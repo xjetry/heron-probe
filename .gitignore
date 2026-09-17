@@ -1,0 +1,12 @@
+# 参考用的第三方仓库，各自带独立 git 历史，不进入本仓库
+reference-projects/
+
+# 构建产物
+/bin/
+/web/dist/
+/web/node_modules/
+
+# 本地运行数据
+*.db
+*.db-wal
+*.db-shm

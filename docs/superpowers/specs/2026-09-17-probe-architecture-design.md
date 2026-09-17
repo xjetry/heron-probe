@@ -1,0 +1,438 @@
+# 服务器监控探针：架构设计
+
+日期：2026-09-17
+
+## 1. 目标与非目标
+
+**目标**：一个单一职责的自托管服务器监控探针。agent 采集主机指标并上报，hub 存储并展示。
+
+范围内：
+
+- 主机指标采集（CPU、内存、交换、磁盘、网络、负载、连接数、进程数）与实时 / 历史图表
+- 延迟探测：hub 下发目标，agent 执行并回报
+- 告警通知：节点离线 / 恢复、探测异常
+- 公开状态页（匿名可访问）
+- 流量统计：总量与按重置日滚动的周期用量
+
+**非目标**（明确排除，新增功能前先对照此表）：
+
+| 排除项 | 原因 |
+|---|---|
+| 远程终端、命令执行、文件管理 | 会让 hub 成为对全部节点的远程代码执行入口；hub 失守即全部节点失守 |
+| agent 自动更新、hub 托管 agent 二进制 | 本质是"hub 可向全部节点推送代码"，与上一条同类 |
+| 插件系统、主题包上传 / 市场 | 与单一职责冲突；文件处理是需要长期维护的攻击面 |
+| OAuth、2FA、多用户 | 单管理员足够 |
+| GeoIP 外呼、计费与到期字段 | 与监控无关 |
+| 多数据库方言、外接时序库 | 目标规模内单文件 SQLite 足够 |
+| 资源阈值告警、流量用量告警 | 未列入需求 |
+| mTLS | 见 §5.5 |
+| hub 自行终止 TLS | 见 §5.4 |
+
+**目标规模**：上百到数百节点，历史保留数月。
+
+## 2. 技术选型
+
+| 项 | 选择 | 理由 |
+|---|---|---|
+| 语言 | hub 与 agent 都用 Go，单 module | 协议类型编译期共享；`CGO_ENABLED=0` 即可交叉编译到冷门架构 |
+| agent 平台 | Linux、macOS | Linux 侧直读 `/proc` 与 `/sys`，采集层零第三方依赖；darwin 侧以 build tag 隔离，其依赖不链入 Linux 二进制 |
+| 通信 | ConnectRPC，agent 侧仅 unary | 见 §4.1 |
+| 契约 | protobuf，`proto/` 为单一事实源 | 同时生成 Go 与 TS；字段号使改名安全；`optional` 区分"无读数"与"读数为 0" |
+| 存储 | 单文件 SQLite，纯 Go 驱动 `modernc.org/sqlite`，WAL | 保持无 CGO、单二进制单文件部署 |
+| 前端 | React + Vite + TS，uPlot 画图，产物 `go:embed` 进 hub | Connect 官方查询层现成；uPlot 专做时序、体积小 |
+
+## 3. 架构
+
+### 3.1 仓库布局
+
+```
+proto/probe/v1/       agent.proto / admin.proto / public.proto / types.proto
+gen/                  buf 生成的 Go 代码，入库
+cmd/hub/  cmd/agent/
+internal/hub/
+  live/      内存中的节点实时状态；不依赖其他 hub 包
+  ingest/    AgentService 实现：校验 → live、traffic、探测桶
+  traffic/   流量差分与周期累计
+  store/     SQLite：schema、迁移、写协程、上卷、prune、按窗口选级查询
+  probe/     探测任务、分配与版本号
+  alert/     巡检、状态机、通知渠道与投递队列
+  auth/      管理员会话、节点 token、注册窗口、可信代理
+  api/       AdminService / PublicService 实现
+  web/       嵌入的前端产物 + 静态目录替换
+internal/agent/
+  collect/   collect_linux.go / collect_darwin.go
+  prober/    icmp / tcp 探测执行与调度
+  client/    上报循环、退避、配置文件
+internal/clock/       可注入的单调钟与墙钟
+web/                  React 工程（admin 与 public 两个入口）
+```
+
+依赖方向：`ingest → live, traffic, probe, store`；`alert → live, store`；`api → live, store, probe, alert, auth`。`live` 与 `clock` 不依赖任何 hub 包。
+
+### 3.2 三个服务，三种鉴权
+
+| 服务 | 调用方 | 鉴权 |
+|---|---|---|
+| `probe.v1.AgentService` | agent | 节点 bearer token（`Register` 用注册窗口 key） |
+| `probe.v1.AdminService` | 管理面板 | 会话 cookie |
+| `probe.v1.PublicService` | 公开页、第三方主题 | 无，按来源 IP 限流 |
+
+鉴权由"服务挂载时绑定的拦截器"承载，不在方法内逐个检查：新增方法无法漏掉鉴权，因为不存在未绑定拦截器的挂载点。
+
+公开数据使用独立的消息类型（`PublicNode`、`PublicSnapshot`），不对 `Node` 做字段过滤。由此默认方向是"私有"：给 `Node` 加字段不会出现在公开页，必须显式加入 `Public*` 消息才公开。
+
+### 3.3 方法清单
+
+- `AgentService`：`Register`、`Report`。
+- `AdminService`：`Login`、`Logout`；节点 `ListNodes`、`CreateNode`、`UpdateNode`、`DeleteNode`、`RotateNodeToken`、`ReorderNodes`；注册窗口 `OpenRegisterWindow`、`CloseRegisterWindow`、`GetRegisterWindow`；数据 `GetSnapshot`、`QueryMetrics`、`QueryProbes`、`GetTraffic`、`AdjustTraffic`；探测 `ListProbeTasks`、`SaveProbeTask`、`DeleteProbeTask`；告警 `ListAlertRules`、`SaveAlertRule`、`DeleteAlertRule`、`ListAlertEvents`、`ListNotifyChannels`、`SaveNotifyChannel`、`DeleteNotifyChannel`、`TestNotifyChannel`；设置 `GetSettings`、`UpdateSettings`、`GetStorageStats`。
+- `PublicService`：`GetSite`、`GetSnapshot`、`QueryMetrics`、`QueryProbes`。后两者只对 `public = true` 的节点应答，对其余节点与不存在的节点返回同一个 `NotFound`。
+
+## 4. agent 协议
+
+### 4.1 为什么是 unary 而不是长连接
+
+hub → agent 的下行只有探测任务列表与上报间隔，都是低频变更的配置，可以在每次上报的响应里按版本对账。由此 agent 与 hub 之间不需要应用层连接状态，下列问题不存在：连接替换时迟到的拆除误删新会话、半开连接探测、出站队列满导致推送丢失、握手与首报之间的在线语义、hub 重启后的重连风暴（每个 agent 本来就是每周期一个请求，恢复后的负载就是稳态负载）。
+
+unary 是普通 HTTP POST，HTTP/1.1 即可，过反代与 CDN 无需特殊配置。不使用 bidi streaming：它要求 HTTP/2 端到端，反代到 hub 这一跳需要显式配置。
+
+代价：每次上报多一份 HTTP 头部；离线发现由"连接断开即知"变为"TTL 到期才知"。
+
+### 4.2 消息
+
+```proto
+service AgentService {
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Report(ReportRequest)     returns (ReportResponse);
+}
+
+message ReportRequest {
+  Metrics metrics = 1;
+  repeated ProbeResult probe_results = 2;
+  uint64  tasks_version = 3;   // agent 当前持有的探测任务版本
+  fixed64 facts_hash = 4;      // agent 静态信息的摘要
+  Facts   facts = 5;           // 进程启动后的首次上报携带；此后仅在 hub 要求时携带
+}
+
+message ReportResponse {
+  uint32     report_interval_ms = 1;
+  ProbeTasks tasks = 2;        // 仅当 tasks_version 与 hub 不一致时携带
+  bool       want_facts = 3;   // hub 持有的 facts_hash 与请求不一致
+}
+
+message Metrics {
+  string boot_id = 1;
+  optional double cpu_pct = 2;
+  optional double load1 = 3;  optional double load5 = 4;  optional double load15 = 5;
+  optional uint64 mem_total = 6;   optional uint64 mem_used = 7;
+  optional uint64 swap_total = 8;  optional uint64 swap_used = 9;
+  optional uint64 disk_total = 10; optional uint64 disk_used = 11;
+  optional uint64 net_rx_total = 12; optional uint64 net_tx_total = 13; // 内核累计计数器
+  optional uint64 net_rx_bps = 14;   optional uint64 net_tx_bps = 15;   // agent 自测瞬时速率，仅供实时视图
+  optional uint32 tcp_conns = 16;  optional uint32 udp_conns = 17;
+  optional uint32 procs = 18;      optional uint64 uptime_s = 19;
+}
+
+message Facts {
+  string hostname = 1; string os = 2; string kernel = 3; string arch = 4;
+  string virtualization = 5; string cpu_model = 6; uint32 cpu_cores = 7;
+  string agent_version = 8;
+  bool icmp_available = 9;     // 两种 ICMP socket 是否至少一种可用，见 §8.2
+}
+
+message ProbeResult {
+  uint64 task_id = 1;
+  uint32 age_ms = 2;           // 测量完成至发送的时长，agent 单调钟
+  oneof outcome {
+    uint32 rtt_us = 3;
+    Timeout timeout = 4;       // 计入丢包
+    ProbeError error = 5;      // 无权限、解析失败等；不计入丢包
+  }
+}
+```
+
+`boot_id` 放在 `Metrics` 而不是 `Facts`：流量差分必须在同一条消息里同时拿到计数器与它所属的启动周期。若 `boot_id` 随 `Facts` 走，重启后的首次上报只带新计数器，当新计数器已超过旧基线时（长时间断连且流量大），hub 会把它当成同一启动周期内的增量而错误入账。
+
+### 4.3 对账
+
+探测任务、主机静态信息、上报间隔三样状态都是电平触发：agent 每次上报带上自己持有的版本 / 摘要，hub 在响应里补齐差异。hub 数据库被恢复、重启或丢失某节点的静态信息后，无需 agent 重启即可重新收敛，收敛时间不超过一个上报周期。
+
+### 4.4 在线判定
+
+`live` 中每节点一个条目，同时持有最新指标与 `last_seen`（单调钟）。在线 ⇔ `now − last_seen < TTL`，其中 `TTL = max(3 × 下发的上报间隔, 10s)`。"在线"与"有最新数据"是同一个事实，只有这一个来源；不存在第二张在线表。节点从首次成功上报起即在线。
+
+### 4.5 时钟
+
+不信任 agent 墙钟。指标由 hub 在收到时打点；探测结果用 `age_ms` 反推测量时刻。hub 内部凡是时长一律用单调钟——墙钟被 NTP 向后拨时差值为负，用它做除数会得到离谱的速率。
+
+### 4.6 版本偏斜
+
+agent 与 hub 不同时升级。hub 必须接受旧 agent 的上报（缺失的 `optional` 字段 = 无读数）；agent 忽略响应里不认识的字段（protobuf 默认行为）。`buf breaking` 以 `WIRE_JSON` 级别在 CI 中守线上兼容——第三方主题以 JSON 调 `PublicService`，字段名同样是契约。
+
+### 4.7 失败与退避
+
+上报失败时 agent 做带抖动的指数退避（上限 60s），成功后回到下发间隔。指标不缓存（过期的实时数据没有意义）；探测结果缓存至多 `MAX_AGE`（120s，其取值约束见 §6.4），超龄丢弃。流量不因断连丢失：计数器是累计值，恢复后的首次差分覆盖整个断连区间（前提见 §7）。
+
+### 4.8 注册
+
+`probe-agent register --hub <url> --key <key> [--name <name>]` 调 `Register`，把节点 token 写入配置文件（权限 0600）。安装脚本只负责下载、校验、调用这条命令与安装服务单元，脚本里不解析 JSON。
+
+## 5. 鉴权与信任边界
+
+### 5.1 节点 token
+
+- 32 字节随机数，只经 `Authorization: Bearer` 传递，不进 URL、不进请求体。
+- hub 只存 SHA-256。token 是高熵随机数，不需要抗字典攻击的慢哈希，而慢哈希撑不住每秒数百次校验。
+- 内存中维护 `hash → node_id` 映射，`Report` 的鉴权只查它、不读库。修改顺序固定为：持 `auth` 的锁 → 写库并等待成功 → 改映射 → 放锁。写库失败则映射不动；进程在两步之间崩溃则映射在下次启动时自库重建。任何绕开这把锁直接改表或改映射的写入都会让两者分叉。
+- token 明文只在创建与轮换时返回一次。轮换后旧 hash 立即从映射移除。
+- 每节点令牌桶限速：上报速率超过下发间隔所对应速率的 2 倍即返回 `ResourceExhausted`。
+- `AgentService` 请求体上限 64 KiB。
+
+同一 token 被两台机器同时使用（克隆虚拟机）会表现为 `boot_id` 交替出现，使流量基线反复重置。hub 在窗口内统计 `boot_id` 切换次数，超过阈值即在管理面板对该节点标记警告。
+
+### 5.2 注册窗口
+
+管理员在面板开启注册窗口：生成一次性 key，带截止时间与可注册节点数上限。窗口关闭与 key 错误返回同一响应。失败计数按来源 IP 独立于登录失败计数：批量安装时用了过期 key 是配置失误而不是对面板的攻击，共用计数会把运维者自己锁在登录页外。只有窗口开启且 key 错误才计数；窗口关闭时没有可猜的秘密，计数只会误伤与他人共用出口地址的运维者。
+
+### 5.3 管理员
+
+- 单管理员。密码用 argon2id 存储，通过 `probe-hub passwd` 在 hub 主机上交互设置；没有经网络的首次设置页，也就没有"谁先访问谁占有"的窗口。
+- 管理员表为空时登录一律失败。空表的语义是"无人可登录"而不是"无需认证"，由登录路径上的显式检查承载。
+- 会话 token 为 32 字节随机数，库中只存 SHA-256，带绝对过期与空闲过期。cookie：`HttpOnly`、`SameSite=Strict`，`Secure` 由可信代理转发的协议决定。修改密码即清空全部会话。
+- 登录失败按来源 IP 锁定。
+- 跨站请求伪造由以下几条各自独立的事实约束，不指定其中哪一条是"主要防线"：会话 cookie 为 `SameSite=Strict`；hub 不下发任何 CORS 允许头；`AdminService` 不把任何方法标为无副作用（因而不接受 GET）；Connect 处理器对 `application/json` 与 `application/proto` 之外的 `Content-Type` 拒绝服务，而浏览器的跨站"简单请求"发不出这两种类型。最后一条是对 connect-go 行为的断言，列入 §13 并由 §12 的测试钉住。
+
+### 5.4 TLS 与可信代理
+
+hub 只监听明文 HTTP，TLS 由反代（Caddy / nginx / CDN）终止，hub 内没有证书代码。
+
+- `--listen` 默认 `127.0.0.1:8080`。监听非 loopback 地址时启动日志告警：此时任何人都能绕过反代直连并自带转发头。
+- `--trusted-proxies` 显式给出 CIDR 列表。只有 TCP 对端地址落在列表内的请求，其 `X-Forwarded-For` / `X-Forwarded-Proto` 才被采信。空列表 = 不信任任何转发头、一律用 TCP 对端地址，是收紧方向。hub 不从请求头推断自己是否在反代之后。
+- `--site-url` 显式给出对外地址，用于生成安装命令；不从 `Host` 头推断。
+
+### 5.5 为什么不做 mTLS
+
+mTLS 相对 bearer token 的增量是"凭据不过线"与"在 HTTP 层之前拒绝未授权连接"。代价：它要求 hub 自己终止 TLS，与 §5.4 冲突——若由反代验证客户端证书再以请求头转发身份，hub 又回到信任请求头；还需要 CA、签发、轮换、吊销整套生命周期，而注册阶段仍需一个一次性秘密换取证书。
+
+在本项目的威胁模型下，节点 token 泄漏的后果是有人能伪造该节点的指标；hub 失守的后果受 §8.3 的 agent 侧限制约束。两者都不足以支撑上述代价。agent 强制校验服务端证书，不提供跳过校验的开关。
+
+## 6. 存储
+
+### 6.1 读写模型
+
+所有写由单一写协程串行执行，读走独立的只读连接池。SQLite 同一时刻只允许一个写者，应用内串行化从根上避免写者之间的 `SQLITE_BUSY`。
+
+`Report` 的处理路径只碰内存、不等待数据库：鉴权查 `auth` 的内存映射，任务列表取自 `probe` 的内存副本，写入落在 `live`、流量累加器与探测桶；`Facts` 的保存投递给写协程后即返回。落盘由定时器驱动：分钟边界刷指标与探测行，每 10 秒刷流量，退出时全刷。管理端的写操作（建节点、轮换 token、改任务）则等待写协程的结果后才应答。
+
+### 6.2 指标表
+
+三级结构相同：`metric_1m`、`metric_5m`、`metric_1h`。
+
+```sql
+CREATE TABLE metric_1m (
+  node_id INTEGER NOT NULL,
+  ts      INTEGER NOT NULL,          -- 桶起始，Unix 秒
+  cpu_sum REAL NOT NULL,       cpu_n INTEGER NOT NULL,       cpu_max REAL NOT NULL,
+  mem_used_sum INTEGER NOT NULL,  mem_used_n INTEGER NOT NULL,  mem_used_max INTEGER NOT NULL,
+  swap_used_sum INTEGER NOT NULL, swap_used_n INTEGER NOT NULL,
+  disk_used_sum INTEGER NOT NULL, disk_used_n INTEGER NOT NULL,
+  load1_sum REAL NOT NULL,     load1_n INTEGER NOT NULL,
+  tcp_sum INTEGER NOT NULL,    tcp_n INTEGER NOT NULL,
+  udp_sum INTEGER NOT NULL,    udp_n INTEGER NOT NULL,
+  procs_sum INTEGER NOT NULL,  procs_n INTEGER NOT NULL,
+  rx_bytes INTEGER NOT NULL,   tx_bytes INTEGER NOT NULL,
+  PRIMARY KEY (node_id, ts)
+) WITHOUT ROWID;
+```
+
+**只存可加量**：和、样本数、最大值、字节增量。均值在查询时由 `x_sum / x_n` 得到，速率由 `bytes / 桶长` 得到。由此：
+
+- 上卷是精确的求和与取最大，不是均值的均值。
+- 每个取均值的指标有自己的样本数。上报里缺失的 `optional` 字段既不加进 `x_sum` 也不加进 `x_n`；`x_n = 0` 的桶在查询结果里是"无数据"而不是 0。"无读数 ≠ 读数为 0"由此从协议一直保持到图表。共用一个行级样本数做不到这一点：某个字段缺失的样本会把该列的均值拉低。
+- hub 在一分钟中途重启时，退出前刷出的半桶与重启后的半桶落在同一主键上，用加法合并（`ON CONFLICT DO UPDATE SET x_sum = x_sum + excluded.x_sum, x_n = x_n + excluded.x_n, x_max = max(x_max, excluded.x_max)`）。这条合并正确的前提是每个内存桶至多成功写入一次：刷出时在 `live` 的锁内"取走并清零"，再交给写协程；写事务失败则该桶留在有界的待重试列表，事务原子性保证失败即未应用，重试不会重复计入。
+- 最大值一路保留到 1h 级，短时尖峰不会被抹平。
+
+主键顺序即唯一查询路径（某节点 + 时间窗），`WITHOUT ROWID` 使主键索引就是表本身。
+
+指标列由 `store` 内的一张描述表驱动（列名、整型或浮点、是否带最大值、对应的 `Metrics` 字段）；建表语句、内存桶的折叠、加法合并、上卷与查询的 SQL 都自它生成。新增一个指标 = 描述表加一项 + 一次迁移，不存在需要手工保持一致的多份字段清单。
+
+### 6.3 探测表
+
+```sql
+CREATE TABLE probe_1m (
+  node_id INTEGER NOT NULL, ts INTEGER NOT NULL, task_id INTEGER NOT NULL,
+  sent INTEGER NOT NULL, lost INTEGER NOT NULL, errors INTEGER NOT NULL,
+  rtt_sum_us INTEGER NOT NULL, rtt_min_us INTEGER NOT NULL, rtt_max_us INTEGER NOT NULL,
+  PRIMARY KEY (node_id, ts, task_id)
+) WITHOUT ROWID;
+```
+
+`probe_5m`、`probe_1h` 同构。主键里 `ts` 在 `task_id` 之前：唯一的查询是"某节点、某时间窗、全部任务"，`task_id` 在前会让 SQLite 只能定位到节点，然后扫描该节点的全部历史。
+
+### 6.4 上卷
+
+`rollup_state(level PRIMARY KEY, upto_ts)` 记录每级水位：水位之前的下级桶已被上卷。上卷任务对每一级：取水位之后的已闭合桶，`INSERT OR REPLACE … SELECT … GROUP BY node_id, 桶` 自下一级重算整桶，并在同一事务内推进水位。重算整桶使它幂等；同事务使它崩溃安全。
+
+这里的替换语义与 §6.2 的加法合并不冲突：加法合并只发生在"内存桶 → 1m 行"，上卷只发生在"下级行 → 上级行"且总是整桶重算。
+
+**冻结不变式**：水位之前的 1m 桶不再被写入，否则上级行不再反映下级行。它由三处共同维持，各有断言：
+
+1. 写协程是 1m 行的唯一写入口，拒绝 `ts` 早于 5m 水位的加法合并（丢弃并记日志）。这是承载不变式的那道检查——它比较的是已持久化的水位而不是时钟，所以墙钟被向后拨、待重试列表里的旧桶迟到，都越不过它。
+2. 上卷只把水位推进到 `桶结束 < now − ROLLUP_LAG` 的桶。
+3. ingest 拒收 `age_ms > MAX_AGE` 的探测结果。
+
+第 2、3 条的作用是让第 1 条在正常运行时不触发。从常量推：一条探测结果最迟在其所属 1m 桶结束后 `MAX_AGE`（120s）到达 hub；到达后先折叠进内存桶，要等下一次分钟刷出才成为 1m 行的写入，再晚至多一个刷出周期（60s）；写协程排队另留余量。因此 `ROLLUP_LAG` 取 300s，并以启动期断言 `ROLLUP_LAG ≥ MAX_AGE + 刷出周期 + 60s` 钉住三个常量之间的关系——调大 `MAX_AGE` 或刷出周期、或调小 `ROLLUP_LAG` 而不同步其余两个，会让合法数据落在水位之前被第 1 条丢弃。上下级一致性本身只依赖第 1 条，不依赖这些常量取值。
+
+迟到的探测结果所属的分钟桶可能已经刷出过一次；它会进入一个同主键的新内存桶，在下次刷出时经加法合并并入已有的行。
+
+### 6.5 保留与查询
+
+保留期默认 1m：7 天、5m：30 天、1h：365 天，可配。prune 按时间片分块删除，每块一个短事务，不长时间占住写协程。
+
+查询按窗口跨度选级：≤ 6h 用 1m，≤ 7d 用 5m，更长用 1h；再按目标点数上限在查询时二次分桶。
+
+规模估算（500 节点，从常量算起）：1m 级 500 × 1440 × 7 = 504 万行；5m 级 500 × 288 × 30 = 432 万行；1h 级 500 × 24 × 365 = 438 万行；合计约 1370 万行。按每行约 120 字节估，指标三级表在 2 GB 上下，探测表另计；均未实测（见 §13）。
+
+### 6.6 其余表
+
+`node`（名称、排序、是否公开、备注、离线宽限期、流量重置日、token_hash）、`node_facts`（facts_hash 与各静态字段）、`traffic`、`probe_task`、`probe_task_node`、`probe_meta`（任务版本号）、`alert_rule`、`alert_state`、`alert_event`、`notify_channel`、`setting`、`admin`、`admin_session`、`register_window`、`rollup_state`。
+
+schema 版本记在 `PRAGMA user_version`，迁移为按版本号顺序执行的函数；空库直接建到当前版本，不重放历史。
+
+## 7. 流量累计
+
+每节点一个内存累加器：`boot_id`、`last_rx`、`last_tx`、`total_rx`、`total_tx`、`period_rx`、`period_tx`、`period_start`、脏标记。
+
+- 每次上报：若 `boot_id` 相同且计数器不小于基线，增量 = 计数器 − 基线，计入总量与周期量；随后基线 = 计数器。
+- `boot_id` 变化、或计数器小于基线（网卡重置、32 位回绕）：只把基线重置为当前计数器，不入账。最多丢失开机到首次上报之间的流量；换来的是 token 被挪到另一台机器时，不会把那台机器开机以来的全部流量一次性记入。
+- 计数器缺失（`optional` 未设置）：不入账也**不动基线**。"无读数"不是"读数为 0"，把基线改成 0 会让下一次上报的增量等于计数器全值。
+- 总量用饱和加法，不回绕。
+- 每 10 秒与退出时，把所有脏条目在一个事务里落盘，基线与累计值同写。
+
+**崩溃不变式**：基线与累计值总是同事务持久化，所以崩溃后的首次上报相对"已落盘的基线"做差分，恰好覆盖崩溃丢失的内存增量，不重不漏。前提是其间 `boot_id` 未变；若节点恰在此窗口内重启，窗口内的流量不可知，按上一条规则重置基线。
+
+**图表与总量的关系**：断连恢复后的首个增量覆盖整个断连区间，若计入单个分钟桶会在速率图上形成假尖峰。因此当距该节点上次上报的间隔超过 TTL 时，该增量只计入 `traffic` 的总量与周期量，不计入 `metric_1m`；hub 重启后各节点的首次上报同样处理（上次上报的时刻已不可知）。由此，`metric_*` 的 `rx_bytes` 对时间求和等于同区间总量的增量，这条等式只在"节点连续在线、hub 未重启、且区间内的分钟行都成功落库"的区间上成立；断连区间在图表上本来就是空洞。
+
+周期用量按节点的重置日（1–28）滚动，时区由 hub 的 `--timezone` 决定；滚动在入账与落盘路径上判定。
+
+agent 默认汇总除 `lo` 与虚拟网卡（`docker*`、`veth*`、`br-*`、`virbr*`）外的全部网卡，可用 `--net-include` / `--net-exclude` 覆盖。
+
+## 8. 探测
+
+### 8.1 任务与版本
+
+`ProbeTask{id, kind(icmp|tcp), target, interval_s, timeout_ms}`，通过 `probe_task_node` 分配到节点。对任务或分配的任何修改都经由 `probe` 包内唯一的写入口，在同一事务内递增 `probe_meta.version`。版本全局唯一而非每节点一份：修改是管理员的低频动作，全体 agent 各多取一次列表的代价可以忽略，换来的是不需要维护"哪些节点受这次修改影响"的推导。
+
+### 8.2 执行
+
+- ICMP：优先用非特权数据报 ICMP socket；不可用且进程持有 `CAP_NET_RAW` 时退到 raw socket；都不可用则每次回报 `error`，面板显示原因，而不是静默呈现为 100% 丢包。
+- TCP：连接建立耗时即 rtt。
+- 各任务的首次触发时刻加随机偏移，避免同一时刻齐发。
+
+### 8.3 agent 侧硬限制
+
+agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 ≥ 5s、任务数 ≤ 64、单次探测 1 个包、超时 ≤ 5s。超限的任务 agent 直接丢弃并回报 `error`。目的是 hub 失守时，攻击者无法把全部节点变成扫描器或流量反射器。
+
+## 9. 告警
+
+### 9.1 规则
+
+- 离线：节点超过宽限期未上报。宽限期按节点可配。
+- 探测：某任务在某节点上的丢包率或平均 rtt 连续 N 分钟超过阈值。数据源为 `probe_1m`。
+
+### 9.2 状态机
+
+每（规则 × 节点）一个状态：`ok → pending → firing → ok`，进入 `firing` 发告警通知，回到 `ok` 发恢复通知。状态持久化在 `alert_state`，hub 重启不会重复触发，也不会忘记尚未恢复的告警。
+
+离线规则每 10 秒巡检；探测规则在分钟桶刷出后评估。离线的恢复条件是收到一次上报（上报本身即证明）；探测的恢复条件是连续 1 分钟低于阈值。
+
+**重启不变式**：hub 重启后 `live` 为空，所有节点看起来都未上报。对本次启动以来尚未上报过的节点，离线时长从 hub 启动时刻起算（单调钟）；已上报过的节点从 `live` 的 `last_seen` 起算。由此重启后每个节点都获得完整的宽限期，重启本身不会触发离线告警。重启前已处于 `firing` 的告警保持 `firing`，直到该节点再次上报才恢复；重启前处于 `pending` 的从启动时刻重新计时。
+
+落盘的 `last_seen`（墙钟，随分钟行刷出与退出时写入）只用于面板显示"最后在线于"与告警文案，不参与离线时长的计算——它必然早于启动时刻，拿它与启动时刻取较大值没有意义。
+
+### 9.3 通知
+
+渠道：Telegram、通用 Webhook（可配方法、头、请求体模板）。投递走有界队列，失败做有限次退避重试，每次投递的结果写入 `alert_event` 并在面板可见。面板显示的"已通知"只来自成功的投递记录。
+
+## 10. 前端与公开页
+
+- `web/` 内两个 Vite 入口：`/admin/*` 管理面板，`/` 公开页，各自打包。lint 规则禁止公开页入口引用 `AdminService` 的生成客户端；这是卫生措施，安全边界在 §3.2 的服务端挂载。
+- 实时数据用轮询（默认 2 秒）。`PublicService.GetSnapshot` 一次返回全部公开节点的实时状态，hub 对序列化结果缓存 1 秒：匿名访客数量不影响 hub 的序列化开销。
+- `--public-dir <dir>` 用指定静态目录替代内置公开页，未命中文件时回落到该目录的 `index.html`。`/admin` 与 RPC 路径的路由优先级更高，替换目录无法遮蔽它们。文件访问经 `os.Root`，不可越出目录、不跟随指向目录外的符号链接。
+- 外观设置（明暗、主色、logo、标题、自定义 CSS）存于 `setting`，经 `PublicService.GetSite` 下发并以 CSS 变量应用。只接受 CSS，不接受 JS 或 HTML；需要改结构的人使用 `--public-dir`。
+- 未构建前端时 hub 照常编译与启动，页面路径返回"前端未构建"的说明；`go build` 与 `go test` 不依赖 Node。
+
+第三方主题 = 调 `PublicService` 的静态站点，框架自选；Connect unary 即 HTTP POST + JSON，直接 `fetch` 可用。
+
+## 11. 错误处理
+
+| 情形 | 行为 |
+|---|---|
+| 上报含非法值（非有限数、负数、百分比越界、`load` 形状不对） | 整条拒绝（`InvalidArgument`）；`live`、流量基线、探测桶均不变 |
+| `Facts` 中的字符串 | 截断到上限并剔除控制字符；其中数个字段会出现在匿名公开页 |
+| 分钟行写库失败 | 该桶进入有界的待重试列表；列表满则丢弃最旧的并记日志；重试时若已落在水位之前，按 §6.4 第 1 条丢弃。不阻塞上报 |
+| 流量落盘失败 | 保留脏标记，下个周期重试；内存状态仍在，不丢 |
+| hub 重启 | `live` 自首批上报重建；流量按 §7 崩溃不变式补齐；告警按 §9.2 重启不变式计时 |
+| agent 连不上 hub | §4.7 |
+| hub 墙钟被向后拨 | 桶的键来自墙钟，回拨后新样本会落进已经写过的分钟。尚在水位之后的桶经加法合并并入：均值仍是并入样本的均值，但该桶的 `rx_bytes` / `tx_bytes` 会装进超过一分钟的字节，图表上这一桶的速率偏高；已在水位之前的桶按 §6.4 第 1 条丢弃，图表在墙钟追上之前出现空洞。流量总量不经过分钟桶，不受影响；TTL 与告警宽限期用单调钟，不受影响 |
+| 同一 token 两台机器 | §5.1，标记警告 |
+| 通知投递失败 | §9.3，重试并记录 |
+
+## 12. 测试策略
+
+- 从用户可见入口测：`ingest`、`api` 的测试经真实 Connect 处理器 + `httptest` + 生成的客户端，不直接调内部函数。
+- 横切不变式用自动枚举覆盖，新增成员自动入测：
+  - 从生成的服务描述符枚举全部 RPC，逐个无凭据调用，断言 `Unauthenticated`；仅 `PublicService` 的方法在白名单内。
+  - 遍历全部 `Public*` 消息的字段，与测试内的显式允许列表比对；往公开消息加字段必须同时改这份列表。
+- 多处同守的不变式每处各写断言：冻结不变式（写协程拒绝水位之前的 1m 写入 / 上卷不越过 `now − ROLLUP_LAG` / ingest 拒收超龄结果 / 三个常量关系的启动期断言）、探测硬限制（hub 校验 / agent 丢弃）。
+- 钉住 §5.3 对 connect-go 的行为断言：带有效会话 cookie、`Content-Type: text/plain` 向 `AdminService` 的写方法 POST，断言被拒绝且无副作用；同一请求改用 GET 同样被拒绝。
+- 时间经 `internal/clock` 注入，`live`、`alert`、`traffic`、上卷的测试可确定性地推进单调钟与墙钟，并可单独向后拨墙钟。
+- 存储：上卷跑两遍结果相同；半桶合并；在"插入上级行"与"推进水位"之间注入失败，断言两者一同回滚；某指标在整桶内都缺失时查询返回"无数据"而不是 0，部分样本缺失时均值只由存在的样本决定。
+- 采集：解析函数接受可注入的文件系统根，用来自真机（含 LXC、OpenVZ）的 `/proc` 快照做 fixture。
+- darwin 采集文件带 build tag，Linux 上的验证循环照不到：CI 含 macOS runner 跑其测试；Linux 上至少执行 `GOOS=darwin go vet ./...`。
+- 每条新断言做一次缺陷注入，确认它红且红在正确的原因上；声称"只有 X 会让它红"的断言，把非 X 的原因也注入一遍。
+- CI：`buf lint`、`buf breaking`（`WIRE_JSON`，对比主干）、`go vet`、`go test -count=1 ./...`。
+
+## 13. 实现前需以实验确认的事项
+
+下列都是对外部组件特定版本的行为断言，以实验结果为准，结论记入对应里程碑的计划：
+
+1. darwin 采集在 `CGO_ENABLED=0` 下的可行实现（gopsutil 或 purego）：能构建，且在真机读出 CPU、内存、网卡计数器、`boot_id` 等价物。
+2. 非特权数据报 ICMP 在目标 Linux 发行版（含容器环境）与 macOS 上的可用性，以及 `CAP_NET_RAW` 回退路径。
+3. `modernc.org/sqlite` 在约 500 万行规模下的上卷查询、窗口查询与分块 prune 耗时；带对照组（同一数据、同一查询、空闲与并发写入两种条件）。
+4. 经反代（HTTP/2 到反代）时单次上报的线上字节数，用于确定默认上报间隔。
+5. 含 connect 与 protobuf runtime 的 agent 二进制体积与常驻内存。
+6. 500 节点规模下的库文件大小。
+7. connect-go 处理器对 `application/json`、`application/proto` 之外的 `Content-Type`，以及对未标为无副作用的方法的 GET 请求的实际响应（§5.3 的前提）。
+
+## 14. 构建、发布、安装
+
+- 全部 `CGO_ENABLED=0`。agent 目标：linux/amd64、arm64、armv7、386、riscv64；darwin/amd64、arm64。hub 目标：linux/amd64、arm64，另出 Docker 镜像。
+- 构建顺序：`buf generate` → 前端构建 → `go build`。生成的 Go 代码入库，前端产物不入库。
+- Linux 安装脚本的步骤顺序：检测 init 系统 → 创建固定的系统用户 → 从 GitHub Releases 下载并校验 sha256 → `probe-agent register` → 安装并启动 systemd 单元。建用户排在下载与注册之前：它若失败，注册窗口的名额尚未消耗、旧服务尚未停止。
+- systemd 单元使用静态 `User=` 并加固（`NoNewPrivileges=`、`ProtectSystem=strict` 等），可选 `AmbientCapabilities=CAP_NET_RAW`。不用 `DynamicUser=`：据 monitor 提交 `85f6702` 的记录，未开 nesting 的 LXC 容器建不了挂载命名空间，此时 systemd 对静态 `User=` 的单元会跳过挂载类隔离照常启动，对 `DynamicUser=` 的单元则拒绝启动（226/NAMESPACE）。`DynamicUser=` 隐含的 `RestrictSUIDSGID=` 需在单元里明写补回。该记录来自参考项目而非本项目的实验，单元定稿前在未开 nesting 的 LXC 容器里实测一次。
+- 第一版只支持 systemd。
+- macOS：launchd。
+- 升级 = 重跑安装脚本。面板显示各节点 agent 版本并标出落后于 hub 的节点。
+
+## 15. 里程碑
+
+每个里程碑有独立的实现计划，结束时都是可端到端运行的状态。
+
+| 里程碑 | 内容 |
+|---|---|
+| M1 垂直切片 | proto 与 buf 流水线；hub 的 `ingest` / `live` / `store`（仅 1m 级）；节点 token、注册窗口、`probe-hub` 的节点管理子命令；Linux agent 采集与上报循环 |
+| M2 管理面板 | `AdminService`、管理员登录、节点管理与 token 轮换、实时视图、历史图表；5m / 1h 上卷、prune、按窗口选级 |
+| M3 流量与探测 | 流量累计；探测任务与版本对账、agent `prober`、探测存储与上卷、图表 |
+| M4 告警 | 规则、状态机、Telegram / Webhook、投递记录 |
+| M5 公开页 | `PublicService`、外观定制、`--public-dir` |
+| M6 交付 | macOS agent、安装脚本、发布流水线、Docker 镜像 |
+
+## 16. 参考项目
+
+`reference-projects/` 下有两个只读参考（不入库）。
+
+沿用自 monitor（`src/agent_ws.rs`、`src/db.rs`）：在线与最新数据同一事实；hub 侧用 `boot_id` + 内核计数器做流量差分且"无读数 ≠ 0"；历史行是整桶聚合而非边界瞬时采样；时长用单调钟；限时限量且失败计数独立的注册窗口；主键顺序按查询路径排；非法上报不改动已有状态。
+
+有意不同于 monitor：token 存 hash 而非明文；单仓库共享协议类型而非两仓库靠运行时契约检查；不从请求头推断部署形态；无主题包管理、无计费字段、无 GeoIP 外呼、不托管 agent 二进制。
+
+规避自 komari：token 经 URL 传递且有三个读取位置；WebSocket 与 HTTP 两套在线状态并存；远程执行 / 终端 / 文件管理；内嵌 JS 引擎的插件系统；三方言自研时序层。
