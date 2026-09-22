@@ -9,6 +9,7 @@ import (
 	"golang.org/x/crypto/argon2"
 	"net/netip"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -327,6 +328,75 @@ func TestConcurrentLoginFailuresCannotBypassLock(t *testing.T) {
 	}
 	if bad != failLimit || locked != 3 {
 		t.Fatalf("concurrent attempts bypassed lock: bad=%d locked=%d", bad, locked)
+	}
+}
+
+func TestNodeMutationsDoNotWaitForLogin(t *testing.T) {
+	for _, operation := range []string{"Register", "CreateNode", "RotateToken", "DeleteNode", "Load"} {
+		t.Run(operation, func(t *testing.T) {
+			a, _, clk := setup(t)
+			ctx := context.Background()
+			if err := a.SetPassword(ctx, goodPassword); err != nil {
+				t.Fatal(err)
+			}
+			id, _, err := a.CreateNode(ctx, "existing")
+			if err != nil {
+				t.Fatal(err)
+			}
+			key, _, err := a.OpenWindow(ctx, time.Hour, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// 只暂停 Login 在签发前的墙钟读取，存储仍用原时钟，排除写队列阻塞。
+			gate := &observationClock{Fake: clk, entered: make(chan struct{}), release: make(chan struct{})}
+			gate.block.Store(true)
+			a.clk = gate
+			release := sync.OnceFunc(func() { close(gate.release) })
+			loginDone := make(chan error, 1)
+			go func() {
+				_, err := a.Login(ctx, goodPassword, netip.MustParseAddr("10.0.0.1"))
+				loginDone <- err
+			}()
+			defer func() {
+				release()
+				if err := <-loginDone; err != nil {
+					t.Errorf("login failed after release: %v", err)
+				}
+			}()
+			select {
+			case <-gate.entered:
+			case <-time.After(2 * time.Second):
+				t.Fatal("Login did not reach session issuance")
+			}
+			done := make(chan error, 1)
+			go func() {
+				var err error
+				switch operation {
+				case "Register":
+					_, _, err = a.Register(ctx, key, "registered", netip.MustParseAddr("10.0.0.2"))
+				case "CreateNode":
+					_, _, err = a.CreateNode(ctx, "new")
+				case "RotateToken":
+					_, err = a.RotateToken(ctx, id)
+				case "DeleteNode":
+					err = a.DeleteNode(ctx, id)
+				case "Load":
+					err = a.Load(ctx)
+				}
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("%s failed while Login was pending: %v", operation, err)
+				}
+			case <-time.After(2 * time.Second):
+				// 先释放登录并等待节点操作退出，避免失败路径留下访问存储的协程。
+				release()
+				<-done
+				t.Fatalf("%s waited for unrelated Login", operation)
+			}
+		})
 	}
 }
 

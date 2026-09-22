@@ -5,6 +5,11 @@
 // 等待成功、后改映射则由每个变更者内部的语句顺序保证，写库失败不改映射。
 // 绕开 mutMu 会让提交与映射更新顺序分叉；仅持有它不能代替上述语句顺序。
 //
+// loginMu 保证 Login 从检查锁定到记失败或签发的完整裁决彼此不交错，避免
+// 并发尝试在失败落账前越过阈值。登录不变更节点 token 映射，不能占用 mutMu，
+// 否则匿名登录的慢哈希和会话写入会让节点变更与 Load 等待无关的登录裁决。
+// 锁序分别为 loginMu -> mu、mutMu -> mu；loginMu 与 mutMu 永不同时持有。
+//
 // mu 只保护 byHash 与两个失败计数器，临界区不含 I/O。CreateNode、Register、
 // DeleteNode 与 RotateToken 在 store 返回成功后、取得 mu.Lock 前存在可见
 // 间隙：Authenticate 可能仍接受已删除或轮换的旧 token，或尚不认识新 token。
@@ -38,6 +43,7 @@ const (
 
 type Auth struct {
 	mutMu    sync.Mutex
+	loginMu  sync.Mutex
 	mu       sync.RWMutex
 	store    *store.Store
 	clk      clock.Clock

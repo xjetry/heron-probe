@@ -109,10 +109,11 @@ func (a *Auth) SetPassword(ctx context.Context, plain string) error {
 // 显式检查承载，并在日志里指明该跑 probe-hub passwd。失败按来源 IP 计数，
 // 锁定期间的拒绝不依赖输入的密码，正确密码也不能提前解除锁定。
 func (a *Auth) Login(ctx context.Context, password string, from netip.Addr) (string, error) {
-	// 裁决与记失败必须串行，否则并发请求都能在第五次失败落账前通过检查。
-	// 沿用 mutMu -> mu 锁序；慢哈希和数据库等待不占用上报鉴权所用的 mu。
-	a.mutMu.Lock()
-	defer a.mutMu.Unlock()
+	// loginMu 串行化检查到记失败或签发，避免并发尝试在失败落账前越过阈值。
+	// 登录不变更节点映射，不能借用 mutMu 让节点操作等待匿名登录的慢哈希。
+	// 只按 loginMu -> mu 取锁，不持 mutMu；慢哈希和数据库等待也不持 mu。
+	a.loginMu.Lock()
+	defer a.loginMu.Unlock()
 	now := a.clk.Mono()
 	a.mu.Lock()
 	locked := a.login.locked(from, now)
