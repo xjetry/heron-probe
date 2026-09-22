@@ -31,7 +31,7 @@
 - 样式用一份 `styles.css` + CSS 变量（明暗跟随 `prefers-color-scheme`），不引入 UI 框架：公开页的外观定制走 CSS 变量，面板与之同一机制。
 - 静态响应头：`assets/*`（带内容哈希）`Cache-Control: public, max-age=31536000, immutable`；`index.html` `Cache-Control: no-cache`；全部页面 `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`（`style-src` 的 `'unsafe-inline'` 给 React 与 uPlot 经 CSSOM 之外偶发写入的内联样式留余地，脚本一律不允许内联）、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`。
 - `/` 在公开页出现之前 302 到 `/admin/`。
-- 历史窗口预设：1h、6h、24h、7d、30d；`max_points` 固定 720。
+- 历史窗口预设：1h、6h、24h、7d、30d；`max_points` 固定 1000：hub 按对齐后的窗口守点数上限，30d 窗口起点未对齐时会跨 721 个小时桶，720 会被推到 2h 步长；1000 让 6h/24h/7d/30d 都保持 1m/2m/15m/1h 的自然分辨率。
 - token 与注册 key 只展示一次：展示组件带"复制"按钮，离开页面即不可再见。
 
 **代码与提交规范（来自用户全局规则，对子代理同样生效）**
@@ -1376,7 +1376,7 @@ export function NodeDetail() {
 
   const nodes = useQuery(AdminService.method.listNodes, {});
   const node = nodes.data?.nodes.find((n) => n.id === nodeId);
-  const history = useQuery(AdminService.method.queryMetrics, { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: 720 });
+  const history = useQuery(AdminService.method.queryMetrics, { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: 1000 });
   const charts = useMemo(
     () => history.data ? PANELS.map((p) => ({ ...p, data: toAligned(history.data, p.names, from, to), unit: unitOf(history.data, p.names[0]) })) : [],
     [history.data, from, to],
@@ -1465,7 +1465,7 @@ describe("NodeDetail", () => {
     const req = queryMetrics.mock.calls[0][0] as { nodeId: bigint; from: bigint; to: bigint; maxPoints: number };
     expect(req.nodeId).toBe(7n);
     expect(Number(req.to - req.from)).toBe(86400);
-    expect(req.maxPoints).toBe(720);
+    expect(req.maxPoints).toBe(1000);
   });
 
   it("切换窗口重新查询", async () => {
