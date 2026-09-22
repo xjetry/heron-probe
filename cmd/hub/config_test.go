@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xjetry/probe/internal/hub/store"
 )
 
 func TestParseTTL(t *testing.T) {
@@ -26,6 +28,31 @@ func TestParseTTL(t *testing.T) {
 		if (err != nil) != c.err || got != c.want {
 			t.Fatalf("parseTTL(%q) = %v, %v; want %v, err=%v", c.in, got, err, c.want, c.err)
 		}
+	}
+}
+
+func TestServeUsageShowsRetentionMinima(t *testing.T) {
+	output, _ := hubCommand(t, "serve", "--help").CombinedOutput()
+	for _, tc := range []struct {
+		flag    string
+		minimum time.Duration
+		want    string
+	}{
+		{"retention-1m", store.MinRetentionM1, "6h0m0s"},
+		{"retention-5m", store.MinRetentionM5, "168h0m0s"},
+		{"retention-1h", store.MinRetentionH1, "168h0m0s"},
+	} {
+		t.Run(tc.flag, func(t *testing.T) {
+			_, section, _ := strings.Cut(string(output), "-"+tc.flag+" duration\n")
+			section, _, _ = strings.Cut(section, "\n  -")
+			if !strings.Contains(section, "minimum "+tc.minimum.String()+")") {
+				t.Errorf("usage differs from Validate minimum %v: %q", tc.minimum, section)
+			}
+			// 独立的对外取值防止常量和帮助一起漂移后自证正确。
+			if !strings.Contains(section, "minimum "+tc.want+")") {
+				t.Errorf("usage minimum changed: got %q, want minimum %s", section, tc.want)
+			}
+		})
 	}
 }
 

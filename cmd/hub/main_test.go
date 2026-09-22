@@ -126,6 +126,15 @@ func TestUsageListsPasswd(t *testing.T) {
 }
 
 func TestSecondInterruptTerminatesWhileDraining(t *testing.T) {
+	checkRepeatedSignalDuringDrain(t, syscall.SIGINT)
+}
+
+func TestRepeatedTerminationCompletesDrain(t *testing.T) {
+	checkRepeatedSignalDuringDrain(t, syscall.SIGTERM)
+}
+
+func checkRepeatedSignalDuringDrain(t *testing.T, sig syscall.Signal) {
+	t.Helper()
 	t.Setenv("PROBE_OFFLINE_AFTER", "30s")
 	cmd := hubCommand(t, "serve", "--db", filepath.Join(t.TempDir(), "hub.db"), "--listen", "127.0.0.1:0")
 	output := &commandOutput{}
@@ -164,11 +173,16 @@ func TestSecondInterruptTerminatesWhileDraining(t *testing.T) {
 	if _, err := fmt.Fprintf(conn, "POST /probe.v1.AdminService/Login HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 100\r\nExpect: 100-continue\r\n\r\n", addr); err != nil {
 		t.Fatal(err)
 	}
-	line, err := bufio.NewReader(conn).ReadString('\n')
-	if err != nil || !strings.Contains(line, "100 Continue") {
-		t.Fatalf("handler did not begin reading: %q %v", line, err)
+	reader := bufio.NewReader(conn)
+	response, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
+	response.Body.Close()
+	if response.StatusCode != http.StatusContinue {
+		t.Fatalf("handler did not begin reading: %s", response.Status)
+	}
+	if err := cmd.Process.Signal(sig); err != nil {
 		t.Fatal(err)
 	}
 	deadline = time.Now().Add(2 * time.Second)
@@ -183,8 +197,36 @@ func TestSecondInterruptTerminatesWhileDraining(t *testing.T) {
 		t.Fatalf("first interrupt did not wait for active request: %v", result)
 	default:
 	}
-	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
+	if err := cmd.Process.Signal(sig); err != nil {
 		t.Fatal(err)
+	}
+	if sig == syscall.SIGTERM {
+		select {
+		case <-finished:
+			t.Fatalf("second SIGTERM bypassed draining: %v", result)
+		case <-time.After(150 * time.Millisecond):
+		}
+		// 只有发送剩余正文后请求才可完成；正常退出必须等待它，而不是被重复 SIGTERM 杀死。
+		if _, err := fmt.Fprint(conn, "{}"+strings.Repeat(" ", 98)); err != nil {
+			t.Fatal(err)
+		}
+		response, err = http.ReadResponse(reader, nil)
+		if err != nil {
+			t.Fatalf("drained request lost response: %v", err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("drained request status=%d, want 401", response.StatusCode)
+		}
+		select {
+		case <-finished:
+			if result != nil {
+				t.Fatalf("SIGTERM drain did not exit cleanly: %v", result)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("SIGTERM drain did not finish after request completed")
+		}
+		return
 	}
 	select {
 	case <-finished:

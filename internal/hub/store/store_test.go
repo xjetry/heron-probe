@@ -249,7 +249,7 @@ func TestWriterRejectsRowsBeforeRollupWatermark(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _ := s.CreateNode(ctx, "a", hash(1))
-	if err := s.SetRollupWatermark(ctx, "5m", 900); err != nil {
+	if err := s.setRollupWatermark(ctx, "5m", 900); err != nil {
 		t.Fatal(err)
 	}
 	rejected, err := s.WriteMinuteRows(ctx, []metric.Row{
@@ -262,6 +262,15 @@ func TestWriterRejectsRowsBeforeRollupWatermark(t *testing.T) {
 	rows, _ := s.ReadMinuteRows(ctx, id, 0, 2000)
 	if len(rows) != 1 || rows[0].TS != 900 {
 		t.Fatalf("rows = %+v, want only ts 900", rows)
+	}
+}
+
+func TestStoreDoesNotExposeWatermarkMutation(t *testing.T) {
+	var s any = (*Store)(nil)
+	if _, ok := s.(interface {
+		SetRollupWatermark(context.Context, string, int64) error
+	}); ok {
+		t.Fatal("Store exposes arbitrary rollup watermark mutation")
 	}
 }
 

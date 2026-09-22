@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -39,15 +40,29 @@ func newMux(mounts ...mount) *http.ServeMux {
 }
 
 func runServe(args []string) error {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	// 先恢复默认信号行为再通知排空路径，慢请求或维护卡住时第二次信号仍能强制终止。
+	interrupt, terminate := make(chan os.Signal, 1), make(chan os.Signal, 1)
+	signal.Notify(interrupt, syscall.SIGINT)
+	signal.Notify(terminate, syscall.SIGTERM)
+	defer signal.Stop(interrupt)
+	defer signal.Stop(terminate)
+	// Ctrl-C 保留人工强退入口；监管方重复 SIGTERM 仍须排空，不能绕过退出前落盘。
+	// Stop 按通道恢复默认处置，所以两类信号必须分开订阅。
 	shutdown, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
-		<-ctx.Done()
-		stop()
-		cancel()
+		for {
+			select {
+			case <-interrupt:
+				signal.Stop(interrupt)
+				cancel()
+			case <-terminate:
+				cancel()
+			case <-done:
+				return
+			}
+		}
 	}()
 	return runServeWith(shutdown, args, clock.Real(), slog.New(slog.NewTextHandler(os.Stderr, nil)))
 }
@@ -59,9 +74,9 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
 	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For / X-Forwarded-Proto are trusted; empty trusts none")
 	retention := store.DefaultRetention
-	fs.DurationVar(&retention.M1, "retention-1m", retention.M1, "how long to keep 1-minute rows (minimum 6h)")
-	fs.DurationVar(&retention.M5, "retention-5m", retention.M5, "how long to keep 5-minute rows (minimum 168h)")
-	fs.DurationVar(&retention.H1, "retention-1h", retention.H1, "how long to keep hourly rows (minimum 168h)")
+	fs.DurationVar(&retention.M1, "retention-1m", retention.M1, fmt.Sprintf("how long to keep 1-minute rows (minimum %s)", store.MinRetentionM1))
+	fs.DurationVar(&retention.M5, "retention-5m", retention.M5, fmt.Sprintf("how long to keep 5-minute rows (minimum %s)", store.MinRetentionM5))
+	fs.DurationVar(&retention.H1, "retention-1h", retention.H1, fmt.Sprintf("how long to keep hourly rows (minimum %s)", store.MinRetentionH1))
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

@@ -137,17 +137,24 @@ type Retention struct {
 
 var DefaultRetention = Retention{M1: 7 * 24 * time.Hour, M5: 30 * 24 * time.Hour, H1: 365 * 24 * time.Hour}
 
+// 保留期准入与命令帮助共用下限，避免显示可用的配置在实际启动时被拒绝。
+const (
+	MinRetentionM1 = 6 * time.Hour
+	MinRetentionM5 = 7 * 24 * time.Hour
+	MinRetentionH1 = 7 * 24 * time.Hour
+)
+
 // Validate 的下限与 ChooseLevel 的选级阈值同向：1m 覆盖六小时、5m 覆盖七天，
 // 且粗级不短于细级，避免刚跨选级边界就因保留期更短而失去历史。
 func (r Retention) Validate() error {
-	if r.M1 < 6*time.Hour {
-		return fmt.Errorf("retention for 1m level is %v, minimum is 6h", r.M1)
+	if r.M1 < MinRetentionM1 {
+		return fmt.Errorf("retention for 1m level is %v, minimum is %v", r.M1, MinRetentionM1)
 	}
-	if r.M5 < 7*24*time.Hour {
-		return fmt.Errorf("retention for 5m level is %v, minimum is 168h", r.M5)
+	if r.M5 < MinRetentionM5 {
+		return fmt.Errorf("retention for 5m level is %v, minimum is %v", r.M5, MinRetentionM5)
 	}
-	if r.H1 < 7*24*time.Hour {
-		return fmt.Errorf("retention for 1h level is %v, minimum is 168h", r.H1)
+	if r.H1 < MinRetentionH1 {
+		return fmt.Errorf("retention for 1h level is %v, minimum is %v", r.H1, MinRetentionH1)
 	}
 	if r.M5 < r.M1 || r.H1 < r.M5 {
 		return errors.New("retention must not shrink as the level gets coarser (1m <= 5m <= 1h)")
@@ -177,7 +184,8 @@ func (s *Store) Prune(ctx context.Context, r Retention) (int64, error) {
 	var total int64
 	for i, lv := range levels {
 		cutoff := alignDown(now-int64(r.forLevel(lv.Name)/time.Second), lv.Bucket)
-		// 消费水位只前进，读到旧值至多延迟清理，不能提前删除尚未聚合的行。
+		// 初始化后只有 rollupLevel 写水位，每片 end > upto，且与聚合原子提交。
+		// 因此消费水位只前进，读到旧值至多延迟清理，不会提前删掉未聚合的行。
 		if i+1 < len(levels) {
 			var consumed int64
 			if err := s.r.QueryRowContext(ctx, "SELECT upto_ts FROM rollup_state WHERE level = ?", levels[i+1].Name).Scan(&consumed); err != nil {

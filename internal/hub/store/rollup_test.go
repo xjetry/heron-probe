@@ -307,6 +307,39 @@ func TestRetentionValidate(t *testing.T) {
 	}
 }
 
+func TestRetentionMinimaMatchChooseLevelWindows(t *testing.T) {
+	for _, target := range levels[:2] {
+		t.Run(target.Name, func(t *testing.T) {
+			// 从真实选级函数找切换点，不复制其阈值；粗级尚未被选中的最大跨度即服务窗口。
+			lo, hi := int64(1), int64(400*86400)
+			for lo < hi {
+				mid := lo + (hi-lo+1)/2
+				chosen, _ := ChooseLevel(0, mid, 0)
+				if chosen.Bucket <= target.Bucket {
+					lo = mid
+				} else {
+					hi = mid - 1
+				}
+			}
+			window := time.Duration(lo) * time.Second
+			r := DefaultRetention
+			r.M1 = MinRetentionM1
+			value := &r.M1
+			if target.Name == "5m" {
+				value = &r.M5
+			}
+			*value = window
+			if err := r.Validate(); err != nil {
+				t.Fatalf("%s longest ChooseLevel window %v rejected: %v", target.Name, window, err)
+			}
+			*value -= time.Second
+			if err := r.Validate(); err == nil {
+				t.Fatalf("%s retention %v accepted below longest ChooseLevel window %v", target.Name, *value, window)
+			}
+		})
+	}
+}
+
 func TestNextMaintenanceAtLandsTwoSecondsPastTheMinute(t *testing.T) {
 	for _, wall := range []time.Time{
 		time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),

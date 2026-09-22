@@ -123,16 +123,3 @@ func scanBucketRows(rows *sql.Rows, nodeID int64) ([]metric.Row, error) {
 	}
 	return out, rows.Err()
 }
-
-func (s *Store) SetRollupWatermark(ctx context.Context, level string, uptoTS int64) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
-		res, err := tx.Exec("UPDATE rollup_state SET upto_ts = ? WHERE level = ?", uptoTS, level)
-		if err != nil {
-			return err
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return ErrNotFound
-		}
-		return nil
-	})
-}
