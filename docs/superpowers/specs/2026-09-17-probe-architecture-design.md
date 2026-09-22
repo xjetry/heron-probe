@@ -54,8 +54,9 @@ proto/probe/v1/       agent.proto / admin.proto / public.proto / types.proto
 gen/                  buf 生成的 Go 代码，入库
 cmd/hub/  cmd/agent/
 internal/hub/
-  live/      内存中的节点实时状态；不依赖其他 hub 包
-  ingest/    AgentService 实现：校验 → live、traffic、探测桶
+  metric/    指标描述表与分钟桶；纯数据的叶子包，live 的折叠与 store 的 SQL 都自它生成
+  live/      内存中的节点实时状态与未落盘的分钟桶
+  ingest/    AgentService 实现：校验 → live、traffic、探测桶；分钟刷出与有界的待重试列表
   traffic/   流量差分与周期累计
   store/     SQLite：schema、迁移、写协程、上卷、prune、按窗口选级查询
   probe/     探测任务、分配与版本号
@@ -71,7 +72,7 @@ internal/clock/       可注入的单调钟与墙钟
 web/                  React 工程（admin 与 public 两个入口）
 ```
 
-依赖方向：`ingest → live, traffic, probe, store`；`alert → live, store`；`api → live, store, probe, alert, auth`。`live` 与 `clock` 不依赖任何 hub 包。
+依赖方向：`live → metric`；`store → metric`；`auth → store`；`ingest → live, store, auth, traffic, probe`；`alert → live, store`；`api → live, store, probe, alert, auth`。`metric` 与 `clock` 不依赖任何 hub 包：描述表必须同时被 live（折叠）与 store（SQL）看到，而 live 不能依赖 store，所以它只能是二者之下的叶子。
 
 ### 3.2 三个服务，三种鉴权
 
@@ -272,7 +273,7 @@ CREATE TABLE metric_1m (
 
 主键顺序即唯一查询路径（某节点 + 时间窗），`WITHOUT ROWID` 使主键索引就是表本身。
 
-指标列由 `store` 内的一张描述表驱动（列名、整型或浮点、是否带最大值、对应的 `Metrics` 字段）；建表语句、内存桶的折叠、加法合并、上卷与查询的 SQL 都自它生成。新增一个指标 = 描述表加一项 + 一次迁移，不存在需要手工保持一致的多份字段清单。
+指标列由 `metric` 包内的一张描述表驱动（列名、整型或浮点、是否带最大值、对应的 `Metrics` 字段）；建表语句、内存桶的折叠、加法合并、上卷与查询的 SQL 都自它生成。新增一个指标 = 描述表加一项 + 一次迁移，不存在需要手工保持一致的多份字段清单。
 
 ### 6.3 探测表
 
