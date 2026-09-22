@@ -10,3 +10,6 @@ reference-projects/
 *.db
 *.db-wal
 *.db-shm
+
+# SDD 执行工作区：账本、任务简报、审阅包，都是会话级草稿
+/.superpowers/
