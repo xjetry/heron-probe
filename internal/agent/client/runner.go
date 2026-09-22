@@ -49,7 +49,6 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 	interval := r.Interval
 	sendFacts := true
-	var factsHash uint64
 	attempt := 0
 	for {
 		m, err := r.Collector.Metrics()
@@ -58,12 +57,13 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 		req := connect.NewRequest(&probev1.ReportRequest{Metrics: m})
 		req.Header().Set("Authorization", "Bearer "+r.Token)
+		// Facts 只读几个小文件；每轮重算才能让 hub 从摘要变化发现运行期间的变更。
+		f := r.Collector.Facts()
+		hash := FactsHash(f)
 		if sendFacts {
-			f := r.Collector.Facts()
-			factsHash = FactsHash(f)
 			req.Msg.Facts = f
 		}
-		req.Msg.FactsHash = factsHash
+		req.Msg.FactsHash = hash
 
 		resp, err := r.Client.Report(ctx, req)
 		if err != nil {

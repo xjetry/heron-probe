@@ -94,11 +94,13 @@ func TestBackoffGrowsAndCapsAtThreeIntervals(t *testing.T) {
 
 // fakeHub 记录收到的上报并按脚本应答。
 type fakeHub struct {
-	mu       sync.Mutex
-	reports  []*probev1.ReportRequest
-	wantNext bool
-	fail     bool
-	interval uint32
+	reconcile bool
+	factsHash uint64
+	mu        sync.Mutex
+	reports   []*probev1.ReportRequest
+	wantNext  bool
+	fail      bool
+	interval  uint32
 }
 
 func (f *fakeHub) Register(context.Context, *connect.Request[probev1.RegisterRequest]) (*connect.Response[probev1.RegisterResponse], error) {
@@ -116,6 +118,12 @@ func (f *fakeHub) Report(_ context.Context, req *connect.Request[probev1.ReportR
 	}
 	f.reports = append(f.reports, req.Msg)
 	want := f.wantNext
+	if f.reconcile {
+		if req.Msg.Facts != nil {
+			f.factsHash = req.Msg.FactsHash
+		}
+		want = req.Msg.FactsHash != f.factsHash
+	}
 	f.wantNext = false
 	return connect.NewResponse(&probev1.ReportResponse{ReportIntervalMs: f.interval, WantFacts: want}), nil
 }
@@ -179,6 +187,36 @@ func TestFirstReportCarriesFactsThenOnlyOnRequest(t *testing.T) {
 	}
 	if hub.reports[1].Facts != nil || hub.reports[1].FactsHash != hub.reports[0].FactsHash {
 		t.Fatal("second report must carry only the hash")
+	}
+}
+
+func TestFactsChangeIsReportedWithoutRestart(t *testing.T) {
+	hub := &fakeHub{interval: 5000, reconcile: true}
+	r, _ := newRunner(t, hub)
+	fs := r.Collector.FS.(fstest.MapFS)
+	fs["proc/sys/kernel/hostname"] = &fstest.MapFile{Data: []byte("old\n")}
+	round := 0
+	r.Sleep = func(context.Context, time.Duration) error {
+		round++
+		if round == 1 {
+			fs["proc/sys/kernel/hostname"] = &fstest.MapFile{Data: []byte("new\n")}
+		}
+		if round == 3 {
+			return context.Canceled
+		}
+		return nil
+	}
+	if err := r.Run(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if hub.reports[0].Facts == nil {
+		t.Fatal("first report missing facts")
+	}
+	if hub.reports[1].FactsHash == hub.reports[0].FactsHash {
+		t.Fatal("facts hash did not change after hostname changed")
+	}
+	if f := hub.reports[2].Facts; f == nil || f.Hostname != "new" {
+		t.Fatalf("requested facts = %+v, want new hostname", f)
 	}
 }
 
