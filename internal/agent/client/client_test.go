@@ -247,9 +247,15 @@ func TestFailureBacksOffWithinThreeIntervals(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { r.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
 	var seen []time.Duration
 	for len(seen) < 6 {
-		seen = append(seen, <-sleeps)
+		select {
+		case d := <-sleeps:
+			seen = append(seen, d)
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for backoff sleep")
+		}
 	}
 	cancel()
 	<-done
