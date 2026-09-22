@@ -226,8 +226,8 @@ func TestOversizedBodyIsRejected(t *testing.T) {
 	req := report(tok, &probev1.Metrics{})
 	req.Msg.Facts = &probev1.Facts{Os: strings.Repeat("x", 70*1024)}
 	_, err := h.client.Report(context.Background(), req)
-	if err == nil {
-		t.Fatal("70 KiB body must be rejected")
+	if connect.CodeOf(err) != connect.CodeResourceExhausted {
+		t.Fatalf("70 KiB body: err = %v, want ResourceExhausted", err)
 	}
 	if _, ok := h.live.Get(id); ok {
 		t.Fatal("rejected body must leave live untouched")
