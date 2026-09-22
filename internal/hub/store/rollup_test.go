@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -244,6 +245,10 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := Retention{M1: 7 * 24 * time.Hour, M5: 30 * 24 * time.Hour, H1: 365 * 24 * time.Hour}
+	if err := s.Rollup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	trace := traceWrites(t, s)
 	n, err := s.Prune(ctx, r)
 	if err != nil {
 		t.Fatal(err)
@@ -251,6 +256,20 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 	// 保留 ts >= now − 7d：d = 8、9 两天在保留期之外，d = 7 恰在 cutoff 上属保留侧；两个节点各 2 行。
 	if n != 4 {
 		t.Fatalf("pruned %d rows, want 4", n)
+	}
+	deletes := 0
+	for _, statements := range trace.snapshot() {
+		for _, stmt := range statements {
+			if strings.HasPrefix(stmt.query, "DELETE FROM metric_1m ") {
+				deletes++
+				if span := stmt.args[2].Value.(int64) - stmt.args[1].Value.(int64); span > 86400 {
+					t.Fatalf("prune slice span=%d exceeds one day", span)
+				}
+			}
+		}
+	}
+	if deletes != 4 {
+		t.Fatalf("prune used %d delete transactions, want 4", deletes)
 	}
 	for _, node := range []int64{id, orphan} {
 		left := readLevel(t, s, levels[0], node)
@@ -272,10 +291,13 @@ func TestRetentionValidate(t *testing.T) {
 	if err := DefaultRetention.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	if err := (Retention{6 * time.Hour, 168 * time.Hour, 168 * time.Hour}).Validate(); err != nil {
+		t.Fatalf("retention minima rejected: %v", err)
+	}
 	bad := []Retention{
-		{M1: 30 * time.Minute, M5: 30 * 24 * time.Hour, H1: 365 * 24 * time.Hour},
-		{M1: 7 * 24 * time.Hour, M5: 12 * time.Hour, H1: 365 * 24 * time.Hour},
-		{M1: 7 * 24 * time.Hour, M5: 30 * 24 * time.Hour, H1: 6 * 24 * time.Hour},
+		{M1: 6*time.Hour - time.Second, M5: 30 * 24 * time.Hour, H1: 365 * 24 * time.Hour},
+		{M1: 6 * time.Hour, M5: 168*time.Hour - time.Second, H1: 365 * 24 * time.Hour},
+		{M1: 6 * time.Hour, M5: 168 * time.Hour, H1: 168*time.Hour - time.Second},
 		{M1: 40 * 24 * time.Hour, M5: 30 * 24 * time.Hour, H1: 365 * 24 * time.Hour},
 	}
 	for _, r := range bad {

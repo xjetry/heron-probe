@@ -114,6 +114,10 @@ func TestEveryAdminProcedureRejectsAnonymousCalls(t *testing.T) {
 	for i := 0; i < services.Len(); i++ {
 		svc := services.Get(i)
 		for j := 0; j < svc.Methods().Len(); j++ {
+			// 匿名白名单由 cmd/hub/mux_test 守；无管理员的 Login 失败不能证明拦截器存在。
+			if svc.Methods().Get(j).Name() == "Login" {
+				continue
+			}
 			count++
 			path := "/" + string(svc.FullName()) + "/" + string(svc.Methods().Get(j).Name())
 			resp, err := http.Post(h.srv.URL+path, "application/json", strings.NewReader("{}"))

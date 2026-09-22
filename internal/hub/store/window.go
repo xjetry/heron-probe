@@ -69,11 +69,7 @@ func (s *Store) RegisterNode(ctx context.Context, keyHash []byte, name string, t
 		if !bytes.Equal(stored, keyHash) {
 			return ErrBadKey
 		}
-		res, err := tx.Exec("INSERT INTO node (name, token_hash, created_at) VALUES (?, ?, ?)", name, tokenHash, s.clk.Now().Unix())
-		if err != nil {
-			return err
-		}
-		if id, err = res.LastInsertId(); err != nil {
+		if id, err = insertNode(tx, name, tokenHash, s.clk.Now().Unix()); err != nil {
 			return err
 		}
 		_, err = tx.Exec("UPDATE register_window SET remaining = remaining - 1 WHERE id = 1")

@@ -38,6 +38,9 @@ const (
 	argonMemory  uint32 = 64 * 1024
 	argonThreads uint8  = 4
 	argonKeyLen  uint32 = 32
+
+	// 未设置管理员也支付相同的默认哈希成本；固定摘要不授予身份，存在性另行守卫。
+	absentAdminPHC = "$argon2id$v=19$m=65536,t=3,p=4$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 )
 
 // HashPassword 输出 PHC 字符串。成本参数随哈希保存，校验预算内的旧哈希按
@@ -126,18 +129,21 @@ func (a *Auth) Login(ctx context.Context, password string, from netip.Addr) (str
 		return "", err
 	}
 	if !ok {
-		a.log.Warn("login refused: no admin password is set; run `probe-hub passwd`", "from", from)
-		return "", ErrNoAdmin
+		phc = absentAdminPHC
 	}
 	match, err := VerifyPassword(phc, password)
 	if err != nil {
 		return "", err
 	}
-	if !match {
+	if !ok || !match {
 		a.mu.Lock()
 		count := a.login.record(from, a.clk.Mono())
 		a.mu.Unlock()
 		a.log.Warn("login failed", "from", from, "failures", count)
+		if !ok {
+			a.log.Warn("login refused: no admin password is set; run `probe-hub passwd`", "from", from)
+			return "", ErrNoAdmin
+		}
 		return "", ErrBadPassword
 	}
 	plain, h := NewToken()

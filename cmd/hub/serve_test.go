@@ -173,8 +173,8 @@ func TestServeRunsMaintenanceWithConfiguredRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	expired := map[string]int64{
-		"1m": clk.Now().Add(-2 * time.Hour).Truncate(time.Hour).Unix(),
-		"5m": clk.Now().Add(-48 * time.Hour).Truncate(time.Hour).Unix(),
+		"1m": clk.Now().Add(-7 * time.Hour).Truncate(time.Hour).Unix(),
+		"5m": clk.Now().Add(-8 * 24 * time.Hour).Truncate(time.Hour).Unix(),
 		"1h": clk.Now().Add(-14 * 24 * time.Hour).Truncate(time.Hour).Unix(),
 	}
 	recent := clk.Now().Add(-20 * time.Minute).Truncate(time.Minute).Unix()
@@ -197,7 +197,7 @@ func TestServeRunsMaintenanceWithConfiguredRetention(t *testing.T) {
 			t.Fatalf("missing %s control row before maintenance: rows=%v err=%v", name, rows, err)
 		}
 	}
-	_, events, stop := startTestHub(t, db, clk, "--retention-1m", "1h", "--retention-5m", "24h", "--retention-1h", "168h")
+	_, events, stop := startTestHub(t, db, clk, "--retention-1m", "6h", "--retention-5m", "168h", "--retention-1h", "168h")
 	deadline := time.NewTimer(8 * time.Second)
 	defer deadline.Stop()
 	for {

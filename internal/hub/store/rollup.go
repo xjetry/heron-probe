@@ -64,7 +64,7 @@ func rollupSQL(lv Level) string {
 	b := fmt.Sprint(lv.Bucket)
 	return "INSERT OR REPLACE INTO " + lv.Table + " (node_id, ts, " + strings.Join(metricColumnNames(), ", ") + ") " +
 		"SELECT node_id, ts - ts % " + b + ", " + strings.Join(aggregates(), ", ") +
-		" FROM " + lv.Source + " WHERE ts >= ? AND ts < ? GROUP BY node_id, ts - ts % " + b
+		" FROM " + lv.Source + " WHERE node_id IN (SELECT id FROM node) AND ts >= ? AND ts < ? GROUP BY node_id, ts - ts % " + b
 }
 
 // Rollup 对每一粗级：取水位之后、滞后期已过的下级桶，整桶重算写入本级，并在
@@ -85,31 +85,50 @@ func (s *Store) Rollup(ctx context.Context) error {
 	return nil
 }
 
-// rollupLevel 通过同一次 write 事务插入桶并推进水位，二者一起提交或回滚，
-// 避免持久化状态只包含其中一项；成功时返回本级水位。
+// rollupSlice 限制每次占用写协程的历史跨度，让其他写请求能在追赶的片间提交。
+var rollupSlice = map[string]int64{"5m": 86400, "1h": 7 * 86400}
+
+// rollupLevel 每片通过同一次 write 事务插入桶并推进水位，二者一起提交或回滚。
+// 每片重读水位，允许其他维护调用在片间推进；空白历史在同一事务中确认后跳过，
+// 避免新库从零水位逐日提交空事务。非空片的起止均对齐目标桶，不拆开整桶。
 func (s *Store) rollupLevel(ctx context.Context, lv Level, limit int64) (int64, error) {
 	var upto int64
-	err := s.write(ctx, func(tx *sql.Tx) error {
-		if err := tx.QueryRow("SELECT upto_ts FROM rollup_state WHERE level = ?", lv.Name).Scan(&upto); err != nil {
-			return err
-		}
-		if limit <= upto {
+	for {
+		err := s.write(ctx, func(tx *sql.Tx) error {
+			if err := tx.QueryRow("SELECT upto_ts FROM rollup_state WHERE level = ?", lv.Name).Scan(&upto); err != nil {
+				return err
+			}
+			if limit <= upto {
+				return nil
+			}
+			var first sql.NullInt64
+			// 每个节点从复合主键的时间范围取首行，再求全局最小值，不扫描全部历史。
+			if err := tx.QueryRow("SELECT min((SELECT ts FROM "+lv.Source+
+				" WHERE node_id = node.id AND ts >= ? AND ts < ? ORDER BY ts LIMIT 1)) FROM node", upto, limit).Scan(&first); err != nil {
+				return err
+			}
+			end := limit
+			if first.Valid {
+				start := max(upto, alignDown(first.Int64, lv.Bucket))
+				end = start + min(rollupSlice[lv.Name], limit-start)
+				if _, err := tx.Exec(rollupSQL(lv), start, end); err != nil {
+					return err
+				}
+			}
+			res, err := tx.Exec("UPDATE rollup_state SET upto_ts = ? WHERE level = ?", end, lv.Name)
+			if err != nil {
+				return err
+			}
+			if n, _ := res.RowsAffected(); n != 1 {
+				return fmt.Errorf("rollup_state has no row for level %s", lv.Name)
+			}
+			upto = end
 			return nil
+		})
+		if err != nil || upto >= limit {
+			return upto, err
 		}
-		if _, err := tx.Exec(rollupSQL(lv), upto, limit); err != nil {
-			return err
-		}
-		res, err := tx.Exec("UPDATE rollup_state SET upto_ts = ? WHERE level = ?", limit, lv.Name)
-		if err != nil {
-			return err
-		}
-		if n, _ := res.RowsAffected(); n != 1 {
-			return fmt.Errorf("rollup_state has no row for level %s", lv.Name)
-		}
-		upto = limit
-		return nil
-	})
-	return upto, err
+	}
 }
 
 type Retention struct {
@@ -118,14 +137,14 @@ type Retention struct {
 
 var DefaultRetention = Retention{M1: 7 * 24 * time.Hour, M5: 30 * 24 * time.Hour, H1: 365 * 24 * time.Hour}
 
-// Validate 守两条：每级不短于下限，且粗级不短于细级——
-// 否则窄窗口有图、宽窗口反而空。
+// Validate 的下限与 ChooseLevel 的选级阈值同向：1m 覆盖六小时、5m 覆盖七天，
+// 且粗级不短于细级，避免刚跨选级边界就因保留期更短而失去历史。
 func (r Retention) Validate() error {
-	if r.M1 < time.Hour {
-		return fmt.Errorf("retention for 1m level is %v, minimum is 1h", r.M1)
+	if r.M1 < 6*time.Hour {
+		return fmt.Errorf("retention for 1m level is %v, minimum is 6h", r.M1)
 	}
-	if r.M5 < 24*time.Hour {
-		return fmt.Errorf("retention for 5m level is %v, minimum is 24h", r.M5)
+	if r.M5 < 7*24*time.Hour {
+		return fmt.Errorf("retention for 5m level is %v, minimum is 168h", r.M5)
 	}
 	if r.H1 < 7*24*time.Hour {
 		return fmt.Errorf("retention for 1h level is %v, minimum is 168h", r.H1)
@@ -156,8 +175,16 @@ var pruneSlice = map[string]int64{"1m": 86400, "5m": 7 * 86400, "1h": 30 * 86400
 func (s *Store) Prune(ctx context.Context, r Retention) (int64, error) {
 	now := s.clk.Now().Unix()
 	var total int64
-	for _, lv := range levels {
+	for i, lv := range levels {
 		cutoff := alignDown(now-int64(r.forLevel(lv.Name)/time.Second), lv.Bucket)
+		// 消费水位只前进，读到旧值至多延迟清理，不能提前删除尚未聚合的行。
+		if i+1 < len(levels) {
+			var consumed int64
+			if err := s.r.QueryRowContext(ctx, "SELECT upto_ts FROM rollup_state WHERE level = ?", levels[i+1].Name).Scan(&consumed); err != nil {
+				return total, err
+			}
+			cutoff = min(cutoff, consumed)
+		}
 		ids, err := s.distinctNodes(ctx, lv.Table)
 		if err != nil {
 			return total, err
@@ -294,6 +321,8 @@ func (s *Store) RunMaintenance(ctx context.Context, r Retention) {
 		case <-timer.C:
 			if err := s.Rollup(context.Background()); err != nil {
 				s.log.Error("rollup failed", "err", err)
+				// 上卷失败时保留本轮全部历史；Prune 自身的消费水位守卫仍独立生效。
+				continue
 			}
 			if n, err := s.Prune(context.Background(), r); err != nil {
 				s.log.Error("prune failed", "err", err)

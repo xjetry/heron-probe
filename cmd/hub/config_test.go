@@ -41,9 +41,9 @@ func TestIsLoopback(t *testing.T) {
 func TestServeRejectsInvalidRetention(t *testing.T) {
 	t.Setenv("PROBE_OFFLINE_AFTER", "30s")
 	for _, tc := range []struct{ flag, value, want string }{
-		{"--retention-1m", "30m", "minimum is 1h"},
+		{"--retention-1m", "5h59m59s", "minimum is 6h"},
 		{"--retention-1m", "40d", `invalid value "40d"`},
-		{"--retention-5m", "23h", "minimum is 24h"},
+		{"--retention-5m", "167h59m59s", "minimum is 168h"},
 		{"--retention-1h", "167h", "minimum is 168h"},
 		{"--retention-1m", "800h", "must not shrink"},
 		{"--retention-5m", "9000h", "must not shrink"},

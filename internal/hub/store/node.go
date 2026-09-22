@@ -171,15 +171,21 @@ func (s *Store) DeleteNode(ctx context.Context, id int64) error {
 func (s *Store) CreateNode(ctx context.Context, name string, tokenHash []byte) (int64, error) {
 	var id int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		res, err := tx.Exec("INSERT INTO node (name, token_hash, created_at) VALUES (?, ?, ?)",
-			name, tokenHash, s.clk.Now().Unix())
-		if err != nil {
-			return err
-		}
-		id, err = res.LastInsertId()
+		var err error
+		id, err = insertNode(tx, name, tokenHash, s.clk.Now().Unix())
 		return err
 	})
 	return id, err
+}
+
+// 两个创建入口共用事务内的末尾序号分配，重排后的相对顺序不被新节点打断。
+func insertNode(tx *sql.Tx, name string, tokenHash []byte, createdAt int64) (int64, error) {
+	res, err := tx.Exec(`INSERT INTO node (name, token_hash, created_at, sort_order)
+		SELECT ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1 FROM node`, name, tokenHash, createdAt)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
 }
 
 func (s *Store) SetTokenHash(ctx context.Context, id int64, hash []byte) error {

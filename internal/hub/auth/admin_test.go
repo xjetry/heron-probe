@@ -64,6 +64,19 @@ func TestLoginWithoutAdminAlwaysFails(t *testing.T) {
 	}
 }
 
+func TestLoginWithoutAdminLocksAfterFailures(t *testing.T) {
+	a, _, _ := setup(t)
+	from := netip.MustParseAddr("10.0.0.1")
+	for i := 0; i < failLimit; i++ {
+		if token, err := a.Login(context.Background(), goodPassword, from); !errors.Is(err, ErrNoAdmin) || token != "" {
+			t.Fatalf("no-admin attempt %d: token=%q err=%v", i+1, token, err)
+		}
+	}
+	if _, err := a.Login(context.Background(), goodPassword, from); !errors.Is(err, ErrLocked) {
+		t.Fatalf("no-admin failures did not lock: %v", err)
+	}
+}
+
 func TestLoginIssuesSessionAndLocksOutAfterFailures(t *testing.T) {
 	a, _, clk := setup(t)
 	ctx := context.Background()

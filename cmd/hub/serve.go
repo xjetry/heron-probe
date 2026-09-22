@@ -41,7 +41,15 @@ func newMux(mounts ...mount) *http.ServeMux {
 func runServe(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	return runServeWith(ctx, args, clock.Real(), slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	// 先恢复默认信号行为再通知排空路径，慢请求或维护卡住时第二次信号仍能强制终止。
+	shutdown, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		<-ctx.Done()
+		stop()
+		cancel()
+	}()
+	return runServeWith(shutdown, args, clock.Real(), slog.New(slog.NewTextHandler(os.Stderr, nil)))
 }
 
 // runServeWith 由调用方拥有停止信号；后台循环与请求排空完成后才能关闭它们共用的库。
@@ -51,8 +59,8 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
 	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For / X-Forwarded-Proto are trusted; empty trusts none")
 	retention := store.DefaultRetention
-	fs.DurationVar(&retention.M1, "retention-1m", retention.M1, "how long to keep 1-minute rows (minimum 1h)")
-	fs.DurationVar(&retention.M5, "retention-5m", retention.M5, "how long to keep 5-minute rows (minimum 24h)")
+	fs.DurationVar(&retention.M1, "retention-1m", retention.M1, "how long to keep 1-minute rows (minimum 6h)")
+	fs.DurationVar(&retention.M5, "retention-5m", retention.M5, "how long to keep 5-minute rows (minimum 168h)")
 	fs.DurationVar(&retention.H1, "retention-1h", retention.H1, "how long to keep hourly rows (minimum 168h)")
 	if err := fs.Parse(args); err != nil {
 		return err
