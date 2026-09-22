@@ -386,6 +386,26 @@ func TestFactsHashNotRecordedWhenWriteFails(t *testing.T) {
 }
 
 // 没有在拦截器里显式列出凭据来源的方法一律拒绝，且不会进入处理函数。
+func TestInterceptorDeniesStreamingHandlers(t *testing.T) {
+	h := newHub(t)
+	called := false
+	next := connect.StreamingHandlerFunc(func(context.Context, connect.StreamingHandlerConn) error { called = true; return nil })
+	err := h.svc.authInterceptor().WrapStreamingHandler(next)(context.Background(), nil)
+	if connect.CodeOf(err) != connect.CodeUnauthenticated || called {
+		t.Fatalf("streaming handler: err=%v called=%v, want Unauthenticated without dispatch", err, called)
+	}
+}
+
+func TestInterceptorPassesStreamingClientsThrough(t *testing.T) {
+	h := newHub(t)
+	called := false
+	next := connect.StreamingClientFunc(func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn { called = true; return nil })
+	h.svc.authInterceptor().WrapStreamingClient(next)(context.Background(), connect.Spec{})
+	if !called {
+		t.Fatal("streaming client was not passed through")
+	}
+}
+
 func TestInterceptorDeniesUnlistedProcedures(t *testing.T) {
 	h := newHub(t)
 	called := false

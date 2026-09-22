@@ -89,27 +89,38 @@ func unauthenticated() error {
 
 // authInterceptor 在挂载点上裁决每个方法的凭据来源。没有在这里显式列出的
 // 方法一律拒绝：新增方法不可能因为忘了加检查而被放行。
-func (s *Service) authInterceptor() connect.Interceptor {
-	return connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
-		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-			switch req.Spec().Procedure {
-			case probev1connect.AgentServiceRegisterProcedure:
-				// 凭据是请求体里的窗口 key，由 Register 裁决。
-				return next(ctx, req)
-			case probev1connect.AgentServiceReportProcedure:
-				tok, ok := strings.CutPrefix(req.Header().Get("Authorization"), "Bearer ")
-				if !ok {
-					return nil, unauthenticated()
-				}
-				id, ok := s.auth.Authenticate(tok)
-				if !ok {
-					return nil, unauthenticated()
-				}
-				return next(context.WithValue(ctx, nodeKey{}, id), req)
+type authInterceptor struct{ service *Service }
+
+func (s *Service) authInterceptor() connect.Interceptor { return authInterceptor{service: s} }
+
+func (i authInterceptor) WrapStreamingHandler(connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return func(context.Context, connect.StreamingHandlerConn) error { return unauthenticated() }
+}
+
+func (i authInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return next
+}
+
+func (i authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	s := i.service
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		switch req.Spec().Procedure {
+		case probev1connect.AgentServiceRegisterProcedure:
+			// 凭据是请求体里的窗口 key，由 Register 裁决。
+			return next(ctx, req)
+		case probev1connect.AgentServiceReportProcedure:
+			tok, ok := strings.CutPrefix(req.Header().Get("Authorization"), "Bearer ")
+			if !ok {
+				return nil, unauthenticated()
 			}
-			return nil, unauthenticated()
+			id, ok := s.auth.Authenticate(tok)
+			if !ok {
+				return nil, unauthenticated()
+			}
+			return next(context.WithValue(ctx, nodeKey{}, id), req)
 		}
-	})
+		return nil, unauthenticated()
+	}
 }
 
 func (s *Service) Register(ctx context.Context, req *connect.Request[probev1.RegisterRequest]) (*connect.Response[probev1.RegisterResponse], error) {
