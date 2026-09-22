@@ -56,7 +56,10 @@ func runServe(args []string) error {
 
 	mux := http.NewServeMux()
 	mux.Handle(svc.Handler())
-	srv := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{
+		Addr: *listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout: 30 * time.Second, // ReadMaxBytes 限量不限时。
+	}
 
 	flushCtx, stopFlusher := context.WithCancel(ctx)
 	flusherDone := make(chan struct{})
