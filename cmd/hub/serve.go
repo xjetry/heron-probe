@@ -47,7 +47,11 @@ func runServe(args []string) error {
 	}
 	a := auth.New(st, clk, log)
 	l := live.New(clk, ttl)
-	svc := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, clk, log)
+	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, clk, log)
+	if err != nil {
+		st.Close()
+		return err
+	}
 	ctx := context.Background()
 	if err := errors.Join(a.Load(ctx), svc.Load(ctx)); err != nil {
 		st.Close()

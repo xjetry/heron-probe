@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"net"
 	"time"
+
+	"github.com/xjetry/probe/internal/hub/ingest"
 )
 
 const (
 	defaultTTL = 30 * time.Second
-	minTTL     = 10 * time.Second
+	minTTL     = ingest.MinTTL
 )
 
 // parseTTL 解析 PROBE_OFFLINE_AFTER。TTL 是离线发现延迟的上界，也是这条链上

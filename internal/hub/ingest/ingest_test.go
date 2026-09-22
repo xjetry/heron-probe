@@ -44,7 +44,10 @@ func newHub(t *testing.T) *hub {
 	t.Cleanup(func() { st.Close() })
 	a := auth.New(st, clk, slog.Default())
 	l := live.New(clk, 30*time.Second)
-	svc := New(Config{TTL: 30 * time.Second}, l, st, a, clk, slog.Default())
+	svc, err := New(Config{TTL: 30 * time.Second}, l, st, a, clk, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -70,6 +73,19 @@ func report(tok string, m *probev1.Metrics) *connect.Request[probev1.ReportReque
 		req.Header().Set("Authorization", "Bearer "+tok)
 	}
 	return req
+}
+
+func TestNewEnforcesMinimumTTL(t *testing.T) {
+	for _, ttl := range []time.Duration{-time.Second, 0, 10*time.Second - time.Nanosecond, 10 * time.Second, 30 * time.Second} {
+		svc, err := New(Config{TTL: ttl}, nil, nil, nil, clock.NewFake(time.Now()), slog.Default())
+		if ttl < 10*time.Second {
+			if err == nil || svc != nil {
+				t.Fatalf("TTL %v accepted below minimum", ttl)
+			}
+		} else if err != nil || svc == nil || svc.Interval() != ttl/3 {
+			t.Fatalf("TTL %v rejected or wrong interval: %v %v", ttl, svc, err)
+		}
+	}
 }
 
 func TestReportWithoutTokenIsUnauthenticated(t *testing.T) {

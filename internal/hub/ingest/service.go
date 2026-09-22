@@ -7,6 +7,7 @@ package ingest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -27,6 +28,9 @@ import (
 
 // maxBody 限制 AgentService 的请求体：一条上报远小于此，超出的只可能是滥用。
 const maxBody = 64 << 10
+
+// MinTTL 限制服务允许的最短离线判定时长，命令行与直接构造共用同一准入边界。
+const MinTTL = 10 * time.Second
 
 type Config struct {
 	TTL            time.Duration
@@ -57,8 +61,11 @@ type Service struct {
 	pending   [][]metric.Row
 }
 
-func New(cfg Config, l *live.Live, st *store.Store, a *auth.Auth, clk clock.Clock, log *slog.Logger) *Service {
-	return &Service{cfg: cfg, live: l, store: st, writer: st, auth: a, clk: clk, log: log, limit: newLimiter(), factsHash: map[int64]uint64{}}
+func New(cfg Config, l *live.Live, st *store.Store, a *auth.Auth, clk clock.Clock, log *slog.Logger) (*Service, error) {
+	if cfg.TTL < MinTTL {
+		return nil, fmt.Errorf("TTL %v is below the minimum %v", cfg.TTL, MinTTL)
+	}
+	return &Service{cfg: cfg, live: l, store: st, writer: st, auth: a, clk: clk, log: log, limit: newLimiter(), factsHash: map[int64]uint64{}}, nil
 }
 
 func (s *Service) Load(ctx context.Context) error {
