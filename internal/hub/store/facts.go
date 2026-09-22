@@ -46,3 +46,7 @@ func (s *Store) FactsHashes(ctx context.Context) (map[int64]uint64, error) {
 	}
 	return out, rows.Err()
 }
+
+func (s *Store) QueryFacts(ctx context.Context, nodeID int64, hostname, os *string) error {
+	return s.r.QueryRowContext(ctx, "SELECT hostname, os FROM node_facts WHERE node_id = ?", nodeID).Scan(hostname, os)
+}
