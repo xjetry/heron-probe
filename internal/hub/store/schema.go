@@ -51,6 +51,8 @@ CREATE TABLE rollup_state (
 INSERT INTO rollup_state (level, upto_ts) VALUES ('5m', 0), ('1h', 0);
 `
 
+// schemaStatements 依赖 DDL 的注释与字符串里不出现 `;`；违反时 Exec 会在
+// 建表阶段失败，测试立刻红。
 func schemaStatements() []string {
 	var out []string
 	for _, stmt := range strings.Split(schemaFixed, ";") {
