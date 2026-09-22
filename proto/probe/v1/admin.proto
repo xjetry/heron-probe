@@ -1,0 +1,188 @@
+syntax = "proto3";
+
+package probe.v1;
+
+option go_package = "github.com/xjetry/probe/gen/probe/v1;probev1";
+
+import "probe/v1/types.proto";
+
+// 管理面板 → hub。除 Login 外每个方法都要求有效的会话 cookie，由挂载时绑定的
+// 拦截器裁决。全部方法都是 unary，且没有一个标为无副作用：本服务不接受 GET，
+// 这是抵御跨站请求伪造的几条各自独立的事实之一。
+service AdminService {
+  // 用管理员密码换取会话 cookie（Set-Cookie 在响应头里）。
+  rpc Login(LoginRequest) returns (LoginResponse);
+  // 作废当前会话并清除 cookie。
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  // 建节点并返回其 token；明文只在此处返回一次。
+  rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse);
+  // 整体替换可编辑字段（名称、是否公开、备注）。
+  rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse);
+  // 删除节点及其全部历史；进程内的实时状态同步清理。
+  rpc DeleteNode(DeleteNodeRequest) returns (DeleteNodeResponse);
+  // 换发 token：旧 token 立即失效，新明文只在此处返回一次。
+  rpc RotateNodeToken(RotateNodeTokenRequest) returns (RotateNodeTokenResponse);
+  // 给出全部节点 id 的新顺序；必须恰好包含每个节点一次。
+  rpc ReorderNodes(ReorderNodesRequest) returns (ReorderNodesResponse);
+
+  // 开启（或替换）注册窗口，返回一次性 key。
+  rpc OpenRegisterWindow(OpenRegisterWindowRequest) returns (OpenRegisterWindowResponse);
+  rpc CloseRegisterWindow(CloseRegisterWindowRequest) returns (CloseRegisterWindowResponse);
+  rpc GetRegisterWindow(GetRegisterWindowRequest) returns (GetRegisterWindowResponse);
+
+  // 全部节点的实时状态，供轮询；轮询间隔不必短于 report_interval_ms。
+  rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse);
+  // 某节点一段时间的历史；级别与步长由 hub 按窗口选定并随数据返回。
+  rpc QueryMetrics(QueryMetricsRequest) returns (QueryMetricsResponse);
+}
+
+message LoginRequest {
+  string password = 1;
+}
+message LoginResponse {}
+
+message LogoutRequest {}
+message LogoutResponse {}
+
+message Node {
+  int64 id = 1;
+  string name = 2;
+  bool public = 3;
+  string note = 4;
+  int32 sort_order = 5;
+  // Unix 秒。
+  int64 created_at = 6;
+  // 最近一次上报的墙钟 Unix 秒；从未上报则缺失。
+  optional int64 last_seen_at = 7;
+  // 主机静态信息；从未上报则缺失。
+  Facts facts = 8;
+  optional int64 facts_updated_at = 9;
+}
+
+message ListNodesRequest {}
+message ListNodesResponse {
+  repeated Node nodes = 1;
+}
+
+message CreateNodeRequest {
+  // 去首尾空白后 1–64 个字符，控制字符被剔除。
+  string name = 1;
+}
+message CreateNodeResponse {
+  Node node = 1;
+  // 节点 token 明文，只在此处返回一次；hub 只存其哈希。
+  string token = 2;
+}
+
+message UpdateNodeRequest {
+  int64 id = 1;
+  string name = 2;
+  bool public = 3;
+  // 最长 1024 个字符。
+  string note = 4;
+}
+message UpdateNodeResponse {
+  Node node = 1;
+}
+
+message DeleteNodeRequest {
+  int64 id = 1;
+}
+message DeleteNodeResponse {}
+
+message RotateNodeTokenRequest {
+  int64 id = 1;
+}
+message RotateNodeTokenResponse {
+  string token = 1;
+}
+
+message ReorderNodesRequest {
+  // 全部节点 id 按新顺序排列；缺一个或多一个都被拒绝。
+  repeated int64 ids = 1;
+}
+message ReorderNodesResponse {}
+
+message OpenRegisterWindowRequest {
+  // 窗口有效期，60–604800 秒。
+  uint32 ttl_s = 1;
+  // 可注册节点数，1–1000。
+  uint32 max_nodes = 2;
+}
+message OpenRegisterWindowResponse {
+  // 一次性 key 明文，只在此处返回一次。
+  string key = 1;
+  // 截止时刻，Unix 秒。
+  int64 expires_at = 2;
+  uint32 max_nodes = 3;
+}
+
+message CloseRegisterWindowRequest {}
+message CloseRegisterWindowResponse {}
+
+message GetRegisterWindowRequest {}
+message GetRegisterWindowResponse {
+  // false 时其余字段无意义。
+  bool open = 1;
+  int64 expires_at = 2;
+  uint32 remaining = 3;
+}
+
+message GetSnapshotRequest {}
+message GetSnapshotResponse {
+  // hub 墙钟，Unix 秒；客户端据此显示"多久之前"而不依赖自己的时钟。
+  int64 now = 1;
+  // hub 下发给 agent 的上报间隔；实时状态不会比它更新得更快。
+  uint32 report_interval_ms = 2;
+  repeated NodeStatus nodes = 3;
+}
+
+message NodeStatus {
+  int64 id = 1;
+  string name = 2;
+  // 在线 ⇔ 距最近一次上报不足 TTL，hub 是唯一裁决者。
+  bool online = 3;
+  // 最近一次上报的墙钟 Unix 秒；从未上报则缺失。
+  optional int64 last_seen_at = 4;
+  // 最近一次上报的读数；从未上报则缺失。离线节点仍带最后一次读数。
+  Metrics metrics = 5;
+}
+
+message QueryMetricsRequest {
+  int64 node_id = 1;
+  // 窗口 [from, to)，Unix 秒。跨度最长 400 天。
+  int64 from = 2;
+  int64 to = 3;
+  // 返回点数上限；0 取默认 720，最大 2000。hub 据此选择步长。
+  uint32 max_points = 4;
+}
+message QueryMetricsResponse {
+  // 数据来自哪一级：1m、5m 或 1h。
+  string level = 1;
+  // 每个点覆盖的秒数；是所选级别桶长的整数倍。
+  uint32 step_s = 2;
+  // 各点起始，Unix 秒，已对齐到 step_s 的整数倍。只包含有行的点：
+  // 缺失的 ts 表示该段完全没有数据。
+  repeated int64 ts = 3;
+  // 每个指标一条，与 metric 描述表同名同序。
+  repeated MetricSeries series = 4;
+}
+
+message MetricSeries {
+  // cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs。
+  string name = 1;
+  // percent、bytes、count；load 无单位为空串。
+  string unit = 2;
+  // 与 ts 一一对应。
+  repeated MetricSample samples = 3;
+}
+
+message MetricSample {
+  // 该点内的样本数；0 表示该指标在这段时间没有任何读数，此时 mean 与 max 缺失。
+  uint32 n = 1;
+  optional double mean = 2;
+  // 只有带最大值的指标（cpu、mem_used）才有。
+  optional double max = 3;
+}

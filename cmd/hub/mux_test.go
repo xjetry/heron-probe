@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
+
+	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/ingest"
@@ -44,9 +47,17 @@ func newTestService(t *testing.T) *ingest.Service {
 	return svc
 }
 
+func newTestMux(t *testing.T) *http.ServeMux {
+	t.Helper()
+	svc := newTestService(t)
+	adminPath, adminHandler := probev1connect.NewAdminServiceHandler(probev1connect.UnimplementedAdminServiceHandler{},
+		connect.WithInterceptors(denyAll()), connect.WithReadMaxBytes(maxAdminBody))
+	return newMux(mountOf(svc.Handler()), mountOf(adminPath, adminHandler))
+}
+
 // 注册表提供方法全集，真实挂载点必须让所有未列入匿名清单的方法经过鉴权。
 func TestMuxRejectsAnonymousProcedures(t *testing.T) {
-	srv := httptest.NewServer(newMux(newTestService(t)))
+	srv := httptest.NewServer(newTestMux(t))
 	t.Cleanup(srv.Close)
 	seen := map[string]bool{}
 	count := 0

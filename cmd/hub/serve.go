@@ -11,6 +11,9 @@ import (
 	"syscall"
 	"time"
 
+	"connectrpc.com/connect"
+
+	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/ingest"
@@ -18,10 +21,45 @@ import (
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
-func newMux(svc *ingest.Service) *http.ServeMux {
+const maxAdminBody = 64 << 10
+
+type mount struct {
+	path string
+	h    http.Handler
+}
+
+func mountOf(path string, h http.Handler) mount { return mount{path: path, h: h} }
+
+// newMux 是所有服务唯一的挂载点；挂载点级测试从注册表枚举方法逐个匿名调用，
+// 所以任何进了描述符的服务都必须在这里出现，且带着它的鉴权拦截器。
+func newMux(mounts ...mount) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.Handle(svc.Handler())
+	for _, m := range mounts {
+		mux.Handle(m.path, m.h)
+	}
 	return mux
+}
+
+// denyAll 在挂载处阻止请求进入尚无实现的服务；不设方法白名单，
+// 因而描述符新增的方法也会被拒绝，不依赖零实现自身返回什么错误。
+func denyAll() connect.Interceptor { return denyAllInterceptor{} }
+
+type denyAllInterceptor struct{}
+
+func (denyAllInterceptor) WrapUnary(connect.UnaryFunc) connect.UnaryFunc {
+	return func(context.Context, connect.AnyRequest) (connect.AnyResponse, error) {
+		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("unauthenticated"))
+	}
+}
+
+func (denyAllInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return next
+}
+
+func (denyAllInterceptor) WrapStreamingHandler(connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return func(context.Context, connect.StreamingHandlerConn) error {
+		return connect.NewError(connect.CodeUnauthenticated, errors.New("unauthenticated"))
+	}
 }
 
 func runServe(args []string) error {
@@ -63,7 +101,9 @@ func runServe(args []string) error {
 		return err
 	}
 
-	mux := newMux(svc)
+	adminPath, adminHandler := probev1connect.NewAdminServiceHandler(probev1connect.UnimplementedAdminServiceHandler{},
+		connect.WithInterceptors(denyAll()), connect.WithReadMaxBytes(maxAdminBody))
+	mux := newMux(mountOf(svc.Handler()), mountOf(adminPath, adminHandler))
 	srv := &http.Server{
 		Addr: *listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second, // ReadMaxBytes 限量不限时。
