@@ -29,7 +29,6 @@ func runServe(args []string) error {
 	db := fs.String("db", "probe.db", "SQLite database path")
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
 	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For is trusted; empty trusts none")
-	fs.String("site-url", "", "public URL of this hub, used in generated install commands")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
