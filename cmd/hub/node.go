@@ -58,6 +58,7 @@ func runNode(args []string) error {
 		}
 		fmt.Printf("id: %d\ntoken: %s\n", nid, tok)
 		fmt.Fprintln(os.Stderr, "the token is shown once; the hub stores only its hash")
+		fmt.Fprintln(os.Stderr, restartNotice)
 	case "list":
 		nodes, err := st.ListNodes(ctx)
 		if err != nil {
