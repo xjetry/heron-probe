@@ -251,7 +251,7 @@ func ChooseLevel(from, to int64, maxPoints int) (Level, int64) {
 // GROUP BY 1 指向第一列（分桶后的 ts）。
 func aggregateSQL(table string) string {
 	return "SELECT ts - ts % ?, " + strings.Join(aggregates(), ", ") + " FROM " + table +
-		" WHERE node_id = ? AND ts >= ? AND ts < ? GROUP BY 1 ORDER BY 1"
+		" WHERE node_id = ? AND ts >= ? AND ts <= ? GROUP BY 1 ORDER BY 1"
 }
 
 // QueryMetrics 返回 [from, to) 内按 step 聚合的桶；from 向下、to 向上对齐到 step，
@@ -261,7 +261,12 @@ func (s *Store) QueryMetrics(ctx context.Context, nodeID int64, from, to int64, 
 		return nil, fmt.Errorf("step %d is not a multiple of the %s bucket (%d)", step, lv.Name, lv.Bucket)
 	}
 	from = alignDown(from, step)
-	to = alignDown(to+step-1, step)
+	// 用最后一秒所在桶的闭区间上界表达对齐，避免 to + step 溢出。
+	last := alignDown(to-1, step)
+	to = math.MaxInt64
+	if last <= math.MaxInt64-(step-1) {
+		to = last + step - 1
+	}
 	rows, err := s.r.QueryContext(ctx, aggregateSQL(lv.Table), step, nodeID, from, to)
 	if err != nil {
 		return nil, err

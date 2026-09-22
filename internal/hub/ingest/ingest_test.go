@@ -523,3 +523,180 @@ func TestInterceptorDeniesUnlistedProcedures(t *testing.T) {
 		t.Fatal("handler must not run for an unlisted procedure")
 	}
 }
+
+func TestForgetClearsNodeState(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	req := report(tok, &probev1.Metrics{CpuPct: proto.Float64(1)})
+	req.Msg.Facts = &probev1.Facts{Hostname: "h"}
+	req.Msg.FactsHash = 5
+	if _, err := h.client.Report(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { h.svc.mu.Lock(); defer h.svc.mu.Unlock(); return h.svc.factsHash[id] == 5 })
+	h.svc.Forget(id)
+	if _, ok := h.live.Get(id); ok {
+		t.Fatal("live entry survived Forget")
+	}
+	h.svc.limit.mu.Lock()
+	_, limited := h.svc.limit.m[id]
+	h.svc.limit.mu.Unlock()
+	if limited {
+		t.Fatal("rate limit bucket survived Forget")
+	}
+	h.svc.mu.Lock()
+	_, known := h.svc.factsHash[id]
+	h.svc.mu.Unlock()
+	if known {
+		t.Fatal("facts hash survived Forget")
+	}
+}
+
+type delayedFactsCallback struct {
+	*store.Store
+	callbacks chan func()
+}
+
+func (w *delayedFactsCallback) UpsertFactsAsync(id int64, hash uint64, f *probev1.Facts, done func(error)) {
+	w.Store.UpsertFactsAsync(id, hash, f, func(err error) { w.callbacks <- func() { done(err) } })
+}
+
+func TestForgetDiscardsDelayedFactsCallback(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	w := &delayedFactsCallback{Store: h.store, callbacks: make(chan func(), 1)}
+	h.svc.writer = w
+	req := report(tok, &probev1.Metrics{})
+	req.Msg.Facts = &probev1.Facts{Hostname: "h"}
+	req.Msg.FactsHash = 9
+	if _, err := h.client.Report(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	callback := <-w.callbacks
+	if err := h.auth.DeleteNode(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	h.svc.Forget(id)
+	callback()
+	h.svc.mu.Lock()
+	_, known := h.svc.factsHash[id]
+	h.svc.mu.Unlock()
+	if known {
+		t.Fatal("late callback rebuilt deleted facts hash")
+	}
+}
+
+func TestForgetDropsPendingRowsWithoutLosingOtherNodes(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	keep, other := h.node(t)
+	fw := &failingWriter{Store: h.store, fail: true}
+	h.svc.writer = fw
+	for _, token := range []string{tok, other} {
+		if _, err := h.client.Report(context.Background(), report(token, &probev1.Metrics{CpuPct: proto.Float64(1)})); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.svc.Flush(context.Background(), true)
+	if err := h.auth.DeleteNode(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	h.svc.Forget(id)
+	h.svc.pendingMu.Lock()
+	forgotten, retained := 0, 0
+	for _, batch := range h.svc.pending {
+		for _, row := range batch {
+			if row.NodeID == id {
+				forgotten++
+			}
+			if row.NodeID == keep {
+				retained++
+			}
+		}
+	}
+	h.svc.pendingMu.Unlock()
+	if forgotten != 0 || retained != 1 {
+		t.Fatalf("pending rows after Forget: deleted=%d other=%d", forgotten, retained)
+	}
+}
+
+type reportGateClock struct {
+	clock.Clock
+	entered chan struct{}
+	release chan struct{}
+	armed   atomic.Bool
+}
+
+func (c *reportGateClock) Mono() time.Duration {
+	if c.armed.Swap(false) {
+		close(c.entered)
+		<-c.release
+	}
+	return c.Clock.Mono()
+}
+
+func TestForgetWaitsForAdmittedReport(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	gate := &reportGateClock{Clock: h.clk, entered: make(chan struct{}), release: make(chan struct{})}
+	h.svc.clk = gate
+	gate.armed.Store(true)
+	reported := make(chan error, 1)
+	go func() {
+		_, err := h.client.Report(context.Background(), report(tok, &probev1.Metrics{}))
+		reported <- err
+	}()
+	select {
+	case <-gate.entered:
+	case <-time.After(2 * time.Second):
+		close(gate.release)
+		t.Fatal("report did not reach admission gate")
+	}
+	if err := h.auth.DeleteNode(context.Background(), id); err != nil {
+		close(gate.release)
+		t.Fatal(err)
+	}
+	forgotten := make(chan struct{})
+	go func() { h.svc.Forget(id); close(forgotten) }()
+	select {
+	case <-forgotten:
+		t.Error("Forget returned before in-flight report completed")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(gate.release)
+	if err := <-reported; err != nil {
+		t.Fatal(err)
+	}
+	<-forgotten
+	if _, ok := h.live.Get(id); ok {
+		t.Error("in-flight report rebuilt live state")
+	}
+	h.svc.limit.mu.Lock()
+	_, limited := h.svc.limit.m[id]
+	h.svc.limit.mu.Unlock()
+	if limited {
+		t.Error("in-flight report rebuilt rate limit")
+	}
+}
+
+func TestRegisterTrimsAfterRemovingControls(t *testing.T) {
+	h := newHub(t)
+	ctx := context.Background()
+	key, _, err := h.auth.OpenWindow(ctx, time.Hour, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ raw, want string }{{"  host \x00 ", "host"}, {"\x00 \u202e", "node"}} {
+		out, err := h.client.Register(ctx, connect.NewRequest(&probev1.RegisterRequest{Key: key, Name: tc.raw}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, err := h.store.GetNode(ctx, out.Msg.NodeId)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n.Name != tc.want {
+			t.Errorf("registered name=%q want=%q", n.Name, tc.want)
+		}
+	}
+}

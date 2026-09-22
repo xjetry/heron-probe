@@ -23,6 +23,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/probe/internal/hub/sanitize"
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
@@ -53,7 +54,10 @@ type Service struct {
 	limit         *buckets[int64]
 	registerLimit *buckets[netip.Addr]
 
-	mu sync.Mutex
+	// stateMu 将 Report 的鉴权及内存写入与 Forget 排他，防止已放行的在途请求重建状态。
+	// 同持时锁序为 pendingMu → stateMu → mu；上报不取 pendingMu，不等待刷盘。
+	stateMu sync.RWMutex
+	mu      sync.Mutex
 	// factsHash 是 hub 已持久化的各节点 facts 摘要；只在写库成功后更新，
 	// 写失败则保持旧值，下一次上报会因不一致再次要求 facts。
 	factsHash map[int64]uint64
@@ -91,6 +95,7 @@ func (s *Service) Handler() (string, http.Handler) {
 }
 
 type nodeKey struct{}
+type nodeTokenKey struct{}
 type registerFromKey struct{}
 
 func unauthenticated() error {
@@ -125,6 +130,8 @@ func (i authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 			// 凭据是请求体里的窗口 key，由 Register 裁决。
 			return next(context.WithValue(ctx, registerFromKey{}, from), req)
 		case probev1connect.AgentServiceReportProcedure:
+			s.stateMu.RLock()
+			defer s.stateMu.RUnlock()
 			tok, ok := strings.CutPrefix(req.Header().Get("Authorization"), "Bearer ")
 			if !ok {
 				return nil, unauthenticated()
@@ -133,6 +140,7 @@ func (i authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 			if !ok {
 				return nil, unauthenticated()
 			}
+			ctx = context.WithValue(ctx, nodeTokenKey{}, tok)
 			return next(context.WithValue(ctx, nodeKey{}, id), req)
 		}
 		return nil, unauthenticated()
@@ -142,7 +150,7 @@ func (i authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 func (s *Service) Register(ctx context.Context, req *connect.Request[probev1.RegisterRequest]) (*connect.Response[probev1.RegisterResponse], error) {
 	// 挂载点的拦截器只向通过限速的请求传入来源，窗口裁决复用同一来源地址。
 	from := ctx.Value(registerFromKey{}).(netip.Addr)
-	name := sanitizeString(strings.TrimSpace(req.Msg.GetName()))
+	name := strings.TrimSpace(sanitize.String(req.Msg.GetName(), maxFactString))
 	if name == "" {
 		name = "node"
 	}
@@ -169,7 +177,7 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[probev1.Repor
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	s.live.Observe(id, m)
-	want := s.reconcileFacts(id, req.Msg.GetFactsHash(), req.Msg.GetFacts())
+	want := s.reconcileFacts(id, ctx.Value(nodeTokenKey{}).(string), req.Msg.GetFactsHash(), req.Msg.GetFacts())
 	return connect.NewResponse(&probev1.ReportResponse{
 		ReportIntervalMs: uint32(s.Interval() / time.Millisecond),
 		WantFacts:        want,
@@ -177,7 +185,7 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[probev1.Repor
 }
 
 // reconcileFacts 是电平触发的对账：agent 每次带摘要，hub 只在不一致时索要。
-func (s *Service) reconcileFacts(id int64, hash uint64, f *probev1.Facts) bool {
+func (s *Service) reconcileFacts(id int64, token string, hash uint64, f *probev1.Facts) bool {
 	if f != nil {
 		sanitizeFacts(f)
 		s.writer.UpsertFactsAsync(id, hash, f, func(err error) {
@@ -186,7 +194,10 @@ func (s *Service) reconcileFacts(id int64, hash uint64, f *probev1.Facts) bool {
 				return
 			}
 			s.mu.Lock()
-			s.factsHash[id] = hash
+			// 回调可晚于删除；在 mu 下复查 token 并发布摘要，与 Forget 的摘要清理互斥。
+			if current, ok := s.auth.Authenticate(token); ok && current == id {
+				s.factsHash[id] = hash
+			}
 			s.mu.Unlock()
 		})
 		return false
@@ -195,4 +206,31 @@ func (s *Service) reconcileFacts(id int64, hash uint64, f *probev1.Facts) bool {
 	defer s.mu.Unlock()
 	known, ok := s.factsHash[id]
 	return !ok || known != hash
+}
+
+// Forget 在 auth 移除 token 后清理节点状态。stateMu 等待已鉴权上报退出，
+// pendingMu 将 live 桶移交与重试队列清理串行化，因此返回后两处都不再持有该节点。
+func (s *Service) Forget(nodeID int64) {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	s.live.Forget(nodeID)
+	s.limit.forget(nodeID)
+	s.mu.Lock()
+	delete(s.factsHash, nodeID)
+	s.mu.Unlock()
+	var pending [][]metric.Row
+	for _, batch := range s.pending {
+		var kept []metric.Row
+		for _, row := range batch {
+			if row.NodeID != nodeID {
+				kept = append(kept, row)
+			}
+		}
+		if len(kept) > 0 {
+			pending = append(pending, kept)
+		}
+	}
+	s.pending = pending
 }

@@ -228,3 +228,10 @@ func (s *Store) Counts(ctx context.Context) (map[string]int64, error) {
 	}
 	return out, nil
 }
+
+// nodeExistsTx 与从属行写入共用事务，由单写协程保证删除后排队的写入不能重建孤儿行。
+func nodeExistsTx(tx *sql.Tx, id int64) (bool, error) {
+	var exists bool
+	err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM node WHERE id = ?)", id).Scan(&exists)
+	return exists, err
+}

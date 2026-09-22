@@ -52,3 +52,9 @@ func (l *buckets[K]) allow(key K, now, refillPer time.Duration) bool {
 	b.tokens--
 	return true
 }
+
+func (l *buckets[K]) forget(key K) {
+	l.mu.Lock()
+	delete(l.m, key)
+	l.mu.Unlock()
+}

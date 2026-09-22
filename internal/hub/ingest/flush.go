@@ -29,14 +29,14 @@ const maxPendingBatches = 64
 // 写失败的批次留在待重试列表，下次先重试它们；被写协程按水位拒绝的行
 // 不算失败——它们已经不可能再被正确并入。
 func (s *Service) Flush(ctx context.Context, all bool) {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
 	var rows []metric.Row
 	if all {
 		rows = s.live.Drain()
 	} else {
 		rows = s.live.Flush()
 	}
-	s.pendingMu.Lock()
-	defer s.pendingMu.Unlock()
 	if len(rows) > 0 {
 		s.pending = append(s.pending, rows)
 	}
@@ -52,7 +52,7 @@ func (s *Service) Flush(ctx context.Context, all bool) {
 			return
 		}
 		if rejected > 0 {
-			s.log.Warn("minute rows dropped at rollup watermark", "rejected", rejected)
+			s.log.Warn("minute rows rejected by storage", "rejected", rejected)
 		}
 		s.pending = s.pending[1:]
 	}

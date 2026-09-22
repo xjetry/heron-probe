@@ -4,11 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	"github.com/xjetry/probe/internal/hub/sanitize"
 )
 
 // validateMetrics 对整条上报做准入：任何一个字段非法就整条拒绝，live 不变。
@@ -44,26 +42,12 @@ func validateMetrics(m *probev1.Metrics) error {
 // maxFactString 是 Facts 里每个字符串的字节上限；其中数个字段会出现在匿名公开页。
 const maxFactString = 256
 
-func sanitizeString(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
-			continue
-		}
-		if b.Len()+utf8.RuneLen(r) > maxFactString {
-			break
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}
-
 func sanitizeFacts(f *probev1.Facts) {
-	f.Hostname = sanitizeString(f.Hostname)
-	f.Os = sanitizeString(f.Os)
-	f.Kernel = sanitizeString(f.Kernel)
-	f.Arch = sanitizeString(f.Arch)
-	f.Virtualization = sanitizeString(f.Virtualization)
-	f.CpuModel = sanitizeString(f.CpuModel)
-	f.AgentVersion = sanitizeString(f.AgentVersion)
+	f.Hostname = sanitize.String(f.Hostname, maxFactString)
+	f.Os = sanitize.String(f.Os, maxFactString)
+	f.Kernel = sanitize.String(f.Kernel, maxFactString)
+	f.Arch = sanitize.String(f.Arch, maxFactString)
+	f.Virtualization = sanitize.String(f.Virtualization, maxFactString)
+	f.CpuModel = sanitize.String(f.CpuModel, maxFactString)
+	f.AgentVersion = sanitize.String(f.AgentVersion, maxFactString)
 }

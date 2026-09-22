@@ -1,0 +1,627 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"math"
+	"net/http"
+	"net/http/cookiejar"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
+
+	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
+	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/probe/internal/hub/ingest"
+	"github.com/xjetry/probe/internal/hub/live"
+	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/probe/internal/hub/store"
+)
+
+const password = "correct horse battery staple"
+
+type harness struct {
+	srv    *httptest.Server
+	http   *http.Client // 带 cookie jar
+	admin  probev1connect.AdminServiceClient
+	agent  probev1connect.AgentServiceClient
+	clk    *clock.Fake
+	store  *store.Store
+	auth   *auth.Auth
+	live   *live.Live
+	ingest *ingest.Service
+	svc    *Service
+}
+
+func newHarness(t *testing.T, trusted string) *harness {
+	t.Helper()
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	prefixes, err := auth.ParsePrefixes(trusted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := auth.New(st, clk, slog.Default())
+	l := live.New(clk, 30*time.Second)
+	in, err := ingest.New(ingest.Config{TTL: 30 * time.Second, TrustedProxies: prefixes}, l, st, a, clk, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(Config{ReportInterval: 10 * time.Second, TrustedProxies: prefixes}, st, a, l, in, clk, slog.Default())
+	mux := http.NewServeMux()
+	mux.Handle(in.Handler())
+	mux.Handle(svc.Handler())
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	jar, _ := cookiejar.New(nil)
+	hc := &http.Client{Jar: jar}
+	return &harness{srv: srv, http: hc, admin: probev1connect.NewAdminServiceClient(hc, srv.URL),
+		agent: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, svc: svc}
+}
+
+func (h *harness) login(t *testing.T) {
+	t.Helper()
+	if err := h.auth.SetPassword(context.Background(), password); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.admin.Login(context.Background(), connect.NewRequest(&probev1.LoginRequest{Password: password})); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (h *harness) createNode(t *testing.T, name string) (int64, string) {
+	t.Helper()
+	resp, err := h.admin.CreateNode(context.Background(), connect.NewRequest(&probev1.CreateNodeRequest{Name: name}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.Msg.GetNode().GetId(), resp.Msg.GetToken()
+}
+
+func (h *harness) report(t *testing.T, tok string, m *probev1.Metrics) error {
+	t.Helper()
+	req := connect.NewRequest(&probev1.ReportRequest{Metrics: m})
+	req.Header().Set("Authorization", "Bearer "+tok)
+	_, err := h.agent.Report(context.Background(), req)
+	return err
+}
+
+func codeOf(err error) connect.Code { return connect.CodeOf(err) }
+
+func TestEveryAdminProcedureRejectsAnonymousCalls(t *testing.T) {
+	h := newHarness(t, "")
+	services := probev1.File_probe_v1_admin_proto.Services()
+	count := 0
+	for i := 0; i < services.Len(); i++ {
+		svc := services.Get(i)
+		for j := 0; j < svc.Methods().Len(); j++ {
+			count++
+			path := "/" + string(svc.FullName()) + "/" + string(svc.Methods().Get(j).Name())
+			resp, err := http.Post(h.srv.URL+path, "application/json", strings.NewReader("{}"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var body struct {
+				Code string `json:"code"`
+			}
+			json.NewDecoder(resp.Body).Decode(&body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusUnauthorized || body.Code != "unauthenticated" {
+				t.Errorf("%s: status %d code %q, want 401 unauthenticated", path, resp.StatusCode, body.Code)
+			}
+			if resp.Header.Get("Access-Control-Allow-Origin") != "" {
+				t.Errorf("%s: hub must not emit CORS allow headers", path)
+			}
+		}
+	}
+	if count == 0 {
+		t.Fatal("enumerated no procedures")
+	}
+}
+
+func TestLoginRequiresAdminAndRightPassword(t *testing.T) {
+	h := newHarness(t, "")
+	ctx := context.Background()
+	_, err := h.admin.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: password}))
+	if codeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("login with empty admin table: %v", err)
+	}
+	if err := h.auth.SetPassword(ctx, password); err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.admin.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: "not it, definitely"}))
+	if codeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("wrong password: %v", err)
+	}
+	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{})); codeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("ListNodes before login: %v", err)
+	}
+	if _, err := h.admin.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: password})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{})); err != nil {
+		t.Fatalf("ListNodes after login: %v", err)
+	}
+	if _, err := h.admin.Logout(ctx, connect.NewRequest(&probev1.LogoutRequest{})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{})); codeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("ListNodes after logout: %v", err)
+	}
+}
+
+func loginRaw(t *testing.T, h *harness, xfProto string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, h.srv.URL+"/probe.v1.AdminService/Login", strings.NewReader(`{"password":"`+password+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	if xfProto != "" {
+		req.Header.Set("X-Forwarded-Proto", xfProto)
+	}
+	resp, err := h.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login status %d", resp.StatusCode)
+	}
+	return resp
+}
+
+func TestSessionCookieIsHostOnlyStrictAndSecureOnlyBehindTLSProxy(t *testing.T) {
+	plain := newHarness(t, "")
+	plain.auth.SetPassword(context.Background(), password)
+	cookies := loginRaw(t, plain, "https").Cookies() // 对端不可信：转发头不采信
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %v", cookies)
+	}
+	c := cookies[0]
+	if c.Name != "probe_session" || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Domain != "" || c.Path != "/" || c.Secure || c.MaxAge != 30*24*60*60 {
+		t.Errorf("cookie = %+v", c)
+	}
+	if len(c.Value) != 64 {
+		t.Fatalf("token length %d, want 64 hex chars", len(c.Value))
+	}
+
+	proxied := newHarness(t, "127.0.0.1/32")
+	proxied.auth.SetPassword(context.Background(), password)
+	if c := loginRaw(t, proxied, "https").Cookies()[0]; !c.Secure {
+		t.Fatal("cookie behind a trusted TLS proxy must be Secure")
+	}
+	if c := loginRaw(t, proxied, "http").Cookies()[0]; c.Secure {
+		t.Fatal("cookie behind a trusted plain proxy must not be Secure")
+	}
+}
+
+// 两项协议约束各自独立：非 JSON/proto 的 Content-Type 被 connect-go 以 415 拒绝；
+// 未标为无副作用的方法不接受 GET（405）；两者都不会进入方法体。带有效 cookie 才有意义。
+func TestCrossSiteRequestShapesAreRejectedWithoutSideEffects(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	count := func() int {
+		resp, err := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(resp.Msg.GetNodes())
+	}
+	url := h.srv.URL + "/probe.v1.AdminService/CreateNode"
+	for _, ct := range []string{"text/plain", "application/x-www-form-urlencoded", "multipart/form-data"} {
+		req, _ := http.NewRequest(http.MethodPost, url, strings.NewReader(`{"name":"csrf"}`))
+		req.Header.Set("Content-Type", ct)
+		resp, err := h.http.Do(req) // h.http 带着登录 cookie
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnsupportedMediaType {
+			t.Fatalf("%s: status %d, want 415", ct, resp.StatusCode)
+		}
+	}
+	resp, err := h.http.Get(url + "?connect=v1&encoding=json&message=%7B%22name%22%3A%22csrf%22%7D")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET: status %d, want 405", resp.StatusCode)
+	}
+	if n := count(); n != 0 {
+		t.Fatalf("%d node(s) created by cross-site request shapes", n)
+	}
+}
+
+func TestPasswordChangeAndExpiryEndSessions(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	if err := h.auth.SetPassword(ctx, "a completely new password"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{})); codeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("session survived password change: %v", err)
+	}
+	if _, err := h.admin.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: "a completely new password"})); err != nil {
+		t.Fatal(err)
+	}
+	h.clk.Advance(auth.SessionIdle)
+	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{})); codeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("idle session survived: %v", err)
+	}
+}
+
+func TestCreatedTokenReportsAndDeleteForgetsEverything(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	id, tok := h.createNode(t, "  web-01 \x00 ")
+	if n, _ := h.store.GetNode(ctx, id); n.Name != "web-01" {
+		t.Fatalf("name = %q, want trimmed and sanitized", n.Name)
+	}
+	if err := h.report(t, tok, &probev1.Metrics{CpuPct: proto.Float64(3)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := h.live.Get(id); !ok {
+		t.Fatal("report did not reach live")
+	}
+	if _, err := h.admin.DeleteNode(ctx, connect.NewRequest(&probev1.DeleteNodeRequest{Id: id})); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := h.live.Get(id); ok {
+		t.Fatal("live state survived DeleteNode")
+	}
+	if err := h.report(t, tok, &probev1.Metrics{}); codeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("deleted node's token still reports: %v", err)
+	}
+	if _, err := h.admin.DeleteNode(ctx, connect.NewRequest(&probev1.DeleteNodeRequest{Id: id})); codeOf(err) != connect.CodeNotFound {
+		t.Fatalf("deleting twice: %v, want NotFound", err)
+	}
+}
+
+func TestRotateTokenInvalidatesTheOldOne(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	id, old := h.createNode(t, "n")
+	resp, err := h.admin.RotateNodeToken(ctx, connect.NewRequest(&probev1.RotateNodeTokenRequest{Id: id}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.report(t, old, &probev1.Metrics{}); codeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("old token still accepted: %v", err)
+	}
+	if err := h.report(t, resp.Msg.GetToken(), &probev1.Metrics{}); err != nil {
+		t.Fatalf("new token rejected: %v", err)
+	}
+	if _, err := h.admin.RotateNodeToken(ctx, connect.NewRequest(&probev1.RotateNodeTokenRequest{Id: 999})); codeOf(err) != connect.CodeNotFound {
+		t.Fatalf("unknown node: %v", err)
+	}
+}
+
+func TestUpdateAndReorderNodes(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	a, _ := h.createNode(t, "a")
+	b, _ := h.createNode(t, "b")
+	upd, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: a, Name: "a2", Public: true, Note: "note‮"}))
+	if err != nil || upd.Msg.GetNode().GetName() != "a2" || !upd.Msg.GetNode().GetPublic() || upd.Msg.GetNode().GetNote() != "note" {
+		t.Fatalf("UpdateNode = %v %v", upd, err)
+	}
+	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: a, Name: strings.Repeat("x", 65)})); codeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("65-char name: %v", err)
+	}
+	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: 999, Name: "x"})); codeOf(err) != connect.CodeNotFound {
+		t.Fatalf("unknown node: %v", err)
+	}
+	if _, err := h.admin.ReorderNodes(ctx, connect.NewRequest(&probev1.ReorderNodesRequest{Ids: []int64{b}})); codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "exactly once") {
+		t.Fatalf("partial reorder: %v", err)
+	}
+	if _, err := h.admin.ReorderNodes(ctx, connect.NewRequest(&probev1.ReorderNodesRequest{Ids: []int64{b, a}})); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{}))
+	if ids := []int64{list.Msg.Nodes[0].Id, list.Msg.Nodes[1].Id}; ids[0] != b || ids[1] != a {
+		t.Fatalf("order = %v, want [b a]", ids)
+	}
+}
+
+func TestRegisterWindowLifecycle(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	if _, err := h.admin.OpenRegisterWindow(ctx, connect.NewRequest(&probev1.OpenRegisterWindowRequest{TtlS: 10, MaxNodes: 1})); codeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("ttl 10s: %v", err)
+	}
+	opened, err := h.admin.OpenRegisterWindow(ctx, connect.NewRequest(&probev1.OpenRegisterWindowRequest{TtlS: 3600, MaxNodes: 2}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened.Msg.GetExpiresAt() != h.clk.Now().Add(time.Hour).Unix() || len(opened.Msg.GetKey()) != 64 {
+		t.Fatalf("opened = %v", opened.Msg)
+	}
+	got, _ := h.admin.GetRegisterWindow(ctx, connect.NewRequest(&probev1.GetRegisterWindowRequest{}))
+	if !got.Msg.GetOpen() || got.Msg.GetRemaining() != 2 {
+		t.Fatalf("window = %v", got.Msg)
+	}
+	if _, err := h.agent.Register(ctx, connect.NewRequest(&probev1.RegisterRequest{Key: opened.Msg.GetKey(), Name: "via-window"})); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = h.admin.GetRegisterWindow(ctx, connect.NewRequest(&probev1.GetRegisterWindowRequest{}))
+	if got.Msg.GetRemaining() != 1 {
+		t.Fatalf("remaining = %d after one registration", got.Msg.GetRemaining())
+	}
+	if _, err := h.admin.CloseRegisterWindow(ctx, connect.NewRequest(&probev1.CloseRegisterWindowRequest{})); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = h.admin.GetRegisterWindow(ctx, connect.NewRequest(&probev1.GetRegisterWindowRequest{})); got.Msg.GetOpen() {
+		t.Fatal("closed window reported open")
+	}
+	if _, err := h.admin.OpenRegisterWindow(ctx, connect.NewRequest(&probev1.OpenRegisterWindowRequest{TtlS: 3600, MaxNodes: 1})); err != nil {
+		t.Fatal(err)
+	}
+	h.clk.Advance(time.Hour)
+	if got, _ = h.admin.GetRegisterWindow(ctx, connect.NewRequest(&probev1.GetRegisterWindowRequest{})); got.Msg.GetOpen() {
+		t.Fatal("expired window reported open")
+	}
+}
+
+func TestSnapshotReflectsLiveState(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	online, tok := h.createNode(t, "online")
+	silent, _ := h.createNode(t, "silent")
+	if err := h.report(t, tok, &probev1.Metrics{CpuPct: proto.Float64(42)}); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := h.admin.GetSnapshot(ctx, connect.NewRequest(&probev1.GetSnapshotRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Msg.GetNow() != h.clk.Now().Unix() || snap.Msg.GetReportIntervalMs() != 10_000 || len(snap.Msg.Nodes) != 2 {
+		t.Fatalf("snapshot = %v", snap.Msg)
+	}
+	byID := map[int64]*probev1.NodeStatus{}
+	for _, n := range snap.Msg.Nodes {
+		byID[n.Id] = n
+	}
+	if n := byID[online]; !n.GetOnline() || n.GetMetrics().GetCpuPct() != 42 || n.LastSeenAt == nil || *n.LastSeenAt != h.clk.Now().Unix() {
+		t.Fatalf("online node = %v", n)
+	}
+	if n := byID[silent]; n.GetOnline() || n.Metrics != nil || n.LastSeenAt != nil {
+		t.Fatalf("silent node = %v", n)
+	}
+	h.clk.Advance(31 * time.Second)
+	snap, _ = h.admin.GetSnapshot(ctx, connect.NewRequest(&probev1.GetSnapshotRequest{}))
+	for _, n := range snap.Msg.Nodes {
+		if n.Id == online && (n.GetOnline() || n.GetMetrics().GetCpuPct() != 42) {
+			t.Fatalf("after TTL: %v (must be offline but keep the last readings)", n)
+		}
+	}
+}
+
+func TestQueryMetricsShapeAndValidation(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	id, _ := h.createNode(t, "n")
+	base := h.clk.Now().Truncate(time.Hour).Unix()
+	var rows []metric.Row
+	for i := int64(0); i < 10; i++ {
+		b := metric.NewBucket()
+		b.Add(&probev1.Metrics{CpuPct: proto.Float64(float64(i)), MemUsed: proto.Uint64(100)})
+		rows = append(rows, metric.Row{NodeID: id, TS: base + i*60, Bucket: b})
+	}
+	if _, err := h.store.WriteMinuteRows(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&probev1.QueryMetricsRequest{NodeId: id, From: base + 30, To: base + 600, MaxPoints: 4}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.GetLevel() != "1m" || resp.Msg.GetStepS() != 180 || len(resp.Msg.Ts) != 4 || resp.Msg.Ts[0] != base {
+		t.Fatalf("level %s step %d ts %v", resp.Msg.GetLevel(), resp.Msg.GetStepS(), resp.Msg.Ts)
+	}
+	if len(resp.Msg.Series) != len(metric.Columns) {
+		t.Fatalf("%d series, want one per column", len(resp.Msg.Series))
+	}
+	cpu := resp.Msg.Series[0]
+	if cpu.GetName() != "cpu" || cpu.GetUnit() != "percent" || len(cpu.Samples) != 4 {
+		t.Fatalf("cpu series = %v", cpu)
+	}
+	if s := cpu.Samples[0]; s.GetN() != 3 || s.Mean == nil || *s.Mean != 1 || s.Max == nil || *s.Max != 2 {
+		t.Fatalf("cpu sample 0 = %v, want n=3 mean=1 max=2", s)
+	}
+	swap := resp.Msg.Series[2]
+	if swap.GetName() != "swap_used" || swap.Samples[0].GetN() != 0 || swap.Samples[0].Mean != nil || swap.Samples[0].Max != nil {
+		t.Fatalf("swap sample 0 = %v, want n=0 with no mean/max", swap.Samples[0])
+	}
+	if load := resp.Msg.Series[4]; load.GetName() != "load1" || load.GetUnit() != "" {
+		t.Fatalf("load series = %v", load)
+	}
+
+	for name, req := range map[string]*probev1.QueryMetricsRequest{
+		"from >= to":        {NodeId: id, From: base + 600, To: base + 600},
+		"span > 400d":       {NodeId: id, From: base, To: base + 401*86400},
+		"max_points > 2000": {NodeId: id, From: base, To: base + 600, MaxPoints: 2001},
+	} {
+		if _, err := h.admin.QueryMetrics(ctx, connect.NewRequest(req)); codeOf(err) != connect.CodeInvalidArgument {
+			t.Fatalf("%s: %v, want InvalidArgument", name, err)
+		}
+	}
+	if _, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&probev1.QueryMetricsRequest{NodeId: 999, From: base, To: base + 600})); codeOf(err) != connect.CodeNotFound {
+		t.Fatalf("unknown node: %v, want NotFound", err)
+	}
+}
+
+func TestUnicodeValidationAndQueryRangeEdges(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	for _, name := range []string{"", "\x00\u202e ", strings.Repeat("😀", 65)} {
+		t.Run("name/"+name, func(t *testing.T) {
+			if _, err := h.admin.CreateNode(ctx, connect.NewRequest(&probev1.CreateNodeRequest{Name: name})); codeOf(err) != connect.CodeInvalidArgument {
+				t.Fatalf("invalid name accepted: %v", err)
+			}
+		})
+	}
+	id, _ := h.createNode(t, strings.Repeat("😀", 64))
+	for _, n := range []int{1024, 1025} {
+		_, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", Note: strings.Repeat("😀", n)}))
+		if (n == 1024 && err != nil) || (n == 1025 && codeOf(err) != connect.CodeInvalidArgument) {
+			t.Errorf("note length %d: %v", n, err)
+		}
+	}
+	for _, q := range []*probev1.QueryMetricsRequest{
+		{NodeId: id, From: -1, To: 60},
+		{NodeId: id, From: math.MinInt64, To: math.MaxInt64},
+		{NodeId: id, From: 1, To: 1 + 18446744074},
+	} {
+		if _, err := h.admin.QueryMetrics(ctx, connect.NewRequest(q)); codeOf(err) != connect.CodeInvalidArgument {
+			t.Errorf("invalid time range accepted: %v err=%v", q, err)
+		}
+	}
+
+	b := metric.NewBucket()
+	b.Add(&probev1.Metrics{CpuPct: proto.Float64(7)})
+	ts := int64(math.MaxInt64 - math.MaxInt64%60)
+	if _, err := h.store.WriteMinuteRows(ctx, []metric.Row{{NodeID: id, TS: ts, Bucket: b}}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&probev1.QueryMetricsRequest{NodeId: id, From: math.MaxInt64 - 60, To: math.MaxInt64}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Msg.Ts) != 1 || out.Msg.Ts[0] != ts || out.Msg.Series[0].Samples[0].GetMean() != 7 {
+		t.Fatalf("near-limit query lost its row: %v", out.Msg)
+	}
+}
+
+func TestDeletedNodeRejectsLateStorageWrites(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	id, _ := h.createNode(t, "deleted")
+	if _, err := h.admin.DeleteNode(ctx, connect.NewRequest(&probev1.DeleteNodeRequest{Id: id})); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.UpsertFacts(ctx, id, 1, &probev1.Facts{Hostname: "late"}); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("late facts write: %v, want ErrNotFound", err)
+	}
+	b := metric.NewBucket()
+	b.Add(&probev1.Metrics{CpuPct: proto.Float64(1)})
+	if n, err := h.store.WriteMinuteRows(ctx, []metric.Row{{NodeID: id, TS: h.clk.Now().Unix(), Bucket: b}}); err != nil || n != 1 {
+		t.Errorf("late metric write: rejected=%d err=%v", n, err)
+	}
+	counts, err := h.store.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["node_facts"] != 0 || counts["metric_1m"] != 0 {
+		t.Fatalf("late writes recreated deleted history: %v", counts)
+	}
+}
+
+func TestSessionBoundaryAndRevocation(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	raw := loginRaw(t, h, "").Cookies()[0].Value
+	anonymous := probev1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
+	for _, header := range []http.Header{
+		{"Authorization": []string{"Bearer " + raw}},
+		{"Cookie": []string{"probe_session=not-a-session"}},
+		{"Cookie": []string{"probe_session="}},
+	} {
+		req := connect.NewRequest(&probev1.ListNodesRequest{})
+		for key, values := range header {
+			for _, v := range values {
+				req.Header().Add(key, v)
+			}
+		}
+		if _, err := anonymous.ListNodes(ctx, req); codeOf(err) != connect.CodeUnauthenticated {
+			t.Errorf("invalid credentials admitted: %v err=%v", header, err)
+		}
+	}
+	logout := connect.NewRequest(&probev1.LogoutRequest{})
+	logout.Header().Set("Cookie", SessionCookie+"="+raw)
+	out, err := anonymous.Logout(ctx, logout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookies := (&http.Response{Header: out.Header()}).Cookies()
+	if len(cookies) != 1 || cookies[0].MaxAge != -1 || cookies[0].Value != "" || cookies[0].Path != "/" {
+		t.Fatalf("logout cookie = %v", cookies)
+	}
+	replay := connect.NewRequest(&probev1.ListNodesRequest{})
+	replay.Header().Set("Cookie", SessionCookie+"="+raw)
+	if _, err := anonymous.ListNodes(ctx, replay); codeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("revoked cookie replay admitted: %v", err)
+	}
+	if _, err := h.admin.CreateNode(ctx, connect.NewRequest(&probev1.CreateNodeRequest{Name: strings.Repeat("x", (64<<10)+1)})); codeOf(err) != connect.CodeResourceExhausted {
+		t.Fatalf("oversized body: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := anonymous.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: "incorrect"})); codeOf(err) != connect.CodeUnauthenticated {
+			t.Fatalf("failed login %d: %v", i, err)
+		}
+	}
+	if _, err := anonymous.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: password})); codeOf(err) != connect.CodeUnauthenticated || !strings.Contains(err.Error(), "15 minutes") {
+		t.Fatalf("locked login: %v", err)
+	}
+}
+
+func TestWindowAndQueryAdmissionBounds(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	for _, r := range []*probev1.OpenRegisterWindowRequest{
+		{TtlS: 604801, MaxNodes: 1}, {TtlS: 60, MaxNodes: 0}, {TtlS: 60, MaxNodes: 1001},
+	} {
+		if _, err := h.admin.OpenRegisterWindow(ctx, connect.NewRequest(r)); codeOf(err) != connect.CodeInvalidArgument {
+			t.Errorf("invalid window accepted: %v err=%v", r, err)
+		}
+	}
+	for _, r := range []*probev1.OpenRegisterWindowRequest{{TtlS: 60, MaxNodes: 1}, {TtlS: 604800, MaxNodes: 1000}} {
+		if _, err := h.admin.OpenRegisterWindow(ctx, connect.NewRequest(r)); err != nil {
+			t.Fatalf("window boundary rejected: %v err=%v", r, err)
+		}
+	}
+	id, _ := h.createNode(t, "n")
+	for _, tc := range []struct {
+		span  int64
+		level string
+		step  uint32
+	}{
+		{6 * 3600, "1m", 60}, {6*3600 + 1, "5m", 300}, {7 * 86400, "5m", 900}, {7*86400 + 1, "1h", 3600},
+	} {
+		resp, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&probev1.QueryMetricsRequest{NodeId: id, From: 0, To: tc.span}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.Msg.Level != tc.level || resp.Msg.StepS != tc.step {
+			t.Errorf("default query span %d: level=%s step=%d", tc.span, resp.Msg.Level, resp.Msg.StepS)
+		}
+	}
+}

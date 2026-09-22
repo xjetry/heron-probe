@@ -31,9 +31,10 @@ type entry struct {
 }
 
 type Entry struct {
-	Metrics  *probev1.Metrics
-	LastSeen time.Duration
-	Online   bool
+	Metrics      *probev1.Metrics
+	LastSeen     time.Duration
+	LastSeenWall time.Time
+	Online       bool
 }
 
 func New(clk clock.Clock, ttl time.Duration) *Live {
@@ -85,7 +86,7 @@ func (l *Live) Get(nodeID int64) (Entry, bool) {
 	if !ok {
 		return Entry{}, false
 	}
-	return Entry{Metrics: e.metrics, LastSeen: e.lastSeen, Online: l.online(e, now)}, true
+	return Entry{Metrics: e.metrics, LastSeen: e.lastSeen, LastSeenWall: e.lastSeenWall, Online: l.online(e, now)}, true
 }
 
 // Flush 取走所有已闭合的桶：起始早于当前分钟的。取走即从 live 删除——每个

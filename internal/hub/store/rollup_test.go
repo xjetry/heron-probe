@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -230,7 +231,16 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 			rows = append(rows, metric.Row{NodeID: node, TS: now.Unix() - d*86400, Bucket: b})
 		}
 	}
-	if _, err := s.WriteMinuteRows(ctx, rows); err != nil {
+	// 绕过正式写入口构造历史遗留孤儿行；正式写入会拒绝不存在的节点。
+	if err := s.write(ctx, func(tx *sql.Tx) error {
+		for _, row := range rows {
+			args := append([]any{row.NodeID, row.TS}, bucketArgs(row.Bucket)...)
+			if _, err := tx.Exec(upsertMinute, args...); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	r := Retention{M1: 7 * 24 * time.Hour, M5: 30 * 24 * time.Hour, H1: 365 * 24 * time.Hour}

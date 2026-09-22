@@ -12,7 +12,8 @@ var (
 	selectMinute = metricSelect("metric_1m")
 )
 
-// WriteMinuteRows 是 1m 行的唯一写入口。
+// WriteMinuteRows 是 1m 行的唯一写入口；节点存在性在写事务内检查，
+// 与 DeleteNode 串行，删除后迟到的批次不会重建历史。
 //
 // 冻结不变式：5m 水位之前的 1m 桶不再被写入，否则上级行不再反映下级行。
 // 这里比较的是已持久化的水位而不是时钟，所以墙钟被向后拨、待重试列表里的
@@ -24,7 +25,22 @@ func (s *Store) WriteMinuteRows(ctx context.Context, rows []metric.Row) (int, er
 		if err := tx.QueryRow("SELECT upto_ts FROM rollup_state WHERE level = '5m'").Scan(&upto); err != nil {
 			return err
 		}
+		existing := map[int64]bool{}
 		for _, r := range rows {
+			exists, checked := existing[r.NodeID]
+			if !checked {
+				var err error
+				exists, err = nodeExistsTx(tx, r.NodeID)
+				if err != nil {
+					return err
+				}
+				existing[r.NodeID] = exists
+			}
+			if !exists {
+				rejected++
+				s.log.Warn("minute row for deleted node dropped", "node", r.NodeID)
+				continue
+			}
 			if r.TS < upto {
 				rejected++
 				s.log.Warn("minute row before rollup watermark dropped", "node", r.NodeID, "ts", r.TS, "watermark", upto)
