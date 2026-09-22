@@ -108,3 +108,16 @@ func (s *Store) TokenHashes(ctx context.Context) (map[[32]byte]int64, error) {
 	}
 	return out, rows.Err()
 }
+
+// Counts 返回各表行数，供运维核对与端到端验收。
+func (s *Store) Counts(ctx context.Context) (map[string]int64, error) {
+	out := map[string]int64{}
+	for _, table := range []string{"node", "node_facts", "metric_1m", "register_window"} {
+		var n int64
+		if err := s.r.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&n); err != nil {
+			return nil, err
+		}
+		out[table] = n
+	}
+	return out, nil
+}
