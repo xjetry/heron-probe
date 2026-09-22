@@ -213,7 +213,11 @@ func TestRateLimitIsTwiceTheReportRate(t *testing.T) {
 	if connect.CodeOf(last) != connect.CodeResourceExhausted {
 		t.Fatalf("burst+1 immediate reports: err = %v, want ResourceExhausted", last)
 	}
-	h.clk.Advance(h.svc.Interval() / 2) // 2× 速率 = 每半个间隔补一个令牌
+	h.clk.Advance(h.svc.Interval()/2 - time.Millisecond)
+	if _, err := h.client.Report(ctx, report(tok, &probev1.Metrics{})); connect.CodeOf(err) != connect.CodeResourceExhausted {
+		t.Fatalf("before half interval: err = %v, want ResourceExhausted", err)
+	}
+	h.clk.Advance(time.Millisecond) // 2× 速率 = 每半个间隔补一个令牌
 	if _, err := h.client.Report(ctx, report(tok, &probev1.Metrics{})); err != nil {
 		t.Fatalf("after refill: %v", err)
 	}
