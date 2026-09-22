@@ -187,7 +187,7 @@ func TestFactsStringsAreSanitized(t *testing.T) {
 	id, tok := h.node(t)
 	ctx := context.Background()
 	req := report(tok, &probev1.Metrics{})
-	req.Msg.Facts = &probev1.Facts{Hostname: "a\x00b\x1fc\x7fd", Os: strings.Repeat("x", 1000)}
+	req.Msg.Facts = &probev1.Facts{Hostname: "a\x00b\x1fc\x7fd\u0085\u009b\u202e\u200c", Os: strings.Repeat("x", 1000)}
 	req.Msg.FactsHash = 1
 	if _, err := h.client.Report(ctx, req); err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func TestFactsStringsAreSanitized(t *testing.T) {
 	if err := h.store.QueryFacts(ctx, id, &hostname, &os); err != nil {
 		t.Fatal(err)
 	}
-	if hostname != "abcd" || len(os) != maxFactString {
+	if hostname != "abcd\u200c" || len(os) != maxFactString {
 		t.Fatalf("hostname %q os len %d", hostname, len(os))
 	}
 }

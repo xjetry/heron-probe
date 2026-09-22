@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
@@ -46,7 +47,7 @@ const maxFactString = 256
 func sanitizeString(s string) string {
 	var b strings.Builder
 	for _, r := range s {
-		if r < 0x20 || r == 0x7f || r == utf8.RuneError {
+		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
 			continue
 		}
 		if b.Len()+utf8.RuneLen(r) > maxFactString {
