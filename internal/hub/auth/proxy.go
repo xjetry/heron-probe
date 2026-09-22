@@ -74,3 +74,19 @@ func ParsePrefixes(list string) ([]netip.Prefix, error) {
 	}
 	return out, nil
 }
+
+// RequestScheme 决定请求在客户端一侧是 https 还是 http。hub 只听明文，所以只有
+// 可信代理转发的 X-Forwarded-Proto 能说明这一点；对端不可信时按 http 处理。
+// 后果：hub 若实际在 TLS 反代之后而运维没有配置 --trusted-proxies，会话 cookie
+// 就不带 Secure——配置可信代理是这条链成立的前提，不从请求头猜。
+func RequestScheme(peerAddr, xfProto string, trusted []netip.Prefix) string {
+	peer := peerIP(peerAddr)
+	if !peer.IsValid() || !inAny(peer, trusted) {
+		return "http"
+	}
+	first, _, _ := strings.Cut(xfProto, ",")
+	if strings.EqualFold(strings.TrimSpace(first), "https") {
+		return "https"
+	}
+	return "http"
+}

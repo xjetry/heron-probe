@@ -1,11 +1,11 @@
-// Package auth 持有节点 token 的内存映射与注册窗口的裁决。
+// Package auth 持有节点 token 的内存映射，并裁决注册、管理员密码和会话。
 //
 // Load 完成且没有外部进程直接改表时，byHash 与 node.token_hash 在每次变更
 // 完成后一致。mutMu 保证变更者彼此不交错，Load 也不与变更交错；先写库并
 // 等待成功、后改映射则由每个变更者内部的语句顺序保证，写库失败不改映射。
 // 绕开 mutMu 会让提交与映射更新顺序分叉；仅持有它不能代替上述语句顺序。
 //
-// mu 只保护 byHash 与 failures，临界区不含 I/O。CreateNode、Register、
+// mu 只保护 byHash 与两个失败计数器，临界区不含 I/O。CreateNode、Register、
 // DeleteNode 与 RotateToken 在 store 返回成功后、取得 mu.Lock 前存在可见
 // 间隙：Authenticate 可能仍接受已删除或轮换的旧 token，或尚不认识新 token。
 // 这个间隙跨越一次 mu.Lock 的获取，包含调度与锁竞争等待，并无固定时长上界；
@@ -31,7 +31,7 @@ import (
 var ErrDenied = errors.New("registration denied")
 
 const (
-	// 同一来源 IP 在窗口开启期间连错 failLimit 次 key，failWindow 内拒绝其注册。
+	// 注册与登录分开计数，避免安装时用错 key 把同一出口的管理员锁在登录页外。
 	failLimit  = 5
 	failWindow = 15 * time.Minute
 )
@@ -43,16 +43,12 @@ type Auth struct {
 	clk      clock.Clock
 	log      *slog.Logger
 	byHash   map[[32]byte]int64
-	failures map[netip.Addr]*failure
-}
-
-type failure struct {
-	count int
-	since time.Duration
+	register *failureTracker
+	login    *failureTracker
 }
 
 func New(st *store.Store, clk clock.Clock, log *slog.Logger) *Auth {
-	return &Auth{store: st, clk: clk, log: log, byHash: map[[32]byte]int64{}, failures: map[netip.Addr]*failure{}}
+	return &Auth{store: st, clk: clk, log: log, byHash: map[[32]byte]int64{}, register: newFailureTracker(failLimit, failWindow), login: newFailureTracker(failLimit, failWindow)}
 }
 
 func (a *Auth) Load(ctx context.Context) error {
@@ -152,29 +148,18 @@ func (a *Auth) Register(ctx context.Context, key, name string, from netip.Addr) 
 	defer a.mutMu.Unlock()
 	now := a.clk.Mono()
 	a.mu.Lock()
-	for ip, f := range a.failures {
-		if now-f.since >= failWindow {
-			delete(a.failures, ip)
-		}
-	}
-	if f := a.failures[from]; f != nil && f.count >= failLimit {
-		a.mu.Unlock()
+	locked := a.register.locked(from, now)
+	a.mu.Unlock()
+	if locked {
 		return 0, "", ErrDenied
 	}
-	a.mu.Unlock()
 	keyHash := HashToken(key)
 	plain, tokHash := NewToken()
 	id, err := a.store.RegisterNode(ctx, keyHash[:], name, tokHash[:])
 	switch {
 	case errors.Is(err, store.ErrBadKey):
 		a.mu.Lock()
-		f := a.failures[from]
-		if f == nil {
-			f = &failure{since: now}
-			a.failures[from] = f
-		}
-		f.count++
-		count := f.count
+		count := a.register.record(from, a.clk.Mono())
 		a.mu.Unlock()
 		a.log.Warn("register key mismatch", "from", from, "failures", count)
 		return 0, "", ErrDenied
@@ -185,7 +170,7 @@ func (a *Auth) Register(ctx context.Context, key, name string, from netip.Addr) 
 	}
 	a.mu.Lock()
 	a.byHash[tokHash] = id
-	delete(a.failures, from)
+	a.register.clear(from)
 	a.mu.Unlock()
 	return id, plain, nil
 }

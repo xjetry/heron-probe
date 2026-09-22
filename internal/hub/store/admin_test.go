@@ -9,11 +9,14 @@ import (
 func TestSetAdminPasswordRevokesEverySession(t *testing.T) {
 	s, clk := open(t)
 	ctx := context.Background()
+	if err := s.SetAdminPassword(ctx, "original"); err != nil {
+		t.Fatal(err)
+	}
 	now := clk.Now()
 	var h1, h2 [32]byte
 	h1[0], h2[0] = 1, 2
 	for _, h := range [][32]byte{h1, h2} {
-		if err := s.CreateSession(ctx, h, now, now.Add(time.Hour)); err != nil {
+		if err := s.CreateSession(ctx, h, now, now.Add(time.Hour), "original"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -41,10 +44,13 @@ func TestNoAdminIsReportedExplicitly(t *testing.T) {
 func TestSessionLifecycle(t *testing.T) {
 	s, clk := open(t)
 	ctx := context.Background()
+	if err := s.SetAdminPassword(ctx, "original"); err != nil {
+		t.Fatal(err)
+	}
 	var h [32]byte
 	h[0] = 9
 	now := clk.Now()
-	if err := s.CreateSession(ctx, h, now, now.Add(30*24*time.Hour)); err != nil {
+	if err := s.CreateSession(ctx, h, now, now.Add(30*24*time.Hour), "original"); err != nil {
 		t.Fatal(err)
 	}
 	got, ok, err := s.Session(ctx, h)

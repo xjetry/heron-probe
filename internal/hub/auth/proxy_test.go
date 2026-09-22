@@ -40,3 +40,25 @@ func TestParsePrefixesRejectsGarbage(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestRequestScheme(t *testing.T) {
+	trusted, _ := ParsePrefixes("10.0.0.0/8")
+	cases := []struct {
+		peer, xfp string
+		want      string
+	}{
+		{"10.1.2.3:4444", "https", "https"},
+		{"10.1.2.3:4444", "HTTPS, http", "https"},
+		{"10.1.2.3:4444", "http", "http"},
+		{"10.1.2.3:4444", "", "http"},
+		{"203.0.113.9:4444", "https", "http"}, // 不可信对端的转发头不采信
+		{"garbage", "https", "http"},
+	}
+	for _, c := range cases {
+		t.Run(c.peer+"/"+c.xfp, func(t *testing.T) {
+			if got := RequestScheme(c.peer, c.xfp, trusted); got != c.want {
+				t.Fatalf("RequestScheme(%q, %q) = %q, want %q", c.peer, c.xfp, got, c.want)
+			}
+		})
+	}
+}

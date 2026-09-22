@@ -178,8 +178,8 @@ func TestRegisterExpiresFailuresFromOtherAddresses(t *testing.T) {
 	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	if len(a.failures) != 1 || a.failures[third] == nil {
-		t.Fatalf("expired IP failures retained: %+v", a.failures)
+	if len(a.register.m) != 1 || a.register.m[third] == nil {
+		t.Fatalf("expired IP failures retained: %+v", a.register.m)
 	}
 }
 

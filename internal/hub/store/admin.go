@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 )
 
@@ -40,11 +41,26 @@ func (s *Store) AdminPasswordHash(ctx context.Context) (string, bool, error) {
 	return phc, true, nil
 }
 
-func (s *Store) CreateSession(ctx context.Context, hash [32]byte, now, expires time.Time) error {
+var ErrAdminChanged = errors.New("admin password changed before session creation")
+
+// CreateSession 在签发事务内复查已验证的密码哈希。passwd 可以在另一进程改密，
+// 进程内锁无法阻止旧密码校验后、会话写入前发生撤销；条件插入与改密事务串行裁决。
+func (s *Store) CreateSession(ctx context.Context, hash [32]byte, now, expires time.Time, verifiedPHC string) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		_, err := tx.Exec("INSERT INTO admin_session (token_hash, created_at, last_used_at, expires_at) VALUES (?, ?, ?, ?)",
-			hash[:], now.Unix(), now.Unix(), expires.Unix())
-		return err
+		res, err := tx.Exec(`INSERT INTO admin_session (token_hash, created_at, last_used_at, expires_at)
+			SELECT ?, ?, ?, ? FROM admin WHERE id = 1 AND password_hash = ?`,
+			hash[:], now.Unix(), now.Unix(), expires.Unix(), verifiedPHC)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return ErrAdminChanged
+		}
+		return nil
 	})
 }
 
