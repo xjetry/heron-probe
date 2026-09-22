@@ -2956,6 +2956,7 @@ func TestInvalidMetricsRejectedWholeWithoutSideEffect(t *testing.T) {
 		"nil metrics":  nil,
 	}
 	for name, m := range cases {
+		h.clk.Advance(h.svc.Interval()) // 限速在校验之前，每个 case 都要有令牌
 		_, err := h.client.Report(context.Background(), report(tok, m))
 		if connect.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Fatalf("%s: err = %v, want InvalidArgument", name, err)
@@ -3088,7 +3089,8 @@ func TestFlushWritesClosedBucketsOnly(t *testing.T) {
 
 type failingWriter struct {
 	*store.Store
-	fail bool
+	fail      bool
+	failFacts bool
 }
 
 func (f *failingWriter) WriteMinuteRows(ctx context.Context, rows []metric.Row) (int, error) {
@@ -3096,6 +3098,74 @@ func (f *failingWriter) WriteMinuteRows(ctx context.Context, rows []metric.Row) 
 		return 0, errors.New("disk on fire")
 	}
 	return f.Store.WriteMinuteRows(ctx, rows)
+}
+
+func (f *failingWriter) UpsertFactsAsync(nodeID int64, hash uint64, facts *probev1.Facts, done func(error)) {
+	if f.failFacts {
+		done(errors.New("disk on fire"))
+		return
+	}
+	f.Store.UpsertFactsAsync(nodeID, hash, facts, done)
+}
+
+// 摘要只在写库成功后记下：写失败时下一次上报必须再次索要 facts，直到落库成功。
+func TestFactsHashNotRecordedWhenWriteFails(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	ctx := context.Background()
+	fw := &failingWriter{Store: h.store, failFacts: true}
+	h.svc.writer = fw
+	req := report(tok, &probev1.Metrics{})
+	req.Msg.Facts = &probev1.Facts{Hostname: "box"}
+	req.Msg.FactsHash = 41
+	if _, err := h.client.Report(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	h.clk.Advance(h.svc.Interval())
+	req = report(tok, &probev1.Metrics{})
+	req.Msg.FactsHash = 41
+	resp, err := h.client.Report(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Msg.WantFacts {
+		t.Fatal("facts write failed, yet the hub stopped asking: the hash was recorded before the write succeeded")
+	}
+	fw.failFacts = false
+	h.clk.Advance(h.svc.Interval())
+	req = report(tok, &probev1.Metrics{})
+	req.Msg.Facts = &probev1.Facts{Hostname: "box"}
+	req.Msg.FactsHash = 41
+	if _, err := h.client.Report(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { m, _ := h.store.FactsHashes(ctx); return m[id] == 41 })
+	h.clk.Advance(h.svc.Interval())
+	req = report(tok, &probev1.Metrics{})
+	req.Msg.FactsHash = 41
+	resp, _ = h.client.Report(ctx, req)
+	if resp.Msg.WantFacts {
+		t.Fatal("facts are persisted now; the hub must stop asking")
+	}
+}
+
+// 没有在拦截器里显式列出凭据来源的方法一律拒绝，且不会进入处理函数。
+func TestInterceptorDeniesUnlistedProcedures(t *testing.T) {
+	h := newHub(t)
+	called := false
+	next := connect.UnaryFunc(func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		called = true
+		return nil, nil
+	})
+	req := connect.NewRequest(&probev1.ReportRequest{}) // 未经客户端发送，Spec().Procedure 为空
+	req.Header().Set("Authorization", "Bearer whatever")
+	_, err := h.svc.authInterceptor().WrapUnary(next)(context.Background(), req)
+	if connect.CodeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("err = %v, want Unauthenticated", err)
+	}
+	if called {
+		t.Fatal("handler must not run for an unlisted procedure")
+	}
 }
 
 func TestFlushRetriesFailedBatchesLater(t *testing.T) {
@@ -3308,15 +3378,18 @@ type Config struct {
 	TrustedProxies []netip.Prefix
 }
 
-type minuteWriter interface {
+// storeWriter 是 Service 触达数据库的唯一出口，测试可注入失败的写者来钉住
+// "内存状态只在写库成功后更新"这类不变式。
+type storeWriter interface {
 	WriteMinuteRows(ctx context.Context, rows []metric.Row) (int, error)
+	UpsertFactsAsync(nodeID int64, hash uint64, f *probev1.Facts, done func(error))
 }
 
 type Service struct {
 	cfg    Config
 	live   *live.Live
 	store  *store.Store
-	writer minuteWriter
+	writer storeWriter
 	auth   *auth.Auth
 	clk    clock.Clock
 	log    *slog.Logger
@@ -3425,7 +3498,7 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[probev1.Repor
 func (s *Service) reconcileFacts(id int64, hash uint64, f *probev1.Facts) bool {
 	if f != nil {
 		sanitizeFacts(f)
-		s.store.UpsertFactsAsync(id, hash, f, func(err error) {
+		s.writer.UpsertFactsAsync(id, hash, f, func(err error) {
 			if err != nil {
 				s.log.Error("facts write failed", "node", id, "err", err)
 				return
@@ -3521,7 +3594,8 @@ func (s *Service) RunFlusher(ctx context.Context) {
 
 1. `authInterceptor` 末尾的 `return nil, unauthenticated()` 改成 `return next(ctx, req)`（默认放行），预期 `TestEveryProcedureRejectsAnonymousCalls` **仍然绿**——因为两个方法都被显式列出了。这说明这条测试钉的是"每个方法都有鉴权"，不是"默认分支拒绝"。再把 `case ...ReportProcedure:` 整段删掉，预期该测试红且报错指向 `/probe.v1.AgentService/Report`。两处都改回。
 2. `Report` 里把 `validateMetrics` 调用移到 `s.live.Observe` 之后，预期 `TestInvalidMetricsRejectedWholeWithoutSideEffect` 红（live 被改）。改回。
-3. `reconcileFacts` 里在 `UpsertFactsAsync` 之前就 `s.factsHash[id] = hash`，然后在测试里让写失败——最省事的注入是把 `factsTx` 的 SQL 改坏（列名拼错）；预期 `TestFactsAreStoredAndReconciledByHash` 在 `waitFor` 处超时。两处都改回。
+3. `reconcileFacts` 里在 `UpsertFactsAsync` 之前就 `s.factsHash[id] = hash`，预期 `TestFactsHashNotRecordedWhenWriteFails` 红且报错含 "recorded before the write succeeded"（它经可注入的失败写者钉住这条不变式，不需要改坏 SQL）。改回。
+4. 拦截器末尾 `return nil, unauthenticated()` 改为 `return next(ctx, req)`，预期 `TestInterceptorDeniesUnlistedProcedures` 红（called == true）。改回。
 
 - [ ] **Step 9: 提交**
 
