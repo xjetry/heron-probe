@@ -1490,7 +1490,7 @@ cd /Users/xjetry/work/vibe/probe && make web-test > /tmp/m2b-t5-test.log 2>&1; e
 make web > /tmp/m2b-t5-build.log 2>&1; echo $?
 ```
 
-注入：`toAligned` 里 `sample.n > 0 &&` 去掉 → `series.test` 的 swap 一组红（`n=0` 但 `mean` 缺失仍是 null……这条注入不红；改为让 `n=0` 的样本带 `mean: 0` 再注入，即测试数据 swap 的 samples 写成 `{ n: 0, mean: 0 }`——这才是 hub 不会发但客户端必须防的形状？hub 保证 n=0 时 mean 缺失，客户端以 n 为准是双重保险）。**裁决**：测试数据里 swap 的样本改为 `{ n: 0, mean: 0 }`，断言仍是全 null；注入去掉 `sample.n > 0` 后红在 swap 列出现 0。`NodeDetail` 的 `maxPoints: 720` 改 100 → 第一条红。各自改回。
+注入：`toAligned` 里 `sample.n > 0 &&` 去掉 → `series.test` 的 swap 一组红（`n=0` 但 `mean` 缺失仍是 null……这条注入不红；改为让 `n=0` 的样本带 `mean: 0` 再注入，即测试数据 swap 的 samples 写成 `{ n: 0, mean: 0 }`——这才是 hub 不会发但客户端必须防的形状？hub 保证 n=0 时 mean 缺失，客户端以 n 为准是双重保险）。**裁决**：测试数据里 swap 的样本改为 `{ n: 0, mean: 0 }`，断言仍是全 null；注入去掉 `sample.n > 0` 后红在 swap 列出现 0。`NodeDetail` 的 `maxPoints: 1000` 改 100 → 第一条红。各自改回。
 
 - [ ] **Step 5: 提交**
 
