@@ -1206,12 +1206,12 @@ func TestOpenCreatesSchemaAtCurrentVersion(t *testing.T) {
 	if v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}
-	var sql string
-	if err := s.r.QueryRow("SELECT sql FROM sqlite_master WHERE name = 'node'").Scan(&sql); err != nil {
+	var seq int
+	if err := s.r.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'").Scan(&seq); err != nil {
 		t.Fatal(err)
 	}
-	if !contains(sql, "AUTOINCREMENT") {
-		t.Fatalf("node.id must never be reused; DDL: %s", sql)
+	if seq != 1 {
+		t.Fatal("node.id must be AUTOINCREMENT: SQLite creates sqlite_sequence only when some table uses it")
 	}
 }
 
@@ -1422,14 +1422,25 @@ func TestDeleteNodeRemovesDependentRows(t *testing.T) {
 	}
 }
 
-func contains(s, sub string) bool { return len(s) >= len(sub) && (s == sub || indexOf(s, sub) >= 0) }
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
+// 回调必须在事务提交之后触发：调用方据它更新的内存状态不能先于持久化。
+func TestAsyncCallbackObservesCommittedWrite(t *testing.T) {
+	s, _ := open(t)
+	ctx := context.Background()
+	id, _ := s.CreateNode(ctx, "a", hash(1))
+	if err := s.UpsertFacts(ctx, id, 77, &probev1.Facts{}); err != nil {
+		t.Fatal(err)
 	}
-	return -1
+	seen := make(chan uint64, 1)
+	s.UpsertFactsAsync(id, 78, &probev1.Facts{}, func(err error) {
+		if err != nil {
+			t.Error(err)
+		}
+		m, _ := s.FactsHashes(ctx)
+		seen <- m[id]
+	})
+	if got := <-seen; got != 78 {
+		t.Fatalf("callback observed facts hash %d, want 78: it must run only after the transaction committed", got)
+	}
 }
 ```
 
@@ -1476,8 +1487,11 @@ type Store struct {
 
 type writeReq struct {
 	fn func(*sql.Tx) error
-	// res 为 nil 表示调用方不等结果（投递即返回）。
-	res chan error
+	// res 与 done 都由 runWriter 在 inTx 返回（事务已提交或已回滚）之后触发：
+	// 等待方与回调方看到的都是已持久化的状态。res 非 nil 表示调用方在等结果；
+	// done 非 nil 表示投递即返回、结果经回调送达。
+	res  chan error
+	done func(error)
 }
 
 func dsn(path string, extra string) string {
@@ -1515,9 +1529,12 @@ func (s *Store) runWriter() {
 	defer close(s.done)
 	for req := range s.writes {
 		err := s.inTx(req.fn)
-		if req.res != nil {
+		switch {
+		case req.res != nil:
 			req.res <- err
-		} else if err != nil {
+		case req.done != nil:
+			req.done(err)
+		case err != nil:
 			s.log.Error("async write failed", "err", err)
 		}
 	}
@@ -1551,16 +1568,10 @@ func (s *Store) write(ctx context.Context, fn func(*sql.Tx) error) error {
 	}
 }
 
-// writeAsync 投递后立即返回；done 在写协程里被调用。队列满时丢弃并报告，
-// 调用方据此保持自己的状态不变，让下一次上报重新触发。
+// writeAsync 投递后立即返回；done 在写协程里、事务提交之后被调用。队列满时
+// 丢弃并报告，调用方据此保持自己的状态不变，让下一次上报重新触发。
 func (s *Store) writeAsync(fn func(*sql.Tx) error, done func(error)) {
-	req := writeReq{fn: func(tx *sql.Tx) error {
-		err := fn(tx)
-		if done != nil {
-			defer done(err)
-		}
-		return err
-	}}
+	req := writeReq{fn: fn, done: done}
 	select {
 	case s.writes <- req:
 	default:
@@ -2152,6 +2163,7 @@ func (s *Store) SetRollupWatermark(ctx context.Context, level string, uptoTS int
 1. `metricUpsert` 里把 `_n = _n + excluded._n` 改成 `_n = excluded._n`，预期 `TestHalfBucketsMergeAdditively` 红（n = 2 而非 3）。改回。
 2. `WriteMinuteRows` 里把 `r.TS < upto` 改成 `r.TS <= upto`，预期 `TestWriterRejectsRowsBeforeRollupWatermark` 红（ts 900 也被拒）。改回。
 3. `RegisterNode` 里去掉 `remaining <= 0` 判断，预期 `TestRegisterNodeConsumesWindow` 红（第三次注册成功）。改回。
+4. `writeAsync` 改回在事务函数内 `defer done(err)`（提交前触发），预期 `TestAsyncCallbackObservesCommittedWrite` 红且报错含 "observed facts hash 77"。改回。
 
 - [ ] **Step 11: 提交**
 
