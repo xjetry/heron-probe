@@ -4192,6 +4192,20 @@ func TestParseStatCPUTimes(t *testing.T) {
 	}
 }
 
+// 2.6.11–2.6.32 的内核只有 7 个计数器；再少就没有 iowait，是格式错误而不是越界。
+func TestParseStatAcceptsOlderKernelsWithFewerCounters(t *testing.T) {
+	c, err := parseStat(strings.NewReader("cpu 1 2 3 4 5 6 7\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.total != 28 || c.idle != 9 {
+		t.Fatalf("total/idle = %d/%d, want 28/9", c.total, c.idle)
+	}
+	if _, err := parseStat(strings.NewReader("cpu 1 2 3 4\n")); err == nil {
+		t.Fatal("four counters cannot carry iowait; must be a parse error, not a panic")
+	}
+}
+
 func TestCPUPercentFromTwoSamples(t *testing.T) {
 	a := cpuTimes{idle: 800, total: 1000}
 	b := cpuTimes{idle: 850, total: 1100} // 100 个 tick 里 50 个空闲 → 50%
@@ -4411,6 +4425,7 @@ package collect
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"strconv"
@@ -4419,28 +4434,37 @@ import (
 
 type cpuTimes struct{ idle, total uint64 }
 
-// parseStat 取 /proc/stat 首行的聚合 CPU 时间。guest 与 guest_nice 已计入
-// user 与 nice，不再相加。
+// parseStat 取 /proc/stat 首行的聚合 CPU 时间。
+//
+// 计数器个数随内核版本变化：user nice system idle iowait 自 2.5.41 起都在，
+// irq softirq steal 陆续加入，guest 与 guest_nice 已计入 user 与 nice 不再相加。
+// 所以至少要 5 个、最多取前 8 个；不足 5 个是格式错误，不能越界。
 func parseStat(r io.Reader) (cpuTimes, error) {
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		f := strings.Fields(sc.Text())
-		if len(f) < 8 || f[0] != "cpu" {
+		if len(f) == 0 || f[0] != "cpu" {
 			continue
 		}
-		var vals [8]uint64
-		for i := range vals {
-			v, err := strconv.ParseUint(f[i+1], 10, 64)
+		counters := f[1:]
+		if len(counters) < 5 {
+			return cpuTimes{}, fmt.Errorf("/proc/stat: cpu line has %d counters, need at least 5", len(counters))
+		}
+		if len(counters) > 8 {
+			counters = counters[:8]
+		}
+		var c cpuTimes
+		for i, s := range counters {
+			v, err := strconv.ParseUint(s, 10, 64)
 			if err != nil {
 				return cpuTimes{}, err
 			}
-			vals[i] = v
+			c.total += v
+			if i == 3 || i == 4 {
+				c.idle += v
+			}
 		}
-		var total uint64
-		for _, v := range vals {
-			total += v
-		}
-		return cpuTimes{idle: vals[3] + vals[4], total: total}, nil
+		return c, nil
 	}
 	return cpuTimes{}, errors.New("/proc/stat: no cpu line")
 }
@@ -4969,6 +4993,7 @@ GOOS=linux GOARCH=amd64 go build ./internal/agent/... ; echo "build=$?"
 
 1. `cpuPercent` 在 `cur.total <= prev.total` 时返回 `0, true`，预期 `TestCPUPercentFromTwoSamples` 红（"no elapsed ticks must yield no reading"）。改回。
 2. `Metrics` 里 meminfo 读失败时改为 `m.MemTotal = proto.Uint64(0)`，预期 `TestMissingFilesYieldMissingReadingsNotZero` 红。改回。
+3. `parseStat` 改回固定读 8 个计数器（`len(f) < 8` 守卫 + `[8]uint64`），预期 `TestParseStatAcceptsOlderKernelsWithFewerCounters` 因越界 panic 而红。改回。
 
 - [ ] **Step 9: 提交**
 
