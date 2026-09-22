@@ -1,0 +1,201 @@
+package client
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+	"testing/fstest"
+	"time"
+
+	"connectrpc.com/connect"
+	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
+	"github.com/xjetry/probe/internal/agent/collect"
+	"github.com/xjetry/probe/internal/clock"
+)
+
+func TestConfigRoundTripAndPermissions(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "sub", "config.json")
+	if err := SaveConfig(p, Config{Hub: "http://h", Token: "t", Name: "n"}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := os.Stat(p)
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("perm = %o, want 600", st.Mode().Perm())
+	}
+	c, err := LoadConfig(p)
+	if err != nil || c.Hub != "http://h" || c.Token != "t" || c.Name != "n" {
+		t.Fatalf("%+v %v", c, err)
+	}
+}
+
+func TestFactsHashIsStableAndSensitive(t *testing.T) {
+	a := &probev1.Facts{Hostname: "h", CpuCores: 2}
+	b := &probev1.Facts{Hostname: "h", CpuCores: 2}
+	if FactsHash(a) != FactsHash(b) {
+		t.Fatal("equal facts must hash equal")
+	}
+	b.CpuCores = 3
+	if FactsHash(a) == FactsHash(b) {
+		t.Fatal("different facts must hash differently")
+	}
+}
+
+func TestBackoffGrowsAndCapsAtThreeIntervals(t *testing.T) {
+	interval := 10 * time.Second
+	one := func() float64 { return 1 }
+	zero := func() float64 { return 0 }
+	if d := Backoff(1, interval, one); d != interval {
+		t.Fatalf("attempt 1 max = %v, want %v", d, interval)
+	}
+	if d := Backoff(2, interval, one); d != 2*interval {
+		t.Fatalf("attempt 2 max = %v, want %v", d, 2*interval)
+	}
+	for attempt := 3; attempt < 40; attempt++ {
+		if d := Backoff(attempt, interval, one); d != 3*interval {
+			t.Fatalf("attempt %d max = %v, want cap %v", attempt, d, 3*interval)
+		}
+		if d := Backoff(attempt, interval, zero); d < 3*interval/2 {
+			t.Fatalf("attempt %d min = %v, jitter must keep at least half the base", attempt, d)
+		}
+	}
+}
+
+// fakeHub 记录收到的上报并按脚本应答。
+type fakeHub struct {
+	mu       sync.Mutex
+	reports  []*probev1.ReportRequest
+	wantNext bool
+	fail     bool
+	interval uint32
+}
+
+func (f *fakeHub) Register(context.Context, *connect.Request[probev1.RegisterRequest]) (*connect.Response[probev1.RegisterResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, nil)
+}
+
+func (f *fakeHub) Report(_ context.Context, req *connect.Request[probev1.ReportRequest]) (*connect.Response[probev1.ReportResponse], error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if req.Header().Get("Authorization") != "Bearer tok" {
+		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("no"))
+	}
+	if f.fail {
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("down"))
+	}
+	f.reports = append(f.reports, req.Msg)
+	want := f.wantNext
+	f.wantNext = false
+	return connect.NewResponse(&probev1.ReportResponse{ReportIntervalMs: f.interval, WantFacts: want}), nil
+}
+
+func (f *fakeHub) count() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.reports) }
+
+func newRunner(t *testing.T, hub *fakeHub) (*Runner, chan time.Duration) {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.Handle(probev1connect.NewAgentServiceHandler(hub))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	sleeps := make(chan time.Duration, 100)
+	r := &Runner{
+		Collector: &collect.Collector{FS: fstest.MapFS{"proc/loadavg": {Data: []byte("0 0 0 1/2 3\n")}}, DiskUsage: func(string) (uint64, uint64, error) { return 1, 1, nil }, Clock: clock.NewFake(time.Unix(0, 0)), Version: "t"},
+		Client:    probev1connect.NewAgentServiceClient(srv.Client(), srv.URL),
+		Token:     "tok",
+		Clock:     clock.NewFake(time.Unix(0, 0)),
+		Sleep: func(ctx context.Context, d time.Duration) error {
+			select {
+			case sleeps <- d:
+			default:
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				return nil
+			}
+		},
+		Rand:     func() float64 { return 1 },
+		Log:      slog.Default(),
+		Interval: 10 * time.Second,
+	}
+	return r, sleeps
+}
+
+func runFor(t *testing.T, r *Runner, hub *fakeHub, reports int) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { r.Run(ctx); close(done) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for hub.count() < reports && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	<-done
+	if hub.count() < reports {
+		t.Fatalf("got %d reports, want at least %d", hub.count(), reports)
+	}
+}
+
+func TestFirstReportCarriesFactsThenOnlyOnRequest(t *testing.T) {
+	hub := &fakeHub{interval: 5000}
+	r, _ := newRunner(t, hub)
+	hub.wantNext = false
+	runFor(t, r, hub, 2)
+	if hub.reports[0].Facts == nil || hub.reports[0].FactsHash == 0 {
+		t.Fatal("first report must carry facts and their hash")
+	}
+	if hub.reports[1].Facts != nil || hub.reports[1].FactsHash != hub.reports[0].FactsHash {
+		t.Fatal("second report must carry only the hash")
+	}
+}
+
+func TestWantFactsTriggersResend(t *testing.T) {
+	hub := &fakeHub{interval: 5000}
+	r, _ := newRunner(t, hub)
+	hub.mu.Lock()
+	hub.wantNext = true // 首次响应就要求 facts → 第二次上报再次携带
+	hub.mu.Unlock()
+	runFor(t, r, hub, 2)
+	if hub.reports[1].Facts == nil {
+		t.Fatal("want_facts must make the next report carry facts")
+	}
+}
+
+func TestAdoptsIntervalFromResponse(t *testing.T) {
+	hub := &fakeHub{interval: 7000}
+	r, sleeps := newRunner(t, hub)
+	runFor(t, r, hub, 1)
+	if d := <-sleeps; d != 7*time.Second {
+		t.Fatalf("slept %v after first response, want the assigned 7s", d)
+	}
+}
+
+func TestFailureBacksOffWithinThreeIntervals(t *testing.T) {
+	hub := &fakeHub{interval: 5000, fail: true}
+	r, sleeps := newRunner(t, hub)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { r.Run(ctx); close(done) }()
+	var seen []time.Duration
+	for len(seen) < 6 {
+		seen = append(seen, <-sleeps)
+	}
+	cancel()
+	<-done
+	if seen[0] != 10*time.Second || seen[1] != 20*time.Second {
+		t.Fatalf("first two backoffs = %v, want 10s then 20s", seen[:2])
+	}
+	for _, d := range seen[2:] {
+		if d != 30*time.Second {
+			t.Fatalf("backoff %v exceeds cap 3×interval", d)
+		}
+	}
+}
