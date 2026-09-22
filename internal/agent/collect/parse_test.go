@@ -17,6 +17,20 @@ func TestParseStatCPUTimes(t *testing.T) {
 	}
 }
 
+// 7 计数器的 CPU 行也能解析；不足 5 个就没有 iowait，应返回格式错误而不是越界。
+func TestParseStatAcceptsOlderKernelsWithFewerCounters(t *testing.T) {
+	c, err := parseStat(strings.NewReader("cpu 1 2 3 4 5 6 7\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.total != 28 || c.idle != 9 {
+		t.Fatalf("total/idle = %d/%d, want 28/9", c.total, c.idle)
+	}
+	if _, err := parseStat(strings.NewReader("cpu 1 2 3 4\n")); err == nil {
+		t.Fatal("four counters cannot carry iowait; must be a parse error, not a panic")
+	}
+}
+
 func TestCPUPercentFromTwoSamples(t *testing.T) {
 	a := cpuTimes{idle: 800, total: 1000}
 	b := cpuTimes{idle: 850, total: 1100} // 100 个 tick 里 50 个空闲 → 50%

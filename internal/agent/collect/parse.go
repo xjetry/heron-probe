@@ -7,6 +7,7 @@ package collect
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"strconv"
@@ -15,28 +16,37 @@ import (
 
 type cpuTimes struct{ idle, total uint64 }
 
-// parseStat 取 /proc/stat 首行的聚合 CPU 时间。guest 与 guest_nice 已计入
-// user 与 nice，不再相加。
+// parseStat 取 /proc/stat 首行的聚合 CPU 时间。
+//
+// 计数器个数随内核版本变化：user nice system idle iowait 自 2.5.41 起都在，
+// irq softirq steal 陆续加入，guest 与 guest_nice 已计入 user 与 nice 不再相加。
+// 所以至少要 5 个、最多取前 8 个；不足 5 个是格式错误，不能越界。
 func parseStat(r io.Reader) (cpuTimes, error) {
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		f := strings.Fields(sc.Text())
-		if len(f) < 8 || f[0] != "cpu" {
+		if len(f) == 0 || f[0] != "cpu" {
 			continue
 		}
-		var vals [8]uint64
-		for i := range vals {
-			v, err := strconv.ParseUint(f[i+1], 10, 64)
+		counters := f[1:]
+		if len(counters) < 5 {
+			return cpuTimes{}, fmt.Errorf("/proc/stat: cpu line has %d counters, need at least 5", len(counters))
+		}
+		if len(counters) > 8 {
+			counters = counters[:8]
+		}
+		var c cpuTimes
+		for i, s := range counters {
+			v, err := strconv.ParseUint(s, 10, 64)
 			if err != nil {
 				return cpuTimes{}, err
 			}
-			vals[i] = v
+			c.total += v
+			if i == 3 || i == 4 {
+				c.idle += v
+			}
 		}
-		var total uint64
-		for _, v := range vals {
-			total += v
-		}
-		return cpuTimes{idle: vals[3] + vals[4], total: total}, nil
+		return c, nil
 	}
 	return cpuTimes{}, errors.New("/proc/stat: no cpu line")
 }
