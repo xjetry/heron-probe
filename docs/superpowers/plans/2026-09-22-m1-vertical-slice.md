@@ -5068,6 +5068,31 @@ func TestConfigRoundTripAndPermissions(t *testing.T) {
 	}
 }
 
+// 落盘后的配置对其他用户不可读，即使残留的临时文件或旧配置本身权限更宽。
+func TestSaveConfigEnforcesModeOverStaleFiles(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(p+".tmp", []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveConfig(p, Config{Hub: "h", Token: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("perm = %o, want 600: a stale world-readable temp file must not carry its mode onto the config", st.Mode().Perm())
+	}
+	c, err := LoadConfig(p)
+	if err != nil || c.Token != "t" {
+		t.Fatalf("config not replaced: %+v %v", c, err)
+	}
+}
+
 func TestFactsHashIsStableAndSensitive(t *testing.T) {
 	a := &probev1.Facts{Hostname: "h", CpuCores: 2}
 	b := &probev1.Facts{Hostname: "h", CpuCores: 2}
@@ -5240,6 +5265,8 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -5259,7 +5286,11 @@ func LoadConfig(path string) (Config, error) {
 	return c, json.Unmarshal(b, &c)
 }
 
-// SaveConfig 以 0600 写入，先写临时文件再 rename：token 不会以部分写入的状态落盘。
+// SaveConfig 先写临时文件再 rename：token 不会以部分写入的状态落盘。
+//
+// 权限不变式：落盘后的配置对其他用户不可读。它由"临时文件一定是本次独占
+// 创建的"承载：先删掉可能残留的同名临时文件，再以 O_EXCL 创建——WriteFile
+// 的权限参数只对新建文件生效，残留的 0644 临时文件会带着旧权限被 rename 成配置。
 func SaveConfig(path string, c Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -5269,7 +5300,22 @@ func SaveConfig(path string, c Config) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	if err := os.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
@@ -5561,6 +5607,7 @@ go build -o /dev/null ./cmd/agent; echo "darwin=$?"
 
 1. `Backoff` 里把 `cap := 3 * interval` 改成 `4 * interval`，预期 `TestBackoffGrowsAndCapsAtThreeIntervals` 与 `TestFailureBacksOffWithinThreeIntervals` 都红。改回。
 2. `Run` 里 `sendFacts = resp.Msg.WantFacts` 改成 `sendFacts = false`，预期 `TestWantFactsTriggersResend` 红。改回。
+3. `SaveConfig` 改回 `os.WriteFile(tmp, b, 0o600)`（不删残留、不独占创建），预期 `TestSaveConfigEnforcesModeOverStaleFiles` 红（perm = 644）。改回。
 
 - [ ] **Step 8: 提交**
 
