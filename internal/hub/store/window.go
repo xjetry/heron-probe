@@ -13,11 +13,11 @@ type Window struct {
 }
 
 // SetRegisterWindow 替换当前窗口：同一时刻只有一个窗口，新开即作废旧 key。
-func (s *Store) SetRegisterWindow(ctx context.Context, keyHash []byte, expiresAt time.Time, max int) error {
+func (s *Store) SetRegisterWindow(ctx context.Context, keyHash []byte, expiresAt time.Time, maxNodes int) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO register_window (id, key_hash, expires_at, remaining) VALUES (1, ?, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET key_hash = excluded.key_hash, expires_at = excluded.expires_at, remaining = excluded.remaining`,
-			keyHash, expiresAt.Unix(), max)
+			keyHash, expiresAt.Unix(), maxNodes)
 		return err
 	})
 }
