@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -175,6 +176,70 @@ type observationClock struct {
 	block   atomic.Bool
 	entered chan struct{}
 	release chan struct{}
+}
+
+// Done 的求值发生在 store.write 投递请求时，用它确认注册已走到写队列。
+type queuedContext struct {
+	context.Context
+	once   sync.Once
+	queued chan struct{}
+}
+
+func (c *queuedContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.queued) })
+	return c.Context.Done()
+}
+
+func TestAuthenticateDoesNotWaitForRegisterTransaction(t *testing.T) {
+	clk := &observationClock{Fake: clock.NewFake(time.Now()), entered: make(chan struct{}), release: make(chan struct{})}
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	a := New(st, clk, slog.Default())
+	ctx := context.Background()
+	id, tok, err := a.CreateNode(ctx, "existing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.OpenWindow(ctx, time.Hour, 1); err != nil {
+		t.Fatal(err)
+	}
+	clk.block.Store(true)
+	gateDone := make(chan error, 1)
+	go func() { _, err := st.CreateNode(ctx, "gate", make([]byte, 32)); gateDone <- err }()
+	<-clk.entered
+	var release sync.Once
+	defer release.Do(func() { close(clk.release) })
+	queued := &queuedContext{Context: ctx, queued: make(chan struct{})}
+	registered := make(chan error, 1)
+	go func() {
+		_, _, err := a.Register(queued, "wrong", "n", netip.MustParseAddr("203.0.113.7"))
+		registered <- err
+	}()
+	select {
+	case <-queued.queued:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Register did not reach the write queue")
+	}
+	authenticated := make(chan bool, 1)
+	go func() { got, ok := a.Authenticate(tok); authenticated <- ok && got == id }()
+	select {
+	case ok := <-authenticated:
+		if !ok {
+			t.Fatal("existing token denied")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Authenticate did not return while Register waited for its transaction")
+	}
+	release.Do(func() { close(clk.release) })
+	if err := <-gateDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-registered; !errors.Is(err, ErrDenied) {
+		t.Fatalf("Register = %v, want ErrDenied", err)
+	}
 }
 
 func (c *observationClock) Now() time.Time {
