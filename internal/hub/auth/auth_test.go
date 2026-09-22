@@ -143,6 +143,29 @@ func TestRegisterWrongKeyOnOpenWindowLocksIP(t *testing.T) {
 	}
 }
 
+func TestRegisterExpiresFailuresFromOtherAddresses(t *testing.T) {
+	a, _, clk := setup(t)
+	ctx := context.Background()
+	if _, err := a.OpenWindow(ctx, time.Hour, 10); err != nil {
+		t.Fatal(err)
+	}
+	for _, ip := range []string{"203.0.113.1", "203.0.113.2"} {
+		if _, _, err := a.Register(ctx, "wrong", "n", netip.MustParseAddr(ip)); !errors.Is(err, ErrDenied) {
+			t.Fatal(err)
+		}
+	}
+	clk.Advance(failWindow + time.Second)
+	third := netip.MustParseAddr("203.0.113.3")
+	if _, _, err := a.Register(ctx, "wrong", "n", third); !errors.Is(err, ErrDenied) {
+		t.Fatal(err)
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if len(a.failures) != 1 || a.failures[third] == nil {
+		t.Fatalf("expired IP failures retained: %+v", a.failures)
+	}
+}
+
 func TestRegisterIssuesWorkingToken(t *testing.T) {
 	a, _, _ := setup(t)
 	ctx := context.Background()

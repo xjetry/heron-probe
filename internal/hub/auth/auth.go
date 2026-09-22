@@ -142,13 +142,14 @@ func (a *Auth) Register(ctx context.Context, key, name string, from netip.Addr) 
 	defer a.mutMu.Unlock()
 	now := a.clk.Mono()
 	a.mu.Lock()
-	if f := a.failures[from]; f != nil {
+	for ip, f := range a.failures {
 		if now-f.since >= failWindow {
-			delete(a.failures, from)
-		} else if f.count >= failLimit {
-			a.mu.Unlock()
-			return 0, "", ErrDenied
+			delete(a.failures, ip)
 		}
+	}
+	if f := a.failures[from]; f != nil && f.count >= failLimit {
+		a.mu.Unlock()
+		return 0, "", ErrDenied
 	}
 	a.mu.Unlock()
 	keyHash := HashToken(key)
