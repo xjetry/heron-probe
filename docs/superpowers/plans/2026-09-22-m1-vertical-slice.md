@@ -158,7 +158,7 @@ plugins:
 ```make
 export CGO_ENABLED=0
 
-.PHONY: gen lint vet test build ci e2e fixtures
+.PHONY: gen lint test build binaries ci e2e fixtures
 
 gen:
 	buf generate
@@ -171,7 +171,14 @@ lint:
 test:
 	go test -count=1 ./...
 
+# build 只验证全部已有的包在三个目标平台都能编译，所以从第一个 Go 包起每个提交上都有意义；
+# 二进制产物由 binaries 生成，只有 e2e 需要它。
 build:
+	go build ./...
+	GOOS=linux GOARCH=amd64 go build ./...
+	GOOS=linux GOARCH=arm64 go build ./...
+
+binaries:
 	go build -o bin/probe-hub ./cmd/hub
 	GOOS=linux GOARCH=amd64 go build -o bin/probe-agent-linux-amd64 ./cmd/agent
 	GOOS=linux GOARCH=arm64 go build -o bin/probe-agent-linux-arm64 ./cmd/agent
@@ -182,7 +189,7 @@ ci: gen lint test build
 fixtures:
 	scripts/capture-proc.sh docker-debian
 
-e2e: build
+e2e: binaries
 	scripts/e2e.sh
 ```
 
@@ -217,13 +224,14 @@ jobs:
         run: buf breaking --against '.git#branch=main'
 ```
 
-- [ ] **Step 5: 验证空 module 可 vet、可 build**
+- [ ] **Step 5: 验证空 module 的状态**
 
 ```bash
-go vet ./... ; echo $?
+go build ./... ; echo "build=$?"
+go vet ./... ; echo "vet=$?"
 ```
 
-预期 `0`（还没有包，vet 无事可做）。`buf lint` 此时会报 proto 目录不存在，属预期，Task 1 补。
+预期 `build=0`；`vet=1` 且 stderr 是 `matched no packages` / `no packages to vet`——这是"没有包可查"，不是某个包没过；同理此时 `go test ./...` 也是 1。Global Constraints 的三条门禁在这个提交上没有对象，从 Task 1 加入第一个 Go 包起才生效。`buf lint` 此时报 proto 模块没有 .proto 文件，属预期，Task 1 补。
 
 - [ ] **Step 6: 提交**
 
