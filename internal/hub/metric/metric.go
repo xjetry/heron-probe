@@ -32,6 +32,9 @@ type Column struct {
 	Name string
 	Kind Kind
 	Type Type
+	// Unit 随查询结果下发：percent、bytes、count；load 无单位为空串。
+	// 数据自带单位，图表与 agent 都不必查表才知道该怎么读。
+	Unit string
 	// Get 从一次上报里取读数；false 表示无读数，此时既不进 sum 也不进 n。
 	Get func(*probev1.Metrics) (float64, bool)
 }
@@ -48,14 +51,14 @@ func f64(v uint64) float64 { return float64(v) }
 // Columns 的顺序就是 Bucket 各切片的下标，也是 SQL 里列的顺序。
 // 只能在末尾追加：中间插入会让已存在的桶与行错位。
 var Columns = []Column{
-	{"cpu", MeanMax, Float, func(m *probev1.Metrics) (float64, bool) { return m.GetCpuPct(), m.CpuPct != nil }},
-	{"mem_used", MeanMax, Int, func(m *probev1.Metrics) (float64, bool) { return f64(m.GetMemUsed()), m.MemUsed != nil }},
-	{"swap_used", Mean, Int, func(m *probev1.Metrics) (float64, bool) { return f64(m.GetSwapUsed()), m.SwapUsed != nil }},
-	{"disk_used", Mean, Int, func(m *probev1.Metrics) (float64, bool) { return f64(m.GetDiskUsed()), m.DiskUsed != nil }},
-	{"load1", Mean, Float, func(m *probev1.Metrics) (float64, bool) { return m.GetLoad1(), m.Load1 != nil }},
-	{"tcp", Mean, Int, func(m *probev1.Metrics) (float64, bool) { return f64(uint64(m.GetTcpConns())), m.TcpConns != nil }},
-	{"udp", Mean, Int, func(m *probev1.Metrics) (float64, bool) { return f64(uint64(m.GetUdpConns())), m.UdpConns != nil }},
-	{"procs", Mean, Int, func(m *probev1.Metrics) (float64, bool) { return f64(uint64(m.GetProcs())), m.Procs != nil }},
+	{"cpu", MeanMax, Float, "percent", func(m *probev1.Metrics) (float64, bool) { return m.GetCpuPct(), m.CpuPct != nil }},
+	{"mem_used", MeanMax, Int, "bytes", func(m *probev1.Metrics) (float64, bool) { return f64(m.GetMemUsed()), m.MemUsed != nil }},
+	{"swap_used", Mean, Int, "bytes", func(m *probev1.Metrics) (float64, bool) { return f64(m.GetSwapUsed()), m.SwapUsed != nil }},
+	{"disk_used", Mean, Int, "bytes", func(m *probev1.Metrics) (float64, bool) { return f64(m.GetDiskUsed()), m.DiskUsed != nil }},
+	{"load1", Mean, Float, "", func(m *probev1.Metrics) (float64, bool) { return m.GetLoad1(), m.Load1 != nil }},
+	{"tcp", Mean, Int, "count", func(m *probev1.Metrics) (float64, bool) { return f64(uint64(m.GetTcpConns())), m.TcpConns != nil }},
+	{"udp", Mean, Int, "count", func(m *probev1.Metrics) (float64, bool) { return f64(uint64(m.GetUdpConns())), m.UdpConns != nil }},
+	{"procs", Mean, Int, "count", func(m *probev1.Metrics) (float64, bool) { return f64(uint64(m.GetProcs())), m.Procs != nil }},
 }
 
 // Bucket 是一分钟内样本的可加折叠。
@@ -109,7 +112,7 @@ func (b *Bucket) Mean(i int) (float64, bool) {
 	return b.Sum[i] / float64(b.N[i]), true
 }
 
-// Row 是一条分钟行：live 刷出的单位，也是 store 写入与读回的单位。
+// Row 是一个时间桶：live 刷出分钟桶，store 也用它返回上卷与查询聚合后的桶。
 type Row struct {
 	NodeID int64
 	// TS 是桶起始，Unix 秒，60 对齐。

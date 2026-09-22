@@ -5,7 +5,21 @@ import (
 	"time"
 
 	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/probe/internal/hub/store"
 )
+
+// FlushPeriod 与分钟桶的闭合周期一致；nextFlushAt 把调度目标放在闭合后半秒，
+// 不把调度目标当作写协程完成落盘的时限。
+const FlushPeriod = time.Minute
+
+// MaxProbeAge 是探测结果的迟到预算；它与刷出周期共同约束上卷滞后，
+// 为数据在其分钟桶被冻结之前完成落盘预留时间。
+const MaxProbeAge = 120 * time.Second
+
+// 上卷滞后必须覆盖"迟到上限 + 一个刷出周期 + 写协程排队余量"，否则合法数据会
+// 落在水位之前被写协程丢弃。差值为负时无法转换为 uint64，编译即失败；
+// 仍满足该不等式的常量变更不会被拒绝。
+const _ = uint64(store.RollupLag - (MaxProbeAge + FlushPeriod + 60*time.Second))
 
 // maxPendingBatches 限制待重试列表：数据库长时间不可用时内存不无限增长，
 // 满了丢最旧的一批并记日志。
@@ -63,5 +77,5 @@ func (s *Service) RunFlusher(ctx context.Context) {
 
 // nextFlushAt 的半秒偏移保证按墙钟分钟闭合的桶在刷出时确实已闭合。
 func nextFlushAt(wall time.Time) time.Time {
-	return wall.Truncate(time.Minute).Add(time.Minute + 500*time.Millisecond)
+	return wall.Truncate(FlushPeriod).Add(FlushPeriod + 500*time.Millisecond)
 }

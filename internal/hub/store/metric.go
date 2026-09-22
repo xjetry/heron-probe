@@ -51,6 +51,12 @@ func (s *Store) ReadMinuteRows(ctx context.Context, nodeID int64, from, to int64
 		return nil, err
 	}
 	defer rows.Close()
+	return scanBucketRows(rows, nodeID)
+}
+
+// scanBucketRows 按 metricColumnNames 的顺序扫描 (ts, 列…) 行；整数列先落到
+// int64 再转回 float64。分钟读与聚合读共用它，列序只在描述表里定义一次。
+func scanBucketRows(rows *sql.Rows, nodeID int64) ([]metric.Row, error) {
 	var out []metric.Row
 	for rows.Next() {
 		b := metric.NewBucket()

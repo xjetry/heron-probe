@@ -79,3 +79,15 @@ func TestColumnsCoverSpecifiedMetrics(t *testing.T) {
 		}
 	}
 }
+
+func TestEveryColumnDeclaresItsUnit(t *testing.T) {
+	allowed := map[string]bool{"percent": true, "bytes": true, "count": true, "": true}
+	for _, c := range Columns {
+		if !allowed[c.Unit] {
+			t.Fatalf("%s: unit %q is not one of percent/bytes/count/\"\"", c.Name, c.Unit)
+		}
+		if c.Unit == "" && c.Name != "load1" {
+			t.Fatalf("%s: only load has no unit", c.Name)
+		}
+	}
+}
