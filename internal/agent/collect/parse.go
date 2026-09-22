@@ -155,33 +155,6 @@ func parseUptime(r io.Reader) (uint64, error) {
 
 type netCounters struct{ rx, tx uint64 }
 
-// parseNetDev 读 /proc/net/dev：前两行是表头；每行 "iface: rx_bytes … tx_bytes …"，
-// 接收段 8 列后是发送段。
-func parseNetDev(r io.Reader) (map[string]netCounters, error) {
-	out := map[string]netCounters{}
-	sc := bufio.NewScanner(r)
-	for sc.Scan() {
-		name, rest, ok := strings.Cut(sc.Text(), ":")
-		if !ok {
-			continue
-		}
-		f := strings.Fields(rest)
-		if len(f) < 9 {
-			continue
-		}
-		rx, err1 := strconv.ParseUint(f[0], 10, 64)
-		tx, err2 := strconv.ParseUint(f[8], 10, 64)
-		if err1 != nil || err2 != nil {
-			continue
-		}
-		out[strings.TrimSpace(name)] = netCounters{rx: rx, tx: tx}
-	}
-	if len(out) == 0 {
-		return nil, errors.New("/proc/net/dev: no interfaces")
-	}
-	return out, sc.Err()
-}
-
 // parseSockstat 同时认 sockstat（TCP:/UDP:）与 sockstat6（TCP6:/UDP6:）。
 func parseSockstat(r io.Reader) (tcp, udp uint32, err error) {
 	sc := bufio.NewScanner(r)

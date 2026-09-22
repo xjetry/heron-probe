@@ -64,21 +64,6 @@ func TestParseLoadavg(t *testing.T) {
 	}
 }
 
-func TestParseNetDev(t *testing.T) {
-	in := `Inter-|   Receive                                                |  Transmit
- face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
-    lo:     100     1    0    0    0     0          0         0      100     1    0    0    0     0       0          0
-  eth0:    5000    10    0    0    0     0          0         0     7000    12    0    0    0     0       0          0
-`
-	m, err := parseNetDev(strings.NewReader(in))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if m["eth0"].rx != 5000 || m["eth0"].tx != 7000 || m["lo"].rx != 100 {
-		t.Fatalf("%+v", m)
-	}
-}
-
 func TestParseSockstatBothFamilies(t *testing.T) {
 	tcp, udp, err := parseSockstat(strings.NewReader("sockets: used 5\nTCP: inuse 3 orphan 0 tw 0 alloc 1 mem 0\nUDP: inuse 2 mem 1\n"))
 	if err != nil || tcp != 3 || udp != 2 {

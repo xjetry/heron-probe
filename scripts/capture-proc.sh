@@ -9,7 +9,7 @@ mkdir -p "$dest"
 docker run --rm "$image" sh -c '
   set -e
   out=/tmp/fixture
-  for f in proc/stat proc/meminfo proc/loadavg proc/uptime proc/net/dev proc/net/sockstat proc/net/sockstat6 \
+  for f in proc/stat proc/meminfo proc/loadavg proc/uptime proc/net/sockstat proc/net/sockstat6 \
            proc/sys/kernel/random/boot_id proc/sys/kernel/osrelease proc/sys/kernel/hostname proc/cpuinfo \
            proc/1/environ etc/os-release; do
     mkdir -p "$out/$(dirname "$f")"
