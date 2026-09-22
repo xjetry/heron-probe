@@ -22,7 +22,7 @@ jobs:
         run: |
           main_files=$(git ls-tree -r --name-only origin/main)
           if grep -q '\.proto$' <<< "$main_files"; then
-            buf breaking --against '.git#branch=main'
+            buf breaking --against '.git#branch=origin/main'
           else
             echo "main has no .proto files yet; nothing to compare against"
           fi
