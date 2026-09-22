@@ -35,6 +35,31 @@ func TestConfigRoundTripAndPermissions(t *testing.T) {
 	}
 }
 
+// 落盘后的配置对其他用户不可读，即使残留的临时文件或旧配置本身权限更宽。
+func TestSaveConfigEnforcesModeOverStaleFiles(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(p+".tmp", []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveConfig(p, Config{Hub: "h", Token: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("perm = %o, want 600: a stale world-readable temp file must not carry its mode onto the config", st.Mode().Perm())
+	}
+	c, err := LoadConfig(p)
+	if err != nil || c.Token != "t" {
+		t.Fatalf("config not replaced: %+v %v", c, err)
+	}
+}
+
 func TestFactsHashIsStableAndSensitive(t *testing.T) {
 	a := &probev1.Facts{Hostname: "h", CpuCores: 2}
 	b := &probev1.Facts{Hostname: "h", CpuCores: 2}
