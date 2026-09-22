@@ -70,14 +70,17 @@ func TestMuxRejectsAnonymousProcedures(t *testing.T) {
 					if anonymousProcedures[path] {
 						return
 					}
+					if resp.StatusCode != http.StatusUnauthorized {
+						t.Fatalf("%s: status %d, want 401", path, resp.StatusCode)
+					}
 					var body struct {
 						Code string `json:"code"`
 					}
 					if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 						t.Fatal(err)
 					}
-					if resp.StatusCode != http.StatusUnauthorized || body.Code != "unauthenticated" {
-						t.Fatalf("%s: status %d code %q, want 401 unauthenticated", path, resp.StatusCode, body.Code)
+					if body.Code != "unauthenticated" {
+						t.Fatalf("%s: code %q, want unauthenticated", path, body.Code)
 					}
 				})
 			}
