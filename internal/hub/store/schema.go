@@ -6,9 +6,8 @@ import (
 	"github.com/xjetry/probe/internal/hub/metric"
 )
 
-// 与描述表无关的表写成常量；metric_1m 由 metricDDL 生成。
-const schemaFixed = `
-CREATE TABLE node (
+// 每张表一个常量：全新建库与增量迁移复用同一段 DDL，不存在第二份字段清单。
+const ddlNode = `CREATE TABLE node (
   -- AUTOINCREMENT 使 id 永不复用：分层备份恢复后两层可能各自漂移，
   -- id 若复用，指标层里已删节点的历史会挂到同 id 的新节点上且无法肉眼分辨。
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -23,8 +22,9 @@ CREATE TABLE node (
   created_at INTEGER NOT NULL,
   -- 墙钟，只供展示与告警文案，不参与离线时长计算。
   last_seen_at INTEGER
-);
-CREATE TABLE node_facts (
+)`
+
+const ddlNodeFacts = `CREATE TABLE node_facts (
   node_id INTEGER PRIMARY KEY,
   facts_hash INTEGER NOT NULL,
   hostname TEXT NOT NULL,
@@ -37,30 +37,50 @@ CREATE TABLE node_facts (
   agent_version TEXT NOT NULL,
   icmp_available INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
-);
-CREATE TABLE register_window (
+)`
+
+const ddlRegisterWindow = `CREATE TABLE register_window (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   key_hash BLOB NOT NULL,
   expires_at INTEGER NOT NULL,
   remaining INTEGER NOT NULL
-);
-CREATE TABLE rollup_state (
+)`
+
+const ddlRollupState = `CREATE TABLE rollup_state (
   level TEXT PRIMARY KEY,
   upto_ts INTEGER NOT NULL
-);
-INSERT INTO rollup_state (level, upto_ts) VALUES ('5m', 0), ('1h', 0);
-`
+)`
 
-// schemaStatements 依赖 DDL 的注释与字符串里不出现 `;`；违反时 Exec 会在
-// 建表阶段失败，测试立刻红。
+const seedRollupState = `INSERT INTO rollup_state (level, upto_ts) VALUES ('5m', 0), ('1h', 0)`
+
+const ddlAdmin = `CREATE TABLE admin (
+  -- 单管理员：CHECK 让第二行无法插入，"多用户"在 schema 上就不成立。
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  -- PHC 字符串，argon2id 的参数随哈希走：改参数不需要迁移，旧哈希按自带参数校验。
+  password_hash TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+)`
+
+const ddlAdminSession = `CREATE TABLE admin_session (
+  token_hash BLOB PRIMARY KEY,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER NOT NULL,
+  -- 绝对过期，墙钟 Unix 秒。会话要跨 hub 重启存活，只能用墙钟；
+  -- 墙钟回拨会推迟按绝对过期时刻判定失效的时间。
+  expires_at INTEGER NOT NULL
+)`
+
+// metricTables 按级别从细到粗；建库、DeleteNode 与 Counts 共用此清单，
+// 避免新增级别后遗漏删除或计数；已有库仍需对应的增量迁移。
+var metricTables = []string{"metric_1m", "metric_5m", "metric_1h"}
+
+// schemaStatements 是当前版本的完整 DDL：空库直接建到当前版本，不重放历史。
 func schemaStatements() []string {
-	var out []string
-	for _, stmt := range strings.Split(schemaFixed, ";") {
-		if strings.TrimSpace(stmt) != "" {
-			out = append(out, stmt)
-		}
+	out := []string{ddlNode, ddlNodeFacts, ddlRegisterWindow, ddlRollupState, seedRollupState, ddlAdmin, ddlAdminSession}
+	for _, t := range metricTables {
+		out = append(out, metricDDL(t))
 	}
-	return append(out, metricDDL("metric_1m"))
+	return out
 }
 
 // metricDDL 从描述表生成分钟表。主键顺序 (node_id, ts) 即唯一查询路径，

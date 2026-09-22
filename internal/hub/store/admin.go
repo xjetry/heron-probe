@@ -1,0 +1,92 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"time"
+)
+
+type Session struct {
+	CreatedAt  time.Time
+	LastUsedAt time.Time
+	ExpiresAt  time.Time
+}
+
+// SetAdminPassword 在同一事务里写入哈希并清空全部会话：改密码即登出所有人，
+// 同事务保证不存在"密码已换、旧会话仍活"的窗口。
+func (s *Store) SetAdminPassword(ctx context.Context, phc string) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`INSERT INTO admin (id, password_hash, updated_at) VALUES (1, ?, ?)
+			ON CONFLICT (id) DO UPDATE SET password_hash = excluded.password_hash, updated_at = excluded.updated_at`,
+			phc, s.clk.Now().Unix()); err != nil {
+			return err
+		}
+		_, err := tx.Exec("DELETE FROM admin_session")
+		return err
+	})
+}
+
+// AdminPasswordHash 的第二个返回值为 false 表示还没有管理员；调用方必须把它
+// 当作"无人可登录"处理，而不是跳过校验。
+func (s *Store) AdminPasswordHash(ctx context.Context) (string, bool, error) {
+	var phc string
+	err := s.r.QueryRowContext(ctx, "SELECT password_hash FROM admin WHERE id = 1").Scan(&phc)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return phc, true, nil
+}
+
+func (s *Store) CreateSession(ctx context.Context, hash [32]byte, now, expires time.Time) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec("INSERT INTO admin_session (token_hash, created_at, last_used_at, expires_at) VALUES (?, ?, ?, ?)",
+			hash[:], now.Unix(), now.Unix(), expires.Unix())
+		return err
+	})
+}
+
+func (s *Store) Session(ctx context.Context, hash [32]byte) (Session, bool, error) {
+	var created, used, exp int64
+	err := s.r.QueryRowContext(ctx, "SELECT created_at, last_used_at, expires_at FROM admin_session WHERE token_hash = ?", hash[:]).Scan(&created, &used, &exp)
+	if err == sql.ErrNoRows {
+		return Session{}, false, nil
+	}
+	if err != nil {
+		return Session{}, false, err
+	}
+	return Session{CreatedAt: time.Unix(created, 0).UTC(), LastUsedAt: time.Unix(used, 0).UTC(), ExpiresAt: time.Unix(exp, 0).UTC()}, true, nil
+}
+
+// TouchSessionAsync 只刷新已有会话的最近使用时刻，避免撤销后被延迟写入重新创建。
+// writeAsync 投递后即返回，刷新失败通过 done 报告，调用方不等待事务提交。
+func (s *Store) TouchSessionAsync(hash [32]byte, now time.Time, done func(error)) {
+	s.writeAsync(func(tx *sql.Tx) error {
+		_, err := tx.Exec("UPDATE admin_session SET last_used_at = ? WHERE token_hash = ?", now.Unix(), hash[:])
+		return err
+	}, done)
+}
+
+func (s *Store) DeleteSession(ctx context.Context, hash [32]byte) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec("DELETE FROM admin_session WHERE token_hash = ?", hash[:])
+		return err
+	})
+}
+
+// DeleteExpiredSessions 只按绝对过期时刻清理；空闲过期由鉴权调用方判定，
+// 因而本函数不会把仍未绝对过期的会话视作应删除的记录。
+func (s *Store) DeleteExpiredSessions(ctx context.Context, now time.Time) (int64, error) {
+	var n int64
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		res, err := tx.Exec("DELETE FROM admin_session WHERE expires_at <= ?", now.Unix())
+		if err != nil {
+			return err
+		}
+		n, _ = res.RowsAffected()
+		return nil
+	})
+	return n, err
+}

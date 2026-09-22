@@ -383,3 +383,94 @@ func TestCancelDuringTransactionStillReportsCommit(t *testing.T) {
 		t.Fatalf("committed row missing: %+v", nodes)
 	}
 }
+
+func TestListNodesCarriesFactsAndOrder(t *testing.T) {
+	s, _ := open(t)
+	ctx := context.Background()
+	a, _ := s.CreateNode(ctx, "a", hash(1))
+	b, _ := s.CreateNode(ctx, "b", hash(2))
+	if err := s.UpsertFacts(ctx, b, 7, &probev1.Facts{Hostname: "hb", CpuCores: 4, IcmpAvailable: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReorderNodes(ctx, []int64{b, a}); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := s.ListNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 2 || nodes[0].ID != b || nodes[1].ID != a {
+		t.Fatalf("order = %+v, want b before a", nodes)
+	}
+	if nodes[0].Facts == nil || nodes[0].Facts.Hostname != "hb" || nodes[0].Facts.CpuCores != 4 || !nodes[0].Facts.IcmpAvailable || nodes[0].FactsUpdatedAt.IsZero() {
+		t.Fatalf("facts not joined: %+v", nodes[0])
+	}
+	if nodes[1].Facts != nil {
+		t.Fatalf("node without facts must carry nil, got %+v", nodes[1].Facts)
+	}
+	if nodes[0].SortOrder != 0 || nodes[1].SortOrder != 1 {
+		t.Fatalf("sort_order = %d, %d", nodes[0].SortOrder, nodes[1].SortOrder)
+	}
+}
+
+func TestReorderNodesRejectsAnythingButAFullPermutation(t *testing.T) {
+	s, _ := open(t)
+	ctx := context.Background()
+	a, _ := s.CreateNode(ctx, "a", hash(1))
+	b, _ := s.CreateNode(ctx, "b", hash(2))
+	for _, ids := range [][]int64{{a}, {a, b, 999}, {a, a}, {b, 999}} {
+		if err := s.ReorderNodes(ctx, ids); !errors.Is(err, ErrBadOrder) {
+			t.Fatalf("ReorderNodes(%v) = %v, want ErrBadOrder", ids, err)
+		}
+	}
+	nodes, _ := s.ListNodes(ctx)
+	if nodes[0].ID != a || nodes[1].ID != b {
+		t.Fatalf("rejected reorder must leave order untouched: %+v", nodes)
+	}
+}
+
+func TestUpdateNodeReplacesEditableFields(t *testing.T) {
+	s, _ := open(t)
+	ctx := context.Background()
+	id, _ := s.CreateNode(ctx, "old", hash(1))
+	if err := s.UpdateNode(ctx, id, "new", true, "note"); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.GetNode(ctx, id)
+	if err != nil || n.Name != "new" || !n.Public || n.Note != "note" {
+		t.Fatalf("GetNode = %+v, %v", n, err)
+	}
+	if err := s.UpdateNode(ctx, 999, "x", false, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown id: %v, want ErrNotFound", err)
+	}
+	if _, err := s.GetNode(ctx, 999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetNode(999) = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleteNodeClearsEveryLevel(t *testing.T) {
+	s, _ := open(t)
+	ctx := context.Background()
+	id, _ := s.CreateNode(ctx, "n", hash(1))
+	keep, _ := s.CreateNode(ctx, "keep", hash(2))
+	for _, tbl := range metricTables {
+		for _, node := range []int64{id, keep} {
+			args := append([]any{node, int64(600)}, bucketArgs(metric.NewBucket())...)
+			if _, err := s.w.ExecContext(ctx, metricUpsert(tbl), args...); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := s.DeleteNode(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	for _, tbl := range metricTables {
+		var n int64
+		if err := s.r.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+tbl+" WHERE node_id = ?", id).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("%s still has %d rows for deleted node (%v)", tbl, n, err)
+		}
+		if err := s.r.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+tbl+" WHERE node_id = ?", keep).Scan(&n); err != nil || n != 1 {
+			t.Fatalf("%s lost the other node's row: %d (%v)", tbl, n, err)
+		}
+	}
+}
