@@ -11,10 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
-
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
 	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/probe/internal/hub/api"
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
@@ -23,9 +21,9 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 )
 
-var anonymousProcedures = map[string]bool{"/probe.v1.AgentService/Register": true}
+var anonymousProcedures = map[string]bool{"/probe.v1.AgentService/Register": true, "/probe.v1.AdminService/Login": true}
 
-func newTestService(t *testing.T) *ingest.Service {
+func newTestMux(t *testing.T) *http.ServeMux {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clk, slog.Default())
@@ -34,7 +32,8 @@ func newTestService(t *testing.T) *ingest.Service {
 	}
 	t.Cleanup(func() { st.Close() })
 	a := auth.New(st, clk, slog.Default())
-	svc, err := ingest.New(ingest.Config{TTL: 30 * time.Second}, live.New(clk, 30*time.Second), st, a, clk, slog.Default())
+	l := live.New(clk, 30*time.Second)
+	svc, err := ingest.New(ingest.Config{TTL: 30 * time.Second}, l, st, a, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,15 +43,8 @@ func newTestService(t *testing.T) *ingest.Service {
 	if err := svc.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	return svc
-}
-
-func newTestMux(t *testing.T) *http.ServeMux {
-	t.Helper()
-	svc := newTestService(t)
-	adminPath, adminHandler := probev1connect.NewAdminServiceHandler(probev1connect.UnimplementedAdminServiceHandler{},
-		connect.WithInterceptors(denyAll()), connect.WithReadMaxBytes(maxAdminBody))
-	return newMux(mountOf(svc.Handler()), mountOf(adminPath, adminHandler))
+	admin := api.New(api.Config{ReportInterval: 10 * time.Second}, st, a, l, svc, clk, slog.Default())
+	return newMux(mountOf(svc.Handler()), mountOf(admin.Handler()))
 }
 
 // 注册表提供方法全集，真实挂载点必须让所有未列入匿名清单的方法经过鉴权。
