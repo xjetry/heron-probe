@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package probe.v1;
+
+option go_package = "github.com/xjetry/probe/gen/probe/v1;probev1";
+
+// 一次上报里的主机读数。每个读数都是 optional：缺失表示"无读数"，
+// 与读数为 0 是两个不同的事实，从协议一直保持到图表。
+message Metrics {
+  // 启动周期标识，随计数器同一条消息到达：流量差分必须在同一条消息里
+  // 同时拿到计数器与它所属的启动周期，否则重启后的首次上报会被误当增量。
+  string boot_id = 1;
+  optional double cpu_pct = 2;
+  optional double load1 = 3;
+  optional double load5 = 4;
+  optional double load15 = 5;
+  optional uint64 mem_total = 6;
+  optional uint64 mem_used = 7;
+  optional uint64 swap_total = 8;
+  optional uint64 swap_used = 9;
+  optional uint64 disk_total = 10;
+  optional uint64 disk_used = 11;
+  // 内核累计计数器，hub 侧做差分。
+  optional uint64 net_rx_total = 12;
+  optional uint64 net_tx_total = 13;
+  // agent 自测的瞬时速率，仅供实时视图。
+  optional uint64 net_rx_bps = 14;
+  optional uint64 net_tx_bps = 15;
+  optional uint32 tcp_conns = 16;
+  optional uint32 udp_conns = 17;
+  optional uint32 procs = 18;
+  optional uint64 uptime_s = 19;
+}
+
+// 主机静态信息。进程启动后的首次上报携带；此后仅在 hub 要求时携带。
+message Facts {
+  string hostname = 1;
+  string os = 2;
+  string kernel = 3;
+  string arch = 4;
+  string virtualization = 5;
+  string cpu_model = 6;
+  uint32 cpu_cores = 7;
+  string agent_version = 8;
+  // 两种 ICMP socket 是否至少一种可用。
+  bool icmp_available = 9;
+}
+
+message ProbeResult {
+  uint64 task_id = 1;
+  // 测量完成至发送的时长，agent 单调钟；hub 用它反推测量时刻。
+  uint32 age_ms = 2;
+  oneof outcome {
+    uint32 rtt_us = 3;
+    // 计入丢包。
+    Timeout timeout = 4;
+    // 无权限、解析失败等；不计入丢包。
+    ProbeError error = 5;
+  }
+}
+
+message Timeout {}
+
+message ProbeError {
+  string message = 1;
+}
+
+enum ProbeKind {
+  PROBE_KIND_UNSPECIFIED = 0;
+  PROBE_KIND_ICMP = 1;
+  PROBE_KIND_TCP = 2;
+}
+
+message ProbeTask {
+  uint64 id = 1;
+  ProbeKind kind = 2;
+  string target = 3;
+  uint32 interval_s = 4;
+  uint32 timeout_ms = 5;
+}
+
+message ProbeTasks {
+  uint64 version = 1;
+  repeated ProbeTask tasks = 2;
+}
