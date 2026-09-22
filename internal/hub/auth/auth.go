@@ -1,10 +1,19 @@
 // Package auth 持有节点 token 的内存映射与注册窗口的裁决。
 //
-// mutMu 串行化变更者与 Load，保证写库并等待成功后才持 mu 更新映射；绕开
-// mutMu 会让提交顺序与映射更新顺序分叉。mu 只保护 byHash 与 failures，临界区
-// 不含 I/O，否则只读内存的 Authenticate 也会排在事务之后。绕开 mu 访问内存
-// 会产生数据竞争。写库失败不改映射；提交与更新之间崩溃时，Load 在启动时重建。
-// 离线子命令直接改表，未更新运行中进程的映射，因此要求 hub 重启。
+// Load 完成且没有外部进程直接改表时，byHash 与 node.token_hash 在每次变更
+// 完成后一致。mutMu 保证变更者彼此不交错，Load 也不与变更交错；先写库并
+// 等待成功、后改映射则由每个变更者内部的语句顺序保证，写库失败不改映射。
+// 绕开 mutMu 会让提交与映射更新顺序分叉；仅持有它不能代替上述语句顺序。
+//
+// mu 只保护 byHash 与 failures，临界区不含 I/O。CreateNode、Register、
+// DeleteNode 与 RotateToken 在 store 返回成功后、取得 mu.Lock 前存在可见
+// 间隙：Authenticate 可能仍接受已删除或轮换的旧 token，或尚不认识新 token。
+// 这个间隙跨越一次 mu.Lock 的获取，包含调度与锁竞争等待，并无固定时长上界；
+// 这是让 Authenticate 不等待任何事务的代价。映射更新期间由 mu 排除并发读取，
+// 绕开 mu 访问内存会产生数据竞争；崩溃若落在提交与更新之间，启动时由 Load 重建。
+//
+// 运行中的 hub 不调用 DeleteNode 或 RotateToken；这些离线子命令在另一进程
+// 直接改表，不会更新运行中进程的映射，因此要求 hub 重启。
 package auth
 
 import (
@@ -82,7 +91,7 @@ func (a *Auth) CreateNode(ctx context.Context, name string) (int64, string, erro
 	return id, plain, nil
 }
 
-// RotateToken 让旧 hash 立即失效：库写成功后先删旧再加新，中间没有两者都有效的窗口。
+// RotateToken 返回前在 mu 下以新 hash 替换旧 hash，读者不会观察到两者同时有效。
 func (a *Auth) RotateToken(ctx context.Context, id int64) (string, error) {
 	a.mutMu.Lock()
 	defer a.mutMu.Unlock()
