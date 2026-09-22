@@ -27,11 +27,11 @@ func runWindow(args []string) error {
 	ctx := context.Background()
 	switch args[0] {
 	case "open":
-		key, err := a.OpenWindow(ctx, *ttl, *max)
+		key, until, err := a.OpenWindow(ctx, *ttl, *max)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("key: %s\nexpires: %s\nmax: %d\n", key, time.Now().Add(*ttl).UTC().Format(time.RFC3339), *max)
+		fmt.Printf("key: %s\nexpires: %s\nmax: %d\n", key, until.UTC().Format(time.RFC3339), *max)
 	case "close":
 		return a.CloseWindow(ctx)
 	case "show":

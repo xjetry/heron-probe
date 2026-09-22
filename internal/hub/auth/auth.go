@@ -117,12 +117,13 @@ func (a *Auth) dropLocked(id int64) {
 	}
 }
 
-func (a *Auth) OpenWindow(ctx context.Context, ttl time.Duration, max int) (string, error) {
+func (a *Auth) OpenWindow(ctx context.Context, ttl time.Duration, max int) (key string, until time.Time, err error) {
 	plain, h := NewToken()
-	if err := a.store.SetRegisterWindow(ctx, h[:], a.clk.Now().Add(ttl), max); err != nil {
-		return "", err
+	until = a.clk.Now().Add(ttl)
+	if err := a.store.SetRegisterWindow(ctx, h[:], until, max); err != nil {
+		return "", time.Time{}, err
 	}
-	return plain, nil
+	return plain, until, nil
 }
 
 func (a *Auth) CloseWindow(ctx context.Context) error { return a.store.ClearRegisterWindow(ctx) }

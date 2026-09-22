@@ -105,6 +105,23 @@ func TestLoadRebuildsMapFromStore(t *testing.T) {
 	}
 }
 
+func TestOpenWindowReturnsPersistedDeadline(t *testing.T) {
+	a, st, clk := setup(t)
+	ctx := context.Background()
+	want := clk.Now().Add(time.Hour)
+	key, until, err := a.OpenWindow(ctx, time.Hour, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, ok, err := st.RegisterWindow(ctx)
+	if err != nil || !ok {
+		t.Fatalf("window = %+v %v %v", w, ok, err)
+	}
+	if key == "" || !until.Equal(want) || !until.Equal(w.ExpiresAt) {
+		t.Fatalf("returned deadline %v, stored %v, want %v", until, w.ExpiresAt, want)
+	}
+}
+
 func TestRegisterDeniedWithoutWindowAndDoesNotCount(t *testing.T) {
 	a, _, _ := setup(t)
 	ctx := context.Background()
@@ -114,7 +131,7 @@ func TestRegisterDeniedWithoutWindowAndDoesNotCount(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	}
-	key, _ := a.OpenWindow(ctx, time.Hour, 1)
+	key, _, _ := a.OpenWindow(ctx, time.Hour, 1)
 	if _, _, err := a.Register(ctx, key, "n", from); err != nil {
 		t.Fatalf("closed-window attempts must not have locked the IP: %v", err)
 	}
@@ -124,7 +141,7 @@ func TestRegisterWrongKeyOnOpenWindowLocksIP(t *testing.T) {
 	a, _, clk := setup(t)
 	ctx := context.Background()
 	from := netip.MustParseAddr("203.0.113.5")
-	key, _ := a.OpenWindow(ctx, time.Hour, 5)
+	key, _, _ := a.OpenWindow(ctx, time.Hour, 5)
 	for i := 0; i < failLimit; i++ {
 		if _, _, err := a.Register(ctx, "wrong", "n", from); !errors.Is(err, ErrDenied) {
 			t.Fatalf("err = %v", err)
@@ -146,7 +163,7 @@ func TestRegisterWrongKeyOnOpenWindowLocksIP(t *testing.T) {
 func TestRegisterExpiresFailuresFromOtherAddresses(t *testing.T) {
 	a, _, clk := setup(t)
 	ctx := context.Background()
-	if _, err := a.OpenWindow(ctx, time.Hour, 10); err != nil {
+	if _, _, err := a.OpenWindow(ctx, time.Hour, 10); err != nil {
 		t.Fatal(err)
 	}
 	for _, ip := range []string{"203.0.113.1", "203.0.113.2"} {
@@ -169,7 +186,7 @@ func TestRegisterExpiresFailuresFromOtherAddresses(t *testing.T) {
 func TestRegisterIssuesWorkingToken(t *testing.T) {
 	a, _, _ := setup(t)
 	ctx := context.Background()
-	key, _ := a.OpenWindow(ctx, time.Hour, 1)
+	key, _, _ := a.OpenWindow(ctx, time.Hour, 1)
 	id, plain, err := a.Register(ctx, key, "n", netip.MustParseAddr("10.0.0.1"))
 	if err != nil {
 		t.Fatal(err)
@@ -226,7 +243,7 @@ func TestAuthenticateDoesNotWaitForRegisterTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.OpenWindow(ctx, time.Hour, 1); err != nil {
+	if _, _, err := a.OpenWindow(ctx, time.Hour, 1); err != nil {
 		t.Fatal(err)
 	}
 	clk.block.Store(true)

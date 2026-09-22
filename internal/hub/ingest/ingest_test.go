@@ -245,7 +245,7 @@ func TestRegisterThenReport(t *testing.T) {
 	if connect.CodeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("closed window: err = %v", err)
 	}
-	key, _ := h.auth.OpenWindow(ctx, time.Hour, 1)
+	key, _, _ := h.auth.OpenWindow(ctx, time.Hour, 1)
 	resp, err := h.client.Register(ctx, connect.NewRequest(&probev1.RegisterRequest{Key: key, Name: "x"}))
 	if err != nil {
 		t.Fatal(err)
