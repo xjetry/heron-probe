@@ -4192,7 +4192,7 @@ func TestParseStatCPUTimes(t *testing.T) {
 	}
 }
 
-// 2.6.11–2.6.32 的内核只有 7 个计数器；再少就没有 iowait，是格式错误而不是越界。
+// 只有 7 个计数器的 cpu 行也能解析；不足 5 个就没有 iowait，是格式错误而不是越界。
 func TestParseStatAcceptsOlderKernelsWithFewerCounters(t *testing.T) {
 	c, err := parseStat(strings.NewReader("cpu 1 2 3 4 5 6 7\n"))
 	if err != nil {
