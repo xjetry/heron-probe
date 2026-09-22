@@ -43,14 +43,15 @@ type storeWriter interface {
 }
 
 type Service struct {
-	cfg    Config
-	live   *live.Live
-	store  *store.Store
-	writer storeWriter
-	auth   *auth.Auth
-	clk    clock.Clock
-	log    *slog.Logger
-	limit  *limiter
+	cfg           Config
+	live          *live.Live
+	store         *store.Store
+	writer        storeWriter
+	auth          *auth.Auth
+	clk           clock.Clock
+	log           *slog.Logger
+	limit         *buckets[int64]
+	registerLimit *buckets[netip.Addr]
 
 	mu sync.Mutex
 	// factsHash 是 hub 已持久化的各节点 facts 摘要；只在写库成功后更新，
@@ -65,7 +66,8 @@ func New(cfg Config, l *live.Live, st *store.Store, a *auth.Auth, clk clock.Cloc
 	if cfg.TTL < MinTTL {
 		return nil, fmt.Errorf("TTL %v is below the minimum %v", cfg.TTL, MinTTL)
 	}
-	return &Service{cfg: cfg, live: l, store: st, writer: st, auth: a, clk: clk, log: log, limit: newLimiter(), factsHash: map[int64]uint64{}}, nil
+	return &Service{cfg: cfg, live: l, store: st, writer: st, auth: a, clk: clk, log: log,
+		limit: newBuckets[int64](burst), registerLimit: newBuckets[netip.Addr](30), factsHash: map[int64]uint64{}}, nil
 }
 
 func (s *Service) Load(ctx context.Context) error {
@@ -132,6 +134,10 @@ func (i authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 
 func (s *Service) Register(ctx context.Context, req *connect.Request[probev1.RegisterRequest]) (*connect.Response[probev1.RegisterResponse], error) {
 	from := auth.ClientIP(req.Peer().Addr, req.Header().Get("X-Forwarded-For"), s.cfg.TrustedProxies)
+	// 窗口关闭也会经写协程裁决；先按来源限速，避免匿名请求耗尽写队列。
+	if !s.registerLimit.allow(from, s.clk.Mono(), time.Second) {
+		return nil, connect.NewError(connect.CodeResourceExhausted, errors.New("registration rate limit exceeded for source address"))
+	}
 	name := sanitizeString(strings.TrimSpace(req.Msg.GetName()))
 	if name == "" {
 		name = "node"
@@ -150,7 +156,8 @@ func (s *Service) Register(ctx context.Context, req *connect.Request[probev1.Reg
 
 func (s *Service) Report(ctx context.Context, req *connect.Request[probev1.ReportRequest]) (*connect.Response[probev1.ReportResponse], error) {
 	id := ctx.Value(nodeKey{}).(int64)
-	if !s.limit.allow(id, s.clk.Mono(), s.Interval()) {
+	// 补充速率为下发速率的两倍，允许正常上报间隔内的一次重试。
+	if !s.limit.allow(id, s.clk.Mono(), s.Interval()/2) {
 		return nil, connect.NewError(connect.CodeResourceExhausted, errors.New("reporting faster than twice the assigned interval"))
 	}
 	m := req.Msg.GetMetrics()

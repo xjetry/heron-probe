@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -251,6 +252,54 @@ func TestOversizedBodyIsRejected(t *testing.T) {
 	}
 	if _, ok := h.live.Get(id); ok {
 		t.Fatal("rejected body must leave live untouched")
+	}
+}
+
+func TestRegisterIsRateLimitedPerSourceAddress(t *testing.T) {
+	h := newHub(t)
+	h.svc.cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}
+	call := func(ip string) connect.Code {
+		req := connect.NewRequest(&probev1.RegisterRequest{Key: "wrong", Name: "n"})
+		req.Header().Set("X-Forwarded-For", ip)
+		_, err := h.client.Register(context.Background(), req)
+		return connect.CodeOf(err)
+	}
+	for i := 1; i <= 30; i++ {
+		if code := call("203.0.113.1"); code != connect.CodeUnauthenticated {
+			t.Fatalf("attempt %d: %v, want Unauthenticated", i, code)
+		}
+	}
+	if code := call("203.0.113.1"); code != connect.CodeResourceExhausted {
+		t.Fatalf("attempt 31: %v, want ResourceExhausted before window decision", code)
+	}
+	if code := call("203.0.113.2"); code != connect.CodeUnauthenticated {
+		t.Fatalf("second source: %v, want Unauthenticated", code)
+	}
+	h.clk.Advance(time.Second)
+	if code := call("203.0.113.1"); code != connect.CodeUnauthenticated {
+		t.Fatalf("after one-second refill: %v, want Unauthenticated", code)
+	}
+}
+
+func TestBucketsSweepIdleKeys(t *testing.T) {
+	b := newBuckets[string](3)
+	per := time.Second
+	b.allow("a", 0, per)
+	b.allow("b", 0, per)
+	b.allow("c", 3*per, per)
+	if len(b.m) != 1 || b.m["c"] == nil {
+		t.Fatalf("idle keys not swept: %+v", b.m)
+	}
+	b.allow("active", 3*per, per)
+	active := b.m["active"]
+	now := 6*per - time.Millisecond
+	b.allow("active", now, per)
+	if b.lastSweep != 3*per || len(b.m) != 2 || b.m["active"] != active {
+		t.Fatal("swept before period or replaced active bucket")
+	}
+	b.allow("d", 6*per, per)
+	if len(b.m) != 2 || b.m["active"] != active || b.m["d"] == nil {
+		t.Fatalf("sweep removed active key or retained idle key: %+v", b.m)
 	}
 }
 
