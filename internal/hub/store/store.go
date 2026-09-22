@@ -3,6 +3,8 @@
 // 不变式：所有写都经 runWriter 串行执行，w 只在那个协程里被使用。SQLite 同一
 // 时刻只允许一个写者，应用内串行化从根上避免写者之间的 SQLITE_BUSY；读走
 // 独立的只读连接池（query_only），WAL 下读不阻塞写。
+// 写请求返回错误意味着事务未应用，返回 nil 意味着已提交；这是 auth 只在
+// 写成功后更新内存映射、保持映射与库一致的前提。
 package store
 
 import (
@@ -33,9 +35,10 @@ type Store struct {
 }
 
 type writeReq struct {
-	fn func(*sql.Tx) error
-	// runWriter 在 inTx 返回最终事务结果后才通知 res 或 done；事务成功提交
-	// 或失败回滚的处理先于通知，回调收到 nil 时可从读池读到已持久化的状态。
+	ctx context.Context // 异步请求为 nil，不受取消影响。
+	fn  func(*sql.Tx) error
+	// runWriter 仅在请求因取消未执行或 inTx 返回最终结果后通知 res 或 done；
+	// 已开始事务的提交或回滚先于通知，回调收到 nil 时读到的是已持久化的状态。
 	res  chan error
 	done func(error)
 }
@@ -74,7 +77,12 @@ func (s *Store) Close() error {
 func (s *Store) runWriter() {
 	defer close(s.done)
 	for req := range s.writes {
-		err := s.inTx(req.fn)
+		var err error
+		if req.ctx != nil && req.ctx.Err() != nil {
+			err = req.ctx.Err()
+		} else {
+			err = s.inTx(req.fn)
+		}
 		if req.res != nil {
 			req.res <- err
 		} else if req.done != nil {
@@ -97,20 +105,17 @@ func (s *Store) inTx(fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
-// write 投递一个事务并等待其结果。ctx 取消只放弃等待：已入队的事务仍会执行。
+// write 返回错误意味着事务未应用，返回 nil 意味着已提交；入队后必须等到
+// runWriter 给出最终结果。中途放弃等待会让调用方在事务照常提交时误以为失败，
+// 据此不更新内存映射就会造成映射与库分叉。取消只阻止尚未开始的事务。
 func (s *Store) write(ctx context.Context, fn func(*sql.Tx) error) error {
-	req := writeReq{fn: fn, res: make(chan error, 1)}
+	req := writeReq{ctx: ctx, fn: fn, res: make(chan error, 1)}
 	select {
 	case s.writes <- req:
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	select {
-	case err := <-req.res:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return <-req.res
 }
 
 // writeAsync 投递后立即返回；done 在写协程里被调用。队列满时丢弃并报告，

@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -269,5 +271,75 @@ func TestAsyncCallbackObservesCommittedWrite(t *testing.T) {
 	})
 	if got := <-seen; got != 78 {
 		t.Fatalf("callback observed facts hash %d, want 78: it must run only after the transaction committed", got)
+	}
+}
+
+// 已入队但尚未开始的事务在 ctx 取消后不执行，调用方得到 ctx.Err() 且库无变化。
+func TestCancelBeforeStartSkipsTransaction(t *testing.T) {
+	s, clk := open(t)
+	gate := make(chan struct{})
+	started := make(chan struct{})
+	go s.write(context.Background(), func(*sql.Tx) error { close(started); <-gate; return nil })
+	<-started
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	res := make(chan error, 1)
+	go func() { _, err := s.CreateNode(ctx, "queued", hash(1)); res <- err }()
+	// 第一个事务占住写协程，队列非空只能来自 CreateNode；确认入队后取消，
+	// 才能检出写协程遗漏取消预检，而不是只覆盖入队前的取消分支。
+	deadline := time.Now().Add(5 * time.Second)
+	for len(s.writes) == 0 {
+		if time.Now().After(deadline) {
+			cancel()
+			close(gate)
+			<-res
+			t.Fatal("CreateNode did not enter the write queue")
+		}
+		runtime.Gosched()
+	}
+	cancel()
+	close(gate)
+	if err := <-res; !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	// 同步写屏障保证即使等待方错误地提前返回，节点事务也已结束。
+	if err := s.SetRegisterWindow(context.Background(), hash(3), clk.Now().Add(time.Hour), 1); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := s.ListNodes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 0 {
+		t.Fatalf("node was created despite cancellation before start: %+v", nodes)
+	}
+}
+
+// 已开始的事务不受取消影响，调用方必须拿到真实结果：nil 且库里有行。
+func TestCancelDuringTransactionStillReportsCommit(t *testing.T) {
+	s, _ := open(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	inside := make(chan struct{})
+	res := make(chan error, 1)
+	go func() {
+		res <- s.write(ctx, func(tx *sql.Tx) error {
+			close(inside)
+			<-ctx.Done() // 事务进行中 ctx 被取消
+			_, err := tx.Exec("INSERT INTO node (name, token_hash, created_at) VALUES ('mid', ?, 0)", hash(2))
+			return err
+		})
+	}()
+	<-inside
+	cancel()
+	if err := <-res; err != nil {
+		t.Fatalf("err = %v, want nil: the transaction committed", err)
+	}
+	nodes, err := s.ListNodes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("committed row missing: %+v", nodes)
 	}
 }

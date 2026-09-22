@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -166,5 +167,73 @@ func TestDeleteNodeRevokesToken(t *testing.T) {
 	}
 	if _, ok := a.Authenticate(plain); ok {
 		t.Fatal("deleted node's token still authenticates")
+	}
+}
+
+type observationClock struct {
+	*clock.Fake
+	block   atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (c *observationClock) Now() time.Time {
+	if c.block.CompareAndSwap(true, false) {
+		close(c.entered)
+		<-c.release
+	}
+	return c.Fake.Now()
+}
+
+func TestCancelledCreateNodeKeepsMapConsistentWithStore(t *testing.T) {
+	clk := &observationClock{
+		Fake:    clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	a := New(st, clk, slog.Default())
+	if err := a.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type result struct {
+		id    int64
+		token string
+		err   error
+	}
+	res := make(chan result, 1)
+	clk.block.Store(true)
+	go func() {
+		id, token, err := a.CreateNode(ctx, "cancelled")
+		res <- result{id, token, err}
+	}()
+	<-clk.entered
+	cancel()
+	close(clk.release)
+	got := <-res
+	if err := st.SetRegisterWindow(context.Background(), make([]byte, 32), clk.Now().Add(time.Hour), 1); err != nil {
+		t.Fatal(err)
+	}
+	if got.err != nil {
+		t.Errorf("CreateNode returned %v, want nil: the transaction committed", got.err)
+	}
+	hashes, err := st.TokenHashes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.mu.RLock()
+	entries := len(a.byHash)
+	a.mu.RUnlock()
+	if len(hashes) != 1 || entries != 1 {
+		t.Errorf("store hashes=%d auth hashes=%d, want 1 each", len(hashes), entries)
+	}
+	if id, ok := a.Authenticate(got.token); !ok || id != got.id {
+		t.Errorf("authenticate = %d,%v want %d,true", id, ok, got.id)
 	}
 }
