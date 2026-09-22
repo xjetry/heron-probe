@@ -14,6 +14,8 @@
 - 公开状态页（匿名可访问）
 - 流量统计：总量与按重置日滚动的周期用量
 
+已确认要做、但尚未在本文成形的功能点记在仓库根的 `FEATURES.md`；其中某条进入里程碑时，设计并入本文并从那里删除。
+
 **非目标**（明确排除，新增功能前先对照此表）：
 
 | 排除项 | 原因 |
@@ -87,6 +89,8 @@ web/                  React 工程（admin 与 public 两个入口）
 - `AdminService`：`Login`、`Logout`；节点 `ListNodes`、`CreateNode`、`UpdateNode`、`DeleteNode`、`RotateNodeToken`、`ReorderNodes`；注册窗口 `OpenRegisterWindow`、`CloseRegisterWindow`、`GetRegisterWindow`；数据 `GetSnapshot`、`QueryMetrics`、`QueryProbes`、`GetTraffic`、`AdjustTraffic`；探测 `ListProbeTasks`、`SaveProbeTask`、`DeleteProbeTask`；告警 `ListAlertRules`、`SaveAlertRule`、`DeleteAlertRule`、`ListAlertEvents`、`ListNotifyChannels`、`SaveNotifyChannel`、`DeleteNotifyChannel`、`TestNotifyChannel`；设置 `GetSettings`、`UpdateSettings`、`GetStorageStats`。
 - `PublicService`：`GetSite`、`GetSnapshot`、`QueryMetrics`、`QueryProbes`。后两者只对 `public = true` 的节点应答，对其余节点与不存在的节点返回同一个 `NotFound`。
 
+无副作用标注（`idempotency_level = NO_SIDE_EFFECTS`，决定方法是否接受 GET）按服务的信任模型决定，不按读写决定：`PublicService` 的四个方法全部标注，因而可用 GET 调用并带 `Cache-Control`——它无鉴权（§3.2），不存在会被浏览器环境性携带的凭据，§5.3 的 CSRF 论证在这里不成立，而公开页恰是需要被缓存的那一面。缓存上界分别定：实时快照不超过一个上报间隔（更短无意义，更长会展示过期的在线状态），历史查询可更长，站点配置最长。`AdminService` 与 `AgentService` 一律不标：前者是 §5.3 的 CSRF 防线之一，后者的上报本就有副作用。
+
 ## 4. agent 协议
 
 ### 4.1 为什么是 unary 而不是长连接
@@ -95,7 +99,9 @@ hub → agent 的下行只有探测任务列表与上报间隔，都是低频变
 
 unary 是普通 HTTP POST，HTTP/1.1 即可，过反代与 CDN 无需特殊配置。不使用 bidi streaming：它要求 HTTP/2 端到端，反代到 hub 这一跳需要显式配置。
 
-代价：每次上报多一份 HTTP 头部；离线发现由"连接断开即知"变为"TTL 到期才知"。
+连接断开不等于节点宕机——绝大多数断开是网络抖动、反代空闲超时或 hub 重启。长连接方案要避免由此误报，仍须叠一层宽限期，叠完就回到了 TTL 语义，只是额外背上连接状态。更根本的是 §4.4 的不变式会碎：一旦存在连接，"连接在但没有数据"与"数据刚到但连接已断"是两个无法归并的状态，而哪个算在线没有正确答案。
+
+代价：每次上报多一份 HTTP 头部；离线发现由"连接断开即知"变为"TTL 到期才知"。该代价有明确上界，且是被优先满足的约束而非残值——见 §4.4。
 
 ### 4.2 消息
 
@@ -158,7 +164,18 @@ message ProbeResult {
 
 ### 4.4 在线判定
 
-`live` 中每节点一个条目，同时持有最新指标与 `last_seen`（单调钟）。在线 ⇔ `now − last_seen < TTL`，其中 `TTL = max(3 × 下发的上报间隔, 10s)`。"在线"与"有最新数据"是同一个事实，只有这一个来源；不存在第二张在线表。节点从首次成功上报起即在线。
+`live` 中每节点一个条目，同时持有最新指标与 `last_seen`（单调钟）。在线 ⇔ `now − last_seen < TTL`。"在线"与"有最新数据"是同一个事实，只有这一个来源；不存在第二张在线表。节点从首次成功上报起即在线。
+
+TTL 是**离线发现延迟的上界**，也是这条链上唯一被直接配置的量：环境变量 `PROBE_OFFLINE_AFTER`，默认 30s，下限 10s。其余三个量由它反推，不各自取值：
+
+| 量 | 取值 | 依据 |
+|---|---|---|
+| TTL | `PROBE_OFFLINE_AFTER`，默认 30s | 掉线多久应当被看见是产品指标，由部署者定 |
+| 下发的上报间隔 | `TTL / 3` | 一个 TTL 内有三次上报机会，容得下两次连续失败而不误判离线 |
+| agent 退避上限（§4.7） | `TTL` | 恢复后重新可见的时长与掉线被发现的时长同一预算 |
+| 离线告警宽限期（§9.1） | 下限为 TTL | 宽限期短于 TTL 会在面板仍显示在线时告警；两个口径必须同向，由保存规则时的显式校验承载 |
+
+方向不可倒置：不能先按带宽预算选上报间隔、再让 TTL 从中掉出来。间隔是实现细节，TTL 是使用者唯一能感知的那个数。
 
 ### 4.5 时钟
 
@@ -170,7 +187,7 @@ agent 与 hub 不同时升级。hub 必须接受旧 agent 的上报（缺失的 
 
 ### 4.7 失败与退避
 
-上报失败时 agent 做带抖动的指数退避（上限 60s），成功后回到下发间隔。指标不缓存（过期的实时数据没有意义）；探测结果缓存至多 `MAX_AGE`（120s，其取值约束见 §6.4），超龄丢弃。流量不因断连丢失：计数器是累计值，恢复后的首次差分覆盖整个断连区间（前提见 §7）。
+上报失败时 agent 做带抖动的指数退避，上限取 TTL 而非独立取值（§4.4）：上限若长于 TTL，hub 短暂不可用后早已恢复，面板上却仍显示掉线。抖动负责把恢复后的重试摊开，成功后回到下发间隔。指标不缓存（过期的实时数据没有意义）；探测结果缓存至多 `MAX_AGE`（120s，其取值约束见 §6.4），超龄丢弃。流量不因断连丢失：计数器是累计值，恢复后的首次差分覆盖整个断连区间（前提见 §7）。
 
 ### 4.8 注册
 
@@ -336,7 +353,7 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 
 ### 9.1 规则
 
-- 离线：节点超过宽限期未上报。宽限期按节点可配。
+- 离线：节点超过宽限期未上报。宽限期按节点可配，下限为 TTL（§4.4），由保存规则时的显式校验承载：宽限期短于 TTL 会在面板仍显示该节点在线时发出离线告警，两处读的是同一个 `last_seen`，口径必须同向。
 - 探测：某任务在某节点上的丢包率或平均 rtt 连续 N 分钟超过阈值。数据源为 `probe_1m`。
 
 ### 9.2 状态机
@@ -399,7 +416,7 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 1. darwin 采集在 `CGO_ENABLED=0` 下的可行实现（gopsutil 或 purego）：能构建，且在真机读出 CPU、内存、网卡计数器、`boot_id` 等价物。
 2. 非特权数据报 ICMP 在目标 Linux 发行版（含容器环境）与 macOS 上的可用性，以及 `CAP_NET_RAW` 回退路径。
 3. `modernc.org/sqlite` 在约 500 万行规模下的上卷查询、窗口查询与分块 prune 耗时；带对照组（同一数据、同一查询、空闲与并发写入两种条件）。
-4. 经反代（HTTP/2 到反代）时单次上报的线上字节数，用于确定默认上报间隔。
+4. 经反代（HTTP/2 到反代）时单次上报的线上字节数，用于判断 §4.4 由 TTL 反推出的上报间隔在目标规模下的成本是否可接受。结论若为不可接受，要动的是 TTL 这个产品指标或消息体积，不是把间隔调长而默许 TTL 跟着漂。
 5. 含 connect 与 protobuf runtime 的 agent 二进制体积与常驻内存。
 6. 500 节点规模下的库文件大小。
 7. connect-go 处理器对 `application/json`、`application/proto` 之外的 `Content-Type`，以及对未标为无副作用的方法的 GET 请求的实际响应（§5.3 的前提）。
