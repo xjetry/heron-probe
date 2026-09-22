@@ -276,7 +276,16 @@ func TestFlushWritesClosedBucketsOnly(t *testing.T) {
 
 type failingWriter struct {
 	*store.Store
-	fail bool
+	fail      bool
+	failFacts bool
+}
+
+func (f *failingWriter) UpsertFactsAsync(nodeID int64, hash uint64, facts *probev1.Facts, done func(error)) {
+	if f.failFacts {
+		done(errors.New("disk on fire"))
+		return
+	}
+	f.Store.UpsertFactsAsync(nodeID, hash, facts, done)
 }
 
 func (f *failingWriter) WriteMinuteRows(ctx context.Context, rows []metric.Row) (int, error) {
@@ -326,4 +335,67 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("condition not met in time")
+}
+
+// 摘要只在写库成功后记下：写失败时下一次上报必须再次索要 facts，直到落库成功。
+func TestFactsHashNotRecordedWhenWriteFails(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	ctx := context.Background()
+	fw := &failingWriter{Store: h.store, failFacts: true}
+	h.svc.writer = fw
+	req := report(tok, &probev1.Metrics{})
+	req.Msg.Facts = &probev1.Facts{Hostname: "box"}
+	req.Msg.FactsHash = 41
+	if _, err := h.client.Report(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	h.clk.Advance(h.svc.Interval())
+	req = report(tok, &probev1.Metrics{})
+	req.Msg.FactsHash = 41
+	resp, err := h.client.Report(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Msg.WantFacts {
+		t.Fatal("facts write failed, yet the hub stopped asking: the hash was recorded before the write succeeded")
+	}
+	fw.failFacts = false
+	h.clk.Advance(h.svc.Interval())
+	req = report(tok, &probev1.Metrics{})
+	req.Msg.Facts = &probev1.Facts{Hostname: "box"}
+	req.Msg.FactsHash = 41
+	if _, err := h.client.Report(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { m, _ := h.store.FactsHashes(ctx); return m[id] == 41 })
+	h.clk.Advance(h.svc.Interval())
+	req = report(tok, &probev1.Metrics{})
+	req.Msg.FactsHash = 41
+	resp, err = h.client.Report(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.WantFacts {
+		t.Fatal("facts are persisted now; the hub must stop asking")
+	}
+}
+
+// 没有在拦截器里显式列出凭据来源的方法一律拒绝，且不会进入处理函数。
+func TestInterceptorDeniesUnlistedProcedures(t *testing.T) {
+	h := newHub(t)
+	called := false
+	next := connect.UnaryFunc(func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		called = true
+		return nil, nil
+	})
+	req := connect.NewRequest(&probev1.ReportRequest{}) // 未经客户端发送，Spec().Procedure 为空
+	req.Header().Set("Authorization", "Bearer whatever")
+	_, err := h.svc.authInterceptor().WrapUnary(next)(context.Background(), req)
+	if connect.CodeOf(err) != connect.CodeUnauthenticated {
+		t.Errorf("err = %v, want Unauthenticated", err)
+	}
+	if called {
+		t.Fatal("handler must not run for an unlisted procedure")
+	}
 }

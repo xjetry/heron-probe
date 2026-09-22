@@ -33,15 +33,16 @@ type Config struct {
 	TrustedProxies []netip.Prefix
 }
 
-type minuteWriter interface {
+type storeWriter interface {
 	WriteMinuteRows(ctx context.Context, rows []metric.Row) (int, error)
+	UpsertFactsAsync(nodeID int64, hash uint64, f *probev1.Facts, done func(error))
 }
 
 type Service struct {
 	cfg    Config
 	live   *live.Live
 	store  *store.Store
-	writer minuteWriter
+	writer storeWriter
 	auth   *auth.Auth
 	clk    clock.Clock
 	log    *slog.Logger
@@ -150,7 +151,7 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[probev1.Repor
 func (s *Service) reconcileFacts(id int64, hash uint64, f *probev1.Facts) bool {
 	if f != nil {
 		sanitizeFacts(f)
-		s.store.UpsertFactsAsync(id, hash, f, func(err error) {
+		s.writer.UpsertFactsAsync(id, hash, f, func(err error) {
 			if err != nil {
 				s.log.Error("facts write failed", "node", id, "err", err)
 				return
