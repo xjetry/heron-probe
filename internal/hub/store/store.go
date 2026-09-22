@@ -34,8 +34,10 @@ type Store struct {
 
 type writeReq struct {
 	fn func(*sql.Tx) error
-	// res 为 nil 表示调用方不等结果（投递即返回）。
-	res chan error
+	// runWriter 在 inTx 返回最终事务结果后才通知 res 或 done；事务成功提交
+	// 或失败回滚的处理先于通知，回调收到 nil 时可从读池读到已持久化的状态。
+	res  chan error
+	done func(error)
 }
 
 func dsn(path string, extra string) string {
@@ -75,6 +77,8 @@ func (s *Store) runWriter() {
 		err := s.inTx(req.fn)
 		if req.res != nil {
 			req.res <- err
+		} else if req.done != nil {
+			req.done(err)
 		} else if err != nil {
 			s.log.Error("async write failed", "err", err)
 		}
@@ -112,13 +116,7 @@ func (s *Store) write(ctx context.Context, fn func(*sql.Tx) error) error {
 // writeAsync 投递后立即返回；done 在写协程里被调用。队列满时丢弃并报告，
 // 调用方据此保持自己的状态不变，让下一次上报重新触发。
 func (s *Store) writeAsync(fn func(*sql.Tx) error, done func(error)) {
-	req := writeReq{fn: func(tx *sql.Tx) error {
-		err := fn(tx)
-		if done != nil {
-			defer done(err)
-		}
-		return err
-	}}
+	req := writeReq{fn: fn, done: done}
 	select {
 	case s.writes <- req:
 	default:

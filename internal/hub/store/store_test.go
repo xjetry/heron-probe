@@ -36,12 +36,12 @@ func TestOpenCreatesSchemaAtCurrentVersion(t *testing.T) {
 	if v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}
-	var sql string
-	if err := s.r.QueryRow("SELECT sql FROM sqlite_master WHERE name = 'node'").Scan(&sql); err != nil {
+	var seq int
+	if err := s.r.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'").Scan(&seq); err != nil {
 		t.Fatal(err)
 	}
-	if !contains(sql, "AUTOINCREMENT") {
-		t.Fatalf("node.id must never be reused; DDL: %s", sql)
+	if seq != 1 {
+		t.Fatal("node.id must be AUTOINCREMENT: SQLite creates sqlite_sequence only when some table uses it")
 	}
 }
 
@@ -252,12 +252,22 @@ func TestDeleteNodeRemovesDependentRows(t *testing.T) {
 	}
 }
 
-func contains(s, sub string) bool { return len(s) >= len(sub) && (s == sub || indexOf(s, sub) >= 0) }
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
+func TestAsyncCallbackObservesCommittedWrite(t *testing.T) {
+	s, _ := open(t)
+	ctx := context.Background()
+	id, _ := s.CreateNode(ctx, "a", hash(1))
+	if err := s.UpsertFacts(ctx, id, 77, &probev1.Facts{}); err != nil {
+		t.Fatal(err)
 	}
-	return -1
+	seen := make(chan uint64, 1)
+	s.UpsertFactsAsync(id, 78, &probev1.Facts{}, func(err error) {
+		if err != nil {
+			t.Error(err)
+		}
+		m, _ := s.FactsHashes(ctx)
+		seen <- m[id]
+	})
+	if got := <-seen; got != 78 {
+		t.Fatalf("callback observed facts hash %d, want 78: it must run only after the transaction committed", got)
+	}
 }
