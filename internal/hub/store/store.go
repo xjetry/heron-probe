@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	_ "modernc.org/sqlite"
 
@@ -20,18 +21,21 @@ import (
 )
 
 var (
+	ErrClosed   = errors.New("store closed")
 	ErrNotFound = errors.New("not found")
 	ErrNoWindow = errors.New("register window closed")
 	ErrBadKey   = errors.New("register key mismatch")
 )
 
 type Store struct {
-	w      *sql.DB
-	r      *sql.DB
-	clk    clock.Clock
-	log    *slog.Logger
-	writes chan writeReq
-	done   chan struct{}
+	closeMu sync.RWMutex
+	closed  bool
+	w       *sql.DB
+	r       *sql.DB
+	clk     clock.Clock
+	log     *slog.Logger
+	writes  chan writeReq
+	done    chan struct{}
 }
 
 type writeReq struct {
@@ -69,6 +73,12 @@ func Open(path string, clk clock.Clock, log *slog.Logger) (*Store, error) {
 
 // Close 等待队列里的写全部执行完再关闭连接，退出时投递的最后一批刷出不丢。
 func (s *Store) Close() error {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
 	close(s.writes)
 	<-s.done
 	return errors.Join(s.r.Close(), s.w.Close())
@@ -109,22 +119,41 @@ func (s *Store) inTx(fn func(*sql.Tx) error) error {
 // runWriter 给出最终结果。中途放弃等待会让调用方在事务照常提交时误以为失败，
 // 据此不更新内存映射就会造成映射与库分叉。取消只阻止尚未开始的事务。
 func (s *Store) write(ctx context.Context, fn func(*sql.Tx) error) error {
+	s.closeMu.RLock()
+	if s.closed {
+		s.closeMu.RUnlock()
+		return ErrClosed
+	}
+	// runWriter 在通道关闭前持续消费，满队列下的投递仍能完成并释放读锁；
+	// Close 获得写锁后才关闭通道，因此不会因等待此读锁而阻止队列消费。
 	req := writeReq{ctx: ctx, fn: fn, res: make(chan error, 1)}
 	select {
 	case s.writes <- req:
 	case <-ctx.Done():
+		s.closeMu.RUnlock()
 		return ctx.Err()
 	}
+	s.closeMu.RUnlock()
 	return <-req.res
 }
 
 // writeAsync 投递后立即返回；done 在写协程里被调用。队列满时丢弃并报告，
 // 调用方据此保持自己的状态不变，让下一次上报重新触发。
 func (s *Store) writeAsync(fn func(*sql.Tx) error, done func(error)) {
+	s.closeMu.RLock()
+	if s.closed {
+		s.closeMu.RUnlock()
+		if done != nil {
+			done(ErrClosed)
+		}
+		return
+	}
 	req := writeReq{fn: fn, done: done}
 	select {
 	case s.writes <- req:
+		s.closeMu.RUnlock()
 	default:
+		s.closeMu.RUnlock()
 		s.log.Warn("write queue full, dropping async write")
 		if done != nil {
 			done(errors.New("write queue full"))

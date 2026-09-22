@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"runtime"
@@ -28,6 +29,45 @@ func open(t *testing.T) (*Store, *clock.Fake) {
 }
 
 func hash(b byte) []byte { h := make([]byte, 32); h[0] = b; return h }
+
+func TestWriteAfterCloseReturnsErrClosed(t *testing.T) {
+	for _, async := range []bool{false, true} {
+		t.Run(fmt.Sprint(async), func(t *testing.T) {
+			s, err := Open(filepath.Join(t.TempDir(), "closed.db"), clock.Real(), slog.Default())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			fn := func(*sql.Tx) error { t.Error("closed store executed a write"); return nil }
+			if async {
+				result := make(chan error, 1)
+				s.writeAsync(fn, func(e error) { result <- e })
+				select {
+				case err = <-result:
+				case <-time.After(2 * time.Second):
+					t.Fatal("closed async write did not notify")
+				}
+			} else {
+				err = s.write(context.Background(), fn)
+			}
+			if !errors.Is(err, ErrClosed) {
+				t.Fatalf("write after close = %v, want ErrClosed", err)
+			}
+		})
+	}
+}
+
+func TestCloseIsIdempotent(t *testing.T) {
+	s, _ := open(t)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("second Close = %v", err)
+	}
+}
 
 func TestOpenCreatesSchemaAtCurrentVersion(t *testing.T) {
 	s, _ := open(t)

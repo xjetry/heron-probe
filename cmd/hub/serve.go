@@ -84,7 +84,9 @@ func runServe(args []string) error {
 	// 反过来会把退出前最后一分钟的数据丢在内存里。
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	srv.Shutdown(shutdownCtx)
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Error("HTTP shutdown failed", "err", err)
+	}
 	stopFlusher()
 	<-flusherDone
 	return st.Close()
