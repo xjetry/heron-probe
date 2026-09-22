@@ -130,6 +130,14 @@ func (f *fakeHub) Report(_ context.Context, req *connect.Request[probev1.ReportR
 
 func (f *fakeHub) count() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.reports) }
 
+// Report 只追加记录，不修改已收到的请求；取消 runner 不保证服务端已处理完
+// 在途请求，因此读者必须在 mu 下复制切片，不能直接读取仍可能被追加的 reports。
+func (f *fakeHub) received() []*probev1.ReportRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*probev1.ReportRequest(nil), f.reports...)
+}
+
 func newRunner(t *testing.T, hub *fakeHub) (*Runner, chan time.Duration) {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -161,6 +169,9 @@ func newRunner(t *testing.T, hub *fakeHub) (*Runner, chan time.Duration) {
 	return r, sleeps
 }
 
+// runFor 以 hub 侧计数为就绪信号，只适合断言 hub 已收到的内容。
+// 断言 runner 侧事件（sleep）的测试必须直接在该事件上等待：hub 计数并不
+// 保证 runner 已处理响应，取消可能让 Runner.Run 直接返回而不再产生该事件。
 func runFor(t *testing.T, r *Runner, hub *fakeHub, reports int) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -182,10 +193,11 @@ func TestFirstReportCarriesFactsThenOnlyOnRequest(t *testing.T) {
 	r, _ := newRunner(t, hub)
 	hub.wantNext = false
 	runFor(t, r, hub, 2)
-	if hub.reports[0].Facts == nil || hub.reports[0].FactsHash == 0 {
+	reports := hub.received()
+	if reports[0].Facts == nil || reports[0].FactsHash == 0 {
 		t.Fatal("first report must carry facts and their hash")
 	}
-	if hub.reports[1].Facts != nil || hub.reports[1].FactsHash != hub.reports[0].FactsHash {
+	if reports[1].Facts != nil || reports[1].FactsHash != reports[0].FactsHash {
 		t.Fatal("second report must carry only the hash")
 	}
 }
@@ -209,13 +221,14 @@ func TestFactsChangeIsReportedWithoutRestart(t *testing.T) {
 	if err := r.Run(context.Background()); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if hub.reports[0].Facts == nil {
+	reports := hub.received()
+	if reports[0].Facts == nil {
 		t.Fatal("first report missing facts")
 	}
-	if hub.reports[1].FactsHash == hub.reports[0].FactsHash {
+	if reports[1].FactsHash == reports[0].FactsHash {
 		t.Fatal("facts hash did not change after hostname changed")
 	}
-	if f := hub.reports[2].Facts; f == nil || f.Hostname != "new" {
+	if f := reports[2].Facts; f == nil || f.Hostname != "new" {
 		t.Fatalf("requested facts = %+v, want new hostname", f)
 	}
 }
@@ -227,7 +240,8 @@ func TestWantFactsTriggersResend(t *testing.T) {
 	hub.wantNext = true // 首次响应就要求 facts → 第二次上报再次携带
 	hub.mu.Unlock()
 	runFor(t, r, hub, 2)
-	if hub.reports[1].Facts == nil {
+	reports := hub.received()
+	if reports[1].Facts == nil {
 		t.Fatal("want_facts must make the next report carry facts")
 	}
 }
@@ -235,9 +249,17 @@ func TestWantFactsTriggersResend(t *testing.T) {
 func TestAdoptsIntervalFromResponse(t *testing.T) {
 	hub := &fakeHub{interval: 7000}
 	r, sleeps := newRunner(t, hub)
-	runFor(t, r, hub, 1)
-	if d := <-sleeps; d != 7*time.Second {
-		t.Fatalf("slept %v after first response, want the assigned 7s", d)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { r.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	select {
+	case d := <-sleeps:
+		if d != 7*time.Second {
+			t.Fatalf("slept %v after first response, want the assigned 7s", d)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runner never slept after the first response")
 	}
 }
 
