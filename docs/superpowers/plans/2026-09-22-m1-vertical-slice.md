@@ -1172,9 +1172,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -1442,6 +1444,53 @@ func TestAsyncCallbackObservesCommittedWrite(t *testing.T) {
 		t.Fatalf("callback observed facts hash %d, want 78: it must run only after the transaction committed", got)
 	}
 }
+
+// 已入队但尚未开始的事务在 ctx 取消后不执行：调用方得到 ctx.Err() 且库无变化。
+func TestCancelBeforeStartSkipsTransaction(t *testing.T) {
+	s, _ := open(t)
+	gate := make(chan struct{})
+	started := make(chan struct{})
+	go s.write(context.Background(), func(*sql.Tx) error { close(started); <-gate; return nil })
+	<-started // 写协程正被第一个事务占住，后面的请求只能排队
+	ctx, cancel := context.WithCancel(context.Background())
+	res := make(chan error, 1)
+	go func() { _, err := s.CreateNode(ctx, "queued", hash(1)); res <- err }()
+	for len(s.writes) == 0 {
+		runtime.Gosched() // 等它真的入队，否则走的是入队前取消那条路径
+	}
+	cancel()
+	close(gate)
+	if err := <-res; !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if nodes, _ := s.ListNodes(context.Background()); len(nodes) != 0 {
+		t.Fatalf("node was created despite cancellation before start: %+v", nodes)
+	}
+}
+
+// 已开始的事务不受取消影响，调用方必须拿到真实结果：nil 且库里有行。
+func TestCancelDuringTransactionStillReportsCommit(t *testing.T) {
+	s, _ := open(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	inside := make(chan struct{})
+	res := make(chan error, 1)
+	go func() {
+		res <- s.write(ctx, func(tx *sql.Tx) error {
+			close(inside)
+			<-ctx.Done() // 事务进行中 ctx 被取消
+			_, err := tx.Exec("INSERT INTO node (name, token_hash, created_at) VALUES ('mid', ?, 0)", hash(2))
+			return err
+		})
+	}()
+	<-inside
+	cancel()
+	if err := <-res; err != nil {
+		t.Fatalf("err = %v, want nil: the transaction committed", err)
+	}
+	if nodes, _ := s.ListNodes(context.Background()); len(nodes) != 1 {
+		t.Fatalf("committed row missing: %+v", nodes)
+	}
+}
 ```
 
 - [ ] **Step 2: 跑，确认红**
@@ -1486,7 +1535,9 @@ type Store struct {
 }
 
 type writeReq struct {
-	fn func(*sql.Tx) error
+	// ctx 只在写协程开始事务前被检查：已取消就不开事务。异步请求为 nil，永不取消。
+	ctx context.Context
+	fn  func(*sql.Tx) error
 	// res 与 done 都由 runWriter 在 inTx 返回（事务已提交或已回滚）之后触发：
 	// 等待方与回调方看到的都是已持久化的状态。res 非 nil 表示调用方在等结果；
 	// done 非 nil 表示投递即返回、结果经回调送达。
@@ -1528,7 +1579,13 @@ func (s *Store) Close() error {
 func (s *Store) runWriter() {
 	defer close(s.done)
 	for req := range s.writes {
-		err := s.inTx(req.fn)
+		var err error
+		if req.ctx != nil && req.ctx.Err() != nil {
+			// 尚未开始的事务尊重取消：不开事务，以 ctx.Err() 作为结果分发。
+			err = req.ctx.Err()
+		} else {
+			err = s.inTx(req.fn)
+		}
 		switch {
 		case req.res != nil:
 			req.res <- err
@@ -1552,20 +1609,20 @@ func (s *Store) inTx(fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
-// write 投递一个事务并等待其结果。ctx 取消只放弃等待：已入队的事务仍会执行。
+// write 投递一个事务并等待其结果。
+//
+// 结果语义是 auth 只在 nil 后改映射的前提：返回错误意味着事务未应用，返回 nil
+// 意味着已提交。所以一旦入队就无条件等到写协程的结果——中途随 ctx 放弃等待
+// 会让调用方在事务照常提交时误以为失败，映射与库由此分叉。取消只在两处生效：
+// 入队之前，以及写协程开始事务之前（runWriter 的预检）。
 func (s *Store) write(ctx context.Context, fn func(*sql.Tx) error) error {
-	req := writeReq{fn: fn, res: make(chan error, 1)}
+	req := writeReq{ctx: ctx, fn: fn, res: make(chan error, 1)}
 	select {
 	case s.writes <- req:
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	select {
-	case err := <-req.res:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return <-req.res
 }
 
 // writeAsync 投递后立即返回；done 在写协程里、事务提交之后被调用。队列满时
@@ -2164,6 +2221,8 @@ func (s *Store) SetRollupWatermark(ctx context.Context, level string, uptoTS int
 2. `WriteMinuteRows` 里把 `r.TS < upto` 改成 `r.TS <= upto`，预期 `TestWriterRejectsRowsBeforeRollupWatermark` 红（ts 900 也被拒）。改回。
 3. `RegisterNode` 里去掉 `remaining <= 0` 判断，预期 `TestRegisterNodeConsumesWindow` 红（第三次注册成功）。改回。
 4. `writeAsync` 改回在事务函数内 `defer done(err)`（提交前触发），预期 `TestAsyncCallbackObservesCommittedWrite` 红且报错含 "observed facts hash 77"。改回。
+5. `write` 入队后改回 `select { case err := <-req.res: … case <-ctx.Done(): return ctx.Err() }`，预期 `TestCancelDuringTransactionStillReportsCommit` 红（err = context canceled, want nil）。改回。
+6. `runWriter` 去掉 ctx 预检，预期 `TestCancelBeforeStartSkipsTransaction` 红（节点被创建）。改回。
 
 - [ ] **Step 11: 提交**
 
