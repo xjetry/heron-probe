@@ -6,6 +6,7 @@ gen:
 	buf generate
 
 lint:
+	go mod tidy -diff
 	buf lint
 	go vet ./...
 	GOOS=linux go vet ./...
