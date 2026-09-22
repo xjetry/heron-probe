@@ -18,6 +18,12 @@ import (
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
+func newMux(svc *ingest.Service) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.Handle(svc.Handler())
+	return mux
+}
+
 func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	db := fs.String("db", "probe.db", "SQLite database path")
@@ -58,8 +64,7 @@ func runServe(args []string) error {
 		return err
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle(svc.Handler())
+	mux := newMux(svc)
 	srv := &http.Server{
 		Addr: *listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second, // ReadMaxBytes 限量不限时。
