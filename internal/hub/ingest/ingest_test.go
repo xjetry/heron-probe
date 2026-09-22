@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -468,6 +469,40 @@ func TestInterceptorPassesStreamingClientsThrough(t *testing.T) {
 	h.svc.authInterceptor().WrapStreamingClient(next)(context.Background(), connect.Spec{})
 	if !called {
 		t.Fatal("streaming client was not passed through")
+	}
+}
+
+// 真实 Connect 挂载负责填入 Procedure 与 Peer；超限请求不能进入处理函数，
+// 因为处理函数的任何语句都可能触碰注册裁决的写协程。
+func TestInterceptorRateLimitsAnonymousRegisterBeforeDispatch(t *testing.T) {
+	h := newHub(t)
+	var called atomic.Int32
+	handler := connect.NewUnaryHandler(probev1connect.AgentServiceRegisterProcedure,
+		func(ctx context.Context, req *connect.Request[probev1.RegisterRequest]) (*connect.Response[probev1.RegisterResponse], error) {
+			called.Add(1)
+			return connect.NewResponse(&probev1.RegisterResponse{NodeId: 77, Token: "accepted"}), nil
+		}, connect.WithInterceptors(h.svc.authInterceptor()))
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	client := probev1connect.NewAgentServiceClient(srv.Client(), srv.URL)
+	for attempt := 1; attempt <= 30; attempt++ {
+		resp, err := client.Register(context.Background(), connect.NewRequest(&probev1.RegisterRequest{}))
+		if got := called.Load(); got != int32(attempt) {
+			t.Fatalf("attempt %d: called = %d, want %d", attempt, got, attempt)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.Msg.GetNodeId() != 77 || resp.Msg.GetToken() != "accepted" {
+			t.Fatalf("attempt %d: handler result changed: %v", attempt, resp.Msg)
+		}
+	}
+	_, err := client.Register(context.Background(), connect.NewRequest(&probev1.RegisterRequest{}))
+	if got := called.Load(); got != 30 {
+		t.Fatalf("attempt 31: called = %d, want 30: rate-limited request must not enter handler", got)
+	}
+	if connect.CodeOf(err) != connect.CodeResourceExhausted {
+		t.Fatalf("attempt 31: err = %v, want ResourceExhausted", err)
 	}
 }
 

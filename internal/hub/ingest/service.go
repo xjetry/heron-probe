@@ -91,6 +91,7 @@ func (s *Service) Handler() (string, http.Handler) {
 }
 
 type nodeKey struct{}
+type registerFromKey struct{}
 
 func unauthenticated() error {
 	return connect.NewError(connect.CodeUnauthenticated, errors.New("unauthenticated"))
@@ -98,6 +99,8 @@ func unauthenticated() error {
 
 // authInterceptor 在挂载点上裁决每个方法的凭据来源。没有在这里显式列出的
 // 方法一律拒绝：新增方法不可能因为忘了加检查而被放行。
+// 匿名注册的 handler 体内任何语句都可能触碰写协程，因此来源限速也必须
+// 在此完成，由拦截器拒绝分发来保证超限请求先于 handler 的一切操作被挡住。
 type authInterceptor struct{ service *Service }
 
 func (s *Service) authInterceptor() connect.Interceptor { return authInterceptor{service: s} }
@@ -115,8 +118,12 @@ func (i authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
 		switch req.Spec().Procedure {
 		case probev1connect.AgentServiceRegisterProcedure:
+			from := auth.ClientIP(req.Peer().Addr, req.Header().Get("X-Forwarded-For"), s.cfg.TrustedProxies)
+			if !s.registerLimit.allow(from, s.clk.Mono(), time.Second) {
+				return nil, connect.NewError(connect.CodeResourceExhausted, errors.New("registration rate limit exceeded for source address"))
+			}
 			// 凭据是请求体里的窗口 key，由 Register 裁决。
-			return next(ctx, req)
+			return next(context.WithValue(ctx, registerFromKey{}, from), req)
 		case probev1connect.AgentServiceReportProcedure:
 			tok, ok := strings.CutPrefix(req.Header().Get("Authorization"), "Bearer ")
 			if !ok {
@@ -133,11 +140,8 @@ func (i authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 }
 
 func (s *Service) Register(ctx context.Context, req *connect.Request[probev1.RegisterRequest]) (*connect.Response[probev1.RegisterResponse], error) {
-	from := auth.ClientIP(req.Peer().Addr, req.Header().Get("X-Forwarded-For"), s.cfg.TrustedProxies)
-	// 窗口关闭也会经写协程裁决；先按来源限速，避免匿名请求耗尽写队列。
-	if !s.registerLimit.allow(from, s.clk.Mono(), time.Second) {
-		return nil, connect.NewError(connect.CodeResourceExhausted, errors.New("registration rate limit exceeded for source address"))
-	}
+	// 挂载点的拦截器只向通过限速的请求传入来源，窗口裁决复用同一来源地址。
+	from := ctx.Value(registerFromKey{}).(netip.Addr)
 	name := sanitizeString(strings.TrimSpace(req.Msg.GetName()))
 	if name == "" {
 		name = "node"
