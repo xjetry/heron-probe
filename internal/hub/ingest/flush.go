@@ -45,11 +45,10 @@ func (s *Service) Flush(ctx context.Context, all bool) {
 }
 
 // RunFlusher 在每个分钟边界后半秒刷出一次，ctx 结束时把全部桶刷出后返回。
-// 半秒的偏移保证按墙钟分钟闭合的桶在刷出时确实已经闭合。
 func (s *Service) RunFlusher(ctx context.Context) {
 	for {
 		wall := s.clk.Now()
-		next := wall.Truncate(time.Minute).Add(time.Minute + 500*time.Millisecond)
+		next := nextFlushAt(wall)
 		timer := time.NewTimer(next.Sub(wall))
 		select {
 		case <-ctx.Done():
@@ -60,4 +59,9 @@ func (s *Service) RunFlusher(ctx context.Context) {
 			s.Flush(ctx, false)
 		}
 	}
+}
+
+// nextFlushAt 的半秒偏移保证按墙钟分钟闭合的桶在刷出时确实已闭合。
+func nextFlushAt(wall time.Time) time.Time {
+	return wall.Truncate(time.Minute).Add(time.Minute + 500*time.Millisecond)
 }
