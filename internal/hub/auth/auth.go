@@ -126,10 +126,10 @@ func (a *Auth) dropLocked(id int64) {
 	}
 }
 
-func (a *Auth) OpenWindow(ctx context.Context, ttl time.Duration, max int) (key string, until time.Time, err error) {
+func (a *Auth) OpenWindow(ctx context.Context, ttl time.Duration, maxNodes int) (key string, until time.Time, err error) {
 	plain, h := NewToken()
 	until = a.clk.Now().Add(ttl)
-	if err := a.store.SetRegisterWindow(ctx, h[:], until, max); err != nil {
+	if err := a.store.SetRegisterWindow(ctx, h[:], until, maxNodes); err != nil {
 		return "", time.Time{}, err
 	}
 	return plain, until, nil

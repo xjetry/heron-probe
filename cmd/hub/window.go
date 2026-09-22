@@ -15,7 +15,7 @@ func runWindow(args []string) error {
 	fs := flag.NewFlagSet("window "+args[0], flag.ContinueOnError)
 	db := fs.String("db", "probe.db", "SQLite database path")
 	ttl := fs.Duration("ttl", time.Hour, "how long the window stays open (open)")
-	max := fs.Int("max", 10, "how many nodes may register (open)")
+	maxNodes := fs.Int("max", 10, "how many nodes may register (open)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -27,11 +27,11 @@ func runWindow(args []string) error {
 	ctx := context.Background()
 	switch args[0] {
 	case "open":
-		key, until, err := a.OpenWindow(ctx, *ttl, *max)
+		key, until, err := a.OpenWindow(ctx, *ttl, *maxNodes)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("key: %s\nexpires: %s\nmax: %d\n", key, until.UTC().Format(time.RFC3339), *max)
+		fmt.Printf("key: %s\nexpires: %s\nmax: %d\n", key, until.UTC().Format(time.RFC3339), *maxNodes)
 	case "close":
 		return a.CloseWindow(ctx)
 	case "show":
