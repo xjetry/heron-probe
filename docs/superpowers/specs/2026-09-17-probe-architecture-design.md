@@ -116,7 +116,7 @@ service AgentService {
 
 message ReportRequest {
   Metrics metrics = 1;
-  repeated ProbeResult probe_results = 2;
+  repeated ProbeResult probe_results = 2;   // 一次至多 1024 条（probelimit.MaxResultsPerReport），多余留待下一次上报
   uint64  tasks_version = 3;   // agent 当前持有的探测任务版本
   fixed64 facts_hash = 4;      // agent 静态信息的摘要
   Facts   facts = 5;           // 进程启动后的首次上报携带；此后仅在 hub 要求时携带
@@ -154,7 +154,7 @@ message ProbeResult {
   oneof outcome {
     uint32 rtt_us = 3;
     Timeout timeout = 4;       // 计入丢包
-    ProbeError error = 5;      // 无权限、解析失败等；不计入丢包
+    ProbeError error = 5;      // 无权限、解析失败等；不计入丢包；message 至多 128 字节，agent 按 rune 截断、hub 超长拒收
   }
 }
 ```
@@ -169,7 +169,7 @@ message ProbeResult {
 
 `live` 中每节点一个条目，同时持有最新指标与 `last_seen`（单调钟）。在线 ⇔ `now − last_seen < TTL`。"在线"与"有最新数据"是同一个事实，只有这一个来源；不存在第二张在线表。节点从首次成功上报起即在线。
 
-TTL 是**离线发现延迟的上界**，也是这条链上唯一被直接配置的量：环境变量 `PROBE_OFFLINE_AFTER`，默认 30s，下限 10s。其余三个量由它反推，不各自取值：
+TTL 是**离线发现延迟的上界**，也是这条链上唯一被直接配置的量：环境变量 `PROBE_OFFLINE_AFTER`，默认 30s，下限 10s，上限 180s。其余三个量由它反推，不各自取值：
 
 | 量 | 取值 | 依据 |
 |---|---|---|
@@ -179,6 +179,8 @@ TTL 是**离线发现延迟的上界**，也是这条链上唯一被直接配置
 | 离线告警宽限期（§9.1） | 下限为 TTL | 宽限期短于 TTL 会在面板仍显示在线时告警；两个口径必须同向，由保存规则时的显式校验承载 |
 
 方向不可倒置：不能先按带宽预算选上报间隔、再让 TTL 从中掉出来。间隔是实现细节，TTL 是使用者唯一能感知的那个数。
+
+上限来自结果排空：上报间隔是 TTL/3，一次上报至多携带 `MaxResultsPerReport`（1024）条探测结果，必须能排空 `MaxTasksPerNode / MinIntervalS`（64 任务 / 5 s）的满速产出并留余量——超过 hub 读上限（256 KiB，由这些常量推导）的请求会被整条拒绝并回队，形成永久失败。这条关系由编译期断言钉住，放宽任何一个常量都必须重新审视。
 
 ### 4.5 时钟
 
@@ -190,7 +192,7 @@ agent 与 hub 不同时升级。hub 必须接受旧 agent 的上报（缺失的 
 
 ### 4.7 失败与退避
 
-上报失败时 agent 做带抖动的指数退避，上限取 TTL 而非独立取值（§4.4）：上限若长于 TTL，hub 短暂不可用后早已恢复，面板上却仍显示掉线。抖动负责把恢复后的重试摊开，成功后回到下发间隔。指标不缓存（过期的实时数据没有意义）；探测结果缓存至多 `MAX_AGE`（120s，其取值约束见 §6.4），超龄丢弃。流量不因断连丢失：计数器是累计值，恢复后的首次差分覆盖整个断连区间（前提见 §7）。
+上报失败时 agent 做带抖动的指数退避，上限取 TTL 而非独立取值（§4.4）：上限若长于 TTL，hub 短暂不可用后早已恢复，面板上却仍显示掉线。抖动负责把恢复后的重试摊开，成功后回到下发间隔。指标不缓存（过期的实时数据没有意义）；探测结果缓存至多 `MAX_AGE`（120s，其取值约束见 §6.4），超龄丢弃；hub 以 `InvalidArgument` 拒绝的请求不回队——确定性拒绝重发无益。回队是至少一次语义：hub 已入账但响应丢失时同一批结果会重复计入，协议未做去重，精确一次留待后续里程碑。流量不因断连丢失：计数器是累计值，恢复后的首次差分覆盖整个断连区间（前提见 §7）。
 
 ### 4.8 注册
 
@@ -348,12 +350,14 @@ agent 默认汇总除 `lo` 与虚拟网卡（`docker*`、`veth*`、`br-*`、`vir
 
 ### 8.1 任务与版本
 
-`ProbeTask{id, kind(icmp|tcp), target, interval_s, timeout_ms}`，通过 `probe_task_node` 分配到节点。经管理接口对任务或分配的任何修改都经由 `probe` 包内唯一的写入口，在同一事务内递增 `probe_meta.version`；删除节点顺带删除它的分配行不递增——版本号的用途是让清单变化的 agent 重取，被删节点的 token 已撤销、其余节点的清单未变。版本全局唯一而非每节点一份：修改是管理员的低频动作，全体 agent 各多取一次列表的代价可以忽略，换来的是不需要维护"哪些节点受这次修改影响"的推导。
+`ProbeTask{id, kind(icmp|tcp), target, interval_s, timeout_ms}`，通过 `probe_task_node` 分配到节点。经管理接口对任务或分配的任何修改都经由 `probe` 包内唯一的写入口，在同一事务内把 `probe_meta.version` 改为 `max(version + 1, 修改时刻的 Unix 秒)`：严格递增，且库从备份恢复后重做编辑得到的值大于 agent 从旧库拿到的值——收敛条件是重做时的 Unix 秒大于 agent 持有的旧版本值（同一秒内多次编辑会把版本推到秒数之上）；同秒重做或时钟回拨到该值以下仍可能碰撞，需重启 agent。agent 只比较相等与否。删除节点顺带删除它的分配行不改版本——版本号的用途是让清单变化的 agent 重取，被删节点的 token 已撤销、其余节点的清单未变。版本全局唯一而非每节点一份：修改是管理员的低频动作，全体 agent 各多取一次列表的代价可以忽略，换来的是不需要维护"哪些节点受这次修改影响"的推导。
 
 ### 8.2 执行
 
 - ICMP：优先用非特权数据报 ICMP socket；不可用且进程持有 `CAP_NET_RAW` 时退到 raw socket；都不可用则每次回报 `error`，面板显示原因，而不是静默呈现为 100% 丢包。
-- TCP：连接建立耗时即 rtt。
+- TCP：连接建立耗时即 rtt，解析在计时之前完成。
+- 丢包与 `error` 的分界两种探测共用一句口径：这一次没有联通是可达性事实，计入丢包（超时、连接被拒或重置、网络或主机不可达）；本地无法发起才是 `error`（无 socket、解析失败、地址非法、fd 耗尽、权限）。
+- 名字的地址族按本机可建的 socket 选、v4 优先、不看路由；仅 IPv6 的主机上双栈名字会选到 v4，是当前的已知限制。
 - 各任务的首次触发时刻加随机偏移，避免同一时刻齐发。
 - ICMP 实现用 `golang.org/x/net/icmp`（纯 Go，与 hub 已依赖的 `x/crypto` 同源；§2 的"零第三方依赖"说的是 /proc / /sys 采集）。启动时探测两种 socket 的可用性并写入 `Facts.icmp_available`。每个地址族一个共享 socket，单读协程按 payload（进程 nonce + task_id + seq）把回包分发给等待中的探测；不按 ICMP ID 匹配——Linux 数据报 socket 的回包 ID 被内核改成本地端口，macOS 的公网回包 ID 也会被改写；读侧只接受 Echo Reply，raw socket 与 macOS 的 udp6 会先读到自己发出的 Echo Request，macOS 同进程的数据报 socket 之间会互相收到对方的回包（§13 第 2 项的实验结论）。
 - 结果进有界队列，上报时整体取走并按单调钟折算 `age_ms`；队列满时丢最旧的并计数，不阻塞探测协程。任务集更新时停掉消失的任务、启动新增的任务，未变化的任务不重启计时。

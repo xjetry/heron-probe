@@ -1808,3 +1808,57 @@ git commit -m "agent: 上报携带探测结果并按版本对账任务，端到�
 - 探测族与指标族各自的水位、冻结检查、上卷、清理都有断言；`ingest` 的归属 / 超龄 / 结构三类准入各有正反测试；agent 侧硬限制与 hub 侧硬限制各有自己的测试。
 - 生成物与工作树一致（`git status --porcelain -- gen web/src/gen` 为空）。
 - spec 的三处修订（§6.3 可空 rtt 列、§8.2 共享 socket 与 payload 匹配、§8.3 `ProbeSample`）与 §13 第 2 项的确认随本计划提交。
+
+---
+
+## 执行修正
+
+执行中发现的计划缺陷与实际采用的做法。计划正文保持原样，读计划时以本节为准。
+
+### Task 1（探测表族与任务事务）
+- Global Constraints 与 `ddlProbeMeta` 注释写成"任务或分配的任何修改都在同一事务内把版本加一"，但 `DeleteNode` 顺带删除分配行不加版本。实际口径：经管理接口对任务或分配的修改加一；删除节点不加——版本号的用途是让清单变化的 agent 重取，被删节点不能再上报、其余节点的清单未变。spec §8.1 已同步收窄。
+- 迁移不变式写成"迁移后的库与全新库经 `PRAGMA table_info` 逐表相同"，照不到索引；本任务引入库里第一个二级索引 `probe_task_node_by_node`，从迁移 4 删掉它全量测试仍绿。实际口径：逐表、逐索引（`sqlite_master` 的非 `sqlite_` 索引、`index_info` 列序、unique 标志）比对。
+- v3 夹具 `v3Statements()` 由现行常量拼出，不是冻结文本；实际冻结为字面量，与 v2 夹具同形。
+
+### Task 2（任务注册表与硬限制）
+- `CheckTask` 的"`timeout_ms` 不得超过 `interval_s` 的毫秒数"在两组范围约束下恒成立（5 s ≥ 5000 ms），用例 `timeout_ms 6000, interval_s 5` 先命中范围错误；实际删掉该检查，用编译期断言钉住 `MinIntervalS*1000 ≥ MaxTimeoutMs`。
+- `HoldWriterForTest` 定义在 store 的 `export_test.go`，probe 包测试调不到；`TestRegistryForgetCannotBeRevivedByEarlierSave` 实际放在 `internal/hub/store/registry_race_test.go`（`package store_test`）。
+- `validHost` 用 `netip.ParseAddr` 判 IP 字面量，IPv6 zone 让任意字节通过；实际拒绝带 zone 的地址。
+
+### Task 3（上报路径）
+- 文件清单漏了 `cmd/hub/mux_test.go`（调用 `ingest.New`，签名变更必须同步装配 registry）。
+- 原文让 `ingest.Forget` 增加 `s.tasks.Forget(nodeID)` 但未说位置：写协程里的 facts 回调会取 `ingest.mu`，而 `Registry.Forget` 要等持 `writeMu` 的 Save 完成 store 往返；若在 mu 下调用会形成写协程死锁环。实际在所有 ingest 锁之外、进入 `pendingMu`/`stateMu` 之前调用。
+- Forget 与在途 Save 的并发回归需要 store 测试构建里的 `HoldWriterForTest`，实际放在 `internal/hub/store/`（`package store_test`），与 Task 2 的同类测试同处。
+- `validateResults` 注释原文"更大的 rtt 不可能来自合法的 agent"是排他论断且无人保证：引擎测得耗时临近截止时可能略超 timeout，叠加 runner 对任何错误都 Requeue，会让节点约 120 s 内的上报全被整条拒绝。实际：注释改为带保证方的前提；引擎把测得耗时超过任务超时的结果记为 Timeout；runner 遇 InvalidArgument 丢弃本批结果不 Requeue。
+- Task 1 保留的 `WriteMinuteRows` 包装在 Task 3 后没有生产调用方，按"不留兼容层"删除，测试调用点迁到 `WriteMinuteBatch`。
+
+### Task 4（管理接口）
+- proto `ListProbeTasksResponse.version` 注释原文"任何修改都加一"与版本口径冲突，实际收窄为"经任务管理接口的修改都加一，删除节点清理分配不加"。
+- 原文让 api 在边界补 "(maximum 64)"、透传 store 的 "%w: node %d" 文本，导致同一服务里"节点不存在"出现两种措辞且缺请求字段；实际由 store 用类型化错误（`NotFoundError`、`NodeLimitError`）写全句子，api 只加字段前缀。
+- proto 注释补齐 `QueryProbesResponse.level`/`step_s`、series 排序、Save/Delete 方法注释与四项约束（target ≤ 253 字节、TCP 规范 host:port、端口 1–65535、IP 不带 zone）。
+
+### Task 5（agent 探测引擎）
+- ICMP 测试的 nonce 注入原文"让假回包经 deliver 注入陌生 key"测不到 nonce 比较（pending 查找先挡住）；实际构造同 key、异 nonce 的 payload 经 `parsePayload` 再 deliver。
+- TCP 引擎草稿在 DialContext 前开始计时，把 DNS 耗时算进 rtt，与 resolve 注释矛盾；实际先解析再连数字地址，rtt 只计连接建立，Close 不计入。
+- 计划写 `ipv6.ICMPTypeEcho`，x/net 的常量是 `ipv6.ICMPTypeEchoRequest`。
+- 计划钉 `golang.org/x/net v0.57.0`，与现有 x/crypto 版本不相容；实际用 v0.58.0（不降级 crypto），并在真实回环测试中重新确认该版本下 udp4 读缓冲不带 IP 头。
+- TCP 与 ICMP 超时用例原文都用 192.0.2.1 作黑洞，本机经 VPN 路由可连通、宿主网络也可能应答；实际 TCP 引擎注入拨号依赖，ICMP 引入包内 socket 接口与丢包替身，超时与 Close 唤醒都在替身上验证。
+- 网络不可达（ENETUNREACH/EHOSTUNREACH）两引擎统一记为丢包；spec §8.2 原只规定 TCP 的口径，已同步。
+- 引擎与 TCP 引擎都接受注入的 `*net.Resolver`（零值用 `net.DefaultResolver`），测试不再改全局解析器。
+
+### Task 6（agent 接入与 e2e）
+- e2e 断言原文写 `.errors == 0`：`ProbeSample.errors` 是非 optional 标量，connect 的 ProtoJSON 缺省省略零值，jq 读到 null。改为 `(.errors // 0) == 0`；不为测试改 codec。
+- e2e 重启前的探测断言原为一次性查询，依赖分钟刷出恰好落在查询之前（按常量算最坏余量为负）；改为轮询 QueryProbes 到条件成立、截止 75 s。
+- runner 每轮读 `Queue.Dropped()`，增长时 Warn 增量——spec §8.2 要求的"队列满时丢最旧并计数"此前没有生产读者。
+
+### 整分支终审后的修正
+- 探测结果批次此前无体积上界：hub 对超过读上限的请求回 ResourceExhausted，runner 把它当可重试回队，64 任务全 error 时 40 s 积压即超过 64 KiB，节点永久离线。实际：probelimit 新增 `MaxResultsPerReport`（1024）与 `MaxErrorMessageLen`（128 字节），Queue.Take 限条数、ToProto 按 rune 截断、validateResults 作第二道守卫；ingest 读上限改 256 KiB 并由常量推导加编译期断言；`PROBE_OFFLINE_AFTER` 加 180 s 上限并用编译期断言钉住"一次上报能排空满速产出"。
+- 版本号原为纯计数器：库从备份恢复后重做编辑可能得到与 agent 已持有的相同数字、内容不同，hub 永不下发。实际：`bumpProbeVersion` 改为 `max(version+1, Unix 秒)`；收敛条件：恢复后重做编辑时的 Unix 秒大于 agent 持有的旧版本值（同一秒多次编辑会把版本推到 Unix 秒之上）；同秒重做或时钟回拨到该值以下仍可能碰撞，需重启 agent。
+- TCP 与 ICMP 的错误分类统一到 prober 包内一个共享函数：超时/截止、ECONNREFUSED、ECONNRESET、ETIMEDOUT、ENETUNREACH、EHOSTUNREACH、EHOSTDOWN 计丢包，其余本地错误（fd 耗尽、权限、地址不可用等）为 error。
+- 被拒任务只在 Apply 时回报一次 error（并 Warn）：同版本部署里 hub 用同一份 probelimit 校验、到不了这里；不按间隔持续回报，是因为超限清单若按间隔产出 error 结果会绕开每节点上限本来要压住的结果量。
+- `Runner.Prober`/`Results` 改为必填；DeleteProbeTask 的 NotFound 前缀改为请求字段 `id`；WriteMinuteBatch 读水位的键取自 family 定义；两条并发回归改用可观测同步点。
+
+### 已知限制（记录，不在本计划改）
+- 地址族选择只看 socket 是否可建、v4 优先、不看路由：仅 IPv6 的主机上双栈名字会永久选到 v4（ICMP 持续 error、TCP 持续丢包）。支持 IPv6-only 部署时需按路由选族。
+- Darwin 上 raw v4 回退 socket 收到带 IP 选项的回包时，x/net v0.58.0 `ipv4/payload_cmsg.go` 的 `*net.IPConn` 分支返回长度多出 20 字节，`parsePayload` 严格要求 32 字节，这类回包计为丢包；只在数据报 socket 创建失败且对端使用 IP 选项时出现。
+- 上报失败回队是至少一次语义：hub 已折叠但响应丢失（客户端 15 s 超时、连接断开）时同一批结果会重复计入 sent 与 rtt。精确一次需协议加结果序号去重，留待后续里程碑（spec §4.7 已注明）。
