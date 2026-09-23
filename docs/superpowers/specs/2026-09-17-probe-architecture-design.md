@@ -229,6 +229,7 @@ agent 与 hub 不同时升级。hub 必须接受旧 agent 的上报（缺失的 
 hub 只监听明文 HTTP，TLS 由反代（Caddy / nginx / CDN）终止，hub 内没有证书代码。
 
 - `--listen` 默认 `127.0.0.1:8080`。监听非 loopback 地址时启动日志告警：此时任何人都能绕过反代直连并自带转发头。
+- `--timezone` 是 IANA 时区名，默认取 hub 进程的本地时区；只用于 §7 流量周期的重置日判定与面板文案，不参与任何时长计算。
 - `--trusted-proxies` 显式给出 CIDR 列表。只有 TCP 对端地址落在列表内的请求，其 `X-Forwarded-For` / `X-Forwarded-Proto` 才被采信。空列表 = 不信任任何转发头、一律用 TCP 对端地址，是收紧方向。hub 不从请求头推断自己是否在反代之后。
 - `--site-url` 显式给出对外地址，用于生成安装命令；不从 `Host` 头推断。
 
@@ -262,7 +263,8 @@ CREATE TABLE metric_1m (
   tcp_sum INTEGER NOT NULL,    tcp_n INTEGER NOT NULL,
   udp_sum INTEGER NOT NULL,    udp_n INTEGER NOT NULL,
   procs_sum INTEGER NOT NULL,  procs_n INTEGER NOT NULL,
-  rx_bytes INTEGER NOT NULL,   tx_bytes INTEGER NOT NULL,
+  rx_bytes_sum INTEGER NOT NULL, rx_bytes_n INTEGER NOT NULL,
+  tx_bytes_sum INTEGER NOT NULL, tx_bytes_n INTEGER NOT NULL,
   PRIMARY KEY (node_id, ts)
 ) WITHOUT ROWID;
 ```
@@ -273,10 +275,11 @@ CREATE TABLE metric_1m (
 - 每个取均值的指标有自己的样本数。上报里缺失的 `optional` 字段既不加进 `x_sum` 也不加进 `x_n`；`x_n = 0` 的桶在查询结果里是"无数据"而不是 0。"无读数 ≠ 读数为 0"由此从协议一直保持到图表。共用一个行级样本数做不到这一点：某个字段缺失的样本会把该列的均值拉低。
 - hub 在一分钟中途重启时，退出前刷出的半桶与重启后的半桶落在同一主键上，用加法合并（`ON CONFLICT DO UPDATE SET x_sum = x_sum + excluded.x_sum, x_n = x_n + excluded.x_n, x_max = max(x_max, excluded.x_max)`）。这条合并正确的前提是每个内存桶至多成功写入一次：刷出时在 `live` 的锁内"取走并清零"，再交给写协程；写事务失败则该桶留在有界的待重试列表，事务原子性保证失败即未应用，重试不会重复计入。
 - 最大值一路保留到 1h 级，短时尖峰不会被抹平。
+- 流量列是字节增量的**和**（描述表里的 `Sum` 种类）而不是均值：`rx_bytes_n` 记录该分钟有多少次上报入了账——计数器缺失、以及按 §7 只进总量不进桶的增量都不计数，因此 `rx_bytes_n = 0` 与其他列一样是空洞而不是 0。查询对 `Sum` 列下发 `sum`（`MetricSample.sum`）而不下发均值与最大值，速率 = `sum / 桶长`；上卷仍是求和。
 
 主键顺序即唯一查询路径（某节点 + 时间窗），`WITHOUT ROWID` 使主键索引就是表本身。
 
-指标列由 `metric` 包内的一张描述表驱动（列名、整型或浮点、是否带最大值、对应的 `Metrics` 字段）；建表语句、内存桶的折叠、加法合并、上卷与查询的 SQL 都自它生成。新增一个指标 = 描述表加一项 + 一次迁移，不存在需要手工保持一致的多份字段清单。
+指标列由 `metric` 包内的一张描述表驱动（列名、整型或浮点、是均值还是和、是否带最大值、对应的 `Metrics` 字段或入账回调）；建表语句、内存桶的折叠、加法合并、上卷与查询的 SQL 都自它生成。新增一个指标 = 描述表加一项 + 一次迁移，不存在需要手工保持一致的多份字段清单。
 
 ### 6.3 探测表
 
@@ -293,7 +296,7 @@ CREATE TABLE probe_1m (
 
 ### 6.4 上卷
 
-`rollup_state(level PRIMARY KEY, upto_ts)` 记录每级水位：水位之前的下级桶已被上卷。上卷任务对每一级：取水位之后的已闭合桶，`INSERT OR REPLACE … SELECT … GROUP BY node_id, 桶` 自下一级重算整桶，并在同一事务内推进水位。重算整桶使它幂等；同事务使它崩溃安全。
+`rollup_state(level PRIMARY KEY, upto_ts)` 记录每级水位：水位之前的下级桶已被上卷。指标与探测两族表各有自己的水位（`metric_5m`、`metric_1h`、`probe_5m`、`probe_1h`），互不牵制。上卷任务对每一级：取水位之后的已闭合桶，`INSERT OR REPLACE … SELECT … GROUP BY node_id, 桶` 自下一级重算整桶，并在同一事务内推进水位。重算整桶使它幂等；同事务使它崩溃安全。
 
 这里的替换语义与 §6.2 的加法合并不冲突：加法合并只发生在"内存桶 → 1m 行"，上卷只发生在"下级行 → 上级行"且总是整桶重算。
 
@@ -335,7 +338,9 @@ schema 版本记在 `PRAGMA user_version`，迁移为按版本号顺序执行的
 
 **图表与总量的关系**：断连恢复后的首个增量覆盖整个断连区间，若计入单个分钟桶会在速率图上形成假尖峰。因此当距该节点上次上报的间隔超过 TTL 时，该增量只计入 `traffic` 的总量与周期量，不计入 `metric_1m`；hub 重启后各节点的首次上报同样处理（上次上报的时刻已不可知）。由此，`metric_*` 的 `rx_bytes` 对时间求和等于同区间总量的增量，这条等式只在"节点连续在线、hub 未重启、且区间内的分钟行都成功落库"的区间上成立；断连区间在图表上本来就是空洞。
 
-周期用量按节点的重置日（1–28）滚动，时区由 hub 的 `--timezone` 决定；滚动在入账与落盘路径上判定。
+周期用量按节点的重置日（1–28）滚动，时区由 hub 的 `--timezone` 决定；滚动在入账与落盘路径上判定：`now` 不早于 `period_start` 之后的首个重置日零点时，周期量清零、`period_start` 推进到该零点。重置日经 `UpdateNode` 修改。
+
+**读写接口**：`GetTraffic` 返回全部节点的总量、周期量、`period_start` 与下次重置时刻；`GetSnapshot` 的每个节点状态也带周期量与总量，实时视图不需要第二条轮询。`AdjustTraffic(node_id, period_rx, period_tx)` 把当前周期的两个用量覆盖为给定值（把面板对齐到云商计费口径的那一次操作），总量按同一差值同步调整且不低于 0；基线不动，之后的增量照常叠加；内存条目与库在同一把锁下同步写入，不经过 10 秒刷出。
 
 agent 默认汇总除 `lo` 与虚拟网卡（`docker*`、`veth*`、`br-*`、`virbr*`）外的全部网卡，可用 `--net-include` / `--net-exclude` 覆盖。
 
@@ -350,8 +355,18 @@ agent 默认汇总除 `lo` 与虚拟网卡（`docker*`、`veth*`、`br-*`、`vir
 - ICMP：优先用非特权数据报 ICMP socket；不可用且进程持有 `CAP_NET_RAW` 时退到 raw socket；都不可用则每次回报 `error`，面板显示原因，而不是静默呈现为 100% 丢包。
 - TCP：连接建立耗时即 rtt。
 - 各任务的首次触发时刻加随机偏移，避免同一时刻齐发。
+- ICMP 实现用 `golang.org/x/net/icmp`（纯 Go，与 hub 已依赖的 `x/crypto` 同源；§2 的"零第三方依赖"说的是 /proc / /sys 采集）。启动时探测两种 socket 的可用性并写入 `Facts.icmp_available`。
+- 结果进有界队列，上报时整体取走并按单调钟折算 `age_ms`；队列满时丢最旧的并计数，不阻塞探测协程。任务集更新时停掉消失的任务、启动新增的任务，未变化的任务不重启计时。
 
-### 8.3 agent 侧硬限制
+### 8.3 对账与入库
+
+版本在 hub 进程内缓存，由 `probe` 包的写入口在事务提交后更新；`Report` 只比较两个整数，不一致时响应携带该节点的 `ProbeTasks`（版本 + 分配给它的任务）。
+
+结果逐条校验后才折叠进内存桶：`task_id` 必须分配给本节点（否则丢弃并记日志——token 被挪用或分配已撤销的旧结果不得写进别的任务的历史）；`age_ms ≤ MAX_AGE`（§6.4 第 3 条）；测量时刻 = 收到时刻 − `age_ms`。桶键是 `(node_id, 分钟, task_id)`：`sent` 每条加一，`timeout` 计入 `lost`，`error` 计入 `errors`，`rtt_us` 累加到 `rtt_sum` 并更新 `rtt_min` / `rtt_max`。刷出、加法合并、冻结检查与 §6.2 的指标桶共用同一条路径。删除任务不删已有历史，到期由 prune 清理；`QueryProbes` 对这些行只带 `task_id`，不再有类型与目标。
+
+`QueryProbes(node_id, from, to, max_points)` 与 `QueryMetrics` 同一套选级与对齐规则，按任务返回序列：`ts[]`、`sent[]`、`lost[]`、`errors[]`、`rtt_mean_us[]`、`rtt_min_us[]`、`rtt_max_us[]`；`sent = 0` 的桶不出样本。丢包率 = `lost / sent`，`errors` 不计入丢包。任务管理经 `ListProbeTasks`（含分配节点）、`SaveProbeTask`（id 为 0 即创建，提交整份分配列表）、`DeleteProbeTask`。
+
+### 8.4 agent 侧硬限制
 
 agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 ≥ 5s、任务数 ≤ 64、单次探测 1 个包、超时 ≤ 5s。超限的任务 agent 直接丢弃并回报 `error`。目的是 hub 失守时，攻击者无法把全部节点变成扫描器或流量反射器。
 
