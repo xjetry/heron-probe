@@ -5,7 +5,7 @@ export CGO_ENABLED=0
 web-install:
 	pnpm --dir web install --frozen-lockfile
 
-# TS 客户端与 Go 代码同一口径：都由 buf 生成、都入库、都由 ci 的 diff 检查钉住。
+# TS 客户端与 Go 代码同一口径：都由 buf 生成并入库，ci 要求生成目录没有改动或未跟踪文件。
 gen: web-install
 	buf generate
 
@@ -25,8 +25,6 @@ web-test: web-install
 # 产物落在 internal/hub/web/dist 供 go:embed；不入库，缺产物时 hub 也能编译并给出说明页。
 web: web-install
 	pnpm --dir web run build
-	# Vite 会清空输出目录；恢复入库占位文件，让 embed 目录始终存在且包含文件。
-	touch internal/hub/web/dist/.gitkeep
 
 # build 验证全部已有的包在本机以及 Linux amd64、arm64 上都能编译；
 # 二进制产物由 binaries 生成，只有 e2e 需要它。
@@ -41,7 +39,8 @@ binaries: web
 	GOOS=linux GOARCH=arm64 go build -o bin/probe-agent-linux-arm64 ./cmd/agent
 
 ci: gen lint test web-test web build
-	git diff --exit-code -- gen web/src/gen
+	@status="$$(git status --porcelain -- gen web/src/gen)" || exit $$?; \
+	if [ -n "$$status" ]; then printf '%s\n' "$$status"; exit 1; fi
 
 fixtures:
 	scripts/capture-proc.sh docker-debian

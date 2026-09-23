@@ -85,6 +85,23 @@ func TestUnbuiltPanelExplainsItself(t *testing.T) {
 	checkSecurityHeaders(t, resp)
 }
 
+func TestAssetDirectoryPaths(t *testing.T) {
+	h := handlerFor(builtFS())
+	for _, c := range []struct {
+		path   string
+		status int
+	}{
+		{"/admin/assets/", http.StatusNotFound},
+		{"/admin/assets", http.StatusMovedPermanently},
+	} {
+		t.Run(c.path, func(t *testing.T) {
+			if resp := get(t, h, c.path); resp.StatusCode != c.status {
+				t.Fatalf("%s: status %d, want %d", c.path, resp.StatusCode, c.status)
+			}
+		})
+	}
+}
+
 func TestRootRedirectsOnlyExactRoot(t *testing.T) {
 	h := RootRedirect()
 	if resp := get(t, h, "/"); resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/admin/" {
