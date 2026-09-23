@@ -2098,7 +2098,9 @@ type SaveProbeTaskRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// task.id 为 0 时创建，否则整体替换该任务的字段；node_ids 是保存后的完整分配列表。
 	// 约束：interval_s 5–3600，timeout_ms 100–5000，
-	// ICMP 目标为 IP 或主机名，TCP 目标为 host:port；每节点至多 64 个任务。
+	// ICMP 目标为 IP 或主机名；每节点至多 64 个任务；target 不超过 253 字节；
+	// TCP 目标必须是规范的 host:port（不带方括号包裹的主机名、不带正号或前导零的端口），
+	// 端口 1–65535；IP 字面量不带 zone。
 	Task          *ProbeTask `protobuf:"bytes,1,opt,name=task,proto3" json:"task,omitempty"`
 	NodeIds       []int64    `protobuf:"varint,2,rep,packed,name=node_ids,json=nodeIds,proto3" json:"node_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -2361,9 +2363,11 @@ func (x *QueryProbesRequest) GetMaxPoints() uint32 {
 
 type QueryProbesResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	Level string                 `protobuf:"bytes,1,opt,name=level,proto3" json:"level,omitempty"`
-	StepS uint32                 `protobuf:"varint,2,opt,name=step_s,json=stepS,proto3" json:"step_s,omitempty"`
-	// 每个任务一条；只含在窗口内有结果的任务，已删除任务的历史同样按 task_id 返回。
+	// 数据来自哪一级：1m、5m 或 1h。
+	Level string `protobuf:"bytes,1,opt,name=level,proto3" json:"level,omitempty"`
+	// 每个点覆盖的秒数；是所选级别桶长的整数倍。
+	StepS uint32 `protobuf:"varint,2,opt,name=step_s,json=stepS,proto3" json:"step_s,omitempty"`
+	// 每个任务一条，按 task_id 升序；只含在窗口内有结果的任务，已删除任务的历史同样按 task_id 返回。
 	Series        []*ProbeSeries `protobuf:"bytes,3,rep,name=series,proto3" json:"series,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2482,8 +2486,10 @@ type ProbeSample struct {
 	Lost   uint32 `protobuf:"varint,3,opt,name=lost,proto3" json:"lost,omitempty"`
 	Errors uint32 `protobuf:"varint,4,opt,name=errors,proto3" json:"errors,omitempty"`
 	// 只有 sent − lost − errors > 0 时才有：该点内成功探测的 rtt 均值 / 最小 / 最大，微秒。
-	RttMeanUs     *uint32 `protobuf:"varint,5,opt,name=rtt_mean_us,json=rttMeanUs,proto3,oneof" json:"rtt_mean_us,omitempty"`
-	RttMinUs      *uint32 `protobuf:"varint,6,opt,name=rtt_min_us,json=rttMinUs,proto3,oneof" json:"rtt_min_us,omitempty"`
+	RttMeanUs *uint32 `protobuf:"varint,5,opt,name=rtt_mean_us,json=rttMeanUs,proto3,oneof" json:"rtt_mean_us,omitempty"`
+	// 成功探测的最小 rtt，微秒；只有 sent − lost − errors > 0 时才有。
+	RttMinUs *uint32 `protobuf:"varint,6,opt,name=rtt_min_us,json=rttMinUs,proto3,oneof" json:"rtt_min_us,omitempty"`
+	// 成功探测的最大 rtt，微秒；只有 sent − lost − errors > 0 时才有。
 	RttMaxUs      *uint32 `protobuf:"varint,7,opt,name=rtt_max_us,json=rttMaxUs,proto3,oneof" json:"rtt_max_us,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

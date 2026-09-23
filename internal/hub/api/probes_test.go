@@ -30,8 +30,11 @@ func TestProbeTaskLifecycleThroughAdminAPI(t *testing.T) {
 	if err != nil || created.Version != 1 || created.Task.Task.Id != 1 || !slices.Equal(created.Task.NodeIds, []int64{n1, n2}) {
 		t.Fatalf("%+v %v", created, err)
 	}
-	list, _ := h.admin.ListProbeTasks(ctx, connect.NewRequest(&probev1.ListProbeTasksRequest{}))
-	if list.Msg.Version != 1 || len(list.Msg.Tasks) != 1 {
+	list, err := h.admin.ListProbeTasks(ctx, connect.NewRequest(&probev1.ListProbeTasksRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list.Msg.Version != 1 || len(list.Msg.Tasks) != 1 || !proto.Equal(list.Msg.Tasks[0], created.Task) {
 		t.Fatalf("%+v", list.Msg)
 	}
 	// 整体替换：改目标、只留 n1。
@@ -39,17 +42,32 @@ func TestProbeTaskLifecycleThroughAdminAPI(t *testing.T) {
 	if err != nil || updated.Version != 2 || updated.Task.Task.Target != "1.1.1.1" || !slices.Equal(updated.Task.NodeIds, []int64{n1}) {
 		t.Fatalf("%+v %v", updated, err)
 	}
+	list, err = h.admin.ListProbeTasks(ctx, connect.NewRequest(&probev1.ListProbeTasksRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list.Msg.Version != 2 || len(list.Msg.Tasks) != 1 || !proto.Equal(list.Msg.Tasks[0], updated.Task) {
+		t.Fatalf("updated list=%v", list.Msg)
+	}
 	del, err := h.admin.DeleteProbeTask(ctx, connect.NewRequest(&probev1.DeleteProbeTaskRequest{Id: 1}))
 	if err != nil || del.Msg.Version != 3 {
 		t.Fatalf("%+v %v", del, err)
 	}
+	list, err = h.admin.ListProbeTasks(ctx, connect.NewRequest(&probev1.ListProbeTasksRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list.Msg.Version != 3 || len(list.Msg.Tasks) != 0 {
+		t.Fatalf("deleted list=%v", list.Msg)
+	}
 	_, err = h.admin.DeleteProbeTask(ctx, connect.NewRequest(&probev1.DeleteProbeTaskRequest{Id: 1}))
-	if codeOf(err) != connect.CodeNotFound || !strings.Contains(err.Error(), "probe task 1") {
+	if codeOf(err) != connect.CodeNotFound || !strings.Contains(err.Error(), "task.id: probe task 1 does not exist") {
 		t.Fatalf("%v", err)
 	}
 }
 
-func TestProbeStorageFailuresStayInternal(t *testing.T) {
+// query 分支覆盖窗口校验中的节点查找失败，不覆盖 QueryProbes 自身的历史存储查询。
+func TestProbeWritesAndWindowLookupFailuresStayInternal(t *testing.T) {
 	h := newHarness(t, "")
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -87,8 +105,8 @@ func TestSaveProbeTaskErrorsNameTheFieldAndCode(t *testing.T) {
 		{"missing", nil, nil, connect.CodeInvalidArgument, "task: required"},
 		{"interval", badInterval, nil, connect.CodeInvalidArgument, "interval_s must be between 5 and 3600"},
 		{"tcp", badTCP, nil, connect.CodeInvalidArgument, "host:port"},
-		{"node", validProbeTask(), []int64{42}, connect.CodeNotFound, "node 42"},
-		{"task", unknownTask, nil, connect.CodeNotFound, "probe task 999"},
+		{"node", validProbeTask(), []int64{42}, connect.CodeNotFound, "node_ids: node 42 does not exist"},
+		{"task", unknownTask, nil, connect.CodeNotFound, "task.id: probe task 999 does not exist"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: tc.task, NodeIds: tc.nodes}))
@@ -103,7 +121,7 @@ func TestSaveProbeTaskErrorsNameTheFieldAndCode(t *testing.T) {
 		}
 	}
 	_, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: validProbeTask(), NodeIds: []int64{id}}))
-	if codeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "maximum 64") {
+	if codeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "node_ids: node 1 already has 64 probe tasks (maximum 64)") {
 		t.Fatalf("limit error=%v", err)
 	}
 }
@@ -114,6 +132,7 @@ func TestQueryProbesGroupsPerTaskAndOmitsEmptyPoints(t *testing.T) {
 	id, _ := h.createNode(t, "n")
 	base := h.clk.Now().Truncate(time.Hour).Unix()
 	rows := []metric.ProbeRow{
+		{NodeID: id, TS: base + 180, TaskID: 7, Bucket: &metric.ProbeBucket{Sent: 2, Errors: 2}},
 		{NodeID: id, TS: base + 120, TaskID: 9, Bucket: &metric.ProbeBucket{Sent: 1, RttN: 1, RttSumUs: 900, RttMinUs: 900, RttMaxUs: 900}},
 		{NodeID: id, TS: base + 120, TaskID: 7, Bucket: &metric.ProbeBucket{Sent: 1, RttN: 1}},
 		{NodeID: id, TS: base + 60, TaskID: 7, Bucket: &metric.ProbeBucket{Sent: 2, Lost: 2}},
@@ -133,6 +152,7 @@ func TestQueryProbesGroupsPerTaskAndOmitsEmptyPoints(t *testing.T) {
 			{Ts: base, Sent: 4, Lost: 1, Errors: 1, RttMeanUs: proto.Uint32(300), RttMinUs: proto.Uint32(200), RttMaxUs: proto.Uint32(400)},
 			{Ts: base + 60, Sent: 2, Lost: 2},
 			{Ts: base + 120, Sent: 1, RttMeanUs: proto.Uint32(0), RttMinUs: proto.Uint32(0), RttMaxUs: proto.Uint32(0)},
+			{Ts: base + 180, Sent: 2, Errors: 2},
 		}},
 		{TaskId: 9, Samples: []*probev1.ProbeSample{{Ts: base + 120, Sent: 1, RttMeanUs: proto.Uint32(900), RttMinUs: proto.Uint32(900), RttMaxUs: proto.Uint32(900)}}},
 	}}

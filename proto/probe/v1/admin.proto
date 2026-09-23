@@ -41,9 +41,11 @@ service AdminService {
   // 把某节点当前周期的用量覆盖为给定值；总量按同一差值调整且不低于 0，计数器基线不动。
   rpc AdjustTraffic(AdjustTrafficRequest) returns (AdjustTrafficResponse);
 
-  // 探测任务：列出全部任务及其分配；保存（id 为 0 即创建）提交整份分配列表；删除不删历史。
+  // 列出全部探测任务及其分配。
   rpc ListProbeTasks(ListProbeTasksRequest) returns (ListProbeTasksResponse);
+  // 保存探测任务：id 为 0 即创建，提交整份分配列表。
   rpc SaveProbeTask(SaveProbeTaskRequest) returns (SaveProbeTaskResponse);
+  // 删除探测任务：不删历史，到期由清理删除。
   rpc DeleteProbeTask(DeleteProbeTaskRequest) returns (DeleteProbeTaskResponse);
   // 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
   rpc QueryProbes(QueryProbesRequest) returns (QueryProbesResponse);
@@ -261,7 +263,9 @@ message ListProbeTasksResponse {
 message SaveProbeTaskRequest {
   // task.id 为 0 时创建，否则整体替换该任务的字段；node_ids 是保存后的完整分配列表。
   // 约束：interval_s 5–3600，timeout_ms 100–5000，
-  // ICMP 目标为 IP 或主机名，TCP 目标为 host:port；每节点至多 64 个任务。
+  // ICMP 目标为 IP 或主机名；每节点至多 64 个任务；target 不超过 253 字节；
+  // TCP 目标必须是规范的 host:port（不带方括号包裹的主机名、不带正号或前导零的端口），
+  // 端口 1–65535；IP 字面量不带 zone。
   ProbeTask task = 1;
   repeated int64 node_ids = 2;
 }
@@ -281,9 +285,11 @@ message QueryProbesRequest {
   uint32 max_points = 4;
 }
 message QueryProbesResponse {
+  // 数据来自哪一级：1m、5m 或 1h。
   string level = 1;
+  // 每个点覆盖的秒数；是所选级别桶长的整数倍。
   uint32 step_s = 2;
-  // 每个任务一条；只含在窗口内有结果的任务，已删除任务的历史同样按 task_id 返回。
+  // 每个任务一条，按 task_id 升序；只含在窗口内有结果的任务，已删除任务的历史同样按 task_id 返回。
   repeated ProbeSeries series = 3;
 }
 message ProbeSeries {
@@ -300,6 +306,8 @@ message ProbeSample {
   uint32 errors = 4;
   // 只有 sent − lost − errors > 0 时才有：该点内成功探测的 rtt 均值 / 最小 / 最大，微秒。
   optional uint32 rtt_mean_us = 5;
+  // 成功探测的最小 rtt，微秒；只有 sent − lost − errors > 0 时才有。
   optional uint32 rtt_min_us = 6;
+  // 成功探测的最大 rtt，微秒；只有 sent − lost − errors > 0 时才有。
   optional uint32 rtt_max_us = 7;
 }

@@ -11,7 +11,6 @@ import (
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/probelimit"
 )
 
 func detailProto(d probe.Detail) *probev1.ProbeTaskDetail {
@@ -27,15 +26,15 @@ func (s *Service) ListProbeTasks(_ context.Context, _ *connect.Request[probev1.L
 	return connect.NewResponse(resp), nil
 }
 
-// SaveProbeTask 的校验全部在注册表里（字段规则与 agent 共用一份）；这里只把错误翻译成响应码：
-// 字段非法 → InvalidArgument，节点或任务不存在 → NotFound，每节点上限 → ResourceExhausted。
+// 字段校验在注册表经 probelimit.CheckTask 完成；节点存在与每节点上限由 store 保存事务裁决，
+// 因为只有事务内计数与并发保存互斥。这里只把哨兵翻译成响应码，并补充请求字段名。
 func (s *Service) SaveProbeTask(ctx context.Context, req *connect.Request[probev1.SaveProbeTaskRequest]) (*connect.Response[probev1.SaveProbeTaskResponse], error) {
 	d, version, err := s.probes.Save(ctx, req.Msg.GetTask(), req.Msg.GetNodeIds())
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		return nil, connect.NewError(connect.CodeNotFound, err)
+		return nil, probeNotFound(err)
 	case errors.Is(err, store.ErrNodeLimit):
-		return nil, connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("%w (maximum %d)", err, probelimit.MaxTasksPerNode))
+		return nil, connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("node_ids: %w", err))
 	case errors.Is(err, probe.ErrInvalid):
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	case err != nil:
@@ -49,12 +48,21 @@ func (s *Service) DeleteProbeTask(ctx context.Context, req *connect.Request[prob
 	version, err := s.probes.Delete(ctx, req.Msg.GetId())
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		return nil, connect.NewError(connect.CodeNotFound, err)
+		return nil, probeNotFound(err)
 	case err != nil:
 		s.log.Error("deleting probe task failed", "err", err)
 		return nil, internalError("deleting probe task failed")
 	}
 	return connect.NewResponse(&probev1.DeleteProbeTaskResponse{Version: version}), nil
+}
+
+func probeNotFound(err error) error {
+	field := "task.id"
+	var missing store.NotFoundError
+	if errors.As(err, &missing) && missing.Kind == "node" {
+		field = "node_ids"
+	}
+	return connect.NewError(connect.CodeNotFound, fmt.Errorf("%s: %w", field, err))
 }
 
 func (s *Service) QueryProbes(ctx context.Context, req *connect.Request[probev1.QueryProbesRequest]) (*connect.Response[probev1.QueryProbesResponse], error) {

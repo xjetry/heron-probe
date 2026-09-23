@@ -172,10 +172,10 @@ func TestSaveProbeTaskAssignsAndBumpsVersion(t *testing.T) {
 	assertTasks(t, s, 2, []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{b}}})
 	absent := taskForTest()
 	absent.Id = 99
-	if _, _, err := s.SaveProbeTask(ctx, absent, nil); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "probe task 99") {
+	if _, _, err := s.SaveProbeTask(ctx, absent, nil); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "probe task 99 does not exist") {
 		t.Fatalf("missing task error=%v", err)
 	}
-	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), []int64{a, 42}); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "node 42") {
+	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), []int64{a, 42}); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "node 42 does not exist") {
 		t.Fatalf("missing node error=%v", err)
 	}
 	assertTasks(t, s, 2, []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{b}}})
@@ -183,7 +183,7 @@ func TestSaveProbeTaskAssignsAndBumpsVersion(t *testing.T) {
 		t.Fatalf("delete version=%d err=%v", version, err)
 	}
 	assertTasks(t, s, 3, nil)
-	if _, err := s.DeleteProbeTask(ctx, 1); !errors.Is(err, ErrNotFound) {
+	if _, err := s.DeleteProbeTask(ctx, 1); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "probe task 1 does not exist") {
 		t.Fatalf("missing delete error=%v", err)
 	}
 	assertTasks(t, s, 3, nil)
@@ -222,7 +222,7 @@ func TestSaveProbeTaskEnforcesPerNodeLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), []int64{id}); !errors.Is(err, ErrNodeLimit) || !strings.Contains(err.Error(), fmt.Sprintf("node %d", id)) {
+	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), []int64{id}); !errors.Is(err, ErrNodeLimit) || !strings.Contains(err.Error(), fmt.Sprintf("node %d already has 64 probe tasks (maximum 64)", id)) {
 		t.Fatalf("65th task error=%v, want ErrNodeLimit with node", err)
 	}
 	version, tasks, err := s.LoadProbeTasks(ctx)

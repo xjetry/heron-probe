@@ -143,7 +143,7 @@ func TestRegistryRejectsInvalidTaskWithoutTouchingStore(t *testing.T) {
 func TestRegistryPassesThroughNotFoundAndLimit(t *testing.T) {
 	r, _, ids := registryStore(t)
 	_, _, err := r.Save(t.Context(), task("example.com"), []int64{42})
-	if !errors.Is(err, store.ErrNotFound) || !strings.Contains(err.Error(), "node 42") {
+	if !errors.Is(err, store.ErrNotFound) || !strings.Contains(err.Error(), "node 42 does not exist") {
 		t.Errorf("missing node error=%v", err)
 	}
 	assertState(t, r, 0, nil, ids...)
@@ -152,11 +152,11 @@ func TestRegistryPassesThroughNotFoundAndLimit(t *testing.T) {
 		want = append(want, save(t, r, "example.com", ids[:1]))
 	}
 	_, _, err = r.Save(t.Context(), task("example.com"), ids[:1])
-	if !errors.Is(err, store.ErrNodeLimit) || !strings.Contains(err.Error(), "node 1") {
+	if !errors.Is(err, store.ErrNodeLimit) || !strings.Contains(err.Error(), "node 1 already has 64 probe tasks (maximum 64)") {
 		t.Errorf("limit error=%v", err)
 	}
 	assertState(t, r, 64, want, ids...)
-	if _, err := r.Delete(t.Context(), 999); !errors.Is(err, store.ErrNotFound) || !strings.Contains(err.Error(), "probe task 999") {
+	if _, err := r.Delete(t.Context(), 999); !errors.Is(err, store.ErrNotFound) || !strings.Contains(err.Error(), "probe task 999 does not exist") {
 		t.Errorf("missing task delete error=%v", err)
 	}
 	assertState(t, r, 64, want, ids...)

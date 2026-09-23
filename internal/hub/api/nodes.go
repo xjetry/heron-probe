@@ -80,6 +80,7 @@ func (s *Service) CreateNode(ctx context.Context, req *connect.Request[probev1.C
 	}
 	n, err := s.store.GetNode(ctx, id)
 	if err != nil {
+		s.log.Error("reading created node failed", "err", err)
 		return nil, internalError("reading created node failed")
 	}
 	s.log.Info("node created", "node", id, "name", name)
@@ -113,6 +114,7 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 	s.traffic.SetResetDay(req.Msg.GetId(), day)
 	n, err := s.store.GetNode(ctx, req.Msg.GetId())
 	if err != nil {
+		s.log.Error("reading updated node failed", "err", err)
 		return nil, internalError("reading updated node failed")
 	}
 	return connect.NewResponse(&probev1.UpdateNodeResponse{Node: nodeProto(n)}), nil

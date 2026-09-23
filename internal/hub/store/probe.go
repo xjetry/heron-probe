@@ -3,15 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
-	"fmt"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/hub/metric"
 	"github.com/xjetry/probe/internal/probelimit"
 )
-
-var ErrNodeLimit = errors.New("node already has the maximum number of probe tasks")
 
 func probeValueColumns() []string {
 	return []string{"sent", "lost", "errors", "rtt_sum_us", "rtt_min_us", "rtt_max_us"}
@@ -144,7 +140,7 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, nodeIDs
 				return err
 			}
 			if n, _ := res.RowsAffected(); n == 0 {
-				return fmt.Errorf("%w: probe task %d", ErrNotFound, saved.Id)
+				return NotFoundError{Kind: "probe task", ID: int64(saved.Id)}
 			}
 			if _, err := tx.Exec("DELETE FROM probe_task_node WHERE task_id = ?", int64(saved.Id)); err != nil {
 				return err
@@ -156,14 +152,14 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, nodeIDs
 				return err
 			}
 			if !exists {
-				return fmt.Errorf("%w: node %d", ErrNotFound, nodeID)
+				return NotFoundError{Kind: "node", ID: nodeID}
 			}
 			var n int
 			if err := tx.QueryRow("SELECT COUNT(*) FROM probe_task_node WHERE node_id = ?", nodeID).Scan(&n); err != nil {
 				return err
 			}
 			if n >= probelimit.MaxTasksPerNode {
-				return fmt.Errorf("%w: node %d", ErrNodeLimit, nodeID)
+				return NodeLimitError{NodeID: nodeID, Max: probelimit.MaxTasksPerNode}
 			}
 			if _, err := tx.Exec("INSERT INTO probe_task_node (task_id, node_id) VALUES (?, ?)", int64(saved.Id), nodeID); err != nil {
 				return err
@@ -188,7 +184,7 @@ func (s *Store) DeleteProbeTask(ctx context.Context, id uint64) (uint64, error) 
 			return err
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
-			return fmt.Errorf("%w: probe task %d", ErrNotFound, id)
+			return NotFoundError{Kind: "probe task", ID: int64(id)}
 		}
 		if _, err := tx.Exec("DELETE FROM probe_task_node WHERE task_id = ?", int64(id)); err != nil {
 			return err

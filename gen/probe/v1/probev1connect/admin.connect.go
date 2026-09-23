@@ -114,9 +114,11 @@ type AdminServiceClient interface {
 	GetTraffic(context.Context, *connect.Request[v1.GetTrafficRequest]) (*connect.Response[v1.GetTrafficResponse], error)
 	// 把某节点当前周期的用量覆盖为给定值；总量按同一差值调整且不低于 0，计数器基线不动。
 	AdjustTraffic(context.Context, *connect.Request[v1.AdjustTrafficRequest]) (*connect.Response[v1.AdjustTrafficResponse], error)
-	// 探测任务：列出全部任务及其分配；保存（id 为 0 即创建）提交整份分配列表；删除不删历史。
+	// 列出全部探测任务及其分配。
 	ListProbeTasks(context.Context, *connect.Request[v1.ListProbeTasksRequest]) (*connect.Response[v1.ListProbeTasksResponse], error)
+	// 保存探测任务：id 为 0 即创建，提交整份分配列表。
 	SaveProbeTask(context.Context, *connect.Request[v1.SaveProbeTaskRequest]) (*connect.Response[v1.SaveProbeTaskResponse], error)
+	// 删除探测任务：不删历史，到期由清理删除。
 	DeleteProbeTask(context.Context, *connect.Request[v1.DeleteProbeTaskRequest]) (*connect.Response[v1.DeleteProbeTaskResponse], error)
 	// 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
 	QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error)
@@ -397,9 +399,11 @@ type AdminServiceHandler interface {
 	GetTraffic(context.Context, *connect.Request[v1.GetTrafficRequest]) (*connect.Response[v1.GetTrafficResponse], error)
 	// 把某节点当前周期的用量覆盖为给定值；总量按同一差值调整且不低于 0，计数器基线不动。
 	AdjustTraffic(context.Context, *connect.Request[v1.AdjustTrafficRequest]) (*connect.Response[v1.AdjustTrafficResponse], error)
-	// 探测任务：列出全部任务及其分配；保存（id 为 0 即创建）提交整份分配列表；删除不删历史。
+	// 列出全部探测任务及其分配。
 	ListProbeTasks(context.Context, *connect.Request[v1.ListProbeTasksRequest]) (*connect.Response[v1.ListProbeTasksResponse], error)
+	// 保存探测任务：id 为 0 即创建，提交整份分配列表。
 	SaveProbeTask(context.Context, *connect.Request[v1.SaveProbeTaskRequest]) (*connect.Response[v1.SaveProbeTaskResponse], error)
+	// 删除探测任务：不删历史，到期由清理删除。
 	DeleteProbeTask(context.Context, *connect.Request[v1.DeleteProbeTaskRequest]) (*connect.Response[v1.DeleteProbeTaskResponse], error)
 	// 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
 	QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error)

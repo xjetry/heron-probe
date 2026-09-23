@@ -978,7 +978,9 @@ export type SaveProbeTaskRequest = Message<"probe.v1.SaveProbeTaskRequest"> & {
   /**
    * task.id 为 0 时创建，否则整体替换该任务的字段；node_ids 是保存后的完整分配列表。
    * 约束：interval_s 5–3600，timeout_ms 100–5000，
-   * ICMP 目标为 IP 或主机名，TCP 目标为 host:port；每节点至多 64 个任务。
+   * ICMP 目标为 IP 或主机名；每节点至多 64 个任务；target 不超过 253 字节；
+   * TCP 目标必须是规范的 host:port（不带方括号包裹的主机名、不带正号或前导零的端口），
+   * 端口 1–65535；IP 字面量不带 zone。
    *
    * @generated from field: probe.v1.ProbeTask task = 1;
    */
@@ -1094,17 +1096,21 @@ export const QueryProbesRequestSchema: GenMessage<QueryProbesRequest> = /*@__PUR
  */
 export type QueryProbesResponse = Message<"probe.v1.QueryProbesResponse"> & {
   /**
+   * 数据来自哪一级：1m、5m 或 1h。
+   *
    * @generated from field: string level = 1;
    */
   level: string;
 
   /**
+   * 每个点覆盖的秒数；是所选级别桶长的整数倍。
+   *
    * @generated from field: uint32 step_s = 2;
    */
   stepS: number;
 
   /**
-   * 每个任务一条；只含在窗口内有结果的任务，已删除任务的历史同样按 task_id 返回。
+   * 每个任务一条，按 task_id 升序；只含在窗口内有结果的任务，已删除任务的历史同样按 task_id 返回。
    *
    * @generated from field: repeated probe.v1.ProbeSeries series = 3;
    */
@@ -1178,11 +1184,15 @@ export type ProbeSample = Message<"probe.v1.ProbeSample"> & {
   rttMeanUs?: number | undefined;
 
   /**
+   * 成功探测的最小 rtt，微秒；只有 sent − lost − errors > 0 时才有。
+   *
    * @generated from field: optional uint32 rtt_min_us = 6;
    */
   rttMinUs?: number | undefined;
 
   /**
+   * 成功探测的最大 rtt，微秒；只有 sent − lost − errors > 0 时才有。
+   *
    * @generated from field: optional uint32 rtt_max_us = 7;
    */
   rttMaxUs?: number | undefined;
@@ -1348,7 +1358,7 @@ export const AdminService: GenService<{
     output: typeof AdjustTrafficResponseSchema;
   },
   /**
-   * 探测任务：列出全部任务及其分配；保存（id 为 0 即创建）提交整份分配列表；删除不删历史。
+   * 列出全部探测任务及其分配。
    *
    * @generated from rpc probe.v1.AdminService.ListProbeTasks
    */
@@ -1358,6 +1368,8 @@ export const AdminService: GenService<{
     output: typeof ListProbeTasksResponseSchema;
   },
   /**
+   * 保存探测任务：id 为 0 即创建，提交整份分配列表。
+   *
    * @generated from rpc probe.v1.AdminService.SaveProbeTask
    */
   saveProbeTask: {
@@ -1366,6 +1378,8 @@ export const AdminService: GenService<{
     output: typeof SaveProbeTaskResponseSchema;
   },
   /**
+   * 删除探测任务：不删历史，到期由清理删除。
+   *
    * @generated from rpc probe.v1.AdminService.DeleteProbeTask
    */
   deleteProbeTask: {

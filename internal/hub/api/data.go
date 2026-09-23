@@ -104,6 +104,7 @@ func (s *Service) queryWindow(ctx context.Context, nodeID, from, to int64, reque
 	}
 	exists, err := s.store.NodeExists(ctx, nodeID)
 	if err != nil {
+		s.log.Error("looking up node failed", "err", err)
 		return 0, internalError("looking up node failed")
 	}
 	if !exists {
