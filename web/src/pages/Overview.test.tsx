@@ -19,6 +19,14 @@ const snapshot = {
 afterEach(() => vi.useRealTimers());
 
 describe("Overview", () => {
+  it("已有快照时请求失败仍保留表格并显示错误", async () => {
+    const getSnapshot = vi.fn().mockResolvedValueOnce(snapshot).mockRejectedValue(new ConnectError("snapshot unavailable", Code.Unavailable));
+    const { queryClient } = renderWithAdmin({ getSnapshot }, [{ path: "/", Component: Overview }], "/");
+    await screen.findByText("1 / 2 在线");
+    await act(async () => { await queryClient.refetchQueries(); });
+    expect(await screen.findByRole("alert")).toHaveTextContent(/^snapshot unavailable$/);
+    expect(screen.getByRole("table")).toBeInTheDocument();
+  });
   it("在线计数、读数条与无读数的破折号", async () => {
     renderWithAdmin({ getSnapshot: async () => snapshot }, [{ path: "/", Component: Overview }], "/");
     expect(await screen.findByText("1 / 2 在线")).toBeInTheDocument();

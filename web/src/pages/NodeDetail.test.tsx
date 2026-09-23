@@ -1,5 +1,5 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import { screen, fireEvent } from "@testing-library/react";
+import { act, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { NodeDetail } from "./NodeDetail";
@@ -16,6 +16,32 @@ const listNodes = async () => ({
 });
 
 describe("NodeDetail", () => {
+  it("切窗请求挂起期间保留六张图", async () => {
+    const response = { level: "1m", stepS: 60, ts: [], series: [] };
+    let release!: () => void;
+    let started!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const pending = new Promise<void>((resolve) => { started = resolve; });
+    const queryMetrics = vi.fn(async () => {
+      if (queryMetrics.mock.calls.length > 1) { started(); await gate; }
+      return response;
+    });
+    renderWithAdmin({ listNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+    await screen.findByText(/级别 1m/);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "7d" })); await pending; });
+    try { expect(screen.queryAllByTestId("chart").length).toBe(6); }
+    finally { await act(async () => { release(); }); }
+  });
+
+  it("非数字节点路径不发查询并显示返回链接", async () => {
+    const list = vi.fn(listNodes);
+    const queryMetrics = vi.fn(async () => ({ level: "1m", stepS: 60, ts: [], series: [] }));
+    await act(async () => { renderWithAdmin({ listNodes: list, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/abc"); });
+    expect(screen.getByRole("alert")).toHaveTextContent("节点 abc 不存在");
+    expect(screen.getByRole("link", { name: "返回总览" })).toHaveAttribute("href", "/");
+    expect(list).not.toHaveBeenCalled();
+    expect(queryMetrics).not.toHaveBeenCalled();
+  });
   it("按面板画图，单位随数据，显示 hub 选定的级别", async () => {
     const queryMetrics = vi.fn<NonNullable<AdminImpl["queryMetrics"]>>(async () => ({
       level: "5m", stepS: 300, ts: [],

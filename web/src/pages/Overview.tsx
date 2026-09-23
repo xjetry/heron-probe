@@ -2,6 +2,7 @@ import { useQuery } from "@connectrpc/connect-query";
 import { Link } from "react-router";
 import { AdminService, type NodeStatus } from "../gen/probe/v1/admin_pb";
 import { ago, bytes, percent } from "../lib/format";
+import { errorText } from "../api/auth";
 
 // 实时视图靠轮询；hub 的上报间隔不会更短，2 秒是让"刚上报"尽快可见的取值。
 export const POLL_MS = 2000;
@@ -9,7 +10,7 @@ export const POLL_MS = 2000;
 export function Overview() {
   const snap = useQuery(AdminService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
   if (snap.isPending) return <p className="muted">加载中…</p>;
-  if (snap.error) return <p role="alert" className="error">{snap.error.rawMessage}</p>;
+  if (!snap.data) return <p role="alert" className="error">{errorText(snap.error)}</p>;
   const now = Number(snap.data.now);
   const online = snap.data.nodes.filter((n) => n.online).length;
   return (
@@ -18,6 +19,7 @@ export function Overview() {
         <h1>总览</h1>
         <span className="muted">{online} / {snap.data.nodes.length} 在线</span>
       </header>
+      {snap.error && <p role="alert" className="error">{errorText(snap.error)}</p>}
       {snap.data.nodes.length === 0 && (
         <p className="muted">
           还没有节点。去 <Link to="/nodes">节点</Link> 页创建，或开一个 <Link to="/register">注册窗口</Link>。

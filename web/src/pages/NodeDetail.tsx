@@ -1,9 +1,11 @@
 import { useQuery } from "@connectrpc/connect-query";
+import { keepPreviousData } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { Chart } from "../components/Chart";
 import { AdminService } from "../gen/probe/v1/admin_pb";
 import { toAligned, unitOf } from "../lib/series";
+import { errorText } from "../api/auth";
 
 export const RANGES = [
   { label: "1h", seconds: 3600 },
@@ -27,7 +29,8 @@ const REFRESH_MS = 60_000;
 
 export function NodeDetail() {
   const { id } = useParams();
-  const nodeId = BigInt(id ?? "0");
+  const validId = /^\d+$/.test(id ?? "");
+  const nodeId = validId ? BigInt(id!) : 0n;
   const [range, setRange] = useState(RANGES[2]);
   // 窗口右端每分钟前进一次：历史行本来就按分钟产生，更频繁的刷新看不到新东西。
   const [to, setTo] = useState(() => Math.floor(Date.now() / 1000) + 60);
@@ -37,16 +40,18 @@ export function NodeDetail() {
   }, []);
   const from = to - range.seconds;
 
-  const nodes = useQuery(AdminService.method.listNodes, {});
+  const nodes = useQuery(AdminService.method.listNodes, {}, { enabled: validId });
   const node = nodes.data?.nodes.find((n) => n.id === nodeId);
-  const history = useQuery(AdminService.method.queryMetrics, { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: 1000 });
+  const history = useQuery(AdminService.method.queryMetrics, { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: 1000 }, {
+    enabled: validId, placeholderData: keepPreviousData,
+  });
   const charts = useMemo(
     () => history.data ? PANELS.map((p) => ({ ...p, data: toAligned(history.data, p.names, from, to), unit: unitOf(history.data, p.names[0]) })) : [],
     [history.data, from, to],
   );
 
-  if (nodes.error) return <p role="alert" className="error">{nodes.error.rawMessage}</p>;
-  if (nodes.data && !node) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
+  if (!validId || (nodes.data && !node)) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
+  if (nodes.error) return <p role="alert" className="error">{errorText(nodes.error)}</p>;
   return (
     <section>
       <header className="row detail-header">
@@ -60,7 +65,7 @@ export function NodeDetail() {
         </nav>
         {history.data && <span className="muted">级别 {history.data.level}，每点 {history.data.stepS}s</span>}
       </header>
-      {history.error && <p role="alert" className="error">{history.error.rawMessage}</p>}
+      {history.error && <p role="alert" className="error">{errorText(history.error)}</p>}
       <div className="grid">
         {charts.map((c) => (
           <div className="card" key={c.title}>

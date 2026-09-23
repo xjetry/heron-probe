@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import uPlot, { type AlignedData, type Options } from "uplot";
 import "uplot/dist/uPlot.min.css";
 import { formatUnit } from "../lib/format";
+import { axisValues } from "../lib/axis";
 
 const palette = ["#3b82f6", "#f59e0b", "#10b981", "#ef4444"];
 
@@ -11,14 +12,26 @@ export function Chart({ data, labels, unit, height = 180 }: { data: AlignedData;
   const plot = useRef<uPlot | null>(null);
   const initialData = useRef(data);
   const key = labels.join("|");
+  const [dark, setDark] = useState(() => window.matchMedia("(prefers-color-scheme: dark)").matches);
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const changed = () => setDark(media.matches);
+    media.addEventListener("change", changed);
+    changed();
+    return () => media.removeEventListener("change", changed);
+  }, []);
   useEffect(() => {
     const host = el.current;
     if (!host) return;
+    const css = getComputedStyle(document.documentElement);
+    const axisColor = css.getPropertyValue("--muted").trim();
+    const gridColor = css.getPropertyValue("--line").trim();
+    const axisStyle = { stroke: axisColor, grid: { stroke: gridColor }, ticks: { stroke: axisColor } };
     const opts: Options = {
       width: host.clientWidth || 600,
       height,
       scales: { x: { time: true }, y: unit === "percent" ? { range: [0, 100] } : {} },
-      axes: [{}, { size: 80, values: (_u, vals) => vals.map((v) => formatUnit(v, unit)) }],
+      axes: [{ ...axisStyle }, { ...axisStyle, size: 80, values: (_u, vals) => axisValues(vals, unit) }],
       series: [
         {},
         ...labels.map((label, i) => ({
@@ -38,8 +51,8 @@ export function Chart({ data, labels, unit, height = 180 }: { data: AlignedData;
       plot.current?.destroy();
       plot.current = null;
     };
-    // data 的更新走 setData，不重建图表。
-  }, [key, unit, height]);
+    // 标签、单位、尺寸或主题改变才重建；下面的数据 effect 维护最近提交的数据快照并应用当前数据。
+  }, [key, unit, height, dark]);
   useEffect(() => {
     initialData.current = data;
     plot.current?.setData(data);
