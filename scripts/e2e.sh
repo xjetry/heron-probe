@@ -31,7 +31,20 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-sleep 1
+
+wait_hub() {
+  attempt=0
+  while [ "$attempt" -lt 30 ]; do
+    if status=$(curl -sS -o /dev/null -w '%{http_code}' "$base/"); then
+      [ "$status" = 302 ] && return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.2
+  done
+  echo "FAIL: hub did not become ready (expected / to return 302)"
+  exit 1
+}
+wait_hub
 
 # 运行中设密码：另一进程经 WAL 写库，登录路径每次读库，不需要重启 hub。
 printf '%s\n' "$admin_pw" | bin/probe-hub passwd --db "$db" > "$work/passwd.log" 2>&1
@@ -91,7 +104,7 @@ query_body=$(jq -nc --arg nodeId "$node1" --argjson from "$((now - 3600))" --arg
 jq -e '.level == "1m" and (.ts | length) >= 1 and any(.series[] | select(.name == "cpu") | .samples[]; .n > 0)' "$work/QueryMetrics.json" > /dev/null || { echo "FAIL: QueryMetrics shape"; cat "$work/QueryMetrics.json"; exit 1; }
 # 流量：两个 agent 每 4 秒上报一次，上报本身就产生字节；首次上报只取基线，之后的差分进总量。
 [ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic"; cat "$work/GetTraffic.json"; exit 1; }
-jq -e '(.nodes | length) == 2 and all(.nodes[]; (.traffic.totalRx | tonumber) > 0 and (.traffic.totalTx | tonumber) > 0 and .traffic.resetDay == 1 and (.traffic.nextResetAt | tonumber) > (.traffic.periodStart | tonumber))' "$work/GetTraffic.json" > /dev/null || { echo "FAIL: traffic shape"; cat "$work/GetTraffic.json"; exit 1; }
+jq -e '.timezone == "UTC" and (.nodes | length) == 2 and all(.nodes[]; (.traffic.totalRx | tonumber) > 0 and (.traffic.totalTx | tonumber) > 0 and .traffic.resetDay == 1 and (.traffic.nextResetAt | tonumber) > (.traffic.periodStart | tonumber))' "$work/GetTraffic.json" > /dev/null || { echo "FAIL: traffic shape"; cat "$work/GetTraffic.json"; exit 1; }
 tx_before=$(jq -r --arg id "$node1" '.nodes[] | select(.nodeId == $id) | .traffic.totalTx' "$work/GetTraffic.json")
 adjust_body=$(jq -nc --arg nodeId "$node1" '{nodeId: $nodeId, periodRx: "1073741824", periodTx: "0"}')
 [ "$(rpc AdjustTraffic "$adjust_body")" = 200 ] || { echo "FAIL: AdjustTraffic"; cat "$work/AdjustTraffic.json"; exit 1; }
@@ -115,7 +128,7 @@ hub=""
 # 重启：流量状态、重置日与被 Drain 出的分钟行都必须还在。
 PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC >> "$work/hub.log" 2>&1 &
 hub=$!
-sleep 1
+wait_hub
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login after restart"; exit 1; }
 [ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic after restart"; exit 1; }
 # 总量不因周期滚动清零；agent 已退出，同周期的用量不再变化，跨周期则为零。
