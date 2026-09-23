@@ -4,3 +4,8 @@ import { Code, ConnectError } from "@connectrpc/connect";
 export function isUnauthenticated(err: unknown): boolean {
   return err instanceof ConnectError && err.code === Code.Unauthenticated;
 }
+
+// hub 的错误正文供人阅读，显示层统一去掉 Connect 的错误码前缀。
+export function errorText(err: unknown): string {
+  return err instanceof ConnectError ? err.rawMessage : String(err);
+}

@@ -1,9 +1,9 @@
 import { useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { Secret } from "../components/Secret";
 import { AdminService } from "../gen/probe/v1/admin_pb";
-import { errorText } from "./Login";
+import { errorText } from "../api/auth";
 
 const TTLS = [
   { label: "10 分钟", seconds: 600 },
@@ -18,11 +18,15 @@ export function RegisterWindow() {
   const [ttl, setTtl] = useState(TTLS[1].seconds);
   const [maxNodes, setMaxNodes] = useState(5);
   const [key, setKey] = useState<string | null>(null);
+  const clearKey = useCallback(() => setKey(null), []);
+  useEffect(() => {
+    if (status.data?.open === false) clearKey();
+  }, [status.data?.open, clearKey]);
   const open = useMutation(AdminService.method.openRegisterWindow, {
     onSuccess: (r) => { setKey(r.key); void qc.invalidateQueries(); },
   });
   const close = useMutation(AdminService.method.closeRegisterWindow, {
-    onSuccess: () => { setKey(null); void qc.invalidateQueries(); },
+    onSuccess: () => { clearKey(); void qc.invalidateQueries(); },
   });
   const onOpen = (e: FormEvent) => { e.preventDefault(); open.mutate({ ttlS: ttl, maxNodes }); };
   const err = open.error ?? close.error ?? status.error;
@@ -50,7 +54,7 @@ export function RegisterWindow() {
           </select>
         </label>
         <label>可注册节点数<input type="number" min={1} max={1000} value={maxNodes} onChange={(e) => setMaxNodes(Number(e.target.value))} /></label>
-        <button type="submit" disabled={open.isPending}>开启新窗口</button>
+        <button type="submit" disabled={open.isPending || maxNodes < 1}>开启新窗口</button>
       </form>
       {err && <p role="alert" className="error">{errorText(err)}</p>}
     </section>

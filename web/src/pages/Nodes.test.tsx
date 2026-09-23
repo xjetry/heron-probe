@@ -1,8 +1,11 @@
 import { Code, ConnectError } from "@connectrpc/connect";
+import { create } from "@bufbuild/protobuf";
+import { createConnectQueryKey } from "@connectrpc/connect-query";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
 import { Nodes } from "./Nodes";
+import { AdminService, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema } from "../gen/probe/v1/admin_pb";
 
 const two = [
   { id: 1n, name: "a", public: false, note: "", sortOrder: 0, createdAt: 0n },
@@ -10,6 +13,50 @@ const two = [
 ];
 
 describe("Nodes", () => {
+  it("变更只失效节点列表，不失效快照与注册窗口", async () => {
+    const listNodes = vi.fn(async () => ({ nodes: two }));
+    const { queryClient } = renderWithAdmin({ listNodes, createNode: async () => ({ node: two[0], token: "new" }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    const snapshotKey = createConnectQueryKey({ schema: AdminService.method.getSnapshot, cardinality: "finite" });
+    const windowKey = createConnectQueryKey({ schema: AdminService.method.getRegisterWindow, cardinality: "finite" });
+    queryClient.setQueryData(snapshotKey, create(GetSnapshotResponseSchema));
+    queryClient.setQueryData(windowKey, create(GetRegisterWindowResponseSchema));
+    await screen.findByRole("link", { name: "a" });
+    fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    await waitFor(() => expect(listNodes).toHaveBeenCalledTimes(2));
+    expect([snapshotKey, windowKey].map((key) => queryClient.getQueryState(key)?.isInvalidated)).toEqual([false, false]);
+  });
+
+  it("再次编辑从当前节点而非旧草稿开始", async () => {
+    let list = two;
+    const { queryClient } = renderWithAdmin({ listNodes: async () => ({ nodes: list }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a" });
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    fireEvent.change(screen.getByLabelText("名称"), { target: { value: "abandoned" } });
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    list = [{ ...two[0], name: "current", public: true, note: "current note" }, two[1]];
+    await act(async () => { await queryClient.refetchQueries(); });
+    await screen.findByRole("link", { name: "current" });
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    expect({
+      name: (screen.getByLabelText("名称") as HTMLInputElement).value,
+      public: (screen.getByLabelText("公开") as HTMLInputElement).checked,
+      note: (screen.getByLabelText("备注") as HTMLInputElement).value,
+    }).toEqual({ name: "current", public: true, note: "current note" });
+  });
+
+  it.each(["delete", "rotate"])("%s 请求挂起时禁止重复操作", async (operation) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const pending = async () => { await gate; return { token: "new" }; };
+    renderWithAdmin({ listNodes: async () => ({ nodes: two }), deleteNode: async () => { await gate; return {}; }, rotateNodeToken: pending }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a" });
+    if (operation === "delete") fireEvent.click(screen.getAllByRole("button", { name: "删除" })[0]);
+    const button = screen.getAllByRole("button", { name: operation === "delete" ? "确认删除 a" : "换 token" })[0];
+    fireEvent.click(button);
+    try { await waitFor(() => expect(button).toBeDisabled()); }
+    finally { await act(async () => { release(); }); }
+  });
   it.each(["list", "create"])("%s 失败时展示错误正文", async (source) => {
     const fail = async () => { throw new ConnectError("request failed", Code.Unavailable); };
     renderWithAdmin({ listNodes: source === "list" ? fail : async () => ({ nodes: two }), createNode: fail }, [{ path: "/nodes", Component: Nodes }], "/nodes");
@@ -76,7 +123,7 @@ describe("Nodes", () => {
       await screen.findByRole("link", { name: "a" });
       fireEvent.click(screen.getAllByRole("button", { name: "换 token" })[0]);
       await waitFor(() => expect(rotateNodeToken).toHaveBeenCalledWith(expect.objectContaining({ id: 1n }), expect.anything()));
-      expect(await screen.findByLabelText("节点 1 的新 token")).toHaveTextContent("new-token");
+      expect(await screen.findByLabelText("节点 a 的新 token")).toHaveTextContent("new-token");
       fireEvent.click(screen.getByRole("button", { name: "复制" }));
       expect(await screen.findByRole("button", { name: "已复制" })).toBeInTheDocument();
       expect(writeText).toHaveBeenCalledWith("new-token");

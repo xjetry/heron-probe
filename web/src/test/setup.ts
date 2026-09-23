@@ -2,5 +2,5 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach } from "vitest";
 
-// Vitest 不暴露全局钩子，显式清理才能隔离各用例挂载的 React 树。
+// 本工程 globals: false，RTL 找不到全局 afterEach 就不会自动注册清理；这里显式注册。
 afterEach(cleanup);

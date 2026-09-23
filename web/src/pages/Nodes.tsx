@@ -1,15 +1,15 @@
-import { useMutation, useQuery } from "@connectrpc/connect-query";
+import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { Link } from "react-router";
 import { Secret } from "../components/Secret";
 import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
-import { errorText } from "./Login";
+import { errorText } from "../api/auth";
 
 export function Nodes() {
   const qc = useQueryClient();
   const nodes = useQuery(AdminService.method.listNodes, {});
-  const refresh = () => qc.invalidateQueries();
+  const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) });
   const [secret, setSecret] = useState<{ label: string; value: string } | null>(null);
   const [name, setName] = useState("");
 
@@ -19,7 +19,7 @@ export function Nodes() {
   const update = useMutation(AdminService.method.updateNode, { onSuccess: () => void refresh() });
   const remove = useMutation(AdminService.method.deleteNode, { onSuccess: () => void refresh() });
   const rotate = useMutation(AdminService.method.rotateNodeToken, {
-    onSuccess: (r, req) => { setSecret({ label: `节点 ${req.id} 的新 token`, value: r.token }); void refresh(); },
+    onSuccess: (r, req) => { setSecret({ label: `节点 ${nodes.data?.nodes.find((n) => n.id === req.id)?.name ?? req.id} 的新 token`, value: r.token }); void refresh(); },
   });
   const reorder = useMutation(AdminService.method.reorderNodes, { onSuccess: () => void refresh() });
 
@@ -35,7 +35,7 @@ export function Nodes() {
   const anyError = create.error ?? update.error ?? remove.error ?? rotate.error ?? reorder.error;
 
   if (nodes.isPending) return <p className="muted">加载中…</p>;
-  if (nodes.error) return <p role="alert" className="error">{nodes.error.rawMessage}</p>;
+  if (nodes.error) return <p role="alert" className="error">{errorText(nodes.error)}</p>;
   const list = nodes.data.nodes;
   return (
     <section>
@@ -52,6 +52,7 @@ export function Nodes() {
           <tbody>
             {list.map((n, i) => (
               <NodeEditor key={String(n.id)} node={n}
+                deleting={remove.isPending} rotating={rotate.isPending}
                 onMoveUp={() => move(list, i, -1)} onMoveDown={() => move(list, i, 1)}
                 onSave={(patch) => update.mutate({ id: n.id, ...patch })}
                 onDelete={() => remove.mutate({ id: n.id })}
@@ -64,8 +65,9 @@ export function Nodes() {
   );
 }
 
-function NodeEditor({ node, onMoveUp, onMoveDown, onSave, onDelete, onRotate }: {
+function NodeEditor({ node, deleting, rotating, onMoveUp, onMoveDown, onSave, onDelete, onRotate }: {
   node: Node;
+  deleting: boolean; rotating: boolean;
   onMoveUp: () => void; onMoveDown: () => void;
   onSave: (patch: { name: string; public: boolean; note: string }) => void;
   onDelete: () => void; onRotate: () => void;
@@ -99,11 +101,11 @@ function NodeEditor({ node, onMoveUp, onMoveDown, onSave, onDelete, onRotate }: 
       <td className="muted">{node.note}</td>
       <td className="muted">{new Date(Number(node.createdAt) * 1000).toLocaleDateString()}</td>
       <td>
-        <button type="button" className="link" onClick={() => setEditing(true)}>编辑</button>{" "}
-        <button type="button" className="link" onClick={onRotate}>换 token</button>{" "}
+        <button type="button" className="link" onClick={() => { setDraft({ name: node.name, public: node.public, note: node.note }); setEditing(true); }}>编辑</button>{" "}
+        <button type="button" className="link" onClick={onRotate} disabled={rotating}>换 token</button>{" "}
         {confirming ? (
           <>
-            <button type="button" className="danger" onClick={onDelete}>确认删除 {node.name}</button>{" "}
+            <button type="button" className="danger" onClick={onDelete} disabled={deleting}>确认删除 {node.name}</button>{" "}
             <button type="button" className="link" onClick={() => setConfirming(false)}>取消</button>
           </>
         ) : (

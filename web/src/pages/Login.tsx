@@ -1,14 +1,16 @@
-import { ConnectError } from "@connectrpc/connect";
 import { useMutation } from "@connectrpc/connect-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { useNavigate } from "react-router";
 import { AdminService } from "../gen/probe/v1/admin_pb";
+import { errorText } from "../api/auth";
 
 export function Login() {
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [password, setPassword] = useState("");
   const login = useMutation(AdminService.method.login, {
-    onSuccess: () => void navigate("/", { replace: true }),
+    onSuccess: () => { queryClient.clear(); void navigate("/", { replace: true }); },
   });
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -39,9 +41,4 @@ export function Login() {
       </form>
     </main>
   );
-}
-
-// hub 的错误信息本身就是给人读的；这里只去掉 Connect 的错误码前缀。
-export function errorText(err: unknown): string {
-  return err instanceof ConnectError ? err.rawMessage : String(err);
 }

@@ -1,10 +1,36 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, fireEvent, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
 import { RegisterWindow } from "./RegisterWindow";
 
+afterEach(() => vi.useRealTimers());
+
 describe("RegisterWindow", () => {
+  it.each(["", "0", "-1"])("名额为 '%s' 时禁用开窗", async (value) => {
+    renderWithAdmin({ getRegisterWindow: async () => ({ open: false }) }, [{ path: "/register", Component: RegisterWindow }], "/register");
+    await screen.findByText("当前没有开启的窗口。");
+    fireEvent.change(screen.getByLabelText("可注册节点数"), { target: { value } });
+    expect(screen.getByRole("button", { name: "开启新窗口" })).toBeDisabled();
+  });
+
+  it("轮询发现窗口失效时撤下 key 与命令", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let opened = false;
+    renderWithAdmin({
+      getRegisterWindow: async () => ({ open: opened, expiresAt: 4_000_000_000n, remaining: 3 }),
+      openRegisterWindow: async () => { opened = true; return { key: "expires", expiresAt: 4_000_000_000n, maxNodes: 3 }; },
+    }, [{ path: "/register", Component: RegisterWindow }], "/register");
+    await screen.findByText("当前没有开启的窗口。");
+    fireEvent.click(screen.getByRole("button", { name: "开启新窗口" }));
+    await screen.findByRole("button", { name: "关闭窗口" });
+    await screen.findByLabelText("注册 key");
+    opened = false;
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    await screen.findByText("当前没有开启的窗口。");
+    expect(screen.queryByLabelText("注册 key")).not.toBeInTheDocument();
+    expect(screen.queryByText(/probe-agent register/)).not.toBeInTheDocument();
+  });
   it.each(["status", "open"])("%s 失败时展示错误正文", async (source) => {
     const fail = async () => { throw new ConnectError("request failed", Code.Unavailable); };
     renderWithAdmin({
@@ -15,9 +41,10 @@ describe("RegisterWindow", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/^request failed$/);
   });
   it("开窗后展示 key 与安装命令", async () => {
-    const openRegisterWindow = vi.fn(async () => ({ key: "cafe", expiresAt: 100n, maxNodes: 5 }));
+    let opened = false;
+    const openRegisterWindow = vi.fn(async () => { opened = true; return { key: "cafe", expiresAt: 4_000_000_000n, maxNodes: 5 }; });
     const { router } = renderWithAdmin(
-      { getRegisterWindow: async () => ({ open: false, expiresAt: 0n, remaining: 0 }), openRegisterWindow },
+      { getRegisterWindow: async () => ({ open: opened, expiresAt: 4_000_000_000n, remaining: 5 }), openRegisterWindow },
       [{ path: "/register", Component: RegisterWindow }, { path: "/away", element: <h1>away</h1> }], "/register",
     );
     await screen.findByText("当前没有开启的窗口。");
@@ -27,7 +54,7 @@ describe("RegisterWindow", () => {
     expect(openRegisterWindow).toHaveBeenCalledWith(expect.objectContaining({ ttlS: 3600, maxNodes: 5 }), expect.anything());
     await act(() => router.navigate("/away"));
     await act(() => router.navigate("/register"));
-    await screen.findByText("当前没有开启的窗口。");
+    await screen.findByRole("button", { name: "关闭窗口" });
     expect(screen.queryByLabelText("注册 key")).not.toBeInTheDocument();
   });
 

@@ -27,6 +27,7 @@ button.danger { color: var(--bad); border-color: var(--bad); }
 .error { color: var(--bad); }
 .muted { color: var(--muted); }
 .row { display: flex; align-items: baseline; gap: 1rem; }
+form.row { align-items: flex-end; flex-wrap: wrap; }
 .detail-header { flex-wrap: wrap; }
 .detail-header nav { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .table-scroll { overflow-x: auto; }

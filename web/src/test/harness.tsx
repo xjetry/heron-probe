@@ -2,14 +2,13 @@ import { createRouterTransport, type ServiceImpl } from "@connectrpc/connect";
 import { TransportProvider } from "@connectrpc/connect-query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { createMemoryRouter, RouterProvider, type RouteObject } from "react-router";
 import { AdminService } from "../gen/probe/v1/admin_pb";
 
 export type AdminImpl = Partial<ServiceImpl<typeof AdminService>>;
 
-// 与生产入口同样的 Provider 栈，只是传输换成内存里的服务实现、路由换成内存历史。
-export function renderWithAdmin(impl: AdminImpl, routes: RouteObject[], initialPath: string, extra?: ReactNode) {
+// 页面测试使用内存服务和路由并关闭重试，不安装全局认证跳转；生产 client 的跳转由入口测试验证。
+export function renderWithAdmin(impl: AdminImpl, routes: RouteObject[], initialPath: string) {
   const transport = createRouterTransport(({ service }) => {
     service(AdminService, impl);
   });
@@ -19,7 +18,6 @@ export function renderWithAdmin(impl: AdminImpl, routes: RouteObject[], initialP
     <TransportProvider transport={transport}>
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />
-        {extra}
       </QueryClientProvider>
     </TransportProvider>,
   );
