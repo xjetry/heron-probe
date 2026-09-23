@@ -28,7 +28,7 @@ export function Overview() {
       <div className="table-scroll" role="region" aria-label="节点实时读数" tabIndex={0}>
         <table className="nodes">
           <thead>
-            <tr><th>节点</th><th>CPU</th><th>内存</th><th>磁盘</th><th>负载</th><th>网络</th><th>最近上报</th></tr>
+            <tr><th>节点</th><th>CPU</th><th>内存</th><th>磁盘</th><th>负载</th><th>网络</th><th>本周期 ↓/↑</th><th>最近上报</th></tr>
           </thead>
           <tbody>
             {snap.data.nodes.map((n) => <NodeRow key={String(n.id)} node={n} now={now} />)}
@@ -52,6 +52,7 @@ function NodeRow({ node, now }: { node: NodeStatus; now: number }) {
       <td>{m?.diskUsed !== undefined && m.diskTotal ? <Bar value={ratio(m.diskUsed, m.diskTotal)} label={`${bytes(m.diskUsed)} / ${bytes(m.diskTotal)}`} /> : <Missing />}</td>
       <td>{m?.load1 !== undefined ? `${m.load1.toFixed(2)} / ${m.load5?.toFixed(2) ?? "–"} / ${m.load15?.toFixed(2) ?? "–"}` : <Missing />}</td>
       <td>{m?.netRxBps !== undefined && m.netTxBps !== undefined ? `↓ ${bytes(m.netRxBps)}/s ↑ ${bytes(m.netTxBps)}/s` : <Missing />}</td>
+      <td>{node.traffic ? `↓ ${bytes(node.traffic.periodRx)} ↑ ${bytes(node.traffic.periodTx)}` : <Missing />}</td>
       <td className="muted">{node.lastSeenAt !== undefined ? ago(node.lastSeenAt, now) : "从未"}</td>
     </tr>
   );

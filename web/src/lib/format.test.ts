@@ -27,6 +27,8 @@ describe("format", () => {
   it("formatUnit 按单位分派，未知单位保留两位小数", () => {
     expect(formatUnit(50, "percent")).toBe("50%");
     expect(formatUnit(2048, "bytes")).toBe("2.0 KiB");
+    expect(formatUnit(2048, "bytes/s")).toBe("2.0 KiB/s");
+    expect(formatUnit(0, "bytes/s")).toBe("0 B/s");
     expect(formatUnit(2.4, "count")).toBe("2");
     expect(formatUnit(1.23456, "")).toBe("1.23");
   });

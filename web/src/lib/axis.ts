@@ -9,11 +9,12 @@ export function axisValues(values: number[], unit: string): string[] {
   if (gaps.length === 0) return values.map((v) => formatUnit(v, unit));
   let scale = 1;
   let suffix = unit === "percent" ? "%" : "";
-  if (unit === "bytes") {
+  const rate = unit === "bytes/s";
+  if (unit === "bytes" || rate) {
     const peak = Math.max(...values.map(Math.abs));
     let index = 0;
     while (peak / scale >= 1024 && index < byteUnits.length - 1) { scale *= 1024; index++; }
-    suffix = ` ${byteUnits[index]}`;
+    suffix = ` ${byteUnits[index]}${rate ? "/s" : ""}`;
   }
   const digits = Math.min(20, Math.max(0, Math.ceil(-Math.log10(Math.min(...gaps) / scale))));
   return values.map((v) => `${(v / scale).toFixed(digits)}${suffix}`);

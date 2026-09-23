@@ -45,6 +45,8 @@ export function formatUnit(v: number, unit: string): string {
       return percent(v);
     case "bytes":
       return bytes(v);
+    case "bytes/s":
+      return `${bytes(v)}/s`;
     case "count":
       return String(Math.round(v));
     default:

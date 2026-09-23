@@ -10,6 +10,7 @@ const snapshot = {
   nodes: [
     {
       id: 1n, name: "web-01", online: true, lastSeenAt: 999_990n,
+      traffic: { totalRx: 10n * 1024n ** 3n, totalTx: 5n * 1024n ** 3n, periodRx: 1024n ** 3n, periodTx: 512n * 1024n ** 2n, periodStart: 1_756_684_800n, nextResetAt: 1_759_276_800n, resetDay: 1 },
       metrics: { cpuPct: 42, memUsed: 512n * 1024n * 1024n, memTotal: 1024n * 1024n * 1024n, load1: 0.5, load5: 0.4, load15: 0.3, netRxBps: 1024n, netTxBps: 2048n },
     },
     { id: 2n, name: "never", online: false },
@@ -36,9 +37,10 @@ describe("Overview", () => {
     expect(web.getByRole("meter", { name: "42%" })).toHaveAttribute("aria-valuenow", "42");
     expect(web.getByRole("meter", { name: "512 MiB / 1.0 GiB" })).toHaveAttribute("aria-valuenow", "50");
     expect(web.getByText("10 秒前")).toBeInTheDocument();
+    expect(web.getByText("↓ 1.0 GiB ↑ 512 MiB")).toBeInTheDocument();
     const never = within(rows[1]);
     expect(never.getByRole("img", { name: "离线" })).toBeInTheDocument();
-    expect(never.getAllByLabelText("无读数")).toHaveLength(5);
+    expect(never.getAllByLabelText("无读数")).toHaveLength(6);
     for (const missing of never.getAllByLabelText("无读数")) {
       expect(missing).toHaveTextContent(/^–$/);
     }

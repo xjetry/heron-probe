@@ -1,10 +1,11 @@
-import { useQuery } from "@connectrpc/connect-query";
-import { keepPreviousData } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
+import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { Chart } from "../components/Chart";
 import { AdminService } from "../gen/probe/v1/admin_pb";
 import { toAligned, unitOf } from "../lib/series";
+import { bytes } from "../lib/format";
 import { errorText } from "../api/auth";
 
 export const RANGES = [
@@ -15,17 +16,21 @@ export const RANGES = [
   { label: "30d", seconds: 30 * 86400 },
 ];
 
-// 每个面板画哪些指标；名字与 hub 的描述表一致，单位随数据来。
-const PANELS: { title: string; names: string[] }[] = [
+// 每个面板画哪些指标；名字与 hub 的描述表一致，单位随数据来。可加量（字节增量）以速率
+// 作图，单位由面板指定：数据里的 bytes 是一个点内的总和，图上要的是 bytes/s。
+const PANELS: { title: string; names: string[]; unit?: string }[] = [
   { title: "CPU", names: ["cpu"] },
   { title: "内存 / 交换", names: ["mem_used", "swap_used"] },
   { title: "磁盘", names: ["disk_used"] },
   { title: "负载（1 分钟）", names: ["load1"] },
   { title: "连接数", names: ["tcp", "udp"] },
   { title: "进程数", names: ["procs"] },
+  { title: "网络", names: ["rx_bytes", "tx_bytes"], unit: "bytes/s" },
 ];
 
 const REFRESH_MS = 60_000;
+// 流量卡随 hub 的刷出周期刷新：周期量在 hub 内存里每次上报都变，10 秒一读足够。
+export const TRAFFIC_MS = 10_000;
 
 export function NodeDetail() {
   const { id } = useParams();
@@ -46,7 +51,7 @@ export function NodeDetail() {
     enabled: validId, placeholderData: keepPreviousData,
   });
   const charts = useMemo(
-    () => history.data ? PANELS.map((p) => ({ ...p, data: toAligned(history.data, p.names, from, to), unit: unitOf(history.data, p.names[0]) })) : [],
+    () => history.data ? PANELS.map((p) => ({ ...p, data: toAligned(history.data, p.names, from, to), unit: p.unit ?? unitOf(history.data, p.names[0]) })) : [],
     [history.data, from, to],
   );
 
@@ -66,6 +71,7 @@ export function NodeDetail() {
         {history.data && <span className="muted">级别 {history.data.level}，每点 {history.data.stepS}s</span>}
       </header>
       {history.error && <p role="alert" className="error">{errorText(history.error)}</p>}
+      {validId && <TrafficCard nodeId={nodeId} />}
       <div className="grid">
         {charts.map((c) => (
           <div className="card" key={c.title}>
@@ -86,5 +92,58 @@ export function NodeDetail() {
         </dl>
       )}
     </section>
+  );
+}
+
+const GIB = 2 ** 30;
+const toGiB = (v: bigint) => (Number(v) / GIB).toFixed(2);
+// 校正值以 GiB 输入，四舍五入到整字节；只有有限且落在 uint64 范围内的非负值才能提交。
+const toBytes = (s: string): bigint | null => {
+  const v = Number(s);
+  const rounded = Math.round(v * GIB);
+  if (!(s.trim() !== "" && Number.isFinite(v) && v >= 0 && Number.isFinite(rounded))) return null;
+  const result = BigInt(rounded);
+  return result <= (1n << 64n) - 1n ? result : null;
+};
+
+function TrafficCard({ nodeId }: { nodeId: bigint }) {
+  const qc = useQueryClient();
+  const all = useQuery(AdminService.method.getTraffic, {}, { refetchInterval: TRAFFIC_MS });
+  const row = all.data?.nodes.find((n) => n.nodeId === nodeId);
+  const t = row?.traffic;
+  const [draft, setDraft] = useState<{ rx: string; tx: string } | null>(null);
+  const adjust = useMutation(AdminService.method.adjustTraffic, {
+    onSuccess: () => {
+      setDraft(null);
+      void qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getTraffic, cardinality: "finite" }) });
+      void qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getSnapshot, cardinality: "finite" }) });
+    },
+  });
+  if (all.error) return <p role="alert" className="error">{errorText(all.error)}</p>;
+  if (!t) return null;
+  // 编辑框首次出现时预填当前值；之后由用户输入驱动。
+  const form = draft ?? { rx: toGiB(t.periodRx), tx: toGiB(t.periodTx) };
+  const rx = toBytes(form.rx);
+  const tx = toBytes(form.tx);
+  const onSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (rx !== null && tx !== null) adjust.mutate({ nodeId, periodRx: rx, periodTx: tx });
+  };
+  return (
+    <div className="card">
+      <h2>流量</h2>
+      <dl className="facts">
+        <dt>本周期</dt><dd>↓ {bytes(t.periodRx)} ↑ {bytes(t.periodTx)}</dd>
+        <dt>总量</dt><dd>↓ {bytes(t.totalRx)} ↑ {bytes(t.totalTx)}</dd>
+        <dt>周期起点</dt><dd>{new Date(Number(t.periodStart) * 1000).toLocaleString()}</dd>
+        <dt>下次重置</dt><dd>{new Date(Number(t.nextResetAt) * 1000).toLocaleString()}（每月 {t.resetDay} 日）</dd>
+      </dl>
+      <form onSubmit={onSubmit} className="row">
+        <label>本周期下行 (GiB)<input value={form.rx} onChange={(e) => setDraft({ ...form, rx: e.target.value })} inputMode="decimal" /></label>
+        <label>本周期上行 (GiB)<input value={form.tx} onChange={(e) => setDraft({ ...form, tx: e.target.value })} inputMode="decimal" /></label>
+        <button type="submit" disabled={adjust.isPending || rx === null || tx === null}>校正本周期</button>
+      </form>
+      {adjust.error && <p role="alert" className="error">{errorText(adjust.error)}</p>}
+    </div>
   );
 }

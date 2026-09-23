@@ -48,7 +48,7 @@ export function Nodes() {
       {anyError && <p role="alert" className="error">{errorText(anyError)}</p>}
       <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
         <table className="nodes">
-          <thead><tr><th>排序</th><th>名称</th><th>公开</th><th>备注</th><th>创建于</th><th>操作</th></tr></thead>
+          <thead><tr><th>排序</th><th>名称</th><th>公开</th><th>备注</th><th>重置日</th><th>创建于</th><th>操作</th></tr></thead>
           <tbody>
             {list.map((n, i) => (
               <NodeEditor key={String(n.id)} node={n}
@@ -69,12 +69,12 @@ function NodeEditor({ node, deleting, rotating, onMoveUp, onMoveDown, onSave, on
   node: Node;
   deleting: boolean; rotating: boolean;
   onMoveUp: () => void; onMoveDown: () => void;
-  onSave: (patch: { name: string; public: boolean; note: string }) => void;
+  onSave: (patch: { name: string; public: boolean; note: string; trafficResetDay: number }) => void;
   onDelete: () => void; onRotate: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [draft, setDraft] = useState({ name: node.name, public: node.public, note: node.note });
+  const [draft, setDraft] = useState({ name: node.name, public: node.public, note: node.note, trafficResetDay: node.trafficResetDay });
   if (editing) {
     return (
       <tr>
@@ -82,6 +82,7 @@ function NodeEditor({ node, deleting, rotating, onMoveUp, onMoveDown, onSave, on
         <td><input aria-label="名称" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></td>
         <td><input type="checkbox" aria-label="公开" checked={draft.public} onChange={(e) => setDraft({ ...draft, public: e.target.checked })} /></td>
         <td><input aria-label="备注" value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></td>
+        <td><input type="number" min={1} max={28} aria-label="重置日" value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /></td>
         <td />
         <td>
           <button type="button" onClick={() => { onSave(draft); setEditing(false); }}>保存</button>{" "}
@@ -99,9 +100,10 @@ function NodeEditor({ node, deleting, rotating, onMoveUp, onMoveDown, onSave, on
       <td><Link to={`/nodes/${node.id}`}>{node.name}</Link></td>
       <td>{node.public ? "是" : "否"}</td>
       <td className="muted">{node.note}</td>
+      <td>每月 {node.trafficResetDay} 日</td>
       <td className="muted">{new Date(Number(node.createdAt) * 1000).toLocaleDateString()}</td>
       <td>
-        <button type="button" className="link" onClick={() => { setDraft({ name: node.name, public: node.public, note: node.note }); setEditing(true); }}>编辑</button>{" "}
+        <button type="button" className="link" onClick={() => { setDraft({ name: node.name, public: node.public, note: node.note, trafficResetDay: node.trafficResetDay }); setEditing(true); }}>编辑</button>{" "}
         <button type="button" className="link" onClick={onRotate} disabled={rotating}>换 token</button>{" "}
         {confirming ? (
           <>

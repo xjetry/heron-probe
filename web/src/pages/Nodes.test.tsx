@@ -8,11 +8,16 @@ import { Nodes } from "./Nodes";
 import { AdminService, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema } from "../gen/probe/v1/admin_pb";
 
 const two = [
-  { id: 1n, name: "a", public: false, note: "", sortOrder: 0, createdAt: 0n },
-  { id: 2n, name: "b", public: true, note: "db", sortOrder: 1, createdAt: 0n },
+  { id: 1n, name: "a", public: false, note: "", sortOrder: 0, createdAt: 0n, trafficResetDay: 1 },
+  { id: 2n, name: "b", public: true, note: "db", sortOrder: 1, createdAt: 0n, trafficResetDay: 1 },
 ];
 
 describe("Nodes", () => {
+  it("列表显示重置日", async () => {
+    renderWithAdmin({ listNodes: async () => ({ nodes: [{ ...two[0], trafficResetDay: 20 }] }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    expect(await screen.findByRole("cell", { name: "每月 20 日" })).toBeInTheDocument();
+  });
+
   it("变更只失效节点列表，不失效快照与注册窗口", async () => {
     const listNodes = vi.fn(async () => ({ nodes: two }));
     const { queryClient } = renderWithAdmin({ listNodes, createNode: async () => ({ node: two[0], token: "new" }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
@@ -102,7 +107,7 @@ describe("Nodes", () => {
     await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n, 3n] }), expect.anything()));
   });
 
-  it("编辑整体提交三个字段", async () => {
+  it("编辑整体提交四个字段", async () => {
     const updateNode = vi.fn(async () => ({ node: two[0] }));
     renderWithAdmin({ listNodes: async () => ({ nodes: two }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: "a" });
@@ -110,8 +115,9 @@ describe("Nodes", () => {
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "a2" } });
     fireEvent.click(screen.getByLabelText("公开"));
     fireEvent.change(screen.getByLabelText("备注"), { target: { value: "changed note" } });
+    fireEvent.change(screen.getByLabelText("重置日"), { target: { value: "15" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, name: "a2", public: true, note: "changed note" }), expect.anything()));
+    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, name: "a2", public: true, note: "changed note", trafficResetDay: 15 }), expect.anything()));
   });
 
   it("轮换后显示并复制新 token", async () => {
