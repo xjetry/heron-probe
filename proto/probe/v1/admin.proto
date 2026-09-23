@@ -40,6 +40,13 @@ service AdminService {
   rpc GetTraffic(GetTrafficRequest) returns (GetTrafficResponse);
   // 把某节点当前周期的用量覆盖为给定值；总量按同一差值调整且不低于 0，计数器基线不动。
   rpc AdjustTraffic(AdjustTrafficRequest) returns (AdjustTrafficResponse);
+
+  // 探测任务：列出全部任务及其分配；保存（id 为 0 即创建）提交整份分配列表；删除不删历史。
+  rpc ListProbeTasks(ListProbeTasksRequest) returns (ListProbeTasksResponse);
+  rpc SaveProbeTask(SaveProbeTaskRequest) returns (SaveProbeTaskResponse);
+  rpc DeleteProbeTask(DeleteProbeTaskRequest) returns (DeleteProbeTaskResponse);
+  // 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
+  rpc QueryProbes(QueryProbesRequest) returns (QueryProbesResponse);
 }
 
 message LoginRequest {
@@ -238,4 +245,61 @@ message AdjustTrafficRequest {
 message AdjustTrafficResponse {
   // 校正后的状态。
   Traffic traffic = 1;
+}
+
+message ProbeTaskDetail {
+  ProbeTask task = 1;
+  // 分配到的节点，升序去重。
+  repeated int64 node_ids = 2;
+}
+message ListProbeTasksRequest {}
+message ListProbeTasksResponse {
+  // 任务与分配的全局版本；经任务管理接口的修改都加一，删除节点清理分配不加；agent 用它对账。
+  uint64 version = 1;
+  repeated ProbeTaskDetail tasks = 2;
+}
+message SaveProbeTaskRequest {
+  // task.id 为 0 时创建，否则整体替换该任务的字段；node_ids 是保存后的完整分配列表。
+  // 约束：interval_s 5–3600，timeout_ms 100–5000，
+  // ICMP 目标为 IP 或主机名，TCP 目标为 host:port；每节点至多 64 个任务。
+  ProbeTask task = 1;
+  repeated int64 node_ids = 2;
+}
+message SaveProbeTaskResponse {
+  ProbeTaskDetail task = 1;
+  uint64 version = 2;
+}
+message DeleteProbeTaskRequest { uint64 id = 1; }
+message DeleteProbeTaskResponse { uint64 version = 1; }
+
+message QueryProbesRequest {
+  int64 node_id = 1;
+  // 窗口 [from, to)，Unix 秒。跨度最长 400 天。
+  int64 from = 2;
+  int64 to = 3;
+  // 返回点数上限；0 取默认 720，最大 2000。hub 据此选择步长。
+  uint32 max_points = 4;
+}
+message QueryProbesResponse {
+  string level = 1;
+  uint32 step_s = 2;
+  // 每个任务一条；只含在窗口内有结果的任务，已删除任务的历史同样按 task_id 返回。
+  repeated ProbeSeries series = 3;
+}
+message ProbeSeries {
+  uint64 task_id = 1;
+  // 按 ts 升序；只包含 sent > 0 的点，缺失的 ts 表示该段没有结果。
+  repeated ProbeSample samples = 2;
+}
+message ProbeSample {
+  // 点起始，Unix 秒，已对齐到 step_s 的整数倍。
+  int64 ts = 1;
+  uint32 sent = 2;
+  // 计入丢包的超时数；丢包率 = lost / sent，errors 不计入。
+  uint32 lost = 3;
+  uint32 errors = 4;
+  // 只有 sent − lost − errors > 0 时才有：该点内成功探测的 rtt 均值 / 最小 / 最大，微秒。
+  optional uint32 rtt_mean_us = 5;
+  optional uint32 rtt_min_us = 6;
+  optional uint32 rtt_max_us = 7;
 }

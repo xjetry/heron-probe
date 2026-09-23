@@ -43,29 +43,9 @@ func (s *Service) GetSnapshot(ctx context.Context, _ *connect.Request[probev1.Ge
 
 func (s *Service) QueryMetrics(ctx context.Context, req *connect.Request[probev1.QueryMetricsRequest]) (*connect.Response[probev1.QueryMetricsResponse], error) {
 	m := req.Msg
-	if m.GetFrom() < 0 {
-		return nil, invalid("from must be a nonnegative Unix timestamp; got %d", m.GetFrom())
-	}
-	if m.GetFrom() >= m.GetTo() {
-		return nil, invalid("from (%d) must be earlier than to (%d)", m.GetFrom(), m.GetTo())
-	}
-	// 指标水位从 Unix epoch 开始；非负秒差直接比较，避免转换纳秒时溢出。
-	if span := m.GetTo() - m.GetFrom(); span > int64(maxQuerySpan/time.Second) {
-		return nil, invalid("window spans %d seconds; the maximum is %d (400 days)", m.GetTo()-m.GetFrom(), int64(maxQuerySpan/time.Second))
-	}
-	maxPoints := int(m.GetMaxPoints())
-	if maxPoints == 0 {
-		maxPoints = defaultMaxPoints
-	}
-	if maxPoints > maxMaxPoints {
-		return nil, invalid("max_points must be at most %d; got %d", maxMaxPoints, maxPoints)
-	}
-	exists, err := s.store.NodeExists(ctx, m.GetNodeId())
+	maxPoints, err := s.queryWindow(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), m.GetMaxPoints())
 	if err != nil {
-		return nil, internalError("looking up node failed")
-	}
-	if !exists {
-		return nil, notFound(m.GetNodeId())
+		return nil, err
 	}
 	lv, step := store.ChooseLevel(m.GetFrom(), m.GetTo(), maxPoints)
 	rows, err := s.store.QueryMetrics(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), lv, step)
@@ -101,4 +81,33 @@ func (s *Service) QueryMetrics(ctx context.Context, req *connect.Request[probev1
 	}
 	resp.Series = series
 	return connect.NewResponse(resp), nil
+}
+
+// queryWindow 为两族查询维持相同的准入与点数预算，避免历史口径随接口分叉。
+func (s *Service) queryWindow(ctx context.Context, nodeID, from, to int64, requested uint32) (int, error) {
+	if from < 0 {
+		return 0, invalid("from must be a nonnegative Unix timestamp; got %d", from)
+	}
+	if from >= to {
+		return 0, invalid("from (%d) must be earlier than to (%d)", from, to)
+	}
+	// 两族水位从 Unix epoch 开始；非负秒差直接比较，避免转换纳秒时溢出。
+	if span := to - from; span > int64(maxQuerySpan/time.Second) {
+		return 0, invalid("window spans %d seconds; the maximum is %d (400 days)", to-from, int64(maxQuerySpan/time.Second))
+	}
+	maxPoints := int(requested)
+	if maxPoints == 0 {
+		maxPoints = defaultMaxPoints
+	}
+	if maxPoints > maxMaxPoints {
+		return 0, invalid("max_points must be at most %d; got %d", maxMaxPoints, maxPoints)
+	}
+	exists, err := s.store.NodeExists(ctx, nodeID)
+	if err != nil {
+		return 0, internalError("looking up node failed")
+	}
+	if !exists {
+		return 0, notFound(nodeID)
+	}
+	return maxPoints, nil
 }

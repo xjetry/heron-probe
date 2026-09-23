@@ -1952,6 +1952,622 @@ func (x *AdjustTrafficResponse) GetTraffic() *Traffic {
 	return nil
 }
 
+type ProbeTaskDetail struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Task  *ProbeTask             `protobuf:"bytes,1,opt,name=task,proto3" json:"task,omitempty"`
+	// 分配到的节点，升序去重。
+	NodeIds       []int64 `protobuf:"varint,2,rep,packed,name=node_ids,json=nodeIds,proto3" json:"node_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProbeTaskDetail) Reset() {
+	*x = ProbeTaskDetail{}
+	mi := &file_probe_v1_admin_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProbeTaskDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProbeTaskDetail) ProtoMessage() {}
+
+func (x *ProbeTaskDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProbeTaskDetail.ProtoReflect.Descriptor instead.
+func (*ProbeTaskDetail) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *ProbeTaskDetail) GetTask() *ProbeTask {
+	if x != nil {
+		return x.Task
+	}
+	return nil
+}
+
+func (x *ProbeTaskDetail) GetNodeIds() []int64 {
+	if x != nil {
+		return x.NodeIds
+	}
+	return nil
+}
+
+type ListProbeTasksRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListProbeTasksRequest) Reset() {
+	*x = ListProbeTasksRequest{}
+	mi := &file_probe_v1_admin_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListProbeTasksRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListProbeTasksRequest) ProtoMessage() {}
+
+func (x *ListProbeTasksRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListProbeTasksRequest.ProtoReflect.Descriptor instead.
+func (*ListProbeTasksRequest) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{37}
+}
+
+type ListProbeTasksResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 任务与分配的全局版本；经任务管理接口的修改都加一，删除节点清理分配不加；agent 用它对账。
+	Version       uint64             `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	Tasks         []*ProbeTaskDetail `protobuf:"bytes,2,rep,name=tasks,proto3" json:"tasks,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListProbeTasksResponse) Reset() {
+	*x = ListProbeTasksResponse{}
+	mi := &file_probe_v1_admin_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListProbeTasksResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListProbeTasksResponse) ProtoMessage() {}
+
+func (x *ListProbeTasksResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListProbeTasksResponse.ProtoReflect.Descriptor instead.
+func (*ListProbeTasksResponse) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *ListProbeTasksResponse) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *ListProbeTasksResponse) GetTasks() []*ProbeTaskDetail {
+	if x != nil {
+		return x.Tasks
+	}
+	return nil
+}
+
+type SaveProbeTaskRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// task.id 为 0 时创建，否则整体替换该任务的字段；node_ids 是保存后的完整分配列表。
+	// 约束：interval_s 5–3600，timeout_ms 100–5000，
+	// ICMP 目标为 IP 或主机名，TCP 目标为 host:port；每节点至多 64 个任务。
+	Task          *ProbeTask `protobuf:"bytes,1,opt,name=task,proto3" json:"task,omitempty"`
+	NodeIds       []int64    `protobuf:"varint,2,rep,packed,name=node_ids,json=nodeIds,proto3" json:"node_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SaveProbeTaskRequest) Reset() {
+	*x = SaveProbeTaskRequest{}
+	mi := &file_probe_v1_admin_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SaveProbeTaskRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SaveProbeTaskRequest) ProtoMessage() {}
+
+func (x *SaveProbeTaskRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SaveProbeTaskRequest.ProtoReflect.Descriptor instead.
+func (*SaveProbeTaskRequest) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *SaveProbeTaskRequest) GetTask() *ProbeTask {
+	if x != nil {
+		return x.Task
+	}
+	return nil
+}
+
+func (x *SaveProbeTaskRequest) GetNodeIds() []int64 {
+	if x != nil {
+		return x.NodeIds
+	}
+	return nil
+}
+
+type SaveProbeTaskResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Task          *ProbeTaskDetail       `protobuf:"bytes,1,opt,name=task,proto3" json:"task,omitempty"`
+	Version       uint64                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SaveProbeTaskResponse) Reset() {
+	*x = SaveProbeTaskResponse{}
+	mi := &file_probe_v1_admin_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SaveProbeTaskResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SaveProbeTaskResponse) ProtoMessage() {}
+
+func (x *SaveProbeTaskResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SaveProbeTaskResponse.ProtoReflect.Descriptor instead.
+func (*SaveProbeTaskResponse) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *SaveProbeTaskResponse) GetTask() *ProbeTaskDetail {
+	if x != nil {
+		return x.Task
+	}
+	return nil
+}
+
+func (x *SaveProbeTaskResponse) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+type DeleteProbeTaskRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteProbeTaskRequest) Reset() {
+	*x = DeleteProbeTaskRequest{}
+	mi := &file_probe_v1_admin_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteProbeTaskRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteProbeTaskRequest) ProtoMessage() {}
+
+func (x *DeleteProbeTaskRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteProbeTaskRequest.ProtoReflect.Descriptor instead.
+func (*DeleteProbeTaskRequest) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *DeleteProbeTaskRequest) GetId() uint64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+type DeleteProbeTaskResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Version       uint64                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteProbeTaskResponse) Reset() {
+	*x = DeleteProbeTaskResponse{}
+	mi := &file_probe_v1_admin_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteProbeTaskResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteProbeTaskResponse) ProtoMessage() {}
+
+func (x *DeleteProbeTaskResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteProbeTaskResponse.ProtoReflect.Descriptor instead.
+func (*DeleteProbeTaskResponse) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *DeleteProbeTaskResponse) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+type QueryProbesRequest struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	NodeId int64                  `protobuf:"varint,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	// 窗口 [from, to)，Unix 秒。跨度最长 400 天。
+	From int64 `protobuf:"varint,2,opt,name=from,proto3" json:"from,omitempty"`
+	To   int64 `protobuf:"varint,3,opt,name=to,proto3" json:"to,omitempty"`
+	// 返回点数上限；0 取默认 720，最大 2000。hub 据此选择步长。
+	MaxPoints     uint32 `protobuf:"varint,4,opt,name=max_points,json=maxPoints,proto3" json:"max_points,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *QueryProbesRequest) Reset() {
+	*x = QueryProbesRequest{}
+	mi := &file_probe_v1_admin_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QueryProbesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QueryProbesRequest) ProtoMessage() {}
+
+func (x *QueryProbesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QueryProbesRequest.ProtoReflect.Descriptor instead.
+func (*QueryProbesRequest) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *QueryProbesRequest) GetNodeId() int64 {
+	if x != nil {
+		return x.NodeId
+	}
+	return 0
+}
+
+func (x *QueryProbesRequest) GetFrom() int64 {
+	if x != nil {
+		return x.From
+	}
+	return 0
+}
+
+func (x *QueryProbesRequest) GetTo() int64 {
+	if x != nil {
+		return x.To
+	}
+	return 0
+}
+
+func (x *QueryProbesRequest) GetMaxPoints() uint32 {
+	if x != nil {
+		return x.MaxPoints
+	}
+	return 0
+}
+
+type QueryProbesResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Level string                 `protobuf:"bytes,1,opt,name=level,proto3" json:"level,omitempty"`
+	StepS uint32                 `protobuf:"varint,2,opt,name=step_s,json=stepS,proto3" json:"step_s,omitempty"`
+	// 每个任务一条；只含在窗口内有结果的任务，已删除任务的历史同样按 task_id 返回。
+	Series        []*ProbeSeries `protobuf:"bytes,3,rep,name=series,proto3" json:"series,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *QueryProbesResponse) Reset() {
+	*x = QueryProbesResponse{}
+	mi := &file_probe_v1_admin_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QueryProbesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QueryProbesResponse) ProtoMessage() {}
+
+func (x *QueryProbesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QueryProbesResponse.ProtoReflect.Descriptor instead.
+func (*QueryProbesResponse) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *QueryProbesResponse) GetLevel() string {
+	if x != nil {
+		return x.Level
+	}
+	return ""
+}
+
+func (x *QueryProbesResponse) GetStepS() uint32 {
+	if x != nil {
+		return x.StepS
+	}
+	return 0
+}
+
+func (x *QueryProbesResponse) GetSeries() []*ProbeSeries {
+	if x != nil {
+		return x.Series
+	}
+	return nil
+}
+
+type ProbeSeries struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	TaskId uint64                 `protobuf:"varint,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// 按 ts 升序；只包含 sent > 0 的点，缺失的 ts 表示该段没有结果。
+	Samples       []*ProbeSample `protobuf:"bytes,2,rep,name=samples,proto3" json:"samples,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProbeSeries) Reset() {
+	*x = ProbeSeries{}
+	mi := &file_probe_v1_admin_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProbeSeries) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProbeSeries) ProtoMessage() {}
+
+func (x *ProbeSeries) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProbeSeries.ProtoReflect.Descriptor instead.
+func (*ProbeSeries) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *ProbeSeries) GetTaskId() uint64 {
+	if x != nil {
+		return x.TaskId
+	}
+	return 0
+}
+
+func (x *ProbeSeries) GetSamples() []*ProbeSample {
+	if x != nil {
+		return x.Samples
+	}
+	return nil
+}
+
+type ProbeSample struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 点起始，Unix 秒，已对齐到 step_s 的整数倍。
+	Ts   int64  `protobuf:"varint,1,opt,name=ts,proto3" json:"ts,omitempty"`
+	Sent uint32 `protobuf:"varint,2,opt,name=sent,proto3" json:"sent,omitempty"`
+	// 计入丢包的超时数；丢包率 = lost / sent，errors 不计入。
+	Lost   uint32 `protobuf:"varint,3,opt,name=lost,proto3" json:"lost,omitempty"`
+	Errors uint32 `protobuf:"varint,4,opt,name=errors,proto3" json:"errors,omitempty"`
+	// 只有 sent − lost − errors > 0 时才有：该点内成功探测的 rtt 均值 / 最小 / 最大，微秒。
+	RttMeanUs     *uint32 `protobuf:"varint,5,opt,name=rtt_mean_us,json=rttMeanUs,proto3,oneof" json:"rtt_mean_us,omitempty"`
+	RttMinUs      *uint32 `protobuf:"varint,6,opt,name=rtt_min_us,json=rttMinUs,proto3,oneof" json:"rtt_min_us,omitempty"`
+	RttMaxUs      *uint32 `protobuf:"varint,7,opt,name=rtt_max_us,json=rttMaxUs,proto3,oneof" json:"rtt_max_us,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProbeSample) Reset() {
+	*x = ProbeSample{}
+	mi := &file_probe_v1_admin_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProbeSample) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProbeSample) ProtoMessage() {}
+
+func (x *ProbeSample) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProbeSample.ProtoReflect.Descriptor instead.
+func (*ProbeSample) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *ProbeSample) GetTs() int64 {
+	if x != nil {
+		return x.Ts
+	}
+	return 0
+}
+
+func (x *ProbeSample) GetSent() uint32 {
+	if x != nil {
+		return x.Sent
+	}
+	return 0
+}
+
+func (x *ProbeSample) GetLost() uint32 {
+	if x != nil {
+		return x.Lost
+	}
+	return 0
+}
+
+func (x *ProbeSample) GetErrors() uint32 {
+	if x != nil {
+		return x.Errors
+	}
+	return 0
+}
+
+func (x *ProbeSample) GetRttMeanUs() uint32 {
+	if x != nil && x.RttMeanUs != nil {
+		return *x.RttMeanUs
+	}
+	return 0
+}
+
+func (x *ProbeSample) GetRttMinUs() uint32 {
+	if x != nil && x.RttMinUs != nil {
+		return *x.RttMinUs
+	}
+	return 0
+}
+
+func (x *ProbeSample) GetRttMaxUs() uint32 {
+	if x != nil && x.RttMaxUs != nil {
+		return *x.RttMaxUs
+	}
+	return 0
+}
+
 var File_probe_v1_admin_proto protoreflect.FileDescriptor
 
 const file_probe_v1_admin_proto_rawDesc = "" +
@@ -2081,7 +2697,50 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\tperiod_rx\x18\x02 \x01(\x04R\bperiodRx\x12\x1b\n" +
 	"\tperiod_tx\x18\x03 \x01(\x04R\bperiodTx\"D\n" +
 	"\x15AdjustTrafficResponse\x12+\n" +
-	"\atraffic\x18\x01 \x01(\v2\x11.probe.v1.TrafficR\atraffic2\xa6\t\n" +
+	"\atraffic\x18\x01 \x01(\v2\x11.probe.v1.TrafficR\atraffic\"U\n" +
+	"\x0fProbeTaskDetail\x12'\n" +
+	"\x04task\x18\x01 \x01(\v2\x13.probe.v1.ProbeTaskR\x04task\x12\x19\n" +
+	"\bnode_ids\x18\x02 \x03(\x03R\anodeIds\"\x17\n" +
+	"\x15ListProbeTasksRequest\"c\n" +
+	"\x16ListProbeTasksResponse\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\x04R\aversion\x12/\n" +
+	"\x05tasks\x18\x02 \x03(\v2\x19.probe.v1.ProbeTaskDetailR\x05tasks\"Z\n" +
+	"\x14SaveProbeTaskRequest\x12'\n" +
+	"\x04task\x18\x01 \x01(\v2\x13.probe.v1.ProbeTaskR\x04task\x12\x19\n" +
+	"\bnode_ids\x18\x02 \x03(\x03R\anodeIds\"`\n" +
+	"\x15SaveProbeTaskResponse\x12-\n" +
+	"\x04task\x18\x01 \x01(\v2\x19.probe.v1.ProbeTaskDetailR\x04task\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\x04R\aversion\"(\n" +
+	"\x16DeleteProbeTaskRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x04R\x02id\"3\n" +
+	"\x17DeleteProbeTaskResponse\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\x04R\aversion\"p\n" +
+	"\x12QueryProbesRequest\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\x03R\x06nodeId\x12\x12\n" +
+	"\x04from\x18\x02 \x01(\x03R\x04from\x12\x0e\n" +
+	"\x02to\x18\x03 \x01(\x03R\x02to\x12\x1d\n" +
+	"\n" +
+	"max_points\x18\x04 \x01(\rR\tmaxPoints\"q\n" +
+	"\x13QueryProbesResponse\x12\x14\n" +
+	"\x05level\x18\x01 \x01(\tR\x05level\x12\x15\n" +
+	"\x06step_s\x18\x02 \x01(\rR\x05stepS\x12-\n" +
+	"\x06series\x18\x03 \x03(\v2\x15.probe.v1.ProbeSeriesR\x06series\"W\n" +
+	"\vProbeSeries\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\x04R\x06taskId\x12/\n" +
+	"\asamples\x18\x02 \x03(\v2\x15.probe.v1.ProbeSampleR\asamples\"\xf6\x01\n" +
+	"\vProbeSample\x12\x0e\n" +
+	"\x02ts\x18\x01 \x01(\x03R\x02ts\x12\x12\n" +
+	"\x04sent\x18\x02 \x01(\rR\x04sent\x12\x12\n" +
+	"\x04lost\x18\x03 \x01(\rR\x04lost\x12\x16\n" +
+	"\x06errors\x18\x04 \x01(\rR\x06errors\x12#\n" +
+	"\vrtt_mean_us\x18\x05 \x01(\rH\x00R\trttMeanUs\x88\x01\x01\x12!\n" +
+	"\n" +
+	"rtt_min_us\x18\x06 \x01(\rH\x01R\brttMinUs\x88\x01\x01\x12!\n" +
+	"\n" +
+	"rtt_max_us\x18\a \x01(\rH\x02R\brttMaxUs\x88\x01\x01B\x0e\n" +
+	"\f_rtt_mean_usB\r\n" +
+	"\v_rtt_min_usB\r\n" +
+	"\v_rtt_max_us2\xf1\v\n" +
 	"\fAdminService\x128\n" +
 	"\x05Login\x12\x16.probe.v1.LoginRequest\x1a\x17.probe.v1.LoginResponse\x12;\n" +
 	"\x06Logout\x12\x17.probe.v1.LogoutRequest\x1a\x18.probe.v1.LogoutResponse\x12D\n" +
@@ -2101,7 +2760,11 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\fQueryMetrics\x12\x1d.probe.v1.QueryMetricsRequest\x1a\x1e.probe.v1.QueryMetricsResponse\x12G\n" +
 	"\n" +
 	"GetTraffic\x12\x1b.probe.v1.GetTrafficRequest\x1a\x1c.probe.v1.GetTrafficResponse\x12P\n" +
-	"\rAdjustTraffic\x12\x1e.probe.v1.AdjustTrafficRequest\x1a\x1f.probe.v1.AdjustTrafficResponseB.Z,github.com/xjetry/probe/gen/probe/v1;probev1b\x06proto3"
+	"\rAdjustTraffic\x12\x1e.probe.v1.AdjustTrafficRequest\x1a\x1f.probe.v1.AdjustTrafficResponse\x12S\n" +
+	"\x0eListProbeTasks\x12\x1f.probe.v1.ListProbeTasksRequest\x1a .probe.v1.ListProbeTasksResponse\x12P\n" +
+	"\rSaveProbeTask\x12\x1e.probe.v1.SaveProbeTaskRequest\x1a\x1f.probe.v1.SaveProbeTaskResponse\x12V\n" +
+	"\x0fDeleteProbeTask\x12 .probe.v1.DeleteProbeTaskRequest\x1a!.probe.v1.DeleteProbeTaskResponse\x12J\n" +
+	"\vQueryProbes\x12\x1c.probe.v1.QueryProbesRequest\x1a\x1d.probe.v1.QueryProbesResponseB.Z,github.com/xjetry/probe/gen/probe/v1;probev1b\x06proto3"
 
 var (
 	file_probe_v1_admin_proto_rawDescOnce sync.Once
@@ -2115,7 +2778,7 @@ func file_probe_v1_admin_proto_rawDescGZIP() []byte {
 	return file_probe_v1_admin_proto_rawDescData
 }
 
-var file_probe_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
+var file_probe_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 47)
 var file_probe_v1_admin_proto_goTypes = []any{
 	(*LoginRequest)(nil),                // 0: probe.v1.LoginRequest
 	(*LoginResponse)(nil),               // 1: probe.v1.LoginResponse
@@ -2153,57 +2816,83 @@ var file_probe_v1_admin_proto_goTypes = []any{
 	(*NodeTraffic)(nil),                 // 33: probe.v1.NodeTraffic
 	(*AdjustTrafficRequest)(nil),        // 34: probe.v1.AdjustTrafficRequest
 	(*AdjustTrafficResponse)(nil),       // 35: probe.v1.AdjustTrafficResponse
-	(*Facts)(nil),                       // 36: probe.v1.Facts
-	(*Metrics)(nil),                     // 37: probe.v1.Metrics
+	(*ProbeTaskDetail)(nil),             // 36: probe.v1.ProbeTaskDetail
+	(*ListProbeTasksRequest)(nil),       // 37: probe.v1.ListProbeTasksRequest
+	(*ListProbeTasksResponse)(nil),      // 38: probe.v1.ListProbeTasksResponse
+	(*SaveProbeTaskRequest)(nil),        // 39: probe.v1.SaveProbeTaskRequest
+	(*SaveProbeTaskResponse)(nil),       // 40: probe.v1.SaveProbeTaskResponse
+	(*DeleteProbeTaskRequest)(nil),      // 41: probe.v1.DeleteProbeTaskRequest
+	(*DeleteProbeTaskResponse)(nil),     // 42: probe.v1.DeleteProbeTaskResponse
+	(*QueryProbesRequest)(nil),          // 43: probe.v1.QueryProbesRequest
+	(*QueryProbesResponse)(nil),         // 44: probe.v1.QueryProbesResponse
+	(*ProbeSeries)(nil),                 // 45: probe.v1.ProbeSeries
+	(*ProbeSample)(nil),                 // 46: probe.v1.ProbeSample
+	(*Facts)(nil),                       // 47: probe.v1.Facts
+	(*Metrics)(nil),                     // 48: probe.v1.Metrics
+	(*ProbeTask)(nil),                   // 49: probe.v1.ProbeTask
 }
 var file_probe_v1_admin_proto_depIdxs = []int32{
-	36, // 0: probe.v1.Node.facts:type_name -> probe.v1.Facts
+	47, // 0: probe.v1.Node.facts:type_name -> probe.v1.Facts
 	4,  // 1: probe.v1.ListNodesResponse.nodes:type_name -> probe.v1.Node
 	4,  // 2: probe.v1.CreateNodeResponse.node:type_name -> probe.v1.Node
 	4,  // 3: probe.v1.UpdateNodeResponse.node:type_name -> probe.v1.Node
 	25, // 4: probe.v1.GetSnapshotResponse.nodes:type_name -> probe.v1.NodeStatus
-	37, // 5: probe.v1.NodeStatus.metrics:type_name -> probe.v1.Metrics
+	48, // 5: probe.v1.NodeStatus.metrics:type_name -> probe.v1.Metrics
 	30, // 6: probe.v1.NodeStatus.traffic:type_name -> probe.v1.Traffic
 	28, // 7: probe.v1.QueryMetricsResponse.series:type_name -> probe.v1.MetricSeries
 	29, // 8: probe.v1.MetricSeries.samples:type_name -> probe.v1.MetricSample
 	33, // 9: probe.v1.GetTrafficResponse.nodes:type_name -> probe.v1.NodeTraffic
 	30, // 10: probe.v1.NodeTraffic.traffic:type_name -> probe.v1.Traffic
 	30, // 11: probe.v1.AdjustTrafficResponse.traffic:type_name -> probe.v1.Traffic
-	0,  // 12: probe.v1.AdminService.Login:input_type -> probe.v1.LoginRequest
-	2,  // 13: probe.v1.AdminService.Logout:input_type -> probe.v1.LogoutRequest
-	5,  // 14: probe.v1.AdminService.ListNodes:input_type -> probe.v1.ListNodesRequest
-	7,  // 15: probe.v1.AdminService.CreateNode:input_type -> probe.v1.CreateNodeRequest
-	9,  // 16: probe.v1.AdminService.UpdateNode:input_type -> probe.v1.UpdateNodeRequest
-	11, // 17: probe.v1.AdminService.DeleteNode:input_type -> probe.v1.DeleteNodeRequest
-	13, // 18: probe.v1.AdminService.RotateNodeToken:input_type -> probe.v1.RotateNodeTokenRequest
-	15, // 19: probe.v1.AdminService.ReorderNodes:input_type -> probe.v1.ReorderNodesRequest
-	17, // 20: probe.v1.AdminService.OpenRegisterWindow:input_type -> probe.v1.OpenRegisterWindowRequest
-	19, // 21: probe.v1.AdminService.CloseRegisterWindow:input_type -> probe.v1.CloseRegisterWindowRequest
-	21, // 22: probe.v1.AdminService.GetRegisterWindow:input_type -> probe.v1.GetRegisterWindowRequest
-	23, // 23: probe.v1.AdminService.GetSnapshot:input_type -> probe.v1.GetSnapshotRequest
-	26, // 24: probe.v1.AdminService.QueryMetrics:input_type -> probe.v1.QueryMetricsRequest
-	31, // 25: probe.v1.AdminService.GetTraffic:input_type -> probe.v1.GetTrafficRequest
-	34, // 26: probe.v1.AdminService.AdjustTraffic:input_type -> probe.v1.AdjustTrafficRequest
-	1,  // 27: probe.v1.AdminService.Login:output_type -> probe.v1.LoginResponse
-	3,  // 28: probe.v1.AdminService.Logout:output_type -> probe.v1.LogoutResponse
-	6,  // 29: probe.v1.AdminService.ListNodes:output_type -> probe.v1.ListNodesResponse
-	8,  // 30: probe.v1.AdminService.CreateNode:output_type -> probe.v1.CreateNodeResponse
-	10, // 31: probe.v1.AdminService.UpdateNode:output_type -> probe.v1.UpdateNodeResponse
-	12, // 32: probe.v1.AdminService.DeleteNode:output_type -> probe.v1.DeleteNodeResponse
-	14, // 33: probe.v1.AdminService.RotateNodeToken:output_type -> probe.v1.RotateNodeTokenResponse
-	16, // 34: probe.v1.AdminService.ReorderNodes:output_type -> probe.v1.ReorderNodesResponse
-	18, // 35: probe.v1.AdminService.OpenRegisterWindow:output_type -> probe.v1.OpenRegisterWindowResponse
-	20, // 36: probe.v1.AdminService.CloseRegisterWindow:output_type -> probe.v1.CloseRegisterWindowResponse
-	22, // 37: probe.v1.AdminService.GetRegisterWindow:output_type -> probe.v1.GetRegisterWindowResponse
-	24, // 38: probe.v1.AdminService.GetSnapshot:output_type -> probe.v1.GetSnapshotResponse
-	27, // 39: probe.v1.AdminService.QueryMetrics:output_type -> probe.v1.QueryMetricsResponse
-	32, // 40: probe.v1.AdminService.GetTraffic:output_type -> probe.v1.GetTrafficResponse
-	35, // 41: probe.v1.AdminService.AdjustTraffic:output_type -> probe.v1.AdjustTrafficResponse
-	27, // [27:42] is the sub-list for method output_type
-	12, // [12:27] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	49, // 12: probe.v1.ProbeTaskDetail.task:type_name -> probe.v1.ProbeTask
+	36, // 13: probe.v1.ListProbeTasksResponse.tasks:type_name -> probe.v1.ProbeTaskDetail
+	49, // 14: probe.v1.SaveProbeTaskRequest.task:type_name -> probe.v1.ProbeTask
+	36, // 15: probe.v1.SaveProbeTaskResponse.task:type_name -> probe.v1.ProbeTaskDetail
+	45, // 16: probe.v1.QueryProbesResponse.series:type_name -> probe.v1.ProbeSeries
+	46, // 17: probe.v1.ProbeSeries.samples:type_name -> probe.v1.ProbeSample
+	0,  // 18: probe.v1.AdminService.Login:input_type -> probe.v1.LoginRequest
+	2,  // 19: probe.v1.AdminService.Logout:input_type -> probe.v1.LogoutRequest
+	5,  // 20: probe.v1.AdminService.ListNodes:input_type -> probe.v1.ListNodesRequest
+	7,  // 21: probe.v1.AdminService.CreateNode:input_type -> probe.v1.CreateNodeRequest
+	9,  // 22: probe.v1.AdminService.UpdateNode:input_type -> probe.v1.UpdateNodeRequest
+	11, // 23: probe.v1.AdminService.DeleteNode:input_type -> probe.v1.DeleteNodeRequest
+	13, // 24: probe.v1.AdminService.RotateNodeToken:input_type -> probe.v1.RotateNodeTokenRequest
+	15, // 25: probe.v1.AdminService.ReorderNodes:input_type -> probe.v1.ReorderNodesRequest
+	17, // 26: probe.v1.AdminService.OpenRegisterWindow:input_type -> probe.v1.OpenRegisterWindowRequest
+	19, // 27: probe.v1.AdminService.CloseRegisterWindow:input_type -> probe.v1.CloseRegisterWindowRequest
+	21, // 28: probe.v1.AdminService.GetRegisterWindow:input_type -> probe.v1.GetRegisterWindowRequest
+	23, // 29: probe.v1.AdminService.GetSnapshot:input_type -> probe.v1.GetSnapshotRequest
+	26, // 30: probe.v1.AdminService.QueryMetrics:input_type -> probe.v1.QueryMetricsRequest
+	31, // 31: probe.v1.AdminService.GetTraffic:input_type -> probe.v1.GetTrafficRequest
+	34, // 32: probe.v1.AdminService.AdjustTraffic:input_type -> probe.v1.AdjustTrafficRequest
+	37, // 33: probe.v1.AdminService.ListProbeTasks:input_type -> probe.v1.ListProbeTasksRequest
+	39, // 34: probe.v1.AdminService.SaveProbeTask:input_type -> probe.v1.SaveProbeTaskRequest
+	41, // 35: probe.v1.AdminService.DeleteProbeTask:input_type -> probe.v1.DeleteProbeTaskRequest
+	43, // 36: probe.v1.AdminService.QueryProbes:input_type -> probe.v1.QueryProbesRequest
+	1,  // 37: probe.v1.AdminService.Login:output_type -> probe.v1.LoginResponse
+	3,  // 38: probe.v1.AdminService.Logout:output_type -> probe.v1.LogoutResponse
+	6,  // 39: probe.v1.AdminService.ListNodes:output_type -> probe.v1.ListNodesResponse
+	8,  // 40: probe.v1.AdminService.CreateNode:output_type -> probe.v1.CreateNodeResponse
+	10, // 41: probe.v1.AdminService.UpdateNode:output_type -> probe.v1.UpdateNodeResponse
+	12, // 42: probe.v1.AdminService.DeleteNode:output_type -> probe.v1.DeleteNodeResponse
+	14, // 43: probe.v1.AdminService.RotateNodeToken:output_type -> probe.v1.RotateNodeTokenResponse
+	16, // 44: probe.v1.AdminService.ReorderNodes:output_type -> probe.v1.ReorderNodesResponse
+	18, // 45: probe.v1.AdminService.OpenRegisterWindow:output_type -> probe.v1.OpenRegisterWindowResponse
+	20, // 46: probe.v1.AdminService.CloseRegisterWindow:output_type -> probe.v1.CloseRegisterWindowResponse
+	22, // 47: probe.v1.AdminService.GetRegisterWindow:output_type -> probe.v1.GetRegisterWindowResponse
+	24, // 48: probe.v1.AdminService.GetSnapshot:output_type -> probe.v1.GetSnapshotResponse
+	27, // 49: probe.v1.AdminService.QueryMetrics:output_type -> probe.v1.QueryMetricsResponse
+	32, // 50: probe.v1.AdminService.GetTraffic:output_type -> probe.v1.GetTrafficResponse
+	35, // 51: probe.v1.AdminService.AdjustTraffic:output_type -> probe.v1.AdjustTrafficResponse
+	38, // 52: probe.v1.AdminService.ListProbeTasks:output_type -> probe.v1.ListProbeTasksResponse
+	40, // 53: probe.v1.AdminService.SaveProbeTask:output_type -> probe.v1.SaveProbeTaskResponse
+	42, // 54: probe.v1.AdminService.DeleteProbeTask:output_type -> probe.v1.DeleteProbeTaskResponse
+	44, // 55: probe.v1.AdminService.QueryProbes:output_type -> probe.v1.QueryProbesResponse
+	37, // [37:56] is the sub-list for method output_type
+	18, // [18:37] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_probe_v1_admin_proto_init() }
@@ -2215,13 +2904,14 @@ func file_probe_v1_admin_proto_init() {
 	file_probe_v1_admin_proto_msgTypes[4].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[25].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[29].OneofWrappers = []any{}
+	file_probe_v1_admin_proto_msgTypes[46].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_probe_v1_admin_proto_rawDesc), len(file_probe_v1_admin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   36,
+			NumMessages:   47,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

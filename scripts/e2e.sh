@@ -90,6 +90,18 @@ done
 jq -e '.reportIntervalMs == 4000 and all(.nodes[]; .metrics.cpuPct != null)' "$work/GetSnapshot.json" > /dev/null || { echo "FAIL: snapshot shape"; cat "$work/GetSnapshot.json"; exit 1; }
 [ "$(rpc ListNodes '{}')" = 200 ] || { echo "FAIL: ListNodes"; exit 1; }
 jq -e '[.nodes[] | select(.facts.arch == "amd64" or .facts.arch == "arm64")] | length == 2' "$work/ListNodes.json" > /dev/null || { echo "FAIL: facts not reported"; cat "$work/ListNodes.json"; exit 1; }
+node1=$(jq -r '.nodes[0].id' "$work/ListNodes.json")
+node2=$(jq -r '.nodes[1].id' "$work/ListNodes.json")
+icmp_body=$(jq -nc --arg a "$node1" --arg b "$node2" '{task: {kind: "PROBE_KIND_ICMP", target: "127.0.0.1", intervalS: 5, timeoutMs: 1000}, nodeIds: [$a, $b]}')
+[ "$(rpc SaveProbeTask "$icmp_body")" = 200 ] || { echo "FAIL: SaveProbeTask icmp"; cat "$work/SaveProbeTask.json"; exit 1; }
+icmp_task=$(jq -r '.task.task.id' "$work/SaveProbeTask.json")
+tcp_body=$(jq -nc --arg a "$node1" --arg b "$node2" --arg target "host.docker.internal:$port" '{task: {kind: "PROBE_KIND_TCP", target: $target, intervalS: 5, timeoutMs: 2000}, nodeIds: [$a, $b]}')
+[ "$(rpc SaveProbeTask "$tcp_body")" = 200 ] || { echo "FAIL: SaveProbeTask tcp"; cat "$work/SaveProbeTask.json"; exit 1; }
+tcp_task=$(jq -r '.task.task.id' "$work/SaveProbeTask.json")
+[ "$(rpc SaveProbeTask '{"task": {"kind": "PROBE_KIND_ICMP", "target": "127.0.0.1", "intervalS": 1, "timeoutMs": 1000}}')" = 400 ] || { echo "FAIL: interval below the minimum must be rejected"; exit 1; }
+grep -q 'interval_s must be between 5 and 3600' "$work/SaveProbeTask.json" || { echo "FAIL: error must name the field"; cat "$work/SaveProbeTask.json"; exit 1; }
+[ "$(rpc ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks"; exit 1; }
+jq -e '.version == "2" and (.tasks | length) == 2 and all(.tasks[]; (.nodeIds | length) == 2)' "$work/ListProbeTasks.json" > /dev/null || { echo "FAIL: task list shape"; cat "$work/ListProbeTasks.json"; exit 1; }
 
 agent_status=0
 wait "$amd64" || agent_status=1
@@ -97,7 +109,6 @@ wait "$arm64" || agent_status=1
 
 # 跨过分钟边界后查最近一小时；首次冷采样所在桶可能没有 CPU 读数，后续样本不能因此被忽略。
 now=$(date +%s)
-node1=$(jq -r '.nodes[0].id' "$work/ListNodes.json")
 query_body=$(jq -nc --arg nodeId "$node1" --argjson from "$((now - 3600))" --argjson to "$((now + 60))" \
   '{nodeId: $nodeId, from: $from, to: $to, maxPoints: 100}')
 [ "$(rpc QueryMetrics "$query_body")" = 200 ] || { echo "FAIL: QueryMetrics"; cat "$work/QueryMetrics.json"; exit 1; }
@@ -130,6 +141,8 @@ PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port
 hub=$!
 wait_hub
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login after restart"; exit 1; }
+[ "$(rpc ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks after restart"; exit 1; }
+jq -e '.version == "2" and (.tasks | length) == 2' "$work/ListProbeTasks.json" > /dev/null || { echo "FAIL: tasks lost across restart"; cat "$work/ListProbeTasks.json"; exit 1; }
 [ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic after restart"; exit 1; }
 # 总量不因周期滚动清零；agent 已退出，同周期的用量不再变化，跨周期则为零。
 jq -e --arg id "$node1" --arg tx "$tx_before" --argjson before "$traffic_before" '.nodes[] | select(.nodeId == $id) |
@@ -160,6 +173,8 @@ cat "$work/nodes.txt"
 
 get() { sed -n "s/^$1: //p" "$work/stats.txt"; }
 [ "$(get node)" = 2 ] || { echo "FAIL: node count"; exit 1; }
+[ "$(get probe_task)" = 2 ] || { echo "FAIL: task count"; exit 1; }
+[ "$(get probe_task_node)" = 4 ] || { echo "FAIL: assignment count"; exit 1; }
 [ "$(get traffic)" = 2 ] || { echo "FAIL: traffic rows"; exit 1; }
 [ "$(get node_facts)" = 2 ] || { echo "FAIL: facts count"; exit 1; }
 [ "$(get metric_1m)" -ge 2 ] || { echo "FAIL: no minute rows"; exit 1; }

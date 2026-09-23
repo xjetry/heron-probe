@@ -1,0 +1,184 @@
+package api
+
+import (
+	"context"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"connectrpc.com/connect"
+	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	"github.com/xjetry/probe/internal/hub/metric"
+	"google.golang.org/protobuf/proto"
+)
+
+func TestProbeTaskLifecycleThroughAdminAPI(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	n1, _ := h.createNode(t, "a")
+	n2, _ := h.createNode(t, "b")
+	ctx := t.Context()
+	save := func(task *probev1.ProbeTask, nodes ...int64) (*probev1.SaveProbeTaskResponse, error) {
+		resp, err := h.admin.SaveProbeTask(ctx, connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: task, NodeIds: nodes}))
+		if err != nil {
+			return nil, err
+		}
+		return resp.Msg, nil
+	}
+	created, err := save(&probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_TCP, Target: "example.com:443", IntervalS: 30, TimeoutMs: 2000}, n2, n1, n1)
+	if err != nil || created.Version != 1 || created.Task.Task.Id != 1 || !slices.Equal(created.Task.NodeIds, []int64{n1, n2}) {
+		t.Fatalf("%+v %v", created, err)
+	}
+	list, _ := h.admin.ListProbeTasks(ctx, connect.NewRequest(&probev1.ListProbeTasksRequest{}))
+	if list.Msg.Version != 1 || len(list.Msg.Tasks) != 1 {
+		t.Fatalf("%+v", list.Msg)
+	}
+	// 整体替换：改目标、只留 n1。
+	updated, err := save(&probev1.ProbeTask{Id: 1, Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "1.1.1.1", IntervalS: 10, TimeoutMs: 1000}, n1)
+	if err != nil || updated.Version != 2 || updated.Task.Task.Target != "1.1.1.1" || !slices.Equal(updated.Task.NodeIds, []int64{n1}) {
+		t.Fatalf("%+v %v", updated, err)
+	}
+	del, err := h.admin.DeleteProbeTask(ctx, connect.NewRequest(&probev1.DeleteProbeTaskRequest{Id: 1}))
+	if err != nil || del.Msg.Version != 3 {
+		t.Fatalf("%+v %v", del, err)
+	}
+	_, err = h.admin.DeleteProbeTask(ctx, connect.NewRequest(&probev1.DeleteProbeTaskRequest{Id: 1}))
+	if codeOf(err) != connect.CodeNotFound || !strings.Contains(err.Error(), "probe task 1") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestProbeStorageFailuresStayInternal(t *testing.T) {
+	h := newHarness(t, "")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, saveErr := h.svc.SaveProbeTask(ctx, connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: validProbeTask()}))
+	_, deleteErr := h.svc.DeleteProbeTask(ctx, connect.NewRequest(&probev1.DeleteProbeTaskRequest{Id: 1}))
+	_, queryErr := h.svc.QueryProbes(ctx, connect.NewRequest(&probev1.QueryProbesRequest{NodeId: 1, From: 0, To: 60}))
+	for name, err := range map[string]error{"save": saveErr, "delete": deleteErr, "query": queryErr} {
+		if codeOf(err) != connect.CodeInternal {
+			t.Errorf("%s error=%v want Internal", name, err)
+		}
+	}
+}
+
+func validProbeTask() *probev1.ProbeTask {
+	return &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}
+}
+
+func TestSaveProbeTaskErrorsNameTheFieldAndCode(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	id, _ := h.createNode(t, "n")
+	badInterval := validProbeTask()
+	badInterval.IntervalS = 1
+	badTCP := validProbeTask()
+	badTCP.Kind = probev1.ProbeKind_PROBE_KIND_TCP
+	unknownTask := validProbeTask()
+	unknownTask.Id = 999
+	for _, tc := range []struct {
+		name  string
+		task  *probev1.ProbeTask
+		nodes []int64
+		code  connect.Code
+		text  string
+	}{
+		{"missing", nil, nil, connect.CodeInvalidArgument, "task: required"},
+		{"interval", badInterval, nil, connect.CodeInvalidArgument, "interval_s must be between 5 and 3600"},
+		{"tcp", badTCP, nil, connect.CodeInvalidArgument, "host:port"},
+		{"node", validProbeTask(), []int64{42}, connect.CodeNotFound, "node 42"},
+		{"task", unknownTask, nil, connect.CodeNotFound, "probe task 999"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: tc.task, NodeIds: tc.nodes}))
+			if codeOf(err) != tc.code || !strings.Contains(err.Error(), tc.text) {
+				t.Fatalf("error=%v want=%s %q", err, tc.code, tc.text)
+			}
+		})
+	}
+	for range 64 {
+		if _, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: validProbeTask(), NodeIds: []int64{id}})); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: validProbeTask(), NodeIds: []int64{id}}))
+	if codeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "maximum 64") {
+		t.Fatalf("limit error=%v", err)
+	}
+}
+
+func TestQueryProbesGroupsPerTaskAndOmitsEmptyPoints(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	id, _ := h.createNode(t, "n")
+	base := h.clk.Now().Truncate(time.Hour).Unix()
+	rows := []metric.ProbeRow{
+		{NodeID: id, TS: base + 120, TaskID: 9, Bucket: &metric.ProbeBucket{Sent: 1, RttN: 1, RttSumUs: 900, RttMinUs: 900, RttMaxUs: 900}},
+		{NodeID: id, TS: base + 120, TaskID: 7, Bucket: &metric.ProbeBucket{Sent: 1, RttN: 1}},
+		{NodeID: id, TS: base + 60, TaskID: 7, Bucket: &metric.ProbeBucket{Sent: 2, Lost: 2}},
+		{NodeID: id, TS: base, TaskID: 7, Bucket: &metric.ProbeBucket{Sent: 4, Lost: 1, Errors: 1, RttN: 2, RttSumUs: 600, RttMinUs: 200, RttMaxUs: 400}},
+		{NodeID: id, TS: base + 60, TaskID: 9, Bucket: &metric.ProbeBucket{}},
+		{NodeID: id, TS: base, TaskID: 8, Bucket: &metric.ProbeBucket{}},
+	}
+	if _, err := h.store.WriteMinuteBatch(t.Context(), metric.Batch{Probes: rows}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := h.admin.QueryProbes(t.Context(), connect.NewRequest(&probev1.QueryProbesRequest{NodeId: id, From: base, To: base + 3600, MaxPoints: 100}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &probev1.QueryProbesResponse{Level: "1m", StepS: 60, Series: []*probev1.ProbeSeries{
+		{TaskId: 7, Samples: []*probev1.ProbeSample{
+			{Ts: base, Sent: 4, Lost: 1, Errors: 1, RttMeanUs: proto.Uint32(300), RttMinUs: proto.Uint32(200), RttMaxUs: proto.Uint32(400)},
+			{Ts: base + 60, Sent: 2, Lost: 2},
+			{Ts: base + 120, Sent: 1, RttMeanUs: proto.Uint32(0), RttMinUs: proto.Uint32(0), RttMaxUs: proto.Uint32(0)},
+		}},
+		{TaskId: 9, Samples: []*probev1.ProbeSample{{Ts: base + 120, Sent: 1, RttMeanUs: proto.Uint32(900), RttMinUs: proto.Uint32(900), RttMaxUs: proto.Uint32(900)}}},
+	}}
+	if !proto.Equal(resp.Msg, want) {
+		t.Fatalf("history=%v want=%v", resp.Msg, want)
+	}
+}
+
+func TestProbeAndMetricQueriesShareWindowValidation(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	id, _ := h.createNode(t, "n")
+	for _, tc := range []struct {
+		name           string
+		node, from, to int64
+		max            uint32
+		code           connect.Code
+		text           string
+	}{
+		{"negative", id, -1, 60, 0, connect.CodeInvalidArgument, "from must be a nonnegative Unix timestamp; got -1"},
+		{"order", id, 60, 60, 0, connect.CodeInvalidArgument, "from (60) must be earlier than to (60)"},
+		{"span", id, 0, 401 * 86400, 0, connect.CodeInvalidArgument, "window spans 34646400 seconds; the maximum is 34560000 (400 days)"},
+		{"points", id, 0, 3600, 2001, connect.CodeInvalidArgument, "max_points must be at most 2000; got 2001"},
+		{"missing", 999, 0, 3600, 0, connect.CodeNotFound, "node 999 does not exist"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, pe := h.admin.QueryProbes(t.Context(), connect.NewRequest(&probev1.QueryProbesRequest{NodeId: tc.node, From: tc.from, To: tc.to, MaxPoints: tc.max}))
+			_, me := h.admin.QueryMetrics(t.Context(), connect.NewRequest(&probev1.QueryMetricsRequest{NodeId: tc.node, From: tc.from, To: tc.to, MaxPoints: tc.max}))
+			for _, err := range []error{pe, me} {
+				if codeOf(err) != tc.code || !strings.Contains(err.Error(), tc.text) {
+					t.Errorf("error=%v want=%s %q", err, tc.code, tc.text)
+				}
+			}
+		})
+	}
+	for _, points := range []uint32{0, 720, 2000} {
+		resp, err := h.admin.QueryProbes(t.Context(), connect.NewRequest(&probev1.QueryProbesRequest{NodeId: id, From: 0, To: 7 * 86400, MaxPoints: points}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		step := uint32(900)
+		if points == 2000 {
+			step = 600
+		}
+		if resp.Msg.Level != "5m" || resp.Msg.StepS != step || len(resp.Msg.Series) != 0 {
+			t.Fatalf("points=%d response=%v", points, resp.Msg)
+		}
+	}
+}

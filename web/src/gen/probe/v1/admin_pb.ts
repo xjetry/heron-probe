@@ -4,7 +4,7 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
-import type { Facts, Metrics } from "./types_pb";
+import type { Facts, Metrics, ProbeTask } from "./types_pb";
 import { file_probe_v1_types } from "./types_pb";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file probe/v1/admin.proto.
  */
 export const file_probe_v1_admin: GenFile = /*@__PURE__*/
-  fileDesc("ChRwcm9iZS92MS9hZG1pbi5wcm90bxIIcHJvYmUudjEiIAoMTG9naW5SZXF1ZXN0EhAKCHBhc3N3b3JkGAEgASgJIg8KDUxvZ2luUmVzcG9uc2UiDwoNTG9nb3V0UmVxdWVzdCIQCg5Mb2dvdXRSZXNwb25zZSKBAgoETm9kZRIKCgJpZBgBIAEoAxIMCgRuYW1lGAIgASgJEg4KBnB1YmxpYxgDIAEoCBIMCgRub3RlGAQgASgJEhIKCnNvcnRfb3JkZXIYBSABKAUSEgoKY3JlYXRlZF9hdBgGIAEoAxIZCgxsYXN0X3NlZW5fYXQYByABKANIAIgBARIeCgVmYWN0cxgIIAEoCzIPLnByb2JlLnYxLkZhY3RzEh0KEGZhY3RzX3VwZGF0ZWRfYXQYCSABKANIAYgBARIZChF0cmFmZmljX3Jlc2V0X2RheRgKIAEoDUIPCg1fbGFzdF9zZWVuX2F0QhMKEV9mYWN0c191cGRhdGVkX2F0IhIKEExpc3ROb2Rlc1JlcXVlc3QiMgoRTGlzdE5vZGVzUmVzcG9uc2USHQoFbm9kZXMYASADKAsyDi5wcm9iZS52MS5Ob2RlIiEKEUNyZWF0ZU5vZGVSZXF1ZXN0EgwKBG5hbWUYASABKAkiQQoSQ3JlYXRlTm9kZVJlc3BvbnNlEhwKBG5vZGUYASABKAsyDi5wcm9iZS52MS5Ob2RlEg0KBXRva2VuGAIgASgJImYKEVVwZGF0ZU5vZGVSZXF1ZXN0EgoKAmlkGAEgASgDEgwKBG5hbWUYAiABKAkSDgoGcHVibGljGAMgASgIEgwKBG5vdGUYBCABKAkSGQoRdHJhZmZpY19yZXNldF9kYXkYBSABKA0iMgoSVXBkYXRlTm9kZVJlc3BvbnNlEhwKBG5vZGUYASABKAsyDi5wcm9iZS52MS5Ob2RlIh8KEURlbGV0ZU5vZGVSZXF1ZXN0EgoKAmlkGAEgASgDIhQKEkRlbGV0ZU5vZGVSZXNwb25zZSIkChZSb3RhdGVOb2RlVG9rZW5SZXF1ZXN0EgoKAmlkGAEgASgDIigKF1JvdGF0ZU5vZGVUb2tlblJlc3BvbnNlEg0KBXRva2VuGAEgASgJIiIKE1Jlb3JkZXJOb2Rlc1JlcXVlc3QSCwoDaWRzGAEgAygDIhYKFFJlb3JkZXJOb2Rlc1Jlc3BvbnNlIj0KGU9wZW5SZWdpc3RlcldpbmRvd1JlcXVlc3QSDQoFdHRsX3MYASABKA0SEQoJbWF4X25vZGVzGAIgASgNIlAKGk9wZW5SZWdpc3RlcldpbmRvd1Jlc3BvbnNlEgsKA2tleRgBIAEoCRISCgpleHBpcmVzX2F0GAIgASgDEhEKCW1heF9ub2RlcxgDIAEoDSIcChpDbG9zZVJlZ2lzdGVyV2luZG93UmVxdWVzdCIdChtDbG9zZVJlZ2lzdGVyV2luZG93UmVzcG9uc2UiGgoYR2V0UmVnaXN0ZXJXaW5kb3dSZXF1ZXN0IlAKGUdldFJlZ2lzdGVyV2luZG93UmVzcG9uc2USDAoEb3BlbhgBIAEoCBISCgpleHBpcmVzX2F0GAIgASgDEhEKCXJlbWFpbmluZxgDIAEoDSIUChJHZXRTbmFwc2hvdFJlcXVlc3QiYwoTR2V0U25hcHNob3RSZXNwb25zZRILCgNub3cYASABKAMSGgoScmVwb3J0X2ludGVydmFsX21zGAIgASgNEiMKBW5vZGVzGAMgAygLMhQucHJvYmUudjEuTm9kZVN0YXR1cyKqAQoKTm9kZVN0YXR1cxIKCgJpZBgBIAEoAxIMCgRuYW1lGAIgASgJEg4KBm9ubGluZRgDIAEoCBIZCgxsYXN0X3NlZW5fYXQYBCABKANIAIgBARIiCgdtZXRyaWNzGAUgASgLMhEucHJvYmUudjEuTWV0cmljcxIiCgd0cmFmZmljGAYgASgLMhEucHJvYmUudjEuVHJhZmZpY0IPCg1fbGFzdF9zZWVuX2F0IlQKE1F1ZXJ5TWV0cmljc1JlcXVlc3QSDwoHbm9kZV9pZBgBIAEoAxIMCgRmcm9tGAIgASgDEgoKAnRvGAMgASgDEhIKCm1heF9wb2ludHMYBCABKA0iaQoUUXVlcnlNZXRyaWNzUmVzcG9uc2USDQoFbGV2ZWwYASABKAkSDgoGc3RlcF9zGAIgASgNEgoKAnRzGAMgAygDEiYKBnNlcmllcxgEIAMoCzIWLnByb2JlLnYxLk1ldHJpY1NlcmllcyJTCgxNZXRyaWNTZXJpZXMSDAoEbmFtZRgBIAEoCRIMCgR1bml0GAIgASgJEicKB3NhbXBsZXMYAyADKAsyFi5wcm9iZS52MS5NZXRyaWNTYW1wbGUiaQoMTWV0cmljU2FtcGxlEgkKAW4YASABKA0SEQoEbWVhbhgCIAEoAUgAiAEBEhAKA21heBgDIAEoAUgBiAEBEhAKA3N1bRgEIAEoAUgCiAEBQgcKBV9tZWFuQgYKBF9tYXhCBgoEX3N1bSKTAQoHVHJhZmZpYxIQCgh0b3RhbF9yeBgBIAEoBBIQCgh0b3RhbF90eBgCIAEoBBIRCglwZXJpb2RfcngYAyABKAQSEQoJcGVyaW9kX3R4GAQgASgEEhQKDHBlcmlvZF9zdGFydBgFIAEoAxIVCg1uZXh0X3Jlc2V0X2F0GAYgASgDEhEKCXJlc2V0X2RheRgHIAEoDSITChFHZXRUcmFmZmljUmVxdWVzdCJZChJHZXRUcmFmZmljUmVzcG9uc2USCwoDbm93GAEgASgDEiQKBW5vZGVzGAIgAygLMhUucHJvYmUudjEuTm9kZVRyYWZmaWMSEAoIdGltZXpvbmUYAyABKAkiUAoLTm9kZVRyYWZmaWMSDwoHbm9kZV9pZBgBIAEoAxIMCgRuYW1lGAIgASgJEiIKB3RyYWZmaWMYAyABKAsyES5wcm9iZS52MS5UcmFmZmljIk0KFEFkanVzdFRyYWZmaWNSZXF1ZXN0Eg8KB25vZGVfaWQYASABKAMSEQoJcGVyaW9kX3J4GAIgASgEEhEKCXBlcmlvZF90eBgDIAEoBCI7ChVBZGp1c3RUcmFmZmljUmVzcG9uc2USIgoHdHJhZmZpYxgBIAEoCzIRLnByb2JlLnYxLlRyYWZmaWMypgkKDEFkbWluU2VydmljZRI4CgVMb2dpbhIWLnByb2JlLnYxLkxvZ2luUmVxdWVzdBoXLnByb2JlLnYxLkxvZ2luUmVzcG9uc2USOwoGTG9nb3V0EhcucHJvYmUudjEuTG9nb3V0UmVxdWVzdBoYLnByb2JlLnYxLkxvZ291dFJlc3BvbnNlEkQKCUxpc3ROb2RlcxIaLnByb2JlLnYxLkxpc3ROb2Rlc1JlcXVlc3QaGy5wcm9iZS52MS5MaXN0Tm9kZXNSZXNwb25zZRJHCgpDcmVhdGVOb2RlEhsucHJvYmUudjEuQ3JlYXRlTm9kZVJlcXVlc3QaHC5wcm9iZS52MS5DcmVhdGVOb2RlUmVzcG9uc2USRwoKVXBkYXRlTm9kZRIbLnByb2JlLnYxLlVwZGF0ZU5vZGVSZXF1ZXN0GhwucHJvYmUudjEuVXBkYXRlTm9kZVJlc3BvbnNlEkcKCkRlbGV0ZU5vZGUSGy5wcm9iZS52MS5EZWxldGVOb2RlUmVxdWVzdBocLnByb2JlLnYxLkRlbGV0ZU5vZGVSZXNwb25zZRJWCg9Sb3RhdGVOb2RlVG9rZW4SIC5wcm9iZS52MS5Sb3RhdGVOb2RlVG9rZW5SZXF1ZXN0GiEucHJvYmUudjEuUm90YXRlTm9kZVRva2VuUmVzcG9uc2USTQoMUmVvcmRlck5vZGVzEh0ucHJvYmUudjEuUmVvcmRlck5vZGVzUmVxdWVzdBoeLnByb2JlLnYxLlJlb3JkZXJOb2Rlc1Jlc3BvbnNlEl8KEk9wZW5SZWdpc3RlcldpbmRvdxIjLnByb2JlLnYxLk9wZW5SZWdpc3RlcldpbmRvd1JlcXVlc3QaJC5wcm9iZS52MS5PcGVuUmVnaXN0ZXJXaW5kb3dSZXNwb25zZRJiChNDbG9zZVJlZ2lzdGVyV2luZG93EiQucHJvYmUudjEuQ2xvc2VSZWdpc3RlcldpbmRvd1JlcXVlc3QaJS5wcm9iZS52MS5DbG9zZVJlZ2lzdGVyV2luZG93UmVzcG9uc2USXAoRR2V0UmVnaXN0ZXJXaW5kb3cSIi5wcm9iZS52MS5HZXRSZWdpc3RlcldpbmRvd1JlcXVlc3QaIy5wcm9iZS52MS5HZXRSZWdpc3RlcldpbmRvd1Jlc3BvbnNlEkoKC0dldFNuYXBzaG90EhwucHJvYmUudjEuR2V0U25hcHNob3RSZXF1ZXN0Gh0ucHJvYmUudjEuR2V0U25hcHNob3RSZXNwb25zZRJNCgxRdWVyeU1ldHJpY3MSHS5wcm9iZS52MS5RdWVyeU1ldHJpY3NSZXF1ZXN0Gh4ucHJvYmUudjEuUXVlcnlNZXRyaWNzUmVzcG9uc2USRwoKR2V0VHJhZmZpYxIbLnByb2JlLnYxLkdldFRyYWZmaWNSZXF1ZXN0GhwucHJvYmUudjEuR2V0VHJhZmZpY1Jlc3BvbnNlElAKDUFkanVzdFRyYWZmaWMSHi5wcm9iZS52MS5BZGp1c3RUcmFmZmljUmVxdWVzdBofLnByb2JlLnYxLkFkanVzdFRyYWZmaWNSZXNwb25zZUIuWixnaXRodWIuY29tL3hqZXRyeS9wcm9iZS9nZW4vcHJvYmUvdjE7cHJvYmV2MWIGcHJvdG8z", [file_probe_v1_types]);
+  fileDesc("ChRwcm9iZS92MS9hZG1pbi5wcm90bxIIcHJvYmUudjEiIAoMTG9naW5SZXF1ZXN0EhAKCHBhc3N3b3JkGAEgASgJIg8KDUxvZ2luUmVzcG9uc2UiDwoNTG9nb3V0UmVxdWVzdCIQCg5Mb2dvdXRSZXNwb25zZSKBAgoETm9kZRIKCgJpZBgBIAEoAxIMCgRuYW1lGAIgASgJEg4KBnB1YmxpYxgDIAEoCBIMCgRub3RlGAQgASgJEhIKCnNvcnRfb3JkZXIYBSABKAUSEgoKY3JlYXRlZF9hdBgGIAEoAxIZCgxsYXN0X3NlZW5fYXQYByABKANIAIgBARIeCgVmYWN0cxgIIAEoCzIPLnByb2JlLnYxLkZhY3RzEh0KEGZhY3RzX3VwZGF0ZWRfYXQYCSABKANIAYgBARIZChF0cmFmZmljX3Jlc2V0X2RheRgKIAEoDUIPCg1fbGFzdF9zZWVuX2F0QhMKEV9mYWN0c191cGRhdGVkX2F0IhIKEExpc3ROb2Rlc1JlcXVlc3QiMgoRTGlzdE5vZGVzUmVzcG9uc2USHQoFbm9kZXMYASADKAsyDi5wcm9iZS52MS5Ob2RlIiEKEUNyZWF0ZU5vZGVSZXF1ZXN0EgwKBG5hbWUYASABKAkiQQoSQ3JlYXRlTm9kZVJlc3BvbnNlEhwKBG5vZGUYASABKAsyDi5wcm9iZS52MS5Ob2RlEg0KBXRva2VuGAIgASgJImYKEVVwZGF0ZU5vZGVSZXF1ZXN0EgoKAmlkGAEgASgDEgwKBG5hbWUYAiABKAkSDgoGcHVibGljGAMgASgIEgwKBG5vdGUYBCABKAkSGQoRdHJhZmZpY19yZXNldF9kYXkYBSABKA0iMgoSVXBkYXRlTm9kZVJlc3BvbnNlEhwKBG5vZGUYASABKAsyDi5wcm9iZS52MS5Ob2RlIh8KEURlbGV0ZU5vZGVSZXF1ZXN0EgoKAmlkGAEgASgDIhQKEkRlbGV0ZU5vZGVSZXNwb25zZSIkChZSb3RhdGVOb2RlVG9rZW5SZXF1ZXN0EgoKAmlkGAEgASgDIigKF1JvdGF0ZU5vZGVUb2tlblJlc3BvbnNlEg0KBXRva2VuGAEgASgJIiIKE1Jlb3JkZXJOb2Rlc1JlcXVlc3QSCwoDaWRzGAEgAygDIhYKFFJlb3JkZXJOb2Rlc1Jlc3BvbnNlIj0KGU9wZW5SZWdpc3RlcldpbmRvd1JlcXVlc3QSDQoFdHRsX3MYASABKA0SEQoJbWF4X25vZGVzGAIgASgNIlAKGk9wZW5SZWdpc3RlcldpbmRvd1Jlc3BvbnNlEgsKA2tleRgBIAEoCRISCgpleHBpcmVzX2F0GAIgASgDEhEKCW1heF9ub2RlcxgDIAEoDSIcChpDbG9zZVJlZ2lzdGVyV2luZG93UmVxdWVzdCIdChtDbG9zZVJlZ2lzdGVyV2luZG93UmVzcG9uc2UiGgoYR2V0UmVnaXN0ZXJXaW5kb3dSZXF1ZXN0IlAKGUdldFJlZ2lzdGVyV2luZG93UmVzcG9uc2USDAoEb3BlbhgBIAEoCBISCgpleHBpcmVzX2F0GAIgASgDEhEKCXJlbWFpbmluZxgDIAEoDSIUChJHZXRTbmFwc2hvdFJlcXVlc3QiYwoTR2V0U25hcHNob3RSZXNwb25zZRILCgNub3cYASABKAMSGgoScmVwb3J0X2ludGVydmFsX21zGAIgASgNEiMKBW5vZGVzGAMgAygLMhQucHJvYmUudjEuTm9kZVN0YXR1cyKqAQoKTm9kZVN0YXR1cxIKCgJpZBgBIAEoAxIMCgRuYW1lGAIgASgJEg4KBm9ubGluZRgDIAEoCBIZCgxsYXN0X3NlZW5fYXQYBCABKANIAIgBARIiCgdtZXRyaWNzGAUgASgLMhEucHJvYmUudjEuTWV0cmljcxIiCgd0cmFmZmljGAYgASgLMhEucHJvYmUudjEuVHJhZmZpY0IPCg1fbGFzdF9zZWVuX2F0IlQKE1F1ZXJ5TWV0cmljc1JlcXVlc3QSDwoHbm9kZV9pZBgBIAEoAxIMCgRmcm9tGAIgASgDEgoKAnRvGAMgASgDEhIKCm1heF9wb2ludHMYBCABKA0iaQoUUXVlcnlNZXRyaWNzUmVzcG9uc2USDQoFbGV2ZWwYASABKAkSDgoGc3RlcF9zGAIgASgNEgoKAnRzGAMgAygDEiYKBnNlcmllcxgEIAMoCzIWLnByb2JlLnYxLk1ldHJpY1NlcmllcyJTCgxNZXRyaWNTZXJpZXMSDAoEbmFtZRgBIAEoCRIMCgR1bml0GAIgASgJEicKB3NhbXBsZXMYAyADKAsyFi5wcm9iZS52MS5NZXRyaWNTYW1wbGUiaQoMTWV0cmljU2FtcGxlEgkKAW4YASABKA0SEQoEbWVhbhgCIAEoAUgAiAEBEhAKA21heBgDIAEoAUgBiAEBEhAKA3N1bRgEIAEoAUgCiAEBQgcKBV9tZWFuQgYKBF9tYXhCBgoEX3N1bSKTAQoHVHJhZmZpYxIQCgh0b3RhbF9yeBgBIAEoBBIQCgh0b3RhbF90eBgCIAEoBBIRCglwZXJpb2RfcngYAyABKAQSEQoJcGVyaW9kX3R4GAQgASgEEhQKDHBlcmlvZF9zdGFydBgFIAEoAxIVCg1uZXh0X3Jlc2V0X2F0GAYgASgDEhEKCXJlc2V0X2RheRgHIAEoDSITChFHZXRUcmFmZmljUmVxdWVzdCJZChJHZXRUcmFmZmljUmVzcG9uc2USCwoDbm93GAEgASgDEiQKBW5vZGVzGAIgAygLMhUucHJvYmUudjEuTm9kZVRyYWZmaWMSEAoIdGltZXpvbmUYAyABKAkiUAoLTm9kZVRyYWZmaWMSDwoHbm9kZV9pZBgBIAEoAxIMCgRuYW1lGAIgASgJEiIKB3RyYWZmaWMYAyABKAsyES5wcm9iZS52MS5UcmFmZmljIk0KFEFkanVzdFRyYWZmaWNSZXF1ZXN0Eg8KB25vZGVfaWQYASABKAMSEQoJcGVyaW9kX3J4GAIgASgEEhEKCXBlcmlvZF90eBgDIAEoBCI7ChVBZGp1c3RUcmFmZmljUmVzcG9uc2USIgoHdHJhZmZpYxgBIAEoCzIRLnByb2JlLnYxLlRyYWZmaWMiRgoPUHJvYmVUYXNrRGV0YWlsEiEKBHRhc2sYASABKAsyEy5wcm9iZS52MS5Qcm9iZVRhc2sSEAoIbm9kZV9pZHMYAiADKAMiFwoVTGlzdFByb2JlVGFza3NSZXF1ZXN0IlMKFkxpc3RQcm9iZVRhc2tzUmVzcG9uc2USDwoHdmVyc2lvbhgBIAEoBBIoCgV0YXNrcxgCIAMoCzIZLnByb2JlLnYxLlByb2JlVGFza0RldGFpbCJLChRTYXZlUHJvYmVUYXNrUmVxdWVzdBIhCgR0YXNrGAEgASgLMhMucHJvYmUudjEuUHJvYmVUYXNrEhAKCG5vZGVfaWRzGAIgAygDIlEKFVNhdmVQcm9iZVRhc2tSZXNwb25zZRInCgR0YXNrGAEgASgLMhkucHJvYmUudjEuUHJvYmVUYXNrRGV0YWlsEg8KB3ZlcnNpb24YAiABKAQiJAoWRGVsZXRlUHJvYmVUYXNrUmVxdWVzdBIKCgJpZBgBIAEoBCIqChdEZWxldGVQcm9iZVRhc2tSZXNwb25zZRIPCgd2ZXJzaW9uGAEgASgEIlMKElF1ZXJ5UHJvYmVzUmVxdWVzdBIPCgdub2RlX2lkGAEgASgDEgwKBGZyb20YAiABKAMSCgoCdG8YAyABKAMSEgoKbWF4X3BvaW50cxgEIAEoDSJbChNRdWVyeVByb2Jlc1Jlc3BvbnNlEg0KBWxldmVsGAEgASgJEg4KBnN0ZXBfcxgCIAEoDRIlCgZzZXJpZXMYAyADKAsyFS5wcm9iZS52MS5Qcm9iZVNlcmllcyJGCgtQcm9iZVNlcmllcxIPCgd0YXNrX2lkGAEgASgEEiYKB3NhbXBsZXMYAiADKAsyFS5wcm9iZS52MS5Qcm9iZVNhbXBsZSK/AQoLUHJvYmVTYW1wbGUSCgoCdHMYASABKAMSDAoEc2VudBgCIAEoDRIMCgRsb3N0GAMgASgNEg4KBmVycm9ycxgEIAEoDRIYCgtydHRfbWVhbl91cxgFIAEoDUgAiAEBEhcKCnJ0dF9taW5fdXMYBiABKA1IAYgBARIXCgpydHRfbWF4X3VzGAcgASgNSAKIAQFCDgoMX3J0dF9tZWFuX3VzQg0KC19ydHRfbWluX3VzQg0KC19ydHRfbWF4X3VzMvELCgxBZG1pblNlcnZpY2USOAoFTG9naW4SFi5wcm9iZS52MS5Mb2dpblJlcXVlc3QaFy5wcm9iZS52MS5Mb2dpblJlc3BvbnNlEjsKBkxvZ291dBIXLnByb2JlLnYxLkxvZ291dFJlcXVlc3QaGC5wcm9iZS52MS5Mb2dvdXRSZXNwb25zZRJECglMaXN0Tm9kZXMSGi5wcm9iZS52MS5MaXN0Tm9kZXNSZXF1ZXN0GhsucHJvYmUudjEuTGlzdE5vZGVzUmVzcG9uc2USRwoKQ3JlYXRlTm9kZRIbLnByb2JlLnYxLkNyZWF0ZU5vZGVSZXF1ZXN0GhwucHJvYmUudjEuQ3JlYXRlTm9kZVJlc3BvbnNlEkcKClVwZGF0ZU5vZGUSGy5wcm9iZS52MS5VcGRhdGVOb2RlUmVxdWVzdBocLnByb2JlLnYxLlVwZGF0ZU5vZGVSZXNwb25zZRJHCgpEZWxldGVOb2RlEhsucHJvYmUudjEuRGVsZXRlTm9kZVJlcXVlc3QaHC5wcm9iZS52MS5EZWxldGVOb2RlUmVzcG9uc2USVgoPUm90YXRlTm9kZVRva2VuEiAucHJvYmUudjEuUm90YXRlTm9kZVRva2VuUmVxdWVzdBohLnByb2JlLnYxLlJvdGF0ZU5vZGVUb2tlblJlc3BvbnNlEk0KDFJlb3JkZXJOb2RlcxIdLnByb2JlLnYxLlJlb3JkZXJOb2Rlc1JlcXVlc3QaHi5wcm9iZS52MS5SZW9yZGVyTm9kZXNSZXNwb25zZRJfChJPcGVuUmVnaXN0ZXJXaW5kb3cSIy5wcm9iZS52MS5PcGVuUmVnaXN0ZXJXaW5kb3dSZXF1ZXN0GiQucHJvYmUudjEuT3BlblJlZ2lzdGVyV2luZG93UmVzcG9uc2USYgoTQ2xvc2VSZWdpc3RlcldpbmRvdxIkLnByb2JlLnYxLkNsb3NlUmVnaXN0ZXJXaW5kb3dSZXF1ZXN0GiUucHJvYmUudjEuQ2xvc2VSZWdpc3RlcldpbmRvd1Jlc3BvbnNlElwKEUdldFJlZ2lzdGVyV2luZG93EiIucHJvYmUudjEuR2V0UmVnaXN0ZXJXaW5kb3dSZXF1ZXN0GiMucHJvYmUudjEuR2V0UmVnaXN0ZXJXaW5kb3dSZXNwb25zZRJKCgtHZXRTbmFwc2hvdBIcLnByb2JlLnYxLkdldFNuYXBzaG90UmVxdWVzdBodLnByb2JlLnYxLkdldFNuYXBzaG90UmVzcG9uc2USTQoMUXVlcnlNZXRyaWNzEh0ucHJvYmUudjEuUXVlcnlNZXRyaWNzUmVxdWVzdBoeLnByb2JlLnYxLlF1ZXJ5TWV0cmljc1Jlc3BvbnNlEkcKCkdldFRyYWZmaWMSGy5wcm9iZS52MS5HZXRUcmFmZmljUmVxdWVzdBocLnByb2JlLnYxLkdldFRyYWZmaWNSZXNwb25zZRJQCg1BZGp1c3RUcmFmZmljEh4ucHJvYmUudjEuQWRqdXN0VHJhZmZpY1JlcXVlc3QaHy5wcm9iZS52MS5BZGp1c3RUcmFmZmljUmVzcG9uc2USUwoOTGlzdFByb2JlVGFza3MSHy5wcm9iZS52MS5MaXN0UHJvYmVUYXNrc1JlcXVlc3QaIC5wcm9iZS52MS5MaXN0UHJvYmVUYXNrc1Jlc3BvbnNlElAKDVNhdmVQcm9iZVRhc2sSHi5wcm9iZS52MS5TYXZlUHJvYmVUYXNrUmVxdWVzdBofLnByb2JlLnYxLlNhdmVQcm9iZVRhc2tSZXNwb25zZRJWCg9EZWxldGVQcm9iZVRhc2sSIC5wcm9iZS52MS5EZWxldGVQcm9iZVRhc2tSZXF1ZXN0GiEucHJvYmUudjEuRGVsZXRlUHJvYmVUYXNrUmVzcG9uc2USSgoLUXVlcnlQcm9iZXMSHC5wcm9iZS52MS5RdWVyeVByb2Jlc1JlcXVlc3QaHS5wcm9iZS52MS5RdWVyeVByb2Jlc1Jlc3BvbnNlQi5aLGdpdGh1Yi5jb20veGpldHJ5L3Byb2JlL2dlbi9wcm9iZS92MTtwcm9iZXYxYgZwcm90bzM", [file_probe_v1_types]);
 
 /**
  * @generated from message probe.v1.LoginRequest
@@ -911,6 +911,291 @@ export const AdjustTrafficResponseSchema: GenMessage<AdjustTrafficResponse> = /*
   messageDesc(file_probe_v1_admin, 35);
 
 /**
+ * @generated from message probe.v1.ProbeTaskDetail
+ */
+export type ProbeTaskDetail = Message<"probe.v1.ProbeTaskDetail"> & {
+  /**
+   * @generated from field: probe.v1.ProbeTask task = 1;
+   */
+  task?: ProbeTask | undefined;
+
+  /**
+   * 分配到的节点，升序去重。
+   *
+   * @generated from field: repeated int64 node_ids = 2;
+   */
+  nodeIds: bigint[];
+};
+
+/**
+ * Describes the message probe.v1.ProbeTaskDetail.
+ * Use `create(ProbeTaskDetailSchema)` to create a new message.
+ */
+export const ProbeTaskDetailSchema: GenMessage<ProbeTaskDetail> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 36);
+
+/**
+ * @generated from message probe.v1.ListProbeTasksRequest
+ */
+export type ListProbeTasksRequest = Message<"probe.v1.ListProbeTasksRequest"> & {
+};
+
+/**
+ * Describes the message probe.v1.ListProbeTasksRequest.
+ * Use `create(ListProbeTasksRequestSchema)` to create a new message.
+ */
+export const ListProbeTasksRequestSchema: GenMessage<ListProbeTasksRequest> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 37);
+
+/**
+ * @generated from message probe.v1.ListProbeTasksResponse
+ */
+export type ListProbeTasksResponse = Message<"probe.v1.ListProbeTasksResponse"> & {
+  /**
+   * 任务与分配的全局版本；经任务管理接口的修改都加一，删除节点清理分配不加；agent 用它对账。
+   *
+   * @generated from field: uint64 version = 1;
+   */
+  version: bigint;
+
+  /**
+   * @generated from field: repeated probe.v1.ProbeTaskDetail tasks = 2;
+   */
+  tasks: ProbeTaskDetail[];
+};
+
+/**
+ * Describes the message probe.v1.ListProbeTasksResponse.
+ * Use `create(ListProbeTasksResponseSchema)` to create a new message.
+ */
+export const ListProbeTasksResponseSchema: GenMessage<ListProbeTasksResponse> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 38);
+
+/**
+ * @generated from message probe.v1.SaveProbeTaskRequest
+ */
+export type SaveProbeTaskRequest = Message<"probe.v1.SaveProbeTaskRequest"> & {
+  /**
+   * task.id 为 0 时创建，否则整体替换该任务的字段；node_ids 是保存后的完整分配列表。
+   * 约束：interval_s 5–3600，timeout_ms 100–5000，
+   * ICMP 目标为 IP 或主机名，TCP 目标为 host:port；每节点至多 64 个任务。
+   *
+   * @generated from field: probe.v1.ProbeTask task = 1;
+   */
+  task?: ProbeTask | undefined;
+
+  /**
+   * @generated from field: repeated int64 node_ids = 2;
+   */
+  nodeIds: bigint[];
+};
+
+/**
+ * Describes the message probe.v1.SaveProbeTaskRequest.
+ * Use `create(SaveProbeTaskRequestSchema)` to create a new message.
+ */
+export const SaveProbeTaskRequestSchema: GenMessage<SaveProbeTaskRequest> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 39);
+
+/**
+ * @generated from message probe.v1.SaveProbeTaskResponse
+ */
+export type SaveProbeTaskResponse = Message<"probe.v1.SaveProbeTaskResponse"> & {
+  /**
+   * @generated from field: probe.v1.ProbeTaskDetail task = 1;
+   */
+  task?: ProbeTaskDetail | undefined;
+
+  /**
+   * @generated from field: uint64 version = 2;
+   */
+  version: bigint;
+};
+
+/**
+ * Describes the message probe.v1.SaveProbeTaskResponse.
+ * Use `create(SaveProbeTaskResponseSchema)` to create a new message.
+ */
+export const SaveProbeTaskResponseSchema: GenMessage<SaveProbeTaskResponse> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 40);
+
+/**
+ * @generated from message probe.v1.DeleteProbeTaskRequest
+ */
+export type DeleteProbeTaskRequest = Message<"probe.v1.DeleteProbeTaskRequest"> & {
+  /**
+   * @generated from field: uint64 id = 1;
+   */
+  id: bigint;
+};
+
+/**
+ * Describes the message probe.v1.DeleteProbeTaskRequest.
+ * Use `create(DeleteProbeTaskRequestSchema)` to create a new message.
+ */
+export const DeleteProbeTaskRequestSchema: GenMessage<DeleteProbeTaskRequest> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 41);
+
+/**
+ * @generated from message probe.v1.DeleteProbeTaskResponse
+ */
+export type DeleteProbeTaskResponse = Message<"probe.v1.DeleteProbeTaskResponse"> & {
+  /**
+   * @generated from field: uint64 version = 1;
+   */
+  version: bigint;
+};
+
+/**
+ * Describes the message probe.v1.DeleteProbeTaskResponse.
+ * Use `create(DeleteProbeTaskResponseSchema)` to create a new message.
+ */
+export const DeleteProbeTaskResponseSchema: GenMessage<DeleteProbeTaskResponse> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 42);
+
+/**
+ * @generated from message probe.v1.QueryProbesRequest
+ */
+export type QueryProbesRequest = Message<"probe.v1.QueryProbesRequest"> & {
+  /**
+   * @generated from field: int64 node_id = 1;
+   */
+  nodeId: bigint;
+
+  /**
+   * 窗口 [from, to)，Unix 秒。跨度最长 400 天。
+   *
+   * @generated from field: int64 from = 2;
+   */
+  from: bigint;
+
+  /**
+   * @generated from field: int64 to = 3;
+   */
+  to: bigint;
+
+  /**
+   * 返回点数上限；0 取默认 720，最大 2000。hub 据此选择步长。
+   *
+   * @generated from field: uint32 max_points = 4;
+   */
+  maxPoints: number;
+};
+
+/**
+ * Describes the message probe.v1.QueryProbesRequest.
+ * Use `create(QueryProbesRequestSchema)` to create a new message.
+ */
+export const QueryProbesRequestSchema: GenMessage<QueryProbesRequest> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 43);
+
+/**
+ * @generated from message probe.v1.QueryProbesResponse
+ */
+export type QueryProbesResponse = Message<"probe.v1.QueryProbesResponse"> & {
+  /**
+   * @generated from field: string level = 1;
+   */
+  level: string;
+
+  /**
+   * @generated from field: uint32 step_s = 2;
+   */
+  stepS: number;
+
+  /**
+   * 每个任务一条；只含在窗口内有结果的任务，已删除任务的历史同样按 task_id 返回。
+   *
+   * @generated from field: repeated probe.v1.ProbeSeries series = 3;
+   */
+  series: ProbeSeries[];
+};
+
+/**
+ * Describes the message probe.v1.QueryProbesResponse.
+ * Use `create(QueryProbesResponseSchema)` to create a new message.
+ */
+export const QueryProbesResponseSchema: GenMessage<QueryProbesResponse> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 44);
+
+/**
+ * @generated from message probe.v1.ProbeSeries
+ */
+export type ProbeSeries = Message<"probe.v1.ProbeSeries"> & {
+  /**
+   * @generated from field: uint64 task_id = 1;
+   */
+  taskId: bigint;
+
+  /**
+   * 按 ts 升序；只包含 sent > 0 的点，缺失的 ts 表示该段没有结果。
+   *
+   * @generated from field: repeated probe.v1.ProbeSample samples = 2;
+   */
+  samples: ProbeSample[];
+};
+
+/**
+ * Describes the message probe.v1.ProbeSeries.
+ * Use `create(ProbeSeriesSchema)` to create a new message.
+ */
+export const ProbeSeriesSchema: GenMessage<ProbeSeries> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 45);
+
+/**
+ * @generated from message probe.v1.ProbeSample
+ */
+export type ProbeSample = Message<"probe.v1.ProbeSample"> & {
+  /**
+   * 点起始，Unix 秒，已对齐到 step_s 的整数倍。
+   *
+   * @generated from field: int64 ts = 1;
+   */
+  ts: bigint;
+
+  /**
+   * @generated from field: uint32 sent = 2;
+   */
+  sent: number;
+
+  /**
+   * 计入丢包的超时数；丢包率 = lost / sent，errors 不计入。
+   *
+   * @generated from field: uint32 lost = 3;
+   */
+  lost: number;
+
+  /**
+   * @generated from field: uint32 errors = 4;
+   */
+  errors: number;
+
+  /**
+   * 只有 sent − lost − errors > 0 时才有：该点内成功探测的 rtt 均值 / 最小 / 最大，微秒。
+   *
+   * @generated from field: optional uint32 rtt_mean_us = 5;
+   */
+  rttMeanUs?: number | undefined;
+
+  /**
+   * @generated from field: optional uint32 rtt_min_us = 6;
+   */
+  rttMinUs?: number | undefined;
+
+  /**
+   * @generated from field: optional uint32 rtt_max_us = 7;
+   */
+  rttMaxUs?: number | undefined;
+};
+
+/**
+ * Describes the message probe.v1.ProbeSample.
+ * Use `create(ProbeSampleSchema)` to create a new message.
+ */
+export const ProbeSampleSchema: GenMessage<ProbeSample> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 46);
+
+/**
  * 管理面板 → hub。除 Login 外每个方法都要求有效的会话 cookie，由挂载时绑定的
  * 拦截器裁决。全部方法都是 unary，且没有一个标为无副作用：本服务不接受 GET，
  * 这是抵御跨站请求伪造的几条各自独立的事实之一。
@@ -1061,6 +1346,42 @@ export const AdminService: GenService<{
     methodKind: "unary";
     input: typeof AdjustTrafficRequestSchema;
     output: typeof AdjustTrafficResponseSchema;
+  },
+  /**
+   * 探测任务：列出全部任务及其分配；保存（id 为 0 即创建）提交整份分配列表；删除不删历史。
+   *
+   * @generated from rpc probe.v1.AdminService.ListProbeTasks
+   */
+  listProbeTasks: {
+    methodKind: "unary";
+    input: typeof ListProbeTasksRequestSchema;
+    output: typeof ListProbeTasksResponseSchema;
+  },
+  /**
+   * @generated from rpc probe.v1.AdminService.SaveProbeTask
+   */
+  saveProbeTask: {
+    methodKind: "unary";
+    input: typeof SaveProbeTaskRequestSchema;
+    output: typeof SaveProbeTaskResponseSchema;
+  },
+  /**
+   * @generated from rpc probe.v1.AdminService.DeleteProbeTask
+   */
+  deleteProbeTask: {
+    methodKind: "unary";
+    input: typeof DeleteProbeTaskRequestSchema;
+    output: typeof DeleteProbeTaskResponseSchema;
+  },
+  /**
+   * 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
+   *
+   * @generated from rpc probe.v1.AdminService.QueryProbes
+   */
+  queryProbes: {
+    methodKind: "unary";
+    input: typeof QueryProbesRequestSchema;
+    output: typeof QueryProbesResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_probe_v1_admin, 0);

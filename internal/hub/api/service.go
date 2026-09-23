@@ -23,6 +23,7 @@ import (
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/live"
+	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/hub/traffic"
 )
@@ -56,12 +57,13 @@ type Service struct {
 	live    *live.Live
 	nodes   NodeState
 	traffic *traffic.Book
+	probes  *probe.Registry
 	clk     clock.Clock
 	log     *slog.Logger
 }
 
-func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, book *traffic.Book, clk clock.Clock, log *slog.Logger) *Service {
-	return &Service{cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, clk: clk, log: log}
+func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, book *traffic.Book, probes *probe.Registry, clk clock.Clock, log *slog.Logger) *Service {
+	return &Service{cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, probes: probes, clk: clk, log: log}
 }
 
 func (s *Service) Handler() (string, http.Handler) {

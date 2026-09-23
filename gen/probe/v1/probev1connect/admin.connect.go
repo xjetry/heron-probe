@@ -71,6 +71,18 @@ const (
 	// AdminServiceAdjustTrafficProcedure is the fully-qualified name of the AdminService's
 	// AdjustTraffic RPC.
 	AdminServiceAdjustTrafficProcedure = "/probe.v1.AdminService/AdjustTraffic"
+	// AdminServiceListProbeTasksProcedure is the fully-qualified name of the AdminService's
+	// ListProbeTasks RPC.
+	AdminServiceListProbeTasksProcedure = "/probe.v1.AdminService/ListProbeTasks"
+	// AdminServiceSaveProbeTaskProcedure is the fully-qualified name of the AdminService's
+	// SaveProbeTask RPC.
+	AdminServiceSaveProbeTaskProcedure = "/probe.v1.AdminService/SaveProbeTask"
+	// AdminServiceDeleteProbeTaskProcedure is the fully-qualified name of the AdminService's
+	// DeleteProbeTask RPC.
+	AdminServiceDeleteProbeTaskProcedure = "/probe.v1.AdminService/DeleteProbeTask"
+	// AdminServiceQueryProbesProcedure is the fully-qualified name of the AdminService's QueryProbes
+	// RPC.
+	AdminServiceQueryProbesProcedure = "/probe.v1.AdminService/QueryProbes"
 )
 
 // AdminServiceClient is a client for the probe.v1.AdminService service.
@@ -102,6 +114,12 @@ type AdminServiceClient interface {
 	GetTraffic(context.Context, *connect.Request[v1.GetTrafficRequest]) (*connect.Response[v1.GetTrafficResponse], error)
 	// 把某节点当前周期的用量覆盖为给定值；总量按同一差值调整且不低于 0，计数器基线不动。
 	AdjustTraffic(context.Context, *connect.Request[v1.AdjustTrafficRequest]) (*connect.Response[v1.AdjustTrafficResponse], error)
+	// 探测任务：列出全部任务及其分配；保存（id 为 0 即创建）提交整份分配列表；删除不删历史。
+	ListProbeTasks(context.Context, *connect.Request[v1.ListProbeTasksRequest]) (*connect.Response[v1.ListProbeTasksResponse], error)
+	SaveProbeTask(context.Context, *connect.Request[v1.SaveProbeTaskRequest]) (*connect.Response[v1.SaveProbeTaskResponse], error)
+	DeleteProbeTask(context.Context, *connect.Request[v1.DeleteProbeTaskRequest]) (*connect.Response[v1.DeleteProbeTaskResponse], error)
+	// 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
+	QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error)
 }
 
 // NewAdminServiceClient constructs a client for the probe.v1.AdminService service. By default, it
@@ -205,6 +223,30 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("AdjustTraffic")),
 			connect.WithClientOptions(opts...),
 		),
+		listProbeTasks: connect.NewClient[v1.ListProbeTasksRequest, v1.ListProbeTasksResponse](
+			httpClient,
+			baseURL+AdminServiceListProbeTasksProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListProbeTasks")),
+			connect.WithClientOptions(opts...),
+		),
+		saveProbeTask: connect.NewClient[v1.SaveProbeTaskRequest, v1.SaveProbeTaskResponse](
+			httpClient,
+			baseURL+AdminServiceSaveProbeTaskProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("SaveProbeTask")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteProbeTask: connect.NewClient[v1.DeleteProbeTaskRequest, v1.DeleteProbeTaskResponse](
+			httpClient,
+			baseURL+AdminServiceDeleteProbeTaskProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("DeleteProbeTask")),
+			connect.WithClientOptions(opts...),
+		),
+		queryProbes: connect.NewClient[v1.QueryProbesRequest, v1.QueryProbesResponse](
+			httpClient,
+			baseURL+AdminServiceQueryProbesProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("QueryProbes")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -225,6 +267,10 @@ type adminServiceClient struct {
 	queryMetrics        *connect.Client[v1.QueryMetricsRequest, v1.QueryMetricsResponse]
 	getTraffic          *connect.Client[v1.GetTrafficRequest, v1.GetTrafficResponse]
 	adjustTraffic       *connect.Client[v1.AdjustTrafficRequest, v1.AdjustTrafficResponse]
+	listProbeTasks      *connect.Client[v1.ListProbeTasksRequest, v1.ListProbeTasksResponse]
+	saveProbeTask       *connect.Client[v1.SaveProbeTaskRequest, v1.SaveProbeTaskResponse]
+	deleteProbeTask     *connect.Client[v1.DeleteProbeTaskRequest, v1.DeleteProbeTaskResponse]
+	queryProbes         *connect.Client[v1.QueryProbesRequest, v1.QueryProbesResponse]
 }
 
 // Login calls probe.v1.AdminService.Login.
@@ -302,6 +348,26 @@ func (c *adminServiceClient) AdjustTraffic(ctx context.Context, req *connect.Req
 	return c.adjustTraffic.CallUnary(ctx, req)
 }
 
+// ListProbeTasks calls probe.v1.AdminService.ListProbeTasks.
+func (c *adminServiceClient) ListProbeTasks(ctx context.Context, req *connect.Request[v1.ListProbeTasksRequest]) (*connect.Response[v1.ListProbeTasksResponse], error) {
+	return c.listProbeTasks.CallUnary(ctx, req)
+}
+
+// SaveProbeTask calls probe.v1.AdminService.SaveProbeTask.
+func (c *adminServiceClient) SaveProbeTask(ctx context.Context, req *connect.Request[v1.SaveProbeTaskRequest]) (*connect.Response[v1.SaveProbeTaskResponse], error) {
+	return c.saveProbeTask.CallUnary(ctx, req)
+}
+
+// DeleteProbeTask calls probe.v1.AdminService.DeleteProbeTask.
+func (c *adminServiceClient) DeleteProbeTask(ctx context.Context, req *connect.Request[v1.DeleteProbeTaskRequest]) (*connect.Response[v1.DeleteProbeTaskResponse], error) {
+	return c.deleteProbeTask.CallUnary(ctx, req)
+}
+
+// QueryProbes calls probe.v1.AdminService.QueryProbes.
+func (c *adminServiceClient) QueryProbes(ctx context.Context, req *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error) {
+	return c.queryProbes.CallUnary(ctx, req)
+}
+
 // AdminServiceHandler is an implementation of the probe.v1.AdminService service.
 type AdminServiceHandler interface {
 	// 用管理员密码换取会话 cookie（Set-Cookie 在响应头里）。
@@ -331,6 +397,12 @@ type AdminServiceHandler interface {
 	GetTraffic(context.Context, *connect.Request[v1.GetTrafficRequest]) (*connect.Response[v1.GetTrafficResponse], error)
 	// 把某节点当前周期的用量覆盖为给定值；总量按同一差值调整且不低于 0，计数器基线不动。
 	AdjustTraffic(context.Context, *connect.Request[v1.AdjustTrafficRequest]) (*connect.Response[v1.AdjustTrafficResponse], error)
+	// 探测任务：列出全部任务及其分配；保存（id 为 0 即创建）提交整份分配列表；删除不删历史。
+	ListProbeTasks(context.Context, *connect.Request[v1.ListProbeTasksRequest]) (*connect.Response[v1.ListProbeTasksResponse], error)
+	SaveProbeTask(context.Context, *connect.Request[v1.SaveProbeTaskRequest]) (*connect.Response[v1.SaveProbeTaskResponse], error)
+	DeleteProbeTask(context.Context, *connect.Request[v1.DeleteProbeTaskRequest]) (*connect.Response[v1.DeleteProbeTaskResponse], error)
+	// 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
+	QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error)
 }
 
 // NewAdminServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -430,6 +502,30 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("AdjustTraffic")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceListProbeTasksHandler := connect.NewUnaryHandler(
+		AdminServiceListProbeTasksProcedure,
+		svc.ListProbeTasks,
+		connect.WithSchema(adminServiceMethods.ByName("ListProbeTasks")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceSaveProbeTaskHandler := connect.NewUnaryHandler(
+		AdminServiceSaveProbeTaskProcedure,
+		svc.SaveProbeTask,
+		connect.WithSchema(adminServiceMethods.ByName("SaveProbeTask")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceDeleteProbeTaskHandler := connect.NewUnaryHandler(
+		AdminServiceDeleteProbeTaskProcedure,
+		svc.DeleteProbeTask,
+		connect.WithSchema(adminServiceMethods.ByName("DeleteProbeTask")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceQueryProbesHandler := connect.NewUnaryHandler(
+		AdminServiceQueryProbesProcedure,
+		svc.QueryProbes,
+		connect.WithSchema(adminServiceMethods.ByName("QueryProbes")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/probe.v1.AdminService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AdminServiceLoginProcedure:
@@ -462,6 +558,14 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceGetTrafficHandler.ServeHTTP(w, r)
 		case AdminServiceAdjustTrafficProcedure:
 			adminServiceAdjustTrafficHandler.ServeHTTP(w, r)
+		case AdminServiceListProbeTasksProcedure:
+			adminServiceListProbeTasksHandler.ServeHTTP(w, r)
+		case AdminServiceSaveProbeTaskProcedure:
+			adminServiceSaveProbeTaskHandler.ServeHTTP(w, r)
+		case AdminServiceDeleteProbeTaskProcedure:
+			adminServiceDeleteProbeTaskHandler.ServeHTTP(w, r)
+		case AdminServiceQueryProbesProcedure:
+			adminServiceQueryProbesHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -529,4 +633,20 @@ func (UnimplementedAdminServiceHandler) GetTraffic(context.Context, *connect.Req
 
 func (UnimplementedAdminServiceHandler) AdjustTraffic(context.Context, *connect.Request[v1.AdjustTrafficRequest]) (*connect.Response[v1.AdjustTrafficResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.AdjustTraffic is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListProbeTasks(context.Context, *connect.Request[v1.ListProbeTasksRequest]) (*connect.Response[v1.ListProbeTasksResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.ListProbeTasks is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) SaveProbeTask(context.Context, *connect.Request[v1.SaveProbeTaskRequest]) (*connect.Response[v1.SaveProbeTaskResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.SaveProbeTask is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) DeleteProbeTask(context.Context, *connect.Request[v1.DeleteProbeTaskRequest]) (*connect.Response[v1.DeleteProbeTaskResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.DeleteProbeTask is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.QueryProbes is not implemented"))
 }
