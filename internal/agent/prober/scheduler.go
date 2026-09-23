@@ -56,7 +56,8 @@ func (s *Scheduler) Version() uint64 {
 }
 
 // Apply 整份替换任务集；未变的任务不重启计时。字段规则由 CheckTask 保证，数量由本入口限制，
-// 应用清单时为每个被拒任务留下一条 error，说明原因。
+// hub 保存时用同一份 probelimit 校验字段，store 在事务内守住每节点数量上限；同版本正常部署不会下发被拒清单。
+// 应用时为每个被拒任务留一条 error 并 Warn 原因；若按间隔持续产出，超限清单会绕过每节点上限对结果量的约束。
 func (s *Scheduler) Apply(tasks *probev1.ProbeTasks) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -98,7 +99,8 @@ func (s *Scheduler) reject(t *probev1.ProbeTask, why string) {
 }
 
 // 首次偏移避免齐发；后续周期从触发时刻计算，不把探测耗时累加到周期。
-// CheckTask 保证超时预算不超过间隔；单任务循环串行调用引擎，停止后不发布半途结果。
+// 超时预算不超过间隔由 probelimit 的范围与 MinIntervalS*1000 ≥ MaxTimeoutMs 的编译期断言保证。
+// 单任务循环串行调用引擎，停止后不发布半途结果。
 func (s *Scheduler) run(ctx context.Context, t *probev1.ProbeTask) {
 	defer s.wg.Done()
 	interval := time.Duration(t.GetIntervalS()) * time.Second

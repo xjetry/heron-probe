@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
@@ -35,7 +34,7 @@ import (
 // Linux udp4：内核 ping socket 只交付 ICMP 报文。
 // Linux raw v4：net/iprawsock_posix.go 的 net.IPConn.ReadFrom 对 SockaddrInet4 调 stripIPv4Header。
 // udp6 与 raw v6：Darwin/Linux 内核均不交付 IPv6 头。
-// 这一次没有联通是可达性事实，计入丢包；本地无法发起才是 error。
+// 连接或发送失败经 classify 区分可达性与本地故障。
 type ICMP struct {
 	clk       clock.Clock
 	log       *slog.Logger
@@ -203,10 +202,7 @@ func (e *ICMP) Probe(ctx context.Context, t *probev1.ProbeTask) Outcome {
 	}
 	sent := e.clk.Mono()
 	if _, err := c.pc.WriteTo(wire, dst); err != nil {
-		if errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTUNREACH) {
-			return Outcome{Timeout: true}
-		}
-		return Outcome{Err: "send: " + err.Error()}
+		return classify(err)
 	}
 	select {
 	case at := <-reply:

@@ -2,7 +2,6 @@ package prober
 
 import (
 	"context"
-	"errors"
 	"net"
 	"time"
 
@@ -10,8 +9,8 @@ import (
 	"github.com/xjetry/probe/internal/clock"
 )
 
-// TCP 只测量连接建立耗时；解析与连接共用预算，解析失败与地址非法是 error，连接失败是丢包。
-// 这一次没有联通是可达性事实，计入丢包；本地无法发起才是 error。
+// TCP 只测量连接建立耗时；解析与连接共用预算，解析失败与地址非法是 error。
+// 连接或发送失败经 classify 区分可达性与本地故障。
 type TCP struct {
 	Clock       clock.Clock
 	Resolver    *net.Resolver
@@ -37,12 +36,7 @@ func (p TCP) Probe(ctx context.Context, t *probev1.ProbeTask) Outcome {
 	}
 	conn, err := dial(ctx, "tcp", net.JoinHostPort(ip.String(), port))
 	if err != nil {
-		var dnsErr *net.DNSError
-		var addrErr *net.AddrError
-		if errors.As(err, &dnsErr) || errors.As(err, &addrErr) {
-			return Outcome{Err: err.Error()}
-		}
-		return Outcome{Timeout: true}
+		return classify(err)
 	}
 	elapsed := p.Clock.Mono() - start
 	conn.Close()
