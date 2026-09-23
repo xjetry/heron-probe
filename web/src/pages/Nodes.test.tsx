@@ -26,7 +26,7 @@ describe("Nodes", () => {
     renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: "a" });
     fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
-    expect(screen.getByText("若今天已过新的重置日，本周期用量会立即清零。")).toBeInTheDocument();
+    expect(screen.getByText("若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。")).toBeInTheDocument();
   });
 
   it("列表显示重置日", async () => {
