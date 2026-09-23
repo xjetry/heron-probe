@@ -113,6 +113,11 @@ query_body=$(jq -nc --arg nodeId "$node1" --argjson from "$((now - 3600))" --arg
   '{nodeId: $nodeId, from: $from, to: $to, maxPoints: 100}')
 [ "$(rpc QueryMetrics "$query_body")" = 200 ] || { echo "FAIL: QueryMetrics"; cat "$work/QueryMetrics.json"; exit 1; }
 jq -e '.level == "1m" and (.ts | length) >= 1 and any(.series[] | select(.name == "cpu") | .samples[]; .n > 0)' "$work/QueryMetrics.json" > /dev/null || { echo "FAIL: QueryMetrics shape"; cat "$work/QueryMetrics.json"; exit 1; }
+probe_body=$(jq -nc --arg nodeId "$node1" --argjson from "$((now - 3600))" --argjson to "$((now + 60))" '{nodeId: $nodeId, from: $from, to: $to, maxPoints: 100}')
+[ "$(rpc QueryProbes "$probe_body")" = 200 ] || { echo "FAIL: QueryProbes"; cat "$work/QueryProbes.json"; exit 1; }
+# 两个任务都有成功的探测：容器里的 ICMP 探测回环，TCP 连接宿主上的 hub。
+jq -e --arg icmp "$icmp_task" --arg tcp "$tcp_task" '.level == "1m" and ([.series[].taskId] | sort) == ([$icmp, $tcp] | sort) and all(.series[]; any(.samples[]; .sent > 0 and .rttMeanUs != null and (.errors // 0) == 0))' "$work/QueryProbes.json" > /dev/null || { echo "FAIL: probe results"; cat "$work/QueryProbes.json"; exit 1; }
+jq -e 'all(.nodes[]; .facts.icmpAvailable == true)' "$work/ListNodes.json" > /dev/null || { echo "FAIL: icmp_available not reported"; cat "$work/ListNodes.json"; exit 1; }
 # 流量：两个 agent 每 4 秒上报一次，上报本身就产生字节；首次上报只取基线，之后的差分进总量。
 [ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic"; cat "$work/GetTraffic.json"; exit 1; }
 jq -e '.timezone == "UTC" and (.nodes | length) == 2 and all(.nodes[]; (.traffic.totalRx | tonumber) > 0 and (.traffic.totalTx | tonumber) > 0 and .traffic.resetDay == 1 and (.traffic.nextResetAt | tonumber) > (.traffic.periodStart | tonumber))' "$work/GetTraffic.json" > /dev/null || { echo "FAIL: traffic shape"; cat "$work/GetTraffic.json"; exit 1; }
@@ -143,6 +148,12 @@ wait_hub
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login after restart"; exit 1; }
 [ "$(rpc ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks after restart"; exit 1; }
 jq -e --arg icmp "$icmp_task" --arg tcp "$tcp_task" '.version == "2" and (.tasks | length) == 2 and all(.tasks[]; (.nodeIds | length) == 2) and ([.tasks[].task.id] | sort) == ([$icmp, $tcp] | sort)' "$work/ListProbeTasks.json" > /dev/null || { echo "FAIL: tasks lost across restart"; cat "$work/ListProbeTasks.json"; exit 1; }
+[ "$(rpc DeleteProbeTask "$(jq -nc --arg id "$tcp_task" '{id: $id}')")" = 200 ] || { echo "FAIL: DeleteProbeTask"; exit 1; }
+[ "$(rpc ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks after deletion"; exit 1; }
+jq -e --arg icmp "$icmp_task" '.version == "3" and (.tasks | length) == 1 and .tasks[0].task.id == $icmp' "$work/ListProbeTasks.json" > /dev/null || { echo "FAIL: task deletion not reflected"; cat "$work/ListProbeTasks.json"; exit 1; }
+[ "$(rpc QueryProbes "$probe_body")" = 200 ] || { echo "FAIL: QueryProbes after deletion"; exit 1; }
+# 删除清单中的任务不删除历史，重启前采集的两个任务仍须可查询。
+jq -e --arg icmp "$icmp_task" --arg tcp "$tcp_task" '([.series[].taskId] | sort) == ([$icmp, $tcp] | sort)' "$work/QueryProbes.json" > /dev/null || { echo "FAIL: probe history lost"; cat "$work/QueryProbes.json"; exit 1; }
 [ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic after restart"; exit 1; }
 # 总量不因周期滚动清零；agent 已退出，同周期的用量不再变化，跨周期则为零。
 jq -e --arg id "$node1" --arg tx "$tx_before" --argjson before "$traffic_before" '.nodes[] | select(.nodeId == $id) |
@@ -173,8 +184,9 @@ cat "$work/nodes.txt"
 
 get() { sed -n "s/^$1: //p" "$work/stats.txt"; }
 [ "$(get node)" = 2 ] || { echo "FAIL: node count"; exit 1; }
-[ "$(get probe_task)" = 2 ] || { echo "FAIL: task count"; exit 1; }
-[ "$(get probe_task_node)" = 4 ] || { echo "FAIL: assignment count"; exit 1; }
+[ "$(get probe_task)" = 1 ] || { echo "FAIL: task count"; exit 1; }
+[ "$(get probe_task_node)" = 2 ] || { echo "FAIL: assignment count"; exit 1; }
+[ "$(get probe_1m)" -ge 2 ] || { echo "FAIL: no probe minute rows"; exit 1; }
 [ "$(get traffic)" = 2 ] || { echo "FAIL: traffic rows"; exit 1; }
 [ "$(get node_facts)" = 2 ] || { echo "FAIL: facts count"; exit 1; }
 [ "$(get metric_1m)" -ge 2 ] || { echo "FAIL: no minute rows"; exit 1; }

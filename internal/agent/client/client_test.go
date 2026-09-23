@@ -94,13 +94,15 @@ func TestBackoffGrowsAndCapsAtThreeIntervals(t *testing.T) {
 
 // fakeHub 记录收到的上报并按脚本应答。
 type fakeHub struct {
-	reconcile bool
-	factsHash uint64
-	mu        sync.Mutex
-	reports   []*probev1.ReportRequest
-	wantNext  bool
-	fail      bool
-	interval  uint32
+	reconcile  bool
+	factsHash  uint64
+	mu         sync.Mutex
+	reports    []*probev1.ReportRequest
+	wantNext   bool
+	fail       bool
+	interval   uint32
+	tasks      *probev1.ProbeTasks
+	probeError connect.Code
 }
 
 func (f *fakeHub) Register(context.Context, *connect.Request[probev1.RegisterRequest]) (*connect.Response[probev1.RegisterResponse], error) {
@@ -117,6 +119,9 @@ func (f *fakeHub) Report(_ context.Context, req *connect.Request[probev1.ReportR
 		return nil, connect.NewError(connect.CodeUnavailable, errors.New("down"))
 	}
 	f.reports = append(f.reports, req.Msg)
+	if f.probeError != 0 {
+		return nil, connect.NewError(f.probeError, errors.New("rejected report"))
+	}
 	want := f.wantNext
 	if f.reconcile {
 		if req.Msg.Facts != nil {
@@ -125,7 +130,7 @@ func (f *fakeHub) Report(_ context.Context, req *connect.Request[probev1.ReportR
 		want = req.Msg.FactsHash != f.factsHash
 	}
 	f.wantNext = false
-	return connect.NewResponse(&probev1.ReportResponse{ReportIntervalMs: f.interval, WantFacts: want}), nil
+	return connect.NewResponse(&probev1.ReportResponse{ReportIntervalMs: f.interval, WantFacts: want, Tasks: f.tasks}), nil
 }
 
 func (f *fakeHub) count() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.reports) }

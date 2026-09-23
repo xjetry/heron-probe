@@ -20,6 +20,7 @@ import (
 	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
 	"github.com/xjetry/probe/internal/agent/client"
 	"github.com/xjetry/probe/internal/agent/collect"
+	"github.com/xjetry/probe/internal/agent/prober"
 	"github.com/xjetry/probe/internal/clock"
 )
 
@@ -95,6 +96,16 @@ func runRun(args []string) error {
 		return err
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	ic := prober.NewICMP(clk, log)
+	// defer 逆序执行，先停止调度再关闭 socket，避免仍在运行的任务入队 icmp closed。
+	defer ic.Close()
+	col.IcmpAvailable = ic.Available()
+	if !ic.Available() {
+		log.Warn("icmp probing unavailable; icmp tasks will report errors", "reasons", ic.InitErrors())
+	}
+	queue := prober.NewQueue(prober.QueueCap)
+	sched := prober.NewScheduler(prober.Multi{ICMP: ic, TCP: prober.TCP{Clock: clk}}, queue, clk, log)
+	defer sched.Stop()
 	r := &client.Runner{
 		Collector: col,
 		Client:    probev1connect.NewAgentServiceClient(&http.Client{Timeout: 15 * time.Second}, cfg.Hub),
@@ -102,6 +113,8 @@ func runRun(args []string) error {
 		Clock:     clk,
 		Log:       log,
 		Interval:  10 * time.Second,
+		Prober:    sched,
+		Results:   queue,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

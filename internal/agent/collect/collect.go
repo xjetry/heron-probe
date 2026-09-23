@@ -23,9 +23,10 @@ type Collector struct {
 	DiskUsage func(path string) (total, used uint64, err error)
 	Clock     clock.Clock
 	// NetInclude 非空时只统计匹配的网卡；否则统计除 NetExclude（默认列表）外的全部。
-	NetInclude []string
-	NetExclude []string
-	Version    string
+	NetInclude    []string
+	NetExclude    []string
+	Version       string
+	IcmpAvailable bool
 
 	prevCPU  *cpuTimes
 	prevNet  *netCounters
@@ -204,7 +205,7 @@ func readUint(fsys fs.FS, name string) (uint64, error) {
 
 // Facts 收集静态信息；读不到的字段留空，由 hub 侧展示为未知。
 func (c *Collector) Facts() *probev1.Facts {
-	f := &probev1.Facts{Arch: runtime.GOARCH, AgentVersion: c.Version, IcmpAvailable: false}
+	f := &probev1.Facts{Arch: runtime.GOARCH, AgentVersion: c.Version, IcmpAvailable: c.IcmpAvailable}
 	f.Hostname, _ = readTrim(c.FS, "proc/sys/kernel/hostname")
 	f.Kernel, _ = readTrim(c.FS, "proc/sys/kernel/osrelease")
 	if r, err := c.open("etc/os-release"); err == nil {
