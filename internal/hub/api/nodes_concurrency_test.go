@@ -40,6 +40,9 @@ func TestConcurrentUpdatesKeepResetDayConsistent(t *testing.T) {
 	}
 }
 
+// 此用例声明 DeleteNode 侧必须与更新共用临界区：Forget 后不能再由 SetResetDay 重建状态。
+// 暴露缺陷需要更新恰在库提交后、SetResetDay 前被抢占，并让删除完成事务与 Forget，窗口很窄。
+// 它是不变式的声明而非可靠探测器；TestConcurrentUpdatesKeepResetDayConsistent 更稳定地探测无锁分叉。
 func TestConcurrentUpdateCannotReviveDeletedResetDay(t *testing.T) {
 	h := newHarness(t, "")
 	for round := range 2000 {

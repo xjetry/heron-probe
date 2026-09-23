@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -45,7 +46,7 @@ func isLoopback(listen string) bool {
 
 var localtimePath = "/etc/localtime"
 
-// loadZone 不使用 time.Local：名字 "Local" 不是 IANA 名，会原样下发给面板而无法格式化。
+// loadZone 的三个来源都经 namedZone 规范化后加载，Location 的名字会随流量响应交给面板。
 // fallback 只表示本机时区不可判定，serve 据此告警；显式指定的无效时区仍拒绝启动。
 func loadZone(name string) (*time.Location, bool, error) {
 	if name != "" {
@@ -57,7 +58,7 @@ func loadZone(name string) (*time.Location, bool, error) {
 			return loc, false, nil
 		}
 	}
-	if target, err := os.Readlink(localtimePath); err == nil {
+	if target, err := filepath.EvalSymlinks(localtimePath); err == nil {
 		if _, name, ok := strings.Cut(target, "zoneinfo/"); ok && name != "" {
 			if loc, err := namedZone(name); err == nil {
 				return loc, false, nil
@@ -67,11 +68,20 @@ func loadZone(name string) (*time.Location, bool, error) {
 	return time.UTC, true, nil
 }
 
+// canonicalZone 去掉 tzdata 的编码目录前缀；同一区域的周期判定与面板 Intl 格式化必须共用规范名。
+// Go 能加载的名字不一定能被 Intl 接受，Local 和空串也没有可下发的区域含义。
+func canonicalZone(name string) (string, bool) {
+	name = strings.TrimPrefix(name, "posix/")
+	name = strings.TrimPrefix(name, "right/")
+	return name, name != "" && name != "Local"
+}
+
 func namedZone(name string) (*time.Location, error) {
-	if name == "Local" {
+	canonical, ok := canonicalZone(name)
+	if !ok {
 		return nil, fmt.Errorf("--timezone: %q is not an IANA time zone", name)
 	}
-	loc, err := time.LoadLocation(name)
+	loc, err := time.LoadLocation(canonical)
 	if err != nil {
 		return nil, fmt.Errorf("--timezone: %w", err)
 	}

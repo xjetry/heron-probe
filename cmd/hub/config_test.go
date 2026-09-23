@@ -114,14 +114,18 @@ func TestLoadZoneFallsBackPastInvalidTZ(t *testing.T) {
 
 func TestLoadZoneResolutionSources(t *testing.T) {
 	for _, tc := range []struct {
-		name, tz, target, want string
-		fallback               bool
+		name, explicit, tz, target, want string
+		fallback, twoHops                bool
 	}{
-		{"environment wins", "Asia/Tokyo", "/usr/share/zoneinfo/UTC", "Asia/Tokyo", false},
-		{"invalid environment uses link", "Mars/Olympus", "/usr/share/zoneinfo/Asia/Shanghai", "Asia/Shanghai", false},
-		{"local environment uses link", "Local", "/usr/share/zoneinfo/Asia/Shanghai", "Asia/Shanghai", false},
-		{"missing sources", "", "", "UTC", true},
-		{"invalid link", "", "/usr/share/zoneinfo/Mars/Olympus", "UTC", true},
+		{name: "environment wins", tz: "Asia/Tokyo", target: "UTC", want: "Asia/Tokyo"},
+		{name: "invalid environment uses link", tz: "Mars/Olympus", target: "Asia/Shanghai", want: "Asia/Shanghai"},
+		{name: "local environment uses link", tz: "Local", target: "Asia/Shanghai", want: "Asia/Shanghai"},
+		{name: "missing sources", want: "UTC", fallback: true},
+		{name: "invalid link", target: "Mars/Olympus", want: "UTC", fallback: true},
+		{name: "explicit right UTC", explicit: "right/UTC", want: "UTC"},
+		{name: "posix environment", tz: "posix/Asia/Tokyo", want: "Asia/Tokyo"},
+		{name: "right link", target: "right/UTC", want: "UTC"},
+		{name: "two hops", target: "Asia/Tokyo", want: "Asia/Tokyo", twoHops: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("TZ", tc.tz)
@@ -129,11 +133,25 @@ func TestLoadZoneResolutionSources(t *testing.T) {
 			localtimePath = filepath.Join(t.TempDir(), "localtime")
 			t.Cleanup(func() { localtimePath = old })
 			if tc.target != "" {
-				if err := os.Symlink(tc.target, localtimePath); err != nil {
+				target := filepath.Join(filepath.Dir(localtimePath), "zoneinfo", tc.target)
+				if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(target, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if tc.twoHops {
+					mid := filepath.Join(filepath.Dir(localtimePath), "mid")
+					if err := os.Symlink(target, mid); err != nil {
+						t.Fatal(err)
+					}
+					target = mid
+				}
+				if err := os.Symlink(target, localtimePath); err != nil {
 					t.Fatal(err)
 				}
 			}
-			loc, fallback, err := loadZone("")
+			loc, fallback, err := loadZone(tc.explicit)
 			if err != nil || fallback != tc.fallback || loc.String() != tc.want {
 				t.Fatalf("zone=%v fallback=%v err=%v, want %s/%v", loc, fallback, err, tc.want, tc.fallback)
 			}
