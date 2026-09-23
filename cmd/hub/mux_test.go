@@ -17,6 +17,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/hub/traffic"
 	"github.com/xjetry/probe/internal/hub/web"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
@@ -34,7 +35,8 @@ func newTestMux(t *testing.T) *http.ServeMux {
 	t.Cleanup(func() { st.Close() })
 	a := auth.New(st, clk, slog.Default())
 	l := live.New(clk, 30*time.Second)
-	svc, err := ingest.New(ingest.Config{TTL: 30 * time.Second}, l, st, a, clk, slog.Default())
+	book := traffic.New(st, clk, time.UTC, slog.Default())
+	svc, err := ingest.New(ingest.Config{TTL: 30 * time.Second}, l, st, a, book, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +44,9 @@ func newTestMux(t *testing.T) *http.ServeMux {
 		t.Fatal(err)
 	}
 	if err := svc.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := book.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	admin := api.New(api.Config{ReportInterval: 10 * time.Second}, st, a, l, svc, clk, slog.Default())

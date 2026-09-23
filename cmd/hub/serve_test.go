@@ -282,3 +282,59 @@ func TestShutdownHTTPWaitsForHandlersAfterClosingConnections(t *testing.T) {
 		t.Fatalf("drained handler admitted new request: %d", recorder.Code)
 	}
 }
+
+func TestServeRejectsUnknownTimezoneBeforeListening(t *testing.T) {
+	err := runServeWith(context.Background(), []string{"--db", filepath.Join(t.TempDir(), "hub.db"), "--listen", "127.0.0.1:0", "--timezone", "Mars/Olympus"},
+		clock.NewFake(time.Now()), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err == nil || !strings.Contains(err.Error(), "--timezone") {
+		t.Fatalf("err = %v, want a --timezone error", err)
+	}
+}
+
+// 退出时流量必须先于关库落盘：最后一次上报之后立刻停机，重启后总量仍在。
+func TestServeFlushesTrafficOnShutdown(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "hub.db")
+	password := "initial sufficiently long password"
+	if err := runPasswdWith([]string{"--db", db}, pipeWith(t, password+"\n"), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	url, _, stop := startTestHub(t, db, clk, "--timezone", "UTC")
+	client := probev1connect.NewAdminServiceClient(http.DefaultClient, url)
+	ctx := context.Background()
+	logged, err := client.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: password}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookies := (&http.Response{Header: logged.Header()}).Cookies()
+	create := connect.NewRequest(&probev1.CreateNodeRequest{Name: "n"})
+	create.Header().Set("Cookie", cookies[0].Name+"="+cookies[0].Value)
+	node, err := client.CreateNode(ctx, create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := probev1connect.NewAgentServiceClient(http.DefaultClient, url)
+	for _, m := range []*probev1.Metrics{
+		{BootId: "b", NetRxTotal: proto.Uint64(1000), NetTxTotal: proto.Uint64(5000)},
+		{BootId: "b", NetRxTotal: proto.Uint64(1200), NetTxTotal: proto.Uint64(5001)},
+	} {
+		report := connect.NewRequest(&probev1.ReportRequest{Metrics: m})
+		report.Header().Set("Authorization", "Bearer "+node.Msg.Token)
+		if _, err := agent.Report(ctx, report); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stop() // 10 秒的刷出周期尚未到：能落盘的只有退出时的那一次
+	st, _, err := openOffline(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	recs, err := st.LoadTraffic(ctx)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("traffic rows after shutdown: %v %v", recs, err)
+	}
+	if r := recs[0]; r.NodeID != node.Msg.Node.Id || r.TotalRx != 200 || r.TotalTx != 1 || r.LastRx != 1200 || r.BootID != "b" {
+		t.Fatalf("shutdown lost the traffic state: %+v", r)
+	}
+}

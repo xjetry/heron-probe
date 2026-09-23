@@ -25,6 +25,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/metric"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/hub/traffic"
 )
 
 const password = "correct horse battery staple"
@@ -39,6 +40,7 @@ type harness struct {
 	auth   *auth.Auth
 	live   *live.Live
 	ingest *ingest.Service
+	book   *traffic.Book
 	svc    *Service
 }
 
@@ -56,7 +58,8 @@ func newHarness(t *testing.T, trusted string) *harness {
 	}
 	a := auth.New(st, clk, slog.Default())
 	l := live.New(clk, 30*time.Second)
-	in, err := ingest.New(ingest.Config{TTL: 30 * time.Second, TrustedProxies: prefixes}, l, st, a, clk, slog.Default())
+	book := traffic.New(st, clk, time.UTC, slog.Default())
+	in, err := ingest.New(ingest.Config{TTL: 30 * time.Second, TrustedProxies: prefixes}, l, st, a, book, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +67,9 @@ func newHarness(t *testing.T, trusted string) *harness {
 		t.Fatal(err)
 	}
 	if err := in.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := book.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	svc := New(Config{ReportInterval: 10 * time.Second, TrustedProxies: prefixes}, st, a, l, in, clk, slog.Default())
@@ -75,7 +81,7 @@ func newHarness(t *testing.T, trusted string) *harness {
 	jar, _ := cookiejar.New(nil)
 	hc := &http.Client{Jar: jar}
 	return &harness{srv: srv, http: hc, admin: probev1connect.NewAdminServiceClient(hc, srv.URL),
-		agent: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, svc: svc}
+		agent: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, book: book, svc: svc}
 }
 
 func (h *harness) login(t *testing.T) {

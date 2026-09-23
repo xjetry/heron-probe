@@ -20,6 +20,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/hub/traffic"
 	"github.com/xjetry/probe/internal/hub/web"
 )
 
@@ -72,6 +73,7 @@ func runServe(args []string) error {
 func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *slog.Logger) (result error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	db := fs.String("db", "probe.db", "SQLite database path")
+	tz := fs.String("timezone", "", "IANA time zone for traffic period boundaries (default: the host's local zone)")
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
 	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For / X-Forwarded-Proto are trusted; empty trusts none")
 	retention := store.DefaultRetention
@@ -82,6 +84,10 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		return err
 	}
 	if err := retention.Validate(); err != nil {
+		return err
+	}
+	loc, err := loadZone(*tz)
+	if err != nil {
 		return err
 	}
 	ttl, err := parseTTL(os.Getenv("PROBE_OFFLINE_AFTER"))
@@ -103,12 +109,13 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	defer func() { result = errors.Join(result, st.Close()) }()
 	a := auth.New(st, clk, log)
 	l := live.New(clk, ttl)
-	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, clk, log)
+	book := traffic.New(st, clk, loc, log)
+	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, book, clk, log)
 	if err != nil {
 		return err
 	}
 	ctx := context.Background()
-	if err := errors.Join(a.Load(ctx), svc.Load(ctx)); err != nil {
+	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx)); err != nil {
 		return err
 	}
 	admin := api.New(api.Config{ReportInterval: svc.Interval(), TrustedProxies: trusted}, st, a, l, svc, clk, log)
@@ -137,15 +144,24 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		st.RunMaintenance(maintCtx, retention)
 	}()
 
+	trafficCtx, stopTraffic := context.WithCancel(ctx)
+	trafficDone := make(chan struct{})
+	go func() {
+		defer close(trafficDone)
+		book.Run(trafficCtx)
+	}()
+
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(listener) }()
-	log.Info("hub listening", "listen", listener.Addr().String(), "ttl", ttl, "interval", svc.Interval(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "version", version)
+	log.Info("hub listening", "listen", listener.Addr().String(), "ttl", ttl, "interval", svc.Interval(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "timezone", loc.String(), "version", version)
 
 	stopBackground := func() {
 		stopFlusher()
 		stopMaintenance()
+		stopTraffic()
 		<-flusherDone
 		<-maintenanceDone
+		<-trafficDone
 	}
 	defer stopBackground()
 	select {

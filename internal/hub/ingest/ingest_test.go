@@ -23,6 +23,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/metric"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/hub/traffic"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -34,30 +35,36 @@ type hub struct {
 	store  *store.Store
 	auth   *auth.Auth
 	live   *live.Live
+	book   *traffic.Book
 }
 
-func newHub(t *testing.T) *hub {
+func newHub(t *testing.T) *hub { return newHubAt(t, filepath.Join(t.TempDir(), "t.db")) }
+
+// newHubAt 在给定库文件上起一套 hub；同一路径起两次即模拟 hub 重启。
+func newHubAt(t *testing.T, path string) *hub {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default())
+	st, err := store.Open(path, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
 	a := auth.New(st, clk, slog.Default())
 	l := live.New(clk, 30*time.Second)
-	svc, err := New(Config{TTL: 30 * time.Second}, l, st, a, clk, slog.Default())
+	book := traffic.New(st, clk, time.UTC, slog.Default())
+	svc, err := New(Config{TTL: 30 * time.Second}, l, st, a, book, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Load(context.Background()); err != nil {
+	ctx := context.Background()
+	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
 	mux.Handle(svc.Handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return &hub{svc: svc, srv: srv, client: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l}
+	return &hub{svc: svc, srv: srv, client: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, book: book}
 }
 
 func (h *hub) node(t *testing.T) (int64, string) {
@@ -79,7 +86,7 @@ func report(tok string, m *probev1.Metrics) *connect.Request[probev1.ReportReque
 
 func TestNewEnforcesMinimumTTL(t *testing.T) {
 	for _, ttl := range []time.Duration{-time.Second, 0, 10*time.Second - time.Nanosecond, 10 * time.Second, 30 * time.Second} {
-		svc, err := New(Config{TTL: ttl}, nil, nil, nil, clock.NewFake(time.Now()), slog.Default())
+		svc, err := New(Config{TTL: ttl}, nil, nil, nil, nil, clock.NewFake(time.Now()), slog.Default())
 		if ttl < 10*time.Second {
 			if err == nil || svc != nil {
 				t.Fatalf("TTL %v accepted below minimum", ttl)
@@ -698,5 +705,107 @@ func TestRegisterTrimsAfterRemovingControls(t *testing.T) {
 		if n.Name != tc.want {
 			t.Errorf("registered name=%q want=%q", n.Name, tc.want)
 		}
+	}
+}
+
+func netCounters(boot string, rx, tx uint64) *probev1.Metrics {
+	return &probev1.Metrics{BootId: boot, NetRxTotal: proto.Uint64(rx), NetTxTotal: proto.Uint64(tx)}
+}
+
+func (h *hub) mustReport(t *testing.T, tok string, m *probev1.Metrics) {
+	t.Helper()
+	if _, err := h.client.Report(context.Background(), report(tok, m)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func rxAccounted(rows []metric.Row) (sum float64, n uint32) {
+	for _, r := range rows {
+		sum += r.Bucket.Sum[metric.RxBytes]
+		n += r.Bucket.N[metric.RxBytes]
+	}
+	return sum, n
+}
+
+func TestReportAccountsTrafficIntoTotalsAndMinuteBucket(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	h.mustReport(t, tok, netCounters("b", 1000, 1000))
+	h.clk.Advance(10 * time.Second)
+	h.mustReport(t, tok, netCounters("b", 1100, 1300))
+	e, ok := h.book.Get(id)
+	if !ok || e.TotalRx != 100 || e.TotalTx != 300 || e.PeriodRx != 100 {
+		t.Fatalf("book after two reports: %+v %v", e, ok)
+	}
+	rows := h.live.Drain()
+	if sum, n := rxAccounted(rows); sum != 100 || n != 1 {
+		t.Fatalf("minute bucket rx = %v/%d, want 100/1", sum, n)
+	}
+	if rows[0].Bucket.Sum[metric.TxBytes] != 300 {
+		t.Fatalf("minute bucket tx = %v, want 300", rows[0].Bucket.Sum[metric.TxBytes])
+	}
+}
+
+func TestGapBeyondTTLKeepsTotalsButSkipsTheBucket(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	h.mustReport(t, tok, netCounters("b", 1000, 1000))
+	h.clk.Advance(31 * time.Second) // TTL 30s：这段增量跨了不止一个上报周期
+	h.mustReport(t, tok, netCounters("b", 1500, 1000))
+	if e, _ := h.book.Get(id); e.TotalRx != 500 {
+		t.Fatalf("totals must still take the increment: %+v", e)
+	}
+	if sum, n := rxAccounted(h.live.Drain()); n != 0 {
+		t.Fatalf("increment across a gap longer than TTL landed in a minute bucket: %v/%d", sum, n)
+	}
+
+	h.clk.Advance(29 * time.Second)
+	h.mustReport(t, tok, netCounters("b", 1600, 1000))
+	if sum, n := rxAccounted(h.live.Drain()); sum != 100 || n != 1 {
+		t.Fatalf("increment at TTL-1s must enter the bucket: %v/%d, want 100/1", sum, n)
+	}
+	h.clk.Advance(30 * time.Second)
+	h.mustReport(t, tok, netCounters("b", 1700, 1000))
+	if sum, n := rxAccounted(h.live.Drain()); sum != 0 || n != 0 {
+		t.Fatalf("increment at exactly TTL landed in a minute bucket: %v/%d", sum, n)
+	}
+}
+
+func TestFirstReportAfterRestartSkipsTheBucketButKeepsTotals(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.db")
+	h := newHubAt(t, path)
+	id, tok := h.node(t)
+	h.mustReport(t, tok, netCounters("b", 1000, 1000))
+	h.clk.Advance(10 * time.Second)
+	h.mustReport(t, tok, netCounters("b", 1200, 1000))
+	if err := h.book.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	h2 := newHubAt(t, path) // 同一库：token 与基线都从库恢复
+	h2.mustReport(t, tok, netCounters("b", 1300, 1000))
+	if e, _ := h2.book.Get(id); e.TotalRx != 300 {
+		t.Fatalf("restart lost the persisted baseline or totals: %+v", e)
+	}
+	if sum, n := rxAccounted(h2.live.Drain()); n != 0 {
+		t.Fatalf("first report after restart landed in a minute bucket: %v/%d", sum, n)
+	}
+	h2.clk.Advance(10 * time.Second)
+	h2.mustReport(t, tok, netCounters("b", 1310, 1000))
+	if sum, n := rxAccounted(h2.live.Drain()); sum != 10 || n != 1 {
+		t.Fatalf("second report after restart must resume bucketing: %v/%d", sum, n)
+	}
+}
+
+func TestForgetDropsTrafficState(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	h.mustReport(t, tok, netCounters("b", 1000, 1000))
+	h.svc.Forget(id)
+	if _, ok := h.book.Get(id); ok {
+		t.Fatal("traffic entry survived Forget")
 	}
 }

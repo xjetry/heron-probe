@@ -1,7 +1,7 @@
-// Package ingest 实现 AgentService：校验 → live、facts 落盘、分钟刷出。
+// Package ingest 实现 AgentService：校验 → live 与流量入账、facts 落盘、分钟刷出。
 //
-// 上报路径只碰内存：鉴权查 auth 的映射，状态写进 live，facts 投递给写协程
-// 即返回。落盘由 RunFlusher 的分钟定时器驱动。
+// 上报路径只碰内存：鉴权查 auth 的映射，状态写进 live 与 traffic，facts 投递给写协程
+// 即返回。分钟桶由 RunFlusher 落盘，流量由 traffic.Book.Run 定时刷出。
 package ingest
 
 import (
@@ -25,6 +25,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/metric"
 	"github.com/xjetry/probe/internal/hub/sanitize"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/hub/traffic"
 )
 
 // maxBody 限制 AgentService 的请求体：一条上报远小于此，超出的只可能是滥用。
@@ -46,6 +47,7 @@ type storeWriter interface {
 type Service struct {
 	cfg           Config
 	live          *live.Live
+	traffic       *traffic.Book
 	store         *store.Store
 	writer        storeWriter
 	auth          *auth.Auth
@@ -66,11 +68,11 @@ type Service struct {
 	pending   [][]metric.Row
 }
 
-func New(cfg Config, l *live.Live, st *store.Store, a *auth.Auth, clk clock.Clock, log *slog.Logger) (*Service, error) {
+func New(cfg Config, l *live.Live, st *store.Store, a *auth.Auth, book *traffic.Book, clk clock.Clock, log *slog.Logger) (*Service, error) {
 	if cfg.TTL < MinTTL {
 		return nil, fmt.Errorf("TTL %v is below the minimum %v", cfg.TTL, MinTTL)
 	}
-	return &Service{cfg: cfg, live: l, store: st, writer: st, auth: a, clk: clk, log: log,
+	return &Service{cfg: cfg, live: l, traffic: book, store: st, writer: st, auth: a, clk: clk, log: log,
 		limit: newBuckets[int64](burst), registerLimit: newBuckets[netip.Addr](30), factsHash: map[int64]uint64{}}, nil
 }
 
@@ -176,7 +178,15 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[probev1.Repor
 	if err := validateMetrics(m); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	s.live.Observe(id, m)
+	ts, gap, first := s.live.Observe(id, m)
+	// 每 token 由单个 agent 串行发出 unary 上报、等到响应才发下一次；这保证同节点的
+	// Observe、Account、AddBytes 不被另一次上报交错。多端共用 token 不提供此保证。
+	// 间隔达到 TTL 意味着按在线判定节点在这段时间里离线过，这段增量跨过一次离线，
+	// 不能当作当前这一分钟的速率；hub 重启后的首次上报（live 无条目）同理。
+	// 流量入账只碰内存；first 与 gap 都来自 Observe 之前的状态。
+	if d, ok := s.traffic.Account(id, m); ok && !first && gap < s.cfg.TTL {
+		s.live.AddBytes(id, ts, d.Rx, d.Tx)
+	}
 	want := s.reconcileFacts(id, ctx.Value(nodeTokenKey{}).(string), req.Msg.GetFactsHash(), req.Msg.GetFacts())
 	return connect.NewResponse(&probev1.ReportResponse{
 		ReportIntervalMs: uint32(s.Interval() / time.Millisecond),
@@ -216,6 +226,7 @@ func (s *Service) Forget(nodeID int64) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 	s.live.Forget(nodeID)
+	s.traffic.Forget(nodeID)
 	s.limit.forget(nodeID)
 	s.mu.Lock()
 	delete(s.factsHash, nodeID)

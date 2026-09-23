@@ -433,3 +433,43 @@ func TestChooseLevelKeepsFinestStepWithinAlignedBudget(t *testing.T) {
 		}
 	}
 }
+
+// Sum 列复用 sum/n 存储：写入、加法合并、上卷都必须把它当可加量对待。
+func TestSumColumnsRoundTripAndRollUp(t *testing.T) {
+	s, clk := open(t)
+	ctx := context.Background()
+	base := clk.Now().Truncate(time.Hour).Unix()
+	id, _ := s.CreateNode(ctx, "n", hash(1))
+	var rows []metric.Row
+	for i := int64(0); i < 5; i++ {
+		b := metric.NewBucket()
+		b.AddSum(metric.RxBytes, 100)
+		b.AddSum(metric.RxBytes, 50)
+		rows = append(rows, metric.Row{NodeID: id, TS: base + i*60, Bucket: b})
+	}
+	if _, err := s.WriteMinuteRows(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	// 同一分钟再写一次：加法合并，不覆盖。
+	again := metric.NewBucket()
+	again.AddSum(metric.RxBytes, 1)
+	if _, err := s.WriteMinuteRows(ctx, []metric.Row{{NodeID: id, TS: base, Bucket: again}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadMinuteRows(ctx, id, base, base+300)
+	if err != nil || len(got) != 5 {
+		t.Fatalf("read: %v %v", got, err)
+	}
+	if b := got[0].Bucket; b.Sum[metric.RxBytes] != 151 || b.N[metric.RxBytes] != 3 || b.N[metric.TxBytes] != 0 {
+		t.Fatalf("minute 0: rx %v/%d tx n=%d, want 151/3 and no tx", b.Sum[metric.RxBytes], b.N[metric.RxBytes], b.N[metric.TxBytes])
+	}
+	clk.SetWall(time.Unix(base+20*60, 0))
+	if err := s.Rollup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	five, _ := LevelByName("5m")
+	agg := readLevel(t, s, five, id)
+	if len(agg) != 1 || agg[0].Bucket.Sum[metric.RxBytes] != 751 || agg[0].Bucket.N[metric.RxBytes] != 11 {
+		t.Fatalf("5m rows = %+v, want one row with rx 751/11", agg)
+	}
+}

@@ -87,3 +87,15 @@ func TestServeRejectsInvalidRetention(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadZone(t *testing.T) {
+	if loc, err := loadZone(""); err != nil || loc != time.Local {
+		t.Fatalf("empty must be the local zone: %v %v", loc, err)
+	}
+	if loc, err := loadZone("Asia/Shanghai"); err != nil || loc.String() != "Asia/Shanghai" {
+		t.Fatalf("Asia/Shanghai: %v %v", loc, err)
+	}
+	if _, err := loadZone("Mars/Olympus"); err == nil || !strings.Contains(err.Error(), "--timezone") {
+		t.Fatalf("unknown zone: %v, want an error naming the flag", err)
+	}
+}

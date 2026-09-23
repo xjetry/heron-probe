@@ -46,24 +46,49 @@ func minuteOf(t time.Time) int64 {
 	return s - s%60
 }
 
-// Observe 记录一次已通过校验的上报。调用方保证 m 不再被修改。
-func (l *Live) Observe(nodeID int64, m *probev1.Metrics) {
+// Observe 记录一次已通过校验的上报。返回样本所属分钟桶的起始、距该节点上一次上报的
+// 单调间隔，以及这是否是本进程里该节点的首次上报（first 为 true 时 gap 无意义）。
+// 调用方保证 m 不再被修改。
+func (l *Live) Observe(nodeID int64, m *probev1.Metrics) (ts int64, gap time.Duration, first bool) {
 	now, wall := l.clk.Mono(), l.clk.Now()
-	ts := minuteOf(wall)
+	ts = minuteOf(wall)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e := l.nodes[nodeID]
 	if e == nil {
 		e = &entry{buckets: map[int64]*metric.Bucket{}}
 		l.nodes[nodeID] = e
+		first = true
+	} else {
+		gap = now - e.lastSeen
 	}
 	e.metrics, e.lastSeen, e.lastSeenWall = m, now, wall
+	l.bucket(e, ts).Add(m)
+	return ts, gap, first
+}
+
+func (l *Live) bucket(e *entry, ts int64) *metric.Bucket {
 	b := e.buckets[ts]
 	if b == nil {
 		b = metric.NewBucket()
 		e.buckets[ts] = b
 	}
-	b.Add(m)
+	return b
+}
+
+// AddBytes 把一次上报算出的字节增量记进 ts 所在的分钟桶。ts 来自同一次上报的 Observe：
+// 增量与该次上报的其余指标同桶，桶按上报到达的墙钟分钟归属。节点已被 Forget 时丢弃——
+// Forget 之后不得再为该节点建任何内存状态。
+func (l *Live) AddBytes(nodeID int64, ts int64, rx, tx int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e := l.nodes[nodeID]
+	if e == nil {
+		return
+	}
+	b := l.bucket(e, ts)
+	b.AddSum(metric.RxBytes, float64(rx))
+	b.AddSum(metric.TxBytes, float64(tx))
 }
 
 func (l *Live) online(e *entry, now time.Duration) bool {

@@ -40,3 +40,16 @@ func isLoopback(listen string) bool {
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
 }
+
+// loadZone 解析 --timezone：空串取本机时区。周期边界是"重置日零点"，只有带时区才有定义；
+// 出错信息带上标志名，启动失败时运维不必猜是哪个参数。
+func loadZone(name string) (*time.Location, error) {
+	if name == "" {
+		return time.Local, nil
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, fmt.Errorf("--timezone: %w", err)
+	}
+	return loc, nil
+}

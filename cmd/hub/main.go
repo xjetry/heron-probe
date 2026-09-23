@@ -8,6 +8,8 @@ package main
 import (
 	"fmt"
 	"os"
+	// hub 常跑在没有系统 tzdata 的精简容器里；嵌入时区库让 --timezone 不依赖宿主。
+	_ "time/tzdata"
 )
 
 var version = "dev"
