@@ -92,9 +92,13 @@ var metricTables = []string{"metric_1m", "metric_5m", "metric_1h"}
 
 // schemaStatements 是当前版本的完整 DDL：空库直接建到当前版本，不重放历史。
 func schemaStatements() []string {
-	out := []string{ddlNode, ddlNodeFacts, ddlRegisterWindow, ddlRollupState, seedRollupState, ddlAdmin, ddlAdminSession, ddlTraffic}
+	out := []string{ddlNode, ddlNodeFacts, ddlRegisterWindow, ddlRollupState, seedRollupState, seedProbeRollupState,
+		ddlAdmin, ddlAdminSession, ddlTraffic, ddlProbeTask, ddlProbeTaskNode, ddlProbeTaskNodeIndex, ddlProbeMeta, seedProbeMeta}
 	for _, t := range metricTables {
 		out = append(out, metricDDL(t))
+	}
+	for _, t := range probeTables {
+		out = append(out, probeDDL(t))
 	}
 	return out
 }
@@ -169,3 +173,47 @@ func bucketArgs(b *metric.Bucket) []any {
 	}
 	return args
 }
+
+// 探测表族：键比指标表多一维 task_id，值列固定六个。rtt_min_us / rtt_max_us 可空——
+// 全部丢包或错误的桶没有 rtt 样本，NULL 让 min()/max() 聚合自动跳过它。
+func probeDDL(table string) string {
+	return "CREATE TABLE " + table + ` (
+  node_id INTEGER NOT NULL, ts INTEGER NOT NULL, task_id INTEGER NOT NULL,
+  sent INTEGER NOT NULL DEFAULT 0, lost INTEGER NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0,
+  rtt_sum_us INTEGER NOT NULL DEFAULT 0, rtt_min_us INTEGER, rtt_max_us INTEGER,
+  PRIMARY KEY (node_id, ts, task_id)
+) WITHOUT ROWID`
+}
+
+var probeTables = []string{"probe_1m", "probe_5m", "probe_1h"}
+
+const ddlProbeTask = `CREATE TABLE probe_task (
+  -- AUTOINCREMENT：历史行只带 task_id，删除任务后 id 若复用，旧历史会挂到新任务上。
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind INTEGER NOT NULL,
+  target TEXT NOT NULL,
+  interval_s INTEGER NOT NULL,
+  timeout_ms INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+)`
+
+const ddlProbeTaskNode = `CREATE TABLE probe_task_node (
+  task_id INTEGER NOT NULL,
+  node_id INTEGER NOT NULL,
+  PRIMARY KEY (task_id, node_id)
+) WITHOUT ROWID`
+
+const ddlProbeTaskNodeIndex = `CREATE INDEX probe_task_node_by_node ON probe_task_node (node_id)`
+
+// probe_meta.version 由任务保存与删除事务递增，agent 用它对账任务清单。
+// 删除节点时仅清理其分配，不递增：auth.DeleteNode 在删除成功后撤销 token，
+// 其余节点的清单不变，无需因此重新对账。
+// 单行表，CHECK 让第二行无法插入。
+const ddlProbeMeta = `CREATE TABLE probe_meta (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  version INTEGER NOT NULL
+)`
+
+const seedProbeMeta = `INSERT INTO probe_meta (id, version) VALUES (1, 0)`
+
+const seedProbeRollupState = `INSERT INTO rollup_state (level, upto_ts) VALUES ('probe_5m', 0), ('probe_1h', 0)`

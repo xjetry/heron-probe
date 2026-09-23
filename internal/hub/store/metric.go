@@ -12,38 +12,43 @@ var (
 	selectMinute = metricSelect("metric_1m")
 )
 
-// WriteMinuteRows 是 1m 行的唯一写入口；节点存在性在写事务内检查，
-// 与 DeleteNode 串行，删除后迟到的批次不会重建历史。
-//
-// 冻结不变式：5m 水位之前的 1m 桶不再被写入，否则上级行不再反映下级行。
-// 这里比较的是已持久化的水位而不是时钟，所以墙钟被向后拨、待重试列表里的
-// 旧桶迟到，都越不过它。被拒绝的行计数返回并记日志，其余行照常写入。
-func (s *Store) WriteMinuteRows(ctx context.Context, rows []metric.Row) (int, error) {
+// WriteMinuteBatch 是两族 1m 行的唯一写入口：同一事务里写指标行与探测行，节点存在性
+// 在事务内检查（与 DeleteNode 串行），各族按自己的 5m 水位做冻结检查——两族各自上卷，
+// 一族的水位不能替另一族裁决。被拒绝的行计数返回并记日志，其余行照常写入。
+func (s *Store) WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, error) {
 	rejected := 0
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		var upto int64
-		if err := tx.QueryRow("SELECT upto_ts FROM rollup_state WHERE level = '5m'").Scan(&upto); err != nil {
+		var metricUpto, probeUpto int64
+		if err := tx.QueryRow("SELECT upto_ts FROM rollup_state WHERE level = '5m'").Scan(&metricUpto); err != nil {
+			return err
+		}
+		if err := tx.QueryRow("SELECT upto_ts FROM rollup_state WHERE level = 'probe_5m'").Scan(&probeUpto); err != nil {
 			return err
 		}
 		existing := map[int64]bool{}
-		for _, r := range rows {
-			exists, checked := existing[r.NodeID]
-			if !checked {
-				var err error
-				exists, err = nodeExistsTx(tx, r.NodeID)
-				if err != nil {
-					return err
-				}
-				existing[r.NodeID] = exists
+		exists := func(nodeID int64) (bool, error) {
+			if ok, checked := existing[nodeID]; checked {
+				return ok, nil
 			}
-			if !exists {
+			ok, err := nodeExistsTx(tx, nodeID)
+			if err == nil {
+				existing[nodeID] = ok
+			}
+			return ok, err
+		}
+		for _, r := range batch.Rows {
+			ok, err := exists(r.NodeID)
+			if err != nil {
+				return err
+			}
+			if !ok {
 				rejected++
 				s.log.Warn("minute row for deleted node dropped", "node", r.NodeID)
 				continue
 			}
-			if r.TS < upto {
+			if r.TS < metricUpto {
 				rejected++
-				s.log.Warn("minute row before rollup watermark dropped", "node", r.NodeID, "ts", r.TS, "watermark", upto)
+				s.log.Warn("minute row before rollup watermark dropped", "node", r.NodeID, "ts", r.TS, "watermark", metricUpto)
 				continue
 			}
 			args := append([]any{r.NodeID, r.TS}, bucketArgs(r.Bucket)...)
@@ -56,9 +61,32 @@ func (s *Store) WriteMinuteRows(ctx context.Context, rows []metric.Row) (int, er
 				}
 			}
 		}
+		for _, r := range batch.Probes {
+			ok, err := exists(r.NodeID)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				rejected++
+				s.log.Warn("probe row for deleted node dropped", "node", r.NodeID, "task", r.TaskID)
+				continue
+			}
+			if r.TS < probeUpto {
+				rejected++
+				s.log.Warn("probe row before rollup watermark dropped", "node", r.NodeID, "task", r.TaskID, "ts", r.TS, "watermark", probeUpto)
+				continue
+			}
+			if _, err := tx.Exec(upsertProbeMinute, probeArgs(r)...); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	return rejected, err
+}
+
+func (s *Store) WriteMinuteRows(ctx context.Context, rows []metric.Row) (int, error) {
+	return s.WriteMinuteBatch(ctx, metric.Batch{Rows: rows})
 }
 
 func (s *Store) ReadMinuteRows(ctx context.Context, nodeID int64, from, to int64) ([]metric.Row, error) {

@@ -96,7 +96,7 @@ func TestPruneWaitsForConsumer(t *testing.T) {
 func TestRollupUsesPrimaryKeyRanges(t *testing.T) {
 	s, _ := open(t)
 	for _, lv := range levels[1:] {
-		rows, err := s.r.Query("EXPLAIN QUERY PLAN "+rollupSQL(lv), 0, 86400)
+		rows, err := s.r.Query("EXPLAIN QUERY PLAN "+metricFamily.rollupSQL(levelIndex(lv)), 0, 86400)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -115,7 +115,7 @@ func TestRollupUsesPrimaryKeyRanges(t *testing.T) {
 		}
 		// 这是当前 modernc.org/sqlite 版本的实测约束，升级驱动时必须重新执行。
 		t.Logf("%s query plan:\n%s", lv.Name, strings.Join(plan, "\n"))
-		if p := strings.Join(plan, "\n"); strings.Contains(p, "SCAN "+lv.Source) || !strings.Contains(p, "SEARCH "+lv.Source) {
+		if p := strings.Join(plan, "\n"); strings.Contains(p, "SCAN "+metricFamily.tables[levelIndex(lv)-1]) || !strings.Contains(p, "SEARCH "+metricFamily.tables[levelIndex(lv)-1]) {
 			t.Fatalf("rollup must seek source primary key ranges:\n%s", p)
 		}
 	}
@@ -139,21 +139,24 @@ func TestRollupCatchupCommitsBoundedSlices(t *testing.T) {
 			if err := s.write(ctx, func(tx *sql.Tx) error {
 				for ts := base; ts < limit; ts += lv.Bucket {
 					args := append([]any{id, ts}, bucketArgs(bucket(3))...)
-					if _, err := tx.Exec(metricUpsert(lv.Source), args...); err != nil {
+					if _, err := tx.Exec(metricUpsert(metricFamily.tables[levelIndex(lv)-1]), args...); err != nil {
 						return err
 					}
 				}
-				_, err := tx.Exec(rollupSQL(lv), base, limit)
+				_, err := tx.Exec(metricFamily.rollupSQL(levelIndex(lv)), base, limit)
 				return err
 			}); err != nil {
 				t.Fatal(err)
 			}
 			want := readLevel(t, s, lv, id)
-			if err := s.write(ctx, func(tx *sql.Tx) error { _, err := tx.Exec("DELETE FROM " + lv.Table); return err }); err != nil {
+			if err := s.write(ctx, func(tx *sql.Tx) error {
+				_, err := tx.Exec("DELETE FROM " + metricFamily.tables[levelIndex(lv)])
+				return err
+			}); err != nil {
 				t.Fatal(err)
 			}
 			trace := traceWrites(t, s)
-			upto, err := s.rollupLevel(ctx, lv, limit)
+			upto, err := s.rollupLevel(ctx, metricFamily, levelIndex(lv), limit)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -164,7 +167,7 @@ func TestRollupCatchupCommitsBoundedSlices(t *testing.T) {
 			}
 			for _, statements := range commits {
 				for _, stmt := range statements {
-					if strings.HasPrefix(stmt.query, "INSERT OR REPLACE INTO "+lv.Table) {
+					if strings.HasPrefix(stmt.query, "INSERT OR REPLACE INTO "+metricFamily.tables[levelIndex(lv)]) {
 						span := stmt.args[1].Value.(int64) - stmt.args[0].Value.(int64)
 						if span > width {
 							t.Fatalf("rollup slice span=%d exceeds %d", span, width)
@@ -179,7 +182,7 @@ func TestRollupCatchupCommitsBoundedSlices(t *testing.T) {
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("chunked result differs from single range: got %d want %d", len(got), len(want))
 			}
-			if _, err := s.rollupLevel(ctx, lv, limit); err != nil {
+			if _, err := s.rollupLevel(ctx, metricFamily, levelIndex(lv), limit); err != nil {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(readLevel(t, s, lv, id), got) {

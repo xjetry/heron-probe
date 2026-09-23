@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ func minuteRows(nodeID int64, from, to int64) []metric.Row {
 
 func readLevel(t *testing.T, s *Store, lv Level, nodeID int64) []metric.Row {
 	t.Helper()
-	rows, err := s.r.QueryContext(context.Background(), metricSelect(lv.Table), nodeID, 0, int64(1)<<40)
+	rows, err := s.r.QueryContext(context.Background(), metricSelect(metricFamily.tables[levelIndex(lv)]), nodeID, 0, int64(1)<<40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,6 +240,9 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 			if _, err := tx.Exec(upsertMinute, args...); err != nil {
 				return err
 			}
+			if _, err := tx.Exec(upsertProbeMinute, probeArgs(probeRow(row.NodeID, row.TS, 1, []uint32{10}, 0, 0))...); err != nil {
+				return err
+			}
 		}
 		return nil
 	}); err != nil {
@@ -249,13 +253,15 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 		t.Fatal(err)
 	}
 	trace := traceWrites(t, s)
+	setProbeWatermark(t, s, "probe_5m", now.Unix()-8*86400)
 	n, err := s.Prune(ctx, r)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// 保留 ts >= now − 7d：d = 8、9 两天在保留期之外，d = 7 恰在 cutoff 上属保留侧；两个节点各 2 行。
-	if n != 4 {
-		t.Fatalf("pruned %d rows, want 4", n)
+	// 探测族只消费到 d = 8，故本轮仅删除 d = 9 的两行；d = 8 要等自己的水位推进。
+	if n != 6 {
+		t.Fatalf("pruned %d rows, want 6", n)
 	}
 	deletes := 0
 	for _, statements := range trace.snapshot() {
@@ -284,6 +290,22 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 	}
 	if n, err := s.Prune(ctx, r); err != nil || n != 0 {
 		t.Fatalf("second prune = %d %v, want 0 nil", n, err)
+	}
+	for _, node := range []int64{id, orphan} {
+		left, err := s.QueryProbes(ctx, node, 0, now.Unix()+60, levels[0], 60)
+		if err != nil || len(left) != 9 || left[0].TS != now.Unix()-8*86400 {
+			t.Fatalf("probe consumption boundary: node=%d rows=%v err=%v, want 9 from %d", node, left, err, now.Unix()-8*86400)
+		}
+	}
+	setProbeWatermark(t, s, "probe_5m", now.Unix())
+	if n, err := s.Prune(ctx, r); err != nil || n != 2 {
+		t.Fatalf("consumed probe prune=%d err=%v, want 2", n, err)
+	}
+	for _, node := range []int64{id, orphan} {
+		left, err := s.QueryProbes(ctx, node, 0, now.Unix()+60, levels[0], 60)
+		if err != nil || len(left) != 8 || left[0].TS != now.Unix()-7*86400 {
+			t.Fatalf("probe retention boundary: node=%d rows=%v err=%v, want 8 from %d", node, left, err, now.Unix()-7*86400)
+		}
 	}
 }
 
@@ -471,5 +493,74 @@ func TestSumColumnsRoundTripAndRollUp(t *testing.T) {
 	agg := readLevel(t, s, five, id)
 	if len(agg) != 1 || agg[0].Bucket.Sum[metric.RxBytes] != 751 || agg[0].Bucket.N[metric.RxBytes] != 11 {
 		t.Fatalf("5m rows = %+v, want one row with rx 751/11", agg)
+	}
+}
+
+func TestProbeRollupIsExactIdempotentAndIndependentOfMetrics(t *testing.T) {
+	s, clk := open(t)
+	ctx := t.Context()
+	id, _ := s.CreateNode(ctx, "n", hash(1))
+	base := clk.Now().Truncate(time.Hour).Unix()
+	batch := metric.Batch{Rows: minuteRows(id, base, base+900)}
+	for i := int64(0); i < 15; i++ {
+		batch.Probes = append(batch.Probes,
+			probeRow(id, base+i*60, 7, []uint32{uint32(100 + i)}, 1, 1),
+			probeRow(id, base+i*60, 9, nil, 2, 0))
+	}
+	if _, err := s.WriteMinuteBatch(ctx, batch); err != nil {
+		t.Fatal(err)
+	}
+	clk.SetWall(time.Unix(base+1200, 0))
+	if err := s.Rollup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"5m", "probe_5m"} {
+		if got := watermark(t, s, state); got != base+900 {
+			t.Fatalf("independent watermark %s=%d, want %d", state, got, base+900)
+		}
+	}
+	first, err := s.QueryProbes(ctx, id, base, base+900, levels[1], 300)
+	if err != nil || len(first) != 6 {
+		t.Fatalf("probe_5m rows=%d err=%v, want 6", len(first), err)
+	}
+	for i, row := range first {
+		j := i % 3
+		want := metric.ProbeBucket{Sent: 10, Lost: 10}
+		task := uint64(9)
+		if i < 3 {
+			task = 7
+			want = metric.ProbeBucket{Sent: 15, Lost: 5, Errors: 5, RttN: 5, RttSumUs: uint64(510 + j*25), RttMinUs: uint32(100 + j*5), RttMaxUs: uint32(104 + j*5)}
+		}
+		if row.NodeID != id || row.TaskID != task || row.TS != base+int64(j)*300 || *row.Bucket != want {
+			t.Fatalf("rollup row=%+v bucket=%+v, want task=%d ts=%d bucket=%+v", row, *row.Bucket, task, base+int64(j)*300, want)
+		}
+	}
+	var nulls int
+	if err := s.r.QueryRow("SELECT COUNT(*) FROM probe_5m WHERE task_id=9 AND rtt_min_us IS NULL AND rtt_max_us IS NULL").Scan(&nulls); err != nil || nulls != 3 {
+		t.Fatalf("all-loss NULL buckets=%d err=%v, want 3", nulls, err)
+	}
+	// 测试库回退水位以真正重算同一批桶，避免第二次调用只走空操作。
+	setProbeWatermark(t, s, "probe_5m", base)
+	if err := s.Rollup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.QueryProbes(ctx, id, base, base+900, levels[1], 300)
+	if err != nil || !reflect.DeepEqual(first, second) {
+		t.Fatalf("repeated rollup changed rows: first=%v second=%v err=%v", first, second, err)
+	}
+	clk.SetWall(time.Unix(base+3900, 0))
+	if err := s.Rollup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	hour, err := s.QueryProbes(ctx, id, base, base+3600, levels[2], 3600)
+	want := []metric.ProbeRow{
+		{NodeID: id, TS: base, TaskID: 7, Bucket: &metric.ProbeBucket{Sent: 45, Lost: 15, Errors: 15, RttN: 15, RttSumUs: 1605, RttMinUs: 100, RttMaxUs: 114}},
+		{NodeID: id, TS: base, TaskID: 9, Bucket: &metric.ProbeBucket{Sent: 30, Lost: 30}},
+	}
+	if err != nil || !reflect.DeepEqual(hour, want) {
+		t.Fatalf("hour rollup=%v err=%v, want %v", hour, err, want)
+	}
+	if got := watermark(t, s, "probe_1h"); got != base+3600 {
+		t.Fatalf("probe_1h watermark=%d, want %d", got, base+3600)
 	}
 }

@@ -19,19 +19,16 @@ import (
 const RollupLag = 300 * time.Second
 
 type Level struct {
-	Name  string
-	Table string
+	Name string
 	// Bucket 是桶长，秒。
 	Bucket int64
-	// Source 是上卷的来源表；最细一级为空。
-	Source string
 }
 
 // levels 从细到粗；上卷按此顺序进行，粗一级只能用细一级已冻结的行。
 var levels = []Level{
-	{Name: "1m", Table: "metric_1m", Bucket: 60},
-	{Name: "5m", Table: "metric_5m", Bucket: 300, Source: "metric_1m"},
-	{Name: "1h", Table: "metric_1h", Bucket: 3600, Source: "metric_5m"},
+	{Name: "1m", Bucket: 60},
+	{Name: "5m", Bucket: 300},
+	{Name: "1h", Bucket: 3600},
 }
 
 func LevelByName(name string) (Level, bool) {
@@ -58,13 +55,51 @@ func aggregates() []string {
 	return out
 }
 
-// rollupSQL 生成"下级整桶重算写入本级"的语句。INSERT OR REPLACE 使重跑幂等：
-// 同一个桶无论算几遍都是同一行。桶长以字面量嵌入，它来自 levels 表不是用户输入。
-func rollupSQL(lv Level) string {
-	b := fmt.Sprint(lv.Bucket)
-	return "INSERT OR REPLACE INTO " + lv.Table + " (node_id, ts, " + strings.Join(metricColumnNames(), ", ") + ") " +
-		"SELECT node_id, ts - ts % " + b + ", " + strings.Join(aggregates(), ", ") +
-		" FROM " + lv.Source + " WHERE node_id IN (SELECT id FROM node) AND ts >= ? AND ts < ? GROUP BY node_id, ts - ts % " + b
+// family 描述一个时间序列表族：三级表、各级水位在 rollup_state 里的键、键列与值列的
+// SQL 片段。两族共用上卷与清理的控制流程，查询共用二次分桶 SQL；
+// 表名、水位键和聚合列来自同一个描述，避免各操作把两族混用。
+type family struct {
+	name string
+	// tables / states 与 levels 同序；states[0] 为空——最细一级没有水位。
+	tables []string
+	states []string
+	// extraKey 是 node_id、ts 之外的键列（探测族为 task_id），为空则没有。
+	extraKey string
+	values   func() []string
+	aggs     func() []string
+}
+
+var metricFamily = &family{name: "metric", tables: metricTables, states: []string{"", "5m", "1h"},
+	values: metricColumnNames, aggs: aggregates}
+
+var probeFamily = &family{name: "probe", tables: probeTables, states: []string{"", "probe_5m", "probe_1h"},
+	extraKey: "task_id", values: probeValueColumns, aggs: probeAggregates}
+
+// families 的顺序无关：两族各有水位，互不牵制（§6.4）。
+var families = []*family{metricFamily, probeFamily}
+
+func (f *family) keys() []string {
+	k := []string{"node_id", "ts"}
+	if f.extraKey != "" {
+		k = append(k, f.extraKey)
+	}
+	return k
+}
+
+// groupBy 是"整桶重算"的分组键：ts 对齐到桶长，其余键原样。
+func (f *family) groupBy(bucket string) string {
+	g := "node_id, ts - ts % " + bucket
+	if f.extraKey != "" {
+		g += ", " + f.extraKey
+	}
+	return g
+}
+
+func (f *family) rollupSQL(i int) string {
+	b := fmt.Sprint(levels[i].Bucket)
+	return "INSERT OR REPLACE INTO " + f.tables[i] + " (" + strings.Join(append(f.keys(), f.values()...), ", ") + ") " +
+		"SELECT " + f.groupBy(b) + ", " + strings.Join(f.aggs(), ", ") +
+		" FROM " + f.tables[i-1] + " WHERE node_id IN (SELECT id FROM node) AND ts >= ? AND ts < ? GROUP BY " + f.groupBy(b)
 }
 
 // Rollup 对每一粗级：取水位之后、滞后期已过的下级桶，整桶重算写入本级，并在
@@ -73,14 +108,17 @@ func rollupSQL(lv Level) string {
 // 此上界与 ceiling 的对齐上界相同；min 显式保留两项约束，不替代处理顺序。
 func (s *Store) Rollup(ctx context.Context) error {
 	ceiling := s.clk.Now().Add(-RollupLag).Unix()
-	lowerUpto := int64(math.MaxInt64)
-	for _, lv := range levels[1:] {
-		limit := min(alignDown(ceiling, lv.Bucket), alignDown(lowerUpto, lv.Bucket))
-		upto, err := s.rollupLevel(ctx, lv, limit)
-		if err != nil {
-			return fmt.Errorf("rollup %s: %w", lv.Name, err)
+	for _, f := range families {
+		lowerUpto := int64(math.MaxInt64)
+		for i := 1; i < len(levels); i++ {
+			lv := levels[i]
+			limit := min(alignDown(ceiling, lv.Bucket), alignDown(lowerUpto, lv.Bucket))
+			upto, err := s.rollupLevel(ctx, f, i, limit)
+			if err != nil {
+				return fmt.Errorf("rollup %s %s: %w", f.name, lv.Name, err)
+			}
+			lowerUpto = upto
 		}
-		lowerUpto = upto
 	}
 	return nil
 }
@@ -91,11 +129,12 @@ var rollupSlice = map[string]int64{"5m": 86400, "1h": 7 * 86400}
 // rollupLevel 每片通过同一次 write 事务插入桶并推进水位，二者一起提交或回滚。
 // 每片重读水位，允许其他维护调用在片间推进；空白历史在同一事务中确认后跳过，
 // 避免新库从零水位逐日提交空事务。非空片的起止均对齐目标桶，不拆开整桶。
-func (s *Store) rollupLevel(ctx context.Context, lv Level, limit int64) (int64, error) {
+func (s *Store) rollupLevel(ctx context.Context, f *family, i int, limit int64) (int64, error) {
+	lv := levels[i]
 	var upto int64
 	for {
 		err := s.write(ctx, func(tx *sql.Tx) error {
-			if err := tx.QueryRow("SELECT upto_ts FROM rollup_state WHERE level = ?", lv.Name).Scan(&upto); err != nil {
+			if err := tx.QueryRow("SELECT upto_ts FROM rollup_state WHERE level = ?", f.states[i]).Scan(&upto); err != nil {
 				return err
 			}
 			if limit <= upto {
@@ -103,7 +142,7 @@ func (s *Store) rollupLevel(ctx context.Context, lv Level, limit int64) (int64, 
 			}
 			var first sql.NullInt64
 			// 每个节点从复合主键的时间范围取首行，再求全局最小值，不扫描全部历史。
-			if err := tx.QueryRow("SELECT min((SELECT ts FROM "+lv.Source+
+			if err := tx.QueryRow("SELECT min((SELECT ts FROM "+f.tables[i-1]+
 				" WHERE node_id = node.id AND ts >= ? AND ts < ? ORDER BY ts LIMIT 1)) FROM node", upto, limit).Scan(&first); err != nil {
 				return err
 			}
@@ -111,16 +150,16 @@ func (s *Store) rollupLevel(ctx context.Context, lv Level, limit int64) (int64, 
 			if first.Valid {
 				start := max(upto, alignDown(first.Int64, lv.Bucket))
 				end = start + min(rollupSlice[lv.Name], limit-start)
-				if _, err := tx.Exec(rollupSQL(lv), start, end); err != nil {
+				if _, err := tx.Exec(f.rollupSQL(i), start, end); err != nil {
 					return err
 				}
 			}
-			res, err := tx.Exec("UPDATE rollup_state SET upto_ts = ? WHERE level = ?", end, lv.Name)
+			res, err := tx.Exec("UPDATE rollup_state SET upto_ts = ? WHERE level = ?", end, f.states[i])
 			if err != nil {
 				return err
 			}
 			if n, _ := res.RowsAffected(); n != 1 {
-				return fmt.Errorf("rollup_state has no row for level %s", lv.Name)
+				return fmt.Errorf("rollup_state has no row for level %s", f.states[i])
 			}
 			upto = end
 			return nil
@@ -182,36 +221,38 @@ var pruneSlice = map[string]int64{"1m": 86400, "5m": 7 * 86400, "1h": 30 * 86400
 func (s *Store) Prune(ctx context.Context, r Retention) (int64, error) {
 	now := s.clk.Now().Unix()
 	var total int64
-	for i, lv := range levels {
-		cutoff := alignDown(now-int64(r.forLevel(lv.Name)/time.Second), lv.Bucket)
-		// 初始化后只有 rollupLevel 写水位，每片 end > upto，且与聚合原子提交。
-		// 因此消费水位只前进，读到旧值至多延迟清理，不会提前删掉未聚合的行。
-		if i+1 < len(levels) {
-			var consumed int64
-			if err := s.r.QueryRowContext(ctx, "SELECT upto_ts FROM rollup_state WHERE level = ?", levels[i+1].Name).Scan(&consumed); err != nil {
+	for _, f := range families {
+		for i, lv := range levels {
+			cutoff := alignDown(now-int64(r.forLevel(lv.Name)/time.Second), lv.Bucket)
+			// 初始化后只有 rollupLevel 写水位，每片 end > upto，且与聚合原子提交。
+			// 因此消费水位只前进，读到旧值至多延迟清理，不会提前删掉未聚合的行。
+			if i+1 < len(levels) {
+				var consumed int64
+				if err := s.r.QueryRowContext(ctx, "SELECT upto_ts FROM rollup_state WHERE level = ?", f.states[i+1]).Scan(&consumed); err != nil {
+					return total, err
+				}
+				cutoff = min(cutoff, consumed)
+			}
+			ids, err := s.distinctNodes(ctx, f.tables[i])
+			if err != nil {
 				return total, err
 			}
-			cutoff = min(cutoff, consumed)
-		}
-		ids, err := s.distinctNodes(ctx, lv.Table)
-		if err != nil {
-			return total, err
-		}
-		for _, id := range ids {
-			for {
-				var oldest sql.NullInt64
-				if err := s.r.QueryRowContext(ctx, "SELECT min(ts) FROM "+lv.Table+" WHERE node_id = ?", id).Scan(&oldest); err != nil {
-					return total, err
+			for _, id := range ids {
+				for {
+					var oldest sql.NullInt64
+					if err := s.r.QueryRowContext(ctx, "SELECT min(ts) FROM "+f.tables[i]+" WHERE node_id = ?", id).Scan(&oldest); err != nil {
+						return total, err
+					}
+					if !oldest.Valid || oldest.Int64 >= cutoff {
+						break
+					}
+					end := min(oldest.Int64+pruneSlice[lv.Name], cutoff)
+					n, err := s.deleteRange(ctx, f.tables[i], id, oldest.Int64, end)
+					if err != nil {
+						return total, err
+					}
+					total += n
 				}
-				if !oldest.Valid || oldest.Int64 >= cutoff {
-					break
-				}
-				end := min(oldest.Int64+pruneSlice[lv.Name], cutoff)
-				n, err := s.deleteRange(ctx, lv.Table, id, oldest.Int64, end)
-				if err != nil {
-					return total, err
-				}
-				total += n
 			}
 		}
 	}
@@ -283,26 +324,25 @@ func ChooseLevel(from, to int64, maxPoints int) (Level, int64) {
 }
 
 // aggregateSQL 是查询时的二次分桶：与上卷同一种运算，步长作为绑定参数。
-// GROUP BY 1 指向第一列（分桶后的 ts）。
-func aggregateSQL(table string) string {
-	return "SELECT ts - ts % ?, " + strings.Join(aggregates(), ", ") + " FROM " + table +
-		" WHERE node_id = ? AND ts >= ? AND ts <= ? GROUP BY 1 ORDER BY 1"
+// 探测族多按 task_id 分组并先按任务再按时间排序，调用方据此切成每任务一条序列。
+func (f *family) aggregateSQL(table string) string {
+	sel, group, order := "ts - ts % ?", "1", "1"
+	if f.extraKey != "" {
+		sel += ", " + f.extraKey
+		group, order = "1, 2", "2, 1"
+	}
+	return "SELECT " + sel + ", " + strings.Join(f.aggs(), ", ") + " FROM " + table +
+		" WHERE node_id = ? AND ts >= ? AND ts <= ? GROUP BY " + group + " ORDER BY " + order
 }
 
 // QueryMetrics 返回 [from, to) 内按 step 聚合的桶；from 向下、to 向上对齐到 step，
 // 结果的 TS 都是 step 的整数倍。只返回有行的桶：缺失的桶就是没有数据。
 func (s *Store) QueryMetrics(ctx context.Context, nodeID int64, from, to int64, lv Level, step int64) ([]metric.Row, error) {
-	if step < lv.Bucket || step%lv.Bucket != 0 {
-		return nil, fmt.Errorf("step %d is not a multiple of the %s bucket (%d)", step, lv.Name, lv.Bucket)
+	if err := checkStep(lv, step); err != nil {
+		return nil, err
 	}
-	from = alignDown(from, step)
-	// 用最后一秒所在桶的闭区间上界表达对齐，避免 to + step 溢出。
-	last := alignDown(to-1, step)
-	to = math.MaxInt64
-	if last <= math.MaxInt64-(step-1) {
-		to = last + step - 1
-	}
-	rows, err := s.r.QueryContext(ctx, aggregateSQL(lv.Table), step, nodeID, from, to)
+	from, to = alignWindow(from, to, step)
+	rows, err := s.r.QueryContext(ctx, metricFamily.aggregateSQL(metricFamily.tables[levelIndex(lv)]), step, nodeID, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -339,4 +379,50 @@ func (s *Store) RunMaintenance(ctx context.Context, r Retention) {
 			}
 		}
 	}
+}
+
+func levelIndex(lv Level) int {
+	for i, level := range levels {
+		if level.Name == lv.Name {
+			return i
+		}
+	}
+	return -1
+}
+
+func checkStep(lv Level, step int64) error {
+	i := levelIndex(lv)
+	if i < 0 || lv.Bucket != levels[i].Bucket {
+		return fmt.Errorf("unknown level %q with bucket %d", lv.Name, lv.Bucket)
+	}
+	if step < lv.Bucket || step%lv.Bucket != 0 {
+		return fmt.Errorf("step %d is not a multiple of the %s bucket (%d)", step, lv.Name, lv.Bucket)
+	}
+	return nil
+}
+
+func alignWindow(from, to, step int64) (int64, int64) {
+	from = alignDown(from, step)
+	// 用最后一秒所在桶的闭区间上界表达对齐，避免 to + step 溢出。
+	last := alignDown(to-1, step)
+	to = math.MaxInt64
+	if last <= math.MaxInt64-(step-1) {
+		to = last + step - 1
+	}
+
+	return from, to
+}
+
+// QueryProbes 与 QueryMetrics 同一套选级与对齐；每任务的桶按 TaskID、TS 升序返回。
+func (s *Store) QueryProbes(ctx context.Context, nodeID int64, from, to int64, lv Level, step int64) ([]metric.ProbeRow, error) {
+	if err := checkStep(lv, step); err != nil {
+		return nil, err
+	}
+	from, to = alignWindow(from, to, step)
+	rows, err := s.r.QueryContext(ctx, probeFamily.aggregateSQL(probeFamily.tables[levelIndex(lv)]), step, nodeID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanProbeRows(rows, nodeID)
 }

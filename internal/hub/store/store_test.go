@@ -488,6 +488,7 @@ func TestDeleteNodeClearsEveryLevel(t *testing.T) {
 	ctx := context.Background()
 	id, _ := s.CreateNode(ctx, "n", hash(1))
 	keep, _ := s.CreateNode(ctx, "keep", hash(2))
+	seedProbeLevels(t, s, []int64{id, keep})
 	for _, tbl := range metricTables {
 		for _, node := range []int64{id, keep} {
 			args := append([]any{node, int64(600)}, bucketArgs(metric.NewBucket())...)
@@ -499,7 +500,7 @@ func TestDeleteNodeClearsEveryLevel(t *testing.T) {
 	if err := s.DeleteNode(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	for _, tbl := range metricTables {
+	for _, tbl := range append(append([]string{}, metricTables...), probeTables...) {
 		var n int64
 		if err := s.r.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+tbl+" WHERE node_id = ?", id).Scan(&n); err != nil || n != 0 {
 			t.Fatalf("%s still has %d rows for deleted node (%v)", tbl, n, err)

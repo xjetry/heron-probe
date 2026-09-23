@@ -202,6 +202,37 @@ func seedMinuteRow(t *testing.T, db *sql.DB) {
 	}
 }
 
+func v3Statements() []string {
+	out := []string{ddlNode, ddlNodeFacts, ddlRegisterWindow, ddlRollupState, seedRollupState, ddlAdmin, ddlAdminSession, ddlTraffic}
+	for _, table := range metricTables {
+		out = append(out, metricDDL(table))
+	}
+	return out
+}
+
+func TestMigrationFromV3MatchesFreshSchemaAndKeepsRows(t *testing.T) {
+	migrated, fresh := migrateFrom(t, v3Statements(), 3, seedMinuteRow)
+	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
+		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
+	}
+	if v := userVersion(t, migrated.r); v != 4 {
+		t.Fatalf("user_version = %d, want 4", v)
+	}
+	rows, err := migrated.ReadMinuteRows(t.Context(), 7, 0, 120)
+	if err != nil || len(rows) != 1 || rows[0].Bucket.Sum[0] != 50 || rows[0].Bucket.N[0] != 1 {
+		t.Fatalf("minute row lost across migration: %v %v", rows, err)
+	}
+	for _, level := range []string{"probe_5m", "probe_1h"} {
+		if got := watermark(t, migrated, level); got != 0 {
+			t.Fatalf("%s watermark = %d, want 0", level, got)
+		}
+	}
+	var version int
+	if err := migrated.r.QueryRow("SELECT version FROM probe_meta WHERE id = 1").Scan(&version); err != nil || version != 0 {
+		t.Fatalf("probe_meta version = %d, err = %v, want 0", version, err)
+	}
+}
+
 func TestMigrationFromV2MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 	migrated, fresh := migrateFrom(t, schemaV2, 2, seedMinuteRow)
 	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
