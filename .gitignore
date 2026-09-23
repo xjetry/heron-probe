@@ -3,7 +3,8 @@ reference-projects/
 
 # 构建产物
 /bin/
-/web/dist/
+/internal/hub/web/dist/*
+!/internal/hub/web/dist/.gitkeep
 /web/node_modules/
 
 # 本地运行数据

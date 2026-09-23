@@ -1,8 +1,12 @@
 export CGO_ENABLED=0
 
-.PHONY: gen lint test build binaries ci e2e fixtures
+.PHONY: gen lint test build binaries ci e2e fixtures web-install web-test web
 
-gen:
+web-install:
+	pnpm --dir web install --frozen-lockfile
+
+# TS 客户端与 Go 代码同一口径：都由 buf 生成、都入库、都由 ci 的 diff 检查钉住。
+gen: web-install
 	buf generate
 
 lint:
@@ -15,6 +19,15 @@ lint:
 test:
 	go test -count=1 ./...
 
+web-test: web-install
+	pnpm --dir web exec vitest run
+
+# 产物落在 internal/hub/web/dist 供 go:embed；不入库，缺产物时 hub 也能编译并给出说明页。
+web: web-install
+	pnpm --dir web run build
+	# Vite 会清空输出目录；恢复入库占位文件，让 embed 目录始终存在且包含文件。
+	touch internal/hub/web/dist/.gitkeep
+
 # build 验证全部已有的包在本机以及 Linux amd64、arm64 上都能编译；
 # 二进制产物由 binaries 生成，只有 e2e 需要它。
 build:
@@ -22,13 +35,13 @@ build:
 	GOOS=linux GOARCH=amd64 go build ./...
 	GOOS=linux GOARCH=arm64 go build ./...
 
-binaries:
+binaries: web
 	go build -o bin/probe-hub ./cmd/hub
 	GOOS=linux GOARCH=amd64 go build -o bin/probe-agent-linux-amd64 ./cmd/agent
 	GOOS=linux GOARCH=arm64 go build -o bin/probe-agent-linux-arm64 ./cmd/agent
 
-ci: gen lint test build
-	git diff --exit-code -- gen
+ci: gen lint test web-test web build
+	git diff --exit-code -- gen web/src/gen
 
 fixtures:
 	scripts/capture-proc.sh docker-debian
