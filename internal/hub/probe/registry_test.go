@@ -152,11 +152,11 @@ func TestRegistryPassesThroughNotFoundAndLimit(t *testing.T) {
 		want = append(want, save(t, r, "example.com", ids[:1]))
 	}
 	_, _, err = r.Save(t.Context(), task("example.com"), ids[:1])
-	if !errors.Is(err, store.ErrNodeLimit) {
+	if !errors.Is(err, store.ErrNodeLimit) || !strings.Contains(err.Error(), "node 1") {
 		t.Errorf("limit error=%v", err)
 	}
 	assertState(t, r, 64, want, ids...)
-	if _, err := r.Delete(t.Context(), 999); !errors.Is(err, store.ErrNotFound) {
+	if _, err := r.Delete(t.Context(), 999); !errors.Is(err, store.ErrNotFound) || !strings.Contains(err.Error(), "probe task 999") {
 		t.Errorf("missing task delete error=%v", err)
 	}
 	assertState(t, r, 64, want, ids...)
@@ -166,6 +166,8 @@ func TestRegistryReloadMatchesMemory(t *testing.T) {
 	r, st, ids := registryStore(t)
 	a := save(t, r, "a.example", ids)
 	b := save(t, r, "b.example", nil)
+	c := save(t, r, "c.example", ids)
+	d := save(t, r, "d.example", nil)
 	edit := proto.Clone(a.Task).(*probev1.ProbeTask)
 	edit.Target = "changed.example"
 	a, _, err := r.Save(t.Context(), edit, ids[1:])
@@ -175,12 +177,39 @@ func TestRegistryReloadMatchesMemory(t *testing.T) {
 	if _, err := r.Delete(t.Context(), b.Task.Id); err != nil {
 		t.Fatal(err)
 	}
-	assertState(t, r, 4, []Detail{a}, ids...)
+	assertState(t, r, 6, []Detail{a, c, d}, ids...)
 	next := New(st, r.log)
 	if err := next.Load(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	assertState(t, next, 4, []Detail{a}, ids...)
+	assertState(t, next, 6, []Detail{a, c, d}, ids...)
+}
+
+func TestRegistryLoadWaitsForPublication(t *testing.T) {
+	r, st, ids := registryStore(t)
+	// writeMu 覆盖从存储访问到发布的整个区间；重载不能在持锁写者结束前读取旧版本。
+	r.writeMu.Lock()
+	loaded := make(chan error, 1)
+	go func() { loaded <- r.Load(t.Context()) }()
+	var loadErr error
+	early := false
+	select {
+	case loadErr = <-loaded:
+		early = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	saved, version, err := st.SaveProbeTask(t.Context(), task("new.example"), ids)
+	r.writeMu.Unlock()
+	if !early {
+		loadErr = <-loaded
+	}
+	if err != nil || loadErr != nil {
+		t.Fatalf("save error=%v load error=%v", err, loadErr)
+	}
+	if early {
+		t.Error("Load returned before the writer released writeMu")
+	}
+	assertState(t, r, version, []Detail{{Task: saved, NodeIDs: ids}}, ids...)
 }
 
 func TestRegistrySnapshotsDoNotAliasCache(t *testing.T) {
