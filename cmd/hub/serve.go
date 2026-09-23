@@ -20,6 +20,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/hub/web"
 )
 
 type mount struct {
@@ -112,7 +113,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	}
 	admin := api.New(api.Config{ReportInterval: svc.Interval(), TrustedProxies: trusted}, st, a, l, svc, clk, log)
 
-	mux := newMux(mountOf(svc.Handler()), mountOf(admin.Handler()))
+	mux := newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", web.RootRedirect()))
 	listener, err := net.Listen("tcp", *listen)
 	if err != nil {
 		return err

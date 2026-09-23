@@ -17,6 +17,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/hub/web"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 )
@@ -44,7 +45,39 @@ func newTestMux(t *testing.T) *http.ServeMux {
 		t.Fatal(err)
 	}
 	admin := api.New(api.Config{ReportInterval: 10 * time.Second}, st, a, l, svc, clk, slog.Default())
-	return newMux(mountOf(svc.Handler()), mountOf(admin.Handler()))
+	return newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", web.RootRedirect()))
+}
+
+// RPC 路径与 /admin/ 的优先级高于根路径的重定向；ServeMux 按最长前缀匹配，
+// 三者同时挂载时，RPC 仍必须经过服务自身的鉴权。
+func TestMuxRoutesPanelAndRootAroundRPC(t *testing.T) {
+	srv := httptest.NewServer(newTestMux(t))
+	t.Cleanup(srv.Close)
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/admin/" {
+		t.Fatalf("/: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	resp, err = client.Get(srv.URL + "/admin/nodes/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if (resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusServiceUnavailable) || resp.Header.Get("Content-Security-Policy") == "" {
+		t.Fatalf("/admin/nodes/1: %d, want the panel handler (200 when built, 503 when not) with CSP", resp.StatusCode)
+	}
+	resp, err = client.Post(srv.URL+"/probe.v1.AdminService/ListNodes", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("RPC path: %d, want 401 from the service, not the panel", resp.StatusCode)
+	}
 }
 
 // 注册表提供方法全集，真实挂载点必须让所有未列入匿名清单的方法经过鉴权。
