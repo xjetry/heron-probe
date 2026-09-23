@@ -27,6 +27,7 @@ button.danger { color: var(--bad); border-color: var(--bad); }
 .error { color: var(--bad); }
 .muted { color: var(--muted); }
 .row { display: flex; align-items: baseline; gap: 1rem; }
+.table-scroll { overflow-x: auto; }
 table.nodes { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
 table.nodes th, table.nodes td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
 tr.offline td { color: var(--muted); }

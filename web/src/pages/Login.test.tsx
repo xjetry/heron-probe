@@ -1,29 +1,17 @@
-import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
-import { TransportProvider } from "@connectrpc/connect-query";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { createMemoryRouter, RouterProvider } from "react-router";
+import { Code, ConnectError } from "@connectrpc/connect";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AdminService } from "../gen/probe/v1/admin_pb";
+import { renderWithAdmin } from "../test/harness";
 import { Login } from "./Login";
 
 function renderLogin(login: (req: { password: string }) => Promise<Record<string, never>>) {
-  const transport = createRouterTransport(({ service }) => {
-    service(AdminService, { login });
-  });
-  const router = createMemoryRouter(
+  const { router } = renderWithAdmin(
+    { login },
     [
       { path: "/login", Component: Login },
       { path: "/", element: <h1>home</h1> },
     ],
-    { initialEntries: ["/login"] },
-  );
-  render(
-    <TransportProvider transport={transport}>
-      <QueryClientProvider client={new QueryClient()}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>
-    </TransportProvider>,
+    "/login",
   );
   return router;
 }

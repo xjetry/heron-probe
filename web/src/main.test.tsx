@@ -15,6 +15,11 @@ let queryClient: QueryClient | undefined;
 let router: (typeof import("./App"))["router"];
 
 beforeAll(async () => {
+  // 总览随路由挂载请求快照；网络结果固定为非认证错误，避免干扰本用例的认证裁决。
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(
+    JSON.stringify({ code: "unavailable", message: "snapshot unavailable" }),
+    { status: 503, headers: { "Content-Type": "application/json" } },
+  )));
   root = document.createElement("div");
   root.id = "root";
   root.textContent = "尚未挂载";
@@ -37,6 +42,7 @@ afterAll(async () => {
   queryClient?.clear();
   router?.dispose();
   root.remove();
+  vi.unstubAllGlobals();
 });
 
 test("入口在 /admin/login 将登录页挂载到 root", () => {
