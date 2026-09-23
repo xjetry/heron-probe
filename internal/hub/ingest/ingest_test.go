@@ -867,20 +867,14 @@ func TestReportDropsUnassignedAndStaleResultsButKeepsTheRest(t *testing.T) {
 	checkLog := func(node int64, foreign, late int) {
 		t.Helper()
 		var record struct {
-			Level              string
-			Msg                string
-			Node               int64
-			Unassigned, TooOld int
-		}
-		var raw map[string]json.RawMessage
-		if err := json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &raw); err != nil {
-			t.Fatalf("expected one drop log: %q err=%v", logs.String(), err)
+			Level      string `json:"level"`
+			Msg        string `json:"msg"`
+			Node       int64  `json:"node"`
+			Unassigned int    `json:"unassigned"`
+			TooOld     int    `json:"too_old"`
 		}
 		if err := json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &record); err != nil {
-			t.Fatal(err)
-		}
-		if err := json.Unmarshal(raw["too_old"], &record.TooOld); err != nil {
-			t.Fatal(err)
+			t.Fatalf("expected one drop log: %q err=%v", logs.String(), err)
 		}
 		if record.Level != "WARN" || record.Msg != "probe results dropped" || record.Node != node || record.Unassigned != foreign || record.TooOld != late {
 			t.Fatalf("drop log=%s", logs.String())
@@ -1058,7 +1052,7 @@ func TestFlushWritesBothFamiliesInOneBatchAndRetriesTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	probes := readProbeMinutes(t, h, id)
-	if len(metrics) != 1 || metrics[0].Bucket.Sum[0] != 10 || len(probes) != 1 || probes[0].TaskID != task || probes[0].Bucket.RttSumUs != 100 || len(h.svc.pending) != 0 {
+	if len(metrics) != 1 || metrics[0].Bucket.Sum[metric.Index("cpu")] != 10 || len(probes) != 1 || probes[0].TaskID != task || probes[0].Bucket.RttSumUs != 100 || len(h.svc.pending) != 0 {
 		t.Fatalf("retry: metrics=%+v probes=%+v pending=%d", metrics, probes, len(h.svc.pending))
 	}
 	// 迟到结果只有探测桶，仍须作为非空批次进入同一个写入口。

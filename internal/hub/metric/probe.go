@@ -80,3 +80,20 @@ type Batch struct {
 }
 
 func (b Batch) Empty() bool { return len(b.Rows) == 0 && len(b.Probes) == 0 }
+
+// WithoutNode 在批次层统一过滤各族，删除节点时不能把任一族的待写行留给重试。
+// 返回独立的行切片，不改变原批次；桶内容只读复用。
+func (b Batch) WithoutNode(id int64) Batch {
+	var kept Batch
+	for _, row := range b.Rows {
+		if row.NodeID != id {
+			kept.Rows = append(kept.Rows, row)
+		}
+	}
+	for _, row := range b.Probes {
+		if row.NodeID != id {
+			kept.Probes = append(kept.Probes, row)
+		}
+	}
+	return kept
+}

@@ -184,7 +184,7 @@ func TestServeRunsMaintenanceWithConfiguredRetention(t *testing.T) {
 	for _, ts := range expired {
 		rowsToWrite = append(rowsToWrite, metric.Row{NodeID: id, TS: ts, Bucket: b})
 	}
-	if _, err := st.WriteMinuteRows(ctx, rowsToWrite); err != nil {
+	if _, err := st.WriteMinuteBatch(ctx, metric.Batch{Rows: rowsToWrite}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Rollup(ctx); err != nil {

@@ -40,8 +40,10 @@ func validateMetrics(m *probev1.Metrics) error {
 	return nil
 }
 
-// validateResults 只判结构：outcome 必须给定，rtt 不得超过最大超时——探测超时上限是 5 s，
-// 更大的 rtt 不可能来自合法的 agent。归属与超龄不是结构问题，由 Report 逐条丢弃而不是整条拒绝。
+// validateResults 只判结构：outcome 必须给定。合法 agent 把超过任务超时的测量记为 timeout
+// 而不是 rtt，由 agent 的 prober 保证；任务超时不超过 MaxTimeoutMs，由 probelimit.CheckTask 保证。
+// 违反时整条拒绝，因此 agent 不得把被 InvalidArgument 拒绝的结果放回队列。
+// 归属与超龄不是结构问题，由 Report 逐条丢弃而不是整条拒绝。
 func validateResults(rs []*probev1.ProbeResult) error {
 	for i, r := range rs {
 		switch o := r.GetOutcome().(type) {

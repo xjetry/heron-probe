@@ -86,11 +86,6 @@ func (s *Store) WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, 
 	return rejected, err
 }
 
-// WriteMinuteRows 委托同批写入口，指标单独刷出时仍遵守相同的事务与冻结规则。
-func (s *Store) WriteMinuteRows(ctx context.Context, rows []metric.Row) (int, error) {
-	return s.WriteMinuteBatch(ctx, metric.Batch{Rows: rows})
-}
-
 func (s *Store) ReadMinuteRows(ctx context.Context, nodeID int64, from, to int64) ([]metric.Row, error) {
 	rows, err := s.r.QueryContext(ctx, selectMinute, nodeID, from, to)
 	if err != nil {

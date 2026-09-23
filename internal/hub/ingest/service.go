@@ -211,7 +211,8 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[probev1.Repor
 	return connect.NewResponse(resp), nil
 }
 
-// foldResults 按归属与迟到预算逐条准入：分配已撤销的旧结果不得写进别的任务历史，
+// foldResults 按归属与迟到预算逐条准入。task_id 未分配给本节点的结果不得写进本节点的历史：
+// token 被挪用时它是伪造的，分配撤销后仍在途时它属于已不承担的任务。
 // 超龄结果可能落在已冻结的分钟里；测量时刻由收到时刻减 age_ms 得到。
 func (s *Service) foldResults(id int64, rs []*probev1.ProbeResult) {
 	if len(rs) == 0 {
@@ -265,7 +266,8 @@ func (s *Service) reconcileFacts(id int64, token string, hash uint64, f *probev1
 func (s *Service) Forget(nodeID int64) {
 	// api.DeleteNode 在 auth.DeleteNode 返回 nil 后才清理状态，保证库删除与 token 撤销已经完成。
 	// Registry.Forget 会等在途管理写入完成整个 store 往返；写协程 facts 回调会取 mu，
-	// 因此必须在所有 ingest 锁之外调用，既避免等待环，也不让这段等待挡住其他节点的 Report。
+	// 持 mu 等待可能形成等待环，持 stateMu 或 mu 会挡住其他节点的 Report，
+	// 持 pendingMu 会挡住全体节点的分钟刷出，因此必须在所有 ingest 锁之外调用。
 	s.tasks.Forget(nodeID)
 	s.pendingMu.Lock()
 	defer s.pendingMu.Unlock()
@@ -279,17 +281,7 @@ func (s *Service) Forget(nodeID int64) {
 	s.mu.Unlock()
 	var pending []metric.Batch
 	for _, batch := range s.pending {
-		var kept metric.Batch
-		for _, row := range batch.Rows {
-			if row.NodeID != nodeID {
-				kept.Rows = append(kept.Rows, row)
-			}
-		}
-		for _, row := range batch.Probes {
-			if row.NodeID != nodeID {
-				kept.Probes = append(kept.Probes, row)
-			}
-		}
+		kept := batch.WithoutNode(nodeID)
 		if !kept.Empty() {
 			pending = append(pending, kept)
 		}

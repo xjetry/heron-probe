@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xjetry/probe/internal/hub/metric"
 )
 
 type logWriterFunc func([]byte) (int, error)
@@ -62,7 +64,7 @@ func TestPruneWaitsForConsumer(t *testing.T) {
 		t.Fatal(err)
 	}
 	ts := clk.Now().Add(-8 * 24 * time.Hour).Truncate(time.Hour).Unix()
-	if _, err := s.WriteMinuteRows(ctx, minuteRows(id, ts, ts+60)); err != nil {
+	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: minuteRows(id, ts, ts+60)}); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := s.Prune(ctx, DefaultRetention); err != nil || n != 0 || len(readLevel(t, s, levels[0], id)) != 1 {

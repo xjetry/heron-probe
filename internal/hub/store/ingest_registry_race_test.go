@@ -115,6 +115,11 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 		flushBlocked = true
 	}
+	select {
+	case <-forgotten:
+		t.Fatal("Forget returned before the in-flight registry write completed")
+	default:
+	}
 	release()
 	if reportBlocked {
 		reportErr = <-reported
