@@ -287,12 +287,12 @@ CREATE TABLE metric_1m (
 CREATE TABLE probe_1m (
   node_id INTEGER NOT NULL, ts INTEGER NOT NULL, task_id INTEGER NOT NULL,
   sent INTEGER NOT NULL, lost INTEGER NOT NULL, errors INTEGER NOT NULL,
-  rtt_sum_us INTEGER NOT NULL, rtt_min_us INTEGER NOT NULL, rtt_max_us INTEGER NOT NULL,
+  rtt_sum_us INTEGER NOT NULL, rtt_min_us INTEGER, rtt_max_us INTEGER,
   PRIMARY KEY (node_id, ts, task_id)
 ) WITHOUT ROWID;
 ```
 
-`probe_5m`、`probe_1h` 同构。主键里 `ts` 在 `task_id` 之前：唯一的查询是"某节点、某时间窗、全部任务"，`task_id` 在前会让 SQLite 只能定位到节点，然后扫描该节点的全部历史。
+`probe_5m`、`probe_1h` 同构。`rtt_min_us`/`rtt_max_us` 可空：桶内没有任何 rtt 样本（全部丢包或错误）时为 NULL，`min()`/`max()` 聚合自动忽略；若落成 0，上卷会把"没有样本"当成 0 µs。主键里 `ts` 在 `task_id` 之前：唯一的查询是"某节点、某时间窗、全部任务"，`task_id` 在前会让 SQLite 只能定位到节点，然后扫描该节点的全部历史。
 
 ### 6.4 上卷
 
@@ -355,7 +355,7 @@ agent 默认汇总除 `lo` 与虚拟网卡（`docker*`、`veth*`、`br-*`、`vir
 - ICMP：优先用非特权数据报 ICMP socket；不可用且进程持有 `CAP_NET_RAW` 时退到 raw socket；都不可用则每次回报 `error`，面板显示原因，而不是静默呈现为 100% 丢包。
 - TCP：连接建立耗时即 rtt。
 - 各任务的首次触发时刻加随机偏移，避免同一时刻齐发。
-- ICMP 实现用 `golang.org/x/net/icmp`（纯 Go，与 hub 已依赖的 `x/crypto` 同源；§2 的"零第三方依赖"说的是 /proc / /sys 采集）。启动时探测两种 socket 的可用性并写入 `Facts.icmp_available`。
+- ICMP 实现用 `golang.org/x/net/icmp`（纯 Go，与 hub 已依赖的 `x/crypto` 同源；§2 的"零第三方依赖"说的是 /proc / /sys 采集）。启动时探测两种 socket 的可用性并写入 `Facts.icmp_available`。每个地址族一个共享 socket，单读协程按 payload（进程 nonce + task_id + seq）把回包分发给等待中的探测；不按 ICMP ID 匹配——Linux 数据报 socket 的回包 ID 被内核改成本地端口，macOS 的公网回包 ID 也会被改写；读侧只接受 Echo Reply，raw socket 与 macOS 的 udp6 会先读到自己发出的 Echo Request，macOS 同进程的数据报 socket 之间会互相收到对方的回包（§13 第 2 项的实验结论）。
 - 结果进有界队列，上报时整体取走并按单调钟折算 `age_ms`；队列满时丢最旧的并计数，不阻塞探测协程。任务集更新时停掉消失的任务、启动新增的任务，未变化的任务不重启计时。
 
 ### 8.3 对账与入库
@@ -364,7 +364,7 @@ agent 默认汇总除 `lo` 与虚拟网卡（`docker*`、`veth*`、`br-*`、`vir
 
 结果逐条校验后才折叠进内存桶：`task_id` 必须分配给本节点（否则丢弃并记日志——token 被挪用或分配已撤销的旧结果不得写进别的任务的历史）；`age_ms ≤ MAX_AGE`（§6.4 第 3 条）；测量时刻 = 收到时刻 − `age_ms`。桶键是 `(node_id, 分钟, task_id)`：`sent` 每条加一，`timeout` 计入 `lost`，`error` 计入 `errors`，`rtt_us` 累加到 `rtt_sum` 并更新 `rtt_min` / `rtt_max`。刷出、加法合并、冻结检查与 §6.2 的指标桶共用同一条路径。删除任务不删已有历史，到期由 prune 清理；`QueryProbes` 对这些行只带 `task_id`，不再有类型与目标。
 
-`QueryProbes(node_id, from, to, max_points)` 与 `QueryMetrics` 同一套选级与对齐规则，按任务返回序列：`ts[]`、`sent[]`、`lost[]`、`errors[]`、`rtt_mean_us[]`、`rtt_min_us[]`、`rtt_max_us[]`；`sent = 0` 的桶不出样本。丢包率 = `lost / sent`，`errors` 不计入丢包。任务管理经 `ListProbeTasks`（含分配节点）、`SaveProbeTask`（id 为 0 即创建，提交整份分配列表）、`DeleteProbeTask`。
+`QueryProbes(node_id, from, to, max_points)` 与 `QueryMetrics` 同一套选级与对齐规则，按任务返回序列，每个点是 `ProbeSample{ts, sent, lost, errors, optional rtt_mean_us, optional rtt_min_us, optional rtt_max_us}`；`sent = 0` 的桶不出样本；rtt 三项只在 `sent − lost − errors > 0` 时存在，缺失由 `optional` 表达而不是零值（平行数组无法表达"这一点没有 rtt"）。丢包率 = `lost / sent`，`errors` 不计入丢包。任务管理经 `ListProbeTasks`（含分配节点）、`SaveProbeTask`（id 为 0 即创建，提交整份分配列表）、`DeleteProbeTask`。
 
 ### 8.4 agent 侧硬限制
 
@@ -435,7 +435,7 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 下列都是对外部组件特定版本的行为断言，以实验结果为准，结论记入对应里程碑的计划：
 
 1. darwin 采集在 `CGO_ENABLED=0` 下的可行实现（gopsutil 或 purego）：能构建，且在真机读出 CPU、内存、网卡计数器、`boot_id` 等价物。
-2. 非特权数据报 ICMP 在目标 Linux 发行版（含容器环境）与 macOS 上的可用性，以及 `CAP_NET_RAW` 回退路径。
+2. 非特权数据报 ICMP 在目标 Linux 发行版（含容器环境）与 macOS 上的可用性，以及 `CAP_NET_RAW` 回退路径。——已于 2026-09-23 实验确认，结论记在 `docs/superpowers/plans/2026-09-23-m3-probe-backend.md` 的"实验结论"节：macOS 非 root 可用数据报 socket；Linux 只受 `net.ipv4.ping_group_range` 管（Docker 默认放开，内核默认关闭，Debian 12 的 systemd 包不放开），raw 需有效 `CAP_NET_RAW`；回包匹配不能依赖 ICMP ID。
 3. `modernc.org/sqlite` 在约 500 万行规模下的上卷查询、窗口查询与分块 prune 耗时；带对照组（同一数据、同一查询、空闲与并发写入两种条件）。
 4. 经反代（HTTP/2 到反代）时单次上报的线上字节数，用于判断 §4.4 由 TTL 反推出的上报间隔在目标规模下的成本是否可接受。结论若为不可接受，要动的是 TTL 这个产品指标或消息体积，不是把间隔调长而默许 TTL 跟着漂。
 5. 含 connect 与 protobuf runtime 的 agent 二进制体积与常驻内存。
@@ -447,7 +447,7 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 - 全部 `CGO_ENABLED=0`。agent 目标：linux/amd64、arm64、armv7、386、riscv64；darwin/amd64、arm64。hub 目标：linux/amd64、arm64，另出 Docker 镜像。
 - 构建顺序：`buf generate` → 前端构建 → `go build`。生成的 Go 代码入库，前端产物不入库。
 - Linux 安装脚本的步骤顺序：检测 init 系统 → 创建固定的系统用户 → 从 GitHub Releases 下载并校验 sha256 → `probe-agent register` → 安装并启动 systemd 单元。建用户排在下载与注册之前：它若失败，注册窗口的名额尚未消耗、旧服务尚未停止。
-- systemd 单元使用静态 `User=` 并加固（`NoNewPrivileges=`、`ProtectSystem=strict` 等），可选 `AmbientCapabilities=CAP_NET_RAW`。不用 `DynamicUser=`：据 monitor 提交 `85f6702` 的记录，未开 nesting 的 LXC 容器建不了挂载命名空间，此时 systemd 对静态 `User=` 的单元会跳过挂载类隔离照常启动，对 `DynamicUser=` 的单元则拒绝启动（226/NAMESPACE）。`DynamicUser=` 隐含的 `RestrictSUIDSGID=` 需在单元里明写补回。该记录来自参考项目而非本项目的实验，单元定稿前在未开 nesting 的 LXC 容器里实测一次。
+- systemd 单元使用静态 `User=` 并加固（`NoNewPrivileges=`、`ProtectSystem=strict` 等），默认带 `AmbientCapabilities=CAP_NET_RAW` 与 `CapabilityBoundingSet=CAP_NET_RAW`：裸机 Debian 的 `ping_group_range` 默认关闭（§13 第 2 项），没有这项能力时 ICMP 探测只能回报 error。不用 `DynamicUser=`：据 monitor 提交 `85f6702` 的记录，未开 nesting 的 LXC 容器建不了挂载命名空间，此时 systemd 对静态 `User=` 的单元会跳过挂载类隔离照常启动，对 `DynamicUser=` 的单元则拒绝启动（226/NAMESPACE）。`DynamicUser=` 隐含的 `RestrictSUIDSGID=` 需在单元里明写补回。该记录来自参考项目而非本项目的实验，单元定稿前在未开 nesting 的 LXC 容器里实测一次。
 - 第一版只支持 systemd。
 - macOS：launchd。
 - 升级 = 重跑安装脚本。面板显示各节点 agent 版本并标出落后于 hub 的节点。
