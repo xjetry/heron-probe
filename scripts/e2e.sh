@@ -35,13 +35,13 @@ trap cleanup EXIT
 wait_hub() {
   attempt=0
   while [ "$attempt" -lt 30 ]; do
-    if status=$(curl -sS -o /dev/null -w '%{http_code}' "$base/"); then
+    if status=$(curl -s -o /dev/null -w '%{http_code}' "$base/"); then
       [ "$status" = 302 ] && return 0
     fi
     attempt=$((attempt + 1))
     sleep 0.2
   done
-  echo "FAIL: hub did not become ready (expected / to return 302)"
+  echo "FAIL: hub did not answer on $base within 6s (expected / to return 302)"
   exit 1
 }
 wait_hub
