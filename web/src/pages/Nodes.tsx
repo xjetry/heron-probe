@@ -65,6 +65,8 @@ export function Nodes() {
   );
 }
 
+const validResetDay = (day: number) => Number.isInteger(day) && day >= 1 && day <= 28;
+
 function NodeEditor({ node, deleting, rotating, onMoveUp, onMoveDown, onSave, onDelete, onRotate }: {
   node: Node;
   deleting: boolean; rotating: boolean;
@@ -82,10 +84,10 @@ function NodeEditor({ node, deleting, rotating, onMoveUp, onMoveDown, onSave, on
         <td><input aria-label="名称" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></td>
         <td><input type="checkbox" aria-label="公开" checked={draft.public} onChange={(e) => setDraft({ ...draft, public: e.target.checked })} /></td>
         <td><input aria-label="备注" value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></td>
-        <td><input type="number" min={1} max={28} aria-label="重置日" value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /></td>
+        <td><input type="number" min={1} max={28} aria-label="重置日" value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><p className="muted">若今天已过新的重置日，本周期用量会立即清零。</p></td>
         <td />
         <td>
-          <button type="button" onClick={() => { onSave(draft); setEditing(false); }}>保存</button>{" "}
+          <button type="button" disabled={!validResetDay(draft.trafficResetDay)} onClick={() => { onSave(draft); setEditing(false); }}>保存</button>{" "}
           <button type="button" className="link" onClick={() => setEditing(false)}>取消</button>
         </td>
       </tr>

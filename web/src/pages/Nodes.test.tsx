@@ -13,6 +13,22 @@ const two = [
 ];
 
 describe("Nodes", () => {
+  it.each(["", "29", "1.5", "15"])("重置日 %s 只有 1–28 的整数能保存", async (value) => {
+    renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a" });
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    fireEvent.change(screen.getByLabelText("重置日"), { target: { value } });
+    if (value === "15") expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
+    else expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+  });
+
+  it("编辑重置日说明周期量清零的后果", async () => {
+    renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a" });
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    expect(screen.getByText("若今天已过新的重置日，本周期用量会立即清零。")).toBeInTheDocument();
+  });
+
   it("列表显示重置日", async () => {
     renderWithAdmin({ listNodes: async () => ({ nodes: [{ ...two[0], trafficResetDay: 20 }] }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     expect(await screen.findByRole("cell", { name: "每月 20 日" })).toBeInTheDocument();

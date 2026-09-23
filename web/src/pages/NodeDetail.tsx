@@ -29,7 +29,7 @@ const PANELS: { title: string; names: string[]; unit?: string }[] = [
 ];
 
 const REFRESH_MS = 60_000;
-// 流量卡随 hub 的刷出周期刷新：周期量在 hub 内存里每次上报都变，10 秒一读足够。
+// 周期量随每次上报更新；流量卡以 10 秒节奏展示内存视图的变化，不依赖落盘刷出。
 export const TRAFFIC_MS = 10_000;
 
 export function NodeDetail() {
@@ -111,6 +111,7 @@ function TrafficCard({ nodeId }: { nodeId: bigint }) {
   const all = useQuery(AdminService.method.getTraffic, {}, { refetchInterval: TRAFFIC_MS });
   const row = all.data?.nodes.find((n) => n.nodeId === nodeId);
   const t = row?.traffic;
+  const timeZone = all.data?.timezone;
   const [draft, setDraft] = useState<{ rx: string; tx: string } | null>(null);
   const adjust = useMutation(AdminService.method.adjustTraffic, {
     onSuccess: () => {
@@ -135,8 +136,8 @@ function TrafficCard({ nodeId }: { nodeId: bigint }) {
       <dl className="facts">
         <dt>本周期</dt><dd>↓ {bytes(t.periodRx)} ↑ {bytes(t.periodTx)}</dd>
         <dt>总量</dt><dd>↓ {bytes(t.totalRx)} ↑ {bytes(t.totalTx)}</dd>
-        <dt>周期起点</dt><dd>{new Date(Number(t.periodStart) * 1000).toLocaleString()}</dd>
-        <dt>下次重置</dt><dd>{new Date(Number(t.nextResetAt) * 1000).toLocaleString()}（每月 {t.resetDay} 日）</dd>
+        <dt>周期起点</dt><dd>{new Date(Number(t.periodStart) * 1000).toLocaleString(undefined, { timeZone })}</dd>
+        <dt>下次重置</dt><dd>{new Date(Number(t.nextResetAt) * 1000).toLocaleString(undefined, { timeZone })}（每月 {t.resetDay} 日，{timeZone}）</dd>
       </dl>
       <form onSubmit={onSubmit} className="row">
         <label>本周期下行 (GiB)<input value={form.rx} onChange={(e) => setDraft({ ...form, rx: e.target.value })} inputMode="decimal" /></label>

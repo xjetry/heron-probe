@@ -20,9 +20,20 @@ const trafficOf = (nodeId: bigint) => ({
   traffic: { totalRx: 10n * 1024n ** 3n, totalTx: 5n * 1024n ** 3n, periodRx: 1024n ** 3n, periodTx: 512n * 1024n ** 2n,
     periodStart: 1_756_684_800n, nextResetAt: 1_759_276_800n, resetDay: 1 },
 });
-const getTraffic = async () => ({ now: 1_757_000_000n, nodes: [trafficOf(7n)] });
+const getTraffic = async () => ({ timezone: "UTC", now: 1_757_000_000n, nodes: [trafficOf(7n)] });
 
 describe("NodeDetail", () => {
+  it.each(["UTC", "Asia/Tokyo"])("流量周期按 hub 时区 %s 显示", async (timezone) => {
+    renderWithAdmin({ listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }),
+      getTraffic: async () => ({ ...await getTraffic(), timezone }) },
+      [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+    const t = trafficOf(7n).traffic;
+    const start = new Date(Number(t.periodStart) * 1000).toLocaleString(undefined, { timeZone: timezone });
+    const next = new Date(Number(t.nextResetAt) * 1000).toLocaleString(undefined, { timeZone: timezone });
+    expect(await screen.findByText(start)).toBeInTheDocument();
+    expect(screen.getByText(`${next}（每月 1 日，${timezone}）`)).toBeInTheDocument();
+  });
+
   it("流量卡显示周期与总量，并按 GiB 提交校正后刷新", async () => {
     const adjustTraffic = vi.fn(async () => ({ traffic: trafficOf(7n).traffic }));
     const traffic = vi.fn(getTraffic);
