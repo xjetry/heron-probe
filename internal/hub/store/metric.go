@@ -20,10 +20,10 @@ func (s *Store) WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, 
 	rejected := 0
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		var metricUpto, probeUpto int64
-		if err := tx.QueryRow("SELECT upto_ts FROM rollup_state WHERE level = '5m'").Scan(&metricUpto); err != nil {
+		if err := tx.QueryRow("SELECT upto_ts FROM rollup_state WHERE level = ?", metricFamily.states[1]).Scan(&metricUpto); err != nil {
 			return err
 		}
-		if err := tx.QueryRow("SELECT upto_ts FROM rollup_state WHERE level = 'probe_5m'").Scan(&probeUpto); err != nil {
+		if err := tx.QueryRow("SELECT upto_ts FROM rollup_state WHERE level = ?", probeFamily.states[1]).Scan(&probeUpto); err != nil {
 			return err
 		}
 		existing := map[int64]bool{}

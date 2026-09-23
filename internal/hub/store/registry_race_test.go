@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +50,43 @@ func waitRegistryWrite(t *testing.T, pending func() int) {
 	}
 }
 
+func registryGoroutineID() string {
+	var buf [128]byte
+	n := runtime.Stack(buf[:], false)
+	return strings.Fields(string(buf[:n]))[1]
+}
+
+// 固定等待窗口不能证明目标协程已获调度；观察指定协程实际阻塞或越过临界区才能区分互斥与缺锁。
+// probe 的 export_test 钩子不会编入这里导入的 probe 包，因此从栈观察阻塞，不给生产接口增加测试钩子。
+func waitRegistryMutex(t *testing.T, id, method string, progressed func() bool) bool {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	buf := make([]byte, 64<<10)
+	var target string
+	for {
+		if progressed() {
+			return false
+		}
+		n := runtime.Stack(buf, true)
+		if n == len(buf) {
+			buf = make([]byte, 2*len(buf))
+			continue
+		}
+		for _, stack := range strings.Split(string(buf[:n]), "\n\n") {
+			if strings.HasPrefix(stack, "goroutine "+id+" ") {
+				target = stack
+				if strings.Contains(stack, "[sync.Mutex.Lock") && strings.Contains(stack, "probe.(*Registry)."+method+"(") {
+					return true
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("waiting for goroutine %s Registry.%s to block on mutex or advance; last stack:\n%s", id, method, target)
+		}
+		runtime.Gosched()
+	}
+}
+
 func TestRegistryForgetCannotBeRevivedByEarlierSave(t *testing.T) {
 	r, st, id := registryRaceStore(t)
 	release, pending, drain := st.HoldWriterForTest()
@@ -64,11 +102,21 @@ func TestRegistryForgetCannotBeRevivedByEarlierSave(t *testing.T) {
 	}()
 	waitRegistryWrite(t, pending)
 	forgotten := make(chan struct{})
-	go func() { r.Forget(id); close(forgotten) }()
-	// 队列里已有 Save，此时它持有 writeMu；给未加锁的 Forget 留出先完成的机会。
-	select {
-	case <-forgotten:
-	case <-time.After(100 * time.Millisecond):
+	started := make(chan string)
+	go func() {
+		started <- registryGoroutineID()
+		r.Forget(id)
+		close(forgotten)
+	}()
+	if !waitRegistryMutex(t, <-started, "Forget", func() bool {
+		select {
+		case <-forgotten:
+			return true
+		default:
+			return false
+		}
+	}) {
+		t.Error("Forget returned before earlier Save published")
 	}
 	release()
 	res := <-saved
@@ -97,14 +145,15 @@ func TestRegistryDeleteSerializesFollowingSave(t *testing.T) {
 	go func() { _, err := r.Delete(t.Context(), d.Task.Id); deleted <- err }()
 	waitRegistryWrite(t, pending)
 	saved := make(chan error, 1)
-	go func() { _, _, err := r.Save(t.Context(), task, []int64{id}); saved <- err }()
+	started := make(chan string)
+	go func() {
+		started <- registryGoroutineID()
+		_, _, err := r.Save(t.Context(), task, []int64{id})
+		saved <- err
+	}()
 	// Delete 入队时已持 writeMu，后来的 Save 在删除发布之前不能进入写队列。
-	deadline := time.Now().Add(100 * time.Millisecond)
+	waitRegistryMutex(t, <-started, "Save", func() bool { return pending() > 1 })
 	n := pending()
-	for n == 1 && time.Now().Before(deadline) {
-		runtime.Gosched()
-		n = pending()
-	}
 	release()
 	deleteErr, saveErr := <-deleted, <-saved
 	if deleteErr != nil || saveErr != nil {

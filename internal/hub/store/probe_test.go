@@ -29,6 +29,44 @@ func probeRow(nodeID int64, ts int64, task uint64, rtts []uint32, lost, errs uin
 	return metric.ProbeRow{NodeID: nodeID, TS: ts, TaskID: task, Bucket: b}
 }
 
+func TestMinuteBatchUsesFamilyWatermarkKeys(t *testing.T) {
+	for _, f := range families {
+		t.Run(f.name, func(t *testing.T) {
+			s, _ := open(t)
+			id, err := s.CreateNode(t.Context(), "n", hash(1))
+			if err != nil {
+				t.Fatal(err)
+			}
+			original := f.states[1]
+			f.states[1] = original + "_renamed"
+			defer func() { f.states[1] = original }()
+			if err := s.write(t.Context(), func(tx *sql.Tx) error {
+				_, err := tx.Exec("UPDATE rollup_state SET level = ?, upto_ts = 1200 WHERE level = ?", f.states[1], original)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			n, err := s.WriteMinuteBatch(t.Context(), metric.Batch{
+				Rows:   minuteRows(id, 600, 660),
+				Probes: []metric.ProbeRow{probeRow(id, 600, 7, []uint32{5}, 0, 0)},
+			})
+			if err != nil || n != 1 {
+				t.Fatalf("family watermark: rejected=%d err=%v, want 1 and nil", n, err)
+			}
+			for _, other := range families {
+				want := 1
+				if other == f {
+					want = 0
+				}
+				var count int
+				if err := s.r.QueryRow("SELECT COUNT(*) FROM " + other.tables[0]).Scan(&count); err != nil || count != want {
+					t.Fatalf("%s count=%d err=%v, want %d", other.name, count, err, want)
+				}
+			}
+		})
+	}
+}
+
 func TestProbeRowsMergeAdditivelyAndKeepNullRtt(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()

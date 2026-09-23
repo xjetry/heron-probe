@@ -165,7 +165,7 @@ func (r *Registry) Delete(ctx context.Context, id uint64) (uint64, error) {
 
 // Forget 只能在 store.DeleteNode 提交成功后调用，删除调用链必须先持久化删除再清内存分配。
 // 它与 Save 互斥且 Save 从提交到发布全程持 writeMu；已持锁的 Save/Delete 完成存储往返与发布前，此调用会阻塞。
-// 调用方不得持有写协程回调会获取的锁（当前为 ingest.mu、auth.mu 写锁），否则回调与等待存储结果的写入口会形成等待环。
+// 调用方不得持有写协程回调会获取的锁：回调经 Authenticate 取 auth.mu 读锁，调用方持写锁调 Forget 即阻塞回调形成环；ingest.mu 同理。
 // 若在 ingest.stateMu 下调用且正在等待存储，全体上报也会排队等待。
 func (r *Registry) Forget(nodeID int64) {
 	r.writeMu.Lock()
