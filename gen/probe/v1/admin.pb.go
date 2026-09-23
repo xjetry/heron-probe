@@ -2043,7 +2043,7 @@ func (*ListProbeTasksRequest) Descriptor() ([]byte, []int) {
 
 type ListProbeTasksResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// 任务与分配的全局版本；经任务管理接口的修改都加一，删除节点清理分配不加；agent 用它对账。
+	// 任务与分配的全局版本；每次经管理接口的修改都变为更大的新值（不小于修改时刻的 Unix 秒）；删除节点清理分配不改；agent 用它对账。
 	Version       uint64             `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
 	Tasks         []*ProbeTaskDetail `protobuf:"bytes,2,rep,name=tasks,proto3" json:"tasks,omitempty"`
 	unknownFields protoimpl.UnknownFields

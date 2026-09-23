@@ -32,7 +32,7 @@ func (s *Service) SaveProbeTask(ctx context.Context, req *connect.Request[probev
 	d, version, err := s.probes.Save(ctx, req.Msg.GetTask(), req.Msg.GetNodeIds())
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		return nil, probeNotFound(err)
+		return nil, probeNotFound(err, "task.id", "node_ids")
 	case errors.Is(err, store.ErrNodeLimit):
 		return nil, connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("node_ids: %w", err))
 	case errors.Is(err, probe.ErrInvalid):
@@ -48,7 +48,7 @@ func (s *Service) DeleteProbeTask(ctx context.Context, req *connect.Request[prob
 	version, err := s.probes.Delete(ctx, req.Msg.GetId())
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		return nil, probeNotFound(err)
+		return nil, probeNotFound(err, "id", "id")
 	case err != nil:
 		s.log.Error("deleting probe task failed", "err", err)
 		return nil, internalError("deleting probe task failed")
@@ -56,11 +56,11 @@ func (s *Service) DeleteProbeTask(ctx context.Context, req *connect.Request[prob
 	return connect.NewResponse(&probev1.DeleteProbeTaskResponse{Version: version}), nil
 }
 
-func probeNotFound(err error) error {
-	field := "task.id"
+func probeNotFound(err error, taskField, nodeField string) error {
+	field := taskField
 	var missing store.NotFoundError
 	if errors.As(err, &missing) && missing.Kind == "node" {
-		field = "node_ids"
+		field = nodeField
 	}
 	return connect.NewError(connect.CodeNotFound, fmt.Errorf("%s: %w", field, err))
 }

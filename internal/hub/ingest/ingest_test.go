@@ -955,12 +955,13 @@ func TestReportReconcilesTaskVersion(t *testing.T) {
 	}
 	check(0, nil)
 	task := h.task(t, id)
-	check(0, &probev1.ProbeTasks{Version: 1, Tasks: []*probev1.ProbeTask{{Id: task, Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}}})
-	check(1, nil)
+	savedVersion := h.reg.Version()
+	check(0, &probev1.ProbeTasks{Version: savedVersion, Tasks: []*probev1.ProbeTask{{Id: task, Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}}})
+	check(savedVersion, nil)
 	if _, err := h.reg.Delete(t.Context(), task); err != nil {
 		t.Fatal(err)
 	}
-	check(1, &probev1.ProbeTasks{Version: 2})
+	check(savedVersion, &probev1.ProbeTasks{Version: h.reg.Version()})
 }
 
 func TestReportAcceptsRttBoundaryAndProbeErrors(t *testing.T) {

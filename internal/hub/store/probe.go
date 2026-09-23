@@ -116,7 +116,7 @@ func (s *Store) LoadProbeTasks(ctx context.Context) (uint64, []ProbeTaskRecord, 
 	return uint64(version), out, nil
 }
 
-// SaveProbeTask 在一个事务里写任务、整份替换分配、把版本加一。分配行写入前检查节点存在
+// SaveProbeTask 在一个事务里写任务、整份替换分配、更新版本。分配行写入前检查节点存在
 // 与每节点上限：上限在这里而不是调用方检查，因为只有事务内的计数才与其他保存互斥。
 func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, nodeIDs []int64) (*probev1.ProbeTask, uint64, error) {
 	saved := &probev1.ProbeTask{Id: t.GetId(), Kind: t.GetKind(), Target: t.GetTarget(), IntervalS: t.GetIntervalS(), TimeoutMs: t.GetTimeoutMs()}
@@ -165,7 +165,7 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, nodeIDs
 				return err
 			}
 		}
-		v, err := bumpProbeVersion(tx)
+		v, err := bumpProbeVersion(tx, s.clk.Now().Unix())
 		version = v
 		return err
 	})
@@ -189,16 +189,18 @@ func (s *Store) DeleteProbeTask(ctx context.Context, id uint64) (uint64, error) 
 		if _, err := tx.Exec("DELETE FROM probe_task_node WHERE task_id = ?", int64(id)); err != nil {
 			return err
 		}
-		v, err := bumpProbeVersion(tx)
+		v, err := bumpProbeVersion(tx, s.clk.Now().Unix())
 		version = v
 		return err
 	})
 	return uint64(version), err
 }
 
-// 版本更新必须与任务及分配的变更一起提交，两个管理写入口共用同一条递增语句。
-func bumpProbeVersion(tx *sql.Tx) (int64, error) {
+// agent 只比较整数相等；版本与任务及分配同事务更新，并以修改时刻的 Unix 秒托底。
+// 恢复后修改的 Unix 秒大于旧库最后版本值时不会碰撞；同秒重做、时钟回拨或旧版本超前
+// 仍可能碰撞，此时需重启 agent 使它重新对账，不能把时间托底当作全局唯一保证。
+func bumpProbeVersion(tx *sql.Tx, now int64) (int64, error) {
 	var version int64
-	err := tx.QueryRow("UPDATE probe_meta SET version = version + 1 WHERE id = 1 RETURNING version").Scan(&version)
+	err := tx.QueryRow("UPDATE probe_meta SET version = max(version + 1, ?) WHERE id = 1 RETURNING version", now).Scan(&version)
 	return version, err
 }

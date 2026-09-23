@@ -27,41 +27,41 @@ func TestProbeTaskLifecycleThroughAdminAPI(t *testing.T) {
 		return resp.Msg, nil
 	}
 	created, err := save(&probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_TCP, Target: "example.com:443", IntervalS: 30, TimeoutMs: 2000}, n2, n1, n1)
-	if err != nil || created.Version != 1 || created.Task.Task.Id != 1 || !slices.Equal(created.Task.NodeIds, []int64{n1, n2}) {
+	if err != nil || created.Version < uint64(h.clk.Now().Unix()) || created.Task.Task.Id != 1 || !slices.Equal(created.Task.NodeIds, []int64{n1, n2}) {
 		t.Fatalf("%+v %v", created, err)
 	}
 	list, err := h.admin.ListProbeTasks(ctx, connect.NewRequest(&probev1.ListProbeTasksRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if list.Msg.Version != 1 || len(list.Msg.Tasks) != 1 || !proto.Equal(list.Msg.Tasks[0], created.Task) {
+	if list.Msg.Version != created.Version || len(list.Msg.Tasks) != 1 || !proto.Equal(list.Msg.Tasks[0], created.Task) {
 		t.Fatalf("%+v", list.Msg)
 	}
 	// 整体替换：改目标、只留 n1。
 	updated, err := save(&probev1.ProbeTask{Id: 1, Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "1.1.1.1", IntervalS: 10, TimeoutMs: 1000}, n1)
-	if err != nil || updated.Version != 2 || updated.Task.Task.Target != "1.1.1.1" || !slices.Equal(updated.Task.NodeIds, []int64{n1}) {
+	if err != nil || updated.Version <= created.Version || updated.Task.Task.Target != "1.1.1.1" || !slices.Equal(updated.Task.NodeIds, []int64{n1}) {
 		t.Fatalf("%+v %v", updated, err)
 	}
 	list, err = h.admin.ListProbeTasks(ctx, connect.NewRequest(&probev1.ListProbeTasksRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if list.Msg.Version != 2 || len(list.Msg.Tasks) != 1 || !proto.Equal(list.Msg.Tasks[0], updated.Task) {
+	if list.Msg.Version != updated.Version || len(list.Msg.Tasks) != 1 || !proto.Equal(list.Msg.Tasks[0], updated.Task) {
 		t.Fatalf("updated list=%v", list.Msg)
 	}
 	del, err := h.admin.DeleteProbeTask(ctx, connect.NewRequest(&probev1.DeleteProbeTaskRequest{Id: 1}))
-	if err != nil || del.Msg.Version != 3 {
+	if err != nil || del.Msg.Version <= updated.Version {
 		t.Fatalf("%+v %v", del, err)
 	}
 	list, err = h.admin.ListProbeTasks(ctx, connect.NewRequest(&probev1.ListProbeTasksRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if list.Msg.Version != 3 || len(list.Msg.Tasks) != 0 {
+	if list.Msg.Version != del.Msg.Version || len(list.Msg.Tasks) != 0 {
 		t.Fatalf("deleted list=%v", list.Msg)
 	}
 	_, err = h.admin.DeleteProbeTask(ctx, connect.NewRequest(&probev1.DeleteProbeTaskRequest{Id: 1}))
-	if codeOf(err) != connect.CodeNotFound || !strings.Contains(err.Error(), "task.id: probe task 1 does not exist") {
+	if codeOf(err) != connect.CodeNotFound || err.Error() != "not_found: id: probe task 1 does not exist" {
 		t.Fatalf("%v", err)
 	}
 }

@@ -59,7 +59,7 @@ func TestLoadProbeTasksReadsOneSnapshot(t *testing.T) {
 	ctx := t.Context()
 	a, _ := s.CreateNode(ctx, "a", hash(1))
 	b, _ := s.CreateNode(ctx, "b", hash(2))
-	saved, _, err := s.SaveProbeTask(ctx, taskForTest(), []int64{a})
+	saved, savedVersion, err := s.SaveProbeTask(ctx, taskForTest(), []int64{a})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,11 +92,11 @@ func TestLoadProbeTasksReadsOneSnapshot(t *testing.T) {
 	if !changed {
 		t.Fatal("concurrent save did not run")
 	}
-	if version != 1 || len(tasks) != 1 || !proto.Equal(tasks[0].Task, saved) || !reflect.DeepEqual(tasks[0].NodeIDs, []int64{a}) {
-		t.Fatalf("mixed snapshot: version=%d tasks=%v, want %v/[%d] at version 1", version, tasks, saved, a)
+	if version != savedVersion || len(tasks) != 1 || !proto.Equal(tasks[0].Task, saved) || !reflect.DeepEqual(tasks[0].NodeIDs, []int64{a}) {
+		t.Fatalf("mixed snapshot: version=%d tasks=%v, want %v/[%d] at saved version", version, tasks, saved, a)
 	}
 	var current int
-	if err := s.r.QueryRow("SELECT version FROM probe_meta").Scan(&current); err != nil || current != 2 {
+	if err := s.r.QueryRow("SELECT version FROM probe_meta").Scan(&current); err != nil || uint64(current) != savedVersion+1 {
 		t.Fatalf("concurrent save not persisted: version=%d err=%v", current, err)
 	}
 }

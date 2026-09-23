@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/hub/metric"
@@ -159,17 +160,17 @@ func TestSaveProbeTaskAssignsAndBumpsVersion(t *testing.T) {
 	a, _ := s.CreateNode(ctx, "a", hash(1))
 	b, _ := s.CreateNode(ctx, "b", hash(2))
 	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), []int64{b, a})
-	if err != nil || saved == nil || saved.Id != 1 || version != 1 {
+	if err != nil || saved == nil || saved.Id != 1 || version != uint64(s.clk.Now().Unix()) {
 		t.Fatalf("save=%v version=%d err=%v", saved, version, err)
 	}
-	assertTasks(t, s, 1, []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{a, b}}})
+	assertTasks(t, s, uint64(s.clk.Now().Unix()), []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{a, b}}})
 	saved.Target = "example.com"
 	saved.IntervalS, saved.TimeoutMs = 10, 500
 	saved, version, err = s.SaveProbeTask(ctx, saved, []int64{b})
-	if err != nil || version != 2 {
+	if err != nil || version != uint64(s.clk.Now().Unix())+1 {
 		t.Fatalf("replace version=%d err=%v", version, err)
 	}
-	assertTasks(t, s, 2, []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{b}}})
+	assertTasks(t, s, uint64(s.clk.Now().Unix())+1, []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{b}}})
 	absent := taskForTest()
 	absent.Id = 99
 	if _, _, err := s.SaveProbeTask(ctx, absent, nil); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "probe task 99 does not exist") {
@@ -178,15 +179,35 @@ func TestSaveProbeTaskAssignsAndBumpsVersion(t *testing.T) {
 	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), []int64{a, 42}); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "node 42 does not exist") {
 		t.Fatalf("missing node error=%v", err)
 	}
-	assertTasks(t, s, 2, []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{b}}})
-	if version, err := s.DeleteProbeTask(ctx, 1); err != nil || version != 3 {
+	assertTasks(t, s, uint64(s.clk.Now().Unix())+1, []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{b}}})
+	if version, err := s.DeleteProbeTask(ctx, 1); err != nil || version != uint64(s.clk.Now().Unix())+2 {
 		t.Fatalf("delete version=%d err=%v", version, err)
 	}
-	assertTasks(t, s, 3, nil)
+	assertTasks(t, s, uint64(s.clk.Now().Unix())+2, nil)
 	if _, err := s.DeleteProbeTask(ctx, 1); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "probe task 1 does not exist") {
 		t.Fatalf("missing delete error=%v", err)
 	}
-	assertTasks(t, s, 3, nil)
+	assertTasks(t, s, uint64(s.clk.Now().Unix())+2, nil)
+}
+
+func TestProbeVersionUsesClockAndIncreases(t *testing.T) {
+	s, clk := open(t)
+	var previous uint64
+	for i := range 3 {
+		if i == 2 {
+			clk.Advance(time.Hour)
+		}
+		_, version, err := s.SaveProbeTask(t.Context(), taskForTest(), nil)
+		if err != nil || version <= previous || version < uint64(clk.Now().Unix()) {
+			t.Fatalf("save version=%d previous=%d now=%d err=%v", version, previous, clk.Now().Unix(), err)
+		}
+		previous = version
+	}
+	clk.Advance(time.Hour)
+	version, err := s.DeleteProbeTask(t.Context(), 1)
+	if err != nil || version <= previous || version < uint64(clk.Now().Unix()) {
+		t.Fatalf("delete version=%d previous=%d now=%d err=%v", version, previous, clk.Now().Unix(), err)
+	}
 }
 
 func assertTasks(t *testing.T, s *Store, wantVersion uint64, want []ProbeTaskRecord) {
@@ -226,18 +247,18 @@ func TestSaveProbeTaskEnforcesPerNodeLimit(t *testing.T) {
 		t.Fatalf("65th task error=%v, want ErrNodeLimit with node", err)
 	}
 	version, tasks, err := s.LoadProbeTasks(ctx)
-	if err != nil || version != 64 || len(tasks) != 64 {
+	if err != nil || version != uint64(s.clk.Now().Unix())+63 || len(tasks) != 64 {
 		t.Fatalf("limit rollback: version=%d tasks=%d err=%v", version, len(tasks), err)
 	}
 
 	changed := proto.Clone(tasks[0].Task).(*probev1.ProbeTask)
 	changed.Target = "example.com"
 	saved, version, err := s.SaveProbeTask(ctx, changed, []int64{id})
-	if err != nil || version != 65 || !proto.Equal(saved, changed) {
-		t.Fatalf("editing full node: task=%v version=%d err=%v, want %v/65", saved, version, err, changed)
+	if err != nil || version != uint64(s.clk.Now().Unix())+64 || !proto.Equal(saved, changed) {
+		t.Fatalf("editing full node: task=%v version=%d err=%v, want task %v and a version increment", saved, version, err, changed)
 	}
 	tasks[0].Task = changed
-	assertTasks(t, s, 65, tasks)
+	assertTasks(t, s, uint64(s.clk.Now().Unix())+64, tasks)
 }
 
 func TestDuplicateProbeAssignmentRollsBackReplacement(t *testing.T) {
@@ -253,7 +274,7 @@ func TestDuplicateProbeAssignmentRollsBackReplacement(t *testing.T) {
 	if _, _, err := s.SaveProbeTask(ctx, changed, []int64{id, id}); err == nil || !strings.Contains(err.Error(), "UNIQUE constraint failed") {
 		t.Fatalf("duplicate assignment error=%v", err)
 	}
-	assertTasks(t, s, 1, []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{id}}})
+	assertTasks(t, s, uint64(s.clk.Now().Unix()), []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{id}}})
 }
 
 func TestDeleteNodeRemovesProbeRowsAndAssignments(t *testing.T) {
@@ -269,7 +290,7 @@ func TestDeleteNodeRemovesProbeRowsAndAssignments(t *testing.T) {
 	if err := s.DeleteNode(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	assertTasks(t, s, 1, []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{b}}})
+	assertTasks(t, s, uint64(s.clk.Now().Unix()), []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{b}}})
 	counts, err := s.Counts(ctx)
 	if err != nil {
 		t.Fatal(err)

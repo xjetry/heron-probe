@@ -952,7 +952,7 @@ export const ListProbeTasksRequestSchema: GenMessage<ListProbeTasksRequest> = /*
  */
 export type ListProbeTasksResponse = Message<"probe.v1.ListProbeTasksResponse"> & {
   /**
-   * 任务与分配的全局版本；经任务管理接口的修改都加一，删除节点清理分配不加；agent 用它对账。
+   * 任务与分配的全局版本；每次经管理接口的修改都变为更大的新值（不小于修改时刻的 Unix 秒）；删除节点清理分配不改；agent 用它对账。
    *
    * @generated from field: uint64 version = 1;
    */
