@@ -29,17 +29,29 @@ import (
 	"github.com/xjetry/probe/internal/probelimit"
 )
 
+// Report 的 protobuf 请求由 Metrics 数值标量、boot_id、Facts、有界版本号/摘要和探测结果组成。
+// 数值由 proto 类型定界；validateMetrics/validateFacts 将主机字符串各限在 maxHostString 字节。
+// validateResults 限条数与错误长度；合法 agent 由 Runner 限批、ToProto 截断错误来遵守这些约束。
+// connect 在拦截器前整条读取，超出 maxBody 返回 ResourceExhausted；Runner 会回队，
+// 因而合法 agent 的编码上界必须从常量推出，不能因读上限不足而永久重发同一超限批次。
+// 这些预算针对已知字段的 protobuf 编码；非法输入仍可能先撞读上限，再也到不了字段校验。
 const (
+	// Metrics/Facts 的字段类型及字符串校验共同定界；TestHostPayloadFitsMetricsBudget 覆盖满值编码。
 	metricsBudget = 32 << 10
 	// maxResultWire 含结果及外层 repeated 字段开销，上界由 TestMaxProbeResultWire 钉住。
 	maxResultWire = 160
 	maxBody       = 256 << 10
 )
 
+// 非探测部分加上整批最坏编码不能超过读上限；单结果由 TestMaxProbeResultWire 钉住。
 const _ = uint(maxBody - metricsBudget - probelimit.MaxResultsPerReport*maxResultWire)
 
-// MinTTL 限制服务允许的最短离线判定时长，命令行与直接构造共用同一准入边界。
-const MinTTL = 10 * time.Second
+// MinTTL 与 MaxTTL 限制离线判定时长，命令行与直接构造共用同一准入边界。
+const (
+	MinTTL        = 10 * time.Second
+	MaxTTL        = 180 * time.Second
+	reportsPerTTL = 3
+)
 
 type Config struct {
 	TTL            time.Duration
@@ -87,6 +99,9 @@ func New(cfg Config, l *live.Live, st *store.Store, a *auth.Auth, book *traffic.
 	if cfg.TTL < MinTTL {
 		return nil, fmt.Errorf("TTL %v is below the minimum %v", cfg.TTL, MinTTL)
 	}
+	if cfg.TTL > MaxTTL {
+		return nil, fmt.Errorf("TTL %v is above the maximum %v", cfg.TTL, MaxTTL)
+	}
 	return &Service{cfg: cfg, live: l, traffic: book, tasks: tasks, store: st, writer: st, auth: a, clk: clk, log: log,
 		limit: newBuckets[int64](burst), registerLimit: newBuckets[netip.Addr](30), factsHash: map[int64]uint64{}}, nil
 }
@@ -103,7 +118,11 @@ func (s *Service) Load(ctx context.Context) error {
 }
 
 // Interval 是下发给 agent 的上报间隔：TTL 内三次上报机会，容得下两次连续失败。
-func (s *Service) Interval() time.Duration { return s.cfg.TTL / 3 }
+func (s *Service) Interval() time.Duration { return s.cfg.TTL / reportsPerTTL }
+
+// New 将 TTL 限在 MaxTTL 内；间隔为 TTL/reportsPerTTL，满速产出
+// MaxTasksPerNode×(TTL/reportsPerTTL)/MinIntervalS 条，单批上限必须容纳它。
+const _ = uint(probelimit.MaxResultsPerReport*probelimit.MinIntervalS*reportsPerTTL - probelimit.MaxTasksPerNode*int(MaxTTL/time.Second))
 
 func (s *Service) Handler() (string, http.Handler) {
 	return probev1connect.NewAgentServiceHandler(s,
@@ -167,7 +186,7 @@ func (i authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 func (s *Service) Register(ctx context.Context, req *connect.Request[probev1.RegisterRequest]) (*connect.Response[probev1.RegisterResponse], error) {
 	// 挂载点的拦截器只向通过限速的请求传入来源，窗口裁决复用同一来源地址。
 	from := ctx.Value(registerFromKey{}).(netip.Addr)
-	name := strings.TrimSpace(sanitize.String(req.Msg.GetName(), maxFactString))
+	name := strings.TrimSpace(sanitize.String(req.Msg.GetName(), maxHostString))
 	if name == "" {
 		name = "node"
 	}
@@ -194,6 +213,9 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[probev1.Repor
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	if err := validateResults(req.Msg.GetProbeResults()); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	if err := validateFacts(req.Msg.GetFacts()); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	ts, gap, first := s.live.Observe(id, m)

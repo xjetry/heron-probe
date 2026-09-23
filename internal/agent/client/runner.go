@@ -86,9 +86,9 @@ func (r *Runner) Run(ctx context.Context) error {
 
 		resp, err := r.Client.Report(ctx, req)
 		if err != nil {
-			// InvalidArgument 可来自 hub 对结构非法探测结果的拒绝、validateMetrics 对非法指标的拒绝，
+			// InvalidArgument 可来自 hub 对结构非法探测结果的拒绝、validateMetrics/validateFacts 对非法主机数据的拒绝，
 			// 或 Connect 客户端解码/解压响应失败。前两种对同一内容的拒绝是确定性的：
-			// 坏结果重发仍失败，非法指标持续时本批也只会在迟到预算内反复被拒。
+			// 坏结果重发仍失败，非法主机数据持续时本批也只会在迟到预算内反复被拒。
 			// hub 正常完成 Report 后的响应若解码/解压失败，本批已折叠，回队会重复入账。
 			// 其他失败保留本批结果，下次 Take 丢弃超过迟到预算的部分。
 			if connect.CodeOf(err) == connect.CodeInvalidArgument {

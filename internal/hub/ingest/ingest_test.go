@@ -88,12 +88,16 @@ func report(tok string, m *probev1.Metrics) *connect.Request[probev1.ReportReque
 	return req
 }
 
-func TestNewEnforcesMinimumTTL(t *testing.T) {
-	for _, ttl := range []time.Duration{-time.Second, 0, 10*time.Second - time.Nanosecond, 10 * time.Second, 30 * time.Second} {
+func TestNewEnforcesTTLBounds(t *testing.T) {
+	for _, ttl := range []time.Duration{-time.Second, 0, 10*time.Second - time.Nanosecond, 10 * time.Second, 30 * time.Second, 180 * time.Second, 181 * time.Second} {
 		svc, err := New(Config{TTL: ttl}, nil, nil, nil, nil, nil, clock.NewFake(time.Now()), slog.Default())
 		if ttl < 10*time.Second {
 			if err == nil || svc != nil {
 				t.Fatalf("TTL %v accepted below minimum", ttl)
+			}
+		} else if ttl > 180*time.Second {
+			if err == nil || svc != nil || err.Error() != "TTL 3m1s is above the maximum 3m0s" {
+				t.Fatalf("TTL %v accepted above maximum or wrong error: %v %v", ttl, svc, err)
 			}
 		} else if err != nil || svc == nil || svc.Interval() != ttl/3 {
 			t.Fatalf("TTL %v rejected or wrong interval: %v %v", ttl, svc, err)
@@ -216,7 +220,7 @@ func TestFactsStringsAreSanitized(t *testing.T) {
 	id, tok := h.node(t)
 	ctx := context.Background()
 	req := report(tok, &probev1.Metrics{})
-	req.Msg.Facts = &probev1.Facts{Hostname: "a\x00b\x1fc\x7fd\u0085\u009b\u202e\u200c", Os: strings.Repeat("x", 1000)}
+	req.Msg.Facts = &probev1.Facts{Hostname: "a\x00b\x1fc\x7fd\u0085\u009b\u202e\u200c", Os: strings.Repeat("x", maxHostString)}
 	req.Msg.FactsHash = 1
 	if _, err := h.client.Report(ctx, req); err != nil {
 		t.Fatal(err)
@@ -226,7 +230,7 @@ func TestFactsStringsAreSanitized(t *testing.T) {
 	if err := h.store.QueryFacts(ctx, id, &hostname, &os); err != nil {
 		t.Fatal(err)
 	}
-	if hostname != "abcd\u200c" || len(os) != maxFactString {
+	if hostname != "abcd\u200c" || len(os) != maxHostString {
 		t.Fatalf("hostname %q os len %d", hostname, len(os))
 	}
 }

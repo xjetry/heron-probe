@@ -9,17 +9,12 @@ import (
 	"time"
 
 	"github.com/xjetry/probe/internal/hub/ingest"
-	"github.com/xjetry/probe/internal/probelimit"
 )
 
 const (
 	defaultTTL = 30 * time.Second
 	minTTL     = ingest.MinTTL
-	maxTTL     = 180 * time.Second
 )
-
-// 间隔为 TTL/3，一次满速产出至多 MaxTasksPerNode×(TTL/3)/MinIntervalS 条；批次须容纳它并留余量。
-const _ = uint(probelimit.MaxResultsPerReport*probelimit.MinIntervalS*3 - probelimit.MaxTasksPerNode*int(maxTTL/time.Second))
 
 // parseTTL 解析 PROBE_OFFLINE_AFTER。TTL 是离线发现延迟的上界，也是这条链上
 // 唯一被直接配置的量：上报间隔、退避上限、告警宽限期下限都由它反推。
@@ -34,8 +29,8 @@ func parseTTL(s string) (time.Duration, error) {
 	if d < minTTL {
 		return 0, fmt.Errorf("PROBE_OFFLINE_AFTER: %v is below the minimum %v", d, minTTL)
 	}
-	if d > maxTTL {
-		return 0, fmt.Errorf("PROBE_OFFLINE_AFTER: %v is above the maximum %v", d, maxTTL)
+	if d > ingest.MaxTTL {
+		return 0, fmt.Errorf("PROBE_OFFLINE_AFTER: %v is above the maximum %v", d, ingest.MaxTTL)
 	}
 	return d, nil
 }

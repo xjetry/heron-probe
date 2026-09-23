@@ -11,10 +11,13 @@ import (
 )
 
 // validateMetrics 对整条上报做准入：任何一个字段非法就整条拒绝，live 不变。
-// 无符号整数字段没有非法取值；需要判定的只有浮点与 load 三元组的形状。
+// 无符号整数由协议类型定界；浮点、load 三元组和 boot_id 长度在此检查。
 func validateMetrics(m *probev1.Metrics) error {
 	if m == nil {
 		return errors.New("metrics: required")
+	}
+	if err := validateHostString("boot_id", m.BootId); err != nil {
+		return err
 	}
 	floats := []struct {
 		name string
@@ -40,9 +43,11 @@ func validateMetrics(m *probev1.Metrics) error {
 	return nil
 }
 
-// validateResults 只判结构：outcome 必须给定。合法 agent 把超过任务超时的测量记为 timeout
+// validateResults 限制条数、error.message 字节数，并要求 outcome 给定。合法 agent 的 Runner
+// 向 Queue.Take 传 MaxResultsPerReport 限条，ToProto 沿 rune 边界截断到 MaxErrorMessageLen 字节。
+// 合法 agent 把超过任务超时的测量记为 timeout
 // 而不是 rtt，由 agent 的 prober 保证；任务超时不超过 MaxTimeoutMs，由 probelimit.CheckTask 保证。
-// 违反时整条拒绝，因此 agent 不得把被 InvalidArgument 拒绝的结果放回队列。
+// 任一守卫违反都整批 InvalidArgument；Runner 丢弃本批而不回队，否则确定性拒绝会反复发生。
 // 归属与超龄不是结构问题，由 Report 逐条丢弃而不是整条拒绝。
 func validateResults(rs []*probev1.ProbeResult) error {
 	if len(rs) > probelimit.MaxResultsPerReport {
@@ -65,15 +70,44 @@ func validateResults(rs []*probev1.ProbeResult) error {
 	return nil
 }
 
-// maxFactString 是 Facts 里每个字符串的字节上限；其中数个字段会出现在匿名公开页。
-const maxFactString = 256
+// maxHostString 约束 boot_id 与 Facts 的入参字节数，给报告的非探测部分提供体积上界。
+const maxHostString = 256
+
+func validateHostString(name, value string) error {
+	if len(value) > maxHostString {
+		return fmt.Errorf("%s: must be at most %d bytes; got %d", name, maxHostString, len(value))
+	}
+	return nil
+}
+
+// 准入长度校验与公开字段清理共用清单，不能只限制落库副本而放过原始请求。
+func factStrings(f *probev1.Facts) []struct {
+	name  string
+	value *string
+} {
+	return []struct {
+		name  string
+		value *string
+	}{
+		{"facts.hostname", &f.Hostname}, {"facts.os", &f.Os}, {"facts.kernel", &f.Kernel},
+		{"facts.arch", &f.Arch}, {"facts.virtualization", &f.Virtualization},
+		{"facts.cpu_model", &f.CpuModel}, {"facts.agent_version", &f.AgentVersion},
+	}
+}
+
+func validateFacts(f *probev1.Facts) error {
+	if f != nil {
+		for _, field := range factStrings(f) {
+			if err := validateHostString(field.name, *field.value); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 
 func sanitizeFacts(f *probev1.Facts) {
-	f.Hostname = sanitize.String(f.Hostname, maxFactString)
-	f.Os = sanitize.String(f.Os, maxFactString)
-	f.Kernel = sanitize.String(f.Kernel, maxFactString)
-	f.Arch = sanitize.String(f.Arch, maxFactString)
-	f.Virtualization = sanitize.String(f.Virtualization, maxFactString)
-	f.CpuModel = sanitize.String(f.CpuModel, maxFactString)
-	f.AgentVersion = sanitize.String(f.AgentVersion, maxFactString)
+	for _, field := range factStrings(f) {
+		*field.value = sanitize.String(*field.value, maxHostString)
+	}
 }
