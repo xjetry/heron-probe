@@ -1855,3 +1855,14 @@ token 与注册 key 只展示一次并可复制，页面不保存它们。删除
 **类型一致性**：`renderWithAdmin` 在 Task 4 定义、Task 5/6 使用；`errorText` 在 Task 3 定义、Task 6 使用；`web.Prefix` / `web.Handler` / `web.RootRedirect` 在 Task 2 定义并挂载；`toAligned` / `unitOf` 在 Task 5 定义与使用。
 
 **占位扫描**：无 TBD；index 路由的初始内容在 Task 4 被替换，Task 3 内它本身是完整可运行的页面。
+
+## 执行修正（2026-09-23）
+
+执行时对本计划文本的修正，按任务列出；代码以分支 m2-admin-panel 的最终状态为准。
+
+- Task 1 / Task 2：恢复 `internal/hub/web/dist/.gitkeep` 的动作不放在 Makefile 的 `web` 目标里 `touch`，而是由 `web/vite.config.ts` 的构建插件在 `closeBundle` 写回——删目录的是 Vite（`emptyOutDir`），维持"embed 目录永远含文件"的必须是同一层，否则绕过 Makefile 的 `pnpm run build` 会留下删掉占位文件的脏树。
+- Task 1：`ci` 的生成物门从 `git diff --exit-code -- gen web/src/gen` 改为要求 `git status --porcelain -- gen web/src/gen` 为空：新增 proto 产生的生成文件是未跟踪的，`diff` 看不到。
+- Task 3：`errorText` 定义在 `web/src/api/auth.ts`（与 `isUnauthenticated` 同层），页面不直接读 `err.rawMessage`。`ago` 的"去掉 `Math.max(0, …)`"注入无效：负差值本就落入 `diff < 5` 分支，断言无法区分；钳位保留为显式意图。
+- Task 4：入口测试在 index 路由换成总览页后必须对 fetch 打非 Unauthenticated 的桩，保持封闭；`Overview` 在已有数据时轮询失败不替换表格，错误行放在表格上方。
+- Task 5：`NodeDetail` 的历史查询加 `placeholderData: keepPreviousData`——查询 key 含 `from`/`to`，每分钟前进与切窗都换 key，不保留旧数据会让六张图整组卸载重建，`Chart` 的 `setData` 路径就没有消费者；非数字 id 在页面层视为"不存在"。`Chart` 的轴色从 CSS 变量取，跟随 `prefers-color-scheme`；轴刻度按刻度增量决定精度，不复用表格口径的 `formatUnit`。
+- Task 6：排序注入"只提交被交换的两个 id"在两节点数据下与完整排列相同，测试数据需要三个节点；登录 / 登出时清空 QueryClient；注册窗口状态轮询到未开启时清掉本页展示的 key。
