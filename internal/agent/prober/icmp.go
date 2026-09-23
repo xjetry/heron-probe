@@ -27,9 +27,14 @@ import (
 // Linux 数据报回包 ID 是本地端口，macOS 的公网回包 ID 也可能被改写；因此只按 payload 匹配。
 // raw 与 macOS udp6 会收到自己的请求，macOS 数据报 socket 会收到同进程其他 socket 的回包；
 // 每个 socket 一个读协程，只接受 Echo Reply，陌生 nonce 或任务序号不会交给 pending。
-// 四种 socket 的 ReadFrom 都不带 IP 头：Darwin udp4 由 x/net 设置 IP_STRIPHDR，
-// Linux udp4 由内核交付 ICMP 报文，Linux raw v4 由 net.IPConn.ReadFrom 剥头；
-// udp6 在 Darwin/Linux 两边以及 raw v6 都由内核保证不交付 IPv6 头。
+// ReadFrom 不带 IP 头依赖 x/net v0.58.0 与 Go 1.27.1 的以下路径，换版本需重新核对：
+// Darwin udp4：icmp/listen_posix.go 的 ListenPacket 设置 IP_STRIPHDR。
+// Darwin raw v4：ListenPacket 走 net.ListenPacket，不设置 IP_STRIPHDR；
+// icmp/endpoint.go 在 darwin 且 p4 非空时转到 ipv4.PacketConn.ReadFrom，
+// ipv4/payload_cmsg.go 的 *net.IPConn 分支将头部读入独立缓冲，再按首字节中的头长剥除。
+// Linux udp4：内核 ping socket 只交付 ICMP 报文。
+// Linux raw v4：net/iprawsock_posix.go 的 net.IPConn.ReadFrom 对 SockaddrInet4 调 stripIPv4Header。
+// udp6 与 raw v6：Darwin/Linux 内核均不交付 IPv6 头。
 // 这一次没有联通是可达性事实，计入丢包；本地无法发起才是 error。
 type ICMP struct {
 	clk       clock.Clock
