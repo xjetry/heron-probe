@@ -40,14 +40,22 @@ type Config struct {
 }
 
 type storeWriter interface {
-	WriteMinuteRows(ctx context.Context, rows []metric.Row) (int, error)
+	WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, error)
 	UpsertFactsAsync(nodeID int64, hash uint64, f *probev1.Facts, done func(error))
+}
+
+type TaskSource interface {
+	Version() uint64
+	TasksFor(nodeID int64) *probev1.ProbeTasks
+	Assigned(nodeID int64, taskID uint64) bool
+	Forget(nodeID int64)
 }
 
 type Service struct {
 	cfg           Config
 	live          *live.Live
 	traffic       *traffic.Book
+	tasks         TaskSource
 	store         *store.Store
 	writer        storeWriter
 	auth          *auth.Auth
@@ -65,14 +73,14 @@ type Service struct {
 	factsHash map[int64]uint64
 
 	pendingMu sync.Mutex
-	pending   [][]metric.Row
+	pending   []metric.Batch
 }
 
-func New(cfg Config, l *live.Live, st *store.Store, a *auth.Auth, book *traffic.Book, clk clock.Clock, log *slog.Logger) (*Service, error) {
+func New(cfg Config, l *live.Live, st *store.Store, a *auth.Auth, book *traffic.Book, tasks TaskSource, clk clock.Clock, log *slog.Logger) (*Service, error) {
 	if cfg.TTL < MinTTL {
 		return nil, fmt.Errorf("TTL %v is below the minimum %v", cfg.TTL, MinTTL)
 	}
-	return &Service{cfg: cfg, live: l, traffic: book, store: st, writer: st, auth: a, clk: clk, log: log,
+	return &Service{cfg: cfg, live: l, traffic: book, tasks: tasks, store: st, writer: st, auth: a, clk: clk, log: log,
 		limit: newBuckets[int64](burst), registerLimit: newBuckets[netip.Addr](30), factsHash: map[int64]uint64{}}, nil
 }
 
@@ -178,6 +186,9 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[probev1.Repor
 	if err := validateMetrics(m); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	if err := validateResults(req.Msg.GetProbeResults()); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
 	ts, gap, first := s.live.Observe(id, m)
 	// 每 token 由单个 agent 串行发出 unary 上报、等到响应才发下一次；这保证同节点的
 	// Observe、Account、AddBytes 不被另一次上报交错。多端共用 token 不提供此保证。
@@ -187,11 +198,42 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[probev1.Repor
 	if d, ok := s.traffic.Account(id, m); ok && !first && gap < s.cfg.TTL {
 		s.live.AddBytes(id, ts, d.Rx, d.Tx)
 	}
+	s.foldResults(id, req.Msg.GetProbeResults())
 	want := s.reconcileFacts(id, ctx.Value(nodeTokenKey{}).(string), req.Msg.GetFactsHash(), req.Msg.GetFacts())
-	return connect.NewResponse(&probev1.ReportResponse{
+	resp := &probev1.ReportResponse{
 		ReportIntervalMs: uint32(s.Interval() / time.Millisecond),
 		WantFacts:        want,
-	}), nil
+	}
+	// 电平触发：agent 报它持有的版本，hub 只在不一致时下发整份清单；空清单让 agent 停掉已消失的任务。
+	if req.Msg.GetTasksVersion() != s.tasks.Version() {
+		resp.Tasks = s.tasks.TasksFor(id)
+	}
+	return connect.NewResponse(resp), nil
+}
+
+// foldResults 按归属与迟到预算逐条准入：分配已撤销的旧结果不得写进别的任务历史，
+// 超龄结果可能落在已冻结的分钟里；测量时刻由收到时刻减 age_ms 得到。
+func (s *Service) foldResults(id int64, rs []*probev1.ProbeResult) {
+	if len(rs) == 0 {
+		return
+	}
+	now := s.clk.Now()
+	var foreign, late int
+	for _, r := range rs {
+		if !s.tasks.Assigned(id, r.GetTaskId()) {
+			foreign++
+			continue
+		}
+		age := time.Duration(r.GetAgeMs()) * time.Millisecond
+		if age > MaxProbeAge {
+			late++
+			continue
+		}
+		s.live.AddProbe(id, now.Add(-age), r.GetTaskId(), r)
+	}
+	if foreign > 0 || late > 0 {
+		s.log.Warn("probe results dropped", "node", id, "unassigned", foreign, "too_old", late)
+	}
 }
 
 // reconcileFacts 是电平触发的对账：agent 每次带摘要，hub 只在不一致时索要。
@@ -221,6 +263,10 @@ func (s *Service) reconcileFacts(id int64, token string, hash uint64, f *probev1
 // Forget 在 auth 移除 token 后清理节点状态。stateMu 等待已鉴权上报退出，
 // pendingMu 将 live 桶移交与重试队列清理串行化，因此返回后两处都不再持有该节点。
 func (s *Service) Forget(nodeID int64) {
+	// api.DeleteNode 在 auth.DeleteNode 返回 nil 后才清理状态，保证库删除与 token 撤销已经完成。
+	// Registry.Forget 会等在途管理写入完成整个 store 往返；写协程 facts 回调会取 mu，
+	// 因此必须在所有 ingest 锁之外调用，既避免等待环，也不让这段等待挡住其他节点的 Report。
+	s.tasks.Forget(nodeID)
 	s.pendingMu.Lock()
 	defer s.pendingMu.Unlock()
 	s.stateMu.Lock()
@@ -231,15 +277,20 @@ func (s *Service) Forget(nodeID int64) {
 	s.mu.Lock()
 	delete(s.factsHash, nodeID)
 	s.mu.Unlock()
-	var pending [][]metric.Row
+	var pending []metric.Batch
 	for _, batch := range s.pending {
-		var kept []metric.Row
-		for _, row := range batch {
+		var kept metric.Batch
+		for _, row := range batch.Rows {
 			if row.NodeID != nodeID {
-				kept = append(kept, row)
+				kept.Rows = append(kept.Rows, row)
 			}
 		}
-		if len(kept) > 0 {
+		for _, row := range batch.Probes {
+			if row.NodeID != nodeID {
+				kept.Probes = append(kept.Probes, row)
+			}
+		}
+		if !kept.Empty() {
 			pending = append(pending, kept)
 		}
 	}

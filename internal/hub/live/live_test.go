@@ -46,19 +46,19 @@ func TestFlushTakesOnlyClosedBuckets(t *testing.T) {
 	clk := clock.NewFake(at(600)) // 分钟 600 的起点
 	l := New(clk, 30*time.Second)
 	l.Observe(1, &probev1.Metrics{CpuPct: proto.Float64(10)})
-	if rows := l.Flush(); len(rows) != 0 {
+	if rows := l.Flush().Rows; len(rows) != 0 {
 		t.Fatalf("bucket for the current minute must stay open, got %d rows", len(rows))
 	}
 	clk.Advance(60 * time.Second)
 	l.Observe(1, &probev1.Metrics{CpuPct: proto.Float64(50)})
-	rows := l.Flush()
+	rows := l.Flush().Rows
 	if len(rows) != 1 || rows[0].TS != 600 || rows[0].NodeID != 1 {
 		t.Fatalf("rows = %+v, want one row for ts 600", rows)
 	}
 	if mean, _ := rows[0].Bucket.Mean(0); mean != 10 {
 		t.Fatalf("flushed bucket mean = %v, want 10 (the sample at 660 belongs to the open bucket)", mean)
 	}
-	if again := l.Flush(); len(again) != 0 {
+	if again := l.Flush().Rows; len(again) != 0 {
 		t.Fatalf("flush must take the bucket away; second flush returned %d rows", len(again))
 	}
 }
@@ -68,7 +68,7 @@ func TestDrainTakesEverything(t *testing.T) {
 	l := New(clk, 30*time.Second)
 	l.Observe(1, &probev1.Metrics{CpuPct: proto.Float64(1)})
 	l.Observe(2, &probev1.Metrics{CpuPct: proto.Float64(2)})
-	if rows := l.Drain(); len(rows) != 2 {
+	if rows := l.Drain().Rows; len(rows) != 2 {
 		t.Fatalf("drain returned %d rows, want 2", len(rows))
 	}
 }
@@ -80,7 +80,7 @@ func TestWallClockSetBackLandsInEarlierMinute(t *testing.T) {
 	clk.SetWall(at(610)) // 回拨到上一分钟
 	l.Observe(1, &probev1.Metrics{CpuPct: proto.Float64(3)})
 	clk.SetWall(at(720))
-	rows := l.Flush()
+	rows := l.Flush().Rows
 	if len(rows) != 2 {
 		t.Fatalf("got %d rows, want separate buckets for 600 and 660", len(rows))
 	}
@@ -134,7 +134,7 @@ func TestAddBytesLandsInTheGivenBucketOnly(t *testing.T) {
 	l.AddBytes(1, ts, 500, 300)
 	l.AddBytes(2, ts, 9, 9) // 从未 Observe 的节点：丢弃，不凭空建条目
 	clk.Advance(time.Minute)
-	rows := l.Flush()
+	rows := l.Flush().Rows
 	if len(rows) != 1 || rows[0].NodeID != 1 || rows[0].TS != 600 {
 		t.Fatalf("rows = %+v", rows)
 	}
@@ -144,5 +144,50 @@ func TestAddBytesLandsInTheGivenBucketOnly(t *testing.T) {
 	}
 	if _, ok := l.Get(2); ok {
 		t.Fatal("AddBytes created a node entry")
+	}
+}
+
+func TestAddProbeFoldsIntoMeasuredMinuteAndFlushesWithMetrics(t *testing.T) {
+	clk := clock.NewFake(at(600))
+	l := New(clk, 30*time.Second)
+	l.Observe(1, &probev1.Metrics{CpuPct: proto.Float64(10)})
+	clk.Advance(time.Minute)
+	l.AddProbe(1, at(670), 7, &probev1.ProbeResult{Outcome: &probev1.ProbeResult_RttUs{RttUs: 1200}})
+	l.AddProbe(1, at(675), 7, &probev1.ProbeResult{Outcome: &probev1.ProbeResult_Timeout{Timeout: &probev1.Timeout{}}})
+	l.AddProbe(1, at(630), 9, &probev1.ProbeResult{Outcome: &probev1.ProbeResult_RttUs{RttUs: 800}})
+	batch := l.Flush()
+	if len(batch.Rows) != 1 || batch.Rows[0].TS != 600 || batch.Rows[0].NodeID != 1 || batch.Rows[0].Bucket.Sum[metric.Index("cpu")] != 10 {
+		t.Fatalf("closed metrics=%+v", batch.Rows)
+	}
+	if len(batch.Probes) != 1 || batch.Probes[0].NodeID != 1 || batch.Probes[0].TS != 600 || batch.Probes[0].TaskID != 9 || batch.Probes[0].Bucket.Sent != 1 || batch.Probes[0].Bucket.RttMinUs != 800 {
+		t.Fatalf("closed probes=%+v", batch.Probes)
+	}
+	if !l.Flush().Empty() {
+		t.Fatal("second Flush returned already taken rows")
+	}
+	// 已刷出的分钟可再次接到迟到结果，但新内存桶不能再携带上次已交出的计数。
+	l.AddProbe(1, at(630), 9, &probev1.ProbeResult{Outcome: &probev1.ProbeResult_RttUs{RttUs: 400}})
+	late := l.Flush()
+	if len(late.Probes) != 1 || late.Probes[0].Bucket.Sent != 1 || late.Probes[0].Bucket.RttSumUs != 400 {
+		t.Fatalf("late probes=%+v", late.Probes)
+	}
+	batch = l.Drain()
+	if len(batch.Rows) != 0 || len(batch.Probes) != 1 {
+		t.Fatalf("drain=%+v", batch)
+	}
+	p := batch.Probes[0]
+	if p.NodeID != 1 || p.TS != 660 || p.TaskID != 7 || *p.Bucket != (metric.ProbeBucket{Sent: 2, Lost: 1, RttN: 1, RttSumUs: 1200, RttMinUs: 1200, RttMaxUs: 1200}) {
+		t.Fatalf("open probe=%+v bucket=%+v", p, *p.Bucket)
+	}
+	if !l.Drain().Empty() {
+		t.Fatal("second Drain returned already taken rows")
+	}
+	l.Forget(1)
+	l.AddProbe(1, at(670), 7, &probev1.ProbeResult{Outcome: &probev1.ProbeResult_RttUs{RttUs: 1}})
+	if _, ok := l.Get(1); ok {
+		t.Error("AddProbe revived forgotten node")
+	}
+	if !l.Drain().Empty() {
+		t.Error("AddProbe created rows after Forget")
 	}
 }

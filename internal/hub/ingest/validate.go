@@ -7,6 +7,7 @@ import (
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/hub/sanitize"
+	"github.com/xjetry/probe/internal/probelimit"
 )
 
 // validateMetrics 对整条上报做准入：任何一个字段非法就整条拒绝，live 不变。
@@ -35,6 +36,22 @@ func validateMetrics(m *probev1.Metrics) error {
 	}
 	if set != 0 && set != 3 {
 		return errors.New("load: load1, load5 and load15 must be given together")
+	}
+	return nil
+}
+
+// validateResults 只判结构：outcome 必须给定，rtt 不得超过最大超时——探测超时上限是 5 s，
+// 更大的 rtt 不可能来自合法的 agent。归属与超龄不是结构问题，由 Report 逐条丢弃而不是整条拒绝。
+func validateResults(rs []*probev1.ProbeResult) error {
+	for i, r := range rs {
+		switch o := r.GetOutcome().(type) {
+		case nil:
+			return fmt.Errorf("probe_results[%d].outcome: required (rtt_us, timeout or error)", i)
+		case *probev1.ProbeResult_RttUs:
+			if o.RttUs > probelimit.MaxTimeoutMs*1000 {
+				return fmt.Errorf("probe_results[%d].rtt_us: must not exceed %d (the maximum probe timeout in microseconds); got %d", i, probelimit.MaxTimeoutMs*1000, o.RttUs)
+			}
+		}
 	}
 	return nil
 }

@@ -28,6 +28,12 @@ type entry struct {
 	// 未刷出的桶：墙钟回拨时新样本会落进更早的分钟，它们各自独立、刷出后
 	// 由写库时的加法合并并入已有的行。
 	buckets map[int64]*metric.Bucket
+	probes  map[probeKey]*metric.ProbeBucket
+}
+
+type probeKey struct {
+	ts   int64
+	task uint64
 }
 
 type Entry struct {
@@ -56,7 +62,7 @@ func (l *Live) Observe(nodeID int64, m *probev1.Metrics) (ts int64, gap time.Dur
 	defer l.mu.Unlock()
 	e := l.nodes[nodeID]
 	if e == nil {
-		e = &entry{buckets: map[int64]*metric.Bucket{}}
+		e = &entry{buckets: map[int64]*metric.Bucket{}, probes: map[probeKey]*metric.ProbeBucket{}}
 		l.nodes[nodeID] = e
 		first = true
 	} else {
@@ -91,6 +97,26 @@ func (l *Live) AddBytes(nodeID int64, ts int64, rx, tx int64) {
 	b.AddSum(metric.TxBytes, float64(tx))
 }
 
+// AddProbe 把一条结果折叠进测量时刻所在分钟的 (任务) 桶。at 由调用方按 收到时刻 − age_ms 算出，
+// 所以同一次上报里的结果可以落进不同分钟；迟到结果所属的分钟若已刷出，会在这里开一个同键的
+// 新桶，刷出后由写库的加法合并并入已有的行。节点已被 Forget 时丢弃——Forget 之后不得再建内存状态。
+func (l *Live) AddProbe(nodeID int64, at time.Time, taskID uint64, r *probev1.ProbeResult) {
+	ts := minuteOf(at)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e := l.nodes[nodeID]
+	if e == nil {
+		return
+	}
+	k := probeKey{ts: ts, task: taskID}
+	b := e.probes[k]
+	if b == nil {
+		b = &metric.ProbeBucket{}
+		e.probes[k] = b
+	}
+	b.Add(r)
+}
+
 func (l *Live) online(e *entry, now time.Duration) bool {
 	return now-e.lastSeen < l.ttl
 }
@@ -116,29 +142,36 @@ func (l *Live) Get(nodeID int64) (Entry, bool) {
 
 // Flush 取走所有已闭合的桶：起始早于当前分钟的。取走即从 live 删除——每个
 // 桶至多被交给写协程一次，写库的加法合并才不会重复计入。
-func (l *Live) Flush() []metric.Row {
+func (l *Live) Flush() metric.Batch {
 	return l.take(minuteOf(l.clk.Now()))
 }
 
 // Drain 取走全部桶，包括当前分钟仍开着的；退出时用。
-func (l *Live) Drain() []metric.Row {
+func (l *Live) Drain() metric.Batch {
 	return l.take(1<<62 - 1)
 }
 
-func (l *Live) take(before int64) []metric.Row {
+func (l *Live) take(before int64) metric.Batch {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	var rows []metric.Row
+	var batch metric.Batch
 	for id, e := range l.nodes {
 		for ts, b := range e.buckets {
 			if ts >= before {
 				continue
 			}
-			rows = append(rows, metric.Row{NodeID: id, TS: ts, Bucket: b, LastSeen: e.lastSeenWall})
+			batch.Rows = append(batch.Rows, metric.Row{NodeID: id, TS: ts, Bucket: b, LastSeen: e.lastSeenWall})
 			delete(e.buckets, ts)
 		}
+		for k, b := range e.probes {
+			if k.ts >= before {
+				continue
+			}
+			batch.Probes = append(batch.Probes, metric.ProbeRow{NodeID: id, TS: k.ts, TaskID: k.task, Bucket: b})
+			delete(e.probes, k)
+		}
 	}
-	return rows
+	return batch
 }
 
 // Forget 删除节点时调用；未刷出的桶随之丢弃，被删节点的历史无处可挂。

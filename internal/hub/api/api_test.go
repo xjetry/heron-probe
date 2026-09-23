@@ -24,6 +24,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/hub/traffic"
 )
@@ -41,6 +42,7 @@ type harness struct {
 	live   *live.Live
 	ingest *ingest.Service
 	book   *traffic.Book
+	reg    *probe.Registry
 	svc    *Service
 }
 
@@ -59,17 +61,13 @@ func newHarness(t *testing.T, trusted string) *harness {
 	a := auth.New(st, clk, slog.Default())
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, slog.Default())
-	in, err := ingest.New(ingest.Config{TTL: 30 * time.Second, TrustedProxies: prefixes}, l, st, a, book, clk, slog.Default())
+	reg := probe.New(st, slog.Default())
+	in, err := ingest.New(ingest.Config{TTL: 30 * time.Second, TrustedProxies: prefixes}, l, st, a, book, reg, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Load(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := in.Load(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := book.Load(context.Background()); err != nil {
+	ctx := context.Background()
+	if err := errors.Join(a.Load(ctx), in.Load(ctx), book.Load(ctx), reg.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}
 	svc := New(Config{ReportInterval: 10 * time.Second, TrustedProxies: prefixes}, st, a, l, in, book, clk, slog.Default())
@@ -81,7 +79,7 @@ func newHarness(t *testing.T, trusted string) *harness {
 	jar, _ := cookiejar.New(nil)
 	hc := &http.Client{Jar: jar}
 	return &harness{srv: srv, http: hc, admin: probev1connect.NewAdminServiceClient(hc, srv.URL),
-		agent: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, book: book, svc: svc}
+		agent: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, book: book, reg: reg, svc: svc}
 }
 
 func (h *harness) login(t *testing.T) {

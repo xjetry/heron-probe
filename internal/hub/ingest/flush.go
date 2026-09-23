@@ -6,6 +6,7 @@ import (
 
 	"github.com/xjetry/probe/internal/hub/metric"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/probelimit"
 )
 
 // FlushPeriod 与分钟桶的闭合周期一致；nextFlushAt 把调度目标放在闭合后半秒，
@@ -14,7 +15,7 @@ const FlushPeriod = time.Minute
 
 // MaxProbeAge 是探测结果的迟到预算；它与刷出周期共同约束上卷滞后，
 // 为数据在其分钟桶被冻结之前完成落盘预留时间。
-const MaxProbeAge = 120 * time.Second
+const MaxProbeAge = probelimit.MaxResultAge
 
 // 上卷滞后必须覆盖"迟到上限 + 一个刷出周期 + 写协程排队余量"，否则合法数据会
 // 落在水位之前被写协程丢弃。差值为负时无法转换为 uint64，编译即失败；
@@ -31,22 +32,22 @@ const maxPendingBatches = 64
 func (s *Service) Flush(ctx context.Context, all bool) {
 	s.pendingMu.Lock()
 	defer s.pendingMu.Unlock()
-	var rows []metric.Row
+	var batch metric.Batch
 	if all {
-		rows = s.live.Drain()
+		batch = s.live.Drain()
 	} else {
-		rows = s.live.Flush()
+		batch = s.live.Flush()
 	}
-	if len(rows) > 0 {
-		s.pending = append(s.pending, rows)
+	if !batch.Empty() {
+		s.pending = append(s.pending, batch)
 	}
 	for len(s.pending) > maxPendingBatches {
-		s.log.Error("dropping oldest unflushed minute batch", "rows", len(s.pending[0]))
+		s.log.Error("dropping oldest unflushed minute batch", "rows", len(s.pending[0].Rows), "probes", len(s.pending[0].Probes))
 		s.pending = s.pending[1:]
 	}
 	for len(s.pending) > 0 {
 		batch := s.pending[0]
-		rejected, err := s.writer.WriteMinuteRows(ctx, batch)
+		rejected, err := s.writer.WriteMinuteBatch(ctx, batch)
 		if err != nil {
 			s.log.Error("minute flush failed, keeping batch for retry", "err", err, "batches", len(s.pending))
 			return

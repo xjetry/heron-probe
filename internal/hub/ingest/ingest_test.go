@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/hub/traffic"
 	"google.golang.org/protobuf/proto"
@@ -36,6 +38,7 @@ type hub struct {
 	auth   *auth.Auth
 	live   *live.Live
 	book   *traffic.Book
+	reg    *probe.Registry
 }
 
 func newHub(t *testing.T) *hub { return newHubAt(t, filepath.Join(t.TempDir(), "t.db")) }
@@ -52,19 +55,20 @@ func newHubAt(t *testing.T, path string) *hub {
 	a := auth.New(st, clk, slog.Default())
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, slog.Default())
-	svc, err := New(Config{TTL: 30 * time.Second}, l, st, a, book, clk, slog.Default())
+	reg := probe.New(st, slog.Default())
+	svc, err := New(Config{TTL: 30 * time.Second}, l, st, a, book, reg, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx)); err != nil {
+	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx), reg.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
 	mux.Handle(svc.Handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return &hub{svc: svc, srv: srv, client: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, book: book}
+	return &hub{svc: svc, srv: srv, client: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, book: book, reg: reg}
 }
 
 func (h *hub) node(t *testing.T) (int64, string) {
@@ -86,7 +90,7 @@ func report(tok string, m *probev1.Metrics) *connect.Request[probev1.ReportReque
 
 func TestNewEnforcesMinimumTTL(t *testing.T) {
 	for _, ttl := range []time.Duration{-time.Second, 0, 10*time.Second - time.Nanosecond, 10 * time.Second, 30 * time.Second} {
-		svc, err := New(Config{TTL: ttl}, nil, nil, nil, nil, clock.NewFake(time.Now()), slog.Default())
+		svc, err := New(Config{TTL: ttl}, nil, nil, nil, nil, nil, clock.NewFake(time.Now()), slog.Default())
 		if ttl < 10*time.Second {
 			if err == nil || svc != nil {
 				t.Fatalf("TTL %v accepted below minimum", ttl)
@@ -365,11 +369,11 @@ func (f *failingWriter) UpsertFactsAsync(nodeID int64, hash uint64, facts *probe
 	f.Store.UpsertFactsAsync(nodeID, hash, facts, done)
 }
 
-func (f *failingWriter) WriteMinuteRows(ctx context.Context, rows []metric.Row) (int, error) {
+func (f *failingWriter) WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, error) {
 	if f.fail {
 		return 0, errors.New("disk on fire")
 	}
-	return f.Store.WriteMinuteRows(ctx, rows)
+	return f.Store.WriteMinuteBatch(ctx, batch)
 }
 
 func TestFlushRetriesFailedBatchesLater(t *testing.T) {
@@ -612,7 +616,7 @@ func TestForgetDropsPendingRowsWithoutLosingOtherNodes(t *testing.T) {
 	h.svc.pendingMu.Lock()
 	forgotten, retained := 0, 0
 	for _, batch := range h.svc.pending {
-		for _, row := range batch {
+		for _, row := range batch.Rows {
 			if row.NodeID == id {
 				forgotten++
 			}
@@ -737,7 +741,7 @@ func TestReportAccountsTrafficIntoTotalsAndMinuteBucket(t *testing.T) {
 	if !ok || e.TotalRx != 100 || e.TotalTx != 300 || e.PeriodRx != 100 {
 		t.Fatalf("book after two reports: %+v %v", e, ok)
 	}
-	rows := h.live.Drain()
+	rows := h.live.Drain().Rows
 	if sum, n := rxAccounted(rows); sum != 100 || n != 1 {
 		t.Fatalf("minute bucket rx = %v/%d, want 100/1", sum, n)
 	}
@@ -755,18 +759,18 @@ func TestGapBeyondTTLKeepsTotalsButSkipsTheBucket(t *testing.T) {
 	if e, _ := h.book.Get(id); e.TotalRx != 500 {
 		t.Fatalf("totals must still take the increment: %+v", e)
 	}
-	if sum, n := rxAccounted(h.live.Drain()); n != 0 {
+	if sum, n := rxAccounted(h.live.Drain().Rows); n != 0 {
 		t.Fatalf("increment across a gap longer than TTL landed in a minute bucket: %v/%d", sum, n)
 	}
 
 	h.clk.Advance(29 * time.Second)
 	h.mustReport(t, tok, netCounters("b", 1600, 1000))
-	if sum, n := rxAccounted(h.live.Drain()); sum != 100 || n != 1 {
+	if sum, n := rxAccounted(h.live.Drain().Rows); sum != 100 || n != 1 {
 		t.Fatalf("increment at TTL-1s must enter the bucket: %v/%d, want 100/1", sum, n)
 	}
 	h.clk.Advance(30 * time.Second)
 	h.mustReport(t, tok, netCounters("b", 1700, 1000))
-	if sum, n := rxAccounted(h.live.Drain()); sum != 0 || n != 0 {
+	if sum, n := rxAccounted(h.live.Drain().Rows); sum != 0 || n != 0 {
 		t.Fatalf("increment at exactly TTL landed in a minute bucket: %v/%d", sum, n)
 	}
 }
@@ -790,12 +794,12 @@ func TestFirstReportAfterRestartSkipsTheBucketButKeepsTotals(t *testing.T) {
 	if e, _ := h2.book.Get(id); e.TotalRx != 300 {
 		t.Fatalf("restart lost the persisted baseline or totals: %+v", e)
 	}
-	if sum, n := rxAccounted(h2.live.Drain()); n != 0 {
+	if sum, n := rxAccounted(h2.live.Drain().Rows); n != 0 {
 		t.Fatalf("first report after restart landed in a minute bucket: %v/%d", sum, n)
 	}
 	h2.clk.Advance(10 * time.Second)
 	h2.mustReport(t, tok, netCounters("b", 1310, 1000))
-	if sum, n := rxAccounted(h2.live.Drain()); sum != 10 || n != 1 {
+	if sum, n := rxAccounted(h2.live.Drain().Rows); sum != 10 || n != 1 {
 		t.Fatalf("second report after restart must resume bucketing: %v/%d", sum, n)
 	}
 }
@@ -807,5 +811,343 @@ func TestForgetDropsTrafficState(t *testing.T) {
 	h.svc.Forget(id)
 	if _, ok := h.book.Get(id); ok {
 		t.Fatal("traffic entry survived Forget")
+	}
+}
+
+func (h *hub) task(t *testing.T, nodeID int64) uint64 {
+	t.Helper()
+	d, _, err := h.reg.Save(context.Background(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}, []int64{nodeID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d.Task.Id
+}
+
+func rtt(task uint64, ageMs, us uint32) *probev1.ProbeResult {
+	return &probev1.ProbeResult{TaskId: task, AgeMs: ageMs, Outcome: &probev1.ProbeResult_RttUs{RttUs: us}}
+}
+
+func TestReportFoldsResultsIntoMeasuredMinuteBuckets(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	task := h.task(t, id)
+	// 墙钟 00:00:30；age 0 落进 00:00 的桶，age 45 000 ms 落进 23:59 的桶。
+	h.clk.SetWall(time.Date(2026, 1, 1, 0, 0, 30, 0, time.UTC))
+	req := report(tok, &probev1.Metrics{})
+	req.Msg.TasksVersion = h.reg.Version()
+	req.Msg.ProbeResults = []*probev1.ProbeResult{rtt(task, 0, 1200), rtt(task, 45_000, 800),
+		{TaskId: task, Outcome: &probev1.ProbeResult_Timeout{Timeout: &probev1.Timeout{}}}}
+	if _, err := h.client.Report(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	batch := h.live.Drain()
+	if len(batch.Probes) != 2 {
+		t.Fatalf("probe rows %+v", batch.Probes)
+	}
+	byTS := map[int64]*metric.ProbeBucket{}
+	for _, r := range batch.Probes {
+		byTS[r.TS] = r.Bucket
+	}
+	cur, prev := byTS[time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Unix()], byTS[time.Date(2025, 12, 31, 23, 59, 0, 0, time.UTC).Unix()]
+	if cur == nil || cur.Sent != 2 || cur.Lost != 1 || cur.RttN != 1 || cur.RttMinUs != 1200 {
+		t.Fatalf("current minute %+v", cur)
+	}
+	if prev == nil || prev.Sent != 1 || prev.RttMinUs != 800 {
+		t.Fatalf("previous minute %+v", prev)
+	}
+}
+
+func TestReportDropsUnassignedAndStaleResultsButKeepsTheRest(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	other, otherToken := h.node(t)
+	task := h.task(t, id)
+	var logs bytes.Buffer
+	h.svc.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	checkLog := func(node int64, foreign, late int) {
+		t.Helper()
+		var record struct {
+			Level              string
+			Msg                string
+			Node               int64
+			Unassigned, TooOld int
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &raw); err != nil {
+			t.Fatalf("expected one drop log: %q err=%v", logs.String(), err)
+		}
+		if err := json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &record); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(raw["too_old"], &record.TooOld); err != nil {
+			t.Fatal(err)
+		}
+		if record.Level != "WARN" || record.Msg != "probe results dropped" || record.Node != node || record.Unassigned != foreign || record.TooOld != late {
+			t.Fatalf("drop log=%s", logs.String())
+		}
+		logs.Reset()
+	}
+	req := report(otherToken, &probev1.Metrics{})
+	req.Msg.ProbeResults = []*probev1.ProbeResult{rtt(task, 0, 100)}
+	if _, err := h.client.Report(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.live.Drain(); len(got.Probes) != 0 {
+		t.Fatalf("unassigned results entered live: %+v", got.Probes)
+	}
+	checkLog(other, 1, 0)
+	req = report(tok, &probev1.Metrics{})
+	req.Msg.ProbeResults = []*probev1.ProbeResult{rtt(task, 120_001, 100), rtt(task, 120_000, 200), rtt(task+999, 0, 300)}
+	if _, err := h.client.Report(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	got := h.live.Drain()
+	if len(got.Probes) != 1 || got.Probes[0].NodeID != id || got.Probes[0].TaskID != task || got.Probes[0].TS != h.clk.Now().Add(-120*time.Second).Unix() || got.Probes[0].Bucket.Sent != 1 || got.Probes[0].Bucket.RttSumUs != 200 {
+		t.Fatalf("accepted results=%+v", got.Probes)
+	}
+	checkLog(id, 1, 1)
+}
+
+func TestMalformedResultRejectsWholeReport(t *testing.T) {
+	for _, tc := range []struct {
+		name, field string
+		result      *probev1.ProbeResult
+	}{
+		{"missing_outcome", "probe_results[0].outcome", &probev1.ProbeResult{}},
+		{"excessive_rtt", "probe_results[0].rtt_us", rtt(0, 0, 5_000_001)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHub(t)
+			id, tok := h.node(t)
+			task := h.task(t, id)
+			tc.result.TaskId = task
+			req := report(tok, netCounters("boot", 1000, 2000))
+			req.Msg.ProbeResults = []*probev1.ProbeResult{tc.result, rtt(task, 0, 100)}
+			_, err := h.client.Report(t.Context(), req)
+			if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), tc.field) {
+				t.Errorf("malformed error=%v want=%s", err, tc.field)
+			}
+			if _, ok := h.live.Get(id); ok {
+				t.Error("malformed report changed live")
+			}
+			if _, ok := h.book.Get(id); ok {
+				t.Error("malformed report seeded traffic baseline")
+			}
+			if v := h.book.View(id); v.TotalRx != 0 || v.TotalTx != 0 || v.PeriodRx != 0 || v.PeriodTx != 0 {
+				t.Errorf("malformed report changed traffic: %+v", v)
+			}
+			if batch := h.live.Drain(); !batch.Empty() {
+				t.Errorf("malformed report created rows: %+v", batch)
+			}
+		})
+	}
+}
+
+func TestReportReconcilesTaskVersion(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	check := func(version uint64, want *probev1.ProbeTasks) {
+		t.Helper()
+		req := report(tok, &probev1.Metrics{})
+		req.Msg.TasksVersion = version
+		resp, err := h.client.Report(t.Context(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !proto.Equal(resp.Msg.Tasks, want) {
+			t.Errorf("Tasks=%v want=%v", resp.Msg.Tasks, want)
+		}
+		h.clk.Advance(10 * time.Second)
+	}
+	check(0, nil)
+	task := h.task(t, id)
+	check(0, &probev1.ProbeTasks{Version: 1, Tasks: []*probev1.ProbeTask{{Id: task, Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}}})
+	check(1, nil)
+	if _, err := h.reg.Delete(t.Context(), task); err != nil {
+		t.Fatal(err)
+	}
+	check(1, &probev1.ProbeTasks{Version: 2})
+}
+
+func TestReportAcceptsRttBoundaryAndProbeErrors(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	task := h.task(t, id)
+	req := report(tok, &probev1.Metrics{})
+	req.Msg.ProbeResults = []*probev1.ProbeResult{rtt(task, 0, 0), rtt(task, 0, 5_000_000),
+		{TaskId: task, Outcome: &probev1.ProbeResult_Error{Error: &probev1.ProbeError{Message: "socket unavailable"}}}}
+	if _, err := h.client.Report(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	b := h.live.Drain()
+	if len(b.Probes) != 1 {
+		t.Fatalf("probe rows=%+v", b.Probes)
+	}
+	want := metric.ProbeBucket{Sent: 3, Errors: 1, RttN: 2, RttSumUs: 5_000_000, RttMaxUs: 5_000_000}
+	if *b.Probes[0].Bucket != want {
+		t.Fatalf("bucket=%+v want=%+v", *b.Probes[0].Bucket, want)
+	}
+}
+
+func TestMalformedResultLeavesExistingStateUnchanged(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	task := h.task(t, id)
+	h.mustReport(t, tok, netCounters("boot", 1000, 2000))
+	before, _ := h.book.Get(id)
+	liveBefore, _ := h.live.Get(id)
+	h.live.Drain()
+	h.clk.Advance(10 * time.Second)
+	req := report(tok, netCounters("boot", 1100, 2300))
+	req.Msg.ProbeResults = []*probev1.ProbeResult{rtt(task, 0, 5_000_001)}
+	_, err := h.client.Report(t.Context(), req)
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Errorf("malformed error=%v", err)
+	}
+	after, ok := h.book.Get(id)
+	if !ok || after != before {
+		t.Errorf("traffic changed: before=%+v after=%+v", before, after)
+	}
+	liveAfter, ok := h.live.Get(id)
+	if !ok || liveAfter.LastSeen != liveBefore.LastSeen || !proto.Equal(liveAfter.Metrics, liveBefore.Metrics) {
+		t.Errorf("live changed: before=%+v after=%+v", liveBefore, liveAfter)
+	}
+	if !h.live.Drain().Empty() {
+		t.Error("malformed report created rows")
+	}
+}
+
+func readProbeMinutes(t *testing.T, h *hub, id int64) []metric.ProbeRow {
+	t.Helper()
+	from, to := h.clk.Now().Add(-5*time.Minute).Unix(), h.clk.Now().Add(time.Minute).Unix()
+	lv, step := store.ChooseLevel(from, to, 1000)
+	rows, err := h.store.QueryProbes(t.Context(), id, from, to, lv, step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rows
+}
+
+func TestFlushWritesBothFamiliesInOneBatchAndRetriesTogether(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	task := h.task(t, id)
+	req := report(tok, &probev1.Metrics{CpuPct: proto.Float64(10)})
+	req.Msg.ProbeResults = []*probev1.ProbeResult{rtt(task, 0, 100)}
+	if _, err := h.client.Report(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	fw := &failingWriter{Store: h.store, fail: true}
+	h.svc.writer = fw
+	h.clk.Advance(time.Minute)
+	h.svc.Flush(t.Context(), false)
+	if len(h.svc.pending) != 1 || len(h.svc.pending[0].Rows) != 1 || len(h.svc.pending[0].Probes) != 1 {
+		t.Fatalf("pending=%+v", h.svc.pending)
+	}
+	metrics, err := h.store.ReadMinuteRows(t.Context(), id, 0, math.MaxInt64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metrics) != 0 || len(readProbeMinutes(t, h, id)) != 0 {
+		t.Error("failed batch partially persisted")
+	}
+	fw.fail = false
+	h.svc.Flush(t.Context(), false)
+	metrics, err = h.store.ReadMinuteRows(t.Context(), id, 0, math.MaxInt64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probes := readProbeMinutes(t, h, id)
+	if len(metrics) != 1 || metrics[0].Bucket.Sum[0] != 10 || len(probes) != 1 || probes[0].TaskID != task || probes[0].Bucket.RttSumUs != 100 || len(h.svc.pending) != 0 {
+		t.Fatalf("retry: metrics=%+v probes=%+v pending=%d", metrics, probes, len(h.svc.pending))
+	}
+	// 迟到结果只有探测桶，仍须作为非空批次进入同一个写入口。
+	h.live.AddProbe(id, h.clk.Now().Add(-time.Minute), task, rtt(task, 0, 50))
+	h.svc.Flush(t.Context(), false)
+	probes = readProbeMinutes(t, h, id)
+	if len(probes) != 1 || probes[0].Bucket.Sent != 2 || probes[0].Bucket.RttSumUs != 150 {
+		t.Fatalf("late additive merge=%+v", probes)
+	}
+}
+
+func TestForgetDropsPendingProbeRowsAndAssignments(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	keep, other := h.node(t)
+	deletedTask, keptTask := h.task(t, id), h.task(t, keep)
+	for _, tc := range []struct {
+		token string
+		task  uint64
+	}{{tok, deletedTask}, {other, keptTask}} {
+		req := report(tc.token, &probev1.Metrics{CpuPct: proto.Float64(1)})
+		req.Msg.ProbeResults = []*probev1.ProbeResult{rtt(tc.task, 0, 100)}
+		if _, err := h.client.Report(t.Context(), req); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.svc.writer = &failingWriter{Store: h.store, fail: true}
+	h.svc.Flush(t.Context(), true)
+	if err := h.auth.DeleteNode(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	h.svc.Forget(id)
+	if h.reg.Assigned(id, deletedTask) || !h.reg.Assigned(keep, keptTask) {
+		t.Error("Forget removed wrong assignments")
+	}
+	if len(h.svc.pending) != 1 {
+		t.Fatalf("pending batches=%d", len(h.svc.pending))
+	}
+	b := h.svc.pending[0]
+	if len(b.Rows) != 1 || b.Rows[0].NodeID != keep || len(b.Probes) != 1 || b.Probes[0].NodeID != keep {
+		t.Fatalf("pending after Forget=%+v", b)
+	}
+	if err := h.auth.DeleteNode(t.Context(), keep); err != nil {
+		t.Fatal(err)
+	}
+	h.svc.Forget(keep)
+	if len(h.svc.pending) != 0 {
+		t.Fatalf("empty batch survived Forget: %+v", h.svc.pending)
+	}
+}
+
+func TestFlushBoundsPendingBothFamilies(t *testing.T) {
+	h := newHub(t)
+	id, _ := h.node(t)
+	task := h.task(t, id)
+	start := h.clk.Now().Unix()
+	var logs bytes.Buffer
+	h.svc.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	h.svc.writer = &failingWriter{Store: h.store, fail: true}
+	for range maxPendingBatches + 1 {
+		h.live.Observe(id, &probev1.Metrics{})
+		h.live.AddProbe(id, h.clk.Now(), task, rtt(task, 0, 100))
+		h.clk.Advance(time.Minute)
+		h.svc.Flush(t.Context(), false)
+	}
+	if len(h.svc.pending) != maxPendingBatches {
+		t.Fatalf("pending=%d want=%d", len(h.svc.pending), maxPendingBatches)
+	}
+	oldest := h.svc.pending[0]
+	if len(oldest.Rows) != 1 || oldest.Rows[0].TS != start+60 || len(oldest.Probes) != 1 || oldest.Probes[0].TS != start+60 {
+		t.Fatalf("oldest batch=%+v", oldest)
+	}
+	drops := 0
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var record struct {
+			Msg          string
+			Rows, Probes int
+		}
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatal(err)
+		}
+		if record.Msg == "dropping oldest unflushed minute batch" {
+			drops++
+			if record.Rows != 1 || record.Probes != 1 {
+				t.Errorf("drop log omitted family counts: %s", line)
+			}
+		}
+	}
+	if drops != 1 {
+		t.Errorf("drop log count=%d want=1", drops)
 	}
 }

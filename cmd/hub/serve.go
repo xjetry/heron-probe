@@ -19,6 +19,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
+	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/hub/traffic"
 	"github.com/xjetry/probe/internal/hub/web"
@@ -114,12 +115,13 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	a := auth.New(st, clk, log)
 	l := live.New(clk, ttl)
 	book := traffic.New(st, clk, loc, log)
-	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, book, clk, log)
+	reg := probe.New(st, log)
+	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, book, reg, clk, log)
 	if err != nil {
 		return err
 	}
 	ctx := context.Background()
-	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx)); err != nil {
+	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx), reg.Load(ctx)); err != nil {
 		return err
 	}
 	admin := api.New(api.Config{ReportInterval: svc.Interval(), TrustedProxies: trusted}, st, a, l, svc, book, clk, log)
