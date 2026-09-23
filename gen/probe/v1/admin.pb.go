@@ -1726,8 +1726,11 @@ func (*GetTrafficRequest) Descriptor() ([]byte, []int) {
 type GetTrafficResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// hub 墙钟，Unix 秒。
-	Now           int64          `protobuf:"varint,1,opt,name=now,proto3" json:"now,omitempty"`
-	Nodes         []*NodeTraffic `protobuf:"bytes,2,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	Now   int64          `protobuf:"varint,1,opt,name=now,proto3" json:"now,omitempty"`
+	Nodes []*NodeTraffic `protobuf:"bytes,2,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	// hub 的 --timezone（IANA 名）：reset_day 与周期零点都按此时区判定；
+	// period_start / next_reset_at 是 Unix 秒，本身无歧义。
+	Timezone      string `protobuf:"bytes,3,opt,name=timezone,proto3" json:"timezone,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1774,6 +1777,13 @@ func (x *GetTrafficResponse) GetNodes() []*NodeTraffic {
 		return x.Nodes
 	}
 	return nil
+}
+
+func (x *GetTrafficResponse) GetTimezone() string {
+	if x != nil {
+		return x.Timezone
+	}
+	return ""
 }
 
 type NodeTraffic struct {
@@ -2057,10 +2067,11 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\fperiod_start\x18\x05 \x01(\x03R\vperiodStart\x12\"\n" +
 	"\rnext_reset_at\x18\x06 \x01(\x03R\vnextResetAt\x12\x1b\n" +
 	"\treset_day\x18\a \x01(\rR\bresetDay\"\x13\n" +
-	"\x11GetTrafficRequest\"S\n" +
+	"\x11GetTrafficRequest\"o\n" +
 	"\x12GetTrafficResponse\x12\x10\n" +
 	"\x03now\x18\x01 \x01(\x03R\x03now\x12+\n" +
-	"\x05nodes\x18\x02 \x03(\v2\x15.probe.v1.NodeTrafficR\x05nodes\"g\n" +
+	"\x05nodes\x18\x02 \x03(\v2\x15.probe.v1.NodeTrafficR\x05nodes\x12\x1a\n" +
+	"\btimezone\x18\x03 \x01(\tR\btimezone\"g\n" +
 	"\vNodeTraffic\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\x03R\x06nodeId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12+\n" +

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
 
 	"connectrpc.com/connect"
@@ -45,6 +46,10 @@ type NodeState interface {
 }
 
 type Service struct {
+	// 内存里的重置日与库里的 traffic_reset_day 必须一致，Forget 之后不得再为该节点建内存状态；
+	// 节点的库写入与内存更新在同一临界区内完成，不同请求按此锁串行。
+	nodeMu sync.Mutex
+
 	cfg     Config
 	store   *store.Store
 	auth    *auth.Auth

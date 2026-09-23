@@ -219,6 +219,9 @@ message GetTrafficResponse {
   // hub 墙钟，Unix 秒。
   int64 now = 1;
   repeated NodeTraffic nodes = 2;
+  // hub 的 --timezone（IANA 名）：reset_day 与周期零点都按此时区判定；
+  // period_start / next_reset_at 是 Unix 秒，本身无歧义。
+  string timezone = 3;
 }
 message NodeTraffic {
   int64 node_id = 1;

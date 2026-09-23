@@ -666,6 +666,10 @@ func TestTrafficIsReportedAdjustedAndConfigured(t *testing.T) {
 		t.Fatalf("GetTraffic = %v %v", all, err)
 	}
 
+	if all.Msg.GetTimezone() != "UTC" {
+		t.Fatalf("timezone = %q, want UTC", all.Msg.GetTimezone())
+	}
+
 	adj, err := h.admin.AdjustTraffic(ctx, connect.NewRequest(&probev1.AdjustTrafficRequest{NodeId: id, PeriodRx: 5 << 30, PeriodTx: 0}))
 	if err != nil {
 		t.Fatal(err)
@@ -749,5 +753,22 @@ func TestQueryMetricsEmitsSumForAdditiveColumns(t *testing.T) {
 	}
 	if cpu := resp.Msg.Series[0].Samples[1]; cpu.Sum != nil || cpu.Mean == nil {
 		t.Fatalf("cpu sample = %v, want mean without sum", cpu)
+	}
+}
+
+func TestAdjustTrafficRejectsOutOfRangeUsage(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	id, _ := h.createNode(t, "n")
+	for _, tc := range []struct {
+		field  string
+		rx, tx uint64
+	}{{"period_rx", math.MaxUint64, 0}, {"period_tx", 0, math.MaxUint64}} {
+		t.Run(tc.field, func(t *testing.T) {
+			_, err := h.admin.AdjustTraffic(t.Context(), connect.NewRequest(&probev1.AdjustTrafficRequest{NodeId: id, PeriodRx: tc.rx, PeriodTx: tc.tx}))
+			if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), tc.field) {
+				t.Fatalf("%s: %v, want InvalidArgument naming the field", tc.field, err)
+			}
+		})
 	}
 }

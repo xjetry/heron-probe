@@ -73,7 +73,7 @@ func runServe(args []string) error {
 func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *slog.Logger) (result error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	db := fs.String("db", "probe.db", "SQLite database path")
-	tz := fs.String("timezone", "", "IANA time zone for traffic period boundaries (default: the host's local zone)")
+	tz := fs.String("timezone", "", "IANA time zone for traffic period boundaries (default: the host's zone, resolved from TZ or /etc/localtime; UTC if neither resolves); already-persisted period starts are interpreted in the new zone; usage of the current period may be reset at the next read, report or flush")
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
 	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For / X-Forwarded-Proto are trusted; empty trusts none")
 	retention := store.DefaultRetention
@@ -86,10 +86,14 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	if err := retention.Validate(); err != nil {
 		return err
 	}
-	loc, err := loadZone(*tz)
+	loc, fallback, err := loadZone(*tz)
 	if err != nil {
 		return err
 	}
+	if fallback {
+		log.Warn("host time zone could not be resolved; using UTC; set --timezone explicitly")
+	}
+
 	ttl, err := parseTTL(os.Getenv("PROBE_OFFLINE_AFTER"))
 	if err != nil {
 		return err

@@ -338,3 +338,21 @@ func TestServeFlushesTrafficOnShutdown(t *testing.T) {
 		t.Fatalf("shutdown lost the traffic state: %+v", r)
 	}
 }
+
+func TestServeWarnsWhenLocalTimezoneCannotBeResolved(t *testing.T) {
+	t.Setenv("TZ", "")
+	old := localtimePath
+	localtimePath = filepath.Join(t.TempDir(), "missing-localtime")
+	t.Cleanup(func() { localtimePath = old })
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	var logs bytes.Buffer
+	err := runServeWith(ctx, []string{"--db", filepath.Join(t.TempDir(), "hub.db"), "--listen", "127.0.0.1:0"},
+		clock.NewFake(time.Now()), slog.New(slog.NewTextHandler(&logs, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "set --timezone") {
+		t.Fatalf("missing UTC fallback warning: %s", &logs)
+	}
+}

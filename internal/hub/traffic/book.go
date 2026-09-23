@@ -33,7 +33,7 @@ type Storage interface {
 var _ Storage = (*store.Store)(nil)
 
 // State 是落盘的累计状态，与 traffic 表一行对应。计数器与累计值用 int64：与 SQLite
-// INTEGER 同宽，协议里的 uint64 在入口处截到 MaxInt64。
+// INTEGER 同宽；计数器在入账时截到 MaxInt64，管理接口拒绝越界的校正用量。
 type State struct {
 	BootID                           string
 	LastRx, LastTx, TotalRx, TotalTx int64
@@ -79,6 +79,8 @@ func New(st Storage, clk clock.Clock, tz *time.Location, log *slog.Logger) *Book
 	return &Book{st: st, clk: clk, tz: tz, log: log, entries: map[int64]*entry{}, resetDay: map[int64]int{}}
 }
 
+func (b *Book) Zone() *time.Location { return b.tz }
+
 // Load 从库恢复条目与重置日。只要 agent 未换启动周期且计数器未倒退，恢复的基线
 // 就让重启后的首次上报通过差分补回最后一次成功刷出之后丢失的内存增量。
 func (b *Book) Load(ctx context.Context) error {
@@ -93,9 +95,10 @@ func (b *Book) Load(ctx context.Context) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.entries = map[int64]*entry{}
+	// 库值是 int64，类型已限定上界；手工改库可能留下负累计值，恢复时统一收敛到非负范围。
 	for _, r := range recs {
-		b.entries[r.NodeID] = &entry{State: State{BootID: r.BootID, LastRx: r.LastRx, LastTx: r.LastTx, TotalRx: r.TotalRx, TotalTx: r.TotalTx,
-			PeriodRx: r.PeriodRx, PeriodTx: r.PeriodTx, PeriodStart: r.PeriodStart}}
+		b.entries[r.NodeID] = &entry{State: State{BootID: r.BootID, LastRx: r.LastRx, LastTx: r.LastTx, TotalRx: max(r.TotalRx, 0), TotalTx: max(r.TotalTx, 0),
+			PeriodRx: max(r.PeriodRx, 0), PeriodTx: max(r.PeriodTx, 0), PeriodStart: r.PeriodStart}}
 	}
 	b.resetDay = days
 	return nil
@@ -125,6 +128,7 @@ func (b *Book) day(nodeID int64) int {
 }
 
 // rolled 只计算状态副本，校正写库失败时不能把周期滚动留在内存里。
+// 周期起点按旧时区落盘；换时区后若该起点之后的首个新边界已过，下一次读取、入账或刷出会清零周期量。
 // 连续错过多个周期时直接跳到 now 所在的周期——中间周期的用量没有载体，本来就丢了。
 func (b *Book) rolled(s State, day int, now time.Time) (State, bool) {
 	if now.Before(NextResetAfter(s.PeriodStart, day, b.tz)) {
@@ -228,6 +232,7 @@ func record(nodeID int64, s State) store.TrafficRecord {
 func (b *Book) Adjust(ctx context.Context, nodeID int64, periodRx, periodTx uint64) (Entry, error) {
 	b.writeMu.Lock()
 	defer b.writeMu.Unlock()
+	// api 已拒绝越界的校正值，这里只对直接调用者兜底。
 	rx, tx := clamp(periodRx), clamp(periodTx)
 	now := b.clk.Now()
 	b.mu.Lock()

@@ -166,8 +166,8 @@ func TestMissingCountersLeaveBaselineUntouched(t *testing.T) {
 func TestTotalsSaturateAtMaxInt64(t *testing.T) {
 	b, _ := newBook(t, newMem())
 	b.Account(1, counters("b1", 0, 0))
-	// 校正值截到 MaxInt64；随后的任何增量都不能把总量回绕成负数。
-	if _, err := b.Adjust(context.Background(), 1, math.MaxUint64, 0); err != nil {
+	// 总量已在存储上界，随后的增量不能使它回绕成负数。
+	if _, err := b.Adjust(context.Background(), 1, math.MaxInt64, 0); err != nil {
 		t.Fatal(err)
 	}
 	b.Account(1, counters("b1", 10, 0))
@@ -478,5 +478,16 @@ func TestBookPersistsAndResumesWithStore(t *testing.T) {
 	}
 	if got := resumed.View(id); got != e {
 		t.Fatalf("skipped adjust changed memory: got %+v, want %+v", got, e)
+	}
+}
+
+func TestLoadClampsNegativeUsage(t *testing.T) {
+	st := newMem()
+	st.recs[1] = store.TrafficRecord{NodeID: 1, TotalRx: -5, TotalTx: -6, PeriodRx: -7, PeriodTx: -8,
+		PeriodStart: time.Date(2026, 9, 1, 0, 0, 0, 0, shanghai)}
+	b, _ := newBook(t, st)
+	e := b.View(1)
+	if e.TotalRx != 0 || e.TotalTx != 0 || e.PeriodRx != 0 || e.PeriodTx != 0 {
+		t.Fatalf("negative persisted usage survived Load: %+v", e)
 	}
 }

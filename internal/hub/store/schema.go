@@ -71,12 +71,12 @@ const ddlAdminSession = `CREATE TABLE admin_session (
 )`
 
 // traffic 是 §7 累加器的持久化形态：基线（boot_id、last_*）与累计值同一行、同一事务落盘，
-// 崩溃后首次上报相对已落盘基线做差分恰好补上内存里丢失的增量。
+// agent 未换启动周期且计数器未倒退时，崩溃后首次上报相对已落盘基线的差分会补回丢失的内存增量。
 const ddlTraffic = `CREATE TABLE traffic (
   node_id INTEGER PRIMARY KEY,
   boot_id TEXT NOT NULL,
-  last_rx INTEGER NOT NULL,
-  last_tx INTEGER NOT NULL,
+  last_rx INTEGER NOT NULL, -- -1 表示尚无基线，与 traffic.NoBaseline 同值；由校正建立的条目才有。
+  last_tx INTEGER NOT NULL, -- -1 的含义与 last_rx 相同。
   total_rx INTEGER NOT NULL,
   total_tx INTEGER NOT NULL,
   period_rx INTEGER NOT NULL,

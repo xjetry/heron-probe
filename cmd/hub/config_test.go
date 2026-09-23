@@ -89,13 +89,60 @@ func TestServeRejectsInvalidRetention(t *testing.T) {
 }
 
 func TestLoadZone(t *testing.T) {
-	if loc, err := loadZone(""); err != nil || loc != time.Local {
-		t.Fatalf("empty must be the local zone: %v %v", loc, err)
+	t.Setenv("TZ", "Asia/Tokyo")
+	if loc, fallback, err := loadZone(""); err != nil || fallback || loc.String() != "Asia/Tokyo" {
+		t.Fatalf("TZ must select Asia/Tokyo without fallback: %v %v %v", loc, fallback, err)
 	}
-	if loc, err := loadZone("Asia/Shanghai"); err != nil || loc.String() != "Asia/Shanghai" {
+	if loc, _, err := loadZone("Asia/Shanghai"); err != nil || loc.String() != "Asia/Shanghai" {
 		t.Fatalf("Asia/Shanghai: %v %v", loc, err)
 	}
-	if _, err := loadZone("Mars/Olympus"); err == nil || !strings.Contains(err.Error(), "--timezone") {
+	if _, _, err := loadZone("Mars/Olympus"); err == nil || !strings.Contains(err.Error(), "--timezone") {
 		t.Fatalf("unknown zone: %v, want an error naming the flag", err)
+	}
+}
+
+func TestLoadZoneFallsBackPastInvalidTZ(t *testing.T) {
+	t.Setenv("TZ", "Mars/Olympus")
+	loc, _, err := loadZone("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := time.LoadLocation(loc.String()); err != nil || loc.String() == "Local" {
+		t.Fatalf("unusable resolved zone %q: %v", loc, err)
+	}
+}
+
+func TestLoadZoneResolutionSources(t *testing.T) {
+	for _, tc := range []struct {
+		name, tz, target, want string
+		fallback               bool
+	}{
+		{"environment wins", "Asia/Tokyo", "/usr/share/zoneinfo/UTC", "Asia/Tokyo", false},
+		{"invalid environment uses link", "Mars/Olympus", "/usr/share/zoneinfo/Asia/Shanghai", "Asia/Shanghai", false},
+		{"local environment uses link", "Local", "/usr/share/zoneinfo/Asia/Shanghai", "Asia/Shanghai", false},
+		{"missing sources", "", "", "UTC", true},
+		{"invalid link", "", "/usr/share/zoneinfo/Mars/Olympus", "UTC", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TZ", tc.tz)
+			old := localtimePath
+			localtimePath = filepath.Join(t.TempDir(), "localtime")
+			t.Cleanup(func() { localtimePath = old })
+			if tc.target != "" {
+				if err := os.Symlink(tc.target, localtimePath); err != nil {
+					t.Fatal(err)
+				}
+			}
+			loc, fallback, err := loadZone("")
+			if err != nil || fallback != tc.fallback || loc.String() != tc.want {
+				t.Fatalf("zone=%v fallback=%v err=%v, want %s/%v", loc, fallback, err, tc.want, tc.fallback)
+			}
+		})
+	}
+}
+
+func TestLoadZoneRejectsExplicitLocal(t *testing.T) {
+	if _, _, err := loadZone("Local"); err == nil || !strings.Contains(err.Error(), "--timezone") {
+		t.Fatalf("Local must be rejected with a flag error: %v", err)
 	}
 }

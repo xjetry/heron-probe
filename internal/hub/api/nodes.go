@@ -99,6 +99,8 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 	if day < minResetDay || day > maxResetDay {
 		return nil, invalid("traffic_reset_day must be between %d and %d; got %d", minResetDay, maxResetDay, day)
 	}
+	s.nodeMu.Lock()
+	defer s.nodeMu.Unlock()
 	err = s.store.UpdateNode(ctx, req.Msg.GetId(), name, req.Msg.GetPublic(), note, day)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, notFound(req.Msg.GetId())
@@ -107,7 +109,7 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 		s.log.Error("updating node failed", "err", err)
 		return nil, internalError("updating node failed")
 	}
-	// 库已提交才改内存：失败的更新不能让内存里的重置日与库分叉。
+	// 只有库提交成功才改内存；nodeMu 跨越两次写入并与删除共用，失败或并发请求都不能使两者分叉。
 	s.traffic.SetResetDay(req.Msg.GetId(), day)
 	n, err := s.store.GetNode(ctx, req.Msg.GetId())
 	if err != nil {
@@ -119,6 +121,8 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 // DeleteNode 先由 auth 删除库记录和 token，再由状态持有者等待在途上报并清理。
 // 返回成功必须同时意味着持久化删除完成与进程内状态清除。
 func (s *Service) DeleteNode(ctx context.Context, req *connect.Request[probev1.DeleteNodeRequest]) (*connect.Response[probev1.DeleteNodeResponse], error) {
+	s.nodeMu.Lock()
+	defer s.nodeMu.Unlock()
 	err := s.auth.DeleteNode(ctx, req.Msg.GetId())
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, notFound(req.Msg.GetId())
