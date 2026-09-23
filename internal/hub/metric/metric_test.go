@@ -64,7 +64,7 @@ func TestColumnsCoverSpecifiedMetrics(t *testing.T) {
 	}{
 		"cpu": {MeanMax, Float}, "mem_used": {MeanMax, Int}, "swap_used": {Mean, Int},
 		"disk_used": {Mean, Int}, "load1": {Mean, Float}, "tcp": {Mean, Int},
-		"udp": {Mean, Int}, "procs": {Mean, Int},
+		"udp": {Mean, Int}, "procs": {Mean, Int}, "rx_bytes": {Sum, Int}, "tx_bytes": {Sum, Int},
 	}
 	if len(Columns) != len(want) {
 		t.Fatalf("%d columns, want %d", len(Columns), len(want))
@@ -89,5 +89,39 @@ func TestEveryColumnDeclaresItsUnit(t *testing.T) {
 		if c.Unit == "" && c.Name != "load1" {
 			t.Fatalf("%s: only load has no unit", c.Name)
 		}
+	}
+}
+
+func TestSumColumnsAreFedByAddSumNotByMetrics(t *testing.T) {
+	b := NewBucket()
+	b.Add(&probev1.Metrics{NetRxTotal: proto.Uint64(5), NetTxTotal: proto.Uint64(7)})
+	if b.N[RxBytes] != 0 || b.N[TxBytes] != 0 {
+		t.Fatalf("Sum columns took a value from Metrics: n = %d/%d, want 0/0", b.N[RxBytes], b.N[TxBytes])
+	}
+	b.AddSum(RxBytes, 1500)
+	b.AddSum(RxBytes, 500)
+	if b.Sum[RxBytes] != 2000 || b.N[RxBytes] != 2 {
+		t.Fatalf("rx_bytes = %v/%d, want 2000/2", b.Sum[RxBytes], b.N[RxBytes])
+	}
+	o := NewBucket()
+	o.AddSum(RxBytes, 1)
+	b.Merge(o)
+	if b.Sum[RxBytes] != 2001 || b.N[RxBytes] != 3 {
+		t.Fatalf("merged rx_bytes = %v/%d, want 2001/3", b.Sum[RxBytes], b.N[RxBytes])
+	}
+	if _, ok := b.Mean(TxBytes); ok {
+		t.Fatal("tx_bytes without AddSum must read as no data")
+	}
+}
+
+func TestIndexLocatesColumnsByName(t *testing.T) {
+	if Index("rx_bytes") != len(Columns)-2 || Index("tx_bytes") != len(Columns)-1 {
+		t.Fatalf("rx_bytes/tx_bytes at %d/%d, want the last two columns", Index("rx_bytes"), Index("tx_bytes"))
+	}
+	if Index("nope") != -1 {
+		t.Fatal("unknown name must be -1")
+	}
+	if Columns[RxBytes].Kind != Sum || Columns[TxBytes].Kind != Sum || Columns[RxBytes].Unit != "bytes" {
+		t.Fatal("traffic columns must be Sum kind in bytes")
 	}
 }

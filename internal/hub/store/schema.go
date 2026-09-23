@@ -70,13 +70,29 @@ const ddlAdminSession = `CREATE TABLE admin_session (
   expires_at INTEGER NOT NULL
 )`
 
+// traffic 是 §7 累加器的持久化形态：基线（boot_id、last_*）与累计值同一行、同一事务落盘，
+// 崩溃后首次上报相对已落盘基线做差分恰好补上内存里丢失的增量。
+const ddlTraffic = `CREATE TABLE traffic (
+  node_id INTEGER PRIMARY KEY,
+  boot_id TEXT NOT NULL,
+  last_rx INTEGER NOT NULL,
+  last_tx INTEGER NOT NULL,
+  total_rx INTEGER NOT NULL,
+  total_tx INTEGER NOT NULL,
+  period_rx INTEGER NOT NULL,
+  period_tx INTEGER NOT NULL,
+  -- 当前周期起点，Unix 秒；重置日零点按 hub 时区换算。
+  period_start INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+)`
+
 // metricTables 按级别从细到粗；建库、DeleteNode 与 Counts 共用此清单，
 // 避免新增级别后遗漏删除或计数；已有库仍需对应的增量迁移。
 var metricTables = []string{"metric_1m", "metric_5m", "metric_1h"}
 
 // schemaStatements 是当前版本的完整 DDL：空库直接建到当前版本，不重放历史。
 func schemaStatements() []string {
-	out := []string{ddlNode, ddlNodeFacts, ddlRegisterWindow, ddlRollupState, seedRollupState, ddlAdmin, ddlAdminSession}
+	out := []string{ddlNode, ddlNodeFacts, ddlRegisterWindow, ddlRollupState, seedRollupState, ddlAdmin, ddlAdminSession, ddlTraffic}
 	for _, t := range metricTables {
 		out = append(out, metricDDL(t))
 	}
@@ -85,12 +101,15 @@ func schemaStatements() []string {
 
 // metricDDL 从描述表生成分钟表。主键顺序 (node_id, ts) 即唯一查询路径，
 // WITHOUT ROWID 使主键索引就是表本身。
+// 每列都带 DEFAULT 0：后加的列在迁移里要由重建搬运旧行，旧行在新列上没有值，
+// 只能取默认值；而全新建库与迁移后的库必须逐列相同（含默认值），所以默认值
+// 由这一处统一给出。所有写路径都显式写全部列，默认值不参与任何业务取值。
 func metricDDL(table string) string {
 	cols := []string{"node_id INTEGER NOT NULL", "ts INTEGER NOT NULL"}
 	for _, c := range metric.Columns {
-		cols = append(cols, c.Name+"_sum "+c.SQLType()+" NOT NULL", c.Name+"_n INTEGER NOT NULL")
+		cols = append(cols, c.Name+"_sum "+c.SQLType()+" NOT NULL DEFAULT 0", c.Name+"_n INTEGER NOT NULL DEFAULT 0")
 		if c.Kind == metric.MeanMax {
-			cols = append(cols, c.Name+"_max "+c.SQLType()+" NOT NULL")
+			cols = append(cols, c.Name+"_max "+c.SQLType()+" NOT NULL DEFAULT 0")
 		}
 	}
 	return "CREATE TABLE " + table + " (" + strings.Join(cols, ", ") + ", PRIMARY KEY (node_id, ts)) WITHOUT ROWID"

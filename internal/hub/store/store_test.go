@@ -303,6 +303,32 @@ func TestDeleteNodeRemovesDependentRows(t *testing.T) {
 	}
 }
 
+func TestDeleteNodeRemovesTraffic(t *testing.T) {
+	s, _ := open(t)
+	id, err := s.CreateNode(t.Context(), "traffic", hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.write(t.Context(), func(tx *sql.Tx) error {
+		_, err := tx.Exec(`INSERT INTO traffic (node_id, boot_id, last_rx, last_tx, total_rx, total_tx,
+			period_rx, period_tx, period_start, updated_at) VALUES (?, 'boot', 5, 7, 5, 7, 5, 7, 0, 1)`, id)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	counts, err := s.Counts(t.Context())
+	if err != nil || counts["traffic"] != 1 {
+		t.Fatalf("traffic count before delete = %d, want 1 (%v)", counts["traffic"], err)
+	}
+	if err := s.DeleteNode(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	var n int64
+	if err := s.r.QueryRow("SELECT COUNT(*) FROM traffic WHERE node_id = ?", id).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("traffic survived delete: %d rows (%v)", n, err)
+	}
+}
+
 func TestAsyncCallbackObservesCommittedWrite(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()

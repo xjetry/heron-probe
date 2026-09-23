@@ -18,6 +18,10 @@ const (
 	Mean Kind = iota
 	// MeanMax 另存 max：短时尖峰一路保留到最粗一级，不被均值抹平。
 	MeanMax
+	// Sum 也只存 sum 与 n，但 sum 本身就是可加量（一分钟内的字节增量），查询下发 sum
+	// 而不是均值；n 是入账次数，n = 0 与其他列一样表示这一分钟没有入账。
+	// Sum 列不从 Metrics 取值：增量由入账方算出后经 AddSum 写入，所以它的 Get 为 nil。
+	Sum
 )
 
 type Type uint8
@@ -35,7 +39,7 @@ type Column struct {
 	// Unit 随查询结果下发：percent、bytes、count；load 无单位为空串。
 	// 数据自带单位，图表与 agent 都不必查表才知道该怎么读。
 	Unit string
-	// Get 从一次上报里取读数；false 表示无读数，此时既不进 sum 也不进 n。
+	// Get 从一次上报里取读数；false 表示无读数，此时既不进 sum 也不进 n。Sum 列为 nil。
 	Get func(*probev1.Metrics) (float64, bool)
 }
 
@@ -59,7 +63,31 @@ var Columns = []Column{
 	{"tcp", Mean, Int, "count", func(m *probev1.Metrics) (float64, bool) { return f64(uint64(m.GetTcpConns())), m.TcpConns != nil }},
 	{"udp", Mean, Int, "count", func(m *probev1.Metrics) (float64, bool) { return f64(uint64(m.GetUdpConns())), m.UdpConns != nil }},
 	{"procs", Mean, Int, "count", func(m *probev1.Metrics) (float64, bool) { return f64(uint64(m.GetProcs())), m.Procs != nil }},
+	{"rx_bytes", Sum, Int, "bytes", nil},
+	{"tx_bytes", Sum, Int, "bytes", nil},
 }
+
+// AddSum 把一次入账的可加量加进第 i 列并计一次入账；只对 Sum 列有意义。
+func (b *Bucket) AddSum(i int, v float64) {
+	b.Sum[i] += v
+	b.N[i]++
+}
+
+// Index 返回列名在 Columns 里的下标，不存在则 -1。
+func Index(name string) int {
+	for i, c := range Columns {
+		if c.Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// 入账方按下标写 Sum 列，不在热路径上按名字查表。
+var (
+	RxBytes = Index("rx_bytes")
+	TxBytes = Index("tx_bytes")
+)
 
 // Bucket 是一分钟内样本的可加折叠。
 //
@@ -78,6 +106,9 @@ func NewBucket() *Bucket {
 
 func (b *Bucket) Add(m *probev1.Metrics) {
 	for i, c := range Columns {
+		if c.Get == nil {
+			continue
+		}
 		v, ok := c.Get(m)
 		if !ok {
 			continue

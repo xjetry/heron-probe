@@ -159,6 +159,9 @@ func (s *Store) DeleteNode(ctx context.Context, id int64) error {
 		if _, err := tx.Exec("DELETE FROM node_facts WHERE node_id = ?", id); err != nil {
 			return err
 		}
+		if _, err := tx.Exec("DELETE FROM traffic WHERE node_id = ?", id); err != nil {
+			return err
+		}
 		for _, t := range metricTables {
 			if _, err := tx.Exec("DELETE FROM "+t+" WHERE node_id = ?", id); err != nil {
 				return err
@@ -223,7 +226,7 @@ func (s *Store) TokenHashes(ctx context.Context) (map[[32]byte]int64, error) {
 
 // Counts 返回各表行数，供运维核对与端到端验收。
 func (s *Store) Counts(ctx context.Context) (map[string]int64, error) {
-	tables := append([]string{"node", "node_facts", "register_window", "admin", "admin_session"}, metricTables...)
+	tables := append([]string{"node", "node_facts", "register_window", "admin", "admin_session", "traffic"}, metricTables...)
 	out := map[string]int64{}
 	for _, table := range tables {
 		var n int64
