@@ -2,14 +2,19 @@ package prober
 
 import (
 	"math"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	"github.com/xjetry/probe/internal/probelimit"
 )
 
-// QueueCap 覆盖最坏情况：64 个任务 × 每 5 秒一次 × 120 秒迟到预算 = 1536 条，留出余量。
+// QueueCap 须容纳 120s 满速产出 1536 条及至少一批 1024 条，避免回队时挤掉仍可上报的结果。
 const QueueCap = 4096
+
+const _ = uint(QueueCap - probelimit.MaxTasksPerNode*int(probelimit.MaxResultAge/time.Second)/probelimit.MinIntervalS - probelimit.MaxResultsPerReport)
 
 type Result struct {
 	TaskID  uint64
@@ -49,19 +54,22 @@ func (q *Queue) trim() {
 }
 
 // Take 丢弃超龄结果：hub 会拒收它们，继续保留只会占用上报体积。
-func (q *Queue) Take(now, maxAge time.Duration) []Result {
+func (q *Queue) Take(now, maxAge time.Duration, limit int) []Result {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	var out []Result
+	remaining := q.items[:0]
 	for _, r := range q.items {
 		if now-r.At > maxAge {
 			q.dropped++
-		} else {
+		} else if len(out) < limit {
 			out = append(out, r)
+		} else {
+			remaining = append(remaining, r)
 		}
 	}
-	clear(q.items)
-	q.items = q.items[:0]
+	clear(q.items[len(remaining):])
+	q.items = remaining
 	return out
 }
 
@@ -88,7 +96,16 @@ func ToProto(rs []Result, now time.Duration) []*probev1.ProbeResult {
 		p := &probev1.ProbeResult{TaskId: r.TaskID, AgeMs: uint32(min(max((now-r.At)/time.Millisecond, 0), math.MaxUint32))}
 		switch {
 		case r.Outcome.Err != "":
-			p.Outcome = &probev1.ProbeResult_Error{Error: &probev1.ProbeError{Message: r.Outcome.Err}}
+			// 协议字符串必须是合法 UTF-8；只在出队编码处统一限制字节数，不切断多字节字符。
+			message := strings.ToValidUTF8(r.Outcome.Err, "\uFFFD")
+			if len(message) > probelimit.MaxErrorMessageLen {
+				end := probelimit.MaxErrorMessageLen
+				for !utf8.RuneStart(message[end]) {
+					end--
+				}
+				message = message[:end]
+			}
+			p.Outcome = &probev1.ProbeResult_Error{Error: &probev1.ProbeError{Message: message}}
 		case r.Outcome.Timeout:
 			p.Outcome = &probev1.ProbeResult_Timeout{Timeout: &probev1.Timeout{}}
 		default:

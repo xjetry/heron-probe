@@ -252,15 +252,15 @@ func TestRateLimitIsTwiceTheReportRate(t *testing.T) {
 	}
 }
 
-// connect v1.21.0 实测：71690 字节消息超过 65536 字节上限时返回 ResourceExhausted。
+// 请求体上限在解码入口执行，超出的请求不能更新 live。
 func TestOversizedBodyIsRejected(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
 	req := report(tok, &probev1.Metrics{})
-	req.Msg.Facts = &probev1.Facts{Os: strings.Repeat("x", 70*1024)}
+	req.Msg.Facts = &probev1.Facts{Os: strings.Repeat("x", maxBody+1024)}
 	_, err := h.client.Report(context.Background(), req)
 	if connect.CodeOf(err) != connect.CodeResourceExhausted {
-		t.Fatalf("70 KiB body: err = %v, want ResourceExhausted", err)
+		t.Fatalf("oversized body: err = %v, want ResourceExhausted", err)
 	}
 	if _, ok := h.live.Get(id); ok {
 		t.Fatal("rejected body must leave live untouched")

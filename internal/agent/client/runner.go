@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math/rand/v2"
 	"time"
@@ -24,9 +25,9 @@ type Runner struct {
 	Sleep     func(context.Context, time.Duration) error
 	Rand      func() float64
 	Log       *slog.Logger
-	// Prober 为 nil 时版本恒报 0；hub 版本非 0 时会每次下发整份清单，但本端不应用。
+	// Prober 必填，持有与 hub 对账的完整清单及版本。
 	Prober *prober.Scheduler
-	// Results 为 nil 时不携带探测结果。
+	// Results 必填，与 Prober 共用同一个结果队列。
 	Results *prober.Queue
 	// Interval 是收到第一个响应之前使用的间隔；之后一律用 hub 下发的。
 	Interval time.Duration
@@ -47,6 +48,12 @@ func sleepReal(ctx context.Context, d time.Duration) error {
 // 失败退避、成功即回到下发间隔；实时指标不缓存，因为过期的实时数据没有意义。
 // 探测结果在迟到预算内重试，InvalidArgument 例外：本批丢弃而不回队。
 func (r *Runner) Run(ctx context.Context) error {
+	if r.Prober == nil {
+		return errors.New("Runner.Prober: required")
+	}
+	if r.Results == nil {
+		return errors.New("Runner.Results: required")
+	}
 	if r.Sleep == nil {
 		r.Sleep = sleepReal
 	}
@@ -63,16 +70,11 @@ func (r *Runner) Run(ctx context.Context) error {
 			r.Log.Warn("partial collection", "err", err)
 		}
 		req := connect.NewRequest(&probev1.ReportRequest{Metrics: m})
-		var taken []prober.Result
-		if r.Results != nil {
-			// 超龄过滤与 age_ms 必须取同一时刻，否则刚通过过滤的结果可能以大于 MaxResultAge 的年龄发出并被 hub 丢弃。
-			now := r.Clock.Mono()
-			taken = r.Results.Take(now, probelimit.MaxResultAge)
-			req.Msg.ProbeResults = prober.ToProto(taken, now)
-		}
-		if r.Prober != nil {
-			req.Msg.TasksVersion = r.Prober.Version()
-		}
+		// 超龄过滤与 age_ms 必须取同一时刻，否则刚通过过滤的结果可能以大于 MaxResultAge 的年龄发出并被 hub 丢弃。
+		now := r.Clock.Mono()
+		taken := r.Results.Take(now, probelimit.MaxResultAge, probelimit.MaxResultsPerReport)
+		req.Msg.ProbeResults = prober.ToProto(taken, now)
+		req.Msg.TasksVersion = r.Prober.Version()
 		req.Header().Set("Authorization", "Bearer "+r.Token)
 		// Facts 只读几个小文件；每轮重算才能让 hub 从摘要变化发现运行期间的变更。
 		f := r.Collector.Facts()
@@ -83,7 +85,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		req.Msg.FactsHash = hash
 
 		resp, err := r.Client.Report(ctx, req)
-		if err != nil && r.Results != nil {
+		if err != nil {
 			// InvalidArgument 可来自 hub 对结构非法探测结果的拒绝、validateMetrics 对非法指标的拒绝，
 			// 或 Connect 客户端解码/解压响应失败。前两种对同一内容的拒绝是确定性的：
 			// 坏结果重发仍失败，非法指标持续时本批也只会在迟到预算内反复被拒。
@@ -97,14 +99,12 @@ func (r *Runner) Run(ctx context.Context) error {
 				r.Results.Requeue(taken)
 			}
 		}
-		if err == nil && resp.Msg.Tasks != nil && r.Prober != nil {
+		if err == nil && resp.Msg.Tasks != nil {
 			r.Prober.Apply(resp.Msg.Tasks)
 		}
-		if r.Results != nil {
-			if total := r.Results.Dropped(); total > dropped {
-				r.Log.Warn("probe results dropped", "dropped", total-dropped)
-				dropped = total
-			}
+		if total := r.Results.Dropped(); total > dropped {
+			r.Log.Warn("probe results dropped", "dropped", total-dropped)
+			dropped = total
 		}
 		if err != nil {
 			if ctx.Err() != nil {

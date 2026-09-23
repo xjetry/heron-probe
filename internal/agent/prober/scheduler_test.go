@@ -161,7 +161,7 @@ func TestApplyRejectsInvalidAndOverLimitWithErrorResults(t *testing.T) {
 	}
 	tasks[64].IntervalS = 1
 	s.Apply(&probev1.ProbeTasks{Version: 7, Tasks: tasks})
-	rs := q.Take(clk.Mono(), probelimit.MaxResultAge)
+	rs := q.Take(clk.Mono(), probelimit.MaxResultAge, probelimit.MaxResultsPerReport)
 	if len(rs) != 2 || rs[0].TaskID != 1 || !strings.Contains(rs[0].Outcome.Err, "interval_s must be between 5 and 3600") ||
 		rs[1].TaskID != 65 || !strings.Contains(rs[1].Outcome.Err, "more than 64 tasks assigned") ||
 		rs[0].At != clk.Mono() || rs[1].At != clk.Mono() {
@@ -208,7 +208,7 @@ func TestRunKeepsPeriodDespiteProbeDuration(t *testing.T) {
 		if c.delay != 3*time.Second {
 			t.Fatalf("remaining interval=%v want 3s", c.delay)
 		}
-		rs := q.Take(clk.Mono(), probelimit.MaxResultAge)
+		rs := q.Take(clk.Mono(), probelimit.MaxResultAge, probelimit.MaxResultsPerReport)
 		if len(rs) != 1 || rs[0].At != clk.Mono() || rs[0].Outcome.RttUs != 2000000 {
 			t.Fatalf("result=%v", rs)
 		}
@@ -235,7 +235,7 @@ func TestStopDoesNotEnqueueInFlightResult(t *testing.T) {
 	close(c.release)
 	receive(t, entered)
 	s.Stop()
-	if rs := q.Take(clk.Mono(), probelimit.MaxResultAge); len(rs) != 0 {
+	if rs := q.Take(clk.Mono(), probelimit.MaxResultAge, probelimit.MaxResultsPerReport); len(rs) != 0 {
 		t.Fatalf("stopped result queued: %v", rs)
 	}
 }

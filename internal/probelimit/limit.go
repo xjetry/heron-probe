@@ -23,6 +23,10 @@ const (
 	MaxTimeoutMs    = 5000
 	MaxTasksPerNode = 64
 	MaxTargetLen    = 253
+	// 一次上报须排空 MaxTasksPerNode/MinIntervalS 条每秒的满速产出，上报间隔为 TTL/3。
+	// 条数和文本共同约束体积；超出 hub 读上限会被 ResourceExhausted 拒绝并回队，形成永久失败。
+	MaxResultsPerReport = 1024
+	MaxErrorMessageLen  = 128 // 字节；协议字符串仍须为合法 UTF-8。
 	// MaxResultAge 是结果的迟到预算（§6.4 第 3 条）：agent 取走时丢弃更老的，hub 拒收更老的，两侧同一个数。
 	MaxResultAge = 120 * time.Second
 )

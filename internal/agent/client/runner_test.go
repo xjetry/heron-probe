@@ -85,7 +85,7 @@ func TestRunnerFailureRetainsOnlyRetryableResults(t *testing.T) {
 				if round == 2 {
 					return context.Canceled
 				}
-				remaining := q.Take(r.Clock.Mono(), probelimit.MaxResultAge)
+				remaining := q.Take(r.Clock.Mono(), probelimit.MaxResultAge, probelimit.MaxResultsPerReport)
 				want := 1
 				if code == connect.CodeInvalidArgument {
 					want = 0
@@ -127,7 +127,7 @@ func TestRunnerFailureRetainsOnlyRetryableResults(t *testing.T) {
 	}
 }
 
-func TestRunnerWithoutProberReportsNoResultsOrVersion(t *testing.T) {
+func TestRunnerEmptySchedulerReportsNoResultsOrVersion(t *testing.T) {
 	hub := &fakeHub{tasks: &probev1.ProbeTasks{Version: 8}}
 	r, _ := newRunner(t, hub)
 	r.Sleep = func(context.Context, time.Duration) error { return context.Canceled }
@@ -140,13 +140,29 @@ func TestRunnerWithoutProberReportsNoResultsOrVersion(t *testing.T) {
 	}
 	got := reports[0]
 	if got.TasksVersion != 0 || len(got.ProbeResults) != 0 || got.GetFacts().GetIcmpAvailable() {
-		t.Fatalf("unexpected probe state without prober: %v", got)
+		t.Fatalf("unexpected probe state for empty scheduler: %v", got)
 	}
 }
 
 type advancingClock struct {
 	clock.Clock
 	mono time.Duration
+}
+
+func TestRunnerRequiresProbeComponents(t *testing.T) {
+	for _, field := range []string{"Prober", "Results"} {
+		t.Run(field, func(t *testing.T) {
+			r, _ := newRunner(t, &fakeHub{})
+			if field == "Prober" {
+				r.Prober = nil
+			} else {
+				r.Results = nil
+			}
+			if err := r.Run(t.Context()); err == nil || !strings.Contains(err.Error(), "Runner."+field+": required") {
+				t.Fatalf("missing %s: %v", field, err)
+			}
+		})
+	}
 }
 
 func (c *advancingClock) Mono() time.Duration {
@@ -227,7 +243,7 @@ func TestRunnerWarnsOnlyWhenQueueDropsIncrease(t *testing.T) {
 					t.Errorf("round %d drop deltas = %v, want %v", round, deltas, want)
 				}
 				if round == 2 {
-					q.Take(r.Clock.Mono(), probelimit.MaxResultAge)
+					q.Take(r.Clock.Mono(), probelimit.MaxResultAge, probelimit.MaxResultsPerReport)
 					q.Push(prober.Result{At: r.Clock.Mono()})
 					q.Push(prober.Result{At: r.Clock.Mono() - probelimit.MaxResultAge - time.Second})
 				}

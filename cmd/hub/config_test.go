@@ -20,6 +20,8 @@ func TestParseTTL(t *testing.T) {
 		{"", 30 * time.Second, false},
 		{"45s", 45 * time.Second, false},
 		{"10s", 10 * time.Second, false},
+		{"180s", 180 * time.Second, false},
+		{"181s", 0, true},
 		{"9s", 0, true},
 		{"banana", 0, true},
 	}

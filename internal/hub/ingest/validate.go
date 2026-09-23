@@ -45,8 +45,15 @@ func validateMetrics(m *probev1.Metrics) error {
 // 违反时整条拒绝，因此 agent 不得把被 InvalidArgument 拒绝的结果放回队列。
 // 归属与超龄不是结构问题，由 Report 逐条丢弃而不是整条拒绝。
 func validateResults(rs []*probev1.ProbeResult) error {
+	if len(rs) > probelimit.MaxResultsPerReport {
+		return fmt.Errorf("probe_results: must contain at most %d results; got %d", probelimit.MaxResultsPerReport, len(rs))
+	}
 	for i, r := range rs {
 		switch o := r.GetOutcome().(type) {
+		case *probev1.ProbeResult_Error:
+			if len(o.Error.GetMessage()) > probelimit.MaxErrorMessageLen {
+				return fmt.Errorf("probe_results[%d].error.message: must be at most %d bytes; got %d", i, probelimit.MaxErrorMessageLen, len(o.Error.GetMessage()))
+			}
 		case nil:
 			return fmt.Errorf("probe_results[%d].outcome: required (rtt_us, timeout or error)", i)
 		case *probev1.ProbeResult_RttUs:

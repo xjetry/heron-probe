@@ -17,6 +17,7 @@ import (
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
 	"github.com/xjetry/probe/internal/agent/collect"
+	"github.com/xjetry/probe/internal/agent/prober"
 	"github.com/xjetry/probe/internal/clock"
 )
 
@@ -171,6 +172,9 @@ func newRunner(t *testing.T, hub *fakeHub) (*Runner, chan time.Duration) {
 		Log:      slog.Default(),
 		Interval: 10 * time.Second,
 	}
+	r.Results = prober.NewQueue(prober.QueueCap)
+	r.Prober = prober.NewScheduler(quietEngine{}, r.Results, r.Clock, r.Log)
+	t.Cleanup(r.Prober.Stop)
 	return r, sleeps
 }
 

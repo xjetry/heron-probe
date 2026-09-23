@@ -26,10 +26,17 @@ import (
 	"github.com/xjetry/probe/internal/hub/sanitize"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/hub/traffic"
+	"github.com/xjetry/probe/internal/probelimit"
 )
 
-// maxBody 限制 AgentService 的请求体：一条上报远小于此，超出的只可能是滥用。
-const maxBody = 64 << 10
+const (
+	metricsBudget = 32 << 10
+	// maxResultWire 含结果及外层 repeated 字段开销，上界由 TestMaxProbeResultWire 钉住。
+	maxResultWire = 160
+	maxBody       = 256 << 10
+)
+
+const _ = uint(maxBody - metricsBudget - probelimit.MaxResultsPerReport*maxResultWire)
 
 // MinTTL 限制服务允许的最短离线判定时长，命令行与直接构造共用同一准入边界。
 const MinTTL = 10 * time.Second

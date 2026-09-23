@@ -17,15 +17,15 @@ func TestQueueDropsOldestAndExpired(t *testing.T) {
 		q.Push(Result{TaskID: i, At: time.Duration(i) * time.Second})
 	}
 	want := []Result{{TaskID: 2, At: 2 * time.Second}, {TaskID: 3, At: 3 * time.Second}, {TaskID: 4, At: 4 * time.Second}}
-	if got := q.Take(4*time.Second, 120*time.Second); !reflect.DeepEqual(got, want) || q.Dropped() != 1 {
+	if got := q.Take(4*time.Second, 120*time.Second, 1024); !reflect.DeepEqual(got, want) || q.Dropped() != 1 {
 		t.Fatalf("results=%v dropped=%d want=%v/1", got, q.Dropped(), want)
 	}
-	if got := q.Take(4*time.Second, 120*time.Second); len(got) != 0 {
+	if got := q.Take(4*time.Second, 120*time.Second, 1024); len(got) != 0 {
 		t.Fatalf("taken results remained: %v", got)
 	}
 	q.Push(Result{TaskID: 1, At: 0})
 	q.Push(Result{TaskID: 2, At: time.Second})
-	if got := q.Take(121*time.Second, 120*time.Second); !reflect.DeepEqual(got, []Result{{TaskID: 2, At: time.Second}}) || q.Dropped() != 2 {
+	if got := q.Take(121*time.Second, 120*time.Second, 1024); !reflect.DeepEqual(got, []Result{{TaskID: 2, At: time.Second}}) || q.Dropped() != 2 {
 		t.Fatalf("age boundary results=%v dropped=%d", got, q.Dropped())
 	}
 }
@@ -34,18 +34,18 @@ func TestQueueRequeuesBeforeNewResultsWithinCapacity(t *testing.T) {
 	q := NewQueue(3)
 	q.Push(Result{TaskID: 1})
 	q.Push(Result{TaskID: 2})
-	old := q.Take(0, time.Minute)
+	old := q.Take(0, time.Minute, 1024)
 	q.Push(Result{TaskID: 3})
 	q.Requeue(old)
 	want := []Result{{TaskID: 1}, {TaskID: 2}, {TaskID: 3}}
-	if got := q.Take(0, time.Minute); !reflect.DeepEqual(got, want) {
+	if got := q.Take(0, time.Minute, 1024); !reflect.DeepEqual(got, want) {
 		t.Fatalf("requeue order=%v want=%v", got, want)
 	}
 	q.Push(Result{TaskID: 3})
 	q.Push(Result{TaskID: 4})
 	q.Requeue(old)
 	want = []Result{{TaskID: 2}, {TaskID: 3}, {TaskID: 4}}
-	if got := q.Take(0, time.Minute); !reflect.DeepEqual(got, want) || q.Dropped() != 1 {
+	if got := q.Take(0, time.Minute, 1024); !reflect.DeepEqual(got, want) || q.Dropped() != 1 {
 		t.Fatalf("requeue overflow=%v dropped=%d", got, q.Dropped())
 	}
 }
@@ -53,7 +53,7 @@ func TestQueueRequeuesBeforeNewResultsWithinCapacity(t *testing.T) {
 func TestQueueCapacityBoundaries(t *testing.T) {
 	q := NewQueue(0)
 	q.Push(Result{TaskID: 1})
-	if got := q.Take(0, time.Minute); len(got) != 0 || q.Dropped() != 1 {
+	if got := q.Take(0, time.Minute, 1024); len(got) != 0 || q.Dropped() != 1 {
 		t.Fatalf("zero capacity results=%v dropped=%d", got, q.Dropped())
 	}
 	defer func() {
