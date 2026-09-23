@@ -8,3 +8,7 @@ it.each([
 ])("$unit 的相邻轴刻度不重名", ({ unit, values }) => {
   expect(new Set(axisValues(values, unit)).size).toBe(values.length);
 });
+
+it("无单位轴按刻度间隔保留小数且不添加后缀", () => {
+  expect(axisValues([0, 0.2, 0.4], "")).toEqual(["0.0", "0.2", "0.4"]);
+});

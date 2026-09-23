@@ -1,15 +1,19 @@
 import { useMutation } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
-import { NavLink, Outlet, useNavigate } from "react-router";
+import { useEffect } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { AdminService } from "../gen/probe/v1/admin_pb";
 import { errorText } from "../api/auth";
 
 export function Layout() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const location = useLocation();
   const logout = useMutation(AdminService.method.logout, {
     onSuccess: () => { queryClient.clear(); void navigate("/login", { replace: true }); },
   });
+  const { reset } = logout;
+  useEffect(() => { reset(); }, [location, reset]);
   return (
     <div className="layout">
       <nav className="nav" aria-label="主导航">

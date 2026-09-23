@@ -1,12 +1,40 @@
 import { Code, ConnectError } from "@connectrpc/connect";
+import { create } from "@bufbuild/protobuf";
+import { createConnectQueryKey } from "@connectrpc/connect-query";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
 import { RegisterWindow } from "./RegisterWindow";
+import { AdminService, GetSnapshotResponseSchema, ListNodesResponseSchema } from "../gen/probe/v1/admin_pb";
 
 afterEach(() => vi.useRealTimers());
 
 describe("RegisterWindow", () => {
+  it.each(["open", "close"])("%s 只失效注册窗口，不标脏其他查询", async (operation) => {
+    let opened = operation === "close";
+    const getRegisterWindow = vi.fn(async () => ({ open: opened, expiresAt: 4_000_000_000n, remaining: 3 }));
+    const { queryClient } = renderWithAdmin({
+      getRegisterWindow,
+      openRegisterWindow: async () => { opened = true; return { key: "key", expiresAt: 4_000_000_000n, maxNodes: 3 }; },
+      closeRegisterWindow: async () => { opened = false; return {}; },
+    }, [{ path: "/register", Component: RegisterWindow }], "/register");
+    const snapshotKey = createConnectQueryKey({ schema: AdminService.method.getSnapshot, cardinality: "finite" });
+    const nodesKey = createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" });
+    queryClient.setQueryData(snapshotKey, create(GetSnapshotResponseSchema));
+    queryClient.setQueryData(nodesKey, create(ListNodesResponseSchema));
+    await vi.waitFor(() => expect(getRegisterWindow).toHaveBeenCalledTimes(1));
+    fireEvent.click(await screen.findByRole("button", { name: operation === "open" ? "开启新窗口" : "关闭窗口" }));
+    await vi.waitFor(() => expect(getRegisterWindow).toHaveBeenCalledTimes(2));
+    expect([snapshotKey, nodesKey].map((key) => queryClient.getQueryState(key)?.isInvalidated)).toEqual([false, false]);
+  });
+
+  it("清空名额保留空白而不是零值", async () => {
+    renderWithAdmin({ getRegisterWindow: async () => ({ open: false }) }, [{ path: "/register", Component: RegisterWindow }], "/register");
+    const input = screen.getByLabelText("可注册节点数") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "" } });
+    expect({ value: input.value, nan: Number.isNaN(input.valueAsNumber) }).toEqual({ value: "", nan: true });
+  });
+
   it.each(["", "0", "-1"])("名额为 '%s' 时禁用开窗", async (value) => {
     renderWithAdmin({ getRegisterWindow: async () => ({ open: false }) }, [{ path: "/register", Component: RegisterWindow }], "/register");
     await screen.findByText("当前没有开启的窗口。");

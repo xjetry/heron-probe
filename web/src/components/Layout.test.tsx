@@ -1,5 +1,5 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { expect, it } from "vitest";
 import { renderWithAdmin } from "../test/harness";
 import { Layout } from "./Layout";
@@ -23,4 +23,14 @@ it("登出失败显示错误并保留当前页面", async () => {
   const { router } = renderWithAdmin({ logout: async () => { throw new ConnectError("logout unavailable", Code.Unavailable); } }, routes, "/");
   fireEvent.click(screen.getByRole("button", { name: "登出" }));
   await waitFor(() => expect({ message: screen.queryByRole("alert")?.textContent, path: router.state.location.pathname }).toEqual({ message: "logout unavailable", path: "/" }));
+});
+
+it("导航后常驻布局不保留上一页的登出错误", async () => {
+  const { router } = renderWithAdmin({ logout: async () => { throw new ConnectError("logout unavailable", Code.Unavailable); } }, [
+    { path: "/", Component: Layout, children: [{ index: true, element: <h1>home</h1> }, { path: "nodes", element: <h1>nodes</h1> }] },
+  ], "/");
+  fireEvent.click(screen.getByRole("button", { name: "登出" }));
+  await screen.findByRole("alert");
+  await act(() => router.navigate("/nodes"));
+  await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
 });

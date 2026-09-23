@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@connectrpc/connect-query";
+import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { Secret } from "../components/Secret";
@@ -14,6 +14,7 @@ const TTLS = [
 
 export function RegisterWindow() {
   const qc = useQueryClient();
+  const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getRegisterWindow, cardinality: "finite" }) });
   const status = useQuery(AdminService.method.getRegisterWindow, {}, { refetchInterval: 10_000 });
   const [ttl, setTtl] = useState(TTLS[1].seconds);
   const [maxNodes, setMaxNodes] = useState(5);
@@ -23,10 +24,10 @@ export function RegisterWindow() {
     if (status.data?.open === false) clearKey();
   }, [status.data?.open, clearKey]);
   const open = useMutation(AdminService.method.openRegisterWindow, {
-    onSuccess: (r) => { setKey(r.key); void qc.invalidateQueries(); },
+    onSuccess: (r) => { setKey(r.key); void refresh(); },
   });
   const close = useMutation(AdminService.method.closeRegisterWindow, {
-    onSuccess: () => { clearKey(); void qc.invalidateQueries(); },
+    onSuccess: () => { clearKey(); void refresh(); },
   });
   const onOpen = (e: FormEvent) => { e.preventDefault(); open.mutate({ ttlS: ttl, maxNodes }); };
   const err = open.error ?? close.error ?? status.error;
@@ -53,8 +54,8 @@ export function RegisterWindow() {
             {TTLS.map((t) => <option key={t.seconds} value={t.seconds}>{t.label}</option>)}
           </select>
         </label>
-        <label>可注册节点数<input type="number" min={1} max={1000} value={maxNodes} onChange={(e) => setMaxNodes(Number(e.target.value))} /></label>
-        <button type="submit" disabled={open.isPending || maxNodes < 1}>开启新窗口</button>
+        <label>可注册节点数<input type="number" min={1} max={1000} value={Number.isNaN(maxNodes) ? "" : maxNodes} onChange={(e) => setMaxNodes(e.target.valueAsNumber)} /></label>
+        <button type="submit" disabled={open.isPending || !(maxNodes >= 1)}>开启新窗口</button>
       </form>
       {err && <p role="alert" className="error">{errorText(err)}</p>}
     </section>

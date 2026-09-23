@@ -39,7 +39,7 @@ binaries: web
 	GOOS=linux GOARCH=arm64 go build -o bin/probe-agent-linux-arm64 ./cmd/agent
 
 ci: gen lint test web-test web build
-	@status="$$(git status --porcelain -- gen web/src/gen)" || exit $$?; \
+	status="$$(git status --porcelain -- gen web/src/gen)" || exit $$?; \
 	if [ -n "$$status" ]; then printf '%s\n' "$$status"; exit 1; fi
 
 fixtures:
