@@ -1,15 +1,71 @@
-import { act } from "react";
-import { expect, test } from "vitest";
+import { Code, ConnectError } from "@connectrpc/connect";
+import { QueryClient } from "@tanstack/react-query";
+import { act, within } from "@testing-library/react";
+import * as ReactDOM from "react-dom/client";
+import { afterAll, beforeAll, expect, test, vi } from "vitest";
 
-test("入口将 React 应用挂载到 root 并移除原有内容", async () => {
-  const root = document.createElement("div");
+vi.mock("react-dom/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-dom/client")>();
+  return { ...actual, createRoot: vi.fn(actual.createRoot) };
+});
+
+let root: HTMLDivElement;
+let reactRoot: ReactDOM.Root | undefined;
+let queryClient: QueryClient | undefined;
+let router: (typeof import("./App"))["router"];
+
+beforeAll(async () => {
+  root = document.createElement("div");
   root.id = "root";
   root.textContent = "尚未挂载";
   document.body.append(root);
+  window.history.pushState({}, "", "/admin/login");
 
+  const createRoot = vi.mocked(ReactDOM.createRoot);
+  const mount = vi.spyOn(QueryClient.prototype, "mount");
   await act(async () => {
     await import("./main.tsx");
   });
+  reactRoot = createRoot.mock.results[0]?.value;
+  queryClient = mount.mock.instances[0] as QueryClient | undefined;
+  mount.mockRestore();
+  router = (await import("./App")).router;
+});
 
-  expect(root).toBeEmptyDOMElement();
+afterAll(async () => {
+  await act(async () => reactRoot?.unmount());
+  queryClient?.clear();
+  router?.dispose();
+  root.remove();
+});
+
+test("入口在 /admin/login 将登录页挂载到 root", () => {
+  expect(within(root).getByLabelText("管理员密码")).toBeInTheDocument();
+});
+
+async function failRequest(kind: "query" | "mutation", code: Code) {
+  const request = vi.fn(async () => {
+    throw new ConnectError("request failed", code);
+  });
+  await act(async () => {
+    await router.navigate("/");
+    if (kind === "query") {
+      await queryClient!.fetchQuery({ queryKey: [kind, code], queryFn: request, retryDelay: 0 }).catch(() => {});
+    } else {
+      await queryClient!.getMutationCache().build(queryClient!, { mutationFn: request }).execute(undefined).catch(() => {});
+    }
+  });
+  return request;
+}
+
+test.each(["query", "mutation"] as const)("%s 的 Unauthenticated 回到登录页且不重试", async (kind) => {
+  const request = await failRequest(kind, Code.Unauthenticated);
+  expect(window.location.pathname).toBe("/admin/login");
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+test.each(["query", "mutation"] as const)("%s 的其他错误不跳登录页，查询只重试两次", async (kind) => {
+  const request = await failRequest(kind, Code.PermissionDenied);
+  expect(window.location.pathname).toBe("/admin");
+  expect(request).toHaveBeenCalledTimes(kind === "query" ? 3 : 1);
 });
