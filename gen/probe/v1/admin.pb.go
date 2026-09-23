@@ -187,8 +187,10 @@ type Node struct {
 	// 主机静态信息；从未上报则缺失。
 	Facts          *Facts `protobuf:"bytes,8,opt,name=facts,proto3" json:"facts,omitempty"`
 	FactsUpdatedAt *int64 `protobuf:"varint,9,opt,name=facts_updated_at,json=factsUpdatedAt,proto3,oneof" json:"facts_updated_at,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// 周期重置日 1–28：周期在 hub 时区的该日零点重置。
+	TrafficResetDay uint32 `protobuf:"varint,10,opt,name=traffic_reset_day,json=trafficResetDay,proto3" json:"traffic_reset_day,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Node) Reset() {
@@ -280,6 +282,13 @@ func (x *Node) GetFacts() *Facts {
 func (x *Node) GetFactsUpdatedAt() int64 {
 	if x != nil && x.FactsUpdatedAt != nil {
 		return *x.FactsUpdatedAt
+	}
+	return 0
+}
+
+func (x *Node) GetTrafficResetDay() uint32 {
+	if x != nil {
+		return x.TrafficResetDay
 	}
 	return 0
 }
@@ -468,9 +477,11 @@ type UpdateNodeRequest struct {
 	Name   string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	Public bool                   `protobuf:"varint,3,opt,name=public,proto3" json:"public,omitempty"`
 	// 最长 1024 个字符。
-	Note          string `protobuf:"bytes,4,opt,name=note,proto3" json:"note,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Note string `protobuf:"bytes,4,opt,name=note,proto3" json:"note,omitempty"`
+	// 1–28，必填：本方法整体替换可编辑字段，缺省的 0 会被拒绝而不是当作"不改"。
+	TrafficResetDay uint32 `protobuf:"varint,5,opt,name=traffic_reset_day,json=trafficResetDay,proto3" json:"traffic_reset_day,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *UpdateNodeRequest) Reset() {
@@ -529,6 +540,13 @@ func (x *UpdateNodeRequest) GetNote() string {
 		return x.Note
 	}
 	return ""
+}
+
+func (x *UpdateNodeRequest) GetTrafficResetDay() uint32 {
+	if x != nil {
+		return x.TrafficResetDay
+	}
+	return 0
 }
 
 type UpdateNodeResponse struct {
@@ -1216,7 +1234,9 @@ type NodeStatus struct {
 	// 最近一次上报的墙钟 Unix 秒；从未上报则缺失。
 	LastSeenAt *int64 `protobuf:"varint,4,opt,name=last_seen_at,json=lastSeenAt,proto3,oneof" json:"last_seen_at,omitempty"`
 	// 最近一次上报的读数；从未上报则缺失。离线节点仍带最后一次读数。
-	Metrics       *Metrics `protobuf:"bytes,5,opt,name=metrics,proto3" json:"metrics,omitempty"`
+	Metrics *Metrics `protobuf:"bytes,5,opt,name=metrics,proto3" json:"metrics,omitempty"`
+	// hub 侧累计的流量；每个节点都有，从未上报的节点为零用量。
+	Traffic       *Traffic `protobuf:"bytes,6,opt,name=traffic,proto3" json:"traffic,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1282,6 +1302,13 @@ func (x *NodeStatus) GetLastSeenAt() int64 {
 func (x *NodeStatus) GetMetrics() *Metrics {
 	if x != nil {
 		return x.Metrics
+	}
+	return nil
+}
+
+func (x *NodeStatus) GetTraffic() *Traffic {
+	if x != nil {
+		return x.Traffic
 	}
 	return nil
 }
@@ -1431,7 +1458,7 @@ func (x *QueryMetricsResponse) GetSeries() []*MetricSeries {
 
 type MetricSeries struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs。
+	// cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs、rx_bytes、tx_bytes。
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	// percent、bytes、count；load 无单位为空串。
 	Unit string `protobuf:"bytes,2,opt,name=unit,proto3" json:"unit,omitempty"`
@@ -1494,11 +1521,14 @@ func (x *MetricSeries) GetSamples() []*MetricSample {
 
 type MetricSample struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// 该点内的样本数；0 表示该指标在这段时间没有任何读数，此时 mean 与 max 缺失。
+	// 该点内的样本数；0 表示该指标在这段时间没有任何读数，此时 mean、max 与 sum 都缺失。
 	N    uint32   `protobuf:"varint,1,opt,name=n,proto3" json:"n,omitempty"`
 	Mean *float64 `protobuf:"fixed64,2,opt,name=mean,proto3,oneof" json:"mean,omitempty"`
 	// 只有带最大值的指标（cpu、mem_used）才有。
-	Max           *float64 `protobuf:"fixed64,3,opt,name=max,proto3,oneof" json:"max,omitempty"`
+	Max *float64 `protobuf:"fixed64,3,opt,name=max,proto3,oneof" json:"max,omitempty"`
+	// 只有可加量指标（rx_bytes、tx_bytes）才有：该点内的字节总和，没有 mean 与 max。
+	// 速率 = sum / step_s。
+	Sum           *float64 `protobuf:"fixed64,4,opt,name=sum,proto3,oneof" json:"sum,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1554,6 +1584,364 @@ func (x *MetricSample) GetMax() float64 {
 	return 0
 }
 
+func (x *MetricSample) GetSum() float64 {
+	if x != nil && x.Sum != nil {
+		return *x.Sum
+	}
+	return 0
+}
+
+type Traffic struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 自节点首次上报以来 hub 累计的字节数。校正只改周期用量，总量随同一差值变动。
+	TotalRx uint64 `protobuf:"varint,1,opt,name=total_rx,json=totalRx,proto3" json:"total_rx,omitempty"`
+	TotalTx uint64 `protobuf:"varint,2,opt,name=total_tx,json=totalTx,proto3" json:"total_tx,omitempty"`
+	// 当前周期内的字节数。
+	PeriodRx uint64 `protobuf:"varint,3,opt,name=period_rx,json=periodRx,proto3" json:"period_rx,omitempty"`
+	PeriodTx uint64 `protobuf:"varint,4,opt,name=period_tx,json=periodTx,proto3" json:"period_tx,omitempty"`
+	// 当前周期起点与下次重置时刻，Unix 秒。
+	PeriodStart int64 `protobuf:"varint,5,opt,name=period_start,json=periodStart,proto3" json:"period_start,omitempty"`
+	NextResetAt int64 `protobuf:"varint,6,opt,name=next_reset_at,json=nextResetAt,proto3" json:"next_reset_at,omitempty"`
+	// 周期重置日 1–28。
+	ResetDay      uint32 `protobuf:"varint,7,opt,name=reset_day,json=resetDay,proto3" json:"reset_day,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Traffic) Reset() {
+	*x = Traffic{}
+	mi := &file_probe_v1_admin_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Traffic) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Traffic) ProtoMessage() {}
+
+func (x *Traffic) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Traffic.ProtoReflect.Descriptor instead.
+func (*Traffic) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *Traffic) GetTotalRx() uint64 {
+	if x != nil {
+		return x.TotalRx
+	}
+	return 0
+}
+
+func (x *Traffic) GetTotalTx() uint64 {
+	if x != nil {
+		return x.TotalTx
+	}
+	return 0
+}
+
+func (x *Traffic) GetPeriodRx() uint64 {
+	if x != nil {
+		return x.PeriodRx
+	}
+	return 0
+}
+
+func (x *Traffic) GetPeriodTx() uint64 {
+	if x != nil {
+		return x.PeriodTx
+	}
+	return 0
+}
+
+func (x *Traffic) GetPeriodStart() int64 {
+	if x != nil {
+		return x.PeriodStart
+	}
+	return 0
+}
+
+func (x *Traffic) GetNextResetAt() int64 {
+	if x != nil {
+		return x.NextResetAt
+	}
+	return 0
+}
+
+func (x *Traffic) GetResetDay() uint32 {
+	if x != nil {
+		return x.ResetDay
+	}
+	return 0
+}
+
+type GetTrafficRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTrafficRequest) Reset() {
+	*x = GetTrafficRequest{}
+	mi := &file_probe_v1_admin_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTrafficRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTrafficRequest) ProtoMessage() {}
+
+func (x *GetTrafficRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTrafficRequest.ProtoReflect.Descriptor instead.
+func (*GetTrafficRequest) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{31}
+}
+
+type GetTrafficResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// hub 墙钟，Unix 秒。
+	Now           int64          `protobuf:"varint,1,opt,name=now,proto3" json:"now,omitempty"`
+	Nodes         []*NodeTraffic `protobuf:"bytes,2,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTrafficResponse) Reset() {
+	*x = GetTrafficResponse{}
+	mi := &file_probe_v1_admin_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTrafficResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTrafficResponse) ProtoMessage() {}
+
+func (x *GetTrafficResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTrafficResponse.ProtoReflect.Descriptor instead.
+func (*GetTrafficResponse) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *GetTrafficResponse) GetNow() int64 {
+	if x != nil {
+		return x.Now
+	}
+	return 0
+}
+
+func (x *GetTrafficResponse) GetNodes() []*NodeTraffic {
+	if x != nil {
+		return x.Nodes
+	}
+	return nil
+}
+
+type NodeTraffic struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeId        int64                  `protobuf:"varint,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Traffic       *Traffic               `protobuf:"bytes,3,opt,name=traffic,proto3" json:"traffic,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NodeTraffic) Reset() {
+	*x = NodeTraffic{}
+	mi := &file_probe_v1_admin_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeTraffic) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeTraffic) ProtoMessage() {}
+
+func (x *NodeTraffic) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeTraffic.ProtoReflect.Descriptor instead.
+func (*NodeTraffic) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *NodeTraffic) GetNodeId() int64 {
+	if x != nil {
+		return x.NodeId
+	}
+	return 0
+}
+
+func (x *NodeTraffic) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *NodeTraffic) GetTraffic() *Traffic {
+	if x != nil {
+		return x.Traffic
+	}
+	return nil
+}
+
+type AdjustTrafficRequest struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	NodeId int64                  `protobuf:"varint,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	// 当前周期的下行 / 上行字节数，覆盖写入。
+	PeriodRx      uint64 `protobuf:"varint,2,opt,name=period_rx,json=periodRx,proto3" json:"period_rx,omitempty"`
+	PeriodTx      uint64 `protobuf:"varint,3,opt,name=period_tx,json=periodTx,proto3" json:"period_tx,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdjustTrafficRequest) Reset() {
+	*x = AdjustTrafficRequest{}
+	mi := &file_probe_v1_admin_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdjustTrafficRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdjustTrafficRequest) ProtoMessage() {}
+
+func (x *AdjustTrafficRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdjustTrafficRequest.ProtoReflect.Descriptor instead.
+func (*AdjustTrafficRequest) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *AdjustTrafficRequest) GetNodeId() int64 {
+	if x != nil {
+		return x.NodeId
+	}
+	return 0
+}
+
+func (x *AdjustTrafficRequest) GetPeriodRx() uint64 {
+	if x != nil {
+		return x.PeriodRx
+	}
+	return 0
+}
+
+func (x *AdjustTrafficRequest) GetPeriodTx() uint64 {
+	if x != nil {
+		return x.PeriodTx
+	}
+	return 0
+}
+
+type AdjustTrafficResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 校正后的状态。
+	Traffic       *Traffic `protobuf:"bytes,1,opt,name=traffic,proto3" json:"traffic,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdjustTrafficResponse) Reset() {
+	*x = AdjustTrafficResponse{}
+	mi := &file_probe_v1_admin_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdjustTrafficResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdjustTrafficResponse) ProtoMessage() {}
+
+func (x *AdjustTrafficResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdjustTrafficResponse.ProtoReflect.Descriptor instead.
+func (*AdjustTrafficResponse) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *AdjustTrafficResponse) GetTraffic() *Traffic {
+	if x != nil {
+		return x.Traffic
+	}
+	return nil
+}
+
 var File_probe_v1_admin_proto protoreflect.FileDescriptor
 
 const file_probe_v1_admin_proto_rawDesc = "" +
@@ -1563,7 +1951,7 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\bpassword\x18\x01 \x01(\tR\bpassword\"\x0f\n" +
 	"\rLoginResponse\"\x0f\n" +
 	"\rLogoutRequest\"\x10\n" +
-	"\x0eLogoutResponse\"\xb7\x02\n" +
+	"\x0eLogoutResponse\"\xe3\x02\n" +
 	"\x04Node\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
@@ -1576,7 +1964,9 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\flast_seen_at\x18\a \x01(\x03H\x00R\n" +
 	"lastSeenAt\x88\x01\x01\x12%\n" +
 	"\x05facts\x18\b \x01(\v2\x0f.probe.v1.FactsR\x05facts\x12-\n" +
-	"\x10facts_updated_at\x18\t \x01(\x03H\x01R\x0efactsUpdatedAt\x88\x01\x01B\x0f\n" +
+	"\x10facts_updated_at\x18\t \x01(\x03H\x01R\x0efactsUpdatedAt\x88\x01\x01\x12*\n" +
+	"\x11traffic_reset_day\x18\n" +
+	" \x01(\rR\x0ftrafficResetDayB\x0f\n" +
 	"\r_last_seen_atB\x13\n" +
 	"\x11_facts_updated_at\"\x12\n" +
 	"\x10ListNodesRequest\"9\n" +
@@ -1586,12 +1976,13 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"N\n" +
 	"\x12CreateNodeResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.probe.v1.NodeR\x04node\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"c\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\x8f\x01\n" +
 	"\x11UpdateNodeRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
 	"\x06public\x18\x03 \x01(\bR\x06public\x12\x12\n" +
-	"\x04note\x18\x04 \x01(\tR\x04note\"8\n" +
+	"\x04note\x18\x04 \x01(\tR\x04note\x12*\n" +
+	"\x11traffic_reset_day\x18\x05 \x01(\rR\x0ftrafficResetDay\"8\n" +
 	"\x12UpdateNodeResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.probe.v1.NodeR\x04node\"#\n" +
 	"\x11DeleteNodeRequest\x12\x0e\n" +
@@ -1624,7 +2015,7 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x13GetSnapshotResponse\x12\x10\n" +
 	"\x03now\x18\x01 \x01(\x03R\x03now\x12,\n" +
 	"\x12report_interval_ms\x18\x02 \x01(\rR\x10reportIntervalMs\x12*\n" +
-	"\x05nodes\x18\x03 \x03(\v2\x14.probe.v1.NodeStatusR\x05nodes\"\xad\x01\n" +
+	"\x05nodes\x18\x03 \x03(\v2\x14.probe.v1.NodeStatusR\x05nodes\"\xda\x01\n" +
 	"\n" +
 	"NodeStatus\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
@@ -1632,7 +2023,8 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x06online\x18\x03 \x01(\bR\x06online\x12%\n" +
 	"\flast_seen_at\x18\x04 \x01(\x03H\x00R\n" +
 	"lastSeenAt\x88\x01\x01\x12+\n" +
-	"\ametrics\x18\x05 \x01(\v2\x11.probe.v1.MetricsR\ametricsB\x0f\n" +
+	"\ametrics\x18\x05 \x01(\v2\x11.probe.v1.MetricsR\ametrics\x12+\n" +
+	"\atraffic\x18\x06 \x01(\v2\x11.probe.v1.TrafficR\atrafficB\x0f\n" +
 	"\r_last_seen_at\"q\n" +
 	"\x13QueryMetricsRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\x03R\x06nodeId\x12\x12\n" +
@@ -1648,13 +2040,37 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\fMetricSeries\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04unit\x18\x02 \x01(\tR\x04unit\x120\n" +
-	"\asamples\x18\x03 \x03(\v2\x16.probe.v1.MetricSampleR\asamples\"]\n" +
+	"\asamples\x18\x03 \x03(\v2\x16.probe.v1.MetricSampleR\asamples\"|\n" +
 	"\fMetricSample\x12\f\n" +
 	"\x01n\x18\x01 \x01(\rR\x01n\x12\x17\n" +
 	"\x04mean\x18\x02 \x01(\x01H\x00R\x04mean\x88\x01\x01\x12\x15\n" +
-	"\x03max\x18\x03 \x01(\x01H\x01R\x03max\x88\x01\x01B\a\n" +
+	"\x03max\x18\x03 \x01(\x01H\x01R\x03max\x88\x01\x01\x12\x15\n" +
+	"\x03sum\x18\x04 \x01(\x01H\x02R\x03sum\x88\x01\x01B\a\n" +
 	"\x05_meanB\x06\n" +
-	"\x04_max2\x8b\b\n" +
+	"\x04_maxB\x06\n" +
+	"\x04_sum\"\xdd\x01\n" +
+	"\aTraffic\x12\x19\n" +
+	"\btotal_rx\x18\x01 \x01(\x04R\atotalRx\x12\x19\n" +
+	"\btotal_tx\x18\x02 \x01(\x04R\atotalTx\x12\x1b\n" +
+	"\tperiod_rx\x18\x03 \x01(\x04R\bperiodRx\x12\x1b\n" +
+	"\tperiod_tx\x18\x04 \x01(\x04R\bperiodTx\x12!\n" +
+	"\fperiod_start\x18\x05 \x01(\x03R\vperiodStart\x12\"\n" +
+	"\rnext_reset_at\x18\x06 \x01(\x03R\vnextResetAt\x12\x1b\n" +
+	"\treset_day\x18\a \x01(\rR\bresetDay\"\x13\n" +
+	"\x11GetTrafficRequest\"S\n" +
+	"\x12GetTrafficResponse\x12\x10\n" +
+	"\x03now\x18\x01 \x01(\x03R\x03now\x12+\n" +
+	"\x05nodes\x18\x02 \x03(\v2\x15.probe.v1.NodeTrafficR\x05nodes\"g\n" +
+	"\vNodeTraffic\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\x03R\x06nodeId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12+\n" +
+	"\atraffic\x18\x03 \x01(\v2\x11.probe.v1.TrafficR\atraffic\"i\n" +
+	"\x14AdjustTrafficRequest\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\x03R\x06nodeId\x12\x1b\n" +
+	"\tperiod_rx\x18\x02 \x01(\x04R\bperiodRx\x12\x1b\n" +
+	"\tperiod_tx\x18\x03 \x01(\x04R\bperiodTx\"D\n" +
+	"\x15AdjustTrafficResponse\x12+\n" +
+	"\atraffic\x18\x01 \x01(\v2\x11.probe.v1.TrafficR\atraffic2\xa6\t\n" +
 	"\fAdminService\x128\n" +
 	"\x05Login\x12\x16.probe.v1.LoginRequest\x1a\x17.probe.v1.LoginResponse\x12;\n" +
 	"\x06Logout\x12\x17.probe.v1.LogoutRequest\x1a\x18.probe.v1.LogoutResponse\x12D\n" +
@@ -1671,7 +2087,10 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x13CloseRegisterWindow\x12$.probe.v1.CloseRegisterWindowRequest\x1a%.probe.v1.CloseRegisterWindowResponse\x12\\\n" +
 	"\x11GetRegisterWindow\x12\".probe.v1.GetRegisterWindowRequest\x1a#.probe.v1.GetRegisterWindowResponse\x12J\n" +
 	"\vGetSnapshot\x12\x1c.probe.v1.GetSnapshotRequest\x1a\x1d.probe.v1.GetSnapshotResponse\x12M\n" +
-	"\fQueryMetrics\x12\x1d.probe.v1.QueryMetricsRequest\x1a\x1e.probe.v1.QueryMetricsResponseB.Z,github.com/xjetry/probe/gen/probe/v1;probev1b\x06proto3"
+	"\fQueryMetrics\x12\x1d.probe.v1.QueryMetricsRequest\x1a\x1e.probe.v1.QueryMetricsResponse\x12G\n" +
+	"\n" +
+	"GetTraffic\x12\x1b.probe.v1.GetTrafficRequest\x1a\x1c.probe.v1.GetTrafficResponse\x12P\n" +
+	"\rAdjustTraffic\x12\x1e.probe.v1.AdjustTrafficRequest\x1a\x1f.probe.v1.AdjustTrafficResponseB.Z,github.com/xjetry/probe/gen/probe/v1;probev1b\x06proto3"
 
 var (
 	file_probe_v1_admin_proto_rawDescOnce sync.Once
@@ -1685,7 +2104,7 @@ func file_probe_v1_admin_proto_rawDescGZIP() []byte {
 	return file_probe_v1_admin_proto_rawDescData
 }
 
-var file_probe_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
+var file_probe_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
 var file_probe_v1_admin_proto_goTypes = []any{
 	(*LoginRequest)(nil),                // 0: probe.v1.LoginRequest
 	(*LoginResponse)(nil),               // 1: probe.v1.LoginResponse
@@ -1717,49 +2136,63 @@ var file_probe_v1_admin_proto_goTypes = []any{
 	(*QueryMetricsResponse)(nil),        // 27: probe.v1.QueryMetricsResponse
 	(*MetricSeries)(nil),                // 28: probe.v1.MetricSeries
 	(*MetricSample)(nil),                // 29: probe.v1.MetricSample
-	(*Facts)(nil),                       // 30: probe.v1.Facts
-	(*Metrics)(nil),                     // 31: probe.v1.Metrics
+	(*Traffic)(nil),                     // 30: probe.v1.Traffic
+	(*GetTrafficRequest)(nil),           // 31: probe.v1.GetTrafficRequest
+	(*GetTrafficResponse)(nil),          // 32: probe.v1.GetTrafficResponse
+	(*NodeTraffic)(nil),                 // 33: probe.v1.NodeTraffic
+	(*AdjustTrafficRequest)(nil),        // 34: probe.v1.AdjustTrafficRequest
+	(*AdjustTrafficResponse)(nil),       // 35: probe.v1.AdjustTrafficResponse
+	(*Facts)(nil),                       // 36: probe.v1.Facts
+	(*Metrics)(nil),                     // 37: probe.v1.Metrics
 }
 var file_probe_v1_admin_proto_depIdxs = []int32{
-	30, // 0: probe.v1.Node.facts:type_name -> probe.v1.Facts
+	36, // 0: probe.v1.Node.facts:type_name -> probe.v1.Facts
 	4,  // 1: probe.v1.ListNodesResponse.nodes:type_name -> probe.v1.Node
 	4,  // 2: probe.v1.CreateNodeResponse.node:type_name -> probe.v1.Node
 	4,  // 3: probe.v1.UpdateNodeResponse.node:type_name -> probe.v1.Node
 	25, // 4: probe.v1.GetSnapshotResponse.nodes:type_name -> probe.v1.NodeStatus
-	31, // 5: probe.v1.NodeStatus.metrics:type_name -> probe.v1.Metrics
-	28, // 6: probe.v1.QueryMetricsResponse.series:type_name -> probe.v1.MetricSeries
-	29, // 7: probe.v1.MetricSeries.samples:type_name -> probe.v1.MetricSample
-	0,  // 8: probe.v1.AdminService.Login:input_type -> probe.v1.LoginRequest
-	2,  // 9: probe.v1.AdminService.Logout:input_type -> probe.v1.LogoutRequest
-	5,  // 10: probe.v1.AdminService.ListNodes:input_type -> probe.v1.ListNodesRequest
-	7,  // 11: probe.v1.AdminService.CreateNode:input_type -> probe.v1.CreateNodeRequest
-	9,  // 12: probe.v1.AdminService.UpdateNode:input_type -> probe.v1.UpdateNodeRequest
-	11, // 13: probe.v1.AdminService.DeleteNode:input_type -> probe.v1.DeleteNodeRequest
-	13, // 14: probe.v1.AdminService.RotateNodeToken:input_type -> probe.v1.RotateNodeTokenRequest
-	15, // 15: probe.v1.AdminService.ReorderNodes:input_type -> probe.v1.ReorderNodesRequest
-	17, // 16: probe.v1.AdminService.OpenRegisterWindow:input_type -> probe.v1.OpenRegisterWindowRequest
-	19, // 17: probe.v1.AdminService.CloseRegisterWindow:input_type -> probe.v1.CloseRegisterWindowRequest
-	21, // 18: probe.v1.AdminService.GetRegisterWindow:input_type -> probe.v1.GetRegisterWindowRequest
-	23, // 19: probe.v1.AdminService.GetSnapshot:input_type -> probe.v1.GetSnapshotRequest
-	26, // 20: probe.v1.AdminService.QueryMetrics:input_type -> probe.v1.QueryMetricsRequest
-	1,  // 21: probe.v1.AdminService.Login:output_type -> probe.v1.LoginResponse
-	3,  // 22: probe.v1.AdminService.Logout:output_type -> probe.v1.LogoutResponse
-	6,  // 23: probe.v1.AdminService.ListNodes:output_type -> probe.v1.ListNodesResponse
-	8,  // 24: probe.v1.AdminService.CreateNode:output_type -> probe.v1.CreateNodeResponse
-	10, // 25: probe.v1.AdminService.UpdateNode:output_type -> probe.v1.UpdateNodeResponse
-	12, // 26: probe.v1.AdminService.DeleteNode:output_type -> probe.v1.DeleteNodeResponse
-	14, // 27: probe.v1.AdminService.RotateNodeToken:output_type -> probe.v1.RotateNodeTokenResponse
-	16, // 28: probe.v1.AdminService.ReorderNodes:output_type -> probe.v1.ReorderNodesResponse
-	18, // 29: probe.v1.AdminService.OpenRegisterWindow:output_type -> probe.v1.OpenRegisterWindowResponse
-	20, // 30: probe.v1.AdminService.CloseRegisterWindow:output_type -> probe.v1.CloseRegisterWindowResponse
-	22, // 31: probe.v1.AdminService.GetRegisterWindow:output_type -> probe.v1.GetRegisterWindowResponse
-	24, // 32: probe.v1.AdminService.GetSnapshot:output_type -> probe.v1.GetSnapshotResponse
-	27, // 33: probe.v1.AdminService.QueryMetrics:output_type -> probe.v1.QueryMetricsResponse
-	21, // [21:34] is the sub-list for method output_type
-	8,  // [8:21] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	37, // 5: probe.v1.NodeStatus.metrics:type_name -> probe.v1.Metrics
+	30, // 6: probe.v1.NodeStatus.traffic:type_name -> probe.v1.Traffic
+	28, // 7: probe.v1.QueryMetricsResponse.series:type_name -> probe.v1.MetricSeries
+	29, // 8: probe.v1.MetricSeries.samples:type_name -> probe.v1.MetricSample
+	33, // 9: probe.v1.GetTrafficResponse.nodes:type_name -> probe.v1.NodeTraffic
+	30, // 10: probe.v1.NodeTraffic.traffic:type_name -> probe.v1.Traffic
+	30, // 11: probe.v1.AdjustTrafficResponse.traffic:type_name -> probe.v1.Traffic
+	0,  // 12: probe.v1.AdminService.Login:input_type -> probe.v1.LoginRequest
+	2,  // 13: probe.v1.AdminService.Logout:input_type -> probe.v1.LogoutRequest
+	5,  // 14: probe.v1.AdminService.ListNodes:input_type -> probe.v1.ListNodesRequest
+	7,  // 15: probe.v1.AdminService.CreateNode:input_type -> probe.v1.CreateNodeRequest
+	9,  // 16: probe.v1.AdminService.UpdateNode:input_type -> probe.v1.UpdateNodeRequest
+	11, // 17: probe.v1.AdminService.DeleteNode:input_type -> probe.v1.DeleteNodeRequest
+	13, // 18: probe.v1.AdminService.RotateNodeToken:input_type -> probe.v1.RotateNodeTokenRequest
+	15, // 19: probe.v1.AdminService.ReorderNodes:input_type -> probe.v1.ReorderNodesRequest
+	17, // 20: probe.v1.AdminService.OpenRegisterWindow:input_type -> probe.v1.OpenRegisterWindowRequest
+	19, // 21: probe.v1.AdminService.CloseRegisterWindow:input_type -> probe.v1.CloseRegisterWindowRequest
+	21, // 22: probe.v1.AdminService.GetRegisterWindow:input_type -> probe.v1.GetRegisterWindowRequest
+	23, // 23: probe.v1.AdminService.GetSnapshot:input_type -> probe.v1.GetSnapshotRequest
+	26, // 24: probe.v1.AdminService.QueryMetrics:input_type -> probe.v1.QueryMetricsRequest
+	31, // 25: probe.v1.AdminService.GetTraffic:input_type -> probe.v1.GetTrafficRequest
+	34, // 26: probe.v1.AdminService.AdjustTraffic:input_type -> probe.v1.AdjustTrafficRequest
+	1,  // 27: probe.v1.AdminService.Login:output_type -> probe.v1.LoginResponse
+	3,  // 28: probe.v1.AdminService.Logout:output_type -> probe.v1.LogoutResponse
+	6,  // 29: probe.v1.AdminService.ListNodes:output_type -> probe.v1.ListNodesResponse
+	8,  // 30: probe.v1.AdminService.CreateNode:output_type -> probe.v1.CreateNodeResponse
+	10, // 31: probe.v1.AdminService.UpdateNode:output_type -> probe.v1.UpdateNodeResponse
+	12, // 32: probe.v1.AdminService.DeleteNode:output_type -> probe.v1.DeleteNodeResponse
+	14, // 33: probe.v1.AdminService.RotateNodeToken:output_type -> probe.v1.RotateNodeTokenResponse
+	16, // 34: probe.v1.AdminService.ReorderNodes:output_type -> probe.v1.ReorderNodesResponse
+	18, // 35: probe.v1.AdminService.OpenRegisterWindow:output_type -> probe.v1.OpenRegisterWindowResponse
+	20, // 36: probe.v1.AdminService.CloseRegisterWindow:output_type -> probe.v1.CloseRegisterWindowResponse
+	22, // 37: probe.v1.AdminService.GetRegisterWindow:output_type -> probe.v1.GetRegisterWindowResponse
+	24, // 38: probe.v1.AdminService.GetSnapshot:output_type -> probe.v1.GetSnapshotResponse
+	27, // 39: probe.v1.AdminService.QueryMetrics:output_type -> probe.v1.QueryMetricsResponse
+	32, // 40: probe.v1.AdminService.GetTraffic:output_type -> probe.v1.GetTrafficResponse
+	35, // 41: probe.v1.AdminService.AdjustTraffic:output_type -> probe.v1.AdjustTrafficResponse
+	27, // [27:42] is the sub-list for method output_type
+	12, // [12:27] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_probe_v1_admin_proto_init() }
@@ -1777,7 +2210,7 @@ func file_probe_v1_admin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_probe_v1_admin_proto_rawDesc), len(file_probe_v1_admin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   30,
+			NumMessages:   36,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

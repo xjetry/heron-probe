@@ -468,14 +468,14 @@ func TestUpdateNodeReplacesEditableFields(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _ := s.CreateNode(ctx, "old", hash(1))
-	if err := s.UpdateNode(ctx, id, "new", true, "note"); err != nil {
+	if err := s.UpdateNode(ctx, id, "new", true, "note", 1); err != nil {
 		t.Fatal(err)
 	}
 	n, err := s.GetNode(ctx, id)
 	if err != nil || n.Name != "new" || !n.Public || n.Note != "note" {
 		t.Fatalf("GetNode = %+v, %v", n, err)
 	}
-	if err := s.UpdateNode(ctx, 999, "x", false, ""); !errors.Is(err, ErrNotFound) {
+	if err := s.UpdateNode(ctx, 999, "x", false, "", 1); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown id: %v, want ErrNotFound", err)
 	}
 	if _, err := s.GetNode(ctx, 999); !errors.Is(err, ErrNotFound) {
@@ -507,5 +507,25 @@ func TestDeleteNodeClearsEveryLevel(t *testing.T) {
 		if err := s.r.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+tbl+" WHERE node_id = ?", keep).Scan(&n); err != nil || n != 1 {
 			t.Fatalf("%s lost the other node's row: %d (%v)", tbl, n, err)
 		}
+	}
+}
+
+func TestUpdateNodePersistsResetDayAndCreateUsesTheDefault(t *testing.T) {
+	s, _ := open(t)
+	ctx := context.Background()
+	id, _ := s.CreateNode(ctx, "n", hash(1))
+	if n, _ := s.GetNode(ctx, id); n.TrafficResetDay != 1 {
+		t.Fatalf("default reset day = %d, want 1", n.TrafficResetDay)
+	}
+	if err := s.UpdateNode(ctx, id, "n", false, "", 15); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.GetNode(ctx, id)
+	if err != nil || n.TrafficResetDay != 15 {
+		t.Fatalf("after update: %+v %v", n, err)
+	}
+	list, _ := s.ListNodes(ctx)
+	if list[0].TrafficResetDay != 15 {
+		t.Fatalf("ListNodes reset day = %d", list[0].TrafficResetDay)
 	}
 }

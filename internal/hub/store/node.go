@@ -12,19 +12,20 @@ import (
 var ErrBadOrder = errors.New("ids must list every node exactly once")
 
 type Node struct {
-	ID         int64
-	Name       string
-	Public     bool
-	Note       string
-	SortOrder  int32
-	CreatedAt  time.Time
-	LastSeenAt time.Time // 零值表示从未上报
+	ID              int64
+	Name            string
+	Public          bool
+	Note            string
+	SortOrder       int32
+	CreatedAt       time.Time
+	LastSeenAt      time.Time // 零值表示从未上报
+	TrafficResetDay int       // 周期重置日 1–28，列默认 1
 	// Facts 为 nil 表示该节点尚未上报过静态信息。
 	Facts          *probev1.Facts
 	FactsUpdatedAt time.Time
 }
 
-const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.created_at, n.last_seen_at,
+const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.created_at, n.last_seen_at, n.traffic_reset_day,
 	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at
 	FROM node n LEFT JOIN node_facts f ON f.node_id = n.id`
 
@@ -36,7 +37,7 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 		var seen sql.NullInt64
 		var hostname, os, kernel, arch, virt, cpuModel, agentVersion sql.NullString
 		var cores, icmp, factsUpdated sql.NullInt64
-		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &created, &seen,
+		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &created, &seen, &n.TrafficResetDay,
 			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated); err != nil {
 			return nil, err
 		}
@@ -91,10 +92,11 @@ func (s *Store) NodeExists(ctx context.Context, id int64) (bool, error) {
 	return err == nil, err
 }
 
-// UpdateNode 整体替换可编辑字段；调用方已做校验与清洗。
-func (s *Store) UpdateNode(ctx context.Context, id int64, name string, public bool, note string) error {
+// UpdateNode 整体替换可编辑字段；调用方已做校验与清洗。重置日与其他字段一起整体替换，
+// 不存在"不改"的取值。
+func (s *Store) UpdateNode(ctx context.Context, id int64, name string, public bool, note string, resetDay int) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		res, err := tx.Exec("UPDATE node SET name = ?, public = ?, note = ? WHERE id = ?", name, public, note, id)
+		res, err := tx.Exec("UPDATE node SET name = ?, public = ?, note = ?, traffic_reset_day = ? WHERE id = ?", name, public, note, resetDay, id)
 		if err != nil {
 			return err
 		}

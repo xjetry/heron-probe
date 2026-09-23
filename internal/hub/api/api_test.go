@@ -72,7 +72,7 @@ func newHarness(t *testing.T, trusted string) *harness {
 	if err := book.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	svc := New(Config{ReportInterval: 10 * time.Second, TrustedProxies: prefixes}, st, a, l, in, clk, slog.Default())
+	svc := New(Config{ReportInterval: 10 * time.Second, TrustedProxies: prefixes}, st, a, l, in, book, clk, slog.Default())
 	mux := http.NewServeMux()
 	mux.Handle(in.Handler())
 	mux.Handle(svc.Handler())
@@ -334,14 +334,14 @@ func TestUpdateAndReorderNodes(t *testing.T) {
 	ctx := context.Background()
 	a, _ := h.createNode(t, "a")
 	b, _ := h.createNode(t, "b")
-	upd, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: a, Name: "a2", Public: true, Note: "note‮"}))
+	upd, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: a, Name: "a2", Public: true, Note: "note‮", TrafficResetDay: 1}))
 	if err != nil || upd.Msg.GetNode().GetName() != "a2" || !upd.Msg.GetNode().GetPublic() || upd.Msg.GetNode().GetNote() != "note" {
 		t.Fatalf("UpdateNode = %v %v", upd, err)
 	}
 	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: a, Name: strings.Repeat("x", 65)})); codeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("65-char name: %v", err)
 	}
-	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: 999, Name: "x"})); codeOf(err) != connect.CodeNotFound {
+	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: 999, Name: "x", TrafficResetDay: 1})); codeOf(err) != connect.CodeNotFound {
 		t.Fatalf("unknown node: %v", err)
 	}
 	if _, err := h.admin.ReorderNodes(ctx, connect.NewRequest(&probev1.ReorderNodesRequest{Ids: []int64{b}})); codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "exactly once") {
@@ -498,7 +498,7 @@ func TestUnicodeValidationAndQueryRangeEdges(t *testing.T) {
 	}
 	id, _ := h.createNode(t, strings.Repeat("😀", 64))
 	for _, n := range []int{1024, 1025} {
-		_, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", Note: strings.Repeat("😀", n)}))
+		_, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", Note: strings.Repeat("😀", n), TrafficResetDay: 1}))
 		if (n == 1024 && err != nil) || (n == 1025 && codeOf(err) != connect.CodeInvalidArgument) {
 			t.Errorf("note length %d: %v", n, err)
 		}
@@ -633,5 +633,121 @@ func TestWindowAndQueryAdmissionBounds(t *testing.T) {
 		if resp.Msg.Level != tc.level || resp.Msg.StepS != tc.step {
 			t.Errorf("default query span %d: level=%s step=%d", tc.span, resp.Msg.Level, resp.Msg.StepS)
 		}
+	}
+}
+
+func netCounters(boot string, rx, tx uint64) *probev1.Metrics {
+	return &probev1.Metrics{BootId: boot, NetRxTotal: proto.Uint64(rx), NetTxTotal: proto.Uint64(tx)}
+}
+
+func TestTrafficIsReportedAdjustedAndConfigured(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	id, tok := h.createNode(t, "n")
+	if err := h.report(t, tok, netCounters("b", 1000, 1000)); err != nil {
+		t.Fatal(err)
+	}
+	h.clk.Advance(10 * time.Second)
+	if err := h.report(t, tok, netCounters("b", 1000+1<<20, 2000)); err != nil {
+		t.Fatal(err)
+	}
+	jan1, feb1, jan15 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Unix(), time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC).Unix(), time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC).Unix()
+
+	snap, err := h.admin.GetSnapshot(ctx, connect.NewRequest(&probev1.GetSnapshotRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr := snap.Msg.Nodes[0].GetTraffic(); tr.GetTotalRx() != 1<<20 || tr.GetPeriodRx() != 1<<20 || tr.GetTotalTx() != 1000 || tr.GetResetDay() != 1 || tr.GetPeriodStart() != jan1 || tr.GetNextResetAt() != feb1 {
+		t.Fatalf("snapshot traffic = %v", tr)
+	}
+	all, err := h.admin.GetTraffic(ctx, connect.NewRequest(&probev1.GetTrafficRequest{}))
+	if err != nil || len(all.Msg.Nodes) != 1 || all.Msg.Nodes[0].GetNodeId() != id || all.Msg.Nodes[0].GetName() != "n" || all.Msg.Nodes[0].GetTraffic().GetTotalTx() != 1000 || all.Msg.GetNow() != h.clk.Now().Unix() {
+		t.Fatalf("GetTraffic = %v %v", all, err)
+	}
+
+	adj, err := h.admin.AdjustTraffic(ctx, connect.NewRequest(&probev1.AdjustTrafficRequest{NodeId: id, PeriodRx: 5 << 30, PeriodTx: 0}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr := adj.Msg.GetTraffic(); tr.GetPeriodRx() != 5<<30 || tr.GetTotalRx() != 5<<30 || tr.GetPeriodTx() != 0 || tr.GetTotalTx() != 0 {
+		t.Fatalf("after adjust: %v", tr)
+	}
+	h.clk.Advance(10 * time.Second)
+	if err := h.report(t, tok, netCounters("b", 1000+1<<20+100, 2000)); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := h.book.Get(id); e.PeriodRx != 5<<30+100 || e.LastRx != 1000+1<<20+100 {
+		t.Fatalf("baseline must survive the adjustment: %+v", e)
+	}
+	if _, err := h.admin.AdjustTraffic(ctx, connect.NewRequest(&probev1.AdjustTrafficRequest{NodeId: 999, PeriodRx: 1})); codeOf(err) != connect.CodeNotFound {
+		t.Fatalf("adjust unknown node: %v, want NotFound", err)
+	}
+	if _, ok := h.book.Get(999); ok {
+		t.Fatal("rejected adjustment left a traffic entry behind")
+	}
+
+	upd, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 15}))
+	if err != nil || upd.Msg.GetNode().GetTrafficResetDay() != 15 {
+		t.Fatalf("UpdateNode reset day: %v %v", upd, err)
+	}
+	all, _ = h.admin.GetTraffic(ctx, connect.NewRequest(&probev1.GetTrafficRequest{}))
+	if tr := all.Msg.Nodes[0].GetTraffic(); tr.GetResetDay() != 15 || tr.GetNextResetAt() != jan15 {
+		t.Fatalf("traffic after changing the reset day: %v", tr)
+	}
+	for _, day := range []uint32{0, 29} {
+		_, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: day}))
+		if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "traffic_reset_day") {
+			t.Fatalf("reset day %d: %v, want InvalidArgument naming the field", day, err)
+		}
+	}
+	list, _ := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{}))
+	if list.Msg.Nodes[0].GetTrafficResetDay() != 15 {
+		t.Fatalf("rejected updates must not change the reset day: %v", list.Msg.Nodes[0])
+	}
+	// 库里没有的节点：更新失败，内存里的重置日也不得被改。
+	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: 999, Name: "x", TrafficResetDay: 20})); codeOf(err) != connect.CodeNotFound {
+		t.Fatalf("unknown node: %v", err)
+	}
+	if day := h.book.View(999).ResetDay; day != 1 {
+		t.Fatalf("failed update changed the in-memory reset day to %d", day)
+	}
+}
+
+func TestQueryMetricsEmitsSumForAdditiveColumns(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	id, _ := h.createNode(t, "n")
+	base := h.clk.Now().Truncate(time.Hour).Unix()
+	filled := metric.NewBucket()
+	filled.AddSum(metric.RxBytes, 1500)
+	filled.AddSum(metric.RxBytes, 500)
+	empty := metric.NewBucket()
+	empty.Add(&probev1.Metrics{CpuPct: proto.Float64(1)})
+	if _, err := h.store.WriteMinuteRows(ctx, []metric.Row{{NodeID: id, TS: base, Bucket: filled}, {NodeID: id, TS: base + 60, Bucket: empty}}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&probev1.QueryMetricsRequest{NodeId: id, From: base, To: base + 120, MaxPoints: 2}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rx *probev1.MetricSeries
+	for _, s := range resp.Msg.Series {
+		if s.GetName() == "rx_bytes" {
+			rx = s
+		}
+	}
+	if rx == nil || rx.GetUnit() != "bytes" || len(rx.Samples) != 2 {
+		t.Fatalf("rx_bytes series = %v", rx)
+	}
+	if s := rx.Samples[0]; s.GetN() != 2 || s.Sum == nil || *s.Sum != 2000 || s.Mean != nil || s.Max != nil {
+		t.Fatalf("rx sample 0 = %v, want n=2 sum=2000 and no mean/max", s)
+	}
+	if s := rx.Samples[1]; s.GetN() != 0 || s.Sum != nil {
+		t.Fatalf("rx sample 1 = %v, want n=0 with no sum", s)
+	}
+	if cpu := resp.Msg.Series[0].Samples[1]; cpu.Sum != nil || cpu.Mean == nil {
+		t.Fatalf("cpu sample = %v, want mean without sum", cpu)
 	}
 }

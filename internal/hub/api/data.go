@@ -28,7 +28,7 @@ func (s *Service) GetSnapshot(ctx context.Context, _ *connect.Request[probev1.Ge
 	}
 	out := &probev1.GetSnapshotResponse{Now: s.clk.Now().Unix(), ReportIntervalMs: uint32(s.cfg.ReportInterval / time.Millisecond)}
 	for _, n := range nodes {
-		st := &probev1.NodeStatus{Id: n.ID, Name: n.Name}
+		st := &probev1.NodeStatus{Id: n.ID, Name: n.Name, Traffic: trafficProto(s.traffic.View(n.ID))}
 		if e, ok := s.live.Get(n.ID); ok {
 			st.Online = e.Online
 			st.Metrics = e.Metrics
@@ -82,10 +82,18 @@ func (s *Service) QueryMetrics(ctx context.Context, req *connect.Request[probev1
 		resp.Ts = append(resp.Ts, r.TS)
 		for i, c := range metric.Columns {
 			sample := &probev1.MetricSample{N: r.Bucket.N[i]}
-			if mean, ok := r.Bucket.Mean(i); ok {
-				sample.Mean = proto.Float64(mean)
-				if c.Kind == metric.MeanMax {
-					sample.Max = proto.Float64(r.Bucket.Max[i])
+			switch {
+			case c.Kind == metric.Sum:
+				// 可加量下发和，不下发均值：一分钟内的字节数除以入账次数没有意义。
+				if r.Bucket.N[i] > 0 {
+					sample.Sum = proto.Float64(r.Bucket.Sum[i])
+				}
+			default:
+				if mean, ok := r.Bucket.Mean(i); ok {
+					sample.Mean = proto.Float64(mean)
+					if c.Kind == metric.MeanMax {
+						sample.Max = proto.Float64(r.Bucket.Max[i])
+					}
 				}
 			}
 			series[i].Samples = append(series[i].Samples, sample)

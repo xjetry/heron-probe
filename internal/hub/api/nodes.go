@@ -21,10 +21,13 @@ const (
 	minWindowTTL   = 60 * time.Second
 	maxWindowTTL   = 7 * 24 * time.Hour
 	maxWindowNodes = 1000
+	minResetDay    = 1
+	// 28 是每个月都有的最大日；更大的日子在短月里没有零点可对齐。
+	maxResetDay = 28
 )
 
 func nodeProto(n store.Node) *probev1.Node {
-	out := &probev1.Node{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, SortOrder: n.SortOrder, CreatedAt: n.CreatedAt.Unix(), Facts: n.Facts}
+	out := &probev1.Node{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, SortOrder: n.SortOrder, CreatedAt: n.CreatedAt.Unix(), Facts: n.Facts, TrafficResetDay: uint32(n.TrafficResetDay)}
 	if !n.LastSeenAt.IsZero() {
 		out.LastSeenAt = proto.Int64(n.LastSeenAt.Unix())
 	}
@@ -92,7 +95,11 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 	if err != nil {
 		return nil, err
 	}
-	err = s.store.UpdateNode(ctx, req.Msg.GetId(), name, req.Msg.GetPublic(), note)
+	day := int(req.Msg.GetTrafficResetDay())
+	if day < minResetDay || day > maxResetDay {
+		return nil, invalid("traffic_reset_day must be between %d and %d; got %d", minResetDay, maxResetDay, day)
+	}
+	err = s.store.UpdateNode(ctx, req.Msg.GetId(), name, req.Msg.GetPublic(), note, day)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, notFound(req.Msg.GetId())
 	}
@@ -100,6 +107,8 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 		s.log.Error("updating node failed", "err", err)
 		return nil, internalError("updating node failed")
 	}
+	// 库已提交才改内存：失败的更新不能让内存里的重置日与库分叉。
+	s.traffic.SetResetDay(req.Msg.GetId(), day)
 	n, err := s.store.GetNode(ctx, req.Msg.GetId())
 	if err != nil {
 		return nil, internalError("reading updated node failed")

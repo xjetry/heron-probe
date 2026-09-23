@@ -23,6 +23,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/hub/traffic"
 )
 
 const (
@@ -44,17 +45,18 @@ type NodeState interface {
 }
 
 type Service struct {
-	cfg   Config
-	store *store.Store
-	auth  *auth.Auth
-	live  *live.Live
-	nodes NodeState
-	clk   clock.Clock
-	log   *slog.Logger
+	cfg     Config
+	store   *store.Store
+	auth    *auth.Auth
+	live    *live.Live
+	nodes   NodeState
+	traffic *traffic.Book
+	clk     clock.Clock
+	log     *slog.Logger
 }
 
-func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, clk clock.Clock, log *slog.Logger) *Service {
-	return &Service{cfg: cfg, store: st, auth: a, live: l, nodes: nodes, clk: clk, log: log}
+func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, book *traffic.Book, clk clock.Clock, log *slog.Logger) *Service {
+	return &Service{cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, clk: clk, log: log}
 }
 
 func (s *Service) Handler() (string, http.Handler) {

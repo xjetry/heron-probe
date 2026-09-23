@@ -49,7 +49,7 @@ func newTestMux(t *testing.T) *http.ServeMux {
 	if err := book.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	admin := api.New(api.Config{ReportInterval: 10 * time.Second}, st, a, l, svc, clk, slog.Default())
+	admin := api.New(api.Config{ReportInterval: 10 * time.Second}, st, a, l, svc, book, clk, slog.Default())
 	return newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", web.RootRedirect()))
 }
 

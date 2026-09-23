@@ -16,7 +16,7 @@ bin/probe-hub window open --db "$db" --ttl 10m --max 2 > "$work/window.txt"
 key=$(sed -n 's/^key: //p' "$work/window.txt")
 [ -n "$key" ] || { echo "no key"; exit 1; }
 
-PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" > "$work/hub.log" 2>&1 &
+PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC > "$work/hub.log" 2>&1 &
 hub=$!
 # 每次运行只回收自己的容器；失败也必须停止上报，不能把流量带进下一次验收。
 cleanup() {
@@ -89,11 +89,49 @@ query_body=$(jq -nc --arg nodeId "$node1" --argjson from "$((now - 3600))" --arg
   '{nodeId: $nodeId, from: $from, to: $to, maxPoints: 100}')
 [ "$(rpc QueryMetrics "$query_body")" = 200 ] || { echo "FAIL: QueryMetrics"; cat "$work/QueryMetrics.json"; exit 1; }
 jq -e '.level == "1m" and (.ts | length) >= 1 and any(.series[] | select(.name == "cpu") | .samples[]; .n > 0)' "$work/QueryMetrics.json" > /dev/null || { echo "FAIL: QueryMetrics shape"; cat "$work/QueryMetrics.json"; exit 1; }
+# 流量：两个 agent 每 4 秒上报一次，上报本身就产生字节；首次上报只取基线，之后的差分进总量。
+[ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic"; cat "$work/GetTraffic.json"; exit 1; }
+jq -e '(.nodes | length) == 2 and all(.nodes[]; (.traffic.totalRx | tonumber) > 0 and (.traffic.totalTx | tonumber) > 0 and .traffic.resetDay == 1 and (.traffic.nextResetAt | tonumber) > (.traffic.periodStart | tonumber))' "$work/GetTraffic.json" > /dev/null || { echo "FAIL: traffic shape"; cat "$work/GetTraffic.json"; exit 1; }
+tx_before=$(jq -r --arg id "$node1" '.nodes[] | select(.nodeId == $id) | .traffic.totalTx' "$work/GetTraffic.json")
+adjust_body=$(jq -nc --arg nodeId "$node1" '{nodeId: $nodeId, periodRx: "1073741824", periodTx: "0"}')
+[ "$(rpc AdjustTraffic "$adjust_body")" = 200 ] || { echo "FAIL: AdjustTraffic"; cat "$work/AdjustTraffic.json"; exit 1; }
+# 首个周期里总量等于周期量，校正后两者同为 1 GiB；上行改成 0 后总量也随差值归零。
+jq -e '.traffic.periodRx == "1073741824" and .traffic.totalRx == "1073741824" and (.traffic.periodTx // "0") == "0" and (.traffic.totalTx // "0") == "0"' "$work/AdjustTraffic.json" > /dev/null || { echo "FAIL: AdjustTraffic result"; cat "$work/AdjustTraffic.json"; exit 1; }
+[ "$(rpc AdjustTraffic '{"nodeId": "999999", "periodRx": "1"}')" = 404 ] || { echo "FAIL: AdjustTraffic on an unknown node must be 404"; exit 1; }
+update_body=$(jq -nc --arg id "$node1" --arg name "$(jq -r '.nodes[0].name' "$work/ListNodes.json")" '{id: $id, name: $name, public: false, note: "", trafficResetDay: 15}')
+[ "$(rpc UpdateNode "$update_body")" = 200 ] || { echo "FAIL: UpdateNode reset day"; cat "$work/UpdateNode.json"; exit 1; }
+jq -e '.node.trafficResetDay == 15' "$work/UpdateNode.json" > /dev/null || { echo "FAIL: reset day not echoed"; cat "$work/UpdateNode.json"; exit 1; }
+
+# 两个 agent 已退出；先推进到新重置日对应的周期，再保存停机前状态。
+[ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic before restart"; exit 1; }
+traffic_before=$(jq -c --arg id "$node1" '.nodes[] | select(.nodeId == $id) | .traffic' "$work/GetTraffic.json")
+
 [ "$(rpc Logout '{}')" = 200 ] || { echo "FAIL: logout"; exit 1; }
 [ "$(rpc GetSnapshot '{}')" = 401 ] || { echo "FAIL: session survived logout"; exit 1; }
 
 kill "$hub"; wait "$hub"
 hub=""
+
+# 重启：流量状态、重置日与被 Drain 出的分钟行都必须还在。
+PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC >> "$work/hub.log" 2>&1 &
+hub=$!
+sleep 1
+[ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login after restart"; exit 1; }
+[ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic after restart"; exit 1; }
+# 总量不因周期滚动清零；agent 已退出，同周期的用量不再变化，跨周期则为零。
+jq -e --arg id "$node1" --arg tx "$tx_before" --argjson before "$traffic_before" '.nodes[] | select(.nodeId == $id) |
+  .traffic.resetDay == 15 and (.traffic.totalRx | tonumber) >= 1073741824 and (.traffic.totalTx // "0" | tonumber) <= ($tx | tonumber) and
+  (if .traffic.periodStart == $before.periodStart then
+    (.traffic.periodRx // "0") == ($before.periodRx // "0")
+  else
+    (.traffic.periodStart | tonumber) > ($before.periodStart | tonumber) and (.traffic.periodRx // "0") == "0"
+  end)' "$work/GetTraffic.json" > /dev/null || { echo "FAIL: traffic state lost across restart"; cat "$work/GetTraffic.json"; exit 1; }
+[ "$(rpc QueryMetrics "$query_body")" = 200 ] || { echo "FAIL: QueryMetrics after restart"; exit 1; }
+jq -e 'any(.series[] | select(.name == "tx_bytes") | .samples[]; .n > 0 and .sum != null and .mean == null)' "$work/QueryMetrics.json" > /dev/null || { echo "FAIL: tx_bytes minute sums missing"; cat "$work/QueryMetrics.json"; exit 1; }
+[ "$(rpc Logout '{}')" = 200 ] || { echo "FAIL: logout after restart"; exit 1; }
+kill "$hub"; wait "$hub"
+hub=""
+
 cleanup
 trap - EXIT
 
@@ -109,6 +147,7 @@ cat "$work/nodes.txt"
 
 get() { sed -n "s/^$1: //p" "$work/stats.txt"; }
 [ "$(get node)" = 2 ] || { echo "FAIL: node count"; exit 1; }
+[ "$(get traffic)" = 2 ] || { echo "FAIL: traffic rows"; exit 1; }
 [ "$(get node_facts)" = 2 ] || { echo "FAIL: facts count"; exit 1; }
 [ "$(get metric_1m)" -ge 2 ] || { echo "FAIL: no minute rows"; exit 1; }
 [ "$(get admin)" = 1 ] || { echo "FAIL: admin row"; exit 1; }

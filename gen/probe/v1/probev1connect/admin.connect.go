@@ -66,6 +66,11 @@ const (
 	// AdminServiceQueryMetricsProcedure is the fully-qualified name of the AdminService's QueryMetrics
 	// RPC.
 	AdminServiceQueryMetricsProcedure = "/probe.v1.AdminService/QueryMetrics"
+	// AdminServiceGetTrafficProcedure is the fully-qualified name of the AdminService's GetTraffic RPC.
+	AdminServiceGetTrafficProcedure = "/probe.v1.AdminService/GetTraffic"
+	// AdminServiceAdjustTrafficProcedure is the fully-qualified name of the AdminService's
+	// AdjustTraffic RPC.
+	AdminServiceAdjustTrafficProcedure = "/probe.v1.AdminService/AdjustTraffic"
 )
 
 // AdminServiceClient is a client for the probe.v1.AdminService service.
@@ -77,7 +82,7 @@ type AdminServiceClient interface {
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
 	// 建节点并返回其 token；明文只在此处返回一次。
 	CreateNode(context.Context, *connect.Request[v1.CreateNodeRequest]) (*connect.Response[v1.CreateNodeResponse], error)
-	// 整体替换可编辑字段（名称、是否公开、备注）。
+	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日）。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
 	// 删除节点及其全部历史；进程内的实时状态同步清理。
 	DeleteNode(context.Context, *connect.Request[v1.DeleteNodeRequest]) (*connect.Response[v1.DeleteNodeResponse], error)
@@ -93,6 +98,10 @@ type AdminServiceClient interface {
 	GetSnapshot(context.Context, *connect.Request[v1.GetSnapshotRequest]) (*connect.Response[v1.GetSnapshotResponse], error)
 	// 某节点一段时间的历史；级别与步长由 hub 按窗口选定并随数据返回。
 	QueryMetrics(context.Context, *connect.Request[v1.QueryMetricsRequest]) (*connect.Response[v1.QueryMetricsResponse], error)
+	// 全部节点的流量：hub 累计的总量、当前周期用量、周期起点与下次重置时刻。
+	GetTraffic(context.Context, *connect.Request[v1.GetTrafficRequest]) (*connect.Response[v1.GetTrafficResponse], error)
+	// 把某节点当前周期的用量覆盖为给定值；总量按同一差值调整且不低于 0，计数器基线不动。
+	AdjustTraffic(context.Context, *connect.Request[v1.AdjustTrafficRequest]) (*connect.Response[v1.AdjustTrafficResponse], error)
 }
 
 // NewAdminServiceClient constructs a client for the probe.v1.AdminService service. By default, it
@@ -184,6 +193,18 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("QueryMetrics")),
 			connect.WithClientOptions(opts...),
 		),
+		getTraffic: connect.NewClient[v1.GetTrafficRequest, v1.GetTrafficResponse](
+			httpClient,
+			baseURL+AdminServiceGetTrafficProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("GetTraffic")),
+			connect.WithClientOptions(opts...),
+		),
+		adjustTraffic: connect.NewClient[v1.AdjustTrafficRequest, v1.AdjustTrafficResponse](
+			httpClient,
+			baseURL+AdminServiceAdjustTrafficProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("AdjustTraffic")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -202,6 +223,8 @@ type adminServiceClient struct {
 	getRegisterWindow   *connect.Client[v1.GetRegisterWindowRequest, v1.GetRegisterWindowResponse]
 	getSnapshot         *connect.Client[v1.GetSnapshotRequest, v1.GetSnapshotResponse]
 	queryMetrics        *connect.Client[v1.QueryMetricsRequest, v1.QueryMetricsResponse]
+	getTraffic          *connect.Client[v1.GetTrafficRequest, v1.GetTrafficResponse]
+	adjustTraffic       *connect.Client[v1.AdjustTrafficRequest, v1.AdjustTrafficResponse]
 }
 
 // Login calls probe.v1.AdminService.Login.
@@ -269,6 +292,16 @@ func (c *adminServiceClient) QueryMetrics(ctx context.Context, req *connect.Requ
 	return c.queryMetrics.CallUnary(ctx, req)
 }
 
+// GetTraffic calls probe.v1.AdminService.GetTraffic.
+func (c *adminServiceClient) GetTraffic(ctx context.Context, req *connect.Request[v1.GetTrafficRequest]) (*connect.Response[v1.GetTrafficResponse], error) {
+	return c.getTraffic.CallUnary(ctx, req)
+}
+
+// AdjustTraffic calls probe.v1.AdminService.AdjustTraffic.
+func (c *adminServiceClient) AdjustTraffic(ctx context.Context, req *connect.Request[v1.AdjustTrafficRequest]) (*connect.Response[v1.AdjustTrafficResponse], error) {
+	return c.adjustTraffic.CallUnary(ctx, req)
+}
+
 // AdminServiceHandler is an implementation of the probe.v1.AdminService service.
 type AdminServiceHandler interface {
 	// 用管理员密码换取会话 cookie（Set-Cookie 在响应头里）。
@@ -278,7 +311,7 @@ type AdminServiceHandler interface {
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
 	// 建节点并返回其 token；明文只在此处返回一次。
 	CreateNode(context.Context, *connect.Request[v1.CreateNodeRequest]) (*connect.Response[v1.CreateNodeResponse], error)
-	// 整体替换可编辑字段（名称、是否公开、备注）。
+	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日）。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
 	// 删除节点及其全部历史；进程内的实时状态同步清理。
 	DeleteNode(context.Context, *connect.Request[v1.DeleteNodeRequest]) (*connect.Response[v1.DeleteNodeResponse], error)
@@ -294,6 +327,10 @@ type AdminServiceHandler interface {
 	GetSnapshot(context.Context, *connect.Request[v1.GetSnapshotRequest]) (*connect.Response[v1.GetSnapshotResponse], error)
 	// 某节点一段时间的历史；级别与步长由 hub 按窗口选定并随数据返回。
 	QueryMetrics(context.Context, *connect.Request[v1.QueryMetricsRequest]) (*connect.Response[v1.QueryMetricsResponse], error)
+	// 全部节点的流量：hub 累计的总量、当前周期用量、周期起点与下次重置时刻。
+	GetTraffic(context.Context, *connect.Request[v1.GetTrafficRequest]) (*connect.Response[v1.GetTrafficResponse], error)
+	// 把某节点当前周期的用量覆盖为给定值；总量按同一差值调整且不低于 0，计数器基线不动。
+	AdjustTraffic(context.Context, *connect.Request[v1.AdjustTrafficRequest]) (*connect.Response[v1.AdjustTrafficResponse], error)
 }
 
 // NewAdminServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -381,6 +418,18 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("QueryMetrics")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceGetTrafficHandler := connect.NewUnaryHandler(
+		AdminServiceGetTrafficProcedure,
+		svc.GetTraffic,
+		connect.WithSchema(adminServiceMethods.ByName("GetTraffic")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceAdjustTrafficHandler := connect.NewUnaryHandler(
+		AdminServiceAdjustTrafficProcedure,
+		svc.AdjustTraffic,
+		connect.WithSchema(adminServiceMethods.ByName("AdjustTraffic")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/probe.v1.AdminService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AdminServiceLoginProcedure:
@@ -409,6 +458,10 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceGetSnapshotHandler.ServeHTTP(w, r)
 		case AdminServiceQueryMetricsProcedure:
 			adminServiceQueryMetricsHandler.ServeHTTP(w, r)
+		case AdminServiceGetTrafficProcedure:
+			adminServiceGetTrafficHandler.ServeHTTP(w, r)
+		case AdminServiceAdjustTrafficProcedure:
+			adminServiceAdjustTrafficHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -468,4 +521,12 @@ func (UnimplementedAdminServiceHandler) GetSnapshot(context.Context, *connect.Re
 
 func (UnimplementedAdminServiceHandler) QueryMetrics(context.Context, *connect.Request[v1.QueryMetricsRequest]) (*connect.Response[v1.QueryMetricsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.QueryMetrics is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) GetTraffic(context.Context, *connect.Request[v1.GetTrafficRequest]) (*connect.Response[v1.GetTrafficResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.GetTraffic is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) AdjustTraffic(context.Context, *connect.Request[v1.AdjustTrafficRequest]) (*connect.Response[v1.AdjustTrafficResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.AdjustTraffic is not implemented"))
 }

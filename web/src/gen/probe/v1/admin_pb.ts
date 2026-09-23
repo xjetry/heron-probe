@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file probe/v1/admin.proto.
  */
 export const file_probe_v1_admin: GenFile = /*@__PURE__*/
-  fileDesc("ChRwcm9iZS92MS9hZG1pbi5wcm90bxIIcHJvYmUudjEiIAoMTG9naW5SZXF1ZXN0EhAKCHBhc3N3b3JkGAEgASgJIg8KDUxvZ2luUmVzcG9uc2UiDwoNTG9nb3V0UmVxdWVzdCIQCg5Mb2dvdXRSZXNwb25zZSLmAQoETm9kZRIKCgJpZBgBIAEoAxIMCgRuYW1lGAIgASgJEg4KBnB1YmxpYxgDIAEoCBIMCgRub3RlGAQgASgJEhIKCnNvcnRfb3JkZXIYBSABKAUSEgoKY3JlYXRlZF9hdBgGIAEoAxIZCgxsYXN0X3NlZW5fYXQYByABKANIAIgBARIeCgVmYWN0cxgIIAEoCzIPLnByb2JlLnYxLkZhY3RzEh0KEGZhY3RzX3VwZGF0ZWRfYXQYCSABKANIAYgBAUIPCg1fbGFzdF9zZWVuX2F0QhMKEV9mYWN0c191cGRhdGVkX2F0IhIKEExpc3ROb2Rlc1JlcXVlc3QiMgoRTGlzdE5vZGVzUmVzcG9uc2USHQoFbm9kZXMYASADKAsyDi5wcm9iZS52MS5Ob2RlIiEKEUNyZWF0ZU5vZGVSZXF1ZXN0EgwKBG5hbWUYASABKAkiQQoSQ3JlYXRlTm9kZVJlc3BvbnNlEhwKBG5vZGUYASABKAsyDi5wcm9iZS52MS5Ob2RlEg0KBXRva2VuGAIgASgJIksKEVVwZGF0ZU5vZGVSZXF1ZXN0EgoKAmlkGAEgASgDEgwKBG5hbWUYAiABKAkSDgoGcHVibGljGAMgASgIEgwKBG5vdGUYBCABKAkiMgoSVXBkYXRlTm9kZVJlc3BvbnNlEhwKBG5vZGUYASABKAsyDi5wcm9iZS52MS5Ob2RlIh8KEURlbGV0ZU5vZGVSZXF1ZXN0EgoKAmlkGAEgASgDIhQKEkRlbGV0ZU5vZGVSZXNwb25zZSIkChZSb3RhdGVOb2RlVG9rZW5SZXF1ZXN0EgoKAmlkGAEgASgDIigKF1JvdGF0ZU5vZGVUb2tlblJlc3BvbnNlEg0KBXRva2VuGAEgASgJIiIKE1Jlb3JkZXJOb2Rlc1JlcXVlc3QSCwoDaWRzGAEgAygDIhYKFFJlb3JkZXJOb2Rlc1Jlc3BvbnNlIj0KGU9wZW5SZWdpc3RlcldpbmRvd1JlcXVlc3QSDQoFdHRsX3MYASABKA0SEQoJbWF4X25vZGVzGAIgASgNIlAKGk9wZW5SZWdpc3RlcldpbmRvd1Jlc3BvbnNlEgsKA2tleRgBIAEoCRISCgpleHBpcmVzX2F0GAIgASgDEhEKCW1heF9ub2RlcxgDIAEoDSIcChpDbG9zZVJlZ2lzdGVyV2luZG93UmVxdWVzdCIdChtDbG9zZVJlZ2lzdGVyV2luZG93UmVzcG9uc2UiGgoYR2V0UmVnaXN0ZXJXaW5kb3dSZXF1ZXN0IlAKGUdldFJlZ2lzdGVyV2luZG93UmVzcG9uc2USDAoEb3BlbhgBIAEoCBISCgpleHBpcmVzX2F0GAIgASgDEhEKCXJlbWFpbmluZxgDIAEoDSIUChJHZXRTbmFwc2hvdFJlcXVlc3QiYwoTR2V0U25hcHNob3RSZXNwb25zZRILCgNub3cYASABKAMSGgoScmVwb3J0X2ludGVydmFsX21zGAIgASgNEiMKBW5vZGVzGAMgAygLMhQucHJvYmUudjEuTm9kZVN0YXR1cyKGAQoKTm9kZVN0YXR1cxIKCgJpZBgBIAEoAxIMCgRuYW1lGAIgASgJEg4KBm9ubGluZRgDIAEoCBIZCgxsYXN0X3NlZW5fYXQYBCABKANIAIgBARIiCgdtZXRyaWNzGAUgASgLMhEucHJvYmUudjEuTWV0cmljc0IPCg1fbGFzdF9zZWVuX2F0IlQKE1F1ZXJ5TWV0cmljc1JlcXVlc3QSDwoHbm9kZV9pZBgBIAEoAxIMCgRmcm9tGAIgASgDEgoKAnRvGAMgASgDEhIKCm1heF9wb2ludHMYBCABKA0iaQoUUXVlcnlNZXRyaWNzUmVzcG9uc2USDQoFbGV2ZWwYASABKAkSDgoGc3RlcF9zGAIgASgNEgoKAnRzGAMgAygDEiYKBnNlcmllcxgEIAMoCzIWLnByb2JlLnYxLk1ldHJpY1NlcmllcyJTCgxNZXRyaWNTZXJpZXMSDAoEbmFtZRgBIAEoCRIMCgR1bml0GAIgASgJEicKB3NhbXBsZXMYAyADKAsyFi5wcm9iZS52MS5NZXRyaWNTYW1wbGUiTwoMTWV0cmljU2FtcGxlEgkKAW4YASABKA0SEQoEbWVhbhgCIAEoAUgAiAEBEhAKA21heBgDIAEoAUgBiAEBQgcKBV9tZWFuQgYKBF9tYXgyiwgKDEFkbWluU2VydmljZRI4CgVMb2dpbhIWLnByb2JlLnYxLkxvZ2luUmVxdWVzdBoXLnByb2JlLnYxLkxvZ2luUmVzcG9uc2USOwoGTG9nb3V0EhcucHJvYmUudjEuTG9nb3V0UmVxdWVzdBoYLnByb2JlLnYxLkxvZ291dFJlc3BvbnNlEkQKCUxpc3ROb2RlcxIaLnByb2JlLnYxLkxpc3ROb2Rlc1JlcXVlc3QaGy5wcm9iZS52MS5MaXN0Tm9kZXNSZXNwb25zZRJHCgpDcmVhdGVOb2RlEhsucHJvYmUudjEuQ3JlYXRlTm9kZVJlcXVlc3QaHC5wcm9iZS52MS5DcmVhdGVOb2RlUmVzcG9uc2USRwoKVXBkYXRlTm9kZRIbLnByb2JlLnYxLlVwZGF0ZU5vZGVSZXF1ZXN0GhwucHJvYmUudjEuVXBkYXRlTm9kZVJlc3BvbnNlEkcKCkRlbGV0ZU5vZGUSGy5wcm9iZS52MS5EZWxldGVOb2RlUmVxdWVzdBocLnByb2JlLnYxLkRlbGV0ZU5vZGVSZXNwb25zZRJWCg9Sb3RhdGVOb2RlVG9rZW4SIC5wcm9iZS52MS5Sb3RhdGVOb2RlVG9rZW5SZXF1ZXN0GiEucHJvYmUudjEuUm90YXRlTm9kZVRva2VuUmVzcG9uc2USTQoMUmVvcmRlck5vZGVzEh0ucHJvYmUudjEuUmVvcmRlck5vZGVzUmVxdWVzdBoeLnByb2JlLnYxLlJlb3JkZXJOb2Rlc1Jlc3BvbnNlEl8KEk9wZW5SZWdpc3RlcldpbmRvdxIjLnByb2JlLnYxLk9wZW5SZWdpc3RlcldpbmRvd1JlcXVlc3QaJC5wcm9iZS52MS5PcGVuUmVnaXN0ZXJXaW5kb3dSZXNwb25zZRJiChNDbG9zZVJlZ2lzdGVyV2luZG93EiQucHJvYmUudjEuQ2xvc2VSZWdpc3RlcldpbmRvd1JlcXVlc3QaJS5wcm9iZS52MS5DbG9zZVJlZ2lzdGVyV2luZG93UmVzcG9uc2USXAoRR2V0UmVnaXN0ZXJXaW5kb3cSIi5wcm9iZS52MS5HZXRSZWdpc3RlcldpbmRvd1JlcXVlc3QaIy5wcm9iZS52MS5HZXRSZWdpc3RlcldpbmRvd1Jlc3BvbnNlEkoKC0dldFNuYXBzaG90EhwucHJvYmUudjEuR2V0U25hcHNob3RSZXF1ZXN0Gh0ucHJvYmUudjEuR2V0U25hcHNob3RSZXNwb25zZRJNCgxRdWVyeU1ldHJpY3MSHS5wcm9iZS52MS5RdWVyeU1ldHJpY3NSZXF1ZXN0Gh4ucHJvYmUudjEuUXVlcnlNZXRyaWNzUmVzcG9uc2VCLlosZ2l0aHViLmNvbS94amV0cnkvcHJvYmUvZ2VuL3Byb2JlL3YxO3Byb2JldjFiBnByb3RvMw", [file_probe_v1_types]);
+  fileDesc("ChRwcm9iZS92MS9hZG1pbi5wcm90bxIIcHJvYmUudjEiIAoMTG9naW5SZXF1ZXN0EhAKCHBhc3N3b3JkGAEgASgJIg8KDUxvZ2luUmVzcG9uc2UiDwoNTG9nb3V0UmVxdWVzdCIQCg5Mb2dvdXRSZXNwb25zZSKBAgoETm9kZRIKCgJpZBgBIAEoAxIMCgRuYW1lGAIgASgJEg4KBnB1YmxpYxgDIAEoCBIMCgRub3RlGAQgASgJEhIKCnNvcnRfb3JkZXIYBSABKAUSEgoKY3JlYXRlZF9hdBgGIAEoAxIZCgxsYXN0X3NlZW5fYXQYByABKANIAIgBARIeCgVmYWN0cxgIIAEoCzIPLnByb2JlLnYxLkZhY3RzEh0KEGZhY3RzX3VwZGF0ZWRfYXQYCSABKANIAYgBARIZChF0cmFmZmljX3Jlc2V0X2RheRgKIAEoDUIPCg1fbGFzdF9zZWVuX2F0QhMKEV9mYWN0c191cGRhdGVkX2F0IhIKEExpc3ROb2Rlc1JlcXVlc3QiMgoRTGlzdE5vZGVzUmVzcG9uc2USHQoFbm9kZXMYASADKAsyDi5wcm9iZS52MS5Ob2RlIiEKEUNyZWF0ZU5vZGVSZXF1ZXN0EgwKBG5hbWUYASABKAkiQQoSQ3JlYXRlTm9kZVJlc3BvbnNlEhwKBG5vZGUYASABKAsyDi5wcm9iZS52MS5Ob2RlEg0KBXRva2VuGAIgASgJImYKEVVwZGF0ZU5vZGVSZXF1ZXN0EgoKAmlkGAEgASgDEgwKBG5hbWUYAiABKAkSDgoGcHVibGljGAMgASgIEgwKBG5vdGUYBCABKAkSGQoRdHJhZmZpY19yZXNldF9kYXkYBSABKA0iMgoSVXBkYXRlTm9kZVJlc3BvbnNlEhwKBG5vZGUYASABKAsyDi5wcm9iZS52MS5Ob2RlIh8KEURlbGV0ZU5vZGVSZXF1ZXN0EgoKAmlkGAEgASgDIhQKEkRlbGV0ZU5vZGVSZXNwb25zZSIkChZSb3RhdGVOb2RlVG9rZW5SZXF1ZXN0EgoKAmlkGAEgASgDIigKF1JvdGF0ZU5vZGVUb2tlblJlc3BvbnNlEg0KBXRva2VuGAEgASgJIiIKE1Jlb3JkZXJOb2Rlc1JlcXVlc3QSCwoDaWRzGAEgAygDIhYKFFJlb3JkZXJOb2Rlc1Jlc3BvbnNlIj0KGU9wZW5SZWdpc3RlcldpbmRvd1JlcXVlc3QSDQoFdHRsX3MYASABKA0SEQoJbWF4X25vZGVzGAIgASgNIlAKGk9wZW5SZWdpc3RlcldpbmRvd1Jlc3BvbnNlEgsKA2tleRgBIAEoCRISCgpleHBpcmVzX2F0GAIgASgDEhEKCW1heF9ub2RlcxgDIAEoDSIcChpDbG9zZVJlZ2lzdGVyV2luZG93UmVxdWVzdCIdChtDbG9zZVJlZ2lzdGVyV2luZG93UmVzcG9uc2UiGgoYR2V0UmVnaXN0ZXJXaW5kb3dSZXF1ZXN0IlAKGUdldFJlZ2lzdGVyV2luZG93UmVzcG9uc2USDAoEb3BlbhgBIAEoCBISCgpleHBpcmVzX2F0GAIgASgDEhEKCXJlbWFpbmluZxgDIAEoDSIUChJHZXRTbmFwc2hvdFJlcXVlc3QiYwoTR2V0U25hcHNob3RSZXNwb25zZRILCgNub3cYASABKAMSGgoScmVwb3J0X2ludGVydmFsX21zGAIgASgNEiMKBW5vZGVzGAMgAygLMhQucHJvYmUudjEuTm9kZVN0YXR1cyKqAQoKTm9kZVN0YXR1cxIKCgJpZBgBIAEoAxIMCgRuYW1lGAIgASgJEg4KBm9ubGluZRgDIAEoCBIZCgxsYXN0X3NlZW5fYXQYBCABKANIAIgBARIiCgdtZXRyaWNzGAUgASgLMhEucHJvYmUudjEuTWV0cmljcxIiCgd0cmFmZmljGAYgASgLMhEucHJvYmUudjEuVHJhZmZpY0IPCg1fbGFzdF9zZWVuX2F0IlQKE1F1ZXJ5TWV0cmljc1JlcXVlc3QSDwoHbm9kZV9pZBgBIAEoAxIMCgRmcm9tGAIgASgDEgoKAnRvGAMgASgDEhIKCm1heF9wb2ludHMYBCABKA0iaQoUUXVlcnlNZXRyaWNzUmVzcG9uc2USDQoFbGV2ZWwYASABKAkSDgoGc3RlcF9zGAIgASgNEgoKAnRzGAMgAygDEiYKBnNlcmllcxgEIAMoCzIWLnByb2JlLnYxLk1ldHJpY1NlcmllcyJTCgxNZXRyaWNTZXJpZXMSDAoEbmFtZRgBIAEoCRIMCgR1bml0GAIgASgJEicKB3NhbXBsZXMYAyADKAsyFi5wcm9iZS52MS5NZXRyaWNTYW1wbGUiaQoMTWV0cmljU2FtcGxlEgkKAW4YASABKA0SEQoEbWVhbhgCIAEoAUgAiAEBEhAKA21heBgDIAEoAUgBiAEBEhAKA3N1bRgEIAEoAUgCiAEBQgcKBV9tZWFuQgYKBF9tYXhCBgoEX3N1bSKTAQoHVHJhZmZpYxIQCgh0b3RhbF9yeBgBIAEoBBIQCgh0b3RhbF90eBgCIAEoBBIRCglwZXJpb2RfcngYAyABKAQSEQoJcGVyaW9kX3R4GAQgASgEEhQKDHBlcmlvZF9zdGFydBgFIAEoAxIVCg1uZXh0X3Jlc2V0X2F0GAYgASgDEhEKCXJlc2V0X2RheRgHIAEoDSITChFHZXRUcmFmZmljUmVxdWVzdCJHChJHZXRUcmFmZmljUmVzcG9uc2USCwoDbm93GAEgASgDEiQKBW5vZGVzGAIgAygLMhUucHJvYmUudjEuTm9kZVRyYWZmaWMiUAoLTm9kZVRyYWZmaWMSDwoHbm9kZV9pZBgBIAEoAxIMCgRuYW1lGAIgASgJEiIKB3RyYWZmaWMYAyABKAsyES5wcm9iZS52MS5UcmFmZmljIk0KFEFkanVzdFRyYWZmaWNSZXF1ZXN0Eg8KB25vZGVfaWQYASABKAMSEQoJcGVyaW9kX3J4GAIgASgEEhEKCXBlcmlvZF90eBgDIAEoBCI7ChVBZGp1c3RUcmFmZmljUmVzcG9uc2USIgoHdHJhZmZpYxgBIAEoCzIRLnByb2JlLnYxLlRyYWZmaWMypgkKDEFkbWluU2VydmljZRI4CgVMb2dpbhIWLnByb2JlLnYxLkxvZ2luUmVxdWVzdBoXLnByb2JlLnYxLkxvZ2luUmVzcG9uc2USOwoGTG9nb3V0EhcucHJvYmUudjEuTG9nb3V0UmVxdWVzdBoYLnByb2JlLnYxLkxvZ291dFJlc3BvbnNlEkQKCUxpc3ROb2RlcxIaLnByb2JlLnYxLkxpc3ROb2Rlc1JlcXVlc3QaGy5wcm9iZS52MS5MaXN0Tm9kZXNSZXNwb25zZRJHCgpDcmVhdGVOb2RlEhsucHJvYmUudjEuQ3JlYXRlTm9kZVJlcXVlc3QaHC5wcm9iZS52MS5DcmVhdGVOb2RlUmVzcG9uc2USRwoKVXBkYXRlTm9kZRIbLnByb2JlLnYxLlVwZGF0ZU5vZGVSZXF1ZXN0GhwucHJvYmUudjEuVXBkYXRlTm9kZVJlc3BvbnNlEkcKCkRlbGV0ZU5vZGUSGy5wcm9iZS52MS5EZWxldGVOb2RlUmVxdWVzdBocLnByb2JlLnYxLkRlbGV0ZU5vZGVSZXNwb25zZRJWCg9Sb3RhdGVOb2RlVG9rZW4SIC5wcm9iZS52MS5Sb3RhdGVOb2RlVG9rZW5SZXF1ZXN0GiEucHJvYmUudjEuUm90YXRlTm9kZVRva2VuUmVzcG9uc2USTQoMUmVvcmRlck5vZGVzEh0ucHJvYmUudjEuUmVvcmRlck5vZGVzUmVxdWVzdBoeLnByb2JlLnYxLlJlb3JkZXJOb2Rlc1Jlc3BvbnNlEl8KEk9wZW5SZWdpc3RlcldpbmRvdxIjLnByb2JlLnYxLk9wZW5SZWdpc3RlcldpbmRvd1JlcXVlc3QaJC5wcm9iZS52MS5PcGVuUmVnaXN0ZXJXaW5kb3dSZXNwb25zZRJiChNDbG9zZVJlZ2lzdGVyV2luZG93EiQucHJvYmUudjEuQ2xvc2VSZWdpc3RlcldpbmRvd1JlcXVlc3QaJS5wcm9iZS52MS5DbG9zZVJlZ2lzdGVyV2luZG93UmVzcG9uc2USXAoRR2V0UmVnaXN0ZXJXaW5kb3cSIi5wcm9iZS52MS5HZXRSZWdpc3RlcldpbmRvd1JlcXVlc3QaIy5wcm9iZS52MS5HZXRSZWdpc3RlcldpbmRvd1Jlc3BvbnNlEkoKC0dldFNuYXBzaG90EhwucHJvYmUudjEuR2V0U25hcHNob3RSZXF1ZXN0Gh0ucHJvYmUudjEuR2V0U25hcHNob3RSZXNwb25zZRJNCgxRdWVyeU1ldHJpY3MSHS5wcm9iZS52MS5RdWVyeU1ldHJpY3NSZXF1ZXN0Gh4ucHJvYmUudjEuUXVlcnlNZXRyaWNzUmVzcG9uc2USRwoKR2V0VHJhZmZpYxIbLnByb2JlLnYxLkdldFRyYWZmaWNSZXF1ZXN0GhwucHJvYmUudjEuR2V0VHJhZmZpY1Jlc3BvbnNlElAKDUFkanVzdFRyYWZmaWMSHi5wcm9iZS52MS5BZGp1c3RUcmFmZmljUmVxdWVzdBofLnByb2JlLnYxLkFkanVzdFRyYWZmaWNSZXNwb25zZUIuWixnaXRodWIuY29tL3hqZXRyeS9wcm9iZS9nZW4vcHJvYmUvdjE7cHJvYmV2MWIGcHJvdG8z", [file_probe_v1_types]);
 
 /**
  * @generated from message probe.v1.LoginRequest
@@ -124,6 +124,13 @@ export type Node = Message<"probe.v1.Node"> & {
    * @generated from field: optional int64 facts_updated_at = 9;
    */
   factsUpdatedAt?: bigint | undefined;
+
+  /**
+   * 周期重置日 1–28：周期在 hub 时区的该日零点重置。
+   *
+   * @generated from field: uint32 traffic_reset_day = 10;
+   */
+  trafficResetDay: number;
 };
 
 /**
@@ -231,6 +238,13 @@ export type UpdateNodeRequest = Message<"probe.v1.UpdateNodeRequest"> & {
    * @generated from field: string note = 4;
    */
   note: string;
+
+  /**
+   * 1–28，必填：本方法整体替换可编辑字段，缺省的 0 会被拒绝而不是当作"不改"。
+   *
+   * @generated from field: uint32 traffic_reset_day = 5;
+   */
+  trafficResetDay: number;
 };
 
 /**
@@ -556,6 +570,13 @@ export type NodeStatus = Message<"probe.v1.NodeStatus"> & {
    * @generated from field: probe.v1.Metrics metrics = 5;
    */
   metrics?: Metrics | undefined;
+
+  /**
+   * hub 侧累计的流量；每个节点都有，从未上报的节点为零用量。
+   *
+   * @generated from field: probe.v1.Traffic traffic = 6;
+   */
+  traffic?: Traffic | undefined;
 };
 
 /**
@@ -647,7 +668,7 @@ export const QueryMetricsResponseSchema: GenMessage<QueryMetricsResponse> = /*@_
  */
 export type MetricSeries = Message<"probe.v1.MetricSeries"> & {
   /**
-   * cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs。
+   * cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs、rx_bytes、tx_bytes。
    *
    * @generated from field: string name = 1;
    */
@@ -680,7 +701,7 @@ export const MetricSeriesSchema: GenMessage<MetricSeries> = /*@__PURE__*/
  */
 export type MetricSample = Message<"probe.v1.MetricSample"> & {
   /**
-   * 该点内的样本数；0 表示该指标在这段时间没有任何读数，此时 mean 与 max 缺失。
+   * 该点内的样本数；0 表示该指标在这段时间没有任何读数，此时 mean、max 与 sum 都缺失。
    *
    * @generated from field: uint32 n = 1;
    */
@@ -697,6 +718,14 @@ export type MetricSample = Message<"probe.v1.MetricSample"> & {
    * @generated from field: optional double max = 3;
    */
   max?: number | undefined;
+
+  /**
+   * 只有可加量指标（rx_bytes、tx_bytes）才有：该点内的字节总和，没有 mean 与 max。
+   * 速率 = sum / step_s。
+   *
+   * @generated from field: optional double sum = 4;
+   */
+  sum?: number | undefined;
 };
 
 /**
@@ -705,6 +734,173 @@ export type MetricSample = Message<"probe.v1.MetricSample"> & {
  */
 export const MetricSampleSchema: GenMessage<MetricSample> = /*@__PURE__*/
   messageDesc(file_probe_v1_admin, 29);
+
+/**
+ * @generated from message probe.v1.Traffic
+ */
+export type Traffic = Message<"probe.v1.Traffic"> & {
+  /**
+   * 自节点首次上报以来 hub 累计的字节数。校正只改周期用量，总量随同一差值变动。
+   *
+   * @generated from field: uint64 total_rx = 1;
+   */
+  totalRx: bigint;
+
+  /**
+   * @generated from field: uint64 total_tx = 2;
+   */
+  totalTx: bigint;
+
+  /**
+   * 当前周期内的字节数。
+   *
+   * @generated from field: uint64 period_rx = 3;
+   */
+  periodRx: bigint;
+
+  /**
+   * @generated from field: uint64 period_tx = 4;
+   */
+  periodTx: bigint;
+
+  /**
+   * 当前周期起点与下次重置时刻，Unix 秒。
+   *
+   * @generated from field: int64 period_start = 5;
+   */
+  periodStart: bigint;
+
+  /**
+   * @generated from field: int64 next_reset_at = 6;
+   */
+  nextResetAt: bigint;
+
+  /**
+   * 周期重置日 1–28。
+   *
+   * @generated from field: uint32 reset_day = 7;
+   */
+  resetDay: number;
+};
+
+/**
+ * Describes the message probe.v1.Traffic.
+ * Use `create(TrafficSchema)` to create a new message.
+ */
+export const TrafficSchema: GenMessage<Traffic> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 30);
+
+/**
+ * @generated from message probe.v1.GetTrafficRequest
+ */
+export type GetTrafficRequest = Message<"probe.v1.GetTrafficRequest"> & {
+};
+
+/**
+ * Describes the message probe.v1.GetTrafficRequest.
+ * Use `create(GetTrafficRequestSchema)` to create a new message.
+ */
+export const GetTrafficRequestSchema: GenMessage<GetTrafficRequest> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 31);
+
+/**
+ * @generated from message probe.v1.GetTrafficResponse
+ */
+export type GetTrafficResponse = Message<"probe.v1.GetTrafficResponse"> & {
+  /**
+   * hub 墙钟，Unix 秒。
+   *
+   * @generated from field: int64 now = 1;
+   */
+  now: bigint;
+
+  /**
+   * @generated from field: repeated probe.v1.NodeTraffic nodes = 2;
+   */
+  nodes: NodeTraffic[];
+};
+
+/**
+ * Describes the message probe.v1.GetTrafficResponse.
+ * Use `create(GetTrafficResponseSchema)` to create a new message.
+ */
+export const GetTrafficResponseSchema: GenMessage<GetTrafficResponse> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 32);
+
+/**
+ * @generated from message probe.v1.NodeTraffic
+ */
+export type NodeTraffic = Message<"probe.v1.NodeTraffic"> & {
+  /**
+   * @generated from field: int64 node_id = 1;
+   */
+  nodeId: bigint;
+
+  /**
+   * @generated from field: string name = 2;
+   */
+  name: string;
+
+  /**
+   * @generated from field: probe.v1.Traffic traffic = 3;
+   */
+  traffic?: Traffic | undefined;
+};
+
+/**
+ * Describes the message probe.v1.NodeTraffic.
+ * Use `create(NodeTrafficSchema)` to create a new message.
+ */
+export const NodeTrafficSchema: GenMessage<NodeTraffic> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 33);
+
+/**
+ * @generated from message probe.v1.AdjustTrafficRequest
+ */
+export type AdjustTrafficRequest = Message<"probe.v1.AdjustTrafficRequest"> & {
+  /**
+   * @generated from field: int64 node_id = 1;
+   */
+  nodeId: bigint;
+
+  /**
+   * 当前周期的下行 / 上行字节数，覆盖写入。
+   *
+   * @generated from field: uint64 period_rx = 2;
+   */
+  periodRx: bigint;
+
+  /**
+   * @generated from field: uint64 period_tx = 3;
+   */
+  periodTx: bigint;
+};
+
+/**
+ * Describes the message probe.v1.AdjustTrafficRequest.
+ * Use `create(AdjustTrafficRequestSchema)` to create a new message.
+ */
+export const AdjustTrafficRequestSchema: GenMessage<AdjustTrafficRequest> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 34);
+
+/**
+ * @generated from message probe.v1.AdjustTrafficResponse
+ */
+export type AdjustTrafficResponse = Message<"probe.v1.AdjustTrafficResponse"> & {
+  /**
+   * 校正后的状态。
+   *
+   * @generated from field: probe.v1.Traffic traffic = 1;
+   */
+  traffic?: Traffic | undefined;
+};
+
+/**
+ * Describes the message probe.v1.AdjustTrafficResponse.
+ * Use `create(AdjustTrafficResponseSchema)` to create a new message.
+ */
+export const AdjustTrafficResponseSchema: GenMessage<AdjustTrafficResponse> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 35);
 
 /**
  * 管理面板 → hub。除 Login 外每个方法都要求有效的会话 cookie，由挂载时绑定的
@@ -753,7 +949,7 @@ export const AdminService: GenService<{
     output: typeof CreateNodeResponseSchema;
   },
   /**
-   * 整体替换可编辑字段（名称、是否公开、备注）。
+   * 整体替换可编辑字段（名称、是否公开、备注、周期重置日）。
    *
    * @generated from rpc probe.v1.AdminService.UpdateNode
    */
@@ -837,6 +1033,26 @@ export const AdminService: GenService<{
     methodKind: "unary";
     input: typeof QueryMetricsRequestSchema;
     output: typeof QueryMetricsResponseSchema;
+  },
+  /**
+   * 全部节点的流量：hub 累计的总量、当前周期用量、周期起点与下次重置时刻。
+   *
+   * @generated from rpc probe.v1.AdminService.GetTraffic
+   */
+  getTraffic: {
+    methodKind: "unary";
+    input: typeof GetTrafficRequestSchema;
+    output: typeof GetTrafficResponseSchema;
+  },
+  /**
+   * 把某节点当前周期的用量覆盖为给定值；总量按同一差值调整且不低于 0，计数器基线不动。
+   *
+   * @generated from rpc probe.v1.AdminService.AdjustTraffic
+   */
+  adjustTraffic: {
+    methodKind: "unary";
+    input: typeof AdjustTrafficRequestSchema;
+    output: typeof AdjustTrafficResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_probe_v1_admin, 0);

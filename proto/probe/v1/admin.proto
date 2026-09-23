@@ -18,7 +18,7 @@ service AdminService {
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
   // 建节点并返回其 token；明文只在此处返回一次。
   rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse);
-  // 整体替换可编辑字段（名称、是否公开、备注）。
+  // 整体替换可编辑字段（名称、是否公开、备注、周期重置日）。
   rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse);
   // 删除节点及其全部历史；进程内的实时状态同步清理。
   rpc DeleteNode(DeleteNodeRequest) returns (DeleteNodeResponse);
@@ -36,6 +36,10 @@ service AdminService {
   rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse);
   // 某节点一段时间的历史；级别与步长由 hub 按窗口选定并随数据返回。
   rpc QueryMetrics(QueryMetricsRequest) returns (QueryMetricsResponse);
+  // 全部节点的流量：hub 累计的总量、当前周期用量、周期起点与下次重置时刻。
+  rpc GetTraffic(GetTrafficRequest) returns (GetTrafficResponse);
+  // 把某节点当前周期的用量覆盖为给定值；总量按同一差值调整且不低于 0，计数器基线不动。
+  rpc AdjustTraffic(AdjustTrafficRequest) returns (AdjustTrafficResponse);
 }
 
 message LoginRequest {
@@ -59,6 +63,8 @@ message Node {
   // 主机静态信息；从未上报则缺失。
   Facts facts = 8;
   optional int64 facts_updated_at = 9;
+  // 周期重置日 1–28：周期在 hub 时区的该日零点重置。
+  uint32 traffic_reset_day = 10;
 }
 
 message ListNodesRequest {}
@@ -82,6 +88,8 @@ message UpdateNodeRequest {
   bool public = 3;
   // 最长 1024 个字符。
   string note = 4;
+  // 1–28，必填：本方法整体替换可编辑字段，缺省的 0 会被拒绝而不是当作"不改"。
+  uint32 traffic_reset_day = 5;
 }
 message UpdateNodeResponse {
   Node node = 1;
@@ -148,6 +156,8 @@ message NodeStatus {
   optional int64 last_seen_at = 4;
   // 最近一次上报的读数；从未上报则缺失。离线节点仍带最后一次读数。
   Metrics metrics = 5;
+  // hub 侧累计的流量；每个节点都有，从未上报的节点为零用量。
+  Traffic traffic = 6;
 }
 
 message QueryMetricsRequest {
@@ -171,7 +181,7 @@ message QueryMetricsResponse {
 }
 
 message MetricSeries {
-  // cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs。
+  // cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs、rx_bytes、tx_bytes。
   string name = 1;
   // percent、bytes、count；load 无单位为空串。
   string unit = 2;
@@ -180,9 +190,49 @@ message MetricSeries {
 }
 
 message MetricSample {
-  // 该点内的样本数；0 表示该指标在这段时间没有任何读数，此时 mean 与 max 缺失。
+  // 该点内的样本数；0 表示该指标在这段时间没有任何读数，此时 mean、max 与 sum 都缺失。
   uint32 n = 1;
   optional double mean = 2;
   // 只有带最大值的指标（cpu、mem_used）才有。
   optional double max = 3;
+  // 只有可加量指标（rx_bytes、tx_bytes）才有：该点内的字节总和，没有 mean 与 max。
+  // 速率 = sum / step_s。
+  optional double sum = 4;
+}
+
+message Traffic {
+  // 自节点首次上报以来 hub 累计的字节数。校正只改周期用量，总量随同一差值变动。
+  uint64 total_rx = 1;
+  uint64 total_tx = 2;
+  // 当前周期内的字节数。
+  uint64 period_rx = 3;
+  uint64 period_tx = 4;
+  // 当前周期起点与下次重置时刻，Unix 秒。
+  int64 period_start = 5;
+  int64 next_reset_at = 6;
+  // 周期重置日 1–28。
+  uint32 reset_day = 7;
+}
+
+message GetTrafficRequest {}
+message GetTrafficResponse {
+  // hub 墙钟，Unix 秒。
+  int64 now = 1;
+  repeated NodeTraffic nodes = 2;
+}
+message NodeTraffic {
+  int64 node_id = 1;
+  string name = 2;
+  Traffic traffic = 3;
+}
+
+message AdjustTrafficRequest {
+  int64 node_id = 1;
+  // 当前周期的下行 / 上行字节数，覆盖写入。
+  uint64 period_rx = 2;
+  uint64 period_tx = 3;
+}
+message AdjustTrafficResponse {
+  // 校正后的状态。
+  Traffic traffic = 1;
 }
