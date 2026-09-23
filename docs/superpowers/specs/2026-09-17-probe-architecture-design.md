@@ -348,7 +348,7 @@ agent 默认汇总除 `lo` 与虚拟网卡（`docker*`、`veth*`、`br-*`、`vir
 
 ### 8.1 任务与版本
 
-`ProbeTask{id, kind(icmp|tcp), target, interval_s, timeout_ms}`，通过 `probe_task_node` 分配到节点。对任务或分配的任何修改都经由 `probe` 包内唯一的写入口，在同一事务内递增 `probe_meta.version`。版本全局唯一而非每节点一份：修改是管理员的低频动作，全体 agent 各多取一次列表的代价可以忽略，换来的是不需要维护"哪些节点受这次修改影响"的推导。
+`ProbeTask{id, kind(icmp|tcp), target, interval_s, timeout_ms}`，通过 `probe_task_node` 分配到节点。经管理接口对任务或分配的任何修改都经由 `probe` 包内唯一的写入口，在同一事务内递增 `probe_meta.version`；删除节点顺带删除它的分配行不递增——版本号的用途是让清单变化的 agent 重取，被删节点的 token 已撤销、其余节点的清单未变。版本全局唯一而非每节点一份：修改是管理员的低频动作，全体 agent 各多取一次列表的代价可以忽略，换来的是不需要维护"哪些节点受这次修改影响"的推导。
 
 ### 8.2 执行
 
