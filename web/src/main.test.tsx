@@ -4,6 +4,9 @@ import { act, within } from "@testing-library/react";
 import * as ReactDOM from "react-dom/client";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 
+// 入口用例验证路由与认证；图表依赖的布局和 canvas 不由 jsdom 提供。
+vi.mock("./components/Chart", () => ({ Chart: () => null }));
+
 vi.mock("react-dom/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-dom/client")>();
   return { ...actual, createRoot: vi.fn(actual.createRoot) };
