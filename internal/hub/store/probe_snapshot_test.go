@@ -1,0 +1,102 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
+	"fmt"
+	"reflect"
+	"sync"
+	"testing"
+
+	"google.golang.org/protobuf/proto"
+	"modernc.org/sqlite"
+)
+
+// 包装真实驱动，在版本行读完后提交保存，使后续读取能否维持快照不依赖调度时机。
+type snapshotDriver struct{ afterVersion func() error }
+type snapshotConn struct {
+	driver.Conn
+	afterVersion func() error
+}
+type snapshotRows struct {
+	driver.Rows
+	afterVersion func() error
+	once         sync.Once
+	err          error
+}
+
+func (d snapshotDriver) Open(name string) (driver.Conn, error) {
+	c, err := (&sqlite.Driver{}).Open(name)
+	if err != nil {
+		return nil, err
+	}
+	return &snapshotConn{Conn: c, afterVersion: d.afterVersion}, nil
+}
+func (c *snapshotConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	return c.Conn.(driver.ConnBeginTx).BeginTx(ctx, opts)
+}
+func (c *snapshotConn) QueryContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
+	rows, err := c.Conn.(driver.QueryerContext).QueryContext(ctx, q, args)
+	if err != nil {
+		return nil, err
+	}
+	if q == "SELECT version FROM probe_meta WHERE id = 1" {
+		return &snapshotRows{Rows: rows, afterVersion: c.afterVersion}, nil
+	}
+	return rows, nil
+}
+func (r *snapshotRows) Close() error {
+	if err := r.Rows.Close(); err != nil {
+		return err
+	}
+	r.once.Do(func() { r.err = r.afterVersion() })
+	return r.err
+}
+
+func TestLoadProbeTasksReadsOneSnapshot(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	a, _ := s.CreateNode(ctx, "a", hash(1))
+	b, _ := s.CreateNode(ctx, "b", hash(2))
+	saved, _, err := s.SaveProbeTask(ctx, taskForTest(), []int64{a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seq int
+	var name, path string
+	if err := s.r.QueryRow("PRAGMA database_list").Scan(&seq, &name, &path); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	changed := false
+	driverName := fmt.Sprintf("snapshot-sqlite-%d", traceID.Add(1))
+	sql.Register(driverName, snapshotDriver{afterVersion: func() error {
+		next := taskForTest()
+		next.Id = saved.Id
+		next.Target = "changed"
+		_, _, err := s.SaveProbeTask(ctx, next, []int64{b})
+		changed = err == nil
+		return err
+	}})
+	s.r, err = sql.Open(driverName, dsn(path, "&_pragma=query_only(1)"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, tasks, err := s.LoadProbeTasks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("concurrent save did not run")
+	}
+	if version != 1 || len(tasks) != 1 || !proto.Equal(tasks[0].Task, saved) || !reflect.DeepEqual(tasks[0].NodeIDs, []int64{a}) {
+		t.Fatalf("mixed snapshot: version=%d tasks=%v, want %v/[%d] at version 1", version, tasks, saved, a)
+	}
+	var current int
+	if err := s.r.QueryRow("SELECT version FROM probe_meta").Scan(&current); err != nil || current != 2 {
+		t.Fatalf("concurrent save not persisted: version=%d err=%v", current, err)
+	}
+}

@@ -25,7 +25,7 @@ ON CONFLICT (node_id) DO UPDATE SET boot_id = excluded.boot_id, last_rx = exclud
   period_start = excluded.period_start, updated_at = excluded.updated_at`
 
 // WriteTraffic 在一个事务里写入全部记录。节点已删除的记录跳过并计数：删除后迟到的
-// 刷出不得重建从属行，与 WriteMinuteRows 同一处理；存在性在写事务内判定，与 DeleteNode 串行。
+// 刷出不得重建从属行，与 WriteMinuteBatch 同一处理；存在性在写事务内判定，与 DeleteNode 串行。
 func (s *Store) WriteTraffic(ctx context.Context, recs []TrafficRecord) (int, error) {
 	skipped := 0
 	err := s.write(ctx, func(tx *sql.Tx) error {

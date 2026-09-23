@@ -75,7 +75,8 @@ var metricFamily = &family{name: "metric", tables: metricTables, states: []strin
 var probeFamily = &family{name: "probe", tables: probeTables, states: []string{"", "probe_5m", "probe_1h"},
 	extraKey: "task_id", values: probeValueColumns, aggs: probeAggregates}
 
-// families 的顺序无关：两族各有水位，互不牵制（§6.4）。
+// 水位各自独立，成功完成全部族时结果与顺序无关；Rollup 在首个错误处返回，
+// 前一族失败时后一族本轮不上卷。
 var families = []*family{metricFamily, probeFamily}
 
 func (f *family) keys() []string {
@@ -338,11 +339,12 @@ func (f *family) aggregateSQL(table string) string {
 // QueryMetrics 返回 [from, to) 内按 step 聚合的桶；from 向下、to 向上对齐到 step，
 // 结果的 TS 都是 step 的整数倍。只返回有行的桶：缺失的桶就是没有数据。
 func (s *Store) QueryMetrics(ctx context.Context, nodeID int64, from, to int64, lv Level, step int64) ([]metric.Row, error) {
-	if err := checkStep(lv, step); err != nil {
+	i, err := checkStep(lv, step)
+	if err != nil {
 		return nil, err
 	}
 	from, to = alignWindow(from, to, step)
-	rows, err := s.r.QueryContext(ctx, metricFamily.aggregateSQL(metricFamily.tables[levelIndex(lv)]), step, nodeID, from, to)
+	rows, err := s.r.QueryContext(ctx, metricFamily.aggregateSQL(metricFamily.tables[i]), step, nodeID, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -390,15 +392,16 @@ func levelIndex(lv Level) int {
 	return -1
 }
 
-func checkStep(lv Level, step int64) error {
+// 表按 levels 的下标取值，级别名称和桶长必须与描述一致；伪造桶长会让对齐口径偏离表的桶长。
+func checkStep(lv Level, step int64) (int, error) {
 	i := levelIndex(lv)
 	if i < 0 || lv.Bucket != levels[i].Bucket {
-		return fmt.Errorf("unknown level %q with bucket %d", lv.Name, lv.Bucket)
+		return 0, fmt.Errorf("unknown level %q with bucket %d", lv.Name, lv.Bucket)
 	}
 	if step < lv.Bucket || step%lv.Bucket != 0 {
-		return fmt.Errorf("step %d is not a multiple of the %s bucket (%d)", step, lv.Name, lv.Bucket)
+		return 0, fmt.Errorf("step %d is not a multiple of the %s bucket (%d)", step, lv.Name, lv.Bucket)
 	}
-	return nil
+	return i, nil
 }
 
 func alignWindow(from, to, step int64) (int64, int64) {
@@ -413,13 +416,14 @@ func alignWindow(from, to, step int64) (int64, int64) {
 	return from, to
 }
 
-// QueryProbes 与 QueryMetrics 同一套选级与对齐；每任务的桶按 TaskID、TS 升序返回。
+// QueryProbes 与 QueryMetrics 共用级别校验与窗口对齐；每任务的桶按 TaskID、TS 升序返回。
 func (s *Store) QueryProbes(ctx context.Context, nodeID int64, from, to int64, lv Level, step int64) ([]metric.ProbeRow, error) {
-	if err := checkStep(lv, step); err != nil {
+	i, err := checkStep(lv, step)
+	if err != nil {
 		return nil, err
 	}
 	from, to = alignWindow(from, to, step)
-	rows, err := s.r.QueryContext(ctx, probeFamily.aggregateSQL(probeFamily.tables[levelIndex(lv)]), step, nodeID, from, to)
+	rows, err := s.r.QueryContext(ctx, probeFamily.aggregateSQL(probeFamily.tables[i]), step, nodeID, from, to)
 	if err != nil {
 		return nil, err
 	}

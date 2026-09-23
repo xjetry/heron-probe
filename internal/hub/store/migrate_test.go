@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -10,7 +11,6 @@ import (
 
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/metric"
-	"log/slog"
 )
 
 // schemaV1 是第一个发布版本的完整 DDL，逐字冻结：迁移测试用它建起旧库，
@@ -63,26 +63,44 @@ type column struct {
 	PK         int
 }
 
-// describe 用 PRAGMA table_info 而不是 sqlite_master.sql 比对：后者保留原文的
-// 空白与注释，同一结构的两种写法会被判为不同。
-func describe(t *testing.T, db *sql.DB) map[string][]column {
+type schemaDescription struct {
+	Tables  map[string][]column
+	Indexes map[string]indexDescription
+}
+
+type indexDescription struct {
+	Table   string
+	Columns []string
+	Unique  bool
+}
+
+// describe 比较结构而不是 SQL 原文：空白与注释不改变结构，索引列序与唯一性会改变访问路径或约束。
+func describe(t *testing.T, db *sql.DB) schemaDescription {
 	t.Helper()
-	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+	rows, err := db.Query("SELECT name, type, tbl_name FROM sqlite_master WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%' ORDER BY name")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var tables []string
+	out := schemaDescription{Tables: map[string][]column{}, Indexes: map[string]indexDescription{}}
 	for rows.Next() {
-		var n string
-		if err := rows.Scan(&n); err != nil {
+		var name, kind, table string
+		if err := rows.Scan(&name, &kind, &table); err != nil {
 			t.Fatal(err)
 		}
-		tables = append(tables, n)
+		if kind == "table" {
+			out.Tables[name] = nil
+		} else {
+			out.Indexes[name] = indexDescription{Table: table}
+		}
 	}
-	rows.Close()
-	out := map[string][]column{}
-	for _, tbl := range tables {
-		info, err := db.Query("PRAGMA table_info(" + tbl + ")")
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for table := range out.Tables {
+		info, err := db.Query(fmt.Sprintf("PRAGMA table_info(%q)", table))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,9 +110,61 @@ func describe(t *testing.T, db *sql.DB) map[string][]column {
 			if err := info.Scan(&cid, &c.Name, &c.Type, &c.NotNull, &c.Default, &c.PK); err != nil {
 				t.Fatal(err)
 			}
-			out[tbl] = append(out[tbl], c)
+			out.Tables[table] = append(out.Tables[table], c)
 		}
-		info.Close()
+		if err := info.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if err := info.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		indexes, err := db.Query(fmt.Sprintf("PRAGMA index_list(%q)", table))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for indexes.Next() {
+			var seq int
+			var name, origin string
+			var unique, partial bool
+			if err := indexes.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
+				t.Fatal(err)
+			}
+			if index, ok := out.Indexes[name]; ok {
+				index.Unique = unique
+				out.Indexes[name] = index
+			}
+		}
+		if err := indexes.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if err := indexes.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, index := range out.Indexes {
+		info, err := db.Query(fmt.Sprintf("PRAGMA index_info(%q)", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for info.Next() {
+			var seq, cid int
+			var column string
+			if err := info.Scan(&seq, &cid, &column); err != nil {
+				t.Fatal(err)
+			}
+			for len(index.Columns) <= seq {
+				index.Columns = append(index.Columns, "")
+			}
+			index.Columns[seq] = column
+		}
+		if err := info.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if err := info.Close(); err != nil {
+			t.Fatal(err)
+		}
+		out.Indexes[name] = index
 	}
 	return out
 }
@@ -202,16 +272,84 @@ func seedMinuteRow(t *testing.T, db *sql.DB) {
 	}
 }
 
-func v3Statements() []string {
-	out := []string{ddlNode, ddlNodeFacts, ddlRegisterWindow, ddlRollupState, seedRollupState, ddlAdmin, ddlAdminSession, ddlTraffic}
-	for _, table := range metricTables {
-		out = append(out, metricDDL(table))
-	}
-	return out
+// schemaV3 冻结发布时的 DDL，避免生产常量变化后旧库夹具也随之改变。
+var schemaV3 = []string{
+	`CREATE TABLE node (
+  -- AUTOINCREMENT 使 id 永不复用：分层备份恢复后两层可能各自漂移，
+  -- id 若复用，指标层里已删节点的历史会挂到同 id 的新节点上且无法肉眼分辨。
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  public INTEGER NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT '',
+  -- NULL 表示"用默认值（TTL）"，是缺省不是放宽；读侧遇 NULL 必须取 TTL。
+  offline_grace_s INTEGER,
+  traffic_reset_day INTEGER NOT NULL DEFAULT 1,
+  token_hash BLOB NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL,
+  -- 墙钟，只供展示与告警文案，不参与离线时长计算。
+  last_seen_at INTEGER
+)`,
+	`CREATE TABLE node_facts (
+  node_id INTEGER PRIMARY KEY,
+  facts_hash INTEGER NOT NULL,
+  hostname TEXT NOT NULL,
+  os TEXT NOT NULL,
+  kernel TEXT NOT NULL,
+  arch TEXT NOT NULL,
+  virtualization TEXT NOT NULL,
+  cpu_model TEXT NOT NULL,
+  cpu_cores INTEGER NOT NULL,
+  agent_version TEXT NOT NULL,
+  icmp_available INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+)`,
+	`CREATE TABLE register_window (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  key_hash BLOB NOT NULL,
+  expires_at INTEGER NOT NULL,
+  remaining INTEGER NOT NULL
+)`,
+	`CREATE TABLE rollup_state (
+  level TEXT PRIMARY KEY,
+  upto_ts INTEGER NOT NULL
+)`,
+	`INSERT INTO rollup_state (level, upto_ts) VALUES ('5m', 0), ('1h', 0)`,
+	`CREATE TABLE admin (
+  -- 单管理员：CHECK 让第二行无法插入，"多用户"在 schema 上就不成立。
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  -- PHC 字符串，argon2id 的参数随哈希走：改参数不需要迁移，旧哈希按自带参数校验。
+  password_hash TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+)`,
+	`CREATE TABLE admin_session (
+  token_hash BLOB PRIMARY KEY,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER NOT NULL,
+  -- 绝对过期，墙钟 Unix 秒。会话要跨 hub 重启存活，只能用墙钟；
+  -- 墙钟回拨会推迟按绝对过期时刻判定失效的时间。
+  expires_at INTEGER NOT NULL
+)`,
+	`CREATE TABLE traffic (
+  node_id INTEGER PRIMARY KEY,
+  boot_id TEXT NOT NULL,
+  last_rx INTEGER NOT NULL, -- -1 表示尚无基线，与 traffic.NoBaseline 同值；由校正建立的条目才有。
+  last_tx INTEGER NOT NULL, -- -1 的含义与 last_rx 相同。
+  total_rx INTEGER NOT NULL,
+  total_tx INTEGER NOT NULL,
+  period_rx INTEGER NOT NULL,
+  period_tx INTEGER NOT NULL,
+  -- 当前周期起点，Unix 秒；重置日零点按 hub 时区换算。
+  period_start INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+)`,
+	`CREATE TABLE metric_1m (node_id INTEGER NOT NULL, ts INTEGER NOT NULL, cpu_sum REAL NOT NULL DEFAULT 0, cpu_n INTEGER NOT NULL DEFAULT 0, cpu_max REAL NOT NULL DEFAULT 0, mem_used_sum INTEGER NOT NULL DEFAULT 0, mem_used_n INTEGER NOT NULL DEFAULT 0, mem_used_max INTEGER NOT NULL DEFAULT 0, swap_used_sum INTEGER NOT NULL DEFAULT 0, swap_used_n INTEGER NOT NULL DEFAULT 0, disk_used_sum INTEGER NOT NULL DEFAULT 0, disk_used_n INTEGER NOT NULL DEFAULT 0, load1_sum REAL NOT NULL DEFAULT 0, load1_n INTEGER NOT NULL DEFAULT 0, tcp_sum INTEGER NOT NULL DEFAULT 0, tcp_n INTEGER NOT NULL DEFAULT 0, udp_sum INTEGER NOT NULL DEFAULT 0, udp_n INTEGER NOT NULL DEFAULT 0, procs_sum INTEGER NOT NULL DEFAULT 0, procs_n INTEGER NOT NULL DEFAULT 0, rx_bytes_sum INTEGER NOT NULL DEFAULT 0, rx_bytes_n INTEGER NOT NULL DEFAULT 0, tx_bytes_sum INTEGER NOT NULL DEFAULT 0, tx_bytes_n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (node_id, ts)) WITHOUT ROWID`,
+	`CREATE TABLE metric_5m (node_id INTEGER NOT NULL, ts INTEGER NOT NULL, cpu_sum REAL NOT NULL DEFAULT 0, cpu_n INTEGER NOT NULL DEFAULT 0, cpu_max REAL NOT NULL DEFAULT 0, mem_used_sum INTEGER NOT NULL DEFAULT 0, mem_used_n INTEGER NOT NULL DEFAULT 0, mem_used_max INTEGER NOT NULL DEFAULT 0, swap_used_sum INTEGER NOT NULL DEFAULT 0, swap_used_n INTEGER NOT NULL DEFAULT 0, disk_used_sum INTEGER NOT NULL DEFAULT 0, disk_used_n INTEGER NOT NULL DEFAULT 0, load1_sum REAL NOT NULL DEFAULT 0, load1_n INTEGER NOT NULL DEFAULT 0, tcp_sum INTEGER NOT NULL DEFAULT 0, tcp_n INTEGER NOT NULL DEFAULT 0, udp_sum INTEGER NOT NULL DEFAULT 0, udp_n INTEGER NOT NULL DEFAULT 0, procs_sum INTEGER NOT NULL DEFAULT 0, procs_n INTEGER NOT NULL DEFAULT 0, rx_bytes_sum INTEGER NOT NULL DEFAULT 0, rx_bytes_n INTEGER NOT NULL DEFAULT 0, tx_bytes_sum INTEGER NOT NULL DEFAULT 0, tx_bytes_n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (node_id, ts)) WITHOUT ROWID`,
+	`CREATE TABLE metric_1h (node_id INTEGER NOT NULL, ts INTEGER NOT NULL, cpu_sum REAL NOT NULL DEFAULT 0, cpu_n INTEGER NOT NULL DEFAULT 0, cpu_max REAL NOT NULL DEFAULT 0, mem_used_sum INTEGER NOT NULL DEFAULT 0, mem_used_n INTEGER NOT NULL DEFAULT 0, mem_used_max INTEGER NOT NULL DEFAULT 0, swap_used_sum INTEGER NOT NULL DEFAULT 0, swap_used_n INTEGER NOT NULL DEFAULT 0, disk_used_sum INTEGER NOT NULL DEFAULT 0, disk_used_n INTEGER NOT NULL DEFAULT 0, load1_sum REAL NOT NULL DEFAULT 0, load1_n INTEGER NOT NULL DEFAULT 0, tcp_sum INTEGER NOT NULL DEFAULT 0, tcp_n INTEGER NOT NULL DEFAULT 0, udp_sum INTEGER NOT NULL DEFAULT 0, udp_n INTEGER NOT NULL DEFAULT 0, procs_sum INTEGER NOT NULL DEFAULT 0, procs_n INTEGER NOT NULL DEFAULT 0, rx_bytes_sum INTEGER NOT NULL DEFAULT 0, rx_bytes_n INTEGER NOT NULL DEFAULT 0, tx_bytes_sum INTEGER NOT NULL DEFAULT 0, tx_bytes_n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (node_id, ts)) WITHOUT ROWID`,
 }
 
 func TestMigrationFromV3MatchesFreshSchemaAndKeepsRows(t *testing.T) {
-	migrated, fresh := migrateFrom(t, v3Statements(), 3, seedMinuteRow)
+	migrated, fresh := migrateFrom(t, schemaV3, 3, seedMinuteRow)
 	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
 		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
 	}

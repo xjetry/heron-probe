@@ -66,13 +66,18 @@ type ProbeTaskRecord struct {
 	NodeIDs []int64
 }
 
-// LoadProbeTasks 读全部任务与分配及当前版本，供注册表在启动时重建内存缓存。
+// LoadProbeTasks 在同一读事务内取得版本、任务和分配；并发保存不能把不同版本的行拼成一个清单。
 func (s *Store) LoadProbeTasks(ctx context.Context) (uint64, []ProbeTaskRecord, error) {
-	var version int64
-	if err := s.r.QueryRowContext(ctx, "SELECT version FROM probe_meta WHERE id = 1").Scan(&version); err != nil {
+	tx, err := s.r.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
 		return 0, nil, err
 	}
-	rows, err := s.r.QueryContext(ctx, "SELECT id, kind, target, interval_s, timeout_ms FROM probe_task ORDER BY id")
+	defer tx.Rollback()
+	var version int64
+	if err := tx.QueryRowContext(ctx, "SELECT version FROM probe_meta WHERE id = 1").Scan(&version); err != nil {
+		return 0, nil, err
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT id, kind, target, interval_s, timeout_ms FROM probe_task ORDER BY id")
 	if err != nil {
 		return 0, nil, err
 	}
@@ -92,7 +97,7 @@ func (s *Store) LoadProbeTasks(ctx context.Context) (uint64, []ProbeTaskRecord, 
 	if err := rows.Err(); err != nil {
 		return 0, nil, err
 	}
-	assign, err := s.r.QueryContext(ctx, "SELECT task_id, node_id FROM probe_task_node ORDER BY task_id, node_id")
+	assign, err := tx.QueryContext(ctx, "SELECT task_id, node_id FROM probe_task_node ORDER BY task_id, node_id")
 	if err != nil {
 		return 0, nil, err
 	}
@@ -106,7 +111,13 @@ func (s *Store) LoadProbeTasks(ctx context.Context) (uint64, []ProbeTaskRecord, 
 			out[i].NodeIDs = append(out[i].NodeIDs, nodeID)
 		}
 	}
-	return uint64(version), out, assign.Err()
+	if err := assign.Err(); err != nil {
+		return 0, nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, nil, err
+	}
+	return uint64(version), out, nil
 }
 
 // SaveProbeTask 在一个事务里写任务、整份替换分配、把版本加一。分配行写入前检查节点存在
@@ -158,7 +169,9 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, nodeIDs
 				return err
 			}
 		}
-		return tx.QueryRow("UPDATE probe_meta SET version = version + 1 WHERE id = 1 RETURNING version").Scan(&version)
+		v, err := bumpProbeVersion(tx)
+		version = v
+		return err
 	})
 	if err != nil {
 		return nil, 0, err
@@ -180,7 +193,16 @@ func (s *Store) DeleteProbeTask(ctx context.Context, id uint64) (uint64, error) 
 		if _, err := tx.Exec("DELETE FROM probe_task_node WHERE task_id = ?", int64(id)); err != nil {
 			return err
 		}
-		return tx.QueryRow("UPDATE probe_meta SET version = version + 1 WHERE id = 1 RETURNING version").Scan(&version)
+		v, err := bumpProbeVersion(tx)
+		version = v
+		return err
 	})
 	return uint64(version), err
+}
+
+// 版本更新必须与任务及分配的变更一起提交，两个管理写入口共用同一条递增语句。
+func bumpProbeVersion(tx *sql.Tx) (int64, error) {
+	var version int64
+	err := tx.QueryRow("UPDATE probe_meta SET version = version + 1 WHERE id = 1 RETURNING version").Scan(&version)
+	return version, err
 }

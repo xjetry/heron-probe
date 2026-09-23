@@ -253,7 +253,9 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 		t.Fatal(err)
 	}
 	trace := traceWrites(t, s)
-	setProbeWatermark(t, s, "probe_5m", now.Unix()-8*86400)
+	if err := s.setRollupWatermark(t.Context(), "probe_5m", now.Unix()-8*86400); err != nil {
+		t.Fatal(err)
+	}
 	n, err := s.Prune(ctx, r)
 	if err != nil {
 		t.Fatal(err)
@@ -294,17 +296,19 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 	for _, node := range []int64{id, orphan} {
 		left, err := s.QueryProbes(ctx, node, 0, now.Unix()+60, levels[0], 60)
 		if err != nil || len(left) != 9 || left[0].TS != now.Unix()-8*86400 {
-			t.Fatalf("probe consumption boundary: node=%d rows=%v err=%v, want 9 from %d", node, left, err, now.Unix()-8*86400)
+			t.Fatalf("probe consumption boundary: node=%d rows=%s err=%v, want 9 from %d", node, formatProbeRows(left), err, now.Unix()-8*86400)
 		}
 	}
-	setProbeWatermark(t, s, "probe_5m", now.Unix())
+	if err := s.setRollupWatermark(t.Context(), "probe_5m", now.Unix()); err != nil {
+		t.Fatal(err)
+	}
 	if n, err := s.Prune(ctx, r); err != nil || n != 2 {
 		t.Fatalf("consumed probe prune=%d err=%v, want 2", n, err)
 	}
 	for _, node := range []int64{id, orphan} {
 		left, err := s.QueryProbes(ctx, node, 0, now.Unix()+60, levels[0], 60)
 		if err != nil || len(left) != 8 || left[0].TS != now.Unix()-7*86400 {
-			t.Fatalf("probe retention boundary: node=%d rows=%v err=%v, want 8 from %d", node, left, err, now.Unix()-7*86400)
+			t.Fatalf("probe retention boundary: node=%d rows=%s err=%v, want 8 from %d", node, formatProbeRows(left), err, now.Unix()-7*86400)
 		}
 	}
 }
@@ -540,13 +544,15 @@ func TestProbeRollupIsExactIdempotentAndIndependentOfMetrics(t *testing.T) {
 		t.Fatalf("all-loss NULL buckets=%d err=%v, want 3", nulls, err)
 	}
 	// 测试库回退水位以真正重算同一批桶，避免第二次调用只走空操作。
-	setProbeWatermark(t, s, "probe_5m", base)
+	if err := s.setRollupWatermark(t.Context(), "probe_5m", base); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Rollup(ctx); err != nil {
 		t.Fatal(err)
 	}
 	second, err := s.QueryProbes(ctx, id, base, base+900, levels[1], 300)
 	if err != nil || !reflect.DeepEqual(first, second) {
-		t.Fatalf("repeated rollup changed rows: first=%v second=%v err=%v", first, second, err)
+		t.Fatalf("repeated rollup changed rows: first=%s second=%s err=%v", formatProbeRows(first), formatProbeRows(second), err)
 	}
 	clk.SetWall(time.Unix(base+3900, 0))
 	if err := s.Rollup(ctx); err != nil {
@@ -558,9 +564,47 @@ func TestProbeRollupIsExactIdempotentAndIndependentOfMetrics(t *testing.T) {
 		{NodeID: id, TS: base, TaskID: 9, Bucket: &metric.ProbeBucket{Sent: 30, Lost: 30}},
 	}
 	if err != nil || !reflect.DeepEqual(hour, want) {
-		t.Fatalf("hour rollup=%v err=%v, want %v", hour, err, want)
+		t.Fatalf("hour rollup=%s err=%v, want %s", formatProbeRows(hour), err, formatProbeRows(want))
 	}
 	if got := watermark(t, s, "probe_1h"); got != base+3600 {
 		t.Fatalf("probe_1h watermark=%d, want %d", got, base+3600)
+	}
+}
+
+func TestQueriesReadSelectedFamilyLevel(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	id, _ := s.CreateNode(ctx, "n", hash(1))
+	// 各级故意写不同的值，避免读错表后又经二次聚合得到相同结果而掩盖路由错误。
+	if err := s.write(ctx, func(tx *sql.Tx) error {
+		for i := range levels {
+			args := append([]any{id, int64(0)}, bucketArgs(bucket(float64(i+1)))...)
+			if _, err := tx.Exec(metricUpsert(metricFamily.tables[i]), args...); err != nil {
+				return err
+			}
+			query := strings.Replace(upsertProbeMinute, "INSERT INTO probe_1m", "INSERT INTO "+probeFamily.tables[i], 1)
+			if _, err := tx.Exec(query, probeArgs(probeRow(id, 0, 1, []uint32{uint32(i + 1)}, 0, 0))...); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i, lv := range levels {
+		t.Run(lv.Name, func(t *testing.T) {
+			rows, err := s.QueryMetrics(ctx, id, 0, lv.Bucket, lv, lv.Bucket)
+			var sums []float64
+			for _, row := range rows {
+				sums = append(sums, row.Bucket.Sum[0])
+			}
+			if err != nil || len(sums) != 1 || sums[0] != float64(i+1) {
+				t.Fatalf("metric query read wrong level %s: sums=%v err=%v, want [%d]", lv.Name, sums, err, i+1)
+			}
+			probes, err := s.QueryProbes(ctx, id, 0, lv.Bucket, lv, lv.Bucket)
+			if err != nil || len(probes) != 1 || probes[0].Bucket.RttSumUs != uint64(i+1) {
+				t.Fatalf("probe query read wrong level %s: rows=%s err=%v, want sum %d", lv.Name, formatProbeRows(probes), err, i+1)
+			}
+		})
 	}
 }

@@ -95,100 +95,149 @@ func TestPruneWaitsForConsumer(t *testing.T) {
 
 func TestRollupUsesPrimaryKeyRanges(t *testing.T) {
 	s, _ := open(t)
-	for _, lv := range levels[1:] {
-		rows, err := s.r.Query("EXPLAIN QUERY PLAN "+metricFamily.rollupSQL(levelIndex(lv)), 0, 86400)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var plan []string
-		for rows.Next() {
-			var id, parent, unused int
-			var detail string
-			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
-				t.Fatal(err)
-			}
-			plan = append(plan, detail)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			t.Fatal(err)
-		}
-		// 这是当前 modernc.org/sqlite 版本的实测约束，升级驱动时必须重新执行。
-		t.Logf("%s query plan:\n%s", lv.Name, strings.Join(plan, "\n"))
-		if p := strings.Join(plan, "\n"); strings.Contains(p, "SCAN "+metricFamily.tables[levelIndex(lv)-1]) || !strings.Contains(p, "SEARCH "+metricFamily.tables[levelIndex(lv)-1]) {
-			t.Fatalf("rollup must seek source primary key ranges:\n%s", p)
+	for _, f := range families {
+		for i, lv := range levels {
+			t.Run(f.name+"/"+lv.Name, func(t *testing.T) {
+				if i > 0 {
+					assertPrimaryKeyRange(t, s, f.tables[i-1], f.rollupSQL(i), 0, 86400)
+				}
+				assertPrimaryKeyRange(t, s, f.tables[i], f.aggregateSQL(f.tables[i]), lv.Bucket, 1, 0, 86400)
+			})
 		}
 	}
 }
 
+func assertPrimaryKeyRange(t *testing.T, s *Store, table, query string, args ...any) {
+	t.Helper()
+	rows, err := s.r.Query("EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	// 主键必须同时约束节点和时间范围；只 SEARCH node_id 仍会扫描该节点全部历史。
+	p := strings.Join(plan, "\n")
+	t.Logf("%s query plan:\n%s", table, p)
+	if !strings.Contains(p, "SEARCH "+table+" USING PRIMARY KEY (node_id=? AND ts>? AND ts<?)") {
+		t.Fatalf("query must seek node and time primary key range:\n%s", p)
+	}
+}
+
+func familyUpsert(f *family, table string, nodeID, ts int64) (string, []any) {
+	if f.extraKey != "" {
+		return strings.Replace(upsertProbeMinute, "INSERT INTO probe_1m", "INSERT INTO "+table, 1),
+			probeArgs(probeRow(nodeID, ts, 1, []uint32{300, 100}, 1, 1))
+	}
+	return metricUpsert(table), append([]any{nodeID, ts}, bucketArgs(bucket(3))...)
+}
+
+// 按原始列值比较分片与整段聚合，NULL 也参与比较，不受展示或扫描结构变化影响。
+func readFamilyLevel(t *testing.T, s *Store, f *family, i int, nodeID int64) [][]any {
+	t.Helper()
+	cols := append(f.keys(), f.values()...)
+	rows, err := s.r.Query("SELECT "+strings.Join(cols, ", ")+" FROM "+f.tables[i]+" WHERE node_id=? ORDER BY "+strings.Join(f.keys(), ", "), nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out [][]any
+	for rows.Next() {
+		values := make([]any, len(cols))
+		dest := make([]any, len(cols))
+		for j := range dest {
+			dest[j] = &values[j]
+		}
+		if err := rows.Scan(dest...); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, values)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 func TestRollupCatchupCommitsBoundedSlices(t *testing.T) {
-	for _, lv := range levels[1:] {
-		t.Run(lv.Name, func(t *testing.T) {
-			s, _ := open(t)
-			ctx := context.Background()
-			id, err := s.CreateNode(ctx, "n", hash(1))
-			if err != nil {
-				t.Fatal(err)
-			}
-			width := int64(86400)
-			if lv.Name == "1h" {
-				width *= 7
-			}
-			base := int64(1_767_225_600)
-			limit := base + 2*width + lv.Bucket
-			if err := s.write(ctx, func(tx *sql.Tx) error {
-				for ts := base; ts < limit; ts += lv.Bucket {
-					args := append([]any{id, ts}, bucketArgs(bucket(3))...)
-					if _, err := tx.Exec(metricUpsert(metricFamily.tables[levelIndex(lv)-1]), args...); err != nil {
-						return err
-					}
+	for _, f := range families {
+		for i := 1; i < len(levels); i++ {
+			lv := levels[i]
+			t.Run(f.name+"/"+lv.Name, func(t *testing.T) {
+				s, _ := open(t)
+				ctx := t.Context()
+				id, err := s.CreateNode(ctx, "n", hash(1))
+				if err != nil {
+					t.Fatal(err)
 				}
-				_, err := tx.Exec(metricFamily.rollupSQL(levelIndex(lv)), base, limit)
-				return err
-			}); err != nil {
-				t.Fatal(err)
-			}
-			want := readLevel(t, s, lv, id)
-			if err := s.write(ctx, func(tx *sql.Tx) error {
-				_, err := tx.Exec("DELETE FROM " + metricFamily.tables[levelIndex(lv)])
-				return err
-			}); err != nil {
-				t.Fatal(err)
-			}
-			trace := traceWrites(t, s)
-			upto, err := s.rollupLevel(ctx, metricFamily, levelIndex(lv), limit)
-			if err != nil {
-				t.Fatal(err)
-			}
-			commits := trace.snapshot()
-			t.Logf("%s catchup committed %d transactions, watermark=%d", lv.Name, len(commits), upto)
-			if len(commits) < 2 {
-				t.Fatalf("catchup used %d transactions, want multiple", len(commits))
-			}
-			for _, statements := range commits {
-				for _, stmt := range statements {
-					if strings.HasPrefix(stmt.query, "INSERT OR REPLACE INTO "+metricFamily.tables[levelIndex(lv)]) {
-						span := stmt.args[1].Value.(int64) - stmt.args[0].Value.(int64)
-						if span > width {
-							t.Fatalf("rollup slice span=%d exceeds %d", span, width)
+				width := int64(86400)
+				if lv.Name == "1h" {
+					width *= 7
+				}
+				base := int64(1_767_225_600)
+				limit := base + 2*width + lv.Bucket
+				if err := s.write(ctx, func(tx *sql.Tx) error {
+					for ts := base; ts < limit; ts += lv.Bucket {
+						query, args := familyUpsert(f, f.tables[i-1], id, ts)
+						if _, err := tx.Exec(query, args...); err != nil {
+							return err
+						}
+					}
+					_, err := tx.Exec(f.rollupSQL(i), base, limit)
+					return err
+				}); err != nil {
+					t.Fatal(err)
+				}
+				want := readFamilyLevel(t, s, f, i, id)
+				if err := s.write(ctx, func(tx *sql.Tx) error { _, err := tx.Exec("DELETE FROM " + f.tables[i]); return err }); err != nil {
+					t.Fatal(err)
+				}
+				trace := traceWrites(t, s)
+				upto, err := s.rollupLevel(ctx, f, i, limit)
+				if err != nil {
+					t.Fatal(err)
+				}
+				commits := trace.snapshot()
+				t.Logf("%s %s catchup committed %d transactions, watermark=%d", f.name, lv.Name, len(commits), upto)
+				if len(commits) < 2 {
+					t.Fatalf("catchup used %d transactions, want multiple", len(commits))
+				}
+				for _, statements := range commits {
+					for _, stmt := range statements {
+						if strings.HasPrefix(stmt.query, "INSERT OR REPLACE INTO "+f.tables[i]) {
+							span := stmt.args[1].Value.(int64) - stmt.args[0].Value.(int64)
+							if span > width {
+								t.Fatalf("rollup slice span=%d exceeds %d", span, width)
+							}
 						}
 					}
 				}
-			}
-			if upto != limit || watermark(t, s, lv.Name) != limit {
-				t.Fatalf("catchup watermark=%d, want %d", upto, limit)
-			}
-			got := readLevel(t, s, lv, id)
-			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("chunked result differs from single range: got %d want %d", len(got), len(want))
-			}
-			if _, err := s.rollupLevel(ctx, metricFamily, levelIndex(lv), limit); err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(readLevel(t, s, lv, id), got) {
-				t.Fatal("catchup result is not idempotent")
-			}
-		})
+				persisted := watermark(t, s, f.states[i])
+				if upto != limit || persisted != limit {
+					t.Fatalf("catchup watermark returned=%d persisted=%d, want %d", upto, persisted, limit)
+				}
+				got := readFamilyLevel(t, s, f, i, id)
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("chunked result differs from single range: got %v want %v", got, want)
+				}
+				if _, err := s.rollupLevel(ctx, f, i, limit); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(readFamilyLevel(t, s, f, i, id), got) {
+					t.Fatal("catchup result is not idempotent")
+				}
+			})
+		}
 	}
 }
 

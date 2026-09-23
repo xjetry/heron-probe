@@ -3,7 +3,8 @@ package metric
 import probev1 "github.com/xjetry/probe/gen/probe/v1"
 
 // ProbeBucket 是一分钟内某任务探测结果的可加折叠。
-// Add 的调用方只传通过 outcome 校验的结果，保证每次 Sent 增加都对应一种结果。
+// ingest 负责在结构校验时拒绝缺 outcome 的结果；这里也只统计三种明确的结果，
+// 缺 outcome 不增加任何计数，避免破坏读侧推导 RTT 样本数所依赖的恒等式。
 //
 // RttN 是带 rtt 的结果数，恒等于 Sent − Lost − Errors；RttN 为 0 时 RttMinUs / RttMaxUs
 // 没有含义，落库为 NULL——若落成 0，上卷的 min() 会把"没有样本"当成 0 µs。
@@ -15,13 +16,15 @@ type ProbeBucket struct {
 }
 
 func (b *ProbeBucket) Add(r *probev1.ProbeResult) {
-	b.Sent++
 	switch o := r.GetOutcome().(type) {
 	case *probev1.ProbeResult_RttUs:
+		b.Sent++
 		b.addRtt(o.RttUs)
 	case *probev1.ProbeResult_Timeout:
+		b.Sent++
 		b.Lost++
 	case *probev1.ProbeResult_Error:
+		b.Sent++
 		b.Errors++
 	}
 }

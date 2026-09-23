@@ -14,7 +14,8 @@ var (
 
 // WriteMinuteBatch 是两族 1m 行的唯一写入口：同一事务里写指标行与探测行，节点存在性
 // 在事务内检查（与 DeleteNode 串行），各族按自己的 5m 水位做冻结检查——两族各自上卷，
-// 一族的水位不能替另一族裁决。被拒绝的行计数返回并记日志，其余行照常写入。
+// 一族的水位不能替另一族决定是否接受写入。被拒绝的行计数返回并记日志，其余行照常写入。
+// 比较的是已持久化的水位而不是时钟，墙钟回拨或重试旧桶都不能改写已冻结的历史。
 func (s *Store) WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, error) {
 	rejected := 0
 	err := s.write(ctx, func(tx *sql.Tx) error {
@@ -85,6 +86,7 @@ func (s *Store) WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, 
 	return rejected, err
 }
 
+// WriteMinuteRows 委托同批写入口，指标单独刷出时仍遵守相同的事务与冻结规则。
 func (s *Store) WriteMinuteRows(ctx context.Context, rows []metric.Row) (int, error) {
 	return s.WriteMinuteBatch(ctx, metric.Batch{Rows: rows})
 }
