@@ -8,10 +8,12 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"net/netip"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
@@ -24,22 +26,35 @@ import (
 // ICMP 每个地址族共享一个 socket，数据报不可用时退到 raw。
 // Linux 数据报回包 ID 是本地端口，macOS 的公网回包 ID 也可能被改写；因此只按 payload 匹配。
 // raw 与 macOS udp6 会收到自己的请求，macOS 数据报 socket 会收到同进程其他 socket 的回包；
-// 单读协程只接受 Echo Reply，陌生 nonce 或任务序号不会交给 pending。
-// x/net v0.58.0 在 Darwin 为 udp4 设置 IP_STRIPHDR，ReadFrom 返回的报文不需要剥 IP 头。
+// 每个 socket 一个读协程，只接受 Echo Reply，陌生 nonce 或任务序号不会交给 pending。
+// 四种 socket 的 ReadFrom 都不带 IP 头：Darwin udp4 由 x/net 设置 IP_STRIPHDR，
+// Linux udp4 由内核交付 ICMP 报文，Linux raw v4 由 net.IPConn.ReadFrom 剥头；
+// udp6 在 Darwin/Linux 两边以及 raw v6 都由内核保证不交付 IPv6 头。
+// 这一次没有联通是可达性事实，计入丢包；本地无法发起才是 error。
 type ICMP struct {
 	clk       clock.Clock
 	log       *slog.Logger
+	Resolver  *net.Resolver
 	nonce     [8]byte
 	seq       atomic.Uint32
 	v4, v6    *icmpConn
-	initErr   []string
+	initErr4  []string
+	initErr6  []string
 	done      chan struct{}
 	closeOnce sync.Once
 	wg        sync.WaitGroup
 }
 
+type icmpSocket interface {
+	WriteTo([]byte, net.Addr) (int, error)
+	ReadFrom([]byte) (int, net.Addr, error)
+	Close() error
+}
+
+var _ icmpSocket = (*icmp.PacketConn)(nil)
+
 type icmpConn struct {
-	pc      *icmp.PacketConn
+	pc      icmpSocket
 	raw     bool
 	proto   int
 	mu      sync.Mutex
@@ -54,8 +69,8 @@ type pendingKey struct {
 func NewICMP(clk clock.Clock, log *slog.Logger) *ICMP {
 	e := &ICMP{clk: clk, log: log, done: make(chan struct{})}
 	rand.Read(e.nonce[:])
-	e.v4 = e.open("udp4", "ip4:icmp", "0.0.0.0", ipv4.ICMPTypeEchoReply.Protocol())
-	e.v6 = e.open("udp6", "ip6:ipv6-icmp", "::", ipv6.ICMPTypeEchoReply.Protocol())
+	e.v4, e.initErr4 = openICMP("udp4", "ip4:icmp", "0.0.0.0", ipv4.ICMPTypeEchoReply.Protocol())
+	e.v6, e.initErr6 = openICMP("udp6", "ip6:ipv6-icmp", "::", ipv6.ICMPTypeEchoReply.Protocol())
 	for _, c := range []*icmpConn{e.v4, e.v6} {
 		if c != nil {
 			e.wg.Add(1)
@@ -66,25 +81,28 @@ func NewICMP(clk clock.Clock, log *slog.Logger) *ICMP {
 }
 
 // 两种 socket 的失败原因都保留，探测不可用时才能说明权限或协议限制。
-func (e *ICMP) open(dgram, raw, addr string, proto int) *icmpConn {
+func openICMP(dgram, raw, addr string, proto int) (*icmpConn, []string) {
+	var diagnostics []string
 	if pc, err := icmp.ListenPacket(dgram, addr); err == nil {
-		return &icmpConn{pc: pc, proto: proto, pending: map[pendingKey]chan time.Duration{}}
+		return &icmpConn{pc: pc, proto: proto, pending: map[pendingKey]chan time.Duration{}}, nil
 	} else {
-		e.initErr = append(e.initErr, dgram+": "+err.Error())
+		diagnostics = append(diagnostics, dgram+": "+err.Error())
 	}
 	if pc, err := icmp.ListenPacket(raw, addr); err == nil {
-		return &icmpConn{pc: pc, raw: true, proto: proto, pending: map[pendingKey]chan time.Duration{}}
+		return &icmpConn{pc: pc, raw: true, proto: proto, pending: map[pendingKey]chan time.Duration{}}, diagnostics
 	} else {
-		e.initErr = append(e.initErr, raw+": "+err.Error())
+		diagnostics = append(diagnostics, raw+": "+err.Error())
 	}
-	return nil
+	return nil, diagnostics
 }
 
 // Available 表示初始化时至少一个地址族成功创建 socket，供 facts 报告能力。
 func (e *ICMP) Available() bool { return e.v4 != nil || e.v6 != nil }
 
-func (e *ICMP) InitErrors() []string { return slices.Clone(e.initErr) }
+// InitErrors 是诊断信息：数据报失败但 raw 成功时也非空，不等于不可用；能力由 Available 判断。
+func (e *ICMP) InitErrors() []string { return append(slices.Clone(e.initErr4), e.initErr6...) }
 
+// Close 须在 Scheduler.Stop 之后调用，否则每个间隔都会入队 icmp closed。
 func (e *ICMP) Close() {
 	e.closeOnce.Do(func() {
 		close(e.done)
@@ -144,12 +162,16 @@ func (e *ICMP) Probe(ctx context.Context, t *probev1.ProbeTask) Outcome {
 	default:
 	}
 	if !e.Available() {
-		return Outcome{Err: "icmp unavailable: " + strings.Join(e.initErr, "; ")}
+		if ip, err := netip.ParseAddr(t.GetTarget()); err == nil {
+			return e.unavailable(ip.Unmap().Is6())
+		}
+		// 没有任何 socket 时，主机名无可选地址族，返回两族初始化诊断，不擅自归因到某一族。
+		return Outcome{Err: "icmp unavailable: " + strings.Join(e.InitErrors(), "; ")}
 	}
 	timeout := time.Duration(t.GetTimeoutMs()) * time.Millisecond
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	ip, err := resolve(ctx, t.GetTarget(), e.v4 != nil, e.v6 != nil)
+	ip, err := resolve(ctx, e.Resolver, t.GetTarget(), e.v4 != nil, e.v6 != nil)
 	if err != nil {
 		return Outcome{Err: err.Error()}
 	}
@@ -158,7 +180,7 @@ func (e *ICMP) Probe(ctx context.Context, t *probev1.ProbeTask) Outcome {
 		c, typ = e.v6, ipv6.ICMPTypeEchoRequest
 	}
 	if c == nil {
-		return Outcome{Err: "icmp unavailable: " + strings.Join(e.initErr, "; ")}
+		return e.unavailable(ip.Is6())
 	}
 	seq := e.seq.Add(1)
 	key := pendingKey{task: t.GetId(), seq: seq}
@@ -176,6 +198,9 @@ func (e *ICMP) Probe(ctx context.Context, t *probev1.ProbeTask) Outcome {
 	}
 	sent := e.clk.Mono()
 	if _, err := c.pc.WriteTo(wire, dst); err != nil {
+		if errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTUNREACH) {
+			return Outcome{Timeout: true}
+		}
 		return Outcome{Err: "send: " + err.Error()}
 	}
 	select {
@@ -192,8 +217,17 @@ func (e *ICMP) Probe(ctx context.Context, t *probev1.ProbeTask) Outcome {
 	}
 }
 
+func (e *ICMP) unavailable(v6 bool) Outcome {
+	diagnostics := e.initErr4
+	if v6 {
+		diagnostics = e.initErr6
+	}
+	return Outcome{Err: "icmp unavailable: " + strings.Join(diagnostics, "; ")}
+}
+
 func (e *ICMP) read(c *icmpConn) {
 	buf := make([]byte, 1500)
+	var delay time.Duration
 	for {
 		n, _, err := c.pc.ReadFrom(buf)
 		if err != nil {
@@ -201,8 +235,18 @@ func (e *ICMP) read(c *icmpConn) {
 				return
 			}
 			e.log.Warn("reading ICMP failed", "err", err)
+			// 每个失败读取后都等待，持续错误不会空转刷日志；Close 不必等待退避到期。
+			delay = min(max(10*time.Millisecond, delay*2), time.Second)
+			timer := time.NewTimer(delay)
+			select {
+			case <-e.done:
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
 			continue
 		}
+		delay = 0
 		e.handle(c, buf[:n], e.clk.Mono())
 	}
 }

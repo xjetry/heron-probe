@@ -11,8 +11,10 @@ import (
 )
 
 // TCP 只测量连接建立耗时；解析与连接共用预算，解析失败与地址非法是 error，连接失败是丢包。
+// 这一次没有联通是可达性事实，计入丢包；本地无法发起才是 error。
 type TCP struct {
 	Clock       clock.Clock
+	Resolver    *net.Resolver
 	DialContext func(context.Context, string, string) (net.Conn, error)
 }
 
@@ -24,7 +26,7 @@ func (p TCP) Probe(ctx context.Context, t *probev1.ProbeTask) Outcome {
 	if err != nil {
 		return Outcome{Err: err.Error()}
 	}
-	ip, err := resolve(ctx, host, true, true)
+	ip, err := resolve(ctx, p.Resolver, host, true, true)
 	if err != nil {
 		return Outcome{Err: err.Error()}
 	}

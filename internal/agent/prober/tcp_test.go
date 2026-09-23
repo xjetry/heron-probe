@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -14,15 +15,22 @@ import (
 	"github.com/xjetry/probe/internal/clock"
 )
 
-// DNS 由回环服务作答，名字失败与地址族选择不依赖宿主 DNS 或公网。
-func localDNS(t *testing.T, answer bool, before func()) {
+type dnsAnswer int
+
+const (
+	dnsMissing dnsAnswer = iota
+	dnsDual
+	dnsMapped
+)
+
+// 每个解析器只访问自己的回环服务，不替换全局解析器，也不依赖宿主 DNS 或公网。
+func localDNS(t *testing.T, answer dnsAnswer, before func()) *net.Resolver {
 	t.Helper()
 	pc, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	previous := net.DefaultResolver
-	net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+	resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "udp4", pc.LocalAddr().String())
 	}}
 	var once sync.Once
@@ -50,15 +58,18 @@ func localDNS(t *testing.T, answer bool, before func()) {
 			msg := append([]byte(nil), buf[:end]...)
 			msg[2], msg[3] = 0x81, 0x80
 			clear(msg[6:12])
-			if answer && (qtype == 1 || qtype == 28) {
+			if (answer == dnsDual && (qtype == 1 || qtype == 28)) || (answer == dnsMapped && qtype == 28) {
 				msg[7] = 1
 				ip := net.ParseIP("127.0.0.1").To4()
 				if qtype == 28 {
 					ip = net.ParseIP("::1").To16()
+					if answer == dnsMapped {
+						ip = net.ParseIP("::ffff:127.0.0.1").To16()
+					}
 				}
 				msg = append(msg, 0xc0, 0x0c, 0, byte(qtype), 0, 1, 0, 0, 0, 0, 0, byte(len(ip)))
 				msg = append(msg, ip...)
-			} else {
+			} else if answer == dnsMissing {
 				msg[3] = 0x83
 			}
 			if before != nil {
@@ -67,7 +78,8 @@ func localDNS(t *testing.T, answer bool, before func()) {
 			_, _ = pc.WriteTo(msg, peer)
 		}
 	}()
-	t.Cleanup(func() { net.DefaultResolver = previous; pc.Close(); <-done })
+	t.Cleanup(func() { pc.Close(); <-done })
+	return resolver
 }
 
 func tcpListener(t *testing.T) (string, <-chan net.Conn) {
@@ -141,7 +153,7 @@ func TestTCPOutcomes(t *testing.T) {
 	if out := p.Probe(t.Context(), tcpTask(closed)); !out.Timeout || out.Err != "" {
 		t.Fatalf("refused=%+v", out)
 	}
-	localDNS(t, false, nil)
+	p.Resolver = localDNS(t, dnsMissing, nil)
 	if out := p.Probe(t.Context(), tcpTask("missing.prober.invalid:9")); !strings.Contains(out.Err, "missing.prober.invalid") || out.Timeout {
 		t.Fatalf("dns=%+v", out)
 	}
@@ -174,7 +186,7 @@ func TestTCPMeasuresOnlyConnectionAndCapsRTT(t *testing.T) {
 	addr, accepted := tcpListener(t)
 	_, port, _ := net.SplitHostPort(addr)
 	clk := &measuredClock{Fake: clock.NewFake(time.Unix(0, 0)), step: time.Millisecond}
-	localDNS(t, true, func() { clk.Advance(50 * time.Millisecond) })
+	resolver := localDNS(t, dnsDual, func() { clk.Advance(50 * time.Millisecond) })
 	var closedEarly bool
 	clk.beforeSecond = func() {
 		c := receive(t, accepted)
@@ -183,7 +195,7 @@ func TestTCPMeasuresOnlyConnectionAndCapsRTT(t *testing.T) {
 		_, err := c.Read(make([]byte, 1))
 		closedEarly = err == io.EOF
 	}
-	out := (TCP{Clock: clk}).Probe(t.Context(), tcpTask(net.JoinHostPort("local.prober.invalid", port)))
+	out := (TCP{Clock: clk, Resolver: resolver}).Probe(t.Context(), tcpTask(net.JoinHostPort("local.prober.invalid", port)))
 	if out != (Outcome{RttUs: 1000}) || closedEarly {
 		t.Fatalf("connection=%+v closed_before_measurement=%v", out, closedEarly)
 	}
@@ -194,7 +206,7 @@ func TestTCPMeasuresOnlyConnectionAndCapsRTT(t *testing.T) {
 }
 
 func TestResolveChoosesAvailableFamilies(t *testing.T) {
-	localDNS(t, true, nil)
+	resolver := localDNS(t, dnsDual, nil)
 	for _, tc := range []struct {
 		host   string
 		v4, v6 bool
@@ -205,12 +217,72 @@ func TestResolveChoosesAvailableFamilies(t *testing.T) {
 		{"local.prober.invalid", true, true, "127.0.0.1"},
 		{"local.prober.invalid", false, true, "::1"},
 	} {
-		ip, err := resolve(t.Context(), tc.host, tc.v4, tc.v6)
+		ip, err := resolve(t.Context(), resolver, tc.host, tc.v4, tc.v6)
 		if err != nil || ip.String() != tc.want {
 			t.Fatalf("resolve %+v = %v/%v", tc, ip, err)
 		}
 	}
-	if _, err := resolve(t.Context(), "local.prober.invalid", false, false); err == nil {
+	if _, err := resolve(t.Context(), resolver, "local.prober.invalid", false, false); err == nil {
 		t.Fatal("resolved without an available family")
+	}
+}
+
+func TestResolveMappedAddresses(t *testing.T) {
+	resolver := localDNS(t, dnsMapped, nil)
+	t.Run("literal", func(t *testing.T) {
+		ip, err := resolve(t.Context(), resolver, "::ffff:127.0.0.1", true, false)
+		if err != nil || ip.String() != "127.0.0.1" {
+			t.Fatalf("mapped literal=%v err=%v", ip, err)
+		}
+	})
+	t.Run("dns-v4", func(t *testing.T) {
+		ip, err := resolve(t.Context(), resolver, "mapped.prober.invalid", true, false)
+		if err != nil || ip.String() != "127.0.0.1" {
+			t.Fatalf("mapped DNS v4=%v err=%v", ip, err)
+		}
+	})
+	t.Run("dns-v6-only", func(t *testing.T) {
+		ip, err := resolve(t.Context(), resolver, "mapped.prober.invalid", false, true)
+		if err == nil {
+			t.Fatalf("mapped DNS accepted as v6=%v", ip)
+		}
+	})
+}
+
+func TestResolversRemainIndependent(t *testing.T) {
+	previous := net.DefaultResolver
+	dual := localDNS(t, dnsDual, nil)
+	mapped := localDNS(t, dnsMapped, nil)
+	if net.DefaultResolver != previous {
+		t.Fatal("local DNS replaced the global resolver")
+	}
+	for _, tc := range []struct {
+		name      string
+		resolver  *net.Resolver
+		wantError bool
+	}{
+		{"dual", dual, false},
+		{"mapped", mapped, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ip, err := resolve(t.Context(), tc.resolver, "local.prober.invalid", false, true)
+			if (err != nil) != tc.wantError || (!tc.wantError && ip.String() != "::1") {
+				t.Fatalf("independent resolver %s=%v err=%v", tc.name, ip, err)
+			}
+		})
+	}
+}
+
+func TestTCPUsesInjectedResolver(t *testing.T) {
+	var destination string
+	p := TCP{Clock: clock.Real(), Resolver: localDNS(t, dnsMapped, nil),
+		DialContext: func(_ context.Context, _ string, target string) (net.Conn, error) {
+			destination = target
+			return nil, syscall.ENETUNREACH
+		}}
+	out := p.Probe(t.Context(), tcpTask("mapped.prober.invalid:9"))
+	if destination != "127.0.0.1:9" || !out.Timeout || out.Err != "" {
+		t.Fatalf("injected resolver destination=%q outcome=%+v", destination, out)
 	}
 }

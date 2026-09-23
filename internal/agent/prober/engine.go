@@ -16,6 +16,7 @@ type Outcome struct {
 	Err     string
 }
 
+// Engine 的 ctx 被调用方取消后返回的 Outcome 无意义，调用方必须丢弃。
 type Engine interface {
 	Probe(ctx context.Context, t *probev1.ProbeTask) Outcome
 }

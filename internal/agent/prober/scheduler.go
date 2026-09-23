@@ -56,7 +56,7 @@ func (s *Scheduler) Version() uint64 {
 }
 
 // Apply 整份替换任务集；未变的任务不重启计时。字段规则由 CheckTask 保证，数量由本入口限制，
-// 超限或非法任务各回报一条 error，不能把拒绝探测伪装成没有数据。
+// 应用清单时为每个被拒任务留下一条 error，说明原因。
 func (s *Scheduler) Apply(tasks *probev1.ProbeTasks) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
