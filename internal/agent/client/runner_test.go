@@ -3,8 +3,10 @@ package client
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -49,6 +51,9 @@ func TestRunnerReportsResultsAndReconcilesVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	reports := hub.received()
+	if len(reports) != 2 {
+		t.Fatalf("reports = %d, want 2", len(reports))
+	}
 	want := &probev1.ProbeResult{TaskId: 42, AgeMs: 1000, Outcome: &probev1.ProbeResult_RttUs{RttUs: 321}}
 	if len(reports[0].ProbeResults) != 1 || !proto.Equal(reports[0].ProbeResults[0], want) {
 		t.Fatalf("first results = %v, want %v", reports[0].ProbeResults, want)
@@ -99,6 +104,9 @@ func TestRunnerFailureRetainsOnlyRetryableResults(t *testing.T) {
 				t.Fatal(err)
 			}
 			reports := hub.received()
+			if len(reports) != 2 {
+				t.Fatalf("reports = %d, want 2", len(reports))
+			}
 			if len(reports[0].ProbeResults) != 1 {
 				t.Fatalf("first results = %v", reports[0].ProbeResults)
 			}
@@ -126,8 +134,111 @@ func TestRunnerWithoutProberReportsNoResultsOrVersion(t *testing.T) {
 	if err := r.Run(context.Background()); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	got := hub.received()[0]
+	reports := hub.received()
+	if len(reports) != 1 {
+		t.Fatalf("reports = %d, want 1", len(reports))
+	}
+	got := reports[0]
 	if got.TasksVersion != 0 || len(got.ProbeResults) != 0 || got.GetFacts().GetIcmpAvailable() {
 		t.Fatalf("unexpected probe state without prober: %v", got)
+	}
+}
+
+type advancingClock struct {
+	clock.Clock
+	mono time.Duration
+}
+
+func (c *advancingClock) Mono() time.Duration {
+	c.mono += time.Second
+	return c.mono
+}
+
+func TestRunnerUsesOneInstantForResultAge(t *testing.T) {
+	hub := &fakeHub{}
+	r, _ := newRunner(t, hub)
+	r.Clock = &advancingClock{Clock: r.Clock, mono: time.Hour}
+	r.Results = prober.NewQueue(1)
+	r.Results.Push(prober.Result{TaskID: 1, At: time.Hour + time.Second - probelimit.MaxResultAge})
+	r.Sleep = func(context.Context, time.Duration) error { return context.Canceled }
+	if err := r.Run(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	reports := hub.received()
+	if len(reports) != 1 {
+		t.Fatalf("reports = %d, want 1", len(reports))
+	}
+	got := reports[0].ProbeResults
+	if len(got) != 1 || got[0].AgeMs != uint32(probelimit.MaxResultAge/time.Millisecond) {
+		t.Fatalf("boundary results = %v, want age_ms 120000 at filtering instant", got)
+	}
+}
+
+func TestRunnerDoesNotWarnAboutEmptyDiscard(t *testing.T) {
+	r, _ := newRunner(t, &fakeHub{probeError: connect.CodeInvalidArgument})
+	var logs bytes.Buffer
+	r.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	r.Results = prober.NewQueue(1)
+	r.Sleep = func(context.Context, time.Duration) error { return context.Canceled }
+	if err := r.Run(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if strings.Contains(logs.String(), "discarding rejected probe results") {
+		t.Fatalf("empty batch must not log a discard: %s", logs.String())
+	}
+}
+
+func TestRunnerWarnsOnlyWhenQueueDropsIncrease(t *testing.T) {
+	for _, code := range []connect.Code{0, connect.CodeUnavailable} {
+		t.Run(code.String(), func(t *testing.T) {
+			r, _ := newRunner(t, &fakeHub{probeError: code})
+			var logs bytes.Buffer
+			r.Log = slog.New(slog.NewJSONHandler(&logs, nil))
+			q := prober.NewQueue(1)
+			r.Results = q
+			q.Push(prober.Result{At: r.Clock.Mono()})
+			q.Push(prober.Result{At: r.Clock.Mono()})
+			round := 0
+			r.Sleep = func(context.Context, time.Duration) error {
+				round++
+				var deltas []uint64
+				decoder := json.NewDecoder(bytes.NewReader(logs.Bytes()))
+				for decoder.More() {
+					var record struct {
+						Message string `json:"msg"`
+						Level   string `json:"level"`
+						Dropped uint64 `json:"dropped"`
+					}
+					if err := decoder.Decode(&record); err != nil {
+						t.Fatal(err)
+					}
+					if record.Message == "probe results dropped" {
+						if record.Level != "WARN" {
+							t.Errorf("drop log level = %s, want WARN", record.Level)
+						}
+						deltas = append(deltas, record.Dropped)
+					}
+				}
+				want := []uint64{1}
+				if round >= 3 {
+					want = append(want, 2)
+				}
+				if !slices.Equal(deltas, want) {
+					t.Errorf("round %d drop deltas = %v, want %v", round, deltas, want)
+				}
+				if round == 2 {
+					q.Take(r.Clock.Mono(), probelimit.MaxResultAge)
+					q.Push(prober.Result{At: r.Clock.Mono()})
+					q.Push(prober.Result{At: r.Clock.Mono() - probelimit.MaxResultAge - time.Second})
+				}
+				if round == 4 {
+					return context.Canceled
+				}
+				return nil
+			}
+			if err := r.Run(context.Background()); !errors.Is(err, context.Canceled) {
+				t.Fatal(err)
+			}
+		})
 	}
 }

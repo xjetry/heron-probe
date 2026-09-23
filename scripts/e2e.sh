@@ -114,9 +114,22 @@ query_body=$(jq -nc --arg nodeId "$node1" --argjson from "$((now - 3600))" --arg
 [ "$(rpc QueryMetrics "$query_body")" = 200 ] || { echo "FAIL: QueryMetrics"; cat "$work/QueryMetrics.json"; exit 1; }
 jq -e '.level == "1m" and (.ts | length) >= 1 and any(.series[] | select(.name == "cpu") | .samples[]; .n > 0)' "$work/QueryMetrics.json" > /dev/null || { echo "FAIL: QueryMetrics shape"; cat "$work/QueryMetrics.json"; exit 1; }
 probe_body=$(jq -nc --arg nodeId "$node1" --argjson from "$((now - 3600))" --argjson to "$((now + 60))" '{nodeId: $nodeId, from: $from, to: $to, maxPoints: 100}')
-[ "$(rpc QueryProbes "$probe_body")" = 200 ] || { echo "FAIL: QueryProbes"; cat "$work/QueryProbes.json"; exit 1; }
 # 两个任务都有成功的探测：容器里的 ICMP 探测回环，TCP 连接宿主上的 hub。
-jq -e --arg icmp "$icmp_task" --arg tcp "$tcp_task" '.level == "1m" and ([.series[].taskId] | sort) == ([$icmp, $tcp] | sort) and all(.series[]; any(.samples[]; .sent > 0 and .rttMeanUs != null and (.errors // 0) == 0))' "$work/QueryProbes.json" > /dev/null || { echo "FAIL: probe results"; cat "$work/QueryProbes.json"; exit 1; }
+# hub 在分钟边界后 0.5s 刷出分钟桶；4s 上报间隔与最多 5s 首次偏移下，首条结果最晚在任务创建后约 13s 到达。
+# agent 退出后立即查库，距首条结果最坏不足 60.5s，一次性查询的最坏余量为负，须等待常规刷出。
+probe_started=$(date +%s)
+probe_deadline=$((probe_started + 75))
+while :; do
+  [ "$(rpc QueryProbes "$probe_body")" = 200 ] || { echo "FAIL: QueryProbes"; cat "$work/QueryProbes.json"; exit 1; }
+  if jq -e --arg icmp "$icmp_task" --arg tcp "$tcp_task" '.level == "1m" and ([.series[].taskId] | sort) == ([$icmp, $tcp] | sort) and all(.series[]; any(.samples[]; .sent > 0 and .rttMeanUs != null and (.errors // 0) == 0))' "$work/QueryProbes.json" > /dev/null; then
+    echo "probe results ready after $(($(date +%s) - probe_started))s"
+    break
+  fi
+  if [ "$(date +%s)" -ge "$probe_deadline" ]; then
+    echo "FAIL: probe results after 75s"; cat "$work/QueryProbes.json"; exit 1
+  fi
+  sleep 2
+done
 jq -e 'all(.nodes[]; .facts.icmpAvailable == true)' "$work/ListNodes.json" > /dev/null || { echo "FAIL: icmp_available not reported"; cat "$work/ListNodes.json"; exit 1; }
 # 流量：两个 agent 每 4 秒上报一次，上报本身就产生字节；首次上报只取基线，之后的差分进总量。
 [ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic"; cat "$work/GetTraffic.json"; exit 1; }

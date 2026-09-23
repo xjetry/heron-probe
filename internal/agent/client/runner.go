@@ -24,8 +24,10 @@ type Runner struct {
 	Sleep     func(context.Context, time.Duration) error
 	Rand      func() float64
 	Log       *slog.Logger
-	Prober    *prober.Scheduler
-	Results   *prober.Queue
+	// Prober 为 nil 时版本恒报 0；hub 版本非 0 时会每次下发整份清单，但本端不应用。
+	Prober *prober.Scheduler
+	// Results 为 nil 时不携带探测结果。
+	Results *prober.Queue
 	// Interval 是收到第一个响应之前使用的间隔；之后一律用 hub 下发的。
 	Interval time.Duration
 }
@@ -42,7 +44,8 @@ func sleepReal(ctx context.Context, d time.Duration) error {
 }
 
 // Run 每次携带 facts 摘要与任务版本供 hub 对账，间隔以响应为准。
-// 失败退避、成功即回到下发间隔；实时指标不缓存，探测结果在迟到预算内重试。
+// 失败退避、成功即回到下发间隔；实时指标不缓存，因为过期的实时数据没有意义。
+// 探测结果在迟到预算内重试，InvalidArgument 例外：本批丢弃而不回队。
 func (r *Runner) Run(ctx context.Context) error {
 	if r.Sleep == nil {
 		r.Sleep = sleepReal
@@ -53,6 +56,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	interval := r.Interval
 	sendFacts := true
 	attempt := 0
+	var dropped uint64
 	for {
 		m, err := r.Collector.Metrics()
 		if err != nil {
@@ -61,6 +65,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		req := connect.NewRequest(&probev1.ReportRequest{Metrics: m})
 		var taken []prober.Result
 		if r.Results != nil {
+			// 超龄过滤与 age_ms 必须取同一时刻，否则刚通过过滤的结果可能以大于 MaxResultAge 的年龄发出并被 hub 丢弃。
 			now := r.Clock.Mono()
 			taken = r.Results.Take(now, probelimit.MaxResultAge)
 			req.Msg.ProbeResults = prober.ToProto(taken, now)
@@ -78,16 +83,30 @@ func (r *Runner) Run(ctx context.Context) error {
 		req.Msg.FactsHash = hash
 
 		resp, err := r.Client.Report(ctx, req)
-		if err != nil {
-			if r.Results != nil {
-				// hub 对结构非法结果整条拒绝；回队会让后续上报反复携带同一批坏结果。
-				// 其他失败保留本批结果，下次 Take 丢弃超过迟到预算的部分。
-				if connect.CodeOf(err) == connect.CodeInvalidArgument {
+		if err != nil && r.Results != nil {
+			// InvalidArgument 可来自 hub 对结构非法探测结果的拒绝、validateMetrics 对非法指标的拒绝，
+			// 或 Connect 客户端解码/解压响应失败。前两种对同一内容的拒绝是确定性的：
+			// 坏结果重发仍失败，非法指标持续时本批也只会在迟到预算内反复被拒。
+			// hub 正常完成 Report 后的响应若解码/解压失败，本批已折叠，回队会重复入账。
+			// 其他失败保留本批结果，下次 Take 丢弃超过迟到预算的部分。
+			if connect.CodeOf(err) == connect.CodeInvalidArgument {
+				if len(taken) > 0 {
 					r.Log.Warn("discarding rejected probe results", "count", len(taken), "err", err)
-				} else {
-					r.Results.Requeue(taken)
 				}
+			} else {
+				r.Results.Requeue(taken)
 			}
+		}
+		if err == nil && resp.Msg.Tasks != nil && r.Prober != nil {
+			r.Prober.Apply(resp.Msg.Tasks)
+		}
+		if r.Results != nil {
+			if total := r.Results.Dropped(); total > dropped {
+				r.Log.Warn("probe results dropped", "dropped", total-dropped)
+				dropped = total
+			}
+		}
+		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -100,9 +119,6 @@ func (r *Runner) Run(ctx context.Context) error {
 			continue
 		}
 		attempt = 0
-		if resp.Msg.Tasks != nil && r.Prober != nil {
-			r.Prober.Apply(resp.Msg.Tasks)
-		}
 		sendFacts = resp.Msg.WantFacts
 		if ms := resp.Msg.ReportIntervalMs; ms > 0 {
 			interval = time.Duration(ms) * time.Millisecond

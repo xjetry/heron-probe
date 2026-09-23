@@ -23,9 +23,10 @@ type Collector struct {
 	DiskUsage func(path string) (total, used uint64, err error)
 	Clock     clock.Clock
 	// NetInclude 非空时只统计匹配的网卡；否则统计除 NetExclude（默认列表）外的全部。
-	NetInclude    []string
-	NetExclude    []string
-	Version       string
+	NetInclude []string
+	NetExclude []string
+	Version    string
+	// IcmpAvailable 默认为 false；须在 Runner.Run 前赋值，运行期间只读。
 	IcmpAvailable bool
 
 	prevCPU  *cpuTimes
