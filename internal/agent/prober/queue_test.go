@@ -30,6 +30,36 @@ func TestQueueDropsOldestAndExpired(t *testing.T) {
 	}
 }
 
+func TestQueueOrdersByCompletionTime(t *testing.T) {
+	for _, capacity := range []int{3, 2} {
+		q := NewQueue(capacity)
+		for _, at := range []time.Duration{3, 1, 2} {
+			q.Push(Result{TaskID: uint64(at), At: at * time.Second})
+		}
+		want := []Result{{TaskID: 1, At: time.Second}, {TaskID: 2, At: 2 * time.Second}, {TaskID: 3, At: 3 * time.Second}}
+		want = want[3-capacity:]
+		if got := q.Take(3*time.Second, time.Minute, 1024); !reflect.DeepEqual(got, want) || q.Dropped() != uint64(3-capacity) {
+			t.Errorf("capacity=%d ordered results=%v dropped=%d want=%v", capacity, got, q.Dropped(), want)
+		}
+	}
+}
+
+func TestRequeueMergesDelayedPushByCompletionTime(t *testing.T) {
+	for _, capacity := range []int{3, 2} {
+		q := NewQueue(capacity)
+		q.Push(Result{TaskID: 2, At: 2 * time.Second})
+		old := q.Take(2*time.Second, time.Minute, 1024)
+		q.Push(Result{TaskID: 1, At: time.Second})
+		q.Push(Result{TaskID: 3, At: 3 * time.Second})
+		q.Requeue(old)
+		want := []Result{{TaskID: 1, At: time.Second}, {TaskID: 2, At: 2 * time.Second}, {TaskID: 3, At: 3 * time.Second}}
+		want = want[3-capacity:]
+		if got := q.Take(3*time.Second, time.Minute, 1024); !reflect.DeepEqual(got, want) || q.Dropped() != uint64(3-capacity) {
+			t.Errorf("capacity=%d merged results=%v dropped=%d want=%v", capacity, got, q.Dropped(), want)
+		}
+	}
+}
+
 func TestQueueRequeuesBeforeNewResultsWithinCapacity(t *testing.T) {
 	q := NewQueue(3)
 	q.Push(Result{TaskID: 1})

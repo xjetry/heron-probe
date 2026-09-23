@@ -11,10 +11,15 @@ import (
 	"github.com/xjetry/probe/internal/probelimit"
 )
 
-// QueueCap 须容纳 120s 满速产出 1536 条及至少一批 1024 条，避免回队时挤掉仍可上报的结果。
+// QueueCap 按硬限制任务的产出上界预留：Take 只丢严格超龄结果，MaxResultAge=120s 的闭区间
+// 内每任务至多 MaxResultAge/MinIntervalS+2=120/5+2=26 次，MaxTasksPerNode=64 共 1664 条。
+// 两个额外位置分别覆盖闭区间触发边界与区间前触发、区间内完成的一次测量；
+// Scheduler.run 保证单任务串行及触发间隔，最小间隔由 probelimit.CheckTask 保证。
+// 回队批次属于同一窗口，不重复预留；Push/Requeue 在锁内维持 At 有序，trim 丢最旧，
+// 因而容量覆盖窗口上界时超容只会丢已超龄结果，剩余容量为余量。
 const QueueCap = 4096
 
-const _ = uint(QueueCap - probelimit.MaxTasksPerNode*int(probelimit.MaxResultAge/time.Second)/probelimit.MinIntervalS - probelimit.MaxResultsPerReport)
+const _ = uint(QueueCap - probelimit.MaxTasksPerNode*(int(probelimit.MaxResultAge/time.Second)/probelimit.MinIntervalS+2))
 
 type Result struct {
 	TaskID  uint64
@@ -40,8 +45,20 @@ func NewQueue(capacity int) *Queue {
 func (q *Queue) Push(r Result) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.items = append(q.items, r)
+	q.insert(r, false)
 	q.trim()
+}
+
+// At 在取得队列锁前记录，协程抢占可让完成较早的测量更晚入队；插入时不能假定时间有序。
+// 同刻的新结果追加，回队则让旧批优先，保留同刻结果的重试顺序。调用者持 mu。
+func (q *Queue) insert(r Result, beforeEqual bool) {
+	i := len(q.items)
+	for i > 0 && (q.items[i-1].At > r.At || (beforeEqual && q.items[i-1].At == r.At)) {
+		i--
+	}
+	q.items = append(q.items, Result{})
+	copy(q.items[i+1:], q.items[i:])
+	q.items[i] = r
 }
 
 func (q *Queue) trim() {
@@ -73,13 +90,13 @@ func (q *Queue) Take(now, maxAge time.Duration, limit int) []Result {
 	return out
 }
 
-// Requeue 把失败批次放回队头；容量不足仍从最旧的结果开始丢弃。
+// Requeue 合回失败批次；期间可能有较早完成却延迟入队的结果，不能直接把整批前置。
 func (q *Queue) Requeue(rs []Result) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	items := make([]Result, 0, len(rs)+len(q.items))
-	items = append(items, rs...)
-	q.items = append(items, q.items...)
+	for i := len(rs) - 1; i >= 0; i-- {
+		q.insert(rs[i], true)
+	}
 	q.trim()
 }
 

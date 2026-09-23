@@ -244,7 +244,7 @@ func TestRunnerWarnsOnlyWhenQueueDropsIncrease(t *testing.T) {
 				}
 				if round == 2 {
 					q.Take(r.Clock.Mono(), probelimit.MaxResultAge, probelimit.MaxResultsPerReport)
-					q.Push(prober.Result{At: r.Clock.Mono()})
+					q.Push(prober.Result{At: r.Clock.Mono() - probelimit.MaxResultAge - 2*time.Second})
 					q.Push(prober.Result{At: r.Clock.Mono() - probelimit.MaxResultAge - time.Second})
 				}
 				if round == 4 {
