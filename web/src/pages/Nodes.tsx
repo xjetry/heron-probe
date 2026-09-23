@@ -1,0 +1,115 @@
+import { useMutation, useQuery } from "@connectrpc/connect-query";
+import { useQueryClient } from "@tanstack/react-query";
+import { type FormEvent, useState } from "react";
+import { Link } from "react-router";
+import { Secret } from "../components/Secret";
+import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
+import { errorText } from "./Login";
+
+export function Nodes() {
+  const qc = useQueryClient();
+  const nodes = useQuery(AdminService.method.listNodes, {});
+  const refresh = () => qc.invalidateQueries();
+  const [secret, setSecret] = useState<{ label: string; value: string } | null>(null);
+  const [name, setName] = useState("");
+
+  const create = useMutation(AdminService.method.createNode, {
+    onSuccess: (r) => { setSecret({ label: `节点 ${r.node?.name} 的 token`, value: r.token }); setName(""); void refresh(); },
+  });
+  const update = useMutation(AdminService.method.updateNode, { onSuccess: () => void refresh() });
+  const remove = useMutation(AdminService.method.deleteNode, { onSuccess: () => void refresh() });
+  const rotate = useMutation(AdminService.method.rotateNodeToken, {
+    onSuccess: (r, req) => { setSecret({ label: `节点 ${req.id} 的新 token`, value: r.token }); void refresh(); },
+  });
+  const reorder = useMutation(AdminService.method.reorderNodes, { onSuccess: () => void refresh() });
+
+  const onCreate = (e: FormEvent) => { e.preventDefault(); create.mutate({ name }); };
+  // 排序接口要求给出全部 id 的完整排列：交换相邻两项后整表提交。
+  const move = (list: Node[], i: number, dir: -1 | 1) => {
+    const ids = list.map((n) => n.id);
+    const j = i + dir;
+    if (j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    reorder.mutate({ ids });
+  };
+  const anyError = create.error ?? update.error ?? remove.error ?? rotate.error ?? reorder.error;
+
+  if (nodes.isPending) return <p className="muted">加载中…</p>;
+  if (nodes.error) return <p role="alert" className="error">{nodes.error.rawMessage}</p>;
+  const list = nodes.data.nodes;
+  return (
+    <section>
+      <h1>节点</h1>
+      {secret && <Secret label={secret.label} value={secret.value} />}
+      <form onSubmit={onCreate} className="row">
+        <label>新节点名称<input value={name} onChange={(e) => setName(e.target.value)} /></label>
+        <button type="submit" disabled={create.isPending || name.trim() === ""}>创建</button>
+      </form>
+      {anyError && <p role="alert" className="error">{errorText(anyError)}</p>}
+      <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
+        <table className="nodes">
+          <thead><tr><th>排序</th><th>名称</th><th>公开</th><th>备注</th><th>创建于</th><th>操作</th></tr></thead>
+          <tbody>
+            {list.map((n, i) => (
+              <NodeEditor key={String(n.id)} node={n}
+                onMoveUp={() => move(list, i, -1)} onMoveDown={() => move(list, i, 1)}
+                onSave={(patch) => update.mutate({ id: n.id, ...patch })}
+                onDelete={() => remove.mutate({ id: n.id })}
+                onRotate={() => rotate.mutate({ id: n.id })} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function NodeEditor({ node, onMoveUp, onMoveDown, onSave, onDelete, onRotate }: {
+  node: Node;
+  onMoveUp: () => void; onMoveDown: () => void;
+  onSave: (patch: { name: string; public: boolean; note: string }) => void;
+  onDelete: () => void; onRotate: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [draft, setDraft] = useState({ name: node.name, public: node.public, note: node.note });
+  if (editing) {
+    return (
+      <tr>
+        <td />
+        <td><input aria-label="名称" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></td>
+        <td><input type="checkbox" aria-label="公开" checked={draft.public} onChange={(e) => setDraft({ ...draft, public: e.target.checked })} /></td>
+        <td><input aria-label="备注" value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></td>
+        <td />
+        <td>
+          <button type="button" onClick={() => { onSave(draft); setEditing(false); }}>保存</button>{" "}
+          <button type="button" className="link" onClick={() => setEditing(false)}>取消</button>
+        </td>
+      </tr>
+    );
+  }
+  return (
+    <tr>
+      <td>
+        <button type="button" className="link" aria-label={`上移 ${node.name}`} onClick={onMoveUp}>↑</button>
+        <button type="button" className="link" aria-label={`下移 ${node.name}`} onClick={onMoveDown}>↓</button>
+      </td>
+      <td><Link to={`/nodes/${node.id}`}>{node.name}</Link></td>
+      <td>{node.public ? "是" : "否"}</td>
+      <td className="muted">{node.note}</td>
+      <td className="muted">{new Date(Number(node.createdAt) * 1000).toLocaleDateString()}</td>
+      <td>
+        <button type="button" className="link" onClick={() => setEditing(true)}>编辑</button>{" "}
+        <button type="button" className="link" onClick={onRotate}>换 token</button>{" "}
+        {confirming ? (
+          <>
+            <button type="button" className="danger" onClick={onDelete}>确认删除 {node.name}</button>{" "}
+            <button type="button" className="link" onClick={() => setConfirming(false)}>取消</button>
+          </>
+        ) : (
+          <button type="button" className="link danger" onClick={() => setConfirming(true)}>删除</button>
+        )}
+      </td>
+    </tr>
+  );
+}

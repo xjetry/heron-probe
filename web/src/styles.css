@@ -40,4 +40,4 @@ tr.offline td { color: var(--muted); }
 .bar span { position: absolute; inset: 0; padding: 0 0.4rem; font-size: 12px; line-height: 18px; }
 .chart { width: 100%; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: 1rem; }
-.secret { font-family: ui-monospace, monospace; word-break: break-all; background: var(--bg); padding: 0.5rem; border-radius: 6px; }
+.secret { font-family: ui-monospace, monospace; word-break: break-all; white-space: pre-wrap; background: var(--bg); padding: 0.5rem; border-radius: 6px; }
