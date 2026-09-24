@@ -134,8 +134,8 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 // 返回成功必须同时意味着持久化删除完成与进程内状态清除。
 func (s *Service) DeleteNode(ctx context.Context, req *connect.Request[probev1.DeleteNodeRequest]) (*connect.Response[probev1.DeleteNodeResponse], error) {
 	s.nodeMu.Lock()
-	defer s.nodeMu.Unlock()
 	err := s.auth.DeleteNode(ctx, req.Msg.GetId())
+	s.nodeMu.Unlock()
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, notFound(req.Msg.GetId())
 	}
@@ -143,6 +143,7 @@ func (s *Service) DeleteNode(ctx context.Context, req *connect.Request[probev1.D
 		s.log.Error("deleting node failed", "err", err)
 		return nil, internalError("deleting node failed")
 	}
+	// 删除已提交，后续更新会因节点不存在而拒绝；在所有 API 锁外等待状态持有者清理，避免跨写协程等待成环。
 	s.nodes.Forget(req.Msg.GetId())
 	// auth.DeleteNode 已提交且释放鉴权锁；同步清掉告警缓存，列表不能残留已删除节点的作用域与状态。
 	s.alerts.Forget(req.Msg.GetId())

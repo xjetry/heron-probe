@@ -82,6 +82,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	fs.DurationVar(&retention.M1, "retention-1m", retention.M1, fmt.Sprintf("how long to keep 1-minute rows (minimum %s)", store.MinRetentionM1))
 	fs.DurationVar(&retention.M5, "retention-5m", retention.M5, fmt.Sprintf("how long to keep 5-minute rows (minimum %s)", store.MinRetentionM5))
 	fs.DurationVar(&retention.H1, "retention-1h", retention.H1, fmt.Sprintf("how long to keep hourly rows (minimum %s)", store.MinRetentionH1))
+	fs.DurationVar(&retention.AlertEvents, "retention-alert-events", retention.AlertEvents, "how long to keep alert events and their deliveries (must be positive)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -119,12 +120,17 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	reg := probe.New(st, log)
 	alerts := alert.New(alert.Config{TTL: ttl}, st, l, clk, log)
 	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, log)
+	alerts.SetSender(notifier)
 	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, book, reg, clk, log)
 	if err != nil {
 		return err
 	}
 	ctx := context.Background()
 	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
+		return err
+	}
+	// 续投读取已加载的渠道快照；所有 Load 成功后才入队，后台 worker 尚未启动。
+	if err := notifier.Requeue(ctx); err != nil {
 		return err
 	}
 	admin := api.New(api.Config{TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
@@ -159,18 +165,42 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		defer close(trafficDone)
 		book.Run(trafficCtx)
 	}()
+	sweepCtx, stopSweep := context.WithCancel(ctx)
+	sweepDone := make(chan struct{})
+	go func() {
+		defer close(sweepDone)
+		alerts.RunOfflineSweep(sweepCtx)
+	}()
+	evalCtx, stopEvaluation := context.WithCancel(ctx)
+	evaluationDone := make(chan struct{})
+	go func() {
+		defer close(evaluationDone)
+		alerts.RunProbeEvaluation(evalCtx)
+	}()
+	notifyCtx, stopNotifier := context.WithCancel(ctx)
+	notifierDone := make(chan struct{})
+	go func() {
+		defer close(notifierDone)
+		notifier.Run(notifyCtx)
+	}()
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(listener) }()
-	log.Info("hub listening", "listen", listener.Addr().String(), "ttl", ttl, "interval", svc.Interval(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "timezone", loc.String(), "version", version)
+	log.Info("hub listening", "listen", listener.Addr().String(), "ttl", ttl, "interval", svc.Interval(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "retention_alert_events", retention.AlertEvents, "timezone", loc.String(), "version", version)
 
 	stopBackground := func() {
 		stopFlusher()
 		stopMaintenance()
 		stopTraffic()
+		stopSweep()
+		stopEvaluation()
+		stopNotifier()
 		<-flusherDone
 		<-maintenanceDone
 		<-trafficDone
+		<-sweepDone
+		<-evaluationDone
+		<-notifierDone
 	}
 	defer stopBackground()
 	select {

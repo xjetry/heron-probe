@@ -317,7 +317,7 @@ func TestRetentionValidate(t *testing.T) {
 	if err := DefaultRetention.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if err := (Retention{6 * time.Hour, 168 * time.Hour, 168 * time.Hour}).Validate(); err != nil {
+	if err := (Retention{M1: 6 * time.Hour, M5: 168 * time.Hour, H1: 168 * time.Hour, AlertEvents: 90 * 24 * time.Hour}).Validate(); err != nil {
 		t.Fatalf("retention minima rejected: %v", err)
 	}
 	bad := []Retention{
@@ -327,6 +327,7 @@ func TestRetentionValidate(t *testing.T) {
 		{M1: 40 * 24 * time.Hour, M5: 30 * 24 * time.Hour, H1: 365 * 24 * time.Hour},
 	}
 	for _, r := range bad {
+		r.AlertEvents = DefaultRetention.AlertEvents
 		if err := r.Validate(); err == nil {
 			t.Fatalf("%+v accepted", r)
 		}

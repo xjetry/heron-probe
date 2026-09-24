@@ -592,6 +592,33 @@ func alertEventWindow(nodeID, beforeID int64, limit int) (string, []any) {
 	return where + " ORDER BY id DESC LIMIT ?", append(args, limit)
 }
 
+// 事件与投递共享事件时间的保留期；同一写事务内先删投递，不能留下孤行。
+// 未完成投递也随过期事件删除，提交后再告警计数，避免把回滚误报成投递丢失。
+func (s *Store) PruneAlertEvents(ctx context.Context, before time.Time) (int64, error) {
+	var deleted, unfinished int64
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		if err := tx.QueryRow("SELECT COUNT(*) FROM alert_delivery WHERE done = 0 AND event_id IN (SELECT id FROM alert_event WHERE at < ?)", before.Unix()).Scan(&unfinished); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM alert_delivery WHERE event_id IN (SELECT id FROM alert_event WHERE at < ?)", before.Unix()); err != nil {
+			return err
+		}
+		result, err := tx.Exec("DELETE FROM alert_event WHERE at < ?", before.Unix())
+		if err != nil {
+			return err
+		}
+		deleted, err = result.RowsAffected()
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	if unfinished > 0 {
+		s.log.Warn("expired alert events discarded unfinished deliveries", "unfinished_deliveries", unfinished)
+	}
+	return deleted, nil
+}
+
 func (s *Store) GetAlertEvent(ctx context.Context, id int64) (AlertEvent, error) {
 	events, err := s.readAlertEvents(ctx, "WHERE id = ?", id)
 	if err != nil {

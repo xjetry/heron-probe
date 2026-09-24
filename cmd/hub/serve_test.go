@@ -42,7 +42,12 @@ func (events serveEvents) Write(p []byte) (int, error) {
 
 func startTestHub(t *testing.T, db string, clk clock.Clock, flags ...string) (string, serveEvents, func()) {
 	t.Helper()
-	t.Setenv("PROBE_OFFLINE_AFTER", "45s")
+	return startTestHubWithTTL(t, db, clk, "45s", flags...)
+}
+
+func startTestHubWithTTL(t *testing.T, db string, clk clock.Clock, ttl string, flags ...string) (string, serveEvents, func()) {
+	t.Helper()
+	t.Setenv("PROBE_OFFLINE_AFTER", ttl)
 	ctx, cancel := context.WithCancel(context.Background())
 	events := make(serveEvents, 128)
 	done := make(chan struct{})

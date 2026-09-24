@@ -42,12 +42,16 @@ func newTestMux(t *testing.T) *http.ServeMux {
 	reg := probe.New(st, slog.Default())
 	alerts := alert.New(alert.Config{TTL: 30 * time.Second}, st, l, clk, slog.Default())
 	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, slog.Default())
+	alerts.SetSender(notifier)
 	svc, err := ingest.New(ingest.Config{TTL: 30 * time.Second}, l, st, a, book, reg, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
 	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
+		t.Fatal(err)
+	}
+	if err := notifier.Requeue(ctx); err != nil {
 		t.Fatal(err)
 	}
 	admin := api.New(api.Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second}, st, a, l, svc, book, reg, alerts, notifier, clk, slog.Default())

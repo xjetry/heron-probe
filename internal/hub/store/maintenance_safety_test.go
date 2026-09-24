@@ -83,7 +83,7 @@ func TestPruneWaitsForConsumer(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	r := Retention{6 * time.Hour, 7 * 24 * time.Hour, 365 * 24 * time.Hour}
+	r := Retention{M1: 6 * time.Hour, M5: 7 * 24 * time.Hour, H1: 365 * 24 * time.Hour}
 	if n, err := s.Prune(ctx, r); err != nil || n != 0 || len(readLevel(t, s, levels[1], id)) != 1 {
 		t.Fatalf("unconsumed 5m row deleted: n=%d err=%v", n, err)
 	}

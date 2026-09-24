@@ -172,10 +172,11 @@ func (s *Store) rollupLevel(ctx context.Context, f *family, i int, limit int64) 
 }
 
 type Retention struct {
-	M1, M5, H1 time.Duration
+	M1, M5, H1  time.Duration
+	AlertEvents time.Duration
 }
 
-var DefaultRetention = Retention{M1: 7 * 24 * time.Hour, M5: 30 * 24 * time.Hour, H1: 365 * 24 * time.Hour}
+var DefaultRetention = Retention{M1: 7 * 24 * time.Hour, M5: 30 * 24 * time.Hour, H1: 365 * 24 * time.Hour, AlertEvents: 90 * 24 * time.Hour}
 
 // 保留期准入与命令帮助共用下限，避免显示可用的配置在实际启动时被拒绝。
 const (
@@ -187,6 +188,9 @@ const (
 // Validate 的下限与 ChooseLevel 的选级阈值同向：1m 覆盖六小时、5m 覆盖七天，
 // 且粗级不短于细级，避免刚跨选级边界就因保留期更短而失去历史。
 func (r Retention) Validate() error {
+	if r.AlertEvents <= 0 {
+		return errors.New("alert event retention must be positive")
+	}
 	if r.M1 < MinRetentionM1 {
 		return fmt.Errorf("retention for 1m level is %v, minimum is %v", r.M1, MinRetentionM1)
 	}
@@ -378,6 +382,11 @@ func (s *Store) RunMaintenance(ctx context.Context, r Retention) {
 				s.log.Error("prune failed", "err", err)
 			} else if n > 0 {
 				s.log.Info("pruned expired rows", "rows", n)
+			}
+			if n, err := s.PruneAlertEvents(context.Background(), s.clk.Now().Add(-r.AlertEvents)); err != nil {
+				s.log.Error("prune alert events failed", "err", err)
+			} else if n > 0 {
+				s.log.Info("pruned expired alert events", "events", n)
 			}
 		}
 	}

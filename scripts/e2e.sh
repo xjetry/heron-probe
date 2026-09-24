@@ -18,8 +18,14 @@ key=$(sed -n 's/^key: //p' "$work/window.txt")
 
 PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC > "$work/hub.log" 2>&1 &
 hub=$!
+hookrecv=""
 # 每次运行只回收自己的容器；失败也必须停止上报，不能把流量带进下一次验收。
 cleanup() {
+  if [ -n "$hookrecv" ]; then
+    kill "$hookrecv" || true
+    wait "$hookrecv" || true
+    hookrecv=""
+  fi
   for arch in amd64 arm64; do
     if [ -s "$work/cid-$arch" ]; then
       docker rm -f "$(cat "$work/cid-$arch")" || true
@@ -67,18 +73,28 @@ login_body=$(jq -nc --arg password "$admin_pw" '{password: $password}')
 [ "$(curl -sS -o /dev/null -w '%{http_code}' -b "$work/jar" -H 'Content-Type: text/plain' --data '{}' "$base/probe.v1.AdminService/CreateNode")" = 415 ] || { echo "FAIL: text/plain POST was not 415"; exit 1; }
 [ "$(curl -sS -o /dev/null -w '%{http_code}' -b "$work/jar" "$base/probe.v1.AdminService/CreateNode?connect=v1&encoding=json&message=%7B%7D")" = 405 ] || { echo "FAIL: GET was not 405"; exit 1; }
 
+register_agent() {
+  arch=$1
+  docker run -d --cidfile "$work/cid-$arch" --platform "linux/$arch" --add-host=host.docker.internal:host-gateway \
+    -v "$PWD/bin:/probe:ro" debian:bookworm-slim sleep infinity
+  docker exec "$(cat "$work/cid-$arch")" "/probe/probe-agent-linux-$arch" register \
+    --hub "http://host.docker.internal:$port" --key "$key" --config /tmp/agent.json --name "e2e-$arch"
+}
 run_agent() {
   arch=$1
-  docker run --cidfile "$work/cid-$arch" --platform "linux/$arch" --add-host=host.docker.internal:host-gateway \
-    -v "$PWD/bin:/probe:ro" debian:bookworm-slim sh -c "
-      set -e
-      /probe/probe-agent-linux-$arch register --hub http://host.docker.internal:$port --key $key --config /tmp/agent.json --name e2e-$arch
-      timeout 75 /probe/probe-agent-linux-$arch run --config /tmp/agent.json || true
-    "
+  if [ "$#" -gt 1 ]; then
+    docker exec "$(cat "$work/cid-$arch")" timeout "$2" "/probe/probe-agent-linux-$arch" run --config /tmp/agent.json || [ "$?" = 124 ]
+  else
+    docker exec "$(cat "$work/cid-$arch")" "/probe/probe-agent-linux-$arch" run --config /tmp/agent.json
+  fi
 }
-run_agent amd64 > "$work/agent-amd64.log" 2>&1 &
+first_agent() {
+  register_agent "$1"
+  run_agent "$1" 75
+}
+first_agent amd64 > "$work/agent-amd64.log" 2>&1 &
 amd64=$!
-run_agent arm64 > "$work/agent-arm64.log" 2>&1 &
+first_agent arm64 > "$work/agent-arm64.log" 2>&1 &
 arm64=$!
 
 # CPU 百分比需要两次采样差分；在线并不保证第一份上报已有 CPU 读数。
@@ -90,8 +106,8 @@ done
 jq -e '.reportIntervalMs == 4000 and all(.nodes[]; .metrics.cpuPct != null)' "$work/GetSnapshot.json" > /dev/null || { echo "FAIL: snapshot shape"; cat "$work/GetSnapshot.json"; exit 1; }
 [ "$(rpc ListNodes '{}')" = 200 ] || { echo "FAIL: ListNodes"; exit 1; }
 jq -e '[.nodes[] | select(.facts.arch == "amd64" or .facts.arch == "arm64")] | length == 2' "$work/ListNodes.json" > /dev/null || { echo "FAIL: facts not reported"; cat "$work/ListNodes.json"; exit 1; }
-node1=$(jq -r '.nodes[0].id' "$work/ListNodes.json")
-node2=$(jq -r '.nodes[1].id' "$work/ListNodes.json")
+node1=$(jq -r '.nodes[] | select(.facts.arch == "amd64") | .id' "$work/ListNodes.json")
+node2=$(jq -r '.nodes[] | select(.facts.arch == "arm64") | .id' "$work/ListNodes.json")
 icmp_body=$(jq -nc --arg a "$node1" --arg b "$node2" '{task: {kind: "PROBE_KIND_ICMP", target: "127.0.0.1", intervalS: 5, timeoutMs: 1000}, nodeIds: [$a, $b]}')
 [ "$(rpc SaveProbeTask "$icmp_body")" = 200 ] || { echo "FAIL: SaveProbeTask icmp"; cat "$work/SaveProbeTask.json"; exit 1; }
 icmp_task=$(jq -r '.task.task.id' "$work/SaveProbeTask.json")
@@ -137,17 +153,79 @@ jq -e 'all(.nodes[]; .facts.icmpAvailable == true)' "$work/ListNodes.json" > /de
 # 流量：两个 agent 每 4 秒上报一次，上报本身就产生字节；首次上报只取基线，之后的差分进总量。
 [ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic"; cat "$work/GetTraffic.json"; exit 1; }
 jq -e '.timezone == "UTC" and (.nodes | length) == 2 and all(.nodes[]; (.traffic.totalRx | tonumber) > 0 and (.traffic.totalTx | tonumber) > 0 and .traffic.resetDay == 1 and (.traffic.nextResetAt | tonumber) > (.traffic.periodStart | tonumber))' "$work/GetTraffic.json" > /dev/null || { echo "FAIL: traffic shape"; cat "$work/GetTraffic.json"; exit 1; }
-tx_before=$(jq -r --arg id "$node1" '.nodes[] | select(.nodeId == $id) | .traffic.totalTx' "$work/GetTraffic.json")
 adjust_body=$(jq -nc --arg nodeId "$node1" '{nodeId: $nodeId, periodRx: "1073741824", periodTx: "0"}')
 [ "$(rpc AdjustTraffic "$adjust_body")" = 200 ] || { echo "FAIL: AdjustTraffic"; cat "$work/AdjustTraffic.json"; exit 1; }
 # 首个周期里总量等于周期量，校正后两者同为 1 GiB；上行改成 0 后总量也随差值归零。
 jq -e '.traffic.periodRx == "1073741824" and .traffic.totalRx == "1073741824" and (.traffic.periodTx // "0") == "0" and (.traffic.totalTx // "0") == "0"' "$work/AdjustTraffic.json" > /dev/null || { echo "FAIL: AdjustTraffic result"; cat "$work/AdjustTraffic.json"; exit 1; }
 [ "$(rpc AdjustTraffic '{"nodeId": "999999", "periodRx": "1"}')" = 404 ] || { echo "FAIL: AdjustTraffic on an unknown node must be 404"; exit 1; }
-update_body=$(jq -nc --arg id "$node1" --arg name "$(jq -r '.nodes[0].name' "$work/ListNodes.json")" '{id: $id, name: $name, public: false, note: "", trafficResetDay: 15, offlineGraceS: 0}')
+update_body=$(jq -nc --arg id "$node1" --arg name "e2e-amd64" '{id: $id, name: $name, public: false, note: "", trafficResetDay: 15, offlineGraceS: 0}')
 [ "$(rpc UpdateNode "$update_body")" = 200 ] || { echo "FAIL: UpdateNode reset day"; cat "$work/UpdateNode.json"; exit 1; }
 jq -e '.node.trafficResetDay == 15' "$work/UpdateNode.json" > /dev/null || { echo "FAIL: reset day not echoed"; cat "$work/UpdateNode.json"; exit 1; }
 
-# 两个 agent 已退出；先推进到新重置日对应的周期，再保存停机前状态。
+# 全部节点规则会让已退出的两个 agent 同时 firing；先完成流量精确断言，再恢复两者持续上报。
+run_agent amd64 >> "$work/agent-amd64.log" 2>&1 &
+amd64=$!
+run_agent arm64 >> "$work/agent-arm64.log" 2>&1 &
+arm64=$!
+i=0
+until [ "$(rpc GetSnapshot '{}')" = 200 ] && jq -e '[.nodes[] | select(.online == true)] | length == 2' "$work/GetSnapshot.json" > /dev/null; do
+  i=$((i + 1)); [ "$i" -lt 40 ] || { echo "FAIL: agents did not resume"; cat "$work/GetSnapshot.json"; exit 1; }; sleep 1
+done
+
+# 接收器与 hub 同在宿主回环；每次请求体落一行，退出时一并回收。
+python3 - "$work/hooks.txt" <<'PY' > "$work/hookrecv.log" 2>&1 &
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+out = sys.argv[1]
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        with open(out, "ab") as f:
+            f.write(body + b"\n")
+        self.send_response(200)
+        self.end_headers()
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+    def log_message(self, *a):
+        pass
+HTTPServer(("127.0.0.1", 18081), H).serve_forever()
+PY
+hookrecv=$!
+i=0
+until curl -sf -o /dev/null http://127.0.0.1:18081/; do
+  i=$((i + 1)); [ "$i" -lt 30 ] || { echo "FAIL: webhook receiver did not listen"; cat "$work/hookrecv.log"; exit 1; }; sleep 0.2
+done
+[ "$(rpc SaveNotifyChannel "$(jq -nc '{channel: {name: "e2e hook", kind: "CHANNEL_KIND_WEBHOOK", webhook: {url: "http://127.0.0.1:18081/hook"}}}')")" = 200 ] || { echo "FAIL: SaveNotifyChannel"; cat "$work/SaveNotifyChannel.json"; exit 1; }
+channel=$(jq -r '.channel.id' "$work/SaveNotifyChannel.json")
+[ "$(rpc TestNotifyChannel "$(jq -nc --arg id "$channel" '{id: $id}')")" = 200 ] || { echo "FAIL: TestNotifyChannel"; cat "$work/TestNotifyChannel.json"; exit 1; }
+[ "$(rpc SaveAlertRule "$(jq -nc --arg c "$channel" '{rule: {name: "e2e offline", kind: "ALERT_KIND_OFFLINE", enabled: true, allNodes: true, channelIds: [$c]}}')")" = 200 ] || { echo "FAIL: SaveAlertRule"; cat "$work/SaveAlertRule.json"; exit 1; }
+
+wait_alert() {
+  transition=$1
+  alert_started=$2
+  alert_deadline=$((alert_started + 40))
+  while :; do
+    [ "$(rpc ListAlertEvents '{}')" = 200 ] || { echo "FAIL: ListAlertEvents"; cat "$work/ListAlertEvents.json"; exit 1; }
+    if jq -e --arg n "$node2" --arg tr "$transition" '[.events[]? | select(.transition == $tr and .nodeId == $n and any(.deliveries[]; (.ok // false) == true))] | length == 1' "$work/ListAlertEvents.json" > /dev/null; then
+      echo "alert $transition delivered after $(($(date +%s) - alert_started))s"
+      return
+    fi
+    [ "$(date +%s)" -lt "$alert_deadline" ] || { echo "FAIL: $transition alert not delivered within 40s"; cat "$work/ListAlertEvents.json"; exit 1; }
+    sleep 1
+  done
+}
+firing_started=$(date +%s)
+docker stop "$(cat "$work/cid-arm64")" > /dev/null
+wait "$arm64" || true
+wait_alert firing "$firing_started"
+grep -q '"transition":"firing"' "$work/hooks.txt" || { echo "FAIL: webhook body"; cat "$work/hooks.txt"; exit 1; }
+recovery_started=$(date +%s)
+docker start "$(cat "$work/cid-arm64")" > /dev/null
+run_agent arm64 >> "$work/agent-arm64.log" 2>&1 &
+arm64=$!
+wait_alert recovered "$recovery_started"
+# 恢复后才取得重启基线；持续上报使流量继续增长，不能再要求周期量严格相等。
 [ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic before restart"; exit 1; }
 traffic_before=$(jq -c --arg id "$node1" '.nodes[] | select(.nodeId == $id) | .traffic' "$work/GetTraffic.json")
 
@@ -162,6 +240,10 @@ PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port
 hub=$!
 wait_hub
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login after restart"; exit 1; }
+[ "$(rpc ListAlertRules '{}')" = 200 ] || { echo "FAIL: ListAlertRules after restart"; exit 1; }
+jq -e '(.rules | length) == 1' "$work/ListAlertRules.json" > /dev/null || { echo "FAIL: alert rule lost"; cat "$work/ListAlertRules.json"; exit 1; }
+[ "$(rpc ListAlertEvents '{}')" = 200 ] || { echo "FAIL: ListAlertEvents after restart"; exit 1; }
+jq -e '(.events | length) == 2 and all(.events[]; any(.deliveries[]; (.ok // false) == true))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: alert events lost"; cat "$work/ListAlertEvents.json"; exit 1; }
 [ "$(rpc ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks after restart"; exit 1; }
 jq -e --arg version "$task_version" --arg icmp "$icmp_task" --arg tcp "$tcp_task" '.version == $version and (.tasks | length) == 2 and all(.tasks[]; (.nodeIds | length) == 2) and ([.tasks[].task.id] | sort) == ([$icmp, $tcp] | sort)' "$work/ListProbeTasks.json" > /dev/null || { echo "FAIL: tasks lost across restart"; cat "$work/ListProbeTasks.json"; exit 1; }
 echo "probe task version after restart: $(jq -r '.version' "$work/ListProbeTasks.json")"
@@ -173,13 +255,13 @@ echo "probe task version after deletion: $(jq -r '.version' "$work/ListProbeTask
 # 删除清单中的任务不删除历史，重启前采集的两个任务仍须可查询。
 jq -e --arg icmp "$icmp_task" --arg tcp "$tcp_task" '([.series[].taskId] | sort) == ([$icmp, $tcp] | sort)' "$work/QueryProbes.json" > /dev/null || { echo "FAIL: probe history lost"; cat "$work/QueryProbes.json"; exit 1; }
 [ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic after restart"; exit 1; }
-# 总量不因周期滚动清零；agent 已退出，同周期的用量不再变化，跨周期则为零。
-jq -e --arg id "$node1" --arg tx "$tx_before" --argjson before "$traffic_before" '.nodes[] | select(.nodeId == $id) |
-  .traffic.resetDay == 15 and (.traffic.totalRx | tonumber) >= 1073741824 and (.traffic.totalTx // "0" | tonumber) <= ($tx | tonumber) and
+# 持续上报可增加总量与周期量；总量不能倒退，跨周期则只要求周期边界前移且包含当前时刻。
+jq -e --arg id "$node1" --argjson now "$(date +%s)" --argjson before "$traffic_before" '.nodes[] | select(.nodeId == $id) |
+  .traffic.resetDay == 15 and (.traffic.totalRx | tonumber) >= ($before.totalRx | tonumber) and (.traffic.totalTx // "0" | tonumber) >= ($before.totalTx // "0" | tonumber) and
   (if .traffic.periodStart == $before.periodStart then
-    (.traffic.periodRx // "0") == ($before.periodRx // "0")
+    (.traffic.periodRx // "0" | tonumber) >= ($before.periodRx // "0" | tonumber) and (.traffic.periodTx // "0" | tonumber) >= ($before.periodTx // "0" | tonumber)
   else
-    (.traffic.periodStart | tonumber) > ($before.periodStart | tonumber) and (.traffic.periodRx // "0") == "0"
+    (.traffic.periodStart | tonumber) > ($before.periodStart | tonumber) and (.traffic.periodStart | tonumber) <= $now and (.traffic.nextResetAt | tonumber) > $now
   end)' "$work/GetTraffic.json" > /dev/null || { echo "FAIL: traffic state lost across restart"; cat "$work/GetTraffic.json"; exit 1; }
 [ "$(rpc QueryMetrics "$query_body")" = 200 ] || { echo "FAIL: QueryMetrics after restart"; exit 1; }
 jq -e 'any(.series[] | select(.name == "tx_bytes") | .samples[]; .n > 0 and .sum != null and .mean == null)' "$work/QueryMetrics.json" > /dev/null || { echo "FAIL: tx_bytes minute sums missing"; cat "$work/QueryMetrics.json"; exit 1; }
@@ -202,6 +284,10 @@ cat "$work/nodes.txt"
 
 get() { sed -n "s/^$1: //p" "$work/stats.txt"; }
 [ "$(get node)" = 2 ] || { echo "FAIL: node count"; exit 1; }
+[ "$(get alert_rule)" = 1 ] || { echo "FAIL: alert rule count"; exit 1; }
+[ "$(get alert_event)" = 2 ] || { echo "FAIL: alert event count"; exit 1; }
+[ "$(get alert_delivery)" = 2 ] || { echo "FAIL: alert delivery count"; exit 1; }
+[ "$(get notify_channel)" = 1 ] || { echo "FAIL: channel count"; exit 1; }
 [ "$(get probe_task)" = 1 ] || { echo "FAIL: task count"; exit 1; }
 [ "$(get probe_task_node)" = 2 ] || { echo "FAIL: assignment count"; exit 1; }
 [ "$(get probe_1m)" -ge 2 ] || { echo "FAIL: no probe minute rows"; exit 1; }
