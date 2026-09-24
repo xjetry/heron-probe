@@ -79,7 +79,7 @@ function TaskForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
     onSubmit(draft);
   };
   return (
-    <form className="card task-form" aria-label={title} onSubmit={handle}>
+    <form className="card edit-form" aria-label={title} onSubmit={handle}>
       <div className="row">
         <label>类型
           <select value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: Number(e.target.value) as ProbeKind })}>
@@ -91,7 +91,7 @@ function TaskForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
         <label>间隔 (s)<input type="number" required min={5} max={3600} value={draft.intervalS} onChange={(e) => setDraft({ ...draft, intervalS: e.target.value })} /></label>
         <label>超时 (ms)<input type="number" required min={100} max={5000} value={draft.timeoutMs} onChange={(e) => setDraft({ ...draft, timeoutMs: e.target.value })} /></label>
       </div>
-      <fieldset className="node-picks">
+      <fieldset className="picks">
         <legend>分配到节点</legend>
         {nodes.map((n) => (
           <label key={String(n.id)}><input type="checkbox" checked={draft.nodeIds.has(n.id)} onChange={() => toggle(n.id)} />{n.name}</label>

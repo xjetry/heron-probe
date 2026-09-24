@@ -19,7 +19,7 @@ a { color: var(--accent); text-decoration: none; }
 .login { min-height: 100vh; display: grid; place-items: center; padding: 1rem; }
 .login .card { width: min(320px, 100%); display: grid; gap: 0.75rem; }
 label { display: grid; gap: 0.25rem; }
-input, select, button { font: inherit; padding: 0.4rem 0.6rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); }
+input, select, button, textarea { font: inherit; padding: 0.4rem 0.6rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); }
 button { cursor: pointer; }
 button[disabled] { opacity: 0.5; cursor: default; }
 button.link { border: none; background: none; color: var(--accent); padding: 0; }
@@ -27,7 +27,7 @@ button.danger { color: var(--bad); border-color: var(--bad); }
 .error { color: var(--bad); }
 .muted { color: var(--muted); }
 .row { display: flex; align-items: baseline; gap: 1rem; }
-form.row, .task-form .row { align-items: flex-end; flex-wrap: wrap; }
+form.row, .edit-form .row { align-items: flex-end; flex-wrap: wrap; }
 .detail-header { flex-wrap: wrap; }
 .detail-header nav { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .table-scroll { overflow-x: auto; }
@@ -40,8 +40,9 @@ tr.offline td { color: var(--muted); }
 .bar .fill { height: 100%; background: var(--accent); opacity: 0.35; }
 .bar span { position: absolute; inset: 0; padding: 0 0.4rem; font-size: 12px; line-height: 18px; }
 .chart { width: 100%; }
-.task-form .node-picks { display: flex; flex-wrap: wrap; gap: .5rem 1rem; border: 1px solid var(--line); padding: .5rem .75rem; }
-.task-form { white-space: normal; }
-.task-form .node-picks label { display: inline-flex; align-items: center; gap: .3rem; }
+.picks { display: flex; flex-wrap: wrap; gap: .5rem 1rem; border: 1px solid var(--line); padding: .5rem .75rem; }
+.edit-form { white-space: normal; }
+.picks label, label.inline { display: inline-flex; align-items: center; gap: .3rem; }
+.edit-form textarea { width: 100%; min-height: 6rem; font-family: ui-monospace, monospace; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: 1rem; }
 .secret { font-family: ui-monospace, monospace; word-break: break-all; white-space: pre-wrap; background: var(--bg); padding: 0.5rem; border-radius: 6px; }
