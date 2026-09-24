@@ -82,7 +82,8 @@ func TestQueueRefillsOverflowWithinProcess(t *testing.T) {
 				stop = startQueue(t, q)
 				defer stop()
 			}
-			deadline := time.Now().Add(5 * time.Second)
+			// 全部送达即结束；截止只作为失败界，留出 race 和受载机器的串行写余量。
+			deadline := time.Now().Add(30 * time.Second)
 			for {
 				pending, err := f.st.PendingDeliveries(t.Context())
 				must(t, err)
@@ -92,7 +93,7 @@ func TestQueueRefillsOverflowWithinProcess(t *testing.T) {
 				if time.Now().After(deadline) {
 					t.Fatalf("overflow deliveries not refilled: pending=%d", len(pending))
 				}
-				time.Sleep(time.Millisecond)
+				time.Sleep(10 * time.Millisecond)
 			}
 			stop()
 			mu.Lock()

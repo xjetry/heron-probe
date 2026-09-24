@@ -33,7 +33,7 @@ type Queue struct {
 	mu           sync.Mutex
 	items        chan deliveryItem
 	active       map[int64]struct{}
-	overflow     bool
+	overflow     bool // 库中可能仍有窗口外的待投递行，包括非终态错误出窗的项。
 }
 
 var _ Sender = (*Queue)(nil)
@@ -106,7 +106,7 @@ func (q *Queue) Requeue(ctx context.Context) error {
 	}
 	for _, d := range ds {
 		ev, err := q.st.GetAlertEvent(ctx, d.EventID)
-		if errors.Is(err, store.ErrNotFound) {
+		if deliveryRemoved(err) {
 			continue
 		}
 		if err != nil {
@@ -122,7 +122,7 @@ func (q *Queue) Requeue(ctx context.Context) error {
 
 // 由装配方启动一个 worker；退出不清空库中待投递行，下一次 Requeue 接续未完成项。
 // 每次发送前已持久化尝试计数，发送次数受 MaxDeliveryAttempts 约束。
-// 结果未落盘（崩溃或写失败）时可在后续尝试中重发，重发同样消耗该上限。
+// 结果未落盘可能来自崩溃、写失败，或关停取消时请求已到对端；后续重发都消耗尝试名额。
 func (q *Queue) Run(ctx context.Context) {
 	var retryDelay time.Duration
 	for {
@@ -169,7 +169,8 @@ func (q *Queue) Run(ctx context.Context) {
 }
 
 // 非终态出窗与补货读失败都保留续投信号；故障期间不能靠窗口大小决定是否重试。
-// 同一个 worker 共用退避，成功完成投递才复位，避免读库正常但写库失败时持续重发。
+// 单条投递的发送上限由 BeginDeliveryAttempt 保证；退避避免存储故障期间空转读库和高频错误日志。
+// 同一个 worker 共用退避，deliver 返回 nil（已终态或已不存在）时复位。
 func (q *Queue) retryAfterFailure(ctx context.Context, delay *time.Duration) error {
 	q.mu.Lock()
 	q.overflow = true
@@ -217,7 +218,19 @@ func (q *Queue) message(ctx context.Context, ev store.AlertEvent) (Message, erro
 	return m, nil
 }
 
-func (q *Queue) deliver(ctx context.Context, item deliveryItem) error {
+// PruneAlertEvents 与投递并发，且在同一事务删除事件和投递；行消失等价于终态，
+// 不是存储故障，不能通过失败退避拖住后续投递。仅归一事件和投递行的不存在错误。
+func deliveryRemoved(err error) bool {
+	var missing store.NotFoundError
+	return errors.As(err, &missing) && (missing.Kind == "alert event" || missing.Kind == "alert delivery")
+}
+
+func (q *Queue) deliver(ctx context.Context, item deliveryItem) (err error) {
+	defer func() {
+		if deliveryRemoved(err) {
+			err = nil
+		}
+	}()
 	m, err := q.message(ctx, item.event)
 	if err != nil {
 		return err
