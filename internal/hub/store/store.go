@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"sync"
 
 	_ "modernc.org/sqlite"
@@ -48,7 +49,9 @@ type writeReq struct {
 }
 
 func dsn(path string, extra string) string {
-	return "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)" + extra
+	// path 是文件名而非 URI；编码路径部分，避免 #、? 和 % 改变实际打开的数据库。
+	u := url.URL{Path: path}
+	return "file:" + u.EscapedPath() + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)" + extra
 }
 
 func Open(path string, clk clock.Clock, log *slog.Logger) (*Store, error) {
