@@ -1,14 +1,14 @@
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { AdminService, ChannelKind, type NotifyChannel } from "../gen/probe/v1/admin_pb";
-import { CHANNEL_KINDS, channelTarget, labelOf } from "../lib/alerts";
+import { CHANNEL_KINDS, channelTarget, labelOf, methodOf } from "../lib/alerts";
 
 const METHODS = ["POST", "PUT", "PATCH"] as const;
-type HeaderRow = { name: string; value: string };
+type HeaderRow = { id: number; name: string; value: string };
 type Draft = {
   name: string; kind: ChannelKind; botToken: string; chatId: string;
   url: string; method: string; headers: HeaderRow[]; removeHeaders: Set<string>; bodyTemplate: string;
@@ -21,7 +21,7 @@ const emptyDraft = (): Draft => ({
 // hub 不回显 token、URL 与头值，编辑草稿里它们恒为空；留空提交由 hub 保留已存值。
 const draftOf = (c: NotifyChannel): Draft => ({
   ...emptyDraft(), name: c.name, kind: c.kind, chatId: c.telegram?.chatId ?? "",
-  method: c.webhook?.method || "POST", bodyTemplate: c.webhook?.bodyTemplate ?? "",
+  method: methodOf(c.webhook?.method), bodyTemplate: c.webhook?.bodyTemplate ?? "",
 });
 
 function toChannel(id: bigint, d: Draft) {
@@ -34,7 +34,8 @@ function toChannel(id: bigint, d: Draft) {
   } };
 }
 
-// 头以 map 传输，同名两行序列化后只剩一行，hub 无从发现；只有表单还能看到两行。
+// 完全同名的两行在 map 里合并、后一行静默胜出，只有表单看得到这个丢失；
+// 大小写不同的两行 hub 也会拒绝，这里一并拦下，两种重名在提交前得到同一条提示。
 function duplicateHeader(rows: HeaderRow[]): string | undefined {
   const seen = new Set<string>();
   for (const r of rows) {
@@ -94,11 +95,17 @@ function ChannelForm({ title, initial, original, pending, onSubmit, onCancel }: 
   // initial 只在挂载时读取；编辑期间的列表刷新不覆盖草稿。
   const [draft, setDraft] = useState(initial);
   const [problem, setProblem] = useState<string | null>(null);
+  // 行号随删除前移，key 必须跟随行本身而不是位置，焦点才不会落到错位的节点上。
+  const nextHeaderId = useRef(0);
   // hub 只在种类未变时用已存凭据补全空值；新建或换种类时凭据必须重新填写。
   const keeps = original !== undefined && original.kind === draft.kind;
   const saved = keeps ? original?.webhook?.headerNames ?? [] : [];
   const set = (patch: Partial<Draft>) => setDraft({ ...draft, ...patch });
   const setHeader = (i: number, patch: Partial<HeaderRow>) => set({ headers: draft.headers.map((h, j) => (j === i ? { ...h, ...patch } : h)) });
+  const addHeader = () => {
+    nextHeaderId.current += 1;
+    set({ headers: [...draft.headers, { id: nextHeaderId.current, name: "", value: "" }] });
+  };
   const toggleRemove = (name: string) => {
     const next = new Set(draft.removeHeaders);
     if (next.has(name)) next.delete(name); else next.add(name);
@@ -114,7 +121,7 @@ function ChannelForm({ title, initial, original, pending, onSubmit, onCancel }: 
   return (
     <form className="card edit-form" aria-label={title} onSubmit={handle}>
       <div className="row">
-        <label>名称<input required maxLength={64} value={draft.name} onChange={(e) => set({ name: e.target.value })} /></label>
+        <label>名称<input required value={draft.name} onChange={(e) => set({ name: e.target.value })} /></label>
         <label>类型
           <select value={draft.kind} onChange={(e) => set({ kind: Number(e.target.value) as ChannelKind })}>
             {CHANNEL_KINDS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
@@ -123,7 +130,7 @@ function ChannelForm({ title, initial, original, pending, onSubmit, onCancel }: 
       </div>
       {draft.kind === ChannelKind.TELEGRAM ? (
         <div className="row">
-          <label>Bot token<input type="password" autoComplete="off" required={!keeps} placeholder={keeps ? "已保存，留空保持不变" : ""}
+          <label>Bot token<input type="password" autoComplete="new-password" required={!keeps} placeholder={keeps ? "已保存，留空保持不变" : ""}
             value={draft.botToken} onChange={(e) => set({ botToken: e.target.value })} /></label>
           <label>Chat ID<input required value={draft.chatId} onChange={(e) => set({ chatId: e.target.value })} /></label>
         </div>
@@ -148,13 +155,13 @@ function ChannelForm({ title, initial, original, pending, onSubmit, onCancel }: 
             </fieldset>
           )}
           {draft.headers.map((h, i) => (
-            <div className="row" key={i}>
+            <div className="row" role="group" aria-label={`请求头 ${i + 1}`} key={h.id}>
               <label>请求头名<input required value={h.name} onChange={(e) => setHeader(i, { name: e.target.value })} /></label>
-              <label>请求头值<input type="password" autoComplete="off" value={h.value} onChange={(e) => setHeader(i, { value: e.target.value })} /></label>
-              <button type="button" className="link" onClick={() => set({ headers: draft.headers.filter((_, j) => j !== i) })}>移除</button>
+              <label>请求头值<input type="password" autoComplete="new-password" value={h.value} onChange={(e) => setHeader(i, { value: e.target.value })} /></label>
+              <button type="button" className="link" aria-label={`移除请求头 ${i + 1}`} onClick={() => set({ headers: draft.headers.filter((_, j) => j !== i) })}>移除</button>
             </div>
           ))}
-          <button type="button" className="link" onClick={() => set({ headers: [...draft.headers, { name: "", value: "" }] })}>添加请求头</button>
+          <button type="button" className="link" onClick={addHeader}>添加请求头</button>
           <label>请求体模板<textarea value={draft.bodyTemplate} placeholder="留空使用默认 JSON 模板" onChange={(e) => set({ bodyTemplate: e.target.value })} /></label>
         </>
       )}
@@ -188,7 +195,7 @@ function ChannelRow({ channel: c, saving, deleting, testing, onSave, onTest, onD
       <td className="muted">{new Date(Number(c.createdAt) * 1000).toLocaleDateString()}</td>
       <td>
         <button type="button" className="link" aria-label={`编辑 ${c.name}`} onClick={() => setEditing(true)}>编辑</button>{" "}
-        <button type="button" className="link" aria-label={`测试 ${c.name}`} disabled={testing} onClick={onTest}>发送测试</button>{" "}
+        <button type="button" className="link" aria-label={`发送测试 ${c.name}`} disabled={testing} onClick={onTest}>发送测试</button>{" "}
         <ConfirmDelete label={`删除 ${c.name}`} confirm={`确认删除 ${c.name}`} pending={deleting} onDelete={onDelete} />
       </td>
     </tr>

@@ -12,13 +12,18 @@ export function labelOf<K extends number>(table: readonly Entry<K>[], value: K):
   return table.find((e) => e.value === value)?.label ?? `未知（${value}）`;
 }
 
-// 凭据只写不读（spec §9.3）：hub 只回 chat_id、scheme://host、方法与头名，目标描述只能由这些拼成。
+// 凭据只写不读（spec §9.3）：目标描述只用到 hub 回显的 chat_id、scheme://host、方法与头名，秘密值不出现在页面上。
 export function channelTarget(c: NotifyChannel): string {
   if (c.kind === ChannelKind.TELEGRAM) return `会话 ${c.telegram?.chatId ?? ""}`;
   if (c.kind === ChannelKind.WEBHOOK) {
     const w = c.webhook;
-    const head = `${w?.method || "POST"} ${w?.urlHost ?? ""}`;
+    const head = `${methodOf(w?.method)} ${w?.urlHost ?? ""}`;
     return w && w.headerNames.length > 0 ? `${head}，头 ${w.headerNames.join("、")}` : head;
   }
   return labelOf(CHANNEL_KINDS, c.kind);
+}
+
+// hub 的保存写侧已把空方法规范成 POST；这个兜底只对绕过写侧进入库里的配置有意义。
+export function methodOf(method: string | undefined): string {
+  return method || "POST";
 }

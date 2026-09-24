@@ -221,15 +221,20 @@ describe("ProbeTasks", () => {
   });
 
   it("原生约束不满足时不发请求", async () => {
-    const save = vi.fn(async () => create(SaveProbeTaskResponseSchema, {}));
-    renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks, saveProbeTask: save }, routes, "/probes");
+    const saved: SaveProbeTaskRequest[] = [];
+    renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks,
+      saveProbeTask: async (req) => { saved.push(req); return create(SaveProbeTaskResponseSchema, {}); },
+    }, routes, "/probes");
     await screen.findByText("1.1.1.1:443");
     const form = screen.getByRole("form", { name: "新建探测任务" });
     fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "8.8.8.8" } });
     fireEvent.change(within(form).getByLabelText("间隔 (s)"), { target: { value: "4" } });
     fireEvent.submit(form);
-    await new Promise((r) => setTimeout(r, 20));
-    expect(save).not.toHaveBeenCalled();
+    // 同一表单修正后立即可提交；若越限的请求漏出，它经由同一路径排在这个请求之前。
+    fireEvent.change(within(form).getByLabelText("间隔 (s)"), { target: { value: "60" } });
+    fireEvent.submit(form);
+    await waitFor(() => expect(saved.at(-1)?.task?.intervalS).toBe(60));
+    expect(saved).toHaveLength(1);
   });
 
   it("编辑提交整个任务与当前分配", async () => {
