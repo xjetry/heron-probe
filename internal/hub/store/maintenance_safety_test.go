@@ -16,7 +16,7 @@ type logWriterFunc func([]byte) (int, error)
 
 func (f logWriterFunc) Write(b []byte) (int, error) { return f(b) }
 
-func TestMaintenanceSkipsPruneAfterRollupError(t *testing.T) {
+func TestMaintenanceAfterRollupErrorKeepsSeriesButPrunesEvents(t *testing.T) {
 	s, clk := open(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

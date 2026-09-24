@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -502,12 +503,19 @@ func TestMigrationFromV4MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 }
 
 func TestAlertMigrationRejectsExistingObjects(t *testing.T) {
-	for _, object := range []struct{ kind, name string }{
-		{"TABLE", "alert_rule"}, {"TABLE", "alert_rule_node"}, {"TABLE", "alert_rule_channel"},
-		{"TABLE", "notify_channel"}, {"TABLE", "alert_state"}, {"TABLE", "alert_event"}, {"TABLE", "alert_delivery"},
-		{"INDEX", "alert_rule_node_by_node"}, {"INDEX", "alert_rule_channel_by_channel"},
-		{"INDEX", "alert_event_by_node"}, {"INDEX", "alert_delivery_by_event"}, {"INDEX", "alert_delivery_pending"},
-	} {
+	// 对象清单与 alertStatements 物理分离但语义耦合；手工维护会漏掉新增对象的同名冲突断言。
+	// 每条语句必须生成一个对象，解析失败直接终止，不能静默缩小覆盖范围。
+	statements := alertStatements()
+	objects := make([]struct{ kind, name string }, len(statements))
+	createObject := regexp.MustCompile(`^CREATE\s+(TABLE|INDEX)\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)\b`)
+	for i, statement := range statements {
+		match := createObject.FindStringSubmatch(statement)
+		if match == nil {
+			t.Fatalf("cannot parse alert schema statement %d: %q", i, statement)
+		}
+		objects[i].kind, objects[i].name = match[1], match[2]
+	}
+	for _, object := range objects {
 		kind, name := object.kind, object.name
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "conflict.db")
