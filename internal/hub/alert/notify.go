@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"net/http"
+	"net/url"
 	"strings"
 	"text/template"
 	"time"
@@ -43,11 +45,34 @@ func NewHTTPClient() *http.Client {
 	return &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
+// URL 可含渠道凭据；构造请求与传输失败共用此出口，只保留操作及底层原因。
+func outboundError(err error, retry bool) error {
+	var target *url.Error
+	if errors.As(err, &target) {
+		err = fmt.Errorf("%s: %v", target.Op, target.Err)
+	}
+	return sendError{err, retry}
+}
+
+// range 只用来定位字符边界，不会改写非法字节；截断后清洗保证落库及协议 string 合法。
+func responseSummary(data []byte) string {
+	text := string(data)
+	n := 0
+	for i := range text {
+		if n == 200 {
+			text = text[:i]
+			break
+		}
+		n++
+	}
+	return strings.ToValidUTF8(text, "�")
+}
+
 // 两种渠道共用出站边界：不信任响应体长度，错误诊断也只保留有限前缀。
 func sendHTTP(ctx context.Context, client *http.Client, method, endpoint string, headers map[string]string, body []byte) error {
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return sendError{err, false}
+		return outboundError(err, false)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	for key, value := range headers {
@@ -55,16 +80,14 @@ func sendHTTP(ctx context.Context, client *http.Client, method, endpoint string,
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return sendError{err, true}
+		return outboundError(err, true)
 	}
 	defer resp.Body.Close()
-	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return httpError{resp.StatusCode, string(data[:min(len(data), 200)])}
+		return httpError{resp.StatusCode, responseSummary(data)}
 	}
-	if readErr != nil {
-		return sendError{readErr, true}
-	}
+	// 接收端已用 2xx 确认送达；读体中断不否定确认，重试只会重复通知。
 	return nil
 }
 

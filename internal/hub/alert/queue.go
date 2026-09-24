@@ -22,8 +22,6 @@ type deliveryItem struct {
 	event    store.AlertEvent
 }
 
-// Enqueue 在 Engine 的 writeMu 下调用，只操作有界内存队列，不等数据库或网络。
-// 满队列丢弃的项仍在库中保持 done=0，下次 Requeue 可以继续投递。
 type Queue struct {
 	st           *store.Store
 	channels     func() []store.NotifyChannel
@@ -72,6 +70,9 @@ func (q *Queue) enqueue(item deliveryItem) {
 	}
 	q.items <- item
 }
+
+// Engine.apply 在 writeMu 下调用 Enqueue；这里只操作有界内存队列，不等数据库或网络。
+// 满队列丢弃的项仍在库中保持 done=0，要等下次启动在 Load 后调用 Requeue 才续投。
 func (q *Queue) Enqueue(ev store.AlertEvent) {
 	ds := ev.Deliveries
 	ev.Deliveries = nil
@@ -170,9 +171,6 @@ func (q *Queue) deliver(ctx context.Context, item deliveryItem) error {
 		if d.Done {
 			return nil
 		}
-		if d.Attempts >= store.MaxDeliveryAttempts {
-			return q.st.UpdateDelivery(ctx, d.ID, d.Attempts, d.OK, true, d.LastError, d.DeliveredAt)
-		}
 		var c *store.NotifyChannel
 		for _, row := range q.channels() {
 			if row.ID == d.ChannelID {
@@ -181,7 +179,7 @@ func (q *Queue) deliver(ctx context.Context, item deliveryItem) error {
 			}
 		}
 		if c == nil {
-			return q.st.UpdateDelivery(ctx, d.ID, d.Attempts, false, true, "channel deleted", time.Time{})
+			return q.st.UpdateDelivery(ctx, d.ID, d.Attempts, false, true, store.DeliveryErrChannelDeleted, time.Time{})
 		}
 		channel, err := ParseChannel(*c, q.client, q.telegramBase)
 		if err != nil {

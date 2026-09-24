@@ -100,6 +100,8 @@ type Delivery struct {
 // 投递尝试的唯一上限；队列达到上限时写入 done，重启也不能绕过它。
 const MaxDeliveryAttempts = 3
 
+const DeliveryErrChannelDeleted = "channel deleted"
+
 // 主表与关联在同一读事务中读取，不能把并发保存前后的两份作用域拼在一起。
 func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	tx, err := s.r.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -382,7 +384,7 @@ func (s *Store) DeleteNotifyChannel(ctx context.Context, id int64) error {
 		if err := deleteAlertEntity(tx, "notify_channel", "notify channel", id); err != nil {
 			return err
 		}
-		_, err := tx.Exec("UPDATE alert_delivery SET done = 1, last_error = 'channel deleted' WHERE channel_id = ? AND done = 0", id)
+		_, err := tx.Exec("UPDATE alert_delivery SET done = 1, last_error = ? WHERE channel_id = ? AND done = 0", DeliveryErrChannelDeleted, id)
 		return err
 	})
 }
