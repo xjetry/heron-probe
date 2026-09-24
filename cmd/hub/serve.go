@@ -146,63 +146,17 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		ReadTimeout: 30 * time.Second, // ReadMaxBytes 限量不限时。
 	}
 
-	flushCtx, stopFlusher := context.WithCancel(ctx)
-	flusherDone := make(chan struct{})
-	go func() {
-		defer close(flusherDone)
-		svc.RunFlusher(flushCtx)
-	}()
-	maintCtx, stopMaintenance := context.WithCancel(ctx)
-	maintenanceDone := make(chan struct{})
-	go func() {
-		defer close(maintenanceDone)
-		st.RunMaintenance(maintCtx, retention)
-	}()
-
-	trafficCtx, stopTraffic := context.WithCancel(ctx)
-	trafficDone := make(chan struct{})
-	go func() {
-		defer close(trafficDone)
-		book.Run(trafficCtx)
-	}()
-	sweepCtx, stopSweep := context.WithCancel(ctx)
-	sweepDone := make(chan struct{})
-	go func() {
-		defer close(sweepDone)
-		alerts.RunOfflineSweep(sweepCtx)
-	}()
-	evalCtx, stopEvaluation := context.WithCancel(ctx)
-	evaluationDone := make(chan struct{})
-	go func() {
-		defer close(evaluationDone)
-		alerts.RunProbeEvaluation(evalCtx)
-	}()
-	notifyCtx, stopNotifier := context.WithCancel(ctx)
-	notifierDone := make(chan struct{})
-	go func() {
-		defer close(notifierDone)
-		notifier.Run(notifyCtx)
-	}()
+	defer startLoop(svc.RunFlusher)()
+	defer startLoop(func(ctx context.Context) { st.RunMaintenance(ctx, retention) })()
+	defer startLoop(book.Run)()
+	stopSweep := startLoop(alerts.RunOfflineSweep)
+	defer startLoop(alerts.RunProbeEvaluation)()
+	defer startLoop(notifier.Run)()
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(listener) }()
 	log.Info("hub listening", "listen", listener.Addr().String(), "ttl", ttl, "interval", svc.Interval(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "retention_alert_events", retention.AlertEvents, "timezone", loc.String(), "version", version)
 
-	stopBackground := func() {
-		stopFlusher()
-		stopMaintenance()
-		stopTraffic()
-		stopSweep()
-		stopEvaluation()
-		stopNotifier()
-		<-flusherDone
-		<-maintenanceDone
-		<-trafficDone
-		<-sweepDone
-		<-evaluationDone
-		<-notifierDone
-	}
-	defer stopBackground()
 	select {
 	case <-stopCtx.Done():
 		log.Info("shutting down")
@@ -211,9 +165,26 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 			err = nil
 		}
 	}
+	// 离线推断以上报准入开放为前提；drainingHandler 关闭准入后新上报一律 503，
+	// unseen 的增长不再代表节点沉默。先停止巡检，避免把健康节点判为 firing 并投递，
+	// 随后重启又因上报补发 recovered。
+	stopSweep()
 	// HTTP 先停止准入并排空；超时则断开连接以中止慢请求体，仍等待已经进入的处理器。
 	// 最后由 defer 依次停止后台循环、关库，避免晚到的上报落在最后一次刷出之后。
 	return errors.Join(err, shutdownHTTP(srv, drain, 10*time.Second))
+}
+
+func startLoop(run func(context.Context)) func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		run(ctx)
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }
 
 // drainingHandler 将请求准入与关闭裁决串行化，Wait 前封住 Add，

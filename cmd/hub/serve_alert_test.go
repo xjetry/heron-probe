@@ -162,12 +162,13 @@ func TestServeEvaluatesProbeAlerts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = st.WriteMinuteBatch(t.Context(), metric.Batch{Probes: []metric.ProbeRow{{NodeID: id, TS: clk.Now().Truncate(time.Minute).Unix(), TaskID: task.Id, Bucket: &metric.ProbeBucket{Sent: 1, Lost: 1}}}})
+		_, err = st.WriteMinuteBatch(t.Context(), metric.Batch{Probes: []metric.ProbeRow{{NodeID: id, TS: clk.Now().Truncate(time.Minute).Add(-time.Minute).Unix(), TaskID: task.Id, Bucket: &metric.ProbeBucket{Sent: 1, Lost: 1}}}})
 		if err != nil {
 			t.Fatal(err)
 		}
 	})
-	clk.Advance(4 * time.Second)
+	// 墙钟固定，评估分钟由它决定；真实计时器只提供 3.001s 等待。
+	// 首次读钟与测试线程拨钟没有同步点，拨钟可能让协程等下一分钟，所以不推进墙钟。
 	awaitDelivered(t, client, bodies, 8*time.Second)
 }
 
