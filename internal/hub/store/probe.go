@@ -179,6 +179,9 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, nodeIDs
 func (s *Store) DeleteProbeTask(ctx context.Context, id uint64) (uint64, error) {
 	var version int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
+		if err := checkAlertReferences(tx, "SELECT name FROM alert_rule WHERE task_id = ? ORDER BY id", "probe task", int64(id)); err != nil {
+			return err
+		}
 		res, err := tx.Exec("DELETE FROM probe_task WHERE id = ?", int64(id))
 		if err != nil {
 			return err
@@ -203,4 +206,21 @@ func bumpProbeVersion(tx *sql.Tx, now int64) (int64, error) {
 	var version int64
 	err := tx.QueryRow("UPDATE probe_meta SET version = max(version + 1, ?) WHERE id = 1 RETURNING version", now).Scan(&version)
 	return version, err
+}
+
+func (s *Store) ProbeTaskNodeIDs(ctx context.Context, taskID uint64) ([]int64, error) {
+	rows, err := s.r.QueryContext(ctx, "SELECT node_id FROM probe_task_node WHERE task_id = ? ORDER BY node_id", int64(taskID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }

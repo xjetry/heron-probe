@@ -353,8 +353,8 @@ func TestMigrationFromV3MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
 		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
 	}
-	if v := userVersion(t, migrated.r); v != 4 {
-		t.Fatalf("user_version = %d, want 4", v)
+	if v := userVersion(t, migrated.r); v != schemaVersion {
+		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}
 	rows, err := migrated.ReadMinuteRows(t.Context(), 7, 0, 120)
 	if err != nil || len(rows) != 1 || rows[0].Bucket.Sum[0] != 50 || rows[0].Bucket.N[0] != 1 {
@@ -368,6 +368,135 @@ func TestMigrationFromV3MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 	var version int
 	if err := migrated.r.QueryRow("SELECT version FROM probe_meta WHERE id = 1").Scan(&version); err != nil || version != 0 {
 		t.Fatalf("probe_meta version = %d, err = %v, want 0", version, err)
+	}
+}
+
+// schemaV4 固定旧库结构，生产 DDL 的变化不能同时改掉迁移的输入。
+var schemaV4 = []string{
+	`CREATE TABLE node (
+  -- AUTOINCREMENT 使 id 永不复用：分层备份恢复后两层可能各自漂移，
+  -- id 若复用，指标层里已删节点的历史会挂到同 id 的新节点上且无法肉眼分辨。
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  public INTEGER NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT '',
+  -- NULL 表示"用默认值（TTL）"，是缺省不是放宽；读侧遇 NULL 必须取 TTL。
+  offline_grace_s INTEGER,
+  traffic_reset_day INTEGER NOT NULL DEFAULT 1,
+  token_hash BLOB NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL,
+  -- 墙钟，只供展示与告警文案，不参与离线时长计算。
+  last_seen_at INTEGER
+)`,
+	`CREATE TABLE node_facts (
+  node_id INTEGER PRIMARY KEY,
+  facts_hash INTEGER NOT NULL,
+  hostname TEXT NOT NULL,
+  os TEXT NOT NULL,
+  kernel TEXT NOT NULL,
+  arch TEXT NOT NULL,
+  virtualization TEXT NOT NULL,
+  cpu_model TEXT NOT NULL,
+  cpu_cores INTEGER NOT NULL,
+  agent_version TEXT NOT NULL,
+  icmp_available INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+)`,
+	`CREATE TABLE register_window (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  key_hash BLOB NOT NULL,
+  expires_at INTEGER NOT NULL,
+  remaining INTEGER NOT NULL
+)`,
+	`CREATE TABLE rollup_state (
+  level TEXT PRIMARY KEY,
+  upto_ts INTEGER NOT NULL
+)`,
+	`INSERT INTO rollup_state (level, upto_ts) VALUES ('5m', 0), ('1h', 0)`,
+	`CREATE TABLE admin (
+  -- 单管理员：CHECK 让第二行无法插入，"多用户"在 schema 上就不成立。
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  -- PHC 字符串，argon2id 的参数随哈希走：改参数不需要迁移，旧哈希按自带参数校验。
+  password_hash TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+)`,
+	`CREATE TABLE admin_session (
+  token_hash BLOB PRIMARY KEY,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER NOT NULL,
+  -- 绝对过期，墙钟 Unix 秒。会话要跨 hub 重启存活，只能用墙钟；
+  -- 墙钟回拨会推迟按绝对过期时刻判定失效的时间。
+  expires_at INTEGER NOT NULL
+)`,
+	`CREATE TABLE traffic (
+  node_id INTEGER PRIMARY KEY,
+  boot_id TEXT NOT NULL,
+  last_rx INTEGER NOT NULL, -- -1 表示尚无基线，与 traffic.NoBaseline 同值；由校正建立的条目才有。
+  last_tx INTEGER NOT NULL, -- -1 的含义与 last_rx 相同。
+  total_rx INTEGER NOT NULL,
+  total_tx INTEGER NOT NULL,
+  period_rx INTEGER NOT NULL,
+  period_tx INTEGER NOT NULL,
+  -- 当前周期起点，Unix 秒；重置日零点按 hub 时区换算。
+  period_start INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+)`,
+	`CREATE TABLE metric_1m (node_id INTEGER NOT NULL, ts INTEGER NOT NULL, cpu_sum REAL NOT NULL DEFAULT 0, cpu_n INTEGER NOT NULL DEFAULT 0, cpu_max REAL NOT NULL DEFAULT 0, mem_used_sum INTEGER NOT NULL DEFAULT 0, mem_used_n INTEGER NOT NULL DEFAULT 0, mem_used_max INTEGER NOT NULL DEFAULT 0, swap_used_sum INTEGER NOT NULL DEFAULT 0, swap_used_n INTEGER NOT NULL DEFAULT 0, disk_used_sum INTEGER NOT NULL DEFAULT 0, disk_used_n INTEGER NOT NULL DEFAULT 0, load1_sum REAL NOT NULL DEFAULT 0, load1_n INTEGER NOT NULL DEFAULT 0, tcp_sum INTEGER NOT NULL DEFAULT 0, tcp_n INTEGER NOT NULL DEFAULT 0, udp_sum INTEGER NOT NULL DEFAULT 0, udp_n INTEGER NOT NULL DEFAULT 0, procs_sum INTEGER NOT NULL DEFAULT 0, procs_n INTEGER NOT NULL DEFAULT 0, rx_bytes_sum INTEGER NOT NULL DEFAULT 0, rx_bytes_n INTEGER NOT NULL DEFAULT 0, tx_bytes_sum INTEGER NOT NULL DEFAULT 0, tx_bytes_n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (node_id, ts)) WITHOUT ROWID`,
+	`CREATE TABLE metric_5m (node_id INTEGER NOT NULL, ts INTEGER NOT NULL, cpu_sum REAL NOT NULL DEFAULT 0, cpu_n INTEGER NOT NULL DEFAULT 0, cpu_max REAL NOT NULL DEFAULT 0, mem_used_sum INTEGER NOT NULL DEFAULT 0, mem_used_n INTEGER NOT NULL DEFAULT 0, mem_used_max INTEGER NOT NULL DEFAULT 0, swap_used_sum INTEGER NOT NULL DEFAULT 0, swap_used_n INTEGER NOT NULL DEFAULT 0, disk_used_sum INTEGER NOT NULL DEFAULT 0, disk_used_n INTEGER NOT NULL DEFAULT 0, load1_sum REAL NOT NULL DEFAULT 0, load1_n INTEGER NOT NULL DEFAULT 0, tcp_sum INTEGER NOT NULL DEFAULT 0, tcp_n INTEGER NOT NULL DEFAULT 0, udp_sum INTEGER NOT NULL DEFAULT 0, udp_n INTEGER NOT NULL DEFAULT 0, procs_sum INTEGER NOT NULL DEFAULT 0, procs_n INTEGER NOT NULL DEFAULT 0, rx_bytes_sum INTEGER NOT NULL DEFAULT 0, rx_bytes_n INTEGER NOT NULL DEFAULT 0, tx_bytes_sum INTEGER NOT NULL DEFAULT 0, tx_bytes_n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (node_id, ts)) WITHOUT ROWID`,
+	`CREATE TABLE metric_1h (node_id INTEGER NOT NULL, ts INTEGER NOT NULL, cpu_sum REAL NOT NULL DEFAULT 0, cpu_n INTEGER NOT NULL DEFAULT 0, cpu_max REAL NOT NULL DEFAULT 0, mem_used_sum INTEGER NOT NULL DEFAULT 0, mem_used_n INTEGER NOT NULL DEFAULT 0, mem_used_max INTEGER NOT NULL DEFAULT 0, swap_used_sum INTEGER NOT NULL DEFAULT 0, swap_used_n INTEGER NOT NULL DEFAULT 0, disk_used_sum INTEGER NOT NULL DEFAULT 0, disk_used_n INTEGER NOT NULL DEFAULT 0, load1_sum REAL NOT NULL DEFAULT 0, load1_n INTEGER NOT NULL DEFAULT 0, tcp_sum INTEGER NOT NULL DEFAULT 0, tcp_n INTEGER NOT NULL DEFAULT 0, udp_sum INTEGER NOT NULL DEFAULT 0, udp_n INTEGER NOT NULL DEFAULT 0, procs_sum INTEGER NOT NULL DEFAULT 0, procs_n INTEGER NOT NULL DEFAULT 0, rx_bytes_sum INTEGER NOT NULL DEFAULT 0, rx_bytes_n INTEGER NOT NULL DEFAULT 0, tx_bytes_sum INTEGER NOT NULL DEFAULT 0, tx_bytes_n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (node_id, ts)) WITHOUT ROWID`,
+	`CREATE TABLE probe_task (
+  -- AUTOINCREMENT：历史行只带 task_id，删除任务后 id 若复用，旧历史会挂到新任务上。
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind INTEGER NOT NULL,
+  target TEXT NOT NULL,
+  interval_s INTEGER NOT NULL,
+  timeout_ms INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+)`,
+	`CREATE TABLE probe_task_node (
+  task_id INTEGER NOT NULL,
+  node_id INTEGER NOT NULL,
+  PRIMARY KEY (task_id, node_id)
+) WITHOUT ROWID`,
+	`CREATE INDEX probe_task_node_by_node ON probe_task_node (node_id)`,
+	`CREATE TABLE probe_meta (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  version INTEGER NOT NULL
+)`,
+	`INSERT INTO probe_meta (id, version) VALUES (1, 0)`,
+	`INSERT INTO rollup_state (level, upto_ts) VALUES ('probe_5m', 0), ('probe_1h', 0)`,
+	`CREATE TABLE probe_1m (
+  node_id INTEGER NOT NULL, ts INTEGER NOT NULL, task_id INTEGER NOT NULL,
+  sent INTEGER NOT NULL DEFAULT 0, lost INTEGER NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0,
+  rtt_sum_us INTEGER NOT NULL DEFAULT 0, rtt_min_us INTEGER, rtt_max_us INTEGER,
+  PRIMARY KEY (node_id, ts, task_id)
+) WITHOUT ROWID`,
+	`CREATE TABLE probe_5m (
+  node_id INTEGER NOT NULL, ts INTEGER NOT NULL, task_id INTEGER NOT NULL,
+  sent INTEGER NOT NULL DEFAULT 0, lost INTEGER NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0,
+  rtt_sum_us INTEGER NOT NULL DEFAULT 0, rtt_min_us INTEGER, rtt_max_us INTEGER,
+  PRIMARY KEY (node_id, ts, task_id)
+) WITHOUT ROWID`,
+	`CREATE TABLE probe_1h (
+  node_id INTEGER NOT NULL, ts INTEGER NOT NULL, task_id INTEGER NOT NULL,
+  sent INTEGER NOT NULL DEFAULT 0, lost INTEGER NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0,
+  rtt_sum_us INTEGER NOT NULL DEFAULT 0, rtt_min_us INTEGER, rtt_max_us INTEGER,
+  PRIMARY KEY (node_id, ts, task_id)
+) WITHOUT ROWID`,
+}
+
+func TestMigrationFromV4MatchesFreshSchemaAndKeepsRows(t *testing.T) {
+	migrated, fresh := migrateFrom(t, schemaV4, 4, seedMinuteRow)
+	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
+		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
+	}
+	if v := userVersion(t, migrated.r); v != schemaVersion {
+		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
+	}
+	rows, err := migrated.ReadMinuteRows(t.Context(), 7, 0, 120)
+	if err != nil || len(rows) != 1 || rows[0].Bucket.Sum[0] != 50 || rows[0].Bucket.N[0] != 1 {
+		t.Fatalf("minute row lost across migration: %v %v", rows, err)
 	}
 }
 

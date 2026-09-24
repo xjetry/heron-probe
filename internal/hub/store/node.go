@@ -20,12 +20,13 @@ type Node struct {
 	CreatedAt       time.Time
 	LastSeenAt      time.Time // 零值表示从未上报
 	TrafficResetDay int       // 周期重置日 1–28，列默认 1
+	OfflineGraceS   int       // 0 表示列为 NULL，读侧取 TTL。
 	// Facts 为 nil 表示该节点尚未上报过静态信息。
 	Facts          *probev1.Facts
 	FactsUpdatedAt time.Time
 }
 
-const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.created_at, n.last_seen_at, n.traffic_reset_day,
+const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.created_at, n.last_seen_at, n.traffic_reset_day, n.offline_grace_s,
 	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at
 	FROM node n LEFT JOIN node_facts f ON f.node_id = n.id`
 
@@ -34,14 +35,15 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 	for rows.Next() {
 		var n Node
 		var created int64
-		var seen sql.NullInt64
+		var seen, grace sql.NullInt64
 		var hostname, os, kernel, arch, virt, cpuModel, agentVersion sql.NullString
 		var cores, icmp, factsUpdated sql.NullInt64
-		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &created, &seen, &n.TrafficResetDay,
+		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &created, &seen, &n.TrafficResetDay, &grace,
 			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated); err != nil {
 			return nil, err
 		}
 		n.CreatedAt = time.Unix(created, 0).UTC()
+		n.OfflineGraceS = int(grace.Int64)
 		if seen.Valid {
 			n.LastSeenAt = time.Unix(seen.Int64, 0).UTC()
 		}
@@ -94,9 +96,9 @@ func (s *Store) NodeExists(ctx context.Context, id int64) (bool, error) {
 
 // UpdateNode 整体替换可编辑字段；调用方已做校验与清洗。重置日与其他字段一起整体替换，
 // 不存在"不改"的取值。
-func (s *Store) UpdateNode(ctx context.Context, id int64, name string, public bool, note string, resetDay int) error {
+func (s *Store) UpdateNode(ctx context.Context, id int64, name string, public bool, note string, resetDay int, offlineGraceS int) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		res, err := tx.Exec("UPDATE node SET name = ?, public = ?, note = ?, traffic_reset_day = ? WHERE id = ?", name, public, note, resetDay, id)
+		res, err := tx.Exec("UPDATE node SET name = ?, public = ?, note = ?, traffic_reset_day = ?, offline_grace_s = NULLIF(?, 0) WHERE id = ?", name, public, note, resetDay, offlineGraceS, id)
 		if err != nil {
 			return err
 		}
@@ -177,6 +179,12 @@ func (s *Store) DeleteNode(ctx context.Context, id int64) error {
 		if _, err := tx.Exec("DELETE FROM probe_task_node WHERE node_id = ?", id); err != nil {
 			return err
 		}
+		if _, err := tx.Exec("DELETE FROM alert_state WHERE node_id = ?", id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM alert_rule_node WHERE node_id = ?", id); err != nil {
+			return err
+		}
 		return nil
 	})
 }
@@ -239,6 +247,7 @@ func (s *Store) Counts(ctx context.Context) (map[string]int64, error) {
 	tables := append([]string{"node", "node_facts", "register_window", "admin", "admin_session", "traffic"}, metricTables...)
 	tables = append(tables, probeTables...)
 	tables = append(tables, "probe_task", "probe_task_node")
+	tables = append(tables, "alert_rule", "alert_rule_node", "alert_rule_channel", "notify_channel", "alert_state", "alert_event", "alert_delivery")
 	out := map[string]int64{}
 	for _, table := range tables {
 		var n int64

@@ -100,7 +100,7 @@ func schemaStatements() []string {
 	for _, t := range probeTables {
 		out = append(out, probeDDL(t))
 	}
-	return out
+	return append(out, alertStatements()...)
 }
 
 // metricDDL 从描述表生成分钟表。主键顺序 (node_id, ts) 即唯一查询路径，
@@ -217,3 +217,74 @@ const ddlProbeMeta = `CREATE TABLE probe_meta (
 const seedProbeMeta = `INSERT INTO probe_meta (id, version) VALUES (1, 0)`
 
 const seedProbeRollupState = `INSERT INTO rollup_state (level, upto_ts) VALUES ('probe_5m', 0), ('probe_1h', 0)`
+
+// 规则作用域与渠道绑定用联结表：无作用域行表示全部节点——空条件匹配一切，属于放宽，
+// 由 alert.Engine 在解析作用域时显式判定并注释后果。
+const ddlAlertRule = `CREATE TABLE IF NOT EXISTS alert_rule (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  task_id INTEGER,
+  metric TEXT,
+  threshold REAL,
+  for_minutes INTEGER,
+  created_at INTEGER NOT NULL
+)`
+const ddlAlertRuleNode = `CREATE TABLE IF NOT EXISTS alert_rule_node (
+  rule_id INTEGER NOT NULL,
+  node_id INTEGER NOT NULL,
+  PRIMARY KEY (rule_id, node_id)
+)`
+const ddlAlertRuleNodeByNode = `CREATE INDEX IF NOT EXISTS alert_rule_node_by_node ON alert_rule_node(node_id)`
+const ddlAlertRuleChannel = `CREATE TABLE IF NOT EXISTS alert_rule_channel (
+  rule_id INTEGER NOT NULL,
+  channel_id INTEGER NOT NULL,
+  PRIMARY KEY (rule_id, channel_id)
+)`
+const ddlAlertRuleChannelByChannel = `CREATE INDEX IF NOT EXISTS alert_rule_channel_by_channel ON alert_rule_channel(channel_id)`
+const ddlNotifyChannel = `CREATE TABLE IF NOT EXISTS notify_channel (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  config TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+)`
+
+// 状态只在转换时写；since_at 是墙钟，只用于展示"自何时起"。计时用引擎内存里的单调钟。
+const ddlAlertState = `CREATE TABLE IF NOT EXISTS alert_state (
+  rule_id INTEGER NOT NULL,
+  node_id INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  since_at INTEGER NOT NULL,
+  PRIMARY KEY (rule_id, node_id)
+)`
+const ddlAlertEvent = `CREATE TABLE IF NOT EXISTS alert_event (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  rule_id INTEGER NOT NULL,
+  node_id INTEGER NOT NULL,
+  transition TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  summary TEXT NOT NULL,
+  value REAL NOT NULL
+)`
+const ddlAlertEventByNode = `CREATE INDEX IF NOT EXISTS alert_event_by_node ON alert_event(node_id, id)`
+
+// 每渠道一行；ok=0 且 attempts 未耗尽的行是重启后要续投的队列。
+const ddlAlertDelivery = `CREATE TABLE IF NOT EXISTS alert_delivery (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  channel_id INTEGER NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  ok INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT '',
+  delivered_at INTEGER
+)`
+const ddlAlertDeliveryByEvent = `CREATE INDEX IF NOT EXISTS alert_delivery_by_event ON alert_delivery(event_id)`
+const ddlAlertDeliveryPending = `CREATE INDEX IF NOT EXISTS alert_delivery_pending ON alert_delivery(ok, attempts)`
+
+func alertStatements() []string {
+	return []string{ddlAlertRule, ddlAlertRuleNode, ddlAlertRuleNodeByNode, ddlAlertRuleChannel,
+		ddlAlertRuleChannelByChannel, ddlNotifyChannel, ddlAlertState, ddlAlertEvent,
+		ddlAlertEventByNode, ddlAlertDelivery, ddlAlertDeliveryByEvent, ddlAlertDeliveryPending}
+}

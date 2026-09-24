@@ -3,9 +3,24 @@ package store
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var ErrNodeLimit = errors.New("node already has the maximum number of probe tasks")
+
+var ErrInUse = errors.New("in use")
+
+type InUseError struct {
+	Kind  string
+	ID    int64
+	Rules []string
+}
+
+func (e InUseError) Error() string {
+	return fmt.Sprintf("%s %d is referenced by alert rules: %s", e.Kind, e.ID, strings.Join(e.Rules, ", "))
+}
+
+func (e InUseError) Is(target error) bool { return target == ErrInUse }
 
 // 错误由发现问题的存储层携带实体与约束；调用方不必解析文本即可保留哨兵分类。
 type NotFoundError struct {

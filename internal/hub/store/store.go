@@ -161,12 +161,20 @@ func (s *Store) writeAsync(fn func(*sql.Tx) error, done func(error)) {
 	}
 }
 
-const schemaVersion = 4
+const schemaVersion = 5
 
 // migrations[v] 把 user_version = v−1 的库升到 v。空库不重放历史，直接建
 // 到当前版本；所以 schemaStatements 必须始终是"当前版本的完整 DDL"，
 // 迁移测试用逐表、逐索引比对钉住这一点。
 var migrations = map[int]func(*sql.Tx) error{
+	5: func(tx *sql.Tx) error {
+		for _, stmt := range alertStatements() {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("%w in %q", err, stmt)
+			}
+		}
+		return nil
+	},
 	2: func(tx *sql.Tx) error {
 		for _, stmt := range []string{ddlAdmin, ddlAdminSession, metricDDL("metric_5m"), metricDDL("metric_1h")} {
 			if _, err := tx.Exec(stmt); err != nil {

@@ -102,7 +102,16 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 	}
 	s.nodeMu.Lock()
 	defer s.nodeMu.Unlock()
-	err = s.store.UpdateNode(ctx, req.Msg.GetId(), name, req.Msg.GetPublic(), note, day)
+	// 请求不携带宽限期；nodeMu 串行化节点编辑，保留已存值而不是把缺省解释为清零。
+	current, err := s.store.GetNode(ctx, req.Msg.GetId())
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, notFound(req.Msg.GetId())
+	}
+	if err != nil {
+		s.log.Error("reading node before update failed", "err", err)
+		return nil, internalError("reading node before update failed")
+	}
+	err = s.store.UpdateNode(ctx, req.Msg.GetId(), name, req.Msg.GetPublic(), note, day, current.OfflineGraceS)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, notFound(req.Msg.GetId())
 	}

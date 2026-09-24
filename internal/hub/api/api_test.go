@@ -31,6 +31,22 @@ import (
 
 const password = "correct horse battery staple"
 
+func TestUpdateNodePreservesOfflineGrace(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	id, _ := h.createNode(t, "n")
+	if err := h.store.UpdateNode(t.Context(), id, "n", false, "", 1, 90); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "renamed", TrafficResetDay: 15})); err != nil {
+		t.Fatal(err)
+	}
+	n, err := h.store.GetNode(t.Context(), id)
+	if err != nil || n.OfflineGraceS != 90 || n.Name != "renamed" || n.TrafficResetDay != 15 {
+		t.Fatalf("updated node=%+v err=%v, want renamed/15 with grace 90", n, err)
+	}
+}
+
 type harness struct {
 	srv    *httptest.Server
 	http   *http.Client // 带 cookie jar
