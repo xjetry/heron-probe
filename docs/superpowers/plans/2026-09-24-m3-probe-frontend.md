@@ -681,3 +681,34 @@ git commit -m "web: 探测任务管理页，创建与编辑共用一份表单并
 **类型一致性**：`gridOf` 在 Task 1 定义并被 `toAligned` 与 `toProbeAligned` 共用；`ProbeValue`/`lossPercent`/`rttMeanMs`/`taskIdsOf`/`taskLabel` 在 Task 1 定义、Task 2 使用；`TaskForm`/`TaskRow`/`Draft` 只在 Task 3 内部。
 
 **占位扫描**：无 TBD；三个任务各自可独立运行与测试。
+
+## 执行修正
+
+执行中发现的计划缺陷与实际采用的做法。计划正文保持原样，读计划时以本节为准。
+
+### Task 2（节点详情）
+- Step 5 的空状态注入写成"把 series.length === 0 改为 >= 0"，这只会让非空时也显示提示，指定断言不会红；实际注入改为把图表渲染条件 `series.length > 0` 改成 `>= 0`。
+- 用例假设 uPlot 图例文字可被 testing-library 查询；现有 NodeDetail 测试把 Chart mock 成不含文字的 div。实际让测试桩呈现传入的 labels，生产 Chart 不变。
+- 用例示意里的 nodesResponse / metricsResponse 与节点 1 改用现有函数式夹具与节点 7。
+- 图表渲染条件里 `probeCharts.length > 0` 恒真，已去掉；tasks 查询不轮询、由任务页的失效驱动刷新，已写成注释。
+
+### Task 3（任务管理页）
+- TaskRow 原文在调用 mutate 后立刻 setEditing(false)：保存失败也会关闭表单、丢掉草稿。实际改为成功回调后才退出编辑，失败保留草稿并显示服务端错误；Nodes.tsx 的 NodeEditor 同形，一并改掉。
+- 创建成功后表单未复位，再点一次会建出重复任务（hub 对 (kind, target) 无唯一约束）；实际用 key 重挂载复位。
+- 类型到标签的映射原文在 taskLabel、kindName 与下拉选项三处各写一份；实际收到 lib/probes.ts 的 PROBE_KINDS 表与 kindLabel 一处。
+- 两页各行共用一个 update mutation observer，重叠的 mutate 只回调最后一次；因此任一行保存挂起时禁用全部行的保存，注释与跨行用例钉住。
+- 两页的错误提示原为 `a.error ?? b.error` 链，创建的旧错误会在之后编辑成功时滞留；实际统一为"最新一次操作的错误优先"（useLatestError，任一 mutation 开始即清空、只记录最新序号的失败）。
+- 提交的 nodeIds 与当前节点列表求交，编辑期间被删的节点自然掉出，不让 hub 以 NotFound 拒绝整次保存。
+- 用例观察方式四处与运行时不符：getByText("TCP") 同时命中 option 与单元格（改按 cell 查）；createConnectQueryKey 不带 transport/input 时 getQueryState 为 undefined 且活跃查询刷新会清掉 isInvalidated（改为观察重取与未激活缓存）；零参数 vi.fn 的 calls[0][0] 触发 TS2493；非法间隔用例未填 target，required 先于 min 拦截。
+- 简报 TaskForm 用 form 内的 div.row，现有 .row 不换行；实际合并 `form.row, .task-form .row` 并让 .task-form 恢复 white-space: normal 抵消表格单元格的 nowrap。
+- 提交时与节点列表求交的写法在节点列表未到达时会把全部分配静默清空；实际与 Nodes 页同一做法，节点列表就绪前不渲染任何可提交的表单，求交只在列表到达后发生。
+
+### 整分支终审后的修正
+- Nodes 页的删除、换 token、排序原为请求返回即解禁而列表尚未刷新，与探测任务页"挂起持续到刷新完成"口径不一致；统一为 onSuccess 返回刷新 promise。
+- 节点详情页任务列表查询失败原来无处显示，图例会全部退回"任务 #N"而像"全部被删"；补 alert。
+- 同类型同目标的两个任务图例同名（hub 对 (kind, target) 无唯一约束）；只在同窗口内碰撞时给标签附加 ` #id`。
+- 断言页面状态不得持有旧元素引用：toHaveTextContent 对已卸载节点仍通过、toBeInTheDocument 对被 React 复用的 DOM 也通过；"编辑态仍在"的用例改为重新按角色与名称查询保存按钮。
+- 任务表格补齐与节点页同形的可访问性结构（可聚焦的滚动 region、操作列表头）。
+
+### 后续跟进（不在本计划）
+- web/tsconfig.app.json 未开 strict，非空断言与 find() 的返回类型没有编译期约束；这是既有配置。
