@@ -21,6 +21,7 @@ import (
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
 	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/probe"
@@ -35,6 +36,7 @@ const (
 )
 
 type Config struct {
+	TTL time.Duration
 	// ReportInterval 是 agent 的正常上报间隔，客户端据此选择轮询节奏。
 	ReportInterval time.Duration
 	TrustedProxies []netip.Prefix
@@ -51,19 +53,21 @@ type Service struct {
 	// 节点的库写入与内存更新在同一临界区内完成，不同请求按此锁串行。
 	nodeMu sync.Mutex
 
-	cfg     Config
-	store   *store.Store
-	auth    *auth.Auth
-	live    *live.Live
-	nodes   NodeState
-	traffic *traffic.Book
-	probes  *probe.Registry
-	clk     clock.Clock
-	log     *slog.Logger
+	cfg      Config
+	store    *store.Store
+	auth     *auth.Auth
+	live     *live.Live
+	nodes    NodeState
+	traffic  *traffic.Book
+	probes   *probe.Registry
+	alerts   *alert.Engine
+	notifier *alert.Queue
+	clk      clock.Clock
+	log      *slog.Logger
 }
 
-func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, book *traffic.Book, probes *probe.Registry, clk clock.Clock, log *slog.Logger) *Service {
-	return &Service{cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, probes: probes, clk: clk, log: log}
+func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, book *traffic.Book, probes *probe.Registry, alerts *alert.Engine, notifier *alert.Queue, clk clock.Clock, log *slog.Logger) *Service {
+	return &Service{cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, probes: probes, alerts: alerts, notifier: notifier, clk: clk, log: log}
 }
 
 func (s *Service) Handler() (string, http.Handler) {

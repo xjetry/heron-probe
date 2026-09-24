@@ -83,6 +83,30 @@ const (
 	// AdminServiceQueryProbesProcedure is the fully-qualified name of the AdminService's QueryProbes
 	// RPC.
 	AdminServiceQueryProbesProcedure = "/probe.v1.AdminService/QueryProbes"
+	// AdminServiceListAlertRulesProcedure is the fully-qualified name of the AdminService's
+	// ListAlertRules RPC.
+	AdminServiceListAlertRulesProcedure = "/probe.v1.AdminService/ListAlertRules"
+	// AdminServiceSaveAlertRuleProcedure is the fully-qualified name of the AdminService's
+	// SaveAlertRule RPC.
+	AdminServiceSaveAlertRuleProcedure = "/probe.v1.AdminService/SaveAlertRule"
+	// AdminServiceDeleteAlertRuleProcedure is the fully-qualified name of the AdminService's
+	// DeleteAlertRule RPC.
+	AdminServiceDeleteAlertRuleProcedure = "/probe.v1.AdminService/DeleteAlertRule"
+	// AdminServiceListAlertEventsProcedure is the fully-qualified name of the AdminService's
+	// ListAlertEvents RPC.
+	AdminServiceListAlertEventsProcedure = "/probe.v1.AdminService/ListAlertEvents"
+	// AdminServiceListNotifyChannelsProcedure is the fully-qualified name of the AdminService's
+	// ListNotifyChannels RPC.
+	AdminServiceListNotifyChannelsProcedure = "/probe.v1.AdminService/ListNotifyChannels"
+	// AdminServiceSaveNotifyChannelProcedure is the fully-qualified name of the AdminService's
+	// SaveNotifyChannel RPC.
+	AdminServiceSaveNotifyChannelProcedure = "/probe.v1.AdminService/SaveNotifyChannel"
+	// AdminServiceDeleteNotifyChannelProcedure is the fully-qualified name of the AdminService's
+	// DeleteNotifyChannel RPC.
+	AdminServiceDeleteNotifyChannelProcedure = "/probe.v1.AdminService/DeleteNotifyChannel"
+	// AdminServiceTestNotifyChannelProcedure is the fully-qualified name of the AdminService's
+	// TestNotifyChannel RPC.
+	AdminServiceTestNotifyChannelProcedure = "/probe.v1.AdminService/TestNotifyChannel"
 )
 
 // AdminServiceClient is a client for the probe.v1.AdminService service.
@@ -94,7 +118,7 @@ type AdminServiceClient interface {
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
 	// 建节点并返回其 token；明文只在此处返回一次。
 	CreateNode(context.Context, *connect.Request[v1.CreateNodeRequest]) (*connect.Response[v1.CreateNodeResponse], error)
-	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日）。
+	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期）。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
 	// 删除节点及其全部历史；进程内的实时状态同步清理。
 	DeleteNode(context.Context, *connect.Request[v1.DeleteNodeRequest]) (*connect.Response[v1.DeleteNodeResponse], error)
@@ -122,6 +146,22 @@ type AdminServiceClient interface {
 	DeleteProbeTask(context.Context, *connect.Request[v1.DeleteProbeTaskRequest]) (*connect.Response[v1.DeleteProbeTaskResponse], error)
 	// 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
 	QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error)
+	// 列出规则及其当前节点状态。
+	ListAlertRules(context.Context, *connect.Request[v1.ListAlertRulesRequest]) (*connect.Response[v1.ListAlertRulesResponse], error)
+	// id 为 0 时创建，否则整体替换规则与作用域、渠道列表。
+	SaveAlertRule(context.Context, *connect.Request[v1.SaveAlertRuleRequest]) (*connect.Response[v1.SaveAlertRuleResponse], error)
+	// 删除规则与状态，历史事件保留至到期清理。
+	DeleteAlertRule(context.Context, *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error)
+	// 按事件 id 倒序分页，包含每个事件的投递状态。
+	ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error)
+	// 列出渠道；不回显 Telegram 凭据。
+	ListNotifyChannels(context.Context, *connect.Request[v1.ListNotifyChannelsRequest]) (*connect.Response[v1.ListNotifyChannelsResponse], error)
+	// id 为 0 时创建，否则整体替换；Telegram 空 token 保留旧值。
+	SaveNotifyChannel(context.Context, *connect.Request[v1.SaveNotifyChannelRequest]) (*connect.Response[v1.SaveNotifyChannelResponse], error)
+	// 被告警规则引用的渠道不可删除，错误列出引用规则。
+	DeleteNotifyChannel(context.Context, *connect.Request[v1.DeleteNotifyChannelRequest]) (*connect.Response[v1.DeleteNotifyChannelResponse], error)
+	// 向已保存的渠道同步发送测试消息，投递失败返回错误原文。
+	TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error)
 }
 
 // NewAdminServiceClient constructs a client for the probe.v1.AdminService service. By default, it
@@ -249,6 +289,54 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("QueryProbes")),
 			connect.WithClientOptions(opts...),
 		),
+		listAlertRules: connect.NewClient[v1.ListAlertRulesRequest, v1.ListAlertRulesResponse](
+			httpClient,
+			baseURL+AdminServiceListAlertRulesProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListAlertRules")),
+			connect.WithClientOptions(opts...),
+		),
+		saveAlertRule: connect.NewClient[v1.SaveAlertRuleRequest, v1.SaveAlertRuleResponse](
+			httpClient,
+			baseURL+AdminServiceSaveAlertRuleProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("SaveAlertRule")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteAlertRule: connect.NewClient[v1.DeleteAlertRuleRequest, v1.DeleteAlertRuleResponse](
+			httpClient,
+			baseURL+AdminServiceDeleteAlertRuleProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("DeleteAlertRule")),
+			connect.WithClientOptions(opts...),
+		),
+		listAlertEvents: connect.NewClient[v1.ListAlertEventsRequest, v1.ListAlertEventsResponse](
+			httpClient,
+			baseURL+AdminServiceListAlertEventsProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListAlertEvents")),
+			connect.WithClientOptions(opts...),
+		),
+		listNotifyChannels: connect.NewClient[v1.ListNotifyChannelsRequest, v1.ListNotifyChannelsResponse](
+			httpClient,
+			baseURL+AdminServiceListNotifyChannelsProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListNotifyChannels")),
+			connect.WithClientOptions(opts...),
+		),
+		saveNotifyChannel: connect.NewClient[v1.SaveNotifyChannelRequest, v1.SaveNotifyChannelResponse](
+			httpClient,
+			baseURL+AdminServiceSaveNotifyChannelProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("SaveNotifyChannel")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteNotifyChannel: connect.NewClient[v1.DeleteNotifyChannelRequest, v1.DeleteNotifyChannelResponse](
+			httpClient,
+			baseURL+AdminServiceDeleteNotifyChannelProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("DeleteNotifyChannel")),
+			connect.WithClientOptions(opts...),
+		),
+		testNotifyChannel: connect.NewClient[v1.TestNotifyChannelRequest, v1.TestNotifyChannelResponse](
+			httpClient,
+			baseURL+AdminServiceTestNotifyChannelProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("TestNotifyChannel")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -273,6 +361,14 @@ type adminServiceClient struct {
 	saveProbeTask       *connect.Client[v1.SaveProbeTaskRequest, v1.SaveProbeTaskResponse]
 	deleteProbeTask     *connect.Client[v1.DeleteProbeTaskRequest, v1.DeleteProbeTaskResponse]
 	queryProbes         *connect.Client[v1.QueryProbesRequest, v1.QueryProbesResponse]
+	listAlertRules      *connect.Client[v1.ListAlertRulesRequest, v1.ListAlertRulesResponse]
+	saveAlertRule       *connect.Client[v1.SaveAlertRuleRequest, v1.SaveAlertRuleResponse]
+	deleteAlertRule     *connect.Client[v1.DeleteAlertRuleRequest, v1.DeleteAlertRuleResponse]
+	listAlertEvents     *connect.Client[v1.ListAlertEventsRequest, v1.ListAlertEventsResponse]
+	listNotifyChannels  *connect.Client[v1.ListNotifyChannelsRequest, v1.ListNotifyChannelsResponse]
+	saveNotifyChannel   *connect.Client[v1.SaveNotifyChannelRequest, v1.SaveNotifyChannelResponse]
+	deleteNotifyChannel *connect.Client[v1.DeleteNotifyChannelRequest, v1.DeleteNotifyChannelResponse]
+	testNotifyChannel   *connect.Client[v1.TestNotifyChannelRequest, v1.TestNotifyChannelResponse]
 }
 
 // Login calls probe.v1.AdminService.Login.
@@ -370,6 +466,46 @@ func (c *adminServiceClient) QueryProbes(ctx context.Context, req *connect.Reque
 	return c.queryProbes.CallUnary(ctx, req)
 }
 
+// ListAlertRules calls probe.v1.AdminService.ListAlertRules.
+func (c *adminServiceClient) ListAlertRules(ctx context.Context, req *connect.Request[v1.ListAlertRulesRequest]) (*connect.Response[v1.ListAlertRulesResponse], error) {
+	return c.listAlertRules.CallUnary(ctx, req)
+}
+
+// SaveAlertRule calls probe.v1.AdminService.SaveAlertRule.
+func (c *adminServiceClient) SaveAlertRule(ctx context.Context, req *connect.Request[v1.SaveAlertRuleRequest]) (*connect.Response[v1.SaveAlertRuleResponse], error) {
+	return c.saveAlertRule.CallUnary(ctx, req)
+}
+
+// DeleteAlertRule calls probe.v1.AdminService.DeleteAlertRule.
+func (c *adminServiceClient) DeleteAlertRule(ctx context.Context, req *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error) {
+	return c.deleteAlertRule.CallUnary(ctx, req)
+}
+
+// ListAlertEvents calls probe.v1.AdminService.ListAlertEvents.
+func (c *adminServiceClient) ListAlertEvents(ctx context.Context, req *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error) {
+	return c.listAlertEvents.CallUnary(ctx, req)
+}
+
+// ListNotifyChannels calls probe.v1.AdminService.ListNotifyChannels.
+func (c *adminServiceClient) ListNotifyChannels(ctx context.Context, req *connect.Request[v1.ListNotifyChannelsRequest]) (*connect.Response[v1.ListNotifyChannelsResponse], error) {
+	return c.listNotifyChannels.CallUnary(ctx, req)
+}
+
+// SaveNotifyChannel calls probe.v1.AdminService.SaveNotifyChannel.
+func (c *adminServiceClient) SaveNotifyChannel(ctx context.Context, req *connect.Request[v1.SaveNotifyChannelRequest]) (*connect.Response[v1.SaveNotifyChannelResponse], error) {
+	return c.saveNotifyChannel.CallUnary(ctx, req)
+}
+
+// DeleteNotifyChannel calls probe.v1.AdminService.DeleteNotifyChannel.
+func (c *adminServiceClient) DeleteNotifyChannel(ctx context.Context, req *connect.Request[v1.DeleteNotifyChannelRequest]) (*connect.Response[v1.DeleteNotifyChannelResponse], error) {
+	return c.deleteNotifyChannel.CallUnary(ctx, req)
+}
+
+// TestNotifyChannel calls probe.v1.AdminService.TestNotifyChannel.
+func (c *adminServiceClient) TestNotifyChannel(ctx context.Context, req *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error) {
+	return c.testNotifyChannel.CallUnary(ctx, req)
+}
+
 // AdminServiceHandler is an implementation of the probe.v1.AdminService service.
 type AdminServiceHandler interface {
 	// 用管理员密码换取会话 cookie（Set-Cookie 在响应头里）。
@@ -379,7 +515,7 @@ type AdminServiceHandler interface {
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
 	// 建节点并返回其 token；明文只在此处返回一次。
 	CreateNode(context.Context, *connect.Request[v1.CreateNodeRequest]) (*connect.Response[v1.CreateNodeResponse], error)
-	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日）。
+	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期）。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
 	// 删除节点及其全部历史；进程内的实时状态同步清理。
 	DeleteNode(context.Context, *connect.Request[v1.DeleteNodeRequest]) (*connect.Response[v1.DeleteNodeResponse], error)
@@ -407,6 +543,22 @@ type AdminServiceHandler interface {
 	DeleteProbeTask(context.Context, *connect.Request[v1.DeleteProbeTaskRequest]) (*connect.Response[v1.DeleteProbeTaskResponse], error)
 	// 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
 	QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error)
+	// 列出规则及其当前节点状态。
+	ListAlertRules(context.Context, *connect.Request[v1.ListAlertRulesRequest]) (*connect.Response[v1.ListAlertRulesResponse], error)
+	// id 为 0 时创建，否则整体替换规则与作用域、渠道列表。
+	SaveAlertRule(context.Context, *connect.Request[v1.SaveAlertRuleRequest]) (*connect.Response[v1.SaveAlertRuleResponse], error)
+	// 删除规则与状态，历史事件保留至到期清理。
+	DeleteAlertRule(context.Context, *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error)
+	// 按事件 id 倒序分页，包含每个事件的投递状态。
+	ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error)
+	// 列出渠道；不回显 Telegram 凭据。
+	ListNotifyChannels(context.Context, *connect.Request[v1.ListNotifyChannelsRequest]) (*connect.Response[v1.ListNotifyChannelsResponse], error)
+	// id 为 0 时创建，否则整体替换；Telegram 空 token 保留旧值。
+	SaveNotifyChannel(context.Context, *connect.Request[v1.SaveNotifyChannelRequest]) (*connect.Response[v1.SaveNotifyChannelResponse], error)
+	// 被告警规则引用的渠道不可删除，错误列出引用规则。
+	DeleteNotifyChannel(context.Context, *connect.Request[v1.DeleteNotifyChannelRequest]) (*connect.Response[v1.DeleteNotifyChannelResponse], error)
+	// 向已保存的渠道同步发送测试消息，投递失败返回错误原文。
+	TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error)
 }
 
 // NewAdminServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -530,6 +682,54 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("QueryProbes")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceListAlertRulesHandler := connect.NewUnaryHandler(
+		AdminServiceListAlertRulesProcedure,
+		svc.ListAlertRules,
+		connect.WithSchema(adminServiceMethods.ByName("ListAlertRules")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceSaveAlertRuleHandler := connect.NewUnaryHandler(
+		AdminServiceSaveAlertRuleProcedure,
+		svc.SaveAlertRule,
+		connect.WithSchema(adminServiceMethods.ByName("SaveAlertRule")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceDeleteAlertRuleHandler := connect.NewUnaryHandler(
+		AdminServiceDeleteAlertRuleProcedure,
+		svc.DeleteAlertRule,
+		connect.WithSchema(adminServiceMethods.ByName("DeleteAlertRule")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceListAlertEventsHandler := connect.NewUnaryHandler(
+		AdminServiceListAlertEventsProcedure,
+		svc.ListAlertEvents,
+		connect.WithSchema(adminServiceMethods.ByName("ListAlertEvents")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceListNotifyChannelsHandler := connect.NewUnaryHandler(
+		AdminServiceListNotifyChannelsProcedure,
+		svc.ListNotifyChannels,
+		connect.WithSchema(adminServiceMethods.ByName("ListNotifyChannels")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceSaveNotifyChannelHandler := connect.NewUnaryHandler(
+		AdminServiceSaveNotifyChannelProcedure,
+		svc.SaveNotifyChannel,
+		connect.WithSchema(adminServiceMethods.ByName("SaveNotifyChannel")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceDeleteNotifyChannelHandler := connect.NewUnaryHandler(
+		AdminServiceDeleteNotifyChannelProcedure,
+		svc.DeleteNotifyChannel,
+		connect.WithSchema(adminServiceMethods.ByName("DeleteNotifyChannel")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceTestNotifyChannelHandler := connect.NewUnaryHandler(
+		AdminServiceTestNotifyChannelProcedure,
+		svc.TestNotifyChannel,
+		connect.WithSchema(adminServiceMethods.ByName("TestNotifyChannel")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/probe.v1.AdminService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AdminServiceLoginProcedure:
@@ -570,6 +770,22 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceDeleteProbeTaskHandler.ServeHTTP(w, r)
 		case AdminServiceQueryProbesProcedure:
 			adminServiceQueryProbesHandler.ServeHTTP(w, r)
+		case AdminServiceListAlertRulesProcedure:
+			adminServiceListAlertRulesHandler.ServeHTTP(w, r)
+		case AdminServiceSaveAlertRuleProcedure:
+			adminServiceSaveAlertRuleHandler.ServeHTTP(w, r)
+		case AdminServiceDeleteAlertRuleProcedure:
+			adminServiceDeleteAlertRuleHandler.ServeHTTP(w, r)
+		case AdminServiceListAlertEventsProcedure:
+			adminServiceListAlertEventsHandler.ServeHTTP(w, r)
+		case AdminServiceListNotifyChannelsProcedure:
+			adminServiceListNotifyChannelsHandler.ServeHTTP(w, r)
+		case AdminServiceSaveNotifyChannelProcedure:
+			adminServiceSaveNotifyChannelHandler.ServeHTTP(w, r)
+		case AdminServiceDeleteNotifyChannelProcedure:
+			adminServiceDeleteNotifyChannelHandler.ServeHTTP(w, r)
+		case AdminServiceTestNotifyChannelProcedure:
+			adminServiceTestNotifyChannelHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -653,4 +869,36 @@ func (UnimplementedAdminServiceHandler) DeleteProbeTask(context.Context, *connec
 
 func (UnimplementedAdminServiceHandler) QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.QueryProbes is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListAlertRules(context.Context, *connect.Request[v1.ListAlertRulesRequest]) (*connect.Response[v1.ListAlertRulesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.ListAlertRules is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) SaveAlertRule(context.Context, *connect.Request[v1.SaveAlertRuleRequest]) (*connect.Response[v1.SaveAlertRuleResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.SaveAlertRule is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) DeleteAlertRule(context.Context, *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.DeleteAlertRule is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.ListAlertEvents is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListNotifyChannels(context.Context, *connect.Request[v1.ListNotifyChannelsRequest]) (*connect.Response[v1.ListNotifyChannelsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.ListNotifyChannels is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) SaveNotifyChannel(context.Context, *connect.Request[v1.SaveNotifyChannelRequest]) (*connect.Response[v1.SaveNotifyChannelResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.SaveNotifyChannel is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) DeleteNotifyChannel(context.Context, *connect.Request[v1.DeleteNotifyChannelRequest]) (*connect.Response[v1.DeleteNotifyChannelResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.DeleteNotifyChannel is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.TestNotifyChannel is not implemented"))
 }

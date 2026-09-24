@@ -2,8 +2,8 @@
 // @generated from file probe/v1/admin.proto (package probe.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Facts, Metrics, ProbeTask } from "./types_pb";
 import { file_probe_v1_types } from "./types_pb";
 import type { Message } from "@bufbuild/protobuf";
@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file probe/v1/admin.proto.
  */
 export const file_probe_v1_admin: GenFile = /*@__PURE__*/
-  fileDesc("ChRwcm9iZS92MS9hZG1pbi5wcm90bxIIcHJvYmUudjEiIAoMTG9naW5SZXF1ZXN0EhAKCHBhc3N3b3JkGAEgASgJIg8KDUxvZ2luUmVzcG9uc2UiDwoNTG9nb3V0UmVxdWVzdCIQCg5Mb2dvdXRSZXNwb25zZSKBAgoETm9kZRIKCgJpZBgBIAEoAxIMCgRuYW1lGAIgASgJEg4KBnB1YmxpYxgDIAEoCBIMCgRub3RlGAQgASgJEhIKCnNvcnRfb3JkZXIYBSABKAUSEgoKY3JlYXRlZF9hdBgGIAEoAxIZCgxsYXN0X3NlZW5fYXQYByABKANIAIgBARIeCgVmYWN0cxgIIAEoCzIPLnByb2JlLnYxLkZhY3RzEh0KEGZhY3RzX3VwZGF0ZWRfYXQYCSABKANIAYgBARIZChF0cmFmZmljX3Jlc2V0X2RheRgKIAEoDUIPCg1fbGFzdF9zZWVuX2F0QhMKEV9mYWN0c191cGRhdGVkX2F0IhIKEExpc3ROb2Rlc1JlcXVlc3QiMgoRTGlzdE5vZGVzUmVzcG9uc2USHQoFbm9kZXMYASADKAsyDi5wcm9iZS52MS5Ob2RlIiEKEUNyZWF0ZU5vZGVSZXF1ZXN0EgwKBG5hbWUYASABKAkiQQoSQ3JlYXRlTm9kZVJlc3BvbnNlEhwKBG5vZGUYASABKAsyDi5wcm9iZS52MS5Ob2RlEg0KBXRva2VuGAIgASgJImYKEVVwZGF0ZU5vZGVSZXF1ZXN0EgoKAmlkGAEgASgDEgwKBG5hbWUYAiABKAkSDgoGcHVibGljGAMgASgIEgwKBG5vdGUYBCABKAkSGQoRdHJhZmZpY19yZXNldF9kYXkYBSABKA0iMgoSVXBkYXRlTm9kZVJlc3BvbnNlEhwKBG5vZGUYASABKAsyDi5wcm9iZS52MS5Ob2RlIh8KEURlbGV0ZU5vZGVSZXF1ZXN0EgoKAmlkGAEgASgDIhQKEkRlbGV0ZU5vZGVSZXNwb25zZSIkChZSb3RhdGVOb2RlVG9rZW5SZXF1ZXN0EgoKAmlkGAEgASgDIigKF1JvdGF0ZU5vZGVUb2tlblJlc3BvbnNlEg0KBXRva2VuGAEgASgJIiIKE1Jlb3JkZXJOb2Rlc1JlcXVlc3QSCwoDaWRzGAEgAygDIhYKFFJlb3JkZXJOb2Rlc1Jlc3BvbnNlIj0KGU9wZW5SZWdpc3RlcldpbmRvd1JlcXVlc3QSDQoFdHRsX3MYASABKA0SEQoJbWF4X25vZGVzGAIgASgNIlAKGk9wZW5SZWdpc3RlcldpbmRvd1Jlc3BvbnNlEgsKA2tleRgBIAEoCRISCgpleHBpcmVzX2F0GAIgASgDEhEKCW1heF9ub2RlcxgDIAEoDSIcChpDbG9zZVJlZ2lzdGVyV2luZG93UmVxdWVzdCIdChtDbG9zZVJlZ2lzdGVyV2luZG93UmVzcG9uc2UiGgoYR2V0UmVnaXN0ZXJXaW5kb3dSZXF1ZXN0IlAKGUdldFJlZ2lzdGVyV2luZG93UmVzcG9uc2USDAoEb3BlbhgBIAEoCBISCgpleHBpcmVzX2F0GAIgASgDEhEKCXJlbWFpbmluZxgDIAEoDSIUChJHZXRTbmFwc2hvdFJlcXVlc3QiYwoTR2V0U25hcHNob3RSZXNwb25zZRILCgNub3cYASABKAMSGgoScmVwb3J0X2ludGVydmFsX21zGAIgASgNEiMKBW5vZGVzGAMgAygLMhQucHJvYmUudjEuTm9kZVN0YXR1cyKqAQoKTm9kZVN0YXR1cxIKCgJpZBgBIAEoAxIMCgRuYW1lGAIgASgJEg4KBm9ubGluZRgDIAEoCBIZCgxsYXN0X3NlZW5fYXQYBCABKANIAIgBARIiCgdtZXRyaWNzGAUgASgLMhEucHJvYmUudjEuTWV0cmljcxIiCgd0cmFmZmljGAYgASgLMhEucHJvYmUudjEuVHJhZmZpY0IPCg1fbGFzdF9zZWVuX2F0IlQKE1F1ZXJ5TWV0cmljc1JlcXVlc3QSDwoHbm9kZV9pZBgBIAEoAxIMCgRmcm9tGAIgASgDEgoKAnRvGAMgASgDEhIKCm1heF9wb2ludHMYBCABKA0iaQoUUXVlcnlNZXRyaWNzUmVzcG9uc2USDQoFbGV2ZWwYASABKAkSDgoGc3RlcF9zGAIgASgNEgoKAnRzGAMgAygDEiYKBnNlcmllcxgEIAMoCzIWLnByb2JlLnYxLk1ldHJpY1NlcmllcyJTCgxNZXRyaWNTZXJpZXMSDAoEbmFtZRgBIAEoCRIMCgR1bml0GAIgASgJEicKB3NhbXBsZXMYAyADKAsyFi5wcm9iZS52MS5NZXRyaWNTYW1wbGUiaQoMTWV0cmljU2FtcGxlEgkKAW4YASABKA0SEQoEbWVhbhgCIAEoAUgAiAEBEhAKA21heBgDIAEoAUgBiAEBEhAKA3N1bRgEIAEoAUgCiAEBQgcKBV9tZWFuQgYKBF9tYXhCBgoEX3N1bSKTAQoHVHJhZmZpYxIQCgh0b3RhbF9yeBgBIAEoBBIQCgh0b3RhbF90eBgCIAEoBBIRCglwZXJpb2RfcngYAyABKAQSEQoJcGVyaW9kX3R4GAQgASgEEhQKDHBlcmlvZF9zdGFydBgFIAEoAxIVCg1uZXh0X3Jlc2V0X2F0GAYgASgDEhEKCXJlc2V0X2RheRgHIAEoDSITChFHZXRUcmFmZmljUmVxdWVzdCJZChJHZXRUcmFmZmljUmVzcG9uc2USCwoDbm93GAEgASgDEiQKBW5vZGVzGAIgAygLMhUucHJvYmUudjEuTm9kZVRyYWZmaWMSEAoIdGltZXpvbmUYAyABKAkiUAoLTm9kZVRyYWZmaWMSDwoHbm9kZV9pZBgBIAEoAxIMCgRuYW1lGAIgASgJEiIKB3RyYWZmaWMYAyABKAsyES5wcm9iZS52MS5UcmFmZmljIk0KFEFkanVzdFRyYWZmaWNSZXF1ZXN0Eg8KB25vZGVfaWQYASABKAMSEQoJcGVyaW9kX3J4GAIgASgEEhEKCXBlcmlvZF90eBgDIAEoBCI7ChVBZGp1c3RUcmFmZmljUmVzcG9uc2USIgoHdHJhZmZpYxgBIAEoCzIRLnByb2JlLnYxLlRyYWZmaWMiRgoPUHJvYmVUYXNrRGV0YWlsEiEKBHRhc2sYASABKAsyEy5wcm9iZS52MS5Qcm9iZVRhc2sSEAoIbm9kZV9pZHMYAiADKAMiFwoVTGlzdFByb2JlVGFza3NSZXF1ZXN0IlMKFkxpc3RQcm9iZVRhc2tzUmVzcG9uc2USDwoHdmVyc2lvbhgBIAEoBBIoCgV0YXNrcxgCIAMoCzIZLnByb2JlLnYxLlByb2JlVGFza0RldGFpbCJLChRTYXZlUHJvYmVUYXNrUmVxdWVzdBIhCgR0YXNrGAEgASgLMhMucHJvYmUudjEuUHJvYmVUYXNrEhAKCG5vZGVfaWRzGAIgAygDIlEKFVNhdmVQcm9iZVRhc2tSZXNwb25zZRInCgR0YXNrGAEgASgLMhkucHJvYmUudjEuUHJvYmVUYXNrRGV0YWlsEg8KB3ZlcnNpb24YAiABKAQiJAoWRGVsZXRlUHJvYmVUYXNrUmVxdWVzdBIKCgJpZBgBIAEoBCIqChdEZWxldGVQcm9iZVRhc2tSZXNwb25zZRIPCgd2ZXJzaW9uGAEgASgEIlMKElF1ZXJ5UHJvYmVzUmVxdWVzdBIPCgdub2RlX2lkGAEgASgDEgwKBGZyb20YAiABKAMSCgoCdG8YAyABKAMSEgoKbWF4X3BvaW50cxgEIAEoDSJbChNRdWVyeVByb2Jlc1Jlc3BvbnNlEg0KBWxldmVsGAEgASgJEg4KBnN0ZXBfcxgCIAEoDRIlCgZzZXJpZXMYAyADKAsyFS5wcm9iZS52MS5Qcm9iZVNlcmllcyJGCgtQcm9iZVNlcmllcxIPCgd0YXNrX2lkGAEgASgEEiYKB3NhbXBsZXMYAiADKAsyFS5wcm9iZS52MS5Qcm9iZVNhbXBsZSK/AQoLUHJvYmVTYW1wbGUSCgoCdHMYASABKAMSDAoEc2VudBgCIAEoDRIMCgRsb3N0GAMgASgNEg4KBmVycm9ycxgEIAEoDRIYCgtydHRfbWVhbl91cxgFIAEoDUgAiAEBEhcKCnJ0dF9taW5fdXMYBiABKA1IAYgBARIXCgpydHRfbWF4X3VzGAcgASgNSAKIAQFCDgoMX3J0dF9tZWFuX3VzQg0KC19ydHRfbWluX3VzQg0KC19ydHRfbWF4X3VzMvELCgxBZG1pblNlcnZpY2USOAoFTG9naW4SFi5wcm9iZS52MS5Mb2dpblJlcXVlc3QaFy5wcm9iZS52MS5Mb2dpblJlc3BvbnNlEjsKBkxvZ291dBIXLnByb2JlLnYxLkxvZ291dFJlcXVlc3QaGC5wcm9iZS52MS5Mb2dvdXRSZXNwb25zZRJECglMaXN0Tm9kZXMSGi5wcm9iZS52MS5MaXN0Tm9kZXNSZXF1ZXN0GhsucHJvYmUudjEuTGlzdE5vZGVzUmVzcG9uc2USRwoKQ3JlYXRlTm9kZRIbLnByb2JlLnYxLkNyZWF0ZU5vZGVSZXF1ZXN0GhwucHJvYmUudjEuQ3JlYXRlTm9kZVJlc3BvbnNlEkcKClVwZGF0ZU5vZGUSGy5wcm9iZS52MS5VcGRhdGVOb2RlUmVxdWVzdBocLnByb2JlLnYxLlVwZGF0ZU5vZGVSZXNwb25zZRJHCgpEZWxldGVOb2RlEhsucHJvYmUudjEuRGVsZXRlTm9kZVJlcXVlc3QaHC5wcm9iZS52MS5EZWxldGVOb2RlUmVzcG9uc2USVgoPUm90YXRlTm9kZVRva2VuEiAucHJvYmUudjEuUm90YXRlTm9kZVRva2VuUmVxdWVzdBohLnByb2JlLnYxLlJvdGF0ZU5vZGVUb2tlblJlc3BvbnNlEk0KDFJlb3JkZXJOb2RlcxIdLnByb2JlLnYxLlJlb3JkZXJOb2Rlc1JlcXVlc3QaHi5wcm9iZS52MS5SZW9yZGVyTm9kZXNSZXNwb25zZRJfChJPcGVuUmVnaXN0ZXJXaW5kb3cSIy5wcm9iZS52MS5PcGVuUmVnaXN0ZXJXaW5kb3dSZXF1ZXN0GiQucHJvYmUudjEuT3BlblJlZ2lzdGVyV2luZG93UmVzcG9uc2USYgoTQ2xvc2VSZWdpc3RlcldpbmRvdxIkLnByb2JlLnYxLkNsb3NlUmVnaXN0ZXJXaW5kb3dSZXF1ZXN0GiUucHJvYmUudjEuQ2xvc2VSZWdpc3RlcldpbmRvd1Jlc3BvbnNlElwKEUdldFJlZ2lzdGVyV2luZG93EiIucHJvYmUudjEuR2V0UmVnaXN0ZXJXaW5kb3dSZXF1ZXN0GiMucHJvYmUudjEuR2V0UmVnaXN0ZXJXaW5kb3dSZXNwb25zZRJKCgtHZXRTbmFwc2hvdBIcLnByb2JlLnYxLkdldFNuYXBzaG90UmVxdWVzdBodLnByb2JlLnYxLkdldFNuYXBzaG90UmVzcG9uc2USTQoMUXVlcnlNZXRyaWNzEh0ucHJvYmUudjEuUXVlcnlNZXRyaWNzUmVxdWVzdBoeLnByb2JlLnYxLlF1ZXJ5TWV0cmljc1Jlc3BvbnNlEkcKCkdldFRyYWZmaWMSGy5wcm9iZS52MS5HZXRUcmFmZmljUmVxdWVzdBocLnByb2JlLnYxLkdldFRyYWZmaWNSZXNwb25zZRJQCg1BZGp1c3RUcmFmZmljEh4ucHJvYmUudjEuQWRqdXN0VHJhZmZpY1JlcXVlc3QaHy5wcm9iZS52MS5BZGp1c3RUcmFmZmljUmVzcG9uc2USUwoOTGlzdFByb2JlVGFza3MSHy5wcm9iZS52MS5MaXN0UHJvYmVUYXNrc1JlcXVlc3QaIC5wcm9iZS52MS5MaXN0UHJvYmVUYXNrc1Jlc3BvbnNlElAKDVNhdmVQcm9iZVRhc2sSHi5wcm9iZS52MS5TYXZlUHJvYmVUYXNrUmVxdWVzdBofLnByb2JlLnYxLlNhdmVQcm9iZVRhc2tSZXNwb25zZRJWCg9EZWxldGVQcm9iZVRhc2sSIC5wcm9iZS52MS5EZWxldGVQcm9iZVRhc2tSZXF1ZXN0GiEucHJvYmUudjEuRGVsZXRlUHJvYmVUYXNrUmVzcG9uc2USSgoLUXVlcnlQcm9iZXMSHC5wcm9iZS52MS5RdWVyeVByb2Jlc1JlcXVlc3QaHS5wcm9iZS52MS5RdWVyeVByb2Jlc1Jlc3BvbnNlQi5aLGdpdGh1Yi5jb20veGpldHJ5L3Byb2JlL2dlbi9wcm9iZS92MTtwcm9iZXYxYgZwcm90bzM", [file_probe_v1_types]);
+  fileDesc("ChRwcm9iZS92MS9hZG1pbi5wcm90bxIIcHJvYmUudjEiIAoMTG9naW5SZXF1ZXN0EhAKCHBhc3N3b3JkGAEgASgJIg8KDUxvZ2luUmVzcG9uc2UiDwoNTG9nb3V0UmVxdWVzdCIQCg5Mb2dvdXRSZXNwb25zZSKzAgoETm9kZRIKCgJpZBgBIAEoAxIMCgRuYW1lGAIgASgJEg4KBnB1YmxpYxgDIAEoCBIMCgRub3RlGAQgASgJEhIKCnNvcnRfb3JkZXIYBSABKAUSEgoKY3JlYXRlZF9hdBgGIAEoAxIZCgxsYXN0X3NlZW5fYXQYByABKANIAIgBARIeCgVmYWN0cxgIIAEoCzIPLnByb2JlLnYxLkZhY3RzEh0KEGZhY3RzX3VwZGF0ZWRfYXQYCSABKANIAYgBARIZChF0cmFmZmljX3Jlc2V0X2RheRgKIAEoDRIcCg9vZmZsaW5lX2dyYWNlX3MYCyABKA1IAogBAUIPCg1fbGFzdF9zZWVuX2F0QhMKEV9mYWN0c191cGRhdGVkX2F0QhIKEF9vZmZsaW5lX2dyYWNlX3MiEgoQTGlzdE5vZGVzUmVxdWVzdCIyChFMaXN0Tm9kZXNSZXNwb25zZRIdCgVub2RlcxgBIAMoCzIOLnByb2JlLnYxLk5vZGUiIQoRQ3JlYXRlTm9kZVJlcXVlc3QSDAoEbmFtZRgBIAEoCSJBChJDcmVhdGVOb2RlUmVzcG9uc2USHAoEbm9kZRgBIAEoCzIOLnByb2JlLnYxLk5vZGUSDQoFdG9rZW4YAiABKAkifwoRVXBkYXRlTm9kZVJlcXVlc3QSCgoCaWQYASABKAMSDAoEbmFtZRgCIAEoCRIOCgZwdWJsaWMYAyABKAgSDAoEbm90ZRgEIAEoCRIZChF0cmFmZmljX3Jlc2V0X2RheRgFIAEoDRIXCg9vZmZsaW5lX2dyYWNlX3MYBiABKA0iMgoSVXBkYXRlTm9kZVJlc3BvbnNlEhwKBG5vZGUYASABKAsyDi5wcm9iZS52MS5Ob2RlIh8KEURlbGV0ZU5vZGVSZXF1ZXN0EgoKAmlkGAEgASgDIhQKEkRlbGV0ZU5vZGVSZXNwb25zZSIkChZSb3RhdGVOb2RlVG9rZW5SZXF1ZXN0EgoKAmlkGAEgASgDIigKF1JvdGF0ZU5vZGVUb2tlblJlc3BvbnNlEg0KBXRva2VuGAEgASgJIiIKE1Jlb3JkZXJOb2Rlc1JlcXVlc3QSCwoDaWRzGAEgAygDIhYKFFJlb3JkZXJOb2Rlc1Jlc3BvbnNlIj0KGU9wZW5SZWdpc3RlcldpbmRvd1JlcXVlc3QSDQoFdHRsX3MYASABKA0SEQoJbWF4X25vZGVzGAIgASgNIlAKGk9wZW5SZWdpc3RlcldpbmRvd1Jlc3BvbnNlEgsKA2tleRgBIAEoCRISCgpleHBpcmVzX2F0GAIgASgDEhEKCW1heF9ub2RlcxgDIAEoDSIcChpDbG9zZVJlZ2lzdGVyV2luZG93UmVxdWVzdCIdChtDbG9zZVJlZ2lzdGVyV2luZG93UmVzcG9uc2UiGgoYR2V0UmVnaXN0ZXJXaW5kb3dSZXF1ZXN0IlAKGUdldFJlZ2lzdGVyV2luZG93UmVzcG9uc2USDAoEb3BlbhgBIAEoCBISCgpleHBpcmVzX2F0GAIgASgDEhEKCXJlbWFpbmluZxgDIAEoDSIUChJHZXRTbmFwc2hvdFJlcXVlc3QiYwoTR2V0U25hcHNob3RSZXNwb25zZRILCgNub3cYASABKAMSGgoScmVwb3J0X2ludGVydmFsX21zGAIgASgNEiMKBW5vZGVzGAMgAygLMhQucHJvYmUudjEuTm9kZVN0YXR1cyKqAQoKTm9kZVN0YXR1cxIKCgJpZBgBIAEoAxIMCgRuYW1lGAIgASgJEg4KBm9ubGluZRgDIAEoCBIZCgxsYXN0X3NlZW5fYXQYBCABKANIAIgBARIiCgdtZXRyaWNzGAUgASgLMhEucHJvYmUudjEuTWV0cmljcxIiCgd0cmFmZmljGAYgASgLMhEucHJvYmUudjEuVHJhZmZpY0IPCg1fbGFzdF9zZWVuX2F0IlQKE1F1ZXJ5TWV0cmljc1JlcXVlc3QSDwoHbm9kZV9pZBgBIAEoAxIMCgRmcm9tGAIgASgDEgoKAnRvGAMgASgDEhIKCm1heF9wb2ludHMYBCABKA0iaQoUUXVlcnlNZXRyaWNzUmVzcG9uc2USDQoFbGV2ZWwYASABKAkSDgoGc3RlcF9zGAIgASgNEgoKAnRzGAMgAygDEiYKBnNlcmllcxgEIAMoCzIWLnByb2JlLnYxLk1ldHJpY1NlcmllcyJTCgxNZXRyaWNTZXJpZXMSDAoEbmFtZRgBIAEoCRIMCgR1bml0GAIgASgJEicKB3NhbXBsZXMYAyADKAsyFi5wcm9iZS52MS5NZXRyaWNTYW1wbGUiaQoMTWV0cmljU2FtcGxlEgkKAW4YASABKA0SEQoEbWVhbhgCIAEoAUgAiAEBEhAKA21heBgDIAEoAUgBiAEBEhAKA3N1bRgEIAEoAUgCiAEBQgcKBV9tZWFuQgYKBF9tYXhCBgoEX3N1bSKTAQoHVHJhZmZpYxIQCgh0b3RhbF9yeBgBIAEoBBIQCgh0b3RhbF90eBgCIAEoBBIRCglwZXJpb2RfcngYAyABKAQSEQoJcGVyaW9kX3R4GAQgASgEEhQKDHBlcmlvZF9zdGFydBgFIAEoAxIVCg1uZXh0X3Jlc2V0X2F0GAYgASgDEhEKCXJlc2V0X2RheRgHIAEoDSITChFHZXRUcmFmZmljUmVxdWVzdCJZChJHZXRUcmFmZmljUmVzcG9uc2USCwoDbm93GAEgASgDEiQKBW5vZGVzGAIgAygLMhUucHJvYmUudjEuTm9kZVRyYWZmaWMSEAoIdGltZXpvbmUYAyABKAkiUAoLTm9kZVRyYWZmaWMSDwoHbm9kZV9pZBgBIAEoAxIMCgRuYW1lGAIgASgJEiIKB3RyYWZmaWMYAyABKAsyES5wcm9iZS52MS5UcmFmZmljIk0KFEFkanVzdFRyYWZmaWNSZXF1ZXN0Eg8KB25vZGVfaWQYASABKAMSEQoJcGVyaW9kX3J4GAIgASgEEhEKCXBlcmlvZF90eBgDIAEoBCI7ChVBZGp1c3RUcmFmZmljUmVzcG9uc2USIgoHdHJhZmZpYxgBIAEoCzIRLnByb2JlLnYxLlRyYWZmaWMiRgoPUHJvYmVUYXNrRGV0YWlsEiEKBHRhc2sYASABKAsyEy5wcm9iZS52MS5Qcm9iZVRhc2sSEAoIbm9kZV9pZHMYAiADKAMiFwoVTGlzdFByb2JlVGFza3NSZXF1ZXN0IlMKFkxpc3RQcm9iZVRhc2tzUmVzcG9uc2USDwoHdmVyc2lvbhgBIAEoBBIoCgV0YXNrcxgCIAMoCzIZLnByb2JlLnYxLlByb2JlVGFza0RldGFpbCJLChRTYXZlUHJvYmVUYXNrUmVxdWVzdBIhCgR0YXNrGAEgASgLMhMucHJvYmUudjEuUHJvYmVUYXNrEhAKCG5vZGVfaWRzGAIgAygDIlEKFVNhdmVQcm9iZVRhc2tSZXNwb25zZRInCgR0YXNrGAEgASgLMhkucHJvYmUudjEuUHJvYmVUYXNrRGV0YWlsEg8KB3ZlcnNpb24YAiABKAQiJAoWRGVsZXRlUHJvYmVUYXNrUmVxdWVzdBIKCgJpZBgBIAEoBCIqChdEZWxldGVQcm9iZVRhc2tSZXNwb25zZRIPCgd2ZXJzaW9uGAEgASgEIlMKElF1ZXJ5UHJvYmVzUmVxdWVzdBIPCgdub2RlX2lkGAEgASgDEgwKBGZyb20YAiABKAMSCgoCdG8YAyABKAMSEgoKbWF4X3BvaW50cxgEIAEoDSJbChNRdWVyeVByb2Jlc1Jlc3BvbnNlEg0KBWxldmVsGAEgASgJEg4KBnN0ZXBfcxgCIAEoDRIlCgZzZXJpZXMYAyADKAsyFS5wcm9iZS52MS5Qcm9iZVNlcmllcyJGCgtQcm9iZVNlcmllcxIPCgd0YXNrX2lkGAEgASgEEiYKB3NhbXBsZXMYAiADKAsyFS5wcm9iZS52MS5Qcm9iZVNhbXBsZSK/AQoLUHJvYmVTYW1wbGUSCgoCdHMYASABKAMSDAoEc2VudBgCIAEoDRIMCgRsb3N0GAMgASgNEg4KBmVycm9ycxgEIAEoDRIYCgtydHRfbWVhbl91cxgFIAEoDUgAiAEBEhcKCnJ0dF9taW5fdXMYBiABKA1IAYgBARIXCgpydHRfbWF4X3VzGAcgASgNSAKIAQFCDgoMX3J0dF9tZWFuX3VzQg0KC19ydHRfbWluX3VzQg0KC19ydHRfbWF4X3VzIocCCglBbGVydFJ1bGUSCgoCaWQYASABKAMSDAoEbmFtZRgCIAEoCRIhCgRraW5kGAMgASgOMhMucHJvYmUudjEuQWxlcnRLaW5kEg8KB2VuYWJsZWQYBCABKAgSEAoIbm9kZV9pZHMYBSADKAMSEwoLY2hhbm5lbF9pZHMYBiADKAMSDwoHdGFza19pZBgHIAEoBBIlCgZtZXRyaWMYCCABKA4yFS5wcm9iZS52MS5Qcm9iZU1ldHJpYxIRCgl0aHJlc2hvbGQYCSABKAESEwoLZm9yX21pbnV0ZXMYCiABKA0SEgoKY3JlYXRlZF9hdBgLIAEoAxIRCglhbGxfbm9kZXMYDCABKAgiFwoVTGlzdEFsZXJ0UnVsZXNSZXF1ZXN0ImcKFkxpc3RBbGVydFJ1bGVzUmVzcG9uc2USIgoFcnVsZXMYASADKAsyEy5wcm9iZS52MS5BbGVydFJ1bGUSKQoGc3RhdGVzGAIgAygLMhkucHJvYmUudjEuQWxlcnRTdGF0ZUVudHJ5IlQKD0FsZXJ0U3RhdGVFbnRyeRIPCgdydWxlX2lkGAEgASgDEg8KB25vZGVfaWQYAiABKAMSDQoFc3RhdGUYAyABKAkSEAoIc2luY2VfYXQYBCABKAMiOQoUU2F2ZUFsZXJ0UnVsZVJlcXVlc3QSIQoEcnVsZRgBIAEoCzITLnByb2JlLnYxLkFsZXJ0UnVsZSI6ChVTYXZlQWxlcnRSdWxlUmVzcG9uc2USIQoEcnVsZRgBIAEoCzITLnByb2JlLnYxLkFsZXJ0UnVsZSIkChZEZWxldGVBbGVydFJ1bGVSZXF1ZXN0EgoKAmlkGAEgASgDIhkKF0RlbGV0ZUFsZXJ0UnVsZVJlc3BvbnNlIrgBCg1Ob3RpZnlDaGFubmVsEgoKAmlkGAEgASgDEgwKBG5hbWUYAiABKAkSIwoEa2luZBgDIAEoDjIVLnByb2JlLnYxLkNoYW5uZWxLaW5kEioKCHRlbGVncmFtGAQgASgLMhgucHJvYmUudjEuVGVsZWdyYW1Db25maWcSKAoHd2ViaG9vaxgFIAEoCzIXLnByb2JlLnYxLldlYmhvb2tDb25maWcSEgoKY3JlYXRlZF9hdBgGIAEoAyJLCg5UZWxlZ3JhbUNvbmZpZxIRCglib3RfdG9rZW4YASABKAkSFQoNaGFzX2JvdF90b2tlbhgCIAEoCBIPCgdjaGF0X2lkGAMgASgJIqoBCg1XZWJob29rQ29uZmlnEgsKA3VybBgBIAEoCRIOCgZtZXRob2QYAiABKAkSNQoHaGVhZGVycxgDIAMoCzIkLnByb2JlLnYxLldlYmhvb2tDb25maWcuSGVhZGVyc0VudHJ5EhUKDWJvZHlfdGVtcGxhdGUYBCABKAkaLgoMSGVhZGVyc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiGwoZTGlzdE5vdGlmeUNoYW5uZWxzUmVxdWVzdCJHChpMaXN0Tm90aWZ5Q2hhbm5lbHNSZXNwb25zZRIpCghjaGFubmVscxgBIAMoCzIXLnByb2JlLnYxLk5vdGlmeUNoYW5uZWwiRAoYU2F2ZU5vdGlmeUNoYW5uZWxSZXF1ZXN0EigKB2NoYW5uZWwYASABKAsyFy5wcm9iZS52MS5Ob3RpZnlDaGFubmVsIkUKGVNhdmVOb3RpZnlDaGFubmVsUmVzcG9uc2USKAoHY2hhbm5lbBgBIAEoCzIXLnByb2JlLnYxLk5vdGlmeUNoYW5uZWwiKAoaRGVsZXRlTm90aWZ5Q2hhbm5lbFJlcXVlc3QSCgoCaWQYASABKAMiHQobRGVsZXRlTm90aWZ5Q2hhbm5lbFJlc3BvbnNlIiYKGFRlc3ROb3RpZnlDaGFubmVsUmVxdWVzdBIKCgJpZBgBIAEoAyIbChlUZXN0Tm90aWZ5Q2hhbm5lbFJlc3BvbnNlIksKFkxpc3RBbGVydEV2ZW50c1JlcXVlc3QSDwoHbm9kZV9pZBgBIAEoAxIRCgliZWZvcmVfaWQYAiABKAMSDQoFbGltaXQYAyABKA0iPwoXTGlzdEFsZXJ0RXZlbnRzUmVzcG9uc2USJAoGZXZlbnRzGAEgAygLMhQucHJvYmUudjEuQWxlcnRFdmVudCKnAQoKQWxlcnRFdmVudBIKCgJpZBgBIAEoAxIPCgdydWxlX2lkGAIgASgDEg8KB25vZGVfaWQYAyABKAMSEgoKdHJhbnNpdGlvbhgEIAEoCRIKCgJhdBgFIAEoAxIPCgdzdW1tYXJ5GAYgASgJEg0KBXZhbHVlGAcgASgBEisKCmRlbGl2ZXJpZXMYCCADKAsyFy5wcm9iZS52MS5BbGVydERlbGl2ZXJ5Io8BCg1BbGVydERlbGl2ZXJ5EhIKCmNoYW5uZWxfaWQYASABKAMSEAoIYXR0ZW1wdHMYAiABKA0SCgoCb2sYAyABKAgSEgoKbGFzdF9lcnJvchgEIAEoCRIZCgxkZWxpdmVyZWRfYXQYBSABKANIAIgBARIMCgRkb25lGAYgASgIQg8KDV9kZWxpdmVyZWRfYXQqVQoJQWxlcnRLaW5kEhoKFkFMRVJUX0tJTkRfVU5TUEVDSUZJRUQQABIWChJBTEVSVF9LSU5EX09GRkxJTkUQARIUChBBTEVSVF9LSU5EX1BST0JFEAIqXwoLUHJvYmVNZXRyaWMSHAoYUFJPQkVfTUVUUklDX1VOU1BFQ0lGSUVEEAASGQoVUFJPQkVfTUVUUklDX0xPU1NfUENUEAESFwoTUFJPQkVfTUVUUklDX1JUVF9NUxACKmAKC0NoYW5uZWxLaW5kEhwKGENIQU5ORUxfS0lORF9VTlNQRUNJRklFRBAAEhkKFUNIQU5ORUxfS0lORF9URUxFR1JBTRABEhgKFENIQU5ORUxfS0lORF9XRUJIT09LEAIyyREKDEFkbWluU2VydmljZRI4CgVMb2dpbhIWLnByb2JlLnYxLkxvZ2luUmVxdWVzdBoXLnByb2JlLnYxLkxvZ2luUmVzcG9uc2USOwoGTG9nb3V0EhcucHJvYmUudjEuTG9nb3V0UmVxdWVzdBoYLnByb2JlLnYxLkxvZ291dFJlc3BvbnNlEkQKCUxpc3ROb2RlcxIaLnByb2JlLnYxLkxpc3ROb2Rlc1JlcXVlc3QaGy5wcm9iZS52MS5MaXN0Tm9kZXNSZXNwb25zZRJHCgpDcmVhdGVOb2RlEhsucHJvYmUudjEuQ3JlYXRlTm9kZVJlcXVlc3QaHC5wcm9iZS52MS5DcmVhdGVOb2RlUmVzcG9uc2USRwoKVXBkYXRlTm9kZRIbLnByb2JlLnYxLlVwZGF0ZU5vZGVSZXF1ZXN0GhwucHJvYmUudjEuVXBkYXRlTm9kZVJlc3BvbnNlEkcKCkRlbGV0ZU5vZGUSGy5wcm9iZS52MS5EZWxldGVOb2RlUmVxdWVzdBocLnByb2JlLnYxLkRlbGV0ZU5vZGVSZXNwb25zZRJWCg9Sb3RhdGVOb2RlVG9rZW4SIC5wcm9iZS52MS5Sb3RhdGVOb2RlVG9rZW5SZXF1ZXN0GiEucHJvYmUudjEuUm90YXRlTm9kZVRva2VuUmVzcG9uc2USTQoMUmVvcmRlck5vZGVzEh0ucHJvYmUudjEuUmVvcmRlck5vZGVzUmVxdWVzdBoeLnByb2JlLnYxLlJlb3JkZXJOb2Rlc1Jlc3BvbnNlEl8KEk9wZW5SZWdpc3RlcldpbmRvdxIjLnByb2JlLnYxLk9wZW5SZWdpc3RlcldpbmRvd1JlcXVlc3QaJC5wcm9iZS52MS5PcGVuUmVnaXN0ZXJXaW5kb3dSZXNwb25zZRJiChNDbG9zZVJlZ2lzdGVyV2luZG93EiQucHJvYmUudjEuQ2xvc2VSZWdpc3RlcldpbmRvd1JlcXVlc3QaJS5wcm9iZS52MS5DbG9zZVJlZ2lzdGVyV2luZG93UmVzcG9uc2USXAoRR2V0UmVnaXN0ZXJXaW5kb3cSIi5wcm9iZS52MS5HZXRSZWdpc3RlcldpbmRvd1JlcXVlc3QaIy5wcm9iZS52MS5HZXRSZWdpc3RlcldpbmRvd1Jlc3BvbnNlEkoKC0dldFNuYXBzaG90EhwucHJvYmUudjEuR2V0U25hcHNob3RSZXF1ZXN0Gh0ucHJvYmUudjEuR2V0U25hcHNob3RSZXNwb25zZRJNCgxRdWVyeU1ldHJpY3MSHS5wcm9iZS52MS5RdWVyeU1ldHJpY3NSZXF1ZXN0Gh4ucHJvYmUudjEuUXVlcnlNZXRyaWNzUmVzcG9uc2USRwoKR2V0VHJhZmZpYxIbLnByb2JlLnYxLkdldFRyYWZmaWNSZXF1ZXN0GhwucHJvYmUudjEuR2V0VHJhZmZpY1Jlc3BvbnNlElAKDUFkanVzdFRyYWZmaWMSHi5wcm9iZS52MS5BZGp1c3RUcmFmZmljUmVxdWVzdBofLnByb2JlLnYxLkFkanVzdFRyYWZmaWNSZXNwb25zZRJTCg5MaXN0UHJvYmVUYXNrcxIfLnByb2JlLnYxLkxpc3RQcm9iZVRhc2tzUmVxdWVzdBogLnByb2JlLnYxLkxpc3RQcm9iZVRhc2tzUmVzcG9uc2USUAoNU2F2ZVByb2JlVGFzaxIeLnByb2JlLnYxLlNhdmVQcm9iZVRhc2tSZXF1ZXN0Gh8ucHJvYmUudjEuU2F2ZVByb2JlVGFza1Jlc3BvbnNlElYKD0RlbGV0ZVByb2JlVGFzaxIgLnByb2JlLnYxLkRlbGV0ZVByb2JlVGFza1JlcXVlc3QaIS5wcm9iZS52MS5EZWxldGVQcm9iZVRhc2tSZXNwb25zZRJKCgtRdWVyeVByb2JlcxIcLnByb2JlLnYxLlF1ZXJ5UHJvYmVzUmVxdWVzdBodLnByb2JlLnYxLlF1ZXJ5UHJvYmVzUmVzcG9uc2USUwoOTGlzdEFsZXJ0UnVsZXMSHy5wcm9iZS52MS5MaXN0QWxlcnRSdWxlc1JlcXVlc3QaIC5wcm9iZS52MS5MaXN0QWxlcnRSdWxlc1Jlc3BvbnNlElAKDVNhdmVBbGVydFJ1bGUSHi5wcm9iZS52MS5TYXZlQWxlcnRSdWxlUmVxdWVzdBofLnByb2JlLnYxLlNhdmVBbGVydFJ1bGVSZXNwb25zZRJWCg9EZWxldGVBbGVydFJ1bGUSIC5wcm9iZS52MS5EZWxldGVBbGVydFJ1bGVSZXF1ZXN0GiEucHJvYmUudjEuRGVsZXRlQWxlcnRSdWxlUmVzcG9uc2USVgoPTGlzdEFsZXJ0RXZlbnRzEiAucHJvYmUudjEuTGlzdEFsZXJ0RXZlbnRzUmVxdWVzdBohLnByb2JlLnYxLkxpc3RBbGVydEV2ZW50c1Jlc3BvbnNlEl8KEkxpc3ROb3RpZnlDaGFubmVscxIjLnByb2JlLnYxLkxpc3ROb3RpZnlDaGFubmVsc1JlcXVlc3QaJC5wcm9iZS52MS5MaXN0Tm90aWZ5Q2hhbm5lbHNSZXNwb25zZRJcChFTYXZlTm90aWZ5Q2hhbm5lbBIiLnByb2JlLnYxLlNhdmVOb3RpZnlDaGFubmVsUmVxdWVzdBojLnByb2JlLnYxLlNhdmVOb3RpZnlDaGFubmVsUmVzcG9uc2USYgoTRGVsZXRlTm90aWZ5Q2hhbm5lbBIkLnByb2JlLnYxLkRlbGV0ZU5vdGlmeUNoYW5uZWxSZXF1ZXN0GiUucHJvYmUudjEuRGVsZXRlTm90aWZ5Q2hhbm5lbFJlc3BvbnNlElwKEVRlc3ROb3RpZnlDaGFubmVsEiIucHJvYmUudjEuVGVzdE5vdGlmeUNoYW5uZWxSZXF1ZXN0GiMucHJvYmUudjEuVGVzdE5vdGlmeUNoYW5uZWxSZXNwb25zZUIuWixnaXRodWIuY29tL3hqZXRyeS9wcm9iZS9nZW4vcHJvYmUvdjE7cHJvYmV2MWIGcHJvdG8z", [file_probe_v1_types]);
 
 /**
  * @generated from message probe.v1.LoginRequest
@@ -131,6 +131,13 @@ export type Node = Message<"probe.v1.Node"> & {
    * @generated from field: uint32 traffic_reset_day = 10;
    */
   trafficResetDay: number;
+
+  /**
+   * 离线告警宽限期（秒）；缺失表示取 PROBE_OFFLINE_AFTER。设置值不得小于 PROBE_OFFLINE_AFTER。
+   *
+   * @generated from field: optional uint32 offline_grace_s = 11;
+   */
+  offlineGraceS?: number | undefined;
 };
 
 /**
@@ -245,6 +252,13 @@ export type UpdateNodeRequest = Message<"probe.v1.UpdateNodeRequest"> & {
    * @generated from field: uint32 traffic_reset_day = 5;
    */
   trafficResetDay: number;
+
+  /**
+   * 0 表示清除（取 PROBE_OFFLINE_AFTER）；非 0 须 ≥ PROBE_OFFLINE_AFTER 的秒数。
+   *
+   * @generated from field: uint32 offline_grace_s = 6;
+   */
+  offlineGraceS: number;
 };
 
 /**
@@ -1206,6 +1220,722 @@ export const ProbeSampleSchema: GenMessage<ProbeSample> = /*@__PURE__*/
   messageDesc(file_probe_v1_admin, 46);
 
 /**
+ * @generated from message probe.v1.AlertRule
+ */
+export type AlertRule = Message<"probe.v1.AlertRule"> & {
+  /**
+   * 0 表示创建。
+   *
+   * @generated from field: int64 id = 1;
+   */
+  id: bigint;
+
+  /**
+   * 1–64 个字符。
+   *
+   * @generated from field: string name = 2;
+   */
+  name: string;
+
+  /**
+   * 必须为离线或探测，未指定值不允许保存。
+   *
+   * @generated from field: probe.v1.AlertKind kind = 3;
+   */
+  kind: AlertKind;
+
+  /**
+   * @generated from field: bool enabled = 4;
+   */
+  enabled: boolean;
+
+  /**
+   * 显式作用域，升序去重；all_nodes 为假时就是作用域，保存时不可为空。
+   *
+   * @generated from field: repeated int64 node_ids = 5;
+   */
+  nodeIds: bigint[];
+
+  /**
+   * 已保存渠道的 id，升序去重；空表示只记事件不投递。
+   *
+   * @generated from field: repeated int64 channel_ids = 6;
+   */
+  channelIds: bigint[];
+
+  /**
+   * 以下字段仅用于探测规则，task_id 必须是已存在的非零任务 id。
+   *
+   * @generated from field: uint64 task_id = 7;
+   */
+  taskId: bigint;
+
+  /**
+   * 探测规则必须选择丢包百分比或往返毫秒数。
+   *
+   * @generated from field: probe.v1.ProbeMetric metric = 8;
+   */
+  metric: ProbeMetric;
+
+  /**
+   * 丢包百分比 0–100；往返毫秒数 > 0。
+   *
+   * @generated from field: double threshold = 9;
+   */
+  threshold: number;
+
+  /**
+   * 1–60：连续多少个已闭合分钟达到阈值才触发。
+   *
+   * @generated from field: uint32 for_minutes = 10;
+   */
+  forMinutes: number;
+
+  /**
+   * 创建墙钟，Unix 秒；保存请求中的值忽略。
+   *
+   * @generated from field: int64 created_at = 11;
+   */
+  createdAt: bigint;
+
+  /**
+   * 为真表示全部节点，新建节点自动纳入，node_ids 忽略且回显为空；
+   * 为假时 node_ids 是显式作用域，删除节点后空集不等于全部。
+   *
+   * @generated from field: bool all_nodes = 12;
+   */
+  allNodes: boolean;
+};
+
+/**
+ * Describes the message probe.v1.AlertRule.
+ * Use `create(AlertRuleSchema)` to create a new message.
+ */
+export const AlertRuleSchema: GenMessage<AlertRule> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 47);
+
+/**
+ * @generated from message probe.v1.ListAlertRulesRequest
+ */
+export type ListAlertRulesRequest = Message<"probe.v1.ListAlertRulesRequest"> & {
+};
+
+/**
+ * Describes the message probe.v1.ListAlertRulesRequest.
+ * Use `create(ListAlertRulesRequestSchema)` to create a new message.
+ */
+export const ListAlertRulesRequestSchema: GenMessage<ListAlertRulesRequest> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 48);
+
+/**
+ * @generated from message probe.v1.ListAlertRulesResponse
+ */
+export type ListAlertRulesResponse = Message<"probe.v1.ListAlertRulesResponse"> & {
+  /**
+   * @generated from field: repeated probe.v1.AlertRule rules = 1;
+   */
+  rules: AlertRule[];
+
+  /**
+   * @generated from field: repeated probe.v1.AlertStateEntry states = 2;
+   */
+  states: AlertStateEntry[];
+};
+
+/**
+ * Describes the message probe.v1.ListAlertRulesResponse.
+ * Use `create(ListAlertRulesResponseSchema)` to create a new message.
+ */
+export const ListAlertRulesResponseSchema: GenMessage<ListAlertRulesResponse> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 49);
+
+/**
+ * @generated from message probe.v1.AlertStateEntry
+ */
+export type AlertStateEntry = Message<"probe.v1.AlertStateEntry"> & {
+  /**
+   * @generated from field: int64 rule_id = 1;
+   */
+  ruleId: bigint;
+
+  /**
+   * @generated from field: int64 node_id = 2;
+   */
+  nodeId: bigint;
+
+  /**
+   * 取值为 ok、pending 或 firing。
+   *
+   * @generated from field: string state = 3;
+   */
+  state: string;
+
+  /**
+   * 进入此状态的墙钟，Unix 秒。
+   *
+   * @generated from field: int64 since_at = 4;
+   */
+  sinceAt: bigint;
+};
+
+/**
+ * Describes the message probe.v1.AlertStateEntry.
+ * Use `create(AlertStateEntrySchema)` to create a new message.
+ */
+export const AlertStateEntrySchema: GenMessage<AlertStateEntry> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 50);
+
+/**
+ * @generated from message probe.v1.SaveAlertRuleRequest
+ */
+export type SaveAlertRuleRequest = Message<"probe.v1.SaveAlertRuleRequest"> & {
+  /**
+   * @generated from field: probe.v1.AlertRule rule = 1;
+   */
+  rule?: AlertRule | undefined;
+};
+
+/**
+ * Describes the message probe.v1.SaveAlertRuleRequest.
+ * Use `create(SaveAlertRuleRequestSchema)` to create a new message.
+ */
+export const SaveAlertRuleRequestSchema: GenMessage<SaveAlertRuleRequest> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 51);
+
+/**
+ * @generated from message probe.v1.SaveAlertRuleResponse
+ */
+export type SaveAlertRuleResponse = Message<"probe.v1.SaveAlertRuleResponse"> & {
+  /**
+   * @generated from field: probe.v1.AlertRule rule = 1;
+   */
+  rule?: AlertRule | undefined;
+};
+
+/**
+ * Describes the message probe.v1.SaveAlertRuleResponse.
+ * Use `create(SaveAlertRuleResponseSchema)` to create a new message.
+ */
+export const SaveAlertRuleResponseSchema: GenMessage<SaveAlertRuleResponse> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 52);
+
+/**
+ * @generated from message probe.v1.DeleteAlertRuleRequest
+ */
+export type DeleteAlertRuleRequest = Message<"probe.v1.DeleteAlertRuleRequest"> & {
+  /**
+   * @generated from field: int64 id = 1;
+   */
+  id: bigint;
+};
+
+/**
+ * Describes the message probe.v1.DeleteAlertRuleRequest.
+ * Use `create(DeleteAlertRuleRequestSchema)` to create a new message.
+ */
+export const DeleteAlertRuleRequestSchema: GenMessage<DeleteAlertRuleRequest> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 53);
+
+/**
+ * @generated from message probe.v1.DeleteAlertRuleResponse
+ */
+export type DeleteAlertRuleResponse = Message<"probe.v1.DeleteAlertRuleResponse"> & {
+};
+
+/**
+ * Describes the message probe.v1.DeleteAlertRuleResponse.
+ * Use `create(DeleteAlertRuleResponseSchema)` to create a new message.
+ */
+export const DeleteAlertRuleResponseSchema: GenMessage<DeleteAlertRuleResponse> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 54);
+
+/**
+ * @generated from message probe.v1.NotifyChannel
+ */
+export type NotifyChannel = Message<"probe.v1.NotifyChannel"> & {
+  /**
+   * 0 表示创建。
+   *
+   * @generated from field: int64 id = 1;
+   */
+  id: bigint;
+
+  /**
+   * 1–64 个字符。
+   *
+   * @generated from field: string name = 2;
+   */
+  name: string;
+
+  /**
+   * 必须选择 Telegram 或自定义 HTTP 通知。
+   *
+   * @generated from field: probe.v1.ChannelKind kind = 3;
+   */
+  kind: ChannelKind;
+
+  /**
+   * 选择 Telegram 时必填。
+   *
+   * @generated from field: probe.v1.TelegramConfig telegram = 4;
+   */
+  telegram?: TelegramConfig | undefined;
+
+  /**
+   * 选择自定义 HTTP 通知时必填。
+   *
+   * @generated from field: probe.v1.WebhookConfig webhook = 5;
+   */
+  webhook?: WebhookConfig | undefined;
+
+  /**
+   * 创建墙钟，Unix 秒；保存请求中的值忽略。
+   *
+   * @generated from field: int64 created_at = 6;
+   */
+  createdAt: bigint;
+};
+
+/**
+ * Describes the message probe.v1.NotifyChannel.
+ * Use `create(NotifyChannelSchema)` to create a new message.
+ */
+export const NotifyChannelSchema: GenMessage<NotifyChannel> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 55);
+
+/**
+ * @generated from message probe.v1.TelegramConfig
+ */
+export type TelegramConfig = Message<"probe.v1.TelegramConfig"> & {
+  /**
+   * 列表与保存响应里恒为空；保存时为空表示保留已存的 token（新建时必填）。
+   *
+   * @generated from field: string bot_token = 1;
+   */
+  botToken: string;
+
+  /**
+   * 只在响应里有意义，表示已保存非空 token。
+   *
+   * @generated from field: bool has_bot_token = 2;
+   */
+  hasBotToken: boolean;
+
+  /**
+   * 非空的接收会话标识。
+   *
+   * @generated from field: string chat_id = 3;
+   */
+  chatId: string;
+};
+
+/**
+ * Describes the message probe.v1.TelegramConfig.
+ * Use `create(TelegramConfigSchema)` to create a new message.
+ */
+export const TelegramConfigSchema: GenMessage<TelegramConfig> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 56);
+
+/**
+ * @generated from message probe.v1.WebhookConfig
+ */
+export type WebhookConfig = Message<"probe.v1.WebhookConfig"> & {
+  /**
+   * 必须为绝对 http 或 https 地址。
+   *
+   * @generated from field: string url = 1;
+   */
+  url: string;
+
+  /**
+   * POST、PUT、PATCH；空取 POST。
+   *
+   * @generated from field: string method = 2;
+   */
+  method: string;
+
+  /**
+   * 至多 16 个；键为合法 HTTP 标记，值不含控制字符。
+   *
+   * @generated from field: map<string, string> headers = 3;
+   */
+  headers: { [key: string]: string };
+
+  /**
+   * Go 文本模板；字段 Rule、Node、Kind、Transition、Value、At、Summary，
+   * 函数 json 输出 JSON 字符串字面量；空取默认 JSON 模板。
+   *
+   * @generated from field: string body_template = 4;
+   */
+  bodyTemplate: string;
+};
+
+/**
+ * Describes the message probe.v1.WebhookConfig.
+ * Use `create(WebhookConfigSchema)` to create a new message.
+ */
+export const WebhookConfigSchema: GenMessage<WebhookConfig> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 57);
+
+/**
+ * @generated from message probe.v1.ListNotifyChannelsRequest
+ */
+export type ListNotifyChannelsRequest = Message<"probe.v1.ListNotifyChannelsRequest"> & {
+};
+
+/**
+ * Describes the message probe.v1.ListNotifyChannelsRequest.
+ * Use `create(ListNotifyChannelsRequestSchema)` to create a new message.
+ */
+export const ListNotifyChannelsRequestSchema: GenMessage<ListNotifyChannelsRequest> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 58);
+
+/**
+ * @generated from message probe.v1.ListNotifyChannelsResponse
+ */
+export type ListNotifyChannelsResponse = Message<"probe.v1.ListNotifyChannelsResponse"> & {
+  /**
+   * @generated from field: repeated probe.v1.NotifyChannel channels = 1;
+   */
+  channels: NotifyChannel[];
+};
+
+/**
+ * Describes the message probe.v1.ListNotifyChannelsResponse.
+ * Use `create(ListNotifyChannelsResponseSchema)` to create a new message.
+ */
+export const ListNotifyChannelsResponseSchema: GenMessage<ListNotifyChannelsResponse> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 59);
+
+/**
+ * @generated from message probe.v1.SaveNotifyChannelRequest
+ */
+export type SaveNotifyChannelRequest = Message<"probe.v1.SaveNotifyChannelRequest"> & {
+  /**
+   * @generated from field: probe.v1.NotifyChannel channel = 1;
+   */
+  channel?: NotifyChannel | undefined;
+};
+
+/**
+ * Describes the message probe.v1.SaveNotifyChannelRequest.
+ * Use `create(SaveNotifyChannelRequestSchema)` to create a new message.
+ */
+export const SaveNotifyChannelRequestSchema: GenMessage<SaveNotifyChannelRequest> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 60);
+
+/**
+ * @generated from message probe.v1.SaveNotifyChannelResponse
+ */
+export type SaveNotifyChannelResponse = Message<"probe.v1.SaveNotifyChannelResponse"> & {
+  /**
+   * @generated from field: probe.v1.NotifyChannel channel = 1;
+   */
+  channel?: NotifyChannel | undefined;
+};
+
+/**
+ * Describes the message probe.v1.SaveNotifyChannelResponse.
+ * Use `create(SaveNotifyChannelResponseSchema)` to create a new message.
+ */
+export const SaveNotifyChannelResponseSchema: GenMessage<SaveNotifyChannelResponse> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 61);
+
+/**
+ * @generated from message probe.v1.DeleteNotifyChannelRequest
+ */
+export type DeleteNotifyChannelRequest = Message<"probe.v1.DeleteNotifyChannelRequest"> & {
+  /**
+   * @generated from field: int64 id = 1;
+   */
+  id: bigint;
+};
+
+/**
+ * Describes the message probe.v1.DeleteNotifyChannelRequest.
+ * Use `create(DeleteNotifyChannelRequestSchema)` to create a new message.
+ */
+export const DeleteNotifyChannelRequestSchema: GenMessage<DeleteNotifyChannelRequest> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 62);
+
+/**
+ * @generated from message probe.v1.DeleteNotifyChannelResponse
+ */
+export type DeleteNotifyChannelResponse = Message<"probe.v1.DeleteNotifyChannelResponse"> & {
+};
+
+/**
+ * Describes the message probe.v1.DeleteNotifyChannelResponse.
+ * Use `create(DeleteNotifyChannelResponseSchema)` to create a new message.
+ */
+export const DeleteNotifyChannelResponseSchema: GenMessage<DeleteNotifyChannelResponse> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 63);
+
+/**
+ * @generated from message probe.v1.TestNotifyChannelRequest
+ */
+export type TestNotifyChannelRequest = Message<"probe.v1.TestNotifyChannelRequest"> & {
+  /**
+   * @generated from field: int64 id = 1;
+   */
+  id: bigint;
+};
+
+/**
+ * Describes the message probe.v1.TestNotifyChannelRequest.
+ * Use `create(TestNotifyChannelRequestSchema)` to create a new message.
+ */
+export const TestNotifyChannelRequestSchema: GenMessage<TestNotifyChannelRequest> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 64);
+
+/**
+ * @generated from message probe.v1.TestNotifyChannelResponse
+ */
+export type TestNotifyChannelResponse = Message<"probe.v1.TestNotifyChannelResponse"> & {
+};
+
+/**
+ * Describes the message probe.v1.TestNotifyChannelResponse.
+ * Use `create(TestNotifyChannelResponseSchema)` to create a new message.
+ */
+export const TestNotifyChannelResponseSchema: GenMessage<TestNotifyChannelResponse> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 65);
+
+/**
+ * @generated from message probe.v1.ListAlertEventsRequest
+ */
+export type ListAlertEventsRequest = Message<"probe.v1.ListAlertEventsRequest"> & {
+  /**
+   * 0 表示全部节点。
+   *
+   * @generated from field: int64 node_id = 1;
+   */
+  nodeId: bigint;
+
+  /**
+   * 0 表示从最新事件开始，否则只返回小于此 id 的事件。
+   *
+   * @generated from field: int64 before_id = 2;
+   */
+  beforeId: bigint;
+
+  /**
+   * 0 取 100，超过 500 按 500 返回。
+   *
+   * @generated from field: uint32 limit = 3;
+   */
+  limit: number;
+};
+
+/**
+ * Describes the message probe.v1.ListAlertEventsRequest.
+ * Use `create(ListAlertEventsRequestSchema)` to create a new message.
+ */
+export const ListAlertEventsRequestSchema: GenMessage<ListAlertEventsRequest> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 66);
+
+/**
+ * @generated from message probe.v1.ListAlertEventsResponse
+ */
+export type ListAlertEventsResponse = Message<"probe.v1.ListAlertEventsResponse"> & {
+  /**
+   * @generated from field: repeated probe.v1.AlertEvent events = 1;
+   */
+  events: AlertEvent[];
+};
+
+/**
+ * Describes the message probe.v1.ListAlertEventsResponse.
+ * Use `create(ListAlertEventsResponseSchema)` to create a new message.
+ */
+export const ListAlertEventsResponseSchema: GenMessage<ListAlertEventsResponse> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 67);
+
+/**
+ * @generated from message probe.v1.AlertEvent
+ */
+export type AlertEvent = Message<"probe.v1.AlertEvent"> & {
+  /**
+   * @generated from field: int64 id = 1;
+   */
+  id: bigint;
+
+  /**
+   * @generated from field: int64 rule_id = 2;
+   */
+  ruleId: bigint;
+
+  /**
+   * @generated from field: int64 node_id = 3;
+   */
+  nodeId: bigint;
+
+  /**
+   * 取值为 firing 或 recovered。
+   *
+   * @generated from field: string transition = 4;
+   */
+  transition: string;
+
+  /**
+   * 事件墙钟，Unix 秒。
+   *
+   * @generated from field: int64 at = 5;
+   */
+  at: bigint;
+
+  /**
+   * @generated from field: string summary = 6;
+   */
+  summary: string;
+
+  /**
+   * 触发或恢复时的观测值，单位由规则种类与指标决定。
+   *
+   * @generated from field: double value = 7;
+   */
+  value: number;
+
+  /**
+   * @generated from field: repeated probe.v1.AlertDelivery deliveries = 8;
+   */
+  deliveries: AlertDelivery[];
+};
+
+/**
+ * Describes the message probe.v1.AlertEvent.
+ * Use `create(AlertEventSchema)` to create a new message.
+ */
+export const AlertEventSchema: GenMessage<AlertEvent> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 68);
+
+/**
+ * @generated from message probe.v1.AlertDelivery
+ */
+export type AlertDelivery = Message<"probe.v1.AlertDelivery"> & {
+  /**
+   * @generated from field: int64 channel_id = 1;
+   */
+  channelId: bigint;
+
+  /**
+   * 实际投递次数，0–3。
+   *
+   * @generated from field: uint32 attempts = 2;
+   */
+  attempts: number;
+
+  /**
+   * @generated from field: bool ok = 3;
+   */
+  ok: boolean;
+
+  /**
+   * @generated from field: string last_error = 4;
+   */
+  lastError: string;
+
+  /**
+   * 送达墙钟，Unix 秒；未成功时缺失。
+   *
+   * @generated from field: optional int64 delivered_at = 5;
+   */
+  deliveredAt?: bigint | undefined;
+
+  /**
+   * 不再尝试：成功、不可重试失败或次数耗尽；渠道删除也终止投递。
+   *
+   * @generated from field: bool done = 6;
+   */
+  done: boolean;
+};
+
+/**
+ * Describes the message probe.v1.AlertDelivery.
+ * Use `create(AlertDeliverySchema)` to create a new message.
+ */
+export const AlertDeliverySchema: GenMessage<AlertDelivery> = /*@__PURE__*/
+  messageDesc(file_probe_v1_admin, 69);
+
+/**
+ * @generated from enum probe.v1.AlertKind
+ */
+export enum AlertKind {
+  /**
+   * @generated from enum value: ALERT_KIND_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: ALERT_KIND_OFFLINE = 1;
+   */
+  OFFLINE = 1,
+
+  /**
+   * @generated from enum value: ALERT_KIND_PROBE = 2;
+   */
+  PROBE = 2,
+}
+
+/**
+ * Describes the enum probe.v1.AlertKind.
+ */
+export const AlertKindSchema: GenEnum<AlertKind> = /*@__PURE__*/
+  enumDesc(file_probe_v1_admin, 0);
+
+/**
+ * @generated from enum probe.v1.ProbeMetric
+ */
+export enum ProbeMetric {
+  /**
+   * @generated from enum value: PROBE_METRIC_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PROBE_METRIC_LOSS_PCT = 1;
+   */
+  LOSS_PCT = 1,
+
+  /**
+   * @generated from enum value: PROBE_METRIC_RTT_MS = 2;
+   */
+  RTT_MS = 2,
+}
+
+/**
+ * Describes the enum probe.v1.ProbeMetric.
+ */
+export const ProbeMetricSchema: GenEnum<ProbeMetric> = /*@__PURE__*/
+  enumDesc(file_probe_v1_admin, 1);
+
+/**
+ * @generated from enum probe.v1.ChannelKind
+ */
+export enum ChannelKind {
+  /**
+   * @generated from enum value: CHANNEL_KIND_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: CHANNEL_KIND_TELEGRAM = 1;
+   */
+  TELEGRAM = 1,
+
+  /**
+   * @generated from enum value: CHANNEL_KIND_WEBHOOK = 2;
+   */
+  WEBHOOK = 2,
+}
+
+/**
+ * Describes the enum probe.v1.ChannelKind.
+ */
+export const ChannelKindSchema: GenEnum<ChannelKind> = /*@__PURE__*/
+  enumDesc(file_probe_v1_admin, 2);
+
+/**
  * 管理面板 → hub。除 Login 外每个方法都要求有效的会话 cookie，由挂载时绑定的
  * 拦截器裁决。全部方法都是 unary，且没有一个标为无副作用：本服务不接受 GET，
  * 这是抵御跨站请求伪造的几条各自独立的事实之一。
@@ -1252,7 +1982,7 @@ export const AdminService: GenService<{
     output: typeof CreateNodeResponseSchema;
   },
   /**
-   * 整体替换可编辑字段（名称、是否公开、备注、周期重置日）。
+   * 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期）。
    *
    * @generated from rpc probe.v1.AdminService.UpdateNode
    */
@@ -1396,6 +2126,86 @@ export const AdminService: GenService<{
     methodKind: "unary";
     input: typeof QueryProbesRequestSchema;
     output: typeof QueryProbesResponseSchema;
+  },
+  /**
+   * 列出规则及其当前节点状态。
+   *
+   * @generated from rpc probe.v1.AdminService.ListAlertRules
+   */
+  listAlertRules: {
+    methodKind: "unary";
+    input: typeof ListAlertRulesRequestSchema;
+    output: typeof ListAlertRulesResponseSchema;
+  },
+  /**
+   * id 为 0 时创建，否则整体替换规则与作用域、渠道列表。
+   *
+   * @generated from rpc probe.v1.AdminService.SaveAlertRule
+   */
+  saveAlertRule: {
+    methodKind: "unary";
+    input: typeof SaveAlertRuleRequestSchema;
+    output: typeof SaveAlertRuleResponseSchema;
+  },
+  /**
+   * 删除规则与状态，历史事件保留至到期清理。
+   *
+   * @generated from rpc probe.v1.AdminService.DeleteAlertRule
+   */
+  deleteAlertRule: {
+    methodKind: "unary";
+    input: typeof DeleteAlertRuleRequestSchema;
+    output: typeof DeleteAlertRuleResponseSchema;
+  },
+  /**
+   * 按事件 id 倒序分页，包含每个事件的投递状态。
+   *
+   * @generated from rpc probe.v1.AdminService.ListAlertEvents
+   */
+  listAlertEvents: {
+    methodKind: "unary";
+    input: typeof ListAlertEventsRequestSchema;
+    output: typeof ListAlertEventsResponseSchema;
+  },
+  /**
+   * 列出渠道；不回显 Telegram 凭据。
+   *
+   * @generated from rpc probe.v1.AdminService.ListNotifyChannels
+   */
+  listNotifyChannels: {
+    methodKind: "unary";
+    input: typeof ListNotifyChannelsRequestSchema;
+    output: typeof ListNotifyChannelsResponseSchema;
+  },
+  /**
+   * id 为 0 时创建，否则整体替换；Telegram 空 token 保留旧值。
+   *
+   * @generated from rpc probe.v1.AdminService.SaveNotifyChannel
+   */
+  saveNotifyChannel: {
+    methodKind: "unary";
+    input: typeof SaveNotifyChannelRequestSchema;
+    output: typeof SaveNotifyChannelResponseSchema;
+  },
+  /**
+   * 被告警规则引用的渠道不可删除，错误列出引用规则。
+   *
+   * @generated from rpc probe.v1.AdminService.DeleteNotifyChannel
+   */
+  deleteNotifyChannel: {
+    methodKind: "unary";
+    input: typeof DeleteNotifyChannelRequestSchema;
+    output: typeof DeleteNotifyChannelResponseSchema;
+  },
+  /**
+   * 向已保存的渠道同步发送测试消息，投递失败返回错误原文。
+   *
+   * @generated from rpc probe.v1.AdminService.TestNotifyChannel
+   */
+  testNotifyChannel: {
+    methodKind: "unary";
+    input: typeof TestNotifyChannelRequestSchema;
+    output: typeof TestNotifyChannelResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_probe_v1_admin, 0);

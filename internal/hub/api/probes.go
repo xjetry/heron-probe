@@ -47,6 +47,8 @@ func (s *Service) SaveProbeTask(ctx context.Context, req *connect.Request[probev
 func (s *Service) DeleteProbeTask(ctx context.Context, req *connect.Request[probev1.DeleteProbeTaskRequest]) (*connect.Response[probev1.DeleteProbeTaskResponse], error) {
 	version, err := s.probes.Delete(ctx, req.Msg.GetId())
 	switch {
+	case errors.Is(err, store.ErrInUse):
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("id: %w", err))
 	case errors.Is(err, store.ErrNotFound):
 		return nil, probeNotFound(err, "id", "id")
 	case err != nil:

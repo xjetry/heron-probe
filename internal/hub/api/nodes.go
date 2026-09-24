@@ -34,6 +34,9 @@ func nodeProto(n store.Node) *probev1.Node {
 	if n.Facts != nil {
 		out.FactsUpdatedAt = proto.Int64(n.FactsUpdatedAt.Unix())
 	}
+	if n.OfflineGraceS != 0 {
+		out.OfflineGraceS = proto.Uint32(uint32(n.OfflineGraceS))
+	}
 	return out
 }
 
@@ -100,18 +103,13 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 	if day < minResetDay || day > maxResetDay {
 		return nil, invalid("traffic_reset_day must be between %d and %d; got %d", minResetDay, maxResetDay, day)
 	}
+	grace := req.Msg.GetOfflineGraceS()
+	if grace != 0 && time.Duration(grace)*time.Second < s.cfg.TTL {
+		return nil, invalid("offline_grace_s: must be 0 or at least %d", (s.cfg.TTL+time.Second-1)/time.Second)
+	}
 	s.nodeMu.Lock()
 	defer s.nodeMu.Unlock()
-	// 请求不携带宽限期；nodeMu 串行化节点编辑，保留已存值而不是把缺省解释为清零。
-	current, err := s.store.GetNode(ctx, req.Msg.GetId())
-	if errors.Is(err, store.ErrNotFound) {
-		return nil, notFound(req.Msg.GetId())
-	}
-	if err != nil {
-		s.log.Error("reading node before update failed", "err", err)
-		return nil, internalError("reading node before update failed")
-	}
-	err = s.store.UpdateNode(ctx, req.Msg.GetId(), name, req.Msg.GetPublic(), note, day, current.OfflineGraceS)
+	err = s.store.UpdateNode(ctx, req.Msg.GetId(), name, req.Msg.GetPublic(), note, day, int(grace))
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, notFound(req.Msg.GetId())
 	}
@@ -143,6 +141,8 @@ func (s *Service) DeleteNode(ctx context.Context, req *connect.Request[probev1.D
 		return nil, internalError("deleting node failed")
 	}
 	s.nodes.Forget(req.Msg.GetId())
+	// auth.DeleteNode 已提交且释放鉴权锁；同步清掉告警缓存，列表不能残留已删除节点的作用域与状态。
+	s.alerts.Forget(req.Msg.GetId())
 	s.log.Info("node deleted", "node", req.Msg.GetId())
 	return connect.NewResponse(&probev1.DeleteNodeResponse{}), nil
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/api"
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/ingest"
@@ -116,15 +117,17 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	l := live.New(clk, ttl)
 	book := traffic.New(st, clk, loc, log)
 	reg := probe.New(st, log)
+	alerts := alert.New(alert.Config{TTL: ttl}, st, l, clk, log)
+	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, log)
 	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, book, reg, clk, log)
 	if err != nil {
 		return err
 	}
 	ctx := context.Background()
-	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx), reg.Load(ctx)); err != nil {
+	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
 		return err
 	}
-	admin := api.New(api.Config{ReportInterval: svc.Interval(), TrustedProxies: trusted}, st, a, l, svc, book, reg, clk, log)
+	admin := api.New(api.Config{TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
 
 	mux := newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", web.RootRedirect()))
 	listener, err := net.Listen("tcp", *listen)

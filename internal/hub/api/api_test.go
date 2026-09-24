@@ -20,6 +20,7 @@ import (
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
 	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
@@ -30,22 +31,6 @@ import (
 )
 
 const password = "correct horse battery staple"
-
-func TestUpdateNodePreservesOfflineGrace(t *testing.T) {
-	h := newHarness(t, "")
-	h.login(t)
-	id, _ := h.createNode(t, "n")
-	if err := h.store.UpdateNode(t.Context(), id, "n", false, "", 1, 90); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "renamed", TrafficResetDay: 15})); err != nil {
-		t.Fatal(err)
-	}
-	n, err := h.store.GetNode(t.Context(), id)
-	if err != nil || n.OfflineGraceS != 90 || n.Name != "renamed" || n.TrafficResetDay != 15 {
-		t.Fatalf("updated node=%+v err=%v, want renamed/15 with grace 90", n, err)
-	}
-}
 
 type harness struct {
 	srv    *httptest.Server
@@ -59,6 +44,7 @@ type harness struct {
 	ingest *ingest.Service
 	book   *traffic.Book
 	reg    *probe.Registry
+	alerts *alert.Engine
 	svc    *Service
 }
 
@@ -78,15 +64,17 @@ func newHarness(t *testing.T, trusted string) *harness {
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, slog.Default())
 	reg := probe.New(st, slog.Default())
+	alerts := alert.New(alert.Config{TTL: 30 * time.Second}, st, l, clk, slog.Default())
+	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, slog.Default())
 	in, err := ingest.New(ingest.Config{TTL: 30 * time.Second, TrustedProxies: prefixes}, l, st, a, book, reg, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if err := errors.Join(a.Load(ctx), in.Load(ctx), book.Load(ctx), reg.Load(ctx)); err != nil {
+	if err := errors.Join(a.Load(ctx), in.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}
-	svc := New(Config{ReportInterval: 10 * time.Second, TrustedProxies: prefixes}, st, a, l, in, book, reg, clk, slog.Default())
+	svc := New(Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes}, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
 	mux := http.NewServeMux()
 	mux.Handle(in.Handler())
 	mux.Handle(svc.Handler())
@@ -95,7 +83,7 @@ func newHarness(t *testing.T, trusted string) *harness {
 	jar, _ := cookiejar.New(nil)
 	hc := &http.Client{Jar: jar}
 	return &harness{srv: srv, http: hc, admin: probev1connect.NewAdminServiceClient(hc, srv.URL),
-		agent: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, book: book, reg: reg, svc: svc}
+		agent: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, book: book, reg: reg, alerts: alerts, svc: svc}
 }
 
 func (h *harness) login(t *testing.T) {

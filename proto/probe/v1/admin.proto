@@ -18,7 +18,7 @@ service AdminService {
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
   // 建节点并返回其 token；明文只在此处返回一次。
   rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse);
-  // 整体替换可编辑字段（名称、是否公开、备注、周期重置日）。
+  // 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期）。
   rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse);
   // 删除节点及其全部历史；进程内的实时状态同步清理。
   rpc DeleteNode(DeleteNodeRequest) returns (DeleteNodeResponse);
@@ -49,6 +49,23 @@ service AdminService {
   rpc DeleteProbeTask(DeleteProbeTaskRequest) returns (DeleteProbeTaskResponse);
   // 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
   rpc QueryProbes(QueryProbesRequest) returns (QueryProbesResponse);
+
+  // 列出规则及其当前节点状态。
+  rpc ListAlertRules(ListAlertRulesRequest) returns (ListAlertRulesResponse);
+  // id 为 0 时创建，否则整体替换规则与作用域、渠道列表。
+  rpc SaveAlertRule(SaveAlertRuleRequest) returns (SaveAlertRuleResponse);
+  // 删除规则与状态，历史事件保留至到期清理。
+  rpc DeleteAlertRule(DeleteAlertRuleRequest) returns (DeleteAlertRuleResponse);
+  // 按事件 id 倒序分页，包含每个事件的投递状态。
+  rpc ListAlertEvents(ListAlertEventsRequest) returns (ListAlertEventsResponse);
+  // 列出渠道；不回显 Telegram 凭据。
+  rpc ListNotifyChannels(ListNotifyChannelsRequest) returns (ListNotifyChannelsResponse);
+  // id 为 0 时创建，否则整体替换；Telegram 空 token 保留旧值。
+  rpc SaveNotifyChannel(SaveNotifyChannelRequest) returns (SaveNotifyChannelResponse);
+  // 被告警规则引用的渠道不可删除，错误列出引用规则。
+  rpc DeleteNotifyChannel(DeleteNotifyChannelRequest) returns (DeleteNotifyChannelResponse);
+  // 向已保存的渠道同步发送测试消息，投递失败返回错误原文。
+  rpc TestNotifyChannel(TestNotifyChannelRequest) returns (TestNotifyChannelResponse);
 }
 
 message LoginRequest {
@@ -74,6 +91,8 @@ message Node {
   optional int64 facts_updated_at = 9;
   // 周期重置日 1–28：周期在 hub 时区的该日零点重置。
   uint32 traffic_reset_day = 10;
+  // 离线告警宽限期（秒）；缺失表示取 PROBE_OFFLINE_AFTER。设置值不得小于 PROBE_OFFLINE_AFTER。
+  optional uint32 offline_grace_s = 11;
 }
 
 message ListNodesRequest {}
@@ -99,6 +118,8 @@ message UpdateNodeRequest {
   string note = 4;
   // 1–28，必填：本方法整体替换可编辑字段，缺省的 0 会被拒绝而不是当作"不改"。
   uint32 traffic_reset_day = 5;
+  // 0 表示清除（取 PROBE_OFFLINE_AFTER）；非 0 须 ≥ PROBE_OFFLINE_AFTER 的秒数。
+  uint32 offline_grace_s = 6;
 }
 message UpdateNodeResponse {
   Node node = 1;
@@ -310,4 +331,136 @@ message ProbeSample {
   optional uint32 rtt_min_us = 6;
   // 成功探测的最大 rtt，微秒；只有 sent − lost − errors > 0 时才有。
   optional uint32 rtt_max_us = 7;
+}
+
+enum AlertKind {
+  ALERT_KIND_UNSPECIFIED = 0;
+  ALERT_KIND_OFFLINE = 1;
+  ALERT_KIND_PROBE = 2;
+}
+enum ProbeMetric {
+  PROBE_METRIC_UNSPECIFIED = 0;
+  PROBE_METRIC_LOSS_PCT = 1;
+  PROBE_METRIC_RTT_MS = 2;
+}
+message AlertRule {
+  // 0 表示创建。
+  int64 id = 1;
+  // 1–64 个字符。
+  string name = 2;
+  // 必须为离线或探测，未指定值不允许保存。
+  AlertKind kind = 3;
+  bool enabled = 4;
+  // 显式作用域，升序去重；all_nodes 为假时就是作用域，保存时不可为空。
+  repeated int64 node_ids = 5;
+  // 已保存渠道的 id，升序去重；空表示只记事件不投递。
+  repeated int64 channel_ids = 6;
+  // 以下字段仅用于探测规则，task_id 必须是已存在的非零任务 id。
+  uint64 task_id = 7;
+  // 探测规则必须选择丢包百分比或往返毫秒数。
+  ProbeMetric metric = 8;
+  // 丢包百分比 0–100；往返毫秒数 > 0。
+  double threshold = 9;
+  // 1–60：连续多少个已闭合分钟达到阈值才触发。
+  uint32 for_minutes = 10;
+  // 创建墙钟，Unix 秒；保存请求中的值忽略。
+  int64 created_at = 11;
+  // 为真表示全部节点，新建节点自动纳入，node_ids 忽略且回显为空；
+  // 为假时 node_ids 是显式作用域，删除节点后空集不等于全部。
+  bool all_nodes = 12;
+}
+message ListAlertRulesRequest {}
+message ListAlertRulesResponse { repeated AlertRule rules = 1; repeated AlertStateEntry states = 2; }
+message AlertStateEntry {
+  int64 rule_id = 1;
+  int64 node_id = 2;
+  // 取值为 ok、pending 或 firing。
+  string state = 3;
+  // 进入此状态的墙钟，Unix 秒。
+  int64 since_at = 4;
+}
+message SaveAlertRuleRequest { AlertRule rule = 1; }
+message SaveAlertRuleResponse { AlertRule rule = 1; }
+message DeleteAlertRuleRequest { int64 id = 1; }
+message DeleteAlertRuleResponse {}
+
+enum ChannelKind {
+  CHANNEL_KIND_UNSPECIFIED = 0;
+  CHANNEL_KIND_TELEGRAM = 1;
+  CHANNEL_KIND_WEBHOOK = 2;
+}
+message NotifyChannel {
+  // 0 表示创建。
+  int64 id = 1;
+  // 1–64 个字符。
+  string name = 2;
+  // 必须选择 Telegram 或自定义 HTTP 通知。
+  ChannelKind kind = 3;
+  // 选择 Telegram 时必填。
+  TelegramConfig telegram = 4;
+  // 选择自定义 HTTP 通知时必填。
+  WebhookConfig webhook = 5;
+  // 创建墙钟，Unix 秒；保存请求中的值忽略。
+  int64 created_at = 6;
+}
+message TelegramConfig {
+  // 列表与保存响应里恒为空；保存时为空表示保留已存的 token（新建时必填）。
+  string bot_token = 1;
+  // 只在响应里有意义，表示已保存非空 token。
+  bool has_bot_token = 2;
+  // 非空的接收会话标识。
+  string chat_id = 3;
+}
+message WebhookConfig {
+  // 必须为绝对 http 或 https 地址。
+  string url = 1;
+  // POST、PUT、PATCH；空取 POST。
+  string method = 2;
+  // 至多 16 个；键为合法 HTTP 标记，值不含控制字符。
+  map<string, string> headers = 3;
+  // Go 文本模板；字段 Rule、Node、Kind、Transition、Value、At、Summary，
+  // 函数 json 输出 JSON 字符串字面量；空取默认 JSON 模板。
+  string body_template = 4;
+}
+message ListNotifyChannelsRequest {}
+message ListNotifyChannelsResponse { repeated NotifyChannel channels = 1; }
+message SaveNotifyChannelRequest { NotifyChannel channel = 1; }
+message SaveNotifyChannelResponse { NotifyChannel channel = 1; }
+message DeleteNotifyChannelRequest { int64 id = 1; }
+message DeleteNotifyChannelResponse {}
+message TestNotifyChannelRequest { int64 id = 1; }
+message TestNotifyChannelResponse {}
+
+message ListAlertEventsRequest {
+  // 0 表示全部节点。
+  int64 node_id = 1;
+  // 0 表示从最新事件开始，否则只返回小于此 id 的事件。
+  int64 before_id = 2;
+  // 0 取 100，超过 500 按 500 返回。
+  uint32 limit = 3;
+}
+message ListAlertEventsResponse { repeated AlertEvent events = 1; }
+message AlertEvent {
+  int64 id = 1;
+  int64 rule_id = 2;
+  int64 node_id = 3;
+  // 取值为 firing 或 recovered。
+  string transition = 4;
+  // 事件墙钟，Unix 秒。
+  int64 at = 5;
+  string summary = 6;
+  // 触发或恢复时的观测值，单位由规则种类与指标决定。
+  double value = 7;
+  repeated AlertDelivery deliveries = 8;
+}
+message AlertDelivery {
+  int64 channel_id = 1;
+  // 实际投递次数，0–3。
+  uint32 attempts = 2;
+  bool ok = 3;
+  string last_error = 4;
+  // 送达墙钟，Unix 秒；未成功时缺失。
+  optional int64 delivered_at = 5;
+  // 不再尝试：成功、不可重试失败或次数耗尽；渠道删除也终止投递。
+  bool done = 6;
 }

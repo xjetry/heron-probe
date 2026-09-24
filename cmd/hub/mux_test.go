@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/api"
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/ingest"
@@ -39,15 +40,17 @@ func newTestMux(t *testing.T) *http.ServeMux {
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, slog.Default())
 	reg := probe.New(st, slog.Default())
+	alerts := alert.New(alert.Config{TTL: 30 * time.Second}, st, l, clk, slog.Default())
+	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, slog.Default())
 	svc, err := ingest.New(ingest.Config{TTL: 30 * time.Second}, l, st, a, book, reg, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx), reg.Load(ctx)); err != nil {
+	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}
-	admin := api.New(api.Config{ReportInterval: 10 * time.Second}, st, a, l, svc, book, reg, clk, slog.Default())
+	admin := api.New(api.Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second}, st, a, l, svc, book, reg, alerts, notifier, clk, slog.Default())
 	return newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", web.RootRedirect()))
 }
 
