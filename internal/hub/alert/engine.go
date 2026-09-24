@@ -175,9 +175,9 @@ func (e *Engine) SaveChannel(ctx context.Context, c store.NotifyChannel) (store.
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
 	if c.Kind == store.ChannelTelegram && c.ID != 0 {
-		var cfg telegramConfig
-		if err := json.Unmarshal([]byte(c.Config), &cfg); err != nil {
-			return store.NotifyChannel{}, invalid("config must be a telegram JSON object: %v", err)
+		cfg, err := decodeTelegram(c.Config)
+		if err != nil {
+			return store.NotifyChannel{}, err
 		}
 		if cfg.BotToken == "" {
 			channels, err := e.st.ListNotifyChannels(ctx)
@@ -189,8 +189,8 @@ func (e *Engine) SaveChannel(ctx context.Context, c store.NotifyChannel) (store.
 				if old.ID == c.ID {
 					found = true
 					if old.Kind == store.ChannelTelegram {
-						var prev telegramConfig
-						if err := json.Unmarshal([]byte(old.Config), &prev); err != nil {
+						prev, err := decodeTelegram(old.Config)
+						if err != nil {
 							return store.NotifyChannel{}, err
 						}
 						cfg.BotToken = prev.BotToken
@@ -212,9 +212,9 @@ func (e *Engine) SaveChannel(ctx context.Context, c store.NotifyChannel) (store.
 		return store.NotifyChannel{}, err
 	}
 	if c.Kind == store.ChannelWebhook {
-		var cfg webhookConfig
-		if err := json.Unmarshal([]byte(c.Config), &cfg); err != nil {
-			return store.NotifyChannel{}, invalid("config must be a webhook JSON object: %v", err)
+		cfg, err := decodeWebhook(c.Config)
+		if err != nil {
+			return store.NotifyChannel{}, err
 		}
 		if cfg.Method == "" {
 			cfg.Method = "POST"

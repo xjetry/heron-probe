@@ -228,7 +228,7 @@ func TestLoadSkipsInvalidRulesAndTheirStates(t *testing.T) {
 func TestChannelRejectsInvalidTemplateFieldsAndHeaderValues(t *testing.T) {
 	for _, body := range []string{`{{.Rulee}}`, `{{json .Value}}`} {
 		t.Run(body, func(t *testing.T) {
-			b, err := json.Marshal(webhookConfig{URL: "https://example.invalid", BodyTemplate: body})
+			b, err := json.Marshal(WebhookConfig{URL: "https://example.invalid", BodyTemplate: body})
 			must(t, err)
 			err = CheckChannel(store.NotifyChannel{Name: "webhook", Kind: store.ChannelWebhook, Config: string(b)})
 			if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "body_template") {
@@ -238,7 +238,7 @@ func TestChannelRejectsInvalidTemplateFieldsAndHeaderValues(t *testing.T) {
 	}
 	for _, value := range []string{"a\r\nb", "a\x00b", "a\x7fb", "a\tb"} {
 		t.Run(fmt.Sprintf("%q", value), func(t *testing.T) {
-			b, err := json.Marshal(webhookConfig{URL: "https://example.invalid", Headers: map[string]string{"X-Test": value}})
+			b, err := json.Marshal(WebhookConfig{URL: "https://example.invalid", Headers: map[string]string{"X-Test": value}})
 			must(t, err)
 			err = CheckChannel(store.NotifyChannel{Name: "webhook", Kind: store.ChannelWebhook, Config: string(b)})
 			if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "headers") {
@@ -252,7 +252,7 @@ func TestSaveWebhookNormalizesMethod(t *testing.T) {
 	for _, method := range []string{"", "PUT"} {
 		t.Run(method, func(t *testing.T) {
 			f := newFixture(t)
-			b, err := json.Marshal(webhookConfig{URL: "https://example.invalid", Method: method})
+			b, err := json.Marshal(WebhookConfig{URL: "https://example.invalid", Method: method})
 			must(t, err)
 			saved, err := f.e.SaveChannel(t.Context(), store.NotifyChannel{Name: "webhook", Kind: store.ChannelWebhook, Config: string(b)})
 			must(t, err)
@@ -263,7 +263,7 @@ func TestSaveWebhookNormalizesMethod(t *testing.T) {
 				want = "POST"
 			}
 			for _, c := range []store.NotifyChannel{saved, rows[0], f.e.Channels()[0]} {
-				var cfg webhookConfig
+				var cfg WebhookConfig
 				must(t, json.Unmarshal([]byte(c.Config), &cfg))
 				if cfg.Method != want {
 					t.Fatalf("method=%q want %q", cfg.Method, want)

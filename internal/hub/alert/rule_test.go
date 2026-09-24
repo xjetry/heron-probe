@@ -105,7 +105,7 @@ func TestCheckChannel(t *testing.T) {
 			for i := 0; i < count; i++ {
 				headers[fmt.Sprintf("X-%d", i)] = "v"
 			}
-			b, err := json.Marshal(webhookConfig{URL: "https://example.invalid", Headers: headers})
+			b, err := json.Marshal(WebhookConfig{URL: "https://example.invalid", Headers: headers})
 			must(t, err)
 			err = CheckChannel(store.NotifyChannel{Name: "n", Kind: store.ChannelWebhook, Config: string(b)})
 			if count == 16 {
@@ -117,7 +117,7 @@ func TestCheckChannel(t *testing.T) {
 	}
 	for _, key := range []string{"", "has space", "bad:colon", "nonascii字", "bad\r\n"} {
 		t.Run("header_"+key, func(t *testing.T) {
-			b, err := json.Marshal(webhookConfig{URL: "https://example.invalid", Headers: map[string]string{key: "v"}})
+			b, err := json.Marshal(WebhookConfig{URL: "https://example.invalid", Headers: map[string]string{key: "v"}})
 			must(t, err)
 			err = CheckChannel(store.NotifyChannel{Name: "n", Kind: store.ChannelWebhook, Config: string(b)})
 			if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "HTTP token") {

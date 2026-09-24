@@ -92,12 +92,12 @@ type Delivery struct {
 	ChannelID   int64
 	Attempts    int
 	OK          bool
+	Done        bool
 	LastError   string
 	DeliveredAt time.Time
 }
 
-// DeleteNotifyChannel 用此上限终止未完成投递；续投方须把同一上限传给 PendingDeliveries，
-// 才不会在重启后把已删除渠道的投递重新入队。
+// 投递尝试的唯一上限；队列达到上限时写入 done，重启也不能绕过它。
 const MaxDeliveryAttempts = 3
 
 // 主表与关联在同一读事务中读取，不能把并发保存前后的两份作用域拼在一起。
@@ -382,7 +382,7 @@ func (s *Store) DeleteNotifyChannel(ctx context.Context, id int64) error {
 		if err := deleteAlertEntity(tx, "notify_channel", "notify channel", id); err != nil {
 			return err
 		}
-		_, err := tx.Exec("UPDATE alert_delivery SET attempts = ?, last_error = 'channel deleted' WHERE channel_id = ? AND ok = 0", MaxDeliveryAttempts, id)
+		_, err := tx.Exec("UPDATE alert_delivery SET done = 1, last_error = 'channel deleted' WHERE channel_id = ? AND done = 0", id)
 		return err
 	})
 }
@@ -463,13 +463,13 @@ func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, stat
 	return ev, nil
 }
 
-func (s *Store) UpdateDelivery(ctx context.Context, id int64, attempts int, ok bool, lastError string, at time.Time) error {
+func (s *Store) UpdateDelivery(ctx context.Context, id int64, attempts int, ok, done bool, lastError string, at time.Time) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
 		var delivered any
 		if !at.IsZero() {
 			delivered = at.Unix()
 		}
-		res, err := tx.Exec("UPDATE alert_delivery SET attempts = ?, ok = ?, last_error = ?, delivered_at = ? WHERE id = ?", attempts, ok, lastError, delivered, id)
+		res, err := tx.Exec("UPDATE alert_delivery SET attempts = ?, ok = ?, done = ?, last_error = ?, delivered_at = ? WHERE id = ? AND done = 0", attempts, ok, done, lastError, delivered, id)
 		if err != nil {
 			return err
 		}
@@ -478,20 +478,21 @@ func (s *Store) UpdateDelivery(ctx context.Context, id int64, attempts int, ok b
 			return err
 		}
 		if n == 0 {
-			return NotFoundError{Kind: "alert delivery", ID: id}
+			// 删除渠道或其他终止已先提交，迟到的 HTTP 结果不能把终态重新打开。
+			return requireAlertReference(tx, "alert_delivery", "alert delivery", id)
 		}
 		return nil
 	})
 }
 
-const selectDeliveries = "SELECT id, event_id, channel_id, attempts, ok, last_error, delivered_at FROM alert_delivery"
+const selectDeliveries = "SELECT id, event_id, channel_id, attempts, ok, done, last_error, delivered_at FROM alert_delivery"
 
 func scanDeliveries(rows *sql.Rows) ([]Delivery, error) {
 	var out []Delivery
 	for rows.Next() {
 		var d Delivery
 		var delivered sql.NullInt64
-		if err := rows.Scan(&d.ID, &d.EventID, &d.ChannelID, &d.Attempts, &d.OK, &d.LastError, &delivered); err != nil {
+		if err := rows.Scan(&d.ID, &d.EventID, &d.ChannelID, &d.Attempts, &d.OK, &d.Done, &d.LastError, &delivered); err != nil {
 			return nil, err
 		}
 		if delivered.Valid {
@@ -502,8 +503,8 @@ func scanDeliveries(rows *sql.Rows) ([]Delivery, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) PendingDeliveries(ctx context.Context, maxAttempts int) ([]Delivery, error) {
-	rows, err := s.r.QueryContext(ctx, selectDeliveries+" WHERE ok = 0 AND attempts < ? ORDER BY id", maxAttempts)
+func (s *Store) PendingDeliveries(ctx context.Context) ([]Delivery, error) {
+	rows, err := s.r.QueryContext(ctx, selectDeliveries+" WHERE done = 0 ORDER BY id")
 	if err != nil {
 		return nil, err
 	}

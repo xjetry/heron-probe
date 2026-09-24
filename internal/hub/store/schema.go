@@ -271,18 +271,19 @@ const ddlAlertEvent = `CREATE TABLE alert_event (
 )`
 const ddlAlertEventByNode = `CREATE INDEX alert_event_by_node ON alert_event(node_id, id)`
 
-// 每渠道一行；ok=0 且 attempts 未耗尽的行是重启后要续投的队列。
+// 每渠道一行；done 显式区分可续投与终态，不用虚增 attempts 冒充不可重试。
 const ddlAlertDelivery = `CREATE TABLE alert_delivery (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   event_id INTEGER NOT NULL,
   channel_id INTEGER NOT NULL,
   attempts INTEGER NOT NULL DEFAULT 0,
   ok INTEGER NOT NULL DEFAULT 0,
+  done INTEGER NOT NULL DEFAULT 0,
   last_error TEXT NOT NULL DEFAULT '',
   delivered_at INTEGER
 )`
 const ddlAlertDeliveryByEvent = `CREATE INDEX alert_delivery_by_event ON alert_delivery(event_id)`
-const ddlAlertDeliveryPending = `CREATE INDEX alert_delivery_pending ON alert_delivery(ok, attempts)`
+const ddlAlertDeliveryPending = `CREATE INDEX alert_delivery_pending ON alert_delivery(done, id)`
 
 func alertStatements() []string {
 	return []string{ddlAlertRule, ddlAlertRuleNode, ddlAlertRuleNodeByNode, ddlAlertRuleChannel,

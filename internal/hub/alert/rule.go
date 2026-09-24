@@ -67,11 +67,11 @@ func CheckRule(r store.AlertRule) error {
 	}
 }
 
-type telegramConfig struct {
+type TelegramConfig struct {
 	BotToken string `json:"bot_token"`
 	ChatID   string `json:"chat_id"`
 }
-type webhookConfig struct {
+type WebhookConfig struct {
 	URL          string            `json:"url"`
 	Method       string            `json:"method"`
 	Headers      map[string]string `json:"headers"`
@@ -114,50 +114,91 @@ func httpToken(s string) bool {
 	return true
 }
 
-func CheckChannel(c store.NotifyChannel) error {
+func decodeTelegram(config string) (TelegramConfig, error) {
+	var cfg TelegramConfig
+	if err := json.Unmarshal([]byte(config), &cfg); err != nil {
+		return cfg, invalid("config must be a telegram JSON object: %v", err)
+	}
+	return cfg, nil
+}
+
+func decodeWebhook(config string) (WebhookConfig, error) {
+	var cfg WebhookConfig
+	if err := json.Unmarshal([]byte(config), &cfg); err != nil {
+		return cfg, invalid("config must be a webhook JSON object: %v", err)
+	}
+	return cfg, nil
+}
+
+func checkWebhook(cfg WebhookConfig) (*template.Template, error) {
+	u, err := url.Parse(cfg.URL)
+	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return nil, invalid("url must be an absolute http or https URL")
+	}
+	if cfg.Method != "" && cfg.Method != "POST" && cfg.Method != "PUT" && cfg.Method != "PATCH" {
+		return nil, invalid("method must be POST, PUT or PATCH (empty defaults to POST)")
+	}
+	if len(cfg.Headers) > 16 {
+		return nil, invalid("headers must contain at most 16 entries")
+	}
+	for key, value := range cfg.Headers {
+		if !httpToken(key) {
+			return nil, invalid("headers key %q must be an HTTP token", key)
+		}
+		if strings.ContainsFunc(value, unicode.IsControl) {
+			return nil, invalid("headers value for %q must not contain control characters", key)
+		}
+	}
+	tmpl, err := parseBodyTemplate(cfg.BodyTemplate)
+	if err != nil {
+		return nil, invalid("body_template must be a valid Go text/template: %v", err)
+	}
+	return tmpl, nil
+}
+
+type channelConfig struct {
+	telegram TelegramConfig
+	webhook  WebhookConfig
+	template *template.Template
+}
+
+// 保存准入与投递构造共用解码、字段检查和模板执行；写侧允许的空 method
+// 还须由 SaveChannel 规范后才能投递，避免读侧重复补缺省。
+func parseChannelConfig(c store.NotifyChannel) (channelConfig, error) {
+	var parsed channelConfig
 	if err := checkName(c.Name); err != nil {
-		return err
+		return parsed, err
 	}
 	switch c.Kind {
 	case store.ChannelTelegram:
-		var cfg telegramConfig
-		if err := json.Unmarshal([]byte(c.Config), &cfg); err != nil {
-			return invalid("config must be a telegram JSON object: %v", err)
+		cfg, err := decodeTelegram(c.Config)
+		if err != nil {
+			return parsed, err
 		}
 		if cfg.ChatID == "" {
-			return invalid("chat_id must not be empty")
+			return parsed, invalid("chat_id must not be empty")
 		}
 		if cfg.BotToken == "" {
-			return invalid("bot_token must not be empty")
+			return parsed, invalid("bot_token must not be empty")
 		}
+		parsed.telegram = cfg
 	case store.ChannelWebhook:
-		var cfg webhookConfig
-		if err := json.Unmarshal([]byte(c.Config), &cfg); err != nil {
-			return invalid("config must be a webhook JSON object: %v", err)
+		cfg, err := decodeWebhook(c.Config)
+		if err != nil {
+			return parsed, err
 		}
-		u, err := url.Parse(cfg.URL)
-		if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
-			return invalid("url must be an absolute http or https URL")
+		tmpl, err := checkWebhook(cfg)
+		if err != nil {
+			return parsed, err
 		}
-		if cfg.Method != "" && cfg.Method != "POST" && cfg.Method != "PUT" && cfg.Method != "PATCH" {
-			return invalid("method must be POST, PUT or PATCH (empty defaults to POST)")
-		}
-		if len(cfg.Headers) > 16 {
-			return invalid("headers must contain at most 16 entries")
-		}
-		for key, value := range cfg.Headers {
-			if !httpToken(key) {
-				return invalid("headers key %q must be an HTTP token", key)
-			}
-			if strings.ContainsFunc(value, unicode.IsControl) {
-				return invalid("headers value for %q must not contain control characters", key)
-			}
-		}
-		if _, err := parseBodyTemplate(cfg.BodyTemplate); err != nil {
-			return invalid("body_template must be a valid Go text/template: %v", err)
-		}
+		parsed.webhook, parsed.template = cfg, tmpl
 	default:
-		return invalid("kind must be telegram or webhook")
+		return parsed, invalid("kind must be telegram or webhook")
 	}
-	return nil
+	return parsed, nil
+}
+
+func CheckChannel(c store.NotifyChannel) error {
+	_, err := parseChannelConfig(c)
+	return err
 }
