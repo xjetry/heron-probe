@@ -218,32 +218,33 @@ const seedProbeMeta = `INSERT INTO probe_meta (id, version) VALUES (1, 0)`
 
 const seedProbeRollupState = `INSERT INTO rollup_state (level, upto_ts) VALUES ('probe_5m', 0), ('probe_1h', 0)`
 
-// 规则作用域与渠道绑定用联结表：无作用域行表示全部节点——空条件匹配一切，属于放宽，
-// 由 alert.Engine 在解析作用域时显式判定并注释后果。
-const ddlAlertRule = `CREATE TABLE IF NOT EXISTS alert_rule (
+// all_nodes 显式区分全部节点与有限作用域：为真时 SaveAlertRule 不写节点联结行；
+// 为假时空联结集合不覆盖任何节点，DeleteNode 删除最后一个联结也不会放宽规则。
+const ddlAlertRule = `CREATE TABLE alert_rule (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   kind TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
+  all_nodes INTEGER NOT NULL DEFAULT 0,
   task_id INTEGER,
   metric TEXT,
   threshold REAL,
   for_minutes INTEGER,
   created_at INTEGER NOT NULL
 )`
-const ddlAlertRuleNode = `CREATE TABLE IF NOT EXISTS alert_rule_node (
+const ddlAlertRuleNode = `CREATE TABLE alert_rule_node (
   rule_id INTEGER NOT NULL,
   node_id INTEGER NOT NULL,
   PRIMARY KEY (rule_id, node_id)
 )`
-const ddlAlertRuleNodeByNode = `CREATE INDEX IF NOT EXISTS alert_rule_node_by_node ON alert_rule_node(node_id)`
-const ddlAlertRuleChannel = `CREATE TABLE IF NOT EXISTS alert_rule_channel (
+const ddlAlertRuleNodeByNode = `CREATE INDEX alert_rule_node_by_node ON alert_rule_node(node_id)`
+const ddlAlertRuleChannel = `CREATE TABLE alert_rule_channel (
   rule_id INTEGER NOT NULL,
   channel_id INTEGER NOT NULL,
   PRIMARY KEY (rule_id, channel_id)
 )`
-const ddlAlertRuleChannelByChannel = `CREATE INDEX IF NOT EXISTS alert_rule_channel_by_channel ON alert_rule_channel(channel_id)`
-const ddlNotifyChannel = `CREATE TABLE IF NOT EXISTS notify_channel (
+const ddlAlertRuleChannelByChannel = `CREATE INDEX alert_rule_channel_by_channel ON alert_rule_channel(channel_id)`
+const ddlNotifyChannel = `CREATE TABLE notify_channel (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   kind TEXT NOT NULL,
@@ -252,14 +253,14 @@ const ddlNotifyChannel = `CREATE TABLE IF NOT EXISTS notify_channel (
 )`
 
 // 状态只在转换时写；since_at 是墙钟，只用于展示"自何时起"。计时用引擎内存里的单调钟。
-const ddlAlertState = `CREATE TABLE IF NOT EXISTS alert_state (
+const ddlAlertState = `CREATE TABLE alert_state (
   rule_id INTEGER NOT NULL,
   node_id INTEGER NOT NULL,
   state TEXT NOT NULL,
   since_at INTEGER NOT NULL,
   PRIMARY KEY (rule_id, node_id)
 )`
-const ddlAlertEvent = `CREATE TABLE IF NOT EXISTS alert_event (
+const ddlAlertEvent = `CREATE TABLE alert_event (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   rule_id INTEGER NOT NULL,
   node_id INTEGER NOT NULL,
@@ -268,10 +269,10 @@ const ddlAlertEvent = `CREATE TABLE IF NOT EXISTS alert_event (
   summary TEXT NOT NULL,
   value REAL NOT NULL
 )`
-const ddlAlertEventByNode = `CREATE INDEX IF NOT EXISTS alert_event_by_node ON alert_event(node_id, id)`
+const ddlAlertEventByNode = `CREATE INDEX alert_event_by_node ON alert_event(node_id, id)`
 
 // 每渠道一行；ok=0 且 attempts 未耗尽的行是重启后要续投的队列。
-const ddlAlertDelivery = `CREATE TABLE IF NOT EXISTS alert_delivery (
+const ddlAlertDelivery = `CREATE TABLE alert_delivery (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   event_id INTEGER NOT NULL,
   channel_id INTEGER NOT NULL,
@@ -280,8 +281,8 @@ const ddlAlertDelivery = `CREATE TABLE IF NOT EXISTS alert_delivery (
   last_error TEXT NOT NULL DEFAULT '',
   delivered_at INTEGER
 )`
-const ddlAlertDeliveryByEvent = `CREATE INDEX IF NOT EXISTS alert_delivery_by_event ON alert_delivery(event_id)`
-const ddlAlertDeliveryPending = `CREATE INDEX IF NOT EXISTS alert_delivery_pending ON alert_delivery(ok, attempts)`
+const ddlAlertDeliveryByEvent = `CREATE INDEX alert_delivery_by_event ON alert_delivery(event_id)`
+const ddlAlertDeliveryPending = `CREATE INDEX alert_delivery_pending ON alert_delivery(ok, attempts)`
 
 func alertStatements() []string {
 	return []string{ddlAlertRule, ddlAlertRuleNode, ddlAlertRuleNodeByNode, ddlAlertRuleChannel,

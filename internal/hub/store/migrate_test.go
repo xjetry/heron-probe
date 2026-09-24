@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -497,6 +498,50 @@ func TestMigrationFromV4MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 	rows, err := migrated.ReadMinuteRows(t.Context(), 7, 0, 120)
 	if err != nil || len(rows) != 1 || rows[0].Bucket.Sum[0] != 50 || rows[0].Bucket.N[0] != 1 {
 		t.Fatalf("minute row lost across migration: %v %v", rows, err)
+	}
+}
+
+func TestAlertMigrationRejectsExistingObjects(t *testing.T) {
+	for _, object := range []struct{ kind, name string }{
+		{"TABLE", "alert_rule"}, {"TABLE", "alert_rule_node"}, {"TABLE", "alert_rule_channel"},
+		{"TABLE", "notify_channel"}, {"TABLE", "alert_state"}, {"TABLE", "alert_event"}, {"TABLE", "alert_delivery"},
+		{"INDEX", "alert_rule_node_by_node"}, {"INDEX", "alert_rule_channel_by_channel"},
+		{"INDEX", "alert_event_by_node"}, {"INDEX", "alert_delivery_by_event"}, {"INDEX", "alert_delivery_pending"},
+	} {
+		kind, name := object.kind, object.name
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "conflict.db")
+			db, err := sql.Open("sqlite", dsn(path, ""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			for _, ddl := range schemaV4 {
+				if _, err := db.Exec(ddl); err != nil {
+					t.Fatal(err)
+				}
+			}
+			conflict := "CREATE TABLE " + name + " (wrong INTEGER, id INTEGER, rule_id INTEGER, node_id INTEGER, channel_id INTEGER, event_id INTEGER, ok INTEGER, attempts INTEGER)"
+			if kind == "INDEX" {
+				conflict = "CREATE INDEX " + name + " ON node(id)"
+			}
+			if _, err := db.Exec(conflict); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec("PRAGMA user_version = 4"); err != nil {
+				t.Fatal(err)
+			}
+			st, err := Open(path, clock.NewFake(time.Unix(1, 0)), slog.Default())
+			if st != nil {
+				st.Close()
+			}
+			if err == nil || !strings.Contains(err.Error(), "already exists") {
+				t.Fatalf("conflicting %s accepted: %v", name, err)
+			}
+			if got := userVersion(t, db); got != 4 {
+				t.Fatalf("failed migration advanced version: %d", got)
+			}
+		})
 	}
 }
 

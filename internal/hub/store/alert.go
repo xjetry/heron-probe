@@ -24,11 +24,14 @@ const (
 )
 
 type AlertRule struct {
-	ID         int64
-	Name       string
-	Kind       AlertKind
-	Enabled    bool
-	NodeIDs    []int64 // 升序去重；空作用域表示全部节点。
+	ID      int64
+	Name    string
+	Kind    AlertKind
+	Enabled bool
+	// AllNodes 为真时不存联结行；否则 NodeIDs 是升序去重的显式集合，空集合不覆盖任何节点。
+	// DeleteNode 只删联结行、不改 AllNodes，因此删除最后一个作用域节点不会放宽到全部节点。
+	AllNodes   bool
+	NodeIDs    []int64
 	ChannelIDs []int64
 	TaskID     uint64
 	Metric     ProbeMetric
@@ -93,6 +96,10 @@ type Delivery struct {
 	DeliveredAt time.Time
 }
 
+// DeleteNotifyChannel 用此上限终止未完成投递；续投方须把同一上限传给 PendingDeliveries，
+// 才不会在重启后把已删除渠道的投递重新入队。
+const MaxDeliveryAttempts = 3
+
 // 主表与关联在同一读事务中读取，不能把并发保存前后的两份作用域拼在一起。
 func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	tx, err := s.r.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -100,7 +107,7 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT id, name, kind, enabled, task_id, metric, threshold, for_minutes, created_at FROM alert_rule ORDER BY id`)
+	rows, err := tx.QueryContext(ctx, `SELECT id, name, kind, enabled, all_nodes, task_id, metric, threshold, for_minutes, created_at FROM alert_rule ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +120,7 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 		var metric sql.NullString
 		var threshold sql.NullFloat64
 		var created int64
-		if err := rows.Scan(&r.ID, &r.Name, &r.Kind, &r.Enabled, &task, &metric, &threshold, &minutes, &created); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.Kind, &r.Enabled, &r.AllNodes, &task, &metric, &threshold, &minutes, &created); err != nil {
 			return nil, err
 		}
 		r.TaskID, r.Metric, r.Threshold, r.ForMinutes = uint64(task.Int64), ProbeMetric(metric.String), threshold.Float64, int(minutes.Int64)
@@ -168,6 +175,9 @@ func sortedAlertIDs(ids []int64) []int64 {
 // 引用检查与保存同在单写事务，删除不能插入两者之间造成孤儿引用。
 func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, error) {
 	r.NodeIDs, r.ChannelIDs = sortedAlertIDs(r.NodeIDs), sortedAlertIDs(r.ChannelIDs)
+	if r.AllNodes {
+		r.NodeIDs = nil
+	}
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		for _, id := range r.NodeIDs {
 			exists, err := nodeExistsTx(tx, id)
@@ -195,14 +205,14 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 		var created int64
 		if r.ID == 0 {
 			created = s.clk.Now().Unix()
-			err := tx.QueryRow(`INSERT INTO alert_rule (name, kind, enabled, task_id, metric, threshold, for_minutes, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`, r.Name, r.Kind, r.Enabled, task, metric, threshold, minutes, created).Scan(&r.ID)
+			err := tx.QueryRow(`INSERT INTO alert_rule (name, kind, enabled, all_nodes, task_id, metric, threshold, for_minutes, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`, r.Name, r.Kind, r.Enabled, r.AllNodes, task, metric, threshold, minutes, created).Scan(&r.ID)
 			if err != nil {
 				return err
 			}
 		} else {
-			err := tx.QueryRow(`UPDATE alert_rule SET name = ?, kind = ?, enabled = ?, task_id = ?, metric = ?, threshold = ?, for_minutes = ?
-				WHERE id = ? RETURNING created_at`, r.Name, r.Kind, r.Enabled, task, metric, threshold, minutes, r.ID).Scan(&created)
+			err := tx.QueryRow(`UPDATE alert_rule SET name = ?, kind = ?, enabled = ?, all_nodes = ?, task_id = ?, metric = ?, threshold = ?, for_minutes = ?
+				WHERE id = ? RETURNING created_at`, r.Name, r.Kind, r.Enabled, r.AllNodes, task, metric, threshold, minutes, r.ID).Scan(&created)
 			if errors.Is(err, sql.ErrNoRows) {
 				return NotFoundError{Kind: "alert rule", ID: r.ID}
 			}
@@ -224,6 +234,20 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 				if _, err := tx.Exec("INSERT INTO "+rel.table+" (rule_id, "+rel.column+") VALUES (?, ?)", r.ID, id); err != nil {
 					return err
 				}
+			}
+		}
+		// 规则与状态由本次写事务一起提交；禁用规则或移出作用域的节点不能保留旧 firing 状态。
+		if !r.Enabled || !r.AllNodes {
+			query := "DELETE FROM alert_state WHERE rule_id = ?"
+			args := []any{r.ID}
+			if r.Enabled && len(r.NodeIDs) > 0 {
+				query += " AND node_id NOT IN (" + placeholders(len(r.NodeIDs)) + ")"
+				for _, id := range r.NodeIDs {
+					args = append(args, id)
+				}
+			}
+			if _, err := tx.Exec(query, args...); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -346,7 +370,11 @@ func (s *Store) DeleteNotifyChannel(ctx context.Context, id int64) error {
 		if err := checkAlertReferences(tx, `SELECT r.name FROM alert_rule r JOIN alert_rule_channel c ON c.rule_id = r.id WHERE c.channel_id = ? ORDER BY r.id`, "notify channel", id); err != nil {
 			return err
 		}
-		return deleteAlertEntity(tx, "notify_channel", "notify channel", id)
+		if err := deleteAlertEntity(tx, "notify_channel", "notify channel", id); err != nil {
+			return err
+		}
+		_, err := tx.Exec("UPDATE alert_delivery SET attempts = ?, last_error = 'channel deleted' WHERE channel_id = ? AND ok = 0", MaxDeliveryAttempts, id)
+		return err
 	})
 }
 
@@ -369,28 +397,24 @@ func (s *Store) ListAlertStates(ctx context.Context) ([]StateRow, error) {
 	return out, rows.Err()
 }
 
+// 两个状态写入口共用事务内准入，单写协程保证删除之后排队的写不能重建孤儿状态。
 func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since time.Time) error {
-	_, err := tx.Exec("INSERT OR REPLACE INTO alert_state (rule_id, node_id, state, since_at) VALUES (?, ?, ?, ?)", ruleID, nodeID, state, since.Unix())
+	if err := requireAlertReference(tx, "alert_rule", "alert rule", ruleID); err != nil {
+		return err
+	}
+	exists, err := nodeExistsTx(tx, nodeID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return NotFoundError{Kind: "node", ID: nodeID}
+	}
+	_, err = tx.Exec("INSERT OR REPLACE INTO alert_state (rule_id, node_id, state, since_at) VALUES (?, ?, ?, ?)", ruleID, nodeID, state, since.Unix())
 	return err
 }
 
 func (s *Store) SetAlertState(ctx context.Context, ruleID, nodeID int64, state AlertState, since time.Time) error {
 	return s.write(ctx, func(tx *sql.Tx) error { return setAlertState(tx, ruleID, nodeID, state, since) })
-}
-
-func (s *Store) DeleteAlertStates(ctx context.Context, ruleID int64, keepNodeIDs []int64) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
-		query := "DELETE FROM alert_state WHERE rule_id = ?"
-		args := []any{ruleID}
-		if len(keepNodeIDs) > 0 {
-			query += " AND node_id NOT IN (" + placeholders(len(keepNodeIDs)) + ")"
-			for _, id := range keepNodeIDs {
-				args = append(args, id)
-			}
-		}
-		_, err := tx.Exec(query, args...)
-		return err
-	})
 }
 
 // 状态、事件与续投队列同事务提交，崩溃不能留下已转换但没有通知记录的状态。
@@ -405,6 +429,9 @@ func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, stat
 			return err
 		}
 		for _, channel := range channelIDs {
+			if err := requireAlertReference(tx, "notify_channel", "notify channel", channel); err != nil {
+				return err
+			}
 			d := Delivery{EventID: ev.ID, ChannelID: channel}
 			if err := tx.QueryRow("INSERT INTO alert_delivery (event_id, channel_id) VALUES (?, ?) RETURNING id", d.EventID, d.ChannelID).Scan(&d.ID); err != nil {
 				return err
@@ -476,7 +503,7 @@ func (s *Store) readAlertEvents(ctx context.Context, predicate string, args ...a
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, "SELECT id, rule_id, node_id, transition, at, summary, value FROM alert_event "+predicate, args...)
+	rows, err := tx.QueryContext(ctx, selectAlertEvents+predicate, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -520,7 +547,29 @@ func (s *Store) readAlertEvents(ctx context.Context, predicate string, args ...a
 }
 
 func (s *Store) ListAlertEvents(ctx context.Context, nodeID int64, beforeID int64, limit int) ([]AlertEvent, error) {
-	return s.readAlertEvents(ctx, "WHERE (? = 0 OR node_id = ?) AND (? = 0 OR id < ?) ORDER BY id DESC LIMIT ?", nodeID, nodeID, beforeID, beforeID, limit)
+	where, args := alertEventWindow(nodeID, beforeID, limit)
+	return s.readAlertEvents(ctx, where, args...)
+}
+
+const selectAlertEvents = "SELECT id, rule_id, node_id, transition, at, summary, value FROM alert_event "
+
+// 只拼接实际过滤条件，node_id 的等值条件才能走 alert_event_by_node 的前缀。
+func alertEventWindow(nodeID, beforeID int64, limit int) (string, []any) {
+	var conditions []string
+	var args []any
+	if nodeID != 0 {
+		conditions = append(conditions, "node_id = ?")
+		args = append(args, nodeID)
+	}
+	if beforeID != 0 {
+		conditions = append(conditions, "id < ?")
+		args = append(args, beforeID)
+	}
+	where := ""
+	if len(conditions) > 0 {
+		where = "WHERE " + strings.Join(conditions, " AND ")
+	}
+	return where + " ORDER BY id DESC LIMIT ?", append(args, limit)
 }
 
 func (s *Store) GetAlertEvent(ctx context.Context, id int64) (AlertEvent, error) {

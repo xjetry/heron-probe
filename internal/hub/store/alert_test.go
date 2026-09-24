@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -224,7 +225,7 @@ func TestUpdateDeliveryAndPending(t *testing.T) {
 		if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, attempts, false, "failed", time.Time{}); err != nil {
 			t.Fatal(err)
 		}
-		got, err := s.PendingDeliveries(t.Context(), 3)
+		got, err := s.PendingDeliveries(t.Context(), MaxDeliveryAttempts)
 		want := []Delivery{{ID: 1, EventID: ev.ID, ChannelID: cs[0].ID, Attempts: attempts, LastError: "failed"}, ev.Deliveries[1]}
 		if attempts == 3 {
 			want = want[1:]
@@ -237,7 +238,7 @@ func TestUpdateDeliveryAndPending(t *testing.T) {
 	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[1].ID, 1, true, "", at); err != nil {
 		t.Fatal(err)
 	}
-	pending, err := s.PendingDeliveries(t.Context(), 3)
+	pending, err := s.PendingDeliveries(t.Context(), MaxDeliveryAttempts)
 	if err != nil || len(pending) != 0 {
 		t.Fatalf("successful delivery still pending: %+v %v", pending, err)
 	}
@@ -321,10 +322,10 @@ func TestCountsIncludesAlertTables(t *testing.T) {
 	}
 }
 
-func TestDeleteAlertStatesKeepsOnlyRequestedNodes(t *testing.T) {
+func TestSaveAlertRulePrunesStatesWithScope(t *testing.T) {
 	s, ids, _, _ := alertFixture(t)
-	a := saveRule(t, s, AlertRule{Kind: KindOffline})
-	b := saveRule(t, s, AlertRule{Kind: KindOffline})
+	a := saveRule(t, s, AlertRule{Kind: KindOffline, Enabled: true, NodeIDs: ids})
+	b := saveRule(t, s, AlertRule{Kind: KindOffline, Enabled: true, NodeIDs: ids})
 	for _, rule := range []int64{a.ID, b.ID} {
 		for _, node := range ids {
 			if err := s.SetAlertState(t.Context(), rule, node, StateOK, s.clk.Now()); err != nil {
@@ -335,17 +336,15 @@ func TestDeleteAlertStatesKeepsOnlyRequestedNodes(t *testing.T) {
 			}
 		}
 	}
-	if err := s.DeleteAlertStates(t.Context(), a.ID, []int64{ids[1], ids[1]}); err != nil {
-		t.Fatal(err)
-	}
+	a.NodeIDs = []int64{ids[1], ids[1]}
+	a = saveRule(t, s, a)
 	want := []StateRow{{a.ID, ids[1], StatePending, s.clk.Now().Add(time.Second)}, {b.ID, ids[0], StatePending, s.clk.Now().Add(time.Second)}, {b.ID, ids[1], StatePending, s.clk.Now().Add(time.Second)}}
 	got, err := s.ListAlertStates(t.Context())
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("kept states=%+v err=%v want=%+v", got, err, want)
 	}
-	if err := s.DeleteAlertStates(t.Context(), a.ID, nil); err != nil {
-		t.Fatal(err)
-	}
+	a.NodeIDs = nil
+	saveRule(t, s, a)
 	got, err = s.ListAlertStates(t.Context())
 	if err != nil || !reflect.DeepEqual(got, want[1:]) {
 		t.Fatalf("clear rule states=%+v err=%v", got, err)
@@ -383,5 +382,182 @@ func TestNotifyChannelRoundTrip(t *testing.T) {
 	got, err = s.ListNotifyChannels(t.Context())
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("updated channels=%+v err=%v", got, err)
+	}
+}
+
+func TestAlertScopeDoesNotWidenAfterLastNodeDeletion(t *testing.T) {
+	s, ids, _, _ := alertFixture(t)
+	scoped := saveRule(t, s, AlertRule{Name: "scoped", Kind: KindOffline, Enabled: true, NodeIDs: ids[:1]})
+	all := saveRule(t, s, AlertRule{Name: "all", Kind: KindOffline, Enabled: true, AllNodes: true, NodeIDs: ids})
+	if !all.AllNodes || len(all.NodeIDs) != 0 {
+		t.Fatalf("all scope=%+v", all)
+	}
+	assertAlertRows(t, s, "alert_rule_node", fmt.Sprintf("rule_id = %d", all.ID), 0)
+	if err := s.DeleteNode(t.Context(), ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ListAlertRules(t.Context())
+	scoped.NodeIDs = nil
+	if err != nil || !reflect.DeepEqual(got, []AlertRule{scoped, all}) {
+		t.Fatalf("scope widened after deletion: %+v err=%v", got, err)
+	}
+	all.AllNodes = false
+	all.NodeIDs = ids[1:]
+	all = saveRule(t, s, all)
+	got, err = s.ListAlertRules(t.Context())
+	if err != nil || !reflect.DeepEqual(got, []AlertRule{scoped, all}) {
+		t.Fatalf("scope replacement=%+v err=%v", got, err)
+	}
+}
+
+func assertAlertNotFound(t *testing.T, err error, kind string, id int64) {
+	t.Helper()
+	var e NotFoundError
+	if !errors.Is(err, ErrNotFound) || !errors.As(err, &e) || e.Kind != kind || e.ID != id {
+		t.Fatalf("missing object: error=%v detail=%+v want=%s/%d", err, e, kind, id)
+	}
+}
+
+func TestAlertWritesRejectDeletedReferences(t *testing.T) {
+	for _, missing := range []string{"node", "alert rule", "notify channel"} {
+		t.Run(missing, func(t *testing.T) {
+			s, ids, cs, _ := alertFixture(t)
+			r := saveRule(t, s, AlertRule{Kind: KindOffline, Enabled: true, AllNodes: true})
+			id := ids[0]
+			var err error
+			switch missing {
+			case "node":
+				err = s.DeleteNode(t.Context(), id)
+			case "alert rule":
+				id = r.ID
+				err = s.DeleteAlertRule(t.Context(), id)
+			case "notify channel":
+				id = cs[1].ID
+				err = s.DeleteNotifyChannel(t.Context(), id)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if missing != "notify channel" {
+				t.Run("set", func(t *testing.T) {
+					assertAlertNotFound(t, s.SetAlertState(t.Context(), r.ID, ids[0], StatePending, s.clk.Now()), missing, id)
+				})
+			}
+			t.Run("transition", func(t *testing.T) {
+				_, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, AlertEvent{At: s.clk.Now()}, []int64{cs[0].ID, cs[1].ID})
+				assertAlertNotFound(t, err, missing, id)
+			})
+			for _, table := range []string{"alert_state", "alert_event", "alert_delivery"} {
+				assertAlertRows(t, s, table, "1", 0)
+			}
+		})
+	}
+}
+
+func TestSaveAlertRulePrunesDisabledButKeepsEnabledAll(t *testing.T) {
+	s, ids, _, _ := alertFixture(t)
+	r := saveRule(t, s, AlertRule{Kind: KindOffline, Enabled: true, AllNodes: true})
+	if err := s.SetAlertState(t.Context(), r.ID, ids[0], StateFiring, s.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	saveRule(t, s, r)
+	assertAlertRows(t, s, "alert_state", "1", 1)
+	r.Enabled = false
+	saveRule(t, s, r)
+	assertAlertRows(t, s, "alert_state", "1", 0)
+}
+
+func TestSaveAlertRuleRollsBackWhenStatePruningFails(t *testing.T) {
+	s, ids, _, _ := alertFixture(t)
+	r := saveRule(t, s, AlertRule{Name: "kept", Kind: KindOffline, Enabled: true, NodeIDs: ids})
+	if err := s.SetAlertState(t.Context(), r.ID, ids[0], StateFiring, s.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.write(t.Context(), func(tx *sql.Tx) error {
+		_, err := tx.Exec("CREATE TRIGGER reject_state_delete BEFORE DELETE ON alert_state BEGIN SELECT RAISE(ABORT, 'state delete rejected'); END")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	changed := r
+	changed.Name, changed.Enabled, changed.NodeIDs = "lost", false, nil
+	_, err := s.SaveAlertRule(t.Context(), changed)
+	if err == nil || !strings.Contains(err.Error(), "state delete rejected") {
+		t.Fatalf("prune error=%v", err)
+	}
+	got, err := s.ListAlertRules(t.Context())
+	if err != nil || !reflect.DeepEqual(got, []AlertRule{r}) {
+		t.Fatalf("partially saved rule: %+v %v", got, err)
+	}
+	assertAlertRows(t, s, "alert_state", "1", 1)
+}
+
+func TestAlertMissingObjects(t *testing.T) {
+	s, _ := open(t)
+	for _, tc := range []struct {
+		name, kind string
+		call       func() error
+	}{
+		{"save_rule", "alert rule", func() error {
+			_, err := s.SaveAlertRule(t.Context(), AlertRule{ID: 999, Kind: KindOffline})
+			return err
+		}},
+		{"delete_rule", "alert rule", func() error { return s.DeleteAlertRule(t.Context(), 999) }},
+		{"delete_channel", "notify channel", func() error { return s.DeleteNotifyChannel(t.Context(), 999) }},
+		{"save_channel", "notify channel", func() error { _, err := s.SaveNotifyChannel(t.Context(), NotifyChannel{ID: 999}); return err }},
+		{"update_delivery", "alert delivery", func() error { return s.UpdateDelivery(t.Context(), 999, 1, false, "failed", time.Time{}) }},
+		{"get_event", "alert event", func() error { _, err := s.GetAlertEvent(t.Context(), 999); return err }},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assertAlertNotFound(t, tc.call(), tc.kind, 999) })
+	}
+}
+
+func TestDeleteNotifyChannelTerminatesPendingDeliveries(t *testing.T) {
+	s, ids, cs, _ := alertFixture(t)
+	r := saveRule(t, s, AlertRule{Kind: KindOffline})
+	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID, cs[0].ID, cs[1].ID})
+	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[1].ID, 1, true, "", s.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteNotifyChannel(t.Context(), cs[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := s.PendingDeliveries(t.Context(), MaxDeliveryAttempts)
+	if err != nil || !reflect.DeepEqual(pending, ev.Deliveries[2:]) {
+		t.Fatalf("deleted channel pending=%+v err=%v", pending, err)
+	}
+	ev.Deliveries[0].Attempts, ev.Deliveries[0].LastError = MaxDeliveryAttempts, "channel deleted"
+	ev.Deliveries[1].Attempts, ev.Deliveries[1].OK, ev.Deliveries[1].DeliveredAt = 1, true, s.clk.Now()
+	got, err := s.GetAlertEvent(t.Context(), ev.ID)
+	if err != nil || !reflect.DeepEqual(got, ev) {
+		t.Fatalf("terminal deliveries=%+v err=%v want=%+v", got, err, ev)
+	}
+}
+
+func TestListAlertEventsUsesNodeIndex(t *testing.T) {
+	s, _, _, _ := alertFixture(t)
+	for _, before := range []int64{0, 99} {
+		where, args := alertEventWindow(1, before, 2)
+		rows, err := s.r.Query("EXPLAIN QUERY PLAN "+selectAlertEvents+where, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var plan []string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			plan = append(plan, detail)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(strings.Join(plan, "\n"), "alert_event_by_node") {
+			t.Fatalf("node filter plan=%v", plan)
+		}
+		t.Logf("before=%d plan=%v", before, plan)
 	}
 }
