@@ -33,5 +33,6 @@ export function taskIdsOf(resp: QueryProbesResponse): bigint[] {
 export function taskLabel(id: bigint, tasks: ProbeTaskDetail[] | undefined): string {
   const t = tasks?.find((d) => d.task?.id === id)?.task;
   if (!t) return `任务 #${id}`;
+  // hub 的 Registry.Save 经 probelimit.CheckTask 只放行 ICMP 与 TCP，二元标签判断依赖该准入。
   return `${t.kind === ProbeKind.TCP ? "TCP" : "ICMP"} ${t.target}`;
 }
