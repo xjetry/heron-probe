@@ -1,7 +1,7 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { create } from "@bufbuild/protobuf";
 import { createConnectQueryKey } from "@connectrpc/connect-query";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
 import { Nodes } from "./Nodes";
@@ -13,6 +13,49 @@ const two = [
 ];
 
 describe("Nodes", () => {
+
+  it("确认删除在列表刷新完成前保持禁用", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const listNodes = vi.fn(async () => {
+      if (listNodes.mock.calls.length > 1) { await gate; return { nodes: [two[1]] }; }
+      return { nodes: two };
+    });
+    renderWithAdmin({ listNodes, deleteNode: async () => ({}) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a" });
+    fireEvent.click(screen.getAllByRole("button", { name: "删除" })[0]);
+    const button = screen.getByRole("button", { name: "确认删除 a" });
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(button); await vi.runAllTimersAsync(); });
+      expect(listNodes).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("button", { name: "确认删除 a" })).toBeDisabled();
+    } finally { vi.useRealTimers(); await act(async () => { release(); }); }
+    await waitFor(() => expect(screen.queryByRole("button", { name: "确认删除 a" })).toBeNull());
+  });
+
+  it.each(["rotate", "reorder"])("%s 挂起持续到节点列表刷新完成", async (operation) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const listNodes = vi.fn(async () => {
+      if (listNodes.mock.calls.length > 1) await gate;
+      return { nodes: two };
+    });
+    const { queryClient } = renderWithAdmin({
+      listNodes, rotateNodeToken: async () => ({ token: "new" }), reorderNodes: async () => ({}),
+    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a" });
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(screen.getAllByRole("button", { name: operation === "rotate" ? "换 token" : "下移 a" })[0]);
+        await vi.runAllTimersAsync();
+      });
+      expect(listNodes).toHaveBeenCalledTimes(2);
+      expect(queryClient.isMutating()).toBe(1);
+    } finally { vi.useRealTimers(); await act(async () => { release(); }); }
+    await waitFor(() => expect(queryClient.isMutating()).toBe(0));
+  });
 
   it("A 行保存挂起时 B 行保存禁用，刷新完成才关闭 A 行", async () => {
     let releaseSave!: () => void;
@@ -29,6 +72,7 @@ describe("Nodes", () => {
     fireEvent.click(edits[1]);
     fireEvent.change(screen.getAllByLabelText("名称")[0], { target: { value: "changed" } });
     const [a, b] = screen.getAllByRole("button", { name: "保存" });
+    const aRow = a.closest("tr")!;
     fireEvent.click(a);
     try {
       await waitFor(() => expect(updateNode).toHaveBeenCalledTimes(1));
@@ -36,7 +80,7 @@ describe("Nodes", () => {
       vi.useFakeTimers();
       await act(async () => { releaseSave(); await vi.runAllTimersAsync(); });
       expect(listNodes).toHaveBeenCalledTimes(2);
-      expect(a).toHaveTextContent(/^保存$/);
+      expect(within(aRow).queryByRole("button", { name: "保存" })).toBeInTheDocument();
     } finally { vi.useRealTimers(); await act(async () => { releaseSave(); releaseList(); }); }
     expect(await screen.findByRole("link", { name: "changed" })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "保存" })).toEqual([b]);
