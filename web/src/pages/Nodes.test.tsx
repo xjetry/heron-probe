@@ -8,7 +8,7 @@ import { Nodes } from "./Nodes";
 import { AdminService, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema } from "../gen/probe/v1/admin_pb";
 
 const two = [
-  { id: 1n, name: "a", public: false, note: "", sortOrder: 0, createdAt: 0n, trafficResetDay: 1 },
+  { id: 1n, name: "a", public: false, note: "", sortOrder: 0, createdAt: 0n, trafficResetDay: 1, offlineGraceS: 120 },
   { id: 2n, name: "b", public: true, note: "db", sortOrder: 1, createdAt: 0n, trafficResetDay: 1 },
 ];
 
@@ -240,7 +240,7 @@ describe("Nodes", () => {
     await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n, 3n] }), expect.anything()));
   });
 
-  it("编辑整体提交四个字段", async () => {
+  it("编辑回传全部字段与当前宽限期", async () => {
     const updateNode = vi.fn(async () => ({ node: two[0] }));
     renderWithAdmin({ listNodes: async () => ({ nodes: two }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: "a" });
@@ -250,7 +250,16 @@ describe("Nodes", () => {
     fireEvent.change(screen.getByLabelText("备注"), { target: { value: "changed note" } });
     fireEvent.change(screen.getByLabelText("重置日"), { target: { value: "15" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, name: "a2", public: true, note: "changed note", trafficResetDay: 15 }), expect.anything()));
+    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, name: "a2", public: true, note: "changed note", trafficResetDay: 15, offlineGraceS: 120 }), expect.anything()));
+  });
+
+  it("未设置宽限期时显式回传零", async () => {
+    const updateNode = vi.fn(async () => ({}));
+    renderWithAdmin({ listNodes: async () => ({ nodes: [two[1]] }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "b" });
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 2n, offlineGraceS: 0 }), expect.anything()));
   });
 
   it("轮换后显示并复制新 token", async () => {

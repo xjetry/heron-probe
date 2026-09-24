@@ -59,7 +59,7 @@ export function Nodes() {
               <NodeEditor key={String(n.id)} node={n}
                 saving={update.isPending} deleting={remove.isPending} rotating={rotate.isPending}
                 onMoveUp={() => move(list, i, -1)} onMoveDown={() => move(list, i, 1)}
-                onSave={(patch, onSuccess) => update.mutate({ id: n.id, ...patch }, { onSuccess })}
+                onSave={(patch, onSuccess) => update.mutate({ id: n.id, offlineGraceS: n.offlineGraceS ?? 0, ...patch }, { onSuccess })}
                 onDelete={() => remove.mutate({ id: n.id })}
                 onRotate={() => rotate.mutate({ id: n.id })} />
             ))}
