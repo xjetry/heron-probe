@@ -68,21 +68,21 @@ func parseEnum[K interface {
 }
 
 // 存储层携带对象种类；保存与删除各自指定请求根路径，不从错误文本猜测对象。
-func missingField(root, kind string) string {
+func missingField(root string, kind store.ObjectKind) string {
 	if root == "id" {
 		return root
 	}
 	switch kind {
-	case "node":
+	case store.ObjectNode:
 		if root == "task" {
 			return "node_ids"
 		}
 		return root + ".node_ids"
-	case "notify channel":
+	case store.ObjectNotifyChannel:
 		if root == "rule" {
 			return "rule.channel_ids"
 		}
-	case "probe task":
+	case store.ObjectProbeTask:
 		if root == "rule" {
 			return "rule.task_id"
 		}
@@ -106,7 +106,7 @@ func (s *Service) operationError(err error, root, operation string) error {
 	case errors.Is(err, store.ErrInUse):
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("%s: %w", root, err))
 	case errors.Is(err, store.ErrNodeLimit):
-		return connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("%s: %w", missingField(root, "node"), err))
+		return connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("%s: %w", missingField(root, store.ObjectNode), err))
 	}
 	s.log.Error(operation, "err", err)
 	return internalError(operation)

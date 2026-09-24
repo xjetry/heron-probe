@@ -140,7 +140,7 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, nodeIDs
 				return err
 			}
 			if n, _ := res.RowsAffected(); n == 0 {
-				return NotFoundError{Kind: "probe task", ID: int64(saved.Id)}
+				return NotFoundError{Kind: ObjectProbeTask, ID: int64(saved.Id)}
 			}
 			if _, err := tx.Exec("DELETE FROM probe_task_node WHERE task_id = ?", int64(saved.Id)); err != nil {
 				return err
@@ -152,7 +152,7 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, nodeIDs
 				return err
 			}
 			if !exists {
-				return NotFoundError{Kind: "node", ID: nodeID}
+				return NotFoundError{Kind: ObjectNode, ID: nodeID}
 			}
 			var n int
 			if err := tx.QueryRow("SELECT COUNT(*) FROM probe_task_node WHERE node_id = ?", nodeID).Scan(&n); err != nil {
@@ -179,7 +179,7 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, nodeIDs
 func (s *Store) DeleteProbeTask(ctx context.Context, id uint64) (uint64, error) {
 	var version int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		if err := checkAlertReferences(tx, "SELECT id, name FROM alert_rule WHERE task_id = ? ORDER BY id", "probe task", int64(id)); err != nil {
+		if err := checkAlertReferences(tx, "SELECT id, name FROM alert_rule WHERE task_id = ? ORDER BY id", ObjectProbeTask, int64(id)); err != nil {
 			return err
 		}
 		res, err := tx.Exec("DELETE FROM probe_task WHERE id = ?", int64(id))
@@ -187,7 +187,7 @@ func (s *Store) DeleteProbeTask(ctx context.Context, id uint64) (uint64, error) 
 			return err
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
-			return NotFoundError{Kind: "probe task", ID: int64(id)}
+			return NotFoundError{Kind: ObjectProbeTask, ID: int64(id)}
 		}
 		if _, err := tx.Exec("DELETE FROM probe_task_node WHERE task_id = ?", int64(id)); err != nil {
 			return err

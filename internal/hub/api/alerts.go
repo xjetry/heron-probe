@@ -175,7 +175,7 @@ func (s *Service) TestNotifyChannel(ctx context.Context, req *connect.Request[pr
 			return connect.NewResponse(&probev1.TestNotifyChannelResponse{}), nil
 		}
 	}
-	return nil, s.operationError(store.NotFoundError{Kind: "notify channel", ID: req.Msg.GetId()}, "id", "reading notify channel failed")
+	return nil, s.operationError(store.NotFoundError{Kind: store.ObjectNotifyChannel, ID: req.Msg.GetId()}, "id", "reading notify channel failed")
 }
 
 func (s *Service) ListAlertEvents(ctx context.Context, req *connect.Request[probev1.ListAlertEventsRequest]) (*connect.Response[probev1.ListAlertEventsResponse], error) {

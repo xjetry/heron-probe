@@ -98,14 +98,14 @@ func TestAlertRuleRoundTripAndScope(t *testing.T) {
 func TestSaveAlertRuleRejectsMissingReferences(t *testing.T) {
 	s, _, _, task := alertFixture(t)
 	for _, tc := range []struct {
-		kind string
+		kind ObjectKind
 		r    AlertRule
 	}{
-		{"node", AlertRule{Kind: KindOffline, NodeIDs: []int64{999}}},
-		{"notify channel", AlertRule{Kind: KindOffline, ChannelIDs: []int64{999}}},
-		{"probe task", AlertRule{Kind: KindProbe, TaskID: 999}},
+		{ObjectNode, AlertRule{Kind: KindOffline, NodeIDs: []int64{999}}},
+		{ObjectNotifyChannel, AlertRule{Kind: KindOffline, ChannelIDs: []int64{999}}},
+		{ObjectProbeTask, AlertRule{Kind: KindProbe, TaskID: 999}},
 	} {
-		t.Run(tc.kind, func(t *testing.T) {
+		t.Run(string(tc.kind), func(t *testing.T) {
 			_, err := s.SaveAlertRule(t.Context(), tc.r)
 			var missing NotFoundError
 			if !errors.Is(err, ErrNotFound) || !errors.As(err, &missing) || missing.Kind != tc.kind || missing.ID != 999 {
@@ -145,7 +145,7 @@ func TestDeleteAlertRuleCascadesButKeepsEvents(t *testing.T) {
 func TestDeleteNotifyChannelInUse(t *testing.T) {
 	s, _, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Name: "bound", Kind: KindOffline, ChannelIDs: []int64{cs[0].ID}})
-	assertInUse(t, s.DeleteNotifyChannel(t.Context(), cs[0].ID), "notify channel", cs[0].ID)
+	assertInUse(t, s.DeleteNotifyChannel(t.Context(), cs[0].ID), ObjectNotifyChannel, cs[0].ID)
 	r.ChannelIDs = nil
 	saveRule(t, s, r)
 	if err := s.DeleteNotifyChannel(t.Context(), cs[0].ID); err != nil {
@@ -157,7 +157,7 @@ func TestDeleteNotifyChannelInUse(t *testing.T) {
 	}
 }
 
-func assertInUse(t *testing.T, err error, kind string, id int64) {
+func assertInUse(t *testing.T, err error, kind ObjectKind, id int64) {
 	t.Helper()
 	var used InUseError
 	if !errors.Is(err, ErrInUse) || !errors.As(err, &used) || used.Kind != kind || used.ID != id || !reflect.DeepEqual(used.Rules, []RuleReference{{ID: 1, Name: "bound"}}) || err.Error() != fmt.Sprintf("%s %d is referenced by alert rules: bound (id 1)", kind, id) {
@@ -169,7 +169,7 @@ func TestDeleteProbeTaskInUseByRule(t *testing.T) {
 	s, _, _, task := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Name: "bound", Kind: KindProbe, TaskID: task})
 	_, err := s.DeleteProbeTask(t.Context(), task)
-	assertInUse(t, err, "probe task", int64(task))
+	assertInUse(t, err, ObjectProbeTask, int64(task))
 	if err := s.DeleteAlertRule(t.Context(), r.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +460,7 @@ func TestAlertScopeDoesNotWidenAfterLastNodeDeletion(t *testing.T) {
 	}
 }
 
-func assertAlertNotFound(t *testing.T, err error, kind string, id int64) {
+func assertAlertNotFound(t *testing.T, err error, kind ObjectKind, id int64) {
 	t.Helper()
 	var e NotFoundError
 	if !errors.Is(err, ErrNotFound) || !errors.As(err, &e) || e.Kind != kind || e.ID != id {
@@ -469,26 +469,26 @@ func assertAlertNotFound(t *testing.T, err error, kind string, id int64) {
 }
 
 func TestAlertWritesRejectDeletedReferences(t *testing.T) {
-	for _, missing := range []string{"node", "alert rule", "notify channel"} {
-		t.Run(missing, func(t *testing.T) {
+	for _, missing := range []ObjectKind{ObjectNode, ObjectAlertRule, ObjectNotifyChannel} {
+		t.Run(string(missing), func(t *testing.T) {
 			s, ids, cs, _ := alertFixture(t)
 			r := saveRule(t, s, AlertRule{Kind: KindOffline, Enabled: true, AllNodes: true})
 			id := ids[0]
 			var err error
 			switch missing {
-			case "node":
+			case ObjectNode:
 				err = s.DeleteNode(t.Context(), id)
-			case "alert rule":
+			case ObjectAlertRule:
 				id = r.ID
 				err = s.DeleteAlertRule(t.Context(), id)
-			case "notify channel":
+			case ObjectNotifyChannel:
 				id = cs[1].ID
 				err = s.DeleteNotifyChannel(t.Context(), id)
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if missing != "notify channel" {
+			if missing != ObjectNotifyChannel {
 				t.Run("set", func(t *testing.T) {
 					assertAlertNotFound(t, s.SetAlertState(t.Context(), r.ID, ids[0], StatePending, s.clk.Now()), missing, id)
 				})
@@ -545,18 +545,19 @@ func TestSaveAlertRuleRollsBackWhenStatePruningFails(t *testing.T) {
 func TestAlertMissingObjects(t *testing.T) {
 	s, _ := open(t)
 	for _, tc := range []struct {
-		name, kind string
-		call       func() error
+		name string
+		kind ObjectKind
+		call func() error
 	}{
-		{"save_rule", "alert rule", func() error {
+		{"save_rule", ObjectAlertRule, func() error {
 			_, err := s.SaveAlertRule(t.Context(), AlertRule{ID: 999, Kind: KindOffline})
 			return err
 		}},
-		{"delete_rule", "alert rule", func() error { return s.DeleteAlertRule(t.Context(), 999) }},
-		{"delete_channel", "notify channel", func() error { return s.DeleteNotifyChannel(t.Context(), 999) }},
-		{"save_channel", "notify channel", func() error { _, err := s.SaveNotifyChannel(t.Context(), NotifyChannel{ID: 999}); return err }},
-		{"update_delivery", "alert delivery", func() error { return s.UpdateDelivery(t.Context(), 999, false, false, "failed", time.Time{}) }},
-		{"get_event", "alert event", func() error { _, err := s.GetAlertEvent(t.Context(), 999); return err }},
+		{"delete_rule", ObjectAlertRule, func() error { return s.DeleteAlertRule(t.Context(), 999) }},
+		{"delete_channel", ObjectNotifyChannel, func() error { return s.DeleteNotifyChannel(t.Context(), 999) }},
+		{"save_channel", ObjectNotifyChannel, func() error { _, err := s.SaveNotifyChannel(t.Context(), NotifyChannel{ID: 999}); return err }},
+		{"update_delivery", ObjectAlertDelivery, func() error { return s.UpdateDelivery(t.Context(), 999, false, false, "failed", time.Time{}) }},
+		{"get_event", ObjectAlertEvent, func() error { _, err := s.GetAlertEvent(t.Context(), 999); return err }},
 	} {
 		t.Run(tc.name, func(t *testing.T) { assertAlertNotFound(t, tc.call(), tc.kind, 999) })
 	}

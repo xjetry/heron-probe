@@ -48,5 +48,5 @@ func TestBeginDeliveryAttemptAtomicallyCapsStarts(t *testing.T) {
 		t.Fatalf("terminal row=%+v err=%v", d, err)
 	}
 	_, err = s.BeginDeliveryAttempt(t.Context(), 999)
-	assertAlertNotFound(t, err, "alert delivery", 999)
+	assertAlertNotFound(t, err, ObjectAlertDelivery, 999)
 }

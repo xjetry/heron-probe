@@ -191,17 +191,17 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 				return err
 			}
 			if !exists {
-				return NotFoundError{Kind: "node", ID: id}
+				return NotFoundError{Kind: ObjectNode, ID: id}
 			}
 		}
 		for _, id := range r.ChannelIDs {
-			if err := requireAlertReference(tx, "notify_channel", "notify channel", id); err != nil {
+			if err := requireAlertReference(tx, "notify_channel", ObjectNotifyChannel, id); err != nil {
 				return err
 			}
 		}
 		var task, metric, threshold, minutes any
 		if r.Kind == KindProbe {
-			if err := requireAlertReference(tx, "probe_task", "probe task", int64(r.TaskID)); err != nil {
+			if err := requireAlertReference(tx, "probe_task", ObjectProbeTask, int64(r.TaskID)); err != nil {
 				return err
 			}
 			task, metric, threshold, minutes = int64(r.TaskID), r.Metric, r.Threshold, r.ForMinutes
@@ -220,7 +220,7 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 		} else {
 			err := tx.QueryRow(`SELECT kind != ? OR COALESCE(task_id, 0) != ? OR COALESCE(metric, '') != ? FROM alert_rule WHERE id = ?`, r.Kind, r.TaskID, r.Metric, r.ID).Scan(&identityChanged)
 			if errors.Is(err, sql.ErrNoRows) {
-				return NotFoundError{Kind: "alert rule", ID: r.ID}
+				return NotFoundError{Kind: ObjectAlertRule, ID: r.ID}
 			}
 			if err != nil {
 				return err
@@ -228,7 +228,7 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 			err = tx.QueryRow(`UPDATE alert_rule SET name = ?, kind = ?, enabled = ?, all_nodes = ?, task_id = ?, metric = ?, threshold = ?, for_minutes = ?
 				WHERE id = ? RETURNING created_at`, r.Name, r.Kind, r.Enabled, r.AllNodes, task, metric, threshold, minutes, r.ID).Scan(&created)
 			if errors.Is(err, sql.ErrNoRows) {
-				return NotFoundError{Kind: "alert rule", ID: r.ID}
+				return NotFoundError{Kind: ObjectAlertRule, ID: r.ID}
 			}
 			if err != nil {
 				return err
@@ -274,7 +274,7 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 	return r, nil
 }
 
-func requireAlertReference(tx *sql.Tx, table, kind string, id int64) error {
+func requireAlertReference(tx *sql.Tx, table string, kind ObjectKind, id int64) error {
 	var one int
 	err := tx.QueryRow("SELECT 1 FROM "+table+" WHERE id = ?", id).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -285,7 +285,7 @@ func requireAlertReference(tx *sql.Tx, table, kind string, id int64) error {
 
 func (s *Store) DeleteAlertRule(ctx context.Context, id int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if err := deleteAlertEntity(tx, "alert_rule", "alert rule", id); err != nil {
+		if err := deleteAlertEntity(tx, "alert_rule", ObjectAlertRule, id); err != nil {
 			return err
 		}
 		for _, table := range []string{"alert_rule_node", "alert_rule_channel", "alert_state"} {
@@ -297,7 +297,7 @@ func (s *Store) DeleteAlertRule(ctx context.Context, id int64) error {
 	})
 }
 
-func deleteAlertEntity(tx *sql.Tx, table, kind string, id int64) error {
+func deleteAlertEntity(tx *sql.Tx, table string, kind ObjectKind, id int64) error {
 	res, err := tx.Exec("DELETE FROM "+table+" WHERE id = ?", id)
 	if err != nil {
 		return err
@@ -342,7 +342,7 @@ func (s *Store) SaveNotifyChannel(ctx context.Context, c NotifyChannel) (NotifyC
 		} else {
 			err := tx.QueryRow("UPDATE notify_channel SET name = ?, kind = ?, config = ? WHERE id = ? RETURNING created_at", c.Name, c.Kind, c.Config, c.ID).Scan(&created)
 			if errors.Is(err, sql.ErrNoRows) {
-				return NotFoundError{Kind: "notify channel", ID: c.ID}
+				return NotFoundError{Kind: ObjectNotifyChannel, ID: c.ID}
 			}
 			if err != nil {
 				return err
@@ -358,7 +358,7 @@ func (s *Store) SaveNotifyChannel(ctx context.Context, c NotifyChannel) (NotifyC
 }
 
 // 检查与删除共用写事务；SaveAlertRule 也经单写协程，检查之后不会新添引用。
-func checkAlertReferences(tx *sql.Tx, query, kind string, id int64) error {
+func checkAlertReferences(tx *sql.Tx, query string, kind ObjectKind, id int64) error {
 	rows, err := tx.Query(query, id)
 	if err != nil {
 		return err
@@ -383,10 +383,10 @@ func checkAlertReferences(tx *sql.Tx, query, kind string, id int64) error {
 
 func (s *Store) DeleteNotifyChannel(ctx context.Context, id int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if err := checkAlertReferences(tx, `SELECT r.id, r.name FROM alert_rule r JOIN alert_rule_channel c ON c.rule_id = r.id WHERE c.channel_id = ? ORDER BY r.id`, "notify channel", id); err != nil {
+		if err := checkAlertReferences(tx, `SELECT r.id, r.name FROM alert_rule r JOIN alert_rule_channel c ON c.rule_id = r.id WHERE c.channel_id = ? ORDER BY r.id`, ObjectNotifyChannel, id); err != nil {
 			return err
 		}
-		if err := deleteAlertEntity(tx, "notify_channel", "notify channel", id); err != nil {
+		if err := deleteAlertEntity(tx, "notify_channel", ObjectNotifyChannel, id); err != nil {
 			return err
 		}
 		_, err := tx.Exec("UPDATE alert_delivery SET done = 1, last_error = ? WHERE channel_id = ? AND done = 0", DeliveryErrChannelDeleted, id)
@@ -415,7 +415,7 @@ func (s *Store) ListAlertStates(ctx context.Context) ([]StateRow, error) {
 
 // 两个状态写入口共用事务内准入，单写协程保证删除之后排队的写不能重建孤儿状态。
 func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since time.Time) error {
-	if err := requireAlertReference(tx, "alert_rule", "alert rule", ruleID); err != nil {
+	if err := requireAlertReference(tx, "alert_rule", ObjectAlertRule, ruleID); err != nil {
 		return err
 	}
 	exists, err := nodeExistsTx(tx, nodeID)
@@ -423,7 +423,7 @@ func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since tim
 		return err
 	}
 	if !exists {
-		return NotFoundError{Kind: "node", ID: nodeID}
+		return NotFoundError{Kind: ObjectNode, ID: nodeID}
 	}
 	_, err = tx.Exec("INSERT OR REPLACE INTO alert_state (rule_id, node_id, state, since_at) VALUES (?, ?, ?, ?)", ruleID, nodeID, state, since.Unix())
 	return err
@@ -453,7 +453,7 @@ func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, stat
 			return err
 		}
 		for _, channel := range channelIDs {
-			if err := requireAlertReference(tx, "notify_channel", "notify channel", channel); err != nil {
+			if err := requireAlertReference(tx, "notify_channel", ObjectNotifyChannel, channel); err != nil {
 				return err
 			}
 			d := Delivery{EventID: ev.ID, ChannelID: channel}
@@ -483,7 +483,7 @@ func (s *Store) BeginDeliveryAttempt(ctx context.Context, id int64) (Delivery, e
 		}
 		d, err = scanDelivery(tx.QueryRow(selectDeliveries+" WHERE id = ?", id))
 		if errors.Is(err, sql.ErrNoRows) {
-			return NotFoundError{Kind: "alert delivery", ID: id}
+			return NotFoundError{Kind: ObjectAlertDelivery, ID: id}
 		}
 		if err != nil {
 			return err
@@ -518,7 +518,7 @@ func (s *Store) UpdateDelivery(ctx context.Context, id int64, ok, done bool, las
 		}
 		if n == 0 {
 			// 删除渠道或其他终止已先提交，迟到的 HTTP 结果不能把终态重新打开。
-			return requireAlertReference(tx, "alert_delivery", "alert delivery", id)
+			return requireAlertReference(tx, "alert_delivery", ObjectAlertDelivery, id)
 		}
 		return nil
 	})
@@ -675,7 +675,7 @@ func (s *Store) GetAlertEvent(ctx context.Context, id int64) (AlertEvent, error)
 		return AlertEvent{}, err
 	}
 	if len(events) == 0 {
-		return AlertEvent{}, NotFoundError{Kind: "alert event", ID: id}
+		return AlertEvent{}, NotFoundError{Kind: ObjectAlertEvent, ID: id}
 	}
 	return events[0], nil
 }

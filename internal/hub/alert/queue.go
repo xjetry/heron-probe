@@ -193,7 +193,7 @@ func (q *Queue) currentDelivery(ctx context.Context, item deliveryItem) (store.D
 			return d, nil
 		}
 	}
-	return store.Delivery{}, store.NotFoundError{Kind: "alert delivery", ID: item.delivery.ID}
+	return store.Delivery{}, store.NotFoundError{Kind: store.ObjectAlertDelivery, ID: item.delivery.ID}
 }
 
 func (q *Queue) message(ctx context.Context, ev store.AlertEvent) (Message, error) {
@@ -222,7 +222,7 @@ func (q *Queue) message(ctx context.Context, ev store.AlertEvent) (Message, erro
 // 不是存储故障，不能通过失败退避拖住后续投递。仅归一事件和投递行的不存在错误。
 func deliveryRemoved(err error) bool {
 	var missing store.NotFoundError
-	return errors.As(err, &missing) && (missing.Kind == "alert event" || missing.Kind == "alert delivery")
+	return errors.As(err, &missing) && (missing.Kind == store.ObjectAlertEvent || missing.Kind == store.ObjectAlertDelivery)
 }
 
 func (q *Queue) deliver(ctx context.Context, item deliveryItem) (err error) {

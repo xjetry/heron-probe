@@ -195,7 +195,7 @@ func (e *Engine) SaveChannel(ctx context.Context, c store.NotifyChannel) (store.
 			}
 		}
 		if previous.ID == 0 {
-			return store.NotifyChannel{}, store.NotFoundError{Kind: "notify channel", ID: c.ID}
+			return store.NotifyChannel{}, store.NotFoundError{Kind: store.ObjectNotifyChannel, ID: c.ID}
 		}
 	}
 	// api.channelProto 不回显凭据；writeMu 跨越读旧配置、合并、提交，两个保存不能互相覆盖所保留的值。
