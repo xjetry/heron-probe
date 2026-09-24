@@ -32,6 +32,8 @@ type Queue struct {
 	log          *slog.Logger
 	mu           sync.Mutex
 	items        chan deliveryItem
+	active       map[int64]struct{}
+	overflow     bool
 }
 
 var _ Sender = (*Queue)(nil)
@@ -40,7 +42,7 @@ func NewQueue(st *store.Store, channels func() []store.NotifyChannel, client *ht
 	if sleep == nil {
 		sleep = sleepContext
 	}
-	return &Queue{st: st, channels: channels, client: client, telegramBase: telegramBase, clk: clk, sleep: sleep, log: log, items: make(chan deliveryItem, QueueCap)}
+	return &Queue{st: st, channels: channels, client: client, telegramBase: telegramBase, clk: clk, sleep: sleep, log: log, items: make(chan deliveryItem, QueueCap), active: make(map[int64]struct{})}
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {
@@ -54,34 +56,49 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func (q *Queue) enqueue(item deliveryItem) {
+// mu 同时保护通道写入和 queued/in-flight id；去重让有界窗口只装不同投递，避免重复项挤占窗口。
+// worker 的 done 回读另保证已终态的旧项不再发送，包括并发 Requeue 读到的旧快照。
+func (q *Queue) enqueue(item deliveryItem, evict bool) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	if _, exists := q.active[item.delivery.ID]; exists {
+		return true
+	}
 	select {
 	case q.items <- item:
-		return
+		q.active[item.delivery.ID] = struct{}{}
+		return true
 	default:
+	}
+	q.overflow = true
+	if !evict {
+		return false
 	}
 	// 生产者在 mu 下串行；worker 只取出，所以腾出一格后发送不会等待。
 	select {
 	case old := <-q.items:
+		delete(q.active, old.delivery.ID)
 		q.log.Warn("notification queue full; oldest delivery dropped", "delivery_id", old.delivery.ID)
 	default:
 	}
 	q.items <- item
+	q.active[item.delivery.ID] = struct{}{}
+	return true
 }
 
 // Engine.apply 在 writeMu 下调用 Enqueue；这里只操作有界内存队列，不等数据库或网络。
-// 满队列丢弃的项仍在库中保持 done=0，要等下次启动在 Load 后调用 Requeue 才续投。
+// 满队列丢弃的项仍在库中保持 done=0；overflow 让 worker 在窗口取空后补货，在本进程内续投。
 func (q *Queue) Enqueue(ev store.AlertEvent) {
 	ds := ev.Deliveries
 	ev.Deliveries = nil
 	for _, d := range ds {
 		if !d.Done {
-			q.enqueue(deliveryItem{d, ev})
+			q.enqueue(deliveryItem{d, ev}, true)
 		}
 	}
 }
+
+// 库中 done=0 的行是真源；按 id 升序装填窗口，未装下的项由 worker 取空后继续补货。
 func (q *Queue) Requeue(ctx context.Context) error {
 	ds, err := q.st.PendingDeliveries(ctx)
 	if err != nil {
@@ -89,11 +106,16 @@ func (q *Queue) Requeue(ctx context.Context) error {
 	}
 	for _, d := range ds {
 		ev, err := q.st.GetAlertEvent(ctx, d.EventID)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
 		ev.Deliveries = nil
-		q.enqueue(deliveryItem{d, ev})
+		if !q.enqueue(deliveryItem{d, ev}, false) {
+			break
+		}
 	}
 	return nil
 }
@@ -105,14 +127,37 @@ func (q *Queue) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		q.mu.Lock()
+		refill := len(q.items) == 0 && q.overflow
+		if refill {
+			q.overflow = false
+		}
+		q.mu.Unlock()
+		if refill {
+			// 只有 worker 自动补货，数据库往返不持 mu，也不占用 Engine 的写锁。
+			if err := q.Requeue(ctx); err != nil {
+				q.mu.Lock()
+				q.overflow = true
+				q.mu.Unlock()
+				if ctx.Err() != nil {
+					return
+				}
+				q.log.Error("notification refill failed", "err", err)
+				if err := q.sleep(ctx, time.Second); err != nil {
+					return
+				}
+			}
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case item := <-q.items:
-			if ctx.Err() != nil {
-				return
-			}
-			if err := q.deliver(ctx, item); err != nil && ctx.Err() == nil {
+			err := q.deliver(ctx, item)
+			q.mu.Lock()
+			delete(q.active, item.delivery.ID)
+			q.mu.Unlock()
+			if err != nil && ctx.Err() == nil {
 				q.log.Error("notification delivery failed", "delivery_id", item.delivery.ID, "err", err)
 			}
 		}

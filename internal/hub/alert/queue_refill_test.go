@@ -1,0 +1,191 @@
+package alert
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/xjetry/probe/internal/hub/store"
+)
+
+func TestQueueRefillsOverflowWithinProcess(t *testing.T) {
+	for _, running := range []bool{false, true} {
+		t.Run(fmt.Sprint(running), func(t *testing.T) {
+			f := newFixture(t)
+			gate, entered := make(chan struct{}), make(chan struct{})
+			var release sync.Once
+			defer release.Do(func() { close(gate) })
+			var mu sync.Mutex
+			received := map[string]int{}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var msg receivedMessage
+				if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+					t.Error(err)
+					w.WriteHeader(400)
+					return
+				}
+				mu.Lock()
+				first := len(received) == 0
+				received[msg.Summary]++
+				mu.Unlock()
+				if running && first {
+					close(entered)
+					select {
+					case <-gate:
+					case <-r.Context().Done():
+					}
+				}
+			}))
+			defer func() { release.Do(func() { close(gate) }); srv.Close() }()
+			c := queueChannel(t, f, srv.URL)
+			rule := f.rule(t, offline())
+			count := QueueCap + 1
+			if running {
+				count++
+			}
+			events := make([]store.AlertEvent, count)
+			for i := range events {
+				ev, err := f.st.RecordTransition(t.Context(), rule.ID, f.ids[0], store.StateFiring,
+					store.AlertEvent{At: f.clk.Now(), Transition: store.TransitionFiring, Summary: fmt.Sprint(i)}, []int64{c.ID})
+				must(t, err)
+				events[i] = ev
+			}
+			q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
+			var stop func()
+			if running {
+				q.Enqueue(events[0])
+				stop = startQueue(t, q)
+				defer stop()
+				select {
+				case <-entered:
+				case <-time.After(3 * time.Second):
+					t.Fatal("worker did not enter HTTP")
+				}
+				// 多个生产者可以在 worker 等待网络时填满窗口；每个事件仍只产生一次请求。
+				var producers sync.WaitGroup
+				for p := 0; p < 8; p++ {
+					producers.Go(func() {
+						for i := p + 1; i < len(events); i += 8 {
+							q.Enqueue(events[i])
+						}
+					})
+				}
+				producers.Wait()
+				release.Do(func() { close(gate) })
+			} else {
+				must(t, q.Requeue(t.Context()))
+				stop = startQueue(t, q)
+				defer stop()
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				pending, err := f.st.PendingDeliveries(t.Context())
+				must(t, err)
+				if len(pending) == 0 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("overflow deliveries not refilled: pending=%d", len(pending))
+				}
+				time.Sleep(time.Millisecond)
+			}
+			stop()
+			mu.Lock()
+			defer mu.Unlock()
+			if len(received) != count {
+				t.Fatalf("HTTP unique deliveries=%d want %d", len(received), count)
+			}
+			for _, ev := range events {
+				if received[ev.Summary] != 1 {
+					t.Errorf("delivery %s sent %d times", ev.Summary, received[ev.Summary])
+				}
+				saved, err := f.st.GetAlertEvent(t.Context(), ev.ID)
+				must(t, err)
+				if len(saved.Deliveries) != 1 || !saved.Deliveries[0].OK || !saved.Deliveries[0].Done || saved.Deliveries[0].Attempts != 1 {
+					t.Errorf("delivery did not succeed exactly once: %+v", saved.Deliveries)
+				}
+			}
+		})
+	}
+}
+
+func TestQueueDeduplicatesQueuedAndInflightIDs(t *testing.T) {
+	for _, running := range []bool{false, true} {
+		t.Run(fmt.Sprint(running), func(t *testing.T) {
+			f := newFixture(t)
+			entered, gate := make(chan struct{}), make(chan struct{})
+			var release sync.Once
+			defer release.Do(func() { close(gate) })
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				close(entered)
+				select {
+				case <-gate:
+				case <-r.Context().Done():
+				}
+			}))
+			defer func() { release.Do(func() { close(gate) }); srv.Close() }()
+			c := queueChannel(t, f, srv.URL)
+			ev := queueEvent(t, f, c)
+			q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
+			q.Enqueue(ev)
+			if !running {
+				q.Enqueue(ev)
+				must(t, q.Requeue(t.Context()))
+				assertQueueIDs(t, q, []int64{ev.Deliveries[0].ID}, 0)
+				return
+			}
+			stop := startQueue(t, q)
+			defer stop()
+			select {
+			case <-entered:
+			case <-time.After(3 * time.Second):
+				t.Fatal("worker did not enter HTTP")
+			}
+			q.Enqueue(ev)
+			must(t, q.Requeue(t.Context()))
+			assertQueueIDs(t, q, nil, ev.Deliveries[0].ID)
+			release.Do(func() { close(gate) })
+			awaitDeliveries(t, f, ev.ID, allDone)
+			stop()
+			assertQueueIDs(t, q, nil, 0)
+		})
+	}
+}
+
+// worker 被 HTTP 门挡住或尚未启动时检查窗口，不靠时间窗口推测是否已经出队。
+func assertQueueIDs(t *testing.T, q *Queue, want []int64, inflight int64) {
+	t.Helper()
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	seen := make(map[int64]bool)
+	if inflight != 0 {
+		seen[inflight] = true
+	}
+	n := len(q.items)
+	ids := make([]int64, 0, n)
+	for range n {
+		item := <-q.items
+		ids = append(ids, item.delivery.ID)
+		q.items <- item
+		if seen[item.delivery.ID] {
+			t.Fatalf("duplicate queued/inflight id %d", item.delivery.ID)
+		}
+		seen[item.delivery.ID] = true
+	}
+	if !slices.Equal(ids, want) {
+		t.Errorf("queued IDs=%v want %v", ids, want)
+	}
+	if len(q.active) != len(seen) {
+		t.Errorf("active IDs=%v want %v", q.active, seen)
+	}
+	for id := range seen {
+		if _, ok := q.active[id]; !ok {
+			t.Errorf("active ID %d missing", id)
+		}
+	}
+}
