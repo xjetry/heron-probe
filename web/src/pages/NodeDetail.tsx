@@ -61,7 +61,9 @@ export function NodeDetail() {
   const probes = useQuery(AdminService.method.queryProbes, { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: 1000 }, {
     enabled: validId, placeholderData: keepPreviousData,
   });
+  // 任务列表只为图例标签；任务页保存或删除失效同一 listProbeTasks key，本页重新挂载会重新取标签，无需另设轮询。
   const tasks = useQuery(AdminService.method.listProbeTasks, {}, { enabled: validId });
+  // 已知任务的标签在任务列表到达后变成“类型 目标”，Chart 按标签重建一次，与单位变化共用重建机制。
   const probeCharts = useMemo(() => {
     if (!probes.data) return [];
     const ids = taskIdsOf(probes.data);
@@ -102,7 +104,7 @@ export function NodeDetail() {
       {probes.data && probes.data.series.length === 0 && (
         <p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>
       )}
-      {probeCharts.length > 0 && probes.data!.series.length > 0 && (
+      {probes.data && probes.data.series.length > 0 && (
         <div className="grid">
           {probeCharts.map((c) => (
             <div className="card" key={c.title}>
