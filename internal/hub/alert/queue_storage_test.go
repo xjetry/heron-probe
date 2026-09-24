@@ -86,7 +86,7 @@ func TestExhaustedUnrecordedDeliveryBecomesTerminal(t *testing.T) {
 
 func TestResultWriteFailuresCannotExceedSendBudget(t *testing.T) {
 	f := newFixture(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var mu sync.Mutex
 	counts := map[string]int{}
@@ -125,6 +125,8 @@ func TestResultWriteFailuresCannotExceedSendBudget(t *testing.T) {
 		return nil
 	}, f.log)
 	must(t, q.Requeue(t.Context()))
+	timer := time.AfterFunc(5*time.Second, cancel)
+	defer timer.Stop()
 	q.Run(ctx)
 	mu.Lock()
 	defer mu.Unlock()

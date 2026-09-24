@@ -124,6 +124,7 @@ func (q *Queue) Requeue(ctx context.Context) error {
 // 每次发送前已持久化尝试计数，发送次数受 MaxDeliveryAttempts 约束。
 // 结果未落盘（崩溃或写失败）时可在后续尝试中重发，重发同样消耗该上限。
 func (q *Queue) Run(ctx context.Context) {
+	var retryDelay time.Duration
 	for {
 		if ctx.Err() != nil {
 			return
@@ -137,14 +138,11 @@ func (q *Queue) Run(ctx context.Context) {
 		if refill {
 			// 只有 worker 自动补货，数据库往返不持 mu，也不占用 Engine 的写锁。
 			if err := q.Requeue(ctx); err != nil {
-				q.mu.Lock()
-				q.overflow = true
-				q.mu.Unlock()
 				if ctx.Err() != nil {
 					return
 				}
 				q.log.Error("notification refill failed", "err", err)
-				if err := q.sleep(ctx, time.Second); err != nil {
+				if err := q.retryAfterFailure(ctx, &retryDelay); err != nil {
 					return
 				}
 			}
@@ -160,9 +158,28 @@ func (q *Queue) Run(ctx context.Context) {
 			q.mu.Unlock()
 			if err != nil && ctx.Err() == nil {
 				q.log.Error("notification delivery failed", "delivery_id", item.delivery.ID, "err", err)
+				if err := q.retryAfterFailure(ctx, &retryDelay); err != nil {
+					return
+				}
+			} else if err == nil {
+				retryDelay = 0
 			}
 		}
 	}
+}
+
+// 非终态出窗与补货读失败都保留续投信号；故障期间不能靠窗口大小决定是否重试。
+// 同一个 worker 共用退避，成功完成投递才复位，避免读库正常但写库失败时持续重发。
+func (q *Queue) retryAfterFailure(ctx context.Context, delay *time.Duration) error {
+	q.mu.Lock()
+	q.overflow = true
+	q.mu.Unlock()
+	if *delay == 0 {
+		*delay = time.Second
+	} else {
+		*delay = min(*delay*2, time.Minute)
+	}
+	return q.sleep(ctx, *delay)
 }
 
 func (q *Queue) currentDelivery(ctx context.Context, item deliveryItem) (store.Delivery, error) {
@@ -217,6 +234,13 @@ func (q *Queue) deliver(ctx context.Context, item deliveryItem) error {
 		if d.Done {
 			return nil
 		}
+		if d.Attempts >= store.MaxDeliveryAttempts {
+			last := d.LastError
+			if last == "" {
+				last = store.DeliveryErrResultUnrecorded
+			}
+			return q.st.UpdateDelivery(ctx, d.ID, false, true, last, time.Time{})
+		}
 		var c *store.NotifyChannel
 		for _, row := range q.channels() {
 			if row.ID == d.ChannelID {
@@ -234,13 +258,6 @@ func (q *Queue) deliver(ctx context.Context, item deliveryItem) error {
 		d, err = q.st.BeginDeliveryAttempt(ctx, d.ID)
 		if errors.Is(err, store.ErrDeliveryDone) {
 			return nil
-		}
-		if errors.Is(err, store.ErrDeliveryExhausted) {
-			last := d.LastError
-			if last == "" {
-				last = store.DeliveryErrResultUnrecorded
-			}
-			return q.st.UpdateDelivery(ctx, d.ID, false, true, last, time.Time{})
 		}
 		if err != nil {
 			return err
