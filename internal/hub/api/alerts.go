@@ -57,7 +57,19 @@ func (s *Service) SaveAlertRule(ctx context.Context, req *connect.Request[probev
 	if err := checkTaskID(r.GetTaskId(), "rule.task_id"); err != nil {
 		return nil, err
 	}
-	saved, err := s.alerts.SaveRule(ctx, store.AlertRule{ID: r.GetId(), Name: r.GetName(), Kind: alertKinds[r.GetKind()], Enabled: r.GetEnabled(), AllNodes: r.GetAllNodes(), NodeIDs: r.GetNodeIds(), ChannelIDs: r.GetChannelIds(), TaskID: r.GetTaskId(), Metric: probeMetrics[r.GetMetric()], Threshold: r.GetThreshold(), ForMinutes: int(r.GetForMinutes())})
+	kind, err := parseEnum(alertKinds, r.GetKind(), "rule", "kind")
+	if err != nil {
+		return nil, err
+	}
+	var metric store.ProbeMetric
+	// 离线规则不使用探测指标；显式传入的指标仍须属于协议枚举。
+	if kind == store.KindProbe || r.GetMetric() != probev1.ProbeMetric_PROBE_METRIC_UNSPECIFIED {
+		metric, err = parseEnum(probeMetrics, r.GetMetric(), "rule", "metric")
+		if err != nil {
+			return nil, err
+		}
+	}
+	saved, err := s.alerts.SaveRule(ctx, store.AlertRule{ID: r.GetId(), Name: r.GetName(), Kind: kind, Enabled: r.GetEnabled(), AllNodes: r.GetAllNodes(), NodeIDs: r.GetNodeIds(), ChannelIDs: r.GetChannelIds(), TaskID: r.GetTaskId(), Metric: metric, Threshold: r.GetThreshold(), ForMinutes: int(r.GetForMinutes())})
 	if err != nil {
 		return nil, s.operationError(err, "rule", "saving alert rule failed")
 	}
@@ -114,6 +126,10 @@ func (s *Service) ListNotifyChannels(_ context.Context, _ *connect.Request[probe
 
 func (s *Service) SaveNotifyChannel(ctx context.Context, req *connect.Request[probev1.SaveNotifyChannelRequest]) (*connect.Response[probev1.SaveNotifyChannelResponse], error) {
 	c := req.Msg.GetChannel()
+	kind, err := parseEnum(channelKinds, c.GetKind(), "channel", "kind")
+	if err != nil {
+		return nil, err
+	}
 	var config any
 	switch c.GetKind() {
 	case probev1.ChannelKind_CHANNEL_KIND_TELEGRAM:
@@ -127,7 +143,7 @@ func (s *Service) SaveNotifyChannel(ctx context.Context, req *connect.Request[pr
 	if err != nil {
 		return nil, s.operationError(err, "channel", "encoding notify channel failed")
 	}
-	saved, err := s.alerts.SaveChannel(ctx, store.NotifyChannel{ID: c.GetId(), Name: c.GetName(), Kind: channelKinds[c.GetKind()], Config: string(b)})
+	saved, err := s.alerts.SaveChannel(ctx, store.NotifyChannel{ID: c.GetId(), Name: c.GetName(), Kind: kind, Config: string(b)})
 	if err != nil {
 		return nil, s.operationError(err, "channel", "saving notify channel failed")
 	}

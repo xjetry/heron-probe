@@ -143,7 +143,8 @@ func (s *Service) DeleteNode(ctx context.Context, req *connect.Request[probev1.D
 		s.log.Error("deleting node failed", "err", err)
 		return nil, internalError("deleting node failed")
 	}
-	// 删除已提交，后续更新会因节点不存在而拒绝；在所有 API 锁外等待状态持有者清理，避免跨写协程等待成环。
+	// 删除已提交，UpdateNode 在库层得到不存在后不会再调 SetResetDay，锁外 Forget 不会与编辑交错重建流量状态。
+	// 持 nodeMu 等待在途上报与评估只会阻塞其它节点的编辑，因此清理放在锁外。
 	s.nodes.Forget(req.Msg.GetId())
 	// auth.DeleteNode 已提交且释放鉴权锁；同步清掉告警缓存，列表不能残留已删除节点的作用域与状态。
 	s.alerts.Forget(req.Msg.GetId())

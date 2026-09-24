@@ -102,6 +102,17 @@ func TestAlertRuleCRUD(t *testing.T) {
 	}
 }
 
+func TestNotifyChannelRejectsUnknownKind(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	c := webhook("http://127.0.0.1")
+	c.Kind = 7
+	_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{Channel: c}))
+	if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), `channel.kind must be`) || !strings.Contains(err.Error(), `got "7"`) {
+		t.Fatalf("unknown kind error=%v", err)
+	}
+}
+
 func TestSaveAlertRuleValidationTexts(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
@@ -118,8 +129,10 @@ func TestSaveAlertRuleValidationTexts(t *testing.T) {
 	}{
 		{"name", func(r *probev1.AlertRule) { r.Name = "" }, connect.CodeInvalidArgument, "rule.name must contain"},
 		{"kind", func(r *probev1.AlertRule) { r.Kind = 0 }, connect.CodeInvalidArgument, "rule.kind must be"},
+		{"unknown_kind", func(r *probev1.AlertRule) { r.Kind = 99 }, connect.CodeInvalidArgument, `got "99"`},
 		{"task_id", func(r *probev1.AlertRule) { r.TaskId = 0 }, connect.CodeInvalidArgument, "rule.task_id must not be 0"},
 		{"metric", func(r *probev1.AlertRule) { r.Metric = 0 }, connect.CodeInvalidArgument, "rule.metric must be"},
+		{"unknown_metric", func(r *probev1.AlertRule) { r.Metric = 99 }, connect.CodeInvalidArgument, `got "99"`},
 		{"threshold", func(r *probev1.AlertRule) { r.Threshold = 101 }, connect.CodeInvalidArgument, "rule.threshold must be between 0 and 100"},
 		{"minutes0", func(r *probev1.AlertRule) { r.ForMinutes = 0 }, connect.CodeInvalidArgument, "rule.for_minutes must be between 1 and 60"},
 		{"minutes61", func(r *probev1.AlertRule) { r.ForMinutes = 61 }, connect.CodeInvalidArgument, "rule.for_minutes must be between 1 and 60"},
@@ -170,11 +183,11 @@ func TestAlertErrorsNameRequestFields(t *testing.T) {
 		{"missing_rule", func() error {
 			_, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&probev1.SaveAlertRuleRequest{}))
 			return err
-		}, connect.CodeInvalidArgument, "rule.name"},
+		}, connect.CodeInvalidArgument, "rule.kind"},
 		{"missing_channel", func() error {
 			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{}))
 			return err
-		}, connect.CodeInvalidArgument, "channel.name"},
+		}, connect.CodeInvalidArgument, "channel.kind"},
 		{"channel_kind", func() error {
 			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{Channel: &probev1.NotifyChannel{Name: "n"}}))
 			return err

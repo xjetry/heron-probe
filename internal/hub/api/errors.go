@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 
 	"connectrpc.com/connect"
 	"github.com/xjetry/probe/internal/hub/alert"
@@ -21,6 +22,11 @@ func checkTaskID(id uint64, field string) error {
 
 // 校验方提供路径和约束，枚举词汇由双向转换共用的表裁定；包装错误不改变字段定位。
 func fieldMessage(root string, field alert.FieldError) string {
+	field = renderField(root, field)
+	return root + "." + field.Path + " " + field.Detail()
+}
+
+func renderField(root string, field alert.FieldError) alert.FieldError {
 	render := func(v string) string {
 		switch {
 		case root == "rule" && field.Path == "kind":
@@ -39,7 +45,26 @@ func fieldMessage(root string, field alert.FieldError) string {
 	}
 	field.Allowed = allowed
 	field.Got = render(field.Got)
-	return root + "." + field.Path + " " + field.Detail()
+	return field
+}
+
+// 协议枚举必须在转换前拒绝表外值；否则 map 零值会抹掉实际输入，错误只能回显 UNSPECIFIED。
+func parseEnum[K interface {
+	comparable
+	fmt.Stringer
+}, V ~string](values map[K]V, value K, root, path string) (V, error) {
+	if v, ok := values[value]; ok {
+		return v, nil
+	}
+	allowed := make([]string, 0, len(values))
+	for _, v := range values {
+		allowed = append(allowed, string(v))
+	}
+	sort.Strings(allowed)
+	field := renderField(root, alert.FieldError{Path: path, Allowed: allowed})
+	field.Got = value.String()
+	var zero V
+	return zero, invalid("%s.%s %s", root, path, field.Detail())
 }
 
 // 存储层携带对象种类；保存与删除各自指定请求根路径，不从错误文本猜测对象。
