@@ -135,6 +135,10 @@ func (e *Engine) States() []store.StateRow {
 func inScope(r store.AlertRule, id int64) bool { return r.AllNodes || slices.Contains(r.NodeIDs, id) }
 
 func (e *Engine) SaveRule(ctx context.Context, r store.AlertRule) (store.AlertRule, error) {
+	// 保存请求必须明确指定非空作用域；这不限制 DeleteNode 留下的持久化空集。
+	if !r.AllNodes && len(r.NodeIDs) == 0 {
+		return store.AlertRule{}, invalid("node_ids", "must not be empty unless all_nodes is true")
+	}
 	if err := CheckRule(r); err != nil {
 		return store.AlertRule{}, err
 	}

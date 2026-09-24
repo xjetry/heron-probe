@@ -50,12 +50,11 @@ func checkName(name string) error {
 	return nil
 }
 
+// CheckRule 只校验持久化结构；DeleteNode 可把显式作用域删空，空集仍是不覆盖节点的合法规则。
+// Load 若丢弃这种规则，列表会不可见，而存储的渠道引用仍阻止删除，库与内存就会不一致。
 func CheckRule(r store.AlertRule) error {
 	if err := checkName(r.Name); err != nil {
 		return err
-	}
-	if !r.AllNodes && len(r.NodeIDs) == 0 {
-		return invalid("node_ids", "must not be empty unless all_nodes is true")
 	}
 	switch r.Kind {
 	case store.KindOffline:

@@ -215,6 +215,9 @@ func TestSweepRespectsScopeAndEnabled(t *testing.T) {
 	if len(f.e.States()) != 0 {
 		t.Fatal("empty explicit scope matched nodes")
 	}
+	if len(f.e.Rules()) != 1 {
+		t.Fatal("empty explicit scope rule disappeared on reload")
+	}
 }
 
 func TestSaveRuleShrinkingScopeDropsStates(t *testing.T) {

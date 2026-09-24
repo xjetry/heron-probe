@@ -23,7 +23,6 @@ func TestCheckRule(t *testing.T) {
 		{"empty_name", func(r *store.AlertRule) { r.Name = "" }, "name"},
 		{"long_name", func(r *store.AlertRule) { r.Name = strings.Repeat("字", 65) }, "name"},
 		{"kind", func(r *store.AlertRule) { r.Kind = "other" }, "kind"},
-		{"scope", func(r *store.AlertRule) { r.AllNodes = false }, "node_ids"},
 		{"task", func(r *store.AlertRule) { r.TaskID = 0 }, "task_id"},
 		{"metric", func(r *store.AlertRule) { r.Metric = "other" }, "metric"},
 		{"loss_low", func(r *store.AlertRule) { r.Threshold = -1 }, "threshold"},
@@ -50,6 +49,7 @@ func TestCheckRule(t *testing.T) {
 		func(r *store.AlertRule) { r.Threshold = 100; r.ForMinutes = 60 },
 		func(r *store.AlertRule) { r.Metric = store.MetricRttMs; r.Threshold = 0.1 },
 		func(r *store.AlertRule) { r.AllNodes = false; r.NodeIDs = []int64{1} },
+		func(r *store.AlertRule) { r.AllNodes = false },
 		func(r *store.AlertRule) { r.Kind = store.KindOffline; r.TaskID = 0; r.Metric = ""; r.ForMinutes = 0 },
 	} {
 		r := base
