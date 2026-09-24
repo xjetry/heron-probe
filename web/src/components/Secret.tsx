@@ -36,7 +36,7 @@ export function Secret({ label, value }: { label: string; value: string }) {
       <code ref={code} className="secret" aria-label={label}>{value}</code>
       <p>
         <button type="button" onClick={copy}>{result === "copied" ? "已复制" : "复制"}</button>
-        {result === "failed" && <span role="status">复制失败，请手动选择</span>}
+        <span role="status">{result === "failed" ? "复制失败，请手动选择" : ""}</span>
       </p>
     </div>
   );

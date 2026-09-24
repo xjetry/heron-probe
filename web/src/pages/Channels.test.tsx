@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
 import { ConnectError, Code } from "@connectrpc/connect";
 import { ChannelKind, ListNotifyChannelsResponseSchema, type SaveNotifyChannelRequest } from "../gen/probe/v1/admin_pb";
@@ -119,13 +119,31 @@ it("发送测试成功与失败", async () => {
     if (fail) throw new ConnectError("telegram: 401 Unauthorized", Code.FailedPrecondition);
     return {};
   } });
+  expect((await screen.findByRole("status")).textContent).toBe("");
   fireEvent.click(await screen.findByRole("button", { name: "测试 tg" }));
-  expect(await screen.findByRole("status")).toHaveTextContent("已向 tg 发送测试消息");
+  await waitFor(() => expect(screen.getByRole("status").textContent).toBe("已向 tg 发送测试消息"));
   fail = true;
   fireEvent.click(screen.getByRole("button", { name: "测试 tg" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("telegram: 401 Unauthorized");
-  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.getByRole("status").textContent).toBe("");
   expect(tested).toEqual([1n, 1n]);
+});
+
+it("在途测试被新操作打断后不出现成功提示", async () => {
+  let releaseTest!: () => void;
+  const testGate = new Promise<void>((r) => { releaseTest = r; });
+  render({
+    testNotifyChannel: async () => { await testGate; return {}; },
+    deleteNotifyChannel: async () => { throw new ConnectError("ref", Code.FailedPrecondition); },
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "测试 tg" }));
+  fireEvent.click(screen.getByRole("button", { name: "删除 tg" }));
+  fireEvent.click(screen.getByRole("button", { name: "确认删除 tg" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("ref");
+  await act(async () => { releaseTest(); });
+  await waitFor(() => expect(screen.getByRole("button", { name: "测试 tg" })).toBeEnabled());
+  expect(screen.getByRole("status").textContent).toBe("");
+  expect(screen.getByRole("alert")).toHaveTextContent("ref");
 });
 
 it("删除被引用渠道显示服务端原文", async () => {

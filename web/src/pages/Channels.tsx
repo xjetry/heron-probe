@@ -50,7 +50,7 @@ export function Channels() {
   const [creation, setCreation] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const { error, ...latest } = useLatestError();
-  // 任何新操作开始时，上一次测试的成功提示与失败一并失效。
+  // 任何新操作开始时，旧的成功提示与失败一并清除；在途请求的迟到结果由 isLatest 挡回，成功与失败同口径。
   const tracked = { ...latest, onMutate: () => { setNotice(null); return latest.onMutate(); } };
   const list = useQuery(AdminService.method.listNotifyChannels, {});
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNotifyChannels, cardinality: "finite" }) });
@@ -69,7 +69,7 @@ export function Channels() {
       <ChannelForm key={creation} title="新建通知渠道" initial={emptyDraft()} pending={create.isPending}
         onSubmit={(d) => create.mutate({ channel: toChannel(0n, d) }, { onSuccess: () => setCreation((k) => k + 1) })} />
       {error != null && <p role="alert" className="error">{errorText(error)}</p>}
-      {notice && <p role="status">{notice}</p>}
+      <p role="status">{notice ?? ""}</p>
       <div className="table-scroll" role="region" aria-label="通知渠道管理" tabIndex={0}>
         <table className="nodes">
           <thead><tr><th>名称</th><th>类型</th><th>目标</th><th>创建于</th><th>操作</th></tr></thead>
@@ -77,7 +77,7 @@ export function Channels() {
             {channels.map((c) => (
               <ChannelRow key={String(c.id)} channel={c} saving={update.isPending} deleting={remove.isPending} testing={test.isPending}
                 onSave={(d, onSuccess) => update.mutate({ channel: toChannel(c.id, d) }, { onSuccess })}
-                onTest={() => test.mutate({ id: c.id }, { onSuccess: () => setNotice(`已向 ${c.name} 发送测试消息`) })}
+                onTest={() => test.mutate({ id: c.id }, { onSuccess: (_r, _v, op) => { if (latest.isLatest(op)) setNotice(`已向 ${c.name} 发送测试消息`); } })}
                 onDelete={() => remove.mutate({ id: c.id })} />
             ))}
           </tbody>

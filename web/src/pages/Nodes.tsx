@@ -13,6 +13,7 @@ export function Nodes() {
   const { error, ...mutationErrors } = useLatestError();
   const nodes = useQuery(AdminService.method.listNodes, {});
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) });
+  // token 只在创建与换 token 的响应里各出现一次，hub 不存明文；展示不经过 isLatest 门控——门控丢弃迟到结果时会把这唯一一份明文一起丢掉。
   const [secret, setSecret] = useState<{ label: string; value: string } | null>(null);
   const [name, setName] = useState("");
 

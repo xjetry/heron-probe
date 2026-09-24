@@ -9,7 +9,7 @@ it.each(["copied", "failed"])("凭据变化清除 %s 反馈", async (result) => 
   const { rerender } = render(<Secret label="token" value="A" />);
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "复制" })); });
   rerender(<Secret label="token" value="B" />);
-  expect({ button: screen.getByRole("button").textContent, feedback: screen.queryByRole("status")?.textContent }).toEqual({ button: "复制", feedback: undefined });
+  expect({ button: screen.getByRole("button").textContent, feedback: screen.queryByRole("status")?.textContent }).toEqual({ button: "复制", feedback: "" });
 });
 
 it.each(["copied", "failed"])("旧凭据迟到的 %s 结果不影响新凭据", async (result) => {
@@ -20,7 +20,7 @@ it.each(["copied", "failed"])("旧凭据迟到的 %s 结果不影响新凭据", 
   fireEvent.click(screen.getByRole("button", { name: "复制" }));
   rerender(<Secret label="token" value="B" />);
   await act(async () => { finish(); });
-  expect({ button: screen.getByRole("button").textContent, feedback: screen.queryByRole("status")?.textContent, selection: window.getSelection()?.toString() }).toEqual({ button: "复制", feedback: undefined, selection: "" });
+  expect({ button: screen.getByRole("button").textContent, feedback: screen.queryByRole("status")?.textContent, selection: window.getSelection()?.toString() }).toEqual({ button: "复制", feedback: "", selection: "" });
 });
 
 it.each(["missing", "rejected"])("剪贴板 %s 时反馈失败并选中明文", async (reason) => {
