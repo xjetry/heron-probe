@@ -382,10 +382,16 @@ func TestListAlertEventsPaging(t *testing.T) {
 		events = append(events, ev)
 	}
 	last := events[500]
-	if err := h.store.UpdateDelivery(t.Context(), last.Deliveries[0].ID, 1, true, true, "", h.clk.Now()); err != nil {
+	if _, err := h.store.BeginDeliveryAttempt(t.Context(), last.Deliveries[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.store.UpdateDelivery(t.Context(), events[499].Deliveries[0].ID, 1, false, true, "HTTP 400 Bad Request", time.Time{}); err != nil {
+	if err := h.store.UpdateDelivery(t.Context(), last.Deliveries[0].ID, true, true, "", h.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.store.BeginDeliveryAttempt(t.Context(), events[499].Deliveries[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.UpdateDelivery(t.Context(), events[499].Deliveries[0].ID, false, true, "HTTP 400 Bad Request", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	query := func(node, before int64, limit uint32) *probev1.ListAlertEventsResponse {

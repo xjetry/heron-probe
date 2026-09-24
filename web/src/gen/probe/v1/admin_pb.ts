@@ -1852,7 +1852,8 @@ export type AlertDelivery = Message<"probe.v1.AlertDelivery"> & {
   channelId: bigint;
 
   /**
-   * 实际投递次数，0–3。
+   * 已开始的投递尝试次数，0–3；每次发送前计数，即使发送前退出也计入。
+   * 发送后结果未落盘时不回退计数，后续重发仍消耗一次尝试。
    *
    * @generated from field: uint32 attempts = 2;
    */

@@ -167,7 +167,10 @@ func TestQueueRequeuesPendingOnLoad(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
 	defer srv.Close()
 	ev := queueEvent(t, f, queueChannel(t, f, srv.URL))
-	must(t, f.st.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, 1, false, false, "prior failure", time.Time{}))
+	if _, err := f.st.BeginDeliveryAttempt(t.Context(), ev.Deliveries[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	must(t, f.st.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, false, false, "prior failure", time.Time{}))
 	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
 	must(t, q.Requeue(t.Context()))
 	stop := startQueue(t, q)

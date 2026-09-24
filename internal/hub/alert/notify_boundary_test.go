@@ -125,7 +125,10 @@ func TestQueueDoesNotSendQueuedTerminalDelivery(t *testing.T) {
 	first, last := queueEvent(t, f, c), queueEvent(t, f, c)
 	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
 	q.Enqueue(first)
-	must(t, f.st.UpdateDelivery(t.Context(), first.Deliveries[0].ID, 1, false, true, "permanent failure", time.Time{}))
+	if _, err := f.st.BeginDeliveryAttempt(t.Context(), first.Deliveries[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	must(t, f.st.UpdateDelivery(t.Context(), first.Deliveries[0].ID, false, true, "permanent failure", time.Time{}))
 	q.Enqueue(last)
 	stop := startQueue(t, q)
 	awaitDeliveries(t, f, last.ID, allDone)

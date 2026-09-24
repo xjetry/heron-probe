@@ -4016,7 +4016,8 @@ func (x *AlertEvent) GetDeliveries() []*AlertDelivery {
 type AlertDelivery struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	ChannelId int64                  `protobuf:"varint,1,opt,name=channel_id,json=channelId,proto3" json:"channel_id,omitempty"`
-	// 实际投递次数，0–3。
+	// 已开始的投递尝试次数，0–3；每次发送前计数，即使发送前退出也计入。
+	// 发送后结果未落盘时不回退计数，后续重发仍消耗一次尝试。
 	Attempts  uint32 `protobuf:"varint,2,opt,name=attempts,proto3" json:"attempts,omitempty"`
 	Ok        bool   `protobuf:"varint,3,opt,name=ok,proto3" json:"ok,omitempty"`
 	LastError string `protobuf:"bytes,4,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"`

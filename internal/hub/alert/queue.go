@@ -121,7 +121,8 @@ func (q *Queue) Requeue(ctx context.Context) error {
 }
 
 // 由装配方启动一个 worker；退出不清空库中待投递行，下一次 Requeue 接续未完成项。
-// HTTP 成功与落盘之间崩溃仍可能重复发送，外部 HTTP 与 SQLite 不共享事务。
+// 每次发送前已持久化尝试计数，发送次数受 MaxDeliveryAttempts 约束。
+// 结果未落盘（崩溃或写失败）时可在后续尝试中重发，重发同样消耗该上限。
 func (q *Queue) Run(ctx context.Context) {
 	for {
 		if ctx.Err() != nil {
@@ -224,17 +225,30 @@ func (q *Queue) deliver(ctx context.Context, item deliveryItem) error {
 			}
 		}
 		if c == nil {
-			return q.st.UpdateDelivery(ctx, d.ID, d.Attempts, false, true, store.DeliveryErrChannelDeleted, time.Time{})
+			return q.st.UpdateDelivery(ctx, d.ID, false, true, store.DeliveryErrChannelDeleted, time.Time{})
 		}
 		channel, err := ParseChannel(*c, q.client, q.telegramBase)
 		if err != nil {
-			return q.st.UpdateDelivery(ctx, d.ID, d.Attempts, false, true, err.Error(), time.Time{})
+			return q.st.UpdateDelivery(ctx, d.ID, false, true, err.Error(), time.Time{})
+		}
+		d, err = q.st.BeginDeliveryAttempt(ctx, d.ID)
+		if errors.Is(err, store.ErrDeliveryDone) {
+			return nil
+		}
+		if errors.Is(err, store.ErrDeliveryExhausted) {
+			last := d.LastError
+			if last == "" {
+				last = store.DeliveryErrResultUnrecorded
+			}
+			return q.st.UpdateDelivery(ctx, d.ID, false, true, last, time.Time{})
+		}
+		if err != nil {
+			return err
 		}
 		err = channel.Send(ctx, m)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		d.Attempts++
 		ok := err == nil
 		last := ""
 		var at time.Time
@@ -247,7 +261,7 @@ func (q *Queue) deliver(ctx context.Context, item deliveryItem) error {
 			retry = errors.As(err, &classified) && classified.Retryable()
 		}
 		done := ok || !retry || d.Attempts >= store.MaxDeliveryAttempts
-		if err := q.st.UpdateDelivery(ctx, d.ID, d.Attempts, ok, done, last, at); err != nil {
+		if err := q.st.UpdateDelivery(ctx, d.ID, ok, done, last, at); err != nil {
 			return err
 		}
 		if done {

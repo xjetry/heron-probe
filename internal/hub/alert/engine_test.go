@@ -21,19 +21,21 @@ import (
 )
 
 type fixture struct {
-	st  *store.Store
-	clk *clock.Fake
-	l   *live.Live
-	e   *Engine
-	log *slog.Logger
-	ids []int64
+	st   *store.Store
+	clk  *clock.Fake
+	l    *live.Live
+	e    *Engine
+	log  *slog.Logger
+	ids  []int64
+	path string
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{clk: clock.NewFake(time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)), log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	var err error
-	f.st, err = store.Open(filepath.Join(t.TempDir(), "hub.db"), f.clk, f.log)
+	f.path = filepath.Join(t.TempDir(), "hub.db")
+	f.st, err = store.Open(f.path, f.clk, f.log)
 	must(t, err)
 	t.Cleanup(func() { must(t, f.st.Close()) })
 	for i := 0; i < 2; i++ {

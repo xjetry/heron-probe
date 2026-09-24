@@ -90,7 +90,7 @@ type Delivery struct {
 	ID          int64
 	EventID     int64
 	ChannelID   int64
-	Attempts    int
+	Attempts    int // 已开始的尝试次数；BeginDeliveryAttempt 在发送之前提交，发送前崩溃也计入。
 	OK          bool
 	Done        bool
 	LastError   string
@@ -101,6 +101,10 @@ type Delivery struct {
 const MaxDeliveryAttempts = 3
 
 const DeliveryErrChannelDeleted = "channel deleted"
+const DeliveryErrResultUnrecorded = "attempts exhausted but last result was not recorded"
+
+var ErrDeliveryDone = errors.New("delivery is done")
+var ErrDeliveryExhausted = errors.New("delivery attempts exhausted")
 
 // 主表与关联在同一读事务中读取，不能把并发保存前后的两份作用域拼在一起。
 func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
@@ -466,13 +470,45 @@ func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, stat
 	return ev, nil
 }
 
-func (s *Store) UpdateDelivery(ctx context.Context, id int64, attempts int, ok, done bool, lastError string, at time.Time) error {
+// 每个已提交的尝试只授权至多一次发送，不保证恰好一次：提交后发送前崩溃也消耗名额。
+// 条件更新由 Store.write 串行化；结果写失败或重启不能重新使用已消耗的名额。
+func (s *Store) BeginDeliveryAttempt(ctx context.Context, id int64) (Delivery, error) {
+	var d Delivery
+	var refused error
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		var err error
+		d, err = scanDelivery(tx.QueryRow("UPDATE alert_delivery SET attempts = attempts + 1 WHERE id = ? AND done = 0 AND attempts < ? RETURNING "+deliveryColumns, id, MaxDeliveryAttempts))
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		d, err = scanDelivery(tx.QueryRow(selectDeliveries+" WHERE id = ?", id))
+		if errors.Is(err, sql.ErrNoRows) {
+			return NotFoundError{Kind: "alert delivery", ID: id}
+		}
+		if err != nil {
+			return err
+		}
+		if d.Done {
+			refused = ErrDeliveryDone
+		} else {
+			refused = ErrDeliveryExhausted
+		}
+		return nil
+	})
+	if err != nil {
+		return Delivery{}, err
+	}
+	return d, refused
+}
+
+// 结果不能改写已开始的次数；计数只由 BeginDeliveryAttempt 推进。
+func (s *Store) UpdateDelivery(ctx context.Context, id int64, ok, done bool, lastError string, at time.Time) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
 		var delivered any
 		if !at.IsZero() {
 			delivered = at.Unix()
 		}
-		res, err := tx.Exec("UPDATE alert_delivery SET attempts = ?, ok = ?, done = ?, last_error = ?, delivered_at = ? WHERE id = ? AND done = 0", attempts, ok, done, lastError, delivered, id)
+		res, err := tx.Exec("UPDATE alert_delivery SET ok = ?, done = ?, last_error = ?, delivered_at = ? WHERE id = ? AND done = 0", ok, done, lastError, delivered, id)
 		if err != nil {
 			return err
 		}
@@ -488,18 +524,27 @@ func (s *Store) UpdateDelivery(ctx context.Context, id int64, attempts int, ok, 
 	})
 }
 
-const selectDeliveries = "SELECT id, event_id, channel_id, attempts, ok, done, last_error, delivered_at FROM alert_delivery"
+const deliveryColumns = "id, event_id, channel_id, attempts, ok, done, last_error, delivered_at"
+const selectDeliveries = "SELECT " + deliveryColumns + " FROM alert_delivery"
+
+func scanDelivery(row interface{ Scan(...any) error }) (Delivery, error) {
+	var d Delivery
+	var delivered sql.NullInt64
+	if err := row.Scan(&d.ID, &d.EventID, &d.ChannelID, &d.Attempts, &d.OK, &d.Done, &d.LastError, &delivered); err != nil {
+		return Delivery{}, err
+	}
+	if delivered.Valid {
+		d.DeliveredAt = time.Unix(delivered.Int64, 0).UTC()
+	}
+	return d, nil
+}
 
 func scanDeliveries(rows *sql.Rows) ([]Delivery, error) {
 	var out []Delivery
 	for rows.Next() {
-		var d Delivery
-		var delivered sql.NullInt64
-		if err := rows.Scan(&d.ID, &d.EventID, &d.ChannelID, &d.Attempts, &d.OK, &d.Done, &d.LastError, &delivered); err != nil {
+		d, err := scanDelivery(rows)
+		if err != nil {
 			return nil, err
-		}
-		if delivered.Valid {
-			d.DeliveredAt = time.Unix(delivered.Int64, 0).UTC()
 		}
 		out = append(out, d)
 	}

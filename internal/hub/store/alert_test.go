@@ -222,7 +222,10 @@ func TestUpdateDeliveryAndPending(t *testing.T) {
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID, cs[1].ID})
 	for _, attempts := range []int{1, 2, 3} {
-		if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, attempts, false, attempts == MaxDeliveryAttempts, "failed", time.Time{}); err != nil {
+		if _, err := s.BeginDeliveryAttempt(t.Context(), ev.Deliveries[0].ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, false, attempts == MaxDeliveryAttempts, "failed", time.Time{}); err != nil {
 			t.Fatal(err)
 		}
 		got, err := s.PendingDeliveries(t.Context())
@@ -235,7 +238,10 @@ func TestUpdateDeliveryAndPending(t *testing.T) {
 		}
 	}
 	at := s.clk.Now().Add(time.Minute)
-	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[1].ID, 1, true, true, "", at); err != nil {
+	if _, err := s.BeginDeliveryAttempt(t.Context(), ev.Deliveries[1].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[1].ID, true, true, "", at); err != nil {
 		t.Fatal(err)
 	}
 	pending, err := s.PendingDeliveries(t.Context())
@@ -256,7 +262,7 @@ func TestDeliveryTerminalStateCannotBeReopened(t *testing.T) {
 	if err := s.DeleteNotifyChannel(t.Context(), cs[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, 1, false, false, "late HTTP failure", time.Time{}); err != nil {
+	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, false, false, "late HTTP failure", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetAlertEvent(t.Context(), ev.ID)
@@ -549,7 +555,7 @@ func TestAlertMissingObjects(t *testing.T) {
 		{"delete_rule", "alert rule", func() error { return s.DeleteAlertRule(t.Context(), 999) }},
 		{"delete_channel", "notify channel", func() error { return s.DeleteNotifyChannel(t.Context(), 999) }},
 		{"save_channel", "notify channel", func() error { _, err := s.SaveNotifyChannel(t.Context(), NotifyChannel{ID: 999}); return err }},
-		{"update_delivery", "alert delivery", func() error { return s.UpdateDelivery(t.Context(), 999, 1, false, false, "failed", time.Time{}) }},
+		{"update_delivery", "alert delivery", func() error { return s.UpdateDelivery(t.Context(), 999, false, false, "failed", time.Time{}) }},
 		{"get_event", "alert event", func() error { _, err := s.GetAlertEvent(t.Context(), 999); return err }},
 	} {
 		t.Run(tc.name, func(t *testing.T) { assertAlertNotFound(t, tc.call(), tc.kind, 999) })
@@ -560,7 +566,10 @@ func TestDeleteNotifyChannelTerminatesPendingDeliveries(t *testing.T) {
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID, cs[0].ID, cs[1].ID})
-	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[1].ID, 1, true, true, "", s.clk.Now()); err != nil {
+	if _, err := s.BeginDeliveryAttempt(t.Context(), ev.Deliveries[1].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[1].ID, true, true, "", s.clk.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteNotifyChannel(t.Context(), cs[0].ID); err != nil {

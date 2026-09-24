@@ -194,7 +194,10 @@ func TestServePrunesAlertEvents(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if err := st.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, 1, true, true, "", clk.Now()); err != nil {
+					if _, err := st.BeginDeliveryAttempt(t.Context(), ev.Deliveries[0].ID); err != nil {
+						t.Fatal(err)
+					}
+					if err := st.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, true, true, "", clk.Now()); err != nil {
 						t.Fatal(err)
 					}
 				}
