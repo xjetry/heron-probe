@@ -21,20 +21,24 @@ func checkTaskID(id uint64, field string) error {
 
 // 校验方提供路径和约束，枚举词汇由双向转换共用的表裁定；包装错误不改变字段定位。
 func fieldMessage(root string, field alert.FieldError) string {
-	allowed := make([]string, len(field.Allowed))
-	for i, v := range field.Allowed {
+	render := func(v string) string {
 		switch {
 		case root == "rule" && field.Path == "kind":
-			allowed[i] = enumFor(alertKinds, store.AlertKind(v)).String()
+			return enumFor(alertKinds, store.AlertKind(v)).String()
 		case root == "rule" && field.Path == "metric":
-			allowed[i] = enumFor(probeMetrics, store.ProbeMetric(v)).String()
+			return enumFor(probeMetrics, store.ProbeMetric(v)).String()
 		case root == "channel" && field.Path == "kind":
-			allowed[i] = enumFor(channelKinds, store.ChannelKind(v)).String()
+			return enumFor(channelKinds, store.ChannelKind(v)).String()
 		default:
-			allowed[i] = v
+			return v
 		}
 	}
+	allowed := make([]string, len(field.Allowed))
+	for i, v := range field.Allowed {
+		allowed[i] = render(v)
+	}
 	field.Allowed = allowed
+	field.Got = render(field.Got)
 	return root + "." + field.Path + " " + field.Detail()
 }
 

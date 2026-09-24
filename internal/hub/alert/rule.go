@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"text/template"
 	"time"
@@ -147,6 +149,21 @@ func decodeWebhook(config string) (WebhookConfig, error) {
 	if err := json.Unmarshal([]byte(config), &cfg); err != nil {
 		return cfg, invalid("webhook", "config must be a JSON object: %v", err)
 	}
+	// HTTP 头名不区分大小写；解码时拒绝歧义，避免合并或发送时由 map 遍历顺序决定凭据。
+	keys := make([]string, 0, len(cfg.Headers))
+	for key := range cfg.Headers {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	headers, original := map[string]string{}, map[string]string{}
+	for _, key := range keys {
+		canonical := http.CanonicalHeaderKey(key)
+		if old, exists := original[canonical]; exists {
+			return cfg, invalid("webhook.headers", "keys %q and %q name the same HTTP header", old, key)
+		}
+		original[canonical], headers[canonical] = key, cfg.Headers[key]
+	}
+	cfg.Headers = headers
 	return cfg, nil
 }
 

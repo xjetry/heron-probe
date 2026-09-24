@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"sort"
@@ -226,21 +227,11 @@ func (e *Engine) SaveChannel(ctx context.Context, c store.NotifyChannel) (store.
 			cfg.URL = prev.URL
 		}
 		headers := map[string]string{}
-		merge := func(src map[string]string) {
-			keys := make([]string, 0, len(src))
-			for k := range src {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				headers[http.CanonicalHeaderKey(k)] = src[k]
-			}
-		}
-		merge(prev.Headers)
+		maps.Copy(headers, prev.Headers)
 		for _, k := range cfg.RemoveHeaders {
 			delete(headers, http.CanonicalHeaderKey(k))
 		}
-		merge(cfg.Headers)
+		maps.Copy(headers, cfg.Headers)
 		cfg.Headers = headers
 		if cfg.Method == "" {
 			cfg.Method = "POST"

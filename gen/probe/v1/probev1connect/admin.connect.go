@@ -154,13 +154,13 @@ type AdminServiceClient interface {
 	DeleteAlertRule(context.Context, *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error)
 	// 按事件 id 倒序分页，包含每个事件的投递状态。
 	ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error)
-	// 列出渠道；不回显 Telegram 凭据。
+	// 不回显渠道凭据（Telegram token、Webhook URL 与头值）。
 	ListNotifyChannels(context.Context, *connect.Request[v1.ListNotifyChannelsRequest]) (*connect.Response[v1.ListNotifyChannelsResponse], error)
-	// id 为 0 时创建，否则整体替换；Telegram 空 token 保留旧值。
+	// id 为 0 创建，否则替换；凭据字段为空或省略时保留旧值，删除头用 remove_headers。
 	SaveNotifyChannel(context.Context, *connect.Request[v1.SaveNotifyChannelRequest]) (*connect.Response[v1.SaveNotifyChannelResponse], error)
 	// 被告警规则引用的渠道不可删除，错误列出引用规则。
 	DeleteNotifyChannel(context.Context, *connect.Request[v1.DeleteNotifyChannelRequest]) (*connect.Response[v1.DeleteNotifyChannelResponse], error)
-	// 向已保存的渠道同步发送测试消息，投递失败返回错误原文。
+	// 向已保存的渠道同步发送测试消息；不可重试失败返回 FailedPrecondition，可重试返回 Unavailable，文本为错误原文。
 	TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error)
 }
 
@@ -551,13 +551,13 @@ type AdminServiceHandler interface {
 	DeleteAlertRule(context.Context, *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error)
 	// 按事件 id 倒序分页，包含每个事件的投递状态。
 	ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error)
-	// 列出渠道；不回显 Telegram 凭据。
+	// 不回显渠道凭据（Telegram token、Webhook URL 与头值）。
 	ListNotifyChannels(context.Context, *connect.Request[v1.ListNotifyChannelsRequest]) (*connect.Response[v1.ListNotifyChannelsResponse], error)
-	// id 为 0 时创建，否则整体替换；Telegram 空 token 保留旧值。
+	// id 为 0 创建，否则替换；凭据字段为空或省略时保留旧值，删除头用 remove_headers。
 	SaveNotifyChannel(context.Context, *connect.Request[v1.SaveNotifyChannelRequest]) (*connect.Response[v1.SaveNotifyChannelResponse], error)
 	// 被告警规则引用的渠道不可删除，错误列出引用规则。
 	DeleteNotifyChannel(context.Context, *connect.Request[v1.DeleteNotifyChannelRequest]) (*connect.Response[v1.DeleteNotifyChannelResponse], error)
-	// 向已保存的渠道同步发送测试消息，投递失败返回错误原文。
+	// 向已保存的渠道同步发送测试消息；不可重试失败返回 FailedPrecondition，可重试返回 Unavailable，文本为错误原文。
 	TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error)
 }
 

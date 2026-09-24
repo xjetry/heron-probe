@@ -58,13 +58,13 @@ service AdminService {
   rpc DeleteAlertRule(DeleteAlertRuleRequest) returns (DeleteAlertRuleResponse);
   // 按事件 id 倒序分页，包含每个事件的投递状态。
   rpc ListAlertEvents(ListAlertEventsRequest) returns (ListAlertEventsResponse);
-  // 列出渠道；不回显 Telegram 凭据。
+  // 不回显渠道凭据（Telegram token、Webhook URL 与头值）。
   rpc ListNotifyChannels(ListNotifyChannelsRequest) returns (ListNotifyChannelsResponse);
-  // id 为 0 时创建，否则整体替换；Telegram 空 token 保留旧值。
+  // id 为 0 创建，否则替换；凭据字段为空或省略时保留旧值，删除头用 remove_headers。
   rpc SaveNotifyChannel(SaveNotifyChannelRequest) returns (SaveNotifyChannelResponse);
   // 被告警规则引用的渠道不可删除，错误列出引用规则。
   rpc DeleteNotifyChannel(DeleteNotifyChannelRequest) returns (DeleteNotifyChannelResponse);
-  // 向已保存的渠道同步发送测试消息，投递失败返回错误原文。
+  // 向已保存的渠道同步发送测试消息；不可重试失败返回 FailedPrecondition，可重试返回 Unavailable，文本为错误原文。
   rpc TestNotifyChannel(TestNotifyChannelRequest) returns (TestNotifyChannelResponse);
 }
 

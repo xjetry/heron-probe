@@ -2201,7 +2201,7 @@ export const AdminService: GenService<{
     output: typeof ListAlertEventsResponseSchema;
   },
   /**
-   * 列出渠道；不回显 Telegram 凭据。
+   * 不回显渠道凭据（Telegram token、Webhook URL 与头值）。
    *
    * @generated from rpc probe.v1.AdminService.ListNotifyChannels
    */
@@ -2211,7 +2211,7 @@ export const AdminService: GenService<{
     output: typeof ListNotifyChannelsResponseSchema;
   },
   /**
-   * id 为 0 时创建，否则整体替换；Telegram 空 token 保留旧值。
+   * id 为 0 创建，否则替换；凭据字段为空或省略时保留旧值，删除头用 remove_headers。
    *
    * @generated from rpc probe.v1.AdminService.SaveNotifyChannel
    */
@@ -2231,7 +2231,7 @@ export const AdminService: GenService<{
     output: typeof DeleteNotifyChannelResponseSchema;
   },
   /**
-   * 向已保存的渠道同步发送测试消息，投递失败返回错误原文。
+   * 向已保存的渠道同步发送测试消息；不可重试失败返回 FailedPrecondition，可重试返回 Unavailable，文本为错误原文。
    *
    * @generated from rpc probe.v1.AdminService.TestNotifyChannel
    */

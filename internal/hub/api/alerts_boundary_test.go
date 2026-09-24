@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,51 @@ import (
 	"github.com/xjetry/probe/internal/hub/alert"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestAlertEnumGotUsesProtocolVocabulary(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	resp, err := h.http.Post(h.srv.URL+"/probe.v1.AdminService/SaveAlertRule", "application/json", strings.NewReader(`{"rule":{"name":"offline","kind":"offline","allNodes":true}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 400 || !strings.Contains(string(body), `got \"ALERT_KIND_UNSPECIFIED\"`) {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+	}
+}
+
+func TestWebhookHeaderNamesAreUnambiguous(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	for _, tc := range []struct {
+		name    string
+		headers map[string]string
+		remove  []string
+		want    []string
+	}{
+		{"duplicate", map[string]string{"x-a": "one", "X-A": "two"}, nil, []string{"channel.webhook.headers", "x-a", "X-A"}},
+		{"remove", nil, []string{"bad key"}, []string{"channel.webhook.remove_headers", "bad key"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := webhook("http://host")
+			c.Webhook.Headers, c.Webhook.RemoveHeaders = tc.headers, tc.remove
+			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{Channel: c}))
+			if codeOf(err) != connect.CodeInvalidArgument {
+				t.Fatalf("err=%v", err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("err=%v lacks %s", err, want)
+				}
+			}
+		})
+	}
+}
 
 func TestUpdateNodeRequiresExplicitGrace(t *testing.T) {
 	h := newHarness(t, "")
