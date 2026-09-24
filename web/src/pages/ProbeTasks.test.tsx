@@ -14,6 +14,20 @@ const tasks = create(ListProbeTasksResponseSchema, { version: 9n, tasks: [
 ] });
 const routes = [{ path: "/probes", Component: ProbeTasks }];
 
+it("节点列表挂起时不渲染表单与任务表格", async () => {
+  const { queryClient } = renderWithAdmin({
+    listNodes: () => new Promise(() => {}),
+    listProbeTasks: async () => tasks,
+  }, routes, "/probes");
+  const key = createConnectQueryKey({ schema: AdminService.method.listProbeTasks, cardinality: "finite" });
+  await waitFor(() => expect(queryClient.getQueriesData({ queryKey: key })[0]?.[1]).toEqual(tasks));
+  expect({
+    loading: screen.queryByText("加载中…") !== null,
+    forms: screen.queryAllByRole("form").length,
+    rows: screen.queryAllByRole("row").length,
+  }).toEqual({ loading: true, forms: 0, rows: 0 });
+});
+
 it("两种类型在选项与任务列表使用一致标签", async () => {
   renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => ({ tasks: [
     ...tasks.tasks, { task: { id: 4n, kind: ProbeKind.ICMP, target: "host" } },
@@ -62,6 +76,10 @@ it("缺失 task 的条目不变成可编辑或可删除的任务", async () => {
 it("节点查询失败可见", async () => {
   renderWithAdmin({ listNodes: async () => { throw new ConnectError("nodes unavailable", Code.Unavailable); }, listProbeTasks: async () => tasks }, routes, "/probes");
   expect(await screen.findByRole("alert")).toHaveTextContent(/^nodes unavailable$/);
+  expect({
+    forms: screen.queryAllByRole("form").length,
+    rows: screen.queryAllByRole("row").length,
+  }).toEqual({ forms: 0, rows: 0 });
 });
 
 it("提交剔除编辑期间从节点列表消失的分配", async () => {

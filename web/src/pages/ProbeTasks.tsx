@@ -28,18 +28,22 @@ export function ProbeTasks() {
   // 返回刷新 promise，编辑态在列表显示已保存值之后才关闭。
   const update = useMutation(AdminService.method.saveProbeTask, { ...mutationErrors, onSuccess: refresh });
   const remove = useMutation(AdminService.method.deleteProbeTask, { ...mutationErrors, onSuccess: refresh });
-  const availableNodeIds = new Set(nodes.data?.nodes.map((n) => n.id));
+  const pageError = error ?? nodes.error;
+  // 分配求交依赖节点列表已到达；未到达前不渲染任何可提交的表单。
+  if (nodes.isPending) return <p className="muted">加载中…</p>;
+  if (!nodes.data) return <p role="alert" className="error">{errorText(pageError)}</p>;
+  const nodeList = nodes.data.nodes;
+  const availableNodeIds = new Set(nodeList.map((n) => n.id));
   // 当前节点列表不再包含的分配自然掉出，避免已删除节点让 hub 以 NotFound 拒绝整次保存。
   const submit = (m: typeof create, id: bigint, d: Draft, onSuccess?: () => void) =>
     m.mutate({ task: { id, kind: d.kind, target: d.target.trim(), intervalS: Number(d.intervalS), timeoutMs: Number(d.timeoutMs) },
       nodeIds: [...d.nodeIds].filter((id) => availableNodeIds.has(id)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)) }, { onSuccess });
-  const pageError = error ?? nodes.error;
   if (list.error) return <p role="alert" className="error">{errorText(list.error)}</p>;
   const tasks = list.data?.tasks.flatMap((d) => d.task ? [{ task: d.task, nodeIds: d.nodeIds }] : []) ?? [];
   return (
     <section>
       <h1>探测任务</h1>
-      <TaskForm key={creation} title="新建探测任务" nodes={nodes.data?.nodes ?? []} initial={emptyDraft()} pending={create.isPending}
+      <TaskForm key={creation} title="新建探测任务" nodes={nodeList} initial={emptyDraft()} pending={create.isPending}
         onSubmit={(d) => submit(create, 0n, d, () => setCreation((key) => key + 1))} />
       {pageError != null && <p role="alert" className="error">{errorText(pageError)}</p>}
       <div className="table-scroll">
@@ -47,7 +51,7 @@ export function ProbeTasks() {
           <thead><tr><th>类型</th><th>目标</th><th>间隔 (s)</th><th>超时 (ms)</th><th>节点</th><th /></tr></thead>
           <tbody>
             {tasks.map(({ task, nodeIds }) => (
-              <TaskRow key={String(task.id)} task={task} nodeIds={nodeIds} nodes={nodes.data?.nodes ?? []} saving={update.isPending} deleting={remove.isPending}
+              <TaskRow key={String(task.id)} task={task} nodeIds={nodeIds} nodes={nodeList} saving={update.isPending} deleting={remove.isPending}
                 onSave={(draft, onSuccess) => submit(update, task.id, draft, onSuccess)} onDelete={() => remove.mutate({ id: task.id })} />
             ))}
           </tbody>
