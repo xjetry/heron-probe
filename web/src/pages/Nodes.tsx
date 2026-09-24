@@ -52,9 +52,9 @@ export function Nodes() {
           <tbody>
             {list.map((n, i) => (
               <NodeEditor key={String(n.id)} node={n}
-                deleting={remove.isPending} rotating={rotate.isPending}
+                saving={update.isPending} deleting={remove.isPending} rotating={rotate.isPending}
                 onMoveUp={() => move(list, i, -1)} onMoveDown={() => move(list, i, 1)}
-                onSave={(patch) => update.mutate({ id: n.id, ...patch })}
+                onSave={(patch, onSuccess) => update.mutate({ id: n.id, ...patch }, { onSuccess })}
                 onDelete={() => remove.mutate({ id: n.id })}
                 onRotate={() => rotate.mutate({ id: n.id })} />
             ))}
@@ -67,11 +67,11 @@ export function Nodes() {
 
 const validResetDay = (day: number) => Number.isInteger(day) && day >= 1 && day <= 28;
 
-function NodeEditor({ node, deleting, rotating, onMoveUp, onMoveDown, onSave, onDelete, onRotate }: {
+function NodeEditor({ node, saving, deleting, rotating, onMoveUp, onMoveDown, onSave, onDelete, onRotate }: {
   node: Node;
-  deleting: boolean; rotating: boolean;
+  saving: boolean; deleting: boolean; rotating: boolean;
   onMoveUp: () => void; onMoveDown: () => void;
-  onSave: (patch: { name: string; public: boolean; note: string; trafficResetDay: number }) => void;
+  onSave: (patch: { name: string; public: boolean; note: string; trafficResetDay: number }, onSuccess: () => void) => void;
   onDelete: () => void; onRotate: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -87,7 +87,7 @@ function NodeEditor({ node, deleting, rotating, onMoveUp, onMoveDown, onSave, on
         <td><input type="number" min={1} max={28} aria-label="重置日" value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><p className="muted">若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。</p></td>
         <td />
         <td>
-          <button type="button" disabled={!validResetDay(draft.trafficResetDay)} onClick={() => { onSave(draft); setEditing(false); }}>保存</button>{" "}
+          <button type="button" disabled={saving || !validResetDay(draft.trafficResetDay)} onClick={() => onSave(draft, () => setEditing(false))}>保存</button>{" "}
           <button type="button" className="link" onClick={() => setEditing(false)}>取消</button>
         </td>
       </tr>

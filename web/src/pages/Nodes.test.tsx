@@ -13,6 +13,30 @@ const two = [
 ];
 
 describe("Nodes", () => {
+  it("编辑保存挂起与失败保留草稿，成功后才退出", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const updateNode = vi.fn(async () => {
+      await gate;
+      if (updateNode.mock.calls.length === 1) throw new ConnectError("node update rejected", Code.InvalidArgument);
+      return { node: { ...two[0], name: "changed" } };
+    });
+    renderWithAdmin({ listNodes: async () => ({ nodes: two }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a" });
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    fireEvent.change(screen.getByLabelText("名称"), { target: { value: "changed" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    try {
+      await waitFor(() => expect(updateNode).toHaveBeenCalledTimes(1));
+      expect(screen.getByLabelText("名称")).toHaveValue("changed");
+      expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+    } finally { await act(async () => { release(); }); }
+    expect(await screen.findByRole("alert")).toHaveTextContent(/^node update rejected$/);
+    expect(screen.getByLabelText("名称")).toHaveValue("changed");
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(updateNode).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByLabelText("名称")).toBeNull());
+  });
   it.each(["", "29", "1.5", "15"])("重置日 %s 只有 1–28 的整数能保存", async (value) => {
     renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: "a" });
