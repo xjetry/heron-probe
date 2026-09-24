@@ -20,6 +20,7 @@ export function Layout() {
         <span className="brand">probe</span>
         <NavLink to="/" end>总览</NavLink>
         <NavLink to="/nodes">节点</NavLink>
+        <NavLink to="/probes">探测任务</NavLink>
         <NavLink to="/register">注册窗口</NavLink>
         <button type="button" className="link" onClick={() => logout.mutate({})} disabled={logout.isPending}>
           登出

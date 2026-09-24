@@ -1,10 +1,21 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
 import { Layout } from "./Layout";
+import { router as appRouter } from "../App";
+
+vi.mock("./Chart", () => ({ Chart: () => null }));
 
 const routes = [{ path: "/", Component: Layout }, { path: "/login", element: <h1>login</h1> }];
+
+it("探测任务导航进入应用的任务页路由", async () => {
+  renderWithAdmin({ listNodes: async () => ({ nodes: [] }), listProbeTasks: async () => ({ tasks: [] }) }, appRouter.routes, "/nodes");
+  const link = screen.getByRole("link", { name: "探测任务" });
+  expect(link).toHaveAttribute("href", "/probes");
+  fireEvent.click(link);
+  expect(await screen.findByRole("heading", { name: "探测任务" })).toBeInTheDocument();
+});
 
 it("登出在导航前清空查询与变更缓存", async () => {
   const { queryClient, router } = renderWithAdmin({ logout: async () => ({}) }, routes, "/");

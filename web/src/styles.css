@@ -40,5 +40,8 @@ tr.offline td { color: var(--muted); }
 .bar .fill { height: 100%; background: var(--accent); opacity: 0.35; }
 .bar span { position: absolute; inset: 0; padding: 0 0.4rem; font-size: 12px; line-height: 18px; }
 .chart { width: 100%; }
+.task-form .node-picks { display: flex; flex-wrap: wrap; gap: .5rem 1rem; border: 1px solid var(--line); padding: .5rem .75rem; }
+.task-form .row { flex-wrap: wrap; align-items: flex-end; }
+.task-form .node-picks label { display: inline-flex; align-items: center; gap: .3rem; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: 1rem; }
 .secret { font-family: ui-monospace, monospace; word-break: break-all; white-space: pre-wrap; background: var(--bg); padding: 0.5rem; border-radius: 6px; }
