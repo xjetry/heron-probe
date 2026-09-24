@@ -286,7 +286,7 @@ func TestDeleteNotifyChannelInUse(t *testing.T) {
 	r.ChannelIds = []int64{c.Id}
 	saveRule(t, h, r)
 	_, err := h.admin.DeleteNotifyChannel(t.Context(), connect.NewRequest(&probev1.DeleteNotifyChannelRequest{Id: c.Id}))
-	want := fmt.Sprintf("failed_precondition: id: notify channel %d is referenced by alert rules: 离线", c.Id)
+	want := fmt.Sprintf("failed_precondition: id: notify channel %d is referenced by alert rules: 离线 (id 1)", c.Id)
 	if codeOf(err) != connect.CodeFailedPrecondition || err.Error() != want {
 		t.Fatalf("err=%v want=%q", err, want)
 	}
@@ -301,7 +301,7 @@ func TestDeleteProbeTaskInUse(t *testing.T) {
 	}
 	saveRule(t, h, &probev1.AlertRule{Name: "丢包", Kind: probev1.AlertKind_ALERT_KIND_PROBE, AllNodes: true, TaskId: task.Task.Id, Metric: probev1.ProbeMetric_PROBE_METRIC_LOSS_PCT, Threshold: 100, ForMinutes: 1})
 	_, err = h.admin.DeleteProbeTask(t.Context(), connect.NewRequest(&probev1.DeleteProbeTaskRequest{Id: task.Task.Id}))
-	want := fmt.Sprintf("failed_precondition: id: probe task %d is referenced by alert rules: 丢包", task.Task.Id)
+	want := fmt.Sprintf("failed_precondition: id: probe task %d is referenced by alert rules: 丢包 (id 1)", task.Task.Id)
 	if codeOf(err) != connect.CodeFailedPrecondition || err.Error() != want {
 		t.Fatalf("err=%v want=%q", err, want)
 	}

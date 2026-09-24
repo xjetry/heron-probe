@@ -179,7 +179,7 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, nodeIDs
 func (s *Store) DeleteProbeTask(ctx context.Context, id uint64) (uint64, error) {
 	var version int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		if err := checkAlertReferences(tx, "SELECT name FROM alert_rule WHERE task_id = ? ORDER BY id", "probe task", int64(id)); err != nil {
+		if err := checkAlertReferences(tx, "SELECT id, name FROM alert_rule WHERE task_id = ? ORDER BY id", "probe task", int64(id)); err != nil {
 			return err
 		}
 		res, err := tx.Exec("DELETE FROM probe_task WHERE id = ?", int64(id))

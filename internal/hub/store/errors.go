@@ -10,14 +10,23 @@ var ErrNodeLimit = errors.New("node already has the maximum number of probe task
 
 var ErrInUse = errors.New("in use")
 
+type RuleReference struct {
+	ID   int64
+	Name string
+}
+
 type InUseError struct {
 	Kind  string
 	ID    int64
-	Rules []string
+	Rules []RuleReference
 }
 
 func (e InUseError) Error() string {
-	return fmt.Sprintf("%s %d is referenced by alert rules: %s", e.Kind, e.ID, strings.Join(e.Rules, ", "))
+	names := make([]string, len(e.Rules))
+	for i, r := range e.Rules {
+		names[i] = fmt.Sprintf("%s (id %d)", r.Name, r.ID)
+	}
+	return fmt.Sprintf("%s %d is referenced by alert rules: %s", e.Kind, e.ID, strings.Join(names, ", "))
 }
 
 func (e InUseError) Is(target error) bool { return target == ErrInUse }

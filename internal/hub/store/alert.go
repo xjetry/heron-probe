@@ -359,26 +359,26 @@ func checkAlertReferences(tx *sql.Tx, query, kind string, id int64) error {
 		return err
 	}
 	defer rows.Close()
-	var names []string
+	var refs []RuleReference
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		var ref RuleReference
+		if err := rows.Scan(&ref.ID, &ref.Name); err != nil {
 			return err
 		}
-		names = append(names, name)
+		refs = append(refs, ref)
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if len(names) > 0 {
-		return InUseError{Kind: kind, ID: id, Rules: names}
+	if len(refs) > 0 {
+		return InUseError{Kind: kind, ID: id, Rules: refs}
 	}
 	return nil
 }
 
 func (s *Store) DeleteNotifyChannel(ctx context.Context, id int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if err := checkAlertReferences(tx, `SELECT r.name FROM alert_rule r JOIN alert_rule_channel c ON c.rule_id = r.id WHERE c.channel_id = ? ORDER BY r.id`, "notify channel", id); err != nil {
+		if err := checkAlertReferences(tx, `SELECT r.id, r.name FROM alert_rule r JOIN alert_rule_channel c ON c.rule_id = r.id WHERE c.channel_id = ? ORDER BY r.id`, "notify channel", id); err != nil {
 			return err
 		}
 		if err := deleteAlertEntity(tx, "notify_channel", "notify channel", id); err != nil {

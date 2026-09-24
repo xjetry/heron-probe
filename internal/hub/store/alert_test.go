@@ -160,7 +160,7 @@ func TestDeleteNotifyChannelInUse(t *testing.T) {
 func assertInUse(t *testing.T, err error, kind string, id int64) {
 	t.Helper()
 	var used InUseError
-	if !errors.Is(err, ErrInUse) || !errors.As(err, &used) || used.Kind != kind || used.ID != id || !reflect.DeepEqual(used.Rules, []string{"bound"}) || err.Error() != fmt.Sprintf("%s %d is referenced by alert rules: bound", kind, id) {
+	if !errors.Is(err, ErrInUse) || !errors.As(err, &used) || used.Kind != kind || used.ID != id || !reflect.DeepEqual(used.Rules, []RuleReference{{ID: 1, Name: "bound"}}) || err.Error() != fmt.Sprintf("%s %d is referenced by alert rules: bound (id 1)", kind, id) {
 		t.Fatalf("reference deletion error=%v, detail=%+v", err, used)
 	}
 }
