@@ -54,7 +54,7 @@ service AdminService {
   rpc ListAlertRules(ListAlertRulesRequest) returns (ListAlertRulesResponse);
   // id 为 0 时创建，否则整体替换规则与作用域、渠道列表。
   rpc SaveAlertRule(SaveAlertRuleRequest) returns (SaveAlertRuleResponse);
-  // 删除规则与状态，历史事件保留至到期清理。
+  // 删除规则与状态；事件与投递记录随规则删除保留；保留期见维护任务。
   rpc DeleteAlertRule(DeleteAlertRuleRequest) returns (DeleteAlertRuleResponse);
   // 按事件 id 倒序分页，包含每个事件的投递状态。
   rpc ListAlertEvents(ListAlertEventsRequest) returns (ListAlertEventsResponse);
@@ -91,7 +91,8 @@ message Node {
   optional int64 facts_updated_at = 9;
   // 周期重置日 1–28：周期在 hub 时区的该日零点重置。
   uint32 traffic_reset_day = 10;
-  // 离线告警宽限期（秒）；缺失表示取 PROBE_OFFLINE_AFTER。设置值不得小于 PROBE_OFFLINE_AFTER。
+  // 离线告警宽限期（秒）；缺失表示取 PROBE_OFFLINE_AFTER。
+  // PROBE_OFFLINE_AFTER 调高后已存的更小值仍会回显，引擎按下限取值，下次编辑须改成不小于下限的值。
   optional uint32 offline_grace_s = 11;
 }
 
@@ -118,8 +119,8 @@ message UpdateNodeRequest {
   string note = 4;
   // 1–28，必填：本方法整体替换可编辑字段，缺省的 0 会被拒绝而不是当作"不改"。
   uint32 traffic_reset_day = 5;
-  // 0 表示清除（取 PROBE_OFFLINE_AFTER）；非 0 须 ≥ PROBE_OFFLINE_AFTER 的秒数。
-  uint32 offline_grace_s = 6;
+  // 必填，缺失拒绝；0 表示清除（取 PROBE_OFFLINE_AFTER），非 0 须 ≥ PROBE_OFFLINE_AFTER 的秒数。
+  optional uint32 offline_grace_s = 6;
 }
 message UpdateNodeResponse {
   Node node = 1;
@@ -370,7 +371,12 @@ message AlertRule {
   bool all_nodes = 12;
 }
 message ListAlertRulesRequest {}
-message ListAlertRulesResponse { repeated AlertRule rules = 1; repeated AlertStateEntry states = 2; }
+message ListAlertRulesResponse {
+  repeated AlertRule rules = 1;
+  // 只含已有记录的组合；缺失表示尚无状态记录，按 ok 显示。
+  // 探测规则候选节点是作用域与任务分配节点的交集。
+  repeated AlertStateEntry states = 2;
+}
 message AlertStateEntry {
   int64 rule_id = 1;
   int64 node_id = 2;
@@ -412,15 +418,24 @@ message TelegramConfig {
   string chat_id = 3;
 }
 message WebhookConfig {
-  // 必须为绝对 http 或 https 地址。
+  // 新建必填，必须为绝对 http 或 https 地址；保存为空保留旧值，响应恒为空。
   string url = 1;
   // POST、PUT、PATCH；空取 POST。
   string method = 2;
-  // 至多 16 个；键为合法 HTTP 标记，值不含控制字符。
+  // 合并后至多 16 个；键为合法 HTTP 标记，值不含控制字符；响应不返回值。
+  // 保存时省略的键保留，显式给出的键覆盖；头名不区分大小写并规范化。
   map<string, string> headers = 3;
   // Go 文本模板；字段 Rule、Node、Kind、Transition、Value、At、Summary，
   // 函数 json 输出 JSON 字符串字面量；空取默认 JSON 模板。
   string body_template = 4;
+  // 只在响应有意义，表示已保存 URL。
+  bool has_url = 5;
+  // 只在响应有意义，只回显 scheme://host，不含用户信息、路径或查询串。
+  string url_host = 6;
+  // 只在响应有意义，已保存头名按升序排列。
+  repeated string header_names = 7;
+  // 本次要删除的头名；先删除再覆盖，同名显式新值优先，不落库。
+  repeated string remove_headers = 8;
 }
 message ListNotifyChannelsRequest {}
 message ListNotifyChannelsResponse { repeated NotifyChannel channels = 1; }
@@ -449,7 +464,7 @@ message AlertEvent {
   // 事件墙钟，Unix 秒。
   int64 at = 5;
   string summary = 6;
-  // 触发或恢复时的观测值，单位由规则种类与指标决定。
+  // 触发或恢复时的观测值：离线为未上报秒数；探测同规则 threshold 的单位（丢包百分比 loss_pct 或往返毫秒 rtt_ms）。
   double value = 7;
   repeated AlertDelivery deliveries = 8;
 }

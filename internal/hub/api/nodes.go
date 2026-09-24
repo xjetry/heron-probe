@@ -103,9 +103,12 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 	if day < minResetDay || day > maxResetDay {
 		return nil, invalid("traffic_reset_day must be between %d and %d; got %d", minResetDay, maxResetDay, day)
 	}
+	if req.Msg.OfflineGraceS == nil {
+		return nil, invalid("offline_grace_s: required; 0 clears it")
+	}
 	grace := req.Msg.GetOfflineGraceS()
 	if grace != 0 && time.Duration(grace)*time.Second < s.cfg.TTL {
-		return nil, invalid("offline_grace_s: must be 0 or at least %d", (s.cfg.TTL+time.Second-1)/time.Second)
+		return nil, invalid("offline_grace_s: must be 0 or at least %d seconds (PROBE_OFFLINE_AFTER); got %d", (s.cfg.TTL+time.Second-1)/time.Second, grace)
 	}
 	s.nodeMu.Lock()
 	defer s.nodeMu.Unlock()

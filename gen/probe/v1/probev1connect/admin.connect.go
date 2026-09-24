@@ -150,7 +150,7 @@ type AdminServiceClient interface {
 	ListAlertRules(context.Context, *connect.Request[v1.ListAlertRulesRequest]) (*connect.Response[v1.ListAlertRulesResponse], error)
 	// id 为 0 时创建，否则整体替换规则与作用域、渠道列表。
 	SaveAlertRule(context.Context, *connect.Request[v1.SaveAlertRuleRequest]) (*connect.Response[v1.SaveAlertRuleResponse], error)
-	// 删除规则与状态，历史事件保留至到期清理。
+	// 删除规则与状态；事件与投递记录随规则删除保留；保留期见维护任务。
 	DeleteAlertRule(context.Context, *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error)
 	// 按事件 id 倒序分页，包含每个事件的投递状态。
 	ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error)
@@ -547,7 +547,7 @@ type AdminServiceHandler interface {
 	ListAlertRules(context.Context, *connect.Request[v1.ListAlertRulesRequest]) (*connect.Response[v1.ListAlertRulesResponse], error)
 	// id 为 0 时创建，否则整体替换规则与作用域、渠道列表。
 	SaveAlertRule(context.Context, *connect.Request[v1.SaveAlertRuleRequest]) (*connect.Response[v1.SaveAlertRuleResponse], error)
-	// 删除规则与状态，历史事件保留至到期清理。
+	// 删除规则与状态；事件与投递记录随规则删除保留；保留期见维护任务。
 	DeleteAlertRule(context.Context, *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error)
 	// 按事件 id 倒序分页，包含每个事件的投递状态。
 	ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error)

@@ -127,7 +127,7 @@ func NewWebhook(cfg WebhookConfig, client *http.Client) (Channel, error) {
 func webhookFrom(cfg WebhookConfig, client *http.Client, tmpl *template.Template) (Channel, error) {
 	// SaveChannel 在写侧规范 method；不能让未规范的配置被 net/http 默认为 GET。
 	if cfg.Method == "" {
-		return nil, sendError{invalid("method must be normalized to POST, PUT or PATCH before delivery"), false}
+		return nil, sendError{invalid("webhook.method", "must be normalized to POST, PUT or PATCH before delivery"), false}
 	}
 	cfg.Headers = maps.Clone(cfg.Headers)
 	return &webhook{cfg, client, tmpl}, nil

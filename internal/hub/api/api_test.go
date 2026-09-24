@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -229,37 +232,64 @@ func TestSessionCookieIsHostOnlyStrictAndSecureOnlyBehindTLSProxy(t *testing.T) 
 func TestCrossSiteRequestShapesAreRejectedWithoutSideEffects(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	ctx := context.Background()
-	count := func() int {
-		resp, err := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{}))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return len(resp.Msg.GetNodes())
+	var calls atomic.Int64
+	outbound := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
+	defer outbound.Close()
+	c := saveChannel(t, h, webhook(outbound.URL))
+	if _, err := h.admin.TestNotifyChannel(t.Context(), connect.NewRequest(&probev1.TestNotifyChannelRequest{Id: c.Id})); err != nil {
+		t.Fatal(err)
 	}
-	url := h.srv.URL + "/probe.v1.AdminService/CreateNode"
-	for _, ct := range []string{"text/plain", "application/x-www-form-urlencoded", "multipart/form-data"} {
-		req, _ := http.NewRequest(http.MethodPost, url, strings.NewReader(`{"name":"csrf"}`))
-		req.Header.Set("Content-Type", ct)
-		resp, err := h.http.Do(req) // h.http 带着登录 cookie
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusUnsupportedMediaType {
-			t.Fatalf("%s: status %d, want 415", ct, resp.StatusCode)
+	if calls.Load() != 1 {
+		t.Fatalf("JSON control sent %d requests", calls.Load())
+	}
+	calls.Store(0)
+	before, err := h.store.Counts(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	services := probev1.File_probe_v1_admin_proto.Services()
+	for i := 0; i < services.Len(); i++ {
+		service := services.Get(i)
+		for j := 0; j < service.Methods().Len(); j++ {
+			method := service.Methods().Get(j)
+			if method.Name() == "Login" {
+				continue
+			}
+			url := h.srv.URL + "/" + string(service.FullName()) + "/" + string(method.Name())
+			for _, ct := range []string{"text/plain", "application/x-www-form-urlencoded", "multipart/form-data"} {
+				req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(fmt.Sprintf("{\"id\":%d,\"name\":\"csrf\"}", c.Id)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				req.Header.Set("Content-Type", ct)
+				resp, err := h.http.Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp.Body.Close()
+				if resp.StatusCode != http.StatusUnsupportedMediaType {
+					t.Errorf("%s %s: status %d, want 415", method.Name(), ct, resp.StatusCode)
+				}
+			}
 		}
 	}
-	resp, err := h.http.Get(url + "?connect=v1&encoding=json&message=%7B%22name%22%3A%22csrf%22%7D")
+	if calls.Load() != 0 {
+		t.Fatalf("cross-site TestNotifyChannel sent %d requests", calls.Load())
+	}
+	after, err := h.store.Counts(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("cross-site changed counts: before=%v after=%v", before, after)
+	}
+	resp, err := h.http.Get(h.srv.URL + "/probe.v1.AdminService/CreateNode?connect=v1&encoding=json&message=%7B%22name%22%3A%22csrf%22%7D")
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("GET: status %d, want 405", resp.StatusCode)
-	}
-	if n := count(); n != 0 {
-		t.Fatalf("%d node(s) created by cross-site request shapes", n)
 	}
 }
 
@@ -336,14 +366,14 @@ func TestUpdateAndReorderNodes(t *testing.T) {
 	ctx := context.Background()
 	a, _ := h.createNode(t, "a")
 	b, _ := h.createNode(t, "b")
-	upd, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: a, Name: "a2", Public: true, Note: "note‮", TrafficResetDay: 1}))
+	upd, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: a, Name: "a2", Public: true, Note: "note‮", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0)}))
 	if err != nil || upd.Msg.GetNode().GetName() != "a2" || !upd.Msg.GetNode().GetPublic() || upd.Msg.GetNode().GetNote() != "note" {
 		t.Fatalf("UpdateNode = %v %v", upd, err)
 	}
-	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: a, Name: strings.Repeat("x", 65)})); codeOf(err) != connect.CodeInvalidArgument {
+	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: a, Name: strings.Repeat("x", 65), OfflineGraceS: proto.Uint32(0)})); codeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("65-char name: %v", err)
 	}
-	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: 999, Name: "x", TrafficResetDay: 1})); codeOf(err) != connect.CodeNotFound {
+	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: 999, Name: "x", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0)})); codeOf(err) != connect.CodeNotFound {
 		t.Fatalf("unknown node: %v", err)
 	}
 	if _, err := h.admin.ReorderNodes(ctx, connect.NewRequest(&probev1.ReorderNodesRequest{Ids: []int64{b}})); codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "exactly once") {
@@ -500,7 +530,7 @@ func TestUnicodeValidationAndQueryRangeEdges(t *testing.T) {
 	}
 	id, _ := h.createNode(t, strings.Repeat("😀", 64))
 	for _, n := range []int{1024, 1025} {
-		_, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", Note: strings.Repeat("😀", n), TrafficResetDay: 1}))
+		_, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", Note: strings.Repeat("😀", n), TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0)}))
 		if (n == 1024 && err != nil) || (n == 1025 && codeOf(err) != connect.CodeInvalidArgument) {
 			t.Errorf("note length %d: %v", n, err)
 		}
@@ -693,7 +723,7 @@ func TestTrafficIsReportedAdjustedAndConfigured(t *testing.T) {
 		t.Fatal("rejected adjustment left a traffic entry behind")
 	}
 
-	upd, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 15}))
+	upd, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 15, OfflineGraceS: proto.Uint32(0)}))
 	if err != nil || upd.Msg.GetNode().GetTrafficResetDay() != 15 {
 		t.Fatalf("UpdateNode reset day: %v %v", upd, err)
 	}
@@ -702,7 +732,7 @@ func TestTrafficIsReportedAdjustedAndConfigured(t *testing.T) {
 		t.Fatalf("traffic after changing the reset day: %v", tr)
 	}
 	for _, day := range []uint32{0, 29} {
-		_, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: day}))
+		_, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: day, OfflineGraceS: proto.Uint32(0)}))
 		if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "traffic_reset_day") {
 			t.Fatalf("reset day %d: %v, want InvalidArgument naming the field", day, err)
 		}
@@ -712,7 +742,7 @@ func TestTrafficIsReportedAdjustedAndConfigured(t *testing.T) {
 		t.Fatalf("rejected updates must not change the reset day: %v", list.Msg.Nodes[0])
 	}
 	// 库里没有的节点：更新失败，内存里的重置日也不得被改。
-	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: 999, Name: "x", TrafficResetDay: 20})); codeOf(err) != connect.CodeNotFound {
+	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: 999, Name: "x", TrafficResetDay: 20, OfflineGraceS: proto.Uint32(0)})); codeOf(err) != connect.CodeNotFound {
 		t.Fatalf("unknown node: %v", err)
 	}
 	if day := h.book.View(999).ResetDay; day != 1 {

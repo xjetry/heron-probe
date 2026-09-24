@@ -182,7 +182,7 @@ func TestAlertErrorsNameRequestFields(t *testing.T) {
 		{"channel_config", func() error {
 			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{Channel: webhook("ftp://host")}))
 			return err
-		}, connect.CodeInvalidArgument, "channel.url"},
+		}, connect.CodeInvalidArgument, "channel.webhook.url"},
 		{"channel_id", func() error {
 			c := webhook("http://host")
 			c.Id = 9
@@ -221,6 +221,11 @@ func TestWebhookConfigRoundTrip(t *testing.T) {
 	got := saveChannel(t, h, want)
 	want.Id = got.Id
 	want.CreatedAt = h.clk.Now().Unix()
+	want.Webhook.Url = ""
+	want.Webhook.Headers = nil
+	want.Webhook.HasUrl = true
+	want.Webhook.UrlHost = "https://example.test"
+	want.Webhook.HeaderNames = []string{"X-Notify"}
 	if got.Id == 0 || !proto.Equal(got, want) {
 		t.Fatalf("channel=%v want=%v", got, want)
 	}
@@ -290,6 +295,13 @@ func TestDeleteNotifyChannelInUse(t *testing.T) {
 	if codeOf(err) != connect.CodeFailedPrecondition || err.Error() != want {
 		t.Fatalf("err=%v want=%q", err, want)
 	}
+	list, err := h.admin.ListNotifyChannels(t.Context(), connect.NewRequest(&probev1.ListNotifyChannelsRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Msg.Channels) != 1 || !proto.Equal(list.Msg.Channels[0], c) {
+		t.Fatalf("rejected deletion changed channels=%v", list.Msg)
+	}
 }
 
 func TestDeleteProbeTaskInUse(t *testing.T) {
@@ -304,6 +316,13 @@ func TestDeleteProbeTaskInUse(t *testing.T) {
 	want := fmt.Sprintf("failed_precondition: id: probe task %d is referenced by alert rules: 丢包 (id 1)", task.Task.Id)
 	if codeOf(err) != connect.CodeFailedPrecondition || err.Error() != want {
 		t.Fatalf("err=%v want=%q", err, want)
+	}
+	list, err := h.admin.ListProbeTasks(t.Context(), connect.NewRequest(&probev1.ListProbeTasksRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Msg.Tasks) != 1 || !proto.Equal(list.Msg.Tasks[0].Task, task.Task) {
+		t.Fatalf("rejected deletion changed tasks=%v", list.Msg)
 	}
 }
 
@@ -392,9 +411,9 @@ func TestUpdateNodeOfflineGraceFloor(t *testing.T) {
 	h.login(t)
 	id, _ := h.createNode(t, "n")
 	for _, grace := range []uint32{29, 30, 0} {
-		resp, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 1, OfflineGraceS: grace}))
+		resp, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(grace)}))
 		if grace == 29 {
-			if codeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: offline_grace_s: must be 0 or at least 30" {
+			if codeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: offline_grace_s: must be 0 or at least 30 seconds (PROBE_OFFLINE_AFTER); got 29" {
 				t.Fatalf("err=%v", err)
 			}
 			continue

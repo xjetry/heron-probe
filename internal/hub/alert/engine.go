@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"slices"
 	"sort"
 	"sync"
@@ -174,39 +175,81 @@ func (e *Engine) DeleteRule(ctx context.Context, id int64) error {
 func (e *Engine) SaveChannel(ctx context.Context, c store.NotifyChannel) (store.NotifyChannel, error) {
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
-	if c.Kind == store.ChannelTelegram && c.ID != 0 {
+	var previous store.NotifyChannel
+	if c.ID != 0 {
+		channels, err := e.st.ListNotifyChannels(ctx)
+		if err != nil {
+			return store.NotifyChannel{}, err
+		}
+		for _, old := range channels {
+			if old.ID == c.ID {
+				previous = old
+				break
+			}
+		}
+		if previous.ID == 0 {
+			return store.NotifyChannel{}, store.NotFoundError{Kind: "notify channel", ID: c.ID}
+		}
+	}
+	// api.channelProto 不回显凭据；writeMu 跨越读旧配置、合并、提交，两个保存不能互相覆盖所保留的值。
+	switch c.Kind {
+	case store.ChannelTelegram:
 		cfg, err := decodeTelegram(c.Config)
 		if err != nil {
 			return store.NotifyChannel{}, err
 		}
-		if cfg.BotToken == "" {
-			channels, err := e.st.ListNotifyChannels(ctx)
+		if cfg.BotToken == "" && previous.Kind == store.ChannelTelegram {
+			prev, err := decodeTelegram(previous.Config)
 			if err != nil {
 				return store.NotifyChannel{}, err
 			}
-			var found bool
-			for _, old := range channels {
-				if old.ID == c.ID {
-					found = true
-					if old.Kind == store.ChannelTelegram {
-						prev, err := decodeTelegram(old.Config)
-						if err != nil {
-							return store.NotifyChannel{}, err
-						}
-						cfg.BotToken = prev.BotToken
-					}
-					break
-				}
-			}
-			if !found {
-				return store.NotifyChannel{}, store.NotFoundError{Kind: "notify channel", ID: c.ID}
-			}
-			b, err := json.Marshal(cfg)
-			if err != nil {
-				return store.NotifyChannel{}, err
-			}
-			c.Config = string(b)
+			cfg.BotToken = prev.BotToken
 		}
+		b, err := json.Marshal(cfg)
+		if err != nil {
+			return store.NotifyChannel{}, err
+		}
+		c.Config = string(b)
+	case store.ChannelWebhook:
+		cfg, err := decodeWebhook(c.Config)
+		if err != nil {
+			return store.NotifyChannel{}, err
+		}
+		var prev WebhookConfig
+		if previous.Kind == store.ChannelWebhook {
+			prev, err = decodeWebhook(previous.Config)
+			if err != nil {
+				return store.NotifyChannel{}, err
+			}
+		}
+		if cfg.URL == "" {
+			cfg.URL = prev.URL
+		}
+		headers := map[string]string{}
+		merge := func(src map[string]string) {
+			keys := make([]string, 0, len(src))
+			for k := range src {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				headers[http.CanonicalHeaderKey(k)] = src[k]
+			}
+		}
+		merge(prev.Headers)
+		for _, k := range cfg.RemoveHeaders {
+			delete(headers, http.CanonicalHeaderKey(k))
+		}
+		merge(cfg.Headers)
+		cfg.Headers = headers
+		if cfg.Method == "" {
+			cfg.Method = "POST"
+		}
+		b, err := json.Marshal(cfg)
+		if err != nil {
+			return store.NotifyChannel{}, err
+		}
+		c.Config = string(b)
 	}
 	if err := CheckChannel(c); err != nil {
 		return store.NotifyChannel{}, err
@@ -216,14 +259,13 @@ func (e *Engine) SaveChannel(ctx context.Context, c store.NotifyChannel) (store.
 		if err != nil {
 			return store.NotifyChannel{}, err
 		}
-		if cfg.Method == "" {
-			cfg.Method = "POST"
-			b, err := json.Marshal(cfg)
-			if err != nil {
-				return store.NotifyChannel{}, err
-			}
-			c.Config = string(b)
+		// remove_headers 只描述这次写入；持久化配置只保留合并结果，不混入已执行的指令。
+		cfg.RemoveHeaders = nil
+		b, err := json.Marshal(cfg)
+		if err != nil {
+			return store.NotifyChannel{}, err
 		}
+		c.Config = string(b)
 	}
 	saved, err := e.st.SaveNotifyChannel(ctx, c)
 	if err != nil {
@@ -372,7 +414,7 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 
 func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 	if minuteTS%60 != 0 {
-		return invalid("minuteTS must be aligned to 60 seconds")
+		return invalid("minuteTS", "must be aligned to 60 seconds")
 	}
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()

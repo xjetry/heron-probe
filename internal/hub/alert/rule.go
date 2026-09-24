@@ -19,12 +19,31 @@ import (
 
 var ErrInvalid = errors.New("invalid")
 
-func invalid(format string, args ...any) error {
-	return fmt.Errorf("%w: %s", ErrInvalid, fmt.Sprintf(format, args...))
+// 字段路径与允许值由校验方提供；协议层只替换枚举词汇，不从错误全文猜测字段。
+type FieldError struct {
+	Path       string
+	Allowed    []string
+	Got        string
+	Constraint string
+}
+
+func (e FieldError) Is(target error) bool { return target == ErrInvalid }
+func (e FieldError) Detail() string {
+	if len(e.Allowed) > 0 {
+		return fmt.Sprintf("must be one of %s; got %q", strings.Join(e.Allowed, ", "), e.Got)
+	}
+	return e.Constraint
+}
+func (e FieldError) Error() string { return fmt.Sprintf("%s: %s %s", ErrInvalid, e.Path, e.Detail()) }
+func invalid(path, constraint string, args ...any) error {
+	return FieldError{Path: path, Constraint: fmt.Sprintf(constraint, args...)}
+}
+func oneOf(path, got string, allowed ...string) error {
+	return FieldError{Path: path, Got: got, Allowed: allowed}
 }
 func checkName(name string) error {
 	if n := utf8.RuneCountInString(name); n < 1 || n > 64 {
-		return invalid("name must contain between 1 and 64 characters")
+		return invalid("name", "must contain between 1 and 64 characters")
 	}
 	return nil
 }
@@ -34,36 +53,36 @@ func CheckRule(r store.AlertRule) error {
 		return err
 	}
 	if !r.AllNodes && len(r.NodeIDs) == 0 {
-		return invalid("node_ids must not be empty unless all_nodes is true")
+		return invalid("node_ids", "must not be empty unless all_nodes is true")
 	}
 	switch r.Kind {
 	case store.KindOffline:
 		return nil
 	case store.KindProbe:
 		if r.TaskID == 0 {
-			return invalid("task_id must not be 0")
+			return invalid("task_id", "must not be 0")
 		}
 		if math.IsNaN(r.Threshold) || math.IsInf(r.Threshold, 0) {
-			return invalid("threshold must be finite")
+			return invalid("threshold", "must be finite")
 		}
 		switch r.Metric {
 		case store.MetricLossPct:
 			if r.Threshold < 0 || r.Threshold > 100 {
-				return invalid("threshold must be between 0 and 100 for loss_pct")
+				return invalid("threshold", "must be between 0 and 100")
 			}
 		case store.MetricRttMs:
 			if r.Threshold <= 0 {
-				return invalid("threshold must be greater than 0 for rtt_ms")
+				return invalid("threshold", "must be greater than 0")
 			}
 		default:
-			return invalid("metric must be loss_pct or rtt_ms")
+			return oneOf("metric", string(r.Metric), string(store.MetricLossPct), string(store.MetricRttMs))
 		}
 		if r.ForMinutes < 1 || r.ForMinutes > 60 {
-			return invalid("for_minutes must be between 1 and 60")
+			return invalid("for_minutes", "must be between 1 and 60")
 		}
 		return nil
 	default:
-		return invalid("kind must be offline or probe")
+		return oneOf("kind", string(r.Kind), string(store.KindOffline), string(store.KindProbe))
 	}
 }
 
@@ -72,10 +91,11 @@ type TelegramConfig struct {
 	ChatID   string `json:"chat_id"`
 }
 type WebhookConfig struct {
-	URL          string            `json:"url"`
-	Method       string            `json:"method"`
-	Headers      map[string]string `json:"headers"`
-	BodyTemplate string            `json:"body_template"`
+	URL           string            `json:"url"`
+	Method        string            `json:"method"`
+	Headers       map[string]string `json:"headers"`
+	BodyTemplate  string            `json:"body_template"`
+	RemoveHeaders []string          `json:"remove_headers,omitempty"`
 }
 
 type Message struct {
@@ -117,7 +137,7 @@ func httpToken(s string) bool {
 func decodeTelegram(config string) (TelegramConfig, error) {
 	var cfg TelegramConfig
 	if err := json.Unmarshal([]byte(config), &cfg); err != nil {
-		return cfg, invalid("config must be a telegram JSON object: %v", err)
+		return cfg, invalid("telegram", "config must be a JSON object: %v", err)
 	}
 	return cfg, nil
 }
@@ -125,7 +145,7 @@ func decodeTelegram(config string) (TelegramConfig, error) {
 func decodeWebhook(config string) (WebhookConfig, error) {
 	var cfg WebhookConfig
 	if err := json.Unmarshal([]byte(config), &cfg); err != nil {
-		return cfg, invalid("config must be a webhook JSON object: %v", err)
+		return cfg, invalid("webhook", "config must be a JSON object: %v", err)
 	}
 	return cfg, nil
 }
@@ -133,25 +153,30 @@ func decodeWebhook(config string) (WebhookConfig, error) {
 func checkWebhook(cfg WebhookConfig) (*template.Template, error) {
 	u, err := url.Parse(cfg.URL)
 	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return nil, invalid("url must be an absolute http or https URL")
+		return nil, invalid("webhook.url", "must be an absolute http or https URL")
 	}
 	if cfg.Method != "" && cfg.Method != "POST" && cfg.Method != "PUT" && cfg.Method != "PATCH" {
-		return nil, invalid("method must be POST, PUT or PATCH (empty defaults to POST)")
+		return nil, oneOf("webhook.method", cfg.Method, "POST", "PUT", "PATCH")
 	}
 	if len(cfg.Headers) > 16 {
-		return nil, invalid("headers must contain at most 16 entries")
+		return nil, invalid("webhook.headers", "must contain at most 16 entries")
 	}
 	for key, value := range cfg.Headers {
 		if !httpToken(key) {
-			return nil, invalid("headers key %q must be an HTTP token", key)
+			return nil, invalid("webhook.headers", "key %q must be an HTTP token", key)
 		}
 		if strings.ContainsFunc(value, unicode.IsControl) {
-			return nil, invalid("headers value for %q must not contain control characters", key)
+			return nil, invalid("webhook.headers", "value for %q must not contain control characters", key)
+		}
+	}
+	for _, key := range cfg.RemoveHeaders {
+		if !httpToken(key) {
+			return nil, invalid("webhook.remove_headers", "key %q must be an HTTP token", key)
 		}
 	}
 	tmpl, err := parseBodyTemplate(cfg.BodyTemplate)
 	if err != nil {
-		return nil, invalid("body_template must be a valid Go text/template: %v", err)
+		return nil, invalid("webhook.body_template", "must be a valid Go text/template: %v", err)
 	}
 	return tmpl, nil
 }
@@ -176,10 +201,10 @@ func parseChannelConfig(c store.NotifyChannel) (channelConfig, error) {
 			return parsed, err
 		}
 		if cfg.ChatID == "" {
-			return parsed, invalid("chat_id must not be empty")
+			return parsed, invalid("telegram.chat_id", "must not be empty")
 		}
 		if cfg.BotToken == "" {
-			return parsed, invalid("bot_token must not be empty")
+			return parsed, invalid("telegram.bot_token", "must not be empty")
 		}
 		parsed.telegram = cfg
 	case store.ChannelWebhook:
@@ -193,7 +218,7 @@ func parseChannelConfig(c store.NotifyChannel) (channelConfig, error) {
 		}
 		parsed.webhook, parsed.template = cfg, tmpl
 	default:
-		return parsed, invalid("kind must be telegram or webhook")
+		return parsed, oneOf("kind", string(c.Kind), string(store.ChannelTelegram), string(store.ChannelWebhook))
 	}
 	return parsed, nil
 }

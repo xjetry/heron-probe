@@ -336,7 +336,8 @@ type Node struct {
 	FactsUpdatedAt *int64 `protobuf:"varint,9,opt,name=facts_updated_at,json=factsUpdatedAt,proto3,oneof" json:"facts_updated_at,omitempty"`
 	// 周期重置日 1–28：周期在 hub 时区的该日零点重置。
 	TrafficResetDay uint32 `protobuf:"varint,10,opt,name=traffic_reset_day,json=trafficResetDay,proto3" json:"traffic_reset_day,omitempty"`
-	// 离线告警宽限期（秒）；缺失表示取 PROBE_OFFLINE_AFTER。设置值不得小于 PROBE_OFFLINE_AFTER。
+	// 离线告警宽限期（秒）；缺失表示取 PROBE_OFFLINE_AFTER。
+	// PROBE_OFFLINE_AFTER 调高后已存的更小值仍会回显，引擎按下限取值，下次编辑须改成不小于下限的值。
 	OfflineGraceS *uint32 `protobuf:"varint,11,opt,name=offline_grace_s,json=offlineGraceS,proto3,oneof" json:"offline_grace_s,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -636,8 +637,8 @@ type UpdateNodeRequest struct {
 	Note string `protobuf:"bytes,4,opt,name=note,proto3" json:"note,omitempty"`
 	// 1–28，必填：本方法整体替换可编辑字段，缺省的 0 会被拒绝而不是当作"不改"。
 	TrafficResetDay uint32 `protobuf:"varint,5,opt,name=traffic_reset_day,json=trafficResetDay,proto3" json:"traffic_reset_day,omitempty"`
-	// 0 表示清除（取 PROBE_OFFLINE_AFTER）；非 0 须 ≥ PROBE_OFFLINE_AFTER 的秒数。
-	OfflineGraceS uint32 `protobuf:"varint,6,opt,name=offline_grace_s,json=offlineGraceS,proto3" json:"offline_grace_s,omitempty"`
+	// 必填，缺失拒绝；0 表示清除（取 PROBE_OFFLINE_AFTER），非 0 须 ≥ PROBE_OFFLINE_AFTER 的秒数。
+	OfflineGraceS *uint32 `protobuf:"varint,6,opt,name=offline_grace_s,json=offlineGraceS,proto3,oneof" json:"offline_grace_s,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -708,8 +709,8 @@ func (x *UpdateNodeRequest) GetTrafficResetDay() uint32 {
 }
 
 func (x *UpdateNodeRequest) GetOfflineGraceS() uint32 {
-	if x != nil {
-		return x.OfflineGraceS
+	if x != nil && x.OfflineGraceS != nil {
+		return *x.OfflineGraceS
 	}
 	return 0
 }
@@ -2920,9 +2921,11 @@ func (*ListAlertRulesRequest) Descriptor() ([]byte, []int) {
 }
 
 type ListAlertRulesResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Rules         []*AlertRule           `protobuf:"bytes,1,rep,name=rules,proto3" json:"rules,omitempty"`
-	States        []*AlertStateEntry     `protobuf:"bytes,2,rep,name=states,proto3" json:"states,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Rules []*AlertRule           `protobuf:"bytes,1,rep,name=rules,proto3" json:"rules,omitempty"`
+	// 只含已有记录的组合；缺失表示尚无状态记录，按 ok 显示。
+	// 探测规则候选节点是作用域与任务分配节点的交集。
+	States        []*AlertStateEntry `protobuf:"bytes,2,rep,name=states,proto3" json:"states,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3364,15 +3367,24 @@ func (x *TelegramConfig) GetChatId() string {
 
 type WebhookConfig struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// 必须为绝对 http 或 https 地址。
+	// 新建必填，必须为绝对 http 或 https 地址；保存为空保留旧值，响应恒为空。
 	Url string `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
 	// POST、PUT、PATCH；空取 POST。
 	Method string `protobuf:"bytes,2,opt,name=method,proto3" json:"method,omitempty"`
-	// 至多 16 个；键为合法 HTTP 标记，值不含控制字符。
+	// 合并后至多 16 个；键为合法 HTTP 标记，值不含控制字符；响应不返回值。
+	// 保存时省略的键保留，显式给出的键覆盖；头名不区分大小写并规范化。
 	Headers map[string]string `protobuf:"bytes,3,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// Go 文本模板；字段 Rule、Node、Kind、Transition、Value、At、Summary，
 	// 函数 json 输出 JSON 字符串字面量；空取默认 JSON 模板。
-	BodyTemplate  string `protobuf:"bytes,4,opt,name=body_template,json=bodyTemplate,proto3" json:"body_template,omitempty"`
+	BodyTemplate string `protobuf:"bytes,4,opt,name=body_template,json=bodyTemplate,proto3" json:"body_template,omitempty"`
+	// 只在响应有意义，表示已保存 URL。
+	HasUrl bool `protobuf:"varint,5,opt,name=has_url,json=hasUrl,proto3" json:"has_url,omitempty"`
+	// 只在响应有意义，只回显 scheme://host，不含用户信息、路径或查询串。
+	UrlHost string `protobuf:"bytes,6,opt,name=url_host,json=urlHost,proto3" json:"url_host,omitempty"`
+	// 只在响应有意义，已保存头名按升序排列。
+	HeaderNames []string `protobuf:"bytes,7,rep,name=header_names,json=headerNames,proto3" json:"header_names,omitempty"`
+	// 本次要删除的头名；先删除再覆盖，同名显式新值优先，不落库。
+	RemoveHeaders []string `protobuf:"bytes,8,rep,name=remove_headers,json=removeHeaders,proto3" json:"remove_headers,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3433,6 +3445,34 @@ func (x *WebhookConfig) GetBodyTemplate() string {
 		return x.BodyTemplate
 	}
 	return ""
+}
+
+func (x *WebhookConfig) GetHasUrl() bool {
+	if x != nil {
+		return x.HasUrl
+	}
+	return false
+}
+
+func (x *WebhookConfig) GetUrlHost() string {
+	if x != nil {
+		return x.UrlHost
+	}
+	return ""
+}
+
+func (x *WebhookConfig) GetHeaderNames() []string {
+	if x != nil {
+		return x.HeaderNames
+	}
+	return nil
+}
+
+func (x *WebhookConfig) GetRemoveHeaders() []string {
+	if x != nil {
+		return x.RemoveHeaders
+	}
+	return nil
 }
 
 type ListNotifyChannelsRequest struct {
@@ -3880,7 +3920,7 @@ type AlertEvent struct {
 	// 事件墙钟，Unix 秒。
 	At      int64  `protobuf:"varint,5,opt,name=at,proto3" json:"at,omitempty"`
 	Summary string `protobuf:"bytes,6,opt,name=summary,proto3" json:"summary,omitempty"`
-	// 触发或恢复时的观测值，单位由规则种类与指标决定。
+	// 触发或恢复时的观测值：离线为未上报秒数；探测同规则 threshold 的单位（丢包百分比 loss_pct 或往返毫秒 rtt_ms）。
 	Value         float64          `protobuf:"fixed64,7,opt,name=value,proto3" json:"value,omitempty"`
 	Deliveries    []*AlertDelivery `protobuf:"bytes,8,rep,name=deliveries,proto3" json:"deliveries,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -4096,14 +4136,15 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"N\n" +
 	"\x12CreateNodeResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.probe.v1.NodeR\x04node\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"\xb7\x01\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\xd0\x01\n" +
 	"\x11UpdateNodeRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
 	"\x06public\x18\x03 \x01(\bR\x06public\x12\x12\n" +
 	"\x04note\x18\x04 \x01(\tR\x04note\x12*\n" +
-	"\x11traffic_reset_day\x18\x05 \x01(\rR\x0ftrafficResetDay\x12&\n" +
-	"\x0foffline_grace_s\x18\x06 \x01(\rR\rofflineGraceS\"8\n" +
+	"\x11traffic_reset_day\x18\x05 \x01(\rR\x0ftrafficResetDay\x12+\n" +
+	"\x0foffline_grace_s\x18\x06 \x01(\rH\x00R\rofflineGraceS\x88\x01\x01B\x12\n" +
+	"\x10_offline_grace_s\"8\n" +
 	"\x12UpdateNodeResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.probe.v1.NodeR\x04node\"#\n" +
 	"\x11DeleteNodeRequest\x12\x0e\n" +
@@ -4280,12 +4321,16 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x0eTelegramConfig\x12\x1b\n" +
 	"\tbot_token\x18\x01 \x01(\tR\bbotToken\x12\"\n" +
 	"\rhas_bot_token\x18\x02 \x01(\bR\vhasBotToken\x12\x17\n" +
-	"\achat_id\x18\x03 \x01(\tR\x06chatId\"\xda\x01\n" +
+	"\achat_id\x18\x03 \x01(\tR\x06chatId\"\xd8\x02\n" +
 	"\rWebhookConfig\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x16\n" +
 	"\x06method\x18\x02 \x01(\tR\x06method\x12>\n" +
 	"\aheaders\x18\x03 \x03(\v2$.probe.v1.WebhookConfig.HeadersEntryR\aheaders\x12#\n" +
-	"\rbody_template\x18\x04 \x01(\tR\fbodyTemplate\x1a:\n" +
+	"\rbody_template\x18\x04 \x01(\tR\fbodyTemplate\x12\x17\n" +
+	"\ahas_url\x18\x05 \x01(\bR\x06hasUrl\x12\x19\n" +
+	"\burl_host\x18\x06 \x01(\tR\aurlHost\x12!\n" +
+	"\fheader_names\x18\a \x03(\tR\vheaderNames\x12%\n" +
+	"\x0eremove_headers\x18\b \x03(\tR\rremoveHeaders\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x1b\n" +
@@ -4572,6 +4617,7 @@ func file_probe_v1_admin_proto_init() {
 	}
 	file_probe_v1_types_proto_init()
 	file_probe_v1_admin_proto_msgTypes[4].OneofWrappers = []any{}
+	file_probe_v1_admin_proto_msgTypes[9].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[25].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[29].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[46].OneofWrappers = []any{}

@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
-	"fmt"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
@@ -29,42 +27,25 @@ func (s *Service) ListProbeTasks(_ context.Context, _ *connect.Request[probev1.L
 // 字段校验在注册表经 probelimit.CheckTask 完成；节点存在与每节点上限由 store 保存事务裁决，
 // 因为只有事务内计数与并发保存互斥。这里只把哨兵翻译成响应码，并补充请求字段名。
 func (s *Service) SaveProbeTask(ctx context.Context, req *connect.Request[probev1.SaveProbeTaskRequest]) (*connect.Response[probev1.SaveProbeTaskResponse], error) {
+	if err := checkTaskID(req.Msg.GetTask().GetId(), "task.id"); err != nil {
+		return nil, err
+	}
 	d, version, err := s.probes.Save(ctx, req.Msg.GetTask(), req.Msg.GetNodeIds())
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		return nil, probeNotFound(err, "task.id", "node_ids")
-	case errors.Is(err, store.ErrNodeLimit):
-		return nil, connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("node_ids: %w", err))
-	case errors.Is(err, probe.ErrInvalid):
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	case err != nil:
-		s.log.Error("saving probe task failed", "err", err)
-		return nil, internalError("saving probe task failed")
+	if err != nil {
+		return nil, s.operationError(err, "task", "saving probe task failed")
 	}
 	return connect.NewResponse(&probev1.SaveProbeTaskResponse{Task: detailProto(d), Version: version}), nil
 }
 
 func (s *Service) DeleteProbeTask(ctx context.Context, req *connect.Request[probev1.DeleteProbeTaskRequest]) (*connect.Response[probev1.DeleteProbeTaskResponse], error) {
+	if err := checkTaskID(req.Msg.GetId(), "id"); err != nil {
+		return nil, err
+	}
 	version, err := s.probes.Delete(ctx, req.Msg.GetId())
-	switch {
-	case errors.Is(err, store.ErrInUse):
-		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("id: %w", err))
-	case errors.Is(err, store.ErrNotFound):
-		return nil, probeNotFound(err, "id", "id")
-	case err != nil:
-		s.log.Error("deleting probe task failed", "err", err)
-		return nil, internalError("deleting probe task failed")
+	if err != nil {
+		return nil, s.operationError(err, "id", "deleting probe task failed")
 	}
 	return connect.NewResponse(&probev1.DeleteProbeTaskResponse{Version: version}), nil
-}
-
-func probeNotFound(err error, taskField, nodeField string) error {
-	field := taskField
-	var missing store.NotFoundError
-	if errors.As(err, &missing) && missing.Kind == "node" {
-		field = nodeField
-	}
-	return connect.NewError(connect.CodeNotFound, fmt.Errorf("%s: %w", field, err))
 }
 
 func (s *Service) QueryProbes(ctx context.Context, req *connect.Request[probev1.QueryProbesRequest]) (*connect.Response[probev1.QueryProbesResponse], error) {

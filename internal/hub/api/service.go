@@ -36,6 +36,7 @@ const (
 )
 
 type Config struct {
+	// TTL 必须为正；零值会放宽宽限期下限，New 将其视为装配错误并 panic。
 	TTL time.Duration
 	// ReportInterval 是 agent 的正常上报间隔，客户端据此选择轮询节奏。
 	ReportInterval time.Duration
@@ -67,6 +68,9 @@ type Service struct {
 }
 
 func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, book *traffic.Book, probes *probe.Registry, alerts *alert.Engine, notifier *alert.Queue, clk clock.Clock, log *slog.Logger) *Service {
+	if cfg.TTL <= 0 {
+		panic("api.Config.TTL must be positive")
+	}
 	return &Service{cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, probes: probes, alerts: alerts, notifier: notifier, clk: clk, log: log}
 }
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"google.golang.org/protobuf/proto"
 	"sync"
 	"testing"
 
@@ -20,7 +21,7 @@ func TestConcurrentUpdatesKeepResetDayConsistent(t *testing.T) {
 		for _, day := range []uint32{15, 20} {
 			go func() {
 				<-start
-				_, err := h.svc.UpdateNode(t.Context(), connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: day}))
+				_, err := h.svc.UpdateNode(t.Context(), connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: day, OfflineGraceS: proto.Uint32(0)}))
 				errs <- err
 			}()
 		}
@@ -55,7 +56,7 @@ func TestConcurrentUpdateCannotReviveDeletedResetDay(t *testing.T) {
 		wg.Go(func() {
 			<-start
 			// 删除可以先提交，更新此时无须成功；最终内存状态不能因更新复活。
-			_, _ = h.svc.UpdateNode(t.Context(), connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 20}))
+			_, _ = h.svc.UpdateNode(t.Context(), connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 20, OfflineGraceS: proto.Uint32(0)}))
 		})
 		wg.Go(func() {
 			<-start
