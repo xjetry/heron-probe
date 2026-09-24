@@ -19,16 +19,16 @@ const draftOf = (task: ProbeTask, nodeIds: bigint[]): Draft => ({
 export function ProbeTasks() {
   const qc = useQueryClient();
   const [creation, setCreation] = useState(0);
-  const { error, ...mutationErrors } = useLatestError();
+  const { error, mutationOptions } = useLatestError();
   const nodes = useQuery(AdminService.method.listNodes, {});
   const list = useQuery(AdminService.method.listProbeTasks, {});
   // 任务与分配的每次修改都让列表重新拉取；节点列表没有变化，不失效它。
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listProbeTasks, cardinality: "finite" }) });
-  const create = useMutation(AdminService.method.saveProbeTask, { ...mutationErrors, onSuccess: refresh });
+  const create = useMutation(AdminService.method.saveProbeTask, { ...mutationOptions, onSuccess: refresh });
   // 各行共用一个 mutation observer，重叠的 mutate 只回调最后一次；因此任一行保存挂起时禁用全部行的保存，退出编辑的才是保存的那一行。
   // 返回刷新 promise，编辑态在列表显示已保存值之后才关闭。
-  const update = useMutation(AdminService.method.saveProbeTask, { ...mutationErrors, onSuccess: refresh });
-  const remove = useMutation(AdminService.method.deleteProbeTask, { ...mutationErrors, onSuccess: refresh });
+  const update = useMutation(AdminService.method.saveProbeTask, { ...mutationOptions, onSuccess: refresh });
+  const remove = useMutation(AdminService.method.deleteProbeTask, { ...mutationOptions, onSuccess: refresh });
   const pageError = error ?? nodes.error;
   // 分配求交依赖节点列表已到达；未到达前不渲染任何可提交的表单。
   if (nodes.isPending) return <p className="muted">加载中…</p>;

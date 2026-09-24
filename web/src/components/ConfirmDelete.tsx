@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 // 危险操作两段式确认：首击只进入确认态，确认才执行；执行挂起时禁用确认，双击不会重复提交。
+// 确认态随组件卸载撤销：调用方在编辑态不渲染本组件，已武装的确认不跨越别的操作继续有效。
 export function ConfirmDelete({ label, confirm, note, pending, onDelete }: {
   label: string; confirm: string; note?: string; pending: boolean; onDelete: () => void;
 }) {

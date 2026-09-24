@@ -50,9 +50,9 @@ export function Channels() {
   const qc = useQueryClient();
   const [creation, setCreation] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
-  const { error, ...latest } = useLatestError();
+  const { error, isLatest, mutationOptions } = useLatestError();
   // 任何新操作开始时，旧的成功提示与失败一并清除；在途请求的迟到结果由 isLatest 挡回，成功与失败同口径。
-  const tracked = { ...latest, onMutate: () => { setNotice(null); return latest.onMutate(); } };
+  const tracked = { ...mutationOptions, onMutate: () => { setNotice(null); return mutationOptions.onMutate(); } };
   const list = useQuery(AdminService.method.listNotifyChannels, {});
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNotifyChannels, cardinality: "finite" }) });
   const create = useMutation(AdminService.method.saveNotifyChannel, { ...tracked, onSuccess: refresh });
@@ -78,7 +78,7 @@ export function Channels() {
             {channels.map((c) => (
               <ChannelRow key={String(c.id)} channel={c} saving={update.isPending} deleting={remove.isPending} testing={test.isPending}
                 onSave={(d, onSuccess) => update.mutate({ channel: toChannel(c.id, d) }, { onSuccess })}
-                onTest={() => test.mutate({ id: c.id }, { onSuccess: (_r, _v, op) => { if (latest.isLatest(op)) setNotice(`已向 ${c.name} 发送测试消息`); } })}
+                onTest={() => test.mutate({ id: c.id }, { onSuccess: (_r, _v, op) => { if (isLatest(op)) setNotice(`已向 ${c.name} 发送测试消息`); } })}
                 onDelete={() => remove.mutate({ id: c.id })} />
             ))}
           </tbody>

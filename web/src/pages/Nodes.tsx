@@ -10,7 +10,7 @@ import { useLatestError } from "../api/useLatestError";
 
 export function Nodes() {
   const qc = useQueryClient();
-  const { error, ...mutationErrors } = useLatestError();
+  const { error, mutationOptions } = useLatestError();
   const nodes = useQuery(AdminService.method.listNodes, {});
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) });
   // token 只在创建与换 token 的响应里各出现一次，hub 不存明文；展示不经过 isLatest 门控——门控丢弃迟到结果时会把这唯一一份明文一起丢掉。
@@ -18,18 +18,18 @@ export function Nodes() {
   const [name, setName] = useState("");
 
   const create = useMutation(AdminService.method.createNode, {
-    ...mutationErrors,
+    ...mutationOptions,
     onSuccess: (r) => { setSecret({ label: `节点 ${r.node?.name} 的 token`, value: r.token }); setName(""); void refresh(); },
   });
   // 各行共用一个 mutation observer，重叠的 mutate 只回调最后一次；因此任一行保存挂起时禁用全部行的保存，退出编辑的才是保存的那一行。
   // 返回刷新 promise，编辑态在列表显示已保存值之后才关闭。
-  const update = useMutation(AdminService.method.updateNode, { ...mutationErrors, onSuccess: refresh });
-  const remove = useMutation(AdminService.method.deleteNode, { ...mutationErrors, onSuccess: refresh });
+  const update = useMutation(AdminService.method.updateNode, { ...mutationOptions, onSuccess: refresh });
+  const remove = useMutation(AdminService.method.deleteNode, { ...mutationOptions, onSuccess: refresh });
   const rotate = useMutation(AdminService.method.rotateNodeToken, {
-    ...mutationErrors,
+    ...mutationOptions,
     onSuccess: (r, req) => { setSecret({ label: `节点 ${nodes.data?.nodes.find((n) => n.id === req.id)?.name ?? req.id} 的新 token`, value: r.token }); return refresh(); },
   });
-  const reorder = useMutation(AdminService.method.reorderNodes, { ...mutationErrors, onSuccess: refresh });
+  const reorder = useMutation(AdminService.method.reorderNodes, { ...mutationOptions, onSuccess: refresh });
 
   const onCreate = (e: FormEvent) => { e.preventDefault(); create.mutate({ name }); };
   // 排序接口要求给出全部 id 的完整排列：交换相邻两项后整表提交。

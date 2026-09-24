@@ -23,7 +23,8 @@ export function channelTarget(c: NotifyChannel): string {
   return labelOf(CHANNEL_KINDS, c.kind);
 }
 
-// hub 的保存写侧已把空方法规范成 POST；这个兜底只对绕过写侧进入库里的配置有意义。
+// 已保存 Webhook 的空 method 由 hub 的 Engine.SaveChannel 规范成 POST；
+// 面板为没有 Webhook 配置的渠道（例如 Telegram 渠道被编辑时）建立草稿也需要 POST 作初值。
 export function methodOf(method: string | undefined): string {
   return method || "POST";
 }

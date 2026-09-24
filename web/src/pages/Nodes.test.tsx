@@ -34,6 +34,17 @@ describe("Nodes", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "确认删除 a" })).toBeNull());
   });
 
+  it("编辑往返撤销已武装的删除确认", async () => {
+    renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a" });
+    fireEvent.click(screen.getAllByRole("button", { name: "删除" })[0]);
+    expect(screen.getByRole("button", { name: "确认删除 a" })).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("button", { name: "确认删除 a" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "删除" })).toHaveLength(2);
+  });
+
   it.each(["rotate", "reorder"])("%s 挂起持续到节点列表刷新完成", async (operation) => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });

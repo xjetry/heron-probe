@@ -168,6 +168,25 @@ it("删除被引用渠道显示服务端原文", async () => {
   expect(screen.getByRole("cell", { name: "tg" })).toBeInTheDocument();
 });
 
+it("编辑往返撤销已武装的删除确认", async () => {
+  render({});
+  fireEvent.click(await screen.findByRole("button", { name: "删除 tg" }));
+  expect(screen.getByRole("button", { name: "确认删除 tg" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "编辑 tg" }));
+  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  expect(screen.getByRole("button", { name: "删除 tg" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "确认删除 tg" })).toBeNull();
+});
+
+it("mutation 配置不携带展示层方法", async () => {
+  const { queryClient } = render({ testNotifyChannel: async () => ({}) });
+  fireEvent.click(await screen.findByRole("button", { name: "发送测试 tg" }));
+  await waitFor(() => expect(screen.getByRole("status").textContent).toBe("已向 tg 发送测试消息"));
+  const mutations = queryClient.getMutationCache().getAll();
+  expect(mutations.length).toBeGreaterThan(0);
+  for (const m of mutations) expect(m.options).not.toHaveProperty("isLatest");
+});
+
 it("表格可聚焦滚动", async () => {
   render({});
   const region = await screen.findByRole("region", { name: "通知渠道管理" });

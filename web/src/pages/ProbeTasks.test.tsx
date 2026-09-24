@@ -266,6 +266,17 @@ describe("ProbeTasks", () => {
     expect(remove.mock.calls[0][0]).toMatchObject({ id: 3n });
   });
 
+  it("编辑往返撤销已武装的删除确认", async () => {
+    renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks }, routes, "/probes");
+    await screen.findByText("1.1.1.1:443");
+    fireEvent.click(screen.getByRole("button", { name: "删除 1.1.1.1:443" }));
+    expect(screen.getByRole("button", { name: "确认删除 1.1.1.1:443" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443" }));
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.getByRole("button", { name: "删除 1.1.1.1:443" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认删除 1.1.1.1:443" })).toBeNull();
+  });
+
   it("服务端错误原文可见", async () => {
     renderWithAdmin({
       listNodes: async () => nodes, listProbeTasks: async () => tasks,
