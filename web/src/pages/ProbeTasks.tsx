@@ -46,9 +46,9 @@ export function ProbeTasks() {
       <TaskForm key={creation} title="新建探测任务" nodes={nodeList} initial={emptyDraft()} pending={create.isPending}
         onSubmit={(d) => submit(create, 0n, d, () => setCreation((key) => key + 1))} />
       {pageError != null && <p role="alert" className="error">{errorText(pageError)}</p>}
-      <div className="table-scroll">
+      <div className="table-scroll" role="region" aria-label="探测任务管理" tabIndex={0}>
         <table className="nodes">
-          <thead><tr><th>类型</th><th>目标</th><th>间隔 (s)</th><th>超时 (ms)</th><th>节点</th><th /></tr></thead>
+          <thead><tr><th>类型</th><th>目标</th><th>间隔 (s)</th><th>超时 (ms)</th><th>节点</th><th>操作</th></tr></thead>
           <tbody>
             {tasks.map(({ task, nodeIds }) => (
               <TaskRow key={String(task.id)} task={task} nodeIds={nodeIds} nodes={nodeList} saving={update.isPending} deleting={remove.isPending}
@@ -66,6 +66,7 @@ export function ProbeTasks() {
 function TaskForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
   title: string; nodes: Node[]; initial: Draft; pending: boolean; onSubmit: (d: Draft) => void; onCancel?: () => void;
 }) {
+  // initial 只在挂载时读取；编辑期间的列表刷新不覆盖草稿，节点列表以 props 实时更新，提交时与当前列表求交。
   const [draft, setDraft] = useState(initial);
   const toggle = (id: bigint) => {
     const next = new Set(draft.nodeIds);

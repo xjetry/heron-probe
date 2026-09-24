@@ -34,6 +34,32 @@ const defaultImpl = {
   queryProbes: async () => create(QueryProbesResponseSchema, { level: "1m", stepS: 60 }),
 } satisfies AdminImpl;
 
+it("任务列表查询失败显示错误，探测图例仍以编号可辨认", async () => {
+  renderWithAdmin({
+    ...defaultImpl,
+    listProbeTasks: async () => { throw new ConnectError("tasks unavailable", Code.Unavailable); },
+    queryProbes: async () => create(QueryProbesResponseSchema, { stepS: 60, series: [{ taskId: 3n }] }),
+  }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  expect(await screen.findByRole("alert")).toHaveTextContent(/^tasks unavailable$/);
+  expect(await screen.findAllByText("任务 #3")).toHaveLength(2);
+});
+
+it("同窗口同名任务在两张探测图中带编号区分", async () => {
+  renderWithAdmin({
+    ...defaultImpl,
+    listProbeTasks: async () => create(ListProbeTasksResponseSchema, { tasks: [3n, 7n].map((id) => ({
+      task: { id, kind: ProbeKind.ICMP, target: "1.1.1.1" },
+    })) }),
+    queryProbes: async () => create(QueryProbesResponseSchema, { stepS: 60, series: [{ taskId: 7n }, { taskId: 3n }] }),
+  }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  await screen.findAllByText("ICMP 1.1.1.1 #7");
+  const charts = screen.getAllByTestId("chart").filter((chart) => chart.dataset.labels?.includes("ICMP"));
+  expect(charts.map((chart) => chart.dataset.labels)).toEqual([
+    "ICMP 1.1.1.1 #7,ICMP 1.1.1.1 #3",
+    "ICMP 1.1.1.1 #7,ICMP 1.1.1.1 #3",
+  ]);
+});
+
 describe("NodeDetail", () => {
   it.each(["UTC", "Asia/Tokyo"])("流量周期按 hub 时区 %s 显示", async (timezone) => {
     renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }),

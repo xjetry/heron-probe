@@ -2,7 +2,15 @@ import { describe, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
 import { ProbeTaskDetailSchema, QueryProbesResponseSchema } from "../gen/probe/v1/admin_pb";
 import { ProbeKind } from "../gen/probe/v1/types_pb";
-import { PROBE_KINDS, kindLabel, lossPercent, rttMeanMs, taskIdsOf, taskLabel, toProbeAligned } from "./probes";
+import { PROBE_KINDS, kindLabel, lossPercent, rttMeanMs, taskIdsOf, taskLabel, taskLabels, toProbeAligned } from "./probes";
+
+it.each([
+  { ids: [7n, 3n, 9n], labels: ["ICMP host #7", "ICMP host #3", "任务 #9"] },
+  { ids: [3n], labels: ["ICMP host"] },
+])("仅在当前序列列表内消歧同名标签 $ids", ({ ids, labels }) => {
+  const tasks = [3n, 7n].map((id) => create(ProbeTaskDetailSchema, { task: { id, kind: ProbeKind.ICMP, target: "host" } }));
+  expect(taskLabels(ids, tasks)).toEqual(labels);
+});
 
 it("类型表与图例使用同一组标签", () => {
   expect(PROBE_KINDS).toEqual([{ kind: ProbeKind.ICMP, label: "ICMP" }, { kind: ProbeKind.TCP, label: "TCP" }]);

@@ -7,7 +7,7 @@ import { AdminService } from "../gen/probe/v1/admin_pb";
 import { toAligned, unitOf } from "../lib/series";
 import { bytes } from "../lib/format";
 import { errorText } from "../api/auth";
-import { lossPercent, rttMeanMs, taskIdsOf, taskLabel, toProbeAligned, type ProbeValue } from "../lib/probes";
+import { lossPercent, rttMeanMs, taskIdsOf, taskLabels, toProbeAligned, type ProbeValue } from "../lib/probes";
 
 export const RANGES = [
   { label: "1h", seconds: 3600 },
@@ -67,7 +67,7 @@ export function NodeDetail() {
   const probeCharts = useMemo(() => {
     if (!probes.data) return [];
     const ids = taskIdsOf(probes.data);
-    const labels = ids.map((id) => taskLabel(id, tasks.data?.tasks));
+    const labels = taskLabels(ids, tasks.data?.tasks);
     return PROBE_PANELS.map((p) => ({ ...p, labels, data: toProbeAligned(probes.data!, ids, from, to, p.value) }));
   }, [probes.data, tasks.data, from, to]);
   const charts = useMemo(
@@ -101,6 +101,7 @@ export function NodeDetail() {
         ))}
       </div>
       {probes.error && <p role="alert" className="error">{errorText(probes.error)}</p>}
+      {tasks.error && <p role="alert" className="error">{errorText(tasks.error)}</p>}
       {probes.data && probes.data.series.length === 0 && (
         <p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>
       )}

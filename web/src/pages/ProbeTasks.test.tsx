@@ -14,6 +14,13 @@ const tasks = create(ListProbeTasksResponseSchema, { version: 9n, tasks: [
 ] });
 const routes = [{ path: "/probes", Component: ProbeTasks }];
 
+it("任务表格提供可聚焦滚动区域和操作列表头", async () => {
+  renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks }, routes, "/probes");
+  const region = await screen.findByRole("region", { name: "探测任务管理" });
+  expect(region).toHaveAttribute("tabindex", "0");
+  expect(within(region).getByRole("columnheader", { name: "操作" })).toBeInTheDocument();
+});
+
 it("节点列表挂起时不渲染表单与任务表格", async () => {
   const { queryClient } = renderWithAdmin({
     listNodes: () => new Promise(() => {}),

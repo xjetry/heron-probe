@@ -42,3 +42,11 @@ export function taskLabel(id: bigint, tasks: ProbeTaskDetail[] | undefined): str
   if (!t) return `任务 #${id}`;
   return `${kindLabel(t.kind)} ${t.target}`;
 }
+
+// 同一窗口可有配置不同却同名的任务；只给碰撞的标签追加编号，保留常见图例的简短形式。
+export function taskLabels(ids: bigint[], tasks: ProbeTaskDetail[] | undefined): string[] {
+  const labels = ids.map((id) => taskLabel(id, tasks));
+  const counts = new Map<string, number>();
+  for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1);
+  return labels.map((label, i) => counts.get(label)! > 1 ? `${label} #${ids[i]}` : label);
+}
