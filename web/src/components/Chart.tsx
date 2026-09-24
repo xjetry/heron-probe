@@ -4,7 +4,8 @@ import "uplot/dist/uPlot.min.css";
 import { formatUnit } from "../lib/format";
 import { axisValues } from "../lib/axis";
 
-const palette = ["#3b82f6", "#f59e0b", "#10b981", "#ef4444"];
+// 一个节点常有多条探测线，八色减少颜色重复；超过八条时循环使用。
+const palette = ["#3b82f6", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#06b6d4", "#84cc16", "#ec4899"];
 
 // spanGaps 关闭：null 是无读数，线在这里必须断开而不是把两侧连起来。
 export function Chart({ data, labels, unit, height = 180 }: { data: AlignedData; labels: string[]; unit: string; height?: number }) {

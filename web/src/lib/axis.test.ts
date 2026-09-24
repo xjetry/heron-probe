@@ -1,6 +1,10 @@
 import { expect, it } from "vitest";
 import { axisValues } from "./axis";
 
+it("ms 轴带后缀且精度足以区分刻度", () => {
+  expect(axisValues([0, 0.5, 1], "ms")).toEqual(["0.0 ms", "0.5 ms", "1.0 ms"]);
+});
+
 it.each([
   { unit: "bytes", values: [40, 40.2, 40.4].map((v) => v * 1024 ** 3) },
   { unit: "bytes/s", values: [40, 40.2, 40.4].map((v) => v * 1024 ** 2) },

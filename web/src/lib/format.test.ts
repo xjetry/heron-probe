@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { ago, bytes, duration, formatUnit, percent } from "./format";
 
 describe("format", () => {
+  it("ms 按量级取位数", () => {
+    expect(formatUnit(0.4567, "ms")).toBe("0.46 ms");
+    expect(formatUnit(12.34, "ms")).toBe("12.3 ms");
+    expect(formatUnit(250.7, "ms")).toBe("251 ms");
+  });
   it("bytes 用二进制单位，小数只在个位数时出现", () => {
     expect(bytes(0)).toBe("0 B");
     expect(bytes(1023)).toBe("1023 B");
