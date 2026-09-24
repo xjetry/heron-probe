@@ -172,7 +172,8 @@ func (s *Store) rollupLevel(ctx context.Context, f *family, i int, limit int64) 
 }
 
 type Retention struct {
-	M1, M5, H1  time.Duration
+	M1, M5, H1 time.Duration
+	// 零值会把截止点放在现在，删除此前全部事件；serve 入口必须先 Validate，拒绝过短或非正保留期。
 	AlertEvents time.Duration
 }
 
@@ -183,13 +184,17 @@ const (
 	MinRetentionM1 = 6 * time.Hour
 	MinRetentionM5 = 7 * 24 * time.Hour
 	MinRetentionH1 = 7 * 24 * time.Hour
+	// 满队列的最坏投递时长必须短于事件保留期，否则 worker 回读已清理事件会丢失通知。
+	// alert 包用例按队列容量、尝试次数、客户端超时和退避的真实常量钉住关系；按天取整留足余量。
+	MinRetentionAlertEvents = 24 * time.Hour
 )
 
 // Validate 的下限与 ChooseLevel 的选级阈值同向：1m 覆盖六小时、5m 覆盖七天，
 // 且粗级不短于细级，避免刚跨选级边界就因保留期更短而失去历史。
+// 事件下限覆盖满队列的最坏投递时长，不能在正常重试完成前清掉事件。
 func (r Retention) Validate() error {
-	if r.AlertEvents <= 0 {
-		return errors.New("alert event retention must be positive")
+	if r.AlertEvents < MinRetentionAlertEvents {
+		return fmt.Errorf("alert event retention is %v, minimum is %v", r.AlertEvents, MinRetentionAlertEvents)
 	}
 	if r.M1 < MinRetentionM1 {
 		return fmt.Errorf("retention for 1m level is %v, minimum is %v", r.M1, MinRetentionM1)
@@ -364,6 +369,7 @@ func nextMaintenanceAt(wall time.Time) time.Time {
 
 // RunMaintenance 按分钟边界调度上卷与清理；一轮维护使用 Background，
 // 因而取消只在等待下一轮时生效，已开始的一轮会完成后再退出。
+// 调用方 serve 先 Validate；AlertEvents 为零会以现在为截止点删除此前全部事件，不能视作禁用清理。
 func (s *Store) RunMaintenance(ctx context.Context, r Retention) {
 	for {
 		wall := s.clk.Now()
@@ -375,14 +381,13 @@ func (s *Store) RunMaintenance(ctx context.Context, r Retention) {
 		case <-timer.C:
 			if err := s.Rollup(context.Background()); err != nil {
 				s.log.Error("rollup failed", "err", err)
-				// 上卷失败时保留本轮全部历史；Prune 自身的消费水位守卫仍独立生效。
-				continue
-			}
-			if n, err := s.Prune(context.Background(), r); err != nil {
+				// 上卷失败只跳过时序行清理，保留未上卷的分钟行；Prune 的水位守卫仍独立生效。
+			} else if n, err := s.Prune(context.Background(), r); err != nil {
 				s.log.Error("prune failed", "err", err)
 			} else if n > 0 {
 				s.log.Info("pruned expired rows", "rows", n)
 			}
+			// 事件表不依赖上卷水位；时序表故障不能阻止它按保留期清理。
 			if n, err := s.PruneAlertEvents(context.Background(), s.clk.Now().Add(-r.AlertEvents)); err != nil {
 				s.log.Error("prune alert events failed", "err", err)
 			} else if n > 0 {

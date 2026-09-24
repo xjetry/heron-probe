@@ -62,15 +62,20 @@ func TestPruneAlertEventsRollsBackDeliveriesOnFailure(t *testing.T) {
 	}
 }
 
-func TestAlertRetentionMustBePositive(t *testing.T) {
+func TestAlertRetentionMinimum(t *testing.T) {
 	if DefaultRetention.AlertEvents != 90*24*time.Hour {
 		t.Fatalf("default=%v", DefaultRetention.AlertEvents)
 	}
-	for _, d := range []time.Duration{0, -time.Second} {
+	for _, d := range []time.Duration{0, -time.Second, 24*time.Hour - time.Second} {
 		r := DefaultRetention
 		r.AlertEvents = d
-		if err := r.Validate(); err == nil {
-			t.Fatalf("retention %v accepted", d)
+		if err := r.Validate(); err == nil || !strings.Contains(err.Error(), "minimum is 24h0m0s") {
+			t.Fatalf("retention %v validation=%v", d, err)
 		}
+	}
+	r := DefaultRetention
+	r.AlertEvents = 24 * time.Hour
+	if err := r.Validate(); err != nil {
+		t.Fatalf("minimum retention rejected: %v", err)
 	}
 }

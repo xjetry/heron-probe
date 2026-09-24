@@ -82,7 +82,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	fs.DurationVar(&retention.M1, "retention-1m", retention.M1, fmt.Sprintf("how long to keep 1-minute rows (minimum %s)", store.MinRetentionM1))
 	fs.DurationVar(&retention.M5, "retention-5m", retention.M5, fmt.Sprintf("how long to keep 5-minute rows (minimum %s)", store.MinRetentionM5))
 	fs.DurationVar(&retention.H1, "retention-1h", retention.H1, fmt.Sprintf("how long to keep hourly rows (minimum %s)", store.MinRetentionH1))
-	fs.DurationVar(&retention.AlertEvents, "retention-alert-events", retention.AlertEvents, "how long to keep alert events and their deliveries (must be positive)")
+	fs.DurationVar(&retention.AlertEvents, "retention-alert-events", retention.AlertEvents, fmt.Sprintf("how long to keep alert events and their deliveries (minimum %s)", store.MinRetentionAlertEvents))
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

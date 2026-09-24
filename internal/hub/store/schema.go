@@ -270,6 +270,7 @@ const ddlAlertEvent = `CREATE TABLE alert_event (
   value REAL NOT NULL
 )`
 const ddlAlertEventByNode = `CREATE INDEX alert_event_by_node ON alert_event(node_id, id)`
+const ddlAlertEventByAt = `CREATE INDEX alert_event_by_at ON alert_event(at)`
 
 // 每渠道一行；done 显式区分可续投与终态，不用虚增 attempts 冒充不可重试。
 const ddlAlertDelivery = `CREATE TABLE alert_delivery (
@@ -288,5 +289,5 @@ const ddlAlertDeliveryPending = `CREATE INDEX alert_delivery_pending ON alert_de
 func alertStatements() []string {
 	return []string{ddlAlertRule, ddlAlertRuleNode, ddlAlertRuleNodeByNode, ddlAlertRuleChannel,
 		ddlAlertRuleChannelByChannel, ddlNotifyChannel, ddlAlertState, ddlAlertEvent,
-		ddlAlertEventByNode, ddlAlertDelivery, ddlAlertDeliveryByEvent, ddlAlertDeliveryPending}
+		ddlAlertEventByNode, ddlAlertEventByAt, ddlAlertDelivery, ddlAlertDeliveryByEvent, ddlAlertDeliveryPending}
 }

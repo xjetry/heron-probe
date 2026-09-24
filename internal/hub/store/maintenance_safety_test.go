@@ -25,6 +25,10 @@ func TestMaintenanceSkipsPruneAfterRollupError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	r := saveRule(t, s, AlertRule{Name: "offline", Kind: KindOffline, AllNodes: true})
+	if _, err := s.RecordTransition(ctx, r.ID, id, StateFiring, AlertEvent{At: clk.Now().Add(-91 * 24 * time.Hour), Transition: TransitionFiring}, nil); err != nil {
+		t.Fatal(err)
+	}
 	ts := clk.Now().Add(-400 * 24 * time.Hour).Truncate(time.Hour).Unix()
 	if err := s.write(ctx, func(tx *sql.Tx) error {
 		args := append([]any{id, ts}, bucketArgs(bucket(3))...)
@@ -54,6 +58,7 @@ func TestMaintenanceSkipsPruneAfterRollupError(t *testing.T) {
 	if len(readLevel(t, s, levels[2], id)) != 1 {
 		t.Fatal("maintenance pruned after rollup failure")
 	}
+	assertAlertRows(t, s, "alert_event", "1 = 1", 0)
 }
 
 func TestPruneWaitsForConsumer(t *testing.T) {
