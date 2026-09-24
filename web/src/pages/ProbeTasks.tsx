@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
+import { ConfirmDelete } from "../components/ConfirmDelete";
 import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
 import { ProbeKind, type ProbeTask } from "../gen/probe/v1/types_pb";
 import { PROBE_KINDS, kindLabel } from "../lib/probes";
@@ -109,7 +110,6 @@ function TaskRow({ task: t, nodeIds, nodes, saving, deleting, onSave, onDelete }
   task: ProbeTask; nodeIds: bigint[]; nodes: Node[]; saving: boolean; deleting: boolean; onSave: (d: Draft, onSuccess: () => void) => void; onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   const names = nodeIds.map((id) => nodes.find((n) => n.id === id)?.name ?? `#${id}`).join("、");
   if (editing) {
     return (
@@ -128,15 +128,7 @@ function TaskRow({ task: t, nodeIds, nodes, saving, deleting, onSave, onDelete }
       <td>{names || <span className="muted">未分配</span>}</td>
       <td>
         <button type="button" className="link" aria-label={`编辑 ${t.target}`} onClick={() => setEditing(true)}>编辑</button>{" "}
-        {confirming ? (
-          <>
-            <button type="button" className="danger" disabled={deleting} onClick={onDelete}>确认删除 {t.target}</button>{" "}
-            <span className="muted">历史保留至到期清理</span>{" "}
-            <button type="button" className="link" onClick={() => setConfirming(false)}>取消</button>
-          </>
-        ) : (
-          <button type="button" className="link danger" aria-label={`删除 ${t.target}`} onClick={() => setConfirming(true)}>删除</button>
-        )}
+        <ConfirmDelete label={`删除 ${t.target}`} confirm={`确认删除 ${t.target}`} note="历史保留至到期清理" pending={deleting} onDelete={onDelete} />
       </td>
     </tr>
   );

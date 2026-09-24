@@ -2,6 +2,7 @@ import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connec
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { Link } from "react-router";
+import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Secret } from "../components/Secret";
 import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
 import { errorText } from "../api/auth";
@@ -80,7 +81,6 @@ function NodeEditor({ node, saving, deleting, rotating, onMoveUp, onMoveDown, on
   onDelete: () => void; onRotate: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   const [draft, setDraft] = useState({ name: node.name, public: node.public, note: node.note, trafficResetDay: node.trafficResetDay });
   if (editing) {
     return (
@@ -112,14 +112,7 @@ function NodeEditor({ node, saving, deleting, rotating, onMoveUp, onMoveDown, on
       <td>
         <button type="button" className="link" onClick={() => { setDraft({ name: node.name, public: node.public, note: node.note, trafficResetDay: node.trafficResetDay }); setEditing(true); }}>编辑</button>{" "}
         <button type="button" className="link" onClick={onRotate} disabled={rotating}>换 token</button>{" "}
-        {confirming ? (
-          <>
-            <button type="button" className="danger" onClick={onDelete} disabled={deleting}>确认删除 {node.name}</button>{" "}
-            <button type="button" className="link" onClick={() => setConfirming(false)}>取消</button>
-          </>
-        ) : (
-          <button type="button" className="link danger" onClick={() => setConfirming(true)}>删除</button>
-        )}
+        <ConfirmDelete label="删除" confirm={`确认删除 ${node.name}`} pending={deleting} onDelete={onDelete} />
       </td>
     </tr>
   );

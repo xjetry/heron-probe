@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
+import { ConfirmDelete } from "../components/ConfirmDelete";
 import { AdminService, ChannelKind, type NotifyChannel } from "../gen/probe/v1/admin_pb";
 import { CHANNEL_KINDS, channelTarget, labelOf } from "../lib/alerts";
 
@@ -171,7 +172,6 @@ function ChannelRow({ channel: c, saving, deleting, testing, onSave, onTest, onD
   onSave: (d: Draft, onSuccess: () => void) => void; onTest: () => void; onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   if (editing) {
     return (
       <tr><td colSpan={5}>
@@ -189,14 +189,7 @@ function ChannelRow({ channel: c, saving, deleting, testing, onSave, onTest, onD
       <td>
         <button type="button" className="link" aria-label={`编辑 ${c.name}`} onClick={() => setEditing(true)}>编辑</button>{" "}
         <button type="button" className="link" aria-label={`测试 ${c.name}`} disabled={testing} onClick={onTest}>发送测试</button>{" "}
-        {confirming ? (
-          <>
-            <button type="button" className="danger" disabled={deleting} onClick={onDelete}>确认删除 {c.name}</button>{" "}
-            <button type="button" className="link" onClick={() => setConfirming(false)}>取消</button>
-          </>
-        ) : (
-          <button type="button" className="link danger" aria-label={`删除 ${c.name}`} onClick={() => setConfirming(true)}>删除</button>
-        )}
+        <ConfirmDelete label={`删除 ${c.name}`} confirm={`确认删除 ${c.name}`} pending={deleting} onDelete={onDelete} />
       </td>
     </tr>
   );
