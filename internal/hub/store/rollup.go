@@ -173,7 +173,7 @@ func (s *Store) rollupLevel(ctx context.Context, f *family, i int, limit int64) 
 
 type Retention struct {
 	M1, M5, H1 time.Duration
-	// 零值会把截止点放在现在，删除此前全部事件；serve 入口必须先 Validate，拒绝过短或非正保留期。
+	// 零值会把截止点放在现在，删除此前全部事件；RunMaintenance 自行 Validate，拒绝过短或非正保留期。
 	AlertEvents time.Duration
 }
 
@@ -369,8 +369,12 @@ func nextMaintenanceAt(wall time.Time) time.Time {
 
 // RunMaintenance 按分钟边界调度上卷与清理；一轮维护使用 Background，
 // 因而取消只在等待下一轮时生效，已开始的一轮会完成后再退出。
-// 调用方 serve 先 Validate；AlertEvents 为零会以现在为截止点删除此前全部事件，不能视作禁用清理。
+// AlertEvents 为零会以现在为截止点删除此前全部事件，不能视作禁用清理。
+// 本入口拒绝非法装配，不依赖调用方记得校验；serve 的 Validate 另提供启动时的友好错误。
 func (s *Store) RunMaintenance(ctx context.Context, r Retention) {
+	if err := r.Validate(); err != nil {
+		panic(err)
+	}
 	for {
 		wall := s.clk.Now()
 		timer := time.NewTimer(nextMaintenanceAt(wall).Sub(wall))
