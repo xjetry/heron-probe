@@ -174,6 +174,8 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	return errors.Join(err, shutdownHTTP(srv, drain, 10*time.Second))
 }
 
+// startLoop 返回的 stop 取消并等待循环退出；调用方用 defer 的后进先出表达停止顺序。
+// 离线巡检是唯一在 HTTP 排空前显式停止的循环，原因见调用处；其余均在排空后、st.Close 前停止。
 func startLoop(run func(context.Context)) func() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

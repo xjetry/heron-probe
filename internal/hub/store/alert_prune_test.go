@@ -62,6 +62,45 @@ func TestPruneAlertEventsRollsBackDeliveriesOnFailure(t *testing.T) {
 	}
 }
 
+// 维护每分钟在写事务里清理事件，全表扫描会随事件量线性占用单写协程。
+// 直接检查生产 SQL 的计划，避免新建与迁移同时漏掉索引时结构对照仍通过。
+func TestPruneAlertEventsUsesTimeIndex(t *testing.T) {
+	s, _ := open(t)
+	for _, tc := range []struct {
+		name  string
+		query string
+	}{
+		{"pending_count", countExpiredPendingDeliveries},
+		{"deliveries", deleteExpiredDeliveries},
+		{"events", deleteExpiredAlertEvents},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := s.r.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+tc.query, s.clk.Now().Unix())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			var details []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+					t.Fatal(err)
+				}
+				details = append(details, detail)
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			plan := strings.Join(details, "\n")
+			t.Logf("query plan:\n%s", plan)
+			if !strings.Contains(plan, "alert_event_by_at") || strings.Contains(plan, "SCAN alert_event") {
+				t.Fatalf("cleanup must use alert_event_by_at without scanning alert_event:\n%s", plan)
+			}
+		})
+	}
+}
+
 func TestAlertRetentionMinimum(t *testing.T) {
 	if DefaultRetention.AlertEvents != 90*24*time.Hour {
 		t.Fatalf("default=%v", DefaultRetention.AlertEvents)
