@@ -7,6 +7,7 @@ import { AdminService } from "../gen/probe/v1/admin_pb";
 import { toAligned, unitOf } from "../lib/series";
 import { bytes } from "../lib/format";
 import { errorText } from "../api/auth";
+import { lossPercent, rttMeanMs, taskIdsOf, taskLabel, toProbeAligned, type ProbeValue } from "../lib/probes";
 
 export const RANGES = [
   { label: "1h", seconds: 3600 },
@@ -26,6 +27,13 @@ const PANELS: { title: string; names: string[]; unit?: string }[] = [
   { title: "连接数", names: ["tcp", "udp"] },
   { title: "进程数", names: ["procs"] },
   { title: "网络", names: ["rx_bytes", "tx_bytes"], unit: "bytes/s" },
+];
+
+// 探测图两张：丢包率与 RTT 均值，每个任务一条线。单位不随数据来——探测样本没有 unit 字段，
+// 两种量各自固定。
+const PROBE_PANELS: { title: string; unit: string; value: ProbeValue }[] = [
+  { title: "探测 · 丢包率", unit: "percent", value: lossPercent },
+  { title: "探测 · RTT 均值", unit: "ms", value: rttMeanMs },
 ];
 
 const REFRESH_MS = 60_000;
@@ -50,6 +58,16 @@ export function NodeDetail() {
   const history = useQuery(AdminService.method.queryMetrics, { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: 1000 }, {
     enabled: validId, placeholderData: keepPreviousData,
   });
+  const probes = useQuery(AdminService.method.queryProbes, { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: 1000 }, {
+    enabled: validId, placeholderData: keepPreviousData,
+  });
+  const tasks = useQuery(AdminService.method.listProbeTasks, {}, { enabled: validId });
+  const probeCharts = useMemo(() => {
+    if (!probes.data) return [];
+    const ids = taskIdsOf(probes.data);
+    const labels = ids.map((id) => taskLabel(id, tasks.data?.tasks));
+    return PROBE_PANELS.map((p) => ({ ...p, labels, data: toProbeAligned(probes.data!, ids, from, to, p.value) }));
+  }, [probes.data, tasks.data, from, to]);
   const charts = useMemo(
     () => history.data ? PANELS.map((p) => ({ ...p, data: toAligned(history.data, p.names, from, to), unit: p.unit ?? unitOf(history.data, p.names[0]) })) : [],
     [history.data, from, to],
@@ -80,6 +98,20 @@ export function NodeDetail() {
           </div>
         ))}
       </div>
+      {probes.error && <p role="alert" className="error">{errorText(probes.error)}</p>}
+      {probes.data && probes.data.series.length === 0 && (
+        <p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>
+      )}
+      {probeCharts.length > 0 && probes.data!.series.length > 0 && (
+        <div className="grid">
+          {probeCharts.map((c) => (
+            <div className="card" key={c.title}>
+              <h2>{c.title}</h2>
+              <Chart data={c.data} labels={c.labels} unit={c.unit} />
+            </div>
+          ))}
+        </div>
+      )}
       {node?.facts && (
         <dl className="card facts">
           <dt>主机名</dt><dd>{node.facts.hostname}</dd>
@@ -89,6 +121,7 @@ export function NodeDetail() {
           <dt>CPU</dt><dd>{node.facts.cpuModel} × {node.facts.cpuCores}</dd>
           <dt>虚拟化</dt><dd>{node.facts.virtualization || "无 / 未知"}</dd>
           <dt>agent</dt><dd>{node.facts.agentVersion}</dd>
+          <dt>ICMP 探测</dt><dd>{node.facts.icmpAvailable ? "可用" : "不可用"}</dd>
         </dl>
       )}
     </section>

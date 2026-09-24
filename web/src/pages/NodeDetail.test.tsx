@@ -1,12 +1,17 @@
+import { create } from "@bufbuild/protobuf";
+import { ListProbeTasksResponseSchema, QueryProbesResponseSchema } from "../gen/probe/v1/admin_pb";
+import { ProbeKind } from "../gen/probe/v1/types_pb";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { act, screen, fireEvent } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { NodeDetail } from "./NodeDetail";
 
 vi.mock("../components/Chart", () => ({
   Chart: ({ labels, unit, data }: { labels: string[]; unit: string; data: unknown[] }) => (
-    <div data-testid="chart" data-labels={labels.join(",")} data-unit={unit} data-points={String((data[0] as unknown[]).length)} />
+    <div data-testid="chart" data-labels={labels.join(",")} data-unit={unit} data-points={String((data[0] as unknown[]).length)}>
+      {labels.map((label) => <span key={label}>{label}</span>)}
+    </div>
   ),
 }));
 
@@ -22,9 +27,16 @@ const trafficOf = (nodeId: bigint) => ({
 });
 const getTraffic = async () => ({ timezone: "UTC", now: 1_757_000_000n, nodes: [trafficOf(7n)] });
 
+const defaultImpl = {
+  listNodes, getTraffic,
+  queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }),
+  listProbeTasks: async () => create(ListProbeTasksResponseSchema, {}),
+  queryProbes: async () => create(QueryProbesResponseSchema, { level: "1m", stepS: 60 }),
+} satisfies AdminImpl;
+
 describe("NodeDetail", () => {
   it.each(["UTC", "Asia/Tokyo"])("流量周期按 hub 时区 %s 显示", async (timezone) => {
-    renderWithAdmin({ listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }),
+    renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }),
       getTraffic: async () => ({ ...await getTraffic(), timezone }) },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
     const t = trafficOf(7n).traffic;
@@ -37,7 +49,7 @@ describe("NodeDetail", () => {
   it("流量卡显示周期与总量，并按 GiB 提交校正后刷新", async () => {
     const adjustTraffic = vi.fn(async () => ({ traffic: trafficOf(7n).traffic }));
     const traffic = vi.fn(getTraffic);
-    renderWithAdmin({ listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }), getTraffic: traffic, adjustTraffic },
+    renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }), getTraffic: traffic, adjustTraffic },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
     expect(await screen.findByText("↓ 1.0 GiB ↑ 512 MiB")).toBeInTheDocument();
     expect(screen.getByText("↓ 10 GiB ↑ 5.0 GiB")).toBeInTheDocument();
@@ -50,7 +62,7 @@ describe("NodeDetail", () => {
   });
 
   it("校正输入不是非负数时按钮禁用", async () => {
-    renderWithAdmin({ listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }), getTraffic },
+    renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }), getTraffic },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
     await screen.findByText("↓ 1.0 GiB ↑ 512 MiB");
     fireEvent.change(screen.getByLabelText("本周期下行 (GiB)"), { target: { value: "-1" } });
@@ -62,7 +74,7 @@ describe("NodeDetail", () => {
   });
 
   it.each(["1e308", "17179869184"])("校正输入 %s 超出字节范围时按钮禁用", async (value) => {
-    renderWithAdmin({ listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }), getTraffic },
+    renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }), getTraffic },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
     await screen.findByText("↓ 1.0 GiB ↑ 512 MiB");
     fireEvent.change(screen.getByLabelText("本周期下行 (GiB)"), { target: { value } });
@@ -70,7 +82,7 @@ describe("NodeDetail", () => {
   });
 
   it("流量请求失败只在卡内报错，不影响图表", async () => {
-    renderWithAdmin({ listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }),
+    renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }),
       getTraffic: async () => { throw new ConnectError("traffic unavailable", Code.Unavailable); } },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
     expect(await screen.findByRole("alert")).toHaveTextContent(/^traffic unavailable$/);
@@ -87,7 +99,7 @@ describe("NodeDetail", () => {
       if (queryMetrics.mock.calls.length > 1) { started(); await gate; }
       return response;
     });
-    renderWithAdmin({ getTraffic, listNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+    renderWithAdmin({ ...defaultImpl, getTraffic, listNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
     await screen.findByText(/级别 1m/);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "7d" })); await pending; });
     try { expect(screen.queryAllByTestId("chart").length).toBe(7); }
@@ -97,7 +109,7 @@ describe("NodeDetail", () => {
   it("非数字节点路径不发查询并显示返回链接", async () => {
     const list = vi.fn(listNodes);
     const queryMetrics = vi.fn(async () => ({ level: "1m", stepS: 60, ts: [], series: [] }));
-    await act(async () => { renderWithAdmin({ getTraffic, listNodes: list, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/abc"); });
+    await act(async () => { renderWithAdmin({ ...defaultImpl, getTraffic, listNodes: list, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/abc"); });
     expect(screen.getByRole("alert")).toHaveTextContent("节点 abc 不存在");
     expect(screen.getByRole("link", { name: "返回总览" })).toHaveAttribute("href", "/");
     expect(list).not.toHaveBeenCalled();
@@ -108,7 +120,7 @@ describe("NodeDetail", () => {
       level: "5m", stepS: 300, ts: [],
       series: [{ name: "cpu", unit: "percent", samples: [] }, { name: "mem_used", unit: "bytes", samples: [] }],
     }));
-    renderWithAdmin({ getTraffic, listNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+    renderWithAdmin({ ...defaultImpl, getTraffic, listNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
     expect(await screen.findByRole("heading", { level: 1, name: "db-01" })).toBeInTheDocument();
     expect(await screen.findByText(/级别 5m，每点 300s/)).toBeInTheDocument();
     const charts = screen.getAllByTestId("chart");
@@ -132,7 +144,7 @@ describe("NodeDetail", () => {
     { label: "30d", seconds: 2592000 },
   ])("切换到 $label 重新查询", async ({ label, seconds }) => {
     const queryMetrics = vi.fn<NonNullable<AdminImpl["queryMetrics"]>>(async () => ({ level: "1m", stepS: 60, ts: [], series: [] }));
-    renderWithAdmin({ getTraffic, listNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+    renderWithAdmin({ ...defaultImpl, getTraffic, listNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
     await screen.findByRole("heading", { level: 1, name: "db-01" });
     await screen.findByText(/级别 1m，每点 60s/);
     fireEvent.click(screen.getByRole("button", { name: label }));
@@ -142,18 +154,108 @@ describe("NodeDetail", () => {
   });
 
   it("不存在的节点给出返回链接", async () => {
-    renderWithAdmin({ getTraffic, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }) }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/99");
+    renderWithAdmin({ ...defaultImpl, getTraffic, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }) }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/99");
     expect(await screen.findByRole("alert")).toHaveTextContent("节点 99 不存在");
     expect(screen.getByRole("link", { name: "返回总览" })).toHaveAttribute("href", "/");
   });
 
   it.each(["nodes", "history"])("%s 请求失败时显示 hub 的错误正文", async (source) => {
     const fail = async () => { throw new ConnectError("data unavailable", Code.Unavailable); };
-    renderWithAdmin({
+    renderWithAdmin({ ...defaultImpl,
       getTraffic,
       listNodes: source === "nodes" ? fail : listNodes,
       queryMetrics: source === "history" ? fail : async () => ({ level: "1m", stepS: 60, ts: [], series: [] }),
     }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
     expect(await screen.findByRole("alert")).toHaveTextContent(/^data unavailable$/);
   });
+});
+
+it("探测图每个任务一条线，已删除任务用编号，且与指标查询共用同一窗口", async () => {
+  const windows: { name: string; from: bigint; to: bigint }[] = [];
+  renderWithAdmin({ ...defaultImpl,
+    listNodes,
+    queryMetrics: async (req) => { windows.push({ name: "metrics", from: req.from, to: req.to }); return defaultImpl.queryMetrics(); },
+    listProbeTasks: async () => create(ListProbeTasksResponseSchema, { version: 5n, tasks: [
+      { task: { id: 3n, kind: ProbeKind.ICMP, target: "1.1.1.1", intervalS: 30, timeoutMs: 1000 }, nodeIds: [7n] },
+    ] }),
+    queryProbes: async (req) => {
+      windows.push({ name: "probes", from: req.from, to: req.to });
+      return create(QueryProbesResponseSchema, { level: "1m", stepS: 60, series: [
+        { taskId: 3n, samples: [{ ts: req.from, sent: 10, lost: 1, errors: 0, rttMeanUs: 9000 }] },
+        { taskId: 9n, samples: [{ ts: req.from, sent: 10, lost: 0, errors: 0, rttMeanUs: 1000 }] },
+      ] });
+    },
+  }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  expect(await screen.findByRole("heading", { name: "探测 · 丢包率" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "探测 · RTT 均值" })).toBeInTheDocument();
+  expect(await screen.findAllByText("ICMP 1.1.1.1")).toHaveLength(2);
+  expect(screen.getAllByText("任务 #9")).toHaveLength(2);
+  await waitFor(() => expect(windows.filter((w) => w.name === "probes")).toHaveLength(1));
+  const m = windows.find((w) => w.name === "metrics")!;
+  const p = windows.find((w) => w.name === "probes")!;
+  expect([p.from, p.to]).toEqual([m.from, m.to]);
+  expect(screen.queryByText(/窗口内没有探测结果/)).toBeNull();
+});
+
+it("窗口内没有探测结果时给出去向", async () => {
+  renderWithAdmin({ ...defaultImpl,
+    listNodes,
+    queryMetrics: defaultImpl.queryMetrics,
+    listProbeTasks: async () => create(ListProbeTasksResponseSchema, { version: 1n, tasks: [] }),
+    queryProbes: async () => create(QueryProbesResponseSchema, { level: "1m", stepS: 60, series: [] }),
+  }, [{ path: "/nodes/:id", Component: NodeDetail }, { path: "/probes", element: <p>任务页</p> }], "/nodes/7");
+  expect(await screen.findByText(/窗口内没有探测结果/)).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "探测 · 丢包率" })).toBeNull();
+  fireEvent.click(screen.getByRole("link", { name: "管理探测任务" }));
+  expect(await screen.findByText("任务页")).toBeInTheDocument();
+});
+
+it("主机信息显示 ICMP 是否可用", async () => {
+  renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: defaultImpl.queryMetrics,
+    listProbeTasks: async () => create(ListProbeTasksResponseSchema, {}), queryProbes: async () => create(QueryProbesResponseSchema, { stepS: 60 }) },
+    [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  const dt = await screen.findByText("ICMP 探测");
+  expect(dt.nextElementSibling).toHaveTextContent("不可用");
+});
+
+it("任务列表迟到时先用编号，标签到达后更新且切窗挂起时保留探测图", async () => {
+  let releaseTasks!: () => void;
+  let releaseProbes!: () => void;
+  let started!: () => void;
+  const taskGate = new Promise<void>((resolve) => { releaseTasks = resolve; });
+  const probeGate = new Promise<void>((resolve) => { releaseProbes = resolve; });
+  const pending = new Promise<void>((resolve) => { started = resolve; });
+  const queryProbes = vi.fn<NonNullable<AdminImpl["queryProbes"]>>(async (req) => {
+    if (queryProbes.mock.calls.length > 1) { started(); await probeGate; }
+    return create(QueryProbesResponseSchema, { stepS: 60, series: [{ taskId: 3n, samples: [{ ts: req.from, sent: 1, rttMeanUs: 1000 }] }] });
+  });
+  renderWithAdmin({ ...defaultImpl, queryProbes, listProbeTasks: async () => {
+    await taskGate;
+    return create(ListProbeTasksResponseSchema, { tasks: [{ task: { id: 3n, kind: ProbeKind.ICMP, target: "1.1.1.1" } }] });
+  } }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  try {
+    expect(await screen.findAllByText("任务 #3")).toHaveLength(2);
+    await act(async () => { releaseTasks(); });
+    expect(await screen.findAllByText("ICMP 1.1.1.1")).toHaveLength(2);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "7d" })); await pending; });
+    expect(screen.getAllByText("ICMP 1.1.1.1")).toHaveLength(2);
+  } finally {
+    await act(async () => { releaseTasks(); releaseProbes(); });
+  }
+});
+
+it("主机信息也显示 ICMP 可用", async () => {
+  renderWithAdmin({ ...defaultImpl, listNodes: async () => {
+    const response = await listNodes();
+    response.nodes[0].facts.icmpAvailable = true;
+    return response;
+  } }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  const dt = await screen.findByText("ICMP 探测");
+  expect(dt.nextElementSibling).toHaveTextContent(/^可用$/);
+});
+
+it("探测查询失败显示错误，不吞掉失败", async () => {
+  renderWithAdmin({ ...defaultImpl, queryProbes: async () => { throw new ConnectError("probes unavailable", Code.Unavailable); } },
+    [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  expect(await screen.findByRole("alert")).toHaveTextContent(/^probes unavailable$/);
 });
