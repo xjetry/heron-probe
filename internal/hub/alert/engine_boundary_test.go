@@ -92,14 +92,14 @@ func TestProbeCandidateRemovalPrunesPersistedState(t *testing.T) {
 }
 
 func TestRuleIdentityChangeClearsState(t *testing.T) {
-	for _, change := range []string{"kind", "task"} {
+	for _, change := range []string{"kind", "task", "metric", "threshold"} {
 		t.Run(change, func(t *testing.T) {
 			f := newFixture(t)
 			task := f.task(t, f.ids)
 			nextTask := f.task(t, nil)
 			ts := f.clk.Now().Unix() - 60
 			r := offline()
-			if change == "task" {
+			if change != "kind" {
 				r = probeRule(task)
 			}
 			r = f.rule(t, r)
@@ -111,24 +111,34 @@ func TestRuleIdentityChangeClearsState(t *testing.T) {
 				must(t, f.e.EvaluateProbes(t.Context(), ts))
 			}
 			wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
-			r.Kind = store.KindProbe
-			r.TaskID = nextTask
-			r.Metric = store.MetricLossPct
-			r.Threshold = 20
-			r.ForMinutes = 1
+			switch change {
+			case "kind":
+				r = probeRule(task)
+				r.ID = f.e.Rules()[0].ID
+			case "task":
+				r.TaskID = nextTask
+			case "metric":
+				r.Metric = store.MetricRttMs
+			case "threshold":
+				r.Threshold = 30
+			}
 			f.rule(t, r)
 			f.sweep(t)
-			if len(f.e.States()) != 0 {
+			want := 0
+			if change == "threshold" {
+				want = 1
+			}
+			if len(f.e.States()) != want {
 				t.Fatalf("old identity states cached: %v", f.e.States())
 			}
 			rows, err := f.st.ListAlertStates(t.Context())
 			must(t, err)
-			if len(rows) != 0 {
+			if len(rows) != want {
 				t.Fatalf("old identity states persisted: %v", rows)
 			}
 			f.restart(t)
-			if len(f.e.States()) != 0 {
-				t.Fatal("old identity revived on restart")
+			if len(f.e.States()) != want {
+				t.Fatal("identity state changed on restart")
 			}
 		})
 	}

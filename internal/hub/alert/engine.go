@@ -151,7 +151,9 @@ func (e *Engine) SaveRule(ctx context.Context, r store.AlertRule) (store.AlertRu
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	previous := e.rules[saved.ID]
-	identityChanged := previous.Kind != saved.Kind || previous.TaskID != saved.TaskID
+	// 种类、任务或指标变化后，旧观测不再描述当前规则，与 SaveAlertRule 的状态裁剪一致。
+	// threshold 与 for_minutes 不改变身份，状态沿用，下一轮按新阈值判断是否恢复。
+	identityChanged := previous.Kind != saved.Kind || previous.TaskID != saved.TaskID || previous.Metric != saved.Metric
 	e.rules[saved.ID] = cloneRule(saved)
 	// SaveAlertRule 已在同一事务裁剪状态，缓存只在提交后同步到相同集合。
 	for k := range e.states {

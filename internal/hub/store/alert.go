@@ -214,7 +214,7 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 				return err
 			}
 		} else {
-			err := tx.QueryRow(`SELECT kind != ? OR COALESCE(task_id, 0) != ? FROM alert_rule WHERE id = ?`, r.Kind, r.TaskID, r.ID).Scan(&identityChanged)
+			err := tx.QueryRow(`SELECT kind != ? OR COALESCE(task_id, 0) != ? OR COALESCE(metric, '') != ? FROM alert_rule WHERE id = ?`, r.Kind, r.TaskID, r.Metric, r.ID).Scan(&identityChanged)
 			if errors.Is(err, sql.ErrNoRows) {
 				return NotFoundError{Kind: "alert rule", ID: r.ID}
 			}
@@ -246,7 +246,8 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 				}
 			}
 		}
-		// 规则与状态由本次写事务一起提交；类型或任务变化后，旧观测不再描述当前规则。
+		// 规则与状态由本次写事务一起提交；种类、任务或指标变化后，旧观测不再描述当前规则。
+		// threshold 与 for_minutes 不是身份：同一个量换阈值时保留状态，下一轮按新阈值判断是否恢复。
 		// 禁用与作用域收缩也在这里裁剪，重启不能重新载入已不适用的 firing。
 		if identityChanged || !r.Enabled || !r.AllNodes {
 			query := "DELETE FROM alert_state WHERE rule_id = ?"

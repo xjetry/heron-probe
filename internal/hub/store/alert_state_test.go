@@ -26,7 +26,7 @@ func TestDeleteAlertStateDeletesOnlyThePair(t *testing.T) {
 }
 
 func TestSaveAlertRuleClearsStatesOnIdentityChange(t *testing.T) {
-	for _, change := range []string{"kind", "task", "name"} {
+	for _, change := range []string{"kind", "task", "metric", "threshold", "name"} {
 		t.Run(change, func(t *testing.T) {
 			s, ids, _, task := alertFixture(t)
 			r := saveRule(t, s, AlertRule{Name: "r", Kind: KindProbe, AllNodes: true, Enabled: true, TaskID: task, Metric: MetricLossPct, Threshold: 20, ForMinutes: 1})
@@ -42,6 +42,10 @@ func TestSaveAlertRuleClearsStatesOnIdentityChange(t *testing.T) {
 					t.Fatal(err)
 				}
 				r.TaskID = p.Id
+			case "metric":
+				r.Metric = MetricRttMs
+			case "threshold":
+				r.Threshold = 30
 			case "name":
 				r.Name = "renamed"
 			}
@@ -51,7 +55,7 @@ func TestSaveAlertRuleClearsStatesOnIdentityChange(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := 0
-			if change == "name" {
+			if change == "name" || change == "threshold" {
 				want = 1
 			}
 			if len(rows) != want {
