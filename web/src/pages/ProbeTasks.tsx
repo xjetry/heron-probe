@@ -4,8 +4,10 @@ import { type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
+import { Picks } from "../components/Picks";
 import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
 import { ProbeKind, type ProbeTask } from "../gen/probe/v1/types_pb";
+import { ascending } from "../lib/ids";
 import { PROBE_KINDS, kindLabel } from "../lib/probes";
 
 type Draft = { kind: ProbeKind; target: string; intervalS: string; timeoutMs: string; nodeIds: Set<bigint> };
@@ -38,7 +40,7 @@ export function ProbeTasks() {
   // 当前节点列表不再包含的分配自然掉出，避免已删除节点让 hub 以 NotFound 拒绝整次保存。
   const submit = (m: typeof create, id: bigint, d: Draft, onSuccess?: () => void) =>
     m.mutate({ task: { id, kind: d.kind, target: d.target.trim(), intervalS: Number(d.intervalS), timeoutMs: Number(d.timeoutMs) },
-      nodeIds: [...d.nodeIds].filter((id) => availableNodeIds.has(id)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)) }, { onSuccess });
+      nodeIds: ascending([...d.nodeIds].filter((id) => availableNodeIds.has(id))) }, { onSuccess });
   if (list.error) return <p role="alert" className="error">{errorText(list.error)}</p>;
   const tasks = list.data?.tasks.flatMap((d) => d.task ? [{ task: d.task, nodeIds: d.nodeIds }] : []) ?? [];
   return (
@@ -69,11 +71,6 @@ function TaskForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
 }) {
   // initial 只在挂载时读取；编辑期间的列表刷新不覆盖草稿，节点列表以 props 实时更新，提交时与当前列表求交。
   const [draft, setDraft] = useState(initial);
-  const toggle = (id: bigint) => {
-    const next = new Set(draft.nodeIds);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    setDraft({ ...draft, nodeIds: next });
-  };
   const handle = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!e.currentTarget.checkValidity()) return;
@@ -92,12 +89,7 @@ function TaskForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
         <label>间隔 (s)<input type="number" required min={5} max={3600} value={draft.intervalS} onChange={(e) => setDraft({ ...draft, intervalS: e.target.value })} /></label>
         <label>超时 (ms)<input type="number" required min={100} max={5000} value={draft.timeoutMs} onChange={(e) => setDraft({ ...draft, timeoutMs: e.target.value })} /></label>
       </div>
-      <fieldset className="picks">
-        <legend>分配到节点</legend>
-        {nodes.map((n) => (
-          <label key={String(n.id)}><input type="checkbox" checked={draft.nodeIds.has(n.id)} onChange={() => toggle(n.id)} />{n.name}</label>
-        ))}
-      </fieldset>
+      <Picks legend="分配到节点" items={nodes} selected={draft.nodeIds} onChange={(nodeIds) => setDraft({ ...draft, nodeIds })} />
       <div className="row">
         <button type="submit" disabled={pending}>{onCancel ? "保存" : "创建"}</button>
         {onCancel && <button type="button" className="link" onClick={onCancel}>取消</button>}

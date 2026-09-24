@@ -1,4 +1,6 @@
-import { ChannelKind, type NotifyChannel } from "../gen/probe/v1/admin_pb";
+import { AlertKind, ChannelKind, ProbeMetric, type AlertRule, type AlertStateEntry, type NotifyChannel, type ProbeTaskDetail } from "../gen/probe/v1/admin_pb";
+import { formatUnit } from "./format";
+import { taskLabel } from "./probes";
 
 export type Entry<K> = { value: K; label: string };
 
@@ -27,4 +29,35 @@ export function channelTarget(c: NotifyChannel): string {
 // 面板为没有 Webhook 配置的渠道（例如 Telegram 渠道被编辑时）建立草稿也需要 POST 作初值。
 export function methodOf(method: string | undefined): string {
   return method || "POST";
+}
+
+export const ALERT_KINDS: readonly Entry<AlertKind>[] = [
+  { value: AlertKind.OFFLINE, label: "离线" },
+  { value: AlertKind.PROBE, label: "探测" },
+];
+// unit 与 formatUnit 的单位名一致：丢包阈值是百分数，RTT 阈值是毫秒（proto AlertRule.threshold）。
+export const PROBE_METRICS: readonly (Entry<ProbeMetric> & { unit: string })[] = [
+  { value: ProbeMetric.LOSS_PCT, label: "丢包率", unit: "percent" },
+  { value: ProbeMetric.RTT_MS, label: "RTT 均值", unit: "ms" },
+];
+
+export function ruleCondition(rule: AlertRule, tasks: ProbeTaskDetail[] | undefined): string {
+  if (rule.kind === AlertKind.OFFLINE) return "超过宽限期未上报";
+  const metric = PROBE_METRICS.find((m) => m.value === rule.metric);
+  const threshold = metric ? formatUnit(rule.threshold, metric.unit) : String(rule.threshold);
+  return `${taskLabel(rule.taskId, tasks)} ${labelOf(PROBE_METRICS, rule.metric)} ≥ ${threshold}，连续 ${rule.forMinutes} 分钟`;
+}
+
+export type RuleStates = { firing: AlertStateEntry[]; pending: AlertStateEntry[] };
+
+// hub 只返回已有记录的组合，缺失即 ok（proto ListAlertRulesResponse.states）；ok 记录同样不展示。
+export function statesOf(states: AlertStateEntry[]): Map<bigint, RuleStates> {
+  const out = new Map<bigint, RuleStates>();
+  for (const s of states) {
+    if (s.state !== "firing" && s.state !== "pending") continue;
+    const entry = out.get(s.ruleId) ?? { firing: [], pending: [] };
+    entry[s.state].push(s);
+    out.set(s.ruleId, entry);
+  }
+  return out;
 }

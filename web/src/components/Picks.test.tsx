@@ -1,0 +1,14 @@
+import { expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { Picks } from "./Picks";
+
+it("分组展示候选项并按勾选回传新集合", () => {
+  const spy = vi.fn();
+  render(<Picks legend="作用域节点" items={[{ id: 1n, name: "东京" }, { id: 2n, name: "法兰克福" }]} selected={new Set([1n])} onChange={spy} />);
+  expect(screen.getByRole("group", { name: "作用域节点" })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "东京" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "法兰克福" })).not.toBeChecked();
+  fireEvent.click(screen.getByRole("checkbox", { name: "法兰克福" }));
+  expect(spy).toHaveBeenCalledTimes(1);
+  expect(spy.mock.calls[0][0]).toEqual(new Set([1n, 2n]));
+});

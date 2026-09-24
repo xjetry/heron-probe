@@ -6,6 +6,7 @@ import { NodeDetail } from "./pages/NodeDetail";
 import { Nodes } from "./pages/Nodes";
 import { RegisterWindow } from "./pages/RegisterWindow";
 import { ProbeTasks } from "./pages/ProbeTasks";
+import { AlertRules } from "./pages/AlertRules";
 import { Channels } from "./pages/Channels";
 
 // basename 与 hub 的挂载路径一致。路由不做鉴权判断：谁都能打开任何页面，
@@ -21,6 +22,7 @@ export const router = createBrowserRouter(
         { path: "nodes/:id", Component: NodeDetail },
         { path: "nodes", Component: Nodes },
         { path: "probes", Component: ProbeTasks },
+        { path: "alerts", Component: AlertRules },
         { path: "channels", Component: Channels },
         { path: "register", Component: RegisterWindow },
       ],
