@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/url"
 	"strings"
 	"text/template"
+	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/xjetry/probe/internal/hub/store"
@@ -75,13 +78,28 @@ type webhookConfig struct {
 	BodyTemplate string            `json:"body_template"`
 }
 
-const defaultBodyTemplate = `{"rule":{{json .Rule}},"node":{{json .Node}},"kind":{{json .Kind}},"transition":{{json .Transition}},"value":{{.Value}},"at":{{.At.Unix}},"summary":{{json .Summary}}}`
+type Message struct {
+	Rule, Node, Kind, Transition, Summary string
+	Value                                 float64
+	At                                    time.Time
+}
+
+const DefaultWebhookTemplate = `{"rule":{{json .Rule}},"node":{{json .Node}},"kind":{{json .Kind}},"transition":{{json .Transition}},"value":{{.Value}},"at":{{.At.Unix}},"summary":{{json .Summary}}}`
 
 func parseBodyTemplate(body string) (*template.Template, error) {
 	if body == "" {
-		body = defaultBodyTemplate
+		body = DefaultWebhookTemplate
 	}
-	return template.New("body").Funcs(template.FuncMap{"json": func(s string) string { b, _ := json.Marshal(s); return string(b) }}).Parse(body)
+	tmpl, err := template.New("body").Funcs(template.FuncMap{"json": func(s string) string { b, _ := json.Marshal(s); return string(b) }}).Parse(body)
+	if err != nil {
+		return nil, err
+	}
+	// 样例与投递共用 Message 的字段类型，能在保存时发现执行到的分支中的字段或类型错误。
+	err = tmpl.Execute(io.Discard, Message{Rule: "rule", Node: "node", Kind: "probe", Transition: "firing", Summary: "summary", Value: 1, At: time.Unix(0, 0).UTC()})
+	if err != nil {
+		return nil, err
+	}
+	return tmpl, nil
 }
 
 func httpToken(s string) bool {
@@ -127,9 +145,12 @@ func CheckChannel(c store.NotifyChannel) error {
 		if len(cfg.Headers) > 16 {
 			return invalid("headers must contain at most 16 entries")
 		}
-		for key := range cfg.Headers {
+		for key, value := range cfg.Headers {
 			if !httpToken(key) {
 				return invalid("headers key %q must be an HTTP token", key)
+			}
+			if strings.ContainsFunc(value, unicode.IsControl) {
+				return invalid("headers value for %q must not contain control characters", key)
 			}
 		}
 		if _, err := parseBodyTemplate(cfg.BodyTemplate); err != nil {

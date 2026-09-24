@@ -128,13 +128,8 @@ func TestCheckChannel(t *testing.T) {
 }
 
 func TestBodyTemplateContract(t *testing.T) {
-	data := struct {
-		Rule, Node, Kind, Transition string
-		Value                        float64
-		At                           time.Time
-		Summary                      string
-	}{"rule\"", "node\n", "probe", "firing", 50.5, time.Unix(123, 0), "line\n\"quote"}
-	for _, body := range []string{"", defaultBodyTemplate} {
+	data := Message{Rule: "rule\"", Node: "node\n", Kind: "probe", Transition: "firing", Value: 50.5, At: time.Unix(123, 0), Summary: "line\n\"quote"}
+	for _, body := range []string{"", DefaultWebhookTemplate} {
 		tmpl, err := parseBodyTemplate(body)
 		must(t, err)
 		var b bytes.Buffer

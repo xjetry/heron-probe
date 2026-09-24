@@ -203,6 +203,7 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 			r.TaskID, r.Metric, r.Threshold, r.ForMinutes = 0, "", 0, 0
 		}
 		var created int64
+		var identityChanged bool
 		if r.ID == 0 {
 			created = s.clk.Now().Unix()
 			err := tx.QueryRow(`INSERT INTO alert_rule (name, kind, enabled, all_nodes, task_id, metric, threshold, for_minutes, created_at)
@@ -211,7 +212,14 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 				return err
 			}
 		} else {
-			err := tx.QueryRow(`UPDATE alert_rule SET name = ?, kind = ?, enabled = ?, all_nodes = ?, task_id = ?, metric = ?, threshold = ?, for_minutes = ?
+			err := tx.QueryRow(`SELECT kind != ? OR COALESCE(task_id, 0) != ? FROM alert_rule WHERE id = ?`, r.Kind, r.TaskID, r.ID).Scan(&identityChanged)
+			if errors.Is(err, sql.ErrNoRows) {
+				return NotFoundError{Kind: "alert rule", ID: r.ID}
+			}
+			if err != nil {
+				return err
+			}
+			err = tx.QueryRow(`UPDATE alert_rule SET name = ?, kind = ?, enabled = ?, all_nodes = ?, task_id = ?, metric = ?, threshold = ?, for_minutes = ?
 				WHERE id = ? RETURNING created_at`, r.Name, r.Kind, r.Enabled, r.AllNodes, task, metric, threshold, minutes, r.ID).Scan(&created)
 			if errors.Is(err, sql.ErrNoRows) {
 				return NotFoundError{Kind: "alert rule", ID: r.ID}
@@ -236,11 +244,12 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 				}
 			}
 		}
-		// 规则与状态由本次写事务一起提交；禁用规则或移出作用域的节点不能保留旧 firing 状态。
-		if !r.Enabled || !r.AllNodes {
+		// 规则与状态由本次写事务一起提交；类型或任务变化后，旧观测不再描述当前规则。
+		// 禁用与作用域收缩也在这里裁剪，重启不能重新载入已不适用的 firing。
+		if identityChanged || !r.Enabled || !r.AllNodes {
 			query := "DELETE FROM alert_state WHERE rule_id = ?"
 			args := []any{r.ID}
-			if r.Enabled && len(r.NodeIDs) > 0 {
+			if !identityChanged && r.Enabled && len(r.NodeIDs) > 0 {
 				query += " AND node_id NOT IN (" + placeholders(len(r.NodeIDs)) + ")"
 				for _, id := range r.NodeIDs {
 					args = append(args, id)
@@ -415,6 +424,14 @@ func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since tim
 
 func (s *Store) SetAlertState(ctx context.Context, ruleID, nodeID int64, state AlertState, since time.Time) error {
 	return s.write(ctx, func(tx *sql.Tx) error { return setAlertState(tx, ruleID, nodeID, state, since) })
+}
+
+// 候选集撤销不是恢复观测，删除状态不产生事件；重复清理同一对规则与节点仍然成功。
+func (s *Store) DeleteAlertState(ctx context.Context, ruleID, nodeID int64) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec("DELETE FROM alert_state WHERE rule_id = ? AND node_id = ?", ruleID, nodeID)
+		return err
+	})
 }
 
 // 状态、事件与续投队列同事务提交，崩溃不能留下已转换但没有通知记录的状态。

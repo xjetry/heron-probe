@@ -31,7 +31,7 @@ func TestNextOffline(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, tr := NextOffline(c.cur, Observation{Unseen: c.unseen, Grace: grace, TTL: ttl})
+			got, tr := NextOffline(c.cur, Observation{Reported: true, Unseen: c.unseen, Grace: grace, TTL: ttl})
 			if got != c.want || !reflect.DeepEqual(tr, c.tr) {
 				t.Fatalf("got %s %v, want %s %v", got, tr, c.want, c.tr)
 			}

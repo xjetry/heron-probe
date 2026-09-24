@@ -16,13 +16,14 @@ import (
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
+// apply 在 writeMu 下调用 Enqueue：不得阻塞，也不得回调 Engine 的写方法，否则会阻塞全部写入或自锁。
+// 读方法只取 mu，apply 调用前已释放 mu，因此可以读取 Channels 等快照。
 type Sender interface{ Enqueue(ev store.AlertEvent) }
 type Config struct{ TTL time.Duration }
 type stateKey struct{ rule, node int64 }
 type stateEntry struct {
-	state     store.AlertState
-	sinceMono time.Duration
-	sinceAt   time.Time
+	state   store.AlertState
+	sinceAt time.Time
 }
 
 // writeMu 串行化读库、写库到内存发布；mu 只保护内存快照，不跨存储往返持有。
@@ -62,21 +63,27 @@ func (e *Engine) Load(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	validRules := map[int64]store.AlertRule{}
+	for _, r := range rules {
+		if err := CheckRule(r); err != nil {
+			e.log.Warn("invalid alert rule skipped", "rule_id", r.ID, "err", err)
+			continue
+		}
+		validRules[r.ID] = cloneRule(r)
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.started = e.clk.Mono()
-	e.rules = map[int64]store.AlertRule{}
+	e.rules = validRules
 	e.channels = map[int64]store.NotifyChannel{}
 	e.states = map[stateKey]stateEntry{}
-	for _, r := range rules {
-		e.rules[r.ID] = cloneRule(r)
-	}
 	for _, c := range channels {
 		e.channels[c.ID] = c
 	}
-	// 持久化的墙钟只供显示，不能还原上一个进程的单调钟；无上报的离线时长从 started 起算。
 	for _, s := range states {
-		e.states[stateKey{s.RuleID, s.NodeID}] = stateEntry{s.State, e.started, s.SinceAt}
+		if _, ok := validRules[s.RuleID]; ok {
+			e.states[stateKey{s.RuleID, s.NodeID}] = stateEntry{s.State, s.SinceAt}
+		}
 	}
 	return nil
 }
@@ -137,10 +144,12 @@ func (e *Engine) SaveRule(ctx context.Context, r store.AlertRule) (store.AlertRu
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	previous := e.rules[saved.ID]
+	identityChanged := previous.Kind != saved.Kind || previous.TaskID != saved.TaskID
 	e.rules[saved.ID] = cloneRule(saved)
 	// SaveAlertRule 已在同一事务裁剪状态，缓存只在提交后同步到相同集合。
 	for k := range e.states {
-		if k.rule == saved.ID && (!saved.Enabled || !inScope(saved, k.node)) {
+		if k.rule == saved.ID && (identityChanged || !saved.Enabled || !inScope(saved, k.node)) {
 			delete(e.states, k)
 		}
 	}
@@ -201,6 +210,20 @@ func (e *Engine) SaveChannel(ctx context.Context, c store.NotifyChannel) (store.
 	}
 	if err := CheckChannel(c); err != nil {
 		return store.NotifyChannel{}, err
+	}
+	if c.Kind == store.ChannelWebhook {
+		var cfg webhookConfig
+		if err := json.Unmarshal([]byte(c.Config), &cfg); err != nil {
+			return store.NotifyChannel{}, invalid("config must be a webhook JSON object: %v", err)
+		}
+		if cfg.Method == "" {
+			cfg.Method = "POST"
+			b, err := json.Marshal(cfg)
+			if err != nil {
+				return store.NotifyChannel{}, err
+			}
+			c.Config = string(b)
+		}
 	}
 	saved, err := e.st.SaveNotifyChannel(ctx, c)
 	if err != nil {
@@ -267,7 +290,7 @@ func (e *Engine) apply(ctx context.Context, r store.AlertRule, nodeID int64, nex
 		return err
 	}
 	e.mu.Lock()
-	e.states[k] = stateEntry{next, e.clk.Mono(), time.Unix(now.Unix(), 0).UTC()}
+	e.states[k] = stateEntry{next, time.Unix(now.Unix(), 0).UTC()}
 	sender := e.sender
 	e.mu.Unlock()
 	// 未装配 Sender 时转换仍完整落库，投递行可供后续续投，不能因此跳过持久化。
@@ -275,6 +298,26 @@ func (e *Engine) apply(ctx context.Context, r store.AlertRule, nodeID int64, nex
 		sender.Enqueue(ev)
 	}
 	return nil
+}
+
+// 调用方持 writeMu 且已成功读取本规则候选集；读库失败时不能用空集代替候选集。
+// 单行删除先持久化再发布，规则不再适用不是恢复观测，因此不经过 apply。
+func (e *Engine) pruneCandidates(ctx context.Context, ruleID int64, keep map[int64]bool) error {
+	var errs []error
+	for _, s := range e.States() {
+		if s.RuleID != ruleID || keep[s.NodeID] {
+			continue
+		}
+		if err := e.st.DeleteAlertState(ctx, ruleID, s.NodeID); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		e.mu.Lock()
+		delete(e.states, stateKey{ruleID, s.NodeID})
+		e.mu.Unlock()
+		e.log.Info("alert state no longer applicable", "rule_id", ruleID, "node_id", s.NodeID)
+	}
+	return errors.Join(errs...)
 }
 
 func (e *Engine) SweepOffline(ctx context.Context) error {
@@ -290,23 +333,29 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 		if !r.Enabled || r.Kind != store.KindOffline {
 			continue
 		}
+		candidates := map[int64]bool{}
 		for _, node := range nodes {
 			if !inScope(r, node.ID) {
 				continue
 			}
+			candidates[node.ID] = true
 			cur := e.current(stateKey{r.ID, node.ID})
+			// LastSeenAt 是跨进程的墙钟，只供文案；无 live 条目时从本次 Load 的单调起点量时长。
 			lastSeen := e.started
 			entry, seen := e.live.Get(node.ID)
-			// 重启没有 live 条目并不证明已经恢复；持久化 firing 只能由新上报解除。
-			if !seen && cur == store.StateFiring {
-				continue
-			}
 			if seen {
 				lastSeen = entry.LastSeen
 			}
 			unseen := now - lastSeen
-			next, tr := NextOffline(cur, Observation{Unseen: unseen, Grace: time.Duration(node.OfflineGraceS) * time.Second, TTL: e.cfg.TTL})
+			next, tr := NextOffline(cur, Observation{Reported: seen, Unseen: unseen, Grace: time.Duration(node.OfflineGraceS) * time.Second, TTL: e.cfg.TTL})
 			summary := fmt.Sprintf("节点 %s 离线 %s（规则 %s）", node.Name, unseen.Round(time.Second), r.Name)
+			if !seen {
+				last := "从未上报"
+				if !node.LastSeenAt.IsZero() {
+					last = "最后在线于 " + node.LastSeenAt.Format(time.RFC3339)
+				}
+				summary = fmt.Sprintf("节点 %s 离线，%s（规则 %s）", node.Name, last, r.Name)
+			}
 			if tr != nil && *tr == store.TransitionRecovered {
 				summary = fmt.Sprintf("节点 %s 已恢复上报（规则 %s）", node.Name, r.Name)
 			}
@@ -314,11 +363,17 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 				errs = append(errs, err)
 			}
 		}
+		if err := e.pruneCandidates(ctx, r.ID, candidates); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	return errors.Join(errs...)
 }
 
 func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
+	if minuteTS%60 != 0 {
+		return invalid("minuteTS must be aligned to 60 seconds")
+	}
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
 	nodes, err := e.st.ListNodes(ctx)
@@ -336,10 +391,12 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 			errs = append(errs, err)
 			continue
 		}
+		candidates := map[int64]bool{}
 		for _, node := range nodes {
 			if !inScope(r, node.ID) || !slices.Contains(ids, node.ID) {
 				continue
 			}
+			candidates[node.ID] = true
 			from := minuteTS - int64(r.ForMinutes-1)*60
 			rows, err := e.st.QueryProbes(ctx, node.ID, from, minuteTS+60, lv, 60)
 			if err != nil {
@@ -365,7 +422,8 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 					}
 					value = float64(b.RttSumUs) / float64(b.RttN) / 1000
 				}
-				samples[(row.TS-from)/60] = MinuteSample{Present: true, Exceeds: value > r.Threshold, Value: value}
+				// 触发含阈值等号，恢复则必须低于阈值。
+				samples[(row.TS-from)/60] = MinuteSample{Present: true, Exceeds: value >= r.Threshold, Value: value}
 			}
 			next, tr := NextProbe(e.current(stateKey{r.ID, node.ID}), samples, r.ForMinutes)
 			value := samples[len(samples)-1].Value
@@ -373,6 +431,9 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 			if err := e.apply(ctx, r, node.ID, next, tr, summary, value); err != nil {
 				errs = append(errs, err)
 			}
+		}
+		if err := e.pruneCandidates(ctx, r.ID, candidates); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
@@ -397,6 +458,10 @@ func nextProbeAt(now time.Time) time.Time {
 	return now.Truncate(time.Minute).Add(time.Minute + 3*time.Second)
 }
 
+func probeMinuteAt(trigger time.Time) int64 {
+	return trigger.Truncate(time.Minute).Add(-time.Minute).Unix()
+}
+
 // 分钟边界后 3s 晚于刷出调度的 0.5s 与维护调度的 2s，给通常的写入留出时间并错开竞争；
 // 这些偏移不是提交屏障，存储阻塞时仍可能读到缺失分钟，NextProbe 不把缺失当作恢复。
 func (e *Engine) RunProbeEvaluation(ctx context.Context) {
@@ -409,7 +474,7 @@ func (e *Engine) RunProbeEvaluation(ctx context.Context) {
 			return
 		case <-timer.C:
 		}
-		minuteTS := e.clk.Now().Truncate(time.Minute).Add(-time.Minute).Unix()
+		minuteTS := probeMinuteAt(e.clk.Now())
 		if err := e.EvaluateProbes(ctx, minuteTS); err != nil {
 			e.log.Error("probe evaluation failed", "err", err)
 		}
