@@ -27,7 +27,7 @@ button.danger { color: var(--bad); border-color: var(--bad); }
 .error { color: var(--bad); }
 .muted { color: var(--muted); }
 .row { display: flex; align-items: baseline; gap: 1rem; }
-form.row { align-items: flex-end; flex-wrap: wrap; }
+form.row, .task-form .row { align-items: flex-end; flex-wrap: wrap; }
 .detail-header { flex-wrap: wrap; }
 .detail-header nav { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .table-scroll { overflow-x: auto; }
@@ -41,7 +41,7 @@ tr.offline td { color: var(--muted); }
 .bar span { position: absolute; inset: 0; padding: 0 0.4rem; font-size: 12px; line-height: 18px; }
 .chart { width: 100%; }
 .task-form .node-picks { display: flex; flex-wrap: wrap; gap: .5rem 1rem; border: 1px solid var(--line); padding: .5rem .75rem; }
-.task-form .row { flex-wrap: wrap; align-items: flex-end; }
+.task-form { white-space: normal; }
 .task-form .node-picks label { display: inline-flex; align-items: center; gap: .3rem; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: 1rem; }
 .secret { font-family: ui-monospace, monospace; word-break: break-all; white-space: pre-wrap; background: var(--bg); padding: 0.5rem; border-radius: 6px; }

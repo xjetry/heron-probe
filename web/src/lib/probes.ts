@@ -5,6 +5,13 @@ import { gridOf } from "./series";
 
 export type ProbeValue = (s: ProbeSample) => number | null;
 
+// hub 的 Registry.Save 经 probelimit.CheckTask 只放行 ICMP 与 TCP，类型标签与选项依赖该准入。
+export const PROBE_KINDS: readonly { kind: ProbeKind; label: string }[] = [
+  { kind: ProbeKind.ICMP, label: "ICMP" },
+  { kind: ProbeKind.TCP, label: "TCP" },
+];
+export const kindLabel = (kind: ProbeKind): string => PROBE_KINDS.find((entry) => entry.kind === kind)!.label;
+
 // 丢包率只看超时：error 是本地无法发起（无 socket、解析失败），不是链路事实。
 // hub 只返回 sent > 0 的点；这里仍显式守住除零，让不变式不依赖上游。
 export const lossPercent: ProbeValue = (s) => (s.sent > 0 ? (s.lost / s.sent) * 100 : null);
@@ -33,6 +40,5 @@ export function taskIdsOf(resp: QueryProbesResponse): bigint[] {
 export function taskLabel(id: bigint, tasks: ProbeTaskDetail[] | undefined): string {
   const t = tasks?.find((d) => d.task?.id === id)?.task;
   if (!t) return `任务 #${id}`;
-  // hub 的 Registry.Save 经 probelimit.CheckTask 只放行 ICMP 与 TCP，二元标签判断依赖该准入。
-  return `${t.kind === ProbeKind.TCP ? "TCP" : "ICMP"} ${t.target}`;
+  return `${kindLabel(t.kind)} ${t.target}`;
 }

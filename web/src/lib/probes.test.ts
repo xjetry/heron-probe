@@ -2,7 +2,15 @@ import { describe, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
 import { ProbeTaskDetailSchema, QueryProbesResponseSchema } from "../gen/probe/v1/admin_pb";
 import { ProbeKind } from "../gen/probe/v1/types_pb";
-import { lossPercent, rttMeanMs, taskIdsOf, taskLabel, toProbeAligned } from "./probes";
+import { PROBE_KINDS, kindLabel, lossPercent, rttMeanMs, taskIdsOf, taskLabel, toProbeAligned } from "./probes";
+
+it("类型表与图例使用同一组标签", () => {
+  expect(PROBE_KINDS).toEqual([{ kind: ProbeKind.ICMP, label: "ICMP" }, { kind: ProbeKind.TCP, label: "TCP" }]);
+  for (const { kind, label } of PROBE_KINDS) {
+    expect(kindLabel(kind)).toBe(label);
+    expect(taskLabel(1n, [create(ProbeTaskDetailSchema, { task: { id: 1n, kind, target: "host" } })])).toBe(`${label} host`);
+  }
+});
 
 const resp = create(QueryProbesResponseSchema, {
   level: "1m", stepS: 60,

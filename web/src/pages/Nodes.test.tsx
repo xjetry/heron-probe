@@ -13,6 +13,55 @@ const two = [
 ];
 
 describe("Nodes", () => {
+
+  it("A 行保存挂起时 B 行保存禁用，刷新完成才关闭 A 行", async () => {
+    let releaseSave!: () => void;
+    let releaseList!: () => void;
+    const saveGate = new Promise<void>((r) => { releaseSave = r; });
+    const listGate = new Promise<void>((r) => { releaseList = r; });
+    let current = two;
+    const listNodes = vi.fn(async () => { if (listNodes.mock.calls.length > 1) await listGate; return { nodes: current }; });
+    const updateNode = vi.fn(async () => { await saveGate; current = [{ ...two[0], name: "changed" }, two[1]]; return {}; });
+    renderWithAdmin({ listNodes, updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a" });
+    const edits = screen.getAllByRole("button", { name: "编辑" });
+    fireEvent.click(edits[0]);
+    fireEvent.click(edits[1]);
+    fireEvent.change(screen.getAllByLabelText("名称")[0], { target: { value: "changed" } });
+    const [a, b] = screen.getAllByRole("button", { name: "保存" });
+    fireEvent.click(a);
+    try {
+      await waitFor(() => expect(updateNode).toHaveBeenCalledTimes(1));
+      expect(b).toBeDisabled();
+      vi.useFakeTimers();
+      await act(async () => { releaseSave(); await vi.runAllTimersAsync(); });
+      expect(listNodes).toHaveBeenCalledTimes(2);
+      expect(a).toHaveTextContent(/^保存$/);
+    } finally { vi.useRealTimers(); await act(async () => { releaseSave(); releaseList(); }); }
+    expect(await screen.findByRole("link", { name: "changed" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "保存" })).toEqual([b]);
+  });
+
+  it("最新操作清掉创建旧错误，编辑失败显示自己的正文", async () => {
+    let rejectEdit = false;
+    renderWithAdmin({ listNodes: async () => ({ nodes: two }),
+      createNode: async () => { throw new ConnectError("create rejected", Code.InvalidArgument); },
+      updateNode: async () => { if (rejectEdit) throw new ConnectError("edit rejected", Code.InvalidArgument); return {}; },
+    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a" });
+    fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/^create rejected$/);
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(screen.queryByLabelText("名称")).toBeNull());
+    expect(screen.queryByRole("alert")).toBeNull();
+    rejectEdit = true;
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/^edit rejected$/);
+  });
+
   it("编辑保存挂起与失败保留草稿，成功后才退出", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });

@@ -5,23 +5,29 @@ import { Link } from "react-router";
 import { Secret } from "../components/Secret";
 import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
 import { errorText } from "../api/auth";
+import { useLatestError } from "../api/useLatestError";
 
 export function Nodes() {
   const qc = useQueryClient();
+  const { error, ...mutationErrors } = useLatestError();
   const nodes = useQuery(AdminService.method.listNodes, {});
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) });
   const [secret, setSecret] = useState<{ label: string; value: string } | null>(null);
   const [name, setName] = useState("");
 
   const create = useMutation(AdminService.method.createNode, {
+    ...mutationErrors,
     onSuccess: (r) => { setSecret({ label: `节点 ${r.node?.name} 的 token`, value: r.token }); setName(""); void refresh(); },
   });
-  const update = useMutation(AdminService.method.updateNode, { onSuccess: () => void refresh() });
-  const remove = useMutation(AdminService.method.deleteNode, { onSuccess: () => void refresh() });
+  // 各行共用一个 mutation observer，重叠的 mutate 只回调最后一次；因此任一行保存挂起时禁用全部行的保存，退出编辑的才是保存的那一行。
+  // 返回刷新 promise，编辑态在列表显示已保存值之后才关闭。
+  const update = useMutation(AdminService.method.updateNode, { ...mutationErrors, onSuccess: refresh });
+  const remove = useMutation(AdminService.method.deleteNode, { ...mutationErrors, onSuccess: () => void refresh() });
   const rotate = useMutation(AdminService.method.rotateNodeToken, {
+    ...mutationErrors,
     onSuccess: (r, req) => { setSecret({ label: `节点 ${nodes.data?.nodes.find((n) => n.id === req.id)?.name ?? req.id} 的新 token`, value: r.token }); void refresh(); },
   });
-  const reorder = useMutation(AdminService.method.reorderNodes, { onSuccess: () => void refresh() });
+  const reorder = useMutation(AdminService.method.reorderNodes, { ...mutationErrors, onSuccess: () => void refresh() });
 
   const onCreate = (e: FormEvent) => { e.preventDefault(); create.mutate({ name }); };
   // 排序接口要求给出全部 id 的完整排列：交换相邻两项后整表提交。
@@ -32,7 +38,6 @@ export function Nodes() {
     [ids[i], ids[j]] = [ids[j], ids[i]];
     reorder.mutate({ ids });
   };
-  const anyError = create.error ?? update.error ?? remove.error ?? rotate.error ?? reorder.error;
 
   if (nodes.isPending) return <p className="muted">加载中…</p>;
   if (nodes.error) return <p role="alert" className="error">{errorText(nodes.error)}</p>;
@@ -45,7 +50,7 @@ export function Nodes() {
         <label>新节点名称<input value={name} onChange={(e) => setName(e.target.value)} /></label>
         <button type="submit" disabled={create.isPending || name.trim() === ""}>创建</button>
       </form>
-      {anyError && <p role="alert" className="error">{errorText(anyError)}</p>}
+      {error != null && <p role="alert" className="error">{errorText(error)}</p>}
       <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
         <table className="nodes">
           <thead><tr><th>排序</th><th>名称</th><th>公开</th><th>备注</th><th>重置日</th><th>创建于</th><th>操作</th></tr></thead>

@@ -14,6 +14,122 @@ const tasks = create(ListProbeTasksResponseSchema, { version: 9n, tasks: [
 ] });
 const routes = [{ path: "/probes", Component: ProbeTasks }];
 
+it("两种类型在选项与任务列表使用一致标签", async () => {
+  renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => ({ tasks: [
+    ...tasks.tasks, { task: { id: 4n, kind: ProbeKind.ICMP, target: "host" } },
+  ] }) }, routes, "/probes");
+  await screen.findByText("1.1.1.1:443");
+  for (const label of ["ICMP", "TCP"]) {
+    expect(screen.getByRole("option", { name: label })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: label })).toBeInTheDocument();
+  }
+});
+
+it("创建成功后复位全部字段，下一次提交不沿用旧值", async () => {
+  const saved: SaveProbeTaskRequest[] = [];
+  renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks,
+    saveProbeTask: async (req) => { saved.push(req); return {}; },
+  }, routes, "/probes");
+  await screen.findByText("东京、法兰克福");
+  const form = screen.getByRole("form", { name: "新建探测任务" });
+  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ProbeKind.TCP) } });
+  fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "old:80" } });
+  fireEvent.change(within(form).getByLabelText("间隔 (s)"), { target: { value: "10" } });
+  fireEvent.change(within(form).getByLabelText("超时 (ms)"), { target: { value: "500" } });
+  fireEvent.click(within(form).getByLabelText("东京"));
+  fireEvent.submit(form);
+  await waitFor(() => expect(within(screen.getByRole("form", { name: "新建探测任务" })).getByLabelText("目标")).toHaveValue(""));
+  const next = screen.getByRole("form", { name: "新建探测任务" });
+  expect(within(next).getByLabelText("类型")).toHaveValue(String(ProbeKind.ICMP));
+  expect(within(next).getByLabelText("间隔 (s)")).toHaveValue(60);
+  expect(within(next).getByLabelText("超时 (ms)")).toHaveValue(1000);
+  expect(within(next).getByLabelText("东京")).not.toBeChecked();
+  fireEvent.change(within(next).getByLabelText("目标"), { target: { value: "new.example" } });
+  fireEvent.submit(next);
+  await waitFor(() => expect(saved).toHaveLength(2));
+  expect(saved[1]).toMatchObject({ task: { id: 0n, kind: ProbeKind.ICMP, target: "new.example", intervalS: 60, timeoutMs: 1000 }, nodeIds: [] });
+});
+
+it("缺失 task 的条目不变成可编辑或可删除的任务", async () => {
+  renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => ({ tasks: [{ nodeIds: [1n] }, ...tasks.tasks] }) }, routes, "/probes");
+  expect(await screen.findByText("1.1.1.1:443")).toBeInTheDocument();
+  expect({
+    edits: screen.getAllByRole("button", { name: /^编辑 / }).length,
+    deletes: screen.getAllByRole("button", { name: /^删除 / }).length,
+  }).toEqual({ edits: 1, deletes: 1 });
+});
+
+it("节点查询失败可见", async () => {
+  renderWithAdmin({ listNodes: async () => { throw new ConnectError("nodes unavailable", Code.Unavailable); }, listProbeTasks: async () => tasks }, routes, "/probes");
+  expect(await screen.findByRole("alert")).toHaveTextContent(/^nodes unavailable$/);
+});
+
+it("提交剔除编辑期间从节点列表消失的分配", async () => {
+  let current = nodes;
+  const save = vi.fn<NonNullable<AdminImpl["saveProbeTask"]>>(async () => ({}));
+  const { queryClient } = renderWithAdmin({ listNodes: async () => current, listProbeTasks: async () => tasks, saveProbeTask: save }, routes, "/probes");
+  await screen.findByText("东京、法兰克福");
+  fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443" }));
+  current = create(ListNodesResponseSchema, { nodes: [nodes.nodes[0]] });
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) }); });
+  await waitFor(() => expect(within(screen.getByRole("form", { name: "编辑探测任务" })).queryByLabelText("法兰克福")).toBeNull());
+  fireEvent.submit(screen.getByRole("form", { name: "编辑探测任务" }));
+  await waitFor(() => expect(save).toHaveBeenCalled());
+  expect(save.mock.calls[0][0].nodeIds).toEqual([1n]);
+});
+
+it("A 行保存挂起时 B 行保存禁用，刷新完成才关闭 A 行", async () => {
+  let releaseSave!: () => void;
+  let releaseList!: () => void;
+  const saveGate = new Promise<void>((r) => { releaseSave = r; });
+  const listGate = new Promise<void>((r) => { releaseList = r; });
+  const entries = [...tasks.tasks, create(ListProbeTasksResponseSchema, { tasks: [{ task: { id: 4n, kind: ProbeKind.ICMP, target: "b", intervalS: 60, timeoutMs: 1000 } }] }).tasks[0]];
+  const listProbeTasks = vi.fn(async () => { if (listProbeTasks.mock.calls.length > 1) await listGate; return { tasks: entries }; });
+  const save = vi.fn(async () => { await saveGate; entries[0] = { ...entries[0], task: { ...entries[0].task!, target: "changed:80" } }; return {}; });
+  renderWithAdmin({ listNodes: async () => nodes, listProbeTasks, saveProbeTask: save }, routes, "/probes");
+  await screen.findByText("1.1.1.1:443");
+  fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443" }));
+  fireEvent.click(screen.getByRole("button", { name: "编辑 b" }));
+  const [a, b] = screen.getAllByRole("form", { name: "编辑探测任务" });
+  fireEvent.change(within(a).getByLabelText("目标"), { target: { value: "changed:80" } });
+  fireEvent.submit(a);
+  try {
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(within(b).getByRole("button", { name: "保存" })).toBeDisabled();
+    vi.useFakeTimers();
+    await act(async () => { releaseSave(); await vi.runAllTimersAsync(); });
+    expect(listProbeTasks).toHaveBeenCalledTimes(2);
+    expect(a).toBeInTheDocument();
+  } finally { vi.useRealTimers(); await act(async () => { releaseSave(); releaseList(); }); }
+  expect(await screen.findByRole("cell", { name: "changed:80" })).toBeInTheDocument();
+  expect(screen.getAllByRole("form", { name: "编辑探测任务" })).toEqual([b]);
+});
+
+it("最新操作清掉创建旧错误，编辑失败显示自己的正文", async () => {
+  let rejectEdit = false;
+  renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks,
+    saveProbeTask: async (req) => {
+      if (req.task?.id === 0n) throw new ConnectError("create rejected", Code.InvalidArgument);
+      if (rejectEdit) throw new ConnectError("edit rejected", Code.InvalidArgument);
+      return {};
+    },
+  }, routes, "/probes");
+  await screen.findByText("1.1.1.1:443");
+  const form = screen.getByRole("form", { name: "新建探测任务" });
+  fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "x" } });
+  fireEvent.submit(form);
+  expect(await screen.findByRole("alert")).toHaveTextContent(/^create rejected$/);
+  fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443" }));
+  fireEvent.submit(screen.getByRole("form", { name: "编辑探测任务" }));
+  await waitFor(() => expect(screen.queryByRole("form", { name: "编辑探测任务" })).toBeNull());
+  expect(screen.queryByRole("alert")).toBeNull();
+  rejectEdit = true;
+  fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443" }));
+  fireEvent.submit(screen.getByRole("form", { name: "编辑探测任务" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(/^edit rejected$/);
+});
+
+
 describe("ProbeTasks", () => {
   it("编辑保存挂起与失败保留草稿，成功后才退出", async () => {
     let release!: () => void;
@@ -64,15 +180,15 @@ describe("ProbeTasks", () => {
     const nodesKey = createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" });
     queryClient.setQueryData(nodesKey, nodes);
     const form = screen.getByRole("form", { name: "新建探测任务" });
-    fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ProbeKind.ICMP) } });
-    fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "8.8.8.8" } });
+    fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ProbeKind.TCP) } });
+    fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "1.1.1.1:80" } });
     fireEvent.change(within(form).getByLabelText("间隔 (s)"), { target: { value: "60" } });
     fireEvent.change(within(form).getByLabelText("超时 (ms)"), { target: { value: "800" } });
     fireEvent.click(within(form).getByLabelText("法兰克福"));
     fireEvent.click(within(form).getByLabelText("东京"));
     fireEvent.submit(form);
     await waitFor(() => expect(saved).toHaveLength(1));
-    expect(saved[0].task).toMatchObject({ id: 0n, kind: ProbeKind.ICMP, target: "8.8.8.8", intervalS: 60, timeoutMs: 800 });
+    expect(saved[0].task).toMatchObject({ id: 0n, kind: ProbeKind.TCP, target: "1.1.1.1:80", intervalS: 60, timeoutMs: 800 });
     expect(saved[0].nodeIds).toEqual([1n, 2n]);
     await waitFor(() => expect(listProbeTasks).toHaveBeenCalledTimes(2));
     expect(queryClient.getQueryState(nodesKey)?.isInvalidated).toBe(false);
@@ -114,6 +230,7 @@ describe("ProbeTasks", () => {
     await screen.findByText("1.1.1.1:443");
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "删除 1.1.1.1:443" })); });
     expect(remove).not.toHaveBeenCalled();
+    expect(screen.getByText("历史保留至到期清理")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "确认删除 1.1.1.1:443" }));
     await waitFor(() => expect(remove).toHaveBeenCalledTimes(1));
     expect(remove.mock.calls[0][0]).toMatchObject({ id: 3n });
