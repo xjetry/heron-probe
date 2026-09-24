@@ -320,9 +320,11 @@ CREATE TABLE probe_1m (
 
 规模估算（500 节点，从常量算起）：1m 级 500 × 1440 × 7 = 504 万行；5m 级 500 × 288 × 30 = 432 万行；1h 级 500 × 24 × 365 = 438 万行；合计约 1370 万行。按每行约 120 字节估，指标三级表在 2 GB 上下，探测表另计；均未实测（见 §13）。
 
+告警事件与投递记录（`alert_event`、`alert_delivery`）随维护任务按保留期清理，默认 90 天；抖动的节点会持续产生事件，不设保留期表会无限增长。规则、渠道与状态不清理。
+
 ### 6.6 其余表
 
-`node`（名称、排序、是否公开、备注、离线宽限期、流量重置日、token_hash）、`node_facts`（facts_hash 与各静态字段）、`traffic`、`probe_task`、`probe_task_node`、`probe_meta`（任务版本号）、`alert_rule`、`alert_rule_node`（作用域；无行表示全部节点）、`alert_rule_channel`、`alert_state`、`alert_event`、`alert_delivery`（每事件每渠道一行投递记录）、`notify_channel`、`setting`、`admin`、`admin_session`、`register_window`、`rollup_state`。
+`node`（名称、排序、是否公开、备注、离线宽限期、流量重置日、token_hash）、`node_facts`（facts_hash 与各静态字段）、`traffic`、`probe_task`、`probe_task_node`、`probe_meta`（任务版本号）、`alert_rule`、`alert_rule_node`（显式作用域；`alert_rule.all_nodes` 为真时不存行且覆盖全部节点，为假时无行表示不覆盖任何节点——删除作用域里最后一个节点不会放宽到全部）、`alert_rule_channel`、`alert_state`、`alert_event`、`alert_delivery`（每事件每渠道一行投递记录）、`notify_channel`、`setting`、`admin`、`admin_session`、`register_window`、`rollup_state`。
 
 schema 版本记在 `PRAGMA user_version`，迁移为按版本号顺序执行的函数；空库直接建到当前版本，不重放历史。
 
@@ -393,7 +395,7 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 
 ### 9.3 通知
 
-渠道：Telegram、通用 Webhook（可配方法、头、请求体模板）。投递走有界队列（单 worker），每条投递至多 3 次尝试、退避 1 s 与 4 s；HTTP 4xx（除 408、429）是永久失败不重试；出站客户端不跟随重定向（3xx 当失败，凭据不随跳转外泄），响应体只读前 64 KiB。每次尝试的结果写入 `alert_delivery`；未成功且未耗尽次数的投递在 hub 重启后重新入队。面板显示的"已通知"只来自成功的投递记录。渠道凭据（Telegram bot token）存库不回显。
+渠道：Telegram、通用 Webhook（可配方法、头、请求体模板）。投递走有界队列（单 worker），每条投递至多 3 次尝试、退避 1 s 与 4 s；HTTP 4xx（除 408、429）是永久失败不重试；出站客户端不跟随重定向（3xx 当失败，凭据不随跳转外泄），响应体只读前 64 KiB。每次尝试的结果写入 `alert_delivery`；未成功且未耗尽次数的投递在 hub 重启后重新入队。面板显示的"已通知"只来自成功的投递记录。渠道凭据存库不回显：Telegram bot token、Webhook 的 URL（入站 webhook 的 URL 本身常是密钥）与全部头值都只写不读，列表只回显主机名与头名；保存时省略即保留旧值。出站错误文本同样不含 URL。
 
 ## 10. 前端与公开页
 
