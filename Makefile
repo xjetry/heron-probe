@@ -67,8 +67,8 @@ AGENT_LINUX_ARCHES := amd64 arm64 armv7 386 riscv64
 HUB_LINUX_ARCHES := amd64 arm64
 
 # 本地验收与线上发布走同一目标，产物与版本注入完全一致（release.yml 只调用它）。
-# macOS 的 bsdtar 会把扩展属性打成 ._* 条目，busybox 解包会带出多余文件；
-# 打包的 tar 前设 COPYFILE_DISABLE=1。这行是 makefile 注释：写进 recipe 会被 make 吃掉。
+# 打包的 tar 前设 COPYFILE_DISABLE=1：macOS 的 bsdtar 否则会把扩展属性打成 ._* 条目，busybox 解包会带出多余文件。
+# 说明写在 recipe 之外：recipe 是反斜杠续行拼成的一条 shell 命令，行内的 # 会把其后的续行一并注释掉。
 release: web
 	@if [ -z "$(VERSION)" ]; then echo "VERSION is required, e.g. make release VERSION=v0.1.0" >&2; exit 1; fi
 	rm -rf dist/build dist/*.tar.gz dist/SHA256SUMS dist/install.sh
