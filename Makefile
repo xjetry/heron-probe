@@ -37,6 +37,7 @@ binaries: web
 	go build -o bin/probe-hub ./cmd/hub
 	GOOS=linux GOARCH=amd64 go build -o bin/probe-agent-linux-amd64 ./cmd/agent
 	GOOS=linux GOARCH=arm64 go build -o bin/probe-agent-linux-arm64 ./cmd/agent
+	go run ./scripts/checkstatic bin/probe-agent-linux-amd64 bin/probe-agent-linux-arm64
 
 ci: gen lint test web-test web build
 	status="$$(git status --porcelain -- gen web/src/gen)" || exit $$?; \
