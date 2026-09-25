@@ -57,7 +57,7 @@ export function AlertRules() {
   // 返回刷新 promise，编辑态在列表显示已保存值之后才关闭。
   const update = useMutation(AdminService.method.saveAlertRule, { ...mutationOptions, onSuccess: refresh });
   const remove = useMutation(AdminService.method.deleteAlertRule, { ...mutationOptions, onSuccess: refresh });
-  // 作用域、渠道与任务的求交依赖三张列表都已到达；任一未到达时不渲染可提交的表单。
+  // 节点与渠道求交需要相应列表，任务列表用于任务选择与标签；依赖未到达时不渲染可提交表单。
   if (!nodes.data || !channels.data || !tasks.data) {
     const failed = nodes.error ?? channels.error ?? tasks.error;
     return failed ? <p role="alert" className="error">{errorText(failed)}</p> : <p className="muted">加载中…</p>;

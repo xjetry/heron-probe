@@ -60,6 +60,104 @@ it("规则首次失败无数据时只显示错误而无表单与表格", async (
   expect(screen.queryByRole("form")).toBeNull();
   expect(screen.queryByRole("table")).toBeNull();
 });
+
+it("显式空作用域不是全部节点，编辑保存仍由 hub 拒绝而不放宽", async () => {
+  const saved: SaveAlertRuleRequest[] = [];
+  const message = "rule.node_ids must not be empty unless all_nodes is true";
+  render({
+    listAlertRules: async () => create(ListAlertRulesResponseSchema, { rules: [
+      { id: 1n, name: "显式空", kind: AlertKind.OFFLINE, enabled: true, allNodes: false },
+      { id: 2n, name: "全部", kind: AlertKind.OFFLINE, enabled: true, allNodes: true },
+    ] }),
+    saveAlertRule: async (req) => { saved.push(req); throw new ConnectError(message, Code.InvalidArgument); },
+  });
+  const empty = within((await screen.findByRole("cell", { name: "显式空" })).closest("tr")!);
+  const all = within(screen.getByRole("cell", { name: "全部" }).closest("tr")!);
+  expect(empty.getByRole("cell", { name: "无节点" })).toBeInTheDocument();
+  expect(empty.queryByRole("cell", { name: "全部节点" })).toBeNull();
+  expect(all.getByRole("cell", { name: "全部节点" })).toBeInTheDocument();
+  fireEvent.click(empty.getByRole("button", { name: "编辑 显式空" }));
+  const form = screen.getByRole("form", { name: "编辑 显式空" });
+  expect(within(form).getByLabelText("全部节点（含以后新建的节点）")).not.toBeChecked();
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  expect(saved).toHaveLength(1);
+  expect({ allNodes: saved[0].rule!.allNodes, nodeIds: saved[0].rule!.nodeIds }).toEqual({ allNodes: false, nodeIds: [] });
+  expect(screen.getByRole("form", { name: "编辑 显式空" })).toBe(form);
+});
+
+const rttRules = create(ListAlertRulesResponseSchema, {
+  rules: [{ id: 10n, name: "延迟", kind: AlertKind.PROBE, enabled: true, allNodes: false, nodeIds: [1n],
+    channelIds: [5n, 9n], taskId: 7n, metric: ProbeMetric.RTT_MS, threshold: 75, forMinutes: 4 }],
+  states: [{ ruleId: 10n, nodeId: 1n, state: "firing" }],
+});
+const rttTasks = create(ListProbeTasksResponseSchema, { tasks: [{ task: { id: 7n, kind: ProbeKind.ICMP, target: "127.0.0.1" }, nodeIds: [1n] }] });
+
+it("RTT 规则只改名称保留完整载荷，已有渠道保留且删除的渠道掉出", async () => {
+  const saved: SaveAlertRuleRequest[] = [];
+  render({ listAlertRules: async () => rttRules, listProbeTasks: async () => rttTasks,
+    saveAlertRule: async (req) => { saved.push(req); return {}; },
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 延迟" }));
+  const form = screen.getByRole("form", { name: "编辑 延迟" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "延迟新名" } });
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].rule).toEqual({ ...rttRules.rules[0], name: "延迟新名", channelIds: [5n] });
+});
+
+it.each([true, false])("从 enabled=%s 编辑开关，保存与刷新后状态一致", async (enabled) => {
+  let current = create(ListAlertRulesResponseSchema, { rules: [{ ...rules.rules[0], enabled }], states: enabled ? rules.states : [] });
+  const saved: SaveAlertRuleRequest[] = [];
+  render({ listAlertRules: async () => current, saveAlertRule: async (req) => {
+    saved.push(req);
+    current = create(ListAlertRulesResponseSchema, { rules: [req.rule!] });
+    return {};
+  } });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 离线" }));
+  const form = screen.getByRole("form", { name: "编辑 离线" });
+  const input = within(form).getByLabelText("启用");
+  expect((input as HTMLInputElement).checked).toBe(enabled);
+  fireEvent.click(input);
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].rule!.enabled).toBe(!enabled);
+  await screen.findByRole("button", { name: "编辑 离线" });
+  const row = within(screen.getByRole("button", { name: "编辑 离线" }).closest("tr")!);
+  expect(row.getByRole("cell", { name: enabled ? "已停用" : "正常" })).toBeInTheDocument();
+  expect(row.queryByText(/触发：/)).toBeNull();
+});
+
+it.each(["指标", "离线", "探测"])("主动切换%s发送新身份，刷新后不沿用旧状态", async (change) => {
+  const original = change === "探测" ? rules.rules[0] : rttRules.rules[0];
+  let current = create(ListAlertRulesResponseSchema, { rules: [original], states: [{ ruleId: original.id, nodeId: 1n, state: "firing" }] });
+  const saved: SaveAlertRuleRequest[] = [];
+  render({ listAlertRules: async () => current, listProbeTasks: async () => rttTasks, saveAlertRule: async (req) => {
+    saved.push(req);
+    current = create(ListAlertRulesResponseSchema, { rules: [req.rule!] });
+    return {};
+  } });
+  fireEvent.click(await screen.findByRole("button", { name: `编辑 ${original.name}` }));
+  const form = screen.getByRole("form", { name: `编辑 ${original.name}` });
+  if (change === "指标") {
+    fireEvent.change(within(form).getByLabelText("指标"), { target: { value: ProbeMetric.LOSS_PCT } });
+  } else {
+    fireEvent.change(within(form).getByLabelText("类型"), { target: { value: change === "离线" ? AlertKind.OFFLINE : AlertKind.PROBE } });
+    if (change === "探测") {
+      fireEvent.change(within(form).getByLabelText("探测任务"), { target: { value: "7" } });
+      fireEvent.change(within(form).getByLabelText("阈值（%）"), { target: { value: "25" } });
+    }
+  }
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  const expected = change === "离线"
+    ? { kind: AlertKind.OFFLINE, taskId: 0n, metric: ProbeMetric.UNSPECIFIED, threshold: 0, forMinutes: 0 }
+    : { kind: AlertKind.PROBE, taskId: 7n, metric: ProbeMetric.LOSS_PCT, threshold: change === "探测" ? 25 : 75, forMinutes: change === "探测" ? 3 : 4 };
+  expect(saved[0].rule).toEqual({ ...original, channelIds: [5n], ...expected });
+  await screen.findByRole("button", { name: `编辑 ${original.name}` });
+  expect(screen.getByRole("cell", { name: "正常" })).toBeInTheDocument();
+  expect(screen.queryByText(/触发：/)).toBeNull();
+});
 const withRule8Name = (name: string) => create(ListAlertRulesResponseSchema, {
   rules: [
     { id: 7n, name: "离线", kind: AlertKind.OFFLINE, enabled: true, allNodes: true, channelIds: [5n] },
