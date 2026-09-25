@@ -52,6 +52,26 @@ it.each(["listNodes", "getTraffic"] as const)("详情 %s 刷新失败保留内�
   expect(screen.getByText("↓ 1.0 GiB ↑ 512 MiB")).toBeInTheDocument();
 });
 
+it("五个查询同文刷新失败只显示一条", async () => {
+  let fail = false;
+  const failing = <A extends unknown[]>(impl: (...args: A) => Promise<unknown>) => async (...args: A) => {
+    if (fail) throw new ConnectError("hub unreachable", Code.Unavailable);
+    return impl(...args);
+  };
+  const { queryClient } = renderWithAdmin({
+    listNodes: failing(defaultImpl.listNodes),
+    getTraffic: failing(defaultImpl.getTraffic),
+    queryMetrics: failing(defaultImpl.queryMetrics),
+    queryProbes: failing(defaultImpl.queryProbes),
+    listProbeTasks: failing(defaultImpl.listProbeTasks),
+  }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  await screen.findByRole("heading", { name: "db-01" });
+  fail = true;
+  await act(async () => { await queryClient.refetchQueries(); });
+  expect((await screen.findAllByRole("alert")).map((a) => a.textContent)).toEqual(["hub unreachable"]);
+  expect(screen.getByRole("heading", { name: "db-01" })).toBeInTheDocument();
+});
+
 it("任务列表查询失败显示错误，探测图例仍以编号可辨认", async () => {
   renderWithAdmin({
     ...defaultImpl,

@@ -4,7 +4,7 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { Chart } from "../components/Chart";
-import { AdminService } from "../gen/probe/v1/admin_pb";
+import { AdminService, type GetTrafficResponse } from "../gen/probe/v1/admin_pb";
 import { toAligned, unitOf } from "../lib/series";
 import { bytes } from "../lib/format";
 import { errorText } from "../api/auth";
@@ -55,7 +55,6 @@ export function NodeDetail() {
   const from = to - range.seconds;
 
   const nodes = useQuery(AdminService.method.listNodes, {}, { enabled: validId });
-  const node = nodes.data?.nodes.find((n) => n.id === nodeId);
   const history = useQuery(AdminService.method.queryMetrics, { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: 1000 }, {
     enabled: validId, placeholderData: keepPreviousData,
   });
@@ -64,6 +63,8 @@ export function NodeDetail() {
   });
   // 任务列表只为图例标签；任务页保存或删除失效同一 listProbeTasks key，本页重新挂载会重新取标签，无需另设轮询。
   const tasks = useQuery(AdminService.method.listProbeTasks, {}, { enabled: validId });
+  // 流量与图表面向不同查询，各自降级；校正操作在卡片内保留自己的错误槽位。
+  const traffic = useQuery(AdminService.method.getTraffic, {}, { enabled: validId, refetchInterval: TRAFFIC_MS });
   // 已知任务的标签在任务列表到达后变成“类型 目标”，Chart 按标签重建一次，与单位变化共用重建机制。
   const probeCharts = useMemo(() => {
     if (!probes.data) return [];
@@ -76,14 +77,16 @@ export function NodeDetail() {
     [history.data, from, to],
   );
 
-  if (!validId || (nodes.data && !node)) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
+  if (!validId) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
   const gate = queryGate(nodes);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
+  const node = gate.data.nodes.find((n) => n.id === nodeId);
+  if (!node) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
   return (
     <section>
-      {gate.banner}
+      {errorBanner(nodes.error, history.error, probes.error, tasks.error, traffic.error)}
       <header className="row detail-header">
-        <h1>{node?.name ?? "…"}</h1>
+        <h1>{node.name}</h1>
         <Link to={`/events?node=${id}`}>告警事件</Link>
         <nav aria-label="时间窗口">
           {RANGES.map((r) => (
@@ -94,8 +97,7 @@ export function NodeDetail() {
         </nav>
         {history.data && <span className="muted">级别 {history.data.level}，每点 {history.data.stepS}s</span>}
       </header>
-      {history.error && <p role="alert" className="error">{errorText(history.error)}</p>}
-      {validId && <TrafficCard nodeId={nodeId} />}
+      <TrafficCard nodeId={nodeId} data={traffic.data} />
       <div className="grid">
         {charts.map((c) => (
           <div className="card" key={c.title}>
@@ -104,8 +106,6 @@ export function NodeDetail() {
           </div>
         ))}
       </div>
-      {probes.error && <p role="alert" className="error">{errorText(probes.error)}</p>}
-      {tasks.error && <p role="alert" className="error">{errorText(tasks.error)}</p>}
       {probes.data && probes.data.series.length === 0 && (
         <p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>
       )}
@@ -119,7 +119,7 @@ export function NodeDetail() {
           ))}
         </div>
       )}
-      {node?.facts && (
+      {node.facts && (
         <dl className="card facts">
           <dt>主机名</dt><dd>{node.facts.hostname}</dd>
           <dt>系统</dt><dd>{node.facts.os}</dd>
@@ -146,9 +146,8 @@ const toBytes = (s: string): bigint | null => {
   return result <= (1n << 64n) - 1n ? result : null;
 };
 
-function TrafficCard({ nodeId }: { nodeId: bigint }) {
+function TrafficCard({ nodeId, data }: { nodeId: bigint; data: GetTrafficResponse | undefined }) {
   const qc = useQueryClient();
-  const all = useQuery(AdminService.method.getTraffic, {}, { refetchInterval: TRAFFIC_MS });
   const [draft, setDraft] = useState<{ rx: string; tx: string } | null>(null);
   const adjust = useMutation(AdminService.method.adjustTraffic, {
     onSuccess: () => {
@@ -157,11 +156,9 @@ function TrafficCard({ nodeId }: { nodeId: bigint }) {
       void qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getSnapshot, cardinality: "finite" }) });
     },
   });
-  const gate = queryGate(all);
-  if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
-  const t = gate.data.nodes.find((n) => n.nodeId === nodeId)?.traffic;
-  const timeZone = gate.data.timezone;
-  if (!t) return gate.banner;
+  const t = data?.nodes.find((n) => n.nodeId === nodeId)?.traffic;
+  const timeZone = data?.timezone;
+  if (!t) return null;
   // 编辑框首次出现时预填当前值；之后由用户输入驱动。
   const form = draft ?? { rx: toGiB(t.periodRx), tx: toGiB(t.periodTx) };
   const rx = toBytes(form.rx);
@@ -172,7 +169,6 @@ function TrafficCard({ nodeId }: { nodeId: bigint }) {
   };
   return (
     <div className="card">
-      {gate.banner}
       <h2>流量</h2>
       <dl className="facts">
         <dt>本周期</dt><dd>↓ {bytes(t.periodRx)} ↑ {bytes(t.periodTx)}</dd>

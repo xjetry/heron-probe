@@ -1,9 +1,11 @@
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { errorText } from "../api/auth";
+import { errorBanner, queryGate } from "../api/queryGate";
+import { useLatestError } from "../api/useLatestError";
 import { Secret } from "../components/Secret";
 import { AdminService } from "../gen/probe/v1/admin_pb";
-import { errorText } from "../api/auth";
 
 const TTLS = [
   { label: "10 分钟", seconds: 600 },
@@ -23,19 +25,24 @@ export function RegisterWindow() {
   useEffect(() => {
     if (status.data?.open === false) clearKey();
   }, [status.data?.open, clearKey]);
+  // 开窗与关窗是操作，错误生命周期独立于窗口状态的轮询。
+  const { error, mutationOptions } = useLatestError();
   const open = useMutation(AdminService.method.openRegisterWindow, {
+    ...mutationOptions,
     onSuccess: (r) => { setKey(r.key); void refresh(); },
   });
   const close = useMutation(AdminService.method.closeRegisterWindow, {
+    ...mutationOptions,
     onSuccess: () => { clearKey(); void refresh(); },
   });
   const onOpen = (e: FormEvent) => { e.preventDefault(); open.mutate({ ttlS: ttl, maxNodes }); };
-  const err = open.error ?? close.error ?? status.error;
+  const gate = queryGate(status);
+  if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   return (
     <section>
       <h1>注册窗口</h1>
-      {status.data?.open ? (
-        <p>窗口开启中：剩余 {status.data.remaining} 个名额，截止 {new Date(Number(status.data.expiresAt) * 1000).toLocaleString()}。{" "}
+      {gate.data.open ? (
+        <p>窗口开启中：剩余 {gate.data.remaining} 个名额，截止 {new Date(Number(gate.data.expiresAt) * 1000).toLocaleString()}。{" "}
           <button type="button" className="danger" onClick={() => close.mutate({})} disabled={close.isPending}>关闭窗口</button>
         </p>
       ) : (
@@ -57,7 +64,8 @@ export function RegisterWindow() {
         <label>可注册节点数<input type="number" min={1} max={1000} value={Number.isNaN(maxNodes) ? "" : maxNodes} onChange={(e) => setMaxNodes(e.target.valueAsNumber)} /></label>
         <button type="submit" disabled={open.isPending || !(maxNodes >= 1)}>开启新窗口</button>
       </form>
-      {err && <p role="alert" className="error">{errorText(err)}</p>}
+      {gate.banner}
+      {error != null && <p role="alert" className="error">{errorText(error)}</p>}
     </section>
   );
 }

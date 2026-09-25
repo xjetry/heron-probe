@@ -30,9 +30,23 @@ describe("RegisterWindow", () => {
 
   it("清空名额保留空白而不是零值", async () => {
     renderWithAdmin({ getRegisterWindow: async () => ({ open: false }) }, [{ path: "/register", Component: RegisterWindow }], "/register");
-    const input = screen.getByLabelText("可注册节点数") as HTMLInputElement;
+    const input = (await screen.findByLabelText("可注册节点数")) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "" } });
     expect({ value: input.value, nan: Number.isNaN(input.valueAsNumber) }).toEqual({ value: "", nan: true });
+  });
+
+  it("状态挂起时显示加载中，不渲染开窗表单", async () => {
+    renderWithAdmin({ getRegisterWindow: () => new Promise(() => {}) }, [{ path: "/register", Component: RegisterWindow }], "/register");
+    expect(await screen.findByText("加载中…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "开启新窗口" })).toBeNull();
+    expect(screen.queryByText("当前没有开启的窗口。")).toBeNull();
+  });
+
+  it("状态首次失败只显示错误", async () => {
+    renderWithAdmin({ getRegisterWindow: async () => { throw new ConnectError("status unavailable", Code.Unavailable); } }, [{ path: "/register", Component: RegisterWindow }], "/register");
+    expect(await screen.findByRole("alert")).toHaveTextContent("status unavailable");
+    expect(screen.queryByText("当前没有开启的窗口。")).toBeNull();
+    expect(screen.queryByRole("button", { name: "开启新窗口" })).toBeNull();
   });
 
   it.each(["", "0", "-1"])("名额为 '%s' 时禁用开窗", async (value) => {
@@ -65,7 +79,7 @@ describe("RegisterWindow", () => {
       getRegisterWindow: source === "status" ? fail : async () => ({ open: false, expiresAt: 0n, remaining: 0 }),
       openRegisterWindow: fail,
     }, [{ path: "/register", Component: RegisterWindow }], "/register");
-    if (source === "open") fireEvent.click(screen.getByRole("button", { name: "开启新窗口" }));
+    if (source === "open") fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/^request failed$/);
   });
   it("开窗后展示 key 与安装命令", async () => {
