@@ -9,6 +9,7 @@ import { ProbeTasks } from "./pages/ProbeTasks";
 import { AlertRules } from "./pages/AlertRules";
 import { AlertEvents } from "./pages/AlertEvents";
 import { Channels } from "./pages/Channels";
+import { ApiTokens } from "./pages/ApiTokens";
 
 // basename 与 hub 的挂载路径一致。路由不做鉴权判断：谁都能打开任何页面，
 // 页面里的第一次请求得到 Unauthenticated 就会被数据层送去登录。
@@ -26,6 +27,7 @@ export const router = createBrowserRouter(
         { path: "alerts", Component: AlertRules },
         { path: "events", Component: AlertEvents },
         { path: "channels", Component: Channels },
+        { path: "tokens", Component: ApiTokens },
         { path: "register", Component: RegisterWindow },
       ],
     },
