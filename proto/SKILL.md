@@ -28,8 +28,8 @@ curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/
 
 - int64 与 uint64 在 JSON 里是字符串（`"id": "3"`）；请求里写数字或字符串都可以。
 - 时间是 Unix 秒；字段名以 `_ms` 结尾的是毫秒，以 `_s` 结尾的是秒。JSON 字段名是 proto 字段名的小驼峰（`last_seen_at` → `lastSeenAt`）。
-- 缺读数与读数为 0 不同：`optional` 字段缺失表示没有读数，不要当成 0。
-- 字段取默认值（0、空串、false、空列表）时在 JSON 里省略。
+- 非 `optional` 的字段取默认值（0、空串、false、空列表）时在 JSON 里省略，读不到就按默认值理解（样本 `{}` 的 `n` 是 0）。
+- `optional` 字段（proto 里标了 `optional` 的，如 `lastSeenAt` 与指标样本的 `mean`、`max`、`sum`）只要有值就出现，哪怕是 0；缺失才表示没有读数。不要把缺失当成 0，也不要把出现的 0 当成缺失。
 - 出错时 HTTP 状态非 200，响应体是 `{"code": "...", "message": "..."}`；message 写明哪个字段、违反了什么约束、期望什么取值。
 
 ## 例子

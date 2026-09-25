@@ -283,6 +283,9 @@ awk -v dir="$work" '
   inblock { print > file }
 ' "$work/SKILL.md"
 examples=$(ls "$work"/card-example-*.sh 2> /dev/null | wc -l | tr -d ' ')
+# 标记块数独立于抽取逻辑另数一次：抽取漏块或多切时两数不等；卡片被删到只剩寥寥几例时下限挡住。
+marked=$(grep -c '^```sh example$' "$work/SKILL.md" || [ "$?" = 1 ])
+[ "$examples" = "$marked" ] || { echo "FAIL: extracted $examples card examples but the card marks $marked"; exit 1; }
 [ "$examples" -ge 3 ] || { echo "FAIL: expected at least 3 card examples, found $examples"; exit 1; }
 for ex in "$work"/card-example-*.sh; do
   status=0
