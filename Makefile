@@ -68,6 +68,8 @@ HUB_LINUX_ARCHES := amd64 arm64
 
 # 本地验收与线上发布走同一目标，产物与版本注入完全一致（release.yml 只调用它）。
 # 打包的 tar 前设 COPYFILE_DISABLE=1：macOS 的 bsdtar 否则会把扩展属性打成 ._* 条目，busybox 解包会带出多余文件。
+# 另加 --no-xattrs：bsdtar 仍会把 com.apple.provenance 之类的扩展属性写成 pax 扩展头，GNU tar 解包时逐条目告警，产物里也带上宿主元数据；
+# bsdtar 与 GNU tar 都认这个选项，本地与 CI 构建同一写法。
 # 说明写在 recipe 之外：recipe 是反斜杠续行拼成的一条 shell 命令，行内的 # 会把其后的续行一并注释掉。
 release: web
 	@if [ -z "$(VERSION)" ]; then echo "VERSION is required, e.g. make release VERSION=v0.1.0" >&2; exit 1; fi
@@ -86,13 +88,13 @@ release: web
 	  cp "dist/build/probe-agent-linux-$$arch" "$$pkg/probe-agent"; \
 	  cp deploy/systemd/probe-agent.service "$$pkg/probe-agent.service"; \
 	  cp deploy/openrc/probe-agent "$$pkg/probe-agent.openrc"; \
-	  COPYFILE_DISABLE=1 tar -C "$$pkg" -czf "dist/probe-agent_linux_$$arch.tar.gz" probe-agent probe-agent.service probe-agent.openrc; \
+	  COPYFILE_DISABLE=1 tar --no-xattrs -C "$$pkg" -czf "dist/probe-agent_linux_$$arch.tar.gz" probe-agent probe-agent.service probe-agent.openrc; \
 	  rm -rf "$$pkg"; \
 	done; \
 	for arch in $(HUB_LINUX_ARCHES); do \
 	  pkg="dist/pkg-hub-$$arch"; mkdir -p "$$pkg"; \
 	  cp "dist/build/probe-hub-linux-$$arch" "$$pkg/probe-hub"; \
-	  COPYFILE_DISABLE=1 tar -C "$$pkg" -czf "dist/probe-hub_linux_$$arch.tar.gz" probe-hub; \
+	  COPYFILE_DISABLE=1 tar --no-xattrs -C "$$pkg" -czf "dist/probe-hub_linux_$$arch.tar.gz" probe-hub; \
 	  rm -rf "$$pkg"; \
 	done; \
 	rm -rf dist/build
