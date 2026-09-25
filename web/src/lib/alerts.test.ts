@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
-import { AlertKind, AlertRuleSchema, AlertStateEntrySchema, ChannelKind, ListProbeTasksResponseSchema, NotifyChannelSchema, ProbeMetric } from "../gen/probe/v1/admin_pb";
+import { AlertDeliverySchema, AlertKind, AlertRuleSchema, AlertStateEntrySchema, ChannelKind, ListProbeTasksResponseSchema, NotifyChannelSchema, ProbeMetric } from "../gen/probe/v1/admin_pb";
 import { ProbeKind } from "../gen/probe/v1/types_pb";
-import { CHANNEL_KINDS, channelTarget, labelOf, ruleCondition, statesOf } from "./alerts";
+import { CHANNEL_KINDS, channelTarget, deliveryText, graceText, labelOf, ruleCondition, statesOf, transitionLabel } from "./alerts";
 
 describe("labelOf", () => {
   it("表内值给标签，表外值显示原值而不抛错", () => {
@@ -54,4 +54,20 @@ describe("statesOf", () => {
     expect(got.get(1n)?.pending.map((s) => s.nodeId)).toEqual([2n]);
     expect(got.has(2n)).toBe(false);
   });
+});
+
+describe("deliveryText", () => {
+  it("成功、投递中、终止失败三种", () => {
+    expect(deliveryText(create(AlertDeliverySchema, { ok: true, done: true, attempts: 1 }), "hook")).toBe("hook：已送达");
+    expect(deliveryText(create(AlertDeliverySchema, { ok: false, done: false, attempts: 1, lastError: "503" }), "hook")).toBe("hook：投递中（已尝试 1 次）");
+    expect(deliveryText(create(AlertDeliverySchema, { ok: false, done: true, attempts: 3, lastError: "timeout" }), "hook")).toBe("hook：失败（3 次）timeout");
+  });
+});
+
+it("transitionLabel 认识两种变化，未知值原样显示", () => {
+  expect([transitionLabel("firing"), transitionLabel("recovered"), transitionLabel("x")]).toEqual(["触发", "恢复", "x"]);
+});
+
+it("graceText 缺失即默认", () => {
+  expect([graceText(undefined), graceText(90)]).toEqual(["默认", "90 秒"]);
 });

@@ -84,6 +84,7 @@ export function NodeDetail() {
       {gate.banner}
       <header className="row detail-header">
         <h1>{node?.name ?? "…"}</h1>
+        <Link to={`/events?node=${id}`}>告警事件</Link>
         <nav aria-label="时间窗口">
           {RANGES.map((r) => (
             <button key={r.label} type="button" className={r.label === range.label ? "active" : "link"} onClick={() => setRange(r)} aria-pressed={r.label === range.label}>

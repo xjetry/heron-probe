@@ -1,4 +1,4 @@
-import { AlertKind, ChannelKind, ProbeMetric, type AlertRule, type AlertStateEntry, type NotifyChannel, type ProbeTaskDetail } from "../gen/probe/v1/admin_pb";
+import { AlertKind, ChannelKind, ProbeMetric, type AlertDelivery, type AlertRule, type AlertStateEntry, type NotifyChannel, type ProbeTaskDetail } from "../gen/probe/v1/admin_pb";
 import { formatUnit } from "./format";
 import { taskLabel } from "./probes";
 
@@ -61,3 +61,15 @@ export function statesOf(states: AlertStateEntry[]): Map<bigint, RuleStates> {
   }
   return out;
 }
+
+export const transitionLabel = (t: string): string => (t === "firing" ? "触发" : t === "recovered" ? "恢复" : t);
+
+// "已送达"只来自成功的投递记录（spec §9.3）；done 为假的投递仍在队列里，不能显示成失败。
+export function deliveryText(d: AlertDelivery, channel: string): string {
+  if (d.ok) return `${channel}：已送达`;
+  if (!d.done) return `${channel}：投递中（已尝试 ${d.attempts} 次）`;
+  return `${channel}：失败（${d.attempts} 次）${d.lastError}`;
+}
+
+// 缺失表示取 hub 的 PROBE_OFFLINE_AFTER（proto Node.offline_grace_s）；清除后 hub 存 NULL，不会回显 0。
+export const graceText = (s: number | undefined): string => (s === undefined ? "默认" : `${s} 秒`);

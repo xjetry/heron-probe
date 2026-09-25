@@ -8,7 +8,7 @@ import { Nodes } from "./Nodes";
 import { AdminService, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema } from "../gen/probe/v1/admin_pb";
 
 const two = [
-  { id: 1n, name: "a", public: false, note: "", sortOrder: 0, createdAt: 0n, trafficResetDay: 1, offlineGraceS: 120 },
+  { id: 1n, name: "a", public: false, note: "", sortOrder: 0, createdAt: 0n, trafficResetDay: 1, offlineGraceS: 90 },
   { id: 2n, name: "b", public: true, note: "db", sortOrder: 1, createdAt: 0n, trafficResetDay: 1 },
 ];
 
@@ -275,7 +275,7 @@ describe("Nodes", () => {
     await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n, 3n] }), expect.anything()));
   });
 
-  it("编辑回传全部字段与当前宽限期", async () => {
+  it("编辑回传全部字段", async () => {
     const updateNode = vi.fn(async () => ({ node: two[0] }));
     renderWithAdmin({ listNodes: async () => ({ nodes: two }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: "a" });
@@ -285,16 +285,51 @@ describe("Nodes", () => {
     fireEvent.change(screen.getByLabelText("备注"), { target: { value: "changed note" } });
     fireEvent.change(screen.getByLabelText("重置日"), { target: { value: "15" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, name: "a2", public: true, note: "changed note", trafficResetDay: 15, offlineGraceS: 120 }), expect.anything()));
+    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, name: "a2", public: true, note: "changed note", trafficResetDay: 15 }), expect.anything()));
   });
 
-  it("未设置宽限期时显式回传零", async () => {
+  it("宽限期列显示默认与秒数", async () => {
+    renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    const a = within((await screen.findByRole("link", { name: "a" })).closest("tr")!);
+    expect(a.getByRole("cell", { name: "90 秒" })).toBeInTheDocument();
+    const b = within(screen.getByRole("link", { name: "b" }).closest("tr")!);
+    expect(b.getByRole("cell", { name: "默认" })).toBeInTheDocument();
+  });
+
+  it("编辑宽限期与非宽限期节点的保存载荷", async () => {
     const updateNode = vi.fn(async () => ({}));
-    renderWithAdmin({ listNodes: async () => ({ nodes: [two[1]] }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "b" });
-    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    renderWithAdmin({ listNodes: async () => ({ nodes: two }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a" });
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    const grace = screen.getByLabelText("离线宽限期（秒）");
+    expect(grace).toHaveValue(90);
+    fireEvent.change(grace, { target: { value: "120" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 2n, offlineGraceS: 0 }), expect.anything()));
+    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, offlineGraceS: 120 }), expect.anything()));
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "编辑" })).toHaveLength(2));
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[1]);
+    fireEvent.change(screen.getByLabelText("名称"), { target: { value: "b2" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 2n, name: "b2", offlineGraceS: 0 }), expect.anything()));
+  });
+
+  it("非法宽限期禁用保存", async () => {
+    renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a" });
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    fireEvent.change(screen.getByLabelText("离线宽限期（秒）"), { target: { value: "-1" } });
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+  });
+
+  it("服务端宽限期下限错误显示原文", async () => {
+    renderWithAdmin({ listNodes: async () => ({ nodes: two }),
+      updateNode: async () => { throw new ConnectError("offline_grace_s: must be 0 or at least 30 seconds (PROBE_OFFLINE_AFTER); got 20", Code.InvalidArgument); } },
+      [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a" });
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    fireEvent.change(screen.getByLabelText("离线宽限期（秒）"), { target: { value: "20" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("offline_grace_s: must be 0 or at least 30 seconds (PROBE_OFFLINE_AFTER); got 20");
   });
 
   it("轮换后显示并复制新 token", async () => {

@@ -62,6 +62,11 @@ it("任务列表查询失败显示错误，探测图例仍以编号可辨认", a
   expect(await screen.findAllByText("任务 #3")).toHaveLength(2);
 });
 
+it("头部链接到该节点的告警事件", async () => {
+  renderWithAdmin(defaultImpl, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  expect((await screen.findByRole("link", { name: "告警事件" }))).toHaveAttribute("href", "/events?node=7");
+});
+
 it("同窗口同名任务在两张探测图中带编号区分", async () => {
   renderWithAdmin({
     ...defaultImpl,

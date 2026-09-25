@@ -34,6 +34,15 @@ it("告警规则导航进入应用的规则页路由", async () => {
   expect(await screen.findByRole("heading", { name: "告警规则" })).toBeInTheDocument();
 });
 
+it("告警事件导航进入应用的事件页路由", async () => {
+  renderWithAdmin({ listNodes: async () => ({ nodes: [] }), listNotifyChannels: async () => ({ channels: [] }),
+    listAlertEvents: async () => ({ events: [] }) }, appRouter.routes, "/nodes");
+  const link = screen.getByRole("link", { name: "告警事件" });
+  expect(link).toHaveAttribute("href", "/events");
+  fireEvent.click(link);
+  expect(await screen.findByRole("heading", { name: "告警事件" })).toBeInTheDocument();
+});
+
 it("登出在导航前清空查询与变更缓存", async () => {
   const { queryClient, router } = renderWithAdmin({ logout: async () => ({}) }, routes, "/");
   queryClient.setQueryData(["previous-session"], "old data");
