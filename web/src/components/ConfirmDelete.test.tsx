@@ -21,7 +21,26 @@ it("取消回到首击按钮，全程不执行", () => {
   const onDelete = vi.fn();
   render(<ConfirmDelete label="删除 东京" confirm="确认删除 东京" pending={false} onDelete={onDelete} />);
   fireEvent.click(screen.getByRole("button", { name: "删除 东京" }));
-  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  fireEvent.click(screen.getByRole("button", { name: "取消删除 东京" }));
   expect(screen.getByRole("button", { name: "删除 东京" })).toBeInTheDocument();
   expect(onDelete).not.toHaveBeenCalled();
+});
+
+it("两行同时武装时取消按钮可区分", () => {
+  render(
+    <>
+      <ConfirmDelete label="删除 东京" confirm="确认删除 东京" pending={false} onDelete={() => {}} />
+      <ConfirmDelete label="删除 大阪" confirm="确认删除 大阪" pending={false} onDelete={() => {}} />
+    </>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "删除 东京" }));
+  fireEvent.click(screen.getByRole("button", { name: "删除 大阪" }));
+  expect(screen.getByRole("button", { name: "取消删除 东京" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "取消删除 大阪" })).toBeInTheDocument();
+});
+
+it("确认态显示可选说明文字", () => {
+  render(<ConfirmDelete label="删除 东京" confirm="确认删除 东京" note="历史保留至到期清理" pending={false} onDelete={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "删除 东京" }));
+  expect(screen.getByText("历史保留至到期清理")).toBeInTheDocument();
 });

@@ -338,7 +338,7 @@ it("删除首击不发请求", async () => {
   const removed: bigint[] = [];
   render({ deleteAlertRule: async (req) => { removed.push(req.id); throw new ConnectError("ref", Code.FailedPrecondition); } });
   fireEvent.click(await screen.findByRole("button", { name: "删除 离线" }));
-  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  fireEvent.click(screen.getByRole("button", { name: "取消删除 离线" }));
   fireEvent.click(screen.getByRole("button", { name: "删除 丢包" }));
   fireEvent.click(screen.getByRole("button", { name: "确认删除 丢包" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("ref");

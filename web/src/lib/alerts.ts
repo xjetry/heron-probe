@@ -2,7 +2,7 @@ import { AlertKind, ChannelKind, ProbeMetric, type AlertDelivery, type AlertRule
 import { formatUnit } from "./format";
 import { taskLabel } from "./probes";
 
-export type Entry<K> = { value: K; label: string };
+type Entry<K> = { value: K; label: string };
 
 export const CHANNEL_KINDS: readonly Entry<ChannelKind>[] = [
   { value: ChannelKind.TELEGRAM, label: "Telegram" },

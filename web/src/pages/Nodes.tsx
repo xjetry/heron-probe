@@ -123,9 +123,9 @@ function NodeEditor({ node, saving, deleting, rotating, onMoveUp, onMoveDown, on
       <td>{graceText(node.offlineGraceS)}</td>
       <td className="muted">{new Date(Number(node.createdAt) * 1000).toLocaleDateString()}</td>
       <td>
-        <button type="button" className="link" onClick={() => { setDraft(draftOf(node)); setEditing(true); }}>编辑</button>{" "}
-        <button type="button" className="link" onClick={onRotate} disabled={rotating}>换 token</button>{" "}
-        <ConfirmDelete label="删除" confirm={`确认删除 ${node.name}`} pending={deleting} onDelete={onDelete} />
+        <button type="button" className="link" aria-label={`编辑 ${node.name}`} onClick={() => { setDraft(draftOf(node)); setEditing(true); }}>编辑</button>{" "}
+        <button type="button" className="link" aria-label={`换 token ${node.name}`} onClick={onRotate} disabled={rotating}>换 token</button>{" "}
+        <ConfirmDelete label={`删除 ${node.name}`} confirm={`确认删除 ${node.name}`} pending={deleting} onDelete={onDelete} />
       </td>
     </tr>
   );

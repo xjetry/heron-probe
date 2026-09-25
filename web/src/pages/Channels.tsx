@@ -19,7 +19,7 @@ const emptyDraft = (): Draft => ({
   name: "", kind: ChannelKind.TELEGRAM, botToken: "", chatId: "",
   url: "", method: "POST", headers: [], removeHeaders: new Set(), bodyTemplate: "",
 });
-// hub 不回显 token、URL 与头值，编辑草稿里它们恒为空；留空提交由 hub 保留已存值。
+// hub 不回显 token、URL 与头值，编辑草稿里它们恒为空；同种类时留空提交由 hub 保留已存值，换种类必须重填。
 const draftOf = (c: NotifyChannel): Draft => ({
   ...emptyDraft(), name: c.name, kind: c.kind, chatId: c.telegram?.chatId ?? "",
   method: methodOf(c.webhook?.method), bodyTemplate: c.webhook?.bodyTemplate ?? "",

@@ -13,7 +13,7 @@ export function ConfirmDelete({ label, confirm, note, pending, onDelete }: {
     <>
       <button type="button" className="danger" disabled={pending} onClick={onDelete}>{confirm}</button>{" "}
       {note ? <><span className="muted">{note}</span>{" "}</> : null}
-      <button type="button" className="link" onClick={() => setConfirming(false)}>取消</button>
+      <button type="button" className="link" aria-label={`取消${label}`} onClick={() => setConfirming(false)}>取消</button>
     </>
   );
 }

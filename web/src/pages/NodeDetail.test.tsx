@@ -54,7 +54,7 @@ it.each(["listNodes", "getTraffic"] as const)("详情 %s 刷新失败保留内�
 
 it("五个查询同文刷新失败只显示一条", async () => {
   let fail = false;
-  const failing = <A extends unknown[]>(impl: (...args: A) => Promise<unknown>) => async (...args: A) => {
+  const failing = <A extends unknown[], R>(impl: (...args: A) => Promise<R>) => async (...args: A): Promise<R> => {
     if (fail) throw new ConnectError("hub unreachable", Code.Unavailable);
     return impl(...args);
   };

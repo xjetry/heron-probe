@@ -7,6 +7,7 @@ export function Picks({ legend, items, selected, onChange }: {
   return (
     <fieldset className="picks">
       <legend>{legend}</legend>
+      {items.length === 0 && <span className="muted">没有可选项。</span>}
       {items.map((it) => (
         <label key={String(it.id)}><input type="checkbox" checked={selected.has(it.id)} onChange={() => onChange(toggled(selected, it.id))} />{it.name}</label>
       ))}

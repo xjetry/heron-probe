@@ -12,3 +12,9 @@ it("分组展示候选项并按勾选回传新集合", () => {
   expect(spy).toHaveBeenCalledTimes(1);
   expect(spy.mock.calls[0][0]).toEqual(new Set([1n, 2n]));
 });
+
+it("候选为空时显示提示而不是空框", () => {
+  render(<Picks legend="作用域节点" items={[]} selected={new Set()} onChange={() => {}} />);
+  expect(screen.getByRole("group", { name: "作用域节点" })).toHaveTextContent("没有可选项。");
+  expect(screen.queryAllByRole("checkbox")).toEqual([]);
+});
