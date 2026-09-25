@@ -45,8 +45,9 @@ curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/
 第一个节点最近一小时的 CPU（百分比；每点有样本数、均值与最大值，`ts` 与 `samples` 一一对应）：
 
 ```sh example
-node=$(curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/json' \
-  --data '{}' "$PROBE_HUB/probe.v1.AdminService/ListNodes" | jq -r '(.nodes // [])[0].id // empty')
+nodes=$(curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/json' \
+  --data '{}' "$PROBE_HUB/probe.v1.AdminService/ListNodes")
+node=$(printf '%s' "$nodes" | jq -r '(.nodes // [])[0].id // empty')
 if [ -z "$node" ]; then
   echo '{}'
 else

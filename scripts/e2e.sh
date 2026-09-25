@@ -86,8 +86,10 @@ bearer() {
 }
 
 # 卡片示例取自 hub 刚下发的那份。空列表由例子自己处理，空 hub 与有数据时用同一段。
+# 第二个参数非空时，每个例子的顶层 JSON 必须非空：有数据时例 2 输出 {} 说明取 id 走错了分支。
 run_card_examples() {
   label=$1
+  nonempty=$2
   jq -r '.guide' "$work/bearer-GetApiReference.json" > "$work/SKILL.md"
   rm -f "$work"/card-example-*.sh "$work"/card-example-*.sh.out "$work"/card-example-*.sh.err
   awk -v dir="$work" '
@@ -105,6 +107,10 @@ run_card_examples() {
     PROBE_HUB=$base PROBE_TOKEN=$api_token sh -eu "$ex" > "$ex.out" 2> "$ex.err" || status=$?
     [ "$status" = 0 ] || { echo "FAIL: card example $ex exited $status"; cat "$ex" "$ex.err"; exit 1; }
     [ -s "$ex.out" ] && jq -e . "$ex.out" > /dev/null || { echo "FAIL: card example $ex did not print JSON"; cat "$ex" "$ex.out" "$ex.err"; exit 1; }
+    # null 的 length 是 0，不能靠 length 单独把 null 当成有内容；空对象与空数组的 length 也是 0。
+    if [ -n "$nonempty" ]; then
+      jq -e 'if . == null then false else length > 0 end' "$ex.out" > /dev/null || { echo "FAIL: card example $ex printed empty JSON"; cat "$ex" "$ex.out"; exit 1; }
+    fi
   done
   if [ -n "$label" ]; then
     echo "card examples ok ($label): $examples"
@@ -126,7 +132,7 @@ login_body=$(jq -nc --arg password "$admin_pw" '{password: $password}')
 api_token=$(jq -r '.token' "$work/CreateApiToken.json")
 api_token_id=$(jq -r '.apiToken.id' "$work/CreateApiToken.json")
 [ "$(bearer GetApiReference '{}')" = 200 ] || { echo "FAIL: GetApiReference on empty hub"; cat "$work/bearer-GetApiReference.json"; exit 1; }
-run_card_examples "empty hub"
+run_card_examples "empty hub" ""
 [ "$(rpc DeleteApiToken "$(jq -nc --arg id "$api_token_id" '{id: $id}')")" = 200 ] || { echo "FAIL: DeleteApiToken (empty hub)"; exit 1; }
 [ "$(curl -sS -o /dev/null -w '%{http_code}' -b "$work/jar" -H 'Content-Type: text/plain' --data '{}' "$base/probe.v1.AdminService/CreateNode")" = 415 ] || { echo "FAIL: text/plain POST was not 415"; exit 1; }
 [ "$(curl -sS -o /dev/null -w '%{http_code}' -b "$work/jar" "$base/probe.v1.AdminService/CreateNode?connect=v1&encoding=json&message=%7B%7D")" = 405 ] || { echo "FAIL: GET was not 405"; exit 1; }
@@ -311,7 +317,7 @@ jq -e '(.nodes | length) == 2' "$work/bearer-ListNodes.json" > /dev/null || { ec
 jq -e '.code == "permission_denied"' "$work/bearer-CreateNode.json" > /dev/null || { echo "FAIL: write via token not permission_denied"; exit 1; }
 [ "$(bearer GetApiReference '{}')" = 200 ] || { echo "FAIL: GetApiReference via token"; exit 1; }
 jq -e 'any(.files[]; .path == "probe/v1/admin.proto") and (.guide | contains("PROBE_TOKEN"))' "$work/bearer-GetApiReference.json" > /dev/null || { echo "FAIL: GetApiReference content"; exit 1; }
-run_card_examples ""
+run_card_examples "" nonempty
 [ "$(rpc DeleteApiToken "$(jq -nc --arg id "$api_token_id" '{id: $id}')")" = 200 ] || { echo "FAIL: DeleteApiToken"; exit 1; }
 [ "$(bearer ListNodes '{}')" = 401 ] || { echo "FAIL: revoked API token still accepted"; exit 1; }
 # 改密只清会话、不动 token；运行中由另一进程吊销，下一个请求即 401。
