@@ -155,7 +155,7 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 		}
 		ctx = context.WithValue(ctx, peerKey{}, peer)
 		// 先鉴别身份再裁决权限：无效 token 调任何方法都是 401，有效 token 调非 READ 方法是 403。
-		// Login 带 Bearer 也落在 403：token 路径只放行 READ。
+		// Login 带 Bearer 也落在 403，但文案不能写成"去开一个面板会话"：token 代替不了密码。
 		if tok, isBearer, err := bearerCredential(req.Header()); isBearer {
 			if err != nil {
 				return nil, unauthenticated(err.Error() + "; send exactly one Authorization: Bearer <API token>")
@@ -169,6 +169,9 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 				return nil, unauthenticated("API token unknown or revoked")
 			}
 			if level != probev1.Access_ACCESS_READ {
+				if level == probev1.Access_ACCESS_LOGIN {
+					return nil, permissionDenied("%s: API tokens cannot log in; send the admin password without an Authorization: Bearer header", req.Spec().Procedure)
+				}
 				return nil, permissionDenied("%s: API tokens are read-only; this method requires a panel session", req.Spec().Procedure)
 			}
 			return next(ctx, req)
