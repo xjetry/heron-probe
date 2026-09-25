@@ -1,8 +1,8 @@
 // Package api 实现 AdminService。
 //
-// 鉴权在挂载点的拦截器里裁决：除 LOGIN 口径的方法外每个方法都要求有效会话，流式调用一律
-// 拒绝，方法体只在准入通过后执行。凭据只走会话 cookie；带 Authorization 头也不看——
-// 两条口径若互相回退，实际生效的是较弱的那条。
+// 鉴权在挂载点的拦截器里裁决：每个方法以 probe.v1.access 声明准入口径，流式调用一律拒绝，
+// 方法体只在准入通过后执行。凭据有两条路径：Authorization 的 scheme 为 Bearer 时走 API token，
+// 此后不看 cookie；否则走会话 cookie。两条路径互不回退——若互相回退，实际生效的是较弱的那条。
 package api
 
 import (
@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -110,6 +111,33 @@ func notFound(id int64) error {
 	return connect.NewError(connect.CodeNotFound, fmt.Errorf("node %d does not exist", id))
 }
 
+func permissionDenied(format string, args ...any) error {
+	return connect.NewError(connect.CodePermissionDenied, fmt.Errorf(format, args...))
+}
+
+// bearerCredential 按 scheme 选凭据路径。scheme 为 Bearer（大小写不敏感）即走 token 路径，
+// 哪怕 token 为空，此后不再看 cookie。其他 scheme 不是 hub 的凭据，按不存在处理：反代做 Basic
+// 认证时浏览器对每个请求自动附带 Authorization: Basic，若因此选了 token 路径，面板的每个请求都会被拒。
+// 同一请求带多个 Bearer 无从判定该用哪个，按无效凭据处理。
+func bearerCredential(h http.Header) (string, bool, error) {
+	var found []string
+	for _, v := range h.Values("Authorization") {
+		scheme, rest, _ := strings.Cut(strings.TrimSpace(v), " ")
+		if strings.EqualFold(scheme, "Bearer") {
+			found = append(found, strings.TrimSpace(rest))
+		}
+	}
+	switch {
+	case len(found) == 0:
+		return "", false, nil
+	case len(found) > 1:
+		return "", true, errors.New("multiple bearer credentials")
+	case found[0] == "":
+		return "", true, errors.New("empty bearer token")
+	}
+	return found[0], true, nil
+}
+
 type accessInterceptor struct{ s *Service }
 
 func (s *Service) accessInterceptor() connect.Interceptor { return accessInterceptor{s: s} }
@@ -126,6 +154,25 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 			scheme: auth.RequestScheme(req.Peer().Addr, req.Header().Get("X-Forwarded-Proto"), s.cfg.TrustedProxies),
 		}
 		ctx = context.WithValue(ctx, peerKey{}, peer)
+		// 先鉴别身份再裁决权限：无效 token 调任何方法都是 401，有效 token 调非 READ 方法是 403。
+		// Login 带 Bearer 也落在 403：token 路径只放行 READ。
+		if tok, isBearer, err := bearerCredential(req.Header()); isBearer {
+			if err != nil {
+				return nil, unauthenticated(err.Error() + "; send exactly one Authorization: Bearer <API token>")
+			}
+			ok, err := s.auth.AuthenticateAPIToken(ctx, tok)
+			if err != nil {
+				s.log.Error("API token lookup failed", "err", err)
+				return nil, internalError("API token lookup failed")
+			}
+			if !ok {
+				return nil, unauthenticated("API token unknown or revoked")
+			}
+			if level != probev1.Access_ACCESS_READ {
+				return nil, permissionDenied("%s: API tokens are read-only; this method requires a panel session", req.Spec().Procedure)
+			}
+			return next(ctx, req)
+		}
 		if level == probev1.Access_ACCESS_LOGIN {
 			// 凭据是请求体里的密码，由 Login 裁决；按来源的锁定也在那里。
 			return next(ctx, req)

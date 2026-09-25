@@ -4101,6 +4101,335 @@ func (x *AlertDelivery) GetDone() bool {
 	return false
 }
 
+type ApiToken struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name  string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// Unix 秒。
+	CreatedAt int64 `protobuf:"varint,3,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// 最近一次用于成功鉴权的墙钟 Unix 秒，精度一分钟；从未使用则缺失。
+	LastUsedAt    *int64 `protobuf:"varint,4,opt,name=last_used_at,json=lastUsedAt,proto3,oneof" json:"last_used_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApiToken) Reset() {
+	*x = ApiToken{}
+	mi := &file_probe_v1_admin_proto_msgTypes[70]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApiToken) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApiToken) ProtoMessage() {}
+
+func (x *ApiToken) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[70]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApiToken.ProtoReflect.Descriptor instead.
+func (*ApiToken) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{70}
+}
+
+func (x *ApiToken) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *ApiToken) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ApiToken) GetCreatedAt() int64 {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return 0
+}
+
+func (x *ApiToken) GetLastUsedAt() int64 {
+	if x != nil && x.LastUsedAt != nil {
+		return *x.LastUsedAt
+	}
+	return 0
+}
+
+type ListApiTokensRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListApiTokensRequest) Reset() {
+	*x = ListApiTokensRequest{}
+	mi := &file_probe_v1_admin_proto_msgTypes[71]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListApiTokensRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListApiTokensRequest) ProtoMessage() {}
+
+func (x *ListApiTokensRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[71]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListApiTokensRequest.ProtoReflect.Descriptor instead.
+func (*ListApiTokensRequest) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{71}
+}
+
+type ListApiTokensResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 按 id 升序。
+	Tokens        []*ApiToken `protobuf:"bytes,1,rep,name=tokens,proto3" json:"tokens,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListApiTokensResponse) Reset() {
+	*x = ListApiTokensResponse{}
+	mi := &file_probe_v1_admin_proto_msgTypes[72]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListApiTokensResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListApiTokensResponse) ProtoMessage() {}
+
+func (x *ListApiTokensResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[72]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListApiTokensResponse.ProtoReflect.Descriptor instead.
+func (*ListApiTokensResponse) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{72}
+}
+
+func (x *ListApiTokensResponse) GetTokens() []*ApiToken {
+	if x != nil {
+		return x.Tokens
+	}
+	return nil
+}
+
+type CreateApiTokenRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 1–64 字符（去掉控制字符与首尾空白之后），不要求唯一。
+	Name          string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateApiTokenRequest) Reset() {
+	*x = CreateApiTokenRequest{}
+	mi := &file_probe_v1_admin_proto_msgTypes[73]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateApiTokenRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateApiTokenRequest) ProtoMessage() {}
+
+func (x *CreateApiTokenRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[73]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateApiTokenRequest.ProtoReflect.Descriptor instead.
+func (*CreateApiTokenRequest) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{73}
+}
+
+func (x *CreateApiTokenRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type CreateApiTokenResponse struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	ApiToken *ApiToken              `protobuf:"bytes,1,opt,name=api_token,json=apiToken,proto3" json:"api_token,omitempty"`
+	// 明文，形如 probe_at_ 加 64 位十六进制；只在此处出现一次。
+	Token         string `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateApiTokenResponse) Reset() {
+	*x = CreateApiTokenResponse{}
+	mi := &file_probe_v1_admin_proto_msgTypes[74]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateApiTokenResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateApiTokenResponse) ProtoMessage() {}
+
+func (x *CreateApiTokenResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[74]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateApiTokenResponse.ProtoReflect.Descriptor instead.
+func (*CreateApiTokenResponse) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{74}
+}
+
+func (x *CreateApiTokenResponse) GetApiToken() *ApiToken {
+	if x != nil {
+		return x.ApiToken
+	}
+	return nil
+}
+
+func (x *CreateApiTokenResponse) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+type DeleteApiTokenRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteApiTokenRequest) Reset() {
+	*x = DeleteApiTokenRequest{}
+	mi := &file_probe_v1_admin_proto_msgTypes[75]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteApiTokenRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteApiTokenRequest) ProtoMessage() {}
+
+func (x *DeleteApiTokenRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[75]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteApiTokenRequest.ProtoReflect.Descriptor instead.
+func (*DeleteApiTokenRequest) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{75}
+}
+
+func (x *DeleteApiTokenRequest) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+type DeleteApiTokenResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteApiTokenResponse) Reset() {
+	*x = DeleteApiTokenResponse{}
+	mi := &file_probe_v1_admin_proto_msgTypes[76]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteApiTokenResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteApiTokenResponse) ProtoMessage() {}
+
+func (x *DeleteApiTokenResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_admin_proto_msgTypes[76]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteApiTokenResponse.ProtoReflect.Descriptor instead.
+func (*DeleteApiTokenResponse) Descriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{76}
+}
+
 var File_probe_v1_admin_proto protoreflect.FileDescriptor
 
 const file_probe_v1_admin_proto_rawDesc = "" +
@@ -4377,7 +4706,26 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"last_error\x18\x04 \x01(\tR\tlastError\x12&\n" +
 	"\fdelivered_at\x18\x05 \x01(\x03H\x00R\vdeliveredAt\x88\x01\x01\x12\x12\n" +
 	"\x04done\x18\x06 \x01(\bR\x04doneB\x0f\n" +
-	"\r_delivered_at*U\n" +
+	"\r_delivered_at\"\x85\x01\n" +
+	"\bApiToken\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\x03 \x01(\x03R\tcreatedAt\x12%\n" +
+	"\flast_used_at\x18\x04 \x01(\x03H\x00R\n" +
+	"lastUsedAt\x88\x01\x01B\x0f\n" +
+	"\r_last_used_at\"\x16\n" +
+	"\x14ListApiTokensRequest\"C\n" +
+	"\x15ListApiTokensResponse\x12*\n" +
+	"\x06tokens\x18\x01 \x03(\v2\x12.probe.v1.ApiTokenR\x06tokens\"+\n" +
+	"\x15CreateApiTokenRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"_\n" +
+	"\x16CreateApiTokenResponse\x12/\n" +
+	"\tapi_token\x18\x01 \x01(\v2\x12.probe.v1.ApiTokenR\bapiToken\x12\x14\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"'\n" +
+	"\x15DeleteApiTokenRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\"\x18\n" +
+	"\x16DeleteApiTokenResponse*U\n" +
 	"\tAlertKind\x12\x1a\n" +
 	"\x16ALERT_KIND_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12ALERT_KIND_OFFLINE\x10\x01\x12\x14\n" +
@@ -4389,7 +4737,7 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\vChannelKind\x12\x1c\n" +
 	"\x18CHANNEL_KIND_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15CHANNEL_KIND_TELEGRAM\x10\x01\x12\x18\n" +
-	"\x14CHANNEL_KIND_WEBHOOK\x10\x022\xeb\x12\n" +
+	"\x14CHANNEL_KIND_WEBHOOK\x10\x022\xf9\x14\n" +
 	"\fAdminService\x12>\n" +
 	"\x05Login\x12\x16.probe.v1.LoginRequest\x1a\x17.probe.v1.LoginResponse\"\x04\x88\xb5\x18\x01\x12A\n" +
 	"\x06Logout\x12\x17.probe.v1.LogoutRequest\x1a\x18.probe.v1.LogoutResponse\"\x04\x88\xb5\x18\x03\x12J\n" +
@@ -4421,7 +4769,10 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x12ListNotifyChannels\x12#.probe.v1.ListNotifyChannelsRequest\x1a$.probe.v1.ListNotifyChannelsResponse\"\x04\x88\xb5\x18\x02\x12b\n" +
 	"\x11SaveNotifyChannel\x12\".probe.v1.SaveNotifyChannelRequest\x1a#.probe.v1.SaveNotifyChannelResponse\"\x04\x88\xb5\x18\x03\x12h\n" +
 	"\x13DeleteNotifyChannel\x12$.probe.v1.DeleteNotifyChannelRequest\x1a%.probe.v1.DeleteNotifyChannelResponse\"\x04\x88\xb5\x18\x03\x12b\n" +
-	"\x11TestNotifyChannel\x12\".probe.v1.TestNotifyChannelRequest\x1a#.probe.v1.TestNotifyChannelResponse\"\x04\x88\xb5\x18\x03B.Z,github.com/xjetry/probe/gen/probe/v1;probev1b\x06proto3"
+	"\x11TestNotifyChannel\x12\".probe.v1.TestNotifyChannelRequest\x1a#.probe.v1.TestNotifyChannelResponse\"\x04\x88\xb5\x18\x03\x12V\n" +
+	"\rListApiTokens\x12\x1e.probe.v1.ListApiTokensRequest\x1a\x1f.probe.v1.ListApiTokensResponse\"\x04\x88\xb5\x18\x03\x12Y\n" +
+	"\x0eCreateApiToken\x12\x1f.probe.v1.CreateApiTokenRequest\x1a .probe.v1.CreateApiTokenResponse\"\x04\x88\xb5\x18\x03\x12Y\n" +
+	"\x0eDeleteApiToken\x12\x1f.probe.v1.DeleteApiTokenRequest\x1a .probe.v1.DeleteApiTokenResponse\"\x04\x88\xb5\x18\x03B.Z,github.com/xjetry/probe/gen/probe/v1;probev1b\x06proto3"
 
 var (
 	file_probe_v1_admin_proto_rawDescOnce sync.Once
@@ -4436,7 +4787,7 @@ func file_probe_v1_admin_proto_rawDescGZIP() []byte {
 }
 
 var file_probe_v1_admin_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_probe_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 71)
+var file_probe_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 78)
 var file_probe_v1_admin_proto_goTypes = []any{
 	(AlertKind)(0),                      // 0: probe.v1.AlertKind
 	(ProbeMetric)(0),                    // 1: probe.v1.ProbeMetric
@@ -4511,27 +4862,34 @@ var file_probe_v1_admin_proto_goTypes = []any{
 	(*ListAlertEventsResponse)(nil),     // 70: probe.v1.ListAlertEventsResponse
 	(*AlertEvent)(nil),                  // 71: probe.v1.AlertEvent
 	(*AlertDelivery)(nil),               // 72: probe.v1.AlertDelivery
-	nil,                                 // 73: probe.v1.WebhookConfig.HeadersEntry
-	(*Facts)(nil),                       // 74: probe.v1.Facts
-	(*Metrics)(nil),                     // 75: probe.v1.Metrics
-	(*ProbeTask)(nil),                   // 76: probe.v1.ProbeTask
+	(*ApiToken)(nil),                    // 73: probe.v1.ApiToken
+	(*ListApiTokensRequest)(nil),        // 74: probe.v1.ListApiTokensRequest
+	(*ListApiTokensResponse)(nil),       // 75: probe.v1.ListApiTokensResponse
+	(*CreateApiTokenRequest)(nil),       // 76: probe.v1.CreateApiTokenRequest
+	(*CreateApiTokenResponse)(nil),      // 77: probe.v1.CreateApiTokenResponse
+	(*DeleteApiTokenRequest)(nil),       // 78: probe.v1.DeleteApiTokenRequest
+	(*DeleteApiTokenResponse)(nil),      // 79: probe.v1.DeleteApiTokenResponse
+	nil,                                 // 80: probe.v1.WebhookConfig.HeadersEntry
+	(*Facts)(nil),                       // 81: probe.v1.Facts
+	(*Metrics)(nil),                     // 82: probe.v1.Metrics
+	(*ProbeTask)(nil),                   // 83: probe.v1.ProbeTask
 }
 var file_probe_v1_admin_proto_depIdxs = []int32{
-	74, // 0: probe.v1.Node.facts:type_name -> probe.v1.Facts
+	81, // 0: probe.v1.Node.facts:type_name -> probe.v1.Facts
 	7,  // 1: probe.v1.ListNodesResponse.nodes:type_name -> probe.v1.Node
 	7,  // 2: probe.v1.CreateNodeResponse.node:type_name -> probe.v1.Node
 	7,  // 3: probe.v1.UpdateNodeResponse.node:type_name -> probe.v1.Node
 	28, // 4: probe.v1.GetSnapshotResponse.nodes:type_name -> probe.v1.NodeStatus
-	75, // 5: probe.v1.NodeStatus.metrics:type_name -> probe.v1.Metrics
+	82, // 5: probe.v1.NodeStatus.metrics:type_name -> probe.v1.Metrics
 	33, // 6: probe.v1.NodeStatus.traffic:type_name -> probe.v1.Traffic
 	31, // 7: probe.v1.QueryMetricsResponse.series:type_name -> probe.v1.MetricSeries
 	32, // 8: probe.v1.MetricSeries.samples:type_name -> probe.v1.MetricSample
 	36, // 9: probe.v1.GetTrafficResponse.nodes:type_name -> probe.v1.NodeTraffic
 	33, // 10: probe.v1.NodeTraffic.traffic:type_name -> probe.v1.Traffic
 	33, // 11: probe.v1.AdjustTrafficResponse.traffic:type_name -> probe.v1.Traffic
-	76, // 12: probe.v1.ProbeTaskDetail.task:type_name -> probe.v1.ProbeTask
+	83, // 12: probe.v1.ProbeTaskDetail.task:type_name -> probe.v1.ProbeTask
 	39, // 13: probe.v1.ListProbeTasksResponse.tasks:type_name -> probe.v1.ProbeTaskDetail
-	76, // 14: probe.v1.SaveProbeTaskRequest.task:type_name -> probe.v1.ProbeTask
+	83, // 14: probe.v1.SaveProbeTaskRequest.task:type_name -> probe.v1.ProbeTask
 	39, // 15: probe.v1.SaveProbeTaskResponse.task:type_name -> probe.v1.ProbeTaskDetail
 	48, // 16: probe.v1.QueryProbesResponse.series:type_name -> probe.v1.ProbeSeries
 	49, // 17: probe.v1.ProbeSeries.samples:type_name -> probe.v1.ProbeSample
@@ -4544,71 +4902,79 @@ var file_probe_v1_admin_proto_depIdxs = []int32{
 	2,  // 24: probe.v1.NotifyChannel.kind:type_name -> probe.v1.ChannelKind
 	59, // 25: probe.v1.NotifyChannel.telegram:type_name -> probe.v1.TelegramConfig
 	60, // 26: probe.v1.NotifyChannel.webhook:type_name -> probe.v1.WebhookConfig
-	73, // 27: probe.v1.WebhookConfig.headers:type_name -> probe.v1.WebhookConfig.HeadersEntry
+	80, // 27: probe.v1.WebhookConfig.headers:type_name -> probe.v1.WebhookConfig.HeadersEntry
 	58, // 28: probe.v1.ListNotifyChannelsResponse.channels:type_name -> probe.v1.NotifyChannel
 	58, // 29: probe.v1.SaveNotifyChannelRequest.channel:type_name -> probe.v1.NotifyChannel
 	58, // 30: probe.v1.SaveNotifyChannelResponse.channel:type_name -> probe.v1.NotifyChannel
 	71, // 31: probe.v1.ListAlertEventsResponse.events:type_name -> probe.v1.AlertEvent
 	72, // 32: probe.v1.AlertEvent.deliveries:type_name -> probe.v1.AlertDelivery
-	3,  // 33: probe.v1.AdminService.Login:input_type -> probe.v1.LoginRequest
-	5,  // 34: probe.v1.AdminService.Logout:input_type -> probe.v1.LogoutRequest
-	8,  // 35: probe.v1.AdminService.ListNodes:input_type -> probe.v1.ListNodesRequest
-	10, // 36: probe.v1.AdminService.CreateNode:input_type -> probe.v1.CreateNodeRequest
-	12, // 37: probe.v1.AdminService.UpdateNode:input_type -> probe.v1.UpdateNodeRequest
-	14, // 38: probe.v1.AdminService.DeleteNode:input_type -> probe.v1.DeleteNodeRequest
-	16, // 39: probe.v1.AdminService.RotateNodeToken:input_type -> probe.v1.RotateNodeTokenRequest
-	18, // 40: probe.v1.AdminService.ReorderNodes:input_type -> probe.v1.ReorderNodesRequest
-	20, // 41: probe.v1.AdminService.OpenRegisterWindow:input_type -> probe.v1.OpenRegisterWindowRequest
-	22, // 42: probe.v1.AdminService.CloseRegisterWindow:input_type -> probe.v1.CloseRegisterWindowRequest
-	24, // 43: probe.v1.AdminService.GetRegisterWindow:input_type -> probe.v1.GetRegisterWindowRequest
-	26, // 44: probe.v1.AdminService.GetSnapshot:input_type -> probe.v1.GetSnapshotRequest
-	29, // 45: probe.v1.AdminService.QueryMetrics:input_type -> probe.v1.QueryMetricsRequest
-	34, // 46: probe.v1.AdminService.GetTraffic:input_type -> probe.v1.GetTrafficRequest
-	37, // 47: probe.v1.AdminService.AdjustTraffic:input_type -> probe.v1.AdjustTrafficRequest
-	40, // 48: probe.v1.AdminService.ListProbeTasks:input_type -> probe.v1.ListProbeTasksRequest
-	42, // 49: probe.v1.AdminService.SaveProbeTask:input_type -> probe.v1.SaveProbeTaskRequest
-	44, // 50: probe.v1.AdminService.DeleteProbeTask:input_type -> probe.v1.DeleteProbeTaskRequest
-	46, // 51: probe.v1.AdminService.QueryProbes:input_type -> probe.v1.QueryProbesRequest
-	51, // 52: probe.v1.AdminService.ListAlertRules:input_type -> probe.v1.ListAlertRulesRequest
-	54, // 53: probe.v1.AdminService.SaveAlertRule:input_type -> probe.v1.SaveAlertRuleRequest
-	56, // 54: probe.v1.AdminService.DeleteAlertRule:input_type -> probe.v1.DeleteAlertRuleRequest
-	69, // 55: probe.v1.AdminService.ListAlertEvents:input_type -> probe.v1.ListAlertEventsRequest
-	61, // 56: probe.v1.AdminService.ListNotifyChannels:input_type -> probe.v1.ListNotifyChannelsRequest
-	63, // 57: probe.v1.AdminService.SaveNotifyChannel:input_type -> probe.v1.SaveNotifyChannelRequest
-	65, // 58: probe.v1.AdminService.DeleteNotifyChannel:input_type -> probe.v1.DeleteNotifyChannelRequest
-	67, // 59: probe.v1.AdminService.TestNotifyChannel:input_type -> probe.v1.TestNotifyChannelRequest
-	4,  // 60: probe.v1.AdminService.Login:output_type -> probe.v1.LoginResponse
-	6,  // 61: probe.v1.AdminService.Logout:output_type -> probe.v1.LogoutResponse
-	9,  // 62: probe.v1.AdminService.ListNodes:output_type -> probe.v1.ListNodesResponse
-	11, // 63: probe.v1.AdminService.CreateNode:output_type -> probe.v1.CreateNodeResponse
-	13, // 64: probe.v1.AdminService.UpdateNode:output_type -> probe.v1.UpdateNodeResponse
-	15, // 65: probe.v1.AdminService.DeleteNode:output_type -> probe.v1.DeleteNodeResponse
-	17, // 66: probe.v1.AdminService.RotateNodeToken:output_type -> probe.v1.RotateNodeTokenResponse
-	19, // 67: probe.v1.AdminService.ReorderNodes:output_type -> probe.v1.ReorderNodesResponse
-	21, // 68: probe.v1.AdminService.OpenRegisterWindow:output_type -> probe.v1.OpenRegisterWindowResponse
-	23, // 69: probe.v1.AdminService.CloseRegisterWindow:output_type -> probe.v1.CloseRegisterWindowResponse
-	25, // 70: probe.v1.AdminService.GetRegisterWindow:output_type -> probe.v1.GetRegisterWindowResponse
-	27, // 71: probe.v1.AdminService.GetSnapshot:output_type -> probe.v1.GetSnapshotResponse
-	30, // 72: probe.v1.AdminService.QueryMetrics:output_type -> probe.v1.QueryMetricsResponse
-	35, // 73: probe.v1.AdminService.GetTraffic:output_type -> probe.v1.GetTrafficResponse
-	38, // 74: probe.v1.AdminService.AdjustTraffic:output_type -> probe.v1.AdjustTrafficResponse
-	41, // 75: probe.v1.AdminService.ListProbeTasks:output_type -> probe.v1.ListProbeTasksResponse
-	43, // 76: probe.v1.AdminService.SaveProbeTask:output_type -> probe.v1.SaveProbeTaskResponse
-	45, // 77: probe.v1.AdminService.DeleteProbeTask:output_type -> probe.v1.DeleteProbeTaskResponse
-	47, // 78: probe.v1.AdminService.QueryProbes:output_type -> probe.v1.QueryProbesResponse
-	52, // 79: probe.v1.AdminService.ListAlertRules:output_type -> probe.v1.ListAlertRulesResponse
-	55, // 80: probe.v1.AdminService.SaveAlertRule:output_type -> probe.v1.SaveAlertRuleResponse
-	57, // 81: probe.v1.AdminService.DeleteAlertRule:output_type -> probe.v1.DeleteAlertRuleResponse
-	70, // 82: probe.v1.AdminService.ListAlertEvents:output_type -> probe.v1.ListAlertEventsResponse
-	62, // 83: probe.v1.AdminService.ListNotifyChannels:output_type -> probe.v1.ListNotifyChannelsResponse
-	64, // 84: probe.v1.AdminService.SaveNotifyChannel:output_type -> probe.v1.SaveNotifyChannelResponse
-	66, // 85: probe.v1.AdminService.DeleteNotifyChannel:output_type -> probe.v1.DeleteNotifyChannelResponse
-	68, // 86: probe.v1.AdminService.TestNotifyChannel:output_type -> probe.v1.TestNotifyChannelResponse
-	60, // [60:87] is the sub-list for method output_type
-	33, // [33:60] is the sub-list for method input_type
-	33, // [33:33] is the sub-list for extension type_name
-	33, // [33:33] is the sub-list for extension extendee
-	0,  // [0:33] is the sub-list for field type_name
+	73, // 33: probe.v1.ListApiTokensResponse.tokens:type_name -> probe.v1.ApiToken
+	73, // 34: probe.v1.CreateApiTokenResponse.api_token:type_name -> probe.v1.ApiToken
+	3,  // 35: probe.v1.AdminService.Login:input_type -> probe.v1.LoginRequest
+	5,  // 36: probe.v1.AdminService.Logout:input_type -> probe.v1.LogoutRequest
+	8,  // 37: probe.v1.AdminService.ListNodes:input_type -> probe.v1.ListNodesRequest
+	10, // 38: probe.v1.AdminService.CreateNode:input_type -> probe.v1.CreateNodeRequest
+	12, // 39: probe.v1.AdminService.UpdateNode:input_type -> probe.v1.UpdateNodeRequest
+	14, // 40: probe.v1.AdminService.DeleteNode:input_type -> probe.v1.DeleteNodeRequest
+	16, // 41: probe.v1.AdminService.RotateNodeToken:input_type -> probe.v1.RotateNodeTokenRequest
+	18, // 42: probe.v1.AdminService.ReorderNodes:input_type -> probe.v1.ReorderNodesRequest
+	20, // 43: probe.v1.AdminService.OpenRegisterWindow:input_type -> probe.v1.OpenRegisterWindowRequest
+	22, // 44: probe.v1.AdminService.CloseRegisterWindow:input_type -> probe.v1.CloseRegisterWindowRequest
+	24, // 45: probe.v1.AdminService.GetRegisterWindow:input_type -> probe.v1.GetRegisterWindowRequest
+	26, // 46: probe.v1.AdminService.GetSnapshot:input_type -> probe.v1.GetSnapshotRequest
+	29, // 47: probe.v1.AdminService.QueryMetrics:input_type -> probe.v1.QueryMetricsRequest
+	34, // 48: probe.v1.AdminService.GetTraffic:input_type -> probe.v1.GetTrafficRequest
+	37, // 49: probe.v1.AdminService.AdjustTraffic:input_type -> probe.v1.AdjustTrafficRequest
+	40, // 50: probe.v1.AdminService.ListProbeTasks:input_type -> probe.v1.ListProbeTasksRequest
+	42, // 51: probe.v1.AdminService.SaveProbeTask:input_type -> probe.v1.SaveProbeTaskRequest
+	44, // 52: probe.v1.AdminService.DeleteProbeTask:input_type -> probe.v1.DeleteProbeTaskRequest
+	46, // 53: probe.v1.AdminService.QueryProbes:input_type -> probe.v1.QueryProbesRequest
+	51, // 54: probe.v1.AdminService.ListAlertRules:input_type -> probe.v1.ListAlertRulesRequest
+	54, // 55: probe.v1.AdminService.SaveAlertRule:input_type -> probe.v1.SaveAlertRuleRequest
+	56, // 56: probe.v1.AdminService.DeleteAlertRule:input_type -> probe.v1.DeleteAlertRuleRequest
+	69, // 57: probe.v1.AdminService.ListAlertEvents:input_type -> probe.v1.ListAlertEventsRequest
+	61, // 58: probe.v1.AdminService.ListNotifyChannels:input_type -> probe.v1.ListNotifyChannelsRequest
+	63, // 59: probe.v1.AdminService.SaveNotifyChannel:input_type -> probe.v1.SaveNotifyChannelRequest
+	65, // 60: probe.v1.AdminService.DeleteNotifyChannel:input_type -> probe.v1.DeleteNotifyChannelRequest
+	67, // 61: probe.v1.AdminService.TestNotifyChannel:input_type -> probe.v1.TestNotifyChannelRequest
+	74, // 62: probe.v1.AdminService.ListApiTokens:input_type -> probe.v1.ListApiTokensRequest
+	76, // 63: probe.v1.AdminService.CreateApiToken:input_type -> probe.v1.CreateApiTokenRequest
+	78, // 64: probe.v1.AdminService.DeleteApiToken:input_type -> probe.v1.DeleteApiTokenRequest
+	4,  // 65: probe.v1.AdminService.Login:output_type -> probe.v1.LoginResponse
+	6,  // 66: probe.v1.AdminService.Logout:output_type -> probe.v1.LogoutResponse
+	9,  // 67: probe.v1.AdminService.ListNodes:output_type -> probe.v1.ListNodesResponse
+	11, // 68: probe.v1.AdminService.CreateNode:output_type -> probe.v1.CreateNodeResponse
+	13, // 69: probe.v1.AdminService.UpdateNode:output_type -> probe.v1.UpdateNodeResponse
+	15, // 70: probe.v1.AdminService.DeleteNode:output_type -> probe.v1.DeleteNodeResponse
+	17, // 71: probe.v1.AdminService.RotateNodeToken:output_type -> probe.v1.RotateNodeTokenResponse
+	19, // 72: probe.v1.AdminService.ReorderNodes:output_type -> probe.v1.ReorderNodesResponse
+	21, // 73: probe.v1.AdminService.OpenRegisterWindow:output_type -> probe.v1.OpenRegisterWindowResponse
+	23, // 74: probe.v1.AdminService.CloseRegisterWindow:output_type -> probe.v1.CloseRegisterWindowResponse
+	25, // 75: probe.v1.AdminService.GetRegisterWindow:output_type -> probe.v1.GetRegisterWindowResponse
+	27, // 76: probe.v1.AdminService.GetSnapshot:output_type -> probe.v1.GetSnapshotResponse
+	30, // 77: probe.v1.AdminService.QueryMetrics:output_type -> probe.v1.QueryMetricsResponse
+	35, // 78: probe.v1.AdminService.GetTraffic:output_type -> probe.v1.GetTrafficResponse
+	38, // 79: probe.v1.AdminService.AdjustTraffic:output_type -> probe.v1.AdjustTrafficResponse
+	41, // 80: probe.v1.AdminService.ListProbeTasks:output_type -> probe.v1.ListProbeTasksResponse
+	43, // 81: probe.v1.AdminService.SaveProbeTask:output_type -> probe.v1.SaveProbeTaskResponse
+	45, // 82: probe.v1.AdminService.DeleteProbeTask:output_type -> probe.v1.DeleteProbeTaskResponse
+	47, // 83: probe.v1.AdminService.QueryProbes:output_type -> probe.v1.QueryProbesResponse
+	52, // 84: probe.v1.AdminService.ListAlertRules:output_type -> probe.v1.ListAlertRulesResponse
+	55, // 85: probe.v1.AdminService.SaveAlertRule:output_type -> probe.v1.SaveAlertRuleResponse
+	57, // 86: probe.v1.AdminService.DeleteAlertRule:output_type -> probe.v1.DeleteAlertRuleResponse
+	70, // 87: probe.v1.AdminService.ListAlertEvents:output_type -> probe.v1.ListAlertEventsResponse
+	62, // 88: probe.v1.AdminService.ListNotifyChannels:output_type -> probe.v1.ListNotifyChannelsResponse
+	64, // 89: probe.v1.AdminService.SaveNotifyChannel:output_type -> probe.v1.SaveNotifyChannelResponse
+	66, // 90: probe.v1.AdminService.DeleteNotifyChannel:output_type -> probe.v1.DeleteNotifyChannelResponse
+	68, // 91: probe.v1.AdminService.TestNotifyChannel:output_type -> probe.v1.TestNotifyChannelResponse
+	75, // 92: probe.v1.AdminService.ListApiTokens:output_type -> probe.v1.ListApiTokensResponse
+	77, // 93: probe.v1.AdminService.CreateApiToken:output_type -> probe.v1.CreateApiTokenResponse
+	79, // 94: probe.v1.AdminService.DeleteApiToken:output_type -> probe.v1.DeleteApiTokenResponse
+	65, // [65:95] is the sub-list for method output_type
+	35, // [35:65] is the sub-list for method input_type
+	35, // [35:35] is the sub-list for extension type_name
+	35, // [35:35] is the sub-list for extension extendee
+	0,  // [0:35] is the sub-list for field type_name
 }
 
 func init() { file_probe_v1_admin_proto_init() }
@@ -4624,13 +4990,14 @@ func file_probe_v1_admin_proto_init() {
 	file_probe_v1_admin_proto_msgTypes[29].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[46].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[69].OneofWrappers = []any{}
+	file_probe_v1_admin_proto_msgTypes[70].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_probe_v1_admin_proto_rawDesc), len(file_probe_v1_admin_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   71,
+			NumMessages:   78,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

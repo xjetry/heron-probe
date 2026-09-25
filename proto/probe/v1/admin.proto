@@ -121,6 +121,18 @@ service AdminService {
   rpc TestNotifyChannel(TestNotifyChannelRequest) returns (TestNotifyChannelResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
+  // API token 的元数据；明文只在 CreateApiToken 的响应里出现一次，hub 只存哈希。
+  rpc ListApiTokens(ListApiTokensRequest) returns (ListApiTokensResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
+  // 建一个只读 API token，以 Authorization: Bearer <token> 调用 ACCESS_READ 方法。
+  rpc CreateApiToken(CreateApiTokenRequest) returns (CreateApiTokenResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
+  // 吊销：下一个用它的请求即返回 Unauthenticated，不需要重启 hub。
+  rpc DeleteApiToken(DeleteApiTokenRequest) returns (DeleteApiTokenResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
 }
 
 message LoginRequest {
@@ -535,3 +547,33 @@ message AlertDelivery {
   // 不再尝试：成功、不可重试失败或次数耗尽；渠道删除也终止投递。
   bool done = 6;
 }
+
+message ApiToken {
+  int64 id = 1;
+  string name = 2;
+  // Unix 秒。
+  int64 created_at = 3;
+  // 最近一次用于成功鉴权的墙钟 Unix 秒，精度一分钟；从未使用则缺失。
+  optional int64 last_used_at = 4;
+}
+
+message ListApiTokensRequest {}
+message ListApiTokensResponse {
+  // 按 id 升序。
+  repeated ApiToken tokens = 1;
+}
+
+message CreateApiTokenRequest {
+  // 1–64 字符（去掉控制字符与首尾空白之后），不要求唯一。
+  string name = 1;
+}
+message CreateApiTokenResponse {
+  ApiToken api_token = 1;
+  // 明文，形如 probe_at_ 加 64 位十六进制；只在此处出现一次。
+  string token = 2;
+}
+
+message DeleteApiTokenRequest {
+  int64 id = 1;
+}
+message DeleteApiTokenResponse {}
