@@ -7,6 +7,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# install.sh 停服务后按"有效 uid 等于 probe-agent"确认进程都已退出，前提是本服务的每个进程都以它运行；
+# 新增以其他身份运行的 Exec*（如 ExecStartPre=+）或改用 DynamicUser= 时必须同步改那里的判据。
 User=probe-agent
 Group=probe-agent
 ExecStart=/usr/local/bin/probe-agent run --config /etc/probe-agent/config.json

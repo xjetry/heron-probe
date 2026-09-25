@@ -11,6 +11,7 @@ CFG_DIR=/etc/probe-agent
 CFG=$CFG_DIR/config.json
 LOG_DIR=/var/log/probe-agent
 SVC_USER=probe-agent
+SYSTEMD_WANTS=/etc/systemd/system/multi-user.target.wants/probe-agent.service
 REPO=https://github.com/xjetry/probe
 
 usage() {
@@ -49,7 +50,7 @@ service_installed() {
   esac
 }
 
-# 停服务后确认进程退出的轮询间隔（秒）与次数上限，合计最多等 10 秒。
+# 停服务后确认进程退出的轮询间隔（秒）与次数上限：sleep 合计最多 10 秒，外加每轮一次 /proc 扫描。
 STOP_POLL_INTERVAL=0.5
 STOP_POLL_MAX=20
 
@@ -68,14 +69,18 @@ scan_uid_pids() {
   done
 }
 
-# 确认没有以服务用户身份运行的进程。不论服务定义在不在都要查：定义被手工删掉而进程仍在时，
-# 发不出 stop，也只有这里能发现。判据不用 init 的状态：OpenRC 0.55.1（Alpine 3.21）实测，
-# supervise-daemon 被杀、子进程留存时 stop 打印 "Unable to shut down the supervisor" 却返回 0，
-# 之后 status 为 stopped（3），子进程仍在运行。
-# $SVC_USER 是专供 agent 的 nologin 账户（create_account 建立），以它为有效 uid 的进程都算本服务的。
-# 用户不存在时（首次安装之前、purge 之后）没有可比对的 uid，直接通过；账户被带外删除而进程仍在的情形因此查不到。
-# 按数值 uid 比对，不按用户名：busybox 的 pgrep -u 对解析不到的用户名返回 1，与"没有进程"同码。
-# 不假定 stop 返回时进程已被回收（这取决于 init 实现）：有上限地轮询，超过上限仍在才报错。
+# 确认没有以服务用户身份运行的进程。它不依赖服务定义是否安装，也不看 init 报告的状态：
+# OpenRC 0.55.1（Alpine 3.21）实测，supervise-daemon 被杀、子进程留存时 stop 打印
+# "Unable to shut down the supervisor" 却返回 0，之后 status 为 stopped（3），子进程仍在运行。
+# 判据"有效 uid 等于服务用户的 uid"与"是本服务的进程"等价，两个方向各有担保：
+# - 以服务用户运行的进程都属于本服务：$SVC_USER 是专供 agent 的 nologin 账户，由 create_account 建立。
+# - 本服务的每个进程都以服务用户运行：由 systemd 单元的 User=probe-agent（deploy/systemd/probe-agent.service）
+#   与 OpenRC 脚本的 command_user（deploy/openrc/probe-agent）保证。给服务定义加以其他身份运行的进程
+#   （例如以 root 执行的 ExecStartPre=+）或改用 DynamicUser= 时，这里会漏查，必须同步改判据。
+# 用户不存在时没有可比对的 uid，直接通过。这让以下情形查不到仍在运行的旧进程：
+# - 卸载路径不建账户：账户被带外删除后，这里直接通过。
+# - 安装路径先由 create_account 重建账户：新账户的 uid 可能与旧进程的不同，按新 uid 查不到它。
+# 不假定 stop 返回时进程已被回收：有上限地轮询，超过上限仍在才报错。
 confirm_service_stopped() {
   id "$SVC_USER" >/dev/null 2>&1 || return 0
   svc_uid=$(id -u "$SVC_USER")
@@ -91,7 +96,8 @@ confirm_service_stopped() {
   return 1
 }
 
-# 服务定义已安装时才发 stop（没有定义就无从发起），stop 命令失败即失败；之后无条件确认进程已退出。
+# 是否发 stop 以服务定义是否安装为准，stop 命令失败即失败；确认一步不依赖它，总是执行：
+# 定义不在而进程仍在时，不替人收拾，由确认失败退出。
 stop_service() {
   if service_installed; then
     case "$INIT" in
@@ -125,6 +131,11 @@ if [ "$UNINSTALL" = 1 ]; then
     systemd)
       if service_installed; then
         systemctl disable probe-agent </dev/null
+      fi
+      # enable 按单元 [Install] 段的 WantedBy=multi-user.target 建这个链接，两处改一处必须同步。
+      # 单元文件被手工删掉时上面不发 disable，链接悬空留下；判链接本身（-L），与 OpenRC 侧同口径。
+      if [ -L "$SYSTEMD_WANTS" ]; then
+        rm -f "$SYSTEMD_WANTS"
       fi
       rm -f /etc/systemd/system/probe-agent.service
       systemctl daemon-reload </dev/null;;
@@ -235,7 +246,10 @@ command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is required to verify 
 
 work=$(mktemp -d)
 BIN_TMP="$BIN.tmp.$$"
+# EXIT trap 覆盖正常结束、exit 与 set -e 触发的退出。dash 与 busybox ash 被信号终止时不执行 EXIT trap，
+# 所以把 INT、TERM、HUP 转成 exit 1，Ctrl-C 或 SSH 断开时也会清掉工作目录与写了一半的临时二进制。
 trap 'rm -rf "$work"; rm -f "$BIN_TMP"' EXIT
+trap 'exit 1' INT TERM HUP
 
 dl() {
   if [ "$FETCH" = curl ]; then curl -fsSL -o "$2" "$1"; else wget -q -O "$2" "$1"; fi
@@ -258,7 +272,7 @@ done
 install -m 0755 "$work/probe-agent" "$BIN_TMP"
 stop_service
 # 同目录 rename 原子替换目录项：exec $BIN 看到的始终是完整的旧文件或完整的新文件；
-# 写了一半的临时文件由 EXIT trap 删除。
+# 写了一半的临时文件由上面的 trap 删除。
 mv -f "$BIN_TMP" "$BIN"
 
 if [ ! -f "$CFG" ]; then

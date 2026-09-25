@@ -6,6 +6,8 @@ description="probe monitoring agent"
 supervisor=supervise-daemon
 command="/usr/local/bin/probe-agent"
 command_args="run --config /etc/probe-agent/config.json"
+# install.sh 停服务后按"有效 uid 等于 probe-agent"确认进程都已退出，前提是本服务的每个进程都以它运行；
+# 改运行身份或新增以其他身份运行的进程时必须同步改那里的判据。
 command_user="probe-agent:probe-agent"
 # 与 systemd 的 AmbientCapabilities 等价：ping_group_range 关闭时靠它拿到
 # CAP_NET_RAW（§14，OpenRC 0.55.1 实测）。
