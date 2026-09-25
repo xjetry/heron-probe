@@ -25,6 +25,14 @@ it("通知渠道导航进入应用的渠道页路由", async () => {
   expect(await screen.findByRole("heading", { name: "通知渠道" })).toBeInTheDocument();
 });
 
+it("API token 导航进入应用的 token 页路由", async () => {
+  renderWithAdmin({ listNodes: async () => ({ nodes: [] }), listApiTokens: async () => ({ tokens: [] }) }, appRouter.routes, "/nodes");
+  const link = screen.getByRole("link", { name: "API token" });
+  expect(link).toHaveAttribute("href", "/tokens");
+  fireEvent.click(link);
+  expect(await screen.findByRole("heading", { name: "API token" })).toBeInTheDocument();
+});
+
 it("告警规则导航进入应用的规则页路由", async () => {
   renderWithAdmin({ listNodes: async () => ({ nodes: [] }), listNotifyChannels: async () => ({ channels: [] }),
     listProbeTasks: async () => ({ tasks: [] }), listAlertRules: async () => ({ rules: [], states: [] }) }, appRouter.routes, "/nodes");

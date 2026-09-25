@@ -7,3 +7,8 @@ export function toggled(set: ReadonlySet<bigint>, id: bigint): Set<bigint> {
   if (next.has(id)) next.delete(id); else next.add(id);
   return next;
 }
+
+// 名称在库里不要求唯一；行操作的可访问名必须带稳定 id，才能让同名行可区分。
+export function withId(name: string, id: bigint): string {
+  return `${name}（#${id}）`;
+}

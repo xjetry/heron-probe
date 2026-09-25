@@ -7,6 +7,7 @@ import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Secret } from "../components/Secret";
 import { AdminService } from "../gen/probe/v1/admin_pb";
+import { withId } from "../lib/ids";
 
 // 卡片内容以 hub 下发的为准：与 hub 同版本，面板不另存一份。
 function download(filename: string, text: string) {
@@ -67,8 +68,8 @@ export function ApiTokens() {
                 <td className="muted">{new Date(Number(t.createdAt) * 1000).toLocaleDateString()}</td>
                 <td className="muted">{t.lastUsedAt == null ? "从未使用" : new Date(Number(t.lastUsedAt) * 1000).toLocaleString()}</td>
                 <td>
-                  <ConfirmDelete label={`吊销 ${t.name}`} confirm={`确认吊销 ${t.name}`} note="用它的请求立即失效" pending={remove.isPending}
-                    onDelete={() => remove.mutate({ id: t.id })} />
+                  <ConfirmDelete label={`吊销 ${withId(t.name, t.id)}`} confirm={`确认吊销 ${withId(t.name, t.id)}`} verb="吊销"
+                    note="用它的请求立即失效" pending={remove.isPending} onDelete={() => remove.mutate({ id: t.id })} />
                 </td>
               </tr>
             ))}

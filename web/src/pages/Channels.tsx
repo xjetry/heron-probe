@@ -7,6 +7,7 @@ import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { AdminService, ChannelKind, type NotifyChannel } from "../gen/probe/v1/admin_pb";
 import { CHANNEL_KINDS, channelTarget, labelOf, methodOf } from "../lib/alerts";
+import { withId } from "../lib/ids";
 
 const METHODS = ["POST", "PUT", "PATCH"] as const;
 type HeaderRow = { id: number; name: string; value: string };
@@ -184,7 +185,7 @@ function ChannelRow({ channel: c, saving, deleting, testing, onSave, onTest, onD
   if (editing) {
     return (
       <tr><td colSpan={5}>
-        <ChannelForm title={`编辑 ${c.name}`} initial={draftOf(c)} original={c} pending={saving}
+        <ChannelForm title={`编辑 ${withId(c.name, c.id)}`} initial={draftOf(c)} original={c} pending={saving}
           onSubmit={(d) => onSave(d, () => setEditing(false))} onCancel={() => setEditing(false)} />
       </td></tr>
     );
@@ -196,9 +197,9 @@ function ChannelRow({ channel: c, saving, deleting, testing, onSave, onTest, onD
       <td>{channelTarget(c)}</td>
       <td className="muted">{new Date(Number(c.createdAt) * 1000).toLocaleDateString()}</td>
       <td>
-        <button type="button" className="link" aria-label={`编辑 ${c.name}`} onClick={() => setEditing(true)}>编辑</button>{" "}
-        <button type="button" className="link" aria-label={`发送测试 ${c.name}`} disabled={testing} onClick={onTest}>发送测试</button>{" "}
-        <ConfirmDelete label={`删除 ${c.name}`} confirm={`确认删除 ${c.name}`} pending={deleting} onDelete={onDelete} />
+        <button type="button" className="link" aria-label={`编辑 ${withId(c.name, c.id)}`} onClick={() => setEditing(true)}>编辑</button>{" "}
+        <button type="button" className="link" aria-label={`发送测试 ${withId(c.name, c.id)}`} disabled={testing} onClick={onTest}>发送测试</button>{" "}
+        <ConfirmDelete label={`删除 ${withId(c.name, c.id)}`} confirm={`确认删除 ${withId(c.name, c.id)}`} pending={deleting} onDelete={onDelete} />
       </td>
     </tr>
   );

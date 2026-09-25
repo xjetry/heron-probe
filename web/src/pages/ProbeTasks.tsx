@@ -8,7 +8,7 @@ import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Picks } from "../components/Picks";
 import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
 import { ProbeKind, type ProbeTask } from "../gen/probe/v1/types_pb";
-import { ascending } from "../lib/ids";
+import { ascending, withId } from "../lib/ids";
 import { PROBE_KINDS, kindLabel } from "../lib/probes";
 
 type Draft = { kind: ProbeKind; target: string; intervalS: string; timeoutMs: string; nodeIds: Set<bigint> };
@@ -120,8 +120,8 @@ function TaskRow({ task: t, nodeIds, nodes, saving, deleting, onSave, onDelete }
       <td>{t.timeoutMs}</td>
       <td>{names || <span className="muted">未分配</span>}</td>
       <td>
-        <button type="button" className="link" aria-label={`编辑 ${t.target}`} onClick={() => setEditing(true)}>编辑</button>{" "}
-        <ConfirmDelete label={`删除 ${t.target}`} confirm={`确认删除 ${t.target}`} note="历史保留至到期清理" pending={deleting} onDelete={onDelete} />
+        <button type="button" className="link" aria-label={`编辑 ${withId(t.target, t.id)}`} onClick={() => setEditing(true)}>编辑</button>{" "}
+        <ConfirmDelete label={`删除 ${withId(t.target, t.id)}`} confirm={`确认删除 ${withId(t.target, t.id)}`} note="历史保留至到期清理" pending={deleting} onDelete={onDelete} />
       </td>
     </tr>
   );

@@ -44,3 +44,8 @@ it("确认态显示可选说明文字", () => {
   fireEvent.click(screen.getByRole("button", { name: "删除 东京" }));
   expect(screen.getByText("历史保留至到期清理")).toBeInTheDocument();
 });
+
+it("自定义动词同时出现在可见文字与可访问名", () => {
+  render(<ConfirmDelete label="吊销 ci（#2）" confirm="确认吊销 ci（#2）" verb="吊销" pending={false} onDelete={() => {}} />);
+  expect(screen.getByRole("button", { name: "吊销 ci（#2）" })).toHaveTextContent("吊销");
+});

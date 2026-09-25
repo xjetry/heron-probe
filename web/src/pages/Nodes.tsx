@@ -9,6 +9,7 @@ import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
 import { graceText } from "../lib/alerts";
+import { withId } from "../lib/ids";
 
 export function Nodes() {
   const qc = useQueryClient();
@@ -113,8 +114,8 @@ function NodeEditor({ node, saving, deleting, rotating, onMoveUp, onMoveDown, on
   return (
     <tr>
       <td>
-        <button type="button" className="link" aria-label={`上移 ${node.name}`} onClick={onMoveUp}>↑</button>
-        <button type="button" className="link" aria-label={`下移 ${node.name}`} onClick={onMoveDown}>↓</button>
+        <button type="button" className="link" aria-label={`上移 ${withId(node.name, node.id)}`} onClick={onMoveUp}>↑</button>
+        <button type="button" className="link" aria-label={`下移 ${withId(node.name, node.id)}`} onClick={onMoveDown}>↓</button>
       </td>
       <td><Link to={`/nodes/${node.id}`}>{node.name}</Link></td>
       <td>{node.public ? "是" : "否"}</td>
@@ -123,9 +124,9 @@ function NodeEditor({ node, saving, deleting, rotating, onMoveUp, onMoveDown, on
       <td>{graceText(node.offlineGraceS)}</td>
       <td className="muted">{new Date(Number(node.createdAt) * 1000).toLocaleDateString()}</td>
       <td>
-        <button type="button" className="link" aria-label={`编辑 ${node.name}`} onClick={() => { setDraft(draftOf(node)); setEditing(true); }}>编辑</button>{" "}
-        <button type="button" className="link" aria-label={`换 token ${node.name}`} onClick={onRotate} disabled={rotating}>换 token</button>{" "}
-        <ConfirmDelete label={`删除 ${node.name}`} confirm={`确认删除 ${node.name}`} pending={deleting} onDelete={onDelete} />
+        <button type="button" className="link" aria-label={`编辑 ${withId(node.name, node.id)}`} onClick={() => { setDraft(draftOf(node)); setEditing(true); }}>编辑</button>{" "}
+        <button type="button" className="link" aria-label={`换 token ${withId(node.name, node.id)}`} onClick={onRotate} disabled={rotating}>换 token</button>{" "}
+        <ConfirmDelete label={`删除 ${withId(node.name, node.id)}`} confirm={`确认删除 ${withId(node.name, node.id)}`} pending={deleting} onDelete={onDelete} />
       </td>
     </tr>
   );

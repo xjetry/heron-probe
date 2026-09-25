@@ -50,9 +50,21 @@ it("创建失败显示 hub 的错误原文", async () => {
 it("吊销需要确认，确认后按 id 删除", async () => {
   const deleted: bigint[] = [];
   render({ deleteApiToken: async (req) => { deleted.push(req.id); return {}; } });
-  fireEvent.click(await screen.findByRole("button", { name: "吊销 laptop" }));
+  fireEvent.click(await screen.findByRole("button", { name: "吊销 laptop（#2）" }));
   expect(deleted).toEqual([]);
-  fireEvent.click(screen.getByRole("button", { name: "确认吊销 laptop" }));
+  fireEvent.click(screen.getByRole("button", { name: "确认吊销 laptop（#2）" }));
+  await waitFor(() => expect(deleted).toEqual([2n]));
+});
+
+it("同名 token 的吊销按钮按 id 区分并删除正确行", async () => {
+  const duplicateTokens = create(ListApiTokensResponseSchema, { tokens: [
+    { id: 1n, name: "ci", createdAt: 1n },
+    { id: 2n, name: "ci", createdAt: 2n },
+  ] });
+  const deleted: bigint[] = [];
+  render({ listApiTokens: async () => duplicateTokens, deleteApiToken: async (req) => { deleted.push(req.id); return {}; } });
+  fireEvent.click(await screen.findByRole("button", { name: "吊销 ci（#2）" }));
+  fireEvent.click(screen.getByRole("button", { name: "确认吊销 ci（#2）" }));
   await waitFor(() => expect(deleted).toEqual([2n]));
 });
 

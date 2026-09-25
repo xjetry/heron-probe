@@ -20,7 +20,7 @@ it("探测任务刷新失败保留同一编辑表单与草稿", async () => {
     if (fail) throw new ConnectError("tasks refresh failed", Code.Unavailable);
     return tasks;
   } }, routes, "/probes");
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 1.1.1.1:443" }));
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
   const form = screen.getByRole("form", { name: "编辑探测任务" });
   fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "draft:443" } });
   fail = true;
@@ -120,7 +120,7 @@ it("提交剔除编辑期间从节点列表消失的分配", async () => {
   const save = vi.fn<NonNullable<AdminImpl["saveProbeTask"]>>(async () => ({}));
   const { queryClient } = renderWithAdmin({ listNodes: async () => current, listProbeTasks: async () => tasks, saveProbeTask: save }, routes, "/probes");
   await screen.findByText("东京、法兰克福");
-  fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443" }));
+  fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
   current = create(ListNodesResponseSchema, { nodes: [nodes.nodes[0]] });
   await act(async () => { await queryClient.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) }); });
   await waitFor(() => expect(within(screen.getByRole("form", { name: "编辑探测任务" })).queryByLabelText("法兰克福")).toBeNull());
@@ -139,8 +139,8 @@ it("A 行保存挂起时 B 行保存禁用，刷新完成才关闭 A 行", async
   const save = vi.fn(async () => { await saveGate; entries[0] = { ...entries[0], task: { ...entries[0].task!, target: "changed:80" } }; return {}; });
   renderWithAdmin({ listNodes: async () => nodes, listProbeTasks, saveProbeTask: save }, routes, "/probes");
   await screen.findByText("1.1.1.1:443");
-  fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443" }));
-  fireEvent.click(screen.getByRole("button", { name: "编辑 b" }));
+  fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
+  fireEvent.click(screen.getByRole("button", { name: "编辑 b（#4）" }));
   const [a, b] = screen.getAllByRole("form", { name: "编辑探测任务" });
   fireEvent.change(within(a).getByLabelText("目标"), { target: { value: "changed:80" } });
   fireEvent.submit(a);
@@ -170,12 +170,12 @@ it("最新操作清掉创建旧错误，编辑失败显示自己的正文", asyn
   fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "x" } });
   fireEvent.submit(form);
   expect(await screen.findByRole("alert")).toHaveTextContent(/^create rejected$/);
-  fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443" }));
+  fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
   fireEvent.submit(screen.getByRole("form", { name: "编辑探测任务" }));
   await waitFor(() => expect(screen.queryByRole("form", { name: "编辑探测任务" })).toBeNull());
   expect(screen.queryByRole("alert")).toBeNull();
   rejectEdit = true;
-  fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443" }));
+  fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
   fireEvent.submit(screen.getByRole("form", { name: "编辑探测任务" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(/^edit rejected$/);
 });
@@ -192,7 +192,7 @@ describe("ProbeTasks", () => {
     });
     renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks, saveProbeTask }, routes, "/probes");
     await screen.findByText("1.1.1.1:443");
-    fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
     const form = screen.getByRole("form", { name: "编辑探测任务" });
     fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "8.8.8.8:443" } });
     fireEvent.submit(form);
@@ -270,7 +270,7 @@ describe("ProbeTasks", () => {
       saveProbeTask: async (req) => { saved.push(req); return create(SaveProbeTaskResponseSchema, { version: 10n }); },
     }, routes, "/probes");
     await screen.findByText("1.1.1.1:443");
-    fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
     const form = screen.getByRole("form", { name: "编辑探测任务" });
     fireEvent.change(within(form).getByLabelText("超时 (ms)"), { target: { value: "2000" } });
     fireEvent.click(within(form).getByLabelText("法兰克福"));
@@ -284,10 +284,10 @@ describe("ProbeTasks", () => {
     const remove = vi.fn<NonNullable<AdminImpl["deleteProbeTask"]>>(async () => create(DeleteProbeTaskResponseSchema, { version: 11n }));
     renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks, deleteProbeTask: remove }, routes, "/probes");
     await screen.findByText("1.1.1.1:443");
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "删除 1.1.1.1:443" })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "删除 1.1.1.1:443（#3）" })); });
     expect(remove).not.toHaveBeenCalled();
     expect(screen.getByText("历史保留至到期清理")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "确认删除 1.1.1.1:443" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认删除 1.1.1.1:443（#3）" }));
     await waitFor(() => expect(remove).toHaveBeenCalledTimes(1));
     expect(remove.mock.calls[0][0]).toMatchObject({ id: 3n });
   });
@@ -295,12 +295,12 @@ describe("ProbeTasks", () => {
   it("编辑往返撤销已武装的删除确认", async () => {
     renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks }, routes, "/probes");
     await screen.findByText("1.1.1.1:443");
-    fireEvent.click(screen.getByRole("button", { name: "删除 1.1.1.1:443" }));
-    expect(screen.getByRole("button", { name: "确认删除 1.1.1.1:443" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除 1.1.1.1:443（#3）" }));
+    expect(screen.getByRole("button", { name: "确认删除 1.1.1.1:443（#3）" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
-    expect(screen.getByRole("button", { name: "删除 1.1.1.1:443" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "确认删除 1.1.1.1:443" })).toBeNull();
+    expect(screen.getByRole("button", { name: "删除 1.1.1.1:443（#3）" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认删除 1.1.1.1:443（#3）" })).toBeNull();
   });
 
   it("服务端错误原文可见", async () => {

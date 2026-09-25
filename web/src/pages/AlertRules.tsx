@@ -8,7 +8,7 @@ import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Picks } from "../components/Picks";
 import { AdminService, AlertKind, ProbeMetric, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/probe/v1/admin_pb";
 import { ALERT_KINDS, PROBE_METRICS, labelOf, ruleCondition, statesOf, type RuleStates } from "../lib/alerts";
-import { ascending } from "../lib/ids";
+import { ascending, withId } from "../lib/ids";
 import { taskLabel } from "../lib/probes";
 
 type Draft = {
@@ -161,7 +161,7 @@ function RuleRow({ rule: r, states, nodes, channels, tasks, nodeName, channelNam
   if (editing) {
     return (
       <tr><td colSpan={7}>
-        <RuleForm title={`编辑 ${r.name}`} nodes={nodes} channels={channels} tasks={tasks} initial={draftOf(r)} pending={saving}
+      <RuleForm title={`编辑 ${withId(r.name, r.id)}`} nodes={nodes} channels={channels} tasks={tasks} initial={draftOf(r)} pending={saving}
           onSubmit={(d) => onSave(d, () => setEditing(false))} onCancel={() => setEditing(false)} />
       </td></tr>
     );
@@ -175,8 +175,8 @@ function RuleRow({ rule: r, states, nodes, channels, tasks, nodeName, channelNam
       <td>{r.channelIds.map(channelName).join("、") || "只记事件"}</td>
       <td><RuleState enabled={r.enabled} states={states} nodeName={nodeName} /></td>
       <td>
-        <button type="button" className="link" aria-label={`编辑 ${r.name}`} onClick={() => setEditing(true)}>编辑</button>{" "}
-        <ConfirmDelete label={`删除 ${r.name}`} confirm={`确认删除 ${r.name}`} note="事件记录保留" pending={deleting} onDelete={onDelete} />
+        <button type="button" className="link" aria-label={`编辑 ${withId(r.name, r.id)}`} onClick={() => setEditing(true)}>编辑</button>{" "}
+        <ConfirmDelete label={`删除 ${withId(r.name, r.id)}`} confirm={`确认删除 ${withId(r.name, r.id)}`} note="事件记录保留" pending={deleting} onDelete={onDelete} />
       </td>
     </tr>
   );

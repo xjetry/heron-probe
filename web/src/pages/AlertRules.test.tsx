@@ -38,18 +38,18 @@ it("轮询成功更新状态，随后刷新失败仍保留同一编辑表单与�
       });
     } });
     await act(async () => { await vi.advanceTimersByTimeAsync(100); });
-    fireEvent.click(screen.getByRole("button", { name: "编辑 丢包" }));
-    const form = screen.getByRole("form", { name: "编辑 丢包" });
+    fireEvent.click(screen.getByRole("button", { name: "编辑 丢包（#8）" }));
+    const form = screen.getByRole("form", { name: "编辑 丢包（#8）" });
     fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "尚未保存" } });
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(calls).toBe(2);
     expect(screen.getByRole("cell", { name: "触发：法兰克福" })).toBeInTheDocument();
-    expect(screen.getByRole("form", { name: "编辑 丢包" })).toBe(form);
+    expect(screen.getByRole("form", { name: "编辑 丢包（#8）" })).toBe(form);
     expect(within(form).getByLabelText("名称")).toHaveValue("尚未保存");
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(calls).toBe(3);
     expect(screen.getByRole("alert")).toHaveTextContent("rules refresh failed");
-    expect(screen.getByRole("form", { name: "编辑 丢包" })).toBe(form);
+    expect(screen.getByRole("form", { name: "编辑 丢包（#8）" })).toBe(form);
     expect(within(form).getByLabelText("名称")).toHaveValue("尚未保存");
   } finally { vi.useRealTimers(); }
 });
@@ -67,13 +67,13 @@ it("依赖列表刷新失败显示横幅且编辑中的表单与草稿仍在", a
     if (fail) throw new ConnectError("nodes refresh failed", Code.Unavailable);
     return nodes;
   } });
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 丢包" }));
-  const form = screen.getByRole("form", { name: "编辑 丢包" });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 丢包（#8）" }));
+  const form = screen.getByRole("form", { name: "编辑 丢包（#8）" });
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "尚未保存" } });
   fail = true;
   await act(async () => { await queryClient.refetchQueries(); });
   expect(await screen.findByRole("alert")).toHaveTextContent("nodes refresh failed");
-  expect(within(screen.getByRole("form", { name: "编辑 丢包" })).getByLabelText("名称")).toHaveValue("尚未保存");
+  expect(within(screen.getByRole("form", { name: "编辑 丢包（#8）" })).getByLabelText("名称")).toHaveValue("尚未保存");
 });
 
 it("多个依赖同时刷新失败时错误全部可见，恢复其一即只移除其错误", async () => {
@@ -92,15 +92,15 @@ it("多个依赖同时刷新失败时错误全部可见，恢复其一即只移�
       return tasks;
     },
   });
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 丢包" }));
-  const form = screen.getByRole("form", { name: "编辑 丢包" });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 丢包（#8）" }));
+  const form = screen.getByRole("form", { name: "编辑 丢包（#8）" });
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "尚未保存" } });
   failing.add("listNodes");
   failing.add("listNotifyChannels");
   failing.add("listProbeTasks");
   await act(async () => { await queryClient.refetchQueries(); });
   expect((await screen.findAllByRole("alert")).map((a) => a.textContent)).toEqual(["nodes refresh failed", "channels refresh failed", "tasks refresh failed"]);
-  expect(within(screen.getByRole("form", { name: "编辑 丢包" })).getByLabelText("名称")).toHaveValue("尚未保存");
+  expect(within(screen.getByRole("form", { name: "编辑 丢包（#8）" })).getByLabelText("名称")).toHaveValue("尚未保存");
   failing.delete("listNodes");
   await act(async () => { await queryClient.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) }); });
   await waitFor(() => expect(screen.getAllByRole("alert").map((a) => a.textContent)).toEqual(["channels refresh failed", "tasks refresh failed"]));
@@ -121,14 +121,14 @@ it("显式空作用域不是全部节点，编辑保存仍由 hub 拒绝而不�
   expect(empty.getByRole("cell", { name: "无节点" })).toBeInTheDocument();
   expect(empty.queryByRole("cell", { name: "全部节点" })).toBeNull();
   expect(all.getByRole("cell", { name: "全部节点" })).toBeInTheDocument();
-  fireEvent.click(empty.getByRole("button", { name: "编辑 显式空" }));
-  const form = screen.getByRole("form", { name: "编辑 显式空" });
+  fireEvent.click(empty.getByRole("button", { name: "编辑 显式空（#1）" }));
+  const form = screen.getByRole("form", { name: "编辑 显式空（#1）" });
   expect(within(form).getByLabelText("全部节点（含以后新建的节点）")).not.toBeChecked();
   fireEvent.click(within(form).getByRole("button", { name: "保存" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(message);
   expect(saved).toHaveLength(1);
   expect({ allNodes: saved[0].rule!.allNodes, nodeIds: saved[0].rule!.nodeIds }).toEqual({ allNodes: false, nodeIds: [] });
-  expect(screen.getByRole("form", { name: "编辑 显式空" })).toBe(form);
+  expect(screen.getByRole("form", { name: "编辑 显式空（#1）" })).toBe(form);
 });
 
 const rttRules = create(ListAlertRulesResponseSchema, {
@@ -143,8 +143,8 @@ it("RTT 规则只改名称保留完整载荷，已有渠道保留且删除的渠
   render({ listAlertRules: async () => rttRules, listProbeTasks: async () => rttTasks,
     saveAlertRule: async (req) => { saved.push(req); return {}; },
   });
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 延迟" }));
-  const form = screen.getByRole("form", { name: "编辑 延迟" });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 延迟（#10）" }));
+  const form = screen.getByRole("form", { name: "编辑 延迟（#10）" });
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "延迟新名" } });
   fireEvent.click(within(form).getByRole("button", { name: "保存" }));
   await waitFor(() => expect(saved).toHaveLength(1));
@@ -159,16 +159,16 @@ it.each([true, false])("从 enabled=%s 编辑开关，保存与刷新后状态�
     current = create(ListAlertRulesResponseSchema, { rules: [req.rule!] });
     return {};
   } });
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 离线" }));
-  const form = screen.getByRole("form", { name: "编辑 离线" });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 离线（#7）" }));
+  const form = screen.getByRole("form", { name: "编辑 离线（#7）" });
   const input = within(form).getByLabelText("启用");
   expect((input as HTMLInputElement).checked).toBe(enabled);
   fireEvent.click(input);
   fireEvent.click(within(form).getByRole("button", { name: "保存" }));
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0].rule!.enabled).toBe(!enabled);
-  await screen.findByRole("button", { name: "编辑 离线" });
-  const row = within(screen.getByRole("button", { name: "编辑 离线" }).closest("tr")!);
+  await screen.findByRole("button", { name: "编辑 离线（#7）" });
+  const row = within(screen.getByRole("button", { name: "编辑 离线（#7）" }).closest("tr")!);
   expect(row.getByRole("cell", { name: enabled ? "已停用" : "正常" })).toBeInTheDocument();
   expect(row.queryByText(/触发：/)).toBeNull();
 });
@@ -182,8 +182,8 @@ it.each(["指标", "离线", "探测"])("主动切换%s发送新身份，刷新�
     current = create(ListAlertRulesResponseSchema, { rules: [req.rule!] });
     return {};
   } });
-  fireEvent.click(await screen.findByRole("button", { name: `编辑 ${original.name}` }));
-  const form = screen.getByRole("form", { name: `编辑 ${original.name}` });
+  fireEvent.click(await screen.findByRole("button", { name: `编辑 ${original.name}（#${original.id}）` }));
+  const form = screen.getByRole("form", { name: `编辑 ${original.name}（#${original.id}）` });
   if (change === "指标") {
     fireEvent.change(within(form).getByLabelText("指标"), { target: { value: ProbeMetric.LOSS_PCT } });
   } else {
@@ -199,7 +199,7 @@ it.each(["指标", "离线", "探测"])("主动切换%s发送新身份，刷新�
     ? { kind: AlertKind.OFFLINE, taskId: 0n, metric: ProbeMetric.UNSPECIFIED, threshold: 0, forMinutes: 0 }
     : { kind: AlertKind.PROBE, taskId: 7n, metric: ProbeMetric.LOSS_PCT, threshold: change === "探测" ? 25 : 75, forMinutes: change === "探测" ? 3 : 4 };
   expect(saved[0].rule).toEqual({ ...original, channelIds: [5n], ...expected });
-  await screen.findByRole("button", { name: `编辑 ${original.name}` });
+  await screen.findByRole("button", { name: `编辑 ${original.name}（#${original.id}）` });
   expect(screen.getByRole("cell", { name: "正常" })).toBeInTheDocument();
   expect(screen.queryByText(/触发：/)).toBeNull();
 });
@@ -283,8 +283,8 @@ it("探测规则字段随指标切换单位", async () => {
 it("编辑回填并去掉已删除节点", async () => {
   const saved: SaveAlertRuleRequest[] = [];
   render({ saveAlertRule: async (req) => { saved.push(req); return {}; } });
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 丢包" }));
-  const form = screen.getByRole("form", { name: "编辑 丢包" });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 丢包（#8）" }));
+  const form = screen.getByRole("form", { name: "编辑 丢包（#8）" });
   expect(within(form).getByLabelText("探测任务")).toHaveValue("3");
   expect(within(form).getByLabelText("阈值（%）")).toHaveValue(50);
   expect(within(form).getByLabelText("全部节点（含以后新建的节点）")).not.toBeChecked();
@@ -308,11 +308,11 @@ it("空显式作用域被 hub 拒绝时显示原文", async () => {
 it("删除两段式确认且事件记录保留", async () => {
   const removed: bigint[] = [];
   render({ deleteAlertRule: async (req) => { removed.push(req.id); return {}; } });
-  fireEvent.click(await screen.findByRole("button", { name: "删除 离线" }));
+  fireEvent.click(await screen.findByRole("button", { name: "删除 离线（#7）" }));
   expect(removed).toEqual([]);
-  expect(screen.getByRole("button", { name: "确认删除 离线" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "确认删除 离线（#7）" })).toBeInTheDocument();
   expect(screen.getByText("事件记录保留")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "确认删除 离线" }));
+  fireEvent.click(screen.getByRole("button", { name: "确认删除 离线（#7）" }));
   await waitFor(() => expect(removed).toEqual([7n]));
 });
 
@@ -337,32 +337,32 @@ it("依赖列表未到达时不渲染表单与规则表格", async () => {
 it("删除首击不发请求", async () => {
   const removed: bigint[] = [];
   render({ deleteAlertRule: async (req) => { removed.push(req.id); throw new ConnectError("ref", Code.FailedPrecondition); } });
-  fireEvent.click(await screen.findByRole("button", { name: "删除 离线" }));
-  fireEvent.click(screen.getByRole("button", { name: "取消删除 离线" }));
-  fireEvent.click(screen.getByRole("button", { name: "删除 丢包" }));
-  fireEvent.click(screen.getByRole("button", { name: "确认删除 丢包" }));
+  fireEvent.click(await screen.findByRole("button", { name: "删除 离线（#7）" }));
+  fireEvent.click(screen.getByRole("button", { name: "取消删除 离线（#7）" }));
+  fireEvent.click(screen.getByRole("button", { name: "删除 丢包（#8）" }));
+  fireEvent.click(screen.getByRole("button", { name: "确认删除 丢包（#8）" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("ref");
   expect(removed).toEqual([8n]);
 });
 
 it("编辑往返撤销已武装的删除确认", async () => {
   render({});
-  fireEvent.click(await screen.findByRole("button", { name: "删除 离线" }));
-  expect(screen.getByRole("button", { name: "确认删除 离线" })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "编辑 离线" }));
+  fireEvent.click(await screen.findByRole("button", { name: "删除 离线（#7）" }));
+  expect(screen.getByRole("button", { name: "确认删除 离线（#7）" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "编辑 离线（#7）" }));
   fireEvent.click(screen.getByRole("button", { name: "取消" }));
-  expect(screen.getByRole("button", { name: "删除 离线" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "确认删除 离线" })).toBeNull();
+  expect(screen.getByRole("button", { name: "删除 离线（#7）" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "确认删除 离线（#7）" })).toBeNull();
 });
 
 it("一行保存挂起时其它行的保存禁用", async () => {
   let releaseSave!: () => void;
   const saveGate = new Promise<void>((r) => { releaseSave = r; });
   render({ saveAlertRule: async () => { await saveGate; return {}; } });
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 丢包" }));
-  fireEvent.click(screen.getByRole("button", { name: "编辑 离线" }));
-  const probeForm = screen.getByRole("form", { name: "编辑 丢包" });
-  const offlineForm = screen.getByRole("form", { name: "编辑 离线" });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 丢包（#8）" }));
+  fireEvent.click(screen.getByRole("button", { name: "编辑 离线（#7）" }));
+  const probeForm = screen.getByRole("form", { name: "编辑 丢包（#8）" });
+  const offlineForm = screen.getByRole("form", { name: "编辑 离线（#7）" });
   fireEvent.click(within(probeForm).getByRole("button", { name: "保存" }));
   try {
     await waitFor(() => expect(within(offlineForm).getByRole("button", { name: "保存" })).toBeDisabled());
@@ -376,8 +376,8 @@ it("编辑态在刷新完成后才关闭", async () => {
   let current = rules;
   render({ listAlertRules: async () => { listCalls++; if (listCalls > 1) await listGate; return current; },
     saveAlertRule: async () => { current = withRule8Name("丢包2"); return {}; } });
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 丢包" }));
-  const form = screen.getByRole("form", { name: "编辑 丢包" });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 丢包（#8）" }));
+  const form = screen.getByRole("form", { name: "编辑 丢包（#8）" });
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "丢包2" } });
   fireEvent.click(within(form).getByRole("button", { name: "保存" }));
   try {
@@ -386,7 +386,7 @@ it("编辑态在刷新完成后才关闭", async () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(form).toBeInTheDocument();
   } finally { vi.useRealTimers(); await act(async () => { releaseList(); }); }
-  await waitFor(() => expect(screen.queryByRole("form", { name: "编辑 丢包" })).toBeNull());
+  await waitFor(() => expect(screen.queryByRole("form", { name: "编辑 丢包（#8）" })).toBeNull());
   expect(screen.getByRole("cell", { name: "丢包2" })).toBeInTheDocument();
 });
 
