@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery } from "@connectrpc/connect-query";
 import { skipToken } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
-import { queryGate, queryGateAll } from "../api/queryGate";
+import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService } from "../gen/probe/v1/admin_pb";
 import { deliveryText, transitionLabel } from "../lib/alerts";
 
@@ -22,16 +22,15 @@ export function AlertEvents() {
     getNextPageParam: (last) => (last.events.length < PAGE ? undefined : last.events[last.events.length - 1].id),
   });
   if (!valid) return <p role="alert" className="error">节点参数 {raw} 无效。<Link to="/events">查看全部事件</Link></p>;
-  const channelGate = queryGate(channels);
-  // 渠道只提供名称：它的失败只换横幅，不阻断事件；名称缺失时按编号回退。
-  const channelBanner = channelGate.ready ? channelGate.banner : (channels.error != null ? channelGate.fallback : null);
-  const gate = queryGateAll(nodes, events);
-  if (!gate.ready) return gate.fallback;
-  const [nodesData, eventsData] = gate.data;
-  const nodeList = nodesData.nodes;
+  // 外壳（标题、筛选、节点名）只依赖节点列表；事件列表是页内区域，区域未就绪不卸载外壳与筛选焦点。
+  const shell = queryGate(nodes);
+  if (!shell.ready) return shell.fallback;
+  const nodeList = shell.data.nodes;
   const nodeName = (id: bigint) => nodeList.find((n) => n.id === id)?.name ?? `节点 #${id}`;
+  // 渠道只提供名称：它的失败只进横幅，不阻断事件；名称缺失时按编号回退。
   const channelName = (id: bigint) => channels.data?.channels.find((c) => c.id === id)?.name ?? `渠道 #${id}`;
-  const rows = eventsData.pages.flatMap((p) => p.events);
+  const region = queryGate(events);
+  const rows = region.ready ? region.data.pages.flatMap((p) => p.events) : [];
   return (
     <section>
       <h1>告警事件</h1>
@@ -42,32 +41,37 @@ export function AlertEvents() {
           {nodeId !== 0n && !nodeList.some((n) => n.id === nodeId) && <option value={String(nodeId)}>{nodeName(nodeId)}</option>}
         </select>
       </label>
-      {gate.banner}
-      {channelBanner}
-      <div className="table-scroll" role="region" aria-label="告警事件" tabIndex={0}>
-        <table className="nodes">
-          <thead><tr><th>时间</th><th>节点</th><th>变化</th><th>摘要</th><th>通知</th></tr></thead>
-          <tbody>
-            {rows.map((ev) => (
-              <tr key={String(ev.id)}>
-                <td>{new Date(Number(ev.at) * 1000).toLocaleString()}</td>
-                <td>{nodeName(ev.nodeId)}</td>
-                <td className={ev.transition === "firing" ? "error" : undefined}>{transitionLabel(ev.transition)}</td>
-                <td>{ev.summary}</td>
-                <td>
-                  {ev.deliveries.length === 0
-                    ? <span className="muted">未配置渠道</span>
-                    : ev.deliveries.map((d) => <div key={String(d.channelId)}>{deliveryText(d, channelName(d.channelId))}</div>)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {events.hasNextPage && (
-        <button type="button" disabled={events.isFetchingNextPage} onClick={() => void events.fetchNextPage()}>加载更早的事件</button>
+      {errorBanner(nodes.error, region.ready ? events.error : null, channels.error)}
+      {region.ready ? (
+        <>
+          <div className="table-scroll" role="region" aria-label="告警事件" tabIndex={0}>
+            <table className="nodes">
+              <thead><tr><th>时间</th><th>节点</th><th>变化</th><th>摘要</th><th>通知</th></tr></thead>
+              <tbody>
+                {rows.map((ev) => (
+                  <tr key={String(ev.id)}>
+                    <td>{new Date(Number(ev.at) * 1000).toLocaleString()}</td>
+                    <td>{nodeName(ev.nodeId)}</td>
+                    <td className={ev.transition === "firing" ? "error" : undefined}>{transitionLabel(ev.transition)}</td>
+                    <td>{ev.summary}</td>
+                    <td>
+                      {ev.deliveries.length === 0
+                        ? <span className="muted">未配置渠道</span>
+                        : ev.deliveries.map((d) => <div key={String(d.channelId)}>{deliveryText(d, channelName(d.channelId))}</div>)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {events.hasNextPage && (
+            <button type="button" disabled={events.isFetchingNextPage} onClick={() => void events.fetchNextPage()}>加载更早的事件</button>
+          )}
+          {rows.length === 0 && <p className="muted">没有告警事件。</p>}
+        </>
+      ) : (
+        region.fallback
       )}
-      {events.data && rows.length === 0 && <p className="muted">没有告警事件。</p>}
     </section>
   );
 }

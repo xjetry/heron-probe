@@ -8,6 +8,12 @@ type DataOf<S> = S extends { data: infer D } ? Exclude<D, undefined> : never;
 
 const errorView = (error: unknown) => <p role="alert" className="error">{errorText(error)}</p>;
 
+// 多个查询可同时失败：不同错误都要可见，同文去重，顺序与输入顺序一致。
+export function errorBanner(...errors: unknown[]): ReactNode {
+  const texts = [...new Set(errors.flatMap((e) => (e != null ? [errorText(e)] : [])))];
+  return texts.map((text) => <p key={text} role="alert" className="error">{text}</p>);
+}
+
 // 轮询与失效刷新随时可能失败，已渲染的内容与未保存的草稿不能因一次刷新失败被卸载：
 // 有数据时的失败只加横幅，没有数据的失败才整页报错。
 // 数据是否到达由类型表达：页面先处理未就绪分支才拿得到 data（排除 undefined），
@@ -20,12 +26,10 @@ export function queryGateAll<Ss extends readonly QuerySlice[]>(...queries: Ss): 
       return { ready: false, fallback: q.error != null ? errorView(q.error) : <p className="muted">加载中…</p> };
     }
   }
-  // 多个查询可同时失败：不同错误都要可见，同文去重，顺序与输入查询一致。
-  const texts = [...new Set(queries.flatMap((q) => (q.error != null ? [errorText(q.error)] : [])))];
   return {
     ready: true,
     data: queries.map((q) => q.data) as { [K in keyof Ss]: DataOf<Ss[K]> },
-    banner: texts.map((text) => <p key={text} role="alert" className="error">{text}</p>),
+    banner: errorBanner(...queries.map((q) => q.error)),
   };
 }
 

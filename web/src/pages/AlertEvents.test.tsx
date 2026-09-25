@@ -97,10 +97,73 @@ it.each(["listNodes", "listAlertEvents", "listNotifyChannels"] as const)("%s 刷
   expect(screen.getByText("事件 200").closest("tr")).toBe(row);
 });
 
-it("事件查询首次失败显示整页错误", async () => {
+it("事件查询首次失败时区域内显示错误而外壳仍在", async () => {
   render({ listAlertEvents: async () => { throw new ConnectError("events unavailable", Code.Unavailable); } });
   expect(await screen.findByRole("alert")).toHaveTextContent("events unavailable");
+  expect(screen.getByLabelText("节点")).toBeInTheDocument();
   expect(screen.queryByRole("table")).toBeNull();
+});
+
+it("节点列表首次失败显示整页错误", async () => {
+  render({ listNodes: async () => { throw new ConnectError("nodes unavailable", Code.Unavailable); } });
+  expect(await screen.findByRole("alert")).toHaveTextContent("nodes unavailable");
+  expect(screen.queryByLabelText("节点")).toBeNull();
+  expect(screen.queryByRole("table")).toBeNull();
+});
+
+it("切换筛选时挂起期间下拉保持挂载与焦点", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const requests: ListAlertEventsRequest[] = [];
+  render({ listAlertEvents: async (req) => {
+    requests.push(req);
+    if (req.nodeId === 0n) return { events: [event(200n)] };
+    await gate;
+    return { events: [] };
+  } });
+  await screen.findByText("事件 200");
+  const select = screen.getByLabelText("节点");
+  select.focus();
+  fireEvent.change(select, { target: { value: "2" } });
+  try {
+    await waitFor(() => expect(requests.some((r) => r.nodeId === 2n)).toBe(true));
+    expect(screen.getByLabelText("节点")).toBe(select);
+    expect(document.activeElement).toBe(select);
+  } finally { await act(async () => { release(); }); }
+});
+
+it("筛到事件首次失败的节点后区域显示错误且能改回全部节点", async () => {
+  render({ listAlertEvents: async (req) => {
+    if (req.nodeId === 2n) throw new ConnectError("node 2 events unavailable", Code.Unavailable);
+    return { events: [event(200n)] };
+  } });
+  await screen.findByText("事件 200");
+  const select = screen.getByLabelText("节点");
+  fireEvent.change(select, { target: { value: "2" } });
+  expect(await screen.findByRole("alert")).toHaveTextContent("node 2 events unavailable");
+  expect(screen.getByLabelText("节点")).toBe(select);
+  expect(screen.queryByRole("table")).toBeNull();
+  fireEvent.change(select, { target: { value: "0" } });
+  expect(await screen.findByText("事件 200")).toBeInTheDocument();
+});
+
+it("同文的多个查询错误只显示一条", async () => {
+  let fail = false;
+  const { queryClient } = render({
+    listNodes: async () => {
+      if (fail) throw new ConnectError("hub unreachable", Code.Unavailable);
+      return nodes;
+    },
+    listAlertEvents: async () => {
+      if (fail) throw new ConnectError("hub unreachable", Code.Unavailable);
+      return { events: [event(200n)] };
+    },
+  });
+  await screen.findByText("事件 200");
+  fail = true;
+  await act(async () => { await queryClient.refetchQueries(); });
+  expect((await screen.findAllByRole("alert")).map((a) => a.textContent)).toEqual(["hub unreachable"]);
+  expect(screen.getByText("事件 200")).toBeInTheDocument();
 });
 
 it("渠道首次失败时事件仍按编号显示且出现横幅", async () => {
