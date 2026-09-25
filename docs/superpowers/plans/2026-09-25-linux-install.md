@@ -1308,3 +1308,17 @@ cd /Users/xjetry/work/vibe/probe-install && git add proto internal cmd gen web &
 
 1. spec 覆盖：§14 全节 → Task 1（服务定义，`after net`）、Task 2（install.sh 全条款，含管道 stdin、分别判断的 CA、主组回查、purge 回查）、Task 3（shellcheck 进 CI）、Task 4（构建矩阵/静态门禁/资产/版本注入/`COPYFILE_DISABLE`）、Task 5（tag 发布，`make ci` 后 `gh release create`）、Task 6（验收矩阵）、Task 7（LXC 实测）；darwin 构建、macOS launchd、hub Docker 镜像属 M6，本计划不含。§12 安装验收条 → Task 6 全部断言（管道形态、Uid/CapEff、指标对照、版本 A→B、OpenRC 重启自启、`--purge`）+ Task 3（shellcheck 进 CI）。§10 安装命令条 → Task 8（正式版本的脚本 URL 与 `--version` 同判；命令区域在 snapshot 未就绪时不渲染）。§13 第 2 项 → 结论已在 spec，体现在 Task 1 的能力授予与注释（引用 §13 第 2 项、§14，不引用实验草稿）。§4.7 → OpenRC `after net` 的注释。§1 非目标"hub 托管 agent 二进制" → 二进制只从 GitHub Releases 下载，hub 不出 install.sh 也不出二进制（面板命令指向 Releases）。
 2. Review Focus 五条落点：1 → Task 6 每格首次安装的管道形态；2 → Task 2 Step 6/7；3 → Task 6 Alpine 格删日志目录后重启 + Step 5 注入；4 → Task 2 Step 8 两个方向；5 → Task 6 重跑断言 + Step 6 注入。无下载器报错在 Task 2 Step 5，不在 Review Focus。
+
+## 执行修正
+
+执行中相对上文的偏离与补充，按主题列出；每条的理由与实测记录在提交信息与 spec §14 里。上文 Task 1、Task 2 的代码块是初稿，现行行为以 `deploy/install.sh`、`deploy/openrc/probe-agent`、`deploy/systemd/probe-agent.service` 为准。
+
+- **停服务**：上文 `[ -f "$CFG" ] && stop_service` 与吞掉错误的 stop 改为：解包、包内三项检查、写临时二进制都在停服务之前做完（准备失败时正在运行的旧服务不受影响）；服务定义已安装才发 stop，stop 失败即失败；之后无条件扫描 `/proc/[0-9]*/status`，按服务用户的有效 uid 确认没有进程在跑，有上限地轮询（0.5 秒 × 20 次），超过上限仍在即报错。stop 的退出码与 status 都不作判据：OpenRC 0.55.1（Alpine 3.21）实测 stop 在所有测过的状态都返回 0，supervise-daemon 被杀而子进程留存时，stop 之后 status 为 stopped、子进程仍在运行。卸载时停不下来即非零退出；单元文件存在时 `systemctl disable` 必须成功。
+- **链接判断**：runlevel 链接的 add 与 del 守卫都用 `-L`（上文是 `-e`：init 脚本被删后链接悬空，`-e` 判为不存在而留下它）；systemd 卸载时单元文件已被手删的，同样按 `-L` 删掉 `multi-user.target.wants` 下的悬空链接。
+- **属主**：上文"配置目录 0700"与 OpenRC `start_pre` 的 `chown -R` 改为：配置目录 root:probe-agent 0750、配置文件 probe-agent 0600；OpenRC 的日志目录 root:root 0755，只把两个日志文件（probe-agent 0640）交给运行用户，由 `checkpath` 每次启动确认，每条带 `|| return 1`（实测不带时 checkpath 失败被 start_pre 吞掉、服务照常启动）。服务用户能增删目录项时，root 按路径操作的对象可被替换，所以 root 要操作的目录都保持 root 属主。
+- **账户**：先建组再以其为主组建用户（Debian 的 perl 版 adduser 用 `--ingroup`，busybox 用 `-G`）；用户已存在而主组不符时报错并写出实际主组，主组丢失时写出 gid。
+- **参数与错误**：`--purge` 不带 `--uninstall` 是用法错误（退出 2），不再去安装；SHA256SUMS 里没有本包那一行时报 `SHA256SUMS has no entry for <包名>`；两处 `--help` 探测也显式 `</dev/null`；dash 与 busybox ash 被信号终止时不执行 EXIT trap，所以把 INT、TERM、HUP 转成 `exit 1`，Ctrl-C 或 SSH 断开时也会清掉临时文件。
+- **Task 2 Step 7 的环境**：bookworm 上无法按上文删掉 useradd 与 groupadd（perl 版 addgroup、adduser 内部调用它们），改为把 adduser、groupadd 复制进 `/usr/bin` 并设 `PATH=/usr/bin:/bin` 隔离；"只有 perl addgroup、没有 groupadd"的组合在 bookworm 上不存在，addgroup 分支的真实覆盖是 Alpine busybox（Step 6）。
+- **打包**：`.gitignore` 用 `/dist/`（不锚定的 `dist/` 会连带匹配 `internal/hub/web/dist/`，破坏那里的 `.gitkeep` 例外）。两处 tar 加 `--no-xattrs`：`COPYFILE_DISABLE=1` 只去掉 `._*` 条目，macOS 的 bsdtar 仍把 `com.apple.provenance` 写成 pax 扩展头，GNU tar 解包时逐条告警；加上后在 debian:bookworm-slim 用 GNU tar 解包没有告警。
+- **OrbStack 镜像与连通**（Task 6 Step 1，arm64 实测）：`alpine:3.21`、`debian:12`、`ubuntu:24.04` 可建；Rocky 的写法是 `rocky:9`（`rockylinux:9` 不合法），实测时三次创建都因镜像 CDN 超时失败；`host.orb.internal` 可达宿主的 127.0.0.1，不需要备用地址。
+- **LXC 对照实验**（Task 7）：bookworm-backports 的 Incus、容器内 systemd 252、`security.nesting=false` 下，静态 `User=` 与 `DynamicUser=` 都能启动，没有出现 226/NAMESPACE。spec §14 与 systemd 单元的注释不再引用那条未复现的记录，单元注释只写可核实的理由。
