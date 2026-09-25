@@ -33,7 +33,7 @@ it("创建后只显示一次明文并刷新列表", async () => {
   const form = await screen.findByRole("form", { name: "新建 API token" });
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "agent" } });
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
-  expect(await screen.findByLabelText("API token agent")).toHaveTextContent("probe_at_abc");
+  expect(await screen.findByLabelText("API token agent（#3）")).toHaveTextContent("probe_at_abc");
   expect(created).toEqual(["agent"]);
   await waitFor(() => expect(lists).toBe(2));
   expect(within(form).getByLabelText("名称")).toHaveValue("");
@@ -66,6 +66,27 @@ it("同名 token 的吊销按钮按 id 区分并删除正确行", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "吊销 ci（#2）" }));
   fireEvent.click(screen.getByRole("button", { name: "确认吊销 ci（#2）" }));
   await waitFor(() => expect(deleted).toEqual([2n]));
+});
+
+it("吊销卡片所属 token 时清掉明文，吊销别的保留", async () => {
+  render({
+    listApiTokens: async () => create(ListApiTokensResponseSchema, { tokens: [
+      { id: 3n, name: "agent", createdAt: 1n },
+      { id: 4n, name: "other", createdAt: 1n },
+    ] }),
+    createApiToken: async (req) => ({ apiToken: { id: 3n, name: req.name, createdAt: 1n }, token: "probe_at_abc" }),
+    deleteApiToken: async () => ({}),
+  });
+  const form = await screen.findByRole("form", { name: "新建 API token" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "agent" } });
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  expect(await screen.findByLabelText("API token agent（#3）")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "吊销 other（#4）" }));
+  fireEvent.click(screen.getByRole("button", { name: "确认吊销 other（#4）" }));
+  expect(await screen.findByLabelText("API token agent（#3）")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "吊销 agent（#3）" }));
+  fireEvent.click(screen.getByRole("button", { name: "确认吊销 agent（#3）" }));
+  await waitFor(() => expect(screen.queryByLabelText("API token agent（#3）")).toBeNull());
 });
 
 it("下载的入口卡片就是 hub 下发的 guide", async () => {

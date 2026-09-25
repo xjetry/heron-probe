@@ -83,14 +83,14 @@ it("创建成功后复位全部字段，下一次提交不沿用旧值", async (
   fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "old:80" } });
   fireEvent.change(within(form).getByLabelText("间隔 (s)"), { target: { value: "10" } });
   fireEvent.change(within(form).getByLabelText("超时 (ms)"), { target: { value: "500" } });
-  fireEvent.click(within(form).getByLabelText("东京"));
+  fireEvent.click(within(form).getByLabelText("东京（#1）"));
   fireEvent.submit(form);
   await waitFor(() => expect(within(screen.getByRole("form", { name: "新建探测任务" })).getByLabelText("目标")).toHaveValue(""));
   const next = screen.getByRole("form", { name: "新建探测任务" });
   expect(within(next).getByLabelText("类型")).toHaveValue(String(ProbeKind.ICMP));
   expect(within(next).getByLabelText("间隔 (s)")).toHaveValue(60);
   expect(within(next).getByLabelText("超时 (ms)")).toHaveValue(1000);
-  expect(within(next).getByLabelText("东京")).not.toBeChecked();
+  expect(within(next).getByLabelText("东京（#1）")).not.toBeChecked();
   fireEvent.change(within(next).getByLabelText("目标"), { target: { value: "new.example" } });
   fireEvent.submit(next);
   await waitFor(() => expect(saved).toHaveLength(2));
@@ -261,8 +261,8 @@ describe("ProbeTasks", () => {
     fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "1.1.1.1:80" } });
     fireEvent.change(within(form).getByLabelText("间隔 (s)"), { target: { value: "60" } });
     fireEvent.change(within(form).getByLabelText("超时 (ms)"), { target: { value: "800" } });
-    fireEvent.click(within(form).getByLabelText("法兰克福"));
-    fireEvent.click(within(form).getByLabelText("东京"));
+    fireEvent.click(within(form).getByLabelText("法兰克福（#2）"));
+    fireEvent.click(within(form).getByLabelText("东京（#1）"));
     fireEvent.submit(form);
     await waitFor(() => expect(saved).toHaveLength(1));
     expect(saved[0].task).toMatchObject({ id: 0n, kind: ProbeKind.TCP, target: "1.1.1.1:80", intervalS: 60, timeoutMs: 800 });
@@ -299,7 +299,7 @@ describe("ProbeTasks", () => {
     fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
     const form = screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" });
     fireEvent.change(within(form).getByLabelText("超时 (ms)"), { target: { value: "2000" } });
-    fireEvent.click(within(form).getByLabelText("法兰克福"));
+    fireEvent.click(within(form).getByLabelText("法兰克福（#2）"));
     fireEvent.submit(form);
     await waitFor(() => expect(saved).toHaveLength(1));
     expect(saved[0].task).toMatchObject({ id: 3n, kind: ProbeKind.TCP, target: "1.1.1.1:443", intervalS: 30, timeoutMs: 2000 });

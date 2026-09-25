@@ -1,4 +1,4 @@
-import { toggled } from "../lib/ids";
+import { toggled, withId } from "../lib/ids";
 
 // 节点与渠道的多选共用；列表刷新后已删除对象的勾选仍留在集合里，由调用方提交时与当前列表求交。
 export function Picks({ legend, items, selected, onChange }: {
@@ -9,7 +9,7 @@ export function Picks({ legend, items, selected, onChange }: {
       <legend>{legend}</legend>
       {items.length === 0 && <span className="muted">没有可选项。</span>}
       {items.map((it) => (
-        <label key={String(it.id)}><input type="checkbox" checked={selected.has(it.id)} onChange={() => onChange(toggled(selected, it.id))} />{it.name}</label>
+        <label key={String(it.id)}><input type="checkbox" checked={selected.has(it.id)} onChange={() => onChange(toggled(selected, it.id))} />{withId(it.name, it.id)}</label>
       ))}
     </fieldset>
   );

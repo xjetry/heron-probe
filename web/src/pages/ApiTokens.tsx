@@ -22,15 +22,27 @@ function download(filename: string, text: string) {
 export function ApiTokens() {
   const qc = useQueryClient();
   const [name, setName] = useState("");
-  const [secret, setSecret] = useState<{ label: string; value: string } | null>(null);
+  // id 记下明文属于哪一行：吊销的若正是这一行，卡片必须一起消失。
+  const [secret, setSecret] = useState<{ id: bigint; label: string; value: string } | null>(null);
   const { error, mutationOptions } = useLatestError();
   const list = useQuery(AdminService.method.listApiTokens, {});
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listApiTokens, cardinality: "finite" }) });
   const create = useMutation(AdminService.method.createApiToken, {
     ...mutationOptions,
-    onSuccess: (r) => { setSecret({ label: `API token ${r.apiToken?.name}`, value: r.token }); setName(""); return refresh(); },
+    onSuccess: (r) => {
+      const tok = r.apiToken;
+      if (tok) setSecret({ id: tok.id, label: `API token ${withId(tok.name, tok.id)}`, value: r.token });
+      setName("");
+      return refresh();
+    },
   });
-  const remove = useMutation(AdminService.method.deleteApiToken, { ...mutationOptions, onSuccess: refresh });
+  const remove = useMutation(AdminService.method.deleteApiToken, {
+    ...mutationOptions,
+    onSuccess: (_r, req) => {
+      setSecret((cur) => (cur?.id === req.id ? null : cur));
+      return refresh();
+    },
+  });
   const reference = useMutation(AdminService.method.getApiReference, { ...mutationOptions, onSuccess: (r) => download("SKILL.md", r.guide) });
   const gate = queryGate(list);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);

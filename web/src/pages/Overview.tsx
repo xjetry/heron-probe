@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService, type NodeStatus } from "../gen/probe/v1/admin_pb";
 import { ago, bytes, percent } from "../lib/format";
+import { withId } from "../lib/ids";
 
 // 实时视图靠轮询；hub 的上报间隔不会更短，2 秒是让"刚上报"尽快可见的取值。
 export const POLL_MS = 2000;
@@ -45,7 +46,7 @@ function NodeRow({ node, now }: { node: NodeStatus; now: number }) {
     <tr className={node.online ? "online" : "offline"}>
       <td>
         <span className={`dot ${node.online ? "ok" : "bad"}`} role="img" aria-label={node.online ? "在线" : "离线"} />
-        <Link to={`/nodes/${node.id}`}>{node.name}</Link>
+        <Link to={`/nodes/${node.id}`} aria-label={withId(node.name, node.id)}>{node.name}</Link>
       </td>
       <td>{m?.cpuPct !== undefined ? <Bar value={m.cpuPct} label={percent(m.cpuPct)} /> : <Missing />}</td>
       <td>{m?.memUsed !== undefined && m.memTotal ? <Bar value={ratio(m.memUsed, m.memTotal)} label={`${bytes(m.memUsed)} / ${bytes(m.memTotal)}`} /> : <Missing />}</td>

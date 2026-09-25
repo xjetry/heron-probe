@@ -17,20 +17,39 @@ export function Nodes() {
   const nodes = useQuery(AdminService.method.listNodes, {});
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) });
   // token 只在创建与换 token 的响应里各出现一次，hub 不存明文；展示不经过 isLatest 门控——门控丢弃迟到结果时会把这唯一一份明文一起丢掉。
-  const [secret, setSecret] = useState<{ label: string; value: string } | null>(null);
+  // id 记下明文属于哪一行：删除的若正是这一行，卡片必须一起消失，不能继续展示已删对象的凭据。
+  const [secret, setSecret] = useState<{ id: bigint; label: string; value: string } | null>(null);
   const [name, setName] = useState("");
 
   const create = useMutation(AdminService.method.createNode, {
     ...mutationOptions,
-    onSuccess: (r) => { setSecret({ label: `节点 ${r.node?.name} 的 token`, value: r.token }); setName(""); void refresh(); },
+    onSuccess: (r) => {
+      const n = r.node;
+      if (n) setSecret({ id: n.id, label: `节点 ${withId(n.name, n.id)} 的 token`, value: r.token });
+      setName("");
+      void refresh();
+    },
   });
   // 各行共用一个 mutation observer，重叠的 mutate 只回调最后一次；因此任一行保存挂起时禁用全部行的保存，退出编辑的才是保存的那一行。
   // 返回刷新 promise，编辑态在列表显示已保存值之后才关闭。
   const update = useMutation(AdminService.method.updateNode, { ...mutationOptions, onSuccess: refresh });
-  const remove = useMutation(AdminService.method.deleteNode, { ...mutationOptions, onSuccess: refresh });
+  const remove = useMutation(AdminService.method.deleteNode, {
+    ...mutationOptions,
+    onSuccess: (_r, req) => {
+      setSecret((cur) => (cur?.id === req.id ? null : cur));
+      return refresh();
+    },
+  });
   const rotate = useMutation(AdminService.method.rotateNodeToken, {
     ...mutationOptions,
-    onSuccess: (r, req) => { setSecret({ label: `节点 ${nodes.data?.nodes.find((n) => n.id === req.id)?.name ?? req.id} 的新 token`, value: r.token }); return refresh(); },
+    onSuccess: (r, req) => {
+      // 请求里的 id 由调用方保证；缺失时没有可归属的卡片。
+      if (req.id == null) return refresh();
+      const id = req.id;
+      const name = nodes.data?.nodes.find((n) => n.id === id)?.name ?? String(id);
+      setSecret({ id, label: `节点 ${withId(name, id)} 的新 token`, value: r.token });
+      return refresh();
+    },
   });
   const reorder = useMutation(AdminService.method.reorderNodes, { ...mutationOptions, onSuccess: refresh });
 
@@ -117,7 +136,7 @@ function NodeEditor({ node, saving, deleting, rotating, onMoveUp, onMoveDown, on
         <button type="button" className="link" aria-label={`上移 ${withId(node.name, node.id)}`} onClick={onMoveUp}>↑</button>
         <button type="button" className="link" aria-label={`下移 ${withId(node.name, node.id)}`} onClick={onMoveDown}>↓</button>
       </td>
-      <td><Link to={`/nodes/${node.id}`}>{node.name}</Link></td>
+      <td><Link to={`/nodes/${node.id}`} aria-label={withId(node.name, node.id)}>{node.name}</Link></td>
       <td>{node.public ? "是" : "否"}</td>
       <td className="muted">{node.note}</td>
       <td>每月 {node.trafficResetDay} 日</td>

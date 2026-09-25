@@ -45,7 +45,7 @@ describe("Overview", () => {
       expect(missing).toHaveTextContent(/^–$/);
     }
     expect(never.getByText("从未")).toBeInTheDocument();
-    expect(web.getByRole("link", { name: "web-01" })).toHaveAttribute("href", "/nodes/1");
+    expect(web.getByRole("link", { name: "web-01（#1）" })).toHaveAttribute("href", "/nodes/1");
   });
 
   it("按 POLL_MS 轮询", async () => {

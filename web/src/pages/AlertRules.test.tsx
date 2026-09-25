@@ -236,9 +236,9 @@ it("新建离线规则覆盖全部节点时不带节点列表", async () => {
   render({ saveAlertRule: async (req) => { saved.push(req); return {}; } });
   const form = await screen.findByRole("form", { name: "新建告警规则" });
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "全网离线" } });
-  fireEvent.click(within(form).getByLabelText("hook"));
+  fireEvent.click(within(form).getByLabelText("hook（#5）"));
   fireEvent.click(within(form).getByLabelText("全部节点（含以后新建的节点）"));
-  fireEvent.click(within(form).getByLabelText("东京"));
+  fireEvent.click(within(form).getByLabelText("东京（#1）"));
   fireEvent.click(within(form).getByLabelText("全部节点（含以后新建的节点）"));
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
   await waitFor(() => expect(saved).toHaveLength(1));
@@ -255,8 +255,8 @@ it("显式作用域按升序发出节点列表", async () => {
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "部分节点" } });
   fireEvent.click(within(form).getByLabelText("全部节点（含以后新建的节点）"));
   const scope = within(form).getByRole("group", { name: "作用域节点" });
-  fireEvent.click(within(scope).getByLabelText("法兰克福"));
-  fireEvent.click(within(scope).getByLabelText("东京"));
+  fireEvent.click(within(scope).getByLabelText("法兰克福（#2）"));
+  fireEvent.click(within(scope).getByLabelText("东京（#1）"));
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0].rule!.allNodes).toBe(false);
@@ -288,8 +288,8 @@ it("编辑回填并去掉已删除节点", async () => {
   expect(within(form).getByLabelText("探测任务")).toHaveValue("3");
   expect(within(form).getByLabelText("阈值（%）")).toHaveValue(50);
   expect(within(form).getByLabelText("全部节点（含以后新建的节点）")).not.toBeChecked();
-  expect(within(form).getByLabelText("东京")).toBeChecked();
-  expect(within(form).getByLabelText("法兰克福")).not.toBeChecked();
+  expect(within(form).getByLabelText("东京（#1）")).toBeChecked();
+  expect(within(form).getByLabelText("法兰克福（#2）")).not.toBeChecked();
   fireEvent.click(within(form).getByRole("button", { name: "保存" }));
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0].rule!.id).toBe(8n);

@@ -20,7 +20,7 @@ describe("Nodes", () => {
       if (fail) throw new ConnectError("nodes refresh failed", Code.Unavailable);
       return { nodes: two };
     } }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     const input = screen.getByLabelText("名称 a（#1）");
     fireEvent.change(input, { target: { value: "尚未保存" } });
@@ -29,7 +29,7 @@ describe("Nodes", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("nodes refresh failed");
     expect(screen.getByLabelText("名称 a（#1）")).toBe(input);
     expect(input).toHaveValue("尚未保存");
-    expect(screen.getByRole("link", { name: "b" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "b（#2）" })).toBeInTheDocument();
   });
 
   it("列表挂起时显示加载中而不是创建表单", async () => {
@@ -46,7 +46,7 @@ describe("Nodes", () => {
       return { nodes: two };
     });
     renderWithAdmin({ listNodes, deleteNode: async () => ({}) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "删除 a（#1）" }));
     const button = screen.getByRole("button", { name: "确认删除 a（#1）" });
     vi.useFakeTimers();
@@ -60,7 +60,7 @@ describe("Nodes", () => {
 
   it("编辑往返撤销已武装的删除确认", async () => {
     renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "删除 a（#1）" }));
     expect(screen.getByRole("button", { name: "确认删除 a（#1）" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
@@ -80,7 +80,7 @@ describe("Nodes", () => {
     const { queryClient } = renderWithAdmin({
       listNodes, rotateNodeToken: async () => ({ token: "new" }), reorderNodes: async () => ({}),
     }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     vi.useFakeTimers();
     try {
       await act(async () => {
@@ -102,7 +102,7 @@ describe("Nodes", () => {
     const listNodes = vi.fn(async () => { if (listNodes.mock.calls.length > 1) await listGate; return { nodes: current }; });
     const updateNode = vi.fn(async () => { await saveGate; current = [{ ...two[0], name: "changed" }, two[1]]; return {}; });
     renderWithAdmin({ listNodes, updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
     fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "changed" } });
@@ -117,7 +117,7 @@ describe("Nodes", () => {
       expect(listNodes).toHaveBeenCalledTimes(2);
       expect(within(aRow).queryByRole("button", { name: "保存" })).toBeInTheDocument();
     } finally { vi.useRealTimers(); await act(async () => { releaseSave(); releaseList(); }); }
-    expect(await screen.findByRole("link", { name: "changed" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "changed（#1）" })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "保存" })).toEqual([b]);
   });
 
@@ -127,7 +127,7 @@ describe("Nodes", () => {
       createNode: async () => { throw new ConnectError("create rejected", Code.InvalidArgument); },
       updateNode: async () => { if (rejectEdit) throw new ConnectError("edit rejected", Code.InvalidArgument); return {}; },
     }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "x" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/^create rejected$/);
@@ -150,7 +150,7 @@ describe("Nodes", () => {
       return { node: { ...two[0], name: "changed" } };
     });
     renderWithAdmin({ listNodes: async () => ({ nodes: two }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "changed" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -167,7 +167,7 @@ describe("Nodes", () => {
   });
   it.each(["", "29", "1.5", "15"])("重置日 %s 只有 1–28 的整数能保存", async (value) => {
     renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("重置日 a（#1）"), { target: { value } });
     if (value === "15") expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
@@ -176,7 +176,7 @@ describe("Nodes", () => {
 
   it("编辑重置日说明周期量清零的后果", async () => {
     renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     expect(screen.getByText("若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。")).toBeInTheDocument();
   });
@@ -193,7 +193,7 @@ describe("Nodes", () => {
     const windowKey = createConnectQueryKey({ schema: AdminService.method.getRegisterWindow, cardinality: "finite" });
     queryClient.setQueryData(snapshotKey, create(GetSnapshotResponseSchema));
     queryClient.setQueryData(windowKey, create(GetRegisterWindowResponseSchema));
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
     await waitFor(() => expect(listNodes).toHaveBeenCalledTimes(2));
@@ -203,13 +203,13 @@ describe("Nodes", () => {
   it("再次编辑从当前节点而非旧草稿开始", async () => {
     let list = two;
     const { queryClient } = renderWithAdmin({ listNodes: async () => ({ nodes: list }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "abandoned" } });
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     list = [{ ...two[0], name: "current", public: true, note: "current note" }, two[1]];
     await act(async () => { await queryClient.refetchQueries(); });
-    await screen.findByRole("link", { name: "current" });
+    await screen.findByRole("link", { name: "current（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 current（#1）" }));
     expect({
       name: (screen.getByLabelText("名称 current（#1）") as HTMLInputElement).value,
@@ -223,7 +223,7 @@ describe("Nodes", () => {
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const pending = async () => { await gate; return { token: "new" }; };
     renderWithAdmin({ listNodes: async () => ({ nodes: two }), deleteNode: async () => { await gate; return {}; }, rotateNodeToken: pending }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     if (operation === "delete") fireEvent.click(screen.getByRole("button", { name: "删除 a（#1）" }));
     const button = screen.getByRole("button", { name: operation === "delete" ? "确认删除 a（#1）" : "换 token a（#1）" });
     fireEvent.click(button);
@@ -234,7 +234,7 @@ describe("Nodes", () => {
     const fail = async () => { throw new ConnectError("request failed", Code.Unavailable); };
     renderWithAdmin({ listNodes: source === "list" ? fail : async () => ({ nodes: two }), createNode: fail }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     if (source === "create") {
-      await screen.findByRole("link", { name: "a" });
+      await screen.findByRole("link", { name: "a（#1）" });
       fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
       fireEvent.click(screen.getByRole("button", { name: "创建" }));
     }
@@ -245,21 +245,40 @@ describe("Nodes", () => {
     const { router } = renderWithAdmin({ listNodes: async () => ({ nodes: two }), createNode }, [
       { path: "/nodes", Component: Nodes }, { path: "/away", element: <h1>away</h1> },
     ], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
-    expect(await screen.findByLabelText("节点 c 的 token")).toHaveTextContent("deadbeef");
+    expect(await screen.findByLabelText("节点 c（#3） 的 token")).toHaveTextContent("deadbeef");
     expect(createNode).toHaveBeenCalledWith(expect.objectContaining({ name: "c" }), expect.anything());
     await act(() => router.navigate("/away"));
     await act(() => router.navigate("/nodes"));
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     expect(screen.queryByText("deadbeef")).not.toBeInTheDocument();
+  });
+
+  it("删除卡片所属节点时清掉明文，删除别的保留", async () => {
+    const nodes = [{ ...two[0], id: 3n, name: "c" }, two[1]];
+    renderWithAdmin({
+      listNodes: async () => ({ nodes }),
+      createNode: async () => ({ node: { id: 3n, name: "c" }, token: "deadbeef" }),
+      deleteNode: async () => ({}),
+    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "c（#3）" });
+    fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    expect(await screen.findByLabelText("节点 c（#3） 的 token")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "删除 b（#2）" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认删除 b（#2）" }));
+    expect(await screen.findByLabelText("节点 c（#3） 的 token")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "删除 c（#3）" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认删除 c（#3）" }));
+    await waitFor(() => expect(screen.queryByLabelText("节点 c（#3） 的 token")).toBeNull());
   });
 
   it("删除需要二次确认", async () => {
     const deleteNode = vi.fn(async () => ({}));
     renderWithAdmin({ listNodes: async () => ({ nodes: two }), deleteNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "删除 a（#1）" })); });
     expect(deleteNode).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "确认删除 a（#1）" }));
@@ -270,7 +289,7 @@ describe("Nodes", () => {
     const sameName = [two[0], { ...two[1], id: 11n, name: "a" }];
     const deleteNode = vi.fn(async () => ({}));
     renderWithAdmin({ listNodes: async () => ({ nodes: sameName }), deleteNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findAllByRole("link", { name: "a" });
+    await screen.findAllByRole("link", { name: /^a（#/ });
     fireEvent.click(screen.getByRole("button", { name: "删除 a（#11）" }));
     fireEvent.click(screen.getByRole("button", { name: "确认删除 a（#11）" }));
     await waitFor(() => expect(deleteNode).toHaveBeenCalledWith(expect.objectContaining({ id: 11n }), expect.anything()));
@@ -280,7 +299,7 @@ describe("Nodes", () => {
     const sameName = [two[0], { ...two[1], id: 11n, name: "a" }];
     const updateNode = vi.fn(async () => ({}));
     renderWithAdmin({ listNodes: async () => ({ nodes: sameName }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findAllByRole("link", { name: "a" });
+    await screen.findAllByRole("link", { name: /^a（#/ });
     const edits = screen.getAllByRole("button", { name: /^编辑 a/ });
     fireEvent.click(edits[0]);
     fireEvent.click(edits[1]);
@@ -295,7 +314,7 @@ describe("Nodes", () => {
     const reorderNodes = vi.fn(async () => ({}));
     const three = [...two, { ...two[0], id: 3n, name: "c", sortOrder: 2 }];
     renderWithAdmin({ listNodes: async () => ({ nodes: three }), reorderNodes }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: button }));
     await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n, 3n] }), expect.anything()));
   });
@@ -303,7 +322,7 @@ describe("Nodes", () => {
   it("编辑回传全部字段", async () => {
     const updateNode = vi.fn(async () => ({ node: two[0] }));
     renderWithAdmin({ listNodes: async () => ({ nodes: two }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "a2" } });
     fireEvent.click(screen.getByLabelText("公开 a（#1）"));
@@ -315,9 +334,9 @@ describe("Nodes", () => {
 
   it("宽限期列显示默认与秒数", async () => {
     renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    const a = within((await screen.findByRole("link", { name: "a" })).closest("tr")!);
+    const a = within((await screen.findByRole("link", { name: "a（#1）" })).closest("tr")!);
     expect(a.getByRole("cell", { name: "90 秒" })).toBeInTheDocument();
-    const b = within(screen.getByRole("link", { name: "b" }).closest("tr")!);
+    const b = within(screen.getByRole("link", { name: "b（#2）" }).closest("tr")!);
     expect(b.getByRole("cell", { name: "默认" })).toBeInTheDocument();
   });
 
@@ -330,7 +349,7 @@ describe("Nodes", () => {
       return { nodes: two };
     });
     renderWithAdmin({ listNodes, updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     const grace = screen.getByLabelText("离线宽限期（秒） a（#1）");
     expect(grace).toHaveValue(90);
@@ -357,18 +376,18 @@ describe("Nodes", () => {
       .mockResolvedValueOnce({ nodes: two })
       .mockResolvedValue({ nodes: [{ ...two[0], offlineGraceS: undefined }, two[1]] });
     renderWithAdmin({ listNodes, updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("离线宽限期（秒） a（#1）"), { target: { value: "0" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, offlineGraceS: 0 }), expect.anything()));
-    const a = within((await screen.findByRole("link", { name: "a" })).closest("tr")!);
+    const a = within((await screen.findByRole("link", { name: "a（#1）" })).closest("tr")!);
     expect(a.getByRole("cell", { name: "默认" })).toBeInTheDocument();
   });
 
   it("非法宽限期禁用保存", async () => {
     renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("离线宽限期（秒） a（#1）"), { target: { value: "-1" } });
     expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
@@ -378,7 +397,7 @@ describe("Nodes", () => {
     renderWithAdmin({ listNodes: async () => ({ nodes: two }),
       updateNode: async () => { throw new ConnectError("offline_grace_s: must be 0 or at least 30 seconds (PROBE_OFFLINE_AFTER); got 20", Code.InvalidArgument); } },
       [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a" });
+    await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("离线宽限期（秒） a（#1）"), { target: { value: "20" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -391,10 +410,10 @@ describe("Nodes", () => {
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     try {
       renderWithAdmin({ listNodes: async () => ({ nodes: two }), rotateNodeToken }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-      await screen.findByRole("link", { name: "a" });
+      await screen.findByRole("link", { name: "a（#1）" });
       fireEvent.click(screen.getByRole("button", { name: "换 token a（#1）" }));
       await waitFor(() => expect(rotateNodeToken).toHaveBeenCalledWith(expect.objectContaining({ id: 1n }), expect.anything()));
-      expect(await screen.findByLabelText("节点 a 的新 token")).toHaveTextContent("new-token");
+      expect(await screen.findByLabelText("节点 a（#1） 的新 token")).toHaveTextContent("new-token");
       fireEvent.click(screen.getByRole("button", { name: "复制" }));
       expect(await screen.findByRole("button", { name: "已复制" })).toBeInTheDocument();
       expect(writeText).toHaveBeenCalledWith("new-token");
