@@ -21,7 +21,7 @@
 
 | 层 | 周期 | 表 |
 |---|---|---|
-| 配置 | 分钟级 | `node`、`node_facts`、`traffic`、`probe_task`、`probe_task_node`、`probe_meta`、`alert_rule`、`alert_state`、`alert_event`、`notify_channel`、`setting`、`admin`、`sqlite_sequence` |
+| 配置 | 分钟级 | `node`、`node_facts`、`traffic`、`probe_task`、`probe_task_node`、`probe_meta`、`alert_rule`、`alert_rule_node`、`alert_rule_channel`、`alert_state`、`alert_event`、`alert_delivery`、`notify_channel`、`setting`、`admin`、`api_token`、`sqlite_sequence` |
 | 指标 | 按天 | `metric_*`、`probe_*`、`rollup_state` |
 | 不备份 | — | `admin_session`（重新登录即可，恢复它等于复活可能已登出的会话）、`register_window`（限时限量，恢复一个旧窗口会复活已消耗的名额） |
 
@@ -91,33 +91,7 @@
 
 **参考项目现状**：monitor 无标签概念。它的 `node` 表（`src/db.rs:35`）与 `NodePatch`（`src/db.rs:405`）都没有可分类字段，唯一的查找手段是 `web-admin/src/components/Admin.tsx:78` 的 `searchNodes`——单个关键词对名称、若干地址字段和国家码做子串 OR 匹配，无法多条件取交集。它的 `country` 是自动 GeoIP 填的单值字段，而本项目已排除 GeoIP 外呼，所以连这个替代维度都不存在。这正是要做标签的直接动因。
 
-## 3. AdminService 的程序化凭据（只读 API token）
-
-**要什么**：与会话 cookie 平行的第二条凭据口径。可创建多个、各自命名、各自单独吊销，默认只读。
-
-**为什么**：`AdminService` 现在只有会话 cookie 一条路（§5.3）。agent 或任何脚本要读数据，就只能拿管理员密码去调 `Login` 换 cookie——把系统里价值最高、且无法按用途吊销的凭据交给一个自动化进程长期持有。只读 token 让"读数据"不再需要最高权限，也让出事时的吊销范围从"全部会话加改密码"缩到一个 token。这是[面向 agent 设计](docs/guidelines/agent-first.md)落地所缺的唯一一块，其余部分 Connect 已经给了。
-
-**必须钉死的语义**：
-
-| 不变式 | 理由 |
-|---|---|
-| 两条路径互不回退：带 bearer 的请求不接受 cookie，带 cookie 的不接受 bearer；两侧各有测试 | 有回退就等于实际生效的是两套鉴权里较弱的那条，且弱在哪一条随请求头变化，事后无法从代码读出来 |
-| §5.3 那四条 CSRF 事实属于 cookie 路径，不得因新增 bearer 路径而放松其中任何一条 | 浏览器不会环境性地附带 `Authorization` 头，所以 bearer 路径不需要它们；但 cookie 路径仍然需要，两者的前提不同 |
-| 作用域在拦截器层裁决，不在方法内逐个检查 | 同 §3.2：不存在未绑定拦截器的挂载点，新增方法就无法漏掉作用域检查 |
-| 默认只读，写操作逐个显式加入允许集合 | 空的允许集合意味着"什么都不能写"，不是"不加限制"。空条件匹配一切的方向与直觉相反，这条要由显式守卫承载 |
-| 库中只存 hash | 与会话 token、节点 token 同一口径（§16）。token 明文只在创建时回显一次 |
-
-**影响面**：新增 token 表与迁移；若本文第 1 条先落地，该表进**配置层**（凭据不自愈）；拦截器增加 bearer 分支；`AdminService` 增加 token 的建、列、删方法；面板增加管理界面并显示最后使用时间；skill 里写明怎么取。
-
-**待决**：
-
-- 改密码是否连带吊销全部 API token。不吊销则自动化不中断，但密码泄露期间被创建的 token 会在改密码后存活；吊销则每次轮换密码都会静默打断自动化。两害取舍，要连同面板上的 token 清单与"最后使用时间"一起定——能看见才谈得上人工裁决
-- 作用域粒度：全局只读，还是按服务、按节点细分
-- 是否带过期时间，以及过期前如何提示
-
-**参考项目现状**：monitor 的管理接口同样只有会话 cookie，无程序化凭据；它的节点 token 与管理员会话是两套独立机制，但都不面向第三方调用者。
-
-## 4. 公开页主题的上传与管理
+## 3. 公开页主题的上传与管理
 
 **要什么**：经 `AdminService` 上传、启用、删除主题包。主题是一个只调 `PublicService` 的静态前端工程，产物由 hub 存进库并托管，托管地址与管理面板不同源。随功能提供主题开发指南。
 

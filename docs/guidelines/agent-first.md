@@ -13,12 +13,12 @@
 **判定标准**：
 
 - **可直接调用**：每个方法都能以纯 HTTP+JSON POST 调通，不需要生成客户端。JSON codec 是硬要求，不是可以为缩小暴露面关掉的选项。
-- **凭据**：程序化凭据与浏览器会话是两条独立口径，各自有断言；agent 不得为了读数据而持有管理员密码。两条路径互不回退——带 bearer 的请求不接受 cookie，带 cookie 的不接受 bearer——否则实际生效的是两套鉴权里较弱的那条。
+- **凭据**：程序化凭据（API token，§5.6）与浏览器会话是两条独立口径，各自有断言；agent 不得为了读数据而持有管理员密码。两条路径互不回退——带 bearer 的请求不接受 cookie，带 cookie 的不接受 bearer——否则实际生效的是两套鉴权里较弱的那条。
 - **不为 agent 放宽**：写操作逐个显式决定是否对程序化凭据开放，默认不开。"给 agent 用"不是放宽鉴权的理由，作用域检查在拦截器层裁决而非方法内逐个判（理由同 §3.2：新增方法无法漏掉）。
 - **无副作用标注按信任模型定，不为 agent 而动**：`AdminService` 一律不标——让 agent 能用 GET 的收益，抵不上 §5.3 那条 CSRF 事实的损失，POST 对 agent 完全够用。`PublicService` 则应当标（§3.3），理由与 agent 无关：它无鉴权，CSRF 论证在那里不成立。
 - **自描述**：语义写在 proto 注释里——它同时是人和 agent 的接口文档。
 - **错误自解释**：说清哪个字段、违反了什么约束、期望什么取值。agent 手上只有这个字符串，人还能去翻日志。
 - **数据自带语义**：单位、时间基准、采样窗口随数据走，不靠"看图才懂"。缺读数与读数为 0 在协议层可区分（`optional`），不用零值冒充。
-- **Skill 是入口卡片**：写 base URL、凭据怎么取、schema 在哪、时间与分页约定，以及两三个可直接跑的例子。它补的是 Connect 给不了的那部分——"这个 API 在哪、怎么进门"——不是 CLI 手册。
+- **Skill 是入口卡片**：写 base URL、凭据怎么取、schema 在哪、时间与分页约定，以及两三个可直接跑的例子。它补的是 Connect 给不了的那部分——"这个 API 在哪、怎么进门"——不是 CLI 手册。卡片在 `proto/SKILL.md`，与 proto 同目录、随 hub 嵌入并经 `GetApiReference` 下发；其中的例子由 e2e 执行，失效即红。
 
-**待定**：不在仓库里的 agent（运维机器、无 checkout）如何取得 schema。三条路：鉴权后开 gRPC reflection、开一个端点吐 FileDescriptorSet、或由 skill 内嵌方法清单。前两条都给 `AdminService` 加了新端点，与"对外服务维持三个"有张力；reflection 若不放在鉴权之后，等于向任何能连上的人公开 API 形状。
+**schema 的取得**：`AdminService.GetApiReference`（只读，API token 可调）返回入口卡片与全部 proto 源文件，均在构建时嵌入 hub——不在仓库里的 agent 由此取得与 hub 同版本的 schema，注释即文档（§5.6）。不开 gRPC reflection：它是双向流，不能以纯 HTTP+JSON POST 调用，与"可直接调用"冲突；未鉴权时还等于向任何能连上的人公开 API 形状。也不另开端点：它是 `AdminService` 的一个方法，对外服务仍是三个。

@@ -50,7 +50,8 @@
 ### 3.1 仓库布局
 
 ```
-proto/probe/v1/       agent.proto / admin.proto / public.proto / types.proto
+proto/probe/v1/       agent.proto / admin.proto / public.proto / types.proto / access.proto
+proto/SKILL.md        agent 入口卡片；与 proto 源文件一同由 proto/embed.go 嵌入 hub（§5.6）
 gen/                  buf 生成的 Go 代码，入库
 cmd/hub/  cmd/agent/
 internal/hub/
@@ -61,7 +62,7 @@ internal/hub/
   store/     SQLite：schema、迁移、写协程、上卷、prune、按窗口选级查询
   probe/     探测任务、分配与版本号
   alert/     巡检、状态机、通知渠道与投递队列
-  auth/      管理员会话、节点 token、注册窗口、可信代理
+  auth/      管理员会话、API token、节点 token、注册窗口、可信代理
   api/       AdminService / PublicService 实现
   web/       嵌入的前端产物 + 静态目录替换
 internal/agent/
@@ -70,6 +71,7 @@ internal/agent/
   client/    上报循环、退避、配置文件
 internal/clock/       可注入的单调钟与墙钟
 web/                  React 工程（admin 与 public 两个入口）
+deploy/               install.sh、systemd 单元、OpenRC 服务脚本（§14）
 ```
 
 依赖方向：`live → metric`；`store → metric`；`auth → store`；`ingest → live, store, auth, traffic, probe`；`alert → live, store`；`api → live, store, probe, alert, auth`。`metric` 与 `clock` 不依赖任何 hub 包：描述表必须同时被 live（折叠）与 store（SQL）看到，而 live 不能依赖 store，所以它只能是二者之下的叶子。
@@ -79,17 +81,19 @@ web/                  React 工程（admin 与 public 两个入口）
 | 服务 | 调用方 | 鉴权 |
 |---|---|---|
 | `probe.v1.AgentService` | agent | 节点 bearer token（`Register` 用注册窗口 key） |
-| `probe.v1.AdminService` | 管理面板 | 会话 cookie |
+| `probe.v1.AdminService` | 管理面板；agent 与脚本 | 会话 cookie；标为只读的方法另接受 API token（§5.6） |
 | `probe.v1.PublicService` | 公开页、第三方主题 | 无，按来源 IP 限流 |
 
 鉴权由"服务挂载时绑定的拦截器"承载，不在方法内逐个检查：新增方法无法漏掉鉴权，因为不存在未绑定拦截器的挂载点。
+
+`AdminService` 的每个方法用 `probe.v1.access` 选项声明准入口径：`ACCESS_LOGIN`（仅 `Login`，凭据是请求体里的密码）、`ACCESS_READ`（会话或 API token）、`ACCESS_SESSION`（仅会话：有副作用的方法，以及凭据管理——包括只读的 `ListApiTokens`，自动化进程没有理由知道还有哪些 token 存在）。拦截器在构造时从生成的描述符读出整张表，任一方法未声明即 panic：未声明的方法无法随 hub 启动，因而不存在"漏标时默认放行还是默认拒绝"的取舍。准入口径与方法定义写在同一处，proto 仍是单一事实源。它与 `idempotency_level` 是两件事：后者决定是否接受 GET，`AdminService` 一律不标（§3.3）。
 
 公开数据使用独立的消息类型（`PublicNode`、`PublicSnapshot`），不对 `Node` 做字段过滤。由此默认方向是"私有"：给 `Node` 加字段不会出现在公开页，必须显式加入 `Public*` 消息才公开。
 
 ### 3.3 方法清单
 
 - `AgentService`：`Register`、`Report`。
-- `AdminService`：`Login`、`Logout`；节点 `ListNodes`、`CreateNode`、`UpdateNode`、`DeleteNode`、`RotateNodeToken`、`ReorderNodes`；注册窗口 `OpenRegisterWindow`、`CloseRegisterWindow`、`GetRegisterWindow`；数据 `GetSnapshot`、`QueryMetrics`、`QueryProbes`、`GetTraffic`、`AdjustTraffic`；探测 `ListProbeTasks`、`SaveProbeTask`、`DeleteProbeTask`；告警 `ListAlertRules`、`SaveAlertRule`、`DeleteAlertRule`、`ListAlertEvents`、`ListNotifyChannels`、`SaveNotifyChannel`、`DeleteNotifyChannel`、`TestNotifyChannel`；设置 `GetSettings`、`UpdateSettings`、`GetStorageStats`。
+- `AdminService`：`Login`、`Logout`；节点 `ListNodes`、`CreateNode`、`UpdateNode`、`DeleteNode`、`RotateNodeToken`、`ReorderNodes`；注册窗口 `OpenRegisterWindow`、`CloseRegisterWindow`、`GetRegisterWindow`；数据 `GetSnapshot`、`QueryMetrics`、`QueryProbes`、`GetTraffic`、`AdjustTraffic`；探测 `ListProbeTasks`、`SaveProbeTask`、`DeleteProbeTask`；告警 `ListAlertRules`、`SaveAlertRule`、`DeleteAlertRule`、`ListAlertEvents`、`ListNotifyChannels`、`SaveNotifyChannel`、`DeleteNotifyChannel`、`TestNotifyChannel`；设置 `GetSettings`、`UpdateSettings`、`GetStorageStats`；API token `ListApiTokens`、`CreateApiToken`、`DeleteApiToken`；自描述 `GetApiReference`。
 - `PublicService`：`GetSite`、`GetSnapshot`、`QueryMetrics`、`QueryProbes`。后两者只对 `public = true` 的节点应答，对其余节点与不存在的节点返回同一个 `NotFound`。
 
 无副作用标注（`idempotency_level = NO_SIDE_EFFECTS`，决定方法是否接受 GET）按服务的信任模型决定，不按读写决定：`PublicService` 的四个方法全部标注，因而可用 GET 调用并带 `Cache-Control`——它无鉴权（§3.2），不存在会被浏览器环境性携带的凭据，§5.3 的 CSRF 论证在这里不成立，而公开页恰是需要被缓存的那一面。缓存上界分别定：实时快照不超过一个上报间隔（更短无意义，更长会展示过期的在线状态），历史查询可更长，站点配置最长。`AdminService` 与 `AgentService` 一律不标：前者是 §5.3 的 CSRF 防线之一，后者的上报本就有副作用。
@@ -222,7 +226,7 @@ agent 与 hub 不同时升级。hub 必须接受旧 agent 的上报（缺失的 
 
 - 单管理员。密码用 argon2id 存储，通过 `probe-hub passwd` 在 hub 主机上交互设置；没有经网络的首次设置页，也就没有"谁先访问谁占有"的窗口。
 - 管理员表为空时登录一律失败。空表的语义是"无人可登录"而不是"无需认证"，由登录路径上的显式检查承载。
-- 会话 token 为 32 字节随机数，库中只存 SHA-256，带绝对过期与空闲过期。cookie：`HttpOnly`、`SameSite=Strict`，`Secure` 由可信代理转发的协议决定。修改密码即清空全部会话。
+- 会话 token 为 32 字节随机数，库中只存 SHA-256，带绝对过期与空闲过期。cookie：`HttpOnly`、`SameSite=Strict`，`Secure` 由可信代理转发的协议决定。修改密码即清空全部会话；API token 不随之吊销（§5.6）。
 - 登录失败按来源 IP 锁定。
 - 跨站请求伪造由以下几条各自独立的事实约束，不指定其中哪一条是"主要防线"：会话 cookie 为 `SameSite=Strict`；hub 不下发任何 CORS 允许头；`AdminService` 不把任何方法标为无副作用（因而不接受 GET）；Connect 处理器对 `application/json` 与 `application/proto` 之外的 `Content-Type` 拒绝服务，而浏览器的跨站"简单请求"发不出这两种类型。最后一条是对 connect-go 行为的断言，列入 §13 并由 §12 的测试钉住。
 
@@ -240,6 +244,21 @@ hub 只监听明文 HTTP，TLS 由反代（Caddy / nginx / CDN）终止，hub �
 mTLS 相对 bearer token 的增量是"凭据不过线"与"在 HTTP 层之前拒绝未授权连接"。代价：它要求 hub 自己终止 TLS，与 §5.4 冲突——若由反代验证客户端证书再以请求头转发身份，hub 又回到信任请求头；还需要 CA、签发、轮换、吊销整套生命周期，而注册阶段仍需一个一次性秘密换取证书。
 
 在本项目的威胁模型下，节点 token 泄漏的后果是有人能伪造该节点的指标；hub 失守的后果受 §8.3 的 agent 侧限制约束。两者都不足以支撑上述代价。agent 强制校验服务端证书，不提供跳过校验的开关。
+
+### 5.6 API token
+
+与会话平行的第二条凭据口径，给 agent 与脚本读数据用：自动化进程不必持有管理员密码，出事时的吊销范围从"全部会话加改密码"缩到一个 token。
+
+- 明文为固定前缀 `probe_at_` 加 32 字节随机数的 hex，库中只存整串的 SHA-256，明文只在 `CreateApiToken` 的响应里出现一次。前缀让泄漏到日志、配置或代码仓库里的 token 能被审查与 secret scanning 认出。
+- 两条路径互不回退：`Authorization` 头的 scheme 为 `Bearer` 即走 bearer 路径，cookie 一律不看；否则走 §5.3 的会话路径。任一路径的失败都不转交另一条——有回退就等于实际生效的是两套鉴权里较弱的那条，且弱在哪条随请求头变化，事后无法从代码读出。scheme 为 `Bearer` 而 token 为空、格式不对或不存在，都返回 `Unauthenticated`。其他 scheme 不是 hub 的凭据，按不存在处理：反代做 Basic 认证时，浏览器会对每个请求自动附带 `Authorization: Basic`，nginx 与 Caddy 默认原样转给 hub，若见头即走 bearer 路径，面板的每个请求都会被拒。
+- token 只能调 `ACCESS_READ` 方法（§3.2），其余返回 `PermissionDenied`，错误信息写明方法名与"API token 只读"。写操作对 token 开放要逐个显式决定，目前一个都不开；token 的建、列、删都是 `ACCESS_SESSION`，token 不能签发 token。
+- §5.3 的四条 CSRF 事实属于会话路径，一条都不因 bearer 路径而放松。bearer 路径不需要它们：浏览器会自动附带的 HTTP 认证只有 Basic、Digest 这类缓存凭据，`Bearer` 只能由脚本显式设置，而跨源请求带 `Authorization` 头必须先过 CORS 预检，hub 不下发允许头。会话路径仍然需要。
+- 每次校验都查库，不缓存：吊销（删行）在下一个请求即生效，hub 运行中由 `probe-hub` 直接改库也一样。管理请求的频率远低于上报，查库的代价可以接受；引入缓存必须同时给出吊销的传播路径。
+- 最后使用时间只供展示，按 token 在内存里节流、每分钟至多落库一次，不让每次读请求都排进写协程；进程崩溃至多丢一分钟精度，不参与任何裁决。
+- 名称 1–64 字符，不要求唯一，身份是 id。token 总数上限 100，超出返回 `ResourceExhausted`。不设过期时间，靠面板上的创建时间、最后使用时间与手动吊销管理。
+- 改密码不连带吊销 token：连带吊销会让每次轮换密码都静默打断自动化。代价是密码泄漏期间被创建的 token 在改密码后仍然有效，所以 `probe-hub passwd` 改完后列出现存 token（名称、创建时间、最后使用时间）并询问是否全部吊销，默认不吊销。`probe-hub token list`、`probe-hub token revoke <id>`、`probe-hub token revoke --all` 供面板不可用或密码已泄漏时应急。
+- 自描述：`GetApiReference`（`ACCESS_READ`）返回入口卡片（`proto/SKILL.md`）与全部 proto 源文件，均在构建时嵌入——不在仓库里的 agent 由此取得与 hub 同版本的 schema，注释即文档。不用 gRPC reflection：它是双向流，不能以纯 HTTP+JSON POST 调用，与 §4.1 的 unary 约束冲突；也不另开端点，对外仍是三个 Connect 服务。
+- 入口卡片约定 `PROBE_HUB` 与 `PROBE_TOKEN` 两个环境变量，写明进门方式、schema 的取法、JSON 约定（int64 编码为字符串、时间为 Unix 秒、`_ms` 后缀为毫秒、缺读数与读数为 0 的区别、Connect 错误体）与可直接运行的例子；例子由 e2e 执行（§12）。
 
 ## 6. 存储
 
@@ -324,7 +343,7 @@ CREATE TABLE probe_1m (
 
 ### 6.6 其余表
 
-`node`（名称、排序、是否公开、备注、离线宽限期、流量重置日、token_hash）、`node_facts`（facts_hash 与各静态字段）、`traffic`、`probe_task`、`probe_task_node`、`probe_meta`（任务版本号）、`alert_rule`、`alert_rule_node`（显式作用域；`alert_rule.all_nodes` 为真时不存行且覆盖全部节点，为假时无行表示不覆盖任何节点——删除作用域里最后一个节点不会放宽到全部）、`alert_rule_channel`、`alert_state`、`alert_event`、`alert_delivery`（每事件每渠道一行投递记录）、`notify_channel`、`setting`、`admin`、`admin_session`、`register_window`、`rollup_state`。
+`node`（名称、排序、是否公开、备注、离线宽限期、流量重置日、token_hash）、`node_facts`（facts_hash 与各静态字段）、`traffic`、`probe_task`、`probe_task_node`、`probe_meta`（任务版本号）、`alert_rule`、`alert_rule_node`（显式作用域；`alert_rule.all_nodes` 为真时不存行且覆盖全部节点，为假时无行表示不覆盖任何节点——删除作用域里最后一个节点不会放宽到全部）、`alert_rule_channel`、`alert_state`、`alert_event`、`alert_delivery`（每事件每渠道一行投递记录）、`notify_channel`、`setting`、`admin`、`admin_session`、`api_token`（名称、token_hash、创建时间、最后使用时间）、`register_window`、`rollup_state`。
 
 schema 版本记在 `PRAGMA user_version`，迁移为按版本号顺序执行的函数；空库直接建到当前版本，不重放历史。
 
@@ -403,6 +422,8 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 - 实时数据用轮询（默认 2 秒）。`PublicService.GetSnapshot` 一次返回全部公开节点的实时状态，hub 对序列化结果缓存 1 秒：匿名访客数量不影响 hub 的序列化开销。
 - `--public-dir <dir>` 用指定静态目录替代内置公开页，未命中文件时回落到该目录的 `index.html`。`/admin` 与 RPC 路径的路由优先级更高，替换目录无法遮蔽它们。文件访问经 `os.Root`，不可越出目录、不跟随指向目录外的符号链接。
 - 外观设置（明暗、主色、logo、标题、自定义 CSS）存于 `setting`，经 `PublicService.GetSite` 下发并以 CSS 变量应用。只接受 CSS，不接受 JS 或 HTML；需要改结构的人使用 `--public-dir`。
+- 管理面板的 API token 页：列表显示名称、创建时间、最后使用时间；创建后明文只显示一次；删除需确认；可下载入口卡片（§5.6）。
+- 注册窗口开启后，面板在 key 旁给出一行安装命令（curl 与 wget 各一条）。hub 地址取浏览器当前的 origin，并注明 agent 若经另一地址访问 hub 需替换；hub 为正式版本时命令带 `--version <hub_version>`（经 `GetSnapshotResponse.hub_version` 下发），装上的 agent 与 hub 同版本，开发构建不带并提示将安装最新 release。
 - 未构建前端时 hub 照常编译与启动，页面路径返回"前端未构建"的说明；`go build` 与 `go test` 不依赖 Node。
 
 第三方主题 = 调 `PublicService` 的静态站点，框架自选；Connect unary 即 HTTP POST + JSON，直接 `fetch` 可用。
@@ -427,6 +448,7 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 - 横切不变式用自动枚举覆盖，新增成员自动入测：
   - 从生成的服务描述符枚举全部 RPC，逐个无凭据调用，断言 `Unauthenticated`；仅 `PublicService` 的方法在白名单内。
   - 遍历全部 `Public*` 消息的字段，与测试内的显式允许列表比对；往公开消息加字段必须同时改这份列表。
+  - 从描述符枚举 `AdminService` 全部方法：每个都声明了 `probe.v1.access`；持有效 API token 逐个调用，`ACCESS_READ` 放行、其余 `PermissionDenied`；吊销后下一个请求即 `Unauthenticated`。两条凭据互不回退由交叉用例钉住：有效 cookie 加无效 bearer 被拒，有效 bearer 加无效 cookie 调只读方法放行，有效 cookie 加 `Authorization: Basic` 走会话路径放行。
 - 多处同守的不变式每处各写断言：冻结不变式（写协程拒绝水位之前的 1m 写入 / 上卷不越过 `now − ROLLUP_LAG` / ingest 拒收超龄结果 / 三个常量关系的启动期断言）、探测硬限制（hub 校验 / agent 丢弃）。
 - 钉住 §5.3 对 connect-go 的行为断言：带有效会话 cookie、`Content-Type: text/plain` 向 `AdminService` 的写方法 POST，断言被拒绝且无副作用；同一请求改用 GET 同样被拒绝。
 - 时间经 `internal/clock` 注入，`live`、`alert`、`traffic`、上卷的测试可确定性地推进单调钟与墙钟，并可单独向后拨墙钟。
@@ -435,6 +457,8 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 - darwin 采集文件带 build tag，Linux 上的验证循环照不到：CI 含 macOS runner 跑其测试；Linux 上至少执行 `GOOS=darwin go vet ./...`。
 - 每条新断言做一次缺陷注入，确认它红且红在正确的原因上；声称"只有 X 会让它红"的断言，把非 X 的原因也注入一遍。
 - 端到端按 agent 容器镜像参数化，并断言上报的系统名与镜像一致（证明换镜像真的生效）：一级发行版每次跑，二级发行版发版前跑（§14）。容器没有真实 init，覆盖不了 sysctl 默认值与服务管理；安装脚本与服务单元在各发行版真实启动的机器上验证。
+- 入口卡片（`proto/SKILL.md`）里标为示例的 shell 代码块由 e2e 用真实 hub 与 token 逐个执行，断言退出码为 0 且输出为合法 JSON：卡片与接口漂移时 e2e 变红，而不是等 agent 调用失败才发现。
+- 安装验收在真实启动的机器上跑（本地 OrbStack；验收脚本只创建与删除带自己前缀的机器）：一级发行版 Debian 12、Alpine 3.21 两个架构每次改动安装脚本或服务定义时跑，二级发行版发版前加跑。每格断言：一条命令装好且节点上线；facts 里 ICMP 可用且 ICMP 任务有结果（服务以非 root 运行，能力由 init 授予）；服务下上报的指标字段集合、根分区用量与网卡集合与同机 root 手动运行一致（加固项不得让采集缩水）；重跑后节点数不变、版本为新版本；卸载后服务不存在。下载目录经 `--base-url` 指向本地 `make release` 的产物。这类验收依赖真实 init，不进 CI；`install.sh` 的 shellcheck（POSIX 模式）进 CI，systemd 单元的 `systemd-analyze verify` 在验收机器上跑。
 - CI：`buf lint`、`buf breaking`（`WIRE_JSON`，对比主干）、`go vet`、`go test -count=1 ./...`。
 
 ## 13. 实现前需以实验确认的事项
@@ -454,12 +478,14 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 - 全部 `CGO_ENABLED=0`。agent 目标：linux/amd64、arm64、armv7、386、riscv64；darwin/amd64、arm64。hub 目标：linux/amd64、arm64，另出 Docker 镜像。
 - Linux 支持矩阵：架构一级为 amd64 与 arm64（每次改动跑端到端），其余 agent 架构只保证能构建。发行版一级为 Debian 12（glibc、systemd）与 Alpine 3.21（musl、OpenRC、busybox），每次改动两个架构都跑端到端；二级为 Ubuntu 24.04 与 Rocky Linux 9，发版前跑。与 libc 无关由静态链接承载：产物不得带动态解释器，构建产出二进制时就检查，让产物变成动态链接的改动都在那里失败，而不是等到 Alpine 上启动报错——未显式关闭 cgo 且 C 工具链可用时，包含 net 的原生构建可能引入系统 C 库依赖。检查是三条独立的交付约束：没有 `PT_INTERP`、没有 `DT_NEEDED`、构建设置显式为 `CGO_ENABLED=0`；它们不互相等价（例如带 `netgo` 标签、开着 cgo 的构建也可能是静态链接），缺一条就拒绝。检查器是 `scripts/checkstatic`，发布流水线必须把全部 Linux 产物（agent 与 hub）交给它，而不是复制一份当前的文件清单。Linux 采集直接读 `/proc`、`/sys` 与 `/etc/os-release`，不调用发行版的命令行工具；共用的内核接口与 os-release 格式让采集不需要发行版专用分支，文件是否可读、返回值是否合理仍由测试与各发行版端到端验证。
 - 构建顺序：`buf generate` → 前端构建 → `go build`。生成的 Go 代码入库，前端产物不入库。
-- Linux 安装脚本的步骤顺序：检测 init 系统 → 创建固定的系统用户 → 从 GitHub Releases 下载并校验 sha256 → `probe-agent register` → 安装并启动检测到的 init 对应的服务（systemd 单元或 OpenRC 服务，要求见下两条）。建用户排在下载与注册之前：它若失败，注册窗口的名额尚未消耗、旧服务尚未停止。
-- systemd 单元使用静态 `User=` 并加固（`NoNewPrivileges=`、`ProtectSystem=strict` 等），默认带 `AmbientCapabilities=CAP_NET_RAW` 与 `CapabilityBoundingSet=CAP_NET_RAW`：裸机 Debian 的 `ping_group_range` 默认关闭（§13 第 2 项），没有这项能力时 ICMP 探测只能回报 error。不用 `DynamicUser=`：据 monitor 提交 `85f6702` 的记录，未开 nesting 的 LXC 容器建不了挂载命名空间，此时 systemd 对静态 `User=` 的单元会跳过挂载类隔离照常启动，对 `DynamicUser=` 的单元则拒绝启动（226/NAMESPACE）。`DynamicUser=` 隐含的 `RestrictSUIDSGID=` 需在单元里明写补回。该记录来自参考项目而非本项目的实验，单元定稿前在未开 nesting 的 LXC 容器里实测一次。
-- init 系统支持 systemd 与 OpenRC。判定：`/run/systemd/system` 存在为 systemd；否则 `/sbin/openrc-run` 存在为 OpenRC（`/run/openrc` 表示已启动）；两者都不是时安装脚本报错并列出支持的 init，不静默降级（容器里两者通常都不存在）。OpenRC 服务用 `supervisor=supervise-daemon`、`command_user` 为固定系统用户、`capabilities="^cap_net_raw"`，与 systemd 的 `AmbientCapabilities` 等价（2026-09-25 在 Alpine 3.21 / OpenRC 0.55.1 真机上实测：ping_group_range 关闭时授予该能力 ICMP 可用，去掉即不可用）。`output_log` 与 `error_log` 的文件必须在启动前建好并交给运行用户：supervise-daemon 降权后才打开它们，打不开时子进程秒退、反复拉起，而 `rc-service status` 仍显示 started。
-- 安装脚本用 POSIX sh，兼容 busybox，按实际存在的工具分支，不假设任何单一工具（所测的基础容器镜像与机器镜像之间、以及各发行版之间，工具集都不相同）：建用户优先 `useradd --system`，没有时 Alpine 用 busybox 的 `adduser -S -D -H`、Debian 用 `adduser --system --group --no-create-home`；建完一律回查 `id`，不信退出码——实测 Debian 的 perl 版 adduser 收到 busybox 风格的参数时打印用法、不建用户，却返回 0。下载用 curl 或 wget，按实际存在的那个走（所测基础容器里 Alpine 只有 wget、Rocky 只有 curl、Debian 与 Ubuntu 两者都没有；所测机器镜像里四个都有 curl），两者都没有就报错说明依赖。能力授予交给 init，不依赖 setcap（所测的 Alpine 与 Debian 机器镜像、以及 Alpine、Debian、Ubuntu 基础容器里都没有）。所测的 Debian 与 Ubuntu 基础容器不带 CA 证书（机器镜像都带），CA 是否存在按文件探测而不是按发行版名判断；缺失且 hub 用 https 时安装脚本先装 `ca-certificates`。
+- 发布：`make release VERSION=vX.Y.Z` 把全部产物生成到 `dist/`；推送 `v*` tag 时 CI 调用同一目标并建 GitHub Release。构建逻辑只在 Makefile 一处，本地验收与线上发布用的是同一套产物。Linux agent 每个架构一个 `probe-agent_linux_<arch>.tar.gz`（二进制、systemd 单元、OpenRC 服务脚本），hub 每个架构一个 `probe-hub_linux_<arch>.tar.gz`，另有 `SHA256SUMS` 与 `install.sh`。资产名不带版本号：`releases/latest/download/<名>` 与 `releases/download/<tag>/<名>` 都能直接拼出，脚本不必调用 GitHub API。版本号经 `-ldflags -X main.version` 注入。服务定义在仓库 `deploy/` 下是真实文件，打包时原样放入，不在脚本里以字符串另存一份。仓库必须公开：私有仓库的 Release 资产要鉴权才能下载。
+- Linux 安装脚本（`install.sh`，以 root 运行）的步骤顺序：检测 init 系统与架构 → 创建固定的系统用户 `probe-agent` → 确保 CA 证书 → 下载 tar 包与 `SHA256SUMS` 并校验 → `probe-agent register`，再把配置交给该用户（目录 0700、文件 0600；register 以 root 写入，不改属主服务就读不到）→ 安装并启动检测到的 init 对应的服务（systemd 单元或 OpenRC 服务，要求见下两条）。建用户排在下载与注册之前：它若失败，注册窗口的名额尚未消耗、旧服务尚未停止。参数：`--hub`、`--key`、`--name`、`--version`（默认最新 release）、`--base-url`（覆盖下载目录，用于镜像与本地验收）。
+- 重跑即升级：已有配置时跳过注册，`--hub` 与 `--key` 可省；同时给了 `--key` 时明确提示沿用现有注册，不重新注册——重新注册会多消耗一个窗口名额，并在 hub 上多出一个节点。二进制先写同目录临时文件再 `mv` 替换；服务定义每次覆盖，单元的改动随升级下发。`--uninstall` 停止并禁用服务、删除二进制与服务定义，保留配置与用户；加 `--purge` 一并删除 `/etc/probe-agent` 与用户。
+- systemd 单元使用静态 `User=` 并加固（`NoNewPrivileges=`、`ProtectSystem=strict` 等），默认带 `AmbientCapabilities=CAP_NET_RAW` 与 `CapabilityBoundingSet=CAP_NET_RAW`：裸机 Debian 的 `ping_group_range` 默认关闭（§13 第 2 项），没有这项能力时 ICMP 探测只能回报 error。不用 `DynamicUser=`：据 monitor 提交 `85f6702` 的记录，未开 nesting 的 LXC 容器建不了挂载命名空间，此时 systemd 对静态 `User=` 的单元会跳过挂载类隔离照常启动，对 `DynamicUser=` 的单元则拒绝启动（226/NAMESPACE）。`DynamicUser=` 隐含的 `RestrictSUIDSGID=` 需在单元里明写补回。采集读不到某个文件时只让对应字段缺失并记日志，上报照常，因而加固项若遮蔽了采集要读的 `/proc`、`/sys` 路径不会以失败显形；由 §12 的真机对照验收承载。该记录来自参考项目而非本项目的实验，单元定稿前在未开 nesting 的 LXC 容器里实测一次。
+- init 系统支持 systemd 与 OpenRC。判定：`/run/systemd/system` 存在为 systemd；否则 `/sbin/openrc-run` 存在为 OpenRC（`/run/openrc` 表示已启动）；两者都不是时安装脚本报错并列出支持的 init，不静默降级（容器里两者通常都不存在）。OpenRC 服务用 `supervisor=supervise-daemon`、`command_user` 为固定系统用户、`capabilities="^cap_net_raw"`，与 systemd 的 `AmbientCapabilities` 等价（2026-09-25 在 Alpine 3.21 / OpenRC 0.55.1 真机上实测：ping_group_range 关闭时授予该能力 ICMP 可用，去掉即不可用）。`output_log` 与 `error_log` 的文件必须在启动前建好并交给运行用户，由服务脚本的 `start_pre` 建立并改属主，每次启动都成立而不只在安装时建一次：supervise-daemon 降权后才打开它们，打不开时子进程秒退、反复拉起，而 `rc-service status` 仍显示 started。
+- 安装脚本用 POSIX sh，兼容 busybox，按实际存在的工具分支，不假设任何单一工具（所测的基础容器镜像与机器镜像之间、以及各发行版之间，工具集都不相同）：建用户优先 `useradd --system`，没有时 Alpine 用 busybox 的 `adduser -S -D -H`、Debian 用 `adduser --system --group --no-create-home`；建完一律回查 `id`，不信退出码——实测 Debian 的 perl 版 adduser 收到 busybox 风格的参数时打印用法、不建用户，却返回 0。下载用 curl 或 wget，按实际存在的那个走（所测基础容器里 Alpine 只有 wget、Rocky 只有 curl、Debian 与 Ubuntu 两者都没有；所测机器镜像里四个都有 curl），两者都没有就报错说明依赖。能力授予交给 init，不依赖 setcap（所测的 Alpine 与 Debian 机器镜像、以及 Alpine、Debian、Ubuntu 基础容器里都没有）。所测的 Debian 与 Ubuntu 基础容器不带 CA 证书（机器镜像都带），CA 是否存在按文件探测而不是按发行版名判断；缺失时安装脚本先装 `ca-certificates`，判据是下载地址或 hub 地址任一为 https——默认下载地址就是 https，只看 hub 地址会让下载先失败。
 - macOS：launchd。
-- 升级 = 重跑安装脚本。面板显示各节点 agent 版本并标出落后于 hub 的节点。
+- 升级 = 重跑安装脚本（见上）。hub 版本经 `GetSnapshotResponse.hub_version` 下发：面板据此生成与 hub 同版本的安装命令（§10），并显示各节点 agent 版本、标出落后于 hub 的节点。
 
 ## 15. 里程碑
 
@@ -471,8 +497,9 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 | M2 管理面板 | `AdminService`、管理员登录、节点管理与 token 轮换、实时视图、历史图表；5m / 1h 上卷、prune、按窗口选级 |
 | M3 流量与探测 | 流量累计；探测任务与版本对账、agent `prober`、探测存储与上卷、图表 |
 | M4 告警 | 规则、状态机、Telegram / Webhook、投递记录 |
+| M4 之后：接入与 Linux 交付 | API token、入口卡片与 `GetApiReference`（§5.6）及其面板页；Linux 发布流水线、安装脚本、systemd 与 OpenRC 服务、面板安装命令（§14） |
 | M5 公开页 | `PublicService`、外观定制、`--public-dir` |
-| M6 交付 | macOS agent、安装脚本、发布流水线、Docker 镜像 |
+| M6 交付 | macOS agent、Docker 镜像 |
 
 ## 16. 参考项目
 
