@@ -1,0 +1,29 @@
+#!/sbin/openrc-run
+# shellcheck disable=SC2034 # 以下变量由 openrc-run 框架读取，脚本内不引用。
+
+name="probe-agent"
+description="probe monitoring agent"
+supervisor=supervise-daemon
+command="/usr/local/bin/probe-agent"
+command_args="run --config /etc/probe-agent/config.json"
+command_user="probe-agent:probe-agent"
+# 与 systemd 的 AmbientCapabilities 等价：ping_group_range 关闭时靠它拿到
+# CAP_NET_RAW（§14，OpenRC 0.55.1 实测）。
+capabilities="^cap_net_raw"
+output_log="/var/log/probe-agent/probe-agent.log"
+error_log="/var/log/probe-agent/probe-agent.err"
+
+depend() {
+	# 只要求排在网络之后启动，不硬依赖某个网络服务：上报循环连不上 hub 时自带退避重试（§4.7），
+	# 网络晚于本服务就绪不影响正确性。
+	after net
+}
+
+start_pre() {
+	# supervise-daemon 降权后才打开 output_log/error_log：目录与文件必须事先属于
+	# 运行用户，否则子进程打不开日志秒退、被反复拉起，而 status 仍显示 started（§14）。
+	# 每次启动都建，不靠安装时建一次。
+	mkdir -p /var/log/probe-agent
+	touch /var/log/probe-agent/probe-agent.log /var/log/probe-agent/probe-agent.err
+	chown -R probe-agent:probe-agent /var/log/probe-agent
+}

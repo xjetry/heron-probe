@@ -1,0 +1,28 @@
+[Unit]
+Description=probe monitoring agent
+# 采集只读 /proc、/sys 与配置；加固项若遮蔽了采集路径不会以启动失败显形，
+# 由真机验收的"服务与 root 手动运行指标对照"承载（spec §12、§14）。
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=probe-agent
+Group=probe-agent
+ExecStart=/usr/local/bin/probe-agent run --config /etc/probe-agent/config.json
+Restart=on-failure
+# 裸机 Debian/Ubuntu/Alpine 的 ping_group_range 默认关闭，没有 CAP_NET_RAW 时
+# ICMP 探测只能回报 error；Rocky 9 放开是发行版默认值，不作依赖（§13 第 2 项）。
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# 不用 DynamicUser=：未开 nesting 的 LXC 容器建不了挂载命名空间时，
+# systemd 对静态 User= 会跳过挂载类隔离照常启动，对 DynamicUser= 拒绝启动
+# （226/NAMESPACE）；其隐含的 RestrictSUIDSGID= 在此明写补回（spec §14）。
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
