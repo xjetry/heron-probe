@@ -231,7 +231,7 @@ agent 与 hub 不同时升级。hub 必须接受旧 agent 的上报（缺失的 
 hub 只监听明文 HTTP，TLS 由反代（Caddy / nginx / CDN）终止，hub 内没有证书代码。
 
 - `--listen` 默认 `127.0.0.1:8080`。监听非 loopback 地址时启动日志告警：此时任何人都能绕过反代直连并自带转发头。
-- `--timezone` 是 IANA 时区名，默认取 hub 进程的本地时区；只用于 §7 流量周期的重置日判定与面板文案，不参与任何时长计算。本地时区的名字按 `TZ`、再按 `/etc/localtime` 符号链接的目标路径里 `zoneinfo/` 之后的部分解析（各发行版都是符号链接，Alpine 指向 `/etc/zoneinfo/`）；不读 `/etc/timezone`——RHEL 系没有它，Debian 与 Ubuntu 用 `timedatectl` 改时区后它仍是旧值。`/etc/localtime` 是复制出来的普通文件时（常见于 Dockerfile）取不到名字，退回 UTC 并告警。
+- `--timezone` 是 IANA 时区名，默认取 hub 进程的本地时区；只用于 §7 流量周期的重置日判定与面板文案，不参与任何时长计算。本地时区的名字按 `TZ`、再按 `/etc/localtime` 符号链接的目标路径里 `zoneinfo/` 之后的部分解析（在所测的 Alpine 3.21、Debian 12、Ubuntu 24.04、Rocky Linux 9 上按各自的标准方式设置时区后都是符号链接，Alpine 指向 `/etc/zoneinfo/`）；不读 `/etc/timezone`——RHEL 系没有它，Debian 与 Ubuntu 用 `timedatectl` 改时区后它仍是旧值。`/etc/localtime` 是复制出来的普通文件时（常见于 Dockerfile）取不到名字，退回 UTC 并告警。
 - `--trusted-proxies` 显式给出 CIDR 列表。只有 TCP 对端地址落在列表内的请求，其 `X-Forwarded-For` / `X-Forwarded-Proto` 才被采信。空列表 = 不信任任何转发头、一律用 TCP 对端地址，是收紧方向。hub 不从请求头推断自己是否在反代之后。
 - `--site-url` 显式给出对外地址，用于生成安装命令；不从 `Host` 头推断。
 
@@ -442,7 +442,7 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 下列都是对外部组件特定版本的行为断言，以实验结果为准，结论记入对应里程碑的计划：
 
 1. darwin 采集在 `CGO_ENABLED=0` 下的可行实现（gopsutil 或 purego）：能构建，且在真机读出 CPU、内存、网卡计数器、`boot_id` 等价物。
-2. 非特权数据报 ICMP 在目标 Linux 发行版（含容器环境）与 macOS 上的可用性，以及 `CAP_NET_RAW` 回退路径。——已于 2026-09-23 实验确认，结论记在 `docs/superpowers/plans/2026-09-23-m3-probe-backend.md` 的"实验结论"节：macOS 非 root 可用数据报 socket；Linux 只受 `net.ipv4.ping_group_range` 管（Docker 默认放开，内核默认关闭，Debian 12 的 systemd 包不放开），raw 需有效 `CAP_NET_RAW`；回包匹配不能依赖 ICMP ID。2026-09-25 在 Alpine 3.21、Debian 12、Ubuntu 24.04、Rocky Linux 9 的真实启动机器（amd64 与 arm64）上复现并补充：开机时 `ping_group_range` 只有 Rocky 9 放开（systemd 上游的 50-default.conf），另外三个关闭——Alpine 的 00-alpine.conf 写了 `999 59999`，但 sysctl 服务不在默认 runlevel 时不会应用；因此能力授予（§14）在多数发行版上是 ICMP 可用的前提，不是兜底。
+2. 非特权数据报 ICMP 在目标 Linux 发行版（含容器环境）与 macOS 上的可用性，以及 `CAP_NET_RAW` 回退路径。——已于 2026-09-23 实验确认，结论记在 `docs/superpowers/plans/2026-09-23-m3-probe-backend.md` 的"实验结论"节：macOS 非 root 可用数据报 socket；Linux 只受 `net.ipv4.ping_group_range` 管（Docker 默认放开，内核默认关闭，Debian 12 的 systemd 包不放开），raw 需有效 `CAP_NET_RAW`；回包匹配不能依赖 ICMP ID。2026-09-25 在 OrbStack 提供的 Alpine 3.21、Debian 12、Ubuntu 24.04、Rocky Linux 9 机器镜像（真实启动，amd64 与 arm64）上复现并补充：开机时 `ping_group_range` 只有 Rocky 9 放开（systemd 上游的 50-default.conf），另外三个关闭——Alpine 的 00-alpine.conf 写了 `999 59999`，但该镜像的 sysctl 服务不在默认 runlevel，文件没有被应用；Alpine 官方安装介质的默认 runlevel 未验证。由此：运行用户的组不在 `ping_group_range` 内时，要靠授予 `CAP_NET_RAW`（§14）才有 ICMP；显式把该组放进范围同样能走数据报路径，二者任一即可。
 3. `modernc.org/sqlite` 在约 500 万行规模下的上卷查询、窗口查询与分块 prune 耗时；带对照组（同一数据、同一查询、空闲与并发写入两种条件）。
 4. 经反代（HTTP/2 到反代）时单次上报的线上字节数，用于判断 §4.4 由 TTL 反推出的上报间隔在目标规模下的成本是否可接受。结论若为不可接受，要动的是 TTL 这个产品指标或消息体积，不是把间隔调长而默许 TTL 跟着漂。
 5. 含 connect 与 protobuf runtime 的 agent 二进制体积与常驻内存。
@@ -452,12 +452,12 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 ## 14. 构建、发布、安装
 
 - 全部 `CGO_ENABLED=0`。agent 目标：linux/amd64、arm64、armv7、386、riscv64；darwin/amd64、arm64。hub 目标：linux/amd64、arm64，另出 Docker 镜像。
-- Linux 支持矩阵：架构一级为 amd64 与 arm64（每次改动跑端到端），其余 agent 架构只保证能构建。发行版一级为 Debian 12（glibc、systemd）与 Alpine 3.21（musl、OpenRC、busybox），每次改动两个架构都跑端到端；二级为 Ubuntu 24.04 与 Rocky Linux 9，发版前跑。与 libc 无关由静态链接承载：产物不得带动态解释器，构建产出二进制时就检查，任何让产物变成动态链接的改动（例如在原生 Linux 上构建而漏设 `CGO_ENABLED=0`，此时 net 包会链接 glibc 的解析器）都在那里失败，而不是等到 Alpine 上启动报错。agent 运行时不调用外部命令，只读 `/proc` 与 `/etc/os-release`，发行版差异不进入采集路径。
+- Linux 支持矩阵：架构一级为 amd64 与 arm64（每次改动跑端到端），其余 agent 架构只保证能构建。发行版一级为 Debian 12（glibc、systemd）与 Alpine 3.21（musl、OpenRC、busybox），每次改动两个架构都跑端到端；二级为 Ubuntu 24.04 与 Rocky Linux 9，发版前跑。与 libc 无关由静态链接承载：产物不得带动态解释器，构建产出二进制时就检查，让产物变成动态链接的改动都在那里失败，而不是等到 Alpine 上启动报错——未显式关闭 cgo 且 C 工具链可用时，包含 net 的原生构建可能引入系统 C 库依赖。检查是三条独立的交付约束：没有 `PT_INTERP`、没有 `DT_NEEDED`、构建设置显式为 `CGO_ENABLED=0`；它们不互相等价（例如带 `netgo` 标签、开着 cgo 的构建也可能是静态链接），缺一条就拒绝。检查器是 `scripts/checkstatic`，发布流水线必须把全部 Linux 产物（agent 与 hub）交给它，而不是复制一份当前的文件清单。Linux 采集直接读 `/proc`、`/sys` 与 `/etc/os-release`，不调用发行版的命令行工具；共用的内核接口与 os-release 格式让采集不需要发行版专用分支，文件是否可读、返回值是否合理仍由测试与各发行版端到端验证。
 - 构建顺序：`buf generate` → 前端构建 → `go build`。生成的 Go 代码入库，前端产物不入库。
-- Linux 安装脚本的步骤顺序：检测 init 系统 → 创建固定的系统用户 → 从 GitHub Releases 下载并校验 sha256 → `probe-agent register` → 安装并启动 systemd 单元。建用户排在下载与注册之前：它若失败，注册窗口的名额尚未消耗、旧服务尚未停止。
+- Linux 安装脚本的步骤顺序：检测 init 系统 → 创建固定的系统用户 → 从 GitHub Releases 下载并校验 sha256 → `probe-agent register` → 安装并启动检测到的 init 对应的服务（systemd 单元或 OpenRC 服务，要求见下两条）。建用户排在下载与注册之前：它若失败，注册窗口的名额尚未消耗、旧服务尚未停止。
 - systemd 单元使用静态 `User=` 并加固（`NoNewPrivileges=`、`ProtectSystem=strict` 等），默认带 `AmbientCapabilities=CAP_NET_RAW` 与 `CapabilityBoundingSet=CAP_NET_RAW`：裸机 Debian 的 `ping_group_range` 默认关闭（§13 第 2 项），没有这项能力时 ICMP 探测只能回报 error。不用 `DynamicUser=`：据 monitor 提交 `85f6702` 的记录，未开 nesting 的 LXC 容器建不了挂载命名空间，此时 systemd 对静态 `User=` 的单元会跳过挂载类隔离照常启动，对 `DynamicUser=` 的单元则拒绝启动（226/NAMESPACE）。`DynamicUser=` 隐含的 `RestrictSUIDSGID=` 需在单元里明写补回。该记录来自参考项目而非本项目的实验，单元定稿前在未开 nesting 的 LXC 容器里实测一次。
 - init 系统支持 systemd 与 OpenRC。判定：`/run/systemd/system` 存在为 systemd；否则 `/sbin/openrc-run` 存在为 OpenRC（`/run/openrc` 表示已启动）；两者都不是时安装脚本报错并列出支持的 init，不静默降级（容器里两者通常都不存在）。OpenRC 服务用 `supervisor=supervise-daemon`、`command_user` 为固定系统用户、`capabilities="^cap_net_raw"`，与 systemd 的 `AmbientCapabilities` 等价（2026-09-25 在 Alpine 3.21 / OpenRC 0.55.1 真机上实测：ping_group_range 关闭时授予该能力 ICMP 可用，去掉即不可用）。`output_log` 与 `error_log` 的文件必须在启动前建好并交给运行用户：supervise-daemon 降权后才打开它们，打不开时子进程秒退、反复拉起，而 `rc-service status` 仍显示 started。
-- 安装脚本用 POSIX sh，兼容 busybox，按实际存在的工具分支，不假设任何单一工具（实测各发行版最小环境的工具集互不相同）：建用户优先 `useradd --system`，没有时 Alpine 用 busybox 的 `adduser -S -D -H`、Debian 用 `adduser --system --group --no-create-home`；建完一律回查 `id`，不信退出码——Debian 的 perl 版 adduser 收到它不认识的参数也返回 0。下载用 curl 或 wget（Alpine 只有 wget，Rocky 只有 curl），两者都没有就报错说明依赖。能力授予交给 init，不依赖 setcap（Alpine 与 Debian 默认都没有）。Debian 与 Ubuntu 的最小环境不带 CA 证书，hub 用 https 时安装脚本先装 `ca-certificates`。
+- 安装脚本用 POSIX sh，兼容 busybox，按实际存在的工具分支，不假设任何单一工具（所测的基础容器镜像与机器镜像之间、以及各发行版之间，工具集都不相同）：建用户优先 `useradd --system`，没有时 Alpine 用 busybox 的 `adduser -S -D -H`、Debian 用 `adduser --system --group --no-create-home`；建完一律回查 `id`，不信退出码——实测 Debian 的 perl 版 adduser 收到 busybox 风格的参数时打印用法、不建用户，却返回 0。下载用 curl 或 wget，按实际存在的那个走（所测基础容器里 Alpine 只有 wget、Rocky 只有 curl、Debian 与 Ubuntu 两者都没有；所测机器镜像里四个都有 curl），两者都没有就报错说明依赖。能力授予交给 init，不依赖 setcap（所测的 Alpine 与 Debian 机器镜像、以及 Alpine、Debian、Ubuntu 基础容器里都没有）。所测的 Debian 与 Ubuntu 基础容器不带 CA 证书（机器镜像都带），CA 是否存在按文件探测而不是按发行版名判断；缺失且 hub 用 https 时安装脚本先装 `ca-certificates`。
 - macOS：launchd。
 - 升级 = 重跑安装脚本。面板显示各节点 agent 版本并标出落后于 hub 的节点。
 
