@@ -573,3 +573,54 @@ func TestMigrationFromV2MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 		t.Fatalf("traffic table missing or non-empty: %v %v", n, err)
 	}
 }
+
+// schemaV5 冻结加入 api_token 之前的完整 DDL：生产常量以后会变，迁移的输入不能跟着变。
+var schemaV5 = []string{
+	"CREATE TABLE node (\n  -- AUTOINCREMENT 使 id 永不复用：分层备份恢复后两层可能各自漂移，\n  -- id 若复用，指标层里已删节点的历史会挂到同 id 的新节点上且无法肉眼分辨。\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  name TEXT NOT NULL,\n  sort_order INTEGER NOT NULL DEFAULT 0,\n  public INTEGER NOT NULL DEFAULT 0,\n  note TEXT NOT NULL DEFAULT '',\n  -- NULL 表示\"用默认值（TTL）\"，是缺省不是放宽；读侧遇 NULL 必须取 TTL。\n  offline_grace_s INTEGER,\n  traffic_reset_day INTEGER NOT NULL DEFAULT 1,\n  token_hash BLOB NOT NULL UNIQUE,\n  created_at INTEGER NOT NULL,\n  -- 墙钟，只供展示与告警文案，不参与离线时长计算。\n  last_seen_at INTEGER\n)",
+	"CREATE TABLE node_facts (\n  node_id INTEGER PRIMARY KEY,\n  facts_hash INTEGER NOT NULL,\n  hostname TEXT NOT NULL,\n  os TEXT NOT NULL,\n  kernel TEXT NOT NULL,\n  arch TEXT NOT NULL,\n  virtualization TEXT NOT NULL,\n  cpu_model TEXT NOT NULL,\n  cpu_cores INTEGER NOT NULL,\n  agent_version TEXT NOT NULL,\n  icmp_available INTEGER NOT NULL,\n  updated_at INTEGER NOT NULL\n)",
+	"CREATE TABLE register_window (\n  id INTEGER PRIMARY KEY CHECK (id = 1),\n  key_hash BLOB NOT NULL,\n  expires_at INTEGER NOT NULL,\n  remaining INTEGER NOT NULL\n)",
+	"CREATE TABLE rollup_state (\n  level TEXT PRIMARY KEY,\n  upto_ts INTEGER NOT NULL\n)",
+	"INSERT INTO rollup_state (level, upto_ts) VALUES ('5m', 0), ('1h', 0)",
+	"INSERT INTO rollup_state (level, upto_ts) VALUES ('probe_5m', 0), ('probe_1h', 0)",
+	"CREATE TABLE admin (\n  -- 单管理员：CHECK 让第二行无法插入，\"多用户\"在 schema 上就不成立。\n  id INTEGER PRIMARY KEY CHECK (id = 1),\n  -- PHC 字符串，argon2id 的参数随哈希走：改参数不需要迁移，旧哈希按自带参数校验。\n  password_hash TEXT NOT NULL,\n  updated_at INTEGER NOT NULL\n)",
+	"CREATE TABLE admin_session (\n  token_hash BLOB PRIMARY KEY,\n  created_at INTEGER NOT NULL,\n  last_used_at INTEGER NOT NULL,\n  -- 绝对过期，墙钟 Unix 秒。会话要跨 hub 重启存活，只能用墙钟；\n  -- 墙钟回拨会推迟按绝对过期时刻判定失效的时间。\n  expires_at INTEGER NOT NULL\n)",
+	"CREATE TABLE traffic (\n  node_id INTEGER PRIMARY KEY,\n  boot_id TEXT NOT NULL,\n  last_rx INTEGER NOT NULL, -- -1 表示尚无基线，与 traffic.NoBaseline 同值；由校正建立的条目才有。\n  last_tx INTEGER NOT NULL, -- -1 的含义与 last_rx 相同。\n  total_rx INTEGER NOT NULL,\n  total_tx INTEGER NOT NULL,\n  period_rx INTEGER NOT NULL,\n  period_tx INTEGER NOT NULL,\n  -- 当前周期起点，Unix 秒；重置日零点按 hub 时区换算。\n  period_start INTEGER NOT NULL,\n  updated_at INTEGER NOT NULL\n)",
+	"CREATE TABLE probe_task (\n  -- AUTOINCREMENT：历史行只带 task_id，删除任务后 id 若复用，旧历史会挂到新任务上。\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  kind INTEGER NOT NULL,\n  target TEXT NOT NULL,\n  interval_s INTEGER NOT NULL,\n  timeout_ms INTEGER NOT NULL,\n  created_at INTEGER NOT NULL\n)",
+	"CREATE TABLE probe_task_node (\n  task_id INTEGER NOT NULL,\n  node_id INTEGER NOT NULL,\n  PRIMARY KEY (task_id, node_id)\n) WITHOUT ROWID",
+	"CREATE INDEX probe_task_node_by_node ON probe_task_node (node_id)",
+	"CREATE TABLE probe_meta (\n  id INTEGER PRIMARY KEY CHECK (id = 1),\n  version INTEGER NOT NULL\n)",
+	"INSERT INTO probe_meta (id, version) VALUES (1, 0)",
+	"CREATE TABLE metric_1m (node_id INTEGER NOT NULL, ts INTEGER NOT NULL, cpu_sum REAL NOT NULL DEFAULT 0, cpu_n INTEGER NOT NULL DEFAULT 0, cpu_max REAL NOT NULL DEFAULT 0, mem_used_sum INTEGER NOT NULL DEFAULT 0, mem_used_n INTEGER NOT NULL DEFAULT 0, mem_used_max INTEGER NOT NULL DEFAULT 0, swap_used_sum INTEGER NOT NULL DEFAULT 0, swap_used_n INTEGER NOT NULL DEFAULT 0, disk_used_sum INTEGER NOT NULL DEFAULT 0, disk_used_n INTEGER NOT NULL DEFAULT 0, load1_sum REAL NOT NULL DEFAULT 0, load1_n INTEGER NOT NULL DEFAULT 0, tcp_sum INTEGER NOT NULL DEFAULT 0, tcp_n INTEGER NOT NULL DEFAULT 0, udp_sum INTEGER NOT NULL DEFAULT 0, udp_n INTEGER NOT NULL DEFAULT 0, procs_sum INTEGER NOT NULL DEFAULT 0, procs_n INTEGER NOT NULL DEFAULT 0, rx_bytes_sum INTEGER NOT NULL DEFAULT 0, rx_bytes_n INTEGER NOT NULL DEFAULT 0, tx_bytes_sum INTEGER NOT NULL DEFAULT 0, tx_bytes_n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (node_id, ts)) WITHOUT ROWID",
+	"CREATE TABLE metric_5m (node_id INTEGER NOT NULL, ts INTEGER NOT NULL, cpu_sum REAL NOT NULL DEFAULT 0, cpu_n INTEGER NOT NULL DEFAULT 0, cpu_max REAL NOT NULL DEFAULT 0, mem_used_sum INTEGER NOT NULL DEFAULT 0, mem_used_n INTEGER NOT NULL DEFAULT 0, mem_used_max INTEGER NOT NULL DEFAULT 0, swap_used_sum INTEGER NOT NULL DEFAULT 0, swap_used_n INTEGER NOT NULL DEFAULT 0, disk_used_sum INTEGER NOT NULL DEFAULT 0, disk_used_n INTEGER NOT NULL DEFAULT 0, load1_sum REAL NOT NULL DEFAULT 0, load1_n INTEGER NOT NULL DEFAULT 0, tcp_sum INTEGER NOT NULL DEFAULT 0, tcp_n INTEGER NOT NULL DEFAULT 0, udp_sum INTEGER NOT NULL DEFAULT 0, udp_n INTEGER NOT NULL DEFAULT 0, procs_sum INTEGER NOT NULL DEFAULT 0, procs_n INTEGER NOT NULL DEFAULT 0, rx_bytes_sum INTEGER NOT NULL DEFAULT 0, rx_bytes_n INTEGER NOT NULL DEFAULT 0, tx_bytes_sum INTEGER NOT NULL DEFAULT 0, tx_bytes_n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (node_id, ts)) WITHOUT ROWID",
+	"CREATE TABLE metric_1h (node_id INTEGER NOT NULL, ts INTEGER NOT NULL, cpu_sum REAL NOT NULL DEFAULT 0, cpu_n INTEGER NOT NULL DEFAULT 0, cpu_max REAL NOT NULL DEFAULT 0, mem_used_sum INTEGER NOT NULL DEFAULT 0, mem_used_n INTEGER NOT NULL DEFAULT 0, mem_used_max INTEGER NOT NULL DEFAULT 0, swap_used_sum INTEGER NOT NULL DEFAULT 0, swap_used_n INTEGER NOT NULL DEFAULT 0, disk_used_sum INTEGER NOT NULL DEFAULT 0, disk_used_n INTEGER NOT NULL DEFAULT 0, load1_sum REAL NOT NULL DEFAULT 0, load1_n INTEGER NOT NULL DEFAULT 0, tcp_sum INTEGER NOT NULL DEFAULT 0, tcp_n INTEGER NOT NULL DEFAULT 0, udp_sum INTEGER NOT NULL DEFAULT 0, udp_n INTEGER NOT NULL DEFAULT 0, procs_sum INTEGER NOT NULL DEFAULT 0, procs_n INTEGER NOT NULL DEFAULT 0, rx_bytes_sum INTEGER NOT NULL DEFAULT 0, rx_bytes_n INTEGER NOT NULL DEFAULT 0, tx_bytes_sum INTEGER NOT NULL DEFAULT 0, tx_bytes_n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (node_id, ts)) WITHOUT ROWID",
+	"CREATE TABLE probe_1m (\n  node_id INTEGER NOT NULL, ts INTEGER NOT NULL, task_id INTEGER NOT NULL,\n  sent INTEGER NOT NULL DEFAULT 0, lost INTEGER NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0,\n  rtt_sum_us INTEGER NOT NULL DEFAULT 0, rtt_min_us INTEGER, rtt_max_us INTEGER,\n  PRIMARY KEY (node_id, ts, task_id)\n) WITHOUT ROWID",
+	"CREATE TABLE probe_5m (\n  node_id INTEGER NOT NULL, ts INTEGER NOT NULL, task_id INTEGER NOT NULL,\n  sent INTEGER NOT NULL DEFAULT 0, lost INTEGER NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0,\n  rtt_sum_us INTEGER NOT NULL DEFAULT 0, rtt_min_us INTEGER, rtt_max_us INTEGER,\n  PRIMARY KEY (node_id, ts, task_id)\n) WITHOUT ROWID",
+	"CREATE TABLE probe_1h (\n  node_id INTEGER NOT NULL, ts INTEGER NOT NULL, task_id INTEGER NOT NULL,\n  sent INTEGER NOT NULL DEFAULT 0, lost INTEGER NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0,\n  rtt_sum_us INTEGER NOT NULL DEFAULT 0, rtt_min_us INTEGER, rtt_max_us INTEGER,\n  PRIMARY KEY (node_id, ts, task_id)\n) WITHOUT ROWID",
+	"CREATE TABLE alert_rule (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  name TEXT NOT NULL,\n  kind TEXT NOT NULL,\n  enabled INTEGER NOT NULL DEFAULT 1,\n  all_nodes INTEGER NOT NULL DEFAULT 0,\n  task_id INTEGER,\n  metric TEXT,\n  threshold REAL,\n  for_minutes INTEGER,\n  created_at INTEGER NOT NULL\n)",
+	"CREATE TABLE alert_rule_node (\n  rule_id INTEGER NOT NULL,\n  node_id INTEGER NOT NULL,\n  PRIMARY KEY (rule_id, node_id)\n)",
+	"CREATE INDEX alert_rule_node_by_node ON alert_rule_node(node_id)",
+	"CREATE TABLE alert_rule_channel (\n  rule_id INTEGER NOT NULL,\n  channel_id INTEGER NOT NULL,\n  PRIMARY KEY (rule_id, channel_id)\n)",
+	"CREATE INDEX alert_rule_channel_by_channel ON alert_rule_channel(channel_id)",
+	"CREATE TABLE notify_channel (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  name TEXT NOT NULL,\n  kind TEXT NOT NULL,\n  config TEXT NOT NULL,\n  created_at INTEGER NOT NULL\n)",
+	"CREATE TABLE alert_state (\n  rule_id INTEGER NOT NULL,\n  node_id INTEGER NOT NULL,\n  state TEXT NOT NULL,\n  since_at INTEGER NOT NULL,\n  PRIMARY KEY (rule_id, node_id)\n)",
+	"CREATE TABLE alert_event (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  rule_id INTEGER NOT NULL,\n  node_id INTEGER NOT NULL,\n  transition TEXT NOT NULL,\n  at INTEGER NOT NULL,\n  summary TEXT NOT NULL,\n  value REAL NOT NULL\n)",
+	"CREATE INDEX alert_event_by_node ON alert_event(node_id, id)",
+	"CREATE INDEX alert_event_by_at ON alert_event(at)",
+	"CREATE TABLE alert_delivery (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  event_id INTEGER NOT NULL,\n  channel_id INTEGER NOT NULL,\n  attempts INTEGER NOT NULL DEFAULT 0,\n  ok INTEGER NOT NULL DEFAULT 0,\n  done INTEGER NOT NULL DEFAULT 0,\n  last_error TEXT NOT NULL DEFAULT '',\n  delivered_at INTEGER\n)",
+	"CREATE INDEX alert_delivery_by_event ON alert_delivery(event_id)",
+	"CREATE INDEX alert_delivery_pending ON alert_delivery(done, id)",
+}
+
+func TestMigrationFromV5MatchesFreshSchemaAndKeepsRows(t *testing.T) {
+	migrated, fresh := migrateFrom(t, schemaV5, 5, seedMinuteRow)
+	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
+		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
+	}
+	if v := userVersion(t, migrated.r); v != schemaVersion {
+		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
+	}
+	rows, err := migrated.ReadMinuteRows(t.Context(), 7, 0, 120)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("minute row lost across migration: %v %v", rows, err)
+	}
+}

@@ -100,7 +100,7 @@ func schemaStatements() []string {
 	for _, t := range probeTables {
 		out = append(out, probeDDL(t))
 	}
-	return append(out, alertStatements()...)
+	return append(append(out, alertStatements()...), ddlAPIToken)
 }
 
 // metricDDL 从描述表生成分钟表。主键顺序 (node_id, ts) 即唯一查询路径，
@@ -285,6 +285,18 @@ const ddlAlertDelivery = `CREATE TABLE alert_delivery (
 )`
 const ddlAlertDeliveryByEvent = `CREATE INDEX alert_delivery_by_event ON alert_delivery(event_id)`
 const ddlAlertDeliveryPending = `CREATE INDEX alert_delivery_pending ON alert_delivery(done, id)`
+
+// api_token 是 AdminService 的程序化凭据（§5.6）。
+const ddlAPIToken = `CREATE TABLE api_token (
+  -- AUTOINCREMENT：id 永不复用。吊销按 id 进行，复用会让针对旧 token 的吊销落到新 token 上。
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  -- 整串明文（含前缀）的 SHA-256；明文不落库。
+  token_hash BLOB NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL,
+  -- NULL 表示从未使用。只供展示：距已落库值满一分钟才刷新。
+  last_used_at INTEGER
+)`
 
 func alertStatements() []string {
 	return []string{ddlAlertRule, ddlAlertRuleNode, ddlAlertRuleNodeByNode, ddlAlertRuleChannel,
