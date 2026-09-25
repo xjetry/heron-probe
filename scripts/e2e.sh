@@ -78,6 +78,13 @@ rpc() {
     -b "$work/jar" -c "$work/jar" "$@" --data "$body" "$base/probe.v1.AdminService/$name"
 }
 
+# bearer 名字 请求体：用 API token 调 AdminService，不带 cookie；打印状态码，响应体落 $work/bearer-<名字>.json。
+bearer() {
+  name=$1; body=$2
+  curl -sS -o "$work/bearer-$name.json" -w '%{http_code}' -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer $api_token" --data "$body" "$base/probe.v1.AdminService/$name"
+}
+
 [ "$(curl -sS -o /dev/null -w '%{http_code}' "$base/")" = 302 ] || { echo "FAIL: / must redirect to the panel"; exit 1; }
 [ "$(curl -sS -o "$work/admin.html" -w '%{http_code}' "$base/admin/")" = 200 ] || { echo "FAIL: /admin/ not served"; exit 1; }
 grep -q 'id="root"' "$work/admin.html" || { echo "FAIL: panel index missing root element"; exit 1; }
@@ -244,8 +251,15 @@ wait_alert recovered "$recovery_started"
 [ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic before restart"; exit 1; }
 traffic_before=$(jq -c --arg id "$node1" '.nodes[] | select(.nodeId == $id) | .traffic' "$work/GetTraffic.json")
 
+[ "$(rpc CreateApiToken '{"name":"e2e"}')" = 200 ] || { echo "FAIL: CreateApiToken"; cat "$work/CreateApiToken.json"; exit 1; }
+api_token=$(jq -r '.token' "$work/CreateApiToken.json")
+api_token_id=$(jq -r '.apiToken.id' "$work/CreateApiToken.json")
+case "$api_token" in probe_at_*) ;; *) echo "FAIL: API token lacks the probe_at_ prefix"; exit 1 ;; esac
+
 [ "$(rpc Logout '{}')" = 200 ] || { echo "FAIL: logout"; exit 1; }
 [ "$(rpc GetSnapshot '{}')" = 401 ] || { echo "FAIL: session survived logout"; exit 1; }
+# token 与会话是两条独立口径：登出不影响 token。
+[ "$(bearer GetSnapshot '{}')" = 200 ] || { echo "FAIL: API token stopped working after logout"; cat "$work/bearer-GetSnapshot.json"; exit 1; }
 
 kill "$hub"; wait "$hub"
 hub=""
@@ -255,6 +269,30 @@ PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port
 hub=$!
 wait_hub
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login after restart"; exit 1; }
+# token 跨重启存活，只读、不能写；卡片取自 hub 实际下发的那份，其中的例子逐个在真实数据上跑。
+[ "$(bearer ListNodes '{}')" = 200 ] || { echo "FAIL: API token lost across restart"; cat "$work/bearer-ListNodes.json"; exit 1; }
+jq -e '(.nodes | length) == 2' "$work/bearer-ListNodes.json" > /dev/null || { echo "FAIL: ListNodes via token"; cat "$work/bearer-ListNodes.json"; exit 1; }
+[ "$(bearer CreateNode '{"name":"via-token"}')" = 403 ] || { echo "FAIL: API token was allowed to write"; cat "$work/bearer-CreateNode.json"; exit 1; }
+jq -e '.code == "permission_denied"' "$work/bearer-CreateNode.json" > /dev/null || { echo "FAIL: write via token not permission_denied"; exit 1; }
+[ "$(bearer GetApiReference '{}')" = 200 ] || { echo "FAIL: GetApiReference via token"; exit 1; }
+jq -e 'any(.files[]; .path == "probe/v1/admin.proto") and (.guide | contains("PROBE_TOKEN"))' "$work/bearer-GetApiReference.json" > /dev/null || { echo "FAIL: GetApiReference content"; exit 1; }
+jq -r '.guide' "$work/bearer-GetApiReference.json" > "$work/SKILL.md"
+awk -v dir="$work" '
+  /^```sh example$/ { n++; file = sprintf("%s/card-example-%d.sh", dir, n); inblock = 1; next }
+  inblock && /^```$/ { inblock = 0; close(file); next }
+  inblock { print > file }
+' "$work/SKILL.md"
+examples=$(ls "$work"/card-example-*.sh 2> /dev/null | wc -l | tr -d ' ')
+[ "$examples" -ge 3 ] || { echo "FAIL: expected at least 3 card examples, found $examples"; exit 1; }
+for ex in "$work"/card-example-*.sh; do
+  status=0
+  PROBE_HUB=$base PROBE_TOKEN=$api_token sh -eu "$ex" > "$ex.out" 2> "$ex.err" || status=$?
+  [ "$status" = 0 ] || { echo "FAIL: card example $ex exited $status"; cat "$ex" "$ex.err"; exit 1; }
+  [ -s "$ex.out" ] && jq -e . "$ex.out" > /dev/null || { echo "FAIL: card example $ex did not print JSON"; cat "$ex" "$ex.out" "$ex.err"; exit 1; }
+done
+echo "card examples ok: $examples"
+[ "$(rpc DeleteApiToken "$(jq -nc --arg id "$api_token_id" '{id: $id}')")" = 200 ] || { echo "FAIL: DeleteApiToken"; exit 1; }
+[ "$(bearer ListNodes '{}')" = 401 ] || { echo "FAIL: revoked API token still accepted"; exit 1; }
 [ "$(rpc ListAlertRules '{}')" = 200 ] || { echo "FAIL: ListAlertRules after restart"; exit 1; }
 jq -e '(.rules | length) == 1' "$work/ListAlertRules.json" > /dev/null || { echo "FAIL: alert rule lost"; cat "$work/ListAlertRules.json"; exit 1; }
 [ "$(rpc ListAlertEvents '{}')" = 200 ] || { echo "FAIL: ListAlertEvents after restart"; exit 1; }

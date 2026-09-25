@@ -133,6 +133,10 @@ service AdminService {
   rpc DeleteApiToken(DeleteApiTokenRequest) returns (DeleteApiTokenResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
+  // 入口卡片与 hub 构建时嵌入的全部 proto 源文件：不在仓库里的调用方由此取得与 hub 同版本的 schema。
+  rpc GetApiReference(GetApiReferenceRequest) returns (GetApiReferenceResponse) {
+    option (probe.v1.access) = ACCESS_READ;
+  }
 }
 
 message LoginRequest {
@@ -577,3 +581,17 @@ message DeleteApiTokenRequest {
   int64 id = 1;
 }
 message DeleteApiTokenResponse {}
+
+message GetApiReferenceRequest {}
+message GetApiReferenceResponse {
+  // 入口卡片（markdown，Claude Code skill 格式）：进门方式、约定与可直接运行的例子。
+  string guide = 1;
+  // 按路径升序。
+  repeated ProtoFile files = 2;
+}
+
+message ProtoFile {
+  // 相对 proto 根的路径，如 probe/v1/admin.proto。
+  string path = 1;
+  string content = 2;
+}

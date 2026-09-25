@@ -116,6 +116,9 @@ const (
 	// AdminServiceDeleteApiTokenProcedure is the fully-qualified name of the AdminService's
 	// DeleteApiToken RPC.
 	AdminServiceDeleteApiTokenProcedure = "/probe.v1.AdminService/DeleteApiToken"
+	// AdminServiceGetApiReferenceProcedure is the fully-qualified name of the AdminService's
+	// GetApiReference RPC.
+	AdminServiceGetApiReferenceProcedure = "/probe.v1.AdminService/GetApiReference"
 )
 
 // AdminServiceClient is a client for the probe.v1.AdminService service.
@@ -177,6 +180,8 @@ type AdminServiceClient interface {
 	CreateApiToken(context.Context, *connect.Request[v1.CreateApiTokenRequest]) (*connect.Response[v1.CreateApiTokenResponse], error)
 	// 吊销：下一个用它的请求即返回 Unauthenticated，不需要重启 hub。
 	DeleteApiToken(context.Context, *connect.Request[v1.DeleteApiTokenRequest]) (*connect.Response[v1.DeleteApiTokenResponse], error)
+	// 入口卡片与 hub 构建时嵌入的全部 proto 源文件：不在仓库里的调用方由此取得与 hub 同版本的 schema。
+	GetApiReference(context.Context, *connect.Request[v1.GetApiReferenceRequest]) (*connect.Response[v1.GetApiReferenceResponse], error)
 }
 
 // NewAdminServiceClient constructs a client for the probe.v1.AdminService service. By default, it
@@ -370,6 +375,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("DeleteApiToken")),
 			connect.WithClientOptions(opts...),
 		),
+		getApiReference: connect.NewClient[v1.GetApiReferenceRequest, v1.GetApiReferenceResponse](
+			httpClient,
+			baseURL+AdminServiceGetApiReferenceProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("GetApiReference")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -405,6 +416,7 @@ type adminServiceClient struct {
 	listApiTokens       *connect.Client[v1.ListApiTokensRequest, v1.ListApiTokensResponse]
 	createApiToken      *connect.Client[v1.CreateApiTokenRequest, v1.CreateApiTokenResponse]
 	deleteApiToken      *connect.Client[v1.DeleteApiTokenRequest, v1.DeleteApiTokenResponse]
+	getApiReference     *connect.Client[v1.GetApiReferenceRequest, v1.GetApiReferenceResponse]
 }
 
 // Login calls probe.v1.AdminService.Login.
@@ -557,6 +569,11 @@ func (c *adminServiceClient) DeleteApiToken(ctx context.Context, req *connect.Re
 	return c.deleteApiToken.CallUnary(ctx, req)
 }
 
+// GetApiReference calls probe.v1.AdminService.GetApiReference.
+func (c *adminServiceClient) GetApiReference(ctx context.Context, req *connect.Request[v1.GetApiReferenceRequest]) (*connect.Response[v1.GetApiReferenceResponse], error) {
+	return c.getApiReference.CallUnary(ctx, req)
+}
+
 // AdminServiceHandler is an implementation of the probe.v1.AdminService service.
 type AdminServiceHandler interface {
 	// 用管理员密码换取会话 cookie（Set-Cookie 在响应头里）。
@@ -616,6 +633,8 @@ type AdminServiceHandler interface {
 	CreateApiToken(context.Context, *connect.Request[v1.CreateApiTokenRequest]) (*connect.Response[v1.CreateApiTokenResponse], error)
 	// 吊销：下一个用它的请求即返回 Unauthenticated，不需要重启 hub。
 	DeleteApiToken(context.Context, *connect.Request[v1.DeleteApiTokenRequest]) (*connect.Response[v1.DeleteApiTokenResponse], error)
+	// 入口卡片与 hub 构建时嵌入的全部 proto 源文件：不在仓库里的调用方由此取得与 hub 同版本的 schema。
+	GetApiReference(context.Context, *connect.Request[v1.GetApiReferenceRequest]) (*connect.Response[v1.GetApiReferenceResponse], error)
 }
 
 // NewAdminServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -805,6 +824,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("DeleteApiToken")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceGetApiReferenceHandler := connect.NewUnaryHandler(
+		AdminServiceGetApiReferenceProcedure,
+		svc.GetApiReference,
+		connect.WithSchema(adminServiceMethods.ByName("GetApiReference")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/probe.v1.AdminService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AdminServiceLoginProcedure:
@@ -867,6 +892,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceCreateApiTokenHandler.ServeHTTP(w, r)
 		case AdminServiceDeleteApiTokenProcedure:
 			adminServiceDeleteApiTokenHandler.ServeHTTP(w, r)
+		case AdminServiceGetApiReferenceProcedure:
+			adminServiceGetApiReferenceHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -994,4 +1021,8 @@ func (UnimplementedAdminServiceHandler) CreateApiToken(context.Context, *connect
 
 func (UnimplementedAdminServiceHandler) DeleteApiToken(context.Context, *connect.Request[v1.DeleteApiTokenRequest]) (*connect.Response[v1.DeleteApiTokenResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.DeleteApiToken is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) GetApiReference(context.Context, *connect.Request[v1.GetApiReferenceRequest]) (*connect.Response[v1.GetApiReferenceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.GetApiReference is not implemented"))
 }
