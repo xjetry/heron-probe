@@ -49,38 +49,57 @@ service_installed() {
   esac
 }
 
+# 停服务后确认进程退出的轮询间隔（秒）与次数上限，合计最多等 10 秒。
+STOP_POLL_INTERVAL=0.5
+STOP_POLL_MAX=20
+
+# 列出有效 uid 为 $1 的进程 pid（空格分隔，写入 svc_pids）。有效 uid 是 /proc/<pid>/status 里 Uid: 行的第三列。
+# 枚举与读取之间进程可能已退出，其 status 文件随之消失：读失败且文件已不在的条目按已退出跳过；
+# 文件还在却读不到则无法判定，返回失败。
+scan_uid_pids() {
+  svc_pids=""
+  [ -r /proc/self/status ] || { echo "cannot inspect processes: /proc is not mounted" >&2; return 1; }
+  for s in /proc/[0-9]*/status; do
+    if euid=$(awk '$1 == "Uid:" { print $3; exit }' "$s" 2>/dev/null); then
+      if [ "$euid" = "$1" ]; then p=${s#/proc/}; svc_pids="$svc_pids ${p%/status}"; fi
+    elif [ -e "$s" ]; then
+      echo "cannot read $s" >&2; return 1
+    fi
+  done
+}
+
+# 确认没有以服务用户身份运行的进程。不论服务定义在不在都要查：定义被手工删掉而进程仍在时，
+# 发不出 stop，也只有这里能发现。判据不用 init 的状态：OpenRC 0.55.1（Alpine 3.21）实测，
+# supervise-daemon 被杀、子进程留存时 stop 打印 "Unable to shut down the supervisor" 却返回 0，
+# 之后 status 为 stopped（3），子进程仍在运行。
+# $SVC_USER 是专供 agent 的 nologin 账户（create_account 建立），以它为有效 uid 的进程都算本服务的。
+# 用户不存在时（首次安装之前、purge 之后）没有可比对的 uid，直接通过；账户被带外删除而进程仍在的情形因此查不到。
+# 按数值 uid 比对，不按用户名：busybox 的 pgrep -u 对解析不到的用户名返回 1，与"没有进程"同码。
+# 不假定 stop 返回时进程已被回收（这取决于 init 实现）：有上限地轮询，超过上限仍在才报错。
+confirm_service_stopped() {
+  id "$SVC_USER" >/dev/null 2>&1 || return 0
+  svc_uid=$(id -u "$SVC_USER")
+  polls=0
+  while :; do
+    scan_uid_pids "$svc_uid" || return 1
+    [ -n "$svc_pids" ] || return 0
+    [ "$polls" -lt "$STOP_POLL_MAX" ] || break
+    sleep "$STOP_POLL_INTERVAL"
+    polls=$((polls + 1))
+  done
+  echo "probe-agent is still running: processes with uid $svc_uid ($SVC_USER):$svc_pids" >&2
+  return 1
+}
+
+# 服务定义已安装时才发 stop（没有定义就无从发起），stop 命令失败即失败；之后无条件确认进程已退出。
 stop_service() {
-  service_installed || return 0
-  case "$INIT" in
-    systemd)
-      systemctl stop probe-agent </dev/null || {
-        echo "failed to stop probe-agent" >&2; return 1;
-      }
-      if systemctl is-active --quiet probe-agent </dev/null; then
-        echo "failed to stop probe-agent: service is still active" >&2; return 1
-      fi
-      ;;
-    openrc)
-      # OpenRC 0.55.1（Alpine 3.21）实测：supervise-daemon 被杀、子进程留存时 status 为 unsupervised（64），
-      # 此时 stop 打印 "Unable to shut down the supervisor" 却返回 0，之后 status 为 stopped（3），
-      # 子进程仍在运行。stop 的退出码与 status 都证明不了进程已退出，所以直接查进程：
-      # $SVC_USER 是专供 agent 的 nologin 账户（create_account 建立），以它为 EUID 的进程都属于本服务。
-      rc-service probe-agent stop </dev/null || {
-        echo "failed to stop probe-agent" >&2; return 1;
-      }
-      command -v pgrep >/dev/null 2>&1 || {
-        echo "pgrep is required to verify that probe-agent stopped" >&2; return 1;
-      }
-      found=0
-      pids=$(pgrep -u "$SVC_USER" </dev/null) || found=$?
-      case "$found" in
-        0) echo "failed to stop probe-agent: processes still running as $SVC_USER:" >&2
-           echo "$pids" >&2; return 1;;
-        1) ;;
-        *) echo "pgrep exited $found while checking processes of $SVC_USER" >&2; return 1;;
-      esac
-      ;;
-  esac
+  if service_installed; then
+    case "$INIT" in
+      systemd) systemctl stop probe-agent </dev/null;;
+      openrc) rc-service probe-agent stop </dev/null;;
+    esac || { echo "failed to stop probe-agent" >&2; return 1; }
+  fi
+  confirm_service_stopped
 }
 
 # 用户与同名组都删并回查：各发行版删除工具对组的处理不一致，不能信退出码，也不能半成功还报成功。
@@ -104,13 +123,15 @@ if [ "$UNINSTALL" = 1 ]; then
   stop_service
   case "$INIT" in
     systemd)
-      if [ -e /etc/systemd/system/probe-agent.service ]; then
+      if service_installed; then
         systemctl disable probe-agent </dev/null
       fi
       rm -f /etc/systemd/system/probe-agent.service
       systemctl daemon-reload </dev/null;;
     openrc)
-      if [ -e /etc/runlevels/default/probe-agent ]; then
+      # 判链接本身（-L）而不跟随它：init 脚本被删后链接悬空，-e 会判为不存在而留下它。
+      # OpenRC 0.55.1 实测：init 脚本不存在时 rc-update del 仍删掉悬空链接并返回 0。
+      if [ -L /etc/runlevels/default/probe-agent ]; then
         rc-update del probe-agent default </dev/null
       fi
       rm -f /etc/init.d/probe-agent;;
@@ -168,8 +189,9 @@ create_account() {
       echo "no useradd or adduser available to create the system user" >&2; exit 1
     fi
   fi
+  id "$SVC_USER" >/dev/null 2>&1 || { echo "failed to create system user $SVC_USER" >&2; exit 1; }
   actual_group=$(id -gn "$SVC_USER" 2>/dev/null) || {
-    echo "failed to create system user $SVC_USER" >&2; exit 1; }
+    echo "user $SVC_USER exists but its primary group is missing (gid $(id -g "$SVC_USER"))" >&2; exit 1; }
   [ "$actual_group" = "$SVC_USER" ] || {
     echo "user $SVC_USER exists with primary group $actual_group; expected $SVC_USER" >&2; exit 1; }
 }
@@ -212,7 +234,8 @@ else echo "neither curl nor wget is available to download $PKG" >&2; exit 1; fi
 command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is required to verify downloads" >&2; exit 1; }
 
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+BIN_TMP="$BIN.tmp.$$"
+trap 'rm -rf "$work"; rm -f "$BIN_TMP"' EXIT
 
 dl() {
   if [ "$FETCH" = curl ]; then curl -fsSL -o "$2" "$1"; else wget -q -O "$2" "$1"; fi
@@ -227,15 +250,16 @@ dl "$BASE_URL/SHA256SUMS" "$work/SHA256SUMS"
 }
 (cd "$work" && sha256sum -c verify.txt)
 
-# 先解包并确认服务所需文件齐全，避免包损坏时先停掉正在运行的旧服务。
+# 解包、检查包内文件、写临时二进制都在停服务之前做完：这些准备失败时，正在运行的旧服务不受影响。
 tar -xzf "$work/$PKG" -C "$work"
 for f in probe-agent probe-agent.service probe-agent.openrc; do
   [ -f "$work/$f" ] || { echo "package is missing $f" >&2; exit 1; }
 done
+install -m 0755 "$work/probe-agent" "$BIN_TMP"
 stop_service
-# 同目录 rename 原子替换目录项：进程看到的始终是完整的旧文件或完整的新文件，中断不会留下截断二进制。
-install -m 0755 "$work/probe-agent" "$BIN.tmp.$$"
-mv -f "$BIN.tmp.$$" "$BIN"
+# 同目录 rename 原子替换目录项：exec $BIN 看到的始终是完整的旧文件或完整的新文件；
+# 写了一半的临时文件由 EXIT trap 删除。
+mv -f "$BIN_TMP" "$BIN"
 
 if [ ! -f "$CFG" ]; then
   # 注册只在没有配置时发生；配置落盘后重跑不再注册，所以注册之后的步骤失败时，重跑不会多耗窗口名额。
@@ -253,8 +277,8 @@ else
 fi
 
 # 服务定义每次覆盖，单元的改动随升级下发。
-# 走到这里时服务一定没在运行：服务定义已安装则 stop_service 已确认停下，否则停不下来已退出；
-# 未安装则没有由它管理的进程。所以用 start，不依赖 restart 对已停服务等价于 start。
+# 走到这里时没有以服务用户运行的进程：stop_service 不论服务定义在不在都已确认，查到就已退出。
+# 所以用 start，不依赖 restart 对已停服务等价于 start。
 case "$INIT" in
   systemd)
     install -m 0644 "$work/probe-agent.service" /etc/systemd/system/probe-agent.service
@@ -264,7 +288,7 @@ case "$INIT" in
   openrc)
     install -m 0755 "$work/probe-agent.openrc" /etc/init.d/probe-agent
     # 重跑时它已在 default runlevel 里；只在不在时才加，不依赖 rc-update 对重复 add 的退出码。
-    [ -e /etc/runlevels/default/probe-agent ] || rc-update add probe-agent default </dev/null
+    [ -L /etc/runlevels/default/probe-agent ] || rc-update add probe-agent default </dev/null
     rc-service probe-agent start </dev/null;;
 esac
 echo "probe-agent installed and started ($INIT, $ARCH, $PKG)"
