@@ -2155,3 +2155,22 @@ Run: `cd /Users/xjetry/work/vibe/probe-access && make ci > /tmp/agent-access-t6-
 ```bash
 cd /Users/xjetry/work/vibe/probe-access && git add web/src && git commit -m "web: API token 页：创建、吊销与下载入口卡片"
 ```
+
+---
+
+## 执行修正
+
+执行中相对上文的偏离与补充，按主题列出；每条的理由与验证记录在提交信息与测试里。
+
+- **最后使用时间**：与会话同一口径——从未使用或距已落库值满一分钟才异步刷新，刷新只 UPDATE（spec §5.6 已同步）。上文 Task 2 注入 1 的 SQL 会同时换掉 token_hash，测试在"复活"断言之前就失败；有效的注入是按 id 的 upsert。迁移测试比对不了 AUTOINCREMENT（见下"后续"），id 不复用由 `TestAPITokenIDsAreNotReused` 承载。
+- **入口卡片的约定**：非 optional 字段取默认值时省略，optional 字段有值即出现（含 0）；列表为空时字段不出现，jq 取列表写 `(.字段 // [])`；`_us` 为微秒。例子在空 hub 上也要能跑：e2e 在注册任何 agent 之前先跑一遍全部例子，有数据那一轮额外断言输出非空；抽出的例子数与卡片里的标记块数独立核对。CPU 例用 `(.samples // [])[]` 逐个产出样本。例 2 的 ListNodes 单独一行，请求失败即以非零退出。
+- **准入口径**：`ListNotifyChannels` 改为 `ACCESS_SESSION`——它回显 webhook 的请求体模板，模板里可能放着密钥；READ 的定义补上"不回显可能含密钥的配置"（spec §3.2、access.proto 同步）。token 调 `Login` 的拒绝文案指向密码，不再说需要会话。
+- **行身份**：名称在库里不唯一（node、alert_rule、notify_channel、probe_task 的 target、api_token），凡按名称识别对象的可访问名或可见文字一律带 id（`withId`）：五个页面的行操作按钮、编辑表单与行内输入框、`Picks` 复选框、节点名链接、告警规则的探测任务下拉（沿用 `taskLabels` 的碰撞后缀）、告警事件的节点筛选、明文卡片标题。`ConfirmDelete` 的首击可见动词由调用方给出（token 页为"吊销"）。明文卡片在其对象被吊销或删除后清掉。
+- **离线子命令建库**（用户确认的口径，spec §5.6）：只有建立状态的子命令（passwd、window open、node create）在 `--db` 不存在时建库，其余报错；检查只在 `openOffline` 一处。
+- **测试写法**：下载用例用 `blob.text()` 读取（`new Response(blob).text()` 在 jsdom 30 + undici 下得到 "[object Blob]"）；会话 cookie 的测试辅助叫 `sessionCookieHeader`（与 service.go 的 `sessionCookie` 区分）。
+- **后续（不在本分支）**：
+  - `migrate_test` 的 `describe` 不比较 AUTOINCREMENT、WITHOUT ROWID、UNIQUE 自动索引与外键，重建型迁移若丢了这些性质照不出。
+  - `passwd` 管道用例的写端已关闭，证明不了"不阻塞"。
+  - e2e 的告警恢复等待在高负载下出现过一次超时（恢复事件未产生，agent 重启后 40 秒内未重新上线），告警、上报与实时状态代码在本分支未改动，待单独排查。
+  - `ListAlertEvents` 的 `last_error` 最多带出接收方响应体的前 200 个字符；接收方若在错误响应里回显请求体，模板里的密钥可被只读 token 读到——口径待定。
+  - 面向运维者的 `probe-hub` CLI 说明（README 目前没有）。
