@@ -166,7 +166,8 @@ type AdminServiceClient interface {
 	DeleteAlertRule(context.Context, *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error)
 	// 按事件 id 倒序分页，包含每个事件的投递状态。
 	ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error)
-	// 不回显渠道凭据（Telegram token、Webhook URL 与头值）。
+	// 不回显凭据本身，但请求体模板、URL 主机名与头名称会回显，模板里可能放着密钥。
+	// agent 不需要渠道配置，所以只对会话开放。
 	ListNotifyChannels(context.Context, *connect.Request[v1.ListNotifyChannelsRequest]) (*connect.Response[v1.ListNotifyChannelsResponse], error)
 	// id 为 0 创建，否则替换；凭据字段为空或省略时保留旧值，删除头用 remove_headers。
 	SaveNotifyChannel(context.Context, *connect.Request[v1.SaveNotifyChannelRequest]) (*connect.Response[v1.SaveNotifyChannelResponse], error)
@@ -619,7 +620,8 @@ type AdminServiceHandler interface {
 	DeleteAlertRule(context.Context, *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error)
 	// 按事件 id 倒序分页，包含每个事件的投递状态。
 	ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error)
-	// 不回显渠道凭据（Telegram token、Webhook URL 与头值）。
+	// 不回显凭据本身，但请求体模板、URL 主机名与头名称会回显，模板里可能放着密钥。
+	// agent 不需要渠道配置，所以只对会话开放。
 	ListNotifyChannels(context.Context, *connect.Request[v1.ListNotifyChannelsRequest]) (*connect.Response[v1.ListNotifyChannelsResponse], error)
 	// id 为 0 创建，否则替换；凭据字段为空或省略时保留旧值，删除头用 remove_headers。
 	SaveNotifyChannel(context.Context, *connect.Request[v1.SaveNotifyChannelRequest]) (*connect.Response[v1.SaveNotifyChannelResponse], error)

@@ -105,9 +105,10 @@ service AdminService {
   rpc ListAlertEvents(ListAlertEventsRequest) returns (ListAlertEventsResponse) {
     option (probe.v1.access) = ACCESS_READ;
   }
-  // 不回显渠道凭据（Telegram token、Webhook URL 与头值）。
+  // 不回显凭据本身，但请求体模板、URL 主机名与头名称会回显，模板里可能放着密钥。
+  // agent 不需要渠道配置，所以只对会话开放。
   rpc ListNotifyChannels(ListNotifyChannelsRequest) returns (ListNotifyChannelsResponse) {
-    option (probe.v1.access) = ACCESS_READ;
+    option (probe.v1.access) = ACCESS_SESSION;
   }
   // id 为 0 创建，否则替换；凭据字段为空或省略时保留旧值，删除头用 remove_headers。
   rpc SaveNotifyChannel(SaveNotifyChannelRequest) returns (SaveNotifyChannelResponse) {

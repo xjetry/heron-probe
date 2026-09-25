@@ -16,7 +16,7 @@ import (
 // token 的权限，必须同时改这份清单——与 Public* 字段允许列表同一口径。
 var readMethods = []string{
 	"ListNodes", "GetRegisterWindow", "GetSnapshot", "QueryMetrics", "GetTraffic",
-	"ListProbeTasks", "QueryProbes", "ListAlertRules", "ListAlertEvents", "ListNotifyChannels",
+	"ListProbeTasks", "QueryProbes", "ListAlertRules", "ListAlertEvents",
 	"GetApiReference",
 }
 

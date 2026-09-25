@@ -4916,7 +4916,7 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\rSaveAlertRule\x12\x1e.probe.v1.SaveAlertRuleRequest\x1a\x1f.probe.v1.SaveAlertRuleResponse\"\x04\x88\xb5\x18\x03\x12\\\n" +
 	"\x0fDeleteAlertRule\x12 .probe.v1.DeleteAlertRuleRequest\x1a!.probe.v1.DeleteAlertRuleResponse\"\x04\x88\xb5\x18\x03\x12\\\n" +
 	"\x0fListAlertEvents\x12 .probe.v1.ListAlertEventsRequest\x1a!.probe.v1.ListAlertEventsResponse\"\x04\x88\xb5\x18\x02\x12e\n" +
-	"\x12ListNotifyChannels\x12#.probe.v1.ListNotifyChannelsRequest\x1a$.probe.v1.ListNotifyChannelsResponse\"\x04\x88\xb5\x18\x02\x12b\n" +
+	"\x12ListNotifyChannels\x12#.probe.v1.ListNotifyChannelsRequest\x1a$.probe.v1.ListNotifyChannelsResponse\"\x04\x88\xb5\x18\x03\x12b\n" +
 	"\x11SaveNotifyChannel\x12\".probe.v1.SaveNotifyChannelRequest\x1a#.probe.v1.SaveNotifyChannelResponse\"\x04\x88\xb5\x18\x03\x12h\n" +
 	"\x13DeleteNotifyChannel\x12$.probe.v1.DeleteNotifyChannelRequest\x1a%.probe.v1.DeleteNotifyChannelResponse\"\x04\x88\xb5\x18\x03\x12b\n" +
 	"\x11TestNotifyChannel\x12\".probe.v1.TestNotifyChannelRequest\x1a#.probe.v1.TestNotifyChannelResponse\"\x04\x88\xb5\x18\x03\x12V\n" +
