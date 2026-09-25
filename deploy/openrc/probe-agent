@@ -20,10 +20,11 @@ depend() {
 }
 
 start_pre() {
-	# supervise-daemon 降权后才打开 output_log/error_log：目录与文件必须事先属于
-	# 运行用户，否则子进程打不开日志秒退、被反复拉起，而 status 仍显示 started（§14）。
-	# 每次启动都建，不靠安装时建一次。
-	mkdir -p /var/log/probe-agent
-	touch /var/log/probe-agent/probe-agent.log /var/log/probe-agent/probe-agent.err
-	chown -R probe-agent:probe-agent /var/log/probe-agent
+	# supervise-daemon 降权后才打开 output_log/error_log，所以两个文件必须事先存在且属于运行用户；
+	# 目录不交给它：目录属 root、0755，服务用户不能增删或替换目录项，root 在这里的操作不会被链接或竞态劫持。
+	# 每次启动都确认，不靠安装时建一次。checkpath 不跟随符号链接（OpenRC 0.55.1 实测：遇到链接报错、
+	# 退出 1、不动链接目标），任何一条失败都中止启动，不带着打不开的日志进入重启循环。
+	checkpath -d -m 0755 -o root:root /var/log/probe-agent || return 1
+	checkpath -f -m 0640 -o probe-agent:probe-agent /var/log/probe-agent/probe-agent.log || return 1
+	checkpath -f -m 0640 -o probe-agent:probe-agent /var/log/probe-agent/probe-agent.err || return 1
 }

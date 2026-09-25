@@ -20,18 +20,20 @@ usage() {
 }
 
 HUB=""; KEY=""; NAME=""; VERSION=""; BASE_URL=""; UNINSTALL=0; PURGE=0
+need_value() { [ "$#" -ge 2 ] || usage; }
 while [ $# -gt 0 ]; do
   case "$1" in
-    --hub) HUB=$2; shift 2;;
-    --key) KEY=$2; shift 2;;
-    --name) NAME=$2; shift 2;;
-    --version) VERSION=$2; shift 2;;
-    --base-url) BASE_URL=$2; shift 2;;
+    --hub) need_value "$@"; HUB=$2; shift 2;;
+    --key) need_value "$@"; KEY=$2; shift 2;;
+    --name) need_value "$@"; NAME=$2; shift 2;;
+    --version) need_value "$@"; VERSION=$2; shift 2;;
+    --base-url) need_value "$@"; BASE_URL=$2; shift 2;;
     --uninstall) UNINSTALL=1; shift;;
     --purge) PURGE=1; shift;;
     *) usage;;
   esac
 done
+[ "$PURGE" = 0 ] || [ "$UNINSTALL" = 1 ] || usage
 
 [ "$(id -u)" = 0 ] || { echo "install.sh must run as root" >&2; exit 1; }
 
@@ -40,10 +42,44 @@ if [ -d /run/systemd/system ]; then INIT=systemd
 elif [ -x /sbin/openrc-run ]; then INIT=openrc
 else echo "unsupported init: expected systemd (/run/systemd/system) or OpenRC (/sbin/openrc-run)" >&2; exit 1; fi
 
-stop_service() {
+service_installed() {
   case "$INIT" in
-    systemd) systemctl stop probe-agent </dev/null 2>/dev/null || true;;
-    openrc) rc-service probe-agent stop </dev/null 2>/dev/null || true;;
+    systemd) [ -e /etc/systemd/system/probe-agent.service ];;
+    openrc) [ -e /etc/init.d/probe-agent ];;
+  esac
+}
+
+stop_service() {
+  service_installed || return 0
+  case "$INIT" in
+    systemd)
+      systemctl stop probe-agent </dev/null || {
+        echo "failed to stop probe-agent" >&2; return 1;
+      }
+      if systemctl is-active --quiet probe-agent </dev/null; then
+        echo "failed to stop probe-agent: service is still active" >&2; return 1
+      fi
+      ;;
+    openrc)
+      # OpenRC 0.55.1（Alpine 3.21）实测：supervise-daemon 被杀、子进程留存时 status 为 unsupervised（64），
+      # 此时 stop 打印 "Unable to shut down the supervisor" 却返回 0，之后 status 为 stopped（3），
+      # 子进程仍在运行。stop 的退出码与 status 都证明不了进程已退出，所以直接查进程：
+      # $SVC_USER 是专供 agent 的 nologin 账户（create_account 建立），以它为 EUID 的进程都属于本服务。
+      rc-service probe-agent stop </dev/null || {
+        echo "failed to stop probe-agent" >&2; return 1;
+      }
+      command -v pgrep >/dev/null 2>&1 || {
+        echo "pgrep is required to verify that probe-agent stopped" >&2; return 1;
+      }
+      found=0
+      pids=$(pgrep -u "$SVC_USER" </dev/null) || found=$?
+      case "$found" in
+        0) echo "failed to stop probe-agent: processes still running as $SVC_USER:" >&2
+           echo "$pids" >&2; return 1;;
+        1) ;;
+        *) echo "pgrep exited $found while checking processes of $SVC_USER" >&2; return 1;;
+      esac
+      ;;
   esac
 }
 
@@ -68,11 +104,15 @@ if [ "$UNINSTALL" = 1 ]; then
   stop_service
   case "$INIT" in
     systemd)
-      systemctl disable probe-agent </dev/null 2>/dev/null || true
+      if [ -e /etc/systemd/system/probe-agent.service ]; then
+        systemctl disable probe-agent </dev/null
+      fi
       rm -f /etc/systemd/system/probe-agent.service
       systemctl daemon-reload </dev/null;;
     openrc)
-      rc-update del probe-agent default </dev/null 2>/dev/null || true
+      if [ -e /etc/runlevels/default/probe-agent ]; then
+        rc-update del probe-agent default </dev/null
+      fi
       rm -f /etc/init.d/probe-agent;;
   esac
   rm -f "$BIN"
@@ -107,7 +147,7 @@ create_account() {
     if command -v groupadd >/dev/null 2>&1; then
       groupadd --system "$SVC_USER" </dev/null
     elif command -v addgroup >/dev/null 2>&1; then
-      if addgroup --help 2>&1 | grep -qi busybox; then addgroup -S "$SVC_USER" </dev/null
+      if addgroup --help </dev/null 2>&1 | grep -qi busybox; then addgroup -S "$SVC_USER" </dev/null
       else addgroup --system "$SVC_USER" </dev/null; fi
     else
       echo "no groupadd or addgroup available to create the system group" >&2; exit 1
@@ -119,7 +159,7 @@ create_account() {
     elif command -v adduser >/dev/null 2>&1; then
       # adduser 有两种不兼容的实现（busybox 与 Debian perl 版），按实现分支；
       # 建完必须回查——perl 版收到 busybox 风格参数会打印用法、不建用户，却返回 0。
-      if adduser --help 2>&1 | grep -qi busybox; then
+      if adduser --help </dev/null 2>&1 | grep -qi busybox; then
         adduser -S -D -H -s "$nologin" -G "$SVC_USER" "$SVC_USER" </dev/null
       else
         adduser --system --no-create-home --shell "$nologin" --ingroup "$SVC_USER" "$SVC_USER" </dev/null
@@ -128,8 +168,10 @@ create_account() {
       echo "no useradd or adduser available to create the system user" >&2; exit 1
     fi
   fi
-  [ "$(id -gn "$SVC_USER" 2>/dev/null)" = "$SVC_USER" ] || {
-    echo "failed to create system user $SVC_USER with primary group $SVC_USER" >&2; exit 1; }
+  actual_group=$(id -gn "$SVC_USER" 2>/dev/null) || {
+    echo "failed to create system user $SVC_USER" >&2; exit 1; }
+  [ "$actual_group" = "$SVC_USER" ] || {
+    echo "user $SVC_USER exists with primary group $actual_group; expected $SVC_USER" >&2; exit 1; }
 }
 create_account
 
@@ -178,28 +220,41 @@ dl() {
 dl "$BASE_URL/$PKG" "$work/$PKG"
 dl "$BASE_URL/SHA256SUMS" "$work/SHA256SUMS"
 # SHA256SUMS 含全部资产，只核对本包那一行；busybox 的 sha256sum 没有 --ignore-missing。
-# 行格式是 64 位十六进制、两个空格、文件名；awk 按第二字段取行，带 * 前缀或单空格会静默取不到。
-(cd "$work" && awk -v p="$PKG" '$2 == p' SHA256SUMS > verify.txt && [ -s verify.txt ] && sha256sum -c verify.txt)
+# 行格式是 64 位十六进制、空白、文件名；二进制模式带 * 前缀的行按第二字段取不到。
+(cd "$work" && awk -v p="$PKG" '$2 == p' SHA256SUMS > verify.txt)
+[ -s "$work/verify.txt" ] || {
+  echo "SHA256SUMS has no entry for $PKG" >&2; exit 1
+}
+(cd "$work" && sha256sum -c verify.txt)
 
-# 升级先停服务；二进制写同目录临时文件再 mv，运行中的进程不会读到写了一半的文件。
-[ -f "$CFG" ] && stop_service
+# 先解包并确认服务所需文件齐全，避免包损坏时先停掉正在运行的旧服务。
 tar -xzf "$work/$PKG" -C "$work"
+for f in probe-agent probe-agent.service probe-agent.openrc; do
+  [ -f "$work/$f" ] || { echo "package is missing $f" >&2; exit 1; }
+done
+stop_service
+# 同目录 rename 原子替换目录项：进程看到的始终是完整的旧文件或完整的新文件，中断不会留下截断二进制。
 install -m 0755 "$work/probe-agent" "$BIN.tmp.$$"
 mv -f "$BIN.tmp.$$" "$BIN"
 
 if [ ! -f "$CFG" ]; then
-  # 注册消耗一个窗口名额，排在所有可能失败的步骤之后。
+  # 注册只在没有配置时发生；配置落盘后重跑不再注册，所以注册之后的步骤失败时，重跑不会多耗窗口名额。
   set -- register --hub "$HUB" --key "$KEY" --config "$CFG"
   if [ -n "$NAME" ]; then set -- "$@" --name "$NAME"; fi
   "$BIN" "$@" </dev/null
-  # register 以 root 写入配置（SaveConfig 定 0700/0600）；不改属主，服务用户读不到。
-  chown "$SVC_USER:$SVC_USER" "$CFG_DIR" "$CFG"
+  # 目录属 root、组 probe-agent、0750：服务用户能读到配置，但不能增删或替换目录项，
+  # root 在其中的操作（register 写配置、下面对 $CFG 的 chown）不会被链接或竞态劫持。
+  # 目录无需对服务用户可写：写配置只发生在以 root 执行的 register 里，cmd/agent 的 run 只调用 LoadConfig、不调用 SaveConfig。
+  chown root:"$SVC_USER" "$CFG_DIR"
+  chmod 0750 "$CFG_DIR"
+  chown "$SVC_USER:$SVC_USER" "$CFG"
 else
   if [ -n "$KEY" ]; then echo "existing config found; keeping the current registration (--key ignored)"; fi
 fi
 
 # 服务定义每次覆盖，单元的改动随升级下发。
-# 此前已 stop；首装时本就未运行。用 start，不依赖 restart 对已停服务等价于 start。
+# 走到这里时服务一定没在运行：服务定义已安装则 stop_service 已确认停下，否则停不下来已退出；
+# 未安装则没有由它管理的进程。所以用 start，不依赖 restart 对已停服务等价于 start。
 case "$INIT" in
   systemd)
     install -m 0644 "$work/probe-agent.service" /etc/systemd/system/probe-agent.service
