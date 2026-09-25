@@ -86,7 +86,7 @@ deploy/               install.sh、systemd 单元、OpenRC 服务脚本（§14�
 
 鉴权由"服务挂载时绑定的拦截器"承载，不在方法内逐个检查：新增方法无法漏掉鉴权，因为不存在未绑定拦截器的挂载点。
 
-`AdminService` 的每个方法用 `probe.v1.access` 选项声明准入口径：`ACCESS_LOGIN`（仅 `Login`，凭据是请求体里的密码）、`ACCESS_READ`（会话或 API token）、`ACCESS_SESSION`（仅会话：有副作用的方法，以及凭据管理——包括只读的 `ListApiTokens`，自动化进程没有理由知道还有哪些 token 存在）。拦截器在构造时从生成的描述符读出整张表，任一方法未声明即 panic：未声明的方法无法随 hub 启动，因而不存在"漏标时默认放行还是默认拒绝"的取舍。准入口径与方法定义写在同一处，proto 仍是单一事实源。它与 `idempotency_level` 是两件事：后者决定是否接受 GET，`AdminService` 一律不标（§3.3）。
+`AdminService` 的每个方法用 `probe.v1.access` 选项声明准入口径：`ACCESS_LOGIN`（仅 `Login`，凭据是请求体里的密码）、`ACCESS_READ`（会话或 API token：无副作用，不列出或管理凭据，也不回显可能含密钥的配置）、`ACCESS_SESSION`（仅会话：有副作用的方法；凭据管理——包括只读的 `ListApiTokens`，自动化进程没有理由知道还有哪些 token 存在；回显可能含密钥的配置的方法——`ListNotifyChannels` 会回显 webhook 的请求体模板，模板里可能放着密钥，而 agent 不需要通知渠道的配置）。拦截器在构造时从生成的描述符读出整张表，任一方法未声明即 panic：未声明的方法无法随 hub 启动，因而不存在"漏标时默认放行还是默认拒绝"的取舍。准入口径与方法定义写在同一处，proto 仍是单一事实源。它与 `idempotency_level` 是两件事：后者决定是否接受 GET，`AdminService` 一律不标（§3.3）。
 
 公开数据使用独立的消息类型（`PublicNode`、`PublicSnapshot`），不对 `Node` 做字段过滤。由此默认方向是"私有"：给 `Node` 加字段不会出现在公开页，必须显式加入 `Public*` 消息才公开。
 
@@ -251,7 +251,7 @@ mTLS 相对 bearer token 的增量是"凭据不过线"与"在 HTTP 层之前拒�
 
 - 明文为固定前缀 `probe_at_` 加 32 字节随机数的 hex，库中只存整串的 SHA-256，明文只在 `CreateApiToken` 的响应里出现一次。前缀让泄漏到日志、配置或代码仓库里的 token 能被审查与 secret scanning 认出。
 - 两条路径互不回退：`Authorization` 头的 scheme 为 `Bearer` 即走 bearer 路径，cookie 一律不看；否则走 §5.3 的会话路径。任一路径的失败都不转交另一条——有回退就等于实际生效的是两套鉴权里较弱的那条，且弱在哪条随请求头变化，事后无法从代码读出。scheme 为 `Bearer` 而 token 为空、格式不对或不存在，都返回 `Unauthenticated`。其他 scheme 不是 hub 的凭据，按不存在处理：反代做 Basic 认证时，浏览器会对每个请求自动附带 `Authorization: Basic`，nginx 与 Caddy 默认原样转给 hub，若见头即走 bearer 路径，面板的每个请求都会被拒。
-- token 只能调 `ACCESS_READ` 方法（§3.2），其余返回 `PermissionDenied`，错误信息写明方法名与"API token 只读"。写操作对 token 开放要逐个显式决定，目前一个都不开；token 的建、列、删都是 `ACCESS_SESSION`，token 不能签发 token。
+- token 只能调 `ACCESS_READ` 方法（§3.2），其余返回 `PermissionDenied`，错误信息写明方法名：`ACCESS_SESSION` 方法说明 API token 只读、需要面板会话，`Login` 说明 token 不能用来登录、应只带密码。写操作对 token 开放要逐个显式决定，目前一个都不开；token 的建、列、删都是 `ACCESS_SESSION`，token 不能签发 token。
 - §5.3 的四条 CSRF 事实属于会话路径，一条都不因 bearer 路径而放松。bearer 路径不需要它们：浏览器会自动附带的 HTTP 认证只有 Basic、Digest 这类缓存凭据，`Bearer` 只能由脚本显式设置，而跨源请求带 `Authorization` 头必须先过 CORS 预检，hub 不下发允许头。会话路径仍然需要。
 - 每次校验都查库，不缓存：吊销（删行）在下一个请求即生效，hub 运行中由 `probe-hub` 直接改库也一样。管理请求的频率远低于上报，查库的代价可以接受；引入缓存必须同时给出吊销的传播路径。
 - 最后使用时间只供展示，与会话同一口径：从未使用或距已落库值满一分钟才异步刷新，不让每次读请求都排进写协程；刷新只 UPDATE 已存在的行，吊销之后才落库的刷新不会把 token 写回来。它不参与任何裁决。
