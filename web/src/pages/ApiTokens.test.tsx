@@ -13,7 +13,10 @@ const tokens = create(ListApiTokensResponseSchema, { tokens: [
 const routes = [{ path: "/tokens", Component: ApiTokens }];
 const render = (impl: AdminImpl) => renderWithAdmin({ listApiTokens: async () => tokens, ...impl }, routes, "/tokens");
 
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 it("列表区分用过与从未使用", async () => {
   render({});
@@ -89,10 +92,17 @@ it("吊销卡片所属 token 时清掉明文，吊销别的保留", async () => 
   await waitFor(() => expect(screen.queryByLabelText("API token agent（#3）")).toBeNull());
 });
 
+it("说明入口卡片的保存路径", async () => {
+  render({});
+  expect(await screen.findByText(/~\/\.claude\/skills\/probe-hub\/SKILL\.md/)).toBeInTheDocument();
+});
+
 it("下载的入口卡片就是 hub 下发的 guide", async () => {
+  // waitFor 自己也靠定时器；时间要跟着真实时间走，否则点击永远等不到。
+  vi.useFakeTimers({ shouldAdvanceTime: true });
   const blobs: Blob[] = [];
+  const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   vi.spyOn(URL, "createObjectURL").mockImplementation((b) => { blobs.push(b as Blob); return "blob:card"; });
-  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   const clicked: HTMLAnchorElement[] = [];
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { clicked.push(this); });
   render({ getApiReference: async () => ({ guide: "---\nname: probe-hub\n---\n卡片", files: [] }) });
@@ -101,6 +111,9 @@ it("下载的入口卡片就是 hub 下发的 guide", async () => {
   expect(clicked[0].download).toBe("SKILL.md");
   // undici 的 Response 不认 jsdom 的 Blob，读出来是 "[object Blob]"；这个 jsdom 实现了 Blob.text。
   expect(await blobs[0].text()).toBe("---\nname: probe-hub\n---\n卡片");
+  expect(revoke).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(revoke).toHaveBeenCalledWith("blob:card");
 });
 
 it("列表挂起时显示加载中", async () => {

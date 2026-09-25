@@ -16,7 +16,8 @@ function download(filename: string, text: string) {
   a.href = url;
   a.download = filename;
   a.click();
-  URL.revokeObjectURL(url);
+  // 下载何时读取 URL 由浏览器决定，不在同一轮释放。
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 export function ApiTokens() {
@@ -57,7 +58,7 @@ export function ApiTokens() {
       <h1>API token</h1>
       <p className="muted">
         只读凭据，供 agent 与脚本调用：以 <code>Authorization: Bearer &lt;token&gt;</code> 调用只读方法，写操作仍需在面板上完成。
-        把入口卡片放进 agent 的 skills 目录，并设置 <code>PROBE_HUB={window.location.origin}</code> 与 <code>PROBE_TOKEN</code>。
+        保存为 agent 的 skills 目录下的 probe-hub/SKILL.md（Claude Code 为 ~/.claude/skills/probe-hub/SKILL.md），并设置 <code>PROBE_HUB={window.location.origin}</code> 与 <code>PROBE_TOKEN</code>。
       </p>
       <p>
         <button type="button" onClick={() => reference.mutate({})} disabled={reference.isPending}>下载入口卡片</button>
