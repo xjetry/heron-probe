@@ -5,67 +5,122 @@ package probe.v1;
 option go_package = "github.com/xjetry/probe/gen/probe/v1;probev1";
 
 import "probe/v1/types.proto";
+import "probe/v1/access.proto";
 
-// 管理面板 → hub。除 Login 外每个方法都要求有效的会话 cookie，由挂载时绑定的
-// 拦截器裁决。全部方法都是 unary，且没有一个标为无副作用：本服务不接受 GET，
+// 管理面板与 agent → hub。每个方法以 probe.v1.access 声明准入口径（见 access.proto），
+// 由挂载时绑定的拦截器裁决。全部方法都是 unary，且没有一个标为无副作用：本服务不接受 GET，
 // 这是抵御跨站请求伪造的几条各自独立的事实之一。
 service AdminService {
   // 用管理员密码换取会话 cookie（Set-Cookie 在响应头里）。
-  rpc Login(LoginRequest) returns (LoginResponse);
+  rpc Login(LoginRequest) returns (LoginResponse) {
+    option (probe.v1.access) = ACCESS_LOGIN;
+  }
   // 作废当前会话并清除 cookie。
-  rpc Logout(LogoutRequest) returns (LogoutResponse);
+  rpc Logout(LogoutRequest) returns (LogoutResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
 
-  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse) {
+    option (probe.v1.access) = ACCESS_READ;
+  }
   // 建节点并返回其 token；明文只在此处返回一次。
-  rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse);
+  rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
   // 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期）。
-  rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse);
+  rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
   // 删除节点及其全部历史；进程内的实时状态同步清理。
-  rpc DeleteNode(DeleteNodeRequest) returns (DeleteNodeResponse);
+  rpc DeleteNode(DeleteNodeRequest) returns (DeleteNodeResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
   // 换发 token：旧 token 立即失效，新明文只在此处返回一次。
-  rpc RotateNodeToken(RotateNodeTokenRequest) returns (RotateNodeTokenResponse);
+  rpc RotateNodeToken(RotateNodeTokenRequest) returns (RotateNodeTokenResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
   // 给出全部节点 id 的新顺序；必须恰好包含每个节点一次。
-  rpc ReorderNodes(ReorderNodesRequest) returns (ReorderNodesResponse);
+  rpc ReorderNodes(ReorderNodesRequest) returns (ReorderNodesResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
 
   // 开启（或替换）注册窗口，返回一次性 key。
-  rpc OpenRegisterWindow(OpenRegisterWindowRequest) returns (OpenRegisterWindowResponse);
-  rpc CloseRegisterWindow(CloseRegisterWindowRequest) returns (CloseRegisterWindowResponse);
-  rpc GetRegisterWindow(GetRegisterWindowRequest) returns (GetRegisterWindowResponse);
+  rpc OpenRegisterWindow(OpenRegisterWindowRequest) returns (OpenRegisterWindowResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
+  rpc CloseRegisterWindow(CloseRegisterWindowRequest) returns (CloseRegisterWindowResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
+  rpc GetRegisterWindow(GetRegisterWindowRequest) returns (GetRegisterWindowResponse) {
+    option (probe.v1.access) = ACCESS_READ;
+  }
 
   // 全部节点的实时状态，供轮询；轮询间隔不必短于 report_interval_ms。
-  rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse);
+  rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse) {
+    option (probe.v1.access) = ACCESS_READ;
+  }
   // 某节点一段时间的历史；级别与步长由 hub 按窗口选定并随数据返回。
-  rpc QueryMetrics(QueryMetricsRequest) returns (QueryMetricsResponse);
+  rpc QueryMetrics(QueryMetricsRequest) returns (QueryMetricsResponse) {
+    option (probe.v1.access) = ACCESS_READ;
+  }
   // 全部节点的流量：hub 累计的总量、当前周期用量、周期起点与下次重置时刻。
-  rpc GetTraffic(GetTrafficRequest) returns (GetTrafficResponse);
+  rpc GetTraffic(GetTrafficRequest) returns (GetTrafficResponse) {
+    option (probe.v1.access) = ACCESS_READ;
+  }
   // 把某节点当前周期的用量覆盖为给定值；总量按同一差值调整且不低于 0，计数器基线不动。
-  rpc AdjustTraffic(AdjustTrafficRequest) returns (AdjustTrafficResponse);
+  rpc AdjustTraffic(AdjustTrafficRequest) returns (AdjustTrafficResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
 
   // 列出全部探测任务及其分配。
-  rpc ListProbeTasks(ListProbeTasksRequest) returns (ListProbeTasksResponse);
+  rpc ListProbeTasks(ListProbeTasksRequest) returns (ListProbeTasksResponse) {
+    option (probe.v1.access) = ACCESS_READ;
+  }
   // 保存探测任务：id 为 0 即创建，提交整份分配列表。
-  rpc SaveProbeTask(SaveProbeTaskRequest) returns (SaveProbeTaskResponse);
+  rpc SaveProbeTask(SaveProbeTaskRequest) returns (SaveProbeTaskResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
   // 删除探测任务：不删历史，到期由清理删除。
-  rpc DeleteProbeTask(DeleteProbeTaskRequest) returns (DeleteProbeTaskResponse);
+  rpc DeleteProbeTask(DeleteProbeTaskRequest) returns (DeleteProbeTaskResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
   // 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
-  rpc QueryProbes(QueryProbesRequest) returns (QueryProbesResponse);
+  rpc QueryProbes(QueryProbesRequest) returns (QueryProbesResponse) {
+    option (probe.v1.access) = ACCESS_READ;
+  }
 
   // 列出规则及其当前节点状态。
-  rpc ListAlertRules(ListAlertRulesRequest) returns (ListAlertRulesResponse);
+  rpc ListAlertRules(ListAlertRulesRequest) returns (ListAlertRulesResponse) {
+    option (probe.v1.access) = ACCESS_READ;
+  }
   // id 为 0 时创建，否则整体替换规则与作用域、渠道列表。
-  rpc SaveAlertRule(SaveAlertRuleRequest) returns (SaveAlertRuleResponse);
+  rpc SaveAlertRule(SaveAlertRuleRequest) returns (SaveAlertRuleResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
   // 删除规则与状态；事件与投递记录随规则删除保留；保留期见维护任务。
-  rpc DeleteAlertRule(DeleteAlertRuleRequest) returns (DeleteAlertRuleResponse);
+  rpc DeleteAlertRule(DeleteAlertRuleRequest) returns (DeleteAlertRuleResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
   // 按事件 id 倒序分页，包含每个事件的投递状态。
-  rpc ListAlertEvents(ListAlertEventsRequest) returns (ListAlertEventsResponse);
+  rpc ListAlertEvents(ListAlertEventsRequest) returns (ListAlertEventsResponse) {
+    option (probe.v1.access) = ACCESS_READ;
+  }
   // 不回显渠道凭据（Telegram token、Webhook URL 与头值）。
-  rpc ListNotifyChannels(ListNotifyChannelsRequest) returns (ListNotifyChannelsResponse);
+  rpc ListNotifyChannels(ListNotifyChannelsRequest) returns (ListNotifyChannelsResponse) {
+    option (probe.v1.access) = ACCESS_READ;
+  }
   // id 为 0 创建，否则替换；凭据字段为空或省略时保留旧值，删除头用 remove_headers。
-  rpc SaveNotifyChannel(SaveNotifyChannelRequest) returns (SaveNotifyChannelResponse);
+  rpc SaveNotifyChannel(SaveNotifyChannelRequest) returns (SaveNotifyChannelResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
   // 被告警规则引用的渠道不可删除，错误列出引用规则。
-  rpc DeleteNotifyChannel(DeleteNotifyChannelRequest) returns (DeleteNotifyChannelResponse);
+  rpc DeleteNotifyChannel(DeleteNotifyChannelRequest) returns (DeleteNotifyChannelResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
   // 向已保存的渠道同步发送测试消息；不可重试失败返回 FailedPrecondition，可重试返回 Unavailable，文本为错误原文。
-  rpc TestNotifyChannel(TestNotifyChannelRequest) returns (TestNotifyChannelResponse);
+  rpc TestNotifyChannel(TestNotifyChannelRequest) returns (TestNotifyChannelResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
 }
 
 message LoginRequest {

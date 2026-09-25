@@ -1,6 +1,6 @@
 // Package api 实现 AdminService。
 //
-// 鉴权在挂载点的拦截器里裁决：除 Login 外每个方法都要求有效会话，流式调用一律
+// 鉴权在挂载点的拦截器里裁决：除 LOGIN 口径的方法外每个方法都要求有效会话，流式调用一律
 // 拒绝，方法体只在准入通过后执行。凭据只走会话 cookie；带 Authorization 头也不看——
 // 两条口径若互相回退，实际生效的是较弱的那条。
 package api
@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
-	"strings"
 	"sync"
 	"time"
 
@@ -65,18 +64,24 @@ type Service struct {
 	notifier *alert.Queue
 	clk      clock.Clock
 	log      *slog.Logger
+
+	// access 是 AdminService 每个过程的准入口径，New 时从描述符读出，之后只读。
+	access map[string]probev1.Access
 }
 
 func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, book *traffic.Book, probes *probe.Registry, alerts *alert.Engine, notifier *alert.Queue, clk clock.Clock, log *slog.Logger) *Service {
 	if cfg.TTL <= 0 {
 		panic("api.Config.TTL must be positive")
 	}
-	return &Service{cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, probes: probes, alerts: alerts, notifier: notifier, clk: clk, log: log}
+	return &Service{
+		cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, probes: probes, alerts: alerts, notifier: notifier, clk: clk, log: log,
+		access: accessTable(probev1.File_probe_v1_admin_proto.Services().ByName("AdminService")),
+	}
 }
 
 func (s *Service) Handler() (string, http.Handler) {
 	return probev1connect.NewAdminServiceHandler(s,
-		connect.WithInterceptors(s.sessionInterceptor()),
+		connect.WithInterceptors(s.accessInterceptor()),
 		connect.WithReadMaxBytes(maxBody))
 }
 
@@ -105,15 +110,15 @@ func notFound(id int64) error {
 	return connect.NewError(connect.CodeNotFound, fmt.Errorf("node %d does not exist", id))
 }
 
-type sessionInterceptor struct{ s *Service }
+type accessInterceptor struct{ s *Service }
 
-func (s *Service) sessionInterceptor() connect.Interceptor { return sessionInterceptor{s: s} }
+func (s *Service) accessInterceptor() connect.Interceptor { return accessInterceptor{s: s} }
 
-func (i sessionInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	s := i.s
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-		proc := req.Spec().Procedure
-		if !strings.HasPrefix(proc, "/probe.v1.AdminService/") {
+		level, ok := s.access[req.Spec().Procedure]
+		if !ok {
 			return nil, unauthenticated("unauthenticated")
 		}
 		peer := peerInfo{
@@ -121,7 +126,7 @@ func (i sessionInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc 
 			scheme: auth.RequestScheme(req.Peer().Addr, req.Header().Get("X-Forwarded-Proto"), s.cfg.TrustedProxies),
 		}
 		ctx = context.WithValue(ctx, peerKey{}, peer)
-		if proc == probev1connect.AdminServiceLoginProcedure {
+		if level == probev1.Access_ACCESS_LOGIN {
 			// 凭据是请求体里的密码，由 Login 裁决；按来源的锁定也在那里。
 			return next(ctx, req)
 		}
@@ -141,11 +146,11 @@ func (i sessionInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc 
 	}
 }
 
-func (i sessionInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+func (i accessInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
 	return next
 }
 
-func (i sessionInterceptor) WrapStreamingHandler(connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+func (i accessInterceptor) WrapStreamingHandler(connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
 	return func(context.Context, connect.StreamingHandlerConn) error {
 		return unauthenticated("unauthenticated")
 	}

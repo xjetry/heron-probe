@@ -4105,7 +4105,7 @@ var File_probe_v1_admin_proto protoreflect.FileDescriptor
 
 const file_probe_v1_admin_proto_rawDesc = "" +
 	"\n" +
-	"\x14probe/v1/admin.proto\x12\bprobe.v1\x1a\x14probe/v1/types.proto\"*\n" +
+	"\x14probe/v1/admin.proto\x12\bprobe.v1\x1a\x14probe/v1/types.proto\x1a\x15probe/v1/access.proto\"*\n" +
 	"\fLoginRequest\x12\x1a\n" +
 	"\bpassword\x18\x01 \x01(\tR\bpassword\"\x0f\n" +
 	"\rLoginResponse\"\x0f\n" +
@@ -4389,39 +4389,39 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\vChannelKind\x12\x1c\n" +
 	"\x18CHANNEL_KIND_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15CHANNEL_KIND_TELEGRAM\x10\x01\x12\x18\n" +
-	"\x14CHANNEL_KIND_WEBHOOK\x10\x022\xc9\x11\n" +
-	"\fAdminService\x128\n" +
-	"\x05Login\x12\x16.probe.v1.LoginRequest\x1a\x17.probe.v1.LoginResponse\x12;\n" +
-	"\x06Logout\x12\x17.probe.v1.LogoutRequest\x1a\x18.probe.v1.LogoutResponse\x12D\n" +
-	"\tListNodes\x12\x1a.probe.v1.ListNodesRequest\x1a\x1b.probe.v1.ListNodesResponse\x12G\n" +
+	"\x14CHANNEL_KIND_WEBHOOK\x10\x022\xeb\x12\n" +
+	"\fAdminService\x12>\n" +
+	"\x05Login\x12\x16.probe.v1.LoginRequest\x1a\x17.probe.v1.LoginResponse\"\x04\x88\xb5\x18\x01\x12A\n" +
+	"\x06Logout\x12\x17.probe.v1.LogoutRequest\x1a\x18.probe.v1.LogoutResponse\"\x04\x88\xb5\x18\x03\x12J\n" +
+	"\tListNodes\x12\x1a.probe.v1.ListNodesRequest\x1a\x1b.probe.v1.ListNodesResponse\"\x04\x88\xb5\x18\x02\x12M\n" +
 	"\n" +
-	"CreateNode\x12\x1b.probe.v1.CreateNodeRequest\x1a\x1c.probe.v1.CreateNodeResponse\x12G\n" +
+	"CreateNode\x12\x1b.probe.v1.CreateNodeRequest\x1a\x1c.probe.v1.CreateNodeResponse\"\x04\x88\xb5\x18\x03\x12M\n" +
 	"\n" +
-	"UpdateNode\x12\x1b.probe.v1.UpdateNodeRequest\x1a\x1c.probe.v1.UpdateNodeResponse\x12G\n" +
+	"UpdateNode\x12\x1b.probe.v1.UpdateNodeRequest\x1a\x1c.probe.v1.UpdateNodeResponse\"\x04\x88\xb5\x18\x03\x12M\n" +
 	"\n" +
-	"DeleteNode\x12\x1b.probe.v1.DeleteNodeRequest\x1a\x1c.probe.v1.DeleteNodeResponse\x12V\n" +
-	"\x0fRotateNodeToken\x12 .probe.v1.RotateNodeTokenRequest\x1a!.probe.v1.RotateNodeTokenResponse\x12M\n" +
-	"\fReorderNodes\x12\x1d.probe.v1.ReorderNodesRequest\x1a\x1e.probe.v1.ReorderNodesResponse\x12_\n" +
-	"\x12OpenRegisterWindow\x12#.probe.v1.OpenRegisterWindowRequest\x1a$.probe.v1.OpenRegisterWindowResponse\x12b\n" +
-	"\x13CloseRegisterWindow\x12$.probe.v1.CloseRegisterWindowRequest\x1a%.probe.v1.CloseRegisterWindowResponse\x12\\\n" +
-	"\x11GetRegisterWindow\x12\".probe.v1.GetRegisterWindowRequest\x1a#.probe.v1.GetRegisterWindowResponse\x12J\n" +
-	"\vGetSnapshot\x12\x1c.probe.v1.GetSnapshotRequest\x1a\x1d.probe.v1.GetSnapshotResponse\x12M\n" +
-	"\fQueryMetrics\x12\x1d.probe.v1.QueryMetricsRequest\x1a\x1e.probe.v1.QueryMetricsResponse\x12G\n" +
+	"DeleteNode\x12\x1b.probe.v1.DeleteNodeRequest\x1a\x1c.probe.v1.DeleteNodeResponse\"\x04\x88\xb5\x18\x03\x12\\\n" +
+	"\x0fRotateNodeToken\x12 .probe.v1.RotateNodeTokenRequest\x1a!.probe.v1.RotateNodeTokenResponse\"\x04\x88\xb5\x18\x03\x12S\n" +
+	"\fReorderNodes\x12\x1d.probe.v1.ReorderNodesRequest\x1a\x1e.probe.v1.ReorderNodesResponse\"\x04\x88\xb5\x18\x03\x12e\n" +
+	"\x12OpenRegisterWindow\x12#.probe.v1.OpenRegisterWindowRequest\x1a$.probe.v1.OpenRegisterWindowResponse\"\x04\x88\xb5\x18\x03\x12h\n" +
+	"\x13CloseRegisterWindow\x12$.probe.v1.CloseRegisterWindowRequest\x1a%.probe.v1.CloseRegisterWindowResponse\"\x04\x88\xb5\x18\x03\x12b\n" +
+	"\x11GetRegisterWindow\x12\".probe.v1.GetRegisterWindowRequest\x1a#.probe.v1.GetRegisterWindowResponse\"\x04\x88\xb5\x18\x02\x12P\n" +
+	"\vGetSnapshot\x12\x1c.probe.v1.GetSnapshotRequest\x1a\x1d.probe.v1.GetSnapshotResponse\"\x04\x88\xb5\x18\x02\x12S\n" +
+	"\fQueryMetrics\x12\x1d.probe.v1.QueryMetricsRequest\x1a\x1e.probe.v1.QueryMetricsResponse\"\x04\x88\xb5\x18\x02\x12M\n" +
 	"\n" +
-	"GetTraffic\x12\x1b.probe.v1.GetTrafficRequest\x1a\x1c.probe.v1.GetTrafficResponse\x12P\n" +
-	"\rAdjustTraffic\x12\x1e.probe.v1.AdjustTrafficRequest\x1a\x1f.probe.v1.AdjustTrafficResponse\x12S\n" +
-	"\x0eListProbeTasks\x12\x1f.probe.v1.ListProbeTasksRequest\x1a .probe.v1.ListProbeTasksResponse\x12P\n" +
-	"\rSaveProbeTask\x12\x1e.probe.v1.SaveProbeTaskRequest\x1a\x1f.probe.v1.SaveProbeTaskResponse\x12V\n" +
-	"\x0fDeleteProbeTask\x12 .probe.v1.DeleteProbeTaskRequest\x1a!.probe.v1.DeleteProbeTaskResponse\x12J\n" +
-	"\vQueryProbes\x12\x1c.probe.v1.QueryProbesRequest\x1a\x1d.probe.v1.QueryProbesResponse\x12S\n" +
-	"\x0eListAlertRules\x12\x1f.probe.v1.ListAlertRulesRequest\x1a .probe.v1.ListAlertRulesResponse\x12P\n" +
-	"\rSaveAlertRule\x12\x1e.probe.v1.SaveAlertRuleRequest\x1a\x1f.probe.v1.SaveAlertRuleResponse\x12V\n" +
-	"\x0fDeleteAlertRule\x12 .probe.v1.DeleteAlertRuleRequest\x1a!.probe.v1.DeleteAlertRuleResponse\x12V\n" +
-	"\x0fListAlertEvents\x12 .probe.v1.ListAlertEventsRequest\x1a!.probe.v1.ListAlertEventsResponse\x12_\n" +
-	"\x12ListNotifyChannels\x12#.probe.v1.ListNotifyChannelsRequest\x1a$.probe.v1.ListNotifyChannelsResponse\x12\\\n" +
-	"\x11SaveNotifyChannel\x12\".probe.v1.SaveNotifyChannelRequest\x1a#.probe.v1.SaveNotifyChannelResponse\x12b\n" +
-	"\x13DeleteNotifyChannel\x12$.probe.v1.DeleteNotifyChannelRequest\x1a%.probe.v1.DeleteNotifyChannelResponse\x12\\\n" +
-	"\x11TestNotifyChannel\x12\".probe.v1.TestNotifyChannelRequest\x1a#.probe.v1.TestNotifyChannelResponseB.Z,github.com/xjetry/probe/gen/probe/v1;probev1b\x06proto3"
+	"GetTraffic\x12\x1b.probe.v1.GetTrafficRequest\x1a\x1c.probe.v1.GetTrafficResponse\"\x04\x88\xb5\x18\x02\x12V\n" +
+	"\rAdjustTraffic\x12\x1e.probe.v1.AdjustTrafficRequest\x1a\x1f.probe.v1.AdjustTrafficResponse\"\x04\x88\xb5\x18\x03\x12Y\n" +
+	"\x0eListProbeTasks\x12\x1f.probe.v1.ListProbeTasksRequest\x1a .probe.v1.ListProbeTasksResponse\"\x04\x88\xb5\x18\x02\x12V\n" +
+	"\rSaveProbeTask\x12\x1e.probe.v1.SaveProbeTaskRequest\x1a\x1f.probe.v1.SaveProbeTaskResponse\"\x04\x88\xb5\x18\x03\x12\\\n" +
+	"\x0fDeleteProbeTask\x12 .probe.v1.DeleteProbeTaskRequest\x1a!.probe.v1.DeleteProbeTaskResponse\"\x04\x88\xb5\x18\x03\x12P\n" +
+	"\vQueryProbes\x12\x1c.probe.v1.QueryProbesRequest\x1a\x1d.probe.v1.QueryProbesResponse\"\x04\x88\xb5\x18\x02\x12Y\n" +
+	"\x0eListAlertRules\x12\x1f.probe.v1.ListAlertRulesRequest\x1a .probe.v1.ListAlertRulesResponse\"\x04\x88\xb5\x18\x02\x12V\n" +
+	"\rSaveAlertRule\x12\x1e.probe.v1.SaveAlertRuleRequest\x1a\x1f.probe.v1.SaveAlertRuleResponse\"\x04\x88\xb5\x18\x03\x12\\\n" +
+	"\x0fDeleteAlertRule\x12 .probe.v1.DeleteAlertRuleRequest\x1a!.probe.v1.DeleteAlertRuleResponse\"\x04\x88\xb5\x18\x03\x12\\\n" +
+	"\x0fListAlertEvents\x12 .probe.v1.ListAlertEventsRequest\x1a!.probe.v1.ListAlertEventsResponse\"\x04\x88\xb5\x18\x02\x12e\n" +
+	"\x12ListNotifyChannels\x12#.probe.v1.ListNotifyChannelsRequest\x1a$.probe.v1.ListNotifyChannelsResponse\"\x04\x88\xb5\x18\x02\x12b\n" +
+	"\x11SaveNotifyChannel\x12\".probe.v1.SaveNotifyChannelRequest\x1a#.probe.v1.SaveNotifyChannelResponse\"\x04\x88\xb5\x18\x03\x12h\n" +
+	"\x13DeleteNotifyChannel\x12$.probe.v1.DeleteNotifyChannelRequest\x1a%.probe.v1.DeleteNotifyChannelResponse\"\x04\x88\xb5\x18\x03\x12b\n" +
+	"\x11TestNotifyChannel\x12\".probe.v1.TestNotifyChannelRequest\x1a#.probe.v1.TestNotifyChannelResponse\"\x04\x88\xb5\x18\x03B.Z,github.com/xjetry/probe/gen/probe/v1;probev1b\x06proto3"
 
 var (
 	file_probe_v1_admin_proto_rawDescOnce sync.Once
@@ -4617,6 +4617,7 @@ func file_probe_v1_admin_proto_init() {
 		return
 	}
 	file_probe_v1_types_proto_init()
+	file_probe_v1_access_proto_init()
 	file_probe_v1_admin_proto_msgTypes[4].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[9].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[25].OneofWrappers = []any{}
