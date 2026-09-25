@@ -1,6 +1,6 @@
 export CGO_ENABLED=0
 
-.PHONY: gen lint test build binaries ci e2e fixtures web-install web-test web
+.PHONY: gen lint test build binaries ci e2e e2e-matrix fixtures web-install web-test web
 
 web-install:
 	pnpm --dir web install --frozen-lockfile
@@ -45,5 +45,16 @@ ci: gen lint test web-test web build
 fixtures:
 	scripts/capture-proc.sh docker-debian
 
+# 一级发行版每次都跑；二级发版前跑。镜像与期望系统名成对，前一个失败就停。
+E2E_TIER1 := debian:bookworm-slim=Debian alpine:3.21=Alpine
+E2E_TIER2 := ubuntu:24.04=Ubuntu rockylinux:9=Rocky
+
 e2e: binaries
-	scripts/e2e.sh
+	@for pair in $(E2E_TIER1); do \
+	  AGENT_IMAGE="$${pair%%=*}" EXPECT_OS="$${pair#*=}" scripts/e2e.sh || exit $$?; \
+	done
+
+e2e-matrix: binaries
+	@for pair in $(E2E_TIER1) $(E2E_TIER2); do \
+	  AGENT_IMAGE="$${pair%%=*}" EXPECT_OS="$${pair#*=}" scripts/e2e.sh || exit $$?; \
+	done

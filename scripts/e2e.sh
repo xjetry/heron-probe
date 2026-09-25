@@ -4,6 +4,10 @@
 # 两个平台都必须实际运行；依赖 Docker 多架构模拟，OrbStack / Docker Desktop 自带。
 # 验收凭据是库里出现两个节点、facts 与分钟行，且管理 API 看到它们在线并查到历史。
 set -eu
+# 镜像与期望系统名成对给出：缺一个就无法证明容器真的换成了目标发行版，不能退化成不检查。
+: "${AGENT_IMAGE:?AGENT_IMAGE is required, e.g. alpine:3.21}"
+: "${EXPECT_OS:?EXPECT_OS is required, e.g. Alpine}"
+echo "agent image: $AGENT_IMAGE (expect os containing \"$EXPECT_OS\")"
 cd "$(cd "$(dirname "$0")/.." && pwd)"
 work=$(mktemp -d)
 echo "E2E artifacts: $work"
@@ -76,7 +80,7 @@ login_body=$(jq -nc --arg password "$admin_pw" '{password: $password}')
 register_agent() {
   arch=$1
   docker run -d --cidfile "$work/cid-$arch" --platform "linux/$arch" --add-host=host.docker.internal:host-gateway \
-    -v "$PWD/bin:/probe:ro" debian:bookworm-slim sleep infinity
+    -v "$PWD/bin:/probe:ro" "$AGENT_IMAGE" sleep infinity
   docker exec "$(cat "$work/cid-$arch")" "/probe/probe-agent-linux-$arch" register \
     --hub "http://host.docker.internal:$port" --key "$key" --config /tmp/agent.json --name "e2e-$arch"
 }
@@ -106,6 +110,7 @@ done
 jq -e '.reportIntervalMs == 4000 and all(.nodes[]; .metrics.cpuPct != null)' "$work/GetSnapshot.json" > /dev/null || { echo "FAIL: snapshot shape"; cat "$work/GetSnapshot.json"; exit 1; }
 [ "$(rpc ListNodes '{}')" = 200 ] || { echo "FAIL: ListNodes"; exit 1; }
 jq -e '[.nodes[] | select(.facts.arch == "amd64" or .facts.arch == "arm64")] | length == 2' "$work/ListNodes.json" > /dev/null || { echo "FAIL: facts not reported"; cat "$work/ListNodes.json"; exit 1; }
+jq -e --arg os "$EXPECT_OS" '(.nodes | length) == 2 and all(.nodes[]; (.facts.os // "") | contains($os))' "$work/ListNodes.json" > /dev/null || { echo "FAIL: nodes did not report an OS containing \"$EXPECT_OS\""; cat "$work/ListNodes.json"; exit 1; }
 node1=$(jq -r '.nodes[] | select(.facts.arch == "amd64") | .id' "$work/ListNodes.json")
 node2=$(jq -r '.nodes[] | select(.facts.arch == "arm64") | .id' "$work/ListNodes.json")
 icmp_body=$(jq -nc --arg a "$node1" --arg b "$node2" '{task: {kind: "PROBE_KIND_ICMP", target: "127.0.0.1", intervalS: 5, timeoutMs: 1000}, nodeIds: [$a, $b]}')
