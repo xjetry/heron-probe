@@ -3,6 +3,7 @@ reference-projects/
 
 # 构建产物
 /bin/
+/dist/
 /internal/hub/web/dist/*
 !/internal/hub/web/dist/.gitkeep
 /web/node_modules/

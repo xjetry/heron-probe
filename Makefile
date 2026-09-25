@@ -1,6 +1,6 @@
 export CGO_ENABLED=0
 
-.PHONY: gen lint test build binaries ci e2e e2e-matrix fixtures web-install web-test web
+.PHONY: gen lint test build binaries ci e2e e2e-matrix fixtures web-install web-test web release
 
 web-install:
 	pnpm --dir web install --frozen-lockfile
@@ -60,3 +60,41 @@ e2e-matrix: binaries
 	@for pair in $(E2E_TIER1) $(E2E_TIER2); do \
 	  AGENT_IMAGE="$${pair%%=*}" EXPECT_OS="$${pair#*=}" scripts/e2e.sh || exit $$?; \
 	done
+
+# 发布产物矩阵：agent 五个 Linux 架构，hub 两个。架构集合只在这两个变量维护，
+# 静态门禁与打包清单都由它们展开，不存在第二份文件清单。
+AGENT_LINUX_ARCHES := amd64 arm64 armv7 386 riscv64
+HUB_LINUX_ARCHES := amd64 arm64
+
+# 本地验收与线上发布走同一目标，产物与版本注入完全一致（release.yml 只调用它）。
+# macOS 的 bsdtar 会把扩展属性打成 ._* 条目，busybox 解包会带出多余文件；
+# 打包的 tar 前设 COPYFILE_DISABLE=1。这行是 makefile 注释：写进 recipe 会被 make 吃掉。
+release: web
+	@if [ -z "$(VERSION)" ]; then echo "VERSION is required, e.g. make release VERSION=v0.1.0" >&2; exit 1; fi
+	rm -rf dist/build dist/*.tar.gz dist/SHA256SUMS dist/install.sh
+	mkdir -p dist/build
+	@set -e; for arch in $(AGENT_LINUX_ARCHES); do \
+	  case $$arch in armv7) gflags="GOARCH=arm GOARM=7" ;; *) gflags="GOARCH=$$arch" ;; esac; \
+	  env GOOS=linux CGO_ENABLED=0 $$gflags go build -ldflags "-X main.version=$(VERSION)" -o "dist/build/probe-agent-linux-$$arch" ./cmd/agent; \
+	done; \
+	for arch in $(HUB_LINUX_ARCHES); do \
+	  env GOOS=linux GOARCH=$$arch CGO_ENABLED=0 go build -ldflags "-X main.version=$(VERSION)" -o "dist/build/probe-hub-linux-$$arch" ./cmd/hub; \
+	done
+	go run ./scripts/checkstatic $(addprefix dist/build/probe-agent-linux-,$(AGENT_LINUX_ARCHES)) $(addprefix dist/build/probe-hub-linux-,$(HUB_LINUX_ARCHES))
+	@set -e; for arch in $(AGENT_LINUX_ARCHES); do \
+	  pkg="dist/pkg-$$arch"; mkdir -p "$$pkg"; \
+	  cp "dist/build/probe-agent-linux-$$arch" "$$pkg/probe-agent"; \
+	  cp deploy/systemd/probe-agent.service "$$pkg/probe-agent.service"; \
+	  cp deploy/openrc/probe-agent "$$pkg/probe-agent.openrc"; \
+	  COPYFILE_DISABLE=1 tar -C "$$pkg" -czf "dist/probe-agent_linux_$$arch.tar.gz" probe-agent probe-agent.service probe-agent.openrc; \
+	  rm -rf "$$pkg"; \
+	done; \
+	for arch in $(HUB_LINUX_ARCHES); do \
+	  pkg="dist/pkg-hub-$$arch"; mkdir -p "$$pkg"; \
+	  cp "dist/build/probe-hub-linux-$$arch" "$$pkg/probe-hub"; \
+	  COPYFILE_DISABLE=1 tar -C "$$pkg" -czf "dist/probe-hub_linux_$$arch.tar.gz" probe-hub; \
+	  rm -rf "$$pkg"; \
+	done; \
+	rm -rf dist/build
+	cp deploy/install.sh dist/install.sh
+	cd dist && sha256sum probe-*.tar.gz > SHA256SUMS
