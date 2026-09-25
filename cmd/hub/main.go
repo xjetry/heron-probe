@@ -2,7 +2,7 @@
 //
 // 直接改表的子命令绕过了 auth 的内存映射：token 映射在 hub 启动时自库重建，
 // 所以 node create / delete / rotate-token 在 hub 运行期间需要重启才生效。
-// passwd 不需要重启：登录每次读库，改密事务同时撤销旧会话。
+// passwd 与 token 不需要重启：登录与 API token 每次读库，改密事务同时撤销旧会话。
 package main
 
 import (
@@ -25,6 +25,8 @@ func main() {
 		err = runServe(os.Args[2:])
 	case "passwd":
 		err = runPasswd(os.Args[2:])
+	case "token":
+		err = runToken(os.Args[2:])
 	case "node":
 		err = runNode(os.Args[2:])
 	case "window":
@@ -49,6 +51,7 @@ func usage() {
 commands:
   serve                     start the hub
   passwd                    set the admin password (reads stdin when not a terminal)
+  token list|revoke           list or revoke API tokens (effective immediately)
   node create|list|delete|rotate-token
   window open|close|show    manage the registration window
   stats                     row counts per table

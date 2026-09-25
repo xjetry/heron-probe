@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"golang.org/x/term"
+
+	"github.com/xjetry/probe/internal/hub/store"
 )
 
 func runPasswd(args []string) error { return runPasswdWith(args, os.Stdin, os.Stderr) }
@@ -37,6 +39,46 @@ func runPasswdWith(args []string, in *os.File, prompt io.Writer) error {
 		return err
 	}
 	fmt.Fprintln(prompt, "admin password set; every existing session has been revoked")
+	var ask func() (bool, error)
+	if term.IsTerminal(int(in.Fd())) {
+		ask = func() (bool, error) {
+			fmt.Fprint(prompt, "Revoke all API tokens as well? [y/N] ")
+			line, err := bufio.NewReader(in).ReadString('\n')
+			if err != nil && !errors.Is(err, io.EOF) {
+				return false, err
+			}
+			answer := strings.ToLower(strings.TrimSpace(line))
+			return answer == "y" || answer == "yes", nil
+		}
+	}
+	return reviewAPITokens(context.Background(), st, prompt, ask, *db)
+}
+
+// reviewAPITokens 在改密后列出现存 API token。改密不连带吊销：连带吊销会让每次轮换密码都
+// 静默打断自动化；代价是密码泄漏期间被创建的 token 仍然有效，所以把清单摆到改密的人面前。
+// ask 为 nil 表示没有终端可问（管道、容器初始化），此时只列出并给出吊销命令，默认不吊销。
+func reviewAPITokens(ctx context.Context, st *store.Store, w io.Writer, ask func() (bool, error), db string) error {
+	list, err := st.ListAPITokens(ctx)
+	if err != nil || len(list) == 0 {
+		return err
+	}
+	fmt.Fprintln(w, "API tokens are not revoked by a password change. Existing tokens:")
+	if err := printAPITokens(w, list); err != nil {
+		return err
+	}
+	if ask == nil {
+		fmt.Fprintf(w, "to revoke them: probe-hub token revoke --all --db %s\n", db)
+		return nil
+	}
+	yes, err := ask()
+	if err != nil || !yes {
+		return err
+	}
+	n, err := st.DeleteAllAPITokens(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "revoked %d API tokens\n", n)
 	return nil
 }
 

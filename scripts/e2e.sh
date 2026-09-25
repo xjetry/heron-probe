@@ -296,6 +296,17 @@ done
 echo "card examples ok: $examples"
 [ "$(rpc DeleteApiToken "$(jq -nc --arg id "$api_token_id" '{id: $id}')")" = 200 ] || { echo "FAIL: DeleteApiToken"; exit 1; }
 [ "$(bearer ListNodes '{}')" = 401 ] || { echo "FAIL: revoked API token still accepted"; exit 1; }
+# 改密只清会话、不动 token；运行中由另一进程吊销，下一个请求即 401。
+[ "$(rpc CreateApiToken '{"name":"e2e-cli"}')" = 200 ] || { echo "FAIL: CreateApiToken (cli)"; exit 1; }
+api_token=$(jq -r '.token' "$work/CreateApiToken.json")
+api_token_id=$(jq -r '.apiToken.id' "$work/CreateApiToken.json")
+printf '%s\n' "$admin_pw" | bin/probe-hub passwd --db "$db" > "$work/passwd2.log" 2>&1
+grep -q 'API tokens are not revoked' "$work/passwd2.log" || { echo "FAIL: passwd did not list API tokens"; cat "$work/passwd2.log"; exit 1; }
+[ "$(rpc GetSnapshot '{}')" = 401 ] || { echo "FAIL: session survived password change"; exit 1; }
+[ "$(bearer GetSnapshot '{}')" = 200 ] || { echo "FAIL: password change revoked the API token"; exit 1; }
+bin/probe-hub token revoke --db "$db" --id "$api_token_id" > "$work/token-revoke.log" 2>&1 || { echo "FAIL: probe-hub token revoke"; cat "$work/token-revoke.log"; exit 1; }
+[ "$(bearer GetSnapshot '{}')" = 401 ] || { echo "FAIL: CLI revocation not effective on a running hub"; exit 1; }
+[ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login after password change"; exit 1; }
 [ "$(rpc ListAlertRules '{}')" = 200 ] || { echo "FAIL: ListAlertRules after restart"; exit 1; }
 jq -e '(.rules | length) == 1' "$work/ListAlertRules.json" > /dev/null || { echo "FAIL: alert rule lost"; cat "$work/ListAlertRules.json"; exit 1; }
 [ "$(rpc ListAlertEvents '{}')" = 200 ] || { echo "FAIL: ListAlertEvents after restart"; exit 1; }

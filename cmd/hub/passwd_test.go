@@ -43,6 +43,34 @@ func TestPasswdReadsOneLineFromNonTerminalStdin(t *testing.T) {
 	}
 }
 
+func TestPasswdListsTokensWithoutPromptingOnAPipe(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "t.db")
+	st, a, err := openOffline(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := a.CreateAPIToken(context.Background(), "ci"); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	var prompt strings.Builder
+	if err := runPasswdWith([]string{"--db", db}, pipeWith(t, "a sufficiently long password\n"), &prompt); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(prompt.String(), "[y/N]") || !strings.Contains(prompt.String(), "API tokens are not revoked") {
+		t.Fatalf("pipe review: %q", prompt.String())
+	}
+	st, _, err = openOffline(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	list, err := st.ListAPITokens(context.Background())
+	if err != nil || len(list) != 1 {
+		t.Fatalf("token after passwd: %+v %v", list, err)
+	}
+}
+
 func TestPasswdRejectsShortPassword(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "t.db")
 	err := runPasswdWith([]string{"--db", db}, pipeWith(t, "short\n"), io.Discard)
