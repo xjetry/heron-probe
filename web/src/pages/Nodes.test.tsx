@@ -84,7 +84,7 @@ describe("Nodes", () => {
     vi.useFakeTimers();
     try {
       await act(async () => {
-        fireEvent.click(screen.getAllByRole("button", { name: operation === "rotate" ? "换 token a" : "下移 a" })[0]);
+        fireEvent.click(screen.getByRole("button", { name: operation === "rotate" ? "换 token a" : "下移 a" }));
         await vi.runAllTimersAsync();
       });
       expect(listNodes).toHaveBeenCalledTimes(2);
@@ -298,7 +298,13 @@ describe("Nodes", () => {
 
   it("编辑宽限期与非宽限期节点的保存载荷", async () => {
     const updateNode = vi.fn(async () => ({}));
-    renderWithAdmin({ listNodes: async () => ({ nodes: two }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    let releaseList!: () => void;
+    const listGate = new Promise<void>((r) => { releaseList = r; });
+    const listNodes = vi.fn(async () => {
+      if (listNodes.mock.calls.length > 1) await listGate;
+      return { nodes: two };
+    });
+    renderWithAdmin({ listNodes, updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: "a" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a" }));
     const grace = screen.getByLabelText("离线宽限期（秒）");
@@ -306,8 +312,14 @@ describe("Nodes", () => {
     expect(grace).toHaveAccessibleDescription("0 表示取 hub 的 PROBE_OFFLINE_AFTER；非 0 不能小于它。");
     fireEvent.change(grace, { target: { value: "120" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, offlineGraceS: 120 }), expect.anything()));
-    await waitFor(() => expect(screen.getByRole("button", { name: "编辑 b" })).toBeEnabled());
+    try {
+      await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, offlineGraceS: 120 }), expect.anything()));
+      await waitFor(() => expect(listNodes).toHaveBeenCalledTimes(2));
+      // 刷新被闸住期间 A 仍在编辑；其它行的编辑按钮随时可用，不能作为 A 已退出的依据。
+      expect(screen.queryByRole("button", { name: "编辑 a" })).toBeNull();
+    } finally { await act(async () => { releaseList(); }); }
+    // A 保存与列表刷新都完成后才退出编辑，"编辑 a"重新出现。
+    await screen.findByRole("button", { name: "编辑 a" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 b" }));
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "b2" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
