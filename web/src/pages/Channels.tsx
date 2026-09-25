@@ -2,7 +2,7 @@ import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connec
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useRef, useState } from "react";
 import { errorText } from "../api/auth";
-import { queryGate } from "../api/queryGate";
+import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { AdminService, ChannelKind, type NotifyChannel } from "../gen/probe/v1/admin_pb";
@@ -63,7 +63,7 @@ export function Channels() {
   const remove = useMutation(AdminService.method.deleteNotifyChannel, { ...tracked, onSuccess: refresh });
   const test = useMutation(AdminService.method.testNotifyChannel, tracked);
   const gate = queryGate(list);
-  if (!gate.ready) return gate.fallback;
+  if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const channels = gate.data.channels;
   return (
     <section>

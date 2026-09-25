@@ -2,7 +2,7 @@ import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connec
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { Link } from "react-router";
-import { queryGate } from "../api/queryGate";
+import { errorBanner, queryGate } from "../api/queryGate";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Secret } from "../components/Secret";
 import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
@@ -44,7 +44,7 @@ export function Nodes() {
   };
 
   const gate = queryGate(nodes);
-  if (!gate.ready) return gate.fallback;
+  if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const list = gate.data.nodes;
   return (
     <section>

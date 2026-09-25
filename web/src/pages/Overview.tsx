@@ -1,6 +1,6 @@
 import { useQuery } from "@connectrpc/connect-query";
 import { Link } from "react-router";
-import { queryGate } from "../api/queryGate";
+import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService, type NodeStatus } from "../gen/probe/v1/admin_pb";
 import { ago, bytes, percent } from "../lib/format";
 
@@ -10,7 +10,7 @@ export const POLL_MS = 2000;
 export function Overview() {
   const snap = useQuery(AdminService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
   const gate = queryGate(snap);
-  if (!gate.ready) return gate.fallback;
+  if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const now = Number(gate.data.now);
   const online = gate.data.nodes.filter((n) => n.online).length;
   return (

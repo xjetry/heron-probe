@@ -2,7 +2,7 @@ import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connec
 import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
-import { queryGate } from "../api/queryGate";
+import { errorBanner, queryGate } from "../api/queryGate";
 import { Chart } from "../components/Chart";
 import { AdminService } from "../gen/probe/v1/admin_pb";
 import { toAligned, unitOf } from "../lib/series";
@@ -78,7 +78,7 @@ export function NodeDetail() {
 
   if (!validId || (nodes.data && !node)) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
   const gate = queryGate(nodes);
-  if (!gate.ready) return gate.fallback;
+  if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   return (
     <section>
       {gate.banner}
@@ -158,7 +158,7 @@ function TrafficCard({ nodeId }: { nodeId: bigint }) {
     },
   });
   const gate = queryGate(all);
-  if (!gate.ready) return gate.fallback;
+  if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const t = gate.data.nodes.find((n) => n.nodeId === nodeId)?.traffic;
   const timeZone = gate.data.timezone;
   if (!t) return gate.banner;

@@ -28,3 +28,22 @@ it("同文错误去重为一条，异文全部保留", () => {
   const { queryAllByRole } = render(<>{gate.banner}</>);
   expect(queryAllByRole("alert").map((a) => a.textContent)).toEqual(["Error: same", "Error: other"]);
 });
+
+it("未就绪时全部已失败查询的错误都给出，有失败时没有加载占位", () => {
+  const gate = queryGateAll(
+    { data: undefined, error: new Error("first failed") },
+    { data: 1 as number | undefined, error: new Error("second failed") },
+    { data: undefined, error: null },
+  );
+  if (gate.ready) throw new Error("ready");
+  expect(gate.errors.map((e) => String(e))).toEqual(["Error: first failed", "Error: second failed"]);
+  expect(gate.loading).toBeNull();
+});
+
+it("只有加载中时给出加载占位", () => {
+  const gate = queryGateAll({ data: undefined, error: null }, { data: 1 as number | undefined, error: null });
+  if (gate.ready) throw new Error("ready");
+  expect(gate.errors).toEqual([]);
+  const { getByText } = render(<>{gate.loading}</>);
+  expect(getByText("加载中…")).toBeInTheDocument();
+});

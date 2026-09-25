@@ -2,7 +2,7 @@ import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connec
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
-import { queryGateAll } from "../api/queryGate";
+import { errorBanner, queryGateAll } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Picks } from "../components/Picks";
@@ -59,7 +59,7 @@ export function AlertRules() {
   const remove = useMutation(AdminService.method.deleteAlertRule, { ...mutationOptions, onSuccess: refresh });
   // 节点与渠道求交需要相应列表，任务列表用于任务选择与标签；依赖未到达时不渲染可提交表单。
   const gate = queryGateAll(nodes, channels, tasks, rules);
-  if (!gate.ready) return gate.fallback;
+  if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const [nodesData, channelsData, tasksData, rulesData] = gate.data;
   const nodeList = nodesData.nodes;
   const channelList = channelsData.channels;

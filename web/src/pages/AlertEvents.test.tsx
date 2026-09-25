@@ -1,8 +1,9 @@
 import { expect, it } from "vitest";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
+import { createConnectQueryKey } from "@connectrpc/connect-query";
 import { ConnectError, Code } from "@connectrpc/connect";
-import { AlertEventSchema, ChannelKind, ListNodesResponseSchema, ListNotifyChannelsResponseSchema, type ListAlertEventsRequest } from "../gen/probe/v1/admin_pb";
+import { AdminService, AlertEventSchema, ChannelKind, ListNodesResponseSchema, ListNotifyChannelsResponseSchema, type ListAlertEventsRequest } from "../gen/probe/v1/admin_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { AlertEvents } from "./AlertEvents";
 
@@ -164,6 +165,22 @@ it("同文的多个查询错误只显示一条", async () => {
   await act(async () => { await queryClient.refetchQueries(); });
   expect((await screen.findAllByRole("alert")).map((a) => a.textContent)).toEqual(["hub unreachable"]);
   expect(screen.getByText("事件 200")).toBeInTheDocument();
+});
+
+it("事件首次失败与节点列表刷新失败同文时只显示一条", async () => {
+  let failNodes = false;
+  const { queryClient } = render({
+    listNodes: async () => {
+      if (failNodes) throw new ConnectError("hub unreachable", Code.Unavailable);
+      return nodes;
+    },
+    listAlertEvents: async () => { throw new ConnectError("hub unreachable", Code.Unavailable); },
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent("hub unreachable");
+  failNodes = true;
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) }); });
+  await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(1));
+  expect(screen.getByRole("alert")).toHaveTextContent("hub unreachable");
 });
 
 it("渠道首次失败时事件仍按编号显示且出现横幅", async () => {

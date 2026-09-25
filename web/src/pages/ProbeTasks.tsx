@@ -2,7 +2,7 @@ import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connec
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
-import { queryGateAll } from "../api/queryGate";
+import { errorBanner, queryGateAll } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Picks } from "../components/Picks";
@@ -34,7 +34,7 @@ export function ProbeTasks() {
   const remove = useMutation(AdminService.method.deleteProbeTask, { ...mutationOptions, onSuccess: refresh });
   // 分配求交依赖节点列表已到达；未到达前不渲染任何可提交的表单。
   const gate = queryGateAll(nodes, list);
-  if (!gate.ready) return gate.fallback;
+  if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const [nodesData, listData] = gate.data;
   const nodeList = nodesData.nodes;
   const availableNodeIds = new Set(nodeList.map((n) => n.id));
