@@ -24,6 +24,7 @@ jobs:
       - uses: bufbuild/buf-action@v1
         with:
           setup_only: true
+      - run: shellcheck --version
       - run: make ci
       - name: buf breaking
         if: github.event_name == 'pull_request'
