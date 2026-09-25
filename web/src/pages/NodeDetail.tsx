@@ -2,8 +2,8 @@ import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connec
 import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
+import { queryGate } from "../api/queryGate";
 import { Chart } from "../components/Chart";
-import { queryFeedback } from "../components/queryFeedback";
 import { AdminService } from "../gen/probe/v1/admin_pb";
 import { toAligned, unitOf } from "../lib/series";
 import { bytes } from "../lib/format";
@@ -77,11 +77,11 @@ export function NodeDetail() {
   );
 
   if (!validId || (nodes.data && !node)) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
-  const feedback = queryFeedback(nodes);
-  if (feedback.blocked) return feedback.banner;
+  const gate = queryGate(nodes);
+  if (!gate.ready) return gate.fallback;
   return (
     <section>
-      {feedback.banner}
+      {gate.banner}
       <header className="row detail-header">
         <h1>{node?.name ?? "…"}</h1>
         <nav aria-label="时间窗口">
@@ -148,9 +148,6 @@ const toBytes = (s: string): bigint | null => {
 function TrafficCard({ nodeId }: { nodeId: bigint }) {
   const qc = useQueryClient();
   const all = useQuery(AdminService.method.getTraffic, {}, { refetchInterval: TRAFFIC_MS });
-  const row = all.data?.nodes.find((n) => n.nodeId === nodeId);
-  const t = row?.traffic;
-  const timeZone = all.data?.timezone;
   const [draft, setDraft] = useState<{ rx: string; tx: string } | null>(null);
   const adjust = useMutation(AdminService.method.adjustTraffic, {
     onSuccess: () => {
@@ -159,8 +156,11 @@ function TrafficCard({ nodeId }: { nodeId: bigint }) {
       void qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getSnapshot, cardinality: "finite" }) });
     },
   });
-  const feedback = queryFeedback(all);
-  if (feedback.blocked || !t) return feedback.banner;
+  const gate = queryGate(all);
+  if (!gate.ready) return gate.fallback;
+  const t = gate.data.nodes.find((n) => n.nodeId === nodeId)?.traffic;
+  const timeZone = gate.data.timezone;
+  if (!t) return gate.banner;
   // 编辑框首次出现时预填当前值；之后由用户输入驱动。
   const form = draft ?? { rx: toGiB(t.periodRx), tx: toGiB(t.periodTx) };
   const rx = toBytes(form.rx);
@@ -171,7 +171,7 @@ function TrafficCard({ nodeId }: { nodeId: bigint }) {
   };
   return (
     <div className="card">
-      {feedback.banner}
+      {gate.banner}
       <h2>流量</h2>
       <dl className="facts">
         <dt>本周期</dt><dd>↓ {bytes(t.periodRx)} ↑ {bytes(t.periodTx)}</dd>

@@ -2,9 +2,9 @@ import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connec
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useRef, useState } from "react";
 import { errorText } from "../api/auth";
+import { queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
-import { queryFeedback } from "../components/queryFeedback";
 import { AdminService, ChannelKind, type NotifyChannel } from "../gen/probe/v1/admin_pb";
 import { CHANNEL_KINDS, channelTarget, labelOf, methodOf } from "../lib/alerts";
 
@@ -62,13 +62,12 @@ export function Channels() {
   const update = useMutation(AdminService.method.saveNotifyChannel, { ...tracked, onSuccess: refresh });
   const remove = useMutation(AdminService.method.deleteNotifyChannel, { ...tracked, onSuccess: refresh });
   const test = useMutation(AdminService.method.testNotifyChannel, tracked);
-  if (list.isPending) return <p className="muted">加载中…</p>;
-  const feedback = queryFeedback(list);
-  if (feedback.blocked) return feedback.banner;
-  const channels = list.data?.channels ?? [];
+  const gate = queryGate(list);
+  if (!gate.ready) return gate.fallback;
+  const channels = gate.data.channels;
   return (
     <section>
-      {feedback.banner}
+      {gate.banner}
       <h1>通知渠道</h1>
       <ChannelForm key={creation} title="新建通知渠道" initial={emptyDraft()} pending={create.isPending}
         onSubmit={(d) => create.mutate({ channel: toChannel(0n, d) }, { onSuccess: () => setCreation((k) => k + 1) })} />

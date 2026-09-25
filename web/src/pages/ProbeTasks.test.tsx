@@ -51,6 +51,16 @@ it("节点列表挂起时不渲染表单与任务表格", async () => {
   }).toEqual({ loading: true, forms: 0, rows: 0 });
 });
 
+it("任务列表挂起时不渲染新建表单", async () => {
+  const { queryClient } = renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: () => new Promise(() => {}) }, routes, "/probes");
+  const key = createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" });
+  await waitFor(() => expect(queryClient.getQueriesData({ queryKey: key })[0]?.[1]).toEqual(nodes));
+  expect({
+    loading: screen.queryByText("加载中…") !== null,
+    forms: screen.queryAllByRole("form").length,
+  }).toEqual({ loading: true, forms: 0 });
+});
+
 it("两种类型在选项与任务列表使用一致标签", async () => {
   renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => ({ tasks: [
     ...tasks.tasks, { task: { id: 4n, kind: ProbeKind.ICMP, target: "host" } },

@@ -61,6 +61,21 @@ it("规则首次失败无数据时只显示错误而无表单与表格", async (
   expect(screen.queryByRole("table")).toBeNull();
 });
 
+it("依赖列表刷新失败显示横幅且编辑中的表单与草稿仍在", async () => {
+  let fail = false;
+  const { queryClient } = render({ listNodes: async () => {
+    if (fail) throw new ConnectError("nodes refresh failed", Code.Unavailable);
+    return nodes;
+  } });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 丢包" }));
+  const form = screen.getByRole("form", { name: "编辑 丢包" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "尚未保存" } });
+  fail = true;
+  await act(async () => { await queryClient.refetchQueries(); });
+  expect(await screen.findByRole("alert")).toHaveTextContent("nodes refresh failed");
+  expect(within(screen.getByRole("form", { name: "编辑 丢包" })).getByLabelText("名称")).toHaveValue("尚未保存");
+});
+
 it("显式空作用域不是全部节点，编辑保存仍由 hub 拒绝而不放宽", async () => {
   const saved: SaveAlertRuleRequest[] = [];
   const message = "rule.node_ids must not be empty unless all_nodes is true";

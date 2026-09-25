@@ -2,9 +2,9 @@ import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connec
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { Link } from "react-router";
+import { queryGate } from "../api/queryGate";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Secret } from "../components/Secret";
-import { queryFeedback } from "../components/queryFeedback";
 import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
@@ -42,13 +42,12 @@ export function Nodes() {
     reorder.mutate({ ids });
   };
 
-  if (nodes.isPending) return <p className="muted">加载中…</p>;
-  const feedback = queryFeedback(nodes);
-  if (feedback.blocked) return feedback.banner;
-  const list = nodes.data?.nodes ?? [];
+  const gate = queryGate(nodes);
+  if (!gate.ready) return gate.fallback;
+  const list = gate.data.nodes;
   return (
     <section>
-      {feedback.banner}
+      {gate.banner}
       <h1>节点</h1>
       {secret && <Secret label={secret.label} value={secret.value} />}
       <form onSubmit={onCreate} className="row">

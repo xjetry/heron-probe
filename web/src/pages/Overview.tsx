@@ -1,26 +1,26 @@
 import { useQuery } from "@connectrpc/connect-query";
 import { Link } from "react-router";
+import { queryGate } from "../api/queryGate";
 import { AdminService, type NodeStatus } from "../gen/probe/v1/admin_pb";
 import { ago, bytes, percent } from "../lib/format";
-import { errorText } from "../api/auth";
 
 // 实时视图靠轮询；hub 的上报间隔不会更短，2 秒是让"刚上报"尽快可见的取值。
 export const POLL_MS = 2000;
 
 export function Overview() {
   const snap = useQuery(AdminService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
-  if (snap.isPending) return <p className="muted">加载中…</p>;
-  if (!snap.data) return <p role="alert" className="error">{errorText(snap.error)}</p>;
-  const now = Number(snap.data.now);
-  const online = snap.data.nodes.filter((n) => n.online).length;
+  const gate = queryGate(snap);
+  if (!gate.ready) return gate.fallback;
+  const now = Number(gate.data.now);
+  const online = gate.data.nodes.filter((n) => n.online).length;
   return (
     <section>
       <header className="row">
         <h1>总览</h1>
-        <span className="muted">{online} / {snap.data.nodes.length} 在线</span>
+        <span className="muted">{online} / {gate.data.nodes.length} 在线</span>
       </header>
-      {snap.error && <p role="alert" className="error">{errorText(snap.error)}</p>}
-      {snap.data.nodes.length === 0 && (
+      {gate.banner}
+      {gate.data.nodes.length === 0 && (
         <p className="muted">
           还没有节点。去 <Link to="/nodes">节点</Link> 页创建，或开一个 <Link to="/register">注册窗口</Link>。
         </p>
@@ -31,7 +31,7 @@ export function Overview() {
             <tr><th>节点</th><th>CPU</th><th>内存</th><th>磁盘</th><th>负载</th><th>网络</th><th>本周期 ↓/↑</th><th>最近上报</th></tr>
           </thead>
           <tbody>
-            {snap.data.nodes.map((n) => <NodeRow key={String(n.id)} node={n} now={now} />)}
+            {gate.data.nodes.map((n) => <NodeRow key={String(n.id)} node={n} now={now} />)}
           </tbody>
         </table>
       </div>

@@ -2,10 +2,10 @@ import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connec
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
+import { queryGateAll } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Picks } from "../components/Picks";
-import { queryFeedback } from "../components/queryFeedback";
 import { AdminService, AlertKind, ProbeMetric, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/probe/v1/admin_pb";
 import { ALERT_KINDS, PROBE_METRICS, labelOf, ruleCondition, statesOf, type RuleStates } from "../lib/alerts";
 import { ascending } from "../lib/ids";
@@ -58,22 +58,19 @@ export function AlertRules() {
   const update = useMutation(AdminService.method.saveAlertRule, { ...mutationOptions, onSuccess: refresh });
   const remove = useMutation(AdminService.method.deleteAlertRule, { ...mutationOptions, onSuccess: refresh });
   // 节点与渠道求交需要相应列表，任务列表用于任务选择与标签；依赖未到达时不渲染可提交表单。
-  if (!nodes.data || !channels.data || !tasks.data) {
-    const failed = nodes.error ?? channels.error ?? tasks.error;
-    return failed ? <p role="alert" className="error">{errorText(failed)}</p> : <p className="muted">加载中…</p>;
-  }
-  const nodeList = nodes.data.nodes;
-  const channelList = channels.data.channels;
-  const taskList = tasks.data.tasks;
-  const feedback = queryFeedback(rules);
-  if (feedback.blocked) return feedback.banner;
-  const byRule = statesOf(rules.data?.states ?? []);
+  const gate = queryGateAll(nodes, channels, tasks, rules);
+  if (!gate.ready) return gate.fallback;
+  const [nodesData, channelsData, tasksData, rulesData] = gate.data;
+  const nodeList = nodesData.nodes;
+  const channelList = channelsData.channels;
+  const taskList = tasksData.tasks;
+  const byRule = statesOf(rulesData.states);
   const nodeName = (id: bigint) => nodeList.find((n) => n.id === id)?.name ?? `节点 #${id}`;
   const channelName = (id: bigint) => channelList.find((c) => c.id === id)?.name ?? `渠道 #${id}`;
   const lists = { nodes: nodeList, channels: channelList, tasks: taskList };
   return (
     <section>
-      {feedback.banner}
+      {gate.banner}
       <h1>告警规则</h1>
       <RuleForm key={creation} title="新建告警规则" {...lists} initial={emptyDraft()} pending={create.isPending}
         onSubmit={(d) => create.mutate({ rule: toRule(0n, d, nodeList, channelList) }, { onSuccess: () => setCreation((k) => k + 1) })} />
@@ -82,7 +79,7 @@ export function AlertRules() {
         <table className="nodes">
           <thead><tr><th>名称</th><th>类型</th><th>条件</th><th>作用域</th><th>通知</th><th>状态</th><th>操作</th></tr></thead>
           <tbody>
-            {(rules.data?.rules ?? []).map((r) => (
+            {rulesData.rules.map((r) => (
               <RuleRow key={String(r.id)} rule={r} states={byRule.get(r.id)} {...lists} nodeName={nodeName} channelName={channelName}
                 saving={update.isPending} deleting={remove.isPending}
                 onSave={(d, onSuccess) => update.mutate({ rule: toRule(r.id, d, nodeList, channelList) }, { onSuccess })}
@@ -91,7 +88,7 @@ export function AlertRules() {
           </tbody>
         </table>
       </div>
-      {rules.data && rules.data.rules.length === 0 && <p className="muted">还没有告警规则。</p>}
+      {rulesData.rules.length === 0 && <p className="muted">还没有告警规则。</p>}
     </section>
   );
 }

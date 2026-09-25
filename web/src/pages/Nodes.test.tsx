@@ -32,6 +32,12 @@ describe("Nodes", () => {
     expect(screen.getByRole("link", { name: "b" })).toBeInTheDocument();
   });
 
+  it("列表挂起时显示加载中而不是创建表单", async () => {
+    renderWithAdmin({ listNodes: () => new Promise(() => {}) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    expect(await screen.findByText("加载中…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "创建" })).toBeNull();
+  });
+
   it("确认删除在列表刷新完成前保持禁用", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });

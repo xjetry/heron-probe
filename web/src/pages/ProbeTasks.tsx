@@ -2,10 +2,10 @@ import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connec
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
+import { queryGateAll } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Picks } from "../components/Picks";
-import { queryFeedback } from "../components/queryFeedback";
 import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
 import { ProbeKind, type ProbeTask } from "../gen/probe/v1/types_pb";
 import { ascending } from "../lib/ids";
@@ -32,26 +32,24 @@ export function ProbeTasks() {
   // 返回刷新 promise，编辑态在列表显示已保存值之后才关闭。
   const update = useMutation(AdminService.method.saveProbeTask, { ...mutationOptions, onSuccess: refresh });
   const remove = useMutation(AdminService.method.deleteProbeTask, { ...mutationOptions, onSuccess: refresh });
-  const pageError = error ?? nodes.error;
   // 分配求交依赖节点列表已到达；未到达前不渲染任何可提交的表单。
-  if (nodes.isPending) return <p className="muted">加载中…</p>;
-  if (!nodes.data) return <p role="alert" className="error">{errorText(pageError)}</p>;
-  const nodeList = nodes.data.nodes;
+  const gate = queryGateAll(nodes, list);
+  if (!gate.ready) return gate.fallback;
+  const [nodesData, listData] = gate.data;
+  const nodeList = nodesData.nodes;
   const availableNodeIds = new Set(nodeList.map((n) => n.id));
   // 当前节点列表不再包含的分配自然掉出，避免已删除节点让 hub 以 NotFound 拒绝整次保存。
   const submit = (m: typeof create, id: bigint, d: Draft, onSuccess?: () => void) =>
     m.mutate({ task: { id, kind: d.kind, target: d.target.trim(), intervalS: Number(d.intervalS), timeoutMs: Number(d.timeoutMs) },
       nodeIds: ascending([...d.nodeIds].filter((id) => availableNodeIds.has(id))) }, { onSuccess });
-  const feedback = queryFeedback(list);
-  if (feedback.blocked) return feedback.banner;
-  const tasks = list.data?.tasks.flatMap((d) => d.task ? [{ task: d.task, nodeIds: d.nodeIds }] : []) ?? [];
+  const tasks = listData.tasks.flatMap((d) => d.task ? [{ task: d.task, nodeIds: d.nodeIds }] : []);
   return (
     <section>
-      {feedback.banner}
+      {gate.banner}
       <h1>探测任务</h1>
       <TaskForm key={creation} title="新建探测任务" nodes={nodeList} initial={emptyDraft()} pending={create.isPending}
         onSubmit={(d) => submit(create, 0n, d, () => setCreation((key) => key + 1))} />
-      {pageError != null && <p role="alert" className="error">{errorText(pageError)}</p>}
+      {error != null && <p role="alert" className="error">{errorText(error)}</p>}
       <div className="table-scroll" role="region" aria-label="探测任务管理" tabIndex={0}>
         <table className="nodes">
           <thead><tr><th>类型</th><th>目标</th><th>间隔 (s)</th><th>超时 (ms)</th><th>节点</th><th>操作</th></tr></thead>
@@ -63,7 +61,7 @@ export function ProbeTasks() {
           </tbody>
         </table>
       </div>
-      {list.data && tasks.length === 0 && <p className="muted">还没有探测任务。</p>}
+      {tasks.length === 0 && <p className="muted">还没有探测任务。</p>}
     </section>
   );
 }

@@ -29,6 +29,12 @@ it("渠道刷新失败保留同一编辑表单与草稿", async () => {
   expect(within(form).getByLabelText("名称")).toHaveValue("尚未保存");
 });
 
+it("列表挂起时显示加载中而不是空提示", async () => {
+  render({ listNotifyChannels: () => new Promise(() => {}) });
+  expect(await screen.findByText("加载中…")).toBeInTheDocument();
+  expect(screen.queryByText("还没有通知渠道。")).toBeNull();
+});
+
 it("列表只显示非凭据字段", async () => {
   render({});
   expect(await screen.findByRole("cell", { name: "会话 42" })).toBeInTheDocument();
