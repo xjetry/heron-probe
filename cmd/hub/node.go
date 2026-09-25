@@ -14,7 +14,18 @@ import (
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
-func openOffline(db string) (*store.Store, *auth.Auth, error) {
+// openOffline 打开已有库，或在 create 时建立新库。
+// 写错 --db 时静默建空库，吊销、删除这类操作会对空库"成功"而真正的库原封不动；
+// 建立状态的子命令例外，因为第一次 serve 之前要能准备库。
+func openOffline(db string, create bool) (*store.Store, *auth.Auth, error) {
+	if !create {
+		if _, err := os.Stat(db); err != nil {
+			if os.IsNotExist(err) {
+				return nil, nil, fmt.Errorf("database %s does not exist; pass --db pointing at the hub's database", db)
+			}
+			return nil, nil, err
+		}
+	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	st, err := store.Open(db, clock.Real(), log)
 	if err != nil {
@@ -41,7 +52,7 @@ func runNode(args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	st, a, err := openOffline(*db)
+	st, a, err := openOffline(*db, args[0] == "create")
 	if err != nil {
 		return err
 	}

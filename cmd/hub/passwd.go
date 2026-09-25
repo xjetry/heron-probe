@@ -30,7 +30,7 @@ func runPasswdWith(args []string, in *os.File, prompt io.Writer) error {
 	if err != nil {
 		return err
 	}
-	st, a, err := openOffline(*db)
+	st, a, err := openOffline(*db, true)
 	if err != nil {
 		return err
 	}

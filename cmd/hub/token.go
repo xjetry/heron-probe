@@ -28,7 +28,7 @@ func runTokenWith(args []string, out, errOut io.Writer) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	st, _, err := openOffline(*db)
+	st, _, err := openOffline(*db, false)
 	if err != nil {
 		return err
 	}

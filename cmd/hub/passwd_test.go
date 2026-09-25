@@ -29,7 +29,7 @@ func TestPasswdReadsOneLineFromNonTerminalStdin(t *testing.T) {
 	if err := runPasswdWith([]string{"--db", db}, pipeWith(t, "a sufficiently long password\n"), io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	st, a, err := openOffline(db)
+	st, a, err := openOffline(db, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestPasswdReadsOneLineFromNonTerminalStdin(t *testing.T) {
 
 func TestPasswdListsTokensWithoutPromptingOnAPipe(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "t.db")
-	st, a, err := openOffline(db)
+	st, a, err := openOffline(db, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestPasswdListsTokensWithoutPromptingOnAPipe(t *testing.T) {
 	if strings.Contains(prompt.String(), "[y/N]") || !strings.Contains(prompt.String(), "API tokens are not revoked") {
 		t.Fatalf("pipe review: %q", prompt.String())
 	}
-	st, _, err = openOffline(db)
+	st, _, err = openOffline(db, false)
 	if err != nil {
 		t.Fatal(err)
 	}

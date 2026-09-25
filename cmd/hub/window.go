@@ -19,7 +19,7 @@ func runWindow(args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	st, a, err := openOffline(*db)
+	st, a, err := openOffline(*db, args[0] == "open")
 	if err != nil {
 		return err
 	}

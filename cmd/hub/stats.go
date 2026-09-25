@@ -13,7 +13,7 @@ func runStats(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	st, _, err := openOffline(*db)
+	st, _, err := openOffline(*db, false)
 	if err != nil {
 		return err
 	}

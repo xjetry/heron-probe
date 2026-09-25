@@ -148,7 +148,7 @@ func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
 		t.Fatalf("new password requires restart: %v", err)
 	}
 	stop()
-	st, _, err := openOffline(db)
+	st, _, err := openOffline(db, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +330,7 @@ func TestServeFlushesTrafficOnShutdown(t *testing.T) {
 		}
 	}
 	stop() // 10 秒的刷出周期尚未到：能落盘的只有退出时的那一次
-	st, _, err := openOffline(db)
+	st, _, err := openOffline(db, false)
 	if err != nil {
 		t.Fatal(err)
 	}

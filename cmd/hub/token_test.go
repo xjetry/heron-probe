@@ -13,7 +13,7 @@ import (
 
 func seedTokens(t *testing.T, db string, names ...string) []store.APIToken {
 	t.Helper()
-	st, a, err := openOffline(db)
+	st, a, err := openOffline(db, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestTokenListAndRevoke(t *testing.T) {
 func TestReviewAPITokensAfterPasswordChange(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "hub.db")
 	seedTokens(t, db, "ci")
-	st, _, err := openOffline(db)
+	st, _, err := openOffline(db, false)
 	if err != nil {
 		t.Fatal(err)
 	}
