@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
+import { ConnectError, Code } from "@connectrpc/connect";
 import { AlertEventSchema, ChannelKind, ListNodesResponseSchema, ListNotifyChannelsResponseSchema, type ListAlertEventsRequest } from "../gen/probe/v1/admin_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { AlertEvents } from "./AlertEvents";
@@ -76,4 +77,88 @@ it("空列表显示提示且没有加载更早按钮", async () => {
   render({ listAlertEvents: async () => ({ events: [] }) });
   expect(await screen.findByText("没有告警事件。")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "加载更早的事件" })).toBeNull();
+});
+
+it.each(["listNodes", "listAlertEvents", "listNotifyChannels"] as const)("%s 刷新失败保留已加载的事件行", async (method) => {
+  let fail = false;
+  const impls = {
+    listNodes: async () => nodes,
+    listNotifyChannels: async () => channels,
+    listAlertEvents: async () => ({ events: [event(200n)] }),
+  };
+  const { queryClient } = render({ ...impls, [method]: async () => {
+    if (fail) throw new ConnectError(`${method} refresh failed`, Code.Unavailable);
+    return impls[method]();
+  } });
+  const row = (await screen.findByText("事件 200")).closest("tr")!;
+  fail = true;
+  await act(async () => { await queryClient.refetchQueries(); });
+  expect(await screen.findByRole("alert")).toHaveTextContent(`${method} refresh failed`);
+  expect(screen.getByText("事件 200").closest("tr")).toBe(row);
+});
+
+it("事件查询首次失败显示整页错误", async () => {
+  render({ listAlertEvents: async () => { throw new ConnectError("events unavailable", Code.Unavailable); } });
+  expect(await screen.findByRole("alert")).toHaveTextContent("events unavailable");
+  expect(screen.queryByRole("table")).toBeNull();
+});
+
+it("渠道首次失败时事件仍按编号显示且出现横幅", async () => {
+  render({
+    listNotifyChannels: async () => { throw new ConnectError("channels unavailable", Code.Unavailable); },
+    listAlertEvents: async () => ({ events: [create(AlertEventSchema, { id: 1n, nodeId: 1n, ruleId: 7n, transition: "firing", at: 1_700_000_000n, summary: "带投递",
+      deliveries: [{ channelId: 5n, ok: true, done: true, attempts: 1 }] })] }),
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent("channels unavailable");
+  expect(screen.getByText("渠道 #5：已送达")).toBeInTheDocument();
+  expect(screen.getByText("带投递")).toBeInTheDocument();
+});
+
+it("第二页在途时加载按钮禁用，空尾页不显示空提示", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const requests: ListAlertEventsRequest[] = [];
+  render({ listAlertEvents: async (req) => {
+    requests.push(req);
+    if (req.beforeId === 0n) return { events: Array.from({ length: 100 }, (_, i) => event(200n - BigInt(i))) };
+    await gate;
+    return { events: [] };
+  } });
+  await screen.findByText("事件 200");
+  fireEvent.click(screen.getByRole("button", { name: "加载更早的事件" }));
+  try {
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(screen.getByRole("button", { name: "加载更早的事件" })).toBeDisabled();
+  } finally { await act(async () => { release(); }); }
+  await waitFor(() => expect(screen.queryByRole("button", { name: "加载更早的事件" })).toBeNull());
+  expect(screen.getByText("事件 101")).toBeInTheDocument();
+  expect(screen.queryByText("没有告警事件。")).toBeNull();
+});
+
+it("筛选切换时挂起期间不残留旧节点的事件", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const requests: ListAlertEventsRequest[] = [];
+  const { router } = render({ listAlertEvents: async (req) => {
+    requests.push(req);
+    if (req.nodeId === 0n) {
+      if (req.beforeId === 0n) return { events: Array.from({ length: 100 }, (_, i) => event(300n - BigInt(i))) };
+      return { events: [event(200n), event(199n)] };
+    }
+    await gate;
+    return { events: [event(50n, 2n)] };
+  } });
+  await screen.findByText("事件 300");
+  fireEvent.click(screen.getByRole("button", { name: "加载更早的事件" }));
+  await screen.findByText("事件 199");
+  fireEvent.change(screen.getByLabelText("节点"), { target: { value: "2" } });
+  try {
+    await waitFor(() => expect(requests).toHaveLength(3));
+    expect(requests[2]).toMatchObject({ nodeId: 2n, beforeId: 0n });
+    expect(router.state.location.search).toBe("?node=2");
+    expect(screen.queryByText("事件 300")).toBeNull();
+    expect(screen.queryByText("事件 199")).toBeNull();
+  } finally { await act(async () => { release(); }); }
+  expect(await screen.findByText("事件 50")).toBeInTheDocument();
+  expect(screen.queryByText("事件 300")).toBeNull();
 });

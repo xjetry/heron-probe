@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery } from "@connectrpc/connect-query";
 import { skipToken } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
-import { errorText } from "../api/auth";
+import { queryGate, queryGateAll } from "../api/queryGate";
 import { AdminService } from "../gen/probe/v1/admin_pb";
 import { deliveryText, transitionLabel } from "../lib/alerts";
 
@@ -22,13 +22,16 @@ export function AlertEvents() {
     getNextPageParam: (last) => (last.events.length < PAGE ? undefined : last.events[last.events.length - 1].id),
   });
   if (!valid) return <p role="alert" className="error">节点参数 {raw} 无效。<Link to="/events">查看全部事件</Link></p>;
-  if (nodes.isPending) return <p className="muted">加载中…</p>;
-  if (nodes.error) return <p role="alert" className="error">{errorText(nodes.error)}</p>;
-  const nodeList = nodes.data.nodes;
+  const channelGate = queryGate(channels);
+  // 渠道只提供名称：它的失败只换横幅，不阻断事件；名称缺失时按编号回退。
+  const channelBanner = channelGate.ready ? channelGate.banner : (channels.error != null ? channelGate.fallback : null);
+  const gate = queryGateAll(nodes, events);
+  if (!gate.ready) return gate.fallback;
+  const [nodesData, eventsData] = gate.data;
+  const nodeList = nodesData.nodes;
   const nodeName = (id: bigint) => nodeList.find((n) => n.id === id)?.name ?? `节点 #${id}`;
   const channelName = (id: bigint) => channels.data?.channels.find((c) => c.id === id)?.name ?? `渠道 #${id}`;
-  const rows = events.data?.pages.flatMap((p) => p.events) ?? [];
-  const pageError = events.error ?? channels.error;
+  const rows = eventsData.pages.flatMap((p) => p.events);
   return (
     <section>
       <h1>告警事件</h1>
@@ -39,7 +42,8 @@ export function AlertEvents() {
           {nodeId !== 0n && !nodeList.some((n) => n.id === nodeId) && <option value={String(nodeId)}>{nodeName(nodeId)}</option>}
         </select>
       </label>
-      {pageError != null && <p role="alert" className="error">{errorText(pageError)}</p>}
+      {gate.banner}
+      {channelBanner}
       <div className="table-scroll" role="region" aria-label="告警事件" tabIndex={0}>
         <table className="nodes">
           <thead><tr><th>时间</th><th>节点</th><th>变化</th><th>摘要</th><th>通知</th></tr></thead>

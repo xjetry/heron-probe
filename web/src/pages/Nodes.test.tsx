@@ -303,6 +303,7 @@ describe("Nodes", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
     const grace = screen.getByLabelText("离线宽限期（秒）");
     expect(grace).toHaveValue(90);
+    expect(grace).toHaveAccessibleDescription("0 表示取 hub 的 PROBE_OFFLINE_AFTER；非 0 不能小于它。");
     fireEvent.change(grace, { target: { value: "120" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, offlineGraceS: 120 }), expect.anything()));
@@ -311,6 +312,21 @@ describe("Nodes", () => {
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "b2" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 2n, name: "b2", offlineGraceS: 0 }), expect.anything()));
+  });
+
+  it("已有非零宽限期可显式清除", async () => {
+    const updateNode = vi.fn(async () => ({}));
+    const listNodes = vi.fn()
+      .mockResolvedValueOnce({ nodes: two })
+      .mockResolvedValue({ nodes: [{ ...two[0], offlineGraceS: undefined }, two[1]] });
+    renderWithAdmin({ listNodes, updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a" });
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    fireEvent.change(screen.getByLabelText("离线宽限期（秒）"), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, offlineGraceS: 0 }), expect.anything()));
+    const a = within((await screen.findByRole("link", { name: "a" })).closest("tr")!);
+    expect(a.getByRole("cell", { name: "默认" })).toBeInTheDocument();
   });
 
   it("非法宽限期禁用保存", async () => {

@@ -64,7 +64,7 @@ export function statesOf(states: AlertStateEntry[]): Map<bigint, RuleStates> {
 
 export const transitionLabel = (t: string): string => (t === "firing" ? "触发" : t === "recovered" ? "恢复" : t);
 
-// "已送达"只来自成功的投递记录（spec §9.3）；done 为假的投递仍在队列里，不能显示成失败。
+// 已送达只由 ok 为真决定；done 为假表示尚未终态，可能等待入窗、正在尝试或等待重试，不能显示为终止失败。
 export function deliveryText(d: AlertDelivery, channel: string): string {
   if (d.ok) return `${channel}：已送达`;
   if (!d.done) return `${channel}：投递中（已尝试 ${d.attempts} 次）`;

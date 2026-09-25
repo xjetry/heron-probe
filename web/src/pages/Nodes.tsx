@@ -101,7 +101,7 @@ function NodeEditor({ node, saving, deleting, rotating, onMoveUp, onMoveDown, on
         <td><input type="checkbox" aria-label="公开" checked={draft.public} onChange={(e) => setDraft({ ...draft, public: e.target.checked })} /></td>
         <td><input aria-label="备注" value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></td>
         <td><input type="number" min={1} max={28} aria-label="重置日" value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><p className="muted">若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。</p></td>
-        <td><input type="number" min={0} aria-label="离线宽限期（秒）" value={draft.offlineGraceS} onChange={(e) => setDraft({ ...draft, offlineGraceS: e.target.value })} /><p className="muted">0 表示取 hub 的 PROBE_OFFLINE_AFTER；非 0 不能小于它。</p></td>
+        <td><input type="number" min={0} aria-label="离线宽限期（秒）" aria-describedby={`grace-hint-${node.id}`} value={draft.offlineGraceS} onChange={(e) => setDraft({ ...draft, offlineGraceS: e.target.value })} /><p className="muted" id={`grace-hint-${node.id}`}>0 表示取 hub 的 PROBE_OFFLINE_AFTER；非 0 不能小于它。</p></td>
         <td />
         <td>
           <button type="button" disabled={saving || !validResetDay(draft.trafficResetDay) || !validGrace(draft.offlineGraceS)} onClick={() => onSave({ ...draft, offlineGraceS: Number(draft.offlineGraceS) }, () => setEditing(false))}>保存</button>{" "}
