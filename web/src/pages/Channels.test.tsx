@@ -13,6 +13,22 @@ const channels = create(ListNotifyChannelsResponseSchema, { channels: [
 const routes = [{ path: "/channels", Component: Channels }];
 const render = (impl: AdminImpl) => renderWithAdmin({ listNotifyChannels: async () => channels, ...impl }, routes, "/channels");
 
+it("渠道刷新失败保留同一编辑表单与草稿", async () => {
+  let fail = false;
+  const { queryClient } = render({ listNotifyChannels: async () => {
+    if (fail) throw new ConnectError("channels refresh failed", Code.Unavailable);
+    return channels;
+  } });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 tg" }));
+  const form = screen.getByRole("form", { name: "编辑 tg" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "尚未保存" } });
+  fail = true;
+  await act(async () => { await queryClient.refetchQueries(); });
+  expect(await screen.findByRole("alert")).toHaveTextContent("channels refresh failed");
+  expect(screen.getByRole("form", { name: "编辑 tg" })).toBe(form);
+  expect(within(form).getByLabelText("名称")).toHaveValue("尚未保存");
+});
+
 it("列表只显示非凭据字段", async () => {
   render({});
   expect(await screen.findByRole("cell", { name: "会话 42" })).toBeInTheDocument();

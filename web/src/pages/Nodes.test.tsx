@@ -14,6 +14,24 @@ const two = [
 
 describe("Nodes", () => {
 
+  it("节点刷新失败保留编辑行与草稿", async () => {
+    let fail = false;
+    const { queryClient } = renderWithAdmin({ listNodes: async () => {
+      if (fail) throw new ConnectError("nodes refresh failed", Code.Unavailable);
+      return { nodes: two };
+    } }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a" });
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    const input = screen.getByLabelText("名称");
+    fireEvent.change(input, { target: { value: "尚未保存" } });
+    fail = true;
+    await act(async () => { await queryClient.refetchQueries(); });
+    expect(await screen.findByRole("alert")).toHaveTextContent("nodes refresh failed");
+    expect(screen.getByLabelText("名称")).toBe(input);
+    expect(input).toHaveValue("尚未保存");
+    expect(screen.getByRole("link", { name: "b" })).toBeInTheDocument();
+  });
+
   it("确认删除在列表刷新完成前保持禁用", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });

@@ -4,6 +4,7 @@ import { type FormEvent, useRef, useState } from "react";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
+import { queryFeedback } from "../components/queryFeedback";
 import { AdminService, ChannelKind, type NotifyChannel } from "../gen/probe/v1/admin_pb";
 import { CHANNEL_KINDS, channelTarget, labelOf, methodOf } from "../lib/alerts";
 
@@ -62,10 +63,12 @@ export function Channels() {
   const remove = useMutation(AdminService.method.deleteNotifyChannel, { ...tracked, onSuccess: refresh });
   const test = useMutation(AdminService.method.testNotifyChannel, tracked);
   if (list.isPending) return <p className="muted">加载中…</p>;
-  if (list.error) return <p role="alert" className="error">{errorText(list.error)}</p>;
-  const channels = list.data.channels;
+  const feedback = queryFeedback(list);
+  if (feedback.blocked) return feedback.banner;
+  const channels = list.data?.channels ?? [];
   return (
     <section>
+      {feedback.banner}
       <h1>通知渠道</h1>
       <ChannelForm key={creation} title="新建通知渠道" initial={emptyDraft()} pending={create.isPending}
         onSubmit={(d) => create.mutate({ channel: toChannel(0n, d) }, { onSuccess: () => setCreation((k) => k + 1) })} />

@@ -3,6 +3,7 @@ import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { Chart } from "../components/Chart";
+import { queryFeedback } from "../components/queryFeedback";
 import { AdminService } from "../gen/probe/v1/admin_pb";
 import { toAligned, unitOf } from "../lib/series";
 import { bytes } from "../lib/format";
@@ -76,9 +77,11 @@ export function NodeDetail() {
   );
 
   if (!validId || (nodes.data && !node)) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
-  if (nodes.error) return <p role="alert" className="error">{errorText(nodes.error)}</p>;
+  const feedback = queryFeedback(nodes);
+  if (feedback.blocked) return feedback.banner;
   return (
     <section>
+      {feedback.banner}
       <header className="row detail-header">
         <h1>{node?.name ?? "…"}</h1>
         <nav aria-label="时间窗口">
@@ -156,8 +159,8 @@ function TrafficCard({ nodeId }: { nodeId: bigint }) {
       void qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getSnapshot, cardinality: "finite" }) });
     },
   });
-  if (all.error) return <p role="alert" className="error">{errorText(all.error)}</p>;
-  if (!t) return null;
+  const feedback = queryFeedback(all);
+  if (feedback.blocked || !t) return feedback.banner;
   // 编辑框首次出现时预填当前值；之后由用户输入驱动。
   const form = draft ?? { rx: toGiB(t.periodRx), tx: toGiB(t.periodTx) };
   const rx = toBytes(form.rx);
@@ -168,6 +171,7 @@ function TrafficCard({ nodeId }: { nodeId: bigint }) {
   };
   return (
     <div className="card">
+      {feedback.banner}
       <h2>流量</h2>
       <dl className="facts">
         <dt>本周期</dt><dd>↓ {bytes(t.periodRx)} ↑ {bytes(t.periodTx)}</dd>

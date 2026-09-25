@@ -5,6 +5,7 @@ import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Picks } from "../components/Picks";
+import { queryFeedback } from "../components/queryFeedback";
 import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
 import { ProbeKind, type ProbeTask } from "../gen/probe/v1/types_pb";
 import { ascending } from "../lib/ids";
@@ -41,10 +42,12 @@ export function ProbeTasks() {
   const submit = (m: typeof create, id: bigint, d: Draft, onSuccess?: () => void) =>
     m.mutate({ task: { id, kind: d.kind, target: d.target.trim(), intervalS: Number(d.intervalS), timeoutMs: Number(d.timeoutMs) },
       nodeIds: ascending([...d.nodeIds].filter((id) => availableNodeIds.has(id))) }, { onSuccess });
-  if (list.error) return <p role="alert" className="error">{errorText(list.error)}</p>;
+  const feedback = queryFeedback(list);
+  if (feedback.blocked) return feedback.banner;
   const tasks = list.data?.tasks.flatMap((d) => d.task ? [{ task: d.task, nodeIds: d.nodeIds }] : []) ?? [];
   return (
     <section>
+      {feedback.banner}
       <h1>探测任务</h1>
       <TaskForm key={creation} title="新建探测任务" nodes={nodeList} initial={emptyDraft()} pending={create.isPending}
         onSubmit={(d) => submit(create, 0n, d, () => setCreation((key) => key + 1))} />

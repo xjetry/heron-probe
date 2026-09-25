@@ -5,6 +5,7 @@ import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Picks } from "../components/Picks";
+import { queryFeedback } from "../components/queryFeedback";
 import { AdminService, AlertKind, ProbeMetric, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/probe/v1/admin_pb";
 import { ALERT_KINDS, PROBE_METRICS, labelOf, ruleCondition, statesOf, type RuleStates } from "../lib/alerts";
 import { ascending } from "../lib/ids";
@@ -64,13 +65,15 @@ export function AlertRules() {
   const nodeList = nodes.data.nodes;
   const channelList = channels.data.channels;
   const taskList = tasks.data.tasks;
-  if (rules.error) return <p role="alert" className="error">{errorText(rules.error)}</p>;
+  const feedback = queryFeedback(rules);
+  if (feedback.blocked) return feedback.banner;
   const byRule = statesOf(rules.data?.states ?? []);
   const nodeName = (id: bigint) => nodeList.find((n) => n.id === id)?.name ?? `节点 #${id}`;
   const channelName = (id: bigint) => channelList.find((c) => c.id === id)?.name ?? `渠道 #${id}`;
   const lists = { nodes: nodeList, channels: channelList, tasks: taskList };
   return (
     <section>
+      {feedback.banner}
       <h1>告警规则</h1>
       <RuleForm key={creation} title="新建告警规则" {...lists} initial={emptyDraft()} pending={create.isPending}
         onSubmit={(d) => create.mutate({ rule: toRule(0n, d, nodeList, channelList) }, { onSuccess: () => setCreation((k) => k + 1) })} />

@@ -34,6 +34,24 @@ const defaultImpl = {
   queryProbes: async () => create(QueryProbesResponseSchema, { level: "1m", stepS: 60 }),
 } satisfies AdminImpl;
 
+it.each(["listNodes", "getTraffic"] as const)("详情 %s 刷新失败保留内容与校正草稿", async (method) => {
+  let fail = false;
+  const { queryClient } = renderWithAdmin({ ...defaultImpl, [method]: async () => {
+    if (fail) throw new ConnectError(`${method} refresh failed`, Code.Unavailable);
+    return defaultImpl[method]();
+  } }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  const input = await screen.findByLabelText("本周期下行 (GiB)");
+  await screen.findByRole("heading", { name: "db-01" });
+  fireEvent.change(input, { target: { value: "2.5" } });
+  fail = true;
+  await act(async () => { await queryClient.refetchQueries(); });
+  expect(await screen.findByRole("alert")).toHaveTextContent(`${method} refresh failed`);
+  expect(screen.getByLabelText("本周期下行 (GiB)")).toBe(input);
+  expect(input).toHaveValue("2.5");
+  expect(screen.getByRole("heading", { name: "db-01" })).toBeInTheDocument();
+  expect(screen.getByText("↓ 1.0 GiB ↑ 512 MiB")).toBeInTheDocument();
+});
+
 it("任务列表查询失败显示错误，探测图例仍以编号可辨认", async () => {
   renderWithAdmin({
     ...defaultImpl,

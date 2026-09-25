@@ -25,6 +25,41 @@ const rules = create(ListAlertRulesResponseSchema, {
 const routes = [{ path: "/alerts", Component: AlertRules }];
 const base: AdminImpl = { listNodes: async () => nodes, listNotifyChannels: async () => channels, listProbeTasks: async () => tasks, listAlertRules: async () => rules };
 const render = (impl: AdminImpl) => renderWithAdmin({ ...base, ...impl }, routes, "/alerts");
+
+it("轮询成功更新状态，随后刷新失败仍保留同一编辑表单与草稿", async () => {
+  let calls = 0;
+  vi.useFakeTimers();
+  try {
+    render({ listAlertRules: async () => {
+      calls++;
+      if (calls > 2) throw new ConnectError("rules refresh failed", Code.Unavailable);
+      return calls === 1 ? rules : create(ListAlertRulesResponseSchema, {
+        rules: rules.rules, states: [{ ruleId: 7n, nodeId: 2n, state: "firing" }],
+      });
+    } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    fireEvent.click(screen.getByRole("button", { name: "编辑 丢包" }));
+    const form = screen.getByRole("form", { name: "编辑 丢包" });
+    fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "尚未保存" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(calls).toBe(2);
+    expect(screen.getByRole("cell", { name: "触发：法兰克福" })).toBeInTheDocument();
+    expect(screen.getByRole("form", { name: "编辑 丢包" })).toBe(form);
+    expect(within(form).getByLabelText("名称")).toHaveValue("尚未保存");
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(calls).toBe(3);
+    expect(screen.getByRole("alert")).toHaveTextContent("rules refresh failed");
+    expect(screen.getByRole("form", { name: "编辑 丢包" })).toBe(form);
+    expect(within(form).getByLabelText("名称")).toHaveValue("尚未保存");
+  } finally { vi.useRealTimers(); }
+});
+
+it("规则首次失败无数据时只显示错误而无表单与表格", async () => {
+  render({ listAlertRules: async () => { throw new ConnectError("rules unavailable", Code.Unavailable); } });
+  expect(await screen.findByRole("alert")).toHaveTextContent("rules unavailable");
+  expect(screen.queryByRole("form")).toBeNull();
+  expect(screen.queryByRole("table")).toBeNull();
+});
 const withRule8Name = (name: string) => create(ListAlertRulesResponseSchema, {
   rules: [
     { id: 7n, name: "离线", kind: AlertKind.OFFLINE, enabled: true, allNodes: true, channelIds: [5n] },

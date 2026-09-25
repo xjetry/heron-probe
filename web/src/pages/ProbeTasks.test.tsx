@@ -14,6 +14,22 @@ const tasks = create(ListProbeTasksResponseSchema, { version: 9n, tasks: [
 ] });
 const routes = [{ path: "/probes", Component: ProbeTasks }];
 
+it("探测任务刷新失败保留同一编辑表单与草稿", async () => {
+  let fail = false;
+  const { queryClient } = renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => {
+    if (fail) throw new ConnectError("tasks refresh failed", Code.Unavailable);
+    return tasks;
+  } }, routes, "/probes");
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 1.1.1.1:443" }));
+  const form = screen.getByRole("form", { name: "编辑探测任务" });
+  fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "draft:443" } });
+  fail = true;
+  await act(async () => { await queryClient.refetchQueries(); });
+  expect(await screen.findByRole("alert")).toHaveTextContent("tasks refresh failed");
+  expect(screen.getByRole("form", { name: "编辑探测任务" })).toBe(form);
+  expect(within(form).getByLabelText("目标")).toHaveValue("draft:443");
+});
+
 it("任务表格提供可聚焦滚动区域和操作列表头", async () => {
   renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks }, routes, "/probes");
   const region = await screen.findByRole("region", { name: "探测任务管理" });

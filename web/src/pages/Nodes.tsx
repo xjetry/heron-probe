@@ -4,6 +4,7 @@ import { type FormEvent, useState } from "react";
 import { Link } from "react-router";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Secret } from "../components/Secret";
+import { queryFeedback } from "../components/queryFeedback";
 import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
@@ -42,10 +43,12 @@ export function Nodes() {
   };
 
   if (nodes.isPending) return <p className="muted">加载中…</p>;
-  if (nodes.error) return <p role="alert" className="error">{errorText(nodes.error)}</p>;
-  const list = nodes.data.nodes;
+  const feedback = queryFeedback(nodes);
+  if (feedback.blocked) return feedback.banner;
+  const list = nodes.data?.nodes ?? [];
   return (
     <section>
+      {feedback.banner}
       <h1>节点</h1>
       {secret && <Secret label={secret.label} value={secret.value} />}
       <form onSubmit={onCreate} className="row">
