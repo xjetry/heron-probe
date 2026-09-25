@@ -22,12 +22,12 @@ describe("Nodes", () => {
     } }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: "a" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
-    const input = screen.getByLabelText("名称");
+    const input = screen.getByLabelText("名称 a（#1）");
     fireEvent.change(input, { target: { value: "尚未保存" } });
     fail = true;
     await act(async () => { await queryClient.refetchQueries(); });
     expect(await screen.findByRole("alert")).toHaveTextContent("nodes refresh failed");
-    expect(screen.getByLabelText("名称")).toBe(input);
+    expect(screen.getByLabelText("名称 a（#1）")).toBe(input);
     expect(input).toHaveValue("尚未保存");
     expect(screen.getByRole("link", { name: "b" })).toBeInTheDocument();
   });
@@ -105,7 +105,7 @@ describe("Nodes", () => {
     await screen.findByRole("link", { name: "a" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
-    fireEvent.change(screen.getAllByLabelText("名称")[0], { target: { value: "changed" } });
+    fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "changed" } });
     const [a, b] = screen.getAllByRole("button", { name: "保存" });
     const aRow = a.closest("tr")!;
     fireEvent.click(a);
@@ -133,7 +133,7 @@ describe("Nodes", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/^create rejected$/);
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() => expect(screen.queryByLabelText("名称")).toBeNull());
+    await waitFor(() => expect(screen.queryByLabelText("名称 a（#1）")).toBeNull());
     expect(screen.queryByRole("alert")).toBeNull();
     rejectEdit = true;
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
@@ -152,24 +152,24 @@ describe("Nodes", () => {
     renderWithAdmin({ listNodes: async () => ({ nodes: two }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: "a" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
-    fireEvent.change(screen.getByLabelText("名称"), { target: { value: "changed" } });
+    fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "changed" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     try {
       await waitFor(() => expect(updateNode).toHaveBeenCalledTimes(1));
-      expect(screen.getByLabelText("名称")).toHaveValue("changed");
+      expect(screen.getByLabelText("名称 a（#1）")).toHaveValue("changed");
       expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
     } finally { await act(async () => { release(); }); }
     expect(await screen.findByRole("alert")).toHaveTextContent(/^node update rejected$/);
-    expect(screen.getByLabelText("名称")).toHaveValue("changed");
+    expect(screen.getByLabelText("名称 a（#1）")).toHaveValue("changed");
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(updateNode).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.queryByLabelText("名称")).toBeNull());
+    await waitFor(() => expect(screen.queryByLabelText("名称 a（#1）")).toBeNull());
   });
   it.each(["", "29", "1.5", "15"])("重置日 %s 只有 1–28 的整数能保存", async (value) => {
     renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: "a" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
-    fireEvent.change(screen.getByLabelText("重置日"), { target: { value } });
+    fireEvent.change(screen.getByLabelText("重置日 a（#1）"), { target: { value } });
     if (value === "15") expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
     else expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
   });
@@ -205,16 +205,16 @@ describe("Nodes", () => {
     const { queryClient } = renderWithAdmin({ listNodes: async () => ({ nodes: list }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: "a" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
-    fireEvent.change(screen.getByLabelText("名称"), { target: { value: "abandoned" } });
+    fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "abandoned" } });
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     list = [{ ...two[0], name: "current", public: true, note: "current note" }, two[1]];
     await act(async () => { await queryClient.refetchQueries(); });
     await screen.findByRole("link", { name: "current" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 current（#1）" }));
     expect({
-      name: (screen.getByLabelText("名称") as HTMLInputElement).value,
-      public: (screen.getByLabelText("公开") as HTMLInputElement).checked,
-      note: (screen.getByLabelText("备注") as HTMLInputElement).value,
+      name: (screen.getByLabelText("名称 current（#1）") as HTMLInputElement).value,
+      public: (screen.getByLabelText("公开 current（#1）") as HTMLInputElement).checked,
+      note: (screen.getByLabelText("备注 current（#1）") as HTMLInputElement).value,
     }).toEqual({ name: "current", public: true, note: "current note" });
   });
 
@@ -276,6 +276,21 @@ describe("Nodes", () => {
     await waitFor(() => expect(deleteNode).toHaveBeenCalledWith(expect.objectContaining({ id: 11n }), expect.anything()));
   });
 
+  it("同名节点同时编辑时保存的是被改的那一行", async () => {
+    const sameName = [two[0], { ...two[1], id: 11n, name: "a" }];
+    const updateNode = vi.fn(async () => ({}));
+    renderWithAdmin({ listNodes: async () => ({ nodes: sameName }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findAllByRole("link", { name: "a" });
+    const edits = screen.getAllByRole("button", { name: /^编辑 a/ });
+    fireEvent.click(edits[0]);
+    fireEvent.click(edits[1]);
+    // 带 id 时只命中第二行；名称不含 id 时两行同名，getBy 必须报多个。
+    const nameInput = screen.getByLabelText((label) => label === "名称 a（#11）" || label === "名称 a");
+    fireEvent.change(nameInput, { target: { value: "renamed" } });
+    fireEvent.click(within(nameInput.closest("tr")!).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 11n, name: "renamed" }), expect.anything()));
+  });
+
   it.each(["下移 a（#1）", "上移 b（#2）"])("%s 提交完整排列", async (button) => {
     const reorderNodes = vi.fn(async () => ({}));
     const three = [...two, { ...two[0], id: 3n, name: "c", sortOrder: 2 }];
@@ -290,10 +305,10 @@ describe("Nodes", () => {
     renderWithAdmin({ listNodes: async () => ({ nodes: two }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: "a" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
-    fireEvent.change(screen.getByLabelText("名称"), { target: { value: "a2" } });
-    fireEvent.click(screen.getByLabelText("公开"));
-    fireEvent.change(screen.getByLabelText("备注"), { target: { value: "changed note" } });
-    fireEvent.change(screen.getByLabelText("重置日"), { target: { value: "15" } });
+    fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "a2" } });
+    fireEvent.click(screen.getByLabelText("公开 a（#1）"));
+    fireEvent.change(screen.getByLabelText("备注 a（#1）"), { target: { value: "changed note" } });
+    fireEvent.change(screen.getByLabelText("重置日 a（#1）"), { target: { value: "15" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, name: "a2", public: true, note: "changed note", trafficResetDay: 15 }), expect.anything()));
   });
@@ -317,7 +332,7 @@ describe("Nodes", () => {
     renderWithAdmin({ listNodes, updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: "a" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
-    const grace = screen.getByLabelText("离线宽限期（秒）");
+    const grace = screen.getByLabelText("离线宽限期（秒） a（#1）");
     expect(grace).toHaveValue(90);
     expect(grace).toHaveAccessibleDescription("0 表示取 hub 的 PROBE_OFFLINE_AFTER；非 0 不能小于它。");
     fireEvent.change(grace, { target: { value: "120" } });
@@ -331,7 +346,7 @@ describe("Nodes", () => {
     // A 保存与列表刷新都完成后才退出编辑，"编辑 a（#1）"重新出现。
     await screen.findByRole("button", { name: "编辑 a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
-    fireEvent.change(screen.getByLabelText("名称"), { target: { value: "b2" } });
+    fireEvent.change(screen.getByLabelText("名称 b（#2）"), { target: { value: "b2" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 2n, name: "b2", offlineGraceS: 0 }), expect.anything()));
   });
@@ -344,7 +359,7 @@ describe("Nodes", () => {
     renderWithAdmin({ listNodes, updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: "a" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
-    fireEvent.change(screen.getByLabelText("离线宽限期（秒）"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("离线宽限期（秒） a（#1）"), { target: { value: "0" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, offlineGraceS: 0 }), expect.anything()));
     const a = within((await screen.findByRole("link", { name: "a" })).closest("tr")!);
@@ -355,7 +370,7 @@ describe("Nodes", () => {
     renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: "a" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
-    fireEvent.change(screen.getByLabelText("离线宽限期（秒）"), { target: { value: "-1" } });
+    fireEvent.change(screen.getByLabelText("离线宽限期（秒） a（#1）"), { target: { value: "-1" } });
     expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
   });
 
@@ -365,7 +380,7 @@ describe("Nodes", () => {
       [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: "a" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
-    fireEvent.change(screen.getByLabelText("离线宽限期（秒）"), { target: { value: "20" } });
+    fireEvent.change(screen.getByLabelText("离线宽限期（秒） a（#1）"), { target: { value: "20" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("offline_grace_s: must be 0 or at least 30 seconds (PROBE_OFFLINE_AFTER); got 20");
   });

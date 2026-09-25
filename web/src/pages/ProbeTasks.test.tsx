@@ -21,12 +21,12 @@ it("探测任务刷新失败保留同一编辑表单与草稿", async () => {
     return tasks;
   } }, routes, "/probes");
   fireEvent.click(await screen.findByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
-  const form = screen.getByRole("form", { name: "编辑探测任务" });
+  const form = screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" });
   fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "draft:443" } });
   fail = true;
   await act(async () => { await queryClient.refetchQueries(); });
   expect(await screen.findByRole("alert")).toHaveTextContent("tasks refresh failed");
-  expect(screen.getByRole("form", { name: "编辑探测任务" })).toBe(form);
+  expect(screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" })).toBe(form);
   expect(within(form).getByLabelText("目标")).toHaveValue("draft:443");
 });
 
@@ -123,8 +123,8 @@ it("提交剔除编辑期间从节点列表消失的分配", async () => {
   fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
   current = create(ListNodesResponseSchema, { nodes: [nodes.nodes[0]] });
   await act(async () => { await queryClient.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) }); });
-  await waitFor(() => expect(within(screen.getByRole("form", { name: "编辑探测任务" })).queryByLabelText("法兰克福")).toBeNull());
-  fireEvent.submit(screen.getByRole("form", { name: "编辑探测任务" }));
+  await waitFor(() => expect(within(screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" })).queryByLabelText("法兰克福")).toBeNull());
+  fireEvent.submit(screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" }));
   await waitFor(() => expect(save).toHaveBeenCalled());
   expect(save.mock.calls[0][0].nodeIds).toEqual([1n]);
 });
@@ -141,7 +141,8 @@ it("A 行保存挂起时 B 行保存禁用，刷新完成才关闭 A 行", async
   await screen.findByText("1.1.1.1:443");
   fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
   fireEvent.click(screen.getByRole("button", { name: "编辑 b（#4）" }));
-  const [a, b] = screen.getAllByRole("form", { name: "编辑探测任务" });
+  const a = screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" });
+  const b = screen.getByRole("form", { name: "编辑 b（#4）" });
   fireEvent.change(within(a).getByLabelText("目标"), { target: { value: "changed:80" } });
   fireEvent.submit(a);
   try {
@@ -153,7 +154,32 @@ it("A 行保存挂起时 B 行保存禁用，刷新完成才关闭 A 行", async
     expect(a).toBeInTheDocument();
   } finally { vi.useRealTimers(); await act(async () => { releaseSave(); releaseList(); }); }
   expect(await screen.findByRole("cell", { name: "changed:80" })).toBeInTheDocument();
-  expect(screen.getAllByRole("form", { name: "编辑探测任务" })).toEqual([b]);
+  expect(screen.queryByRole("form", { name: "编辑 1.1.1.1:443（#3）" })).toBeNull();
+  expect(screen.getByRole("form", { name: "编辑 b（#4）" })).toBe(b);
+});
+
+it("同名任务同时编辑时保存的是被改的那一行", async () => {
+  const same = create(ListProbeTasksResponseSchema, { version: 9n, tasks: [
+    { task: { id: 7n, kind: ProbeKind.TCP, target: "same.example", intervalS: 30, timeoutMs: 1000 }, nodeIds: [1n] },
+    { task: { id: 8n, kind: ProbeKind.TCP, target: "same.example", intervalS: 30, timeoutMs: 1000 }, nodeIds: [2n] },
+  ] });
+  const saved: SaveProbeTaskRequest[] = [];
+  renderWithAdmin({
+    listNodes: async () => nodes, listProbeTasks: async () => same,
+    saveProbeTask: async (req) => { saved.push(req); return {}; },
+  }, routes, "/probes");
+  await screen.findAllByText("same.example");
+  const edits = screen.getAllByRole("button", { name: /^编辑 same\.example/ });
+  fireEvent.click(edits[0]);
+  fireEvent.click(edits[1]);
+  // 带 id 时只命中第二行；名称不含 id 时两行同名，getBy 必须报多个。
+  const second = screen.getByRole("form", {
+    name: (name) => name === "编辑 same.example（#8）" || name === "编辑 same.example",
+  });
+  fireEvent.change(within(second).getByLabelText("目标"), { target: { value: "other.example" } });
+  fireEvent.submit(second);
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].task).toMatchObject({ id: 8n, target: "other.example" });
 });
 
 it("最新操作清掉创建旧错误，编辑失败显示自己的正文", async () => {
@@ -171,12 +197,12 @@ it("最新操作清掉创建旧错误，编辑失败显示自己的正文", asyn
   fireEvent.submit(form);
   expect(await screen.findByRole("alert")).toHaveTextContent(/^create rejected$/);
   fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
-  fireEvent.submit(screen.getByRole("form", { name: "编辑探测任务" }));
-  await waitFor(() => expect(screen.queryByRole("form", { name: "编辑探测任务" })).toBeNull());
+  fireEvent.submit(screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" }));
+  await waitFor(() => expect(screen.queryByRole("form", { name: "编辑 1.1.1.1:443（#3）" })).toBeNull());
   expect(screen.queryByRole("alert")).toBeNull();
   rejectEdit = true;
   fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
-  fireEvent.submit(screen.getByRole("form", { name: "编辑探测任务" }));
+  fireEvent.submit(screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(/^edit rejected$/);
 });
 
@@ -193,19 +219,19 @@ describe("ProbeTasks", () => {
     renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks, saveProbeTask }, routes, "/probes");
     await screen.findByText("1.1.1.1:443");
     fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
-    const form = screen.getByRole("form", { name: "编辑探测任务" });
+    const form = screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" });
     fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "8.8.8.8:443" } });
     fireEvent.submit(form);
     try {
       await waitFor(() => expect(saveProbeTask).toHaveBeenCalledTimes(1));
-      expect(screen.getByRole("form", { name: "编辑探测任务" })).toBeInTheDocument();
+      expect(screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" })).toBeInTheDocument();
       expect(within(form).getByRole("button", { name: "保存" })).toBeDisabled();
     } finally { await act(async () => { release(); }); }
     expect(await screen.findByRole("alert")).toHaveTextContent(/^task update rejected$/);
-    expect(within(screen.getByRole("form", { name: "编辑探测任务" })).getByLabelText("目标")).toHaveValue("8.8.8.8:443");
+    expect(within(screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" })).getByLabelText("目标")).toHaveValue("8.8.8.8:443");
     fireEvent.submit(form);
     await waitFor(() => expect(saveProbeTask).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.queryByRole("form", { name: "编辑探测任务" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("form", { name: "编辑 1.1.1.1:443（#3）" })).toBeNull());
   });
 
   it("没有任务时显示空状态", async () => {
@@ -271,7 +297,7 @@ describe("ProbeTasks", () => {
     }, routes, "/probes");
     await screen.findByText("1.1.1.1:443");
     fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
-    const form = screen.getByRole("form", { name: "编辑探测任务" });
+    const form = screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" });
     fireEvent.change(within(form).getByLabelText("超时 (ms)"), { target: { value: "2000" } });
     fireEvent.click(within(form).getByLabelText("法兰克福"));
     fireEvent.submit(form);

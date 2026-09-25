@@ -107,7 +107,7 @@ function TaskRow({ task: t, nodeIds, nodes, saving, deleting, onSave, onDelete }
   if (editing) {
     return (
       <tr><td colSpan={6}>
-        <TaskForm title="编辑探测任务" nodes={nodes} initial={draftOf(t, nodeIds)} pending={saving}
+        <TaskForm title={`编辑 ${withId(t.target, t.id)}`} nodes={nodes} initial={draftOf(t, nodeIds)} pending={saving}
           onSubmit={(d) => onSave(d, () => setEditing(false))} onCancel={() => setEditing(false)} />
       </td></tr>
     );
