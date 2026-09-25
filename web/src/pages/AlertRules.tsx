@@ -9,7 +9,7 @@ import { Picks } from "../components/Picks";
 import { AdminService, AlertKind, ProbeMetric, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/probe/v1/admin_pb";
 import { ALERT_KINDS, PROBE_METRICS, labelOf, ruleCondition, statesOf, type RuleStates } from "../lib/alerts";
 import { ascending, withId } from "../lib/ids";
-import { taskLabel } from "../lib/probes";
+import { taskLabels } from "../lib/probes";
 
 type Draft = {
   name: string; kind: AlertKind; enabled: boolean; allNodes: boolean; nodeIds: Set<bigint>; channelIds: Set<bigint>;
@@ -95,6 +95,13 @@ export function AlertRules() {
 
 type Lists = { nodes: Node[]; channels: NotifyChannel[]; tasks: ProbeTaskDetail[] };
 
+// 同类型同目标没有唯一约束。只在这份下拉里碰撞的标签追加编号，否则两个任务无法区分，选错会盯住另一个任务。
+function taskOptions(tasks: ProbeTaskDetail[]) {
+  const listed = tasks.flatMap((d) => (d.task ? [d.task] : []));
+  const labels = taskLabels(listed.map((t) => t.id), tasks);
+  return listed.map((t, i) => <option key={String(t.id)} value={String(t.id)}>{labels[i]}</option>);
+}
+
 function RuleForm({ title, nodes, channels, tasks, initial, pending, onSubmit, onCancel }: Lists & {
   title: string; initial: Draft; pending: boolean; onSubmit: (d: Draft) => void; onCancel?: () => void;
 }) {
@@ -124,7 +131,7 @@ function RuleForm({ title, nodes, channels, tasks, initial, pending, onSubmit, o
           <label>探测任务
             <select required value={draft.taskId} onChange={(e) => set({ taskId: e.target.value })}>
               <option value="">选择任务</option>
-              {tasks.flatMap((d) => (d.task ? [<option key={String(d.task.id)} value={String(d.task.id)}>{taskLabel(d.task.id, tasks)}</option>] : []))}
+              {taskOptions(tasks)}
             </select>
           </label>
           <label>指标

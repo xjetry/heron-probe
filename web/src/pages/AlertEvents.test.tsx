@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
 import { createConnectQueryKey } from "@connectrpc/connect-query";
 import { ConnectError, Code } from "@connectrpc/connect";
@@ -27,6 +27,19 @@ it("一页满 100 条时可加载更早的事件，从本页最小 id 之前继�
   expect(requests.map((r) => r.beforeId)).toEqual([0n, 101n]);
   expect(requests[0].limit).toBe(100);
   expect(screen.queryByRole("button", { name: "加载更早的事件" })).toBeNull();
+});
+
+it("同名节点按 id 筛选第二个", async () => {
+  const requests: ListAlertEventsRequest[] = [];
+  render({
+    listNodes: async () => create(ListNodesResponseSchema, { nodes: [{ id: 1n, name: "东京" }, { id: 11n, name: "东京" }] }),
+    listAlertEvents: async (req) => { requests.push(req); return { events: [] }; },
+  });
+  const select = await screen.findByLabelText("节点");
+  // 带 id 时只命中第二项；名称不含 id 时两项同名，getBy 必须报多个。
+  const option = within(select).getByRole("option", { name: (n) => n === "东京（#11）" || n === "东京" });
+  fireEvent.change(select, { target: { value: (option as HTMLOptionElement).value } });
+  await waitFor(() => expect(requests.at(-1)?.nodeId).toBe(11n));
 });
 
 it("URL 里的节点筛选", async () => {

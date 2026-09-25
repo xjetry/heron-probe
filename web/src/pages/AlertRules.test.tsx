@@ -263,6 +263,26 @@ it("显式作用域按升序发出节点列表", async () => {
   expect(saved[0].rule!.nodeIds).toEqual([1n, 2n]);
 });
 
+it("同类型同目标的探测任务按 id 保存第二个", async () => {
+  const saved: SaveAlertRuleRequest[] = [];
+  const duplicate = create(ListProbeTasksResponseSchema, { tasks: [
+    { task: { id: 3n, kind: ProbeKind.ICMP, target: "1.1.1.1" }, nodeIds: [1n] },
+    { task: { id: 11n, kind: ProbeKind.ICMP, target: "1.1.1.1" }, nodeIds: [2n] },
+  ] });
+  render({ listProbeTasks: async () => duplicate, saveAlertRule: async (req) => { saved.push(req); return {}; } });
+  const form = await screen.findByRole("form", { name: "新建告警规则" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "同名任务" } });
+  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(AlertKind.PROBE) } });
+  const select = within(form).getByLabelText("探测任务");
+  // 带 id 时只命中第二项；名称不含 id 时两项同名，getBy 必须报多个。
+  const option = within(select).getByRole("option", { name: (n) => n === "ICMP 1.1.1.1 #11" || n === "ICMP 1.1.1.1" });
+  fireEvent.change(select, { target: { value: (option as HTMLOptionElement).value } });
+  fireEvent.change(within(form).getByLabelText("阈值（%）"), { target: { value: "10" } });
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].rule!.taskId).toBe(11n);
+});
+
 it("探测规则字段随指标切换单位", async () => {
   const saved: SaveAlertRuleRequest[] = [];
   render({ saveAlertRule: async (req) => { saved.push(req); return {}; } });

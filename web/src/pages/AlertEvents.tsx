@@ -4,6 +4,7 @@ import { Link, useSearchParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService, type ListAlertEventsResponse } from "../gen/probe/v1/admin_pb";
 import { deliveryText, transitionLabel } from "../lib/alerts";
+import { withId } from "../lib/ids";
 
 // 与 hub 的默认页长一致；不足一页即已到最早的事件。
 const PAGE = 100;
@@ -36,7 +37,7 @@ export function AlertEvents() {
       <label>节点
         <select value={String(nodeId)} onChange={(e) => setParams(e.target.value === "0" ? {} : { node: e.target.value })}>
           <option value="0">全部节点</option>
-          {nodeList.map((n) => <option key={String(n.id)} value={String(n.id)}>{n.name}</option>)}
+          {nodeList.map((n) => <option key={String(n.id)} value={String(n.id)}>{withId(n.name, n.id)}</option>)}
           {nodeId !== 0n && !nodeList.some((n) => n.id === nodeId) && <option value={String(nodeId)}>{nodeName(nodeId)}</option>}
         </select>
       </label>
