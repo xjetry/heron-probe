@@ -67,7 +67,8 @@ func reviewAPITokens(ctx context.Context, st *store.Store, w io.Writer, ask func
 		return err
 	}
 	if ask == nil {
-		fmt.Fprintf(w, "to revoke them: probe-hub token revoke --all --db %s\n", db)
+		// 提示会被人粘贴进 shell。路径按 POSIX 单引号引用：空格与元字符按字面处理，单引号本身不能留在引号内。
+		fmt.Fprintf(w, "to revoke them: probe-hub token revoke --all --db %s\n", shellSingle(db))
 		return nil
 	}
 	yes, err := ask()
@@ -80,6 +81,12 @@ func reviewAPITokens(ctx context.Context, st *store.Store, w io.Writer, ask func
 	}
 	fmt.Fprintf(w, "revoked %d API tokens\n", n)
 	return nil
+}
+
+// shellSingle 把路径嵌进 POSIX shell 命令。单引号内除单引号外都按字面处理；
+// 单引号本身要先结束引号、接一个转义的单引号、再重新打开。
+func shellSingle(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // readPassword 在终端上不回显地读两遍并比对；stdin 不是终端时读一行——供容器

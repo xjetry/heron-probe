@@ -51,7 +51,7 @@ func usage() {
 commands:
   serve                     start the hub
   passwd                    set the admin password (reads stdin when not a terminal)
-  token list|revoke           list or revoke API tokens (effective immediately)
+  token list|revoke         list or revoke API tokens (effective immediately)
   node create|list|delete|rotate-token
   window open|close|show    manage the registration window
   stats                     row counts per table

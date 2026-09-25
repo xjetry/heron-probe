@@ -94,3 +94,23 @@ func TestReviewAPITokensAfterPasswordChange(t *testing.T) {
 		t.Fatalf("no tokens: asked=%v output %q err %v", asked, w.String(), err)
 	}
 }
+
+func TestReviewAPITokensQuotesDBPathForShell(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "hub.db")
+	seedTokens(t, db, "ci")
+	st, _, err := openOffline(db, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var w bytes.Buffer
+	// 提示按字面粘贴。空格与单引号都必须留在单引号引用里，不能靠 Go 的 %q。
+	path := "/var/lib/o'brien hub/probe.db"
+	if err := reviewAPITokens(context.Background(), st, &w, nil, path); err != nil {
+		t.Fatal(err)
+	}
+	want := "to revoke them: probe-hub token revoke --all --db '/var/lib/o'\\''brien hub/probe.db'\n"
+	if !strings.Contains(w.String(), want) {
+		t.Fatalf("revoke hint %q, want substring %q", w.String(), want)
+	}
+}
