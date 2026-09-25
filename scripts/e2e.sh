@@ -16,14 +16,10 @@ port=18080
 base="http://127.0.0.1:$port"
 admin_pw="e2e admin password 2026"
 : > "$work/jar"
-bin/probe-hub window open --db "$db" --ttl 10m --max 2 > "$work/window.txt"
-key=$(sed -n 's/^key: //p' "$work/window.txt")
-[ -n "$key" ] || { echo "no key"; exit 1; }
-
-PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC > "$work/hub.log" 2>&1 &
-hub=$!
 hookrecv=""
+hub=""
 # 每次运行只回收自己的容器；失败也必须停止上报，不能把流量带进下一次验收。
+# 清理先于一切会留下副作用的步骤安装：容器准备中途失败时，已启动的容器也要回收。
 cleanup() {
   if [ -n "$hookrecv" ]; then
     kill "$hookrecv" || true
@@ -41,6 +37,22 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+# 镜像冷拉取可能远超注册窗口与上线等待的预算，它属于准备阶段，不能消耗这些预算；
+# 任一架构准备失败就直接退出，不进入注册阶段。注册与上报复用这两个容器。
+for arch in amd64 arm64; do
+  docker run -d --cidfile "$work/cid-$arch" --platform "linux/$arch" --add-host=host.docker.internal:host-gateway \
+    -v "$PWD/bin:/probe:ro" "$AGENT_IMAGE" sleep infinity > /dev/null
+done
+echo "agent containers ready: $AGENT_IMAGE"
+
+bin/probe-hub window open --db "$db" --ttl 10m --max 2 > "$work/window.txt"
+key=$(sed -n 's/^key: //p' "$work/window.txt")
+[ -n "$key" ] || { echo "no key"; exit 1; }
+echo "registration window: $(sed -n 's/^expires: //p' "$work/window.txt")"
+
+PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC > "$work/hub.log" 2>&1 &
+hub=$!
 
 wait_hub() {
   attempt=0
@@ -79,8 +91,6 @@ login_body=$(jq -nc --arg password "$admin_pw" '{password: $password}')
 
 register_agent() {
   arch=$1
-  docker run -d --cidfile "$work/cid-$arch" --platform "linux/$arch" --add-host=host.docker.internal:host-gateway \
-    -v "$PWD/bin:/probe:ro" "$AGENT_IMAGE" sleep infinity
   docker exec "$(cat "$work/cid-$arch")" "/probe/probe-agent-linux-$arch" register \
     --hub "http://host.docker.internal:$port" --key "$key" --config /tmp/agent.json --name "e2e-$arch"
 }
