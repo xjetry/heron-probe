@@ -76,6 +76,36 @@ it("依赖列表刷新失败显示横幅且编辑中的表单与草稿仍在", a
   expect(within(screen.getByRole("form", { name: "编辑 丢包" })).getByLabelText("名称")).toHaveValue("尚未保存");
 });
 
+it("多个依赖同时刷新失败时错误全部可见，恢复其一即只移除其错误", async () => {
+  const failing = new Set<string>();
+  const { queryClient } = render({
+    listNodes: async () => {
+      if (failing.has("listNodes")) throw new ConnectError("nodes refresh failed", Code.Unavailable);
+      return nodes;
+    },
+    listNotifyChannels: async () => {
+      if (failing.has("listNotifyChannels")) throw new ConnectError("channels refresh failed", Code.Unavailable);
+      return channels;
+    },
+    listProbeTasks: async () => {
+      if (failing.has("listProbeTasks")) throw new ConnectError("tasks refresh failed", Code.Unavailable);
+      return tasks;
+    },
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 丢包" }));
+  const form = screen.getByRole("form", { name: "编辑 丢包" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "尚未保存" } });
+  failing.add("listNodes");
+  failing.add("listNotifyChannels");
+  failing.add("listProbeTasks");
+  await act(async () => { await queryClient.refetchQueries(); });
+  expect((await screen.findAllByRole("alert")).map((a) => a.textContent)).toEqual(["nodes refresh failed", "channels refresh failed", "tasks refresh failed"]);
+  expect(within(screen.getByRole("form", { name: "编辑 丢包" })).getByLabelText("名称")).toHaveValue("尚未保存");
+  failing.delete("listNodes");
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) }); });
+  await waitFor(() => expect(screen.getAllByRole("alert").map((a) => a.textContent)).toEqual(["channels refresh failed", "tasks refresh failed"]));
+});
+
 it("显式空作用域不是全部节点，编辑保存仍由 hub 拒绝而不放宽", async () => {
   const saved: SaveAlertRuleRequest[] = [];
   const message = "rule.node_ids must not be empty unless all_nodes is true";
