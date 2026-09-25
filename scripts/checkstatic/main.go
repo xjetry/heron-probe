@@ -1,5 +1,5 @@
-// Alpine 用 musl，动态链接 glibc 的二进制在那里直接无法启动；原生 Linux 上构建时
-// CGO_ENABLED 默认为 1，net 包会链接系统解析器，所以只靠构建命令的约定不够，要在产物上检查。
+// 未显式关闭 cgo 且 C 工具链可用时，包含 net 的原生构建可能引入系统 C 库依赖；
+// Alpine 基础系统不能假定提供 glibc 的动态加载器，所以在产物上验证，而不只依赖构建命令的约定。
 package main
 
 import (
@@ -7,6 +7,7 @@ import (
 	"debug/buildinfo"
 	"debug/elf"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -27,7 +28,10 @@ func check(path string) []string {
 		}
 		reasons = append(reasons, fmt.Sprintf("has PT_INTERP (dynamic loader %s)", string(bytes.TrimRight(data, "\x00"))))
 	}
-	if libs, err := f.ImportedLibraries(); err == nil {
+	if libs, err := f.ImportedLibraries(); err != nil {
+		// 没有读到依赖不等于已经证明没有依赖，读不出本身就是拒绝的理由。
+		reasons = append(reasons, fmt.Sprintf("cannot read dynamic dependencies: %v", err))
+	} else {
 		for _, lib := range libs {
 			reasons = append(reasons, fmt.Sprintf("has DT_NEEDED %s", lib))
 		}
@@ -57,13 +61,22 @@ func cgoReason(bi *buildinfo.BuildInfo) []string {
 	return []string{"missing CGO_ENABLED build setting"}
 }
 
-func main() {
+// run 是可测的 CLI 入口；空文件清单等价于"全部通过"，必须在入口拒绝。
+func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: checkstatic <file>...")
+		return 2
+	}
 	status := 0
-	for _, path := range os.Args[1:] {
+	for _, path := range args {
 		for _, reason := range check(path) {
-			fmt.Printf("%s: %s\n", path, reason)
+			fmt.Fprintf(stdout, "%s: %s\n", path, reason)
 			status = 1
 		}
 	}
-	os.Exit(status)
+	return status
+}
+
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
