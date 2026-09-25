@@ -85,6 +85,34 @@ bearer() {
     -H "Authorization: Bearer $api_token" --data "$body" "$base/probe.v1.AdminService/$name"
 }
 
+# 卡片示例取自 hub 刚下发的那份。空列表由例子自己处理，空 hub 与有数据时用同一段。
+run_card_examples() {
+  label=$1
+  jq -r '.guide' "$work/bearer-GetApiReference.json" > "$work/SKILL.md"
+  rm -f "$work"/card-example-*.sh "$work"/card-example-*.sh.out "$work"/card-example-*.sh.err
+  awk -v dir="$work" '
+    /^```sh example$/ { n++; file = sprintf("%s/card-example-%d.sh", dir, n); inblock = 1; next }
+    inblock && /^```$/ { inblock = 0; close(file); next }
+    inblock { print > file }
+  ' "$work/SKILL.md"
+  examples=$(ls "$work"/card-example-*.sh 2> /dev/null | wc -l | tr -d ' ')
+  # 标记块数独立于抽取逻辑另数一次：抽取漏块或多切时两数不等；卡片被删到只剩寥寥几例时下限挡住。
+  marked=$(grep -c '^```sh example$' "$work/SKILL.md" || [ "$?" = 1 ])
+  [ "$examples" = "$marked" ] || { echo "FAIL: extracted $examples card examples but the card marks $marked"; exit 1; }
+  [ "$examples" -ge 3 ] || { echo "FAIL: expected at least 3 card examples, found $examples"; exit 1; }
+  for ex in "$work"/card-example-*.sh; do
+    status=0
+    PROBE_HUB=$base PROBE_TOKEN=$api_token sh -eu "$ex" > "$ex.out" 2> "$ex.err" || status=$?
+    [ "$status" = 0 ] || { echo "FAIL: card example $ex exited $status"; cat "$ex" "$ex.err"; exit 1; }
+    [ -s "$ex.out" ] && jq -e . "$ex.out" > /dev/null || { echo "FAIL: card example $ex did not print JSON"; cat "$ex" "$ex.out" "$ex.err"; exit 1; }
+  done
+  if [ -n "$label" ]; then
+    echo "card examples ok ($label): $examples"
+  else
+    echo "card examples ok: $examples"
+  fi
+}
+
 [ "$(curl -sS -o /dev/null -w '%{http_code}' "$base/")" = 302 ] || { echo "FAIL: / must redirect to the panel"; exit 1; }
 [ "$(curl -sS -o "$work/admin.html" -w '%{http_code}' "$base/admin/")" = 200 ] || { echo "FAIL: /admin/ not served"; exit 1; }
 grep -q 'id="root"' "$work/admin.html" || { echo "FAIL: panel index missing root element"; exit 1; }
@@ -93,6 +121,13 @@ curl -sS -D "$work/admin.headers" -o /dev/null "$base/admin/" && grep -qi '^cont
 [ "$(rpc GetSnapshot '{}')" = 401 ] || { echo "FAIL: anonymous GetSnapshot was not 401"; exit 1; }
 login_body=$(jq -nc --arg password "$admin_pw" '{password: $password}')
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login"; cat "$work/Login.json"; exit 1; }
+# hub 上还没有节点：卡片例子必须在空库上也能跑完。
+[ "$(rpc CreateApiToken '{"name":"e2e-empty"}')" = 200 ] || { echo "FAIL: CreateApiToken (empty hub)"; cat "$work/CreateApiToken.json"; exit 1; }
+api_token=$(jq -r '.token' "$work/CreateApiToken.json")
+api_token_id=$(jq -r '.apiToken.id' "$work/CreateApiToken.json")
+[ "$(bearer GetApiReference '{}')" = 200 ] || { echo "FAIL: GetApiReference on empty hub"; cat "$work/bearer-GetApiReference.json"; exit 1; }
+run_card_examples "empty hub"
+[ "$(rpc DeleteApiToken "$(jq -nc --arg id "$api_token_id" '{id: $id}')")" = 200 ] || { echo "FAIL: DeleteApiToken (empty hub)"; exit 1; }
 [ "$(curl -sS -o /dev/null -w '%{http_code}' -b "$work/jar" -H 'Content-Type: text/plain' --data '{}' "$base/probe.v1.AdminService/CreateNode")" = 415 ] || { echo "FAIL: text/plain POST was not 415"; exit 1; }
 [ "$(curl -sS -o /dev/null -w '%{http_code}' -b "$work/jar" "$base/probe.v1.AdminService/CreateNode?connect=v1&encoding=json&message=%7B%7D")" = 405 ] || { echo "FAIL: GET was not 405"; exit 1; }
 
@@ -276,24 +311,7 @@ jq -e '(.nodes | length) == 2' "$work/bearer-ListNodes.json" > /dev/null || { ec
 jq -e '.code == "permission_denied"' "$work/bearer-CreateNode.json" > /dev/null || { echo "FAIL: write via token not permission_denied"; exit 1; }
 [ "$(bearer GetApiReference '{}')" = 200 ] || { echo "FAIL: GetApiReference via token"; exit 1; }
 jq -e 'any(.files[]; .path == "probe/v1/admin.proto") and (.guide | contains("PROBE_TOKEN"))' "$work/bearer-GetApiReference.json" > /dev/null || { echo "FAIL: GetApiReference content"; exit 1; }
-jq -r '.guide' "$work/bearer-GetApiReference.json" > "$work/SKILL.md"
-awk -v dir="$work" '
-  /^```sh example$/ { n++; file = sprintf("%s/card-example-%d.sh", dir, n); inblock = 1; next }
-  inblock && /^```$/ { inblock = 0; close(file); next }
-  inblock { print > file }
-' "$work/SKILL.md"
-examples=$(ls "$work"/card-example-*.sh 2> /dev/null | wc -l | tr -d ' ')
-# 标记块数独立于抽取逻辑另数一次：抽取漏块或多切时两数不等；卡片被删到只剩寥寥几例时下限挡住。
-marked=$(grep -c '^```sh example$' "$work/SKILL.md" || [ "$?" = 1 ])
-[ "$examples" = "$marked" ] || { echo "FAIL: extracted $examples card examples but the card marks $marked"; exit 1; }
-[ "$examples" -ge 3 ] || { echo "FAIL: expected at least 3 card examples, found $examples"; exit 1; }
-for ex in "$work"/card-example-*.sh; do
-  status=0
-  PROBE_HUB=$base PROBE_TOKEN=$api_token sh -eu "$ex" > "$ex.out" 2> "$ex.err" || status=$?
-  [ "$status" = 0 ] || { echo "FAIL: card example $ex exited $status"; cat "$ex" "$ex.err"; exit 1; }
-  [ -s "$ex.out" ] && jq -e . "$ex.out" > /dev/null || { echo "FAIL: card example $ex did not print JSON"; cat "$ex" "$ex.out" "$ex.err"; exit 1; }
-done
-echo "card examples ok: $examples"
+run_card_examples ""
 [ "$(rpc DeleteApiToken "$(jq -nc --arg id "$api_token_id" '{id: $id}')")" = 200 ] || { echo "FAIL: DeleteApiToken"; exit 1; }
 [ "$(bearer ListNodes '{}')" = 401 ] || { echo "FAIL: revoked API token still accepted"; exit 1; }
 # 改密只清会话、不动 token；运行中由另一进程吊销，下一个请求即 401。

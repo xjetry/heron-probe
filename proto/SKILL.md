@@ -27,7 +27,8 @@ curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/
 ## 约定
 
 - int64 与 uint64 在 JSON 里是字符串（`"id": "3"`）；请求里写数字或字符串都可以。
-- 时间是 Unix 秒；字段名以 `_ms` 结尾的是毫秒，以 `_s` 结尾的是秒。JSON 字段名是 proto 字段名的小驼峰（`last_seen_at` → `lastSeenAt`）。
+- 时间是 Unix 秒；字段名以 `_ms` 结尾的是毫秒，以 `_s` 结尾的是秒，以 `_us` 结尾的是微秒。JSON 字段名是 proto 字段名的小驼峰（`last_seen_at` → `lastSeenAt`）。
+- 列表为空时字段不出现，jq 里取列表写 `(.字段 // [])`。
 - 非 `optional` 的字段取默认值（0、空串、false、空列表）时在 JSON 里省略，读不到就按默认值理解（样本 `{}` 的 `n` 是 0）。
 - `optional` 字段（proto 里标了 `optional` 的，如 `lastSeenAt` 与指标样本的 `mean`、`max`、`sum`）只要有值就出现，哪怕是 0；缺失才表示没有读数。不要把缺失当成 0，也不要把出现的 0 当成缺失。
 - 出错时 HTTP 状态非 200，响应体是 `{"code": "...", "message": "..."}`；message 写明哪个字段、违反了什么约束、期望什么取值。
@@ -38,18 +39,22 @@ curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/
 
 ```sh example
 curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/json' \
-  --data '{}' "$PROBE_HUB/probe.v1.AdminService/ListNodes" | jq '[.nodes[] | {id, name, lastSeenAt}]'
+  --data '{}' "$PROBE_HUB/probe.v1.AdminService/ListNodes" | jq '[(.nodes // [])[] | {id, name, lastSeenAt}]'
 ```
 
 第一个节点最近一小时的 CPU（百分比；每点有样本数、均值与最大值，`ts` 与 `samples` 一一对应）：
 
 ```sh example
 node=$(curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/json' \
-  --data '{}' "$PROBE_HUB/probe.v1.AdminService/ListNodes" | jq -r '.nodes[0].id')
-now=$(date +%s)
-curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/json' \
-  --data "$(jq -nc --arg node "$node" --argjson now "$now" '{nodeId: $node, from: ($now - 3600), to: $now}')" \
-  "$PROBE_HUB/probe.v1.AdminService/QueryMetrics" | jq '{stepS, ts, cpu: [.series[] | select(.name == "cpu") | .samples[]]}'
+  --data '{}' "$PROBE_HUB/probe.v1.AdminService/ListNodes" | jq -r '(.nodes // [])[0].id // empty')
+if [ -z "$node" ]; then
+  echo '{}'
+else
+  now=$(date +%s)
+  curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/json' \
+    --data "$(jq -nc --arg node "$node" --argjson now "$now" '{nodeId: $node, from: ($now - 3600), to: $now}')" \
+    "$PROBE_HUB/probe.v1.AdminService/QueryMetrics" | jq '{stepS, ts: (.ts // []), cpu: [(.series // [])[] | select(.name == "cpu") | .samples // []]}'
+fi
 ```
 
 最近 20 条告警事件：
