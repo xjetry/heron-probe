@@ -2,7 +2,8 @@
 # hub 镜像冒烟（spec §12、§14）：以默认参数起容器，/admin/ 返回嵌入的面板，docker exec 经 stdin
 # 设密码后能登录，docker stop 后以 0 退出。另外钉住部署时最容易踩到的几条：运行用户与卷属主、
 # passwd 没收到输入时的报错、库目录不可写时的退出、非 loopback 监听与时区回退的告警、README 里
-# 不依赖镜像内 shell 的排查办法。只创建与删除带本次运行前缀的容器和卷；工件目录保留，路径在开头打印。
+# 不依赖镜像内 shell 的排查办法。创建的容器与卷全部带本次运行的前缀，由 cleanup 删除；工件目录保留，
+# 路径在开头打印。
 set -eu
 : "${IMAGE:?IMAGE is required, e.g. ghcr.io/xjetry/probe-hub:v0.1.0}"
 : "${VERSION:?VERSION is required: the image must report exactly this version}"
@@ -10,10 +11,16 @@ set -eu
 platform=${SMOKE_PLATFORM:-}
 # 带 shell 的工具镜像：读卷里的属主、预置不可写的卷、在 hub 的网络命名空间里发请求。不进入产物。
 # 按 digest 固定，由 Makefile 的 ALPINE_IMAGE 经环境变量传入，与 Dockerfile 的基础镜像同一处定义。
+# 工具容器不指定平台：本机已有这个 digest 的镜像就直接用，没有才拉取，每次冒烟不必访问 registry
+# （Docker Hub 对匿名请求限流）。经典镜像存储里一个索引 digest 只对应一个本地镜像，它可能是别的架构、
+# 经模拟运行并在 stderr 告警；这里用到的 busybox stat、wget、sh 与架构无关，读结果时只取 stdout。
 tool=${TOOL_IMAGE:?TOOL_IMAGE is required: the pinned alpine image, see ALPINE_IMAGE in the Makefile}
-# 工具容器在 docker 守护进程的本机平台上运行，按该平台清单的 digest 引用（原因见 image-platform-ref.sh）。
-tool_platform=$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}')
-tool=$("$(dirname "$0")/image-platform-ref.sh" "$tool" "$tool_platform")
+# 每个等待的上限：发布后回读在 QEMU 模拟的 arm64 上跑同一段，比本机慢。
+wait_s=30
+# 与 README 示范的部署一致：大于 hub 关停时排空请求的上限（cmd/hub/serve.go 的 drainTimeout，10 秒）。
+# docker stop 的默认宽限期也是 10 秒，与排空上限相等时最后一批写可能被 SIGKILL 截断。
+stop_timeout=30
+
 work=$(mktemp -d)
 echo "docker smoke artifacts: $work (image $IMAGE${platform:+, platform $platform})"
 run_id=probe-smoke-$(basename "$work")
@@ -21,30 +28,76 @@ hub=$run_id-hub
 denied=$run_id-denied
 data=$run_id-data
 denied_data=$run_id-denied-data
+containers="$run_id-version $hub $run_id-owner $run_id-netns $run_id-prepare $denied"
 
 cleanup() {
-  docker rm -f "$hub" "$denied" > /dev/null 2>&1 || true
+  # 容器先于卷删除：卷还挂在容器上时删不掉。
+  # shellcheck disable=SC2086 # 容器名不含空白，按词拆开
+  docker rm -f $containers > /dev/null 2>&1 || true
   docker volume rm "$data" "$denied_data" > /dev/null 2>&1 || true
 }
 trap cleanup EXIT
 # dash 与 busybox ash 被信号终止时不执行 EXIT trap；转成 exit，清理照常发生。
 trap 'exit 1' INT TERM HUP
 
+# fail MESSAGE [FILE…]：先打印诊断文件（不存在或为空的跳过），最后一行是 FAIL。诊断输出不能抢在
+# 结论行之前中止脚本：set -e 下 cat 一个不存在的文件会先让脚本退出，FAIL 行就打不出来了。
 fail() {
-  echo "FAIL: $*" >&2
+  msg=$1
+  shift
+  for f in "$@"; do
+    if [ -s "$f" ]; then
+      echo "--- $f" >&2
+      cat "$f" >&2
+      # 响应体之类不以换行结尾的文件后面补一个，FAIL 行总是独占一行。
+      [ -z "$(tail -c 1 "$f")" ] || echo >&2
+    fi
+  done
+  echo "FAIL: $msg" >&2
   exit 1
 }
 
-# docker run 带上指定的平台；未指定时不加参数，由 docker 取默认平台。
-drun() {
-  if [ -n "$platform" ]; then
-    docker run --platform "$platform" "$@"
-  else
-    docker run "$@"
+# save_logs NAME：容器的 stdout 与 stderr 分别存到 $work/NAME.out、$work/NAME.err。
+save_logs() {
+  if ! docker logs "$1" > "$work/$1.out" 2> "$work/$1.err"; then
+    echo "(docker logs $1 failed)" >> "$work/$1.err"
   fi
 }
 
-got=$(drun --rm "$IMAGE" version) || fail "probe-hub version exited $?"
+# 运行被测镜像的唯一入口：带上指定的平台（未指定时由 docker 取默认平台），且只用本机已有的镜像。
+# docker run 默认 --pull=missing，本机没有这个 tag 时会去 registry 拉已发布的同名镜像来冒烟，版本断言
+# 照样通过；回读脚本在冒烟之前按平台显式拉取。
+drun() {
+  if [ -n "$platform" ]; then
+    docker run --pull=never --platform "$platform" "$@"
+  else
+    docker run --pull=never "$@"
+  fi
+}
+
+# run_to_exit NAME TIMEOUT_MESSAGE ARGS…：起容器并等它退出，至多 wait_s 秒；退出码存入 code，
+# 日志经 save_logs 存档。
+run_to_exit() {
+  name=$1
+  timeout_message=$2
+  shift 2
+  drun -d --name "$name" "$@" > /dev/null || fail "cannot start $name from $IMAGE"
+  deadline=$(($(date +%s) + wait_s))
+  until [ "$(docker inspect -f '{{.State.Status}}' "$name")" = exited ]; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      save_logs "$name"
+      fail "$timeout_message (still running after ${wait_s}s)" "$work/$name.out" "$work/$name.err"
+    fi
+    sleep 0.5
+  done
+  code=$(docker inspect -f '{{.State.ExitCode}}' "$name")
+  save_logs "$name"
+}
+
+# 有时限：ENTRYPOINT 若被改成带 serve 的形式，version 会被当作 serve 的多余参数，hub 起来后不退出。
+run_to_exit "$run_id-version" "probe-hub version did not exit" "$IMAGE" version
+[ "$code" = 0 ] || fail "probe-hub version exited $code" "$work/$run_id-version.out" "$work/$run_id-version.err"
+got=$(cat "$work/$run_id-version.out")
 [ "$got" = "$VERSION" ] || fail "image reports version '$got', want '$VERSION'"
 echo "version ok: $got"
 
@@ -54,14 +107,15 @@ hub_running() {
   case $state in
     running*) ;;
     *)
-      docker logs "$hub" >&2
-      fail "hub container is not running ($state)"
+      save_logs "$hub"
+      fail "hub container is not running ($state)" "$work/$hub.out" "$work/$hub.err"
       ;;
   esac
 }
 
 docker volume create "$data" > /dev/null
-drun -d --name "$hub" -p 127.0.0.1::8080 -v "$data:/data" "$IMAGE" > /dev/null
+drun -d --name "$hub" --stop-timeout "$stop_timeout" -p 127.0.0.1::8080 -v "$data:/data" "$IMAGE" > /dev/null ||
+  fail "cannot start $hub from $IMAGE"
 # 容器已经退出时 docker port 同样失败；先按没起来报并附上 hub 的日志，端口确实没发布才报端口。
 hostport=$(docker port "$hub" 8080/tcp) || {
   hub_running
@@ -69,137 +123,113 @@ hostport=$(docker port "$hub" 8080/tcp) || {
 }
 base="http://127.0.0.1:${hostport##*:}"
 
-# 上限 30 秒：发布后回读在 QEMU 模拟的 arm64 上跑同一段，启动比本机慢。
-deadline=$(($(date +%s) + 30))
+deadline=$(($(date +%s) + wait_s))
 while :; do
   hub_running
   rc=0
   status=$(curl -sS --max-time 2 -o "$work/admin.html" -w '%{http_code}' "$base/admin/" 2> "$work/admin.curl") || rc=$?
   [ "$rc" = 0 ] && break
   if [ "$(date +%s)" -ge "$deadline" ]; then
-    docker logs "$hub" >&2
-    cat "$work/admin.curl" >&2
-    fail "no HTTP answer on $base/admin/ within 30s (curl exit $rc)"
+    save_logs "$hub"
+    fail "no HTTP answer on $base/admin/ within ${wait_s}s (curl exit $rc)" "$work/$hub.out" "$work/$hub.err" "$work/admin.curl"
   fi
   sleep 0.5
 done
 # 503 是 internal/hub/web 的"面板没有构建进二进制"说明页：镜像里的 hub 缺了 make web 的产物。
-[ "$status" = 200 ] || {
-  cat "$work/admin.html" >&2
-  fail "/admin/ returned $status, want 200"
-}
-grep -q 'id="root"' "$work/admin.html" || fail "/admin/ is not the panel index"
+[ "$status" = 200 ] || fail "/admin/ returned $status, want 200" "$work/admin.html"
+grep -q 'id="root"' "$work/admin.html" || fail "/admin/ is not the panel index" "$work/admin.html"
 echo "admin ok: $base/admin/"
 
 docker logs "$hub" > "$work/hub.log" 2>&1
 # 容器里监听 0.0.0.0 是预期的，告警照旧（§5.4、§14）：能直连这个端口的人都能绕过反代并自带转发头。
-grep -q 'listening on a non-loopback address' "$work/hub.log" || {
-  cat "$work/hub.log" >&2
-  fail "startup log lacks the non-loopback listen warning"
-}
+grep -q 'listening on a non-loopback address' "$work/hub.log" ||
+  fail "startup log lacks the non-loopback listen warning" "$work/hub.log"
 # 镜像里没有 /etc/localtime、默认不设 TZ：退回 UTC 并告警（§5.4），README 据此要求显式给时区。
-grep -q 'host time zone could not be resolved; using UTC' "$work/hub.log" || {
-  cat "$work/hub.log" >&2
-  fail "startup log lacks the UTC fallback warning"
-}
+grep -q 'host time zone could not be resolved; using UTC' "$work/hub.log" ||
+  fail "startup log lacks the UTC fallback warning" "$work/hub.log"
 echo "startup warnings ok"
 
 # README 与 §14 的命令按名字执行 probe-hub：二进制必须在容器的默认 PATH 里。
 # 两个流都落到同一个文件：exec 本身失败时（如 executable file not found in $PATH），docker CLI 把
 # OCI 运行时的报错写在 stdout 上，只收 stderr 会让诊断丢失。
-docker exec "$hub" probe-hub version > "$work/exec.log" 2>&1 || {
-  cat "$work/exec.log" >&2
-  fail "docker exec $hub probe-hub version failed: probe-hub is not runnable by name"
-}
+docker exec "$hub" probe-hub version > "$work/exec.log" 2>&1 ||
+  fail "docker exec $hub probe-hub version failed: probe-hub is not runnable by name" "$work/exec.log"
 got=$(cat "$work/exec.log")
 [ "$got" = "$VERSION" ] || fail "docker exec probe-hub version printed '$got', want '$VERSION'"
 
 # 不带 -i 时容器里的 stdin 是 /dev/null：passwd 必须报没有收到密码，且不改管理员表。
 rc=0
 docker exec "$hub" probe-hub passwd --db /data/probe.db > "$work/passwd-noinput.log" 2>&1 || rc=$?
-[ "$rc" != 0 ] || fail "passwd without -i succeeded"
-grep -q 'no password on stdin' "$work/passwd-noinput.log" || {
-  cat "$work/passwd-noinput.log" >&2
-  fail "passwd without -i did not report the missing input"
-}
-docker exec "$hub" probe-hub stats --db /data/probe.db > "$work/stats.log" 2>&1 || {
-  cat "$work/stats.log" >&2
-  fail "probe-hub stats"
-}
-grep -qx 'admin: 0' "$work/stats.log" || {
-  cat "$work/stats.log" >&2
-  fail "passwd without input changed the admin table"
-}
+[ "$rc" != 0 ] || fail "passwd without -i succeeded" "$work/passwd-noinput.log"
+grep -q 'no password on stdin' "$work/passwd-noinput.log" ||
+  fail "passwd without -i did not report the missing input" "$work/passwd-noinput.log"
+docker exec "$hub" probe-hub stats --db /data/probe.db > "$work/stats.log" 2>&1 ||
+  fail "probe-hub stats" "$work/stats.log"
+grep -qx 'admin: 0' "$work/stats.log" || fail "passwd without input changed the admin table" "$work/stats.log"
 echo "passwd without -i ok"
 
 pw='smoke admin password 2026'
-printf '%s\n' "$pw" | docker exec -i "$hub" probe-hub passwd --db /data/probe.db > "$work/passwd.log" 2>&1 || {
-  cat "$work/passwd.log" >&2
-  fail "passwd via docker exec -i"
-}
+printf '%s\n' "$pw" | docker exec -i "$hub" probe-hub passwd --db /data/probe.db > "$work/passwd.log" 2>&1 ||
+  fail "passwd via docker exec -i" "$work/passwd.log"
+# login NAME PASSWORD：打印 HTTP 状态码（连不上时 curl 打印 000）；每次调用有自己的响应文件，
+# 失败时看到的不会是上一次调用留下的内容。
 login() {
-  curl -sS -o "$work/login.json" -D "$work/login.headers" -w '%{http_code}' -H 'Content-Type: application/json' \
-    --data "{\"password\":\"$1\"}" "$base/probe.v1.AdminService/Login"
+  rm -f "$work/login-$1.json" "$work/login-$1.headers" "$work/login-$1.curl"
+  curl -sS --max-time 10 -o "$work/login-$1.json" -D "$work/login-$1.headers" -w '%{http_code}' \
+    -H 'Content-Type: application/json' --data "{\"password\":\"$2\"}" "$base/probe.v1.AdminService/Login" \
+    2> "$work/login-$1.curl"
 }
-[ "$(login 'not the admin password')" = 401 ] || {
-  cat "$work/login.json" >&2
-  fail "a wrong password was not rejected with 401"
-}
-[ "$(login "$pw")" = 200 ] || {
-  cat "$work/login.json" >&2
-  fail "login with the password set through docker exec"
-}
-grep -qi '^set-cookie: probe_session=' "$work/login.headers" || fail "login did not set the session cookie"
+rc=0
+status=$(login wrong 'not the admin password') || rc=$?
+[ "$status" = 401 ] ||
+  fail "a wrong password was not rejected with 401 (got $status, curl exit $rc)" "$work/login-wrong.json" "$work/login-wrong.curl"
+rc=0
+status=$(login right "$pw") || rc=$?
+[ "$status" = 200 ] ||
+  fail "login with the password set through docker exec (got $status, curl exit $rc)" "$work/login-right.json" "$work/login-right.curl"
+grep -qi '^set-cookie: probe_session=' "$work/login-right.headers" ||
+  fail "login did not set the session cookie" "$work/login-right.headers"
 echo "passwd and login ok"
 
-# hub 以 uid 65532 运行：它在新建的命名卷里写出的库文件属于 65532（Docker 把镜像里 /data 的属主带到空卷上）。
-docker run --rm --platform "$tool_platform" -v "$data:/data" "$tool" stat -c '%u:%g %n' /data /data/probe.db > "$work/owner.log" 2> "$work/owner.err" || {
-  cat "$work/owner.log" "$work/owner.err" >&2
-  fail "stat the data volume"
-}
-awk '$1 != "65532:65532" { bad = 1 } END { exit bad || NR != 2 }' "$work/owner.log" || {
-  cat "$work/owner.log" >&2
-  fail "data volume entries are not owned by 65532:65532"
-}
+# 两个属主各有来源。/data 属 65532：Dockerfile 把镜像里的 /data 交给 65532，空卷挂上时 Docker 沿用镜像里
+# 该目录的属主。probe.db 属 65532：文件属于创建它的进程的 uid，即以 USER 65532:65532 运行的 hub——
+# 镜像配置里的 USER 只在这里得到核对（checkimage 看的导出 tar 里没有镜像配置）。
+docker run --rm --name "$run_id-owner" -v "$data:/data" "$tool" \
+  stat -c '%u:%g %n' /data /data/probe.db > "$work/owner.log" 2> "$work/owner.err" ||
+  fail "stat the data volume" "$work/owner.log" "$work/owner.err"
+awk '$1 != "65532:65532" { bad = 1 } END { exit bad || NR != 2 }' "$work/owner.log" ||
+  fail "data volume entries are not owned by 65532:65532" "$work/owner.log"
 # README 的排查办法：镜像里没有 shell，用工具镜像进入 hub 的网络命名空间发请求。
-docker run --rm --platform "$tool_platform" --network "container:$hub" "$tool" wget -q -O /dev/null http://127.0.0.1:8080/admin/ > "$work/netns.log" 2>&1 || {
-  cat "$work/netns.log" >&2
-  fail "request from the hub's network namespace"
-}
+docker run --rm --name "$run_id-netns" --network "container:$hub" "$tool" \
+  wget -q -T 10 -O /dev/null http://127.0.0.1:8080/admin/ > "$work/netns.log" 2> "$work/netns.err" ||
+  fail "request from the hub's network namespace" "$work/netns.log" "$work/netns.err"
 echo "volume owner and debugging recipes ok"
 
-# docker stop 发 SIGTERM：hub 的关停路径排空请求、停下后台循环并关库后以 0 退出。非 0 说明
-# SIGTERM 没有走到这条路径，退出前的落盘无从保证。
+# docker stop 先发 SIGTERM，等 --stop-timeout 秒后发 SIGKILL。hub 订阅了 SIGTERM（cmd/hub/serve.go 的
+# runServe），排空请求、停后台循环、关库后返回 nil，以 0 退出。其余退出码逐条对应：143 是进程被 SIGTERM
+# 的默认处置杀死，即没有订阅；137 是关停超过宽限期被 SIGKILL；1 是关停路径返回了错误。任一非 0，
+# 退出前的落盘都没有得到确认。
 docker stop "$hub" > /dev/null
 code=$(docker inspect -f '{{.State.ExitCode}}' "$hub")
-[ "$code" = 0 ] || {
-  docker logs "$hub" >&2
-  fail "hub exited $code on docker stop, want 0"
-}
+save_logs "$hub"
+case $code in
+  0) ;;
+  143) fail "hub was killed by SIGTERM on docker stop (exit 143): SIGTERM is not handled" "$work/$hub.err" ;;
+  137) fail "hub was SIGKILLed after the ${stop_timeout}s stop timeout (exit 137): shutdown did not finish" "$work/$hub.err" ;;
+  1) fail "hub's shutdown path returned an error on docker stop (exit 1)" "$work/$hub.err" ;;
+  *) fail "hub exited $code on docker stop, want 0" "$work/$hub.err" ;;
+esac
 echo "stop ok"
 
 # 库目录不可写（绑定了属主为 root 的宿主目录）：卷里已有内容时 Docker 不改它的属主，
 # 用预置了 root 文件的卷模拟。hub 必须退出，报错里写出库路径。
 docker volume create "$denied_data" > /dev/null
-docker run --rm --platform "$tool_platform" -v "$denied_data:/data" "$tool" sh -c 'touch /data/placeholder && chown 0:0 /data /data/placeholder && chmod 755 /data' || fail "prepare the root-owned volume"
-drun -d --name "$denied" -v "$denied_data:/data" "$IMAGE" > /dev/null
-deadline=$(($(date +%s) + 30))
-until [ "$(docker inspect -f '{{.State.Status}}' "$denied")" = exited ]; do
-  [ "$(date +%s)" -lt "$deadline" ] || {
-    docker logs "$denied" >&2
-    fail "hub kept running on an unwritable /data"
-  }
-  sleep 0.5
-done
-code=$(docker inspect -f '{{.State.ExitCode}}' "$denied")
-docker logs "$denied" > "$work/denied.log" 2>&1
-[ "$code" = 1 ] || {
-  cat "$work/denied.log" >&2
-  fail "hub on an unwritable /data exited $code, want 1"
-}
-grep -q 'open database /data/probe.db' "$work/denied.log" || {
-  cat "$work/denied.log" >&2
-  fail "error on an unwritable /data does not name the database path"
-}
+docker run --rm --name "$run_id-prepare" -v "$denied_data:/data" "$tool" \
+  sh -c 'touch /data/placeholder && chown 0:0 /data /data/placeholder && chmod 755 /data' ||
+  fail "prepare the root-owned volume"
+run_to_exit "$denied" "hub kept running on an unwritable /data" -v "$denied_data:/data" "$IMAGE"
+[ "$code" = 1 ] || fail "hub on an unwritable /data exited $code, want 1" "$work/$denied.out" "$work/$denied.err"
+grep -q 'open database /data/probe.db' "$work/$denied.err" ||
+  fail "error on an unwritable /data does not name the database path" "$work/$denied.out" "$work/$denied.err"
 echo "unwritable data dir ok"
 echo "docker smoke passed: $IMAGE${platform:+ ($platform)}"
