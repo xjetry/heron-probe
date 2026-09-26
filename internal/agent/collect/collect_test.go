@@ -70,7 +70,7 @@ func TestCPUPercentAppearsOnSecondSample(t *testing.T) {
 	fsys["proc/stat"] = &fstest.MapFile{Data: []byte("cpu  150 0 50 850 20 0 10 0 0 0\n")} // +100 tick，其中 50 空闲
 	m, _ := c.Metrics()
 	if m.CpuPct == nil || m.GetCpuPct() != 50 {
-		t.Fatalf("cpu_pct = %v", m.CpuPct)
+		t.Fatalf("cpu_pct set %v = %v, want 50", m.CpuPct != nil, m.GetCpuPct())
 	}
 }
 
@@ -129,7 +129,7 @@ func TestUsageAboveTotalIsDroppedNotClamped(t *testing.T) {
 		t.Fatalf("err = %v, want both rejections named", err)
 	}
 	if m.GetSwapTotal() != 10*1024 || m.GetSwapUsed() != 6*1024 {
-		t.Fatalf("swap from the same file must be unaffected: %v/%v", m.SwapTotal, m.SwapUsed)
+		t.Fatalf("swap from the same file must be unaffected: %d/%d", m.GetSwapUsed(), m.GetSwapTotal())
 	}
 
 	fsys["proc/meminfo"] = &fstest.MapFile{Data: []byte("MemTotal: 1000 kB\nMemAvailable: 400 kB\nSwapTotal: 10 kB\nSwapFree: 12 kB\n")}

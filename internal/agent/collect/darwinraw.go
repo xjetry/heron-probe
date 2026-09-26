@@ -14,17 +14,29 @@ import (
 var darwinNetExclude = []string{"lo*", "gif*", "stf*", "utun*", "ipsec*", "bridge*", "vmenet*", "awdl*", "llw*", "anpi*", "ap*"}
 
 // 下列布局取自 macOS SDK：<sys/sysctl.h> 的 loadavg 与 xsw_usage、<mach/vm_statistics.h> 的
-// vm_statistics64、<net/if_mib.h> 的 ifmibdata 与 <net/if_var.h> 的 if_data64（#pragma pack(4)）。darwin 的两个目标
-// amd64 与 arm64 都是小端，字段按小端解码。
+// vm_statistics64、<net/if_mib.h> 的 ifmibdata 与 <net/if_var.h> 的 if_data64（#pragma pack(4)）。
+// 每个尺寸与偏移都在 SDK 26.5 上用 clang 的 sizeof/offsetof 核对过，arm64 与 x86_64 相同。
+// darwin 的两个目标 amd64 与 arm64 都是小端，字段按小端解码。
 const (
-	sizeofLoadavg   = 24  // struct loadavg { fixpt_t ldavg[3]; long fscale; }
-	sizeofXswUsage  = 32  // struct xsw_usage { u_int64_t total, avail, used; u_int32_t pagesize; boolean_t encrypted; }
-	vmStatsMinLen   = 144 // vm_statistics64 读到 internal_page_count 为止
-	ifmibDataOffset = 52  // struct ifmibdata 里 if_data64 的偏移
-	ifmibMinLen     = ifmibDataOffset + 80
+	// struct loadavg { fixpt_t ldavg[3]; long fscale; }：ldavg 占 0–11，long 按 8 字节对齐，
+	// 其后留 4 字节填充，fscale 在 16。
+	sizeofLoadavg = 24
+	// struct xsw_usage { u_int64_t xsu_total, xsu_avail, xsu_used; u_int32_t xsu_pagesize; boolean_t xsu_encrypted; }
+	sizeofXswUsage = 32
+	// parseVMStatistics64 读到 internal_page_count（偏移 140）为止。host_statistics64 按请求的字数回填整个 revision
+	// （REV0 24 字、REV1 38 字……），新字段追加在末尾，所以只要求不短于此、不要求等长；
+	// 请求多少字由 platform_darwin.go 的 hostVMInfo64Rev1Count 决定，两处一起改。
+	vmStatsMinLen = 144
+	// struct ifmibdata：ifmd_name[IFNAMSIZ] 16 字节 + 9 个 unsigned int（pcount、flags、snd_len、snd_maxlen、
+	// snd_drops、filler[4]）36 字节，if_data64 从 52 开始、长 128 字节，共 180。内核按 sizeof 整个复制出来，
+	// 长度不等说明布局变了，按旧偏移读出的计数不可信。
+	sizeofIfmibdata = 180
+	ifmibDataOffset = 52
 	ifNameSize      = 16 // IFNAMSIZ
 
-	// PROCESSOR_CPU_LOAD_INFO 每个 CPU 一组 natural_t：CPU_STATE_USER、SYSTEM、IDLE、NICE。
+	// PROCESSOR_CPU_LOAD_INFO 每个 CPU 一组 natural_t：<mach/processor_info.h> 的
+	// processor_cpu_load_info.cpu_ticks[CPU_STATE_MAX]，下标是 <mach/machine.h> 的
+	// CPU_STATE_USER 0、SYSTEM 1、IDLE 2、NICE 3。
 	cpuStateMax  = 4
 	cpuStateIdle = 2
 )
@@ -90,11 +102,18 @@ func (d *darwinHost) memory() (usage, error) {
 	if err != nil {
 		return usage{}, err
 	}
-	used, err := vmUsed(raw, page)
+	if page == 0 {
+		return usage{}, errors.New("page size is 0")
+	}
+	vm, err := parseVMStatistics64(raw)
 	if err != nil {
 		return usage{}, err
 	}
-	return usage{total: total, used: used}, nil
+	pages, err := vm.usedPages()
+	if err != nil {
+		return usage{}, err
+	}
+	return usage{total: total, used: pages * page}, nil
 }
 
 func (d *darwinHost) swap() (usage, error) {
@@ -214,6 +233,8 @@ func parseLoadavgSysctl(b []byte) (loadAvg, error) {
 	}
 	le := binary.LittleEndian
 	scale := float64(int64(le.Uint64(b[16:])))
+	// fscale 为 0 或负时比值是 Inf 或 NaN；hub 的 validateMetrics 对非有限的负载拒收整条上报，
+	// 所以在这里按读不到处理，只让负载缺失。
 	if scale <= 0 {
 		return loadAvg{}, fmt.Errorf("vm.loadavg: fscale %v", scale)
 	}
@@ -231,32 +252,37 @@ func parseSwapUsage(b []byte) (usage, error) {
 	return usage{total: binary.LittleEndian.Uint64(b[0:]), used: binary.LittleEndian.Uint64(b[16:])}, nil
 }
 
-// vmUsed 取 vm_statistics64 的 wire_count(12)、purgeable_count(88)、
-// compressor_page_count(128)、internal_page_count(140)。可清除页是匿名页的子集；读到前者大于后者
-// 说明这份计数不自洽，按读不到处理。这条检查是回绕的唯一防线：internal − purgeable 回绕后再加上
-// wire 与 compressor，结果可能落回 hw.memsize 以内，Collector 的 checkUsage 看不出（Host.memory 的约定）。
-func vmUsed(b []byte, page uint64) (uint64, error) {
+// vmCounts 是 vm_statistics64 里已用内存公式要的四个页计数。
+type vmCounts struct{ wire, purgeable, compressor, internal uint64 }
+
+// parseVMStatistics64 取 wire_count(12)、purgeable_count(88)、compressor_page_count(128)、internal_page_count(140)。
+func parseVMStatistics64(b []byte) (vmCounts, error) {
 	if len(b) < vmStatsMinLen {
-		return 0, fmt.Errorf("vm_statistics64: %d bytes, want at least %d", len(b), vmStatsMinLen)
-	}
-	if page == 0 {
-		return 0, errors.New("vm_statistics64: page size is 0")
+		return vmCounts{}, fmt.Errorf("vm_statistics64: %d bytes, want at least %d", len(b), vmStatsMinLen)
 	}
 	le := binary.LittleEndian
-	wire := uint64(le.Uint32(b[12:]))
-	purgeable := uint64(le.Uint32(b[88:]))
-	compressor := uint64(le.Uint32(b[128:]))
-	internal := uint64(le.Uint32(b[140:]))
-	if purgeable > internal {
-		return 0, fmt.Errorf("vm_statistics64: purgeable %d exceeds internal %d", purgeable, internal)
+	return vmCounts{
+		wire:       uint64(le.Uint32(b[12:])),
+		purgeable:  uint64(le.Uint32(b[88:])),
+		compressor: uint64(le.Uint32(b[128:])),
+		internal:   uint64(le.Uint32(b[140:])),
+	}, nil
+}
+
+// usedPages = 匿名页 − 可清除页 + 联动页 + 压缩器占用页。可清除页是匿名页的子集；读到前者大于后者
+// 说明这份计数不自洽，按读不到处理。这条检查是回绕的唯一防线：internal − purgeable 回绕后再加上
+// wire 与 compressor，结果可能落回 hw.memsize 以内，Collector 的 checkUsage 看不出（Host.memory 的约定）。
+func (c vmCounts) usedPages() (uint64, error) {
+	if c.purgeable > c.internal {
+		return 0, fmt.Errorf("vm_statistics64: purgeable %d exceeds internal %d", c.purgeable, c.internal)
 	}
-	return (internal - purgeable + wire + compressor) * page, nil
+	return c.internal - c.purgeable + c.wire + c.compressor, nil
 }
 
 // parseIfmibData 取 struct ifmibdata 的 ifmd_name 与 if_data64 的 ifi_ibytes(64)、ifi_obytes(72)。
 func parseIfmibData(b []byte) (ifaceCounters, error) {
-	if len(b) < ifmibMinLen {
-		return ifaceCounters{}, fmt.Errorf("ifmibdata: %d bytes, want at least %d", len(b), ifmibMinLen)
+	if len(b) != sizeofIfmibdata {
+		return ifaceCounters{}, fmt.Errorf("ifmibdata: %d bytes, want %d", len(b), sizeofIfmibdata)
 	}
 	name, _, _ := strings.Cut(string(b[:ifNameSize]), "\x00")
 	if name == "" {

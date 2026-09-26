@@ -118,7 +118,7 @@ func swapBytes(total, avail, used uint64) []byte {
 	return b
 }
 
-// vmBytes 只填 vmUsed 读的四个字段，其余字段写入不同的哨兵值：偏移错一位就读到哨兵。
+// vmBytes 只填 parseVMStatistics64 读的四个字段，其余字段写入不同的哨兵值：偏移错一位就读到哨兵。
 func vmBytes(wire, purgeable, compressor, internal uint32) []byte {
 	b := make([]byte, 152)
 	for off := 0; off+4 <= len(b); off += 4 {
@@ -131,7 +131,8 @@ func vmBytes(wire, purgeable, compressor, internal uint32) []byte {
 	return b
 }
 
-// ifmibBytes 的 ifi_ipackets(24)、ifi_opackets(40) 与字节计数相邻，写成不同的值以抓偏移错误。
+// ifmibBytes 把包计数 ifi_ipackets(24)、ifi_opackets(40) 与紧随 ifi_obytes 的 ifi_imcasts(80) 写成与字节数
+// 不同的值，紧邻 ifi_ibytes 的 ifi_collisions(56) 留 0：把包计数当字节数、或错读相邻字段，都得不出期望值。
 func ifmibBytes(name string, rx, tx uint64) []byte {
 	b := make([]byte, 180)
 	copy(b, name)
@@ -152,21 +153,24 @@ func newFakeDarwin() *fakeDarwin {
 			"kern.osproductversion": "26.3.1", "kern.osrelease": "25.3.0", "machdep.cpu.brand_string": "Apple M4 Max",
 		},
 		u32: map[string]uint32{
-			"net.inet.tcp.pcbcount": 614, "net.inet.udp.pcbcount": 94, "hw.logicalcpu": 16, "kern.hv_vmm_present": 0,
+			"net.inet.tcp.pcbcount": 614, "net.inet.udp.pcbcount": 94, "hw.logicalcpu": 13, "kern.hv_vmm_present": 0,
 			"net.link.generic.system.ifcount": 4,
 		},
 		u64: map[string]uint64{"hw.memsize": 1 << 37},
 		raw: map[string][]byte{
-			"vm.loadavg":                loadavgBytes(3072, 2048, 1024, 2048),
-			"vm.swapusage":              swapBytes(2<<30, 1<<30, 1<<30),
+			"vm.loadavg": loadavgBytes(3072, 2048, 1024, 2048),
+			// total、avail、used 互不相等（3、1、2 GiB）：错读成 xsu_avail 得不出 used。
+			"vm.swapusage":              swapBytes(3<<30, 1<<30, 2<<30),
 			"net.link.generic.ifdata/1": ifmibBytes("lo0", 9<<32, 9<<32),
 			// 大于 2^32 且不是 1024 的倍数：32 位截断或 KiB 取整的来源都得不出这两个值。
 			"net.link.generic.ifdata/2": ifmibBytes("en0", 1<<32+1025, 40_156_680_979),
 			"net.link.generic.ifdata/4": ifmibBytes("utun0", 5, 5),
 		},
+		// 每个 CPU：user +30、system +15、idle +50、nice +5，四个状态的增量两两不同，
+		// idle 下标错成任何别的状态都得不出 50%。
 		ticks: [][]uint32{
 			{100, 50, 800, 0, 100, 50, 800, 0},
-			{150, 50, 850, 0, 150, 50, 850, 0},
+			{130, 65, 850, 5, 130, 65, 850, 5},
 		},
 		vm:   vmBytes(400, 30, 70, 5000),
 		page: 16384,
@@ -183,12 +187,12 @@ func TestDarwinMetricsFromSyscallLayout(t *testing.T) {
 		t.Fatalf("unexpected read failures: %v", err)
 	}
 	if m.GetBootId() != "DEF2AAD6-739B-4A47-AC3D-8D8AB38FE277" || m.CpuPct != nil {
-		t.Fatalf("boot_id %q cpu_pct %v", m.GetBootId(), m.CpuPct)
+		t.Fatalf("boot_id %q, cpu_pct set %v (%v) on the first sample", m.GetBootId(), m.CpuPct != nil, m.GetCpuPct())
 	}
 	if m.GetMemTotal() != 1<<37 || m.GetMemUsed() != (5000-30+400+70)*16384 {
 		t.Fatalf("mem = %d/%d, want total 2^37 and (internal-purgeable+wire+compressor)*page", m.GetMemUsed(), m.GetMemTotal())
 	}
-	if m.GetSwapTotal() != 2<<30 || m.GetSwapUsed() != 1<<30 {
+	if m.GetSwapTotal() != 3<<30 || m.GetSwapUsed() != 2<<30 {
 		t.Fatalf("swap = %d/%d", m.GetSwapUsed(), m.GetSwapTotal())
 	}
 	if m.GetLoad1() != 1.5 || m.GetLoad5() != 1 || m.GetLoad15() != 0.5 {
@@ -207,7 +211,7 @@ func TestDarwinMetricsFromSyscallLayout(t *testing.T) {
 	m, _ = c.Metrics()
 	// 两个 CPU 各 +100 tick，其中各 50 空闲。
 	if m.CpuPct == nil || m.GetCpuPct() != 50 {
-		t.Fatalf("second cpu_pct = %v, want 50", m.CpuPct)
+		t.Fatalf("second cpu_pct set %v = %v, want 50", m.CpuPct != nil, m.GetCpuPct())
 	}
 }
 
@@ -232,7 +236,7 @@ func TestDarwinInterfaceReadErrorDropsTheWholeReading(t *testing.T) {
 	c := &Collector{Host: &darwinHost{src: f}, Clock: clock.NewFake(time.Unix(0, 0))}
 	m, err := c.Metrics()
 	if m.NetRxTotal != nil || m.NetTxTotal != nil {
-		t.Fatalf("partial interface set must not be reported: %v/%v", m.NetRxTotal, m.NetTxTotal)
+		t.Fatalf("partial interface set must not be reported: rx %d tx %d", m.GetNetRxTotal(), m.GetNetTxTotal())
 	}
 	if err == nil || !strings.Contains(err.Error(), "ifdata 3") {
 		t.Fatalf("err = %v, want the failing index named", err)
@@ -241,12 +245,12 @@ func TestDarwinInterfaceReadErrorDropsTheWholeReading(t *testing.T) {
 
 func TestTickAccumulatorAcrossWrapAndCPUCountChange(t *testing.T) {
 	var a tickAccumulator
-	first, err := a.add([]uint32{10, 0, math.MaxUint32 - 19, 0})
+	first, err := a.add([]uint32{10, 5, math.MaxUint32 - 19, 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// idle 从 2^32−20 回绕到 30：增量 50；user +50。
-	cur, _ := a.add([]uint32{60, 0, 30, 0})
+	// idle 从 2^32−20 回绕到 30：增量 50；user +30、system +15、nice +5，四个增量两两不同。
+	cur, _ := a.add([]uint32{40, 20, 30, 6})
 	if pct, ok := cpuPercent(first, cur); !ok || pct != 50 {
 		t.Fatalf("pct across wrap = %v,%v, want 50 (50 busy of 100)", pct, ok)
 	}
@@ -255,21 +259,48 @@ func TestTickAccumulatorAcrossWrapAndCPUCountChange(t *testing.T) {
 	if _, ok := cpuPercent(cur, next); ok {
 		t.Fatal("cpu count change must yield no reading")
 	}
+	// 换基线之后，同样个数的下一份照常给读数：每 CPU user +10、idle +30，共 80 tick、60 空闲。
+	after, _ := a.add([]uint32{40, 0, 70, 0, 11, 1, 31, 1})
+	if pct, ok := cpuPercent(next, after); !ok || pct != 25 {
+		t.Fatalf("pct after rebaselining = %v,%v, want 25 (20 busy of 80)", pct, ok)
+	}
 	if _, err := a.add([]uint32{1, 2, 3}); err == nil {
 		t.Fatal("ticks not a multiple of cpuStateMax must be an error")
 	}
 }
 
+// 直接对照头文件偏移，不经 Collector：偏移错一位就读到 vmBytes 的哨兵，失败信息里带 0x5A5A…。
+func TestVMStatisticsReadsHeaderOffsets(t *testing.T) {
+	got, err := parseVMStatistics64(vmBytes(400, 30, 70, 5000))
+	want := vmCounts{wire: 400, purgeable: 30, compressor: 70, internal: 5000}
+	if err != nil || got != want {
+		t.Fatalf("pages wire %#x purgeable %#x compressor %#x internal %#x, %v; want %#x %#x %#x %#x (0x5a5a.... means a sentinel word was read)",
+			got.wire, got.purgeable, got.compressor, got.internal, err, want.wire, want.purgeable, want.compressor, want.internal)
+	}
+}
+
 func TestVMUsedRejectsInconsistentCounts(t *testing.T) {
-	if used, err := vmUsed(vmBytes(400, 900, 70, 500), 4096); err == nil {
+	if used, err := (vmCounts{wire: 400, purgeable: 900, compressor: 70, internal: 500}).usedPages(); err == nil {
 		t.Fatalf("purgeable above internal must be an error, got %d", used)
 	}
-	if _, err := vmUsed(make([]byte, vmStatsMinLen-1), 4096); err == nil {
+	if _, err := parseVMStatistics64(make([]byte, vmStatsMinLen-1)); err == nil {
 		t.Fatal("short vm_statistics64 must be an error")
 	}
 }
 
-// internal − purgeable 回绕后再加上 wire，结果落在总量以内：checkUsage 放行，只有 vmUsed 的检查拒收。
+// ifcount 是最大索引而不是个数：最大索引上的网卡（开机后插上的 USB、雷雳网卡常拿到它）也要读到。
+func TestDarwinEnumeratesEveryIndexUpToIfcount(t *testing.T) {
+	ifs, err := (&darwinHost{src: newFakeDarwin()}).ifaces()
+	var names []string
+	for _, i := range ifs {
+		names = append(names, i.name)
+	}
+	if err != nil || strings.Join(names, " ") != "lo0 en0 utun0" {
+		t.Fatalf("interfaces %v, %v; want [lo0 en0 utun0]", names, err)
+	}
+}
+
+// internal − purgeable 回绕后再加上 wire，结果落在总量以内：checkUsage 放行，只有 usedPages 的检查拒收。
 func TestVMUsedWrapIsCaughtBeforeCheckUsage(t *testing.T) {
 	internal, purgeable, wire, page := uint64(100), uint64(110), uint64(50), uint64(16384)
 	if wrapped := (internal - purgeable + wire) * page; wrapped > 1<<37 {
@@ -282,7 +313,7 @@ func TestVMUsedWrapIsCaughtBeforeCheckUsage(t *testing.T) {
 		t.Fatalf("wrapped memory reading reported: used %d total %d", m.GetMemUsed(), m.GetMemTotal())
 	}
 	if err == nil || !strings.Contains(err.Error(), "purgeable 110 exceeds internal 100") {
-		t.Fatalf("err = %v, want vmUsed's rejection", err)
+		t.Fatalf("err = %v, want usedPages's rejection", err)
 	}
 }
 
@@ -296,8 +327,16 @@ func TestDarwinLayoutsRejectWrongSizes(t *testing.T) {
 	if _, err := parseSwapUsage(make([]byte, 24)); err == nil {
 		t.Fatal("short xsw_usage must be an error")
 	}
-	if _, err := parseIfmibData(make([]byte, ifmibMinLen)); err == nil {
+	if _, err := parseIfmibData(make([]byte, sizeofIfmibdata)); err == nil {
 		t.Fatal("empty interface name must be an error")
+	}
+	// ifmibdata 定长：长一点短一点都说明布局变了，按旧偏移读出的计数不可信。
+	for _, n := range []int{sizeofIfmibdata - 1, sizeofIfmibdata + 1} {
+		b := make([]byte, n)
+		copy(b, "en0")
+		if _, err := parseIfmibData(b); err == nil {
+			t.Fatalf("%d-byte ifmibdata must be an error", n)
+		}
 	}
 }
 
@@ -306,7 +345,7 @@ func TestDarwinFacts(t *testing.T) {
 	f.u32["kern.hv_vmm_present"] = 1
 	got := (&Collector{Host: &darwinHost{src: f}, Version: "v"}).Facts()
 	if got.GetOs() != "macOS 26.3.1" || got.GetKernel() != "25.3.0" || got.GetCpuModel() != "Apple M4 Max" ||
-		got.GetCpuCores() != 16 || got.GetHostname() != "mac.local" || got.GetVirtualization() != "vm" {
+		got.GetCpuCores() != 13 || got.GetHostname() != "mac.local" || got.GetVirtualization() != "vm" {
 		t.Fatalf("%+v", got)
 	}
 	delete(f.u32, "kern.hv_vmm_present")
