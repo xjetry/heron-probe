@@ -233,8 +233,9 @@ func parseLoadavgSysctl(b []byte) (loadAvg, error) {
 	}
 	le := binary.LittleEndian
 	scale := float64(int64(le.Uint64(b[16:])))
-	// fscale 为 0 或负时比值是 Inf 或 NaN；hub 的 validateMetrics 对非有限的负载拒收整条上报，
-	// 所以在这里按读不到处理，只让负载缺失。
+	// 守卫的两半各防一种读数：fscale 为 0 时比值是 Inf 或 NaN，为负时是负数（有限）。hub 的
+	// validateMetrics（internal/hub/ingest/validate.go）对非有限或负的负载都拒收整条上报，CPU、内存、
+	// 流量随之一起丢失；所以在这里按读不到处理，只让负载缺失。
 	if scale <= 0 {
 		return loadAvg{}, fmt.Errorf("vm.loadavg: fscale %v", scale)
 	}

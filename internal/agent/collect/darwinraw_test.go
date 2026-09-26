@@ -321,6 +321,9 @@ func TestDarwinLayoutsRejectWrongSizes(t *testing.T) {
 	if _, err := parseLoadavgSysctl(loadavgBytes(1, 1, 1, 0)); err == nil {
 		t.Fatal("fscale 0 must be an error, not +Inf")
 	}
+	if l, err := parseLoadavgSysctl(loadavgBytes(1, 1, 1, -65536)); err == nil {
+		t.Fatalf("negative fscale must be an error, not a negative load %v", l.l1)
+	}
 	if _, err := parseLoadavgSysctl(make([]byte, 20)); err == nil {
 		t.Fatal("short loadavg must be an error")
 	}
