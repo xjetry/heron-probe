@@ -2,7 +2,8 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
-import { Overview, POLL_MS } from "./Overview";
+import { POLL_MS } from "../lib/poll";
+import { Overview } from "./Overview";
 
 const snapshot = {
   now: 1_000_000n,

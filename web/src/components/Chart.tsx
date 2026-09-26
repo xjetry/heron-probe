@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import uPlot, { type AlignedData, type Options } from "uplot";
 import "uplot/dist/uPlot.min.css";
 import { formatUnit } from "../lib/format";
 import { axisValues } from "../lib/axis";
+import { resolveColor, useColorScheme } from "../lib/colorScheme";
 
 // 一个节点常有多条探测线，八色减少颜色重复；超过八条时循环使用。
 const palette = ["#3b82f6", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#06b6d4", "#84cc16", "#ec4899"];
@@ -13,20 +14,12 @@ export function Chart({ data, labels, unit, height = 180 }: { data: AlignedData;
   const plot = useRef<uPlot | null>(null);
   const initialData = useRef(data);
   const key = labels.join("|");
-  const [dark, setDark] = useState(() => window.matchMedia("(prefers-color-scheme: dark)").matches);
-  useEffect(() => {
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const changed = () => setDark(media.matches);
-    media.addEventListener("change", changed);
-    changed();
-    return () => media.removeEventListener("change", changed);
-  }, []);
+  const scheme = useColorScheme();
   useEffect(() => {
     const host = el.current;
     if (!host) return;
-    const css = getComputedStyle(document.documentElement);
-    const axisColor = css.getPropertyValue("--muted").trim();
-    const gridColor = css.getPropertyValue("--line").trim();
+    const axisColor = resolveColor(host, "var(--muted)");
+    const gridColor = resolveColor(host, "var(--line)");
     const axisStyle = { stroke: axisColor, grid: { stroke: gridColor }, ticks: { stroke: axisColor } };
     const opts: Options = {
       width: host.clientWidth || 600,
@@ -52,8 +45,8 @@ export function Chart({ data, labels, unit, height = 180 }: { data: AlignedData;
       plot.current?.destroy();
       plot.current = null;
     };
-    // 标签、单位、尺寸或主题改变才重建；下面的数据 effect 维护最近提交的数据快照并应用当前数据。
-  }, [key, unit, height, dark]);
+    // 标签、单位、尺寸或明暗改变才重建；下面的数据 effect 维护最近提交的数据快照并应用当前数据。
+  }, [key, unit, height, scheme]);
   useEffect(() => {
     initialData.current = data;
     plot.current?.setData(data);

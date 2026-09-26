@@ -4,9 +4,8 @@ import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService, type NodeStatus } from "../gen/probe/v1/admin_pb";
 import { ago, bytes, percent } from "../lib/format";
 import { withId } from "../lib/ids";
-
-// 实时视图靠轮询；hub 的上报间隔不会更短，2 秒是让"刚上报"尽快可见的取值。
-export const POLL_MS = 2000;
+import { POLL_MS } from "../lib/poll";
+import { Bar, Missing, ratio } from "../components/Bar";
 
 export function Overview() {
   const snap = useQuery(AdminService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
@@ -56,24 +55,5 @@ function NodeRow({ node, now }: { node: NodeStatus; now: number }) {
       <td>{node.traffic ? `↓ ${bytes(node.traffic.periodRx)} ↑ ${bytes(node.traffic.periodTx)}` : <Missing />}</td>
       <td className="muted">{node.lastSeenAt !== undefined ? ago(node.lastSeenAt, now) : "从未"}</td>
     </tr>
-  );
-}
-
-function ratio(used: bigint, total: bigint): number {
-  return (Number(used) / Number(total)) * 100;
-}
-
-// 无读数与 0 是两个事实：缺失的字段显示为破折号，不画成 0。
-function Missing() {
-  return <span className="muted" aria-label="无读数">–</span>;
-}
-
-export function Bar({ value, label }: { value: number; label: string }) {
-  const v = Math.max(0, Math.min(100, value));
-  return (
-    <div className="bar" role="meter" aria-valuenow={Math.round(v)} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
-      <div className="fill" style={{ width: `${v}%` }} />
-      <span>{label}</span>
-    </div>
   );
 }

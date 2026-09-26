@@ -1,11 +1,14 @@
+/* 明暗只经 color-scheme 切换：light-dark() 按元素的 color-scheme 取值，默认跟随系统；公开页按站点设置在 html 上
+   写 data-theme，下面两条规则让它压过系统设置。不要再按系统明暗的媒体查询改写变量，那会绕过 data-theme。 */
 :root {
-  --bg: #f6f7f9; --card: #ffffff; --fg: #1f2328; --muted: #6b7280; --line: #e5e7eb;
-  --accent: #2563eb; --ok: #16a34a; --bad: #dc2626; --warn: #d97706;
+  color-scheme: light dark;
+  --bg: light-dark(#f6f7f9, #0f1115); --card: light-dark(#ffffff, #171a21); --fg: light-dark(#1f2328, #e5e7eb);
+  --muted: light-dark(#6b7280, #9ca3af); --line: light-dark(#e5e7eb, #2a2f3a);
+  --accent: light-dark(#2563eb, #60a5fa); --ok: #16a34a; --bad: #dc2626; --warn: #d97706;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 14px; color: var(--fg); background: var(--bg);
 }
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #0f1115; --card: #171a21; --fg: #e5e7eb; --muted: #9ca3af; --line: #2a2f3a; --accent: #60a5fa; }
-}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 * { box-sizing: border-box; }
 body { margin: 0; }
 a { color: var(--accent); text-decoration: none; }

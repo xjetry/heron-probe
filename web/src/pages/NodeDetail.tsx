@@ -1,43 +1,15 @@
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
-import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { type FormEvent, useState } from "react";
 import { Link, useParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
-import { Chart } from "../components/Chart";
+import { HistoryCharts, RangePicker, useHistory, type HistoryMethods } from "../components/History";
 import { AdminService, type GetTrafficResponse } from "../gen/probe/v1/admin_pb";
-import { toAligned, unitOf } from "../lib/series";
 import { bytes } from "../lib/format";
 import { errorText } from "../api/auth";
-import { lossPercent, rttMeanMs, seriesLabels, taskIdsOf, toProbeAligned, type ProbeValue } from "../lib/probes";
 
-export const RANGES = [
-  { label: "1h", seconds: 3600 },
-  { label: "6h", seconds: 6 * 3600 },
-  { label: "24h", seconds: 86400 },
-  { label: "7d", seconds: 7 * 86400 },
-  { label: "30d", seconds: 30 * 86400 },
-];
+const ADMIN_HISTORY: HistoryMethods = { queryMetrics: AdminService.method.queryMetrics, queryProbes: AdminService.method.queryProbes };
 
-// 每个面板画哪些指标；名字与 hub 的描述表一致，单位随数据来。可加量（字节增量）以速率
-// 作图，单位由面板指定：数据里的 bytes 是一个点内的总和，图上要的是 bytes/s。
-const PANELS: { title: string; names: string[]; unit?: string }[] = [
-  { title: "CPU", names: ["cpu"] },
-  { title: "内存 / 交换", names: ["mem_used", "swap_used"] },
-  { title: "磁盘", names: ["disk_used"] },
-  { title: "负载（1 分钟）", names: ["load1"] },
-  { title: "连接数", names: ["tcp", "udp"] },
-  { title: "进程数", names: ["procs"] },
-  { title: "网络", names: ["rx_bytes", "tx_bytes"], unit: "bytes/s" },
-];
-
-// 探测图两张：丢包率与 RTT 均值，每个任务一条线。单位不随数据来——探测样本没有 unit 字段，
-// 两种量各自固定。
-const PROBE_PANELS: { title: string; unit: string; value: ProbeValue }[] = [
-  { title: "探测 · 丢包率", unit: "percent", value: lossPercent },
-  { title: "探测 · RTT 均值", unit: "ms", value: rttMeanMs },
-];
-
-const REFRESH_MS = 60_000;
 // 周期量随每次上报更新；流量卡以 10 秒节奏展示内存视图的变化，不依赖落盘刷出。
 export const TRAFFIC_MS = 10_000;
 
@@ -45,35 +17,10 @@ export function NodeDetail() {
   const { id } = useParams();
   const validId = /^\d+$/.test(id ?? "");
   const nodeId = validId ? BigInt(id!) : 0n;
-  const [range, setRange] = useState(RANGES[2]);
-  // 窗口右端每分钟前进一次：历史行本来就按分钟产生，更频繁的刷新看不到新东西。
-  const [to, setTo] = useState(() => Math.floor(Date.now() / 1000) + 60);
-  useEffect(() => {
-    const t = setInterval(() => setTo(Math.floor(Date.now() / 1000) + 60), REFRESH_MS);
-    return () => clearInterval(t);
-  }, []);
-  const from = to - range.seconds;
-
   const nodes = useQuery(AdminService.method.listNodes, {}, { enabled: validId });
-  const history = useQuery(AdminService.method.queryMetrics, { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: 1000 }, {
-    enabled: validId, placeholderData: keepPreviousData,
-  });
-  const probes = useQuery(AdminService.method.queryProbes, { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: 1000 }, {
-    enabled: validId, placeholderData: keepPreviousData,
-  });
+  const history = useHistory(ADMIN_HISTORY, nodeId, validId);
   // 流量与图表面向不同查询，各自降级；校正操作在卡片内保留自己的错误槽位。
   const traffic = useQuery(AdminService.method.getTraffic, {}, { enabled: validId, refetchInterval: TRAFFIC_MS });
-  // 标签随序列下发（任务当前的种类与目标），与数据同一次响应到达，不另查任务列表。
-  const probeCharts = useMemo(() => {
-    if (!probes.data) return [];
-    const ids = taskIdsOf(probes.data);
-    const labels = seriesLabels(probes.data.series);
-    return PROBE_PANELS.map((p) => ({ ...p, labels, data: toProbeAligned(probes.data!, ids, from, to, p.value) }));
-  }, [probes.data, from, to]);
-  const charts = useMemo(
-    () => history.data ? PANELS.map((p) => ({ ...p, data: toAligned(history.data, p.names, from, to), unit: p.unit ?? unitOf(history.data, p.names[0]) })) : [],
-    [history.data, from, to],
-  );
 
   if (!validId) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
   const gate = queryGate(nodes);
@@ -82,41 +29,14 @@ export function NodeDetail() {
   if (!node) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
   return (
     <section>
-      {errorBanner(nodes.error, history.error, probes.error, traffic.error)}
+      {errorBanner(nodes.error, history.metrics.error, history.probes.error, traffic.error)}
       <header className="row detail-header">
         <h1>{node.name}</h1>
         <Link to={`/events?node=${id}`}>告警事件</Link>
-        <nav aria-label="时间窗口">
-          {RANGES.map((r) => (
-            <button key={r.label} type="button" className={r.label === range.label ? "active" : "link"} onClick={() => setRange(r)} aria-pressed={r.label === range.label}>
-              {r.label}
-            </button>
-          ))}
-        </nav>
-        {history.data && <span className="muted">级别 {history.data.level}，每点 {history.data.stepS}s</span>}
+        <RangePicker history={history} />
       </header>
       <TrafficCard nodeId={nodeId} data={traffic.data} />
-      <div className="grid">
-        {charts.map((c) => (
-          <div className="card" key={c.title}>
-            <h2>{c.title}</h2>
-            <Chart data={c.data} labels={c.names} unit={c.unit} />
-          </div>
-        ))}
-      </div>
-      {probes.data && probes.data.series.length === 0 && (
-        <p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>
-      )}
-      {probes.data && probes.data.series.length > 0 && (
-        <div className="grid">
-          {probeCharts.map((c) => (
-            <div className="card" key={c.title}>
-              <h2>{c.title}</h2>
-              <Chart data={c.data} labels={c.labels} unit={c.unit} />
-            </div>
-          ))}
-        </div>
-      )}
+      <HistoryCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>} />
       {node.facts && (
         <dl className="card facts">
           <dt>主机名</dt><dd>{node.facts.hostname}</dd>
