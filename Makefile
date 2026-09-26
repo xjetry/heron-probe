@@ -71,16 +71,18 @@ HUB_LINUX_ARCHES := amd64 arm64
 # 另加 --no-xattrs：bsdtar 仍会把 com.apple.provenance 之类的扩展属性写成 pax 扩展头，GNU tar 解包时逐条目告警，产物里也带上宿主元数据；
 # bsdtar 与 GNU tar 都认这个选项，本地与 CI 构建同一写法。
 # 说明写在 recipe 之外：recipe 是反斜杠续行拼成的一条 shell 命令，行内的 # 会把其后的续行一并注释掉。
-release: web
+# VERSION 在构建前端之前检查：缺参时立即报错，不等 web 目标跑完。
+release:
 	@if [ -z "$(VERSION)" ]; then echo "VERSION is required, e.g. make release VERSION=v0.1.0" >&2; exit 1; fi
+	$(MAKE) web
 	rm -rf dist/build dist/*.tar.gz dist/SHA256SUMS dist/install.sh
 	mkdir -p dist/build
 	@set -e; for arch in $(AGENT_LINUX_ARCHES); do \
 	  case $$arch in armv7) gflags="GOARCH=arm GOARM=7" ;; *) gflags="GOARCH=$$arch" ;; esac; \
-	  env GOOS=linux CGO_ENABLED=0 $$gflags go build -ldflags "-X main.version=$(VERSION)" -o "dist/build/probe-agent-linux-$$arch" ./cmd/agent; \
+	  env GOOS=linux CGO_ENABLED=0 $$gflags go build -trimpath -ldflags "-X main.version=$(VERSION)" -o "dist/build/probe-agent-linux-$$arch" ./cmd/agent; \
 	done; \
 	for arch in $(HUB_LINUX_ARCHES); do \
-	  env GOOS=linux GOARCH=$$arch CGO_ENABLED=0 go build -ldflags "-X main.version=$(VERSION)" -o "dist/build/probe-hub-linux-$$arch" ./cmd/hub; \
+	  env GOOS=linux GOARCH=$$arch CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$(VERSION)" -o "dist/build/probe-hub-linux-$$arch" ./cmd/hub; \
 	done
 	go run ./scripts/checkstatic $(addprefix dist/build/probe-agent-linux-,$(AGENT_LINUX_ARCHES)) $(addprefix dist/build/probe-hub-linux-,$(HUB_LINUX_ARCHES))
 	@set -e; for arch in $(AGENT_LINUX_ARCHES); do \
