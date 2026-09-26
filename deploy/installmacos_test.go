@@ -324,7 +324,9 @@ func TestFreshInstallFromStdin(t *testing.T) {
 		"chown root:_probe-agent " + e.root + "/etc/probe-agent",
 		"chown _probe-agent:_probe-agent " + e.root + "/etc/probe-agent/config.json",
 		"chown root:wheel " + e.root + "/Library/LaunchDaemons/xyz.probe.agent.plist",
-		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent",
+		"chown root:wheel " + e.root + "/Library/Logs/probe-agent",
+		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent/probe-agent.log",
+		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent/probe-agent.err",
 		"launchctl enable system/xyz.probe.agent",
 	} {
 		if i := index(c, want); i < 0 || i > boot {
@@ -336,20 +338,20 @@ func TestFreshInstallFromStdin(t *testing.T) {
 	}
 	e.mode("etc/probe-agent", 0o750)
 	e.mode("etc/probe-agent/config.json", 0o600)
+	// 目录属 root，两个日志文件由脚本建好交给服务用户：launchd 不论以哪个身份打开都写得进去。
 	e.mode("Library/Logs/probe-agent", 0o755)
-	// 日志文件由 launchd 在服务用户属主的目录里建，脚本不建也不碰。
-	for _, f := range []string{"probe-agent.log", "probe-agent.err"} {
-		if e.exists("Library/Logs/probe-agent/" + f) {
-			t.Errorf("the script must not create %s; launchd creates it in the service user's directory", f)
-		}
-	}
+	e.mode("Library/Logs/probe-agent/probe-agent.log", 0o640)
+	e.mode("Library/Logs/probe-agent/probe-agent.err", 0o640)
 }
 
 func (e *env) mode(rel string, want os.FileMode) {
 	e.t.Helper()
 	st, err := os.Lstat(filepath.Join(e.root, rel))
-	if err != nil || st.Mode().Perm() != want || !st.Mode().IsRegular() && !st.IsDir() {
-		e.t.Fatalf("%s: mode %v, %v; want %v", rel, st.Mode(), err, want)
+	if err != nil {
+		e.t.Fatalf("%s: %v", rel, err)
+	}
+	if st.Mode().Perm() != want || !st.Mode().IsRegular() && !st.IsDir() {
+		e.t.Fatalf("%s: mode %v; want %v", rel, st.Mode(), want)
 	}
 }
 
@@ -409,6 +411,9 @@ func TestOwnershipIsRestoredOnEveryInstall(t *testing.T) {
 	os.Chmod(filepath.Join(e.root, "etc/probe-agent"), 0o755)
 	os.Chmod(filepath.Join(e.root, "etc/probe-agent/config.json"), 0o644)
 	os.Chmod(filepath.Join(e.root, "Library/Logs/probe-agent"), 0o700)
+	os.Chmod(filepath.Join(e.root, "Library/Logs/probe-agent/probe-agent.err"), 0o644)
+	// 日志文件被删后，以服务用户身份打开它的 launchd 建不回来；重跑安装脚本把它建回来。
+	os.Remove(filepath.Join(e.root, "Library/Logs/probe-agent/probe-agent.log"))
 	e.resetCalls()
 	if out, code := e.install(); code != 0 {
 		t.Fatalf("rerun exit %d:\n%s", code, out)
@@ -421,7 +426,9 @@ func TestOwnershipIsRestoredOnEveryInstall(t *testing.T) {
 	for _, want := range []string{
 		"chown root:_probe-agent " + e.root + "/etc/probe-agent",
 		"chown _probe-agent:_probe-agent " + e.root + "/etc/probe-agent/config.json",
-		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent",
+		"chown root:wheel " + e.root + "/Library/Logs/probe-agent",
+		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent/probe-agent.log",
+		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent/probe-agent.err",
 	} {
 		if i := index(c, want); i < out || i > boot {
 			t.Errorf("rerun: %q must run between bootout and bootstrap, calls %q", want, c)
@@ -430,6 +437,8 @@ func TestOwnershipIsRestoredOnEveryInstall(t *testing.T) {
 	e.mode("etc/probe-agent", 0o750)
 	e.mode("etc/probe-agent/config.json", 0o600)
 	e.mode("Library/Logs/probe-agent", 0o755)
+	e.mode("Library/Logs/probe-agent/probe-agent.log", 0o640)
+	e.mode("Library/Logs/probe-agent/probe-agent.err", 0o640)
 }
 
 // launchd 以服务 uid 派生的辅助进程（cfprefsd、trustd……）不是本服务：按 uid 加可执行路径认进程，
@@ -699,23 +708,44 @@ func TestAccountFailuresNameTheirCause(t *testing.T) {
 	}
 }
 
-// 会让脚本中止的前置检查都在停服务之前：日志目录被换成链接时拒绝，旧服务照常运行、二进制不被替换。
-func TestLogDirSymlinkIsRefusedBeforeStopping(t *testing.T) {
+// 会让脚本中止的前置检查都在停服务之前：日志目录不是真目录、日志文件不是普通文件时拒绝，
+// 旧服务照常运行、二进制不被替换，也不对链接指向的对象 chown。
+func TestLogPathsThatAreNotPlainAreRefusedBeforeStopping(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t)
-	if out, code := e.install(); code != 0 {
-		t.Fatalf("first install exit %d:\n%s", code, out)
-	}
-	logDir := filepath.Join(e.root, "Library/Logs/probe-agent")
-	os.RemoveAll(logDir)
-	os.Symlink(filepath.Join(e.root, "etc"), logDir)
-	e.release("arm64", "v2")
-	e.resetCalls()
-	out, code := e.install()
-	if code != 1 || !strings.Contains(out, "exists but is not a directory") {
-		t.Fatalf("exit %d:\n%s", code, out)
-	}
-	if index(e.calls(), "launchctl bootout") >= 0 || !strings.Contains(e.file("usr/local/bin/probe-agent"), "# v1 arm64") {
-		t.Fatalf("the running service must be left alone: calls %q", e.calls())
+	for _, tc := range []struct {
+		name, rel, want string
+		plant           func(path, root string)
+	}{
+		{"directory symlink", "Library/Logs/probe-agent", "exists but is not a directory", func(p, root string) {
+			os.RemoveAll(p)
+			os.Symlink(filepath.Join(root, "etc"), p)
+		}},
+		{"file symlink", "Library/Logs/probe-agent/probe-agent.err", "exists but is not a regular file", func(p, root string) {
+			os.Remove(p)
+			os.Symlink(filepath.Join(root, "etc/probe-agent/config.json"), p)
+		}},
+		{"file is a directory", "Library/Logs/probe-agent/probe-agent.log", "exists but is not a regular file", func(p, root string) {
+			os.Remove(p)
+			os.Mkdir(p, 0o755)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t)
+			if out, code := e.install(); code != 0 {
+				t.Fatalf("first install exit %d:\n%s", code, out)
+			}
+			tc.plant(filepath.Join(e.root, tc.rel), e.root)
+			e.release("arm64", "v2")
+			e.resetCalls()
+			out, code := e.install()
+			if code != 1 || !strings.Contains(out, tc.want) {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			c := e.calls()
+			if index(c, "launchctl bootout") >= 0 || index(c, "chown") >= 0 || !strings.Contains(e.file("usr/local/bin/probe-agent"), "# v1 arm64") {
+				t.Fatalf("the running service must be left alone: calls %q", c)
+			}
+		})
 	}
 }

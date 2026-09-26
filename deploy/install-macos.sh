@@ -272,10 +272,17 @@ done
 mkdir -p "$(dirname "$BIN")"
 install -m 0755 "$work/probe-agent" "$BIN_TMP"
 # 停服务之后还会中止脚本的前置条件，都在这里先核完：检查失败时旧服务照常运行，机器上不留停掉的服务。
-# 日志目录若已存在，必须是真目录：后面以 root 对它 chown，是链接就会改到链接指向的对象。
+# 日志目录若已存在必须是真目录，两个日志文件若已存在必须是普通文件：后面以 root 对它们 chown、chmod，
+# 是链接就会改到链接指向的对象。本脚本每次安装都把目录设成 root:wheel，此后只有 root 能在其中放条目，
+# 检查到操作之间条目不会被服务用户换掉。
 if [ -L "$LOG_DIR" ] || { [ -e "$LOG_DIR" ] && [ ! -d "$LOG_DIR" ]; }; then
   echo "$LOG_DIR exists but is not a directory; refusing to take it over" >&2; exit 1
 fi
+for f in "$LOG_DIR/probe-agent.log" "$LOG_DIR/probe-agent.err"; do
+  if [ -L "$f" ] || { [ -e "$f" ] && [ ! -f "$f" ]; }; then
+    echo "$f exists but is not a regular file; refusing to hand it to $SVC_USER" >&2; exit 1
+  fi
+done
 stop_service
 # 同目录 rename 原子替换目录项：launchd 执行 $BIN 时看到的始终是完整的旧文件或完整的新文件。
 mv -f "$BIN_TMP" "$BIN"
@@ -298,16 +305,21 @@ chmod 0750 "$CFG_DIR"
 chown "$SVC_USER:$SVC_USER" "$CFG"
 chmod 0600 "$CFG"
 
-# 日志目录属服务用户、0755，日志文件不预建：不变式由目录属主承载。launchd 不论以 root 还是以 UserName 打开
-# StandardOutPath/StandardErrorPath，都能在这个目录里建文件，文件被删后下次拉起时重建。
-# 用户域作业实测：目录属作业用户时 launchd 建出日志文件，删掉后 kickstart -k 重启即以新 inode 重建；
-# 目录对作业用户不可写时建不出，作业以 78（EX_CONFIG）退出。system 域加 UserName 时 launchd 以什么身份
-# 打开由 README 真机核对第 12 条验证。
-# 这里只对目录本身操作：它在 root 属主的 /Library/Logs 下，服务用户换不掉这个目录项；目录本身不是链接由
-# 停服务之前的检查保证。目录里的条目归服务用户，脚本不碰。
+# 日志目录属 root:wheel、0755：服务用户不能在其中增删条目，日志路径换不成链接，launchd 不论以哪个身份打开
+# StandardOutPath/StandardErrorPath 都不会被引到别处。安全性由目录属主承载，不依赖 launchd 的打开身份。
+# 两个日志文件每次安装都建好并交给服务用户（0640）：以服务用户身份打开时可写，以 root 打开时也可写。
+# 残余：用户域作业实测，日志所在目录对作业用户不可写且文件不存在时，launchd 建不出文件，作业以 78（EX_CONFIG）
+# 退出。所以文件被删后，若 launchd 以服务用户身份打开，作业会反复以 EX_CONFIG 退出，直到重跑本脚本把文件
+# 建回来。这是健壮性问题，不是安全问题；launchd 实际以哪个身份打开由 README 真机核对第 12 条记录。
+# 目录与文件不是链接由停服务之前的检查保证。
 mkdir -p "$LOG_DIR"
-chown "$SVC_USER:$SVC_USER" "$LOG_DIR"
+chown root:wheel "$LOG_DIR"
 chmod 0755 "$LOG_DIR"
+for f in "$LOG_DIR/probe-agent.log" "$LOG_DIR/probe-agent.err"; do
+  [ -e "$f" ] || : > "$f"
+  chown "$SVC_USER:$SVC_USER" "$f"
+  chmod 0640 "$f"
+done
 
 # plist 每次覆盖，改动随升级下发。它决定以什么身份运行什么程序，只能由 root 改：root:wheel、0644。
 # enable 清掉可能残留的禁用覆盖（launchctl disable 跨重启有效），与 systemctl enable 同位。

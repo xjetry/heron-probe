@@ -25,8 +25,8 @@
 	<true/>
 	<key>ThrottleInterval</key>
 	<integer>5</integer>
-	<!-- 日志目录由安装脚本建成属 UserName 的用户、0755，文件不预建：launchd 在其中建文件，删掉后下次拉起时重建。
-	     用户域作业实测：目录对作业用户不可写时 launchd 建不出这两个文件、作业以 EX_CONFIG 退出（deploy/install-macos.sh 的日志一段）。 -->
+	<!-- 日志目录由安装脚本建成 root:wheel 0755，两个文件每次安装都预建并交给 UserName 的用户（0640）：
+	     服务用户换不掉目录里的条目，launchd 以哪个身份打开都不会被链接引到别处（deploy/install-macos.sh 的日志一段）。 -->
 	<key>StandardOutPath</key>
 	<string>/Library/Logs/probe-agent/probe-agent.log</string>
 	<key>StandardErrorPath</key>
