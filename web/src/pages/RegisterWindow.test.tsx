@@ -1,7 +1,7 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { create } from "@bufbuild/protobuf";
 import { createConnectQueryKey } from "@connectrpc/connect-query";
-import { act, fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
 import { RegisterWindow } from "./RegisterWindow";
@@ -22,9 +22,9 @@ describe("RegisterWindow", () => {
     const nodesKey = createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" });
     queryClient.setQueryData(snapshotKey, create(GetSnapshotResponseSchema));
     queryClient.setQueryData(nodesKey, create(ListNodesResponseSchema));
-    await vi.waitFor(() => expect(getRegisterWindow).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getRegisterWindow).toHaveBeenCalledTimes(1));
     fireEvent.click(await screen.findByRole("button", { name: operation === "open" ? "开启新窗口" : "关闭窗口" }));
-    await vi.waitFor(() => expect(getRegisterWindow).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(getRegisterWindow).toHaveBeenCalledTimes(2));
     expect([snapshotKey, nodesKey].map((key) => queryClient.getQueryState(key)?.isInvalidated)).toEqual([false, false]);
   });
 
@@ -108,7 +108,7 @@ describe("RegisterWindow", () => {
     );
     expect(await screen.findByText(/剩余 3 个名额/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "关闭窗口" }));
-    await vi.waitFor(() => expect(closeRegisterWindow).toHaveBeenCalled());
+    await waitFor(() => expect(closeRegisterWindow).toHaveBeenCalled());
   });
 
   it("关窗清除刚展示的 key 与命令", async () => {

@@ -126,8 +126,8 @@ describe("NodeDetail", () => {
     fireEvent.change(screen.getByLabelText("本周期下行 (GiB)"), { target: { value: "2.5" } });
     fireEvent.change(screen.getByLabelText("本周期上行 (GiB)"), { target: { value: "0" } });
     fireEvent.click(screen.getByRole("button", { name: "校正本周期" }));
-    await vi.waitFor(() => expect(adjustTraffic).toHaveBeenCalledWith(expect.objectContaining({ nodeId: 7n, periodRx: 2_684_354_560n, periodTx: 0n }), expect.anything()));
-    await vi.waitFor(() => expect(traffic.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(adjustTraffic).toHaveBeenCalledWith(expect.objectContaining({ nodeId: 7n, periodRx: 2_684_354_560n, periodTx: 0n }), expect.anything()));
+    await waitFor(() => expect(traffic.mock.calls.length).toBeGreaterThanOrEqual(2));
   });
 
   it("校正输入不是非负数时按钮禁用", async () => {
@@ -217,7 +217,7 @@ describe("NodeDetail", () => {
     await screen.findByRole("heading", { level: 1, name: "db-01" });
     await screen.findByText(/级别 1m，每点 60s/);
     fireEvent.click(screen.getByRole("button", { name: label }));
-    await vi.waitFor(() => expect(queryMetrics.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(queryMetrics.mock.calls.length).toBeGreaterThanOrEqual(2));
     const last = queryMetrics.mock.calls.at(-1)![0] as { from: bigint; to: bigint };
     expect(Number(last.to - last.from)).toBe(seconds);
   });

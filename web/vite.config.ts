@@ -2,6 +2,8 @@ import react from "@vitejs/plugin-react";
 import { writeFileSync } from "node:fs";
 import { defineConfig } from "vitest/config";
 
+import { asyncUtilTimeout } from "./src/test/async-timeout.ts";
+
 // base 与 hub 的挂载路径一致：产物里的资源引用都是 /admin/assets/…，
 // 由 internal/hub/web 服务。outDir 直接落在 embed 目录，不再拷贝一次。
 // tsconfig.app.json 关掉了 erasableSyntaxOnly：protoc-gen-es 为 proto enum
@@ -19,5 +21,7 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     globals: false,
+    // 必须长于异步查找上界，否则运行器会先杀掉用例，上界到不了。
+    testTimeout: asyncUtilTimeout * 2,
   },
 });
