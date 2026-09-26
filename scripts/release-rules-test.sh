@@ -49,9 +49,11 @@ for t in $targets; do
   esac
 done
 
-# rejects TARGET VALUE WANT：退出码非 0，输出含 WANT。WANT 取守卫独有的文字：空值那条带 "e.g." 后缀，
-# 脚本自己的空值报错（docker-readback.sh、docker-smoke.sh 的 ${VERSION:?…}）没有它，守卫被删时这一行才会红；
-# 守卫打印后立即退出，而守卫是配方第一行（上面已核对）；绊线文件为空另外证明配方的其余部分没有执行。
+# rejects TARGET VALUE WANT：退出码非 0，输出含 WANT，且第一行就是守卫的报错（shell 层以 "VERSION " 开头，
+# make 层是 "*** VERSION"）。要看第一行：守卫是配方第一行、打印后立即退出，它之前不会有任何输出；守卫被删
+# 时第一行是 make 回显的下一条配方（docker-push 递归的 make docker 之后会再打印同样的守卫文字，但已不在
+# 第一行），所以只凭"输出含 WANT"钉不住守卫。带换行的值会把守卫的报错拆成两行，WANT 因此不限定在第一行。
+# 绊线文件为空证明 docker、go、pnpm、gh 一次都没被调用。
 rejects() {
   rc=0
   MAKE "$1" "VERSION=$2" > "$work/out" 2>&1 || rc=$?
@@ -59,6 +61,8 @@ rejects() {
     bad "make $1 accepted VERSION '$2'"
   elif ! grep -qF -- "$3" "$work/out"; then
     bad "make $1 with VERSION '$2' did not fail on the version check (want '$3')"
+  elif ! sed -n 1p "$work/out" | grep -q '^VERSION \|\*\*\* VERSION'; then
+    bad "make $1 with VERSION '$2' ran past the version check before failing"
   fi
 }
 
