@@ -56,7 +56,7 @@ script-test:
 web-test: web-install
 	pnpm --dir web exec vitest run
 
-# 产物落在 internal/hub/web/dist 供 go:embed；不入库，缺产物时 hub 也能编译并给出说明页。
+# 两个入口的产物落在 internal/hub/web/dist（面板）与 dist-public（公开页）供 go:embed；不入库，缺产物时 hub 也能编译并给出说明页。
 web: web-install
 	pnpm --dir web run build
 
