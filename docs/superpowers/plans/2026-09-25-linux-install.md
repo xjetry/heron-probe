@@ -1330,3 +1330,9 @@ cd /Users/xjetry/work/vibe/probe-install && git add proto internal cmd gen web &
   - HTTP 服务用 `exec` 拉起，开跑前核对应答的是本轮 `mktemp` 目录名写成的 run-id（孤儿 `http.server` 曾占着端口让注入假绿；install.sh 在 deploy/ 未改时各轮逐字相同，比对它区分不了新旧服务）；hub 必须在本进程日志里打出监听行。
   - 新增 `--only DISTRO-ARCH`（可重复，默认行为不变），单格注入与分段运行用；`--only` 时每格多留 1 个窗口名额，无条件注册的注入才能走到节点数断言。
   - 矩阵结果（分支变基到 main 之前跑，install.sh 已含停服务确认与属主修复）：一级四格、二级四格全部通过；Rocky amd64 首次创建报 "machine didn't start in 30s"，立即重试通过。变基到含 API token、测试等待与投递类别的 main 后复验 Debian arm64、Alpine arm64 两格通过。
+- **面板安装命令与落后标记（Task 8）**：
+  - 上文只测到 api 层回填 `hub_version`；删掉 serve.go 的传值时那条测试仍绿，所以真实 serve 的集成用例也断言快照里的版本。
+  - 节点页取不到快照时不再静默：列表照常、不标记，并显示横幅；从未取到时写落后标记不可用，取到过而刷新失败时写按上次取得的版本判断。节点页测试用默认返回成功快照的共享渲染辅助。
+  - 落后判定按 semver 2.0 优先级（`web/src/lib/version.ts`）：三段数值、正式版高于预发布、预发布按点分标识符逐段比、构建元数据不参与、任一方不合 semver（含前导 0）不标。上文的正则忽略预发布后缀，而且解析不了带构建元数据的版本。
+  - `hubVersion` 为空串（装配时没传）与 `dev` 同样按非正式版本处理，两页各有用例。
+  - spec §5.4 的 `--site-url` 已删：安装命令的 hub 地址由面板取浏览器 origin（§10），hub 不生成对外地址。
