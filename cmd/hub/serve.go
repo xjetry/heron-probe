@@ -133,7 +133,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	if err := notifier.Requeue(ctx); err != nil {
 		return err
 	}
-	admin := api.New(api.Config{TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
+	admin := api.New(api.Config{TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
 
 	mux := newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", web.RootRedirect()))
 	listener, err := net.Listen("tcp", *listen)

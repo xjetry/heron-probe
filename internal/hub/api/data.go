@@ -26,7 +26,7 @@ func (s *Service) GetSnapshot(ctx context.Context, _ *connect.Request[probev1.Ge
 		s.log.Error("listing nodes failed", "err", err)
 		return nil, internalError("listing nodes failed")
 	}
-	out := &probev1.GetSnapshotResponse{Now: s.clk.Now().Unix(), ReportIntervalMs: uint32(s.cfg.ReportInterval / time.Millisecond)}
+	out := &probev1.GetSnapshotResponse{Now: s.clk.Now().Unix(), ReportIntervalMs: uint32(s.cfg.ReportInterval / time.Millisecond), HubVersion: s.cfg.HubVersion}
 	for _, n := range nodes {
 		st := &probev1.NodeStatus{Id: n.ID, Name: n.Name, Traffic: trafficProto(s.traffic.View(n.ID))}
 		if e, ok := s.live.Get(n.ID); ok {

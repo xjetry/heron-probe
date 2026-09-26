@@ -77,7 +77,7 @@ func newHarness(t *testing.T, trusted string) *harness {
 	if err := errors.Join(a.Load(ctx), in.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}
-	svc := New(Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes}, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
+	svc := New(Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version"}, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
 	mux := http.NewServeMux()
 	mux.Handle(in.Handler())
 	mux.Handle(svc.Handler())
@@ -426,6 +426,18 @@ func TestRegisterWindowLifecycle(t *testing.T) {
 	h.clk.Advance(time.Hour)
 	if got, _ = h.admin.GetRegisterWindow(ctx, connect.NewRequest(&probev1.GetRegisterWindowRequest{})); got.Msg.GetOpen() {
 		t.Fatal("expired window reported open")
+	}
+}
+
+func TestGetSnapshotReportsHubVersion(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	resp, err := h.admin.GetSnapshot(context.Background(), connect.NewRequest(&probev1.GetSnapshotRequest{}))
+	if err != nil {
+		t.Fatalf("GetSnapshot: %v", err)
+	}
+	if resp.Msg.HubVersion != "test-hub-version" {
+		t.Fatalf("want hub_version test-hub-version, got %q", resp.Msg.HubVersion)
 	}
 }
 

@@ -41,6 +41,9 @@ type Config struct {
 	// ReportInterval 是 agent 的正常上报间隔，客户端据此选择轮询节奏。
 	ReportInterval time.Duration
 	TrustedProxies []netip.Prefix
+	// HubVersion 原样经 GetSnapshotResponse.hub_version 下发。空串（装配时没传）与 dev 一样
+	// 被面板当作非正式版本：给出 latest 安装命令、不标落后节点。
+	HubVersion string
 }
 
 // NodeState 是节点在进程内的状态持有者；删除节点后由它清理。用接口而不直接依赖

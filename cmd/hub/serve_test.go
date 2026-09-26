@@ -137,6 +137,9 @@ func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
 	if snap.Msg.ReportIntervalMs != 15000 || len(snap.Msg.Nodes) != 1 || !snap.Msg.Nodes[0].Online {
 		t.Fatalf("serve did not share interval/live state: %v", snap.Msg)
 	}
+	if snap.Msg.HubVersion != version || version == "" {
+		t.Fatalf("serve reports hub_version %q, want the build version %q", snap.Msg.HubVersion, version)
+	}
 	var notice bytes.Buffer
 	if err := runPasswdWith([]string{"--db", db}, pipeWith(t, newPassword+"\n"), &notice); err != nil {
 		t.Fatal(err)

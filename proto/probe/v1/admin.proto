@@ -256,6 +256,9 @@ message GetSnapshotResponse {
   // hub 下发给 agent 的上报间隔；实时状态不会比它更新得更快。
   uint32 report_interval_ms = 2;
   repeated NodeStatus nodes = 3;
+  // hub 构建版本（release 经 ldflags 注入，未注入为 dev）：面板据此生成与 hub
+  // 同版本的安装命令，并标出 agent 版本落后的节点。
+  string hub_version = 4;
 }
 
 message NodeStatus {

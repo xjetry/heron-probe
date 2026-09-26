@@ -1409,8 +1409,11 @@ type GetSnapshotResponse struct {
 	// hub 下发给 agent 的上报间隔；实时状态不会比它更新得更快。
 	ReportIntervalMs uint32        `protobuf:"varint,2,opt,name=report_interval_ms,json=reportIntervalMs,proto3" json:"report_interval_ms,omitempty"`
 	Nodes            []*NodeStatus `protobuf:"bytes,3,rep,name=nodes,proto3" json:"nodes,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// hub 构建版本（release 经 ldflags 注入，未注入为 dev）：面板据此生成与 hub
+	// 同版本的安装命令，并标出 agent 版本落后的节点。
+	HubVersion    string `protobuf:"bytes,4,opt,name=hub_version,json=hubVersion,proto3" json:"hub_version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetSnapshotResponse) Reset() {
@@ -1462,6 +1465,13 @@ func (x *GetSnapshotResponse) GetNodes() []*NodeStatus {
 		return x.Nodes
 	}
 	return nil
+}
+
+func (x *GetSnapshotResponse) GetHubVersion() string {
+	if x != nil {
+		return x.HubVersion
+	}
+	return ""
 }
 
 type NodeStatus struct {
@@ -4826,11 +4836,13 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\n" +
 	"expires_at\x18\x02 \x01(\x03R\texpiresAt\x12\x1c\n" +
 	"\tremaining\x18\x03 \x01(\rR\tremaining\"\x14\n" +
-	"\x12GetSnapshotRequest\"\x81\x01\n" +
+	"\x12GetSnapshotRequest\"\xa2\x01\n" +
 	"\x13GetSnapshotResponse\x12\x10\n" +
 	"\x03now\x18\x01 \x01(\x03R\x03now\x12,\n" +
 	"\x12report_interval_ms\x18\x02 \x01(\rR\x10reportIntervalMs\x12*\n" +
-	"\x05nodes\x18\x03 \x03(\v2\x14.probe.v1.NodeStatusR\x05nodes\"\xda\x01\n" +
+	"\x05nodes\x18\x03 \x03(\v2\x14.probe.v1.NodeStatusR\x05nodes\x12\x1f\n" +
+	"\vhub_version\x18\x04 \x01(\tR\n" +
+	"hubVersion\"\xda\x01\n" +
 	"\n" +
 	"NodeStatus\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
