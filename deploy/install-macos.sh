@@ -271,7 +271,12 @@ for f in probe-agent "$LABEL.plist"; do
 done
 mkdir -p "$(dirname "$BIN")"
 install -m 0755 "$work/probe-agent" "$BIN_TMP"
-# 停服务之后还会中止脚本的前置条件，都在这里先核完：检查失败时旧服务照常运行，机器上不留停掉的服务。
+# 停服务之前完成全部可能失败的操作：任何一步失败时旧服务照常运行，机器上不留停掉的服务。注册可能因 hub
+# 不可达失败；对服务用户自己的文件 chown、chmod 也可能失败：文件带 uchg 标志时，本机以属主身份实测 chmod
+# 报 Operation not permitted，以 root 执行时是否同样被拦本机验证不了（chflags(2) 只写 "may not be changed"）。
+# 停服务之后只剩替换二进制、写 plist、bootstrap。这些操作都不需要服务停下：agent 只在启动时读一次配置
+# （cmd/agent 的 run 只调用 LoadConfig），日志写在 launchd 已打开的 fd 上，改属主、权限、ACL 不影响它们。
+#
 # 后面以 root 对两个日志文件 chown、chmod；它们若是链接（符号链接或硬链接），就会改到另一个名字所指的文件。
 # 三步的顺序承载这一点：
 # 1. 日志目录若已存在必须是真目录：它在 root 属主的 /Library/Logs 下，服务用户换不掉这个目录项；下一步的
@@ -303,15 +308,28 @@ for f in "$LOG_DIR/probe-agent.log" "$LOG_DIR/probe-agent.err"; do
     fi
   fi
 done
-stop_service
-# 同目录 rename 原子替换目录项：launchd 执行 $BIN 时看到的始终是完整的旧文件或完整的新文件。
-mv -f "$BIN_TMP" "$BIN"
+
+# 日志目录属 root:wheel、0755、没有 ACL（上面已设好）：服务用户不能在其中增删条目，日志路径换不成链接，
+# launchd 不论以哪个身份打开 StandardOutPath/StandardErrorPath 都不会被引到别处。安全性由目录属主承载，
+# 不依赖 launchd 的打开身份。
+# 两个日志文件每次安装都建好并交给服务用户（0640）：以服务用户身份打开时可写，以 root 打开时也可写。
+# 残余：用户域作业实测，日志所在目录对作业用户不可写且文件不存在时，launchd 建不出文件，作业以 78（EX_CONFIG）
+# 退出。所以文件被删后，若 launchd 以服务用户身份打开，作业会反复以 EX_CONFIG 退出，直到重跑本脚本把文件
+# 建回来。这是健壮性问题，不是安全问题；launchd 实际以哪个身份打开由 README 真机核对第 12 条记录。
+# 这里操作的条目就是上面检查过的那两个：目录那时已属 root 且没有 ACL，之后只有 root 能增删其中的条目。
+for f in "$LOG_DIR/probe-agent.log" "$LOG_DIR/probe-agent.err"; do
+  [ -e "$f" ] || : > "$f"
+  chown "$SVC_USER:$SVC_USER" "$f"
+  chmod 0640 "$f"
+  chmod -N "$f"
+done
 
 if [ ! -f "$CFG" ]; then
   # 注册只在没有配置时发生；配置落盘后重跑不再注册，所以注册之后的步骤失败时，重跑不会多耗窗口名额。
+  # 用还没换上的新二进制注册：注册可能失败（hub 不可达、key 失效），必须在停服务之前。
   set -- register --hub "$HUB" --key "$KEY" --config "$CFG"
   if [ -n "$NAME" ]; then set -- "$@" --name "$NAME"; fi
-  "$BIN" "$@" </dev/null
+  "$BIN_TMP" "$@" </dev/null
 else
   if [ -n "$KEY" ]; then echo "existing config found; keeping the current registration (--key ignored)"; fi
   if [ -n "$NAME" ]; then echo "existing config found; --name ignored"; fi
@@ -328,20 +346,9 @@ chown "$SVC_USER:$SVC_USER" "$CFG"
 chmod 0600 "$CFG"
 chmod -N "$CFG"
 
-# 日志目录属 root:wheel、0755（停服务之前已设好）：服务用户不能在其中增删条目，日志路径换不成链接，
-# launchd 不论以哪个身份打开 StandardOutPath/StandardErrorPath 都不会被引到别处。安全性由目录属主承载，
-# 不依赖 launchd 的打开身份。
-# 两个日志文件每次安装都建好并交给服务用户（0640）：以服务用户身份打开时可写，以 root 打开时也可写。
-# 残余：用户域作业实测，日志所在目录对作业用户不可写且文件不存在时，launchd 建不出文件，作业以 78（EX_CONFIG）
-# 退出。所以文件被删后，若 launchd 以服务用户身份打开，作业会反复以 EX_CONFIG 退出，直到重跑本脚本把文件
-# 建回来。这是健壮性问题，不是安全问题；launchd 实际以哪个身份打开由 README 真机核对第 12 条记录。
-# 这里操作的条目就是停服务之前检查过的那两个：目录那时已属 root，之后只有 root 能增删其中的条目。
-for f in "$LOG_DIR/probe-agent.log" "$LOG_DIR/probe-agent.err"; do
-  [ -e "$f" ] || : > "$f"
-  chown "$SVC_USER:$SVC_USER" "$f"
-  chmod 0640 "$f"
-  chmod -N "$f"
-done
+stop_service
+# 同目录 rename 原子替换目录项：launchd 执行 $BIN 时看到的始终是完整的旧文件或完整的新文件。
+mv -f "$BIN_TMP" "$BIN"
 
 # plist 每次覆盖，改动随升级下发。它决定以什么身份运行什么程序，只能由 root 改：root:wheel、0644。
 # enable 清掉可能残留的禁用覆盖（launchctl disable 跨重启有效），与 systemctl enable 同位。

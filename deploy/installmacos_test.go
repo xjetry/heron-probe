@@ -135,6 +135,10 @@ d=$PROBE_INSTALL_ROOT/Library/Logs/probe-agent
 if [ -n "${STUB_SWAP_LOG-}" ] && [ "$1" = root:wheel ] && [ "$2" = "$d" ]; then
   rm -f "$d/probe-agent.log"; ln "$STUB_SWAP_LOG" "$d/probe-agent.log"
 fi
+# STUB_CHOWN_FAILS 是一个路径：对它 chown 时像文件带了不可变标志那样失败。
+if [ -n "${STUB_CHOWN_FAILS-}" ] && [ "$2" = "$STUB_CHOWN_FAILS" ]; then
+  echo "chown: $2: Operation not permitted" >&2; exit 1
+fi
 `,
 	"sleep": `#!/bin/sh
 echo "sleep $*" >> "$STUB_STATE/calls"
@@ -160,6 +164,7 @@ const fakeAgent = `#!/bin/sh
 cat > /dev/null
 echo "probe-agent $*" >> "$STUB_STATE/calls"
 [ "$1" = register ] || exit 0
+[ -z "${STUB_REGISTER_FAILS-}" ] || { echo "register: hub unreachable" >&2; exit 1; }
 while [ $# -gt 0 ]; do [ "$1" = --config ] && cfg=$2; shift; done
 mkdir -p "$(dirname "$cfg")"
 echo '{"hub":"h","token":"t"}' > "$cfg"
@@ -341,6 +346,10 @@ func TestFreshInstallFromStdin(t *testing.T) {
 	if reg < 0 || boot < reg || index(c, "launchctl bootout") >= 0 {
 		t.Fatalf("register before bootstrap and no bootout on a fresh host, got %q", c)
 	}
+	// 注册在停服务（它的第一步是 launchctl print）之前：注册失败时不留下停掉的服务。
+	if stop := index(c, "launchctl print system/xyz.probe.agent"); stop < reg {
+		t.Fatalf("register must precede stopping the service, got %q", c)
+	}
 	for _, want := range []string{
 		"chown root:_probe-agent " + e.root + "/etc/probe-agent",
 		"chown _probe-agent:_probe-agent " + e.root + "/etc/probe-agent/config.json",
@@ -452,8 +461,17 @@ func TestOwnershipIsRestoredOnEveryInstall(t *testing.T) {
 	}
 	// 每个按数字模式设权限的对象都去掉 ACL：数字 chmod 与 chown 都不动 ACL。
 	for _, rel := range []string{"etc/probe-agent", "etc/probe-agent/config.json", "Library/Logs/probe-agent/probe-agent.log", "Library/Logs/probe-agent/probe-agent.err"} {
-		if i := index(c, "chmod -N "+e.root+"/"+rel); i < 0 || i > boot {
-			t.Errorf("rerun: missing chmod -N %s before bootstrap, calls %q", rel, c)
+		if i := index(c, "chmod -N "+e.root+"/"+rel); i < 0 || i > out {
+			t.Errorf("rerun: missing chmod -N %s before bootout, calls %q", rel, c)
+		}
+	}
+	// 可能失败的操作都在停服务之前：失败时旧服务照常运行。停服务之后只剩替换二进制、写 plist、bootstrap，
+	// bootout 与 bootstrap 之间的 chown、chmod 只作用于 plist。
+	for _, call := range c[out+1 : boot] {
+		for _, p := range []string{"chown ", "chmod ", "find ", "probe-agent "} {
+			if strings.HasPrefix(call, p) && !strings.HasSuffix(call, "/Library/LaunchDaemons/xyz.probe.agent.plist") {
+				t.Errorf("rerun: %q runs after the service is stopped", call)
+			}
 		}
 	}
 	for _, want := range []string{
@@ -462,8 +480,8 @@ func TestOwnershipIsRestoredOnEveryInstall(t *testing.T) {
 		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent/probe-agent.log",
 		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent/probe-agent.err",
 	} {
-		if i := index(c, want); i < out || i > boot {
-			t.Errorf("rerun: %q must run between bootout and bootstrap, calls %q", want, c)
+		if i := index(c, want); i < 0 || i > out {
+			t.Errorf("rerun: %q must run before bootout, calls %q", want, c)
 		}
 	}
 	e.mode("etc/probe-agent", 0o750)
@@ -885,4 +903,47 @@ func hasACL(t *testing.T, path string) bool {
 		t.Fatalf("ls -lde %s: %v", path, err)
 	}
 	return len(strings.Split(strings.TrimSpace(string(out)), "\n")) > 1
+}
+
+// 日志文件或配置 chown 失败（服务用户给自己的文件设了不可变标志之类），或者配置丢了、重新注册失败：
+// 都在停服务之前失败，旧服务照常运行、二进制不被替换。
+func TestFailuresBeforeStoppingLeaveTheServiceRunning(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		vars func(root string) []string
+		prep func(root string)
+		want string
+	}{
+		{"log file chown", func(root string) []string {
+			return []string{"STUB_CHOWN_FAILS=" + root + "/Library/Logs/probe-agent/probe-agent.err"}
+		}, nil, "probe-agent.err: Operation not permitted"},
+		{"config chown", func(root string) []string {
+			return []string{"STUB_CHOWN_FAILS=" + root + "/etc/probe-agent/config.json"}
+		}, nil, "config.json: Operation not permitted"},
+		{"re-register", func(string) []string { return []string{"STUB_REGISTER_FAILS=1"} }, func(root string) {
+			os.Remove(filepath.Join(root, "etc/probe-agent/config.json"))
+		}, "register: hub unreachable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t)
+			if out, code := e.install(); code != 0 {
+				t.Fatalf("first install exit %d:\n%s", code, out)
+			}
+			if tc.prep != nil {
+				tc.prep(e.root)
+			}
+			e.release("arm64", "v2")
+			e.vars = tc.vars(e.root)
+			e.resetCalls()
+			out, code := e.install()
+			if code == 0 || !strings.Contains(out, tc.want) {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			if index(e.calls(), "launchctl bootout") >= 0 || !strings.Contains(e.file("usr/local/bin/probe-agent"), "# v1 arm64") {
+				t.Fatalf("the running service must be left alone: calls %q", e.calls())
+			}
+		})
+	}
 }
