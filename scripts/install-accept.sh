@@ -265,8 +265,9 @@ run_cell() {
   before=$(jq '[.nodes[] | select(.name | startswith("'"$name"'"))] | length' "$work/ListNodes.json")
   orb -m "$name" -u root sh -c "$fetch_b" \
     > "$work/fetchb-$name.log" 2>&1 || { echo "FAIL($name): fetch rerun install.sh"; exit 1; }
-  # 手工 register 以 root 重写配置，文件属主回到 root。重跑必须改回来，节点仍在线。
+  # 手工 register 以 root 重写配置，文件属主回到 root；人工编辑留下 0644。重跑必须都改回来，节点仍在线。
   orb -m "$name" -u root chown root:root /etc/probe-agent/config.json
+  orb -m "$name" -u root chmod 0644 /etc/probe-agent/config.json
   orb -m "$name" -u root sh /root/install.sh --hub "http://$HOST:$HUB_PORT" --key "$key" --base-url "http://$HOST:$DIST_PORT/b" \
     > "$work/rerun-$name.log" 2>&1 || { echo "FAIL($name): rerun"; tail -20 "$work/rerun-$name.log"; exit 1; }
   grep -q 'keeping the current registration' "$work/rerun-$name.log" || { echo "FAIL($name): rerun did not keep registration"; exit 1; }

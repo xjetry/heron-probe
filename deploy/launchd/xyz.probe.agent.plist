@@ -11,19 +11,22 @@
 		<string>--config</string>
 		<string>/etc/probe-agent/config.json</string>
 	</array>
-	<!-- 安装脚本按有效 uid 确认服务进程已停与已起，前提是本服务的每个进程都以这个专用账户运行。
-	     改用别的身份运行任何进程时，deploy/install-macos.sh 的判据要一起改。 -->
+	<!-- 安装脚本按"有效 uid 为这个专用账户且可执行路径为 ProgramArguments[0]"确认服务进程已停与已起，
+	     前提是本服务的每个进程都以这个账户、从这个路径运行。改身份或改程序路径时，deploy/install-macos.sh 的判据要一起改。 -->
 	<key>UserName</key>
 	<string>_probe-agent</string>
 	<key>GroupName</key>
 	<string>_probe-agent</string>
-	<!-- 连不上 hub 时 agent 在进程内退避重试（上限为 TTL）而不退出；进程只在启动失败或崩溃时退出。
-	     KeepAlive 无条件拉起，ThrottleInterval 把间隔定为 5 秒，与 Linux 两种 init 的无限次、每次 5 秒一致。 -->
+	<!-- 连不上 hub 时 agent 在进程内退避重试（上限为 TTL）而不退出，launchd 不参与。
+	     KeepAlive 为 true 时任何退出都会被拉起，含收到 SIGTERM 后的 0 退出（与 Linux 的 Restart=on-failure 不同），
+	     launchd 不设次数上限：监控 agent 只该由 bootout 停下。ThrottleInterval 是两次拉起之间的最小间隔
+	     （launchd.plist(5)），从上一次拉起算：跑满 5 秒后退出会立即拉起，秒退的进程每 5 秒拉起一次，与 Linux 的重启间隔同量级。 -->
 	<key>KeepAlive</key>
 	<true/>
 	<key>ThrottleInterval</key>
 	<integer>5</integer>
-	<!-- 文件不存在时 launchd 以 UserName/GroupName 的属主创建（launchd.plist(5)）；目录由安装脚本建、属 root。 -->
+	<!-- 日志目录属 root，两个文件由安装脚本事先建好并交给服务用户：用户域作业实测，目录对作业用户不可写时
+	     launchd 建不出这两个文件、作业以 EX_CONFIG 退出（deploy/install-macos.sh 的日志一段）。 -->
 	<key>StandardOutPath</key>
 	<string>/Library/Logs/probe-agent/probe-agent.log</string>
 	<key>StandardErrorPath</key>

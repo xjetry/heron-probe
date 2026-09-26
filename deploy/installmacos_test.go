@@ -18,8 +18,10 @@ import (
 
 const svcUser = "_probe-agent"
 
-// 替身共用的状态目录：users/<名> 存 "uid gid"，groups/<名> 存 "gid"，procs 每行 "uid pid"，
+// 替身共用的状态目录：users/<名> 存 "uid gid"，groups/<名> 存 "gid"，procs 每行 "uid pid comm"，
 // loaded 表示作业已载入，calls 按调用顺序记下每个替身收到的参数。
+// launchd 起的 agent 的 comm 是 plist 的 ProgramArguments[0]；STUB_HELPER 另起一个同 uid 的 cfprefsd，
+// 它不属于作业，bootout 不带走它（launchd 按 uid 派生的辅助进程就是这样）。
 // dscl、launchctl 与假 agent 读尽 stdin：脚本以 sh -s 从 stdin 运行，
 // 漏掉 </dev/null 的调用会吞掉脚本余下部分，安装在中途无声结束，测试看不到最后一行。
 var stubs = map[string]string{
@@ -28,6 +30,8 @@ S=$STUB_STATE
 if [ "$#" = 1 ] && [ "$1" = -u ]; then echo "${STUB_UID:-0}"; exit 0; fi
 flag=""; [ "$#" = 2 ] && { flag=$1; shift; }
 f="$S/users/$1"
+# remote-users 是解析得到、但不在本地节点里的账户（别的目录节点的同名账户，或陈旧的缓存）。
+[ -f "$f" ] || f="$S/remote-users/$1"
 [ -f "$f" ] || { echo "id: $1: no such user" >&2; exit 1; }
 read -r uid gid < "$f"
 case "$flag" in
@@ -51,11 +55,12 @@ op=$2; path=$3; key=${4-}; val=${5-}
 kind=${path#/}; kind=${kind%%/*}; name=${path##*/}
 case "$op" in
   -list)
+    [ -z "${STUB_DSCL_LIST_FAILS-}" ] || { echo "list failed" >&2; exit 71; }
     cat "$S/sys-$kind" 2>/dev/null
     for f in "$S/$(echo "$kind" | tr 'UG' 'ug')"/*; do
       [ -f "$f" ] || continue
       read -r a b < "$f"
-      if [ "$key" = UniqueID ]; then echo "$(basename "$f") $a"; else echo "$(basename "$f") $a"; fi
+      echo "$(basename "$f") $a"
     done;;
   -read)
     f="$S/$(echo "$kind" | tr 'UG' 'ug')/$name"
@@ -68,7 +73,9 @@ case "$op" in
       Users/PrimaryGroupID) [ -f "$S/users/$name" ] && { read -r u g < "$S/users/$name"; echo "$u $val" > "$S/users/$name"; };;
     esac;;
   -delete)
-    [ -n "${STUB_DSCL_KEEP-}" ] || rm -f "$S/$(echo "$kind" | tr 'UG' 'ug')/$name";;
+    f="$S/$(echo "$kind" | tr 'UG' 'ug')/$name"
+    [ -f "$f" ] || { echo "<main> delete status: eDSRecordNotFound" >&2; exit 56; }
+    [ -n "${STUB_DSCL_KEEP-}" ] || rm -f "$f";;
 esac
 exit 0
 `,
@@ -81,27 +88,30 @@ case "$1" in
   bootout)
     [ -f "$S/loaded" ] || { echo "Boot-out failed: 3: No such process" >&2; exit 3; }
     rm -f "$S/loaded"
-    [ -n "${STUB_BOOTOUT_LEAVES_PROCESS-}" ] || : > "$S/procs"
+    if [ -z "${STUB_BOOTOUT_LEAVES_PROCESS-}" ]; then
+      grep -v ' /usr/local/bin/probe-agent$' "$S/procs" > "$S/procs.new"; mv "$S/procs.new" "$S/procs"
+    fi
     exit 0;;
   enable) exit 0;;
   bootstrap)
     [ -f "$3" ] || { echo "Bootstrap failed: 2: No such file or directory" >&2; exit 5; }
     cp "$3" "$S/bootstrapped.plist"
     : > "$S/loaded"
-    [ -n "${STUB_START_FAILS-}" ] && exit 0
     read -r uid gid < "$S/users/_probe-agent"
-    echo "$uid 4242" >> "$S/procs"
+    [ -z "${STUB_HELPER-}" ] || grep -q ' 999 ' "$S/procs" || echo "$uid 999 /usr/libexec/cfprefsd" >> "$S/procs"
+    [ -n "${STUB_START_FAILS-}" ] && exit 0
+    echo "$uid 4242 /usr/local/bin/probe-agent" >> "$S/procs"
     exit 0;;
 esac
 exit 64
 `,
 	"ps": `#!/bin/sh
 S=$STUB_STATE
-[ "$*" = "-axo uid=,pid=" ] || { echo "unexpected ps $*" >&2; exit 64; }
-echo "    0     1"
-echo "  501   777"
+[ "$*" = "-axo uid=,pid=,comm=" ] || { echo "unexpected ps $*" >&2; exit 64; }
+echo "    0     1 /sbin/launchd"
+echo "  501   777 /Applications/Some App.app/Contents/MacOS/Some App"
 if [ -n "${STUB_RESPAWN-}" ] && [ -s "$S/procs" ]; then
-  awk '{ print $1, $2 + 1 }' "$S/procs" > "$S/procs.new" && mv "$S/procs.new" "$S/procs"
+  awk '$3 == "/usr/local/bin/probe-agent" { $2 = $2 + 1 } { print }' "$S/procs" > "$S/procs.new" && mv "$S/procs.new" "$S/procs"
 fi
 cat "$S/procs" 2>/dev/null
 exit 0
@@ -156,9 +166,10 @@ func newEnv(t *testing.T) *env {
 			t.Fatal(err)
 		}
 	}
-	// 300–302 已被占用，空闲号应是 303；系统账户不在替身状态里，只出现在 -list 的输出中。
-	e.write("sys-Users", "_taken1 300\n_taken3 302\n")
-	e.write("sys-Groups", "_taken2 301\n")
+	// Apple 的系统账户从 300 往上连号占用（macOS 26.3.1 本机到 308），两个命名空间合起来占满 300–308；
+	// 取号从 499 往下，不取紧挨着的 309。系统账户不在替身状态里，只出现在 -list 的输出中。
+	e.write("sys-Users", "_taken300 300\n_taken302 302\n_taken304 304\n_taken306 306\n_taken308 308\n")
+	e.write("sys-Groups", "_taken301 301\n_taken303 303\n_taken305 305\n_taken307 307\n")
 	e.write("calls", "")
 	e.write("procs", "")
 	e.release("arm64", "v1")
@@ -286,9 +297,9 @@ func TestFreshInstallFromStdin(t *testing.T) {
 		t.Fatalf("exit %d, want the final line %q:\n%s", code, done, out)
 	}
 	c := e.calls()
-	// 空闲号 303 同时给组与用户；组先于用户建。
-	if g, u := index(c, "dscl . -create /Groups/_probe-agent PrimaryGroupID 303"), index(c, "dscl . -create /Users/_probe-agent UniqueID 303"); g < 0 || u < g {
-		t.Fatalf("group then user with id 303, got %q", c)
+	// 从 499 往下的第一个空闲号同时给组与用户，不取 Apple 追加前沿上的 309；组先于用户建。
+	if g, u := index(c, "dscl . -create /Groups/_probe-agent PrimaryGroupID 499"), index(c, "dscl . -create /Users/_probe-agent UniqueID 499"); g < 0 || u < g {
+		t.Fatalf("group then user with id 499, got %q", c)
 	}
 	reg := index(c, "probe-agent register --hub http://hub.test --key k --config "+e.root+"/etc/probe-agent/config.json --name mac-1")
 	boot := index(c, "launchctl bootstrap system "+e.root+"/Library/LaunchDaemons/xyz.probe.agent.plist")
@@ -299,6 +310,9 @@ func TestFreshInstallFromStdin(t *testing.T) {
 		"chown root:_probe-agent " + e.root + "/etc/probe-agent",
 		"chown _probe-agent:_probe-agent " + e.root + "/etc/probe-agent/config.json",
 		"chown root:wheel " + e.root + "/Library/LaunchDaemons/xyz.probe.agent.plist",
+		"chown root:wheel " + e.root + "/Library/Logs/probe-agent",
+		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent/probe-agent.log",
+		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent/probe-agent.err",
 		"launchctl enable system/xyz.probe.agent",
 	} {
 		if i := index(c, want); i < 0 || i > boot {
@@ -308,9 +322,140 @@ func TestFreshInstallFromStdin(t *testing.T) {
 	if !strings.Contains(e.file("usr/local/bin/probe-agent"), "# v1 arm64") {
 		t.Fatal("installed binary is not the arm64 package's")
 	}
-	st, err := os.Stat(filepath.Join(e.root, "etc/probe-agent"))
-	if err != nil || st.Mode().Perm() != 0o750 {
-		t.Fatalf("config dir mode %v, %v; want 0750", st.Mode(), err)
+	e.mode("etc/probe-agent", 0o750)
+	e.mode("etc/probe-agent/config.json", 0o600)
+	e.mode("Library/Logs/probe-agent", 0o755)
+	e.mode("Library/Logs/probe-agent/probe-agent.log", 0o640)
+	e.mode("Library/Logs/probe-agent/probe-agent.err", 0o640)
+}
+
+func (e *env) mode(rel string, want os.FileMode) {
+	e.t.Helper()
+	st, err := os.Lstat(filepath.Join(e.root, rel))
+	if err != nil || st.Mode().Perm() != want || !st.Mode().IsRegular() && !st.IsDir() {
+		e.t.Fatalf("%s: mode %v, %v; want %v", rel, st.Mode(), err, want)
+	}
+}
+
+// 499 只被用作 GID 也不能取：组与用户同号，要两个命名空间都空闲。
+func TestFreeIDMustBeFreeInBothNamespaces(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.write("sys-Groups", "_taken301 301\n_taken303 303\n_taken305 305\n_taken307 307\n_taken499 499\n")
+	if out, code := e.install(); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if c := e.calls(); index(c, "dscl . -create /Users/_probe-agent UniqueID 498") < 0 {
+		t.Fatalf("want id 498, got %q", c)
+	}
+}
+
+// 上次安装在建组之后、建用户之前中断：沿用已有的组，用户另取一个空闲号，不再建组。
+func TestExistingGroupWithoutUserIsReused(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.write("groups/_probe-agent", "310\n")
+	if out, code := e.install(); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	c := e.calls()
+	if index(c, "dscl . -create /Groups/") >= 0 {
+		t.Fatalf("the existing group must be reused, got %q", c)
+	}
+	if index(c, "dscl . -create /Users/_probe-agent PrimaryGroupID 310") < 0 || index(c, "dscl . -create /Users/_probe-agent UniqueID 499") < 0 {
+		t.Fatalf("user must join group 310 with a free id, got %q", c)
+	}
+}
+
+// 同名用户已在但主组不是同名组：plist 的 GroupName 与配置目录的组对不上，退出且不建组。
+func TestExistingUserWithWrongPrimaryGroupIsRefused(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.write("users/_probe-agent", "450 20\n")
+	e.write("groups/staff", "20\n")
+	out, code := e.install()
+	if code != 1 || !strings.Contains(out, "exists with primary group staff; expected _probe-agent") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if index(e.calls(), "dscl . -create") >= 0 || e.exists("usr/local/bin/probe-agent") {
+		t.Fatal("nothing may be created or downloaded")
+	}
+}
+
+// 配置与日志文件的属主、权限每次安装都设，不只在首次注册之后：手工重新注册以 root 重写配置、
+// 注册之后被打断、人工编辑改了权限，重跑都要修回来。
+func TestOwnershipIsRestoredOnEveryInstall(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	if out, code := e.install(); code != 0 {
+		t.Fatalf("first install exit %d:\n%s", code, out)
+	}
+	os.Chmod(filepath.Join(e.root, "etc/probe-agent"), 0o755)
+	os.Chmod(filepath.Join(e.root, "etc/probe-agent/config.json"), 0o644)
+	os.Chmod(filepath.Join(e.root, "Library/Logs/probe-agent/probe-agent.err"), 0o666)
+	e.resetCalls()
+	if out, code := e.install(); code != 0 {
+		t.Fatalf("rerun exit %d:\n%s", code, out)
+	}
+	c := e.calls()
+	if index(c, "probe-agent register") >= 0 {
+		t.Fatalf("rerun must not register: %q", c)
+	}
+	out, boot := index(c, "launchctl bootout"), index(c, "launchctl bootstrap")
+	for _, want := range []string{
+		"chown root:_probe-agent " + e.root + "/etc/probe-agent",
+		"chown _probe-agent:_probe-agent " + e.root + "/etc/probe-agent/config.json",
+		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent/probe-agent.err",
+	} {
+		if i := index(c, want); i < out || i > boot {
+			t.Errorf("rerun: %q must run between bootout and bootstrap, calls %q", want, c)
+		}
+	}
+	e.mode("etc/probe-agent", 0o750)
+	e.mode("etc/probe-agent/config.json", 0o600)
+	e.mode("Library/Logs/probe-agent/probe-agent.err", 0o640)
+}
+
+// 日志文件交给服务用户之前查它不是符号链接：root 不跟着链接去改别的文件的属主。
+func TestSymlinkedLogFileIsRefused(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	if out, code := e.install(); code != 0 {
+		t.Fatalf("first install exit %d:\n%s", code, out)
+	}
+	errLog := filepath.Join(e.root, "Library/Logs/probe-agent/probe-agent.err")
+	os.Remove(errLog)
+	os.Symlink(filepath.Join(e.root, "etc/probe-agent/config.json"), errLog)
+	out, code := e.install()
+	if code != 1 || !strings.Contains(out, "probe-agent.err is a symbolic link") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// launchd 以服务 uid 派生的辅助进程（cfprefsd、trustd……）不是本服务：按 uid 加可执行路径认进程，
+// 升级与卸载不会因为它们等满 10 秒后失败，也不会把它们当成已启动的 agent。
+func TestHelperProcessesOfTheServiceUserAreNotTheService(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.vars = []string{"STUB_HELPER=1"}
+	if out, code := e.install(); code != 0 || !strings.Contains(out, done) {
+		t.Fatalf("install exit %d:\n%s", code, out)
+	}
+	e.release("arm64", "v2")
+	if out, code := e.install(); code != 0 || !strings.Contains(out, done) {
+		t.Fatalf("upgrade with a helper process still running: exit %d:\n%s", code, out)
+	}
+	if out, code := e.run("--uninstall"); code != 0 {
+		t.Fatalf("uninstall with a helper process still running: exit %d:\n%s", code, out)
+	}
+}
+
+func TestHelperProcessDoesNotCountAsStarted(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.vars = []string{"STUB_HELPER=1", "STUB_START_FAILS=1"}
+	if out, code := e.install(); code != 1 || !strings.Contains(out, "probe-agent did not start") {
+		t.Fatalf("only a helper process running must not count as started: exit %d:\n%s", code, out)
 	}
 }
 
@@ -447,7 +592,7 @@ func TestLingeringProcessBlocksReplacement(t *testing.T) {
 	e.release("arm64", "v2")
 	e.vars = []string{"STUB_BOOTOUT_LEAVES_PROCESS=1"}
 	out, code := e.install()
-	if code != 1 || !strings.Contains(out, "probe-agent is still running: processes with uid 303 (_probe-agent): 4242") {
+	if code != 1 || !strings.Contains(out, "probe-agent is still running: processes with uid 499 (_probe-agent): 4242") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	if !strings.Contains(e.file("usr/local/bin/probe-agent"), "# v1 arm64") {
@@ -509,5 +654,47 @@ func TestRefusals(t *testing.T) {
 	}
 	if out, code := e.run("--hub"); code != 2 {
 		t.Fatalf("flag without value: exit %d:\n%s", code, out)
+	}
+}
+
+// 解析得到的同名用户不在本地节点里：不对本地节点发 -delete（它会以 eDSRecordNotFound 失败、
+// 脚本以 dscl 的退出码结束），回查仍能看到这个用户，由脚本自己报出删不掉。
+func TestPurgeDecidesDeletionFromTheLocalRecord(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	if err := os.MkdirAll(filepath.Join(e.state, "remote-users"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e.write("remote-users/_probe-agent", "480 480\n")
+	out, code := e.run("--uninstall", "--purge")
+	if code != 1 || !strings.Contains(out, "failed to delete user or group _probe-agent") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if index(e.calls(), "dscl . -delete /Users/_probe-agent") >= 0 {
+		t.Fatalf("no local record, no -delete: %q", e.calls())
+	}
+}
+
+// 目录服务读不出账户列表与号段耗尽是两回事，报错各说各的。
+func TestAccountFailuresNameTheirCause(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.vars = []string{"STUB_DSCL_LIST_FAILS=1"}
+	if out, code := e.install(); code != 1 || !strings.Contains(out, "cannot list user ids") || strings.Contains(out, "no free id") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	f := newEnv(t)
+	var b strings.Builder
+	for i := 300; i < 500; i++ {
+		fmt.Fprintf(&b, "_taken%d %d\n", i, i)
+	}
+	f.write("sys-Users", b.String())
+	if out, code := f.install(); code != 1 || !strings.Contains(out, "no free id in 300-499 for _probe-agent") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	g := newEnv(t)
+	g.write("groups/_probe-agent", "\n")
+	if out, code := g.install(); code != 1 || !strings.Contains(out, "group _probe-agent has no PrimaryGroupID") {
+		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }

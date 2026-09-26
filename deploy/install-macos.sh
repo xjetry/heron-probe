@@ -11,7 +11,9 @@ set -eu
 # 把它指向临时目录，连同 PATH 上的 dscl、launchctl、ps 等替身一起运行，不触碰真实系统路径。
 # 它只改变本脚本写文件的位置：plist 里的 ProgramArguments 与日志路径是固定的真实路径。
 ROOT=${PROBE_INSTALL_ROOT-}
-BIN=$ROOT/usr/local/bin/probe-agent
+# 服务进程的可执行路径，即 plist 的 ProgramArguments[0]；按它认进程，所以不带 ROOT 前缀。
+SVC_BIN=/usr/local/bin/probe-agent
+BIN=$ROOT$SVC_BIN
 CFG_DIR=$ROOT/etc/probe-agent
 CFG=$CFG_DIR/config.json
 LOG_DIR=$ROOT/Library/Logs/probe-agent
@@ -51,25 +53,31 @@ STOP_POLL_MAX=10
 START_POLL_INTERVAL=1
 START_POLL_MAX=10
 
-# 列出有效 uid 为 $1 的进程 pid（空格分隔，写入 svc_pids）。BSD ps 的 uid 列是有效 uid（ps(1)）。
-scan_uid_pids() {
-  procs=$(ps -axo uid=,pid=) || { echo "cannot list processes" >&2; return 1; }
-  svc_pids=$(printf '%s\n' "$procs" | awk -v u="$1" '$1 == u { printf " %s", $2 }')
+# 列出本服务的进程 pid（空格分隔，写入 svc_pids）：有效 uid 为 $1 且可执行路径为 $SVC_BIN。
+# BSD ps 的 uid 列是有效 uid（ps(1)）；comm 列是进程的 argv[0]（实测：不截断，文件被替换后不变），
+# launchd 作业的 argv[0] 是 plist 的 ProgramArguments[0]（用户域作业实测）。comm 里可能有空格，取前两列之后的整段比较。
+scan_svc_pids() {
+  procs=$(ps -axo uid=,pid=,comm=) || { echo "cannot list processes" >&2; return 1; }
+  svc_pids=$(printf '%s\n' "$procs" | awk -v u="$1" -v p="$SVC_BIN" '
+    { c = $0; sub(/^[ \t]*[0-9]+[ \t]+[0-9]+[ \t]+/, "", c) }
+    $1 == u && c == p { printf " %s", $2 }')
 }
 
-# 确认没有以服务用户身份运行的进程。它不看 launchd 报告的状态，也不依赖 plist 是否还在：
+# 确认没有本服务的进程。它不看 launchd 报告的状态，也不依赖 plist 是否还在：
 # plist 被手工删掉而进程仍在时也只有这一步抓得到。
-# 判据"有效 uid 等于服务用户的 uid"与"是本服务的进程"等价，两个方向各有担保：
-# - 以服务用户运行的进程都属于本服务：$SVC_USER 是专供 agent 的账户（登录 shell /usr/bin/false），由 create_account 建立。
-# - 本服务的每个进程都以服务用户运行：由 plist 的 UserName（deploy/launchd/xyz.probe.agent.plist）保证。
-#   plist 若改以其他身份运行任何进程，这里会漏查，必须同步改判据。
+# 判据"有效 uid 为服务用户且可执行路径为 $SVC_BIN"与"是本服务的进程"等价，两个方向各有担保：
+# - 选中的都是本服务的进程：$SVC_USER 是专供 agent 的账户（登录 shell /usr/bin/false），由 create_account 建立；
+#   launchd 会以该 uid 按需派生 cfprefsd、trustd 之类的辅助进程，只看 uid 会把它们算进来（升级、卸载误报仍在运行，
+#   秒退的 agent 被辅助进程顶替成"已启动"），可执行路径把它们排除。
+# - 本服务的每个进程都被选中：plist 的 UserName 与 ProgramArguments[0]（deploy/launchd/xyz.probe.agent.plist）
+#   保证，TestPlistAgreesWithScript 把两处钉在一起。plist 若改以别的身份或别的程序运行任何进程，这里会漏查，必须同步改判据。
 # 用户不存在时没有可比对的 uid，直接通过；此时查不到仍在运行的旧进程，与 Linux 脚本相同。
 confirm_service_stopped() {
   id "$SVC_USER" >/dev/null 2>&1 || return 0
   svc_uid=$(id -u "$SVC_USER")
   polls=0
   while :; do
-    scan_uid_pids "$svc_uid" || return 1
+    scan_svc_pids "$svc_uid" || return 1
     [ -n "$svc_pids" ] || return 0
     [ "$polls" -lt "$STOP_POLL_MAX" ] || break
     sleep "$STOP_POLL_INTERVAL"
@@ -80,7 +88,7 @@ confirm_service_stopped() {
 }
 
 # 启动之后确认服务进程活着：bootstrap 返回 0 只说明作业已载入，证明不了子进程没有秒退。
-# 先等到出现有效 uid 为服务用户的进程，记下 pid，3 秒后同一个 pid 仍在；
+# 先等到出现本服务的进程，记下 pid，3 秒后同一个 pid 仍在；
 # 秒退再被 KeepAlive 拉起会换成新 pid，不能算起来了。判据与 confirm_service_stopped 同一处。
 start_log_hint() { echo "see $LOG_DIR/probe-agent.err" >&2; }
 confirm_service_started() {
@@ -88,7 +96,7 @@ confirm_service_started() {
   polls=0
   pid=""
   while :; do
-    scan_uid_pids "$svc_uid" || return 1
+    scan_svc_pids "$svc_uid" || return 1
     if [ -n "$svc_pids" ]; then
       pid=${svc_pids# }
       pid=${pid%% *}
@@ -104,7 +112,7 @@ confirm_service_started() {
     return 1
   fi
   sleep 3
-  scan_uid_pids "$svc_uid" || return 1
+  scan_svc_pids "$svc_uid" || return 1
   case " $svc_pids " in
     *" $pid "*) return 0;;
   esac
@@ -125,10 +133,14 @@ stop_service() {
 }
 
 group_exists() { dscl . -read "/Groups/$SVC_USER" PrimaryGroupID >/dev/null 2>&1 </dev/null; }
+user_record_exists() { dscl . -read "/Users/$SVC_USER" UniqueID >/dev/null 2>&1 </dev/null; }
 
 # 用户与同名组都删并回查：不信 dscl 的退出码，也不能半成功还报成功。
+# 要不要发 dscl . -delete 看本地节点的记录，与这条命令操作的对象同一口径：id 的解析结果可能来自别的目录节点
+# 或陈旧的缓存，那时 -delete 以 eDSRecordNotFound 失败，脚本以 dscl 的退出码结束、说不出原因。
+# 回查仍用 id：chown 与 launchd 按名字取身份走的就是这条解析路径。
 delete_account() {
-  if id "$SVC_USER" >/dev/null 2>&1; then dscl . -delete "/Users/$SVC_USER" </dev/null; fi
+  if user_record_exists; then dscl . -delete "/Users/$SVC_USER" </dev/null; fi
   if group_exists; then dscl . -delete "/Groups/$SVC_USER" </dev/null; fi
   if id "$SVC_USER" >/dev/null 2>&1 || group_exists; then
     echo "failed to delete user or group $SVC_USER" >&2; exit 1
@@ -164,12 +176,15 @@ if [ ! -f "$CFG" ] && { [ -z "$HUB" ] || [ -z "$KEY" ]; }; then
   exit 2
 fi
 
-# 300–499 中同时未被用作 UniqueID 与 PrimaryGroupID 的最小值：低于 500 的账户不出现在登录窗口，
-# 两个命名空间都空闲的号可以让新建的组与用户同号。
+# 300–499 中同时未被用作 UniqueID 与 PrimaryGroupID 的最大值：低于 500 的账户不出现在登录窗口，
+# 两个命名空间都空闲的号可以让新建的组与用户同号。从上端往下取：Apple 的系统账户从 300 往上逐版追加
+# （macOS 26.3.1 已连号占到 308），升级会替换占着这些号的第三方账户（macOS 15 替换过占 301–304 的 _nixbld1–4）；
+# 从 499 取离这条前沿最远。低于 500 的号段没有留给第三方的保证，这只是把风险推到最远。
 free_id() {
-  uids=$(dscl . -list /Users UniqueID </dev/null) || return 1
-  gids=$(dscl . -list /Groups PrimaryGroupID </dev/null) || return 1
-  printf '%s\n%s\n' "$uids" "$gids" | awk '{ used[$2] = 1 } END { for (i = 300; i < 500; i++) if (!(i in used)) { print i; exit 0 } exit 1 }'
+  uids=$(dscl . -list /Users UniqueID </dev/null) || { echo "cannot list user ids" >&2; return 1; }
+  gids=$(dscl . -list /Groups PrimaryGroupID </dev/null) || { echo "cannot list group ids" >&2; return 1; }
+  printf '%s\n%s\n' "$uids" "$gids" | awk '{ used[$2] = 1 } END { for (i = 499; i >= 300; i--) if (!(i in used)) { print i; exit 0 } exit 1 }' ||
+    { echo "no free id in 300-499 for $SVC_USER" >&2; return 1; }
 }
 
 # 建用户排在下载与注册之前：它若失败，注册窗口的名额尚未消耗、旧服务尚未停止。
@@ -185,10 +200,12 @@ create_account() {
     return 0
   fi
   if group_exists; then
-    gid=$(dscl . -read "/Groups/$SVC_USER" PrimaryGroupID </dev/null | awk '{ print $2 }')
-    uid=$(free_id) || { echo "no free id in 300-499 for user $SVC_USER" >&2; exit 1; }
+    rec=$(dscl . -read "/Groups/$SVC_USER" PrimaryGroupID </dev/null) || { echo "cannot read group $SVC_USER" >&2; exit 1; }
+    gid=$(printf '%s\n' "$rec" | awk '$1 == "PrimaryGroupID:" { print $2 }')
+    [ -n "$gid" ] || { echo "group $SVC_USER has no PrimaryGroupID" >&2; exit 1; }
+    uid=$(free_id) || exit 1
   else
-    gid=$(free_id) || { echo "no free id in 300-499 for group $SVC_USER" >&2; exit 1; }
+    gid=$(free_id) || exit 1
     uid=$gid
     dscl . -create "/Groups/$SVC_USER" PrimaryGroupID "$gid" </dev/null
     dscl . -create "/Groups/$SVC_USER" RealName "probe agent" </dev/null
@@ -266,17 +283,29 @@ else
   if [ -n "$KEY" ]; then echo "existing config found; keeping the current registration (--key ignored)"; fi
   if [ -n "$NAME" ]; then echo "existing config found; --name ignored"; fi
 fi
-# 每次安装都做，不只在注册之后（手工重新注册、注册后被打断、账户重建后 uid 变了，都会留下服务用户读不到的配置）。
+# 每次安装都做，不只在注册之后（手工重新注册、注册后被打断、账户重建后 uid 变了、人工编辑改了权限，
+# 都会留下服务用户读不到或别人读得到的配置）。
 # 目录属 root、0750：服务用户不能增删目录项，这里的 chown 不会被链接劫持。
 # 目录无需对服务用户可写：写配置只发生在以 root 执行的 register 里，run 只读配置。
 chown "root:$SVC_USER" "$CFG_DIR"
 chmod 0750 "$CFG_DIR"
 chown "$SVC_USER:$SVC_USER" "$CFG"
+chmod 0600 "$CFG"
 
-# 日志目录属 root：launchd 以 root 身份按 plist 的 UserName 属主创建日志文件，服务用户不需要写目录。
+# 日志目录属 root、0755，两个日志文件事先建好并交给服务用户，与 Linux 的 OpenRC 服务同一做法（spec §14）。
+# 用户域作业实测：StandardErrorPath 所在目录对作业用户不可写时，launchd 建不出日志文件，作业以 78（EX_CONFIG）
+# 退出——文件以作业的身份打开。system 域加 UserName 时是否同样如此本机无法实测（要 root），由 README 真机
+# 核对清单第 12 条验证；事先建好属于服务用户的文件，两种情形下服务都能打开日志。
+# 服务用户不能增删 root 目录里的条目，文件换不成链接；已是链接（只有 root 放得进来）时拒绝，不跟着改别的文件。
 mkdir -p "$LOG_DIR"
 chown root:wheel "$LOG_DIR"
 chmod 0755 "$LOG_DIR"
+for f in "$LOG_DIR/probe-agent.log" "$LOG_DIR/probe-agent.err"; do
+  [ ! -L "$f" ] || { echo "$f is a symbolic link; refusing to hand it to $SVC_USER" >&2; exit 1; }
+  [ -e "$f" ] || : > "$f"
+  chown "$SVC_USER:$SVC_USER" "$f"
+  chmod 0640 "$f"
+done
 
 # plist 每次覆盖，改动随升级下发。它决定以什么身份运行什么程序，只能由 root 改：root:wheel、0644。
 # enable 清掉可能残留的禁用覆盖（launchctl disable 跨重启有效），与 systemctl enable 同位。

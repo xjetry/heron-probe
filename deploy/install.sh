@@ -348,15 +348,17 @@ else
   if [ -n "$KEY" ]; then echo "existing config found; keeping the current registration (--key ignored)"; fi
   if [ -n "$NAME" ]; then echo "existing config found; --name ignored"; fi
 fi
-# 每次安装都做，不只在注册之后。只做一次会留下服务用户读不到的配置：
+# 每次安装都做，不只在注册之后。只做一次会留下服务用户读不到或别人读得到的配置：
 # - 手工重新注册以 root 重写配置（SaveConfig 新建 0600，属主是调用者）
 # - 注册之后、改属主之前被信号打断，重跑走已有配置分支
 # - 账户被删后以新 uid 重建，配置仍属旧 uid
+# - 人工编辑后权限变了（0600 只由 SaveConfig 在注册时保证）
 # 目录属 root、0750：服务用户不能增删目录项，这里的 chown 不会被链接劫持。
 # 目录无需对服务用户可写：写配置只发生在以 root 执行的 register 里，cmd/agent 的 run 只调用 LoadConfig、不调用 SaveConfig。
 chown root:"$SVC_USER" "$CFG_DIR"
 chmod 0750 "$CFG_DIR"
 chown "$SVC_USER:$SVC_USER" "$CFG"
+chmod 0600 "$CFG"
 
 # 服务定义每次覆盖，单元的改动随升级下发。
 # 走到这里时没有以服务用户运行的进程：stop_service 不论服务定义在不在都已确认，查到就已退出。
