@@ -64,3 +64,14 @@ fi
 curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/json' \
   --data '{"limit": 20}' "$PROBE_HUB/probe.v1.AdminService/ListAlertEvents" | jq '.events // []'
 ```
+
+## 公开数据
+
+标为公开的节点另经 `PublicService` 对外提供，不需要 token：只能查到公开节点，未公开与不存在的节点得到同一个 `not_found`。按来源限流（IPv4 一个地址、IPv6 一个 /64 算一个来源），每个来源瞬时 60 次、此后每秒 10 次，超出返回 `resource_exhausted`。方法与字段见 `probe/v1/public.proto`，都可以用 GET 调用，请求消息放在查询串里。
+
+公开节点的实时状态：
+
+```sh example
+curl -fsS -G --data-urlencode 'connect=v1' --data-urlencode 'encoding=json' --data-urlencode 'message={}' \
+  "$PROBE_HUB/probe.v1.PublicService/GetSnapshot" | jq '[(.nodes // [])[] | {id, name, online}]'
+```

@@ -15,6 +15,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/descriptorpb"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/hub/metric"
@@ -356,5 +357,118 @@ func TestPublicProbeLabelsOnlyTasksAssignedToTheNode(t *testing.T) {
 	}
 	if got := labels(admin.Msg.GetSeries()); !maps.Equal(got, wantAdmin) {
 		t.Errorf("admin labels = %v, want %v", got, wantAdmin)
+	}
+}
+
+func TestPublicRateLimitPerSourceAddress(t *testing.T) {
+	h := newHarness(t, "127.0.0.0/8")
+	site := jsonQuery("{}")
+	from := func(ip string) map[string]string { return map[string]string{"X-Forwarded-For": ip} }
+	// 60 与 100ms 是 spec §10 的字面值（桶容量 60、每秒补充 10），不引用常量：常量改了，这里要红。
+	for i := range 60 {
+		if got := pubGet(t, h, "GetSite", site, from("198.51.100.7")); got.status != http.StatusOK {
+			t.Fatalf("request %d within the burst: %d %s", i+1, got.status, got.body)
+		}
+	}
+	over := pubGet(t, h, "GetSite", site, from("198.51.100.7"))
+	if over.status != http.StatusTooManyRequests || !bytes.Contains(over.body, []byte(`"code":"resource_exhausted"`)) || over.header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("request past the burst: %d %v %s", over.status, over.header, over.body)
+	}
+	if got := pubGet(t, h, "GetSite", site, from("198.51.100.8")); got.status != http.StatusOK {
+		t.Fatalf("another source shares the bucket: %d", got.status)
+	}
+	h.clk.Advance(100 * time.Millisecond)
+	if got := pubGet(t, h, "GetSite", site, from("198.51.100.7")); got.status != http.StatusOK {
+		t.Fatalf("after one refill period: %d", got.status)
+	}
+	if got := pubGet(t, h, "GetSite", site, from("198.51.100.7")); got.status != http.StatusTooManyRequests {
+		t.Fatalf("second request after one refill period: %d", got.status)
+	}
+	// 解码失败的请求同样计数：限流在 connect 之外裁决。
+	for range 60 {
+		pubGet(t, h, "GetSite", "connect=v1&encoding=json&message=%7B", from("198.51.100.9"))
+	}
+	if got := pubGet(t, h, "GetSite", site, from("198.51.100.9")); got.status != http.StatusTooManyRequests {
+		t.Fatalf("malformed requests were not counted: %d", got.status)
+	}
+}
+
+// 对端不是可信代理时 X-Forwarded-For 不被采信：改这个头换不了桶。
+func TestPublicRateLimitIgnoresForwardedForFromUntrustedPeers(t *testing.T) {
+	h := newHarness(t, "")
+	for i := range 60 {
+		pubGet(t, h, "GetSite", jsonQuery("{}"), map[string]string{"X-Forwarded-For": fmt.Sprintf("198.51.100.%d", i+1)})
+	}
+	if got := pubGet(t, h, "GetSite", jsonQuery("{}"), map[string]string{"X-Forwarded-For": "203.0.113.1"}); got.status != http.StatusTooManyRequests {
+		t.Fatalf("spoofed X-Forwarded-For got a fresh bucket: %d", got.status)
+	}
+}
+
+func TestPublicCacheControlPerMethod(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	pub, _ := h.createNode(t, "pub")
+	h.setPublic(t, pub, "pub", true)
+	window := fmt.Sprintf(`{"nodeId":"%d","from":"0","to":"3600"}`, pub)
+	for _, c := range []struct{ method, body, want string }{
+		{"GetSite", "{}", "max-age=300"},
+		{"GetSnapshot", "{}", "max-age=1"},
+		{"QueryMetrics", window, "max-age=60"},
+		{"QueryProbes", window, "max-age=60"},
+	} {
+		if got := pubGet(t, h, c.method, jsonQuery(c.body), nil); got.status != http.StatusOK || got.header.Get("Cache-Control") != c.want {
+			t.Errorf("GET %s: %d Cache-Control %q, want %q", c.method, got.status, got.header.Get("Cache-Control"), c.want)
+		}
+		if got := pubPost(t, h, c.method, c.body, nil); got.status != http.StatusOK || got.header.Values("Cache-Control") != nil {
+			t.Errorf("POST %s: %d Cache-Control %q, want none", c.method, got.status, got.header.Values("Cache-Control"))
+		}
+	}
+	// 失败的 GET 一律 no-store：节点改回公开之后，浏览器不能继续用缓存里的 NotFound 挡住访客。
+	h.setPublic(t, pub, "pub", false)
+	if got := pubGet(t, h, "QueryMetrics", jsonQuery(window), nil); got.status != http.StatusNotFound || got.header.Get("Cache-Control") != "no-store" {
+		t.Errorf("NotFound: %d Cache-Control %q", got.status, got.header.Get("Cache-Control"))
+	}
+	if got := pubGet(t, h, "QueryMetrics", jsonQuery(`{"from":"-1"}`), nil); got.status != http.StatusBadRequest || got.header.Get("Cache-Control") != "no-store" {
+		t.Errorf("InvalidArgument: %d Cache-Control %q", got.status, got.header.Get("Cache-Control"))
+	}
+}
+
+func TestCachePolicyRequiresGETAndMaxAgeTogether(t *testing.T) {
+	opts := func(get bool, maxAge uint32, set bool) *descriptorpb.MethodOptions {
+		o := &descriptorpb.MethodOptions{}
+		if get {
+			o.IdempotencyLevel = descriptorpb.MethodOptions_NO_SIDE_EFFECTS.Enum()
+		}
+		if set {
+			proto.SetExtension(o, probev1.E_CacheMaxAgeS, maxAge)
+		}
+		return o
+	}
+	one := func(o *descriptorpb.MethodOptions) []protoreflect.ServiceDescriptor {
+		return []protoreflect.ServiceDescriptor{syntheticService(t, o)}
+	}
+	expectPanic(t, "synthetic.S.Bare accepts GET", func() { cachePolicy(one(opts(true, 0, false))) })
+	expectPanic(t, "synthetic.S.Bare accepts GET", func() { cachePolicy(one(opts(true, 0, true))) })
+	expectPanic(t, "synthetic.S.Bare declares probe.v1.cache_max_age_s but does not accept GET", func() { cachePolicy(one(opts(false, 30, true))) })
+	if got := cachePolicy(one(opts(false, 0, false))); len(got) != 0 {
+		t.Fatalf("a POST-only method without a max-age: table = %v, want empty", got)
+	}
+	// 装配时核对的是 probe.v1 的全部服务，不只是 PublicService：枚举本身不能是空的。
+	services := probeServices()
+	var names []string
+	for _, s := range services {
+		names = append(names, string(s.FullName()))
+	}
+	slices.Sort(names)
+	if want := []string{"probe.v1.AdminService", "probe.v1.AgentService", "probe.v1.PublicService"}; !slices.Equal(names, want) {
+		t.Fatalf("probe.v1 services = %v, want %v", names, want)
+	}
+	got := cachePolicy(services)
+	want := map[string]uint32{
+		"/probe.v1.PublicService/GetSite": 300, "/probe.v1.PublicService/GetSnapshot": 1,
+		"/probe.v1.PublicService/QueryMetrics": 60, "/probe.v1.PublicService/QueryProbes": 60,
+	}
+	if !maps.Equal(got, want) {
+		t.Fatalf("table = %v, want %v", got, want)
 	}
 }
