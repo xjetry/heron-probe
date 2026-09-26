@@ -1337,3 +1337,11 @@ cd /Users/xjetry/work/vibe/probe-install && git add proto internal cmd gen web &
   - `hubVersion` 为空串（装配时没传）与 `dev` 同样按非正式版本处理，两页各有用例。
   - spec §5.4 的 `--site-url` 已删：安装命令的 hub 地址由面板取浏览器 origin（§10），hub 不生成对外地址。
 - **打包的口径**：提交 d678086 的标题说"产物不含宿主元数据"说过了：`--no-xattrs` 只去掉扩展属性的 pax 头，归档里的属主（uid、用户名）与 mtime 仍是构建机的。install.sh 用 `install` 复制文件，不继承归档属主，功能不受影响。二进制里的构建机路径由 `-trimpath` 去掉。
+- **整分支终审后的补强**：
+  - 配置属主与权限每次安装都设，不只在注册之后（手工重新注册、注册后被打断、账户重建都会留下服务读不到的配置）；验收加"把配置改成手工 register 留下的属主后重跑"一步。
+  - 启动后确认服务进程：等到出现服务用户的进程，3 秒后同一 pid 仍在，否则非零退出并指出日志；与停服务后的确认共用 `scan_uid_pids`。
+  - 异常退出无限次重启、间隔 5 秒：systemd `RestartSec=5` 与 `StartLimitIntervalSec=0`，OpenRC `respawn_delay=5` 与 `respawn_max=0`（实测默认设置下 systemd 252 约 1 秒内重启 5 次后进入 failed，OpenRC 0.55.1 约 11 秒后监督进程消失；`respawn_period=0` 不被接受）。
+  - 下载器与 `sha256sum` 检查先于任何网络操作；https 下载时 curl 限定协议；`--name`、`--version` 被忽略时提示；用户已存在时先核对主组再建组；停服务确认用整数秒。
+  - release 构建带 `-trimpath`；tag 去掉构建元数据后含 `-` 时建为 prerelease；workflow 的 action 按提交固定；`make release` 先查 VERSION。
+  - 面板的正式版本判定与落后判定共用 `web/src/lib/version.ts` 的解析；跨面测试核对面板命令的参数都是 install.sh 接受的选项、仓库地址一致。
+  - 验收：purge 断言含日志目录；重启机器后先等服务进程出现（实测 `orb start` 返回后约 15 秒才出现）；窗口时长按格数放大。提交 fbb720e 同时含上面两组 deploy 改动，标题只写了第一组。
