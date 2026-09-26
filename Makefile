@@ -1,6 +1,32 @@
 export CGO_ENABLED=0
 
-.PHONY: gen lint test build binaries ci e2e e2e-matrix fixtures web-install web-test web release docker docker-smoke release-channel docker-push docker-latest docker-readback
+# 版本号（VERSION）的两层守卫。不变式：make 展开后的 $(VERSION) 与调用方给的原文逐字相同，且只含
+# [A-Za-z0-9_.-]、首字符不是 . 或 -、至多 128 字节。发布物的版本号、镜像 tag 与 Release 名都取展开后的
+# $(VERSION)，而调用方（release.yml 的 tag 名）给的是原文。
+#
+# make 层：原文里的 $ 会被当作变量或函数引用展开，$(shell …) 在每次引用处执行。make 在执行配方第一行
+# 之前就展开整条配方，配方里的 shell 检查拦不住同一配方后面的引用，所以在解析 Makefile 时按未展开的
+# 原文（$(value VERSION)）拒绝。这之后 $(VERSION) 的展开是恒等的。
+ifneq ($(findstring $$,$(value VERSION)),)
+$(error VERSION '$(value VERSION)' contains '$$', which make would expand as a variable or function reference; use a plain version such as v0.1.0)
+endif
+
+# shell 层（check_version）：每个消费 VERSION 的目标第一行调用它，只此一份。镜像 tag 与版本号逐字相同
+# （probe-hub version 打印的就是 tag），Docker 的 tag 只允许 [A-Za-z0-9_.-]、首字符不为 . 与 -、至多 128 个
+# 字符；带构建元数据（+）的 tag 因而不能成为镜像 tag，§14 规定这类 tag 的发布整体失败，release 的 tar 包
+# 与镜像用同一规则，不单独放宽。
+# 检查读配方环境里的 $$VERSION，不把 $(VERSION) 拼进 shell 源码：git tag 名允许 ' ( 等字符，拼进去的值
+# 能改写检查本身（v1'x' 在单引号里拼接后成了 v1x）。make 把命令行与环境给出的 VERSION 放进配方环境，
+# 放进去的是展开后的文本，它与原文相同由上面的 make 层守卫承载；若日后改为在 Makefile 里赋值而不导出，
+# 这里读到空值、报 VERSION is required，不会放行。
+# 按字节判断而不用 grep：grep 按行匹配，任一行合法即整体放行，带换行的值会漏过。删掉允许的字节后只应
+# 剩下末尾的哨兵 /（删完后剩下的换行都落在末尾，没有哨兵就会被命令替换吞掉）；shell 的 ${VERSION##[.-]*}
+# 为空即首字符是 . 或 -。通过之后 $(VERSION) 只含 [A-Za-z0-9_.-]，配方里其余位置直接展开它才是安全的。
+check_version = if [ -z "$$VERSION" ]; then echo "VERSION is required, e.g. VERSION=v0.1.0" >&2; exit 1; fi; \
+	if [ "$$(printf '%s/' "$$VERSION" | LC_ALL=C tr -d 'A-Za-z0-9_.-')" != / ] || [ -z "$${VERSION\#\#[.-]*}" ] || [ $${\#VERSION} -gt 128 ]; then \
+	  echo "VERSION '$$VERSION' cannot be an image tag: only [A-Za-z0-9_.-], not starting with . or -, at most 128 characters, no + build metadata" >&2; exit 1; fi
+
+.PHONY: gen lint test build binaries ci e2e e2e-matrix fixtures web-install web-test web release script-test docker docker-smoke release-channel docker-push docker-latest docker-readback
 
 web-install:
 	pnpm --dir web install --frozen-lockfile
@@ -12,13 +38,17 @@ gen: web-install
 lint:
 	go mod tidy -diff
 	buf lint
-	shellcheck -s sh deploy/install.sh deploy/openrc/probe-agent scripts/docker-smoke.sh scripts/docker-readback.sh
+	shellcheck -s sh deploy/install.sh deploy/openrc/probe-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/release-rules-test.sh
 	go vet ./...
 	GOOS=linux go vet ./...
 	GOOS=darwin go vet ./...
 
 test:
 	go test -count=1 ./...
+
+# 发布规则（版本号守卫、预发布判定）的回归检查：只跑 make 的检查与 -n 展开，不构建。
+script-test:
+	MAKE='$(MAKE)' scripts/release-rules-test.sh
 
 web-test: web-install
 	pnpm --dir web exec vitest run
@@ -40,7 +70,7 @@ binaries: web
 	GOOS=linux GOARCH=arm64 go build -o bin/probe-agent-linux-arm64 ./cmd/agent
 	go run ./scripts/checkstatic bin/probe-agent-linux-amd64 bin/probe-agent-linux-arm64
 
-ci: gen lint test web-test web build
+ci: gen lint test script-test web-test web build
 	status="$$(git status --porcelain -- gen web/src/gen)" || exit $$?; \
 	if [ -n "$$status" ]; then printf '%s\n' "$$status"; exit 1; fi
 
@@ -78,9 +108,9 @@ hub_build = env GOOS=linux GOARCH=$(1) CGO_ENABLED=0 go build $(RELEASE_GOFLAGS)
 # 另加 --no-xattrs：bsdtar 仍会把 com.apple.provenance 之类的扩展属性写成 pax 扩展头，GNU tar 解包时逐条目告警，产物里也带上宿主元数据；
 # bsdtar 与 GNU tar 都认这个选项，本地与 CI 构建同一写法。
 # 说明写在 recipe 之外：recipe 是反斜杠续行拼成的一条 shell 命令，行内的 # 会把其后的续行一并注释掉。
-# VERSION 在构建前端之前检查：缺参时立即报错，不等 web 目标跑完。
+# VERSION 在构建前端之前检查：不合规时立即报错，不等 web 目标跑完。
 release:
-	@if [ -z "$(VERSION)" ]; then echo "VERSION is required, e.g. make release VERSION=v0.1.0" >&2; exit 1; fi
+	@$(check_version)
 	$(MAKE) web
 	rm -rf dist/build dist/*.tar.gz dist/SHA256SUMS dist/install.sh
 	mkdir -p dist/build
@@ -130,24 +160,12 @@ BUILDKIT_IMAGE := moby/buildkit:$(BUILDKIT_VERSION)@sha256:6c2fa84a6b61ccd72899d
 DOCKER_BUILDER := probe-hub-buildkit-$(BUILDKIT_VERSION)
 docker_build = docker buildx build --builder $(DOCKER_BUILDER) -f Dockerfile
 
-# 镜像 tag 与版本号逐字相同：probe-hub version 打印的就是 tag。Docker 的 tag 只允许 [A-Za-z0-9_.-]、
-# 首字符不为 . 与 -、至多 128 个字符，带构建元数据（+）的版本因而不能发布镜像，在构建之前拒绝。
-# 检查从配方环境读 $$VERSION，不把 $(VERSION) 拼进 shell 源码：git tag 名允许 ' $ ( 等字符，拼进去的值
-# 能改写检查本身（v1'x' 在单引号里拼接后就成了 v1x）。make 把命令行与环境给出的 VERSION 都放进配方
-# 环境；若日后改为在 Makefile 里赋值而不导出，这里读到空值、报 VERSION is required，不会放行。
-# 通过之后 VERSION 只含 [A-Za-z0-9_.-]，配方里其余位置直接展开 $(VERSION) 才是安全的。
-# 字符集按字节判断而不按行匹配：grep -x 逐行比对，带换行的值每一行各自合法就会整体放行。删掉允许的
-# 字节后只应剩下末尾的哨兵 /（哨兵让结尾的换行不被命令替换吞掉）；${VERSION##[.-]*} 为空即首字符是 . 或 -。
-check_image_version = if [ -z "$$VERSION" ]; then echo "VERSION is required, e.g. make docker VERSION=v0.1.0" >&2; exit 1; fi; \
-	if [ "$$(printf '%s/' "$$VERSION" | LC_ALL=C tr -d 'A-Za-z0-9_.-')" != / ] || [ -z "$${VERSION\#\#[.-]*}" ] || [ $${\#VERSION} -gt 128 ]; then \
-	  echo "VERSION '$$VERSION' cannot be an image tag: only [A-Za-z0-9_.-], not starting with . or -, at most 128 characters, no + build metadata" >&2; exit 1; fi
-
 # 本地构建并核对（§14）：两个平台都构建、导出根文件系统交给 checkimage，再把本机平台装进 docker。
 # 多平台结果不能 --load：经典镜像存储不接受多平台索引（docker exporter does not currently support
 # exporting manifest lists），不给 --platform 时构建的是构建节点的本机平台。
 # 面板随 go:embed 进二进制，先 make web：漏掉它，镜像里的 /admin/ 只有 503 说明页。
 docker:
-	@$(check_image_version)
+	@$(check_version)
 	$(MAKE) web
 	rm -rf $(IMAGE_BIN_DIR)
 	@set -e; for arch in $(HUB_LINUX_ARCHES); do \
@@ -162,24 +180,26 @@ docker:
 	$(MAKE) docker-smoke
 
 # 冒烟本机 docker 里已有的 $(DOCKER_IMAGE):$(VERSION)：make docker 构建后调用；发布后回读时先按平台
-# docker pull，再由回读脚本以同样的环境变量直接调用脚本。SMOKE_PLATFORM 为空时用 docker 的默认平台。
+# docker pull，再由回读脚本以同样的环境变量直接调用脚本。VERSION 与 SMOKE_PLATFORM（为空时用 docker 的
+# 默认平台）由 make 从命令行或环境放进配方环境，脚本直接读，不在这里重新赋值拼进 shell 源码。
 docker-smoke:
-	@$(check_image_version)
-	IMAGE='$(DOCKER_IMAGE):$(VERSION)' VERSION='$(VERSION)' SMOKE_PLATFORM='$(SMOKE_PLATFORM)' scripts/docker-smoke.sh
+	@$(check_version)
+	IMAGE='$(DOCKER_IMAGE):$(VERSION)' scripts/docker-smoke.sh
 
 # 预发布判定（§14）：去掉构建元数据（+ 及之后）后仍含 - 就是预发布。GitHub Release 是否标为 prerelease、
-# 镜像是否推 latest 都读它，判定只在这一处。
-RELEASE_CHANNEL = $(shell v='$(VERSION)'; case "$${v%%+*}" in (*-*) echo prerelease ;; (*) echo stable ;; esac)
+# 镜像是否推 latest 都读它，判定只在这一处。纯文本函数，不经 shell：make 展开配方时就求值，早于配方里
+# 的 check_version，求值本身不能执行任何东西。
+RELEASE_CHANNEL = $(if $(findstring -,$(firstword $(subst +, ,$(VERSION)))),prerelease,stable)
 docker_latest = $(if $(filter stable,$(RELEASE_CHANNEL)),-t $(DOCKER_IMAGE):latest)
 
 release-channel:
-	@if [ -z '$(VERSION)' ]; then echo "VERSION is required, e.g. make release-channel VERSION=v0.1.0" >&2; exit 1; fi
+	@$(check_version)
 	@echo $(RELEASE_CHANNEL)
 
 # 发布镜像：先走完 make docker（两个平台的根文件系统核对、本机平台冒烟），再推送两个平台。
 # 只由 release.yml 在登录 ghcr 之后调用；推送沿用 make docker 的构建器与缓存，构建参数同一处。
 docker-push:
-	@$(check_image_version)
+	@$(check_version)
 	$(MAKE) docker
 	$(docker_build) --platform $(DOCKER_PLATFORMS) -t $(DOCKER_IMAGE):$(VERSION) $(docker_latest) --push .
 
@@ -188,5 +208,5 @@ docker-latest:
 	@IMAGE_REPO=$(DOCKER_IMAGE) scripts/docker-readback.sh latest
 
 docker-readback:
-	@$(check_image_version)
+	@$(check_version)
 	IMAGE_REPO=$(DOCKER_IMAGE) VERSION='$(VERSION)' CHANNEL=$(RELEASE_CHANNEL) ARCHES='$(HUB_LINUX_ARCHES)' scripts/docker-readback.sh verify '$(LATEST_BEFORE)'
