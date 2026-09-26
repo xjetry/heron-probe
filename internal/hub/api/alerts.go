@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -166,10 +165,9 @@ func (s *Service) TestNotifyChannel(ctx context.Context, req *connect.Request[pr
 	for _, c := range s.alerts.Channels() {
 		if c.ID == req.Msg.GetId() {
 			if err := s.notifier.SendTest(ctx, c); err != nil {
-				code := connect.CodeUnavailable
-				var retry alert.Retryable
-				if errors.As(err, &retry) && !retry.Retryable() {
-					code = connect.CodeFailedPrecondition
+				code := connect.CodeFailedPrecondition
+				if _, retry := alert.Classify(err); retry {
+					code = connect.CodeUnavailable
 				}
 				return nil, connect.NewError(code, err)
 			}

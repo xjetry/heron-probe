@@ -1,11 +1,14 @@
 package alert
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/xjetry/probe/internal/hub/store"
@@ -21,6 +24,10 @@ func TestEveryChannelFailurePathIsClassified(t *testing.T) {
 		}))
 		t.Cleanup(srv.Close)
 		return srv.URL
+	}
+	rawStatus := func(line string) string {
+		endpoint, _ := rawStatusServer(t, line)
+		return endpoint
 	}
 	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	closedURL := closed.URL
@@ -84,13 +91,16 @@ func TestEveryChannelFailurePathIsClassified(t *testing.T) {
 		{"webhook/408", sendWebhook(WebhookConfig{URL: respond(408), Method: "POST"}), store.FailureHTTPStatus, 408, true},
 		{"webhook/429", sendWebhook(WebhookConfig{URL: respond(429), Method: "POST"}), store.FailureHTTPStatus, 429, true},
 		{"webhook/500", sendWebhook(WebhookConfig{URL: respond(500), Method: "POST"}), store.FailureHTTPStatus, 500, true},
+		// Go 的 HTTP/1.1 客户端接受三位数字的状态行，099 会以 StatusCode 99 交回来。
+		{"webhook/status_099", sendWebhook(WebhookConfig{URL: rawStatus("HTTP/1.1 099 Odd"), Method: "POST"}), store.FailureTransport, 0, true},
+		{"telegram/status_099", sendTelegram("token", rawStatus("HTTP/1.1 099 Odd")), store.FailureTransport, 0, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.run()
 			if err == nil {
 				t.Fatal("failure path succeeded")
 			}
-			r, retry := failureResult(err)
+			r, retry := Classify(err)
 			if r.Failure == store.FailureUnclassified {
 				t.Fatalf("failure path left unclassified: %v", err)
 			}
@@ -111,17 +121,57 @@ func TestEveryChannelFailurePathIsClassified(t *testing.T) {
 	}
 }
 
-type foreignError struct{}
+// rawStatusServer 用原始 TCP 回一行任意状态行，httptest 不允许写出 100–999 以外的状态码。
+// 返回 URL 与已处理的请求数。
+func rawStatusServer(t *testing.T, statusLine string) (string, *atomic.Int32) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	var requests atomic.Int32
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				req, err := http.ReadRequest(bufio.NewReader(conn))
+				if err != nil {
+					return
+				}
+				_, _ = io.Copy(io.Discard, req.Body)
+				requests.Add(1)
+				_, _ = io.WriteString(conn, statusLine+"\r\nContent-Length: 4\r\nConnection: close\r\n\r\nbody")
+			}()
+		}
+	}()
+	return "http://" + ln.Addr().String(), &requests
+}
 
-func (foreignError) Error() string   { return "foreign failure" }
-func (foreignError) Retryable() bool { return true }
+func TestMalformedStatusDetailNamesTheStatus(t *testing.T) {
+	endpoint, _ := rawStatusServer(t, "HTTP/1.1 099 Odd")
+	c, err := NewWebhook(WebhookConfig{URL: endpoint, Method: "POST"}, NewHTTPClient())
+	must(t, err)
+	r, retry := Classify(c.Send(t.Context(), messageForTest()))
+	want := store.DeliveryResult{Failure: store.FailureTransport, Error: "malformed HTTP status 99"}
+	if r != want || !retry {
+		t.Fatalf("classified as %+v retry=%v, want %+v with retry", r, retry, want)
+	}
+}
 
 func TestUnclassifiedFailureIsVisibleAndFinal(t *testing.T) {
-	for _, err := range []error{errors.New("plain failure"), foreignError{}} {
-		r, retry := failureResult(err)
-		want := store.DeliveryResult{Failure: store.FailureUnclassified, Error: err.Error()}
-		if r != want || retry {
-			t.Fatalf("%v classified as %+v retry=%v, want %+v without retry", err, r, retry, want)
-		}
+	r, retry := Classify(errors.New("plain failure"))
+	want := store.DeliveryResult{Failure: store.FailureUnclassified, Error: "plain failure"}
+	if r != want || retry {
+		t.Fatalf("classified as %+v retry=%v, want %+v without retry", r, retry, want)
+	}
+	// 包了一层的带类别错误照样取得到类别。
+	r, retry = Classify(fmt.Errorf("wrapped: %w", &sendFailure{failure: store.FailureTransport, detail: "refused"}))
+	if want := (store.DeliveryResult{Failure: store.FailureTransport, Error: "refused"}); r != want || !retry {
+		t.Fatalf("wrapped failure classified as %+v retry=%v, want %+v with retry", r, retry, want)
 	}
 }

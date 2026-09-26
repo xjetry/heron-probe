@@ -285,7 +285,9 @@ const ddlAlertDelivery = `CREATE TABLE alert_delivery (
   delivered_at INTEGER,
   -- 最近一次失败的类别（DeliveryFailure），空表示没有失败；列序与迁移 7 的 ADD COLUMN 结果一致。
   failure TEXT NOT NULL DEFAULT '',
-  -- 仅 failure = 'http_status' 时非 NULL，由 DeliveryResult.check 保证。
+  -- 仅 failure = 'http_status' 时非 NULL，且在 100–999。三条写路径各自保证：UpdateDelivery 经
+  -- DeliveryResult.check；DeleteNotifyChannel 写 channel_deleted 时一并写 NULL；迁移 7 只对首位
+  -- 1–9 的三位数写入，其余行保持 ADD COLUMN 的 NULL。
   http_status INTEGER
 )`
 const ddlAlertDeliveryByEvent = `CREATE INDEX alert_delivery_by_event ON alert_delivery(event_id)`

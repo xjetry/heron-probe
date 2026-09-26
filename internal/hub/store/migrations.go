@@ -210,11 +210,17 @@ const ddlAPITokenV6 = `CREATE TABLE api_token (
   last_used_at INTEGER
 )`
 
-// 旧版本把类别与原文混写在 last_error 里。只按旧版本写入的确定形状归类，
-// 其余失败无法确定类别，归入 unclassified 且原文不动；成功行与尚无结果的行不碰。
+// 旧版本把类别与原文混写在 last_error 里。只按旧版本写入的确定形状归类，其余失败无法确定类别，
+// 归入 unclassified 且原文不动；成功行与尚无结果（未终态且没有文本）的行不碰。终态失败却没有
+// 文本的行旧版本不会写出，若有也归 unclassified，不能迁成"没有失败"。
 // 下面两个字符串是旧版本写入 last_error 的文本，是库里的历史值，不随代码变。
-// 旧 HTTP 失败的格式是 "HTTP %d %s: %s"，http.StatusText 不含 ": "，所以第一个 ": " 之后就是响应体片段；
-// 没有 ": " 的不是这个格式写出的，不按 HTTP 形状归类。
+// 旧 HTTP 失败的格式是 "HTTP %d %s: %s"：%d 不带前导 0，所以只认首位 1–9 的三位数，写入的状态码
+// 因而落在 100–999（http_status 列的不变式）；http.StatusText 不含 ": "，所以第一个 ": " 之后就是
+// 响应体片段；没有 ": " 的不是这个格式写出的，不按 HTTP 形状归类。
+//
+// 历史数据的边界：旧版本在"次数耗尽而最后一次结果未落盘"时沿用更早一次的失败作终态，写下的行
+// 与"最后一次真的以同样原因失败"在库里分不出来，这里按那次失败归类（例如 http_status 503）；
+// 这部分历史无法修正。只有一次失败都没记下的行才带着 result_unrecorded 的旧文本。
 func migrateDeliveryFailure(tx *sql.Tx) error {
 	for _, stmt := range []string{
 		`ALTER TABLE alert_delivery ADD COLUMN failure TEXT NOT NULL DEFAULT ''`,
@@ -225,8 +231,9 @@ func migrateDeliveryFailure(tx *sql.Tx) error {
 		  WHERE ok = 0 AND last_error = 'attempts exhausted but last result was not recorded'`,
 		`UPDATE alert_delivery SET failure = 'http_status', http_status = CAST(substr(last_error, 6, 3) AS INTEGER),
 		    last_error = substr(last_error, instr(last_error, ': ') + 2)
-		  WHERE ok = 0 AND failure = '' AND last_error GLOB 'HTTP [0-9][0-9][0-9] *' AND instr(last_error, ': ') > 0`,
-		`UPDATE alert_delivery SET failure = 'unclassified' WHERE ok = 0 AND failure = '' AND last_error <> ''`,
+		  WHERE ok = 0 AND failure = '' AND last_error GLOB 'HTTP [1-9][0-9][0-9] *' AND instr(last_error, ': ') > 0`,
+		`UPDATE alert_delivery SET failure = 'unclassified'
+		  WHERE ok = 0 AND failure = '' AND (last_error <> '' OR done = 1)`,
 	} {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("%w in %q", err, stmt)

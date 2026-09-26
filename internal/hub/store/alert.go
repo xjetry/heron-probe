@@ -95,9 +95,10 @@ type Delivery struct {
 	OK         bool
 	Done       bool
 	Failure    DeliveryFailure // 最近一次失败的类别；成功或尚无结果时为空。
-	HTTPStatus int             // 仅 FailureHTTPStatus 非零。
-	// 最近一次失败的原文：HTTP 失败时是响应体片段，其余是出站错误文本，都不含 URL。
-	// 接收方可能在错误响应里回显请求体模板里的密钥，所以只经仅会话的 GetAlertDeliveryError 读出；
+	HTTPStatus int             // 仅 FailureHTTPStatus 非零，且 ValidHTTPStatus；写路径见 schema.go 的 http_status 列。
+	// 最近一次失败的原文：HTTP 失败时是响应体片段，其余是出站错误文本。hub 不把 URL 写进原文，
+	// 但响应体由接收方决定：接收方可能回显请求体模板里的密钥，也可能回显请求路径或头值这些只写
+	// 不读的配置。所以只经仅会话的 GetAlertDeliveryError 读出（会话本就有权管理这些配置）；
 	// 只读的 ListAlertEvents 逐字段映射 Delivery，不带这个字段。
 	LastError   string
 	DeliveredAt time.Time
@@ -563,14 +564,29 @@ func (s *Store) UpdateDelivery(ctx context.Context, id int64, r DeliveryResult) 
 	})
 }
 
-// 读侧据类别解释状态码与原文、只读口径据类别给出状态码，都依赖这里的一致性；
-// 违反即拒绝，不写库，也不改写成某个"最接近"的类别。
+// ValidHTTPStatus 是状态码合法性的唯一判定：产生侧（alert.sendHTTP）据它决定一次应答算不算
+// 合法应答，写侧（DeliveryResult.check）据它守住 http_status 列。两处必须同一口径，否则产生侧
+// 定下的类别会被写侧拒绝，结果写不进库。
+func ValidHTTPStatus(code int) bool { return code >= 100 && code <= 999 }
+
+// 读侧据类别解释状态码与原文、只读口径据类别给出状态码、PendingDeliveries 据 done 续投，
+// 都依赖这里的一致性；违反即拒绝，不写库，也不改写成某个"最接近"的类别。
 func (r DeliveryResult) check() error {
 	if r.OK {
 		if r.Failure != FailureNone || r.HTTPStatus != 0 || r.Error != "" {
 			return fmt.Errorf("delivery result: success carries failure %q, status %d, error %q", r.Failure, r.HTTPStatus, r.Error)
 		}
+		// 成功未终态会被 PendingDeliveries 重新入队，接收方收到重复通知。
+		if !r.Done {
+			return errors.New("delivery result: success must be done")
+		}
+		if r.DeliveredAt.IsZero() {
+			return errors.New("delivery result: success without delivery time")
+		}
 		return nil
+	}
+	if !r.DeliveredAt.IsZero() {
+		return errors.New("delivery result: failure with delivery time")
 	}
 	if r.Failure == FailureNone {
 		return errors.New("delivery result: failure without category")
@@ -578,11 +594,21 @@ func (r DeliveryResult) check() error {
 	if !slices.Contains(DeliveryFailures(), r.Failure) {
 		return fmt.Errorf("delivery result: unknown failure category %q", r.Failure)
 	}
-	if (r.Failure == FailureHTTPStatus) != (r.HTTPStatus >= 100 && r.HTTPStatus <= 999) {
-		return fmt.Errorf("delivery result: failure %q with HTTP status %d", r.Failure, r.HTTPStatus)
+	if r.Failure == FailureHTTPStatus && !ValidHTTPStatus(r.HTTPStatus) {
+		return fmt.Errorf("delivery result: failure %q with invalid HTTP status %d", r.Failure, r.HTTPStatus)
+	}
+	if r.Failure != FailureHTTPStatus && r.HTTPStatus != 0 {
+		return fmt.Errorf("delivery result: failure %q carries HTTP status %d", r.Failure, r.HTTPStatus)
 	}
 	if (r.Failure == FailureChannelDeleted || r.Failure == FailureResultUnrecorded) && r.Error != "" {
 		return fmt.Errorf("delivery result: failure %q carries error text", r.Failure)
+	}
+	// 这五类原样重发只会得到同样结果（或已无从重发），不能留在续投队列里。
+	switch r.Failure {
+	case FailureChannelDeleted, FailureResultUnrecorded, FailureChannelInvalid, FailureRequest, FailureUnclassified:
+		if !r.Done {
+			return fmt.Errorf("delivery result: failure %q must be done", r.Failure)
+		}
 	}
 	return nil
 }

@@ -248,13 +248,9 @@ func (q *Queue) deliver(ctx context.Context, item deliveryItem) (err error) {
 			return nil
 		}
 		if d.Attempts >= store.MaxDeliveryAttempts {
-			// 名额已耗尽而行仍未终态：最后一次尝试的结果没落盘。已记下的更早失败原样留作终态；
-			// 一次失败都没记下才是 result_unrecorded。
-			r := store.DeliveryResult{Done: true, Failure: d.Failure, HTTPStatus: d.HTTPStatus, Error: d.LastError}
-			if r.Failure == store.FailureNone {
-				r = store.DeliveryResult{Done: true, Failure: store.FailureResultUnrecorded}
-			}
-			return q.st.UpdateDelivery(ctx, d.ID, r)
+			// 名额已耗尽而行仍未终态：最后一次尝试已发出，结果没落盘。接收方可能已经收到，
+			// 所以不沿用更早一次的失败，也不留下它的原文与状态码。
+			return q.st.UpdateDelivery(ctx, d.ID, store.DeliveryResult{Done: true, Failure: store.FailureResultUnrecorded})
 		}
 		var c *store.NotifyChannel
 		for _, row := range q.channels() {
@@ -268,7 +264,7 @@ func (q *Queue) deliver(ctx context.Context, item deliveryItem) (err error) {
 		}
 		channel, err := ParseChannel(*c, q.client, q.telegramBase)
 		if err != nil {
-			r, _ := failureResult(err)
+			r, _ := Classify(err)
 			r.Done = true
 			return q.st.UpdateDelivery(ctx, d.ID, r)
 		}
@@ -286,7 +282,7 @@ func (q *Queue) deliver(ctx context.Context, item deliveryItem) (err error) {
 		r := store.DeliveryResult{OK: true, DeliveredAt: q.clk.Now()}
 		retry := false
 		if err != nil {
-			r, retry = failureResult(err)
+			r, retry = Classify(err)
 		}
 		r.Done = r.OK || !retry || d.Attempts >= store.MaxDeliveryAttempts
 		if err := q.st.UpdateDelivery(ctx, d.ID, r); err != nil {
@@ -301,15 +297,15 @@ func (q *Queue) deliver(ctx context.Context, item deliveryItem) (err error) {
 	}
 }
 
-// 真实渠道的每条失败路径都在 notify.go 带上类别，由 notify 的表驱动测试逐条钉住；
-// 取不到类别说明某条路径漏了，记为 unclassified 让遗漏可见，而不是标成某个具体类别。
-// 它不可重试，与"不是 Retryable 就不重试"同向。
-func failureResult(err error) (store.DeliveryResult, bool) {
+// Classify 是渠道失败的唯一分类：队列据它落库并决定是否重试，TestNotifyChannel 据它选错误码。
+// 真实渠道每条可达的失败路径都在 notify.go 带上类别，由 notify 的表驱动测试逐条钉住；
+// 取不到类别说明某条路径漏了，记为 unclassified 让遗漏可见，而不是标成某个具体类别，且不重试。
+func Classify(err error) (store.DeliveryResult, bool) {
 	var f *sendFailure
 	if !errors.As(err, &f) {
 		return store.DeliveryResult{Failure: store.FailureUnclassified, Error: err.Error()}, false
 	}
-	return store.DeliveryResult{Failure: f.failure, HTTPStatus: f.status, Error: f.detail}, f.Retryable()
+	return store.DeliveryResult{Failure: f.failure, HTTPStatus: f.status, Error: f.detail}, f.retryable()
 }
 
 func (q *Queue) SendTest(ctx context.Context, c store.NotifyChannel) error {

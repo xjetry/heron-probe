@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -57,6 +58,7 @@ func TestAttemptWriteFailureSendsNothing(t *testing.T) {
 	}
 }
 
+// 最后一次尝试已发出而结果未知：不沿用更早一次的失败（接收方可能已经收到），也不留下它的原文与状态码。
 func TestExhaustedUnrecordedDeliveryBecomesTerminal(t *testing.T) {
 	prior := store.DeliveryResult{Failure: store.FailureHTTPStatus, HTTPStatus: 503, Error: "prior error"}
 	for _, last := range []*store.DeliveryResult{nil, &prior} {
@@ -74,11 +76,8 @@ func TestExhaustedUnrecordedDeliveryBecomesTerminal(t *testing.T) {
 				_, err := f.st.BeginDeliveryAttempt(t.Context(), ev.Deliveries[0].ID)
 				must(t, err)
 			}
-			want := store.DeliveryResult{Done: true, Failure: store.FailureResultUnrecorded}
 			if last != nil {
 				must(t, f.st.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, *last))
-				want = *last
-				want.Done = true
 			}
 			q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
 			must(t, q.deliver(t.Context(), deliveryItem{ev.Deliveries[0], ev}))
@@ -86,10 +85,38 @@ func TestExhaustedUnrecordedDeliveryBecomesTerminal(t *testing.T) {
 			must(t, err)
 			d := saved.Deliveries[0]
 			got := store.DeliveryResult{OK: d.OK, Done: d.Done, Failure: d.Failure, HTTPStatus: d.HTTPStatus, Error: d.LastError}
+			want := store.DeliveryResult{Done: true, Failure: store.FailureResultUnrecorded}
 			if calls.Load() != 0 || d.Attempts != store.MaxDeliveryAttempts || got != want {
 				t.Fatalf("exhausted delivery sent=%d row=%+v want %+v", calls.Load(), d, want)
 			}
+			raw := deliveryDB(t, f)
+			var status sql.NullInt64
+			var text string
+			must(t, raw.QueryRow("SELECT http_status, last_error FROM alert_delivery WHERE id = ?", d.ID).Scan(&status, &text))
+			if status.Valid || text != "" {
+				t.Fatalf("earlier failure kept: http_status=%v last_error=%q, want NULL and empty", status, text)
+			}
 		})
+	}
+}
+
+// 越界状态码不是合法应答：按 transport 重试到次数上限，每次结果都写得进库，不落进存储故障的退避。
+func TestMalformedStatusIsRetriedAsTransport(t *testing.T) {
+	f := newFixture(t)
+	endpoint, requests := rawStatusServer(t, "HTTP/1.1 099 Odd")
+	ev := queueEvent(t, f, queueChannel(t, f, endpoint))
+	var sleeps []time.Duration
+	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, func(_ context.Context, d time.Duration) error { sleeps = append(sleeps, d); return nil }, f.log)
+	must(t, q.deliver(t.Context(), deliveryItem{ev.Deliveries[0], ev}))
+	saved, err := f.st.GetAlertEvent(t.Context(), ev.ID)
+	must(t, err)
+	d := saved.Deliveries[0]
+	if requests.Load() != store.MaxDeliveryAttempts || d.Attempts != store.MaxDeliveryAttempts || !d.Done || d.OK ||
+		d.Failure != store.FailureTransport || d.HTTPStatus != 0 || d.LastError != "malformed HTTP status 99" {
+		t.Fatalf("requests=%d delivery=%+v", requests.Load(), d)
+	}
+	if !reflect.DeepEqual(sleeps, []time.Duration{time.Second, 4 * time.Second}) {
+		t.Fatalf("backoff=%v, want the per-attempt backoff only", sleeps)
 	}
 }
 

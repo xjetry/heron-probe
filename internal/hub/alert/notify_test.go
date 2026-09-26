@@ -21,9 +21,11 @@ func messageForTest() Message {
 
 func wantRetry(t *testing.T, err error, want bool) {
 	t.Helper()
-	var r Retryable
-	if err == nil || !errors.As(err, &r) || r.Retryable() != want {
-		t.Fatalf("error=%v retryable want %v", err, want)
+	if err == nil {
+		t.Fatalf("error=nil, want a failure with retryable=%v", want)
+	}
+	if _, retry := Classify(err); retry != want {
+		t.Fatalf("error=%v retryable=%v, want %v", err, retry, want)
 	}
 }
 
