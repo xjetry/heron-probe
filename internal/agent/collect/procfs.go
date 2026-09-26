@@ -72,27 +72,27 @@ func (p *ProcFS) load() (loadAvg, error) {
 // procs 数 /proc 下名字全是数字的目录。/proc 的目录列表只列线程组（进程），线程只在
 // /proc/<pid>/task 下列出，所以这是进程数，与 darwin 的 proc_listallpids 同口径（spec §7）。
 // /proc/loadavg 第 4 字段的分母是含线程的调度实体数，而且在容器里是整个内核的数，不用。
-// 能列出 /proc 却一个进程目录都没有，说明读的不是 procfs（至少有 agent 自己），按读不到处理。
+//
+// 列表里必须有 PID 1 的目录，否则按读不到处理。PID 1 在任何 pid 命名空间里都存在，列表里没有它就说明
+// 列表不全：/proc 以 hidepid=2（invisible）挂载时，非 root 进程只列得出自己同 uid 的进程目录，数出来
+// 是个位数而不报错（debian 容器里 remount 后以 nobody 实测：ls 只剩自己的两个 pid，stat /proc/1 报
+// ENOENT）；读的不是 procfs 时通常也没有它。判据取自同一次 ReadDir 的条目，所以返回时 n ≥ 1。
+// 报错经 Collector 进日志，点名 hidepid 供排查。
 func (p *ProcFS) procs() (uint32, error) {
-	// /proc 以 hidepid=2（invisible）挂载时，非 root 进程只列得出自己同 uid 的进程目录，数出来是
-	// 个位数而不报错（debian 容器里 remount 后以 nobody 实测：ls 只剩自己的两个 pid，stat /proc/1
-	// 报 ENOENT）。PID 1 在任何 pid 命名空间里都存在，看不到它就说明列表不全；按"要么正确要么
-	// 缺失"让进程数缺失，报错经 Collector 进日志，点名 hidepid 供排查。
-	if _, err := fs.Stat(p.FS, "proc/1"); err != nil {
-		return 0, fmt.Errorf("proc/1 is not visible, /proc is likely mounted with hidepid so other users' processes are hidden: %w", err)
-	}
 	entries, err := fs.ReadDir(p.FS, "proc")
 	if err != nil {
 		return 0, err
 	}
 	var n uint32
+	hasPID1 := false
 	for _, e := range entries {
 		if e.IsDir() && isPID(e.Name()) {
 			n++
+			hasPID1 = hasPID1 || e.Name() == "1"
 		}
 	}
-	if n == 0 {
-		return 0, errors.New("proc: no process directories")
+	if !hasPID1 {
+		return 0, errors.New("proc/1 is not visible as a process directory, /proc is likely mounted with hidepid so other users' processes are hidden")
 	}
 	return n, nil
 }

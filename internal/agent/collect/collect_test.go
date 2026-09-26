@@ -343,8 +343,14 @@ func TestProcsCountsProcessDirectoriesNotSchedulingEntities(t *testing.T) {
 	if err != nil || n != 3 {
 		t.Fatalf("procs = %d, %v; want 3 process directories", n, err)
 	}
-	if _, err := (&ProcFS{FS: fstest.MapFS{"proc/loadavg": {Data: []byte("0 0 0 1/2 3\n")}}}).procs(); err == nil {
-		t.Fatal("a /proc without process directories must be an error, not 0 processes")
+	// 没有 PID 1 的进程目录，列表就不是完整的 procfs：不论是只有别的文件，还是 1 不是目录。
+	for name, fsys := range map[string]fstest.MapFS{
+		"no process directories": {"proc/loadavg": {Data: []byte("0 0 0 1/2 3\n")}},
+		"1 is not a directory":   {"proc/1": {Data: []byte("")}, "proc/42/comm": {Data: []byte("sshd\n")}},
+	} {
+		if n, err := (&ProcFS{FS: fsys}).procs(); err == nil {
+			t.Errorf("%s: procs = %d, want an error for a /proc without PID 1's directory", name, n)
+		}
 	}
 }
 
