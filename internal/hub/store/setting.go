@@ -6,7 +6,8 @@ import (
 )
 
 // SiteSettings 是公开页的外观，五项整体读写。存储不校验取值：约束由 api 的 UpdateSettings 裁决，
-// 这里只维持"整体替换"——空串照样写入，表示该项回到默认，不存在"不改"。
+// 这里只维持"整体替换"——每项都写入，空串也照写，不存在"不改"。标题、主色、logo、自定义 CSS 为空表示
+// 用内置的；明暗的取值由 api 的 themes 白名单限定，不会是空串。
 type SiteSettings struct {
 	Title       string
 	Theme       string
@@ -23,7 +24,7 @@ type settingField struct {
 	value *string
 }
 
-// 键名是库里的持久标识，改名要迁移。setting 表还会放别的设置，外观只占 site.* 这五个键。
+// 键名是库里的持久标识，改名要迁移。外观只占 site.* 这五个键，同表若放别的设置不影响它们。
 func (st *SiteSettings) fields() []settingField {
 	return []settingField{
 		{"site.title", &st.Title},
@@ -34,6 +35,8 @@ func (st *SiteSettings) fields() []settingField {
 	}
 }
 
+// SiteSettings 用一条 SELECT 读出全部 site.* 键：单条语句在 WAL 下读同一个快照，SaveSiteSettings 又在
+// 一个写事务里写五个键，两者合起来保证读者拿不到新旧混合的外观。改成逐键查询会失去前一半。
 func (s *Store) SiteSettings(ctx context.Context) (SiteSettings, error) {
 	out := SiteSettings{Theme: DefaultTheme}
 	byKey := map[string]*string{}
@@ -57,7 +60,8 @@ func (s *Store) SiteSettings(ctx context.Context) (SiteSettings, error) {
 	return out, rows.Err()
 }
 
-// SaveSiteSettings 在一个事务里写五个键：读侧不会看到新旧混合的外观。
+// SaveSiteSettings 在 s.write 的一个事务里写五个键，任一条失败整体回滚：库里不会留下半套外观，
+// 与 SiteSettings 的单条 SELECT 一起保证读侧看不到新旧混合。
 func (s *Store) SaveSiteSettings(ctx context.Context, st SiteSettings) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
 		for _, f := range st.fields() {

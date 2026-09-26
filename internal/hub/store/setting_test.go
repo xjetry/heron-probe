@@ -1,8 +1,10 @@
 package store
 
 import (
+	"database/sql"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -28,6 +30,30 @@ func TestSiteSettingsDefaultAndWholeReplacement(t *testing.T) {
 	}
 	if n := rowCounts(t, s)["setting"]; n != 5 {
 		t.Fatalf("setting rows = %d, want 5", n)
+	}
+}
+
+// 保存中途失败时库里仍是上一套完整外观：五个键在同一个写事务里，任一条失败整体回滚。
+// 触发器只拦最后一个键，拆成逐键提交的实现会留下前四个新值。
+func TestSaveSiteSettingsIsAllOrNothing(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	first := SiteSettings{Title: "旧", Theme: "light", AccentColor: "#111111", Logo: "data:image/png;base64,AAAA", CustomCSS: "a{}"}
+	if err := s.SaveSiteSettings(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec("CREATE TRIGGER reject_css BEFORE INSERT ON setting WHEN NEW.key = 'site.custom_css' BEGIN SELECT RAISE(ABORT, 'css rejected'); END")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err := s.SaveSiteSettings(ctx, SiteSettings{Title: "新", Theme: "dark", AccentColor: "#222222", CustomCSS: "b{}"})
+	if err == nil || !strings.Contains(err.Error(), "css rejected") {
+		t.Fatalf("save error = %v", err)
+	}
+	if got, err := s.SiteSettings(ctx); err != nil || got != first {
+		t.Fatalf("failed save left %+v %v, want %+v", got, err, first)
 	}
 }
 

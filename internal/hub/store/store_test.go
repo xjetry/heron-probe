@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -304,6 +305,125 @@ func TestDeleteNodeRemovesDependentRows(t *testing.T) {
 	if rows, _ := s.ReadMinuteRows(ctx, id, 0, 1000); len(rows) != 0 {
 		t.Fatalf("metric rows survived delete: %v", rows)
 	}
+}
+
+// keptOnNodeDelete 是带 node_id 列、删节点时按设计保留的表。alert_event 是告警历史，只按保留期
+// （deleteExpiredAlertEvents）清理：节点删了，它当时发生过的告警仍可查（TestDeleteNodeCleansAlertScopeAndState）。
+var keptOnNodeDelete = []string{"alert_event"}
+
+// DeleteNode 手写"哪些表存着节点的行"；这里从 sqlite_master 与 pragma_table_info 找出全部带 node_id 列的表，
+// 每张给待删节点与另一个节点各写一行，删后待删节点的行只能留在 keptOnNodeDelete 里，另一个节点的行一行不少。
+// 新增按节点存行的表而漏改 DeleteNode、或保留清单写了不存在 / 其实会被删的表，这里都会红。
+func TestDeleteNodeCoversEveryTableWithNodeID(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	gone, _ := s.CreateNode(ctx, "gone", hash(1))
+	kept, _ := s.CreateNode(ctx, "kept", hash(2))
+	tables := tablesWithNodeID(t, s)
+	t.Logf("tables with node_id: %v", tables)
+	for _, name := range keptOnNodeDelete {
+		if !slices.Contains(tables, name) {
+			t.Fatalf("kept table %s has no node_id column; tables with node_id: %v", name, tables)
+		}
+	}
+	for _, table := range tables {
+		for _, id := range []int64{gone, kept} {
+			insertRowFor(t, s, table, id)
+		}
+	}
+	if err := s.DeleteNode(ctx, gone); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range tables {
+		want := int64(0)
+		if slices.Contains(keptOnNodeDelete, table) {
+			want = 1
+		}
+		if n := nodeRows(t, s, table, gone); n != want {
+			t.Fatalf("%s: %d rows of the deleted node, want %d", table, n, want)
+		}
+		if n := nodeRows(t, s, table, kept); n != 1 {
+			t.Fatalf("%s: %d rows of the other node, want 1", table, n)
+		}
+	}
+}
+
+func tablesWithNodeID(t *testing.T, s *Store) []string {
+	t.Helper()
+	rows, err := s.r.QueryContext(t.Context(), "SELECT m.name FROM sqlite_master m JOIN pragma_table_info(m.name) c WHERE m.type = 'table' AND c.name = 'node_id' ORDER BY m.name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(out) == 0 {
+		t.Fatal("no table has a node_id column")
+	}
+	return out
+}
+
+// insertRowFor 给 table 写一行属于 node 的数据：node_id 取 node，其余 NOT NULL 且无默认值的列按声明类型给零值，
+// 可空或有默认值的列不写。同一张表的两行因此只在 node_id 上不同：主键含 node_id 的表不冲突，
+// 主键是自增 id 的表（alert_event）各得一个新 id。
+func insertRowFor(t *testing.T, s *Store, table string, node int64) {
+	t.Helper()
+	rows, err := s.r.QueryContext(t.Context(), "SELECT name, type, \"notnull\", dflt_value IS NOT NULL FROM pragma_table_info(?)", table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cols []string
+	var args []any
+	for rows.Next() {
+		var name, typ string
+		var notNull, hasDefault bool
+		if err := rows.Scan(&name, &typ, &notNull, &hasDefault); err != nil {
+			t.Fatal(err)
+		}
+		switch {
+		case name == "node_id":
+			args = append(args, node)
+		case !notNull || hasDefault:
+			continue
+		case typ == "TEXT":
+			args = append(args, "")
+		case typ == "REAL":
+			args = append(args, 0.0)
+		case typ == "BLOB":
+			args = append(args, []byte{})
+		default:
+			args = append(args, 0)
+		}
+		cols = append(cols, name)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.write(t.Context(), func(tx *sql.Tx) error {
+		_, err := tx.Exec("INSERT INTO "+table+" ("+strings.Join(cols, ", ")+") VALUES ("+strings.TrimSuffix(strings.Repeat("?, ", len(cols)), ", ")+")", args...)
+		return err
+	}); err != nil {
+		t.Fatalf("insert into %s: %v", table, err)
+	}
+}
+
+func nodeRows(t *testing.T, s *Store, table string, node int64) int64 {
+	t.Helper()
+	var n int64
+	if err := s.r.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table+" WHERE node_id = ?", node).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 func TestDeleteNodeRemovesTraffic(t *testing.T) {

@@ -84,6 +84,16 @@ func TestStorageStatsReportsLogicalDatabaseSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 用例的区分力来自检查点前主文件落后于逻辑大小：此时按主文件大小算的实现给不出 DBBytes。
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Size() >= stats.DBBytes {
+		t.Fatalf("main file before checkpoint = %d, db_bytes = %d: the WAL is no longer ahead of the main file "+
+			"(an automatic checkpoint ran), so this test cannot tell logical from physical size; use fewer nodes or disable wal_autocheckpoint",
+			before.Size(), stats.DBBytes)
+	}
 	if _, err := s.w.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 		t.Fatal(err)
 	}

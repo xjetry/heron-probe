@@ -86,8 +86,9 @@ const ddlTraffic = `CREATE TABLE traffic (
   updated_at INTEGER NOT NULL
 )`
 
-// metricTables 按级别从细到粗；建库与 DeleteNode 共用此清单，避免新增级别后遗漏删除；
-// 已有库仍需对应的增量迁移。存储统计按 sqlite_master 列表，不读它。
+// metricTables 按级别从细到粗。读者有三处：建库、DeleteNode、上卷（rollup.go 的 metricFamily.tables，
+// 必须与 levels、states 同序同长，上卷按 levels 循环，多出的表不会被上卷也不报错）。新增级别要三处同改，
+// 已有库还需对应的增量迁移。存储统计按 sqlite_master 列表，不读它。
 var metricTables = []string{"metric_1m", "metric_5m", "metric_1h"}
 
 // schemaStatements 是当前版本的完整 DDL：空库直接建到当前版本，不重放历史。
@@ -185,6 +186,8 @@ func probeDDL(table string) string {
 ) WITHOUT ROWID`
 }
 
+// probeTables 与 metricTables 同一口径：建库、DeleteNode 与上卷（rollup.go 的 probeFamily.tables，
+// 与 levels、states 同序同长）共用。
 var probeTables = []string{"probe_1m", "probe_5m", "probe_1h"}
 
 const ddlProbeTask = `CREATE TABLE probe_task (
