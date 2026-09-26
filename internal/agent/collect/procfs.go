@@ -74,6 +74,13 @@ func (p *ProcFS) load() (loadAvg, error) {
 // /proc/loadavg 第 4 字段的分母是含线程的调度实体数，而且在容器里是整个内核的数，不用。
 // 能列出 /proc 却一个进程目录都没有，说明读的不是 procfs（至少有 agent 自己），按读不到处理。
 func (p *ProcFS) procs() (uint32, error) {
+	// /proc 以 hidepid=2（invisible）挂载时，非 root 进程只列得出自己同 uid 的进程目录，数出来是
+	// 个位数而不报错（debian 容器里 remount 后以 nobody 实测：ls 只剩自己的两个 pid，stat /proc/1
+	// 报 ENOENT）。PID 1 在任何 pid 命名空间里都存在，看不到它就说明列表不全；按"要么正确要么
+	// 缺失"让进程数缺失，报错经 Collector 进日志，点名 hidepid 供排查。
+	if _, err := fs.Stat(p.FS, "proc/1"); err != nil {
+		return 0, fmt.Errorf("proc/1 is not visible, /proc is likely mounted with hidepid so other users' processes are hidden: %w", err)
+	}
 	entries, err := fs.ReadDir(p.FS, "proc")
 	if err != nil {
 		return 0, err

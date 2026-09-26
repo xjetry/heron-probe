@@ -420,3 +420,21 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 		t.Fatalf("facts differ:\n%s", strings.Join(d, "\n"))
 	}
 }
+
+// /proc 以 hidepid=2 挂载时非 root 的 agent 只看得到自己的进程：按目录数会静默错成个位数。
+// PID 1 在任何 pid 命名空间里都存在，看不到它就说明列表不全，进程数缺失并记日志。
+func TestProcsMissingWhenOtherProcessesAreHidden(t *testing.T) {
+	fsys := fstest.MapFS{
+		"proc/loadavg":   {Data: []byte("0.10 0.20 0.30 3/900 77\n")},
+		"proc/4242/comm": {Data: []byte("probe-agent\n")},
+		"proc/4243/comm": {Data: []byte("probe-agent\n")},
+	}
+	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clock.NewFake(time.Unix(0, 0))}
+	m, err := c.Metrics()
+	if m.Procs != nil {
+		t.Fatalf("procs = %d from a /proc that hides PID 1, want missing", m.GetProcs())
+	}
+	if err == nil || !strings.Contains(err.Error(), "procs: proc/1 is not visible") {
+		t.Fatalf("err = %v, want the hidden PID 1 named", err)
+	}
+}
