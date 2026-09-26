@@ -48,5 +48,6 @@ tr.offline td { color: var(--muted); }
 .edit-form { white-space: normal; }
 .picks label, label.inline { display: inline-flex; align-items: center; gap: .3rem; }
 .edit-form textarea { width: 100%; min-height: 6rem; font-family: ui-monospace, monospace; }
+.logo-preview { height: 32px; width: auto; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: 1rem; }
 .secret { font-family: ui-monospace, monospace; word-break: break-all; white-space: pre-wrap; background: var(--bg); padding: 0.5rem; border-radius: 6px; }
