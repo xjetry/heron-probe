@@ -45,7 +45,7 @@ curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-maco
 
 #### 真机核对
 
-没有 macOS 虚拟机可做自动验收，改动 `deploy/install-macos.sh` 或 `deploy/launchd/xyz.probe.agent.plist` 后、发版前在一台 Mac 上逐条执行。未发布的构建用 `make release VERSION=v0.0.0-check` 产出 `dist/`，`python3 -m http.server 18086 --directory dist` 提供下载，下面的 `<base>` 即该地址，安装时加 `--base-url <base>`。
+没有 macOS 虚拟机可做自动验收，改动 `deploy/install-macos.sh` 或 `deploy/launchd/xyz.probe.agent.plist` 后、发版前在一台 Mac 上逐条执行。未发布的构建用 `make release VERSION=v0.0.0-check` 产出 `dist/`，`python3 -m http.server 18089 --directory dist` 提供下载，下面的 `<base>` 即该地址，安装时加 `--base-url <base>`。端口避开仓库里各验收脚本占用的号：e2e 用 18080/18081，Linux 安装验收用 18085/18086（下载服务就在 18086），macOS 本机验收用 18087/18088；同一台机器上同时跑时，后起的一方会绑不上端口。
 
 1. `curl -fsSL <base>/install-macos.sh | sudo sh -s -- --hub <hub> --key <key> --base-url <base>`：最后一行是 `probe-agent installed and started (launchd, arm64, probe-agent_darwin_arm64.tar.gz)`（Intel 为 amd64）。
 2. `dscl . -read /Users/_probe-agent UniqueID PrimaryGroupID UserShell NFSHomeDirectory`：UniqueID 是 300–499 中从 499 往下第一个两个命名空间都空闲的号（通常就是 499），PrimaryGroupID 等于 `dscl . -read /Groups/_probe-agent PrimaryGroupID` 的值、与 UniqueID 相同，UserShell 为 `/usr/bin/false`，NFSHomeDirectory 为 `/var/empty`；`id -gn _probe-agent` 输出 `_probe-agent`；登录窗口里看不到这个用户。
