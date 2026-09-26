@@ -49,6 +49,7 @@ type harness struct {
 	reg    *probe.Registry
 	alerts *alert.Engine
 	svc    *Service
+	pub    *Public
 }
 
 func newHarness(t *testing.T, trusted string) *harness {
@@ -78,15 +79,17 @@ func newHarness(t *testing.T, trusted string) *harness {
 		t.Fatal(err)
 	}
 	svc := New(Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version"}, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
+	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, TrustedProxies: prefixes}, st, l, book, reg, clk, slog.Default())
 	mux := http.NewServeMux()
 	mux.Handle(in.Handler())
 	mux.Handle(svc.Handler())
+	mux.Handle(pub.Handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
 	hc := &http.Client{Jar: jar}
 	return &harness{srv: srv, http: hc, admin: probev1connect.NewAdminServiceClient(hc, srv.URL),
-		agent: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, book: book, reg: reg, alerts: alerts, svc: svc}
+		agent: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, book: book, reg: reg, alerts: alerts, svc: svc, pub: pub}
 }
 
 func (h *harness) login(t *testing.T) {
@@ -114,6 +117,20 @@ func (h *harness) report(t *testing.T, tok string, m *probev1.Metrics) error {
 	req.Header().Set("Authorization", "Bearer "+tok)
 	_, err := h.agent.Report(context.Background(), req)
 	return err
+}
+
+// publicClient 是不带任何凭据的公开服务客户端：harness.http 带着会话 cookie jar，这里用裸客户端。
+func (h *harness) publicClient(opts ...connect.ClientOption) probev1connect.PublicServiceClient {
+	return probev1connect.NewPublicServiceClient(h.srv.Client(), h.srv.URL, opts...)
+}
+
+// setPublic 只改公开与否；UpdateNode 整体替换可编辑字段，其余取建节点时的默认值（重置日 1、宽限期取 TTL）。
+func (h *harness) setPublic(t *testing.T, id int64, name string, public bool) {
+	t.Helper()
+	req := &probev1.UpdateNodeRequest{Id: id, Name: name, Public: public, TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0)}
+	if _, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(req)); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func codeOf(err error) connect.Code { return connect.CodeOf(err) }

@@ -550,3 +550,40 @@ func TestOpenErrorNamesTheDatabasePath(t *testing.T) {
 		t.Fatalf("Open(%s) = %q, want the path in the error", path, err)
 	}
 }
+
+func TestPublicNodeQueriesSeeOnlyPublicNodes(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	var ids []int64
+	for i, name := range []string{"a", "b", "c"} {
+		id, err := s.CreateNode(ctx, name, hash(byte(i)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	for _, i := range []int{0, 2} {
+		if err := s.UpdateNode(ctx, ids[i], []string{"a", "b", "c"}[i], true, "", 1, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.ReorderNodes(ctx, []int64{ids[2], ids[1], ids[0]}); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := s.ListPublicNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, n := range nodes {
+		names = append(names, n.Name)
+	}
+	if strings.Join(names, ",") != "c,a" {
+		t.Fatalf("public nodes = %v, want c,a in panel order", names)
+	}
+	for id, want := range map[int64]bool{ids[0]: true, ids[1]: false, ids[2]: true, 999999: false} {
+		if got, err := s.NodeIsPublic(ctx, id); err != nil || got != want {
+			t.Errorf("NodeIsPublic(%d) = %v %v, want %v", id, got, err, want)
+		}
+	}
+}

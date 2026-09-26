@@ -26,7 +26,14 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 )
 
-var anonymousProcedures = map[string]bool{"/probe.v1.AgentService/Register": true, "/probe.v1.AdminService/Login": true}
+// publicProcedures 是匿名可达的全部过程：只有 PublicService（§12）。Register 与 Login 的凭据在请求体里，
+// 用 {} 调用时由方法体返回 Unauthenticated（没有注册窗口、没有管理员），与其他过程一样断言 401。
+var publicProcedures = map[string]bool{
+	"/probe.v1.PublicService/GetSite":      true,
+	"/probe.v1.PublicService/GetSnapshot":  true,
+	"/probe.v1.PublicService/QueryMetrics": true,
+	"/probe.v1.PublicService/QueryProbes":  true,
+}
 
 func newTestMux(t *testing.T) *http.ServeMux {
 	t.Helper()
@@ -55,7 +62,8 @@ func newTestMux(t *testing.T) *http.ServeMux {
 		t.Fatal(err)
 	}
 	admin := api.New(api.Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second}, st, a, l, svc, book, reg, alerts, notifier, clk, slog.Default())
-	return newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", web.RootRedirect()))
+	pub := api.NewPublic(api.PublicConfig{ReportInterval: 10 * time.Second}, st, l, book, reg, clk, slog.Default())
+	return newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(pub.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", web.RootRedirect()))
 }
 
 // RPC 路径与 /admin/ 的优先级高于根路径的重定向；ServeMux 按最长前缀匹配，
@@ -113,7 +121,11 @@ func TestMuxRejectsAnonymousProcedures(t *testing.T) {
 						t.Fatal(err)
 					}
 					defer resp.Body.Close()
-					if anonymousProcedures[path] {
+					if publicProcedures[path] {
+						// 404 说明没挂载（落到了根路径），401 说明被鉴权挡住：两者都不是匿名可达。
+						if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusNotFound {
+							t.Fatalf("%s: status %d, want the public service to answer anonymously", path, resp.StatusCode)
+						}
 						return
 					}
 					if resp.StatusCode != http.StatusUnauthorized {
@@ -136,9 +148,44 @@ func TestMuxRejectsAnonymousProcedures(t *testing.T) {
 	if count == 0 {
 		t.Fatal("enumerated no procedures")
 	}
-	for path := range anonymousProcedures {
+	for path := range publicProcedures {
 		if !seen[path] {
 			t.Errorf("anonymous allowlist path not enumerated: %s", path)
 		}
+	}
+}
+
+// 无副作用标注决定一个过程是否接受 GET（§3.3），只有 PublicService 标了：GET 到其余过程一律 405，
+// 这是 §5.3 的 CSRF 事实之一；公开过程接受 GET，浏览器与中间缓存才能按 Cache-Control 复用响应。
+func TestMuxAcceptsGETOnlyOnPublicService(t *testing.T) {
+	srv := httptest.NewServer(newTestMux(t))
+	t.Cleanup(srv.Close)
+	count := 0
+	protoregistry.GlobalFiles.RangeFiles(func(file protoreflect.FileDescriptor) bool {
+		if file.Package() != "probe.v1" {
+			return true
+		}
+		for i := 0; i < file.Services().Len(); i++ {
+			svc := file.Services().Get(i)
+			for j := 0; j < svc.Methods().Len(); j++ {
+				path := "/" + string(svc.FullName()) + "/" + string(svc.Methods().Get(j).Name())
+				count++
+				resp, err := srv.Client().Get(srv.URL + path + "?connect=v1&encoding=json&message=%7B%7D")
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp.Body.Close()
+				switch public := svc.FullName() == "probe.v1.PublicService"; {
+				case public && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusBadRequest:
+					t.Errorf("%s: GET status %d, want the public service to answer (200, or 400 for an empty window)", path, resp.StatusCode)
+				case !public && resp.StatusCode != http.StatusMethodNotAllowed:
+					t.Errorf("%s: GET status %d, want 405", path, resp.StatusCode)
+				}
+			}
+		}
+		return true
+	})
+	if count == 0 {
+		t.Fatal("enumerated no procedures")
 	}
 }

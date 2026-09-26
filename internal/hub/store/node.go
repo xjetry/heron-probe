@@ -30,6 +30,9 @@ const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.crea
 	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at
 	FROM node n LEFT JOIN node_facts f ON f.node_id = n.id`
 
+// nodeOrder 是节点列表唯一的排序：面板与公开页看到同一个顺序。
+const nodeOrder = " ORDER BY n.sort_order, n.id"
+
 func scanNodes(rows *sql.Rows) ([]Node, error) {
 	var out []Node
 	for rows.Next() {
@@ -61,12 +64,32 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 }
 
 func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
-	rows, err := s.r.QueryContext(ctx, selectNodes+" ORDER BY n.sort_order, n.id")
+	rows, err := s.r.QueryContext(ctx, selectNodes+nodeOrder)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	return scanNodes(rows)
+}
+
+// ListPublicNodes 只返回 public = 1 的节点。公开服务只经它与 NodeIsPublic 读节点：可见范围由这两处的 WHERE 承载。
+func (s *Store) ListPublicNodes(ctx context.Context) ([]Node, error) {
+	rows, err := s.r.QueryContext(ctx, selectNodes+" WHERE n.public = 1"+nodeOrder)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanNodes(rows)
+}
+
+// NodeIsPublic 对未公开的节点与不存在的节点同样返回 false：调用方无从、也不需要区分二者。
+func (s *Store) NodeIsPublic(ctx context.Context, id int64) (bool, error) {
+	var public bool
+	err := s.r.QueryRowContext(ctx, "SELECT public FROM node WHERE id = ?", id).Scan(&public)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return public, err
 }
 
 func (s *Store) GetNode(ctx context.Context, id int64) (Node, error) {

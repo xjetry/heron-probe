@@ -72,6 +72,7 @@ type Service struct {
 	notifier *alert.Queue
 	clk      clock.Clock
 	log      *slog.Logger
+	history  history
 
 	// access 是 AdminService 每个过程的准入口径，New 时从描述符读出，之后只读。
 	access map[string]probev1.Access
@@ -83,7 +84,8 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 	}
 	return &Service{
 		cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, probes: probes, alerts: alerts, notifier: notifier, clk: clk, log: log,
-		access: accessTable(probev1.File_probe_v1_admin_proto.Services().ByName("AdminService")),
+		history: history{store: st, log: log},
+		access:  accessTable(probev1.File_probe_v1_admin_proto.Services().ByName("AdminService")),
 	}
 }
 

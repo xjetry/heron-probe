@@ -135,6 +135,20 @@ func (r *Registry) Target(id uint64) (kind probev1.ProbeKind, target string, ok 
 	return t.Kind, t.Target, true
 }
 
+// TargetFor 是公开端标注历史序列的口径：只对当前分配给 nodeID 的任务给出种类与目标，其余 ok 为 false。
+// 节点公开即公开它正在探测的目标；历史里出现、但现在不分配给该节点的任务，当前目标可能从未被该节点探测过
+// （撤下后改成了内网地址、只分配给私有节点），不在公开范围内。分配与目标在同一个读锁下读出：分开两次加锁，
+// 中间的 Save 可能让"已分配"与"新目标"拼在一起。
+func (r *Registry) TargetFor(nodeID int64, id uint64) (kind probev1.ProbeKind, target string, ok bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	t, known := r.tasks[id]
+	if _, assigned := r.byNode[nodeID][id]; !known || !assigned {
+		return probev1.ProbeKind_PROBE_KIND_UNSPECIFIED, "", false
+	}
+	return t.Kind, t.Target, true
+}
+
 func dedupSorted(ids []int64) []int64 {
 	out := slices.Clone(ids)
 	slices.Sort(out)

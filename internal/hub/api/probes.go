@@ -4,11 +4,9 @@ import (
 	"context"
 
 	"connectrpc.com/connect"
-	"google.golang.org/protobuf/proto"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/hub/probe"
-	"github.com/xjetry/probe/internal/hub/store"
 )
 
 func detailProto(d probe.Detail) *probev1.ProbeTaskDetail {
@@ -50,33 +48,16 @@ func (s *Service) DeleteProbeTask(ctx context.Context, req *connect.Request[prob
 
 func (s *Service) QueryProbes(ctx context.Context, req *connect.Request[probev1.QueryProbesRequest]) (*connect.Response[probev1.QueryProbesResponse], error) {
 	m := req.Msg
-	maxPoints, err := s.queryWindow(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), m.GetMaxPoints())
+	maxPoints, err := checkWindow(m.GetFrom(), m.GetTo(), m.GetMaxPoints())
 	if err != nil {
 		return nil, err
 	}
-	lv, step := store.ChooseLevel(m.GetFrom(), m.GetTo(), maxPoints)
-	rows, err := s.store.QueryProbes(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), lv, step)
-	if err != nil {
-		s.log.Error("probe query failed", "err", err)
-		return nil, internalError("probe query failed")
+	if err := s.requireNode(ctx, m.GetNodeId()); err != nil {
+		return nil, err
 	}
-	resp := &probev1.QueryProbesResponse{Level: lv.Name, StepS: uint32(step)}
-	var cur *probev1.ProbeSeries
-	for _, r := range rows { // store 已按 TaskID、TS 排序
-		if r.Bucket.Sent == 0 {
-			continue
-		}
-		if cur == nil || cur.TaskId != r.TaskID {
-			cur = &probev1.ProbeSeries{TaskId: r.TaskID}
-			// 标签取查询时的任务清单；已删除的任务两项留空，客户端退回编号。
-			cur.Kind, cur.Target, _ = s.probes.Target(r.TaskID)
-			resp.Series = append(resp.Series, cur)
-		}
-		sample := &probev1.ProbeSample{Ts: r.TS, Sent: r.Bucket.Sent, Lost: r.Bucket.Lost, Errors: r.Bucket.Errors}
-		if mean, ok := r.Bucket.RttMean(); ok {
-			sample.RttMeanUs, sample.RttMinUs, sample.RttMaxUs = proto.Uint32(mean), proto.Uint32(r.Bucket.RttMinUs), proto.Uint32(r.Bucket.RttMaxUs)
-		}
-		cur.Samples = append(cur.Samples, sample)
+	resp, err := s.history.probeSeries(ctx, m, maxPoints, s.probes.Target)
+	if err != nil {
+		return nil, err
 	}
 	return connect.NewResponse(resp), nil
 }

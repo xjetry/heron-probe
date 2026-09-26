@@ -372,3 +372,20 @@ func TestServeWarnsWhenLocalTimezoneCannotBeResolved(t *testing.T) {
 		t.Fatalf("missing UTC fallback warning: %s", &logs)
 	}
 }
+
+// serve 的装配与 newTestMux 各写一份：这里经真实 serve 调一次公开服务，挂载遗漏不会只在 mux 测试里被掩盖。
+func TestServeMountsPublicService(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "hub.db")
+	url, _, _ := startTestHub(t, db, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
+	resp, err := http.Get(url + "/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var site struct {
+		Theme string `json:"theme"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&site); err != nil || resp.StatusCode != http.StatusOK || site.Theme != "auto" {
+		t.Fatalf("GetSite via serve: %d %+v %v", resp.StatusCode, site, err)
+	}
+}

@@ -4,6 +4,14 @@ modules:
 lint:
   use:
     - STANDARD
+  # 豁免只到文件：历史查询的请求与响应由管理与公开两个服务共用（§10），公开服务的两个方法直接返回
+  # §10 定义的 PublicSite 与 PublicSnapshot。其余文件照常受这两条规则约束。
+  ignore_only:
+    RPC_REQUEST_RESPONSE_UNIQUE:
+      - proto/probe/v1/admin.proto
+      - proto/probe/v1/public.proto
+    RPC_RESPONSE_STANDARD_NAME:
+      - proto/probe/v1/public.proto
 breaking:
   use:
     - WIRE_JSON
