@@ -1,6 +1,6 @@
 export CGO_ENABLED=0
 
-.PHONY: gen lint test build binaries ci e2e e2e-matrix fixtures web-install web-test web release
+.PHONY: gen lint test build binaries ci e2e e2e-matrix fixtures web-install web-test web release docker
 
 web-install:
 	pnpm --dir web install --frozen-lockfile
@@ -109,3 +109,53 @@ release:
 	rm -rf dist/build
 	cp deploy/install.sh dist/install.sh
 	cd dist && sha256sum probe-*.tar.gz > SHA256SUMS
+
+# hub 镜像（§14）：ghcr.io/xjetry/probe-hub:<version>，平台由 HUB_LINUX_ARCHES 展开。
+# 镜像里不编译 Go：hub 二进制经 hub_build 构建到 IMAGE_BIN_DIR，Dockerfile 按 TARGETARCH 取用。
+DOCKER_IMAGE := ghcr.io/xjetry/probe-hub
+comma := ,
+empty :=
+space := $(empty) $(empty)
+DOCKER_PLATFORMS := $(subst $(space),$(comma),$(addprefix linux/,$(HUB_LINUX_ARCHES)))
+# 构建上下文里的二进制按 linux/<arch>/probe-hub 排列，.dockerignore 只放行这些文件。
+# 不放在 dist/ 下：release.yml 以 dist/* 整体上传发布资产，而镜像在 make release 之后、
+# gh release create 之前构建，目录混进 dist/ 就会被 dist/* 展开进上传参数。
+IMAGE_BIN_DIR := build/image
+# 构建节点固定为这一版 BuildKit（docker-container 驱动），本地、CI 与发布用同一个：docker 自带的
+# docker 驱动在经典镜像存储上不支持多平台构建，而是否启用 containerd 存储是宿主的配置。
+# 构建器名带版本号：改 BUILDKIT_VERSION 即换用新构建器，旧的不会被沿用；不用时 docker buildx rm 删除。
+# 首次运行时 docker buildx inspect 会报 no builder found，随后创建。
+BUILDKIT_VERSION := v0.33.0
+BUILDKIT_IMAGE := moby/buildkit:$(BUILDKIT_VERSION)@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+DOCKER_BUILDER := probe-hub-buildkit-$(BUILDKIT_VERSION)
+docker_build = docker buildx build --builder $(DOCKER_BUILDER) -f Dockerfile
+
+# 镜像 tag 与版本号逐字相同：probe-hub version 打印的就是 tag。Docker 的 tag 只允许 [A-Za-z0-9_.-]、
+# 首字符不为 . 与 -、至多 128 个字符，带构建元数据（+）的版本因而不能发布镜像，在构建之前拒绝。
+# 检查从配方环境读 $$VERSION，不把 $(VERSION) 拼进 shell 源码：git tag 名允许 ' $ ( 等字符，拼进去的值
+# 能改写检查本身（v1'x' 在单引号里拼接后就成了 v1x）。make 把命令行与环境给出的 VERSION 都放进配方
+# 环境；若日后改为在 Makefile 里赋值而不导出，这里读到空值、报 VERSION is required，不会放行。
+# 通过之后 VERSION 只含 [A-Za-z0-9_.-]，配方里其余位置直接展开 $(VERSION) 才是安全的。
+# 字符集按字节判断而不按行匹配：grep -x 逐行比对，带换行的值每一行各自合法就会整体放行。删掉允许的
+# 字节后只应剩下末尾的哨兵 /（哨兵让结尾的换行不被命令替换吞掉）；${VERSION##[.-]*} 为空即首字符是 . 或 -。
+check_image_version = if [ -z "$$VERSION" ]; then echo "VERSION is required, e.g. make docker VERSION=v0.1.0" >&2; exit 1; fi; \
+	if [ "$$(printf '%s/' "$$VERSION" | LC_ALL=C tr -d 'A-Za-z0-9_.-')" != / ] || [ -z "$${VERSION\#\#[.-]*}" ] || [ $${\#VERSION} -gt 128 ]; then \
+	  echo "VERSION '$$VERSION' cannot be an image tag: only [A-Za-z0-9_.-], not starting with . or -, at most 128 characters, no + build metadata" >&2; exit 1; fi
+
+# 本地构建并核对（§14）：两个平台都构建、导出根文件系统交给 checkimage，再把本机平台装进 docker。
+# 多平台结果不能 --load：经典镜像存储不接受多平台索引（docker exporter does not currently support
+# exporting manifest lists），不给 --platform 时构建的是构建节点的本机平台。
+# 面板随 go:embed 进二进制，先 make web：漏掉它，镜像里的 /admin/ 只有 503 说明页。
+docker:
+	@$(check_image_version)
+	$(MAKE) web
+	rm -rf $(IMAGE_BIN_DIR)
+	@set -e; for arch in $(HUB_LINUX_ARCHES); do \
+	  mkdir -p "$(IMAGE_BIN_DIR)/linux/$$arch"; \
+	  $(call hub_build,$$arch,$(IMAGE_BIN_DIR)/linux/$$arch/probe-hub); \
+	done
+	go run ./scripts/checkstatic $(foreach a,$(HUB_LINUX_ARCHES),$(IMAGE_BIN_DIR)/linux/$(a)/probe-hub)
+	docker buildx inspect $(DOCKER_BUILDER) > /dev/null || docker buildx create --name $(DOCKER_BUILDER) --driver docker-container --driver-opt image=$(BUILDKIT_IMAGE) --bootstrap
+	$(docker_build) --platform $(DOCKER_PLATFORMS) --output type=tar,dest=$(IMAGE_BIN_DIR)/rootfs.tar .
+	go run ./scripts/checkimage $(IMAGE_BIN_DIR)/rootfs.tar $(HUB_LINUX_ARCHES)
+	$(docker_build) -t $(DOCKER_IMAGE):$(VERSION) --load .
