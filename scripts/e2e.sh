@@ -264,8 +264,9 @@ i=0
 until [ "$(pubget snapshot GetSnapshot '{}')" = 200 ] && jq -e --arg id "$node1" '[(.nodes // [])[].id] == [$id]' "$work/pub-snapshot.json" > /dev/null; do
   i=$((i + 1)); [ "$i" -lt 10 ] || { echo "FAIL: public snapshot does not list exactly node1"; cat "$work/pub-snapshot.json"; exit 1; }; sleep 0.5
 done
-# 公开的主机信息只有这五项：主机名、内核、agent 版本、ICMP 可用性不出现在线上。
-jq -e --arg os "$EXPECT_OS" '.reportIntervalMs == 4000 and (.nodes[0].facts | (.os | contains($os)) and .arch == "amd64" and (keys - ["os", "arch", "virtualization", "cpuModel", "cpuCores"]) == []) and ((.nodes[0].metrics // {}) | has("bootId") | not)' "$work/pub-snapshot.json" > /dev/null || { echo "FAIL: public snapshot shape"; cat "$work/pub-snapshot.json"; exit 1; }
+# 公开的主机信息只有这五项：主机名、内核、agent 版本、ICMP 可用性不出现在线上。指标一定在：node1 早已上报，
+# live 里的最近一次指标只在删节点时清掉；公开指标里没有 bootId。
+jq -e --arg os "$EXPECT_OS" '.reportIntervalMs == 4000 and (.nodes[0].facts | (.os | contains($os)) and .arch == "amd64" and (keys - ["os", "arch", "virtualization", "cpuModel", "cpuCores"]) == []) and (.nodes[0].metrics | type == "object" and .memTotal != null and (has("bootId") | not))' "$work/pub-snapshot.json" > /dev/null || { echo "FAIL: public snapshot shape"; cat "$work/pub-snapshot.json"; exit 1; }
 [ "$(hdr snapshot Cache-Control)" = "max-age=1" ] || { echo "FAIL: GetSnapshot Cache-Control"; cat "$work/pub-snapshot.headers"; exit 1; }
 # 缓存头只给 GET：POST 的响应不进浏览器缓存，不带这个头。
 [ "$(curl -sS -o /dev/null -D "$work/pub-post.headers" -w '%{http_code}' -H 'Content-Type: application/json' --data '{}' "$base/probe.v1.PublicService/GetSnapshot")" = 200 ] || { echo "FAIL: POST GetSnapshot"; exit 1; }
@@ -383,13 +384,19 @@ grep -q 'e2e custom public page' "$work/pub-dir-index.html" || { echo "FAIL: / i
 [ "$(hdr dir-index Cache-Control)" = no-cache ] || { echo "FAIL: --public-dir Cache-Control"; cat "$work/pub-dir-index.headers"; exit 1; }
 [ "$(curl -sS -o "$work/pub-dir-css" -w '%{http_code}' "$base/assets/app.css")" = 200 ] && grep -q 'color: red' "$work/pub-dir-css" || { echo "FAIL: --public-dir asset"; exit 1; }
 [ "$(curl -sS -o /dev/null -w '%{http_code}' "$base/assets/missing.js")" = 404 ] || { echo "FAIL: a missing asset under --public-dir must be 404"; exit 1; }
-for path in /leak.txt /../outside.txt; do
-  curl -sS --path-as-is -L -o "$work/pub-dir-escape" "$base$path"
+# 两条路都要回落 index.html、读不到目录外的内容。/leak.txt 是指向目录外的符号链接，由 os.Root 拒绝；
+# /%2e%2e/outside.txt 到得了替换目录的处理器，由三层各自挡住：relPath 的 path.Clean 先把它清成 /outside.txt；
+# 不清理时 .. 段也被当作点段（hidden）而不打开；再往下 os.Root 拒绝越界。这一轮钉的是用户可见的结果，三层全失效才红。
+# 字面的 /../ 不在这里测：它在分派之前就被 ServeMux 以 307 重定向清理掉，到不了替换目录。
+for path in /leak.txt /%2e%2e/outside.txt; do
+  curl -sS --path-as-is -o "$work/pub-dir-escape" "$base$path"
   if grep -q 'outside secret' "$work/pub-dir-escape"; then echo "FAIL: $path read a file outside --public-dir"; exit 1; fi
   grep -q 'e2e custom public page' "$work/pub-dir-escape" || { echo "FAIL: $path did not fall back to index.html"; cat "$work/pub-dir-escape"; exit 1; }
 done
 [ "$(curl -sS -o "$work/admin-after-dir.html" -w '%{http_code}' "$base/admin/")" = 200 ] && grep -q 'src="/admin/assets/' "$work/admin-after-dir.html" || { echo "FAIL: --public-dir shadowed the panel"; exit 1; }
-[ "$(pubget site-after-dir GetSite '{}')" = 200 ] || { echo "FAIL: --public-dir shadowed PublicService"; exit 1; }
+# 替换目录对不是文件的路径一律回落 index.html（也是 200），只看状态码分不出 RPC 是否被遮蔽：比对正文。
+# 与重启前保存的那份逐字节相同，也就钉住了外观跨重启保留（同一个二进制的 protojson 输出稳定，上面"a rejected update changed the site"那一处同样依赖这一点）。
+[ "$(pubget site-after-dir GetSite '{}')" = 200 ] && cmp -s "$work/pub-site.json" "$work/pub-site-after-dir.json" || { echo "FAIL: --public-dir shadowed PublicService or the saved site settings did not survive the restart"; cat "$work/pub-site-after-dir.json"; exit 1; }
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login after restart"; exit 1; }
 # token 跨重启存活，只读、不能写；卡片取自 hub 实际下发的那份，其中的例子逐个在真实数据上跑。
 [ "$(bearer ListNodes '{}')" = 200 ] || { echo "FAIL: API token lost across restart"; cat "$work/bearer-ListNodes.json"; exit 1; }
@@ -462,6 +469,7 @@ jq -r '.tables[].name' "$work/GetStorageStats.json" > "$work/stats-api-tables.tx
 sed -n '/^db_bytes: /d; s/^\([a-z0-9_]*\): [0-9][0-9]*$/\1/p' "$work/stats.txt" > "$work/stats-cli-tables.txt"
 [ -s "$work/stats-cli-tables.txt" ] && cmp -s "$work/stats-api-tables.txt" "$work/stats-cli-tables.txt" || { echo "FAIL: GetStorageStats and probe-hub stats list different tables"; cat "$work/stats-api-tables.txt" "$work/stats-cli-tables.txt"; exit 1; }
 [ "$(get db_bytes)" -gt 0 ] || { echo "FAIL: db_bytes"; exit 1; }
+# UpdateSettings 整体替换：请求只给了四项，存储层照样写五个 site.* 键（空 logo 也是一行）；表里目前只有外观。
 [ "$(get setting)" = 5 ] || { echo "FAIL: setting rows"; exit 1; }
 [ "$(get node)" = 2 ] || { echo "FAIL: node count"; exit 1; }
 [ "$(get alert_rule)" = 1 ] || { echo "FAIL: alert rule count"; exit 1; }
