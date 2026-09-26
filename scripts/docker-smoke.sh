@@ -9,7 +9,11 @@ set -eu
 # 空表示 docker 的默认平台；发布后回读时逐个架构给出。
 platform=${SMOKE_PLATFORM:-}
 # 带 shell 的工具镜像：读卷里的属主、预置不可写的卷、在 hub 的网络命名空间里发请求。不进入产物。
-tool=alpine:3.21
+# 按 digest 固定，由 Makefile 的 ALPINE_IMAGE 经环境变量传入，与 Dockerfile 的基础镜像同一处定义。
+tool=${TOOL_IMAGE:?TOOL_IMAGE is required: the pinned alpine image, see ALPINE_IMAGE in the Makefile}
+# 工具容器在 docker 守护进程的本机平台上运行，按该平台清单的 digest 引用（原因见 image-platform-ref.sh）。
+tool_platform=$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}')
+tool=$("$(dirname "$0")/image-platform-ref.sh" "$tool" "$tool_platform")
 work=$(mktemp -d)
 echo "docker smoke artifacts: $work (image $IMAGE${platform:+, platform $platform})"
 run_id=probe-smoke-$(basename "$work")
@@ -149,8 +153,8 @@ grep -qi '^set-cookie: probe_session=' "$work/login.headers" || fail "login did 
 echo "passwd and login ok"
 
 # hub 以 uid 65532 运行：它在新建的命名卷里写出的库文件属于 65532（Docker 把镜像里 /data 的属主带到空卷上）。
-docker run --rm -v "$data:/data" "$tool" stat -c '%u:%g %n' /data /data/probe.db > "$work/owner.log" 2>&1 || {
-  cat "$work/owner.log" >&2
+docker run --rm --platform "$tool_platform" -v "$data:/data" "$tool" stat -c '%u:%g %n' /data /data/probe.db > "$work/owner.log" 2> "$work/owner.err" || {
+  cat "$work/owner.log" "$work/owner.err" >&2
   fail "stat the data volume"
 }
 awk '$1 != "65532:65532" { bad = 1 } END { exit bad || NR != 2 }' "$work/owner.log" || {
@@ -158,7 +162,7 @@ awk '$1 != "65532:65532" { bad = 1 } END { exit bad || NR != 2 }' "$work/owner.l
   fail "data volume entries are not owned by 65532:65532"
 }
 # README 的排查办法：镜像里没有 shell，用工具镜像进入 hub 的网络命名空间发请求。
-docker run --rm --network "container:$hub" "$tool" wget -q -O /dev/null http://127.0.0.1:8080/admin/ > "$work/netns.log" 2>&1 || {
+docker run --rm --platform "$tool_platform" --network "container:$hub" "$tool" wget -q -O /dev/null http://127.0.0.1:8080/admin/ > "$work/netns.log" 2>&1 || {
   cat "$work/netns.log" >&2
   fail "request from the hub's network namespace"
 }
@@ -177,7 +181,7 @@ echo "stop ok"
 # 库目录不可写（绑定了属主为 root 的宿主目录）：卷里已有内容时 Docker 不改它的属主，
 # 用预置了 root 文件的卷模拟。hub 必须退出，报错里写出库路径。
 docker volume create "$denied_data" > /dev/null
-docker run --rm -v "$denied_data:/data" "$tool" sh -c 'touch /data/placeholder && chown 0:0 /data /data/placeholder && chmod 755 /data' || fail "prepare the root-owned volume"
+docker run --rm --platform "$tool_platform" -v "$denied_data:/data" "$tool" sh -c 'touch /data/placeholder && chown 0:0 /data /data/placeholder && chmod 755 /data' || fail "prepare the root-owned volume"
 drun -d --name "$denied" -v "$denied_data:/data" "$IMAGE" > /dev/null
 deadline=$(($(date +%s) + 30))
 until [ "$(docker inspect -f '{{.State.Status}}' "$denied")" = exited ]; do

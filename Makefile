@@ -38,7 +38,7 @@ gen: web-install
 lint:
 	go mod tidy -diff
 	buf lint
-	shellcheck -s sh deploy/install.sh deploy/openrc/probe-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/release-rules-test.sh
+	shellcheck -s sh deploy/install.sh deploy/openrc/probe-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/release-rules-test.sh scripts/image-platform-ref.sh
 	go vet ./...
 	GOOS=linux go vet ./...
 	GOOS=darwin go vet ./...
@@ -158,7 +158,10 @@ IMAGE_BIN_DIR := build/image
 BUILDKIT_VERSION := v0.33.0
 BUILDKIT_IMAGE := moby/buildkit:$(BUILDKIT_VERSION)@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
 DOCKER_BUILDER := probe-hub-buildkit-$(BUILDKIT_VERSION)
-docker_build = docker buildx build --builder $(DOCKER_BUILDER) -f Dockerfile
+# alpine 按 digest 固定，只在这里定义：Dockerfile 的 rootfs 阶段经 --build-arg 取用，冒烟的工具镜像
+# （读卷属主、预置不可写的卷、在 hub 的网络命名空间里发请求）经环境变量 TOOL_IMAGE 取用。
+ALPINE_IMAGE := alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
+docker_build = docker buildx build --builder $(DOCKER_BUILDER) -f Dockerfile --build-arg ALPINE_IMAGE=$(ALPINE_IMAGE)
 
 # 本地构建并核对（§14）：两个平台都构建、导出根文件系统交给 checkimage，再把本机平台装进 docker。
 # 多平台结果不能 --load：经典镜像存储不接受多平台索引（docker exporter does not currently support
@@ -184,7 +187,7 @@ docker:
 # 默认平台）由 make 从命令行或环境放进配方环境，脚本直接读，不在这里重新赋值拼进 shell 源码。
 docker-smoke:
 	@$(check_version)
-	IMAGE='$(DOCKER_IMAGE):$(VERSION)' scripts/docker-smoke.sh
+	IMAGE='$(DOCKER_IMAGE):$(VERSION)' TOOL_IMAGE='$(ALPINE_IMAGE)' scripts/docker-smoke.sh
 
 # 预发布判定（§14）：去掉构建元数据（+ 及之后）后仍含 - 就是预发布。GitHub Release 是否标为 prerelease、
 # 镜像是否推 latest 都读它，判定只在这一处。纯文本函数，不经 shell：make 展开配方时就求值，早于配方里
