@@ -43,8 +43,9 @@ export function Appearance() {
   const gate = queryGate(settings);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const form = draft ?? toDraft(gate.data.settings);
-  // edit 是草稿的唯一改法：按最新的草稿合并（读 logo 的回调在读完时才调用它，选文件时的快照可能已过时），
-  // 并清掉上一次保存的"已保存"与错误——改了草稿，它们就不再描述当前内容。
+  // 用户侧对草稿的改动都经 edit：按最新的草稿合并（读 logo 的回调在读完时才调用它，选文件时的快照可能已过时），
+  // 并清掉上一次保存的"已保存"与错误——改了草稿，它们就不再描述当前内容。保存成功的回显由 onSuccess
+  // 直接替换草稿，那是 hub 已保存的值，"已保存"正是要留给它显示的。
   const edit = (patch: Partial<Draft>) => {
     setDraft((d) => ({ ...(d ?? toDraft(gate.data.settings)), ...patch }));
     setSaved(false);
