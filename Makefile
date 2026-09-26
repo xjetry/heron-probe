@@ -38,7 +38,7 @@ gen: web-install
 lint:
 	go mod tidy -diff
 	buf lint
-	shellcheck -s sh deploy/install.sh deploy/openrc/probe-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/release-rules-test.sh scripts/image-platform-ref.sh
+	shellcheck -s sh deploy/install.sh deploy/openrc/probe-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/release-rules-test.sh scripts/image-platform-ref.sh scripts/docker-builder.sh
 	go vet ./...
 	GOOS=linux go vet ./...
 	GOOS=darwin go vet ./...
@@ -154,7 +154,7 @@ IMAGE_BIN_DIR := build/image
 # 构建节点固定为这一版 BuildKit（docker-container 驱动），本地、CI 与发布用同一个：docker 自带的
 # docker 驱动在经典镜像存储上不支持多平台构建，而是否启用 containerd 存储是宿主的配置。
 # 构建器名带版本号：改 BUILDKIT_VERSION 即换用新构建器，旧的不会被沿用；不用时 docker buildx rm 删除。
-# 首次运行时 docker buildx inspect 会报 no builder found，随后创建。
+# 同名构建器由 scripts/docker-builder.sh 核对驱动与镜像后才沿用（只改 digest 时名字不变），不存在时创建。
 BUILDKIT_VERSION := v0.33.0
 BUILDKIT_IMAGE := moby/buildkit:$(BUILDKIT_VERSION)@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
 DOCKER_BUILDER := probe-hub-buildkit-$(BUILDKIT_VERSION)
@@ -176,7 +176,7 @@ docker:
 	  $(call hub_build,$$arch,$(IMAGE_BIN_DIR)/linux/$$arch/probe-hub); \
 	done
 	go run ./scripts/checkstatic $(foreach a,$(HUB_LINUX_ARCHES),$(IMAGE_BIN_DIR)/linux/$(a)/probe-hub)
-	docker buildx inspect $(DOCKER_BUILDER) > /dev/null || docker buildx create --name $(DOCKER_BUILDER) --driver docker-container --driver-opt image=$(BUILDKIT_IMAGE) --bootstrap
+	scripts/docker-builder.sh $(DOCKER_BUILDER) $(BUILDKIT_IMAGE)
 	$(docker_build) --platform $(DOCKER_PLATFORMS) --output type=tar,dest=$(IMAGE_BIN_DIR)/rootfs.tar .
 	go run ./scripts/checkimage $(IMAGE_BIN_DIR)/rootfs.tar $(HUB_LINUX_ARCHES)
 	$(docker_build) -t $(DOCKER_IMAGE):$(VERSION) --load .
