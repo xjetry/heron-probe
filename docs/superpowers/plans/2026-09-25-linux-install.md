@@ -1322,3 +1322,11 @@ cd /Users/xjetry/work/vibe/probe-install && git add proto internal cmd gen web &
 - **打包**：`.gitignore` 用 `/dist/`（不锚定的 `dist/` 会连带匹配 `internal/hub/web/dist/`，破坏那里的 `.gitkeep` 例外）。两处 tar 加 `--no-xattrs`：`COPYFILE_DISABLE=1` 只去掉 `._*` 条目，macOS 的 bsdtar 仍把 `com.apple.provenance` 写成 pax 扩展头，GNU tar 解包时逐条告警；加上后在 debian:bookworm-slim 用 GNU tar 解包没有告警。
 - **OrbStack 镜像与连通**（Task 6 Step 1，arm64 实测）：`alpine:3.21`、`debian:12`、`ubuntu:24.04` 可建；Rocky 的写法是 `rocky:9`（`rockylinux:9` 不合法），实测时三次创建都因镜像 CDN 超时失败；`host.orb.internal` 可达宿主的 127.0.0.1，不需要备用地址。
 - **LXC 对照实验**（Task 7）：bookworm-backports 的 Incus、容器内 systemd 252、`security.nesting=false` 下，静态 `User=` 与 `DynamicUser=` 都能启动，没有出现 226/NAMESPACE。spec §14 与 systemd 单元的注释不再引用那条未复现的记录，单元注释只写可核实的理由。
+- **验收脚本（Task 6）**：
+  - 服务进程按服务用户的有效 uid 扫描 `/proc` 认定，断言恰好一个，与 install.sh 停服务后的确认同一判据；上文的 `pidof` 在 BusyBox 1.37.0（Alpine 3.21）上会把它自己的进程也打印出来（把 `pidof` 停住实测：comm 为 `pidof`），不能用来认进程。卸载后的残留检查按 `comm` 精确等于 `probe-agent`。
+  - 上文"根分区总量与 root 对照相等"改为：服务进程的 `/proc/<pid>/root/` 与 `/` 设备号相同（加固没有让 agent 统计到另一个根分区）；指标比较保留字段集合、内存总量与 bootId。OrbStack 机器的根是 btrfs，实测同一台机器相隔 5 秒的两次上报总量相差约 2.4 GiB 而已用量相同，数值不可比；同一时刻在带同样加固的 systemd-run 与普通环境里 statfs 结果相同。
+  - 每格断言配置目录 root:probe-agent 0750、配置文件 probe-agent 0600；OpenRC 格另断言日志目录 root:root 0755、两个日志文件 probe-agent 0640，删目录重启后再断言一次。
+  - hub 用默认 30 秒 TTL（不设 `PROBE_OFFLINE_AFTER=3m`：3 分钟 TTL 把上报间隔抬到 1 分钟，root 对照 35 秒凑不齐两次 CPU 采样）；QueryProbes 取样本写 `.series[]?`；重跑后最多等 60 秒到版本变为 B。
+  - HTTP 服务用 `exec` 拉起，开跑前核对应答的是本轮 `mktemp` 目录名写成的 run-id（孤儿 `http.server` 曾占着端口让注入假绿；install.sh 在 deploy/ 未改时各轮逐字相同，比对它区分不了新旧服务）；hub 必须在本进程日志里打出监听行。
+  - 新增 `--only DISTRO-ARCH`（可重复，默认行为不变），单格注入与分段运行用；`--only` 时每格多留 1 个窗口名额，无条件注册的注入才能走到节点数断言。
+  - 矩阵结果（分支变基到 main 之前跑，install.sh 已含停服务确认与属主修复）：一级四格、二级四格全部通过；Rocky amd64 首次创建报 "machine didn't start in 30s"，立即重试通过。变基到含 API token、测试等待与投递类别的 main 后复验 Debian arm64、Alpine arm64 两格通过。
