@@ -45,8 +45,10 @@ func currentSettings(t *testing.T, h *harness) *probev1.Settings {
 }
 
 // rejected 断言更新被拒、错误含 want，且库里的外观仍是 before：一项不合约束，整次更新什么都不写。
+// 先把库复位到 before，每个子用例都从同一状态开始：前一个子用例被错误接受时，红只落在它自己身上。
 func rejected(t *testing.T, h *harness, in *probev1.Settings, want string, before *probev1.Settings) {
 	t.Helper()
+	saveSettings(t, h, before)
 	_, err := h.admin.UpdateSettings(t.Context(), connect.NewRequest(&probev1.UpdateSettingsRequest{Settings: in}))
 	if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %v, want InvalidArgument containing %q", err, want)
@@ -96,6 +98,23 @@ func TestUpdateSettingsCleansTitleAndAccentAndEchoes(t *testing.T) {
 	}
 }
 
+// 标题与节点名是同一种显示文字，清洗结果必须一致；任何一边换成自己的写法，这里就会分叉。
+func TestTitleAndNodeNameCleanAlike(t *testing.T) {
+	for _, raw := range []string{" \x01 状态\u202e 页 \x7f\t", "\u0085a\u200cb", "\u2066x\u2069 "} {
+		name, err := cleanName(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st, err := cleanSettings(&probev1.Settings{Title: raw, Theme: "auto"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Title != name {
+			t.Fatalf("title %q, node name %q from %q", st.Title, name, raw)
+		}
+	}
+}
+
 func TestUpdateSettingsLogoAcceptsOnlyOneShape(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
@@ -132,6 +151,7 @@ func TestUpdateSettingsLogoAcceptsOnlyOneShape(t *testing.T) {
 		"data:image/jpeg;base64,/9j/4A==",
 		"data:image/webp;base64,UklGRg==",
 		"data:image/svg+xml;base64,PHN2Zy8+",
+		longestLogo(),
 		"",
 	} {
 		if got := saveSettings(t, h, withSettings(func(s *probev1.Settings) { s.Logo = logo })); got.GetLogo() != logo {
@@ -162,23 +182,41 @@ func TestUpdateSettingsCustomCSSRejectsOnlyLiteralEndTagOpen(t *testing.T) {
 	}
 }
 
+// longestLogo 是不超过 maxLogoBytes 的最长合法 logo：对每个类型，base64 数据取不超过余量的最大 4 的倍数，
+// 再在类型之间取总长最大的。前缀最长的类型不一定最长，取整会吃掉差额。
+func longestLogo() string {
+	var out string
+	for _, typ := range logoTypes {
+		prefix := "data:" + typ + ";base64,"
+		logo := prefix + strings.Repeat("A", (maxLogoBytes-len(prefix))/4*4)
+		if len(logo) > len(out) {
+			out = logo
+		}
+	}
+	return out
+}
+
 // 解码预算不够时，connect 在方法体之前就以 ResourceExhausted 拒绝，校验根本到不了。
-// 解码预算装得下满额设置在最坏转义下的 JSON（service.go 的 maxBody 写了推导）：标题与 CSS 用控制字符填满，
-// json.Marshal 把每个控制字符写成 6 字节的 \u00XX；标题的控制字符清洗后不计入 64 个字符，所以这仍是合法的设置。
+// 解码预算装得下满额设置在最坏转义下的 JSON（service.go 的 maxBody 写了推导）：logo 取 longestLogo；
+// 标题与 CSS 用控制字符填满，json.Marshal 把每个控制字符写成 6 字节的 \u00XX，标题的控制字符清洗后不计入
+// 64 个字符，所以这仍是合法的设置；明暗取最长的值，字段名用比 camelCase 长的 proto 原名（connect 两种都收）。
 func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
+	logo := longestLogo()
+	theme := slices.MaxFunc(themes, func(a, b string) int { return len(a) - len(b) })
 	body, err := json.Marshal(map[string]any{"settings": map[string]string{
-		"title": strings.Repeat("\x01", maxTitleBytes), "theme": "auto", "accentColor": "#112233",
-		"logo":      "data:image/png;base64," + strings.Repeat("A", 131048),
-		"customCss": strings.Repeat("\x01", maxCSSBytes),
+		"title": strings.Repeat("\x01", maxTitleBytes), "theme": theme, "accent_color": "#112233",
+		"logo":       logo,
+		"custom_css": strings.Repeat("\x01", maxCSSBytes),
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(body) <= 131048+6*maxCSSBytes+6*maxTitleBytes {
+	if len(body) < len(logo)+6*maxCSSBytes+6*maxTitleBytes {
 		t.Fatalf("request is %d bytes; the worst case was not constructed", len(body))
 	}
+	t.Logf("worst-case request: %d bytes, logo %d bytes, budget %d", len(body), len(logo), maxBody)
 	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/probe.v1.AdminService/UpdateSettings", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)

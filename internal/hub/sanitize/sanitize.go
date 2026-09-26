@@ -23,3 +23,9 @@ func String(s string, maxBytes int) string {
 	}
 	return b.String()
 }
+
+// Text 是显示成一行文字的外来字符串（节点名、页面标题、agent 上报的主机名）的共同口径：String 之后再裁首尾空白。
+// 顺序不能反：先裁空白，剔除控制字符后会露出新的首尾空白。截断发生在裁空白之前，所以结果可能短于 maxBytes。
+func Text(s string, maxBytes int) string {
+	return strings.TrimSpace(String(s, maxBytes))
+}

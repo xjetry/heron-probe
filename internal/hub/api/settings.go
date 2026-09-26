@@ -32,12 +32,12 @@ var (
 )
 
 // cleanSettings 校验并清洗外观，返回可以原样存储与下发的值；任一项不合约束即返回错误，调用方什么都不写。
-// 标题会显示在页面与标签页上，按节点名同一口径清洗；logo 与 CSS 是数据与代码，改写任何字节都可能改变含义，只校验不清洗。
+// 标题会显示在页面与标签页上，与节点名（cleanName）同用 sanitize.Text 清洗；logo 与 CSS 是数据与代码，改写任何字节都可能改变含义，只校验不清洗。
 func cleanSettings(in *probev1.Settings) (store.SiteSettings, error) {
 	if n := len(in.GetTitle()); n > maxTitleBytes {
 		return store.SiteSettings{}, invalid("settings.title must be at most %d bytes before cleaning; got %d", maxTitleBytes, n)
 	}
-	title := strings.TrimSpace(sanitize.String(in.GetTitle(), len(in.GetTitle())))
+	title := sanitize.Text(in.GetTitle(), len(in.GetTitle()))
 	if n := utf8.RuneCountInString(title); n > maxTitleRunes {
 		return store.SiteSettings{}, invalid("settings.title must be at most %d characters after removing control characters and surrounding whitespace; got %d", maxTitleRunes, n)
 	}

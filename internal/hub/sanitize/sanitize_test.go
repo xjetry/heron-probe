@@ -17,3 +17,9 @@ func TestStringTruncatesOnRuneBoundary(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestTextTrimsWhitespaceExposedByStripping(t *testing.T) {
+	if got := Text(" \x01 a\u202e b \x7f\t", 64); got != "a b" {
+		t.Fatalf("got %q", got)
+	}
+}

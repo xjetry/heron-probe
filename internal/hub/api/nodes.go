@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -40,10 +39,10 @@ func nodeProto(n store.Node) *probev1.Node {
 	return out
 }
 
-// cleanName 先去控制字符再裁剪空白，避免清洗后暴露新的首尾空白。
+// cleanName 按 sanitize.Text 清洗，页面标题（cleanSettings）用同一个口径。
 // 按完整清洗结果计字符数；先截字节会把超长输入变成合法名称。
 func cleanName(raw string) (string, error) {
-	name := strings.TrimSpace(sanitize.String(raw, len(raw)))
+	name := sanitize.Text(raw, len(raw))
 	if n := utf8.RuneCountInString(name); n == 0 || n > maxNameRunes {
 		return "", invalid("name must be 1–%d characters after trimming whitespace and control characters; got %d", maxNameRunes, n)
 	}

@@ -206,7 +206,7 @@ func (s *Service) Register(ctx context.Context, req *connect.Request[probev1.Reg
 	if !ok {
 		panic("ingest: Register reached without the source-address rate limit; mount Service.Handler")
 	}
-	name := strings.TrimSpace(sanitize.String(req.Msg.GetName(), maxHostString))
+	name := sanitize.Text(req.Msg.GetName(), maxHostString)
 	if name == "" {
 		name = "node"
 	}
