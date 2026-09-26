@@ -18,9 +18,13 @@ const toDraft = (s: Settings | undefined): Draft => ({
 
 // 公开页的外观：UpdateSettings 整体替换五项，表单因此总是提交全部字段。
 //
-// 保存成功时 onSuccess 用 hub 的回显替换草稿；它不判断"是不是最新一次"，靠的是"有未结请求"与"草稿还能被改"互斥：
-// 保存进行中整个表单禁用（fieldset），读 logo 文件进行中不能保存（读完的回调会改草稿）。所以回显覆盖的
-// 总是这次提交自己送出的内容。
+// 保存成功时 onSuccess 用 hub 的回显替换草稿；它不判断"是不是最新一次"，靠的是"有未结请求"与"草稿还能被改"互斥。
+// 草稿的改动来自两处：用户改字段（同步），与读 logo 文件的回调（异步，读完才改）。互斥由两处承载：
+//   - 保存进行中，fieldset 的 disabled={update.isPending} 禁用整个表单，含文件输入：保存期间既改不了字段，也开始不了读取；
+//   - 读取进行中，文件输入的 disabled={reading} 让至多一个读者在飞，reading 因此恰好等于"有读者在飞"；
+//     submit 守卫（!reading）与保存按钮的禁用拒绝在这时保存。
+// 所以回显覆盖的总是这次提交自己送出的内容。reading 若不对应唯一的读者（文件输入在读取中仍可用），先读完的那个
+// 把它置回 false，保存得以发出，后读完的在保存进行中改草稿，迟到的回显再把它改回去并误报"已保存"。
 export function Appearance() {
   const qc = useQueryClient();
   const settings = useQuery(AdminService.method.getSettings, {});
@@ -39,8 +43,10 @@ export function Appearance() {
   const gate = queryGate(settings);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const form = draft ?? toDraft(gate.data.settings);
+  // edit 是草稿的唯一改法：按最新的草稿合并（读 logo 的回调在读完时才调用它，选文件时的快照可能已过时），
+  // 并清掉上一次保存的"已保存"与错误——改了草稿，它们就不再描述当前内容。
   const edit = (patch: Partial<Draft>) => {
-    setDraft({ ...form, ...patch });
+    setDraft((d) => ({ ...(d ?? toDraft(gate.data.settings)), ...patch }));
     setSaved(false);
     update.reset();
   };
@@ -50,13 +56,10 @@ export function Appearance() {
     e.target.value = "";
     if (!file) return;
     const reader = new FileReader();
-    // 读取期间用户可能还在改别的字段：回调按读完那一刻的草稿合并，不用选文件时的快照。
     reader.onload = () => {
       setReading(false);
       setFileError(null);
-      setDraft((d) => ({ ...(d ?? toDraft(gate.data.settings)), logo: String(reader.result) }));
-      setSaved(false);
-      update.reset();
+      edit({ logo: String(reader.result) });
     };
     reader.onerror = () => { setReading(false); setFileError(`读取 ${file.name} 失败：${String(reader.error)}`); };
     setReading(true);
@@ -103,7 +106,7 @@ export function Appearance() {
           <div className="row">
             <label>
               logo
-              <input type="file" accept={LOGO_TYPES.join(",")} onChange={pickLogo} />
+              <input type="file" accept={LOGO_TYPES.join(",")} onChange={pickLogo} disabled={reading} />
             </label>
             {form.logo && <img src={form.logo} alt="logo 预览" className="logo-preview" />}
             <button type="button" className="link" onClick={() => edit({ logo: "" })} disabled={form.logo === ""}>移除 logo</button>

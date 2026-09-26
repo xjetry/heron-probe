@@ -1,6 +1,6 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
 import type { UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
 import { MAX_LOGO_BYTES } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
@@ -136,4 +136,68 @@ it("取色器的兜底色不当成设置提交", async () => {
   fireEvent.click(f.getByRole("button", { name: "保存" }));
   await waitFor(() => expect(sent).toHaveLength(2));
   expect(sent[1].settings?.accentColor).toBe("#00ff00");
+});
+
+// 可控的 FileReader：读取在测试调用 finish 时才结束，读取进行中的状态可以逐步观察。
+class FakeReader {
+  static all: FakeReader[] = [];
+  result: string | null = null;
+  error: unknown = null;
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  readAsDataURL() { FakeReader.all.push(this); }
+  finish(dataUrl: string) { act(() => { this.result = dataUrl; this.onload?.(); }); }
+}
+
+function useFakeReader() {
+  FakeReader.all = [];
+  vi.stubGlobal("FileReader", FakeReader);
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
+const pick = (f: ReturnType<typeof within>, name: string) =>
+  fireEvent.change(f.getByLabelText("logo"), { target: { files: [new File([new Uint8Array([1])], name, { type: "image/png" })] } });
+
+// 至多一个读者在飞：读取进行中文件输入禁用，reading 才恰好等于"有读者在飞"，保存也随之被拒。
+// 文件输入若仍可用，第二次选文件会让先读完的那个把 reading 置回 false，保存在另一份还在读时发出。
+it("读 logo 进行中文件输入与保存都禁用，读完恢复", async () => {
+  useFakeReader();
+  render({ updateSettings: async (req) => ({ settings: req.settings }) });
+  const f = await form();
+  pick(f, "a.png");
+  expect(FakeReader.all).toHaveLength(1);
+  expect(f.getByLabelText("logo")).toBeDisabled();
+  expect(f.getByRole("button", { name: "保存" })).toBeDisabled();
+  FakeReader.all[0].finish("data:image/png;base64,QQ==");
+  expect(f.getByLabelText("logo")).toBeEnabled();
+  expect(f.getByRole("button", { name: "保存" })).toBeEnabled();
+  expect(f.getByRole("img", { name: "logo 预览" })).toHaveAttribute("src", "data:image/png;base64,QQ==");
+});
+
+it("读完 a 再选 b，最后选的生效", async () => {
+  useFakeReader();
+  const sent: UpdateSettingsRequest[] = [];
+  render({ updateSettings: async (req) => { sent.push(req); return { settings: req.settings }; } });
+  const f = await form();
+  pick(f, "a.png");
+  FakeReader.all[0].finish("data:image/png;base64,QQ==");
+  pick(f, "b.png");
+  FakeReader.all[1].finish("data:image/png;base64,Qg==");
+  expect(f.getByRole("img", { name: "logo 预览" })).toHaveAttribute("src", "data:image/png;base64,Qg==");
+  fireEvent.click(f.getByRole("button", { name: "保存" }));
+  expect(await f.findByRole("status")).toHaveTextContent("已保存");
+  expect(sent.map((r) => r.settings?.logo)).toEqual(["data:image/png;base64,Qg=="]);
+});
+
+// 换 logo 与改其他字段一样：上一次保存的错误不再描述当前草稿，读完即清掉。
+it("上次保存失败后换 logo，旧的错误清掉", async () => {
+  useFakeReader();
+  render({ updateSettings: async () => { throw new ConnectError("settings.logo must be empty or data:<type>;base64,<data>", Code.InvalidArgument); } });
+  const f = await form();
+  fireEvent.click(f.getByRole("button", { name: "保存" }));
+  expect(await f.findByRole("alert")).toHaveTextContent("settings.logo must be empty");
+  pick(f, "a.png");
+  FakeReader.all[0].finish("data:image/png;base64,QQ==");
+  expect(f.queryByRole("alert")).toBeNull();
 });
