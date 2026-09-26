@@ -49,9 +49,10 @@ func matchAny(patterns []string, name string) bool {
 	return false
 }
 
-// checkUsage 承载 used ≤ total。平台的已用量都是差或和（Linux 的 total − available，
-// darwin 的页计数之和），计数彼此不一致或无符号减法回绕都会得出超过总量的值；
-// 这样的读数按读不到处理并记日志，不截到总量——截断会把错误的计数伪装成满载。
+// checkUsage 拒收超过总量的读数：按读不到处理并记日志，不截到总量——截断会把错误的计数伪装成满载。
+// 单次无符号减法回绕的结果必然大于被减数，所以 Linux 的 total − available、total − free 回绕由这里兜住。
+// 先减后加的组合（darwin 的 internal − purgeable + wire + compressor）回绕后可能落回总量以内，
+// 这里看不出；这类组合的每个中间差由 Host 自己拒收（Host.memory 的约定，darwin 由 vmUsed 承担）。
 func checkUsage(u usage, err error) (usage, error) {
 	if err != nil {
 		return usage{}, err

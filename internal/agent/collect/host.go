@@ -13,12 +13,16 @@ package collect
 // 缺失的读数则让面板显示未知、hub 保持基线。两个平台的实现都按这条约定。
 //
 // 方法名不导出，实现只能在本包内：Linux 的 ProcFS（procfs.go）与 darwin 的
-// darwinHost（darwinraw.go）。两次采样的差分、网卡过滤、用量不变式与"读不到即缺失"
-// 由此只在 Collector 里实现一次，平台只负责把各自的来源翻译成同一组原始读数。
+// darwinHost（darwinraw.go）。两次采样的差分、网卡过滤与"读不到即缺失"由此只在 Collector 里实现一次，
+// 平台只负责把各自的来源翻译成同一组原始读数。used ≤ total 由 Collector 的 checkUsage 拒收，
+// 但它只看得见最终值：中间差的回绕见 memory、swap 的约定。
 type Host interface {
 	bootID() (string, error)
-	// cpuTimes 返回单调不减的累计 tick；Collector 只用两次读数之差，起点无意义。
+	// cpuTimes 返回累计 tick，Collector 只用两次读数之差，起点无意义。两次之间 total 不增或
+	// idle 变小（如 Linux 的 iowait 会回退）时，由 cpuPercent 放弃这一次读数，不由实现保证单调。
 	cpuTimes() (cpuTimes, error)
+	// memory、swap 的 used 若由多项先减后加得出，实现必须自己拒收任何一步减法的回绕：
+	// 回绕后再加回的值可能落在 total 以内，checkUsage 看不出。
 	memory() (usage, error)
 	swap() (usage, error)
 	disk() (usage, error)

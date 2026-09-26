@@ -2,15 +2,20 @@ package collect
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
 
+	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/clock"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 func fixture(t *testing.T) *Collector {
@@ -109,7 +114,8 @@ func TestFactsFromRealProcSnapshot(t *testing.T) {
 	}
 }
 
-// used > total 只能来自不一致的计数或回绕的减法：按读不到处理，不截断成满载。
+// 不一致的计数、回绕的减法都可能给出 used > total；这样的读数按读不到处理，不截断成满载。
+// 内存、swap、磁盘三处各有一个守卫，各自一条断言。
 func TestUsageAboveTotalIsDroppedNotClamped(t *testing.T) {
 	fsys := fstest.MapFS{
 		"proc/meminfo": {Data: []byte("MemTotal: 1000 kB\nMemAvailable: 2000 kB\nSwapTotal: 10 kB\nSwapFree: 4 kB\n")},
@@ -124,6 +130,18 @@ func TestUsageAboveTotalIsDroppedNotClamped(t *testing.T) {
 	}
 	if m.GetSwapTotal() != 10*1024 || m.GetSwapUsed() != 6*1024 {
 		t.Fatalf("swap from the same file must be unaffected: %v/%v", m.SwapTotal, m.SwapUsed)
+	}
+
+	fsys["proc/meminfo"] = &fstest.MapFile{Data: []byte("MemTotal: 1000 kB\nMemAvailable: 400 kB\nSwapTotal: 10 kB\nSwapFree: 12 kB\n")}
+	m, err = c.Metrics()
+	if m.SwapTotal != nil || m.SwapUsed != nil {
+		t.Fatalf("swap used above total must leave both readings unset, got %d/%d", m.GetSwapUsed(), m.GetSwapTotal())
+	}
+	if err == nil || !strings.Contains(err.Error(), "swap: used") {
+		t.Fatalf("err = %v, want the swap rejection named", err)
+	}
+	if m.GetMemTotal() != 1000*1024 || m.GetMemUsed() != 600*1024 {
+		t.Fatalf("memory from the same file must be unaffected: %d/%d", m.GetMemUsed(), m.GetMemTotal())
 	}
 }
 
@@ -271,5 +289,134 @@ func TestProcsCountsProcessDirectoriesNotSchedulingEntities(t *testing.T) {
 	}
 	if _, err := (&ProcFS{FS: fstest.MapFS{"proc/loadavg": {Data: []byte("0 0 0 1/2 3\n")}}}).procs(); err == nil {
 		t.Fatal("a /proc without process directories must be an error, not 0 processes")
+	}
+}
+
+// protoDiff 按字段描述逐个比较两条消息，含"有无"（optional 字段），列出不同的字段名与两边的值。
+// 字段表来自消息描述符，proto 新增的字段自动进入比较。
+func protoDiff(got, want proto.Message) []string {
+	g, w := got.ProtoReflect(), want.ProtoReflect()
+	fields := g.Descriptor().Fields()
+	var diff []string
+	for i := range fields.Len() {
+		fd := fields.Get(i)
+		if g.Has(fd) == w.Has(fd) && g.Get(fd).Equal(w.Get(fd)) {
+			continue
+		}
+		show := func(m protoreflect.Message) string {
+			if !m.Has(fd) {
+				return "unset"
+			}
+			return m.Get(fd).String()
+		}
+		diff = append(diff, fmt.Sprintf("%s: got %s, want %s", fd.Name(), show(g), show(w)))
+	}
+	return diff
+}
+
+// Linux 上报值逐字段钉住：期望值由快照文件算出，写成算式，读者能对着 testdata/docker-debian 核对。
+func TestGoldenMetricsFromRealProcSnapshot(t *testing.T) {
+	m, err := fixture(t).Metrics()
+	if err != nil {
+		t.Fatalf("unexpected read failures: %v", err)
+	}
+	want := &probev1.Metrics{
+		BootId:     "319b05cd-78d2-479e-b8ef-4c2478582043",     // proc/sys/kernel/random/boot_id
+		MemTotal:   proto.Uint64(16424476 * 1024),              // meminfo MemTotal
+		MemUsed:    proto.Uint64((16424476 - 14608052) * 1024), // MemTotal − MemAvailable
+		SwapTotal:  proto.Uint64(17473044 * 1024),
+		SwapUsed:   proto.Uint64(0), // SwapTotal − SwapFree
+		DiskTotal:  proto.Uint64(1000),
+		DiskUsed:   proto.Uint64(400),
+		Load1:      proto.Float64(0.27),
+		Load5:      proto.Float64(0.50),
+		Load15:     proto.Float64(0.46),
+		Procs:      proto.Uint32(1), // 进程目录只有 proc/1
+		UptimeS:    proto.Uint64(202088),
+		TcpConns:   proto.Uint32(0),
+		UdpConns:   proto.Uint32(0),
+		NetRxTotal: proto.Uint64(110), // 只有 eth0，lo 被默认排除
+		NetTxTotal: proto.Uint64(42),
+	}
+	if d := protoDiff(m, want); d != nil {
+		t.Fatalf("metrics differ from the snapshot:\n%s", strings.Join(d, "\n"))
+	}
+	f := fixture(t).Facts()
+	wantFacts := &probev1.Facts{
+		Hostname: "fa6437c2745e", Os: "Debian GNU/Linux 12 (bookworm)", Kernel: "7.0.14-orbstack-00380-ga7e0a2dc9535",
+		Arch: runtime.GOARCH, CpuCores: 16, AgentVersion: "test",
+	}
+	if d := protoDiff(f, wantFacts); d != nil {
+		t.Fatalf("facts differ from the snapshot:\n%s", strings.Join(d, "\n"))
+	}
+}
+
+// 合成快照的每个字段取互不相同的非零值：字段对调、公式写错都得不出期望值。采两次，覆盖差分出的读数。
+func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
+	fsys := fstest.MapFS{
+		"proc/sys/kernel/random/boot_id":         {Data: []byte("0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f\n")},
+		"proc/stat":                              {Data: []byte("cpu  100 20 50 800 30 5 7 3 0 0\ncpu0 1 1 1 1 1 1 1 1 0 0\n")},
+		"proc/meminfo":                           {Data: []byte("MemTotal: 8000 kB\nMemFree: 1000 kB\nMemAvailable: 3000 kB\nSwapTotal: 4000 kB\nSwapFree: 1500 kB\n")},
+		"proc/loadavg":                           {Data: []byte("1.25 2.5 3.75 4/555 99\n")},
+		"proc/uptime":                            {Data: []byte("4321.99 100.00\n")},
+		"proc/net/sockstat":                      {Data: []byte(sockstat4)},
+		"proc/net/sockstat6":                     {Data: []byte(sockstat6)},
+		"proc/1/comm":                            {Data: []byte("init\n")},
+		"proc/42/comm":                           {Data: []byte("sshd\n")},
+		"proc/99/comm":                           {Data: []byte("probe-agent\n")},
+		"proc/sys/kernel/hostname":               {Data: []byte("synth\n")},
+		"proc/sys/kernel/osrelease":              {Data: []byte("6.1.0-synth\n")},
+		"proc/cpuinfo":                           {Data: []byte("processor: 0\nmodel name: Synth CPU\nprocessor: 1\nmodel name: Synth CPU\nprocessor: 2\nmodel name: Synth CPU\n")},
+		"proc/1/environ":                         {Data: []byte("PATH=/bin\x00container=lxc\x00")},
+		"etc/os-release":                         {Data: []byte("NAME=Synth\nPRETTY_NAME=\"Synth Linux 1\"\n")},
+		"sys/class/net/eth0/statistics/rx_bytes": {Data: []byte("1000\n")},
+		"sys/class/net/eth0/statistics/tx_bytes": {Data: []byte("3000\n")},
+		"sys/class/net/lo/statistics/rx_bytes":   {Data: []byte("700\n")},
+		"sys/class/net/lo/statistics/tx_bytes":   {Data: []byte("800\n")},
+	}
+	clk := clock.NewFake(time.Unix(0, 0))
+	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 9000, 1234, nil }}, Clock: clk, Version: "v9", IcmpAvailable: true}
+	if _, err := c.Metrics(); err != nil {
+		t.Fatalf("first sample: %v", err)
+	}
+	// 各状态增量：user 80、nice 10、system 40、idle 50、iowait 10、irq 5、softirq 3、steal 2，合计 200，空闲 60。
+	fsys["proc/stat"] = &fstest.MapFile{Data: []byte("cpu  180 30 90 850 40 10 10 5 0 0\n")}
+	fsys["sys/class/net/eth0/statistics/rx_bytes"] = &fstest.MapFile{Data: []byte("5000\n")}
+	fsys["sys/class/net/eth0/statistics/tx_bytes"] = &fstest.MapFile{Data: []byte("4000\n")}
+	clk.Advance(2 * time.Second)
+	m, err := c.Metrics()
+	if err != nil {
+		t.Fatalf("second sample: %v", err)
+	}
+	want := &probev1.Metrics{
+		BootId:     "0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f",
+		CpuPct:     proto.Float64(100 * (1 - 60.0/200)),
+		MemTotal:   proto.Uint64(8000 * 1024),
+		MemUsed:    proto.Uint64((8000 - 3000) * 1024),
+		SwapTotal:  proto.Uint64(4000 * 1024),
+		SwapUsed:   proto.Uint64((4000 - 1500) * 1024),
+		DiskTotal:  proto.Uint64(9000),
+		DiskUsed:   proto.Uint64(1234),
+		Load1:      proto.Float64(1.25),
+		Load5:      proto.Float64(2.5),
+		Load15:     proto.Float64(3.75),
+		Procs:      proto.Uint32(3),
+		UptimeS:    proto.Uint64(4321),
+		TcpConns:   proto.Uint32(11 + 17),
+		UdpConns:   proto.Uint32(13 + 19),
+		NetRxTotal: proto.Uint64(5000),
+		NetTxTotal: proto.Uint64(4000),
+		NetRxBps:   proto.Uint64((5000 - 1000) / 2),
+		NetTxBps:   proto.Uint64((4000 - 3000) / 2),
+	}
+	if d := protoDiff(m, want); d != nil {
+		t.Fatalf("metrics differ:\n%s", strings.Join(d, "\n"))
+	}
+	wantFacts := &probev1.Facts{
+		Hostname: "synth", Os: "Synth Linux 1", Kernel: "6.1.0-synth", Arch: runtime.GOARCH, Virtualization: "lxc",
+		CpuModel: "Synth CPU", CpuCores: 3, AgentVersion: "v9", IcmpAvailable: true,
+	}
+	if d := protoDiff(c.Facts(), wantFacts); d != nil {
+		t.Fatalf("facts differ:\n%s", strings.Join(d, "\n"))
 	}
 }

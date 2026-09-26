@@ -269,6 +269,23 @@ func TestVMUsedRejectsInconsistentCounts(t *testing.T) {
 	}
 }
 
+// internal − purgeable 回绕后再加上 wire，结果落在总量以内：checkUsage 放行，只有 vmUsed 的检查拒收。
+func TestVMUsedWrapIsCaughtBeforeCheckUsage(t *testing.T) {
+	internal, purgeable, wire, page := uint64(100), uint64(110), uint64(50), uint64(16384)
+	if wrapped := (internal - purgeable + wire) * page; wrapped > 1<<37 {
+		t.Fatalf("fixture no longer demonstrates a wrap within total: %d", wrapped)
+	}
+	f := newFakeDarwin()
+	f.vm = vmBytes(uint32(wire), uint32(purgeable), 0, uint32(internal))
+	m, err := (&Collector{Host: &darwinHost{src: f}, Clock: clock.NewFake(time.Unix(0, 0))}).Metrics()
+	if m.MemUsed != nil || m.MemTotal != nil {
+		t.Fatalf("wrapped memory reading reported: used %d total %d", m.GetMemUsed(), m.GetMemTotal())
+	}
+	if err == nil || !strings.Contains(err.Error(), "purgeable 110 exceeds internal 100") {
+		t.Fatalf("err = %v, want vmUsed's rejection", err)
+	}
+}
+
 func TestDarwinLayoutsRejectWrongSizes(t *testing.T) {
 	if _, err := parseLoadavgSysctl(loadavgBytes(1, 1, 1, 0)); err == nil {
 		t.Fatal("fscale 0 must be an error, not +Inf")

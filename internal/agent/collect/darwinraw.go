@@ -232,8 +232,9 @@ func parseSwapUsage(b []byte) (usage, error) {
 }
 
 // vmUsed 取 vm_statistics64 的 wire_count(12)、purgeable_count(88)、
-// compressor_page_count(128)、internal_page_count(140)。可清除页是匿名页的子集；
-// 读到前者大于后者说明这份计数不自洽，与 checkUsage 同一口径按读不到处理，不截成 0。
+// compressor_page_count(128)、internal_page_count(140)。可清除页是匿名页的子集；读到前者大于后者
+// 说明这份计数不自洽，按读不到处理。这条检查是回绕的唯一防线：internal − purgeable 回绕后再加上
+// wire 与 compressor，结果可能落回 hw.memsize 以内，Collector 的 checkUsage 看不出（Host.memory 的约定）。
 func vmUsed(b []byte, page uint64) (uint64, error) {
 	if len(b) < vmStatsMinLen {
 		return 0, fmt.Errorf("vm_statistics64: %d bytes, want at least %d", len(b), vmStatsMinLen)
