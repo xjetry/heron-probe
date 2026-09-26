@@ -36,7 +36,10 @@ cleanup() {
     wait "$hub" 2>/dev/null || true
   fi
 }
+# 被信号打断时 dash 不执行 EXIT trap（容器实测），macOS 的 /bin/sh 实测会执行但 sh 不保证：把 INT、TERM、HUP
+# 转成 exit 1，Ctrl-C 时容器也会被回收、停止上报。
 trap cleanup EXIT
+trap 'exit 1' INT TERM HUP
 
 # 镜像冷拉取可能远超注册窗口与上线等待的预算，它属于准备阶段，不能消耗这些预算；
 # 任一架构准备失败就直接退出，不进入注册阶段。注册与上报复用这两个容器。

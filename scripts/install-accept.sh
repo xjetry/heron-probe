@@ -46,7 +46,10 @@ cleanup() {
   if [ -n "$rootrun" ]; then kill "$rootrun" 2>/dev/null || true; wait "$rootrun" 2>/dev/null || true; fi
   while read -r m; do orb delete -f "$m" > /dev/null 2>&1 || true; done < "$work/machines"
 }
+# 被信号打断时 dash 不执行 EXIT trap（容器实测），macOS 的 /bin/sh 实测会执行但 sh 不保证：把 INT、TERM、HUP
+# 转成 exit 1，Ctrl-C 时也删掉本轮的机器、停掉 18086 上的 python（非交互 shell 的后台作业忽略 SIGINT）。
 trap cleanup EXIT
+trap 'exit 1' INT TERM HUP
 
 # 两个版本各打一包再复制走：第二次 make release 会清空 dist/，重跑必须能证出版本从 A 变成 B。
 make release VERSION="$VERSION_A" > "$work/release-a.log" 2>&1 || { echo "FAIL: make release A"; tail -20 "$work/release-a.log"; exit 1; }
