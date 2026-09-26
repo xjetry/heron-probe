@@ -271,7 +271,9 @@ for f in probe-agent "$LABEL.plist"; do
 done
 mkdir -p "$(dirname "$BIN")"
 install -m 0755 "$work/probe-agent" "$BIN_TMP"
-# 停服务之前完成全部可能失败的操作：任何一步失败时旧服务照常运行，机器上不留停掉的服务。注册可能因 hub
+# 依赖外部条件的操作（注册、账户、目录与文件的属主权限）都在停服务之前完成：它们失败时旧服务照常运行。停服务
+# 之后只剩换二进制、写 plist、enable/bootstrap 与启动确认，这几步本身也可能失败（bootout 刚返回就 bootstrap 可能报
+# EIO、磁盘满、新二进制秒退），失败时服务已停、脚本以非零退出并留下报错，但不再有需要回滚的外部副作用。注册可能因 hub
 # 不可达失败；对服务用户自己的文件 chown、chmod 也可能失败：文件带 uchg 标志时，本机以属主身份实测 chmod
 # 报 Operation not permitted，以 root 执行时是否同样被拦本机验证不了（chflags(2) 只写 "may not be changed"）。
 # 停服务之后只剩替换二进制、写 plist、bootstrap。这些操作都不需要服务停下：agent 只在启动时读一次配置
@@ -353,7 +355,8 @@ mv -f "$BIN_TMP" "$BIN"
 # plist 每次覆盖，改动随升级下发。它决定以什么身份运行什么程序，只能由 root 改：root:wheel、0644。
 # enable 清掉可能残留的禁用覆盖（launchctl disable 跨重启有效），与 systemctl enable 同位。
 # KeepAlive 隐含 RunAtLoad（launchd.plist(5)），bootstrap 即启动。
-# 走到这里时没有以服务用户运行的进程：stop_service 已确认。
+# 走到这里时 stop_service 已确认本服务的进程（按 uid 与可执行路径认）退出；同 uid 的辅助进程（launchd 派生的
+# cfprefsd 之类）可能还在，它们不持有二进制或 plist。
 mkdir -p "$(dirname "$PLIST")"
 install -m 0644 "$work/$LABEL.plist" "$PLIST"
 chown root:wheel "$PLIST"

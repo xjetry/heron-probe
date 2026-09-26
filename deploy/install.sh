@@ -342,8 +342,9 @@ dl "$BASE_URL/SHA256SUMS" "$work/SHA256SUMS"
 }
 (cd "$work" && sha256sum -c verify.txt)
 
-# 可能失败的操作都在停服务之前做完：解包、检查包内文件、写临时二进制、注册、设配置的属主与权限。
-# 这些失败时正在运行的旧服务不受影响；停服务之后只剩替换二进制、装服务定义、启动。它们都不需要服务停下：
+# 依赖外部条件的操作都在停服务之前做完：解包、检查包内文件、写临时二进制、注册、设配置的属主与权限。
+# 这些失败时正在运行的旧服务不受影响；停服务之后只剩替换二进制、装服务定义、启动，这几步本身也可能失败
+# （磁盘满、新二进制秒退），失败时服务已停、脚本以非零退出。前面的步骤都不需要服务停下：
 # agent 只在启动时读一次配置（cmd/agent 的 run 只调用 LoadConfig）。
 tar -xzf "$work/$PKG" -C "$work"
 for f in probe-agent probe-agent.service probe-agent.openrc; do
