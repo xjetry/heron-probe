@@ -12,6 +12,14 @@ command_user="probe-agent:probe-agent"
 # 与 systemd 的 AmbientCapabilities 等价：ping_group_range 关闭时靠它拿到
 # CAP_NET_RAW（§14，OpenRC 0.55.1 实测）。
 capabilities="^cap_net_raw"
+# 异常退出后隔 5 秒再拉起，不设次数上限。Alpine 3.21 / OpenRC 0.55.1 实测：
+# 不设 respawn_* 时命令行是 --respawn-delay 2 --respawn-max 5 --respawn-period 1800，
+# 非法 JSON 下监督进程约 11 秒后退出，status 变为 stopped，之后 70 秒窗口内不再拉起。
+# respawn_delay=5、respawn_max=0 时 70 秒内监督进程始终在，错误日志每 5 秒增加一行。
+# respawn_period 不能设 0：同一版本报 "Invalid respawn-period value '0'"，服务起不来。
+# 不设 period 时 supervise-daemon 自带 1800，respawn_max=0 不按这个窗口限次。
+respawn_delay=5
+respawn_max=0
 output_log="/var/log/probe-agent/probe-agent.log"
 error_log="/var/log/probe-agent/probe-agent.err"
 

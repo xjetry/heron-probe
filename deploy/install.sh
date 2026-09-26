@@ -51,8 +51,12 @@ service_installed() {
 }
 
 # 停服务后确认进程退出的轮询间隔（秒）与次数上限：sleep 合计最多 10 秒，外加每轮一次 /proc 扫描。
-STOP_POLL_INTERVAL=0.5
-STOP_POLL_MAX=20
+# 间隔用整数秒：POSIX 的 sleep 只保证整数，小数在只有整数 sleep 的系统上会让确认本身失败。
+STOP_POLL_INTERVAL=1
+STOP_POLL_MAX=10
+# 启动后等到进程出现的上限，同一口径。出现之后再固定等 3 秒，确认还是同一个 pid。
+START_POLL_INTERVAL=1
+START_POLL_MAX=10
 
 # 列出有效 uid 为 $1 的进程 pid（空格分隔，写入 svc_pids）。有效 uid 是 /proc/<pid>/status 里 Uid: 行的第三列。
 # 枚举与读取之间进程可能已退出，其 status 文件随之消失：读失败且文件已不在的条目按已退出跳过；
@@ -93,6 +97,47 @@ confirm_service_stopped() {
     polls=$((polls + 1))
   done
   echo "probe-agent is still running: processes with uid $svc_uid ($SVC_USER):$svc_pids" >&2
+  return 1
+}
+
+# 启动之后确认服务进程活着。init 的 start 返回 0 证明不了子进程仍在：
+# systemd 的 Type=simple 在 fork 之后即视为已启动；OpenRC 上子进程秒退、反复拉起时 status 仍是 started。
+# 判据与 confirm_service_stopped 同一处，只调用 scan_uid_pids，不另写一套扫描。
+# 先等到出现有效 uid 为服务用户的进程，记下 pid，3 秒后同一个 pid 仍在：
+# 秒退再拉起会换成新 pid，不能算起来了。前提与停服务确认相同，由 create_account 与服务定义保证。
+start_log_hint() {
+  case "$INIT" in
+    systemd) echo "see journalctl -u probe-agent" >&2;;
+    openrc) echo "see /var/log/probe-agent/probe-agent.err" >&2;;
+  esac
+}
+confirm_service_started() {
+  svc_uid=$(id -u "$SVC_USER") || { echo "no service user $SVC_USER" >&2; start_log_hint; return 1; }
+  polls=0
+  pid=""
+  while :; do
+    scan_uid_pids "$svc_uid" || return 1
+    if [ -n "$svc_pids" ]; then
+      pid=${svc_pids# }
+      pid=${pid%% *}
+      break
+    fi
+    [ "$polls" -lt "$START_POLL_MAX" ] || break
+    sleep "$START_POLL_INTERVAL"
+    polls=$((polls + 1))
+  done
+  if [ -z "$pid" ]; then
+    echo "probe-agent did not start" >&2
+    start_log_hint
+    return 1
+  fi
+  sleep 3
+  scan_uid_pids "$svc_uid" || return 1
+  case " $svc_pids " in
+    *" $pid "*) return 0;;
+  esac
+  echo "probe-agent did not stay running (pid $pid)" >&2
+  start_log_hint
   return 1
 }
 
@@ -175,6 +220,14 @@ fi
 create_account() {
   nologin=/sbin/nologin
   [ -x /usr/sbin/nologin ] && nologin=/usr/sbin/nologin
+  # 用户已在时先核对主组，再决定要不要建组。顺序反了会在主组不符退出时留下本次新建的同名组。
+  if id "$SVC_USER" >/dev/null 2>&1; then
+    actual_group=$(id -gn "$SVC_USER" 2>/dev/null) || {
+      echo "user $SVC_USER exists but its primary group is missing (gid $(id -g "$SVC_USER"))" >&2; exit 1; }
+    [ "$actual_group" = "$SVC_USER" ] || {
+      echo "user $SVC_USER exists with primary group $actual_group; expected $SVC_USER" >&2; exit 1; }
+    return 0
+  fi
   if ! grep -q "^$SVC_USER:" /etc/group; then
     if command -v groupadd >/dev/null 2>&1; then
       groupadd --system "$SVC_USER" </dev/null
@@ -208,10 +261,22 @@ create_account() {
 }
 create_account
 
+# 给了 --base-url 时它就是下载目录，--version 不参与地址。与 --key 被忽略时一样说出来，
+# 避免人以为钉住了版本。
+if [ -n "$BASE_URL" ] && [ -n "$VERSION" ]; then
+  echo "--base-url is the download directory (--version ignored)"
+fi
 [ -n "$BASE_URL" ] || {
   if [ -n "$VERSION" ]; then BASE_URL="$REPO/releases/download/$VERSION"
   else BASE_URL="$REPO/releases/latest/download"; fi
 }
+
+# 缺下载器或 sha256sum 时在任何网络操作之前退出：否则会先 apt-get update 装 CA，再报没有 curl。
+PKG="probe-agent_linux_$ARCH.tar.gz"
+if command -v curl >/dev/null 2>&1; then FETCH=curl
+elif command -v wget >/dev/null 2>&1; then FETCH=wget
+else echo "neither curl nor wget is available to download $PKG" >&2; exit 1; fi
+command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is required to verify downloads" >&2; exit 1; }
 
 ca_bundle_present() {
   for f in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem; do
@@ -238,12 +303,6 @@ if is_https "$BASE_URL" || is_https "$HUB"; then
   fi
 fi
 
-PKG="probe-agent_linux_$ARCH.tar.gz"
-if command -v curl >/dev/null 2>&1; then FETCH=curl
-elif command -v wget >/dev/null 2>&1; then FETCH=wget
-else echo "neither curl nor wget is available to download $PKG" >&2; exit 1; fi
-command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is required to verify downloads" >&2; exit 1; }
-
 work=$(mktemp -d)
 BIN_TMP="$BIN.tmp.$$"
 # EXIT trap 覆盖正常结束、exit 与 set -e 触发的退出。dash 与 busybox ash 被信号终止时不执行 EXIT trap，
@@ -252,7 +311,12 @@ trap 'rm -rf "$work"; rm -f "$BIN_TMP"' EXIT
 trap 'exit 1' INT TERM HUP
 
 dl() {
-  if [ "$FETCH" = curl ]; then curl -fsSL -o "$2" "$1"; else wget -q -O "$2" "$1"; fi
+  # 下载地址为 https 时，请求和重定向都只走 https。http（本地验收）不加：--proto '=https' 会拒绝它。
+  # wget 没有对应开关。
+  if [ "$FETCH" = curl ]; then
+    if is_https "$1"; then curl --proto '=https' --proto-redir '=https' -fsSL -o "$2" "$1"
+    else curl -fsSL -o "$2" "$1"; fi
+  else wget -q -O "$2" "$1"; fi
 }
 dl "$BASE_URL/$PKG" "$work/$PKG"
 dl "$BASE_URL/SHA256SUMS" "$work/SHA256SUMS"
@@ -280,15 +344,19 @@ if [ ! -f "$CFG" ]; then
   set -- register --hub "$HUB" --key "$KEY" --config "$CFG"
   if [ -n "$NAME" ]; then set -- "$@" --name "$NAME"; fi
   "$BIN" "$@" </dev/null
-  # 目录属 root、组 probe-agent、0750：服务用户能读到配置，但不能增删或替换目录项，
-  # root 在其中的操作（register 写配置、下面对 $CFG 的 chown）不会被链接或竞态劫持。
-  # 目录无需对服务用户可写：写配置只发生在以 root 执行的 register 里，cmd/agent 的 run 只调用 LoadConfig、不调用 SaveConfig。
-  chown root:"$SVC_USER" "$CFG_DIR"
-  chmod 0750 "$CFG_DIR"
-  chown "$SVC_USER:$SVC_USER" "$CFG"
 else
   if [ -n "$KEY" ]; then echo "existing config found; keeping the current registration (--key ignored)"; fi
+  if [ -n "$NAME" ]; then echo "existing config found; --name ignored"; fi
 fi
+# 每次安装都做，不只在注册之后。只做一次会留下服务用户读不到的配置：
+# - 手工重新注册以 root 重写配置（SaveConfig 新建 0600，属主是调用者）
+# - 注册之后、改属主之前被信号打断，重跑走已有配置分支
+# - 账户被删后以新 uid 重建，配置仍属旧 uid
+# 目录属 root、0750：服务用户不能增删目录项，这里的 chown 不会被链接劫持。
+# 目录无需对服务用户可写：写配置只发生在以 root 执行的 register 里，cmd/agent 的 run 只调用 LoadConfig、不调用 SaveConfig。
+chown root:"$SVC_USER" "$CFG_DIR"
+chmod 0750 "$CFG_DIR"
+chown "$SVC_USER:$SVC_USER" "$CFG"
 
 # 服务定义每次覆盖，单元的改动随升级下发。
 # 走到这里时没有以服务用户运行的进程：stop_service 不论服务定义在不在都已确认，查到就已退出。
@@ -305,4 +373,5 @@ case "$INIT" in
     [ -L /etc/runlevels/default/probe-agent ] || rc-update add probe-agent default </dev/null
     rc-service probe-agent start </dev/null;;
 esac
+confirm_service_started
 echo "probe-agent installed and started ($INIT, $ARCH, $PKG)"

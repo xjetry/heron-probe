@@ -4,6 +4,10 @@ Description=probe monitoring agent
 # 由真机验收的"服务与 root 手动运行指标对照"承载（spec §12、§14）。
 After=network-online.target
 Wants=network-online.target
+# 异常退出后不设次数上限。Debian 12 / systemd 252.39-1~deb12u2 实测：默认 Restart=on-failure
+#（无 RestartSec、无 StartLimitIntervalSec）在配置为非法 JSON 时 NRestarts 到 5 即 failed，
+# journal 为 "Start request repeated too quickly"，此后 70 秒不再拉起。StartLimitIntervalSec=0 取消这个上限。
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -13,6 +17,9 @@ User=probe-agent
 Group=probe-agent
 ExecStart=/usr/local/bin/probe-agent run --config /etc/probe-agent/config.json
 Restart=on-failure
+# 间隔 5 秒。同一台 Debian 12 机器上，RestartSec=5 与 StartLimitIntervalSec=0 在非法 JSON 下
+# 72 秒内 NRestarts 从 0 增到 13，相邻两次增加间隔约 5 秒，没有进入 failed。
+RestartSec=5
 # 裸机 Debian/Ubuntu/Alpine 的 ping_group_range 默认关闭，没有 CAP_NET_RAW 时
 # ICMP 探测只能回报 error；Rocky 9 放开是发行版默认值，不作依赖（§13 第 2 项）。
 AmbientCapabilities=CAP_NET_RAW
