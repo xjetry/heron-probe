@@ -231,12 +231,22 @@ wait_new_pid() {
     sleep 0.2
   done
 }
+# wait_exec <pid>：等到拉起的子进程 exec 成 agent（comm 等于 $bin）。exec 之前它是 xpcproxy，
+# 由 launchd 以更高的权限派生，本人发的信号会以 Operation not permitted 失败（实测）。
+wait_exec() {
+  i=0
+  until [ "$(ps -o comm= -p "$1" 2> /dev/null)" = "$bin" ]; do
+    i=$((i + 1)); [ "$i" -lt 50 ] || { echo "FAIL: pid $1 did not exec $bin"; ps -o uid=,comm= -p "$1"; exit 1; }
+    sleep 0.1
+  done
+}
 pid1=$(wait_new_pid none 15) || { echo "FAIL: launchd did not start the job"; launchctl print "gui/$uid/$label"; exit 1; }
-# install-macos.sh 按 ps 的 comm 等于 ProgramArguments[0] 认服务进程，这里钉住它的前提。
-comm=$(ps -o comm= -p "$pid1") || { echo "FAIL: ps -p $pid1"; exit 1; }
-[ "$comm" = "$bin" ] || { echo "FAIL: job comm $comm is not ProgramArguments[0] $bin"; exit 1; }
 # 节点在上一个 agent 停下后仍在 TTL 内显示在线；以作业启动之后的上报时刻为准。
 until_node 30 "(.lastSeenAt | tonumber) > $t_job"
+# install-macos.sh 按 ps 的 comm 等于 ProgramArguments[0] 认服务进程，这里钉住它的前提。拉起之后、exec 之前
+# 子进程的 comm 是 xpcproxy（实测），所以等作业有一份上报落地、必然已 exec 之后再核对。
+comm=$(ps -o comm= -p "$pid1") || { echo "FAIL: ps -p $pid1"; exit 1; }
+[ "$comm" = "$bin" ] || { echo "FAIL: job comm $comm is not ProgramArguments[0] $bin"; exit 1; }
 [ -f "$work/logs/probe-agent.err" ] && [ -f "$work/logs/probe-agent.log" ] || { echo "FAIL: launchd did not create the log files"; ls -l "$work/logs"; exit 1; }
 grep -q 'agent starting' "$work/logs/probe-agent.err" || { echo "FAIL: agent log not in StandardErrorPath"; cat "$work/logs/probe-agent.err"; exit 1; }
 
@@ -252,10 +262,11 @@ until_node 30 '.online'
 
 # 进程被杀：KeepAlive 拉起。第二次在拉起后立刻再杀，下一次拉起受 ThrottleInterval 节流：
 # 与上一次拉起相隔约 5 秒（默认值 10 秒会落在区间外）。
-kill -9 "$pid1"
+kill -9 "$pid1" || { echo "FAIL: cannot kill $pid1"; exit 1; }
 pid2=$(wait_new_pid "$pid1" 15) || { echo "FAIL: KeepAlive did not restart the agent"; exit 1; }
 t2=$(date +%s)
-kill -9 "$pid2"
+wait_exec "$pid2"
+kill -9 "$pid2" || { echo "FAIL: cannot kill $pid2"; exit 1; }
 pid3=$(wait_new_pid "$pid2" 20) || { echo "FAIL: KeepAlive gave up after a quick second exit"; exit 1; }
 gap=$(($(date +%s) - t2))
 [ "$gap" -ge 3 ] && [ "$gap" -le 8 ] || { echo "FAIL: respawn after a quick exit took ${gap}s, want about 5 (ThrottleInterval)"; exit 1; }
@@ -279,7 +290,7 @@ if launchctl print "gui/$uid/$label" > /dev/null 2>&1; then echo "FAIL: job stil
 i=0
 while kill -0 "$pid3" 2> /dev/null; do
   i=$((i + 1))
-  [ "$i" -lt 50 ] || { kill -9 "$pid3"; echo "FAIL: agent survived bootout"; exit 1; }
+  [ "$i" -lt 50 ] || { echo "FAIL: agent survived bootout"; kill -9 "$pid3"; exit 1; }
   sleep 0.2
 done
 echo "MACOS ACCEPT OK ($arch$amd64_note)"

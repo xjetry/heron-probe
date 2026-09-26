@@ -56,6 +56,7 @@ START_POLL_MAX=10
 # 列出本服务的进程 pid（空格分隔，写入 svc_pids）：有效 uid 为 $1 且可执行路径为 $SVC_BIN。
 # BSD ps 的 uid 列是有效 uid（ps(1)）；comm 列是进程的 argv[0]（实测：不截断，文件被替换后不变），
 # launchd 作业的 argv[0] 是 plist 的 ProgramArguments[0]（用户域作业实测）。comm 里可能有空格，取前两列之后的整段比较。
+# 拉起之后、exec 之前的瞬间子进程的 comm 是 xpcproxy（实测）：启动确认是轮询，只会晚一轮认出它。
 scan_svc_pids() {
   procs=$(ps -axo uid=,pid=,comm=) || { echo "cannot list processes" >&2; return 1; }
   svc_pids=$(printf '%s\n' "$procs" | awk -v u="$1" -v p="$SVC_BIN" '
