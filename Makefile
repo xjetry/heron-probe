@@ -66,6 +66,13 @@ e2e-matrix: binaries
 AGENT_LINUX_ARCHES := amd64 arm64 armv7 386 riscv64
 HUB_LINUX_ARCHES := amd64 arm64
 
+# 发布产物的构建参数（§14）：版本经 ldflags 注入，-trimpath 去掉构建机路径。agent 与 hub、
+# tar 包与镜像里的 hub 都经它构建，任何一种产物都不会单独漂移。
+RELEASE_GOFLAGS = -trimpath -ldflags "-X main.version=$(VERSION)"
+
+# 一个 Linux hub 二进制：$(1) 为 GOARCH，$(2) 为输出路径。release 打包与 docker 镜像都调用它。
+hub_build = env GOOS=linux GOARCH=$(1) CGO_ENABLED=0 go build $(RELEASE_GOFLAGS) -o "$(2)" ./cmd/hub
+
 # 本地验收与线上发布走同一目标，产物与版本注入完全一致（release.yml 只调用它）。
 # 打包的 tar 前设 COPYFILE_DISABLE=1：macOS 的 bsdtar 否则会把扩展属性打成 ._* 条目，busybox 解包会带出多余文件。
 # 另加 --no-xattrs：bsdtar 仍会把 com.apple.provenance 之类的扩展属性写成 pax 扩展头，GNU tar 解包时逐条目告警，产物里也带上宿主元数据；
@@ -79,10 +86,10 @@ release:
 	mkdir -p dist/build
 	@set -e; for arch in $(AGENT_LINUX_ARCHES); do \
 	  case $$arch in armv7) gflags="GOARCH=arm GOARM=7" ;; *) gflags="GOARCH=$$arch" ;; esac; \
-	  env GOOS=linux CGO_ENABLED=0 $$gflags go build -trimpath -ldflags "-X main.version=$(VERSION)" -o "dist/build/probe-agent-linux-$$arch" ./cmd/agent; \
+	  env GOOS=linux CGO_ENABLED=0 $$gflags go build $(RELEASE_GOFLAGS) -o "dist/build/probe-agent-linux-$$arch" ./cmd/agent; \
 	done; \
 	for arch in $(HUB_LINUX_ARCHES); do \
-	  env GOOS=linux GOARCH=$$arch CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$(VERSION)" -o "dist/build/probe-hub-linux-$$arch" ./cmd/hub; \
+	  $(call hub_build,$$arch,dist/build/probe-hub-linux-$$arch); \
 	done
 	go run ./scripts/checkstatic $(addprefix dist/build/probe-agent-linux-,$(AGENT_LINUX_ARCHES)) $(addprefix dist/build/probe-hub-linux-,$(HUB_LINUX_ARCHES))
 	@set -e; for arch in $(AGENT_LINUX_ARCHES); do \
