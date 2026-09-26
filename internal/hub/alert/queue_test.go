@@ -147,6 +147,17 @@ func TestQueueGivesUpAfterMaxAttempts(t *testing.T) {
 			if !reflect.DeepEqual(sleeps, backoffs) {
 				t.Fatalf("backoff=%v want %v", sleeps, backoffs)
 			}
+			// 启动行的 delivery_retry_wait 与 e2e 的等待上限都取 DeliveryRetryWait；这里把它钉到 deliver
+			// 在可重试的渠道失败下实际等过的总和上，两者分叉时在这里红，而不是让上限静默偏离真实等待。
+			if status == 500 {
+				var total time.Duration
+				for _, d := range sleeps {
+					total += d
+				}
+				if total != DeliveryRetryWait() {
+					t.Fatalf("deliver waited %v in total between retries, DeliveryRetryWait reports %v", total, DeliveryRetryWait())
+				}
+			}
 			fresh := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
 			must(t, fresh.Requeue(t.Context()))
 			if len(fresh.items) != 0 {

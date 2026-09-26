@@ -1,0 +1,255 @@
+package deploy
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// install.sh 的替身。本地账户记录在 $PROBE_INSTALL_ROOT/etc/passwd 与 etc/group 里；
+// state/remote-passwd 里的账户由 NSS 的非本地源解析得到：id 查得到，本地文件里没有。
+// userdel、groupdel 只改本地文件，找不到记录时照 shadow 4.13 实测的报错与退出码（6）失败。
+// systemctl 记下参数；start 在假 /proc 里放一个以服务用户运行的进程，stop 把它拿走，供脚本的起停确认读取。
+// 服务的真实起停由 scripts/install-accept.sh 在容器里验证。
+var linuxStubs = map[string]string{
+	"id": `#!/bin/sh
+S=$STUB_STATE
+if [ "$#" = 1 ] && [ "$1" = -u ]; then echo "${STUB_UID:-0}"; exit 0; fi
+flag=""; [ "$#" = 2 ] && { flag=$1; shift; }
+line=$(grep "^$1:" "$PROBE_INSTALL_ROOT/etc/passwd") || line=$(grep "^$1:" "$S/remote-passwd" 2>/dev/null) || {
+  echo "id: '$1': no such user" >&2; exit 1; }
+uid=$(echo "$line" | cut -d: -f3); gid=$(echo "$line" | cut -d: -f4)
+case "$flag" in
+  "") echo "uid=$uid($1) gid=$gid";;
+  -u) echo "$uid";;
+  -g) echo "$gid";;
+  -gn) awk -F: -v g="$gid" '$3 == g { print $1; found = 1; exit } END { exit !found }' "$PROBE_INSTALL_ROOT/etc/group";;
+esac
+`,
+	"systemctl": `#!/bin/sh
+cat > /dev/null
+echo "systemctl $*" >> "$STUB_STATE/calls"
+P=$PROBE_INSTALL_ROOT/proc
+case "$1" in
+  start)
+    uid=$(grep '^probe-agent:' "$PROBE_INSTALL_ROOT/etc/passwd" | cut -d: -f3)
+    mkdir -p "$P/4242"; printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$P/4242/status";;
+  stop) rm -rf "$P/4242";;
+esac
+`,
+	"uname": `#!/bin/sh
+[ "$*" = -m ] || { echo "unexpected uname $*" >&2; exit 64; }
+echo x86_64
+`,
+	// STUB_CHOWN_FAILS 是一个路径：对它 chown 时失败。
+	"chown": `#!/bin/sh
+echo "chown $*" >> "$STUB_STATE/calls"
+if [ -n "${STUB_CHOWN_FAILS-}" ] && [ "$2" = "$STUB_CHOWN_FAILS" ]; then
+  echo "chown: $2: Operation not permitted" >&2; exit 1
+fi
+`,
+	"userdel": `#!/bin/sh
+cat > /dev/null
+echo "userdel $*" >> "$STUB_STATE/calls"
+f=$PROBE_INSTALL_ROOT/etc/passwd
+grep -q "^$1:" "$f" || { echo "userdel: user '$1' does not exist" >&2; exit 6; }
+grep -v "^$1:" "$f" > "$f.new"; mv "$f.new" "$f"
+`,
+	"groupdel": `#!/bin/sh
+cat > /dev/null
+echo "groupdel $*" >> "$STUB_STATE/calls"
+f=$PROBE_INSTALL_ROOT/etc/group
+grep -q "^$1:" "$f" || { echo "groupdel: group '$1' does not exist" >&2; exit 6; }
+grep -v "^$1:" "$f" > "$f.new"; mv "$f.new" "$f"
+`,
+	"sleep": `#!/bin/sh
+echo "sleep $*" >> "$STUB_STATE/calls"
+`,
+}
+
+// newLinuxHost 是一台 systemd 主机：服务用户不在本地账户文件里，由各用例按需加上；
+// /proc 下只有 self，没有以任何 uid 运行的进程目录。
+func newLinuxHost(t *testing.T) *env {
+	t.Helper()
+	e := newStubEnv(t, "install.sh", linuxStubs)
+	for rel, body := range map[string]string{
+		"run/systemd/system/.keep": "",
+		// 真实主机上这两个目录总在（FHS 与 systemd 自带），install.sh 不建它们。
+		"usr/local/bin/.keep":      "",
+		"etc/systemd/system/.keep": "",
+		"proc/self/status":         "Uid:\t1000\t1000\t1000\t1000\n",
+		"etc/passwd":               "root:x:0:0:root:/root:/bin/sh\n",
+		"etc/group":                "root:x:0:\n",
+	} {
+		e.put(rel, body)
+	}
+	return e
+}
+
+// newLinuxEnv 在 newLinuxHost 上放好一次安装留下的文件，服务没有在运行。
+func newLinuxEnv(t *testing.T) *env {
+	t.Helper()
+	e := newLinuxHost(t)
+	for rel, body := range map[string]string{
+		"etc/systemd/system/probe-agent.service": "[Service]\n",
+		"etc/probe-agent/config.json":            "{}\n",
+		"var/log/probe-agent/.keep":              "",
+		"usr/local/bin/probe-agent":              "#!/bin/sh\n",
+	} {
+		e.put(rel, body)
+	}
+	return e
+}
+
+// put 在假根目录下写文件，缺的父目录一并建出。
+func (e *env) put(rel, body string) {
+	e.t.Helper()
+	p := filepath.Join(e.root, rel)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) appendTo(rel, line string) {
+	e.t.Helper()
+	e.put(rel, e.file(rel)+line)
+}
+
+func TestLinuxPurgeDeletesTheLocalAccount(t *testing.T) {
+	t.Parallel()
+	e := newLinuxEnv(t)
+	e.appendTo("etc/passwd", "probe-agent:x:480:480::/nonexistent:/usr/sbin/nologin\n")
+	e.appendTo("etc/group", "probe-agent:x:480:\n")
+	out, code := e.run("--uninstall", "--purge")
+	if code != 0 || !strings.Contains(out, "probe-agent uninstalled") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for _, rel := range []string{"usr/local/bin/probe-agent", "etc/systemd/system/probe-agent.service", "etc/probe-agent", "var/log/probe-agent"} {
+		if e.exists(rel) {
+			t.Errorf("%s left behind", rel)
+		}
+	}
+	if strings.Contains(e.file("etc/passwd"), "probe-agent:") || strings.Contains(e.file("etc/group"), "probe-agent:") {
+		t.Fatalf("account left in the local files:\n%s%s", e.file("etc/passwd"), e.file("etc/group"))
+	}
+}
+
+// 解析得到的同名用户不在本地 /etc/passwd 里：不发 userdel（它会以 does not exist 失败、脚本以它的
+// 退出码结束），回查仍能看到这个用户，由脚本自己报出删不掉。
+func TestLinuxPurgeDecidesDeletionFromTheLocalRecord(t *testing.T) {
+	t.Parallel()
+	e := newLinuxEnv(t)
+	e.write("remote-passwd", "probe-agent:x:480:480::/nonexistent:/usr/sbin/nologin\n")
+	out, code := e.run("--uninstall", "--purge")
+	if code != 1 || !strings.Contains(out, "failed to delete user or group probe-agent") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if index(e.calls(), "userdel") >= 0 {
+		t.Fatalf("no local record, no userdel: %q", e.calls())
+	}
+}
+
+// linuxRelease 按 make release 的形状打 Linux 包：probe-agent 与仓库里的 systemd 单元、OpenRC 脚本原件。
+func (e *env) linuxRelease(arch, version string) {
+	e.t.Helper()
+	unit, err := os.ReadFile("systemd/probe-agent.service")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	openrc, err := os.ReadFile("openrc/probe-agent")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.pack("probe-agent_linux_"+arch+".tar.gz", []packFile{
+		{"probe-agent", fakeAgent + "# " + version + " " + arch + "\n", 0o755},
+		{"probe-agent.service", string(unit), 0o644},
+		{"probe-agent.openrc", string(openrc), 0o755},
+	})
+}
+
+// newLinuxInstalled 在 newLinuxHost 上以 v1 装好并启动服务；服务用户已在本地账户文件里，不走建账户分支。
+func newLinuxInstalled(t *testing.T) *env {
+	t.Helper()
+	e := newLinuxHost(t)
+	e.appendTo("etc/passwd", "probe-agent:x:480:480::/nonexistent:/usr/sbin/nologin\n")
+	e.appendTo("etc/group", "probe-agent:x:480:\n")
+	e.linuxRelease("amd64", "v1")
+	out, code := e.linuxInstall()
+	if code != 0 || !strings.Contains(out, "probe-agent installed and started (systemd, amd64, probe-agent_linux_amd64.tar.gz)") {
+		t.Fatalf("first install exit %d:\n%s", code, out)
+	}
+	return e
+}
+
+func (e *env) linuxInstall() (string, int) {
+	return e.run("--hub", "http://hub.test", "--key", "k", "--base-url", "file://"+e.dist)
+}
+
+// 可能失败的操作都在停服务之前：失败时旧服务照常运行。停服务之后只剩替换二进制、装服务定义、启动。
+func TestLinuxRerunDoesTheFallibleStepsBeforeStopping(t *testing.T) {
+	t.Parallel()
+	e := newLinuxInstalled(t)
+	e.linuxRelease("amd64", "v2")
+	e.resetCalls()
+	if out, code := e.linuxInstall(); code != 0 {
+		t.Fatalf("rerun exit %d:\n%s", code, out)
+	}
+	c := e.calls()
+	stop := index(c, "systemctl stop probe-agent")
+	for _, want := range []string{
+		"chown root:probe-agent " + e.root + "/etc/probe-agent",
+		"chown probe-agent:probe-agent " + e.root + "/etc/probe-agent/config.json",
+	} {
+		if i := index(c, want); i < 0 || i > stop {
+			t.Errorf("%q must run before the service is stopped, calls %q", want, c)
+		}
+	}
+	for _, call := range c[stop+1:] {
+		if strings.HasPrefix(call, "chown ") || strings.HasPrefix(call, "probe-agent ") {
+			t.Errorf("%q runs after the service is stopped", call)
+		}
+	}
+	if !strings.Contains(e.file("usr/local/bin/probe-agent"), "# v2 amd64") {
+		t.Fatal("the rerun did not install v2")
+	}
+}
+
+// 配置丢了、重新注册失败，或配置 chown 失败：都在停服务之前失败，旧服务照常运行、二进制不被替换。
+func TestLinuxFailuresBeforeStoppingLeaveTheServiceRunning(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		vars func(root string) []string
+		prep func(root string)
+		want string
+	}{
+		{"re-register", func(string) []string { return []string{"STUB_REGISTER_FAILS=1"} }, func(root string) {
+			os.Remove(filepath.Join(root, "etc/probe-agent/config.json"))
+		}, "register: hub unreachable"},
+		{"config chown", func(root string) []string {
+			return []string{"STUB_CHOWN_FAILS=" + root + "/etc/probe-agent/config.json"}
+		}, nil, "config.json: Operation not permitted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newLinuxInstalled(t)
+			if tc.prep != nil {
+				tc.prep(e.root)
+			}
+			e.linuxRelease("amd64", "v2")
+			e.vars = tc.vars(e.root)
+			e.resetCalls()
+			out, code := e.linuxInstall()
+			if code == 0 || !strings.Contains(out, tc.want) {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			if index(e.calls(), "systemctl stop") >= 0 || !strings.Contains(e.file("usr/local/bin/probe-agent"), "# v1 amd64") || !e.exists("proc/4242/status") {
+				t.Fatalf("the running service must be left alone: calls %q", e.calls())
+			}
+		})
+	}
+}

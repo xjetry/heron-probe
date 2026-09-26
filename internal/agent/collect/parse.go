@@ -1,7 +1,3 @@
-// Package collect 读取 Linux 的 /proc 与 /sys 生成一次上报。
-//
-// 解析全部是对 fs.FS 的纯函数，不带 build tag：它们在任何平台上都能用真机
-// 抓来的快照测试。只有取根文件系统与 statfs 的几行在 platform_linux.go 里。
 package collect
 
 import (
@@ -101,39 +97,28 @@ func parseMeminfo(r io.Reader) (memInfo, error) {
 	return m, nil
 }
 
-type loadAvg struct {
-	l1, l5, l15 float64
-	procs       uint32
-}
+type loadAvg struct{ l1, l5, l15 float64 }
 
+// parseLoadavg 取 /proc/loadavg 的负载三元组。
 func parseLoadavg(r io.Reader) (loadAvg, error) {
 	b, err := io.ReadAll(r)
 	if err != nil {
 		return loadAvg{}, err
 	}
 	f := strings.Fields(string(b))
-	if len(f) < 4 {
+	if len(f) < 3 {
 		return loadAvg{}, errors.New("/proc/loadavg: short")
 	}
 	var l loadAvg
 	if l.l1, err = strconv.ParseFloat(f[0], 64); err != nil {
-		return l, err
+		return loadAvg{}, err
 	}
 	if l.l5, err = strconv.ParseFloat(f[1], 64); err != nil {
-		return l, err
+		return loadAvg{}, err
 	}
 	if l.l15, err = strconv.ParseFloat(f[2], 64); err != nil {
-		return l, err
+		return loadAvg{}, err
 	}
-	_, total, ok := strings.Cut(f[3], "/")
-	if !ok {
-		return l, errors.New("/proc/loadavg: no running/total field")
-	}
-	n, err := strconv.ParseUint(total, 10, 32)
-	if err != nil {
-		return l, err
-	}
-	l.procs = uint32(n)
 	return l, nil
 }
 
@@ -155,26 +140,41 @@ func parseUptime(r io.Reader) (uint64, error) {
 
 type netCounters struct{ rx, tx uint64 }
 
-// parseSockstat 同时认 sockstat（TCP:/UDP:）与 sockstat6（TCP6:/UDP6:）。
+// parseSockstat 同时认 sockstat（TCP:/UDP:）与 sockstat6（TCP6:/UDP6:）。两个 inuse 行缺一，
+// 或数值认不出，都是 error：把认不出的表当成 0 个套接字，合计就静默少了一族。
 func parseSockstat(r io.Reader) (tcp, udp uint32, err error) {
+	var gotTCP, gotUDP bool
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		f := strings.Fields(sc.Text())
 		if len(f) < 3 || f[1] != "inuse" {
 			continue
 		}
-		n, perr := strconv.ParseUint(f[2], 10, 32)
-		if perr != nil {
-			continue
-		}
+		var isTCP bool
 		switch f[0] {
 		case "TCP:", "TCP6:":
-			tcp += uint32(n)
+			isTCP = true
 		case "UDP:", "UDP6:":
-			udp += uint32(n)
+		default:
+			continue
+		}
+		n, err := strconv.ParseUint(f[2], 10, 32)
+		if err != nil {
+			return 0, 0, fmt.Errorf("%s inuse: %w", f[0], err)
+		}
+		if isTCP {
+			tcp, gotTCP = uint32(n), true
+		} else {
+			udp, gotUDP = uint32(n), true
 		}
 	}
-	return tcp, udp, sc.Err()
+	if err := sc.Err(); err != nil {
+		return 0, 0, err
+	}
+	if !gotTCP || !gotUDP {
+		return 0, 0, errors.New("no TCP and UDP inuse lines")
+	}
+	return tcp, udp, nil
 }
 
 type cpuInfo struct {

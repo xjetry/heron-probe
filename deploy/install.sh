@@ -6,12 +6,20 @@
 # 不能用 exec </dev/null：那会切断脚本自己的来源。
 set -eu
 
-BIN=/usr/local/bin/probe-agent
-CFG_DIR=/etc/probe-agent
+# 脚本读写的系统路径都挂在 PROBE_INSTALL_ROOT 下。生产运行时它为空，即真实根目录；脚本的逻辑测试以普通用户
+# 把它指向临时目录，连同 PATH 上的 id、systemctl、userdel 等替身一起运行，不触碰真实系统路径。
+# 它只改变本脚本读写的位置：服务定义里的可执行路径、传给 useradd 的 shell 是目标系统里的真实路径。
+ROOT=${PROBE_INSTALL_ROOT-}
+BIN=$ROOT/usr/local/bin/probe-agent
+CFG_DIR=$ROOT/etc/probe-agent
 CFG=$CFG_DIR/config.json
-LOG_DIR=/var/log/probe-agent
+LOG_DIR=$ROOT/var/log/probe-agent
 SVC_USER=probe-agent
-SYSTEMD_WANTS=/etc/systemd/system/multi-user.target.wants/probe-agent.service
+SYSTEMD_UNIT=$ROOT/etc/systemd/system/probe-agent.service
+SYSTEMD_WANTS=$ROOT/etc/systemd/system/multi-user.target.wants/probe-agent.service
+OPENRC_SCRIPT=$ROOT/etc/init.d/probe-agent
+OPENRC_LINK=$ROOT/etc/runlevels/default/probe-agent
+PROC=$ROOT/proc
 REPO=https://github.com/xjetry/probe
 
 usage() {
@@ -39,14 +47,14 @@ done
 [ "$(id -u)" = 0 ] || { echo "install.sh must run as root" >&2; exit 1; }
 
 # init 判定只认两个真实标记：都没有时是容器等无 init 环境，报错而不静默降级。
-if [ -d /run/systemd/system ]; then INIT=systemd
-elif [ -x /sbin/openrc-run ]; then INIT=openrc
+if [ -d "$ROOT/run/systemd/system" ]; then INIT=systemd
+elif [ -x "$ROOT/sbin/openrc-run" ]; then INIT=openrc
 else echo "unsupported init: expected systemd (/run/systemd/system) or OpenRC (/sbin/openrc-run)" >&2; exit 1; fi
 
 service_installed() {
   case "$INIT" in
-    systemd) [ -e /etc/systemd/system/probe-agent.service ];;
-    openrc) [ -e /etc/init.d/probe-agent ];;
+    systemd) [ -e "$SYSTEMD_UNIT" ];;
+    openrc) [ -e "$OPENRC_SCRIPT" ];;
   esac
 }
 
@@ -63,10 +71,10 @@ START_POLL_MAX=10
 # 文件还在却读不到则无法判定，返回失败。
 scan_uid_pids() {
   svc_pids=""
-  [ -r /proc/self/status ] || { echo "cannot inspect processes: /proc is not mounted" >&2; return 1; }
-  for s in /proc/[0-9]*/status; do
+  [ -r "$PROC/self/status" ] || { echo "cannot inspect processes: /proc is not mounted" >&2; return 1; }
+  for s in "$PROC"/[0-9]*/status; do
     if euid=$(awk '$1 == "Uid:" { print $3; exit }' "$s" 2>/dev/null); then
-      if [ "$euid" = "$1" ]; then p=${s#/proc/}; svc_pids="$svc_pids ${p%/status}"; fi
+      if [ "$euid" = "$1" ]; then p=${s#"$PROC"/}; svc_pids="$svc_pids ${p%/status}"; fi
     elif [ -e "$s" ]; then
       echo "cannot read $s" >&2; return 1
     fi
@@ -154,18 +162,24 @@ stop_service() {
 }
 
 # 用户与同名组都删并回查：各发行版删除工具对组的处理不一致，不能信退出码，也不能半成功还报成功。
+# 要不要发删除命令看本地 /etc/passwd、/etc/group 的记录，与 userdel、groupdel 操作的对象同一口径：
+# id 走 NSS，解析结果可能来自 LDAP、sssd 之类的非本地源，那时 userdel 以"用户不存在"失败（shadow 4.13
+# 实测：nss_wrapper 注入的非本地用户 id 解析得到，userdel 报 does not exist 并以 6 退出），
+# set -e 让脚本以它的退出码结束、说不出原因。回查用户仍用 id：按名字还解析得到它，就不能报成已删除。
+local_user_exists() { grep -q "^$SVC_USER:" "$ROOT/etc/passwd"; }
+local_group_exists() { grep -q "^$SVC_USER:" "$ROOT/etc/group"; }
 delete_account() {
-  if id "$SVC_USER" >/dev/null 2>&1; then
+  if local_user_exists; then
     if command -v userdel >/dev/null 2>&1; then userdel "$SVC_USER" </dev/null
     elif command -v deluser >/dev/null 2>&1; then deluser "$SVC_USER" </dev/null
     fi
   fi
-  if grep -q "^$SVC_USER:" /etc/group; then
+  if local_group_exists; then
     if command -v groupdel >/dev/null 2>&1; then groupdel "$SVC_USER" </dev/null
     elif command -v delgroup >/dev/null 2>&1; then delgroup "$SVC_USER" </dev/null
     fi
   fi
-  if id "$SVC_USER" >/dev/null 2>&1 || grep -q "^$SVC_USER:" /etc/group; then
+  if id "$SVC_USER" >/dev/null 2>&1 || local_group_exists; then
     echo "failed to delete user or group $SVC_USER" >&2; exit 1
   fi
 }
@@ -182,15 +196,15 @@ if [ "$UNINSTALL" = 1 ]; then
       if [ -L "$SYSTEMD_WANTS" ]; then
         rm -f "$SYSTEMD_WANTS"
       fi
-      rm -f /etc/systemd/system/probe-agent.service
+      rm -f "$SYSTEMD_UNIT"
       systemctl daemon-reload </dev/null;;
     openrc)
       # 判链接本身（-L）而不跟随它：init 脚本被删后链接悬空，-e 会判为不存在而留下它。
       # OpenRC 0.55.1 实测：init 脚本不存在时 rc-update del 仍删掉悬空链接并返回 0。
-      if [ -L /etc/runlevels/default/probe-agent ]; then
+      if [ -L "$OPENRC_LINK" ]; then
         rc-update del probe-agent default </dev/null
       fi
-      rm -f /etc/init.d/probe-agent;;
+      rm -f "$OPENRC_SCRIPT";;
   esac
   rm -f "$BIN"
   if [ "$PURGE" = 1 ]; then
@@ -219,7 +233,7 @@ fi
 # 而 busybox 的 adduser 不指定组时会把用户放进 nogroup。先建组、再以它为主组建用户，建完回查。
 create_account() {
   nologin=/sbin/nologin
-  [ -x /usr/sbin/nologin ] && nologin=/usr/sbin/nologin
+  [ -x "$ROOT/usr/sbin/nologin" ] && nologin=/usr/sbin/nologin
   # 用户已在时先核对主组，再决定要不要建组。顺序反了会在主组不符退出时留下本次新建的同名组。
   if id "$SVC_USER" >/dev/null 2>&1; then
     actual_group=$(id -gn "$SVC_USER" 2>/dev/null) || {
@@ -228,7 +242,7 @@ create_account() {
       echo "user $SVC_USER exists with primary group $actual_group; expected $SVC_USER" >&2; exit 1; }
     return 0
   fi
-  if ! grep -q "^$SVC_USER:" /etc/group; then
+  if ! local_group_exists; then
     if command -v groupadd >/dev/null 2>&1; then
       groupadd --system "$SVC_USER" </dev/null
     elif command -v addgroup >/dev/null 2>&1; then
@@ -280,7 +294,7 @@ command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is required to verify 
 
 ca_bundle_present() {
   for f in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem; do
-    [ -f "$f" ] && return 0
+    [ -f "$ROOT$f" ] && return 0
   done
   return 1
 }
@@ -328,49 +342,56 @@ dl "$BASE_URL/SHA256SUMS" "$work/SHA256SUMS"
 }
 (cd "$work" && sha256sum -c verify.txt)
 
-# 解包、检查包内文件、写临时二进制都在停服务之前做完：这些准备失败时，正在运行的旧服务不受影响。
+# 依赖外部条件的操作都在停服务之前做完：解包、检查包内文件、写临时二进制、注册、设配置的属主与权限。
+# 这些失败时正在运行的旧服务不受影响；停服务之后只剩替换二进制、装服务定义、启动，这几步本身也可能失败
+# （磁盘满、新二进制秒退），失败时服务已停、脚本以非零退出。前面的步骤都不需要服务停下：
+# agent 只在启动时读一次配置（cmd/agent 的 run 只调用 LoadConfig）。
 tar -xzf "$work/$PKG" -C "$work"
 for f in probe-agent probe-agent.service probe-agent.openrc; do
   [ -f "$work/$f" ] || { echo "package is missing $f" >&2; exit 1; }
 done
 install -m 0755 "$work/probe-agent" "$BIN_TMP"
-stop_service
-# 同目录 rename 原子替换目录项：exec $BIN 看到的始终是完整的旧文件或完整的新文件；
-# 写了一半的临时文件由上面的 trap 删除。
-mv -f "$BIN_TMP" "$BIN"
 
 if [ ! -f "$CFG" ]; then
   # 注册只在没有配置时发生；配置落盘后重跑不再注册，所以注册之后的步骤失败时，重跑不会多耗窗口名额。
+  # 用还没换上的新二进制注册：注册可能失败（hub 不可达、key 失效），必须在停服务之前。
   set -- register --hub "$HUB" --key "$KEY" --config "$CFG"
   if [ -n "$NAME" ]; then set -- "$@" --name "$NAME"; fi
-  "$BIN" "$@" </dev/null
+  "$BIN_TMP" "$@" </dev/null
 else
   if [ -n "$KEY" ]; then echo "existing config found; keeping the current registration (--key ignored)"; fi
   if [ -n "$NAME" ]; then echo "existing config found; --name ignored"; fi
 fi
-# 每次安装都做，不只在注册之后。只做一次会留下服务用户读不到的配置：
+# 每次安装都做，不只在注册之后。只做一次会留下服务用户读不到或别人读得到的配置：
 # - 手工重新注册以 root 重写配置（SaveConfig 新建 0600，属主是调用者）
 # - 注册之后、改属主之前被信号打断，重跑走已有配置分支
 # - 账户被删后以新 uid 重建，配置仍属旧 uid
+# - 人工编辑后权限变了（0600 只由 SaveConfig 在注册时保证）
 # 目录属 root、0750：服务用户不能增删目录项，这里的 chown 不会被链接劫持。
 # 目录无需对服务用户可写：写配置只发生在以 root 执行的 register 里，cmd/agent 的 run 只调用 LoadConfig、不调用 SaveConfig。
 chown root:"$SVC_USER" "$CFG_DIR"
 chmod 0750 "$CFG_DIR"
 chown "$SVC_USER:$SVC_USER" "$CFG"
+chmod 0600 "$CFG"
+
+stop_service
+# 同目录 rename 原子替换目录项：exec $BIN 看到的始终是完整的旧文件或完整的新文件；
+# 写了一半的临时文件由上面的 trap 删除。
+mv -f "$BIN_TMP" "$BIN"
 
 # 服务定义每次覆盖，单元的改动随升级下发。
 # 走到这里时没有以服务用户运行的进程：stop_service 不论服务定义在不在都已确认，查到就已退出。
 # 所以用 start，不依赖 restart 对已停服务等价于 start。
 case "$INIT" in
   systemd)
-    install -m 0644 "$work/probe-agent.service" /etc/systemd/system/probe-agent.service
+    install -m 0644 "$work/probe-agent.service" "$SYSTEMD_UNIT"
     systemctl daemon-reload </dev/null
     systemctl enable probe-agent </dev/null
     systemctl start probe-agent </dev/null;;
   openrc)
-    install -m 0755 "$work/probe-agent.openrc" /etc/init.d/probe-agent
+    install -m 0755 "$work/probe-agent.openrc" "$OPENRC_SCRIPT"
     # 重跑时它已在 default runlevel 里；只在不在时才加，不依赖 rc-update 对重复 add 的退出码。
-    [ -L /etc/runlevels/default/probe-agent ] || rc-update add probe-agent default </dev/null
+    [ -L "$OPENRC_LINK" ] || rc-update add probe-agent default </dev/null
     rc-service probe-agent start </dev/null;;
 esac
 confirm_service_started

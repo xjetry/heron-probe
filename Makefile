@@ -39,7 +39,8 @@ gen: web-install
 lint:
 	go mod tidy -diff
 	buf lint
-	shellcheck -s sh deploy/install.sh deploy/openrc/probe-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/docker-readback-test.sh scripts/release-rules-test.sh scripts/image-platform-ref.sh scripts/docker-builder.sh
+	@unformatted="$$(gofmt -l $$(git ls-files '*.go'))"; if [ -n "$$unformatted" ]; then printf 'gofmt: %s\n' $$unformatted >&2; exit 1; fi
+	shellcheck -s sh deploy/install.sh deploy/install-macos.sh deploy/openrc/probe-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/docker-readback-test.sh scripts/release-rules-test.sh scripts/image-platform-ref.sh scripts/docker-builder.sh
 	go vet ./...
 	GOOS=linux go vet ./...
 	GOOS=darwin go vet ./...
@@ -60,12 +61,15 @@ web-test: web-install
 web: web-install
 	pnpm --dir web run build
 
-# build 验证全部已有的包在本机以及 Linux amd64、arm64 上都能编译；
+# build 验证全部已有的包在本机、Linux 与 darwin 的 amd64、arm64 上都能编译。darwin 的采集文件带 build tag，
+# Linux 上的 CI 里 lint 的 GOOS=darwin go vet 只为本机架构编译它们；另一个架构只有这里编译得到，而 purego 按架构分文件实现。
 # 二进制产物由 binaries 生成，只有 e2e 需要它。
 build:
 	go build ./...
 	GOOS=linux GOARCH=amd64 go build ./...
 	GOOS=linux GOARCH=arm64 go build ./...
+	GOOS=darwin GOARCH=amd64 go build ./...
+	GOOS=darwin GOARCH=arm64 go build ./...
 
 binaries: web
 	go build -o bin/probe-hub ./cmd/hub
@@ -94,9 +98,10 @@ e2e-matrix: binaries
 	  AGENT_IMAGE="$${pair%%=*}" EXPECT_OS="$${pair#*=}" scripts/e2e.sh || exit $$?; \
 	done
 
-# 发布产物矩阵：agent 五个 Linux 架构，hub 两个。架构集合只在这两个变量维护，
+# 发布产物矩阵：agent 五个 Linux 架构与两个 darwin 架构，hub 两个 Linux 架构。架构集合只在这三个变量维护，
 # 静态门禁与打包清单都由它们展开，不存在第二份文件清单。
 AGENT_LINUX_ARCHES := amd64 arm64 armv7 386 riscv64
+AGENT_DARWIN_ARCHES := amd64 arm64
 HUB_LINUX_ARCHES := amd64 arm64
 
 # 发布产物的构建参数（§14）：版本经 ldflags 注入，-trimpath 去掉构建机路径。agent 与 hub、
@@ -111,15 +116,22 @@ hub_build = env GOOS=linux GOARCH=$(1) CGO_ENABLED=0 go build $(RELEASE_GOFLAGS)
 # 另加 --no-xattrs：bsdtar 仍会把 com.apple.provenance 之类的扩展属性写成 pax 扩展头，GNU tar 解包时逐条目告警，产物里也带上宿主元数据；
 # bsdtar 与 GNU tar 都认这个选项，本地与 CI 构建同一写法。
 # 说明写在 recipe 之外：recipe 是反斜杠续行拼成的一条 shell 命令，行内的 # 会把其后的续行一并注释掉。
+# 静态门禁只收 Linux 产物：它守的是"与 libc 无关"（不带 PT_INTERP 与 DT_NEEDED），这是 Linux 发行版之间的约束。
+# darwin 产物是 Mach-O，依赖 /usr/lib/libSystem.B.dylib 与 libresolv.9.dylib（otool -L）：Go 在 darwin 上经 libSystem
+# 发起系统调用，macOS 也不提供静态链接的系统库，"不带动态依赖"在这里不成立也无须成立。
+# darwin 的 CGO_ENABLED=0 由下面的显式 env 承载。
 # VERSION 在构建前端之前检查：不合规时立即报错，不等 web 目标跑完。
 release:
 	@$(check_version)
 	$(MAKE) web
-	rm -rf dist/build dist/*.tar.gz dist/SHA256SUMS dist/install.sh
+	rm -rf dist/build dist/*.tar.gz dist/SHA256SUMS dist/install.sh dist/install-macos.sh
 	mkdir -p dist/build
 	@set -e; for arch in $(AGENT_LINUX_ARCHES); do \
 	  case $$arch in armv7) gflags="GOARCH=arm GOARM=7" ;; *) gflags="GOARCH=$$arch" ;; esac; \
 	  env GOOS=linux CGO_ENABLED=0 $$gflags go build $(RELEASE_GOFLAGS) -o "dist/build/probe-agent-linux-$$arch" ./cmd/agent; \
+	done; \
+	for arch in $(AGENT_DARWIN_ARCHES); do \
+	  env GOOS=darwin GOARCH=$$arch CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$(VERSION)" -o "dist/build/probe-agent-darwin-$$arch" ./cmd/agent; \
 	done; \
 	for arch in $(HUB_LINUX_ARCHES); do \
 	  $(call hub_build,$$arch,dist/build/probe-hub-linux-$$arch); \
@@ -133,6 +145,13 @@ release:
 	  COPYFILE_DISABLE=1 tar --no-xattrs -C "$$pkg" -czf "dist/probe-agent_linux_$$arch.tar.gz" probe-agent probe-agent.service probe-agent.openrc; \
 	  rm -rf "$$pkg"; \
 	done; \
+	for arch in $(AGENT_DARWIN_ARCHES); do \
+	  pkg="dist/pkg-darwin-$$arch"; mkdir -p "$$pkg"; \
+	  cp "dist/build/probe-agent-darwin-$$arch" "$$pkg/probe-agent"; \
+	  cp deploy/launchd/xyz.probe.agent.plist "$$pkg/xyz.probe.agent.plist"; \
+	  COPYFILE_DISABLE=1 tar --no-xattrs -C "$$pkg" -czf "dist/probe-agent_darwin_$$arch.tar.gz" probe-agent xyz.probe.agent.plist; \
+	  rm -rf "$$pkg"; \
+	done; \
 	for arch in $(HUB_LINUX_ARCHES); do \
 	  pkg="dist/pkg-hub-$$arch"; mkdir -p "$$pkg"; \
 	  cp "dist/build/probe-hub-linux-$$arch" "$$pkg/probe-hub"; \
@@ -141,6 +160,7 @@ release:
 	done; \
 	rm -rf dist/build
 	cp deploy/install.sh dist/install.sh
+	cp deploy/install-macos.sh dist/install-macos.sh
 	cd dist && sha256sum probe-*.tar.gz > SHA256SUMS
 
 # hub 镜像（§14）：ghcr.io/xjetry/probe-hub:<version>，平台由 HUB_LINUX_ARCHES 展开。
@@ -172,7 +192,7 @@ ensure_builder = scripts/docker-builder.sh $(DOCKER_BUILDER) $(BUILDKIT_IMAGE)
 # 本地构建并核对（§14）：两个平台都构建、导出根文件系统交给 checkimage，再把本机平台装进 docker。
 # 多平台结果不能 --load：经典镜像存储不接受多平台索引（docker exporter does not currently support
 # exporting manifest lists），不给 --platform 时构建的是构建节点的本机平台。
-# 面板随 go:embed 进二进制，先 make web：漏掉它，镜像里的 /admin/ 只有 503 说明页。
+# 面板与公开页随 go:embed 进二进制，先 make web：漏掉它，镜像里的 /admin/ 与 / 都只有 503 说明页。
 docker:
 	@$(check_version)
 	$(MAKE) web

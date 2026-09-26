@@ -154,7 +154,7 @@ func newRunner(t *testing.T, hub *fakeHub) (*Runner, chan time.Duration) {
 	t.Cleanup(srv.Close)
 	sleeps := make(chan time.Duration, 100)
 	r := &Runner{
-		Collector: &collect.Collector{FS: fstest.MapFS{"proc/loadavg": {Data: []byte("0 0 0 1/2 3\n")}}, DiskUsage: func(string) (uint64, uint64, error) { return 1, 1, nil }, Clock: clock.NewFake(time.Unix(0, 0)), Version: "t"},
+		Collector: &collect.Collector{Host: &collect.ProcFS{FS: fstest.MapFS{"proc/loadavg": {Data: []byte("0 0 0 1/2 3\n")}}, DiskUsage: func(string) (uint64, uint64, error) { return 1, 1, nil }}, Clock: clock.NewFake(time.Unix(0, 0)), Version: "t"},
 		Client:    probev1connect.NewAgentServiceClient(srv.Client(), srv.URL),
 		Token:     "tok",
 		Clock:     clock.NewFake(time.Unix(0, 0)),
@@ -213,7 +213,7 @@ func TestFirstReportCarriesFactsThenOnlyOnRequest(t *testing.T) {
 func TestFactsChangeIsReportedWithoutRestart(t *testing.T) {
 	hub := &fakeHub{interval: 5000, reconcile: true}
 	r, _ := newRunner(t, hub)
-	fs := r.Collector.FS.(fstest.MapFS)
+	fs := r.Collector.Host.(*collect.ProcFS).FS.(fstest.MapFS)
 	fs["proc/sys/kernel/hostname"] = &fstest.MapFile{Data: []byte("old\n")}
 	round := 0
 	r.Sleep = func(context.Context, time.Duration) error {

@@ -3701,3 +3701,29 @@ cd /Users/xjetry/work/vibe/probe-macos && git add README.md && git commit -m "do
 - 本计划内：Task 1 → 2 → 3 依次（接口逐级依赖）；Task 4 只依赖 agent 的命令行，可与 1–3 并行（另开工作树时注意 `Makefile` 的 `lint` 与 Task 3 的 `build` 改在同一文件的不同段）；Task 5 依赖 3、4；Task 6 依赖 5；Task 7 依赖 3、4；Task 8 最后。单工作树顺序执行最简单，推荐如此。
 - 与 hub Docker 镜像计划：两者都改 `Makefile`（本计划：`lint`、`build`、发布矩阵变量、`release`；Docker 计划：`docker` 目标与发布相关部分）与 `.github/workflows/ci.yml`（各加一个任务）；Docker 计划还改 `release.yml`（本计划不改）；若 Docker 计划也新建 `README.md`，会与本计划的 Task 8 冲突。**后合并者变基**：合回前固定三步——`git log --oneline $(git merge-base main <分支>)..main` 读标题找同类改动；`git merge-tree --write-tree --name-only main <分支>` 无副作用预演冲突；冲突按"两边都保留"解（Makefile 的两处新增并存、ci.yml 两个任务并存、README 把 Docker 的运行方式并进"运行 hub"一节），解完在变基后的分支上重跑 `make ci` 与 `make release VERSION=v0.0.0-rebase`，并核对 `dist/SHA256SUMS` 同时含 darwin 两行与 Docker 计划的产物（若有）。
 - 两个计划的 `make release` 都往 `dist/` 写并先清理：在同一台机器上并行验收时各用自己的工作树，不共用 `dist/`。`scripts/macos-accept.sh` 的端口 18087/18088 与其他验收脚本不冲突，可与 e2e、install-accept 同时跑。
+
+## 执行修正（执行与整分支审阅后记录；代码以分支为准）
+
+**计划文字与实测不符（没改行为）**
+- Task 2 注入 2（`internal` 读错偏移）红在 `checkUsage` 的 used exceeds total，不是计划期望的 `want total 2^37` 断言：vmBytes 的哨兵让任何错位都使已用量超过 hw.memsize。后由专属的偏移断言（`TestVMStatisticsReadsHeaderOffsets`，按十六进制页数报出错的字段）取代。
+- Task 2 注入 4 按计划写法（`if err != nil {`）会让 `io/fs` import 未使用而编译失败，改为语义相同的写法。
+- 规划决定里"CLOCK_MONOTONIC 不经墙钟"未经验证：darwin 的 CLOCK_MONOTONIC 与 gettimeofday − kern.boottime 相符、微秒粒度，在睡眠期间也计数（clock_gettime(3)）；`CLOCK_MONOTONIC_RAW` 同样含睡眠，`CLOCK_UPTIME_RAW` 才不计。仍用 CLOCK_MONOTONIC（spec §14），注释只写已验证事实。
+- 规划决定的取号策略"300–499 最小空闲号"会撞上 Apple 逐版向上追加的系统账户（本机 26.3.1 已占到 308），改为从 499 向下（spec §14）。
+- 本机 `/bin/sh` 收到 SIGINT 时会执行 EXIT trap（与审阅推测相反），`trap 'exit 1' INT TERM HUP` 仍加（dash 不会）。
+- Task 4 D.4"launchd 以 root 身份创建日志文件"未经实证；用户域实验：作业以自己的身份打开日志。最终口径见下。
+
+**源自计划原文、审阅改掉的缺陷**
+- Linux"上报值不变"没有能红的测试：补逐字段黄金值测试（docker-debian 快照 + 各字段取不同非零值的合成快照）。进程数按 spec §7 改为数 `/proc` 进程目录（不再取 loadavg 第 4 字段），`hidepid=2` 下同一次目录列表里没有 `1` 这个进程目录即缺失。
+- 合计型读数缺成员即整体缺失：sockstat 表不存在不计、存在读不出则 conns 整体缺失并记日志；网卡在列出与读取之间消失（ENOENT/ENODEV，以目录是否还在判定）只略过该网卡，其它读错整体缺失。网卡过滤只由 Collector 承载（Host 返回全部网卡）。
+- darwin 夹具的区分度：swap 夹具 total/used/avail 互不相等；CPU 夹具四个状态增量两两不同；hw.logicalcpu 夹具值不等于本机核数；ifmib 长度守卫改为等于 180；网卡枚举上界与换基线各有用例。真机对照：内存按 vm_stat 四行逐项比对，夹逼测试先断言网卡集合相等（netstat 名字去掉结尾 `*`）。
+- `hostVMInfo64Count` 的 38 是 HOST_VM_INFO64_REV1_COUNT（当前 SDK 的 HOST_VM_INFO64_COUNT = 62）；内核按 revision 回填并写回 count，count 偏小只让内存读数整体缺失。libSystem 逐函数绑定：缺一个符号只让对应读数缺失。
+- 进程身份按 uid + 可执行路径（launchd 以该 uid 派生 cfprefsd、trustd 等辅助进程），启动与停止确认都用它。
+- 日志目录口径经四轮收敛：目录 root:wheel 0755，`chown` 后 `chmod -N` 去 ACL（服务用户曾为属主时可加允许项，数字 chmod 与 chown 都不去掉），再检查两个日志文件为"不存在或链接数 1 的普通文件"（硬链接可穿过 `[ -f ]`，让 root 的 chown/chmod 改到目录外），每次安装预建文件交给服务用户 0640；预建、属主、权限等依赖外部条件的操作全部在停服务之前完成，停服务后只剩换二进制、写 plist、bootstrap（Linux install.sh 同一顺序）。文件被删后若 launchd 以服务用户打开会反复 EX_CONFIG，重跑安装恢复；launchd 以什么身份打开由 README 真机清单判别（文件不存在时按 UserName 属主创建，看属主分不出）。
+- `--purge` 与建号的回查：删号前置判定读本地节点记录（`id` 会解析非本地来源的账户），Linux install.sh 同形改齐并加 `PROBE_INSTALL_ROOT` 测试缝（生产路径不变）。
+- 验收脚本（macos-accept.sh、install-accept.sh）的端口可用环境变量覆盖，默认值不变；macos-accept.sh 每条判定都能红，"空输出 = 通过"的 grep 先冒烟。
+
+**留给后续的同形清单**
+- `scripts/macos-accept.sh` 的三处墙钟截止（节点条件等待、探测结果 90s、带 return 1 的等待函数）应改为按累计 sleep 计（e2e.sh 已改）；271–272 行测的是 launchd 的 ThrottleInterval 本身，不能照搬，改法待定。
+- 公开页合入后 `/` 是公开页，macos-accept.sh 以"`/` 返回 302"判就绪要改为匿名 GetSite 200（与 e2e.sh、install-accept.sh 同写法）。
+- 仓库里没有 LXC、OpenVZ 的 /proc 快照可核对 sockstat 的严格解析。
+- 被排除的网卡长期读不出时整条流量读数缺失（接受的残余）。

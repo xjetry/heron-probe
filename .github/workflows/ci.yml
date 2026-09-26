@@ -39,3 +39,20 @@ jobs:
           else
             echo "main has no .proto files yet; nothing to compare against"
           fi
+  # darwin 的采集文件带 build tag，Linux 上的 go test 照不到（spec §12）；安装脚本的逻辑测试在这里
+  # 跑的是 macOS 自带的 /bin/sh（bash 3.2 的 sh 模式），ubuntu 上跑的是 dash。
+  # 两格覆盖 Apple Silicon 与 Intel：页大小（16 KiB 与 4 KiB）与 sysctl 的差异只在对应架构的 macOS 内核上显形。
+  agent-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-latest, macos-26-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go test -count=1 ./internal/agent/... ./cmd/agent/... ./deploy/...
+        env:
+          CGO_ENABLED: "0"

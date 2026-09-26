@@ -3,7 +3,6 @@ package collect
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"path"
 	"runtime"
 	"time"
@@ -13,17 +12,13 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// defaultNetExclude 是不计入流量的网卡：回环与常见的虚拟桥接口。
-var defaultNetExclude = []string{"lo", "docker*", "veth*", "br-*", "virbr*"}
-
+// Collector 把 Host 的原始读数变成一次上报。
 type Collector struct {
-	// FS 是主机根文件系统；路径相对根，如 "proc/stat"。
-	FS fs.FS
-	// DiskUsage 取根分区用量；statfs 是系统调用，由平台文件注入。
-	DiskUsage func(path string) (total, used uint64, err error)
-	Clock     clock.Clock
-	// NetInclude 非空时只统计匹配的网卡；否则统计除 NetExclude（默认列表）外的全部。
+	Host  Host
+	Clock clock.Clock
+	// NetInclude 非空时只统计匹配的网卡；否则统计除 NetExclude 外的全部。
 	NetInclude []string
+	// NetExclude 为 nil 时用 Host.defaultNetExclude。
 	NetExclude []string
 	Version    string
 	// IcmpAvailable 默认为 false；须在 Runner.Run 前赋值，运行期间只读。
@@ -40,7 +35,7 @@ func (c *Collector) includeIface(name string) bool {
 	}
 	ex := c.NetExclude
 	if ex == nil {
-		ex = defaultNetExclude
+		ex = c.Host.defaultNetExclude()
 	}
 	return !matchAny(ex, name)
 }
@@ -54,7 +49,19 @@ func matchAny(patterns []string, name string) bool {
 	return false
 }
 
-func (c *Collector) open(name string) (fs.File, error) { return c.FS.Open(name) }
+// checkUsage 拒收超过总量的读数：按读不到处理并记日志，不截到总量——截断会把错误的计数伪装成满载。
+// 单次无符号减法回绕的结果必然大于被减数，所以 Linux 的 total − available、total − free 回绕由这里兜住。
+// 先减后加的组合（darwin 的 internal − purgeable + wire + compressor）回绕后可能落回总量以内，
+// 这里看不出；这类组合的每个中间差由 Host 自己拒收（Host.memory 的约定，darwin 由 vmCounts.usedPages 承担）。
+func checkUsage(u usage, err error) (usage, error) {
+	if err != nil {
+		return usage{}, err
+	}
+	if u.used > u.total {
+		return usage{}, fmt.Errorf("used %d exceeds total %d", u.used, u.total)
+	}
+	return u, nil
+}
 
 // Metrics 生成一次上报。任何一个来源读不到只让对应读数缺失，其余照常；
 // 返回的 error 汇总了这些失败，供调用方记日志，不阻止上报。
@@ -62,93 +69,60 @@ func (c *Collector) Metrics() (*probev1.Metrics, error) {
 	m := &probev1.Metrics{}
 	var errs []error
 	fail := func(what string, err error) { errs = append(errs, fmt.Errorf("%s: %w", what, err)) }
+	h := c.Host
 
-	if id, err := readTrim(c.FS, "proc/sys/kernel/random/boot_id"); err == nil {
+	if id, err := h.bootID(); err == nil {
 		m.BootId = id
 	} else {
 		fail("boot_id", err)
 	}
 
-	if f, err := c.open("proc/stat"); err == nil {
-		cur, perr := parseStat(f)
-		f.Close()
-		if perr != nil {
-			fail("stat", perr)
-		} else {
-			if c.prevCPU != nil {
-				if pct, ok := cpuPercent(*c.prevCPU, cur); ok {
-					m.CpuPct = proto.Float64(pct)
-				}
+	if cur, err := h.cpuTimes(); err == nil {
+		if c.prevCPU != nil {
+			if pct, ok := cpuPercent(*c.prevCPU, cur); ok {
+				m.CpuPct = proto.Float64(pct)
 			}
-			c.prevCPU = &cur
 		}
+		c.prevCPU = &cur
 	} else {
-		fail("stat", err)
+		fail("cpu", err)
 	}
 
-	if f, err := c.open("proc/meminfo"); err == nil {
-		mi, perr := parseMeminfo(f)
-		f.Close()
-		if perr != nil {
-			fail("meminfo", perr)
-		} else {
-			m.MemTotal, m.MemUsed = proto.Uint64(mi.total), proto.Uint64(mi.total-mi.available)
-			m.SwapTotal, m.SwapUsed = proto.Uint64(mi.swapTotal), proto.Uint64(mi.swapTotal-mi.swapFree)
-		}
+	if u, err := checkUsage(h.memory()); err == nil {
+		m.MemTotal, m.MemUsed = proto.Uint64(u.total), proto.Uint64(u.used)
 	} else {
-		fail("meminfo", err)
+		fail("memory", err)
 	}
-
-	if f, err := c.open("proc/loadavg"); err == nil {
-		l, perr := parseLoadavg(f)
-		f.Close()
-		if perr != nil {
-			fail("loadavg", perr)
-		} else {
-			m.Load1, m.Load5, m.Load15 = proto.Float64(l.l1), proto.Float64(l.l5), proto.Float64(l.l15)
-			m.Procs = proto.Uint32(l.procs)
-		}
+	if u, err := checkUsage(h.swap()); err == nil {
+		m.SwapTotal, m.SwapUsed = proto.Uint64(u.total), proto.Uint64(u.used)
 	} else {
-		fail("loadavg", err)
+		fail("swap", err)
 	}
-
-	if f, err := c.open("proc/uptime"); err == nil {
-		up, perr := parseUptime(f)
-		f.Close()
-		if perr != nil {
-			fail("uptime", perr)
-		} else {
-			m.UptimeS = proto.Uint64(up)
-		}
-	} else {
-		fail("uptime", err)
-	}
-
-	if total, used, err := c.DiskUsage("/"); err == nil {
-		m.DiskTotal, m.DiskUsed = proto.Uint64(total), proto.Uint64(used)
+	if u, err := checkUsage(h.disk()); err == nil {
+		m.DiskTotal, m.DiskUsed = proto.Uint64(u.total), proto.Uint64(u.used)
 	} else {
 		fail("disk", err)
 	}
 
-	var tcp, udp uint32
-	gotConns := false
-	for _, name := range []string{"proc/net/sockstat", "proc/net/sockstat6"} {
-		f, err := c.open(name)
-		if err != nil {
-			continue
-		}
-		t, u, perr := parseSockstat(f)
-		f.Close()
-		if perr != nil {
-			fail(name, perr)
-			continue
-		}
-		tcp, udp, gotConns = tcp+t, udp+u, true
+	if l, err := h.load(); err == nil {
+		m.Load1, m.Load5, m.Load15 = proto.Float64(l.l1), proto.Float64(l.l5), proto.Float64(l.l15)
+	} else {
+		fail("load", err)
 	}
-	if gotConns {
+	if n, err := h.procs(); err == nil {
+		m.Procs = proto.Uint32(n)
+	} else {
+		fail("procs", err)
+	}
+	if up, err := h.uptime(); err == nil {
+		m.UptimeS = proto.Uint64(up)
+	} else {
+		fail("uptime", err)
+	}
+	if tcp, udp, err := h.conns(); err == nil {
 		m.TcpConns, m.UdpConns = proto.Uint32(tcp), proto.Uint32(udp)
 	} else {
-		fail("sockstat", fs.ErrNotExist)
+		fail("conns", err)
 	}
 
 	if sum, err := c.netTotals(); err == nil {
@@ -167,60 +141,36 @@ func (c *Collector) Metrics() (*probev1.Metrics, error) {
 	return m, errors.Join(errs...)
 }
 
-// netTotals 从 /sys/class/net/<if>/statistics 汇总计数器；每个网卡一对文件，
-// 比 /proc/net/dev 少一次整表解析，且缺某块网卡时不影响其余。
 func (c *Collector) netTotals() (netCounters, error) {
-	entries, err := fs.ReadDir(c.FS, "sys/class/net")
+	ifs, err := c.Host.ifaces()
 	if err != nil {
 		return netCounters{}, err
 	}
 	var sum netCounters
-	found := false
-	for _, e := range entries {
-		if !c.includeIface(e.Name()) {
+	counted := false
+	for _, i := range ifs {
+		if !c.includeIface(i.name) {
 			continue
 		}
-		base := "sys/class/net/" + e.Name() + "/statistics/"
-		rx, err1 := readUint(c.FS, base+"rx_bytes")
-		tx, err2 := readUint(c.FS, base+"tx_bytes")
-		if err1 != nil || err2 != nil {
-			continue
-		}
-		sum.rx, sum.tx, found = sum.rx+rx, sum.tx+tx, true
+		sum.rx, sum.tx, counted = sum.rx+i.rx, sum.tx+i.tx, true
 	}
-	if !found {
-		return netCounters{}, errors.New("no interface with readable counters")
+	if !counted {
+		return netCounters{}, errors.New("no included interface")
 	}
 	return sum, nil
 }
 
-func readUint(fsys fs.FS, name string) (uint64, error) {
-	s, err := readTrim(fsys, name)
-	if err != nil {
-		return 0, err
-	}
-	var v uint64
-	_, err = fmt.Sscan(s, &v)
-	return v, err
-}
-
 // Facts 收集静态信息；读不到的字段留空，由 hub 侧展示为未知。
+// arch 取本二进制的 GOARCH：与发布资产名、安装脚本的架构名同一套词汇，两个平台一致。
 func (c *Collector) Facts() *probev1.Facts {
-	f := &probev1.Facts{Arch: runtime.GOARCH, AgentVersion: c.Version, IcmpAvailable: c.IcmpAvailable}
-	f.Hostname, _ = readTrim(c.FS, "proc/sys/kernel/hostname")
-	f.Kernel, _ = readTrim(c.FS, "proc/sys/kernel/osrelease")
-	if r, err := c.open("etc/os-release"); err == nil {
-		f.Os = parseOSRelease(r)
-		r.Close()
-	}
-	if r, err := c.open("proc/cpuinfo"); err == nil {
-		ci := parseCPUInfo(r)
-		r.Close()
-		f.CpuModel, f.CpuCores = ci.model, ci.cores
+	hf := c.Host.facts()
+	f := &probev1.Facts{
+		Hostname: hf.hostname, Os: hf.os, Kernel: hf.kernel, Arch: runtime.GOARCH,
+		Virtualization: hf.virtualization, CpuModel: hf.cpuModel, CpuCores: hf.cpuCores,
+		AgentVersion: c.Version, IcmpAvailable: c.IcmpAvailable,
 	}
 	if f.CpuCores == 0 {
 		f.CpuCores = uint32(runtime.NumCPU())
 	}
-	f.Virtualization = detectVirtualization(c.FS)
 	return f
 }

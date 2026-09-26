@@ -1,7 +1,8 @@
 #!/bin/sh
 # install.sh 与服务单元的真机验收：只在 OrbStack 真实启动的机器上跑，不进 CI。
 # 机器名 pia- 前缀是隔离边界；只删除本 run 创建的机器（逐台登记）。
-# 端口 18085/18086 与 e2e 的 18080/18081 错开，两者可同时跑。
+# 端口默认 18085（hub）/18086（下载服务），与 e2e 的 18080/18081、macos-accept 的 18087/18088 错开，
+# 几个验收可同时跑；本机上别的进程占着默认端口时，用环境变量 HUB_PORT、DIST_PORT 覆盖。
 set -eu
 cd "$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -31,8 +32,8 @@ IMG_ROCKY=${IMG_ROCKY:-rocky:9}
 
 VERSION_A=${VERSION_A:-v0.0.0-accept-a}
 VERSION_B=${VERSION_B:-v0.0.0-accept-b}
-HUB_PORT=18085
-DIST_PORT=18086
+HUB_PORT=${HUB_PORT:-18085}
+DIST_PORT=${DIST_PORT:-18086}
 HOST=host.orb.internal
 work=$(mktemp -d)
 echo "work=$work"
@@ -46,7 +47,10 @@ cleanup() {
   if [ -n "$rootrun" ]; then kill "$rootrun" 2>/dev/null || true; wait "$rootrun" 2>/dev/null || true; fi
   while read -r m; do orb delete -f "$m" > /dev/null 2>&1 || true; done < "$work/machines"
 }
+# 被信号打断时 dash 不执行 EXIT trap（容器实测），macOS 的 /bin/sh 实测会执行但 sh 不保证：把 INT、TERM、HUP
+# 转成 exit 1，Ctrl-C 时也删掉本轮的机器、停掉 18086 上的 python（非交互 shell 的后台作业忽略 SIGINT）。
 trap cleanup EXIT
+trap 'exit 1' INT TERM HUP
 
 # 两个版本各打一包再复制走：第二次 make release 会清空 dist/，重跑必须能证出版本从 A 变成 B。
 make release VERSION="$VERSION_A" > "$work/release-a.log" 2>&1 || { echo "FAIL: make release A"; tail -20 "$work/release-a.log"; exit 1; }
@@ -266,8 +270,9 @@ run_cell() {
   before=$(jq '[.nodes[] | select(.name | startswith("'"$name"'"))] | length' "$work/ListNodes.json")
   orb -m "$name" -u root sh -c "$fetch_b" \
     > "$work/fetchb-$name.log" 2>&1 || { echo "FAIL($name): fetch rerun install.sh"; exit 1; }
-  # 手工 register 以 root 重写配置，文件属主回到 root。重跑必须改回来，节点仍在线。
+  # 手工 register 以 root 重写配置，文件属主回到 root；人工编辑留下 0644。重跑必须都改回来，节点仍在线。
   orb -m "$name" -u root chown root:root /etc/probe-agent/config.json
+  orb -m "$name" -u root chmod 0644 /etc/probe-agent/config.json
   orb -m "$name" -u root sh /root/install.sh --hub "http://$HOST:$HUB_PORT" --key "$key" --base-url "http://$HOST:$DIST_PORT/b" \
     > "$work/rerun-$name.log" 2>&1 || { echo "FAIL($name): rerun"; tail -20 "$work/rerun-$name.log"; exit 1; }
   grep -q 'keeping the current registration' "$work/rerun-$name.log" || { echo "FAIL($name): rerun did not keep registration"; exit 1; }
