@@ -68,8 +68,9 @@ func parseEnum[K interface {
 }
 
 // 存储层携带对象种类；保存与删除各自指定请求根路径，不从错误文本猜测对象。
+// root 为请求顶层的 id 字段本身（id、delivery_id）时，缺失的就是它。
 func missingField(root string, kind store.ObjectKind) string {
-	if root == "id" {
+	if root == "id" || root == "delivery_id" {
 		return root
 	}
 	switch kind {

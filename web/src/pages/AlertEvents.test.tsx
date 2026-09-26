@@ -3,7 +3,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { create } from "@bufbuild/protobuf";
 import { createConnectQueryKey } from "@connectrpc/connect-query";
 import { ConnectError, Code } from "@connectrpc/connect";
-import { AdminService, AlertEventSchema, ChannelKind, ListNodesResponseSchema, ListNotifyChannelsResponseSchema, type ListAlertEventsRequest } from "../gen/probe/v1/admin_pb";
+import { AdminService, AlertEventSchema, ChannelKind, DeliveryFailure, ListNodesResponseSchema, ListNotifyChannelsResponseSchema, type ListAlertEventsRequest } from "../gen/probe/v1/admin_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { AlertEvents } from "./AlertEvents";
 
@@ -67,13 +67,13 @@ it("投递文案与渠道回退", async () => {
   render({ listAlertEvents: async () => ({ events: [
     create(AlertEventSchema, { id: 1n, nodeId: 1n, ruleId: 7n, transition: "firing", at: 1_700_000_000n, summary: "带投递",
       deliveries: [
-        { channelId: 5n, ok: true, done: true, attempts: 1 },
-        { channelId: 7n, ok: false, done: true, attempts: 0, lastError: "channel deleted" },
+        { id: 1n, channelId: 5n, ok: true, done: true, attempts: 1 },
+        { id: 2n, channelId: 7n, ok: false, done: true, attempts: 0, failure: DeliveryFailure.CHANNEL_DELETED },
       ] }),
     create(AlertEventSchema, { id: 2n, nodeId: 1n, ruleId: 7n, transition: "recovered", at: 1_700_000_000n, summary: "无投递" }),
   ] }) });
   expect(await screen.findByText("hook：已送达")).toBeInTheDocument();
-  expect(screen.getByText("渠道 #7：失败（0 次）channel deleted")).toBeInTheDocument();
+  expect(screen.getByText("渠道 #7：失败（0 次）渠道已删除")).toBeInTheDocument();
   expect(screen.getByText("未配置渠道")).toBeInTheDocument();
 });
 

@@ -1,4 +1,4 @@
-import { AlertKind, ChannelKind, ProbeMetric, type AlertDelivery, type AlertRule, type AlertStateEntry, type NotifyChannel, type ProbeTaskDetail } from "../gen/probe/v1/admin_pb";
+import { AlertKind, ChannelKind, DeliveryFailure, ProbeMetric, type AlertDelivery, type AlertRule, type AlertStateEntry, type NotifyChannel, type ProbeTaskDetail } from "../gen/probe/v1/admin_pb";
 import { formatUnit } from "./format";
 import { taskLabel } from "./probes";
 
@@ -64,11 +64,28 @@ export function statesOf(states: AlertStateEntry[]): Map<bigint, RuleStates> {
 
 export const transitionLabel = (t: string): string => (t === "firing" ? "触发" : t === "recovered" ? "恢复" : t);
 
+// 与 proto DeliveryFailure 逐值对齐（测试按枚举全集核对）；UNSPECIFIED 表示没有失败，不在表里。
+// http_status 只随 HTTP_STATUS 出现，由 hub 写库前的校验保证。
+export const DELIVERY_FAILURES: readonly { value: DeliveryFailure; text: (d: AlertDelivery) => string }[] = [
+  { value: DeliveryFailure.HTTP_STATUS, text: (d) => `HTTP ${d.httpStatus}` },
+  { value: DeliveryFailure.TRANSPORT, text: () => "连接失败" },
+  { value: DeliveryFailure.REQUEST, text: () => "请求无法构造" },
+  { value: DeliveryFailure.CHANNEL_INVALID, text: () => "渠道配置无效" },
+  { value: DeliveryFailure.CHANNEL_DELETED, text: () => "渠道已删除" },
+  { value: DeliveryFailure.RESULT_UNRECORDED, text: () => "结果未记录" },
+  { value: DeliveryFailure.UNCLASSIFIED, text: () => "未分类" },
+];
+
+// 表外的值（hub 比面板新）显示编号而不是空：失败必须带着可追查的类别出现。
+export function failureText(d: AlertDelivery): string {
+  return DELIVERY_FAILURES.find((e) => e.value === d.failure)?.text(d) ?? `类别 ${d.failure}`;
+}
+
 // 已送达只由 ok 为真决定；done 为假表示尚未终态，可能等待入窗、正在尝试或等待重试，不能显示为终止失败。
 export function deliveryText(d: AlertDelivery, channel: string): string {
   if (d.ok) return `${channel}：已送达`;
   if (!d.done) return `${channel}：投递中（已尝试 ${d.attempts} 次）`;
-  return `${channel}：失败（${d.attempts} 次）${d.lastError}`;
+  return `${channel}：失败（${d.attempts} 次）${failureText(d)}`;
 }
 
 // 缺失表示取 hub 的 PROBE_OFFLINE_AFTER（proto Node.offline_grace_s）；清除后 hub 存 NULL，不会回显 0。

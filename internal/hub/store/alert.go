@@ -97,6 +97,8 @@ type Delivery struct {
 	Failure    DeliveryFailure // 最近一次失败的类别；成功或尚无结果时为空。
 	HTTPStatus int             // 仅 FailureHTTPStatus 非零。
 	// 最近一次失败的原文：HTTP 失败时是响应体片段，其余是出站错误文本，都不含 URL。
+	// 接收方可能在错误响应里回显请求体模板里的密钥，所以只经仅会话的 GetAlertDeliveryError 读出；
+	// 只读的 ListAlertEvents 逐字段映射 Delivery，不带这个字段。
 	LastError   string
 	DeliveredAt time.Time
 }
@@ -114,6 +116,13 @@ const (
 	FailureResultUnrecorded DeliveryFailure = "result_unrecorded"
 	FailureUnclassified     DeliveryFailure = "unclassified"
 )
+
+// DeliveryFailures 列出全部失败类别（不含 FailureNone）：写侧只接受其中之一；
+// api 的协议映射测试据它核对与协议枚举一一对应，新增类别时漏改映射或枚举由该测试发现。
+func DeliveryFailures() []DeliveryFailure {
+	return []DeliveryFailure{FailureHTTPStatus, FailureTransport, FailureRequest, FailureChannelInvalid,
+		FailureChannelDeleted, FailureResultUnrecorded, FailureUnclassified}
+}
 
 // DeliveryResult 是一次投递结果的完整写入；UpdateDelivery 在写库前校验字段之间的一致性。
 type DeliveryResult struct {
@@ -563,11 +572,10 @@ func (r DeliveryResult) check() error {
 		}
 		return nil
 	}
-	switch r.Failure {
-	case FailureNone:
+	if r.Failure == FailureNone {
 		return errors.New("delivery result: failure without category")
-	case FailureHTTPStatus, FailureTransport, FailureRequest, FailureChannelInvalid, FailureChannelDeleted, FailureResultUnrecorded, FailureUnclassified:
-	default:
+	}
+	if !slices.Contains(DeliveryFailures(), r.Failure) {
 		return fmt.Errorf("delivery result: unknown failure category %q", r.Failure)
 	}
 	if (r.Failure == FailureHTTPStatus) != (r.HTTPStatus >= 100 && r.HTTPStatus <= 999) {
@@ -577,6 +585,16 @@ func (r DeliveryResult) check() error {
 		return fmt.Errorf("delivery result: failure %q carries error text", r.Failure)
 	}
 	return nil
+}
+
+// GetDeliveryError 读出最近一次失败的原文；只供仅会话的方法使用（见 Delivery.LastError）。
+func (s *Store) GetDeliveryError(ctx context.Context, id int64) (string, error) {
+	var text string
+	err := s.r.QueryRowContext(ctx, "SELECT last_error FROM alert_delivery WHERE id = ?", id).Scan(&text)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", NotFoundError{Kind: ObjectAlertDelivery, ID: id}
+	}
+	return text, err
 }
 
 const deliveryColumns = "id, event_id, channel_id, attempts, ok, done, failure, http_status, last_error, delivered_at"

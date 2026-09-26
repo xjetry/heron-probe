@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"sort"
 
@@ -194,7 +195,15 @@ func (s *Service) ListAlertEvents(ctx context.Context, req *connect.Request[prob
 	for _, ev := range events {
 		p := &probev1.AlertEvent{Id: ev.ID, RuleId: ev.RuleID, NodeId: ev.NodeID, Transition: string(ev.Transition), At: ev.At.Unix(), Summary: ev.Summary, Value: ev.Value}
 		for _, d := range ev.Deliveries {
-			v := &probev1.AlertDelivery{ChannelId: d.ChannelID, Attempts: uint32(d.Attempts), Ok: d.OK, Done: d.Done, LastError: d.LastError}
+			// 只读口径：原文可能含接收方回显的密钥，只给类别与状态码（GetAlertDeliveryError 是原文的唯一出口）。
+			failure, err := deliveryFailureProto(d.Failure)
+			if err != nil {
+				return nil, s.operationError(err, "", "listing alert events failed")
+			}
+			v := &probev1.AlertDelivery{Id: d.ID, ChannelId: d.ChannelID, Attempts: uint32(d.Attempts), Ok: d.OK, Done: d.Done, Failure: failure}
+			if d.Failure == store.FailureHTTPStatus {
+				v.HttpStatus = proto.Uint32(uint32(d.HTTPStatus))
+			}
 			if !d.DeliveredAt.IsZero() {
 				v.DeliveredAt = proto.Int64(d.DeliveredAt.Unix())
 			}
@@ -203,4 +212,36 @@ func (s *Service) ListAlertEvents(ctx context.Context, req *connect.Request[prob
 		out.Events = append(out.Events, p)
 	}
 	return connect.NewResponse(out), nil
+}
+
+// UNSPECIFIED 在协议上的含义是"没有失败"；库里出现表外的类别说明读写口径不一致，
+// 返回 internal，不能让一次失败被读成没有失败。
+func deliveryFailureProto(f store.DeliveryFailure) (probev1.DeliveryFailure, error) {
+	switch f {
+	case store.FailureNone:
+		return probev1.DeliveryFailure_DELIVERY_FAILURE_UNSPECIFIED, nil
+	case store.FailureHTTPStatus:
+		return probev1.DeliveryFailure_DELIVERY_FAILURE_HTTP_STATUS, nil
+	case store.FailureTransport:
+		return probev1.DeliveryFailure_DELIVERY_FAILURE_TRANSPORT, nil
+	case store.FailureRequest:
+		return probev1.DeliveryFailure_DELIVERY_FAILURE_REQUEST, nil
+	case store.FailureChannelInvalid:
+		return probev1.DeliveryFailure_DELIVERY_FAILURE_CHANNEL_INVALID, nil
+	case store.FailureChannelDeleted:
+		return probev1.DeliveryFailure_DELIVERY_FAILURE_CHANNEL_DELETED, nil
+	case store.FailureResultUnrecorded:
+		return probev1.DeliveryFailure_DELIVERY_FAILURE_RESULT_UNRECORDED, nil
+	case store.FailureUnclassified:
+		return probev1.DeliveryFailure_DELIVERY_FAILURE_UNCLASSIFIED, nil
+	}
+	return 0, fmt.Errorf("unknown delivery failure %q", f)
+}
+
+func (s *Service) GetAlertDeliveryError(ctx context.Context, req *connect.Request[probev1.GetAlertDeliveryErrorRequest]) (*connect.Response[probev1.GetAlertDeliveryErrorResponse], error) {
+	text, err := s.store.GetDeliveryError(ctx, req.Msg.GetDeliveryId())
+	if err != nil {
+		return nil, s.operationError(err, "delivery_id", "reading delivery error failed")
+	}
+	return connect.NewResponse(&probev1.GetAlertDeliveryErrorResponse{Error: text}), nil
 }

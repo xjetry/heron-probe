@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
-import { AlertDeliverySchema, AlertKind, AlertRuleSchema, AlertStateEntrySchema, ChannelKind, ListProbeTasksResponseSchema, NotifyChannelSchema, ProbeMetric } from "../gen/probe/v1/admin_pb";
+import { AlertDeliverySchema, AlertKind, AlertRuleSchema, AlertStateEntrySchema, ChannelKind, DeliveryFailure, DeliveryFailureSchema, ListProbeTasksResponseSchema, NotifyChannelSchema, ProbeMetric } from "../gen/probe/v1/admin_pb";
 import { ProbeKind } from "../gen/probe/v1/types_pb";
-import { CHANNEL_KINDS, channelTarget, deliveryText, graceText, labelOf, ruleCondition, statesOf, transitionLabel } from "./alerts";
+import { CHANNEL_KINDS, channelTarget, deliveryText, failureText, graceText, labelOf, ruleCondition, statesOf, transitionLabel } from "./alerts";
 
 describe("labelOf", () => {
   it("表内值给标签，表外值显示原值而不抛错", () => {
@@ -59,8 +59,40 @@ describe("statesOf", () => {
 describe("deliveryText", () => {
   it("成功、投递中、终止失败三种", () => {
     expect(deliveryText(create(AlertDeliverySchema, { ok: true, done: true, attempts: 1 }), "hook")).toBe("hook：已送达");
-    expect(deliveryText(create(AlertDeliverySchema, { ok: false, done: false, attempts: 1, lastError: "503" }), "hook")).toBe("hook：投递中（已尝试 1 次）");
-    expect(deliveryText(create(AlertDeliverySchema, { ok: false, done: true, attempts: 3, lastError: "timeout" }), "hook")).toBe("hook：失败（3 次）timeout");
+    expect(deliveryText(create(AlertDeliverySchema, { ok: false, done: false, attempts: 1, failure: DeliveryFailure.HTTP_STATUS, httpStatus: 503 }), "hook")).toBe("hook：投递中（已尝试 1 次）");
+    expect(deliveryText(create(AlertDeliverySchema, { ok: false, done: true, attempts: 3, failure: DeliveryFailure.TRANSPORT }), "hook")).toBe("hook：失败（3 次）连接失败");
+  });
+
+  it("终态失败按类别显示文案", () => {
+    const text = (failure: DeliveryFailure, httpStatus?: number) =>
+      deliveryText(create(AlertDeliverySchema, { ok: false, done: true, attempts: 2, failure, httpStatus }), "hook");
+    expect([
+      text(DeliveryFailure.HTTP_STATUS, 401),
+      text(DeliveryFailure.TRANSPORT),
+      text(DeliveryFailure.REQUEST),
+      text(DeliveryFailure.CHANNEL_INVALID),
+      text(DeliveryFailure.CHANNEL_DELETED),
+      text(DeliveryFailure.RESULT_UNRECORDED),
+      text(DeliveryFailure.UNCLASSIFIED),
+      text(99 as DeliveryFailure),
+    ]).toEqual([
+      "hook：失败（2 次）HTTP 401",
+      "hook：失败（2 次）连接失败",
+      "hook：失败（2 次）请求无法构造",
+      "hook：失败（2 次）渠道配置无效",
+      "hook：失败（2 次）渠道已删除",
+      "hook：失败（2 次）结果未记录",
+      "hook：失败（2 次）未分类",
+      "hook：失败（2 次）类别 99",
+    ]);
+  });
+
+  it("文案表覆盖协议枚举里的每个失败类别", () => {
+    for (const { number, name } of DeliveryFailureSchema.values) {
+      if (number === DeliveryFailure.UNSPECIFIED) continue;
+      const got = failureText(create(AlertDeliverySchema, { failure: number, httpStatus: 500 }));
+      expect(got, name).not.toMatch(/^类别 /);
+    }
   });
 });
 

@@ -66,6 +66,20 @@ func TestUpdateDeliveryStoresFailureAndClearsItOnSuccess(t *testing.T) {
 	}
 }
 
+func TestGetDeliveryError(t *testing.T) {
+	s, ids, cs, _ := alertFixture(t)
+	r := saveRule(t, s, AlertRule{Kind: KindOffline})
+	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID})
+	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, DeliveryResult{Done: true, Failure: FailureHTTPStatus, HTTPStatus: 401, Error: "echo secret"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.GetDeliveryError(t.Context(), ev.Deliveries[0].ID); err != nil || got != "echo secret" {
+		t.Fatalf("raw error=%q err=%v", got, err)
+	}
+	_, err := s.GetDeliveryError(t.Context(), 999)
+	assertAlertNotFound(t, err, ObjectAlertDelivery, 999)
+}
+
 // schemaV6 冻结加入投递失败类别之前的完整 DDL。
 var schemaV6 = append(slices.Clone(schemaV5), "CREATE TABLE api_token (\n  -- AUTOINCREMENT：id 永不复用。吊销按 id 进行，复用会让针对旧 token 的吊销落到新 token 上。\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  name TEXT NOT NULL,\n  -- 整串明文（含前缀）的 SHA-256；明文不落库。\n  token_hash BLOB NOT NULL UNIQUE,\n  created_at INTEGER NOT NULL,\n  -- NULL 表示从未使用。只供展示：距已落库值满一分钟才刷新。\n  last_used_at INTEGER\n)")
 

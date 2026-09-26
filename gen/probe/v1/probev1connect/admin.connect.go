@@ -95,6 +95,9 @@ const (
 	// AdminServiceListAlertEventsProcedure is the fully-qualified name of the AdminService's
 	// ListAlertEvents RPC.
 	AdminServiceListAlertEventsProcedure = "/probe.v1.AdminService/ListAlertEvents"
+	// AdminServiceGetAlertDeliveryErrorProcedure is the fully-qualified name of the AdminService's
+	// GetAlertDeliveryError RPC.
+	AdminServiceGetAlertDeliveryErrorProcedure = "/probe.v1.AdminService/GetAlertDeliveryError"
 	// AdminServiceListNotifyChannelsProcedure is the fully-qualified name of the AdminService's
 	// ListNotifyChannels RPC.
 	AdminServiceListNotifyChannelsProcedure = "/probe.v1.AdminService/ListNotifyChannels"
@@ -164,8 +167,12 @@ type AdminServiceClient interface {
 	SaveAlertRule(context.Context, *connect.Request[v1.SaveAlertRuleRequest]) (*connect.Response[v1.SaveAlertRuleResponse], error)
 	// 删除规则与状态；事件与投递记录随规则删除保留；保留期见维护任务。
 	DeleteAlertRule(context.Context, *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error)
-	// 按事件 id 倒序分页，包含每个事件的投递状态。
+	// 按事件 id 倒序分页，包含每个事件的投递状态；投递失败只给类别与状态码，原文见 GetAlertDeliveryError。
 	ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error)
+	// 一次投递最近一次失败的原文：HTTP 失败时是响应体的前 200 个字符，其余是出站错误文本，都不含 URL。
+	// 接收方可能在错误响应里回显收到的请求体，而 webhook 请求体模板里可能放着密钥，所以只对会话开放。
+	// 投递不存在时返回 NotFound；没有失败、或类别没有原文时返回空串。
+	GetAlertDeliveryError(context.Context, *connect.Request[v1.GetAlertDeliveryErrorRequest]) (*connect.Response[v1.GetAlertDeliveryErrorResponse], error)
 	// 不回显凭据本身，但请求体模板、URL 主机名与头名称会回显，模板里可能放着密钥。
 	// agent 不需要渠道配置，所以只对会话开放。
 	ListNotifyChannels(context.Context, *connect.Request[v1.ListNotifyChannelsRequest]) (*connect.Response[v1.ListNotifyChannelsResponse], error)
@@ -334,6 +341,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("ListAlertEvents")),
 			connect.WithClientOptions(opts...),
 		),
+		getAlertDeliveryError: connect.NewClient[v1.GetAlertDeliveryErrorRequest, v1.GetAlertDeliveryErrorResponse](
+			httpClient,
+			baseURL+AdminServiceGetAlertDeliveryErrorProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("GetAlertDeliveryError")),
+			connect.WithClientOptions(opts...),
+		),
 		listNotifyChannels: connect.NewClient[v1.ListNotifyChannelsRequest, v1.ListNotifyChannelsResponse](
 			httpClient,
 			baseURL+AdminServiceListNotifyChannelsProcedure,
@@ -387,37 +400,38 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 
 // adminServiceClient implements AdminServiceClient.
 type adminServiceClient struct {
-	login               *connect.Client[v1.LoginRequest, v1.LoginResponse]
-	logout              *connect.Client[v1.LogoutRequest, v1.LogoutResponse]
-	listNodes           *connect.Client[v1.ListNodesRequest, v1.ListNodesResponse]
-	createNode          *connect.Client[v1.CreateNodeRequest, v1.CreateNodeResponse]
-	updateNode          *connect.Client[v1.UpdateNodeRequest, v1.UpdateNodeResponse]
-	deleteNode          *connect.Client[v1.DeleteNodeRequest, v1.DeleteNodeResponse]
-	rotateNodeToken     *connect.Client[v1.RotateNodeTokenRequest, v1.RotateNodeTokenResponse]
-	reorderNodes        *connect.Client[v1.ReorderNodesRequest, v1.ReorderNodesResponse]
-	openRegisterWindow  *connect.Client[v1.OpenRegisterWindowRequest, v1.OpenRegisterWindowResponse]
-	closeRegisterWindow *connect.Client[v1.CloseRegisterWindowRequest, v1.CloseRegisterWindowResponse]
-	getRegisterWindow   *connect.Client[v1.GetRegisterWindowRequest, v1.GetRegisterWindowResponse]
-	getSnapshot         *connect.Client[v1.GetSnapshotRequest, v1.GetSnapshotResponse]
-	queryMetrics        *connect.Client[v1.QueryMetricsRequest, v1.QueryMetricsResponse]
-	getTraffic          *connect.Client[v1.GetTrafficRequest, v1.GetTrafficResponse]
-	adjustTraffic       *connect.Client[v1.AdjustTrafficRequest, v1.AdjustTrafficResponse]
-	listProbeTasks      *connect.Client[v1.ListProbeTasksRequest, v1.ListProbeTasksResponse]
-	saveProbeTask       *connect.Client[v1.SaveProbeTaskRequest, v1.SaveProbeTaskResponse]
-	deleteProbeTask     *connect.Client[v1.DeleteProbeTaskRequest, v1.DeleteProbeTaskResponse]
-	queryProbes         *connect.Client[v1.QueryProbesRequest, v1.QueryProbesResponse]
-	listAlertRules      *connect.Client[v1.ListAlertRulesRequest, v1.ListAlertRulesResponse]
-	saveAlertRule       *connect.Client[v1.SaveAlertRuleRequest, v1.SaveAlertRuleResponse]
-	deleteAlertRule     *connect.Client[v1.DeleteAlertRuleRequest, v1.DeleteAlertRuleResponse]
-	listAlertEvents     *connect.Client[v1.ListAlertEventsRequest, v1.ListAlertEventsResponse]
-	listNotifyChannels  *connect.Client[v1.ListNotifyChannelsRequest, v1.ListNotifyChannelsResponse]
-	saveNotifyChannel   *connect.Client[v1.SaveNotifyChannelRequest, v1.SaveNotifyChannelResponse]
-	deleteNotifyChannel *connect.Client[v1.DeleteNotifyChannelRequest, v1.DeleteNotifyChannelResponse]
-	testNotifyChannel   *connect.Client[v1.TestNotifyChannelRequest, v1.TestNotifyChannelResponse]
-	listApiTokens       *connect.Client[v1.ListApiTokensRequest, v1.ListApiTokensResponse]
-	createApiToken      *connect.Client[v1.CreateApiTokenRequest, v1.CreateApiTokenResponse]
-	deleteApiToken      *connect.Client[v1.DeleteApiTokenRequest, v1.DeleteApiTokenResponse]
-	getApiReference     *connect.Client[v1.GetApiReferenceRequest, v1.GetApiReferenceResponse]
+	login                 *connect.Client[v1.LoginRequest, v1.LoginResponse]
+	logout                *connect.Client[v1.LogoutRequest, v1.LogoutResponse]
+	listNodes             *connect.Client[v1.ListNodesRequest, v1.ListNodesResponse]
+	createNode            *connect.Client[v1.CreateNodeRequest, v1.CreateNodeResponse]
+	updateNode            *connect.Client[v1.UpdateNodeRequest, v1.UpdateNodeResponse]
+	deleteNode            *connect.Client[v1.DeleteNodeRequest, v1.DeleteNodeResponse]
+	rotateNodeToken       *connect.Client[v1.RotateNodeTokenRequest, v1.RotateNodeTokenResponse]
+	reorderNodes          *connect.Client[v1.ReorderNodesRequest, v1.ReorderNodesResponse]
+	openRegisterWindow    *connect.Client[v1.OpenRegisterWindowRequest, v1.OpenRegisterWindowResponse]
+	closeRegisterWindow   *connect.Client[v1.CloseRegisterWindowRequest, v1.CloseRegisterWindowResponse]
+	getRegisterWindow     *connect.Client[v1.GetRegisterWindowRequest, v1.GetRegisterWindowResponse]
+	getSnapshot           *connect.Client[v1.GetSnapshotRequest, v1.GetSnapshotResponse]
+	queryMetrics          *connect.Client[v1.QueryMetricsRequest, v1.QueryMetricsResponse]
+	getTraffic            *connect.Client[v1.GetTrafficRequest, v1.GetTrafficResponse]
+	adjustTraffic         *connect.Client[v1.AdjustTrafficRequest, v1.AdjustTrafficResponse]
+	listProbeTasks        *connect.Client[v1.ListProbeTasksRequest, v1.ListProbeTasksResponse]
+	saveProbeTask         *connect.Client[v1.SaveProbeTaskRequest, v1.SaveProbeTaskResponse]
+	deleteProbeTask       *connect.Client[v1.DeleteProbeTaskRequest, v1.DeleteProbeTaskResponse]
+	queryProbes           *connect.Client[v1.QueryProbesRequest, v1.QueryProbesResponse]
+	listAlertRules        *connect.Client[v1.ListAlertRulesRequest, v1.ListAlertRulesResponse]
+	saveAlertRule         *connect.Client[v1.SaveAlertRuleRequest, v1.SaveAlertRuleResponse]
+	deleteAlertRule       *connect.Client[v1.DeleteAlertRuleRequest, v1.DeleteAlertRuleResponse]
+	listAlertEvents       *connect.Client[v1.ListAlertEventsRequest, v1.ListAlertEventsResponse]
+	getAlertDeliveryError *connect.Client[v1.GetAlertDeliveryErrorRequest, v1.GetAlertDeliveryErrorResponse]
+	listNotifyChannels    *connect.Client[v1.ListNotifyChannelsRequest, v1.ListNotifyChannelsResponse]
+	saveNotifyChannel     *connect.Client[v1.SaveNotifyChannelRequest, v1.SaveNotifyChannelResponse]
+	deleteNotifyChannel   *connect.Client[v1.DeleteNotifyChannelRequest, v1.DeleteNotifyChannelResponse]
+	testNotifyChannel     *connect.Client[v1.TestNotifyChannelRequest, v1.TestNotifyChannelResponse]
+	listApiTokens         *connect.Client[v1.ListApiTokensRequest, v1.ListApiTokensResponse]
+	createApiToken        *connect.Client[v1.CreateApiTokenRequest, v1.CreateApiTokenResponse]
+	deleteApiToken        *connect.Client[v1.DeleteApiTokenRequest, v1.DeleteApiTokenResponse]
+	getApiReference       *connect.Client[v1.GetApiReferenceRequest, v1.GetApiReferenceResponse]
 }
 
 // Login calls probe.v1.AdminService.Login.
@@ -535,6 +549,11 @@ func (c *adminServiceClient) ListAlertEvents(ctx context.Context, req *connect.R
 	return c.listAlertEvents.CallUnary(ctx, req)
 }
 
+// GetAlertDeliveryError calls probe.v1.AdminService.GetAlertDeliveryError.
+func (c *adminServiceClient) GetAlertDeliveryError(ctx context.Context, req *connect.Request[v1.GetAlertDeliveryErrorRequest]) (*connect.Response[v1.GetAlertDeliveryErrorResponse], error) {
+	return c.getAlertDeliveryError.CallUnary(ctx, req)
+}
+
 // ListNotifyChannels calls probe.v1.AdminService.ListNotifyChannels.
 func (c *adminServiceClient) ListNotifyChannels(ctx context.Context, req *connect.Request[v1.ListNotifyChannelsRequest]) (*connect.Response[v1.ListNotifyChannelsResponse], error) {
 	return c.listNotifyChannels.CallUnary(ctx, req)
@@ -618,8 +637,12 @@ type AdminServiceHandler interface {
 	SaveAlertRule(context.Context, *connect.Request[v1.SaveAlertRuleRequest]) (*connect.Response[v1.SaveAlertRuleResponse], error)
 	// 删除规则与状态；事件与投递记录随规则删除保留；保留期见维护任务。
 	DeleteAlertRule(context.Context, *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error)
-	// 按事件 id 倒序分页，包含每个事件的投递状态。
+	// 按事件 id 倒序分页，包含每个事件的投递状态；投递失败只给类别与状态码，原文见 GetAlertDeliveryError。
 	ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error)
+	// 一次投递最近一次失败的原文：HTTP 失败时是响应体的前 200 个字符，其余是出站错误文本，都不含 URL。
+	// 接收方可能在错误响应里回显收到的请求体，而 webhook 请求体模板里可能放着密钥，所以只对会话开放。
+	// 投递不存在时返回 NotFound；没有失败、或类别没有原文时返回空串。
+	GetAlertDeliveryError(context.Context, *connect.Request[v1.GetAlertDeliveryErrorRequest]) (*connect.Response[v1.GetAlertDeliveryErrorResponse], error)
 	// 不回显凭据本身，但请求体模板、URL 主机名与头名称会回显，模板里可能放着密钥。
 	// agent 不需要渠道配置，所以只对会话开放。
 	ListNotifyChannels(context.Context, *connect.Request[v1.ListNotifyChannelsRequest]) (*connect.Response[v1.ListNotifyChannelsResponse], error)
@@ -784,6 +807,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("ListAlertEvents")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceGetAlertDeliveryErrorHandler := connect.NewUnaryHandler(
+		AdminServiceGetAlertDeliveryErrorProcedure,
+		svc.GetAlertDeliveryError,
+		connect.WithSchema(adminServiceMethods.ByName("GetAlertDeliveryError")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceListNotifyChannelsHandler := connect.NewUnaryHandler(
 		AdminServiceListNotifyChannelsProcedure,
 		svc.ListNotifyChannels,
@@ -880,6 +909,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceDeleteAlertRuleHandler.ServeHTTP(w, r)
 		case AdminServiceListAlertEventsProcedure:
 			adminServiceListAlertEventsHandler.ServeHTTP(w, r)
+		case AdminServiceGetAlertDeliveryErrorProcedure:
+			adminServiceGetAlertDeliveryErrorHandler.ServeHTTP(w, r)
 		case AdminServiceListNotifyChannelsProcedure:
 			adminServiceListNotifyChannelsHandler.ServeHTTP(w, r)
 		case AdminServiceSaveNotifyChannelProcedure:
@@ -995,6 +1026,10 @@ func (UnimplementedAdminServiceHandler) DeleteAlertRule(context.Context, *connec
 
 func (UnimplementedAdminServiceHandler) ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.ListAlertEvents is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) GetAlertDeliveryError(context.Context, *connect.Request[v1.GetAlertDeliveryErrorRequest]) (*connect.Response[v1.GetAlertDeliveryErrorResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.GetAlertDeliveryError is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) ListNotifyChannels(context.Context, *connect.Request[v1.ListNotifyChannelsRequest]) (*connect.Response[v1.ListNotifyChannelsResponse], error) {

@@ -403,11 +403,11 @@ func TestListAlertEventsPaging(t *testing.T) {
 		return resp.Msg
 	}
 	page := query(0, 0, 2)
-	want := &probev1.AlertEvent{Id: last.ID, RuleId: r.Id, NodeId: n, Transition: "firing", At: h.clk.Now().Unix(), Summary: "500", Value: 500, Deliveries: []*probev1.AlertDelivery{{ChannelId: c.Id, Attempts: 1, Ok: true, Done: true, DeliveredAt: proto.Int64(h.clk.Now().Unix())}}}
+	want := &probev1.AlertEvent{Id: last.ID, RuleId: r.Id, NodeId: n, Transition: "firing", At: h.clk.Now().Unix(), Summary: "500", Value: 500, Deliveries: []*probev1.AlertDelivery{{Id: last.Deliveries[0].ID, ChannelId: c.Id, Attempts: 1, Ok: true, Done: true, DeliveredAt: proto.Int64(h.clk.Now().Unix())}}}
 	if len(page.Events) != 2 || !proto.Equal(page.Events[0], want) || page.Events[1].Id != events[499].ID || page.Events[1].Deliveries[0].DeliveredAt != nil {
 		t.Fatalf("page=%v want first=%v", page, want)
 	}
-	failed := &probev1.AlertDelivery{ChannelId: c.Id, Attempts: 1, Done: true, LastError: "bad request body"}
+	failed := &probev1.AlertDelivery{Id: events[499].Deliveries[0].ID, ChannelId: c.Id, Attempts: 1, Done: true, Failure: probev1.DeliveryFailure_DELIVERY_FAILURE_HTTP_STATUS, HttpStatus: proto.Uint32(400)}
 	if !proto.Equal(page.Events[1].Deliveries[0], failed) {
 		t.Fatalf("failed delivery=%v want=%v", page.Events[1].Deliveries[0], failed)
 	}

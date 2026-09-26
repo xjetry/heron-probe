@@ -101,9 +101,15 @@ service AdminService {
   rpc DeleteAlertRule(DeleteAlertRuleRequest) returns (DeleteAlertRuleResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
-  // 按事件 id 倒序分页，包含每个事件的投递状态。
+  // 按事件 id 倒序分页，包含每个事件的投递状态；投递失败只给类别与状态码，原文见 GetAlertDeliveryError。
   rpc ListAlertEvents(ListAlertEventsRequest) returns (ListAlertEventsResponse) {
     option (probe.v1.access) = ACCESS_READ;
+  }
+  // 一次投递最近一次失败的原文：HTTP 失败时是响应体的前 200 个字符，其余是出站错误文本，都不含 URL。
+  // 接收方可能在错误响应里回显收到的请求体，而 webhook 请求体模板里可能放着密钥，所以只对会话开放。
+  // 投递不存在时返回 NotFound；没有失败、或类别没有原文时返回空串。
+  rpc GetAlertDeliveryError(GetAlertDeliveryErrorRequest) returns (GetAlertDeliveryErrorResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
   }
   // 不回显凭据本身，但请求体模板、URL 主机名与头名称会回显，模板里可能放着密钥。
   // agent 不需要渠道配置，所以只对会话开放。
@@ -527,6 +533,8 @@ message ListAlertEventsRequest {
   uint32 limit = 3;
 }
 message ListAlertEventsResponse { repeated AlertEvent events = 1; }
+message GetAlertDeliveryErrorRequest { int64 delivery_id = 1; }
+message GetAlertDeliveryErrorResponse { string error = 1; }
 message AlertEvent {
   int64 id = 1;
   int64 rule_id = 2;
@@ -541,16 +549,43 @@ message AlertEvent {
   repeated AlertDelivery deliveries = 8;
 }
 message AlertDelivery {
+  // 错误原文不在只读口径里：接收方可能在错误响应里回显含密钥的请求体。原文经 GetAlertDeliveryError 读出。
+  reserved 4;
+  reserved "last_error";
   int64 channel_id = 1;
   // 已开始的投递尝试次数，0–3；每次发送前计数，即使发送前退出也计入。
   // 发送后结果未落盘时不回退计数，后续重发仍消耗一次尝试。
   uint32 attempts = 2;
   bool ok = 3;
-  string last_error = 4;
   // 送达墙钟，Unix 秒；未成功时缺失。
   optional int64 delivered_at = 5;
   // 不再尝试：成功、不可重试失败或次数耗尽；渠道删除也终止投递。
   bool done = 6;
+  // 投递 id，GetAlertDeliveryError 用它取原文。
+  int64 id = 7;
+  // 最近一次失败的类别；成功时清空。未终态时是上一次尝试的失败，之后可能重试。
+  DeliveryFailure failure = 8;
+  // 接收方应答的 HTTP 状态码，仅 failure 为 DELIVERY_FAILURE_HTTP_STATUS 时存在。
+  optional uint32 http_status = 9;
+}
+// 投递失败的类别，在产生失败的地方确定，不从错误文本反推。
+enum DeliveryFailure {
+  // 没有失败：已送达，或尚无结果。
+  DELIVERY_FAILURE_UNSPECIFIED = 0;
+  // 接收方以非 2xx 应答（含不跟随的 3xx），状态码见 http_status；原文是响应体的前 200 个字符。
+  DELIVERY_FAILURE_HTTP_STATUS = 1;
+  // 没有收到应答：连接、DNS、TLS、超时。
+  DELIVERY_FAILURE_TRANSPORT = 2;
+  // 请求没能构造：模板执行、编码、URL。
+  DELIVERY_FAILURE_REQUEST = 3;
+  // 渠道配置无法解析。
+  DELIVERY_FAILURE_CHANNEL_INVALID = 4;
+  // 渠道已删除，投递终止；没有原文。
+  DELIVERY_FAILURE_CHANNEL_DELETED = 5;
+  // 次数耗尽而最后一次结果未落盘；没有原文。
+  DELIVERY_FAILURE_RESULT_UNRECORDED = 6;
+  // 失败没有携带类别；迁移时无法从旧记录确定类别的也归入此类。
+  DELIVERY_FAILURE_UNCLASSIFIED = 7;
 }
 
 message ApiToken {

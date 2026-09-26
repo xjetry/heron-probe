@@ -34,8 +34,8 @@ export enum Access {
   LOGIN = 1,
 
   /**
-   * 无副作用，不列出或管理任何凭据，也不回显可能含密钥的配置：会话与 API token 都可调用。
-   * 把方法改成 ACCESS_READ 就是扩大 API token 的权限。
+   * 无副作用，不列出或管理任何凭据，也不回显可能含密钥的内容——配置本身，或外部接收方对它的回显：
+   * 会话与 API token 都可调用。把方法改成 ACCESS_READ 就是扩大 API token 的权限。
    *
    * @generated from enum value: ACCESS_READ = 2;
    */
@@ -43,8 +43,9 @@ export enum Access {
 
   /**
    * 仅会话：有副作用的方法，以及凭据管理（包括只读的 ListApiTokens——自动化进程
-   * 没有理由知道还有哪些 token 存在），以及回显可能含密钥的配置的方法（如
-   * ListNotifyChannels：webhook 请求体模板里可能放着密钥）。
+   * 没有理由知道还有哪些 token 存在），以及回显可能含密钥的内容的方法（如
+   * ListNotifyChannels：webhook 请求体模板里可能放着密钥；GetAlertDeliveryError：
+   * 接收方可能在错误响应里回显收到的请求体）。
    *
    * @generated from enum value: ACCESS_SESSION = 3;
    */
