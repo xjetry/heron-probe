@@ -16,29 +16,66 @@ import (
 )
 
 func NewPlatform(version string, clk clock.Clock, netInclude, netExclude []string) (*Collector, error) {
-	return &Collector{Host: &darwinHost{src: openDarwinSyscalls()}, Clock: clk, NetInclude: netInclude, NetExclude: netExclude, Version: version}, nil
+	return newDarwinCollector(openDarwinSyscalls(), version, clk, netInclude, netExclude)
+}
+
+// newDarwinCollector 不因 libSystem 的函数缺失而失败：缺的函数只让依赖它的读数缺失（各方法开头的 need），
+// client.Runner.Run 遇 Metrics 的错误记日志后照常上报。构造若失败，agent 退出，launchd 的 KeepAlive
+// 每 5 秒拉起一个立即退出的进程，连 sysctl 读数也没有了。NewPlatform 与测试共用这一个构造函数。
+func newDarwinCollector(src *darwinSyscalls, version string, clk clock.Clock, netInclude, netExclude []string) (*Collector, error) {
+	return &Collector{Host: &darwinHost{src: src}, Clock: clk, NetInclude: netInclude, NetExclude: netExclude, Version: version}, nil
 }
 
 // DefaultNetExclude 是本平台未给 --net-exclude 时不计入流量的网卡。
 func DefaultNetExclude() []string { return darwinNetExclude }
 
-// Mach 常量取自 <mach/processor_info.h>、<mach/host_info.h>、<mach/vm_statistics.h>、<mach/kern_return.h>。
+// Mach 常量取自 <mach/processor_info.h>、<mach/host_info.h>、<mach/kern_return.h>。
 const (
-	processorCPULoadInfo = 2  // PROCESSOR_CPU_LOAD_INFO
-	hostVMInfo64         = 4  // HOST_VM_INFO64
-	hostVMInfo64Count    = 38 // HOST_VM_INFO64_COUNT = sizeof(vm_statistics64_data_t) / sizeof(integer_t)
-	kernSuccess          = 0
+	processorCPULoadInfo = 2 // PROCESSOR_CPU_LOAD_INFO
+	hostVMInfo64         = 4 // HOST_VM_INFO64
+	// hostVMInfo64Rev1Count 是向 host_statistics64 请求的字数：HOST_VM_INFO64_REV1_COUNT，38 个 integer_t，
+	// 覆盖到偏移 152（swapped_count 之前）。当前 SDK（26.5）的 HOST_VM_INFO64_COUNT 是 62，但这里只读到
+	// internal_page_count（140）。内核按整个 revision 回填并把实际字数写回 count（本机实测：请求 24–37
+	// 回 24，38–39 回 38，40 及以上回 40），vmStatistics64 按写回的字数切字节；请求偏小时
+	// parseVMStatistics64 的长度检查（darwinraw.go 的 vmStatsMinLen）让内存读数整体缺失，不会把靠后的
+	// 字段读成 0。两个常量一起改，下面的常量表达式在请求覆盖不到时编译失败。
+	hostVMInfo64Rev1Count = 38
+	kernSuccess           = 0
 )
+
+const _ = uint(hostVMInfo64Rev1Count*4 - vmStatsMinLen)
+
+const libSystemPath = "/usr/lib/libSystem.B.dylib"
+
+// libSym 是 libSystem 里的一个函数：符号名，与把符号地址注册到 darwinSyscalls 对应字段的方式。
+type libSym struct {
+	name string
+	bind func(s *darwinSyscalls, addr uintptr)
+}
+
+var libSystemSyms = []libSym{
+	{"mach_host_self", func(s *darwinSyscalls, a uintptr) { purego.RegisterFunc(&s.machHostSelf, a) }},
+	{"mach_task_self", func(s *darwinSyscalls, a uintptr) { purego.RegisterFunc(&s.machTaskSelf, a) }},
+	{"host_processor_info", func(s *darwinSyscalls, a uintptr) { purego.RegisterFunc(&s.hostProcessorInfo, a) }},
+	{"host_statistics64", func(s *darwinSyscalls, a uintptr) { purego.RegisterFunc(&s.hostStatistics64, a) }},
+	{"host_page_size", func(s *darwinSyscalls, a uintptr) { purego.RegisterFunc(&s.hostPageSize, a) }},
+	{"vm_deallocate", func(s *darwinSyscalls, a uintptr) { purego.RegisterFunc(&s.vmDeallocate, a) }},
+	{"proc_listallpids", func(s *darwinSyscalls, a uintptr) { purego.RegisterFunc(&s.procListallpids, a) }},
+}
 
 // darwinSyscalls 是 darwinSource 的真实实现：sysctl 走 x/sys/unix；逐 CPU 计数与 VM 统计只有 Mach 接口给得出，
 // 进程数用 libproc 的 proc_listallpids（sysctl kern.proc.all 也能数，但每次要复制约 1 MB 的 kinfo_proc），
 // 这几个经 purego 调 libSystem。
 type darwinSyscalls struct {
-	// machErr 非空时 libSystem 的函数不可用：依赖它们的读数缺失，sysctl 读数照常，agent 不因此退出。
-	machErr error
-	// mach_host_self 每次调用都给同一个端口名多加一个发送权引用，只在打开时取一次。
+	// bound 记已绑定的符号，symErr 记没绑上的原因。各方法开头用 need 检查自己要的符号，
+	// 缺哪个只让依赖它的读数缺失。
+	bound  map[string]bool
+	symErr map[string]error
+	// mach_host_self、mach_task_self 每次调用都给同一个端口名多加一个发送权引用，只在打开时各取一次。
 	host, task uint32
 
+	machHostSelf      func() uint32
+	machTaskSelf      func() uint32
 	hostProcessorInfo func(host uint32, flavor int32, n *uint32, info **uint32, cnt *uint32) int32
 	hostStatistics64  func(host uint32, flavor int32, info *uint32, cnt *uint32) int32
 	hostPageSize      func(host uint32, size *uintptr) int32
@@ -46,37 +83,49 @@ type darwinSyscalls struct {
 	procListallpids   func(buf *int32, size int32) int32
 }
 
-func openDarwinSyscalls() *darwinSyscalls {
-	s := &darwinSyscalls{}
-	lib, err := purego.Dlopen("/usr/lib/libSystem.B.dylib", purego.RTLD_NOW|purego.RTLD_GLOBAL)
-	if err != nil {
-		s.machErr = fmt.Errorf("dlopen libSystem: %w", err)
-		return s
-	}
-	// 用 Dlsym 逐个取符号再注册：RegisterLibFunc 找不到符号时 panic，而缺一个函数只该让对应读数缺失。
-	bind := func(fptr any, name string) {
-		if s.machErr != nil {
-			return
-		}
-		sym, err := purego.Dlsym(lib, name)
+func openDarwinSyscalls() *darwinSyscalls { return openLibSystem(libSystemPath, libSystemSyms) }
+
+// openLibSystem 逐个符号绑定，缺哪个记哪个。用 Dlsym 取地址再 RegisterFunc，而不是 RegisterLibFunc：
+// 后者找不到符号时 panic，panic 出在 NewPlatform 里就是进程退出（见 newDarwinCollector）。
+func openLibSystem(path string, syms []libSym) *darwinSyscalls {
+	s := &darwinSyscalls{bound: map[string]bool{}, symErr: map[string]error{}}
+	lib, err := purego.Dlopen(path, purego.RTLD_NOW|purego.RTLD_GLOBAL)
+	for _, sym := range syms {
 		if err != nil {
-			s.machErr = fmt.Errorf("dlsym %s: %w", name, err)
-			return
+			s.symErr[sym.name] = fmt.Errorf("dlopen %s: %w", path, err)
+			continue
 		}
-		purego.RegisterFunc(fptr, sym)
+		addr, serr := purego.Dlsym(lib, sym.name)
+		if serr != nil {
+			s.symErr[sym.name] = fmt.Errorf("dlsym %s: %w", sym.name, serr)
+			continue
+		}
+		sym.bind(s, addr)
+		s.bound[sym.name] = true
 	}
-	var machHostSelf, machTaskSelf func() uint32
-	bind(&machHostSelf, "mach_host_self")
-	bind(&machTaskSelf, "mach_task_self")
-	bind(&s.hostProcessorInfo, "host_processor_info")
-	bind(&s.hostStatistics64, "host_statistics64")
-	bind(&s.hostPageSize, "host_page_size")
-	bind(&s.vmDeallocate, "vm_deallocate")
-	bind(&s.procListallpids, "proc_listallpids")
-	if s.machErr == nil {
-		s.host, s.task = machHostSelf(), machTaskSelf()
+	if s.need("mach_host_self") == nil {
+		s.host = s.machHostSelf()
+	}
+	if s.need("mach_task_self") == nil {
+		s.task = s.machTaskSelf()
 	}
 	return s
+}
+
+// need 在任一符号未绑定时返回错误，点名缺的符号与原因。
+func (s *darwinSyscalls) need(names ...string) error {
+	var errs []error
+	for _, n := range names {
+		if s.bound[n] {
+			continue
+		}
+		if err := s.symErr[n]; err != nil {
+			errs = append(errs, err)
+		} else {
+			errs = append(errs, fmt.Errorf("libSystem: %s not bound", n))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (s *darwinSyscalls) sysctlString(name string) (string, error) { return unix.Sysctl(name) }
@@ -87,8 +136,10 @@ func (s *darwinSyscalls) sysctlRaw(name string, args ...int) ([]byte, error) {
 }
 func (s *darwinSyscalls) statfs(path string) (uint64, uint64, error) { return statfs(path) }
 
-// monotonicSeconds 用 CLOCK_MONOTONIC：macOS 上它自启动起算且含睡眠时间，与 now − kern.boottime 一致，
-// 又不随墙钟调整。CLOCK_UPTIME_RAW 不含睡眠（实测一台睡过的机器上两者差 14 小时），不能当运行时长。
+// monotonicSeconds 用 CLOCK_MONOTONIC：clock_gettime(3) 写明它在系统睡眠时继续计数，与 Linux 的
+// /proc/uptime 同口径（含挂起）；本机实测它只有微秒粒度（纳秒部分 2000 次全是 1000 的倍数），
+// 与 gettimeofday − kern.boottime 相差几微秒。CLOCK_UPTIME_RAW 睡眠时不计数（实测一台睡过的机器上
+// 少 14 小时），不能当运行时长。这个值只作展示：判定机器是否重启的是 kern.bootsessionuuid（bootID）。
 func (s *darwinSyscalls) monotonicSeconds() (uint64, error) {
 	var ts unix.Timespec
 	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &ts); err != nil {
@@ -101,8 +152,8 @@ func (s *darwinSyscalls) monotonicSeconds() (uint64, error) {
 // 实测一台 16 核 Apple Silicon：前者之和每秒稳定在约 1590（CPU 数 × kern.clockrate 的 hz 100），
 // 后者按秒取差在 1057 到 2202 之间摆动，算出的忙碌比例偏差到 12 个百分点。
 func (s *darwinSyscalls) processorTicks() ([]uint32, error) {
-	if s.machErr != nil {
-		return nil, s.machErr
+	if err := s.need("mach_host_self", "mach_task_self", "host_processor_info", "vm_deallocate"); err != nil {
+		return nil, err
 	}
 	var n, cnt uint32
 	var info *uint32
@@ -121,11 +172,11 @@ func (s *darwinSyscalls) processorTicks() ([]uint32, error) {
 }
 
 func (s *darwinSyscalls) vmStatistics64() ([]byte, error) {
-	if s.machErr != nil {
-		return nil, s.machErr
+	if err := s.need("mach_host_self", "host_statistics64"); err != nil {
+		return nil, err
 	}
-	var words [hostVMInfo64Count]uint32
-	cnt := uint32(hostVMInfo64Count)
+	var words [hostVMInfo64Rev1Count]uint32
+	cnt := uint32(hostVMInfo64Rev1Count)
 	if kr := s.hostStatistics64(s.host, hostVMInfo64, &words[0], &cnt); kr != kernSuccess {
 		return nil, fmt.Errorf("host_statistics64: kern_return_t %d", kr)
 	}
@@ -140,8 +191,8 @@ func (s *darwinSyscalls) vmStatistics64() ([]byte, error) {
 // pageSize 取 host_page_size：它是 host_statistics64 页计数的单位。hw.pagesize 对 Rosetta 转译的
 // x86_64 进程报 4096，而 Apple Silicon 内核的页是 16384，用它会把已用内存少算四倍。
 func (s *darwinSyscalls) pageSize() (uint64, error) {
-	if s.machErr != nil {
-		return 0, s.machErr
+	if err := s.need("mach_host_self", "host_page_size"); err != nil {
+		return 0, err
 	}
 	var size uintptr
 	if kr := s.hostPageSize(s.host, &size); kr != kernSuccess {
@@ -150,11 +201,12 @@ func (s *darwinSyscalls) pageSize() (uint64, error) {
 	return uint64(size), nil
 }
 
-// pidCount 用 proc_listallpids：不带缓冲区时返回带余量的估计值，带缓冲区时返回实际写入的个数。
-// 写满缓冲区说明进程表在两次调用之间长过了余量，放大再取。
+// pidCount 用 proc_listallpids 数进程（不是线程），与 Linux 数 /proc 进程目录同口径（spec §7）。
+// 不带缓冲区时它返回带余量的估计值，带缓冲区时返回实际写入的个数；写满缓冲区说明进程表在两次调用之间
+// 长过了余量，放大再取。
 func (s *darwinSyscalls) pidCount() (uint32, error) {
-	if s.machErr != nil {
-		return 0, s.machErr
+	if err := s.need("proc_listallpids"); err != nil {
+		return 0, err
 	}
 	est := s.procListallpids(nil, 0)
 	if est <= 0 {

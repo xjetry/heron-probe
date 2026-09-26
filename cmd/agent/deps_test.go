@@ -1,9 +1,15 @@
 package main
 
 import (
+	"go/build"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -32,6 +38,72 @@ func TestPuregoOnlyLinksIntoDarwin(t *testing.T) {
 	for _, pkg := range []string{"github.com/xjetry/probe/cmd/agent", "github.com/xjetry/probe/cmd/hub"} {
 		if slices.Contains(deps(t, "linux", pkg), purego) {
 			t.Fatalf("%s links %s on linux", pkg, purego)
+		}
+	}
+}
+
+// 依赖图检查两侧都固定 GOARCH=arm64，按架构分的文件（如 *_linux_amd64.go）引用 purego 时它看不见。
+// 这里按文件检查：凡 import purego 的 .go 文件，对工具链支持的、不满足 darwin 构建标签的每个平台
+// 都不能进入构建（GOOS=ios 也满足 darwin 标签，go/build 的约定）。
+// 平台集合取自 go tool dist list，文件名后缀与 //go:build 由 go/build 的 MatchFile 判定，cgo 开关两种都试。
+func TestPuregoImportedOnlyByDarwinFiles(t *testing.T) {
+	out, err := exec.Command("go", "tool", "dist", "list").Output()
+	if err != nil {
+		t.Fatalf("go tool dist list: %v", err)
+	}
+	platforms := strings.Fields(string(out))
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var importers []string
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path != root && (strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules" || d.Name() == "testdata") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+		if err != nil {
+			return err
+		}
+		for _, imp := range f.Imports {
+			if p, _ := strconv.Unquote(imp.Path.Value); p == purego || strings.HasPrefix(p, purego+"/") {
+				importers = append(importers, path)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(importers) == 0 {
+		t.Fatal("no file imports purego; the check below would pass vacuously")
+	}
+	for _, path := range importers {
+		for _, p := range platforms {
+			goos, goarch, _ := strings.Cut(p, "/")
+			if goos == "darwin" || goos == "ios" {
+				continue
+			}
+			for _, cgo := range []bool{false, true} {
+				ctx := build.Default
+				ctx.GOOS, ctx.GOARCH, ctx.CgoEnabled = goos, goarch, cgo
+				ok, err := ctx.MatchFile(filepath.Dir(path), filepath.Base(path))
+				if err != nil {
+					t.Fatalf("%s: %v", path, err)
+				}
+				if ok {
+					t.Errorf("%s imports %s but builds for %s (cgo %v)", path, purego, p, cgo)
+				}
+			}
 		}
 	}
 }

@@ -4,14 +4,15 @@ package collect
 
 import (
 	"bufio"
-	"errors"
 	"net"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/clock"
 )
 
@@ -48,8 +49,10 @@ func within(a, b, tol uint64) bool {
 func realHost(t *testing.T) *darwinHost {
 	t.Helper()
 	s := openDarwinSyscalls()
-	if s.machErr != nil {
-		t.Fatalf("libSystem: %v", s.machErr)
+	for _, sym := range libSystemSyms {
+		if err := s.need(sym.name); err != nil {
+			t.Fatalf("libSystem: %v", err)
+		}
 	}
 	return &darwinHost{src: s}
 }
@@ -93,20 +96,11 @@ func TestDarwinBootIDAndUptimeMatchSysctl(t *testing.T) {
 	}
 }
 
-// vm_stat 打印页大小与各计数；"Anonymous pages" 是 internal_page_count。
-func TestDarwinMemoryMatchesVMStat(t *testing.T) {
-	h := realHost(t)
-	mem, err := h.memory()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mem.total != cliUint(t, "sysctl", "-n", "hw.memsize") {
-		t.Fatalf("total %d != hw.memsize", mem.total)
-	}
-	out := run(t, "vm_stat")
-	pages := map[string]uint64{}
-	var page uint64
-	sc := bufio.NewScanner(strings.NewReader(out))
+// vmStat 解析 vm_stat 的页大小与各行计数。
+func vmStat(t *testing.T) (page uint64, pages map[string]uint64) {
+	t.Helper()
+	pages = map[string]uint64{}
+	sc := bufio.NewScanner(strings.NewReader(run(t, "vm_stat")))
 	for sc.Scan() {
 		line := sc.Text()
 		if i := strings.Index(line, "page size of "); i >= 0 {
@@ -117,19 +111,67 @@ func TestDarwinMemoryMatchesVMStat(t *testing.T) {
 		if !ok {
 			continue
 		}
-		n, err := strconv.ParseUint(strings.TrimSuffix(strings.TrimSpace(v), "."), 10, 64)
-		if err == nil {
+		if n, err := strconv.ParseUint(strings.TrimSuffix(strings.TrimSpace(v), "."), 10, 64); err == nil {
 			pages[strings.Trim(k, `"`)] = n
 		}
 	}
-	want := (pages["Anonymous pages"] - pages["Pages purgeable"] + pages["Pages wired down"] + pages["Pages occupied by compressor"]) * page
-	if page == 0 || !within(mem.used, want, mem.total/20) {
-		t.Fatalf("used %d, vm_stat gives %d (page %d); tolerance 5%% of %d", mem.used, want, page, mem.total)
+	return page, pages
+}
+
+// vm_stat 走另一条代码路径打印同一组页计数。四个计数逐项对照：合计的容差会吞掉某一项整个读错
+// （compressor 与 purgeable 各自都小于总量的 5%）。每项的前后各读一次本实现，vm_stat 的值须落在
+// 两次读数围成的区间外扩该项 5% 加 64 页之内：gauge 在几毫秒里的变化远小于此（本机实测两次读取之间
+// 四项相差 0–3800 页），而某项读成 0 或读错偏移会差出该项自身的量级。
+func TestDarwinMemoryMatchesVMStat(t *testing.T) {
+	h := realHost(t)
+	s := h.src.(*darwinSyscalls)
+	read := func() vmCounts {
+		t.Helper()
+		raw, err := s.vmStatistics64()
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := parseVMStatistics64(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	before := read()
+	cliPage, pages := vmStat(t)
+	after := read()
+	page, err := s.pageSize()
+	if err != nil || page != cliPage {
+		t.Fatalf("page size %d, %v; vm_stat says %d", page, err, cliPage)
+	}
+	for _, f := range []struct {
+		line string
+		b, a uint64
+	}{
+		{"Pages wired down", before.wire, after.wire},
+		{"Pages purgeable", before.purgeable, after.purgeable},
+		{"Pages occupied by compressor", before.compressor, after.compressor},
+		{"Anonymous pages", before.internal, after.internal},
+	} {
+		cli, ok := pages[f.line]
+		if !ok {
+			t.Fatalf("vm_stat has no %q line", f.line)
+		}
+		lo, hi := min(f.b, f.a), max(f.b, f.a)
+		slack := cli/20 + 64
+		if cli+slack < lo || cli > hi+slack {
+			t.Errorf("%s: vm_stat %d pages, implementation read %d then %d (slack %d)", f.line, cli, f.b, f.a, slack)
+		}
+	}
+	mem, err := h.memory()
+	if err != nil || mem.total != cliUint(t, "sysctl", "-n", "hw.memsize") {
+		t.Fatalf("memory %+v, %v; total must equal hw.memsize", mem, err)
 	}
 }
 
-// netstat -ib 的 <Link#n> 行给出每块网卡的完整 64 位字节数。计数只增不减：
-// 前后各读一次本实现，netstat 的值必须夹在两次之间，没有容差。
+// netstat -ib 的 <Link#n> 行给出每块网卡的完整 64 位字节数。先比网卡集合：实现漏读一块网卡，
+// 合计就少了它的全部字节（netstat 给 down 的网卡名加 *，先去掉）；只放过两次读取之间新建或销毁的网卡。
+// 再比计数：计数只增不减，前后各读一次本实现，netstat 的值必须夹在两次之间，没有容差。
 func TestDarwinInterfaceCountersSandwichNetstat(t *testing.T) {
 	h := realHost(t)
 	before, err := h.ifaces()
@@ -149,30 +191,42 @@ func TestDarwinInterfaceCountersSandwichNetstat(t *testing.T) {
 		return m
 	}
 	b, a := index(before), index(after)
+	cli := map[string]bool{}
 	checked := 0
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
 		if len(f) < 7 || !strings.HasPrefix(f[2], "<Link#") {
 			continue
 		}
+		name := strings.TrimSuffix(f[0], "*")
+		cli[name] = true
 		// 有链路地址的行多一列 Address；字节列按从行尾倒数取：Ibytes 在倒数第五，Obytes 在倒数第二。
 		rx, err1 := strconv.ParseUint(f[len(f)-5], 10, 64)
 		tx, err2 := strconv.ParseUint(f[len(f)-2], 10, 64)
 		if err1 != nil || err2 != nil {
 			t.Fatalf("cannot parse netstat line %q", line)
 		}
-		x, ok1 := b[f[0]]
-		y, ok2 := a[f[0]]
-		if !ok1 || !ok2 {
-			continue // 两次读取之间出现或消失的网卡
+		x, ok1 := b[name]
+		y, ok2 := a[name]
+		if ok1 != ok2 {
+			continue // 两次读取之间新建或销毁的网卡
+		}
+		if !ok1 {
+			t.Errorf("%s: listed by netstat, missing from both reads", name)
+			continue
 		}
 		if x.rx > rx || rx > y.rx || x.tx > tx || tx > y.tx {
-			t.Errorf("%s: netstat rx=%d tx=%d not within [%d,%d]/[%d,%d]", f[0], rx, tx, x.rx, y.rx, x.tx, y.tx)
+			t.Errorf("%s: netstat rx=%d tx=%d not within [%d,%d]/[%d,%d]", name, rx, tx, x.rx, y.rx, x.tx, y.tx)
 		}
 		checked++
 	}
-	if checked == 0 || b["lo0"].name == "" {
-		t.Fatalf("no interface compared (lo0 present: %v)", b["lo0"].name != "")
+	for name := range b {
+		if _, again := a[name]; again && !cli[name] {
+			t.Errorf("%s: read twice by the implementation, not listed by netstat", name)
+		}
+	}
+	if checked == 0 || !cli["lo0"] {
+		t.Fatalf("no interface compared (lo0 listed: %v)", cli["lo0"])
 	}
 }
 
@@ -194,15 +248,25 @@ func TestDarwinSwapLoadProcsDiskMatchCLI(t *testing.T) {
 	if !within(sw.total, mib(f[2]), 1<<20) || !within(sw.used, mib(f[5]), 64<<20) {
 		t.Fatalf("swap %d/%d vs vm.swapusage %v", sw.used, sw.total, f)
 	}
-	// "{ 1.23 4.56 7.89 }"：一分钟负载每 5 秒更新一次，两次读取之间变化不超过 1。
-	l, err := h.load()
+	// "{ 1.23 4.56 7.89 }"，两位小数。负载每 5 秒更新一次，两次读取之间可能恰好更新：
+	// 前后各读一次本实现，CLI 值须落在两次读数围成的区间内（外扩 0.005 容下舍入）。
+	l0, err := h.load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	lf := strings.Fields(strings.Trim(run(t, "sysctl", "-n", "vm.loadavg"), "{ }"))
-	cli, _ := strconv.ParseFloat(lf[0], 64)
-	if d := l.l1 - cli; d > 1 || d < -1 {
-		t.Fatalf("load1 %v vs vm.loadavg %v", l.l1, lf)
+	l1, err := h.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, pair := range [][2]float64{{l0.l1, l1.l1}, {l0.l5, l1.l5}, {l0.l15, l1.l15}} {
+		cli, err := strconv.ParseFloat(lf[i], 64)
+		if err != nil {
+			t.Fatalf("vm.loadavg %v: %v", lf, err)
+		}
+		if lo, hi := min(pair[0], pair[1])-0.005, max(pair[0], pair[1])+0.005; cli < lo || cli > hi {
+			t.Fatalf("load[%d]: vm.loadavg %v not within [%v, %v]", i, cli, lo, hi)
+		}
 	}
 	n, err := h.procs()
 	if err != nil {
@@ -237,9 +301,14 @@ func TestDarwinConnsCountOpenSockets(t *testing.T) {
 	if err != nil || tcp == 0 || udp == 0 {
 		t.Fatalf("tcp=%d udp=%d err=%v with one listener and one udp socket open", tcp, udp, err)
 	}
-	cli := cliUint(t, "sysctl", "-n", "net.inet.tcp.pcbcount")
-	if !within(uint64(tcp), cli, cli/10+16) {
-		t.Fatalf("tcp %d vs sysctl %d", tcp, cli)
+	for _, c := range []struct {
+		name string
+		got  uint32
+	}{{"net.inet.tcp.pcbcount", tcp}, {"net.inet.udp.pcbcount", udp}} {
+		cli := cliUint(t, "sysctl", "-n", c.name)
+		if !within(uint64(c.got), cli, cli/10+16) {
+			t.Fatalf("%s: implementation %d, sysctl %d", c.name, c.got, cli)
+		}
 	}
 }
 
@@ -286,16 +355,48 @@ func TestDarwinFactsMatchCLI(t *testing.T) {
 	}
 }
 
-// libSystem 的函数取不到时只让 CPU、内存与进程数缺失：NewPlatform 不因此失败，agent 不退出，
-// 否则 launchd 的 KeepAlive 会每 5 秒拉起一个立即退出的进程。
+// 两次采样之后的全部读数；第二次才有 cpu_pct。
+func twoSamples(t *testing.T, c *Collector) (*probev1.Metrics, error) {
+	t.Helper()
+	c.Metrics()
+	time.Sleep(1100 * time.Millisecond)
+	return c.Metrics()
+}
+
+// 缺一个 libSystem 函数只让依赖它的读数缺失：NewPlatform 与这里共用 newDarwinCollector，
+// 构造不失败、不 panic，否则 launchd 的 KeepAlive 会每 5 秒拉起一个立即退出的进程。
+func TestDarwinMissingLibSystemFunctionOnlyDropsItsReading(t *testing.T) {
+	syms := slices.Clone(libSystemSyms)
+	for i := range syms {
+		if syms[i].name == "proc_listallpids" {
+			syms[i].name = "proc_listallpids_nosuch"
+		}
+	}
+	c, err := newDarwinCollector(openLibSystem(libSystemPath, syms), "t", clock.Real(), nil, nil)
+	if err != nil {
+		t.Fatalf("a missing function must not fail construction: %v", err)
+	}
+	m, err := twoSamples(t, c)
+	if m.Procs != nil || err == nil || !strings.Contains(err.Error(), "proc_listallpids") {
+		t.Fatalf("procs set %v, err = %v; want procs missing and the symbol named", m.Procs != nil, err)
+	}
+	if m.CpuPct == nil || m.MemUsed == nil {
+		t.Fatalf("cpu_pct set %v, mem_used set %v: readings that do not need proc_listallpids must survive", m.CpuPct != nil, m.MemUsed != nil)
+	}
+}
+
+// libSystem 整个打不开：依赖它的 CPU、已用内存与进程数缺失，sysctl 读数照常，构造不失败。
 func TestDarwinWithoutLibSystemKeepsSysctlReadings(t *testing.T) {
-	c := &Collector{Host: &darwinHost{src: &darwinSyscalls{machErr: errors.New("dlopen libSystem: test")}}, Clock: clock.Real()}
-	m, err := c.Metrics()
-	if err == nil || !strings.Contains(err.Error(), "dlopen libSystem: test") {
+	c, err := newDarwinCollector(openLibSystem("/nonexistent/libSystem.B.dylib", libSystemSyms), "t", clock.Real(), nil, nil)
+	if err != nil {
+		t.Fatalf("an unloadable libSystem must not fail construction: %v", err)
+	}
+	m, err := twoSamples(t, c)
+	if err == nil || !strings.Contains(err.Error(), "dlopen /nonexistent/libSystem.B.dylib") {
 		t.Fatalf("err = %v, want the libSystem failure reported", err)
 	}
-	if m.CpuPct != nil || m.MemTotal != nil || m.Procs != nil {
-		t.Fatalf("readings that need libSystem must be missing: %+v", m)
+	if m.CpuPct != nil || m.MemUsed != nil || m.Procs != nil {
+		t.Fatalf("readings that need libSystem must be missing: cpu_pct %v mem_used %v procs %v", m.CpuPct != nil, m.MemUsed != nil, m.Procs != nil)
 	}
 	if m.GetBootId() == "" || m.Load1 == nil || m.SwapTotal == nil || m.DiskTotal == nil || m.TcpConns == nil || m.NetRxTotal == nil || m.UptimeS == nil {
 		t.Fatalf("sysctl readings must survive: %+v", m)

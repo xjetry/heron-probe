@@ -27,8 +27,8 @@ web-test: web-install
 web: web-install
 	pnpm --dir web run build
 
-# build 验证全部已有的包在本机、Linux 与 darwin 的 amd64、arm64 上都能编译：darwin 的采集文件带 build tag，
-# Linux 上的 CI 只有在这里才编译得到它们；lint 的 GOOS=darwin go vet 只覆盖本机架构，而 purego 按架构分文件实现。
+# build 验证全部已有的包在本机、Linux 与 darwin 的 amd64、arm64 上都能编译。darwin 的采集文件带 build tag，
+# Linux 上的 CI 里 lint 的 GOOS=darwin go vet 只为本机架构编译它们；另一个架构只有这里编译得到，而 purego 按架构分文件实现。
 # 二进制产物由 binaries 生成，只有 e2e 需要它。
 build:
 	go build ./...
