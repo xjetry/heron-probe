@@ -15,7 +15,9 @@ import (
 //
 // xff 是该头的全部字段行（Header.Values），按出现顺序：同名的多行字段等价于按顺序用逗号拼接
 // （RFC 9110 §5.3），代理可以不动客户端自带的那一行、另起一行追加它看到的地址。只读第一行，
-// "从右向左"就是在客户端写的那一行里找，客户端改一个头就能换来源。参数是切片，调用方没法只传一行。
+// "从右向左"就是在客户端写的那一行里找，客户端改一个头就能换来源。只传一行（如 []string{Header.Get(…)}）
+// 照样能编译，"每一行都被读到"由多行用例钉住：ratelimit 的 TestBySourceReadsEveryForwardedForLine、
+// auth 的 TestClientIPReadsEveryForwardedForLine、api 的 TestLoginLockoutKeysOnEveryForwardedForLine。
 func ClientIP(peerAddr string, xff []string, trusted []netip.Prefix) netip.Addr {
 	peer := peerIP(peerAddr)
 	if !peer.IsValid() || !inAny(peer, trusted) {

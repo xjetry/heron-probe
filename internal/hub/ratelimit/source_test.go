@@ -55,8 +55,6 @@ func TestBySourceLimitsBeforeNextAndPassesTheSource(t *testing.T) {
 	}
 }
 
-// 一台主机通常独占整个 IPv6 /64，逐地址计键等于不限流：IPv6 同一 /64 的地址共用一桶，不同 /64 各自一桶；
-// IPv4 仍是一个地址一桶。放行的请求带进 next 的是同一个键。
 // 可信代理另起一行追加真实地址时，桶取自那一行：客户端每次换一个伪造的第一行也换不了桶。
 func TestBySourceReadsEveryForwardedForLine(t *testing.T) {
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -87,6 +85,8 @@ func TestBySourceReadsEveryForwardedForLine(t *testing.T) {
 	}
 }
 
+// 一台主机通常独占整个 IPv6 /64，逐地址计键等于不限流：IPv6 同一 /64 的地址共用一桶，不同 /64 各自一桶；
+// IPv4 仍是一个地址一桶。放行的请求带进 next 的是同一个键。
 func TestBySourceKeysIPv4ByAddressAndIPv6ByPrefix64(t *testing.T) {
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	var seen []string

@@ -141,7 +141,7 @@ func interval(ttl time.Duration) time.Duration { return ttl / reportsPerTTL }
 // MaxTasksPerNode×(TTL/reportsPerTTL)/MinIntervalS 条，单批上限必须容纳它。
 const _ = uint(probelimit.MaxResultsPerReport*probelimit.MinIntervalS*reportsPerTTL - probelimit.MaxTasksPerNode*int(MaxTTL/time.Second))
 
-// Handler 挂载 AgentService。Register 是唯一的匿名方法，按来源地址限速（§5.2），限流中间件包在 connect 外面，
+// Handler 挂载 AgentService。Register 是唯一的匿名方法，按来源键限速（§5.2；IPv4 一个地址一桶、IPv6 一个 /64 一桶，见 ratelimit.BySource），限流中间件包在 connect 外面，
 // 解码失败的请求同样计数（ratelimit.BySource 的注释写了理由）。Report 不进这个桶：同一出口地址后面可以有很多
 // agent，上报按节点限速（Report 方法体里的 s.limit）。路径判定与 connect 分派用同一个 r.URL.Path 全等比较，
 // 所以到达 Register 方法体的请求都先经过了限流。
