@@ -39,6 +39,7 @@ gen: web-install
 lint:
 	go mod tidy -diff
 	buf lint
+	@unformatted="$$(gofmt -l $$(git ls-files '*.go'))"; if [ -n "$$unformatted" ]; then printf 'gofmt: %s\n' $$unformatted >&2; exit 1; fi
 	shellcheck -s sh deploy/install.sh deploy/install-macos.sh deploy/openrc/probe-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/docker-readback-test.sh scripts/release-rules-test.sh scripts/image-platform-ref.sh scripts/docker-builder.sh
 	go vet ./...
 	GOOS=linux go vet ./...
