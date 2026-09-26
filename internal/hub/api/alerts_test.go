@@ -385,13 +385,13 @@ func TestListAlertEventsPaging(t *testing.T) {
 	if _, err := h.store.BeginDeliveryAttempt(t.Context(), last.Deliveries[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.store.UpdateDelivery(t.Context(), last.Deliveries[0].ID, true, true, "", h.clk.Now()); err != nil {
+	if err := h.store.UpdateDelivery(t.Context(), last.Deliveries[0].ID, store.DeliveryResult{OK: true, Done: true, DeliveredAt: h.clk.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.store.BeginDeliveryAttempt(t.Context(), events[499].Deliveries[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.store.UpdateDelivery(t.Context(), events[499].Deliveries[0].ID, false, true, "HTTP 400 Bad Request", time.Time{}); err != nil {
+	if err := h.store.UpdateDelivery(t.Context(), events[499].Deliveries[0].ID, store.DeliveryResult{Done: true, Failure: store.FailureHTTPStatus, HTTPStatus: 400, Error: "bad request body"}); err != nil {
 		t.Fatal(err)
 	}
 	query := func(node, before int64, limit uint32) *probev1.ListAlertEventsResponse {
@@ -407,7 +407,7 @@ func TestListAlertEventsPaging(t *testing.T) {
 	if len(page.Events) != 2 || !proto.Equal(page.Events[0], want) || page.Events[1].Id != events[499].ID || page.Events[1].Deliveries[0].DeliveredAt != nil {
 		t.Fatalf("page=%v want first=%v", page, want)
 	}
-	failed := &probev1.AlertDelivery{ChannelId: c.Id, Attempts: 1, Done: true, LastError: "HTTP 400 Bad Request"}
+	failed := &probev1.AlertDelivery{ChannelId: c.Id, Attempts: 1, Done: true, LastError: "bad request body"}
 	if !proto.Equal(page.Events[1].Deliveries[0], failed) {
 		t.Fatalf("failed delivery=%v want=%v", page.Events[1].Deliveries[0], failed)
 	}

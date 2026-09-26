@@ -24,7 +24,7 @@ func TestPruneAlertEventsKeepsBoundaryAndDeletesDeliveries(t *testing.T) {
 		if _, err := s.BeginDeliveryAttempt(t.Context(), ev.Deliveries[0].ID); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, true, true, "", at); err != nil {
+		if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, DeliveryResult{OK: true, Done: true, DeliveredAt: at}); err != nil {
 			t.Fatal(err)
 		}
 		events = append(events, ev)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -87,21 +88,44 @@ type AlertEvent struct {
 }
 
 type Delivery struct {
-	ID          int64
-	EventID     int64
-	ChannelID   int64
-	Attempts    int // 已开始的尝试次数；BeginDeliveryAttempt 在发送之前提交，发送前崩溃也计入。
-	OK          bool
-	Done        bool
+	ID         int64
+	EventID    int64
+	ChannelID  int64
+	Attempts   int // 已开始的尝试次数；BeginDeliveryAttempt 在发送之前提交，发送前崩溃也计入。
+	OK         bool
+	Done       bool
+	Failure    DeliveryFailure // 最近一次失败的类别；成功或尚无结果时为空。
+	HTTPStatus int             // 仅 FailureHTTPStatus 非零。
+	// 最近一次失败的原文：HTTP 失败时是响应体片段，其余是出站错误文本，都不含 URL。
 	LastError   string
+	DeliveredAt time.Time
+}
+
+// DeliveryFailure 在产生失败的地方确定，不从错误文本反推；与 transition、渠道 kind 一样按 TEXT 落库。
+type DeliveryFailure string
+
+const (
+	FailureNone             DeliveryFailure = ""
+	FailureHTTPStatus       DeliveryFailure = "http_status"
+	FailureTransport        DeliveryFailure = "transport"
+	FailureRequest          DeliveryFailure = "request"
+	FailureChannelInvalid   DeliveryFailure = "channel_invalid"
+	FailureChannelDeleted   DeliveryFailure = "channel_deleted"
+	FailureResultUnrecorded DeliveryFailure = "result_unrecorded"
+	FailureUnclassified     DeliveryFailure = "unclassified"
+)
+
+// DeliveryResult 是一次投递结果的完整写入；UpdateDelivery 在写库前校验字段之间的一致性。
+type DeliveryResult struct {
+	OK, Done    bool
+	Failure     DeliveryFailure
+	HTTPStatus  int
+	Error       string
 	DeliveredAt time.Time
 }
 
 // 投递尝试的唯一上限；队列达到上限时写入 done，重启也不能绕过它。
 const MaxDeliveryAttempts = 3
-
-const DeliveryErrChannelDeleted = "channel deleted"
-const DeliveryErrResultUnrecorded = "attempts exhausted but last result was not recorded"
 
 var ErrDeliveryDone = errors.New("delivery is done")
 var ErrDeliveryExhausted = errors.New("delivery attempts exhausted")
@@ -389,7 +413,7 @@ func (s *Store) DeleteNotifyChannel(ctx context.Context, id int64) error {
 		if err := deleteAlertEntity(tx, "notify_channel", ObjectNotifyChannel, id); err != nil {
 			return err
 		}
-		_, err := tx.Exec("UPDATE alert_delivery SET done = 1, last_error = ? WHERE channel_id = ? AND done = 0", DeliveryErrChannelDeleted, id)
+		_, err := tx.Exec("UPDATE alert_delivery SET done = 1, failure = ?, http_status = NULL, last_error = '' WHERE channel_id = ? AND done = 0", FailureChannelDeleted, id)
 		return err
 	})
 }
@@ -502,13 +526,19 @@ func (s *Store) BeginDeliveryAttempt(ctx context.Context, id int64) (Delivery, e
 }
 
 // 结果不能改写已开始的次数；计数只由 BeginDeliveryAttempt 推进。
-func (s *Store) UpdateDelivery(ctx context.Context, id int64, ok, done bool, lastError string, at time.Time) error {
+func (s *Store) UpdateDelivery(ctx context.Context, id int64, r DeliveryResult) error {
+	if err := r.check(); err != nil {
+		return err
+	}
 	return s.write(ctx, func(tx *sql.Tx) error {
-		var delivered any
-		if !at.IsZero() {
-			delivered = at.Unix()
+		var delivered, status any
+		if !r.DeliveredAt.IsZero() {
+			delivered = r.DeliveredAt.Unix()
 		}
-		res, err := tx.Exec("UPDATE alert_delivery SET ok = ?, done = ?, last_error = ?, delivered_at = ? WHERE id = ? AND done = 0", ok, done, lastError, delivered, id)
+		if r.HTTPStatus != 0 {
+			status = r.HTTPStatus
+		}
+		res, err := tx.Exec("UPDATE alert_delivery SET ok = ?, done = ?, failure = ?, http_status = ?, last_error = ?, delivered_at = ? WHERE id = ? AND done = 0", r.OK, r.Done, r.Failure, status, r.Error, delivered, id)
 		if err != nil {
 			return err
 		}
@@ -524,15 +554,41 @@ func (s *Store) UpdateDelivery(ctx context.Context, id int64, ok, done bool, las
 	})
 }
 
-const deliveryColumns = "id, event_id, channel_id, attempts, ok, done, last_error, delivered_at"
+// 读侧据类别解释状态码与原文、只读口径据类别给出状态码，都依赖这里的一致性；
+// 违反即拒绝，不写库，也不改写成某个"最接近"的类别。
+func (r DeliveryResult) check() error {
+	if r.OK {
+		if r.Failure != FailureNone || r.HTTPStatus != 0 || r.Error != "" {
+			return fmt.Errorf("delivery result: success carries failure %q, status %d, error %q", r.Failure, r.HTTPStatus, r.Error)
+		}
+		return nil
+	}
+	switch r.Failure {
+	case FailureNone:
+		return errors.New("delivery result: failure without category")
+	case FailureHTTPStatus, FailureTransport, FailureRequest, FailureChannelInvalid, FailureChannelDeleted, FailureResultUnrecorded, FailureUnclassified:
+	default:
+		return fmt.Errorf("delivery result: unknown failure category %q", r.Failure)
+	}
+	if (r.Failure == FailureHTTPStatus) != (r.HTTPStatus >= 100 && r.HTTPStatus <= 999) {
+		return fmt.Errorf("delivery result: failure %q with HTTP status %d", r.Failure, r.HTTPStatus)
+	}
+	if (r.Failure == FailureChannelDeleted || r.Failure == FailureResultUnrecorded) && r.Error != "" {
+		return fmt.Errorf("delivery result: failure %q carries error text", r.Failure)
+	}
+	return nil
+}
+
+const deliveryColumns = "id, event_id, channel_id, attempts, ok, done, failure, http_status, last_error, delivered_at"
 const selectDeliveries = "SELECT " + deliveryColumns + " FROM alert_delivery"
 
 func scanDelivery(row interface{ Scan(...any) error }) (Delivery, error) {
 	var d Delivery
-	var delivered sql.NullInt64
-	if err := row.Scan(&d.ID, &d.EventID, &d.ChannelID, &d.Attempts, &d.OK, &d.Done, &d.LastError, &delivered); err != nil {
+	var delivered, status sql.NullInt64
+	if err := row.Scan(&d.ID, &d.EventID, &d.ChannelID, &d.Attempts, &d.OK, &d.Done, &d.Failure, &status, &d.LastError, &delivered); err != nil {
 		return Delivery{}, err
 	}
+	d.HTTPStatus = int(status.Int64)
 	if delivered.Valid {
 		d.DeliveredAt = time.Unix(delivered.Int64, 0).UTC()
 	}

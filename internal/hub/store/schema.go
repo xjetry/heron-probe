@@ -280,8 +280,13 @@ const ddlAlertDelivery = `CREATE TABLE alert_delivery (
   attempts INTEGER NOT NULL DEFAULT 0,
   ok INTEGER NOT NULL DEFAULT 0,
   done INTEGER NOT NULL DEFAULT 0,
+  -- 最近一次失败的原文，谁能读到它见 Delivery.LastError。
   last_error TEXT NOT NULL DEFAULT '',
-  delivered_at INTEGER
+  delivered_at INTEGER,
+  -- 最近一次失败的类别（DeliveryFailure），空表示没有失败；列序与迁移 7 的 ADD COLUMN 结果一致。
+  failure TEXT NOT NULL DEFAULT '',
+  -- 仅 failure = 'http_status' 时非 NULL，由 DeliveryResult.check 保证。
+  http_status INTEGER
 )`
 const ddlAlertDeliveryByEvent = `CREATE INDEX alert_delivery_by_event ON alert_delivery(event_id)`
 const ddlAlertDeliveryPending = `CREATE INDEX alert_delivery_pending ON alert_delivery(done, id)`
@@ -298,8 +303,12 @@ const ddlAPIToken = `CREATE TABLE api_token (
   last_used_at INTEGER
 )`
 
-func alertStatements() []string {
+func alertStatements() []string { return alertStatementsWith(ddlAlertDelivery) }
+
+// 告警各表只有 alert_delivery 在迁移 5 之后变过；迁移 5 传入它当时的 DDL，
+// 否则从 v4 升级会建出带新列的表，再在迁移 7 的 ADD COLUMN 撞上重复列。
+func alertStatementsWith(delivery string) []string {
 	return []string{ddlAlertRule, ddlAlertRuleNode, ddlAlertRuleNodeByNode, ddlAlertRuleChannel,
 		ddlAlertRuleChannelByChannel, ddlNotifyChannel, ddlAlertState, ddlAlertEvent,
-		ddlAlertEventByNode, ddlAlertEventByAt, ddlAlertDelivery, ddlAlertDeliveryByEvent, ddlAlertDeliveryPending}
+		ddlAlertEventByNode, ddlAlertEventByAt, delivery, ddlAlertDeliveryByEvent, ddlAlertDeliveryPending}
 }

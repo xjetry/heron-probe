@@ -248,11 +248,13 @@ func (q *Queue) deliver(ctx context.Context, item deliveryItem) (err error) {
 			return nil
 		}
 		if d.Attempts >= store.MaxDeliveryAttempts {
-			last := d.LastError
-			if last == "" {
-				last = store.DeliveryErrResultUnrecorded
+			// 名额已耗尽而行仍未终态：最后一次尝试的结果没落盘。已记下的更早失败原样留作终态；
+			// 一次失败都没记下才是 result_unrecorded。
+			r := store.DeliveryResult{Done: true, Failure: d.Failure, HTTPStatus: d.HTTPStatus, Error: d.LastError}
+			if r.Failure == store.FailureNone {
+				r = store.DeliveryResult{Done: true, Failure: store.FailureResultUnrecorded}
 			}
-			return q.st.UpdateDelivery(ctx, d.ID, false, true, last, time.Time{})
+			return q.st.UpdateDelivery(ctx, d.ID, r)
 		}
 		var c *store.NotifyChannel
 		for _, row := range q.channels() {
@@ -262,11 +264,13 @@ func (q *Queue) deliver(ctx context.Context, item deliveryItem) (err error) {
 			}
 		}
 		if c == nil {
-			return q.st.UpdateDelivery(ctx, d.ID, false, true, store.DeliveryErrChannelDeleted, time.Time{})
+			return q.st.UpdateDelivery(ctx, d.ID, store.DeliveryResult{Done: true, Failure: store.FailureChannelDeleted})
 		}
 		channel, err := ParseChannel(*c, q.client, q.telegramBase)
 		if err != nil {
-			return q.st.UpdateDelivery(ctx, d.ID, false, true, err.Error(), time.Time{})
+			r, _ := failureResult(err)
+			r.Done = true
+			return q.st.UpdateDelivery(ctx, d.ID, r)
 		}
 		d, err = q.st.BeginDeliveryAttempt(ctx, d.ID)
 		if errors.Is(err, store.ErrDeliveryDone) {
@@ -279,28 +283,33 @@ func (q *Queue) deliver(ctx context.Context, item deliveryItem) (err error) {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		ok := err == nil
-		last := ""
-		var at time.Time
+		r := store.DeliveryResult{OK: true, DeliveredAt: q.clk.Now()}
 		retry := false
-		if ok {
-			at = q.clk.Now()
-		} else {
-			last = err.Error()
-			var classified Retryable
-			retry = errors.As(err, &classified) && classified.Retryable()
+		if err != nil {
+			r, retry = failureResult(err)
 		}
-		done := ok || !retry || d.Attempts >= store.MaxDeliveryAttempts
-		if err := q.st.UpdateDelivery(ctx, d.ID, ok, done, last, at); err != nil {
+		r.Done = r.OK || !retry || d.Attempts >= store.MaxDeliveryAttempts
+		if err := q.st.UpdateDelivery(ctx, d.ID, r); err != nil {
 			return err
 		}
-		if done {
+		if r.Done {
 			return nil
 		}
 		if err := q.sleep(ctx, backoff[d.Attempts-1]); err != nil {
 			return err
 		}
 	}
+}
+
+// 真实渠道的每条失败路径都在 notify.go 带上类别，由 notify 的表驱动测试逐条钉住；
+// 取不到类别说明某条路径漏了，记为 unclassified 让遗漏可见，而不是标成某个具体类别。
+// 它不可重试，与"不是 Retryable 就不重试"同向。
+func failureResult(err error) (store.DeliveryResult, bool) {
+	var f *sendFailure
+	if !errors.As(err, &f) {
+		return store.DeliveryResult{Failure: store.FailureUnclassified, Error: err.Error()}, false
+	}
+	return store.DeliveryResult{Failure: f.failure, HTTPStatus: f.status, Error: f.detail}, f.Retryable()
 }
 
 func (q *Queue) SendTest(ctx context.Context, c store.NotifyChannel) error {

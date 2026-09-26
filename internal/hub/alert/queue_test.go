@@ -111,7 +111,7 @@ func TestQueueDeliversAndRecords(t *testing.T) {
 		t.Fatalf("calls=%d/%d deliveries=%+v", one.Load(), two.Load(), ds)
 	}
 	for _, d := range ds {
-		if !d.OK || !d.Done || d.LastError != "" || !d.DeliveredAt.Equal(f.clk.Now()) {
+		if !d.OK || !d.Done || d.Failure != store.FailureNone || d.HTTPStatus != 0 || d.LastError != "" || !d.DeliveredAt.Equal(f.clk.Now()) {
 			t.Fatalf("delivery=%+v", d)
 		}
 	}
@@ -141,7 +141,7 @@ func TestQueueGivesUpAfterMaxAttempts(t *testing.T) {
 				backoffs = []time.Duration{time.Second, 4 * time.Second}
 			}
 			d := ds[0]
-			if d.Attempts != want || calls.Load() != int32(want) || d.OK || !d.Done || d.LastError == "" || !d.DeliveredAt.IsZero() {
+			if d.Attempts != want || calls.Load() != int32(want) || d.OK || !d.Done || d.Failure != store.FailureHTTPStatus || d.HTTPStatus != status || !d.DeliveredAt.IsZero() {
 				t.Fatalf("calls=%d delivery=%+v", calls.Load(), d)
 			}
 			if !reflect.DeepEqual(sleeps, backoffs) {
@@ -165,7 +165,7 @@ func TestQueueRequeuesPendingOnLoad(t *testing.T) {
 	if _, err := f.st.BeginDeliveryAttempt(t.Context(), ev.Deliveries[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	must(t, f.st.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, false, false, "prior failure", time.Time{}))
+	must(t, f.st.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, store.DeliveryResult{Failure: store.FailureTransport, Error: "prior failure"}))
 	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
 	must(t, q.Requeue(t.Context()))
 	stop := startQueue(t, q)
@@ -234,7 +234,7 @@ func TestQueueMissingChannelIsTerminal(t *testing.T) {
 	stop := startQueue(t, q)
 	ds := awaitDeliveries(t, f, ev.ID, allDone)
 	stop()
-	if d := ds[0]; d.Attempts != 0 || d.OK || d.LastError != "channel deleted" {
+	if d := ds[0]; d.Attempts != 0 || d.OK || d.Failure != store.FailureChannelDeleted || d.LastError != "" {
 		t.Fatalf("missing channel delivery=%+v", d)
 	}
 }

@@ -201,7 +201,7 @@ func TestServePrunesAlertEvents(t *testing.T) {
 					if _, err := st.BeginDeliveryAttempt(t.Context(), ev.Deliveries[0].ID); err != nil {
 						t.Fatal(err)
 					}
-					if err := st.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, true, true, "", clk.Now()); err != nil {
+					if err := st.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, store.DeliveryResult{OK: true, Done: true, DeliveredAt: clk.Now()}); err != nil {
 						t.Fatal(err)
 					}
 				}

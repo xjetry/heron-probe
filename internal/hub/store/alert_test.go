@@ -225,11 +225,11 @@ func TestUpdateDeliveryAndPending(t *testing.T) {
 		if _, err := s.BeginDeliveryAttempt(t.Context(), ev.Deliveries[0].ID); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, false, attempts == MaxDeliveryAttempts, "failed", time.Time{}); err != nil {
+		if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, DeliveryResult{Done: attempts == MaxDeliveryAttempts, Failure: FailureTransport, Error: "failed"}); err != nil {
 			t.Fatal(err)
 		}
 		got, err := s.PendingDeliveries(t.Context())
-		want := []Delivery{{ID: 1, EventID: ev.ID, ChannelID: cs[0].ID, Attempts: attempts, LastError: "failed"}, ev.Deliveries[1]}
+		want := []Delivery{{ID: 1, EventID: ev.ID, ChannelID: cs[0].ID, Attempts: attempts, Failure: FailureTransport, LastError: "failed"}, ev.Deliveries[1]}
 		if attempts == 3 {
 			want = want[1:]
 		}
@@ -241,7 +241,7 @@ func TestUpdateDeliveryAndPending(t *testing.T) {
 	if _, err := s.BeginDeliveryAttempt(t.Context(), ev.Deliveries[1].ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[1].ID, true, true, "", at); err != nil {
+	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[1].ID, DeliveryResult{OK: true, Done: true, DeliveredAt: at}); err != nil {
 		t.Fatal(err)
 	}
 	pending, err := s.PendingDeliveries(t.Context())
@@ -262,7 +262,7 @@ func TestDeliveryTerminalStateCannotBeReopened(t *testing.T) {
 	if err := s.DeleteNotifyChannel(t.Context(), cs[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, false, false, "late HTTP failure", time.Time{}); err != nil {
+	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, DeliveryResult{Failure: FailureHTTPStatus, HTTPStatus: 500, Error: "late HTTP failure"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetAlertEvent(t.Context(), ev.ID)
@@ -270,7 +270,7 @@ func TestDeliveryTerminalStateCannotBeReopened(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := got.Deliveries[0]
-	if !d.Done || d.LastError != "channel deleted" || d.Attempts != 0 {
+	if !d.Done || d.Failure != FailureChannelDeleted || d.LastError != "" || d.Attempts != 0 {
 		t.Fatalf("terminal delivery reopened: %+v", d)
 	}
 }
@@ -556,7 +556,9 @@ func TestAlertMissingObjects(t *testing.T) {
 		{"delete_rule", ObjectAlertRule, func() error { return s.DeleteAlertRule(t.Context(), 999) }},
 		{"delete_channel", ObjectNotifyChannel, func() error { return s.DeleteNotifyChannel(t.Context(), 999) }},
 		{"save_channel", ObjectNotifyChannel, func() error { _, err := s.SaveNotifyChannel(t.Context(), NotifyChannel{ID: 999}); return err }},
-		{"update_delivery", ObjectAlertDelivery, func() error { return s.UpdateDelivery(t.Context(), 999, false, false, "failed", time.Time{}) }},
+		{"update_delivery", ObjectAlertDelivery, func() error {
+			return s.UpdateDelivery(t.Context(), 999, DeliveryResult{Failure: FailureTransport, Error: "failed"})
+		}},
 		{"get_event", ObjectAlertEvent, func() error { _, err := s.GetAlertEvent(t.Context(), 999); return err }},
 	} {
 		t.Run(tc.name, func(t *testing.T) { assertAlertNotFound(t, tc.call(), tc.kind, 999) })
@@ -570,7 +572,7 @@ func TestDeleteNotifyChannelTerminatesPendingDeliveries(t *testing.T) {
 	if _, err := s.BeginDeliveryAttempt(t.Context(), ev.Deliveries[1].ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[1].ID, true, true, "", s.clk.Now()); err != nil {
+	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[1].ID, DeliveryResult{OK: true, Done: true, DeliveredAt: s.clk.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteNotifyChannel(t.Context(), cs[0].ID); err != nil {
@@ -580,7 +582,7 @@ func TestDeleteNotifyChannelTerminatesPendingDeliveries(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(pending, ev.Deliveries[2:]) {
 		t.Fatalf("deleted channel pending=%+v err=%v", pending, err)
 	}
-	ev.Deliveries[0].Done, ev.Deliveries[0].LastError = true, "channel deleted"
+	ev.Deliveries[0].Done, ev.Deliveries[0].Failure = true, FailureChannelDeleted
 	ev.Deliveries[1].Attempts, ev.Deliveries[1].OK, ev.Deliveries[1].Done, ev.Deliveries[1].DeliveredAt = 1, true, true, s.clk.Now()
 	got, err := s.GetAlertEvent(t.Context(), ev.ID)
 	if err != nil || !reflect.DeepEqual(got, ev) {

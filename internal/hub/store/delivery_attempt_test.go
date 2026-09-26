@@ -4,7 +4,6 @@ import (
 	"errors"
 	"sync"
 	"testing"
-	"time"
 )
 
 func TestBeginDeliveryAttemptAtomicallyCapsStarts(t *testing.T) {
@@ -40,7 +39,7 @@ func TestBeginDeliveryAttemptAtomicallyCapsStarts(t *testing.T) {
 	if !errors.Is(err, ErrDeliveryExhausted) || d.Attempts != MaxDeliveryAttempts || d.Done {
 		t.Fatalf("exhausted row=%+v err=%v", d, err)
 	}
-	if err := s.UpdateDelivery(t.Context(), d.ID, false, true, "exhausted", time.Time{}); err != nil {
+	if err := s.UpdateDelivery(t.Context(), d.ID, DeliveryResult{Done: true, Failure: FailureResultUnrecorded}); err != nil {
 		t.Fatal(err)
 	}
 	d, err = s.BeginDeliveryAttempt(t.Context(), d.ID)

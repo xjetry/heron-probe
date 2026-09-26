@@ -164,12 +164,13 @@ func (s *Store) writeAsync(fn func(*sql.Tx) error, done func(error)) {
 	}
 }
 
-const schemaVersion = 6
+const schemaVersion = 7
 
 // migrations[v] 把 user_version = v−1 的库升到 v。空库不重放历史，直接建
 // 到当前版本；所以 schemaStatements 必须始终是"当前版本的完整 DDL"，
 // 迁移测试用逐表、逐索引比对钉住这一点。
 var migrations = map[int]func(*sql.Tx) error{
+	7: migrateDeliveryFailure,
 	6: func(tx *sql.Tx) error {
 		if _, err := tx.Exec(ddlAPIToken); err != nil {
 			return fmt.Errorf("%w in %q", err, ddlAPIToken)
@@ -177,7 +178,7 @@ var migrations = map[int]func(*sql.Tx) error{
 		return nil
 	},
 	5: func(tx *sql.Tx) error {
-		for _, stmt := range alertStatements() {
+		for _, stmt := range alertStatementsWith(ddlAlertDeliveryV5) {
 			if _, err := tx.Exec(stmt); err != nil {
 				return fmt.Errorf("%w in %q", err, stmt)
 			}
@@ -215,6 +216,43 @@ var migrations = map[int]func(*sql.Tx) error{
 		}
 		return nil
 	},
+}
+
+// ddlAlertDeliveryV5 是迁移 5 建表时的 alert_delivery，逐字冻结：迁移的输入不能跟着当前 DDL 变。
+const ddlAlertDeliveryV5 = `CREATE TABLE alert_delivery (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  channel_id INTEGER NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  ok INTEGER NOT NULL DEFAULT 0,
+  done INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT '',
+  delivered_at INTEGER
+)`
+
+// 旧版本把类别与原文混写在 last_error 里。只按旧版本写入的确定形状归类，
+// 其余失败无法确定类别，归入 unclassified 且原文不动；成功行与尚无结果的行不碰。
+// 下面两个字符串是旧版本写入 last_error 的文本，是库里的历史值，不随代码变。
+// 旧 HTTP 失败的格式是 "HTTP %d %s: %s"，http.StatusText 不含 ": "，所以第一个 ": " 之后就是响应体片段；
+// 没有 ": " 的不是这个格式写出的，不按 HTTP 形状归类。
+func migrateDeliveryFailure(tx *sql.Tx) error {
+	for _, stmt := range []string{
+		`ALTER TABLE alert_delivery ADD COLUMN failure TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE alert_delivery ADD COLUMN http_status INTEGER`,
+		`UPDATE alert_delivery SET failure = 'channel_deleted', last_error = ''
+		  WHERE ok = 0 AND last_error = 'channel deleted'`,
+		`UPDATE alert_delivery SET failure = 'result_unrecorded', last_error = ''
+		  WHERE ok = 0 AND last_error = 'attempts exhausted but last result was not recorded'`,
+		`UPDATE alert_delivery SET failure = 'http_status', http_status = CAST(substr(last_error, 6, 3) AS INTEGER),
+		    last_error = substr(last_error, instr(last_error, ': ') + 2)
+		  WHERE ok = 0 AND failure = '' AND last_error GLOB 'HTTP [0-9][0-9][0-9] *' AND instr(last_error, ': ') > 0`,
+		`UPDATE alert_delivery SET failure = 'unclassified' WHERE ok = 0 AND failure = '' AND last_error <> ''`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("%w in %q", err, stmt)
+		}
+	}
+	return nil
 }
 
 func migrate(db *sql.DB) error {

@@ -58,8 +58,13 @@ func TestAttemptWriteFailureSendsNothing(t *testing.T) {
 }
 
 func TestExhaustedUnrecordedDeliveryBecomesTerminal(t *testing.T) {
-	for _, last := range []string{"", "prior error"} {
-		t.Run(last, func(t *testing.T) {
+	prior := store.DeliveryResult{Failure: store.FailureHTTPStatus, HTTPStatus: 503, Error: "prior error"}
+	for _, last := range []*store.DeliveryResult{nil, &prior} {
+		name := "unrecorded"
+		if last != nil {
+			name = "prior_failure"
+		}
+		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
 			var calls atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
@@ -69,18 +74,20 @@ func TestExhaustedUnrecordedDeliveryBecomesTerminal(t *testing.T) {
 				_, err := f.st.BeginDeliveryAttempt(t.Context(), ev.Deliveries[0].ID)
 				must(t, err)
 			}
-			must(t, f.st.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, false, false, last, time.Time{}))
+			want := store.DeliveryResult{Done: true, Failure: store.FailureResultUnrecorded}
+			if last != nil {
+				must(t, f.st.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, *last))
+				want = *last
+				want.Done = true
+			}
 			q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
 			must(t, q.deliver(t.Context(), deliveryItem{ev.Deliveries[0], ev}))
 			saved, err := f.st.GetAlertEvent(t.Context(), ev.ID)
 			must(t, err)
-			want := last
-			if want == "" {
-				want = store.DeliveryErrResultUnrecorded
-			}
 			d := saved.Deliveries[0]
-			if calls.Load() != 0 || !d.Done || d.OK || d.Attempts != store.MaxDeliveryAttempts || d.LastError != want {
-				t.Fatalf("exhausted delivery sent=%d row=%+v want error=%q", calls.Load(), d, want)
+			got := store.DeliveryResult{OK: d.OK, Done: d.Done, Failure: d.Failure, HTTPStatus: d.HTTPStatus, Error: d.LastError}
+			if calls.Load() != 0 || d.Attempts != store.MaxDeliveryAttempts || got != want {
+				t.Fatalf("exhausted delivery sent=%d row=%+v want %+v", calls.Load(), d, want)
 			}
 		})
 	}

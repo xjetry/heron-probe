@@ -85,12 +85,12 @@ func TestResponseSummaryIsValidUTF8AndRuneBounded(t *testing.T) {
 			ch, err := ParseChannel(c, NewHTTPClient(), "")
 			must(t, err)
 			err = ch.Send(t.Context(), messageForTest())
-			var response httpError
-			if !errors.As(err, &response) {
+			var response *sendFailure
+			if !errors.As(err, &response) || response.failure != store.FailureHTTPStatus {
 				t.Fatalf("HTTP error=%v", err)
 			}
-			if response.body != tc.want || utf8.RuneCountInString(response.body) > 200 {
-				t.Fatalf("summary=%q runes=%d", response.body, utf8.RuneCountInString(response.body))
+			if response.detail != tc.want || utf8.RuneCountInString(response.detail) > 200 || ds[0].LastError != tc.want {
+				t.Fatalf("summary=%q runes=%d stored=%q", response.detail, utf8.RuneCountInString(response.detail), ds[0].LastError)
 			}
 		})
 	}
@@ -129,7 +129,7 @@ func TestQueueDoesNotSendQueuedTerminalDelivery(t *testing.T) {
 	if _, err := f.st.BeginDeliveryAttempt(t.Context(), first.Deliveries[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	must(t, f.st.UpdateDelivery(t.Context(), first.Deliveries[0].ID, false, true, "permanent failure", time.Time{}))
+	must(t, f.st.UpdateDelivery(t.Context(), first.Deliveries[0].ID, store.DeliveryResult{Done: true, Failure: store.FailureHTTPStatus, HTTPStatus: 400, Error: "permanent failure"}))
 	q.Enqueue(last)
 	stop := startQueue(t, q)
 	awaitDeliveries(t, f, last.ID, allDone)
