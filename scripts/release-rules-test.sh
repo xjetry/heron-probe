@@ -51,8 +51,9 @@ done
 
 # rejects TARGET VALUE WANT：退出码非 0，输出含 WANT，且第一行就是守卫的报错（shell 层以 "VERSION " 开头，
 # make 层是 "*** VERSION"）。要看第一行：守卫是配方第一行、打印后立即退出，它之前不会有任何输出；守卫被删
-# 时第一行是 make 回显的下一条配方（docker-push 递归的 make docker 之后会再打印同样的守卫文字，但已不在
-# 第一行），所以只凭"输出含 WANT"钉不住守卫。带换行的值会把守卫的报错拆成两行，WANT 因此不限定在第一行。
+# 时第一行是下一条配方的回显（docker-push 递归的 make docker 之后会再打印同样的守卫文字，但已不在第一行），
+# 所以只凭"输出含 WANT"钉不住守卫；release-channel 的下一条是静默的 echo，删守卫后它以 0 退出，由 accepted
+# 分支拦下。带换行的值会把守卫的报错拆成两行，WANT 因此不限定在第一行。
 # 绊线文件为空证明 docker、go、pnpm、gh 一次都没被调用。
 rejects() {
   rc=0
