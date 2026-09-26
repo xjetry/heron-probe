@@ -63,16 +63,20 @@ printf '%s\n' "$work" > "$work/dist/run-id"
 # 每格 2 个节点（服务 + root 对照）。窗口名额必须盖住本 run 会注册的节点，否则后一格 register 被拒。
 # --only 再留 1 个名额：单格注入若把重跑改成再次注册，窗口要接得住，节点数断言才看得到；
 # 名额刚好用完时这次 register 会被拒成 unauthenticated，断言到不了。
+# 窗口 TTL 按格数放大（每格 20 分钟，不少于 90 分钟）：八格加上镜像重试可能超过 90 分钟，
+# 过期后的失败与 key 错误同是 unauthenticated。
 if [ -n "$ONLY" ]; then
-  max_nodes=0
   cells=0
-  for id in $ONLY; do cells=$((cells + 1)); max_nodes=$((max_nodes + 2)); done
-  max_nodes=$((max_nodes + cells))
+  for id in $ONLY; do cells=$((cells + 1)); done
+  max_nodes=$((cells * 2 + cells))
 else
-  max_nodes=8
-  [ "$TIER2" = 1 ] && max_nodes=16
+  cells=4
+  [ "$TIER2" = 1 ] && cells=8
+  max_nodes=$((cells * 2))
 fi
-bin/probe-hub window open --db "$work/accept.db" --ttl 90m --max "$max_nodes" > "$work/window.txt" 2>&1
+ttl_min=$((cells * 20))
+[ "$ttl_min" -lt 90 ] && ttl_min=90
+bin/probe-hub window open --db "$work/accept.db" --ttl "${ttl_min}m" --max "$max_nodes" > "$work/window.txt" 2>&1
 key=$(sed -n 's/^key: //p' "$work/window.txt")
 [ -n "$key" ] || { echo "FAIL: no window key"; exit 1; }
 
@@ -261,6 +265,8 @@ run_cell() {
   before=$(jq '[.nodes[] | select(.name | startswith("'"$name"'"))] | length' "$work/ListNodes.json")
   orb -m "$name" -u root sh -c "$fetch_b" \
     > "$work/fetchb-$name.log" 2>&1 || { echo "FAIL($name): fetch rerun install.sh"; exit 1; }
+  # 手工 register 以 root 重写配置，文件属主回到 root。重跑必须改回来，节点仍在线。
+  orb -m "$name" -u root chown root:root /etc/probe-agent/config.json
   orb -m "$name" -u root sh /root/install.sh --hub "http://$HOST:$HUB_PORT" --key "$key" --base-url "http://$HOST:$DIST_PORT/b" \
     > "$work/rerun-$name.log" 2>&1 || { echo "FAIL($name): rerun"; tail -20 "$work/rerun-$name.log"; exit 1; }
   grep -q 'keeping the current registration' "$work/rerun-$name.log" || { echo "FAIL($name): rerun did not keep registration"; exit 1; }
@@ -273,6 +279,11 @@ run_cell() {
     i=$((i + 1)); [ "$i" -lt 60 ] || { echo "FAIL($name): agentVersion after rerun is not B"; exit 1; }
     sleep 1
   done
+  case "$distro" in
+    alpine) assert_layout "$name" 1 layout-rereg;;
+    *) assert_layout "$name" 0 layout-rereg;;
+  esac
+  node_field "$name" '.online == true and .metrics.cpuPct != null' || { echo "FAIL($name): not online after ownership repair"; exit 1; }
 
   case "$distro" in
     debian|ubuntu|rocky)
@@ -293,6 +304,20 @@ run_cell() {
       i=0
       until [ "$(rpc GetSnapshot '{}')" = 200 ] && jq -e --arg n "$name" --arg s "$seen" '.nodes[] | select(.name == $n) | .online == true and (.lastSeenAt | tonumber) > ($s | tonumber)' "$work/GetSnapshot.json" > /dev/null 2>&1; do
         i=$((i + 1)); [ "$i" -lt 120 ] || { echo "FAIL($name): did not come back after reboot"; exit 1; }
+        sleep 1
+      done
+      # 停机前已经在路上的上报也能把 lastSeenAt 推过保存值，那时服务还没被拉起来。
+      # Alpine 3.21 / OpenRC 0.55.1 实测 orb start 返回后约 15 秒监督进程才出现。
+      i=0
+      until orb -m "$name" -u root sh -c '
+        uid=$(id -u probe-agent) || exit 1
+        for s in /proc/[0-9]*/status; do
+          euid=$(awk "\$1 == \"Uid:\" { print \$3; exit }" "$s" 2>/dev/null) || continue
+          [ "$euid" = "$uid" ] && exit 0
+        done
+        exit 1
+      ' >/dev/null 2>&1; do
+        i=$((i + 1)); [ "$i" -lt 40 ] || { echo "FAIL($name): service process did not appear after reboot"; exit 1; }
         sleep 1
       done
       assert_service_identity "$name";;
@@ -319,8 +344,9 @@ run_cell() {
       fi
     done
     if [ -n "$left" ]; then echo "leftover probe-agent:$left"; exit 1; fi
+    if [ -e /var/log/probe-agent ]; then echo "leftover log dir"; exit 1; fi
     test ! -e /usr/local/bin/probe-agent && ! id probe-agent >/dev/null 2>&1 && ! grep -q "^probe-agent:" /etc/group && test ! -e /etc/probe-agent
-  ' || { echo "FAIL($name): purge left process, binary, user, group, or config"; exit 1; }
+  ' || { echo "FAIL($name): purge left process, binary, user, group, config, or log dir"; exit 1; }
 
   orb delete -f "$name" > /dev/null 2>&1
   # grep 把名单滤成空时退出码为 1；set -eu 会把"只剩这一台"当成失败。
