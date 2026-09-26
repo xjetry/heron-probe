@@ -37,12 +37,13 @@ HOST=host.orb.internal
 work=$(mktemp -d)
 echo "work=$work"
 : > "$work/machines"
-hub=""; httpd=""
+hub=""; httpd=""; rootrun=""
 admin_pw="accept admin password 2026"
 
 cleanup() {
   if [ -n "$httpd" ]; then kill "$httpd" 2>/dev/null || true; wait "$httpd" 2>/dev/null || true; fi
   if [ -n "$hub" ]; then kill "$hub" 2>/dev/null || true; wait "$hub" 2>/dev/null || true; fi
+  if [ -n "$rootrun" ]; then kill "$rootrun" 2>/dev/null || true; wait "$rootrun" 2>/dev/null || true; fi
   while read -r m; do orb delete -f "$m" > /dev/null 2>&1 || true; done < "$work/machines"
 }
 trap cleanup EXIT
@@ -55,6 +56,9 @@ make release VERSION="$VERSION_B" > "$work/release-b.log" 2>&1 || { echo "FAIL: 
 mkdir -p "$work/dist/b"
 cp dist/probe-*.tar.gz dist/SHA256SUMS dist/install.sh "$work/dist/b/"
 make binaries > "$work/binaries.log" 2>&1 || { echo "FAIL: make binaries"; tail -20 "$work/binaries.log"; exit 1; }
+# 本 run 的标记，HTTP 起来后核对它。install.sh 与包内文件在 deploy/ 未改动时各轮逐字相同，
+# 比对被测文件区分不了本轮的服务与上一轮遗留的服务；$work 由本轮的 mktemp 产生，各轮必然不同。
+printf '%s\n' "$work" > "$work/dist/run-id"
 
 # 每格 2 个节点（服务 + root 对照）。窗口名额必须盖住本 run 会注册的节点，否则后一格 register 被拒。
 # --only 再留 1 个名额：单格注入若把重跑改成再次注册，窗口要接得住，节点数断言才看得到；
@@ -87,15 +91,15 @@ printf '%s\n' "$admin_pw" | bin/probe-hub passwd --db "$work/accept.db" > "$work
 
 # HTTP 以 $work/dist 为根，/a 与 /b 是两个版本目录。
 # exec 让 $httpd 就是 python：子 shell 被 kill 后 python 会被 init 收养并继续占着端口，
-# 下一轮会装到上一轮的包。起来之后核对响应体就是本 run 的 install.sh，端口被占时立即失败。
+# 下一轮会装到上一轮的包。起来之后核对应答的是本 run 的标记，端口被占时立即失败。
 (cd "$work/dist" && exec python3 -m http.server "$DIST_PORT" --bind 127.0.0.1) > "$work/httpd.log" 2>&1 &
 httpd=$!
 attempt=0
 while [ "$attempt" -lt 50 ]; do
-  curl -fsS -o "$work/served-install.sh" "http://127.0.0.1:$DIST_PORT/a/install.sh" 2>/dev/null && break
+  curl -fsS -o "$work/served-run-id" "http://127.0.0.1:$DIST_PORT/run-id" 2>/dev/null && break
   attempt=$((attempt + 1)); sleep 0.2
 done
-cmp -s "$work/dist/a/install.sh" "$work/served-install.sh" || { echo "FAIL: dist HTTP is not serving this run"; cat "$work/httpd.log"; exit 1; }
+cmp -s "$work/dist/run-id" "$work/served-run-id" || { echo "FAIL: dist HTTP is not serving this run"; cat "$work/httpd.log"; exit 1; }
 
 : > "$work/jar"
 base="http://127.0.0.1:$HUB_PORT"
@@ -122,7 +126,10 @@ list_nodes() { [ "$(rpc ListNodes '{}')" = 200 ]; }
 # （comm=pidof，cmdline 含参数 probe-agent，有效 uid 0，exe 是 /bin/busybox）。同机 supervise-daemon
 # 的 /proc/comm 是 supervise-daemo（15 字节截断）、有效 uid 0，不在那份 pidof 输出里。
 # 按有效 uid 扫描时 root 对照进程不在结果里。
-# Uid 第一列不为 0，CapEff 含 bit 13（CAP_NET_RAW = 0x2000）。
+# 有效 uid（Uid 行第三列，与扫描用的同一列）不为 0，CapEff 含 bit 13（CAP_NET_RAW = 0x2000）。
+# 服务进程所见的根目录与 init 所见的在同一个文件系统上（设备号相同）：加固项不得让 agent 统计到另一个根分区。
+# 不拿两次上报的根分区总量比数值：OrbStack 机器的根是 btrfs，实测同一格里服务与 root 对照相隔 5 秒的
+# 两次上报总量相差约 2.4 GiB 而已用量相同；同一时刻在带同样加固的 systemd-run 与普通环境里 statfs 结果相同。
 # ping_group_range 写进日志：所测机器上组范围关闭时，ICMP 可用应来自能力而不是组范围。
 assert_service_identity() {
   cell=$1
@@ -139,10 +146,14 @@ assert_service_identity() {
     set -- $pids
     [ "$#" -eq 1 ] || { echo "want exactly one process with euid $svc_uid (probe-agent), got $#:$pids"; exit 1; }
     pid=$1
-    uid=$(awk "/^Uid:/ {print \$2; exit}" "/proc/$pid/status")
+    uid=$(awk "/^Uid:/ {print \$3; exit}" "/proc/$pid/status")
     cap=$(awk "/^CapEff:/ {print \$2; exit}" "/proc/$pid/status")
     echo "pid=$pid uid=$uid CapEff=$cap ping_group_range=$(cat /proc/sys/net/ipv4/ping_group_range)"
     [ "$uid" != 0 ] || exit 1
+    rootdev=$(stat -c %d "/proc/$pid/root/") || { echo "cannot stat /proc/$pid/root"; exit 1; }
+    initdev=$(stat -c %d /) || exit 1
+    echo "rootdev=$rootdev initdev=$initdev"
+    [ "$rootdev" = "$initdev" ] || { echo "service root is on another filesystem"; exit 1; }
     [ $((0x$cap & 0x2000)) -ne 0 ] || exit 1
   ' > "$work/ident-$cell.log" 2>&1 || { echo "FAIL($cell): service identity"; cat "$work/ident-$cell.log"; exit 1; }
   cat "$work/ident-$cell.log"
@@ -191,11 +202,14 @@ run_cell() {
   orb create -a "$arch" "$img" "$name" > "$work/create-$name.log" 2>&1 || { echo "FAIL($name): orb create"; exit 1; }
   echo "$name" >> "$work/machines"
 
-  # 首次安装用面板命令的管道形态。无 curl 时用 wget -qO-（运行时再探一次，不把探测结果写死）。
+  # 首次安装用面板命令的管道形态。无 curl 时用 wget（运行时再探一次，不把探测结果写死）；
+  # 重跑下载版本 B 的 install.sh 用同一次探测的结果。
   if orb -m "$name" -u root command -v curl >/dev/null 2>&1; then
     fetch="curl -fsSL http://$HOST:$DIST_PORT/a/install.sh"
+    fetch_b="curl -fsSL -o /root/install.sh http://$HOST:$DIST_PORT/b/install.sh"
   else
     fetch="wget -qO- http://$HOST:$DIST_PORT/a/install.sh"
+    fetch_b="wget -q -O /root/install.sh http://$HOST:$DIST_PORT/b/install.sh"
   fi
   orb -m "$name" -u root sh -c "$fetch | sh -s -- --hub http://$HOST:$HUB_PORT --key $key --base-url http://$HOST:$DIST_PORT/a" \
     > "$work/install-$name.log" 2>&1 || { echo "FAIL($name): install"; tail -20 "$work/install-$name.log"; exit 1; }
@@ -225,7 +239,8 @@ run_cell() {
     sleep 2
   done
 
-  # 加固不得让采集缩水。网卡只以合计计数器上报，逐网卡集合经接口观测不到，不作断言（§12）。
+  # 加固不得让采集缩水：字段集合、内存总量与 bootId 与 root 对照一致；根分区是不是同一个由
+  # assert_service_identity 按设备号判定。网卡只以合计计数器上报，逐网卡集合经接口观测不到，不作断言（§12）。
   orb -m "$name" -u root /usr/local/bin/probe-agent register --hub "http://$HOST:$HUB_PORT" --key "$key" \
     --config /root/root-agent.json --name "$name-root" > "$work/regroot-$name.log" 2>&1 || { echo "FAIL($name): root register"; exit 1; }
   orb -m "$name" -u root timeout 35 /usr/local/bin/probe-agent run --config /root/root-agent.json > "$work/runroot-$name.log" 2>&1 &
@@ -235,14 +250,16 @@ run_cell() {
     ([.nodes[] | select(.name == $a) | .metrics][0]) as $ma |
     ([.nodes[] | select(.name == $b) | .metrics][0]) as $mb |
     ($ma | keys | sort) == ($mb | keys | sort) and
-    $ma.diskTotal == $mb.diskTotal and $ma.memTotal == $mb.memTotal and $ma.bootId == $mb.bootId' \
+    $ma.memTotal == $mb.memTotal and $ma.bootId == $mb.bootId' \
     "$work/GetSnapshot.json" > /dev/null || { echo "FAIL($name): service/root metrics mismatch"; cat "$work/GetSnapshot.json"; exit 1; }
+  # timeout 35 到点结束 root 对照，退出码非零是预期的；等完即清空，cleanup 不再去 kill 一个可能已被复用的 pid。
   wait "$rootrun" || true
+  rootrun=""
 
   # 重跑即升级：文件形态，base-url 指向版本 B。沿用注册；版本必须变成 B，节点数不变。
   list_nodes || { echo "FAIL($name): ListNodes before rerun"; exit 1; }
   before=$(jq '[.nodes[] | select(.name | startswith("'"$name"'"))] | length' "$work/ListNodes.json")
-  orb -m "$name" -u root sh -c "curl -fsSL -o /root/install.sh http://$HOST:$DIST_PORT/b/install.sh || wget -q -O /root/install.sh http://$HOST:$DIST_PORT/b/install.sh" \
+  orb -m "$name" -u root sh -c "$fetch_b" \
     > "$work/fetchb-$name.log" 2>&1 || { echo "FAIL($name): fetch rerun install.sh"; exit 1; }
   orb -m "$name" -u root sh /root/install.sh --hub "http://$HOST:$HUB_PORT" --key "$key" --base-url "http://$HOST:$DIST_PORT/b" \
     > "$work/rerun-$name.log" 2>&1 || { echo "FAIL($name): rerun"; tail -20 "$work/rerun-$name.log"; exit 1; }
