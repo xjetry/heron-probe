@@ -237,7 +237,7 @@ hub 只监听明文 HTTP，TLS 由反代（Caddy / nginx / CDN）终止，hub �
 - `--listen` 默认 `127.0.0.1:8080`。监听非 loopback 地址时启动日志告警：此时任何人都能绕过反代直连并自带转发头。
 - `--timezone` 是 IANA 时区名，默认取 hub 进程的本地时区；只用于 §7 流量周期的重置日判定与面板文案，不参与任何时长计算。本地时区的名字按 `TZ`、再按 `/etc/localtime` 符号链接的目标路径里 `zoneinfo/` 之后的部分解析（在所测的 Alpine 3.21、Debian 12、Ubuntu 24.04、Rocky Linux 9 上按各自的标准方式设置时区后都是符号链接，Alpine 指向 `/etc/zoneinfo/`）；不读 `/etc/timezone`——RHEL 系没有它，Debian 与 Ubuntu 用 `timedatectl` 改时区后它仍是旧值。`/etc/localtime` 是复制出来的普通文件时（常见于 Dockerfile）取不到名字，退回 UTC 并告警。
 - `--trusted-proxies` 显式给出 CIDR 列表。只有 TCP 对端地址落在列表内的请求，其 `X-Forwarded-For` / `X-Forwarded-Proto` 才被采信。空列表 = 不信任任何转发头、一律用 TCP 对端地址，是收紧方向。hub 不从请求头推断自己是否在反代之后。
-- `--site-url` 显式给出对外地址，用于生成安装命令；不从 `Host` 头推断。
+- hub 不生成自己的对外地址：面板里安装命令的 hub 地址取浏览器当前的 origin（§10），所以没有 `--site-url`，也不存在从 `Host` 头推断对外地址的问题。
 
 ### 5.5 为什么不做 mTLS
 
@@ -460,7 +460,7 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 - 每条新断言做一次缺陷注入，确认它红且红在正确的原因上；声称"只有 X 会让它红"的断言，把非 X 的原因也注入一遍。
 - 端到端按 agent 容器镜像参数化，并断言上报的系统名与镜像一致（证明换镜像真的生效）：一级发行版每次跑，二级发行版发版前跑（§14）。容器没有真实 init，覆盖不了 sysctl 默认值与服务管理；安装脚本与服务单元在各发行版真实启动的机器上验证。
 - 入口卡片（`proto/SKILL.md`）里标为示例的 shell 代码块由 e2e 用真实 hub 与 token 逐个执行，断言退出码为 0 且输出为合法 JSON：卡片与接口漂移时 e2e 变红，而不是等 agent 调用失败才发现。
-- 安装验收在真实启动的机器上跑（本地 OrbStack；验收脚本只创建与删除带自己前缀的机器）：一级发行版 Debian 12、Alpine 3.21 两个架构每次改动安装脚本或服务定义时跑，二级发行版发版前加跑。每格断言：以面板给出的管道形态（`curl … | sh -s -- …`）一条命令装好且节点上线——脚本来自 stdin 时，脚本里读 stdin 的命令会吞掉余下部分，文件形态测不出这一点；服务进程的 Uid 不为 0 且有效能力含 `CAP_NET_RAW`，facts 里 ICMP 可用且 ICMP 任务有结果（能力由 init 授予）；服务下上报的指标字段集合、根分区总量与内存总量与同机 root 手动运行一致（加固项不得让采集缩水；网卡只以合计计数器上报，逐网卡集合经接口观测不到，不作断言）；换一个版本重跑后节点数不变、版本为新版本；OpenRC 机器重启后服务自启；卸载（含 `--purge`）后服务、二进制、配置、用户与组都不存在。下载目录经 `--base-url` 指向本地 `make release` 的产物。这类验收依赖真实 init，不进 CI；`install.sh` 的 shellcheck（POSIX 模式）进 CI，systemd 单元的 `systemd-analyze verify` 在验收机器上跑。
+- 安装验收在真实启动的机器上跑（本地 OrbStack；验收脚本只创建与删除带自己前缀的机器）：一级发行版 Debian 12、Alpine 3.21 两个架构每次改动安装脚本或服务定义时跑，二级发行版发版前加跑。每格断言：以面板给出的管道形态（`curl … | sh -s -- …`）一条命令装好且节点上线——脚本来自 stdin 时，脚本里读 stdin 的命令会吞掉余下部分，文件形态测不出这一点；服务进程的 Uid 不为 0 且有效能力含 `CAP_NET_RAW`，facts 里 ICMP 可用且 ICMP 任务有结果（能力由 init 授予）；服务下上报的指标字段集合与内存总量与同机 root 手动运行一致，服务进程所见的根目录与 init 所见的在同一个文件系统上（按设备号判定）（加固项不得让采集缩水；根分区总量不按两次上报的数值比：OrbStack 机器的根是 btrfs，实测同一台机器相隔 5 秒的两次上报总量可相差约 2.4 GiB 而已用量相同；网卡只以合计计数器上报，逐网卡集合经接口观测不到，不作断言）；换一个版本重跑后节点数不变、版本为新版本；OpenRC 机器重启后服务自启；卸载（含 `--purge`）后服务、二进制、配置、用户与组都不存在。下载目录经 `--base-url` 指向本地 `make release` 的产物。这类验收依赖真实 init，不进 CI；`install.sh` 的 shellcheck（POSIX 模式）进 CI，systemd 单元的 `systemd-analyze verify` 在验收机器上跑。
 - CI：`buf lint`、`buf breaking`（`WIRE_JSON`，对比主干）、`go vet`、`go test -count=1 ./...`。
 
 ## 13. 实现前需以实验确认的事项
