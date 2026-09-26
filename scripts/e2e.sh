@@ -87,6 +87,19 @@ bearer() {
     -H "Authorization: Bearer $api_token" --data "$body" "$base/probe.v1.AdminService/$name"
 }
 
+# pubget 名字 方法 请求消息：以 GET 匿名调用 PublicService，不带 cookie 与 token；打印状态码，
+# 响应体落 $work/pub-<名字>.json，响应头落 $work/pub-<名字>.headers。
+pubget() {
+  name=$1; method=$2; msg=$3
+  curl -sS -G -o "$work/pub-$name.json" -D "$work/pub-$name.headers" -w '%{http_code}' \
+    --data-urlencode connect=v1 --data-urlencode encoding=json --data-urlencode "message=$msg" "$base/probe.v1.PublicService/$method"
+}
+
+# hdr 名字 头名：打印 $work/pub-<名字>.headers 里该头的值（头名不分大小写，去掉行尾 CR）；没有这个头时不打印。
+hdr() {
+  awk -v want="$2" 'BEGIN { want = tolower(want) } { sub(/\r$/, "") } tolower(substr($0, 1, length(want) + 2)) == want ": " { print substr($0, length(want) + 3) }' "$work/pub-$1.headers"
+}
+
 # 卡片示例取自 hub 刚下发的那份。空列表由例子自己处理，空 hub 与有数据时用同一段。
 # 第二个参数非空时，每个例子的顶层 JSON 必须非空：有数据时例 2 输出 {} 说明取 id 走错了分支。
 run_card_examples() {
@@ -121,13 +134,31 @@ run_card_examples() {
   fi
 }
 
+# 根路径是内置公开页，面板在 /admin/；两者各有一份构建产物，资源分别引用 /assets/ 与 /admin/assets/。
+[ "$(curl -sS -o "$work/pub-index.html" -D "$work/pub-index.headers" -w '%{http_code}' "$base/")" = 200 ] || { echo "FAIL: / did not serve the public page"; exit 1; }
+grep -q 'src="/assets/' "$work/pub-index.html" || { echo "FAIL: public page does not load its own bundle"; cat "$work/pub-index.html"; exit 1; }
+[ -n "$(hdr index Content-Security-Policy)" ] || { echo "FAIL: CSP header missing on the public page"; cat "$work/pub-index.headers"; exit 1; }
 [ "$(curl -sS -o "$work/admin.html" -w '%{http_code}' "$base/admin/")" = 200 ] || { echo "FAIL: /admin/ not served"; exit 1; }
 grep -q 'id="root"' "$work/admin.html" || { echo "FAIL: panel index missing root element"; exit 1; }
+grep -q 'src="/admin/assets/' "$work/admin.html" || { echo "FAIL: panel does not load its own bundle"; cat "$work/admin.html"; exit 1; }
 curl -sS -D "$work/admin.headers" -o /dev/null "$base/admin/" && grep -qi '^content-security-policy:' "$work/admin.headers" || { echo "FAIL: CSP header missing"; exit 1; }
 
 [ "$(rpc GetSnapshot '{}')" = 401 ] || { echo "FAIL: anonymous GetSnapshot was not 401"; exit 1; }
+# 公开服务匿名可达；从未保存过外观时明暗为 auto，其余为空（JSON 里省略）。
+[ "$(pubget site-default GetSite '{}')" = 200 ] || { echo "FAIL: anonymous GetSite"; cat "$work/pub-site-default.json"; exit 1; }
+jq -e '. == {theme: "auto"}' "$work/pub-site-default.json" > /dev/null || { echo "FAIL: default site settings"; cat "$work/pub-site-default.json"; exit 1; }
+[ "$(hdr site-default Cache-Control)" = "max-age=300" ] || { echo "FAIL: GetSite Cache-Control"; cat "$work/pub-site-default.headers"; exit 1; }
 login_body=$(jq -nc --arg password "$admin_pw" '{password: $password}')
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login"; cat "$work/Login.json"; exit 1; }
+# 外观整体替换并回显 hub 实际保存的值（主色转小写），公开页随即拿到；被拒的更新什么都不写。
+settings_body='{"settings": {"title": "e2e 状态", "theme": "dark", "accentColor": "#FF5500", "customCss": ".card { border-width: 2px; }"}}'
+[ "$(rpc UpdateSettings "$settings_body")" = 200 ] || { echo "FAIL: UpdateSettings"; cat "$work/UpdateSettings.json"; exit 1; }
+jq -e '.settings.accentColor == "#ff5500"' "$work/UpdateSettings.json" > /dev/null || { echo "FAIL: UpdateSettings echo"; cat "$work/UpdateSettings.json"; exit 1; }
+[ "$(pubget site GetSite '{}')" = 200 ] || { echo "FAIL: GetSite after update"; exit 1; }
+jq -e '. == {title: "e2e 状态", theme: "dark", accentColor: "#ff5500", customCss: ".card { border-width: 2px; }"}' "$work/pub-site.json" > /dev/null || { echo "FAIL: GetSite does not serve the saved settings"; cat "$work/pub-site.json"; exit 1; }
+[ "$(rpc UpdateSettings '{"settings": {"theme": "auto", "customCss": "a</style>"}}')" = 400 ] || { echo "FAIL: CSS containing </ was accepted"; cat "$work/UpdateSettings.json"; exit 1; }
+grep -q 'settings.custom_css must not contain' "$work/UpdateSettings.json" || { echo "FAIL: error must name the field"; cat "$work/UpdateSettings.json"; exit 1; }
+[ "$(pubget site-after-reject GetSite '{}')" = 200 ] && cmp -s "$work/pub-site.json" "$work/pub-site-after-reject.json" || { echo "FAIL: a rejected update changed the site"; cat "$work/pub-site-after-reject.json"; exit 1; }
 # hub 上还没有节点：卡片例子必须在空库上也能跑完。
 [ "$(rpc CreateApiToken '{"name":"e2e-empty"}')" = 200 ] || { echo "FAIL: CreateApiToken (empty hub)"; cat "$work/CreateApiToken.json"; exit 1; }
 api_token=$(jq -r '.token' "$work/CreateApiToken.json")
@@ -226,7 +257,34 @@ jq -e '.traffic.periodRx == "1073741824" and .traffic.totalRx == "1073741824" an
 # node1 标为公开：入口卡片"公开数据"的例子只列公开节点，重启后那一轮 run_card_examples 要求它输出非空。
 update_body=$(jq -nc --arg id "$node1" --arg name "e2e-amd64" '{id: $id, name: $name, public: true, note: "", trafficResetDay: 15, offlineGraceS: 0}')
 [ "$(rpc UpdateNode "$update_body")" = 200 ] || { echo "FAIL: UpdateNode reset day"; cat "$work/UpdateNode.json"; exit 1; }
-jq -e '.node.trafficResetDay == 15' "$work/UpdateNode.json" > /dev/null || { echo "FAIL: reset day not echoed"; cat "$work/UpdateNode.json"; exit 1; }
+jq -e '.node.trafficResetDay == 15 and .node.public == true' "$work/UpdateNode.json" > /dev/null || { echo "FAIL: reset day or public flag not echoed"; cat "$work/UpdateNode.json"; exit 1; }
+
+# 公开服务只给 node1（公开）；node2 保持私有。快照响应缓存 1 秒，公开之后最迟 1 秒出现在公开快照里。
+i=0
+until [ "$(pubget snapshot GetSnapshot '{}')" = 200 ] && jq -e --arg id "$node1" '[(.nodes // [])[].id] == [$id]' "$work/pub-snapshot.json" > /dev/null; do
+  i=$((i + 1)); [ "$i" -lt 10 ] || { echo "FAIL: public snapshot does not list exactly node1"; cat "$work/pub-snapshot.json"; exit 1; }; sleep 0.5
+done
+# 公开的主机信息只有这五项：主机名、内核、agent 版本、ICMP 可用性不出现在线上。
+jq -e --arg os "$EXPECT_OS" '.reportIntervalMs == 4000 and (.nodes[0].facts | (.os | contains($os)) and .arch == "amd64" and (keys - ["os", "arch", "virtualization", "cpuModel", "cpuCores"]) == []) and ((.nodes[0].metrics // {}) | has("bootId") | not)' "$work/pub-snapshot.json" > /dev/null || { echo "FAIL: public snapshot shape"; cat "$work/pub-snapshot.json"; exit 1; }
+[ "$(hdr snapshot Cache-Control)" = "max-age=1" ] || { echo "FAIL: GetSnapshot Cache-Control"; cat "$work/pub-snapshot.headers"; exit 1; }
+# 缓存头只给 GET：POST 的响应不进浏览器缓存，不带这个头。
+[ "$(curl -sS -o /dev/null -D "$work/pub-post.headers" -w '%{http_code}' -H 'Content-Type: application/json' --data '{}' "$base/probe.v1.PublicService/GetSnapshot")" = 200 ] || { echo "FAIL: POST GetSnapshot"; exit 1; }
+[ -z "$(hdr post Cache-Control)" ] || { echo "FAIL: POST response carries Cache-Control"; cat "$work/pub-post.headers"; exit 1; }
+[ "$(pubget metrics QueryMetrics "$query_body")" = 200 ] || { echo "FAIL: public QueryMetrics"; cat "$work/pub-metrics.json"; exit 1; }
+jq -e '.level == "1m" and any(.series[] | select(.name == "cpu") | .samples[]; .n > 0)' "$work/pub-metrics.json" > /dev/null || { echo "FAIL: public QueryMetrics shape"; cat "$work/pub-metrics.json"; exit 1; }
+[ "$(hdr metrics Cache-Control)" = "max-age=60" ] || { echo "FAIL: QueryMetrics Cache-Control"; cat "$work/pub-metrics.headers"; exit 1; }
+# 公开节点即公开它的探测目标：序列带任务当前的种类与目标。
+[ "$(pubget probes QueryProbes "$probe_body")" = 200 ] || { echo "FAIL: public QueryProbes"; cat "$work/pub-probes.json"; exit 1; }
+jq -e --arg icmp "$icmp_task" --arg tcp "$tcp_task" --arg target "host.docker.internal:$port" '[.series[] | {taskId, kind, target}] | sort_by(.taskId) == ([{taskId: $icmp, kind: "PROBE_KIND_ICMP", target: "127.0.0.1"}, {taskId: $tcp, kind: "PROBE_KIND_TCP", target: $target}] | sort_by(.taskId))' "$work/pub-probes.json" > /dev/null || { echo "FAIL: public probe series lack kind and target"; cat "$work/pub-probes.json"; exit 1; }
+# 私有节点与不存在的节点逐字节同一个 NotFound，且不进缓存：节点改为公开后浏览器不会继续用它。
+for method in QueryMetrics QueryProbes; do
+  private_body=$(jq -nc --arg nodeId "$node2" --argjson from "$((now - 3600))" --argjson to "$((now + 60))" '{nodeId: $nodeId, from: $from, to: $to, maxPoints: 100}')
+  missing_body=$(jq -nc --argjson from "$((now - 3600))" --argjson to "$((now + 60))" '{nodeId: "999999", from: $from, to: $to, maxPoints: 100}')
+  [ "$(pubget "private-$method" "$method" "$private_body")" = 404 ] || { echo "FAIL: $method on a private node was not 404"; cat "$work/pub-private-$method.json"; exit 1; }
+  [ "$(pubget "missing-$method" "$method" "$missing_body")" = 404 ] || { echo "FAIL: $method on a missing node was not 404"; cat "$work/pub-missing-$method.json"; exit 1; }
+  cmp -s "$work/pub-private-$method.json" "$work/pub-missing-$method.json" || { echo "FAIL: $method tells private and missing nodes apart"; cat "$work/pub-private-$method.json" "$work/pub-missing-$method.json"; exit 1; }
+  [ "$(hdr "private-$method" Cache-Control)" = no-store ] || { echo "FAIL: $method NotFound is cacheable"; cat "$work/pub-private-$method.headers"; exit 1; }
+done
 
 # 规则只覆盖 arm64；amd64 保持退出，node1 的流量精确复核不受后续上报影响。
 run_agent arm64 >> "$work/agent-arm64.log" 2>&1 &
@@ -307,10 +365,31 @@ case "$api_token" in probe_at_*) ;; *) echo "FAIL: API token lacks the probe_at_
 kill "$hub"; wait "$hub"
 hub=""
 
+# 重启时换上替换目录：它接管 / 下除 /admin 与 RPC 之外的路径；指向目录外的符号链接拿不到目标内容。
+mkdir -p "$work/site/assets"
+printf '%s\n' '<!doctype html><title>e2e custom public page</title>' > "$work/site/index.html"
+printf '%s\n' 'body { color: red }' > "$work/site/assets/app.css"
+printf '%s\n' 'outside secret' > "$work/outside.txt"
+ln -s ../outside.txt "$work/site/leak.txt"
+
 # 重启：流量状态、重置日与被 Drain 出的分钟行都必须还在。
-PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC >> "$work/hub.log" 2>&1 &
+PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC --public-dir "$work/site" >> "$work/hub.log" 2>&1 &
 hub=$!
 wait_hub
+[ "$(curl -sS -o "$work/pub-dir-index.html" -D "$work/pub-dir-index.headers" -w '%{http_code}' "$base/")" = 200 ] || { echo "FAIL: --public-dir index not served"; exit 1; }
+grep -q 'e2e custom public page' "$work/pub-dir-index.html" || { echo "FAIL: / is not the --public-dir index"; cat "$work/pub-dir-index.html"; exit 1; }
+[ "$(hdr dir-index Content-Security-Policy)" = "frame-ancestors 'none'" ] || { echo "FAIL: --public-dir CSP"; cat "$work/pub-dir-index.headers"; exit 1; }
+[ "$(hdr dir-index X-Content-Type-Options)" = nosniff ] || { echo "FAIL: --public-dir nosniff"; cat "$work/pub-dir-index.headers"; exit 1; }
+[ "$(hdr dir-index Cache-Control)" = no-cache ] || { echo "FAIL: --public-dir Cache-Control"; cat "$work/pub-dir-index.headers"; exit 1; }
+[ "$(curl -sS -o "$work/pub-dir-css" -w '%{http_code}' "$base/assets/app.css")" = 200 ] && grep -q 'color: red' "$work/pub-dir-css" || { echo "FAIL: --public-dir asset"; exit 1; }
+[ "$(curl -sS -o /dev/null -w '%{http_code}' "$base/assets/missing.js")" = 404 ] || { echo "FAIL: a missing asset under --public-dir must be 404"; exit 1; }
+for path in /leak.txt /../outside.txt; do
+  curl -sS --path-as-is -L -o "$work/pub-dir-escape" "$base$path"
+  if grep -q 'outside secret' "$work/pub-dir-escape"; then echo "FAIL: $path read a file outside --public-dir"; exit 1; fi
+  grep -q 'e2e custom public page' "$work/pub-dir-escape" || { echo "FAIL: $path did not fall back to index.html"; cat "$work/pub-dir-escape"; exit 1; }
+done
+[ "$(curl -sS -o "$work/admin-after-dir.html" -w '%{http_code}' "$base/admin/")" = 200 ] && grep -q 'src="/admin/assets/' "$work/admin-after-dir.html" || { echo "FAIL: --public-dir shadowed the panel"; exit 1; }
+[ "$(pubget site-after-dir GetSite '{}')" = 200 ] || { echo "FAIL: --public-dir shadowed PublicService"; exit 1; }
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login after restart"; exit 1; }
 # token 跨重启存活，只读、不能写；卡片取自 hub 实际下发的那份，其中的例子逐个在真实数据上跑。
 [ "$(bearer ListNodes '{}')" = 200 ] || { echo "FAIL: API token lost across restart"; cat "$work/bearer-ListNodes.json"; exit 1; }
@@ -358,6 +437,8 @@ jq -e --arg id "$node1" --arg tx "$tx_before" --argjson before "$traffic_before"
   end)' "$work/GetTraffic.json" > /dev/null || { echo "FAIL: traffic state lost across restart"; cat "$work/GetTraffic.json"; exit 1; }
 [ "$(rpc QueryMetrics "$query_body")" = 200 ] || { echo "FAIL: QueryMetrics after restart"; exit 1; }
 jq -e 'any(.series[] | select(.name == "tx_bytes") | .samples[]; .n > 0 and .sum != null and .mean == null)' "$work/QueryMetrics.json" > /dev/null || { echo "FAIL: tx_bytes minute sums missing"; cat "$work/QueryMetrics.json"; exit 1; }
+[ "$(rpc GetStorageStats '{}')" = 200 ] || { echo "FAIL: GetStorageStats"; cat "$work/GetStorageStats.json"; exit 1; }
+jq -e '(.dbBytes | tonumber) > 0 and (.tables | length) > 0' "$work/GetStorageStats.json" > /dev/null || { echo "FAIL: GetStorageStats shape"; cat "$work/GetStorageStats.json"; exit 1; }
 [ "$(rpc Logout '{}')" = 200 ] || { echo "FAIL: logout after restart"; exit 1; }
 kill "$hub"; wait "$hub"
 hub=""
@@ -376,6 +457,12 @@ bin/probe-hub node list --db "$db" > "$work/nodes.txt"
 cat "$work/nodes.txt"
 
 get() { sed -n "s/^$1: //p" "$work/stats.txt"; }
+# API 与 CLI 同一来源：两边列出同一组表（行数在两次读取之间会变，只比表名）。
+jq -r '.tables[].name' "$work/GetStorageStats.json" > "$work/stats-api-tables.txt"
+sed -n '/^db_bytes: /d; s/^\([a-z0-9_]*\): [0-9][0-9]*$/\1/p' "$work/stats.txt" > "$work/stats-cli-tables.txt"
+[ -s "$work/stats-cli-tables.txt" ] && cmp -s "$work/stats-api-tables.txt" "$work/stats-cli-tables.txt" || { echo "FAIL: GetStorageStats and probe-hub stats list different tables"; cat "$work/stats-api-tables.txt" "$work/stats-cli-tables.txt"; exit 1; }
+[ "$(get db_bytes)" -gt 0 ] || { echo "FAIL: db_bytes"; exit 1; }
+[ "$(get setting)" = 5 ] || { echo "FAIL: setting rows"; exit 1; }
 [ "$(get node)" = 2 ] || { echo "FAIL: node count"; exit 1; }
 [ "$(get alert_rule)" = 1 ] || { echo "FAIL: alert rule count"; exit 1; }
 [ "$(get alert_rule_node)" = 1 ] || { echo "FAIL: alert scope count"; exit 1; }
