@@ -2238,14 +2238,14 @@ export enum DeliveryFailure {
   UNSPECIFIED = 0,
 
   /**
-   * 接收方以非 2xx 应答（含不跟随的 3xx），状态码见 http_status；原文是响应体的前 200 个字符。
+   * 接收方以非 2xx 应答（含不跟随的 3xx），状态码见 http_status（100–999）；原文是响应体的前 200 个字符。
    *
    * @generated from enum value: DELIVERY_FAILURE_HTTP_STATUS = 1;
    */
   HTTP_STATUS = 1,
 
   /**
-   * 没有收到应答：连接、DNS、TLS、超时。
+   * 没有收到合法应答：连接、DNS、TLS、超时，以及状态码不在 100–999 的应答（原文写明该状态码）。可重试。
    *
    * @generated from enum value: DELIVERY_FAILURE_TRANSPORT = 2;
    */
@@ -2273,7 +2273,7 @@ export enum DeliveryFailure {
   CHANNEL_DELETED = 5,
 
   /**
-   * 次数耗尽而最后一次结果未落盘；没有原文。
+   * 次数耗尽而最后一次结果未落盘；没有原文。不沿用更早一次尝试的失败：最后一次已发出，接收方可能已经收到。
    *
    * @generated from enum value: DELIVERY_FAILURE_RESULT_UNRECORDED = 6;
    */
@@ -2526,7 +2526,9 @@ export const AdminService: GenService<{
     output: typeof ListAlertEventsResponseSchema;
   },
   /**
-   * 一次投递最近一次失败的原文：HTTP 失败时是响应体的前 200 个字符，其余是出站错误文本，都不含 URL。
+   * 一次投递最近一次失败的原文：HTTP 失败时是响应体的前 200 个字符，其余是出站错误文本。hub 不把 URL
+   * 写进原文，但响应体由接收方决定：接收方若回显请求路径或头值，这些只写不读的配置也会出现在这里，
+   * 这在会话的权限之内。
    * 接收方可能在错误响应里回显收到的请求体，而 webhook 请求体模板里可能放着密钥，所以只对会话开放。
    * 投递不存在时返回 NotFound；没有失败、或类别没有原文时返回空串。
    *

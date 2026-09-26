@@ -65,7 +65,8 @@ export function statesOf(states: AlertStateEntry[]): Map<bigint, RuleStates> {
 export const transitionLabel = (t: string): string => (t === "firing" ? "触发" : t === "recovered" ? "恢复" : t);
 
 // 与 proto DeliveryFailure 逐值对齐（测试按枚举全集核对）；UNSPECIFIED 表示没有失败，不在表里。
-// http_status 只随 HTTP_STATUS 出现，由 hub 写库前的校验保证。
+// 面板依赖"HTTP_STATUS 必带 http_status"，由 hub 写库前的校验（DeliveryResult.check）保证；
+// 反方向"http_status 只随 HTTP_STATUS 出现"由 api 的 ListAlertEvents 映射保证。
 // hasText：hub 为该类别记下错误原文；渠道删除与结果未落盘没有原文（proto 枚举注释），不给查看入口。
 export const DELIVERY_FAILURES: readonly { value: DeliveryFailure; text: (d: AlertDelivery) => string; hasText: boolean }[] = [
   { value: DeliveryFailure.HTTP_STATUS, text: (d) => `HTTP ${d.httpStatus}`, hasText: true },

@@ -174,9 +174,9 @@ type DeliveryFailure int32
 const (
 	// 没有失败：已送达，或尚无结果。
 	DeliveryFailure_DELIVERY_FAILURE_UNSPECIFIED DeliveryFailure = 0
-	// 接收方以非 2xx 应答（含不跟随的 3xx），状态码见 http_status；原文是响应体的前 200 个字符。
+	// 接收方以非 2xx 应答（含不跟随的 3xx），状态码见 http_status（100–999）；原文是响应体的前 200 个字符。
 	DeliveryFailure_DELIVERY_FAILURE_HTTP_STATUS DeliveryFailure = 1
-	// 没有收到应答：连接、DNS、TLS、超时。
+	// 没有收到合法应答：连接、DNS、TLS、超时，以及状态码不在 100–999 的应答（原文写明该状态码）。可重试。
 	DeliveryFailure_DELIVERY_FAILURE_TRANSPORT DeliveryFailure = 2
 	// 请求没能构造：模板执行、编码、URL。
 	DeliveryFailure_DELIVERY_FAILURE_REQUEST DeliveryFailure = 3
@@ -184,7 +184,7 @@ const (
 	DeliveryFailure_DELIVERY_FAILURE_CHANNEL_INVALID DeliveryFailure = 4
 	// 渠道已删除，投递终止；没有原文。
 	DeliveryFailure_DELIVERY_FAILURE_CHANNEL_DELETED DeliveryFailure = 5
-	// 次数耗尽而最后一次结果未落盘；没有原文。
+	// 次数耗尽而最后一次结果未落盘；没有原文。不沿用更早一次尝试的失败：最后一次已发出，接收方可能已经收到。
 	DeliveryFailure_DELIVERY_FAILURE_RESULT_UNRECORDED DeliveryFailure = 6
 	// 失败没有携带类别；迁移时无法从旧记录确定类别的也归入此类。
 	DeliveryFailure_DELIVERY_FAILURE_UNCLASSIFIED DeliveryFailure = 7

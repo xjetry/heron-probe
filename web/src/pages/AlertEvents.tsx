@@ -89,7 +89,8 @@ function EventList({ data, nodeName, channelName, hasNextPage, fetchingNext, onM
 }
 
 // 原文可能含接收方回显的密钥，只读口径不带它；按需经仅会话的 GetAlertDeliveryError 取，展开前不发请求。
-// 同一事件可能有同名渠道，按钮的可访问名带投递 id 才可区分。
+// 同一事件可能有同名渠道，按钮的可访问名带投递 id 才可区分；id 属于投递而不是渠道，名字写成"渠道名 的投递（#id）"。
+// 收起再展开会重新取（数据已过期），这次失败时缓存的原文仍在，按 queryGate 的约定只加横幅。
 function DeliveryItem({ d, channel }: { d: AlertDelivery; channel: string }) {
   const [open, setOpen] = useState(false);
   const text = useQuery(AdminService.method.getAlertDeliveryError, open ? { deliveryId: d.id } : skipToken);
@@ -100,12 +101,15 @@ function DeliveryItem({ d, channel }: { d: AlertDelivery; channel: string }) {
       {hasErrorText(d) && (
         <>
           {" "}
-          <button type="button" className="link" aria-label={`查看错误原文 ${withId(channel, d.id)}`} aria-expanded={open}
+          <button type="button" className="link" aria-label={`查看错误原文 ${withId(`${channel} 的投递`, d.id)}`} aria-expanded={open}
             onClick={() => setOpen((o) => !o)}>查看错误原文</button>
         </>
       )}
       {open && (gate.ready
-        ? (gate.data.error ? <pre className="secret">{gate.data.error}</pre> : <p className="muted">（没有错误原文）</p>)
+        ? <>
+            {gate.banner}
+            {gate.data.error ? <pre className="secret">{gate.data.error}</pre> : <p className="muted">（没有错误原文）</p>}
+          </>
         : gate.loading ?? errorBanner(...gate.errors))}
     </div>
   );

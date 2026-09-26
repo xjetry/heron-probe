@@ -96,8 +96,8 @@ it("只有带原文的终态失败才有查看原文按钮", async () => {
     failed(9n, DeliveryFailure.HTTP_STATUS, { done: false, httpStatus: 503 }),
   ]) });
   await screen.findByText("hook：失败（1 次）HTTP 401");
-  for (const id of [1n, 2n, 3n, 4n, 5n]) expect(rawButton(`hook（#${id}）`), `delivery ${id}`).toBeInTheDocument();
-  for (const id of [6n, 7n, 8n, 9n]) expect(rawButton(`hook（#${id}）`), `delivery ${id}`).toBeNull();
+  for (const id of [1n, 2n, 3n, 4n, 5n]) expect(rawButton(`hook 的投递（#${id}）`), `delivery ${id}`).toBeInTheDocument();
+  for (const id of [6n, 7n, 8n, 9n]) expect(rawButton(`hook 的投递（#${id}）`), `delivery ${id}`).toBeNull();
   expect(screen.getAllByRole("button", { name: /^查看错误原文/ })).toHaveLength(5);
 });
 
@@ -107,7 +107,7 @@ it("点击后按投递 id 取原文，显示在该投递下方", async () => {
     listAlertEvents: async () => withDeliveries([failed(42n, DeliveryFailure.HTTP_STATUS, { httpStatus: 401 }), failed(43n, DeliveryFailure.TRANSPORT)]),
     getAlertDeliveryError: async (req) => { requests.push(req.deliveryId); return { error: `{"token":"secret-echo-7f3a"}` }; },
   });
-  fireEvent.click(await screen.findByRole("button", { name: "查看错误原文 hook（#42）" }));
+  fireEvent.click(await screen.findByRole("button", { name: "查看错误原文 hook 的投递（#42）" }));
   const text = await screen.findByText(`{"token":"secret-echo-7f3a"}`);
   expect(requests).toEqual([42n]);
   const item = screen.getByText("hook：失败（1 次）HTTP 401").closest("div")!;
@@ -120,7 +120,7 @@ it("原文为空时明确显示没有原文", async () => {
     listAlertEvents: async () => withDeliveries([failed(2n, DeliveryFailure.TRANSPORT)]),
     getAlertDeliveryError: async () => ({ error: "" }),
   });
-  fireEvent.click(await screen.findByRole("button", { name: "查看错误原文 hook（#2）" }));
+  fireEvent.click(await screen.findByRole("button", { name: "查看错误原文 hook 的投递（#2）" }));
   expect(await screen.findByText("（没有错误原文）")).toBeInTheDocument();
 });
 
@@ -129,8 +129,28 @@ it("取原文失败按页面方式显示错误", async () => {
     listAlertEvents: async () => withDeliveries([failed(2n, DeliveryFailure.TRANSPORT)]),
     getAlertDeliveryError: async () => { throw new ConnectError("delivery error unavailable", Code.Unavailable); },
   });
-  fireEvent.click(await screen.findByRole("button", { name: "查看错误原文 hook（#2）" }));
+  fireEvent.click(await screen.findByRole("button", { name: "查看错误原文 hook 的投递（#2）" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("delivery error unavailable");
+});
+
+it("已取到原文后重新取失败，保留原文并显示错误横幅", async () => {
+  let fail = false;
+  render({
+    listAlertEvents: async () => withDeliveries([failed(2n, DeliveryFailure.TRANSPORT)]),
+    getAlertDeliveryError: async () => {
+      if (fail) throw new ConnectError("delivery error refresh failed", Code.Unavailable);
+      return { error: "Post: connection refused" };
+    },
+  });
+  const button = await screen.findByRole("button", { name: "查看错误原文 hook 的投递（#2）" });
+  fireEvent.click(button);
+  expect(await screen.findByText("Post: connection refused")).toBeInTheDocument();
+  fireEvent.click(button);
+  expect(screen.queryByText("Post: connection refused")).toBeNull();
+  fail = true;
+  fireEvent.click(button);
+  expect(await screen.findByRole("alert")).toHaveTextContent("delivery error refresh failed");
+  expect(screen.getByText("Post: connection refused")).toBeInTheDocument();
 });
 
 it("同一事件两个同名渠道的查看按钮可区分", async () => {
@@ -142,7 +162,7 @@ it("同一事件两个同名渠道的查看按钮可区分", async () => {
     listAlertEvents: async () => withDeliveries([failed(11n, DeliveryFailure.TRANSPORT), failed(12n, DeliveryFailure.TRANSPORT, { channelId: 6n })]),
     getAlertDeliveryError: async (req) => { requests.push(req.deliveryId); return { error: `原文 ${req.deliveryId}` }; },
   });
-  fireEvent.click(await screen.findByRole("button", { name: "查看错误原文 hook（#12）" }));
+  fireEvent.click(await screen.findByRole("button", { name: "查看错误原文 hook 的投递（#12）" }));
   expect(await screen.findByText("原文 12")).toBeInTheDocument();
   expect(requests).toEqual([12n]);
 });

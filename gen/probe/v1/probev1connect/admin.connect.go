@@ -169,7 +169,9 @@ type AdminServiceClient interface {
 	DeleteAlertRule(context.Context, *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error)
 	// 按事件 id 倒序分页，包含每个事件的投递状态；投递失败只给类别与状态码，原文见 GetAlertDeliveryError。
 	ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error)
-	// 一次投递最近一次失败的原文：HTTP 失败时是响应体的前 200 个字符，其余是出站错误文本，都不含 URL。
+	// 一次投递最近一次失败的原文：HTTP 失败时是响应体的前 200 个字符，其余是出站错误文本。hub 不把 URL
+	// 写进原文，但响应体由接收方决定：接收方若回显请求路径或头值，这些只写不读的配置也会出现在这里，
+	// 这在会话的权限之内。
 	// 接收方可能在错误响应里回显收到的请求体，而 webhook 请求体模板里可能放着密钥，所以只对会话开放。
 	// 投递不存在时返回 NotFound；没有失败、或类别没有原文时返回空串。
 	GetAlertDeliveryError(context.Context, *connect.Request[v1.GetAlertDeliveryErrorRequest]) (*connect.Response[v1.GetAlertDeliveryErrorResponse], error)
@@ -639,7 +641,9 @@ type AdminServiceHandler interface {
 	DeleteAlertRule(context.Context, *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error)
 	// 按事件 id 倒序分页，包含每个事件的投递状态；投递失败只给类别与状态码，原文见 GetAlertDeliveryError。
 	ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error)
-	// 一次投递最近一次失败的原文：HTTP 失败时是响应体的前 200 个字符，其余是出站错误文本，都不含 URL。
+	// 一次投递最近一次失败的原文：HTTP 失败时是响应体的前 200 个字符，其余是出站错误文本。hub 不把 URL
+	// 写进原文，但响应体由接收方决定：接收方若回显请求路径或头值，这些只写不读的配置也会出现在这里，
+	// 这在会话的权限之内。
 	// 接收方可能在错误响应里回显收到的请求体，而 webhook 请求体模板里可能放着密钥，所以只对会话开放。
 	// 投递不存在时返回 NotFound；没有失败、或类别没有原文时返回空串。
 	GetAlertDeliveryError(context.Context, *connect.Request[v1.GetAlertDeliveryErrorRequest]) (*connect.Response[v1.GetAlertDeliveryErrorResponse], error)
