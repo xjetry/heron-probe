@@ -1,6 +1,6 @@
 export CGO_ENABLED=0
 
-.PHONY: gen lint test build binaries ci e2e e2e-matrix fixtures web-install web-test web release docker docker-smoke
+.PHONY: gen lint test build binaries ci e2e e2e-matrix fixtures web-install web-test web release docker docker-smoke release-channel docker-push docker-latest docker-readback
 
 web-install:
 	pnpm --dir web install --frozen-lockfile
@@ -12,7 +12,7 @@ gen: web-install
 lint:
 	go mod tidy -diff
 	buf lint
-	shellcheck -s sh deploy/install.sh deploy/openrc/probe-agent scripts/docker-smoke.sh
+	shellcheck -s sh deploy/install.sh deploy/openrc/probe-agent scripts/docker-smoke.sh scripts/docker-readback.sh
 	go vet ./...
 	GOOS=linux go vet ./...
 	GOOS=darwin go vet ./...
@@ -166,3 +166,27 @@ docker:
 docker-smoke:
 	@$(check_image_version)
 	IMAGE='$(DOCKER_IMAGE):$(VERSION)' VERSION='$(VERSION)' SMOKE_PLATFORM='$(SMOKE_PLATFORM)' scripts/docker-smoke.sh
+
+# 预发布判定（§14）：去掉构建元数据（+ 及之后）后仍含 - 就是预发布。GitHub Release 是否标为 prerelease、
+# 镜像是否推 latest 都读它，判定只在这一处。
+RELEASE_CHANNEL = $(shell v='$(VERSION)'; case "$${v%%+*}" in (*-*) echo prerelease ;; (*) echo stable ;; esac)
+docker_latest = $(if $(filter stable,$(RELEASE_CHANNEL)),-t $(DOCKER_IMAGE):latest)
+
+release-channel:
+	@if [ -z '$(VERSION)' ]; then echo "VERSION is required, e.g. make release-channel VERSION=v0.1.0" >&2; exit 1; fi
+	@echo $(RELEASE_CHANNEL)
+
+# 发布镜像：先走完 make docker（两个平台的根文件系统核对、本机平台冒烟），再推送两个平台。
+# 只由 release.yml 在登录 ghcr 之后调用；推送沿用 make docker 的构建器与缓存，构建参数同一处。
+docker-push:
+	@$(check_image_version)
+	$(MAKE) docker
+	$(docker_build) --platform $(DOCKER_PLATFORMS) -t $(DOCKER_IMAGE):$(VERSION) $(docker_latest) --push .
+
+# 发布后回读（release.yml 调用）：推送前记下 latest 的指向，推送后回读版本、匿名可取与 latest。
+docker-latest:
+	@IMAGE_REPO=$(DOCKER_IMAGE) scripts/docker-readback.sh latest
+
+docker-readback:
+	@$(check_image_version)
+	IMAGE_REPO=$(DOCKER_IMAGE) VERSION='$(VERSION)' CHANNEL=$(RELEASE_CHANNEL) ARCHES='$(HUB_LINUX_ARCHES)' scripts/docker-readback.sh verify '$(LATEST_BEFORE)'
