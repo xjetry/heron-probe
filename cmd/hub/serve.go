@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -68,8 +69,12 @@ func runServe(args []string) error {
 			}
 		}
 	}()
-	return runServeWith(shutdown, args, clock.Real(), slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	return runServeWith(shutdown, args, clock.Real(), newServeLogger(os.Stderr))
 }
+
+// newServeLogger 是 serve 的日志装配。启动行的文本格式有外部读者（scripts/e2e.sh 按整秒读字段），
+// 测试经同一个函数装配日志，才钉得住读者实际看到的格式。
+func newServeLogger(w io.Writer) *slog.Logger { return slog.New(slog.NewTextHandler(w, nil)) }
 
 // runServeWith 由调用方拥有停止信号；后台循环与请求排空完成后才能关闭它们共用的库。
 func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *slog.Logger) (result error) {
@@ -153,9 +158,15 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	defer startLoop(alerts.RunProbeEvaluation)()
 	defer startLoop(notifier.Run)()
 
+	// 监听在 net.Listen 返回时已建立，连接先进内核队列。runServe 装配的文本 handler 在 Info 返回前
+	// 同步写完 stderr，所以先写启动行再开始 Serve，拿到任何响应的调用方都已能在日志里读到它。
+	// 离线告警在 ttl 与节点宽限期中较大者之后至多再等一个 offline_sweep 才触发（NextOffline 两者都要满足），
+	// 恢复在首个被接受的上报之后至多等一个 offline_sweep；渠道失败可重试且存储正常时，投递另有至多
+	// delivery_retry_wait 的重试等待，存储失败时的 worker 级退避不在其内（见 alert.DeliveryRetryWait）；
+	// scripts/e2e.sh 从这一行读这些量推出告警等待上限。
+	log.Info("hub listening", "listen", listener.Addr().String(), "ttl", ttl, "interval", svc.Interval(), "offline_sweep", alert.OfflineSweepEvery, "delivery_retry_wait", alert.DeliveryRetryWait(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "retention_alert_events", retention.AlertEvents, "timezone", loc.String(), "version", version)
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(listener) }()
-	log.Info("hub listening", "listen", listener.Addr().String(), "ttl", ttl, "interval", svc.Interval(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "retention_alert_events", retention.AlertEvents, "timezone", loc.String(), "version", version)
 
 	select {
 	case <-stopCtx.Done():

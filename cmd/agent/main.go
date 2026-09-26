@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -27,6 +28,14 @@ import (
 var version = "dev"
 
 const defaultConfig = "/etc/probe-agent/config.json"
+
+// requestTimeout 是单次 RPC 的上限：hub 不应答时一次上报至多挂这么久才进入退避。
+// initialInterval 是收到 hub 第一个响应之前的上报间隔，也是这段时间里 client.Backoff 的基数。
+// 两者都写进启动行，scripts/e2e.sh 据此推出告警恢复的等待上限。
+const (
+	requestTimeout  = 15 * time.Second
+	initialInterval = 10 * time.Second
+)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -66,7 +75,7 @@ func runRegister(args []string) error {
 	if *name == "" {
 		*name, _ = os.Hostname()
 	}
-	c := probev1connect.NewAgentServiceClient(&http.Client{Timeout: 15 * time.Second}, strings.TrimRight(*hub, "/"))
+	c := probev1connect.NewAgentServiceClient(&http.Client{Timeout: requestTimeout}, strings.TrimRight(*hub, "/"))
 	resp, err := c.Register(context.Background(), connect.NewRequest(&probev1.RegisterRequest{Key: *key, Name: *name}))
 	if err != nil {
 		return fmt.Errorf("register: %w", err)
@@ -95,7 +104,7 @@ func runRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	log := newLogger(os.Stderr)
 	ic := prober.NewICMP(clk, log)
 	// defer 逆序执行，先停止调度再关闭 socket，避免仍在运行的任务入队 icmp closed。
 	defer ic.Close()
@@ -108,21 +117,29 @@ func runRun(args []string) error {
 	defer sched.Stop()
 	r := &client.Runner{
 		Collector: col,
-		Client:    probev1connect.NewAgentServiceClient(&http.Client{Timeout: 15 * time.Second}, cfg.Hub),
+		Client:    probev1connect.NewAgentServiceClient(&http.Client{Timeout: requestTimeout}, cfg.Hub),
 		Token:     cfg.Token,
 		Clock:     clk,
 		Log:       log,
-		Interval:  10 * time.Second,
+		Interval:  initialInterval,
 		Prober:    sched,
 		Results:   queue,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	log.Info("agent starting", "hub", cfg.Hub, "version", version)
+	logStarting(log, cfg.Hub)
 	if err := r.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil
+}
+
+// newLogger 是 run 的日志装配。启动行的文本格式有外部读者（scripts/e2e.sh 按整秒读字段），测试经同一个
+// 函数装配日志，才钉得住读者实际看到的格式。
+func newLogger(w io.Writer) *slog.Logger { return slog.New(slog.NewTextHandler(w, nil)) }
+
+func logStarting(log *slog.Logger, hub string) {
+	log.Info("agent starting", "hub", hub, "request_timeout", requestTimeout, "initial_interval", initialInterval, "version", version)
 }
 
 func splitList(s string) []string {

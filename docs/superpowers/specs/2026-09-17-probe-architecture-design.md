@@ -50,7 +50,7 @@
 ### 3.1 仓库布局
 
 ```
-proto/probe/v1/       agent.proto / admin.proto / public.proto / types.proto / access.proto
+proto/probe/v1/       agent.proto / admin.proto / public.proto / query.proto（管理与公开共用的历史查询类型）/ types.proto / access.proto / cache.proto（cache_max_age_s 方法选项）
 proto/SKILL.md        agent 入口卡片；与 proto 源文件一同由 proto/embed.go 嵌入 hub（§5.6）
 gen/                  buf 生成的 Go 代码，入库
 cmd/hub/  cmd/agent/
@@ -63,8 +63,9 @@ internal/hub/
   probe/     探测任务、分配与版本号
   alert/     巡检、状态机、通知渠道与投递队列
   auth/      管理员会话、API token、节点 token、注册窗口、可信代理
+  ratelimit/ 按来源的令牌桶与挂载点中间件（来源键经 auth.ClientIP 与 auth.SourceKey，IPv6 按 /64）；Register 与 PublicService 共用
   api/       AdminService / PublicService 实现
-  web/       嵌入的前端产物 + 静态目录替换
+  web/       嵌入的面板与公开页两份产物 + 静态目录替换，三者共用只服务普通文件的核心
 internal/agent/
   collect/   host.go（Host 接口）/ procfs.go / darwinraw.go / platform_{linux,darwin,other}.go
   prober/    icmp / tcp 探测执行与调度
@@ -82,7 +83,7 @@ deploy/               install.sh、systemd 单元、OpenRC 服务脚本（§14�
 |---|---|---|
 | `probe.v1.AgentService` | agent | 节点 bearer token（`Register` 用注册窗口 key） |
 | `probe.v1.AdminService` | 管理面板；agent 与脚本 | 会话 cookie；标为只读的方法另接受 API token（§5.6） |
-| `probe.v1.PublicService` | 公开页、第三方主题 | 无，按来源 IP 限流 |
+| `probe.v1.PublicService` | 公开页、第三方主题 | 无，按来源键限流（§5.3） |
 
 鉴权由"服务挂载时绑定的拦截器"承载，不在方法内逐个检查：新增方法无法漏掉鉴权，因为不存在未绑定拦截器的挂载点。
 
@@ -93,6 +94,7 @@ deploy/               install.sh、systemd 单元、OpenRC 服务脚本（§14�
 ### 3.3 方法清单
 
 - `AgentService`：`Register`、`Report`。
+- GET 准入由装配期的显式检查承载：`probe.v1` 的每个方法接受 GET 当且仅当声明了正的 `cache_max_age_s`，遍历包内全部服务，任一方向不符 hub 起不来。
 - `AdminService`：`Login`、`Logout`；节点 `ListNodes`、`CreateNode`、`UpdateNode`、`DeleteNode`、`RotateNodeToken`、`ReorderNodes`；注册窗口 `OpenRegisterWindow`、`CloseRegisterWindow`、`GetRegisterWindow`；数据 `GetSnapshot`、`QueryMetrics`、`QueryProbes`、`GetTraffic`、`AdjustTraffic`；探测 `ListProbeTasks`、`SaveProbeTask`、`DeleteProbeTask`；告警 `ListAlertRules`、`SaveAlertRule`、`DeleteAlertRule`、`ListAlertEvents`、`GetAlertDeliveryError`、`ListNotifyChannels`、`SaveNotifyChannel`、`DeleteNotifyChannel`、`TestNotifyChannel`；设置 `GetSettings`、`UpdateSettings`、`GetStorageStats`；API token `ListApiTokens`、`CreateApiToken`、`DeleteApiToken`；自描述 `GetApiReference`。
 - `PublicService`：`GetSite`、`GetSnapshot`、`QueryMetrics`、`QueryProbes`。后两者只对 `public = true` 的节点应答，对其余节点与不存在的节点返回同一个 `NotFound`。
 
@@ -218,16 +220,16 @@ agent 与 hub 不同时升级。hub 必须接受旧 agent 的上报（缺失的 
 
 ### 5.2 注册窗口
 
-管理员在面板开启注册窗口：生成一次性 key，带截止时间与可注册节点数上限。窗口关闭与 key 错误返回同一响应。失败计数按来源 IP 独立于登录失败计数：批量安装时用了过期 key 是配置失误而不是对面板的攻击，共用计数会把运维者自己锁在登录页外。只有窗口开启且 key 错误才计数；窗口关闭时没有可猜的秘密，计数只会误伤与他人共用出口地址的运维者。
+管理员在面板开启注册窗口：生成一次性 key，带截止时间与可注册节点数上限。窗口关闭与 key 错误返回同一响应。失败计数按来源键（§5.3）独立于登录失败计数：批量安装时用了过期 key 是配置失误而不是对面板的攻击，共用计数会把运维者自己锁在登录页外。只有窗口开启且 key 错误才计数；窗口关闭时没有可猜的秘密，计数只会误伤与他人共用出口地址的运维者。
 
-`Register` 是 `AgentService` 唯一的匿名方法，因此按来源 IP 令牌桶限速（桶容量 30、每秒补充 1，超限返回 `ResourceExhausted`），与 `PublicService` 的按 IP 限流同一原则。限速在窗口裁决之前生效：窗口关闭时匿名请求也到不了写协程，否则任何人都能用几十字节的请求体让分钟刷出与 facts 落盘排在自己的事务之后。批量安装脚本遇到 `ResourceExhausted` 按退避重试即可。
+`Register` 是 `AgentService` 唯一的匿名方法，因此按来源键令牌桶限速（桶容量 30、每秒补充 1，超限返回 `ResourceExhausted`），与 `PublicService` 的限流同一原则。限速在 connect 解码之前（解码失败的请求也计数；挂载点上按路径的 HTTP 中间件，窗口失败计数用它算出的同一个来源地址）生效：窗口关闭时匿名请求也到不了写协程，否则任何人都能用几十字节的请求体让分钟刷出与 facts 落盘排在自己的事务之后。批量安装脚本遇到 `ResourceExhausted` 按退避重试即可。
 
 ### 5.3 管理员
 
 - 单管理员。密码用 argon2id 存储，通过 `probe-hub passwd` 在 hub 主机上交互设置；没有经网络的首次设置页，也就没有"谁先访问谁占有"的窗口。
 - 管理员表为空时登录一律失败。空表的语义是"无人可登录"而不是"无需认证"，由登录路径上的显式检查承载。
 - 会话 token 为 32 字节随机数，库中只存 SHA-256，带绝对过期与空闲过期。cookie：`HttpOnly`、`SameSite=Strict`，`Secure` 由可信代理转发的协议决定。修改密码即清空全部会话；API token 不随之吊销（§5.6）。
-- 登录失败按来源 IP 锁定。
+- 登录失败按来源键锁定。来源键由 `auth.SourceKey` 统一归一化（IPv4 按单个地址，IPv4 映射地址先还原；IPv6 按 /64——一台主机通常拥有整个 /64，逐地址计等于不计），登录锁定、注册窗口失败计数与两处限流（§5.2、§10）共用同一个键。
 - 跨站请求伪造由以下几条各自独立的事实约束，不指定其中哪一条是"主要防线"：会话 cookie 为 `SameSite=Strict`；hub 不下发任何 CORS 允许头；`AdminService` 不把任何方法标为无副作用（因而不接受 GET）；Connect 处理器对 `application/json` 与 `application/proto` 之外的 `Content-Type` 拒绝服务，而浏览器的跨站"简单请求"发不出这两种类型。最后一条是对 connect-go 行为的断言，列入 §13 并由 §12 的测试钉住。
 
 ### 5.4 TLS 与可信代理
@@ -236,7 +238,7 @@ hub 只监听明文 HTTP，TLS 由反代（Caddy / nginx / CDN）终止，hub �
 
 - `--listen` 默认 `127.0.0.1:8080`。监听非 loopback 地址时启动日志告警：此时任何人都能绕过反代直连并自带转发头。
 - `--timezone` 是 IANA 时区名，默认取 hub 进程的本地时区；只用于 §7 流量周期的重置日判定与面板文案，不参与任何时长计算。本地时区的名字按 `TZ`、再按 `/etc/localtime` 符号链接的目标路径里 `zoneinfo/` 之后的部分解析（在所测的 Alpine 3.21、Debian 12、Ubuntu 24.04、Rocky Linux 9 上按各自的标准方式设置时区后都是符号链接，Alpine 指向 `/etc/zoneinfo/`）；不读 `/etc/timezone`——RHEL 系没有它，Debian 与 Ubuntu 用 `timedatectl` 改时区后它仍是旧值。`/etc/localtime` 是复制出来的普通文件时（常见于 Dockerfile）取不到名字，退回 UTC 并告警。
-- `--trusted-proxies` 显式给出 CIDR 列表。只有 TCP 对端地址落在列表内的请求，其 `X-Forwarded-For` / `X-Forwarded-Proto` 才被采信。空列表 = 不信任任何转发头、一律用 TCP 对端地址，是收紧方向。hub 不从请求头推断自己是否在反代之后。
+- `--trusted-proxies` 显式给出 CIDR 列表。只有 TCP 对端地址落在列表内的请求，其 `X-Forwarded-For` / `X-Forwarded-Proto` 才被采信。`X-Forwarded-For` 可能有多行（HAProxy 的 `option forwardfor` 把真实地址另起一行追加），读取时把全部字段行按出现顺序合并后再取值，只读第一行会让键取自客户端伪造的那一行。空列表 = 不信任任何转发头、一律用 TCP 对端地址，是收紧方向。hub 不从请求头推断自己是否在反代之后。
 - hub 不生成自己的对外地址：面板里安装命令的 hub 地址取浏览器当前的 origin（§10），所以没有 `--site-url`，也不存在从 `Host` 头推断对外地址的问题。
 
 ### 5.5 为什么不做 mTLS
@@ -365,7 +367,7 @@ schema 版本记在 `PRAGMA user_version`，迁移为按版本号顺序执行的
 
 **读写接口**：`GetTraffic` 返回全部节点的总量、周期量、`period_start` 与下次重置时刻；`GetSnapshot` 的每个节点状态也带周期量与总量，实时视图不需要第二条轮询。`AdjustTraffic(node_id, period_rx, period_tx)` 把当前周期的两个用量覆盖为给定值（把面板对齐到云商计费口径的那一次操作），总量按同一差值同步调整且不低于 0；基线不动，之后的增量照常叠加；内存条目与库在同一把锁下同步写入，不经过 10 秒刷出。
 
-agent 默认汇总除回环与虚拟网卡外的全部网卡（Linux：`lo`、`docker*`、`veth*`、`br-*`、`virbr*`；darwin：`lo*`、`gif*`、`stf*`、`utun*`、`ipsec*`、`bridge*`、`vmenet*`、`awdl*`、`llw*`、`anpi*`、`ap*`——回环，以及字节同时计在物理网口上或不出本机的接口），可用 `--net-include` / `--net-exclude` 覆盖。进程数两个平台都按进程计：Linux 数 `/proc` 下的进程目录（不用 `/proc/loadavg` 第 4 字段——那是含线程的调度实体数），darwin 用 `proc_listallpids`。
+agent 默认汇总除回环与虚拟网卡外的全部网卡（Linux：`lo`、`docker*`、`veth*`、`br-*`、`virbr*`；darwin：`lo*`、`gif*`、`stf*`、`utun*`、`ipsec*`、`bridge*`、`vmenet*`、`awdl*`、`llw*`、`anpi*`、`ap*`——回环，以及字节同时计在物理网口上或不出本机的接口），可用 `--net-include` / `--net-exclude` 覆盖。进程数两个平台都按进程计：Linux 数 `/proc` 下的进程目录（不用 `/proc/loadavg` 第 4 字段——那是含线程的调度实体数），darwin 用 `proc_listallpids`。`/proc` 以 `hidepid=2` 挂载时非 root 的 agent 只看得到自己的进程：同一次目录列表里必须有名为 `1` 的进程目录，没有就让进程数缺失并记日志，不上报一个错的小数。合计型读数（连接数、流量、进程数）的口径都是要么正确要么缺失：成员读不出就整个缺失，不给缺一半的合计；网卡在列出与读取之间消失（ENOENT）只略过该网卡。
 
 ## 8. 探测
 
@@ -420,9 +422,9 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 
 ## 10. 前端与公开页
 
-- `web/` 内两个 Vite 入口：`/admin/*` 管理面板，`/` 公开页，各自打包。lint 规则禁止公开页入口引用 `AdminService` 的生成客户端；这是卫生措施，安全边界在 §3.2 的服务端挂载。
+- `web/` 内两个 Vite 入口：`/admin/*` 管理面板，`/` 公开页，各自打包。测试扫描公开入口的 import、构建产物按描述符前缀核对，禁止公开页引用 `AdminService` 的生成客户端；这是卫生措施，安全边界在 §3.2 的服务端挂载。
 - 实时数据用轮询（默认 2 秒）。`PublicService.GetSnapshot` 一次返回全部公开节点的实时状态，hub 对序列化结果缓存 1 秒：匿名访客数量不影响 hub 的序列化开销。
-- `--public-dir <dir>` 用指定静态目录替代内置公开页，未命中文件时回落到该目录的 `index.html`。`/admin` 与 RPC 路径的路由优先级更高，替换目录无法遮蔽它们。文件访问经 `os.Root`，不可越出目录、不跟随指向目录外的符号链接。
+- `--public-dir <dir>` 用指定静态目录替代内置公开页，未命中文件时回落到该目录的 `index.html`。`/admin` 与 RPC 路径的路由优先级更高，替换目录无法遮蔽它们。文件访问经 `os.Root`，不可越出目录、不跟随指向目录外的符号链接。目录与面板同源：里面的脚本能读面板、也能带着来访管理员的会话调管理接口，所以只放与 hub 二进制同等可信的内容（flag 帮助写明）。
 - 外观设置（明暗、主色、logo、标题、自定义 CSS）存于 `setting`，经 `PublicService.GetSite` 下发并以 CSS 变量应用。只接受 CSS，不接受 JS 或 HTML；需要改结构的人使用 `--public-dir`。
 - 管理面板的 API token 页：列表显示名称、创建时间、最后使用时间；创建后明文只显示一次；删除需确认；可下载入口卡片（§5.6）。
 - 注册窗口开启后，面板在 key 旁给出一行安装命令（curl 与 wget 各一条）。hub 地址取浏览器当前的 origin，并注明 agent 若经另一地址访问 hub 需替换；hub 为正式版本（`hub_version` 是带 `v` 前缀的合法 semver，与节点落后判定用同一个解析）时，脚本取自该版本的 release、命令带 `--version <hub_version>`（经 `GetSnapshotResponse.hub_version` 下发），装上的 agent 与 hub 同版本；开发构建取最新 release 的脚本、不带 `--version`，并提示将安装最新 release。命令区域在 `hub_version` 到达之前不渲染。
@@ -430,13 +432,13 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 
 公开页与 `PublicService` 的细节：
 
-- 内容：总览是节点卡片（名称、在线、系统与架构、CPU、内存、磁盘、网速、运行时长、本周期流量），节点页是历史图表（指标与探测，时间范围选择与面板同一组件）。图表组件与面板共用；公开入口不得引用 `AdminService` 的生成代码，由测试扫描公开入口的 import 钉住。
-- 消息：`PublicSnapshot`（`now`、`report_interval_ms`、`nodes`）；`PublicNode`（id、名称、在线、最近上报、排序、`PublicFacts`、`PublicMetrics`、`Traffic`）。`PublicFacts` 只有系统、架构、CPU 型号、核数、虚拟化——不给主机名、内核版本、agent 版本、ICMP 可用性；`PublicMetrics` 与 `Metrics` 同字段但没有 `boot_id`。`QueryMetrics` 与 `QueryProbes` 复用管理端的请求与响应类型。把节点标为公开即公开它的探测目标：`QueryProbes` 返回任务的种类与目标，否则图表无从辨认。
-- 限流：按来源 IP 令牌桶，桶容量 60、每秒补充 10，超限 `ResourceExhausted`，与 `Register` 的限速同一实现（§5.2）。
-- 缓存：`GetSnapshot` 的序列化结果按编码（codec、压缩）缓存 1 秒，缓存的是响应字节而不是消息。GET 响应的 `Cache-Control`：快照 `max-age=1`、历史查询 `max-age=60`、站点配置 `max-age=300`；POST 响应不带缓存头。
-- 设置：`setting` 表是键值表；`GetSettings` 为只读口径、`UpdateSettings` 仅会话。字段与上限：标题不超过 64 个字符；明暗为 `auto`、`light`、`dark` 之一；主色为 `#rrggbb`；logo 为 `data:` URL，图片类型限 png、jpeg、webp、svg，不超过 128 KiB；自定义 CSS 不超过 64 KiB，含 `</` 即拒绝（它能跳出注入点的 `<style>`）。校验错误写明字段、违反的约束与期望取值。`GetSite` 下发这五项，公开页以 CSS 变量应用，自定义 CSS 放在其后。
-- 静态服务：内置公开页与面板用同一套 CSP；`--public-dir` 只加 `X-Content-Type-Options: nosniff` 与 `frame-ancestors 'none'`，不限制脚本与外部资源——目录由运维放置，严格 CSP 会让第三方主题的字体与图片失效。两者都不列目录；`assets/` 下未命中返回 404，其余回落 `index.html`；自定义目录一律 `no-cache`。未构建前端时 `/` 与面板一样返回"前端未构建"的说明。
-- `GetStorageStats`（只读口径）返回库文件大小与各表行数，与 `probe-hub stats` 同一来源。
+- 内容：总览是节点卡片（名称、在线、系统与架构、CPU、内存、磁盘、网速、运行时长、本周期流量），节点页是历史图表（指标与探测，时间范围选择与面板同一组件）。图表组件与面板共用；公开入口不得引用 `AdminService` 的生成代码，由测试扫描公开入口的 import 钉住，构建后再按描述符前缀对产物做一次性 grep 核对（不是常驻检查）；依赖方向只禁止公开到管理，面板可以引用公开页的常量。配色用 `light-dark()` 加 `color-scheme`，站点设置的明暗经 `html[data-theme]` 压过系统设置，图表颜色由浏览器解析成 rgb 再交给 uPlot（canvas 不认 `light-dark()`）；浏览器下限 Chrome 123、Firefox 120、Safari 17.5。公开入口的产物在 `internal/hub/web/dist-public`。
+- 消息：`PublicSnapshot`（`now`、`report_interval_ms`、`nodes`）；`PublicNode`（id、名称、在线、最近上报、排序、`PublicFacts`、`PublicMetrics`、`Traffic`）。`PublicFacts` 只有系统、架构、CPU 型号、核数、虚拟化——不给主机名、内核版本、agent 版本、ICMP 可用性；`PublicMetrics` 与 `Metrics` 同字段但没有 `boot_id`。两者沿用源消息的字段号，不公开的号连名带号 `reserved`——要公开 `hostname` 这类字段必须先删掉 `reserved` 行，是一个显式动作；值由投影按字段名从源消息复制，字段集合由公开消息自己声明（`Metrics` 以后加字段不会自动公开），构造时逐字段核对名字、类型、基数与 presence，任一不符即 panic。`QueryMetrics` 与 `QueryProbes` 复用管理端的请求与响应类型（定义在 `query.proto`：`public.proto` 若 import `admin.proto`，protoc-gen-es 会让公开包带上 `AdminService` 的描述符）；`GetSite` 直接返回 `PublicSite`、`GetSnapshot` 直接返回 `PublicSnapshot`，第三方主题拿到的 JSON 顶层就是快照本身。把节点标为公开即公开它正在探测的目标：`ProbeSeries` 带任务的种类与目标，公开端只给当前分配给该节点的任务打标签（历史里出现、现已撤下的任务留空——它改成内网目标后从未被该节点探测过，不在公开范围内），管理端按任务当前配置标注、已删除的任务留空；面板图例也用序列自带的标签。缓存上界以 `cache_max_age_s` 方法选项写在 proto 里，与 `probe.v1.access` 同一口径：proto 是单一事实源，第三方主题在 proto 注释里就能看到。
+- 限流：按来源键令牌桶，桶容量 60、每秒补充 10，超限 `ResourceExhausted`，与 `Register` 的限速同一实现（§5.2，`internal/hub/ratelimit`）。两处都是挂载点上的 HTTP 中间件而不是拦截器（`Register` 按路径恰为 `/probe.v1.AgentService/Register` 匹配，`Report` 不进桶；公开服务是整个挂载点都经过它）：解码先于拦截器，拦截器看不到解码失败的请求；公开服务还要包在快照缓存外面，缓存命中在 connect 处理器之前应答。只有这样每个请求（含解码失败的）都计数。来源键：IPv4 按单个地址，IPv6 按 /64（一台主机通常拥有整个 /64，逐地址计键等于不限流）；超限的 429 同样带 `no-store`。hub 在反向代理之后而没有配 `--trusted-proxies` 时，全部访客共用代理地址的一个桶（每个打开的公开页每 2 秒轮询一次即 0.5 次/秒，补充 10 次/秒：超过 20 个打开的页面后消耗持续多于补充，30 个页面时净流出 5 次/秒、60 的桶约 12 秒耗尽后出现 429）——这是部署配置问题，写在 flag 帮助与 README 的反代一节，不改限流。
+- 缓存：`GetSnapshot` 的序列化结果按编码缓存 1 秒，缓存的是响应字节而不是消息：只缓存规范形态的请求（GET 不带正文——connect 对带正文的 GET 回 415，缓存不得替它应答；POST 为规范的 connect unary），键是 {GET 或 POST, codec, 协商出的压缩}，其余形态直通 connect；协商压缩只读 `Accept-Encoding` 的第一行，与 connect 一致；节点改为私有后公开快照里最多还能看到它约 2 秒（hub 缓存 1 秒加下游 `max-age=1`）。公开页只在加载时取 `GetSite`，已打开的页面刷新后才看到外观改动，刷新时浏览器还可能再用最多 5 分钟的缓存。GET 响应的 `Cache-Control`：快照 `max-age=1`、历史查询 `max-age=60`、站点配置 `max-age=300`；失败响应带 `no-store`（节点改回公开后浏览器不会继续用缓存的 NotFound）；POST 响应不带缓存头。
+- 设置：`setting` 表是键值表；`GetSettings` 为只读口径、`UpdateSettings` 仅会话。字段与上限：标题不超过 64 个字符；明暗为 `auto`、`light`、`dark` 之一；主色为 `#rrggbb`；logo 为 `data:` URL，图片类型限 png、jpeg、webp、svg，不超过 128 KiB；自定义 CSS 不超过 64 KiB，含 `</` 即拒绝（它能跳出注入点的 `<style>`）。校验错误写明字段、违反的约束与期望取值；任一项不合约束整次更新不写入。logo 只接受 `data:<type>;base64,<data>` 这一种写法（type 全小写、不带参数；data 逐字节核对标准 base64 字母表后 Strict 解码——宽松解析与浏览器解析一旦不一致，白名单就能被绕过）。CSS 不清洗、按字节原样存，只查字面 `</`（它本身不含字母，一条就覆盖全部大小写变体；CSS 转义与 HTML 实体在 `<style>` 的 RAWTEXT 里都不解码，不拒绝）。表结构 `setting(key TEXT PRIMARY KEY, value TEXT NOT NULL)`，不用 `WITHOUT ROWID`（值可达 128 KiB，超出 SQLite 对无 rowid 表的建议行大小）；键 `site.title`、`site.theme`、`site.accent_color`、`site.logo`、`site.custom_css` 是持久标识；从未保存过时明暗为 `auto`、其余为空串（空标题即内置标题）。标题有两道限：清洗前不超过 1024 字节，去掉控制字符与首尾空白后不超过 64 个字符。管理请求的解码预算由这些上限推出：`maxLogoBytes + 6 × maxCSSBytes + 6 × maxTitleBytes + 4 KiB`（CSS 与标题的每个字节在 JSON 里最坏转义成 6 字节，4 KiB 留给字段名；多余的 JSON 空白不在预算内）＝ 534528 字节，`AdminService` 只此一个预算——解码先于鉴权拦截器，所以 `AdminService` 全部过程的匿名请求读取上限随之变大但仍有界（`Register` 在 `AgentService` 上，用 ingest 自己的 256 KiB 上限，不受影响）；按路径分预算要在 connect 外再加一层与解压后上限配合的读者，不值。`GetSite` 下发这五项，公开页以 CSS 变量应用，自定义 CSS 放在其后。
+- 静态服务：内置公开页与面板用同一套 CSP；`--public-dir` 只加 `X-Content-Type-Options: nosniff` 与 `frame-ancestors 'none'`，不限制脚本与外部资源——目录由运维放置，严格 CSP 会让第三方主题的字体与图片失效。面板、内置公开页与 `--public-dir` 共用一个只服务普通文件的核心：目录、FIFO、设备一律当作不存在，路径任一段以 `.` 开头的名字也当作不存在（`.git/config`、`.env` 是运维放目录时最常见的泄漏；`.well-known/` 因此也不服务，ACME http-01 之类由反代完成），因此任何来源都不列目录、也不会在特殊文件上阻塞（打开带 `O_NONBLOCK`）；`assets/` 下未命中返回 404（`/admin/assets` 因此是 404 而不是重定向），其余回落 `index.html`；自定义目录一律 `no-cache`，每个请求重新 `os.OpenRoot`，目录被原子替换后下一个请求就读到新内容；启动时核对其 `index.html` 是普通文件，否则 `serve` 在打开数据库之前报错。`/` 就是公开页，不再重定向到 `/admin/`。未构建前端时 `/` 与面板一样返回"前端未构建"的说明。
+- `GetStorageStats`（只读口径）返回库大小与各表行数，与 `probe-hub stats` 同一来源：表名取自 `sqlite_master` 而不是手写清单（手写清单曾漏掉三张表）；库大小是逻辑大小 `page_count × page_size`——WAL 下主文件大小滞后于内容，逻辑大小等于检查点之后的主文件大小。CLI 先一行 `db_bytes: N`，再逐表 `name: rows` 按表名升序。行数是聚合值，API token 可读：看到 `api_token`、`admin_session` 的行数不构成列出 token（§5.6 禁的是枚举与吊销其他 token）。
 
 第三方主题 = 调 `PublicService` 的静态站点，框架自选；Connect unary 即 HTTP POST + JSON，直接 `fetch` 可用。
 
@@ -458,8 +460,8 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 
 - 从用户可见入口测：`ingest`、`api` 的测试经真实 Connect 处理器 + `httptest` + 生成的客户端，不直接调内部函数。
 - 横切不变式用自动枚举覆盖，新增成员自动入测：
-  - 从生成的服务描述符枚举全部 RPC，逐个无凭据调用，断言 `Unauthenticated`；仅 `PublicService` 的方法在白名单内。
-  - 遍历全部 `Public*` 消息的字段，与测试内的显式允许列表比对；往公开消息加字段必须同时改这份列表。
+  - 从生成的服务描述符枚举全部 RPC，逐个无凭据调用，断言 `Unauthenticated`；白名单恰好是 `PublicService` 的四个方法，白名单内的另断言不是 401（证明确实可匿名到达）。`Register` 与 `Login` 不在白名单：用空请求调用时各自的方法体本就返回 `Unauthenticated`，放进白名单只会让测试变弱。
+  - 从 `PublicService` 各方法的响应出发遍历可达的全部消息（含复用的 `Traffic`、`QueryMetricsResponse` 等非 `Public*` 类型）的字段，与测试内的显式允许列表比对；往公开消息加字段必须同时改这份列表，列表里有而响应到不了的消息同样报错。
   - 从描述符枚举 `AdminService` 全部方法：每个都声明了 `probe.v1.access`；持有效 API token 逐个调用，`ACCESS_READ` 放行、其余 `PermissionDenied`；吊销后下一个请求即 `Unauthenticated`。两条凭据互不回退由交叉用例钉住：有效 cookie 加无效 bearer 被拒，有效 bearer 加无效 cookie 调只读方法放行，有效 cookie 加 `Authorization: Basic` 走会话路径放行。
 - 多处同守的不变式每处各写断言：冻结不变式（写协程拒绝水位之前的 1m 写入 / 上卷不越过 `now − ROLLUP_LAG` / ingest 拒收超龄结果 / 三个常量关系的启动期断言）、探测硬限制（hub 校验 / agent 丢弃）。
 - 钉住 §5.3 对 connect-go 的行为断言：带有效会话 cookie、`Content-Type: text/plain` 向 `AdminService` 的写方法 POST，断言被拒绝且无副作用；同一请求改用 GET 同样被拒绝。
@@ -498,7 +500,7 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 - systemd 单元使用静态 `User=` 并加固（`NoNewPrivileges=`、`ProtectSystem=strict` 等），默认带 `AmbientCapabilities=CAP_NET_RAW` 与 `CapabilityBoundingSet=CAP_NET_RAW`：裸机 Debian 的 `ping_group_range` 默认关闭（§13 第 2 项），没有这项能力时 ICMP 探测只能回报 error。用户由安装脚本创建并拥有配置文件，OpenRC 侧以同一用户运行，单元用静态 `User=` 并逐项写出加固，不经 `DynamicUser=` 隐式引入；`DynamicUser=` 会隐含的 `RestrictSUIDSGID=` 在单元里明写。monitor 提交 `85f6702` 记录过未开 nesting 的 LXC 容器里 `DynamicUser=` 的单元拒绝启动（226/NAMESPACE）；2026-09-26 在 Debian 12 bookworm-backports 的 Incus、容器内 systemd 252（252.39-1~deb12u2）、`security.nesting=false` 的容器里实测，静态 `User=` 与 `DynamicUser=` 的单元都能启动，该记录在此环境不成立；它出自哪种 LXC 配置未定位，不作为选型理由。采集读不到某个文件时只让对应字段缺失并记日志，上报照常，因而加固项若遮蔽了采集要读的 `/proc`、`/sys` 路径不会以失败显形；由 §12 的真机对照验收承载。
 - init 系统支持 systemd 与 OpenRC。判定：`/run/systemd/system` 存在为 systemd；否则 `/sbin/openrc-run` 存在且可执行为 OpenRC（`/run/openrc` 表示已启动）；两者都不是时安装脚本报错并列出支持的 init，不静默降级（容器里两者通常都不存在）。OpenRC 服务用 `supervisor=supervise-daemon`、`command_user` 为固定系统用户、`capabilities="^cap_net_raw"`，与 systemd 的 `AmbientCapabilities` 等价（2026-09-25 在 Alpine 3.21 / OpenRC 0.55.1 真机上实测：ping_group_range 关闭时授予该能力 ICMP 可用，去掉即不可用）。`output_log` 与 `error_log` 的文件必须在启动前建好并交给运行用户，由服务脚本的 `start_pre` 建立，只把这两个文件交给运行用户，日志目录保持 root 属主、不递归改属主（服务用户能增删目录项时，root 按路径做的改属主之类的操作，对象可以被它换成别的文件；所以 root 不在服务用户控制的目录里操作），每次启动都成立而不只在安装时建一次：supervise-daemon 降权后才打开它们，打不开时子进程秒退、反复拉起，而 `rc-service status` 仍显示 started。agent 异常退出后两种 init 都无限次重启、每次间隔 5 秒：systemd 用 `Restart=on-failure`、`RestartSec=5` 与 `StartLimitIntervalSec=0`（默认 100 ms 间隔加 10 秒内 5 次的上限，会让一次短暂故障把单元永久留在 failed）；OpenRC 用 supervise-daemon 的对应设置，取值以实测为准。
 - 安装脚本用 POSIX sh，兼容 busybox，按实际存在的工具分支，不假设任何单一工具（所测的基础容器镜像与机器镜像之间、以及各发行版之间，工具集都不相同）：先建同名组（`groupadd --system`，没有时 busybox 的 `addgroup -S` 或 Debian 的 `addgroup --system`），再以它为主组建用户：优先 `useradd --system -g`，没有时 busybox 的 `adduser -S -D -H -G`、Debian 的 `adduser --system --no-create-home --ingroup`（busybox 的 adduser 不指定组时会把用户放进 `nogroup`，而 OpenRC 的 `command_user` 与配置文件属主都写 `probe-agent`），建完一律回查主组 `id -gn`，不信退出码——实测 Debian 的 perl 版 adduser 收到 busybox 风格的参数时打印用法、不建用户，却返回 0。下载用 curl 或 wget，按实际存在的那个走（所测基础容器里 Alpine 只有 wget、Rocky 只有 curl、Debian 与 Ubuntu 两者都没有；所测机器镜像里四个都有 curl），两者都没有就报错说明依赖；下载地址为 https 时 curl 限定请求与重定向都只走 https（wget 没有对应开关）。能力授予交给 init，不依赖 setcap（所测的 Alpine 与 Debian 机器镜像、以及 Alpine、Debian、Ubuntu 基础容器里都没有）。所测的 Debian 与 Ubuntu 基础容器不带 CA 证书（机器镜像都带），CA 是否存在按文件探测而不是按发行版名判断；缺失时安装脚本先装 `ca-certificates`，判据是下载地址或 hub 地址任一为 https——默认下载地址就是 https，只看 hub 地址会让下载先失败。
-- macOS agent：采集在 `CGO_ENABLED=0` 下实现（§13 第 1 项的实验定案）：`x/sys/unix` 的 sysctl 取启动标识（`kern.bootsessionuuid`）、内存总量、负载、swap、连接数（`net.inet.tcp.pcbcount`/`net.inet.udp.pcbcount`）、网卡计数器（`net.link.generic.ifdata`）与 facts；`statfs` 取磁盘；`clock_gettime(CLOCK_MONOTONIC)` 取运行时长；purego 调 libSystem 取逐 CPU tick、VM 统计、页大小与进程数。采集分层为平台取原始读数的 `Host` 与平台无关的差分、过滤与 `used ≤ total` 检查；darwin 的字节布局解析不带 build tag、Linux 上可测，只有系统调用层带 darwin 约束并引用 purego，其依赖不链入 Linux 二进制。darwin 二进制按平台约定动态链接 libSystem，静态门禁只查 Linux 产物。产物 `probe-agent_darwin_<arch>.tar.gz`（二进制、launchd plist）。安装脚本 `install-macos.sh` 以 root 运行：检测架构 → 用 `dscl` 建 `_probe-agent` 用户与组（uid/gid 从 499 向下取空闲号：Apple 逐版从 300 向上追加系统账户，升级会替换低号段的第三方账户）→ 下载并用 `shasum -a 256` 校验 → 停止已装的 LaunchDaemon 并确认进程退出 → 替换二进制 → 没有配置时 `probe-agent register` → 配置属主同 Linux（`/etc/probe-agent`，目录 root 属主、组 `_probe-agent`、0750，文件 0600）→ 写 `/Library/LaunchDaemons/xyz.probe.agent.plist`（`UserName` 为该用户、`KeepAlive`、`ThrottleInterval` 5 秒——两次拉起的最小间隔，进程跑满 5 秒后退出会立即拉起，`KeepAlive` 为真时 0 退出也拉起，与 Linux 的重启间隔同量级、日志在 `/Library/Logs/probe-agent/`）→ `launchctl enable` 后 `bootstrap system`（enable 清掉可能残留的禁用覆盖）→ 确认进程活着（`ps -axo uid=,pid=,comm=` 按有效 uid 与可执行路径，macOS 没有 /proc；只按 uid 不够：launchd 会以该 uid 派生 cfprefsd、trustd 之类的辅助进程，停止确认与启动确认都要把它们排除）。是否发 `bootout` 看作业是否已载入 system 域（`launchctl print`），不看 plist 文件在不在：launchd 按已载入的作业管进程。架构按 `hw.optional.arm64` 判定再看 `uname -m`（Rosetta 终端里 `uname -m` 报 x86_64）。不装 CA：macOS 自带 curl 与系统信任库。重跑即升级，`--uninstall`、`--purge` 语义同 Linux。没有 macOS 虚拟机可用：脚本逻辑用桩测试，真机验收由人在 Mac 上执行，脚本随附检查清单。面板的安装命令只给 Linux 的两条，macOS 的写在 README。CI 含 macOS runner 跑 agent 的测试。
+- macOS agent：采集在 `CGO_ENABLED=0` 下实现（§13 第 1 项的实验定案）：`x/sys/unix` 的 sysctl 取启动标识（`kern.bootsessionuuid`）、内存总量、负载、swap、连接数（`net.inet.tcp.pcbcount`/`net.inet.udp.pcbcount`）、网卡计数器（`net.link.generic.ifdata`）与 facts；`statfs` 取磁盘；`clock_gettime(CLOCK_MONOTONIC)` 取运行时长；purego 调 libSystem 取逐 CPU tick、VM 统计、页大小与进程数。采集分层为平台取原始读数的 `Host` 与平台无关的差分、过滤与 `used ≤ total` 检查；darwin 的字节布局解析不带 build tag、Linux 上可测，只有系统调用层带 darwin 约束并引用 purego，其依赖不链入 Linux 二进制。darwin 二进制按平台约定动态链接 libSystem，静态门禁只查 Linux 产物。产物 `probe-agent_darwin_<arch>.tar.gz`（二进制、launchd plist）。安装脚本 `install-macos.sh` 以 root 运行：检测架构 → 用 `dscl` 建 `_probe-agent` 用户与组（uid/gid 从 499 向下取空闲号：Apple 逐版从 300 向上追加系统账户，升级会替换低号段的第三方账户）→ 下载并用 `shasum -a 256` 校验 → 停止已装的 LaunchDaemon 并确认进程退出 → 替换二进制 → 没有配置时 `probe-agent register` → 配置属主同 Linux（`/etc/probe-agent`，目录 root 属主、组 `_probe-agent`、0750，文件 0600）→ 写 `/Library/LaunchDaemons/xyz.probe.agent.plist`（`UserName` 为该用户、`KeepAlive`、`ThrottleInterval` 5 秒——两次拉起的最小间隔，进程跑满 5 秒后退出会立即拉起，`KeepAlive` 为真时 0 退出也拉起，与 Linux 的重启间隔同量级、日志在 `/Library/Logs/probe-agent/`：目录属 root:wheel 0755，服务用户不能在其中放条目，launchd 无论以什么身份打开日志都不会被链接引到别处；两个日志文件每次安装预建并交给服务用户 0640；安装脚本先把目录交给 root、`chmod -N` 去掉 ACL（服务用户曾为属主时可能加过允许项，数字 chmod 与 chown 都不去掉它），再检查文件是不存在或链接数为 1 的普通文件；预建、属主、权限这些依赖外部条件的操作全部在停服务之前完成，停服务之后只剩换二进制、写 plist、bootstrap。文件被删后若 launchd 以服务用户身份打开会反复 EX_CONFIG，重跑安装恢复；launchd 以什么身份打开由真机清单判别，不在代码里假设）→ `launchctl enable` 后 `bootstrap system`（enable 清掉可能残留的禁用覆盖）→ 确认进程活着（`ps -axo uid=,pid=,comm=` 按有效 uid 与可执行路径，macOS 没有 /proc；只按 uid 不够：launchd 会以该 uid 派生 cfprefsd、trustd 之类的辅助进程，停止确认与启动确认都要把它们排除）。是否发 `bootout` 看作业是否已载入 system 域（`launchctl print`），不看 plist 文件在不在：launchd 按已载入的作业管进程。架构按 `hw.optional.arm64` 判定再看 `uname -m`（Rosetta 终端里 `uname -m` 报 x86_64）。不装 CA：macOS 自带 curl 与系统信任库。重跑即升级，`--uninstall`、`--purge` 语义同 Linux。没有 macOS 虚拟机可用：脚本逻辑用桩测试，真机验收由人在 Mac 上执行，脚本随附检查清单。面板的安装命令只给 Linux 的两条，macOS 的写在 README。CI 含 macOS runner 跑 agent 的测试。
 - hub Docker 镜像：`ghcr.io/xjetry/probe-hub:<version>`，预发布不打 `latest`；`FROM scratch`，只含静态二进制（`/usr/local/bin/probe-hub`，让 `docker exec … probe-hub` 按名字可执行：`/` 不在容器默认 PATH 里）、CA 证书（通知出站 HTTPS 要用）、非 root 用户、属于该用户的空 `/data` 与 1777 的 `/tmp`（SQLite 的排序溢出、临时表与建索引要写临时文件，没有 `/tmp` 时报 `disk I/O error`，小查询不触发）；时区数据已嵌入二进制。根文件系统由 `scripts/checkimage` 逐条目核对，多出或缺少任一条即失败。数据卷 `/data`，默认参数 `serve --db /data/probe.db --listen 0.0.0.0:8080`；容器里监听非 loopback 是预期的，启动告警照旧，反代与 `--trusted-proxies` 由部署者配。管理员密码经 `docker exec -i … probe-hub passwd --db /data/probe.db` 设置；不带 `-i` 时容器内 stdin 立即 EOF，`passwd` 单独报没有输入。镜像的构建与推送都在 Makefile（构建器是按 digest 固定的 BuildKit，本地与发布同一版本），release 流水线不另用 build-push 类 action；镜像先于 GitHub Release 推送并回读：先只推版本 tag，回读时逐平台拉回、冒烟并把导出的根文件系统交给 `scripts/checkimage` 核对（核对的是 registry 上实际存在的内容，不是构建时的中间产物），正式版本再把 `latest` 指向已回读的 digest 并回读 `latest`——`latest` 只会指向回读通过的镜像；回读里"取不到"与"读取失败"分开判定，读取失败不放行；同组 release 运行串行；任何一步失败重跑 job 即可；带构建元数据（`+`）的 tag 不能成为 Docker tag，这类 tag 的发布整体失败、什么都不发布；新建的 ghcr 包首次发布须手工设为公开。`make docker` 在本地构建、核对并冒烟（起容器、`/admin/` 返回 200 的面板页而不是"未构建"说明、`passwd` 可执行）。
 - 升级 = 重跑安装脚本（见上）。hub 版本经 `GetSnapshotResponse.hub_version` 下发：面板据此生成与 hub 同版本的安装命令（§10），并显示各节点 agent 版本、标出落后于 hub 的节点：按 semver 2.0 优先级比较（预发布低于对应的正式版，构建元数据不参与），任一方不是带 `v` 前缀的合法 semver 时不标。
 

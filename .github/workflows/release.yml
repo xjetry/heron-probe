@@ -2,13 +2,26 @@ name: release
 on:
   push:
     tags: ["v*"]
+# contents: write 建 GitHub Release；packages: write 推镜像（镜像名见 Makefile 的 DOCKER_IMAGE）。
 permissions:
   contents: write
+  packages: write
+# latest 是共享指针：回读与移动 latest 都假设推送到回读之间没有别的写者，同组的运行串行。同组里已在排队的
+# 运行会被后来者替换并取消，被取消的 tag 需要手工重跑。
+concurrency:
+  group: release
+  cancel-in-progress: false
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
+      # 不把 token 留在工作区的 .git/config：它带 packages: write，而 make ci、make release 会运行 pnpm 依赖、
+      # Go 模块与 buf 等第三方代码。之后需要 token 的步骤各自经输入拿到（login-action 的 password、gh 的
+      # GH_TOKEN；buf、setup-go、setup-node 的输入默认值也会拿到它），没有一步依赖工作区里的凭据。
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
@@ -24,14 +37,40 @@ jobs:
         with:
           setup_only: true
       - run: make ci
-      # 与本地验收同一构建入口；版本注入与静态门禁都在 make release 里。
+      # 与本地验收同一构建入口；版本注入、版本号守卫与静态门禁都在 make release 里。
       - run: make release VERSION="$GITHUB_REF_NAME"
-      # 去掉构建元数据（+ 及之后）后仍含 - 就是预发布，不能成为 releases/latest。
+      # 回读要在 amd64 运行器上运行 arm64 镜像。构建本身不需要它：Dockerfile 唯一的 RUN 所在阶段固定在
+      # --platform=$BUILDPLATFORM，最终阶段没有 RUN。binfmt 容器以特权运行，等同运行器上的 root，步骤顺序
+      # 不提供隔离；它是否可信由 image 的 digest 固定与 action 的 SHA 固定承载。镜像不经 Actions 缓存。
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+        with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+          cache-image: false
+      # registry 由 Makefile 的 DOCKER_IMAGE 推出，登录与推送不会指向两个不同的 registry。
+      - id: registry
+        run: |
+          host=$(make -s docker-registry)
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ${{ steps.registry.outputs.host }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      # 镜像先于 GitHub Release 发布，gh release create 是最后一步：之前任何一步失败都能原样重跑本 job
+      # （同一 tag 重推即覆盖）；反过来，Release 已建而镜像失败时，重跑会停在 release 已存在。
+      # 推送只推版本 tag；latest 只在回读通过后按回读过的 digest 移动（make docker-promote）。
+      - run: make docker-push VERSION="$GITHUB_REF_NAME"
+      - run: make docker-readback VERSION="$GITHUB_REF_NAME"
+      - run: make docker-promote VERSION="$GITHUB_REF_NAME"
+      # prerelease 与镜像是否移动 latest 读同一个判定（make release-channel）。
       - run: |
-          extra=""
-          case "${GITHUB_REF_NAME%%+*}" in
-            *-*) extra=--prerelease ;;
+          channel=$(make -s release-channel VERSION="$GITHUB_REF_NAME")
+          case "$channel" in
+            prerelease) extra=--prerelease ;;
+            stable) extra= ;;
+            *) echo "make release-channel printed '$channel'" >&2; exit 1 ;;
           esac
-          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "$GITHUB_REF_NAME" $extra
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "$GITHUB_REF_NAME" ${extra:+"$extra"}
         env:
           GH_TOKEN: ${{ github.token }}

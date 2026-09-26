@@ -89,6 +89,11 @@ func shellSingle(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// errNoPasswordInput：stdin 不是终端，且在读到任何字节之前就结束了。docker exec 不带 -i 时，
+// 容器里的 stdin 是 /dev/null，宿主上的管道根本没有接进来；这时报"密码太短"会让人去查一个
+// 从来没输入过的密码，所以单独报，并写明该加的参数。
+var errNoPasswordInput = errors.New("no password on stdin: it is not a terminal and ended before any input (with docker exec, add -i to pipe the password in, or -it to type it)")
+
 // readPassword 在终端上不回显地读两遍并比对；stdin 不是终端时读一行——供容器
 // 初始化与脚本使用，仍不经网络。
 func readPassword(in *os.File, prompt io.Writer) (string, error) {
@@ -97,6 +102,11 @@ func readPassword(in *os.File, prompt io.Writer) (string, error) {
 		line, err := bufio.NewReader(in).ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return "", err
+		}
+		// ReadString 只在 EOF 之前一个字节都没读到时返回空串；空行至少带着 '\n'，
+		// 那是输入了一个空密码，留给 SetPassword 按长度拒绝。
+		if line == "" {
+			return "", errNoPasswordInput
 		}
 		return strings.TrimRight(line, "\r\n"), nil
 	}
