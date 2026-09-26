@@ -175,7 +175,7 @@ func (s *Store) writeAsync(fn func(*sql.Tx) error, done func(error)) {
 	}
 }
 
-const schemaVersion = 7
+const schemaVersion = 8
 
 func migrate(db *sql.DB) error {
 	var v int

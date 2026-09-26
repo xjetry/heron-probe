@@ -319,9 +319,8 @@ func TestDeleteNodeRemovesTraffic(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	counts, err := s.Counts(t.Context())
-	if err != nil || counts["traffic"] != 1 {
-		t.Fatalf("traffic count before delete = %d, want 1 (%v)", counts["traffic"], err)
+	if n := rowCounts(t, s)["traffic"]; n != 1 {
+		t.Fatalf("traffic count before delete = %d, want 1", n)
 	}
 	if err := s.DeleteNode(t.Context(), id); err != nil {
 		t.Fatal(err)

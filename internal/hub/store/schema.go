@@ -86,8 +86,8 @@ const ddlTraffic = `CREATE TABLE traffic (
   updated_at INTEGER NOT NULL
 )`
 
-// metricTables 按级别从细到粗；建库、DeleteNode 与 Counts 共用此清单，
-// 避免新增级别后遗漏删除或计数；已有库仍需对应的增量迁移。
+// metricTables 按级别从细到粗；建库与 DeleteNode 共用此清单，避免新增级别后遗漏删除；
+// 已有库仍需对应的增量迁移。存储统计按 sqlite_master 列表，不读它。
 var metricTables = []string{"metric_1m", "metric_5m", "metric_1h"}
 
 // schemaStatements 是当前版本的完整 DDL：空库直接建到当前版本，不重放历史。
@@ -100,7 +100,7 @@ func schemaStatements() []string {
 	for _, t := range probeTables {
 		out = append(out, probeDDL(t))
 	}
-	return append(append(out, alertStatements()...), ddlAPIToken)
+	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting)
 }
 
 // metricDDL 从描述表生成分钟表。主键顺序 (node_id, ts) 即唯一查询路径，
@@ -303,6 +303,13 @@ const ddlAPIToken = `CREATE TABLE api_token (
   created_at INTEGER NOT NULL,
   -- NULL 表示从未使用。只供展示：距已落库值满一分钟才刷新。
   last_used_at INTEGER
+)`
+
+// setting 是全站设置的键值表（公开页外观等）。值可达 128 KiB（logo 的 data: URL），不用 WITHOUT ROWID：
+// 那种表把整行放进主键 B 树，SQLite 文档建议其行不超过页大小的约 1/20。
+const ddlSetting = `CREATE TABLE setting (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 )`
 
 func alertStatements() []string {

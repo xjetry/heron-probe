@@ -35,7 +35,7 @@ func TestOfflineCommandsDoNotCreateAMissingDatabase(t *testing.T) {
 		{"token revoke --all", func(db string) error {
 			return runTokenWith([]string{"revoke", "--all", "--db", db}, &out, &errOut)
 		}},
-		{"stats", func(db string) error { return runStats([]string{"--db", db}) }},
+		{"stats", func(db string) error { return runStatsWith([]string{"--db", db}, io.Discard) }},
 		{"node list", func(db string) error { return runNode([]string{"list", "--db", db}) }},
 		{"node delete", func(db string) error { return runNode([]string{"delete", "--id", "1", "--db", db}) }},
 		{"node rotate-token", func(db string) error { return runNode([]string{"rotate-token", "--id", "1", "--db", db}) }},

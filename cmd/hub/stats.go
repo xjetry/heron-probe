@@ -4,10 +4,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"sort"
+	"io"
+	"os"
 )
 
-func runStats(args []string) error {
+func runStats(args []string) error { return runStatsWith(args, os.Stdout) }
+
+// runStatsWith 打印库的逻辑大小与每张表的行数；数据来自 store.StorageStats，与 AdminService.GetStorageStats 同源。
+func runStatsWith(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("stats", flag.ContinueOnError)
 	db := fs.String("db", "probe.db", "SQLite database path")
 	if err := fs.Parse(args); err != nil {
@@ -18,17 +22,13 @@ func runStats(args []string) error {
 		return err
 	}
 	defer st.Close()
-	counts, err := st.Counts(context.Background())
+	stats, err := st.StorageStats(context.Background())
 	if err != nil {
 		return err
 	}
-	tables := make([]string, 0, len(counts))
-	for t := range counts {
-		tables = append(tables, t)
-	}
-	sort.Strings(tables)
-	for _, t := range tables {
-		fmt.Printf("%s: %d\n", t, counts[t])
+	fmt.Fprintf(out, "db_bytes: %d\n", stats.DBBytes)
+	for _, t := range stats.Tables {
+		fmt.Fprintf(out, "%s: %d\n", t.Name, t.Rows)
 	}
 	return nil
 }

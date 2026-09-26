@@ -54,6 +54,6 @@ commands:
   token list|revoke         list or revoke API tokens (effective immediately)
   node create|list|delete|rotate-token
   window open|close|show    manage the registration window
-  stats                     row counts per table
+  stats                     database size (page_count × page_size) and row counts per table
   version`)
 }

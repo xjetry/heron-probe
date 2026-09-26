@@ -118,6 +118,20 @@ func (h *harness) report(t *testing.T, tok string, m *probev1.Metrics) error {
 
 func codeOf(err error) connect.Code { return connect.CodeOf(err) }
 
+// rowCounts 按表名取行数，来源与 GetStorageStats、probe-hub stats 相同。
+func rowCounts(t *testing.T, st *store.Store) map[string]int64 {
+	t.Helper()
+	stats, err := st.StorageStats(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]int64{}
+	for _, tr := range stats.Tables {
+		out[tr.Name] = tr.Rows
+	}
+	return out
+}
+
 func TestEveryAdminProcedureRejectsAnonymousCalls(t *testing.T) {
 	h := newHarness(t, "")
 	services := probev1.File_probe_v1_admin_proto.Services()
@@ -244,10 +258,7 @@ func TestCrossSiteRequestShapesAreRejectedWithoutSideEffects(t *testing.T) {
 		t.Fatalf("JSON control sent %d requests", calls.Load())
 	}
 	calls.Store(0)
-	before, err := h.store.Counts(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := rowCounts(t, h.store)
 	services := probev1.File_probe_v1_admin_proto.Services()
 	for i := 0; i < services.Len(); i++ {
 		service := services.Get(i)
@@ -277,10 +288,7 @@ func TestCrossSiteRequestShapesAreRejectedWithoutSideEffects(t *testing.T) {
 	if calls.Load() != 0 {
 		t.Fatalf("cross-site TestNotifyChannel sent %d requests", calls.Load())
 	}
-	after, err := h.store.Counts(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
+	after := rowCounts(t, h.store)
 	if !reflect.DeepEqual(before, after) {
 		t.Fatalf("cross-site changed counts: before=%v after=%v", before, after)
 	}
@@ -589,10 +597,7 @@ func TestDeletedNodeRejectsLateStorageWrites(t *testing.T) {
 	if n, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: h.clk.Now().Unix(), Bucket: b}}}); err != nil || n != 1 {
 		t.Errorf("late metric write: rejected=%d err=%v", n, err)
 	}
-	counts, err := h.store.Counts(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	counts := rowCounts(t, h.store)
 	if counts["node_facts"] != 0 || counts["metric_1m"] != 0 {
 		t.Fatalf("late writes recreated deleted history: %v", counts)
 	}

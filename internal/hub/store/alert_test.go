@@ -359,19 +359,6 @@ func TestNodeOfflineGraceRoundTrip(t *testing.T) {
 	}
 }
 
-func TestCountsIncludesAlertTables(t *testing.T) {
-	s, _ := open(t)
-	got, err := s.Counts(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, table := range []string{"alert_rule", "alert_rule_node", "alert_rule_channel", "notify_channel", "alert_state", "alert_event", "alert_delivery"} {
-		if n, ok := got[table]; !ok || n != 0 {
-			t.Fatalf("Counts[%s]=%d exists=%v", table, n, ok)
-		}
-	}
-}
-
 func TestSaveAlertRulePrunesStatesWithScope(t *testing.T) {
 	s, ids, _, _ := alertFixture(t)
 	a := saveRule(t, s, AlertRule{Kind: KindOffline, Enabled: true, NodeIDs: ids})

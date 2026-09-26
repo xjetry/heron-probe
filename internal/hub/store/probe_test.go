@@ -137,10 +137,7 @@ func TestProbeWriterRejectsRowsBeforeProbeWatermarkOnly(t *testing.T) {
 			if err != nil || n != 1 {
 				t.Fatalf("rejected=%d err=%v, want 1", n, err)
 			}
-			counts, err := s.Counts(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
+			counts := rowCounts(t, s)
 			wantMetric, wantProbe := int64(1), int64(0)
 			if frozen == "5m" {
 				wantMetric, wantProbe = 0, 1
@@ -329,10 +326,7 @@ func TestDeleteNodeRemovesProbeRowsAndAssignments(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertTasks(t, s, uint64(s.clk.Now().Unix()), []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{b}}})
-	counts, err := s.Counts(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	counts := rowCounts(t, s)
 	for _, table := range append(append([]string{}, probeTables...), "probe_task", "probe_task_node") {
 		if counts[table] != 1 {
 			t.Fatalf("%s count=%d, want 1", table, counts[table])
@@ -386,10 +380,7 @@ func TestDeleteProbeTaskKeepsHistoryAndNeverReusesID(t *testing.T) {
 	if err != nil || next.Id <= saved.Id {
 		t.Fatalf("task id reused: next=%v old=%v err=%v", next, saved, err)
 	}
-	counts, err := s.Counts(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	counts := rowCounts(t, s)
 	for _, table := range probeTables {
 		if counts[table] != 1 {
 			t.Fatalf("task deletion erased %s history", table)
@@ -411,9 +402,9 @@ func TestMinuteBatchRollsBackBothFamilies(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "probe rejected") {
 		t.Fatalf("batch error=%v", err)
 	}
-	counts, err := s.Counts(ctx)
-	if err != nil || counts["metric_1m"] != 0 || counts["probe_1m"] != 0 {
-		t.Fatalf("partial batch committed: counts=%v err=%v", counts, err)
+	counts := rowCounts(t, s)
+	if counts["metric_1m"] != 0 || counts["probe_1m"] != 0 {
+		t.Fatalf("partial batch committed: counts=%v", counts)
 	}
 }
 

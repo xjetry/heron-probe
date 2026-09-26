@@ -26,6 +26,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	5: execAll(alertStatementsV5),
 	6: execAll([]string{ddlAPITokenV6}),
 	7: migrateDeliveryFailure,
+	8: execAll([]string{ddlSettingV8}),
 }
 
 func execAll(stmts []string) func(*sql.Tx) error {
@@ -241,3 +242,9 @@ func migrateDeliveryFailure(tx *sql.Tx) error {
 	}
 	return nil
 }
+
+// v8：全站设置的键值表。
+const ddlSettingV8 = `CREATE TABLE setting (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+)`

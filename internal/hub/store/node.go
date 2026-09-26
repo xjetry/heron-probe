@@ -242,23 +242,6 @@ func (s *Store) TokenHashes(ctx context.Context) (map[[32]byte]int64, error) {
 	return out, rows.Err()
 }
 
-// Counts 返回各表行数，供运维核对与端到端验收。
-func (s *Store) Counts(ctx context.Context) (map[string]int64, error) {
-	tables := append([]string{"node", "node_facts", "register_window", "admin", "admin_session", "traffic"}, metricTables...)
-	tables = append(tables, probeTables...)
-	tables = append(tables, "probe_task", "probe_task_node")
-	tables = append(tables, "alert_rule", "alert_rule_node", "alert_rule_channel", "notify_channel", "alert_state", "alert_event", "alert_delivery")
-	out := map[string]int64{}
-	for _, table := range tables {
-		var n int64
-		if err := s.r.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&n); err != nil {
-			return nil, err
-		}
-		out[table] = n
-	}
-	return out, nil
-}
-
 // nodeExistsTx 与从属行写入共用事务，由单写协程保证删除后排队的写入不能重建孤儿行。
 func nodeExistsTx(tx *sql.Tx, id int64) (bool, error) {
 	var exists bool
