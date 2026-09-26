@@ -110,6 +110,15 @@ const (
 	// AdminServiceTestNotifyChannelProcedure is the fully-qualified name of the AdminService's
 	// TestNotifyChannel RPC.
 	AdminServiceTestNotifyChannelProcedure = "/probe.v1.AdminService/TestNotifyChannel"
+	// AdminServiceGetSettingsProcedure is the fully-qualified name of the AdminService's GetSettings
+	// RPC.
+	AdminServiceGetSettingsProcedure = "/probe.v1.AdminService/GetSettings"
+	// AdminServiceUpdateSettingsProcedure is the fully-qualified name of the AdminService's
+	// UpdateSettings RPC.
+	AdminServiceUpdateSettingsProcedure = "/probe.v1.AdminService/UpdateSettings"
+	// AdminServiceGetStorageStatsProcedure is the fully-qualified name of the AdminService's
+	// GetStorageStats RPC.
+	AdminServiceGetStorageStatsProcedure = "/probe.v1.AdminService/GetStorageStats"
 	// AdminServiceListApiTokensProcedure is the fully-qualified name of the AdminService's
 	// ListApiTokens RPC.
 	AdminServiceListApiTokensProcedure = "/probe.v1.AdminService/ListApiTokens"
@@ -184,6 +193,13 @@ type AdminServiceClient interface {
 	DeleteNotifyChannel(context.Context, *connect.Request[v1.DeleteNotifyChannelRequest]) (*connect.Response[v1.DeleteNotifyChannelResponse], error)
 	// 向已保存的渠道同步发送测试消息；不可重试失败返回 FailedPrecondition，可重试返回 Unavailable，文本为错误原文。
 	TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error)
+	// 公开页外观：标题、明暗、主色、logo 与自定义 CSS，经 PublicService.GetSite 对外下发。
+	GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error)
+	// 整体替换外观的五项并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
+	// 约束与期望取值，什么都不写入。
+	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
+	// 库的逻辑大小与每张表的行数，与 probe-hub stats 同一来源。
+	GetStorageStats(context.Context, *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error)
 	// API token 的元数据；明文只在 CreateApiToken 的响应里出现一次，hub 只存哈希。
 	ListApiTokens(context.Context, *connect.Request[v1.ListApiTokensRequest]) (*connect.Response[v1.ListApiTokensResponse], error)
 	// 建一个只读 API token，以 Authorization: Bearer <token> 调用 ACCESS_READ 方法。
@@ -373,6 +389,24 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("TestNotifyChannel")),
 			connect.WithClientOptions(opts...),
 		),
+		getSettings: connect.NewClient[v1.GetSettingsRequest, v1.GetSettingsResponse](
+			httpClient,
+			baseURL+AdminServiceGetSettingsProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("GetSettings")),
+			connect.WithClientOptions(opts...),
+		),
+		updateSettings: connect.NewClient[v1.UpdateSettingsRequest, v1.UpdateSettingsResponse](
+			httpClient,
+			baseURL+AdminServiceUpdateSettingsProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("UpdateSettings")),
+			connect.WithClientOptions(opts...),
+		),
+		getStorageStats: connect.NewClient[v1.GetStorageStatsRequest, v1.GetStorageStatsResponse](
+			httpClient,
+			baseURL+AdminServiceGetStorageStatsProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("GetStorageStats")),
+			connect.WithClientOptions(opts...),
+		),
 		listApiTokens: connect.NewClient[v1.ListApiTokensRequest, v1.ListApiTokensResponse](
 			httpClient,
 			baseURL+AdminServiceListApiTokensProcedure,
@@ -430,6 +464,9 @@ type adminServiceClient struct {
 	saveNotifyChannel     *connect.Client[v1.SaveNotifyChannelRequest, v1.SaveNotifyChannelResponse]
 	deleteNotifyChannel   *connect.Client[v1.DeleteNotifyChannelRequest, v1.DeleteNotifyChannelResponse]
 	testNotifyChannel     *connect.Client[v1.TestNotifyChannelRequest, v1.TestNotifyChannelResponse]
+	getSettings           *connect.Client[v1.GetSettingsRequest, v1.GetSettingsResponse]
+	updateSettings        *connect.Client[v1.UpdateSettingsRequest, v1.UpdateSettingsResponse]
+	getStorageStats       *connect.Client[v1.GetStorageStatsRequest, v1.GetStorageStatsResponse]
 	listApiTokens         *connect.Client[v1.ListApiTokensRequest, v1.ListApiTokensResponse]
 	createApiToken        *connect.Client[v1.CreateApiTokenRequest, v1.CreateApiTokenResponse]
 	deleteApiToken        *connect.Client[v1.DeleteApiTokenRequest, v1.DeleteApiTokenResponse]
@@ -576,6 +613,21 @@ func (c *adminServiceClient) TestNotifyChannel(ctx context.Context, req *connect
 	return c.testNotifyChannel.CallUnary(ctx, req)
 }
 
+// GetSettings calls probe.v1.AdminService.GetSettings.
+func (c *adminServiceClient) GetSettings(ctx context.Context, req *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error) {
+	return c.getSettings.CallUnary(ctx, req)
+}
+
+// UpdateSettings calls probe.v1.AdminService.UpdateSettings.
+func (c *adminServiceClient) UpdateSettings(ctx context.Context, req *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error) {
+	return c.updateSettings.CallUnary(ctx, req)
+}
+
+// GetStorageStats calls probe.v1.AdminService.GetStorageStats.
+func (c *adminServiceClient) GetStorageStats(ctx context.Context, req *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error) {
+	return c.getStorageStats.CallUnary(ctx, req)
+}
+
 // ListApiTokens calls probe.v1.AdminService.ListApiTokens.
 func (c *adminServiceClient) ListApiTokens(ctx context.Context, req *connect.Request[v1.ListApiTokensRequest]) (*connect.Response[v1.ListApiTokensResponse], error) {
 	return c.listApiTokens.CallUnary(ctx, req)
@@ -656,6 +708,13 @@ type AdminServiceHandler interface {
 	DeleteNotifyChannel(context.Context, *connect.Request[v1.DeleteNotifyChannelRequest]) (*connect.Response[v1.DeleteNotifyChannelResponse], error)
 	// 向已保存的渠道同步发送测试消息；不可重试失败返回 FailedPrecondition，可重试返回 Unavailable，文本为错误原文。
 	TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error)
+	// 公开页外观：标题、明暗、主色、logo 与自定义 CSS，经 PublicService.GetSite 对外下发。
+	GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error)
+	// 整体替换外观的五项并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
+	// 约束与期望取值，什么都不写入。
+	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
+	// 库的逻辑大小与每张表的行数，与 probe-hub stats 同一来源。
+	GetStorageStats(context.Context, *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error)
 	// API token 的元数据；明文只在 CreateApiToken 的响应里出现一次，hub 只存哈希。
 	ListApiTokens(context.Context, *connect.Request[v1.ListApiTokensRequest]) (*connect.Response[v1.ListApiTokensResponse], error)
 	// 建一个只读 API token，以 Authorization: Bearer <token> 调用 ACCESS_READ 方法。
@@ -841,6 +900,24 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("TestNotifyChannel")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceGetSettingsHandler := connect.NewUnaryHandler(
+		AdminServiceGetSettingsProcedure,
+		svc.GetSettings,
+		connect.WithSchema(adminServiceMethods.ByName("GetSettings")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceUpdateSettingsHandler := connect.NewUnaryHandler(
+		AdminServiceUpdateSettingsProcedure,
+		svc.UpdateSettings,
+		connect.WithSchema(adminServiceMethods.ByName("UpdateSettings")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceGetStorageStatsHandler := connect.NewUnaryHandler(
+		AdminServiceGetStorageStatsProcedure,
+		svc.GetStorageStats,
+		connect.WithSchema(adminServiceMethods.ByName("GetStorageStats")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceListApiTokensHandler := connect.NewUnaryHandler(
 		AdminServiceListApiTokensProcedure,
 		svc.ListApiTokens,
@@ -923,6 +1000,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceDeleteNotifyChannelHandler.ServeHTTP(w, r)
 		case AdminServiceTestNotifyChannelProcedure:
 			adminServiceTestNotifyChannelHandler.ServeHTTP(w, r)
+		case AdminServiceGetSettingsProcedure:
+			adminServiceGetSettingsHandler.ServeHTTP(w, r)
+		case AdminServiceUpdateSettingsProcedure:
+			adminServiceUpdateSettingsHandler.ServeHTTP(w, r)
+		case AdminServiceGetStorageStatsProcedure:
+			adminServiceGetStorageStatsHandler.ServeHTTP(w, r)
 		case AdminServiceListApiTokensProcedure:
 			adminServiceListApiTokensHandler.ServeHTTP(w, r)
 		case AdminServiceCreateApiTokenProcedure:
@@ -1050,6 +1133,18 @@ func (UnimplementedAdminServiceHandler) DeleteNotifyChannel(context.Context, *co
 
 func (UnimplementedAdminServiceHandler) TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.TestNotifyChannel is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.GetSettings is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.UpdateSettings is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) GetStorageStats(context.Context, *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.GetStorageStats is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) ListApiTokens(context.Context, *connect.Request[v1.ListApiTokensRequest]) (*connect.Response[v1.ListApiTokensResponse], error) {

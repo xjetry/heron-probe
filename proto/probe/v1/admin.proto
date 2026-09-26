@@ -131,6 +131,19 @@ service AdminService {
   rpc TestNotifyChannel(TestNotifyChannelRequest) returns (TestNotifyChannelResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
+  // 公开页外观：标题、明暗、主色、logo 与自定义 CSS，经 PublicService.GetSite 对外下发。
+  rpc GetSettings(GetSettingsRequest) returns (GetSettingsResponse) {
+    option (probe.v1.access) = ACCESS_READ;
+  }
+  // 整体替换外观的五项并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
+  // 约束与期望取值，什么都不写入。
+  rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
+  // 库的逻辑大小与每张表的行数，与 probe-hub stats 同一来源。
+  rpc GetStorageStats(GetStorageStatsRequest) returns (GetStorageStatsResponse) {
+    option (probe.v1.access) = ACCESS_READ;
+  }
   // API token 的元数据；明文只在 CreateApiToken 的响应里出现一次，hub 只存哈希。
   rpc ListApiTokens(ListApiTokensRequest) returns (ListApiTokensResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
@@ -160,6 +173,7 @@ message LogoutResponse {}
 message Node {
   int64 id = 1;
   string name = 2;
+  // 公开节点出现在 PublicService：实时状态、历史指标与探测（含任务的种类与目标）对匿名访客可见。
   bool public = 3;
   string note = 4;
   int32 sort_order = 5;
@@ -439,6 +453,39 @@ message DeleteNotifyChannelRequest { int64 id = 1; }
 message DeleteNotifyChannelResponse {}
 message TestNotifyChannelRequest { int64 id = 1; }
 message TestNotifyChannelResponse {}
+
+// 公开页外观。整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。
+message Settings {
+  // 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
+  // 空串表示公开页用内置标题。
+  string title = 1;
+  // auto（跟随访客的系统设置）、light 或 dark。
+  string theme = 2;
+  // 主色 #rrggbb，hub 保存为小写；空串表示内置配色。
+  string accent_color = 3;
+  // data:<type>;base64,<data>：type 为 image/png、image/jpeg、image/webp、image/svg+xml 之一（全小写、不带参数），
+  // data 为带填充的标准 base64，整串不超过 131072 字节；空串表示没有 logo。
+  string logo = 4;
+  // 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
+  string custom_css = 5;
+}
+message GetSettingsRequest {}
+message GetSettingsResponse { Settings settings = 1; }
+message UpdateSettingsRequest { Settings settings = 1; }
+// hub 实际保存的值：标题已清洗，主色已转小写。
+message UpdateSettingsResponse { Settings settings = 1; }
+
+message GetStorageStatsRequest {}
+message GetStorageStatsResponse {
+  // page_count × page_size：数据库的逻辑大小，等于 WAL 检查点之后主文件的大小；不含 -wal 与 -shm 文件。
+  uint64 db_bytes = 1;
+  // 每张表一项，按表名升序，含 hub 内部的簿记表。
+  repeated TableRows tables = 2;
+}
+message TableRows {
+  string name = 1;
+  uint64 rows = 2;
+}
 
 message ListAlertEventsRequest {
   // 0 表示全部节点。
