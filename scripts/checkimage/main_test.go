@@ -133,10 +133,10 @@ func TestRejectsEachDeviation(t *testing.T) {
 		mutate func([]file) []file
 		want   string
 	}{
-		{"tmp without the sticky bit", edit("linux_amd64/tmp/", func(f *file) { f.mode = 0o777 }), "linux_amd64/tmp: mode drwxrwxrwx, want dtrwxrwxrwx"},
+		{"tmp without the sticky bit", edit("linux_amd64/tmp/", func(f *file) { f.mode = 0o777 }), "linux_amd64/tmp: mode 0777, want 1777"},
 		{"no tmp", without("linux_arm64/tmp/"), "linux_arm64/tmp: missing"},
 		{"data owned by root", edit("linux_amd64/data/", func(f *file) { f.uid, f.gid = 0, 0 }), "linux_amd64/data: owner 0:0, want 65532:65532"},
-		{"binary not executable", edit("linux_amd64/usr/local/bin/probe-hub", func(f *file) { f.mode = 0o644 }), "linux_amd64/usr/local/bin/probe-hub: mode -rw-r--r--, want -rwxr-xr-x"},
+		{"binary not executable", edit("linux_amd64/usr/local/bin/probe-hub", func(f *file) { f.mode = 0o644 }), "linux_amd64/usr/local/bin/probe-hub: mode 0644, want 0755"},
 		{"a shell", with(reg("linux_amd64/bin/sh", 0o755, nil)), "linux_amd64/bin/sh: unexpected entry"},
 		{"binary for the other architecture", edit("linux_arm64/usr/local/bin/probe-hub", func(f *file) { f.body = fakeELF(elf.EM_X86_64) }), "linux_arm64/usr/local/bin/probe-hub: ELF machine EM_X86_64, want EM_AARCH64"},
 		{"binary that is not ELF", edit("linux_amd64/usr/local/bin/probe-hub", func(f *file) { f.body = []byte("#!/bin/sh\n") }), "linux_amd64/usr/local/bin/probe-hub: not an ELF file"},
@@ -145,6 +145,11 @@ func TestRejectsEachDeviation(t *testing.T) {
 		{"short CA bundle", edit("linux_amd64/etc/ssl/certs/ca-certificates.crt", func(f *file) { f.body = caBundle(1) }), "linux_amd64/etc/ssl/certs/ca-certificates.crt: 1 certificates, want at least 100"},
 		{"root account", edit("linux_amd64/etc/passwd", func(f *file) { f.body = []byte("root:x:0:0:root:/root:/bin/sh\n") }), "linux_amd64/etc/passwd: account"},
 		{"a second account", edit("linux_arm64/etc/passwd", func(f *file) { f.body = append(f.body, "root:x:0:0:root:/root:/bin/sh\n"...) }), "linux_arm64/etc/passwd: want exactly one account"},
+		{"root group", edit("linux_amd64/etc/group", func(f *file) { f.body = []byte("root:x:0:\n") }), "linux_amd64/etc/group: account"},
+		{"passwd with root as the primary group", edit("linux_amd64/etc/passwd", func(f *file) { f.body = []byte("probe-hub:x:65532:0:probe-hub:/nonexistent:/sbin/nologin\n") }), "linux_amd64/etc/passwd: account"},
+		{"passwd with an extra column", edit("linux_amd64/etc/passwd", func(f *file) { f.body = []byte("probe-hub:x:65532:65532:probe-hub:/nonexistent:/sbin/nologin:x\n") }), "linux_amd64/etc/passwd: malformed line"},
+		{"tmp as a regular file", edit("linux_amd64/tmp/", func(f *file) { f.name, f.typ = "linux_amd64/tmp", tar.TypeReg }), "linux_amd64/tmp: type regular file, want directory"},
+		{"passwd as a hard link", edit("linux_arm64/etc/passwd", func(f *file) { f.typ, f.body = tar.TypeLink, nil }), "linux_arm64/etc/passwd: type hard link, want regular file"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			problems := check(tarOf(t, tc.mutate(expectedLayout("amd64", "arm64"))), []string{"amd64", "arm64"})
@@ -156,6 +161,17 @@ func TestRejectsEachDeviation(t *testing.T) {
 			t.Fatalf("no problem contains %q; got %q", tc.want, problems)
 		})
 	}
+}
+
+// 读 tar 出错时 check 提前返回、跳过其余核对，这一条问题是损坏输入唯一的失败信号。
+func TestReportsAnUnreadableArchive(t *testing.T) {
+	problems := check(bytes.NewReader(bytes.Repeat([]byte("not a tar archive\n"), 64)), []string{"amd64"})
+	for _, p := range problems {
+		if strings.HasPrefix(p, "read tar: ") {
+			return
+		}
+	}
+	t.Fatalf("no problem starts with \"read tar: \"; got %q", problems)
 }
 
 func TestRunRejectsAnEmptyArchitectureList(t *testing.T) {
