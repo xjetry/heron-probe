@@ -7,9 +7,8 @@ import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Picks } from "../components/Picks";
 import { AdminService, AlertKind, ProbeMetric, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/probe/v1/admin_pb";
-import { ALERT_KINDS, PROBE_METRICS, labelOf, ruleCondition, statesOf, type RuleStates } from "../lib/alerts";
+import { ALERT_KINDS, PROBE_METRICS, labelOf, ruleCondition, statesOf, taskLabels, type RuleStates } from "../lib/alerts";
 import { ascending, withId } from "../lib/ids";
-import { taskLabels } from "../lib/probes";
 
 type Draft = {
   name: string; kind: AlertKind; enabled: boolean; allNodes: boolean; nodeIds: Set<bigint>; channelIds: Set<bigint>;

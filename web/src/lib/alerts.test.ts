@@ -1,8 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
-import { AlertDeliverySchema, AlertKind, AlertRuleSchema, AlertStateEntrySchema, ChannelKind, DeliveryFailure, DeliveryFailureSchema, ListProbeTasksResponseSchema, NotifyChannelSchema, ProbeMetric } from "../gen/probe/v1/admin_pb";
+import { AlertDeliverySchema, AlertKind, AlertRuleSchema, AlertStateEntrySchema, ChannelKind, DeliveryFailure, DeliveryFailureSchema, ListProbeTasksResponseSchema, NotifyChannelSchema, ProbeMetric, ProbeTaskDetailSchema } from "../gen/probe/v1/admin_pb";
 import { ProbeKind } from "../gen/probe/v1/types_pb";
-import { CHANNEL_KINDS, channelTarget, deliveryText, failureText, graceText, labelOf, ruleCondition, statesOf, transitionLabel } from "./alerts";
+import { CHANNEL_KINDS, channelTarget, deliveryText, failureText, graceText, labelOf, ruleCondition, statesOf, taskLabel, taskLabels, transitionLabel } from "./alerts";
+import { PROBE_KINDS } from "./probes";
+
+describe("taskLabel", () => {
+  const tasks = [create(ProbeTaskDetailSchema, { task: { id: 3n, kind: ProbeKind.TCP, target: "1.1.1.1:443", intervalS: 30, timeoutMs: 1000 }, nodeIds: [] })];
+  it("有任务时用类型与目标", () => expect(taskLabel(3n, tasks)).toBe("TCP 1.1.1.1:443"));
+  it("列表里没有该任务时退回编号", () => expect(taskLabel(7n, tasks)).toBe("任务 #7"));
+  it("任务列表未到时也退回编号", () => expect(taskLabel(3n, undefined)).toBe("任务 #3"));
+  it("类型标签与图例同一张表", () => {
+    for (const { kind, label } of PROBE_KINDS) {
+      expect(taskLabel(1n, [create(ProbeTaskDetailSchema, { task: { id: 1n, kind, target: "host" } })])).toBe(`${label} host`);
+    }
+  });
+});
+
+it.each([
+  { ids: [7n, 3n, 9n], labels: ["ICMP host #7", "ICMP host #3", "任务 #9"] },
+  { ids: [3n], labels: ["ICMP host"] },
+])("仅在当前列表内消歧同名标签 $ids", ({ ids, labels }) => {
+  const tasks = [3n, 7n].map((id) => create(ProbeTaskDetailSchema, { task: { id, kind: ProbeKind.ICMP, target: "host" } }));
+  expect(taskLabels(ids, tasks)).toEqual(labels);
+});
 
 describe("labelOf", () => {
   it("表内值给标签，表外值显示原值而不抛错", () => {

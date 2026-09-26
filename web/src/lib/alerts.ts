@@ -1,6 +1,6 @@
 import { AlertKind, ChannelKind, DeliveryFailure, ProbeMetric, type AlertDelivery, type AlertRule, type AlertStateEntry, type NotifyChannel, type ProbeTaskDetail } from "../gen/probe/v1/admin_pb";
 import { formatUnit } from "./format";
-import { taskLabel } from "./probes";
+import { disambiguate, kindLabel } from "./probes";
 
 type Entry<K> = { value: K; label: string };
 
@@ -40,6 +40,19 @@ export const PROBE_METRICS: readonly (Entry<ProbeMetric> & { unit: string })[] =
   { value: ProbeMetric.LOSS_PCT, label: "丢包率", unit: "percent" },
   { value: ProbeMetric.RTT_MS, label: "RTT 均值", unit: "ms" },
 ];
+
+// 调用方是告警规则页与 ruleCondition，任务取自管理端的任务列表；列表未到或查询失败时用编号，标签仍可辨认。
+// 被告警规则引用的任务不能删除（store 的 checkAlertReferences），所以这里的编号回退不代表任务已删除。
+// 历史图例不走这里：序列自带标注，用 probes.ts 的 seriesLabels。
+export function taskLabel(id: bigint, tasks: readonly ProbeTaskDetail[] | undefined): string {
+  const t = tasks?.find((d) => d.task?.id === id)?.task;
+  if (!t) return `任务 #${id}`;
+  return `${kindLabel(t.kind)} ${t.target}`;
+}
+
+export function taskLabels(ids: bigint[], tasks: readonly ProbeTaskDetail[] | undefined): string[] {
+  return disambiguate(ids.map((id) => taskLabel(id, tasks)), ids);
+}
 
 export function ruleCondition(rule: AlertRule, tasks: ProbeTaskDetail[] | undefined): string {
   if (rule.kind === AlertKind.OFFLINE) return "超过宽限期未上报";

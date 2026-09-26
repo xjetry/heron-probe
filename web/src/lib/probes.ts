@@ -1,6 +1,6 @@
 import type { AlignedData } from "uplot";
 import type { ProbeSample, ProbeSeries, QueryProbesResponse } from "../gen/probe/v1/query_pb";
-import { ProbeKind, type ProbeTask } from "../gen/probe/v1/types_pb";
+import { ProbeKind } from "../gen/probe/v1/types_pb";
 import { gridOf } from "./series";
 
 export type ProbeValue = (s: ProbeSample) => number | null;
@@ -36,19 +36,8 @@ export function taskIdsOf(resp: QueryProbesResponse): bigint[] {
   return resp.series.map((s) => s.taskId);
 }
 
-// 已删除任务的历史仍会返回；没有任务可查时用编号，让线仍有名字。
-// 只要求每项带可选的 task：任务页与告警规则页传 ProbeTaskDetail，本文件因此不依赖管理端的生成代码，公开页也能用。
-export function taskLabel(id: bigint, tasks: readonly { task?: ProbeTask }[] | undefined): string {
-  const t = tasks?.find((d) => d.task?.id === id)?.task;
-  if (!t) return `任务 #${id}`;
-  return `${kindLabel(t.kind)} ${t.target}`;
-}
-
-export function taskLabels(ids: bigint[], tasks: readonly { task?: ProbeTask }[] | undefined): string[] {
-  return disambiguate(ids.map((id) => taskLabel(id, tasks)), ids);
-}
-
-// 序列自带任务当前的种类与目标（hub 查询时从任务清单读出）；已删除的任务种类为 UNSPECIFIED，退回编号。
+// 序列自带任务的种类与目标（hub 查询时从任务清单读出）。kind 为 UNSPECIFIED 表示 hub 未标注，退回编号；
+// 未标注的原因见 ProbeSeries 的注释：管理端是任务已删除，公开端另含已从该节点撤下的任务，所以不能当成"已删除"显示。
 // hub 的任务准入只放行 ICMP 与 TCP（probelimit.CheckTask），所以其余种类只会是 UNSPECIFIED。
 export function seriesLabel(s: ProbeSeries): string {
   return s.kind === ProbeKind.UNSPECIFIED ? `任务 #${s.taskId}` : `${kindLabel(s.kind)} ${s.target}`;
@@ -58,8 +47,8 @@ export function seriesLabels(series: readonly ProbeSeries[]): string[] {
   return disambiguate(series.map(seriesLabel), series.map((s) => s.taskId));
 }
 
-// 同一窗口可有配置不同却同名的任务；只给碰撞的标签追加编号，保留常见图例的简短形式。
-function disambiguate(labels: string[], ids: readonly bigint[]): string[] {
+// 同一窗口可有配置不同却同名的任务；只给碰撞的标签追加编号，保留常见标签的简短形式。
+export function disambiguate(labels: string[], ids: readonly bigint[]): string[] {
   const counts = new Map<string, number>();
   for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1);
   return labels.map((label, i) => (counts.get(label)! > 1 ? `${label} #${ids[i]}` : label));

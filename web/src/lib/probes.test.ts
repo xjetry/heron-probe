@@ -1,17 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
-import { ProbeTaskDetailSchema } from "../gen/probe/v1/admin_pb";
 import { ProbeSeriesSchema, QueryProbesResponseSchema } from "../gen/probe/v1/query_pb";
 import { ProbeKind } from "../gen/probe/v1/types_pb";
-import { PROBE_KINDS, kindLabel, lossPercent, rttMeanMs, seriesLabels, taskIdsOf, taskLabel, taskLabels, toProbeAligned } from "./probes";
-
-it.each([
-  { ids: [7n, 3n, 9n], labels: ["ICMP host #7", "ICMP host #3", "任务 #9"] },
-  { ids: [3n], labels: ["ICMP host"] },
-])("仅在当前序列列表内消歧同名标签 $ids", ({ ids, labels }) => {
-  const tasks = [3n, 7n].map((id) => create(ProbeTaskDetailSchema, { task: { id, kind: ProbeKind.ICMP, target: "host" } }));
-  expect(taskLabels(ids, tasks)).toEqual(labels);
-});
+import { PROBE_KINDS, kindLabel, lossPercent, rttMeanMs, seriesLabels, taskIdsOf, toProbeAligned } from "./probes";
 
 it.each([
   {
@@ -19,7 +10,7 @@ it.each([
     labels: ["ICMP host #7", "ICMP host #3", "任务 #9"],
   },
   { series: [{ taskId: 3n, kind: ProbeKind.TCP, target: "1.1.1.1:443" }], labels: ["TCP 1.1.1.1:443"] },
-])("序列标签取序列自带的种类与目标，已删除任务用编号 $labels", ({ series, labels }) => {
+])("序列标签取序列自带的种类与目标，未标注的用编号 $labels", ({ series, labels }) => {
   expect(seriesLabels(series.map((s) => create(ProbeSeriesSchema, s)))).toEqual(labels);
 });
 
@@ -27,7 +18,7 @@ it("类型表与图例使用同一组标签", () => {
   expect(PROBE_KINDS).toEqual([{ kind: ProbeKind.ICMP, label: "ICMP" }, { kind: ProbeKind.TCP, label: "TCP" }]);
   for (const { kind, label } of PROBE_KINDS) {
     expect(kindLabel(kind)).toBe(label);
-    expect(taskLabel(1n, [create(ProbeTaskDetailSchema, { task: { id: 1n, kind, target: "host" } })])).toBe(`${label} host`);
+    expect(seriesLabels([create(ProbeSeriesSchema, { taskId: 1n, kind, target: "host" })])).toEqual([`${label} host`]);
   }
 });
 
@@ -60,11 +51,4 @@ describe("toProbeAligned", () => {
   it("taskIdsOf 保持响应顺序", () => {
     expect(taskIdsOf(resp)).toEqual([3n, 7n]);
   });
-});
-
-describe("taskLabel", () => {
-  const tasks = [create(ProbeTaskDetailSchema, { task: { id: 3n, kind: ProbeKind.TCP, target: "1.1.1.1:443", intervalS: 30, timeoutMs: 1000 }, nodeIds: [] })];
-  it("有任务时用类型与目标", () => expect(taskLabel(3n, tasks)).toBe("TCP 1.1.1.1:443"));
-  it("找不到任务（已删除）时退回编号", () => expect(taskLabel(7n, tasks)).toBe("任务 #7"));
-  it("任务列表未到时也退回编号", () => expect(taskLabel(3n, undefined)).toBe("任务 #3"));
 });
