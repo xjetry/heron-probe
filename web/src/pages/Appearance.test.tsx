@@ -190,6 +190,22 @@ it("读完 a 再选 b，最后选的生效", async () => {
   expect(sent.map((r) => r.settings?.logo)).toEqual(["data:image/png;base64,Qg=="]);
 });
 
+// logo 字段的第二个写者"移除 logo"在读取中禁用：否则读取中点了移除，读完的回调又把 logo 写回来。
+it("读 logo 进行中移除按钮禁用，读完恢复且移除生效", async () => {
+  useFakeReader();
+  render({ updateSettings: async (req) => ({ settings: req.settings }) });
+  const f = await form();
+  pick(f, "a.png");
+  FakeReader.all[0].finish("data:image/png;base64,QQ==");
+  expect(f.getByRole("button", { name: "移除 logo" })).toBeEnabled();
+  pick(f, "b.png");
+  expect(f.getByRole("button", { name: "移除 logo" })).toBeDisabled();
+  FakeReader.all[1].finish("data:image/png;base64,Qg==");
+  expect(f.getByRole("button", { name: "移除 logo" })).toBeEnabled();
+  fireEvent.click(f.getByRole("button", { name: "移除 logo" }));
+  expect(f.queryByRole("img", { name: "logo 预览" })).toBeNull();
+});
+
 // 换 logo 与改其他字段一样：上一次保存的错误不再描述当前草稿，读完即清掉。
 it("上次保存失败后换 logo，旧的错误清掉", async () => {
   useFakeReader();

@@ -22,7 +22,8 @@ const toDraft = (s: Settings | undefined): Draft => ({
 // 草稿的改动来自两处：用户改字段（同步），与读 logo 文件的回调（异步，读完才改）。互斥由两处承载：
 //   - 保存进行中，fieldset 的 disabled={update.isPending} 禁用整个表单，含文件输入：保存期间既改不了字段，也开始不了读取；
 //   - 读取进行中，文件输入的 disabled={reading} 让至多一个读者在飞，reading 因此恰好等于"有读者在飞"；
-//     submit 守卫（!reading）与保存按钮的禁用拒绝在这时保存。
+//     submit 守卫（!reading）与保存按钮的禁用拒绝在这时保存。logo 字段另有第二个写者"移除 logo"，它在读取中
+//     同样禁用：否则读取中点了移除，读完的回调又把 logo 写回来，用户最后一次操作被迟到的结果覆盖。
 // 所以回显覆盖的总是这次提交自己送出的内容。reading 若不对应唯一的读者（文件输入在读取中仍可用），先读完的那个
 // 把它置回 false，保存得以发出，后读完的在保存进行中改草稿，迟到的回显再把它改回去并误报"已保存"。
 export function Appearance() {
@@ -110,7 +111,7 @@ export function Appearance() {
               <input type="file" accept={LOGO_TYPES.join(",")} onChange={pickLogo} disabled={reading} />
             </label>
             {form.logo && <img src={form.logo} alt="logo 预览" className="logo-preview" />}
-            <button type="button" className="link" onClick={() => edit({ logo: "" })} disabled={form.logo === ""}>移除 logo</button>
+            <button type="button" className="link" onClick={() => edit({ logo: "" })} disabled={form.logo === "" || reading}>移除 logo</button>
           </div>
           <label>
             自定义 CSS

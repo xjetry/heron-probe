@@ -30,7 +30,8 @@ type snapshotKey struct {
 type snapshotEntry struct {
 	// mu 让同键的并发请求排队：填充成功时，窗口内只有第一个进到 connect 处理器，其余拿它存下的字节。
 	// 填充失败（非 200，或压缩与键不符）时不入缓存，排队的请求在这把锁下逐个进 connect，串行各跑一次；
-	// 排队的请求数受外层的按来源限流约束（每个来源至多约 60 个）；来源数不设上限，所以总数没有全局上界。
+	// 外层按来源的限流（ratelimit.BySource）约束的是每个来源进入的速率（突发 60，之后每 100ms 一个），不是排队的
+	// 长度：填充一直失败且每次慢于补充周期时，同一来源的排队也会持续增长；来源数不设上限，排队总数没有上界。
 	mu      sync.Mutex
 	filled  bool
 	expires time.Duration
