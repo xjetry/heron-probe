@@ -1,4 +1,4 @@
-import { onlineManager } from "@tanstack/react-query";
+import { focusManager, onlineManager } from "@tanstack/react-query";
 import { act, within } from "@testing-library/react";
 import * as ReactDOM from "react-dom/client";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
@@ -75,6 +75,24 @@ test("网络恢复后不重取站点设置", async () => {
     await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
   } finally {
     vi.useRealTimers();
+  }
+  expect(siteFetches()).toBe(loaded);
+});
+
+// 窗口重新聚焦同样不重取站点设置。QueryClient 关掉了聚焦重取，GetSite 自己的 staleTime: Infinity 也挡住它，
+// 两者各自都够（Layout.tsx 的注释）；这里钉的是结果。
+test("窗口重新聚焦后不重取站点设置", async () => {
+  const siteFetches = () => fetches.filter(({ url }) => url.includes("/GetSite?")).length;
+  expect(await within(root).findByRole("link", { name: "机房状态" })).toBeInTheDocument();
+  const loaded = siteFetches();
+  vi.setSystemTime(Date.now() + 2 * 24 * 60 * 60 * 1000);
+  try {
+    await act(async () => focusManager.setFocused(false));
+    await act(async () => focusManager.setFocused(true));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+  } finally {
+    vi.useRealTimers();
+    focusManager.setFocused(undefined);
   }
   expect(siteFetches()).toBe(loaded);
 });

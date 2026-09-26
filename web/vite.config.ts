@@ -12,8 +12,15 @@ import { asyncUtilTimeout } from "./src/test/async-timeout.ts";
 const embedDir = (name: string) => fileURLToPath(new URL(`../internal/hub/web/${name}`, import.meta.url));
 
 // Vite 清空输出目录，也由构建自身恢复占位文件，保证任意构建入口都维持 embed 目录含文件（go:embed 的模式要能匹配）。
+// 不落盘的构建（build.write 为 false，importScan.test 读模块图用）既不清空也不产出，不碰 embed 目录。
 function keepEmbedDirectory(outDir: string): Plugin {
-  return { name: "keep-embed-directory", apply: "build", closeBundle() { writeFileSync(`${outDir}/.gitkeep`, ""); } };
+  let write = true;
+  return {
+    name: "keep-embed-directory",
+    apply: "build",
+    configResolved(config) { write = config.build.write; },
+    closeBundle() { if (write) writeFileSync(`${outDir}/.gitkeep`, ""); },
+  };
 }
 
 // 内置配色只写在 styles.css 的 --accent: light-dark(浅色, 深色) 里。外观页的取色器在主色为空时显示浅色那一个值，

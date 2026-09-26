@@ -7,7 +7,6 @@ afterEach(() => {
   document.head.innerHTML = "";
   document.documentElement.removeAttribute("style");
   delete document.documentElement.dataset.theme;
-  delete document.body.dataset.pwned;
 });
 
 it("明暗、主色与标题写到文档上，撤销后恢复；auto 跟随系统", () => {
@@ -38,10 +37,14 @@ it("自定义 CSS 排在已有样式之后，撤销时移除", () => {
 });
 
 // hub 拒绝含 "</" 的 CSS；即便有这样的值到达，textContent 也不经 HTML 解析，产生不了任何元素。
+// 判据是文档里的元素：jsdom 不加载图片，onerror 永远不触发，看脚本有没有执行证明不了什么。
 it("CSS 按文本写入，不产生元素", () => {
-  const css = `</style><img src=x onerror="document.body.dataset.pwned='1'">`;
+  const css = `</style><img src=x onerror="alert(1)"><script>alert(2)</script>`;
+  document.title = "页面自带的标题"; // 先有 <title>：applySite 设标题时不必新建它，新增的元素就只该有那个 <style>
+  const before = [...document.querySelectorAll("*")];
   applySite(create(PublicSiteSchema, { theme: "auto", customCss: css }));
-  expect(document.querySelectorAll("img")).toHaveLength(0);
-  expect((document.head.lastElementChild as HTMLStyleElement).textContent).toBe(css);
-  expect(document.body.dataset.pwned).toBeUndefined();
+  const added = [...document.querySelectorAll("*")].filter((el) => !before.includes(el));
+  expect(added.map((el) => el.tagName)).toEqual(["STYLE"]);
+  expect(added[0].parentElement).toBe(document.head);
+  expect(added[0].textContent).toBe(css);
 });
