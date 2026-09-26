@@ -1,5 +1,5 @@
 import { create } from "@bufbuild/protobuf";
-import { ListProbeTasksResponseSchema, QueryProbesResponseSchema } from "../gen/probe/v1/admin_pb";
+import { QueryProbesResponseSchema } from "../gen/probe/v1/query_pb";
 import { ProbeKind } from "../gen/probe/v1/types_pb";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -30,7 +30,6 @@ const getTraffic = async () => ({ timezone: "UTC", now: 1_757_000_000n, nodes: [
 const defaultImpl = {
   listNodes, getTraffic,
   queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }),
-  listProbeTasks: async () => create(ListProbeTasksResponseSchema, {}),
   queryProbes: async () => create(QueryProbesResponseSchema, { level: "1m", stepS: 60 }),
 } satisfies AdminImpl;
 
@@ -52,7 +51,7 @@ it.each(["listNodes", "getTraffic"] as const)("详情 %s 刷新失败保留内�
   expect(screen.getByText("↓ 1.0 GiB ↑ 512 MiB")).toBeInTheDocument();
 });
 
-it("五个查询同文刷新失败只显示一条", async () => {
+it("四个查询同文刷新失败只显示一条", async () => {
   let fail = false;
   const failing = <A extends unknown[], R>(impl: (...args: A) => Promise<R>) => async (...args: A): Promise<R> => {
     if (fail) throw new ConnectError("hub unreachable", Code.Unavailable);
@@ -63,23 +62,12 @@ it("五个查询同文刷新失败只显示一条", async () => {
     getTraffic: failing(defaultImpl.getTraffic),
     queryMetrics: failing(defaultImpl.queryMetrics),
     queryProbes: failing(defaultImpl.queryProbes),
-    listProbeTasks: failing(defaultImpl.listProbeTasks),
   }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   await screen.findByRole("heading", { name: "db-01" });
   fail = true;
   await act(async () => { await queryClient.refetchQueries(); });
   expect((await screen.findAllByRole("alert")).map((a) => a.textContent)).toEqual(["hub unreachable"]);
   expect(screen.getByRole("heading", { name: "db-01" })).toBeInTheDocument();
-});
-
-it("任务列表查询失败显示错误，探测图例仍以编号可辨认", async () => {
-  renderWithAdmin({
-    ...defaultImpl,
-    listProbeTasks: async () => { throw new ConnectError("tasks unavailable", Code.Unavailable); },
-    queryProbes: async () => create(QueryProbesResponseSchema, { stepS: 60, series: [{ taskId: 3n }] }),
-  }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
-  expect(await screen.findByRole("alert")).toHaveTextContent(/^tasks unavailable$/);
-  expect(await screen.findAllByText("任务 #3")).toHaveLength(2);
 });
 
 it("头部链接到该节点的告警事件", async () => {
@@ -90,10 +78,10 @@ it("头部链接到该节点的告警事件", async () => {
 it("同窗口同名任务在两张探测图中带编号区分", async () => {
   renderWithAdmin({
     ...defaultImpl,
-    listProbeTasks: async () => create(ListProbeTasksResponseSchema, { tasks: [3n, 7n].map((id) => ({
-      task: { id, kind: ProbeKind.ICMP, target: "1.1.1.1" },
-    })) }),
-    queryProbes: async () => create(QueryProbesResponseSchema, { stepS: 60, series: [{ taskId: 7n }, { taskId: 3n }] }),
+    queryProbes: async () => create(QueryProbesResponseSchema, { stepS: 60, series: [
+      { taskId: 7n, kind: ProbeKind.ICMP, target: "1.1.1.1" },
+      { taskId: 3n, kind: ProbeKind.ICMP, target: "1.1.1.1" },
+    ] }),
   }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   await screen.findAllByText("ICMP 1.1.1.1 #7");
   const charts = screen.getAllByTestId("chart").filter((chart) => chart.dataset.labels?.includes("ICMP"));
@@ -244,13 +232,10 @@ it("探测图每个任务一条线，已删除任务用编号，且与指标查�
   renderWithAdmin({ ...defaultImpl,
     listNodes,
     queryMetrics: async (req) => { windows.push({ name: "metrics", from: req.from, to: req.to }); return defaultImpl.queryMetrics(); },
-    listProbeTasks: async () => create(ListProbeTasksResponseSchema, { version: 5n, tasks: [
-      { task: { id: 3n, kind: ProbeKind.ICMP, target: "1.1.1.1", intervalS: 30, timeoutMs: 1000 }, nodeIds: [7n] },
-    ] }),
     queryProbes: async (req) => {
       windows.push({ name: "probes", from: req.from, to: req.to });
       return create(QueryProbesResponseSchema, { level: "1m", stepS: 60, series: [
-        { taskId: 3n, samples: [{ ts: req.from, sent: 10, lost: 1, errors: 0, rttMeanUs: 9000 }] },
+        { taskId: 3n, kind: ProbeKind.ICMP, target: "1.1.1.1", samples: [{ ts: req.from, sent: 10, lost: 1, errors: 0, rttMeanUs: 9000 }] },
         { taskId: 9n, samples: [{ ts: req.from, sent: 10, lost: 0, errors: 0, rttMeanUs: 1000 }] },
       ] });
     },
@@ -270,7 +255,6 @@ it("窗口内没有探测结果时给出去向", async () => {
   renderWithAdmin({ ...defaultImpl,
     listNodes,
     queryMetrics: defaultImpl.queryMetrics,
-    listProbeTasks: async () => create(ListProbeTasksResponseSchema, { version: 1n, tasks: [] }),
     queryProbes: async () => create(QueryProbesResponseSchema, { level: "1m", stepS: 60, series: [] }),
   }, [{ path: "/nodes/:id", Component: NodeDetail }, { path: "/probes", element: <p>任务页</p> }], "/nodes/7");
   expect(await screen.findByText(/窗口内没有探测结果/)).toBeInTheDocument();
@@ -281,36 +265,10 @@ it("窗口内没有探测结果时给出去向", async () => {
 
 it("主机信息显示 ICMP 是否可用", async () => {
   renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: defaultImpl.queryMetrics,
-    listProbeTasks: async () => create(ListProbeTasksResponseSchema, {}), queryProbes: async () => create(QueryProbesResponseSchema, { stepS: 60 }) },
+    queryProbes: async () => create(QueryProbesResponseSchema, { stepS: 60 }) },
     [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   const dt = await screen.findByText("ICMP 探测");
   expect(dt.nextElementSibling).toHaveTextContent("不可用");
-});
-
-it("任务列表迟到时先用编号，标签到达后更新且切窗挂起时保留探测图", async () => {
-  let releaseTasks!: () => void;
-  let releaseProbes!: () => void;
-  let started!: () => void;
-  const taskGate = new Promise<void>((resolve) => { releaseTasks = resolve; });
-  const probeGate = new Promise<void>((resolve) => { releaseProbes = resolve; });
-  const pending = new Promise<void>((resolve) => { started = resolve; });
-  const queryProbes = vi.fn<NonNullable<AdminImpl["queryProbes"]>>(async (req) => {
-    if (queryProbes.mock.calls.length > 1) { started(); await probeGate; }
-    return create(QueryProbesResponseSchema, { stepS: 60, series: [{ taskId: 3n, samples: [{ ts: req.from, sent: 1, rttMeanUs: 1000 }] }] });
-  });
-  renderWithAdmin({ ...defaultImpl, queryProbes, listProbeTasks: async () => {
-    await taskGate;
-    return create(ListProbeTasksResponseSchema, { tasks: [{ task: { id: 3n, kind: ProbeKind.ICMP, target: "1.1.1.1" } }] });
-  } }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
-  try {
-    expect(await screen.findAllByText("任务 #3")).toHaveLength(2);
-    await act(async () => { releaseTasks(); });
-    expect(await screen.findAllByText("ICMP 1.1.1.1")).toHaveLength(2);
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "7d" })); await pending; });
-    expect(screen.getAllByText("ICMP 1.1.1.1")).toHaveLength(2);
-  } finally {
-    await act(async () => { releaseTasks(); releaseProbes(); });
-  }
 });
 
 it("主机信息也显示 ICMP 可用", async () => {
@@ -327,4 +285,25 @@ it("探测查询失败显示错误，不吞掉失败", async () => {
   renderWithAdmin({ ...defaultImpl, queryProbes: async () => { throw new ConnectError("probes unavailable", Code.Unavailable); } },
     [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   expect(await screen.findByRole("alert")).toHaveTextContent(/^probes unavailable$/);
+});
+
+it("切窗请求挂起时保留探测图与图例", async () => {
+  let releaseProbes!: () => void;
+  let started!: () => void;
+  const probeGate = new Promise<void>((resolve) => { releaseProbes = resolve; });
+  const pending = new Promise<void>((resolve) => { started = resolve; });
+  const queryProbes = vi.fn<NonNullable<AdminImpl["queryProbes"]>>(async (req) => {
+    if (queryProbes.mock.calls.length > 1) { started(); await probeGate; }
+    return create(QueryProbesResponseSchema, { stepS: 60, series: [
+      { taskId: 3n, kind: ProbeKind.ICMP, target: "1.1.1.1", samples: [{ ts: req.from, sent: 1, rttMeanUs: 1000 }] },
+    ] });
+  });
+  renderWithAdmin({ ...defaultImpl, queryProbes }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  try {
+    expect(await screen.findAllByText("ICMP 1.1.1.1")).toHaveLength(2);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "7d" })); await pending; });
+    expect(screen.getAllByText("ICMP 1.1.1.1")).toHaveLength(2);
+  } finally {
+    await act(async () => { releaseProbes(); });
+  }
 });

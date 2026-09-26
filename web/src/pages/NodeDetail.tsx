@@ -8,7 +8,7 @@ import { AdminService, type GetTrafficResponse } from "../gen/probe/v1/admin_pb"
 import { toAligned, unitOf } from "../lib/series";
 import { bytes } from "../lib/format";
 import { errorText } from "../api/auth";
-import { lossPercent, rttMeanMs, taskIdsOf, taskLabels, toProbeAligned, type ProbeValue } from "../lib/probes";
+import { lossPercent, rttMeanMs, seriesLabels, taskIdsOf, toProbeAligned, type ProbeValue } from "../lib/probes";
 
 export const RANGES = [
   { label: "1h", seconds: 3600 },
@@ -61,17 +61,15 @@ export function NodeDetail() {
   const probes = useQuery(AdminService.method.queryProbes, { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: 1000 }, {
     enabled: validId, placeholderData: keepPreviousData,
   });
-  // 任务列表只为图例标签；任务页保存或删除失效同一 listProbeTasks key，本页重新挂载会重新取标签，无需另设轮询。
-  const tasks = useQuery(AdminService.method.listProbeTasks, {}, { enabled: validId });
   // 流量与图表面向不同查询，各自降级；校正操作在卡片内保留自己的错误槽位。
   const traffic = useQuery(AdminService.method.getTraffic, {}, { enabled: validId, refetchInterval: TRAFFIC_MS });
-  // 已知任务的标签在任务列表到达后变成“类型 目标”，Chart 按标签重建一次，与单位变化共用重建机制。
+  // 标签随序列下发（任务当前的种类与目标），与数据同一次响应到达，不另查任务列表。
   const probeCharts = useMemo(() => {
     if (!probes.data) return [];
     const ids = taskIdsOf(probes.data);
-    const labels = taskLabels(ids, tasks.data?.tasks);
+    const labels = seriesLabels(probes.data.series);
     return PROBE_PANELS.map((p) => ({ ...p, labels, data: toProbeAligned(probes.data!, ids, from, to, p.value) }));
-  }, [probes.data, tasks.data, from, to]);
+  }, [probes.data, from, to]);
   const charts = useMemo(
     () => history.data ? PANELS.map((p) => ({ ...p, data: toAligned(history.data, p.names, from, to), unit: p.unit ?? unitOf(history.data, p.names[0]) })) : [],
     [history.data, from, to],
@@ -84,7 +82,7 @@ export function NodeDetail() {
   if (!node) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
   return (
     <section>
-      {errorBanner(nodes.error, history.error, probes.error, tasks.error, traffic.error)}
+      {errorBanner(nodes.error, history.error, probes.error, traffic.error)}
       <header className="row detail-header">
         <h1>{node.name}</h1>
         <Link to={`/events?node=${id}`}>告警事件</Link>

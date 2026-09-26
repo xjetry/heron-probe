@@ -68,6 +68,8 @@ func (s *Service) QueryProbes(ctx context.Context, req *connect.Request[probev1.
 		}
 		if cur == nil || cur.TaskId != r.TaskID {
 			cur = &probev1.ProbeSeries{TaskId: r.TaskID}
+			// 标签取查询时的任务清单；已删除的任务两项留空，客户端退回编号。
+			cur.Kind, cur.Target, _ = s.probes.Target(r.TaskID)
 			resp.Series = append(resp.Series, cur)
 		}
 		sample := &probev1.ProbeSample{Ts: r.TS, Sent: r.Bucket.Sent, Lost: r.Bucket.Lost, Errors: r.Bucket.Errors}

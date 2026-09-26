@@ -202,3 +202,55 @@ func TestProbeAndMetricQueriesShareWindowValidation(t *testing.T) {
 		}
 	}
 }
+
+// 图例要的种类与目标随序列下发，取自查询时的任务清单：改过目标的任务按新目标标注，
+// 清单里已没有的任务（删除后仍有历史）两者都空，由客户端退回编号。
+func TestQueryProbesLabelsSeriesWithCurrentTaskConfig(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	id, _ := h.createNode(t, "n")
+	saved, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{
+		Task:    &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_TCP, Target: "example.com:443", IntervalS: 30, TimeoutMs: 1000},
+		NodeIds: []int64{id},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := saved.Msg.GetTask().GetTask().GetId()
+	gone := task + 1000
+	base := h.clk.Now().Truncate(time.Hour).Unix()
+	rows := []metric.ProbeRow{
+		{NodeID: id, TS: base, TaskID: task, Bucket: &metric.ProbeBucket{Sent: 1, Lost: 1}},
+		{NodeID: id, TS: base, TaskID: gone, Bucket: &metric.ProbeBucket{Sent: 1, Lost: 1}},
+	}
+	if _, err := h.store.WriteMinuteBatch(t.Context(), metric.Batch{Probes: rows}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{
+		Task:    &probev1.ProbeTask{Id: task, Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "192.0.2.1", IntervalS: 30, TimeoutMs: 1000},
+		NodeIds: []int64{id},
+	})); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := h.admin.QueryProbes(t.Context(), connect.NewRequest(&probev1.QueryProbesRequest{NodeId: id, From: base, To: base + 3600}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type label struct {
+		kind   probev1.ProbeKind
+		target string
+	}
+	want := map[uint64]label{task: {probev1.ProbeKind_PROBE_KIND_ICMP, "192.0.2.1"}, gone: {}}
+	got := map[uint64]label{}
+	for _, s := range resp.Msg.GetSeries() {
+		got[s.GetTaskId()] = label{s.GetKind(), s.GetTarget()}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("labels = %v, want %v", got, want)
+	}
+	for id, w := range want {
+		if got[id] != w {
+			t.Fatalf("labels = %v, want %v", got, want)
+		}
+	}
+}

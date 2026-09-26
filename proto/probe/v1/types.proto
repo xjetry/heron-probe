@@ -83,3 +83,17 @@ message ProbeTasks {
   uint64 version = 1;
   repeated ProbeTask tasks = 2;
 }
+
+message Traffic {
+  // 自节点首次上报以来 hub 累计的字节数。校正只改周期用量，总量随同一差值变动。
+  uint64 total_rx = 1;
+  uint64 total_tx = 2;
+  // 当前周期内的字节数。
+  uint64 period_rx = 3;
+  uint64 period_tx = 4;
+  // 当前周期起点与下次重置时刻，Unix 秒。
+  int64 period_start = 5;
+  int64 next_reset_at = 6;
+  // 周期重置日 1–28。
+  uint32 reset_day = 7;
+}

@@ -6,6 +6,7 @@ option go_package = "github.com/xjetry/probe/gen/probe/v1;probev1";
 
 import "probe/v1/types.proto";
 import "probe/v1/access.proto";
+import "probe/v1/query.proto";
 
 // 管理面板与 agent → hub。每个方法以 probe.v1.access 声明准入口径（见 access.proto），
 // 由挂载时绑定的拦截器裁决。全部方法都是 unary，且没有一个标为无副作用：本服务不接受 GET，
@@ -274,60 +275,6 @@ message NodeStatus {
   Traffic traffic = 6;
 }
 
-message QueryMetricsRequest {
-  int64 node_id = 1;
-  // 窗口 [from, to)，Unix 秒。跨度最长 400 天。
-  int64 from = 2;
-  int64 to = 3;
-  // 返回点数上限；0 取默认 720，最大 2000。hub 据此选择步长。
-  uint32 max_points = 4;
-}
-message QueryMetricsResponse {
-  // 数据来自哪一级：1m、5m 或 1h。
-  string level = 1;
-  // 每个点覆盖的秒数；是所选级别桶长的整数倍。
-  uint32 step_s = 2;
-  // 各点起始，Unix 秒，已对齐到 step_s 的整数倍。只包含有行的点：
-  // 缺失的 ts 表示该段完全没有数据。
-  repeated int64 ts = 3;
-  // 每个指标一条，与 metric 描述表同名同序。
-  repeated MetricSeries series = 4;
-}
-
-message MetricSeries {
-  // cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs、rx_bytes、tx_bytes。
-  string name = 1;
-  // percent、bytes、count；load 无单位为空串。
-  string unit = 2;
-  // 与 ts 一一对应。
-  repeated MetricSample samples = 3;
-}
-
-message MetricSample {
-  // 该点内的样本数；0 表示该指标在这段时间没有任何读数，此时 mean、max 与 sum 都缺失。
-  uint32 n = 1;
-  optional double mean = 2;
-  // 只有带最大值的指标（cpu、mem_used）才有。
-  optional double max = 3;
-  // 只有可加量指标（rx_bytes、tx_bytes）才有：该点内的字节总和，没有 mean 与 max。
-  // 速率 = sum / step_s。
-  optional double sum = 4;
-}
-
-message Traffic {
-  // 自节点首次上报以来 hub 累计的字节数。校正只改周期用量，总量随同一差值变动。
-  uint64 total_rx = 1;
-  uint64 total_tx = 2;
-  // 当前周期内的字节数。
-  uint64 period_rx = 3;
-  uint64 period_tx = 4;
-  // 当前周期起点与下次重置时刻，Unix 秒。
-  int64 period_start = 5;
-  int64 next_reset_at = 6;
-  // 周期重置日 1–28。
-  uint32 reset_day = 7;
-}
-
 message GetTrafficRequest {}
 message GetTrafficResponse {
   // hub 墙钟，Unix 秒。
@@ -380,42 +327,6 @@ message SaveProbeTaskResponse {
 }
 message DeleteProbeTaskRequest { uint64 id = 1; }
 message DeleteProbeTaskResponse { uint64 version = 1; }
-
-message QueryProbesRequest {
-  int64 node_id = 1;
-  // 窗口 [from, to)，Unix 秒。跨度最长 400 天。
-  int64 from = 2;
-  int64 to = 3;
-  // 返回点数上限；0 取默认 720，最大 2000。hub 据此选择步长。
-  uint32 max_points = 4;
-}
-message QueryProbesResponse {
-  // 数据来自哪一级：1m、5m 或 1h。
-  string level = 1;
-  // 每个点覆盖的秒数；是所选级别桶长的整数倍。
-  uint32 step_s = 2;
-  // 每个任务一条，按 task_id 升序；只含在窗口内有结果的任务，已删除任务的历史同样按 task_id 返回。
-  repeated ProbeSeries series = 3;
-}
-message ProbeSeries {
-  uint64 task_id = 1;
-  // 按 ts 升序；只包含 sent > 0 的点，缺失的 ts 表示该段没有结果。
-  repeated ProbeSample samples = 2;
-}
-message ProbeSample {
-  // 点起始，Unix 秒，已对齐到 step_s 的整数倍。
-  int64 ts = 1;
-  uint32 sent = 2;
-  // 计入丢包的超时数；丢包率 = lost / sent，errors 不计入。
-  uint32 lost = 3;
-  uint32 errors = 4;
-  // 只有 sent − lost − errors > 0 时才有：该点内成功探测的 rtt 均值 / 最小 / 最大，微秒。
-  optional uint32 rtt_mean_us = 5;
-  // 成功探测的最小 rtt，微秒；只有 sent − lost − errors > 0 时才有。
-  optional uint32 rtt_min_us = 6;
-  // 成功探测的最大 rtt，微秒；只有 sent − lost − errors > 0 时才有。
-  optional uint32 rtt_max_us = 7;
-}
 
 enum AlertKind {
   ALERT_KIND_UNSPECIFIED = 0;

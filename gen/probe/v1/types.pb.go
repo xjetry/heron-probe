@@ -699,6 +699,102 @@ func (x *ProbeTasks) GetTasks() []*ProbeTask {
 	return nil
 }
 
+type Traffic struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 自节点首次上报以来 hub 累计的字节数。校正只改周期用量，总量随同一差值变动。
+	TotalRx uint64 `protobuf:"varint,1,opt,name=total_rx,json=totalRx,proto3" json:"total_rx,omitempty"`
+	TotalTx uint64 `protobuf:"varint,2,opt,name=total_tx,json=totalTx,proto3" json:"total_tx,omitempty"`
+	// 当前周期内的字节数。
+	PeriodRx uint64 `protobuf:"varint,3,opt,name=period_rx,json=periodRx,proto3" json:"period_rx,omitempty"`
+	PeriodTx uint64 `protobuf:"varint,4,opt,name=period_tx,json=periodTx,proto3" json:"period_tx,omitempty"`
+	// 当前周期起点与下次重置时刻，Unix 秒。
+	PeriodStart int64 `protobuf:"varint,5,opt,name=period_start,json=periodStart,proto3" json:"period_start,omitempty"`
+	NextResetAt int64 `protobuf:"varint,6,opt,name=next_reset_at,json=nextResetAt,proto3" json:"next_reset_at,omitempty"`
+	// 周期重置日 1–28。
+	ResetDay      uint32 `protobuf:"varint,7,opt,name=reset_day,json=resetDay,proto3" json:"reset_day,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Traffic) Reset() {
+	*x = Traffic{}
+	mi := &file_probe_v1_types_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Traffic) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Traffic) ProtoMessage() {}
+
+func (x *Traffic) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_types_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Traffic.ProtoReflect.Descriptor instead.
+func (*Traffic) Descriptor() ([]byte, []int) {
+	return file_probe_v1_types_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *Traffic) GetTotalRx() uint64 {
+	if x != nil {
+		return x.TotalRx
+	}
+	return 0
+}
+
+func (x *Traffic) GetTotalTx() uint64 {
+	if x != nil {
+		return x.TotalTx
+	}
+	return 0
+}
+
+func (x *Traffic) GetPeriodRx() uint64 {
+	if x != nil {
+		return x.PeriodRx
+	}
+	return 0
+}
+
+func (x *Traffic) GetPeriodTx() uint64 {
+	if x != nil {
+		return x.PeriodTx
+	}
+	return 0
+}
+
+func (x *Traffic) GetPeriodStart() int64 {
+	if x != nil {
+		return x.PeriodStart
+	}
+	return 0
+}
+
+func (x *Traffic) GetNextResetAt() int64 {
+	if x != nil {
+		return x.NextResetAt
+	}
+	return 0
+}
+
+func (x *Traffic) GetResetDay() uint32 {
+	if x != nil {
+		return x.ResetDay
+	}
+	return 0
+}
+
 var File_probe_v1_types_proto protoreflect.FileDescriptor
 
 const file_probe_v1_types_proto_rawDesc = "" +
@@ -788,7 +884,15 @@ const file_probe_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"ProbeTasks\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12)\n" +
-	"\x05tasks\x18\x02 \x03(\v2\x13.probe.v1.ProbeTaskR\x05tasks*P\n" +
+	"\x05tasks\x18\x02 \x03(\v2\x13.probe.v1.ProbeTaskR\x05tasks\"\xdd\x01\n" +
+	"\aTraffic\x12\x19\n" +
+	"\btotal_rx\x18\x01 \x01(\x04R\atotalRx\x12\x19\n" +
+	"\btotal_tx\x18\x02 \x01(\x04R\atotalTx\x12\x1b\n" +
+	"\tperiod_rx\x18\x03 \x01(\x04R\bperiodRx\x12\x1b\n" +
+	"\tperiod_tx\x18\x04 \x01(\x04R\bperiodTx\x12!\n" +
+	"\fperiod_start\x18\x05 \x01(\x03R\vperiodStart\x12\"\n" +
+	"\rnext_reset_at\x18\x06 \x01(\x03R\vnextResetAt\x12\x1b\n" +
+	"\treset_day\x18\a \x01(\rR\bresetDay*P\n" +
 	"\tProbeKind\x12\x1a\n" +
 	"\x16PROBE_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fPROBE_KIND_ICMP\x10\x01\x12\x12\n" +
@@ -807,7 +911,7 @@ func file_probe_v1_types_proto_rawDescGZIP() []byte {
 }
 
 var file_probe_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_probe_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_probe_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_probe_v1_types_proto_goTypes = []any{
 	(ProbeKind)(0),      // 0: probe.v1.ProbeKind
 	(*Metrics)(nil),     // 1: probe.v1.Metrics
@@ -817,6 +921,7 @@ var file_probe_v1_types_proto_goTypes = []any{
 	(*ProbeError)(nil),  // 5: probe.v1.ProbeError
 	(*ProbeTask)(nil),   // 6: probe.v1.ProbeTask
 	(*ProbeTasks)(nil),  // 7: probe.v1.ProbeTasks
+	(*Traffic)(nil),     // 8: probe.v1.Traffic
 }
 var file_probe_v1_types_proto_depIdxs = []int32{
 	4, // 0: probe.v1.ProbeResult.timeout:type_name -> probe.v1.Timeout
@@ -847,7 +952,7 @@ func file_probe_v1_types_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_probe_v1_types_proto_rawDesc), len(file_probe_v1_types_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   7,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

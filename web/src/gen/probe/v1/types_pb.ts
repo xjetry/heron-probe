@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file probe/v1/types.proto.
  */
 export const file_probe_v1_types: GenFile = /*@__PURE__*/
-  fileDesc("ChRwcm9iZS92MS90eXBlcy5wcm90bxIIcHJvYmUudjEitAUKB01ldHJpY3MSDwoHYm9vdF9pZBgBIAEoCRIUCgdjcHVfcGN0GAIgASgBSACIAQESEgoFbG9hZDEYAyABKAFIAYgBARISCgVsb2FkNRgEIAEoAUgCiAEBEhMKBmxvYWQxNRgFIAEoAUgDiAEBEhYKCW1lbV90b3RhbBgGIAEoBEgEiAEBEhUKCG1lbV91c2VkGAcgASgESAWIAQESFwoKc3dhcF90b3RhbBgIIAEoBEgGiAEBEhYKCXN3YXBfdXNlZBgJIAEoBEgHiAEBEhcKCmRpc2tfdG90YWwYCiABKARICIgBARIWCglkaXNrX3VzZWQYCyABKARICYgBARIZCgxuZXRfcnhfdG90YWwYDCABKARICogBARIZCgxuZXRfdHhfdG90YWwYDSABKARIC4gBARIXCgpuZXRfcnhfYnBzGA4gASgESAyIAQESFwoKbmV0X3R4X2JwcxgPIAEoBEgNiAEBEhYKCXRjcF9jb25ucxgQIAEoDUgOiAEBEhYKCXVkcF9jb25ucxgRIAEoDUgPiAEBEhIKBXByb2NzGBIgASgNSBCIAQESFQoIdXB0aW1lX3MYEyABKARIEYgBAUIKCghfY3B1X3BjdEIICgZfbG9hZDFCCAoGX2xvYWQ1QgkKB19sb2FkMTVCDAoKX21lbV90b3RhbEILCglfbWVtX3VzZWRCDQoLX3N3YXBfdG90YWxCDAoKX3N3YXBfdXNlZEINCgtfZGlza190b3RhbEIMCgpfZGlza191c2VkQg8KDV9uZXRfcnhfdG90YWxCDwoNX25ldF90eF90b3RhbEINCgtfbmV0X3J4X2Jwc0INCgtfbmV0X3R4X2Jwc0IMCgpfdGNwX2Nvbm5zQgwKCl91ZHBfY29ubnNCCAoGX3Byb2NzQgsKCV91cHRpbWVfcyKwAQoFRmFjdHMSEAoIaG9zdG5hbWUYASABKAkSCgoCb3MYAiABKAkSDgoGa2VybmVsGAMgASgJEgwKBGFyY2gYBCABKAkSFgoOdmlydHVhbGl6YXRpb24YBSABKAkSEQoJY3B1X21vZGVsGAYgASgJEhEKCWNwdV9jb3JlcxgHIAEoDRIVCg1hZ2VudF92ZXJzaW9uGAggASgJEhYKDmljbXBfYXZhaWxhYmxlGAkgASgIIpgBCgtQcm9iZVJlc3VsdBIPCgd0YXNrX2lkGAEgASgEEg4KBmFnZV9tcxgCIAEoDRIQCgZydHRfdXMYAyABKA1IABIkCgd0aW1lb3V0GAQgASgLMhEucHJvYmUudjEuVGltZW91dEgAEiUKBWVycm9yGAUgASgLMhQucHJvYmUudjEuUHJvYmVFcnJvckgAQgkKB291dGNvbWUiCQoHVGltZW91dCIdCgpQcm9iZUVycm9yEg8KB21lc3NhZ2UYASABKAkicgoJUHJvYmVUYXNrEgoKAmlkGAEgASgEEiEKBGtpbmQYAiABKA4yEy5wcm9iZS52MS5Qcm9iZUtpbmQSDgoGdGFyZ2V0GAMgASgJEhIKCmludGVydmFsX3MYBCABKA0SEgoKdGltZW91dF9tcxgFIAEoDSJBCgpQcm9iZVRhc2tzEg8KB3ZlcnNpb24YASABKAQSIgoFdGFza3MYAiADKAsyEy5wcm9iZS52MS5Qcm9iZVRhc2sqUAoJUHJvYmVLaW5kEhoKFlBST0JFX0tJTkRfVU5TUEVDSUZJRUQQABITCg9QUk9CRV9LSU5EX0lDTVAQARISCg5QUk9CRV9LSU5EX1RDUBACQi5aLGdpdGh1Yi5jb20veGpldHJ5L3Byb2JlL2dlbi9wcm9iZS92MTtwcm9iZXYxYgZwcm90bzM");
+  fileDesc("ChRwcm9iZS92MS90eXBlcy5wcm90bxIIcHJvYmUudjEitAUKB01ldHJpY3MSDwoHYm9vdF9pZBgBIAEoCRIUCgdjcHVfcGN0GAIgASgBSACIAQESEgoFbG9hZDEYAyABKAFIAYgBARISCgVsb2FkNRgEIAEoAUgCiAEBEhMKBmxvYWQxNRgFIAEoAUgDiAEBEhYKCW1lbV90b3RhbBgGIAEoBEgEiAEBEhUKCG1lbV91c2VkGAcgASgESAWIAQESFwoKc3dhcF90b3RhbBgIIAEoBEgGiAEBEhYKCXN3YXBfdXNlZBgJIAEoBEgHiAEBEhcKCmRpc2tfdG90YWwYCiABKARICIgBARIWCglkaXNrX3VzZWQYCyABKARICYgBARIZCgxuZXRfcnhfdG90YWwYDCABKARICogBARIZCgxuZXRfdHhfdG90YWwYDSABKARIC4gBARIXCgpuZXRfcnhfYnBzGA4gASgESAyIAQESFwoKbmV0X3R4X2JwcxgPIAEoBEgNiAEBEhYKCXRjcF9jb25ucxgQIAEoDUgOiAEBEhYKCXVkcF9jb25ucxgRIAEoDUgPiAEBEhIKBXByb2NzGBIgASgNSBCIAQESFQoIdXB0aW1lX3MYEyABKARIEYgBAUIKCghfY3B1X3BjdEIICgZfbG9hZDFCCAoGX2xvYWQ1QgkKB19sb2FkMTVCDAoKX21lbV90b3RhbEILCglfbWVtX3VzZWRCDQoLX3N3YXBfdG90YWxCDAoKX3N3YXBfdXNlZEINCgtfZGlza190b3RhbEIMCgpfZGlza191c2VkQg8KDV9uZXRfcnhfdG90YWxCDwoNX25ldF90eF90b3RhbEINCgtfbmV0X3J4X2Jwc0INCgtfbmV0X3R4X2Jwc0IMCgpfdGNwX2Nvbm5zQgwKCl91ZHBfY29ubnNCCAoGX3Byb2NzQgsKCV91cHRpbWVfcyKwAQoFRmFjdHMSEAoIaG9zdG5hbWUYASABKAkSCgoCb3MYAiABKAkSDgoGa2VybmVsGAMgASgJEgwKBGFyY2gYBCABKAkSFgoOdmlydHVhbGl6YXRpb24YBSABKAkSEQoJY3B1X21vZGVsGAYgASgJEhEKCWNwdV9jb3JlcxgHIAEoDRIVCg1hZ2VudF92ZXJzaW9uGAggASgJEhYKDmljbXBfYXZhaWxhYmxlGAkgASgIIpgBCgtQcm9iZVJlc3VsdBIPCgd0YXNrX2lkGAEgASgEEg4KBmFnZV9tcxgCIAEoDRIQCgZydHRfdXMYAyABKA1IABIkCgd0aW1lb3V0GAQgASgLMhEucHJvYmUudjEuVGltZW91dEgAEiUKBWVycm9yGAUgASgLMhQucHJvYmUudjEuUHJvYmVFcnJvckgAQgkKB291dGNvbWUiCQoHVGltZW91dCIdCgpQcm9iZUVycm9yEg8KB21lc3NhZ2UYASABKAkicgoJUHJvYmVUYXNrEgoKAmlkGAEgASgEEiEKBGtpbmQYAiABKA4yEy5wcm9iZS52MS5Qcm9iZUtpbmQSDgoGdGFyZ2V0GAMgASgJEhIKCmludGVydmFsX3MYBCABKA0SEgoKdGltZW91dF9tcxgFIAEoDSJBCgpQcm9iZVRhc2tzEg8KB3ZlcnNpb24YASABKAQSIgoFdGFza3MYAiADKAsyEy5wcm9iZS52MS5Qcm9iZVRhc2sikwEKB1RyYWZmaWMSEAoIdG90YWxfcngYASABKAQSEAoIdG90YWxfdHgYAiABKAQSEQoJcGVyaW9kX3J4GAMgASgEEhEKCXBlcmlvZF90eBgEIAEoBBIUCgxwZXJpb2Rfc3RhcnQYBSABKAMSFQoNbmV4dF9yZXNldF9hdBgGIAEoAxIRCglyZXNldF9kYXkYByABKA0qUAoJUHJvYmVLaW5kEhoKFlBST0JFX0tJTkRfVU5TUEVDSUZJRUQQABITCg9QUk9CRV9LSU5EX0lDTVAQARISCg5QUk9CRV9LSU5EX1RDUBACQi5aLGdpdGh1Yi5jb20veGpldHJ5L3Byb2JlL2dlbi9wcm9iZS92MTtwcm9iZXYxYgZwcm90bzM");
 
 /**
  * 一次上报里的主机读数。每个读数都是 optional：缺失表示"无读数"，
@@ -329,6 +329,61 @@ export type ProbeTasks = Message<"probe.v1.ProbeTasks"> & {
  */
 export const ProbeTasksSchema: GenMessage<ProbeTasks> = /*@__PURE__*/
   messageDesc(file_probe_v1_types, 6);
+
+/**
+ * @generated from message probe.v1.Traffic
+ */
+export type Traffic = Message<"probe.v1.Traffic"> & {
+  /**
+   * 自节点首次上报以来 hub 累计的字节数。校正只改周期用量，总量随同一差值变动。
+   *
+   * @generated from field: uint64 total_rx = 1;
+   */
+  totalRx: bigint;
+
+  /**
+   * @generated from field: uint64 total_tx = 2;
+   */
+  totalTx: bigint;
+
+  /**
+   * 当前周期内的字节数。
+   *
+   * @generated from field: uint64 period_rx = 3;
+   */
+  periodRx: bigint;
+
+  /**
+   * @generated from field: uint64 period_tx = 4;
+   */
+  periodTx: bigint;
+
+  /**
+   * 当前周期起点与下次重置时刻，Unix 秒。
+   *
+   * @generated from field: int64 period_start = 5;
+   */
+  periodStart: bigint;
+
+  /**
+   * @generated from field: int64 next_reset_at = 6;
+   */
+  nextResetAt: bigint;
+
+  /**
+   * 周期重置日 1–28。
+   *
+   * @generated from field: uint32 reset_day = 7;
+   */
+  resetDay: number;
+};
+
+/**
+ * Describes the message probe.v1.Traffic.
+ * Use `create(TrafficSchema)` to create a new message.
+ */
+export const TrafficSchema: GenMessage<Traffic> = /*@__PURE__*/
+  messageDesc(file_probe_v1_types, 7);
 
 /**
  * @generated from enum probe.v1.ProbeKind
