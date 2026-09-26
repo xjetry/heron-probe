@@ -93,3 +93,38 @@ func TestReadPasswordLineBoundaries(t *testing.T) {
 		})
 	}
 }
+
+// docker exec 不带 -i 时容器里的 stdin 就是 /dev/null：读到立即 EOF，这不是"密码太短"。
+func TestReadPasswordFromDevNullIsMissingInput(t *testing.T) {
+	devnull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devnull.Close()
+	if _, err := readPassword(devnull, io.Discard); !errors.Is(err, errNoPasswordInput) {
+		t.Fatalf("stdin /dev/null: err = %v, want errNoPasswordInput", err)
+	}
+}
+
+// 空行是输入了一个空密码，由 SetPassword 按长度拒绝，不归入"没有输入"。
+func TestReadPasswordEmptyLineIsAnEmptyPassword(t *testing.T) {
+	got, err := readPassword(pipeWith(t, "\n"), io.Discard)
+	if err != nil || got != "" {
+		t.Fatalf("empty line: password=%q err=%v, want an empty password and no error", got, err)
+	}
+}
+
+func TestPasswdWithoutInputLeavesNoDatabase(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "t.db")
+	devnull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devnull.Close()
+	if err := runPasswdWith([]string{"--db", db}, devnull, io.Discard); !errors.Is(err, errNoPasswordInput) {
+		t.Fatalf("err = %v, want errNoPasswordInput", err)
+	}
+	if _, err := os.Stat(db); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("passwd without input touched %s (stat err = %v)", db, err)
+	}
+}

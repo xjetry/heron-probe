@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -529,5 +531,23 @@ func TestUpdateNodePersistsResetDayAndCreateUsesTheDefault(t *testing.T) {
 	list, _ := s.ListNodes(ctx)
 	if list[0].TrafficResetDay != 15 {
 		t.Fatalf("ListNodes reset day = %d", list[0].TrafficResetDay)
+	}
+}
+
+// SQLite 打开失败的报错不带文件名；容器里 /data 不可写时，路径是报错里唯一能指向原因的线索。
+func TestOpenErrorNamesTheDatabasePath(t *testing.T) {
+	// 父路径是普通文件：谁来运行测试都打不开，失败不依赖权限位。
+	parent := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parent, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(parent, "t.db")
+	s, err := Open(path, clock.NewFake(time.Unix(0, 0)), slog.Default())
+	if err == nil {
+		s.Close()
+		t.Fatalf("Open(%s) succeeded", path)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Fatalf("Open(%s) = %q, want the path in the error", path, err)
 	}
 }

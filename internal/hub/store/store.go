@@ -62,7 +62,9 @@ func Open(path string, clk clock.Clock, log *slog.Logger) (*Store, error) {
 	w.SetMaxOpenConns(1)
 	if err := migrate(w); err != nil {
 		w.Close()
-		return nil, err
+		// SQLite 打开失败的报错不带文件名（如 unable to open database file (14)）；serve 与离线子命令
+		// 都经这里打开库，在这一层补上路径，报错才指得出是哪个文件、该查哪个目录的权限。
+		return nil, fmt.Errorf("open database %s: %w", path, err)
 	}
 	r, err := sql.Open("sqlite", dsn(path, "&_pragma=query_only(1)"))
 	if err != nil {
