@@ -28,6 +28,14 @@ var version = "dev"
 
 const defaultConfig = "/etc/probe-agent/config.json"
 
+// requestTimeout 是单次 RPC 的上限：hub 不应答时一次上报至多挂这么久才进入退避。
+// initialInterval 是收到 hub 第一个响应之前的上报间隔，也是这段时间里 client.Backoff 的基数。
+// 两者都写进启动行，scripts/e2e.sh 据此推出告警恢复的等待上限。
+const (
+	requestTimeout  = 15 * time.Second
+	initialInterval = 10 * time.Second
+)
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: probe-agent register|run|version [flags]")
@@ -66,7 +74,7 @@ func runRegister(args []string) error {
 	if *name == "" {
 		*name, _ = os.Hostname()
 	}
-	c := probev1connect.NewAgentServiceClient(&http.Client{Timeout: 15 * time.Second}, strings.TrimRight(*hub, "/"))
+	c := probev1connect.NewAgentServiceClient(&http.Client{Timeout: requestTimeout}, strings.TrimRight(*hub, "/"))
 	resp, err := c.Register(context.Background(), connect.NewRequest(&probev1.RegisterRequest{Key: *key, Name: *name}))
 	if err != nil {
 		return fmt.Errorf("register: %w", err)
@@ -108,17 +116,17 @@ func runRun(args []string) error {
 	defer sched.Stop()
 	r := &client.Runner{
 		Collector: col,
-		Client:    probev1connect.NewAgentServiceClient(&http.Client{Timeout: 15 * time.Second}, cfg.Hub),
+		Client:    probev1connect.NewAgentServiceClient(&http.Client{Timeout: requestTimeout}, cfg.Hub),
 		Token:     cfg.Token,
 		Clock:     clk,
 		Log:       log,
-		Interval:  10 * time.Second,
+		Interval:  initialInterval,
 		Prober:    sched,
 		Results:   queue,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	log.Info("agent starting", "hub", cfg.Hub, "version", version)
+	log.Info("agent starting", "hub", cfg.Hub, "request_timeout", requestTimeout, "initial_interval", initialInterval, "version", version)
 	if err := r.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}

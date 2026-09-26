@@ -67,14 +67,14 @@ wait_hub() {
   exit 1
 }
 wait_hub
-# 告警等待上限由 hub 实际生效的 TTL 与离线巡检周期推出（见 wait_alert 的调用处），两者读自
-# hub 在开始服务前写下的启动行，脚本里不另抄一份。只认整秒写法：读不出来就停下，
-# 不能退回一个与 hub 参数无关的固定上限。
-hub_seconds() {
-  sed -n "s/.*msg=\"hub listening\".* $1=\([0-9][0-9]*\)s .*/\1/p" "$work/hub.log"
+# 告警等待上限由 hub 与 agent 实际生效的参数推出（见 wait_alert 的调用处），参数读自两者的启动行，
+# 脚本里不另抄一份。只认整秒写法：读不出来就停下，不能退回一个与实际参数无关的固定上限。
+# startup_seconds 日志文件 启动行消息 字段名
+startup_seconds() {
+  sed -n "s/.*msg=\"$2\".* $3=\([0-9][0-9]*\)s .*/\1/p" "$1" | sed -n 1p
 }
-ttl_s=$(hub_seconds ttl)
-sweep_s=$(hub_seconds offline_sweep)
+ttl_s=$(startup_seconds "$work/hub.log" "hub listening" ttl)
+sweep_s=$(startup_seconds "$work/hub.log" "hub listening" offline_sweep)
 [ -n "$ttl_s" ] && [ -n "$sweep_s" ] || { echo "FAIL: hub startup line does not state ttl and offline_sweep in whole seconds"; cat "$work/hub.log"; exit 1; }
 
 # 运行中设密码：另一进程经 WAL 写库，登录路径每次读库，不需要重启 hub。
@@ -208,18 +208,22 @@ probe_body=$(jq -nc --arg nodeId "$node1" --argjson from "$((now - 3600))" --arg
 # 两个任务都有成功的探测：容器里的 ICMP 探测回环，TCP 连接宿主上的 hub。
 # hub 在分钟边界后 0.5s 刷出分钟桶；4s 上报间隔与最多 5s 首次偏移下，首条结果最晚在任务创建后约 13s 到达。
 # agent 退出后立即查库，距首条结果最坏不足 60.5s，一次性查询的最坏余量为负，须等待常规刷出。
+# 截止按轮询间累计的 sleep 秒数计（见 wait_alert 的说明）。分钟行按墙钟分钟边界刷出，但宿主休眠时墙钟照走，
+# hub 的刷出定时器无论是否把休眠时长计入，醒来后还需的醒着时间都不超过不休眠时，所以这里也不用墙钟截止。
 probe_started=$(date +%s)
-probe_deadline=$((probe_started + 75))
+probe_budget_s=75
+probe_slept_s=0
 while :; do
   [ "$(rpc QueryProbes "$probe_body")" = 200 ] || { echo "FAIL: QueryProbes"; cat "$work/QueryProbes.json"; exit 1; }
   if jq -e --arg icmp "$icmp_task" --arg tcp "$tcp_task" '.level == "1m" and ([.series[].taskId] | sort) == ([$icmp, $tcp] | sort) and all(.series[]; any(.samples[]; .sent > 0 and .rttMeanUs != null and (.errors // 0) == 0))' "$work/QueryProbes.json" > /dev/null; then
-    echo "probe results ready after $(($(date +%s) - probe_started))s"
+    echo "probe results ready after $(($(date +%s) - probe_started))s (${probe_slept_s}s of polling)"
     break
   fi
-  if [ "$(date +%s)" -ge "$probe_deadline" ]; then
-    echo "FAIL: probe results after 75s"; cat "$work/QueryProbes.json"; exit 1
+  if [ "$probe_slept_s" -ge "$probe_budget_s" ]; then
+    echo "FAIL: probe results not ready after ${probe_slept_s}s of polling"; cat "$work/QueryProbes.json"; exit 1
   fi
   sleep 2
+  probe_slept_s=$((probe_slept_s + 2))
 done
 jq -e 'all(.nodes[]; .facts.icmpAvailable == true)' "$work/ListNodes.json" > /dev/null || { echo "FAIL: icmp_available not reported"; cat "$work/ListNodes.json"; exit 1; }
 # 流量：两个 agent 每 4 秒上报一次，上报本身就产生字节；首次上报只取基线，之后的差分进总量。
@@ -272,42 +276,55 @@ channel=$(jq -r '.channel.id' "$work/SaveNotifyChannel.json")
 [ "$(rpc TestNotifyChannel "$(jq -nc --arg id "$channel" '{id: $id}')")" = 200 ] || { echo "FAIL: TestNotifyChannel"; cat "$work/TestNotifyChannel.json"; exit 1; }
 [ "$(rpc SaveAlertRule "$(jq -nc --arg c "$channel" --arg n "$node2" '{rule: {name: "e2e offline", kind: "ALERT_KIND_OFFLINE", enabled: true, allNodes: false, nodeIds: [$n], channelIds: [$c]}}')")" = 200 ] || { echo "FAIL: SaveAlertRule"; cat "$work/SaveAlertRule.json"; exit 1; }
 
+# 截止按轮询间累计的 sleep 秒数计，不按墙钟。宿主休眠时 hub、docker VM 与本脚本一起停摆，一次休眠
+# 至多落在一次 sleep 里，累计值至多多算这一次，其余每一秒都是被等的系统醒着运行的时间。墙钟截止会把
+# 整段休眠算进预算，醒来后第一次检查就失败，而那段时间里被等的系统根本没有运行。
 wait_alert() {
   transition=$1
-  alert_started=$2
-  alert_budget=$3
-  alert_deadline=$((alert_started + alert_budget))
+  alert_budget_s=$2
+  alert_started=$(date +%s)
+  alert_slept_s=0
   while :; do
     [ "$(rpc ListAlertEvents '{}')" = 200 ] || { echo "FAIL: ListAlertEvents"; cat "$work/ListAlertEvents.json"; exit 1; }
     if jq -e --arg n "$node2" --arg tr "$transition" '[.events[]? | select(.transition == $tr and .nodeId == $n and any(.deliveries[]; (.ok // false) == true))] | length == 1' "$work/ListAlertEvents.json" > /dev/null; then
-      echo "alert $transition delivered after $(($(date +%s) - alert_started))s (budget ${alert_budget}s)"
+      echo "alert $transition delivered after $(($(date +%s) - alert_started))s (${alert_slept_s}s of polling, budget ${alert_budget_s}s)"
       return
     fi
-    [ "$(date +%s)" -lt "$alert_deadline" ] || { echo "FAIL: $transition alert not delivered within ${alert_budget}s"; cat "$work/ListAlertEvents.json"; exit 1; }
+    [ "$alert_slept_s" -lt "$alert_budget_s" ] || { echo "FAIL: $transition alert not delivered after ${alert_slept_s}s of polling"; cat "$work/ListAlertEvents.json"; exit 1; }
     sleep 1
+    alert_slept_s=$((alert_slept_s + 1))
   done
 }
-# 两个上限都是"推出的最坏时长 + 同一份余量"。SweepOffline 只由 RunOfflineSweep 按 offline_sweep
+# agent 的参数取自它首次运行的启动行（cmd/agent/main.go 的 requestTimeout、initialInterval）。
+request_timeout_s=$(startup_seconds "$work/agent-arm64.log" "agent starting" request_timeout)
+initial_interval_s=$(startup_seconds "$work/agent-arm64.log" "agent starting" initial_interval)
+[ -n "$request_timeout_s" ] && [ -n "$initial_interval_s" ] || { echo "FAIL: agent startup line does not state request_timeout and initial_interval in whole seconds"; cat "$work/agent-arm64.log"; exit 1; }
+# 两个上限都是"推出的最坏时长 + 投递 + 余量"。SweepOffline 只由 RunOfflineSweep 按 offline_sweep
 # 定时调用，触发与恢复都只在巡检时判定。
 # firing：最后一次上报早于 docker kill，kill 后至多 ttl 即满足离线（node2 的宽限未设置，取 TTL，
-#   NextOffline 也以 TTL 为下限），之后至多再等一个 offline_sweep。
-# recovered：agent 一启动就上报（Runner.Run 在首次 Sleep 之前发出 Report），此后按 hub 下发的
-#   ttl/3 间隔上报，首个上报之后的任何一轮巡检看到的未上报时长都小于 TTL，第一轮就判恢复，
-#   所以至多等一个 offline_sweep，与 ttl 无关。
-# 余量是再一个 offline_sweep 加 5s：前者容纳 docker start/kill、agent 进程启动、1s 轮询与错过一轮
-#   巡检；后者是投递遇到可重试失败时 queue.go 的 backoff（1s、4s）。渠道客户端的 10s 超时只在
-#   接收器挂住时才会用满；接收器在本机回环、已由 TestNotifyChannel 验证能应答，上限不为此留量。
-alert_slack_s=$((sweep_s + 5))
-firing_started=$(date +%s)
+#   NextOffline 也以 TTL 为下限），之后至多再等一个 offline_sweep。agent 侧没有量进入这条链：
+#   kill 前 agent 若正在退避，最后一次上报只会更早，离线只会更早成立。
+# recovered：agent 一启动就上报（Runner.Run 在首次 Sleep 之前发出 Report）。最坏情形取首次上报挂满
+#   request_timeout（main.go 的 http.Client 超时），按 client.Backoff(1, initial_interval) 退避——
+#   attempt 为 1 时等待落在 [interval/2, interval)——第二次上报成功。此后按 hub 下发的 ttl/3 间隔
+#   上报，任何一轮巡检看到的未上报时长都小于 TTL，首个成功上报之后的第一轮巡检就判恢复，至多一个
+#   offline_sweep，与 ttl 无关。连续失败没有上限可推：hub 一直不应答时节点本来就没有恢复上报。
+# 投递 5s：可重试失败时 internal/hub/alert/queue.go 的 backoff（1s、4s）。渠道客户端 10s 超时
+#   （notify.go 的 NewHTTPClient）只在接收器挂住时才会用满；接收器在本机回环、已由 TestNotifyChannel
+#   验证能应答，上限不为此留量。
+# 余量一个 offline_sweep：容纳 agent 进程启动与巡检本身的耗时推迟下一轮。docker kill/start 在计数
+#   开始之前完成，不占预算。
+alert_deliver_s=5
+wait_alert_firing_s=$((ttl_s + sweep_s + alert_deliver_s + sweep_s))
+wait_alert_recovered_s=$((request_timeout_s + initial_interval_s + sweep_s + alert_deliver_s + sweep_s))
 docker kill "$(cat "$work/cid-arm64")" > /dev/null
 wait "$arm64" || true
-wait_alert firing "$firing_started" $((ttl_s + sweep_s + alert_slack_s))
+wait_alert firing "$wait_alert_firing_s"
 grep -q '"transition":"firing"' "$work/hooks.txt" || { echo "FAIL: webhook body"; cat "$work/hooks.txt"; exit 1; }
-recovery_started=$(date +%s)
 docker start "$(cat "$work/cid-arm64")" > /dev/null
 run_agent arm64 >> "$work/agent-arm64.log" 2>&1 &
 arm64=$!
-wait_alert recovered "$recovery_started" $((sweep_s + alert_slack_s))
+wait_alert recovered "$wait_alert_recovered_s"
 # node1 的 agent 已退出；先推进到新重置日对应的周期，再保存停机前状态。
 [ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic before restart"; exit 1; }
 traffic_before=$(jq -c --arg id "$node1" '.nodes[] | select(.nodeId == $id) | .traffic' "$work/GetTraffic.json")

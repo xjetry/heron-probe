@@ -15,7 +15,9 @@ platform=${SMOKE_PLATFORM:-}
 # （Docker Hub 对匿名请求限流）。经典镜像存储里一个索引 digest 只对应一个本地镜像，它可能是别的架构、
 # 经模拟运行并在 stderr 告警；这里用到的 busybox stat、wget、sh 与架构无关，读结果时只取 stdout。
 tool=${TOOL_IMAGE:?TOOL_IMAGE is required: the pinned alpine image, see ALPINE_IMAGE in the Makefile}
-# 每个等待的上限：发布后回读在 QEMU 模拟的 arm64 上跑同一段，比本机慢。
+# 每个等待的上限：发布后回读在 QEMU 模拟的 arm64 上跑同一段，比本机慢。上限按轮询间累计的 sleep
+# 计（每次 0.5s，至多 wait_s×2 次），不按墙钟：宿主休眠时 docker 与本脚本一起停摆，一次休眠至多落在
+# 一次 sleep 里；墙钟截止会把整段休眠算进上限，醒来后第一次检查就失败。
 wait_s=30
 # 与 README 示范的部署一致：大于 hub 关停时排空请求的上限（cmd/hub/serve.go 的 drainTimeout，10 秒）。
 # docker stop 的默认宽限期也是 10 秒，与排空上限相等时最后一批写可能被 SIGKILL 截断。
@@ -75,20 +77,21 @@ drun() {
   fi
 }
 
-# run_to_exit NAME TIMEOUT_MESSAGE ARGS…：起容器并等它退出，至多 wait_s 秒；退出码存入 code，
+# run_to_exit NAME TIMEOUT_MESSAGE ARGS…：起容器并等它退出，至多轮询 wait_s 秒；退出码存入 code，
 # 日志经 save_logs 存档。
 run_to_exit() {
   name=$1
   timeout_message=$2
   shift 2
   drun -d --name "$name" "$@" > /dev/null || fail "cannot start $name from $IMAGE"
-  deadline=$(($(date +%s) + wait_s))
+  polls=0
   until [ "$(docker inspect -f '{{.State.Status}}' "$name")" = exited ]; do
-    if [ "$(date +%s)" -ge "$deadline" ]; then
+    if [ "$polls" -ge "$((wait_s * 2))" ]; then
       save_logs "$name"
-      fail "$timeout_message (still running after ${wait_s}s)" "$work/$name.out" "$work/$name.err"
+      fail "$timeout_message (still running after ${wait_s}s of polling)" "$work/$name.out" "$work/$name.err"
     fi
     sleep 0.5
+    polls=$((polls + 1))
   done
   code=$(docker inspect -f '{{.State.ExitCode}}' "$name")
   save_logs "$name"
@@ -123,17 +126,18 @@ hostport=$(docker port "$hub" 8080/tcp) || {
 }
 base="http://127.0.0.1:${hostport##*:}"
 
-deadline=$(($(date +%s) + wait_s))
+polls=0
 while :; do
   hub_running
   rc=0
   status=$(curl -sS --max-time 2 -o "$work/admin.html" -w '%{http_code}' "$base/admin/" 2> "$work/admin.curl") || rc=$?
   [ "$rc" = 0 ] && break
-  if [ "$(date +%s)" -ge "$deadline" ]; then
+  if [ "$polls" -ge "$((wait_s * 2))" ]; then
     save_logs "$hub"
-    fail "no HTTP answer on $base/admin/ within ${wait_s}s (curl exit $rc)" "$work/$hub.out" "$work/$hub.err" "$work/admin.curl"
+    fail "no HTTP answer on $base/admin/ after ${wait_s}s of polling (curl exit $rc)" "$work/$hub.out" "$work/$hub.err" "$work/admin.curl"
   fi
   sleep 0.5
+  polls=$((polls + 1))
 done
 # 503 是 internal/hub/web 的"面板没有构建进二进制"说明页：镜像里的 hub 缺了 make web 的产物。
 [ "$status" = 200 ] || fail "/admin/ returned $status, want 200" "$work/admin.html"
