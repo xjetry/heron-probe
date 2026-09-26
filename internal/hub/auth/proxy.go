@@ -12,12 +12,16 @@ import (
 // 可信地址，第一个不可信的就是客户端。空列表 = 不信任任何转发头、一律用对端
 // 地址，是收紧方向。畸形头同样回落到对端地址。hub 不从请求头推断自己是否
 // 在反代之后。
-func ClientIP(peerAddr, xff string, trusted []netip.Prefix) netip.Addr {
+//
+// xff 是该头的全部字段行（Header.Values），按出现顺序：同名的多行字段等价于按顺序用逗号拼接
+// （RFC 9110 §5.3），代理可以不动客户端自带的那一行、另起一行追加它看到的地址。只读第一行，
+// "从右向左"就是在客户端写的那一行里找，客户端改一个头就能换来源。参数是切片，调用方没法只传一行。
+func ClientIP(peerAddr string, xff []string, trusted []netip.Prefix) netip.Addr {
 	peer := peerIP(peerAddr)
 	if !peer.IsValid() || !inAny(peer, trusted) {
 		return peer
 	}
-	parts := strings.Split(xff, ",")
+	parts := strings.Split(strings.Join(xff, ","), ",")
 	for i := len(parts) - 1; i >= 0; i-- {
 		s := strings.TrimSpace(parts[i])
 		if s == "" {
@@ -100,12 +104,17 @@ func ParsePrefixes(list string) ([]netip.Prefix, error) {
 // 可信代理转发的 X-Forwarded-Proto 能说明这一点；对端不可信时按 http 处理。
 // 后果：hub 若实际在 TLS 反代之后而运维没有配置 --trusted-proxies，会话 cookie
 // 就不带 Secure——配置可信代理是这条链成立的前提，不从请求头猜。
-func RequestScheme(peerAddr, xfProto string, trusted []netip.Prefix) string {
+//
+// xfProto 与 ClientIP 一样是全部字段行，取拼接后的第一个值，即最外层那一跳写的协议。这个头不带逐跳地址，
+// 没法像 X-Forwarded-For 那样跳过可信代理；代理若追加而不覆盖、客户端又自带该头，第一个值就是客户端写的。
+// 这里有意不处理：它只决定 Login/Logout 回给请求者自己的 cookie 带不带 Secure（service.go 的 sessionCookie），
+// 客户端只能改到自己，影响不到别的来源。
+func RequestScheme(peerAddr string, xfProto []string, trusted []netip.Prefix) string {
 	peer := peerIP(peerAddr)
 	if !peer.IsValid() || !inAny(peer, trusted) {
 		return "http"
 	}
-	first, _, _ := strings.Cut(xfProto, ",")
+	first, _, _ := strings.Cut(strings.Join(xfProto, ","), ",")
 	if strings.EqualFold(strings.TrimSpace(first), "https") {
 		return "https"
 	}

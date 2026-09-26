@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -232,6 +233,40 @@ func loginRaw(t *testing.T, h *harness, xfProto string) *http.Response {
 		t.Fatalf("login status %d", resp.StatusCode)
 	}
 	return resp
+}
+
+// 登录失败按可信代理追加在另起一行里的真实地址计：客户端每次换一个伪造的第一行，锁定照样落在它自己的来源上，
+// 换了伪造值带正确密码也进不去。
+func TestLoginLockoutKeysOnEveryForwardedForLine(t *testing.T) {
+	h := newHarness(t, "127.0.0.1/32")
+	h.auth.SetPassword(t.Context(), password)
+	login := func(pw string, forged int) (int, string) {
+		req, _ := http.NewRequest(http.MethodPost, h.srv.URL+"/probe.v1.AdminService/Login", strings.NewReader(`{"password":"`+pw+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Add("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", forged))
+		req.Header.Add("X-Forwarded-For", "198.51.100.9")
+		resp, err := h.srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(body)
+	}
+	const lockedText = "too many failed logins from this source"
+	locked := false
+	for i := range 20 { // 远多于 auth 的锁定上限
+		if _, body := login("wrong", i+1); strings.Contains(body, lockedText) {
+			locked = true
+			break
+		}
+	}
+	if !locked {
+		t.Fatal("20 failed logins with a new forged first X-Forwarded-For line each time never locked the real source")
+	}
+	if code, body := login(password, 200); code != http.StatusUnauthorized || !strings.Contains(body, lockedText) {
+		t.Fatalf("correct password from the locked source behind a fresh forged line: %d %s", code, body)
+	}
 }
 
 func TestSessionCookieIsHostOnlyStrictAndSecureOnlyBehindTLSProxy(t *testing.T) {

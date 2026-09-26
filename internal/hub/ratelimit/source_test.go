@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -56,6 +57,36 @@ func TestBySourceLimitsBeforeNextAndPassesTheSource(t *testing.T) {
 
 // 一台主机通常独占整个 IPv6 /64，逐地址计键等于不限流：IPv6 同一 /64 的地址共用一桶，不同 /64 各自一桶；
 // IPv4 仍是一个地址一桶。放行的请求带进 next 的是同一个键。
+// 可信代理另起一行追加真实地址时，桶取自那一行：客户端每次换一个伪造的第一行也换不了桶。
+func TestBySourceReadsEveryForwardedForLine(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	var seen []string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		from, _ := SourceOf(r.Context())
+		seen = append(seen, from.String())
+	})
+	h := BySource(New[netip.Addr](2, time.Second), []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, clk, next)
+	for i := range 3 {
+		req := httptest.NewRequest(http.MethodPost, "/probe.v1.S/M", strings.NewReader("{}"))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "192.0.2.1:5000"
+		req.Header.Add("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", i+1))
+		req.Header.Add("X-Forwarded-For", "198.51.100.9")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		want := http.StatusOK
+		if i == 2 {
+			want = http.StatusTooManyRequests
+		}
+		if rec.Code != want {
+			t.Fatalf("request %d: %d %s, want %d", i, rec.Code, rec.Body.String(), want)
+		}
+	}
+	if want := "198.51.100.9,198.51.100.9"; strings.Join(seen, ",") != want {
+		t.Fatalf("next saw sources %v, want %s", seen, want)
+	}
+}
+
 func TestBySourceKeysIPv4ByAddressAndIPv6ByPrefix64(t *testing.T) {
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	var seen []string

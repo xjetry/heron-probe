@@ -159,8 +159,8 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 			return nil, unauthenticated("unauthenticated")
 		}
 		peer := peerInfo{
-			from:   auth.ClientIP(req.Peer().Addr, req.Header().Get("X-Forwarded-For"), s.cfg.TrustedProxies),
-			scheme: auth.RequestScheme(req.Peer().Addr, req.Header().Get("X-Forwarded-Proto"), s.cfg.TrustedProxies),
+			from:   auth.ClientIP(req.Peer().Addr, req.Header().Values("X-Forwarded-For"), s.cfg.TrustedProxies),
+			scheme: auth.RequestScheme(req.Peer().Addr, req.Header().Values("X-Forwarded-Proto"), s.cfg.TrustedProxies),
 		}
 		ctx = context.WithValue(ctx, peerKey{}, peer)
 		// 先鉴别身份再裁决权限：无效 token 调任何方法都是 401，有效 token 调非 READ 方法是 403。
