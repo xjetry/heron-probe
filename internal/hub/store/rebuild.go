@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// rebuildTable 用当前 DDL 重建 name：以 name_new 建出新表，搬运两版都有的列（新列取 DDL
+// rebuildTable 用 ddlOf 给出的 DDL 重建 name：以 name_new 建出新表，搬运两版都有的列（新列取 DDL
 // 默认值），删旧表、改名。走重建而不是 ALTER TABLE ADD COLUMN：描述表生成的 DDL 给每列
 // 统一的默认值，而旧版建出的列没有默认值；ADD COLUMN 只能补新列、改不了旧列的定义，
 // 迁移后的库却必须与全新库逐列相同（含默认值）。

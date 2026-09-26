@@ -303,12 +303,8 @@ const ddlAPIToken = `CREATE TABLE api_token (
   last_used_at INTEGER
 )`
 
-func alertStatements() []string { return alertStatementsWith(ddlAlertDelivery) }
-
-// 告警各表只有 alert_delivery 在迁移 5 之后变过；迁移 5 传入它当时的 DDL，
-// 否则从 v4 升级会建出带新列的表，再在迁移 7 的 ADD COLUMN 撞上重复列。
-func alertStatementsWith(delivery string) []string {
+func alertStatements() []string {
 	return []string{ddlAlertRule, ddlAlertRuleNode, ddlAlertRuleNodeByNode, ddlAlertRuleChannel,
 		ddlAlertRuleChannelByChannel, ddlNotifyChannel, ddlAlertState, ddlAlertEvent,
-		ddlAlertEventByNode, ddlAlertEventByAt, delivery, ddlAlertDeliveryByEvent, ddlAlertDeliveryPending}
+		ddlAlertEventByNode, ddlAlertEventByAt, ddlAlertDelivery, ddlAlertDeliveryByEvent, ddlAlertDeliveryPending}
 }

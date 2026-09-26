@@ -3,6 +3,9 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"log/slog"
 	"path/filepath"
 	"reflect"
@@ -503,9 +506,9 @@ func TestMigrationFromV4MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 }
 
 func TestAlertMigrationRejectsExistingObjects(t *testing.T) {
-	// 对象清单与 alertStatements 物理分离但语义耦合；手工维护会漏掉新增对象的同名冲突断言。
+	// 对象清单取自迁移 5 实际执行的冻结语句；手工维护会漏掉新增对象的同名冲突断言。
 	// 每条语句必须生成一个对象，解析失败直接终止，不能静默缩小覆盖范围。
-	statements := alertStatements()
+	statements := alertStatementsV5
 	objects := make([]struct{ kind, name string }, len(statements))
 	createObject := regexp.MustCompile(`^CREATE\s+(TABLE|INDEX)\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)\b`)
 	for i, statement := range statements {
@@ -623,4 +626,30 @@ func TestMigrationFromV5MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("minute row lost across migration: %v %v", rows, err)
 	}
+}
+
+// 迁移只引用冻结的 DDL：schema.go 里的顶层名字（当前 DDL 与生成函数）一个都不能出现在 migrations.go。
+func TestMigrationsReferenceOnlyFrozenDDL(t *testing.T) {
+	fset := token.NewFileSet()
+	schema, err := parser.ParseFile(fset, "schema.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := map[string]bool{}
+	for name := range schema.Scope.Objects {
+		current[name] = true
+	}
+	if !current["ddlAlertDelivery"] || !current["metricDDL"] {
+		t.Fatalf("schema.go declarations not found: %v", current)
+	}
+	migrations, err := parser.ParseFile(fset, "migrations.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ast.Inspect(migrations, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && current[id.Name] {
+			t.Errorf("%s: migrations reference current DDL %s", fset.Position(id.Pos()), id.Name)
+		}
+		return true
+	})
 }
