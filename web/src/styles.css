@@ -25,6 +25,7 @@ button[disabled] { opacity: 0.5; cursor: default; }
 button.link { border: none; background: none; color: var(--accent); padding: 0; }
 button.danger { color: var(--bad); border-color: var(--bad); }
 .error { color: var(--bad); }
+.warn { color: var(--warn); }
 .muted { color: var(--muted); }
 .row { display: flex; align-items: baseline; gap: 1rem; }
 form.row, .edit-form .row { align-items: flex-end; flex-wrap: wrap; }

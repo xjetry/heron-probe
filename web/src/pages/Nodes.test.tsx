@@ -12,7 +12,68 @@ const two = [
   { id: 2n, name: "b", public: true, note: "db", sortOrder: 1, createdAt: 0n, trafficResetDay: 1 },
 ];
 
+const withVersion = [
+  { ...two[0], facts: { hostname: "a", os: "", kernel: "", arch: "", virtualization: "", cpuModel: "", cpuCores: 0, agentVersion: "v1.0.0", icmpAvailable: true } },
+];
+const agentAt = (agentVersion: string) => [{ ...withVersion[0], facts: { ...withVersion[0].facts, agentVersion } }];
+const snapshotOf = (hubVersion: string) => async () => ({ now: 1n, reportIntervalMs: 4000, nodes: [], hubVersion });
+
 describe("Nodes", () => {
+
+  it("marks nodes whose agent version lags the hub", async () => {
+    renderWithAdmin({
+      listNodes: async () => ({ nodes: withVersion }),
+      getSnapshot: snapshotOf("v1.1.0"),
+    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    expect(await screen.findByText("落后于 hub")).toBeInTheDocument();
+    // 标记在链接之外，不改变链接的可访问名。
+    expect(screen.getByRole("link", { name: "a（#1）" })).not.toHaveTextContent("落后于 hub");
+  });
+
+  it.each(["v1.1.0", "dev"])("no lagging marker when versions match or hub is %s", async (hubVersion) => {
+    renderWithAdmin({
+      listNodes: async () => ({ nodes: agentAt("v1.1.0") }),
+      getSnapshot: snapshotOf(hubVersion),
+    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a（#1）" });
+    expect(screen.queryByText("落后于 hub")).toBeNull();
+  });
+
+  it("does not mark a node newer than the hub", async () => {
+    renderWithAdmin({
+      listNodes: async () => ({ nodes: agentAt("v1.2.0") }),
+      getSnapshot: snapshotOf("v1.1.0"),
+    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a（#1）" });
+    expect(screen.queryByText("落后于 hub")).toBeNull();
+  });
+
+  it("does not mark a dev agent", async () => {
+    renderWithAdmin({
+      listNodes: async () => ({ nodes: agentAt("dev") }),
+      getSnapshot: snapshotOf("v1.1.0"),
+    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a（#1）" });
+    expect(screen.queryByText("落后于 hub")).toBeNull();
+  });
+
+  it.each([["v1.9.0", "v1.10.0"], ["v1.1.0-rc.1", "v1.1.1"], ["v0.9.9", "v1.0.0"]])("按版本号比较：%s 落后于 %s", async (agent, hub) => {
+    renderWithAdmin({
+      listNodes: async () => ({ nodes: agentAt(agent) }),
+      getSnapshot: snapshotOf(hub),
+    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    expect(await screen.findByText("落后于 hub")).toBeInTheDocument();
+  });
+
+  it("快照失败不卸载节点列表、不标记、不显示错误", async () => {
+    renderWithAdmin({
+      listNodes: async () => ({ nodes: withVersion }),
+      getSnapshot: async () => { throw new ConnectError("snapshot unavailable", Code.Unavailable); },
+    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    await screen.findByRole("link", { name: "a（#1）" });
+    await waitFor(() => expect(screen.queryByText("落后于 hub")).toBeNull());
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 
   it("节点刷新失败保留编辑行与草稿", async () => {
     let fail = false;

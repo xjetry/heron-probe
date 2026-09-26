@@ -1,11 +1,19 @@
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useEffect, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { Secret } from "../components/Secret";
 import { AdminService } from "../gen/probe/v1/admin_pb";
+
+// hub 为正式版本（以 v 开头；未注入版本的构建是 dev）时取同版本 release 的脚本并用 --version 钉住
+// agent 版本；否则只能取最新 release。URL 与 --version 由同一个判断决定，不会一个钉版本一个不钉。
+const isRelease = (hubVersion: string) => hubVersion.startsWith("v");
+const scriptUrl = (hubVersion: string) =>
+  isRelease(hubVersion)
+    ? `https://github.com/xjetry/probe/releases/download/${hubVersion}/install.sh`
+    : "https://github.com/xjetry/probe/releases/latest/download/install.sh";
 
 const TTLS = [
   { label: "10 分钟", seconds: 600 },
@@ -18,6 +26,8 @@ export function RegisterWindow() {
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getRegisterWindow, cardinality: "finite" }) });
   const status = useQuery(AdminService.method.getRegisterWindow, {}, { refetchInterval: 10_000 });
+  // hub 版本在进程生命周期内不变，不轮询。
+  const snapshot = useQuery(AdminService.method.getSnapshot, {});
   const [ttl, setTtl] = useState(TTLS[1].seconds);
   const [maxNodes, setMaxNodes] = useState(5);
   const [key, setKey] = useState<string | null>(null);
@@ -38,6 +48,9 @@ export function RegisterWindow() {
   const onOpen = (e: FormEvent) => { e.preventDefault(); open.mutate({ ttlS: ttl, maxNodes }); };
   const gate = queryGate(status);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
+  // 命令区域只依赖快照；外壳（key、开窗表单）不等它。未就绪时不拼命令：用空版本先渲染 latest 命令
+  // 再在快照到达后变成钉版本的命令，会让先复制的人装上与 hub 不同的版本。
+  const snap = queryGate(snapshot);
   return (
     <section>
       <h1>注册窗口</h1>
@@ -51,8 +64,12 @@ export function RegisterWindow() {
       {key && (
         <>
           <Secret label="注册 key" value={key} />
-          <p>在被监控的机器上执行：</p>
-          <pre className="secret">{`probe-agent register --hub ${window.location.origin} --key ${key}`}</pre>
+          <p>在被监控的机器上以 root 执行（agent 若经其他地址访问 hub，把命令里的地址换掉）：</p>
+          {snap.ready ? (
+            <InstallCommands hubVersion={snap.data.hubVersion} args={`--hub ${window.location.origin} --key ${key}`} banner={snap.banner} />
+          ) : (
+            snap.loading ?? errorBanner(...snap.errors)
+          )}
         </>
       )}
       <form onSubmit={onOpen} className="row">
@@ -67,5 +84,18 @@ export function RegisterWindow() {
       {gate.banner}
       {error != null && <p role="alert" className="error">{errorText(error)}</p>}
     </section>
+  );
+}
+
+function InstallCommands({ hubVersion, args, banner }: { hubVersion: string; args: string; banner: ReactNode }) {
+  const url = scriptUrl(hubVersion);
+  const full = isRelease(hubVersion) ? `${args} --version ${hubVersion}` : args;
+  return (
+    <>
+      {banner}
+      <pre className="secret">{`curl -fsSL ${url} | sh -s -- ${full}`}</pre>
+      <pre className="secret">{`wget -qO- ${url} | sh -s -- ${full}`}</pre>
+      {!isRelease(hubVersion) && <p className="muted">hub 不是正式版本（{hubVersion || "未知"}），命令不带 --version，将安装最新 release。</p>}
+    </>
   );
 }

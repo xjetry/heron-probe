@@ -15,6 +15,9 @@ export function Nodes() {
   const qc = useQueryClient();
   const { error, mutationOptions } = useLatestError();
   const nodes = useQuery(AdminService.method.listNodes, {});
+  // 只用于落后标记的可选查询：不进页面门控，失败或未就绪时不标，也不卸载列表。hub 版本在进程生命周期内不变，不轮询。
+  const snapshot = useQuery(AdminService.method.getSnapshot, {});
+  const hubVersion = snapshot.data?.hubVersion;
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) });
   // token 只在创建与换 token 的响应里各出现一次，hub 不存明文；展示不经过 isLatest 门控——门控丢弃迟到结果时会把这唯一一份明文一起丢掉。
   // id 记下明文属于哪一行：删除的若正是这一行，卡片必须一起消失，不能继续展示已删对象的凭据。
@@ -81,7 +84,7 @@ export function Nodes() {
           <thead><tr><th>排序</th><th>名称</th><th>公开</th><th>备注</th><th>重置日</th><th>离线宽限期</th><th>创建于</th><th>操作</th></tr></thead>
           <tbody>
             {list.map((n, i) => (
-              <NodeEditor key={String(n.id)} node={n}
+              <NodeEditor key={String(n.id)} node={n} hubVersion={hubVersion}
                 saving={update.isPending} deleting={remove.isPending} rotating={rotate.isPending}
                 onMoveUp={() => move(list, i, -1)} onMoveDown={() => move(list, i, 1)}
                 onSave={(patch, onSuccess) => update.mutate({ id: n.id, ...patch }, { onSuccess })}
@@ -95,6 +98,22 @@ export function Nodes() {
   );
 }
 
+// 正式版本号 vMAJOR.MINOR.PATCH，忽略 "-" 之后的预发布后缀；dev 等解析不了的返回 null。
+function releaseTriple(v: string): [number, number, number] | null {
+  const m = /^v(\d+)\.(\d+)\.(\d+)(?:-|$)/.exec(v);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+// 按版本号逐段比较而不是字符串不等：agent 比 hub 新不算落后，v1.9.0 比 v1.10.0 旧。
+// 任一方不是正式版本（dev、缺失）就不标：没有可比的次序。
+function lagsHub(agent: string | undefined, hub: string): boolean {
+  const a = agent ? releaseTriple(agent) : null;
+  const h = releaseTriple(hub);
+  if (!a || !h) return false;
+  for (let i = 0; i < 3; i++) if (a[i] !== h[i]) return a[i] < h[i];
+  return false;
+}
+
 const validResetDay = (day: number) => Number.isInteger(day) && day >= 1 && day <= 28;
 
 // 宽限期以字符串编辑，0 表示清除（取 hub 的 PROBE_OFFLINE_AFTER）。
@@ -104,8 +123,8 @@ const draftOf = (node: Node) => ({
 });
 const validGrace = (s: string) => /^\d+$/.test(s);
 
-function NodeEditor({ node, saving, deleting, rotating, onMoveUp, onMoveDown, onSave, onDelete, onRotate }: {
-  node: Node;
+function NodeEditor({ node, hubVersion, saving, deleting, rotating, onMoveUp, onMoveDown, onSave, onDelete, onRotate }: {
+  node: Node; hubVersion: string | undefined;
   saving: boolean; deleting: boolean; rotating: boolean;
   onMoveUp: () => void; onMoveDown: () => void;
   onSave: (patch: { name: string; public: boolean; note: string; trafficResetDay: number; offlineGraceS: number }, onSuccess: () => void) => void;
@@ -136,7 +155,10 @@ function NodeEditor({ node, saving, deleting, rotating, onMoveUp, onMoveDown, on
         <button type="button" className="link" aria-label={`上移 ${withId(node.name, node.id)}`} onClick={onMoveUp}>↑</button>
         <button type="button" className="link" aria-label={`下移 ${withId(node.name, node.id)}`} onClick={onMoveDown}>↓</button>
       </td>
-      <td><Link to={`/nodes/${node.id}`} aria-label={withId(node.name, node.id)}>{node.name}</Link></td>
+      <td>
+        <Link to={`/nodes/${node.id}`} aria-label={withId(node.name, node.id)}>{node.name}</Link>
+        {hubVersion !== undefined && lagsHub(node.facts?.agentVersion, hubVersion) && <>{" "}<span className="warn">落后于 hub</span></>}
+      </td>
       <td>{node.public ? "是" : "否"}</td>
       <td className="muted">{node.note}</td>
       <td>每月 {node.trafficResetDay} 日</td>
