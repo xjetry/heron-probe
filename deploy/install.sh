@@ -342,22 +342,21 @@ dl "$BASE_URL/SHA256SUMS" "$work/SHA256SUMS"
 }
 (cd "$work" && sha256sum -c verify.txt)
 
-# 解包、检查包内文件、写临时二进制都在停服务之前做完：这些准备失败时，正在运行的旧服务不受影响。
+# 可能失败的操作都在停服务之前做完：解包、检查包内文件、写临时二进制、注册、设配置的属主与权限。
+# 这些失败时正在运行的旧服务不受影响；停服务之后只剩替换二进制、装服务定义、启动。它们都不需要服务停下：
+# agent 只在启动时读一次配置（cmd/agent 的 run 只调用 LoadConfig）。
 tar -xzf "$work/$PKG" -C "$work"
 for f in probe-agent probe-agent.service probe-agent.openrc; do
   [ -f "$work/$f" ] || { echo "package is missing $f" >&2; exit 1; }
 done
 install -m 0755 "$work/probe-agent" "$BIN_TMP"
-stop_service
-# 同目录 rename 原子替换目录项：exec $BIN 看到的始终是完整的旧文件或完整的新文件；
-# 写了一半的临时文件由上面的 trap 删除。
-mv -f "$BIN_TMP" "$BIN"
 
 if [ ! -f "$CFG" ]; then
   # 注册只在没有配置时发生；配置落盘后重跑不再注册，所以注册之后的步骤失败时，重跑不会多耗窗口名额。
+  # 用还没换上的新二进制注册：注册可能失败（hub 不可达、key 失效），必须在停服务之前。
   set -- register --hub "$HUB" --key "$KEY" --config "$CFG"
   if [ -n "$NAME" ]; then set -- "$@" --name "$NAME"; fi
-  "$BIN" "$@" </dev/null
+  "$BIN_TMP" "$@" </dev/null
 else
   if [ -n "$KEY" ]; then echo "existing config found; keeping the current registration (--key ignored)"; fi
   if [ -n "$NAME" ]; then echo "existing config found; --name ignored"; fi
@@ -373,6 +372,11 @@ chown root:"$SVC_USER" "$CFG_DIR"
 chmod 0750 "$CFG_DIR"
 chown "$SVC_USER:$SVC_USER" "$CFG"
 chmod 0600 "$CFG"
+
+stop_service
+# 同目录 rename 原子替换目录项：exec $BIN 看到的始终是完整的旧文件或完整的新文件；
+# 写了一半的临时文件由上面的 trap 删除。
+mv -f "$BIN_TMP" "$BIN"
 
 # 服务定义每次覆盖，单元的改动随升级下发。
 # 走到这里时没有以服务用户运行的进程：stop_service 不论服务定义在不在都已确认，查到就已退出。

@@ -231,18 +231,27 @@ func (e *env) release(arch, version string) {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	pkg := "probe-agent_darwin_" + arch + ".tar.gz"
+	e.pack("probe-agent_darwin_"+arch+".tar.gz", []packFile{
+		{"probe-agent", fakeAgent + "# " + version + " " + arch + "\n", 0o755},
+		{"xyz.probe.agent.plist", string(plist), 0o644},
+	})
+}
+
+type packFile struct {
+	name, body string
+	mode       int64
+}
+
+// pack 把 files 打成 dist 下的 pkg，并重写 SHA256SUMS。
+func (e *env) pack(pkg string, files []packFile) {
+	e.t.Helper()
 	f, err := os.Create(filepath.Join(e.dist, pkg))
 	if err != nil {
 		e.t.Fatal(err)
 	}
 	gz := gzip.NewWriter(f)
 	tw := tar.NewWriter(gz)
-	for _, m := range []struct {
-		name string
-		body string
-		mode int64
-	}{{"probe-agent", fakeAgent + "# " + version + " " + arch + "\n", 0o755}, {"xyz.probe.agent.plist", string(plist), 0o644}} {
+	for _, m := range files {
 		if err := tw.WriteHeader(&tar.Header{Name: m.name, Mode: m.mode, Size: int64(len(m.body))}); err != nil {
 			e.t.Fatal(err)
 		}
@@ -254,16 +263,20 @@ func (e *env) release(arch, version string) {
 	e.sums()
 }
 
+// sums 按 dist 下现有的包写 SHA256SUMS，与发布产物同一格式。
 func (e *env) sums() {
 	e.t.Helper()
+	pkgs, err := filepath.Glob(filepath.Join(e.dist, "*.tar.gz"))
+	if err != nil {
+		e.t.Fatal(err)
+	}
 	var b strings.Builder
-	for _, arch := range []string{"amd64", "arm64"} {
-		pkg := "probe-agent_darwin_" + arch + ".tar.gz"
-		data, err := os.ReadFile(filepath.Join(e.dist, pkg))
+	for _, p := range pkgs {
+		data, err := os.ReadFile(p)
 		if err != nil {
-			continue
+			e.t.Fatal(err)
 		}
-		fmt.Fprintf(&b, "%x  %s\n", sha256.Sum256(data), pkg)
+		fmt.Fprintf(&b, "%x  %s\n", sha256.Sum256(data), filepath.Base(p))
 	}
 	if err := os.WriteFile(filepath.Join(e.dist, "SHA256SUMS"), []byte(b.String()), 0o644); err != nil {
 		e.t.Fatal(err)
@@ -280,7 +293,8 @@ func (e *env) run(args ...string) (string, int) {
 	defer script.Close()
 	cmd := exec.Command("sh", append([]string{"-s", "--"}, args...)...)
 	cmd.Stdin = script
-	cmd.Env = append(os.Environ(), "PATH="+e.bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+	// 末尾补上 sbin：macOS 的 sha256sum 在 /sbin。
+	cmd.Env = append(os.Environ(), "PATH="+e.bin+string(os.PathListSeparator)+os.Getenv("PATH")+":/usr/sbin:/sbin",
 		"PROBE_INSTALL_ROOT="+e.root, "STUB_STATE="+e.state)
 	cmd.Env = append(cmd.Env, e.vars...)
 	out, err := cmd.CombinedOutput()
