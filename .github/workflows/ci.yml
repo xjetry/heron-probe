@@ -26,6 +26,8 @@ jobs:
           setup_only: true
       - run: shellcheck --version
       - run: make ci
+      # 镜像的构建与冒烟（§12）：两个平台构建并核对根文件系统，本机平台装进 docker 后冒烟；不推送。
+      - run: make docker VERSION=v0.0.0-ci
       - name: buf breaking
         if: github.event_name == 'pull_request'
         run: |
