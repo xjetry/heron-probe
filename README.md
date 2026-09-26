@@ -4,21 +4,23 @@
 
 ## 用 Docker 运行 hub
 
-镜像 `ghcr.io/xjetry/probe-hub:<版本>`，含 linux/amd64 与 linux/arm64。正式版本同时推为 `latest`；预发布版本（tag 含 `-`，如 `v0.2.0-rc.1`）不动 `latest`。镜像基于 `scratch`，只有静态链接的 `probe-hub`、CA 证书与 uid 65532 的非 root 用户，没有 shell。
+镜像 `ghcr.io/xjetry/probe-hub:<版本>`，含 linux/amd64 与 linux/arm64。正式版本在发布回读通过后同时成为 `latest`；预发布版本（tag 含 `-`，如 `v0.2.0-rc.1`）不动 `latest`。推 `v*` tag 触发发布，同组的发布运行串行：同时推多个 tag 时，排队中被后来者替换而取消的那个需要手工重跑。镜像基于 `scratch`，只有静态链接的 `probe-hub`、CA 证书与 uid 65532 的非 root 用户，没有 shell。
 
 ```sh
 docker volume create probe-data
-docker run -d --name probe --restart unless-stopped \
+docker run -d --name probe --restart unless-stopped --stop-timeout 30 \
   -p 127.0.0.1:8080:8080 \
   -v probe-data:/data \
   -e TZ=Asia/Shanghai \
   ghcr.io/xjetry/probe-hub:v0.1.0
 ```
 
+`--stop-timeout 30` 给关停留出余量：`docker stop` 先发 SIGTERM，hub 排空在途请求（至多 10 秒）、停下后台循环、关库后退出；宽限期一过 Docker 就发 SIGKILL。默认宽限期也是 10 秒，与排空上限相等，排空用满时最后一批写可能被截断。
+
 默认参数是 `serve --db /data/probe.db --listen 0.0.0.0:8080`。镜像名之后写的任何参数都会替换这一整组默认参数，要加参数时连同默认的一起写全：
 
 ```sh
-docker run -d --name probe --restart unless-stopped -p 127.0.0.1:8080:8080 -v probe-data:/data \
+docker run -d --name probe --restart unless-stopped --stop-timeout 30 -p 127.0.0.1:8080:8080 -v probe-data:/data \
   ghcr.io/xjetry/probe-hub:v0.1.0 \
   serve --db /data/probe.db --listen 0.0.0.0:8080 --timezone Asia/Shanghai
 ```
@@ -48,7 +50,7 @@ hub 只提供明文 HTTP，TLS 由反代（Caddy、nginx、CDN）终止。容器
 
 ```sh
 docker network create --subnet 172.30.0.0/24 probe-net
-docker run -d --name probe --restart unless-stopped --network probe-net -v probe-data:/data -e TZ=Asia/Shanghai \
+docker run -d --name probe --restart unless-stopped --stop-timeout 30 --network probe-net -v probe-data:/data -e TZ=Asia/Shanghai \
   ghcr.io/xjetry/probe-hub:v0.1.0 \
   serve --db /data/probe.db --listen 0.0.0.0:8080 --trusted-proxies 172.30.0.0/24
 # 反代容器以 --network probe-net 加入，把请求转给 http://probe:8080
