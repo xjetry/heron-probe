@@ -36,11 +36,15 @@ it("data-theme 压过系统设置，没有或不认识时跟随系统", () => {
 it("useColorScheme 随系统与 data-theme 的变化更新", async () => {
   stubSystem();
   const { result, unmount } = renderHook(() => useColorScheme());
-  expect(result.current).toBe("light");
-  act(() => { systemDark = true; changed(); });
-  expect(result.current).toBe("dark");
-  await act(async () => { document.documentElement.dataset.theme = "light"; });
-  await waitFor(() => expect(result.current).toBe("light"));
   // 先卸载再由 afterEach 撤掉 matchMedia 的替身：挂着的订阅会在删 data-theme 时再读一次系统设置。
-  unmount();
+  // 断言失败时也要卸载，否则那次读取抛出的未捕获异常会盖住真正的失败原因。
+  try {
+    expect(result.current).toBe("light");
+    act(() => { systemDark = true; changed(); });
+    expect(result.current).toBe("dark");
+    await act(async () => { document.documentElement.dataset.theme = "light"; });
+    await waitFor(() => expect(result.current).toBe("light"));
+  } finally {
+    unmount();
+  }
 });

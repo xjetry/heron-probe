@@ -42,18 +42,22 @@ it("数据原地更新；系统或 data-theme 改变明暗时，用最新数据�
   const light = ["rgb(107, 114, 128)", "rgb(229, 231, 235)", "rgb(107, 114, 128)"];
   const darkColors = ["rgb(156, 163, 175)", "rgb(42, 47, 58)", "rgb(156, 163, 175)"];
   const { rerender, unmount } = render(<Chart data={[[0], [1]]} labels={["cpu"]} unit="count" />);
-  const colors = () => plots.at(-1)!.options.axes!.map((axis) => [axis.stroke, axis.grid?.stroke, axis.ticks?.stroke]);
-  expect(colors()).toEqual([light, light]);
-  const next: AlignedData = [[0], [2]];
-  rerender(<Chart data={next} labels={["cpu"]} unit="count" />);
-  expect(plots).toHaveLength(1);
-  expect(plots[0].setData).toHaveBeenLastCalledWith(next);
-  act(() => { dark = true; changed(); });
-  expect(colors()).toEqual([darkColors, darkColors]);
-  expect(plots.at(-1)!.data).toEqual(next);
-  // 站点设置强制浅色：html 的 data-theme 压过系统的深色。
-  await act(async () => { document.documentElement.dataset.theme = "light"; });
-  await waitFor(() => expect(colors()).toEqual([light, light]));
-  expect(plots.at(-1)!.data).toEqual(next);
-  unmount();
+  // 断言失败时也先卸载：挂着的订阅会在 afterEach 撤掉 matchMedia 替身后再读一次系统设置，抛出的未捕获异常盖住真正的失败原因。
+  try {
+    const colors = () => plots.at(-1)!.options.axes!.map((axis) => [axis.stroke, axis.grid?.stroke, axis.ticks?.stroke]);
+    expect(colors()).toEqual([light, light]);
+    const next: AlignedData = [[0], [2]];
+    rerender(<Chart data={next} labels={["cpu"]} unit="count" />);
+    expect(plots).toHaveLength(1);
+    expect(plots[0].setData).toHaveBeenLastCalledWith(next);
+    act(() => { dark = true; changed(); });
+    expect(colors()).toEqual([darkColors, darkColors]);
+    expect(plots.at(-1)!.data).toEqual(next);
+    // 站点设置强制浅色：html 的 data-theme 压过系统的深色。
+    await act(async () => { document.documentElement.dataset.theme = "light"; });
+    await waitFor(() => expect(colors()).toEqual([light, light]));
+    expect(plots.at(-1)!.data).toEqual(next);
+  } finally {
+    unmount();
+  }
 });
