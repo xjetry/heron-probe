@@ -33,8 +33,10 @@ type mount struct {
 
 func mountOf(path string, h http.Handler) mount { return mount{path: path, h: h} }
 
-// newMux 是所有服务唯一的挂载点；挂载点级测试从注册表枚举方法逐个匿名调用，
-// 所以任何进了描述符的服务都必须在这里出现，且带着它的鉴权拦截器。
+// newMux 是所有服务唯一的挂载点；挂载点级测试（TestMuxRejectsAnonymousProcedures）从注册表枚举方法逐个匿名调用，
+// 所以任何进了描述符的服务都必须在这里出现。除 PublicService 外，每个服务都带着它的鉴权拦截器；PublicService
+// 按 §3.2 不鉴权，它的四个过程是那个测试里唯一的匿名白名单（publicProcedures），其余过程匿名调用必须得到 401。
+// 往 PublicService 加方法等于把它公开给任何人，没有拦截器兜底。
 func newMux(mounts ...mount) *http.ServeMux {
 	mux := http.NewServeMux()
 	for _, m := range mounts {

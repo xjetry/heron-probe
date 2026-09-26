@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -72,7 +73,8 @@ func pubPost(t *testing.T, h *harness, method, body string, header map[string]st
 	return pubDo(t, req, header)
 }
 
-// 未公开与不存在的节点得到同一个响应：状态码与正文逐字节相同，错误里没有 id。
+// 未公开与不存在的节点得到同一个响应：状态码、正文与响应头（除 Date）都相同，错误里没有 id。
+// 错误 metadata 走响应头，只比正文看不到按分支加的头。
 func TestPublicHistoryTreatsPrivateAndMissingNodesAlike(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
@@ -89,8 +91,34 @@ func TestPublicHistoryTreatsPrivateAndMissingNodesAlike(t *testing.T) {
 		if private.status != http.StatusNotFound || missing.status != private.status || !bytes.Equal(private.body, missing.body) {
 			t.Fatalf("%s: private %d %s, missing %d %s", method, private.status, private.body, missing.status, missing.body)
 		}
+		ph, mh := private.header.Clone(), missing.header.Clone()
+		ph.Del("Date")
+		mh.Del("Date")
+		if !reflect.DeepEqual(ph, mh) {
+			t.Fatalf("%s: private headers %v, missing headers %v", method, ph, mh)
+		}
 		if !bytes.Contains(private.body, []byte(`"node_id: no public node has this id"`)) {
 			t.Fatalf("%s: body %s", method, private.body)
+		}
+	}
+}
+
+// 匿名请求的解码上限是 publicMaxBody：GET 的 message 与 POST 正文都按它计，恰好满额照常处理，多一个字节即
+// resource_exhausted。填充用 JSON 空白，请求本身合法，拒绝只能来自大小。
+func TestPublicDecodeBudget(t *testing.T) {
+	h := newHarness(t, "")
+	padded := func(n int) string { return "{" + strings.Repeat(" ", n-2) + "}" }
+	for _, c := range []struct {
+		size int
+		want int
+	}{{publicMaxBody, http.StatusOK}, {publicMaxBody + 1, http.StatusTooManyRequests}} {
+		for name, got := range map[string]pubResult{
+			"GET":  pubGet(t, h, "GetSite", jsonQuery(padded(c.size)), nil),
+			"POST": pubPost(t, h, "GetSite", padded(c.size), nil),
+		} {
+			if got.status != c.want || (c.want != http.StatusOK && !bytes.Contains(got.body, []byte(`"code":"resource_exhausted"`))) {
+				t.Fatalf("%s with a %d-byte message: %d %s, want %d", name, c.size, got.status, got.body, c.want)
+			}
 		}
 	}
 }

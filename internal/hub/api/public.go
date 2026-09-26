@@ -44,7 +44,8 @@ type PublicConfig struct {
 	TrustedProxies []netip.Prefix
 }
 
-// Public 实现 PublicService。它不经会话或 token：挂载点只绑定按来源地址的限流与缓存头（Handler）。
+// Public 实现 PublicService。它不经会话或 token：挂载点只绑定按来源键（IPv4 一个地址、IPv6 一个 /64，
+// 见 ratelimit.BySource）的限流与缓存头（Handler）。
 // 可见范围由 store 的 ListPublicNodes 与 NodeIsPublic 承载，节点是否公开在每个请求里现读库；
 // 进程里只有 GetSnapshot 的响应字节有 snapshotTTL 的缓存窗口。
 type Public struct {
@@ -171,8 +172,10 @@ func probeServices() []protoreflect.ServiceDescriptor {
 	return out
 }
 
-// noPublicNode 对未公开与不存在的节点是同一个错误：文案不带 id，两种情形的响应逐字节相同，
-// 匿名调用方无从由错误区分"存在但未公开"与"不存在"。
+// noPublicNode 是公开端对"没有这个公开节点"的唯一回答。匿名调用方区分不出"存在但未公开"与"不存在"，
+// 由两处承载：store 的 NodeIsPublic 对不存在的 id 返回 false 而不是错误；requirePublic 对 false 只有这一条分支。
+// 在这条分支里按"是否存在"分叉，哪怕文案不变、只多一个错误 metadata（它走响应头），私有节点就可区分了。
+// 文案不带 id 只是让所有非公开 id 的响应逐字节相同，测试因此能拿两个不同的 id 比较整个响应。
 func noPublicNode() error {
 	return connect.NewError(connect.CodeNotFound, errors.New("node_id: no public node has this id"))
 }

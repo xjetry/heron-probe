@@ -72,7 +72,8 @@ func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
 	return scanNodes(rows)
 }
 
-// ListPublicNodes 只返回 public = 1 的节点。公开服务只经它与 NodeIsPublic 读节点：可见范围由这两处的 WHERE 承载。
+// ListPublicNodes 只返回 public = 1 的节点。公开服务只经它与 NodeIsPublic 读节点，可见范围由这两处承载：
+// 这里的 WHERE n.public = 1，与 NodeIsPublic 读出的 public 列（不存在的 id 同样得到 false）。
 func (s *Store) ListPublicNodes(ctx context.Context) ([]Node, error) {
 	rows, err := s.r.QueryContext(ctx, selectNodes+" WHERE n.public = 1"+nodeOrder)
 	if err != nil {
