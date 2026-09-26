@@ -1,9 +1,11 @@
+# check=skip=InvalidDefaultArgInFrom
 # hub 镜像（spec §14）：FROM scratch，只含静态二进制、CA 证书与非 root 用户。
 # 镜像里不编译 Go：make docker 用与 release 同一条构建命令把二进制产出到 build/image/linux/<arch>/，
 # 这里按 TARGETARCH 取用。根文件系统由 scripts/checkimage 逐条目核对，改这里须同步改那份清单。
 
 # 基础镜像由 make 经 --build-arg 传入（Makefile 的 ALPINE_IMAGE，按 digest 固定，冒烟的工具镜像取同一个）；
-# 没有传入时 FROM 为空、构建失败，不会退回浮动的 tag。
+# 没有传入时 FROM 为空、构建失败，不会退回浮动的 tag。故意不给默认值，首行的 check 指令关掉的正是
+# "ARG 默认值使 FROM 为空"这条告警；它是解析器指令，必须在文件第一行。
 ARG ALPINE_IMAGE
 
 # 这一阶段只产出与架构无关的文件，固定在构建节点的本机平台上运行；最终阶段没有 RUN，

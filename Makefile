@@ -26,7 +26,7 @@ check_version = if [ -z "$$VERSION" ]; then echo "VERSION is required, e.g. VERS
 	if [ "$$(printf '%s/' "$$VERSION" | LC_ALL=C tr -d 'A-Za-z0-9_.-')" != / ] || [ -z "$${VERSION\#\#[.-]*}" ] || [ $${\#VERSION} -gt 128 ]; then \
 	  echo "VERSION '$$VERSION' cannot be an image tag: only [A-Za-z0-9_.-], not starting with . or -, at most 128 characters, no + build metadata" >&2; exit 1; fi
 
-.PHONY: gen lint test build binaries ci e2e e2e-matrix fixtures web-install web-test web release script-test docker docker-smoke release-channel docker-push docker-latest docker-readback
+.PHONY: gen lint test build binaries ci e2e e2e-matrix fixtures web-install web-test web release script-test docker docker-smoke release-channel docker-registry docker-push docker-readback docker-promote
 
 web-install:
 	pnpm --dir web install --frozen-lockfile
@@ -38,7 +38,7 @@ gen: web-install
 lint:
 	go mod tidy -diff
 	buf lint
-	shellcheck -s sh deploy/install.sh deploy/openrc/probe-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/release-rules-test.sh scripts/image-platform-ref.sh scripts/docker-builder.sh
+	shellcheck -s sh deploy/install.sh deploy/openrc/probe-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/docker-readback-test.sh scripts/release-rules-test.sh scripts/image-platform-ref.sh scripts/docker-builder.sh
 	go vet ./...
 	GOOS=linux go vet ./...
 	GOOS=darwin go vet ./...
@@ -47,8 +47,11 @@ test:
 	go test -count=1 ./...
 
 # 发布规则（版本号守卫、预发布判定）的回归检查：只跑 make 的检查与 -n 展开，不构建。
+# 发布规则（版本号守卫、预发布判定）与回读判定的回归检查：只跑 make 的检查、-n 展开与 docker 桩，
+# 不构建、不访问 registry。
 script-test:
 	MAKE='$(MAKE)' scripts/release-rules-test.sh
+	scripts/docker-readback-test.sh
 
 web-test: web-install
 	pnpm --dir web exec vitest run
@@ -143,6 +146,8 @@ release:
 # hub 镜像（§14）：ghcr.io/xjetry/probe-hub:<version>，平台由 HUB_LINUX_ARCHES 展开。
 # 镜像里不编译 Go：hub 二进制经 hub_build 构建到 IMAGE_BIN_DIR，Dockerfile 按 TARGETARCH 取用。
 DOCKER_IMAGE := ghcr.io/xjetry/probe-hub
+# registry 主机只由 DOCKER_IMAGE 推出；release.yml 登录时经 make docker-registry 取用，不另写一份。
+DOCKER_REGISTRY = $(firstword $(subst /, ,$(DOCKER_IMAGE)))
 comma := ,
 empty :=
 space := $(empty) $(empty)
@@ -162,6 +167,7 @@ DOCKER_BUILDER := probe-hub-buildkit-$(BUILDKIT_VERSION)
 # （读卷属主、预置不可写的卷、在 hub 的网络命名空间里发请求）经环境变量 TOOL_IMAGE 取用。
 ALPINE_IMAGE := alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
 docker_build = docker buildx build --builder $(DOCKER_BUILDER) -f Dockerfile --build-arg ALPINE_IMAGE=$(ALPINE_IMAGE)
+ensure_builder = scripts/docker-builder.sh $(DOCKER_BUILDER) $(BUILDKIT_IMAGE)
 
 # 本地构建并核对（§14）：两个平台都构建、导出根文件系统交给 checkimage，再把本机平台装进 docker。
 # 多平台结果不能 --load：经典镜像存储不接受多平台索引（docker exporter does not currently support
@@ -176,7 +182,7 @@ docker:
 	  $(call hub_build,$$arch,$(IMAGE_BIN_DIR)/linux/$$arch/probe-hub); \
 	done
 	go run ./scripts/checkstatic $(foreach a,$(HUB_LINUX_ARCHES),$(IMAGE_BIN_DIR)/linux/$(a)/probe-hub)
-	scripts/docker-builder.sh $(DOCKER_BUILDER) $(BUILDKIT_IMAGE)
+	$(ensure_builder)
 	$(docker_build) --platform $(DOCKER_PLATFORMS) --output type=tar,dest=$(IMAGE_BIN_DIR)/rootfs.tar .
 	go run ./scripts/checkimage $(IMAGE_BIN_DIR)/rootfs.tar $(HUB_LINUX_ARCHES)
 	$(docker_build) -t $(DOCKER_IMAGE):$(VERSION) --load .
@@ -190,26 +196,40 @@ docker-smoke:
 	IMAGE='$(DOCKER_IMAGE):$(VERSION)' TOOL_IMAGE='$(ALPINE_IMAGE)' scripts/docker-smoke.sh
 
 # 预发布判定（§14）：去掉构建元数据（+ 及之后）后仍含 - 就是预发布。GitHub Release 是否标为 prerelease、
-# 镜像是否推 latest 都读它，判定只在这一处。纯文本函数，不经 shell：make 展开配方时就求值，早于配方里
-# 的 check_version，求值本身不能执行任何东西。
+# 镜像是否移动 latest 都读它，判定只在这一处。纯文本函数，不经 shell：make 展开配方时就求值，早于配方
+# 里的 check_version，求值本身不能执行任何东西。
 RELEASE_CHANNEL = $(if $(findstring -,$(firstword $(subst +, ,$(VERSION)))),prerelease,stable)
-docker_latest = $(if $(filter stable,$(RELEASE_CHANNEL)),-t $(DOCKER_IMAGE):latest)
 
 release-channel:
 	@$(check_version)
 	@echo $(RELEASE_CHANNEL)
 
-# 发布镜像：先走完 make docker（两个平台的根文件系统核对、本机平台冒烟），再推送两个平台。
-# 只由 release.yml 在登录 ghcr 之后调用；推送沿用 make docker 的构建器与缓存，构建参数同一处。
+docker-registry:
+	@echo $(DOCKER_REGISTRY)
+
+# 发布镜像，release.yml 依次调用下面三个目标，最后才 gh release create。不变式：latest 只会指向回读
+# 通过的镜像；回读核对的是 registry 上实际存在的内容，不是构建时的中间产物。
+#
+# docker-push：先走完 make docker（两个平台的根文件系统核对、本机平台冒烟），再推送两个平台的版本 tag，
+# 不碰 latest。推送沿用 make docker 的构建器与缓存，构建参数同一处。
 docker-push:
 	@$(check_version)
 	$(MAKE) docker
-	$(docker_build) --platform $(DOCKER_PLATFORMS) -t $(DOCKER_IMAGE):$(VERSION) $(docker_latest) --push .
+	$(docker_build) --platform $(DOCKER_PLATFORMS) -t $(DOCKER_IMAGE):$(VERSION) --push .
 
-# 发布后回读（release.yml 调用）：推送前记下 latest 的指向，推送后回读版本、匿名可取与 latest。
-docker-latest:
-	@IMAGE_REPO=$(DOCKER_IMAGE) scripts/docker-readback.sh latest
-
+# docker-readback：回读 registry 上版本 tag 指向的索引（匿名可取、逐平台冒烟、逐平台核对根文件系统），
+# 通过后把 <版本> <索引 digest> 记到 READBACK_RECORD。
+# docker-promote：只认这份记录。正式版本把 latest 移到记录里的 digest 并回读确认；预发布确认 latest
+# 没有指向本次的 digest。
+READBACK_RECORD := build/readback-record
 docker-readback:
 	@$(check_version)
-	IMAGE_REPO=$(DOCKER_IMAGE) VERSION='$(VERSION)' CHANNEL=$(RELEASE_CHANNEL) ARCHES='$(HUB_LINUX_ARCHES)' scripts/docker-readback.sh verify '$(LATEST_BEFORE)'
+	$(ensure_builder)
+	mkdir -p build/tools
+	go build -o build/tools/checkimage ./scripts/checkimage
+	IMAGE_REPO=$(DOCKER_IMAGE) ARCHES='$(HUB_LINUX_ARCHES)' BUILDER=$(DOCKER_BUILDER) TOOL_IMAGE='$(ALPINE_IMAGE)' \
+	  SMOKE=scripts/docker-smoke.sh CHECKIMAGE=build/tools/checkimage RECORD=$(READBACK_RECORD) scripts/docker-readback.sh verify
+
+docker-promote:
+	@$(check_version)
+	IMAGE_REPO=$(DOCKER_IMAGE) CHANNEL=$(RELEASE_CHANNEL) RECORD=$(READBACK_RECORD) scripts/docker-readback.sh promote

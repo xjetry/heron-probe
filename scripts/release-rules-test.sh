@@ -39,7 +39,7 @@ bad() {
 }
 
 # 每个消费 VERSION 的目标都必须以 check_version 开头：配方其余部分直接展开 $(VERSION)。
-targets='release docker docker-smoke docker-push docker-readback release-channel'
+targets='release docker docker-smoke docker-push docker-readback docker-promote release-channel'
 for t in $targets; do
   MAKE -n "$t" VERSION=v1.0.0 > "$work/out" 2>&1 || { bad "make -n $t exited non-zero"; continue; }
   # shellcheck disable=SC2016 # 比对的是 make -n 打印的配方原文，$VERSION 按字面出现
@@ -105,13 +105,17 @@ for pair in v1.2.3=stable v1.2.3-rc.1=prerelease v1.2.3+build-5=stable v1.2.3-rc
   [ "$got" = "${pair#*=}" ] || bad "RELEASE_CHANNEL for ${pair%%=*}: got '$got', want '${pair#*=}'"
 done
 
-# 推送命令里的 latest：正式版本推 latest，预发布不推。
-latest_count() {
-  MAKE -n docker-push "VERSION=$1" > "$work/out" 2>&1 || { bad "make -n docker-push VERSION=$1"; return; }
-  awk '/--push/ && /probe-hub:latest/ { n++ } END { print n + 0 }' "$work/out"
-}
-[ "$(latest_count v1.2.3)" = 1 ] || bad "docker-push for v1.2.3 does not push latest"
-[ "$(latest_count v1.2.3-rc.1)" = 0 ] || bad "docker-push for v1.2.3-rc.1 pushes latest"
+# latest 只由 docker-promote 按回读过的 digest 移动：推送命令在两种渠道下都不带 latest，
+# docker-promote 拿到的 CHANNEL 与预发布判定一致。
+for v in v1.2.3 v1.2.3-rc.1; do
+  MAKE -n docker-push "VERSION=$v" > "$work/out" 2>&1 || bad "make -n docker-push VERSION=$v"
+  [ "$(awk '/--push/ { n++ } END { print n + 0 }' "$work/out")" = 1 ] || bad "make -n docker-push VERSION=$v has no single push line"
+  [ "$(awk '/--push/ && /latest/ { n++ } END { print n + 0 }' "$work/out")" = 0 ] || bad "docker-push for $v pushes latest"
+done
+for pair in v1.2.3=stable v1.2.3-rc.1=prerelease; do
+  MAKE -n docker-promote "VERSION=${pair%%=*}" > "$work/out" 2>&1 || bad "make -n docker-promote VERSION=${pair%%=*}"
+  grep -q "CHANNEL=${pair#*=} " "$work/out" || bad "docker-promote for ${pair%%=*} does not pass CHANNEL=${pair#*=}"
+done
 
 if [ "$failures" != 0 ]; then
   echo "release rules: $failures failure(s)" >&2
