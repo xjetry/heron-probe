@@ -14,7 +14,8 @@ FROM --platform=$BUILDPLATFORM ${ALPINE_IMAGE} AS rootfs
 # CA 证书供通知出站 HTTPS（Go 在 Linux 上先读 /etc/ssl/certs/ca-certificates.crt）；
 # --upgrade 取 3.21 仓库里当前的证书包，而不是基础镜像构建时的那份。
 # /data 交给运行用户：空的命名卷或匿名卷挂到 /data 时，Docker 把镜像里这个目录的属主带到卷上。
-# /tmp 为 1777：SQLite 的排序溢出、临时表与建索引写临时文件，找不到可写的临时目录时报 disk I/O error (6410)。
+# /tmp 为 1777：SQLite 的排序、临时表与建索引在页缓存装不下时写临时文件，没有可写的临时目录时报
+# disk I/O error (6410)，小查询不触发；root 属主的 1777 目录对任何 uid 可写，不依赖 USER 取值。
 RUN apk add --no-cache --upgrade ca-certificates-bundle \
  && mkdir -p /rootfs/etc/ssl/certs /rootfs/data \
  && mkdir -m 1777 /rootfs/tmp \

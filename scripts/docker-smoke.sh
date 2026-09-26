@@ -193,7 +193,8 @@ echo "passwd and login ok"
 
 # 两个属主各有来源。/data 属 65532：Dockerfile 把镜像里的 /data 交给 65532，空卷挂上时 Docker 沿用镜像里
 # 该目录的属主。probe.db 属 65532：文件属于创建它的进程的 uid，即以 USER 65532:65532 运行的 hub——
-# 镜像配置里的 USER 只在这里得到核对（checkimage 看的导出 tar 里没有镜像配置）。
+# 镜像配置里的 USER 在这里得到核对（checkimage 看的导出 tar 里没有镜像配置）；USER 为 root 时后面"库目录
+# 不可写"一段同样会红。
 docker run --rm --name "$run_id-owner" -v "$data:/data" "$tool" \
   stat -c '%u:%g %n' /data /data/probe.db > "$work/owner.log" 2> "$work/owner.err" ||
   fail "stat the data volume" "$work/owner.log" "$work/owner.err"

@@ -49,8 +49,9 @@ for t in $targets; do
   esac
 done
 
-# rejects TARGET VALUE WANT：退出码非 0，输出含 WANT。WANT 只由守卫本身打印，打印后立即退出，
-# 而守卫是配方第一行（上面已核对）；绊线文件为空另外证明配方的其余部分没有执行。
+# rejects TARGET VALUE WANT：退出码非 0，输出含 WANT。WANT 取守卫独有的文字：空值那条带 "e.g." 后缀，
+# 脚本自己的空值报错（docker-readback.sh、docker-smoke.sh 的 ${VERSION:?…}）没有它，守卫被删时这一行才会红；
+# 守卫打印后立即退出，而守卫是配方第一行（上面已核对）；绊线文件为空另外证明配方的其余部分没有执行。
 rejects() {
   rc=0
   MAKE "$1" "VERSION=$2" > "$work/out" 2>&1 || rc=$?
@@ -66,7 +67,7 @@ long=$(printf 'a%.0s' $(seq 129))
 nl='v1.0
 x'
 for t in $targets; do
-  rejects "$t" '' 'VERSION is required'
+  rejects "$t" '' 'VERSION is required, e.g. VERSION=v0.1.0'
   rejects "$t" "v1'x'" "$shape"
   rejects "$t" "$nl" "$shape"
   rejects "$t" 'v1.0+meta' "$shape"

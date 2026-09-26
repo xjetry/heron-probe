@@ -63,8 +63,10 @@ verify)
       fail "smoke of $platform_ref (linux/$arch) failed"
   done
 
-  # 逐平台核对根文件系统：构建器按 digest 从 registry 取回各平台，以与 make docker 相同的 tar 布局
-  # （每个平台一个 linux_<arch>/）导出，交给同一个 checkimage。不用 docker export：它导出的是容器的文件
+  # 逐平台核对根文件系统：按 digest 导出——内容由 registry 上版本 tag 指向的索引 digest 唯一确定，索引、
+  # 平台清单与层全是内容寻址，构建器本地已有同 digest 的 blob 时可能不重新下载，但按 digest 校验过的字节
+  # 与 registry 上的相同。以与 make docker 相同的 tar 布局（每个平台一个 linux_<arch>/）导出，交给同一个
+  # checkimage。不用 docker export：它导出的是容器的文件
   # 系统，带着运行时注入的 /.dockerenv、/dev、/proc、/sys、/etc/hosts 等条目。冒烟照不到架构错配（amd64
   # 运行器会原生跑通装错了 amd64 二进制的 arm64 条目），这里读 ELF 头能照到。
   # shellcheck disable=SC2086 # 架构清单按词拆成参数

@@ -17,7 +17,8 @@ jobs:
     timeout-minutes: 60
     steps:
       # 不把 token 留在工作区的 .git/config：它带 packages: write，而 make ci、make release 会运行 pnpm 依赖、
-      # Go 模块与 buf 等第三方代码。之后用到 token 的只有 login-action 与 gh（GH_TOKEN），都不需要它。
+      # Go 模块与 buf 等第三方代码。之后需要 token 的步骤各自经输入拿到（login-action 的 password、gh 的
+      # GH_TOKEN；buf、setup-go、setup-node 的输入默认值也会拿到它），没有一步依赖工作区里的凭据。
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -40,7 +41,7 @@ jobs:
       - run: make release VERSION="$GITHUB_REF_NAME"
       # 回读要在 amd64 运行器上运行 arm64 镜像。构建本身不需要它：Dockerfile 唯一的 RUN 所在阶段固定在
       # --platform=$BUILDPLATFORM，最终阶段没有 RUN。binfmt 容器以特权运行，等同运行器上的 root，步骤顺序
-      # 不提供隔离；它是否可信只由 image 的 digest 固定承载。镜像不经 Actions 缓存。
+      # 不提供隔离；它是否可信由 image 的 digest 固定与 action 的 SHA 固定承载。镜像不经 Actions 缓存。
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
         with:
           image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
