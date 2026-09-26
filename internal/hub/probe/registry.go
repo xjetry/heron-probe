@@ -123,8 +123,9 @@ func (r *Registry) List() (uint64, []Detail) {
 	return r.version, out
 }
 
-// Target 返回任务当前的种类与目标，是管理端标注历史序列的口径。任务不在清单里时 ok 为 false：
-// 历史行只带 task_id，而任务表的 AUTOINCREMENT 保证编号不复用，查不到就是删了，不会标成别的任务。
+// Target 返回任务当前的种类与目标，是管理端标注历史序列的口径。任务不在清单里时 ok 为 false。
+// 历史行只带 task_id，查不到即已删除，这靠两个前提：ingest 的 foldResults 只收 Assigned 为真的结果，
+// 所以历史里的每个 task_id 都曾是已发布的任务；任务表的 AUTOINCREMENT 保证编号不复用，所以不会标成别的任务。
 func (r *Registry) Target(id uint64) (kind probev1.ProbeKind, target string, ok bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
