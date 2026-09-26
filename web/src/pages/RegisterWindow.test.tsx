@@ -154,6 +154,17 @@ describe("RegisterWindow", () => {
     expect(screen.getByText(/以 root 执行/)).toBeInTheDocument();
   });
 
+  it("v1.0 不是合法 semver，走 latest、不带 --version", async () => {
+    renderOpen("v1.0");
+    fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
+    for (const p of await screen.findAllByText(/install\.sh \| sh -s --/)) {
+      expect(p.textContent).toContain("https://github.com/xjetry/probe/releases/latest/download/install.sh");
+      expect(p.textContent).not.toContain("--version");
+      expect(p.textContent).not.toContain("/download/v1.0/");
+    }
+    expect(await screen.findByText(/将安装最新 release/)).toBeInTheDocument();
+  });
+
   it("dev hub uses latest/download and shows the latest-release hint", async () => {
     renderOpen("dev");
     fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));

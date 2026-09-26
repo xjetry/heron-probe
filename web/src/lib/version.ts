@@ -40,6 +40,11 @@ function compare(a: Version, b: Version): number {
   return a.pre.length - b.pre.length;
 }
 
+// 带 v 前缀的合法 semver。与 lagsHub 用同一个 parse：v1.0 这种少一段的不算。
+export function isRelease(v: string): boolean {
+  return parse(v) !== null;
+}
+
 // agent 版本按 semver 2.0 优先级低于 hub 才算落后；agent 更高或相同不标。任一方解析不了（dev、空、
 // 格式不对）就没有可比的次序，不标。
 export function lagsHub(agent: string | undefined, hub: string): boolean {
