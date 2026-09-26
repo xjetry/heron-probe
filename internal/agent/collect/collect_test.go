@@ -1,7 +1,10 @@
 package collect
 
 import (
+	"errors"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -124,23 +127,130 @@ func TestUsageAboveTotalIsDroppedNotClamped(t *testing.T) {
 	}
 }
 
-// 过滤在 Collector 里决定、由 Host 执行：被排除的网卡不进合计，未给 --net-exclude 时用平台默认列表。
+// ifacesOnly 是只给网卡读数的 Host，列出什么就原样返回什么，不做任何预过滤：
+// 网卡过滤只由 Collector 承载，换一个平台实现也不会把被排除的网卡带进合计。
+type ifacesOnly struct{ list []ifaceCounters }
+
+var errNoReading = errors.New("no reading")
+
+func (h *ifacesOnly) bootID() (string, error)          { return "", errNoReading }
+func (h *ifacesOnly) cpuTimes() (cpuTimes, error)      { return cpuTimes{}, errNoReading }
+func (h *ifacesOnly) memory() (usage, error)           { return usage{}, errNoReading }
+func (h *ifacesOnly) swap() (usage, error)             { return usage{}, errNoReading }
+func (h *ifacesOnly) disk() (usage, error)             { return usage{}, errNoReading }
+func (h *ifacesOnly) load() (loadAvg, error)           { return loadAvg{}, errNoReading }
+func (h *ifacesOnly) procs() (uint32, error)           { return 0, errNoReading }
+func (h *ifacesOnly) uptime() (uint64, error)          { return 0, errNoReading }
+func (h *ifacesOnly) conns() (uint32, uint32, error)   { return 0, 0, errNoReading }
+func (h *ifacesOnly) ifaces() ([]ifaceCounters, error) { return h.list, nil }
+func (h *ifacesOnly) defaultNetExclude() []string      { return []string{"lo", "docker*"} }
+func (h *ifacesOnly) facts() hostFacts                 { return hostFacts{} }
+
+// 被排除的网卡不进合计，未给 --net-exclude 时用 Host 的默认列表，给了就整个替换默认列表。
 func TestExcludedInterfacesAreNotSummed(t *testing.T) {
-	fsys := fstest.MapFS{
-		"sys/class/net/eth0/statistics/rx_bytes":    {Data: []byte("1000\n")},
-		"sys/class/net/eth0/statistics/tx_bytes":    {Data: []byte("2000\n")},
-		"sys/class/net/lo/statistics/rx_bytes":      {Data: []byte("50000\n")},
-		"sys/class/net/lo/statistics/tx_bytes":      {Data: []byte("50000\n")},
-		"sys/class/net/docker0/statistics/rx_bytes": {Data: []byte("70000\n")},
-		"sys/class/net/docker0/statistics/tx_bytes": {Data: []byte("70000\n")},
-	}
-	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clock.NewFake(time.Unix(0, 0))}
+	h := &ifacesOnly{list: []ifaceCounters{{"eth0", 1000, 2000}, {"lo", 50000, 50000}, {"docker0", 70000, 70000}}}
+	c := &Collector{Host: h, Clock: clock.NewFake(time.Unix(0, 0))}
 	if m, _ := c.Metrics(); m.GetNetRxTotal() != 1000 || m.GetNetTxTotal() != 2000 {
 		t.Fatalf("net = %d/%d, want eth0 only", m.GetNetRxTotal(), m.GetNetTxTotal())
 	}
-	c = &Collector{Host: c.Host, Clock: c.Clock, NetExclude: []string{"eth*"}}
+	c = &Collector{Host: h, Clock: c.Clock, NetExclude: []string{"eth*"}}
 	if m, _ := c.Metrics(); m.GetNetRxTotal() != 120000 {
 		t.Fatalf("explicit exclude list replaces the default: rx = %d, want lo + docker0", m.GetNetRxTotal())
+	}
+	c = &Collector{Host: h, Clock: c.Clock, NetInclude: []string{"docker*"}}
+	if m, _ := c.Metrics(); m.GetNetRxTotal() != 70000 {
+		t.Fatalf("include list is exclusive: rx = %d, want docker0 only", m.GetNetRxTotal())
+	}
+}
+
+// failingFS 让指定文件的读取失败，其余照常：表示文件存在、内容读不出。
+type failingFS struct {
+	fs.FS
+	name string
+}
+
+type failingFile struct{ fs.File }
+
+func (failingFile) Read([]byte) (int, error) { return 0, errors.New("injected read error") }
+
+func (f failingFS) Open(name string) (fs.File, error) {
+	file, err := f.FS.Open(name)
+	if err != nil || name != f.name {
+		return file, err
+	}
+	return failingFile{file}, nil
+}
+
+const (
+	sockstat4 = "sockets: used 50\nTCP: inuse 11 orphan 0 tw 3 alloc 12 mem 1\nUDP: inuse 13 mem 2\n"
+	sockstat6 = "TCP6: inuse 17\nUDP6: inuse 19\n"
+)
+
+// 合计型读数：一张表不存在即不计；表存在却读不出或认不出时，整个 conns 缺失并记日志，
+// 不上报缺一族的合计（spec §4.2 读不到即缺失）。
+func TestConnsAreCorrectOrMissing(t *testing.T) {
+	only4 := fstest.MapFS{"proc/net/sockstat": {Data: []byte(sockstat4)}}
+	if tcp, udp, err := (&ProcFS{FS: only4}).conns(); err != nil || tcp != 11 || udp != 13 {
+		t.Fatalf("without sockstat6 (ipv6 disabled): %d/%d, %v; want the IPv4 table alone", tcp, udp, err)
+	}
+	both := fstest.MapFS{"proc/net/sockstat": {Data: []byte(sockstat4)}, "proc/net/sockstat6": {Data: []byte(sockstat6)}}
+	if tcp, udp, err := (&ProcFS{FS: both}).conns(); err != nil || tcp != 28 || udp != 32 {
+		t.Fatalf("both tables: %d/%d, %v; want 28/32", tcp, udp, err)
+	}
+	for name, fsys := range map[string]fs.FS{
+		"unreadable sockstat":   failingFS{both, "proc/net/sockstat"},
+		"unrecognized sockstat": fstest.MapFS{"proc/net/sockstat": {Data: []byte("sockets: used 50\n")}, "proc/net/sockstat6": {Data: []byte(sockstat6)}},
+		"sockstat without UDP":  fstest.MapFS{"proc/net/sockstat": {Data: []byte("TCP: inuse 11\n")}, "proc/net/sockstat6": {Data: []byte(sockstat6)}},
+	} {
+		c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clock.NewFake(time.Unix(0, 0))}
+		m, err := c.Metrics()
+		if m.TcpConns != nil || m.UdpConns != nil {
+			t.Errorf("%s: conns = %d/%d, want both missing rather than the IPv6 part alone", name, m.GetTcpConns(), m.GetUdpConns())
+		}
+		if err == nil || !strings.Contains(err.Error(), "conns: proc/net/sockstat:") {
+			t.Errorf("%s: err = %v, want the failing table named", name, err)
+		}
+	}
+	if _, _, err := (&ProcFS{FS: fstest.MapFS{}}).conns(); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("no table at all: err = %v, want fs.ErrNotExist", err)
+	}
+}
+
+// /sys/class/net 里没有 statistics 目录的条目（bonding_masters 这类文件）不是网卡，跳过；
+// 真网卡的计数读不出时整个网络读数缺失：少一块的合计会让 hub 只换基线，恢复时把那块的历史计数当增量（spec §7）。
+func TestInterfaceReadErrorDropsTheWholeReadingOnLinux(t *testing.T) {
+	fsys := fstest.MapFS{
+		"sys/class/net/bonding_masters":          {Data: []byte("\n")},
+		"sys/class/net/eth0/statistics/rx_bytes": {Data: []byte("1000\n")},
+		"sys/class/net/eth0/statistics/tx_bytes": {Data: []byte("2000\n")},
+		"sys/class/net/eth1/statistics/rx_bytes": {Data: []byte("3000\n")},
+		"sys/class/net/eth1/statistics/tx_bytes": {Data: []byte("4000\n")},
+	}
+	ifs, err := (&ProcFS{FS: fsys}).ifaces()
+	if err != nil || len(ifs) != 2 {
+		t.Fatalf("ifaces = %v, %v; want eth0 and eth1, bonding_masters skipped", ifs, err)
+	}
+	// 同样的形状落在真实目录上：普通文件下的 statistics 由 os.DirFS 报 ENOTDIR，不是 ENOENT。
+	root := t.TempDir()
+	for name, f := range fsys {
+		p := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, f.Data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ifs, err := (&ProcFS{FS: os.DirFS(root)}).ifaces(); err != nil || len(ifs) != 2 {
+		t.Fatalf("on a real directory: ifaces = %v, %v; want eth0 and eth1", ifs, err)
+	}
+	c := &Collector{Host: &ProcFS{FS: failingFS{fsys, "sys/class/net/eth1/statistics/rx_bytes"}, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clock.NewFake(time.Unix(0, 0))}
+	m, err := c.Metrics()
+	if m.NetRxTotal != nil || m.NetTxTotal != nil {
+		t.Fatalf("partial interface set must not be reported: rx %d tx %d", m.GetNetRxTotal(), m.GetNetTxTotal())
+	}
+	if err == nil || !strings.Contains(err.Error(), "net: eth1:") {
+		t.Fatalf("err = %v, want the failing interface named", err)
 	}
 }
 

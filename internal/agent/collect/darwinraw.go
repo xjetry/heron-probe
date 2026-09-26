@@ -141,7 +141,7 @@ func (d *darwinHost) conns() (uint32, uint32, error) {
 // 索引空间有空洞（实测 ifcount 为 35 时 23、34、35 号不存在），缺号返回 ENOENT，跳过。
 // 其余错误让整个读数缺失：少一块网卡的合计会先变小、恢复时再把那块网卡的全部历史计数当增量加回去；
 // 缺失的读数则让 hub 保持基线不动（spec §7）。
-func (d *darwinHost) ifaces(include func(string) bool) ([]ifaceCounters, error) {
+func (d *darwinHost) ifaces() ([]ifaceCounters, error) {
 	n, err := d.src.sysctlUint32("net.link.generic.system.ifcount")
 	if err != nil {
 		return nil, err
@@ -159,9 +159,7 @@ func (d *darwinHost) ifaces(include func(string) bool) ([]ifaceCounters, error) 
 		if err != nil {
 			return nil, fmt.Errorf("ifdata %d: %w", idx, err)
 		}
-		if include(ic.name) {
-			out = append(out, ic)
-		}
+		out = append(out, ic)
 	}
 	return out, nil
 }

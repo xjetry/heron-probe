@@ -141,16 +141,20 @@ func (c *Collector) Metrics() (*probev1.Metrics, error) {
 }
 
 func (c *Collector) netTotals() (netCounters, error) {
-	ifs, err := c.Host.ifaces(c.includeIface)
+	ifs, err := c.Host.ifaces()
 	if err != nil {
 		return netCounters{}, err
 	}
-	if len(ifs) == 0 {
-		return netCounters{}, errors.New("no interface with readable counters")
-	}
 	var sum netCounters
+	counted := false
 	for _, i := range ifs {
-		sum.rx, sum.tx = sum.rx+i.rx, sum.tx+i.tx
+		if !c.includeIface(i.name) {
+			continue
+		}
+		sum.rx, sum.tx, counted = sum.rx+i.rx, sum.tx+i.tx, true
+	}
+	if !counted {
+		return netCounters{}, errors.New("no included interface")
 	}
 	return sum, nil
 }

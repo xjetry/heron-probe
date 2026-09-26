@@ -111,47 +111,63 @@ func (p *ProcFS) uptime() (uint64, error) {
 	return parseUptime(f)
 }
 
-// conns 合计 IPv4 与 IPv6 两张表；两张都读不到才算没有读数。
+// conns 合计 IPv4 与 IPv6 两张表，按 Host 对合计型读数的约定：表不存在（如以 ipv6.disable=1
+// 启动时没有 sockstat6）即不计；表存在却打不开、读不出或认不出 inuse 行时，整个读数返回 error。
 func (p *ProcFS) conns() (uint32, uint32, error) {
 	var tcp, udp uint32
-	var errs []error
 	got := false
 	for _, name := range []string{"proc/net/sockstat", "proc/net/sockstat6"} {
 		f, err := p.FS.Open(name)
-		if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
-		t, u, perr := parseSockstat(f)
+		if err != nil {
+			return 0, 0, err
+		}
+		t, u, err := parseSockstat(f)
 		f.Close()
-		if perr != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", name, perr))
-			continue
+		if err != nil {
+			return 0, 0, fmt.Errorf("%s: %w", name, err)
 		}
 		tcp, udp, got = tcp+t, udp+u, true
 	}
 	if !got {
-		return 0, 0, errors.Join(append(errs, fs.ErrNotExist)...)
+		return 0, 0, fs.ErrNotExist
 	}
 	return tcp, udp, nil
 }
 
-// ifaces 从 /sys/class/net/<if>/statistics 读计数器；每个网卡一对文件，
-// 比 /proc/net/dev 少一次整表解析，且缺某块网卡时不影响其余。
-func (p *ProcFS) ifaces(include func(string) bool) ([]ifaceCounters, error) {
+// ifaces 从 /sys/class/net/<if>/statistics 读计数器；每个网卡一对文件，比 /proc/net/dev 少一次整表解析。
+// 按 Host 对合计型读数的约定：没有 statistics 目录的条目（bonding_masters 这类文件）不是网卡，不计；
+// 是网卡而计数读不出时，整个读数返回 error。
+func (p *ProcFS) ifaces() ([]ifaceCounters, error) {
 	entries, err := fs.ReadDir(p.FS, "sys/class/net")
 	if err != nil {
 		return nil, err
 	}
 	var out []ifaceCounters
 	for _, e := range entries {
-		if !include(e.Name()) {
+		dir := "sys/class/net/" + e.Name()
+		base := dir + "/statistics"
+		// 真实 /sys 里网卡条目是指向设备目录的符号链接，DirEntry 的类型看不出是不是目录，按路径 Stat。
+		// 普通文件下的子路径，os.DirFS 报 ENOTDIR 而不是 ENOENT，所以先看条目本身是不是目录。
+		if st, err := fs.Stat(p.FS, dir); err == nil && !st.IsDir() {
 			continue
 		}
-		base := "sys/class/net/" + e.Name() + "/statistics/"
-		rx, err1 := readUint(p.FS, base+"rx_bytes")
-		tx, err2 := readUint(p.FS, base+"tx_bytes")
-		if err1 != nil || err2 != nil {
+		st, err := fs.Stat(p.FS, base)
+		switch {
+		case errors.Is(err, fs.ErrNotExist), err == nil && !st.IsDir():
 			continue
+		case err != nil:
+			return nil, fmt.Errorf("%s: %w", e.Name(), err)
+		}
+		rx, err := readUint(p.FS, base+"/rx_bytes")
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", e.Name(), err)
+		}
+		tx, err := readUint(p.FS, base+"/tx_bytes")
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", e.Name(), err)
 		}
 		out = append(out, ifaceCounters{name: e.Name(), rx: rx, tx: tx})
 	}

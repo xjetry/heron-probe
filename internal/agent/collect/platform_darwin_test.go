@@ -132,13 +132,12 @@ func TestDarwinMemoryMatchesVMStat(t *testing.T) {
 // 前后各读一次本实现，netstat 的值必须夹在两次之间，没有容差。
 func TestDarwinInterfaceCountersSandwichNetstat(t *testing.T) {
 	h := realHost(t)
-	all := func(string) bool { return true }
-	before, err := h.ifaces(all)
+	before, err := h.ifaces()
 	if err != nil {
 		t.Fatal(err)
 	}
 	out := run(t, "netstat", "-ib", "-n")
-	after, err := h.ifaces(all)
+	after, err := h.ifaces()
 	if err != nil {
 		t.Fatal(err)
 	}

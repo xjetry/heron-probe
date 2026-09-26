@@ -7,6 +7,11 @@ package collect
 
 // Host 是一个平台取原始读数的全部入口。每个方法独立失败，失败只让对应读数缺失。
 //
+// 合计型读数（conns 合计多张表，ifaces 列出多块网卡）对成员的约定：成员不存在即不计；
+// 成员存在却读不出时整个读数返回 error。缺一块的合计会被当成真值——连接数静默跌落，
+// 流量合计变小让 hub 只换基线、恢复时把那一块的历史计数当增量入账（spec §7）；
+// 缺失的读数则让面板显示未知、hub 保持基线。两个平台的实现都按这条约定。
+//
 // 方法名不导出，实现只能在本包内：Linux 的 ProcFS（procfs.go）与 darwin 的
 // darwinHost（darwinraw.go）。两次采样的差分、网卡过滤、用量不变式与"读不到即缺失"
 // 由此只在 Collector 里实现一次，平台只负责把各自的来源翻译成同一组原始读数。
@@ -21,8 +26,9 @@ type Host interface {
 	procs() (uint32, error)
 	uptime() (uint64, error)
 	conns() (tcp, udp uint32, err error)
-	// ifaces 只返回 include 接受的网卡：能按名字先过滤的平台不必读被排除网卡的计数器。
-	ifaces(include func(name string) bool) ([]ifaceCounters, error)
+	// ifaces 返回全部网卡，不做过滤：哪些网卡计入流量只由 Collector.includeIface 决定，
+	// 实现里漏掉或写错过滤不会把被排除的网卡带进合计。
+	ifaces() ([]ifaceCounters, error)
 	// defaultNetExclude 是未给 --net-exclude 时不计入流量的网卡；网卡命名随平台而异。
 	defaultNetExclude() []string
 	facts() hostFacts
