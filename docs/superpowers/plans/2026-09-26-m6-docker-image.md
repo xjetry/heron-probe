@@ -1850,3 +1850,24 @@ release job 的成功路径（推送、回读、`latest`）本机无法演练，
 2. 占位扫描：除任务说明要求实现者自查的两个 action SHA（Task 6 Step 5 给出查法与替换位置）与两处实测墙钟（Task 5 Step 5 产出）外，没有待定内容。
 3. 名称一致：`hub_build`、`RELEASE_GOFLAGS`、`DOCKER_IMAGE`、`DOCKER_PLATFORMS`、`DOCKER_BUILDER`、`docker_build`、`check_image_version`、`RELEASE_CHANNEL`、`docker_latest`、`IMAGE_BIN_DIR`、`errNoPasswordInput`、脚本环境变量 `IMAGE`/`VERSION`/`SMOKE_PLATFORM`/`IMAGE_REPO`/`CHANNEL`/`ARCHES` 在定义处与使用处一致；报错文字 `no password on stdin`、`open database /data/probe.db` 在 Task 1 产出、Task 5 与 README 引用。
 4. Review Focus：五条各有落点（见该节），其中第 3 条的行为证据是一次性实验，回归由 checkimage 的结构断言承载。
+
+## 执行修正（执行与整分支审阅后记录；代码以分支为准）
+
+**计划文字与实测不符（没改行为）**
+- Task 3 Step 5：带 `-trimpath` 时 go1.27.1 的 buildinfo 不记录 `-ldflags`，`go version -m` 看不到版本注入；核对版本改为运行二进制的 `version`（独立复现：同一程序单独 `-ldflags` 时 buildinfo 有该行，加 `-trimpath` 后消失，两种构建运行时都打印注入值）。
+- Task 4 Step 6：docker-container 驱动的 `--load` 打印 `importing to docker`，不是 `naming to`；装入与否以 `docker image inspect` 为准。
+- Task 6 Step 4：回读脚本无参数时 macOS `/bin/sh` 退出 1、dash 退出 2，差别只在 shell。
+- Task 2 注入 (d) 按计划写法会编译失败（红因不对），改了注入方式重做。
+
+**源自计划原文、执行后审阅改掉的缺陷**
+- Task 2 `checkimage`：`run` 的"清单为空等价于全部通过"不成立（unexpected platform 循环承载该防线）；"只有 ELF 头能揭示"是排他句；`tmp` 注释把临时表写成一律报错（§14：页缓存装不下才写临时文件，小查询不触发）；group、passwd 主组、passwd 列数、read tar 出错报告四条断言没有测试钉住；类型改按 `Typeflag` 核对、权限只比 `07777`；`./` 前缀归一化删除（真实导出没有这种前缀）。
+- Task 4：`check_image_version` 把 `$(VERSION)` 拼进 shell 源码（`v1'x'` 拼成 `v1x` 通过）且 `grep -x` 按行放行；改为读配方环境按字节判定。`COPY` 不带 `--chmod` 时权限位随构建机 umask（002 的桌面 Linux 会在 checkimage 处失败）。
+- Task 5 冒烟：Docker 29.4.0 在 exec 失败时把 OCI 报错写到 stdout，两个流一起落文件；hub 启动即退出时先判容器是否已退出再查端口；运行被测镜像必须 `--pull=never`（否则本机无该 tag 时拉 ghcr 已发布镜像冒烟，版本断言照样通过）；四个一次性容器要带运行前缀并列入清理；docker stop 退出码逐条区分（1 关停路径报错、137 超宽限期被 SIGKILL、143 未订阅 SIGTERM）。
+- Task 6 回读：`docker-latest`/`LATEST_BEFORE` 的"推送前记下 latest"判定在读取失败时误报或放行，删除；改为直接性质判定（stable：latest == 本次 digest；prerelease：latest 不存在或 ≠ 本次），"不存在"只认 buildx 的 `not found` 报错，其余读取失败一律 FAIL。`latest` 改为回读通过后才由 `docker-promote` 用 `imagetools create` 按已回读的 digest 移动，再回读 latest；单源为索引时 `imagetools create` 不改 digest（单平台清单为源会得到新索引），promote 仍回读确认。回读逐平台按平台清单 digest 拉取并冒烟（同一索引 digest 按两个平台先后拉取会 `cannot overwrite digest`），根文件系统经构建器 `FROM <repo>@<索引 digest>` 导出两平台 tar 交同一个 checkimage——不用 `docker export`（带 11 个运行时注入条目，需要第二份忽略清单）；导出由 digest 寻址承载内容一致，构建器本地已有同 digest 的 blob 时不一定重新下载。release.yml 加 `persist-credentials: false`、`concurrency: { group: release }`、`timeout-minutes`；registry 由 `make -s docker-registry` 打印、login 引用它。
+- VERSION 消费面收口：make 先展开整条配方再执行第一行，配方第一行的 shell 检查拦不住同一配方后面的 `$(shell)`，所以在解析 Makefile 时对 `$(value VERSION)` 含 `$` 用 `$(error)` 拒绝；shell 层只有一份 `check_version`，release / docker / docker-smoke / docker-push / docker-readback / docker-promote / release-channel 第一行都调它，release 与 docker 同一规则；`RELEASE_CHANNEL` 改为 make 文本函数；`SMOKE_PLATFORM` 等命令行变量由 make 导出到配方环境，不再拼进 shell。这些规则与回读判定各有入库的桩测试（`make ci` 的 `script-test`）。
+- 冒烟的工具镜像按索引 digest 引用、不指定平台（经典镜像存储里同一索引 digest 已绑定某架构时按别的平台拉取报 `cannot overwrite digest`；逐次解析平台清单会撞 Docker Hub 匿名限流）；alpine 的 digest 只定义一处，Dockerfile 经 `--build-arg` 取得。
+
+**首次发布检查清单补充**
+6. 回读把"latest 不存在"限定为 buildx 报 `<引用>: not found`，运行器上的 buildx 版本若措辞不同，预发布的 `docker-promote` 会以 cannot read latest 失败（封闭方向）：看日志，必要时把该版本的措辞加进判定。
+7. job 日志里 `docker-readback` 应有两个平台各一次 `docker smoke passed`、checkimage 无问题行、`readback ok`；正式版本另有 `docker-promote` 的 `pushing … to …:latest` 与回读 latest == 该 digest。
+8. 一次推多个 tag 时同组运行串行，排队中被替换而取消的 tag 需手工重跑。
