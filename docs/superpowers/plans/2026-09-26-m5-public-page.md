@@ -8056,3 +8056,39 @@ Expected：两条都是 0，第一条的日志为 `1`（替换落地）。
   - `.well-known/` 也不服务，需要它的（ACME 校验、security.txt）由反向代理提供。嵌入产物里的 `.gitkeep` 同样不再被服务。
 - §10 限流写"约 20 个并发访客即触发 429"。按常量算，每个打开的公开页（总览或节点页，一个标签页算一个）每 2 秒轮询一次，超过 20 个页面才持续多于每秒 10 次的补充，之后 60 的余量耗尽才开始 429。README 按这个写法（30 个页面时约 12 秒）。
 - §10 第一条的"构建产物按描述符前缀核对"，在计划里是 Task 10 Step 6 构建之后的一次 grep 核对，不是常驻测试。
+
+## 执行修正（执行与整分支审阅后记录；代码以分支为准）
+
+**计划文字与实测不符（没改行为）**
+- Task 5 lint 冒烟的还原写法：`buf.yaml` 的豁免在冒烟时尚未提交，`git checkout -- buf.yaml` 会退回没有豁免的版本。实际做法是按计划原文重写 `buf.yaml`、复跑 `buf lint` 为 0 再提交；该步应先备份再还原。
+- Task 5 的 `git add` 清单漏了 `internal/hub/probe`（`registry.go` 的 `TargetFor`），执行时补上。
+- Task 7 注入 a 的期望：connect v1.21.0 对 `base64=1` 配字面 `{}` 的直连应答是 500（`unknown: read message: illegal base64 data at input byte 0`），不是计划写的 400；红因不变（缓存替 connect 接受了它会拒绝的请求）。
+- Task 4 的 `burst`/`registerBurst` 常量块落在 `service.go` 的 `MinTTL…reportsPerTTL` 块之后（计划指的位置在被删的 `limiter.go` 里）。
+- Task 12 改动 1 的锚点是一行更长注释的开头，辅助函数插在整行之前。各注入为保持可编译加的 `_ = x` / `void x` 与自拟报错文案，逐项记在任务报告里，不影响判定。
+- "实验与读码结论 9"末段与 Task 7 `lookup` 的注释原文说复刻协商"与实际不符时只损失命中率"，不成立：入缓存的门只保证条目字节的 Content-Encoding 与键一致；`negotiatedCompression` 对 connect 协商的复刻若只对一类请求偏离，这类请求命中时拿到的 Content-Encoding 就与直连不同；整个键一致地偏离才只是少命中。正确表述以分支上的注释与提交信息为准，透明性测试按 v1.21.0 逐形态钉住。
+- "设计决定 9"的 GET 规范形态漏了"不带正文"：带正文的 GET connect 回 415，缓存若照答 200 就不透明；`canonicalSnapshotRequest` 的 GET 分支要求 `ContentLength == 0`（未知长度 -1 也直通）。spec §10 已同步。
+- "设计决定 15"把"重连与重新挂载只重取已过期的查询"写在 `refetchOnWindowFocus: false` 之后，像是开关的效果；实测三种自动重取都只针对过期查询，`staleTime: Infinity` 单独就挡住了聚焦、重连与重新挂载的重取，`QueryClient` 的开关是全站取舍而非"不再重取"的承载者（`main.test.tsx` 的三组对照注入）。
+- "设计决定 6"与 Task 5 提交信息里"文案不带 id，所以两种情形逐字节相同、无从区分"的推导不成立：文案带上 id，对任一被查询的 id 两种情形仍得到同一段文字。不可区分由两处承载——`NodeIsPublic` 对不存在的 id 返回 false 而不是错误，`requirePublic` 对 false 只有一条分支；文案不带 id 只是让所有非公开 id 的响应逐字节相同，测试因此能拿两个 id 比较整段正文。分支上的注释已按此写。
+- Task 2 提交信息里"实测 200 个节点时 4096 对 196608"取自计划实验 8，那时还没有 `setting` 表；本提交下同一测量是 4096 对 204800。现象成立，数字不对应。
+- 提交信息里写错或不精确的因果句（历史不改，以此处与分支上的注释为准）：Task 4 的"参数是切片，调用方没法只传一行"（`[]string{Header.Get(…)}` 照样能编译，性质由多行用例承载）；Task 7 批量修复的"以 415 拒绝带正文的 GET，早于解析查询串"（`CanHandlePayload` 在 415 之前已读出查询串里的 `encoding`，代码注释写的是对的）；Task 7 原提交的"协商复刻出错只损失命中率"（见上一条）。
+- Task 12 简报与报告把 `/../` 那一轮记为覆盖 Task 8 的 os.Root 越界（注入 a 的委托），不成立：字面 `/../` 被 ServeMux 307 掉，处理器不执行；`/%2e%2e/` 由 `path.Clean`、`hidden` 把 `..` 当点段、`os.Root` 三层各自挡住，任一层在就不红。e2e 这一轮改测 `/%2e%2e/outside.txt` 钉用户可见结果；os.Root 越界由 Task 8 的 Go 测试承载。
+
+**源自计划原文、审阅改掉的缺陷**
+- 排他性论断：`query.proto` 的"唯一原因"句改为"public.proto 不得 import admin.proto"；`serveFiles` 把"不挂住"归错保证者（是 `O_NONBLOCK`，不是只服务普通文件）；`newMux` 注释"每个服务都带鉴权拦截器"被不鉴权的 PublicService 证伪，改写为例外与白名单口径；`Layout` 注释按对照实验归因 `staleTime: Infinity`。
+- 多行 `X-Forwarded-For`（HAProxy `option forwardfor` 另起一行追加）时 `Header.Get` 只读第一行，来源键取自客户端伪造值：既有缺陷，`auth.ClientIP` 改为合并全部字段行，限流与登录锁定同时受益。Register 路径的两处日志改用 `DescribeSource`，/64 键不再裸打成地址；`failureTracker.clear` 的归一化补断言。
+- `cacheControl` 看不到 `net/http` 的隐式 200：`next` 返回后补 `WriteHeader(200)`；失败与 429 一律 `no-store`。
+- 快照缓存：预热清单由键空间生成（原清单 8 个键只预热 6 个），条目数恰为 8 写成不变式；过期时刻在填充前取；`Vary` 追加不覆盖。
+- import 扫描改以 `index.html` / vite 模块图为根（`build({ write: false })` 的 `moduleIds`），检查实际发给浏览器的内容，"类型 import 也计入"的口径去掉；`applySite` 用 textContent，注入断言改查 DOM 新增元素。
+- 外观页：飞行中的保存返回后会覆盖用户新输入，改为 `update.isPending` 时禁用整个表单；`BUILT_IN_ACCENT` 不再是硬编码的第二份真值（由 vite `define` 从 styles.css 取）；取色器在主色为空时的兜底显示值不当成用户设置提交；`FileReader` 回调是同形的第二条入口，一并处理。
+- e2e 的"`--public-dir` 遮蔽 PublicService"断言只看 200 不够（回落 index.html 也是 200），改为与已保存的 `GetSite` 响应逐字节 `cmp`，顺带钉住外观跨重启保留；`metrics // {}` 整段缺失照绿改为显式断言。
+- store：`DeleteNode` 的手写表清单加枚举测试（从 `sqlite_master` 找含 `node_id` 列的表，与清单加显式保留例外 `alert_event` 比对）；设置校验子用例各用独立库，预算用例按常量构造真正满额，标题清洗与 `cleanName` 共用一个函数。
+- README 与 spec §10 的 429 量级补节点页每分钟两次历史查询：节点页约 19 页起持续超出、30 页约 10 秒耗尽（从 `publicBurst=60`、`publicRefill=100ms`、`POLL_MS=2000`、`REFRESH_MS=60000` 算起）。
+- 外观页 `reading` 是布尔，两次选文件读取重叠时先读完的把它置回 false：保存在另一份还在读时发出，后读完的在保存进行中改草稿并 reset 掉 mutation 的观察者，迟到的回显把用户最后选的 logo 改回去并误报"已保存"。互斥改由文件输入的 `disabled={reading}` 承载（至多一个读者在飞），读完的回调经 `edit` 改草稿，`edit` 按最新草稿函数式合并；`onload` 里的 reset 不是并发防线，是编辑语义（上次保存失败后换 logo 要清掉旧错误），用例钉住这个可达情形。
+- 合并时按当前主干重新枚举根路径的读者：`scripts/macos-accept.sh` 的就绪判据从"`/` 返回 302"改为匿名 GetSite 200（不带 make web 时 `/` 是 503、带时是 200，302 不再出现）；镜像的入口多了 `/`，`docker-smoke.sh` 补根路径是公开页的检查（脚本路径 `/assets/` 区分于面板的 `/admin/assets/`）。
+- `X-Forwarded-Proto` 取合并后第一个值的取舍原只在 `auth.RequestScheme` 的注释里，spec §5.4 补上（c016e7e）。
+- `make ci` 原不查 gofmt（一处 import 顺序不合 gofmt 照样过），main 的 lint 加 `gofmt -l $(git ls-files '*.go')`。
+
+**留给后续的同形清单**
+- 限流桶表没有上限（每键约 96 B），spec 未要求，记后续。
+- `hidden` 兜住未清理的 `..` 是冗余防线，注释不写它（写了会被当成主要防线）。
+- `scripts/install-accept.sh` 的新就绪判据（匿名 GetSite 200）由合并前的 OrbStack 验收证明。
