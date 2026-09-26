@@ -24,6 +24,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/metric"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/testlog"
 	"github.com/xjetry/probe/internal/testwait"
 	"google.golang.org/protobuf/proto"
 )
@@ -113,8 +114,9 @@ func (b *lockedBuffer) String() string {
 	return b.buf.String()
 }
 
-// scripts/e2e.sh 从启动行按整秒读出 ttl 与 offline_sweep，推出告警等待上限；这里用 serve 实际装配的
-// 文本日志格式钉住这两个字段，字段缺失或改名时 make ci 先红，而不是等到 e2e 才停下。
+// scripts/e2e.sh 从启动行按整秒读出 ttl、offline_sweep 与 delivery_retry_wait 推出告警等待上限。这里用
+// runServe 同一个 newServeLogger 装配日志，按脚本同形的 testlog.WholeSeconds 取值再与常量比较：字段缺失、
+// 改名、不再是整秒写法或不跟常量走时 make ci 先红，而不是等到 e2e 才停下。
 func TestServeStartupLineStatesAlertTiming(t *testing.T) {
 	t.Setenv("PROBE_OFFLINE_AFTER", "12s")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -123,18 +125,20 @@ func TestServeStartupLineStatesAlertTiming(t *testing.T) {
 	done := make(chan error, 1)
 	args := []string{"--db", filepath.Join(t.TempDir(), "hub.db"), "--listen", "127.0.0.1:0"}
 	go func() {
-		done <- runServeWith(ctx, args, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), slog.New(slog.NewTextHandler(out, nil)))
+		done <- runServeWith(ctx, args, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), newServeLogger(out))
 	}()
 	testwait.Until(t, 10*time.Millisecond, func() bool { return strings.Contains(out.String(), `msg="hub listening"`) }, "no startup line in %v", testwait.When(out.String))
-	var line string
-	for _, l := range strings.Split(out.String(), "\n") {
-		if strings.Contains(l, `msg="hub listening"`) {
-			line = l
-		}
-	}
-	for _, want := range []string{" ttl=12s ", " offline_sweep=" + alert.OfflineSweepEvery.String() + " "} {
-		if !strings.Contains(line, want) {
-			t.Errorf("startup line %q lacks %q", line, want)
+	for _, f := range []struct {
+		key  string
+		want time.Duration
+	}{
+		{"ttl", 12 * time.Second},
+		{"offline_sweep", alert.OfflineSweepEvery},
+		{"delivery_retry_wait", alert.DeliveryRetryWait()},
+	} {
+		got, ok := testlog.WholeSeconds(out.String(), "hub listening", f.key)
+		if !ok || got != f.want {
+			t.Errorf("startup line: %s read as %v (ok=%v), want whole seconds equal to %v; log:\n%s", f.key, got, ok, f.want, out.String())
 		}
 	}
 	cancel()

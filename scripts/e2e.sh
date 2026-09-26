@@ -75,7 +75,8 @@ startup_seconds() {
 }
 ttl_s=$(startup_seconds "$work/hub.log" "hub listening" ttl)
 sweep_s=$(startup_seconds "$work/hub.log" "hub listening" offline_sweep)
-[ -n "$ttl_s" ] && [ -n "$sweep_s" ] || { echo "FAIL: hub startup line does not state ttl and offline_sweep in whole seconds"; cat "$work/hub.log"; exit 1; }
+retry_wait_s=$(startup_seconds "$work/hub.log" "hub listening" delivery_retry_wait)
+[ -n "$ttl_s" ] && [ -n "$sweep_s" ] && [ -n "$retry_wait_s" ] || { echo "FAIL: hub startup line does not state ttl, offline_sweep and delivery_retry_wait in whole seconds"; cat "$work/hub.log"; exit 1; }
 
 # 运行中设密码：另一进程经 WAL 写库，登录路径每次读库，不需要重启 hub。
 printf '%s\n' "$admin_pw" | bin/probe-hub passwd --db "$db" > "$work/passwd.log" 2>&1
@@ -209,7 +210,9 @@ probe_body=$(jq -nc --arg nodeId "$node1" --argjson from "$((now - 3600))" --arg
 # hub 在分钟边界后 0.5s 刷出分钟桶；4s 上报间隔与最多 5s 首次偏移下，首条结果最晚在任务创建后约 13s 到达。
 # agent 退出后立即查库，距首条结果最坏不足 60.5s，一次性查询的最坏余量为负，须等待常规刷出。
 # 截止按轮询间累计的 sleep 秒数计（见 wait_alert 的说明）。分钟行按墙钟分钟边界刷出，但宿主休眠时墙钟照走，
-# hub 的刷出定时器无论是否把休眠时长计入，醒来后还需的醒着时间都不超过不休眠时，所以这里也不用墙钟截止。
+# hub 的刷出定时器无论是否把休眠时长计入，醒来后还需的醒着时间都不超过不休眠时；醒来后的第一次刷出由
+# live.Flush 取走全部已闭合的桶（起始早于当前墙钟分钟的，不只上一分钟），墙钟跳过多个分钟也一次交出。
+# 所以这里也不用墙钟截止。
 probe_started=$(date +%s)
 probe_budget_s=75
 probe_slept_s=0
@@ -309,14 +312,13 @@ initial_interval_s=$(startup_seconds "$work/agent-arm64.log" "agent starting" in
 #   attempt 为 1 时等待落在 [interval/2, interval)——第二次上报成功。此后按 hub 下发的 ttl/3 间隔
 #   上报，任何一轮巡检看到的未上报时长都小于 TTL，首个成功上报之后的第一轮巡检就判恢复，至多一个
 #   offline_sweep，与 ttl 无关。连续失败没有上限可推：hub 一直不应答时节点本来就没有恢复上报。
-# 投递 5s：可重试失败时 internal/hub/alert/queue.go 的 backoff（1s、4s）。渠道客户端 10s 超时
-#   （notify.go 的 NewHTTPClient）只在接收器挂住时才会用满；接收器在本机回环、已由 TestNotifyChannel
-#   验证能应答，上限不为此留量。
+# 投递 delivery_retry_wait：可重试失败时一条投递依次等过 internal/hub/alert/queue.go 的 backoff 各项，
+#   总和即 DeliveryRetryWait。渠道客户端 10s 超时（notify.go 的 NewHTTPClient）只在接收器挂住时才会
+#   用满；接收器在本机回环、已由 TestNotifyChannel 验证能应答，上限不为此留量。
 # 余量一个 offline_sweep：容纳 agent 进程启动与巡检本身的耗时推迟下一轮。docker kill/start 在计数
 #   开始之前完成，不占预算。
-alert_deliver_s=5
-wait_alert_firing_s=$((ttl_s + sweep_s + alert_deliver_s + sweep_s))
-wait_alert_recovered_s=$((request_timeout_s + initial_interval_s + sweep_s + alert_deliver_s + sweep_s))
+wait_alert_firing_s=$((ttl_s + sweep_s + retry_wait_s + sweep_s))
+wait_alert_recovered_s=$((request_timeout_s + initial_interval_s + sweep_s + retry_wait_s + sweep_s))
 docker kill "$(cat "$work/cid-arm64")" > /dev/null
 wait "$arm64" || true
 wait_alert firing "$wait_alert_firing_s"

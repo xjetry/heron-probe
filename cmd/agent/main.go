@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -103,7 +104,7 @@ func runRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	log := newLogger(os.Stderr)
 	ic := prober.NewICMP(clk, log)
 	// defer 逆序执行，先停止调度再关闭 socket，避免仍在运行的任务入队 icmp closed。
 	defer ic.Close()
@@ -126,11 +127,19 @@ func runRun(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	log.Info("agent starting", "hub", cfg.Hub, "request_timeout", requestTimeout, "initial_interval", initialInterval, "version", version)
+	logStarting(log, cfg.Hub)
 	if err := r.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil
+}
+
+// newLogger 是 run 的日志装配。启动行的文本格式有外部读者（scripts/e2e.sh 按整秒读字段），测试经同一个
+// 函数装配日志，才钉得住读者实际看到的格式。
+func newLogger(w io.Writer) *slog.Logger { return slog.New(slog.NewTextHandler(w, nil)) }
+
+func logStarting(log *slog.Logger, hub string) {
+	log.Info("agent starting", "hub", hub, "request_timeout", requestTimeout, "initial_interval", initialInterval, "version", version)
 }
 
 func splitList(s string) []string {

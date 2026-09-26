@@ -17,6 +17,17 @@ const QueueCap = 256
 
 var backoff = [...]time.Duration{time.Second, 4 * time.Second}
 
+// DeliveryRetryWait 是一条投递在各次重试之间至多等待的总和。deliver 在第 n 次尝试失败且未到
+// store.MaxDeliveryAttempts 时等 backoff[n-1]，所以一条投递至多依次等过 backoff 的每一项。
+// 启动行以 delivery_retry_wait 报出，scripts/e2e.sh 据此推出告警等待上限。
+func DeliveryRetryWait() time.Duration {
+	var total time.Duration
+	for _, d := range backoff {
+		total += d
+	}
+	return total
+}
+
 type deliveryItem struct {
 	delivery store.Delivery
 	event    store.AlertEvent
