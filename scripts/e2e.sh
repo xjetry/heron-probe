@@ -67,6 +67,15 @@ wait_hub() {
   exit 1
 }
 wait_hub
+# 告警等待上限由 hub 实际生效的 TTL 与离线巡检周期推出（见 wait_alert 的调用处），两者读自
+# hub 在开始服务前写下的启动行，脚本里不另抄一份。只认整秒写法：读不出来就停下，
+# 不能退回一个与 hub 参数无关的固定上限。
+hub_seconds() {
+  sed -n "s/.*msg=\"hub listening\".* $1=\([0-9][0-9]*\)s .*/\1/p" "$work/hub.log"
+}
+ttl_s=$(hub_seconds ttl)
+sweep_s=$(hub_seconds offline_sweep)
+[ -n "$ttl_s" ] && [ -n "$sweep_s" ] || { echo "FAIL: hub startup line does not state ttl and offline_sweep in whole seconds"; cat "$work/hub.log"; exit 1; }
 
 # 运行中设密码：另一进程经 WAL 写库，登录路径每次读库，不需要重启 hub。
 printf '%s\n' "$admin_pw" | bin/probe-hub passwd --db "$db" > "$work/passwd.log" 2>&1
@@ -266,28 +275,39 @@ channel=$(jq -r '.channel.id' "$work/SaveNotifyChannel.json")
 wait_alert() {
   transition=$1
   alert_started=$2
-  # TTL 12s + 最迟一轮巡检 10s + 本机投递与可重试失败的 1s/4s 退避，40s 留出调度余量。
-  alert_deadline=$((alert_started + 40))
+  alert_budget=$3
+  alert_deadline=$((alert_started + alert_budget))
   while :; do
     [ "$(rpc ListAlertEvents '{}')" = 200 ] || { echo "FAIL: ListAlertEvents"; cat "$work/ListAlertEvents.json"; exit 1; }
     if jq -e --arg n "$node2" --arg tr "$transition" '[.events[]? | select(.transition == $tr and .nodeId == $n and any(.deliveries[]; (.ok // false) == true))] | length == 1' "$work/ListAlertEvents.json" > /dev/null; then
-      echo "alert $transition delivered after $(($(date +%s) - alert_started))s"
+      echo "alert $transition delivered after $(($(date +%s) - alert_started))s (budget ${alert_budget}s)"
       return
     fi
-    [ "$(date +%s)" -lt "$alert_deadline" ] || { echo "FAIL: $transition alert not delivered within 40s"; cat "$work/ListAlertEvents.json"; exit 1; }
+    [ "$(date +%s)" -lt "$alert_deadline" ] || { echo "FAIL: $transition alert not delivered within ${alert_budget}s"; cat "$work/ListAlertEvents.json"; exit 1; }
     sleep 1
   done
 }
+# 两个上限都是"推出的最坏时长 + 同一份余量"。SweepOffline 只由 RunOfflineSweep 按 offline_sweep
+# 定时调用，触发与恢复都只在巡检时判定。
+# firing：最后一次上报早于 docker kill，kill 后至多 ttl 即满足离线（node2 的宽限未设置，取 TTL，
+#   NextOffline 也以 TTL 为下限），之后至多再等一个 offline_sweep。
+# recovered：agent 一启动就上报（Runner.Run 在首次 Sleep 之前发出 Report），此后按 hub 下发的
+#   ttl/3 间隔上报，首个上报之后的任何一轮巡检看到的未上报时长都小于 TTL，第一轮就判恢复，
+#   所以至多等一个 offline_sweep，与 ttl 无关。
+# 余量是再一个 offline_sweep 加 5s：前者容纳 docker start/kill、agent 进程启动、1s 轮询与错过一轮
+#   巡检；后者是投递遇到可重试失败时 queue.go 的 backoff（1s、4s）。渠道客户端的 10s 超时只在
+#   接收器挂住时才会用满；接收器在本机回环、已由 TestNotifyChannel 验证能应答，上限不为此留量。
+alert_slack_s=$((sweep_s + 5))
 firing_started=$(date +%s)
 docker kill "$(cat "$work/cid-arm64")" > /dev/null
 wait "$arm64" || true
-wait_alert firing "$firing_started"
+wait_alert firing "$firing_started" $((ttl_s + sweep_s + alert_slack_s))
 grep -q '"transition":"firing"' "$work/hooks.txt" || { echo "FAIL: webhook body"; cat "$work/hooks.txt"; exit 1; }
 recovery_started=$(date +%s)
 docker start "$(cat "$work/cid-arm64")" > /dev/null
 run_agent arm64 >> "$work/agent-arm64.log" 2>&1 &
 arm64=$!
-wait_alert recovered "$recovery_started"
+wait_alert recovered "$recovery_started" $((sweep_s + alert_slack_s))
 # node1 的 agent 已退出；先推进到新重置日对应的周期，再保存停机前状态。
 [ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic before restart"; exit 1; }
 traffic_before=$(jq -c --arg id "$node1" '.nodes[] | select(.nodeId == $id) | .traffic' "$work/GetTraffic.json")

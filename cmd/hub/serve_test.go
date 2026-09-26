@@ -20,6 +20,7 @@ import (
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
 	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/metric"
 	"github.com/xjetry/probe/internal/hub/store"
@@ -92,6 +93,58 @@ func startTestHubWithTTL(t *testing.T, db string, clk clock.Clock, ttl string, f
 		case <-timer.C:
 			t.Fatal("serve did not bind a listener")
 		}
+	}
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// scripts/e2e.sh 从启动行按整秒读出 ttl 与 offline_sweep，推出告警等待上限；这里用 serve 实际装配的
+// 文本日志格式钉住这两个字段，字段缺失或改名时 make ci 先红，而不是等到 e2e 才停下。
+func TestServeStartupLineStatesAlertTiming(t *testing.T) {
+	t.Setenv("PROBE_OFFLINE_AFTER", "12s")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := &lockedBuffer{}
+	done := make(chan error, 1)
+	args := []string{"--db", filepath.Join(t.TempDir(), "hub.db"), "--listen", "127.0.0.1:0"}
+	go func() {
+		done <- runServeWith(ctx, args, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), slog.New(slog.NewTextHandler(out, nil)))
+	}()
+	testwait.Until(t, 10*time.Millisecond, func() bool { return strings.Contains(out.String(), `msg="hub listening"`) }, "no startup line in %v", testwait.When(out.String))
+	var line string
+	for _, l := range strings.Split(out.String(), "\n") {
+		if strings.Contains(l, `msg="hub listening"`) {
+			line = l
+		}
+	}
+	for _, want := range []string{" ttl=12s ", " offline_sweep=" + alert.OfflineSweepEvery.String() + " "} {
+		if !strings.Contains(line, want) {
+			t.Errorf("startup line %q lacks %q", line, want)
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serve exit: %v", err)
+		}
+	case <-time.After(testwait.Bound):
+		t.Fatal("serve did not stop")
 	}
 }
 
