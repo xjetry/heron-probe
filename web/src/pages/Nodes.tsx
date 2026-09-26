@@ -10,6 +10,7 @@ import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
 import { graceText } from "../lib/alerts";
 import { withId } from "../lib/ids";
+import { lagsHub } from "../lib/version";
 
 export function Nodes() {
   const qc = useQueryClient();
@@ -102,22 +103,6 @@ export function Nodes() {
       </div>
     </section>
   );
-}
-
-// 正式版本号 vMAJOR.MINOR.PATCH，忽略 "-" 之后的预发布后缀；dev 等解析不了的返回 null。
-function releaseTriple(v: string): [number, number, number] | null {
-  const m = /^v(\d+)\.(\d+)\.(\d+)(?:-|$)/.exec(v);
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
-}
-
-// 按版本号逐段比较而不是字符串不等：agent 比 hub 新不算落后，v1.9.0 比 v1.10.0 旧。
-// 任一方不是正式版本（dev、缺失）就不标：没有可比的次序。
-function lagsHub(agent: string | undefined, hub: string): boolean {
-  const a = agent ? releaseTriple(agent) : null;
-  const h = releaseTriple(hub);
-  if (!a || !h) return false;
-  for (let i = 0; i < 3; i++) if (a[i] !== h[i]) return a[i] < h[i];
-  return false;
 }
 
 const validResetDay = (day: number) => Number.isInteger(day) && day >= 1 && day <= 28;

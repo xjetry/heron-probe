@@ -60,7 +60,7 @@ describe("Nodes", () => {
     expect(screen.queryByText("落后于 hub")).toBeNull();
   });
 
-  it.each([["v1.9.0", "v1.10.0"], ["v1.1.0-rc.1", "v1.1.1"], ["v0.9.9", "v1.0.0"]])("按版本号比较：%s 落后于 %s", async (agent, hub) => {
+  it.each([["v1.9.0", "v1.10.0"], ["v1.1.0-rc.1", "v1.1.1"], ["v0.9.9", "v1.0.0"], ["v1.1.0-rc.1", "v1.1.0"]])("按版本号比较：%s 落后于 %s", async (agent, hub) => {
     renderNodes({
       listNodes: async () => ({ nodes: agentAt(agent) }),
       getSnapshot: snapshotOf(hub),
