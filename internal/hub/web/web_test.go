@@ -9,12 +9,18 @@ import (
 	"testing/fstest"
 )
 
-func builtFS() fstest.MapFS {
+func builtFS(dir string) fstest.MapFS {
 	return fstest.MapFS{
-		"dist/index.html":         {Data: []byte("<!doctype html><div id=root></div>")},
-		"dist/assets/app-abc.js":  {Data: []byte("console.log(1)")},
-		"dist/assets/app-abc.css": {Data: []byte("body{}")},
-		"dist/robots.txt":         {Data: []byte("User-agent: *")},
+		dir + "/index.html":         {Data: []byte("<!doctype html><div id=root></div>")},
+		dir + "/assets/app-abc.js":  {Data: []byte("console.log(1)")},
+		dir + "/assets/app-abc.css": {Data: []byte("body{}")},
+		dir + "/robots.txt":         {Data: []byte("User-agent: *")},
+		dir + "/sub/page.txt":       {Data: []byte("sub page")},
+		dir + "/.gitkeep":           {},
+		dir + "/.env":               {Data: []byte("SECRET=embedded")},
+		dir + "/.git/config":        {Data: []byte("[core] embedded")},
+		dir + "/sub/.hidden.txt":    {Data: []byte("hidden page")},
+		dir + "/assets/.hidden.js":  {Data: []byte("hidden asset")},
 	}
 }
 
@@ -44,77 +50,78 @@ func checkSecurityHeaders(t *testing.T, resp *http.Response) {
 	}
 }
 
-func TestServesFilesAndFallsBackToIndex(t *testing.T) {
-	h := handlerFor(builtFS())
+// 面板与内置公开页是同一个核心、两个挂载点：同一组路径在两处得到同样的应答与同一套 CSP。
+func TestEmbeddedServesFilesAndFallsBackToIndex(t *testing.T) {
+	for _, mount := range []struct {
+		name, dir, prefix string
+	}{{"panel", "dist", Prefix}, {"public", "dist-public", "/"}} {
+		h := embedded(builtFS(mount.dir), mount.dir, mount.prefix, notBuiltAdmin)
+		for _, c := range []struct {
+			path, wantBody, wantCache string
+			wantStatus                int
+		}{
+			{"", "<div id=root>", "no-cache", 200},
+			{"index.html", "<div id=root>", "no-cache", 200},
+			{"nodes/7", "<div id=root>", "no-cache", 200},
+			{"assets/app-abc.js", "console.log", "public, max-age=31536000, immutable", 200},
+			{"assets/app-abc.css", "body{}", "public, max-age=31536000, immutable", 200},
+			{"robots.txt", "User-agent: *", "no-cache", 200},
+			{"sub/", "<div id=root>", "no-cache", 200},
+			{"sub", "<div id=root>", "no-cache", 200},
+			{"assets/../robots.txt", "User-agent: *", "no-cache", 200},
+			{"sub/../robots.txt", "User-agent: *", "no-cache", 200},
+			{"assets/missing.js", "404 page not found", "", 404},
+			{"assets/", "404 page not found", "", 404},
+			{"assets", "404 page not found", "", 404},
+			// 点文件当作不存在：assets/ 下 404，其余回落 index.html；产物里的 .gitkeep 也不例外。
+			{".gitkeep", "<div id=root>", "no-cache", 200},
+			{".env", "<div id=root>", "no-cache", 200},
+			{".git/config", "<div id=root>", "no-cache", 200},
+			{"sub/.hidden.txt", "<div id=root>", "no-cache", 200},
+			{"assets/.hidden.js", "404 page not found", "", 404},
+		} {
+			path := mount.prefix + c.path
+			t.Run(mount.name+" "+path, func(t *testing.T) {
+				resp := get(t, h, path)
+				body := responseBody(t, resp)
+				if resp.StatusCode != c.wantStatus || !strings.Contains(body, c.wantBody) {
+					t.Fatalf("%s: status %d body %q", path, resp.StatusCode, body)
+				}
+				if c.wantCache != "" && resp.Header.Get("Cache-Control") != c.wantCache {
+					t.Fatalf("%s: Cache-Control %q, want %q", path, resp.Header.Get("Cache-Control"), c.wantCache)
+				}
+				checkSecurityHeaders(t, resp)
+			})
+		}
+	}
+}
+
+func TestUnbuiltEmbeddedPagesExplainThemselves(t *testing.T) {
 	for _, c := range []struct {
-		path, wantBody, wantCache string
-		wantStatus                int
+		dir, prefix, notBuilt, want string
 	}{
-		{"/admin/", "<div id=root>", "no-cache", 200},
-		{"/admin/index.html", "<div id=root>", "no-cache", 200},
-		{"/admin/nodes/7", "<div id=root>", "no-cache", 200},
-		{"/admin/assets/app-abc.js", "console.log", "public, max-age=31536000, immutable", 200},
-		{"/admin/assets/app-abc.css", "body{}", "public, max-age=31536000, immutable", 200},
-		{"/admin/robots.txt", "User-agent: *", "no-cache", 200},
-		{"/admin/assets/missing.js", "404 page not found", "", 404},
+		{"dist", Prefix, notBuiltAdmin, "The admin panel has not been built"},
+		{"dist-public", "/", notBuiltPublic, "The public page has not been built"},
 	} {
-		t.Run(c.path, func(t *testing.T) {
-			resp := get(t, h, c.path)
-			body := responseBody(t, resp)
-			if resp.StatusCode != c.wantStatus || !strings.Contains(body, c.wantBody) {
-				t.Fatalf("%s: status %d body %q", c.path, resp.StatusCode, body)
-			}
-			if c.wantCache != "" && resp.Header.Get("Cache-Control") != c.wantCache {
-				t.Fatalf("%s: Cache-Control %q, want %q", c.path, resp.Header.Get("Cache-Control"), c.wantCache)
-			}
-			checkSecurityHeaders(t, resp)
-		})
+		h := embedded(fstest.MapFS{c.dir + "/.gitkeep": {}}, c.dir, c.prefix, c.notBuilt)
+		resp := get(t, h, c.prefix+"nodes/7")
+		body := responseBody(t, resp)
+		if resp.StatusCode != http.StatusServiceUnavailable || !strings.Contains(body, c.want) {
+			t.Fatalf("%s: status %d body %q", c.dir, resp.StatusCode, body)
+		}
+		if resp.Header.Get("Cache-Control") != "no-cache" || resp.Header.Get("Content-Type") != "text/html; charset=utf-8" {
+			t.Fatalf("%s: unbuilt response headers: %v", c.dir, resp.Header)
+		}
+		checkSecurityHeaders(t, resp)
 	}
 }
 
-func TestUnbuiltPanelExplainsItself(t *testing.T) {
-	h := handlerFor(fstest.MapFS{"dist/.gitkeep": {}})
-	resp := get(t, h, "/admin/")
-	body := responseBody(t, resp)
-	if resp.StatusCode != http.StatusServiceUnavailable || !strings.Contains(body, "has not been built") {
-		t.Fatalf("status %d body %q", resp.StatusCode, body)
-	}
-	if resp.Header.Get("Cache-Control") != "no-cache" || resp.Header.Get("Content-Type") != "text/html; charset=utf-8" {
-		t.Fatalf("unbuilt response headers: %v", resp.Header)
-	}
-	checkSecurityHeaders(t, resp)
-}
-
-func TestAssetDirectoryPaths(t *testing.T) {
-	h := handlerFor(builtFS())
-	for _, c := range []struct {
-		path   string
-		status int
-	}{
-		{"/admin/assets/", http.StatusNotFound},
-		{"/admin/assets", http.StatusMovedPermanently},
-	} {
-		t.Run(c.path, func(t *testing.T) {
-			if resp := get(t, h, c.path); resp.StatusCode != c.status {
-				t.Fatalf("%s: status %d, want %d", c.path, resp.StatusCode, c.status)
-			}
-		})
-	}
-}
-
-func TestRootRedirectsOnlyExactRoot(t *testing.T) {
-	h := RootRedirect()
-	if resp := get(t, h, "/"); resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/admin/" {
-		t.Fatalf("/: %d %q", resp.StatusCode, resp.Header.Get("Location"))
-	}
-	if resp := get(t, h, "/nothing"); resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("/nothing: %d", resp.StatusCode)
-	}
-}
-
-// all:dist 必须能匹配文件；源码检出靠入库的 .gitkeep 满足，构建后还会包含产物。
+// all:dist 与 all:dist-public 必须能匹配文件；源码检出靠入库的 .gitkeep 满足，构建后还会包含产物。
 func TestEmbeddedDistExists(t *testing.T) {
-	if _, err := dist.ReadDir("dist"); err != nil {
+	if _, err := adminDist.ReadDir("dist"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publicDist.ReadDir("dist-public"); err != nil {
 		t.Fatal(err)
 	}
 }

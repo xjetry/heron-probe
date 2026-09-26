@@ -85,11 +85,12 @@ key=$(sed -n 's/^key: //p' "$work/window.txt")
 bin/probe-hub serve --db "$work/accept.db" --listen "127.0.0.1:$HUB_PORT" --timezone UTC > "$work/hub.log" 2>&1 &
 hub=$!
 attempt=0
+# 就绪判据是匿名的 GetSite 返回 200，不取决于根路径服务什么（公开页是否构建、是否换了 --public-dir）。
 while [ "$attempt" -lt 50 ]; do
-  [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$HUB_PORT/")" = 302 ] && break
+  [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$HUB_PORT/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D")" = 200 ] && break
   attempt=$((attempt + 1)); sleep 0.2
 done
-# 302 也可能是别人占着 18085。本进程没打出 listening 就不是这次的 hub。
+# 200 也可能是别人占着 18085。本进程没打出 listening 就不是这次的 hub。
 grep -q 'hub listening' "$work/hub.log" || { echo "FAIL: hub did not bind $HUB_PORT"; cat "$work/hub.log"; exit 1; }
 printf '%s\n' "$admin_pw" | bin/probe-hub passwd --db "$work/accept.db" > "$work/passwd.log" 2>&1
 

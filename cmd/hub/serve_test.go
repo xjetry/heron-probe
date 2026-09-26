@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/metric"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/hub/web"
 	"github.com/xjetry/probe/internal/testwait"
 	"google.golang.org/protobuf/proto"
 )
@@ -387,5 +389,81 @@ func TestServeMountsPublicService(t *testing.T) {
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&site); err != nil || resp.StatusCode != http.StatusOK || site.Theme != "auto" {
 		t.Fatalf("GetSite via serve: %d %+v %v", resp.StatusCode, site, err)
+	}
+}
+
+// 不带 --public-dir 时根路径是内置公开页。serve 的装配与 newTestMux 各写一份，这里经真实 serve 核对：应答与直接调用
+// web.PublicHandler 逐字节相同。面板与公开页的应答总是不同（构建过是各自的 index.html，没构建是各自的说明页），
+// 所以无论是否构建过，把 / 挂成面板或别的处理器都会在这里现形。
+func TestServeMountsBuiltinPublicPageAtRoot(t *testing.T) {
+	url, _, _ := startTestHub(t, filepath.Join(t.TempDir(), "hub.db"), clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
+	resp, err := http.Get(url + "/nodes/3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := httptest.NewRecorder()
+	web.PublicHandler().ServeHTTP(want, httptest.NewRequest(http.MethodGet, "/nodes/3", nil))
+	if resp.StatusCode != want.Code || string(body) != want.Body.String() {
+		t.Fatalf("/nodes/3 via serve: %d %q, want the built-in public page: %d %q", resp.StatusCode, body, want.Code, want.Body.String())
+	}
+}
+
+// 替换目录在打开数据库之前核对：配置有误时 hub 不留下任何副作用。
+func TestServeRejectsPublicDirWithoutIndexBeforeOpeningTheDatabase(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "hub.db")
+	dir := t.TempDir()
+	err := runServeWith(context.Background(), []string{"--db", db, "--listen", "127.0.0.1:0", "--public-dir", dir},
+		clock.NewFake(time.Now()), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err == nil || !strings.Contains(err.Error(), "--public-dir "+dir) {
+		t.Fatalf("err = %v, want a --public-dir error naming the directory", err)
+	}
+	if _, statErr := os.Stat(db); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("database touched before --public-dir was checked: %v", statErr)
+	}
+}
+
+// 替换目录只接管 /：面板与 RPC 路径的路由优先级更高，目录里同名的文件遮蔽不了它们。
+func TestServePublicDirReplacesRootButNotPanelOrRPC(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"index.html":                     "custom site",
+		"admin/index.html":               "shadow panel",
+		"probe.v1.PublicService/GetSite": "shadow rpc",
+	} {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	url, _, _ := startTestHub(t, filepath.Join(t.TempDir(), "hub.db"), clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), "--public-dir", dir)
+	fetch := func(path string) (*http.Response, string) {
+		t.Helper()
+		resp, err := http.Get(url + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp, string(b)
+	}
+	if resp, body := fetch("/nodes/3"); resp.StatusCode != http.StatusOK || body != "custom site" || resp.Header.Get("Content-Security-Policy") != "frame-ancestors 'none'" {
+		t.Fatalf("/nodes/3: %d %q %v", resp.StatusCode, body, resp.Header)
+	}
+	if resp, body := fetch("/admin/"); strings.Contains(body, "shadow") || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "default-src 'self'") {
+		t.Fatalf("/admin/ was shadowed: %d %q", resp.StatusCode, body)
+	}
+	if resp, body := fetch("/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D"); resp.StatusCode != http.StatusOK || strings.Contains(body, "shadow") {
+		t.Fatalf("RPC path was shadowed: %d %q", resp.StatusCode, body)
 	}
 }

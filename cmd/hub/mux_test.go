@@ -63,24 +63,25 @@ func newTestMux(t *testing.T) *http.ServeMux {
 	}
 	admin := api.New(api.Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second}, st, a, l, svc, book, reg, alerts, notifier, clk, slog.Default())
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: 10 * time.Second}, st, l, book, reg, clk, slog.Default())
-	return newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(pub.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", web.RootRedirect()))
+	return newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(pub.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", web.PublicHandler()))
 }
 
-// RPC 路径与 /admin/ 的优先级高于根路径的重定向；ServeMux 按最长前缀匹配，
-// 三者同时挂载时，RPC 仍必须经过服务自身的鉴权。
+// RPC 路径与 /admin/ 的优先级高于根路径的公开页；ServeMux 按最长前缀匹配，三者同时挂载时，RPC 仍必须经过服务自身的鉴权。
 func TestMuxRoutesPanelAndRootAroundRPC(t *testing.T) {
 	srv := httptest.NewServer(newTestMux(t))
 	t.Cleanup(srv.Close)
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := client.Get(srv.URL + "/")
-	if err != nil {
-		t.Fatal(err)
+	for _, path := range []string{"/", "/nodes/3"} {
+		resp, err := client.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if (resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusServiceUnavailable) || resp.Header.Get("Content-Security-Policy") == "" {
+			t.Fatalf("%s: %d, want the public page handler (200 when built, 503 when not) with CSP", path, resp.StatusCode)
+		}
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/admin/" {
-		t.Fatalf("/: %d %q", resp.StatusCode, resp.Header.Get("Location"))
-	}
-	resp, err = client.Get(srv.URL + "/admin/nodes/1")
+	resp, err := client.Get(srv.URL + "/admin/nodes/1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,9 +123,10 @@ func TestMuxRejectsAnonymousProcedures(t *testing.T) {
 					}
 					defer resp.Body.Close()
 					if publicProcedures[path] {
-						// 404 说明没挂载（落到了根路径），401 说明被鉴权挡住：两者都不是匿名可达。
-						if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusNotFound {
-							t.Fatalf("%s: status %d, want the public service to answer anonymously", path, resp.StatusCode)
+						// 401 说明被鉴权挡住。没挂载的过程落到根路径：根路径挂着公开页，得到的是 HTML（构建过 200，没构建 503），
+						// 只看状态码分不出来，所以还要求应答是 connect 的 JSON（成功与错误都是 application/json）。
+						if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusNotFound || resp.Header.Get("Content-Type") != "application/json" {
+							t.Fatalf("%s: status %d %q, want the public service to answer anonymously", path, resp.StatusCode, resp.Header.Get("Content-Type"))
 						}
 						return
 					}
@@ -176,8 +178,9 @@ func TestMuxAcceptsGETOnlyOnPublicService(t *testing.T) {
 				}
 				resp.Body.Close()
 				switch public := svc.FullName() == "probe.v1.PublicService"; {
-				case public && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusBadRequest:
-					t.Errorf("%s: GET status %d, want the public service to answer (200, or 400 for an empty window)", path, resp.StatusCode)
+				// 公开过程的应答必须来自 connect：没挂载的过程落到根路径的公开页，也可能是 200，只是不是 JSON。
+				case public && (resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusBadRequest || resp.Header.Get("Content-Type") != "application/json"):
+					t.Errorf("%s: GET status %d %q, want the public service to answer (200, or 400 for an empty window)", path, resp.StatusCode, resp.Header.Get("Content-Type"))
 				case !public && resp.StatusCode != http.StatusMethodNotAllowed:
 					t.Errorf("%s: GET status %d, want 405", path, resp.StatusCode)
 				}

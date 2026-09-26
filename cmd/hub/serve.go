@@ -77,7 +77,8 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	db := fs.String("db", "probe.db", "SQLite database path")
 	tz := fs.String("timezone", "", "IANA time zone for traffic period boundaries (default: the host's zone, resolved from TZ or /etc/localtime; UTC if neither resolves); already-persisted period starts are interpreted in the new zone; usage of the current period may be reset at the next read, report or flush")
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
-	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For / X-Forwarded-Proto are trusted; empty trusts none")
+	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For / X-Forwarded-Proto are trusted; empty trusts none. Behind a reverse proxy, list the proxy here: the public page and agent registration are rate-limited per source address, and failed logins are locked out per source address, so without it every visitor shares the proxy address's single bucket and lockout")
+	publicDir := fs.String("public-dir", "", "serve this directory at / instead of the built-in public page; files are opened through os.Root, so paths and symbolic links cannot leave the directory; a path that is not a file, or that has a segment starting with a dot (.git, .env, .well-known), gets the directory's index.html (404 under assets/); every response is no-cache. The directory shares the admin panel's origin: its scripts can read the panel and call the admin API with the session of any signed-in administrator who opens the page, so put only content you trust as much as the hub binary there")
 	retention := store.DefaultRetention
 	fs.DurationVar(&retention.M1, "retention-1m", retention.M1, fmt.Sprintf("how long to keep 1-minute rows (minimum %s)", store.MinRetentionM1))
 	fs.DurationVar(&retention.M5, "retention-5m", retention.M5, fmt.Sprintf("how long to keep 5-minute rows (minimum %s)", store.MinRetentionM5))
@@ -104,6 +105,13 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	trusted, err := auth.ParsePrefixes(*proxies)
 	if err != nil {
 		return err
+	}
+	// 替换目录在打开数据库之前核对：配置有误时 hub 不留下任何副作用就退出。
+	public := web.PublicHandler()
+	if *publicDir != "" {
+		if public, err = web.DirHandler(*publicDir); err != nil {
+			return err
+		}
 	}
 	if !isLoopback(*listen) {
 		log.Warn("listening on a non-loopback address: direct access bypasses the proxy; forwarded headers are trusted only from configured peers", "listen", *listen)
@@ -136,7 +144,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	admin := api.New(api.Config{TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: trusted}, st, l, book, reg, clk, log)
 
-	mux := newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(pub.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", web.RootRedirect()))
+	mux := newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(pub.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", public))
 	listener, err := net.Listen("tcp", *listen)
 	if err != nil {
 		return err
@@ -156,7 +164,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(listener) }()
-	log.Info("hub listening", "listen", listener.Addr().String(), "ttl", ttl, "interval", svc.Interval(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "retention_alert_events", retention.AlertEvents, "timezone", loc.String(), "version", version)
+	log.Info("hub listening", "listen", listener.Addr().String(), "ttl", ttl, "interval", svc.Interval(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "retention_alert_events", retention.AlertEvents, "timezone", loc.String(), "public_dir", *publicDir, "version", version)
 
 	select {
 	case <-stopCtx.Done():

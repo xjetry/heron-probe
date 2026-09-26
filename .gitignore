@@ -7,6 +7,8 @@ reference-projects/
 /dist/
 /internal/hub/web/dist/*
 !/internal/hub/web/dist/.gitkeep
+/internal/hub/web/dist-public/*
+!/internal/hub/web/dist-public/.gitkeep
 /web/node_modules/
 
 # 本地运行数据

@@ -54,16 +54,18 @@ echo "registration window: $(sed -n 's/^expires: //p' "$work/window.txt")"
 PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC > "$work/hub.log" 2>&1 &
 hub=$!
 
+# 就绪判据是匿名的 GetSite 返回 200：根路径的应答取决于公开页是否构建进二进制、是否换了 --public-dir，
+# GetSite 两者都不取决。
 wait_hub() {
   attempt=0
   while [ "$attempt" -lt 30 ]; do
-    if status=$(curl -s -o /dev/null -w '%{http_code}' "$base/"); then
-      [ "$status" = 302 ] && return 0
+    if status=$(curl -s -o /dev/null -w '%{http_code}' "$base/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D"); then
+      [ "$status" = 200 ] && return 0
     fi
     attempt=$((attempt + 1))
     sleep 0.2
   done
-  echo "FAIL: hub did not answer on $base within 6s (expected / to return 302)"
+  echo "FAIL: hub did not answer on $base within 6s (expected an anonymous GetSite to return 200)"
   exit 1
 }
 wait_hub
@@ -119,7 +121,6 @@ run_card_examples() {
   fi
 }
 
-[ "$(curl -sS -o /dev/null -w '%{http_code}' "$base/")" = 302 ] || { echo "FAIL: / must redirect to the panel"; exit 1; }
 [ "$(curl -sS -o "$work/admin.html" -w '%{http_code}' "$base/admin/")" = 200 ] || { echo "FAIL: /admin/ not served"; exit 1; }
 grep -q 'id="root"' "$work/admin.html" || { echo "FAIL: panel index missing root element"; exit 1; }
 curl -sS -D "$work/admin.headers" -o /dev/null "$base/admin/" && grep -qi '^content-security-policy:' "$work/admin.headers" || { echo "FAIL: CSP header missing"; exit 1; }
