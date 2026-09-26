@@ -2172,5 +2172,5 @@ cd /Users/xjetry/work/vibe/probe-access && git add web/src && git commit -m "web
   - `migrate_test` 的 `describe` 不比较 AUTOINCREMENT、WITHOUT ROWID、UNIQUE 自动索引与外键，重建型迁移若丢了这些性质照不出。
   - `passwd` 管道用例的写端已关闭，证明不了"不阻塞"。
   - e2e 的告警恢复等待在高负载下出现过一次超时（恢复事件未产生，agent 重启后 40 秒内未重新上线），告警、上报与实时状态代码在本分支未改动，待单独排查。
-  - `ListAlertEvents` 的 `last_error` 最多带出接收方响应体的前 200 个字符；接收方若在错误响应里回显请求体，模板里的密钥可被只读 token 读到——口径待定。
+  - `ListAlertEvents` 的 `last_error` 最多带出接收方响应体的前 200 个字符；接收方若在错误响应里回显请求体，模板里的密钥可被只读 token 读到——已定：只读口径只给失败类别与状态码，原文只经仅会话的方法读出（spec §9.3）。
   - 面向运维者的 `probe-hub` CLI 说明（README 目前没有）。
