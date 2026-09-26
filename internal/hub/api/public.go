@@ -90,21 +90,33 @@ func (p *Public) Handler() (string, http.Handler) {
 	return path, p.cacheControl(ratelimit.BySource(p.limit, p.cfg.TrustedProxies, p.clk, newSnapshotCache(h, p.clk)))
 }
 
-// cacheControl 只作用于 GET：GET 的 URL 就是缓存键，浏览器与中间缓存可以复用；POST 响应不带缓存头。
-// 成功响应按方法声明的 cache_max_age_s；失败响应（含限流的 429 与 NotFound）一律 no-store——节点改为公开后，
-// 之前缓存的 NotFound 不能继续挡住访客。
+// cacheControl 只作用于 GET，POST 响应不带缓存头。成功响应按方法声明的 cache_max_age_s；失败响应（含限流的 429
+// 与 NotFound）一律 no-store——节点改为公开后，之前缓存的 NotFound 不能继续挡住访客。
+//
+// 浏览器与共享缓存按 URL 与 Accept-Encoding 复用 GET 响应：正文随协商的压缩在 gzip 与 identity 之间变化，
+// connect 在 GET 响应上声明 Vary: Accept-Encoding（mergeResponseHeader），由 TestPublicCacheControlPerMethod 钉住。
+// 响应若再随别的请求头变化，就要把它加进 Vary。
+//
+// 每个 GET 响应都经 cacheHeaderWriter.WriteHeader 定下缓存头：next 显式写头或写正文时在那一刻定；next 什么都没写
+// 就返回时（proto 编码的全默认值消息是 0 字节，connect 不调用 Write），状态码本会由 net/http 隐式补成 200，
+// 包装器看不到，所以返回后在这里补一次 WriteHeader(200)。
 func (p *Public) cacheControl(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(&cacheHeaderWriter{ResponseWriter: w, maxAge: p.maxAge[r.URL.Path]}, r)
+		cw := &cacheHeaderWriter{ResponseWriter: w, maxAge: p.maxAge[r.URL.Path]}
+		next.ServeHTTP(cw, r)
+		if !cw.wrote {
+			cw.WriteHeader(http.StatusOK)
+		}
 	})
 }
 
-// cacheHeaderWriter 在状态码确定的那一刻写 Cache-Control：之后头已发出，改不了。maxAge 为 0 只出现在
-// 注册表之外的路径上，connect 以 404 应答，落到 no-store。
+// cacheHeaderWriter 在状态码确定的那一刻写 Cache-Control：之后头已发出，改不了。
+// GET 得到 200 只能是一个接受 GET 的过程在应答；cachePolicy 保证每个这样的过程都在 maxAge 表里且值为正。
+// 表外的路径（未知过程 404、不接受 GET 的过程 405）都不是 200，所以 maxAge 为 0 时一律 no-store。
 type cacheHeaderWriter struct {
 	http.ResponseWriter
 	maxAge uint32

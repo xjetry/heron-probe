@@ -376,6 +376,8 @@ func TestServeWarnsWhenLocalTimezoneCannotBeResolved(t *testing.T) {
 }
 
 // serve 的装配与 newTestMux 各写一份：这里经真实 serve 调一次公开服务，挂载遗漏不会只在 mux 测试里被掩盖。
+// max-age 只有 Public.Handler 的挂载点中间件会写，而它与限流同在一条链上（链内顺序由 api 包的测试钉住）；
+// Public 实现了生成的 handler 接口，挂成裸 connect 处理器也能编译，拿到这个头才证明 serve 挂的是 Handler()。
 func TestServeMountsPublicService(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "hub.db")
 	url, _, _ := startTestHub(t, db, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
@@ -389,6 +391,9 @@ func TestServeMountsPublicService(t *testing.T) {
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&site); err != nil || resp.StatusCode != http.StatusOK || site.Theme != "auto" {
 		t.Fatalf("GetSite via serve: %d %+v %v", resp.StatusCode, site, err)
+	}
+	if got := resp.Header.Get("Cache-Control"); got != "max-age=300" {
+		t.Fatalf("GetSite via serve: Cache-Control %q, want max-age=300 from Public.Handler", got)
 	}
 }
 

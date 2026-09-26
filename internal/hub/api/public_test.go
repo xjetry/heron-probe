@@ -6,9 +6,10 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
-	"slices"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -412,9 +413,12 @@ func TestPublicRateLimitPerSourceAddress(t *testing.T) {
 	if got := pubGet(t, h, "GetSite", site, from("198.51.100.7")); got.status != http.StatusTooManyRequests {
 		t.Fatalf("second request after one refill period: %d", got.status)
 	}
-	// 解码失败的请求同样计数：限流在 connect 之外裁决。
-	for range 60 {
-		pubGet(t, h, "GetSite", "connect=v1&encoding=json&message=%7B", from("198.51.100.9"))
+	// 解码失败的请求同样计数：限流在 connect 之外裁决。先确认这种请求确实在解码阶段失败。
+	for i := range 60 {
+		got := pubGet(t, h, "GetSite", "connect=v1&encoding=json&message=%7B", from("198.51.100.9"))
+		if i == 0 && (got.status != http.StatusBadRequest || !bytes.Contains(got.body, []byte(`"code":"invalid_argument"`))) {
+			t.Fatalf("malformed request: %d %s, want 400 invalid_argument from the decoder", got.status, got.body)
+		}
 	}
 	if got := pubGet(t, h, "GetSite", site, from("198.51.100.9")); got.status != http.StatusTooManyRequests {
 		t.Fatalf("malformed requests were not counted: %d", got.status)
@@ -444,8 +448,13 @@ func TestPublicCacheControlPerMethod(t *testing.T) {
 		{"QueryMetrics", window, "max-age=60"},
 		{"QueryProbes", window, "max-age=60"},
 	} {
-		if got := pubGet(t, h, c.method, jsonQuery(c.body), nil); got.status != http.StatusOK || got.header.Get("Cache-Control") != c.want {
+		got := pubGet(t, h, c.method, jsonQuery(c.body), nil)
+		if got.status != http.StatusOK || got.header.Get("Cache-Control") != c.want {
 			t.Errorf("GET %s: %d Cache-Control %q, want %q", c.method, got.status, got.header.Get("Cache-Control"), c.want)
+		}
+		// 正文随 Accept-Encoding 变化，共享缓存要靠 Vary 才能按它区分；这个头由 connect 给出，中间件不补。
+		if !slices.Contains(got.header.Values("Vary"), "Accept-Encoding") {
+			t.Errorf("GET %s: Vary %q, want Accept-Encoding", c.method, got.header.Values("Vary"))
 		}
 		if got := pubPost(t, h, c.method, c.body, nil); got.status != http.StatusOK || got.header.Values("Cache-Control") != nil {
 			t.Errorf("POST %s: %d Cache-Control %q, want none", c.method, got.status, got.header.Values("Cache-Control"))
@@ -458,6 +467,16 @@ func TestPublicCacheControlPerMethod(t *testing.T) {
 	}
 	if got := pubGet(t, h, "QueryMetrics", jsonQuery(`{"from":"-1"}`), nil); got.status != http.StatusBadRequest || got.header.Get("Cache-Control") != "no-store" {
 		t.Errorf("InvalidArgument: %d Cache-Control %q", got.status, got.header.Get("Cache-Control"))
+	}
+}
+
+// next 什么都不写就返回时，net/http 会隐式补 200；缓存头仍须按表写出，而不是缺席。
+func TestCacheControlCoversImplicitOK(t *testing.T) {
+	p := &Public{maxAge: map[string]uint32{"/probe.v1.PublicService/GetSite": 60}}
+	rec := httptest.NewRecorder()
+	p.cacheControl(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/probe.v1.PublicService/GetSite", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "max-age=60" {
+		t.Fatalf("empty handler: %d Cache-Control %q, want 200 max-age=60", rec.Code, rec.Header().Get("Cache-Control"))
 	}
 }
 
