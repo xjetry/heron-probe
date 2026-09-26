@@ -1,6 +1,6 @@
 // Package deploy 的测试以普通用户运行安装脚本：脚本读写的系统路径经 PROBE_INSTALL_ROOT 挂到临时目录，
 // 系统管理命令由 PATH 上的替身接管。本文件测 install-macos.sh：dscl、launchctl、ps、id、sysctl、uname、
-// chown、sleep 是替身，curl、shasum、tar 用真的；真实 launchd、目录服务与 root 属主只在真机上验证
+// chown、sleep 是替身，find 经替身转调真的，curl、shasum、tar 用真的；真实 launchd、目录服务与 root 属主只在真机上验证
 // （spec §14：没有 macOS 虚拟机可用）。install.sh 的替身在 installlinux_test.go。
 package deploy
 
@@ -128,9 +128,20 @@ echo "${STUB_UNAME_M:-arm64}"
 `,
 	"chown": `#!/bin/sh
 echo "chown $*" >> "$STUB_STATE/calls"
+# STUB_SWAP_LOG 模拟日志目录此前对服务用户可写：在目录交给 root 的那一刻之前，服务用户把 probe-agent.log
+# 换成指向目录外文件的硬链接。
+d=$PROBE_INSTALL_ROOT/Library/Logs/probe-agent
+if [ -n "${STUB_SWAP_LOG-}" ] && [ "$1" = root:wheel ] && [ "$2" = "$d" ]; then
+  rm -f "$d/probe-agent.log"; ln "$STUB_SWAP_LOG" "$d/probe-agent.log"
+fi
 `,
 	"sleep": `#!/bin/sh
 echo "sleep $*" >> "$STUB_STATE/calls"
+`,
+	// find 用真的；STUB_FIND_FAILS 让它像读不到文件时那样只报错、stdout 为空、退出 1。
+	"find": `#!/bin/sh
+[ -z "${STUB_FIND_FAILS-}" ] || { echo "find: $1: Permission denied" >&2; exit 1; }
+exec /usr/bin/find "$@"
 `,
 }
 
@@ -423,10 +434,13 @@ func TestOwnershipIsRestoredOnEveryInstall(t *testing.T) {
 		t.Fatalf("rerun must not register: %q", c)
 	}
 	out, boot := index(c, "launchctl bootout"), index(c, "launchctl bootstrap")
+	// 日志目录在检查日志文件之前、也就在停服务之前交给 root。
+	if i := index(c, "chown root:wheel "+e.root+"/Library/Logs/probe-agent"); i < 0 || i > out {
+		t.Errorf("rerun: the log directory must be handed to root before bootout, calls %q", c)
+	}
 	for _, want := range []string{
 		"chown root:_probe-agent " + e.root + "/etc/probe-agent",
 		"chown _probe-agent:_probe-agent " + e.root + "/etc/probe-agent/config.json",
-		"chown root:wheel " + e.root + "/Library/Logs/probe-agent",
 		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent/probe-agent.log",
 		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent/probe-agent.err",
 	} {
@@ -708,25 +722,32 @@ func TestAccountFailuresNameTheirCause(t *testing.T) {
 	}
 }
 
-// 会让脚本中止的前置检查都在停服务之前：日志目录不是真目录、日志文件不是普通文件时拒绝，
-// 旧服务照常运行、二进制不被替换，也不对链接指向的对象 chown。
+// 会让脚本中止的前置检查都在停服务之前：日志目录不是真目录、日志文件不是链接数为 1 的普通文件时拒绝，
+// 旧服务照常运行、二进制不被替换，也不对日志文件 chown——不改到链接指向的对象。
+// 日志目录不是真目录时连目录也不 chown；其余情形目录已先交给 root（见 TestLogFileSwappedBeforeTheDirectoryIsTakenIsRefused）。
 func TestLogPathsThatAreNotPlainAreRefusedBeforeStopping(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, rel, want string
+		dirTaken        bool
 		plant           func(path, root string)
 	}{
-		{"directory symlink", "Library/Logs/probe-agent", "exists but is not a directory", func(p, root string) {
+		{"directory symlink", "Library/Logs/probe-agent", "exists but is not a directory", false, func(p, root string) {
 			os.RemoveAll(p)
 			os.Symlink(filepath.Join(root, "etc"), p)
 		}},
-		{"file symlink", "Library/Logs/probe-agent/probe-agent.err", "exists but is not a regular file", func(p, root string) {
+		{"file symlink", "Library/Logs/probe-agent/probe-agent.err", "exists but is not a regular file with a single link", true, func(p, root string) {
 			os.Remove(p)
 			os.Symlink(filepath.Join(root, "etc/probe-agent/config.json"), p)
 		}},
-		{"file is a directory", "Library/Logs/probe-agent/probe-agent.log", "exists but is not a regular file", func(p, root string) {
+		{"file is a directory", "Library/Logs/probe-agent/probe-agent.log", "exists but is not a regular file with a single link", true, func(p, root string) {
 			os.Remove(p)
 			os.Mkdir(p, 0o755)
+		}},
+		// 硬链接：[ -L ] 为假、[ -f ] 为真，只有链接数看得出它另有名字。
+		{"file hard link", "Library/Logs/probe-agent/probe-agent.log", "exists but is not a regular file with a single link", true, func(p, root string) {
+			os.Remove(p)
+			os.Link(filepath.Join(root, "outside"), p)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -734,6 +755,10 @@ func TestLogPathsThatAreNotPlainAreRefusedBeforeStopping(t *testing.T) {
 			e := newEnv(t)
 			if out, code := e.install(); code != 0 {
 				t.Fatalf("first install exit %d:\n%s", code, out)
+			}
+			outside := filepath.Join(e.root, "outside")
+			if err := os.WriteFile(outside, []byte("root's\n"), 0o644); err != nil {
+				t.Fatal(err)
 			}
 			tc.plant(filepath.Join(e.root, tc.rel), e.root)
 			e.release("arm64", "v2")
@@ -743,9 +768,63 @@ func TestLogPathsThatAreNotPlainAreRefusedBeforeStopping(t *testing.T) {
 				t.Fatalf("exit %d:\n%s", code, out)
 			}
 			c := e.calls()
-			if index(c, "launchctl bootout") >= 0 || index(c, "chown") >= 0 || !strings.Contains(e.file("usr/local/bin/probe-agent"), "# v1 arm64") {
-				t.Fatalf("the running service must be left alone: calls %q", c)
+			var chowns []string
+			for _, call := range c {
+				if strings.HasPrefix(call, "chown ") {
+					chowns = append(chowns, call)
+				}
 			}
+			wantChowns := []string(nil)
+			if tc.dirTaken {
+				wantChowns = []string{"chown root:wheel " + e.root + "/Library/Logs/probe-agent"}
+			}
+			if index(c, "launchctl bootout") >= 0 || !slices.Equal(chowns, wantChowns) || !strings.Contains(e.file("usr/local/bin/probe-agent"), "# v1 arm64") {
+				t.Fatalf("the running service and the log files must be left alone: calls %q", c)
+			}
+			e.mode("outside", 0o644)
 		})
+	}
+}
+
+// 日志目录此前对服务用户可写（手工建的，或由把目录交给服务用户的版本装的）时，检查之后、目录交给 root 之前
+// 服务用户还能换掉其中的条目。目录必须先交给 root 再检查：替身在目录 chown 的那一刻把 probe-agent.log 换成
+// 指向目录外文件的硬链接，检查要看到它并拒绝，目录外文件的权限不被改动。
+func TestLogFileSwappedBeforeTheDirectoryIsTakenIsRefused(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	if out, code := e.install(); code != 0 {
+		t.Fatalf("first install exit %d:\n%s", code, out)
+	}
+	outside := filepath.Join(e.root, "outside")
+	if err := os.WriteFile(outside, []byte("root's\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.vars = []string{"STUB_SWAP_LOG=" + outside}
+	e.resetCalls()
+	out, code := e.install()
+	e.mode("outside", 0o644)
+	if code != 1 || !strings.Contains(out, "probe-agent.log exists but is not a regular file with a single link") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if index(e.calls(), "launchctl bootout") >= 0 {
+		t.Fatalf("the running service must be left alone: calls %q", e.calls())
+	}
+}
+
+// 读不到链接数时拒绝，而不是把空输出当成"链接数为 1"放行。
+func TestLogFileLinkCountUnreadableIsRefused(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	if out, code := e.install(); code != 0 {
+		t.Fatalf("first install exit %d:\n%s", code, out)
+	}
+	e.vars = []string{"STUB_FIND_FAILS=1"}
+	e.resetCalls()
+	out, code := e.install()
+	if code != 1 || !strings.Contains(out, "cannot read the link count of") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if index(e.calls(), "launchctl bootout") >= 0 {
+		t.Fatalf("the running service must be left alone: calls %q", e.calls())
 	}
 }

@@ -272,15 +272,31 @@ done
 mkdir -p "$(dirname "$BIN")"
 install -m 0755 "$work/probe-agent" "$BIN_TMP"
 # 停服务之后还会中止脚本的前置条件，都在这里先核完：检查失败时旧服务照常运行，机器上不留停掉的服务。
-# 日志目录若已存在必须是真目录，两个日志文件若已存在必须是普通文件：后面以 root 对它们 chown、chmod，
-# 是链接就会改到链接指向的对象。本脚本每次安装都把目录设成 root:wheel，此后只有 root 能在其中放条目，
-# 检查到操作之间条目不会被服务用户换掉。
+# 后面以 root 对两个日志文件 chown、chmod；它们若是链接（符号链接或硬链接），就会改到另一个名字所指的文件。
+# 三步的顺序承载这一点：
+# 1. 日志目录若已存在必须是真目录：它在 root 属主的 /Library/Logs 下，服务用户换不掉这个目录项；下一步的
+#    chown 不带 -h，是链接就会改到链接指向的目录。
+# 2. 先把日志目录交给 root:wheel、0755，再查其中的文件。目录此前可能对服务用户可写（手工建的，或旧的安装
+#    交给了服务用户），那时服务用户能随时增删、替换其中的条目；交给 root 之后只有 root 能动它们，
+#    这一步之后看到的条目就是后面操作的条目。所以这一步必须排在文件检查前面。
+# 3. 两个日志文件不存在，或是链接数为 1 的普通文件。硬链接 [ -L ] 为假、[ -f ] 为真，只有链接数看得出它
+#    另有名字。链接数用 find -links 取：BSD 与 GNU 的 find 都支持，替身测试也在 Linux 上跑；find 失败时
+#    输出同样为空，所以先看它的退出码。
 if [ -L "$LOG_DIR" ] || { [ -e "$LOG_DIR" ] && [ ! -d "$LOG_DIR" ]; }; then
   echo "$LOG_DIR exists but is not a directory; refusing to take it over" >&2; exit 1
 fi
+mkdir -p "$LOG_DIR"
+chown root:wheel "$LOG_DIR"
+chmod 0755 "$LOG_DIR"
 for f in "$LOG_DIR/probe-agent.log" "$LOG_DIR/probe-agent.err"; do
-  if [ -L "$f" ] || { [ -e "$f" ] && [ ! -f "$f" ]; }; then
-    echo "$f exists but is not a regular file; refusing to hand it to $SVC_USER" >&2; exit 1
+  if [ -L "$f" ] || [ -e "$f" ]; then
+    extra=""
+    if [ ! -L "$f" ] && [ -f "$f" ]; then
+      extra=$(find "$f" -prune -links +1) || { echo "cannot read the link count of $f" >&2; exit 1; }
+    fi
+    if [ -L "$f" ] || [ ! -f "$f" ] || [ -n "$extra" ]; then
+      echo "$f exists but is not a regular file with a single link; refusing to hand it to $SVC_USER" >&2; exit 1
+    fi
   fi
 done
 stop_service
@@ -305,16 +321,14 @@ chmod 0750 "$CFG_DIR"
 chown "$SVC_USER:$SVC_USER" "$CFG"
 chmod 0600 "$CFG"
 
-# 日志目录属 root:wheel、0755：服务用户不能在其中增删条目，日志路径换不成链接，launchd 不论以哪个身份打开
-# StandardOutPath/StandardErrorPath 都不会被引到别处。安全性由目录属主承载，不依赖 launchd 的打开身份。
+# 日志目录属 root:wheel、0755（停服务之前已设好）：服务用户不能在其中增删条目，日志路径换不成链接，
+# launchd 不论以哪个身份打开 StandardOutPath/StandardErrorPath 都不会被引到别处。安全性由目录属主承载，
+# 不依赖 launchd 的打开身份。
 # 两个日志文件每次安装都建好并交给服务用户（0640）：以服务用户身份打开时可写，以 root 打开时也可写。
 # 残余：用户域作业实测，日志所在目录对作业用户不可写且文件不存在时，launchd 建不出文件，作业以 78（EX_CONFIG）
 # 退出。所以文件被删后，若 launchd 以服务用户身份打开，作业会反复以 EX_CONFIG 退出，直到重跑本脚本把文件
 # 建回来。这是健壮性问题，不是安全问题；launchd 实际以哪个身份打开由 README 真机核对第 12 条记录。
-# 目录与文件不是链接由停服务之前的检查保证。
-mkdir -p "$LOG_DIR"
-chown root:wheel "$LOG_DIR"
-chmod 0755 "$LOG_DIR"
+# 这里操作的条目就是停服务之前检查过的那两个：目录那时已属 root，之后只有 root 能增删其中的条目。
 for f in "$LOG_DIR/probe-agent.log" "$LOG_DIR/probe-agent.err"; do
   [ -e "$f" ] || : > "$f"
   chown "$SVC_USER:$SVC_USER" "$f"
