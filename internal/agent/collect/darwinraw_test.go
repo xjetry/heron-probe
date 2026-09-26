@@ -243,6 +243,20 @@ func TestDarwinInterfaceReadErrorDropsTheWholeReading(t *testing.T) {
 	}
 }
 
+// 读完 ifcount 之后 en0 被删除，它的索引读出 ENOENT：只略过它，不让整个读数缺失。
+func TestDarwinVanishedInterfaceIsSkipped(t *testing.T) {
+	f := newFakeDarwin()
+	f.errs = map[string]error{"net.link.generic.ifdata/2": syscall.ENOENT}
+	ifs, err := (&darwinHost{src: f}).ifaces()
+	var names []string
+	for _, i := range ifs {
+		names = append(names, i.name)
+	}
+	if err != nil || strings.Join(names, " ") != "lo0 utun0" {
+		t.Fatalf("interfaces %v, %v; want [lo0 utun0] with the vanished en0 skipped", names, err)
+	}
+}
+
 func TestTickAccumulatorAcrossWrapAndCPUCountChange(t *testing.T) {
 	var a tickAccumulator
 	first, err := a.add([]uint32{10, 5, math.MaxUint32 - 19, 1})

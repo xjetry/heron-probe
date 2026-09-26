@@ -169,11 +169,17 @@ func (p *ProcFS) ifaces() ([]ifaceCounters, error) {
 			return nil, fmt.Errorf("%s: %w", e.Name(), err)
 		}
 		rx, err := readUint(p.FS, base+"/rx_bytes")
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", e.Name(), err)
+		var tx uint64
+		if err == nil {
+			tx, err = readUint(p.FS, base+"/tx_bytes")
 		}
-		tx, err := readUint(p.FS, base+"/tx_bytes")
 		if err != nil {
+			// 列出之后网卡可能被删除（veth、tun 随容器与 VPN 来去），sysfs 目录随之消失。错误码认不全：
+			// alpine 容器里删 dummy 网卡实测，删除后打开计数文件报 ENOENT，删除前已打开的文件读时报 ENODEV。
+			// 所以按网卡目录还在不在认：不在了按不存在的成员不计；还在却读不出（EACCES 之类）则整个读数缺失。
+			if _, serr := fs.Stat(p.FS, dir); errors.Is(serr, fs.ErrNotExist) {
+				continue
+			}
 			return nil, fmt.Errorf("%s: %w", e.Name(), err)
 		}
 		out = append(out, ifaceCounters{name: e.Name(), rx: rx, tx: tx})

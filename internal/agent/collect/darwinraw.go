@@ -157,7 +157,9 @@ func (d *darwinHost) conns() (uint32, uint32, error) {
 // ifaces 读 net.link.generic.ifdata.<index>.IFDATA_GENERAL：它给出 64 位、不取整的字节计数。
 // 同一台机器上，普通用户进程经 NET_RT_IFLIST2 读到的 if_data64 字节数截到了 32 位并按 1 KiB 取整；
 // 累计值过 4 GiB 就回绕，hub 把变小的计数当成重置、只换基线不入账（spec §7），流量就丢了。
-// 索引空间有空洞（实测 ifcount 为 35 时 23、34、35 号不存在），缺号返回 ENOENT，跳过。
+// 索引空间有空洞（实测 ifcount 为 35 时 23、34、35 号不存在），缺号返回 ENOENT，跳过。读完 ifcount 之后
+// 被删除的网卡读出 ENOENT 时同样按不存在略过；删网卡要 root，它实际报哪个错误码本机未复现，
+// 若是别的错误码，按下一句整个读数缺失——缺失而不是错。
 // 其余错误让整个读数缺失：少一块网卡的合计会先变小、恢复时再把那块网卡的全部历史计数当增量加回去；
 // 缺失的读数则让 hub 保持基线不动（spec §7）。
 func (d *darwinHost) ifaces() ([]ifaceCounters, error) {

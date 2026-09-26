@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -182,21 +183,54 @@ func TestExcludedInterfacesAreNotSummed(t *testing.T) {
 }
 
 // failingFS 让指定文件的读取失败，其余照常：表示文件存在、内容读不出。
+// failingFS 让 name 能打开、读时报 err，其余路径照常：文件还在却读不出。
 type failingFS struct {
 	fs.FS
 	name string
+	err  error
 }
 
-type failingFile struct{ fs.File }
+type failingFile struct {
+	fs.File
+	err error
+}
 
-func (failingFile) Read([]byte) (int, error) { return 0, errors.New("injected read error") }
+func (f failingFile) Read([]byte) (int, error) { return 0, f.err }
 
 func (f failingFS) Open(name string) (fs.File, error) {
 	file, err := f.FS.Open(name)
 	if err != nil || name != f.name {
 		return file, err
 	}
-	return failingFile{file}, nil
+	return failingFile{file, f.err}, nil
+}
+
+// vanishingFS 模拟网卡在列出之后被删除：读 name 时报 err，此后 dir 下的一切都不存在。
+// 与实测的 sysfs 一致（alpine 容器里删 dummy 网卡）：删除后打开计数文件报 ENOENT，
+// 删除前已打开的文件读时报 ENODEV，网卡目录随之消失。
+type vanishingFS struct {
+	fs.FS
+	name, dir string
+	err       error
+	gone      *bool
+}
+
+func (v vanishingFS) Open(name string) (fs.File, error) {
+	if *v.gone && (name == v.dir || strings.HasPrefix(name, v.dir+"/")) {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+	}
+	if name != v.name {
+		return v.FS.Open(name)
+	}
+	*v.gone = true
+	if errors.Is(v.err, fs.ErrNotExist) {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: v.err}
+	}
+	file, err := v.FS.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	return failingFile{file, v.err}, nil
 }
 
 const (
@@ -216,7 +250,7 @@ func TestConnsAreCorrectOrMissing(t *testing.T) {
 		t.Fatalf("both tables: %d/%d, %v; want 28/32", tcp, udp, err)
 	}
 	for name, fsys := range map[string]fs.FS{
-		"unreadable sockstat":   failingFS{both, "proc/net/sockstat"},
+		"unreadable sockstat":   failingFS{both, "proc/net/sockstat", fs.ErrPermission},
 		"unrecognized sockstat": fstest.MapFS{"proc/net/sockstat": {Data: []byte("sockets: used 50\n")}, "proc/net/sockstat6": {Data: []byte(sockstat6)}},
 		"sockstat without UDP":  fstest.MapFS{"proc/net/sockstat": {Data: []byte("TCP: inuse 11\n")}, "proc/net/sockstat6": {Data: []byte(sockstat6)}},
 	} {
@@ -262,13 +296,35 @@ func TestInterfaceReadErrorDropsTheWholeReadingOnLinux(t *testing.T) {
 	if ifs, err := (&ProcFS{FS: os.DirFS(root)}).ifaces(); err != nil || len(ifs) != 2 {
 		t.Fatalf("on a real directory: ifaces = %v, %v; want eth0 and eth1", ifs, err)
 	}
-	c := &Collector{Host: &ProcFS{FS: failingFS{fsys, "sys/class/net/eth1/statistics/rx_bytes"}, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clock.NewFake(time.Unix(0, 0))}
+	// 网卡目录还在、计数读不出（EACCES 之类）：不是网卡消失，整个流量读数缺失。
+	c := &Collector{Host: &ProcFS{FS: failingFS{fsys, "sys/class/net/eth1/statistics/rx_bytes", fs.ErrPermission}, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clock.NewFake(time.Unix(0, 0))}
 	m, err := c.Metrics()
 	if m.NetRxTotal != nil || m.NetTxTotal != nil {
 		t.Fatalf("partial interface set must not be reported: rx %d tx %d", m.GetNetRxTotal(), m.GetNetTxTotal())
 	}
 	if err == nil || !strings.Contains(err.Error(), "net: eth1:") {
 		t.Fatalf("err = %v, want the failing interface named", err)
+	}
+}
+
+// 网卡在列出之后被删除（veth、tun 随容器与 VPN 来去）：只略过它，其余网卡照常合计。
+// 两个错误码对应删除落在打开之前与打开之后两个窗口；rx 与 tx 两次读取各自都可能撞上。
+func TestVanishedInterfaceIsSkippedOnLinux(t *testing.T) {
+	fsys := fstest.MapFS{
+		"sys/class/net/eth0/statistics/rx_bytes": {Data: []byte("1000\n")},
+		"sys/class/net/eth0/statistics/tx_bytes": {Data: []byte("2000\n")},
+		"sys/class/net/eth1/statistics/rx_bytes": {Data: []byte("3000\n")},
+		"sys/class/net/eth1/statistics/tx_bytes": {Data: []byte("4000\n")},
+	}
+	for _, file := range []string{"rx_bytes", "tx_bytes"} {
+		for _, readErr := range []error{fs.ErrNotExist, syscall.ENODEV} {
+			gone := false
+			v := vanishingFS{fsys, "sys/class/net/eth1/statistics/" + file, "sys/class/net/eth1", readErr, &gone}
+			ifs, err := (&ProcFS{FS: v}).ifaces()
+			if err != nil || len(ifs) != 1 || ifs[0].name != "eth0" || ifs[0].rx != 1000 || ifs[0].tx != 2000 {
+				t.Fatalf("%s fails with %v and eth1 is gone: ifaces = %v, %v; want eth0 alone", file, readErr, ifs, err)
+			}
+		}
 	}
 }
 
