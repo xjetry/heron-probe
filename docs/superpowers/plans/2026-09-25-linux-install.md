@@ -1336,3 +1336,4 @@ cd /Users/xjetry/work/vibe/probe-install && git add proto internal cmd gen web &
   - 落后判定按 semver 2.0 优先级（`web/src/lib/version.ts`）：三段数值、正式版高于预发布、预发布按点分标识符逐段比、构建元数据不参与、任一方不合 semver（含前导 0）不标。上文的正则忽略预发布后缀，而且解析不了带构建元数据的版本。
   - `hubVersion` 为空串（装配时没传）与 `dev` 同样按非正式版本处理，两页各有用例。
   - spec §5.4 的 `--site-url` 已删：安装命令的 hub 地址由面板取浏览器 origin（§10），hub 不生成对外地址。
+- **打包的口径**：提交 d678086 的标题说"产物不含宿主元数据"说过了：`--no-xattrs` 只去掉扩展属性的 pax 头，归档里的属主（uid、用户名）与 mtime 仍是构建机的。install.sh 用 `install` 复制文件，不继承归档属主，功能不受影响。二进制里的构建机路径由 `-trimpath` 去掉。
