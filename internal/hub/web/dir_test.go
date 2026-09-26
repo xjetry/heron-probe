@@ -39,6 +39,7 @@ func publicDirFixture(t *testing.T) string {
 	writeFile(t, filepath.Join(site, "assets", "app.js"), "console.log(1)")
 	writeFile(t, filepath.Join(site, "inner.txt"), "inner file")
 	writeFile(t, filepath.Join(site, "sub", "page.txt"), "sub page")
+	writeFile(t, filepath.Join(site, "assetsx", "a.js"), "not under assets")
 	writeFile(t, filepath.Join(outside, "secret.txt"), "outside secret")
 	symlink(t, "inner.txt", filepath.Join(site, "in-link.txt"))
 	symlink(t, "../outside/secret.txt", filepath.Join(site, "out-link.txt"))
@@ -97,11 +98,16 @@ func TestDirHandlerServesOnlyRegularFilesInsideTheDirectory(t *testing.T) {
 		{"/assets/leak.js", "404 page not found\n", 404},
 		{"/assets/missing.js", "404 page not found\n", 404},
 		{"/assets/", "404 page not found\n", 404},
+		{"/assetsx/a.js", "not under assets", 200},
+		{"/assetsx/missing.js", "site index", 200},
 	} {
 		t.Run(c.path, func(t *testing.T) {
 			status, header, body := serveWithin(t, h, c.path)
 			if status != c.status || body != c.want {
 				t.Fatalf("status %d body %q, want %d %q", status, body, c.status, c.want)
+			}
+			if body == "site index" && header.Get("Content-Type") != "text/html; charset=utf-8" {
+				t.Fatalf("Content-Type %q for index.html", header.Get("Content-Type"))
 			}
 			if header.Get("Content-Security-Policy") != "frame-ancestors 'none'" || header.Get("X-Content-Type-Options") != "nosniff" ||
 				header.Get("Cache-Control") != "no-cache" || header.Get("Referrer-Policy") != "" {
@@ -157,9 +163,14 @@ func TestDirHandlerRefusesADirectoryWithoutAnIndexInside(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dirIndex, "index.html"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, dir := range []string{filepath.Join(base, "missing"), noIndex, escaping, dirIndex} {
-		if _, err := DirHandler(dir); err == nil || !strings.Contains(err.Error(), "--public-dir "+dir) {
-			t.Errorf("DirHandler(%s) error = %v, want one naming --public-dir and the directory", dir, err)
+	absolute := filepath.Join(base, "absolute")
+	writeFile(t, filepath.Join(absolute, "real.html"), "inside index")
+	symlink(t, filepath.Join(absolute, "real.html"), filepath.Join(absolute, "index.html"))
+	// 每种情形都报出同一条约束，再附底层原因。
+	for _, dir := range []string{filepath.Join(base, "missing"), noIndex, escaping, dirIndex, absolute} {
+		want := "--public-dir " + dir + ": index.html must be a regular file inside the directory (it answers every path that is not a file): "
+		if _, err := DirHandler(dir); err == nil || !strings.HasPrefix(err.Error(), want) {
+			t.Errorf("DirHandler(%s) error = %v, want it to start with %q", dir, err, want)
 		}
 	}
 }

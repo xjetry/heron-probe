@@ -21,6 +21,7 @@ func builtFS(dir string) fstest.MapFS {
 		dir + "/.git/config":        {Data: []byte("[core] embedded")},
 		dir + "/sub/.hidden.txt":    {Data: []byte("hidden page")},
 		dir + "/assets/.hidden.js":  {Data: []byte("hidden asset")},
+		dir + "/assetsx/a.js":       {Data: []byte("not under assets")},
 	}
 }
 
@@ -79,6 +80,9 @@ func TestEmbeddedServesFilesAndFallsBackToIndex(t *testing.T) {
 			{".git/config", "<div id=root>", "no-cache", 200},
 			{"sub/.hidden.txt", "<div id=root>", "no-cache", 200},
 			{"assets/.hidden.js", "404 page not found", "", 404},
+			// assets 按整段比较：assetsx/ 下的文件不永久缓存，缺失时回落 index.html。
+			{"assetsx/a.js", "not under assets", "no-cache", 200},
+			{"assetsx/missing.js", "<div id=root>", "no-cache", 200},
 		} {
 			path := mount.prefix + c.path
 			t.Run(mount.name+" "+path, func(t *testing.T) {
@@ -89,6 +93,10 @@ func TestEmbeddedServesFilesAndFallsBackToIndex(t *testing.T) {
 				}
 				if c.wantCache != "" && resp.Header.Get("Cache-Control") != c.wantCache {
 					t.Fatalf("%s: Cache-Control %q, want %q", path, resp.Header.Get("Cache-Control"), c.wantCache)
+				}
+				// 回落的 index.html 按 index.html 定类型，不按请求路径的扩展名：配合 nosniff，类型错了浏览器会把页面当纯文本。
+				if c.wantBody == "<div id=root>" && resp.Header.Get("Content-Type") != "text/html; charset=utf-8" {
+					t.Fatalf("%s: Content-Type %q for index.html", path, resp.Header.Get("Content-Type"))
 				}
 				checkSecurityHeaders(t, resp)
 			})

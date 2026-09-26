@@ -64,7 +64,7 @@ func embedded(root fs.FS, dir, prefix, notBuilt string) http.Handler {
 		})
 	}
 	cacheFor := func(rel string) string {
-		if strings.HasPrefix(rel, "assets/") {
+		if underAssets(rel) {
 			return "public, max-age=31536000, immutable"
 		}
 		return "no-cache"
@@ -73,11 +73,14 @@ func embedded(root fs.FS, dir, prefix, notBuilt string) http.Handler {
 }
 
 // opener 打开 rel：rel 已按 URL 路径语义清理，相对挂载根，不以 / 开头，不含 ..。
+// 打开不得阻塞：FIFO 在没有写端时挂住的是 open 本身，serveFiles 在打开之后才看文件类型，兜不住这一步。
+// DirHandler 以 O_NONBLOCK 打开；embed 里没有特殊文件。新增来源要自己满足这一条。
 type opener func(rel string) (fs.File, error)
 
-// serveFiles 是三处静态服务共用的核心。命中普通文件就返回它；rel 为 assets 或在 assets/ 之下而未命中时返回 404——
+// serveFiles 是三处静态服务共用的核心。命中普通文件就返回它；rel 在 assets 之下（underAssets）而未命中时返回 404——
 // 用 HTML 回应 script 标签会被浏览器按 MIME 拒绝，404 才能让缺失可见；其余路径回落到 index.html，交给客户端路由。
-// 只服务普通文件：目录、FIFO、设备一律当作不存在，所以任何来源都不列目录，也不会读在特殊文件上。
+// 不在特殊文件上挂住靠两条各自的事实：打开本身不阻塞由 opener 保证；打开之后不是普通文件（目录、FIFO、设备）
+// 就当作不存在、不读，所以任何来源都不列目录，也不从 FIFO 与设备读。
 // 点文件同样当作不存在：路径任一段以 . 开头就不打开（hidden），.git/config、.env 这类运维放目录时顺手带进来的
 // 文件因此不经任何来源服务。判定只看请求路径里各段的名字，符号链接按链接自己的名字算。.well-known/ 也在其列，
 // 需要它的（ACME 校验、security.txt）由反向代理提供。
@@ -91,7 +94,7 @@ func serveFiles(prefix string, headers func(http.Header), cacheFor func(rel stri
 		if !hidden(rel) && serveRegular(w, r, open, rel, cacheFor(rel)) {
 			return
 		}
-		if rel == "assets" || strings.HasPrefix(rel, "assets/") {
+		if underAssets(rel) {
 			http.NotFound(w, r)
 			return
 		}
@@ -99,6 +102,12 @@ func serveFiles(prefix string, headers func(http.Header), cacheFor func(rel stri
 			http.Error(w, "index.html unreadable", http.StatusInternalServerError)
 		}
 	})
+}
+
+// underAssets 报告 rel 是否是 assets 目录本身或在它之下，按整段比较：assetsx/ 不算。缺失时 404 与嵌入产物的
+// 永久缓存都按它判定，同一个判定只有这一种写法。
+func underAssets(rel string) bool {
+	return rel == "assets" || strings.HasPrefix(rel, "assets/")
 }
 
 // hidden 报告 rel 是否有一段以 . 开头。rel 来自 relPath：经 path.Clean 清理，没有 . 与 .. 段，也不以 / 开头，
