@@ -66,15 +66,21 @@ export const transitionLabel = (t: string): string => (t === "firing" ? "触发"
 
 // 与 proto DeliveryFailure 逐值对齐（测试按枚举全集核对）；UNSPECIFIED 表示没有失败，不在表里。
 // http_status 只随 HTTP_STATUS 出现，由 hub 写库前的校验保证。
-export const DELIVERY_FAILURES: readonly { value: DeliveryFailure; text: (d: AlertDelivery) => string }[] = [
-  { value: DeliveryFailure.HTTP_STATUS, text: (d) => `HTTP ${d.httpStatus}` },
-  { value: DeliveryFailure.TRANSPORT, text: () => "连接失败" },
-  { value: DeliveryFailure.REQUEST, text: () => "请求无法构造" },
-  { value: DeliveryFailure.CHANNEL_INVALID, text: () => "渠道配置无效" },
-  { value: DeliveryFailure.CHANNEL_DELETED, text: () => "渠道已删除" },
-  { value: DeliveryFailure.RESULT_UNRECORDED, text: () => "结果未记录" },
-  { value: DeliveryFailure.UNCLASSIFIED, text: () => "未分类" },
+// hasText：hub 为该类别记下错误原文；渠道删除与结果未落盘没有原文（proto 枚举注释），不给查看入口。
+export const DELIVERY_FAILURES: readonly { value: DeliveryFailure; text: (d: AlertDelivery) => string; hasText: boolean }[] = [
+  { value: DeliveryFailure.HTTP_STATUS, text: (d) => `HTTP ${d.httpStatus}`, hasText: true },
+  { value: DeliveryFailure.TRANSPORT, text: () => "连接失败", hasText: true },
+  { value: DeliveryFailure.REQUEST, text: () => "请求无法构造", hasText: true },
+  { value: DeliveryFailure.CHANNEL_INVALID, text: () => "渠道配置无效", hasText: true },
+  { value: DeliveryFailure.CHANNEL_DELETED, text: () => "渠道已删除", hasText: false },
+  { value: DeliveryFailure.RESULT_UNRECORDED, text: () => "结果未记录", hasText: false },
+  { value: DeliveryFailure.UNCLASSIFIED, text: () => "未分类", hasText: true },
 ];
+
+// 只对终态失败给原文入口：未终态时类别属于上一次尝试，原文随后续尝试变化。
+export function hasErrorText(d: AlertDelivery): boolean {
+  return !d.ok && d.done && DELIVERY_FAILURES.some((e) => e.value === d.failure && e.hasText);
+}
 
 // 表外的值（hub 比面板新）显示编号而不是空：失败必须带着可追查的类别出现。
 export function failureText(d: AlertDelivery): string {

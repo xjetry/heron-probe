@@ -1,9 +1,10 @@
 import { useInfiniteQuery, useQuery } from "@connectrpc/connect-query";
 import { skipToken, type InfiniteData } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
-import { AdminService, type ListAlertEventsResponse } from "../gen/probe/v1/admin_pb";
-import { deliveryText, transitionLabel } from "../lib/alerts";
+import { AdminService, type AlertDelivery, type ListAlertEventsResponse } from "../gen/probe/v1/admin_pb";
+import { deliveryText, hasErrorText, transitionLabel } from "../lib/alerts";
 import { withId } from "../lib/ids";
 
 // 与 hub 的默认页长一致；不足一页即已到最早的事件。
@@ -72,7 +73,7 @@ function EventList({ data, nodeName, channelName, hasNextPage, fetchingNext, onM
                 <td>
                   {ev.deliveries.length === 0
                     ? <span className="muted">未配置渠道</span>
-                    : ev.deliveries.map((d) => <div key={String(d.channelId)}>{deliveryText(d, channelName(d.channelId))}</div>)}
+                    : ev.deliveries.map((d) => <DeliveryItem key={String(d.id)} d={d} channel={channelName(d.channelId)} />)}
                 </td>
               </tr>
             ))}
@@ -84,5 +85,28 @@ function EventList({ data, nodeName, channelName, hasNextPage, fetchingNext, onM
       )}
       {rows.length === 0 && <p className="muted">没有告警事件。</p>}
     </>
+  );
+}
+
+// 原文可能含接收方回显的密钥，只读口径不带它；按需经仅会话的 GetAlertDeliveryError 取，展开前不发请求。
+// 同一事件可能有同名渠道，按钮的可访问名带投递 id 才可区分。
+function DeliveryItem({ d, channel }: { d: AlertDelivery; channel: string }) {
+  const [open, setOpen] = useState(false);
+  const text = useQuery(AdminService.method.getAlertDeliveryError, open ? { deliveryId: d.id } : skipToken);
+  const gate = queryGate(text);
+  return (
+    <div>
+      {deliveryText(d, channel)}
+      {hasErrorText(d) && (
+        <>
+          {" "}
+          <button type="button" className="link" aria-label={`查看错误原文 ${withId(channel, d.id)}`} aria-expanded={open}
+            onClick={() => setOpen((o) => !o)}>查看错误原文</button>
+        </>
+      )}
+      {open && (gate.ready
+        ? (gate.data.error ? <pre className="secret">{gate.data.error}</pre> : <p className="muted">（没有错误原文）</p>)
+        : gate.loading ?? errorBanner(...gate.errors))}
+    </div>
   );
 }
