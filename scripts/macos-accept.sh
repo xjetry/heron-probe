@@ -3,7 +3,8 @@
 # 经管理 API（curl + jq）断言各指标、facts、ICMP 与流量差分；再把包里的 plist 改成用户域作业交给 launchd，
 # 验证 KeepAlive 拉起、ThrottleInterval 与日志文件由 launchd 创建。
 # 不 sudo，不执行安装脚本：system 域、专用账户与 root 属主由 README 的真机清单验证。
-# 端口 18087/18088 与 e2e（18080/18081）、install-accept（18085/18086）错开。
+# 端口默认 18087（hub）/18088（回环流量源），与 e2e（18080/18081）、install-accept（18085/18086）错开，
+# 几个验收可同时跑；本机上别的进程占着默认端口时，用环境变量 PORT、BLOB_PORT 覆盖。
 set -eu
 cd "$(cd "$(dirname "$0")/.." && pwd)"
 [ "$(uname -s)" = Darwin ] || { echo "macos-accept.sh runs on macOS only" >&2; exit 2; }
@@ -11,8 +12,8 @@ cd "$(cd "$(dirname "$0")/.." && pwd)"
 [ "$(id -u)" != 0 ] || { echo "run macos-accept.sh as a normal user" >&2; exit 2; }
 
 VERSION=v0.0.0-macos-accept
-PORT=18087
-BLOB_PORT=18088
+PORT=${PORT:-18087}
+BLOB_PORT=${BLOB_PORT:-18088}
 base="http://127.0.0.1:$PORT"
 uid=$(id -u)
 label="xyz.probe.agent.accept.$$"

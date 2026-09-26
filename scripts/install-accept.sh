@@ -1,7 +1,8 @@
 #!/bin/sh
 # install.sh 与服务单元的真机验收：只在 OrbStack 真实启动的机器上跑，不进 CI。
 # 机器名 pia- 前缀是隔离边界；只删除本 run 创建的机器（逐台登记）。
-# 端口 18085/18086 与 e2e 的 18080/18081 错开，两者可同时跑。
+# 端口默认 18085（hub）/18086（下载服务），与 e2e 的 18080/18081、macos-accept 的 18087/18088 错开，
+# 几个验收可同时跑；本机上别的进程占着默认端口时，用环境变量 HUB_PORT、DIST_PORT 覆盖。
 set -eu
 cd "$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -31,8 +32,8 @@ IMG_ROCKY=${IMG_ROCKY:-rocky:9}
 
 VERSION_A=${VERSION_A:-v0.0.0-accept-a}
 VERSION_B=${VERSION_B:-v0.0.0-accept-b}
-HUB_PORT=18085
-DIST_PORT=18086
+HUB_PORT=${HUB_PORT:-18085}
+DIST_PORT=${DIST_PORT:-18086}
 HOST=host.orb.internal
 work=$(mktemp -d)
 echo "work=$work"
