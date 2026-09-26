@@ -1,6 +1,6 @@
 export CGO_ENABLED=0
 
-.PHONY: gen lint test build binaries ci e2e e2e-matrix fixtures web-install web-test web release docker
+.PHONY: gen lint test build binaries ci e2e e2e-matrix fixtures web-install web-test web release docker docker-smoke
 
 web-install:
 	pnpm --dir web install --frozen-lockfile
@@ -12,7 +12,7 @@ gen: web-install
 lint:
 	go mod tidy -diff
 	buf lint
-	shellcheck -s sh deploy/install.sh deploy/openrc/probe-agent
+	shellcheck -s sh deploy/install.sh deploy/openrc/probe-agent scripts/docker-smoke.sh
 	go vet ./...
 	GOOS=linux go vet ./...
 	GOOS=darwin go vet ./...
@@ -159,3 +159,10 @@ docker:
 	$(docker_build) --platform $(DOCKER_PLATFORMS) --output type=tar,dest=$(IMAGE_BIN_DIR)/rootfs.tar .
 	go run ./scripts/checkimage $(IMAGE_BIN_DIR)/rootfs.tar $(HUB_LINUX_ARCHES)
 	$(docker_build) -t $(DOCKER_IMAGE):$(VERSION) --load .
+	$(MAKE) docker-smoke
+
+# 冒烟本机 docker 里已有的 $(DOCKER_IMAGE):$(VERSION)：make docker 构建后调用；发布后回读时先按平台
+# docker pull，再由回读脚本以同样的环境变量直接调用脚本。SMOKE_PLATFORM 为空时用 docker 的默认平台。
+docker-smoke:
+	@$(check_image_version)
+	IMAGE='$(DOCKER_IMAGE):$(VERSION)' VERSION='$(VERSION)' SMOKE_PLATFORM='$(SMOKE_PLATFORM)' scripts/docker-smoke.sh
