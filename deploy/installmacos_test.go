@@ -1,6 +1,6 @@
 // Package deploy 的测试以普通用户运行安装脚本：脚本读写的系统路径经 PROBE_INSTALL_ROOT 挂到临时目录，
 // 系统管理命令由 PATH 上的替身接管。本文件测 install-macos.sh：dscl、launchctl、ps、id、sysctl、uname、
-// chown、sleep 是替身，find 经替身转调真的，curl、shasum、tar 用真的；真实 launchd、目录服务与 root 属主只在真机上验证
+// chown、sleep 是替身，find、chmod 经替身记下参数后转调真的，curl、shasum、tar 用真的；真实 launchd、目录服务与 root 属主只在真机上验证
 // （spec §14：没有 macOS 虚拟机可用）。install.sh 的替身在 installlinux_test.go。
 package deploy
 
@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -138,10 +139,19 @@ fi
 	"sleep": `#!/bin/sh
 echo "sleep $*" >> "$STUB_STATE/calls"
 `,
-	// find 用真的；STUB_FIND_FAILS 让它像读不到文件时那样只报错、stdout 为空、退出 1。
+	// find 用真的，先记下参数；STUB_FIND_FAILS 让它像读不到文件时那样只报错、stdout 为空、退出 1。
 	"find": `#!/bin/sh
+echo "find $*" >> "$STUB_STATE/calls"
 [ -z "${STUB_FIND_FAILS-}" ] || { echo "find: $1: Permission denied" >&2; exit 1; }
 exec /usr/bin/find "$@"
+`,
+	// chmod 先记下参数再转调真的，权限断言看的是真实的文件模式。GNU chmod 没有 -N（去掉 ACL），
+	// 这组测试也在 Linux 上跑：那里的 -N 只记录。
+	"chmod": `#!/bin/sh
+echo "chmod $*" >> "$STUB_STATE/calls"
+# uname 本身也是替身、只认 -m，取系统名走 command -p 的默认 PATH。
+if [ "$1" = -N ] && [ "$(command -p uname -s)" != Darwin ]; then exit 0; fi
+exec /bin/chmod "$@"
 `,
 }
 
@@ -434,9 +444,17 @@ func TestOwnershipIsRestoredOnEveryInstall(t *testing.T) {
 		t.Fatalf("rerun must not register: %q", c)
 	}
 	out, boot := index(c, "launchctl bootout"), index(c, "launchctl bootstrap")
-	// 日志目录在检查日志文件之前、也就在停服务之前交给 root。
-	if i := index(c, "chown root:wheel "+e.root+"/Library/Logs/probe-agent"); i < 0 || i > out {
-		t.Errorf("rerun: the log directory must be handed to root before bootout, calls %q", c)
+	// 日志目录先交给 root、再去掉 ACL，然后才查其中的文件，这些都在停服务之前。
+	logDir := e.root + "/Library/Logs/probe-agent"
+	take, noACL, check := index(c, "chown root:wheel "+logDir), index(c, "chmod -N "+logDir), index(c, "find "+logDir+"/probe-agent.err")
+	if take < 0 || noACL < take || check < noACL || out < check {
+		t.Errorf("rerun: want chown root:wheel < chmod -N < the file check < bootout on the log directory, calls %q", c)
+	}
+	// 每个按数字模式设权限的对象都去掉 ACL：数字 chmod 与 chown 都不动 ACL。
+	for _, rel := range []string{"etc/probe-agent", "etc/probe-agent/config.json", "Library/Logs/probe-agent/probe-agent.log", "Library/Logs/probe-agent/probe-agent.err"} {
+		if i := index(c, "chmod -N "+e.root+"/"+rel); i < 0 || i > boot {
+			t.Errorf("rerun: missing chmod -N %s before bootstrap, calls %q", rel, c)
+		}
 	}
 	for _, want := range []string{
 		"chown root:_probe-agent " + e.root + "/etc/probe-agent",
@@ -827,4 +845,44 @@ func TestLogFileLinkCountUnreadableIsRefused(t *testing.T) {
 	if index(e.calls(), "launchctl bootout") >= 0 {
 		t.Fatalf("the running service must be left alone: calls %q", e.calls())
 	}
+}
+
+// macOS 上真实的 ACL：日志目录此前归服务用户时，它作为属主能加上 allow add_file,delete_child，这类允许项
+// 越过数字模式生效，数字 chmod 与 chown 都不去掉它。重跑安装之后目录与日志文件上不能再有 ACL。
+func TestLogACLsAreRemovedOnDarwin(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("ACLs set by chmod +a exist only on macOS")
+	}
+	t.Parallel()
+	e := newEnv(t)
+	if out, code := e.install(); code != 0 {
+		t.Fatalf("first install exit %d:\n%s", code, out)
+	}
+	paths := []string{"Library/Logs/probe-agent", "Library/Logs/probe-agent/probe-agent.log"}
+	for _, rel := range paths {
+		if out, err := exec.Command("/bin/chmod", "+a", "everyone allow add_file,delete_child,write", filepath.Join(e.root, rel)).CombinedOutput(); err != nil {
+			t.Fatalf("chmod +a %s: %v\n%s", rel, err, out)
+		}
+		if !hasACL(t, filepath.Join(e.root, rel)) {
+			t.Fatalf("fixture: %s has no ACL after chmod +a", rel)
+		}
+	}
+	if out, code := e.install(); code != 0 {
+		t.Fatalf("rerun exit %d:\n%s", code, out)
+	}
+	for _, rel := range paths {
+		if hasACL(t, filepath.Join(e.root, rel)) {
+			t.Errorf("%s still has an ACL after reinstalling", rel)
+		}
+	}
+}
+
+// hasACL 看 ls -lde 在条目那一行之后有没有 ACL 行。
+func hasACL(t *testing.T, path string) bool {
+	t.Helper()
+	out, err := exec.Command("/bin/ls", "-lde", path).Output()
+	if err != nil {
+		t.Fatalf("ls -lde %s: %v", path, err)
+	}
+	return len(strings.Split(strings.TrimSpace(string(out)), "\n")) > 1
 }

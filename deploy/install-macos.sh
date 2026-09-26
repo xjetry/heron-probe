@@ -276,9 +276,12 @@ install -m 0755 "$work/probe-agent" "$BIN_TMP"
 # 三步的顺序承载这一点：
 # 1. 日志目录若已存在必须是真目录：它在 root 属主的 /Library/Logs 下，服务用户换不掉这个目录项；下一步的
 #    chown 不带 -h，是链接就会改到链接指向的目录。
-# 2. 先把日志目录交给 root:wheel、0755，再查其中的文件。目录此前可能对服务用户可写（手工建的，或旧的安装
-#    交给了服务用户），那时服务用户能随时增删、替换其中的条目；交给 root 之后只有 root 能动它们，
-#    这一步之后看到的条目就是后面操作的条目。所以这一步必须排在文件检查前面。
+# 2. 先把日志目录交给 root:wheel、0755，再去掉它的全部 ACL，然后才查其中的文件。目录此前可能对服务用户
+#    可写（手工建的，或旧的安装交给了服务用户），那时服务用户能随时增删、替换其中的条目，作为属主还能给目录
+#    加上 allow add_file,delete_child 这类 ACL：允许项越过数字模式生效（本机实测：带这条 ACL 的 0555 目录里
+#    仍能建文件），数字 chmod 与 chown 都不去掉它，只有 chmod -N 去掉。chmod -N 必须排在 chown 之后：
+#    交给 root 之前服务用户随时能把 ACL 加回来。这一步之后只有 root 能动目录里的条目，看到的条目就是后面
+#    操作的条目，所以它必须排在文件检查前面。
 # 3. 两个日志文件不存在，或是链接数为 1 的普通文件。硬链接 [ -L ] 为假、[ -f ] 为真，只有链接数看得出它
 #    另有名字。链接数用 find -links 取：BSD 与 GNU 的 find 都支持，替身测试也在 Linux 上跑；find 失败时
 #    输出同样为空，所以先看它的退出码。
@@ -288,6 +291,7 @@ fi
 mkdir -p "$LOG_DIR"
 chown root:wheel "$LOG_DIR"
 chmod 0755 "$LOG_DIR"
+chmod -N "$LOG_DIR"
 for f in "$LOG_DIR/probe-agent.log" "$LOG_DIR/probe-agent.err"; do
   if [ -L "$f" ] || [ -e "$f" ]; then
     extra=""
@@ -316,10 +320,13 @@ fi
 # 都会留下服务用户读不到或别人读得到的配置）。
 # 目录属 root、0750：服务用户不能增删目录项，这里的 chown 不会被链接劫持。
 # 目录无需对服务用户可写：写配置只发生在以 root 执行的 register 里，run 只读配置。
+# 数字模式只管属主、组、其他人三类；chmod -N 去掉 ACL，否则挂在上面的允许项仍让别人读得到配置。
 chown "root:$SVC_USER" "$CFG_DIR"
 chmod 0750 "$CFG_DIR"
+chmod -N "$CFG_DIR"
 chown "$SVC_USER:$SVC_USER" "$CFG"
 chmod 0600 "$CFG"
+chmod -N "$CFG"
 
 # 日志目录属 root:wheel、0755（停服务之前已设好）：服务用户不能在其中增删条目，日志路径换不成链接，
 # launchd 不论以哪个身份打开 StandardOutPath/StandardErrorPath 都不会被引到别处。安全性由目录属主承载，
@@ -333,6 +340,7 @@ for f in "$LOG_DIR/probe-agent.log" "$LOG_DIR/probe-agent.err"; do
   [ -e "$f" ] || : > "$f"
   chown "$SVC_USER:$SVC_USER" "$f"
   chmod 0640 "$f"
+  chmod -N "$f"
 done
 
 # plist 每次覆盖，改动随升级下发。它决定以什么身份运行什么程序，只能由 root 改：root:wheel、0644。
