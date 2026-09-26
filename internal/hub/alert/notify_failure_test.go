@@ -14,7 +14,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
-// 队列落库的类别来自 failureResult；每条真实失败路径都必须在产生处带上类别，不能落到 unclassified。
+// 队列落库的类别与 TestNotifyChannel 的错误码都来自 Classify；每条可达的真实失败路径都必须在产生处带上类别，不能落到 unclassified。
 func TestEveryChannelFailurePathIsClassified(t *testing.T) {
 	respond := func(status int) string {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

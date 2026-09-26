@@ -21,7 +21,7 @@ type Channel interface {
 	Send(context.Context, Message) error
 }
 
-// sendFailure 是渠道每条失败路径的唯一错误形状：类别在产生失败的地方确定，Classify 据此给出
+// sendFailure 是渠道每条可达失败路径的唯一错误形状：类别在产生失败的地方确定，Classify 据此给出
 // 落库结果与是否重试，不从错误文本反推。detail 是落库的原文：hub 不把 URL 写进去（outboundError
 // 负责剥离），但 HTTP 失败的 detail 是响应体片段，内容由接收方决定。
 type sendFailure struct {
