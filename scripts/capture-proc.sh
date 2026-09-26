@@ -15,6 +15,14 @@ docker run --rm "$image" sh -c '
     mkdir -p "$out/$(dirname "$f")"
     cat "/$f" > "$out/$f" 2>/dev/null || true
   done
+  # 进程数按 /proc 下的进程目录计。git 不存空目录，每个进程带上它的 comm 让目录留在 fixture 里；
+  # 列出之后、读 comm 之前退出的进程读不到 comm，不记。
+  for d in /proc/[0-9]*; do
+    if c=$(cat "$d/comm" 2>/dev/null); then
+      mkdir -p "$out$d"
+      printf "%s\n" "$c" > "$out$d/comm"
+    fi
+  done
   for i in /sys/class/net/*; do
     n=$(basename "$i")
     mkdir -p "$out/sys/class/net/$n/statistics"

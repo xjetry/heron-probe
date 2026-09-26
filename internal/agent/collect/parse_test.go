@@ -55,12 +55,12 @@ func TestParseMeminfoKBToBytes(t *testing.T) {
 }
 
 func TestParseLoadavg(t *testing.T) {
-	l, procs, err := parseLoadavg(strings.NewReader("0.52 0.31 0.20 3/721 12345\n"))
+	l, err := parseLoadavg(strings.NewReader("0.52 0.31 0.20 3/721 12345\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if l.l1 != 0.52 || l.l5 != 0.31 || l.l15 != 0.20 || procs != 721 {
-		t.Fatalf("%+v procs=%d", l, procs)
+	if l.l1 != 0.52 || l.l5 != 0.31 || l.l15 != 0.20 {
+		t.Fatalf("%+v", l)
 	}
 }
 

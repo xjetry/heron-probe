@@ -143,3 +143,23 @@ func TestExcludedInterfacesAreNotSummed(t *testing.T) {
 		t.Fatalf("explicit exclude list replaces the default: rx = %d, want lo + docker0", m.GetNetRxTotal())
 	}
 }
+
+// 进程数是 /proc 下的进程目录数：线程不列在 /proc 下，loadavg 第 4 字段的调度实体数不用（spec §7）。
+func TestProcsCountsProcessDirectoriesNotSchedulingEntities(t *testing.T) {
+	fsys := fstest.MapFS{
+		"proc/loadavg":      {Data: []byte("0.10 0.20 0.30 3/900 77\n")},
+		"proc/1/comm":       {Data: []byte("init\n")},
+		"proc/42/comm":      {Data: []byte("sshd\n")},
+		"proc/4242/comm":    {Data: []byte("probe-agent\n")},
+		"proc/self":         {Data: []byte("4242")},
+		"proc/sys/kernel/x": {Data: []byte("")},
+		"proc/1a/comm":      {Data: []byte("")},
+	}
+	n, err := (&ProcFS{FS: fsys}).procs()
+	if err != nil || n != 3 {
+		t.Fatalf("procs = %d, %v; want 3 process directories", n, err)
+	}
+	if _, err := (&ProcFS{FS: fstest.MapFS{"proc/loadavg": {Data: []byte("0 0 0 1/2 3\n")}}}).procs(); err == nil {
+		t.Fatal("a /proc without process directories must be an error, not 0 processes")
+	}
+}

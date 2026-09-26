@@ -99,35 +99,27 @@ func parseMeminfo(r io.Reader) (memInfo, error) {
 
 type loadAvg struct{ l1, l5, l15 float64 }
 
-// parseLoadavg 同时给出负载三元组与第四列 running/total 里的进程总数。
-func parseLoadavg(r io.Reader) (loadAvg, uint32, error) {
+// parseLoadavg 取 /proc/loadavg 的负载三元组。
+func parseLoadavg(r io.Reader) (loadAvg, error) {
 	b, err := io.ReadAll(r)
 	if err != nil {
-		return loadAvg{}, 0, err
+		return loadAvg{}, err
 	}
 	f := strings.Fields(string(b))
-	if len(f) < 4 {
-		return loadAvg{}, 0, errors.New("/proc/loadavg: short")
+	if len(f) < 3 {
+		return loadAvg{}, errors.New("/proc/loadavg: short")
 	}
 	var l loadAvg
 	if l.l1, err = strconv.ParseFloat(f[0], 64); err != nil {
-		return loadAvg{}, 0, err
+		return loadAvg{}, err
 	}
 	if l.l5, err = strconv.ParseFloat(f[1], 64); err != nil {
-		return loadAvg{}, 0, err
+		return loadAvg{}, err
 	}
 	if l.l15, err = strconv.ParseFloat(f[2], 64); err != nil {
-		return loadAvg{}, 0, err
+		return loadAvg{}, err
 	}
-	_, total, ok := strings.Cut(f[3], "/")
-	if !ok {
-		return loadAvg{}, 0, errors.New("/proc/loadavg: no running/total field")
-	}
-	n, err := strconv.ParseUint(total, 10, 32)
-	if err != nil {
-		return loadAvg{}, 0, err
-	}
-	return l, uint32(n), nil
+	return l, nil
 }
 
 func parseUptime(r io.Reader) (uint64, error) {

@@ -60,23 +60,46 @@ func (p *ProcFS) disk() (usage, error) {
 	return usage{total: total, used: used}, err
 }
 
-func (p *ProcFS) loadavg() (loadAvg, uint32, error) {
+func (p *ProcFS) load() (loadAvg, error) {
 	f, err := p.FS.Open("proc/loadavg")
 	if err != nil {
-		return loadAvg{}, 0, err
+		return loadAvg{}, err
 	}
 	defer f.Close()
 	return parseLoadavg(f)
 }
 
-func (p *ProcFS) load() (loadAvg, error) {
-	l, _, err := p.loadavg()
-	return l, err
+// procs 数 /proc 下名字全是数字的目录。/proc 的目录列表只列线程组（进程），线程只在
+// /proc/<pid>/task 下列出，所以这是进程数，与 darwin 的 proc_listallpids 同口径（spec §7）。
+// /proc/loadavg 第 4 字段的分母是含线程的调度实体数，而且在容器里是整个内核的数，不用。
+// 能列出 /proc 却一个进程目录都没有，说明读的不是 procfs（至少有 agent 自己），按读不到处理。
+func (p *ProcFS) procs() (uint32, error) {
+	entries, err := fs.ReadDir(p.FS, "proc")
+	if err != nil {
+		return 0, err
+	}
+	var n uint32
+	for _, e := range entries {
+		if e.IsDir() && isPID(e.Name()) {
+			n++
+		}
+	}
+	if n == 0 {
+		return 0, errors.New("proc: no process directories")
+	}
+	return n, nil
 }
 
-func (p *ProcFS) procs() (uint32, error) {
-	_, n, err := p.loadavg()
-	return n, err
+func isPID(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, c := range name {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *ProcFS) uptime() (uint64, error) {
