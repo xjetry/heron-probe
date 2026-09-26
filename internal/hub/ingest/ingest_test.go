@@ -297,9 +297,34 @@ func TestRegisterIsRateLimitedPerSourceAddress(t *testing.T) {
 	if code := call("203.0.113.2"); code != connect.CodeUnauthenticated {
 		t.Fatalf("second source: %v, want Unauthenticated", code)
 	}
+	// 每秒补充一个：推进一秒只多放行一次，补充再快（每秒两个及以上）紧接着的那次就不会被限。
 	h.clk.Advance(time.Second)
 	if code := call("203.0.113.1"); code != connect.CodeUnauthenticated {
 		t.Fatalf("after one-second refill: %v, want Unauthenticated", code)
+	}
+	if code := call("203.0.113.1"); code != connect.CodeResourceExhausted {
+		t.Fatalf("second request after one-second refill: %v, want ResourceExhausted", code)
+	}
+}
+
+// "node registered" 的来源是 BySource 给出的键，按 DescribeSource 写：IPv6 带 /64，不会被读成具体地址。
+func TestRegisterLogsTheSourceKey(t *testing.T) {
+	trusted, _ := auth.ParsePrefixes("127.0.0.1/32")
+	h := newHubWith(t, filepath.Join(t.TempDir(), "t.db"), Config{TTL: 30 * time.Second, TrustedProxies: trusted})
+	var logs bytes.Buffer
+	h.svc.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	key, _, _ := h.auth.OpenWindow(t.Context(), time.Hour, 1)
+	req := connect.NewRequest(&probev1.RegisterRequest{Key: key, Name: "x"})
+	req.Header().Set("X-Forwarded-For", "2001:db8:1:2::abcd")
+	if _, err := h.client.Register(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	var record struct{ Msg, Source string }
+	if err := json.Unmarshal(logs.Bytes(), &record); err != nil {
+		t.Fatalf("%v: %s", err, logs.Bytes())
+	}
+	if record.Msg != "node registered" || record.Source != "2001:db8:1:2::/64" {
+		t.Fatalf("logged %s", logs.Bytes())
 	}
 }
 

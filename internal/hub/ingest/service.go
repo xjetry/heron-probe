@@ -57,8 +57,10 @@ const (
 const (
 	// burst 是上报的令牌桶容量：允许上报间隔的抖动与一次立即重试，再多就是异常。
 	burst = 3
-	// registerBurst 与每秒补充 1 个是 Register 按来源的限速（§5.2；来源的口径见 ratelimit.BySource）。
-	registerBurst = 30
+	// registerBurst 与 registerRefillPer 是 Register 按来源的限速（§5.2；来源的口径见 ratelimit.BySource）：
+	// 桶容量与每补充一个令牌的周期。
+	registerBurst     = 30
+	registerRefillPer = time.Second
 )
 
 type Config struct {
@@ -110,9 +112,10 @@ func New(cfg Config, l *live.Live, st *store.Store, a *auth.Auth, book *traffic.
 	if cfg.TTL > MaxTTL {
 		return nil, fmt.Errorf("TTL %v is above the maximum %v", cfg.TTL, MaxTTL)
 	}
-	// 上报的补充周期是下发间隔的一半：允许正常间隔内的一次重试。间隔由 TTL 决定，服务存续期间不变。
+	// 上报的补充周期是下发间隔的一半：允许正常间隔内的一次重试。间隔由 TTL 决定，服务存续期间不变；
+	// 限速与下发都经 interval 算，下发间隔改了，限速跟着改。
 	return &Service{cfg: cfg, live: l, traffic: book, tasks: tasks, store: st, writer: st, auth: a, clk: clk, log: log,
-		limit: ratelimit.New[int64](burst, cfg.TTL/reportsPerTTL/2), registerLimit: ratelimit.New[netip.Addr](registerBurst, time.Second),
+		limit: ratelimit.New[int64](burst, interval(cfg.TTL)/2), registerLimit: ratelimit.New[netip.Addr](registerBurst, registerRefillPer),
 		factsHash: map[int64]uint64{}}, nil
 }
 
@@ -127,10 +130,14 @@ func (s *Service) Load(ctx context.Context) error {
 	return nil
 }
 
-// Interval 是下发给 agent 的上报间隔：TTL 内三次上报机会，容得下两次连续失败。
-func (s *Service) Interval() time.Duration { return s.cfg.TTL / reportsPerTTL }
+// Interval 是下发给 agent 的上报间隔。
+func (s *Service) Interval() time.Duration { return interval(s.cfg.TTL) }
 
-// New 将 TTL 限在 MaxTTL 内；间隔为 TTL/reportsPerTTL，满速产出
+// interval 是上报间隔的唯一算法：TTL 内三次上报机会，容得下两次连续失败。下发给 agent 的间隔（Interval）
+// 与上报限速的补充周期（New）都从它推出。
+func interval(ttl time.Duration) time.Duration { return ttl / reportsPerTTL }
+
+// New 将 TTL 限在 MaxTTL 内；间隔为 interval(TTL) = TTL/reportsPerTTL，满速产出
 // MaxTasksPerNode×(TTL/reportsPerTTL)/MinIntervalS 条，单批上限必须容纳它。
 const _ = uint(probelimit.MaxResultsPerReport*probelimit.MinIntervalS*reportsPerTTL - probelimit.MaxTasksPerNode*int(MaxTTL/time.Second))
 
@@ -218,7 +225,7 @@ func (s *Service) Register(ctx context.Context, req *connect.Request[probev1.Reg
 		s.log.Error("register failed", "err", err)
 		return nil, connect.NewError(connect.CodeInternal, errors.New("registration failed"))
 	}
-	s.log.Info("node registered", "node", id, "name", name, "from", from)
+	s.log.Info("node registered", "node", id, "name", name, "source", auth.DescribeSource(from))
 	return connect.NewResponse(&probev1.RegisterResponse{NodeId: id, Token: tok}), nil
 }
 

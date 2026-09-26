@@ -505,6 +505,30 @@ func TestSuccessfulLoginClearsFailures(t *testing.T) {
 	}
 }
 
+// 登录成功清掉的是整个来源键的计数：隐私地址轮换后从同一 /64 的另一个地址登录成功，旧地址的失败也一并清零。
+func TestSuccessfulLoginClearsFailuresOfTheWholeSource(t *testing.T) {
+	a, _, _ := setup(t)
+	ctx := context.Background()
+	if err := a.SetPassword(ctx, goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	first, second := netip.MustParseAddr("2001:db8:1:2::a"), netip.MustParseAddr("2001:db8:1:2::b")
+	for i := 0; i < failLimit-1; i++ {
+		_, _ = a.Login(ctx, "wrong", first)
+	}
+	if _, err := a.Login(ctx, goodPassword, second); err != nil {
+		t.Fatalf("login from the same /64: %v", err)
+	}
+	for i := 0; i < failLimit-1; i++ {
+		if _, err := a.Login(ctx, "wrong", first); errors.Is(err, ErrLocked) {
+			t.Fatalf("failure %d after a successful login from the same /64 hit the lock: failures were not cleared", i+1)
+		}
+	}
+	if _, err := a.Login(ctx, goodPassword, first); err != nil {
+		t.Fatalf("correct password: %v", err)
+	}
+}
+
 func TestSessionTouchThreshold(t *testing.T) {
 	a, st, clk := setup(t)
 	ctx := context.Background()

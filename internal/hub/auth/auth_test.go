@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/netip"
@@ -158,6 +160,29 @@ func TestRegisterWrongKeyOnOpenWindowLocksIP(t *testing.T) {
 	clk.Advance(failWindow)
 	if _, _, err := a.Register(ctx, key, "n", from); err != nil {
 		t.Fatalf("lockout must expire: %v", err)
+	}
+}
+
+// 日志里的来源写成 DescribeSource 的形式：IPv6 带 /64。传具体地址与传已归一化的键结果相同。
+func TestRegisterMismatchLogsTheSourceKey(t *testing.T) {
+	a, _, _ := setup(t)
+	var logs bytes.Buffer
+	a.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	if _, _, err := a.OpenWindow(t.Context(), time.Hour, 5); err != nil {
+		t.Fatal(err)
+	}
+	for _, from := range []string{"2001:db8:1:2::abcd", "2001:db8:1:2::"} {
+		logs.Reset()
+		if _, _, err := a.Register(t.Context(), "wrong", "n", netip.MustParseAddr(from)); !errors.Is(err, ErrDenied) {
+			t.Fatalf("err = %v", err)
+		}
+		var record struct{ Msg, Source string }
+		if err := json.Unmarshal(logs.Bytes(), &record); err != nil {
+			t.Fatalf("%v: %s", err, logs.Bytes())
+		}
+		if record.Msg != "register key mismatch" || record.Source != "2001:db8:1:2::/64" {
+			t.Fatalf("from %s logged %s", from, logs.Bytes())
+		}
 	}
 }
 

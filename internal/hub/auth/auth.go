@@ -148,7 +148,9 @@ func (a *Auth) Window(ctx context.Context) (store.Window, bool, error) {
 // 窗口关闭与 key 错误对外都是 ErrDenied；失败计数只在窗口开启且 key 错误时累加：
 // 窗口关闭时没有可猜的秘密，计数只会误伤与他人共用出口地址的运维者。
 // 计数按来源键（SourceKey：IPv4 按地址、IPv6 按 /64）、独立于任何登录失败计数：批量安装时用了过期 key 是配置失误，
-// 不是对面板的攻击。
+// 不是对面板的攻击。from 可以是具体地址，也可以是已归一化的来源键（ingest 传的是 ratelimit.SourceOf 的键），
+// failureTracker 与日志都先经 SourceKey，两种传法结果相同；日志的 source 按 DescribeSource 写，IPv6 带 /64，
+// 不会被读成一个具体地址（/64 的网络地址本身也是合法地址）。
 func (a *Auth) Register(ctx context.Context, key, name string, from netip.Addr) (int64, string, error) {
 	a.mutMu.Lock()
 	defer a.mutMu.Unlock()
@@ -167,7 +169,7 @@ func (a *Auth) Register(ctx context.Context, key, name string, from netip.Addr) 
 		a.mu.Lock()
 		count := a.register.record(from, a.clk.Mono())
 		a.mu.Unlock()
-		a.log.Warn("register key mismatch", "from", from, "failures", count)
+		a.log.Warn("register key mismatch", "source", DescribeSource(SourceKey(from)), "failures", count)
 		return 0, "", ErrDenied
 	case errors.Is(err, store.ErrNoWindow):
 		return 0, "", ErrDenied
