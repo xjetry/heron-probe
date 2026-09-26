@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>xyz.probe.agent</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/bin/probe-agent</string>
+		<string>run</string>
+		<string>--config</string>
+		<string>/etc/probe-agent/config.json</string>
+	</array>
+	<!-- 安装脚本按有效 uid 确认服务进程已停与已起，前提是本服务的每个进程都以这个专用账户运行。
+	     改用别的身份运行任何进程时，deploy/install-macos.sh 的判据要一起改。 -->
+	<key>UserName</key>
+	<string>_probe-agent</string>
+	<key>GroupName</key>
+	<string>_probe-agent</string>
+	<!-- 连不上 hub 时 agent 在进程内退避重试（上限为 TTL）而不退出；进程只在启动失败或崩溃时退出。
+	     KeepAlive 无条件拉起，ThrottleInterval 把间隔定为 5 秒，与 Linux 两种 init 的无限次、每次 5 秒一致。 -->
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
+	<!-- 文件不存在时 launchd 以 UserName/GroupName 的属主创建（launchd.plist(5)）；目录由安装脚本建、属 root。 -->
+	<key>StandardOutPath</key>
+	<string>/Library/Logs/probe-agent/probe-agent.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Library/Logs/probe-agent/probe-agent.err</string>
+</dict>
+</plist>
