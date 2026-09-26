@@ -15,7 +15,8 @@ export function Nodes() {
   const qc = useQueryClient();
   const { error, mutationOptions } = useLatestError();
   const nodes = useQuery(AdminService.method.listNodes, {});
-  // 只用于落后标记的可选查询：不进页面门控，失败或未就绪时不标，也不卸载列表。hub 版本在进程生命周期内不变，不轮询。
+  // 只用于落后标记的可选查询：不进页面门控，失败或未就绪时不标，也不卸载列表；失败时在列表上方说明标记不可用，
+  // 否则用户会把"没有标记"读成"没有落后的节点"。hub 版本在进程生命周期内不变，不轮询。
   const snapshot = useQuery(AdminService.method.getSnapshot, {});
   const hubVersion = snapshot.data?.hubVersion;
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) });
@@ -72,6 +73,11 @@ export function Nodes() {
   return (
     <section>
       {gate.banner}
+      {snapshot.error != null && (
+        <p role="alert" className="error">
+          {hubVersion === undefined ? "无法取得 hub 版本，落后标记不可用" : `刷新 hub 版本失败，落后标记按上次取得的 ${hubVersion || "空版本"} 判断`}：{errorText(snapshot.error)}
+        </p>
+      )}
       <h1>节点</h1>
       {secret && <Secret label={secret.label} value={secret.value} />}
       <form onSubmit={onCreate} className="row">

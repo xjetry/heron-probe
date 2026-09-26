@@ -165,6 +165,19 @@ describe("RegisterWindow", () => {
     expect(await screen.findByText(/将安装最新 release/)).toBeInTheDocument();
   });
 
+  it("空的 hub_version 按非正式版本给出 latest 命令，不当作未就绪", async () => {
+    renderOpen("");
+    fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
+    const pres = await screen.findAllByText(/install\.sh \| sh -s --/);
+    expect(pres).toHaveLength(2);
+    for (const p of pres) {
+      expect(p.textContent).toContain("https://github.com/xjetry/probe/releases/latest/download/install.sh");
+      expect(p.textContent).not.toContain("--version");
+    }
+    expect(screen.getByText(/hub 不是正式版本（未知）.*将安装最新 release/)).toBeInTheDocument();
+    expect(screen.queryByText("加载中…")).toBeNull();
+  });
+
   it("does not render install commands while the snapshot is pending", async () => {
     renderWithAdmin({
       getRegisterWindow: async () => ({ open: true, expiresAt: 4_000_000_000n, remaining: 3 }),

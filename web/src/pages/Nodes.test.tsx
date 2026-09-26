@@ -3,7 +3,7 @@ import { create } from "@bufbuild/protobuf";
 import { createConnectQueryKey } from "@connectrpc/connect-query";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { renderWithAdmin } from "../test/harness";
+import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Nodes } from "./Nodes";
 import { AdminService, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema } from "../gen/probe/v1/admin_pb";
 
@@ -17,70 +17,91 @@ const withVersion = [
 ];
 const agentAt = (agentVersion: string) => [{ ...withVersion[0], facts: { ...withVersion[0].facts, agentVersion } }];
 const snapshotOf = (hubVersion: string) => async () => ({ now: 1n, reportIntervalMs: 4000, nodes: [], hubVersion });
+// 节点页总会取快照（落后标记用）；默认给一个成功的快照，需要别的版本或失败的用例覆盖 getSnapshot。
+const renderNodes = (impl: AdminImpl, routes: Parameters<typeof renderWithAdmin>[1] = [{ path: "/nodes", Component: Nodes }]) =>
+  renderWithAdmin({ getSnapshot: snapshotOf("v1.1.0"), ...impl }, routes, "/nodes");
 
 describe("Nodes", () => {
 
   it("marks nodes whose agent version lags the hub", async () => {
-    renderWithAdmin({
+    renderNodes({
       listNodes: async () => ({ nodes: withVersion }),
       getSnapshot: snapshotOf("v1.1.0"),
-    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    });
     expect(await screen.findByText("落后于 hub")).toBeInTheDocument();
     // 标记在链接之外，不改变链接的可访问名。
     expect(screen.getByRole("link", { name: "a（#1）" })).not.toHaveTextContent("落后于 hub");
   });
 
-  it.each(["v1.1.0", "dev"])("no lagging marker when versions match or hub is %s", async (hubVersion) => {
-    renderWithAdmin({
+  it.each(["v1.1.0", "dev", ""])("no lagging marker when versions match or hub is '%s'", async (hubVersion) => {
+    renderNodes({
       listNodes: async () => ({ nodes: agentAt("v1.1.0") }),
       getSnapshot: snapshotOf(hubVersion),
-    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    });
     await screen.findByRole("link", { name: "a（#1）" });
     expect(screen.queryByText("落后于 hub")).toBeNull();
   });
 
   it("does not mark a node newer than the hub", async () => {
-    renderWithAdmin({
+    renderNodes({
       listNodes: async () => ({ nodes: agentAt("v1.2.0") }),
       getSnapshot: snapshotOf("v1.1.0"),
-    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    });
     await screen.findByRole("link", { name: "a（#1）" });
     expect(screen.queryByText("落后于 hub")).toBeNull();
   });
 
   it("does not mark a dev agent", async () => {
-    renderWithAdmin({
+    renderNodes({
       listNodes: async () => ({ nodes: agentAt("dev") }),
       getSnapshot: snapshotOf("v1.1.0"),
-    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    });
     await screen.findByRole("link", { name: "a（#1）" });
     expect(screen.queryByText("落后于 hub")).toBeNull();
   });
 
   it.each([["v1.9.0", "v1.10.0"], ["v1.1.0-rc.1", "v1.1.1"], ["v0.9.9", "v1.0.0"]])("按版本号比较：%s 落后于 %s", async (agent, hub) => {
-    renderWithAdmin({
+    renderNodes({
       listNodes: async () => ({ nodes: agentAt(agent) }),
       getSnapshot: snapshotOf(hub),
-    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    });
     expect(await screen.findByText("落后于 hub")).toBeInTheDocument();
   });
 
-  it("快照失败不卸载节点列表、不标记、不显示错误", async () => {
-    renderWithAdmin({
+  it("快照失败显示版本比较不可用的横幅，列表仍在且不标记", async () => {
+    renderNodes({
       listNodes: async () => ({ nodes: withVersion }),
       getSnapshot: async () => { throw new ConnectError("snapshot unavailable", Code.Unavailable); },
-    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
-    await screen.findByRole("link", { name: "a（#1）" });
-    await waitFor(() => expect(screen.queryByText("落后于 hub")).toBeNull());
-    expect(screen.queryByRole("alert")).toBeNull();
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(/落后标记不可用.*snapshot unavailable/);
+    expect(screen.getByRole("link", { name: "a（#1）" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "创建" })).toBeInTheDocument();
+    expect(screen.queryByText("落后于 hub")).toBeNull();
+  });
+
+  it("快照已取到后刷新失败，标记保留并说明按上次的版本判断", async () => {
+    let fail = false;
+    const { queryClient } = renderNodes({
+      listNodes: async () => ({ nodes: withVersion }),
+      getSnapshot: async () => {
+        if (fail) throw new ConnectError("snapshot refresh failed", Code.Unavailable);
+        return { now: 1n, reportIntervalMs: 4000, nodes: [], hubVersion: "v1.1.0" };
+      },
+    });
+    expect(await screen.findByText("落后于 hub")).toBeInTheDocument();
+    fail = true;
+    const snapshotKey = createConnectQueryKey({ schema: AdminService.method.getSnapshot, cardinality: "finite" });
+    await act(async () => { await queryClient.refetchQueries({ queryKey: snapshotKey }); });
+    expect(await screen.findByRole("alert")).toHaveTextContent(/按上次取得的 v1\.1\.0 判断.*snapshot refresh failed/);
+    expect(screen.getByText("落后于 hub")).toBeInTheDocument();
   });
 
   it("节点刷新失败保留编辑行与草稿", async () => {
     let fail = false;
-    const { queryClient } = renderWithAdmin({ listNodes: async () => {
+    const { queryClient } = renderNodes({ listNodes: async () => {
       if (fail) throw new ConnectError("nodes refresh failed", Code.Unavailable);
       return { nodes: two };
-    } }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    } });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     const input = screen.getByLabelText("名称 a（#1）");
@@ -94,7 +115,7 @@ describe("Nodes", () => {
   });
 
   it("列表挂起时显示加载中而不是创建表单", async () => {
-    renderWithAdmin({ listNodes: () => new Promise(() => {}) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes: () => new Promise(() => {}) });
     expect(await screen.findByText("加载中…")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "创建" })).toBeNull();
   });
@@ -106,7 +127,7 @@ describe("Nodes", () => {
       if (listNodes.mock.calls.length > 1) { await gate; return { nodes: [two[1]] }; }
       return { nodes: two };
     });
-    renderWithAdmin({ listNodes, deleteNode: async () => ({}) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes, deleteNode: async () => ({}) });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "删除 a（#1）" }));
     const button = screen.getByRole("button", { name: "确认删除 a（#1）" });
@@ -120,7 +141,7 @@ describe("Nodes", () => {
   });
 
   it("编辑往返撤销已武装的删除确认", async () => {
-    renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes: async () => ({ nodes: two }) });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "删除 a（#1）" }));
     expect(screen.getByRole("button", { name: "确认删除 a（#1）" })).toBeInTheDocument();
@@ -138,9 +159,9 @@ describe("Nodes", () => {
       if (listNodes.mock.calls.length > 1) await gate;
       return { nodes: two };
     });
-    const { queryClient } = renderWithAdmin({
+    const { queryClient } = renderNodes({
       listNodes, rotateNodeToken: async () => ({ token: "new" }), reorderNodes: async () => ({}),
-    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    });
     await screen.findByRole("link", { name: "a（#1）" });
     vi.useFakeTimers();
     try {
@@ -162,7 +183,7 @@ describe("Nodes", () => {
     let current = two;
     const listNodes = vi.fn(async () => { if (listNodes.mock.calls.length > 1) await listGate; return { nodes: current }; });
     const updateNode = vi.fn(async () => { await saveGate; current = [{ ...two[0], name: "changed" }, two[1]]; return {}; });
-    renderWithAdmin({ listNodes, updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes, updateNode });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
@@ -184,10 +205,10 @@ describe("Nodes", () => {
 
   it("最新操作清掉创建旧错误，编辑失败显示自己的正文", async () => {
     let rejectEdit = false;
-    renderWithAdmin({ listNodes: async () => ({ nodes: two }),
+    renderNodes({ listNodes: async () => ({ nodes: two }),
       createNode: async () => { throw new ConnectError("create rejected", Code.InvalidArgument); },
       updateNode: async () => { if (rejectEdit) throw new ConnectError("edit rejected", Code.InvalidArgument); return {}; },
-    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "x" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
@@ -210,7 +231,7 @@ describe("Nodes", () => {
       if (updateNode.mock.calls.length === 1) throw new ConnectError("node update rejected", Code.InvalidArgument);
       return { node: { ...two[0], name: "changed" } };
     });
-    renderWithAdmin({ listNodes: async () => ({ nodes: two }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes: async () => ({ nodes: two }), updateNode });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "changed" } });
@@ -227,7 +248,7 @@ describe("Nodes", () => {
     await waitFor(() => expect(screen.queryByLabelText("名称 a（#1）")).toBeNull());
   });
   it.each(["", "29", "1.5", "15"])("重置日 %s 只有 1–28 的整数能保存", async (value) => {
-    renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes: async () => ({ nodes: two }) });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("重置日 a（#1）"), { target: { value } });
@@ -236,20 +257,20 @@ describe("Nodes", () => {
   });
 
   it("编辑重置日说明周期量清零的后果", async () => {
-    renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes: async () => ({ nodes: two }) });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     expect(screen.getByText("若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。")).toBeInTheDocument();
   });
 
   it("列表显示重置日", async () => {
-    renderWithAdmin({ listNodes: async () => ({ nodes: [{ ...two[0], trafficResetDay: 20 }] }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes: async () => ({ nodes: [{ ...two[0], trafficResetDay: 20 }] }) });
     expect(await screen.findByRole("cell", { name: "每月 20 日" })).toBeInTheDocument();
   });
 
   it("变更只失效节点列表，不失效快照与注册窗口", async () => {
     const listNodes = vi.fn(async () => ({ nodes: two }));
-    const { queryClient } = renderWithAdmin({ listNodes, createNode: async () => ({ node: two[0], token: "new" }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    const { queryClient } = renderNodes({ listNodes, createNode: async () => ({ node: two[0], token: "new" }) });
     const snapshotKey = createConnectQueryKey({ schema: AdminService.method.getSnapshot, cardinality: "finite" });
     const windowKey = createConnectQueryKey({ schema: AdminService.method.getRegisterWindow, cardinality: "finite" });
     queryClient.setQueryData(snapshotKey, create(GetSnapshotResponseSchema));
@@ -263,7 +284,7 @@ describe("Nodes", () => {
 
   it("再次编辑从当前节点而非旧草稿开始", async () => {
     let list = two;
-    const { queryClient } = renderWithAdmin({ listNodes: async () => ({ nodes: list }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    const { queryClient } = renderNodes({ listNodes: async () => ({ nodes: list }) });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "abandoned" } });
@@ -283,7 +304,7 @@ describe("Nodes", () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const pending = async () => { await gate; return { token: "new" }; };
-    renderWithAdmin({ listNodes: async () => ({ nodes: two }), deleteNode: async () => { await gate; return {}; }, rotateNodeToken: pending }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes: async () => ({ nodes: two }), deleteNode: async () => { await gate; return {}; }, rotateNodeToken: pending });
     await screen.findByRole("link", { name: "a（#1）" });
     if (operation === "delete") fireEvent.click(screen.getByRole("button", { name: "删除 a（#1）" }));
     const button = screen.getByRole("button", { name: operation === "delete" ? "确认删除 a（#1）" : "换 token a（#1）" });
@@ -293,7 +314,7 @@ describe("Nodes", () => {
   });
   it.each(["list", "create"])("%s 失败时展示错误正文", async (source) => {
     const fail = async () => { throw new ConnectError("request failed", Code.Unavailable); };
-    renderWithAdmin({ listNodes: source === "list" ? fail : async () => ({ nodes: two }), createNode: fail }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes: source === "list" ? fail : async () => ({ nodes: two }), createNode: fail });
     if (source === "create") {
       await screen.findByRole("link", { name: "a（#1）" });
       fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
@@ -303,9 +324,9 @@ describe("Nodes", () => {
   });
   it("创建后一次性展示 token", async () => {
     const createNode = vi.fn(async () => ({ node: { ...two[0], id: 3n, name: "c" }, token: "deadbeef" }));
-    const { router } = renderWithAdmin({ listNodes: async () => ({ nodes: two }), createNode }, [
+    const { router } = renderNodes({ listNodes: async () => ({ nodes: two }), createNode }, [
       { path: "/nodes", Component: Nodes }, { path: "/away", element: <h1>away</h1> },
-    ], "/nodes");
+    ]);
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
@@ -319,11 +340,11 @@ describe("Nodes", () => {
 
   it("删除卡片所属节点时清掉明文，删除别的保留", async () => {
     const nodes = [{ ...two[0], id: 3n, name: "c" }, two[1]];
-    renderWithAdmin({
+    renderNodes({
       listNodes: async () => ({ nodes }),
       createNode: async () => ({ node: { id: 3n, name: "c" }, token: "deadbeef" }),
       deleteNode: async () => ({}),
-    }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    });
     await screen.findByRole("link", { name: "c（#3）" });
     fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
@@ -338,7 +359,7 @@ describe("Nodes", () => {
 
   it("删除需要二次确认", async () => {
     const deleteNode = vi.fn(async () => ({}));
-    renderWithAdmin({ listNodes: async () => ({ nodes: two }), deleteNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes: async () => ({ nodes: two }), deleteNode });
     await screen.findByRole("link", { name: "a（#1）" });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "删除 a（#1）" })); });
     expect(deleteNode).not.toHaveBeenCalled();
@@ -349,7 +370,7 @@ describe("Nodes", () => {
   it("同名节点的删除按钮按 id 区分并删除正确行", async () => {
     const sameName = [two[0], { ...two[1], id: 11n, name: "a" }];
     const deleteNode = vi.fn(async () => ({}));
-    renderWithAdmin({ listNodes: async () => ({ nodes: sameName }), deleteNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes: async () => ({ nodes: sameName }), deleteNode });
     await screen.findAllByRole("link", { name: /^a（#/ });
     fireEvent.click(screen.getByRole("button", { name: "删除 a（#11）" }));
     fireEvent.click(screen.getByRole("button", { name: "确认删除 a（#11）" }));
@@ -359,7 +380,7 @@ describe("Nodes", () => {
   it("同名节点同时编辑时保存的是被改的那一行", async () => {
     const sameName = [two[0], { ...two[1], id: 11n, name: "a" }];
     const updateNode = vi.fn(async () => ({}));
-    renderWithAdmin({ listNodes: async () => ({ nodes: sameName }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes: async () => ({ nodes: sameName }), updateNode });
     await screen.findAllByRole("link", { name: /^a（#/ });
     const edits = screen.getAllByRole("button", { name: /^编辑 a/ });
     fireEvent.click(edits[0]);
@@ -374,7 +395,7 @@ describe("Nodes", () => {
   it.each(["下移 a（#1）", "上移 b（#2）"])("%s 提交完整排列", async (button) => {
     const reorderNodes = vi.fn(async () => ({}));
     const three = [...two, { ...two[0], id: 3n, name: "c", sortOrder: 2 }];
-    renderWithAdmin({ listNodes: async () => ({ nodes: three }), reorderNodes }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes: async () => ({ nodes: three }), reorderNodes });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: button }));
     await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n, 3n] }), expect.anything()));
@@ -382,7 +403,7 @@ describe("Nodes", () => {
 
   it("编辑回传全部字段", async () => {
     const updateNode = vi.fn(async () => ({ node: two[0] }));
-    renderWithAdmin({ listNodes: async () => ({ nodes: two }), updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes: async () => ({ nodes: two }), updateNode });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "a2" } });
@@ -394,7 +415,7 @@ describe("Nodes", () => {
   });
 
   it("宽限期列显示默认与秒数", async () => {
-    renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes: async () => ({ nodes: two }) });
     const a = within((await screen.findByRole("link", { name: "a（#1）" })).closest("tr")!);
     expect(a.getByRole("cell", { name: "90 秒" })).toBeInTheDocument();
     const b = within(screen.getByRole("link", { name: "b（#2）" }).closest("tr")!);
@@ -409,7 +430,7 @@ describe("Nodes", () => {
       if (listNodes.mock.calls.length > 1) await listGate;
       return { nodes: two };
     });
-    renderWithAdmin({ listNodes, updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes, updateNode });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     const grace = screen.getByLabelText("离线宽限期（秒） a（#1）");
@@ -436,7 +457,7 @@ describe("Nodes", () => {
     const listNodes = vi.fn()
       .mockResolvedValueOnce({ nodes: two })
       .mockResolvedValue({ nodes: [{ ...two[0], offlineGraceS: undefined }, two[1]] });
-    renderWithAdmin({ listNodes, updateNode }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes, updateNode });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("离线宽限期（秒） a（#1）"), { target: { value: "0" } });
@@ -447,7 +468,7 @@ describe("Nodes", () => {
   });
 
   it("非法宽限期禁用保存", async () => {
-    renderWithAdmin({ listNodes: async () => ({ nodes: two }) }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes: async () => ({ nodes: two }) });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("离线宽限期（秒） a（#1）"), { target: { value: "-1" } });
@@ -455,9 +476,8 @@ describe("Nodes", () => {
   });
 
   it("服务端宽限期下限错误显示原文", async () => {
-    renderWithAdmin({ listNodes: async () => ({ nodes: two }),
-      updateNode: async () => { throw new ConnectError("offline_grace_s: must be 0 or at least 30 seconds (PROBE_OFFLINE_AFTER); got 20", Code.InvalidArgument); } },
-      [{ path: "/nodes", Component: Nodes }], "/nodes");
+    renderNodes({ listNodes: async () => ({ nodes: two }),
+      updateNode: async () => { throw new ConnectError("offline_grace_s: must be 0 or at least 30 seconds (PROBE_OFFLINE_AFTER); got 20", Code.InvalidArgument); } });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("离线宽限期（秒） a（#1）"), { target: { value: "20" } });
@@ -470,7 +490,7 @@ describe("Nodes", () => {
     const writeText = vi.fn(async () => {});
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     try {
-      renderWithAdmin({ listNodes: async () => ({ nodes: two }), rotateNodeToken }, [{ path: "/nodes", Component: Nodes }], "/nodes");
+      renderNodes({ listNodes: async () => ({ nodes: two }), rotateNodeToken });
       await screen.findByRole("link", { name: "a（#1）" });
       fireEvent.click(screen.getByRole("button", { name: "换 token a（#1）" }));
       await waitFor(() => expect(rotateNodeToken).toHaveBeenCalledWith(expect.objectContaining({ id: 1n }), expect.anything()));
