@@ -3,6 +3,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { expect, it } from "vitest";
 import type { UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
 import { MAX_LOGO_BYTES } from "../lib/appearance";
+import { BUILT_IN_ACCENT } from "../lib/palette";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Appearance } from "./Appearance";
 
@@ -79,4 +80,60 @@ it("超出大小上限的 logo 在提交前报出，不发请求", async () => {
   fireEvent.click(f.getByRole("button", { name: "保存" }));
   await waitFor(() => expect(sent.length).toBeGreaterThan(0));
   expect(sent[0].settings?.logo).toBe("data:image/png;base64,iVBORw==");
+});
+
+// 保存进行中整个表单禁用：飞行中的保存返回时，回显覆盖的只能是这次提交自己送出的内容。
+it("保存进行中表单禁用，回显落地后恢复可编辑", async () => {
+  let resolve: (v: { settings: typeof current }) => void = () => {};
+  let calls = 0;
+  render({ updateSettings: () => { calls++; return new Promise((r) => { resolve = r; }); } });
+  const f = await form();
+  fireEvent.change(f.getByLabelText("标题"), { target: { value: "第一次" } });
+  fireEvent.click(f.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(f.getByLabelText("标题")).toBeDisabled());
+  for (const label of ["明暗", "主色", "取色", "logo", "自定义 CSS"]) expect(f.getByLabelText(label)).toBeDisabled();
+  expect(f.getByRole("button", { name: "保存" })).toBeDisabled();
+  // 按钮禁用之外，submit 自己也不在进行中再发：直接触发 submit 事件验证。
+  fireEvent.submit(f.getByRole("button", { name: "保存" }).closest("form")!);
+  resolve({ settings: { ...current, title: "第一次" } });
+  expect(await f.findByRole("status")).toHaveTextContent("已保存");
+  expect(f.getByLabelText("标题")).toBeEnabled();
+  expect(f.getByLabelText("标题")).toHaveValue("第一次");
+  expect(calls).toBe(1);
+});
+
+// 读 logo 文件是异步的：读取期间不能保存（读完的回调会改草稿），读取期间改的其他字段在读完后仍在。
+it("读 logo 期间不能保存，期间的编辑不丢", async () => {
+  const sent: UpdateSettingsRequest[] = [];
+  render({ updateSettings: async (req) => { sent.push(req); return { settings: req.settings }; } });
+  const f = await form();
+  fireEvent.change(f.getByLabelText("logo"), { target: { files: [new File([new Uint8Array([137, 80, 78, 71])], "logo.png", { type: "image/png" })] } });
+  expect(f.getByRole("button", { name: "保存" })).toBeDisabled();
+  fireEvent.submit(f.getByRole("button", { name: "保存" }).closest("form")!);
+  fireEvent.change(f.getByLabelText("标题"), { target: { value: "读取期间改的" } });
+  await f.findByRole("img", { name: "logo 预览" });
+  expect(f.getByLabelText("标题")).toHaveValue("读取期间改的");
+  await waitFor(() => expect(f.getByRole("button", { name: "保存" })).toBeEnabled());
+  fireEvent.click(f.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(sent).toHaveLength(1));
+  expect(sent[0].settings).toMatchObject({ title: "读取期间改的", logo: "data:image/png;base64,iVBORw==" });
+});
+
+// 主色为空时取色器显示内置主色；只有选了别的颜色才算设置，原样的兜底色（浏览器关上取色器时可能再报一次）不提交。
+it("取色器的兜底色不当成设置提交", async () => {
+  const sent: UpdateSettingsRequest[] = [];
+  render({
+    getSettings: async () => ({ settings: { ...current, accentColor: "" } }),
+    updateSettings: async (req) => { sent.push(req); return { settings: req.settings }; },
+  });
+  const f = await form();
+  expect(f.getByLabelText("取色")).toHaveValue(BUILT_IN_ACCENT);
+  fireEvent.change(f.getByLabelText("取色"), { target: { value: BUILT_IN_ACCENT } });
+  fireEvent.click(f.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(sent).toHaveLength(1));
+  expect(sent[0].settings?.accentColor).toBe("");
+  fireEvent.change(f.getByLabelText("取色"), { target: { value: "#00ff00" } });
+  fireEvent.click(f.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(sent).toHaveLength(2));
+  expect(sent[1].settings?.accentColor).toBe("#00ff00");
 });

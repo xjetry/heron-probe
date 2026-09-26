@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { BUILT_IN_ACCENT } from "./lib/palette";
 
 const css = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "styles.css"), "utf8");
 
@@ -18,4 +19,10 @@ it("调色板随 color-scheme 取值，data-theme 能强制明暗", () => {
   }
   expect(css).toMatch(/:root\[data-theme="light"\]\s*\{\s*color-scheme:\s*light;?\s*\}/);
   expect(css).toMatch(/:root\[data-theme="dark"\]\s*\{\s*color-scheme:\s*dark;?\s*\}/);
+});
+
+// 外观页取色器的兜底色就是内置浅色主题的主色：不另存一份，改了 styles.css 这里跟着变。
+it("内置主色取自 styles.css 的 --accent 浅色值", () => {
+  const light = css.match(/--accent:\s*light-dark\(\s*(#[0-9a-fA-F]{6})/)[1].toLowerCase();
+  expect(BUILT_IN_ACCENT).toBe(light);
 });

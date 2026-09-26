@@ -46,6 +46,7 @@ tr.offline td { color: var(--muted); }
 .chart { width: 100%; }
 .picks { display: flex; flex-wrap: wrap; gap: .5rem 1rem; border: 1px solid var(--line); padding: .5rem .75rem; }
 .edit-form { white-space: normal; }
+fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .picks label, label.inline { display: inline-flex; align-items: center; gap: .3rem; }
 .edit-form textarea { width: 100%; min-height: 6rem; font-family: ui-monospace, monospace; }
 .logo-preview { height: 32px; width: auto; }

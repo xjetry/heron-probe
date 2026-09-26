@@ -1,5 +1,5 @@
 import react from "@vitejs/plugin-react";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vitest/config";
 
@@ -16,6 +16,16 @@ function keepEmbedDirectory(outDir: string): Plugin {
   return { name: "keep-embed-directory", apply: "build", closeBundle() { writeFileSync(`${outDir}/.gitkeep`, ""); } };
 }
 
+// 内置配色只写在 styles.css 的 --accent: light-dark(浅色, 深色) 里。外观页的取色器在主色为空时显示浅色那一个值，
+// 这里在构建与测试时读出它、经 define 编成常量（lib/palette.ts），不另存一份；写法变了读不出即构建失败。
+// 不在运行时用 ?raw 读 styles.css：vitest 默认把 CSS 文件换成空内容，测试里读不到。
+function builtInLightAccent(): string {
+  const css = readFileSync(new URL("./src/styles.css", import.meta.url), "utf8");
+  const m = /--accent:\s*light-dark\(\s*(#[0-9a-fA-F]{6})\s*,/.exec(css);
+  if (!m) throw new Error("src/styles.css: --accent must be light-dark(#rrggbb, …); the appearance page reads the built-in light accent from it");
+  return m[1].toLowerCase();
+}
+
 export default defineConfig(({ mode }) => {
   const isPublic = mode === "public";
   const outDir = embedDir(isPublic ? "dist-public" : "dist");
@@ -23,6 +33,7 @@ export default defineConfig(({ mode }) => {
     root: isPublic ? fileURLToPath(new URL("./src/public", import.meta.url)) : undefined,
     base: isPublic ? "/" : "/admin/",
     plugins: [react(), keepEmbedDirectory(outDir)],
+    define: { __BUILT_IN_ACCENT__: JSON.stringify(builtInLightAccent()) },
     build: { outDir, emptyOutDir: true },
     test: {
       environment: "jsdom",
