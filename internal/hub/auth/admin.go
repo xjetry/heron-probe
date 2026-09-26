@@ -20,7 +20,7 @@ import (
 var (
 	ErrNoAdmin      = errors.New("no admin password has been set")
 	ErrBadPassword  = errors.New("wrong password")
-	ErrLocked       = errors.New("too many failed logins from this address")
+	ErrLocked       = errors.New("too many failed logins from this source (one IPv4 address, or one IPv6 /64)")
 	ErrWeakPassword = fmt.Errorf("password must be at least %d characters", MinPasswordLen)
 )
 
@@ -109,7 +109,7 @@ func (a *Auth) SetPassword(ctx context.Context, plain string) error {
 // Login 用密码换会话 token，明文只返回这一次。
 //
 // admin 表为空时一律失败：空表的语义是"无人可登录"而不是"无需认证"，由这里的
-// 显式检查承载，并在日志里指明该跑 probe-hub passwd。失败按来源 IP 计数，
+// 显式检查承载，并在日志里指明该跑 probe-hub passwd。失败按来源键计数（SourceKey：IPv4 按地址、IPv6 按 /64），
 // 锁定期间的拒绝不依赖输入的密码，正确密码也不能提前解除锁定。
 func (a *Auth) Login(ctx context.Context, password string, from netip.Addr) (string, error) {
 	// loginMu 串行化检查到记失败或签发，避免并发尝试在失败落账前越过阈值。

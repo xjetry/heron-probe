@@ -6,7 +6,9 @@ import (
 )
 
 // failureTracker 保存滑动窗口中的失败时刻，达到上限后从该次失败起锁满 window。
-// 调用方持 Auth.mu，临界区无 I/O；过期地址在访问时回收，每个地址最多保存 limit 次失败。
+// 调用方持 Auth.mu，临界区无 I/O；过期的键在访问时回收，每个键最多保存 limit 次失败。
+// 键是 SourceKey 归一化后的来源（IPv4 一个地址，IPv6 一个 /64）：在自己的 /64 里换地址不重置计数。归一化在这里的
+// 三个入口做，调用方传具体地址即可；传入已归一化的键（Register 从 ratelimit.SourceOf 拿到的就是）结果相同，掩码两次与一次无异。
 type failureTracker struct {
 	limit  int
 	window time.Duration
@@ -38,12 +40,14 @@ func (t *failureTracker) sweep(now time.Duration) {
 
 func (t *failureTracker) locked(from netip.Addr, now time.Duration) bool {
 	t.sweep(now)
+	from = SourceKey(from)
 	f := t.m[from]
 	return f != nil && now < f.until
 }
 
 func (t *failureTracker) record(from netip.Addr, now time.Duration) int {
 	t.sweep(now)
+	from = SourceKey(from)
 	f := t.m[from]
 	if f == nil {
 		f = &failure{}
@@ -59,4 +63,4 @@ func (t *failureTracker) record(from netip.Addr, now time.Duration) int {
 	return len(f.attempts)
 }
 
-func (t *failureTracker) clear(from netip.Addr) { delete(t.m, from) }
+func (t *failureTracker) clear(from netip.Addr) { delete(t.m, SourceKey(from)) }

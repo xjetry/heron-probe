@@ -23,6 +23,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/probe/internal/hub/ratelimit"
 	"github.com/xjetry/probe/internal/hub/sanitize"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/hub/traffic"
@@ -53,6 +54,13 @@ const (
 	reportsPerTTL = 3
 )
 
+const (
+	// burst 是上报的令牌桶容量：允许上报间隔的抖动与一次立即重试，再多就是异常。
+	burst = 3
+	// registerBurst 与每秒补充 1 个是 Register 按来源的限速（§5.2；来源的口径见 ratelimit.BySource）。
+	registerBurst = 30
+)
+
 type Config struct {
 	TTL            time.Duration
 	TrustedProxies []netip.Prefix
@@ -80,8 +88,8 @@ type Service struct {
 	auth          *auth.Auth
 	clk           clock.Clock
 	log           *slog.Logger
-	limit         *buckets[int64]
-	registerLimit *buckets[netip.Addr]
+	limit         *ratelimit.Buckets[int64]
+	registerLimit *ratelimit.Buckets[netip.Addr]
 
 	// stateMu 将 Report 的鉴权及内存写入与 Forget 排他，防止已放行的在途请求重建状态。
 	// 同持时锁序为 pendingMu → stateMu → mu；上报不取 pendingMu，不等待刷盘。
@@ -102,8 +110,10 @@ func New(cfg Config, l *live.Live, st *store.Store, a *auth.Auth, book *traffic.
 	if cfg.TTL > MaxTTL {
 		return nil, fmt.Errorf("TTL %v is above the maximum %v", cfg.TTL, MaxTTL)
 	}
+	// 上报的补充周期是下发间隔的一半：允许正常间隔内的一次重试。间隔由 TTL 决定，服务存续期间不变。
 	return &Service{cfg: cfg, live: l, traffic: book, tasks: tasks, store: st, writer: st, auth: a, clk: clk, log: log,
-		limit: newBuckets[int64](burst), registerLimit: newBuckets[netip.Addr](30), factsHash: map[int64]uint64{}}, nil
+		limit: ratelimit.New[int64](burst, cfg.TTL/reportsPerTTL/2), registerLimit: ratelimit.New[netip.Addr](registerBurst, time.Second),
+		factsHash: map[int64]uint64{}}, nil
 }
 
 func (s *Service) Load(ctx context.Context) error {
@@ -124,15 +134,26 @@ func (s *Service) Interval() time.Duration { return s.cfg.TTL / reportsPerTTL }
 // MaxTasksPerNode×(TTL/reportsPerTTL)/MinIntervalS 条，单批上限必须容纳它。
 const _ = uint(probelimit.MaxResultsPerReport*probelimit.MinIntervalS*reportsPerTTL - probelimit.MaxTasksPerNode*int(MaxTTL/time.Second))
 
+// Handler 挂载 AgentService。Register 是唯一的匿名方法，按来源地址限速（§5.2），限流中间件包在 connect 外面，
+// 解码失败的请求同样计数（ratelimit.BySource 的注释写了理由）。Report 不进这个桶：同一出口地址后面可以有很多
+// agent，上报按节点限速（Report 方法体里的 s.limit）。路径判定与 connect 分派用同一个 r.URL.Path 全等比较，
+// 所以到达 Register 方法体的请求都先经过了限流。
 func (s *Service) Handler() (string, http.Handler) {
-	return probev1connect.NewAgentServiceHandler(s,
+	path, h := probev1connect.NewAgentServiceHandler(s,
 		connect.WithInterceptors(s.authInterceptor()),
 		connect.WithReadMaxBytes(maxBody))
+	register := ratelimit.BySource(s.registerLimit, s.cfg.TrustedProxies, s.clk, h)
+	return path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == probev1connect.AgentServiceRegisterProcedure {
+			register.ServeHTTP(w, r)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 type nodeKey struct{}
 type nodeTokenKey struct{}
-type registerFromKey struct{}
 
 func unauthenticated() error {
 	return connect.NewError(connect.CodeUnauthenticated, errors.New("unauthenticated"))
@@ -140,8 +161,7 @@ func unauthenticated() error {
 
 // authInterceptor 在挂载点上裁决每个方法的凭据来源。没有在这里显式列出的
 // 方法一律拒绝：新增方法不可能因为忘了加检查而被放行。
-// 匿名注册的 handler 体内任何语句都可能触碰写协程，因此来源限速也必须
-// 在此完成，由拦截器拒绝分发来保证超限请求先于 handler 的一切操作被挡住。
+// Register 的来源限速不在这里，在更外层的 Handler：超限请求连解码都不进，更到不了方法体里会触碰写协程的语句。
 type authInterceptor struct{ service *Service }
 
 func (s *Service) authInterceptor() connect.Interceptor { return authInterceptor{service: s} }
@@ -159,12 +179,8 @@ func (i authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
 		switch req.Spec().Procedure {
 		case probev1connect.AgentServiceRegisterProcedure:
-			from := auth.ClientIP(req.Peer().Addr, req.Header().Get("X-Forwarded-For"), s.cfg.TrustedProxies)
-			if !s.registerLimit.allow(from, s.clk.Mono(), time.Second) {
-				return nil, connect.NewError(connect.CodeResourceExhausted, errors.New("registration rate limit exceeded for source address"))
-			}
 			// 凭据是请求体里的窗口 key，由 Register 裁决。
-			return next(context.WithValue(ctx, registerFromKey{}, from), req)
+			return next(ctx, req)
 		case probev1connect.AgentServiceReportProcedure:
 			s.stateMu.RLock()
 			defer s.stateMu.RUnlock()
@@ -184,8 +200,12 @@ func (i authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 }
 
 func (s *Service) Register(ctx context.Context, req *connect.Request[probev1.RegisterRequest]) (*connect.Response[probev1.RegisterResponse], error) {
-	// 挂载点的拦截器只向通过限速的请求传入来源，窗口裁决复用同一来源地址。
-	from := ctx.Value(registerFromKey{}).(netip.Addr)
+	// 窗口裁决的失败计数与限速按同一个来源键（IPv4 按地址、IPv6 按 /64）：由 Handler 里的 ratelimit.BySource 算出并放进 ctx。
+	// 取不到只可能是挂载绕过了 Handler，属于装配错误。
+	from, ok := ratelimit.SourceOf(ctx)
+	if !ok {
+		panic("ingest: Register reached without the source-address rate limit; mount Service.Handler")
+	}
 	name := strings.TrimSpace(sanitize.String(req.Msg.GetName(), maxHostString))
 	if name == "" {
 		name = "node"
@@ -204,8 +224,7 @@ func (s *Service) Register(ctx context.Context, req *connect.Request[probev1.Reg
 
 func (s *Service) Report(ctx context.Context, req *connect.Request[probev1.ReportRequest]) (*connect.Response[probev1.ReportResponse], error) {
 	id := ctx.Value(nodeKey{}).(int64)
-	// 补充速率为下发速率的两倍，允许正常上报间隔内的一次重试。
-	if !s.limit.allow(id, s.clk.Mono(), s.Interval()/2) {
+	if !s.limit.Allow(id, s.clk.Mono()) {
 		return nil, connect.NewError(connect.CodeResourceExhausted, errors.New("reporting faster than twice the assigned interval"))
 	}
 	m := req.Msg.GetMetrics()
@@ -304,7 +323,7 @@ func (s *Service) Forget(nodeID int64) {
 	defer s.stateMu.Unlock()
 	s.live.Forget(nodeID)
 	s.traffic.Forget(nodeID)
-	s.limit.forget(nodeID)
+	s.limit.Forget(nodeID)
 	s.mu.Lock()
 	delete(s.factsHash, nodeID)
 	s.mu.Unlock()

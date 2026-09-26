@@ -35,6 +35,27 @@ func ClientIP(peerAddr, xff string, trusted []netip.Prefix) netip.Addr {
 	return peer
 }
 
+// SourceKey 把 ClientIP 得到的来源地址归一化成按来源计数的键：IPv4 按单个地址，IPv6 截到所在 /64 的网络地址。
+// 一台主机通常独占整个 /64（SLAAC 与隐私扩展地址随时可换），逐地址计键等于在 /64 里换个地址就换一份计数。
+// 按来源计数的三处都经它：匿名入口的限流（ratelimit.BySource）、Register 的窗口失败计数与登录失败锁定（failureTracker）。
+// IPv4 映射地址先还原成 IPv4：它们的前 64 位全是 0，不还原就全部落进 ::/64。netip.PrefixFrom 丢掉区域标识（%eth0），
+// 键里没有它。无效地址（取不到对端）原样返回，这类请求共用一个键。
+func SourceKey(a netip.Addr) netip.Addr {
+	a = a.Unmap()
+	if !a.Is6() {
+		return a
+	}
+	return netip.PrefixFrom(a, 64).Masked().Addr()
+}
+
+// DescribeSource 把 SourceKey 的结果写成给人看的形式：IPv6 的键带上 /64，免得被读成一个具体地址。
+func DescribeSource(key netip.Addr) string {
+	if key.Is6() {
+		return netip.PrefixFrom(key, 64).String()
+	}
+	return key.String()
+}
+
 func peerIP(addr string) netip.Addr {
 	if ap, err := netip.ParseAddrPort(addr); err == nil {
 		return ap.Addr().Unmap()

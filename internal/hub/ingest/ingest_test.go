@@ -47,6 +47,12 @@ func newHub(t *testing.T) *hub { return newHubAt(t, filepath.Join(t.TempDir(), "
 // newHubAt 在给定库文件上起一套 hub；同一路径起两次即模拟 hub 重启。
 func newHubAt(t *testing.T, path string) *hub {
 	t.Helper()
+	return newHubWith(t, path, Config{TTL: 30 * time.Second})
+}
+
+// newHubWith 用给定配置起 hub。配置在挂载时读入（Handler 把可信代理交给限流中间件），测试不能挂载后再改。
+func newHubWith(t *testing.T, path string, cfg Config) *hub {
+	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	st, err := store.Open(path, clk, slog.Default())
 	if err != nil {
@@ -57,7 +63,7 @@ func newHubAt(t *testing.T, path string) *hub {
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, slog.Default())
 	reg := probe.New(st, slog.Default())
-	svc, err := New(Config{TTL: 30 * time.Second}, l, st, a, book, reg, clk, slog.Default())
+	svc, err := New(cfg, l, st, a, book, reg, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,8 +279,7 @@ func TestOversizedBodyIsRejected(t *testing.T) {
 }
 
 func TestRegisterIsRateLimitedPerSourceAddress(t *testing.T) {
-	h := newHub(t)
-	h.svc.cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}
+	h := newHubWith(t, filepath.Join(t.TempDir(), "t.db"), Config{TTL: 30 * time.Second, TrustedProxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}})
 	call := func(ip string) connect.Code {
 		req := connect.NewRequest(&probev1.RegisterRequest{Key: "wrong", Name: "n"})
 		req.Header().Set("X-Forwarded-For", ip)
@@ -295,28 +300,6 @@ func TestRegisterIsRateLimitedPerSourceAddress(t *testing.T) {
 	h.clk.Advance(time.Second)
 	if code := call("203.0.113.1"); code != connect.CodeUnauthenticated {
 		t.Fatalf("after one-second refill: %v, want Unauthenticated", code)
-	}
-}
-
-func TestBucketsSweepIdleKeys(t *testing.T) {
-	b := newBuckets[string](3)
-	per := time.Second
-	b.allow("a", 0, per)
-	b.allow("b", 0, per)
-	b.allow("c", 3*per, per)
-	if len(b.m) != 1 || b.m["c"] == nil {
-		t.Fatalf("idle keys not swept: %+v", b.m)
-	}
-	b.allow("active", 3*per, per)
-	active := b.m["active"]
-	now := 6*per - time.Millisecond
-	b.allow("active", now, per)
-	if b.lastSweep != 3*per || len(b.m) != 2 || b.m["active"] != active {
-		t.Fatal("swept before period or replaced active bucket")
-	}
-	b.allow("d", 6*per, per)
-	if len(b.m) != 2 || b.m["active"] != active || b.m["d"] == nil {
-		t.Fatalf("sweep removed active key or retained idle key: %+v", b.m)
 	}
 }
 
@@ -481,37 +464,38 @@ func TestInterceptorPassesStreamingClientsThrough(t *testing.T) {
 	}
 }
 
-// 真实 Connect 挂载负责填入 Procedure 与 Peer；超限请求不能进入处理函数，
-// 因为处理函数的任何语句都可能触碰注册裁决的写协程。
-func TestInterceptorRateLimitsAnonymousRegisterBeforeDispatch(t *testing.T) {
+// 限速包在 connect 外面：解码失败的 Register 同样消耗来源地址的令牌，之后连格式正确的请求也在窗口裁决之前被拒。
+// 放在拦截器里时这些请求在解码处就被拒绝，一个都不计数。
+func TestRegisterRateLimitCountsUndecodableRequests(t *testing.T) {
 	h := newHub(t)
-	var called atomic.Int32
-	handler := connect.NewUnaryHandler(probev1connect.AgentServiceRegisterProcedure,
-		func(ctx context.Context, req *connect.Request[probev1.RegisterRequest]) (*connect.Response[probev1.RegisterResponse], error) {
-			called.Add(1)
-			return connect.NewResponse(&probev1.RegisterResponse{NodeId: 77, Token: "accepted"}), nil
-		}, connect.WithInterceptors(h.svc.authInterceptor()))
-	srv := httptest.NewServer(handler)
-	t.Cleanup(srv.Close)
-	client := probev1connect.NewAgentServiceClient(srv.Client(), srv.URL)
-	for attempt := 1; attempt <= 30; attempt++ {
-		resp, err := client.Register(context.Background(), connect.NewRequest(&probev1.RegisterRequest{}))
-		if got := called.Load(); got != int32(attempt) {
-			t.Fatalf("attempt %d: called = %d, want %d", attempt, got, attempt)
-		}
+	for i := 1; i <= 30; i++ {
+		resp, err := http.Post(h.srv.URL+probev1connect.AgentServiceRegisterProcedure, "application/json", strings.NewReader("{"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if resp.Msg.GetNodeId() != 77 || resp.Msg.GetToken() != "accepted" {
-			t.Fatalf("attempt %d: handler result changed: %v", attempt, resp.Msg)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("malformed request %d: %d, want 400 from the decoder", i, resp.StatusCode)
 		}
 	}
-	_, err := client.Register(context.Background(), connect.NewRequest(&probev1.RegisterRequest{}))
-	if got := called.Load(); got != 30 {
-		t.Fatalf("attempt 31: called = %d, want 30: rate-limited request must not enter handler", got)
+	_, err := h.client.Register(context.Background(), connect.NewRequest(&probev1.RegisterRequest{Key: "wrong", Name: "n"}))
+	if code := connect.CodeOf(err); code != connect.CodeResourceExhausted {
+		t.Fatalf("well-formed request after 30 malformed ones: %v, want ResourceExhausted", err)
 	}
-	if connect.CodeOf(err) != connect.CodeResourceExhausted {
-		t.Fatalf("attempt 31: err = %v, want ResourceExhausted", err)
+}
+
+// 只有 Register 进来源地址的桶：同一出口地址后面可以有很多 agent，上报按节点限速，不能被注册耗尽。
+func TestRegisterRateLimitDoesNotChargeReports(t *testing.T) {
+	h := newHub(t)
+	_, tok := h.node(t)
+	for i := 1; i <= 31; i++ {
+		_, err := h.client.Register(context.Background(), connect.NewRequest(&probev1.RegisterRequest{Key: "wrong", Name: "n"}))
+		if want := map[bool]connect.Code{false: connect.CodeUnauthenticated, true: connect.CodeResourceExhausted}[i == 31]; connect.CodeOf(err) != want {
+			t.Fatalf("register %d: %v, want %v", i, err, want)
+		}
+	}
+	if _, err := h.client.Report(context.Background(), report(tok, &probev1.Metrics{CpuPct: proto.Float64(1)})); err != nil {
+		t.Fatalf("report from an address whose register bucket is empty: %v", err)
 	}
 }
 
@@ -547,11 +531,11 @@ func TestForgetClearsNodeState(t *testing.T) {
 	if _, ok := h.live.Get(id); ok {
 		t.Fatal("live entry survived Forget")
 	}
-	h.svc.limit.mu.Lock()
-	_, limited := h.svc.limit.m[id]
-	h.svc.limit.mu.Unlock()
-	if limited {
-		t.Fatal("rate limit bucket survived Forget")
+	// Forget 之后该节点从满桶开始：钟不走，连续 burst 次都放行，说明桶被丢掉而不是留着上次的余量。
+	for i := range burst {
+		if !h.svc.limit.Allow(id, h.clk.Mono()) {
+			t.Fatalf("rate limit bucket survived Forget: request %d of %d denied", i+1, burst)
+		}
 	}
 	h.svc.mu.Lock()
 	_, known := h.svc.factsHash[id]
@@ -681,11 +665,12 @@ func TestForgetWaitsForAdmittedReport(t *testing.T) {
 	if _, ok := h.live.Get(id); ok {
 		t.Error("in-flight report rebuilt live state")
 	}
-	h.svc.limit.mu.Lock()
-	_, limited := h.svc.limit.m[id]
-	h.svc.limit.mu.Unlock()
-	if limited {
-		t.Error("in-flight report rebuilt rate limit")
+	// 在途上报若在 Forget 之后重建了桶，桶里就少了它取走的那个令牌，连续 burst 次里最后一次被拒。
+	for i := range burst {
+		if !h.svc.limit.Allow(id, h.clk.Mono()) {
+			t.Errorf("in-flight report rebuilt rate limit: request %d of %d denied", i+1, burst)
+			break
+		}
 	}
 }
 

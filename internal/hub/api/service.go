@@ -243,7 +243,7 @@ func (s *Service) Login(ctx context.Context, req *connect.Request[probev1.LoginR
 	tok, err := s.auth.Login(ctx, req.Msg.GetPassword(), peer.from)
 	switch {
 	case errors.Is(err, auth.ErrLocked):
-		return nil, unauthenticated("too many failed logins from this address; retry in 15 minutes")
+		return nil, unauthenticated("too many failed logins from this source (one IPv4 address, or one IPv6 /64); retry in 15 minutes")
 	case errors.Is(err, auth.ErrNoAdmin), errors.Is(err, auth.ErrBadPassword):
 		// 对外同一响应，避免匿名调用方由错误内容判断管理员是否已配置。
 		return nil, unauthenticated("wrong password")

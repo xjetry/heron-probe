@@ -147,7 +147,7 @@ func (a *Auth) Window(ctx context.Context) (store.Window, bool, error) {
 //
 // 窗口关闭与 key 错误对外都是 ErrDenied；失败计数只在窗口开启且 key 错误时累加：
 // 窗口关闭时没有可猜的秘密，计数只会误伤与他人共用出口地址的运维者。
-// 计数按来源 IP、独立于任何登录失败计数：批量安装时用了过期 key 是配置失误，
+// 计数按来源键（SourceKey：IPv4 按地址、IPv6 按 /64）、独立于任何登录失败计数：批量安装时用了过期 key 是配置失误，
 // 不是对面板的攻击。
 func (a *Auth) Register(ctx context.Context, key, name string, from netip.Addr) (int64, string, error) {
 	a.mutMu.Lock()

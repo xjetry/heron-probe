@@ -111,6 +111,28 @@ func TestLoginIssuesSessionAndLocksOutAfterFailures(t *testing.T) {
 	}
 }
 
+// 登录失败按来源键计：一台主机通常独占整个 IPv6 /64，每次换一个 /64 里的地址也在累加同一份计数，
+// 锁定后同一 /64 的任何地址都进不来；另一个 /64 不受影响。IPv4 逐地址计由上一个用例钉住。
+func TestLoginLockoutCountsAnIPv6Prefix64AsOneSource(t *testing.T) {
+	a, _, _ := setup(t)
+	ctx := context.Background()
+	if err := a.SetPassword(ctx, goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < failLimit; i++ {
+		from := netip.MustParseAddr(fmt.Sprintf("2001:db8:1:2::%x", i+1))
+		if _, err := a.Login(ctx, "wrong password here", from); !errors.Is(err, ErrBadPassword) {
+			t.Fatalf("attempt %d from %s: %v", i+1, from, err)
+		}
+	}
+	if _, err := a.Login(ctx, goodPassword, netip.MustParseAddr("2001:db8:1:2:ffff:ffff:ffff:ffff")); !errors.Is(err, ErrLocked) {
+		t.Fatalf("another address in the locked /64 got past the lockout: %v", err)
+	}
+	if _, err := a.Login(ctx, goodPassword, netip.MustParseAddr("2001:db8:1:3::1")); err != nil {
+		t.Fatalf("another /64 must not be affected: %v", err)
+	}
+}
+
 func TestSessionExpiresIdleAndAbsolute(t *testing.T) {
 	a, _, clk := setup(t)
 	ctx := context.Background()
