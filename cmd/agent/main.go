@@ -82,7 +82,7 @@ func runRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	cfgPath := fs.String("config", defaultConfig, "agent config path")
 	include := fs.String("net-include", "", "comma-separated interface globs to count (exclusive)")
-	exclude := fs.String("net-exclude", "", "comma-separated interface globs to skip (default: lo, docker*, veth*, br-*, virbr*)")
+	exclude := fs.String("net-exclude", "", "comma-separated interface globs to skip (default: "+strings.Join(collect.DefaultNetExclude(), ", ")+")")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

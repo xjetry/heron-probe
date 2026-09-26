@@ -55,12 +55,12 @@ func TestParseMeminfoKBToBytes(t *testing.T) {
 }
 
 func TestParseLoadavg(t *testing.T) {
-	l, err := parseLoadavg(strings.NewReader("0.52 0.31 0.20 3/721 12345\n"))
+	l, procs, err := parseLoadavg(strings.NewReader("0.52 0.31 0.20 3/721 12345\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if l.l1 != 0.52 || l.l5 != 0.31 || l.l15 != 0.20 || l.procs != 721 {
-		t.Fatalf("%+v", l)
+	if l.l1 != 0.52 || l.l5 != 0.31 || l.l15 != 0.20 || procs != 721 {
+		t.Fatalf("%+v procs=%d", l, procs)
 	}
 }
 
@@ -91,7 +91,7 @@ func TestParseOSReleasePrettyName(t *testing.T) {
 }
 
 func TestInterfaceFilterDefaults(t *testing.T) {
-	c := &Collector{}
+	c := &Collector{Host: &ProcFS{}}
 	for _, n := range []string{"lo", "docker0", "veth1234", "br-abc", "virbr0"} {
 		if c.includeIface(n) {
 			t.Fatalf("%s must be excluded by default", n)
@@ -102,7 +102,7 @@ func TestInterfaceFilterDefaults(t *testing.T) {
 			t.Fatalf("%s must be included by default", n)
 		}
 	}
-	c = &Collector{NetInclude: []string{"eth*"}}
+	c = &Collector{Host: &ProcFS{}, NetInclude: []string{"eth*"}}
 	if c.includeIface("ens3") || !c.includeIface("eth1") {
 		t.Fatal("explicit include list must be exclusive")
 	}

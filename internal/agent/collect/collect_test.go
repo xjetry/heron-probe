@@ -2,6 +2,7 @@ package collect
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -12,10 +13,9 @@ import (
 func fixture(t *testing.T) *Collector {
 	t.Helper()
 	return &Collector{
-		FS:        os.DirFS("testdata/docker-debian"),
-		DiskUsage: func(string) (uint64, uint64, error) { return 1000, 400, nil },
-		Clock:     clock.NewFake(time.Unix(0, 0)),
-		Version:   "test",
+		Host:    &ProcFS{FS: os.DirFS("testdata/docker-debian"), DiskUsage: func(string) (uint64, uint64, error) { return 1000, 400, nil }},
+		Clock:   clock.NewFake(time.Unix(0, 0)),
+		Version: "test",
 	}
 }
 
@@ -55,7 +55,7 @@ func TestCPUPercentAppearsOnSecondSample(t *testing.T) {
 	fsys := fstest.MapFS{
 		"proc/stat": {Data: []byte("cpu  100 0 50 800 20 0 10 0 0 0\n")},
 	}
-	c := &Collector{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }, Clock: clock.NewFake(time.Unix(0, 0))}
+	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clock.NewFake(time.Unix(0, 0))}
 	if m, _ := c.Metrics(); m.CpuPct != nil {
 		t.Fatal("first sample must not carry cpu_pct")
 	}
@@ -72,7 +72,7 @@ func TestNetRateNeedsTwoSamples(t *testing.T) {
 		"sys/class/net/eth0/statistics/rx_bytes": {Data: []byte("1000\n")},
 		"sys/class/net/eth0/statistics/tx_bytes": {Data: []byte("2000\n")},
 	}
-	c := &Collector{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }, Clock: clk}
+	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clk}
 	m, _ := c.Metrics()
 	if m.GetNetRxTotal() != 1000 || m.NetRxBps != nil {
 		t.Fatalf("first: %+v", m)
@@ -86,7 +86,7 @@ func TestNetRateNeedsTwoSamples(t *testing.T) {
 }
 
 func TestMissingFilesYieldMissingReadingsNotZero(t *testing.T) {
-	c := &Collector{FS: fstest.MapFS{}, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, os.ErrNotExist }, Clock: clock.NewFake(time.Unix(0, 0))}
+	c := &Collector{Host: &ProcFS{FS: fstest.MapFS{}, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, os.ErrNotExist }}, Clock: clock.NewFake(time.Unix(0, 0))}
 	m, err := c.Metrics()
 	if err == nil {
 		t.Fatal("read failures must be reported for logging")
@@ -103,5 +103,43 @@ func TestFactsFromRealProcSnapshot(t *testing.T) {
 	}
 	if f.GetAgentVersion() != "test" || f.GetIcmpAvailable() {
 		t.Fatalf("%+v", f)
+	}
+}
+
+// used > total 只能来自不一致的计数或回绕的减法：按读不到处理，不截断成满载。
+func TestUsageAboveTotalIsDroppedNotClamped(t *testing.T) {
+	fsys := fstest.MapFS{
+		"proc/meminfo": {Data: []byte("MemTotal: 1000 kB\nMemAvailable: 2000 kB\nSwapTotal: 10 kB\nSwapFree: 4 kB\n")},
+	}
+	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 100, 101, nil }}, Clock: clock.NewFake(time.Unix(0, 0))}
+	m, err := c.Metrics()
+	if m.MemTotal != nil || m.MemUsed != nil || m.DiskTotal != nil || m.DiskUsed != nil {
+		t.Fatalf("used above total must leave both readings unset, got mem %d/%d disk %d/%d", m.GetMemUsed(), m.GetMemTotal(), m.GetDiskUsed(), m.GetDiskTotal())
+	}
+	if err == nil || !strings.Contains(err.Error(), "memory: used") || !strings.Contains(err.Error(), "disk: used 101 exceeds total 100") {
+		t.Fatalf("err = %v, want both rejections named", err)
+	}
+	if m.GetSwapTotal() != 10*1024 || m.GetSwapUsed() != 6*1024 {
+		t.Fatalf("swap from the same file must be unaffected: %v/%v", m.SwapTotal, m.SwapUsed)
+	}
+}
+
+// 过滤在 Collector 里决定、由 Host 执行：被排除的网卡不进合计，未给 --net-exclude 时用平台默认列表。
+func TestExcludedInterfacesAreNotSummed(t *testing.T) {
+	fsys := fstest.MapFS{
+		"sys/class/net/eth0/statistics/rx_bytes":    {Data: []byte("1000\n")},
+		"sys/class/net/eth0/statistics/tx_bytes":    {Data: []byte("2000\n")},
+		"sys/class/net/lo/statistics/rx_bytes":      {Data: []byte("50000\n")},
+		"sys/class/net/lo/statistics/tx_bytes":      {Data: []byte("50000\n")},
+		"sys/class/net/docker0/statistics/rx_bytes": {Data: []byte("70000\n")},
+		"sys/class/net/docker0/statistics/tx_bytes": {Data: []byte("70000\n")},
+	}
+	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clock.NewFake(time.Unix(0, 0))}
+	if m, _ := c.Metrics(); m.GetNetRxTotal() != 1000 || m.GetNetTxTotal() != 2000 {
+		t.Fatalf("net = %d/%d, want eth0 only", m.GetNetRxTotal(), m.GetNetTxTotal())
+	}
+	c = &Collector{Host: c.Host, Clock: c.Clock, NetExclude: []string{"eth*"}}
+	if m, _ := c.Metrics(); m.GetNetRxTotal() != 120000 {
+		t.Fatalf("explicit exclude list replaces the default: rx = %d, want lo + docker0", m.GetNetRxTotal())
 	}
 }

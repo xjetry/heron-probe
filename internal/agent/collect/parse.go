@@ -1,7 +1,3 @@
-// Package collect 读取 Linux 的 /proc 与 /sys 生成一次上报。
-//
-// 解析全部是对 fs.FS 的纯函数，不带 build tag：它们在任何平台上都能用真机
-// 抓来的快照测试。只有取根文件系统与 statfs 的几行在 platform_linux.go 里。
 package collect
 
 import (
@@ -101,40 +97,37 @@ func parseMeminfo(r io.Reader) (memInfo, error) {
 	return m, nil
 }
 
-type loadAvg struct {
-	l1, l5, l15 float64
-	procs       uint32
-}
+type loadAvg struct{ l1, l5, l15 float64 }
 
-func parseLoadavg(r io.Reader) (loadAvg, error) {
+// parseLoadavg 同时给出负载三元组与第四列 running/total 里的进程总数。
+func parseLoadavg(r io.Reader) (loadAvg, uint32, error) {
 	b, err := io.ReadAll(r)
 	if err != nil {
-		return loadAvg{}, err
+		return loadAvg{}, 0, err
 	}
 	f := strings.Fields(string(b))
 	if len(f) < 4 {
-		return loadAvg{}, errors.New("/proc/loadavg: short")
+		return loadAvg{}, 0, errors.New("/proc/loadavg: short")
 	}
 	var l loadAvg
 	if l.l1, err = strconv.ParseFloat(f[0], 64); err != nil {
-		return l, err
+		return loadAvg{}, 0, err
 	}
 	if l.l5, err = strconv.ParseFloat(f[1], 64); err != nil {
-		return l, err
+		return loadAvg{}, 0, err
 	}
 	if l.l15, err = strconv.ParseFloat(f[2], 64); err != nil {
-		return l, err
+		return loadAvg{}, 0, err
 	}
 	_, total, ok := strings.Cut(f[3], "/")
 	if !ok {
-		return l, errors.New("/proc/loadavg: no running/total field")
+		return loadAvg{}, 0, errors.New("/proc/loadavg: no running/total field")
 	}
 	n, err := strconv.ParseUint(total, 10, 32)
 	if err != nil {
-		return l, err
+		return loadAvg{}, 0, err
 	}
-	l.procs = uint32(n)
-	return l, nil
+	return l, uint32(n), nil
 }
 
 func parseUptime(r io.Reader) (uint64, error) {
