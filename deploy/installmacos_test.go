@@ -1,6 +1,7 @@
-// Package deploy 的测试以普通用户运行 install-macos.sh：落盘路径经 PROBE_INSTALL_ROOT 挂到临时目录，
-// dscl、launchctl、ps、id、sysctl、uname、chown、sleep 由 PATH 上的替身接管，curl、shasum、tar 用真的。
-// 真实 launchd、目录服务与 root 属主只在真机上验证（spec §14：没有 macOS 虚拟机可用）。
+// Package deploy 的测试以普通用户运行安装脚本：脚本读写的系统路径经 PROBE_INSTALL_ROOT 挂到临时目录，
+// 系统管理命令由 PATH 上的替身接管。本文件测 install-macos.sh：dscl、launchctl、ps、id、sysctl、uname、
+// chown、sleep 是替身，curl、shasum、tar 用真的；真实 launchd、目录服务与 root 属主只在真机上验证
+// （spec §14：没有 macOS 虚拟机可用）。install.sh 的替身在 installlinux_test.go。
 package deploy
 
 import (
@@ -147,16 +148,18 @@ echo "registered as node 1; config written to $cfg"
 
 type env struct {
 	t                *testing.T
+	script           string
 	root, state, bin string
 	dist             string
 	vars             []string
 }
 
-func newEnv(t *testing.T) *env {
+// newStubEnv 建出临时的根目录、替身状态目录与放替身的 PATH 目录，脚本与替身集由调用方给。
+func newStubEnv(t *testing.T, script string, stubs map[string]string) *env {
 	t.Helper()
 	d := t.TempDir()
-	e := &env{t: t, root: filepath.Join(d, "root"), state: filepath.Join(d, "state"), bin: filepath.Join(d, "bin"), dist: filepath.Join(d, "dist")}
-	for _, dir := range []string{e.root, e.bin, e.dist, filepath.Join(e.state, "users"), filepath.Join(e.state, "groups")} {
+	e := &env{t: t, script: script, root: filepath.Join(d, "root"), state: filepath.Join(d, "state"), bin: filepath.Join(d, "bin"), dist: filepath.Join(d, "dist")}
+	for _, dir := range []string{e.root, e.state, e.bin, e.dist} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -166,11 +169,22 @@ func newEnv(t *testing.T) *env {
 			t.Fatal(err)
 		}
 	}
+	e.write("calls", "")
+	return e
+}
+
+func newEnv(t *testing.T) *env {
+	t.Helper()
+	e := newStubEnv(t, "install-macos.sh", stubs)
+	for _, dir := range []string{"users", "groups"} {
+		if err := os.MkdirAll(filepath.Join(e.state, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// Apple 的系统账户从 300 往上连号占用（macOS 26.3.1 本机到 308），两个命名空间合起来占满 300–308；
 	// 取号从 499 往下，不取紧挨着的 309。系统账户不在替身状态里，只出现在 -list 的输出中。
 	e.write("sys-Users", "_taken300 300\n_taken302 302\n_taken304 304\n_taken306 306\n_taken308 308\n")
 	e.write("sys-Groups", "_taken301 301\n_taken303 303\n_taken305 305\n_taken307 307\n")
-	e.write("calls", "")
 	e.write("procs", "")
 	e.release("arm64", "v1")
 	e.release("amd64", "v1")
@@ -233,7 +247,7 @@ func (e *env) sums() {
 // run 以面板命令的形态执行：脚本来自 stdin（sh -s --）。
 func (e *env) run(args ...string) (string, int) {
 	e.t.Helper()
-	script, err := os.Open("install-macos.sh")
+	script, err := os.Open(e.script)
 	if err != nil {
 		e.t.Fatal(err)
 	}
