@@ -69,7 +69,8 @@ wait_hub() {
 wait_hub
 # 告警等待上限由 hub 与 agent 实际生效的参数推出（见 wait_alert 的调用处），参数读自两者的启动行，
 # 脚本里不另抄一份。只认整秒写法：读不出来就停下，不能退回一个与实际参数无关的固定上限。
-# startup_seconds 日志文件 启动行消息 字段名
+# startup_seconds 日志文件 启动行消息 字段名。internal/testlog.WholeSeconds 与这里同形（msg 过滤、字段前后
+# 空格、纯整秒、取第一条能读出的），make ci 的启动行测试靠它钉住本脚本读得出的写法，改一处须同改另一处。
 startup_seconds() {
   sed -n "s/.*msg=\"$2\".* $3=\([0-9][0-9]*\)s .*/\1/p" "$1" | sed -n 1p
 }
@@ -312,9 +313,11 @@ initial_interval_s=$(startup_seconds "$work/agent-arm64.log" "agent starting" in
 #   attempt 为 1 时等待落在 [interval/2, interval)——第二次上报成功。此后按 hub 下发的 ttl/3 间隔
 #   上报，任何一轮巡检看到的未上报时长都小于 TTL，首个成功上报之后的第一轮巡检就判恢复，至多一个
 #   offline_sweep，与 ttl 无关。连续失败没有上限可推：hub 一直不应答时节点本来就没有恢复上报。
-# 投递 delivery_retry_wait：可重试失败时一条投递依次等过 internal/hub/alert/queue.go 的 backoff 各项，
-#   总和即 DeliveryRetryWait。渠道客户端 10s 超时（notify.go 的 NewHTTPClient）只在接收器挂住时才会
-#   用满；接收器在本机回环、已由 TestNotifyChannel 验证能应答，上限不为此留量。
+# 投递 delivery_retry_wait：渠道失败可重试且存储正常时，一条投递依次等过 internal/hub/alert/queue.go
+#   的 backoff 各项，总和即 DeliveryRetryWait。存储失败走 worker 级退避（1s 起翻倍、上限 1 分钟），
+#   没有总量上界，不在预算内；e2e 的库在本机磁盘上，视为正常。渠道客户端 10s 超时（notify.go 的
+#   NewHTTPClient）只在接收器挂住时才会用满；接收器在本机回环、已由 TestNotifyChannel 验证能应答，
+#   上限不为此留量。
 # 余量一个 offline_sweep：容纳 agent 进程启动与巡检本身的耗时推迟下一轮。docker kill/start 在计数
 #   开始之前完成，不占预算。
 wait_alert_firing_s=$((ttl_s + sweep_s + retry_wait_s + sweep_s))
