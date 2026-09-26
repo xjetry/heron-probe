@@ -171,8 +171,12 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	stopSweep()
 	// HTTP 先停止准入并排空；超时则断开连接以中止慢请求体，仍等待已经进入的处理器。
 	// 最后由 defer 依次停止后台循环、关库，避免晚到的上报落在最后一次刷出之后。
-	return errors.Join(err, shutdownHTTP(srv, drain, 10*time.Second))
+	return errors.Join(err, shutdownHTTP(srv, drain, drainTimeout))
 }
+
+// drainTimeout 是关停时排空在途请求的上限。到点后断开连接以中止慢请求体，仍等待已经进入的处理器。
+// 空闲关停和请求完成后的退出从发信号或 cancel 起算，必须早于它；否则是在等这个超时，而不是在等请求结束。
+const drainTimeout = 10 * time.Second
 
 // startLoop 返回的 stop 取消并等待循环退出；调用方用 defer 的后进先出表达停止顺序。
 // 离线巡检是唯一在 HTTP 排空前显式停止的循环，原因见调用处；其余均在排空后、st.Close 前停止。

@@ -23,6 +23,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/metric"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/testwait"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -57,19 +58,24 @@ func startTestHubWithTTL(t *testing.T, db string, clk clock.Clock, ttl string, f
 	var once sync.Once
 	stop := func() {
 		once.Do(func() {
+			// 从 cancel 起算。空闲关停若总是等满排空超时，会在 drainTimeout 时返回且 result 仍可能为 nil。
+			canceled := time.Now()
 			cancel()
 			select {
 			case <-done:
 				if result != nil {
 					t.Errorf("serve exit: %v", result)
 				}
-			case <-time.After(5 * time.Second):
+				if elapsed := time.Since(canceled); elapsed >= drainTimeout {
+					t.Errorf("idle shutdown took %v since cancel, want < %v", elapsed, drainTimeout)
+				}
+			case <-time.After(testwait.Bound):
 				t.Error("serve did not join background loops")
 			}
 		})
 	}
 	t.Cleanup(stop)
-	timer := time.NewTimer(5 * time.Second)
+	timer := time.NewTimer(testwait.Bound)
 	defer timer.Stop()
 	for {
 		select {
@@ -203,7 +209,7 @@ func TestServeRunsMaintenanceWithConfiguredRetention(t *testing.T) {
 		}
 	}
 	_, events, stop := startTestHub(t, db, clk, "--retention-1m", "6h", "--retention-5m", "168h", "--retention-1h", "168h")
-	deadline := time.NewTimer(8 * time.Second)
+	deadline := time.NewTimer(testwait.Bound)
 	defer deadline.Stop()
 	for {
 		select {
@@ -255,14 +261,15 @@ func TestShutdownHTTPWaitsForHandlersAfterClosingConnections(t *testing.T) {
 	}()
 	select {
 	case <-entered:
-	case <-time.After(2 * time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("request did not enter handler")
 	}
 	done := make(chan error, 1)
+	// 20ms 是交给 shutdownHTTP 的超时，用来证明到点会断开连接，不是等退出的上界。
 	go func() { done <- shutdownHTTP(srv.Config, drain, 20*time.Millisecond) }()
 	select {
 	case <-canceled:
-	case <-time.After(2 * time.Second):
+	case <-time.After(testwait.Bound):
 		unblock()
 		srv.CloseClientConnections()
 		t.Fatal("shutdown timeout did not close active connections")
@@ -270,6 +277,7 @@ func TestShutdownHTTPWaitsForHandlersAfterClosingConnections(t *testing.T) {
 	select {
 	case err := <-done:
 		t.Fatalf("shutdown returned before handler finished: %v", err)
+	// 负向窗口：排空未完成时 shutdown 不应返回。窗口短只会漏掉稍晚才提前返回的缺陷，不会把仍在等待的调用判失败。
 	case <-time.After(50 * time.Millisecond):
 	}
 	unblock()
@@ -278,7 +286,7 @@ func TestShutdownHTTPWaitsForHandlersAfterClosingConnections(t *testing.T) {
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("shutdown hid timeout: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("shutdown did not finish after handler returned")
 	}
 	recorder := httptest.NewRecorder()

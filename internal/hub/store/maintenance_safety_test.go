@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 type logWriterFunc func([]byte) (int, error)
@@ -50,7 +51,7 @@ func TestMaintenanceAfterRollupErrorKeepsSeriesButPrunesEvents(t *testing.T) {
 	go func() { s.RunMaintenance(ctx, DefaultRetention); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Bound):
 		cancel()
 		<-done
 		t.Fatal("maintenance did not report rollup failure")

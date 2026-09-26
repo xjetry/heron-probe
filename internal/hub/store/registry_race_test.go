@@ -14,6 +14,7 @@ import (
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 func registryRaceStore(t *testing.T) (*probe.Registry, *store.Store, int64) {
@@ -41,7 +42,7 @@ func registryRaceStore(t *testing.T) (*probe.Registry, *store.Store, int64) {
 
 func waitRegistryWrite(t *testing.T, pending func() int) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(testwait.Bound)
 	for pending() == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("registry write did not reach writer queue")
@@ -60,7 +61,7 @@ func registryGoroutineID() string {
 // probe 的 export_test 钩子不会编入这里导入的 probe 包，因此从栈观察阻塞，不给生产接口增加测试钩子。
 func waitRegistryMutex(t *testing.T, id, method string, progressed func() bool) bool {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(testwait.Bound)
 	buf := make([]byte, 64<<10)
 	var target string
 	for {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 func TestQueueRefillsOverflowWithinProcess(t *testing.T) {
@@ -63,7 +64,7 @@ func TestQueueRefillsOverflowWithinProcess(t *testing.T) {
 				defer stop()
 				select {
 				case <-entered:
-				case <-time.After(3 * time.Second):
+				case <-time.After(testwait.Bound):
 					t.Fatal("worker did not enter HTTP")
 				}
 				// 多个生产者可以在 worker 等待网络时填满窗口；每个事件仍只产生一次请求。
@@ -82,19 +83,18 @@ func TestQueueRefillsOverflowWithinProcess(t *testing.T) {
 				stop = startQueue(t, q)
 				defer stop()
 			}
-			// 全部送达即结束；截止只作为失败界，留出 race 和受载机器的串行写余量。
-			deadline := time.Now().Add(30 * time.Second)
-			for {
+			// 全部送达即结束；上界只作为失败界，不参与“会不会补货”这个性质。
+			testwait.Until(t, 10*time.Millisecond, func() bool {
 				pending, err := f.st.PendingDeliveries(t.Context())
 				must(t, err)
-				if len(pending) == 0 {
-					break
+				return len(pending) == 0
+			}, "overflow deliveries not refilled: pending=%s", testwait.When(func() string {
+				pending, err := f.st.PendingDeliveries(t.Context())
+				if err != nil {
+					return err.Error()
 				}
-				if time.Now().After(deadline) {
-					t.Fatalf("overflow deliveries not refilled: pending=%d", len(pending))
-				}
-				time.Sleep(10 * time.Millisecond)
-			}
+				return fmt.Sprint(len(pending))
+			}))
 			stop()
 			mu.Lock()
 			defer mu.Unlock()
@@ -144,7 +144,7 @@ func TestQueueDeduplicatesQueuedAndInflightIDs(t *testing.T) {
 			defer stop()
 			select {
 			case <-entered:
-			case <-time.After(3 * time.Second):
+			case <-time.After(testwait.Bound):
 				t.Fatal("worker did not enter HTTP")
 			}
 			q.Enqueue(ev)

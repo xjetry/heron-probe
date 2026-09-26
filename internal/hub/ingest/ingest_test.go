@@ -26,6 +26,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/hub/traffic"
+	"github.com/xjetry/probe/internal/testwait"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -412,14 +413,7 @@ func TestDrainOnShutdownWritesOpenBucket(t *testing.T) {
 
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal("condition not met in time")
+	testwait.Until(t, 5*time.Millisecond, cond, "condition not met in time")
 }
 
 // 摘要只在写库成功后记下：写失败时下一次上报必须再次索要 facts，直到落库成功。
@@ -663,7 +657,7 @@ func TestForgetWaitsForAdmittedReport(t *testing.T) {
 	}()
 	select {
 	case <-gate.entered:
-	case <-time.After(2 * time.Second):
+	case <-time.After(testwait.Bound):
 		close(gate.release)
 		t.Fatal("report did not reach admission gate")
 	}
@@ -676,6 +670,7 @@ func TestForgetWaitsForAdmittedReport(t *testing.T) {
 	select {
 	case <-forgotten:
 		t.Error("Forget returned before in-flight report completed")
+	// 负向窗口：在途上报未完成时 Forget 不应返回。窗口短只会漏掉稍晚才提前返回的缺陷，不会把仍在等待的 Forget 判失败。
 	case <-time.After(50 * time.Millisecond):
 	}
 	close(gate.release)

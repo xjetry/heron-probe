@@ -13,6 +13,7 @@ import (
 
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 func setup(t *testing.T) (*Auth, *store.Store, *clock.Fake) {
@@ -260,7 +261,7 @@ func TestAuthenticateDoesNotWaitForRegisterTransaction(t *testing.T) {
 	}()
 	select {
 	case <-queued.queued:
-	case <-time.After(2 * time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("Register did not reach the write queue")
 	}
 	authenticated := make(chan bool, 1)
@@ -270,7 +271,7 @@ func TestAuthenticateDoesNotWaitForRegisterTransaction(t *testing.T) {
 		if !ok {
 			t.Fatal("existing token denied")
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("Authenticate did not return while Register waited for its transaction")
 	}
 	release.Do(func() { close(clk.release) })

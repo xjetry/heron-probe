@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 type receivedMessage struct {
@@ -51,7 +53,7 @@ func startQueue(t *testing.T, q *Queue) func() {
 		cancel()
 		select {
 		case <-done:
-		case <-time.After(2 * time.Second):
+		case <-time.After(testwait.Bound):
 			t.Fatal("queue did not stop")
 		}
 	}
@@ -60,21 +62,14 @@ func startQueue(t *testing.T, q *Queue) func() {
 }
 func awaitDeliveries(t *testing.T, f *fixture, id int64, ready func([]store.Delivery) bool) []store.Delivery {
 	t.Helper()
-	deadline := time.After(3 * time.Second)
-	ticker := time.NewTicker(time.Millisecond)
-	defer ticker.Stop()
-	for {
+	var got []store.Delivery
+	testwait.Until(t, time.Millisecond, func() bool {
 		ev, err := f.st.GetAlertEvent(t.Context(), id)
 		must(t, err)
-		if ready(ev.Deliveries) {
-			return ev.Deliveries
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("delivery state did not arrive: %+v", ev.Deliveries)
-		case <-ticker.C:
-		}
-	}
+		got = ev.Deliveries
+		return ready(got)
+	}, "delivery state did not arrive: %s", testwait.When(func() string { return fmt.Sprintf("%+v", got) }))
+	return got
 }
 func allDone(ds []store.Delivery) bool {
 	for _, d := range ds {
@@ -255,7 +250,7 @@ func TestQueueCancellationLeavesPending(t *testing.T) {
 	stop := startQueue(t, q)
 	select {
 	case <-sleeping:
-	case <-time.After(3 * time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("no retry sleep")
 	}
 	stop()

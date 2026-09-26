@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 const goodPassword = "correct horse battery"
@@ -140,18 +142,13 @@ func TestSessionExpiresIdleAndAbsolute(t *testing.T) {
 // 测试要观察它的结果就得等写协程。
 func waitTouch(t *testing.T, a *Auth, token string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	testwait.Until(t, time.Millisecond, func() bool {
 		sess, ok, err := a.store.Session(context.Background(), HashToken(token))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ok && sess.LastUsedAt.Equal(a.clk.Now()) {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatal("last_used_at was not recorded")
+		return ok && sess.LastUsedAt.Equal(a.clk.Now())
+	}, "last_used_at was not recorded")
 }
 
 func TestPasswordChangeRevokesSessions(t *testing.T) {
@@ -378,7 +375,7 @@ func TestNodeMutationsDoNotWaitForLogin(t *testing.T) {
 			}()
 			select {
 			case <-gate.entered:
-			case <-time.After(2 * time.Second):
+			case <-time.After(testwait.Bound):
 				t.Fatal("Login did not reach session issuance")
 			}
 			done := make(chan error, 1)
@@ -403,7 +400,7 @@ func TestNodeMutationsDoNotWaitForLogin(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s failed while Login was pending: %v", operation, err)
 				}
-			case <-time.After(2 * time.Second):
+			case <-time.After(testwait.Bound):
 				// 先释放登录并等待节点操作退出，避免失败路径留下访问存储的协程。
 				release()
 				<-done

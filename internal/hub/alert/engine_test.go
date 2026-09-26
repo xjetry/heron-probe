@@ -18,6 +18,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/metric"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 type fixture struct {
@@ -396,14 +397,31 @@ func TestRunLoopsStopOnCancellation(t *testing.T) {
 	f := newFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	for _, run := range []func(context.Context){f.e.RunOfflineSweep, f.e.RunProbeEvaluation} {
-		done := make(chan struct{})
-		go func() { run(ctx); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(time.Second):
-			t.Fatal("run loop ignored cancellation")
-		}
+	// 取消已经发生。正确实现在 select 里看到 ctx 结束就返回。
+	// 先等第一次自然唤醒再查取消的路径不会早于这次唤醒：离线巡检是 OfflineSweepEvery，
+	// 探测评估是 nextProbeAt 距现在。Bound 只兜永远不返回。
+	cases := []struct {
+		name string
+		run  func(context.Context)
+		wake time.Duration
+	}{
+		{"offline sweep", f.e.RunOfflineSweep, OfflineSweepEvery},
+		{"probe evaluation", f.e.RunProbeEvaluation, nextProbeAt(f.clk.Now()).Sub(f.clk.Now())},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			done := make(chan struct{})
+			start := time.Now()
+			go func() { tc.run(ctx); close(done) }()
+			select {
+			case <-done:
+				if elapsed := time.Since(start); elapsed >= tc.wake {
+					t.Fatalf("returned %v after cancellation, want before first wake %v", elapsed, tc.wake)
+				}
+			case <-time.After(testwait.Bound):
+				t.Fatal("run loop ignored cancellation")
+			}
+		})
 	}
 }
 

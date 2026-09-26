@@ -15,8 +15,10 @@ import (
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
 	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/metric"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 func startAlertHub(t *testing.T, clk clock.Clock, seed func(*store.Store), flags ...string) (probev1connect.AdminServiceClient, serveEvents, func()) {
@@ -36,12 +38,12 @@ func startAlertHub(t *testing.T, clk clock.Clock, seed func(*store.Store), flags
 			t.Fatal(err)
 		}
 	}
-	url, events, stop := startTestHubWithTTL(t, db, clk, "10s", flags...)
+	url, events, stop := startTestHubWithTTL(t, db, clk, minTTL.String(), flags...)
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := probev1connect.NewAdminServiceClient(&http.Client{Jar: jar, Timeout: 5 * time.Second}, url)
+	client := probev1connect.NewAdminServiceClient(&http.Client{Jar: jar, Timeout: testwait.Bound}, url)
 	if _, err := client.Login(t.Context(), connect.NewRequest(&probev1.LoginRequest{Password: password})); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +118,9 @@ func TestServeDeliversOfflineAlerts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	awaitDelivered(t, client, bodies, 25*time.Second)
+	// 节点要先过 PROBE_OFFLINE_AFTER（minTTL），再赶上 OfflineSweepEvery 的巡检才会投递。
+	// 上界只覆盖这两段之后的挂死，不把“多久内必须送达”当成被测性质。
+	awaitDelivered(t, client, bodies, minTTL+alert.OfflineSweepEvery+testwait.Bound)
 }
 
 func seedAlertChannel(t *testing.T, st *store.Store, url string) (int64, int64) {
@@ -146,7 +150,7 @@ func TestServeRequeuesPendingNotifications(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	awaitDelivered(t, client, bodies, 5*time.Second)
+	awaitDelivered(t, client, bodies, testwait.Bound)
 }
 
 func TestServeEvaluatesProbeAlerts(t *testing.T) {
@@ -169,7 +173,7 @@ func TestServeEvaluatesProbeAlerts(t *testing.T) {
 	})
 	// 墙钟固定，评估分钟由它决定；真实计时器只提供 3.001s 等待。
 	// 首次读钟与测试线程拨钟没有同步点，拨钟可能让协程等下一分钟，所以不推进墙钟。
-	awaitDelivered(t, client, bodies, 8*time.Second)
+	awaitDelivered(t, client, bodies, testwait.Bound)
 }
 
 func TestServePrunesAlertEvents(t *testing.T) {
@@ -202,7 +206,7 @@ func TestServePrunesAlertEvents(t *testing.T) {
 					}
 				}
 			}, tc.flags...)
-			deadline := time.NewTimer(8 * time.Second)
+			deadline := time.NewTimer(testwait.Bound)
 			defer deadline.Stop()
 			for {
 				select {

@@ -11,6 +11,7 @@ import (
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/probelimit"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 type sleepCall struct {
@@ -41,7 +42,7 @@ func receive[T any](t *testing.T, ch <-chan T) T {
 	select {
 	case value := <-ch:
 		return value
-	case <-time.After(3 * time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("timed out waiting for controlled event")
 		var zero T
 		return zero

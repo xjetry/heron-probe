@@ -226,6 +226,14 @@ func (e *ICMP) unavailable(v6 bool) Outcome {
 	return Outcome{Err: "icmp unavailable: " + strings.Join(diagnostics, "; ")}
 }
 
+// readBackoffMin 与 readBackoffMax 是读失败后的等待上下限。
+// 每次失败取 min(max(readBackoffMin, 上次*2), readBackoffMax)；成功必须清零，否则下一次失败从上次的倍数继续。
+// 重置窗口、封顶窗口和 Close 不等待退避的上界都由这两端推出。
+const (
+	readBackoffMin = 10 * time.Millisecond
+	readBackoffMax = time.Second
+)
+
 func (e *ICMP) read(c *icmpConn) {
 	buf := make([]byte, 1500)
 	var delay time.Duration
@@ -237,7 +245,7 @@ func (e *ICMP) read(c *icmpConn) {
 			}
 			e.log.Warn("reading ICMP failed", "err", err)
 			// 每个失败读取后都等待，持续错误不会空转刷日志；Close 不必等待退避到期。
-			delay = min(max(10*time.Millisecond, delay*2), time.Second)
+			delay = min(max(readBackoffMin, delay*2), readBackoffMax)
 			timer := time.NewTimer(delay)
 			select {
 			case <-e.done:

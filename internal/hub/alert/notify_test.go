@@ -100,6 +100,7 @@ func TestWebhookRefusesRedirectAndClassifies(t *testing.T) {
 		if client.Timeout != 10*time.Second {
 			t.Fatalf("timeout=%s", client.Timeout)
 		}
+		// 这是故意的短客户端超时，用来逼出超时重试，不是等一件事发生的上界。
 		client.Timeout = 20 * time.Millisecond
 		c, err := NewWebhook(WebhookConfig{URL: srv.URL, Method: "POST"}, client)
 		must(t, err)

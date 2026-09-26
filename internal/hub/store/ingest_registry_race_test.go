@@ -22,6 +22,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/hub/traffic"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 type notifiedTasks struct {
@@ -89,7 +90,7 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 	go func() { svc.Forget(deleted); close(forgotten) }()
 	select {
 	case <-tasks.entered:
-	case <-time.After(2 * time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("Forget did not reach registry")
 	}
 	reported := make(chan error, 1)
@@ -103,7 +104,7 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 	reportBlocked := false
 	select {
 	case reportErr = <-reported:
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(testwait.Bound):
 		reportBlocked = true
 	}
 	// 当前分钟没有闭合桶，Flush 不需要存储往返；它仍须能取得 pendingMu。
@@ -112,7 +113,7 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 	flushBlocked := false
 	select {
 	case <-flushed:
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(testwait.Bound):
 		flushBlocked = true
 	}
 	select {

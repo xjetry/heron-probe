@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 func TestOutboundErrorsDoNotExposeCredentials(t *testing.T) {
@@ -142,7 +143,8 @@ func TestEnqueueCompletesWithBusyWorkerAndConcurrentProducers(t *testing.T) {
 	f := newFixture(t)
 	entered := make(chan struct{})
 	client := NewHTTPClient()
-	client.Timeout = time.Minute
+	// 客户端超时必须长于测试的正向等待，否则 worker 会先被客户端掐断，测不到忙着也不堵生产者。
+	client.Timeout = 2 * testwait.Bound
 	client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		close(entered)
 		<-r.Context().Done()
@@ -156,7 +158,7 @@ func TestEnqueueCompletesWithBusyWorkerAndConcurrentProducers(t *testing.T) {
 	stopWorker := startQueue(t, q)
 	select {
 	case <-entered:
-	case <-time.After(3 * time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("worker did not become busy")
 	}
 	for range cap(q.items) {
@@ -193,7 +195,7 @@ func TestEnqueueCompletesWithBusyWorkerAndConcurrentProducers(t *testing.T) {
 	close(start)
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("Enqueue blocked with busy worker and 8 producers")
 	}
 }

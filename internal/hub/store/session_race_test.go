@@ -12,6 +12,7 @@ import (
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 func TestDelayedSessionTouchCannotResurrectLogout(t *testing.T) {
@@ -50,7 +51,7 @@ func TestDelayedSessionTouchCannotResurrectLogout(t *testing.T) {
 	blocked := false
 	select {
 	case result = <-authenticated:
-	case <-time.After(2 * time.Second):
+	case <-time.After(testwait.Bound):
 		// 缺陷使刷新变为同步写时也要释放夹具，避免测试自身无限等待。
 		blocked = true
 		release()

@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	"github.com/xjetry/probe/internal/agent/collect"
 	"github.com/xjetry/probe/internal/agent/prober"
 	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 func TestConfigRoundTripAndPermissions(t *testing.T) {
@@ -186,10 +188,7 @@ func runFor(t *testing.T, r *Runner, hub *fakeHub, reports int) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { r.Run(ctx); close(done) }()
-	deadline := time.Now().Add(2 * time.Second)
-	for hub.count() < reports && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
+	testwait.Until(t, time.Millisecond, func() bool { return hub.count() >= reports }, "got %s reports, want at least %d", testwait.When(func() string { return fmt.Sprint(hub.count()) }), reports)
 	cancel()
 	<-done
 	if hub.count() < reports {
@@ -267,7 +266,7 @@ func TestAdoptsIntervalFromResponse(t *testing.T) {
 		if d != 7*time.Second {
 			t.Fatalf("slept %v after first response, want the assigned 7s", d)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("runner never slept after the first response")
 	}
 }
@@ -284,7 +283,7 @@ func TestFailureBacksOffWithinThreeIntervals(t *testing.T) {
 		select {
 		case d := <-sleeps:
 			seen = append(seen, d)
-		case <-time.After(2 * time.Second):
+		case <-time.After(testwait.Bound):
 			t.Fatal("timed out waiting for backoff sleep")
 		}
 	}

@@ -478,8 +478,12 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 	return errors.Join(errs...)
 }
 
+// OfflineSweepEvery 是离线巡检周期。RunOfflineSweep 用它做 ticker。
+// 取消后必须在下一次 tick 前返回；节点过了离线宽限之后，投递还要再赶上这一周期。
+const OfflineSweepEvery = 10 * time.Second
+
 func (e *Engine) RunOfflineSweep(ctx context.Context) {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(OfflineSweepEvery)
 	defer ticker.Stop()
 	for {
 		select {

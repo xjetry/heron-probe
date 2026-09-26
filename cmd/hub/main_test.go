@@ -19,6 +19,7 @@ import (
 	"connectrpc.com/connect"
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 // 子进程执行真实 main，使 os.Exit 与信号处理不会终止测试宿主。
@@ -79,8 +80,7 @@ func TestMainPasswdServeAndSignal(t *testing.T) {
 	go func() { result = cmd.Wait(); close(finished) }()
 	defer func() { _ = cmd.Process.Kill(); <-finished }()
 	var addr string
-	deadline := time.Now().Add(5 * time.Second)
-	for addr == "" && time.Now().Before(deadline) {
+	testwait.Until(t, 10*time.Millisecond, func() bool {
 		for _, field := range strings.Fields(output.String()) {
 			if strings.HasPrefix(field, "listen=") {
 				addr = strings.Trim(strings.TrimPrefix(field, "listen="), `"`)
@@ -91,17 +91,15 @@ func TestMainPasswdServeAndSignal(t *testing.T) {
 			t.Fatalf("serve command exited before ready: %v %s", result, output.String())
 		default:
 		}
-		if addr == "" {
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-	if addr == "" {
-		t.Fatalf("serve command never listened: %s", output.String())
-	}
-	client := probev1connect.NewAdminServiceClient(&http.Client{Timeout: 2 * time.Second}, "http://"+addr)
+		return addr != ""
+	}, "serve command never listened: %s", output)
+	client := probev1connect.NewAdminServiceClient(&http.Client{Timeout: testwait.Bound}, "http://"+addr)
 	if _, err := client.Login(context.Background(), connect.NewRequest(&probev1.LoginRequest{Password: password})); err != nil {
 		t.Fatalf("command password cannot authenticate real serve: %v", err)
 	}
+	// 排空超时的 ctx 在进程收到信号、进入 shutdownHTTP 之后才开始计。
+	// 若关停总是等满 drainTimeout，从发信号到退出不会早于它。
+	signaled := time.Now()
 	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +108,10 @@ func TestMainPasswdServeAndSignal(t *testing.T) {
 		if result != nil || !strings.Contains(output.String(), "shutting down") {
 			t.Fatalf("serve signal exit: %v %s", result, output.String())
 		}
-	case <-time.After(5 * time.Second):
+		if elapsed := time.Since(signaled); elapsed >= drainTimeout {
+			t.Fatalf("SIGTERM shutdown took %v since signal, want < %v", elapsed, drainTimeout)
+		}
+	case <-time.After(testwait.Bound):
 		t.Fatal("serve command ignored SIGTERM")
 	}
 }
@@ -147,26 +148,20 @@ func checkRepeatedSignalDuringDrain(t *testing.T, sig syscall.Signal) {
 	go func() { result = cmd.Wait(); close(finished) }()
 	defer func() { _ = cmd.Process.Kill(); <-finished }()
 	var addr string
-	deadline := time.Now().Add(5 * time.Second)
-	for addr == "" && time.Now().Before(deadline) {
+	testwait.Until(t, 10*time.Millisecond, func() bool {
 		for _, field := range strings.Fields(output.String()) {
 			if strings.HasPrefix(field, "listen=") {
 				addr = strings.Trim(strings.TrimPrefix(field, "listen="), `"`)
 			}
 		}
-		if addr == "" {
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-	if addr == "" {
-		t.Fatalf("serve never listened: %s", output.String())
-	}
-	conn, err := net.DialTimeout("tcp", addr, time.Second)
+		return addr != ""
+	}, "serve never listened: %s", output)
+	conn, err := net.DialTimeout("tcp", addr, testwait.Bound)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+	if err := conn.SetDeadline(time.Now().Add(testwait.Bound)); err != nil {
 		t.Fatal(err)
 	}
 	// 100 Continue 证明处理器已开始读请求体；故意不发完整正文，让首次信号进入排空等待。
@@ -182,16 +177,14 @@ func checkRepeatedSignalDuringDrain(t *testing.T, sig syscall.Signal) {
 	if response.StatusCode != http.StatusContinue {
 		t.Fatalf("handler did not begin reading: %s", response.Status)
 	}
+	// 排空超时的 ctx 在第一次信号被处理、进入 shutdownHTTP 之后才开始计。
+	signaled := time.Now()
 	if err := cmd.Process.Signal(sig); err != nil {
 		t.Fatal(err)
 	}
-	deadline = time.Now().Add(2 * time.Second)
-	for !strings.Contains(output.String(), "shutting down") && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if !strings.Contains(output.String(), "shutting down") {
-		t.Fatalf("first interrupt did not start draining: %s", output.String())
-	}
+	testwait.Until(t, time.Millisecond, func() bool {
+		return strings.Contains(output.String(), "shutting down")
+	}, "first interrupt did not start draining: %s", output)
 	select {
 	case <-finished:
 		t.Fatalf("first interrupt did not wait for active request: %v", result)
@@ -204,6 +197,7 @@ func checkRepeatedSignalDuringDrain(t *testing.T, sig syscall.Signal) {
 		select {
 		case <-finished:
 			t.Fatalf("second SIGTERM bypassed draining: %v", result)
+		// 负向窗口：第二次 SIGTERM 不应在这段时间内结束排空。窗口短只会漏掉稍晚才被杀掉的缺陷，不会把仍在排空的进程判失败。
 		case <-time.After(150 * time.Millisecond):
 		}
 		// 只有发送剩余正文后请求才可完成；正常退出必须等待它，而不是被重复 SIGTERM 杀死。
@@ -223,7 +217,11 @@ func checkRepeatedSignalDuringDrain(t *testing.T, sig syscall.Signal) {
 			if result != nil {
 				t.Fatalf("SIGTERM drain did not exit cleanly: %v", result)
 			}
-		case <-time.After(3 * time.Second):
+			// 从第一次发信号起算。缺陷路径等满 drainTimeout 才返回，不会早于它。
+			if elapsed := time.Since(signaled); elapsed >= drainTimeout {
+				t.Fatalf("SIGTERM drain took %v since first signal, want < %v", elapsed, drainTimeout)
+			}
+		case <-time.After(testwait.Bound):
 			t.Fatal("SIGTERM drain did not finish after request completed")
 		}
 		return
@@ -234,7 +232,7 @@ func checkRepeatedSignalDuringDrain(t *testing.T, sig syscall.Signal) {
 		if !ok || !status.Signaled() || status.Signal() != syscall.SIGINT {
 			t.Fatalf("second interrupt was not default termination: %v (%v)", status, result)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("second interrupt ignored while draining")
 	}
 }

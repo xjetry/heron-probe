@@ -14,6 +14,7 @@ import (
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/probe/internal/testwait"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -46,7 +47,7 @@ func TestWriteAfterCloseReturnsErrClosed(t *testing.T) {
 				s.writeAsync(fn, func(e error) { result <- e })
 				select {
 				case err = <-result:
-				case <-time.After(2 * time.Second):
+				case <-time.After(testwait.Bound):
 					t.Fatal("closed async write did not notify")
 				}
 			} else {
@@ -362,7 +363,7 @@ func TestCancelBeforeStartSkipsTransaction(t *testing.T) {
 	go func() { _, err := s.CreateNode(ctx, "queued", hash(1)); res <- err }()
 	// 第一个事务占住写协程，队列非空只能来自 CreateNode；确认入队后取消，
 	// 才能检出写协程遗漏取消预检，而不是只覆盖入队前的取消分支。
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testwait.Bound)
 	for len(s.writes) == 0 {
 		if time.Now().After(deadline) {
 			cancel()

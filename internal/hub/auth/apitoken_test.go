@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 func TestNewAPITokenFormat(t *testing.T) {
@@ -79,12 +80,11 @@ func TestAPITokenUseIsRecordedAtMostOncePerMinute(t *testing.T) {
 	}
 	waitLastUsed := func(want time.Time) {
 		t.Helper()
-		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
-			if lastUsed().Equal(want) {
-				return
-			}
-		}
-		t.Fatalf("last used %v, want %v", lastUsed(), want)
+		var got time.Time
+		testwait.Until(t, 5*time.Millisecond, func() bool {
+			got = lastUsed()
+			return got.Equal(want)
+		}, "last used %v, want %v", &got, want)
 	}
 	first := clk.Now().Truncate(time.Second)
 	a.AuthenticateAPIToken(ctx, plain)

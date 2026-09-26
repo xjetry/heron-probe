@@ -15,6 +15,7 @@ import (
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 // memStore 是 Storage 的内存实现：记录每次写入，可注入失败。
@@ -396,7 +397,7 @@ func TestFlushCannotOverwriteSuccessfulAdjust(t *testing.T) {
 	go func() { flushed <- b.Flush(t.Context()) }()
 	select {
 	case <-st.entered:
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("flush did not enter storage")
 	}
 	adjusted := make(chan error, 1)
@@ -413,6 +414,7 @@ func TestFlushCannotOverwriteSuccessfulAdjust(t *testing.T) {
 	select {
 	case adjustErr = <-adjusted:
 		adjustDone = true
+	// 负向窗口：旧快照停在存储入口时校正不应先完成。窗口短只会漏掉稍晚才越过的缺陷，不会把仍被挡住的校正判失败。
 	case <-time.After(100 * time.Millisecond):
 	}
 	release.Do(func() { close(st.gate) })
@@ -421,13 +423,13 @@ func TestFlushCannotOverwriteSuccessfulAdjust(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("flush did not finish")
 	}
 	if !adjustDone {
 		select {
 		case adjustErr = <-adjusted:
-		case <-time.After(5 * time.Second):
+		case <-time.After(testwait.Bound):
 			t.Fatal("adjust did not finish")
 		}
 	}

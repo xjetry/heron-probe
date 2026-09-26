@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/probe/internal/probelimit"
+	"github.com/xjetry/probe/internal/testwait"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
@@ -32,7 +34,7 @@ func TestICMPDatagramWireAndPayload(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer pc.Close()
-			if err := pc.SetDeadline(time.Now().Add(time.Second)); err != nil {
+			if err := pc.SetDeadline(time.Now().Add(testwait.Bound)); err != nil {
 				t.Fatal(err)
 			}
 			key := pendingKey{task: 987654321, seq: 123456}
@@ -92,6 +94,8 @@ func TestICMPLoopbackAndConcurrentTasks(t *testing.T) {
 	for _, target := range []string{"127.0.0.1", "::1"} {
 		probe := task(1)
 		probe.Target = target
+		// 等的是真实回包，性质不是时长。用产品允许的超时上限，负载下回包变慢不会被判成探测超时。
+		probe.TimeoutMs = probelimit.MaxTimeoutMs
 		if out := e.Probe(t.Context(), probe); out.Err != "" || out.Timeout || out.RttUs == 0 {
 			t.Fatalf("target=%s outcome=%+v", target, out)
 		}
@@ -102,8 +106,10 @@ func TestICMPLoopbackAndConcurrentTasks(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			probe := task(id)
+			probe.TimeoutMs = probelimit.MaxTimeoutMs
 			for range 20 {
-				results <- e.Probe(t.Context(), task(id))
+				results <- e.Probe(t.Context(), probe)
 			}
 		}()
 	}
@@ -123,7 +129,7 @@ func TestICMPTimeoutAndClose(t *testing.T) {
 	probe.TimeoutMs = 100
 	start := time.Now()
 	out := e.Probe(t.Context(), probe)
-	if !out.Timeout || out.Err != "" || time.Since(start) >= time.Second {
+	if !out.Timeout || out.Err != "" || time.Since(start) >= 10*time.Duration(probe.TimeoutMs)*time.Millisecond {
 		t.Fatalf("quiet socket=%+v elapsed=%v", out, time.Since(start))
 	}
 	e.Close()
@@ -142,13 +148,16 @@ func TestICMPCloseWakesPendingProbe(t *testing.T) {
 	receive(t, socket.written)
 	start := time.Now()
 	e.Close()
+	// 要验证的是被 Close 唤醒，而不是等到探测超时。窗口小于 TimeoutMs 就能区分；
+	// out.Timeout 与 Err 另锁这条性质。取一半给调度留余量，不是挂死上界。
+	limit := time.Duration(probe.TimeoutMs) * time.Millisecond / 2
 	select {
 	case out := <-result:
-		if out.Err != "icmp closed" || out.Timeout || time.Since(start) >= 500*time.Millisecond {
-			t.Fatalf("pending close=%+v elapsed=%v", out, time.Since(start))
+		if out.Err != "icmp closed" || out.Timeout || time.Since(start) >= limit {
+			t.Fatalf("pending close=%+v elapsed=%v, want wake before %v", out, time.Since(start), limit)
 		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("Close did not wake pending probe within 500ms (timeout 5s)")
+	case <-time.After(testwait.Bound):
+		t.Fatal("Close did not wake pending probe")
 	}
 }
 
@@ -244,6 +253,7 @@ func TestICMPReadErrorsBackOff(t *testing.T) {
 	}
 	e := icmpWithSocket(t, socket)
 	first := receive(t, calls)
+	// 测量窗口：数这段时间内的重试次数，用来核对退避，不是等一件预期会发生的事。
 	time.Sleep(120 * time.Millisecond)
 	e.Close()
 	close(calls)
@@ -265,13 +275,16 @@ func TestICMPReadBackoffResetsAndCaps(t *testing.T) {
 			name = "reset"
 		}
 		t.Run(name, func(t *testing.T) {
+			// 前 failuresBeforeSuccess 次失败把退避推到 readBackoffMin·2^(n-1)。下一次成功若把 delay 清零，
+			// 再失败后的等待是 readBackoffMin。若没清零，那次失败会再翻倍，等待是 readBackoffMin·2^n（受 readBackoffMax 封顶）。
+			const failuresBeforeSuccess = 5
 			socket := newQuietSocket()
 			calls := make(chan time.Time, 16)
 			n := 0
 			socket.read = func(b []byte) (int, net.Addr, error) {
 				n++
 				calls <- time.Now()
-				if reset && n == 6 {
+				if reset && n == failuresBeforeSuccess+1 {
 					b[0] = 0xff
 					return 1, &net.UDPAddr{}, nil
 				}
@@ -279,27 +292,42 @@ func TestICMPReadBackoffResetsAndCaps(t *testing.T) {
 			}
 			e := icmpWithSocket(t, socket)
 			if reset {
-				for range 7 {
+				// 窗口必须落在重置后的 readBackoffMin 与未重置退避之间：长于未重置会把未重置判成通过，过短会在负载下把按时到来的读取判失败。
+				unreset := min(readBackoffMin<<failuresBeforeSuccess, readBackoffMax)
+				window := readBackoffMin + (unreset-readBackoffMin)/2
+				if window <= readBackoffMin || window >= unreset {
+					t.Fatalf("reset window %v is not strictly between %v and %v", window, readBackoffMin, unreset)
+				}
+				for range failuresBeforeSuccess + 2 {
 					receive(t, calls)
 				}
 				select {
 				case <-calls:
-				case <-time.After(200 * time.Millisecond):
-					t.Fatal("successful read did not reset backoff to 10ms")
+				case <-time.After(window):
+					t.Fatalf("successful read did not reset backoff to %v", readBackoffMin)
 				}
 			} else {
-				for range 9 {
+				// 已看到 9 次失败读取；下一次读取前的等待由第 9 次失败设置。
+				// 封顶后是 readBackoffMax。不封顶时是 readBackoffMin·2^8。
+				// 窗口必须长于封顶值才能看见下一次读取，短于不封顶的那一次，否则没封顶也会在窗口内到来。
+				const failuresSeen = 9
+				uncapped := readBackoffMin << (failuresSeen - 1)
+				window := readBackoffMax + (uncapped-readBackoffMax)/2
+				if window <= readBackoffMax || window >= uncapped {
+					t.Fatalf("cap window %v is not strictly between %v and %v", window, readBackoffMax, uncapped)
+				}
+				for range failuresSeen {
 					receive(t, calls)
 				}
 				select {
 				case <-calls:
-				case <-time.After(1500 * time.Millisecond):
-					t.Fatal("read backoff exceeded 1s cap")
+				case <-time.After(window):
+					t.Fatal("read backoff exceeded cap")
 				}
 			}
 			start := time.Now()
 			e.Close()
-			if time.Since(start) >= 500*time.Millisecond {
+			if time.Since(start) >= readBackoffMax {
 				t.Fatalf("Close waited for read backoff: %v", time.Since(start))
 			}
 		})

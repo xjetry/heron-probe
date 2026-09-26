@@ -13,6 +13,8 @@ import (
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/probe/internal/probelimit"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 type dnsAnswer int
@@ -141,7 +143,10 @@ func (c *measuredClock) Mono() time.Duration {
 func TestTCPOutcomes(t *testing.T) {
 	addr, _ := tcpListener(t)
 	p := TCP{Clock: clock.Real()}
-	if out := p.Probe(t.Context(), tcpTask(addr)); out.Err != "" || out.Timeout || out.RttUs == 0 {
+	loopback := tcpTask(addr)
+	// 等的是本机回包，性质不是时长。用产品允许的超时上限，负载下连接变慢不会被判成探测超时。
+	loopback.TimeoutMs = probelimit.MaxTimeoutMs
+	if out := p.Probe(t.Context(), loopback); out.Err != "" || out.Timeout || out.RttUs == 0 {
 		t.Fatalf("loopback=%+v", out)
 	}
 	ln, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -170,14 +175,15 @@ func TestTCPOutcomes(t *testing.T) {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(300 * time.Millisecond):
-			t.Error("dial not bounded by task timeout")
+		// 拨号受任务超时约束由上面的 deadline 检查锁住。这里只在 ctx 从不取消时结束，防止挂死。
+		case <-time.After(testwait.Bound):
+			t.Error("dial context was not canceled")
 			return nil, context.DeadlineExceeded
 		}
 	}
 	start := time.Now()
 	out := p.Probe(t.Context(), blackhole)
-	if !out.Timeout || out.Err != "" || time.Since(start) >= time.Second {
+	if !out.Timeout || out.Err != "" || time.Since(start) >= 10*time.Duration(blackhole.TimeoutMs)*time.Millisecond {
 		t.Fatalf("blackhole=%+v elapsed=%v", out, time.Since(start))
 	}
 }
@@ -191,11 +197,14 @@ func TestTCPMeasuresOnlyConnectionAndCapsRTT(t *testing.T) {
 	clk.beforeSecond = func() {
 		c := receive(t, accepted)
 		defer c.Close()
+		// 负向窗口：这段时间内连接不应已关闭。窗口短只会漏掉稍晚才关掉的缺陷，不会把尚未关闭的连接判失败；拉长会让尚未关闭的成功路径空等。
 		_ = c.SetReadDeadline(time.Now().Add(5 * time.Millisecond))
 		_, err := c.Read(make([]byte, 1))
 		closedEarly = err == io.EOF
 	}
-	out := (TCP{Clock: clk, Resolver: resolver}).Probe(t.Context(), tcpTask(net.JoinHostPort("local.prober.invalid", port)))
+	connected := tcpTask(net.JoinHostPort("local.prober.invalid", port))
+	connected.TimeoutMs = probelimit.MaxTimeoutMs
+	out := (TCP{Clock: clk, Resolver: resolver}).Probe(t.Context(), connected)
 	if out != (Outcome{RttUs: 1000}) || closedEarly {
 		t.Fatalf("connection=%+v closed_before_measurement=%v", out, closedEarly)
 	}

@@ -196,6 +196,7 @@ func TestRegistryLoadWaitsForPublication(t *testing.T) {
 	select {
 	case loadErr = <-loaded:
 		early = true
+	// 负向窗口：持锁期间 Load 不应返回。窗口短只会漏掉稍晚才提前返回的缺陷，不会把仍在等锁的 Load 判失败。
 	case <-time.After(100 * time.Millisecond):
 	}
 	saved, version, err := st.SaveProbeTask(t.Context(), task("new.example"), ids)

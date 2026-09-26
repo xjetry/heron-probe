@@ -12,6 +12,7 @@ import (
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 type rawResult struct {
@@ -198,8 +199,7 @@ func TestListApiTokensShowsLastUse(t *testing.T) {
 	_, tok := createToken(t, h, "seen")
 	createToken(t, h, "unseen")
 	rawCall(t, h, "ListNodes", "{}", bearer(tok))
-	deadline := time.Now().Add(2 * time.Second)
-	for {
+	testwait.Until(t, 5*time.Millisecond, func() bool {
 		resp, err := h.admin.ListApiTokens(context.Background(), connect.NewRequest(&probev1.ListApiTokensRequest{}))
 		if err != nil {
 			t.Fatal(err)
@@ -211,15 +211,12 @@ func TestListApiTokensShowsLastUse(t *testing.T) {
 		if list[1].LastUsedAt != nil {
 			t.Fatalf("unused token reports a last use: %v", list[1])
 		}
-		if list[0].LastUsedAt != nil {
-			if list[0].GetLastUsedAt() != h.clk.Now().Unix() {
-				t.Fatalf("last used %d, want %d", list[0].GetLastUsedAt(), h.clk.Now().Unix())
-			}
-			return
+		if list[0].LastUsedAt == nil {
+			return false
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("last use never recorded")
+		if list[0].GetLastUsedAt() != h.clk.Now().Unix() {
+			t.Fatalf("last used %d, want %d", list[0].GetLastUsedAt(), h.clk.Now().Unix())
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
+		return true
+	}, "last use never recorded")
 }

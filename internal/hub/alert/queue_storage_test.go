@@ -15,13 +15,15 @@ import (
 	"time"
 
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 // 外部连接只在故障用例中安装/移除 SQLite 故障；不向 Store 或 Queue 暴露生产钩子。
 func deliveryDB(t *testing.T, f *fixture) *sql.DB {
 	t.Helper()
 	u := url.URL{Path: f.path}
-	db, err := sql.Open("sqlite", "file:"+u.EscapedPath()+"?_pragma=busy_timeout(5000)")
+	// DDL 等产品写锁。窗口只为锁久占时能结束，不参与被测性质，所以用正向等待上界，不必与 store 的 busy_timeout 取同一值。
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)", u.EscapedPath(), testwait.Bound.Milliseconds()))
 	must(t, err)
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { must(t, db.Close()) })
@@ -125,7 +127,7 @@ func TestResultWriteFailuresCannotExceedSendBudget(t *testing.T) {
 		return nil
 	}, f.log)
 	must(t, q.Requeue(t.Context()))
-	timer := time.AfterFunc(5*time.Second, cancel)
+	timer := time.AfterFunc(testwait.Bound, cancel)
 	defer timer.Stop()
 	q.Run(ctx)
 	mu.Lock()

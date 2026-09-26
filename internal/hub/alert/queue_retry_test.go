@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 const rejectResult = "CREATE TRIGGER reject_result BEFORE UPDATE ON alert_delivery WHEN NEW.done = 1 OR NEW.ok = 1 BEGIN SELECT RAISE(ABORT, 'result write blocked'); END"
@@ -61,7 +63,7 @@ func TestQueueRefillReadFailureRetainsSignal(t *testing.T) {
 	stop := startQueue(t, q)
 	select {
 	case <-slept:
-	case <-time.After(3 * time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("refill failure did not sleep")
 	}
 	awaitDeliveries(t, f, a.ID, allDone)
@@ -114,7 +116,7 @@ func TestQueueFailureBackoffCapsAndResetsAfterCompletion(t *testing.T) {
 	stop := startQueue(t, q)
 	select {
 	case <-ready:
-	case <-time.After(3 * time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("failure backoff did not reach cap")
 	}
 	awaitDeliveries(t, f, first.ID, allDone)
