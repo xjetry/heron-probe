@@ -54,7 +54,18 @@ func dsn(path string, extra string) string {
 	return "file:" + u.EscapedPath() + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)" + extra
 }
 
+// Open 打开库并迁移到当前 schema。SQLite 打开失败的报错不带文件名（如 unable to open database file (14)）；
+// serve 与离线子命令都经这里打开库，打开过程的每一种失败都在这一层补上路径，报错才指得出是哪个文件、
+// 该查哪个目录的权限。
 func Open(path string, clk clock.Clock, log *slog.Logger) (*Store, error) {
+	s, err := openStore(path, clk, log)
+	if err != nil {
+		return nil, fmt.Errorf("open database %s: %w", path, err)
+	}
+	return s, nil
+}
+
+func openStore(path string, clk clock.Clock, log *slog.Logger) (*Store, error) {
 	w, err := sql.Open("sqlite", dsn(path, ""))
 	if err != nil {
 		return nil, err
@@ -62,9 +73,7 @@ func Open(path string, clk clock.Clock, log *slog.Logger) (*Store, error) {
 	w.SetMaxOpenConns(1)
 	if err := migrate(w); err != nil {
 		w.Close()
-		// SQLite 打开失败的报错不带文件名（如 unable to open database file (14)）；serve 与离线子命令
-		// 都经这里打开库，在这一层补上路径，报错才指得出是哪个文件、该查哪个目录的权限。
-		return nil, fmt.Errorf("open database %s: %w", path, err)
+		return nil, err
 	}
 	r, err := sql.Open("sqlite", dsn(path, "&_pragma=query_only(1)"))
 	if err != nil {
