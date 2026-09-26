@@ -63,7 +63,7 @@ internal/hub/
   probe/     探测任务、分配与版本号
   alert/     巡检、状态机、通知渠道与投递队列
   auth/      管理员会话、API token、节点 token、注册窗口、可信代理
-  ratelimit/ 按来源的令牌桶与挂载点中间件（来源键经 auth.ClientIP，IPv6 按 /64）；Register 与 PublicService 共用
+  ratelimit/ 按来源的令牌桶与挂载点中间件（来源键经 auth.ClientIP 与 auth.SourceKey，IPv6 按 /64）；Register 与 PublicService 共用
   api/       AdminService / PublicService 实现
   web/       嵌入的面板与公开页两份产物 + 静态目录替换，三者共用只服务普通文件的核心
 internal/agent/
@@ -83,7 +83,7 @@ deploy/               install.sh、systemd 单元、OpenRC 服务脚本（§14�
 |---|---|---|
 | `probe.v1.AgentService` | agent | 节点 bearer token（`Register` 用注册窗口 key） |
 | `probe.v1.AdminService` | 管理面板；agent 与脚本 | 会话 cookie；标为只读的方法另接受 API token（§5.6） |
-| `probe.v1.PublicService` | 公开页、第三方主题 | 无，按来源 IP 限流 |
+| `probe.v1.PublicService` | 公开页、第三方主题 | 无，按来源键限流（§5.3） |
 
 鉴权由"服务挂载时绑定的拦截器"承载，不在方法内逐个检查：新增方法无法漏掉鉴权，因为不存在未绑定拦截器的挂载点。
 
@@ -220,16 +220,16 @@ agent 与 hub 不同时升级。hub 必须接受旧 agent 的上报（缺失的 
 
 ### 5.2 注册窗口
 
-管理员在面板开启注册窗口：生成一次性 key，带截止时间与可注册节点数上限。窗口关闭与 key 错误返回同一响应。失败计数按来源 IP 独立于登录失败计数：批量安装时用了过期 key 是配置失误而不是对面板的攻击，共用计数会把运维者自己锁在登录页外。只有窗口开启且 key 错误才计数；窗口关闭时没有可猜的秘密，计数只会误伤与他人共用出口地址的运维者。
+管理员在面板开启注册窗口：生成一次性 key，带截止时间与可注册节点数上限。窗口关闭与 key 错误返回同一响应。失败计数按来源键（§5.3）独立于登录失败计数：批量安装时用了过期 key 是配置失误而不是对面板的攻击，共用计数会把运维者自己锁在登录页外。只有窗口开启且 key 错误才计数；窗口关闭时没有可猜的秘密，计数只会误伤与他人共用出口地址的运维者。
 
-`Register` 是 `AgentService` 唯一的匿名方法，因此按来源 IP 令牌桶限速（桶容量 30、每秒补充 1，超限返回 `ResourceExhausted`），与 `PublicService` 的按 IP 限流同一原则。限速在 connect 解码之前（解码失败的请求也计数；挂载点上按路径的 HTTP 中间件，窗口失败计数用它算出的同一个来源地址）生效：窗口关闭时匿名请求也到不了写协程，否则任何人都能用几十字节的请求体让分钟刷出与 facts 落盘排在自己的事务之后。批量安装脚本遇到 `ResourceExhausted` 按退避重试即可。
+`Register` 是 `AgentService` 唯一的匿名方法，因此按来源键令牌桶限速（桶容量 30、每秒补充 1，超限返回 `ResourceExhausted`），与 `PublicService` 的限流同一原则。限速在 connect 解码之前（解码失败的请求也计数；挂载点上按路径的 HTTP 中间件，窗口失败计数用它算出的同一个来源地址）生效：窗口关闭时匿名请求也到不了写协程，否则任何人都能用几十字节的请求体让分钟刷出与 facts 落盘排在自己的事务之后。批量安装脚本遇到 `ResourceExhausted` 按退避重试即可。
 
 ### 5.3 管理员
 
 - 单管理员。密码用 argon2id 存储，通过 `probe-hub passwd` 在 hub 主机上交互设置；没有经网络的首次设置页，也就没有"谁先访问谁占有"的窗口。
 - 管理员表为空时登录一律失败。空表的语义是"无人可登录"而不是"无需认证"，由登录路径上的显式检查承载。
 - 会话 token 为 32 字节随机数，库中只存 SHA-256，带绝对过期与空闲过期。cookie：`HttpOnly`、`SameSite=Strict`，`Secure` 由可信代理转发的协议决定。修改密码即清空全部会话；API token 不随之吊销（§5.6）。
-- 登录失败按来源 IP 锁定。
+- 登录失败按来源键锁定。来源键由 `auth.SourceKey` 统一归一化（IPv4 按单个地址，IPv4 映射地址先还原；IPv6 按 /64——一台主机通常拥有整个 /64，逐地址计等于不计），登录锁定、注册窗口失败计数与两处限流（§5.2、§10）共用同一个键。
 - 跨站请求伪造由以下几条各自独立的事实约束，不指定其中哪一条是"主要防线"：会话 cookie 为 `SameSite=Strict`；hub 不下发任何 CORS 允许头；`AdminService` 不把任何方法标为无副作用（因而不接受 GET）；Connect 处理器对 `application/json` 与 `application/proto` 之外的 `Content-Type` 拒绝服务，而浏览器的跨站"简单请求"发不出这两种类型。最后一条是对 connect-go 行为的断言，列入 §13 并由 §12 的测试钉住。
 
 ### 5.4 TLS 与可信代理
@@ -432,12 +432,12 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 
 公开页与 `PublicService` 的细节：
 
-- 内容：总览是节点卡片（名称、在线、系统与架构、CPU、内存、磁盘、网速、运行时长、本周期流量），节点页是历史图表（指标与探测，时间范围选择与面板同一组件）。图表组件与面板共用；公开入口不得引用 `AdminService` 的生成代码，由测试扫描公开入口的 import 钉住，构建产物再按描述符前缀核对一次；依赖方向只禁止公开到管理，面板可以引用公开页的常量。配色用 `light-dark()` 加 `color-scheme`，站点设置的明暗经 `html[data-theme]` 压过系统设置，图表颜色由浏览器解析成 rgb 再交给 uPlot（canvas 不认 `light-dark()`）；浏览器下限 Chrome 123、Firefox 120、Safari 17.5。公开入口的产物在 `internal/hub/web/dist-public`。
+- 内容：总览是节点卡片（名称、在线、系统与架构、CPU、内存、磁盘、网速、运行时长、本周期流量），节点页是历史图表（指标与探测，时间范围选择与面板同一组件）。图表组件与面板共用；公开入口不得引用 `AdminService` 的生成代码，由测试扫描公开入口的 import 钉住，构建后再按描述符前缀对产物做一次性 grep 核对（不是常驻检查）；依赖方向只禁止公开到管理，面板可以引用公开页的常量。配色用 `light-dark()` 加 `color-scheme`，站点设置的明暗经 `html[data-theme]` 压过系统设置，图表颜色由浏览器解析成 rgb 再交给 uPlot（canvas 不认 `light-dark()`）；浏览器下限 Chrome 123、Firefox 120、Safari 17.5。公开入口的产物在 `internal/hub/web/dist-public`。
 - 消息：`PublicSnapshot`（`now`、`report_interval_ms`、`nodes`）；`PublicNode`（id、名称、在线、最近上报、排序、`PublicFacts`、`PublicMetrics`、`Traffic`）。`PublicFacts` 只有系统、架构、CPU 型号、核数、虚拟化——不给主机名、内核版本、agent 版本、ICMP 可用性；`PublicMetrics` 与 `Metrics` 同字段但没有 `boot_id`。两者沿用源消息的字段号，不公开的号连名带号 `reserved`——要公开 `hostname` 这类字段必须先删掉 `reserved` 行，是一个显式动作；值由投影按字段名从源消息复制，字段集合由公开消息自己声明（`Metrics` 以后加字段不会自动公开），构造时逐字段核对名字、类型、基数与 presence，任一不符即 panic。`QueryMetrics` 与 `QueryProbes` 复用管理端的请求与响应类型（定义在 `query.proto`：`public.proto` 若 import `admin.proto`，protoc-gen-es 会让公开包带上 `AdminService` 的描述符）；`GetSite` 直接返回 `PublicSite`、`GetSnapshot` 直接返回 `PublicSnapshot`，第三方主题拿到的 JSON 顶层就是快照本身。把节点标为公开即公开它正在探测的目标：`ProbeSeries` 带任务的种类与目标，公开端只给当前分配给该节点的任务打标签（历史里出现、现已撤下的任务留空——它改成内网目标后从未被该节点探测过，不在公开范围内），管理端按任务当前配置标注、已删除的任务留空；面板图例也用序列自带的标签。缓存上界以 `cache_max_age_s` 方法选项写在 proto 里，与 `probe.v1.access` 同一口径：proto 是单一事实源，第三方主题在 proto 注释里就能看到。
-- 限流：按来源 IP 令牌桶，桶容量 60、每秒补充 10，超限 `ResourceExhausted`，与 `Register` 的限速同一实现（§5.2，`internal/hub/ratelimit`）。两处都是挂载点上的 HTTP 中间件而不是拦截器（`Register` 按路径恰为 `/probe.v1.AgentService/Register` 匹配，`Report` 不进桶；公开服务是整个挂载点都经过它）：解码先于拦截器，拦截器看不到解码失败的请求；公开服务还要包在快照缓存外面，缓存命中在 connect 处理器之前应答。只有这样每个请求（含解码失败的）都计数。来源键：IPv4 按单个地址，IPv6 按 /64（一台主机通常拥有整个 /64，逐地址计键等于不限流）；超限的 429 同样带 `no-store`。hub 在反向代理之后而没有配 `--trusted-proxies` 时，全部访客共用代理地址的一个桶（公开页每 2 秒轮询，约 20 个并发访客即触发 429）——这是部署配置问题，写在 flag 帮助与 README 的反代一节，不改限流。
+- 限流：按来源键令牌桶，桶容量 60、每秒补充 10，超限 `ResourceExhausted`，与 `Register` 的限速同一实现（§5.2，`internal/hub/ratelimit`）。两处都是挂载点上的 HTTP 中间件而不是拦截器（`Register` 按路径恰为 `/probe.v1.AgentService/Register` 匹配，`Report` 不进桶；公开服务是整个挂载点都经过它）：解码先于拦截器，拦截器看不到解码失败的请求；公开服务还要包在快照缓存外面，缓存命中在 connect 处理器之前应答。只有这样每个请求（含解码失败的）都计数。来源键：IPv4 按单个地址，IPv6 按 /64（一台主机通常拥有整个 /64，逐地址计键等于不限流）；超限的 429 同样带 `no-store`。hub 在反向代理之后而没有配 `--trusted-proxies` 时，全部访客共用代理地址的一个桶（每个打开的公开页每 2 秒轮询一次即 0.5 次/秒，补充 10 次/秒：超过 20 个打开的页面后消耗持续多于补充，30 个页面时净流出 5 次/秒、60 的桶约 12 秒耗尽后出现 429）——这是部署配置问题，写在 flag 帮助与 README 的反代一节，不改限流。
 - 缓存：`GetSnapshot` 的序列化结果按编码缓存 1 秒，缓存的是响应字节而不是消息：只缓存规范形态的请求，键是 {GET 或 POST, codec, 协商出的压缩}，其余形态直通 connect；协商压缩只读 `Accept-Encoding` 的第一行，与 connect 一致；节点改为私有后公开快照里最多还能看到它约 2 秒（hub 缓存 1 秒加下游 `max-age=1`）。公开页只在加载时取 `GetSite`，已打开的页面刷新后才看到外观改动，刷新时浏览器还可能再用最多 5 分钟的缓存。GET 响应的 `Cache-Control`：快照 `max-age=1`、历史查询 `max-age=60`、站点配置 `max-age=300`；失败响应带 `no-store`（节点改回公开后浏览器不会继续用缓存的 NotFound）；POST 响应不带缓存头。
 - 设置：`setting` 表是键值表；`GetSettings` 为只读口径、`UpdateSettings` 仅会话。字段与上限：标题不超过 64 个字符；明暗为 `auto`、`light`、`dark` 之一；主色为 `#rrggbb`；logo 为 `data:` URL，图片类型限 png、jpeg、webp、svg，不超过 128 KiB；自定义 CSS 不超过 64 KiB，含 `</` 即拒绝（它能跳出注入点的 `<style>`）。校验错误写明字段、违反的约束与期望取值；任一项不合约束整次更新不写入。logo 只接受 `data:<type>;base64,<data>` 这一种写法（type 全小写、不带参数；data 逐字节核对标准 base64 字母表后 Strict 解码——宽松解析与浏览器解析一旦不一致，白名单就能被绕过）。CSS 不清洗、按字节原样存，只查字面 `</`（它本身不含字母，一条就覆盖全部大小写变体；CSS 转义与 HTML 实体在 `<style>` 的 RAWTEXT 里都不解码，不拒绝）。表结构 `setting(key TEXT PRIMARY KEY, value TEXT NOT NULL)`，不用 `WITHOUT ROWID`（值可达 128 KiB，超出 SQLite 对无 rowid 表的建议行大小）；键 `site.title`、`site.theme`、`site.accent_color`、`site.logo`、`site.custom_css` 是持久标识；从未保存过时明暗为 `auto`、其余为空串（空标题即内置标题）。标题有两道限：清洗前不超过 1024 字节，去掉控制字符与首尾空白后不超过 64 个字符。管理请求的解码预算由这些上限推出：`maxLogoBytes + 6 × maxCSSBytes + 6 × maxTitleBytes + 4 KiB`（CSS 与标题的每个字节在 JSON 里最坏转义成 6 字节，4 KiB 留给字段名；多余的 JSON 空白不在预算内）＝ 534528 字节，`AdminService` 只此一个预算——解码先于鉴权拦截器，所以 `AdminService` 全部过程的匿名请求读取上限随之变大但仍有界（`Register` 在 `AgentService` 上，用 ingest 自己的 256 KiB 上限，不受影响）；按路径分预算要在 connect 外再加一层与解压后上限配合的读者，不值。`GetSite` 下发这五项，公开页以 CSS 变量应用，自定义 CSS 放在其后。
-- 静态服务：内置公开页与面板用同一套 CSP；`--public-dir` 只加 `X-Content-Type-Options: nosniff` 与 `frame-ancestors 'none'`，不限制脚本与外部资源——目录由运维放置，严格 CSP 会让第三方主题的字体与图片失效。面板、内置公开页与 `--public-dir` 共用一个只服务普通文件的核心：目录、FIFO、设备一律当作不存在，路径任一段以 `.` 开头的名字也当作不存在（`.git/config`、`.env` 是运维放目录时最常见的泄漏），因此任何来源都不列目录、也不会在特殊文件上阻塞（打开带 `O_NONBLOCK`）；`assets/` 下未命中返回 404（`/admin/assets` 因此是 404 而不是重定向），其余回落 `index.html`；自定义目录一律 `no-cache`，每个请求重新 `os.OpenRoot`，目录被原子替换后下一个请求就读到新内容；启动时核对其 `index.html` 是普通文件，否则 `serve` 在打开数据库之前报错。`/` 就是公开页，不再重定向到 `/admin/`。未构建前端时 `/` 与面板一样返回"前端未构建"的说明。
+- 静态服务：内置公开页与面板用同一套 CSP；`--public-dir` 只加 `X-Content-Type-Options: nosniff` 与 `frame-ancestors 'none'`，不限制脚本与外部资源——目录由运维放置，严格 CSP 会让第三方主题的字体与图片失效。面板、内置公开页与 `--public-dir` 共用一个只服务普通文件的核心：目录、FIFO、设备一律当作不存在，路径任一段以 `.` 开头的名字也当作不存在（`.git/config`、`.env` 是运维放目录时最常见的泄漏；`.well-known/` 因此也不服务，ACME http-01 之类由反代完成），因此任何来源都不列目录、也不会在特殊文件上阻塞（打开带 `O_NONBLOCK`）；`assets/` 下未命中返回 404（`/admin/assets` 因此是 404 而不是重定向），其余回落 `index.html`；自定义目录一律 `no-cache`，每个请求重新 `os.OpenRoot`，目录被原子替换后下一个请求就读到新内容；启动时核对其 `index.html` 是普通文件，否则 `serve` 在打开数据库之前报错。`/` 就是公开页，不再重定向到 `/admin/`。未构建前端时 `/` 与面板一样返回"前端未构建"的说明。
 - `GetStorageStats`（只读口径）返回库大小与各表行数，与 `probe-hub stats` 同一来源：表名取自 `sqlite_master` 而不是手写清单（手写清单曾漏掉三张表）；库大小是逻辑大小 `page_count × page_size`——WAL 下主文件大小滞后于内容，逻辑大小等于检查点之后的主文件大小。CLI 先一行 `db_bytes: N`，再逐表 `name: rows` 按表名升序。行数是聚合值，API token 可读：看到 `api_token`、`admin_session` 的行数不构成列出 token（§5.6 禁的是枚举与吊销其他 token）。
 
 第三方主题 = 调 `PublicService` 的静态站点，框架自选；Connect unary 即 HTTP POST + JSON，直接 `fetch` 可用。
