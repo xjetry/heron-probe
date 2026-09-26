@@ -82,11 +82,11 @@ func (p *Public) connectHandler() (string, http.Handler) {
 	return probev1connect.NewPublicServiceHandler(p, connect.WithReadMaxBytes(publicMaxBody))
 }
 
-// Handler 是公开服务唯一的挂载点：cacheControl(BySource(connect))。限流包在 connect 之外，解码失败的请求同样计数
-// （ratelimit.BySource 的注释写了理由）；缓存头包在最外面，限流的 429 也带 no-store。
+// Handler 是公开服务唯一的挂载点：cacheControl(BySource(snapshotCache(connect)))。限流包在缓存与 connect 之外，
+// 缓存命中与解码失败的请求同样计数；缓存头包在最外面，限流的 429 也带 no-store。
 func (p *Public) Handler() (string, http.Handler) {
 	path, h := p.connectHandler()
-	return path, p.cacheControl(ratelimit.BySource(p.limit, p.cfg.TrustedProxies, p.clk, h))
+	return path, p.cacheControl(ratelimit.BySource(p.limit, p.cfg.TrustedProxies, p.clk, newSnapshotCache(h, p.clk)))
 }
 
 // cacheControl 只作用于 GET：GET 的 URL 就是缓存键，浏览器与中间缓存可以复用；POST 响应不带缓存头。
