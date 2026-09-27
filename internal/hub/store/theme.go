@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -170,4 +171,41 @@ func (s *Store) ThemePreview(ctx context.Context, id string) (Theme, []byte, err
 		return Theme{}, nil, err
 	}
 	return t, content, nil
+}
+
+// EnabledThemeFiles 在启用中的主题里按路径取文件内容，返回 path→content（没有的路径不在其中）与"是否有启用中的主题"。
+// 全部路径在一条语句里读出：SQLite 的单条语句读的是同一个快照，所以返回的文件同属一个完整的包——托管在请求路径未命中时
+// 回落 index.html，两者分两次读的话，中间换了启用主题或整包替换会拼出两个包的混合，删掉主题则让回落读空。
+// 没有启用中的主题时 enabled 为假：调用方据此回落内置公开页，而不是把它当作"文件都不存在"。
+func (s *Store) EnabledThemeFiles(ctx context.Context, paths []string) (files map[string][]byte, enabled bool, err error) {
+	if len(paths) == 0 {
+		return nil, false, errors.New("EnabledThemeFiles: no paths")
+	}
+	args := make([]any, len(paths))
+	for i, p := range paths {
+		args[i] = p
+	}
+	// LEFT JOIN 让启用中的主题至少产出一行（路径都没命中时 path 为 NULL），零行才表示没有启用中的主题。
+	rows, err := s.r.QueryContext(ctx, "SELECT f.path, f.content FROM theme t LEFT JOIN theme_file f ON f.theme_id = t.id AND f.path IN (?"+
+		strings.Repeat(", ?", len(paths)-1)+") WHERE t.enabled = 1", args...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	files = map[string][]byte{}
+	for rows.Next() {
+		enabled = true
+		var path sql.NullString
+		var content []byte
+		if err := rows.Scan(&path, &content); err != nil {
+			return nil, false, err
+		}
+		if path.Valid {
+			files[path.String] = content
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	return files, enabled, nil
 }

@@ -238,3 +238,44 @@ func TestEnableThemeKeepsAtMostOneAndDeleteFallsBack(t *testing.T) {
 		t.Fatalf("preview of a theme without one = %+v %q %v, want the theme and no content", th, content, err)
 	}
 }
+
+// 托管只读启用中的主题：别的主题里同名的文件不会被读到；没有启用中的主题与"启用了但路径都没命中"是两个不同的答案，
+// 前者让主题 origin 回落内置公开页，后者按包内的回落规则处理。
+func TestEnabledThemeFilesReadsOnlyTheEnabledPackage(t *testing.T) {
+	s, _ := open(t)
+	lookup := func(paths ...string) (map[string]string, bool) {
+		t.Helper()
+		files, enabled, err := s.EnabledThemeFiles(t.Context(), paths)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]string{}
+		for p, c := range files {
+			out[p] = string(c)
+		}
+		return out, enabled
+	}
+	if files, enabled := lookup("index.html"); enabled || len(files) != 0 {
+		t.Fatalf("no theme installed: %v %v, want nothing enabled", files, enabled)
+	}
+	putTheme(t, s, "a", "index.html", "assets/app.js")
+	putTheme(t, s, "b", "index.html", "assets/app.js", "only-b.css")
+	if files, enabled := lookup("index.html"); enabled || len(files) != 0 {
+		t.Fatalf("themes installed but none enabled: %v %v, want nothing enabled", files, enabled)
+	}
+	if err := s.EnableTheme(t.Context(), "a"); err != nil {
+		t.Fatal(err)
+	}
+	if files, enabled := lookup("assets/app.js", "index.html"); !enabled || !reflect.DeepEqual(files, map[string]string{"assets/app.js": "a:assets/app.js", "index.html": "a:index.html"}) {
+		t.Fatalf("theme a enabled: %v %v", files, enabled)
+	}
+	if files, enabled := lookup("only-b.css", "missing.js"); !enabled || len(files) != 0 {
+		t.Fatalf("paths missing from the enabled theme: %v %v, want enabled with no files", files, enabled)
+	}
+	if err := s.DeleteTheme(t.Context(), "a"); err != nil {
+		t.Fatal(err)
+	}
+	if files, enabled := lookup("index.html"); enabled || len(files) != 0 {
+		t.Fatalf("enabled theme deleted: %v %v, want nothing enabled", files, enabled)
+	}
+}
