@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
-import { AlertDeliverySchema, AlertKind, AlertRuleSchema, AlertStateEntrySchema, ChannelKind, DeliveryFailure, DeliveryFailureSchema, ListProbeTasksResponseSchema, NotifyChannelSchema, ProbeMetric, ProbeTaskDetailSchema } from "../gen/probe/v1/admin_pb";
+import { AlertDeliverySchema, AlertKind, AlertKindSchema, AlertRuleSchema, AlertStateEntrySchema, ChannelKind, DeliveryFailure, DeliveryFailureSchema, ListProbeTasksResponseSchema, NotifyChannelSchema, ProbeMetric, ProbeTaskDetailSchema } from "../gen/probe/v1/admin_pb";
 import { ProbeKind } from "../gen/probe/v1/types_pb";
-import { CHANNEL_KINDS, channelTarget, deliveryText, failureText, graceText, labelOf, ruleCondition, statesOf, taskLabel, taskLabels, transitionLabel } from "./alerts";
+import { ALERT_KINDS, CHANNEL_KINDS, channelTarget, deliveryText, failureText, graceText, labelOf, ruleCondition, statesOf, taskLabel, taskLabels, transitionLabel } from "./alerts";
 import { PROBE_KINDS } from "./probes";
 
 describe("taskLabel", () => {
@@ -56,6 +56,9 @@ describe("ruleCondition", () => {
   it("丢包规则带百分号", () => {
     const r = create(AlertRuleSchema, { kind: AlertKind.PROBE, taskId: 3n, metric: ProbeMetric.LOSS_PCT, threshold: 50, forMinutes: 3 });
     expect(ruleCondition(r, tasks)).toBe("TCP 1.1.1.1:443 丢包率 ≥ 50%，连续 3 分钟");
+  });
+  it("到期规则写出提前天数", () => {
+    expect(ruleCondition(create(AlertRuleSchema, { kind: AlertKind.EXPIRY, daysBefore: 14 }), tasks)).toBe("到期日距今不超过 14 天（含已过期）");
   });
   it("RTT 规则带 ms，已删除任务用编号", () => {
     const r = create(AlertRuleSchema, { kind: AlertKind.PROBE, taskId: 9n, metric: ProbeMetric.RTT_MS, threshold: 150, forMinutes: 5 });
@@ -115,6 +118,13 @@ describe("deliveryText", () => {
       expect(got, name).not.toMatch(/^类别 /);
     }
   });
+});
+
+it("类型表覆盖协议枚举里除未指定之外的每个种类", () => {
+  for (const { number, name } of AlertKindSchema.values) {
+    if (number === AlertKind.UNSPECIFIED) continue;
+    expect(labelOf(ALERT_KINDS, number), name).not.toMatch(/^未知/);
+  }
 });
 
 it("transitionLabel 认识两种变化，未知值原样显示", () => {
