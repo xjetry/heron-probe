@@ -12,16 +12,23 @@ PROC=$ROOT/proc
 SVC_USER=probe-hub
 REPO=https://github.com/xjetry/probe
 VERSION=""; BASE_URL=""; UNINSTALL=0; PURGE=0; YES=0; OVERRIDES=""
+nl='
+'
+cr=$(printf '\r')
 usage() {
   echo 'usage: install-hub.sh [--version VERSION] [--base-url URL] [--listen ADDR] [--timezone ZONE] [--trusted-proxies CIDRS] [--public-dir DIR] [--retention-1m DURATION] [--retention-5m DURATION] [--retention-1h DURATION] [--retention-alert-events DURATION] [--yes]' >&2
   echo '       install-hub.sh --uninstall [--purge] [--yes]' >&2
   exit 2
 }
 fail() { echo "$*" >&2; exit 1; }
-# 每个参数单独引用；systemd 会展开 $ 与 %，两者必须双写才能保持命令行给出的字面值。
+# 写回的单元一行一条指令，参数里带换行会把 ExecStart 断成两行；回车一并拒绝，不依赖 systemd 对行内回车的处理。
+# 命令行覆盖值按行暂存到合并那一步，带换行的值还会被拆成两个参数，所以解析命令行时就要拒绝。
+reject_line_breaks() {
+  case "$1" in *"$nl"*|*"$cr"*) fail 'arguments must not contain line breaks';; esac
+}
+# 每个参数单独引用；systemd 会展开 $ 与 %，两者必须双写才能保持字面值。
 quote_arg() {
-  case "$1" in *'
-'*|*''*) fail 'arguments must not contain line breaks';; esac
+  reject_line_breaks "$1"
   quoted=$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\$/$$/g; s/%/%%/g')
   quoted="\"$quoted\""
 }
@@ -33,8 +40,9 @@ while [ "$#" -gt 0 ]; do
       shift 2;;
     --listen|--timezone|--trusted-proxies|--public-dir|--retention-1m|--retention-5m|--retention-1h|--retention-alert-events)
       [ "$#" -ge 2 ] || usage
-      quote_arg "$1=$2"
-      OVERRIDES="$OVERRIDES $quoted"
+      reject_line_breaks "$2"
+      # 每行一条字面值的 --flag=value，稍后与已装参数按 flag 名合并。
+      OVERRIDES="$OVERRIDES$1=$2$nl"
       shift 2;;
     --uninstall) UNINSTALL=1; shift;;
     --purge) PURGE=1; shift;;
@@ -234,30 +242,45 @@ for f in probe-hub probe-hub.service; do
 done
 install -m 0755 "$work/probe-hub" "$BIN_TMP"
 
+# 单元里 [Service] 段的 ExecStart 值，每个一行。主单元与 drop-in 用这同一个谓词：注释行跳过、续行先拼接、
+# 首尾空白去掉（含 CRLF 行尾的回车），键名与等号之间允许空白（systemd 接受 `ExecStart = …`）。口径不一时，
+# drop-in 里 `ExecStart = …` 这类写法会漏过检查，systemd 却照样采用它。以续行结尾的文件视为无法解析。
+exec_starts() {
+  awk '
+    /^[[:space:]]*[#;]/ { next }
+    {
+      line = $0
+      sub(/[[:space:]]+$/, "", line)
+      line = pending line; pending = ""
+      if (sub(/\\$/, " ", line)) { pending = line; next }
+      sub(/^[[:space:]]+/, "", line)
+      if (line ~ /^\[/) service = (line == "[Service]")
+      else if (service && line ~ /^ExecStart[[:space:]]*=/) { sub(/^ExecStart[[:space:]]*=[[:space:]]*/, "", line); print line }
+    }
+    END { if (pending != "") exit 1 }
+  ' "$1"
+}
+
 # 不执行单元内容，也不按空格粗拆：带引号的目录必须作为一个参数保留。
 # 未支持的 systemd 动态展开与转义在停服前拒绝，而不是静默变成另一组参数。
 source_unit=$work/probe-hub.service
 if [ -f "$UNIT" ]; then
-  systemctl cat probe-hub </dev/null > "$work/loaded-unit"
-  # 保留下来的 drop-in 若改 ExecStart，会盖掉写进主单元的显式覆盖参数；不涉及命令的全局加固项不受影响。
-  awk '
-    /^# \// { source = substr($0, 3) }
-    /^[[:space:]]*ExecStart[[:space:]]*=/ && source != "/etc/systemd/system/probe-hub.service" { exit 1 }
-  ' "$work/loaded-unit" || fail 'merge ExecStart drop-ins into probe-hub.service before upgrading'
+  # 保留下来的 drop-in 若设 ExecStart，会盖掉写进主单元的参数，显式覆盖也随之失效；不涉及命令的 drop-in
+  # （如全局加固项）不受影响。drop-in 列表取 systemd 自己报告的 DropInPaths，拼上 PROBE_INSTALL_ROOT 再读；
+  # 列出来却读不到的无法判定，一并拒绝。
+  dropins=$(systemctl show probe-hub -p DropInPaths --value </dev/null) || fail 'cannot list probe-hub drop-ins'
+  set -f
+  for dropin in $dropins; do
+    [ -f "$ROOT$dropin" ] || fail "cannot read probe-hub drop-in $dropin"
+    exec_starts "$ROOT$dropin" > "$work/dropin-exec" || fail "cannot parse probe-hub drop-in $dropin"
+    [ ! -s "$work/dropin-exec" ] || fail "drop-in $dropin sets ExecStart; merge it into probe-hub.service before upgrading"
+  done
+  set +f
   source_unit=$UNIT
 fi
-awk '
-  /^[[:space:]]*[#;]/ { next }
-  {
-    line = pending $0; pending = ""
-    if (sub(/\\$/, " ", line)) { pending = line; next }
-    sub(/^[[:space:]]+/, "", line)
-    if (line ~ /^\[/) { service = (line == "[Service]") }
-    if (service && line ~ /^ExecStart=/) { command = substr(line, 11) }
-  }
-  END { if (pending != "" || command == "") exit 1; print command }
-' "$source_unit" > "$work/command" || fail 'cannot read ExecStart from installed unit'
-printf '%s\n' "$(cat "$work/command")$OVERRIDES" > "$work/effective"
+exec_starts "$source_unit" > "$work/command" || fail 'cannot read ExecStart from installed unit'
+awk 'NR == 1 && $0 != "" { ok = 1 } END { exit !(ok && NR == 1) }' "$work/command" ||
+  fail 'installed unit must set ExecStart exactly once'
 awk '
   function bad() { failed = 1; exit 1 }
   {
@@ -280,8 +303,10 @@ awk '
     if (active) print token
   }
   END { if (failed) exit 1 }
-' "$work/effective" > "$work/raw-args" || fail 'unsupported quoting or escape in ExecStart'
-# 双写的 $、% 是字面字符；单写需要 systemd 的运行时上下文，安装器不能据此判定监听端口。
+' "$work/command" > "$work/raw-args" || fail 'unsupported quoting or escape in ExecStart'
+# 写回时 quote_arg 把每个 $、% 双写。这里把读到的 $$、%% 还原成字面字符，写回去与原文逐字相同。单写的
+# $、% 是 systemd 的动态展开（环境变量、specifier），读进来再写回会被双写成字面值、改变参数的意思；
+# 所以不论出现在哪个参数里都在停服前拒绝，而不只拒绝影响监听端口的那几个。
 awk '{
   out = ""
   for (i = 1; i <= length($0); i++) {
@@ -291,34 +316,56 @@ awk '{
   }
   print out
 }' "$work/raw-args" > "$work/args" || fail 'dynamic $ or % expansion in ExecStart is not supported'
-EXEC=""; position=0; pending=""; listen=127.0.0.1:8080; db=""
+printf '%s' "$OVERRIDES" > "$work/overrides"
+# 已装参数与命令行覆盖按 flag 名合并成一张表，写回单元的就是这张表：
+# - 顺序取 flag 首次出现的位置；已装参数里同名 flag 取最后一个值，与 serve 的解析（Go flag 包，后者覆盖前者）一致。
+# - 命令行覆盖按名替换表里的值，表里没有才追加。
+# - 写回统一为 --flag=value、每个 flag 一次：单元里只留生效的值，带同样参数重跑不会累加。
+# 接受 Go flag 包的 --f v、-f v、--f=v、-f=v 四种写法。已知 flag 与 cmd/hub/serve.go 定义的 serve 参数一一对应，
+# 两处增删要同步：表外的 flag 在停服前拒绝，而不是原样带过去。
+awk '
+  function die(msg) { print msg | "cat 1>&2"; failed = 1; exit 1 }
+  function set(name, value) { if (!(name in val)) order[++count] = name; val[name] = value }
+  BEGIN {
+    split("db listen timezone trusted-proxies public-dir retention-1m retention-5m retention-1h retention-alert-events", names, " ")
+    for (i in names) known[names[i]] = 1
+  }
+  FILENAME == ARGV[1] {
+    position++
+    if (position <= 2) {
+      if ($0 != (position == 1 ? "/usr/local/bin/probe-hub" : "serve")) die("ExecStart must invoke /usr/local/bin/probe-hub serve")
+      next
+    }
+    if (pending != "") { set(pending, $0); pending = ""; next }
+    if ($0 !~ /^--?[^-=]/) die("unexpected positional argument in ExecStart: " $0)
+    name = $0; sub(/^--?/, "", name)
+    eq = index(name, "=")
+    if (eq) { value = substr(name, eq + 1); name = substr(name, 1, eq - 1) }
+    if (!(name in known)) die("unsupported serve flag in ExecStart: " $0)
+    if (eq) set(name, value); else pending = name
+    next
+  }
+  {
+    eq = index($0, "=")
+    set(substr($0, 3, eq - 3), substr($0, eq + 1))
+  }
+  END {
+    if (failed) exit 1
+    if (position < 2 || pending != "") die("incomplete ExecStart arguments")
+    print "/usr/local/bin/probe-hub"; print "serve"
+    for (i = 1; i <= count; i++) print "--" order[i] "=" val[order[i]]
+  }
+' "$work/args" "$work/overrides" > "$work/merged" || exit 1
+# 没有 --listen 时 serve 用自己的默认值 127.0.0.1:8080（cmd/hub/serve.go），端口预检按同一个值查。
+EXEC=""; listen=127.0.0.1:8080; db=""
 while IFS= read -r arg; do
-  position=$((position + 1))
-  case "$position:$arg" in
-    1:/usr/local/bin/probe-hub|2:serve) ;;
-    1:*|2:*) fail 'ExecStart must invoke /usr/local/bin/probe-hub serve';;
+  case "$arg" in
+    --listen=*) listen=${arg#--listen=};;
+    --db=*) db=${arg#--db=};;
   esac
-  if [ -n "$pending" ]; then
-    case "$pending" in listen) listen=$arg;; db) db=$arg;; esac
-    pending=""
-  else
-    if [ "$position" -gt 2 ]; then
-      flag=${arg#-}; flag=${flag#-}; flag=${flag%%=*}
-      case "$arg" in -*) ;; *) fail "unexpected positional argument in ExecStart: $arg";; esac
-      case "$flag" in
-        listen|db|timezone|trusted-proxies|public-dir|retention-1m|retention-5m|retention-1h|retention-alert-events) ;;
-        *) fail "unsupported serve flag in ExecStart: $arg";;
-      esac
-      case "$arg" in
-        *=*) case "$flag" in listen) listen=${arg#*=};; db) db=${arg#*=};; esac;;
-        *) pending=$flag;;
-      esac
-    fi
-  fi
   quote_arg "$arg"
   EXEC="$EXEC $quoted"
-done < "$work/args"
-[ "$position" -ge 2 ] && [ -z "$pending" ] || fail 'incomplete ExecStart arguments'
+done < "$work/merged"
 [ "$db" = /var/lib/probe/probe.db ] || fail 'installed unit must use --db /var/lib/probe/probe.db'
 port=${listen##*:}
 case "$port" in ''|*[!0-9]*) fail "listen address must end in a numeric TCP port: $listen";; esac
