@@ -95,6 +95,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, opts ...h
 	reg := probe.New(st, slog.Default())
 	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: loc}, st, l, clk, slog.Default())
 	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, slog.Default())
+	a.SetLoginSender(notifier)
 	in, err := ingest.New(ingest.Config{TTL: 30 * time.Second, TrustedProxies: prefixes}, l, st, a, book, reg, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)

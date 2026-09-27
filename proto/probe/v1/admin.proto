@@ -466,7 +466,7 @@ message DeleteNotifyChannelResponse {}
 message TestNotifyChannelRequest { int64 id = 1; }
 message TestNotifyChannelResponse {}
 
-// 公开页外观。整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。
+// 管理设置。外观五项作为一组整体替换（必须给出合法 theme）；仅提交登录通知配置时不改外观。
 message Settings {
   // 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
   // 空串表示公开页用内置标题。
@@ -480,6 +480,12 @@ message Settings {
   string logo = 4;
   // 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
   string custom_css = 5;
+  // 缺席即不变；显式给出空集合即关闭。不会下发到公开页。
+  optional LoginNotify login_notify = 6;
+}
+message LoginNotify {
+  // 每个 ID 必须对应存在的渠道，否则整次更新返回 InvalidArgument 并点名 ID；重复 ID 合并。
+  repeated int64 channel_ids = 1;
 }
 message GetSettingsRequest {}
 message GetSettingsResponse { Settings settings = 1; }
@@ -514,7 +520,7 @@ message AlertEvent {
   int64 id = 1;
   int64 rule_id = 2;
   int64 node_id = 3;
-  // 取值为 firing 或 recovered。
+  // firing、recovered、login_success 或 login_locked；后两者的 rule_id/node_id 均为 0，表示系统事件。
   string transition = 4;
   // 事件墙钟，Unix 秒。
   int64 at = 5;

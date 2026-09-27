@@ -80,8 +80,10 @@ type StateRow struct {
 type Transition string
 
 const (
-	TransitionFiring    Transition = "firing"
-	TransitionRecovered Transition = "recovered"
+	TransitionFiring       Transition = "firing"
+	TransitionRecovered    Transition = "recovered"
+	TransitionLoginSuccess Transition = "login_success"
+	TransitionLoginLocked  Transition = "login_locked"
 )
 
 type AlertEvent struct {
@@ -468,7 +470,17 @@ func (s *Store) DeleteNotifyChannel(ctx context.Context, id int64) error {
 		if err := deleteAlertEntity(tx, "notify_channel", ObjectNotifyChannel, id); err != nil {
 			return err
 		}
-		_, err := tx.Exec("UPDATE alert_delivery SET done = 1, failure = ?, http_status = NULL, last_error = '' WHERE channel_id = ? AND done = 0", FailureChannelDeleted, id)
+		ids, err := loginChannels(tx)
+		if err != nil {
+			return err
+		}
+		if slices.Contains(ids, id) {
+			ids = slices.DeleteFunc(ids, func(channel int64) bool { return channel == id })
+			if err := saveLoginChannels(tx, ids); err != nil {
+				return err
+			}
+		}
+		_, err = tx.Exec("UPDATE alert_delivery SET done = 1, failure = ?, http_status = NULL, last_error = '' WHERE channel_id = ? AND done = 0", FailureChannelDeleted, id)
 		return err
 	})
 }
@@ -532,20 +544,45 @@ func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, stat
 		if err := setAlertState(tx, ruleID, nodeID, state, ev.At, firedExpiresOn); err != nil {
 			return err
 		}
-		if err := tx.QueryRow("INSERT INTO alert_event (rule_id, node_id, transition, at, summary, value) VALUES (?, ?, ?, ?, ?, ?) RETURNING id", ruleID, nodeID, ev.Transition, ev.At.Unix(), ev.Summary, ev.Value).Scan(&ev.ID); err != nil {
+		return recordAlertEvent(tx, &ev, channelIDs)
+	})
+	if err != nil {
+		return AlertEvent{}, err
+	}
+	return ev, nil
+}
+
+func recordAlertEvent(tx *sql.Tx, ev *AlertEvent, channelIDs []int64) error {
+	if err := tx.QueryRow("INSERT INTO alert_event (rule_id, node_id, transition, at, summary, value) VALUES (?, ?, ?, ?, ?, ?) RETURNING id", ev.RuleID, ev.NodeID, ev.Transition, ev.At.Unix(), ev.Summary, ev.Value).Scan(&ev.ID); err != nil {
+		return err
+	}
+	for _, channel := range channelIDs {
+		if err := requireAlertReference(tx, "notify_channel", ObjectNotifyChannel, channel); err != nil {
 			return err
 		}
-		for _, channel := range channelIDs {
-			if err := requireAlertReference(tx, "notify_channel", ObjectNotifyChannel, channel); err != nil {
-				return err
-			}
-			d := Delivery{EventID: ev.ID, ChannelID: channel}
-			if err := tx.QueryRow("INSERT INTO alert_delivery (event_id, channel_id) VALUES (?, ?) RETURNING id", d.EventID, d.ChannelID).Scan(&d.ID); err != nil {
-				return err
-			}
-			ev.Deliveries = append(ev.Deliveries, d)
+		d := Delivery{EventID: ev.ID, ChannelID: channel}
+		if err := tx.QueryRow("INSERT INTO alert_delivery (event_id, channel_id) VALUES (?, ?) RETURNING id", d.EventID, d.ChannelID).Scan(&d.ID); err != nil {
+			return err
 		}
-		return nil
+		ev.Deliveries = append(ev.Deliveries, d)
+	}
+	return nil
+}
+
+// 登录是 hub 的全局事件，不属于规则×节点状态机；零 ID 不建立 alert_state，也不绕过规则事件的引用检查。
+// 配置读取与事件、投递写入共用事务；删渠道和关闭通知不会与此处交错产生悬空引用。
+func (s *Store) RecordLoginEvent(ctx context.Context, ev AlertEvent) (AlertEvent, error) {
+	ev.ID, ev.RuleID, ev.NodeID, ev.Deliveries = 0, 0, 0, nil
+	ev.At = time.Unix(ev.At.Unix(), 0).UTC()
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		ids, err := loginChannels(tx)
+		if err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		return recordAlertEvent(tx, &ev, ids)
 	})
 	if err != nil {
 		return AlertEvent{}, err

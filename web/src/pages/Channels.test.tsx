@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
 import { ConnectError, Code } from "@connectrpc/connect";
-import { ChannelKind, ListNotifyChannelsResponseSchema, type SaveNotifyChannelRequest } from "../gen/probe/v1/admin_pb";
+import { ChannelKind, ListNotifyChannelsResponseSchema, type SaveNotifyChannelRequest, type UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Channels } from "./Channels";
 
@@ -11,7 +11,34 @@ const channels = create(ListNotifyChannelsResponseSchema, { channels: [
   { id: 2n, name: "hook", kind: ChannelKind.WEBHOOK, webhook: { method: "POST", hasUrl: true, urlHost: "https://hooks.example", headerNames: ["Authorization"], bodyTemplate: "{{.Summary}}" }, createdAt: 1_700_000_000n },
 ] });
 const routes = [{ path: "/channels", Component: Channels }];
-const render = (impl: AdminImpl) => renderWithAdmin({ listNotifyChannels: async () => channels, ...impl }, routes, "/channels");
+const render = (impl: AdminImpl) => renderWithAdmin({ listNotifyChannels: async () => channels, getSettings: async () => ({ settings: { theme: "dark", title: "站点", loginNotify: { channelIds: [2n] } } }), ...impl }, routes, "/channels");
+
+it("登录通知读取选择且只提交通知字段，空集合可关闭", async () => {
+  const sent: UpdateSettingsRequest[] = [];
+  render({ updateSettings: async (r) => { sent.push(r); return { settings: r.settings }; } });
+  const f = within(await screen.findByRole("form", { name: "登录通知" }));
+  expect([f.getByLabelText("tg（#1）"), f.getByLabelText("hook（#2）")].map((c) => (c as HTMLInputElement).checked)).toEqual([false, true]);
+  fireEvent.click(f.getByLabelText("tg（#1）"));
+  fireEvent.click(f.getByRole("button", { name: "保存登录通知" }));
+  await waitFor(() => expect(sent.map((r) => ({ title: r.settings?.title, theme: r.settings?.theme, ids: r.settings?.loginNotify?.channelIds }))).toEqual([{ title: "", theme: "", ids: [1n, 2n] }]));
+  await waitFor(() => expect(f.getByRole("button", { name: "保存登录通知" })).toBeEnabled());
+  fireEvent.click(f.getByLabelText("tg（#1）"));
+  fireEvent.click(f.getByLabelText("hook（#2）"));
+  fireEvent.click(f.getByRole("button", { name: "保存登录通知" }));
+  await waitFor(() => expect(sent[1]?.settings?.loginNotify?.channelIds).toEqual([]));
+});
+
+it("登录通知保存中禁用选择，失败显示错误并保留草稿", async () => {
+  let reject!: (err: Error) => void;
+  render({ updateSettings: () => new Promise((_resolve, r) => { reject = r; }) });
+  const f = within(await screen.findByRole("form", { name: "登录通知" }));
+  fireEvent.click(f.getByLabelText("tg（#1）"));
+  fireEvent.click(f.getByRole("button", { name: "保存登录通知" }));
+  await waitFor(() => expect(f.getByLabelText("tg（#1）")).toBeDisabled());
+  await act(async () => { reject(new ConnectError("channel 1 does not exist", Code.InvalidArgument)); });
+  await f.findByRole("alert");
+  expect({ error: f.getByRole("alert").textContent, checked: (f.getByLabelText("tg（#1）") as HTMLInputElement).checked }).toEqual({ error: "channel 1 does not exist", checked: true });
+});
 
 it("渠道刷新失败保留同一编辑表单与草稿", async () => {
   let fail = false;

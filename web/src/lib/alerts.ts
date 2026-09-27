@@ -77,7 +77,8 @@ export function statesOf(states: AlertStateEntry[]): Map<bigint, RuleStates> {
   return out;
 }
 
-export const transitionLabel = (t: string): string => (t === "firing" ? "触发" : t === "recovered" ? "恢复" : t);
+const TRANSITIONS: Record<string, string> = { firing: "触发", recovered: "恢复", login_success: "登录成功", login_locked: "登录锁定" };
+export const transitionLabel = (t: string): string => TRANSITIONS[t] ?? t;
 
 // 与 proto DeliveryFailure 逐值对齐（测试按枚举全集核对）；UNSPECIFIED 表示没有失败，不在表里。
 // 面板依赖"HTTP_STATUS 必带 http_status"，由 hub 写库前的校验（DeliveryResult.check）保证；

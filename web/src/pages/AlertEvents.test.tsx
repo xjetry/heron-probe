@@ -14,6 +14,15 @@ const routes = [{ path: "/events", Component: AlertEvents }];
 const render = (impl: AdminImpl, path = "/events") =>
   renderWithAdmin({ listNodes: async () => nodes, listNotifyChannels: async () => channels, ...impl }, routes, path);
 
+it("零节点登录事件显示系统与登录结果", async () => {
+  render({ listAlertEvents: async () => ({ events: [
+    { id: 1n, ruleId: 0n, nodeId: 0n, transition: "login_success", summary: "密码登录" },
+    { id: 2n, ruleId: 0n, nodeId: 0n, transition: "login_locked", summary: "密码锁定" },
+  ] }) });
+  await screen.findByText("密码登录");
+  expect(screen.getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").slice(1, 3).map((c) => c.textContent))).toEqual([["系统", "登录成功"], ["系统", "登录锁定"]]);
+});
+
 it("一页满 100 条时可加载更早的事件，从本页最小 id 之前继续", async () => {
   const requests: ListAlertEventsRequest[] = [];
   render({ listAlertEvents: async (req) => {

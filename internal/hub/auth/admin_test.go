@@ -16,6 +16,7 @@ import (
 	"golang.org/x/crypto/argon2"
 
 	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/testwait"
 )
 
@@ -305,6 +306,14 @@ func TestFailureWindowAndFullLockDuration(t *testing.T) {
 func TestPasswordChangeDuringLoginDoesNotIssueSession(t *testing.T) {
 	a, st, clk := setup(t)
 	ctx := context.Background()
+	channel, err := st.SaveNotifyChannel(ctx, store.NotifyChannel{Name: "login", Kind: store.ChannelWebhook, Config: `{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	channels := []int64{channel.ID}
+	if _, err := st.UpdateSettings(ctx, nil, &channels); err != nil {
+		t.Fatal(err)
+	}
 	if err := a.SetPassword(ctx, goodPassword); err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +332,7 @@ func TestPasswordChangeDuringLoginDoesNotIssueSession(t *testing.T) {
 	<-gate.entered
 	// 另一个 Auth 不共享锁，代表 passwd 独立于服务进程的修改。
 	other := New(st, clk, a.log)
-	err := other.SetPassword(ctx, "another long password")
+	err = other.SetPassword(ctx, "another long password")
 	close(gate.release)
 	got := <-done
 	if err != nil {
@@ -331,6 +340,13 @@ func TestPasswordChangeDuringLoginDoesNotIssueSession(t *testing.T) {
 	}
 	if !errors.Is(got.err, ErrBadPassword) || got.token != "" {
 		t.Fatalf("stale password issued session: token=%q err=%v", got.token, got.err)
+	}
+	events, err := st.ListAlertEvents(ctx, 0, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("session issuance failure emitted login notification: %v", events)
 	}
 }
 

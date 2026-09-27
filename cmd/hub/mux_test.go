@@ -50,6 +50,7 @@ func newTestMux(t *testing.T) *http.ServeMux {
 	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, st, l, clk, slog.Default())
 	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, slog.Default())
 	alerts.SetSender(notifier)
+	a.SetLoginSender(notifier)
 	svc, err := ingest.New(ingest.Config{TTL: 30 * time.Second}, l, st, a, book, reg, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)

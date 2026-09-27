@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"regexp"
 	"slices"
 	"strings"
@@ -117,25 +118,49 @@ func settingsProto(st store.SiteSettings) *probev1.Settings {
 	return &probev1.Settings{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS}
 }
 
+func adminSettingsProto(st store.Settings) *probev1.Settings {
+	out := settingsProto(st.Site)
+	if len(st.LoginChannelIDs) > 0 {
+		out.LoginNotify = &probev1.LoginNotify{ChannelIds: st.LoginChannelIDs}
+	}
+	return out
+}
+
 func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.GetSettingsRequest]) (*connect.Response[probev1.GetSettingsResponse], error) {
-	st, err := s.store.SiteSettings(ctx)
+	st, err := s.store.Settings(ctx)
 	if err != nil {
 		s.log.Error("reading settings failed", "err", err)
 		return nil, internalError("reading settings failed")
 	}
-	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: settingsProto(st)}), nil
+	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: adminSettingsProto(st)}), nil
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probev1.UpdateSettingsRequest]) (*connect.Response[probev1.UpdateSettingsResponse], error) {
-	st, err := cleanSettings(req.Msg.GetSettings())
-	if err != nil {
-		return nil, err
+	in := req.Msg.GetSettings()
+	var site *store.SiteSettings
+	// 合法外观必须包含 theme，五项全空不是一次有效的外观替换。
+	// 独立设置请求不携带外观，不能用空值覆盖另一页面刚保存的外观。
+	if in.GetLoginNotify() == nil || in.GetTitle() != "" || in.GetTheme() != "" || in.GetAccentColor() != "" || in.GetLogo() != "" || in.GetCustomCss() != "" {
+		st, err := cleanSettings(in)
+		if err != nil {
+			return nil, err
+		}
+		site = &st
 	}
-	if err := s.store.SaveSiteSettings(ctx, st); err != nil {
+	var channels *[]int64
+	if in.GetLoginNotify() != nil {
+		channels = &in.LoginNotify.ChannelIds
+	}
+	st, err := s.store.UpdateSettings(ctx, site, channels)
+	if err != nil {
+		var missing store.NotFoundError
+		if errors.As(err, &missing) && missing.Kind == store.ObjectNotifyChannel {
+			return nil, invalid("settings.login_notify.channel_ids: channel %d does not exist", missing.ID)
+		}
 		s.log.Error("saving settings failed", "err", err)
 		return nil, internalError("saving settings failed")
 	}
-	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: settingsProto(st)}), nil
+	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: adminSettingsProto(st)}), nil
 }
 
 func (s *Service) GetStorageStats(ctx context.Context, _ *connect.Request[probev1.GetStorageStatsRequest]) (*connect.Response[probev1.GetStorageStatsResponse], error) {

@@ -61,7 +61,10 @@ export function Channels() {
   // 各行共用一个 mutation observer，重叠的 mutate 只回调最后一次；任一行保存挂起时禁用全部行的保存。
   // 返回刷新 promise，编辑态在列表显示已保存值之后才关闭。
   const update = useMutation(AdminService.method.saveNotifyChannel, { ...tracked, onSuccess: refresh });
-  const remove = useMutation(AdminService.method.deleteNotifyChannel, { ...tracked, onSuccess: refresh });
+  const remove = useMutation(AdminService.method.deleteNotifyChannel, { ...tracked, onSuccess: async () => {
+    await refresh();
+    await qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getSettings, cardinality: "finite" }) });
+  } });
   const test = useMutation(AdminService.method.testNotifyChannel, tracked);
   const gate = queryGate(list);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
@@ -70,6 +73,7 @@ export function Channels() {
     <section>
       {gate.banner}
       <h1>通知渠道</h1>
+      <LoginNotifications channels={channels} deleting={remove.isPending} />
       <ChannelForm key={creation} title="新建通知渠道" initial={emptyDraft()} pending={create.isPending}
         onSubmit={(d) => create.mutate({ channel: toChannel(0n, d) }, { onSuccess: () => setCreation((k) => k + 1) })} />
       {error != null && <p role="alert" className="error">{errorText(error)}</p>}
@@ -89,6 +93,46 @@ export function Channels() {
       </div>
       {channels.length === 0 && <p className="muted">还没有通知渠道。</p>}
     </section>
+  );
+}
+
+function LoginNotifications({ channels, deleting }: { channels: NotifyChannel[]; deleting: boolean }) {
+  const qc = useQueryClient();
+  const settings = useQuery(AdminService.method.getSettings, {});
+  const [draft, setDraft] = useState<bigint[] | null>(null);
+  const [saved, setSaved] = useState(false);
+  const update = useMutation(AdminService.method.updateSettings, { onSuccess: async (r) => {
+    setDraft(r.settings?.loginNotify?.channelIds ?? []);
+    setSaved(true);
+    await qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getSettings, cardinality: "finite" }) });
+  } });
+  const gate = queryGate(settings);
+  if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
+  // 渠道删除后服务端会摘除引用；草稿也只能提交当前列表里仍存在的渠道。
+  const selected = channels.filter((c) => (draft ?? gate.data.settings?.loginNotify?.channelIds ?? []).includes(c.id)).map((c) => c.id);
+  const pending = update.isPending || deleting;
+  const toggle = (id: bigint) => {
+    setDraft(selected.includes(id) ? selected.filter((n) => n !== id) : [...selected, id]);
+    setSaved(false);
+    update.reset();
+  };
+  return (
+    <form className="card edit-form" aria-label="登录通知" onSubmit={(e) => {
+      e.preventDefault();
+      if (!pending) update.mutate({ settings: { loginNotify: { channelIds: selected } } });
+    }}>
+      <h2>登录通知</h2>
+      <p className="muted">密码登录成功或登录失败达到锁定阈值时通知。未选择渠道即关闭；API token 使用不通知。来源地址以 Hub 观察为准，未配置可信代理时显示代理地址。</p>
+      {gate.banner}
+      <fieldset className="picks" disabled={pending}>
+        <legend>接收渠道</legend>
+        {channels.map((c) => <label key={String(c.id)}><input type="checkbox" checked={selected.includes(c.id)} onChange={() => toggle(c.id)} />{withId(c.name, c.id)}</label>)}
+        {channels.length === 0 && <p className="muted">先创建通知渠道，再选择接收方。</p>}
+        <button type="submit">保存登录通知</button>
+      </fieldset>
+      {update.error != null && <p role="alert" className="error">{errorText(update.error)}</p>}
+      {saved && <p role="status">登录通知已保存。</p>}
+    </form>
   );
 }
 

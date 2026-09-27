@@ -10,7 +10,7 @@
 // 登录不占用 mutMu，密码校验和会话写入不让节点变更与 Load 等待。
 // 持 mu 时只 TryLock 门、不等待门；持门时可以取 mu 记账，因此不会形成等待环。
 //
-// mu 只保护 byHash 与两个失败计数器，临界区不含 I/O。CreateNode、Register、
+// mu 保护 byHash、两个失败计数器与通知发送者引用，临界区不含 I/O。CreateNode、Register、
 // DeleteNode 与 RotateToken 在 store 返回成功后、取得 mu.Lock 前存在可见
 // 间隙：Authenticate 可能仍接受已删除或轮换的旧 token，或尚不认识新 token。
 // 这个间隙跨越一次 mu.Lock 的获取，包含调度与锁竞争等待，并无固定时长上界；
@@ -42,15 +42,22 @@ const (
 )
 
 type Auth struct {
-	mutMu     sync.Mutex
-	loginGate sync.Mutex
-	mu        sync.RWMutex
-	store     *store.Store
-	clk       clock.Clock
-	log       *slog.Logger
-	byHash    map[[32]byte]int64
-	register  *failureTracker
-	login     *failureTracker
+	mutMu       sync.Mutex
+	loginGate   sync.Mutex
+	mu          sync.RWMutex
+	store       *store.Store
+	clk         clock.Clock
+	log         *slog.Logger
+	byHash      map[[32]byte]int64
+	register    *failureTracker
+	login       *failureTracker
+	loginSender interface{ Enqueue(store.AlertEvent) }
+}
+
+func (a *Auth) SetLoginSender(sender interface{ Enqueue(store.AlertEvent) }) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.loginSender = sender
 }
 
 func New(st *store.Store, clk clock.Clock, log *slog.Logger) *Auth {

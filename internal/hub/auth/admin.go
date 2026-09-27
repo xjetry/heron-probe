@@ -113,7 +113,11 @@ func (a *Auth) SetPassword(ctx context.Context, plain string) error {
 // 显式检查承载，并在日志里指明该跑 probe-hub passwd。失败按来源键计数（SourceKey：IPv4 按地址、IPv6 按 /64），
 // 锁定期间的拒绝不依赖输入的密码，正确密码也不能提前解除锁定。
 func (a *Auth) Login(ctx context.Context, password string, from netip.Addr) (string, error) {
-	phc, err := a.verifyLoginPassword(ctx, password, from)
+	phc, newlyLocked, err := a.verifyLoginPassword(ctx, password, from)
+	if newlyLocked {
+		// 锁定也通知：密码猜测尚未成功时就让管理员得知；已锁定请求不再记失败，不重复发送。
+		a.notifyLogin(ctx, store.TransitionLoginLocked, fmt.Sprintf("登录失败达到锁定阈值：来源 %s（密码）", from))
+	}
 	if err != nil {
 		return "", err
 	}
@@ -128,14 +132,33 @@ func (a *Auth) Login(ctx context.Context, password string, from netip.Addr) (str
 	if _, err := a.store.DeleteExpiredSessions(ctx, wall); err != nil {
 		a.log.Warn("purging expired sessions failed", "err", err)
 	}
+	a.notifyLogin(ctx, store.TransitionLoginSuccess, fmt.Sprintf("管理员登录成功：来源 %s（密码）", from))
 	return plain, nil
 }
 
-func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from netip.Addr) (string, error) {
+// 只在密码登录入口调用，不在会话/API token 鉴权中调用：自动化轮询不是一次人工登录，不应刷屏。
+// 会话或锁定已经生效后，请求断开不能取消记账；写入有期限，失败记录日志且不伪报身份判定失败。
+func (a *Auth) notifyLogin(ctx context.Context, transition store.Transition, summary string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	ev, err := a.store.RecordLoginEvent(ctx, store.AlertEvent{Transition: transition, At: a.clk.Now(), Summary: summary})
+	if err != nil {
+		a.log.Error("recording login notification failed", "err", err)
+		return
+	}
+	a.mu.RLock()
+	sender := a.loginSender
+	a.mu.RUnlock()
+	if ev.ID != 0 && sender != nil {
+		sender.Enqueue(ev)
+	}
+}
+
+func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from netip.Addr) (string, bool, error) {
 	a.mu.Lock()
 	if a.login.locked(from, a.clk.Mono()) {
 		a.mu.Unlock()
-		return "", ErrLocked
+		return "", false, ErrLocked
 	}
 	// 排队会保留整波匿名请求的慢哈希成本，并把合法登录推到队尾，故直接拒绝。
 	//
@@ -149,20 +172,20 @@ func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from ne
 	// 管理员重试几次后被锁满 failWindow。
 	if !a.loginGate.TryLock() {
 		a.mu.Unlock()
-		return "", ErrLoginBusy
+		return "", false, ErrLoginBusy
 	}
 	a.mu.Unlock()
 	defer a.loginGate.Unlock()
 	phc, ok, err := a.store.AdminPasswordHash(ctx)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if !ok {
 		phc = absentAdminPHC
 	}
 	match, err := VerifyPassword(phc, password)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if !ok || !match {
 		a.mu.Lock()
@@ -171,9 +194,9 @@ func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from ne
 		a.log.Warn("login failed", "from", from, "failures", count)
 		if !ok {
 			a.log.Warn("login refused: no admin password is set; run `probe-hub passwd`", "from", from)
-			return "", ErrNoAdmin
+			return "", count == failLimit, ErrNoAdmin
 		}
-		return "", ErrBadPassword
+		return "", count == failLimit, ErrBadPassword
 	}
 	// 清账以密码校验通过为准，不以会话签发为准。会话写库不占门，放门后另一次校验
 	// 可能已记下新的失败，写库返回后再清会把它抹掉，所以在放门前清。由此签发失败时
@@ -184,7 +207,7 @@ func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from ne
 	a.mu.Lock()
 	a.login.clear(from)
 	a.mu.Unlock()
-	return phc, nil
+	return phc, false, nil
 }
 
 // AuthenticateSession 判定 cookie 里的 token 是否对应一个活着的会话。

@@ -136,6 +136,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	alerts := alert.New(alert.Config{TTL: ttl, Location: loc}, st, l, clk, log)
 	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, log)
 	alerts.SetSender(notifier)
+	a.SetLoginSender(notifier)
 	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, book, reg, clk, log)
 	if err != nil {
 		return err

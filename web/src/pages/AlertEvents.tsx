@@ -28,7 +28,7 @@ export function AlertEvents() {
   const shell = queryGate(nodes);
   if (!shell.ready) return shell.loading ?? errorBanner(...shell.errors);
   const nodeList = shell.data.nodes;
-  const nodeName = (id: bigint) => nodeList.find((n) => n.id === id)?.name ?? `节点 #${id}`;
+  const nodeName = (id: bigint) => id === 0n ? "系统" : nodeList.find((n) => n.id === id)?.name ?? `节点 #${id}`;
   // 渠道只提供名称：它的失败只进横幅，不阻断事件；名称缺失时按编号回退。
   const channelName = (id: bigint) => channels.data?.channels.find((c) => c.id === id)?.name ?? `渠道 #${id}`;
   const region = queryGate(events);

@@ -11,6 +11,14 @@ const current = { title: "机房", theme: "dark", accentColor: "#123abc", logo: 
 const routes = [{ path: "/appearance", Component: Appearance }];
 const render = (impl: AdminImpl) => renderWithAdmin({ getSettings: async () => ({ settings: current }), ...impl }, routes, "/appearance");
 
+it("保存外观不回传登录通知配置", async () => {
+  const sent: UpdateSettingsRequest[] = [];
+  render({ getSettings: async () => ({ settings: { ...current, loginNotify: { channelIds: [7n] } } }), updateSettings: async (r) => { sent.push(r); return { settings: r.settings }; } });
+  const f = await form();
+  fireEvent.click(f.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(sent.map((r) => ({ title: r.settings?.title, login: r.settings?.loginNotify }))).toEqual([{ title: "机房", login: undefined }]));
+});
+
 async function form() {
   return within(await screen.findByRole("form", { name: "公开页外观" }));
 }
