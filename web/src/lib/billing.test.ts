@@ -1,8 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BillingCycle, BillingCycleSchema } from "../gen/probe/v1/types_pb";
 import { BILLING_CYCLES, cycleLabel, expired, expiryText, priceText, type BillingView } from "./billing";
 
 const none: BillingView = { price: "", currency: "", billingCycle: BillingCycle.UNSPECIFIED, expiresOn: "" };
+
+// 夹具的 daysLeft 是 hub 下发的值，与"到期日减去浏览器今天"无关。时钟钉在离夹具几年之外的日期：在任何时区里，
+// 按本地日期重算出的天数都与夹具不同，用 Date 自己算的实现一定红；不钉时，夹具恰好等于某一天的日历差，那一天
+// 本地重算照样全绿。只 fake Date，计时器保持真实。
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime("2030-06-15T12:00:00Z");
+});
+afterEach(() => { vi.useRealTimers(); });
 
 describe("cycleLabel", () => {
   it("周期表覆盖协议枚举里除未指定之外的每个值", () => {
