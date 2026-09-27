@@ -66,6 +66,22 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 	}
 }
 
+// openOffline 的注释声称建立状态的子命令必须放出 store 的 Info 级 schema 事件；
+// created 是这类命令新建了文件的唯一信号，钉住这一行不被日志级别过滤掉。
+func TestPasswdLogsSchemaCreationOnStderr(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "new.db")
+	cmd := hubCommand(t, "passwd", "--db", path)
+	cmd.Stdin = strings.NewReader("long enough test password\n")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("passwd command: %v, stderr: %s", err, stderr.String())
+	}
+	if want := `msg="database schema created" version=9`; !strings.Contains(stderr.String(), want) {
+		t.Errorf("passwd stderr = %q, want to contain %q", stderr.String(), want)
+	}
+}
+
 // 统计的表清单来自库本身：原先手写清单漏掉的 api_token、probe_meta、setting 都在；
 // 关库后主文件已检查点，db_bytes 等于它的大小。
 func TestStatsPrintsSizeAndEveryTable(t *testing.T) {
