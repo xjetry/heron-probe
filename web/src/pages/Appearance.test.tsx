@@ -1,7 +1,8 @@
+import { isFieldSet, type MessageInitShape } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
+import { SettingsSchema, type UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
 import { MAX_LOGO_BYTES } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
@@ -15,22 +16,83 @@ async function form() {
   return within(await screen.findByRole("form", { name: "公开页外观" }));
 }
 
-it("公开页总闸显示当前值并显式提交 false 与 true", async () => {
+// 有状态的假 hub，与 SaveSiteSettings 同语义：外观整体替换，总闸缺席即不变；set 模拟别处（另一个面板、脚本）改了设置，
+// holdReads 让之后的 GetSettings 挂起到 releaseReads。
+type SettingsInit = MessageInitShape<typeof SettingsSchema>;
+
+function statefulHub(publicEnabled: boolean) {
+  let state: SettingsInit = { ...current, publicEnabled };
   const sent: UpdateSettingsRequest[] = [];
-  render({ getSettings: async () => ({ settings: { ...current, publicEnabled: true } }),
-    updateSettings: async (req) => { sent.push(req); return { settings: req.settings }; } });
+  let held: Promise<void> | null = null;
+  let release = () => {};
+  const impl: AdminImpl = {
+    getSettings: async () => {
+      if (held) await held;
+      return { settings: state };
+    },
+    updateSettings: async (req) => {
+      sent.push(req);
+      const { title, theme, accentColor, logo, customCss, publicEnabled } = req.settings!;
+      state = { title, theme, accentColor, logo, customCss, publicEnabled: publicEnabled ?? state.publicEnabled };
+      return { settings: state };
+    },
+  };
+  return {
+    impl, sent, state: () => state,
+    set: (patch: SettingsInit) => { state = { ...state, ...patch }; },
+    holdReads: () => { held = new Promise((r) => { release = () => { held = null; r(); }; }); },
+    releaseReads: () => release(),
+  };
+}
+
+it("公开页总闸显示当前值并显式提交 false 与 true", async () => {
+  const hub = statefulHub(true);
+  const sent = hub.sent;
+  render(hub.impl);
   const f = await form();
   const toggle = f.getByRole("checkbox", { name: "启用公开页" });
   expect(toggle).toBeChecked();
   expect(f.getByText(/节点的公开标记保留/)).toBeInTheDocument();
   fireEvent.click(toggle);
+  hub.holdReads();
   fireEvent.click(f.getByRole("button", { name: "保存" }));
   await waitFor(() => expect(sent.map((r) => r.settings?.publicEnabled)).toEqual([false]));
-  await f.findByRole("status");
-  expect(toggle).not.toBeChecked();
+  expect(await f.findByRole("status")).toHaveTextContent("已保存");
+  // 保存后的重新拉取还挂着，开关此时显示的只能是写进缓存的回显。
+  await waitFor(() => expect(toggle).not.toBeChecked());
+  hub.releaseReads();
+  await waitFor(() => expect(toggle).toBeEnabled());
   fireEvent.click(toggle);
   fireEvent.click(f.getByRole("button", { name: "保存" }));
   await waitFor(() => expect(sent.map((r) => r.settings?.publicEnabled)).toEqual([false, true]));
+});
+
+// 草稿是开始编辑时的快照。之后别处关了公开页，只改标题的保存不得带总闸——带上快照里的"开"就会把它重新打开。
+it("开关没动过时保存不带总闸，别处关掉的公开页不被重新打开", async () => {
+  const hub = statefulHub(true);
+  const { queryClient } = render(hub.impl);
+  const f = await form();
+  const toggle = f.getByRole("checkbox", { name: "启用公开页" });
+  expect(toggle).toBeChecked();
+  fireEvent.change(f.getByLabelText("标题"), { target: { value: "新标题" } });
+  hub.set({ publicEnabled: false });
+  await act(() => queryClient.refetchQueries());
+  // 查询通知经 setTimeout 调度，重新拉取落地后还要等一次渲染。
+  await waitFor(() => expect(toggle).not.toBeChecked());
+  expect(f.getByLabelText("标题")).toHaveValue("新标题");
+  fireEvent.click(f.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(hub.sent).toHaveLength(1));
+  expect(hub.sent[0].settings?.title).toBe("新标题");
+  expect(isFieldSet(hub.sent[0].settings!, SettingsSchema.field.publicEnabled)).toBe(false);
+  expect(await f.findByRole("status")).toHaveTextContent("已保存");
+  expect(hub.state().publicEnabled).toBe(false);
+  expect(toggle).not.toBeChecked();
+  // 动过开关才带：这次显式打开。
+  fireEvent.click(toggle);
+  fireEvent.click(f.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(hub.sent).toHaveLength(2));
+  expect(isFieldSet(hub.sent[1].settings!, SettingsSchema.field.publicEnabled)).toBe(true);
+  expect(hub.sent[1].settings?.publicEnabled).toBe(true);
 });
 
 it("表单显示当前设置，标题留空时提示内置标题", async () => {
