@@ -11,17 +11,16 @@
   原样复制自 AWS 维护的 boto/botocore 测试套件，固定版本
   https://github.com/boto/botocore/tree/32302bc372dde1b6173b60f8b85d671e24a0d414/tests/unit/auth/aws4_testsuite ，
   上游许可为 Apache-2.0（`LICENSE.txt`）。
-- `get-utf8`、`get-space`、`get-unreserved`：`.req` 按上游套件同名用例的请求写出（上游放在 `normalize-path/` 下）。
-  写入时无法联网取得上游文件，`.creq`、`.sts`、`.authz` 由本机 awscli 2.37.0 自带的 botocore 通用签名器
+- `get-utf8`、`get-space`、`get-unreserved`：`.req` 按 AWS 通用套件同名用例的请求写出。写入时无法联网取得上游文件，`.creq`、`.sts`、`.authz` 由本机 awscli 2.37.0 自带的 botocore 通用签名器
   `SigV4Auth` 离线算出（`botocore_vectors.py suite …`），尚未与上游文件逐字节核对。同一脚本对上面四组复制来的
   `.req` 重算，得到的 `.creq`、`.sts`、`.authz` 与上游逐字节相同。
 
 S3 与通用 SigV4 的规范 URI 有两处不同：S3 的规范 URI 是对象键编码一次的结果，不规范化路径（不去点段、不合并重复
 斜杠）；其余服务先规范化路径，再对请求里（已编码的）路径编码一次，对象名相当于被编码两次。这三组的路径里没有点段、
 重复斜杠或 `%`，两种规则得到同一个规范 URI，所以它们对 S3 签名器同样成立（`TestAWSVectors` 用 S3 客户端的
-`canonicalRequest` 重算并比对）。`normalize-path/` 下的其余用例（`get-relative`、`get-relative-relative`、`get-slash`、
-`get-slash-dot-slash`、`get-slash-pointless-dot`、`get-slashes`）期望的正是去点段、合并斜杠之后的路径；对 S3，
-`a//b/../c` 是一个与 `a/c` 不同的对象键，按它们签名会得到服务端不接受的签名，所以不收。
+`canonicalRequest` 重算并比对）。通用套件里测路径规范化的其余用例（路径含 `..`、`.` 段或连续斜杠的那些）期望的
+正是去点段、合并斜杠之后的规范 URI；对 S3，`a//b/../c` 是一个与 `a/c` 不同的对象键，按规范化之后的路径签名，
+服务端按原样的键重算就对不上，所以不收。
 
 ## S3 向量（`s3-signing.json`）
 
