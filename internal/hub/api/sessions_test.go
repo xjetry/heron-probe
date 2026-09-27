@@ -157,7 +157,10 @@ func TestListSessionsExpiryMatchesAuthentication(t *testing.T) {
 			if rows := listSessions(t, h, active); len(rows) != 2 {
 				t.Errorf("unexpired %s session missing: %v", kind, rows)
 			}
-			// 鉴权的异步 touch 落库后再推进，调用者本身不会在边界失效。
+			// write 与 writeAsync 共用 store.go 的 s.writes 单消费者 FIFO 通道：write 阻塞到自己的
+			// 请求被处理完才返回，因此这次同步写返回时，前面 listSessions 鉴权触发的异步 touch
+			// 已经落库。传入起始时刻 now 时它不删除任何行（本用例的会话都在 now 之后过期），这里
+			// 只借它的返回时机当屏障。
 			if _, err := h.store.DeleteExpiredSessions(t.Context(), now); err != nil {
 				t.Fatal(err)
 			}
