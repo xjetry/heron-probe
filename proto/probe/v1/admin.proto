@@ -193,6 +193,11 @@ message Node {
   optional uint32 offline_grace_s = 11;
   // 计费与到期（§9.4）；五项都没填时缺失。days_left 由 hub 按 --timezone 的今天算出。
   Billing billing = 12;
+  // 最近一次上报的来源地址：hub 在 Report 上看到的对端，按 --trusted-proxies 解析 X-Forwarded-For，不读其它旁路头，
+  // 也不采信 agent 自报。IPv4 点分、IPv6 压缩形式、不带区域标识；空串表示从未上报。只留最后一次，与 last_seen_at
+  // 同时刷出落盘，所以可能比实时状态晚约一分钟。hub 与节点同在内网或 agent 经出口代理时，这里是内网或代理地址。
+  // 只在管理端可见：公开节点（PublicNode）没有这个字段。
+  string last_source = 13;
 }
 
 message ListNodesRequest {}

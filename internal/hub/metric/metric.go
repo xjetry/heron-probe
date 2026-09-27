@@ -151,4 +151,7 @@ type Row struct {
 	Bucket *Bucket
 	// LastSeen 是该节点最近一次上报的墙钟，只供展示与告警文案。
 	LastSeen time.Time
+	// Source 是该节点最近一次上报的来源地址（auth.SourceText），与 LastSeen 取自同一次上报、一起落盘；空串表示那次
+	// 上报取不到对端，不覆盖库里已有的值。
+	Source string
 }

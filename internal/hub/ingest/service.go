@@ -249,7 +249,11 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[probev1.Repor
 	if err := validateFacts(req.Msg.GetFacts()); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	ts, gap, first := s.live.Observe(id, m)
+	// 来源地址只取 hub 在这次请求上看到的对端，经 auth.ClientIP 按 --trusted-proxies 解析，与限流、登录锁定同一口径：
+	//   - 不读 CF-Connecting-IP 之类的旁路头：任何客户端都能自己带上它们，读了就等于采信请求方自述；
+	//   - 不采信 agent 自报的地址：那是 agent 的自述，与"hub 看到什么"是两个事实，混在一列里无法区分。
+	source := auth.SourceText(auth.ClientIP(req.Peer().Addr, req.Header().Values("X-Forwarded-For"), s.cfg.TrustedProxies))
+	ts, gap, first := s.live.Observe(id, source, m)
 	// 每 token 由单个 agent 串行发出 unary 上报、等到响应才发下一次；这保证同节点的
 	// Observe、Account、AddBytes 不被另一次上报交错。多端共用 token 不提供此保证。
 	// 间隔达到 TTL 意味着按在线判定节点在这段时间里离线过，这段增量跨过一次离线，

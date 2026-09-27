@@ -97,7 +97,7 @@ func billingProto(b store.Billing, today time.Time) *probev1.Billing {
 // nodeProto 的 today 是 hub 时区的今天（alert.Today）。
 func nodeProto(n store.Node, today time.Time) *probev1.Node {
 	out := &probev1.Node{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, SortOrder: n.SortOrder, CreatedAt: n.CreatedAt.Unix(), Facts: n.Facts, TrafficResetDay: uint32(n.TrafficResetDay),
-		Billing: billingProto(n.Billing, today)}
+		Billing: billingProto(n.Billing, today), LastSource: n.LastSource}
 	if !n.LastSeenAt.IsZero() {
 		out.LastSeenAt = proto.Int64(n.LastSeenAt.Unix())
 	}

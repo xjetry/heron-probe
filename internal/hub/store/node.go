@@ -59,6 +59,7 @@ type Node struct {
 	SortOrder       int32
 	CreatedAt       time.Time
 	LastSeenAt      time.Time // 零值表示从未上报
+	LastSource      string    // 最近一次上报的来源地址，空串表示从未上报（见 node.last_source）
 	TrafficResetDay int       // 周期重置日 1–28，列默认 1
 	OfflineGraceS   int       // 0 表示列为 NULL，读侧取 TTL。
 	// Facts 为 nil 表示该节点尚未上报过静态信息。
@@ -68,7 +69,7 @@ type Node struct {
 }
 
 const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.created_at, n.last_seen_at, n.traffic_reset_day, n.offline_grace_s,
-	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew,
+	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source,
 	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at
 	FROM node n LEFT JOIN node_facts f ON f.node_id = n.id`
 
@@ -85,7 +86,7 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 		var cores, icmp, factsUpdated sql.NullInt64
 		b := &n.Billing
 		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &created, &seen, &n.TrafficResetDay, &grace,
-			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew,
+			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource,
 			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated); err != nil {
 			return nil, err
 		}

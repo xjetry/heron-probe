@@ -41,6 +41,16 @@ func ClientIP(peerAddr string, xff []string, trusted []netip.Prefix) netip.Addr 
 	return peer
 }
 
+// SourceText 把 ClientIP 得到的来源地址写成存储与展示用的规范文本：IPv4 映射地址还原成 IPv4，点分；IPv6 为 RFC 5952 的
+// 压缩形式（netip 的 String）；区域标识（%eth0）去掉——它只在 hub 本机有意义。取不到对端时为空串，调用方按"没有新观测"
+// 处理，不覆盖已有的值（空在 node.last_source 里表示从未上报）。
+func SourceText(a netip.Addr) string {
+	if !a.IsValid() {
+		return ""
+	}
+	return a.Unmap().WithZone("").String()
+}
+
 // SourceKey 把 ClientIP 得到的来源地址归一化成按来源计数的键：IPv4 按单个地址，IPv6 截到所在 /64 的网络地址。
 // 一台主机通常独占整个 /64（SLAAC 与隐私扩展地址随时可换），逐地址计键等于在 /64 里换个地址就换一份计数。
 // 按来源计数的三处都经它：匿名入口的限流（ratelimit.BySource）、Register 的窗口失败计数与登录失败锁定（failureTracker）。
