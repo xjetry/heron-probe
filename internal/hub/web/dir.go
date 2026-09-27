@@ -46,13 +46,14 @@ func DirHandler(dir string) (http.Handler, error) {
 	if !info.Mode().IsRegular() {
 		return nil, refuse(fmt.Errorf("it has mode %v", info.Mode()))
 	}
-	return serveFiles("/", dirHeaders, func(string) string { return "no-cache" }, open), nil
+	return serveFiles("/", customHeaders, func(string) string { return "no-cache" }, open), nil
 }
 
-// dirHeaders 只加 nosniff 与 frame-ancestors 'none'（§10）：目录由运维放置，严格 CSP 会让第三方主题的
-// 字体与图片失效。不限制脚本的后果是目录里的脚本以面板的 origin 运行（DirHandler 的注释写了能做到什么）。
+// customHeaders 是替换目录与主题（ThemeHandler）共用的头，只加 nosniff 与 frame-ancestors 'none'（§10、§10.1）：
+// 两者都不是本仓库构建的内容，严格 CSP 会让第三方主题的字体与图片失效。不限制脚本的后果：替换目录的脚本以面板的
+// origin 运行（DirHandler 的注释写了能做到什么）；主题的脚本以主题 origin 运行，那里只挂 PublicService。
 // 文件名不保证带内容哈希，所以一律 no-cache，404 也一样。
-func dirHeaders(h http.Header) {
+func customHeaders(h http.Header) {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Content-Security-Policy", "frame-ancestors 'none'")
 	h.Set("Cache-Control", "no-cache")

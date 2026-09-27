@@ -1,5 +1,5 @@
-// Package web 服务 hub 的静态页面：嵌入的管理面板（/admin/）、嵌入的内置公开页（/），以及运维用
-// --public-dir 指定的替换目录。三者共用 serveFiles。
+// Package web 服务 hub 的静态页面：嵌入的管理面板（/admin/）、嵌入的内置公开页（/）、运维用 --public-dir 指定的
+// 替换目录，以及主题 origin 上启用中的主题（存在库里）。四者共用 serveFiles。
 //
 // 两份嵌入产物由 Vite 构建到本包的 dist 与 dist-public 目录，不入库；目录里只保证有一个占位文件，
 // 所以 embed 永远成立，而"有没有真的构建过"由 index.html 是否存在判定。
@@ -74,10 +74,10 @@ func embedded(root fs.FS, dir, prefix, notBuilt string) http.Handler {
 
 // opener 打开 rel：rel 已按 URL 路径语义清理，相对挂载根，不以 / 开头，不含 ..。
 // 打开不得阻塞：FIFO 在没有写端时挂住的是 open 本身，serveFiles 在打开之后才看文件类型，兜不住这一步。
-// DirHandler 以 O_NONBLOCK 打开；embed 里没有特殊文件。新增来源要自己满足这一条。
+// DirHandler 以 O_NONBLOCK 打开；embed 里没有特殊文件；ThemeHandler 从已读进内存的内容打开。新增来源要自己满足这一条。
 type opener func(rel string) (fs.File, error)
 
-// serveFiles 是三处静态服务共用的核心。命中普通文件就返回它；rel 在 assets 之下（underAssets）而未命中时返回 404——
+// serveFiles 是各处静态服务共用的核心。命中普通文件就返回它；rel 在 assets 之下（underAssets）而未命中时返回 404——
 // 用 HTML 回应 script 标签会被浏览器按 MIME 拒绝，404 才能让缺失可见；其余路径回落到 index.html，交给客户端路由。
 // 不在特殊文件上挂住靠两条各自的事实：打开本身不阻塞由 opener 保证；打开之后不是普通文件（目录、FIFO、设备）
 // 就当作不存在、不读，所以任何来源都不列目录，也不从 FIFO 与设备读。
@@ -87,10 +87,7 @@ type opener func(rel string) (fs.File, error)
 func serveFiles(prefix string, headers func(http.Header), cacheFor func(rel string) string, open opener) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		headers(w.Header())
-		rel := relPath(r.URL.Path, prefix)
-		if rel == "" {
-			rel = "index.html"
-		}
+		rel := requestRel(r.URL.Path, prefix)
 		if !hidden(rel) && serveRegular(w, r, open, rel, cacheFor(rel)) {
 			return
 		}
@@ -116,9 +113,18 @@ func hidden(rel string) bool {
 	return strings.HasPrefix(rel, ".") || strings.Contains(rel, "/.")
 }
 
-// relPath 先按 URL 路径语义清理再去掉挂载前缀。三种来源对 . 与 .. 的处理不同（embed 经 fs.ValidPath 一律拒绝，
-// os.Root 接受不越界的 ..），先清理，同一个 URL 在三处才落到同一个文件名，assets/ 的 404 判定也看清理后的路径。
-// 越界由来源自己拒绝（fs.ValidPath、os.Root），不靠这里。清理后不在前缀之下的（如 /admin 本身）按挂载根处理。
+// requestRel 是请求路径对应的文件名：挂载根本身是 index.html。serveFiles 打开的只有它与回落用的 index.html，
+// ThemeHandler 按这一条预先读出这两份。
+func requestRel(urlPath, prefix string) string {
+	if rel := relPath(urlPath, prefix); rel != "" {
+		return rel
+	}
+	return "index.html"
+}
+
+// relPath 先按 URL 路径语义清理再去掉挂载前缀。各来源对 . 与 .. 的处理不同（embed 经 fs.ValidPath 一律拒绝，
+// os.Root 接受不越界的 ..，主题按库里的键精确匹配），先清理，同一个 URL 在各处才落到同一个文件名，assets/ 的 404 判定
+// 也看清理后的路径。越界由来源自己拒绝（fs.ValidPath、os.Root；主题的键由 theme.Parse 限定为包内规范路径），不靠这里。清理后不在前缀之下的（如 /admin 本身）按挂载根处理。
 func relPath(urlPath, prefix string) string {
 	if rest, ok := strings.CutPrefix(path.Clean("/"+urlPath), prefix); ok {
 		return rest
