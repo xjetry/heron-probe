@@ -363,10 +363,14 @@ func (s *Store) QueryMetrics(ctx context.Context, nodeID int64, from, to int64, 
 	return scanBucketRows(rows, nodeID)
 }
 
+// MaintenanceInterval 是维护循环的周期：每个周期边界后跑一轮上卷与清理。存储健康的超期阈值
+// （SeriesHealth.Staleness）把它算进去，两处必须是同一个值。
+const MaintenanceInterval = time.Minute
+
 // nextMaintenanceAt 落在分钟边界后 2 秒：分钟刷出在 +0.5s，两者的顺序其实不
 // 重要——上卷只碰至少 RollupLag 之前闭合的桶——错开只是避免同时争写协程。
 func nextMaintenanceAt(wall time.Time) time.Time {
-	return wall.Truncate(time.Minute).Add(time.Minute + 2*time.Second)
+	return wall.Truncate(MaintenanceInterval).Add(MaintenanceInterval + 2*time.Second)
 }
 
 // RunMaintenance 按分钟边界调度上卷与清理；一轮维护使用 Background，

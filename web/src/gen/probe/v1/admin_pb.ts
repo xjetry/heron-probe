@@ -1613,9 +1613,8 @@ export const GetStorageStatsResponseSchema: GenMessage<GetStorageStatsResponse> 
 
 /**
  * 一张时序表的健康读数。两个 stale 是 hub 按当前配置算出的结论，调用方直接用，不必自己重算：
- * oldest_stale：最老桶早于"现在 − 保留期 − 一个桶长"（严格早于才算）；
+ * oldest_stale：最老桶早于"现在 − 保留期 − 一个桶长 − 一个维护间隔（60 秒）"（严格早于才算）；
  * watermark_stale：水位落后现在超过三个桶长（严格超过才算）。
- * 维护每分钟一轮，最老桶在跨过桶边界之后、下一轮清理完成之前可能短暂标红；持续标红才表示清理停了。
  *
  * @generated from message probe.v1.SeriesTableHealth
  */

@@ -43,10 +43,11 @@ type Staleness struct {
 // Staleness 是存储健康的唯一判定：API 响应带上它的结论，面板只渲染、不重算，阈值因此只有这一份，不会在
 // 前端与 hub 之间各改各的。保留期取调用方传入的当前配置，与 Prune 用的是同一个 Retention。
 //
-//   - 最老桶早于 now − 保留期 − 一个桶长即标红。Prune 的截止点是 now − 保留期向下对齐到桶长，所以正常运行时
-//     最老桶可以比 now − 保留期早不到一个桶长；再往前说明超期的行没有被清掉：prune 停了，或者上卷停了
-//     （Prune 对细一级只清到粗一级的水位为止）。维护每分钟一轮，截止点越过桶边界之后、
-//     下一轮 prune 删完之前，健康的表也会短暂越过阈值（至多约一个维护间隔加一轮维护的耗时），偶发一次不代表故障。
+//   - 最老桶早于 now − 保留期 − 一个桶长 − MaintenanceInterval 即标红。Prune 的截止点是 now − 保留期向下对齐到
+//     桶长，所以刚清理完时最老桶比 now − 保留期早不到一个桶长；截止点跨过桶边界之后、下一轮 prune 删掉那一桶之前，
+//     还要再多等至多一个维护间隔，少了这一段每个桶长都会误报一次。越过这个阈值说明超期的行没有被清掉：prune 停了，
+//     或者上卷停了（Prune 对细一级只清到粗一级的水位为止）。余量覆盖的是跨过边界到下一轮开始的等待，它总不超过
+//     一个维护间隔；这一轮上卷与清理本身的耗时不在其内，耗时长时健康的表仍可能在删完之前短暂越过。
 //   - 水位落后 now 超过三个桶长即标红。上卷只推进到 now − RollupLag 向下对齐到桶长，再加至多一个维护间隔，
 //     健康的落后量 5m 级不到 300 + 300 + 60 秒、1h 级不到 300 + 3600 + 60 秒，都在三个桶长之内。
 //
@@ -55,7 +56,7 @@ func (h SeriesHealth) Staleness(now time.Time, r Retention) Staleness {
 	n, bucket := now.Unix(), h.Level.Bucket
 	var out Staleness
 	if h.Oldest != nil {
-		out.Oldest = *h.Oldest < n-int64(r.ForLevel(h.Level.Name)/time.Second)-bucket
+		out.Oldest = *h.Oldest < n-int64(r.ForLevel(h.Level.Name)/time.Second)-bucket-int64(MaintenanceInterval/time.Second)
 	}
 	if h.Watermark != nil {
 		out.Watermark = n-*h.Watermark > 3*bucket

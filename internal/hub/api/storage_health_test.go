@@ -36,7 +36,8 @@ func TestGetStorageStatsReportsHealthWithStaleness(t *testing.T) {
 	node, _ := h.createNode(t, "n")
 	now := h.clk.Now().Unix()
 	day := int64(24 * 3600)
-	edge := now - 7*day - 60
+	// 阈值 = 保留期 7 天 + 桶长 60 秒 + 维护间隔 60 秒（spec §6.5 的字面值）。
+	edge := now - 7*day - 60 - 60
 	b := metric.NewBucket()
 	b.Add(&probev1.Metrics{CpuPct: proto.Float64(5)})
 	batch := metric.Batch{

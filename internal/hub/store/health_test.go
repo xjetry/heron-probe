@@ -193,7 +193,8 @@ func TestStalenessBoundaries(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	r := DefaultRetention
 	for _, lv := range levels {
-		oldestEdge := now.Unix() - int64(r.ForLevel(lv.Name)/time.Second) - lv.Bucket
+		// 60 是 spec §6.5 的维护间隔字面值，不引用常量：常量改了而 spec 没改，这里要红。
+		oldestEdge := now.Unix() - int64(r.ForLevel(lv.Name)/time.Second) - lv.Bucket - 60
 		watermarkEdge := now.Unix() - 3*lv.Bucket
 		for _, tc := range []struct {
 			name string
