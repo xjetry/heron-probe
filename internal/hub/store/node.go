@@ -193,7 +193,8 @@ func (s *Store) UpdateNode(ctx context.Context, id int64, e NodeEdit) (billingCh
 
 // RenewExpiry 把自动续期推后的到期日写回，前提是该行此刻仍是推后所依据的那组取值（开着自动续期、周期与
 // 旧到期日都没变）：推后的日期由到期扫描从它读出的快照算出，快照之后 UpdateNode 若改了计费字段，按旧快照写回
-// 就会盖掉管理员刚保存的值。条件不成立时不写、返回 false，由那次 UpdateNode 触发的扫描按新值重算。
+// 就会盖掉管理员刚保存的值。条件不成立时不写、返回 false：计费被 UpdateNode 改过时，由那次 UpdateNode 触发的扫描
+// 按新值重算；节点已被删除时，没有要重算的对象。
 func (s *Store) RenewExpiry(ctx context.Context, id int64, cycle BillingCycle, from, to string) (bool, error) {
 	var renewed bool
 	err := s.write(ctx, func(tx *sql.Tx) error {
