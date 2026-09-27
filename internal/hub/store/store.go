@@ -29,6 +29,7 @@ var (
 )
 
 type Store struct {
+	path    string
 	closeMu sync.RWMutex
 	closed  bool
 	w       *sql.DB
@@ -105,7 +106,7 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 		w.Close()
 		return nil, err
 	}
-	s := &Store{w: w, r: r, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{})}
+	s := &Store{path: path, w: w, r: r, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{})}
 	go s.runWriter()
 	return s, nil
 }
