@@ -587,3 +587,23 @@ func TestHubFlagTableAgreesWithServe(t *testing.T) {
 		}
 	}
 }
+
+// 命令行只接受 SERVE_FLAGS 里的参数：--db 固定、表外的参数与 --flag=value 写法都以用法错误退出，什么都不做。
+// 带空格的名字按子串会命中参数表（" listen timezone " 在表里），写进单元就是 serve 不认的参数。
+func TestHubCommandLineRefusesFlagsOutsideTheTable(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"--db", "/srv/other.db"},
+		{"--foo", "bar"},
+		{"--listen=127.0.0.1:9000"},
+		{"--listen timezone", "x"},
+		{"--*", "x"},
+	} {
+		e := newHubHost(t)
+		out, code := e.hubInstall(args...)
+		// calls 为空文件时 e.calls() 是一个空串。
+		if c := e.calls(); code != 2 || !strings.Contains(out, "usage: install-hub.sh") || len(c) != 1 || c[0] != "" {
+			t.Fatalf("%q: exit %d, calls %q:\n%s", args, code, c, out)
+		}
+	}
+}
