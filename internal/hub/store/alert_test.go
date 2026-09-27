@@ -45,7 +45,7 @@ func saveRule(t *testing.T, s *Store, r AlertRule) AlertRule {
 
 func recordEvent(t *testing.T, s *Store, rule, node int64, channels []int64) AlertEvent {
 	t.Helper()
-	ev, err := s.RecordTransition(t.Context(), rule, node, StateFiring, "", AlertEvent{
+	ev, err := s.RecordTransition(t.Context(), rule, node, StateFiring, "", time.Time{}, AlertEvent{
 		Transition: TransitionFiring, At: s.clk.Now(), Summary: "offline", Value: 42,
 	}, channels)
 	if err != nil {
@@ -208,7 +208,7 @@ func TestRecordTransitionRollsBackOnDeliveryFailure(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, "", AlertEvent{At: s.clk.Now()}, []int64{cs[0].ID, cs[1].ID})
+	_, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, "", time.Time{}, AlertEvent{At: s.clk.Now()}, []int64{cs[0].ID, cs[1].ID})
 	if err == nil {
 		t.Fatal("delivery failure was accepted")
 	}
@@ -325,7 +325,7 @@ func TestDeleteNodeCleansAlertScopeAndState(t *testing.T) {
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline, NodeIDs: ids})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID})
-	if err := s.SetAlertState(t.Context(), r.ID, ids[1], StatePending, s.clk.Now()); err != nil {
+	if err := s.SetAlertState(t.Context(), r.ID, ids[1], StatePending, s.clk.Now(), time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteNode(t.Context(), ids[0]); err != nil {
@@ -365,10 +365,10 @@ func TestSaveAlertRulePrunesStatesWithScope(t *testing.T) {
 	b := saveRule(t, s, AlertRule{Kind: KindOffline, Enabled: true, NodeIDs: ids})
 	for _, rule := range []int64{a.ID, b.ID} {
 		for _, node := range ids {
-			if err := s.SetAlertState(t.Context(), rule, node, StateOK, s.clk.Now()); err != nil {
+			if err := s.SetAlertState(t.Context(), rule, node, StateOK, s.clk.Now(), time.Time{}); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.SetAlertState(t.Context(), rule, node, StatePending, s.clk.Now().Add(time.Second)); err != nil {
+			if err := s.SetAlertState(t.Context(), rule, node, StatePending, s.clk.Now().Add(time.Second), time.Time{}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -480,11 +480,11 @@ func TestAlertWritesRejectDeletedReferences(t *testing.T) {
 			}
 			if missing != ObjectNotifyChannel {
 				t.Run("set", func(t *testing.T) {
-					assertAlertNotFound(t, s.SetAlertState(t.Context(), r.ID, ids[0], StatePending, s.clk.Now()), missing, id)
+					assertAlertNotFound(t, s.SetAlertState(t.Context(), r.ID, ids[0], StatePending, s.clk.Now(), time.Time{}), missing, id)
 				})
 			}
 			t.Run("transition", func(t *testing.T) {
-				_, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, "", AlertEvent{At: s.clk.Now()}, []int64{cs[0].ID, cs[1].ID})
+				_, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, "", time.Time{}, AlertEvent{At: s.clk.Now()}, []int64{cs[0].ID, cs[1].ID})
 				assertAlertNotFound(t, err, missing, id)
 			})
 			for _, table := range []string{"alert_state", "alert_event", "alert_delivery"} {
@@ -497,7 +497,7 @@ func TestAlertWritesRejectDeletedReferences(t *testing.T) {
 func TestSaveAlertRulePrunesDisabledButKeepsEnabledAll(t *testing.T) {
 	s, ids, _, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline, Enabled: true, AllNodes: true})
-	if err := s.SetAlertState(t.Context(), r.ID, ids[0], StateFiring, s.clk.Now()); err != nil {
+	if err := s.SetAlertState(t.Context(), r.ID, ids[0], StateFiring, s.clk.Now(), time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	saveRule(t, s, r)
@@ -510,7 +510,7 @@ func TestSaveAlertRulePrunesDisabledButKeepsEnabledAll(t *testing.T) {
 func TestSaveAlertRuleRollsBackWhenStatePruningFails(t *testing.T) {
 	s, ids, _, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Name: "kept", Kind: KindOffline, Enabled: true, NodeIDs: ids})
-	if err := s.SetAlertState(t.Context(), r.ID, ids[0], StateFiring, s.clk.Now()); err != nil {
+	if err := s.SetAlertState(t.Context(), r.ID, ids[0], StateFiring, s.clk.Now(), time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.write(t.Context(), func(tx *sql.Tx) error {

@@ -33,6 +33,17 @@ type stateEntry struct {
 	// firedExpiresOn 与库里的 alert_state.fired_expires_on 同值（含义见 store.StateRow.FiredExpiresOn）：Load 从库读入，
 	// apply 在写库成功后随状态一起发布。
 	firedExpiresOn string
+	// recoveredAt 与库里的 alert_state.recovered_at 同值（含义见 store.StateRow.RecoveredAt），Load 读入，apply 写库成功后发布。
+	recoveredAt time.Time
+	// flapping 是离线巡检最近一次对这对规则与节点的判定：pending 且只因抖动抑制而未进入 firing（FlapDeferred）。
+	// 它是由当前观测派生的展示量，不落库：重启后第一轮巡检即重新算出。
+	flapping bool
+}
+
+// StateView 是对外的一条状态：落库的状态行，加上引擎在离线巡检里算出、不落库的 Flapping。
+type StateView struct {
+	store.StateRow
+	Flapping bool
 }
 
 // writeMu 串行化读库、写库到内存发布；mu 只保护内存快照，不跨存储往返持有。
@@ -95,7 +106,7 @@ func (e *Engine) Load(ctx context.Context) error {
 	}
 	for _, s := range states {
 		if _, ok := validRules[s.RuleID]; ok {
-			e.states[stateKey{s.RuleID, s.NodeID}] = stateEntry{s.State, s.SinceAt, s.FiredExpiresOn}
+			e.states[stateKey{s.RuleID, s.NodeID}] = stateEntry{state: s.State, sinceAt: s.SinceAt, firedExpiresOn: s.FiredExpiresOn, recoveredAt: s.RecoveredAt}
 		}
 	}
 	return nil
@@ -125,12 +136,12 @@ func (e *Engine) Channels() []store.NotifyChannel {
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
-func (e *Engine) States() []store.StateRow {
+func (e *Engine) States() []StateView {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	var out []store.StateRow
+	var out []StateView
 	for k, s := range e.states {
-		out = append(out, store.StateRow{RuleID: k.rule, NodeID: k.node, State: s.state, SinceAt: s.sinceAt, FiredExpiresOn: s.firedExpiresOn})
+		out = append(out, StateView{store.StateRow{RuleID: k.rule, NodeID: k.node, State: s.state, SinceAt: s.sinceAt, FiredExpiresOn: s.firedExpiresOn, RecoveredAt: s.recoveredAt}, s.flapping})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].RuleID != out[j].RuleID {
@@ -337,29 +348,51 @@ func (e *Engine) entry(k stateKey) stateEntry {
 	return stateEntry{state: store.StateOK}
 }
 
+// setFlapping 在 apply 成功之后更新展示用的抖动标记；状态不变时 apply 不写库，标记仍要跟着这一轮的观测走。
+// 没有状态项（ok 且从未写过）的一对不会是 pending，无需记录。调用方持 writeMu。
+func (e *Engine) setFlapping(k stateKey, flapping bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if s, ok := e.states[k]; ok {
+		s.flapping = flapping
+		e.states[k] = s
+	}
+}
+
 // 调用方持 writeMu；状态、事件与投递先由 store 原子提交，再发布内存并通知 Sender。
 // firedExpiresOn 只由到期扫描在进入 firing 时给出，其余调用传空。状态不变时 apply 直接返回、不写库，所以一个 firing
 // 状态记的始终是它进入 firing 那一刻的到期日。
 func (e *Engine) apply(ctx context.Context, r store.AlertRule, nodeID int64, next store.AlertState, firedExpiresOn string, tr *store.Transition, summary string, value float64) error {
 	k := stateKey{r.ID, nodeID}
-	if e.current(k) == next {
+	cur := e.entry(k)
+	if cur.state == next {
 		return nil
 	}
 	now := e.clk.Now()
+	since := time.Unix(now.Unix(), 0).UTC()
+	// 状态行整行写入，上次恢复时刻必须显式带上：离线规则的恢复转换记下当下，其余写入沿用当前值（恢复之后的再次离线
+	// 先写成 pending，那一次若不带上，窗口恰在要用时丢失）；其余种类不做抖动抑制，恒为零值。
+	var recoveredAt time.Time
+	if r.Kind == store.KindOffline {
+		recoveredAt = cur.recoveredAt
+		if tr != nil && *tr == store.TransitionRecovered {
+			recoveredAt = since
+		}
+	}
 	var ev store.AlertEvent
 	var err error
 	if tr != nil {
-		ev, err = e.st.RecordTransition(ctx, r.ID, nodeID, next, firedExpiresOn, store.AlertEvent{Transition: *tr, At: now, Summary: summary, Value: value}, r.ChannelIDs)
+		ev, err = e.st.RecordTransition(ctx, r.ID, nodeID, next, firedExpiresOn, recoveredAt, store.AlertEvent{Transition: *tr, At: now, Summary: summary, Value: value}, r.ChannelIDs)
 	} else {
 		// SetAlertState 不写触发日期，内存与库记同一个值。
 		firedExpiresOn = ""
-		err = e.st.SetAlertState(ctx, r.ID, nodeID, next, now)
+		err = e.st.SetAlertState(ctx, r.ID, nodeID, next, now, recoveredAt)
 	}
 	if err != nil {
 		return err
 	}
 	e.mu.Lock()
-	e.states[k] = stateEntry{next, time.Unix(now.Unix(), 0).UTC(), firedExpiresOn}
+	e.states[k] = stateEntry{state: next, sinceAt: since, firedExpiresOn: firedExpiresOn, recoveredAt: recoveredAt}
 	sender := e.sender
 	e.mu.Unlock()
 	// 未装配 Sender 时转换仍完整落库，投递行可供后续续投，不能因此跳过持久化。
@@ -396,7 +429,7 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	now := e.clk.Mono()
+	now, wall := e.clk.Mono(), e.clk.Now()
 	var errs []error
 	for _, r := range e.Rules() {
 		if !r.Enabled || r.Kind != store.KindOffline {
@@ -408,7 +441,8 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 				continue
 			}
 			candidates[node.ID] = true
-			cur := e.current(stateKey{r.ID, node.ID})
+			k := stateKey{r.ID, node.ID}
+			cur := e.entry(k)
 			// LastSeenAt 是跨进程的墙钟，只供文案；无 live 条目时从本次 Load 的单调起点量时长。
 			lastSeen := e.started
 			entry, seen := e.live.Get(node.ID)
@@ -416,7 +450,12 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 				lastSeen = entry.LastSeen
 			}
 			unseen := now - lastSeen
-			next, tr := NextOffline(cur, Observation{Reported: seen, Unseen: unseen, Grace: time.Duration(node.OfflineGraceS) * time.Second, TTL: e.cfg.TTL})
+			o := Observation{Reported: seen, Unseen: unseen, Grace: time.Duration(node.OfflineGraceS) * time.Second, TTL: e.cfg.TTL}
+			if !cur.recoveredAt.IsZero() {
+				// 离线开始的墙钟 = 现在 − 已离线时长；已离线时长按单调钟量，只有上次恢复时刻需要跨重启的墙钟。
+				o.Recovered, o.SinceRecovery = true, wall.Add(-unseen).Sub(cur.recoveredAt)
+			}
+			next, tr := NextOffline(cur.state, o)
 			summary := fmt.Sprintf("节点 %s 离线 %s（规则 %s）", node.Name, unseen.Round(time.Second), r.Name)
 			if !seen {
 				last := "从未上报"
@@ -430,7 +469,9 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 			}
 			if err := e.apply(ctx, r, node.ID, next, "", tr, summary, unseen.Seconds()); err != nil {
 				errs = append(errs, err)
+				continue
 			}
+			e.setFlapping(k, FlapDeferred(next, o))
 		}
 		if err := e.pruneCandidates(ctx, r.ID, candidates); err != nil {
 			errs = append(errs, err)

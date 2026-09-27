@@ -40,7 +40,7 @@ func queueEvent(t *testing.T, f *fixture, cs ...store.NotifyChannel) store.Alert
 	for _, c := range cs {
 		ids = append(ids, c.ID)
 	}
-	ev, err := f.st.RecordTransition(t.Context(), r.ID, f.ids[0], store.StateFiring, "", store.AlertEvent{At: f.clk.Now(), Summary: "persisted summary", Value: 5, Transition: store.TransitionFiring}, ids)
+	ev, err := f.st.RecordTransition(t.Context(), r.ID, f.ids[0], store.StateFiring, "", time.Time{}, store.AlertEvent{At: f.clk.Now(), Summary: "persisted summary", Value: 5, Transition: store.TransitionFiring}, ids)
 	must(t, err)
 	return ev
 }

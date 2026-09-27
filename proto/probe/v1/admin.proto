@@ -412,6 +412,10 @@ message AlertStateEntry {
   string state = 3;
   // 进入此状态的墙钟，Unix 秒。
   int64 since_at = 4;
+  // 仅离线规则：pending 且离线已满节点自己的宽限，只因抖动抑制而尚未触发。抖动抑制：上次从 firing 恢复后一小时内
+  // 再次开始的离线，要满 max(节点宽限, 30 分钟) 才触发；恢复通知照发。由 hub 的离线巡检算出，不落库，hub 重启后
+  // 第一轮巡检之前为 false。
+  bool flapping = 5;
 }
 message SaveAlertRuleRequest { AlertRule rule = 1; }
 message SaveAlertRuleResponse { AlertRule rule = 1; }

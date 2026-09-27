@@ -146,8 +146,9 @@ func TestSweepOfflineFollowsRestartInvariant(t *testing.T) {
 	if ev := f.events(t); len(ev) != 3 || ev[0].Transition != store.TransitionRecovered {
 		t.Fatalf("recovery events=%+v", ev)
 	}
-	// 重启前让节点再次离线，才能验证持久化 firing 在没有新上报时不恢复。
-	f.clk.Advance(61 * time.Second)
+	// 重启前让节点再次离线，才能验证持久化 firing 在没有新上报时不恢复。刚恢复就再次离线落在抖动窗口里，要满
+	// flapGrace 才重新进入 firing，节点自己的 60 秒宽限不够。
+	f.clk.Advance(flapGrace + time.Second)
 	f.sweep(t)
 	f.restart(t)
 	f.sweep(t)

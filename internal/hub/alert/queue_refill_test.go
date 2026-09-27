@@ -51,7 +51,7 @@ func TestQueueRefillsOverflowWithinProcess(t *testing.T) {
 			}
 			events := make([]store.AlertEvent, count)
 			for i := range events {
-				ev, err := f.st.RecordTransition(t.Context(), rule.ID, f.ids[0], store.StateFiring, "",
+				ev, err := f.st.RecordTransition(t.Context(), rule.ID, f.ids[0], store.StateFiring, "", time.Time{},
 					store.AlertEvent{At: f.clk.Now(), Transition: store.TransitionFiring, Summary: fmt.Sprint(i)}, []int64{c.ID})
 				must(t, err)
 				events[i] = ev

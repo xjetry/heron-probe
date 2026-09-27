@@ -27,7 +27,7 @@ func TestMaintenanceAfterRollupErrorKeepsSeriesButPrunesEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := saveRule(t, s, AlertRule{Name: "offline", Kind: KindOffline, AllNodes: true})
-	if _, err := s.RecordTransition(ctx, r.ID, id, StateFiring, "", AlertEvent{At: clk.Now().Add(-91 * 24 * time.Hour), Transition: TransitionFiring}, nil); err != nil {
+	if _, err := s.RecordTransition(ctx, r.ID, id, StateFiring, "", time.Time{}, AlertEvent{At: clk.Now().Add(-91 * 24 * time.Hour), Transition: TransitionFiring}, nil); err != nil {
 		t.Fatal(err)
 	}
 	ts := clk.Now().Add(-400 * 24 * time.Hour).Truncate(time.Hour).Unix()
