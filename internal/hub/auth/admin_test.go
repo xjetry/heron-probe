@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
+	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/testwait"
 )
 
@@ -516,72 +517,97 @@ func TestLoginReleasesGateBeforeSessionIssuance(t *testing.T) {
 	}
 }
 
+// 登录不占 mutMu，节点变更与 Load 不等它。两个暂停点：门内，停在读密码哈希、argon2 校验与
+// 记账之后、放门之前的失败日志上；放门之后，停在签发会话前的墙钟读取上。门内这一点照得到
+// 从取门起持有到放门的锁，照不到只包住校验那一句、在失败日志之前就释放的锁。
 func TestNodeMutationsDoNotWaitForLogin(t *testing.T) {
-	for _, operation := range []string{"Register", "CreateNode", "RotateToken", "DeleteNode", "Load"} {
-		t.Run(operation, func(t *testing.T) {
-			a, _, clk := setup(t)
-			ctx := context.Background()
-			if err := a.SetPassword(ctx, goodPassword); err != nil {
-				t.Fatal(err)
+	pauses := []struct {
+		name string
+		// start 让一次登录停在暂停点；finish 放行并核对这次登录的结果，可重复调用。
+		start func(t *testing.T, a *Auth, clk *clock.Fake) (finish func() error)
+	}{
+		{"in gate", func(t *testing.T, a *Auth, _ *clock.Fake) func() error {
+			finish := loginPausedInGate(t, a, netip.MustParseAddr("10.0.0.1"))
+			return func() error {
+				if err := finish(); !errors.Is(err, ErrBadPassword) {
+					return fmt.Errorf("paused login = %v, want ErrBadPassword", err)
+				}
+				return nil
 			}
-			id, _, err := a.CreateNode(ctx, "existing")
-			if err != nil {
-				t.Fatal(err)
-			}
-			key, _, err := a.OpenWindow(ctx, time.Hour, 1)
-			if err != nil {
-				t.Fatal(err)
-			}
+		}},
+		{"before session issuance", func(t *testing.T, a *Auth, clk *clock.Fake) func() error {
 			// 只暂停 Login 在签发前的墙钟读取，存储仍用原时钟，排除写队列阻塞。
 			gate := &observationClock{Fake: clk, entered: make(chan struct{}), release: make(chan struct{})}
 			gate.block.Store(true)
 			a.clk = gate
-			release := sync.OnceFunc(func() { close(gate.release) })
-			loginDone := make(chan error, 1)
+			done := make(chan error, 1)
 			go func() {
-				_, err := a.Login(ctx, goodPassword, netip.MustParseAddr("10.0.0.1"))
-				loginDone <- err
+				_, err := a.Login(context.Background(), goodPassword, netip.MustParseAddr("10.0.0.1"))
+				done <- err
 			}()
-			defer func() {
-				release()
-				if err := <-loginDone; err != nil {
-					t.Errorf("login failed after release: %v", err)
-				}
-			}()
+			finish := sync.OnceValue(func() error {
+				close(gate.release)
+				return <-done
+			})
+			t.Cleanup(func() { _ = finish() })
 			select {
 			case <-gate.entered:
 			case <-time.After(testwait.Bound):
 				t.Fatal("Login did not reach session issuance")
 			}
-			done := make(chan error, 1)
-			go func() {
-				var err error
-				switch operation {
-				case "Register":
-					_, _, err = a.Register(ctx, key, "registered", netip.MustParseAddr("10.0.0.2"))
-				case "CreateNode":
-					_, _, err = a.CreateNode(ctx, "new")
-				case "RotateToken":
-					_, err = a.RotateToken(ctx, id)
-				case "DeleteNode":
-					err = a.DeleteNode(ctx, id)
-				case "Load":
-					err = a.Load(ctx)
+			return finish
+		}},
+	}
+	for _, pause := range pauses {
+		for _, operation := range []string{"Register", "CreateNode", "RotateToken", "DeleteNode", "Load"} {
+			t.Run(pause.name+"/"+operation, func(t *testing.T) {
+				a, _, clk := setup(t)
+				ctx := context.Background()
+				if err := a.SetPassword(ctx, goodPassword); err != nil {
+					t.Fatal(err)
 				}
-				done <- err
-			}()
-			select {
-			case err := <-done:
+				id, _, err := a.CreateNode(ctx, "existing")
 				if err != nil {
-					t.Fatalf("%s failed while Login was pending: %v", operation, err)
+					t.Fatal(err)
 				}
-			case <-time.After(testwait.Bound):
-				// 先释放登录并等待节点操作退出，避免失败路径留下访问存储的协程。
-				release()
-				<-done
-				t.Fatalf("%s waited for unrelated Login", operation)
-			}
-		})
+				key, _, err := a.OpenWindow(ctx, time.Hour, 1)
+				if err != nil {
+					t.Fatal(err)
+				}
+				finish := pause.start(t, a, clk)
+				done := make(chan error, 1)
+				go func() {
+					var err error
+					switch operation {
+					case "Register":
+						_, _, err = a.Register(ctx, key, "registered", netip.MustParseAddr("10.0.0.2"))
+					case "CreateNode":
+						_, _, err = a.CreateNode(ctx, "new")
+					case "RotateToken":
+						_, err = a.RotateToken(ctx, id)
+					case "DeleteNode":
+						err = a.DeleteNode(ctx, id)
+					case "Load":
+						err = a.Load(ctx)
+					}
+					done <- err
+				}()
+				select {
+				case err := <-done:
+					if err != nil {
+						t.Fatalf("%s failed while Login was paused %s: %v", operation, pause.name, err)
+					}
+				case <-time.After(testwait.Bound):
+					// 先放行登录并等待节点操作退出，避免失败路径留下访问存储的协程。
+					_ = finish()
+					<-done
+					t.Fatalf("%s waited for Login paused %s", operation, pause.name)
+				}
+				if err := finish(); err != nil {
+					t.Errorf("login after release: %v", err)
+				}
+			})
+		}
 	}
 }
 
