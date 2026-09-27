@@ -240,12 +240,13 @@ func TestListPagination(t *testing.T) {
 	}
 }
 
-// 端点不停地返回新 token 时，列举在超过调用方给的上界时停下并报错，不无界地翻页。
+// 前缀下的对象多于调用方给的上界时，列举在超过上界的那一页停下并报错，不把其余的页翻完。
+// 假端点 11 页、每页 2 个对象：上界 5 在第 3 页超出。
 func TestListStopsAtMaxObjects(t *testing.T) {
 	var pages atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := pages.Add(1)
-		fmt.Fprintf(w, `<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>t%d</NextContinuationToken><Contents><Key>a%d</Key></Contents><Contents><Key>b%d</Key></Contents></ListBucketResult>`, n, n, n)
+		fmt.Fprintf(w, `<ListBucketResult><IsTruncated>%v</IsTruncated><NextContinuationToken>t%d</NextContinuationToken><Contents><Key>a%d</Key></Contents><Contents><Key>b%d</Key></Contents></ListBucketResult>`, n < 11, n, n, n)
 	}))
 	defer srv.Close()
 	c := clientFor(t, srv.URL)
