@@ -198,7 +198,7 @@ func longestLogo() string {
 }
 
 // 解码预算不够时，connect 在方法体之前就以 ResourceExhausted 拒绝，校验根本到不了。
-// 解码预算装得下满额设置在最坏转义下的 JSON（service.go 的 maxBody 写了推导）：logo 取 longestLogo；
+// 解码预算装得下满额设置在最坏转义下的 JSON（service.go 的 maxSettingsBody 写了推导）：logo 取 longestLogo；
 // 标题与 CSS 用控制字符填满，json.Marshal 把每个控制字符写成 6 字节的 \u00XX，服务地址用 < 填满（写法见下），标题的控制字符清洗后不计入
 // 64 个字符，所以这仍是合法的设置；明暗取最长的值，字段名用比 camelCase 长的 proto 原名（connect 两种都收）。
 func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T) {

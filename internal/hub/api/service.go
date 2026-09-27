@@ -26,17 +26,29 @@ import (
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/hub/theme"
 	"github.com/xjetry/probe/internal/hub/traffic"
 )
 
 const (
 	SessionCookie = "probe_session"
-	// maxBody 是管理请求的解码预算。connect 先解码再进拦截器，未鉴权的请求也会被读到这个上限，所以它必须有界。
-	// 它要装下 UpdateSettings 的满额设置在最坏转义下的 JSON：logo 满额（base64 字符在 JSON 里无需转义）；自定义 CSS
-	// 与清洗前的标题、国家查询的服务地址满额，且每个字节都转义成 6 字节的 \u00XX（控制字符就是这样）；另留 4 KiB 给
-	// 明暗、主色、国家查询开关、字段名与 JSON 语法。多余的 JSON 空白、对无需转义的字符的转义不在预算内：这样的请求超出预算时得到 resource_exhausted。
-	// 各项的上限在 settings.go；每个字段的合法取值都有字节上限（明暗与主色由取值集合与格式限定）是这条推导成立的前提。
-	maxBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes + 6*maxGeoURLBytes + 4<<10
+	// maxBody 是管理请求的解码预算，AdminService 只此一个：按路径分预算要在 connect 外再加一层与解压后上限配合的
+	// 读者，不值。connect 先解码再进拦截器，未鉴权的请求也会被读到这个上限，所以它必须有界。它取两类最大的合法请求中
+	// 较大的一个；每个字段的合法取值都有字节上限是这条推导成立的前提。多余的 JSON 空白、对无需转义的字符的转义不在
+	// 预算内：这样的请求超出预算时得到 resource_exhausted。
+	maxBody = max(maxSettingsBody, maxThemeBody)
+
+	// maxSettingsBody 装下 UpdateSettings 的满额设置在最坏转义下的 JSON：logo 满额（base64 字符在 JSON 里无需转义）；
+	// 自定义 CSS 与清洗前的标题、国家查询的服务地址满额，且每个字节都转义成 6 字节的 \u00XX（控制字符就是这样）；另留
+	// 4 KiB 给明暗、主色、国家查询开关、字段名与 JSON 语法。各项的上限在 settings.go（明暗与主色由取值集合与格式限定）。
+	maxSettingsBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes + 6*maxGeoURLBytes + 4<<10
+
+	// maxThemeBody 装下 UploadTheme 的满额主题包的 JSON：bytes 在 JSON 里是带填充的标准 base64，8 MiB 编码成
+	// 4 × ⌈8388608 / 3⌉ = 11184812 字节（base64 字母表无需转义；二进制编码是原样 8 MiB，更小）；另留 4 KiB 给 expect_id
+	// （合法值至多 32 个 ASCII 字符，每个最坏转义成 6 字节）、字段名与 JSON 语法。合计 11188908 字节，约 10.7 MiB：
+	// 这也是匿名请求在 AdminService 上被读到的上限。包本身的 8 MiB 由 theme.Parse 另行核对——二进制编码的请求在这个
+	// 预算内能带更大的包。
+	maxThemeBody = 4*((theme.MaxPackageBytes+2)/3) + 4<<10
 )
 
 type Config struct {
@@ -53,6 +65,9 @@ type Config struct {
 	// Retention 是 serve 交给维护循环的同一份保留期，存储健康按它判定最老桶是否超期。零值会把最老桶早于
 	// 一个桶长之前的表都标成超期，New 用 Retention.Validate 把它当作装配错误拒绝。
 	Retention store.Retention
+	// ThemeOrigin 为真表示 serve 给了 --theme-origin。为假时主题的五个方法一律 FailedPrecondition（requireThemeOrigin）：
+	// 零值是关闭，与"未配置独立 origin 即不开启上传与托管"同一方向。
+	ThemeOrigin bool
 }
 
 // NodeState 是节点在进程内的状态持有者；删除节点后由它清理。用接口而不直接依赖

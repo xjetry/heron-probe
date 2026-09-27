@@ -61,6 +61,12 @@ func newHarness(t *testing.T, trusted string) *harness {
 // newZonedHarness 的 loc 是 hub 的 --timezone：流量周期、到期扫描与 days_left 用同一个时区，与 serve 的装配一致。
 func newZonedHarness(t *testing.T, trusted string, loc *time.Location) *harness {
 	t.Helper()
+	return newConfiguredHarness(t, trusted, loc, func(*Config) {})
+}
+
+// newConfiguredHarness 让用例在装配前改 api.Config 里与 serve 的 flag 对应的项（例如 --theme-origin）。
+func newConfiguredHarness(t *testing.T, trusted string, loc *time.Location, edit func(*Config)) *harness {
+	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default(), store.MigrateSchema)
 	if err != nil {
@@ -85,7 +91,9 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location) *harness 
 	if err := errors.Join(a.Load(ctx), in.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}
-	svc := New(Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: store.DefaultRetention}, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
+	cfg := Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: store.DefaultRetention}
+	edit(&cfg)
+	svc := New(cfg, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
 	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, TrustedProxies: prefixes, Location: loc}, st, l, book, reg, clk, slog.Default())
 	mux := http.NewServeMux()
 	mux.Handle(in.Handler())
