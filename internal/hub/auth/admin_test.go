@@ -3,15 +3,16 @@ package auth
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
-
 	"errors"
-	"golang.org/x/crypto/argon2"
+	"fmt"
+	"log/slog"
 	"net/netip"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/argon2"
 
 	"github.com/xjetry/probe/internal/testwait"
 )
@@ -331,60 +332,103 @@ func TestPasswordChangeDuringLoginDoesNotIssueSession(t *testing.T) {
 	}
 }
 
+// loginPausedInGate 让 from 的一次错误密码登录停在 "login failed" 日志上：它已记完失败、
+// 尚未放门，只持 loginGate，不持 mu，也不持数据库连接，别的请求读库与取 mu 都不受它影响。
+// 暂停点靠日志语句的位置，所以先断言门确实被占。finish 放行并返回这次登录的结果，可重复调用。
+func loginPausedInGate(t *testing.T, a *Auth, from netip.Addr) (finish func() error) {
+	t.Helper()
+	pause, entered, release := testwait.PauseAtLog(a.log.Handler(), "login failed")
+	a.log = slog.New(pause)
+	done := make(chan error, 1)
+	go func() {
+		_, err := a.Login(context.Background(), "wrong password here", from)
+		done <- err
+	}()
+	finish = sync.OnceValue(func() error {
+		release()
+		return <-done
+	})
+	t.Cleanup(func() { _ = finish() })
+	select {
+	case <-entered:
+	case <-time.After(testwait.Bound):
+		t.Fatal("wrong-password login did not reach its failure log")
+	}
+	if a.loginGate.TryLock() {
+		a.loginGate.Unlock()
+		t.Fatal("login paused at its failure log without holding the gate")
+	}
+	return finish
+}
+
+// 门不分来源，失败按请求自己的来源记。攻击者的错误密码占住门时，管理员用正确密码重试
+// failLimit+1 次，每次都立即得到 ErrLoginBusy 且不留计数；忙碌若计入失败，管理员来源在
+// 第 failLimit 次后就被锁满 failWindow。
 func TestConcurrentLoginsRejectWithoutWaitingForPasswordVerification(t *testing.T) {
 	a, _, _ := setup(t)
 	ctx := context.Background()
 	if err := a.SetPassword(ctx, goodPassword); err != nil {
 		t.Fatal(err)
 	}
-	from := netip.MustParseAddr("10.0.0.1")
-	paused, entered, release := testwait.PauseContext(ctx)
-	first := make(chan error, 1)
-	go func() {
-		_, err := a.Login(paused, goodPassword, from)
-		first <- err
-	}()
-	defer func() {
-		release()
-		if err := <-first; err != nil {
-			t.Errorf("admitted login failed after release: %v", err)
-		}
-	}()
-	select {
-	case <-entered:
-	case <-time.After(testwait.Bound):
-		t.Fatal("admitted login did not reach password read")
-	}
+	attacker, admin := netip.MustParseAddr("198.51.100.7"), netip.MustParseAddr("203.0.113.9")
+	finish := loginPausedInGate(t, a, attacker)
 	start := make(chan struct{})
-	done := make(chan error, failLimit+3)
-	for i := 0; i < cap(done); i++ {
+	done := make(chan error, failLimit+1)
+	for range cap(done) {
 		go func() {
 			<-start
-			_, err := a.Login(ctx, goodPassword, from)
+			_, err := a.Login(ctx, goodPassword, admin)
 			done <- err
 		}()
 	}
 	close(start)
-	for i := 0; i < cap(done); i++ {
+	for i := range cap(done) {
 		select {
 		case err := <-done:
 			if !errors.Is(err, ErrLoginBusy) {
-				t.Errorf("concurrent login = %v, want ErrLoginBusy", err)
+				t.Errorf("admin login while another source holds the gate = %v, want ErrLoginBusy", err)
 			}
 		case <-time.After(testwait.Bound):
-			release()
-			for remaining := i; remaining < cap(done); remaining++ {
+			_ = finish()
+			for range cap(done) - i {
 				<-done
 			}
-			t.Fatal("concurrent login waited for password verification")
+			t.Fatal("admin login waited for another source's password verification")
 		}
 	}
 	a.mu.Lock()
-	f := a.login.m[SourceKey(from)]
-	locked := a.login.locked(from, a.clk.Mono())
+	f := a.login.m[SourceKey(admin)]
+	locked := a.login.locked(admin, a.clk.Mono())
 	a.mu.Unlock()
 	if f != nil || locked {
-		t.Fatalf("busy attempts changed failure state: entry=%+v locked=%v", f, locked)
+		t.Fatalf("busy attempts counted against the admin source: entry=%+v locked=%v", f, locked)
+	}
+	if err := finish(); !errors.Is(err, ErrBadPassword) {
+		t.Fatalf("paused login = %v, want ErrBadPassword", err)
+	}
+	if _, err := a.Login(ctx, goodPassword, admin); err != nil {
+		t.Fatalf("admin login after the gate freed: %v", err)
+	}
+}
+
+// 门在读密码哈希之前：门被占时，已取消的 context 还没被读库用到就得到 ErrLoginBusy。
+// 门空闲时同一个 context 必须在读库处失败，否则这条用例分辨不出门在读库之前还是之后；
+// 用错误密码，是因为正确密码会走到会话写库，那里同样报取消，就证明不了读库用了 context。
+func TestLoginTakesGateBeforeReadingPassword(t *testing.T) {
+	a, _, _ := setup(t)
+	if err := a.SetPassword(context.Background(), goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	from := netip.MustParseAddr("10.0.0.1")
+	if _, err := a.Login(ctx, "wrong password here", from); !errors.Is(err, context.Canceled) {
+		t.Fatalf("login with cancelled context and free gate = %v, want context.Canceled from the password read", err)
+	}
+	a.loginGate.Lock()
+	defer a.loginGate.Unlock()
+	if _, err := a.Login(ctx, "wrong password here", from); !errors.Is(err, ErrLoginBusy) {
+		t.Fatalf("login with busy gate = %v, want ErrLoginBusy before reading the password", err)
 	}
 }
 

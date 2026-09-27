@@ -55,14 +55,30 @@ type harness struct {
 	pub    *Public
 }
 
-func newHarness(t *testing.T, trusted string) *harness {
+func newHarness(t *testing.T, trusted string, opts ...harnessOption) *harness {
 	t.Helper()
-	return newZonedHarness(t, trusted, time.UTC)
+	return newZonedHarness(t, trusted, time.UTC, opts...)
+}
+
+// harnessOption 替换 newZonedHarness 装配里的个别依赖，其余照常。
+type harnessOption func(*harnessDeps)
+
+type harnessDeps struct {
+	authLog *slog.Logger
+}
+
+// withAuthLog 给 Auth 换 logger，用例借它的日志语句位置暂停登录。
+func withAuthLog(l *slog.Logger) harnessOption {
+	return func(d *harnessDeps) { d.authLog = l }
 }
 
 // newZonedHarness 的 loc 是 hub 的 --timezone：流量周期、到期扫描与 days_left 用同一个时区，与 serve 的装配一致。
-func newZonedHarness(t *testing.T, trusted string, loc *time.Location) *harness {
+func newZonedHarness(t *testing.T, trusted string, loc *time.Location, opts ...harnessOption) *harness {
 	t.Helper()
+	deps := harnessDeps{authLog: slog.Default()}
+	for _, o := range opts {
+		o(&deps)
+	}
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default())
 	if err != nil {
@@ -73,7 +89,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location) *harness 
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := auth.New(st, clk, slog.Default())
+	a := auth.New(st, clk, deps.authLog)
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, loc, slog.Default())
 	reg := probe.New(st, slog.Default())
@@ -225,26 +241,30 @@ func TestLoginRequiresAdminAndRightPassword(t *testing.T) {
 	}
 }
 
+// 另一来源的错误密码登录停在它的失败日志上（已记账、未放门）时，管理员经 HTTP 登录得到
+// ResourceExhausted 与稍后重试的正文，不是密码错误。暂停点若不在门内，这次登录会成功而让用例变红。
 func TestLoginBusyReturnsResourceExhausted(t *testing.T) {
-	h := newHarness(t, "")
-	h.login(t)
+	pause, entered, release := testwait.PauseAtLog(slog.Default().Handler(), "login failed")
+	h := newHarness(t, "", withAuthLog(slog.New(pause)))
 	ctx := context.Background()
-	paused, entered, release := testwait.PauseContext(ctx)
+	if err := h.auth.SetPassword(ctx, password); err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := h.auth.Login(paused, password, netip.MustParseAddr("192.0.2.1"))
+		_, err := h.auth.Login(ctx, "wrong password here", netip.MustParseAddr("198.51.100.7"))
 		done <- err
 	}()
 	defer func() {
 		release()
-		if err := <-done; err != nil {
-			t.Errorf("admitted login failed after release: %v", err)
+		if err := <-done; !errors.Is(err, auth.ErrBadPassword) {
+			t.Errorf("paused login = %v, want ErrBadPassword", err)
 		}
 	}()
 	select {
 	case <-entered:
 	case <-time.After(testwait.Bound):
-		t.Fatal("admitted login did not reach password read")
+		t.Fatal("wrong-password login did not reach its failure log")
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, testwait.Bound)
 	defer cancel()
