@@ -153,10 +153,14 @@ describe("Nodes", () => {
     expect(screen.getByRole("link", { name: "b（#2）" })).toBeInTheDocument();
   });
 
-  it("列表挂起时显示加载中而不是创建表单", async () => {
-    renderNodes({ listNodes: () => new Promise(() => {}) });
+  // 门控只罩节点表格：创建、搜索与标签过滤都不读节点列表，不等它就绪。
+  it("列表挂起时表格处显示加载中，创建、搜索与标签过滤照常显示", async () => {
+    renderNodes({ listNodes: () => new Promise(() => {}), listTags: async () => ({ tags: [{ name: "db", nodeCount: 0 }] }) });
     expect(await screen.findByText("加载中…")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "创建" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "节点管理" })).toBeNull();
+    expect(screen.getByRole("searchbox", { name: "搜索节点" })).toBeInTheDocument();
+    expect(await screen.findByRole("checkbox", { name: "按标签过滤 db" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "创建" })).toBeInTheDocument();
   });
 
   it("确认删除在列表刷新完成前保持禁用", async () => {
@@ -801,6 +805,82 @@ describe("Nodes", () => {
       fireEvent.click(filterBox("db"));
       await waitFor(() => expect(shown()).toEqual(["alpha", "beta", "gamma"]));
       expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: [] }), expect.anything());
+    });
+
+    // 过滤条件是查询的输入：新条件的请求失败时它们必须还在，用户才能改回去。hub 的错误原文照常显示，
+    // 页面不另抄"至多 16 个"的规则，第 17 个照样发给 hub。
+    it("勾满 17 个标签，hub 回 InvalidArgument：错误原文可见，过滤器仍在，取消一个即恢复", async () => {
+      const seventeen = Array.from({ length: 17 }, (_, i) => ({ name: `t${i}`, nodeCount: i === 0 ? 1 : 0 }));
+      const alpha = { ...tagged[0], tags: ["t0"] };
+      const listNodes = vi.fn(async (req: ListNodesRequest) => {
+        if (req.tags.length > 16) throw new ConnectError(`tags: at most 16 distinct tags (case-insensitive); got ${req.tags.length}`, Code.InvalidArgument);
+        return { nodes: req.tags.every((t) => t === "t0") ? [alpha] : [] };
+      });
+      renderNodes({ listNodes, listTags: async () => ({ tags: seventeen }) });
+      await screen.findByRole("link", { name: "alpha（#1）" });
+      for (const t of seventeen) {
+        fireEvent.click(filterBox(t.name));
+        await waitFor(() => expect(filterBox(t.name)).toBeChecked());
+      }
+      expect(await screen.findByRole("alert")).toHaveTextContent("tags: at most 16 distinct tags (case-insensitive); got 17");
+      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: seventeen.map((t) => t.name) }), expect.anything());
+      fireEvent.click(filterBox("t16"));
+      await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+      expect(filterBox("t16")).not.toBeChecked();
+      expect(screen.getByRole("status")).toHaveTextContent("没有匹配的节点。");
+    });
+
+    it("单个标签过滤时 hub 暂时不可用：错误原文可见，过滤器、上一份结果与未保存的草稿都在", async () => {
+      const listNodes = vi.fn(async (req: ListNodesRequest) => {
+        if (req.tags.length > 0) throw new ConnectError("hub unavailable", Code.Unavailable);
+        return { nodes: tagged };
+      });
+      renderNodes({ listNodes, listTags: tagList });
+      await screen.findByRole("link", { name: "gamma（#3）" });
+      fireEvent.click(screen.getByRole("button", { name: "编辑 alpha（#1）" }));
+      const input = screen.getByLabelText("名称 alpha（#1）");
+      fireEvent.change(input, { target: { value: "尚未保存" } });
+      fireEvent.click(filterBox("web"));
+      expect(await screen.findByRole("alert")).toHaveTextContent("hub unavailable");
+      expect(filterBox("web")).toBeChecked();
+      expect(screen.getByLabelText("名称 alpha（#1）")).toBe(input);
+      expect(input).toHaveValue("尚未保存");
+      expect(shown()).toEqual(["beta", "gamma"]);
+      fireEvent.click(filterBox("web"));
+      await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+      expect(screen.getByLabelText("名称 alpha（#1）")).toBe(input);
+      expect(input).toHaveValue("尚未保存");
+    });
+
+    // 排序要求全部 id 的完整排列。沿用的结果属于上一个条件，即使当前条件为空，它也可能只是子集。
+    it("当前条件还没有自己的结果时，沿用的上一份结果不开放排序", async () => {
+      let fail = false;
+      const byTags = listByTags();
+      const listNodes = vi.fn(async (req: ListNodesRequest) => {
+        if (fail) throw new ConnectError("hub unavailable", Code.Unavailable);
+        return byTags(req);
+      });
+      const reorderNodes = vi.fn(async () => ({}));
+      const { queryClient } = renderNodes({ listNodes, listTags: tagList, reorderNodes });
+      await screen.findByRole("link", { name: "gamma（#3）" });
+      fireEvent.click(filterBox("db"));
+      await waitFor(() => expect(shown()).toEqual(["alpha", "beta"]));
+      // 空条件的缓存已回收（离开它超过 gcTime），清除过滤后的请求又失败：显示的仍是 db 的结果。
+      queryClient.removeQueries({ predicate: (q) => {
+        const key = q.queryKey[1] as { methodName?: string; input?: object };
+        return key.methodName === "ListNodes" && Object.keys(key.input ?? {}).length === 0;
+      } });
+      fail = true;
+      fireEvent.click(screen.getByRole("button", { name: "清除标签过滤" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("hub unavailable");
+      expect(shown()).toEqual(["alpha", "beta"]);
+      expect(screen.getByText("列表还不是当前条件下的结果，暂时无法排序。")).toBeInTheDocument();
+      for (const button of screen.getAllByRole("button", { name: /^(上移|下移)/ })) {
+        expect(button).toBeDisabled();
+        fireEvent.click(button);
+      }
+      await act(async () => {});
+      expect(reorderNodes).not.toHaveBeenCalled();
     });
 
     it("标签清单取不到时节点列表照常显示，过滤器处说明原因", async () => {

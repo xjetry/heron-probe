@@ -18,6 +18,8 @@ export function errorBanner(...errors: unknown[]): ReactNode {
 // 数据是否到达由类型表达：页面先处理未就绪分支才拿得到 data（排除 undefined），
 // 不用空数组兜底把"还在加载"伪装成"没有数据"。
 // 本函数面向页面必需的查询；可选或禁用的查询要在业务层先区分——未就绪不代表请求正在进行。
+// 查询键随输入变化的查询，新键还没有自己的数据时 data 为 undefined，本函数判成未就绪；这类查询先经 useRetained
+// 沿用上一份数据，上面"有数据时的失败只加横幅"才对它成立。
 export function queryGateAll<Ss extends readonly QuerySlice[]>(...queries: Ss): NotReady | Ready<{ [K in keyof Ss]: DataOf<Ss[K]> }> {
   const errors = queries.flatMap((q) => (q.error != null ? [q.error] : []));
   if (queries.some((q) => q.data === undefined)) {
