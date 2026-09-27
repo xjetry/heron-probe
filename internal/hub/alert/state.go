@@ -12,9 +12,9 @@ import (
 // 两个数是常量，不按节点或规则配：flapGrace 的作用是压抖动的噪声，与节点自己的宽限是两个量；若随节点配置，
 // 调小节点宽限的同时也会把压噪声的下限一起调没。
 //
-// flapWindow 严格大于 flapGrace 是 spec 的约束，下面的常量表达式在编译期钉住它（差为负时常量转换 uint 溢出）。
-// 窗口按这次离线开始的时刻判定（见 Observation.SinceRecovery），所以这条约束在本实现里保证的是：恢复之后立刻
-// 再次离线的那一次，flapGrace 在窗口之内走完。
+// flapWindow 严格大于 flapGrace 是 spec 的取值约束，下面的常量表达式在编译期钉住它（差为负时常量转换 uint 溢出）。
+// 状态机不比较两者：grace() 按离线开始时刻一次定下宽限，之后不再看窗口，改反它不会改变任何一次判定，
+// 只会让"窗口内再掉"与"抖动宽限"两个量失去各自的含义。
 const (
 	flapWindow = time.Hour
 	flapGrace  = 30 * time.Minute
