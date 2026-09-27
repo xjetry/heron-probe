@@ -26,10 +26,11 @@ type Observation struct {
 	Reported   bool
 	Unseen     time.Duration
 	Grace, TTL time.Duration
-	// Recovered 为真表示这对规则与节点从 firing 恢复过；SinceRecovery 是上次恢复到这次离线开始（最后一次上报，
-	// 本次启动后未上报过的按启动时刻）的时长。按离线开始的时刻而不是评估时刻判定：同一次离线在整个 pending 期间
-	// 用同一个宽限，不会因为评估时刻走出窗口而中途改回节点宽限、提前触发。恢复是在上报之后的巡检里记下的，
-	// 离线开始（那次上报）可以比它早一个巡检间隔，所以 SinceRecovery 可以为负，仍算在窗口内。
+	// Recovered 为真表示这对规则与节点从 firing 恢复过；SinceRecovery 是上次恢复到这次离线开始的时长。离线开始即最后
+	// 一次上报的墙钟：本次启动后上报过的取 live 里的，没有的取落库的最后上报时刻，库里也没有才取启动时刻（见
+	// Engine.offlineStart）。按离线开始的时刻而不是评估时刻判定：同一次离线在整个 pending 期间用同一个宽限，不会因为
+	// 评估时刻走出窗口而中途改回节点宽限、提前触发；这次离线之前的上报已刷出落库时，hub 重启也不换宽限。恢复是在上报
+	// 之后的巡检里记下的，离线开始（那次上报）可以比它早一个巡检间隔，所以 SinceRecovery 可以为负，仍算在窗口内。
 	Recovered     bool
 	SinceRecovery time.Duration
 }

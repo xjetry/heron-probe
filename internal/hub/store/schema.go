@@ -20,7 +20,7 @@ const ddlNode = `CREATE TABLE node (
   traffic_reset_day INTEGER NOT NULL DEFAULT 1,
   token_hash BLOB NOT NULL UNIQUE,
   created_at INTEGER NOT NULL,
-  -- 墙钟，只供展示与告警文案，不参与离线时长计算。
+  -- 墙钟，供展示、告警文案与 hub 重启后抖动窗口判定里的离线开始，不参与离线时长计算。
   last_seen_at INTEGER,
   -- 计费与到期（§9.4）：提醒用的展示值，空串与 0 是"未填"。取值约束由 api 的 UpdateNode 裁决，库里不设 CHECK。
   -- 列序与迁移 9 的 ADD COLUMN 结果一致。

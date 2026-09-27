@@ -59,8 +59,11 @@ type Engine struct {
 	rules    map[int64]store.AlertRule
 	channels map[int64]store.NotifyChannel
 	states   map[stateKey]stateEntry
-	started  time.Duration
-	sender   Sender
+	// started 与 startedWall 是本次 Load 的时刻，分别按单调钟与墙钟记：前者是本次启动后没有上报的节点量已离线时长的起点，
+	// 后者只在库里也没有最后上报时充当离线开始（见 offlineStart）。
+	started     time.Duration
+	startedWall time.Time
+	sender      Sender
 }
 
 // New 对缺时区的 Config panic：到期扫描对 nil 时区调用 time.Time.In 会在运行中 panic，装配错误应当在启动时暴露。
@@ -97,7 +100,7 @@ func (e *Engine) Load(ctx context.Context) error {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.started = e.clk.Mono()
+	e.started, e.startedWall = e.clk.Mono(), e.clk.Now()
 	e.rules = validRules
 	e.channels = map[int64]store.NotifyChannel{}
 	e.states = map[stateKey]stateEntry{}
@@ -422,6 +425,29 @@ func (e *Engine) pruneCandidates(ctx context.Context, ruleID int64, keep map[int
 	return errors.Join(errs...)
 }
 
+// offlineStart 是这次离线开始、即节点最后一次上报的墙钟，只用来与 recoveredAt 相减判定抖动窗口：recoveredAt 是落库的墙钟，
+// 离线开始也必须是跨重启可比的墙钟。
+//
+//   - 本次启动后上报过：live 的 LastSeenWall。
+//   - 否则取库里的 LastSeenAt。ingest.Service.RunFlusher 在每个分钟边界之后刷出已闭合的分钟桶、ctx 结束时刷出全部桶，
+//     store.WriteMinuteBatch 随分钟行把 live 当时的 LastSeenWall 写进 node.last_seen_at。重启前已开始、重启时仍在 pending 的
+//     离线因此保住原来的离线开始，重启前后按同一个宽限判定。
+//   - 库里也没有（没有任何上报落过库）才退回本次启动的墙钟：这时离线开始不晚于启动时刻，启动时刻是能确定的最晚值。
+//
+// 落库值不晚于真实的最后上报：正常停机时全部刷出，二者相同；异常退出丢的是还没刷出的上报，存储正常时只有退出前约一个刷出周期
+// 之内的那些。偏早只让 SinceRecovery 偏小、更偏向判进窗口，而窗口内的宽限 max(节点宽限, flapGrace) 不小于窗口外的节点宽限，
+// 所以这个偏差只会推迟触发，不会让本该抑制的离线提前触发。
+func (e *Engine) offlineStart(entry live.Entry, seen bool, node store.Node) time.Time {
+	switch {
+	case seen:
+		return entry.LastSeenWall
+	case !node.LastSeenAt.IsZero():
+		return node.LastSeenAt
+	default:
+		return e.startedWall
+	}
+}
+
 func (e *Engine) SweepOffline(ctx context.Context) error {
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
@@ -429,7 +455,7 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	now, wall := e.clk.Mono(), e.clk.Now()
+	now := e.clk.Mono()
 	var errs []error
 	for _, r := range e.Rules() {
 		if !r.Enabled || r.Kind != store.KindOffline {
@@ -443,7 +469,8 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 			candidates[node.ID] = true
 			k := stateKey{r.ID, node.ID}
 			cur := e.entry(k)
-			// LastSeenAt 是跨进程的墙钟，只供文案；无 live 条目时从本次 Load 的单调起点量时长。
+			// 已离线时长按单调钟量，不受墙钟跳变影响：有本次启动后的上报从 live 的 LastSeen 起算，否则从本次 Load 的单调起点
+			// 起算（重启不变式：重启前处于 pending 的从启动时刻重新计时）。落库的 LastSeenAt 不参与时长，用于下面的窗口判定与文案。
 			lastSeen := e.started
 			entry, seen := e.live.Get(node.ID)
 			if seen {
@@ -452,8 +479,7 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 			unseen := now - lastSeen
 			o := Observation{Reported: seen, Unseen: unseen, Grace: time.Duration(node.OfflineGraceS) * time.Second, TTL: e.cfg.TTL}
 			if !cur.recoveredAt.IsZero() {
-				// 离线开始的墙钟 = 现在 − 已离线时长；已离线时长按单调钟量，只有上次恢复时刻需要跨重启的墙钟。
-				o.Recovered, o.SinceRecovery = true, wall.Add(-unseen).Sub(cur.recoveredAt)
+				o.Recovered, o.SinceRecovery = true, e.offlineStart(entry, seen, node).Sub(cur.recoveredAt)
 			}
 			next, tr := NextOffline(cur.state, o)
 			summary := fmt.Sprintf("节点 %s 离线 %s（规则 %s）", node.Name, unseen.Round(time.Second), r.Name)

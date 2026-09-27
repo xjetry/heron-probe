@@ -1,6 +1,7 @@
 package alert
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -132,7 +133,8 @@ func TestReofflineAfterWindowUsesNodeGrace(t *testing.T) {
 	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
 }
 
-// hub 重启不丢窗口：恢复时刻从库读回。重启后节点没有上报，离线从启动时刻起算，仍在恢复后的窗口里。
+// hub 重启不丢窗口：恢复时刻从库读回。夹具没有刷出分钟桶，库里没有最后上报，离线开始退回启动时刻（恢复后 5 分钟），
+// 仍在窗口里；已离线时长照重启不变式从启动时刻起算。
 func TestFlapWindowSurvivesRestart(t *testing.T) {
 	f, r := flapFixture(t)
 	f.clk.Advance(5 * time.Minute)
@@ -145,6 +147,114 @@ func TestFlapWindowSurvivesRestart(t *testing.T) {
 		t.Fatal("pending after restart is not marked flapping")
 	}
 	f.clk.Advance(30*time.Minute - 61*time.Second)
+	f.sweep(t)
+	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
+}
+
+// flushLive 走 hub 停机时的全量刷出路径（ingest.Service.RunFlusher 在 ctx 结束时 live.Drain 交给 store.WriteMinuteBatch），
+// 把 live 当时的最后上报时刻写进 node.last_seen_at，并核对它确实落库。
+func (f *fixture) flushLive(t *testing.T, node int64, want time.Time) {
+	t.Helper()
+	rejected, err := f.st.WriteMinuteBatch(t.Context(), f.l.Drain())
+	must(t, err)
+	if rejected != 0 {
+		t.Fatalf("flush rejected %d rows", rejected)
+	}
+	if got := storedLastSeen(t, f, node); !got.Equal(want) {
+		t.Fatalf("stored last_seen_at = %v, want %v", got, want)
+	}
+}
+
+func storedLastSeen(t *testing.T, f *fixture, node int64) time.Time {
+	t.Helper()
+	nodes, err := f.st.ListNodes(t.Context())
+	must(t, err)
+	for _, n := range nodes {
+		if n.ID == node {
+			return n.LastSeenAt
+		}
+	}
+	t.Fatalf("node %d not found", node)
+	return time.Time{}
+}
+
+// 重启时仍在 pending 的离线，离线开始跨重启取落库的最后上报时刻，按它定下的抖动宽限重启前后不换。已离线时长照重启
+// 不变式从启动时刻重新计时，所以重启的一组在启动后满 30 分钟才触发，不重启的对照组在离线开始后满 30 分钟触发；
+// 重启后满节点宽限（60 秒）的同一时刻，两组都停在 pending 并标抖动。重启已过窗口结束的那一行：按启动时刻判窗口的
+// 写法会把这次离线判到窗口外、换成节点宽限，在重启后 60 秒触发。
+func TestFlapGraceSurvivesRestartDuringPending(t *testing.T) {
+	cases := []struct {
+		name               string
+		lastReport, reboot time.Duration // 相对恢复时刻
+	}{
+		{"重启已过窗口结束", 50 * time.Minute, 65 * time.Minute},
+		{"重启仍在窗口内", 10 * time.Minute, 20 * time.Minute},
+	}
+	type check struct {
+		at       time.Duration // 相对恢复时刻
+		state    store.AlertState
+		flapping bool
+	}
+	for _, c := range cases {
+		for _, restart := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/restart=%v", c.name, restart), func(t *testing.T) {
+				f, r := flapFixture(t)
+				recoveredAt := f.clk.Now()
+				f.clk.Advance(c.lastReport)
+				f.l.Observe(f.ids[0], &probev1.Metrics{})
+				f.sweep(t)
+				checks := []check{
+					{c.lastReport + 61*time.Second, store.StatePending, true},
+					{c.reboot, store.StatePending, true},
+				}
+				fireAt := c.lastReport + 30*time.Minute
+				if restart {
+					fireAt = c.reboot + 30*time.Minute
+				}
+				// 重启后未满 TTL 时 NextOffline 保持现状，不做抖动抑制也停在 pending，不标。
+				after := []check{
+					{c.reboot + 10*time.Second, store.StatePending, !restart},
+					{c.reboot + 60*time.Second, store.StatePending, true},
+					{fireAt - time.Second, store.StatePending, true},
+					{fireAt, store.StateFiring, false},
+				}
+				run := func(checks []check) {
+					t.Helper()
+					for _, ck := range checks {
+						f.clk.Advance(recoveredAt.Add(ck.at).Sub(f.clk.Now()))
+						f.sweep(t)
+						if got, flapping := stateOf(f.e, r.ID, f.ids[0]), flappingOf(f.e, r.ID, f.ids[0]); got != ck.state || flapping != ck.flapping {
+							t.Fatalf("at R+%v: state=%s flapping=%v, want %s flapping=%v", ck.at, got, flapping, ck.state, ck.flapping)
+						}
+					}
+				}
+				run(checks)
+				if restart {
+					f.flushLive(t, f.ids[0], recoveredAt.Add(c.lastReport))
+					f.restart(t)
+				}
+				run(after)
+			})
+		}
+	}
+}
+
+// 库里没有最后上报（last_seen_at 为 NULL）时离线开始退回启动时刻。恢复记在启动前两小时，窗口已过，按节点宽限在
+// 启动后 60 秒触发；把 NULL 读出的零值当离线开始会算出远早于恢复的离线开始，误判进窗口而停在 pending。
+func TestOfflineStartWithoutStoredLastSeenFallsBackToBoot(t *testing.T) {
+	f, r := flapFixture(t)
+	f.clk.Advance(2 * time.Hour)
+	f.restart(t)
+	if seen := storedLastSeen(t, f, f.ids[0]); !seen.IsZero() {
+		t.Fatalf("stored last_seen_at = %v, want NULL", seen)
+	}
+	f.clk.Advance(59 * time.Second)
+	f.sweep(t)
+	wantState(t, f.e, r.ID, f.ids[0], store.StatePending)
+	if flappingOf(f.e, r.ID, f.ids[0]) {
+		t.Fatal("pending outside the window is marked flapping")
+	}
+	f.clk.Advance(time.Second)
 	f.sweep(t)
 	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
 }
