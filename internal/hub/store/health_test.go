@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -133,6 +134,14 @@ func TestPruneRecordsCompletionOnlyOnSuccess(t *testing.T) {
 
 func ptr(v int64) *int64 { return &v }
 
+func showSeries(series []SeriesHealth) string {
+	var out []string
+	for _, h := range series {
+		out = append(out, fmt.Sprintf("%s(%s) oldest=%v watermark=%v", h.Table, h.Level.Name, deref(h.Oldest), deref(h.Watermark)))
+	}
+	return "[" + strings.Join(out, "; ") + "]"
+}
+
 // 最老桶按表分别给：六张表各造不同的 ts（另各有一行更新的），读出的是每张表自己的最小值；水位是 rollup_state 的
 // 原值；空表与从未跑过的维护是缺失而不是 0。
 func TestStorageStatsReportsSeriesHealthPerTable(t *testing.T) {
@@ -147,7 +156,7 @@ func TestStorageStatsReportsSeriesHealthPerTable(t *testing.T) {
 		{Table: "probe_1m", Level: levels[0]}, {Table: "probe_5m", Level: m5, Watermark: ptr(0)}, {Table: "probe_1h", Level: h1, Watermark: ptr(0)},
 	}
 	if !reflect.DeepEqual(stats.Series, want) || stats.LastPrune != nil || stats.LastRollup != nil {
-		t.Fatalf("empty database health = %+v prune=%v rollup=%v, want %+v and no maintenance", stats.Series, stats.LastPrune, stats.LastRollup, want)
+		t.Fatalf("empty database health = %s prune=%v rollup=%v, want %s and no maintenance", showSeries(stats.Series), deref(stats.LastPrune), deref(stats.LastRollup), showSeries(want))
 	}
 	oldest := map[string]int64{"metric_1m": 600, "metric_5m": 1200, "metric_1h": 7200, "probe_1m": 660, "probe_5m": 1500, "probe_1h": 10800}
 	var stmts []string
@@ -175,7 +184,7 @@ func TestStorageStatsReportsSeriesHealthPerTable(t *testing.T) {
 		want[i].Oldest = ptr(oldest[want[i].Table])
 	}
 	if !reflect.DeepEqual(stats.Series, want) || stats.LastPrune != nil || stats.LastRollup == nil || *stats.LastRollup != 555 {
-		t.Fatalf("health = %+v prune=%v rollup=%v, want %+v, no prune, rollup 555", stats.Series, deref(stats.LastPrune), deref(stats.LastRollup), want)
+		t.Fatalf("health = %s prune=%v rollup=%v, want %s, no prune, rollup 555", showSeries(stats.Series), deref(stats.LastPrune), deref(stats.LastRollup), showSeries(want))
 	}
 }
 
