@@ -199,16 +199,18 @@ func longestLogo() string {
 // 解码预算不够时，connect 在方法体之前就以 ResourceExhausted 拒绝，校验根本到不了。
 // 解码预算装得下满额设置在最坏转义下的 JSON（service.go 的 maxBody 写了推导）：logo 取 longestLogo；
 // 标题与 CSS 用控制字符填满，json.Marshal 把每个控制字符写成 6 字节的 \u00XX，标题的控制字符清洗后不计入
-// 64 个字符，所以这仍是合法的设置；明暗取最长的值，字段名用比 camelCase 长的 proto 原名（connect 两种都收）。
+// 64 个字符，所以这仍是合法的设置；明暗取最长的值，总闸取较长的 false，字段名用比 camelCase 长的 proto 原名（connect
+// 两种都收）。connect 丢弃不认识的字段，保存后总闸确实关上，才说明请求里的总闸按字段被解码、这是一份全字段的设置。
 func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	logo := longestLogo()
 	theme := slices.MaxFunc(themes, func(a, b string) int { return len(a) - len(b) })
-	body, err := json.Marshal(map[string]any{"settings": map[string]string{
+	body, err := json.Marshal(map[string]any{"settings": map[string]any{
 		"title": strings.Repeat("\x01", maxTitleBytes), "theme": theme, "accent_color": "#112233",
-		"logo":       logo,
-		"custom_css": strings.Repeat("\x01", maxCSSBytes),
+		"logo":           logo,
+		"custom_css":     strings.Repeat("\x01", maxCSSBytes),
+		"public_enabled": false,
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -230,6 +232,9 @@ func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T)
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("full settings escaped worst case (%d bytes): %d %s", len(body), resp.StatusCode, b)
+	}
+	if h.store.PublicEnabled() {
+		t.Fatal("public_enabled in the worst-case request was not applied")
 	}
 }
 
