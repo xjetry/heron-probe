@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type ChangeEvent, type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
-import { BackupFields, backupDraft, type BackupDraft } from "../components/BackupFields";
+import { BackupFields, backupDraft, backupRequest, type BackupDraft } from "../components/BackupFields";
 import { AdminService, type Settings } from "../gen/probe/v1/admin_pb";
 import { LOGO_TYPES, MAX_TITLE_CHARS, THEMES, sizeProblems, type Theme } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
@@ -72,7 +72,7 @@ export function Appearance() {
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!e.currentTarget.checkValidity()) return;
-    if (problems.length === 0 && !reading && !update.isPending) update.mutate({ settings: form });
+    if (problems.length === 0 && !reading && !update.isPending) update.mutate({ settings: { ...form, backup: form.backup && backupRequest(form.backup) } });
   };
   return (
     <section>

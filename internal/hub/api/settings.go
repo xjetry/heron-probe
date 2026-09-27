@@ -138,8 +138,13 @@ func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probe
 	}
 	st, savedBackup, err := s.store.SaveSettings(ctx, st, backup)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, invalid("backup.channels: %s", err)
+		var missing store.NotFoundError
+		var outOfRange store.BackupRangeError
+		switch {
+		case errors.As(err, &missing) && missing.Kind == store.ObjectNotifyChannel:
+			return nil, invalid("backup.notify.channel_ids: channel %d does not exist", missing.ID)
+		case errors.As(err, &outOfRange):
+			return nil, invalid("%s", outOfRange)
 		}
 		s.log.Error("saving settings failed", "err", err)
 		return nil, internalError("saving settings failed")

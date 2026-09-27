@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/xjetry/probe/internal/hub/outbound"
 )
@@ -42,10 +43,16 @@ func ValidateTarget(endpoint, bucket string) error {
 	return ValidateBucket(bucket)
 }
 
+// ValidateEndpoint 同样不回显配置值。主机只收签名与线上一致的写法：签名覆盖 URL 里的 host，而 net/http 在线上
+// 把非 ASCII 主机转成 punycode、把 IPv6 zone 从 Host 头里去掉（Go 1.27.1 实测），两者不一致时每个请求都会被
+// 服务端以签名不符拒绝。
 func ValidateEndpoint(endpoint string) error {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return errors.New("backup.endpoint must be an http(s) URL without userinfo, query or fragment")
+	}
+	if strings.ContainsFunc(u.Host, func(r rune) bool { return r >= utf8.RuneSelf || r == '%' }) {
+		return errors.New("backup.endpoint host must be ASCII without an IPv6 zone; write internationalized names in punycode (xn--...)")
 	}
 	return nil
 }

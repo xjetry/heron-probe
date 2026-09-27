@@ -430,7 +430,7 @@ message NotifyChannel {
   int64 created_at = 6;
 }
 message TelegramConfig {
-  // 列表与保存响应里恒为空；保存时为空表示保留已存的 token（新建时必填）。
+  // 列表与保存响应里恒为空；保存时为空表示保留已存的 token（新建时必填）。与 BackupSettings.secret 方向不同：那里显式空串表示清除。
   string bot_token = 1;
   // 只在响应里有意义，表示已保存非空 token。
   bool has_bot_token = 2;
@@ -438,7 +438,7 @@ message TelegramConfig {
   string chat_id = 3;
 }
 message WebhookConfig {
-  // 新建必填，必须为绝对 http 或 https 地址；保存为空保留旧值，响应恒为空。
+  // 新建必填，必须为绝对 http 或 https 地址；保存为空保留旧值，响应恒为空。与 BackupSettings.secret 方向不同：那里显式空串表示清除。
   string url = 1;
   // POST、PUT、PATCH；空取 POST。
   string method = 2;
@@ -480,24 +480,30 @@ message Settings {
   string logo = 4;
   // 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
   string custom_css = 5;
-  BackupSettings backup = 6;
+  // 备份设置（§6.7）。缺席即不变：只改外观的请求不带它，备份配置与渠道都不动。不下发到公开页。
+  BackupSettings backup = 11;
 }
 
-// 备份目标由管理员显式配置。endpoint、bucket、access_key、secret 任一为空即整体关闭。
-// 提交 backup 时，除 optional 字段外整体替换；只改外观时应省略 backup。
+// 备份目标、两层周期与份数、失败通知渠道。endpoint、bucket、access_key、secret 任一为空即整体关闭；
+// has_secret 与其余三项一起就能从读侧判断是否已配置。提交 backup 时 endpoint、bucket、region、access_key、prefix
+// 整体替换；secret、四个数值与 notify 缺席即不变。
 message BackupSettings {
-  // http(s) URL，不含 userinfo、query、fragment，最多 2048 字节；空串关闭备份。
+  // http(s) URL，最多 2048 字节，不含 userinfo、query、fragment；主机只含 ASCII、不带 IPv6 zone，国际化域名写
+  // punycode 形式（xn--…）：签名覆盖 host，而 HTTP 客户端在线上发的是 punycode、去掉了 zone。空串关闭备份。
   // 面板使用 path-style（兼容 R2），endpoint 可含路径前缀。
   string endpoint = 1;
   // 非空时为 S3 bucket 名：3-63 个小写字母、数字、点或连字符，首尾为字母或数字，无连续点。
   string bucket = 2;
   // 签名区域，最多 64 字节，不含斜杠或空白；空串保存为 auto（R2）。
   string region = 3;
-  // 最多 128 字节，不含斜杠或空白；可回显，空串关闭备份。
+  // 最多 128 字节，不含斜杠或空白；空串关闭备份。回显：它是标识而不是凭据，每个请求的 Authorization 头里都以明文出现，
+  // 签名的保密性只由 secret 承载。
   string access_key = 4;
-  // 只写不读，最多 4096 字节。缺席保留旧值，显式空串清除凭据并关闭备份。
+  // 只写不读，最多 4096 字节；读侧看 has_secret。缺席保留旧值，显式空串清除凭据并关闭备份。
+  // 与渠道凭据（TelegramConfig.bot_token、WebhookConfig.url）方向不同：那两处空串表示保留旧值。
   optional string secret = 5;
-  // 对象键前缀，最多 512 字节；允许为空。
+  // 对象键前缀，最多 512 字节，不以 / 开头或结尾、不含控制字符。对象键为 <prefix>/config/…、<prefix>/metrics/…、
+  // <prefix>/theme/…；空串时直接以 config/ 等开头。
   string prefix = 6;
   // 60-86400 秒；缺席不变，无存储键时默认 300；显式 0 非法。
   optional uint32 config_interval_s = 7;
@@ -507,8 +513,15 @@ message BackupSettings {
   optional uint32 config_keep = 9;
   // 1-1000 份；缺席不变，无存储键时默认 14；显式 0 非法。
   optional uint32 metrics_keep = 10;
-  // notify.backup_channels：最多 100 个已存在的通知渠道 ID；空列表不发送备份通知。
-  repeated int64 channels = 11;
+  // 备份失败与恢复的通知渠道（键 notify.backup_channels）。缺席即不变，显式给出空集合即关闭；响应里恒给出。
+  // proto3 的裸 repeated 字段缺席与空列表在线上不可区分，所以包一层 message 承载 presence。
+  optional BackupNotify notify = 11;
+  // 只在响应里有意义，表示已保存非空 secret；请求里的值被忽略。
+  bool has_secret = 12;
+}
+message BackupNotify {
+  // 最多 100 个；每个 ID 必须对应存在的渠道，否则整次更新返回 InvalidArgument 并点名 ID；重复 ID 合并。
+  repeated int64 channel_ids = 1;
 }
 message GetSettingsRequest {}
 message GetSettingsResponse { Settings settings = 1; }
