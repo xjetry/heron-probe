@@ -303,5 +303,5 @@ func TestRegistryExplicitEmptyScopeReachesNoNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertState(t, r, setupVersion+2, []Detail{empty}, append(slices.Clone(ids), three)...)
+	assertState(t, r, setupVersion+2, []Detail{{Task: empty.Task}}, append(slices.Clone(ids), three)...)
 }
