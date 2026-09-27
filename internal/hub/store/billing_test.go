@@ -104,6 +104,14 @@ func TestUpdateNodeReplacesBillingAndReportsChange(t *testing.T) {
 	if !update(edit) {
 		t.Fatal("changing only the cycle reported no change")
 	}
+	edit.Billing.ExpiresOn = "2026-11-01"
+	if !update(edit) {
+		t.Fatal("changing only the expiry date reported no change")
+	}
+	edit.Billing.Price = "13.00"
+	if !update(edit) {
+		t.Fatal("changing only the price reported no change")
+	}
 	edit.Billing = Billing{}
 	if !update(edit) {
 		t.Fatal("clearing billing reported no change")

@@ -241,7 +241,8 @@ const ddlAlertRule = `CREATE TABLE alert_rule (
   threshold REAL,
   for_minutes INTEGER,
   created_at INTEGER NOT NULL,
-  -- 仅到期规则非 NULL（1–365），种类与字段的对应由 alert.CheckRule 裁决；列序与迁移 9 的 ADD COLUMN 结果一致。
+  -- 非到期规则写 NULL：SaveAlertRule 只为到期规则落这一列，CheckKindFields 拒绝别的种类带非零值。到期规则的
+  -- 1–365 由 alert.CheckRule 在保存与载入时裁决，存储层不查。列序与迁移 9 的 ADD COLUMN 结果一致。
   days_before INTEGER
 )`
 const ddlAlertRuleNode = `CREATE TABLE alert_rule_node (
