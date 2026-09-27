@@ -16,7 +16,7 @@ export function Layout() {
   useEffect(() => { reset(); }, [location, reset]);
   return (
     <div className="layout">
-      <nav className="nav" aria-label="主导航">
+      <nav className="nav panel-nav" aria-label="主导航">
         <span className="brand">probe</span>
         <NavLink to="/" end>总览</NavLink>
         <NavLink to="/nodes">节点</NavLink>
