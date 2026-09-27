@@ -83,3 +83,15 @@ it("填了费用与到期的节点卡片多两行，已过期的到期标红，�
   const plain = within(screen.getByRole("article", { name: "plain" }));
   expect([plain.queryByText("费用"), plain.queryByText("到期")]).toEqual([null, null]);
 });
+
+it("卡片名称旁是国家 / 地区徽章：旗帜由国家码算出，照写国家码；没有国家的卡片不画徽章", async () => {
+  const withCountry = { ...snapshot, nodes: [{ ...snapshot.nodes[0], country: "JP" }, snapshot.nodes[1]] };
+  renderWithService(PublicService, { getSnapshot: async () => withCountry }, [{ path: "/", Component: PublicOverview }], "/");
+  const web = within(await screen.findByRole("article", { name: "web-1" }));
+  expect(web.getByTitle("国家 / 地区 JP")).toHaveTextContent("\u{1F1EF}\u{1F1F5} JP");
+  expect(web.getByRole("heading", { level: 2 })).toHaveTextContent("web-1 \u{1F1EF}\u{1F1F5} JP");
+  // 徽章在链接之外，不改变链接的可访问名。
+  expect(web.getByRole("link", { name: "web-1" })).toBeInTheDocument();
+  const db = within(screen.getByRole("article", { name: "db-1" }));
+  expect(db.getByRole("heading", { level: 2 })).toHaveTextContent(/^db-1$/);
+});

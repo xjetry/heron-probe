@@ -5,7 +5,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Nodes } from "./Nodes";
-import { AdminService, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema } from "../gen/probe/v1/admin_pb";
+import { AdminService, CountrySource, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema } from "../gen/probe/v1/admin_pb";
 import { BillingCycle } from "../gen/probe/v1/types_pb";
 
 const two = [
@@ -17,6 +17,8 @@ const withVersion = [
   { ...two[0], facts: { hostname: "a", os: "", kernel: "", arch: "", virtualization: "", cpuModel: "", cpuCores: 0, agentVersion: "v1.0.0", icmpAvailable: true } },
 ];
 const agentAt = (agentVersion: string) => [{ ...withVersion[0], facts: { ...withVersion[0].facts, agentVersion } }];
+// 按表头文字取列号：同一行里可能有多个"—"，断言要落在指定的列上。
+const column = (header: string) => screen.getAllByRole("columnheader").findIndex((th) => th.textContent === header);
 const snapshotOf = (hubVersion: string) => async () => ({ now: 1n, reportIntervalMs: 4000, nodes: [], hubVersion });
 // 节点页总会取快照（落后标记用）；默认给一个成功的快照，需要别的版本或失败的用例覆盖 getSnapshot。
 const renderNodes = (impl: AdminImpl, routes: Parameters<typeof renderWithAdmin>[1] = [{ path: "/nodes", Component: Nodes }]) =>
@@ -420,6 +422,49 @@ describe("Nodes", () => {
     }), expect.anything()));
   });
 
+  describe("国家 / 地区", () => {
+    const located = [
+      { ...two[0], country: "US", countrySource: CountrySource.LOOKUP, countryIp: "8.8.8.8" },
+      { ...two[1], country: "JP", countrySource: CountrySource.MANUAL, countryIp: "8.8.4.4", countryPin: "JP" },
+      { ...two[0], id: 3n, name: "c" },
+    ];
+    const row = async (name: string) => within((await screen.findByRole("link", { name })).closest("tr")!);
+    const countryCell = async (name: string) => (await row(name)).getAllByRole("cell")[column("国家 / 地区")];
+
+    it("列出显示值的徽章、来源与查得于哪个地址，没有国家是破折号", async () => {
+      renderNodes({ listNodes: async () => ({ nodes: located }) });
+      expect(await countryCell("a（#1）")).toHaveTextContent(/^\u{1F1FA}\u{1F1F8} US 查得于 8\.8\.8\.8$/u);
+      expect(await countryCell("b（#2）")).toHaveTextContent(/^\u{1F1EF}\u{1F1F5} JP 手动指定；查得于 8\.8\.4\.4$/u);
+      expect(await countryCell("c（#3）")).toHaveTextContent(/^—$/);
+    });
+
+    it("编辑表单回显手动值并转成大写提交；只改别的字段时手动值按当前值回传；提示查得于哪个地址", async () => {
+      const updateNode = vi.fn(async () => ({}));
+      renderNodes({ listNodes: async () => ({ nodes: located }), updateNode });
+      await screen.findByRole("link", { name: "b（#2）" });
+      fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
+      const pin = screen.getByLabelText("手动指定国家 / 地区 b（#2）");
+      expect(pin).toHaveValue("JP");
+      expect(pin).toHaveAccessibleDescription("两个字母（ISO 3166-1），优先于查得值；留空用查得值：查得于 8.8.4.4。");
+      fireEvent.change(screen.getByLabelText("备注 b（#2）"), { target: { value: "moved" } });
+      fireEvent.click(screen.getByRole("button", { name: "保存" }));
+      await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 2n, note: "moved", countryPin: "JP" }), expect.anything()));
+
+      fireEvent.click(await screen.findByRole("button", { name: "编辑 a（#1）" }));
+      expect(screen.getByLabelText("手动指定国家 / 地区 a（#1）")).toHaveValue("");
+      fireEvent.change(screen.getByLabelText("手动指定国家 / 地区 a（#1）"), { target: { value: "de" } });
+      expect(screen.getByLabelText("手动指定国家 / 地区 a（#1）")).toHaveValue("DE");
+      fireEvent.click(screen.getByRole("button", { name: "保存" }));
+      await waitFor(() => expect(updateNode).toHaveBeenLastCalledWith(expect.objectContaining({ id: 1n, countryPin: "DE" }), expect.anything()));
+    });
+
+    it("尚无查得值时提示", async () => {
+      renderNodes({ listNodes: async () => ({ nodes: located }) });
+      fireEvent.click(await screen.findByRole("button", { name: "编辑 c（#3）" }));
+      expect(screen.getByLabelText("手动指定国家 / 地区 c（#3）")).toHaveAccessibleDescription("两个字母（ISO 3166-1），优先于查得值；留空用查得值：尚无查得值。");
+    });
+  });
+
   describe("计费", () => {
     // 夹具的 daysLeft 是 hub 下发的值。时钟钉在离夹具几年之外的日期，按浏览器本地日期重算的实现在任何时区都与夹具
     // 不同而红；不钉时夹具恰好等于某一天的日历差，那一天本地重算照样全绿。只 fake Date，react-query 与 waitFor
@@ -440,7 +485,7 @@ describe("Nodes", () => {
       expect((await row("a（#1）")).getByRole("cell", { name: "USD 12.50 / 月 · 2026-10-01（剩 4 天） · 自动续期" })).toBeInTheDocument();
       expect((await row("a（#1）")).getByText("2026-10-01（剩 4 天）")).not.toHaveClass("error");
       expect((await row("b（#2）")).getByText("2026-09-24（已过期 3 天）")).toHaveClass("error");
-      expect((await row("c（#3）")).getByRole("cell", { name: "—" })).toBeInTheDocument();
+      expect((await row("c（#3）")).getAllByRole("cell")[column("计费")]).toHaveTextContent(/^—$/);
     });
 
     it("编辑计费随整行整体提交，币种输入即转大写", async () => {

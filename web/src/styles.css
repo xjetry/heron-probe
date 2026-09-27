@@ -55,3 +55,10 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .billing-edit p { grid-column: 1 / -1; margin: 0; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: 1rem; }
 .secret { font-family: ui-monospace, monospace; word-break: break-all; white-space: pre-wrap; background: var(--bg); padding: 0.5rem; border-radius: 6px; }
+
+/* 国家 / 地区徽章（components/CountryBadge.tsx），面板与公开页共用。 */
+.country-badge {
+  white-space: nowrap;
+  font-size: 0.85em;
+  font-weight: normal;
+}

@@ -16,7 +16,8 @@ const toDraft = (s: Settings | undefined): Draft => ({
   title: s?.title ?? "", theme: s?.theme || "auto", accentColor: s?.accentColor ?? "", logo: s?.logo ?? "", customCss: s?.customCss ?? "",
 });
 
-// 公开页的外观：UpdateSettings 整体替换五项，表单因此总是提交全部字段。
+// 公开页的外观：UpdateSettings 整体替换五项，表单因此总是提交全部字段。国家查询的两项不在这个表单里、不提交：
+// hub 对它们缺席即不改（见 GeoLookup）。
 //
 // 保存成功时 onSuccess 用 hub 的回显替换草稿；它不判断"是不是最新一次"，靠的是"有未结请求"与"草稿还能被改"互斥。
 // 草稿的改动来自两处：用户改字段（同步），与读 logo 文件的回调（异步，读完才改）。互斥由两处承载：
@@ -125,6 +126,61 @@ export function Appearance() {
           <button type="submit" disabled={reading || problems.length > 0}>保存</button>
         </fieldset>
       </form>
+      <GeoLookup current={gate.data.settings} />
     </section>
+  );
+}
+
+type GeoDraft = { geoEnabled: boolean; geoUrl: string };
+const toGeoDraft = (s: Settings | undefined): GeoDraft => ({ geoEnabled: s?.geoEnabled ?? false, geoUrl: s?.geoUrl ?? "" });
+
+// 国家 / 地区查询的开关与服务地址。UpdateSettings 对外观五项整体替换，这里提交的外观取 hub 当前的已保存值（current），
+// 不取上面表单的草稿：只改查询设置不会顺带保存外观的未保存改动。开关决定 hub 是否把节点地址发给第三方，文案照写
+// 发给哪个地址。
+function GeoLookup({ current }: { current: Settings | undefined }) {
+  const qc = useQueryClient();
+  const [draft, setDraft] = useState<GeoDraft | null>(null);
+  const [saved, setSaved] = useState(false);
+  const update = useMutation(AdminService.method.updateSettings, {
+    onSuccess: (r) => {
+      setDraft(toGeoDraft(r.settings));
+      setSaved(true);
+      return qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getSettings, cardinality: "finite" }) });
+    },
+  });
+  const form = draft ?? toGeoDraft(current);
+  const edit = (patch: Partial<GeoDraft>) => {
+    setDraft((d) => ({ ...(d ?? toGeoDraft(current)), ...patch }));
+    setSaved(false);
+    update.reset();
+  };
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!update.isPending) update.mutate({ settings: { ...toDraft(current), ...form } });
+  };
+  return (
+    <>
+      <h2>国家 / 地区查询</h2>
+      <form className="card edit-form" aria-label="国家 / 地区查询" onSubmit={submit}>
+        <fieldset className="bare" disabled={update.isPending}>
+          <label className="inline">
+            <input type="checkbox" checked={form.geoEnabled} onChange={(e) => edit({ geoEnabled: e.target.checked })} />
+            按来源地址查询节点的国家 / 地区
+          </label>
+          <p className="muted" id="geo-disclosure">
+            开启即由 hub 把每个节点的来源地址发给 {form.geoUrl || "（未填写的服务地址）"}（{"{ip}"} 处换成地址），用它的应答作为节点的国家 / 地区。
+            只发公网地址，不带任何凭据；每个地址查得一次即止，失败一小时后重试。关闭时 hub 不为此出网。
+          </p>
+          <label>
+            服务地址
+            <input value={form.geoUrl} aria-describedby="geo-disclosure" onChange={(e) => edit({ geoUrl: e.target.value })} spellCheck={false} />
+          </label>
+          <p className="muted">http 或 https，含 {"{ip}"}；应答须恰为两个大写字母的国家码（ISO 3166-1），否则按失败处理。节点也可在节点页手动指定国家，手动值优先。</p>
+          {update.error != null && <p role="alert" className="error">{errorText(update.error)}</p>}
+          {saved && <p role="status">已保存。</p>}
+          <button type="submit">保存</button>
+        </fieldset>
+      </form>
+    </>
   );
 }

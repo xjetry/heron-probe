@@ -1,6 +1,6 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
 import { MAX_LOGO_BYTES } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
@@ -216,4 +216,44 @@ it("上次保存失败后换 logo，旧的错误清掉", async () => {
   pick(f, "a.png");
   FakeReader.all[0].finish("data:image/png;base64,QQ==");
   expect(f.queryByRole("alert")).toBeNull();
+});
+
+describe("国家 / 地区查询", () => {
+  const geoForm = async () => within(await screen.findByRole("form", { name: "国家 / 地区查询" }));
+  const withGeo = { ...current, geoEnabled: false, geoUrl: "https://ipinfo.io/{ip}/country" };
+
+  it("开关文案写明开启即把节点地址发给哪个服务，随输入的服务地址更新", async () => {
+    render({ getSettings: async () => ({ settings: withGeo }) });
+    const f = await geoForm();
+    const toggle = f.getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" });
+    expect(toggle).not.toBeChecked();
+    expect(f.getByLabelText("服务地址")).toHaveValue("https://ipinfo.io/{ip}/country");
+    expect(f.getByLabelText("服务地址")).toHaveAccessibleDescription(/^开启即由 hub 把每个节点的来源地址发给 https:\/\/ipinfo\.io\/\{ip\}\/country（\{ip\} 处换成地址）/);
+    fireEvent.change(f.getByLabelText("服务地址"), { target: { value: "https://geo.example/{ip}" } });
+    expect(f.getByLabelText("服务地址")).toHaveAccessibleDescription(/^开启即由 hub 把每个节点的来源地址发给 https:\/\/geo\.example\/\{ip\}（/);
+  });
+
+  it("保存提交开关与服务地址，外观取 hub 的已保存值而不是外观表单的草稿", async () => {
+    const sent: UpdateSettingsRequest[] = [];
+    render({ getSettings: async () => ({ settings: withGeo }), updateSettings: async (req) => { sent.push(req); return { settings: req.settings }; } });
+    const appearance = await form();
+    fireEvent.change(appearance.getByLabelText("标题"), { target: { value: "未保存的标题" } });
+    const f = await geoForm();
+    fireEvent.click(f.getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" }));
+    fireEvent.click(f.getByRole("button", { name: "保存" }));
+    expect(await f.findByRole("status")).toHaveTextContent("已保存");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].settings).toMatchObject({ ...current, geoEnabled: true, geoUrl: "https://ipinfo.io/{ip}/country" });
+    expect(appearance.getByLabelText("标题")).toHaveValue("未保存的标题");
+  });
+
+  it("外观表单不提交查询设置：hub 对缺席的两项不改", async () => {
+    const sent: UpdateSettingsRequest[] = [];
+    render({ getSettings: async () => ({ settings: { ...withGeo, geoEnabled: true } }), updateSettings: async (req) => { sent.push(req); return { settings: { ...req.settings!, geoEnabled: true, geoUrl: withGeo.geoUrl } }; } });
+    const f = await form();
+    fireEvent.click(f.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0].settings?.geoEnabled).toBeUndefined();
+    expect(sent[0].settings?.geoUrl).toBeUndefined();
+  });
 });
