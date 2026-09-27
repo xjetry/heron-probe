@@ -72,10 +72,15 @@ func NextOffline(cur store.AlertState, o Observation) (store.AlertState, *store.
 	return store.StatePending, nil
 }
 
-// FlapDeferred 报告 NextOffline 给出的 next 是否只因抖动抑制而停在 pending：离线已满节点自己的宽限，按节点宽限本该
-// 进入 firing。面板据此标出"抖动中"。
-func FlapDeferred(next store.AlertState, o Observation) bool {
-	return next == store.StatePending && o.Unseen >= o.Grace
+// FlapDeferred 报告这一轮是否只因抖动抑制而停在 pending，面板据此标出"抖动中"。字面意思就是定义：NextOffline 给出
+// pending，而拿掉恢复历史之后 NextOffline 本会给出 firing。抖动抑制的输入只有恢复历史（grace() 在 Recovered 为假时
+// 不看 SinceRecovery），Recovered 置假的那次调用就是不做抖动抑制的状态机。这里只比较两次调用的结果、不复述其中任何
+// 一道门（TTL、未上报时保持现状、宽限），NextOffline 以后加门或改门，这里自动跟上。
+func FlapDeferred(cur store.AlertState, o Observation) bool {
+	with, _ := NextOffline(cur, o)
+	o.Recovered = false
+	without, _ := NextOffline(cur, o)
+	return with == store.StatePending && without == store.StateFiring
 }
 
 // EvaluateProbes 按时间升序铺满窗口；Present 为假不能当成一次恢复观测。

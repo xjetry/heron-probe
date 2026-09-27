@@ -497,7 +497,7 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 				errs = append(errs, err)
 				continue
 			}
-			e.setFlapping(k, FlapDeferred(next, o))
+			e.setFlapping(k, FlapDeferred(cur.state, o))
 		}
 		if err := e.pruneCandidates(ctx, r.ID, candidates); err != nil {
 			errs = append(errs, err)

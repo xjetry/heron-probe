@@ -11,8 +11,8 @@ import (
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
-// 抖动抑制的状态机：离线开始时距上次恢复不足一小时（不含一小时），宽限取 max(节点宽限, 30 分钟)。30 分钟与一小时写
-// 字面值，不引用常量：常量改了而 spec 没改，这里要红。
+// 抖动抑制的状态机：离线开始时距上次恢复不足一小时（不含一小时），宽限取 max(节点宽限, 30 分钟)。每行都从 pending、
+// 未上报出发。30 分钟与一小时写字面值，不引用常量：常量改了而 spec 没改，这里要红。
 func TestNextOfflineFlapGrace(t *testing.T) {
 	ttl := 30 * time.Second
 	firing := ptr(store.TransitionFiring)
@@ -37,6 +37,11 @@ func TestNextOfflineFlapGrace(t *testing.T) {
 		{"节点宽限大于 30 分钟时按节点宽限触发", 45 * time.Minute, true, 10 * time.Minute, 45 * time.Minute, store.StateFiring, firing, false},
 		{"恢复记在离线开始之后的巡检里（负时长）仍在窗口内", 2 * time.Minute, true, -5 * time.Second, 2 * time.Minute, store.StatePending, nil, true},
 		{"从未恢复过按节点宽限", 2 * time.Minute, false, 0, 2 * time.Minute, store.StateFiring, firing, false},
+		{"从未恢复过、未满节点宽限的 pending 不算抖动推迟", 2 * time.Minute, false, 0, time.Minute, store.StatePending, nil, false},
+		// 未上报且未满 TTL 时 NextOffline 保持现状：这样的 pending 不做抖动抑制也不会触发（重启后头一个 TTL 即是此情形），
+		// 宽限为 0（读侧取 TTL）时已离线时长虽不小于节点宽限，也不标。
+		{"未满 TTL 保持现状的 pending 在窗口内不标", 0, true, 10 * time.Minute, 10 * time.Second, store.StatePending, nil, false},
+		{"未满 TTL 保持现状的 pending 从未恢复过不标", 0, false, 0, 10 * time.Second, store.StatePending, nil, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -45,7 +50,7 @@ func TestNextOfflineFlapGrace(t *testing.T) {
 			if got != c.want || !reflect.DeepEqual(tr, c.tr) {
 				t.Fatalf("got %s %v, want %s %v", got, tr, c.want, c.tr)
 			}
-			if d := FlapDeferred(got, o); d != c.deferred {
+			if d := FlapDeferred(store.StatePending, o); d != c.deferred {
 				t.Fatalf("FlapDeferred = %v, want %v", d, c.deferred)
 			}
 		})
@@ -257,6 +262,34 @@ func TestOfflineStartWithoutStoredLastSeenFallsBackToBoot(t *testing.T) {
 	f.clk.Advance(time.Second)
 	f.sweep(t)
 	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
+}
+
+// 从未恢复过（recovered_at 为 NULL）的 pending 在重启后不标抖动：未满 TTL 时 NextOffline 保持现状，它停在 pending 是因为
+// 重启重新计时，不做抖动抑制也不会触发。节点宽限为 0（读侧取 TTL），已离线时长从一开始就不小于节点宽限。
+func TestNeverRecoveredPendingAfterRestartIsNotFlapping(t *testing.T) {
+	f := newFixture(t)
+	f.grace(t, f.ids[0], 60)
+	r := offline()
+	r.AllNodes, r.NodeIDs = false, f.ids[:1]
+	r = f.rule(t, r)
+	f.clk.Advance(30 * time.Second)
+	f.sweep(t)
+	wantState(t, f.e, r.ID, f.ids[0], store.StatePending)
+	f.grace(t, f.ids[0], 0)
+	f.restart(t)
+	rows, err := f.st.ListAlertStates(t.Context())
+	must(t, err)
+	if len(rows) != 1 || rows[0].State != store.StatePending || !rows[0].RecoveredAt.IsZero() {
+		t.Fatalf("stored state = %+v, want pending without recovered_at", rows)
+	}
+	for _, want := range []store.AlertState{store.StatePending, store.StatePending, store.StateFiring} {
+		f.clk.Advance(10 * time.Second)
+		f.sweep(t)
+		wantState(t, f.e, r.ID, f.ids[0], want)
+		if flappingOf(f.e, r.ID, f.ids[0]) {
+			t.Fatalf("never-recovered %s is marked flapping", want)
+		}
+	}
 }
 
 // 窗口按离线开始的时刻判定：恢复后 50 分钟开始的离线，到恢复后 61 分钟（已走出窗口、已满节点宽限）仍按抖动宽限

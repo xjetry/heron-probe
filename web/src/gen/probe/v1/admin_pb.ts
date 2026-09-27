@@ -1082,9 +1082,9 @@ export type AlertStateEntry = Message<"probe.v1.AlertStateEntry"> & {
   sinceAt: bigint;
 
   /**
-   * 仅离线规则：pending 且离线已满节点自己的宽限，只因抖动抑制而尚未触发。抖动抑制：上次从 firing 恢复后一小时内
-   * 再次开始的离线，要满 max(节点宽限, 30 分钟) 才触发；恢复通知照发。由 hub 的离线巡检算出，不落库，hub 重启后
-   * 第一轮巡检之前为 false。
+   * 仅离线规则：pending 且只因抖动抑制而尚未触发，即不做抖动抑制时这一轮巡检本会触发。抖动抑制：上次从 firing
+   * 恢复后一小时内再次开始的离线（离线开始即最后一次上报），要满 max(节点宽限, 30 分钟) 才触发；恢复通知照发。
+   * 由 hub 的离线巡检算出，不落库，hub 重启后第一轮巡检之前为 false。
    *
    * @generated from field: bool flapping = 5;
    */
