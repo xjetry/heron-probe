@@ -1,13 +1,16 @@
 package store
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestDeleteAlertStateDeletesOnlyThePair(t *testing.T) {
 	s, ids, _, _ := alertFixture(t)
 	a := saveRule(t, s, AlertRule{Name: "a", Kind: KindOffline, AllNodes: true, Enabled: true})
 	b := saveRule(t, s, AlertRule{Name: "b", Kind: KindOffline, AllNodes: true, Enabled: true})
 	for _, key := range [][2]int64{{a.ID, ids[0]}, {a.ID, ids[1]}, {b.ID, ids[0]}} {
-		if err := s.SetAlertState(t.Context(), key[0], key[1], StateFiring, s.clk.Now()); err != nil {
+		if err := s.SetAlertState(t.Context(), key[0], key[1], StateFiring, s.clk.Now(), time.Time{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -30,7 +33,7 @@ func TestSaveAlertRuleClearsStatesOnIdentityChange(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			s, ids, _, task := alertFixture(t)
 			r := saveRule(t, s, AlertRule{Name: "r", Kind: KindProbe, AllNodes: true, Enabled: true, TaskID: task, Metric: MetricLossPct, Threshold: 20, ForMinutes: 1})
-			if err := s.SetAlertState(t.Context(), r.ID, ids[0], StateFiring, s.clk.Now()); err != nil {
+			if err := s.SetAlertState(t.Context(), r.ID, ids[0], StateFiring, s.clk.Now(), time.Time{}); err != nil {
 				t.Fatal(err)
 			}
 			switch change {

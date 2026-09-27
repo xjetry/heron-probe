@@ -200,7 +200,7 @@ func (s *Store) writeAsync(fn func(*sql.Tx) error, done func(error)) {
 	}
 }
 
-const schemaVersion = 11
+const schemaVersion = 12
 
 // migrate 用 user_version 保存当前版本，不在库里保存迁移历史或时间；因此本程序提供给
 // 运维判断何时迁过、该还原哪份备份的唯一时间线是日志。每步事务提交成功后才记日志，

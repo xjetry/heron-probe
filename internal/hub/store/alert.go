@@ -75,6 +75,10 @@ type StateRow struct {
 	// 恢复文案写"已不在提醒窗口内"而不是"到期日已更新"（§9.2）。这个日期随状态存，而不是从触发事件里读回：告警事件
 	// 按保留期清理，一个过期节点却可以一直处在 firing。其余种类的状态、以及不经 RecordTransition 写入的状态，这一项为空。
 	FiredExpiresOn string
+	// RecoveredAt 只属于离线规则：这一对规则与节点上一次从 firing 恢复的时刻，零值表示从未恢复过（库里是 NULL）。
+	// 它不是当前状态的属性，而是一段历史：状态再变（恢复后再次离线写成 pending）时由写入方沿用，只有下一次恢复
+	// 才改写它。抖动抑制按它判断这次离线是否落在恢复后的窗口里；状态行被删除（规则不再适用）时一起消失。
+	RecoveredAt time.Time
 }
 
 type Transition string
@@ -474,7 +478,7 @@ func (s *Store) DeleteNotifyChannel(ctx context.Context, id int64) error {
 }
 
 func (s *Store) ListAlertStates(ctx context.Context) ([]StateRow, error) {
-	rows, err := s.r.QueryContext(ctx, "SELECT rule_id, node_id, state, since_at, fired_expires_on FROM alert_state ORDER BY rule_id, node_id")
+	rows, err := s.r.QueryContext(ctx, "SELECT rule_id, node_id, state, since_at, fired_expires_on, recovered_at FROM alert_state ORDER BY rule_id, node_id")
 	if err != nil {
 		return nil, err
 	}
@@ -483,18 +487,22 @@ func (s *Store) ListAlertStates(ctx context.Context) ([]StateRow, error) {
 	for rows.Next() {
 		var r StateRow
 		var since int64
-		if err := rows.Scan(&r.RuleID, &r.NodeID, &r.State, &since, &r.FiredExpiresOn); err != nil {
+		var recovered sql.NullInt64
+		if err := rows.Scan(&r.RuleID, &r.NodeID, &r.State, &since, &r.FiredExpiresOn, &recovered); err != nil {
 			return nil, err
 		}
 		r.SinceAt = time.Unix(since, 0).UTC()
+		if recovered.Valid {
+			r.RecoveredAt = time.Unix(recovered.Int64, 0).UTC()
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
 }
 
 // 两个状态写入口共用事务内准入，单写协程保证删除之后排队的写不能重建孤儿状态。整行替换：每次写都给出
-// fired_expires_on，上一个状态记的日期不会留到下一个状态。
-func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since time.Time, firedExpiresOn string) error {
+// fired_expires_on 与 recovered_at，上一个状态记的到期日不会留到下一个状态；recovered_at 要沿用时由调用方显式带上。
+func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since time.Time, firedExpiresOn string, recoveredAt time.Time) error {
 	if err := requireAlertReference(tx, "alert_rule", ObjectAlertRule, ruleID); err != nil {
 		return err
 	}
@@ -505,14 +513,19 @@ func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since tim
 	if !exists {
 		return NotFoundError{Kind: ObjectNode, ID: nodeID}
 	}
-	_, err = tx.Exec("INSERT OR REPLACE INTO alert_state (rule_id, node_id, state, since_at, fired_expires_on) VALUES (?, ?, ?, ?, ?)", ruleID, nodeID, state, since.Unix(), firedExpiresOn)
+	var recovered any
+	if !recoveredAt.IsZero() {
+		recovered = recoveredAt.Unix()
+	}
+	_, err = tx.Exec("INSERT OR REPLACE INTO alert_state (rule_id, node_id, state, since_at, fired_expires_on, recovered_at) VALUES (?, ?, ?, ?, ?, ?)",
+		ruleID, nodeID, state, since.Unix(), firedExpiresOn, recovered)
 	return err
 }
 
 // SetAlertState 写不带事件的状态变化。alert 的状态机只经触发转换进入 firing（那一步走 RecordTransition），所以这里
-// 写的状态没有触发时的到期日。
-func (s *Store) SetAlertState(ctx context.Context, ruleID, nodeID int64, state AlertState, since time.Time) error {
-	return s.write(ctx, func(tx *sql.Tx) error { return setAlertState(tx, ruleID, nodeID, state, since, "") })
+// 写的状态没有触发时的到期日。recoveredAt 含义见 StateRow.RecoveredAt，零值写 NULL。
+func (s *Store) SetAlertState(ctx context.Context, ruleID, nodeID int64, state AlertState, since, recoveredAt time.Time) error {
+	return s.write(ctx, func(tx *sql.Tx) error { return setAlertState(tx, ruleID, nodeID, state, since, "", recoveredAt) })
 }
 
 // 候选集撤销不是恢复观测，删除状态不产生事件；重复清理同一对规则与节点仍然成功。
@@ -523,13 +536,13 @@ func (s *Store) DeleteAlertState(ctx context.Context, ruleID, nodeID int64) erro
 	})
 }
 
-// 状态、事件与续投队列同事务提交，崩溃不能留下已转换但没有通知记录的状态。firedExpiresOn 随状态写入，
-// 含义见 StateRow.FiredExpiresOn。
-func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, state AlertState, firedExpiresOn string, ev AlertEvent, channelIDs []int64) (AlertEvent, error) {
+// 状态、事件与续投队列同事务提交，崩溃不能留下已转换但没有通知记录的状态。firedExpiresOn 与 recoveredAt 随状态写入，
+// 含义见 StateRow.FiredExpiresOn 与 StateRow.RecoveredAt。
+func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, state AlertState, firedExpiresOn string, recoveredAt time.Time, ev AlertEvent, channelIDs []int64) (AlertEvent, error) {
 	ev.ID, ev.RuleID, ev.NodeID, ev.Deliveries = 0, ruleID, nodeID, nil
 	ev.At = time.Unix(ev.At.Unix(), 0).UTC()
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		if err := setAlertState(tx, ruleID, nodeID, state, ev.At, firedExpiresOn); err != nil {
+		if err := setAlertState(tx, ruleID, nodeID, state, ev.At, firedExpiresOn, recoveredAt); err != nil {
 			return err
 		}
 		if err := tx.QueryRow("INSERT INTO alert_event (rule_id, node_id, transition, at, summary, value) VALUES (?, ?, ?, ?, ?, ?) RETURNING id", ruleID, nodeID, ev.Transition, ev.At.Unix(), ev.Summary, ev.Value).Scan(&ev.ID); err != nil {

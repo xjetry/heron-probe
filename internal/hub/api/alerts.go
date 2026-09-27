@@ -48,7 +48,7 @@ func (s *Service) ListAlertRules(_ context.Context, _ *connect.Request[probev1.L
 		out.Rules = append(out.Rules, ruleProto(r))
 	}
 	for _, state := range s.alerts.States() {
-		out.States = append(out.States, &probev1.AlertStateEntry{RuleId: state.RuleID, NodeId: state.NodeID, State: string(state.State), SinceAt: state.SinceAt.Unix()})
+		out.States = append(out.States, &probev1.AlertStateEntry{RuleId: state.RuleID, NodeId: state.NodeID, State: string(state.State), SinceAt: state.SinceAt.Unix(), Flapping: state.Flapping})
 	}
 	return connect.NewResponse(out), nil
 }

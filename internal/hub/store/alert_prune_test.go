@@ -17,7 +17,7 @@ func TestPruneAlertEventsKeepsBoundaryAndDeletesDeliveries(t *testing.T) {
 	before := s.clk.Now().Add(-90 * 24 * time.Hour)
 	var events []AlertEvent
 	for _, at := range []time.Time{before.Add(-24 * time.Hour), before, before.Add(24 * time.Hour)} {
-		ev, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, "", AlertEvent{At: at, Transition: TransitionFiring}, []int64{cs[0].ID, cs[1].ID})
+		ev, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, "", time.Time{}, AlertEvent{At: at, Transition: TransitionFiring}, []int64{cs[0].ID, cs[1].ID})
 		if err != nil {
 			t.Fatal(err)
 		}

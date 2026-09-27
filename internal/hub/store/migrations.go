@@ -30,6 +30,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	9:  execAll(migrationV9),
 	10: execAll(migrationV10),
 	11: execAll([]string{ddlMaintenanceStateV11}),
+	12: execAll(migrationV12),
 }
 
 func execAll(stmts []string) func(*sql.Tx) error {
@@ -274,3 +275,8 @@ const ddlMaintenanceStateV11 = `CREATE TABLE maintenance_state (
   name TEXT PRIMARY KEY,
   finished_at INTEGER NOT NULL
 )`
+
+// v12：离线规则×节点上次恢复的时刻。旧行取 NULL（从未恢复过）：升级前的恢复没有记录，升级后的第一次恢复开始计窗口。
+var migrationV12 = []string{
+	`ALTER TABLE alert_state ADD COLUMN recovered_at INTEGER`,
+}

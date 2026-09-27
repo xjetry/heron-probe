@@ -189,7 +189,7 @@ func TestAlertRuleDaysBeforeBelongsToExpiryRules(t *testing.T) {
 	if rules, err := s.ListAlertRules(ctx); err != nil || len(rules) != 1 || rules[0].DaysBefore != 7 || rules[0].Kind != KindExpiry {
 		t.Fatalf("listed %+v %v", rules, err)
 	}
-	if err := s.SetAlertState(ctx, r.ID, ids[0], StateFiring, s.clk.Now()); err != nil {
+	if err := s.SetAlertState(ctx, r.ID, ids[0], StateFiring, s.clk.Now(), time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	r.DaysBefore = 30
@@ -251,7 +251,7 @@ func TestAlertStateFiredExpiresOnFollowsEachWrite(t *testing.T) {
 	}
 	record := func(state AlertState, firedExpiresOn string, tr Transition) {
 		t.Helper()
-		if _, err := s.RecordTransition(ctx, r.ID, ids[0], state, firedExpiresOn, AlertEvent{Transition: tr, At: s.clk.Now()}, nil); err != nil {
+		if _, err := s.RecordTransition(ctx, r.ID, ids[0], state, firedExpiresOn, time.Time{}, AlertEvent{Transition: tr, At: s.clk.Now()}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -264,7 +264,7 @@ func TestAlertStateFiredExpiresOnFollowsEachWrite(t *testing.T) {
 		t.Fatalf("after recovery: fired_expires_on = %q, want empty", got)
 	}
 	record(StateFiring, "2026-10-01", TransitionFiring)
-	if err := s.SetAlertState(ctx, r.ID, ids[0], StateOK, s.clk.Now()); err != nil {
+	if err := s.SetAlertState(ctx, r.ID, ids[0], StateOK, s.clk.Now(), time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := fired(); got != "" {

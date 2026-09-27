@@ -191,7 +191,7 @@ func TestProbeThresholdEqualityFiresAndDoesNotRecover(t *testing.T) {
 			r := probeRule(task)
 			r.Metric, r.Threshold = c.metric, c.threshold
 			r = f.rule(t, r)
-			must(t, f.st.SetAlertState(t.Context(), r.ID, f.ids[0], store.StateFiring, f.clk.Now()))
+			must(t, f.st.SetAlertState(t.Context(), r.ID, f.ids[0], store.StateFiring, f.clk.Now(), time.Time{}))
 			must(t, f.e.Load(t.Context()))
 			ts := f.clk.Now().Unix() - 60
 			f.minutes(t, task, f.ids[0], ts, c.bucket)
@@ -218,7 +218,7 @@ func TestLoadSkipsInvalidRulesAndTheirStates(t *testing.T) {
 	bad.ForMinutes = 0
 	bad, err := f.st.SaveAlertRule(t.Context(), bad)
 	must(t, err)
-	must(t, f.st.SetAlertState(t.Context(), bad.ID, f.ids[0], store.StateFiring, f.clk.Now()))
+	must(t, f.st.SetAlertState(t.Context(), bad.ID, f.ids[0], store.StateFiring, f.clk.Now(), time.Time{}))
 	good := f.rule(t, offline())
 	var logs bytes.Buffer
 	f.e.log = slog.New(slog.NewJSONHandler(&logs, nil))

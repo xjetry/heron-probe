@@ -149,6 +149,7 @@ type Row struct {
 	// TS 是桶起始，Unix 秒，60 对齐。
 	TS     int64
 	Bucket *Bucket
-	// LastSeen 是该节点最近一次上报的墙钟，只供展示与告警文案。
+	// LastSeen 是该节点最近一次上报的墙钟，写进 node.last_seen_at：供展示与告警文案，hub 重启后还充当抖动窗口判定里的
+	// 离线开始（见 alert.Engine.offlineStart），不参与离线时长。
 	LastSeen time.Time
 }

@@ -20,7 +20,7 @@ const ddlNode = `CREATE TABLE node (
   traffic_reset_day INTEGER NOT NULL DEFAULT 1,
   token_hash BLOB NOT NULL UNIQUE,
   created_at INTEGER NOT NULL,
-  -- 墙钟，只供展示与告警文案，不参与离线时长计算。
+  -- 墙钟，供展示、告警文案与 hub 重启后抖动窗口判定里的离线开始，不参与离线时长计算。
   last_seen_at INTEGER,
   -- 计费与到期（§9.4）：提醒用的展示值，空串与 0 是"未填"。取值约束由 api 的 UpdateNode 裁决，库里不设 CHECK。
   -- 列序与迁移 9 的 ADD COLUMN 结果一致。
@@ -286,6 +286,11 @@ const ddlAlertState = `CREATE TABLE alert_state (
   -- 引擎只在到期规则进入 firing 时写入非空值：当时节点的到期日（见 StateRow.FiredExpiresOn）。
   -- 列序与迁移 9 的 ADD COLUMN 结果一致：ADD COLUMN 把列排在最后，与写在 PRIMARY KEY 约束之前的这一行同为第五列。
   fired_expires_on TEXT NOT NULL DEFAULT '',
+  -- 离线规则×节点上一次从 firing 恢复的墙钟（Unix 秒），NULL 表示从未恢复过；其余种类恒为 NULL。离线抖动抑制按它判定
+  -- 这次离线是否落在恢复后的窗口里（见 StateRow.RecoveredAt）。整行写入时由调用方给出：恢复转换写当下时刻，其余写入
+  -- 沿用当前值——恢复之后的再次离线先写成 pending，那一次写若清掉它，窗口恰在要用时丢失。
+  -- 列序与迁移 12 的 ADD COLUMN 结果一致，同 fired_expires_on 写在 PRIMARY KEY 约束之前。
+  recovered_at INTEGER,
   PRIMARY KEY (rule_id, node_id)
 )`
 const ddlAlertEvent = `CREATE TABLE alert_event (

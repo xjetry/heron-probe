@@ -2463,7 +2463,11 @@ type AlertStateEntry struct {
 	// 取值为 ok、pending 或 firing。
 	State string `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`
 	// 进入此状态的墙钟，Unix 秒。
-	SinceAt       int64 `protobuf:"varint,4,opt,name=since_at,json=sinceAt,proto3" json:"since_at,omitempty"`
+	SinceAt int64 `protobuf:"varint,4,opt,name=since_at,json=sinceAt,proto3" json:"since_at,omitempty"`
+	// 仅离线规则：pending 且只因抖动抑制而尚未触发，即不做抖动抑制时这一轮巡检本会触发。抖动抑制：上次从 firing
+	// 恢复后一小时内再次开始的离线（离线开始即最后一次上报），要满 max(节点宽限, 30 分钟) 才触发；恢复通知照发。
+	// 由 hub 的离线巡检算出，不落库，hub 重启后第一轮巡检之前为 false。
+	Flapping      bool `protobuf:"varint,5,opt,name=flapping,proto3" json:"flapping,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2524,6 +2528,13 @@ func (x *AlertStateEntry) GetSinceAt() int64 {
 		return x.SinceAt
 	}
 	return 0
+}
+
+func (x *AlertStateEntry) GetFlapping() bool {
+	if x != nil {
+		return x.Flapping
+	}
+	return false
 }
 
 type SaveAlertRuleRequest struct {
@@ -4836,12 +4847,13 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x15ListAlertRulesRequest\"v\n" +
 	"\x16ListAlertRulesResponse\x12)\n" +
 	"\x05rules\x18\x01 \x03(\v2\x13.probe.v1.AlertRuleR\x05rules\x121\n" +
-	"\x06states\x18\x02 \x03(\v2\x19.probe.v1.AlertStateEntryR\x06states\"t\n" +
+	"\x06states\x18\x02 \x03(\v2\x19.probe.v1.AlertStateEntryR\x06states\"\x90\x01\n" +
 	"\x0fAlertStateEntry\x12\x17\n" +
 	"\arule_id\x18\x01 \x01(\x03R\x06ruleId\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\x03R\x06nodeId\x12\x14\n" +
 	"\x05state\x18\x03 \x01(\tR\x05state\x12\x19\n" +
-	"\bsince_at\x18\x04 \x01(\x03R\asinceAt\"?\n" +
+	"\bsince_at\x18\x04 \x01(\x03R\asinceAt\x12\x1a\n" +
+	"\bflapping\x18\x05 \x01(\bR\bflapping\"?\n" +
 	"\x14SaveAlertRuleRequest\x12'\n" +
 	"\x04rule\x18\x01 \x01(\v2\x13.probe.v1.AlertRuleR\x04rule\"@\n" +
 	"\x15SaveAlertRuleResponse\x12'\n" +
