@@ -299,7 +299,7 @@ pruned:
 	if err != nil || len(rows) != 1 {
 		t.Errorf("maintenance lost retained control row: %v %v", rows, err)
 	}
-	// retention_s 只取决于装配的配置，与数据和时序无关，查询挪到这里不用抢在维护之前：这条只钉住 serve
+	// retention_s 只取决于装配的配置，与数据和时序无关，不必抢在维护之前查：这条只钉住 serve
 	// 把 --retention-* 传给了 api.Config.Retention 的那份值。标红结论是否也用这份配置由
 	// internal/hub/api 的 TestGetStorageStatsUsesTheConfiguredRetention 钉住——那边的夹具不跑
 	// RunMaintenance，判定不依赖任何真实时间窗。
