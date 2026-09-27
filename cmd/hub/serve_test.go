@@ -234,7 +234,7 @@ func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
 func TestServeRunsMaintenanceWithConfiguredRetention(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "hub.db")
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 59, 999000000, time.UTC))
-	st, err := store.Open(db, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	st, err := store.Open(db, clk, slog.New(slog.NewTextHandler(io.Discard, nil)), store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}

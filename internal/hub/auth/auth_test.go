@@ -21,7 +21,7 @@ import (
 func setup(t *testing.T) (*Auth, *store.Store, *clock.Fake) {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default())
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default(), store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func (c *queuedContext) Done() <-chan struct{} {
 
 func TestAuthenticateDoesNotWaitForRegisterTransaction(t *testing.T) {
 	clk := &observationClock{Fake: clock.NewFake(time.Now()), entered: make(chan struct{}), release: make(chan struct{})}
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default())
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default(), store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func TestCancelledCreateNodeKeepsMapConsistentWithStore(t *testing.T) {
 		entered: make(chan struct{}),
 		release: make(chan struct{}),
 	}
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default())
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default(), store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}

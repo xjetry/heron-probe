@@ -204,12 +204,12 @@ func migrateFrom(t *testing.T, stmts []string, version int, seed func(*testing.T
 	seed(t, raw)
 	raw.Close()
 
-	migrated, err = Open(old, clk, slog.Default())
+	migrated, err = Open(old, clk, slog.Default(), MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { migrated.Close() })
-	fresh, err = Open(filepath.Join(dir, "fresh.db"), clk, slog.Default())
+	fresh, err = Open(filepath.Join(dir, "fresh.db"), clk, slog.Default(), MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,8 +243,11 @@ func TestOpenRefusesNewerSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw.Close()
-	if _, err := Open(path, clock.NewFake(time.Unix(0, 0)), slog.Default()); err == nil {
-		t.Fatal("opened a database written by a newer binary")
+	for _, policy := range []SchemaPolicy{MigrateSchema, RequireCurrentSchema} {
+		if st, err := Open(path, clock.NewFake(time.Unix(0, 0)), slog.Default(), policy); err == nil {
+			st.Close()
+			t.Errorf("policy %d opened a database written by a newer binary", policy)
+		}
 	}
 }
 
@@ -542,7 +545,7 @@ func TestAlertMigrationRejectsExistingObjects(t *testing.T) {
 			if _, err := db.Exec("PRAGMA user_version = 4"); err != nil {
 				t.Fatal(err)
 			}
-			st, err := Open(path, clock.NewFake(time.Unix(1, 0)), slog.Default())
+			st, err := Open(path, clock.NewFake(time.Unix(1, 0)), slog.Default(), MigrateSchema)
 			if st != nil {
 				st.Close()
 			}

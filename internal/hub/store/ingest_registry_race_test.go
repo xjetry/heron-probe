@@ -39,7 +39,7 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 	ctx := context.Background()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clk, log)
+	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clk, log, store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}

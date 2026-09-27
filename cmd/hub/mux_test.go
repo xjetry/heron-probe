@@ -38,7 +38,7 @@ var publicProcedures = map[string]bool{
 func newTestMux(t *testing.T) *http.ServeMux {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clk, slog.Default())
+	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clk, slog.Default(), store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}

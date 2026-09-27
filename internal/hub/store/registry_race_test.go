@@ -20,7 +20,7 @@ import (
 func registryRaceStore(t *testing.T) (*probe.Registry, *store.Store, int64) {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clock.NewFake(time.Unix(0, 0)), log)
+	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clock.NewFake(time.Unix(0, 0)), log, store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}

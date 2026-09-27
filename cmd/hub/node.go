@@ -26,8 +26,13 @@ func openOffline(db string, create bool) (*store.Store, *auth.Auth, error) {
 			return nil, nil, err
 		}
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	st, err := store.Open(db, clock.Real(), log)
+	// 用默认级别（Info 起放行）而不是过滤到 Warn：store.Open 建库或迁移时只在 Info 级各记
+	// 一行（"database schema created"/"database schema migrated"），过滤掉 Info 会让这一行
+	// 消失。上面这条注释说的"写错 --db 时静默建空库"，运维唯一能在离线命令的输出里看出
+	// 库被新建的信号就是这一行；建立状态的子命令（passwd、node create、window open）因此
+	// 必须放出它，否则退出码与其余输出跟"库已存在、操作在原库上完成"完全一样。
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	st, err := store.Open(db, clock.Real(), log, store.RequireCurrentSchema)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -62,7 +62,7 @@ func newHarness(t *testing.T, trusted string) *harness {
 func newZonedHarness(t *testing.T, trusted string, loc *time.Location) *harness {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default())
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default(), store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}

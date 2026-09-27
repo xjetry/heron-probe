@@ -15,7 +15,7 @@ func TestDatabasePathsAreNotURIComponents(t *testing.T) {
 			dir := t.TempDir()
 			for _, suffix := range []string{"one", "two"} {
 				path := filepath.Join(dir, "hub"+tc.separator+suffix+".db")
-				s, err := Open(path, clock.Real(), slog.Default())
+				s, err := Open(path, clock.Real(), slog.Default(), MigrateSchema)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -33,7 +33,7 @@ func TestDatabasePathsAreNotURIComponents(t *testing.T) {
 				if err := s.Close(); err != nil {
 					t.Fatal(err)
 				}
-				reopened, err := Open(path, clock.Real(), slog.Default())
+				reopened, err := Open(path, clock.Real(), slog.Default(), MigrateSchema)
 				if err != nil {
 					t.Fatal(err)
 				}

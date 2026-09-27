@@ -4,6 +4,8 @@
 
 ## 运行 hub
 
+升级前备份库；新版本 `serve` 会迁移库，迁移后旧版本无法再打开。离线子命令遇到旧库会拒绝操作，并提示先用新版本 `serve` 升级。备份方法见下文"数据卷与备份"：运行中直接复制可能得到损坏的备份，需要先停 hub，再连同 `-wal`、`-shm` 一起复制。
+
 hub 是一个静态链接的二进制，数据在一个 SQLite 文件里。从 [Releases](https://github.com/xjetry/probe/releases/latest) 下载 `probe-hub_linux_<arch>.tar.gz`（amd64、arm64）：
 
 ```sh
