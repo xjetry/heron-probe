@@ -15,7 +15,7 @@ func TestSiteSettingsDefaultAndWholeReplacement(t *testing.T) {
 		t.Fatalf("never saved: %+v %v", got, err)
 	}
 	full := SiteSettings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,AAAA", CustomCSS: "body{}"}
-	if _, err := s.SaveSiteSettings(t.Context(), SiteSettingsUpdate{Title: full.Title, Theme: full.Theme, AccentColor: full.AccentColor, Logo: full.Logo, CustomCSS: full.CustomCSS, PublicEnabled: &full.PublicEnabled}); err != nil {
+	if _, err := s.SaveSiteSettings(t.Context(), SiteSettingsUpdate{SiteAppearance: full.SiteAppearance, PublicEnabled: &full.PublicEnabled}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.SiteSettings(t.Context()); err != nil || got != full {
@@ -33,13 +33,34 @@ func TestSiteSettingsDefaultAndWholeReplacement(t *testing.T) {
 	}
 }
 
+// 外观的每个字段都要经 fields 登记才存得进库。逐字段填入各不相同的值（用字段名），保存后必须原样读回：
+// 漏登记的字段读回空串，两个字段共用一个键则其中一个读回另一个的值。字段按反射枚举，新增的字段自动纳入。
+func TestSiteAppearanceRoundTripsEveryField(t *testing.T) {
+	s, _ := open(t)
+	var want SiteAppearance
+	v := reflect.ValueOf(&want).Elem()
+	for i := range v.NumField() {
+		v.Field(i).SetString(v.Type().Field(i).Name)
+	}
+	if _, err := s.SaveSiteSettings(t.Context(), SiteSettingsUpdate{SiteAppearance: want}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.SiteSettings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SiteAppearance != want {
+		t.Fatalf("appearance did not round-trip: got %+v, want %+v", got.SiteAppearance, want)
+	}
+}
+
 // 保存中途失败时库里仍是上一套完整设置：全部键在同一个写事务里，任一条失败整体回滚。
 // 触发器拦 CSS 键，拆成逐键提交的实现会留下前四个新值。
 func TestSaveSiteSettingsIsAllOrNothing(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
 	first := SiteSettings{Title: "旧", Theme: "light", AccentColor: "#111111", Logo: "data:image/png;base64,AAAA", CustomCSS: "a{}"}
-	if _, err := s.SaveSiteSettings(ctx, SiteSettingsUpdate{Title: first.Title, Theme: first.Theme, AccentColor: first.AccentColor, Logo: first.Logo, CustomCSS: first.CustomCSS, PublicEnabled: &first.PublicEnabled}); err != nil {
+	if _, err := s.SaveSiteSettings(ctx, SiteSettingsUpdate{SiteAppearance: first.SiteAppearance, PublicEnabled: &first.PublicEnabled}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.write(ctx, func(tx *sql.Tx) error {
