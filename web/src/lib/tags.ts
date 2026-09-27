@@ -2,7 +2,7 @@ import { literalPattern } from "./fold";
 
 // 去首尾空白用的字符集与 hub 的 strings.TrimSpace 相同：Unicode 的 White_Space 属性（unicode.IsSpace 的定义）。
 // 不用 String.prototype.trim：它按 ECMAScript 的 WhiteSpace 与 LineTerminator 去，比 White_Space 多 U+FEFF、少 U+0085。
-// 用它时，经 API 建的 "﻿db" 在 hub 是另一个标签，页面却会把它与 db 判成同一个。
+// 用它时，经 API 建的 "\uFEFFdb" 在 hub 是另一个标签，页面却会把它与 db 判成同一个。
 const edgeSpace = /^\p{White_Space}+|\p{White_Space}+$/gu;
 const trimTag = (raw: string) => raw.replace(edgeSpace, "");
 
