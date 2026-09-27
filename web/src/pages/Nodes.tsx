@@ -1,14 +1,16 @@
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, Fragment, type ReactNode, useState } from "react";
 import { Link } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Secret } from "../components/Secret";
 import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
+import { BillingCycle } from "../gen/probe/v1/types_pb";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
 import { graceText } from "../lib/alerts";
+import { BILLING_CYCLES, expired, expiryText, priceText } from "../lib/billing";
 import { withId } from "../lib/ids";
 import { lagsHub } from "../lib/version";
 
@@ -88,7 +90,7 @@ export function Nodes() {
       {error != null && <p role="alert" className="error">{errorText(error)}</p>}
       <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
         <table className="nodes">
-          <thead><tr><th>排序</th><th>名称</th><th>公开</th><th>备注</th><th>重置日</th><th>离线宽限期</th><th>创建于</th><th>操作</th></tr></thead>
+          <thead><tr><th>排序</th><th>名称</th><th>公开</th><th>备注</th><th>重置日</th><th>离线宽限期</th><th>计费</th><th>创建于</th><th>操作</th></tr></thead>
           <tbody>
             {list.map((n, i) => (
               <NodeEditor key={String(n.id)} node={n} hubVersion={hubVersion}
@@ -107,18 +109,25 @@ export function Nodes() {
 
 const validResetDay = (day: number) => Number.isInteger(day) && day >= 1 && day <= 28;
 
-// 宽限期以字符串编辑，0 表示清除（取 hub 的 PROBE_OFFLINE_AFTER）。
+// 宽限期以字符串编辑，0 表示清除（取 hub 的 PROBE_OFFLINE_AFTER）。计费五项随整行整体提交（UpdateNode 整体替换），
+// 节点没有 billing 时从空值开始；取值约束由 hub 裁决并把错误原文显示在列表上方，页面不另抄一份规则。
 const draftOf = (node: Node) => ({
   name: node.name, public: node.public, note: node.note, trafficResetDay: node.trafficResetDay,
   offlineGraceS: String(node.offlineGraceS ?? 0),
+  billing: {
+    price: node.billing?.price ?? "", currency: node.billing?.currency ?? "", billingCycle: node.billing?.billingCycle ?? BillingCycle.UNSPECIFIED,
+    expiresOn: node.billing?.expiresOn ?? "", autoRenew: node.billing?.autoRenew ?? false,
+  },
 });
+type Draft = ReturnType<typeof draftOf>;
+type BillingDraft = Draft["billing"];
 const validGrace = (s: string) => /^\d+$/.test(s);
 
 function NodeEditor({ node, hubVersion, saving, deleting, rotating, onMoveUp, onMoveDown, onSave, onDelete, onRotate }: {
   node: Node; hubVersion: string | undefined;
   saving: boolean; deleting: boolean; rotating: boolean;
   onMoveUp: () => void; onMoveDown: () => void;
-  onSave: (patch: { name: string; public: boolean; note: string; trafficResetDay: number; offlineGraceS: number }, onSuccess: () => void) => void;
+  onSave: (patch: Omit<Draft, "offlineGraceS"> & { offlineGraceS: number }, onSuccess: () => void) => void;
   onDelete: () => void; onRotate: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -132,6 +141,7 @@ function NodeEditor({ node, hubVersion, saving, deleting, rotating, onMoveUp, on
         <td><input aria-label={`备注 ${withId(node.name, node.id)}`} value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></td>
         <td><input type="number" min={1} max={28} aria-label={`重置日 ${withId(node.name, node.id)}`} value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><p className="muted">若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。</p></td>
         <td><input type="number" min={0} aria-label={`离线宽限期（秒） ${withId(node.name, node.id)}`} aria-describedby={`grace-hint-${node.id}`} value={draft.offlineGraceS} onChange={(e) => setDraft({ ...draft, offlineGraceS: e.target.value })} /><p className="muted" id={`grace-hint-${node.id}`}>0 表示取 hub 的 PROBE_OFFLINE_AFTER；非 0 不能小于它。</p></td>
+        <td><BillingEditor label={withId(node.name, node.id)} draft={draft.billing} onChange={(patch) => setDraft({ ...draft, billing: { ...draft.billing, ...patch } })} /></td>
         <td />
         <td>
           <button type="button" disabled={saving || !validResetDay(draft.trafficResetDay) || !validGrace(draft.offlineGraceS)} onClick={() => onSave({ ...draft, offlineGraceS: Number(draft.offlineGraceS) }, () => setEditing(false))}>保存</button>{" "}
@@ -154,6 +164,7 @@ function NodeEditor({ node, hubVersion, saving, deleting, rotating, onMoveUp, on
       <td className="muted">{node.note}</td>
       <td>每月 {node.trafficResetDay} 日</td>
       <td>{graceText(node.offlineGraceS)}</td>
+      <td><BillingSummary node={node} /></td>
       <td className="muted">{new Date(Number(node.createdAt) * 1000).toLocaleDateString()}</td>
       <td>
         <button type="button" className="link" aria-label={`编辑 ${withId(node.name, node.id)}`} onClick={() => { setDraft(draftOf(node)); setEditing(true); }}>编辑</button>{" "}
@@ -161,5 +172,34 @@ function NodeEditor({ node, hubVersion, saving, deleting, rotating, onMoveUp, on
         <ConfirmDelete label={`删除 ${withId(node.name, node.id)}`} confirm={`确认删除 ${withId(node.name, node.id)}`} pending={deleting} onDelete={onDelete} />
       </td>
     </tr>
+  );
+}
+
+// "USD 12.50 / 月 · 2026-10-01（剩 4 天） · 自动续期"；已过期的那一段用告警红；全没填是"—"。
+function BillingSummary({ node }: { node: Node }) {
+  const parts: ReactNode[] = [];
+  const price = priceText(node.billing);
+  if (price) parts.push(price);
+  const expiry = expiryText(node.billing);
+  if (expiry) parts.push(<span className={expired(node.billing) ? "error" : undefined}>{expiry}</span>);
+  if (node.billing?.autoRenew) parts.push("自动续期");
+  if (parts.length === 0) return <>—</>;
+  return <>{parts.map((p, i) => <Fragment key={i}>{i > 0 && " · "}{p}</Fragment>)}</>;
+}
+
+function BillingEditor({ label, draft, onChange }: { label: string; draft: BillingDraft; onChange: (patch: Partial<BillingDraft>) => void }) {
+  return (
+    <div className="billing-edit">
+      <input aria-label={`价格 ${label}`} inputMode="decimal" placeholder="12.50" value={draft.price} onChange={(e) => onChange({ price: e.target.value })} />
+      {/* ISO 4217 代码都是大写，输入时就转成大写；其余取值原样交给 hub 校验。 */}
+      <input aria-label={`币种 ${label}`} placeholder="USD" value={draft.currency} onChange={(e) => onChange({ currency: e.target.value.toUpperCase() })} />
+      <select aria-label={`周期 ${label}`} value={draft.billingCycle} onChange={(e) => onChange({ billingCycle: Number(e.target.value) as BillingCycle })}>
+        <option value={BillingCycle.UNSPECIFIED}>无周期</option>
+        {BILLING_CYCLES.map(({ value, label: cycle }) => <option key={value} value={value}>每{cycle}</option>)}
+      </select>
+      <input type="date" aria-label={`到期日 ${label}`} value={draft.expiresOn} onChange={(e) => onChange({ expiresOn: e.target.value })} />
+      <label className="inline"><input type="checkbox" aria-label={`自动续期 ${label}`} checked={draft.autoRenew} onChange={(e) => onChange({ autoRenew: e.target.checked })} />自动续期</label>
+      <p className="muted">只用于展示与到期提醒。开着自动续期时，到期日过了 hub 按周期推后；需要周期与到期日。</p>
+    </div>
   );
 }
