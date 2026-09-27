@@ -437,7 +437,7 @@ func TestLookupAndPinDoNotOverwriteEachOther(t *testing.T) {
 }
 
 // 一轮之中关掉开关：这一轮不再发出任何请求（开关在每次外呼前重读），关闭前在途的那一个照常完成并写入。
-func TestDisablingMidRoundStopsFurtherRequests(t *testing.T) {
+func TestDisablingMidSweepStopsFurtherRequests(t *testing.T) {
 	f := newFixture(t)
 	f.enable(true)
 	var ids []int64
@@ -460,7 +460,7 @@ func TestDisablingMidRoundStopsFurtherRequests(t *testing.T) {
 }
 
 // 一轮之中改服务地址：这一轮之后的请求走新地址（服务地址在每次外呼前重读），不再发往旧地址。
-func TestURLChangeMidRoundTakesEffectForTheNextRequest(t *testing.T) {
+func TestURLChangeMidSweepTakesEffectForTheNextRequest(t *testing.T) {
 	f := newFixture(t)
 	f.enable(true)
 	for _, addr := range []string{"8.8.8.8", "1.1.1.1", "9.9.9.9"} {
