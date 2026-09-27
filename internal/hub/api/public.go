@@ -60,6 +60,7 @@ type Public struct {
 
 	facts   projection
 	metrics projection
+	billing projection
 
 	// limit 按来源计数，覆盖挂载点收到的每个请求。
 	limit *ratelimit.Buckets[netip.Addr]
@@ -73,6 +74,7 @@ func NewPublic(cfg PublicConfig, st *store.Store, l *live.Live, book *traffic.Bo
 		history: history{store: st, log: log},
 		facts:   newProjection((&probev1.PublicFacts{}).ProtoReflect().Type(), (&probev1.Facts{}).ProtoReflect().Descriptor()),
 		metrics: newProjection((&probev1.PublicMetrics{}).ProtoReflect().Type(), (&probev1.Metrics{}).ProtoReflect().Descriptor()),
+		billing: newProjection((&probev1.PublicBilling{}).ProtoReflect().Type(), (&probev1.Billing{}).ProtoReflect().Descriptor()),
 		limit:   ratelimit.New[netip.Addr](publicBurst, publicRefill),
 		maxAge:  cachePolicy(probeServices()),
 	}

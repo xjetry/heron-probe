@@ -28,7 +28,8 @@ service AdminService {
   rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
-  // 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期）。
+  // 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期）。计费字段有变化时，
+  // 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
   rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
@@ -189,6 +190,8 @@ message Node {
   // 离线告警宽限期（秒）；缺失表示取 PROBE_OFFLINE_AFTER。
   // PROBE_OFFLINE_AFTER 调高后已存的更小值仍会回显，引擎按下限取值，下次编辑须改成不小于下限的值。
   optional uint32 offline_grace_s = 11;
+  // 计费与到期（§9.4）；五项都没填时缺失。days_left 由 hub 按 --timezone 的今天算出。
+  Billing billing = 12;
 }
 
 message ListNodesRequest {}
@@ -216,6 +219,9 @@ message UpdateNodeRequest {
   uint32 traffic_reset_day = 5;
   // 必填，缺失拒绝；0 表示清除（取 PROBE_OFFLINE_AFTER），非 0 须 ≥ PROBE_OFFLINE_AFTER 的秒数。
   optional uint32 offline_grace_s = 6;
+  // 计费与到期，整体替换：缺失等于五项全清，空串、未指定与 false 也是清除，没有"不改"的取值。
+  // 取值约束见 Billing 各字段；days_left 由 hub 计算，这里的值忽略。
+  Billing billing = 7;
 }
 message UpdateNodeResponse {
   Node node = 1;
@@ -346,6 +352,8 @@ enum AlertKind {
   ALERT_KIND_UNSPECIFIED = 0;
   ALERT_KIND_OFFLINE = 1;
   ALERT_KIND_PROBE = 2;
+  // 节点到期日距今不超过 days_before 天（含已过期）即触发，数据源是节点的到期日。
+  ALERT_KIND_EXPIRY = 3;
 }
 enum ProbeMetric {
   PROBE_METRIC_UNSPECIFIED = 0;
@@ -357,14 +365,14 @@ message AlertRule {
   int64 id = 1;
   // 1–64 个字符。
   string name = 2;
-  // 必须为离线或探测，未指定值不允许保存。
+  // 必须为离线、探测或到期，未指定值不允许保存。
   AlertKind kind = 3;
   bool enabled = 4;
   // 显式作用域，升序去重；all_nodes 为假时就是作用域，保存时不可为空。
   repeated int64 node_ids = 5;
   // 已保存渠道的 id，升序去重；空表示只记事件不投递。
   repeated int64 channel_ids = 6;
-  // 以下字段仅用于探测规则，task_id 必须是已存在的非零任务 id。
+  // 以下四个字段仅用于探测规则，task_id 必须是已存在的非零任务 id；离线与到期规则四项都必须为零值。
   uint64 task_id = 7;
   // 探测规则必须选择丢包百分比或往返毫秒数。
   ProbeMetric metric = 8;
@@ -377,6 +385,10 @@ message AlertRule {
   // 为真表示全部节点，新建节点自动纳入，node_ids 忽略且回显为空；
   // 为假时 node_ids 是显式作用域，删除节点后空集不等于全部。
   bool all_nodes = 12;
+  // 仅用于到期规则：1–365，节点到期日减今天（hub 时区）不超过它即触发，已过期的也算；其余种类必须为 0。
+  // 保存启用的到期规则后立即评估一次，此后在 hub 启动、每个日界（零点不存在的日子取新一天的第一个时刻）与节点
+  // 计费字段变化时评估。
+  uint32 days_before = 13;
 }
 message ListAlertRulesRequest {}
 message ListAlertRulesResponse {
@@ -507,7 +519,8 @@ message AlertEvent {
   // 事件墙钟，Unix 秒。
   int64 at = 5;
   string summary = 6;
-  // 触发或恢复时的观测值：离线为未上报秒数；探测同规则 threshold 的单位（丢包百分比 loss_pct 或往返毫秒 rtt_ms）。
+  // 触发或恢复时的观测值：离线为未上报秒数；探测同规则 threshold 的单位（丢包百分比 loss_pct 或往返毫秒 rtt_ms）；
+  // 到期为剩余天数（负数是已过期天数），因清除到期日而恢复时为 0。
   double value = 7;
   repeated AlertDelivery deliveries = 8;
 }
