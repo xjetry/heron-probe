@@ -48,10 +48,16 @@ type writeReq struct {
 	done func(error)
 }
 
+// dsn 不含 journal_mode(WAL)：这个 pragma 一旦生效就立即改写文件头（第 18—19 字节
+// 标出日志模式），比 migrate 读版本号、判定"这是不是本项目的库"更早。所有连接都带它
+// 会让身份判定本身成为一次写：外来库被拒绝时文件也已经被改成 WAL，判定分支之后没有
+// 机会撤销。WAL 只在 migrate 判定通过、库确实建成或迁移完成后由写连接显式打开，
+// 见 openStore；一旦打开，日志模式记在文件里，之后的连接（包括这里的读连接池）
+// 不需要也不应重复声明它。
 func dsn(path string, extra string) string {
 	// path 是文件名而非 URI；编码路径部分，避免 #、? 和 % 改变实际打开的数据库。
 	u := url.URL{Path: path}
-	return "file:" + u.EscapedPath() + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)" + extra
+	return "file:" + u.EscapedPath() + "?_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)" + extra
 }
 
 // SchemaPolicy 由打开库的入口显式选择。离线命令不得迁移旧库：否则用新二进制查看 stats
@@ -85,6 +91,12 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 	}
 	w.SetMaxOpenConns(1)
 	if err := migrate(w, policy, log); err != nil {
+		w.Close()
+		return nil, err
+	}
+	// migrate 返回 nil 意味着这是本项目的库（已在当前版本、刚建成、或刚迁移完成）；
+	// 只有到这里才把日志模式切到 WAL，拒绝分支在此之前已经返回，不会执行到这一行。
+	if _, err := w.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		w.Close()
 		return nil, err
 	}
