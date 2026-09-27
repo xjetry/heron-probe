@@ -196,8 +196,8 @@ message Node {
   // 最近一次上报的来源地址：hub 在 Report 上看到的对端，按 --trusted-proxies 解析 X-Forwarded-For，不读其它旁路头，
   // 也不采信 agent 自报。IPv4 点分、IPv6 压缩形式、不带区域标识；空串表示 hub 没有记录到来源：从未上报，或最近一次
   // 上报早于 hub 开始记录来源的版本（此时 last_seen_at 有值）。只留最后一次，与 last_seen_at
-  // 同时刷出落盘，所以可能比实时状态晚约一分钟。hub 与节点同在内网或 agent 经出口代理时，这里是内网或代理地址。
-  // 只在管理端可见：公开节点（PublicNode）没有这个字段。
+  // 同时刷出落盘，所以可能比实时状态晚约一分钟。hub 与节点同在内网或 agent 经出口代理时，这里是内网或代理地址；
+  // hub 在反代之后而未把反代列进 --trusted-proxies 时，这里是反代地址。只在管理端可见：公开节点（PublicNode）没有这个字段。
   string last_source = 13;
 }
 
