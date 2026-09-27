@@ -1,6 +1,7 @@
 package geo
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -148,9 +149,16 @@ func (f *fixture) restart() {
 
 func (f *fixture) enable(on bool) {
 	f.t.Helper()
-	if _, err := f.st.SaveSettings(f.t.Context(), store.SiteSettings{Theme: store.DefaultTheme}, store.GeoUpdate{Enabled: &on}); err != nil {
+	if err := f.saveGeo(f.t.Context(), store.GeoUpdate{Enabled: &on}); err != nil {
 		f.t.Fatal(err)
 	}
+}
+
+// saveGeo 改国家查询设置。假服务的处理函数里也用它来模拟"查询进行中运维改了设置"：那不是测试协程，不能 Fatal，
+// 错误交给调用方报告。
+func (f *fixture) saveGeo(ctx context.Context, u store.GeoUpdate) error {
+	_, err := f.st.SaveSettings(ctx, store.SiteSettings{Theme: store.DefaultTheme}, u)
+	return err
 }
 
 // report 让节点以 addr 为来源上报一次并刷出：与 ingest 的分钟刷出走同一个写入口。
@@ -405,4 +413,197 @@ func TestLookupAndPinDoNotOverwriteEachOther(t *testing.T) {
 	}
 	edit("")
 	f.wantCountry(id, "US", "8.8.8.8")
+}
+
+// 一轮之中关掉开关：这一轮不再发出任何请求（开关在每次外呼前重读），关闭前在途的那一个照常完成并写入。
+func TestDisablingMidRoundStopsFurtherRequests(t *testing.T) {
+	f := newFixture(t)
+	f.enable(true)
+	var ids []int64
+	for _, addr := range []string{"8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1", "9.9.9.9"} {
+		ids = append(ids, f.report(addr, addr))
+	}
+	off := false
+	f.svc.reply = func(w http.ResponseWriter, r *http.Request) {
+		if err := f.saveGeo(r.Context(), store.GeoUpdate{Enabled: &off}); err != nil {
+			t.Error(err)
+		}
+		io.WriteString(w, "US")
+	}
+	f.sweep()
+	f.wantRequests("/8.8.8.8/country")
+	f.wantCountry(ids[0], "US", "8.8.8.8")
+	for _, id := range ids[1:] {
+		f.wantCountry(id, "", "")
+	}
+}
+
+// 一轮之中改服务地址：这一轮之后的请求走新地址（服务地址在每次外呼前重读），不再发往旧地址。
+func TestURLChangeMidRoundTakesEffectForTheNextRequest(t *testing.T) {
+	f := newFixture(t)
+	f.enable(true)
+	for _, addr := range []string{"8.8.8.8", "1.1.1.1", "9.9.9.9"} {
+		f.report(addr, addr)
+	}
+	other := f.svc.srv.URL + "/other/{ip}"
+	f.svc.reply = func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/8.8.8.8/country" {
+			if err := f.saveGeo(r.Context(), store.GeoUpdate{URL: &other}); err != nil {
+				t.Error(err)
+			}
+		}
+		io.WriteString(w, "US")
+	}
+	f.sweep()
+	f.wantRequests("/8.8.8.8/country", "/other/1.1.1.1", "/other/9.9.9.9")
+}
+
+// 退避的键含服务地址：旧服务失败留下的退避不挡住对新服务的查询，改了服务地址的下一轮即重查；旧服务的那一条随之丢掉。
+func TestURLChangeLiftsTheOldServicesBackoff(t *testing.T) {
+	f := newFixture(t)
+	f.enable(true)
+	f.svc.reply = func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/other/") {
+			io.WriteString(w, "US")
+			return
+		}
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	}
+	id := f.report("a", "8.8.8.8")
+	f.sweep()
+	f.clk.Advance(time.Minute)
+	f.sweep()
+	f.wantRequests("/8.8.8.8/country")
+	other := f.svc.srv.URL + "/other/{ip}"
+	if err := f.saveGeo(t.Context(), store.GeoUpdate{URL: &other}); err != nil {
+		t.Fatal(err)
+	}
+	f.sweep()
+	f.wantRequests("/8.8.8.8/country", "/other/8.8.8.8")
+	f.wantCountry(id, "US", "8.8.8.8")
+	if len(f.r.retryAt) != 0 {
+		t.Fatalf("backoff after the new service answered: %v, want empty", f.r.retryAt)
+	}
+}
+
+// 退避表只留仍待查的条目：节点在不同地址上接连失败，表里始终只有当前地址的那一条，不随地址变化增长。
+func TestBackoffTableKeepsOnlyTheCurrentAddress(t *testing.T) {
+	f := newFixture(t)
+	f.enable(true)
+	f.svc.reply = func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "down", http.StatusServiceUnavailable) }
+	for i, addr := range []string{"8.8.8.8", "8.8.4.4", "1.1.1.1", "2606:4700::1111"} {
+		id := f.report("a", addr)
+		f.sweep()
+		if len(f.r.retryAt) != 1 || !f.r.backingOff(id, addr) {
+			t.Fatalf("after failing on address %d (%s): backoff %v, want only that address", i+1, addr, f.r.retryAt)
+		}
+	}
+}
+
+// 节点删除后，它记住的答案与退避都在下一轮丢掉。
+func TestDeletedNodeLeavesNoRememberedState(t *testing.T) {
+	f := newFixture(t)
+	f.enable(true)
+	f.svc.reply = func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/1.1.1.1/country" {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		io.WriteString(w, "US")
+	}
+	answered := f.report("a", "8.8.8.8")
+	failed := f.report("b", "1.1.1.1")
+	f.sweep()
+	if len(f.r.answers[answered]) != 1 || !f.r.backingOff(failed, "1.1.1.1") {
+		t.Fatalf("before deletion: answers %v, backoff %v", f.r.answers, f.r.retryAt)
+	}
+	for _, id := range []int64{answered, failed} {
+		if err := f.st.DeleteNode(t.Context(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.sweep()
+	if len(f.r.answers) != 0 || len(f.r.retryAt) != 0 {
+		t.Fatalf("after deletion: answers %v, backoff %v, want both empty", f.r.answers, f.r.retryAt)
+	}
+}
+
+// 每节点每地址至多查一次：v4 与 v6 交替上报时两个地址各查一次，之后的切换由记住的答案直接写回、不外呼。hub 重启后
+// 记住的答案清空，两个地址各重查一次：库里那一对只属于当前地址，节点一换走就清空了。
+func TestAlternatingAddressesQueryEachAddressOnce(t *testing.T) {
+	f := newFixture(t)
+	f.enable(true)
+	f.svc.reply = func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, ":") {
+			io.WriteString(w, "CA")
+			return
+		}
+		io.WriteString(w, "US")
+	}
+	want := map[string]string{"8.8.8.8": "US", "2606:4700::1111": "CA"}
+	alternate := func(times int) {
+		t.Helper()
+		for i := range times {
+			addr := []string{"8.8.8.8", "2606:4700::1111"}[i%2]
+			id := f.report("a", addr)
+			f.sweep()
+			f.wantCountry(id, want[addr], addr)
+		}
+	}
+	alternate(6)
+	f.wantRequests("/8.8.8.8/country", "/2606:4700::1111/country")
+	f.restart()
+	alternate(6)
+	f.wantRequests("/8.8.8.8/country", "/2606:4700::1111/country", "/8.8.8.8/country", "/2606:4700::1111/country")
+}
+
+// 记住的答案每节点至多 4 个地址，按最近用到保留：命中的地址留下，最久未用的被挤掉、再来时重查。4 写字面值，
+// 不引用常量：常量改了，这里要红。
+func TestRememberedAnswersAreBoundedPerNode(t *testing.T) {
+	f := newFixture(t)
+	f.enable(true)
+	visit := func(addr string) {
+		t.Helper()
+		id := f.report("a", addr)
+		f.sweep()
+		f.wantCountry(id, "US", addr)
+	}
+	for _, addr := range []string{"1.0.0.1", "1.0.0.2", "1.0.0.3", "1.0.0.4", "1.0.0.5"} {
+		visit(addr)
+	}
+	visit("1.0.0.2") // 命中，移到最前；1.0.0.1 已被挤掉
+	visit("1.0.0.1") // 未命中，重查；挤掉此刻最久未用的 1.0.0.3，不是刚命中的 1.0.0.2
+	visit("1.0.0.2")
+	visit("1.0.0.3")
+	f.wantRequests("/1.0.0.1/country", "/1.0.0.2/country", "/1.0.0.3/country", "/1.0.0.4/country", "/1.0.0.5/country",
+		"/1.0.0.1/country", "/1.0.0.3/country")
+	if n := len(f.r.answers[f.nodes["a"]]); n != 4 {
+		t.Fatalf("remembered %d addresses, want 4", n)
+	}
+}
+
+// 退避按单调钟计：墙钟向前拨过一小时不提前重查，向后拨也不把退避拖长。
+func TestBackoffFollowsTheMonotonicClock(t *testing.T) {
+	f := newFixture(t)
+	f.enable(true)
+	f.svc.reply = func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "down", http.StatusServiceUnavailable) }
+	f.report("a", "8.8.8.8")
+	f.sweep()
+	f.clk.SetWall(f.clk.Now().Add(2 * time.Hour))
+	f.sweep()
+	f.wantRequests("/8.8.8.8/country")
+	f.clk.SetWall(f.clk.Now().Add(-24 * time.Hour))
+	f.clk.Advance(time.Hour)
+	f.sweep()
+	f.wantRequests("/8.8.8.8/country", "/8.8.8.8/country")
+}
+
+// backingOff 报告（节点, 地址）在任一服务地址下是否有退避条目，供用例检查退避表。
+func (r *Resolver) backingOff(node int64, addr string) bool {
+	for k := range r.retryAt {
+		if k.node == node && k.addr == addr {
+			return true
+		}
+	}
+	return false
 }
