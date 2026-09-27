@@ -29,8 +29,8 @@ type Tag struct {
 	Nodes int
 }
 
-// 访问 node_tag 的语句。它们各走哪个索引写在 ddlNodeTag 的注释里，TestNodeTagQueryPlans 对这些语句本身跑
-// EXPLAIN QUERY PLAN 核对。
+// 按条件查找 node_tag 行的语句（setNodeTags 里插入关联的那条不在此列：它只查 tag）。它们各走哪个索引写在
+// ddlNodeTag 的注释里，TestNodeTagQueryPlans 对这些语句本身跑 EXPLAIN QUERY PLAN 核对。
 const (
 	// clearNodeTags 清掉一个节点的全部关联：setNodeTags 替换前与 DeleteNode 都用它。
 	clearNodeTags = "DELETE FROM node_tag WHERE node_id = ?"
