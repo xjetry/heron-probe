@@ -258,3 +258,45 @@ func TestServeRenewsExpiryAtStartupInTheHubZone(t *testing.T) {
 		}
 	}
 }
+
+// serve 把 --timezone 交给管理端与公开端：UTC 16:30 在上海已是 9 月 25 日，9 月 30 日到期还剩 5 天（按 UTC 是 6 天）。
+func TestServeReportsDaysLeftInTheHubZone(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 9, 24, 16, 30, 0, 0, time.UTC))
+	db := filepath.Join(t.TempDir(), "hub.db")
+	password := "days left sufficiently long password"
+	if err := runPasswdWith([]string{"--db", db}, pipeWith(t, password+"\n"), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(db, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := st.CreateNode(t.Context(), "zoned", make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateNode(t.Context(), id, store.NodeEdit{Name: "zoned", Public: true, TrafficResetDay: 1, Billing: store.Billing{ExpiresOn: "2026-09-30"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	url, _, _ := startTestHub(t, db, clk, "--timezone", "Asia/Shanghai")
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := probev1connect.NewAdminServiceClient(&http.Client{Jar: jar, Timeout: testwait.Bound}, url)
+	if _, err := admin.Login(t.Context(), connect.NewRequest(&probev1.LoginRequest{Password: password})); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := admin.ListNodes(t.Context(), connect.NewRequest(&probev1.ListNodesRequest{}))
+	if err != nil || len(nodes.Msg.GetNodes()) != 1 || nodes.Msg.GetNodes()[0].GetBilling().GetDaysLeft() != 5 {
+		t.Fatalf("admin ListNodes = %v %v, want days_left 5", nodes, err)
+	}
+	public := probev1connect.NewPublicServiceClient(&http.Client{Timeout: testwait.Bound}, url)
+	snap, err := public.GetSnapshot(t.Context(), connect.NewRequest(&probev1.PublicServiceGetSnapshotRequest{}))
+	if err != nil || len(snap.Msg.GetNodes()) != 1 || snap.Msg.GetNodes()[0].GetBilling().GetDaysLeft() != 5 {
+		t.Fatalf("public GetSnapshot = %v %v, want days_left 5", snap, err)
+	}
+}

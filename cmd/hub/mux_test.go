@@ -61,8 +61,8 @@ func newTestMux(t *testing.T) *http.ServeMux {
 	if err := notifier.Requeue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	admin := api.New(api.Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second}, st, a, l, svc, book, reg, alerts, notifier, clk, slog.Default())
-	pub := api.NewPublic(api.PublicConfig{ReportInterval: 10 * time.Second}, st, l, book, reg, clk, slog.Default())
+	admin := api.New(api.Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, Location: time.UTC}, st, a, l, svc, book, reg, alerts, notifier, clk, slog.Default())
+	pub := api.NewPublic(api.PublicConfig{ReportInterval: 10 * time.Second, Location: time.UTC}, st, l, book, reg, clk, slog.Default())
 	return newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(pub.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", web.PublicHandler()))
 }
 
