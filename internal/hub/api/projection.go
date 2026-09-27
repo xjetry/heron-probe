@@ -11,7 +11,7 @@ import (
 // 不会出现在公开消息里，除非公开消息也声明它——"默认私有"由此落在类型上，而不是一处可能漏改的逐字段拷贝。
 //
 // newProjection 是唯一把公开消息与源消息配对的地方，spec §10 对这对消息的约束都在这里核对，任一不符即 panic：
-//   - 每个公开字段在源里有同名字段，号、类型、基数与 presence 都相同；
+//   - 每个公开字段在源里有同名字段，号、类型、基数与 presence 都相同，枚举字段两侧引用同一个枚举类型；
 //   - 源里没公开的字段，号与名都在公开消息的 reserved 里；每个 reserved 的号与名都对应一个没公开的源字段。
 //
 // 后一条让"公开一个源字段"必须是显式动作（删掉 reserved 再声明），源消息新增字段时公开消息不跟着 reserve
@@ -39,6 +39,9 @@ func newProjection(dst protoreflect.MessageType, src protoreflect.MessageDescrip
 		case d.Kind() != s.Kind() || d.HasPresence() != s.HasPresence():
 			panic(fmt.Sprintf("%s (%v, presence %v) does not match %s (%v, presence %v)",
 				d.FullName(), d.Kind(), d.HasPresence(), s.FullName(), s.Kind(), s.HasPresence()))
+		case d.Kind() == protoreflect.EnumKind && d.Enum().FullName() != s.Enum().FullName():
+			panic(fmt.Sprintf("%s uses enum %s but %s uses enum %s; enums are copied by number, so both sides must use the same enum",
+				d.FullName(), d.Enum().FullName(), s.FullName(), s.Enum().FullName()))
 		}
 		p.fields = append(p.fields, [2]protoreflect.FieldDescriptor{d, s})
 	}
@@ -74,13 +77,14 @@ func newProjection(dst protoreflect.MessageType, src protoreflect.MessageDescrip
 	return p
 }
 
-// projectable 限于单值标量：消息、枚举、列表与 map 的逐项语义各不相同，公开消息目前只需要标量。
+// projectable 限于单值标量与枚举：消息、列表与 map 的逐项语义各不相同，公开消息目前不需要。枚举按编号复制，编号的
+// 含义由枚举类型决定，所以 newProjection 另要求两侧引用同一个枚举类型。
 func projectable(f protoreflect.FieldDescriptor) bool {
 	if f.Cardinality() == protoreflect.Repeated {
 		return false
 	}
 	switch f.Kind() {
-	case protoreflect.MessageKind, protoreflect.GroupKind, protoreflect.EnumKind:
+	case protoreflect.MessageKind, protoreflect.GroupKind:
 		return false
 	}
 	return true

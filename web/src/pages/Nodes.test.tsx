@@ -2,10 +2,11 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { create } from "@bufbuild/protobuf";
 import { createConnectQueryKey } from "@connectrpc/connect-query";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Nodes } from "./Nodes";
 import { AdminService, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema } from "../gen/probe/v1/admin_pb";
+import { BillingCycle } from "../gen/probe/v1/types_pb";
 
 const two = [
   { id: 1n, name: "a", public: false, note: "", sortOrder: 0, createdAt: 0n, trafficResetDay: 1, offlineGraceS: 90 },
@@ -401,9 +402,11 @@ describe("Nodes", () => {
     await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n, 3n] }), expect.anything()));
   });
 
-  it("编辑回传全部字段", async () => {
+  it("编辑回传全部字段，没碰的计费也按当前值回传", async () => {
     const updateNode = vi.fn(async () => ({ node: two[0] }));
-    renderNodes({ listNodes: async () => ({ nodes: two }), updateNode });
+    // UpdateNode 整体替换，billing 缺失等于五项全清：只改名称时提交体里的计费必须是节点当前的五项。
+    const billed = { ...two[0], billing: { price: "9", currency: "EUR", billingCycle: BillingCycle.QUARTERLY, expiresOn: "2026-12-01", daysLeft: 60, autoRenew: true } };
+    renderNodes({ listNodes: async () => ({ nodes: [billed, two[1]] }), updateNode });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "a2" } });
@@ -411,7 +414,99 @@ describe("Nodes", () => {
     fireEvent.change(screen.getByLabelText("备注 a（#1）"), { target: { value: "changed note" } });
     fireEvent.change(screen.getByLabelText("重置日 a（#1）"), { target: { value: "15" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, name: "a2", public: true, note: "changed note", trafficResetDay: 15 }), expect.anything()));
+    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({
+      id: 1n, name: "a2", public: true, note: "changed note", trafficResetDay: 15,
+      billing: expect.objectContaining({ price: "9", currency: "EUR", billingCycle: BillingCycle.QUARTERLY, expiresOn: "2026-12-01", autoRenew: true }),
+    }), expect.anything()));
+  });
+
+  describe("计费", () => {
+    // 夹具的 daysLeft 是 hub 下发的值。时钟钉在离夹具几年之外的日期，按浏览器本地日期重算的实现在任何时区都与夹具
+    // 不同而红；不钉时夹具恰好等于某一天的日历差，那一天本地重算照样全绿。只 fake Date，react-query 与 waitFor
+    // 用的计时器保持真实。
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime("2030-06-15T12:00:00Z");
+    });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it("计费列合成价格、周期、到期与自动续期，已过期的那段标红，全空是破折号", async () => {
+      renderNodes({ listNodes: async () => ({ nodes: [
+        { ...two[0], billing: { price: "12.50", currency: "USD", billingCycle: BillingCycle.MONTHLY, expiresOn: "2026-10-01", daysLeft: 4, autoRenew: true } },
+        { ...two[1], billing: { price: "", currency: "", billingCycle: BillingCycle.UNSPECIFIED, expiresOn: "2026-09-24", daysLeft: -3, autoRenew: false } },
+        { ...two[0], id: 3n, name: "c" },
+      ] }) });
+      const row = async (name: string) => within((await screen.findByRole("link", { name })).closest("tr")!);
+      expect((await row("a（#1）")).getByRole("cell", { name: "USD 12.50 / 月 · 2026-10-01（剩 4 天） · 自动续期" })).toBeInTheDocument();
+      expect((await row("a（#1）")).getByText("2026-10-01（剩 4 天）")).not.toHaveClass("error");
+      expect((await row("b（#2）")).getByText("2026-09-24（已过期 3 天）")).toHaveClass("error");
+      expect((await row("c（#3）")).getByRole("cell", { name: "—" })).toBeInTheDocument();
+    });
+
+    it("编辑计费随整行整体提交，币种输入即转大写", async () => {
+      const updateNode = vi.fn(async () => ({}));
+      renderNodes({ listNodes: async () => ({ nodes: two }), updateNode });
+      await screen.findByRole("link", { name: "a（#1）" });
+      fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+      fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "12.50" } });
+      fireEvent.change(screen.getByLabelText("币种 a（#1）"), { target: { value: "usd" } });
+      fireEvent.change(screen.getByLabelText("周期 a（#1）"), { target: { value: String(BillingCycle.YEARLY) } });
+      fireEvent.change(screen.getByLabelText("到期日 a（#1）"), { target: { value: "2027-01-31" } });
+      fireEvent.click(screen.getByLabelText("自动续期 a（#1）"));
+      expect(screen.getByLabelText("币种 a（#1）")).toHaveValue("USD");
+      fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "a2" } });
+      fireEvent.click(screen.getByRole("button", { name: "保存" }));
+      await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({
+        id: 1n, name: "a2", billing: expect.objectContaining({ price: "12.50", currency: "USD", billingCycle: BillingCycle.YEARLY, expiresOn: "2027-01-31", autoRenew: true }),
+      }), expect.anything()));
+    });
+
+    it("编辑从节点当前的计费开始，清空之后提交的是空值", async () => {
+      const updateNode = vi.fn(async () => ({}));
+      const current = { ...two[0], billing: { price: "9", currency: "EUR", billingCycle: BillingCycle.QUARTERLY, expiresOn: "2026-12-01", daysLeft: 60, autoRenew: true } };
+      renderNodes({ listNodes: async () => ({ nodes: [current] }), updateNode });
+      await screen.findByRole("link", { name: "a（#1）" });
+      fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+      expect({
+        price: (screen.getByLabelText("价格 a（#1）") as HTMLInputElement).value,
+        currency: (screen.getByLabelText("币种 a（#1）") as HTMLInputElement).value,
+        cycle: (screen.getByLabelText("周期 a（#1）") as HTMLSelectElement).value,
+        expiresOn: (screen.getByLabelText("到期日 a（#1）") as HTMLInputElement).value,
+        autoRenew: (screen.getByLabelText("自动续期 a（#1）") as HTMLInputElement).checked,
+      }).toEqual({ price: "9", currency: "EUR", cycle: String(BillingCycle.QUARTERLY), expiresOn: "2026-12-01", autoRenew: true });
+      fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "" } });
+      fireEvent.change(screen.getByLabelText("币种 a（#1）"), { target: { value: "" } });
+      fireEvent.change(screen.getByLabelText("周期 a（#1）"), { target: { value: String(BillingCycle.UNSPECIFIED) } });
+      fireEvent.change(screen.getByLabelText("到期日 a（#1）"), { target: { value: "" } });
+      fireEvent.click(screen.getByLabelText("自动续期 a（#1）"));
+      fireEvent.click(screen.getByRole("button", { name: "保存" }));
+      await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({
+        id: 1n, billing: expect.objectContaining({ price: "", currency: "", billingCycle: BillingCycle.UNSPECIFIED, expiresOn: "", autoRenew: false }),
+      }), expect.anything()));
+    });
+
+    it("hub 拒绝计费取值时显示错误原文，编辑行与五项草稿保留", async () => {
+      const message = "billing.currency: must be three uppercase letters (ISO 4217); got \"US\"";
+      const updateNode = vi.fn(async () => { throw new ConnectError(message, Code.InvalidArgument); });
+      renderNodes({ listNodes: async () => ({ nodes: two }), updateNode });
+      await screen.findByRole("link", { name: "a（#1）" });
+      fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+      fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "12.50" } });
+      fireEvent.change(screen.getByLabelText("币种 a（#1）"), { target: { value: "us" } });
+      fireEvent.change(screen.getByLabelText("周期 a（#1）"), { target: { value: String(BillingCycle.MONTHLY) } });
+      fireEvent.change(screen.getByLabelText("到期日 a（#1）"), { target: { value: "2030-07-01" } });
+      fireEvent.click(screen.getByLabelText("自动续期 a（#1）"));
+      fireEvent.click(screen.getByRole("button", { name: "保存" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(message);
+      expect(updateNode).toHaveBeenCalledTimes(1);
+      expect({
+        price: (screen.getByLabelText("价格 a（#1）") as HTMLInputElement).value,
+        currency: (screen.getByLabelText("币种 a（#1）") as HTMLInputElement).value,
+        cycle: (screen.getByLabelText("周期 a（#1）") as HTMLSelectElement).value,
+        expiresOn: (screen.getByLabelText("到期日 a（#1）") as HTMLInputElement).value,
+        autoRenew: (screen.getByLabelText("自动续期 a（#1）") as HTMLInputElement).checked,
+      }).toEqual({ price: "12.50", currency: "US", cycle: String(BillingCycle.MONTHLY), expiresOn: "2030-07-01", autoRenew: true });
+    });
   });
 
   it("宽限期列显示默认与秒数", async () => {

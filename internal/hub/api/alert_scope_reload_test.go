@@ -23,11 +23,11 @@ func TestDeletedAlertScopeRemainsListedAfterReload(t *testing.T) {
 	if _, err := h.admin.DeleteNode(t.Context(), connect.NewRequest(&probev1.DeleteNodeRequest{Id: id})); err != nil {
 		t.Fatal(err)
 	}
-	e := alert.New(alert.Config{TTL: 30 * time.Second}, h.store, h.live, h.clk, slog.Default())
+	e := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, h.store, h.live, h.clk, slog.Default())
 	if err := e.Load(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	svc := New(Config{TTL: 30 * time.Second}, h.store, h.auth, h.live, h.ingest, h.book, h.reg, e, nil, h.clk, slog.Default())
+	svc := New(Config{TTL: 30 * time.Second, Location: time.UTC}, h.store, h.auth, h.live, h.ingest, h.book, h.reg, e, nil, h.clk, slog.Default())
 	mux := http.NewServeMux()
 	mux.Handle(svc.Handler())
 	srv := httptest.NewServer(mux)

@@ -7,7 +7,7 @@ import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2
 import { file_probe_v1_cache } from "./cache_pb";
 import type { QueryMetricsRequestSchema, QueryMetricsResponseSchema, QueryProbesRequestSchema, QueryProbesResponseSchema } from "./query_pb";
 import { file_probe_v1_query } from "./query_pb";
-import type { Traffic } from "./types_pb";
+import type { BillingCycle, Traffic } from "./types_pb";
 import { file_probe_v1_types } from "./types_pb";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -15,7 +15,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file probe/v1/public.proto.
  */
 export const file_probe_v1_public: GenFile = /*@__PURE__*/
-  fileDesc("ChVwcm9iZS92MS9wdWJsaWMucHJvdG8SCHByb2JlLnYxIhAKDkdldFNpdGVSZXF1ZXN0ImIKClB1YmxpY1NpdGUSDQoFdGl0bGUYASABKAkSDQoFdGhlbWUYAiABKAkSFAoMYWNjZW50X2NvbG9yGAMgASgJEgwKBGxvZ28YBCABKAkSEgoKY3VzdG9tX2NzcxgFIAEoCSIhCh9QdWJsaWNTZXJ2aWNlR2V0U25hcHNob3RSZXF1ZXN0Il4KDlB1YmxpY1NuYXBzaG90EgsKA25vdxgBIAEoAxIaChJyZXBvcnRfaW50ZXJ2YWxfbXMYAiABKA0SIwoFbm9kZXMYAyADKAsyFC5wcm9iZS52MS5QdWJsaWNOb2RlIuoBCgpQdWJsaWNOb2RlEgoKAmlkGAEgASgDEgwKBG5hbWUYAiABKAkSDgoGb25saW5lGAMgASgIEhkKDGxhc3Rfc2Vlbl9hdBgEIAEoA0gAiAEBEhIKCnNvcnRfb3JkZXIYBSABKAUSJAoFZmFjdHMYBiABKAsyFS5wcm9iZS52MS5QdWJsaWNGYWN0cxIoCgdtZXRyaWNzGAcgASgLMhcucHJvYmUudjEuUHVibGljTWV0cmljcxIiCgd0cmFmZmljGAggASgLMhEucHJvYmUudjEuVHJhZmZpY0IPCg1fbGFzdF9zZWVuX2F0Iq4BCgtQdWJsaWNGYWN0cxIKCgJvcxgCIAEoCRIMCgRhcmNoGAQgASgJEhYKDnZpcnR1YWxpemF0aW9uGAUgASgJEhEKCWNwdV9tb2RlbBgGIAEoCRIRCgljcHVfY29yZXMYByABKA1KBAgBEAJKBAgDEARKBAgIEAlKBAgJEApSCGhvc3RuYW1lUgZrZXJuZWxSDWFnZW50X3ZlcnNpb25SDmljbXBfYXZhaWxhYmxlIrgFCg1QdWJsaWNNZXRyaWNzEhQKB2NwdV9wY3QYAiABKAFIAIgBARISCgVsb2FkMRgDIAEoAUgBiAEBEhIKBWxvYWQ1GAQgASgBSAKIAQESEwoGbG9hZDE1GAUgASgBSAOIAQESFgoJbWVtX3RvdGFsGAYgASgESASIAQESFQoIbWVtX3VzZWQYByABKARIBYgBARIXCgpzd2FwX3RvdGFsGAggASgESAaIAQESFgoJc3dhcF91c2VkGAkgASgESAeIAQESFwoKZGlza190b3RhbBgKIAEoBEgIiAEBEhYKCWRpc2tfdXNlZBgLIAEoBEgJiAEBEhkKDG5ldF9yeF90b3RhbBgMIAEoBEgKiAEBEhkKDG5ldF90eF90b3RhbBgNIAEoBEgLiAEBEhcKCm5ldF9yeF9icHMYDiABKARIDIgBARIXCgpuZXRfdHhfYnBzGA8gASgESA2IAQESFgoJdGNwX2Nvbm5zGBAgASgNSA6IAQESFgoJdWRwX2Nvbm5zGBEgASgNSA+IAQESEgoFcHJvY3MYEiABKA1IEIgBARIVCgh1cHRpbWVfcxgTIAEoBEgRiAEBQgoKCF9jcHVfcGN0QggKBl9sb2FkMUIICgZfbG9hZDVCCQoHX2xvYWQxNUIMCgpfbWVtX3RvdGFsQgsKCV9tZW1fdXNlZEINCgtfc3dhcF90b3RhbEIMCgpfc3dhcF91c2VkQg0KC19kaXNrX3RvdGFsQgwKCl9kaXNrX3VzZWRCDwoNX25ldF9yeF90b3RhbEIPCg1fbmV0X3R4X3RvdGFsQg0KC19uZXRfcnhfYnBzQg0KC19uZXRfdHhfYnBzQgwKCl90Y3BfY29ubnNCDAoKX3VkcF9jb25uc0IICgZfcHJvY3NCCwoJX3VwdGltZV9zSgQIARACUgdib290X2lkMt4CCg1QdWJsaWNTZXJ2aWNlEkMKB0dldFNpdGUSGC5wcm9iZS52MS5HZXRTaXRlUmVxdWVzdBoULnByb2JlLnYxLlB1YmxpY1NpdGUiCJACAZC1GKwCElsKC0dldFNuYXBzaG90EikucHJvYmUudjEuUHVibGljU2VydmljZUdldFNuYXBzaG90UmVxdWVzdBoYLnByb2JlLnYxLlB1YmxpY1NuYXBzaG90IgeQAgGQtRgBElYKDFF1ZXJ5TWV0cmljcxIdLnByb2JlLnYxLlF1ZXJ5TWV0cmljc1JlcXVlc3QaHi5wcm9iZS52MS5RdWVyeU1ldHJpY3NSZXNwb25zZSIHkAIBkLUYPBJTCgtRdWVyeVByb2JlcxIcLnByb2JlLnYxLlF1ZXJ5UHJvYmVzUmVxdWVzdBodLnByb2JlLnYxLlF1ZXJ5UHJvYmVzUmVzcG9uc2UiB5ACAZC1GDxCLlosZ2l0aHViLmNvbS94amV0cnkvcHJvYmUvZ2VuL3Byb2JlL3YxO3Byb2JldjFiBnByb3RvMw", [file_probe_v1_cache, file_probe_v1_query, file_probe_v1_types]);
+  fileDesc("ChVwcm9iZS92MS9wdWJsaWMucHJvdG8SCHByb2JlLnYxIhAKDkdldFNpdGVSZXF1ZXN0ImIKClB1YmxpY1NpdGUSDQoFdGl0bGUYASABKAkSDQoFdGhlbWUYAiABKAkSFAoMYWNjZW50X2NvbG9yGAMgASgJEgwKBGxvZ28YBCABKAkSEgoKY3VzdG9tX2NzcxgFIAEoCSIhCh9QdWJsaWNTZXJ2aWNlR2V0U25hcHNob3RSZXF1ZXN0Il4KDlB1YmxpY1NuYXBzaG90EgsKA25vdxgBIAEoAxIaChJyZXBvcnRfaW50ZXJ2YWxfbXMYAiABKA0SIwoFbm9kZXMYAyADKAsyFC5wcm9iZS52MS5QdWJsaWNOb2RlIpQCCgpQdWJsaWNOb2RlEgoKAmlkGAEgASgDEgwKBG5hbWUYAiABKAkSDgoGb25saW5lGAMgASgIEhkKDGxhc3Rfc2Vlbl9hdBgEIAEoA0gAiAEBEhIKCnNvcnRfb3JkZXIYBSABKAUSJAoFZmFjdHMYBiABKAsyFS5wcm9iZS52MS5QdWJsaWNGYWN0cxIoCgdtZXRyaWNzGAcgASgLMhcucHJvYmUudjEuUHVibGljTWV0cmljcxIiCgd0cmFmZmljGAggASgLMhEucHJvYmUudjEuVHJhZmZpYxIoCgdiaWxsaW5nGAkgASgLMhcucHJvYmUudjEuUHVibGljQmlsbGluZ0IPCg1fbGFzdF9zZWVuX2F0IqsBCg1QdWJsaWNCaWxsaW5nEg0KBXByaWNlGAEgASgJEhAKCGN1cnJlbmN5GAIgASgJEi0KDWJpbGxpbmdfY3ljbGUYAyABKA4yFi5wcm9iZS52MS5CaWxsaW5nQ3ljbGUSEgoKZXhwaXJlc19vbhgEIAEoCRIWCglkYXlzX2xlZnQYBiABKAVIAIgBAUIMCgpfZGF5c19sZWZ0SgQIBRAGUgphdXRvX3JlbmV3Iq4BCgtQdWJsaWNGYWN0cxIKCgJvcxgCIAEoCRIMCgRhcmNoGAQgASgJEhYKDnZpcnR1YWxpemF0aW9uGAUgASgJEhEKCWNwdV9tb2RlbBgGIAEoCRIRCgljcHVfY29yZXMYByABKA1KBAgBEAJKBAgDEARKBAgIEAlKBAgJEApSCGhvc3RuYW1lUgZrZXJuZWxSDWFnZW50X3ZlcnNpb25SDmljbXBfYXZhaWxhYmxlIrgFCg1QdWJsaWNNZXRyaWNzEhQKB2NwdV9wY3QYAiABKAFIAIgBARISCgVsb2FkMRgDIAEoAUgBiAEBEhIKBWxvYWQ1GAQgASgBSAKIAQESEwoGbG9hZDE1GAUgASgBSAOIAQESFgoJbWVtX3RvdGFsGAYgASgESASIAQESFQoIbWVtX3VzZWQYByABKARIBYgBARIXCgpzd2FwX3RvdGFsGAggASgESAaIAQESFgoJc3dhcF91c2VkGAkgASgESAeIAQESFwoKZGlza190b3RhbBgKIAEoBEgIiAEBEhYKCWRpc2tfdXNlZBgLIAEoBEgJiAEBEhkKDG5ldF9yeF90b3RhbBgMIAEoBEgKiAEBEhkKDG5ldF90eF90b3RhbBgNIAEoBEgLiAEBEhcKCm5ldF9yeF9icHMYDiABKARIDIgBARIXCgpuZXRfdHhfYnBzGA8gASgESA2IAQESFgoJdGNwX2Nvbm5zGBAgASgNSA6IAQESFgoJdWRwX2Nvbm5zGBEgASgNSA+IAQESEgoFcHJvY3MYEiABKA1IEIgBARIVCgh1cHRpbWVfcxgTIAEoBEgRiAEBQgoKCF9jcHVfcGN0QggKBl9sb2FkMUIICgZfbG9hZDVCCQoHX2xvYWQxNUIMCgpfbWVtX3RvdGFsQgsKCV9tZW1fdXNlZEINCgtfc3dhcF90b3RhbEIMCgpfc3dhcF91c2VkQg0KC19kaXNrX3RvdGFsQgwKCl9kaXNrX3VzZWRCDwoNX25ldF9yeF90b3RhbEIPCg1fbmV0X3R4X3RvdGFsQg0KC19uZXRfcnhfYnBzQg0KC19uZXRfdHhfYnBzQgwKCl90Y3BfY29ubnNCDAoKX3VkcF9jb25uc0IICgZfcHJvY3NCCwoJX3VwdGltZV9zSgQIARACUgdib290X2lkMt4CCg1QdWJsaWNTZXJ2aWNlEkMKB0dldFNpdGUSGC5wcm9iZS52MS5HZXRTaXRlUmVxdWVzdBoULnByb2JlLnYxLlB1YmxpY1NpdGUiCJACAZC1GKwCElsKC0dldFNuYXBzaG90EikucHJvYmUudjEuUHVibGljU2VydmljZUdldFNuYXBzaG90UmVxdWVzdBoYLnByb2JlLnYxLlB1YmxpY1NuYXBzaG90IgeQAgGQtRgBElYKDFF1ZXJ5TWV0cmljcxIdLnByb2JlLnYxLlF1ZXJ5TWV0cmljc1JlcXVlc3QaHi5wcm9iZS52MS5RdWVyeU1ldHJpY3NSZXNwb25zZSIHkAIBkLUYPBJTCgtRdWVyeVByb2JlcxIcLnByb2JlLnYxLlF1ZXJ5UHJvYmVzUmVxdWVzdBodLnByb2JlLnYxLlF1ZXJ5UHJvYmVzUmVzcG9uc2UiB5ACAZC1GDxCLlosZ2l0aHViLmNvbS94amV0cnkvcHJvYmUvZ2VuL3Byb2JlL3YxO3Byb2JldjFiBnByb3RvMw", [file_probe_v1_cache, file_probe_v1_query, file_probe_v1_types]);
 
 /**
  * @generated from message probe.v1.GetSiteRequest
@@ -178,6 +178,13 @@ export type PublicNode = Message<"probe.v1.PublicNode"> & {
    * @generated from field: probe.v1.Traffic traffic = 8;
    */
   traffic?: Traffic | undefined;
+
+  /**
+   * 计费与到期的公开部分（§9.4）；五项都没填时缺失。
+   *
+   * @generated from field: probe.v1.PublicBilling billing = 9;
+   */
+  billing?: PublicBilling | undefined;
 };
 
 /**
@@ -186,6 +193,54 @@ export type PublicNode = Message<"probe.v1.PublicNode"> & {
  */
 export const PublicNodeSchema: GenMessage<PublicNode> = /*@__PURE__*/
   messageDesc(file_probe_v1_public, 4);
+
+/**
+ * Billing 的公开部分，字段号与 Billing 相同，由投影按字段名生成（与 PublicFacts 同一机制）。自动续期是运维开关，
+ * 不公开，号与名保留：要公开必须先删掉 reserved，而不是随手加一个字段。
+ *
+ * @generated from message probe.v1.PublicBilling
+ */
+export type PublicBilling = Message<"probe.v1.PublicBilling"> & {
+  /**
+   * 价格，十进制文本（如 12.50）；空表示未填。
+   *
+   * @generated from field: string price = 1;
+   */
+  price: string;
+
+  /**
+   * ISO 4217 币种代码；价格非空时必有。
+   *
+   * @generated from field: string currency = 2;
+   */
+  currency: string;
+
+  /**
+   * @generated from field: probe.v1.BillingCycle billing_cycle = 3;
+   */
+  billingCycle: BillingCycle;
+
+  /**
+   * 到期日 YYYY-MM-DD；空表示没有到期日。
+   *
+   * @generated from field: string expires_on = 4;
+   */
+  expiresOn: string;
+
+  /**
+   * 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日、或库里的到期日无法解析时缺失。
+   *
+   * @generated from field: optional int32 days_left = 6;
+   */
+  daysLeft?: number | undefined;
+};
+
+/**
+ * Describes the message probe.v1.PublicBilling.
+ * Use `create(PublicBillingSchema)` to create a new message.
+ */
+export const PublicBillingSchema: GenMessage<PublicBilling> = /*@__PURE__*/
+  messageDesc(file_probe_v1_public, 5);
 
 /**
  * Facts 的公开部分，字段号与 Facts 相同。主机名、内核版本、agent 版本与 ICMP 可用性不公开，
@@ -225,7 +280,7 @@ export type PublicFacts = Message<"probe.v1.PublicFacts"> & {
  * Use `create(PublicFactsSchema)` to create a new message.
  */
 export const PublicFactsSchema: GenMessage<PublicFacts> = /*@__PURE__*/
-  messageDesc(file_probe_v1_public, 5);
+  messageDesc(file_probe_v1_public, 6);
 
 /**
  * 与 Metrics 同字段号、同语义，只是没有 boot_id（流量差分用的内部标识）。每个读数都是 optional：
@@ -334,7 +389,7 @@ export type PublicMetrics = Message<"probe.v1.PublicMetrics"> & {
  * Use `create(PublicMetricsSchema)` to create a new message.
  */
 export const PublicMetricsSchema: GenMessage<PublicMetrics> = /*@__PURE__*/
-  messageDesc(file_probe_v1_public, 6);
+  messageDesc(file_probe_v1_public, 7);
 
 /**
  * 公开页与第三方主题 → hub。没有鉴权，不需要也不看任何凭据；按来源限流（IPv4 一个地址、IPv6 一个 /64 算一个来源）：

@@ -29,7 +29,7 @@ beforeAll(async () => {
 
 it("公开包的模块图不含管理服务的生成代码", () => {
   // 冒烟：确实打进了公开服务的生成代码与共用组件，空图不能冒充通过。
-  for (const f of ["gen/probe/v1/public_pb.ts", "gen/probe/v1/query_pb.ts", "components/History.tsx", "components/Chart.tsx"]) {
+  for (const f of ["gen/probe/v1/public_pb.ts", "gen/probe/v1/query_pb.ts", "components/History.tsx", "components/Chart.tsx", "lib/billing.ts"]) {
     expect(pub.ids.some((id) => id.endsWith(`/src/${f}`)), f).toBe(true);
   }
   expect(pub.ids.filter(isAdminGen).map((id) => relative(web, id))).toEqual([]);

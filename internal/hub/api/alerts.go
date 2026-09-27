@@ -17,6 +17,7 @@ import (
 var alertKinds = map[probev1.AlertKind]store.AlertKind{
 	probev1.AlertKind_ALERT_KIND_OFFLINE: store.KindOffline,
 	probev1.AlertKind_ALERT_KIND_PROBE:   store.KindProbe,
+	probev1.AlertKind_ALERT_KIND_EXPIRY:  store.KindExpiry,
 }
 var probeMetrics = map[probev1.ProbeMetric]store.ProbeMetric{
 	probev1.ProbeMetric_PROBE_METRIC_LOSS_PCT: store.MetricLossPct,
@@ -38,7 +39,7 @@ func enumFor[K comparable, V comparable](values map[K]V, value V) K {
 }
 
 func ruleProto(r store.AlertRule) *probev1.AlertRule {
-	return &probev1.AlertRule{Id: r.ID, Name: r.Name, Kind: enumFor(alertKinds, r.Kind), Enabled: r.Enabled, AllNodes: r.AllNodes, NodeIds: r.NodeIDs, ChannelIds: r.ChannelIDs, TaskId: r.TaskID, Metric: enumFor(probeMetrics, r.Metric), Threshold: r.Threshold, ForMinutes: uint32(r.ForMinutes), CreatedAt: r.CreatedAt.Unix()}
+	return &probev1.AlertRule{Id: r.ID, Name: r.Name, Kind: enumFor(alertKinds, r.Kind), Enabled: r.Enabled, AllNodes: r.AllNodes, NodeIds: r.NodeIDs, ChannelIds: r.ChannelIDs, TaskId: r.TaskID, Metric: enumFor(probeMetrics, r.Metric), Threshold: r.Threshold, ForMinutes: uint32(r.ForMinutes), DaysBefore: uint32(r.DaysBefore), CreatedAt: r.CreatedAt.Unix()}
 }
 
 func (s *Service) ListAlertRules(_ context.Context, _ *connect.Request[probev1.ListAlertRulesRequest]) (*connect.Response[probev1.ListAlertRulesResponse], error) {
@@ -62,14 +63,15 @@ func (s *Service) SaveAlertRule(ctx context.Context, req *connect.Request[probev
 		return nil, err
 	}
 	var metric store.ProbeMetric
-	// 离线规则不使用探测指标；显式传入的指标仍须属于协议枚举。
+	// 只有探测规则使用指标。其余种类显式传入的指标也先按协议枚举解析，表外值在这里以协议词汇报错；表内值由
+	// alert.CheckRule 以"非探测规则必须不指定"拒绝。
 	if kind == store.KindProbe || r.GetMetric() != probev1.ProbeMetric_PROBE_METRIC_UNSPECIFIED {
 		metric, err = parseEnum(probeMetrics, r.GetMetric(), "rule", "metric")
 		if err != nil {
 			return nil, err
 		}
 	}
-	saved, err := s.alerts.SaveRule(ctx, store.AlertRule{ID: r.GetId(), Name: r.GetName(), Kind: kind, Enabled: r.GetEnabled(), AllNodes: r.GetAllNodes(), NodeIDs: r.GetNodeIds(), ChannelIDs: r.GetChannelIds(), TaskID: r.GetTaskId(), Metric: metric, Threshold: r.GetThreshold(), ForMinutes: int(r.GetForMinutes())})
+	saved, err := s.alerts.SaveRule(ctx, store.AlertRule{ID: r.GetId(), Name: r.GetName(), Kind: kind, Enabled: r.GetEnabled(), AllNodes: r.GetAllNodes(), NodeIDs: r.GetNodeIds(), ChannelIDs: r.GetChannelIds(), TaskID: r.GetTaskId(), Metric: metric, Threshold: r.GetThreshold(), ForMinutes: int(r.GetForMinutes()), DaysBefore: int(r.GetDaysBefore())})
 	if err != nil {
 		return nil, s.operationError(err, "rule", "saving alert rule failed")
 	}

@@ -19,6 +19,7 @@ import (
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
 	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/ratelimit"
@@ -42,6 +43,8 @@ type PublicConfig struct {
 	ReportInterval time.Duration
 	// TrustedProxies 决定限流按哪个来源地址计：只有来自这些对端的 X-Forwarded-For 才被采信；空表示一个都不信。
 	TrustedProxies []netip.Prefix
+	// Location 是 hub 的 --timezone，days_left 按它的日历日算；NewPublic 要求非 nil。
+	Location *time.Location
 }
 
 // Public 实现 PublicService。它不经会话或 token：挂载点只绑定按来源键（IPv4 一个地址、IPv6 一个 /64，
@@ -60,6 +63,7 @@ type Public struct {
 
 	facts   projection
 	metrics projection
+	billing projection
 
 	// limit 按来源计数，覆盖挂载点收到的每个请求。
 	limit *ratelimit.Buckets[netip.Addr]
@@ -68,11 +72,15 @@ type Public struct {
 }
 
 func NewPublic(cfg PublicConfig, st *store.Store, l *live.Live, book *traffic.Book, probes *probe.Registry, clk clock.Clock, log *slog.Logger) *Public {
+	if cfg.Location == nil {
+		panic("api.PublicConfig.Location must be set")
+	}
 	return &Public{
 		cfg: cfg, store: st, live: l, traffic: book, probes: probes, clk: clk, log: log,
 		history: history{store: st, log: log},
 		facts:   newProjection((&probev1.PublicFacts{}).ProtoReflect().Type(), (&probev1.Facts{}).ProtoReflect().Descriptor()),
 		metrics: newProjection((&probev1.PublicMetrics{}).ProtoReflect().Type(), (&probev1.Metrics{}).ProtoReflect().Descriptor()),
+		billing: newProjection((&probev1.PublicBilling{}).ProtoReflect().Type(), (&probev1.Billing{}).ProtoReflect().Descriptor()),
 		limit:   ratelimit.New[netip.Addr](publicBurst, publicRefill),
 		maxAge:  cachePolicy(probeServices()),
 	}
@@ -220,10 +228,17 @@ func (p *Public) GetSnapshot(ctx context.Context, _ *connect.Request[probev1.Pub
 		p.log.Error("listing public nodes failed", "err", err)
 		return nil, internalError("listing nodes failed")
 	}
-	out := &probev1.PublicSnapshot{Now: p.clk.Now().Unix(), ReportIntervalMs: uint32(p.cfg.ReportInterval / time.Millisecond)}
+	// now 只读一次：快照的 now 与每个节点的 days_left 出自同一时刻，调用方拿 now 核对 days_left 不会差一天。
+	now := p.clk.Now()
+	today := alert.Today(now, p.cfg.Location)
+	out := &probev1.PublicSnapshot{Now: now.Unix(), ReportIntervalMs: uint32(p.cfg.ReportInterval / time.Millisecond)}
 	for _, n := range nodes {
 		online, seen, m := liveState(p.live, n)
 		pn := &probev1.PublicNode{Id: n.ID, Name: n.Name, Online: online, LastSeenAt: seen, SortOrder: n.SortOrder, Traffic: trafficProto(p.traffic.View(n.ID))}
+		// 计费经投影公开：PublicBilling 没有 auto_renew（reserved），它与 Billing 的对齐由 NewPublic 构造投影时核对。
+		if b := billingProto(n.Billing, today); b != nil {
+			pn.Billing = p.billing.apply(b).(*probev1.PublicBilling)
+		}
 		if n.Facts != nil {
 			pn.Facts = p.facts.apply(n.Facts).(*probev1.PublicFacts)
 		}

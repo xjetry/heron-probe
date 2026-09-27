@@ -48,6 +48,8 @@ type Config struct {
 	// HubVersion 原样经 GetSnapshotResponse.hub_version 下发。空串（装配时没传）与 dev 一样
 	// 被面板当作非正式版本：给出 latest 安装命令、不标落后节点。
 	HubVersion string
+	// Location 是 hub 的 --timezone，days_left 按它的日历日算；New 要求非 nil。
+	Location *time.Location
 }
 
 // NodeState 是节点在进程内的状态持有者；删除节点后由它清理。用接口而不直接依赖
@@ -82,12 +84,18 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 	if cfg.TTL <= 0 {
 		panic("api.Config.TTL must be positive")
 	}
+	if cfg.Location == nil {
+		panic("api.Config.Location must be set")
+	}
 	return &Service{
 		cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, probes: probes, alerts: alerts, notifier: notifier, clk: clk, log: log,
 		history: history{store: st, log: log},
 		access:  accessTable(probev1.File_probe_v1_admin_proto.Services().ByName("AdminService")),
 	}
 }
+
+// today 是 hub 时区（--timezone）的今天，days_left 以它为基准。
+func (s *Service) today() time.Time { return alert.Today(s.clk.Now(), s.cfg.Location) }
 
 func (s *Service) Handler() (string, http.Handler) {
 	return probev1connect.NewAdminServiceHandler(s,

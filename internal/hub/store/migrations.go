@@ -27,6 +27,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	6: execAll([]string{ddlAPITokenV6}),
 	7: migrateDeliveryFailure,
 	8: execAll([]string{ddlSettingV8}),
+	9: execAll(migrationV9),
 }
 
 func execAll(stmts []string) func(*sql.Tx) error {
@@ -248,3 +249,15 @@ const ddlSettingV8 = `CREATE TABLE setting (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 )`
+
+// v9：节点的计费与到期五列、到期规则的提前天数、到期告警状态记下的触发时到期日。旧行取列默认值：没有计费信息，
+// 规则的 days_before 为 NULL，已有状态的 fired_expires_on 为空（它们都属于离线与探测规则）。
+var migrationV9 = []string{
+	`ALTER TABLE node ADD COLUMN price TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE node ADD COLUMN currency TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE node ADD COLUMN billing_cycle TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE node ADD COLUMN expires_on TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE node ADD COLUMN auto_renew INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE alert_rule ADD COLUMN days_before INTEGER`,
+	`ALTER TABLE alert_state ADD COLUMN fired_expires_on TEXT NOT NULL DEFAULT ''`,
+}

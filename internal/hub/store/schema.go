@@ -21,7 +21,14 @@ const ddlNode = `CREATE TABLE node (
   token_hash BLOB NOT NULL UNIQUE,
   created_at INTEGER NOT NULL,
   -- 墙钟，只供展示与告警文案，不参与离线时长计算。
-  last_seen_at INTEGER
+  last_seen_at INTEGER,
+  -- 计费与到期（§9.4）：提醒用的展示值，空串与 0 是"未填"。取值约束由 api 的 UpdateNode 裁决，库里不设 CHECK。
+  -- 列序与迁移 9 的 ADD COLUMN 结果一致。
+  price TEXT NOT NULL DEFAULT '',
+  currency TEXT NOT NULL DEFAULT '',
+  billing_cycle TEXT NOT NULL DEFAULT '',
+  expires_on TEXT NOT NULL DEFAULT '',
+  auto_renew INTEGER NOT NULL DEFAULT 0
 )`
 
 const ddlNodeFacts = `CREATE TABLE node_facts (
@@ -233,7 +240,10 @@ const ddlAlertRule = `CREATE TABLE alert_rule (
   metric TEXT,
   threshold REAL,
   for_minutes INTEGER,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  -- 非到期规则写 NULL：SaveAlertRule 只为到期规则落这一列，CheckKindFields 拒绝别的种类带非零值。到期规则的
+  -- 1–365 由 alert.CheckRule 在保存与载入时裁决，存储层不查。列序与迁移 9 的 ADD COLUMN 结果一致。
+  days_before INTEGER
 )`
 const ddlAlertRuleNode = `CREATE TABLE alert_rule_node (
   rule_id INTEGER NOT NULL,
@@ -261,6 +271,9 @@ const ddlAlertState = `CREATE TABLE alert_state (
   node_id INTEGER NOT NULL,
   state TEXT NOT NULL,
   since_at INTEGER NOT NULL,
+  -- 引擎只在到期规则进入 firing 时写入非空值：当时节点的到期日（见 StateRow.FiredExpiresOn）。
+  -- 列序与迁移 9 的 ADD COLUMN 结果一致：ADD COLUMN 把列排在最后，与写在 PRIMARY KEY 约束之前的这一行同为第五列。
+  fired_expires_on TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (rule_id, node_id)
 )`
 const ddlAlertEvent = `CREATE TABLE alert_event (

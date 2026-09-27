@@ -70,6 +70,75 @@ func (ProbeKind) EnumDescriptor() ([]byte, []int) {
 	return file_probe_v1_types_proto_rawDescGZIP(), []int{0}
 }
 
+// 节点的计费周期（§9.4）。管理与公开两端共用，所以与 Billing 一起定义在这里：public.proto 不能 import admin.proto。
+// 未指定表示没有周期（一次性付费或未填）；自动续期要求非未指定。
+type BillingCycle int32
+
+const (
+	BillingCycle_BILLING_CYCLE_UNSPECIFIED BillingCycle = 0
+	// 1 个月。
+	BillingCycle_BILLING_CYCLE_MONTHLY BillingCycle = 1
+	// 3 个月。
+	BillingCycle_BILLING_CYCLE_QUARTERLY BillingCycle = 2
+	// 6 个月。
+	BillingCycle_BILLING_CYCLE_SEMIANNUAL BillingCycle = 3
+	// 12 个月。
+	BillingCycle_BILLING_CYCLE_YEARLY BillingCycle = 4
+	// 24 个月。
+	BillingCycle_BILLING_CYCLE_BIENNIAL BillingCycle = 5
+	// 36 个月。
+	BillingCycle_BILLING_CYCLE_TRIENNIAL BillingCycle = 6
+)
+
+// Enum value maps for BillingCycle.
+var (
+	BillingCycle_name = map[int32]string{
+		0: "BILLING_CYCLE_UNSPECIFIED",
+		1: "BILLING_CYCLE_MONTHLY",
+		2: "BILLING_CYCLE_QUARTERLY",
+		3: "BILLING_CYCLE_SEMIANNUAL",
+		4: "BILLING_CYCLE_YEARLY",
+		5: "BILLING_CYCLE_BIENNIAL",
+		6: "BILLING_CYCLE_TRIENNIAL",
+	}
+	BillingCycle_value = map[string]int32{
+		"BILLING_CYCLE_UNSPECIFIED": 0,
+		"BILLING_CYCLE_MONTHLY":     1,
+		"BILLING_CYCLE_QUARTERLY":   2,
+		"BILLING_CYCLE_SEMIANNUAL":  3,
+		"BILLING_CYCLE_YEARLY":      4,
+		"BILLING_CYCLE_BIENNIAL":    5,
+		"BILLING_CYCLE_TRIENNIAL":   6,
+	}
+)
+
+func (x BillingCycle) Enum() *BillingCycle {
+	p := new(BillingCycle)
+	*p = x
+	return p
+}
+
+func (x BillingCycle) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (BillingCycle) Descriptor() protoreflect.EnumDescriptor {
+	return file_probe_v1_types_proto_enumTypes[1].Descriptor()
+}
+
+func (BillingCycle) Type() protoreflect.EnumType {
+	return &file_probe_v1_types_proto_enumTypes[1]
+}
+
+func (x BillingCycle) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use BillingCycle.Descriptor instead.
+func (BillingCycle) EnumDescriptor() ([]byte, []int) {
+	return file_probe_v1_types_proto_rawDescGZIP(), []int{1}
+}
+
 // 一次上报里的主机读数。每个读数都是 optional：缺失表示"无读数"，
 // 与读数为 0 是两个不同的事实，从协议一直保持到图表。
 type Metrics struct {
@@ -795,6 +864,99 @@ func (x *Traffic) GetResetDay() uint32 {
 	return 0
 }
 
+// 节点的计费与到期（§9.4）。价格与币种是提醒用的展示值：hub 不汇总、不换算，也不拿它们做任何计算；到期日与周期
+// 驱动 days_left、自动续期与到期规则。Node 与 UpdateNodeRequest 都以它承载；公开端的 PublicBilling 由它按字段名投影生成，两者对不齐时 hub 构造公开服务就 panic。
+type Billing struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 价格，十进制文本（如 12.50）；空表示未填。保存时须为空或匹配 ^[0-9]{1,9}(\.[0-9]{1,2})?$。
+	Price string `protobuf:"bytes,1,opt,name=price,proto3" json:"price,omitempty"`
+	// ISO 4217 币种代码（三个大写字母）；价格非空时必填，币种可以单独填。
+	Currency     string       `protobuf:"bytes,2,opt,name=currency,proto3" json:"currency,omitempty"`
+	BillingCycle BillingCycle `protobuf:"varint,3,opt,name=billing_cycle,json=billingCycle,proto3,enum=probe.v1.BillingCycle" json:"billing_cycle,omitempty"`
+	// 到期日 YYYY-MM-DD；空表示没有到期日。保存时须为空或存在的日期。
+	ExpiresOn string `protobuf:"bytes,4,opt,name=expires_on,json=expiresOn,proto3" json:"expires_on,omitempty"`
+	// 开着时，到期日早于今天（hub 时区）即按周期推后到不早于今天。hub 启动、每个日界（零点不存在的日子取新一天的
+	// 第一个时刻）、计费字段变化与保存启用的到期规则时检查。保存时要求 billing_cycle 与 expires_on 都非空。
+	AutoRenew bool `protobuf:"varint,5,opt,name=auto_renew,json=autoRenew,proto3" json:"auto_renew,omitempty"`
+	// 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日、或库里的到期日无法解析时缺失。只由 hub 填写：
+	// 保存请求里的值忽略，与 AlertRule.created_at 同一做法。
+	DaysLeft      *int32 `protobuf:"varint,6,opt,name=days_left,json=daysLeft,proto3,oneof" json:"days_left,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Billing) Reset() {
+	*x = Billing{}
+	mi := &file_probe_v1_types_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Billing) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Billing) ProtoMessage() {}
+
+func (x *Billing) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_types_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Billing.ProtoReflect.Descriptor instead.
+func (*Billing) Descriptor() ([]byte, []int) {
+	return file_probe_v1_types_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *Billing) GetPrice() string {
+	if x != nil {
+		return x.Price
+	}
+	return ""
+}
+
+func (x *Billing) GetCurrency() string {
+	if x != nil {
+		return x.Currency
+	}
+	return ""
+}
+
+func (x *Billing) GetBillingCycle() BillingCycle {
+	if x != nil {
+		return x.BillingCycle
+	}
+	return BillingCycle_BILLING_CYCLE_UNSPECIFIED
+}
+
+func (x *Billing) GetExpiresOn() string {
+	if x != nil {
+		return x.ExpiresOn
+	}
+	return ""
+}
+
+func (x *Billing) GetAutoRenew() bool {
+	if x != nil {
+		return x.AutoRenew
+	}
+	return false
+}
+
+func (x *Billing) GetDaysLeft() int32 {
+	if x != nil && x.DaysLeft != nil {
+		return *x.DaysLeft
+	}
+	return 0
+}
+
 var File_probe_v1_types_proto protoreflect.FileDescriptor
 
 const file_probe_v1_types_proto_rawDesc = "" +
@@ -892,11 +1054,30 @@ const file_probe_v1_types_proto_rawDesc = "" +
 	"\tperiod_tx\x18\x04 \x01(\x04R\bperiodTx\x12!\n" +
 	"\fperiod_start\x18\x05 \x01(\x03R\vperiodStart\x12\"\n" +
 	"\rnext_reset_at\x18\x06 \x01(\x03R\vnextResetAt\x12\x1b\n" +
-	"\treset_day\x18\a \x01(\rR\bresetDay*P\n" +
+	"\treset_day\x18\a \x01(\rR\bresetDay\"\xe6\x01\n" +
+	"\aBilling\x12\x14\n" +
+	"\x05price\x18\x01 \x01(\tR\x05price\x12\x1a\n" +
+	"\bcurrency\x18\x02 \x01(\tR\bcurrency\x12;\n" +
+	"\rbilling_cycle\x18\x03 \x01(\x0e2\x16.probe.v1.BillingCycleR\fbillingCycle\x12\x1d\n" +
+	"\n" +
+	"expires_on\x18\x04 \x01(\tR\texpiresOn\x12\x1d\n" +
+	"\n" +
+	"auto_renew\x18\x05 \x01(\bR\tautoRenew\x12 \n" +
+	"\tdays_left\x18\x06 \x01(\x05H\x00R\bdaysLeft\x88\x01\x01B\f\n" +
+	"\n" +
+	"_days_left*P\n" +
 	"\tProbeKind\x12\x1a\n" +
 	"\x16PROBE_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fPROBE_KIND_ICMP\x10\x01\x12\x12\n" +
-	"\x0ePROBE_KIND_TCP\x10\x02B.Z,github.com/xjetry/probe/gen/probe/v1;probev1b\x06proto3"
+	"\x0ePROBE_KIND_TCP\x10\x02*\xd6\x01\n" +
+	"\fBillingCycle\x12\x1d\n" +
+	"\x19BILLING_CYCLE_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15BILLING_CYCLE_MONTHLY\x10\x01\x12\x1b\n" +
+	"\x17BILLING_CYCLE_QUARTERLY\x10\x02\x12\x1c\n" +
+	"\x18BILLING_CYCLE_SEMIANNUAL\x10\x03\x12\x18\n" +
+	"\x14BILLING_CYCLE_YEARLY\x10\x04\x12\x1a\n" +
+	"\x16BILLING_CYCLE_BIENNIAL\x10\x05\x12\x1b\n" +
+	"\x17BILLING_CYCLE_TRIENNIAL\x10\x06B.Z,github.com/xjetry/probe/gen/probe/v1;probev1b\x06proto3"
 
 var (
 	file_probe_v1_types_proto_rawDescOnce sync.Once
@@ -910,29 +1091,32 @@ func file_probe_v1_types_proto_rawDescGZIP() []byte {
 	return file_probe_v1_types_proto_rawDescData
 }
 
-var file_probe_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_probe_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_probe_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_probe_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_probe_v1_types_proto_goTypes = []any{
 	(ProbeKind)(0),      // 0: probe.v1.ProbeKind
-	(*Metrics)(nil),     // 1: probe.v1.Metrics
-	(*Facts)(nil),       // 2: probe.v1.Facts
-	(*ProbeResult)(nil), // 3: probe.v1.ProbeResult
-	(*Timeout)(nil),     // 4: probe.v1.Timeout
-	(*ProbeError)(nil),  // 5: probe.v1.ProbeError
-	(*ProbeTask)(nil),   // 6: probe.v1.ProbeTask
-	(*ProbeTasks)(nil),  // 7: probe.v1.ProbeTasks
-	(*Traffic)(nil),     // 8: probe.v1.Traffic
+	(BillingCycle)(0),   // 1: probe.v1.BillingCycle
+	(*Metrics)(nil),     // 2: probe.v1.Metrics
+	(*Facts)(nil),       // 3: probe.v1.Facts
+	(*ProbeResult)(nil), // 4: probe.v1.ProbeResult
+	(*Timeout)(nil),     // 5: probe.v1.Timeout
+	(*ProbeError)(nil),  // 6: probe.v1.ProbeError
+	(*ProbeTask)(nil),   // 7: probe.v1.ProbeTask
+	(*ProbeTasks)(nil),  // 8: probe.v1.ProbeTasks
+	(*Traffic)(nil),     // 9: probe.v1.Traffic
+	(*Billing)(nil),     // 10: probe.v1.Billing
 }
 var file_probe_v1_types_proto_depIdxs = []int32{
-	4, // 0: probe.v1.ProbeResult.timeout:type_name -> probe.v1.Timeout
-	5, // 1: probe.v1.ProbeResult.error:type_name -> probe.v1.ProbeError
+	5, // 0: probe.v1.ProbeResult.timeout:type_name -> probe.v1.Timeout
+	6, // 1: probe.v1.ProbeResult.error:type_name -> probe.v1.ProbeError
 	0, // 2: probe.v1.ProbeTask.kind:type_name -> probe.v1.ProbeKind
-	6, // 3: probe.v1.ProbeTasks.tasks:type_name -> probe.v1.ProbeTask
-	4, // [4:4] is the sub-list for method output_type
-	4, // [4:4] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	7, // 3: probe.v1.ProbeTasks.tasks:type_name -> probe.v1.ProbeTask
+	1, // 4: probe.v1.Billing.billing_cycle:type_name -> probe.v1.BillingCycle
+	5, // [5:5] is the sub-list for method output_type
+	5, // [5:5] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_probe_v1_types_proto_init() }
@@ -946,13 +1130,14 @@ func file_probe_v1_types_proto_init() {
 		(*ProbeResult_Timeout)(nil),
 		(*ProbeResult_Error)(nil),
 	}
+	file_probe_v1_types_proto_msgTypes[8].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_probe_v1_types_proto_rawDesc), len(file_probe_v1_types_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   8,
+			NumEnums:      2,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -13,8 +14,9 @@ import (
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 )
 
-// projectionFixtures 造几组消息：Src 是 int32 a = 1，Pair 是 a = 1、b = 2；其余各在一处与它们不对齐，
-// 或（PairPublic、MsgField、EnumField 之外）按 newProjection 的某一条约束写错。
+// projectionFixtures 造几组消息：Src 是 int32 a = 1，Pair 是 a = 1、b = 2，Painted 是 a = 1 与枚举 c = 2；其余各在一处
+// 与它们不对齐（OtherEnumField 是与 EnumField 不对齐），或（PairPublic、PaintedPublic、MsgField、EnumField 之外）按 newProjection
+// 的某一条约束写错。
 func projectionFixtures(t *testing.T) protoreflect.FileDescriptor {
 	t.Helper()
 	i32 := descriptorpb.FieldDescriptorProto_TYPE_INT32.Enum()
@@ -41,13 +43,18 @@ func projectionFixtures(t *testing.T) protoreflect.FileDescriptor {
 		return m
 	}
 	a := func() *descriptorpb.FieldDescriptorProto { return field("a", 1, i32, single) }
+	colorC := field("c", 2, descriptorpb.FieldDescriptorProto_TYPE_ENUM.Enum(), single)
+	colorC.TypeName = proto.String(".projfix.Color")
 	// proto3 optional 由一个合成 oneof 承载 presence。
 	optional := msg("WithPresence", a())
 	optional.Field[0].Proto3Optional, optional.Field[0].OneofIndex = proto.Bool(true), proto.Int32(0)
 	optional.OneofDecl = []*descriptorpb.OneofDescriptorProto{{Name: proto.String("_a")}}
 	fd, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{
 		Name: proto.String("projection_fixtures.proto"), Package: proto.String("projfix"), Syntax: proto.String("proto3"),
-		EnumType: []*descriptorpb.EnumDescriptorProto{{Name: proto.String("Color"), Value: []*descriptorpb.EnumValueDescriptorProto{{Name: proto.String("COLOR_UNSPECIFIED"), Number: proto.Int32(0)}}}},
+		EnumType: []*descriptorpb.EnumDescriptorProto{
+			{Name: proto.String("Color"), Value: []*descriptorpb.EnumValueDescriptorProto{{Name: proto.String("COLOR_UNSPECIFIED"), Number: proto.Int32(0)}}},
+			{Name: proto.String("Shade"), Value: []*descriptorpb.EnumValueDescriptorProto{{Name: proto.String("SHADE_UNSPECIFIED"), Number: proto.Int32(0)}}},
+		},
 		MessageType: []*descriptorpb.DescriptorProto{
 			msg("Src", a()),
 			msg("Renamed", field("z", 1, i32, single)),
@@ -57,6 +64,10 @@ func projectionFixtures(t *testing.T) protoreflect.FileDescriptor {
 			optional,
 			msg("MsgField", typed("a", descriptorpb.FieldDescriptorProto_TYPE_MESSAGE.Enum(), ".projfix.Src")),
 			msg("EnumField", typed("a", descriptorpb.FieldDescriptorProto_TYPE_ENUM.Enum(), ".projfix.Color")),
+			msg("OtherEnumField", typed("a", descriptorpb.FieldDescriptorProto_TYPE_ENUM.Enum(), ".projfix.Shade")),
+			msg("Painted", a(), colorC),
+			reserve(msg("PaintedPublic", a()), [][2]int32{{2, 2}}, "c"),
+			msg("PaintedUnreserved", a()),
 			msg("Pair", a(), field("b", 2, i32, single)),
 			reserve(msg("PairPublic", a()), [][2]int32{{2, 2}}, "b"),
 			msg("PairUnreserved", a()),
@@ -85,7 +96,8 @@ func TestNewProjectionRejectsMisalignedFields(t *testing.T) {
 		{"Repeated", "Src", "only singular scalar fields"},
 		{"Src", "Repeated", "only singular scalar fields"},
 		{"MsgField", "MsgField", "only singular scalar fields"},
-		{"EnumField", "EnumField", "only singular scalar fields"},
+		{"OtherEnumField", "EnumField", "projfix.OtherEnumField.a uses enum projfix.Shade but projfix.EnumField.a uses enum projfix.Color"},
+		{"PaintedUnreserved", "Painted", `projfix.Painted.c is not public, so projfix.PaintedUnreserved must reserve both its number 2 and its name "c"`},
 		{"PairUnreserved", "Pair", fmt.Sprintf(hideB, "PairUnreserved")},
 		{"PairNumberOnly", "Pair", fmt.Sprintf(hideB, "PairNumberOnly")},
 		{"PairNameOnly", "Pair", fmt.Sprintf(hideB, "PairNameOnly")},
@@ -99,6 +111,8 @@ func TestNewProjectionRejectsMisalignedFields(t *testing.T) {
 	}
 	newProjection(dynamicpb.NewMessageType(desc("Src")), desc("Src"))
 	newProjection(dynamicpb.NewMessageType(desc("PairPublic")), desc("Pair"))
+	newProjection(dynamicpb.NewMessageType(desc("EnumField")), desc("EnumField"))
+	newProjection(dynamicpb.NewMessageType(desc("PaintedPublic")), desc("Painted"))
 }
 
 // 只复制源里存在的字段：optional 缺失仍是缺失，显式的 0 仍是 0；目标没有的字段（boot_id）不出现。
@@ -107,5 +121,24 @@ func TestProjectionKeepsPresenceAndDropsUndeclaredFields(t *testing.T) {
 	got := p.apply(&probev1.Metrics{BootId: "b", MemUsed: proto.Uint64(0), Load1: proto.Float64(0.5)}).(*probev1.PublicMetrics)
 	if want := (&probev1.PublicMetrics{MemUsed: proto.Uint64(0), Load1: proto.Float64(0.5)}); !proto.Equal(got, want) || got.CpuPct != nil {
 		t.Fatalf("projected = %v, want %v", got, want)
+	}
+}
+
+// PublicBilling 由 Billing 投影：周期按编号原样复制，自动续期不出现，days_left 的缺失与 0 各自保留。期望值从 JSON 读入、
+// days_left 经反射取：两个消息对不齐时本测试照常编译，红在构造投影的 panic 上。
+func TestPublicBillingProjectsFromBilling(t *testing.T) {
+	p := newProjection((&probev1.PublicBilling{}).ProtoReflect().Type(), (&probev1.Billing{}).ProtoReflect().Descriptor())
+	got := p.apply(&probev1.Billing{Price: "12.50", Currency: "USD", BillingCycle: probev1.BillingCycle_BILLING_CYCLE_YEARLY,
+		ExpiresOn: "2026-10-01", AutoRenew: true, DaysLeft: proto.Int32(0)})
+	want := &probev1.PublicBilling{}
+	if err := protojson.Unmarshal([]byte(`{"price": "12.50", "currency": "USD", "billingCycle": "BILLING_CYCLE_YEARLY", "expiresOn": "2026-10-01", "daysLeft": 0}`), want); err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(got, want) {
+		t.Fatalf("projected = %v, want %v", got, want)
+	}
+	noDate := p.apply(&probev1.Billing{Price: "5", Currency: "EUR"}).ProtoReflect()
+	if noDate.Has(noDate.Descriptor().Fields().ByName("days_left")) {
+		t.Fatalf("no expiry date projected days_left: %v", noDate.Interface())
 	}
 }

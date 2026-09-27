@@ -252,7 +252,9 @@ type PublicNode struct {
 	// 最近一次上报的读数；从未上报则缺失，离线节点仍带最后一次读数。
 	Metrics *PublicMetrics `protobuf:"bytes,7,opt,name=metrics,proto3" json:"metrics,omitempty"`
 	// hub 侧累计的流量；每个节点都有，从未上报的节点为零用量。
-	Traffic       *Traffic `protobuf:"bytes,8,opt,name=traffic,proto3" json:"traffic,omitempty"`
+	Traffic *Traffic `protobuf:"bytes,8,opt,name=traffic,proto3" json:"traffic,omitempty"`
+	// 计费与到期的公开部分（§9.4）；五项都没填时缺失。
+	Billing       *PublicBilling `protobuf:"bytes,9,opt,name=billing,proto3" json:"billing,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -343,6 +345,95 @@ func (x *PublicNode) GetTraffic() *Traffic {
 	return nil
 }
 
+func (x *PublicNode) GetBilling() *PublicBilling {
+	if x != nil {
+		return x.Billing
+	}
+	return nil
+}
+
+// Billing 的公开部分，字段号与 Billing 相同，由投影按字段名生成（与 PublicFacts 同一机制）。自动续期是运维开关，
+// 不公开，号与名保留：要公开必须先删掉 reserved，而不是随手加一个字段。
+type PublicBilling struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 价格，十进制文本（如 12.50）；空表示未填。
+	Price string `protobuf:"bytes,1,opt,name=price,proto3" json:"price,omitempty"`
+	// ISO 4217 币种代码；价格非空时必有。
+	Currency     string       `protobuf:"bytes,2,opt,name=currency,proto3" json:"currency,omitempty"`
+	BillingCycle BillingCycle `protobuf:"varint,3,opt,name=billing_cycle,json=billingCycle,proto3,enum=probe.v1.BillingCycle" json:"billing_cycle,omitempty"`
+	// 到期日 YYYY-MM-DD；空表示没有到期日。
+	ExpiresOn string `protobuf:"bytes,4,opt,name=expires_on,json=expiresOn,proto3" json:"expires_on,omitempty"`
+	// 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日、或库里的到期日无法解析时缺失。
+	DaysLeft      *int32 `protobuf:"varint,6,opt,name=days_left,json=daysLeft,proto3,oneof" json:"days_left,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PublicBilling) Reset() {
+	*x = PublicBilling{}
+	mi := &file_probe_v1_public_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PublicBilling) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PublicBilling) ProtoMessage() {}
+
+func (x *PublicBilling) ProtoReflect() protoreflect.Message {
+	mi := &file_probe_v1_public_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PublicBilling.ProtoReflect.Descriptor instead.
+func (*PublicBilling) Descriptor() ([]byte, []int) {
+	return file_probe_v1_public_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *PublicBilling) GetPrice() string {
+	if x != nil {
+		return x.Price
+	}
+	return ""
+}
+
+func (x *PublicBilling) GetCurrency() string {
+	if x != nil {
+		return x.Currency
+	}
+	return ""
+}
+
+func (x *PublicBilling) GetBillingCycle() BillingCycle {
+	if x != nil {
+		return x.BillingCycle
+	}
+	return BillingCycle_BILLING_CYCLE_UNSPECIFIED
+}
+
+func (x *PublicBilling) GetExpiresOn() string {
+	if x != nil {
+		return x.ExpiresOn
+	}
+	return ""
+}
+
+func (x *PublicBilling) GetDaysLeft() int32 {
+	if x != nil && x.DaysLeft != nil {
+		return *x.DaysLeft
+	}
+	return 0
+}
+
 // Facts 的公开部分，字段号与 Facts 相同。主机名、内核版本、agent 版本与 ICMP 可用性不公开，
 // 它们的号与名保留：要公开必须先删掉 reserved，而不是随手加一个字段。
 type PublicFacts struct {
@@ -358,7 +449,7 @@ type PublicFacts struct {
 
 func (x *PublicFacts) Reset() {
 	*x = PublicFacts{}
-	mi := &file_probe_v1_public_proto_msgTypes[5]
+	mi := &file_probe_v1_public_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -370,7 +461,7 @@ func (x *PublicFacts) String() string {
 func (*PublicFacts) ProtoMessage() {}
 
 func (x *PublicFacts) ProtoReflect() protoreflect.Message {
-	mi := &file_probe_v1_public_proto_msgTypes[5]
+	mi := &file_probe_v1_public_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -383,7 +474,7 @@ func (x *PublicFacts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublicFacts.ProtoReflect.Descriptor instead.
 func (*PublicFacts) Descriptor() ([]byte, []int) {
-	return file_probe_v1_public_proto_rawDescGZIP(), []int{5}
+	return file_probe_v1_public_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *PublicFacts) GetOs() string {
@@ -451,7 +542,7 @@ type PublicMetrics struct {
 
 func (x *PublicMetrics) Reset() {
 	*x = PublicMetrics{}
-	mi := &file_probe_v1_public_proto_msgTypes[6]
+	mi := &file_probe_v1_public_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -463,7 +554,7 @@ func (x *PublicMetrics) String() string {
 func (*PublicMetrics) ProtoMessage() {}
 
 func (x *PublicMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_probe_v1_public_proto_msgTypes[6]
+	mi := &file_probe_v1_public_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -476,7 +567,7 @@ func (x *PublicMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublicMetrics.ProtoReflect.Descriptor instead.
 func (*PublicMetrics) Descriptor() ([]byte, []int) {
-	return file_probe_v1_public_proto_rawDescGZIP(), []int{6}
+	return file_probe_v1_public_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *PublicMetrics) GetCpuPct() float64 {
@@ -623,7 +714,7 @@ const file_probe_v1_public_proto_rawDesc = "" +
 	"\x0ePublicSnapshot\x12\x10\n" +
 	"\x03now\x18\x01 \x01(\x03R\x03now\x12,\n" +
 	"\x12report_interval_ms\x18\x02 \x01(\rR\x10reportIntervalMs\x12*\n" +
-	"\x05nodes\x18\x03 \x03(\v2\x14.probe.v1.PublicNodeR\x05nodes\"\xac\x02\n" +
+	"\x05nodes\x18\x03 \x03(\v2\x14.probe.v1.PublicNodeR\x05nodes\"\xdf\x02\n" +
 	"\n" +
 	"PublicNode\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
@@ -635,8 +726,19 @@ const file_probe_v1_public_proto_rawDesc = "" +
 	"sort_order\x18\x05 \x01(\x05R\tsortOrder\x12+\n" +
 	"\x05facts\x18\x06 \x01(\v2\x15.probe.v1.PublicFactsR\x05facts\x121\n" +
 	"\ametrics\x18\a \x01(\v2\x17.probe.v1.PublicMetricsR\ametrics\x12+\n" +
-	"\atraffic\x18\b \x01(\v2\x11.probe.v1.TrafficR\atrafficB\x0f\n" +
-	"\r_last_seen_at\"\xdc\x01\n" +
+	"\atraffic\x18\b \x01(\v2\x11.probe.v1.TrafficR\atraffic\x121\n" +
+	"\abilling\x18\t \x01(\v2\x17.probe.v1.PublicBillingR\abillingB\x0f\n" +
+	"\r_last_seen_at\"\xdf\x01\n" +
+	"\rPublicBilling\x12\x14\n" +
+	"\x05price\x18\x01 \x01(\tR\x05price\x12\x1a\n" +
+	"\bcurrency\x18\x02 \x01(\tR\bcurrency\x12;\n" +
+	"\rbilling_cycle\x18\x03 \x01(\x0e2\x16.probe.v1.BillingCycleR\fbillingCycle\x12\x1d\n" +
+	"\n" +
+	"expires_on\x18\x04 \x01(\tR\texpiresOn\x12 \n" +
+	"\tdays_left\x18\x06 \x01(\x05H\x00R\bdaysLeft\x88\x01\x01B\f\n" +
+	"\n" +
+	"_days_leftJ\x04\b\x05\x10\x06R\n" +
+	"auto_renew\"\xdc\x01\n" +
 	"\vPublicFacts\x12\x0e\n" +
 	"\x02os\x18\x02 \x01(\tR\x02os\x12\x12\n" +
 	"\x04arch\x18\x04 \x01(\tR\x04arch\x12&\n" +
@@ -713,39 +815,43 @@ func file_probe_v1_public_proto_rawDescGZIP() []byte {
 	return file_probe_v1_public_proto_rawDescData
 }
 
-var file_probe_v1_public_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_probe_v1_public_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_probe_v1_public_proto_goTypes = []any{
 	(*GetSiteRequest)(nil),                  // 0: probe.v1.GetSiteRequest
 	(*PublicSite)(nil),                      // 1: probe.v1.PublicSite
 	(*PublicServiceGetSnapshotRequest)(nil), // 2: probe.v1.PublicServiceGetSnapshotRequest
 	(*PublicSnapshot)(nil),                  // 3: probe.v1.PublicSnapshot
 	(*PublicNode)(nil),                      // 4: probe.v1.PublicNode
-	(*PublicFacts)(nil),                     // 5: probe.v1.PublicFacts
-	(*PublicMetrics)(nil),                   // 6: probe.v1.PublicMetrics
-	(*Traffic)(nil),                         // 7: probe.v1.Traffic
-	(*QueryMetricsRequest)(nil),             // 8: probe.v1.QueryMetricsRequest
-	(*QueryProbesRequest)(nil),              // 9: probe.v1.QueryProbesRequest
-	(*QueryMetricsResponse)(nil),            // 10: probe.v1.QueryMetricsResponse
-	(*QueryProbesResponse)(nil),             // 11: probe.v1.QueryProbesResponse
+	(*PublicBilling)(nil),                   // 5: probe.v1.PublicBilling
+	(*PublicFacts)(nil),                     // 6: probe.v1.PublicFacts
+	(*PublicMetrics)(nil),                   // 7: probe.v1.PublicMetrics
+	(*Traffic)(nil),                         // 8: probe.v1.Traffic
+	(BillingCycle)(0),                       // 9: probe.v1.BillingCycle
+	(*QueryMetricsRequest)(nil),             // 10: probe.v1.QueryMetricsRequest
+	(*QueryProbesRequest)(nil),              // 11: probe.v1.QueryProbesRequest
+	(*QueryMetricsResponse)(nil),            // 12: probe.v1.QueryMetricsResponse
+	(*QueryProbesResponse)(nil),             // 13: probe.v1.QueryProbesResponse
 }
 var file_probe_v1_public_proto_depIdxs = []int32{
 	4,  // 0: probe.v1.PublicSnapshot.nodes:type_name -> probe.v1.PublicNode
-	5,  // 1: probe.v1.PublicNode.facts:type_name -> probe.v1.PublicFacts
-	6,  // 2: probe.v1.PublicNode.metrics:type_name -> probe.v1.PublicMetrics
-	7,  // 3: probe.v1.PublicNode.traffic:type_name -> probe.v1.Traffic
-	0,  // 4: probe.v1.PublicService.GetSite:input_type -> probe.v1.GetSiteRequest
-	2,  // 5: probe.v1.PublicService.GetSnapshot:input_type -> probe.v1.PublicServiceGetSnapshotRequest
-	8,  // 6: probe.v1.PublicService.QueryMetrics:input_type -> probe.v1.QueryMetricsRequest
-	9,  // 7: probe.v1.PublicService.QueryProbes:input_type -> probe.v1.QueryProbesRequest
-	1,  // 8: probe.v1.PublicService.GetSite:output_type -> probe.v1.PublicSite
-	3,  // 9: probe.v1.PublicService.GetSnapshot:output_type -> probe.v1.PublicSnapshot
-	10, // 10: probe.v1.PublicService.QueryMetrics:output_type -> probe.v1.QueryMetricsResponse
-	11, // 11: probe.v1.PublicService.QueryProbes:output_type -> probe.v1.QueryProbesResponse
-	8,  // [8:12] is the sub-list for method output_type
-	4,  // [4:8] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	6,  // 1: probe.v1.PublicNode.facts:type_name -> probe.v1.PublicFacts
+	7,  // 2: probe.v1.PublicNode.metrics:type_name -> probe.v1.PublicMetrics
+	8,  // 3: probe.v1.PublicNode.traffic:type_name -> probe.v1.Traffic
+	5,  // 4: probe.v1.PublicNode.billing:type_name -> probe.v1.PublicBilling
+	9,  // 5: probe.v1.PublicBilling.billing_cycle:type_name -> probe.v1.BillingCycle
+	0,  // 6: probe.v1.PublicService.GetSite:input_type -> probe.v1.GetSiteRequest
+	2,  // 7: probe.v1.PublicService.GetSnapshot:input_type -> probe.v1.PublicServiceGetSnapshotRequest
+	10, // 8: probe.v1.PublicService.QueryMetrics:input_type -> probe.v1.QueryMetricsRequest
+	11, // 9: probe.v1.PublicService.QueryProbes:input_type -> probe.v1.QueryProbesRequest
+	1,  // 10: probe.v1.PublicService.GetSite:output_type -> probe.v1.PublicSite
+	3,  // 11: probe.v1.PublicService.GetSnapshot:output_type -> probe.v1.PublicSnapshot
+	12, // 12: probe.v1.PublicService.QueryMetrics:output_type -> probe.v1.QueryMetricsResponse
+	13, // 13: probe.v1.PublicService.QueryProbes:output_type -> probe.v1.QueryProbesResponse
+	10, // [10:14] is the sub-list for method output_type
+	6,  // [6:10] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_probe_v1_public_proto_init() }
@@ -757,14 +863,15 @@ func file_probe_v1_public_proto_init() {
 	file_probe_v1_query_proto_init()
 	file_probe_v1_types_proto_init()
 	file_probe_v1_public_proto_msgTypes[4].OneofWrappers = []any{}
-	file_probe_v1_public_proto_msgTypes[6].OneofWrappers = []any{}
+	file_probe_v1_public_proto_msgTypes[5].OneofWrappers = []any{}
+	file_probe_v1_public_proto_msgTypes[7].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_probe_v1_public_proto_rawDesc), len(file_probe_v1_public_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

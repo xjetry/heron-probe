@@ -12,12 +12,14 @@ import { ascending, withId } from "../lib/ids";
 
 type Draft = {
   name: string; kind: AlertKind; enabled: boolean; allNodes: boolean; nodeIds: Set<bigint>; channelIds: Set<bigint>;
-  taskId: string; metric: ProbeMetric; threshold: string; forMinutes: string;
+  taskId: string; metric: ProbeMetric; threshold: string; forMinutes: string; daysBefore: string;
 };
 
+// 种类专用字段里有默认值的是指标（丢包率）、连续分钟 3 与提前天数 7；探测任务与阈值留空，切到探测时由表单的 required
+// 挡住提交，要用户自己选填。种类、启用与"全部节点"另有各自的默认值。只有当前类型的那几项随保存发出（toRule）。
 const emptyDraft = (): Draft => ({
   name: "", kind: AlertKind.OFFLINE, enabled: true, allNodes: true, nodeIds: new Set(), channelIds: new Set(),
-  taskId: "", metric: ProbeMetric.LOSS_PCT, threshold: "", forMinutes: "3",
+  taskId: "", metric: ProbeMetric.LOSS_PCT, threshold: "", forMinutes: "3", daysBefore: "7",
 });
 const draftOf = (r: AlertRule): Draft => {
   const probe = r.kind === AlertKind.PROBE;
@@ -25,19 +27,21 @@ const draftOf = (r: AlertRule): Draft => {
     name: r.name, kind: r.kind, enabled: r.enabled, allNodes: r.allNodes, nodeIds: new Set(r.nodeIds), channelIds: new Set(r.channelIds),
     taskId: probe ? String(r.taskId) : "", metric: probe ? r.metric : ProbeMetric.LOSS_PCT,
     threshold: probe ? String(r.threshold) : "", forMinutes: probe ? String(r.forMinutes) : "3",
+    daysBefore: r.kind === AlertKind.EXPIRY ? String(r.daysBefore) : "7",
   };
 };
 
 // 当前列表不再包含的节点与渠道自然掉出，避免已删除对象让 hub 拒绝整次保存；
 // 显式作用域因此变空时由 hub 拒绝（spec §6.6：空集不等于全部节点），不会悄悄放宽成全部。
+// 种类专用字段只发当前类型的：hub 拒绝带着别的种类字段的规则（alert.CheckRule）。
 function toRule(id: bigint, d: Draft, nodes: Node[], channels: NotifyChannel[]) {
   const live = (ids: ReadonlySet<bigint>, items: { id: bigint }[]) => ascending(items.filter((it) => ids.has(it.id)).map((it) => it.id));
-  const probe = d.kind === AlertKind.PROBE
+  const own = d.kind === AlertKind.PROBE
     ? { taskId: BigInt(d.taskId), metric: d.metric, threshold: Number(d.threshold), forMinutes: Number(d.forMinutes) }
-    : {};
+    : d.kind === AlertKind.EXPIRY ? { daysBefore: Number(d.daysBefore) } : {};
   return {
     id, name: d.name.trim(), kind: d.kind, enabled: d.enabled, allNodes: d.allNodes,
-    nodeIds: d.allNodes ? [] : live(d.nodeIds, nodes), channelIds: live(d.channelIds, channels), ...probe,
+    nodeIds: d.allNodes ? [] : live(d.nodeIds, nodes), channelIds: live(d.channelIds, channels), ...own,
   };
 }
 
@@ -125,7 +129,14 @@ function RuleForm({ title, nodes, channels, tasks, initial, pending, onSubmit, o
         </label>
         <label className="inline"><input type="checkbox" checked={draft.enabled} onChange={(e) => set({ enabled: e.target.checked })} />启用</label>
       </div>
-      {probe ? (
+      {draft.kind === AlertKind.EXPIRY ? (
+        <>
+          <div className="row">
+            <label>提前天数<input type="number" required min={1} max={365} step={1} value={draft.daysBefore} onChange={(e) => set({ daysBefore: e.target.value })} /></label>
+          </div>
+          <p className="muted">节点到期日距今不超过提前天数即触发（已过期的也算）；到期日改到这个范围之外、清除到期日，或调小提前天数使它落到范围之外，即恢复。续期后的到期日仍在范围内时不恢复。到期日在节点页设置。保存后立即评估，此后在 hub 启动时、hub 时区的每个日界（零点不存在的日子取新一天的第一个时刻）与修改节点计费时评估。</p>
+        </>
+      ) : probe ? (
         <div className="row">
           <label>探测任务
             <select required value={draft.taskId} onChange={(e) => set({ taskId: e.target.value })}>

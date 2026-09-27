@@ -11,6 +11,45 @@ import (
 
 var ErrBadOrder = errors.New("ids must list every node exactly once")
 
+// BillingCycle 按 TEXT 落库，空串表示没有周期。与协议枚举的对应在 api 的 billingCycles 表，周期的月数在
+// alert 的 cycleMonths；两处的测试都按 BillingCycles 核对一一对应。
+type BillingCycle string
+
+const (
+	CycleNone       BillingCycle = ""
+	CycleMonthly    BillingCycle = "monthly"
+	CycleQuarterly  BillingCycle = "quarterly"
+	CycleSemiannual BillingCycle = "semiannual"
+	CycleYearly     BillingCycle = "yearly"
+	CycleBiennial   BillingCycle = "biennial"
+	CycleTriennial  BillingCycle = "triennial"
+)
+
+// BillingCycles 列出全部非空周期。
+func BillingCycles() []BillingCycle {
+	return []BillingCycle{CycleMonthly, CycleQuarterly, CycleSemiannual, CycleYearly, CycleBiennial, CycleTriennial}
+}
+
+// Billing 是节点的计费与到期（§9.4），随 UpdateNode 整体替换，零值即"都没填"。存储不校验取值：写入口有两个，
+// api 的 UpdateNode 按 §9.4 校验整组取值，RenewExpiry 只写 alert 推后得到的日期。
+type Billing struct {
+	Price     string
+	Currency  string
+	Cycle     BillingCycle
+	ExpiresOn string // YYYY-MM-DD；空表示没有到期日
+	AutoRenew bool
+}
+
+// NodeEdit 是 UpdateNode 整体替换的可编辑字段；调用方已做校验与清洗。
+type NodeEdit struct {
+	Name            string
+	Public          bool
+	Note            string
+	TrafficResetDay int
+	OfflineGraceS   int // 0 写 NULL，读侧取 TTL
+	Billing         Billing
+}
+
 type Node struct {
 	ID              int64
 	Name            string
@@ -24,9 +63,11 @@ type Node struct {
 	// Facts 为 nil 表示该节点尚未上报过静态信息。
 	Facts          *probev1.Facts
 	FactsUpdatedAt time.Time
+	Billing        Billing
 }
 
 const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.created_at, n.last_seen_at, n.traffic_reset_day, n.offline_grace_s,
+	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew,
 	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at
 	FROM node n LEFT JOIN node_facts f ON f.node_id = n.id`
 
@@ -41,7 +82,9 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 		var seen, grace sql.NullInt64
 		var hostname, os, kernel, arch, virt, cpuModel, agentVersion sql.NullString
 		var cores, icmp, factsUpdated sql.NullInt64
+		b := &n.Billing
 		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &created, &seen, &n.TrafficResetDay, &grace,
+			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew,
 			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated); err != nil {
 			return nil, err
 		}
@@ -118,19 +161,52 @@ func (s *Store) NodeExists(ctx context.Context, id int64) (bool, error) {
 	return err == nil, err
 }
 
-// UpdateNode 整体替换可编辑字段；调用方已做校验与清洗。重置日与其他字段一起整体替换，
-// 不存在"不改"的取值。
-func (s *Store) UpdateNode(ctx context.Context, id int64, name string, public bool, note string, resetDay int, offlineGraceS int) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
-		res, err := tx.Exec("UPDATE node SET name = ?, public = ?, note = ?, traffic_reset_day = ?, offline_grace_s = NULLIF(?, 0) WHERE id = ?", name, public, note, resetDay, offlineGraceS, id)
+// UpdateNode 整体替换可编辑字段，不存在"不改"的取值。billingChanged 报告计费五项与写入前的库内值是否不同，
+// 调用方据它决定是否立即做一次到期扫描。库内值在同一个写事务里读出，RenewExpiry 也经单写协程，读与写之间插不进
+// 一次推后，所以它就是这次写入实际覆盖掉的值。表单若带着推后之前的到期日提交，库内值已是推后的日期，两者不同，
+// 调用方随即重新扫描、再推后一次。
+func (s *Store) UpdateNode(ctx context.Context, id int64, e NodeEdit) (billingChanged bool, err error) {
+	err = s.write(ctx, func(tx *sql.Tx) error {
+		var old Billing
+		err := tx.QueryRow("SELECT price, currency, billing_cycle, expires_on, auto_renew FROM node WHERE id = ?", id).
+			Scan(&old.Price, &old.Currency, &old.Cycle, &old.ExpiresOn, &old.AutoRenew)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
 		if err != nil {
 			return err
 		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return ErrNotFound
+		b := e.Billing
+		if _, err := tx.Exec(`UPDATE node SET name = ?, public = ?, note = ?, traffic_reset_day = ?, offline_grace_s = NULLIF(?, 0),
+			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, auto_renew = ? WHERE id = ?`,
+			e.Name, e.Public, e.Note, e.TrafficResetDay, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, id); err != nil {
+			return err
 		}
+		billingChanged = old != b
 		return nil
 	})
+	if err != nil {
+		return false, err
+	}
+	return billingChanged, nil
+}
+
+// RenewExpiry 把自动续期推后的到期日写回，前提是该行此刻仍是推后所依据的那组取值（开着自动续期、周期与
+// 旧到期日都没变）：推后的日期由到期扫描从它读出的快照算出，快照之后 UpdateNode 若改了计费字段，按旧快照写回
+// 就会盖掉管理员刚保存的值。条件不成立时不写、返回 false：计费被 UpdateNode 改过时，由那次 UpdateNode 触发的扫描
+// 按新值重算；节点已被删除时，没有要重算的对象。
+func (s *Store) RenewExpiry(ctx context.Context, id int64, cycle BillingCycle, from, to string) (bool, error) {
+	var renewed bool
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		res, err := tx.Exec("UPDATE node SET expires_on = ? WHERE id = ? AND auto_renew = 1 AND billing_cycle = ? AND expires_on = ?", to, id, cycle, from)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		renewed = n == 1
+		return err
+	})
+	return renewed, err
 }
 
 // ReorderNodes 在写事务中验证 ids 恰是全部节点的一个排列，再整体更新顺序。

@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { Bar, Missing, ratio } from "../components/Bar";
 import { PublicService, type PublicNode } from "../gen/probe/v1/public_pb";
+import { expired, expiryText, priceText } from "../lib/billing";
 import { ago, bytes, duration, percent } from "../lib/format";
 import { POLL_MS } from "../lib/poll";
 
@@ -27,10 +28,12 @@ export function PublicOverview() {
   );
 }
 
-// 卡片内容按 §10：名称、在线、系统与架构、CPU、内存、磁盘、网速、运行时长、本周期流量。
+// 卡片内容按 §10：名称、在线、系统与架构、CPU、内存、磁盘、网速、运行时长、本周期流量，以及填了才显示的费用与到期。
 function NodeCard({ node, now }: { node: PublicNode; now: number }) {
   const m = node.metrics;
   const f = node.facts;
+  const price = priceText(node.billing);
+  const expiry = expiryText(node.billing);
   return (
     <article className={`card node-card ${node.online ? "online" : "offline"}`} aria-label={node.name}>
       <h2>
@@ -51,6 +54,8 @@ function NodeCard({ node, now }: { node: PublicNode; now: number }) {
         <dd>{m?.uptimeS !== undefined ? duration(m.uptimeS) : <Missing />}</dd>
         <dt>本周期</dt>
         <dd>{node.traffic ? `↓ ${bytes(node.traffic.periodRx)} ↑ ${bytes(node.traffic.periodTx)}` : <Missing />}</dd>
+        {price && <><dt>费用</dt><dd>{price}</dd></>}
+        {expiry && <><dt>到期</dt><dd className={expired(node.billing) ? "error" : undefined}>{expiry}</dd></>}
       </dl>
       <p className="muted">{node.lastSeenAt !== undefined ? `最近上报 ${ago(node.lastSeenAt, now)}` : "从未上报"}</p>
     </article>

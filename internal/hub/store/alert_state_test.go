@@ -35,7 +35,8 @@ func TestSaveAlertRuleClearsStatesOnIdentityChange(t *testing.T) {
 			}
 			switch change {
 			case "kind":
-				r.Kind = KindOffline
+				// 换成离线要同时清掉探测字段：带着它们的离线规则是非法组合，存储层拒绝。
+				r = AlertRule{ID: r.ID, Name: r.Name, Kind: KindOffline, AllNodes: true, Enabled: true}
 			case "task":
 				p, _, err := s.SaveProbeTask(t.Context(), taskForTest(), nil)
 				if err != nil {

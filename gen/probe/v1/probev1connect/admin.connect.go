@@ -142,7 +142,8 @@ type AdminServiceClient interface {
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
 	// 建节点并返回其 token；明文只在此处返回一次。
 	CreateNode(context.Context, *connect.Request[v1.CreateNodeRequest]) (*connect.Response[v1.CreateNodeResponse], error)
-	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期）。
+	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期）。计费字段有变化时，
+	// 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
 	// 删除节点及其全部历史；进程内的实时状态同步清理。
 	DeleteNode(context.Context, *connect.Request[v1.DeleteNodeRequest]) (*connect.Response[v1.DeleteNodeResponse], error)
@@ -657,7 +658,8 @@ type AdminServiceHandler interface {
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
 	// 建节点并返回其 token；明文只在此处返回一次。
 	CreateNode(context.Context, *connect.Request[v1.CreateNodeRequest]) (*connect.Response[v1.CreateNodeResponse], error)
-	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期）。
+	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期）。计费字段有变化时，
+	// 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
 	// 删除节点及其全部历史；进程内的实时状态同步清理。
 	DeleteNode(context.Context, *connect.Request[v1.DeleteNodeRequest]) (*connect.Response[v1.DeleteNodeResponse], error)

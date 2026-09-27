@@ -229,8 +229,9 @@ func TestPublicSiteServesSavedSettings(t *testing.T) {
 var publicFields = map[protoreflect.FullName][]protoreflect.Name{
 	"probe.v1.PublicSite":     {"title", "theme", "accent_color", "logo", "custom_css"},
 	"probe.v1.PublicSnapshot": {"now", "report_interval_ms", "nodes"},
-	"probe.v1.PublicNode":     {"id", "name", "online", "last_seen_at", "sort_order", "facts", "metrics", "traffic"},
+	"probe.v1.PublicNode":     {"id", "name", "online", "last_seen_at", "sort_order", "facts", "metrics", "traffic", "billing"},
 	"probe.v1.PublicFacts":    {"os", "arch", "virtualization", "cpu_model", "cpu_cores"},
+	"probe.v1.PublicBilling":  {"price", "currency", "billing_cycle", "expires_on", "days_left"},
 	"probe.v1.PublicMetrics": {"cpu_pct", "load1", "load5", "load15", "mem_total", "mem_used", "swap_total", "swap_used",
 		"disk_total", "disk_used", "net_rx_total", "net_tx_total", "net_rx_bps", "net_tx_bps", "tcp_conns", "udp_conns", "procs", "uptime_s"},
 	"probe.v1.Traffic":              {"total_rx", "total_tx", "period_rx", "period_tx", "period_start", "next_reset_at", "reset_day"},

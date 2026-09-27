@@ -1,6 +1,6 @@
 ---
 name: probe-hub
-description: 查询自托管探针 hub 的节点、实时状态、历史指标、流量、探测与告警事件。用户问起服务器在不在线、负载、流量、延迟或告警时使用。
+description: 查询自托管探针 hub 的节点、实时状态、历史指标、流量、探测、费用与到期，以及告警事件。用户问起服务器在不在线、负载、流量、延迟、费用、何时到期或告警时使用。
 ---
 
 # probe hub
@@ -56,6 +56,13 @@ else
     --data "$(jq -nc --arg node "$node" --argjson now "$now" '{nodeId: $node, from: ($now - 3600), to: $now}')" \
     "$PROBE_HUB/probe.v1.AdminService/QueryMetrics" | jq '{stepS, ts: (.ts // []), cpu: [(.series // [])[] | select(.name == "cpu") | (.samples // [])[]]}'
 fi
+```
+
+节点的费用与到期。`daysLeft` 是到期日减去今天的天数，今天按 hub 的时区（`--timezone`）取日历日，负数是已过期的天数，由 hub 算好下发；没有到期日（或库里的到期日无法解析）时它缺失，这样的节点不列出。价格与币种是记录用的展示值，hub 不汇总、不换算：
+
+```sh example
+curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/json' \
+  --data '{}' "$PROBE_HUB/probe.v1.AdminService/ListNodes" | jq '[(.nodes // [])[] | select(.billing.daysLeft != null) | {name, price: .billing.price, currency: .billing.currency, expiresOn: .billing.expiresOn, daysLeft: .billing.daysLeft}]'
 ```
 
 最近 20 条告警事件：

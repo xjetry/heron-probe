@@ -27,6 +27,8 @@ const (
 	AlertKind_ALERT_KIND_UNSPECIFIED AlertKind = 0
 	AlertKind_ALERT_KIND_OFFLINE     AlertKind = 1
 	AlertKind_ALERT_KIND_PROBE       AlertKind = 2
+	// 节点到期日距今不超过 days_before 天（含已过期）即触发，数据源是节点的到期日。
+	AlertKind_ALERT_KIND_EXPIRY AlertKind = 3
 )
 
 // Enum value maps for AlertKind.
@@ -35,11 +37,13 @@ var (
 		0: "ALERT_KIND_UNSPECIFIED",
 		1: "ALERT_KIND_OFFLINE",
 		2: "ALERT_KIND_PROBE",
+		3: "ALERT_KIND_EXPIRY",
 	}
 	AlertKind_value = map[string]int32{
 		"ALERT_KIND_UNSPECIFIED": 0,
 		"ALERT_KIND_OFFLINE":     1,
 		"ALERT_KIND_PROBE":       2,
+		"ALERT_KIND_EXPIRY":      3,
 	}
 )
 
@@ -413,6 +417,8 @@ type Node struct {
 	// 离线告警宽限期（秒）；缺失表示取 PROBE_OFFLINE_AFTER。
 	// PROBE_OFFLINE_AFTER 调高后已存的更小值仍会回显，引擎按下限取值，下次编辑须改成不小于下限的值。
 	OfflineGraceS *uint32 `protobuf:"varint,11,opt,name=offline_grace_s,json=offlineGraceS,proto3,oneof" json:"offline_grace_s,omitempty"`
+	// 计费与到期（§9.4）；五项都没填时缺失。days_left 由 hub 按 --timezone 的今天算出。
+	Billing       *Billing `protobuf:"bytes,12,opt,name=billing,proto3" json:"billing,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -522,6 +528,13 @@ func (x *Node) GetOfflineGraceS() uint32 {
 		return *x.OfflineGraceS
 	}
 	return 0
+}
+
+func (x *Node) GetBilling() *Billing {
+	if x != nil {
+		return x.Billing
+	}
+	return nil
 }
 
 type ListNodesRequest struct {
@@ -713,6 +726,9 @@ type UpdateNodeRequest struct {
 	TrafficResetDay uint32 `protobuf:"varint,5,opt,name=traffic_reset_day,json=trafficResetDay,proto3" json:"traffic_reset_day,omitempty"`
 	// 必填，缺失拒绝；0 表示清除（取 PROBE_OFFLINE_AFTER），非 0 须 ≥ PROBE_OFFLINE_AFTER 的秒数。
 	OfflineGraceS *uint32 `protobuf:"varint,6,opt,name=offline_grace_s,json=offlineGraceS,proto3,oneof" json:"offline_grace_s,omitempty"`
+	// 计费与到期，整体替换：缺失等于五项全清，空串、未指定与 false 也是清除，没有"不改"的取值。
+	// 取值约束见 Billing 各字段；days_left 由 hub 计算，这里的值忽略。
+	Billing       *Billing `protobuf:"bytes,7,opt,name=billing,proto3" json:"billing,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -787,6 +803,13 @@ func (x *UpdateNodeRequest) GetOfflineGraceS() uint32 {
 		return *x.OfflineGraceS
 	}
 	return 0
+}
+
+func (x *UpdateNodeRequest) GetBilling() *Billing {
+	if x != nil {
+		return x.Billing
+	}
+	return nil
 }
 
 type UpdateNodeResponse struct {
@@ -2173,14 +2196,14 @@ type AlertRule struct {
 	Id int64 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
 	// 1–64 个字符。
 	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	// 必须为离线或探测，未指定值不允许保存。
+	// 必须为离线、探测或到期，未指定值不允许保存。
 	Kind    AlertKind `protobuf:"varint,3,opt,name=kind,proto3,enum=probe.v1.AlertKind" json:"kind,omitempty"`
 	Enabled bool      `protobuf:"varint,4,opt,name=enabled,proto3" json:"enabled,omitempty"`
 	// 显式作用域，升序去重；all_nodes 为假时就是作用域，保存时不可为空。
 	NodeIds []int64 `protobuf:"varint,5,rep,packed,name=node_ids,json=nodeIds,proto3" json:"node_ids,omitempty"`
 	// 已保存渠道的 id，升序去重；空表示只记事件不投递。
 	ChannelIds []int64 `protobuf:"varint,6,rep,packed,name=channel_ids,json=channelIds,proto3" json:"channel_ids,omitempty"`
-	// 以下字段仅用于探测规则，task_id 必须是已存在的非零任务 id。
+	// 以下四个字段仅用于探测规则，task_id 必须是已存在的非零任务 id；离线与到期规则四项都必须为零值。
 	TaskId uint64 `protobuf:"varint,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	// 探测规则必须选择丢包百分比或往返毫秒数。
 	Metric ProbeMetric `protobuf:"varint,8,opt,name=metric,proto3,enum=probe.v1.ProbeMetric" json:"metric,omitempty"`
@@ -2192,7 +2215,11 @@ type AlertRule struct {
 	CreatedAt int64 `protobuf:"varint,11,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	// 为真表示全部节点，新建节点自动纳入，node_ids 忽略且回显为空；
 	// 为假时 node_ids 是显式作用域，删除节点后空集不等于全部。
-	AllNodes      bool `protobuf:"varint,12,opt,name=all_nodes,json=allNodes,proto3" json:"all_nodes,omitempty"`
+	AllNodes bool `protobuf:"varint,12,opt,name=all_nodes,json=allNodes,proto3" json:"all_nodes,omitempty"`
+	// 仅用于到期规则：1–365，节点到期日减今天（hub 时区）不超过它即触发，已过期的也算；其余种类必须为 0。
+	// 保存启用的到期规则后立即评估一次，此后在 hub 启动、每个日界（零点不存在的日子取新一天的第一个时刻）与节点
+	// 计费字段变化时评估。
+	DaysBefore    uint32 `protobuf:"varint,13,opt,name=days_before,json=daysBefore,proto3" json:"days_before,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2309,6 +2336,13 @@ func (x *AlertRule) GetAllNodes() bool {
 		return x.AllNodes
 	}
 	return false
+}
+
+func (x *AlertRule) GetDaysBefore() uint32 {
+	if x != nil {
+		return x.DaysBefore
+	}
+	return 0
 }
 
 type ListAlertRulesRequest struct {
@@ -3830,7 +3864,8 @@ type AlertEvent struct {
 	// 事件墙钟，Unix 秒。
 	At      int64  `protobuf:"varint,5,opt,name=at,proto3" json:"at,omitempty"`
 	Summary string `protobuf:"bytes,6,opt,name=summary,proto3" json:"summary,omitempty"`
-	// 触发或恢复时的观测值：离线为未上报秒数；探测同规则 threshold 的单位（丢包百分比 loss_pct 或往返毫秒 rtt_ms）。
+	// 触发或恢复时的观测值：离线为未上报秒数；探测同规则 threshold 的单位（丢包百分比 loss_pct 或往返毫秒 rtt_ms）；
+	// 到期为剩余天数（负数是已过期天数），因清除到期日而恢复时为 0。
 	Value         float64          `protobuf:"fixed64,7,opt,name=value,proto3" json:"value,omitempty"`
 	Deliveries    []*AlertDelivery `protobuf:"bytes,8,rep,name=deliveries,proto3" json:"deliveries,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -4511,7 +4546,7 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\bpassword\x18\x01 \x01(\tR\bpassword\"\x0f\n" +
 	"\rLoginResponse\"\x0f\n" +
 	"\rLogoutRequest\"\x10\n" +
-	"\x0eLogoutResponse\"\xa4\x03\n" +
+	"\x0eLogoutResponse\"\xd1\x03\n" +
 	"\x04Node\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
@@ -4527,7 +4562,8 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x10facts_updated_at\x18\t \x01(\x03H\x01R\x0efactsUpdatedAt\x88\x01\x01\x12*\n" +
 	"\x11traffic_reset_day\x18\n" +
 	" \x01(\rR\x0ftrafficResetDay\x12+\n" +
-	"\x0foffline_grace_s\x18\v \x01(\rH\x02R\rofflineGraceS\x88\x01\x01B\x0f\n" +
+	"\x0foffline_grace_s\x18\v \x01(\rH\x02R\rofflineGraceS\x88\x01\x01\x12+\n" +
+	"\abilling\x18\f \x01(\v2\x11.probe.v1.BillingR\abillingB\x0f\n" +
 	"\r_last_seen_atB\x13\n" +
 	"\x11_facts_updated_atB\x12\n" +
 	"\x10_offline_grace_s\"\x12\n" +
@@ -4538,14 +4574,15 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"N\n" +
 	"\x12CreateNodeResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.probe.v1.NodeR\x04node\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"\xd0\x01\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\xfd\x01\n" +
 	"\x11UpdateNodeRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
 	"\x06public\x18\x03 \x01(\bR\x06public\x12\x12\n" +
 	"\x04note\x18\x04 \x01(\tR\x04note\x12*\n" +
 	"\x11traffic_reset_day\x18\x05 \x01(\rR\x0ftrafficResetDay\x12+\n" +
-	"\x0foffline_grace_s\x18\x06 \x01(\rH\x00R\rofflineGraceS\x88\x01\x01B\x12\n" +
+	"\x0foffline_grace_s\x18\x06 \x01(\rH\x00R\rofflineGraceS\x88\x01\x01\x12+\n" +
+	"\abilling\x18\a \x01(\v2\x11.probe.v1.BillingR\abillingB\x12\n" +
 	"\x10_offline_grace_s\"8\n" +
 	"\x12UpdateNodeResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.probe.v1.NodeR\x04node\"#\n" +
@@ -4623,7 +4660,7 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x16DeleteProbeTaskRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\"3\n" +
 	"\x17DeleteProbeTaskResponse\x12\x18\n" +
-	"\aversion\x18\x01 \x01(\x04R\aversion\"\xf1\x02\n" +
+	"\aversion\x18\x01 \x01(\x04R\aversion\"\x92\x03\n" +
 	"\tAlertRule\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12'\n" +
@@ -4640,7 +4677,9 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"forMinutes\x12\x1d\n" +
 	"\n" +
 	"created_at\x18\v \x01(\x03R\tcreatedAt\x12\x1b\n" +
-	"\tall_nodes\x18\f \x01(\bR\ballNodes\"\x17\n" +
+	"\tall_nodes\x18\f \x01(\bR\ballNodes\x12\x1f\n" +
+	"\vdays_before\x18\r \x01(\rR\n" +
+	"daysBefore\"\x17\n" +
 	"\x15ListAlertRulesRequest\"v\n" +
 	"\x16ListAlertRulesResponse\x12)\n" +
 	"\x05rules\x18\x01 \x03(\v2\x13.probe.v1.AlertRuleR\x05rules\x121\n" +
@@ -4779,11 +4818,12 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x05files\x18\x02 \x03(\v2\x13.probe.v1.ProtoFileR\x05files\"9\n" +
 	"\tProtoFile\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
-	"\acontent\x18\x02 \x01(\tR\acontent*U\n" +
+	"\acontent\x18\x02 \x01(\tR\acontent*l\n" +
 	"\tAlertKind\x12\x1a\n" +
 	"\x16ALERT_KIND_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12ALERT_KIND_OFFLINE\x10\x01\x12\x14\n" +
-	"\x10ALERT_KIND_PROBE\x10\x02*_\n" +
+	"\x10ALERT_KIND_PROBE\x10\x02\x12\x15\n" +
+	"\x11ALERT_KIND_EXPIRY\x10\x03*_\n" +
 	"\vProbeMetric\x12\x1c\n" +
 	"\x18PROBE_METRIC_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15PROBE_METRIC_LOSS_PCT\x10\x01\x12\x17\n" +
@@ -4944,127 +4984,130 @@ var file_probe_v1_admin_proto_goTypes = []any{
 	(*ProtoFile)(nil),                     // 84: probe.v1.ProtoFile
 	nil,                                   // 85: probe.v1.WebhookConfig.HeadersEntry
 	(*Facts)(nil),                         // 86: probe.v1.Facts
-	(*Metrics)(nil),                       // 87: probe.v1.Metrics
-	(*Traffic)(nil),                       // 88: probe.v1.Traffic
-	(*ProbeTask)(nil),                     // 89: probe.v1.ProbeTask
-	(*QueryMetricsRequest)(nil),           // 90: probe.v1.QueryMetricsRequest
-	(*QueryProbesRequest)(nil),            // 91: probe.v1.QueryProbesRequest
-	(*QueryMetricsResponse)(nil),          // 92: probe.v1.QueryMetricsResponse
-	(*QueryProbesResponse)(nil),           // 93: probe.v1.QueryProbesResponse
+	(*Billing)(nil),                       // 87: probe.v1.Billing
+	(*Metrics)(nil),                       // 88: probe.v1.Metrics
+	(*Traffic)(nil),                       // 89: probe.v1.Traffic
+	(*ProbeTask)(nil),                     // 90: probe.v1.ProbeTask
+	(*QueryMetricsRequest)(nil),           // 91: probe.v1.QueryMetricsRequest
+	(*QueryProbesRequest)(nil),            // 92: probe.v1.QueryProbesRequest
+	(*QueryMetricsResponse)(nil),          // 93: probe.v1.QueryMetricsResponse
+	(*QueryProbesResponse)(nil),           // 94: probe.v1.QueryProbesResponse
 }
 var file_probe_v1_admin_proto_depIdxs = []int32{
 	86, // 0: probe.v1.Node.facts:type_name -> probe.v1.Facts
-	8,  // 1: probe.v1.ListNodesResponse.nodes:type_name -> probe.v1.Node
-	8,  // 2: probe.v1.CreateNodeResponse.node:type_name -> probe.v1.Node
-	8,  // 3: probe.v1.UpdateNodeResponse.node:type_name -> probe.v1.Node
-	29, // 4: probe.v1.GetSnapshotResponse.nodes:type_name -> probe.v1.NodeStatus
-	87, // 5: probe.v1.NodeStatus.metrics:type_name -> probe.v1.Metrics
-	88, // 6: probe.v1.NodeStatus.traffic:type_name -> probe.v1.Traffic
-	32, // 7: probe.v1.GetTrafficResponse.nodes:type_name -> probe.v1.NodeTraffic
-	88, // 8: probe.v1.NodeTraffic.traffic:type_name -> probe.v1.Traffic
-	88, // 9: probe.v1.AdjustTrafficResponse.traffic:type_name -> probe.v1.Traffic
-	89, // 10: probe.v1.ProbeTaskDetail.task:type_name -> probe.v1.ProbeTask
-	35, // 11: probe.v1.ListProbeTasksResponse.tasks:type_name -> probe.v1.ProbeTaskDetail
-	89, // 12: probe.v1.SaveProbeTaskRequest.task:type_name -> probe.v1.ProbeTask
-	35, // 13: probe.v1.SaveProbeTaskResponse.task:type_name -> probe.v1.ProbeTaskDetail
-	0,  // 14: probe.v1.AlertRule.kind:type_name -> probe.v1.AlertKind
-	1,  // 15: probe.v1.AlertRule.metric:type_name -> probe.v1.ProbeMetric
-	42, // 16: probe.v1.ListAlertRulesResponse.rules:type_name -> probe.v1.AlertRule
-	45, // 17: probe.v1.ListAlertRulesResponse.states:type_name -> probe.v1.AlertStateEntry
-	42, // 18: probe.v1.SaveAlertRuleRequest.rule:type_name -> probe.v1.AlertRule
-	42, // 19: probe.v1.SaveAlertRuleResponse.rule:type_name -> probe.v1.AlertRule
-	2,  // 20: probe.v1.NotifyChannel.kind:type_name -> probe.v1.ChannelKind
-	51, // 21: probe.v1.NotifyChannel.telegram:type_name -> probe.v1.TelegramConfig
-	52, // 22: probe.v1.NotifyChannel.webhook:type_name -> probe.v1.WebhookConfig
-	85, // 23: probe.v1.WebhookConfig.headers:type_name -> probe.v1.WebhookConfig.HeadersEntry
-	50, // 24: probe.v1.ListNotifyChannelsResponse.channels:type_name -> probe.v1.NotifyChannel
-	50, // 25: probe.v1.SaveNotifyChannelRequest.channel:type_name -> probe.v1.NotifyChannel
-	50, // 26: probe.v1.SaveNotifyChannelResponse.channel:type_name -> probe.v1.NotifyChannel
-	61, // 27: probe.v1.GetSettingsResponse.settings:type_name -> probe.v1.Settings
-	61, // 28: probe.v1.UpdateSettingsRequest.settings:type_name -> probe.v1.Settings
-	61, // 29: probe.v1.UpdateSettingsResponse.settings:type_name -> probe.v1.Settings
-	68, // 30: probe.v1.GetStorageStatsResponse.tables:type_name -> probe.v1.TableRows
-	73, // 31: probe.v1.ListAlertEventsResponse.events:type_name -> probe.v1.AlertEvent
-	74, // 32: probe.v1.AlertEvent.deliveries:type_name -> probe.v1.AlertDelivery
-	3,  // 33: probe.v1.AlertDelivery.failure:type_name -> probe.v1.DeliveryFailure
-	75, // 34: probe.v1.ListApiTokensResponse.tokens:type_name -> probe.v1.ApiToken
-	75, // 35: probe.v1.CreateApiTokenResponse.api_token:type_name -> probe.v1.ApiToken
-	84, // 36: probe.v1.GetApiReferenceResponse.files:type_name -> probe.v1.ProtoFile
-	4,  // 37: probe.v1.AdminService.Login:input_type -> probe.v1.LoginRequest
-	6,  // 38: probe.v1.AdminService.Logout:input_type -> probe.v1.LogoutRequest
-	9,  // 39: probe.v1.AdminService.ListNodes:input_type -> probe.v1.ListNodesRequest
-	11, // 40: probe.v1.AdminService.CreateNode:input_type -> probe.v1.CreateNodeRequest
-	13, // 41: probe.v1.AdminService.UpdateNode:input_type -> probe.v1.UpdateNodeRequest
-	15, // 42: probe.v1.AdminService.DeleteNode:input_type -> probe.v1.DeleteNodeRequest
-	17, // 43: probe.v1.AdminService.RotateNodeToken:input_type -> probe.v1.RotateNodeTokenRequest
-	19, // 44: probe.v1.AdminService.ReorderNodes:input_type -> probe.v1.ReorderNodesRequest
-	21, // 45: probe.v1.AdminService.OpenRegisterWindow:input_type -> probe.v1.OpenRegisterWindowRequest
-	23, // 46: probe.v1.AdminService.CloseRegisterWindow:input_type -> probe.v1.CloseRegisterWindowRequest
-	25, // 47: probe.v1.AdminService.GetRegisterWindow:input_type -> probe.v1.GetRegisterWindowRequest
-	27, // 48: probe.v1.AdminService.GetSnapshot:input_type -> probe.v1.GetSnapshotRequest
-	90, // 49: probe.v1.AdminService.QueryMetrics:input_type -> probe.v1.QueryMetricsRequest
-	30, // 50: probe.v1.AdminService.GetTraffic:input_type -> probe.v1.GetTrafficRequest
-	33, // 51: probe.v1.AdminService.AdjustTraffic:input_type -> probe.v1.AdjustTrafficRequest
-	36, // 52: probe.v1.AdminService.ListProbeTasks:input_type -> probe.v1.ListProbeTasksRequest
-	38, // 53: probe.v1.AdminService.SaveProbeTask:input_type -> probe.v1.SaveProbeTaskRequest
-	40, // 54: probe.v1.AdminService.DeleteProbeTask:input_type -> probe.v1.DeleteProbeTaskRequest
-	91, // 55: probe.v1.AdminService.QueryProbes:input_type -> probe.v1.QueryProbesRequest
-	43, // 56: probe.v1.AdminService.ListAlertRules:input_type -> probe.v1.ListAlertRulesRequest
-	46, // 57: probe.v1.AdminService.SaveAlertRule:input_type -> probe.v1.SaveAlertRuleRequest
-	48, // 58: probe.v1.AdminService.DeleteAlertRule:input_type -> probe.v1.DeleteAlertRuleRequest
-	69, // 59: probe.v1.AdminService.ListAlertEvents:input_type -> probe.v1.ListAlertEventsRequest
-	71, // 60: probe.v1.AdminService.GetAlertDeliveryError:input_type -> probe.v1.GetAlertDeliveryErrorRequest
-	53, // 61: probe.v1.AdminService.ListNotifyChannels:input_type -> probe.v1.ListNotifyChannelsRequest
-	55, // 62: probe.v1.AdminService.SaveNotifyChannel:input_type -> probe.v1.SaveNotifyChannelRequest
-	57, // 63: probe.v1.AdminService.DeleteNotifyChannel:input_type -> probe.v1.DeleteNotifyChannelRequest
-	59, // 64: probe.v1.AdminService.TestNotifyChannel:input_type -> probe.v1.TestNotifyChannelRequest
-	62, // 65: probe.v1.AdminService.GetSettings:input_type -> probe.v1.GetSettingsRequest
-	64, // 66: probe.v1.AdminService.UpdateSettings:input_type -> probe.v1.UpdateSettingsRequest
-	66, // 67: probe.v1.AdminService.GetStorageStats:input_type -> probe.v1.GetStorageStatsRequest
-	76, // 68: probe.v1.AdminService.ListApiTokens:input_type -> probe.v1.ListApiTokensRequest
-	78, // 69: probe.v1.AdminService.CreateApiToken:input_type -> probe.v1.CreateApiTokenRequest
-	80, // 70: probe.v1.AdminService.DeleteApiToken:input_type -> probe.v1.DeleteApiTokenRequest
-	82, // 71: probe.v1.AdminService.GetApiReference:input_type -> probe.v1.GetApiReferenceRequest
-	5,  // 72: probe.v1.AdminService.Login:output_type -> probe.v1.LoginResponse
-	7,  // 73: probe.v1.AdminService.Logout:output_type -> probe.v1.LogoutResponse
-	10, // 74: probe.v1.AdminService.ListNodes:output_type -> probe.v1.ListNodesResponse
-	12, // 75: probe.v1.AdminService.CreateNode:output_type -> probe.v1.CreateNodeResponse
-	14, // 76: probe.v1.AdminService.UpdateNode:output_type -> probe.v1.UpdateNodeResponse
-	16, // 77: probe.v1.AdminService.DeleteNode:output_type -> probe.v1.DeleteNodeResponse
-	18, // 78: probe.v1.AdminService.RotateNodeToken:output_type -> probe.v1.RotateNodeTokenResponse
-	20, // 79: probe.v1.AdminService.ReorderNodes:output_type -> probe.v1.ReorderNodesResponse
-	22, // 80: probe.v1.AdminService.OpenRegisterWindow:output_type -> probe.v1.OpenRegisterWindowResponse
-	24, // 81: probe.v1.AdminService.CloseRegisterWindow:output_type -> probe.v1.CloseRegisterWindowResponse
-	26, // 82: probe.v1.AdminService.GetRegisterWindow:output_type -> probe.v1.GetRegisterWindowResponse
-	28, // 83: probe.v1.AdminService.GetSnapshot:output_type -> probe.v1.GetSnapshotResponse
-	92, // 84: probe.v1.AdminService.QueryMetrics:output_type -> probe.v1.QueryMetricsResponse
-	31, // 85: probe.v1.AdminService.GetTraffic:output_type -> probe.v1.GetTrafficResponse
-	34, // 86: probe.v1.AdminService.AdjustTraffic:output_type -> probe.v1.AdjustTrafficResponse
-	37, // 87: probe.v1.AdminService.ListProbeTasks:output_type -> probe.v1.ListProbeTasksResponse
-	39, // 88: probe.v1.AdminService.SaveProbeTask:output_type -> probe.v1.SaveProbeTaskResponse
-	41, // 89: probe.v1.AdminService.DeleteProbeTask:output_type -> probe.v1.DeleteProbeTaskResponse
-	93, // 90: probe.v1.AdminService.QueryProbes:output_type -> probe.v1.QueryProbesResponse
-	44, // 91: probe.v1.AdminService.ListAlertRules:output_type -> probe.v1.ListAlertRulesResponse
-	47, // 92: probe.v1.AdminService.SaveAlertRule:output_type -> probe.v1.SaveAlertRuleResponse
-	49, // 93: probe.v1.AdminService.DeleteAlertRule:output_type -> probe.v1.DeleteAlertRuleResponse
-	70, // 94: probe.v1.AdminService.ListAlertEvents:output_type -> probe.v1.ListAlertEventsResponse
-	72, // 95: probe.v1.AdminService.GetAlertDeliveryError:output_type -> probe.v1.GetAlertDeliveryErrorResponse
-	54, // 96: probe.v1.AdminService.ListNotifyChannels:output_type -> probe.v1.ListNotifyChannelsResponse
-	56, // 97: probe.v1.AdminService.SaveNotifyChannel:output_type -> probe.v1.SaveNotifyChannelResponse
-	58, // 98: probe.v1.AdminService.DeleteNotifyChannel:output_type -> probe.v1.DeleteNotifyChannelResponse
-	60, // 99: probe.v1.AdminService.TestNotifyChannel:output_type -> probe.v1.TestNotifyChannelResponse
-	63, // 100: probe.v1.AdminService.GetSettings:output_type -> probe.v1.GetSettingsResponse
-	65, // 101: probe.v1.AdminService.UpdateSettings:output_type -> probe.v1.UpdateSettingsResponse
-	67, // 102: probe.v1.AdminService.GetStorageStats:output_type -> probe.v1.GetStorageStatsResponse
-	77, // 103: probe.v1.AdminService.ListApiTokens:output_type -> probe.v1.ListApiTokensResponse
-	79, // 104: probe.v1.AdminService.CreateApiToken:output_type -> probe.v1.CreateApiTokenResponse
-	81, // 105: probe.v1.AdminService.DeleteApiToken:output_type -> probe.v1.DeleteApiTokenResponse
-	83, // 106: probe.v1.AdminService.GetApiReference:output_type -> probe.v1.GetApiReferenceResponse
-	72, // [72:107] is the sub-list for method output_type
-	37, // [37:72] is the sub-list for method input_type
-	37, // [37:37] is the sub-list for extension type_name
-	37, // [37:37] is the sub-list for extension extendee
-	0,  // [0:37] is the sub-list for field type_name
+	87, // 1: probe.v1.Node.billing:type_name -> probe.v1.Billing
+	8,  // 2: probe.v1.ListNodesResponse.nodes:type_name -> probe.v1.Node
+	8,  // 3: probe.v1.CreateNodeResponse.node:type_name -> probe.v1.Node
+	87, // 4: probe.v1.UpdateNodeRequest.billing:type_name -> probe.v1.Billing
+	8,  // 5: probe.v1.UpdateNodeResponse.node:type_name -> probe.v1.Node
+	29, // 6: probe.v1.GetSnapshotResponse.nodes:type_name -> probe.v1.NodeStatus
+	88, // 7: probe.v1.NodeStatus.metrics:type_name -> probe.v1.Metrics
+	89, // 8: probe.v1.NodeStatus.traffic:type_name -> probe.v1.Traffic
+	32, // 9: probe.v1.GetTrafficResponse.nodes:type_name -> probe.v1.NodeTraffic
+	89, // 10: probe.v1.NodeTraffic.traffic:type_name -> probe.v1.Traffic
+	89, // 11: probe.v1.AdjustTrafficResponse.traffic:type_name -> probe.v1.Traffic
+	90, // 12: probe.v1.ProbeTaskDetail.task:type_name -> probe.v1.ProbeTask
+	35, // 13: probe.v1.ListProbeTasksResponse.tasks:type_name -> probe.v1.ProbeTaskDetail
+	90, // 14: probe.v1.SaveProbeTaskRequest.task:type_name -> probe.v1.ProbeTask
+	35, // 15: probe.v1.SaveProbeTaskResponse.task:type_name -> probe.v1.ProbeTaskDetail
+	0,  // 16: probe.v1.AlertRule.kind:type_name -> probe.v1.AlertKind
+	1,  // 17: probe.v1.AlertRule.metric:type_name -> probe.v1.ProbeMetric
+	42, // 18: probe.v1.ListAlertRulesResponse.rules:type_name -> probe.v1.AlertRule
+	45, // 19: probe.v1.ListAlertRulesResponse.states:type_name -> probe.v1.AlertStateEntry
+	42, // 20: probe.v1.SaveAlertRuleRequest.rule:type_name -> probe.v1.AlertRule
+	42, // 21: probe.v1.SaveAlertRuleResponse.rule:type_name -> probe.v1.AlertRule
+	2,  // 22: probe.v1.NotifyChannel.kind:type_name -> probe.v1.ChannelKind
+	51, // 23: probe.v1.NotifyChannel.telegram:type_name -> probe.v1.TelegramConfig
+	52, // 24: probe.v1.NotifyChannel.webhook:type_name -> probe.v1.WebhookConfig
+	85, // 25: probe.v1.WebhookConfig.headers:type_name -> probe.v1.WebhookConfig.HeadersEntry
+	50, // 26: probe.v1.ListNotifyChannelsResponse.channels:type_name -> probe.v1.NotifyChannel
+	50, // 27: probe.v1.SaveNotifyChannelRequest.channel:type_name -> probe.v1.NotifyChannel
+	50, // 28: probe.v1.SaveNotifyChannelResponse.channel:type_name -> probe.v1.NotifyChannel
+	61, // 29: probe.v1.GetSettingsResponse.settings:type_name -> probe.v1.Settings
+	61, // 30: probe.v1.UpdateSettingsRequest.settings:type_name -> probe.v1.Settings
+	61, // 31: probe.v1.UpdateSettingsResponse.settings:type_name -> probe.v1.Settings
+	68, // 32: probe.v1.GetStorageStatsResponse.tables:type_name -> probe.v1.TableRows
+	73, // 33: probe.v1.ListAlertEventsResponse.events:type_name -> probe.v1.AlertEvent
+	74, // 34: probe.v1.AlertEvent.deliveries:type_name -> probe.v1.AlertDelivery
+	3,  // 35: probe.v1.AlertDelivery.failure:type_name -> probe.v1.DeliveryFailure
+	75, // 36: probe.v1.ListApiTokensResponse.tokens:type_name -> probe.v1.ApiToken
+	75, // 37: probe.v1.CreateApiTokenResponse.api_token:type_name -> probe.v1.ApiToken
+	84, // 38: probe.v1.GetApiReferenceResponse.files:type_name -> probe.v1.ProtoFile
+	4,  // 39: probe.v1.AdminService.Login:input_type -> probe.v1.LoginRequest
+	6,  // 40: probe.v1.AdminService.Logout:input_type -> probe.v1.LogoutRequest
+	9,  // 41: probe.v1.AdminService.ListNodes:input_type -> probe.v1.ListNodesRequest
+	11, // 42: probe.v1.AdminService.CreateNode:input_type -> probe.v1.CreateNodeRequest
+	13, // 43: probe.v1.AdminService.UpdateNode:input_type -> probe.v1.UpdateNodeRequest
+	15, // 44: probe.v1.AdminService.DeleteNode:input_type -> probe.v1.DeleteNodeRequest
+	17, // 45: probe.v1.AdminService.RotateNodeToken:input_type -> probe.v1.RotateNodeTokenRequest
+	19, // 46: probe.v1.AdminService.ReorderNodes:input_type -> probe.v1.ReorderNodesRequest
+	21, // 47: probe.v1.AdminService.OpenRegisterWindow:input_type -> probe.v1.OpenRegisterWindowRequest
+	23, // 48: probe.v1.AdminService.CloseRegisterWindow:input_type -> probe.v1.CloseRegisterWindowRequest
+	25, // 49: probe.v1.AdminService.GetRegisterWindow:input_type -> probe.v1.GetRegisterWindowRequest
+	27, // 50: probe.v1.AdminService.GetSnapshot:input_type -> probe.v1.GetSnapshotRequest
+	91, // 51: probe.v1.AdminService.QueryMetrics:input_type -> probe.v1.QueryMetricsRequest
+	30, // 52: probe.v1.AdminService.GetTraffic:input_type -> probe.v1.GetTrafficRequest
+	33, // 53: probe.v1.AdminService.AdjustTraffic:input_type -> probe.v1.AdjustTrafficRequest
+	36, // 54: probe.v1.AdminService.ListProbeTasks:input_type -> probe.v1.ListProbeTasksRequest
+	38, // 55: probe.v1.AdminService.SaveProbeTask:input_type -> probe.v1.SaveProbeTaskRequest
+	40, // 56: probe.v1.AdminService.DeleteProbeTask:input_type -> probe.v1.DeleteProbeTaskRequest
+	92, // 57: probe.v1.AdminService.QueryProbes:input_type -> probe.v1.QueryProbesRequest
+	43, // 58: probe.v1.AdminService.ListAlertRules:input_type -> probe.v1.ListAlertRulesRequest
+	46, // 59: probe.v1.AdminService.SaveAlertRule:input_type -> probe.v1.SaveAlertRuleRequest
+	48, // 60: probe.v1.AdminService.DeleteAlertRule:input_type -> probe.v1.DeleteAlertRuleRequest
+	69, // 61: probe.v1.AdminService.ListAlertEvents:input_type -> probe.v1.ListAlertEventsRequest
+	71, // 62: probe.v1.AdminService.GetAlertDeliveryError:input_type -> probe.v1.GetAlertDeliveryErrorRequest
+	53, // 63: probe.v1.AdminService.ListNotifyChannels:input_type -> probe.v1.ListNotifyChannelsRequest
+	55, // 64: probe.v1.AdminService.SaveNotifyChannel:input_type -> probe.v1.SaveNotifyChannelRequest
+	57, // 65: probe.v1.AdminService.DeleteNotifyChannel:input_type -> probe.v1.DeleteNotifyChannelRequest
+	59, // 66: probe.v1.AdminService.TestNotifyChannel:input_type -> probe.v1.TestNotifyChannelRequest
+	62, // 67: probe.v1.AdminService.GetSettings:input_type -> probe.v1.GetSettingsRequest
+	64, // 68: probe.v1.AdminService.UpdateSettings:input_type -> probe.v1.UpdateSettingsRequest
+	66, // 69: probe.v1.AdminService.GetStorageStats:input_type -> probe.v1.GetStorageStatsRequest
+	76, // 70: probe.v1.AdminService.ListApiTokens:input_type -> probe.v1.ListApiTokensRequest
+	78, // 71: probe.v1.AdminService.CreateApiToken:input_type -> probe.v1.CreateApiTokenRequest
+	80, // 72: probe.v1.AdminService.DeleteApiToken:input_type -> probe.v1.DeleteApiTokenRequest
+	82, // 73: probe.v1.AdminService.GetApiReference:input_type -> probe.v1.GetApiReferenceRequest
+	5,  // 74: probe.v1.AdminService.Login:output_type -> probe.v1.LoginResponse
+	7,  // 75: probe.v1.AdminService.Logout:output_type -> probe.v1.LogoutResponse
+	10, // 76: probe.v1.AdminService.ListNodes:output_type -> probe.v1.ListNodesResponse
+	12, // 77: probe.v1.AdminService.CreateNode:output_type -> probe.v1.CreateNodeResponse
+	14, // 78: probe.v1.AdminService.UpdateNode:output_type -> probe.v1.UpdateNodeResponse
+	16, // 79: probe.v1.AdminService.DeleteNode:output_type -> probe.v1.DeleteNodeResponse
+	18, // 80: probe.v1.AdminService.RotateNodeToken:output_type -> probe.v1.RotateNodeTokenResponse
+	20, // 81: probe.v1.AdminService.ReorderNodes:output_type -> probe.v1.ReorderNodesResponse
+	22, // 82: probe.v1.AdminService.OpenRegisterWindow:output_type -> probe.v1.OpenRegisterWindowResponse
+	24, // 83: probe.v1.AdminService.CloseRegisterWindow:output_type -> probe.v1.CloseRegisterWindowResponse
+	26, // 84: probe.v1.AdminService.GetRegisterWindow:output_type -> probe.v1.GetRegisterWindowResponse
+	28, // 85: probe.v1.AdminService.GetSnapshot:output_type -> probe.v1.GetSnapshotResponse
+	93, // 86: probe.v1.AdminService.QueryMetrics:output_type -> probe.v1.QueryMetricsResponse
+	31, // 87: probe.v1.AdminService.GetTraffic:output_type -> probe.v1.GetTrafficResponse
+	34, // 88: probe.v1.AdminService.AdjustTraffic:output_type -> probe.v1.AdjustTrafficResponse
+	37, // 89: probe.v1.AdminService.ListProbeTasks:output_type -> probe.v1.ListProbeTasksResponse
+	39, // 90: probe.v1.AdminService.SaveProbeTask:output_type -> probe.v1.SaveProbeTaskResponse
+	41, // 91: probe.v1.AdminService.DeleteProbeTask:output_type -> probe.v1.DeleteProbeTaskResponse
+	94, // 92: probe.v1.AdminService.QueryProbes:output_type -> probe.v1.QueryProbesResponse
+	44, // 93: probe.v1.AdminService.ListAlertRules:output_type -> probe.v1.ListAlertRulesResponse
+	47, // 94: probe.v1.AdminService.SaveAlertRule:output_type -> probe.v1.SaveAlertRuleResponse
+	49, // 95: probe.v1.AdminService.DeleteAlertRule:output_type -> probe.v1.DeleteAlertRuleResponse
+	70, // 96: probe.v1.AdminService.ListAlertEvents:output_type -> probe.v1.ListAlertEventsResponse
+	72, // 97: probe.v1.AdminService.GetAlertDeliveryError:output_type -> probe.v1.GetAlertDeliveryErrorResponse
+	54, // 98: probe.v1.AdminService.ListNotifyChannels:output_type -> probe.v1.ListNotifyChannelsResponse
+	56, // 99: probe.v1.AdminService.SaveNotifyChannel:output_type -> probe.v1.SaveNotifyChannelResponse
+	58, // 100: probe.v1.AdminService.DeleteNotifyChannel:output_type -> probe.v1.DeleteNotifyChannelResponse
+	60, // 101: probe.v1.AdminService.TestNotifyChannel:output_type -> probe.v1.TestNotifyChannelResponse
+	63, // 102: probe.v1.AdminService.GetSettings:output_type -> probe.v1.GetSettingsResponse
+	65, // 103: probe.v1.AdminService.UpdateSettings:output_type -> probe.v1.UpdateSettingsResponse
+	67, // 104: probe.v1.AdminService.GetStorageStats:output_type -> probe.v1.GetStorageStatsResponse
+	77, // 105: probe.v1.AdminService.ListApiTokens:output_type -> probe.v1.ListApiTokensResponse
+	79, // 106: probe.v1.AdminService.CreateApiToken:output_type -> probe.v1.CreateApiTokenResponse
+	81, // 107: probe.v1.AdminService.DeleteApiToken:output_type -> probe.v1.DeleteApiTokenResponse
+	83, // 108: probe.v1.AdminService.GetApiReference:output_type -> probe.v1.GetApiReferenceResponse
+	74, // [74:109] is the sub-list for method output_type
+	39, // [39:74] is the sub-list for method input_type
+	39, // [39:39] is the sub-list for extension type_name
+	39, // [39:39] is the sub-list for extension extendee
+	0,  // [0:39] is the sub-list for field type_name
 }
 
 func init() { file_probe_v1_admin_proto_init() }

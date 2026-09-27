@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { HistoryCharts, RangePicker, useHistory, type HistoryMethods } from "../components/History";
 import { PublicService } from "../gen/probe/v1/public_pb";
+import { expired, expiryText, priceText } from "../lib/billing";
 import { POLL_MS } from "../lib/poll";
 
 const PUBLIC_HISTORY: HistoryMethods = { queryMetrics: PublicService.method.queryMetrics, queryProbes: PublicService.method.queryProbes };
@@ -20,6 +21,8 @@ export function NodePage() {
   const gate = queryGate(snap);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   if (!node) return missing;
+  const price = priceText(node.billing);
+  const expiry = expiryText(node.billing);
   return (
     <section>
       {errorBanner(snap.error, history.metrics.error, history.probes.error)}
@@ -28,12 +31,19 @@ export function NodePage() {
         <RangePicker history={history} />
       </header>
       <HistoryCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。</p>} />
-      {node.facts && (
+      {/* 静态信息卡：主机信息从未上报时缺失，费用与到期填了才显示（§10），三者都没有时不画这张卡。 */}
+      {(node.facts || price || expiry) && (
         <dl className="card facts">
-          <dt>系统</dt><dd>{node.facts.os}</dd>
-          <dt>架构</dt><dd>{node.facts.arch}</dd>
-          <dt>CPU</dt><dd>{node.facts.cpuModel} × {node.facts.cpuCores}</dd>
-          <dt>虚拟化</dt><dd>{node.facts.virtualization || "无 / 未知"}</dd>
+          {node.facts && (
+            <>
+              <dt>系统</dt><dd>{node.facts.os}</dd>
+              <dt>架构</dt><dd>{node.facts.arch}</dd>
+              <dt>CPU</dt><dd>{node.facts.cpuModel} × {node.facts.cpuCores}</dd>
+              <dt>虚拟化</dt><dd>{node.facts.virtualization || "无 / 未知"}</dd>
+            </>
+          )}
+          {price && <><dt>费用</dt><dd>{price}</dd></>}
+          {expiry && <><dt>到期</dt><dd className={expired(node.billing) ? "error" : undefined}>{expiry}</dd></>}
         </dl>
       )}
     </section>

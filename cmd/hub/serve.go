@@ -82,7 +82,7 @@ func newServeLogger(w io.Writer) *slog.Logger { return slog.New(slog.NewTextHand
 func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *slog.Logger) (result error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	db := fs.String("db", "probe.db", "SQLite database path")
-	tz := fs.String("timezone", "", "IANA time zone for traffic period boundaries (default: the host's zone, resolved from TZ or /etc/localtime; UTC if neither resolves); already-persisted period starts are interpreted in the new zone; usage of the current period may be reset at the next read, report or flush")
+	tz := fs.String("timezone", "", "IANA time zone for traffic period boundaries and node expiry days (default: the host's zone, resolved from TZ or /etc/localtime; UTC if neither resolves); already-persisted period starts are interpreted in the new zone; usage of the current period may be reset at the next read, report or flush")
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
 	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For / X-Forwarded-Proto are trusted; empty trusts none. Behind a reverse proxy, list the proxy here: the public page and agent registration are rate-limited per source (one IPv4 address, or one IPv6 /64), and failed logins are locked out per source, so without it every visitor shares the proxy address's single bucket and lockout")
 	publicDir := fs.String("public-dir", "", "serve this directory at / instead of the built-in public page; files are opened through os.Root, so paths cannot leave the directory and symbolic links are followed only if they are relative and never step outside it (absolute links are refused even when they point inside); a path that is not a file, or that has a segment starting with a dot (.git, .env, .well-known), gets the directory's index.html (404 under assets/); every response is no-cache. The directory shares the admin panel's origin: its scripts can read the panel and call the admin API with the session of any signed-in administrator who opens the page, so put only content you trust as much as the hub binary there")
@@ -133,7 +133,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	l := live.New(clk, ttl)
 	book := traffic.New(st, clk, loc, log)
 	reg := probe.New(st, log)
-	alerts := alert.New(alert.Config{TTL: ttl}, st, l, clk, log)
+	alerts := alert.New(alert.Config{TTL: ttl, Location: loc}, st, l, clk, log)
 	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, log)
 	alerts.SetSender(notifier)
 	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, book, reg, clk, log)
@@ -148,8 +148,8 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	if err := notifier.Requeue(ctx); err != nil {
 		return err
 	}
-	admin := api.New(api.Config{TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
-	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: trusted}, st, l, book, reg, clk, log)
+	admin := api.New(api.Config{TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version, Location: loc}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
+	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: trusted, Location: loc}, st, l, book, reg, clk, log)
 
 	mux := newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(pub.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", public))
 	listener, err := net.Listen("tcp", *listen)
@@ -167,6 +167,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	defer startLoop(book.Run)()
 	stopSweep := startLoop(alerts.RunOfflineSweep)
 	defer startLoop(alerts.RunProbeEvaluation)()
+	defer startLoop(alerts.RunExpirySweep)()
 	defer startLoop(notifier.Run)()
 
 	// 监听在 net.Listen 返回时已建立，连接先进内核队列。runServe 装配的文本 handler 在 Info 返回前

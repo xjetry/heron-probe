@@ -231,7 +231,10 @@ it("列表展示名称、条件、作用域、通知与当前状态", async () =
   expect(screen.getByRole("cell", { name: "已停用" })).toBeInTheDocument();
 });
 
-it("新建离线规则覆盖全部节点时不带节点列表", async () => {
+// 离线规则的探测字段与提前天数、到期规则的探测字段都必须是零值：hub 拒绝带着别的种类字段的规则（alert.CheckRule）。
+// 新建草稿里连续分钟默认 3、提前天数默认 7，所以这里这两项的断言不是空转；任务与阈值在新建草稿里是空串，
+// 由"主动切换离线"那例从探测规则出发钉住。
+it("新建离线规则覆盖全部节点时不带节点列表，别的种类的字段都是零值", async () => {
   const saved: SaveAlertRuleRequest[] = [];
   render({ saveAlertRule: async (req) => { saved.push(req); return {}; } });
   const form = await screen.findByRole("form", { name: "新建告警规则" });
@@ -243,8 +246,10 @@ it("新建离线规则覆盖全部节点时不带节点列表", async () => {
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
   await waitFor(() => expect(saved).toHaveLength(1));
   const r = saved[0].rule!;
-  expect({ id: r.id, name: r.name, kind: r.kind, enabled: r.enabled, allNodes: r.allNodes, nodeIds: r.nodeIds, channelIds: r.channelIds, taskId: r.taskId, metric: r.metric }).toEqual(
-    { id: 0n, name: "全网离线", kind: AlertKind.OFFLINE, enabled: true, allNodes: true, nodeIds: [], channelIds: [5n], taskId: 0n, metric: ProbeMetric.UNSPECIFIED });
+  expect({ id: r.id, name: r.name, kind: r.kind, enabled: r.enabled, allNodes: r.allNodes, nodeIds: r.nodeIds, channelIds: r.channelIds,
+    taskId: r.taskId, metric: r.metric, threshold: r.threshold, forMinutes: r.forMinutes, daysBefore: r.daysBefore }).toEqual(
+    { id: 0n, name: "全网离线", kind: AlertKind.OFFLINE, enabled: true, allNodes: true, nodeIds: [], channelIds: [5n],
+      taskId: 0n, metric: ProbeMetric.UNSPECIFIED, threshold: 0, forMinutes: 0, daysBefore: 0 });
   await waitFor(() => expect(within(screen.getByRole("form", { name: "新建告警规则" })).getByLabelText("名称")).toHaveValue(""));
 });
 
@@ -417,4 +422,80 @@ it("创建失败保留草稿", async () => {
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("rule.name: must not be empty");
   expect(within(screen.getByRole("form", { name: "新建告警规则" })).getByLabelText("名称")).toHaveValue("全网离线");
+});
+
+const expiryRules = create(ListAlertRulesResponseSchema, {
+  rules: [{ id: 12n, name: "续费", kind: AlertKind.EXPIRY, enabled: true, allNodes: true, channelIds: [5n], daysBefore: 14 }],
+  states: [{ ruleId: 12n, nodeId: 2n, state: "firing" }],
+});
+
+it("新建到期规则只发提前天数，默认 7 天", async () => {
+  const saved: SaveAlertRuleRequest[] = [];
+  render({ saveAlertRule: async (req) => { saved.push(req); return {}; } });
+  const form = await screen.findByRole("form", { name: "新建告警规则" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "续费提醒" } });
+  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(AlertKind.EXPIRY) } });
+  expect(within(form).getByLabelText("提前天数")).toHaveValue(7);
+  expect(within(form).queryByLabelText("探测任务")).toBeNull();
+  fireEvent.change(within(form).getByLabelText("提前天数"), { target: { value: "30" } });
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  const r = saved[0].rule!;
+  expect({ kind: r.kind, daysBefore: r.daysBefore, taskId: r.taskId, metric: r.metric, threshold: r.threshold, forMinutes: r.forMinutes }).toEqual(
+    { kind: AlertKind.EXPIRY, daysBefore: 30, taskId: 0n, metric: ProbeMetric.UNSPECIFIED, threshold: 0, forMinutes: 0 });
+});
+
+it("提前天数超出 1–365 时表单不提交", async () => {
+  const saved: SaveAlertRuleRequest[] = [];
+  render({ saveAlertRule: async (req) => { saved.push(req); return {}; } });
+  const form = await screen.findByRole("form", { name: "新建告警规则" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "越界" } });
+  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(AlertKind.EXPIRY) } });
+  for (const value of ["0", "366", ""]) {
+    fireEvent.change(within(form).getByLabelText("提前天数"), { target: { value } });
+    fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  }
+  await act(async () => {});
+  expect(saved).toHaveLength(0);
+});
+
+it("列表写出到期规则的条件与状态，编辑时带回提前天数", async () => {
+  const saved: SaveAlertRuleRequest[] = [];
+  render({ listAlertRules: async () => expiryRules, saveAlertRule: async (req) => { saved.push(req); return {}; } });
+  const row = within((await screen.findByRole("cell", { name: "到期日距今不超过 14 天（含已过期）" })).closest("tr")!);
+  expect(row.getByRole("cell", { name: "到期" })).toBeInTheDocument();
+  expect(row.getByRole("cell", { name: "触发：法兰克福" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "编辑 续费（#12）" }));
+  const form = screen.getByRole("form", { name: "编辑 续费（#12）" });
+  expect(within(form).getByLabelText("提前天数")).toHaveValue(14);
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "续费提醒" } });
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].rule).toEqual({ ...expiryRules.rules[0], name: "续费提醒" });
+});
+
+it("到期规则改成离线时不再带提前天数", async () => {
+  const saved: SaveAlertRuleRequest[] = [];
+  render({ listAlertRules: async () => expiryRules, saveAlertRule: async (req) => { saved.push(req); return {}; } });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 续费（#12）" }));
+  const form = screen.getByRole("form", { name: "编辑 续费（#12）" });
+  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(AlertKind.OFFLINE) } });
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect({ kind: saved[0].rule!.kind, daysBefore: saved[0].rule!.daysBefore }).toEqual({ kind: AlertKind.OFFLINE, daysBefore: 0 });
+});
+
+// 新建草稿的探测任务与阈值是空串，换算后本来就是零值；从带着任务与阈值的探测规则切过来，这两项的断言才不是空转。
+it("探测规则改成到期时只带提前天数", async () => {
+  const saved: SaveAlertRuleRequest[] = [];
+  render({ listAlertRules: async () => rttRules, listProbeTasks: async () => rttTasks,
+    saveAlertRule: async (req) => { saved.push(req); return {}; },
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 延迟（#10）" }));
+  const form = screen.getByRole("form", { name: "编辑 延迟（#10）" });
+  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(AlertKind.EXPIRY) } });
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].rule).toEqual({ ...rttRules.rules[0], channelIds: [5n], kind: AlertKind.EXPIRY,
+    taskId: 0n, metric: ProbeMetric.UNSPECIFIED, threshold: 0, forMinutes: 0, daysBefore: 7 });
 });

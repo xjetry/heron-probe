@@ -145,7 +145,7 @@ func TestServeRequeuesPendingNotifications(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = st.RecordTransition(t.Context(), r.ID, id, store.StateFiring, store.AlertEvent{Transition: store.TransitionFiring, At: time.Now()}, []int64{channel})
+		_, err = st.RecordTransition(t.Context(), r.ID, id, store.StateFiring, "", store.AlertEvent{Transition: store.TransitionFiring, At: time.Now()}, []int64{channel})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -194,7 +194,7 @@ func TestServePrunesAlertEvents(t *testing.T) {
 					t.Fatal(err)
 				}
 				for _, age := range []time.Duration{tc.retention + 24*time.Hour, tc.retention - 24*time.Hour} {
-					ev, err := st.RecordTransition(t.Context(), r.ID, id, store.StateFiring, store.AlertEvent{Transition: store.TransitionFiring, At: clk.Now().Add(-age)}, []int64{channel})
+					ev, err := st.RecordTransition(t.Context(), r.ID, id, store.StateFiring, "", store.AlertEvent{Transition: store.TransitionFiring, At: clk.Now().Add(-age)}, []int64{channel})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -224,5 +224,79 @@ func TestServePrunesAlertEvents(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// hub 启动即做一次到期扫描，天界取 --timezone：UTC 16:30 在上海已是 9 月 25 日，9 月 24 日到期、开着按月自动续期的
+// 节点推后到 10 月 24 日；按 UTC 算今天仍是 9 月 24 日，不会推后。"node expiry renewed" 只在推后的日期落库之后记。
+func TestServeRenewsExpiryAtStartupInTheHubZone(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 9, 24, 16, 30, 0, 0, time.UTC))
+	_, events, _ := startAlertHub(t, clk, func(st *store.Store) {
+		id, err := st.CreateNode(t.Context(), "renewing", make([]byte, 32))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := store.Billing{Cycle: store.CycleMonthly, ExpiresOn: "2026-09-24", AutoRenew: true}
+		if _, err := st.UpdateNode(t.Context(), id, store.NodeEdit{Name: "renewing", TrafficResetDay: 1, Billing: b}); err != nil {
+			t.Fatal(err)
+		}
+	}, "--timezone", "Asia/Shanghai")
+	deadline := time.NewTimer(testwait.Bound)
+	defer deadline.Stop()
+	for {
+		select {
+		case event := <-events:
+			if string(event["msg"]) != `"node expiry renewed"` {
+				continue
+			}
+			if from, to := string(event["from"]), string(event["to"]); from != `"2026-09-24"` || to != `"2026-10-24"` {
+				t.Fatalf("renewed from %s to %s, want 2026-09-24 to 2026-10-24", from, to)
+			}
+			return
+		case <-deadline.C:
+			t.Fatal("the startup expiry sweep did not renew the node")
+		}
+	}
+}
+
+// serve 把 --timezone 交给管理端与公开端：UTC 16:30 在上海已是 9 月 25 日，9 月 30 日到期还剩 5 天（按 UTC 是 6 天）。
+func TestServeReportsDaysLeftInTheHubZone(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 9, 24, 16, 30, 0, 0, time.UTC))
+	db := filepath.Join(t.TempDir(), "hub.db")
+	password := "days left sufficiently long password"
+	if err := runPasswdWith([]string{"--db", db}, pipeWith(t, password+"\n"), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(db, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := st.CreateNode(t.Context(), "zoned", make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateNode(t.Context(), id, store.NodeEdit{Name: "zoned", Public: true, TrafficResetDay: 1, Billing: store.Billing{ExpiresOn: "2026-09-30"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	url, _, _ := startTestHub(t, db, clk, "--timezone", "Asia/Shanghai")
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := probev1connect.NewAdminServiceClient(&http.Client{Jar: jar, Timeout: testwait.Bound}, url)
+	if _, err := admin.Login(t.Context(), connect.NewRequest(&probev1.LoginRequest{Password: password})); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := admin.ListNodes(t.Context(), connect.NewRequest(&probev1.ListNodesRequest{}))
+	if err != nil || len(nodes.Msg.GetNodes()) != 1 || nodes.Msg.GetNodes()[0].GetBilling().GetDaysLeft() != 5 {
+		t.Fatalf("admin ListNodes = %v %v, want days_left 5", nodes, err)
+	}
+	public := probev1connect.NewPublicServiceClient(&http.Client{Timeout: testwait.Bound}, url)
+	snap, err := public.GetSnapshot(t.Context(), connect.NewRequest(&probev1.PublicServiceGetSnapshotRequest{}))
+	if err != nil || len(snap.Msg.GetNodes()) != 1 || snap.Msg.GetNodes()[0].GetBilling().GetDaysLeft() != 5 {
+		t.Fatalf("public GetSnapshot = %v %v, want days_left 5", snap, err)
 	}
 }

@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file probe/v1/types.proto.
  */
 export const file_probe_v1_types: GenFile = /*@__PURE__*/
-  fileDesc("ChRwcm9iZS92MS90eXBlcy5wcm90bxIIcHJvYmUudjEitAUKB01ldHJpY3MSDwoHYm9vdF9pZBgBIAEoCRIUCgdjcHVfcGN0GAIgASgBSACIAQESEgoFbG9hZDEYAyABKAFIAYgBARISCgVsb2FkNRgEIAEoAUgCiAEBEhMKBmxvYWQxNRgFIAEoAUgDiAEBEhYKCW1lbV90b3RhbBgGIAEoBEgEiAEBEhUKCG1lbV91c2VkGAcgASgESAWIAQESFwoKc3dhcF90b3RhbBgIIAEoBEgGiAEBEhYKCXN3YXBfdXNlZBgJIAEoBEgHiAEBEhcKCmRpc2tfdG90YWwYCiABKARICIgBARIWCglkaXNrX3VzZWQYCyABKARICYgBARIZCgxuZXRfcnhfdG90YWwYDCABKARICogBARIZCgxuZXRfdHhfdG90YWwYDSABKARIC4gBARIXCgpuZXRfcnhfYnBzGA4gASgESAyIAQESFwoKbmV0X3R4X2JwcxgPIAEoBEgNiAEBEhYKCXRjcF9jb25ucxgQIAEoDUgOiAEBEhYKCXVkcF9jb25ucxgRIAEoDUgPiAEBEhIKBXByb2NzGBIgASgNSBCIAQESFQoIdXB0aW1lX3MYEyABKARIEYgBAUIKCghfY3B1X3BjdEIICgZfbG9hZDFCCAoGX2xvYWQ1QgkKB19sb2FkMTVCDAoKX21lbV90b3RhbEILCglfbWVtX3VzZWRCDQoLX3N3YXBfdG90YWxCDAoKX3N3YXBfdXNlZEINCgtfZGlza190b3RhbEIMCgpfZGlza191c2VkQg8KDV9uZXRfcnhfdG90YWxCDwoNX25ldF90eF90b3RhbEINCgtfbmV0X3J4X2Jwc0INCgtfbmV0X3R4X2Jwc0IMCgpfdGNwX2Nvbm5zQgwKCl91ZHBfY29ubnNCCAoGX3Byb2NzQgsKCV91cHRpbWVfcyKwAQoFRmFjdHMSEAoIaG9zdG5hbWUYASABKAkSCgoCb3MYAiABKAkSDgoGa2VybmVsGAMgASgJEgwKBGFyY2gYBCABKAkSFgoOdmlydHVhbGl6YXRpb24YBSABKAkSEQoJY3B1X21vZGVsGAYgASgJEhEKCWNwdV9jb3JlcxgHIAEoDRIVCg1hZ2VudF92ZXJzaW9uGAggASgJEhYKDmljbXBfYXZhaWxhYmxlGAkgASgIIpgBCgtQcm9iZVJlc3VsdBIPCgd0YXNrX2lkGAEgASgEEg4KBmFnZV9tcxgCIAEoDRIQCgZydHRfdXMYAyABKA1IABIkCgd0aW1lb3V0GAQgASgLMhEucHJvYmUudjEuVGltZW91dEgAEiUKBWVycm9yGAUgASgLMhQucHJvYmUudjEuUHJvYmVFcnJvckgAQgkKB291dGNvbWUiCQoHVGltZW91dCIdCgpQcm9iZUVycm9yEg8KB21lc3NhZ2UYASABKAkicgoJUHJvYmVUYXNrEgoKAmlkGAEgASgEEiEKBGtpbmQYAiABKA4yEy5wcm9iZS52MS5Qcm9iZUtpbmQSDgoGdGFyZ2V0GAMgASgJEhIKCmludGVydmFsX3MYBCABKA0SEgoKdGltZW91dF9tcxgFIAEoDSJBCgpQcm9iZVRhc2tzEg8KB3ZlcnNpb24YASABKAQSIgoFdGFza3MYAiADKAsyEy5wcm9iZS52MS5Qcm9iZVRhc2sikwEKB1RyYWZmaWMSEAoIdG90YWxfcngYASABKAQSEAoIdG90YWxfdHgYAiABKAQSEQoJcGVyaW9kX3J4GAMgASgEEhEKCXBlcmlvZF90eBgEIAEoBBIUCgxwZXJpb2Rfc3RhcnQYBSABKAMSFQoNbmV4dF9yZXNldF9hdBgGIAEoAxIRCglyZXNldF9kYXkYByABKA0qUAoJUHJvYmVLaW5kEhoKFlBST0JFX0tJTkRfVU5TUEVDSUZJRUQQABITCg9QUk9CRV9LSU5EX0lDTVAQARISCg5QUk9CRV9LSU5EX1RDUBACQi5aLGdpdGh1Yi5jb20veGpldHJ5L3Byb2JlL2dlbi9wcm9iZS92MTtwcm9iZXYxYgZwcm90bzM");
+  fileDesc("ChRwcm9iZS92MS90eXBlcy5wcm90bxIIcHJvYmUudjEitAUKB01ldHJpY3MSDwoHYm9vdF9pZBgBIAEoCRIUCgdjcHVfcGN0GAIgASgBSACIAQESEgoFbG9hZDEYAyABKAFIAYgBARISCgVsb2FkNRgEIAEoAUgCiAEBEhMKBmxvYWQxNRgFIAEoAUgDiAEBEhYKCW1lbV90b3RhbBgGIAEoBEgEiAEBEhUKCG1lbV91c2VkGAcgASgESAWIAQESFwoKc3dhcF90b3RhbBgIIAEoBEgGiAEBEhYKCXN3YXBfdXNlZBgJIAEoBEgHiAEBEhcKCmRpc2tfdG90YWwYCiABKARICIgBARIWCglkaXNrX3VzZWQYCyABKARICYgBARIZCgxuZXRfcnhfdG90YWwYDCABKARICogBARIZCgxuZXRfdHhfdG90YWwYDSABKARIC4gBARIXCgpuZXRfcnhfYnBzGA4gASgESAyIAQESFwoKbmV0X3R4X2JwcxgPIAEoBEgNiAEBEhYKCXRjcF9jb25ucxgQIAEoDUgOiAEBEhYKCXVkcF9jb25ucxgRIAEoDUgPiAEBEhIKBXByb2NzGBIgASgNSBCIAQESFQoIdXB0aW1lX3MYEyABKARIEYgBAUIKCghfY3B1X3BjdEIICgZfbG9hZDFCCAoGX2xvYWQ1QgkKB19sb2FkMTVCDAoKX21lbV90b3RhbEILCglfbWVtX3VzZWRCDQoLX3N3YXBfdG90YWxCDAoKX3N3YXBfdXNlZEINCgtfZGlza190b3RhbEIMCgpfZGlza191c2VkQg8KDV9uZXRfcnhfdG90YWxCDwoNX25ldF90eF90b3RhbEINCgtfbmV0X3J4X2Jwc0INCgtfbmV0X3R4X2Jwc0IMCgpfdGNwX2Nvbm5zQgwKCl91ZHBfY29ubnNCCAoGX3Byb2NzQgsKCV91cHRpbWVfcyKwAQoFRmFjdHMSEAoIaG9zdG5hbWUYASABKAkSCgoCb3MYAiABKAkSDgoGa2VybmVsGAMgASgJEgwKBGFyY2gYBCABKAkSFgoOdmlydHVhbGl6YXRpb24YBSABKAkSEQoJY3B1X21vZGVsGAYgASgJEhEKCWNwdV9jb3JlcxgHIAEoDRIVCg1hZ2VudF92ZXJzaW9uGAggASgJEhYKDmljbXBfYXZhaWxhYmxlGAkgASgIIpgBCgtQcm9iZVJlc3VsdBIPCgd0YXNrX2lkGAEgASgEEg4KBmFnZV9tcxgCIAEoDRIQCgZydHRfdXMYAyABKA1IABIkCgd0aW1lb3V0GAQgASgLMhEucHJvYmUudjEuVGltZW91dEgAEiUKBWVycm9yGAUgASgLMhQucHJvYmUudjEuUHJvYmVFcnJvckgAQgkKB291dGNvbWUiCQoHVGltZW91dCIdCgpQcm9iZUVycm9yEg8KB21lc3NhZ2UYASABKAkicgoJUHJvYmVUYXNrEgoKAmlkGAEgASgEEiEKBGtpbmQYAiABKA4yEy5wcm9iZS52MS5Qcm9iZUtpbmQSDgoGdGFyZ2V0GAMgASgJEhIKCmludGVydmFsX3MYBCABKA0SEgoKdGltZW91dF9tcxgFIAEoDSJBCgpQcm9iZVRhc2tzEg8KB3ZlcnNpb24YASABKAQSIgoFdGFza3MYAiADKAsyEy5wcm9iZS52MS5Qcm9iZVRhc2sikwEKB1RyYWZmaWMSEAoIdG90YWxfcngYASABKAQSEAoIdG90YWxfdHgYAiABKAQSEQoJcGVyaW9kX3J4GAMgASgEEhEKCXBlcmlvZF90eBgEIAEoBBIUCgxwZXJpb2Rfc3RhcnQYBSABKAMSFQoNbmV4dF9yZXNldF9hdBgGIAEoAxIRCglyZXNldF9kYXkYByABKA0ipwEKB0JpbGxpbmcSDQoFcHJpY2UYASABKAkSEAoIY3VycmVuY3kYAiABKAkSLQoNYmlsbGluZ19jeWNsZRgDIAEoDjIWLnByb2JlLnYxLkJpbGxpbmdDeWNsZRISCgpleHBpcmVzX29uGAQgASgJEhIKCmF1dG9fcmVuZXcYBSABKAgSFgoJZGF5c19sZWZ0GAYgASgFSACIAQFCDAoKX2RheXNfbGVmdCpQCglQcm9iZUtpbmQSGgoWUFJPQkVfS0lORF9VTlNQRUNJRklFRBAAEhMKD1BST0JFX0tJTkRfSUNNUBABEhIKDlBST0JFX0tJTkRfVENQEAIq1gEKDEJpbGxpbmdDeWNsZRIdChlCSUxMSU5HX0NZQ0xFX1VOU1BFQ0lGSUVEEAASGQoVQklMTElOR19DWUNMRV9NT05USExZEAESGwoXQklMTElOR19DWUNMRV9RVUFSVEVSTFkQAhIcChhCSUxMSU5HX0NZQ0xFX1NFTUlBTk5VQUwQAxIYChRCSUxMSU5HX0NZQ0xFX1lFQVJMWRAEEhoKFkJJTExJTkdfQ1lDTEVfQklFTk5JQUwQBRIbChdCSUxMSU5HX0NZQ0xFX1RSSUVOTklBTBAGQi5aLGdpdGh1Yi5jb20veGpldHJ5L3Byb2JlL2dlbi9wcm9iZS92MTtwcm9iZXYxYgZwcm90bzM");
 
 /**
  * 一次上报里的主机读数。每个读数都是 optional：缺失表示"无读数"，
@@ -386,6 +386,63 @@ export const TrafficSchema: GenMessage<Traffic> = /*@__PURE__*/
   messageDesc(file_probe_v1_types, 7);
 
 /**
+ * 节点的计费与到期（§9.4）。价格与币种是提醒用的展示值：hub 不汇总、不换算，也不拿它们做任何计算；到期日与周期
+ * 驱动 days_left、自动续期与到期规则。Node 与 UpdateNodeRequest 都以它承载；公开端的 PublicBilling 由它按字段名投影生成，两者对不齐时 hub 构造公开服务就 panic。
+ *
+ * @generated from message probe.v1.Billing
+ */
+export type Billing = Message<"probe.v1.Billing"> & {
+  /**
+   * 价格，十进制文本（如 12.50）；空表示未填。保存时须为空或匹配 ^[0-9]{1,9}(\.[0-9]{1,2})?$。
+   *
+   * @generated from field: string price = 1;
+   */
+  price: string;
+
+  /**
+   * ISO 4217 币种代码（三个大写字母）；价格非空时必填，币种可以单独填。
+   *
+   * @generated from field: string currency = 2;
+   */
+  currency: string;
+
+  /**
+   * @generated from field: probe.v1.BillingCycle billing_cycle = 3;
+   */
+  billingCycle: BillingCycle;
+
+  /**
+   * 到期日 YYYY-MM-DD；空表示没有到期日。保存时须为空或存在的日期。
+   *
+   * @generated from field: string expires_on = 4;
+   */
+  expiresOn: string;
+
+  /**
+   * 开着时，到期日早于今天（hub 时区）即按周期推后到不早于今天。hub 启动、每个日界（零点不存在的日子取新一天的
+   * 第一个时刻）、计费字段变化与保存启用的到期规则时检查。保存时要求 billing_cycle 与 expires_on 都非空。
+   *
+   * @generated from field: bool auto_renew = 5;
+   */
+  autoRenew: boolean;
+
+  /**
+   * 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日、或库里的到期日无法解析时缺失。只由 hub 填写：
+   * 保存请求里的值忽略，与 AlertRule.created_at 同一做法。
+   *
+   * @generated from field: optional int32 days_left = 6;
+   */
+  daysLeft?: number | undefined;
+};
+
+/**
+ * Describes the message probe.v1.Billing.
+ * Use `create(BillingSchema)` to create a new message.
+ */
+export const BillingSchema: GenMessage<Billing> = /*@__PURE__*/
+  messageDesc(file_probe_v1_types, 8);
+
+/**
  * @generated from enum probe.v1.ProbeKind
  */
 export enum ProbeKind {
@@ -410,4 +467,65 @@ export enum ProbeKind {
  */
 export const ProbeKindSchema: GenEnum<ProbeKind> = /*@__PURE__*/
   enumDesc(file_probe_v1_types, 0);
+
+/**
+ * 节点的计费周期（§9.4）。管理与公开两端共用，所以与 Billing 一起定义在这里：public.proto 不能 import admin.proto。
+ * 未指定表示没有周期（一次性付费或未填）；自动续期要求非未指定。
+ *
+ * @generated from enum probe.v1.BillingCycle
+ */
+export enum BillingCycle {
+  /**
+   * @generated from enum value: BILLING_CYCLE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * 1 个月。
+   *
+   * @generated from enum value: BILLING_CYCLE_MONTHLY = 1;
+   */
+  MONTHLY = 1,
+
+  /**
+   * 3 个月。
+   *
+   * @generated from enum value: BILLING_CYCLE_QUARTERLY = 2;
+   */
+  QUARTERLY = 2,
+
+  /**
+   * 6 个月。
+   *
+   * @generated from enum value: BILLING_CYCLE_SEMIANNUAL = 3;
+   */
+  SEMIANNUAL = 3,
+
+  /**
+   * 12 个月。
+   *
+   * @generated from enum value: BILLING_CYCLE_YEARLY = 4;
+   */
+  YEARLY = 4,
+
+  /**
+   * 24 个月。
+   *
+   * @generated from enum value: BILLING_CYCLE_BIENNIAL = 5;
+   */
+  BIENNIAL = 5,
+
+  /**
+   * 36 个月。
+   *
+   * @generated from enum value: BILLING_CYCLE_TRIENNIAL = 6;
+   */
+  TRIENNIAL = 6,
+}
+
+/**
+ * Describes the enum probe.v1.BillingCycle.
+ */
+export const BillingCycleSchema: GenEnum<BillingCycle> = /*@__PURE__*/
+  enumDesc(file_probe_v1_types, 1);
 

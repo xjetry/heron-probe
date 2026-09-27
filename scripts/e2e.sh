@@ -12,7 +12,10 @@ cd "$(cd "$(dirname "$0")/.." && pwd)"
 work=$(mktemp -d)
 echo "E2E artifacts: $work"
 db="$work/e2e.db"
-port=18080
+# 端口默认 18080（hub）/18081（webhook 接收器），与 install-accept 的 18085/18086、macos-accept 的 18087/18088 错开；
+# 本机上别的进程占着默认端口时，用环境变量 E2E_HUB_PORT、E2E_HOOK_PORT 覆盖。
+port=${E2E_HUB_PORT:-18080}
+hook_port=${E2E_HOOK_PORT:-18081}
 base="http://127.0.0.1:$port"
 admin_pw="e2e admin password 2026"
 : > "$work/jar"
@@ -316,7 +319,7 @@ until [ "$(rpc GetSnapshot '{}')" = 200 ] && jq -e --arg id "$node2" '[.nodes[] 
 done
 
 # 接收器与 hub 同在宿主回环；每次请求体落一行，退出时一并回收。
-python3 - "$work/hooks.txt" <<'PY' > "$work/hookrecv.log" 2>&1 &
+python3 - "$work/hooks.txt" "$hook_port" <<'PY' > "$work/hookrecv.log" 2>&1 &
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 out = sys.argv[1]
@@ -332,14 +335,14 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
     def log_message(self, *a):
         pass
-HTTPServer(("127.0.0.1", 18081), H).serve_forever()
+HTTPServer(("127.0.0.1", int(sys.argv[2])), H).serve_forever()
 PY
 hookrecv=$!
 i=0
-until curl -sf -o /dev/null http://127.0.0.1:18081/; do
+until curl -sf -o /dev/null "http://127.0.0.1:$hook_port/"; do
   i=$((i + 1)); [ "$i" -lt 30 ] || { echo "FAIL: webhook receiver did not listen"; cat "$work/hookrecv.log"; exit 1; }; sleep 0.2
 done
-[ "$(rpc SaveNotifyChannel "$(jq -nc '{channel: {name: "e2e hook", kind: "CHANNEL_KIND_WEBHOOK", webhook: {url: "http://127.0.0.1:18081/hook"}}}')")" = 200 ] || { echo "FAIL: SaveNotifyChannel"; cat "$work/SaveNotifyChannel.json"; exit 1; }
+[ "$(rpc SaveNotifyChannel "$(jq -nc --arg url "http://127.0.0.1:$hook_port/hook" '{channel: {name: "e2e hook", kind: "CHANNEL_KIND_WEBHOOK", webhook: {url: $url}}}')")" = 200 ] || { echo "FAIL: SaveNotifyChannel"; cat "$work/SaveNotifyChannel.json"; exit 1; }
 channel=$(jq -r '.channel.id' "$work/SaveNotifyChannel.json")
 [ "$(rpc TestNotifyChannel "$(jq -nc --arg id "$channel" '{id: $id}')")" = 200 ] || { echo "FAIL: TestNotifyChannel"; cat "$work/TestNotifyChannel.json"; exit 1; }
 [ "$(rpc SaveAlertRule "$(jq -nc --arg c "$channel" --arg n "$node2" '{rule: {name: "e2e offline", kind: "ALERT_KIND_OFFLINE", enabled: true, allNodes: false, nodeIds: [$n], channelIds: [$c]}}')")" = 200 ] || { echo "FAIL: SaveAlertRule"; cat "$work/SaveAlertRule.json"; exit 1; }
@@ -347,14 +350,16 @@ channel=$(jq -r '.channel.id' "$work/SaveNotifyChannel.json")
 # 截止按轮询间累计的 sleep 秒数计，不按墙钟。宿主休眠时 hub、docker VM 与本脚本一起停摆，一次休眠
 # 至多落在一次 sleep 里，累计值至多多算这一次，其余每一秒都是被等的系统醒着运行的时间。墙钟截止会把
 # 整段休眠算进预算，醒来后第一次检查就失败，而那段时间里被等的系统根本没有运行。
+# wait_alert 节点 变化 预算秒数：等该节点恰有一条已送达的该变化事件。
 wait_alert() {
-  transition=$1
-  alert_budget_s=$2
+  alert_node=$1
+  transition=$2
+  alert_budget_s=$3
   alert_started=$(date +%s)
   alert_slept_s=0
   while :; do
     [ "$(rpc ListAlertEvents '{}')" = 200 ] || { echo "FAIL: ListAlertEvents"; cat "$work/ListAlertEvents.json"; exit 1; }
-    if jq -e --arg n "$node2" --arg tr "$transition" '[.events[]? | select(.transition == $tr and .nodeId == $n and any(.deliveries[]; (.ok // false) == true))] | length == 1' "$work/ListAlertEvents.json" > /dev/null; then
+    if jq -e --arg n "$alert_node" --arg tr "$transition" '[.events[]? | select(.transition == $tr and .nodeId == $n and any(.deliveries[]; (.ok // false) == true))] | length == 1' "$work/ListAlertEvents.json" > /dev/null; then
       echo "alert $transition delivered after $(($(date +%s) - alert_started))s (${alert_slept_s}s of polling, budget ${alert_budget_s}s)"
       return
     fi
@@ -388,12 +393,57 @@ wait_alert_firing_s=$((ttl_s + sweep_s + retry_wait_s + sweep_s))
 wait_alert_recovered_s=$((request_timeout_s + initial_interval_s + sweep_s + retry_wait_s + sweep_s))
 docker kill "$(cat "$work/cid-arm64")" > /dev/null
 wait "$arm64" || true
-wait_alert firing "$wait_alert_firing_s"
+wait_alert "$node2" firing "$wait_alert_firing_s"
 grep -q '"transition":"firing"' "$work/hooks.txt" || { echo "FAIL: webhook body"; cat "$work/hooks.txt"; exit 1; }
 docker start "$(cat "$work/cid-arm64")" > /dev/null
 run_agent arm64 >> "$work/agent-arm64.log" 2>&1 &
 arm64=$!
-wait_alert recovered "$wait_alert_recovered_s"
+wait_alert "$node2" recovered "$wait_alert_recovered_s"
+
+# 计费与到期（§9.4）。UpdateNode 整体替换，billing 与 node1 其余可编辑字段（公开、重置日 15）一起给全。
+# hub 以 --timezone UTC 运行，jq 的 now 与 strftime 按 UTC 取日历日。
+# node_body 到期日 自动续期：node1 的整份可编辑字段，12.50 USD 按月。billing 里的 daysLeft 由 hub 计算，请求里的 999
+# 不起作用：续期后的 0–31、公开快照里与 now 相符、重启后的 4–5、重启后续期的 59–60 四处断言都排除了 999。
+node_body() {
+  jq -nc --arg id "$node1" --arg exp "$1" --argjson renew "$2" \
+    '{id: $id, name: "e2e-amd64", public: true, note: "", trafficResetDay: 15, offlineGraceS: 0,
+      billing: {price: "12.50", currency: "USD", billingCycle: "BILLING_CYCLE_MONTHLY", expiresOn: $exp, autoRenew: $renew, daysLeft: 999}}'
+}
+[ "$(rpc UpdateNode "$(jq -nc --arg id "$node1" '{id: $id, name: "e2e-amd64", public: true, trafficResetDay: 15, offlineGraceS: 0, billing: {price: "12.345", currency: "USD"}}')")" = 400 ] || { echo "FAIL: a three-decimal price was accepted"; cat "$work/UpdateNode.json"; exit 1; }
+grep -q 'billing.price: must match' "$work/UpdateNode.json" || { echo "FAIL: price error must name the field"; cat "$work/UpdateNode.json"; exit 1; }
+# 自动续期：上月 1 日到期、按月续期。保存触发的扫描当即推后到不早于今天的某月 1 日，响应里已是推后的日期；
+# 1 日在任何月份都不钳，跑在月底零点前后也只是推后到这个月或下个月的 1 日。
+last_month=$(jq -rn 'now | strftime("%Y %m") | split(" ") | map(tonumber) | if .[1] == 1 then [.[0] - 1, 12] else [.[0], .[1] - 1] end | "\(.[0])-\(if .[1] < 10 then "0" else "" end)\(.[1])-01"')
+[ "$(rpc UpdateNode "$(node_body "$last_month" true)")" = 200 ] || { echo "FAIL: UpdateNode with auto renew"; cat "$work/UpdateNode.json"; exit 1; }
+jq -e --arg from "$last_month" '.node.billing | .autoRenew == true and .expiresOn != $from and (.expiresOn | endswith("-01")) and .daysLeft >= 0 and .daysLeft <= 31' "$work/UpdateNode.json" > /dev/null || { echo "FAIL: auto renew did not push the expiry date past today"; cat "$work/UpdateNode.json"; exit 1; }
+renewed_to=$(jq -r '.node.billing.expiresOn' "$work/UpdateNode.json")
+grep -q "msg=\"node expiry renewed\" node_id=$node1 node=e2e-amd64 cycle=monthly from=$last_month to=$renewed_to\$" "$work/hub.log" || { echo "FAIL: renewal not logged"; grep 'expiry' "$work/hub.log"; exit 1; }
+# 5 天后到期、关掉自动续期；公开快照带价格、币种、周期、到期日与 days_left，不带自动续期。快照缓存 1 秒。
+soon=$(jq -rn 'now + 5 * 86400 | strftime("%Y-%m-%d")')
+[ "$(rpc UpdateNode "$(node_body "$soon" false)")" = 200 ] || { echo "FAIL: UpdateNode billing"; cat "$work/UpdateNode.json"; exit 1; }
+i=0
+until [ "$(pubget billing GetSnapshot '{}')" = 200 ] && jq -e --arg exp "$soon" '.nodes[0].billing.expiresOn == $exp' "$work/pub-billing.json" > /dev/null; do
+  i=$((i + 1)); [ "$i" -lt 10 ] || { echo "FAIL: public snapshot lacks the expiry date"; cat "$work/pub-billing.json"; exit 1; }; sleep 0.5
+done
+jq -e '.nodes[0].billing | .price == "12.50" and .currency == "USD" and .billingCycle == "BILLING_CYCLE_MONTHLY" and (has("autoRenew") | not)' "$work/pub-billing.json" > /dev/null || { echo "FAIL: public billing fields"; cat "$work/pub-billing.json"; exit 1; }
+# days_left 与同一响应的 now 出自同一时刻：到期日的 UTC 零点减 now 所在日的 UTC 零点，按天计。
+jq -e '(.now | tonumber) as $now | .nodes[0].billing | .daysLeft == (((.expiresOn | strptime("%Y-%m-%d") | mktime) - ($now - $now % 86400)) / 86400)' "$work/pub-billing.json" > /dev/null || { echo "FAIL: public days_left does not match now"; cat "$work/pub-billing.json"; exit 1; }
+[ "$(rpc SaveAlertRule '{"rule": {"name": "bad expiry", "kind": "ALERT_KIND_EXPIRY", "enabled": true, "allNodes": true, "daysBefore": 0}}')" = 400 ] || { echo "FAIL: days_before 0 was accepted"; cat "$work/SaveAlertRule.json"; exit 1; }
+grep -q 'rule.days_before must be between 1 and 365' "$work/SaveAlertRule.json" || { echo "FAIL: days_before error must name the field"; cat "$work/SaveAlertRule.json"; exit 1; }
+# 到期规则在 SaveAlertRule 与 UpdateNode 的请求里同步评估：响应返回时事件已落库并交给投递队列，等待的只是投递。
+# 预算 delivery_retry_wait，余量一个 offline_sweep（与上面两处同一余量口径）。
+wait_expiry_s=$((retry_wait_s + sweep_s))
+# expiry_rule_body 规则 ID：node1 的到期规则，提前 10 天；新建时 ID 为 0。重启后按同一份载荷再保存一次。
+expiry_rule_body() {
+  jq -nc --arg id "$1" --arg c "$channel" --arg n "$node1" '{rule: {id: $id, name: "e2e expiry", kind: "ALERT_KIND_EXPIRY", enabled: true, allNodes: false, nodeIds: [$n], channelIds: [$c], daysBefore: 10}}'
+}
+[ "$(rpc SaveAlertRule "$(expiry_rule_body 0)")" = 200 ] || { echo "FAIL: SaveAlertRule expiry"; cat "$work/SaveAlertRule.json"; exit 1; }
+jq -e '.rule.kind == "ALERT_KIND_EXPIRY" and .rule.daysBefore == 10' "$work/SaveAlertRule.json" > /dev/null || { echo "FAIL: expiry rule echo"; cat "$work/SaveAlertRule.json"; exit 1; }
+expiry_rule=$(jq -r '.rule.id' "$work/SaveAlertRule.json")
+wait_alert "$node1" firing "$wait_expiry_s"
+jq -e --arg n "$node1" --arg exp "$soon" '[.events[] | select(.nodeId == $n and .transition == "firing")][0].summary | startswith("节点 e2e-amd64 将于 " + $exp + " 到期（剩 ") and endswith("天，规则 e2e expiry）")' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: expiry firing summary"; cat "$work/ListAlertEvents.json"; exit 1; }
+grep -q '"kind":"expiry","transition":"firing"' "$work/hooks.txt" || { echo "FAIL: expiry webhook body"; cat "$work/hooks.txt"; exit 1; }
+# node1 停在 firing 进入重启；续期与恢复放到重启之后。
 # node1 的 agent 已退出；先推进到新重置日对应的周期，再保存停机前状态。
 [ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic before restart"; exit 1; }
 traffic_before=$(jq -c --arg id "$node1" '.nodes[] | select(.nodeId == $id) | .traffic' "$work/GetTraffic.json")
@@ -465,9 +515,21 @@ bin/probe-hub token revoke --db "$db" --id "$api_token_id" > "$work/token-revoke
 [ "$(bearer GetSnapshot '{}')" = 401 ] || { echo "FAIL: CLI revocation not effective on a running hub"; exit 1; }
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login after password change"; exit 1; }
 [ "$(rpc ListAlertRules '{}')" = 200 ] || { echo "FAIL: ListAlertRules after restart"; exit 1; }
-jq -e '(.rules | length) == 1' "$work/ListAlertRules.json" > /dev/null || { echo "FAIL: alert rule lost"; cat "$work/ListAlertRules.json"; exit 1; }
+jq -e '(.rules | length) == 2 and any(.rules[]; .kind == "ALERT_KIND_EXPIRY" and .daysBefore == 10)' "$work/ListAlertRules.json" > /dev/null || { echo "FAIL: alert rule lost"; cat "$work/ListAlertRules.json"; exit 1; }
+[ "$(rpc ListNodes '{}')" = 200 ] || { echo "FAIL: ListNodes after restart"; exit 1; }
+jq -e --arg id "$node1" --arg exp "$soon" '.nodes[] | select(.id == $id) | .billing | .price == "12.50" and .currency == "USD" and .billingCycle == "BILLING_CYCLE_MONTHLY" and .expiresOn == $exp and (.autoRenew // false) == false and .daysLeft >= 4 and .daysLeft <= 5' "$work/ListNodes.json" > /dev/null || { echo "FAIL: billing lost across restart"; cat "$work/ListNodes.json"; exit 1; }
+# node1 在 firing 状态下重启：状态从 alert_state 读回，启动扫描不再发第二条触发。再保存一次同一条规则，让一次扫描
+# 在响应之前同步做完，之后再数事件，不与启动扫描赛跑。离线一对加到期的触发，共三条，都已送达。
+[ "$(rpc SaveAlertRule "$(expiry_rule_body "$expiry_rule")")" = 200 ] || { echo "FAIL: SaveAlertRule expiry after restart"; cat "$work/SaveAlertRule.json"; exit 1; }
 [ "$(rpc ListAlertEvents '{}')" = 200 ] || { echo "FAIL: ListAlertEvents after restart"; exit 1; }
-jq -e '(.events | length) == 2 and all(.events[]; any(.deliveries[]; (.ok // false) == true))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: alert events lost"; cat "$work/ListAlertEvents.json"; exit 1; }
+jq -e '(.events | length) == 3 and all(.events[]; any(.deliveries[]; (.ok // false) == true))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: restart changed the alert events (lost, undelivered or fired again)"; cat "$work/ListAlertEvents.json"; exit 1; }
+# 重启之后续期：60 天后到期，恢复事件送达，文案写新日期。
+later=$(jq -rn 'now + 60 * 86400 | strftime("%Y-%m-%d")')
+[ "$(rpc UpdateNode "$(node_body "$later" false)")" = 200 ] || { echo "FAIL: UpdateNode renewal"; cat "$work/UpdateNode.json"; exit 1; }
+jq -e '.node.billing | .daysLeft >= 59 and .daysLeft <= 60' "$work/UpdateNode.json" > /dev/null || { echo "FAIL: renewed days_left"; cat "$work/UpdateNode.json"; exit 1; }
+wait_alert "$node1" recovered "$wait_expiry_s"
+jq -e --arg n "$node1" --arg exp "$later" '[.events[] | select(.nodeId == $n and .transition == "recovered")][0].summary == "节点 e2e-amd64 到期日已更新为 " + $exp + "（规则 e2e expiry）"' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: expiry recovered summary"; cat "$work/ListAlertEvents.json"; exit 1; }
+jq -e '(.events | length) == 4 and all(.events[]; any(.deliveries[]; (.ok // false) == true))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: alert events after renewal"; cat "$work/ListAlertEvents.json"; exit 1; }
 [ "$(rpc ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks after restart"; exit 1; }
 jq -e --arg version "$task_version" --arg icmp "$icmp_task" --arg tcp "$tcp_task" '.version == $version and (.tasks | length) == 2 and all(.tasks[]; (.nodeIds | length) == 2) and ([.tasks[].task.id] | sort) == ([$icmp, $tcp] | sort)' "$work/ListProbeTasks.json" > /dev/null || { echo "FAIL: tasks lost across restart"; cat "$work/ListProbeTasks.json"; exit 1; }
 echo "probe task version after restart: $(jq -r '.version' "$work/ListProbeTasks.json")"
@@ -517,10 +579,10 @@ sed -n '/^db_bytes: /d; s/^\([a-z0-9_]*\): [0-9][0-9]*$/\1/p' "$work/stats.txt" 
 # UpdateSettings 整体替换：请求只给了四项，存储层照样写五个 site.* 键（空 logo 也是一行）；表里目前只有外观。
 [ "$(get setting)" = 5 ] || { echo "FAIL: setting rows"; exit 1; }
 [ "$(get node)" = 2 ] || { echo "FAIL: node count"; exit 1; }
-[ "$(get alert_rule)" = 1 ] || { echo "FAIL: alert rule count"; exit 1; }
-[ "$(get alert_rule_node)" = 1 ] || { echo "FAIL: alert scope count"; exit 1; }
-[ "$(get alert_event)" = 2 ] || { echo "FAIL: alert event count"; exit 1; }
-[ "$(get alert_delivery)" = 2 ] || { echo "FAIL: alert delivery count"; exit 1; }
+[ "$(get alert_rule)" = 2 ] || { echo "FAIL: alert rule count"; exit 1; }
+[ "$(get alert_rule_node)" = 2 ] || { echo "FAIL: alert scope count"; exit 1; }
+[ "$(get alert_event)" = 4 ] || { echo "FAIL: alert event count"; exit 1; }
+[ "$(get alert_delivery)" = 4 ] || { echo "FAIL: alert delivery count"; exit 1; }
 [ "$(get notify_channel)" = 1 ] || { echo "FAIL: channel count"; exit 1; }
 [ "$(get probe_task)" = 1 ] || { echo "FAIL: task count"; exit 1; }
 [ "$(get probe_task_node)" = 2 ] || { echo "FAIL: assignment count"; exit 1; }
