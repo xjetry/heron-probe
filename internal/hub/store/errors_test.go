@@ -18,6 +18,7 @@ func TestTypedProbeErrorsKeepTextAndSentinels(t *testing.T) {
 		{"task", NotFoundError{Kind: ObjectProbeTask, ID: 999}, "probe task 999 does not exist", ErrNotFound, ErrNodeLimit},
 		{"limit", NodeLimitError{NodeID: 1, Tasks: 65, Max: 64}, "node 1 would have 65 probe tasks (maximum 64)", ErrNodeLimit, ErrNotFound},
 		{"inherited", InheritedLimitError{Tasks: 65, Max: 64}, "a new node would inherit 65 all-nodes probe tasks (maximum 64 per node); assign some of them to explicit nodes or delete them first", ErrNodeLimit, ErrNotFound},
+		{"limit sentinel", ErrNodeLimit, "probe task limit per node exceeded", ErrNodeLimit, ErrNotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.err.Error() != tc.text {
