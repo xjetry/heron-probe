@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -88,13 +89,32 @@ type fixture struct {
 	st    *store.Store
 	svc   *fakeService
 	r     *Resolver
+	logs  *syncBuffer
 	ts    int64
 	nodes map[string]int64
 }
 
+// syncBuffer 收集查询器的日志：假服务的处理函数与 Sweep 在不同协程里，写入要加锁。
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	f := &fixture{t: t, clk: clock.NewFake(time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)), nodes: map[string]int64{}}
+	f := &fixture{t: t, clk: clock.NewFake(time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)), logs: &syncBuffer{}, nodes: map[string]int64{}}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	var err error
 	f.st, err = store.Open(filepath.Join(t.TempDir(), "hub.db"), f.clk, log, store.MigrateSchema)
@@ -123,7 +143,7 @@ func newFixture(t *testing.T) *fixture {
 
 // restart 换一个新的查询器，与 hub 重启后一样没有任何内存状态；库与假服务不变。
 func (f *fixture) restart() {
-	f.r = New(f.st, alert.NewHTTPClient(), f.clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	f.r = New(f.st, alert.NewHTTPClient(), f.clk, slog.New(slog.NewTextHandler(f.logs, nil)))
 }
 
 func (f *fixture) enable(on bool) {
@@ -277,9 +297,34 @@ func TestLateAnswerForTheOldAddressIsNotWritten(t *testing.T) {
 	f.sweep()
 	f.wantRequests("/8.8.8.8/country")
 	f.wantCountry(id, "", "")
+	if logs := f.logs.String(); !strings.Contains(logs, "node address changed") || strings.Contains(logs, "node deleted") {
+		t.Fatalf("dropped answer logged as %q, want the address change", logs)
+	}
 	f.sweep()
 	f.wantRequests("/8.8.8.8/country", "/1.1.1.1/country")
 	f.wantCountry(id, "AU", "1.1.1.1")
+}
+
+// 查询发出之后节点被删除：答案丢掉、日志写明是节点已删而不是换了地址，这一轮照常处理后面的节点。
+func TestNodeDeletedWhileQueryingIsSkipped(t *testing.T) {
+	f := newFixture(t)
+	f.enable(true)
+	gone := f.report("a", "8.8.8.8")
+	kept := f.report("b", "1.1.1.1")
+	f.svc.reply = func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/8.8.8.8/country" {
+			if err := f.st.DeleteNode(r.Context(), gone); err != nil {
+				t.Error(err)
+			}
+		}
+		io.WriteString(w, "US")
+	}
+	f.sweep()
+	f.wantRequests("/8.8.8.8/country", "/1.1.1.1/country")
+	f.wantCountry(kept, "US", "1.1.1.1")
+	if logs := f.logs.String(); !strings.Contains(logs, "node deleted") || strings.Contains(logs, "node address changed") {
+		t.Fatalf("dropped answer logged as %q, want the deletion", logs)
+	}
 }
 
 // 查询关闭（从未开启、开启后又关闭）时不出网，假服务一个请求都收不到。开启的那一轮先证明这个节点确实会被查。

@@ -62,15 +62,6 @@ func IsPublic(addr netip.Addr) bool {
 	return true
 }
 
-// IsCountryCode 报告 s 是否恰为两个 ASCII 大写字母，是查询应答与手动指定共用的判定。只接受这一种形状：应答来自
-// 第三方，收窄到 [A-Z]{2} 之后它不可能携带标记、文字或别的国家写法（小写、三字母、名称），应答体也就不进入任何
-// 解释路径；页面按这两个字母算区域指示符旗帜，计算只对 A–Z 有定义。不核对是否是已分配的 ISO 3166-1 代码。
-func IsCountryCode(s string) bool {
-	return len(s) == 2 && isUpper(s[0]) && isUpper(s[1])
-}
-
-func isUpper(c byte) bool { return c >= 'A' && c <= 'Z' }
-
 // Target 把地址填进服务地址的占位。地址取 netip 的文本（数字、十六进制字母、点与冒号），在路径与查询串里都无需转义。
 func Target(tmpl string, addr netip.Addr) string {
 	return strings.ReplaceAll(tmpl, Placeholder, addr.WithZone("").String())
@@ -149,10 +140,12 @@ func (r *Resolver) Sweep(ctx context.Context) error {
 		}
 		delete(r.retryAt, k)
 		set, err := r.store.SetLookupCountry(ctx, n.ID, n.LastSource, country)
-		if err != nil {
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			r.log.Info("country lookup answer dropped: node deleted while querying", "node", n.ID, "addr", n.LastSource)
+		case err != nil:
 			return err
-		}
-		if !set {
+		case !set:
 			r.log.Info("country lookup answer dropped: node address changed while querying", "node", n.ID, "addr", n.LastSource)
 		}
 	}
@@ -191,7 +184,7 @@ func (r *Resolver) lookup(ctx context.Context, tmpl string, addr netip.Addr) (st
 		return "", fmt.Errorf("response longer than %d bytes", maxResponseBytes)
 	}
 	country := strings.TrimSpace(string(data))
-	if !IsCountryCode(country) {
+	if !store.IsCountryCode(country) {
 		return "", errNotCountry
 	}
 	return country, nil

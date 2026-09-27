@@ -13,7 +13,6 @@ import (
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/hub/alert"
-	"github.com/xjetry/probe/internal/hub/geo"
 	"github.com/xjetry/probe/internal/hub/sanitize"
 	"github.com/xjetry/probe/internal/hub/store"
 )
@@ -199,7 +198,7 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 		return nil, err
 	}
 	pin := req.Msg.GetCountryPin()
-	if pin != "" && !geo.IsCountryCode(pin) {
+	if pin != "" && !store.IsCountryCode(pin) {
 		return nil, invalid("country_pin: must be empty or two uppercase letters (ISO 3166-1 alpha-2), e.g. US; got %q", pin)
 	}
 	edit := store.NodeEdit{Name: name, Public: req.Msg.GetPublic(), Note: note, TrafficResetDay: day, OfflineGraceS: int(grace), Billing: billing, CountryPin: pin}

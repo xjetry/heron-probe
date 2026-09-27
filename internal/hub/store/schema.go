@@ -35,13 +35,15 @@ const ddlNode = `CREATE TABLE node (
   last_source TEXT NOT NULL DEFAULT '',
   -- 国家 / 地区（§4.9），ISO 3166-1 alpha-2，空串表示没有。列序与迁移 14 的 ADD COLUMN 结果一致。
   -- country 与 country_ip 成对：country 是对 country_ip 这个地址的查询答案，不是节点属性，换了出口的节点不得沿用
-  -- 旧答案。不变式 country_ip ∈ {'', last_source} 且 country 与 country_ip 同空同非空，由两个写者共同维持：
+  -- 旧答案。不变式 country_ip ∈ {'', last_source} 且 country 与 country_ip 同空同非空，由两个写者各自承载：
   -- WriteMinuteBatch 写入与 country_ip 不同的来源时同一条语句清空两列；SetLookupCountry 只在 last_source 仍是
-  -- 所查地址时写入两列（查询器只写非空的国家码）。
+  -- 所查地址时写入两列，并自己拒绝空地址与不是国家码的值。查询器本就只查非空的来源、只写国家码，写者的检查让
+  -- 不变式不依赖这一点。
   country TEXT NOT NULL DEFAULT '',
   country_ip TEXT NOT NULL DEFAULT '',
-  -- 管理员手动指定的国家，只由 UpdateNode 写；查询只写上面两列。两边各只有一个写者，手动值不会被查询覆盖，
-  -- 清空手动值即回落到查得值，冲突不需要裁决（显示值见 Node.DisplayCountry）。
+  -- 管理员手动指定的国家，只由 UpdateNode 写；查得两列的写者（WriteMinuteBatch、SetLookupCountry）不碰它，
+  -- UpdateNode 也不碰查得两列。没有哪个写者同时写两边，手动值不会被查询覆盖，清空手动值即回落到查得值，冲突不需要
+  -- 裁决（显示值见 Node.DisplayCountry）。
   country_pin TEXT NOT NULL DEFAULT ''
 )`
 

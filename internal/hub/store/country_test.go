@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
@@ -36,7 +37,7 @@ func TestMigrationFromV13AddsEmptyCountry(t *testing.T) {
 	}
 }
 
-// SetLookupCountry 只在 last_source 仍是所查地址时写入：地址已变、节点已删除都不写并返回 false。
+// SetLookupCountry 只在 last_source 仍是所查地址时写入：地址已变时不写、返回 false；节点不存在时返回 ErrNotFound。
 func TestSetLookupCountryIsConditionalOnTheAddress(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
@@ -57,8 +58,40 @@ func TestSetLookupCountryIsConditionalOnTheAddress(t *testing.T) {
 	if n, err := s.GetNode(ctx, id); err != nil || n.Country != "AU" || n.CountryIP != "1.1.1.1" {
 		t.Fatalf("after a matching answer: %+v %v", n, err)
 	}
-	if set, err := s.SetLookupCountry(ctx, id+1, "1.1.1.1", "AU"); err != nil || set {
-		t.Fatalf("missing node: set = %v %v", set, err)
+	if set, err := s.SetLookupCountry(ctx, id+1, "1.1.1.1", "AU"); !errors.Is(err, ErrNotFound) || set {
+		t.Fatalf("missing node: set = %v %v, want ErrNotFound", set, err)
+	}
+}
+
+// 写者自己维持"country 与 country_ip 同空同非空"：空地址（会匹配从未上报的节点）与不是国家码的值都返回错误、
+// 什么都不写，不靠调用方先过滤。
+func TestSetLookupCountryRejectsEmptyAddressAndNonCountry(t *testing.T) {
+	s, clk := open(t)
+	ctx := t.Context()
+	silent, _, _ := s.CreateNode(ctx, "never reported", hash(1))
+	reported, _, _ := s.CreateNode(ctx, "reported", hash(2))
+	row := metric.Row{NodeID: reported, TS: 600, Bucket: metric.NewBucket(), LastSeen: clk.Now(), Source: "8.8.8.8"}
+	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{row}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		id            int64
+		addr, country string
+		want          string
+	}{
+		{silent, "", "US", "lookup country of node 1: empty address"},
+		{reported, "8.8.8.8", "", `lookup country of node 2 for 8.8.8.8: "" is not two uppercase letters`},
+		{reported, "8.8.8.8", "us", `"us" is not two uppercase letters`},
+		{reported, "8.8.8.8", "USA", `"USA" is not two uppercase letters`},
+	} {
+		if set, err := s.SetLookupCountry(ctx, c.id, c.addr, c.country); set || err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("SetLookupCountry(%d, %q, %q) = %v %v, want an error containing %q", c.id, c.addr, c.country, set, err, c.want)
+		}
+	}
+	for _, id := range []int64{silent, reported} {
+		if n, err := s.GetNode(ctx, id); err != nil || n.Country != "" || n.CountryIP != "" {
+			t.Fatalf("rejected write left %+v %v", n, err)
+		}
 	}
 }
 

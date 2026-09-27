@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
@@ -81,6 +82,16 @@ const (
 	CountryManual
 	CountryLookup
 )
+
+// IsCountryCode 报告 s 是否恰为两个 ASCII 大写字母：node 表两处国家（查得的 country 与手动的 country_pin）的取值域，
+// 查询应答（geo）、手动指定（api 的 UpdateNode）与 SetLookupCountry 共用这一个判定。只接受这一种形状：应答来自
+// 第三方，收窄到 [A-Z]{2} 之后它不可能携带标记、文字或别的国家写法（小写、三字母、名称），应答体也就不进入任何
+// 解释路径；页面按这两个字母算区域指示符旗帜，计算只对 A–Z 有定义。不核对是否是已分配的 ISO 3166-1 代码。
+func IsCountryCode(s string) bool {
+	return len(s) == 2 && isUpper(s[0]) && isUpper(s[1])
+}
+
+func isUpper(c byte) bool { return c >= 'A' && c <= 'Z' }
 
 // DisplayCountry 是面板与公开页显示的国家：手动值非空取手动值，否则取查得值。这是显示值唯一的判定，管理端与公开端
 // 都经它取值。
@@ -239,8 +250,18 @@ func (s *Store) RenewExpiry(ctx context.Context, id int64, cycle BillingCycle, f
 
 // SetLookupCountry 写入对 addr 查得的国家，前提是节点的 last_source 此刻仍是 addr：查询在写协程之外发出，应答
 // 到达之前节点可能已换了出口（WriteMinuteBatch 随之清空了两列），按旧地址的答案写回就会把旧出口的国家挂到新地址上。
-// 条件不成立时不写、返回 false，新地址由查询器下一轮重查；节点已被删除时同样返回 false。
+// 条件不成立时不写、返回 false，新地址由查询器下一轮重查；节点已被删除时返回 ErrNotFound。
+//
+// country 与 country_ip 同空同非空（见 node 表的列注释）由这里的检查承载，不依赖调用方：addr 为空时条件
+// last_source = addr 对从未上报的节点成立，会写出有国家没地址的一对；country 为空则写出有地址没国家的一对。
+// 两种都返回错误、什么都不写，不是国家码的 country 同样拒绝。
 func (s *Store) SetLookupCountry(ctx context.Context, id int64, addr, country string) (bool, error) {
+	if addr == "" {
+		return false, fmt.Errorf("lookup country of node %d: empty address", id)
+	}
+	if !IsCountryCode(country) {
+		return false, fmt.Errorf("lookup country of node %d for %s: %q is not two uppercase letters", id, addr, country)
+	}
 	var set bool
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		res, err := tx.Exec("UPDATE node SET country = ?, country_ip = ? WHERE id = ? AND last_source = ?", country, addr, id, addr)
@@ -248,7 +269,17 @@ func (s *Store) SetLookupCountry(ctx context.Context, id int64, addr, country st
 			return err
 		}
 		n, err := res.RowsAffected()
-		set = n == 1
+		if err != nil {
+			return err
+		}
+		if set = n == 1; set {
+			return nil
+		}
+		var one int
+		err = tx.QueryRow("SELECT 1 FROM node WHERE id = ?", id).Scan(&one)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
 		return err
 	})
 	return set, err
