@@ -138,6 +138,70 @@ func TestSchemaPolicyCreatesAndReopensWithoutMigration(t *testing.T) {
 	}
 }
 
+// 非本项目建的库通常从没调用过 PRAGMA user_version，读出来正好是 0；如果只看版本号
+// 就当空库处理，CREATE TABLE 会把 schemaStatements 的全部对象叠进陌生库已有的数据上。
+func TestSchemaPolicyRejectsDatabaseWithTablesButNoVersion(t *testing.T) {
+	for _, policy := range []SchemaPolicy{MigrateSchema, RequireCurrentSchema} {
+		t.Run(fmt.Sprint(policy), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "foreign.db")
+			raw, err := sql.Open("sqlite", dsn(path, ""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { raw.Close() })
+			if _, err := raw.Exec("CREATE TABLE unrelated (id INTEGER PRIMARY KEY, note TEXT)"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := raw.Exec("INSERT INTO unrelated (note) VALUES ('not a probe database')"); err != nil {
+				t.Fatal(err)
+			}
+			before := describe(t, raw)
+			st, err := Open(path, clock.Real(), slog.Default(), policy)
+			if st != nil {
+				st.Close()
+			}
+			want := "not a probe database"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("foreign database open error = %v, want to contain %q", err, want)
+			}
+			if got := userVersion(t, raw); got != 0 {
+				t.Errorf("foreign database user_version = %d, want 0", got)
+			}
+			if after := describe(t, raw); !reflect.DeepEqual(after, before) {
+				t.Error("foreign database schema changed")
+			}
+			var rows int
+			if err := raw.QueryRow("SELECT count(*) FROM unrelated").Scan(&rows); err != nil || rows != 1 {
+				t.Errorf("foreign database rows = %d, %v, want 1 row kept", rows, err)
+			}
+		})
+	}
+}
+
+// 负数版本落进旧库分支会去找不存在的 migrations[0]（MigrateSchema）或建议改跑
+// serve 升级（RequireCurrentSchema）——两条提示都假定这是本项目的旧库，跟着做都走不通。
+func TestSchemaPolicyRejectsNegativeVersionWithoutSuggestingServe(t *testing.T) {
+	for _, policy := range []SchemaPolicy{MigrateSchema, RequireCurrentSchema} {
+		t.Run(fmt.Sprint(policy), func(t *testing.T) {
+			path, raw := schemaPolicyFixture(t, nil, -1)
+			st, err := Open(path, clock.Real(), slog.Default(), policy)
+			if st != nil {
+				st.Close()
+			}
+			want := "not a probe database"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("negative version open error = %v, want to contain %q", err, want)
+			}
+			if strings.Contains(err.Error(), "serve") {
+				t.Errorf("negative version error = %v, must not suggest running serve", err)
+			}
+			if got := userVersion(t, raw); got != -1 {
+				t.Errorf("negative version database user_version = %d, want -1", got)
+			}
+		})
+	}
+}
+
 func TestSchemaPolicyRejectsInvalidPolicy(t *testing.T) {
 	for _, policy := range []SchemaPolicy{0, -1, 3} {
 		t.Run(fmt.Sprint(policy), func(t *testing.T) {
