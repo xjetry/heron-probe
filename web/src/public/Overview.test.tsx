@@ -60,6 +60,9 @@ it("按 POLL_MS 轮询快照", async () => {
 });
 
 it("填了费用与到期的节点卡片多两行，已过期的到期标红，没填的不显示这两行", async () => {
+  // 时钟放在与夹具错开的日期：剩余天数只能来自 hub 下发的 daysLeft，页面按本地日期重算会得出另一个数。
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2031, 0, 1));
   const billed = {
     now: 1_000n,
     nodes: [

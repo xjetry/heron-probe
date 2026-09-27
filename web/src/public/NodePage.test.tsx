@@ -1,6 +1,6 @@
 import { create } from "@bufbuild/protobuf";
 import { cleanup, screen } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { PublicService } from "../gen/probe/v1/public_pb";
 import { QueryProbesResponseSchema } from "../gen/probe/v1/query_pb";
 import { BillingCycle, ProbeKind } from "../gen/probe/v1/types_pb";
@@ -10,6 +10,8 @@ import { NodePage } from "./NodePage";
 vi.mock("../components/Chart", () => ({
   Chart: ({ labels }: { labels: string[] }) => <div data-testid="chart">{labels.map((l) => <span key={l}>{l}</span>)}</div>,
 }));
+
+afterEach(() => vi.useRealTimers());
 
 const snapshot = async () => ({ now: 1_000n, nodes: [{ id: 7n, name: "edge-1", online: true, facts: { os: "Alpine 3.21", arch: "arm64", cpuModel: "Neoverse", cpuCores: 2 } }] });
 
@@ -33,10 +35,14 @@ it("快照里没有的节点说明不存在或未公开，也不去查历史", a
 });
 
 it("静态信息卡带费用与到期两行；主机信息缺失时卡片照样显示这两行，都没有时不画卡片", async () => {
+  // 时钟放在与夹具错开的日期：剩余天数只能来自 hub 下发的 daysLeft，页面按本地日期重算会得出另一个数。
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2031, 0, 1));
   const nodes = [
     { id: 7n, name: "edge-1", online: true, facts: { os: "Alpine 3.21", arch: "arm64" }, billing: { price: "5", currency: "EUR", billingCycle: BillingCycle.YEARLY, expiresOn: "2026-09-20", daysLeft: -7 } },
     { id: 8n, name: "fresh", online: false, billing: { price: "3", currency: "USD" } },
     { id: 9n, name: "bare", online: false },
+    { id: 10n, name: "due", online: false, billing: { expiresOn: "2026-09-20", daysLeft: -7 } },
   ];
   const getSnapshot = async () => ({ now: 1_000n, nodes });
   const queryMetrics = async () => ({ level: "1m", stepS: 60, ts: [], series: [] });
@@ -57,4 +63,8 @@ it("静态信息卡带费用与到期两行；主机信息缺失时卡片照样�
   cleanup();
   await show(9);
   expect(screen.queryByRole("definition")).toBeNull();
+  cleanup();
+  await show(10);
+  expect(screen.getAllByRole("definition").map((d) => d.textContent)).toEqual(["2026-09-20（已过期 7 天）"]);
+  expect(screen.getByText("2026-09-20（已过期 7 天）")).toHaveClass("error");
 });
