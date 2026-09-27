@@ -163,11 +163,14 @@ func TestSchemaPolicyCreatesAndReopensWithoutMigration(t *testing.T) {
 
 // 非本项目建的库通常从没调用过 PRAGMA user_version，读出来正好是 0；如果只看版本号
 // 就当空库处理，CREATE TABLE 会把 schemaStatements 的全部对象叠进陌生库已有的数据上。
+// 夹具不经 dsn 的任何 pragma 建库（sqlite3 建库的默认日志模式就是 DELETE），拒绝时
+// 逐字节比较而不只比较表结构：journal_mode(WAL) 这类 pragma 一旦在某个连接上生效就
+// 立即改写文件头（第 18—19 字节标出日志模式），比对表结构看不出这种改写。
 func TestSchemaPolicyRejectsDatabaseWithTablesButNoVersion(t *testing.T) {
 	for _, policy := range []SchemaPolicy{MigrateSchema, RequireCurrentSchema} {
 		t.Run(fmt.Sprint(policy), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "foreign.db")
-			raw, err := sql.Open("sqlite", dsn(path, ""))
+			raw, err := sql.Open("sqlite", "file:"+path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -178,24 +181,27 @@ func TestSchemaPolicyRejectsDatabaseWithTablesButNoVersion(t *testing.T) {
 			if _, err := raw.Exec("INSERT INTO unrelated (note) VALUES ('not a probe database')"); err != nil {
 				t.Fatal(err)
 			}
-			before := describe(t, raw)
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
 			st, err := Open(path, clock.Real(), slog.Default(), policy)
 			if st != nil {
 				st.Close()
 			}
 			want := "not a probe database"
-			if err == nil || !strings.Contains(err.Error(), want) {
+			if err == nil {
+				t.Fatalf("foreign database open error = <nil>, want to contain %q", want)
+			}
+			if !strings.Contains(err.Error(), want) {
 				t.Errorf("foreign database open error = %v, want to contain %q", err, want)
 			}
-			if got := userVersion(t, raw); got != 0 {
-				t.Errorf("foreign database user_version = %d, want 0", got)
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if after := describe(t, raw); !reflect.DeepEqual(after, before) {
-				t.Error("foreign database schema changed")
-			}
-			var rows int
-			if err := raw.QueryRow("SELECT count(*) FROM unrelated").Scan(&rows); err != nil || rows != 1 {
-				t.Errorf("foreign database rows = %d, %v, want 1 row kept", rows, err)
+			if !bytes.Equal(before, after) {
+				t.Errorf("foreign database bytes changed: before %d bytes, after %d bytes", len(before), len(after))
 			}
 		})
 	}
@@ -203,23 +209,47 @@ func TestSchemaPolicyRejectsDatabaseWithTablesButNoVersion(t *testing.T) {
 
 // 负数版本落进旧库分支会去找不存在的 migrations[0]（MigrateSchema）或建议改跑
 // serve 升级（RequireCurrentSchema）——两条提示都假定这是本项目的旧库，跟着做都走不通。
+// 逐字节比较的理由同上一条：schemaPolicyFixture 建的也是不带 pragma 的 DELETE 模式库。
 func TestSchemaPolicyRejectsNegativeVersionWithoutSuggestingServe(t *testing.T) {
 	for _, policy := range []SchemaPolicy{MigrateSchema, RequireCurrentSchema} {
 		t.Run(fmt.Sprint(policy), func(t *testing.T) {
-			path, raw := schemaPolicyFixture(t, nil, -1)
+			// 不经 schemaPolicyFixture：它建夹具用的是 dsn，dsn 的 pragma 列表一旦重新
+			// 带回 journal_mode(WAL)，"改写前"的快照会在夹具建立的那一刻就已经被写成
+			// WAL，测不出 Open 自己有没有再碰这个文件。这条用例要单独验证 Open，
+			// 夹具必须独立于 dsn 的实现。
+			path := filepath.Join(t.TempDir(), "negative.db")
+			raw, err := sql.Open("sqlite", "file:"+path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { raw.Close() })
+			if _, err := raw.Exec("PRAGMA user_version = -1"); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
 			st, err := Open(path, clock.Real(), slog.Default(), policy)
 			if st != nil {
 				st.Close()
 			}
 			want := "not a probe database"
-			if err == nil || !strings.Contains(err.Error(), want) {
+			if err == nil {
+				t.Fatalf("negative version open error = <nil>, want to contain %q", want)
+			}
+			if !strings.Contains(err.Error(), want) {
 				t.Errorf("negative version open error = %v, want to contain %q", err, want)
 			}
 			if strings.Contains(err.Error(), "serve") {
 				t.Errorf("negative version error = %v, must not suggest running serve", err)
 			}
-			if got := userVersion(t, raw); got != -1 {
-				t.Errorf("negative version database user_version = %d, want -1", got)
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Errorf("negative version database bytes changed: before %d bytes, after %d bytes", len(before), len(after))
 			}
 		})
 	}

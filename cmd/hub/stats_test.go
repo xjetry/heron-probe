@@ -37,6 +37,9 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 				t.Fatalf("fixture user_version = %d, want 9; this fixture is built for schema 9 by dropping its 7 added columns below, rebuild the v8 fixture for the new version", freshVersion)
 			}
 			// v9 只增加计费与到期列；去掉这些列得到可实际迁移的 v8 库，避免仅伪造版本号。
+			// 这个夹具经 openOffline 建成，openStore 判定通过后已经把它切成 WAL；切回
+			// DELETE 让它代表不受本项目管理的旧库常见状态（sqlite3 建库的默认日志模式
+			// 就是 DELETE），拒绝时逐字节不变与日志模式无关，两种模式都要成立。
 			for _, stmt := range []string{
 				"ALTER TABLE node DROP COLUMN price",
 				"ALTER TABLE node DROP COLUMN currency",
@@ -46,10 +49,15 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 				"ALTER TABLE alert_rule DROP COLUMN days_before",
 				"ALTER TABLE alert_state DROP COLUMN fired_expires_on",
 				"PRAGMA user_version = 8",
+				"PRAGMA journal_mode=DELETE",
 			} {
 				if _, err := raw.Exec(stmt); err != nil {
 					t.Fatal(err)
 				}
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
 			}
 			cmd := hubCommand(t, append(args, "--db", path)...)
 			cmd.Stdin = strings.NewReader("long enough test password\n")
@@ -62,12 +70,12 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 			if !strings.Contains(stderr.String(), "older than this binary") {
 				t.Errorf("old database stderr = %q, want older than this binary", stderr.String())
 			}
-			var version int
-			if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+			after, err := os.ReadFile(path)
+			if err != nil {
 				t.Fatal(err)
 			}
-			if version != 8 {
-				t.Errorf("offline command changed user_version to %d, want 8", version)
+			if !bytes.Equal(before, after) {
+				t.Errorf("offline command changed database bytes: before %d bytes, after %d bytes", len(before), len(after))
 			}
 		})
 	}
