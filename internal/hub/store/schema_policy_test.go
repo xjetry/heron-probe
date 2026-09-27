@@ -202,18 +202,50 @@ func TestSchemaPolicyRejectsNegativeVersionWithoutSuggestingServe(t *testing.T) 
 	}
 }
 
+// 守卫挪到 openStore 之后，panic 仍会发生：能观察到挪动的不是 panic 本身，而是
+// panic 之前多做的那部分工作留下的副作用。用一个已存在的 v8 库：挪动后的守卫会先
+// 把它迁到 v9 再 panic，这正是 store.go 的 SchemaPolicy 注释所说守卫要防的
+// "遗漏选择时意外迁移"。这条钉住"库被迁走"这一种副作用；空路径上的另一种副作用见
+// 下一条用例。
 func TestSchemaPolicyRejectsInvalidPolicy(t *testing.T) {
 	for _, policy := range []SchemaPolicy{0, -1, 3} {
 		t.Run(fmt.Sprint(policy), func(t *testing.T) {
+			path, raw := schemaPolicyFixture(t, schemaV8, 8)
+			before := describe(t, raw)
 			defer func() {
 				if got := recover(); got != "store.Open requires a valid SchemaPolicy" {
 					t.Errorf("invalid policy panic = %v, want explicit SchemaPolicy panic", got)
 				}
+				if got := userVersion(t, raw); got != 8 {
+					t.Errorf("invalid policy changed user_version to %d before panicking, want 8", got)
+				}
+				if after := describe(t, raw); !reflect.DeepEqual(after, before) {
+					t.Error("invalid policy changed schema before panicking")
+				}
 			}()
-			st, _ := Open(filepath.Join(t.TempDir(), "invalid.db"), clock.Real(), slog.Default(), policy)
+			st, _ := Open(path, clock.Real(), slog.Default(), policy)
 			if st != nil {
 				st.Close()
 			}
 		})
+	}
+}
+
+// 同一种挪动在空路径上留下另一种副作用：挪到 openStore 之后会先建出这个文件再
+// panic。这条钉住"文件被建出"，与上一条钉住的"库被迁走"是两种不同的副作用，各自
+// 只覆盖自己这条路径上的挪动。
+func TestSchemaPolicyRejectsInvalidPolicyBeforeTouchingAMissingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "invalid.db")
+	defer func() {
+		if got := recover(); got != "store.Open requires a valid SchemaPolicy" {
+			t.Errorf("invalid policy panic = %v, want explicit SchemaPolicy panic", got)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("invalid policy created a file at %s before panicking: %v", path, err)
+		}
+	}()
+	st, _ := Open(path, clock.Real(), slog.Default(), SchemaPolicy(0))
+	if st != nil {
+		st.Close()
 	}
 }
