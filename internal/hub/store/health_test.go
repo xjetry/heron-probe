@@ -132,6 +132,21 @@ func TestPruneRecordsCompletionOnlyOnSuccess(t *testing.T) {
 	wantFinished(t, s, MaintenanceRollup, nil)
 }
 
+// recordMaintenance 写簿记失败时，Rollup 与 Prune 都把错误包上一层前缀：RunMaintenance 只把返回的 error 原样
+// 记成 "rollup failed"/"prune failed" 日志，不包装就只剩 SQLite 原始错误，看日志的人无法判断是上卷/清理本身
+// 失败还是簿记没写进去——后者其实已经提交，只是这一轮的完成时刻没记上。
+func TestMaintenanceRecordErrorIsWrapped(t *testing.T) {
+	s, _ := open(t)
+	failRecord := "CREATE TRIGGER fail_maintenance_state BEFORE INSERT ON maintenance_state BEGIN SELECT RAISE(ABORT, 'maintenance state rejected'); END"
+	execStmts(t, s, failRecord)
+	if err := s.Rollup(t.Context()); err == nil || !strings.HasPrefix(err.Error(), "record rollup completion: ") {
+		t.Fatalf("Rollup error = %v, want prefix %q", err, "record rollup completion: ")
+	}
+	if _, err := s.Prune(t.Context(), DefaultRetention); err == nil || !strings.HasPrefix(err.Error(), "record prune completion: ") {
+		t.Fatalf("Prune error = %v, want prefix %q", err, "record prune completion: ")
+	}
+}
+
 func ptr(v int64) *int64 { return &v }
 
 func showSeries(series []SeriesHealth) string {

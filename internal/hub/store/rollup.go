@@ -121,7 +121,10 @@ func (s *Store) Rollup(ctx context.Context) error {
 			lowerUpto = upto
 		}
 	}
-	return s.recordMaintenance(ctx, MaintenanceRollup)
+	if err := s.recordMaintenance(ctx, MaintenanceRollup); err != nil {
+		return fmt.Errorf("record rollup completion: %w", err)
+	}
+	return nil
 }
 
 // rollupSlice 限制每次占用写协程的历史跨度，让其他写请求能在追赶的片间提交。
@@ -268,7 +271,10 @@ func (s *Store) Prune(ctx context.Context, r Retention) (int64, error) {
 			}
 		}
 	}
-	return total, s.recordMaintenance(ctx, MaintenancePrune)
+	if err := s.recordMaintenance(ctx, MaintenancePrune); err != nil {
+		return total, fmt.Errorf("record prune completion: %w", err)
+	}
+	return total, nil
 }
 
 func (s *Store) distinctNodes(ctx context.Context, table string) ([]int64, error) {
