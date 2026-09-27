@@ -10,7 +10,8 @@ import (
 )
 
 // 到期日按日历日计（§9.4）。日期一律表示为该日 UTC 零点的 time.Time：解析、"今天"与相减都在这种值上做，两个日期
-// 相差几天与任何时区的夏令时无关。hub 时区（--timezone）只在 Today 里出现一次：把一个时刻换成那里的日历日。
+// 相差几天与任何时区的夏令时无关。日期值里 hub 时区（--timezone）只经 Today 进入：把一个时刻换成那里的日历日；
+// 下一个日界的时刻由 nextDayStart 按同一时区算（RunExpirySweep 传入 cfg.Location）。
 
 // ParseDate 解析 YYYY-MM-DD。写侧（api 的 UpdateNode）与读侧（到期扫描、days_left）都用它，"合法日期"只有这一个
 // 口径：time.Parse 按 time.DateOnly 要求四位年、两位月日，并拒绝不存在的日子（2026-02-30、非闰年的 02-29）。
@@ -90,10 +91,14 @@ func renewedExpiry(b store.Billing, today time.Time) (string, bool) {
 }
 
 // nextDayStart 是 now 之后 loc 里下一个日历日开始的时刻。一般就是 time.Date(y, m, d+1, 0, 0, 0, 0, loc)。
-// 夏令时在零点开始的时区（America/Santiago、America/Havana）当天的零点不存在，go1.27.1 的 time.Date 对它给出前一天的
-// 23:00（仍按旧偏移），本地日期没变；拿它定时会在旧的一天里触发，之后每一轮算出的都是这个已经过去的时刻，
-// 定时器立即触发，循环空转到夏令时生效为止。
-// 这时新的一天从夏令时生效的那一刻开始，也就是该时刻所在时段的结束处（ZoneBounds 的 end）。
+// 夏令时在零点开始的时区当天的零点不存在，go1.27.1 的 time.Date 对它的归一方向随 UTC 偏移的正负而异（它先把墙钟
+// 读数当作 UTC 去查偏移，再按换算结果是否越出该时段复核）：
+// 偏移为负的时区（America/Santiago、America/Havana）往回给前一天的 23:00（仍按旧偏移），本地日期没变；拿它定时会在旧的一天里
+// 触发，之后每一轮算出的都是这个已经过去的时刻，定时器立即触发，循环空转到夏令时生效为止。这时新的一天从夏令时
+// 生效的那一刻开始，也就是该时刻所在时段的结束处（ZoneBounds 的 end）。
+// 偏移为正的时区（Africa/Cairo、Asia/Beirut）往前给新一天的 01:00（新偏移），本地日期已变，它本身就是新一天的第一个时刻，
+// 走普通分支直接返回。判断只看本地日期有没有变，不看时分：按"不存在的零点会变成非零点的时刻"去判，会把偏移为正的
+// 时区的日界定到几个月后夏令时结束的那次切换。
 func nextDayStart(now time.Time, loc *time.Location) time.Time {
 	y, m, d := now.In(loc).Date()
 	next := time.Date(y, m, d+1, 0, 0, 0, 0, loc)

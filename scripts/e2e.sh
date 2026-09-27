@@ -350,7 +350,7 @@ channel=$(jq -r '.channel.id' "$work/SaveNotifyChannel.json")
 # 截止按轮询间累计的 sleep 秒数计，不按墙钟。宿主休眠时 hub、docker VM 与本脚本一起停摆，一次休眠
 # 至多落在一次 sleep 里，累计值至多多算这一次，其余每一秒都是被等的系统醒着运行的时间。墙钟截止会把
 # 整段休眠算进预算，醒来后第一次检查就失败，而那段时间里被等的系统根本没有运行。
-# wait_alert 节点 变化 预算秒数：等该节点恰有一条该变化的事件且已送达。
+# wait_alert 节点 变化 预算秒数：等该节点恰有一条已送达的该变化事件。
 wait_alert() {
   alert_node=$1
   transition=$2

@@ -203,7 +203,8 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 	// 计费字段变了就立刻按新值扫描一次（§9.2）：续费之后不等到零点才恢复。修改已提交，扫描失败只记日志，下一次扫描
 	// 会再评估。扫描放在 nodeMu 之外：它要等 writeMu（离线巡检、探测评估、日界扫描都可能正持有），再做一整轮续期
 	// 写回与状态写，持 nodeMu 等它只会挡住其它节点的编辑与删除，与 DeleteNode 把清理放在锁外同一个理由。持锁调用
-	// 也不会成环：alert 包不 import api，任何持 writeMu 的路径都取不到 nodeMu。
+	// 也不会成环：alert 包不 import api，且引擎经 SetSender 注入的实现（当前是 alert.Queue）也不在 api 里，
+	// 任何持 writeMu 的路径都取不到 nodeMu。
 	if billingChanged {
 		if err := s.alerts.SweepExpiry(context.WithoutCancel(ctx)); err != nil {
 			s.log.Error("expiry sweep after node update failed", "node", req.Msg.GetId(), "err", err)
