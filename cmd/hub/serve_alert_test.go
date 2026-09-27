@@ -29,7 +29,7 @@ func startAlertHub(t *testing.T, clk clock.Clock, seed func(*store.Store), flags
 		t.Fatal(err)
 	}
 	if seed != nil {
-		st, err := store.Open(db, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		st, err := store.Open(db, clk, slog.New(slog.NewTextHandler(io.Discard, nil)), store.MigrateSchema)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -125,7 +125,7 @@ func TestServeDeliversOfflineAlerts(t *testing.T) {
 
 func seedAlertChannel(t *testing.T, st *store.Store, url string) (int64, int64) {
 	t.Helper()
-	id, err := st.CreateNode(t.Context(), "n", []byte("token hash"))
+	id, _, err := st.CreateNode(t.Context(), "n", []byte("token hash"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestServeRequeuesPendingNotifications(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = st.RecordTransition(t.Context(), r.ID, id, store.StateFiring, "", store.AlertEvent{Transition: store.TransitionFiring, At: time.Now()}, []int64{channel})
+		_, err = st.RecordTransition(t.Context(), r.ID, id, store.StateFiring, "", time.Time{}, store.AlertEvent{Transition: store.TransitionFiring, At: time.Now()}, []int64{channel})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -158,15 +158,15 @@ func TestServeEvaluatesProbeAlerts(t *testing.T) {
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 59, 999000000, time.UTC))
 	client, _, _ := startAlertHub(t, clk, func(st *store.Store) {
 		id, channel := seedAlertChannel(t, st, url)
-		task, _, err := st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}, []int64{id})
+		task, _, err := st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}, false, []int64{id})
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = st.SaveAlertRule(t.Context(), store.AlertRule{Name: "loss", Kind: store.KindProbe, Enabled: true, AllNodes: true, TaskID: task.Id, Metric: store.MetricLossPct, Threshold: 100, ForMinutes: 1, ChannelIDs: []int64{channel}})
+		_, err = st.SaveAlertRule(t.Context(), store.AlertRule{Name: "loss", Kind: store.KindProbe, Enabled: true, AllNodes: true, TaskID: task.Task.Id, Metric: store.MetricLossPct, Threshold: 100, ForMinutes: 1, ChannelIDs: []int64{channel}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = st.WriteMinuteBatch(t.Context(), metric.Batch{Probes: []metric.ProbeRow{{NodeID: id, TS: clk.Now().Truncate(time.Minute).Add(-time.Minute).Unix(), TaskID: task.Id, Bucket: &metric.ProbeBucket{Sent: 1, Lost: 1}}}})
+		_, err = st.WriteMinuteBatch(t.Context(), metric.Batch{Probes: []metric.ProbeRow{{NodeID: id, TS: clk.Now().Truncate(time.Minute).Add(-time.Minute).Unix(), TaskID: task.Task.Id, Bucket: &metric.ProbeBucket{Sent: 1, Lost: 1}}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -194,7 +194,7 @@ func TestServePrunesAlertEvents(t *testing.T) {
 					t.Fatal(err)
 				}
 				for _, age := range []time.Duration{tc.retention + 24*time.Hour, tc.retention - 24*time.Hour} {
-					ev, err := st.RecordTransition(t.Context(), r.ID, id, store.StateFiring, "", store.AlertEvent{Transition: store.TransitionFiring, At: clk.Now().Add(-age)}, []int64{channel})
+					ev, err := st.RecordTransition(t.Context(), r.ID, id, store.StateFiring, "", time.Time{}, store.AlertEvent{Transition: store.TransitionFiring, At: clk.Now().Add(-age)}, []int64{channel})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -232,7 +232,7 @@ func TestServePrunesAlertEvents(t *testing.T) {
 func TestServeRenewsExpiryAtStartupInTheHubZone(t *testing.T) {
 	clk := clock.NewFake(time.Date(2026, 9, 24, 16, 30, 0, 0, time.UTC))
 	_, events, _ := startAlertHub(t, clk, func(st *store.Store) {
-		id, err := st.CreateNode(t.Context(), "renewing", make([]byte, 32))
+		id, _, err := st.CreateNode(t.Context(), "renewing", make([]byte, 32))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -267,11 +267,11 @@ func TestServeReportsDaysLeftInTheHubZone(t *testing.T) {
 	if err := runPasswdWith([]string{"--db", db}, pipeWith(t, password+"\n"), io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(db, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	st, err := store.Open(db, clk, slog.New(slog.NewTextHandler(io.Discard, nil)), store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := st.CreateNode(t.Context(), "zoned", make([]byte, 32))
+	id, _, err := st.CreateNode(t.Context(), "zoned", make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}

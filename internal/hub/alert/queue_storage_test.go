@@ -145,7 +145,7 @@ func TestResultWriteFailuresCannotExceedSendBudget(t *testing.T) {
 	c := queueChannel(t, f, srv.URL)
 	rule := f.rule(t, offline())
 	for i := range QueueCap + 1 {
-		_, err := f.st.RecordTransition(t.Context(), rule.ID, f.ids[0], store.StateFiring, "", store.AlertEvent{
+		_, err := f.st.RecordTransition(t.Context(), rule.ID, f.ids[0], store.StateFiring, "", time.Time{}, store.AlertEvent{
 			At: f.clk.Now(), Transition: store.TransitionFiring, Summary: fmt.Sprint(i),
 		}, []int64{c.ID})
 		must(t, err)

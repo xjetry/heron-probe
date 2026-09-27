@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/testwait"
 )
 
@@ -319,7 +320,7 @@ func TestPasswordChangeDuringLoginDoesNotIssueSession(t *testing.T) {
 	}()
 	<-gate.entered
 	// 另一个 Auth 不共享锁，代表 passwd 独立于服务进程的修改。
-	other := New(st, clk, a.log)
+	other := New(st, probe.New(st, a.log), clk, a.log)
 	err := other.SetPassword(ctx, "another long password")
 	close(gate.release)
 	got := <-done

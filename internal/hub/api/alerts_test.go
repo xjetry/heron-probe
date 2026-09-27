@@ -117,7 +117,7 @@ func TestNotifyChannelRejectsUnknownKind(t *testing.T) {
 func TestSaveAlertRuleValidationTexts(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	task, _, err := h.reg.Save(t.Context(), validProbeTask(), nil)
+	task, _, err := h.reg.Save(t.Context(), validProbeTask(), false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestSaveAlertRuleValidationTexts(t *testing.T) {
 func TestProbeAlertRuleRoundTrip(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	task, _, err := h.reg.Save(t.Context(), validProbeTask(), nil)
+	task, _, err := h.reg.Save(t.Context(), validProbeTask(), false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func TestDeleteNotifyChannelInUse(t *testing.T) {
 func TestDeleteProbeTaskInUse(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	task, _, err := h.reg.Save(t.Context(), validProbeTask(), nil)
+	task, _, err := h.reg.Save(t.Context(), validProbeTask(), false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +376,7 @@ func TestListAlertEventsPaging(t *testing.T) {
 		if i == 0 {
 			id = n2
 		}
-		ev, err := h.store.RecordTransition(t.Context(), r.Id, id, store.StateFiring, "", store.AlertEvent{Transition: store.TransitionFiring, At: h.clk.Now(), Summary: fmt.Sprint(i), Value: float64(i)}, []int64{c.Id})
+		ev, err := h.store.RecordTransition(t.Context(), r.Id, id, store.StateFiring, "", time.Time{}, store.AlertEvent{Transition: store.TransitionFiring, At: h.clk.Now(), Summary: fmt.Sprint(i), Value: float64(i)}, []int64{c.Id})
 		if err != nil {
 			t.Fatal(err)
 		}

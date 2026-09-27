@@ -58,7 +58,7 @@ func TestMigrationFromV8MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 func TestUpdateNodeReplacesBillingAndReportsChange(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", hash(1))
 	edit := NodeEdit{Name: "n", TrafficResetDay: 1}
 	update := func(e NodeEdit) bool {
 		t.Helper()
@@ -128,7 +128,7 @@ func TestUpdateNodeReplacesBillingAndReportsChange(t *testing.T) {
 func TestRenewExpiryWritesOnlyOverTheValuesItWasComputedFrom(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", hash(1))
 	set := func(b Billing) {
 		t.Helper()
 		if _, err := s.UpdateNode(ctx, id, NodeEdit{Name: "n", TrafficResetDay: 1, Billing: b}); err != nil {
@@ -189,7 +189,7 @@ func TestAlertRuleDaysBeforeBelongsToExpiryRules(t *testing.T) {
 	if rules, err := s.ListAlertRules(ctx); err != nil || len(rules) != 1 || rules[0].DaysBefore != 7 || rules[0].Kind != KindExpiry {
 		t.Fatalf("listed %+v %v", rules, err)
 	}
-	if err := s.SetAlertState(ctx, r.ID, ids[0], StateFiring, s.clk.Now()); err != nil {
+	if err := s.SetAlertState(ctx, r.ID, ids[0], StateFiring, s.clk.Now(), time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	r.DaysBefore = 30
@@ -251,7 +251,7 @@ func TestAlertStateFiredExpiresOnFollowsEachWrite(t *testing.T) {
 	}
 	record := func(state AlertState, firedExpiresOn string, tr Transition) {
 		t.Helper()
-		if _, err := s.RecordTransition(ctx, r.ID, ids[0], state, firedExpiresOn, AlertEvent{Transition: tr, At: s.clk.Now()}, nil); err != nil {
+		if _, err := s.RecordTransition(ctx, r.ID, ids[0], state, firedExpiresOn, time.Time{}, AlertEvent{Transition: tr, At: s.clk.Now()}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -264,7 +264,7 @@ func TestAlertStateFiredExpiresOnFollowsEachWrite(t *testing.T) {
 		t.Fatalf("after recovery: fired_expires_on = %q, want empty", got)
 	}
 	record(StateFiring, "2026-10-01", TransitionFiring)
-	if err := s.SetAlertState(ctx, r.ID, ids[0], StateOK, s.clk.Now()); err != nil {
+	if err := s.SetAlertState(ctx, r.ID, ids[0], StateOK, s.clk.Now(), time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := fired(); got != "" {

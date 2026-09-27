@@ -30,7 +30,7 @@ func rowCounts(t testing.TB, s *Store) map[string]int64 {
 func openAt(t *testing.T) (*Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "t.db")
-	s, err := Open(path, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), slog.Default())
+	s, err := Open(path, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), slog.Default(), MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func openAt(t *testing.T) (*Store, string) {
 func TestStorageStatsCoversEveryTableAndCountsRows(t *testing.T) {
 	s, _ := openAt(t)
 	for i := range 3 {
-		if _, err := s.CreateNode(t.Context(), fmt.Sprint("n", i), hash(byte(i))); err != nil {
+		if _, _, err := s.CreateNode(t.Context(), fmt.Sprint("n", i), hash(byte(i))); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -76,7 +76,7 @@ func TestStorageStatsCoversEveryTableAndCountsRows(t *testing.T) {
 func TestStorageStatsReportsLogicalDatabaseSize(t *testing.T) {
 	s, path := openAt(t)
 	for i := range 200 {
-		if _, err := s.CreateNode(t.Context(), "n", hash(byte(i))); err != nil {
+		if _, _, err := s.CreateNode(t.Context(), "n", hash(byte(i))); err != nil {
 			t.Fatal(err)
 		}
 	}

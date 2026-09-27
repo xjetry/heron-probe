@@ -443,12 +443,12 @@ func TestFlushCannotOverwriteSuccessfulAdjust(t *testing.T) {
 
 func TestBookPersistsAndResumesWithStore(t *testing.T) {
 	clk := clock.NewFake(time.Date(2026, 9, 15, 4, 0, 0, 0, time.UTC))
-	st, err := store.Open(filepath.Join(t.TempDir(), "traffic.db"), clk, slog.Default())
+	st, err := store.Open(filepath.Join(t.TempDir(), "traffic.db"), clk, slog.Default(), store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	id, err := st.CreateNode(t.Context(), "n", []byte{1})
+	id, _, err := st.CreateNode(t.Context(), "n", []byte{1})
 	if err != nil {
 		t.Fatal(err)
 	}

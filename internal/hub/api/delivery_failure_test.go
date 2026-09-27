@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -71,7 +72,7 @@ func TestDeliveryErrorTextOnlyReachesSessions(t *testing.T) {
 	n, _ := h.createNode(t, "n")
 	r := saveRule(t, h, offlineRule())
 	c := saveChannel(t, h, webhook("http://127.0.0.1"))
-	ev, err := h.store.RecordTransition(t.Context(), r.Id, n, store.StateFiring, "", store.AlertEvent{Transition: store.TransitionFiring, At: h.clk.Now(), Summary: "down"}, []int64{c.Id})
+	ev, err := h.store.RecordTransition(t.Context(), r.Id, n, store.StateFiring, "", time.Time{}, store.AlertEvent{Transition: store.TransitionFiring, At: h.clk.Now(), Summary: "down"}, []int64{c.Id})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +115,7 @@ func TestListAlertEventsReportsFailureCategory(t *testing.T) {
 	for i := range channels {
 		channels[i] = c.Id
 	}
-	ev, err := h.store.RecordTransition(t.Context(), r.Id, n, store.StateFiring, "", store.AlertEvent{Transition: store.TransitionFiring, At: h.clk.Now()}, channels)
+	ev, err := h.store.RecordTransition(t.Context(), r.Id, n, store.StateFiring, "", time.Time{}, store.AlertEvent{Transition: store.TransitionFiring, At: h.clk.Now()}, channels)
 	if err != nil {
 		t.Fatal(err)
 	}

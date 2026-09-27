@@ -70,7 +70,7 @@ func TestProbeCandidateRemovalPrunesPersistedState(t *testing.T) {
 	f.minutes(t, task, f.ids[0], ts, metric.ProbeBucket{Sent: 1, Lost: 1})
 	must(t, f.e.EvaluateProbes(t.Context(), ts))
 	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
-	_, _, err := f.st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Id: task, Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}, f.ids[1:])
+	_, _, err := f.st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Id: task, Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}, false, f.ids[1:])
 	must(t, err)
 	var logs bytes.Buffer
 	f.e.log = slog.New(slog.NewJSONHandler(&logs, nil))
@@ -191,7 +191,7 @@ func TestProbeThresholdEqualityFiresAndDoesNotRecover(t *testing.T) {
 			r := probeRule(task)
 			r.Metric, r.Threshold = c.metric, c.threshold
 			r = f.rule(t, r)
-			must(t, f.st.SetAlertState(t.Context(), r.ID, f.ids[0], store.StateFiring, f.clk.Now()))
+			must(t, f.st.SetAlertState(t.Context(), r.ID, f.ids[0], store.StateFiring, f.clk.Now(), time.Time{}))
 			must(t, f.e.Load(t.Context()))
 			ts := f.clk.Now().Unix() - 60
 			f.minutes(t, task, f.ids[0], ts, c.bucket)
@@ -218,7 +218,7 @@ func TestLoadSkipsInvalidRulesAndTheirStates(t *testing.T) {
 	bad.ForMinutes = 0
 	bad, err := f.st.SaveAlertRule(t.Context(), bad)
 	must(t, err)
-	must(t, f.st.SetAlertState(t.Context(), bad.ID, f.ids[0], store.StateFiring, f.clk.Now()))
+	must(t, f.st.SetAlertState(t.Context(), bad.ID, f.ids[0], store.StateFiring, f.clk.Now(), time.Time{}))
 	good := f.rule(t, offline())
 	var logs bytes.Buffer
 	f.e.log = slog.New(slog.NewJSONHandler(&logs, nil))

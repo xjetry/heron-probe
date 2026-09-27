@@ -343,3 +343,49 @@ describe("ProbeTasks", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("task.target: target for a TCP task must be host:port");
   });
 });
+
+describe("全部节点作用域", () => {
+  const allTask = { task: { id: 5n, kind: ProbeKind.ICMP, target: "all.example", intervalS: 60, timeoutMs: 1000 }, allNodes: true, nodeIds: [1n, 2n] };
+  const emptyTask = { task: { id: 6n, kind: ProbeKind.ICMP, target: "none.example", intervalS: 60, timeoutMs: 1000 }, nodeIds: [] };
+
+  it("列表显示 hub 展开的节点；显式空分配显示未分配而不是全部节点", async () => {
+    renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => ({ tasks: [allTask, emptyTask] }) }, routes, "/probes");
+    const all = within((await screen.findByText("all.example")).closest("tr")!);
+    const none = within(screen.getByText("none.example").closest("tr")!);
+    expect(all.getByRole("cell", { name: "全部节点：东京、法兰克福" })).toBeInTheDocument();
+    expect(none.getByRole("cell", { name: "未分配" })).toBeInTheDocument();
+    expect(none.queryByText(/全部节点/)).toBeNull();
+  });
+
+  it("勾选全部节点后隐藏节点多选，提交 allNodes 且不带分配", async () => {
+    const saved: SaveProbeTaskRequest[] = [];
+    renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks,
+      saveProbeTask: async (req) => { saved.push(req); return {}; },
+    }, routes, "/probes");
+    const form = await screen.findByRole("form", { name: "新建探测任务" });
+    fireEvent.click(within(form).getByLabelText("东京（#1）"));
+    fireEvent.click(within(form).getByLabelText("全部节点（含以后新建的节点）"));
+    expect(within(form).queryByLabelText("东京（#1）")).toBeNull();
+    fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "all.example" } });
+    fireEvent.submit(form);
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect(saved[0]).toMatchObject({ task: { id: 0n, target: "all.example" }, allNodes: true, nodeIds: [] });
+  });
+
+  it("编辑全部节点任务时取消勾选，以当前展开的节点作为显式分配提交", async () => {
+    const saved: SaveProbeTaskRequest[] = [];
+    renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => ({ tasks: [allTask] }),
+      saveProbeTask: async (req) => { saved.push(req); return {}; },
+    }, routes, "/probes");
+    fireEvent.click(await screen.findByRole("button", { name: "编辑 all.example（#5）" }));
+    const form = screen.getByRole("form", { name: "编辑 all.example（#5）" });
+    const toggle = within(form).getByLabelText("全部节点（含以后新建的节点）");
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    expect(within(form).getByLabelText("东京（#1）")).toBeChecked();
+    fireEvent.click(within(form).getByLabelText("东京（#1）"));
+    fireEvent.submit(form);
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect(saved[0]).toMatchObject({ task: { id: 5n }, allNodes: false, nodeIds: [2n] });
+  });
+});

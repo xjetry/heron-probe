@@ -14,12 +14,12 @@ import (
 func openTraffic(t *testing.T) (*Store, int64) {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC))
-	st, err := Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default())
+	st, err := Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default(), MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	id, err := st.CreateNode(context.Background(), "n", []byte{1})
+	id, _, err := st.CreateNode(context.Background(), "n", []byte{1})
 	if err != nil {
 		t.Fatal(err)
 	}

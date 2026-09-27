@@ -121,7 +121,7 @@ func TestSaveProbeTaskErrorsNameTheFieldAndCode(t *testing.T) {
 		}
 	}
 	_, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: validProbeTask(), NodeIds: []int64{id}}))
-	if codeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "node_ids: node 1 already has 64 probe tasks (maximum 64)") {
+	if codeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "node_ids: node 1 would have 65 probe tasks (maximum 64)") {
 		t.Fatalf("limit error=%v", err)
 	}
 }

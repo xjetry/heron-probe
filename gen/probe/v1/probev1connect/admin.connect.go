@@ -140,7 +140,8 @@ type AdminServiceClient interface {
 	// 作废当前会话并清除 cookie。
 	Logout(context.Context, *connect.Request[v1.LogoutRequest]) (*connect.Response[v1.LogoutResponse], error)
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
-	// 建节点并返回其 token；明文只在此处返回一次。
+	// 建节点并返回其 token；明文只在此处返回一次。新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
+	// 返回 ResourceExhausted 并说明，节点不建。
 	CreateNode(context.Context, *connect.Request[v1.CreateNodeRequest]) (*connect.Response[v1.CreateNodeResponse], error)
 	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期）。计费字段有变化时，
 	// 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
@@ -199,7 +200,7 @@ type AdminServiceClient interface {
 	// 整体替换外观的五项并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
 	// 约束与期望取值，什么都不写入。
 	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
-	// 库的逻辑大小与每张表的行数，与 probe-hub stats 同一来源。
+	// 库的逻辑大小、每张表的行数与存储健康读数，与 probe-hub stats 同一来源。
 	GetStorageStats(context.Context, *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error)
 	// API token 的元数据；明文只在 CreateApiToken 的响应里出现一次，hub 只存哈希。
 	ListApiTokens(context.Context, *connect.Request[v1.ListApiTokensRequest]) (*connect.Response[v1.ListApiTokensResponse], error)
@@ -656,7 +657,8 @@ type AdminServiceHandler interface {
 	// 作废当前会话并清除 cookie。
 	Logout(context.Context, *connect.Request[v1.LogoutRequest]) (*connect.Response[v1.LogoutResponse], error)
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
-	// 建节点并返回其 token；明文只在此处返回一次。
+	// 建节点并返回其 token；明文只在此处返回一次。新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
+	// 返回 ResourceExhausted 并说明，节点不建。
 	CreateNode(context.Context, *connect.Request[v1.CreateNodeRequest]) (*connect.Response[v1.CreateNodeResponse], error)
 	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期）。计费字段有变化时，
 	// 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
@@ -715,7 +717,7 @@ type AdminServiceHandler interface {
 	// 整体替换外观的五项并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
 	// 约束与期望取值，什么都不写入。
 	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
-	// 库的逻辑大小与每张表的行数，与 probe-hub stats 同一来源。
+	// 库的逻辑大小、每张表的行数与存储健康读数，与 probe-hub stats 同一来源。
 	GetStorageStats(context.Context, *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error)
 	// API token 的元数据；明文只在 CreateApiToken 的响应里出现一次，hub 只存哈希。
 	ListApiTokens(context.Context, *connect.Request[v1.ListApiTokensRequest]) (*connect.Response[v1.ListApiTokensResponse], error)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
@@ -26,12 +27,20 @@ func openOffline(db string, create bool) (*store.Store, *auth.Auth, error) {
 			return nil, nil, err
 		}
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	st, err := store.Open(db, clock.Real(), log)
+	// 用默认级别（Info 起放行）而不是过滤到 Warn：store.Open 建库或迁移时只在 Info 级各记
+	// 一行（"database schema created"/"database schema migrated"），过滤掉 Info 会让这一行
+	// 消失。上面这条注释说的"写错 --db 时静默建空库"，运维唯一能在离线命令的输出里看出
+	// 库被新建的信号就是这一行；建立状态的子命令（passwd、node create、window open）因此
+	// 必须放出它，否则退出码与其余输出跟"库已存在、操作在原库上完成"完全一样。
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	st, err := store.Open(db, clock.Real(), log, store.RequireCurrentSchema)
 	if err != nil {
 		return nil, nil, err
 	}
-	a := auth.New(st, clock.Real(), log)
+	// 离线进程只需要注册表的落库入口：建节点经它进入 store 的建节点事务，继承任务的上限检查与任务版本的推进都在
+	// 那个事务里，与运行中的 hub 走同一段代码，不因注册表未 Load 而跳过。注册表的内存发布随进程退出丢弃，本进程
+	// 里也没有读它的调用方，所以不 Load；运行中的 hub 重启时从库里重建自己的缓存（见 restartNotice）。
+	a := auth.New(st, probe.New(st, log), clock.Real(), log)
 	if err := a.Load(context.Background()); err != nil {
 		st.Close()
 		return nil, nil, err
@@ -39,7 +48,7 @@ func openOffline(db string, create bool) (*store.Store, *auth.Auth, error) {
 	return st, a, nil
 }
 
-const restartNotice = "note: if the hub is running, restart it for this change to take effect (the token map is rebuilt at startup)"
+const restartNotice = "note: if the hub is running, restart it for this change to take effect (the token map and the probe task lists are rebuilt at startup)"
 
 func runNode(args []string) error {
 	if len(args) < 1 {

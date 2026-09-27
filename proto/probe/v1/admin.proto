@@ -24,7 +24,8 @@ service AdminService {
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse) {
     option (probe.v1.access) = ACCESS_READ;
   }
-  // 建节点并返回其 token；明文只在此处返回一次。
+  // 建节点并返回其 token；明文只在此处返回一次。新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
+  // 返回 ResourceExhausted 并说明，节点不建。
   rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
@@ -141,7 +142,7 @@ service AdminService {
   rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
-  // 库的逻辑大小与每张表的行数，与 probe-hub stats 同一来源。
+  // 库的逻辑大小、每张表的行数与存储健康读数，与 probe-hub stats 同一来源。
   rpc GetStorageStats(GetStorageStatsRequest) returns (GetStorageStatsResponse) {
     option (probe.v1.access) = ACCESS_READ;
   }
@@ -323,23 +324,30 @@ message AdjustTrafficResponse {
 
 message ProbeTaskDetail {
   ProbeTask task = 1;
-  // 分配到的节点，升序去重。
+  // 任务当前覆盖的节点，升序去重。all_nodes 为真时是 hub 展开的全部现有节点，随建删节点变化；
+  // 为假时就是显式分配，空表示不覆盖任何节点（删掉最后一个分配不会变成全部节点）。
   repeated int64 node_ids = 2;
+  // 为真表示全部节点，之后新建的节点自动纳入；agent 只拿到展开后的清单，看不到这个开关。
+  bool all_nodes = 3;
 }
 message ListProbeTasksRequest {}
 message ListProbeTasksResponse {
-  // 任务与分配的全局版本；每次经管理接口的修改都变为更大的新值（不小于修改时刻的 Unix 秒）；删除节点清理分配不改；agent 用它对账。
+  // 任务与分配的全局版本；每次经管理接口的修改都变为更大的新值（不小于修改时刻的 Unix 秒），建节点（含 agent 自助注册）
+  // 也是一次修改，因为新节点继承全部 all_nodes 任务；删除节点清理分配不改；agent 用它对账。
   uint64 version = 1;
   repeated ProbeTaskDetail tasks = 2;
 }
 message SaveProbeTaskRequest {
-  // task.id 为 0 时创建，否则整体替换该任务的字段；node_ids 是保存后的完整分配列表。
+  // task.id 为 0 时创建，否则整体替换该任务的字段；all_nodes 为假时 node_ids 是保存后的完整分配列表，可以为空。
   // 约束：interval_s 5–3600，timeout_ms 100–5000，
-  // ICMP 目标为 IP 或主机名；每节点至多 64 个任务；target 不超过 253 字节；
+  // ICMP 目标为 IP 或主机名；每节点至多 64 个任务（all_nodes 任务计入每个节点）；target 不超过 253 字节；
   // TCP 目标必须是规范的 host:port（不带方括号包裹的主机名、不带正号或前导零的端口），
   // 端口 1–65535；IP 字面量不带 zone。
   ProbeTask task = 1;
   repeated int64 node_ids = 2;
+  // 为真表示全部节点（含以后新建的），node_ids 忽略。新节点也会继承这些任务，all_nodes 任务超过 64 个时
+  // 建节点与注册会被拒绝。
+  bool all_nodes = 3;
 }
 message SaveProbeTaskResponse {
   ProbeTaskDetail task = 1;
@@ -404,6 +412,10 @@ message AlertStateEntry {
   string state = 3;
   // 进入此状态的墙钟，Unix 秒。
   int64 since_at = 4;
+  // 仅离线规则：pending 且只因抖动抑制而尚未触发，即不做抖动抑制时这一轮巡检本会触发。抖动抑制：上次从 firing
+  // 恢复后一小时内再次开始的离线（离线开始即最后一次上报），要满 max(节点宽限, 30 分钟) 才触发；恢复通知照发。
+  // 由 hub 的离线巡检算出，不落库，hub 重启后第一轮巡检之前为 false。
+  bool flapping = 5;
 }
 message SaveAlertRuleRequest { AlertRule rule = 1; }
 message SaveAlertRuleResponse { AlertRule rule = 1; }
@@ -522,6 +534,32 @@ message GetStorageStatsResponse {
   uint64 db_bytes = 1;
   // 每张表一项，按表名升序，含 hub 内部的簿记表。
   repeated TableRows tables = 2;
+  // 指标与探测的每级时序表各一项，顺序固定：metric_1m、metric_5m、metric_1h、probe_1m、probe_5m、probe_1h。
+  // 按表分别给、不合并：各级保留期不同，合并后的最老桶无法与任何一级的保留期对比。
+  repeated SeriesTableHealth series = 3;
+  // 上一次整轮成功的时序表清理（不含告警事件清理）与上卷的完成时刻，Unix 秒。只在成功时记下：缺失即从未成功
+  // 跑过；有值但很旧即此后一直失败或没有运行。
+  optional int64 last_prune_at = 4;
+  optional int64 last_rollup_at = 5;
+}
+// 一张时序表的健康读数。两个 stale 是 hub 按当前配置算出的结论，调用方直接用，不必自己重算：
+// oldest_stale：最老桶早于"现在 − 保留期 − 一个桶长 − 一个维护间隔（60 秒）"（严格早于才算）；
+// watermark_stale：水位落后现在超过三个桶长（严格超过才算）。
+// 两项都可能来自一轮维护跑得久而单次误报，持续标红才是故障。oldest_stale 的余量只有约一个维护间隔，一轮跑超
+// 下一个周期边界就可能撞上；watermark_stale 的余量按单独一轮跳过的维护周期数算（5m 级跳过 4 个以内不标，跳过
+// 5 个起可能标——是否标还取决于上次上卷时刻在桶内的相位），连续多轮各跳一拍不累积——每轮做完都把水位推回当前。
+message SeriesTableHealth {
+  string table = 1;
+  // 本级桶长，秒。
+  uint32 bucket_s = 2;
+  // 该级当前配置的保留期，秒。
+  uint64 retention_s = 3;
+  // 表里最老一行的桶起点，Unix 秒；表为空时缺失。
+  optional int64 oldest_ts = 4;
+  // 上卷水位：rollup_state.upto_ts 的原值，本级在它之前的桶已由细一级上卷生成；最细一级（1m）没有水位，缺失。
+  optional int64 watermark_ts = 5;
+  bool oldest_stale = 6;
+  bool watermark_stale = 7;
 }
 message TableRows {
   string name = 1;

@@ -39,7 +39,7 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 	ctx := context.Background()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clk, log)
+	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clk, log, store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,10 +48,10 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	a := auth.New(st, clk, log)
+	reg := probe.New(st, log)
+	a := auth.New(st, reg, clk, log)
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, log)
-	reg := probe.New(st, log)
 	tasks := &notifiedTasks{Registry: reg, entered: make(chan struct{})}
 	svc, err := ingest.New(ingest.Config{TTL: 30 * time.Second}, l, st, a, book, tasks, clk, log)
 	if err != nil {
@@ -69,7 +69,7 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "localhost", IntervalS: 5, TimeoutMs: 1000}
-	d, _, err := reg.Save(ctx, task, []int64{deleted})
+	d, _, err := reg.Save(ctx, task, false, []int64{deleted})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 	release, pending, drain := st.HoldWriterForTest()
 	defer release()
 	saved := make(chan error, 1)
-	go func() { _, _, err := reg.Save(ctx, task, []int64{keep}); saved <- err }()
+	go func() { _, _, err := reg.Save(ctx, task, false, []int64{keep}); saved <- err }()
 	waitRegistryWrite(t, pending)
 	forgotten := make(chan struct{})
 	go func() { svc.Forget(deleted); close(forgotten) }()

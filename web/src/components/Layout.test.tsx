@@ -41,6 +41,14 @@ it("外观导航进入应用的外观页路由", async () => {
   expect(await screen.findByRole("heading", { name: "外观" })).toBeInTheDocument();
 });
 
+it("存储导航进入应用的存储页路由", async () => {
+  renderWithAdmin({ listNodes: async () => ({ nodes: [] }), getStorageStats: async () => ({}) }, appRouter.routes, "/nodes");
+  const link = screen.getByRole("link", { name: "存储" });
+  expect(link).toHaveAttribute("href", "/storage");
+  fireEvent.click(link);
+  expect(await screen.findByRole("heading", { name: "存储" })).toBeInTheDocument();
+});
+
 it("告警规则导航进入应用的规则页路由", async () => {
   renderWithAdmin({ listNodes: async () => ({ nodes: [] }), listNotifyChannels: async () => ({ channels: [] }),
     listProbeTasks: async () => ({ tasks: [] }), listAlertRules: async () => ({ rules: [], states: [] }) }, appRouter.routes, "/nodes");

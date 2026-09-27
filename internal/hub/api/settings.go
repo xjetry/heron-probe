@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"connectrpc.com/connect"
@@ -153,9 +154,18 @@ func (s *Service) GetStorageStats(ctx context.Context, _ *connect.Request[probev
 		s.log.Error("reading storage stats failed", "err", err)
 		return nil, internalError("reading storage stats failed")
 	}
-	out := &probev1.GetStorageStatsResponse{DbBytes: uint64(stats.DBBytes)}
+	out := &probev1.GetStorageStatsResponse{DbBytes: uint64(stats.DBBytes), LastPruneAt: stats.LastPrune, LastRollupAt: stats.LastRollup}
 	for _, t := range stats.Tables {
 		out.Tables = append(out.Tables, &probev1.TableRows{Name: t.Name, Rows: uint64(t.Rows)})
+	}
+	// 标红只在 store.SeriesHealth.Staleness 一处判定，这里原样带上它的结论与判定用的原始数值。
+	now := s.clk.Now()
+	for _, h := range stats.Series {
+		stale := h.Staleness(now, s.cfg.Retention)
+		out.Series = append(out.Series, &probev1.SeriesTableHealth{
+			Table: h.Table, BucketS: uint32(h.Level.Bucket), RetentionS: uint64(s.cfg.Retention.ForLevel(h.Level.Name) / time.Second),
+			OldestTs: h.Oldest, WatermarkTs: h.Watermark, OldestStale: stale.Oldest, WatermarkStale: stale.Watermark,
+		})
 	}
 	return connect.NewResponse(out), nil
 }

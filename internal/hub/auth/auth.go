@@ -19,6 +19,9 @@
 //
 // 管理服务的节点变更必须经当前进程的 Auth 更新映射；另一进程执行节点离线子命令
 // 只会改表，无法通知这里的映射，因此仍要求 hub 重启。
+//
+// 建节点（CreateNode、Register）不直接写 store，而经 NodeCreator：新节点会继承全部 all_nodes 探测任务，
+// 落库与探测任务缓存的发布必须由任务注册表串行化（见 probe 包）。锁序 mutMu → 注册表的写锁。
 package auth
 
 import (
@@ -41,11 +44,18 @@ const (
 	failWindow = 15 * time.Minute
 )
 
+// NodeCreator 是建节点的落库入口，实现是 probe.Registry。两个方法返回新节点的 id；建节点失败时节点不存在。
+type NodeCreator interface {
+	CreateNode(ctx context.Context, name string, tokenHash []byte) (int64, error)
+	RegisterNode(ctx context.Context, keyHash []byte, name string, tokenHash []byte) (int64, error)
+}
+
 type Auth struct {
 	mutMu    sync.Mutex
 	loginMu  sync.Mutex
 	mu       sync.RWMutex
 	store    *store.Store
+	nodes    NodeCreator
 	clk      clock.Clock
 	log      *slog.Logger
 	byHash   map[[32]byte]int64
@@ -53,8 +63,8 @@ type Auth struct {
 	login    *failureTracker
 }
 
-func New(st *store.Store, clk clock.Clock, log *slog.Logger) *Auth {
-	return &Auth{store: st, clk: clk, log: log, byHash: map[[32]byte]int64{}, register: newFailureTracker(failLimit, failWindow), login: newFailureTracker(failLimit, failWindow)}
+func New(st *store.Store, nodes NodeCreator, clk clock.Clock, log *slog.Logger) *Auth {
+	return &Auth{store: st, nodes: nodes, clk: clk, log: log, byHash: map[[32]byte]int64{}, register: newFailureTracker(failLimit, failWindow), login: newFailureTracker(failLimit, failWindow)}
 }
 
 func (a *Auth) Load(ctx context.Context) error {
@@ -83,7 +93,7 @@ func (a *Auth) CreateNode(ctx context.Context, name string) (int64, string, erro
 	a.mutMu.Lock()
 	defer a.mutMu.Unlock()
 	plain, h := NewToken()
-	id, err := a.store.CreateNode(ctx, name, h[:])
+	id, err := a.nodes.CreateNode(ctx, name, h[:])
 	if err != nil {
 		return 0, "", err
 	}
@@ -163,7 +173,7 @@ func (a *Auth) Register(ctx context.Context, key, name string, from netip.Addr) 
 	}
 	keyHash := HashToken(key)
 	plain, tokHash := NewToken()
-	id, err := a.store.RegisterNode(ctx, keyHash[:], name, tokHash[:])
+	id, err := a.nodes.RegisterNode(ctx, keyHash[:], name, tokHash[:])
 	switch {
 	case errors.Is(err, store.ErrBadKey):
 		a.mu.Lock()

@@ -22,12 +22,15 @@ var migrations = map[int]func(*sql.Tx) error{
 		}
 		return nil
 	},
-	4: execAll(migrationV4),
-	5: execAll(alertStatementsV5),
-	6: execAll([]string{ddlAPITokenV6}),
-	7: migrateDeliveryFailure,
-	8: execAll([]string{ddlSettingV8}),
-	9: execAll(migrationV9),
+	4:  execAll(migrationV4),
+	5:  execAll(alertStatementsV5),
+	6:  execAll([]string{ddlAPITokenV6}),
+	7:  migrateDeliveryFailure,
+	8:  execAll([]string{ddlSettingV8}),
+	9:  execAll(migrationV9),
+	10: execAll(migrationV10),
+	11: execAll([]string{ddlMaintenanceStateV11}),
+	12: execAll(migrationV12),
 }
 
 func execAll(stmts []string) func(*sql.Tx) error {
@@ -260,4 +263,20 @@ var migrationV9 = []string{
 	`ALTER TABLE node ADD COLUMN auto_renew INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE alert_rule ADD COLUMN days_before INTEGER`,
 	`ALTER TABLE alert_state ADD COLUMN fired_expires_on TEXT NOT NULL DEFAULT ''`,
+}
+
+// v10：探测任务的全部节点开关。旧任务取默认值 0，保持原来的显式分配。
+var migrationV10 = []string{
+	`ALTER TABLE probe_task ADD COLUMN all_nodes INTEGER NOT NULL DEFAULT 0`,
+}
+
+// v11：维护任务的簿记表。旧库升级后没有行，读侧按"从未成功跑过"呈现，直到下一轮成功的上卷与 prune 写入。
+const ddlMaintenanceStateV11 = `CREATE TABLE maintenance_state (
+  name TEXT PRIMARY KEY,
+  finished_at INTEGER NOT NULL
+)`
+
+// v12：离线规则×节点上次恢复的时刻。旧行取 NULL（从未恢复过）：升级前的恢复没有记录，升级后的第一次恢复开始计窗口。
+var migrationV12 = []string{
+	`ALTER TABLE alert_state ADD COLUMN recovered_at INTEGER`,
 }

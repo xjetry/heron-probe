@@ -7,6 +7,7 @@ import (
 	"time"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	"github.com/xjetry/probe/internal/probelimit"
 )
 
 var ErrBadOrder = errors.New("ids must list every node exactly once")
@@ -289,24 +290,59 @@ func (s *Store) DeleteNode(ctx context.Context, id int64) error {
 	})
 }
 
-func (s *Store) CreateNode(ctx context.Context, name string, tokenHash []byte) (int64, error) {
-	var id int64
-	err := s.write(ctx, func(tx *sql.Tx) error {
-		var err error
-		id, err = insertNode(tx, name, tokenHash, s.clk.Now().Unix())
-		return err
-	})
-	return id, err
+// NewNodeTasks 是建节点事务提交时新节点的探测清单：Version 是该事务推进后的任务版本，TaskIDs 是同一事务里按
+// probeCoverage 读出的新节点覆盖，升序。探测任务注册表的建节点增量只取这份结果，不另行推导覆盖。
+type NewNodeTasks struct {
+	Version uint64
+	TaskIDs []uint64
 }
 
-// 两个创建入口共用事务内的末尾序号分配，重排后的相对顺序不被新节点打断。
-func insertNode(tx *sql.Tx, name string, tokenHash []byte, createdAt int64) (int64, error) {
+// CreateNode 返回新节点的 id 与它在建节点事务提交时的探测清单（见 insertNode）。
+func (s *Store) CreateNode(ctx context.Context, name string, tokenHash []byte) (int64, NewNodeTasks, error) {
+	var id int64
+	var tasks NewNodeTasks
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		var err error
+		id, tasks, err = insertNode(tx, name, tokenHash, s.clk.Now().Unix())
+		return err
+	})
+	return id, tasks, err
+}
+
+// insertNode 是两个创建入口（CreateNode 与 RegisterNode）共用的建节点步骤，在调用方的写事务里完成：
+//   - 分配末尾序号，重排后的相对顺序不被新节点打断；
+//   - 按 probeCoverage 读出新节点覆盖的任务 id：读在本事务写入节点行之后，事务从那次写入起持有库的写锁直到提交，
+//     别的写入插不进来，所以返回的清单就是提交时库里新节点的覆盖；
+//   - 检查每节点任务上限：新节点继承全部 all_nodes 任务，SaveProbeTask 的上限检查只覆盖保存那一刻已有的节点，
+//     没有节点时保存的 all_nodes 任务可以超过上限，所以建节点这一侧必须再查；超限返回 InheritedLimitError，
+//     事务回滚，节点不建；
+//   - 推进任务版本：新节点的清单从空变为全部 all_nodes 任务，按 bumpProbeVersion 的不变式必须推进。
+func insertNode(tx *sql.Tx, name string, tokenHash []byte, createdAt int64) (int64, NewNodeTasks, error) {
 	res, err := tx.Exec(`INSERT INTO node (name, token_hash, created_at, sort_order)
 		SELECT ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1 FROM node`, name, tokenHash, createdAt)
 	if err != nil {
-		return 0, err
+		return 0, NewNodeTasks{}, err
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, NewNodeTasks{}, err
+	}
+	covered, err := scanIDs(tx.Query("SELECT task_id FROM ("+probeCoverage+") WHERE node_id = ? ORDER BY task_id", id))
+	if err != nil {
+		return 0, NewNodeTasks{}, err
+	}
+	if len(covered) > probelimit.MaxTasksPerNode {
+		return 0, NewNodeTasks{}, InheritedLimitError{Tasks: len(covered), Max: probelimit.MaxTasksPerNode}
+	}
+	version, err := bumpProbeVersion(tx, createdAt)
+	if err != nil {
+		return 0, NewNodeTasks{}, err
+	}
+	tasks := NewNodeTasks{Version: uint64(version)}
+	for _, task := range covered {
+		tasks.TaskIDs = append(tasks.TaskIDs, uint64(task))
+	}
+	return id, tasks, nil
 }
 
 func (s *Store) SetTokenHash(ctx context.Context, id int64, hash []byte) error {

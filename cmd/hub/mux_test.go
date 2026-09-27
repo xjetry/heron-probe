@@ -39,15 +39,21 @@ var publicProcedures = map[string]bool{
 func newTestMux(t *testing.T) *http.ServeMux {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clk, slog.Default())
+	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clk, slog.Default(), store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	a := auth.New(st, clk, slog.Default())
+	return newTestMuxOn(t, st, clk)
+}
+
+// newTestMuxOn 按 serve 的装配把全部服务挂到给定的库上。
+func newTestMuxOn(t *testing.T, st *store.Store, clk clock.Clock) *http.ServeMux {
+	t.Helper()
+	reg := probe.New(st, slog.Default())
+	a := auth.New(st, reg, clk, slog.Default())
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, slog.Default())
-	reg := probe.New(st, slog.Default())
 	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, st, l, clk, slog.Default())
 	notifier := alert.NewQueue(st, alerts.Channels, outbound.NewClient(), "", clk, nil, slog.Default())
 	alerts.SetSender(notifier)
@@ -62,7 +68,7 @@ func newTestMux(t *testing.T) *http.ServeMux {
 	if err := notifier.Requeue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	admin := api.New(api.Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, Location: time.UTC}, st, a, l, svc, book, reg, alerts, notifier, clk, slog.Default())
+	admin := api.New(api.Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, Location: time.UTC, Retention: store.DefaultRetention}, st, a, l, svc, book, reg, alerts, notifier, clk, slog.Default())
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: 10 * time.Second, Location: time.UTC}, st, l, book, reg, clk, slog.Default())
 	return newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(pub.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", web.PublicHandler()))
 }

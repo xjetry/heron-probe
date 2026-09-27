@@ -203,7 +203,8 @@ function RuleRow({ rule: r, states, nodes, channels, tasks, nodeName, channelNam
 function RuleState({ enabled, states, nodeName }: { enabled: boolean; states: RuleStates | undefined; nodeName: (id: bigint) => string }) {
   if (!enabled) return <span className="muted">已停用</span>;
   if (!states) return <span className="muted">正常</span>;
-  const names = (list: RuleStates["firing"]) => list.map((s) => nodeName(s.nodeId)).join("、");
+  // flapping 由 hub 的离线巡检判定（pending 且只因抖动抑制而未触发），面板只标出，不重算。
+  const names = (list: RuleStates["firing"]) => list.map((s) => nodeName(s.nodeId) + (s.flapping ? "（抖动中）" : "")).join("、");
   return (
     <>
       {states.firing.length > 0 && <span className="error">触发：{names(states.firing)}</span>}

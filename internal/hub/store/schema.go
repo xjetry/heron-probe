@@ -20,7 +20,7 @@ const ddlNode = `CREATE TABLE node (
   traffic_reset_day INTEGER NOT NULL DEFAULT 1,
   token_hash BLOB NOT NULL UNIQUE,
   created_at INTEGER NOT NULL,
-  -- 墙钟，只供展示与告警文案，不参与离线时长计算。
+  -- 墙钟，供展示、告警文案与 hub 重启后抖动窗口判定里的离线开始，不参与离线时长计算。
   last_seen_at INTEGER,
   -- 计费与到期（§9.4）：提醒用的展示值，空串与 0 是"未填"。取值约束由 api 的 UpdateNode 裁决，库里不设 CHECK。
   -- 列序与迁移 9 的 ADD COLUMN 结果一致。
@@ -60,6 +60,14 @@ const ddlRollupState = `CREATE TABLE rollup_state (
 
 const seedRollupState = `INSERT INTO rollup_state (level, upto_ts) VALUES ('5m', 0), ('1h', 0)`
 
+// maintenance_state 与 rollup_state 同类，是维护任务的簿记：name 取 health.go 的 MaintenancePrune、MaintenanceRollup，finished_at 是该任务
+// 最近一次整轮成功完成的时刻（Unix 秒）。只在整轮成功后写（recordMaintenance），失败不写、不清，所以"无行"只表示
+// 从未成功跑过，"有行但很旧"表示此后一直失败或没跑——两者在读侧可区分，不会被一次失败抹成同一个样子。
+const ddlMaintenanceState = `CREATE TABLE maintenance_state (
+  name TEXT PRIMARY KEY,
+  finished_at INTEGER NOT NULL
+)`
+
 const ddlAdmin = `CREATE TABLE admin (
   -- 单管理员：CHECK 让第二行无法插入，"多用户"在 schema 上就不成立。
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -95,7 +103,7 @@ const ddlTraffic = `CREATE TABLE traffic (
 
 // metricTables 按级别从细到粗。读者有三处：建库、DeleteNode、上卷（rollup.go 的 metricFamily.tables，
 // 必须与 levels、states 同序同长，上卷按 levels 循环，多出的表不会被上卷也不报错）。新增级别要三处同改，
-// 已有库还需对应的增量迁移。存储统计按 sqlite_master 列表，不读它。
+// 已有库还需对应的增量迁移。存储统计的行数按 sqlite_master 列表，不读它；存储健康经 families 读它。
 var metricTables = []string{"metric_1m", "metric_5m", "metric_1h"}
 
 // schemaStatements 是当前版本的完整 DDL：空库直接建到当前版本，不重放历史。
@@ -108,7 +116,7 @@ func schemaStatements() []string {
 	for _, t := range probeTables {
 		out = append(out, probeDDL(t))
 	}
-	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting)
+	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState)
 }
 
 // metricDDL 从描述表生成分钟表。主键顺序 (node_id, ts) 即唯一查询路径，
@@ -204,7 +212,11 @@ const ddlProbeTask = `CREATE TABLE probe_task (
   target TEXT NOT NULL,
   interval_s INTEGER NOT NULL,
   timeout_ms INTEGER NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  -- 与 alert_rule.all_nodes 同一语义：为真时 SaveProbeTask 不写 probe_task_node 行，任务覆盖全部节点，
+  -- 之后新建的节点也在内；为假时分配行就是全部覆盖，空集不覆盖任何节点，DeleteNode 删掉最后一个分配行
+  -- 也不会放宽到全部。覆盖的读法只有 probeCoverage 一处。列序与迁移 10 的 ADD COLUMN 结果一致。
+  all_nodes INTEGER NOT NULL DEFAULT 0
 )`
 
 const ddlProbeTaskNode = `CREATE TABLE probe_task_node (
@@ -215,7 +227,7 @@ const ddlProbeTaskNode = `CREATE TABLE probe_task_node (
 
 const ddlProbeTaskNodeIndex = `CREATE INDEX probe_task_node_by_node ON probe_task_node (node_id)`
 
-// probe_meta.version 由任务保存与删除事务递增，agent 用它对账任务清单。
+// probe_meta.version 由任务保存与删除、建节点的事务递增，agent 用它对账任务清单（见 bumpProbeVersion）。
 // 删除节点时仅清理其分配，不递增：auth.DeleteNode 在删除成功后撤销 token，
 // 其余节点的清单不变，无需因此重新对账。
 // 单行表，CHECK 让第二行无法插入。
@@ -274,6 +286,11 @@ const ddlAlertState = `CREATE TABLE alert_state (
   -- 引擎只在到期规则进入 firing 时写入非空值：当时节点的到期日（见 StateRow.FiredExpiresOn）。
   -- 列序与迁移 9 的 ADD COLUMN 结果一致：ADD COLUMN 把列排在最后，与写在 PRIMARY KEY 约束之前的这一行同为第五列。
   fired_expires_on TEXT NOT NULL DEFAULT '',
+  -- 离线规则×节点上一次从 firing 恢复的墙钟（Unix 秒），NULL 表示从未恢复过；其余种类恒为 NULL。离线抖动抑制按它判定
+  -- 这次离线是否落在恢复后的窗口里（见 StateRow.RecoveredAt）。整行写入时由调用方给出：恢复转换写当下时刻，其余写入
+  -- 沿用当前值——恢复之后的再次离线先写成 pending，那一次写若清掉它，窗口恰在要用时丢失。
+  -- 列序与迁移 12 的 ADD COLUMN 结果一致，同 fired_expires_on 写在 PRIMARY KEY 约束之前。
+  recovered_at INTEGER,
   PRIMARY KEY (rule_id, node_id)
 )`
 const ddlAlertEvent = `CREATE TABLE alert_event (

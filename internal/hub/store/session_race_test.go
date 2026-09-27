@@ -11,6 +11,7 @@ import (
 
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/testwait"
 )
@@ -20,17 +21,17 @@ func TestDelayedSessionTouchCannotResurrectLogout(t *testing.T) {
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	path := filepath.Join(t.TempDir(), "hub.db")
-	st, err := store.Open(path, clk, log)
+	st, err := store.Open(path, clk, log, store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	other, err := store.Open(path, clk, log)
+	other, err := store.Open(path, clk, log, store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer other.Close()
-	a := auth.New(st, clk, log)
+	a := auth.New(st, probe.New(st, log), clk, log)
 	if err := a.SetPassword(ctx, "a sufficiently long password"); err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +68,7 @@ func TestDelayedSessionTouchCannotResurrectLogout(t *testing.T) {
 		t.Fatalf("refresh not queued: %d writes", n)
 	}
 	// 单实例队列是 FIFO；另一连接先撤销才会产生延迟刷新晚于登出的真实交错。
-	if err := auth.New(other, clk, log).Logout(ctx, token); err != nil {
+	if err := auth.New(other, probe.New(other, log), clk, log).Logout(ctx, token); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok, err := st.Session(ctx, auth.HashToken(token)); err != nil || ok {

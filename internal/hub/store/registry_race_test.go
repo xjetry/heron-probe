@@ -20,7 +20,7 @@ import (
 func registryRaceStore(t *testing.T) (*probe.Registry, *store.Store, int64) {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clock.NewFake(time.Unix(0, 0)), log)
+	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clock.NewFake(time.Unix(0, 0)), log, store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func registryRaceStore(t *testing.T) (*probe.Registry, *store.Store, int64) {
 			t.Error(err)
 		}
 	})
-	id, err := st.CreateNode(t.Context(), "node", []byte("token"))
+	id, _, err := st.CreateNode(t.Context(), "node", []byte("token"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestRegistryForgetCannotBeRevivedByEarlierSave(t *testing.T) {
 	}
 	saved := make(chan result, 1)
 	go func() {
-		d, _, err := r.Save(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "localhost", IntervalS: 5, TimeoutMs: 1000}, []int64{id})
+		d, _, err := r.Save(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "localhost", IntervalS: 5, TimeoutMs: 1000}, false, []int64{id})
 		saved <- result{d, err}
 	}()
 	waitRegistryWrite(t, pending)
@@ -136,7 +136,7 @@ func TestRegistryForgetCannotBeRevivedByEarlierSave(t *testing.T) {
 func TestRegistryDeleteSerializesFollowingSave(t *testing.T) {
 	r, st, id := registryRaceStore(t)
 	task := &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "localhost", IntervalS: 5, TimeoutMs: 1000}
-	d, _, err := r.Save(t.Context(), task, []int64{id})
+	d, _, err := r.Save(t.Context(), task, false, []int64{id})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestRegistryDeleteSerializesFollowingSave(t *testing.T) {
 	started := make(chan string)
 	go func() {
 		started <- registryGoroutineID()
-		_, _, err := r.Save(t.Context(), task, []int64{id})
+		_, _, err := r.Save(t.Context(), task, false, []int64{id})
 		saved <- err
 	}()
 	// Delete 入队时已持 writeMu，后来的 Save 在删除发布之前不能进入写队列。
