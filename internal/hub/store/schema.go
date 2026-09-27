@@ -28,7 +28,12 @@ const ddlNode = `CREATE TABLE node (
   currency TEXT NOT NULL DEFAULT '',
   billing_cycle TEXT NOT NULL DEFAULT '',
   expires_on TEXT NOT NULL DEFAULT '',
-  auto_renew INTEGER NOT NULL DEFAULT 0
+  auto_renew INTEGER NOT NULL DEFAULT 0,
+  -- 最近一次上报的来源地址（auth.SourceText 的规范文本），空串表示 hub 没有记录到来源：从未上报，或最近一次
+  -- 上报早于 hub 开始记录来源的版本（此时 last_seen_at 有值）。与 last_seen_at 同一路径写入：分钟行刷出
+  -- 与退出时由 WriteMinuteBatch 写，上报路径只碰内存。只存最后一个，是观测事实，不设手动覆盖。
+  -- 列序与迁移 13 的 ADD COLUMN 结果一致。
+  last_source TEXT NOT NULL DEFAULT ''
 )`
 
 const ddlNodeFacts = `CREATE TABLE node_facts (

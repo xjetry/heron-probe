@@ -17,7 +17,8 @@ import (
 // （RFC 9110 §5.3），代理可以不动客户端自带的那一行、另起一行追加它看到的地址。只读第一行，
 // "从右向左"就是在客户端写的那一行里找，客户端改一个头就能换来源。只传一行（如 []string{Header.Get(…)}）
 // 照样能编译，"每一行都被读到"由多行用例钉住：ratelimit 的 TestBySourceReadsEveryForwardedForLine、
-// auth 的 TestClientIPReadsEveryForwardedForLine、api 的 TestLoginLockoutKeysOnEveryForwardedForLine。
+// auth 的 TestClientIPReadsEveryForwardedForLine、api 的 TestLoginLockoutKeysOnEveryForwardedForLine、
+// ingest 的 TestReportRecordsTheSourceHubSees/可信代理追加的转发头覆盖客户端伪造的第一行。
 func ClientIP(peerAddr string, xff []string, trusted []netip.Prefix) netip.Addr {
 	peer := peerIP(peerAddr)
 	if !peer.IsValid() || !inAny(peer, trusted) {
@@ -39,6 +40,17 @@ func ClientIP(peerAddr string, xff []string, trusted []netip.Prefix) netip.Addr 
 		}
 	}
 	return peer
+}
+
+// SourceText 把 ClientIP 得到的来源地址写成存储与展示用的规范文本：IPv4 映射地址还原成 IPv4，点分；IPv6 为 RFC 5952 的
+// 压缩形式（netip 的 String）；区域标识（%eth0）去掉——它只在 hub 本机有意义。取不到对端时为空串。live 层照常用它
+// 覆盖条目里的来源，"空串不覆盖已落盘的值"由 store.WriteMinuteBatch 那条 UPDATE 里 COALESCE(NULLIF(?, 空串), last_source)
+// 承载，不是这里或调用方；hub 只监听 TCP（serve 的 listen），这种输入在生产上不会出现。
+func SourceText(a netip.Addr) string {
+	if !a.IsValid() {
+		return ""
+	}
+	return a.Unmap().WithZone("").String()
 }
 
 // SourceKey 把 ClientIP 得到的来源地址归一化成按来源计数的键：IPv4 按单个地址，IPv6 截到所在 /64 的网络地址。

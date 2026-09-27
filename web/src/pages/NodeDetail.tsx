@@ -39,7 +39,8 @@ export function NodeDetail() {
       <HistoryCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>} />
       {node.facts && (
         <dl className="card facts">
-          <dt>主机名</dt><dd>{node.facts.hostname}</dd>
+          {/* 来源地址是 hub 在上报上看到的对端，不是 agent 自报；只在管理端显示，公开页没有这个字段。 */}
+          <dt>主机名</dt><dd>{node.facts.hostname}{node.lastSource && <span className="muted">（来源 {node.lastSource}）</span>}</dd>
           <dt>系统</dt><dd>{node.facts.os}</dd>
           <dt>内核</dt><dd>{node.facts.kernel}</dd>
           <dt>架构</dt><dd>{node.facts.arch}</dd>

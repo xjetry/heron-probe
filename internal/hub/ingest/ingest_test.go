@@ -1124,7 +1124,7 @@ func TestFlushBoundsPendingBothFamilies(t *testing.T) {
 	h.svc.log = slog.New(slog.NewJSONHandler(&logs, nil))
 	h.svc.writer = &failingWriter{Store: h.store, fail: true}
 	for range maxPendingBatches + 1 {
-		h.live.Observe(id, &probev1.Metrics{})
+		h.live.Observe(id, "", &probev1.Metrics{})
 		h.live.AddProbe(id, h.clk.Now(), task, rtt(task, 0, 100))
 		h.clk.Advance(time.Minute)
 		h.svc.Flush(t.Context(), false)
