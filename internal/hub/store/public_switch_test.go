@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"log/slog"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -47,6 +49,48 @@ func TestPublicSwitchPersistenceAndMemory(t *testing.T) {
 		if s.PublicEnabled() != enabled {
 			t.Fatalf("reopened gate=%v, want %v", s.PublicEnabled(), enabled)
 		}
+	}
+}
+
+// 内存副本必须等于库里最近一次提交的总闸。runWriter 串行提交，但各调用方醒来后的发布顺序不受它约束：两次保存
+// 背靠背提交时，后提交的一方可以先发布，最后发布的就不是最后提交的，分叉一直留到下一次显式保存总闸。
+// 每轮先用一个阻塞的写占住写协程，让两次相反的保存排进队列，放行后它们背靠背提交。持 siteWriteMu 时第二次保存
+// 要等第一次发布完才入队，排不进去，所以等它入队的轮询以次数为界。GOMAXPROCS 取 1：醒来的调用方没有别的处理器
+// 可用，通常要等写协程让出处理器才运行，错序才稳定出现；处理器多时它往往被空闲的处理器立刻取走，在下一次提交之前
+// 就发布完了，自由并发的保存能否撞上错序随机器负载与是否开 -race 大幅波动。
+func TestPublicSwitchMemoryMatchesDatabaseUnderConcurrentSaves(t *testing.T) {
+	prev := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(prev)
+	s, _ := open(t)
+	const rounds = 200
+	mismatches := 0
+	for round := range rounds {
+		release, blocking := make(chan struct{}), make(chan struct{})
+		s.writeAsync(func(*sql.Tx) error { close(blocking); <-release; return nil }, nil)
+		<-blocking
+		var wg sync.WaitGroup
+		for queued, enabled := range []bool{round%2 == 0, round%2 != 0} {
+			wg.Go(func() {
+				if _, err := s.SaveSiteSettings(t.Context(), SiteSettingsUpdate{Theme: "auto", PublicEnabled: &enabled}); err != nil {
+					t.Error(err)
+				}
+			})
+			for n := 0; n < 100 && len(s.writes) <= queued; n++ {
+				runtime.Gosched()
+			}
+		}
+		close(release)
+		wg.Wait()
+		st, err := s.SiteSettings(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.PublicEnabled != s.PublicEnabled() {
+			mismatches++
+		}
+	}
+	if mismatches > 0 {
+		t.Fatalf("memory differs from the committed gate after %d of %d rounds", mismatches, rounds)
 	}
 }
 

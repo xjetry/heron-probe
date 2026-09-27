@@ -83,9 +83,14 @@ func (s *Store) SiteSettings(ctx context.Context) (SiteSettings, error) {
 // 匿名请求与静态资源都要检查总闸，读原子副本避免每次准入都占用数据库连接。
 func (s *Store) PublicEnabled() bool { return s.publicEnabled.Load() }
 
-// SaveSiteSettings 在一个事务里替换外观及显式提供的总闸，失败不发布内存值。
-// Open 初始化总闸，后续写者均持 siteWriteMu 至提交与发布完成；缺席时在锁内取该副本回显，
-// 不写总闸键，避免并发的外观保存覆盖总闸修改。读总闸不取这把锁。
+// SaveSiteSettings 在一个事务里替换外观及显式提供的总闸，失败不发布内存值；总闸缺席表示不变，不写这个键，也不发布。
+//
+// 不变式：publicEnabled 等于库里最近一次提交的 site.public_enabled。前提有二：Open 从库加载它；hub 运行期间
+// 只有这里写这个键（现有离线子命令都不写它；此外改库的途径，如 §6.7 整表覆盖的 restore，必须在 hub 停止时
+// 进行，由下次 Open 重新加载）。runWriter 串行提交，但各调用方醒来后的发布顺序不受它约束：不持 siteWriteMu
+// 时，两次并发保存可以按 A、B 提交却按 B、A 发布，内存与库从此分叉，直到下一次显式保存总闸或重启。所以写者持锁
+// 直到提交与发布都完成。缺席时回显取锁内的内存值，由同一不变式保证它等于库值。读总闸（PublicEnabled）不取
+// 这把锁，读到的是最近一次发布的值。
 func (s *Store) SaveSiteSettings(ctx context.Context, in SiteSettingsUpdate) (SiteSettings, error) {
 	s.siteWriteMu.Lock()
 	defer s.siteWriteMu.Unlock()

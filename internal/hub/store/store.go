@@ -30,6 +30,7 @@ var (
 )
 
 type Store struct {
+	// siteWriteMu 让站点设置的提交与总闸发布对其它保存原子，维持的不变式写在 SaveSiteSettings。
 	siteWriteMu   sync.Mutex
 	publicEnabled atomic.Bool
 	closeMu       sync.RWMutex
