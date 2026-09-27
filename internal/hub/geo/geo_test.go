@@ -247,7 +247,8 @@ func TestLookupQueriesAPublicAddressOnce(t *testing.T) {
 }
 
 // 只接受 200 且去掉首尾空白后恰为两个大写字母的应答，其余按失败：不写国家，记一小时退避。一小时写字面值，
-// 不引用常量：常量改了而 spec 没改，这里要红。302 不跟随：跳转目标即使应答 US 也不被请求。
+// 不引用常量：常量改了而 spec 没改，这里要红。302 不跟随：跳转目标即使应答 US 也不被请求。203 是 2xx，正文也合法，
+// 只有"只认 200"让它失败。"超长"是 US 后接 100 个空白：读完再去空白就是合法的 US，只有限读让它失败。
 func TestLookupFailuresBackOffForAnHour(t *testing.T) {
 	for _, c := range []struct {
 		name  string
@@ -264,7 +265,13 @@ func TestLookupFailuresBackOffForAnHour(t *testing.T) {
 			http.Redirect(w, r, "/moved", http.StatusFound)
 		}},
 		{"500 带合法正文", func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "US", http.StatusInternalServerError) }},
-		{"超长", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "US"+string(make([]byte, 100))) }},
+		{"203 带合法正文", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNonAuthoritativeInfo)
+			io.WriteString(w, "US")
+		}},
+		{"超长", func(w http.ResponseWriter, _ *http.Request) {
+			io.WriteString(w, "US"+strings.Repeat(" ", 50)+strings.Repeat("\n", 50))
+		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newFixture(t)
