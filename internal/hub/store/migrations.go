@@ -29,6 +29,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	8:  execAll([]string{ddlSettingV8}),
 	9:  execAll(migrationV9),
 	10: execAll(migrationV10),
+	11: execAll([]string{ddlMaintenanceStateV11}),
 }
 
 func execAll(stmts []string) func(*sql.Tx) error {
@@ -267,3 +268,9 @@ var migrationV9 = []string{
 var migrationV10 = []string{
 	`ALTER TABLE probe_task ADD COLUMN all_nodes INTEGER NOT NULL DEFAULT 0`,
 }
+
+// v11：维护任务的簿记表。旧库升级后没有行，读侧按"从未成功跑过"呈现，直到下一轮成功的上卷与 prune 写入。
+const ddlMaintenanceStateV11 = `CREATE TABLE maintenance_state (
+  name TEXT PRIMARY KEY,
+  finished_at INTEGER NOT NULL
+)`

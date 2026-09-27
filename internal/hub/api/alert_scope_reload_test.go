@@ -11,6 +11,7 @@ import (
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
 	"github.com/xjetry/probe/internal/hub/alert"
+	"github.com/xjetry/probe/internal/hub/store"
 )
 
 func TestDeletedAlertScopeRemainsListedAfterReload(t *testing.T) {
@@ -27,7 +28,7 @@ func TestDeletedAlertScopeRemainsListedAfterReload(t *testing.T) {
 	if err := e.Load(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	svc := New(Config{TTL: 30 * time.Second, Location: time.UTC}, h.store, h.auth, h.live, h.ingest, h.book, h.reg, e, nil, h.clk, slog.Default())
+	svc := New(Config{TTL: 30 * time.Second, Location: time.UTC, Retention: store.DefaultRetention}, h.store, h.auth, h.live, h.ingest, h.book, h.reg, e, nil, h.clk, slog.Default())
 	mux := http.NewServeMux()
 	mux.Handle(svc.Handler())
 	srv := httptest.NewServer(mux)

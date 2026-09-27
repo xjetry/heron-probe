@@ -12,14 +12,19 @@ type TableRows struct {
 	Rows int64
 }
 
-// StorageStats 是库的规模：DBBytes 为 page_count × page_size，即数据库的逻辑大小，等于 WAL 检查点之后
-// 主文件的大小（检查点之前主文件可能远小于它）；不含 -wal 与 -shm 文件。Tables 按表名升序。
+// StorageStats 是库的规模与健康读数，GetStorageStats 与 probe-hub stats 都从它取：DBBytes 为
+// page_count × page_size，即数据库的逻辑大小，等于 WAL 检查点之后主文件的大小（检查点之前主文件可能远小于它）；
+// 不含 -wal 与 -shm 文件。Tables 按表名升序。Series 按 metric_1m、5m、1h、probe_1m、5m、1h 的固定顺序。
+// LastPrune、LastRollup 是 maintenance_state 里的完成时刻（Unix 秒），nil 即从未整轮成功过。
 type StorageStats struct {
-	DBBytes int64
-	Tables  []TableRows
+	DBBytes    int64
+	Tables     []TableRows
+	Series     []SeriesHealth
+	LastPrune  *int64
+	LastRollup *int64
 }
 
-// StorageStats 在一个只读事务里读出，行数与大小属于同一快照。表名取自 sqlite_master 而不是手写清单：
+// StorageStats 在一个只读事务里读出，行数、大小与健康读数属于同一快照。表名取自 sqlite_master 而不是手写清单：
 // 新增的表自动计入。名字以 sqlite_ 开头的是 SQLite 内部表（如 AUTOINCREMENT 的 sqlite_sequence），不计；
 // 前缀按字面比较，不用 LIKE（它的 _ 是通配符，且对 ASCII 不分大小写）。
 func (s *Store) StorageStats(ctx context.Context) (StorageStats, error) {
@@ -61,5 +66,18 @@ func (s *Store) StorageStats(ctx context.Context) (StorageStats, error) {
 		return StorageStats{}, err
 	}
 	out.DBBytes = pages * pageSize
+	if out.Series, err = seriesHealth(ctx, tx); err != nil {
+		return StorageStats{}, err
+	}
+	last, err := lastMaintenance(ctx, tx)
+	if err != nil {
+		return StorageStats{}, err
+	}
+	if at, ok := last[MaintenancePrune]; ok {
+		out.LastPrune = &at
+	}
+	if at, ok := last[MaintenanceRollup]; ok {
+		out.LastRollup = &at
+	}
 	return out, nil
 }

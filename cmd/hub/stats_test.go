@@ -133,6 +133,10 @@ func TestStatsPrintsSizeAndEveryTable(t *testing.T) {
 		t.Fatalf("first line %q, file size %v (%v)", lines[0], info, statErr)
 	}
 	tables := lines[1:]
+	// 表行之后是健康行，它们的键带点号。
+	if i := slices.IndexFunc(tables, func(l string) bool { k, _, _ := strings.Cut(l, ":"); return strings.Contains(k, ".") }); i >= 0 {
+		tables = tables[:i]
+	}
 	if !slices.IsSorted(tables) {
 		t.Fatalf("tables not sorted: %v", tables)
 	}

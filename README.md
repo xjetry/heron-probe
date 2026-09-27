@@ -100,7 +100,7 @@ docker start probe
 镜像里没有 shell，`docker exec probe sh` 不可用。可以：
 
 - 看日志：`docker logs probe`。
-- 查版本与各表行数：`docker exec probe probe-hub version`、`docker exec probe probe-hub stats --db /data/probe.db`。
+- 查版本、各表行数与存储健康（各级最老桶、上卷水位、上次清理与上卷的完成时刻；标红判定见面板的存储页或 `GetStorageStats`）：`docker exec probe probe-hub version`、`docker exec probe probe-hub stats --db /data/probe.db`。
 - 看卷里的文件：挂同一个卷起一个带 shell 的临时容器，`docker run --rm -v probe-data:/data alpine:3.21 ls -ln /data`。
 - 从 hub 自己的网络里发请求：`docker run --rm --network container:probe alpine:3.21 wget -qO /dev/null http://127.0.0.1:8080/admin/ && echo ok`。
 

@@ -233,6 +233,10 @@ func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
 
 func TestServeRunsMaintenanceWithConfiguredRetention(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "hub.db")
+	password := "storage health retention check password"
+	if err := runPasswdWith([]string{"--db", db}, pipeWith(t, password+"\n"), io.Discard); err != nil {
+		t.Fatal(err)
+	}
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 59, 999000000, time.UTC))
 	st, err := store.Open(db, clk, slog.New(slog.NewTextHandler(io.Discard, nil)), store.MigrateSchema)
 	if err != nil {
@@ -270,7 +274,7 @@ func TestServeRunsMaintenanceWithConfiguredRetention(t *testing.T) {
 			t.Fatalf("missing %s control row before maintenance: rows=%v err=%v", name, rows, err)
 		}
 	}
-	_, events, stop := startTestHub(t, db, clk, "--retention-1m", "6h", "--retention-5m", "168h", "--retention-1h", "168h")
+	url, events, stop := startTestHub(t, db, clk, "--retention-1m", "6h", "--retention-5m", "168h", "--retention-1h", "168h")
 	deadline := time.NewTimer(testwait.Bound)
 	defer deadline.Stop()
 	for {
@@ -294,6 +298,40 @@ pruned:
 	rows, err := st.ReadMinuteRows(ctx, id, recent, recent+60)
 	if err != nil || len(rows) != 1 {
 		t.Errorf("maintenance lost retained control row: %v %v", rows, err)
+	}
+	// retention_s 只取决于装配的配置，与数据和时序无关，不必抢在维护之前查：这条只钉住 serve
+	// 把 --retention-* 传给了 api.Config.Retention 的那份值。标红结论是否也用这份配置由
+	// internal/hub/api 的 TestGetStorageStatsUsesTheConfiguredRetention 钉住——那边的夹具不跑
+	// RunMaintenance，判定不依赖任何真实时间窗。
+	client := probev1connect.NewAdminServiceClient(http.DefaultClient, url)
+	logged, err := client.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: password}))
+	if err != nil {
+		t.Fatalf("login for storage stats check: %v", err)
+	}
+	cookies := (&http.Response{Header: logged.Header()}).Cookies()
+	statsReq := connect.NewRequest(&probev1.GetStorageStatsRequest{})
+	statsReq.Header().Set("Cookie", cookies[0].Name+"="+cookies[0].Value)
+	stats, err := client.GetStorageStats(ctx, statsReq)
+	if err != nil {
+		t.Fatalf("GetStorageStats: %v", err)
+	}
+	wantRetentionS := map[string]uint64{"1m": uint64(6 * time.Hour / time.Second), "5m": uint64(168 * time.Hour / time.Second), "1h": uint64(168 * time.Hour / time.Second)}
+	var sawSeries int
+	for _, s := range stats.Msg.GetSeries() {
+		level, ok := strings.CutPrefix(s.GetTable(), "metric_")
+		if !ok {
+			level, ok = strings.CutPrefix(s.GetTable(), "probe_")
+		}
+		if !ok {
+			t.Fatalf("series table %q matches neither the metric_ nor the probe_ prefix", s.GetTable())
+		}
+		sawSeries++
+		if want := wantRetentionS[level]; s.GetRetentionS() != want {
+			t.Errorf("%s retention_s = %d, want the configured %d", s.GetTable(), s.GetRetentionS(), want)
+		}
+	}
+	if sawSeries != 6 {
+		t.Fatalf("GetStorageStats reported %d series, want 6", sawSeries)
 	}
 	stop()
 }
