@@ -33,10 +33,10 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 			if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
 				t.Fatal(err)
 			}
-			if freshVersion != 9 {
-				t.Fatalf("fixture user_version = %d, want 9; this fixture is built for schema 9 by dropping its 7 added columns below, rebuild the v8 fixture for the new version", freshVersion)
+			if freshVersion != 10 {
+				t.Fatalf("fixture user_version = %d, want 10; this fixture is built for schema 10 by dropping everything v9–v10 added below, rebuild the v8 fixture for the new version", freshVersion)
 			}
-			// v9 只增加计费与到期列；去掉这些列得到可实际迁移的 v8 库，避免仅伪造版本号。
+			// v9 只增加计费与到期列，v10 只增加 probe_task.all_nodes；去掉它们得到可实际迁移的 v8 库，避免仅伪造版本号。
 			// 这个夹具经 openOffline 建成，openStore 判定通过后已经把它切成 WAL；切回
 			// DELETE 是因为提前生效的 journal_mode(WAL) 只在非 WAL 的库上改写文件头：本项目
 			// 自己产出的 v8 库本就是 WAL，在它上面这个缺陷不显形，逐字节比较测不出。
@@ -48,6 +48,7 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 				"ALTER TABLE node DROP COLUMN auto_renew",
 				"ALTER TABLE alert_rule DROP COLUMN days_before",
 				"ALTER TABLE alert_state DROP COLUMN fired_expires_on",
+				"ALTER TABLE probe_task DROP COLUMN all_nodes",
 				"PRAGMA user_version = 8",
 				"PRAGMA journal_mode=DELETE",
 			} {
@@ -92,7 +93,17 @@ func TestPasswdLogsSchemaCreationOnStderr(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("passwd command: %v, stderr: %s", err, stderr.String())
 	}
-	if want := `msg="database schema created" version=9`; !strings.Contains(stderr.String(), want) {
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var created int
+	if err := raw.QueryRow("PRAGMA user_version").Scan(&created); err != nil {
+		t.Fatal(err)
+	}
+	// 建库日志里的版本号必须是库里实际写下的那个；不写死数字，免得每次迁移都要改这里。
+	if want := `msg="database schema created" version=` + strconv.Itoa(created); created == 0 || !strings.Contains(stderr.String(), want) {
 		t.Errorf("passwd stderr = %q, want to contain %q", stderr.String(), want)
 	}
 }
