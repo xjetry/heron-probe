@@ -231,8 +231,9 @@ it("列表展示名称、条件、作用域、通知与当前状态", async () =
   expect(screen.getByRole("cell", { name: "已停用" })).toBeInTheDocument();
 });
 
-// 非探测种类的探测字段与提前天数都必须是零值：hub 拒绝带着别的种类字段的规则（alert.CheckRule），而表单的草稿里
-// 持续分钟默认 3、提前天数默认 7。
+// 离线规则的探测字段与提前天数、到期规则的探测字段都必须是零值：hub 拒绝带着别的种类字段的规则（alert.CheckRule）。
+// 新建草稿里连续分钟默认 3、提前天数默认 7，所以这里这两项的断言不是空转；任务与阈值在新建草稿里是空串，
+// 由"主动切换离线"那例从探测规则出发钉住。
 it("新建离线规则覆盖全部节点时不带节点列表，别的种类的字段都是零值", async () => {
   const saved: SaveAlertRuleRequest[] = [];
   render({ saveAlertRule: async (req) => { saved.push(req); return {}; } });
@@ -482,4 +483,19 @@ it("到期规则改成离线时不再带提前天数", async () => {
   fireEvent.click(within(form).getByRole("button", { name: "保存" }));
   await waitFor(() => expect(saved).toHaveLength(1));
   expect({ kind: saved[0].rule!.kind, daysBefore: saved[0].rule!.daysBefore }).toEqual({ kind: AlertKind.OFFLINE, daysBefore: 0 });
+});
+
+// 新建草稿的探测任务与阈值是空串，换算后本来就是零值；从带着任务与阈值的探测规则切过来，这两项的断言才不是空转。
+it("探测规则改成到期时只带提前天数", async () => {
+  const saved: SaveAlertRuleRequest[] = [];
+  render({ listAlertRules: async () => rttRules, listProbeTasks: async () => rttTasks,
+    saveAlertRule: async (req) => { saved.push(req); return {}; },
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 延迟（#10）" }));
+  const form = screen.getByRole("form", { name: "编辑 延迟（#10）" });
+  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(AlertKind.EXPIRY) } });
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].rule).toEqual({ ...rttRules.rules[0], channelIds: [5n], kind: AlertKind.EXPIRY,
+    taskId: 0n, metric: ProbeMetric.UNSPECIFIED, threshold: 0, forMinutes: 0, daysBefore: 7 });
 });

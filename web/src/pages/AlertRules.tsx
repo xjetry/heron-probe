@@ -15,7 +15,8 @@ type Draft = {
   taskId: string; metric: ProbeMetric; threshold: string; forMinutes: string; daysBefore: string;
 };
 
-// 每种规则的专用字段都有初值，切换类型时表单不空着；只有当前类型的那几项随保存发出（toRule）。
+// 有默认值的只有指标（丢包率）、连续分钟 3 与提前天数 7；探测任务与阈值留空，切到探测时由表单的 required 挡住提交，
+// 要用户自己选填。只有当前类型的那几项随保存发出（toRule）。
 const emptyDraft = (): Draft => ({
   name: "", kind: AlertKind.OFFLINE, enabled: true, allNodes: true, nodeIds: new Set(), channelIds: new Set(),
   taskId: "", metric: ProbeMetric.LOSS_PCT, threshold: "", forMinutes: "3", daysBefore: "7",
@@ -133,7 +134,7 @@ function RuleForm({ title, nodes, channels, tasks, initial, pending, onSubmit, o
           <div className="row">
             <label>提前天数<input type="number" required min={1} max={365} step={1} value={draft.daysBefore} onChange={(e) => set({ daysBefore: e.target.value })} /></label>
           </div>
-          <p className="muted">节点到期日距今不超过提前天数即触发（已过期的也算），续期或清除到期日即恢复；到期日在节点页设置。保存后立即评估，此后在 hub 启动时、hub 时区的每个日界（零点不存在的日子取新一天的第一个时刻）与修改节点计费时评估。</p>
+          <p className="muted">节点到期日距今不超过提前天数即触发（已过期的也算）；到期日改到这个范围之外、清除到期日，或调小提前天数使它落到范围之外，即恢复。续期后的到期日仍在范围内时不恢复。到期日在节点页设置。保存后立即评估，此后在 hub 启动时、hub 时区的每个日界（零点不存在的日子取新一天的第一个时刻）与修改节点计费时评估。</p>
         </>
       ) : probe ? (
         <div className="row">
