@@ -13,15 +13,34 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/outbound"
 )
 
+// responseLimit 是 PutObject、DeleteObject 成功应答体排空时的读取上限：这两个操作的成功体为空或只有几百字节的 XML，
+// 超出部分不读（net/http 因此可能不复用这条连接）。
 const responseLimit = 64 << 10
+
+// 列举一页的条数与应答上限。一条 <Contents> 的上界：S3 的对象键至多 maxKeyBytes 字节（UTF-8），encoding-type=url 时
+// 每字节最坏编成 3 字节的 %XX；其余子元素（LastModified、ETag、Size、StorageClass，以及各家追加的校验和字段）连同
+// 标签按 contentsOverhead 计，约为实际大小（三四百字节）的三倍。页级元素（Name、回显的 Prefix、两个 continuation
+// token、KeyCount 等）按 pageOverhead 计，其中回显的 Prefix 同样至多 3×maxKeyBytes。按份数上限 1000 列一层，
+// 256 条一页要 4 个来回；应答上限 listPageKeys×(3×maxKeyBytes+contentsOverhead)+pageOverhead = 1064960 字节，
+// 超过即当作不合法的应答，不截断解析。
+const (
+	maxKeyBytes       = 1024
+	contentsOverhead  = 1 << 10
+	pageOverhead      = 16 << 10
+	listPageKeys      = 256
+	listResponseLimit = listPageKeys*(3*maxKeyBytes+contentsOverhead) + pageOverhead
+)
 
 type Config struct {
 	Endpoint  string
@@ -79,10 +98,11 @@ type Client struct {
 	cfg      Config
 	endpoint *url.URL
 	http     *http.Client
-	now      func() time.Time
+	clk      clock.Clock
 }
 
-func New(cfg Config) (*Client, error) {
+// New 的时钟只用于签名时刻（x-amz-date）。
+func New(cfg Config, clk clock.Clock) (*Client, error) {
 	if !cfg.Enabled() {
 		return nil, errors.New("backup endpoint, bucket, access key and secret are required")
 	}
@@ -101,7 +121,7 @@ func New(cfg Config) (*Client, error) {
 	client := outbound.NewClient()
 	// 对象可能为 GB 级；通知的十秒总时限不适合完整传输。仍保留共享客户端的重定向禁令。
 	client.Timeout = 30 * time.Minute
-	return &Client{cfg: cfg, endpoint: u, http: client, now: time.Now}, nil
+	return &Client{cfg: cfg, endpoint: u, http: client, clk: clk}, nil
 }
 
 type Error struct {
@@ -142,7 +162,7 @@ func (c *Client) request(ctx context.Context, method, key string, query url.Valu
 		return nil, fail("request", "cannot construct request", err)
 	}
 	req.ContentLength = size
-	req.Header.Set("X-Amz-Date", c.now().UTC().Format("20060102T150405Z"))
+	req.Header.Set("X-Amz-Date", c.clk.Now().UTC().Format("20060102T150405Z"))
 	req.Header.Set("X-Amz-Content-Sha256", hash)
 	canonical, signed := canonicalRequest(req, hash)
 	_, auth := authorization(req, canonical, signed, c.cfg.Region, "s3", c.cfg.AccessKey, c.cfg.Secret)
@@ -163,8 +183,9 @@ func (c *Client) request(ctx context.Context, method, key string, query url.Valu
 	return resp, nil
 }
 
-// PutObject 从当前位置开始上传；读取器必须在散列与上传期间保持内容不变。
-// 先散列再回到原位，不把整个数据库读入内存，也不使用 UNSIGNED-PAYLOAD。
+// PutObject 从 body 的当前位置上传到末尾，不关闭 body。先散列再回到原位上传同一段内容：不把整个数据库读进内存，
+// 也不用 UNSIGNED-PAYLOAD。前提是两次读取之间内容不变，由调用方保证——持有快照临时文件的消费方在 PutObject 返回
+// 之前不改写它。PutObject 返回之后不再读 body（见 uploadBody），调用方可以立即 Seek 回原位重试，或自行关闭它。
 func (c *Client) PutObject(ctx context.Context, key string, body io.ReadSeeker) error {
 	if body == nil {
 		return fail("request", "object body is required", nil)
@@ -181,13 +202,51 @@ func (c *Client) PutObject(ctx context.Context, key string, body io.ReadSeeker) 
 	if _, err := body.Seek(start, io.SeekStart); err != nil {
 		return fail("request", "cannot rewind object", err)
 	}
-	resp, err := c.request(ctx, http.MethodPut, key, nil, body, n, hex.EncodeToString(h.Sum(nil)))
+	// 空对象交 http.NoBody：长度为 0 而正文非 nil 时 net/http 当作长度未知，改用 chunked 编码，S3 不收。
+	var payload io.Reader = http.NoBody
+	if n > 0 {
+		upload := &uploadBody{r: body}
+		defer upload.detach()
+		payload = upload
+	}
+	resp, err := c.request(ctx, http.MethodPut, key, nil, payload, n, hex.EncodeToString(h.Sum(nil)))
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, responseLimit))
 	return nil
+}
+
+var errBodyDetached = errors.New("s3: upload body read after PutObject returned")
+
+// uploadBody 是交给 transport 的请求正文，它把调用方的 reader 与 RoundTripper 的两条约定隔开：
+//   - RoundTripper 会关闭请求正文。调用方传的多半是快照临时文件（*os.File），关掉它，重试时就 Seek 不回原位；
+//     所以 Close 不往下传。
+//   - RoundTripper 可以在 RoundTrip 返回之后，在另一个协程里继续读正文（服务端没收完正文就应答时）。PutObject 返回
+//     前 detach：它等正在进行的那次 Read 结束，此后的 Read 一律失败，底层 reader 在 PutObject 返回之后不会再被读，
+//     与调用方随后的 Seek、重读不交错。
+type uploadBody struct {
+	mu       sync.Mutex
+	r        io.Reader
+	detached bool
+}
+
+func (b *uploadBody) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.detached {
+		return 0, errBodyDetached
+	}
+	return b.r.Read(p)
+}
+
+func (b *uploadBody) Close() error { return nil }
+
+func (b *uploadBody) detach() {
+	b.mu.Lock()
+	b.detached = true
+	b.mu.Unlock()
 }
 
 type contextReader struct {
@@ -223,6 +282,7 @@ func (c *Client) GetObject(ctx context.Context, key string, dst io.Writer, maxBy
 		return err
 	}
 	defer resp.Body.Close()
+	// 声明的长度已超上限就不读正文：dst 里不留任何部分产物。没有长度头的超限由下面多读一个字节判出。
 	if resp.ContentLength > maxBytes {
 		return fail("response", "object exceeds maxBytes", nil)
 	}
@@ -245,12 +305,17 @@ type Object struct {
 	LastModified time.Time `xml:"LastModified"`
 }
 
-func (c *Client) ListObjectsV2(ctx context.Context, prefix string) ([]Object, error) {
+// ListObjectsV2 列出 prefix 下的全部对象。maxObjects 由消费方按自己的保留份数给出上界，列举超过它即返回错误，
+// 不无界地翻页：前缀下混进大量别的对象、或删除长期失败而对象越积越多时，报错让它可见。
+func (c *Client) ListObjectsV2(ctx context.Context, prefix string, maxObjects int) ([]Object, error) {
+	if maxObjects <= 0 {
+		return nil, fail("request", "positive maxObjects is required", nil)
+	}
 	var objects []Object
 	seen := map[string]bool{}
 	token := ""
 	for {
-		query := url.Values{"list-type": {"2"}, "prefix": {prefix}, "max-keys": {"10"}, "encoding-type": {"url"}}
+		query := url.Values{"list-type": {"2"}, "prefix": {prefix}, "max-keys": {strconv.Itoa(listPageKeys)}, "encoding-type": {"url"}}
 		if token != "" {
 			query.Set("continuation-token", token)
 		}
@@ -258,13 +323,13 @@ func (c *Client) ListObjectsV2(ctx context.Context, prefix string) ([]Object, er
 		if err != nil {
 			return nil, err
 		}
-		data, err := io.ReadAll(io.LimitReader(resp.Body, responseLimit+1))
+		data, err := io.ReadAll(io.LimitReader(resp.Body, listResponseLimit+1))
 		resp.Body.Close()
 		if err != nil {
 			return nil, fail("response", "cannot read list response", err)
 		}
-		if len(data) > responseLimit {
-			return nil, fail("response", "list response exceeds 65536 bytes", nil)
+		if len(data) > listResponseLimit {
+			return nil, fail("response", fmt.Sprintf("list response exceeds %d bytes", listResponseLimit), nil)
 		}
 		var page struct {
 			XMLName   xml.Name `xml:"ListBucketResult"`
@@ -277,13 +342,18 @@ func (c *Client) ListObjectsV2(ctx context.Context, prefix string) ([]Object, er
 			return nil, fail("response", "invalid list XML", err)
 		}
 		for _, obj := range page.Objects {
+			// encoding-type=url 的键是表单编码：空格写成 +，字面的 + 写成 %2B。PathUnescape 不把 + 还原成空格，
+			// 含空格的键会被解成另一个键，按它删除得到的是对不存在的键的 204，保留删除静默失效。
 			if page.Encoding == "url" {
-				obj.Key, err = url.PathUnescape(obj.Key)
+				obj.Key, err = url.QueryUnescape(obj.Key)
 				if err != nil {
 					return nil, fail("response", "invalid encoded object key", err)
 				}
 			}
 			objects = append(objects, obj)
+		}
+		if len(objects) > maxObjects {
+			return nil, fail("response", fmt.Sprintf("listing exceeds %d objects", maxObjects), nil)
 		}
 		if !page.Truncated {
 			return objects, nil

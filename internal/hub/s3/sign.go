@@ -1,11 +1,13 @@
 package s3
 
 import (
+	"cmp"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -38,15 +40,23 @@ func escape(value string, slash bool) string {
 	return out.String()
 }
 
+// canonicalQuery 先按编码后的键、键相同再按编码后的值排序。对整串 k=v 排序在一个键是另一个键的前缀时会排错：
+// a-b=1 排在 a=2 之前（'-' 小于 '='），规范顺序是 a=2&a-b=1。请求线上发的也是这个串，线上与签名同一顺序。
 func canonicalQuery(query url.Values) string {
-	var pairs []string
+	type pair struct{ k, v string }
+	var pairs []pair
 	for k, values := range query {
+		ek := escape(k, false)
 		for _, v := range values {
-			pairs = append(pairs, escape(k, false)+"="+escape(v, false))
+			pairs = append(pairs, pair{ek, escape(v, false)})
 		}
 	}
-	sort.Strings(pairs)
-	return strings.Join(pairs, "&")
+	slices.SortFunc(pairs, func(a, b pair) int { return cmp.Or(strings.Compare(a.k, b.k), strings.Compare(a.v, b.v)) })
+	out := make([]string, len(pairs))
+	for i, p := range pairs {
+		out[i] = p.k + "=" + p.v
+	}
+	return strings.Join(out, "&")
 }
 
 func canonicalRequest(req *http.Request, payloadHash string) (string, string) {

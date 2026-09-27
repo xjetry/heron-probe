@@ -10,20 +10,36 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/xjetry/probe/internal/clock"
 )
+
+var signingTime = time.Date(2026, 9, 28, 1, 2, 3, 0, time.UTC)
 
 func clientFor(t *testing.T, endpoint string) *Client {
 	t.Helper()
-	c, err := New(Config{Endpoint: endpoint, Bucket: "backups", Region: "auto", AccessKey: "access", Secret: "secret"})
+	c, err := New(Config{Endpoint: endpoint, Bucket: "backups", Region: "auto", AccessKey: "access", Secret: "secret"}, clock.NewFake(signingTime))
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.now = func() time.Time { return time.Date(2026, 9, 28, 1, 2, 3, 0, time.UTC) }
 	return c
+}
+
+// dialTo 让任意主机名的请求都连到 srv：虚拟主机寻址与带端口的 endpoint 不必真的解析。
+func dialTo(c *Client, srv *httptest.Server) *http.Transport {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil
+	tr.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+	}
+	c.http.Transport = tr
+	return tr
 }
 
 func TestObjectOperations(t *testing.T) {
@@ -69,13 +85,7 @@ func TestObjectOperations(t *testing.T) {
 			defer srv.Close()
 			c := clientFor(t, "http://s3.example/base")
 			c.cfg.VirtualHost = virtual
-			tr := http.DefaultTransport.(*http.Transport).Clone()
-			tr.Proxy = nil
-			tr.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
-			}
-			defer tr.CloseIdleConnections()
-			c.http.Transport = tr
+			defer dialTo(c, srv).CloseIdleConnections()
 			body := bytes.NewReader(append([]byte("skip"), payload...))
 			_, _ = body.Seek(4, io.SeekStart)
 			if err := c.PutObject(t.Context(), key, body); err != nil {
@@ -98,31 +108,161 @@ func TestObjectOperations(t *testing.T) {
 	}
 }
 
+// closeRecorder 是调用方最常见的正文形态（快照临时文件）的替身：可 Seek，记录是否被关闭。
+type closeRecorder struct {
+	*bytes.Reader
+	closed atomic.Bool
+}
+
+func (c *closeRecorder) Close() error { c.closed.Store(true); return nil }
+
+// 第一次 503 可重试；调用方的正文必须仍然打开，Seek 回起点后用它重试成功。
+func TestPutObjectLeavesBodyOpenForRetry(t *testing.T) {
+	payload := []byte("sqlite snapshot")
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ := io.ReadAll(r.Body)
+		if calls.Add(1) == 1 {
+			w.WriteHeader(503)
+			return
+		}
+		if !bytes.Equal(got, payload) {
+			t.Errorf("retried upload = %q, want %q", got, payload)
+		}
+	}))
+	defer srv.Close()
+	c := clientFor(t, srv.URL)
+	body := &closeRecorder{Reader: bytes.NewReader(payload)}
+	err := c.PutObject(t.Context(), "config/a.db", body)
+	var e *Error
+	if !errors.As(err, &e) || e.StatusCode != 503 || !e.Retryable() {
+		t.Fatalf("first upload = %v, want retryable HTTP 503", err)
+	}
+	if body.closed.Load() {
+		t.Fatal("PutObject closed the caller's body")
+	}
+	if _, err := body.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PutObject(t.Context(), "config/a.db", body); err != nil {
+		t.Fatalf("retry with the same body: %v", err)
+	}
+	if body.closed.Load() || calls.Load() != 2 {
+		t.Fatalf("after retry: closed=%v server calls=%d", body.closed.Load(), calls.Load())
+	}
+}
+
+// countingReader 记录底层被读了多少次，用来判断 PutObject 返回之后还有没有人读它。
+type countingReader struct {
+	io.ReadSeeker
+	reads atomic.Int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) { r.reads.Add(1); return r.ReadSeeker.Read(p) }
+
+// lateTransport 按 RoundTripper 约定允许的方式行事：立即以 503 应答，在 RoundTrip 返回之后才在另一个协程里读正文。
+type lateTransport struct {
+	release chan struct{}
+	done    chan struct{}
+}
+
+func (tr *lateTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	go func() {
+		defer close(tr.done)
+		<-tr.release
+		_, _ = io.Copy(io.Discard, req.Body)
+		_ = req.Body.Close()
+	}()
+	return &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}, Request: req}, nil
+}
+
+func TestPutObjectDoesNotReadBodyAfterReturning(t *testing.T) {
+	c := clientFor(t, "http://s3.example")
+	tr := &lateTransport{release: make(chan struct{}), done: make(chan struct{})}
+	c.http.Transport = tr
+	body := &countingReader{ReadSeeker: bytes.NewReader(bytes.Repeat([]byte("x"), 1<<20))}
+	if err := c.PutObject(t.Context(), "k", body); err == nil {
+		t.Fatal("503 accepted")
+	}
+	before := body.reads.Load()
+	close(tr.release)
+	<-tr.done
+	if after := body.reads.Load(); after != before {
+		t.Fatalf("the caller's reader was read %d more times after PutObject returned", after-before)
+	}
+}
+
+// 空对象走 Content-Length: 0，不走 chunked：S3 不收不带 aws-chunked 声明的 chunked 上传。
+func TestPutObjectEmptyBodySendsContentLength(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
+			t.Errorf("empty upload: Content-Length %d, Transfer-Encoding %v", r.ContentLength, r.TransferEncoding)
+		}
+	}))
+	defer srv.Close()
+	if err := clientFor(t, srv.URL).PutObject(t.Context(), "empty", bytes.NewReader(nil)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestListPagination(t *testing.T) {
 	var tokens []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		if q.Get("prefix") != "a +/" || q.Get("list-type") != "2" || q.Get("max-keys") != "10" || q.Get("encoding-type") != "url" {
+		if q.Get("prefix") != "a +/" || q.Get("list-type") != "2" || q.Get("max-keys") != fmt.Sprint(listPageKeys) || q.Get("encoding-type") != "url" {
 			t.Errorf("list query = %v", q)
 		}
 		token := q.Get("continuation-token")
 		tokens = append(tokens, token)
 		if token == "" {
-			fmt.Fprint(w, `<ListBucketResult><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated><NextContinuationToken>a+/=</NextContinuationToken><Contents><Key>a%20%2B%2Fone</Key><Size>7</Size><LastModified>2026-09-28T01:02:03Z</LastModified></Contents></ListBucketResult>`)
+			// encoding-type=url 是表单编码：+ 是空格，%2B 才是字面的 +。
+			fmt.Fprint(w, `<ListBucketResult><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated><NextContinuationToken>a+/=</NextContinuationToken>`+
+				`<Contents><Key>a%20%2B%2Fone</Key><Size>7</Size><LastModified>2026-09-28T01:02:03Z</LastModified></Contents>`+
+				`<Contents><Key>a+b%2Bc</Key><Size>1</Size></Contents></ListBucketResult>`)
 		} else {
 			fmt.Fprint(w, `<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>a +/two</Key><Size>8</Size></Contents></ListBucketResult>`)
 		}
 	}))
 	defer srv.Close()
-	objects, err := clientFor(t, srv.URL).ListObjectsV2(t.Context(), "a +/")
+	objects, err := clientFor(t, srv.URL).ListObjectsV2(t.Context(), "a +/", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(objects) != 2 || objects[0].Key != "a +/one" || objects[1].Key != "a +/two" || objects[0].Size != 7 || objects[0].LastModified.Format(time.RFC3339) != "2026-09-28T01:02:03Z" {
-		t.Errorf("joined pages = %+v", objects)
+	var keys []string
+	for _, o := range objects {
+		keys = append(keys, o.Key)
+	}
+	if got := strings.Join(keys, "|"); got != "a +/one|a b+c|a +/two" || objects[0].Size != 7 || objects[0].LastModified.Format(time.RFC3339) != "2026-09-28T01:02:03Z" {
+		t.Errorf("joined pages = %q %+v", got, objects)
 	}
 	if strings.Join(tokens, ",") != ",a+/=" {
 		t.Fatalf("continuation tokens = %q", tokens)
+	}
+}
+
+// 端点不停地返回新 token 时，列举在超过调用方给的上界时停下并报错，不无界地翻页。
+func TestListStopsAtMaxObjects(t *testing.T) {
+	var pages atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := pages.Add(1)
+		fmt.Fprintf(w, `<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>t%d</NextContinuationToken><Contents><Key>a%d</Key></Contents><Contents><Key>b%d</Key></Contents></ListBucketResult>`, n, n, n)
+	}))
+	defer srv.Close()
+	c := clientFor(t, srv.URL)
+	_, err := c.ListObjectsV2(t.Context(), "", 5)
+	var e *Error
+	if !errors.As(err, &e) || e.Kind != "response" || !strings.Contains(err.Error(), "listing exceeds 5 objects") || pages.Load() != 3 {
+		t.Fatalf("endless listing: %v after %d pages", err, pages.Load())
+	}
+	if _, err := c.ListObjectsV2(t.Context(), "", 0); !errors.As(err, &e) || e.Kind != "request" || pages.Load() != 3 {
+		t.Fatalf("maxObjects 0: %v", err)
+	}
+}
+
+func TestCanonicalQueryOrdersByKeyThenValue(t *testing.T) {
+	// 期望值是 botocore S3SigV4Auth._canonical_query_string_url 对 ?a-b=1&a=2&a=1 的结果（awscli 2.37.0 自带）。
+	if got := canonicalQuery(url.Values{"a-b": {"1"}, "a": {"2", "1"}}); got != "a=1&a=2&a-b=1" {
+		t.Fatalf("canonical query = %q", got)
 	}
 }
 
@@ -166,26 +306,39 @@ func TestResponseBounds(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
 		list       bool
+		flush      bool
 	}{
-		{"oversized list", strings.Repeat("x", responseLimit+1), true},
-		{"invalid XML", "<not-list/>", true},
-		{"missing token", "<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>", true},
-		{"repeated token", "<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>same</NextContinuationToken></ListBucketResult>", true},
-		{"oversized object", "too much data", false},
+		{"oversized list", strings.Repeat("x", listResponseLimit+1), true, true},
+		{"invalid XML", "<not-list/>", true, true},
+		{"missing token", "<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>", true, true},
+		{"repeated token", "<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>same</NextContinuationToken></ListBucketResult>", true, true},
+		{"oversized object without length", "too much data", false, true},
+		{"oversized object with length", "too much data", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.(http.Flusher).Flush(); fmt.Fprint(w, tc.body) }))
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// 先 Flush 就没有 Content-Length，应答以 chunked 发出；不 Flush 时小正文带 Content-Length。
+				if tc.flush {
+					w.(http.Flusher).Flush()
+				}
+				fmt.Fprint(w, tc.body)
+			}))
 			defer srv.Close()
 			c := clientFor(t, srv.URL)
 			var err error
+			var dst bytes.Buffer
 			if tc.list {
-				_, err = c.ListObjectsV2(t.Context(), "")
+				_, err = c.ListObjectsV2(t.Context(), "", 1000)
 			} else {
-				err = c.GetObject(t.Context(), "object", io.Discard, 3)
+				err = c.GetObject(t.Context(), "object", &dst, 3)
 			}
 			var e *Error
 			if !errors.As(err, &e) || e.Kind != "response" {
 				t.Fatalf("invalid response accepted: %v", err)
+			}
+			// 声明的长度已超上限时一个字节都不写进 dst。
+			if !tc.list && !tc.flush && dst.Len() != 0 {
+				t.Fatalf("oversized object with Content-Length wrote %d bytes before failing", dst.Len())
 			}
 		})
 	}
@@ -211,14 +364,14 @@ func TestConfigurationAndDisabled(t *testing.T) {
 		if c.Enabled() {
 			t.Errorf("backup enabled without %s", field)
 		}
-		if _, err := New(c); err == nil {
+		if _, err := New(c, clock.NewFake(signingTime)); err == nil {
 			t.Errorf("client constructed without %s", field)
 		}
 	}
-	for _, endpoint := range []string{"ftp://host", "https://user:pass@host", "https://host?a=b", "https://host/#secret", "not a url"} {
+	for _, endpoint := range []string{"ftp://host", "https://user:pass@host", "https://host?a=b", "https://host/#secret", "not a url", "https://例子.example", "http://[fe80::1%25en0]:9000"} {
 		c := full
 		c.Endpoint = endpoint
-		if _, err := New(c); err == nil {
+		if _, err := New(c, clock.NewFake(signingTime)); err == nil {
 			t.Errorf("invalid endpoint accepted: %s", endpoint)
 		}
 	}
