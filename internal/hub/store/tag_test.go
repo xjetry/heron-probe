@@ -3,9 +3,11 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -201,5 +203,118 @@ func TestTagFoldMatchesEqualFold(t *testing.T) {
 				t.Errorf("%q vs %q: same key %v, EqualFold %v", a, b, same, want)
 			}
 		}
+	}
+}
+
+// ddlNodeTag 注释里每条访问路径的依据：对 tag.go 里的语句本身跑 EXPLAIN QUERY PLAN，库里没有统计信息（store 从不跑
+// ANALYZE，与生产一致）。计划的措辞属于所钉的 SQLite 版本；换驱动版本后这里红了，按新输出重新核对注释，不只改字符串。
+func TestNodeTagQueryPlans(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	for i := range 30 {
+		id, _, err := s.CreateNode(ctx, fmt.Sprint("n", i), hash(byte(i+1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		setTags(t, s, id, fmt.Sprint("a", i%5), fmt.Sprint("b", i%3), "all")
+	}
+	filter := tagFilterWhere(2)
+	filterArgs := []any{TagFold("a1"), TagFold("all"), 2}
+	byTag := "SEARCH nt USING COVERING INDEX node_tag_by_tag (tag_id=?)"
+	byNode := "SEARCH nt USING PRIMARY KEY (node_id=?)"
+	for _, c := range []struct {
+		label string
+		query string
+		args  []any
+		want  []string
+	}{
+		{"ListNodesByTags", selectNodes + filter + nodeOrder, filterArgs, []string{byTag, "USE TEMP B-TREE FOR GROUP BY"}},
+		{"tags of the filtered nodes", nodeTagsQuery(filter), filterArgs, []string{byNode, byTag}},
+		{"tags of all nodes", nodeTagsQuery(""), nil, []string{byNode}},
+		{"ListTags", listTagsQuery, nil, []string{byTag + " LEFT-JOIN"}},
+		{"DeleteTag", detachTag, []any{1}, []string{"SEARCH node_tag USING COVERING INDEX node_tag_by_tag (tag_id=?)"}},
+		{"clearing a node", clearNodeTags, []any{1}, []string{"SEARCH node_tag USING PRIMARY KEY (node_id=?)"}},
+	} {
+		plan := queryPlan(t, s, c.query, c.args...)
+		for _, w := range c.want {
+			if !slices.Contains(plan, w) {
+				t.Errorf("%s: plan %q lacks %q", c.label, plan, w)
+			}
+		}
+	}
+}
+
+func queryPlan(t *testing.T, s *Store, query string, args ...any) []string {
+	t.Helper()
+	rows, err := s.r.Query("EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// 节点行与它的标签来自同一个快照：写者每次同时改名字与标签（n<i> 配 t<i>），读者读到的名字后缀必须与标签后缀相同。
+// 标签若在另一个只读事务里读，两次读之间提交的写会让名字与标签错配，这条用例随之变红。
+func TestNodeRowAndTagsComeFromOneSnapshot(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	id, _, err := s.CreateNode(ctx, "n0", hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setTags(t, s, id, "t0")
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	defer func() { close(stop); wg.Wait() }()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 1; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if _, err := s.UpdateNode(ctx, id, NodeEdit{Name: fmt.Sprint("n", i), TrafficResetDay: 1, Tags: []string{fmt.Sprint("t", i)}}); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	const reads = 500
+	names := map[string]bool{}
+	mismatches := 0
+	for range reads {
+		n, err := s.GetNode(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		names[n.Name] = true
+		if want := []string{"t" + strings.TrimPrefix(n.Name, "n")}; !slices.Equal(n.Tags, want) {
+			mismatches++
+			if mismatches <= 3 {
+				t.Errorf("node row %q read with tags %q", n.Name, n.Tags)
+			}
+		}
+	}
+	if mismatches > 0 {
+		t.Errorf("%d of %d reads paired the node row with tags from another moment", mismatches, reads)
+	}
+	// 读者只看到一个名字说明写者没有插进任何两次读之间，上面的核对就什么也没验证。
+	if len(names) < 2 {
+		t.Fatalf("the reads saw %d distinct names; the writer never interleaved with them", len(names))
 	}
 }

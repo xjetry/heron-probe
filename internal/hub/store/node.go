@@ -139,8 +139,9 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 	return out, rows.Err()
 }
 
-// queryNodes 是节点的唯一读法：where 是作用于 node n 的条件（空串即全部）。节点行与它们的标签在同一个只读事务里读出，
-// 两者来自同一个快照：两次独立查询之间插进一次 UpdateNode，节点行与标签就会是不同时刻的样子。
+// queryNodes 是 store.Node 值的唯一来源（selectNodes 与 scanNodes 只在这里用）：where 是作用于 node n 的条件（空串即
+// 全部）。节点行与它们的标签在同一个只读事务里读出，两者来自同一个快照：两次独立查询之间插进一次 UpdateNode，节点行与
+// 标签就会是不同时刻的样子（TestNodeRowAndTagsComeFromOneSnapshot）。
 func (s *Store) queryNodes(ctx context.Context, where string, args ...any) ([]Node, error) {
 	tx, err := s.r.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -354,7 +355,7 @@ func (s *Store) DeleteNode(ctx context.Context, id int64) error {
 		if _, err := tx.Exec("DELETE FROM alert_rule_node WHERE node_id = ?", id); err != nil {
 			return err
 		}
-		if _, err := tx.Exec("DELETE FROM node_tag WHERE node_id = ?", id); err != nil {
+		if _, err := tx.Exec(clearNodeTags, id); err != nil {
 			return err
 		}
 		return nil

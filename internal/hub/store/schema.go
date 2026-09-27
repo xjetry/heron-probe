@@ -366,7 +366,8 @@ func alertStatements() []string {
 }
 
 // tag 是运维自定义的节点标签（§10）。name 是先建的写法，回显用；name_fold 是 TagFold(name)，UNIQUE 承载"大小写不敏感
-// 唯一"：两个只差大小写的名字落到同一行，后来的写法不覆盖先建的（写者只有 UpdateNode 的 setNodeTags，冲突时不改行）。
+// 唯一"：两个只差大小写的名字落到同一行，后来的写法不覆盖先建的（插入 tag 行的只有 setNodeTags，冲突时不改行；
+// DeleteTag 只删行）。
 // AUTOINCREMENT 使 id 永不复用：node_tag 只存 tag_id，id 若复用，任何一条没被清掉的关联行都会静默挂到之后新建的
 // 同 id 标签上；不复用时这样的行 JOIN 不到标签，读侧不显示。
 const ddlTag = `CREATE TABLE tag (
@@ -376,8 +377,13 @@ const ddlTag = `CREATE TABLE tag (
 )`
 
 // node_tag 是节点与标签的多对多关联。不声明外键：删节点（DeleteNode）与删标签（DeleteTag）各在自己的写事务里显式删掉
-// 关联行，与其余从属表同一做法，不依赖连接是否开启外键约束。主键 (node_id, tag_id) 服务按节点读与按节点分组的过滤，
-// 按标签删除与计数走 node_tag_by_tag。
+// 关联行，与其余从属表同一做法，不依赖连接是否开启外键约束。
+//
+// 两个索引各自服务的语句如下，依据是 EXPLAIN QUERY PLAN（不跑 ANALYZE，与生产一致：store 从不跑 ANALYZE），
+// 由 TestNodeTagQueryPlans 对 tag.go 里的这些语句本身核对：
+//   - 主键 (node_id, tag_id)：按节点读标签（nodeTagsQuery），按节点清空（clearNodeTags，setNodeTags 与 DeleteNode 用）。
+//   - node_tag_by_tag：按标签过滤（tagFilterWhere 的交集子查询走它，按节点分组另用临时 B 树），ListTags 的计数，
+//     DeleteTag 解除关联（detachTag）。
 const ddlNodeTag = `CREATE TABLE node_tag (
   node_id INTEGER NOT NULL,
   tag_id INTEGER NOT NULL,

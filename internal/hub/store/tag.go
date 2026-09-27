@@ -29,10 +29,35 @@ type Tag struct {
 	Nodes int
 }
 
+// 访问 node_tag 的语句。它们各走哪个索引写在 ddlNodeTag 的注释里，TestNodeTagQueryPlans 对这些语句本身跑
+// EXPLAIN QUERY PLAN 核对。
+const (
+	// clearNodeTags 清掉一个节点的全部关联：setNodeTags 替换前与 DeleteNode 都用它。
+	clearNodeTags = "DELETE FROM node_tag WHERE node_id = ?"
+	// detachTag 解除一个标签的全部关联（DeleteTag）。
+	detachTag = "DELETE FROM node_tag WHERE tag_id = ?"
+	// listTagsQuery 是 ListTags 的查询。
+	listTagsQuery = `SELECT t.name, COUNT(nt.node_id) FROM tag t LEFT JOIN node_tag nt ON nt.tag_id = t.id
+	GROUP BY t.id ORDER BY t.name_fold`
+)
+
+// nodeTagsQuery 读出 where（queryNodes 的节点条件）选中的节点各自的标签名，按 name_fold 排序。
+func nodeTagsQuery(where string) string {
+	return `SELECT nt.node_id, t.name FROM node_tag nt JOIN tag t ON t.id = nt.tag_id
+	WHERE nt.node_id IN (SELECT n.id FROM node n` + where + `) ORDER BY t.name_fold`
+}
+
+// tagFilterWhere 是 ListNodesByTags 交给 queryNodes 的节点条件：n 个折叠后的名字，外加所选标签数，共 n+1 个参数。
+func tagFilterWhere(n int) string {
+	return ` WHERE n.id IN (SELECT nt.node_id FROM node_tag nt JOIN tag t ON t.id = nt.tag_id
+	WHERE t.name_fold IN (` + strings.TrimSuffix(strings.Repeat("?, ", n), ", ") + `)
+	GROUP BY nt.node_id HAVING COUNT(DISTINCT nt.tag_id) = ?)`
+}
+
 // setNodeTags 在 UpdateNode 的写事务里把节点的标签集合整体替换成 names：已存在的标签（按 name_fold）沿用先建的写法，
 // 不存在的新建。标签行不随最后一个关联消失：删标签只经 DeleteTag，ListTags 因此能列出没挂在任何节点上的标签。
 func setNodeTags(tx *sql.Tx, node int64, names []string) error {
-	if _, err := tx.Exec("DELETE FROM node_tag WHERE node_id = ?", node); err != nil {
+	if _, err := tx.Exec(clearNodeTags, node); err != nil {
 		return err
 	}
 	for _, name := range names {
@@ -47,10 +72,9 @@ func setNodeTags(tx *sql.Tx, node int64, names []string) error {
 	return nil
 }
 
-// nodeTags 读出 where（queryNodes 的节点条件）选中的节点各自的标签名，按 name_fold 排序。
+// nodeTags 在 queryNodes 的只读事务里按 nodeTagsQuery 读标签，按节点分组。
 func nodeTags(ctx context.Context, tx *sql.Tx, where string, args []any) (map[int64][]string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT nt.node_id, t.name FROM node_tag nt JOIN tag t ON t.id = nt.tag_id
-		WHERE nt.node_id IN (SELECT n.id FROM node n`+where+`) ORDER BY t.name_fold`, args...)
+	rows, err := tx.QueryContext(ctx, nodeTagsQuery(where), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -88,16 +112,12 @@ func (s *Store) ListNodesByTags(ctx context.Context, names []string) ([]Node, er
 			folds = append(folds, fold)
 		}
 	}
-	where := ` WHERE n.id IN (SELECT nt.node_id FROM node_tag nt JOIN tag t ON t.id = nt.tag_id
-		WHERE t.name_fold IN (` + strings.TrimSuffix(strings.Repeat("?, ", len(folds)), ", ") + `)
-		GROUP BY nt.node_id HAVING COUNT(DISTINCT nt.tag_id) = ?)`
-	return s.queryNodes(ctx, where, append(folds, len(folds))...)
+	return s.queryNodes(ctx, tagFilterWhere(len(folds)), append(folds, len(folds))...)
 }
 
 // ListTags 列出全部标签与各自的节点数，按 name_fold 排序；没挂在任何节点上的标签节点数为 0。
 func (s *Store) ListTags(ctx context.Context) ([]Tag, error) {
-	rows, err := s.r.QueryContext(ctx, `SELECT t.name, COUNT(nt.node_id) FROM tag t LEFT JOIN node_tag nt ON nt.tag_id = t.id
-		GROUP BY t.id ORDER BY t.name_fold`)
+	rows, err := s.r.QueryContext(ctx, listTagsQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +144,7 @@ func (s *Store) DeleteTag(ctx context.Context, name string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec("DELETE FROM node_tag WHERE tag_id = ?", id); err != nil {
+		if _, err := tx.Exec(detachTag, id); err != nil {
 			return err
 		}
 		_, err = tx.Exec("DELETE FROM tag WHERE id = ?", id)
