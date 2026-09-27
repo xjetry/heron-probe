@@ -87,7 +87,7 @@ func builtinPublic(path string) hostResponse {
 // 两边各自一张 404/200 表；任何一边都不下发 CORS 允许头。
 func TestHandlerRoutesByHost(t *testing.T) {
 	srv, st := newThemeTestServer(t)
-	installTheme(t, st, "t", map[string]string{"index.html": "theme index", "assets/app.js": "console.log(1)", "admin/index.html": "shadow panel"})
+	installTheme(t, st, "t", map[string]string{"index.html": "theme index", "assets/app.js": "console.log(1)", "admin/index.html": "shadow panel", "probe.v1.PublicService/GetSite": "shadow rpc"})
 	const listNodes, report, getSite = "/probe.v1.AdminService/ListNodes", "/probe.v1.AgentService/Report", "/probe.v1.PublicService/GetSite"
 	type check struct {
 		method, path string
@@ -98,8 +98,9 @@ func TestHandlerRoutesByHost(t *testing.T) {
 	body := func(want string) func(hostResponse) bool {
 		return func(r hostResponse) bool { return r.status == http.StatusOK && r.body == want }
 	}
+	// RPC 路径优先于主题文件：包里的 probe.v1.PublicService/GetSite 遮蔽不了公开服务。
 	connectJSON := func(r hostResponse) bool {
-		return r.status == http.StatusOK && r.header.Get("Content-Type") == "application/json"
+		return r.status == http.StatusOK && r.header.Get("Content-Type") == "application/json" && r.body != "shadow rpc"
 	}
 	builtin := func(r hostResponse) bool {
 		want := builtinPublic("/")
