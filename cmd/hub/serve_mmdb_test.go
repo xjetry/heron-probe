@@ -25,9 +25,12 @@ import (
 )
 
 func TestServeRejectsBadMMDBBeforeOpeningDatabase(t *testing.T) {
-	for _, kind := range []string{"missing", "text"} {
+	for _, kind := range []string{"missing", "text", "empty"} {
 		t.Run(kind, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "country.mmdb")
+			if kind == "empty" {
+				path = ""
+			}
 			if kind == "text" {
 				if err := os.WriteFile(path, []byte("not an mmdb database"), 0o600); err != nil {
 					t.Fatal(err)

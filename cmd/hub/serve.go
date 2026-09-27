@@ -96,6 +96,13 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// 缺席才选择 HTTP；显式空路径也必须打开并报错，不能把部署配置错误变成意外出网。
+	geoMMDBSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "geo-mmdb" {
+			geoMMDBSet = true
+		}
+	})
 	if err := retention.Validate(); err != nil {
 		return err
 	}
@@ -128,7 +135,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	// 文件路径是部署配置，由启动参数指定并在启动期打开；更新文件靠重启，不由设置 API 热切换。
 	// 显式选择本地库后不能静默退回 HTTP，否则运维以为不出网时会把节点地址送到外部。
 	var localGeo *geo.MMDB
-	if *geoMMDB != "" {
+	if geoMMDBSet {
 		localGeo, err = geo.OpenMMDB(*geoMMDB)
 		if err != nil {
 			return err
