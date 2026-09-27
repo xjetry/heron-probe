@@ -734,9 +734,10 @@ func (s *syncBuffer) Write(p []byte) (int, error) {
 }
 func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
 
-// 扫描出错时循环按退避重扫，不等日界。钟在 arm 之后前 2 次读（循环记下扫描开始、扫描取今天）返回东八区 24 日 12:00，
-// 此后返回 1 分钟退避到期前 1ns（夹具里没有规则，扫描不再读钟）：第一次失败后定时器只等 1ns 就重扫；第二次仍失败，
-// 退避翻倍为 2 分钟。日界在 12 小时之后，循环若按日界定时，第二次扫描不会在时限内发生。
+// 扫描出错时循环按退避重扫，不等日界。钟在 arm 之后第一次读（每一轮的第一次读钟就是 sweepRound 记下的 start，这正是
+// RunExpirySweep 注释要求的不变式）返回东八区 24 日 12:00，此后一律返回 1 分钟退避到期前 1ns（扫描自己再读钟也还在
+// 同一天）：第一次失败后定时器只等 1ns 就重扫；第二次仍失败，退避翻倍为 2 分钟。日界在 12 小时之后，循环若按日界定时，
+// 第二次扫描不会在时限内发生。
 func TestRunExpirySweepRetriesAFailedSweepWithBackoff(t *testing.T) {
 	f := newFixture(t)
 	logs := &syncBuffer{}
@@ -744,15 +745,24 @@ func TestRunExpirySweepRetriesAFailedSweepWithBackoff(t *testing.T) {
 	f.billing(t, f.ids[0], store.Billing{Cycle: store.CycleMonthly, ExpiresOn: "2026-09-20", AutoRenew: true})
 	renewalFails(t, f)
 	start := time.Date(2026, 9, 24, 12, 0, 0, 0, f.loc)
-	clk := &scriptedClock{before: start, after: start.Add(time.Minute - time.Nanosecond), beforeReads: 2}
+	clk := &scriptedClock{before: start, after: start.Add(time.Minute - time.Nanosecond), beforeReads: 1}
 	e := New(Config{TTL: 30 * time.Second, Location: f.loc}, f.st, f.l, clk, f.log)
 	must(t, e.Load(t.Context()))
 	clk.arm()
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() { defer close(done); e.RunExpirySweep(ctx) }()
-	const failed = `level=ERROR msg="expiry sweep failed" err="constraint failed: renewal write failed (1811)" retry_in=`
-	testwait.Until(t, 10*time.Millisecond, func() bool { return strings.Contains(logs.String(), failed+"2m0s") },
+	// 只认 msg 与行尾的 retry_in，不带驱动格式化的错误原文：驱动换了错误文本的写法，这里不该跟着等满时限。
+	retryLines := func(retryIn string) int {
+		n := 0
+		for _, line := range strings.Split(logs.String(), "\n") {
+			if strings.Contains(line, `msg="expiry sweep failed"`) && strings.HasSuffix(line, "retry_in="+retryIn) {
+				n++
+			}
+		}
+		return n
+	}
+	testwait.Until(t, 10*time.Millisecond, func() bool { return retryLines("2m0s") > 0 },
 		"no retry after the first failed sweep; logs:\n%s", testwait.When(logs.String))
 	cancel()
 	select {
@@ -760,7 +770,7 @@ func TestRunExpirySweepRetriesAFailedSweepWithBackoff(t *testing.T) {
 	case <-time.After(testwait.Bound):
 		t.Fatal("RunExpirySweep did not return after cancel")
 	}
-	if n := strings.Count(logs.String(), failed+"1ns"); n != 1 {
+	if n := retryLines("1ns"); n != 1 {
 		t.Fatalf("%d lines with retry_in=1ns, want 1 (the wait after the first failure counts from the clock after the sweep):\n%s", n, logs.String())
 	}
 }
