@@ -506,7 +506,7 @@ message TestNotifyChannelResponse {}
 
 // 公开页外观与国家查询（§4.9）。外观五项整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。国家查询两项
 // 缺失表示不改：开关决定 hub 是否把节点地址发给第三方，只改外观的旧客户端与脚本不得顺手改掉它。GetSettings 与
-// UpdateSettings 的响应总带这两项。
+// UpdateSettings 的响应总带这两项。字段号按架构设计 §10 的登记表分配，不各自挑号：6 属公开页总闸，7 起属国家查询。
 message Settings {
   // 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
   // 空串表示公开页用内置标题。
@@ -522,11 +522,11 @@ message Settings {
   string custom_css = 5;
   // 国家查询开关，从未保存过时为关。开启即由 hub 把每个节点的来源地址（Node.last_source）逐个发给 geo_url：只发公网
   // 地址、每节点每地址至多成功查一次，失败按小时退避。
-  optional bool geo_enabled = 6;
+  optional bool geo_enabled = 7;
   // 国家查询的服务地址：http 或 https，含 {ip} 占位（查询时替换为地址），不含用户信息，不超过 2048 字节。
   // 从未保存过时为 https://ipinfo.io/{ip}/country。可回显，不是凭据：请求只带地址，不带任何凭据。
   // 服务的响应去掉首尾空白后必须恰为两个大写字母（ISO 3166-1 alpha-2），状态码必须是 200。
-  optional string geo_url = 7;
+  optional string geo_url = 8;
 }
 message GetSettingsRequest {}
 message GetSettingsResponse { Settings settings = 1; }

@@ -3409,7 +3409,7 @@ func (*TestNotifyChannelResponse) Descriptor() ([]byte, []int) {
 
 // 公开页外观与国家查询（§4.9）。外观五项整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。国家查询两项
 // 缺失表示不改：开关决定 hub 是否把节点地址发给第三方，只改外观的旧客户端与脚本不得顺手改掉它。GetSettings 与
-// UpdateSettings 的响应总带这两项。
+// UpdateSettings 的响应总带这两项。字段号按架构设计 §10 的登记表分配，不各自挑号：6 属公开页总闸，7 起属国家查询。
 type Settings struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
@@ -3426,11 +3426,11 @@ type Settings struct {
 	CustomCss string `protobuf:"bytes,5,opt,name=custom_css,json=customCss,proto3" json:"custom_css,omitempty"`
 	// 国家查询开关，从未保存过时为关。开启即由 hub 把每个节点的来源地址（Node.last_source）逐个发给 geo_url：只发公网
 	// 地址、每节点每地址至多成功查一次，失败按小时退避。
-	GeoEnabled *bool `protobuf:"varint,6,opt,name=geo_enabled,json=geoEnabled,proto3,oneof" json:"geo_enabled,omitempty"`
+	GeoEnabled *bool `protobuf:"varint,7,opt,name=geo_enabled,json=geoEnabled,proto3,oneof" json:"geo_enabled,omitempty"`
 	// 国家查询的服务地址：http 或 https，含 {ip} 占位（查询时替换为地址），不含用户信息，不超过 2048 字节。
 	// 从未保存过时为 https://ipinfo.io/{ip}/country。可回显，不是凭据：请求只带地址，不带任何凭据。
 	// 服务的响应去掉首尾空白后必须恰为两个大写字母（ISO 3166-1 alpha-2），状态码必须是 200。
-	GeoUrl        *string `protobuf:"bytes,7,opt,name=geo_url,json=geoUrl,proto3,oneof" json:"geo_url,omitempty"`
+	GeoUrl        *string `protobuf:"bytes,8,opt,name=geo_url,json=geoUrl,proto3,oneof" json:"geo_url,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5046,9 +5046,9 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x04logo\x18\x04 \x01(\tR\x04logo\x12\x1d\n" +
 	"\n" +
 	"custom_css\x18\x05 \x01(\tR\tcustomCss\x12$\n" +
-	"\vgeo_enabled\x18\x06 \x01(\bH\x00R\n" +
+	"\vgeo_enabled\x18\a \x01(\bH\x00R\n" +
 	"geoEnabled\x88\x01\x01\x12\x1c\n" +
-	"\ageo_url\x18\a \x01(\tH\x01R\x06geoUrl\x88\x01\x01B\x0e\n" +
+	"\ageo_url\x18\b \x01(\tH\x01R\x06geoUrl\x88\x01\x01B\x0e\n" +
 	"\f_geo_enabledB\n" +
 	"\n" +
 	"\b_geo_url\"\x14\n" +
