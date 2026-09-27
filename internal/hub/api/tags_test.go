@@ -134,6 +134,30 @@ func TestTagsAreCaseInsensitiveAndKeepTheFirstSpelling(t *testing.T) {
 	}
 }
 
+// 名字只去首尾空白，中间的空格是名字的一部分：原样存下与回显，过滤按折叠比较同样命中；去掉空格后的写法是另一个名字。
+func TestTagNamesKeepInnerSpaces(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	id, _ := h.createNode(t, "n")
+	h.createNode(t, "other")
+	if n := mustUpdateTags(t, h, id, "n", "web server", "Customer A", "  客户 甲  "); !slices.Equal(n.GetTags(), []string{"Customer A", "web server", "客户 甲"}) {
+		t.Fatalf("tags = %q", n.GetTags())
+	}
+	for _, c := range []struct {
+		filter []string
+		want   []string
+	}{
+		{[]string{"WEB SERVER"}, []string{"n"}},
+		{[]string{" customer a ", "客户 甲"}, []string{"n"}},
+		{[]string{"webserver"}, []string{}},
+	} {
+		got, err := listByTags(t, h, c.filter...)
+		if err != nil || !slices.Equal(got, c.want) {
+			t.Errorf("filter %q: nodes %q %v, want %q", c.filter, got, err, c.want)
+		}
+	}
+}
+
 // 每节点至多 16 个（按去重后计），名字 1–64 个字符、不含控制字符；被拒的更新什么都不写。
 func TestUpdateNodeTagValidation(t *testing.T) {
 	h := newHarness(t, "")
@@ -165,8 +189,8 @@ func TestUpdateNodeTagValidation(t *testing.T) {
 	if n := listedNode(t, h); n.GetName() != "n" || !slices.Equal(n.GetTags(), []string{"kept"}) {
 		t.Fatalf("a rejected update wrote something: %v", n)
 	}
-	// 边界：恰好 16 个、16 个再加一个只差大小写的、64 个字符（首尾空白不计）都接受。
-	for _, tags := range [][]string{sixteen, append(slices.Clone(sixteen), "T00"), {"  " + long + "\t"}} {
+	// 边界：恰好 16 个、16 个再加一个只差大小写的、中间带空格与大小写混写的、64 个字符（首尾空白不计）都接受。
+	for _, tags := range [][]string{sixteen, append(slices.Clone(sixteen), "T00"), {"web server", "Customer A"}, {"  " + long + "\t"}} {
 		if _, err := updateTags(t, h, id, "n", false, tags...); err != nil {
 			t.Errorf("tags %q rejected: %v", tags, err)
 		}
