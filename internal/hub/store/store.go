@@ -203,7 +203,24 @@ func migrate(db *sql.DB, policy SchemaPolicy, log *slog.Logger) error {
 		return nil
 	case v > schemaVersion:
 		return fmt.Errorf("database schema version %d is newer than this binary (%d)", v, schemaVersion)
+	case v < 0:
+		// 本程序的迁移只把 user_version 写成 0 或沿 migrations 的键顺序递增到 schemaVersion，
+		// 从不写负数；负数只能来自这个文件不是本程序建的库，或被外部工具改过。当成旧库去迁
+		// （落进下面的迁移循环）会去找 migrations[0]，报出一句与"该升级"无关的内部错误；
+		// 当成空库建表会把 schemaStatements 叠进未知内容上。两条路径都要拒绝。
+		return fmt.Errorf("database schema version %d is invalid; not a probe database", v)
 	case v == 0:
+		// PRAGMA user_version 未显式设置时读出的也是 0，任何 SQLite 文件都满足这一条；
+		// 只有 sqlite_schema 里确实不存在任何对象才是 §6.6 定义的"空库"。有对象却没有版本号
+		// 说明这是别的程序建的库，在它上面叠加 schemaStatements 会把两套 schema 的对象混进
+		// 同一个文件——stats --db 指错文件时就会把陌生库当空库建满全部表。
+		var objects int
+		if err := db.QueryRow("SELECT count(*) FROM sqlite_schema").Scan(&objects); err != nil {
+			return err
+		}
+		if objects > 0 {
+			return errors.New("database has tables but no schema version; not a probe database")
+		}
 		if err := inTxDB(db, func(tx *sql.Tx) error {
 			for _, stmt := range schemaStatements() {
 				if _, err := tx.Exec(stmt); err != nil {
