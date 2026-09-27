@@ -71,21 +71,39 @@ func TestServePublicSwitchBothSources(t *testing.T) {
 				return r.StatusCode, string(b), r.Header
 			}
 			rootCode, rootBody, _ := fetch("/")
-			adminCode, adminBody, _ := fetch("/admin/")
+			adminCode, adminBody, adminHeaders := fetch("/admin/")
+			// 面板经 builtinHeaders 下发内置策略，拿它作说明页的对照：--public-dir 的来源只带 frame-ancestors，
+			// 说明页若随来源取头，目录模式下就与面板不同。
+			builtinCSP := adminHeaders.Get("Content-Security-Policy")
+			if !strings.Contains(builtinCSP, "default-src 'self'") {
+				t.Fatalf("admin CSP %q is not the built-in policy", builtinCSP)
+			}
+			checkBuiltinHeaders := func(path string, h http.Header) {
+				t.Helper()
+				if h.Get("Content-Security-Policy") != builtinCSP || h.Get("X-Content-Type-Options") != "nosniff" ||
+					h.Get("Referrer-Policy") != adminHeaders.Get("Referrer-Policy") || h.Get("Cache-Control") != "no-store" {
+					t.Errorf("closed %s: headers %v, want the built-in CSP %q, nosniff, the panel's Referrer-Policy and no-store", path, h, builtinCSP)
+				}
+			}
 			for _, enabled := range []bool{false, true} {
 				if _, err := admin.UpdateSettings(t.Context(), connect.NewRequest(&probev1.UpdateSettingsRequest{Settings: &probev1.Settings{Theme: "auto", PublicEnabled: &enabled}})); err != nil {
 					t.Fatal(err)
 				}
-				code, body, headers := fetch("/")
+				code, body, _ := fetch("/")
 				if !enabled {
-					if code != 200 || !strings.Contains(body, "公开页已关闭") || headers.Get("Content-Type") != "text/html; charset=utf-8" || headers.Get("Cache-Control") != "no-store" {
-						t.Fatalf("closed root: %d %s %v", code, body, headers)
-					}
-					for _, path := range []string{"/assets/app.js", "/theme.js", "/index.html", "/nodes/1"} {
-						if code, body, _ := fetch(path); code != 404 {
-							t.Errorf("closed resource %s: %d %s", path, code, body)
+					// 公开页的前端路由与 assets/ 之外的文件路径都得到说明页（文件内容不外泄），assets/ 下 404。
+					for _, path := range []string{"/", "/nodes/1", "/theme.js", "/index.html"} {
+						code, body, headers := fetch(path)
+						if code != 200 || !strings.Contains(body, "公开页已关闭") || headers.Get("Content-Type") != "text/html; charset=utf-8" {
+							t.Errorf("closed %s: %d %s %v, want the closed page", path, code, body, headers)
 						}
+						checkBuiltinHeaders(path, headers)
 					}
+					code, body, headers := fetch("/assets/app.js")
+					if code != 404 || strings.Contains(body, "public script") {
+						t.Errorf("closed /assets/app.js: %d %s, want 404", code, body)
+					}
+					checkBuiltinHeaders("/assets/app.js", headers)
 				} else if code != rootCode || body != rootBody {
 					t.Fatalf("reopened root differs: %d %s", code, body)
 				}

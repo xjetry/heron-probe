@@ -104,6 +104,73 @@ func TestEmbeddedServesFilesAndFallsBackToIndex(t *testing.T) {
 	}
 }
 
+// 关闸时按 serveFiles 的回落规则分流：开闸时回落到 index.html 的路径（前端路由、缺失的文件、点文件）关闸后得到说明页，
+// 开闸时 404 的（assets/ 下缺失）关闸后仍是 404。逐路径对照两边，规则只在一侧改动时失败。这些路径都不对应可服务的
+// 文件，开闸时的应答只由回落规则决定；存在的文件另列在后面，关闸时一律不经文件服务。
+func TestPublicGateClosedFollowsTheFallbackRule(t *testing.T) {
+	open := true
+	gate := PublicGate(embedded(builtFS("dist-public"), "dist-public", "/", notBuiltPublic), func() bool { return open })
+	checkClosed := func(t *testing.T, path string, wantNotFound bool) string {
+		t.Helper()
+		resp := get(t, gate, path)
+		body := responseBody(t, resp)
+		if wantNotFound {
+			if resp.StatusCode != http.StatusNotFound {
+				t.Fatalf("closed %s: status %d body %q, want 404", path, resp.StatusCode, body)
+			}
+		} else if resp.StatusCode != http.StatusOK || body != closedPage || resp.Header.Get("Content-Type") != "text/html; charset=utf-8" {
+			t.Fatalf("closed %s: status %d body %q type %q, want the closed page", path, resp.StatusCode, body, resp.Header.Get("Content-Type"))
+		}
+		if resp.Header.Get("Cache-Control") != "no-store" {
+			t.Fatalf("closed %s: Cache-Control %q", path, resp.Header.Get("Cache-Control"))
+		}
+		checkSecurityHeaders(t, resp)
+		return body
+	}
+	var pages, notFound int
+	for _, path := range []string{
+		"/nodes/7", "/theme.js", "/sub", "/.env", "/assetsx/missing.js", "/assets/../nodes/7",
+		"/assets", "/assets/", "/assets/missing.js", "/assets/.hidden.js", "/sub/../assets/missing.js",
+	} {
+		t.Run(path, func(t *testing.T) {
+			open = true
+			resp := get(t, gate, path)
+			fallback := responseBody(t, resp)
+			wantNotFound := resp.StatusCode == http.StatusNotFound
+			if !wantNotFound && !strings.Contains(fallback, "<div id=root>") {
+				t.Fatalf("open %s: status %d body %q, want index.html or 404", path, resp.StatusCode, fallback)
+			}
+			if wantNotFound {
+				notFound++
+			} else {
+				pages++
+			}
+			open = false
+			checkClosed(t, path, wantNotFound)
+		})
+	}
+	if pages == 0 || notFound == 0 {
+		t.Fatalf("paths cover %d fallback pages and %d not-found; both directions are needed", pages, notFound)
+	}
+	for _, c := range []struct {
+		path         string
+		wantNotFound bool
+		leak         string
+	}{
+		{"/", false, "<div id=root>"},
+		{"/index.html", false, "<div id=root>"},
+		{"/robots.txt", false, "User-agent"},
+		{"/assets/app-abc.js", true, "console.log"},
+	} {
+		t.Run("existing "+c.path, func(t *testing.T) {
+			open = false
+			if body := checkClosed(t, c.path, c.wantNotFound); strings.Contains(body, c.leak) {
+				t.Fatalf("closed %s served the file: %q", c.path, body)
+			}
+		})
+	}
+}
+
 func TestUnbuiltEmbeddedPagesExplainThemselves(t *testing.T) {
 	for _, c := range []struct {
 		dir, prefix, notBuilt, want string
