@@ -3,6 +3,10 @@
 # 管道安装时 stdin 是脚本源码，外部命令不能读取它；确认只从 /dev/tty 读取。
 set -eu
 
+# 脚本读写的系统路径都挂在 PROBE_INSTALL_ROOT 下。生产运行时它为空，即真实根目录；deploy/installhub_test.go
+# 把它指向临时目录，连同 PATH 上的 systemctl、chown、curl 等替身一起运行，不触碰真实系统路径。它只改变本脚本
+# 读写的位置：写进单元的可执行路径与库路径、systemctl 报告的 drop-in 路径都是目标系统里的真实路径，读文件时
+# 才拼上这个前缀。
 ROOT=${PROBE_INSTALL_ROOT-}
 BIN=$ROOT/usr/local/bin/probe-hub
 DATA=$ROOT/var/lib/probe

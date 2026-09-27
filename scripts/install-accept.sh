@@ -1,6 +1,9 @@
 #!/bin/sh
-# install.sh 与服务单元的真机验收：只在 OrbStack 真实启动的机器上跑，不进 CI。
+# install.sh、install-hub.sh 与服务单元的真机验收：只在 OrbStack 真实启动的机器上跑，不进 CI。
 # 机器名 pia- 前缀是隔离边界；只删除本 run 创建的机器（逐台登记）。
+# 机器名还带本 run 的 pid（$$）：同时跑的几轮不争同一个名字；清理没能执行（被 SIGKILL、宿主重启）或删除失败
+# 时留下的机器，也不再挡住下一轮的创建。代价是这类残留不再以创建失败显形，会静默累积，需要时用 orb list
+# 按 pia- 前缀清点。
 # 端口默认 18085（hub）/18086（下载服务），与 e2e 的 18080/18081、macos-accept 的 18087/18088 错开，
 # 几个验收可同时跑；本机上别的进程占着默认端口时，用环境变量 HUB_PORT、DIST_PORT 覆盖。
 set -eu
@@ -94,6 +97,9 @@ fi
 printf '%s\n' "$work" > "$work/dist/run-id"
 
 # 下载服务也供不需要本机 hub 的 hub 安装格使用，先核对本 run 标记再运行任何格。
+# HTTP 以 $work/dist 为根，/a 与 /b 是两个版本目录。
+# exec 让 $httpd 就是 python：子 shell 被 kill 后 python 会被 init 收养并继续占着端口，
+# 下一轮会装到上一轮的包。起来之后核对应答的是本 run 的标记，端口被占时立即失败。
 (cd "$work/dist" && exec python3 -m http.server "$DIST_PORT" --bind 127.0.0.1) > "$work/httpd.log" 2>&1 &
 httpd=$!
 attempt=0

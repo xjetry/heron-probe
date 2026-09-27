@@ -27,7 +27,7 @@ curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.
 probe-hub passwd --db /var/lib/probe/probe.db
 ```
 
-安装器校验下载包的 SHA256SUMS，以静态系统用户 `probe-hub` 启动服务，确认进程持续存活后才提示设置密码。升级时先让新版本的 `serve` 启动并完成数据库迁移，再使用 `passwd` 等离线子命令。管理员密码由你设置，脚本不生成、不打印密码。
+安装器校验下载包的 SHA256SUMS，以静态系统用户 `probe-hub` 启动服务，确认进程持续存活后才提示设置密码。主机没有 CA 证书包时安装器会装上 `ca-certificates`：不论从哪里下载，hub 发往 Telegram 的告警都走 HTTPS。升级时先让新版本的 `serve` 启动并完成数据库迁移，再使用 `passwd` 等离线子命令。管理员密码由你设置，脚本不生成、不打印密码。
 
 默认只监听 `127.0.0.1:8080`，TLS 交给反向代理。可用 `--listen`、`--timezone`、`--trusted-proxies`、`--public-dir` 和 `--retention-*` 设置 serve 参数；例如：
 
@@ -36,11 +36,13 @@ curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.
   --timezone Asia/Taipei --trusted-proxies 127.0.0.1/32
 ```
 
-重跑即升级，沿用 `/etc/systemd/system/probe-hub.service` 的 `ExecStart` 参数，命令行显式给出的值覆盖旧值。`--version vX.Y.Z` 指定发行版，`--base-url URL` 改用该下载目录并忽略 `--version`。安装器只接受静态参数：使用 systemd `$` / `%` 动态展开或覆盖 `ExecStart` 的 drop-in 时须先将参数合并为主单元中的静态值，无法解析时会在停服前报错，不会重置配置。不覆盖启动命令的 drop-in 保留。数据库固定为 `/var/lib/probe/probe.db`。
+重跑即升级，沿用 `/etc/systemd/system/probe-hub.service` 里 `ExecStart` 的参数，命令行显式给出的值按参数名替换旧值；写回时每个参数只留一份，统一写成 `--flag=value`。`--version vX.Y.Z` 指定发行版，`--base-url URL` 改用该下载目录并忽略 `--version`。安装器只接受静态参数：用了 systemd 的 `$` / `%` 动态展开，或有 drop-in 设了 `ExecStart` 时，须先把参数合并为主单元里的静态值；无法解析时在停服前报错，不会重置配置。数据库固定为 `/var/lib/probe/probe.db`。
 
-数据目录为 `root:probe-hub 0770`，库文件为 `probe-hub:probe-hub 0600`；目录必须允许服务组创建和删除 SQLite 的 WAL/SHM 文件。单元逐项加固，将数据目录列入 `ReadWritePaths`，提供私有临时目录，不授予 `CAP_NET_RAW`。查看状态与日志：`systemctl status probe-hub`、`journalctl -u probe-hub`。
+每次安装都用发行包里的单元覆盖主单元，只保留其中 `ExecStart` 的参数：主单元里别的手工改动（例如 `Environment=PROBE_OFFLINE_AFTER=60s`）会在升级时丢失。这类定制放进 drop-in（`systemctl edit probe-hub`，写在 `/etc/systemd/system/probe-hub.service.d/`）；不设 `ExecStart` 的 drop-in 升级时保留，卸载与 purge 也不删这个目录。
 
-卸载需确认；无终端时必须显式 `--yes`，不会读取管道里的脚本内容：
+数据目录为 `root:probe-hub 0770`，库文件为 `probe-hub:probe-hub 0600`；目录必须允许服务组创建和删除 SQLite 的 WAL/SHM 文件。数据目录或库文件是符号链接、库文件另有硬链接时，安装器在停服前拒绝，不改动链接指向的文件。单元逐项加固，将数据目录列入 `ReadWritePaths`，提供私有临时目录，不授予 `CAP_NET_RAW`。查看状态与日志：`systemctl status probe-hub`、`journalctl -u probe-hub`。
+
+普通卸载停掉的是全部节点的展示与告警，`--purge` 删除唯一一份数据与全部节点凭据，所以两者都需确认；无终端时必须显式 `--yes`，不会读取管道里的脚本内容：
 
 ```sh
 curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.sh | sh -s -- --uninstall --yes
@@ -48,7 +50,7 @@ curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.
 curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.sh | sh -s -- --uninstall --purge --yes
 ```
 
-普通卸载保留数据和账户。安装、升级都会先核对目标端口的监听进程，排除现有 hub 自身；冲突时不停止旧服务。停止失败、旧进程未退出或新进程未持续存活均返回失败。
+普通卸载保留数据和账户。安装、升级都会先核对目标端口的监听进程，排除现有 hub 自身；冲突时不停止旧服务。停止失败、旧进程未退出或新进程未持续存活均返回失败；停服之后某一步失败时，安装器会提示 hub 已停，可重跑安装器或手动启动。
 
 ## 用 Docker 运行 hub
 
