@@ -29,6 +29,13 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer raw.Close()
+			var freshVersion int
+			if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
+				t.Fatal(err)
+			}
+			if freshVersion != 9 {
+				t.Fatalf("fixture user_version = %d, want 9; this fixture is built for schema 9 by dropping its 7 added columns below, rebuild the v8 fixture for the new version", freshVersion)
+			}
 			// v9 只增加计费与到期列；去掉这些列得到可实际迁移的 v8 库，避免仅伪造版本号。
 			for _, stmt := range []string{
 				"ALTER TABLE node DROP COLUMN price",
