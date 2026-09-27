@@ -18,7 +18,7 @@
 - e2e：POSIX sh + curl + jq（jq-1.7.1-apple）
 
 **Spec:**
-- `docs/superpowers/specs/2026-09-17-probe-architecture-design.md`，以 main af62cf9 的版本为准（§9.4 由 d0c9c32 写入；171e14a 按控制端的裁决改了 §9.1、§9.2、§9.4、§10；3072a7c 补了 §9.2 的日界、只提醒一次、三种恢复文案与几条评估细节；af62cf9 写明 `alert_state` 带触发时的到期日、评估时机四处与"日期没变"的比较基准）；涉及 §1、§5.4、§6.6、§9.1、§9.2、§9.4、§10、§12、§16。
+- `docs/superpowers/specs/2026-09-17-probe-architecture-design.md`，以 main 10a7409 的版本为准（§9.4 由 d0c9c32 写入；171e14a 按控制端的裁决改了 §9.1、§9.2、§9.4、§10；3072a7c 补了 §9.2 的日界、只提醒一次、三种恢复文案与几条评估细节；af62cf9 写明 `alert_state` 带触发时的到期日、评估时机四处与"日期没变"的比较基准；bfbab2e 把节点计费收进 §1 与 §15，写明 §10 只填周期时费用行的显示；10a7409 把 §9.2 零点不存在时的日界只定义为新一天的第一个时刻，`time.Date` 的归一方向按 UTC 偏移正负说明）；涉及 §1、§5.4、§6.6、§9.1、§9.2、§9.4、§10、§12、§15、§16。
 - 方针：`docs/guidelines/agent-first.md`。
 - `FEATURES.md` 第 51 行：节点费用与到期日是提醒用的展示值，不触发 Litestream 的重新考虑条件。本计划不改它。
 
@@ -188,7 +188,7 @@
 
 凡由实验得出的结论，都注明了版本；换版本要重跑，不能直接改数字。
 
-1. **go1.27.1 darwin/arm64：`time.Date` 对不存在的零点往回归一。**
+1. **go1.27.1 darwin/arm64：`time.Date` 对不存在的零点的归一方向随时区而异。**
    - 做法：对 `time.Date(y, m, d, 0, 0, 0, 0, loc)` 在几个时区的夏令时切换日取值，另取该时刻 `ZoneBounds()` 的 `end`。
    - 结果（原文）：
 
@@ -199,10 +199,11 @@
         ... next midnight 2026-03-07 23:00:00 -0500 CST nextLocalDate=2026-03-07 zoneBoundsEnd=2026-03-08 01:00:00 -0400 CDT
      America/New_York 2026-03-08 00:00 -> 2026-03-08 00:00:00 -0500 EST
      Asia/Beirut 2026-03-29 00:00 -> 2026-03-29 01:00:00 +0300 EEST
+     Africa/Cairo 2026-04-24 00:00 -> 2026-04-24 01:00:00 +0300 EEST
      ```
 
-   - 结论：归一的方向因时区而异。Santiago 与 Havana 给出前一天 23:00，本地日期没变；Beirut 往后到 01:00。拿 23:00 定时，会在旧的一天里触发，之后每一轮算出的仍是这个已过去的时刻，定时器立即触发，空转一小时。spec §9.2 原先写"由 `time.Date` 归一化"，3072a7c 已据此改写。
-   - 日期没变时取 `ZoneBounds()` 的 `end`，恰是新的一天的第一个时刻（01:00，新偏移）。Task 3 的 `nextDayStart` 这样做。测试覆盖这两个时区，另以 UTC、固定的东八区、New York 的夏令时开始日与两个时区的夏令时结束日作对照。
+   - 结论：归一的方向随 UTC 偏移的正负而异（`time.Date` 先把墙钟读数当作 UTC 去查偏移，再按换算结果是否越出该时段复核）。偏移为负的 Santiago 与 Havana 往回给前一天 23:00（旧偏移），本地日期没变；偏移为正的 Cairo 与 Beirut 往前给新一天的 01:00（新偏移），本地日期已变，它本身就是新一天的第一个时刻。拿 23:00 定时，会在旧的一天里触发，之后每一轮算出的仍是这个已过去的时刻，定时器立即触发，空转一小时。spec §9.2 原先写"由 `time.Date` 归一化"，3072a7c 已据此改写，10a7409 又把归一方向按偏移正负写全。
+   - 日期没变时取 `ZoneBounds()` 的 `end`，恰是新的一天的第一个时刻（01:00，新偏移）；日期已变时 `time.Date` 的结果本身就是答案。Task 3 的 `nextDayStart` 这样做，判断只看本地日期有没有变、不看时分：按"时分不为零就取 `ZoneBounds` 的 end"去判，偏移为正的那两例会取夏令时时段的结束处，日界定到几个月后夏令时结束的那次切换（Task 3 注入 an）。测试覆盖往回的两个时区与往前的 Cairo、Beirut，另以 UTC、固定的东八区、New York 的夏令时开始日与两个时区的夏令时结束日作对照。
 
 2. **go1.27.1：`time.Time.Sub` 在约 292 年外饱和。**
    - 从 2026-09-27 到 9999-12-31：`Sub` 折合 106751.99 天，Unix 秒相减得 2912173 天；到 0000-01-01：−106751.99 对 −740251。
@@ -241,7 +242,7 @@
 
 10. **读码与实跑：锁序。**
     - 到期扫描取 `alert.Engine.writeMu`；`nodeMu` 只在 `api` 包里。
-    - 不成环的保证是：`alert` 不引用 `api`，持 `writeMu` 的路径（各次扫描、`apply`、`Sender.Enqueue`）都不会回到 `api` 取 `nodeMu`。只要这一条成立，`api` 里持 `nodeMu` 再取 `writeMu` 也不成环。
+    - 不成环的保证是：`alert` 包不 import `api`，且引擎经 `SetSender` 注入的实现（当前是 `cmd/hub/serve.go` 装配的 `alert.Queue`）也不在 `api` 里，任何持 `writeMu` 的路径都取不到 `nodeMu`。只看 import 方向不够：注入的实现若来自 `api`，也能在 `writeMu` 下取到 `nodeMu`。两条都成立时，`api` 里持 `nodeMu` 再取 `writeMu` 也不成环。
     - 在 Task 1–8 做完的树上核对过：`go list -deps ./internal/hub/alert` 列出的项目内包只有 `gen/probe/v1`、`clock`、`hub/metric`、`hub/live`、`probelimit`、`hub/store` 与 `alert` 自己，没有 `hub/api`；同一命令对 `./cmd/hub` 列出 `hub/api`（对照）。`nodeMu` 只出现在 `api` 包的 `nodes.go` 与 `service.go`。取 `Engine.writeMu` 的是 `Load`、`SaveRule`、`DeleteRule`、`SaveChannel`、`DeleteChannel`、`Forget`、`SweepOffline`、`EvaluateProbes`、`SweepExpiry` 九个方法，`apply` 与 `Queue.Enqueue` 在它们之下被调用。
     - 本计划的 `UpdateNode` 并不持着 `nodeMu` 扫描（设计决定 6），两把锁在这里不嵌套。`DeleteNode` 在锁外调 `alerts.Forget` 是为了不挡住别的编辑，与成环无关。
 
@@ -415,7 +416,7 @@
 - `public/Overview.tsx`、`public/NodePage.tsx`：费用与到期两行；`public/importScan.test.ts` 的冒烟清单。
 
 **其他**
-- `scripts/e2e.sh`、`README.md`。
+- `scripts/e2e.sh`、`README.md`、`proto/SKILL.md`（入口卡片）。
 
 ## 开工
 
@@ -2924,7 +2925,9 @@ func TestRenewedExpiry(t *testing.T) {
 }
 
 // 下一个日界是本地日期变化的第一个时刻：严格晚于 now，本地日期是明天，再早 1 纳秒还是今天。
-// 夏令时在零点开始的时区里零点不存在，新的一天从 01:00 开始。
+// 夏令时在零点开始的时区里零点不存在，新的一天从 01:00 开始。go1.27.1 的 time.Date 对不存在的零点给出的时刻两个方向
+// 都有：Santiago、Havana 往回给前一天的 23:00，本地日期没变，要取 ZoneBounds 的 end；Cairo、Beirut 往前给新一天的
+// 01:00，本地日期已变，它本身就是答案。两类各有用例，只认其中一类的写法会在另一类上定错日界。
 func TestNextDayStartIsTheFirstInstantOfTheNextLocalDay(t *testing.T) {
 	for _, c := range []struct {
 		loc  *time.Location
@@ -2938,6 +2941,8 @@ func TestNextDayStartIsTheFirstInstantOfTheNextLocalDay(t *testing.T) {
 		{zone(t, "America/Santiago"), "2026-04-04T22:00:00", "2026-04-05T00:00:00-04:00"},
 		{zone(t, "America/Havana"), "2026-03-07T22:00:00", "2026-03-08T01:00:00-04:00"},
 		{zone(t, "America/Havana"), "2026-10-31T22:00:00", "2026-11-01T00:00:00-04:00"},
+		{zone(t, "Africa/Cairo"), "2026-04-23T22:00:00", "2026-04-24T01:00:00+03:00"},
+		{zone(t, "Asia/Beirut"), "2026-03-28T22:00:00", "2026-03-29T01:00:00+03:00"},
 	} {
 		now, err := time.ParseInLocation("2006-01-02T15:04:05", c.now, c.loc)
 		if err != nil {
@@ -3654,7 +3659,8 @@ import (
 )
 
 // 到期日按日历日计（§9.4）。日期一律表示为该日 UTC 零点的 time.Time：解析、"今天"与相减都在这种值上做，两个日期
-// 相差几天与任何时区的夏令时无关。hub 时区（--timezone）只在 Today 里出现一次：把一个时刻换成那里的日历日。
+// 相差几天与任何时区的夏令时无关。日期值里 hub 时区（--timezone）只经 Today 进入：把一个时刻换成那里的日历日；
+// 下一个日界的时刻由 nextDayStart 按同一时区算（RunExpirySweep 传入 cfg.Location）。
 
 // ParseDate 解析 YYYY-MM-DD。写侧（api 的 UpdateNode）与读侧（到期扫描、days_left）都用它，"合法日期"只有这一个
 // 口径：time.Parse 按 time.DateOnly 要求四位年、两位月日，并拒绝不存在的日子（2026-02-30、非闰年的 02-29）。
@@ -3734,10 +3740,14 @@ func renewedExpiry(b store.Billing, today time.Time) (string, bool) {
 }
 
 // nextDayStart 是 now 之后 loc 里下一个日历日开始的时刻。一般就是 time.Date(y, m, d+1, 0, 0, 0, 0, loc)。
-// 夏令时在零点开始的时区（America/Santiago、America/Havana）当天的零点不存在，go1.27.1 的 time.Date 对它给出前一天的
-// 23:00（仍按旧偏移），本地日期没变；拿它定时会在旧的一天里触发，之后每一轮算出的都是这个已经过去的时刻，
-// 定时器立即触发，循环空转到夏令时生效为止。
-// 这时新的一天从夏令时生效的那一刻开始，也就是该时刻所在时段的结束处（ZoneBounds 的 end）。
+// 夏令时在零点开始的时区当天的零点不存在，go1.27.1 的 time.Date 对它的归一方向随 UTC 偏移的正负而异（它先把墙钟
+// 读数当作 UTC 去查偏移，再按换算结果是否越出该时段复核）：
+// 偏移为负的时区（America/Santiago、America/Havana）往回给前一天的 23:00（仍按旧偏移），本地日期没变；拿它定时会在旧的一天里
+// 触发，之后每一轮算出的都是这个已经过去的时刻，定时器立即触发，循环空转到夏令时生效为止。这时新的一天从夏令时
+// 生效的那一刻开始，也就是该时刻所在时段的结束处（ZoneBounds 的 end）。
+// 偏移为正的时区（Africa/Cairo、Asia/Beirut）往前给新一天的 01:00（新偏移），本地日期已变，它本身就是新一天的第一个时刻，
+// 走普通分支直接返回。判断只看本地日期有没有变，不看时分：按"不存在的零点会变成非零点的时刻"去判，会把偏移为正的
+// 时区的日界定到几个月后夏令时结束的那次切换。
 func nextDayStart(now time.Time, loc *time.Location) time.Time {
 	y, m, d := now.In(loc).Date()
 	next := time.Date(y, m, d+1, 0, 0, 0, 0, loc)
@@ -4397,45 +4407,46 @@ Expected：0；vitest `Tests  369 passed (369)`。`make ci` 最后核对生成�
 
 | | 改动 | 命令 | 期望 |
 |---|---|---|---|
-| a | `nextDayStart` 去掉"日期没变就取 `ZoneBounds` 的 end"那段 | `go test -count=1 -run 'TestNextDayStart' ./internal/hub/alert/ > /tmp/billing-t3-inj-a.log 2>&1; echo $?` | 1，`expiry_test.go:181: America/Santiago from 2026-09-05T22:00:00: next day starts 2026-09-05T23:00:00-04:00, want 2026-09-06T01:00:00-03:00`；Havana 同样，两个时区各另有一行 `is not the first instant of the next local day` |
+| a | `nextDayStart` 去掉"日期没变就取 `ZoneBounds` 的 end"那段 | `go test -count=1 -run 'TestNextDayStart' ./internal/hub/alert/ > /tmp/billing-t3-inj-a.log 2>&1; echo $?` | 1，`expiry_test.go:185: America/Santiago from 2026-09-05T22:00:00: next day starts 2026-09-05T23:00:00-04:00, want 2026-09-06T01:00:00-03:00`；Havana 同样，两个时区各另有一行 `is not the first instant of the next local day` |
 | b | `daysBetween` 改用 `to.Sub(from) / (24 * time.Hour)` | `go test -count=1 -run 'TestDaysLeft' ./internal/hub/alert/ > /tmp/billing-t3-inj-b.log 2>&1; echo $?` | 1，`expiry_test.go:89: DaysLeft(9999-12-31) = 106751 true, want 2912173` 与 `DaysLeft(0000-01-01) = -106751 true, want -740251` |
 | c | `renewedExpiry` 每步从原到期日加 k 个周期（不累积钳位漂移） | `go test -count=1 -run 'TestRenewedExpiry' ./internal/hub/alert/ > /tmp/billing-t3-inj-c.log 2>&1; echo $?` | 1，`expiry_test.go:138: several months, clamped then drifting: renewedExpiry = "2026-04-30" true, want "2026-04-28"`；from year 0 同样 |
 | d | `addMonths` 不钳到月末（`min(d.Day(), last)` 改成 `d.Day()+0*last`） | `go test -count=1 -run 'TestRenewedExpiry' ./internal/hub/alert/ > /tmp/billing-t3-inj-d.log 2>&1; echo $?` | 1，`expiry_test.go:138: several months, clamped then drifting: renewedExpiry = "2026-04-03" …`、`leap February: … "2028-03-02" … want "2028-02-29"`、`yearly from February 29: … "2025-03-01" …` |
 | e | `renewedExpiry` 去掉 `!b.AutoRenew` 的守卫 | `go test -count=1 -run 'TestRenewedExpiry' ./internal/hub/alert/ > /tmp/billing-t3-inj-e.log 2>&1; echo $?` | 1，`expiry_test.go:154: auto renew off: renewed to 2026-10-10` |
 | f | `cycleMonths` 的季度返回 4 | `go test -count=1 -run 'TestCycleMonths' ./internal/hub/alert/ > /tmp/billing-t3-inj-f.log 2>&1; echo $?` | 1，`expiry_test.go:108: cycleMonths(quarterly) = 4 true, want 3` |
-| g | `Today` 取 UTC 的日历日（`now.In(loc)` 改成 `now.UTC()`） | `go test -count=1 -run 'TestToday\|TestSweepExpiryCountsDaysInTheHubZone' ./internal/hub/alert/ > /tmp/billing-t3-inj-g.log 2>&1; echo $?` | 1，`expiry_test.go:68: Today in UTC+8 = 2026-09-24, want 2026-09-25` 与 `expiry_test.go:272: node 1 state="" want "firing"` |
-| h | `NextExpiry` 的 `o.DaysLeft > o.DaysBefore` 改成 `>=` | `go test -count=1 -run 'TestNextExpiry' ./internal/hub/alert/ > /tmp/billing-t3-inj-h.log 2>&1; echo $?` | 1，`expiry_test.go:210: enters the window on its edge: NextExpiry = ok <nil>, want firing …` |
-| i | 续期落库之后不更新快照里的到期日（删掉 `n.Billing.ExpiresOn = to`） | `go test -count=1 -run 'TestSweepExpiryRenewsBeforeEvaluating' ./internal/hub/alert/ > /tmp/billing-t3-inj-i.log 2>&1; echo $?` | 1，`expiry_test.go:292: events after renewal: [{… Transition:firing … Summary:节点 node1 已于 2026-09-20 到期（已过期 4 天，规则 到期） …}]`：只有触发，没有随续期的恢复 |
-| j | `SaveRule` 不做保存后的到期扫描 | `go test -count=1 -run 'TestSaveRuleEvaluatesEnabledExpiryRules' ./internal/hub/alert/ > /tmp/billing-t3-inj-j.log 2>&1; echo $?` | 1，`expiry_test.go:382: node 1 state="" want "firing"` |
-| k | 读不懂的到期日不跳过（删掉 `if !ob.valid { continue }`） | `go test -count=1 -run 'TestSweepExpirySkipsUnreadableDates' ./internal/hub/alert/ > /tmp/billing-t3-inj-k.log 2>&1; echo $?` | 1，`expiry_test.go:327: node 1 state="ok" want "firing"` |
-| l | `sweepExpiry` 不调 `pruneCandidates` | `go test -count=1 -run 'TestSweepExpiryDropsStatesOfNodesDeletedElsewhere' ./internal/hub/alert/ > /tmp/billing-t3-inj-l.log 2>&1; echo $?` | 1，`expiry_test.go:370: node 1 state="firing" want ""` |
+| g | `Today` 取 UTC 的日历日（`now.In(loc)` 改成 `now.UTC()`） | `go test -count=1 -run 'TestToday\|TestSweepExpiryCountsDaysInTheHubZone' ./internal/hub/alert/ > /tmp/billing-t3-inj-g.log 2>&1; echo $?` | 1，`expiry_test.go:68: Today in UTC+8 = 2026-09-24, want 2026-09-25` 与 `expiry_test.go:276: node 1 state="" want "firing"` |
+| h | `NextExpiry` 的 `o.DaysLeft > o.DaysBefore` 改成 `>=` | `go test -count=1 -run 'TestNextExpiry' ./internal/hub/alert/ > /tmp/billing-t3-inj-h.log 2>&1; echo $?` | 1，`expiry_test.go:214: enters the window on its edge: NextExpiry = ok <nil>, want firing …` |
+| i | 续期落库之后不更新快照里的到期日（删掉 `n.Billing.ExpiresOn = to`） | `go test -count=1 -run 'TestSweepExpiryRenewsBeforeEvaluating' ./internal/hub/alert/ > /tmp/billing-t3-inj-i.log 2>&1; echo $?` | 1，`expiry_test.go:296: events after renewal: [{… Transition:firing … Summary:节点 node1 已于 2026-09-20 到期（已过期 4 天，规则 到期） …}]`：只有触发，没有随续期的恢复 |
+| j | `SaveRule` 不做保存后的到期扫描 | `go test -count=1 -run 'TestSaveRuleEvaluatesEnabledExpiryRules' ./internal/hub/alert/ > /tmp/billing-t3-inj-j.log 2>&1; echo $?` | 1，`expiry_test.go:386: node 1 state="" want "firing"` |
+| k | 读不懂的到期日不跳过（删掉 `if !ob.valid { continue }`） | `go test -count=1 -run 'TestSweepExpirySkipsUnreadableDates' ./internal/hub/alert/ > /tmp/billing-t3-inj-k.log 2>&1; echo $?` | 1，`expiry_test.go:331: node 1 state="ok" want "firing"` |
+| l | `sweepExpiry` 不调 `pruneCandidates` | `go test -count=1 -run 'TestSweepExpiryDropsStatesOfNodesDeletedElsewhere' ./internal/hub/alert/ > /tmp/billing-t3-inj-l.log 2>&1; echo $?` | 1，`expiry_test.go:374: node 1 state="firing" want ""` |
 | m | `CheckRule` 的离线分支不调 `checkKindFields`（直接 `return nil`） | `go test -count=1 -run 'TestCheckRule' ./internal/hub/alert/ > /tmp/billing-t3-inj-m.log 2>&1; echo $?` | 1，`rule_test.go:55: error=<nil> want ErrInvalid and task_id`，metric、threshold（两条，含 NaN）、for_minutes、days_before（`TestCheckRule/offline_days_before`）各一行 |
 | n | 到期规则的下限从 1 放到 0 | `go test -count=1 -run 'TestCheckRule' ./internal/hub/alert/ > /tmp/billing-t3-inj-n.log 2>&1; echo $?` | 1，`rule_test.go:55: error=<nil> want ErrInvalid and days_before`（`expiry_days_low`） |
 | o | `CheckRule` 的探测分支不调 `checkKindFields` | `go test -count=1 -run 'TestCheckRule' ./internal/hub/alert/ > /tmp/billing-t3-inj-o.log 2>&1; echo $?` | 1，同一句（`probe_days_before`） |
-| p | 扫描不跳过停用的规则 | `go test -count=1 -run 'TestSweepExpiryHonoursScopeAndEnabled' ./internal/hub/alert/ > /tmp/billing-t3-inj-p.log 2>&1; echo $?` | 1，`expiry_test.go:355: node 1 state="firing" want ""` |
-| q | `alert.New` 不检查 `Location` | `go test -count=1 -run 'TestNewRequiresLocation' ./internal/hub/alert/ > /tmp/billing-t3-inj-q.log 2>&1; echo $?` | 1，`expiry_test.go:633: panic = <nil>` |
-| r | 清除到期日的恢复文案用"到期日已更新为"那句 | `go test -count=1 -run 'TestSweepExpiryFiresAndRecoversWithSpecSummaries' ./internal/hub/alert/ > /tmp/billing-t3-inj-r.log 2>&1; echo $?` | 1，`expiry_test.go:255: expires_on "": event {… Summary:节点 node1 到期日已更新为 （规则 到期） Value:0 …}, want summary "节点 node1 已清除到期日（规则 到期）" value 0` |
-| s | `RunExpirySweep` 先等到日界再扫（启动时不扫） | `go test -count=1 -run 'TestRunExpirySweepSweepsOnStartAndStops' ./internal/hub/alert/ > /tmp/billing-t3-inj-s.log 2>&1; echo $?` | 1，`expiry_test.go:456: expires_on = 2026-09-01, want 2026-10-01 after the startup sweep` |
+| p | 扫描不跳过停用的规则 | `go test -count=1 -run 'TestSweepExpiryHonoursScopeAndEnabled' ./internal/hub/alert/ > /tmp/billing-t3-inj-p.log 2>&1; echo $?` | 1，`expiry_test.go:359: node 1 state="firing" want ""` |
+| q | `alert.New` 不检查 `Location` | `go test -count=1 -run 'TestNewRequiresLocation' ./internal/hub/alert/ > /tmp/billing-t3-inj-q.log 2>&1; echo $?` | 1，`expiry_test.go:637: panic = <nil>` |
+| r | 清除到期日的恢复文案用"到期日已更新为"那句 | `go test -count=1 -run 'TestSweepExpiryFiresAndRecoversWithSpecSummaries' ./internal/hub/alert/ > /tmp/billing-t3-inj-r.log 2>&1; echo $?` | 1，`expiry_test.go:259: expires_on "": event {… Summary:节点 node1 到期日已更新为 （规则 到期） Value:0 …}, want summary "节点 node1 已清除到期日（规则 到期）" value 0` |
+| s | `RunExpirySweep` 先等到日界再扫（启动时不扫） | `go test -count=1 -run 'TestRunExpirySweepSweepsOnStartAndStops' ./internal/hub/alert/ > /tmp/billing-t3-inj-s.log 2>&1; echo $?` | 1，`expiry_test.go:460: expires_on = 2026-09-01, want 2026-10-01 after the startup sweep` |
 | t | `serve.go` 不启动 `RunExpirySweep` | `go test -count=1 -run 'TestServeRenewsExpiryAtStartupInTheHubZone' ./cmd/hub/ > /tmp/billing-t3-inj-t.log 2>&1; echo $?` | 1，`serve_alert_test.go:257: the startup expiry sweep did not renew the node` |
 | u | `serve.go` 给告警引擎传 `time.UTC` 而不是 `--timezone` | `go test -count=1 -run 'TestServeRenewsExpiryAtStartupInTheHubZone' ./cmd/hub/ > /tmp/billing-t3-inj-u.log 2>&1; echo $?` | 1，同一句：按 UTC 今天还是 2026-09-24，到期日不早于今天，不推后 |
-| v | `Load` 不经 `CheckRule`（删掉跳过非法规则那段） | `go test -count=1 -run 'TestLoadChecksExpiryRules' ./internal/hub/alert/ > /tmp/billing-t3-inj-v.log 2>&1; echo $?` | 1，`expiry_test.go:623: loaded rules = [{… DaysBefore:400 …} {… DaysBefore:7 …}], want only rule 2 with days_before 7` |
-| w | `expirySummary` 删掉"日期没变"那一支 | `go test -count=1 -run 'TestSweepExpiryRecoverySummaryFollowsTheReason' ./internal/hub/alert/ > /tmp/billing-t3-inj-w.log 2>&1; echo $?` | 1，`expiry_test.go:422: 2026-09-27 with days_before 2: events [{… Transition:recovered … Summary:节点 node1 到期日已更新为 2026-09-27（规则 到期） Value:3 …} …], want one new event "节点 node1 已不在提醒窗口内（规则 到期）" value 3`：第一步就红 |
+| v | `Load` 不经 `CheckRule`（删掉跳过非法规则那段） | `go test -count=1 -run 'TestLoadChecksExpiryRules' ./internal/hub/alert/ > /tmp/billing-t3-inj-v.log 2>&1; echo $?` | 1，`expiry_test.go:627: loaded rules = [{… DaysBefore:400 …} {… DaysBefore:7 …}], want only rule 2 with days_before 7` |
+| w | `expirySummary` 删掉"日期没变"那一支 | `go test -count=1 -run 'TestSweepExpiryRecoverySummaryFollowsTheReason' ./internal/hub/alert/ > /tmp/billing-t3-inj-w.log 2>&1; echo $?` | 1，`expiry_test.go:426: 2026-09-27 with days_before 2: events [{… Transition:recovered … Summary:节点 node1 到期日已更新为 2026-09-27（规则 到期） Value:3 …} …], want one new event "节点 node1 已不在提醒窗口内（规则 到期）" value 3`：第一步就红 |
 | x | `Load` 不读回触发日期（`s.FiredExpiresOn` 换成 `""`） | `go test -count=1 -run 'TestSweepExpiryRecoverySummaryFollowsTheReason' ./internal/hub/alert/ > /tmp/billing-t3-inj-x.log 2>&1; echo $?` | 1，同一句，红在第一步：那一步之前重启过，触发日期要从库里读回 |
 | y | `apply` 发布到内存时丢掉触发日期（库里照写） | `go test -count=1 -run 'TestSweepExpiryRecoverySummaryFollowsTheReason' ./internal/hub/alert/ > /tmp/billing-t3-inj-y.log 2>&1; echo $?` | 1，同一句，红在第三步（事件 ID 3、4）：那一步没有重启，触发日期来自内存；第一步从库里读回，照常通过 |
 | z | `apply` 去掉"状态不变直接返回"（留在 firing 的扫描经 `SetAlertState` 重写状态行） | `go test -count=1 -run 'TestSweepExpiryRecoverySummaryFollowsTheReason' ./internal/hub/alert/ > /tmp/billing-t3-inj-z.log 2>&1; echo $?` | 1，同一句，红在第一步：保存规则之前那次留在 firing 的扫描经 `SetAlertState` 重写了状态行，触发日期被清空 |
-| aa | 到期当天写成"已于"（`o.DaysLeft < 0` 改成 `<= 0`） | `go test -count=1 -run 'TestSweepExpiryNotifiesOncePerEntry' ./internal/hub/alert/ > /tmp/billing-t3-inj-aa.log 2>&1; echo $?` | 1，`expiry_test.go:445: summaries over four days = [… "节点 node2 已于 2026-09-24 到期（已过期 0 天，规则 到期）"], want [… "节点 node2 将于 2026-09-24 到期（剩 0 天，规则 到期）"]` |
-| ab | `NextExpiry` 对留在 firing 也报触发转换，且 `apply` 去掉"状态不变直接返回" | `go test -count=1 -run 'TestSweepExpiryNotifiesOncePerEntry' ./internal/hub/alert/ > /tmp/billing-t3-inj-ab.log 2>&1; echo $?` | 1，`expiry_test.go:445: summaries over four days = [ …（剩 0 天… …（剩 1 天… …（已过期 1 天… …（已过期 2 天… …]`：每次扫描都发一条 |
-| ac | 读不懂的到期日不记 Warn（删掉那行 `e.log.Warn`） | `go test -count=1 -run 'TestSweepExpirySkipsUnreadableDates' ./internal/hub/alert/ > /tmp/billing-t3-inj-ac.log 2>&1; echo $?` | 1，`expiry_test.go:338: 0 lines of "level=WARN msg=\"node expires_on is not a YYYY-MM-DD date; expiry rules skip this node\" node_id=1 expires_on=2026-09-31", want 2`：两次扫描一行都没有 |
+| aa | 到期当天写成"已于"（`o.DaysLeft < 0` 改成 `<= 0`） | `go test -count=1 -run 'TestSweepExpiryNotifiesOncePerEntry' ./internal/hub/alert/ > /tmp/billing-t3-inj-aa.log 2>&1; echo $?` | 1，`expiry_test.go:449: summaries over four days = [… "节点 node2 已于 2026-09-24 到期（已过期 0 天，规则 到期）"], want [… "节点 node2 将于 2026-09-24 到期（剩 0 天，规则 到期）"]` |
+| ab | `NextExpiry` 对留在 firing 也报触发转换，且 `apply` 去掉"状态不变直接返回" | `go test -count=1 -run 'TestSweepExpiryNotifiesOncePerEntry' ./internal/hub/alert/ > /tmp/billing-t3-inj-ab.log 2>&1; echo $?` | 1，`expiry_test.go:449: summaries over four days = [ …（剩 0 天… …（剩 1 天… …（已过期 1 天… …（已过期 2 天… …]`：每次扫描都发一条 |
+| ac | 读不懂的到期日不记 Warn（删掉那行 `e.log.Warn`） | `go test -count=1 -run 'TestSweepExpirySkipsUnreadableDates' ./internal/hub/alert/ > /tmp/billing-t3-inj-ac.log 2>&1; echo $?` | 1，`expiry_test.go:342: 0 lines of "level=WARN msg=\"node expires_on is not a YYYY-MM-DD date; expiry rules skip this node\" node_id=1 expires_on=2026-09-31", want 2`：两次扫描一行都没有 |
 | ad | 只去掉 `NextExpiry` 对留在 firing 的那一道（`apply` 的一道仍在） | `go test -count=1 -run 'TestSweepExpiryNotifiesOncePerEntry' ./internal/hub/alert/ > /tmp/billing-t3-inj-ad.log 2>&1; echo $?` | 0（预期不红，见下） |
 | ae | 与 z 同一改动（`apply` 去掉"状态不变直接返回"），只跑只提醒一次的用例 | `go test -count=1 -run 'TestSweepExpiryNotifiesOncePerEntry' ./internal/hub/alert/ > /tmp/billing-t3-inj-ae.log 2>&1; echo $?` | 0（预期不红，见下） |
-| af | 条件更新落空时照常评估（删掉 `if !renewed` 分支里的 `skip[n.ID] = true`） | `go test -count=1 -run 'TestSweepExpirySkipsANodeWhoseSnapshotIsStale' ./internal/hub/alert/ > /tmp/billing-t3-inj-af.log 2>&1; echo $?` | 1，`expiry_test.go:480: a node with a stale snapshot was evaluated: [{… Transition:firing … Summary:节点 node1 已于 2026-09-20 到期（已过期 4 天，规则 到期） …}]` |
-| ag | `RunExpirySweep` 只在启动时扫一次，之后只等 `ctx` 结束 | `go test -count=1 -run 'TestRunExpirySweep' ./internal/hub/alert/ > /tmp/billing-t3-inj-ag.log 2>&1; echo $?` | 1，两个日界用例都红：`expiry_test.go:542: expires_on = 2026-09-24, want 2026-10-24 after the sweep at the day boundary`；跨越用例的两例（零点前读 1 次、2 次）都是 `expiry_test.go:597: expires_on = 2026-09-24, want 2026-10-24: the day boundary crossed during the sweep was skipped`（每处都等满 testwait 的时限后才红） |
-| ah | `Load` 跳过非法规则时不记 Warn（删掉那行 `e.log.Warn`） | `go test -count=1 -run 'TestLoadChecksExpiryRules' ./internal/hub/alert/ > /tmp/billing-t3-inj-ah.log 2>&1; echo $?` | 1，`expiry_test.go:626: want one line "level=WARN msg=\"invalid alert rule skipped\" rule_id=1 err=\"invalid: days_before must be between 1 and 365\"" in:` |
-| ai | 读不懂的到期日每个节点只记一次 Warn（包级的 `sync.Map` 去重） | `go test -count=1 -run 'TestSweepExpirySkipsUnreadableDates' ./internal/hub/alert/ > /tmp/billing-t3-inj-ai.log 2>&1; echo $?` | 1，`expiry_test.go:338: 1 lines of "level=WARN msg=\"node expires_on is not a YYYY-MM-DD date; expiry rules skip this node\" node_id=1 expires_on=2026-09-31", want 2` |
-| aj | `RunExpirySweep` 扫描之后才读钟（改回先 `SweepExpiry`、再 `now := e.clk.Now()`、按 `nextDayStart(now, …).Sub(now)` 定时） | `go test -count=1 -run 'TestRunExpirySweep' ./internal/hub/alert/ > /tmp/billing-t3-inj-aj.log 2>&1; echo $?` | 1，只有 `TestRunExpirySweepDoesNotSkipADayBoundaryCrossedDuringASweep/1_reads_before_midnight` 红：`expiry_test.go:597: expires_on = 2026-09-24, want 2026-10-24: the day boundary crossed during the sweep was skipped`（等满 testwait 的时限后才红）。扫描拿到零点前的读数、不推后，循环拿到零点后的读数、定到 26 日零点。`2_reads_before_midnight` 照常通过：循环与扫描都在零点前，扫描之后的读数在零点后，按它定到 25 日零点、立即重扫。另两个循环用例也照常通过：`tickingClock` 用例的启动扫描在零点前就结束，读钟顺序对它没有影响 |
-| ak | 定时器时长为负时不立即触发，改等再下一个日界（`d < 0` 时 `d = nextDayStart(now, …).Sub(now)`） | `go test -count=1 -run 'TestRunExpirySweep' ./internal/hub/alert/ > /tmp/billing-t3-inj-ak.log 2>&1; echo $?` | 1，只有 `TestRunExpirySweepDoesNotSkipADayBoundaryCrossedDuringASweep/2_reads_before_midnight` 红：`expiry_test.go:597: expires_on = 2026-09-24, want 2026-10-24: the day boundary crossed during the sweep was skipped`（等满 testwait 的时限后才红）。扫描按 24 日评估不推后，结束时已过零点，负时长被改成等到 26 日零点。`1_reads_before_midnight` 照常通过：扫描自己读到 25 日就推后了 |
-| al | 续期写回出错时照常评估（删掉 `err != nil` 分支里的 `skip[n.ID] = true`） | `go test -count=1 -run 'TestSweepExpirySkipsANodeWhoseRenewalFailed' ./internal/hub/alert/ > /tmp/billing-t3-inj-al.log 2>&1; echo $?` | 1，`expiry_test.go:509: a node whose renewal failed was evaluated: [{… Transition:firing … Summary:节点 node1 已于 2026-09-20 到期（已过期 4 天，规则 到期） …}]` |
-| am | `Load` 不载入到期规则的状态（`if _, ok := validRules[s.RuleID]; ok {` 改成 `if r, ok := validRules[s.RuleID]; ok && r.Kind != store.KindExpiry {`） | `go test -count=1 -run 'TestSweepExpiryRecoverySummaryFollowsTheReason' ./internal/hub/alert/ > /tmp/billing-t3-inj-am.log 2>&1; echo $?` | 1，`expiry_test.go:422: 2026-09-27 with days_before 2: events [{ID:3 … 已不在提醒窗口内 …} {ID:2 … Transition:firing … 将于 2026-09-27 到期（剩 3 天，规则 到期） …} {ID:1 …}], want one new event "节点 node1 已不在提醒窗口内（规则 到期）" value 3`：红在第一步。重启后没有读回 firing，扫描把节点当成刚进窗口，又发了一条触发（事件 2） |
+| af | 条件更新落空时照常评估（删掉 `if !renewed` 分支里的 `skip[n.ID] = true`） | `go test -count=1 -run 'TestSweepExpirySkipsANodeWhoseSnapshotIsStale' ./internal/hub/alert/ > /tmp/billing-t3-inj-af.log 2>&1; echo $?` | 1，`expiry_test.go:484: a node with a stale snapshot was evaluated: [{… Transition:firing … Summary:节点 node1 已于 2026-09-20 到期（已过期 4 天，规则 到期） …}]` |
+| ag | `RunExpirySweep` 只在启动时扫一次，之后只等 `ctx` 结束 | `go test -count=1 -run 'TestRunExpirySweep' ./internal/hub/alert/ > /tmp/billing-t3-inj-ag.log 2>&1; echo $?` | 1，两个日界用例都红：`expiry_test.go:546: expires_on = 2026-09-24, want 2026-10-24 after the sweep at the day boundary`；跨越用例的两例（零点前读 1 次、2 次）都是 `expiry_test.go:601: expires_on = 2026-09-24, want 2026-10-24: the day boundary crossed during the sweep was skipped`（每处都等满 testwait 的时限后才红） |
+| ah | `Load` 跳过非法规则时不记 Warn（删掉那行 `e.log.Warn`） | `go test -count=1 -run 'TestLoadChecksExpiryRules' ./internal/hub/alert/ > /tmp/billing-t3-inj-ah.log 2>&1; echo $?` | 1，`expiry_test.go:630: want one line "level=WARN msg=\"invalid alert rule skipped\" rule_id=1 err=\"invalid: days_before must be between 1 and 365\"" in:` |
+| ai | 读不懂的到期日每个节点只记一次 Warn（包级的 `sync.Map` 去重） | `go test -count=1 -run 'TestSweepExpirySkipsUnreadableDates' ./internal/hub/alert/ > /tmp/billing-t3-inj-ai.log 2>&1; echo $?` | 1，`expiry_test.go:342: 1 lines of "level=WARN msg=\"node expires_on is not a YYYY-MM-DD date; expiry rules skip this node\" node_id=1 expires_on=2026-09-31", want 2` |
+| aj | `RunExpirySweep` 扫描之后才读钟（改回先 `SweepExpiry`、再 `now := e.clk.Now()`、按 `nextDayStart(now, …).Sub(now)` 定时） | `go test -count=1 -run 'TestRunExpirySweep' ./internal/hub/alert/ > /tmp/billing-t3-inj-aj.log 2>&1; echo $?` | 1，只有 `TestRunExpirySweepDoesNotSkipADayBoundaryCrossedDuringASweep/1_reads_before_midnight` 红：`expiry_test.go:601: expires_on = 2026-09-24, want 2026-10-24: the day boundary crossed during the sweep was skipped`（等满 testwait 的时限后才红）。扫描拿到零点前的读数、不推后，循环拿到零点后的读数、定到 26 日零点。`2_reads_before_midnight` 照常通过：循环与扫描都在零点前，扫描之后的读数在零点后，按它定到 25 日零点、立即重扫。另两个循环用例也照常通过：`tickingClock` 用例的启动扫描在零点前就结束，读钟顺序对它没有影响 |
+| ak | 定时器时长为负时不立即触发，改等再下一个日界（`d < 0` 时 `d = nextDayStart(now, …).Sub(now)`） | `go test -count=1 -run 'TestRunExpirySweep' ./internal/hub/alert/ > /tmp/billing-t3-inj-ak.log 2>&1; echo $?` | 1，只有 `TestRunExpirySweepDoesNotSkipADayBoundaryCrossedDuringASweep/2_reads_before_midnight` 红：`expiry_test.go:601: expires_on = 2026-09-24, want 2026-10-24: the day boundary crossed during the sweep was skipped`（等满 testwait 的时限后才红）。扫描按 24 日评估不推后，结束时已过零点，负时长被改成等到 26 日零点。`1_reads_before_midnight` 照常通过：扫描自己读到 25 日就推后了 |
+| al | 续期写回出错时照常评估（删掉 `err != nil` 分支里的 `skip[n.ID] = true`） | `go test -count=1 -run 'TestSweepExpirySkipsANodeWhoseRenewalFailed' ./internal/hub/alert/ > /tmp/billing-t3-inj-al.log 2>&1; echo $?` | 1，`expiry_test.go:513: a node whose renewal failed was evaluated: [{… Transition:firing … Summary:节点 node1 已于 2026-09-20 到期（已过期 4 天，规则 到期） …}]` |
+| am | `Load` 不载入到期规则的状态（`if _, ok := validRules[s.RuleID]; ok {` 改成 `if r, ok := validRules[s.RuleID]; ok && r.Kind != store.KindExpiry {`） | `go test -count=1 -run 'TestSweepExpiryRecoverySummaryFollowsTheReason' ./internal/hub/alert/ > /tmp/billing-t3-inj-am.log 2>&1; echo $?` | 1，`expiry_test.go:426: 2026-09-27 with days_before 2: events [{ID:3 … 已不在提醒窗口内 …} {ID:2 … Transition:firing … 将于 2026-09-27 到期（剩 3 天，规则 到期） …} {ID:1 …}], want one new event "节点 node1 已不在提醒窗口内（规则 到期）" value 3`：红在第一步。重启后没有读回 firing，扫描把节点当成刚进窗口，又发了一条触发（事件 2） |
+| an | `nextDayStart` 按时分判断：`if ny, nm, nd := next.Date(); ny == y && nm == m && nd == d {` 改成 `if next.Hour() != 0 \|\| next.Minute() != 0 {` | `go test -count=1 -run 'TestNextDayStart' ./internal/hub/alert/ > /tmp/billing-t3-inj-an.log 2>&1; echo $?` | 1，只有偏移为正的两行红：`expiry_test.go:185: Africa/Cairo from 2026-04-23T22:00:00: next day starts 2026-10-29T23:00:00+02:00, want 2026-04-24T01:00:00+03:00`，Beirut 同样（`2026-10-24T23:00:00+02:00`），两个时区各另有一行 `is not the first instant of the next local day`。01:00 的时分不为零，取了夏令时时段的结束处，日界定到几个月后夏令时结束的那次切换；Santiago、Havana 的 23:00 同样不为零，照旧取对 |
 
 每项：改动 → `git diff --stat` 非空 → 跑命令 → 核对原因 → `git checkout -- internal/hub/alert cmd/hub`。s、ag、aj、ak 等满 `testwait.Bound`（30 秒）才红，ag 有三处各等一次。
 
@@ -4452,6 +4463,7 @@ ad 与 ae 预期不红，列在这里是为核对 `expirySummary` 注释里"两�
 - Modify: `internal/hub/api/alerts.go`（`alertKinds` 加到期；`ruleProto`、`SaveAlertRule` 带 `days_before`；指标一段的注释）
 - Modify: `cmd/hub/serve.go`（`api.Config`、`api.PublicConfig` 带 `loc`）
 - Create: `internal/hub/api/billing_test.go`
+- Modify: `internal/hub/api/alerts_test.go`（`TestAlertKindsMapEveryValue`：`alertKinds` 按协议枚举全集核对，映射出的每个存储种类都被 `alert.CheckRule` 接受）
 - Test（夹具与调用点）：`internal/hub/api/api_test.go`（`newZonedHarness`）、`internal/hub/api/alert_scope_reload_test.go`、`cmd/hub/mux_test.go`、`cmd/hub/serve_alert_test.go`（`TestServeReportsDaysLeftInTheHubZone`）
 
 **Interfaces:**
@@ -5053,6 +5065,64 @@ func TestServeReportsDaysLeftInTheHubZone(t *testing.T) {
 }
 ```
 
+`internal/hub/api/alerts_test.go` 原文：
+
+```go
+		t.Fatalf("deleted node left alert cache=%v", after.Msg)
+	}
+}
+```
+
+替换为：
+
+```go
+		t.Fatalf("deleted node left alert cache=%v", after.Msg)
+	}
+}
+
+// alertKinds 是协议种类与存储种类之间的翻译表。协议加了种类而这张表漏配时，编译照过；新种类若还没有协议层的用例，
+// 别的用例也不会红，功能却静默失效：
+// SaveAlertRule 在 parseEnum 处以 rule.kind 拒绝这个种类，列表回显时 enumFor 找不到它而给出 UNSPECIFIED。这里按协议
+// 枚举的全集核对：UNSPECIFIED 之外的每个值都有映射且往返一致，表里没有多出的项；反过来，映射出的每个存储种类都要被
+// alert.CheckRule 接受，免得表配上了、校验却不认这个种类。
+func TestAlertKindsMapEveryValue(t *testing.T) {
+	values := probev1.AlertKind(0).Descriptor().Values()
+	for i := 0; i < values.Len(); i++ {
+		v := probev1.AlertKind(values.Get(i).Number())
+		if v == probev1.AlertKind_ALERT_KIND_UNSPECIFIED {
+			continue
+		}
+		k, ok := alertKinds[v]
+		if !ok {
+			t.Errorf("%s has no stored kind in alertKinds", v)
+			continue
+		}
+		if enumFor(alertKinds, k) != v {
+			t.Errorf("%s does not round-trip through %q", v, k)
+		}
+	}
+	if len(alertKinds) != values.Len()-1 {
+		t.Errorf("alertKinds has %d entries, want one per protocol kind except UNSPECIFIED (%d)", len(alertKinds), values.Len()-1)
+	}
+	// 每个存储种类一条最小的合法规则：离线不带专用字段，探测带任务、指标、阈值与持续分钟，到期带提前天数。
+	minimal := map[store.AlertKind]store.AlertRule{
+		store.KindOffline: {Name: "离线", Kind: store.KindOffline, AllNodes: true},
+		store.KindProbe:   {Name: "探测", Kind: store.KindProbe, AllNodes: true, TaskID: 1, Metric: store.MetricLossPct, Threshold: 10, ForMinutes: 3},
+		store.KindExpiry:  {Name: "到期", Kind: store.KindExpiry, AllNodes: true, DaysBefore: 7},
+	}
+	for v, k := range alertKinds {
+		r, ok := minimal[k]
+		if !ok {
+			t.Errorf("no minimal valid rule for stored kind %q (%s); add one so CheckRule is checked for it", k, v)
+			continue
+		}
+		if err := alert.CheckRule(r); err != nil {
+			t.Errorf("alert.CheckRule rejects the stored kind %q of %s: %v", k, v, err)
+		}
+	}
+}
+```
+
 - [ ] **Step 2: 跑红**
 
 ```bash
@@ -5297,7 +5367,8 @@ func nodeProto(n store.Node, today time.Time) *probev1.Node {
 	// 计费字段变了就立刻按新值扫描一次（§9.2）：续费之后不等到零点才恢复。修改已提交，扫描失败只记日志，下一次扫描
 	// 会再评估。扫描放在 nodeMu 之外：它要等 writeMu（离线巡检、探测评估、日界扫描都可能正持有），再做一整轮续期
 	// 写回与状态写，持 nodeMu 等它只会挡住其它节点的编辑与删除，与 DeleteNode 把清理放在锁外同一个理由。持锁调用
-	// 也不会成环：alert 不引用 api，持 writeMu 的路径（各次扫描、apply、Sender.Enqueue）都不会回到 api 取 nodeMu。
+	// 也不会成环：alert 包不 import api，且引擎经 SetSender 注入的实现（当前是 alert.Queue）也不在 api 里，
+	// 任何持 writeMu 的路径都取不到 nodeMu。
 	if billingChanged {
 		if err := s.alerts.SweepExpiry(context.WithoutCancel(ctx)); err != nil {
 			s.log.Error("expiry sweep after node update failed", "node", req.Msg.GetId(), "err", err)
@@ -5587,7 +5658,7 @@ Expected：两条都是 0。
 - [ ] **Step 5: 提交**
 
 ```bash
-cd /Users/xjetry/work/vibe/probe-billing && git add cmd/hub/mux_test.go cmd/hub/serve.go cmd/hub/serve_alert_test.go internal/hub/api/alert_scope_reload_test.go internal/hub/api/alerts.go internal/hub/api/api_test.go internal/hub/api/billing_test.go internal/hub/api/nodes.go internal/hub/api/public.go internal/hub/api/service.go > /tmp/billing-t4-add.log 2>&1; echo $?
+cd /Users/xjetry/work/vibe/probe-billing && git add cmd/hub/mux_test.go cmd/hub/serve.go cmd/hub/serve_alert_test.go internal/hub/api/alert_scope_reload_test.go internal/hub/api/alerts.go internal/hub/api/alerts_test.go internal/hub/api/api_test.go internal/hub/api/billing_test.go internal/hub/api/nodes.go internal/hub/api/public.go internal/hub/api/service.go > /tmp/billing-t4-add.log 2>&1; echo $?
 cd /Users/xjetry/work/vibe/probe-billing && git commit -m "api: UpdateNode 校验并保存计费子消息，days_left 按 hub 时区下发，到期规则经协议保存" -m "计费在 UpdateNode 入口一处校验，错误以请求路径写明字段、约束与收到的值；billing 缺失即五项全清，其中的 days_left 不读。到期日与扫描共用 alert.ParseDate，写进去的日期读侧一定读得懂。计费有变化就在返回前同步扫描一次，扫描之后才回读，响应里的到期日与 days_left 已是推后之后的值；扫描在 nodeMu 之外进行，一次计费编辑等 writeMu 时不会挡住其它节点的编辑与删除。days_left 由 hub 按 --timezone 的今天算出，库里读不懂的到期日照原样下发、days_left 缺失（0 会被读成今天到期）；Node.billing 与经投影生成的 PublicBilling 同一来源；公开快照的 now 与 days_left 出自同一次读钟。离线规则带探测字段、探测规则带提前天数都以 InvalidArgument 拒绝。api.Config 与 api.PublicConfig 缺时区即 panic，装配错误在启动时暴露。" > /tmp/billing-t4-commit.log 2>&1; echo $?
 cd /Users/xjetry/work/vibe/probe-billing && git status --porcelain > /tmp/billing-t4-status.log 2>&1; echo $?
 ```
@@ -5606,14 +5677,14 @@ Expected：0；vitest `Tests  369 passed (369)`。`make ci` 最后核对生成�
 
 | | 改动 | 命令 | 期望 |
 |---|---|---|---|
-| a | 价格正则去掉 `^` 与 `$` | `go test -count=1 -run 'TestUpdateNodeRejectsMalformedBilling' ./internal/hub/api/ > /tmp/billing-t4-inj-a.log 2>&1; echo $?` | 1，`billing_test.go:91: price:"12.345" currency:"USD": err = <nil>, want billing.price: must match ^\d{1,9}(\.\d{1,2})?$, e.g. 12.50; got "12.345"`，`1234567890`、`-1`、`12.`、`.5` 等各一行 |
+| a | 价格正则去掉 `^` 与 `$` | `go test -count=1 -run 'TestUpdateNodeRejectsMalformedBilling' ./internal/hub/api/ > /tmp/billing-t4-inj-a.log 2>&1; echo $?` | 1，`billing_test.go:91: price:"12.345" currency:"USD": err = <nil>, want billing.price: must match ^\d{1,9}(\.\d{1,2})?$, e.g. 12.50; got "12.345"`，`1234567890`、`-1`、`12.`、`.5`、`1e3`、`" 12"` 各一行。全角 `１２` 那一行也红：去掉锚点后它照样被拒（RE2 的 `\d` 只认 ASCII），红是因为错误原文里插入的是改动后的正则。另有 `billing_test.go:96: rejected updates changed the node` 一行：最后一个被放行的 `" 12"` 存下了 |
 | b | 删掉"价格非空时币种必填" | `go test -count=1 -run 'TestUpdateNodeRejectsMalformedBilling' ./internal/hub/api/ > /tmp/billing-t4-inj-b.log 2>&1; echo $?` | 1，`billing_test.go:91: price:"12": err = <nil>, want billing.currency: required when billing.price is set` 与 `billing_test.go:96: rejected updates changed the node` |
 | c | 币种正则加 `(?i)`（接受小写） | `go test -count=1 -run 'TestUpdateNodeRejectsMalformedBilling' ./internal/hub/api/ > /tmp/billing-t4-inj-c.log 2>&1; echo $?` | 1，`… currency:"usd": err = <nil>, want billing.currency: must be three uppercase letters (ISO 4217), e.g. USD; got "usd"` 与 `rejected updates changed the node` |
 | d | 表外的周期值不拒绝（`if !ok` 改成 `if ok = true; !ok`） | `go test -count=1 -run 'TestUpdateNodeRejectsMalformedBilling' ./internal/hub/api/ > /tmp/billing-t4-inj-d.log 2>&1; echo $?` | 1，`… billing_cycle:99: err = <nil>, want billing.billing_cycle: must be one of BILLING_CYCLE_UNSPECIFIED, …; got 99` 与 `rejected updates changed the node` |
 | e | 到期日不校验（`ParseDate` 的错误条件后加 `&& false`） | `go test -count=1 -run 'TestUpdateNodeRejectsMalformedBilling' ./internal/hub/api/ > /tmp/billing-t4-inj-e.log 2>&1; echo $?` | 1，`… expires_on:"2026-02-29": err = <nil>, want billing.expires_on: must be an existing date in YYYY-MM-DD form; got "2026-02-29"`，另两种写法各一行 |
 | f | 自动续期只在周期与到期日都缺时才拒绝（`\|\|` 改成 `&&`） | `go test -count=1 -run 'TestUpdateNodeRejectsMalformedBilling' ./internal/hub/api/ > /tmp/billing-t4-inj-f.log 2>&1; echo $?` | 1，`… expires_on:"2026-10-01" auto_renew:true: err = <nil>, want billing.auto_renew: requires billing.billing_cycle and billing.expires_on to be set`，只带周期的一行同样 |
 | g | `Service.today` 用 `time.UTC` | `go test -count=1 -run 'TestDaysLeftUsesTheHubZone' ./internal/hub/api/ > /tmp/billing-t4-inj-g.log 2>&1; echo $?` | 1，`billing_test.go:145: UpdateNode days_left = 9, want 8` |
-| h | `GetSnapshot` 不填 `PublicNode.billing`（删掉投影那段） | `go test -count=1 -run 'TestPublicSnapshotCarriesBilling\|TestDaysLeftUsesTheHubZone' ./internal/hub/api/ > /tmp/billing-t4-inj-h.log 2>&1; echo $?` | 1，`billing_test.go:153: public snapshot = …`（节点没有 `billing`）与 `billing_test.go:179: public billing of a = <nil>, want price:"12.50" … days_left:-3` |
+| h | `GetSnapshot` 不填 `PublicNode.billing`：投影那段的条件改成 `b != nil && false`（整段删掉会让 `today` 未使用，编译失败） | `go test -count=1 -run 'TestPublicSnapshotCarriesBilling\|TestDaysLeftUsesTheHubZone' ./internal/hub/api/ > /tmp/billing-t4-inj-h.log 2>&1; echo $?` | 1，`billing_test.go:153: public snapshot = …`（节点没有 `billing`）与 `billing_test.go:179: public billing of a = <nil>, want price:"12.50" … days_left:-3` |
 | i | 不论计费是否变化都扫描（`if billingChanged {` 改成 `if billingChanged \|\| true {`） | `go test -count=1 -run 'TestUpdateNodeSweepsExpiryWhenBillingChanges' ./internal/hub/api/ > /tmp/billing-t4-inj-i.log 2>&1; echo $?` | 1，`billing_test.go:276: a rename swept expiry: … billing:{… expires_on:"2026-02-15" auto_renew:true days_left:26}` |
 | j | 计费变化也不扫描（`if billingChanged && false {`） | `go test -count=1 -run 'TestUpdateNodeSweepsExpiryWhenBillingChanges\|TestUpdateNodeFiresAndRecovers' ./internal/hub/api/ > /tmp/billing-t4-inj-j.log 2>&1; echo $?` | 1，`billing_test.go:281: a billing change did not renew: … expires_on:"2026-01-15" … days_left:-5}` 与 `billing_test.go:304: events after setting a close date: []` |
 | k | 先 `GetNode` 读回响应、后扫描（响应不含推后的日期） | `go test -count=1 -run 'TestUpdateNodeSweepsExpiryWhenBillingChanges' ./internal/hub/api/ > /tmp/billing-t4-inj-k.log 2>&1; echo $?` | 1，`billing_test.go:281: a billing change did not renew: …`：库里已推后，响应是推后之前读出的 |
@@ -5627,7 +5698,9 @@ Expected：0；vitest `Tests  369 passed (369)`。`make ci` 最后核对生成�
 | s | `billingProto` 对五项全空的计费也返回非 nil（删掉开头的 `return nil`） | `go test -count=1 -run 'TestUpdateNodeAcceptsBoundaryBillingAndIgnoresDaysLeft\|TestPublicSnapshotCarriesBilling' ./internal/hub/api/ > /tmp/billing-t4-inj-s.log 2>&1; echo $?` | 1，`billing_test.go:126: billing  did not clear: … billing:{}` 与 `billing_test.go:182: node without billing = … billing:{}` |
 | t | `CheckRule` 的离线分支不调 `checkKindFields`（与 Task 3 注入 m 同一处，这里跑协议层的测试） | `go test -count=1 -run 'TestSaveAlertRuleRejectsFieldsOfOtherKinds' ./internal/hub/api/ > /tmp/billing-t4-inj-t.log 2>&1; echo $?` | 1，`billing_test.go:369: … kind:ALERT_KIND_OFFLINE … task_id:1 …: err = internal: saving alert rule failed, want rule.task_id must be 0 unless kind is probe`，metric、threshold、for_minutes、days_before 各一行：store 的判定挡住了写入，但错误没转成字段错误，协议层只见 internal；没有 `rejected rules were saved` |
 | u | `billingProto` 只对空串不给 `days_left`，读不懂的日期给 0 | `go test -count=1 -run 'TestUnreadableExpiresOnHasNoDaysLeft' ./internal/hub/api/ > /tmp/billing-t4-inj-u.log 2>&1; echo $?` | 1，`billing_test.go:210: billing = expires_on:"2026-02-30" days_left:0, want expires_on kept and days_left missing` |
-| v | `GetSnapshot` 分两次读钟（`today` 与 `now` 各读一次） | `go test -count=1 -run 'TestPublicSnapshotReadsTheClockOnce\|TestDaysLeftUsesTheHubZone\|TestPublicSnapshotCarriesBilling' ./internal/hub/api/ > /tmp/billing-t4-inj-v.log 2>&1; echo $?` | 1，只有 `TestPublicSnapshotReadsTheClockOnce` 红：`billing_test.go:254: now 1767369599 is 2026-01-02 in the hub zone, so days_left should be 58; got 59`；另两个用例的钟不走，照常通过 |
+| v | `GetSnapshot` 分两次读钟：先为 `today` 读一次，再读 `now` | `go test -count=1 -run 'TestPublicSnapshotReadsTheClockOnce\|TestDaysLeftUsesTheHubZone\|TestPublicSnapshotCarriesBilling' ./internal/hub/api/ > /tmp/billing-t4-inj-v.log 2>&1; echo $?` | 1，只有 `TestPublicSnapshotReadsTheClockOnce` 红：`billing_test.go:254: now 1767369599 is 2026-01-02 in the hub zone, so days_left should be 58; got 59`；另两个用例的钟不走，照常通过。反过来的顺序（先读 `now`）红在同一条断言，数字对调：`now 1767283199 is 2026-01-01 in the hub zone, so days_left should be 59; got 58` |
+| w | `alertKinds` 删掉 `EXPIRY` 一行（同注入 l，这里跑全集用例） | `go test -count=1 -run 'TestAlertKindsMapEveryValue' ./internal/hub/api/ > /tmp/billing-t4-inj-w.log 2>&1; echo $?` | 1，`alerts_test.go:499: ALERT_KIND_EXPIRY has no stored kind in alertKinds` 与 `alerts_test.go:507: alertKinds has 2 entries, want one per protocol kind except UNSPECIFIED (3)` |
+| x | `CheckRule` 不认到期种类（`case store.KindExpiry:` 改成 `case "expiry_disabled":`，到期规则落到 `default` 被拒） | `go test -count=1 -run 'TestAlertKindsMapEveryValue' ./internal/hub/api/ > /tmp/billing-t4-inj-x.log 2>&1; echo $?` | 1，`alerts_test.go:522: alert.CheckRule rejects the stored kind "expiry" of ALERT_KIND_EXPIRY: invalid: kind must be one of offline, probe, expiry; got "expiry"`：翻译表配上了，校验却不认这个种类 |
 
 每项：改动 → `git diff --stat` 非空 → 跑命令 → 核对原因 → `git checkout -- internal/hub cmd/hub`（t 改的是 `internal/hub/alert/rule.go`）。
 
@@ -7027,11 +7100,12 @@ Expected：0；vitest `Tests  396 passed (396)`。`make ci` 最后核对生成�
 
 ---
 
-### Task 8: e2e：计费字段、公开快照、到期告警与自动续期；README
+### Task 8: e2e：计费字段、公开快照、到期告警与自动续期；README；入口卡片
 
 **Files:**
 - Modify: `scripts/e2e.sh`（两个端口可由环境变量覆盖；`wait_alert` 带节点参数；计费与到期一段；node1 在 firing 状态下重启，重启后的规则、事件、计费与续期恢复；统计的行数）
 - Modify: `README.md`（"运行 hub"一节加一条；"时区"一节提到期日的天边界）
+- Modify: `proto/SKILL.md`（入口卡片：`description` 加上费用与到期；"例子"一节在 CPU 那例之后加一个按 `daysLeft` 列节点的例子）
 
 **Interfaces:**
 - Consumes：Task 1–7 的全部对外行为。e2e 用 curl + jq 走 Connect 的 JSON；公开服务用既有的 `pubget`（匿名 GET）。
@@ -7045,8 +7119,9 @@ Expected：0；vitest `Tests  396 passed (396)`。`make ci` 最后核对生成�
   7. 重启之后续期到 60 天后：`daysLeft` 在 59–60，恢复事件送达，文案"到期日已更新为…"，事件共四个。统计里 `alert_rule`、`alert_rule_node` 为 2，`alert_event`、`alert_delivery` 为 4。
 - 每个 `UpdateNode` 的请求体都在 `billing` 里带 `daysLeft: 999`：续期后的 0–31、公开快照里与 `now` 相符、重启后的 4–5、重启后续期的 59–60 四处断言都排除了 999。
 - 端口：`port=${E2E_HUB_PORT:-18080}`、`hook_port=${E2E_HOOK_PORT:-18081}`，webhook 接收器的三处 18081 都换成 `$hook_port`，python 接收器从参数读端口。
+- 入口卡片：hub 经 `GetApiReference` 下发的 `guide` 就是 `proto/SKILL.md`（`proto/embed.go` 的 `go:embed`；`reference_test.go` 核对两者逐字相同）。`run_card_examples` 从下发的卡片里抽出每个 `sh example` 块，用 API token 执行：空 hub 那一轮要求输出是 JSON，重启后有数据的那一轮另要求非空。新例子在空 hub 输出 `[]`，有数据时 node1 带着到期日，所以 `scripts/e2e.sh` 不用为它改。
 
-- [ ] **Step 1: 改 e2e.sh 与 README**
+- [ ] **Step 1: 改 e2e.sh、README 与入口卡片**
 
 原文以 Task 7 提交后的文件为准，都只出现一次。
 
@@ -7149,7 +7224,7 @@ wait_alert() {
 ```sh
 # 至多落在一次 sleep 里，累计值至多多算这一次，其余每一秒都是被等的系统醒着运行的时间。墙钟截止会把
 # 整段休眠算进预算，醒来后第一次检查就失败，而那段时间里被等的系统根本没有运行。
-# wait_alert 节点 变化 预算秒数：等该节点恰有一条该变化的事件且已送达。
+# wait_alert 节点 变化 预算秒数：等该节点恰有一条已送达的该变化事件。
 wait_alert() {
   alert_node=$1
   transition=$2
@@ -7339,13 +7414,45 @@ jq -e --arg version "$task_version" --arg icmp "$icmp_task" --arg tcp "$tcp_task
 ### 环境变量
 ```
 
-- [ ] **Step 2: 语法检查**
+`proto/SKILL.md` 原文（1/2）：
+
+```markdown
+description: 查询自托管探针 hub 的节点、实时状态、历史指标、流量、探测与告警事件。用户问起服务器在不在线、负载、流量、延迟或告警时使用。
+```
+
+替换为：
+
+```markdown
+description: 查询自托管探针 hub 的节点、实时状态、历史指标、流量、探测、费用与到期，以及告警事件。用户问起服务器在不在线、负载、流量、延迟、费用、何时到期或告警时使用。
+```
+
+`proto/SKILL.md` 原文（2/2）：
+
+```markdown
+最近 20 条告警事件：
+```
+
+替换为：
+
+````markdown
+节点的费用与到期。`daysLeft` 是到期日减去今天的天数，今天按 hub 的时区（`--timezone`）取日历日，负数是已过期的天数，由 hub 算好下发；没有到期日（或库里的到期日无法解析）时它缺失，这样的节点不列出。价格与币种是记录用的展示值，hub 不汇总、不换算：
+
+```sh example
+curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/json' \
+  --data '{}' "$PROBE_HUB/probe.v1.AdminService/ListNodes" | jq '[(.nodes // [])[] | select(.billing.daysLeft != null) | {name, price: .billing.price, currency: .billing.currency, expiresOn: .billing.expiresOn, daysLeft: .billing.daysLeft}]'
+```
+
+最近 20 条告警事件：
+````
+
+- [ ] **Step 2: 语法检查与卡片一致性**
 
 ```bash
 cd /Users/xjetry/work/vibe/probe-billing && sh -n scripts/e2e.sh > /tmp/billing-t8-syntax.log 2>&1; echo $?
+cd /Users/xjetry/work/vibe/probe-billing && go test -count=1 -run 'Reference|Guide|Skill' -v ./internal/hub/api/ > /tmp/billing-t8-card.log 2>&1; echo $?
 ```
 
-Expected：0，日志为空。
+Expected：两条都是 0；第一条日志为空。第二条 `TestApiReferenceServesTheRepositoryProtoAndGuide` 与 `TestApiReferenceIsReachableWithAToken` 都 PASS，前者核对 hub 下发的卡片与 `proto/SKILL.md` 逐字相同。
 
 - [ ] **Step 3: 跑 e2e**
 
@@ -7358,17 +7465,20 @@ Expected：
 - 每一遍都有到期告警的两行：重启之前的 `alert firing delivered after 0s (0s of polling, budget 15s)`，重启之后的 `alert recovered delivered after 0s (0s of polling, budget 15s)`。评估在请求里同步完成，只等投递。写计划时两遍分别是 0s（触发与恢复，Debian 与 Alpine 相同）。
 - hub 日志里有续期的一行，形如 `msg="node expiry renewed" node_id=2 node=e2e-amd64 cycle=monthly from=2026-08-01 to=2026-10-01`：`from` 是上月 1 日，`to` 是不早于今天的某月 1 日（写计划时在 2026-09-27 跑出的就是这一行）。
 - `--- stats ---` 段有 `alert_rule: 2`、`alert_rule_node: 2`、`alert_event: 4`、`alert_delivery: 4`。
+- 每一遍都有 `card examples ok (empty hub): 6` 与 `card examples ok: 6`：卡片的 `sh example` 由 5 个变成 6 个，新例子在两轮里都执行。
 - 镜像冷拉取报 `toomanyrequests` 是 Docker Hub 的匿名限速，属于环境；换个时间重跑同一条命令，不改脚本。
 
 - [ ] **Step 4: 提交**
 
 ```bash
 cd /Users/xjetry/work/vibe/probe-billing && git add scripts/e2e.sh README.md > /tmp/billing-t8-add.log 2>&1; echo $?
-cd /Users/xjetry/work/vibe/probe-billing && git commit -m "e2e: 计费字段、公开快照、到期告警与自动续期；README 记计费与到期" -m "e2e 从 HTTP 入口走一遍计费与到期：畸形价格被拒且错误写明 billing.price；自动续期在保存时即推后并记日志；请求里的 daysLeft 被忽略；公开快照带计费、不带自动续期，daysLeft 与同一响应的 now 相符；到期规则保存即触发并经 webhook 送达；节点停在 firing 进入重启，重启后再保存规则也不重复提醒，续期即恢复；重启后规则、事件与计费都在。两个端口可由 E2E_HUB_PORT、E2E_HOOK_PORT 覆盖，默认仍是 18080/18081。wait_alert 改为带节点参数，离线与到期告警共用。README 写明计费只作展示与提醒，到期日的天边界与流量周期一样取 --timezone。" > /tmp/billing-t8-commit.log 2>&1; echo $?
+cd /Users/xjetry/work/vibe/probe-billing && git commit -m "e2e: 计费字段、公开快照、到期告警与自动续期；README 记计费与到期" -m "e2e 从 HTTP 入口走一遍计费与到期：畸形价格被拒且错误写明 billing.price；自动续期在保存时即推后并记日志；请求里的 daysLeft 被忽略；公开快照带计费、不带自动续期，daysLeft 与同一响应的 now 相符；到期规则保存即触发并经 webhook 送达；节点停在 firing 进入重启，重启后再保存规则也不重复提醒，续期到窗口之外即恢复；重启后规则、事件与计费都在。两个端口可由 E2E_HUB_PORT、E2E_HOOK_PORT 覆盖，默认仍是 18080/18081。wait_alert 改为带节点参数，离线与到期告警共用。README 写明计费只作展示与提醒，到期日的天边界与流量周期一样取 --timezone。" > /tmp/billing-t8-commit.log 2>&1; echo $?
+cd /Users/xjetry/work/vibe/probe-billing && git add proto/SKILL.md > /tmp/billing-t8-add-card.log 2>&1; echo $?
+cd /Users/xjetry/work/vibe/probe-billing && git commit -m "proto: 入口卡片写明费用与到期，并给一个按剩余天数列节点的例子" -m 'agent 靠卡片的 description 判断什么时候用这个 API、靠例子学会怎么进门：描述里没有费用与到期，问到"哪台服务器快到期了"时 agent 不会想到这里；有了例子，它不必先读完 proto 才知道 daysLeft 由 hub 按 --timezone 算好、缺失表示没有到期日。例子与卡片里其它例子同样标成 sh example，e2e 在有数据的那一轮执行它并要求输出非空，select 用的字段名写错就红（投影里的字段名写错只会输出 null，仍非空）。' > /tmp/billing-t8-commit-card.log 2>&1; echo $?
 cd /Users/xjetry/work/vibe/probe-billing && git status --porcelain > /tmp/billing-t8-status.log 2>&1; echo $?
 ```
 
-Expected：三条都是 0；`billing-t8-status.log` 为空。
+Expected：五条都是 0；`billing-t8-status.log` 为空。两个提交：e2e 与 README 一个，入口卡片一个。
 
 - [ ] **Step 5: make ci**
 
@@ -7380,7 +7490,7 @@ Expected：0；vitest `Tests  396 passed (396)`。
 
 - [ ] **Step 6: 缺陷注入**
 
-e2e 一遍要几分钟，注入只跑 Alpine 一个镜像。每项：改动 → `git diff --stat` 非空 → 重建 hub → 跑命令 → 核对首个 `FAIL` 行 → `git checkout -- internal` → 再重建 hub。
+e2e 一遍要几分钟，注入只跑 Alpine 一个镜像。每项：改动 → `git diff --stat` 非空 → 重建 hub → 跑命令 → 核对首个 `FAIL` 行 → `git checkout -- internal proto` → 再重建 hub。卡片由 `go:embed` 编进 hub，改它同样要重建。
 
 重建与命令：
 
@@ -7391,12 +7501,13 @@ cd /Users/xjetry/work/vibe/probe-billing && AGENT_IMAGE=alpine:3.21 EXPECT_OS=Al
 
 | | 改动 | 期望 |
 |---|---|---|
-| a | `internal/hub/api/public.go` 的 `GetSnapshot` 不填 `PublicNode.billing`（删掉投影那段） | 1，`FAIL: public snapshot lacks the expiry date`（约 5 秒的轮询之后） |
+| a | `internal/hub/api/public.go` 的 `GetSnapshot` 不填 `PublicNode.billing`：投影那段的条件改成 `b != nil && false`，同 Task 4 注入 h | 1，`FAIL: public snapshot lacks the expiry date`（约 5 秒的轮询之后） |
 | b | `internal/hub/api/nodes.go` 的 `UpdateNode` 不做计费变化后的扫描（`if billingChanged {` 改成 `if billingChanged && false {`） | 1，`FAIL: auto renew did not push the expiry date past today`：响应里的到期日仍是上月 1 日（写计划时 `expiresOn` 2026-08-01、`daysLeft` −57） |
 | c | `internal/hub/alert/engine.go` 的 `SaveRule` 不做保存后的扫描（条件末尾加 `&& false`） | 1，`FAIL: firing alert not delivered after 15s of polling`：到期规则保存后没有评估，要等到零点 |
 | d | `internal/hub/api/nodes.go` 的 `UpdateNode` 响应沿用请求里的 `days_left`，写法同 Task 4 注入 r（nil 安全：e2e 里改重置日的 `UpdateNode` 不带 `billing`） | 1，`FAIL: auto renew did not push the expiry date past today`：响应里的到期日已推后（2026-10-01），`daysLeft` 却是请求里的 999，续期后 0–31 的断言排除了它 |
 | e | `internal/hub/store/alert.go` 的 `KindExpiry` 字面值改成 `"expiry_x"`（单测都引用常量，只有 webhook 载荷里的种类名跟着变） | 1，`FAIL: expiry webhook body`：webhook 收到的到期告警是 `"kind":"expiry_x","transition":"firing"`，同一文件里的测试通知与离线告警照旧 |
 | f | `internal/hub/alert/engine.go` 的 `Load` 不读回状态（条件末尾加 `&& false`） | 1，`FAIL: restart changed the alert events (lost, undelivered or fired again)`：重启后状态没有读回，重启后再保存规则的那次扫描把同一节点当作刚进入提醒窗口，又发了一条同样文案的触发，事件变成 4 个 |
+| g | `proto/SKILL.md` 新例子的 `select(.billing.daysLeft != null)` 改成 `select(.billing.days_left != null)`（JSON 里没有这个名字） | 1，空 hub 那一轮照常通过（`card examples ok (empty hub): 6`），重启后有数据的那一轮 `FAIL: card example …/card-example-4.sh printed empty JSON`：`select` 什么都选不出 |
 
 e2e 的其余断言不逐条在 e2e 上注入，各自的缺陷由单测的注入覆盖：
 - 三位小数的价格被拒、错误写明 `billing.price`：Task 4 注入 a。
@@ -7408,6 +7519,7 @@ e2e 的其余断言不逐条在 e2e 上注入，各自的缺陷由单测的注�
 - 重启后两条规则且带 `daysBefore`：Task 2 注入 l。计费原样：Task 2 注入 e、n。
 - 重启时 node1 停在 firing，重启后再保存一次规则（同步扫描一轮）事件仍是 3 个：e2e 注入 f 在线上钉住；单测侧，触发日期落库与读回由 Task 2 注入 p、q 钉住，`Load` 读回它由 Task 3 注入 x 钉住，只提醒一次由 Task 3 注入 ab 钉住。
 - 没有单独注入的：统计的行数。
+- 钉不住的：卡片新例子投影里的字段名写错（如 `expiresOn: .billing.expires_on`）时输出带 `null`，仍非空，e2e 不红。卡片里其它例子也只要求非空，是同一口径。
 
 ---
 
@@ -7463,6 +7575,7 @@ e2e 的其余断言不逐条在 e2e 上注入，各自的缺陷由单测的注�
 | §6.6 表结构 | Task 2（v9，冻结语句；含 `alert_state.fired_expires_on`） |
 | §12 公开消息字段允许列表 | Task 1 |
 | README（控制端要求） | Task 8 |
+| 入口卡片写明费用与到期（`docs/guidelines/agent-first.md`：卡片写清 schema 在哪，例子由 e2e 执行） | Task 8 |
 
 `FEATURES.md` 第 51 行：Litestream 的重新考虑条件不因本计划成立，不改。
 
@@ -7476,11 +7589,11 @@ e2e 的其余断言不逐条在 e2e 上注入，各自的缺陷由单测的注�
 - 副本在 af62cf9 上做完 Task 1–8，每个任务一个提交。本计划的代码块由这 8 个提交逐文件生成；反过来，把计划里的"新建"与"原文→替换为"按任务顺序应用到 af62cf9 的干净检出上，Task 1 之后再跑 `make gen`，每个任务之后的整棵树都与对应提交逐字节相同。
 - 跑红：在每个任务的父提交上放入该任务改动的全部测试文件，跑 Step 2 的命令，退出码与原文如各任务所记。
 - 跑绿：每个任务的提交上跑 Step 4 的命令，全部退出 0。Task 1 的 `buf breaking` 另做了冒烟（实验 8）。
-- `make ci`：基点与 8 个提交上都跑过，全部退出 0，生成物干净；vitest 用例数依次为 369、369、369、369、369、387、394、396、396。Task 4 那次没有在按当前计划重建的提交上重跑：此后变动的是 Task 1–3 与 5–7 的测试与注释，Task 8 做完的树上 `make ci` 照常为 0。
-- 注入：Task 1–7 的 115 项在对应提交上逐项实跑。113 项退出 1，红在表中写的原因；Task 3 的 ad、ae 按预期退出 0（实验 13）。复跑脚本对每项先核对原文恰出现一次、`git diff --stat` 非空，跑完还原并确认工作树干净。
+- `make ci`：基点与 8 个提交上都跑过，全部退出 0，生成物干净；vitest 用例数依次为 369、369、369、369、369、387、394、396、396。
+- 注入：Task 1–7 的 118 项在对应提交上逐项实跑。116 项退出 1，红在表中写的原因；Task 3 的 ad、ae 按预期退出 0（实验 13）。复跑脚本对每项先核对原文恰出现一次、`git diff --stat` 非空，跑完还原并确认工作树干净。
 - 日界循环改为扫描之前读钟之后，Task 3 在 billing 分支的 60ac1dc（Task 1、2 已落地）上重做：计划里的 Task 3 逐条施加，锚点都唯一命中，整棵树与重做的提交逐字节相同；跑红与计划所记相同；跑绿两条都是 0；`make ci` 退出 0，vitest 369；Task 3 的 36 项注入全部重跑，34 项退出 1，ad、ae 退出 0。Task 4–8 的 71 处改动在新的 Task 3 之上逐条施加，都唯一命中，做完的树上 `make ci` 退出 0。
-- 执行中的逐任务审阅改了 Task 1、2、3、5、6、7 的测试、注释与说明文字，计划按落地的提交同步。Task 1–8 按本计划在 af62cf9 上逐任务重建：Task 2 之后的整棵树与 billing 分支 30a5ef5 只差 `RenewExpiry` 的一段注释（billing-t3fix 分支 73222b3 改的），Task 3 之后的整棵树与 73222b3 逐字节相同；Task 7 之后的 `web/` 与 billing-web 分支 be7ab7a 逐字节相同。Task 1、2、5、6、7 重新跑红，Task 5–7 重新跑绿，Task 1–3、5–8 重新跑 `make ci`，Task 2、5、6、7 的注入全部重跑（21、11、8、7 项，全部退出 1）。同步 73222b3 之后，Task 3 重新跑红、跑绿与全部 39 项注入（37 项退出 1，ad、ae 退出 0），Task 2、3、8 重新跑 `make ci`。
-- e2e：Task 8 的提交上先 `make binaries`，Debian 与 Alpine 各跑一遍，都是 `E2E OK`；Task 8 的六项注入各自红在表中的 `FAIL` 行。这八次运行跑的就是 Task 8 提交里的 `scripts/e2e.sh`，只用 `E2E_HUB_PORT=18193 E2E_HOOK_PORT=18194` 把端口挪开（18079–18092 留给别的工作），没有拷贝脚本。
+- 执行中的逐任务审阅改了 Task 1、2、3、5、6、7 的测试、注释与说明文字，计划按落地的提交同步。Task 1–8 按本计划在 af62cf9 上逐任务重建：Task 2 之后的整棵树与 billing 分支 30a5ef5 只差 `RenewExpiry` 的一段注释（billing-t3fix 分支 73222b3 改的），Task 3 之后的整棵树与 73222b3 逐字节相同；Task 7 之后的 `web/` 与 billing-web 分支 be7ab7a 逐字节相同。Task 1、2、5、6、7 重新跑红，Task 5–7 重新跑绿，Task 1–3、5–8 重新跑 `make ci`，Task 2、5、6、7 的注入全部重跑（21、11、8、7 项，全部退出 1）。同步 73222b3 之后，Task 3 重新跑红、跑绿与全部 39 项注入（37 项退出 1，ad、ae 退出 0），Task 2、3、8 重新跑 `make ci`。同步 d41ae4a、bf4aeb6、afda87e、3b174ae、e253156 与 59a033e 之后，Task 8 之后的整棵树与 59a033e 逐字节相同。Task 4 重跑注入 a、h、v（v 的两种读钟顺序各一次；h 另把投影那段整段删掉，编译失败在 `declared and not used: today`）。在与 afda87e 相同的那棵树上，Task 4、8 重新跑 `make ci`（vitest 369、396），Task 8 重跑语法检查与卡片一致性测试，实验 10 的依赖核对也在这棵树上重做。在与 59a033e 相同的树上：Task 3 的 alert 包重跑为 0，注入 a、al、am 重跑（`expiry_test.go` 的行号随新增的说明与两行用例后移），新增的注入 an 实跑；Task 4 重新跑红、跑绿与 vet，新增的注入 w、x 实跑；实验 1 在同一环境重跑，加了 Cairo；Task 8 之后的树上 `make ci` 退出 0，vitest 396。
+- e2e：与 afda87e 相同的那棵 Task 8 树上先 `make binaries`，Debian 与 Alpine 各跑一遍，都是 `E2E OK`，两遍都有 `card examples ok (empty hub): 6` 与 `card examples ok: 6`。这两次运行跑的就是那棵树里的 `scripts/e2e.sh`，只用 `E2E_HUB_PORT=18193 E2E_HOOK_PORT=18194` 把端口挪开（18079–18092 留给别的工作），没有拷贝脚本。表中七项注入的 `FAIL` 行取自 billing 分支上同一棵树的两次逐项实跑（Alpine、默认端口，首个 `FAIL` 两次相同），本副本没有重跑。
 - 实验 1–4、6、8、11、13–15 的原文与实验 10 的依赖核对来自同一环境。
 - 副本在写完计划后删除。
 
@@ -7491,12 +7604,44 @@ e2e 的其余断言不逐条在 e2e 上注入，各自的缺陷由单测的注�
 
 ## 对 spec 的回写
 
-以 main af62cf9 的 spec 逐条核对过：计划与 spec 一致，没有需要回写或裁决的条目。
+以 main 10a7409 的 spec 逐条核对过：计划与 spec 一致，没有需要回写或裁决的条目。
 
 **已一致**
+- §1、§15：节点费用与到期、到期提醒在范围之内，里程碑是"M6 之后：节点计费"，即本计划。
 - §6.6：`alert_state` 带进入 firing 时的到期日 `fired_expires_on`（Task 2，设计决定 18）。
 - §9.1：到期规则、`days_before` 1–365；探测专用字段对离线与到期规则必须为零、`days_before` 只属于到期规则，由 `store.CheckKindFields` 一处裁决，存储层与 `CheckRule` 都用它，保存与载入共用。
-- §9.2：没有 `pending`；评估时机四处；零点不存在的日子取新一天的第一个时刻；先推后再评估；只提醒一次，到期当天"剩 0 天"；三种恢复文案，"日期没变"与进入 firing 时记在 `alert_state` 里的到期日比，成因通常是提前天数调小，换时区或墙钟回拨也会；`value`；`days_before` 不是身份；读不懂的到期日；扫描快照与并发编辑的收敛、续期写回的条件更新。
+- §9.2：没有 `pending`；评估时机四处；零点不存在的日子取新一天的第一个时刻，`time.Date` 的结果本地日期没变才取该时段的结束处（偏移为负往回、为正往前，实验 1）；先推后再评估；只提醒一次，到期当天"剩 0 天"；三种恢复文案，"日期没变"与进入 firing 时记在 `alert_state` 里的到期日比，成因通常是提前天数调小，换时区或墙钟回拨也会；`value`；`days_before` 不是身份；读不懂的到期日；扫描快照与并发编辑的收敛、续期写回的条件更新。
 - §9.4：`Billing` 子消息与字段表、校验、空值含义；`days_left` 由 hub 按 `--timezone` 算好下发、保存请求里的值忽略；`billing` 缺失即五项全清；自动续期的推后、钳位与漂移；`PublicBilling` 由投影生成，投影扩展到枚举。
-- §10：卡片与节点页的费用、到期两行，已过期标红；`PublicNode` 带 `PublicBilling`。
+- §10：卡片与节点页的费用、到期两行，已过期标红；费用行在价格或周期任一填了时显示，只填周期时是"每年"这类周期字样（Task 5 的 `priceText`，只填币种时为空）；`PublicNode` 带 `PublicBilling`。
 - §12：公开消息的字段允许列表随 `PublicBilling` 更新。
+
+## 执行修正（执行与整分支审阅后记录；代码以分支为准）
+
+**计划文字与实测不符（没改行为）**
+- Task 3 注入 m：除 `task_id`、`metric`、`threshold`（两条）、`for_minutes` 外，`TestCheckRule/offline_days_before` 也红（`rule_test.go:55`）。离线分支里的 `checkKindFields` 同样拒绝 `days_before`，注入去掉的正是这一步。正文已补这一行。
+- Task 4 注入 a：全角 `１２` 那一行也红。去掉锚点后它照样被拒（RE2 的 `\d` 只认 ASCII），红是因为错误原文里插入的是改动后的正则。另有 `billing_test.go:96: rejected updates changed the node` 一行。正文已补。
+- Task 4 注入 v：原文没写两次读钟的先后，期望输出对应先为 `today` 读、再读 `now`。反过来的顺序红在同一条断言，数字对调（`now 1767283199 is 2026-01-01 in the hub zone, so days_left should be 59; got 58`）。正文已写明顺序与另一种顺序的输出。
+- Task 4 注入 h 与 Task 8 注入 a：原文"删掉投影那段"会让 `today` 未使用，编译失败（`internal/hub/api/public.go:233:2: declared and not used: today`），单测与 e2e 都跑不起来。改为把投影那段的条件改成 `b != nil && false`，红在原来的期望行。
+- vitest 用例数：Task 5–8 的 `make ci` 原文是 386、392、394、394，实测 387、394、396、396。Task 5 的修复补了计费错误回显一例，Task 6 的修复补了探测规则改成到期一例。正文已按实测。
+- 几处注释与提交信息描述的是后续任务才落地的行为：在各自的提交上还不成立，合到一起后成立，所以分支只能整体合回。这些没有改：
+  - Task 1 的 proto 注释（`UpdateNode` 的同步扫描、离线与到期规则带探测字段一律拒绝、`kind` 可取到期、`Node.billing` 的回显）与 Task 2 的提交信息与注释（`Load` 读回、`CheckKindFields` 由 `alert.CheckRule` 调用），到 Task 2–4 成立。
+  - Task 3 的 `SweepExpiry`（节点计费字段变化时调用它）、`sweepExpiry`（那次 `UpdateNode` 提交后自己调用 `SweepExpiry`）、`ParseDate`（写侧 api 的 `UpdateNode`）、`cycleMonths`（写入口拒绝表外值）四处，到 Task 4 成立。
+  - Task 5 `web/src/lib/billing.ts` 头注释的"公开入口也引用它……（importScan.test.ts 钉住）"，到 Task 7 公开页引用它之后成立。`importScan.test.ts` 按真实构建的模块图扫描，不需要往清单里补。
+
+**源自计划原文、执行后审阅改掉的缺陷**
+- Task 1 `proto/probe/v1/types.proto`：`Billing` 的消息注释"也不拿它做任何计算"与同一消息里驱动 `days_left`、自动续期与到期规则的到期日和周期相矛盾，收窄为价格与币种（spec §9.4 同步收窄）。`Billing.days_left` 与 `public.proto` 的 `PublicBilling.days_left` 的缺失情形补上"库里的到期日无法解析"。`internal/hub/api/projection_test.go` 的夹具注释写明 `OtherEnumField` 是与 `EnumField` 对不齐。
+- Task 2 `internal/hub/store/alert.go`：原文的替换把 `KindFieldError` 与 `CheckKindFields` 插在 `SaveAlertRule` 与它的文档注释之间，那段注释移回 `SaveAlertRule` 正上方。`schema.go` 的 `ddlAlertRule` 里 `days_before` 列注释原把保证方写成 `alert.CheckRule`，改为逐条写：非到期规则写 NULL 由 `SaveAlertRule` 与 `CheckKindFields` 保证，1–365 由 `alert.CheckRule` 在保存与载入时裁决，存储层不查。`internal/hub/store/billing_test.go` 的 `TestUpdateNodeReplacesBillingAndReportsChange` 补了只改到期日、只改价格两步。
+- Task 3 `internal/hub/alert/expiry.go` 的 `SweepExpiry` 文档注释：原文"唯一的评估入口……保存启用的到期规则时各调用一次"是排他句，也与代码不符：保存规则时是 `SaveRule` 在已持的 `writeMu` 下直接调 `sweepExpiry`。改为分别写两种调用。
+- Task 3 `TestRunExpirySweepDoesNotSkipADayBoundaryCrossedDuringASweep`：原先只钉住"循环在扫描之前读钟"。扫描拖过零点、定时器时长为负而立即重扫的那条路径没有钉住：把负时长改成等到再下一个日界，`internal/hub/alert` 与 `cmd/hub` 全绿。改用前 N 次读钟返回零点前的钟，N = 1、2 各跑一遍；注入 aj 只红 N = 1，ak 只红 N = 2。
+- Task 3 续期写回的条件更新落空：原文把原因只写成 `UpdateNode` 改了计费，漏了删除。api 的 `DeleteNode` 在 `nodeMu` 下提交删除，不经 `writeMu`，扫描读完快照之后节点可以被删掉。`expiry.go`、`expiry_test.go` 与 `internal/hub/store/node.go` 的 `RenewExpiry` 三处注释改为非排他的逐条陈述。
+- Task 3 `RenewExpiry` 报错：原文照常按未推后的日期评估，开着自动续期的节点会发出一对假告警。改为与落空同样跳过该节点：本轮不评估、保留状态，错误照常返回。新用例 `TestSweepExpirySkipsANodeWhoseRenewalFailed` 用触发器让写回 `RAISE(ABORT)`，注入 al 钉住。
+- Task 3 `TestSweepExpiryRecoverySummaryFollowsTheReason`：`before` 原在重启后的第一次扫描之后才取，§9.2 的"重启后不重复触发"没有到期专属的钉子。挪到 `f.billing` 之前，注入 am（`Load` 不载入到期规则的状态）红在第一步。
+- Task 3 `internal/hub/alert/expiry.go` 的 `nextDayStart` 注释只写了 Santiago、Havana 往回给前一天 23:00 的情形，实验 1 的标题也写成"往回归一"。Cairo、Beirut 的 `time.Date` 往前给新一天的 01:00，本地日期已变，走普通分支；照原注释把判断改成"时分不为零就取 `ZoneBounds` 的 end"，这类时区的日界会定到几个月后夏令时结束的那次切换。方向随 UTC 偏移的正负而异：偏移为负往回，偏移为正往前。注释写清两个方向、成因与只看本地日期的判据，`TestNextDayStartIsTheFirstInstantOfTheNextLocalDay` 补 Cairo、Beirut 两行与说明，注入 an（按时分判断）只红这两行。spec §9.2 同口径。
+- Task 3 `expiry.go` 的头注释"hub 时区（--timezone）只在 Today 里出现一次"是排他句，`nextDayStart` 也按同一时区算下一个日界。改为：日期值里 hub 时区只经 `Today` 进入，下一个日界的时刻由 `nextDayStart` 按同一时区算（`RunExpirySweep` 传入 `cfg.Location`）。
+- Task 4 `internal/hub/api/nodes.go` 的 `UpdateNode`：锁序注释的括号里只列了各次扫描、`apply` 与 `Sender.Enqueue`，读着像持 `writeMu` 路径的全集，实际还有 `Load`、`SaveRule`、`DeleteRule`、`SaveChannel`、`DeleteChannel`、`Forget`。改为保证方本身：alert 包不 import api，且引擎经 `SetSender` 注入的实现（当前是 `alert.Queue`）也不在 api 里，任何持 writeMu 的路径都取不到 nodeMu。只写 import 方向不够：注入的实现若来自 api，也能在 writeMu 下取到 nodeMu。实验 10 同改。
+- Task 4 `internal/hub/api/alerts_test.go`：`alertKinds` 把协议种类翻成存储种类，协议加了种类而表漏配时编译照过；新种类若还没有协议层的用例，别的用例也不会红，保存时 `parseEnum` 以 `rule.kind` 拒绝、列表回显给出 `UNSPECIFIED`。补 `TestAlertKindsMapEveryValue`：按协议枚举全集核对映射与往返，并要求映射出的每个存储种类都被 `alert.CheckRule` 接受，与 `TestBillingCyclesMapEveryValue` 同一写法；注入 w、x。
+- Task 5 `web/src/lib/billing.test.ts` 与 `web/src/pages/Nodes.test.tsx`：夹具的 `daysLeft` 恰好等于按今天的本地日期算出的天数，按本地日期重算的注入全绿。两处把 `Date` 固定到 2030-06-15，只替换 `Date`。"编辑回传全部字段"改用带计费的节点，断言不碰计费时提交体仍按当前值带着五项计费。另补了计费错误回显一例。
+- Task 6 `web/src/pages/AlertRules.tsx`：到期表单的说明"续期或清除到期日即恢复"与 §9.2 不符，改为按提醒范围写：到期日移出范围、清除到期日或调小提前天数使它落到范围之外才恢复，续期后仍在范围内不恢复。到期种类提交体里的 `threshold`、`taskId` 原先没有钉住，因为新草稿的这两项本来就是空的；补"探测规则改成到期时只带提前天数"一例，注入 h 红在它上面。`AlertRules.test.tsx` 的测试注释"非探测种类的探测字段与提前天数都必须是零值"对到期规则不成立，按种类分开写。`emptyDraft` 的注释原说每种规则的专用字段都有初值，改为写明哪几项有默认值、探测任务与阈值留空。
+- Task 7 `web/src/public/Overview.test.tsx` 与 `NodePage.test.tsx`：夹具日期与今天吻合，"只显示 hub 下发的 `daysLeft`"没有钉住。两处把 `Date` 固定到本地 2031-01-01，`NodePage.test.tsx` 另在 `afterEach` 恢复真实计时器。`NodePage.tsx` 静态信息卡的显示条件 `node.facts || price || expiry` 里的 `expiry` 没有用例，补一个只有到期日的节点。
+- Task 8 `proto/SKILL.md`：入口卡片的 `description` 与例子都没有费用与到期。用户问哪台快到期时 agent 可能不会加载这张卡片，加载了也不知道信息在 `ListNodes` 的 `billing` 里。`description` 补上费用与到期，"例子"一节加一个按 `daysLeft` 列节点的例子，由 e2e 执行；`card examples ok` 由 5 个变成 6 个。
+- Task 8 `scripts/e2e.sh` 与提交信息：`wait_alert` 的说明原写"等该节点恰有一条该变化的事件且已送达"，而 jq 数的是已送达的该变化事件恰为一条，同一变化的未送达事件不计；改为"等该节点恰有一条已送达的该变化事件"。e2e 提交信息里的"续期即恢复"与 §9.2 不符：续期后仍在提醒范围内不恢复；改为"续期到窗口之外即恢复"。
