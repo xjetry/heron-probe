@@ -9,7 +9,7 @@ import { Appearance } from "./Appearance";
 
 const current = { title: "机房", theme: "dark", accentColor: "#123abc", logo: "", customCss: "body { margin: 0 }" };
 const routes = [{ path: "/appearance", Component: Appearance }];
-const render = (impl: AdminImpl) => renderWithAdmin({ getSettings: async () => ({ settings: current }), ...impl }, routes, "/appearance");
+const render = (impl: AdminImpl) => renderWithAdmin({ getSettings: async () => ({ settings: current }), listNotifyChannels: async () => ({ channels: [] }), ...impl }, routes, "/appearance");
 
 async function form() {
   return within(await screen.findByRole("form", { name: "公开页外观" }));
