@@ -19,6 +19,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/api"
 	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/probe/internal/hub/geo"
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/probe"
@@ -134,7 +135,9 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	l := live.New(clk, ttl)
 	book := traffic.New(st, clk, loc, log)
 	alerts := alert.New(alert.Config{TTL: ttl, Location: loc}, st, l, clk, log)
-	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, log)
+	// 通知渠道与国家查询共用一个出站客户端（§4.9 复用 §9.3 的那一个）：不跟随重定向、带总超时的出站行为只有一份。
+	outbound := alert.NewHTTPClient()
+	notifier := alert.NewQueue(st, alerts.Channels, outbound, "", clk, nil, log)
 	alerts.SetSender(notifier)
 	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, book, reg, clk, log)
 	if err != nil {
@@ -169,6 +172,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	defer startLoop(alerts.RunProbeEvaluation)()
 	defer startLoop(alerts.RunExpirySweep)()
 	defer startLoop(notifier.Run)()
+	defer startLoop(geo.New(st, outbound, clk, log).Run)()
 
 	// 监听在 net.Listen 返回时已建立，连接先进内核队列。runServe 装配的文本 handler 在 Info 返回前
 	// 同步写完 stderr，所以先写启动行再开始 Serve，拿到任何响应的调用方都已能在日志里读到它。

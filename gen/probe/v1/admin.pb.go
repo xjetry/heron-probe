@@ -21,6 +21,59 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// 国家显示值的来源。
+type CountrySource int32
+
+const (
+	// 没有国家：未手动指定，也没有查得值。
+	CountrySource_COUNTRY_SOURCE_UNSPECIFIED CountrySource = 0
+	// 管理员手动指定（Node.country_pin）。
+	CountrySource_COUNTRY_SOURCE_MANUAL CountrySource = 1
+	// 国家查询按来源地址查得（Node.country_ip）。
+	CountrySource_COUNTRY_SOURCE_LOOKUP CountrySource = 2
+)
+
+// Enum value maps for CountrySource.
+var (
+	CountrySource_name = map[int32]string{
+		0: "COUNTRY_SOURCE_UNSPECIFIED",
+		1: "COUNTRY_SOURCE_MANUAL",
+		2: "COUNTRY_SOURCE_LOOKUP",
+	}
+	CountrySource_value = map[string]int32{
+		"COUNTRY_SOURCE_UNSPECIFIED": 0,
+		"COUNTRY_SOURCE_MANUAL":      1,
+		"COUNTRY_SOURCE_LOOKUP":      2,
+	}
+)
+
+func (x CountrySource) Enum() *CountrySource {
+	p := new(CountrySource)
+	*p = x
+	return p
+}
+
+func (x CountrySource) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CountrySource) Descriptor() protoreflect.EnumDescriptor {
+	return file_probe_v1_admin_proto_enumTypes[0].Descriptor()
+}
+
+func (CountrySource) Type() protoreflect.EnumType {
+	return &file_probe_v1_admin_proto_enumTypes[0]
+}
+
+func (x CountrySource) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CountrySource.Descriptor instead.
+func (CountrySource) EnumDescriptor() ([]byte, []int) {
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{0}
+}
+
 type AlertKind int32
 
 const (
@@ -58,11 +111,11 @@ func (x AlertKind) String() string {
 }
 
 func (AlertKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_probe_v1_admin_proto_enumTypes[0].Descriptor()
+	return file_probe_v1_admin_proto_enumTypes[1].Descriptor()
 }
 
 func (AlertKind) Type() protoreflect.EnumType {
-	return &file_probe_v1_admin_proto_enumTypes[0]
+	return &file_probe_v1_admin_proto_enumTypes[1]
 }
 
 func (x AlertKind) Number() protoreflect.EnumNumber {
@@ -71,7 +124,7 @@ func (x AlertKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AlertKind.Descriptor instead.
 func (AlertKind) EnumDescriptor() ([]byte, []int) {
-	return file_probe_v1_admin_proto_rawDescGZIP(), []int{0}
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{1}
 }
 
 type ProbeMetric int32
@@ -107,11 +160,11 @@ func (x ProbeMetric) String() string {
 }
 
 func (ProbeMetric) Descriptor() protoreflect.EnumDescriptor {
-	return file_probe_v1_admin_proto_enumTypes[1].Descriptor()
+	return file_probe_v1_admin_proto_enumTypes[2].Descriptor()
 }
 
 func (ProbeMetric) Type() protoreflect.EnumType {
-	return &file_probe_v1_admin_proto_enumTypes[1]
+	return &file_probe_v1_admin_proto_enumTypes[2]
 }
 
 func (x ProbeMetric) Number() protoreflect.EnumNumber {
@@ -120,7 +173,7 @@ func (x ProbeMetric) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ProbeMetric.Descriptor instead.
 func (ProbeMetric) EnumDescriptor() ([]byte, []int) {
-	return file_probe_v1_admin_proto_rawDescGZIP(), []int{1}
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{2}
 }
 
 type ChannelKind int32
@@ -156,11 +209,11 @@ func (x ChannelKind) String() string {
 }
 
 func (ChannelKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_probe_v1_admin_proto_enumTypes[2].Descriptor()
+	return file_probe_v1_admin_proto_enumTypes[3].Descriptor()
 }
 
 func (ChannelKind) Type() protoreflect.EnumType {
-	return &file_probe_v1_admin_proto_enumTypes[2]
+	return &file_probe_v1_admin_proto_enumTypes[3]
 }
 
 func (x ChannelKind) Number() protoreflect.EnumNumber {
@@ -169,7 +222,7 @@ func (x ChannelKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ChannelKind.Descriptor instead.
 func (ChannelKind) EnumDescriptor() ([]byte, []int) {
-	return file_probe_v1_admin_proto_rawDescGZIP(), []int{2}
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{3}
 }
 
 // 投递失败的类别，在产生失败的地方确定，不从错误文本反推。
@@ -229,11 +282,11 @@ func (x DeliveryFailure) String() string {
 }
 
 func (DeliveryFailure) Descriptor() protoreflect.EnumDescriptor {
-	return file_probe_v1_admin_proto_enumTypes[3].Descriptor()
+	return file_probe_v1_admin_proto_enumTypes[4].Descriptor()
 }
 
 func (DeliveryFailure) Type() protoreflect.EnumType {
-	return &file_probe_v1_admin_proto_enumTypes[3]
+	return &file_probe_v1_admin_proto_enumTypes[4]
 }
 
 func (x DeliveryFailure) Number() protoreflect.EnumNumber {
@@ -242,7 +295,7 @@ func (x DeliveryFailure) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DeliveryFailure.Descriptor instead.
 func (DeliveryFailure) EnumDescriptor() ([]byte, []int) {
-	return file_probe_v1_admin_proto_rawDescGZIP(), []int{3}
+	return file_probe_v1_admin_proto_rawDescGZIP(), []int{4}
 }
 
 type LoginRequest struct {
@@ -423,7 +476,16 @@ type Node struct {
 	// 也不采信 agent 自报。IPv4 点分、IPv6 压缩形式、不带区域标识；空串表示从未上报。只留最后一次，与 last_seen_at
 	// 同时刷出落盘，所以可能比实时状态晚约一分钟。hub 与节点同在内网或 agent 经出口代理时，这里是内网或代理地址。
 	// 只在管理端可见：公开节点（PublicNode）没有这个字段。
-	LastSource    string `protobuf:"bytes,13,opt,name=last_source,json=lastSource,proto3" json:"last_source,omitempty"`
+	LastSource string `protobuf:"bytes,13,opt,name=last_source,json=lastSource,proto3" json:"last_source,omitempty"`
+	// 国家 / 地区（§4.9）的显示值，ISO 3166-1 alpha-2（两个大写字母）：country_pin 非空取它，否则取查得值；空串表示没有。
+	// 公开节点的 PublicNode.country 是同一个值。
+	Country       string        `protobuf:"bytes,14,opt,name=country,proto3" json:"country,omitempty"`
+	CountrySource CountrySource `protobuf:"varint,15,opt,name=country_source,json=countrySource,proto3,enum=probe.v1.CountrySource" json:"country_source,omitempty"`
+	// 查得的国家所属的地址，即查询时节点的 last_source；没有查得值时为空串。查得值是对这个地址的答案：节点换了
+	// 来源地址，查得值随即清空并重查。手动指定时也照常回显（查询不看 country_pin），清空 country_pin 即回落到它。
+	CountryIp string `protobuf:"bytes,16,opt,name=country_ip,json=countryIp,proto3" json:"country_ip,omitempty"`
+	// 管理员手动指定的国家，空串表示不指定。
+	CountryPin    string `protobuf:"bytes,17,opt,name=country_pin,json=countryPin,proto3" json:"country_pin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -545,6 +607,34 @@ func (x *Node) GetBilling() *Billing {
 func (x *Node) GetLastSource() string {
 	if x != nil {
 		return x.LastSource
+	}
+	return ""
+}
+
+func (x *Node) GetCountry() string {
+	if x != nil {
+		return x.Country
+	}
+	return ""
+}
+
+func (x *Node) GetCountrySource() CountrySource {
+	if x != nil {
+		return x.CountrySource
+	}
+	return CountrySource_COUNTRY_SOURCE_UNSPECIFIED
+}
+
+func (x *Node) GetCountryIp() string {
+	if x != nil {
+		return x.CountryIp
+	}
+	return ""
+}
+
+func (x *Node) GetCountryPin() string {
+	if x != nil {
+		return x.CountryPin
 	}
 	return ""
 }
@@ -740,7 +830,9 @@ type UpdateNodeRequest struct {
 	OfflineGraceS *uint32 `protobuf:"varint,6,opt,name=offline_grace_s,json=offlineGraceS,proto3,oneof" json:"offline_grace_s,omitempty"`
 	// 计费与到期，整体替换：缺失等于五项全清，空串、未指定与 false 也是清除，没有"不改"的取值。
 	// 取值约束见 Billing 各字段；days_left 由 hub 计算，这里的值忽略。
-	Billing       *Billing `protobuf:"bytes,7,opt,name=billing,proto3" json:"billing,omitempty"`
+	Billing *Billing `protobuf:"bytes,7,opt,name=billing,proto3" json:"billing,omitempty"`
+	// 手动指定的国家：两个大写字母（ISO 3166-1 alpha-2）或空串。整体替换：缺失即空串，清除手动值、回落到查得值。
+	CountryPin    string `protobuf:"bytes,8,opt,name=country_pin,json=countryPin,proto3" json:"country_pin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -822,6 +914,13 @@ func (x *UpdateNodeRequest) GetBilling() *Billing {
 		return x.Billing
 	}
 	return nil
+}
+
+func (x *UpdateNodeRequest) GetCountryPin() string {
+	if x != nil {
+		return x.CountryPin
+	}
+	return ""
 }
 
 type UpdateNodeResponse struct {
@@ -3308,7 +3407,9 @@ func (*TestNotifyChannelResponse) Descriptor() ([]byte, []int) {
 	return file_probe_v1_admin_proto_rawDescGZIP(), []int{56}
 }
 
-// 公开页外观。整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。
+// 公开页外观与国家查询（§4.9）。外观五项整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。国家查询两项
+// 缺失表示不改：开关决定 hub 是否把节点地址发给第三方，只改外观的旧客户端与脚本不得顺手改掉它。GetSettings 与
+// UpdateSettings 的响应总带这两项。
 type Settings struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
@@ -3322,7 +3423,14 @@ type Settings struct {
 	// data 为带填充的标准 base64，整串不超过 131072 字节；空串表示没有 logo。
 	Logo string `protobuf:"bytes,4,opt,name=logo,proto3" json:"logo,omitempty"`
 	// 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
-	CustomCss     string `protobuf:"bytes,5,opt,name=custom_css,json=customCss,proto3" json:"custom_css,omitempty"`
+	CustomCss string `protobuf:"bytes,5,opt,name=custom_css,json=customCss,proto3" json:"custom_css,omitempty"`
+	// 国家查询开关，从未保存过时为关。开启即由 hub 把每个节点的来源地址（Node.last_source）逐个发给 geo_url：只发公网
+	// 地址、每节点每地址至多成功查一次，失败按小时退避。
+	GeoEnabled *bool `protobuf:"varint,6,opt,name=geo_enabled,json=geoEnabled,proto3,oneof" json:"geo_enabled,omitempty"`
+	// 国家查询的服务地址：http 或 https，含 {ip} 占位（查询时替换为地址），不含用户信息，不超过 2048 字节。
+	// 从未保存过时为 https://ipinfo.io/{ip}/country。可回显，不是凭据：请求只带地址，不带任何凭据。
+	// 服务的响应去掉首尾空白后必须恰为两个大写字母（ISO 3166-1 alpha-2），状态码必须是 200。
+	GeoUrl        *string `protobuf:"bytes,7,opt,name=geo_url,json=geoUrl,proto3,oneof" json:"geo_url,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3388,6 +3496,20 @@ func (x *Settings) GetLogo() string {
 func (x *Settings) GetCustomCss() string {
 	if x != nil {
 		return x.CustomCss
+	}
+	return ""
+}
+
+func (x *Settings) GetGeoEnabled() bool {
+	if x != nil && x.GeoEnabled != nil {
+		return *x.GeoEnabled
+	}
+	return false
+}
+
+func (x *Settings) GetGeoUrl() string {
+	if x != nil && x.GeoUrl != nil {
+		return *x.GeoUrl
 	}
 	return ""
 }
@@ -4717,7 +4839,7 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\bpassword\x18\x01 \x01(\tR\bpassword\"\x0f\n" +
 	"\rLoginResponse\"\x0f\n" +
 	"\rLogoutRequest\"\x10\n" +
-	"\x0eLogoutResponse\"\xf2\x03\n" +
+	"\x0eLogoutResponse\"\x8c\x05\n" +
 	"\x04Node\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
@@ -4736,7 +4858,13 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x0foffline_grace_s\x18\v \x01(\rH\x02R\rofflineGraceS\x88\x01\x01\x12+\n" +
 	"\abilling\x18\f \x01(\v2\x11.probe.v1.BillingR\abilling\x12\x1f\n" +
 	"\vlast_source\x18\r \x01(\tR\n" +
-	"lastSourceB\x0f\n" +
+	"lastSource\x12\x18\n" +
+	"\acountry\x18\x0e \x01(\tR\acountry\x12>\n" +
+	"\x0ecountry_source\x18\x0f \x01(\x0e2\x17.probe.v1.CountrySourceR\rcountrySource\x12\x1d\n" +
+	"\n" +
+	"country_ip\x18\x10 \x01(\tR\tcountryIp\x12\x1f\n" +
+	"\vcountry_pin\x18\x11 \x01(\tR\n" +
+	"countryPinB\x0f\n" +
 	"\r_last_seen_atB\x13\n" +
 	"\x11_facts_updated_atB\x12\n" +
 	"\x10_offline_grace_s\"\x12\n" +
@@ -4747,7 +4875,7 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"N\n" +
 	"\x12CreateNodeResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.probe.v1.NodeR\x04node\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"\xfd\x01\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\x9e\x02\n" +
 	"\x11UpdateNodeRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
@@ -4755,7 +4883,9 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x04note\x18\x04 \x01(\tR\x04note\x12*\n" +
 	"\x11traffic_reset_day\x18\x05 \x01(\rR\x0ftrafficResetDay\x12+\n" +
 	"\x0foffline_grace_s\x18\x06 \x01(\rH\x00R\rofflineGraceS\x88\x01\x01\x12+\n" +
-	"\abilling\x18\a \x01(\v2\x11.probe.v1.BillingR\abillingB\x12\n" +
+	"\abilling\x18\a \x01(\v2\x11.probe.v1.BillingR\abilling\x12\x1f\n" +
+	"\vcountry_pin\x18\b \x01(\tR\n" +
+	"countryPinB\x12\n" +
 	"\x10_offline_grace_s\"8\n" +
 	"\x12UpdateNodeResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.probe.v1.NodeR\x04node\"#\n" +
@@ -4908,14 +5038,20 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x1bDeleteNotifyChannelResponse\"*\n" +
 	"\x18TestNotifyChannelRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\"\x1b\n" +
-	"\x19TestNotifyChannelResponse\"\x8c\x01\n" +
+	"\x19TestNotifyChannelResponse\"\xec\x01\n" +
 	"\bSettings\x12\x14\n" +
 	"\x05title\x18\x01 \x01(\tR\x05title\x12\x14\n" +
 	"\x05theme\x18\x02 \x01(\tR\x05theme\x12!\n" +
 	"\faccent_color\x18\x03 \x01(\tR\vaccentColor\x12\x12\n" +
 	"\x04logo\x18\x04 \x01(\tR\x04logo\x12\x1d\n" +
 	"\n" +
-	"custom_css\x18\x05 \x01(\tR\tcustomCss\"\x14\n" +
+	"custom_css\x18\x05 \x01(\tR\tcustomCss\x12$\n" +
+	"\vgeo_enabled\x18\x06 \x01(\bH\x00R\n" +
+	"geoEnabled\x88\x01\x01\x12\x1c\n" +
+	"\ageo_url\x18\a \x01(\tH\x01R\x06geoUrl\x88\x01\x01B\x0e\n" +
+	"\f_geo_enabledB\n" +
+	"\n" +
+	"\b_geo_url\"\x14\n" +
 	"\x12GetSettingsRequest\"E\n" +
 	"\x13GetSettingsResponse\x12.\n" +
 	"\bsettings\x18\x01 \x01(\v2\x12.probe.v1.SettingsR\bsettings\"G\n" +
@@ -5011,7 +5147,11 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x05files\x18\x02 \x03(\v2\x13.probe.v1.ProtoFileR\x05files\"9\n" +
 	"\tProtoFile\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
-	"\acontent\x18\x02 \x01(\tR\acontent*l\n" +
+	"\acontent\x18\x02 \x01(\tR\acontent*e\n" +
+	"\rCountrySource\x12\x1e\n" +
+	"\x1aCOUNTRY_SOURCE_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15COUNTRY_SOURCE_MANUAL\x10\x01\x12\x19\n" +
+	"\x15COUNTRY_SOURCE_LOOKUP\x10\x02*l\n" +
 	"\tAlertKind\x12\x1a\n" +
 	"\x16ALERT_KIND_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12ALERT_KIND_OFFLINE\x10\x01\x12\x14\n" +
@@ -5087,222 +5227,224 @@ func file_probe_v1_admin_proto_rawDescGZIP() []byte {
 	return file_probe_v1_admin_proto_rawDescData
 }
 
-var file_probe_v1_admin_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_probe_v1_admin_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
 var file_probe_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 83)
 var file_probe_v1_admin_proto_goTypes = []any{
-	(AlertKind)(0),                        // 0: probe.v1.AlertKind
-	(ProbeMetric)(0),                      // 1: probe.v1.ProbeMetric
-	(ChannelKind)(0),                      // 2: probe.v1.ChannelKind
-	(DeliveryFailure)(0),                  // 3: probe.v1.DeliveryFailure
-	(*LoginRequest)(nil),                  // 4: probe.v1.LoginRequest
-	(*LoginResponse)(nil),                 // 5: probe.v1.LoginResponse
-	(*LogoutRequest)(nil),                 // 6: probe.v1.LogoutRequest
-	(*LogoutResponse)(nil),                // 7: probe.v1.LogoutResponse
-	(*Node)(nil),                          // 8: probe.v1.Node
-	(*ListNodesRequest)(nil),              // 9: probe.v1.ListNodesRequest
-	(*ListNodesResponse)(nil),             // 10: probe.v1.ListNodesResponse
-	(*CreateNodeRequest)(nil),             // 11: probe.v1.CreateNodeRequest
-	(*CreateNodeResponse)(nil),            // 12: probe.v1.CreateNodeResponse
-	(*UpdateNodeRequest)(nil),             // 13: probe.v1.UpdateNodeRequest
-	(*UpdateNodeResponse)(nil),            // 14: probe.v1.UpdateNodeResponse
-	(*DeleteNodeRequest)(nil),             // 15: probe.v1.DeleteNodeRequest
-	(*DeleteNodeResponse)(nil),            // 16: probe.v1.DeleteNodeResponse
-	(*RotateNodeTokenRequest)(nil),        // 17: probe.v1.RotateNodeTokenRequest
-	(*RotateNodeTokenResponse)(nil),       // 18: probe.v1.RotateNodeTokenResponse
-	(*ReorderNodesRequest)(nil),           // 19: probe.v1.ReorderNodesRequest
-	(*ReorderNodesResponse)(nil),          // 20: probe.v1.ReorderNodesResponse
-	(*OpenRegisterWindowRequest)(nil),     // 21: probe.v1.OpenRegisterWindowRequest
-	(*OpenRegisterWindowResponse)(nil),    // 22: probe.v1.OpenRegisterWindowResponse
-	(*CloseRegisterWindowRequest)(nil),    // 23: probe.v1.CloseRegisterWindowRequest
-	(*CloseRegisterWindowResponse)(nil),   // 24: probe.v1.CloseRegisterWindowResponse
-	(*GetRegisterWindowRequest)(nil),      // 25: probe.v1.GetRegisterWindowRequest
-	(*GetRegisterWindowResponse)(nil),     // 26: probe.v1.GetRegisterWindowResponse
-	(*GetSnapshotRequest)(nil),            // 27: probe.v1.GetSnapshotRequest
-	(*GetSnapshotResponse)(nil),           // 28: probe.v1.GetSnapshotResponse
-	(*NodeStatus)(nil),                    // 29: probe.v1.NodeStatus
-	(*GetTrafficRequest)(nil),             // 30: probe.v1.GetTrafficRequest
-	(*GetTrafficResponse)(nil),            // 31: probe.v1.GetTrafficResponse
-	(*NodeTraffic)(nil),                   // 32: probe.v1.NodeTraffic
-	(*AdjustTrafficRequest)(nil),          // 33: probe.v1.AdjustTrafficRequest
-	(*AdjustTrafficResponse)(nil),         // 34: probe.v1.AdjustTrafficResponse
-	(*ProbeTaskDetail)(nil),               // 35: probe.v1.ProbeTaskDetail
-	(*ListProbeTasksRequest)(nil),         // 36: probe.v1.ListProbeTasksRequest
-	(*ListProbeTasksResponse)(nil),        // 37: probe.v1.ListProbeTasksResponse
-	(*SaveProbeTaskRequest)(nil),          // 38: probe.v1.SaveProbeTaskRequest
-	(*SaveProbeTaskResponse)(nil),         // 39: probe.v1.SaveProbeTaskResponse
-	(*DeleteProbeTaskRequest)(nil),        // 40: probe.v1.DeleteProbeTaskRequest
-	(*DeleteProbeTaskResponse)(nil),       // 41: probe.v1.DeleteProbeTaskResponse
-	(*AlertRule)(nil),                     // 42: probe.v1.AlertRule
-	(*ListAlertRulesRequest)(nil),         // 43: probe.v1.ListAlertRulesRequest
-	(*ListAlertRulesResponse)(nil),        // 44: probe.v1.ListAlertRulesResponse
-	(*AlertStateEntry)(nil),               // 45: probe.v1.AlertStateEntry
-	(*SaveAlertRuleRequest)(nil),          // 46: probe.v1.SaveAlertRuleRequest
-	(*SaveAlertRuleResponse)(nil),         // 47: probe.v1.SaveAlertRuleResponse
-	(*DeleteAlertRuleRequest)(nil),        // 48: probe.v1.DeleteAlertRuleRequest
-	(*DeleteAlertRuleResponse)(nil),       // 49: probe.v1.DeleteAlertRuleResponse
-	(*NotifyChannel)(nil),                 // 50: probe.v1.NotifyChannel
-	(*TelegramConfig)(nil),                // 51: probe.v1.TelegramConfig
-	(*WebhookConfig)(nil),                 // 52: probe.v1.WebhookConfig
-	(*ListNotifyChannelsRequest)(nil),     // 53: probe.v1.ListNotifyChannelsRequest
-	(*ListNotifyChannelsResponse)(nil),    // 54: probe.v1.ListNotifyChannelsResponse
-	(*SaveNotifyChannelRequest)(nil),      // 55: probe.v1.SaveNotifyChannelRequest
-	(*SaveNotifyChannelResponse)(nil),     // 56: probe.v1.SaveNotifyChannelResponse
-	(*DeleteNotifyChannelRequest)(nil),    // 57: probe.v1.DeleteNotifyChannelRequest
-	(*DeleteNotifyChannelResponse)(nil),   // 58: probe.v1.DeleteNotifyChannelResponse
-	(*TestNotifyChannelRequest)(nil),      // 59: probe.v1.TestNotifyChannelRequest
-	(*TestNotifyChannelResponse)(nil),     // 60: probe.v1.TestNotifyChannelResponse
-	(*Settings)(nil),                      // 61: probe.v1.Settings
-	(*GetSettingsRequest)(nil),            // 62: probe.v1.GetSettingsRequest
-	(*GetSettingsResponse)(nil),           // 63: probe.v1.GetSettingsResponse
-	(*UpdateSettingsRequest)(nil),         // 64: probe.v1.UpdateSettingsRequest
-	(*UpdateSettingsResponse)(nil),        // 65: probe.v1.UpdateSettingsResponse
-	(*GetStorageStatsRequest)(nil),        // 66: probe.v1.GetStorageStatsRequest
-	(*GetStorageStatsResponse)(nil),       // 67: probe.v1.GetStorageStatsResponse
-	(*SeriesTableHealth)(nil),             // 68: probe.v1.SeriesTableHealth
-	(*TableRows)(nil),                     // 69: probe.v1.TableRows
-	(*ListAlertEventsRequest)(nil),        // 70: probe.v1.ListAlertEventsRequest
-	(*ListAlertEventsResponse)(nil),       // 71: probe.v1.ListAlertEventsResponse
-	(*GetAlertDeliveryErrorRequest)(nil),  // 72: probe.v1.GetAlertDeliveryErrorRequest
-	(*GetAlertDeliveryErrorResponse)(nil), // 73: probe.v1.GetAlertDeliveryErrorResponse
-	(*AlertEvent)(nil),                    // 74: probe.v1.AlertEvent
-	(*AlertDelivery)(nil),                 // 75: probe.v1.AlertDelivery
-	(*ApiToken)(nil),                      // 76: probe.v1.ApiToken
-	(*ListApiTokensRequest)(nil),          // 77: probe.v1.ListApiTokensRequest
-	(*ListApiTokensResponse)(nil),         // 78: probe.v1.ListApiTokensResponse
-	(*CreateApiTokenRequest)(nil),         // 79: probe.v1.CreateApiTokenRequest
-	(*CreateApiTokenResponse)(nil),        // 80: probe.v1.CreateApiTokenResponse
-	(*DeleteApiTokenRequest)(nil),         // 81: probe.v1.DeleteApiTokenRequest
-	(*DeleteApiTokenResponse)(nil),        // 82: probe.v1.DeleteApiTokenResponse
-	(*GetApiReferenceRequest)(nil),        // 83: probe.v1.GetApiReferenceRequest
-	(*GetApiReferenceResponse)(nil),       // 84: probe.v1.GetApiReferenceResponse
-	(*ProtoFile)(nil),                     // 85: probe.v1.ProtoFile
-	nil,                                   // 86: probe.v1.WebhookConfig.HeadersEntry
-	(*Facts)(nil),                         // 87: probe.v1.Facts
-	(*Billing)(nil),                       // 88: probe.v1.Billing
-	(*Metrics)(nil),                       // 89: probe.v1.Metrics
-	(*Traffic)(nil),                       // 90: probe.v1.Traffic
-	(*ProbeTask)(nil),                     // 91: probe.v1.ProbeTask
-	(*QueryMetricsRequest)(nil),           // 92: probe.v1.QueryMetricsRequest
-	(*QueryProbesRequest)(nil),            // 93: probe.v1.QueryProbesRequest
-	(*QueryMetricsResponse)(nil),          // 94: probe.v1.QueryMetricsResponse
-	(*QueryProbesResponse)(nil),           // 95: probe.v1.QueryProbesResponse
+	(CountrySource)(0),                    // 0: probe.v1.CountrySource
+	(AlertKind)(0),                        // 1: probe.v1.AlertKind
+	(ProbeMetric)(0),                      // 2: probe.v1.ProbeMetric
+	(ChannelKind)(0),                      // 3: probe.v1.ChannelKind
+	(DeliveryFailure)(0),                  // 4: probe.v1.DeliveryFailure
+	(*LoginRequest)(nil),                  // 5: probe.v1.LoginRequest
+	(*LoginResponse)(nil),                 // 6: probe.v1.LoginResponse
+	(*LogoutRequest)(nil),                 // 7: probe.v1.LogoutRequest
+	(*LogoutResponse)(nil),                // 8: probe.v1.LogoutResponse
+	(*Node)(nil),                          // 9: probe.v1.Node
+	(*ListNodesRequest)(nil),              // 10: probe.v1.ListNodesRequest
+	(*ListNodesResponse)(nil),             // 11: probe.v1.ListNodesResponse
+	(*CreateNodeRequest)(nil),             // 12: probe.v1.CreateNodeRequest
+	(*CreateNodeResponse)(nil),            // 13: probe.v1.CreateNodeResponse
+	(*UpdateNodeRequest)(nil),             // 14: probe.v1.UpdateNodeRequest
+	(*UpdateNodeResponse)(nil),            // 15: probe.v1.UpdateNodeResponse
+	(*DeleteNodeRequest)(nil),             // 16: probe.v1.DeleteNodeRequest
+	(*DeleteNodeResponse)(nil),            // 17: probe.v1.DeleteNodeResponse
+	(*RotateNodeTokenRequest)(nil),        // 18: probe.v1.RotateNodeTokenRequest
+	(*RotateNodeTokenResponse)(nil),       // 19: probe.v1.RotateNodeTokenResponse
+	(*ReorderNodesRequest)(nil),           // 20: probe.v1.ReorderNodesRequest
+	(*ReorderNodesResponse)(nil),          // 21: probe.v1.ReorderNodesResponse
+	(*OpenRegisterWindowRequest)(nil),     // 22: probe.v1.OpenRegisterWindowRequest
+	(*OpenRegisterWindowResponse)(nil),    // 23: probe.v1.OpenRegisterWindowResponse
+	(*CloseRegisterWindowRequest)(nil),    // 24: probe.v1.CloseRegisterWindowRequest
+	(*CloseRegisterWindowResponse)(nil),   // 25: probe.v1.CloseRegisterWindowResponse
+	(*GetRegisterWindowRequest)(nil),      // 26: probe.v1.GetRegisterWindowRequest
+	(*GetRegisterWindowResponse)(nil),     // 27: probe.v1.GetRegisterWindowResponse
+	(*GetSnapshotRequest)(nil),            // 28: probe.v1.GetSnapshotRequest
+	(*GetSnapshotResponse)(nil),           // 29: probe.v1.GetSnapshotResponse
+	(*NodeStatus)(nil),                    // 30: probe.v1.NodeStatus
+	(*GetTrafficRequest)(nil),             // 31: probe.v1.GetTrafficRequest
+	(*GetTrafficResponse)(nil),            // 32: probe.v1.GetTrafficResponse
+	(*NodeTraffic)(nil),                   // 33: probe.v1.NodeTraffic
+	(*AdjustTrafficRequest)(nil),          // 34: probe.v1.AdjustTrafficRequest
+	(*AdjustTrafficResponse)(nil),         // 35: probe.v1.AdjustTrafficResponse
+	(*ProbeTaskDetail)(nil),               // 36: probe.v1.ProbeTaskDetail
+	(*ListProbeTasksRequest)(nil),         // 37: probe.v1.ListProbeTasksRequest
+	(*ListProbeTasksResponse)(nil),        // 38: probe.v1.ListProbeTasksResponse
+	(*SaveProbeTaskRequest)(nil),          // 39: probe.v1.SaveProbeTaskRequest
+	(*SaveProbeTaskResponse)(nil),         // 40: probe.v1.SaveProbeTaskResponse
+	(*DeleteProbeTaskRequest)(nil),        // 41: probe.v1.DeleteProbeTaskRequest
+	(*DeleteProbeTaskResponse)(nil),       // 42: probe.v1.DeleteProbeTaskResponse
+	(*AlertRule)(nil),                     // 43: probe.v1.AlertRule
+	(*ListAlertRulesRequest)(nil),         // 44: probe.v1.ListAlertRulesRequest
+	(*ListAlertRulesResponse)(nil),        // 45: probe.v1.ListAlertRulesResponse
+	(*AlertStateEntry)(nil),               // 46: probe.v1.AlertStateEntry
+	(*SaveAlertRuleRequest)(nil),          // 47: probe.v1.SaveAlertRuleRequest
+	(*SaveAlertRuleResponse)(nil),         // 48: probe.v1.SaveAlertRuleResponse
+	(*DeleteAlertRuleRequest)(nil),        // 49: probe.v1.DeleteAlertRuleRequest
+	(*DeleteAlertRuleResponse)(nil),       // 50: probe.v1.DeleteAlertRuleResponse
+	(*NotifyChannel)(nil),                 // 51: probe.v1.NotifyChannel
+	(*TelegramConfig)(nil),                // 52: probe.v1.TelegramConfig
+	(*WebhookConfig)(nil),                 // 53: probe.v1.WebhookConfig
+	(*ListNotifyChannelsRequest)(nil),     // 54: probe.v1.ListNotifyChannelsRequest
+	(*ListNotifyChannelsResponse)(nil),    // 55: probe.v1.ListNotifyChannelsResponse
+	(*SaveNotifyChannelRequest)(nil),      // 56: probe.v1.SaveNotifyChannelRequest
+	(*SaveNotifyChannelResponse)(nil),     // 57: probe.v1.SaveNotifyChannelResponse
+	(*DeleteNotifyChannelRequest)(nil),    // 58: probe.v1.DeleteNotifyChannelRequest
+	(*DeleteNotifyChannelResponse)(nil),   // 59: probe.v1.DeleteNotifyChannelResponse
+	(*TestNotifyChannelRequest)(nil),      // 60: probe.v1.TestNotifyChannelRequest
+	(*TestNotifyChannelResponse)(nil),     // 61: probe.v1.TestNotifyChannelResponse
+	(*Settings)(nil),                      // 62: probe.v1.Settings
+	(*GetSettingsRequest)(nil),            // 63: probe.v1.GetSettingsRequest
+	(*GetSettingsResponse)(nil),           // 64: probe.v1.GetSettingsResponse
+	(*UpdateSettingsRequest)(nil),         // 65: probe.v1.UpdateSettingsRequest
+	(*UpdateSettingsResponse)(nil),        // 66: probe.v1.UpdateSettingsResponse
+	(*GetStorageStatsRequest)(nil),        // 67: probe.v1.GetStorageStatsRequest
+	(*GetStorageStatsResponse)(nil),       // 68: probe.v1.GetStorageStatsResponse
+	(*SeriesTableHealth)(nil),             // 69: probe.v1.SeriesTableHealth
+	(*TableRows)(nil),                     // 70: probe.v1.TableRows
+	(*ListAlertEventsRequest)(nil),        // 71: probe.v1.ListAlertEventsRequest
+	(*ListAlertEventsResponse)(nil),       // 72: probe.v1.ListAlertEventsResponse
+	(*GetAlertDeliveryErrorRequest)(nil),  // 73: probe.v1.GetAlertDeliveryErrorRequest
+	(*GetAlertDeliveryErrorResponse)(nil), // 74: probe.v1.GetAlertDeliveryErrorResponse
+	(*AlertEvent)(nil),                    // 75: probe.v1.AlertEvent
+	(*AlertDelivery)(nil),                 // 76: probe.v1.AlertDelivery
+	(*ApiToken)(nil),                      // 77: probe.v1.ApiToken
+	(*ListApiTokensRequest)(nil),          // 78: probe.v1.ListApiTokensRequest
+	(*ListApiTokensResponse)(nil),         // 79: probe.v1.ListApiTokensResponse
+	(*CreateApiTokenRequest)(nil),         // 80: probe.v1.CreateApiTokenRequest
+	(*CreateApiTokenResponse)(nil),        // 81: probe.v1.CreateApiTokenResponse
+	(*DeleteApiTokenRequest)(nil),         // 82: probe.v1.DeleteApiTokenRequest
+	(*DeleteApiTokenResponse)(nil),        // 83: probe.v1.DeleteApiTokenResponse
+	(*GetApiReferenceRequest)(nil),        // 84: probe.v1.GetApiReferenceRequest
+	(*GetApiReferenceResponse)(nil),       // 85: probe.v1.GetApiReferenceResponse
+	(*ProtoFile)(nil),                     // 86: probe.v1.ProtoFile
+	nil,                                   // 87: probe.v1.WebhookConfig.HeadersEntry
+	(*Facts)(nil),                         // 88: probe.v1.Facts
+	(*Billing)(nil),                       // 89: probe.v1.Billing
+	(*Metrics)(nil),                       // 90: probe.v1.Metrics
+	(*Traffic)(nil),                       // 91: probe.v1.Traffic
+	(*ProbeTask)(nil),                     // 92: probe.v1.ProbeTask
+	(*QueryMetricsRequest)(nil),           // 93: probe.v1.QueryMetricsRequest
+	(*QueryProbesRequest)(nil),            // 94: probe.v1.QueryProbesRequest
+	(*QueryMetricsResponse)(nil),          // 95: probe.v1.QueryMetricsResponse
+	(*QueryProbesResponse)(nil),           // 96: probe.v1.QueryProbesResponse
 }
 var file_probe_v1_admin_proto_depIdxs = []int32{
-	87, // 0: probe.v1.Node.facts:type_name -> probe.v1.Facts
-	88, // 1: probe.v1.Node.billing:type_name -> probe.v1.Billing
-	8,  // 2: probe.v1.ListNodesResponse.nodes:type_name -> probe.v1.Node
-	8,  // 3: probe.v1.CreateNodeResponse.node:type_name -> probe.v1.Node
-	88, // 4: probe.v1.UpdateNodeRequest.billing:type_name -> probe.v1.Billing
-	8,  // 5: probe.v1.UpdateNodeResponse.node:type_name -> probe.v1.Node
-	29, // 6: probe.v1.GetSnapshotResponse.nodes:type_name -> probe.v1.NodeStatus
-	89, // 7: probe.v1.NodeStatus.metrics:type_name -> probe.v1.Metrics
-	90, // 8: probe.v1.NodeStatus.traffic:type_name -> probe.v1.Traffic
-	32, // 9: probe.v1.GetTrafficResponse.nodes:type_name -> probe.v1.NodeTraffic
-	90, // 10: probe.v1.NodeTraffic.traffic:type_name -> probe.v1.Traffic
-	90, // 11: probe.v1.AdjustTrafficResponse.traffic:type_name -> probe.v1.Traffic
-	91, // 12: probe.v1.ProbeTaskDetail.task:type_name -> probe.v1.ProbeTask
-	35, // 13: probe.v1.ListProbeTasksResponse.tasks:type_name -> probe.v1.ProbeTaskDetail
-	91, // 14: probe.v1.SaveProbeTaskRequest.task:type_name -> probe.v1.ProbeTask
-	35, // 15: probe.v1.SaveProbeTaskResponse.task:type_name -> probe.v1.ProbeTaskDetail
-	0,  // 16: probe.v1.AlertRule.kind:type_name -> probe.v1.AlertKind
-	1,  // 17: probe.v1.AlertRule.metric:type_name -> probe.v1.ProbeMetric
-	42, // 18: probe.v1.ListAlertRulesResponse.rules:type_name -> probe.v1.AlertRule
-	45, // 19: probe.v1.ListAlertRulesResponse.states:type_name -> probe.v1.AlertStateEntry
-	42, // 20: probe.v1.SaveAlertRuleRequest.rule:type_name -> probe.v1.AlertRule
-	42, // 21: probe.v1.SaveAlertRuleResponse.rule:type_name -> probe.v1.AlertRule
-	2,  // 22: probe.v1.NotifyChannel.kind:type_name -> probe.v1.ChannelKind
-	51, // 23: probe.v1.NotifyChannel.telegram:type_name -> probe.v1.TelegramConfig
-	52, // 24: probe.v1.NotifyChannel.webhook:type_name -> probe.v1.WebhookConfig
-	86, // 25: probe.v1.WebhookConfig.headers:type_name -> probe.v1.WebhookConfig.HeadersEntry
-	50, // 26: probe.v1.ListNotifyChannelsResponse.channels:type_name -> probe.v1.NotifyChannel
-	50, // 27: probe.v1.SaveNotifyChannelRequest.channel:type_name -> probe.v1.NotifyChannel
-	50, // 28: probe.v1.SaveNotifyChannelResponse.channel:type_name -> probe.v1.NotifyChannel
-	61, // 29: probe.v1.GetSettingsResponse.settings:type_name -> probe.v1.Settings
-	61, // 30: probe.v1.UpdateSettingsRequest.settings:type_name -> probe.v1.Settings
-	61, // 31: probe.v1.UpdateSettingsResponse.settings:type_name -> probe.v1.Settings
-	69, // 32: probe.v1.GetStorageStatsResponse.tables:type_name -> probe.v1.TableRows
-	68, // 33: probe.v1.GetStorageStatsResponse.series:type_name -> probe.v1.SeriesTableHealth
-	74, // 34: probe.v1.ListAlertEventsResponse.events:type_name -> probe.v1.AlertEvent
-	75, // 35: probe.v1.AlertEvent.deliveries:type_name -> probe.v1.AlertDelivery
-	3,  // 36: probe.v1.AlertDelivery.failure:type_name -> probe.v1.DeliveryFailure
-	76, // 37: probe.v1.ListApiTokensResponse.tokens:type_name -> probe.v1.ApiToken
-	76, // 38: probe.v1.CreateApiTokenResponse.api_token:type_name -> probe.v1.ApiToken
-	85, // 39: probe.v1.GetApiReferenceResponse.files:type_name -> probe.v1.ProtoFile
-	4,  // 40: probe.v1.AdminService.Login:input_type -> probe.v1.LoginRequest
-	6,  // 41: probe.v1.AdminService.Logout:input_type -> probe.v1.LogoutRequest
-	9,  // 42: probe.v1.AdminService.ListNodes:input_type -> probe.v1.ListNodesRequest
-	11, // 43: probe.v1.AdminService.CreateNode:input_type -> probe.v1.CreateNodeRequest
-	13, // 44: probe.v1.AdminService.UpdateNode:input_type -> probe.v1.UpdateNodeRequest
-	15, // 45: probe.v1.AdminService.DeleteNode:input_type -> probe.v1.DeleteNodeRequest
-	17, // 46: probe.v1.AdminService.RotateNodeToken:input_type -> probe.v1.RotateNodeTokenRequest
-	19, // 47: probe.v1.AdminService.ReorderNodes:input_type -> probe.v1.ReorderNodesRequest
-	21, // 48: probe.v1.AdminService.OpenRegisterWindow:input_type -> probe.v1.OpenRegisterWindowRequest
-	23, // 49: probe.v1.AdminService.CloseRegisterWindow:input_type -> probe.v1.CloseRegisterWindowRequest
-	25, // 50: probe.v1.AdminService.GetRegisterWindow:input_type -> probe.v1.GetRegisterWindowRequest
-	27, // 51: probe.v1.AdminService.GetSnapshot:input_type -> probe.v1.GetSnapshotRequest
-	92, // 52: probe.v1.AdminService.QueryMetrics:input_type -> probe.v1.QueryMetricsRequest
-	30, // 53: probe.v1.AdminService.GetTraffic:input_type -> probe.v1.GetTrafficRequest
-	33, // 54: probe.v1.AdminService.AdjustTraffic:input_type -> probe.v1.AdjustTrafficRequest
-	36, // 55: probe.v1.AdminService.ListProbeTasks:input_type -> probe.v1.ListProbeTasksRequest
-	38, // 56: probe.v1.AdminService.SaveProbeTask:input_type -> probe.v1.SaveProbeTaskRequest
-	40, // 57: probe.v1.AdminService.DeleteProbeTask:input_type -> probe.v1.DeleteProbeTaskRequest
-	93, // 58: probe.v1.AdminService.QueryProbes:input_type -> probe.v1.QueryProbesRequest
-	43, // 59: probe.v1.AdminService.ListAlertRules:input_type -> probe.v1.ListAlertRulesRequest
-	46, // 60: probe.v1.AdminService.SaveAlertRule:input_type -> probe.v1.SaveAlertRuleRequest
-	48, // 61: probe.v1.AdminService.DeleteAlertRule:input_type -> probe.v1.DeleteAlertRuleRequest
-	70, // 62: probe.v1.AdminService.ListAlertEvents:input_type -> probe.v1.ListAlertEventsRequest
-	72, // 63: probe.v1.AdminService.GetAlertDeliveryError:input_type -> probe.v1.GetAlertDeliveryErrorRequest
-	53, // 64: probe.v1.AdminService.ListNotifyChannels:input_type -> probe.v1.ListNotifyChannelsRequest
-	55, // 65: probe.v1.AdminService.SaveNotifyChannel:input_type -> probe.v1.SaveNotifyChannelRequest
-	57, // 66: probe.v1.AdminService.DeleteNotifyChannel:input_type -> probe.v1.DeleteNotifyChannelRequest
-	59, // 67: probe.v1.AdminService.TestNotifyChannel:input_type -> probe.v1.TestNotifyChannelRequest
-	62, // 68: probe.v1.AdminService.GetSettings:input_type -> probe.v1.GetSettingsRequest
-	64, // 69: probe.v1.AdminService.UpdateSettings:input_type -> probe.v1.UpdateSettingsRequest
-	66, // 70: probe.v1.AdminService.GetStorageStats:input_type -> probe.v1.GetStorageStatsRequest
-	77, // 71: probe.v1.AdminService.ListApiTokens:input_type -> probe.v1.ListApiTokensRequest
-	79, // 72: probe.v1.AdminService.CreateApiToken:input_type -> probe.v1.CreateApiTokenRequest
-	81, // 73: probe.v1.AdminService.DeleteApiToken:input_type -> probe.v1.DeleteApiTokenRequest
-	83, // 74: probe.v1.AdminService.GetApiReference:input_type -> probe.v1.GetApiReferenceRequest
-	5,  // 75: probe.v1.AdminService.Login:output_type -> probe.v1.LoginResponse
-	7,  // 76: probe.v1.AdminService.Logout:output_type -> probe.v1.LogoutResponse
-	10, // 77: probe.v1.AdminService.ListNodes:output_type -> probe.v1.ListNodesResponse
-	12, // 78: probe.v1.AdminService.CreateNode:output_type -> probe.v1.CreateNodeResponse
-	14, // 79: probe.v1.AdminService.UpdateNode:output_type -> probe.v1.UpdateNodeResponse
-	16, // 80: probe.v1.AdminService.DeleteNode:output_type -> probe.v1.DeleteNodeResponse
-	18, // 81: probe.v1.AdminService.RotateNodeToken:output_type -> probe.v1.RotateNodeTokenResponse
-	20, // 82: probe.v1.AdminService.ReorderNodes:output_type -> probe.v1.ReorderNodesResponse
-	22, // 83: probe.v1.AdminService.OpenRegisterWindow:output_type -> probe.v1.OpenRegisterWindowResponse
-	24, // 84: probe.v1.AdminService.CloseRegisterWindow:output_type -> probe.v1.CloseRegisterWindowResponse
-	26, // 85: probe.v1.AdminService.GetRegisterWindow:output_type -> probe.v1.GetRegisterWindowResponse
-	28, // 86: probe.v1.AdminService.GetSnapshot:output_type -> probe.v1.GetSnapshotResponse
-	94, // 87: probe.v1.AdminService.QueryMetrics:output_type -> probe.v1.QueryMetricsResponse
-	31, // 88: probe.v1.AdminService.GetTraffic:output_type -> probe.v1.GetTrafficResponse
-	34, // 89: probe.v1.AdminService.AdjustTraffic:output_type -> probe.v1.AdjustTrafficResponse
-	37, // 90: probe.v1.AdminService.ListProbeTasks:output_type -> probe.v1.ListProbeTasksResponse
-	39, // 91: probe.v1.AdminService.SaveProbeTask:output_type -> probe.v1.SaveProbeTaskResponse
-	41, // 92: probe.v1.AdminService.DeleteProbeTask:output_type -> probe.v1.DeleteProbeTaskResponse
-	95, // 93: probe.v1.AdminService.QueryProbes:output_type -> probe.v1.QueryProbesResponse
-	44, // 94: probe.v1.AdminService.ListAlertRules:output_type -> probe.v1.ListAlertRulesResponse
-	47, // 95: probe.v1.AdminService.SaveAlertRule:output_type -> probe.v1.SaveAlertRuleResponse
-	49, // 96: probe.v1.AdminService.DeleteAlertRule:output_type -> probe.v1.DeleteAlertRuleResponse
-	71, // 97: probe.v1.AdminService.ListAlertEvents:output_type -> probe.v1.ListAlertEventsResponse
-	73, // 98: probe.v1.AdminService.GetAlertDeliveryError:output_type -> probe.v1.GetAlertDeliveryErrorResponse
-	54, // 99: probe.v1.AdminService.ListNotifyChannels:output_type -> probe.v1.ListNotifyChannelsResponse
-	56, // 100: probe.v1.AdminService.SaveNotifyChannel:output_type -> probe.v1.SaveNotifyChannelResponse
-	58, // 101: probe.v1.AdminService.DeleteNotifyChannel:output_type -> probe.v1.DeleteNotifyChannelResponse
-	60, // 102: probe.v1.AdminService.TestNotifyChannel:output_type -> probe.v1.TestNotifyChannelResponse
-	63, // 103: probe.v1.AdminService.GetSettings:output_type -> probe.v1.GetSettingsResponse
-	65, // 104: probe.v1.AdminService.UpdateSettings:output_type -> probe.v1.UpdateSettingsResponse
-	67, // 105: probe.v1.AdminService.GetStorageStats:output_type -> probe.v1.GetStorageStatsResponse
-	78, // 106: probe.v1.AdminService.ListApiTokens:output_type -> probe.v1.ListApiTokensResponse
-	80, // 107: probe.v1.AdminService.CreateApiToken:output_type -> probe.v1.CreateApiTokenResponse
-	82, // 108: probe.v1.AdminService.DeleteApiToken:output_type -> probe.v1.DeleteApiTokenResponse
-	84, // 109: probe.v1.AdminService.GetApiReference:output_type -> probe.v1.GetApiReferenceResponse
-	75, // [75:110] is the sub-list for method output_type
-	40, // [40:75] is the sub-list for method input_type
-	40, // [40:40] is the sub-list for extension type_name
-	40, // [40:40] is the sub-list for extension extendee
-	0,  // [0:40] is the sub-list for field type_name
+	88, // 0: probe.v1.Node.facts:type_name -> probe.v1.Facts
+	89, // 1: probe.v1.Node.billing:type_name -> probe.v1.Billing
+	0,  // 2: probe.v1.Node.country_source:type_name -> probe.v1.CountrySource
+	9,  // 3: probe.v1.ListNodesResponse.nodes:type_name -> probe.v1.Node
+	9,  // 4: probe.v1.CreateNodeResponse.node:type_name -> probe.v1.Node
+	89, // 5: probe.v1.UpdateNodeRequest.billing:type_name -> probe.v1.Billing
+	9,  // 6: probe.v1.UpdateNodeResponse.node:type_name -> probe.v1.Node
+	30, // 7: probe.v1.GetSnapshotResponse.nodes:type_name -> probe.v1.NodeStatus
+	90, // 8: probe.v1.NodeStatus.metrics:type_name -> probe.v1.Metrics
+	91, // 9: probe.v1.NodeStatus.traffic:type_name -> probe.v1.Traffic
+	33, // 10: probe.v1.GetTrafficResponse.nodes:type_name -> probe.v1.NodeTraffic
+	91, // 11: probe.v1.NodeTraffic.traffic:type_name -> probe.v1.Traffic
+	91, // 12: probe.v1.AdjustTrafficResponse.traffic:type_name -> probe.v1.Traffic
+	92, // 13: probe.v1.ProbeTaskDetail.task:type_name -> probe.v1.ProbeTask
+	36, // 14: probe.v1.ListProbeTasksResponse.tasks:type_name -> probe.v1.ProbeTaskDetail
+	92, // 15: probe.v1.SaveProbeTaskRequest.task:type_name -> probe.v1.ProbeTask
+	36, // 16: probe.v1.SaveProbeTaskResponse.task:type_name -> probe.v1.ProbeTaskDetail
+	1,  // 17: probe.v1.AlertRule.kind:type_name -> probe.v1.AlertKind
+	2,  // 18: probe.v1.AlertRule.metric:type_name -> probe.v1.ProbeMetric
+	43, // 19: probe.v1.ListAlertRulesResponse.rules:type_name -> probe.v1.AlertRule
+	46, // 20: probe.v1.ListAlertRulesResponse.states:type_name -> probe.v1.AlertStateEntry
+	43, // 21: probe.v1.SaveAlertRuleRequest.rule:type_name -> probe.v1.AlertRule
+	43, // 22: probe.v1.SaveAlertRuleResponse.rule:type_name -> probe.v1.AlertRule
+	3,  // 23: probe.v1.NotifyChannel.kind:type_name -> probe.v1.ChannelKind
+	52, // 24: probe.v1.NotifyChannel.telegram:type_name -> probe.v1.TelegramConfig
+	53, // 25: probe.v1.NotifyChannel.webhook:type_name -> probe.v1.WebhookConfig
+	87, // 26: probe.v1.WebhookConfig.headers:type_name -> probe.v1.WebhookConfig.HeadersEntry
+	51, // 27: probe.v1.ListNotifyChannelsResponse.channels:type_name -> probe.v1.NotifyChannel
+	51, // 28: probe.v1.SaveNotifyChannelRequest.channel:type_name -> probe.v1.NotifyChannel
+	51, // 29: probe.v1.SaveNotifyChannelResponse.channel:type_name -> probe.v1.NotifyChannel
+	62, // 30: probe.v1.GetSettingsResponse.settings:type_name -> probe.v1.Settings
+	62, // 31: probe.v1.UpdateSettingsRequest.settings:type_name -> probe.v1.Settings
+	62, // 32: probe.v1.UpdateSettingsResponse.settings:type_name -> probe.v1.Settings
+	70, // 33: probe.v1.GetStorageStatsResponse.tables:type_name -> probe.v1.TableRows
+	69, // 34: probe.v1.GetStorageStatsResponse.series:type_name -> probe.v1.SeriesTableHealth
+	75, // 35: probe.v1.ListAlertEventsResponse.events:type_name -> probe.v1.AlertEvent
+	76, // 36: probe.v1.AlertEvent.deliveries:type_name -> probe.v1.AlertDelivery
+	4,  // 37: probe.v1.AlertDelivery.failure:type_name -> probe.v1.DeliveryFailure
+	77, // 38: probe.v1.ListApiTokensResponse.tokens:type_name -> probe.v1.ApiToken
+	77, // 39: probe.v1.CreateApiTokenResponse.api_token:type_name -> probe.v1.ApiToken
+	86, // 40: probe.v1.GetApiReferenceResponse.files:type_name -> probe.v1.ProtoFile
+	5,  // 41: probe.v1.AdminService.Login:input_type -> probe.v1.LoginRequest
+	7,  // 42: probe.v1.AdminService.Logout:input_type -> probe.v1.LogoutRequest
+	10, // 43: probe.v1.AdminService.ListNodes:input_type -> probe.v1.ListNodesRequest
+	12, // 44: probe.v1.AdminService.CreateNode:input_type -> probe.v1.CreateNodeRequest
+	14, // 45: probe.v1.AdminService.UpdateNode:input_type -> probe.v1.UpdateNodeRequest
+	16, // 46: probe.v1.AdminService.DeleteNode:input_type -> probe.v1.DeleteNodeRequest
+	18, // 47: probe.v1.AdminService.RotateNodeToken:input_type -> probe.v1.RotateNodeTokenRequest
+	20, // 48: probe.v1.AdminService.ReorderNodes:input_type -> probe.v1.ReorderNodesRequest
+	22, // 49: probe.v1.AdminService.OpenRegisterWindow:input_type -> probe.v1.OpenRegisterWindowRequest
+	24, // 50: probe.v1.AdminService.CloseRegisterWindow:input_type -> probe.v1.CloseRegisterWindowRequest
+	26, // 51: probe.v1.AdminService.GetRegisterWindow:input_type -> probe.v1.GetRegisterWindowRequest
+	28, // 52: probe.v1.AdminService.GetSnapshot:input_type -> probe.v1.GetSnapshotRequest
+	93, // 53: probe.v1.AdminService.QueryMetrics:input_type -> probe.v1.QueryMetricsRequest
+	31, // 54: probe.v1.AdminService.GetTraffic:input_type -> probe.v1.GetTrafficRequest
+	34, // 55: probe.v1.AdminService.AdjustTraffic:input_type -> probe.v1.AdjustTrafficRequest
+	37, // 56: probe.v1.AdminService.ListProbeTasks:input_type -> probe.v1.ListProbeTasksRequest
+	39, // 57: probe.v1.AdminService.SaveProbeTask:input_type -> probe.v1.SaveProbeTaskRequest
+	41, // 58: probe.v1.AdminService.DeleteProbeTask:input_type -> probe.v1.DeleteProbeTaskRequest
+	94, // 59: probe.v1.AdminService.QueryProbes:input_type -> probe.v1.QueryProbesRequest
+	44, // 60: probe.v1.AdminService.ListAlertRules:input_type -> probe.v1.ListAlertRulesRequest
+	47, // 61: probe.v1.AdminService.SaveAlertRule:input_type -> probe.v1.SaveAlertRuleRequest
+	49, // 62: probe.v1.AdminService.DeleteAlertRule:input_type -> probe.v1.DeleteAlertRuleRequest
+	71, // 63: probe.v1.AdminService.ListAlertEvents:input_type -> probe.v1.ListAlertEventsRequest
+	73, // 64: probe.v1.AdminService.GetAlertDeliveryError:input_type -> probe.v1.GetAlertDeliveryErrorRequest
+	54, // 65: probe.v1.AdminService.ListNotifyChannels:input_type -> probe.v1.ListNotifyChannelsRequest
+	56, // 66: probe.v1.AdminService.SaveNotifyChannel:input_type -> probe.v1.SaveNotifyChannelRequest
+	58, // 67: probe.v1.AdminService.DeleteNotifyChannel:input_type -> probe.v1.DeleteNotifyChannelRequest
+	60, // 68: probe.v1.AdminService.TestNotifyChannel:input_type -> probe.v1.TestNotifyChannelRequest
+	63, // 69: probe.v1.AdminService.GetSettings:input_type -> probe.v1.GetSettingsRequest
+	65, // 70: probe.v1.AdminService.UpdateSettings:input_type -> probe.v1.UpdateSettingsRequest
+	67, // 71: probe.v1.AdminService.GetStorageStats:input_type -> probe.v1.GetStorageStatsRequest
+	78, // 72: probe.v1.AdminService.ListApiTokens:input_type -> probe.v1.ListApiTokensRequest
+	80, // 73: probe.v1.AdminService.CreateApiToken:input_type -> probe.v1.CreateApiTokenRequest
+	82, // 74: probe.v1.AdminService.DeleteApiToken:input_type -> probe.v1.DeleteApiTokenRequest
+	84, // 75: probe.v1.AdminService.GetApiReference:input_type -> probe.v1.GetApiReferenceRequest
+	6,  // 76: probe.v1.AdminService.Login:output_type -> probe.v1.LoginResponse
+	8,  // 77: probe.v1.AdminService.Logout:output_type -> probe.v1.LogoutResponse
+	11, // 78: probe.v1.AdminService.ListNodes:output_type -> probe.v1.ListNodesResponse
+	13, // 79: probe.v1.AdminService.CreateNode:output_type -> probe.v1.CreateNodeResponse
+	15, // 80: probe.v1.AdminService.UpdateNode:output_type -> probe.v1.UpdateNodeResponse
+	17, // 81: probe.v1.AdminService.DeleteNode:output_type -> probe.v1.DeleteNodeResponse
+	19, // 82: probe.v1.AdminService.RotateNodeToken:output_type -> probe.v1.RotateNodeTokenResponse
+	21, // 83: probe.v1.AdminService.ReorderNodes:output_type -> probe.v1.ReorderNodesResponse
+	23, // 84: probe.v1.AdminService.OpenRegisterWindow:output_type -> probe.v1.OpenRegisterWindowResponse
+	25, // 85: probe.v1.AdminService.CloseRegisterWindow:output_type -> probe.v1.CloseRegisterWindowResponse
+	27, // 86: probe.v1.AdminService.GetRegisterWindow:output_type -> probe.v1.GetRegisterWindowResponse
+	29, // 87: probe.v1.AdminService.GetSnapshot:output_type -> probe.v1.GetSnapshotResponse
+	95, // 88: probe.v1.AdminService.QueryMetrics:output_type -> probe.v1.QueryMetricsResponse
+	32, // 89: probe.v1.AdminService.GetTraffic:output_type -> probe.v1.GetTrafficResponse
+	35, // 90: probe.v1.AdminService.AdjustTraffic:output_type -> probe.v1.AdjustTrafficResponse
+	38, // 91: probe.v1.AdminService.ListProbeTasks:output_type -> probe.v1.ListProbeTasksResponse
+	40, // 92: probe.v1.AdminService.SaveProbeTask:output_type -> probe.v1.SaveProbeTaskResponse
+	42, // 93: probe.v1.AdminService.DeleteProbeTask:output_type -> probe.v1.DeleteProbeTaskResponse
+	96, // 94: probe.v1.AdminService.QueryProbes:output_type -> probe.v1.QueryProbesResponse
+	45, // 95: probe.v1.AdminService.ListAlertRules:output_type -> probe.v1.ListAlertRulesResponse
+	48, // 96: probe.v1.AdminService.SaveAlertRule:output_type -> probe.v1.SaveAlertRuleResponse
+	50, // 97: probe.v1.AdminService.DeleteAlertRule:output_type -> probe.v1.DeleteAlertRuleResponse
+	72, // 98: probe.v1.AdminService.ListAlertEvents:output_type -> probe.v1.ListAlertEventsResponse
+	74, // 99: probe.v1.AdminService.GetAlertDeliveryError:output_type -> probe.v1.GetAlertDeliveryErrorResponse
+	55, // 100: probe.v1.AdminService.ListNotifyChannels:output_type -> probe.v1.ListNotifyChannelsResponse
+	57, // 101: probe.v1.AdminService.SaveNotifyChannel:output_type -> probe.v1.SaveNotifyChannelResponse
+	59, // 102: probe.v1.AdminService.DeleteNotifyChannel:output_type -> probe.v1.DeleteNotifyChannelResponse
+	61, // 103: probe.v1.AdminService.TestNotifyChannel:output_type -> probe.v1.TestNotifyChannelResponse
+	64, // 104: probe.v1.AdminService.GetSettings:output_type -> probe.v1.GetSettingsResponse
+	66, // 105: probe.v1.AdminService.UpdateSettings:output_type -> probe.v1.UpdateSettingsResponse
+	68, // 106: probe.v1.AdminService.GetStorageStats:output_type -> probe.v1.GetStorageStatsResponse
+	79, // 107: probe.v1.AdminService.ListApiTokens:output_type -> probe.v1.ListApiTokensResponse
+	81, // 108: probe.v1.AdminService.CreateApiToken:output_type -> probe.v1.CreateApiTokenResponse
+	83, // 109: probe.v1.AdminService.DeleteApiToken:output_type -> probe.v1.DeleteApiTokenResponse
+	85, // 110: probe.v1.AdminService.GetApiReference:output_type -> probe.v1.GetApiReferenceResponse
+	76, // [76:111] is the sub-list for method output_type
+	41, // [41:76] is the sub-list for method input_type
+	41, // [41:41] is the sub-list for extension type_name
+	41, // [41:41] is the sub-list for extension extendee
+	0,  // [0:41] is the sub-list for field type_name
 }
 
 func init() { file_probe_v1_admin_proto_init() }
@@ -5316,6 +5458,7 @@ func file_probe_v1_admin_proto_init() {
 	file_probe_v1_admin_proto_msgTypes[4].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[9].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[25].OneofWrappers = []any{}
+	file_probe_v1_admin_proto_msgTypes[57].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[63].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[64].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[71].OneofWrappers = []any{}
@@ -5325,7 +5468,7 @@ func file_probe_v1_admin_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_probe_v1_admin_proto_rawDesc), len(file_probe_v1_admin_proto_rawDesc)),
-			NumEnums:      4,
+			NumEnums:      5,
 			NumMessages:   83,
 			NumExtensions: 0,
 			NumServices:   1,

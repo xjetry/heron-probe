@@ -49,6 +49,7 @@ type NodeEdit struct {
 	TrafficResetDay int
 	OfflineGraceS   int // 0 写 NULL，读侧取 TTL
 	Billing         Billing
+	CountryPin      string // 手动指定的国家，空串表示不指定（回落到查得值）
 }
 
 type Node struct {
@@ -66,10 +67,35 @@ type Node struct {
 	Facts          *probev1.Facts
 	FactsUpdatedAt time.Time
 	Billing        Billing
+	// Country 是对 CountryIP 这个地址的查询答案，两者同空同非空；CountryPin 是手动指定的国家。见 node 表的列注释。
+	Country    string
+	CountryIP  string
+	CountryPin string
+}
+
+// CountrySource 是显示值的来源。
+type CountrySource int
+
+const (
+	CountryNone CountrySource = iota
+	CountryManual
+	CountryLookup
+)
+
+// DisplayCountry 是面板与公开页显示的国家：手动值非空取手动值，否则取查得值。这是显示值唯一的判定，管理端与公开端
+// 都经它取值。
+func (n Node) DisplayCountry() (string, CountrySource) {
+	switch {
+	case n.CountryPin != "":
+		return n.CountryPin, CountryManual
+	case n.Country != "":
+		return n.Country, CountryLookup
+	}
+	return "", CountryNone
 }
 
 const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.created_at, n.last_seen_at, n.traffic_reset_day, n.offline_grace_s,
-	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source,
+	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source, n.country, n.country_ip, n.country_pin,
 	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at
 	FROM node n LEFT JOIN node_facts f ON f.node_id = n.id`
 
@@ -86,7 +112,7 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 		var cores, icmp, factsUpdated sql.NullInt64
 		b := &n.Billing
 		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &created, &seen, &n.TrafficResetDay, &grace,
-			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource,
+			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource, &n.Country, &n.CountryIP, &n.CountryPin,
 			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated); err != nil {
 			return nil, err
 		}
@@ -180,8 +206,8 @@ func (s *Store) UpdateNode(ctx context.Context, id int64, e NodeEdit) (billingCh
 		}
 		b := e.Billing
 		if _, err := tx.Exec(`UPDATE node SET name = ?, public = ?, note = ?, traffic_reset_day = ?, offline_grace_s = NULLIF(?, 0),
-			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, auto_renew = ? WHERE id = ?`,
-			e.Name, e.Public, e.Note, e.TrafficResetDay, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, id); err != nil {
+			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, auto_renew = ?, country_pin = ? WHERE id = ?`,
+			e.Name, e.Public, e.Note, e.TrafficResetDay, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, e.CountryPin, id); err != nil {
 			return err
 		}
 		billingChanged = old != b
@@ -209,6 +235,23 @@ func (s *Store) RenewExpiry(ctx context.Context, id int64, cycle BillingCycle, f
 		return err
 	})
 	return renewed, err
+}
+
+// SetLookupCountry 写入对 addr 查得的国家，前提是节点的 last_source 此刻仍是 addr：查询在写协程之外发出，应答
+// 到达之前节点可能已换了出口（WriteMinuteBatch 随之清空了两列），按旧地址的答案写回就会把旧出口的国家挂到新地址上。
+// 条件不成立时不写、返回 false，新地址由查询器下一轮重查；节点已被删除时同样返回 false。
+func (s *Store) SetLookupCountry(ctx context.Context, id int64, addr, country string) (bool, error) {
+	var set bool
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		res, err := tx.Exec("UPDATE node SET country = ?, country_ip = ? WHERE id = ? AND last_source = ?", country, addr, id, addr)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		set = n == 1
+		return err
+	})
+	return set, err
 }
 
 // ReorderNodes 在写事务中验证 ids 恰是全部节点的一个排列，再整体更新顺序。

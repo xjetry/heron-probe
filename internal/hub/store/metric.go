@@ -58,7 +58,13 @@ func (s *Store) WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, 
 			}
 			if !r.LastSeen.IsZero() {
 				// last_source 与 last_seen_at 取自同一次上报，同一条语句写入；空串（那次取不到对端）保留已有的值。
-				if _, err := tx.Exec("UPDATE node SET last_seen_at = ?, last_source = COALESCE(NULLIF(?, ''), last_source) WHERE id = ?",
+				// 写入后的来源与 country_ip 不同时同一条语句清空查得的国家：它是对旧地址的答案（见 node.country）。
+				// 与 last_source 同句写，读者不会看到"新地址配旧国家"的中间态。SET 右侧读的都是更新前的列值，
+				// 所以 src 表达式要重算一遍写入后的来源，不能引用刚赋的 last_source。
+				if _, err := tx.Exec(`UPDATE node SET last_seen_at = ?1, last_source = COALESCE(NULLIF(?2, ''), last_source),
+					country = CASE WHEN COALESCE(NULLIF(?2, ''), last_source) = country_ip THEN country ELSE '' END,
+					country_ip = CASE WHEN COALESCE(NULLIF(?2, ''), last_source) = country_ip THEN country_ip ELSE '' END
+					WHERE id = ?3`,
 					r.LastSeen.Unix(), r.Source, r.NodeID); err != nil {
 					return err
 				}

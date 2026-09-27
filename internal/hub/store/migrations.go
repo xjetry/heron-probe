@@ -32,6 +32,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	11: execAll([]string{ddlMaintenanceStateV11}),
 	12: execAll(migrationV12),
 	13: execAll(migrationV13),
+	14: execAll(migrationV14),
 }
 
 func execAll(stmts []string) func(*sql.Tx) error {
@@ -285,4 +286,11 @@ var migrationV12 = []string{
 // v13：节点最近一次上报的来源地址。旧行取空串（从未上报过的记法）：升级前的上报没有记录，下一次刷出即补上。
 var migrationV13 = []string{
 	`ALTER TABLE node ADD COLUMN last_source TEXT NOT NULL DEFAULT ''`,
+}
+
+// v14：节点的国家（查得值与所属地址成对）与手动指定的国家。旧行取空串：没有国家；查询开启后按来源地址补查。
+var migrationV14 = []string{
+	`ALTER TABLE node ADD COLUMN country TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE node ADD COLUMN country_ip TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE node ADD COLUMN country_pin TEXT NOT NULL DEFAULT ''`,
 }

@@ -198,6 +198,25 @@ message Node {
   // 同时刷出落盘，所以可能比实时状态晚约一分钟。hub 与节点同在内网或 agent 经出口代理时，这里是内网或代理地址。
   // 只在管理端可见：公开节点（PublicNode）没有这个字段。
   string last_source = 13;
+  // 国家 / 地区（§4.9）的显示值，ISO 3166-1 alpha-2（两个大写字母）：country_pin 非空取它，否则取查得值；空串表示没有。
+  // 公开节点的 PublicNode.country 是同一个值。
+  string country = 14;
+  CountrySource country_source = 15;
+  // 查得的国家所属的地址，即查询时节点的 last_source；没有查得值时为空串。查得值是对这个地址的答案：节点换了
+  // 来源地址，查得值随即清空并重查。手动指定时也照常回显（查询不看 country_pin），清空 country_pin 即回落到它。
+  string country_ip = 16;
+  // 管理员手动指定的国家，空串表示不指定。
+  string country_pin = 17;
+}
+
+// 国家显示值的来源。
+enum CountrySource {
+  // 没有国家：未手动指定，也没有查得值。
+  COUNTRY_SOURCE_UNSPECIFIED = 0;
+  // 管理员手动指定（Node.country_pin）。
+  COUNTRY_SOURCE_MANUAL = 1;
+  // 国家查询按来源地址查得（Node.country_ip）。
+  COUNTRY_SOURCE_LOOKUP = 2;
 }
 
 message ListNodesRequest {}
@@ -228,6 +247,8 @@ message UpdateNodeRequest {
   // 计费与到期，整体替换：缺失等于五项全清，空串、未指定与 false 也是清除，没有"不改"的取值。
   // 取值约束见 Billing 各字段；days_left 由 hub 计算，这里的值忽略。
   Billing billing = 7;
+  // 手动指定的国家：两个大写字母（ISO 3166-1 alpha-2）或空串。整体替换：缺失即空串，清除手动值、回落到查得值。
+  string country_pin = 8;
 }
 message UpdateNodeResponse {
   Node node = 1;
@@ -483,7 +504,9 @@ message DeleteNotifyChannelResponse {}
 message TestNotifyChannelRequest { int64 id = 1; }
 message TestNotifyChannelResponse {}
 
-// 公开页外观。整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。
+// 公开页外观与国家查询（§4.9）。外观五项整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。国家查询两项
+// 缺失表示不改：开关决定 hub 是否把节点地址发给第三方，只改外观的旧客户端与脚本不得顺手改掉它。GetSettings 与
+// UpdateSettings 的响应总带这两项。
 message Settings {
   // 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
   // 空串表示公开页用内置标题。
@@ -497,6 +520,13 @@ message Settings {
   string logo = 4;
   // 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
   string custom_css = 5;
+  // 国家查询开关，从未保存过时为关。开启即由 hub 把每个节点的来源地址（Node.last_source）逐个发给 geo_url：只发公网
+  // 地址、每节点每地址至多成功查一次，失败按小时退避。
+  optional bool geo_enabled = 6;
+  // 国家查询的服务地址：http 或 https，含 {ip} 占位（查询时替换为地址），不含用户信息，不超过 2048 字节。
+  // 从未保存过时为 https://ipinfo.io/{ip}/country。可回显，不是凭据：请求只带地址，不带任何凭据。
+  // 服务的响应去掉首尾空白后必须恰为两个大写字母（ISO 3166-1 alpha-2），状态码必须是 200。
+  optional string geo_url = 7;
 }
 message GetSettingsRequest {}
 message GetSettingsResponse { Settings settings = 1; }

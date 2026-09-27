@@ -235,6 +235,8 @@ func (p *Public) GetSnapshot(ctx context.Context, _ *connect.Request[probev1.Pub
 	for _, n := range nodes {
 		online, seen, m := liveState(p.live, n)
 		pn := &probev1.PublicNode{Id: n.ID, Name: n.Name, Online: online, LastSeenAt: seen, SortOrder: n.SortOrder, Traffic: trafficProto(p.traffic.View(n.ID))}
+		// 国家只放行显示值：查得于哪个地址与来源不公开，公开页表达"在哪个区域"，不定位机器（§4.9）。
+		pn.Country, _ = n.DisplayCountry()
 		// 计费经投影公开：PublicBilling 没有 auto_renew（reserved），它与 Billing 的对齐由 NewPublic 构造投影时核对。
 		if b := billingProto(n.Billing, today); b != nil {
 			pn.Billing = p.billing.apply(b).(*probev1.PublicBilling)

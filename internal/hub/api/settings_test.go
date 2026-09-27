@@ -84,7 +84,8 @@ func TestUpdateSettingsValidatesTitleThemeAndAccent(t *testing.T) {
 func TestUpdateSettingsCleansTitleAndAccentAndEchoes(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	want := &probev1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef"}
+	// 国家查询两项没有提交，回显的是从未保存过时的值。
+	want := &probev1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef", GeoEnabled: proto.Bool(false), GeoUrl: proto.String("https://ipinfo.io/{ip}/country")}
 	if got := saveSettings(t, h, &probev1.Settings{Title: " ‮\x07运行状态 \t", Theme: "light", AccentColor: "#AbCdEf"}); !proto.Equal(got, want) {
 		t.Fatalf("echo = %v, want %v", got, want)
 	}
@@ -198,22 +199,26 @@ func longestLogo() string {
 
 // 解码预算不够时，connect 在方法体之前就以 ResourceExhausted 拒绝，校验根本到不了。
 // 解码预算装得下满额设置在最坏转义下的 JSON（service.go 的 maxBody 写了推导）：logo 取 longestLogo；
-// 标题与 CSS 用控制字符填满，json.Marshal 把每个控制字符写成 6 字节的 \u00XX，标题的控制字符清洗后不计入
+// 标题与 CSS 用控制字符填满，json.Marshal 把每个控制字符写成 6 字节的 \u00XX，服务地址用 < 填满（写法见下），标题的控制字符清洗后不计入
 // 64 个字符，所以这仍是合法的设置；明暗取最长的值，字段名用比 camelCase 长的 proto 原名（connect 两种都收）。
 func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	logo := longestLogo()
 	theme := slices.MaxFunc(themes, func(a, b string) int { return len(a) - len(b) })
-	body, err := json.Marshal(map[string]any{"settings": map[string]string{
+	// 服务地址不能含控制字符（url.Parse 拒绝），json.Marshal 把 < 同样写成 6 字节的 \u003c，url.Parse 在查询串里放行它。
+	const geoPrefix = "https://geo.example/{ip}?"
+	geoURL := geoPrefix + strings.Repeat("<", maxGeoURLBytes-len(geoPrefix))
+	body, err := json.Marshal(map[string]any{"settings": map[string]any{
 		"title": strings.Repeat("\x01", maxTitleBytes), "theme": theme, "accent_color": "#112233",
-		"logo":       logo,
-		"custom_css": strings.Repeat("\x01", maxCSSBytes),
+		"logo":        logo,
+		"custom_css":  strings.Repeat("\x01", maxCSSBytes),
+		"geo_enabled": false, "geo_url": geoURL,
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(body) < len(logo)+6*maxCSSBytes+6*maxTitleBytes {
+	if len(body) < len(logo)+6*maxCSSBytes+6*maxTitleBytes+6*(maxGeoURLBytes-len(geoPrefix)) {
 		t.Fatalf("request is %d bytes; the worst case was not constructed", len(body))
 	}
 	t.Logf("worst-case request: %d bytes, logo %d bytes, budget %d", len(body), len(logo), maxBody)
