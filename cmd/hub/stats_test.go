@@ -38,8 +38,8 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 			}
 			// v9 只增加计费与到期列；去掉这些列得到可实际迁移的 v8 库，避免仅伪造版本号。
 			// 这个夹具经 openOffline 建成，openStore 判定通过后已经把它切成 WAL；切回
-			// DELETE 让它代表不受本项目管理的旧库常见状态（sqlite3 建库的默认日志模式
-			// 就是 DELETE），拒绝时逐字节不变与日志模式无关，两种模式都要成立。
+			// DELETE 是因为提前生效的 journal_mode(WAL) 只在非 WAL 的库上改写文件头：本项目
+			// 自己产出的 v8 库本就是 WAL，在它上面这个缺陷不显形，逐字节比较测不出。
 			for _, stmt := range []string{
 				"ALTER TABLE node DROP COLUMN price",
 				"ALTER TABLE node DROP COLUMN currency",

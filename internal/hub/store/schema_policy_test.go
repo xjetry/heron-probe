@@ -209,7 +209,7 @@ func TestSchemaPolicyRejectsDatabaseWithTablesButNoVersion(t *testing.T) {
 
 // 负数版本落进旧库分支会去找不存在的 migrations[0]（MigrateSchema）或建议改跑
 // serve 升级（RequireCurrentSchema）——两条提示都假定这是本项目的旧库，跟着做都走不通。
-// 逐字节比较的理由同上一条：schemaPolicyFixture 建的也是不带 pragma 的 DELETE 模式库。
+// 逐字节比较的理由同上一条；夹具在下面独立建成 DELETE 模式库。
 func TestSchemaPolicyRejectsNegativeVersionWithoutSuggestingServe(t *testing.T) {
 	for _, policy := range []SchemaPolicy{MigrateSchema, RequireCurrentSchema} {
 		t.Run(fmt.Sprint(policy), func(t *testing.T) {
