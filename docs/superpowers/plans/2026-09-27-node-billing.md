@@ -3712,9 +3712,10 @@ type nodeExpiry struct {
 	valid     bool
 }
 
-// SweepExpiry 是到期规则唯一的评估入口：hub 启动、每个日历日开始、节点计费字段变化与保存启用的到期规则时各调用
-// 一次（§9.2）。先把开着自动续期且早于今天的到期日推后并落库，再按推后之后的日期评估全部启用的到期规则。两步在
-// 同一次 writeMu 下完成，续期带来的恢复与续期本身在同一次扫描里发生，不会先发一条"已过期"再发恢复。
+// SweepExpiry 在 writeMu 下做一次到期扫描（sweepExpiry）。评估时机共四处（§9.2）：hub 启动与每个日历日开始
+// （RunExpirySweep）、节点计费字段变化时调用它；保存启用的到期规则时，SaveRule 已持 writeMu，直接调 sweepExpiry。
+// 一次扫描先把开着自动续期且早于今天的到期日推后并落库，再按推后之后的日期评估全部启用的到期规则。两步在同一次
+// writeMu 下完成，续期带来的恢复与续期本身在同一次扫描里发生，不会先发一条"已过期"再发恢复。
 func (e *Engine) SweepExpiry(ctx context.Context) error {
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
@@ -6473,8 +6474,8 @@ const emptyDraft = (): Draft => ({
   taskId: string; metric: ProbeMetric; threshold: string; forMinutes: string; daysBefore: string;
 };
 
-// 有默认值的只有指标（丢包率）、连续分钟 3 与提前天数 7；探测任务与阈值留空，切到探测时由表单的 required 挡住提交，
-// 要用户自己选填。只有当前类型的那几项随保存发出（toRule）。
+// 种类专用字段里有默认值的是指标（丢包率）、连续分钟 3 与提前天数 7；探测任务与阈值留空，切到探测时由表单的 required
+// 挡住提交，要用户自己选填。种类、启用与"全部节点"另有各自的默认值。只有当前类型的那几项随保存发出（toRule）。
 const emptyDraft = (): Draft => ({
   name: "", kind: AlertKind.OFFLINE, enabled: true, allNodes: true, nodeIds: new Set(), channelIds: new Set(),
   taskId: "", metric: ProbeMetric.LOSS_PCT, threshold: "", forMinutes: "3", daysBefore: "7",
@@ -6607,27 +6608,24 @@ Expected：0；vitest `Tests  394 passed (394)`。`make ci` 最后核对生成�
 - [ ] **Step 1: 写失败测试**
 
 - 总览：填了费用与到期的卡片多两行，已过期的到期标红，没填的不显示这两行。
-- 节点页：静态信息卡带这两行；主机信息缺失时卡片照样显示它们；三者都没有时不画卡片。
+- 节点页：静态信息卡带这两行；主机信息缺失时卡片照样显示它们；只填了到期日的节点也画卡片，只有到期一行且标红，没有费用行；三者都没有时不画卡片。
 - 夹具的计费写成嵌套的 `billing`（`PublicBilling`）。
+- 两处计费用例开头把 Date 钉在 2031-01-01（`vi.useFakeTimers({ toFake: ["Date"] })` 与 `vi.setSystemTime(new Date(2031, 0, 1))`），节点页补 `afterEach(() => vi.useRealTimers())`。夹具的剩余天数是 hub 下发的值；不钉时它恰好等于到期日减今天，按浏览器本地日期重算的实现照样通过。
 - import 扫描的冒烟清单加上 `lib/billing.ts`，证明它确实进了公开包、且没带进管理服务的生成代码。
 
 `web/src/public/Overview.test.tsx` 原文（1/2）：
 
 ```tsx
-import { afterEach, expect, it, vi } from "vitest";
 import { PublicService } from "../gen/probe/v1/public_pb";
 import { POLL_MS } from "../lib/poll";
-import { renderWithService } from "../test/harness";
 ```
 
 替换为：
 
 ```tsx
-import { afterEach, expect, it, vi } from "vitest";
 import { PublicService } from "../gen/probe/v1/public_pb";
 import { BillingCycle } from "../gen/probe/v1/types_pb";
 import { POLL_MS } from "../lib/poll";
-import { renderWithService } from "../test/harness";
 ```
 
 `web/src/public/Overview.test.tsx` 原文（2/2）：
@@ -6644,6 +6642,9 @@ import { renderWithService } from "../test/harness";
 });
 
 it("填了费用与到期的节点卡片多两行，已过期的到期标红，没填的不显示这两行", async () => {
+  // 时钟放在与夹具错开的日期：剩余天数只能来自 hub 下发的 daysLeft，页面按本地日期重算会得出另一个数。
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2031, 0, 1));
   const billed = {
     now: 1_000n,
     nodes: [
@@ -6666,7 +6667,7 @@ it("填了费用与到期的节点卡片多两行，已过期的到期标红，�
 });
 ```
 
-`web/src/public/NodePage.test.tsx` 原文（1/2）：
+`web/src/public/NodePage.test.tsx` 原文（1/3）：
 
 ```tsx
 import { create } from "@bufbuild/protobuf";
@@ -6676,7 +6677,6 @@ import { PublicService } from "../gen/probe/v1/public_pb";
 import { QueryProbesResponseSchema } from "../gen/probe/v1/query_pb";
 import { ProbeKind } from "../gen/probe/v1/types_pb";
 import { renderWithService } from "../test/harness";
-import { NodePage } from "./NodePage";
 ```
 
 替换为：
@@ -6684,15 +6684,30 @@ import { NodePage } from "./NodePage";
 ```tsx
 import { create } from "@bufbuild/protobuf";
 import { cleanup, screen } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { PublicService } from "../gen/probe/v1/public_pb";
 import { QueryProbesResponseSchema } from "../gen/probe/v1/query_pb";
 import { BillingCycle, ProbeKind } from "../gen/probe/v1/types_pb";
 import { renderWithService } from "../test/harness";
-import { NodePage } from "./NodePage";
 ```
 
-`web/src/public/NodePage.test.tsx` 原文（2/2）：
+`web/src/public/NodePage.test.tsx` 原文（2/3）：
+
+```tsx
+}));
+
+```
+
+替换为：
+
+```tsx
+}));
+
+afterEach(() => vi.useRealTimers());
+
+```
+
+`web/src/public/NodePage.test.tsx` 原文（3/3）：
 
 ```tsx
   expect(queryMetrics).not.toHaveBeenCalled();
@@ -6706,10 +6721,14 @@ import { NodePage } from "./NodePage";
 });
 
 it("静态信息卡带费用与到期两行；主机信息缺失时卡片照样显示这两行，都没有时不画卡片", async () => {
+  // 时钟放在与夹具错开的日期：剩余天数只能来自 hub 下发的 daysLeft，页面按本地日期重算会得出另一个数。
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2031, 0, 1));
   const nodes = [
     { id: 7n, name: "edge-1", online: true, facts: { os: "Alpine 3.21", arch: "arm64" }, billing: { price: "5", currency: "EUR", billingCycle: BillingCycle.YEARLY, expiresOn: "2026-09-20", daysLeft: -7 } },
     { id: 8n, name: "fresh", online: false, billing: { price: "3", currency: "USD" } },
     { id: 9n, name: "bare", online: false },
+    { id: 10n, name: "due", online: false, billing: { expiresOn: "2026-09-20", daysLeft: -7 } },
   ];
   const getSnapshot = async () => ({ now: 1_000n, nodes });
   const queryMetrics = async () => ({ level: "1m", stepS: 60, ts: [], series: [] });
@@ -6730,6 +6749,10 @@ it("静态信息卡带费用与到期两行；主机信息缺失时卡片照样�
   cleanup();
   await show(9);
   expect(screen.queryByRole("definition")).toBeNull();
+  cleanup();
+  await show(10);
+  expect(screen.getAllByRole("definition").map((d) => d.textContent)).toEqual(["2026-09-20（已过期 7 天）"]);
+  expect(screen.getByText("2026-09-20（已过期 7 天）")).toHaveClass("error");
 });
 ```
 
@@ -6923,7 +6946,7 @@ Expected：两条都是 0；第一条 `Test Files  3 passed (3)`、`Tests  11 pa
 
 ```bash
 cd /Users/xjetry/work/vibe/probe-billing && git add web/src/public/NodePage.test.tsx web/src/public/NodePage.tsx web/src/public/Overview.test.tsx web/src/public/Overview.tsx web/src/public/importScan.test.ts > /tmp/billing-t7-add.log 2>&1; echo $?
-cd /Users/xjetry/work/vibe/probe-billing && git commit -m "web: 公开页卡片与节点页显示费用与到期" -m "费用与到期取自 PublicBilling，填了才显示，已过期的到期标红；节点没有 billing 时两行都不出现。节点页的静态信息卡在主机信息缺失时也显示这两行。import 扫描的冒烟清单加上 lib/billing.ts，证明它确实进了公开包、且没带进管理服务的生成代码。" > /tmp/billing-t7-commit.log 2>&1; echo $?
+cd /Users/xjetry/work/vibe/probe-billing && git commit -m "web: 公开页卡片与节点页显示费用与到期" -m "费用与到期取自 PublicBilling，填了才显示，已过期的到期标红；节点没有 billing 时两行都不出现。节点页的静态信息卡在主机信息缺失时也显示这两行。import 扫描的冒烟清单加上 lib/billing.ts，证明它确实进了公开包、且没带进管理服务的生成代码。两处计费用例把 Date 钉在 2031 年，按浏览器本地日期重算的实现会红；节点页补只填了到期日的节点，钉住静态信息卡显示条件里的到期一支。" > /tmp/billing-t7-commit.log 2>&1; echo $?
 cd /Users/xjetry/work/vibe/probe-billing && git status --porcelain > /tmp/billing-t7-status.log 2>&1; echo $?
 ```
 
@@ -6946,6 +6969,8 @@ Expected：0；vitest `Tests  396 passed (396)`。`make ci` 最后核对生成�
 | c | 节点页只在有主机信息时画静态信息卡 | `pnpm --dir web exec vitest run src/public/NodePage.test.tsx > /tmp/billing-t7-inj-c.log 2>&1; echo $?` | 1，`静态信息卡带费用与到期两行；主机信息缺失时卡片照样显示这两行，都没有时不画卡片`：`Unable to find an element with the text: 费用.` |
 | d | 节点页的到期不标红 | `pnpm --dir web exec vitest run src/public/NodePage.test.tsx > /tmp/billing-t7-inj-d.log 2>&1; echo $?` | 1，同一用例：`expect(element).toHaveClass("error")` 失败 |
 | e | `billing.ts` 加 `import { AdminService } from "../gen/probe/v1/admin_pb";` 并导出一个用到它的值 `export const adminServiceName = AdminService.typeName;`。只加 import 或用 `import type` 会被打包消除，不红 | `pnpm --dir web exec vitest run src/public/importScan.test.ts > /tmp/billing-t7-inj-e.log 2>&1; echo $?` | 1，`公开包的模块图不含管理服务的生成代码`：`expected [ 'src/gen/probe/v1/admin_pb.ts' ] to deeply equal []`；`公开包的产物里没有 admin.proto 的描述符` 同样红 |
+| f | `billing.ts` 的 `expiryText` 与 `expired` 改用浏览器本地日期重算天数（写法同 Task 5 注入 k） | `pnpm --dir web exec vitest run src/public/Overview.test.tsx src/public/NodePage.test.tsx > /tmp/billing-t7-inj-f.log 2>&1; echo $?` | 1，两个用例都红：总览 `Expected element to have text content: /^2026-10-01（剩 4 天）$/`，收到 `2026-10-01（已过期 1553 天）`；节点页 `Unable to find an element with the text: 2026-09-20（已过期 7 天）` |
+| g | 节点页静态信息卡的显示条件去掉 `\|\| expiry`（`{(node.facts \|\| price \|\| expiry) && (` 改成 `{(node.facts \|\| price) && (`） | `pnpm --dir web exec vitest run src/public/NodePage.test.tsx > /tmp/billing-t7-inj-g.log 2>&1; echo $?` | 1，`静态信息卡带费用与到期两行；主机信息缺失时卡片照样显示这两行，都没有时不画卡片`：红在只填了到期日的节点（`show(10)` 之后）：`Unable to find an accessible element with the role "definition"` |
 
 每项：改动 → `git diff --stat` 非空 → 跑命令 → 核对原因 → `git checkout -- web/src`。
 
@@ -7400,10 +7425,10 @@ e2e 的其余断言不逐条在 e2e 上注入，各自的缺陷由单测的注�
 - 副本在 af62cf9 上做完 Task 1–8，每个任务一个提交。本计划的代码块由这 8 个提交逐文件生成；反过来，把计划里的"新建"与"原文→替换为"按任务顺序应用到 af62cf9 的干净检出上，Task 1 之后再跑 `make gen`，每个任务之后的整棵树都与对应提交逐字节相同。
 - 跑红：在每个任务的父提交上放入该任务改动的全部测试文件，跑 Step 2 的命令，退出码与原文如各任务所记。
 - 跑绿：每个任务的提交上跑 Step 4 的命令，全部退出 0。Task 1 的 `buf breaking` 另做了冒烟（实验 8）。
-- `make ci`：基点与 8 个提交上都跑过，全部退出 0，生成物干净；vitest 用例数依次为 369、369、369、369、369、387、394、396、396。Task 3、4 的两次没有在按当前计划重建的提交上重跑：此后变动的是 Task 1、2 的测试与注释，Task 8 做完的树上 `make ci` 照常为 0。
-- 注入：Task 1–7 的 110 项在对应提交上逐项实跑。108 项退出 1，红在表中写的原因；Task 3 的 ad、ae 按预期退出 0（实验 13）。复跑脚本对每项先核对原文恰出现一次、`git diff --stat` 非空，跑完还原并确认工作树干净。
+- `make ci`：基点与 8 个提交上都跑过，全部退出 0，生成物干净；vitest 用例数依次为 369、369、369、369、369、387、394、396、396。Task 4 那次没有在按当前计划重建的提交上重跑：此后变动的是 Task 1–3 与 5–7 的测试与注释，Task 8 做完的树上 `make ci` 照常为 0。
+- 注入：Task 1–7 的 112 项在对应提交上逐项实跑。110 项退出 1，红在表中写的原因；Task 3 的 ad、ae 按预期退出 0（实验 13）。复跑脚本对每项先核对原文恰出现一次、`git diff --stat` 非空，跑完还原并确认工作树干净。
 - 日界循环改为扫描之前读钟之后，Task 3 在 billing 分支的 60ac1dc（Task 1、2 已落地）上重做：计划里的 Task 3 逐条施加，锚点都唯一命中，整棵树与重做的提交逐字节相同；跑红与计划所记相同；跑绿两条都是 0；`make ci` 退出 0，vitest 369；Task 3 的 36 项注入全部重跑，34 项退出 1，ad、ae 退出 0。Task 4–8 的 71 处改动在新的 Task 3 之上逐条施加，都唯一命中，做完的树上 `make ci` 退出 0。
-- 执行中的逐任务审阅改了 Task 1、2、5、6 的测试、注释与说明文字，计划按落地的提交同步。Task 1–8 按本计划在 af62cf9 上逐任务重建：Task 2 之后的整棵树与 billing 分支 30a5ef5 逐字节相同；Task 7 之后的 `web/` 与 billing-web 分支 61113b6 逐字节相同，其中两个计费测试文件取 billing-web-t5fix 分支 d3c9942 的版本。Task 1、2、5、6、7 重新跑红，Task 5–7 重新跑绿，Task 1、2、5–8 重新跑 `make ci`，Task 2、5、6 的注入全部重跑（21、11、8 项，全部退出 1）。
+- 执行中的逐任务审阅改了 Task 1、2、3、5、6、7 的测试、注释与说明文字，计划按落地的提交同步。Task 1–8 按本计划在 af62cf9 上逐任务重建：Task 2 之后的整棵树与 billing 分支 30a5ef5 逐字节相同，Task 3 之后的整棵树与 billing 分支 121237b 逐字节相同；Task 7 之后的 `web/` 与 billing-web 分支 be7ab7a 逐字节相同。Task 1、2、5、6、7 重新跑红，Task 5–7 重新跑绿，Task 1–3、5–8 重新跑 `make ci`，Task 2、5、6、7 的注入全部重跑（21、11、8、7 项，全部退出 1）。
 - e2e：Task 8 的提交上先 `make binaries`，Debian 与 Alpine 各跑一遍，都是 `E2E OK`；Task 8 的六项注入各自红在表中的 `FAIL` 行。这八次运行跑的就是 Task 8 提交里的 `scripts/e2e.sh`，只用 `E2E_HUB_PORT=18193 E2E_HOOK_PORT=18194` 把端口挪开（18079–18092 留给别的工作），没有拷贝脚本。
 - 实验 1–4、6、8、11、13–15 的原文与实验 10 的依赖核对来自同一环境。
 - 副本在写完计划后删除。
