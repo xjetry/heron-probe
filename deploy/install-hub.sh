@@ -56,7 +56,9 @@ done
 
 confirm_removal() {
   [ "$YES" = 0 ] || return 0
-  if [ ! -t 1 ] || [ ! -r /dev/tty ]; then
+  # 能打开 /dev/tty 才算有终端。它的权限位对所有人可读写，[ -r ] 只看权限，没有控制终端时照样为真，
+  # 打开却失败；那时往下走，提示写不出去，报错说的是 /dev/tty 而不是缺 --yes。
+  if [ ! -t 1 ] || ! ( : </dev/tty ) 2>/dev/null; then
     fail 'uninstall requires --yes without a terminal'
   fi
   printf 'Stop and remove probe-hub (purge data: %s)? [y/N] ' "$PURGE" > /dev/tty
