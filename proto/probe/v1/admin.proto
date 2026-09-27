@@ -207,6 +207,9 @@ message Node {
   string country_ip = 16;
   // 管理员手动指定的国家，空串表示不指定。
   string country_pin = 17;
+  // 查得的国家（对 country_ip 这个地址的答案），与 country_ip 同空同非空。手动指定时 country 是手动值，查得值仍在
+  // 这里，清空 country_pin 即回落到它。
+  string country_lookup = 19;
 }
 
 // 国家显示值的来源。

@@ -104,7 +104,7 @@ var countrySources = map[store.CountrySource]probev1.CountrySource{
 // nodeProto 的 today 是 hub 时区的今天（alert.Today）。
 func nodeProto(n store.Node, today time.Time) *probev1.Node {
 	out := &probev1.Node{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, SortOrder: n.SortOrder, CreatedAt: n.CreatedAt.Unix(), Facts: n.Facts, TrafficResetDay: uint32(n.TrafficResetDay),
-		Billing: billingProto(n.Billing, today), LastSource: n.LastSource, CountryIp: n.CountryIP, CountryPin: n.CountryPin}
+		Billing: billingProto(n.Billing, today), LastSource: n.LastSource, CountryIp: n.CountryIP, CountryPin: n.CountryPin, CountryLookup: n.Country}
 	country, source := n.DisplayCountry()
 	out.Country, out.CountrySource = country, countrySources[source]
 	if !n.LastSeenAt.IsZero() {

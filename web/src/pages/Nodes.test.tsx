@@ -458,28 +458,30 @@ describe("Nodes", () => {
 
   describe("国家 / 地区", () => {
     const located = [
-      { ...two[0], country: "US", countrySource: CountrySource.LOOKUP, countryIp: "8.8.8.8" },
-      { ...two[1], country: "JP", countrySource: CountrySource.MANUAL, countryIp: "8.8.4.4", countryPin: "JP" },
+      { ...two[0], country: "US", countrySource: CountrySource.LOOKUP, countryLookup: "US", countryIp: "8.8.8.8" },
+      { ...two[1], country: "JP", countrySource: CountrySource.MANUAL, countryLookup: "US", countryIp: "8.8.4.4", countryPin: "JP" },
       { ...two[0], id: 3n, name: "c" },
+      { ...two[0], id: 4n, name: "d", country: "DE", countrySource: CountrySource.MANUAL, countryPin: "DE" },
     ];
     const row = async (name: string) => within((await screen.findByRole("link", { name })).closest("tr")!);
     const countryCell = async (name: string) => (await row(name)).getAllByRole("cell")[column("国家 / 地区")];
 
-    it("列出显示值的徽章、来源与查得于哪个地址，没有国家是破折号", async () => {
+    it("列出显示值的徽章、来源与查得值，手动指定时查得值与它所属的地址照写，没有国家是破折号", async () => {
       renderNodes({ listNodes: async () => ({ nodes: located }) });
       expect(await countryCell("a（#1）")).toHaveTextContent(/^\u{1F1FA}\u{1F1F8} US 查得于 8\.8\.8\.8$/u);
-      expect(await countryCell("b（#2）")).toHaveTextContent(/^\u{1F1EF}\u{1F1F5} JP 手动指定；查得于 8\.8\.4\.4$/u);
+      expect(await countryCell("b（#2）")).toHaveTextContent(/^\u{1F1EF}\u{1F1F5} JP 手动指定；查得 US（于 8\.8\.4\.4）$/u);
       expect(await countryCell("c（#3）")).toHaveTextContent(/^—$/);
+      expect(await countryCell("d（#4）")).toHaveTextContent(/^\u{1F1E9}\u{1F1EA} DE 手动指定$/u);
     });
 
-    it("编辑表单回显手动值并转成大写提交；只改别的字段时手动值按当前值回传；提示查得于哪个地址", async () => {
+    it("编辑表单回显手动值并转成大写提交；只改别的字段时手动值按当前值回传；提示查得值与它所属的地址", async () => {
       const updateNode = vi.fn(async () => ({}));
       renderNodes({ listNodes: async () => ({ nodes: located }), updateNode });
       await screen.findByRole("link", { name: "b（#2）" });
       fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
       const pin = screen.getByLabelText("手动指定国家 / 地区 b（#2）");
       expect(pin).toHaveValue("JP");
-      expect(pin).toHaveAccessibleDescription("两个字母（ISO 3166-1），优先于查得值；留空用查得值：查得于 8.8.4.4。");
+      expect(pin).toHaveAccessibleDescription("两个字母（ISO 3166-1），优先于查得值；留空用查得值：查得 US（于 8.8.4.4）。");
       fireEvent.change(screen.getByLabelText("备注 b（#2）"), { target: { value: "moved" } });
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
       await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 2n, note: "moved", countryPin: "JP" }), expect.anything()));

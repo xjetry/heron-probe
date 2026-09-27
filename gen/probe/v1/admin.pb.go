@@ -485,7 +485,10 @@ type Node struct {
 	// 来源地址，查得值随即清空并重查。手动指定时也照常回显（查询不看 country_pin），清空 country_pin 即回落到它。
 	CountryIp string `protobuf:"bytes,16,opt,name=country_ip,json=countryIp,proto3" json:"country_ip,omitempty"`
 	// 管理员手动指定的国家，空串表示不指定。
-	CountryPin    string `protobuf:"bytes,17,opt,name=country_pin,json=countryPin,proto3" json:"country_pin,omitempty"`
+	CountryPin string `protobuf:"bytes,17,opt,name=country_pin,json=countryPin,proto3" json:"country_pin,omitempty"`
+	// 查得的国家（对 country_ip 这个地址的答案），与 country_ip 同空同非空。手动指定时 country 是手动值，查得值仍在
+	// 这里，清空 country_pin 即回落到它。
+	CountryLookup string `protobuf:"bytes,19,opt,name=country_lookup,json=countryLookup,proto3" json:"country_lookup,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -635,6 +638,13 @@ func (x *Node) GetCountryIp() string {
 func (x *Node) GetCountryPin() string {
 	if x != nil {
 		return x.CountryPin
+	}
+	return ""
+}
+
+func (x *Node) GetCountryLookup() string {
+	if x != nil {
+		return x.CountryLookup
 	}
 	return ""
 }
@@ -4839,7 +4849,7 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\bpassword\x18\x01 \x01(\tR\bpassword\"\x0f\n" +
 	"\rLoginResponse\"\x0f\n" +
 	"\rLogoutRequest\"\x10\n" +
-	"\x0eLogoutResponse\"\x8c\x05\n" +
+	"\x0eLogoutResponse\"\xb3\x05\n" +
 	"\x04Node\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
@@ -4864,7 +4874,8 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\n" +
 	"country_ip\x18\x10 \x01(\tR\tcountryIp\x12\x1f\n" +
 	"\vcountry_pin\x18\x11 \x01(\tR\n" +
-	"countryPinB\x0f\n" +
+	"countryPin\x12%\n" +
+	"\x0ecountry_lookup\x18\x13 \x01(\tR\rcountryLookupB\x0f\n" +
 	"\r_last_seen_atB\x13\n" +
 	"\x11_facts_updated_atB\x12\n" +
 	"\x10_offline_grace_s\"\x12\n" +
