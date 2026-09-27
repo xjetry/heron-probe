@@ -190,6 +190,8 @@ export type PublicNode = Message<"probe.v1.PublicNode"> & {
    * 国家 / 地区（§4.9）的显示值，与 Node.country 相同，空串表示没有。只放行这个值：查得于哪个地址、来源是手动还是
    * 查得都不公开——公开页表达"在哪个区域"，不定位机器。
    *
+   * 节点标签（Node.tags）不在这里，也不保留字段号：标签常写用途与归属（db、客户A），公开即暴露内部构成。
+   *
    * @generated from field: string country = 10;
    */
   country: string;
