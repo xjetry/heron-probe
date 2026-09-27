@@ -111,7 +111,7 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 	}
 	s.nodeMu.Lock()
 	defer s.nodeMu.Unlock()
-	err = s.store.UpdateNode(ctx, req.Msg.GetId(), name, req.Msg.GetPublic(), note, day, int(grace))
+	_, err = s.store.UpdateNode(ctx, req.Msg.GetId(), store.NodeEdit{Name: name, Public: req.Msg.GetPublic(), Note: note, TrafficResetDay: day, OfflineGraceS: int(grace)})
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, notFound(req.Msg.GetId())
 	}

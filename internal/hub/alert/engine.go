@@ -321,7 +321,7 @@ func (e *Engine) apply(ctx context.Context, r store.AlertRule, nodeID int64, nex
 	var ev store.AlertEvent
 	var err error
 	if tr != nil {
-		ev, err = e.st.RecordTransition(ctx, r.ID, nodeID, next, store.AlertEvent{Transition: *tr, At: now, Summary: summary, Value: value}, r.ChannelIDs)
+		ev, err = e.st.RecordTransition(ctx, r.ID, nodeID, next, "", store.AlertEvent{Transition: *tr, At: now, Summary: summary, Value: value}, r.ChannelIDs)
 	} else {
 		err = e.st.SetAlertState(ctx, r.ID, nodeID, next, now)
 	}

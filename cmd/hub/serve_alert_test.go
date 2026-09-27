@@ -145,7 +145,7 @@ func TestServeRequeuesPendingNotifications(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = st.RecordTransition(t.Context(), r.ID, id, store.StateFiring, store.AlertEvent{Transition: store.TransitionFiring, At: time.Now()}, []int64{channel})
+		_, err = st.RecordTransition(t.Context(), r.ID, id, store.StateFiring, "", store.AlertEvent{Transition: store.TransitionFiring, At: time.Now()}, []int64{channel})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -194,7 +194,7 @@ func TestServePrunesAlertEvents(t *testing.T) {
 					t.Fatal(err)
 				}
 				for _, age := range []time.Duration{tc.retention + 24*time.Hour, tc.retention - 24*time.Hour} {
-					ev, err := st.RecordTransition(t.Context(), r.ID, id, store.StateFiring, store.AlertEvent{Transition: store.TransitionFiring, At: clk.Now().Add(-age)}, []int64{channel})
+					ev, err := st.RecordTransition(t.Context(), r.ID, id, store.StateFiring, "", store.AlertEvent{Transition: store.TransitionFiring, At: clk.Now().Add(-age)}, []int64{channel})
 					if err != nil {
 						t.Fatal(err)
 					}

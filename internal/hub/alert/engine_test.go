@@ -70,7 +70,8 @@ func offline() store.AlertRule {
 }
 func (f *fixture) grace(t *testing.T, id int64, seconds int) {
 	t.Helper()
-	must(t, f.st.UpdateNode(t.Context(), id, fmt.Sprintf("node%d", id), false, "", 1, seconds))
+	_, err := f.st.UpdateNode(t.Context(), id, store.NodeEdit{Name: fmt.Sprintf("node%d", id), TrafficResetDay: 1, OfflineGraceS: seconds})
+	must(t, err)
 }
 func (f *fixture) sweep(t *testing.T) { t.Helper(); must(t, f.e.SweepOffline(t.Context())) }
 func (f *fixture) events(t *testing.T) []store.AlertEvent {

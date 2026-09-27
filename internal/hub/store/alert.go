@@ -15,6 +15,7 @@ type AlertKind string
 const (
 	KindOffline AlertKind = "offline"
 	KindProbe   AlertKind = "probe"
+	KindExpiry  AlertKind = "expiry"
 )
 
 type ProbeMetric string
@@ -38,6 +39,8 @@ type AlertRule struct {
 	Metric     ProbeMetric
 	Threshold  float64
 	ForMinutes int
+	// DaysBefore 只属于到期规则。它与 Threshold、ForMinutes 一样不是规则身份：改它保留状态（见 SaveAlertRule）。
+	DaysBefore int
 	CreatedAt  time.Time
 }
 
@@ -68,6 +71,10 @@ type StateRow struct {
 	RuleID, NodeID int64
 	State          AlertState
 	SinceAt        time.Time
+	// FiredExpiresOn 只属于到期规则：进入 firing 时节点的到期日。恢复时拿它与节点当前的到期日比较，相等说明日期没变，
+	// 恢复文案写"已不在提醒窗口内"而不是"到期日已更新"（§9.2）。这个日期随状态存，而不是从触发事件里读回：告警事件
+	// 按保留期清理，一个过期节点却可以一直处在 firing。其余种类的状态、以及不经 RecordTransition 写入的状态，这一项为空。
+	FiredExpiresOn string
 }
 
 type Transition string
@@ -147,7 +154,7 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT id, name, kind, enabled, all_nodes, task_id, metric, threshold, for_minutes, created_at FROM alert_rule ORDER BY id`)
+	rows, err := tx.QueryContext(ctx, `SELECT id, name, kind, enabled, all_nodes, task_id, metric, threshold, for_minutes, days_before, created_at FROM alert_rule ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -156,14 +163,15 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	index := map[int64]int{}
 	for rows.Next() {
 		var r AlertRule
-		var task, minutes sql.NullInt64
+		var task, minutes, daysBefore sql.NullInt64
 		var metric sql.NullString
 		var threshold sql.NullFloat64
 		var created int64
-		if err := rows.Scan(&r.ID, &r.Name, &r.Kind, &r.Enabled, &r.AllNodes, &task, &metric, &threshold, &minutes, &created); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.Kind, &r.Enabled, &r.AllNodes, &task, &metric, &threshold, &minutes, &daysBefore, &created); err != nil {
 			return nil, err
 		}
 		r.TaskID, r.Metric, r.Threshold, r.ForMinutes = uint64(task.Int64), ProbeMetric(metric.String), threshold.Float64, int(minutes.Int64)
+		r.DaysBefore = int(daysBefore.Int64)
 		r.CreatedAt = time.Unix(created, 0).UTC()
 		index[r.ID] = len(out)
 		out = append(out, r)
@@ -212,8 +220,42 @@ func sortedAlertIDs(ids []int64) []int64 {
 	return slices.Compact(out)
 }
 
+// KindFieldError 是规则带着不属于它种类的专用字段。Field 是协议里的字段名，Constraint 是违反的约束。
+type KindFieldError struct {
+	Field, Constraint string
+}
+
+func (e KindFieldError) Error() string { return e.Field + " " + e.Constraint }
+
+// CheckKindFields 裁决种类与专用字段的组合：探测四项（任务、指标、阈值、持续分钟）只属于探测规则，days_before
+// 只属于到期规则，别的种类上必须是零值。它是这条规则唯一的实现：SaveAlertRule 对非法组合报错而不改写，
+// alert.CheckRule 在保存与载入时调它，协议层经 CheckRule 得到同样的字段与约束（§9.1）。阈值用 != 0 判：NaN 与任何数
+// 都不等，也被拒绝。种类本身是否合法不在这里判断。
+func CheckKindFields(r AlertRule) error {
+	if r.Kind != KindProbe {
+		switch {
+		case r.TaskID != 0:
+			return KindFieldError{"task_id", "must be 0 unless kind is probe"}
+		case r.Metric != "":
+			return KindFieldError{"metric", "must be unspecified unless kind is probe"}
+		case r.Threshold != 0:
+			return KindFieldError{"threshold", "must be 0 unless kind is probe"}
+		case r.ForMinutes != 0:
+			return KindFieldError{"for_minutes", "must be 0 unless kind is probe"}
+		}
+	}
+	if r.Kind != KindExpiry && r.DaysBefore != 0 {
+		return KindFieldError{"days_before", "must be 0 unless kind is expiry"}
+	}
+	return nil
+}
+
 // 引用检查与保存同在单写事务，删除不能插入两者之间造成孤儿引用。
 func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, error) {
+	// 非法组合报错而不是清零：静默清零是放宽方向，调用方发了什么、存下的却是零值，无从察觉（§9.1）。
+	if err := CheckKindFields(r); err != nil {
+		return AlertRule{}, err
+	}
 	r.NodeIDs, r.ChannelIDs = sortedAlertIDs(r.NodeIDs), sortedAlertIDs(r.ChannelIDs)
 	if r.AllNodes {
 		r.NodeIDs = nil
@@ -233,21 +275,24 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 				return err
 			}
 		}
-		var task, metric, threshold, minutes any
+		// 每种规则只落自己的专用列，其余列写 NULL。CheckKindFields 已保证别的种类的专用字段都是零值，NULL 与回显的
+		// 零值一致。
+		var task, metric, threshold, minutes, daysBefore any
 		if r.Kind == KindProbe {
 			if err := requireAlertReference(tx, "probe_task", ObjectProbeTask, int64(r.TaskID)); err != nil {
 				return err
 			}
 			task, metric, threshold, minutes = int64(r.TaskID), r.Metric, r.Threshold, r.ForMinutes
-		} else {
-			r.TaskID, r.Metric, r.Threshold, r.ForMinutes = 0, "", 0, 0
+		}
+		if r.Kind == KindExpiry {
+			daysBefore = r.DaysBefore
 		}
 		var created int64
 		var identityChanged bool
 		if r.ID == 0 {
 			created = s.clk.Now().Unix()
-			err := tx.QueryRow(`INSERT INTO alert_rule (name, kind, enabled, all_nodes, task_id, metric, threshold, for_minutes, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`, r.Name, r.Kind, r.Enabled, r.AllNodes, task, metric, threshold, minutes, created).Scan(&r.ID)
+			err := tx.QueryRow(`INSERT INTO alert_rule (name, kind, enabled, all_nodes, task_id, metric, threshold, for_minutes, days_before, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`, r.Name, r.Kind, r.Enabled, r.AllNodes, task, metric, threshold, minutes, daysBefore, created).Scan(&r.ID)
 			if err != nil {
 				return err
 			}
@@ -259,8 +304,8 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 			if err != nil {
 				return err
 			}
-			err = tx.QueryRow(`UPDATE alert_rule SET name = ?, kind = ?, enabled = ?, all_nodes = ?, task_id = ?, metric = ?, threshold = ?, for_minutes = ?
-				WHERE id = ? RETURNING created_at`, r.Name, r.Kind, r.Enabled, r.AllNodes, task, metric, threshold, minutes, r.ID).Scan(&created)
+			err = tx.QueryRow(`UPDATE alert_rule SET name = ?, kind = ?, enabled = ?, all_nodes = ?, task_id = ?, metric = ?, threshold = ?, for_minutes = ?, days_before = ?
+				WHERE id = ? RETURNING created_at`, r.Name, r.Kind, r.Enabled, r.AllNodes, task, metric, threshold, minutes, daysBefore, r.ID).Scan(&created)
 			if errors.Is(err, sql.ErrNoRows) {
 				return NotFoundError{Kind: ObjectAlertRule, ID: r.ID}
 			}
@@ -285,7 +330,7 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 			}
 		}
 		// 规则与状态由本次写事务一起提交；种类、任务或指标变化后，旧观测不再描述当前规则。
-		// threshold 与 for_minutes 不是身份：同一个量换阈值时保留状态，下一轮按新阈值判断是否恢复。
+		// threshold、for_minutes 与 days_before 不是身份：同一个量换阈值时保留状态，下一轮按新阈值判断是否恢复。
 		// 禁用与作用域收缩也在这里裁剪，重启不能重新载入已不适用的 firing。
 		if identityChanged || !r.Enabled || !r.AllNodes {
 			query := "DELETE FROM alert_state WHERE rule_id = ?"
@@ -429,7 +474,7 @@ func (s *Store) DeleteNotifyChannel(ctx context.Context, id int64) error {
 }
 
 func (s *Store) ListAlertStates(ctx context.Context) ([]StateRow, error) {
-	rows, err := s.r.QueryContext(ctx, "SELECT rule_id, node_id, state, since_at FROM alert_state ORDER BY rule_id, node_id")
+	rows, err := s.r.QueryContext(ctx, "SELECT rule_id, node_id, state, since_at, fired_expires_on FROM alert_state ORDER BY rule_id, node_id")
 	if err != nil {
 		return nil, err
 	}
@@ -438,7 +483,7 @@ func (s *Store) ListAlertStates(ctx context.Context) ([]StateRow, error) {
 	for rows.Next() {
 		var r StateRow
 		var since int64
-		if err := rows.Scan(&r.RuleID, &r.NodeID, &r.State, &since); err != nil {
+		if err := rows.Scan(&r.RuleID, &r.NodeID, &r.State, &since, &r.FiredExpiresOn); err != nil {
 			return nil, err
 		}
 		r.SinceAt = time.Unix(since, 0).UTC()
@@ -447,8 +492,9 @@ func (s *Store) ListAlertStates(ctx context.Context) ([]StateRow, error) {
 	return out, rows.Err()
 }
 
-// 两个状态写入口共用事务内准入，单写协程保证删除之后排队的写不能重建孤儿状态。
-func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since time.Time) error {
+// 两个状态写入口共用事务内准入，单写协程保证删除之后排队的写不能重建孤儿状态。整行替换：每次写都给出
+// fired_expires_on，上一个状态记的日期不会留到下一个状态。
+func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since time.Time, firedExpiresOn string) error {
 	if err := requireAlertReference(tx, "alert_rule", ObjectAlertRule, ruleID); err != nil {
 		return err
 	}
@@ -459,12 +505,14 @@ func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since tim
 	if !exists {
 		return NotFoundError{Kind: ObjectNode, ID: nodeID}
 	}
-	_, err = tx.Exec("INSERT OR REPLACE INTO alert_state (rule_id, node_id, state, since_at) VALUES (?, ?, ?, ?)", ruleID, nodeID, state, since.Unix())
+	_, err = tx.Exec("INSERT OR REPLACE INTO alert_state (rule_id, node_id, state, since_at, fired_expires_on) VALUES (?, ?, ?, ?, ?)", ruleID, nodeID, state, since.Unix(), firedExpiresOn)
 	return err
 }
 
+// SetAlertState 写不带事件的状态变化。alert 的状态机只经触发转换进入 firing（那一步走 RecordTransition），所以这里
+// 写的状态没有触发时的到期日。
 func (s *Store) SetAlertState(ctx context.Context, ruleID, nodeID int64, state AlertState, since time.Time) error {
-	return s.write(ctx, func(tx *sql.Tx) error { return setAlertState(tx, ruleID, nodeID, state, since) })
+	return s.write(ctx, func(tx *sql.Tx) error { return setAlertState(tx, ruleID, nodeID, state, since, "") })
 }
 
 // 候选集撤销不是恢复观测，删除状态不产生事件；重复清理同一对规则与节点仍然成功。
@@ -475,12 +523,13 @@ func (s *Store) DeleteAlertState(ctx context.Context, ruleID, nodeID int64) erro
 	})
 }
 
-// 状态、事件与续投队列同事务提交，崩溃不能留下已转换但没有通知记录的状态。
-func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, state AlertState, ev AlertEvent, channelIDs []int64) (AlertEvent, error) {
+// 状态、事件与续投队列同事务提交，崩溃不能留下已转换但没有通知记录的状态。firedExpiresOn 随状态写入，
+// 含义见 StateRow.FiredExpiresOn。
+func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, state AlertState, firedExpiresOn string, ev AlertEvent, channelIDs []int64) (AlertEvent, error) {
 	ev.ID, ev.RuleID, ev.NodeID, ev.Deliveries = 0, ruleID, nodeID, nil
 	ev.At = time.Unix(ev.At.Unix(), 0).UTC()
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		if err := setAlertState(tx, ruleID, nodeID, state, ev.At); err != nil {
+		if err := setAlertState(tx, ruleID, nodeID, state, ev.At, firedExpiresOn); err != nil {
 			return err
 		}
 		if err := tx.QueryRow("INSERT INTO alert_event (rule_id, node_id, transition, at, summary, value) VALUES (?, ?, ?, ?, ?, ?) RETURNING id", ruleID, nodeID, ev.Transition, ev.At.Unix(), ev.Summary, ev.Value).Scan(&ev.ID); err != nil {

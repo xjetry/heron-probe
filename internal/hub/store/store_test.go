@@ -590,14 +590,14 @@ func TestUpdateNodeReplacesEditableFields(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _ := s.CreateNode(ctx, "old", hash(1))
-	if err := s.UpdateNode(ctx, id, "new", true, "note", 1, 0); err != nil {
+	if _, err := s.UpdateNode(ctx, id, NodeEdit{Name: "new", Public: true, Note: "note", TrafficResetDay: 1}); err != nil {
 		t.Fatal(err)
 	}
 	n, err := s.GetNode(ctx, id)
 	if err != nil || n.Name != "new" || !n.Public || n.Note != "note" {
 		t.Fatalf("GetNode = %+v, %v", n, err)
 	}
-	if err := s.UpdateNode(ctx, 999, "x", false, "", 1, 0); !errors.Is(err, ErrNotFound) {
+	if _, err := s.UpdateNode(ctx, 999, NodeEdit{Name: "x", TrafficResetDay: 1}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown id: %v, want ErrNotFound", err)
 	}
 	if _, err := s.GetNode(ctx, 999); !errors.Is(err, ErrNotFound) {
@@ -640,7 +640,7 @@ func TestUpdateNodePersistsResetDayAndCreateUsesTheDefault(t *testing.T) {
 	if n, _ := s.GetNode(ctx, id); n.TrafficResetDay != 1 {
 		t.Fatalf("default reset day = %d, want 1", n.TrafficResetDay)
 	}
-	if err := s.UpdateNode(ctx, id, "n", false, "", 15, 0); err != nil {
+	if _, err := s.UpdateNode(ctx, id, NodeEdit{Name: "n", TrafficResetDay: 15}); err != nil {
 		t.Fatal(err)
 	}
 	n, err := s.GetNode(ctx, id)
@@ -683,7 +683,7 @@ func TestPublicNodeQueriesSeeOnlyPublicNodes(t *testing.T) {
 		ids = append(ids, id)
 	}
 	for _, i := range []int{0, 2} {
-		if err := s.UpdateNode(ctx, ids[i], []string{"a", "b", "c"}[i], true, "", 1, 0); err != nil {
+		if _, err := s.UpdateNode(ctx, ids[i], NodeEdit{Name: []string{"a", "b", "c"}[i], Public: true, TrafficResetDay: 1}); err != nil {
 			t.Fatal(err)
 		}
 	}

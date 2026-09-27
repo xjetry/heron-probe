@@ -375,7 +375,7 @@ func TestListAlertEventsPaging(t *testing.T) {
 		if i == 0 {
 			id = n2
 		}
-		ev, err := h.store.RecordTransition(t.Context(), r.Id, id, store.StateFiring, store.AlertEvent{Transition: store.TransitionFiring, At: h.clk.Now(), Summary: fmt.Sprint(i), Value: float64(i)}, []int64{c.Id})
+		ev, err := h.store.RecordTransition(t.Context(), r.Id, id, store.StateFiring, "", store.AlertEvent{Transition: store.TransitionFiring, At: h.clk.Now(), Summary: fmt.Sprint(i), Value: float64(i)}, []int64{c.Id})
 		if err != nil {
 			t.Fatal(err)
 		}

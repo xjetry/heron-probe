@@ -45,7 +45,7 @@ func saveRule(t *testing.T, s *Store, r AlertRule) AlertRule {
 
 func recordEvent(t *testing.T, s *Store, rule, node int64, channels []int64) AlertEvent {
 	t.Helper()
-	ev, err := s.RecordTransition(t.Context(), rule, node, StateFiring, AlertEvent{
+	ev, err := s.RecordTransition(t.Context(), rule, node, StateFiring, "", AlertEvent{
 		Transition: TransitionFiring, At: s.clk.Now(), Summary: "offline", Value: 42,
 	}, channels)
 	if err != nil {
@@ -208,7 +208,7 @@ func TestRecordTransitionRollsBackOnDeliveryFailure(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, AlertEvent{At: s.clk.Now()}, []int64{cs[0].ID, cs[1].ID})
+	_, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, "", AlertEvent{At: s.clk.Now()}, []int64{cs[0].ID, cs[1].ID})
 	if err == nil {
 		t.Fatal("delivery failure was accepted")
 	}
@@ -345,7 +345,7 @@ func TestDeleteNodeCleansAlertScopeAndState(t *testing.T) {
 func TestNodeOfflineGraceRoundTrip(t *testing.T) {
 	s, ids, _, _ := alertFixture(t)
 	for _, grace := range []int{90, 0} {
-		if err := s.UpdateNode(t.Context(), ids[0], "n", false, "", 1, grace); err != nil {
+		if _, err := s.UpdateNode(t.Context(), ids[0], NodeEdit{Name: "n", TrafficResetDay: 1, OfflineGraceS: grace}); err != nil {
 			t.Fatal(err)
 		}
 		var raw sql.NullInt64
@@ -375,7 +375,10 @@ func TestSaveAlertRulePrunesStatesWithScope(t *testing.T) {
 	}
 	a.NodeIDs = []int64{ids[1], ids[1]}
 	a = saveRule(t, s, a)
-	want := []StateRow{{a.ID, ids[1], StatePending, s.clk.Now().Add(time.Second)}, {b.ID, ids[0], StatePending, s.clk.Now().Add(time.Second)}, {b.ID, ids[1], StatePending, s.clk.Now().Add(time.Second)}}
+	pending := func(rule, node int64) StateRow {
+		return StateRow{RuleID: rule, NodeID: node, State: StatePending, SinceAt: s.clk.Now().Add(time.Second)}
+	}
+	want := []StateRow{pending(a.ID, ids[1]), pending(b.ID, ids[0]), pending(b.ID, ids[1])}
 	got, err := s.ListAlertStates(t.Context())
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("kept states=%+v err=%v want=%+v", got, err, want)
@@ -481,7 +484,7 @@ func TestAlertWritesRejectDeletedReferences(t *testing.T) {
 				})
 			}
 			t.Run("transition", func(t *testing.T) {
-				_, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, AlertEvent{At: s.clk.Now()}, []int64{cs[0].ID, cs[1].ID})
+				_, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, "", AlertEvent{At: s.clk.Now()}, []int64{cs[0].ID, cs[1].ID})
 				assertAlertNotFound(t, err, missing, id)
 			})
 			for _, table := range []string{"alert_state", "alert_event", "alert_delivery"} {
