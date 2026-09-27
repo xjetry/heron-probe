@@ -169,6 +169,9 @@ func TestUpdateSettingsValidatesGeoURL(t *testing.T) {
 		{"no host", withURL("https:///{ip}"), `settings.geo_url must be an absolute http:// or https:// URL`},
 		{"control character", withURL("https://geo.example/{ip}\n"), `settings.geo_url must be an absolute http:// or https:// URL`},
 		{"user information", withURL("https://user:secret@geo.example/{ip}"), `settings.geo_url must not contain user information`},
+		// 样例地址是 IPv6：{ip} 放在主机或端口位置时，填入样例后冒号落进主机端口，不是合法 URL。
+		{"placeholder as host", withURL("https://{ip}/country"), `settings.geo_url must be an absolute http:// or https:// URL; got "https://{ip}/country"`},
+		{"placeholder as port", withURL("https://geo.example:{ip}/country"), `settings.geo_url must be an absolute http:// or https:// URL; got "https://geo.example:{ip}/country"`},
 		{"too long", withURL("https://geo.example/{ip}?" + strings.Repeat("a", maxGeoURLBytes)), `settings.geo_url must be at most 2048 bytes; got 2073`},
 	} {
 		t.Run(c.name, func(t *testing.T) { rejected(t, h, c.in, c.want, before) })
