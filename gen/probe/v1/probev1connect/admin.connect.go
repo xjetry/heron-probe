@@ -196,7 +196,7 @@ type AdminServiceClient interface {
 	TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error)
 	// 公开页设置：总闸与外观；外观在总闸开启时经 PublicService.GetSite 对外下发。
 	GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error)
-	// 整体替换公开页设置并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
+	// 整体替换公开页外观，总闸 public_enabled 缺席时保持不变，并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
 	// 约束与期望取值，什么都不写入。
 	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
 	// 库的逻辑大小与每张表的行数，与 probe-hub stats 同一来源。
@@ -712,7 +712,7 @@ type AdminServiceHandler interface {
 	TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error)
 	// 公开页设置：总闸与外观；外观在总闸开启时经 PublicService.GetSite 对外下发。
 	GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error)
-	// 整体替换公开页设置并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
+	// 整体替换公开页外观，总闸 public_enabled 缺席时保持不变，并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
 	// 约束与期望取值，什么都不写入。
 	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
 	// 库的逻辑大小与每张表的行数，与 probe-hub stats 同一来源。

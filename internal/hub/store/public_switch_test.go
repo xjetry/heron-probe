@@ -23,7 +23,7 @@ func TestPublicSwitchPersistenceAndMemory(t *testing.T) {
 		t.Fatal("new store gate is closed")
 	}
 	for _, enabled := range []bool{false, true, false} {
-		if err := s.SaveSiteSettings(t.Context(), SiteSettings{Theme: "auto", PublicEnabled: enabled}); err != nil {
+		if _, err := s.SaveSiteSettings(t.Context(), SiteSettingsUpdate{Theme: "auto", PublicEnabled: &enabled}); err != nil {
 			t.Fatal(err)
 		}
 		var raw string
@@ -58,7 +58,7 @@ func TestPublicSwitchFailedSaveKeepsMemory(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	err := s.SaveSiteSettings(t.Context(), SiteSettings{Theme: "auto"})
+	_, err := s.SaveSiteSettings(t.Context(), SiteSettingsUpdate{Theme: "auto", PublicEnabled: new(bool)})
 	if err == nil || !strings.Contains(err.Error(), "gate rejected") {
 		t.Fatalf("save err=%v", err)
 	}

@@ -314,8 +314,17 @@ done
 closed_settings=$(printf '%s' "$settings_body" | jq '.settings.publicEnabled = false')
 [ "$(rpc UpdateSettings "$closed_settings")" = 200 ] || { echo "FAIL: close public page"; exit 1; }
 [ "$(pubget disabled-site GetSite '{}')" = 404 ] || { echo "FAIL: disabled GetSite must be 404"; cat "$work/pub-disabled-site.json"; exit 1; }
+# 旧客户端仅改标题，保留其它外观字段但不认识总闸；缺席不能改变任一方向的状态。
+title_settings=$(printf '%s' "$settings_body" | jq 'del(.settings.publicEnabled) | .settings.title = "e2e 标题更新"')
+[ "$(rpc UpdateSettings "$title_settings")" = 200 ] || { echo "FAIL: title update while closed"; exit 1; }
+jq -e '.settings.publicEnabled == false and .settings.title == "e2e 标题更新"' "$work/UpdateSettings.json" > /dev/null || { echo "FAIL: omitted gate must echo closed and new title"; exit 1; }
+[ "$(pubget omitted-closed-site GetSite '{}')" = 404 ] || { echo "FAIL: omitted gate reopened public page"; exit 1; }
 [ "$(rpc UpdateSettings "$settings_body")" = 200 ] || { echo "FAIL: reopen public page"; exit 1; }
 [ "$(pubget reopened-site GetSite '{}')" = 200 ] || { echo "FAIL: reopened GetSite"; cat "$work/pub-reopened-site.json"; exit 1; }
+[ "$(rpc UpdateSettings "$title_settings")" = 200 ] || { echo "FAIL: title update while open"; exit 1; }
+jq -e '.settings.publicEnabled == true and .settings.title == "e2e 标题更新"' "$work/UpdateSettings.json" > /dev/null || { echo "FAIL: omitted gate must echo open and new title"; exit 1; }
+[ "$(pubget omitted-open-site GetSite '{}')" = 200 ] || { echo "FAIL: omitted gate closed public page"; exit 1; }
+[ "$(rpc UpdateSettings "$settings_body")" = 200 ] || { echo "FAIL: restore appearance"; exit 1; }
 
 # 规则只覆盖 arm64；amd64 保持退出，node1 的流量精确复核不受后续上报影响。
 run_agent arm64 >> "$work/agent-arm64.log" 2>&1 &
@@ -583,7 +592,7 @@ jq -r '.tables[].name' "$work/GetStorageStats.json" > "$work/stats-api-tables.tx
 sed -n '/^db_bytes: /d; s/^\([a-z0-9_]*\): [0-9][0-9]*$/\1/p' "$work/stats.txt" > "$work/stats-cli-tables.txt"
 [ -s "$work/stats-cli-tables.txt" ] && cmp -s "$work/stats-api-tables.txt" "$work/stats-cli-tables.txt" || { echo "FAIL: GetStorageStats and probe-hub stats list different tables"; cat "$work/stats-api-tables.txt" "$work/stats-cli-tables.txt"; exit 1; }
 [ "$(get db_bytes)" -gt 0 ] || { echo "FAIL: db_bytes"; exit 1; }
-# UpdateSettings 整体替换六个 site.* 键，空 logo 也是一行；表里目前只有公开页设置。
+# 已显式保存总闸与五项外观，空 logo 也是一行；表里目前只有公开页设置。
 [ "$(get setting)" = 6 ] || { echo "FAIL: setting rows"; exit 1; }
 [ "$(get node)" = 2 ] || { echo "FAIL: node count"; exit 1; }
 [ "$(get alert_rule)" = 2 ] || { echo "FAIL: alert rule count"; exit 1; }

@@ -15,14 +15,14 @@ func TestSiteSettingsDefaultAndWholeReplacement(t *testing.T) {
 		t.Fatalf("never saved: %+v %v", got, err)
 	}
 	full := SiteSettings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,AAAA", CustomCSS: "body{}"}
-	if err := s.SaveSiteSettings(t.Context(), full); err != nil {
+	if _, err := s.SaveSiteSettings(t.Context(), SiteSettingsUpdate{Title: full.Title, Theme: full.Theme, AccentColor: full.AccentColor, Logo: full.Logo, CustomCSS: full.CustomCSS, PublicEnabled: &full.PublicEnabled}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.SiteSettings(t.Context()); err != nil || got != full {
 		t.Fatalf("round trip: %+v %v", got, err)
 	}
 	// 整体替换：空串写入，表示该项回到默认，不是"不改"。
-	if err := s.SaveSiteSettings(t.Context(), SiteSettings{Theme: "auto"}); err != nil {
+	if _, err := s.SaveSiteSettings(t.Context(), SiteSettingsUpdate{Theme: "auto"}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.SiteSettings(t.Context()); err != nil || got != (SiteSettings{Theme: "auto"}) {
@@ -39,7 +39,7 @@ func TestSaveSiteSettingsIsAllOrNothing(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
 	first := SiteSettings{Title: "旧", Theme: "light", AccentColor: "#111111", Logo: "data:image/png;base64,AAAA", CustomCSS: "a{}"}
-	if err := s.SaveSiteSettings(ctx, first); err != nil {
+	if _, err := s.SaveSiteSettings(ctx, SiteSettingsUpdate{Title: first.Title, Theme: first.Theme, AccentColor: first.AccentColor, Logo: first.Logo, CustomCSS: first.CustomCSS, PublicEnabled: &first.PublicEnabled}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.write(ctx, func(tx *sql.Tx) error {
@@ -48,7 +48,7 @@ func TestSaveSiteSettingsIsAllOrNothing(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	err := s.SaveSiteSettings(ctx, SiteSettings{Title: "新", Theme: "dark", AccentColor: "#222222", CustomCSS: "b{}"})
+	_, err := s.SaveSiteSettings(ctx, SiteSettingsUpdate{Title: "新", Theme: "dark", AccentColor: "#222222", CustomCSS: "b{}"})
 	if err == nil || !strings.Contains(err.Error(), "css rejected") {
 		t.Fatalf("save error = %v", err)
 	}

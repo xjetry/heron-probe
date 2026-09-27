@@ -17,7 +17,7 @@ const toDraft = (s: Settings | undefined): Draft => ({
   publicEnabled: s?.publicEnabled ?? true,
 });
 
-// 公开页设置由 UpdateSettings 整体替换，表单因此总是提交全部字段。
+// 外观由 UpdateSettings 整体替换；总闸虽允许缺席不变，表单仍显式提交当前布尔值。
 //
 // 保存成功时 onSuccess 用 hub 的回显替换草稿；它不判断"是不是最新一次"，靠的是"有未结请求"与"草稿还能被改"互斥。
 // 草稿的改动来自两处：用户改字段（同步），与读 logo 文件的回调（异步，读完才改）。互斥由两处承载：

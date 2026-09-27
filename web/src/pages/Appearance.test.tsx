@@ -15,7 +15,7 @@ async function form() {
   return within(await screen.findByRole("form", { name: "公开页外观" }));
 }
 
-it("公开页总闸显示当前值并提交关闭与重新打开", async () => {
+it("公开页总闸显示当前值并显式提交 false 与 true", async () => {
   const sent: UpdateSettingsRequest[] = [];
   render({ getSettings: async () => ({ settings: { ...current, publicEnabled: true } }),
     updateSettings: async (req) => { sent.push(req); return { settings: req.settings }; } });

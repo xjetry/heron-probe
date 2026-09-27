@@ -73,7 +73,7 @@ func TestServePublicSwitchBothSources(t *testing.T) {
 			rootCode, rootBody, _ := fetch("/")
 			adminCode, adminBody, _ := fetch("/admin/")
 			for _, enabled := range []bool{false, true} {
-				if _, err := admin.UpdateSettings(t.Context(), connect.NewRequest(&probev1.UpdateSettingsRequest{Settings: &probev1.Settings{Theme: "auto", PublicEnabled: enabled}})); err != nil {
+				if _, err := admin.UpdateSettings(t.Context(), connect.NewRequest(&probev1.UpdateSettingsRequest{Settings: &probev1.Settings{Theme: "auto", PublicEnabled: &enabled}})); err != nil {
 					t.Fatal(err)
 				}
 				code, body, headers := fetch("/")

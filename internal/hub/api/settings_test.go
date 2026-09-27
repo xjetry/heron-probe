@@ -17,7 +17,7 @@ import (
 )
 
 func validSettings() *probev1.Settings {
-	return &probev1.Settings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,iVBORw0KGgo=", CustomCss: "body { color: red }", PublicEnabled: true}
+	return &probev1.Settings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,iVBORw0KGgo=", CustomCss: "body { color: red }", PublicEnabled: proto.Bool(true)}
 }
 
 func withSettings(change func(*probev1.Settings)) *probev1.Settings {
@@ -84,7 +84,7 @@ func TestUpdateSettingsValidatesTitleThemeAndAccent(t *testing.T) {
 func TestUpdateSettingsCleansTitleAndAccentAndEchoes(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	want := &probev1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef"}
+	want := &probev1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef", PublicEnabled: proto.Bool(true)}
 	if got := saveSettings(t, h, &probev1.Settings{Title: " ‮\x07运行状态 \t", Theme: "light", AccentColor: "#AbCdEf"}); !proto.Equal(got, want) {
 		t.Fatalf("echo = %v, want %v", got, want)
 	}

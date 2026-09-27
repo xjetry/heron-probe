@@ -10,23 +10,50 @@ import (
 
 	"connectrpc.com/connect"
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestPublicSwitchSettings(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	if !currentSettings(t, h).GetPublicEnabled() {
-		t.Fatal("never saved: public_enabled must be true")
+	if got := currentSettings(t, h); got.PublicEnabled == nil || !got.GetPublicEnabled() {
+		t.Fatal("never saved: public_enabled must be present and true")
 	}
 	for _, enabled := range []bool{false, true, false} {
 		in := validSettings()
-		in.PublicEnabled = enabled
-		if got := saveSettings(t, h, in).GetPublicEnabled(); got != enabled {
-			t.Fatalf("saved public_enabled = %v, want %v", got, enabled)
+		in.PublicEnabled = proto.Bool(enabled)
+		if got := saveSettings(t, h, in); got.PublicEnabled == nil || got.GetPublicEnabled() != enabled {
+			t.Fatalf("saved public_enabled must be present and %v: %v", enabled, got)
 		}
-		if got := currentSettings(t, h).GetPublicEnabled(); got != enabled {
-			t.Fatalf("read public_enabled = %v, want %v", got, enabled)
+		if got := currentSettings(t, h); got.PublicEnabled == nil || got.GetPublicEnabled() != enabled {
+			t.Fatalf("read public_enabled must be present and %v: %v", enabled, got)
 		}
+	}
+}
+
+func TestPublicSwitchOmittedSettings(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			h := newHarness(t, "")
+			h.login(t)
+			in := validSettings()
+			in.PublicEnabled = proto.Bool(enabled)
+			saveSettings(t, h, in)
+			out := saveSettings(t, h, &probev1.Settings{Title: "旧客户端改标题", Theme: "auto"})
+			if out.PublicEnabled == nil || out.GetPublicEnabled() != enabled {
+				t.Errorf("omitted gate echo must be present and %v: %v", enabled, out)
+			}
+			if got := currentSettings(t, h); got.PublicEnabled == nil || got.GetPublicEnabled() != enabled {
+				t.Errorf("omitted gate persisted must be present and %v: %v", enabled, got)
+			}
+			want := http.StatusNotFound
+			if enabled {
+				want = http.StatusOK
+			}
+			if got := pubGet(t, h, "GetSite", jsonQuery("{}"), nil); got.status != want {
+				t.Errorf("omitted gate public status = %d, want %d", got.status, want)
+			}
+		})
 	}
 }
 
@@ -42,7 +69,7 @@ func TestPublicSwitchAllMethodsAndNodePreservation(t *testing.T) {
 	}
 	for _, enabled := range []bool{false, true} {
 		in := validSettings()
-		in.PublicEnabled = enabled
+		in.PublicEnabled = proto.Bool(enabled)
 		saveSettings(t, h, in)
 		for i := 0; i < methods.Len(); i++ {
 			m := methods.Get(i)
@@ -78,7 +105,7 @@ func TestPublicSwitchSnapshotCacheWindow(t *testing.T) {
 		t.Fatalf("prime snapshot: %d %s", first.status, first.body)
 	}
 	h.clk.Advance(500 * time.Millisecond)
-	saveSettings(t, h, &probev1.Settings{Theme: "auto", PublicEnabled: false})
+	saveSettings(t, h, &probev1.Settings{Theme: "auto", PublicEnabled: proto.Bool(false)})
 	cached := pubGet(t, h, "GetSnapshot", jsonQuery("{}"), nil)
 	if cached.status != 200 || !bytes.Equal(cached.body, first.body) {
 		t.Fatalf("snapshot inside 1s cache window: %d %s", cached.status, cached.body)
@@ -93,7 +120,7 @@ func TestPublicSwitchSnapshotCacheWindow(t *testing.T) {
 func TestPublicSwitchStillRateLimits(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	saveSettings(t, h, &probev1.Settings{Theme: "auto"})
+	saveSettings(t, h, &probev1.Settings{Theme: "auto", PublicEnabled: proto.Bool(false)})
 	for i := 0; i <= publicBurst; i++ {
 		got := pubGet(t, h, "GetSite", jsonQuery("{}"), nil)
 		want := 404
@@ -112,7 +139,7 @@ func TestPublicSwitchStillRateLimits(t *testing.T) {
 func TestPublicSwitchDoesNotReadDatabase(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	saveSettings(t, h, &probev1.Settings{Theme: "auto"})
+	saveSettings(t, h, &probev1.Settings{Theme: "auto", PublicEnabled: proto.Bool(false)})
 	if err := h.store.Close(); err != nil {
 		t.Fatal(err)
 	}

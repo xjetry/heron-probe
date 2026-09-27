@@ -3264,7 +3264,7 @@ func (*TestNotifyChannelResponse) Descriptor() ([]byte, []int) {
 	return file_probe_v1_admin_proto_rawDescGZIP(), []int{56}
 }
 
-// 公开页设置。整体替换：UpdateSettings 写入全部字段，没有"不改"的取值。
+// 公开页设置。UpdateSettings 整体替换外观字段；public_enabled 是例外，缺席表示不变。
 type Settings struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
@@ -3279,9 +3279,11 @@ type Settings struct {
 	Logo string `protobuf:"bytes,4,opt,name=logo,proto3" json:"logo,omitempty"`
 	// 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
 	CustomCss string `protobuf:"bytes,5,opt,name=custom_css,json=customCss,proto3" json:"custom_css,omitempty"`
-	// 公开页与 PublicService 的总闸，从未保存过时为开；保存时 false 即关闭。
+	// 公开页与 PublicService 的总闸。GetSettings 总是带值，从未保存过时为 true。
+	// UpdateSettings 缺席表示不变，显式 true/false 才修改；关闭公开页会中断对外服务，
+	// 不认识此字段的旧客户端修改外观时不得顺带关站，因此它有别于外观字段的整体替换语义。
 	// 关闭不修改节点的 public 标记，重新打开后恢复原来的公开范围。
-	PublicEnabled bool `protobuf:"varint,6,opt,name=public_enabled,json=publicEnabled,proto3" json:"public_enabled,omitempty"`
+	PublicEnabled *bool `protobuf:"varint,6,opt,name=public_enabled,json=publicEnabled,proto3,oneof" json:"public_enabled,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3352,8 +3354,8 @@ func (x *Settings) GetCustomCss() string {
 }
 
 func (x *Settings) GetPublicEnabled() bool {
-	if x != nil {
-		return x.PublicEnabled
+	if x != nil && x.PublicEnabled != nil {
+		return *x.PublicEnabled
 	}
 	return false
 }
@@ -4742,15 +4744,16 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x1bDeleteNotifyChannelResponse\"*\n" +
 	"\x18TestNotifyChannelRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\"\x1b\n" +
-	"\x19TestNotifyChannelResponse\"\xb3\x01\n" +
+	"\x19TestNotifyChannelResponse\"\xcb\x01\n" +
 	"\bSettings\x12\x14\n" +
 	"\x05title\x18\x01 \x01(\tR\x05title\x12\x14\n" +
 	"\x05theme\x18\x02 \x01(\tR\x05theme\x12!\n" +
 	"\faccent_color\x18\x03 \x01(\tR\vaccentColor\x12\x12\n" +
 	"\x04logo\x18\x04 \x01(\tR\x04logo\x12\x1d\n" +
 	"\n" +
-	"custom_css\x18\x05 \x01(\tR\tcustomCss\x12%\n" +
-	"\x0epublic_enabled\x18\x06 \x01(\bR\rpublicEnabled\"\x14\n" +
+	"custom_css\x18\x05 \x01(\tR\tcustomCss\x12*\n" +
+	"\x0epublic_enabled\x18\x06 \x01(\bH\x00R\rpublicEnabled\x88\x01\x01B\x11\n" +
+	"\x0f_public_enabled\"\x14\n" +
 	"\x12GetSettingsRequest\"E\n" +
 	"\x13GetSettingsResponse\x12.\n" +
 	"\bsettings\x18\x01 \x01(\v2\x12.probe.v1.SettingsR\bsettings\"G\n" +
@@ -5132,6 +5135,7 @@ func file_probe_v1_admin_proto_init() {
 	file_probe_v1_admin_proto_msgTypes[4].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[9].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[25].OneofWrappers = []any{}
+	file_probe_v1_admin_proto_msgTypes[57].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[70].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[71].OneofWrappers = []any{}
 	type x struct{}
