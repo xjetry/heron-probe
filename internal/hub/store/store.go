@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/url"
 	"sync"
+	"sync/atomic"
 
 	_ "modernc.org/sqlite"
 
@@ -29,14 +30,16 @@ var (
 )
 
 type Store struct {
-	closeMu sync.RWMutex
-	closed  bool
-	w       *sql.DB
-	r       *sql.DB
-	clk     clock.Clock
-	log     *slog.Logger
-	writes  chan writeReq
-	done    chan struct{}
+	siteWriteMu   sync.Mutex
+	publicEnabled atomic.Bool
+	closeMu       sync.RWMutex
+	closed        bool
+	w             *sql.DB
+	r             *sql.DB
+	clk           clock.Clock
+	log           *slog.Logger
+	writes        chan writeReq
+	done          chan struct{}
 }
 
 type writeReq struct {
@@ -94,6 +97,13 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 		return nil, err
 	}
 	s := &Store{w: w, r: r, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{})}
+	site, err := s.SiteSettings(context.Background())
+	if err != nil {
+		r.Close()
+		w.Close()
+		return nil, err
+	}
+	s.publicEnabled.Store(site.PublicEnabled)
 	go s.runWriter()
 	return s, nil
 }

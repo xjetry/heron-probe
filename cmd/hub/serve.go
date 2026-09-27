@@ -37,7 +37,7 @@ func mountOf(path string, h http.Handler) mount { return mount{path: path, h: h}
 // newMux 是所有服务唯一的挂载点；挂载点级测试（TestMuxRejectsAnonymousProcedures）从注册表枚举方法逐个匿名调用，
 // 所以任何进了描述符的服务都必须在这里出现。除 PublicService 外，每个服务都带着它的鉴权拦截器；PublicService
 // 按 §3.2 不鉴权，它的四个过程是那个测试里唯一的匿名白名单（publicProcedures），其余过程匿名调用必须得到 401。
-// 往 PublicService 加方法等于把它公开给任何人，没有拦截器兜底。
+// 往 PublicService 加方法等于把它公开给任何人，总闸只决定整站是否开放，不提供身份鉴权。
 func newMux(mounts ...mount) *http.ServeMux {
 	mux := http.NewServeMux()
 	for _, m := range mounts {
@@ -151,7 +151,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	admin := api.New(api.Config{TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version, Location: loc}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: trusted, Location: loc}, st, l, book, reg, clk, log)
 
-	mux := newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(pub.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", public))
+	mux := newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(pub.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", web.PublicGate(public, st.PublicEnabled)))
 	listener, err := net.Listen("tcp", *listen)
 	if err != nil {
 		return err

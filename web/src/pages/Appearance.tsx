@@ -10,13 +10,14 @@ import { DEFAULT_TITLE } from "../public/site";
 
 const THEME_LABELS: Record<Theme, string> = { auto: "跟随访客的系统设置", light: "浅色", dark: "深色" };
 
-type Draft = { title: string; theme: string; accentColor: string; logo: string; customCss: string };
+type Draft = { title: string; theme: string; accentColor: string; logo: string; customCss: string; publicEnabled: boolean };
 
 const toDraft = (s: Settings | undefined): Draft => ({
   title: s?.title ?? "", theme: s?.theme || "auto", accentColor: s?.accentColor ?? "", logo: s?.logo ?? "", customCss: s?.customCss ?? "",
+  publicEnabled: s?.publicEnabled ?? true,
 });
 
-// 公开页的外观：UpdateSettings 整体替换五项，表单因此总是提交全部字段。
+// 公开页设置由 UpdateSettings 整体替换，表单因此总是提交全部字段。
 //
 // 保存成功时 onSuccess 用 hub 的回显替换草稿；它不判断"是不是最新一次"，靠的是"有未结请求"与"草稿还能被改"互斥。
 // 草稿的改动来自两处：用户改字段（同步），与读 logo 文件的回调（异步，读完才改）。互斥由两处承载：
@@ -81,6 +82,8 @@ export function Appearance() {
       </p>
       <form className="card edit-form" aria-label="公开页外观" onSubmit={submit}>
         <fieldset className="bare" disabled={update.isPending}>
+          <label className="row"><input type="checkbox" checked={form.publicEnabled} onChange={(e) => edit({ publicEnabled: e.target.checked })} />启用公开页</label>
+          <p className="muted">关闭后公开页与公开接口整体不可访问，节点的公开标记保留，重新打开即可恢复。已缓存的快照最多还可命中 1 秒。</p>
           <label>
             标题
             <input value={form.title} placeholder={DEFAULT_TITLE} onChange={(e) => edit({ title: e.target.value })} />

@@ -40,6 +40,25 @@ func Handler() http.Handler { return embedded(adminDist, "dist", Prefix, notBuil
 // PublicHandler 服务挂在 / 的内置公开页。
 func PublicHandler() http.Handler { return embedded(publicDist, "dist-public", "/", notBuiltPublic) }
 
+// PublicGate 统一包住内置页与自定义目录；只挂在公开根路径，管理面板和 RPC 由 mux 的更具体路由承载。
+// 关闭时不调用文件服务，避免说明页之外仍可下载脚本或自定义资源。
+func PublicGate(next http.Handler, enabled func() bool) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if enabled() {
+			next.ServeHTTP(w, r)
+			return
+		}
+		builtinHeaders(w.Header())
+		w.Header().Set("Cache-Control", "no-store")
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		io.WriteString(w, `<!doctype html><meta charset="utf-8"><title>probe</title><p>公开页已关闭</p>`)
+	})
+}
+
 func builtinHeaders(h http.Header) {
 	h.Set("Content-Security-Policy", csp)
 	h.Set("X-Content-Type-Options", "nosniff")

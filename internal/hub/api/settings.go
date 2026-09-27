@@ -55,7 +55,7 @@ func cleanSettings(in *probev1.Settings) (store.SiteSettings, error) {
 	}
 	return store.SiteSettings{
 		Title: title, Theme: in.GetTheme(), AccentColor: strings.ToLower(in.GetAccentColor()),
-		Logo: in.GetLogo(), CustomCSS: in.GetCustomCss(),
+		Logo: in.GetLogo(), CustomCSS: in.GetCustomCss(), PublicEnabled: in.GetPublicEnabled(),
 	}, nil
 }
 
@@ -114,7 +114,7 @@ func checkCSS(css string) error {
 }
 
 func settingsProto(st store.SiteSettings) *probev1.Settings {
-	return &probev1.Settings{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS}
+	return &probev1.Settings{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS, PublicEnabled: st.PublicEnabled}
 }
 
 func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.GetSettingsRequest]) (*connect.Response[probev1.GetSettingsResponse], error) {

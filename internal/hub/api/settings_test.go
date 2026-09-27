@@ -17,7 +17,7 @@ import (
 )
 
 func validSettings() *probev1.Settings {
-	return &probev1.Settings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,iVBORw0KGgo=", CustomCss: "body { color: red }"}
+	return &probev1.Settings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,iVBORw0KGgo=", CustomCss: "body { color: red }", PublicEnabled: true}
 }
 
 func withSettings(change func(*probev1.Settings)) *probev1.Settings {

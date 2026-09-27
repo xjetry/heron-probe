@@ -168,7 +168,7 @@ jq -e '. == {theme: "auto"}' "$work/pub-site-default.json" > /dev/null || { echo
 login_body=$(jq -nc --arg password "$admin_pw" '{password: $password}')
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login"; cat "$work/Login.json"; exit 1; }
 # 外观整体替换并回显 hub 实际保存的值（主色转小写），公开页随即拿到；被拒的更新什么都不写。
-settings_body='{"settings": {"title": "e2e 状态", "theme": "dark", "accentColor": "#FF5500", "customCss": ".card { border-width: 2px; }"}}'
+settings_body='{"settings": {"title": "e2e 状态", "theme": "dark", "accentColor": "#FF5500", "customCss": ".card { border-width: 2px; }", "publicEnabled": true}}'
 [ "$(rpc UpdateSettings "$settings_body")" = 200 ] || { echo "FAIL: UpdateSettings"; cat "$work/UpdateSettings.json"; exit 1; }
 jq -e '.settings.accentColor == "#ff5500"' "$work/UpdateSettings.json" > /dev/null || { echo "FAIL: UpdateSettings echo"; cat "$work/UpdateSettings.json"; exit 1; }
 [ "$(pubget site GetSite '{}')" = 200 ] || { echo "FAIL: GetSite after update"; exit 1; }
@@ -309,6 +309,13 @@ for method in QueryMetrics QueryProbes; do
   cmp -s "$work/pub-private-$method.json" "$work/pub-missing-$method.json" || { echo "FAIL: $method tells private and missing nodes apart"; cat "$work/pub-private-$method.json" "$work/pub-missing-$method.json"; exit 1; }
   [ "$(hdr "private-$method" Cache-Control)" = no-store ] || { echo "FAIL: $method NotFound is cacheable"; cat "$work/pub-private-$method.headers"; exit 1; }
 done
+
+# 总闸整体关闭公开接口，重新打开仍使用原外观与逐节点公开范围。
+closed_settings=$(printf '%s' "$settings_body" | jq '.settings.publicEnabled = false')
+[ "$(rpc UpdateSettings "$closed_settings")" = 200 ] || { echo "FAIL: close public page"; exit 1; }
+[ "$(pubget disabled-site GetSite '{}')" = 404 ] || { echo "FAIL: disabled GetSite must be 404"; cat "$work/pub-disabled-site.json"; exit 1; }
+[ "$(rpc UpdateSettings "$settings_body")" = 200 ] || { echo "FAIL: reopen public page"; exit 1; }
+[ "$(pubget reopened-site GetSite '{}')" = 200 ] || { echo "FAIL: reopened GetSite"; cat "$work/pub-reopened-site.json"; exit 1; }
 
 # 规则只覆盖 arm64；amd64 保持退出，node1 的流量精确复核不受后续上报影响。
 run_agent arm64 >> "$work/agent-arm64.log" 2>&1 &
@@ -576,8 +583,8 @@ jq -r '.tables[].name' "$work/GetStorageStats.json" > "$work/stats-api-tables.tx
 sed -n '/^db_bytes: /d; s/^\([a-z0-9_]*\): [0-9][0-9]*$/\1/p' "$work/stats.txt" > "$work/stats-cli-tables.txt"
 [ -s "$work/stats-cli-tables.txt" ] && cmp -s "$work/stats-api-tables.txt" "$work/stats-cli-tables.txt" || { echo "FAIL: GetStorageStats and probe-hub stats list different tables"; cat "$work/stats-api-tables.txt" "$work/stats-cli-tables.txt"; exit 1; }
 [ "$(get db_bytes)" -gt 0 ] || { echo "FAIL: db_bytes"; exit 1; }
-# UpdateSettings 整体替换：请求只给了四项，存储层照样写五个 site.* 键（空 logo 也是一行）；表里目前只有外观。
-[ "$(get setting)" = 5 ] || { echo "FAIL: setting rows"; exit 1; }
+# UpdateSettings 整体替换六个 site.* 键，空 logo 也是一行；表里目前只有公开页设置。
+[ "$(get setting)" = 6 ] || { echo "FAIL: setting rows"; exit 1; }
 [ "$(get node)" = 2 ] || { echo "FAIL: node count"; exit 1; }
 [ "$(get alert_rule)" = 2 ] || { echo "FAIL: alert rule count"; exit 1; }
 [ "$(get alert_rule_node)" = 2 ] || { echo "FAIL: alert scope count"; exit 1; }

@@ -11,7 +11,7 @@ import (
 func TestSiteSettingsDefaultAndWholeReplacement(t *testing.T) {
 	s, _ := open(t)
 	got, err := s.SiteSettings(t.Context())
-	if err != nil || got != (SiteSettings{Theme: DefaultTheme}) {
+	if err != nil || got != (SiteSettings{Theme: DefaultTheme, PublicEnabled: true}) {
 		t.Fatalf("never saved: %+v %v", got, err)
 	}
 	full := SiteSettings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,AAAA", CustomCSS: "body{}"}
@@ -28,13 +28,13 @@ func TestSiteSettingsDefaultAndWholeReplacement(t *testing.T) {
 	if got, err := s.SiteSettings(t.Context()); err != nil || got != (SiteSettings{Theme: "auto"}) {
 		t.Fatalf("replacement kept old values: %+v %v", got, err)
 	}
-	if n := rowCounts(t, s)["setting"]; n != 5 {
-		t.Fatalf("setting rows = %d, want 5", n)
+	if n := rowCounts(t, s)["setting"]; n != 6 {
+		t.Fatalf("setting rows = %d, want 6", n)
 	}
 }
 
-// 保存中途失败时库里仍是上一套完整外观：五个键在同一个写事务里，任一条失败整体回滚。
-// 触发器只拦最后一个键，拆成逐键提交的实现会留下前四个新值。
+// 保存中途失败时库里仍是上一套完整设置：全部键在同一个写事务里，任一条失败整体回滚。
+// 触发器拦 CSS 键，拆成逐键提交的实现会留下前四个新值。
 func TestSaveSiteSettingsIsAllOrNothing(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
@@ -74,7 +74,7 @@ func TestMigrationFromV7MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("minute row lost across migration: %v %v", rows, err)
 	}
-	if st, err := migrated.SiteSettings(t.Context()); err != nil || st != (SiteSettings{Theme: DefaultTheme}) {
+	if st, err := migrated.SiteSettings(t.Context()); err != nil || st != (SiteSettings{Theme: DefaultTheme, PublicEnabled: true}) {
 		t.Fatalf("settings after migration: %+v %v", st, err)
 	}
 }

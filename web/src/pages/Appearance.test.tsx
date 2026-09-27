@@ -15,6 +15,24 @@ async function form() {
   return within(await screen.findByRole("form", { name: "公开页外观" }));
 }
 
+it("公开页总闸显示当前值并提交关闭与重新打开", async () => {
+  const sent: UpdateSettingsRequest[] = [];
+  render({ getSettings: async () => ({ settings: { ...current, publicEnabled: true } }),
+    updateSettings: async (req) => { sent.push(req); return { settings: req.settings }; } });
+  const f = await form();
+  const toggle = f.getByRole("checkbox", { name: "启用公开页" });
+  expect(toggle).toBeChecked();
+  expect(f.getByText(/节点的公开标记保留/)).toBeInTheDocument();
+  fireEvent.click(toggle);
+  fireEvent.click(f.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(sent.map((r) => r.settings?.publicEnabled)).toEqual([false]));
+  await f.findByRole("status");
+  expect(toggle).not.toBeChecked();
+  fireEvent.click(toggle);
+  fireEvent.click(f.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(sent.map((r) => r.settings?.publicEnabled)).toEqual([false, true]));
+});
+
 it("表单显示当前设置，标题留空时提示内置标题", async () => {
   render({ getSettings: async () => ({ settings: { ...current, title: "" } }) });
   const f = await form();
@@ -25,7 +43,7 @@ it("表单显示当前设置，标题留空时提示内置标题", async () => {
   expect(f.getByLabelText("自定义 CSS")).toHaveValue("body { margin: 0 }");
 });
 
-it("保存提交全部五项，表单改显 hub 实际保存的值", async () => {
+it("保存提交全部外观字段，表单改显 hub 实际保存的值", async () => {
   const sent: UpdateSettingsRequest[] = [];
   render({ updateSettings: async (req) => { sent.push(req); return { settings: { ...req.settings!, title: "新标题", accentColor: "#abcdef" } }; } });
   const f = await form();
