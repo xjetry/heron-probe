@@ -1,6 +1,7 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { PublicService } from "../gen/probe/v1/public_pb";
+import { BillingCycle } from "../gen/probe/v1/types_pb";
 import { POLL_MS } from "../lib/poll";
 import { renderWithService } from "../test/harness";
 import { PublicOverview } from "./Overview";
@@ -56,4 +57,26 @@ it("按 POLL_MS 轮询快照", async () => {
   await screen.findByText("1 / 2 在线");
   await act(async () => vi.advanceTimersByTimeAsync(POLL_MS + 100));
   await waitFor(() => expect(getSnapshot.mock.calls.length).toBeGreaterThanOrEqual(2));
+});
+
+it("填了费用与到期的节点卡片多两行，已过期的到期标红，没填的不显示这两行", async () => {
+  const billed = {
+    now: 1_000n,
+    nodes: [
+      { id: 5n, name: "paid", online: true, sortOrder: 0, billing: { price: "12.50", currency: "USD", billingCycle: BillingCycle.MONTHLY, expiresOn: "2026-10-01", daysLeft: 4 } },
+      { id: 6n, name: "lapsed", online: true, sortOrder: 1, billing: { expiresOn: "2026-09-24", daysLeft: -3 } },
+      { id: 7n, name: "plain", online: true, sortOrder: 2 },
+    ],
+  };
+  renderWithService(PublicService, { getSnapshot: async () => billed }, [{ path: "/", Component: PublicOverview }], "/");
+  const paid = within(await screen.findByRole("article", { name: "paid" }));
+  expect(paid.getByText("费用").nextElementSibling).toHaveTextContent(/^USD 12\.50 \/ 月$/);
+  const due = paid.getByText("到期").nextElementSibling;
+  expect(due).toHaveTextContent(/^2026-10-01（剩 4 天）$/);
+  expect(due).not.toHaveClass("error");
+  const lapsed = within(screen.getByRole("article", { name: "lapsed" }));
+  expect(lapsed.queryByText("费用")).toBeNull();
+  expect(lapsed.getByText("2026-09-24（已过期 3 天）")).toHaveClass("error");
+  const plain = within(screen.getByRole("article", { name: "plain" }));
+  expect([plain.queryByText("费用"), plain.queryByText("到期")]).toEqual([null, null]);
 });

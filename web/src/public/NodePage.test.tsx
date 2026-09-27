@@ -1,9 +1,9 @@
 import { create } from "@bufbuild/protobuf";
-import { screen } from "@testing-library/react";
+import { cleanup, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { PublicService } from "../gen/probe/v1/public_pb";
 import { QueryProbesResponseSchema } from "../gen/probe/v1/query_pb";
-import { ProbeKind } from "../gen/probe/v1/types_pb";
+import { BillingCycle, ProbeKind } from "../gen/probe/v1/types_pb";
 import { renderWithService } from "../test/harness";
 import { NodePage } from "./NodePage";
 
@@ -30,4 +30,31 @@ it("快照里没有的节点说明不存在或未公开，也不去查历史", a
   renderWithService(PublicService, { getSnapshot: snapshot, queryMetrics }, [{ path: "/nodes/:id", Component: NodePage }], "/nodes/9");
   expect(await screen.findByRole("alert")).toHaveTextContent("节点 9 不存在或未公开");
   expect(queryMetrics).not.toHaveBeenCalled();
+});
+
+it("静态信息卡带费用与到期两行；主机信息缺失时卡片照样显示这两行，都没有时不画卡片", async () => {
+  const nodes = [
+    { id: 7n, name: "edge-1", online: true, facts: { os: "Alpine 3.21", arch: "arm64" }, billing: { price: "5", currency: "EUR", billingCycle: BillingCycle.YEARLY, expiresOn: "2026-09-20", daysLeft: -7 } },
+    { id: 8n, name: "fresh", online: false, billing: { price: "3", currency: "USD" } },
+    { id: 9n, name: "bare", online: false },
+  ];
+  const getSnapshot = async () => ({ now: 1_000n, nodes });
+  const queryMetrics = async () => ({ level: "1m", stepS: 60, ts: [], series: [] });
+  const queryProbes = async () => ({ level: "1m", stepS: 60, series: [] });
+  const show = async (id: number) => {
+    renderWithService(PublicService, { getSnapshot, queryMetrics, queryProbes }, [{ path: "/nodes/:id", Component: NodePage }], `/nodes/${id}`);
+    await screen.findByRole("heading", { level: 1 });
+  };
+  await show(7);
+  expect(screen.getByText("Alpine 3.21")).toBeInTheDocument();
+  expect(screen.getByText("费用").nextElementSibling).toHaveTextContent(/^EUR 5 \/ 年$/);
+  expect(screen.getByText("2026-09-20（已过期 7 天）")).toHaveClass("error");
+  cleanup();
+  await show(8);
+  expect(screen.getByText("费用").nextElementSibling).toHaveTextContent(/^USD 3$/);
+  expect(screen.queryByText("到期")).toBeNull();
+  expect(screen.queryByText("系统")).toBeNull();
+  cleanup();
+  await show(9);
+  expect(screen.queryByRole("definition")).toBeNull();
 });
