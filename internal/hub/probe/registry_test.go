@@ -305,3 +305,59 @@ func TestRegistryExplicitEmptyScopeReachesNoNode(t *testing.T) {
 	}
 	assertState(t, r, setupVersion+2, []Detail{{Task: empty.Task}}, append(slices.Clone(ids), three)...)
 }
+
+// 新节点的覆盖只取库在建节点事务里按 probeCoverage 读出的结果，不看内存的 allNodes 集合。这里绕过注册表直接在
+// store 里改两个任务的作用域（任务体不变），让库的覆盖与内存的 allNodes 集合朝两个方向分叉：一个在库里改成全部
+// 节点、内存仍是显式分配；另一个在库里改回显式分配、内存仍是全部节点。两个建节点入口建出的节点，清单都必须与库一致。
+func TestRegistryCreatedNodeCoverageFollowsStore(t *testing.T) {
+	for name, create := range map[string]func(t *testing.T, r *Registry, st *store.Store) (int64, error){
+		"create": func(t *testing.T, r *Registry, _ *store.Store) (int64, error) {
+			return r.CreateNode(t.Context(), "new", []byte("new"))
+		},
+		"register": func(t *testing.T, r *Registry, st *store.Store) (int64, error) {
+			if err := st.SetRegisterWindow(t.Context(), []byte("key"), time.Unix(3600, 0), 1); err != nil {
+				return 0, err
+			}
+			return r.RegisterNode(t.Context(), []byte("key"), "new", []byte("new"))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, st, ids := registryStore(t)
+			widened := save(t, r, "widened.example", ids[:1])
+			narrowed, _, err := r.Save(t.Context(), task("narrowed.example"), true, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := st.SaveProbeTask(t.Context(), widened.Task, true, nil); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := st.SaveProbeTask(t.Context(), narrowed.Task, false, ids[:1]); err != nil {
+				t.Fatal(err)
+			}
+			node, err := create(t, r, st)
+			if err != nil {
+				t.Fatal(err)
+			}
+			version, recs, err := st.LoadProbeTasks(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored := &probev1.ProbeTasks{Version: version}
+			for _, rec := range recs {
+				if slices.Contains(rec.NodeIDs, node) {
+					stored.Tasks = append(stored.Tasks, rec.Task)
+				}
+			}
+			// 前提：分叉确实落在新节点上，库给它的是 widened 而不是 narrowed；否则下面的比较证明不了什么。
+			if want := (&probev1.ProbeTasks{Version: version, Tasks: []*probev1.ProbeTask{widened.Task}}); !proto.Equal(stored, want) {
+				t.Fatalf("store coverage of the new node = %v, want %v", stored, want)
+			}
+			if got := r.TasksFor(node); !proto.Equal(got, stored) {
+				t.Errorf("TasksFor(new node)=%v, store has %v", got, stored)
+			}
+			if !r.Assigned(node, widened.Task.Id) || r.Assigned(node, narrowed.Task.Id) {
+				t.Errorf("Assigned(new node): widened=%v narrowed=%v, want true false", r.Assigned(node, widened.Task.Id), r.Assigned(node, narrowed.Task.Id))
+			}
+		})
+	}
+}

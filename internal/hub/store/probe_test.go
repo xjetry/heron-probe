@@ -193,7 +193,8 @@ func TestSaveProbeTaskAssignsAndBumpsVersion(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
 	a, _, _ := s.CreateNode(ctx, "a", hash(1))
-	b, base, _ := s.CreateNode(ctx, "b", hash(2))
+	b, created, _ := s.CreateNode(ctx, "b", hash(2))
+	base := created.Version
 	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{b, a})
 	if err != nil || saved.Task.Id != 1 || !reflect.DeepEqual(saved.NodeIDs, []int64{a, b}) || version != base+1 {
 		t.Fatalf("save=%v version=%d err=%v", saved, version, err)
@@ -274,7 +275,8 @@ func assertTasks(t *testing.T, s *Store, wantVersion uint64, want []ProbeTaskRec
 func TestSaveProbeTaskEnforcesPerNodeLimit(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, base, _ := s.CreateNode(ctx, "n", hash(1))
+	id, created, _ := s.CreateNode(ctx, "n", hash(1))
+	base := created.Version
 	for range probelimit.MaxTasksPerNode {
 		if _, _, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{id}); err != nil {
 			t.Fatal(err)
