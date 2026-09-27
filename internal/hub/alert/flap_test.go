@@ -206,7 +206,7 @@ func TestFlapGraceSurvivesRestartDuringPending(t *testing.T) {
 				f, r := flapFixture(t)
 				recoveredAt := f.clk.Now()
 				f.clk.Advance(c.lastReport)
-				f.l.Observe(f.ids[0], &probev1.Metrics{})
+				f.l.Observe(f.ids[0], "", &probev1.Metrics{})
 				f.sweep(t)
 				checks := []check{
 					{c.lastReport + 61*time.Second, store.StatePending, true},
