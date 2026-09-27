@@ -631,6 +631,11 @@ message UploadThemeResponse {
 message ListThemesRequest {}
 message ListThemesResponse {
   repeated Theme themes = 1;
+  // hub 的 --theme-origin，规范形态 scheme://host[:port]：启用中的主题在这个 origin 的根路径上托管，没有启用中的主题时
+  // 那里是内置公开页。
+  string theme_origin = 2;
+  // hub 给了 --public-dir：面板所在 origin 的公开页由那个目录接管，与主题无关；启用主题只改变 theme_origin 上的页面。
+  bool public_dir = 3;
 }
 
 message EnableThemeRequest {

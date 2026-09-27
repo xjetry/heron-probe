@@ -232,12 +232,23 @@ func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
 	}
 }
 
-// serve 把"是否配了 --theme-origin"交给管理服务：没配时主题方法 FailedPrecondition，配了就能调。
+// serve 把 --theme-origin 与"是否给了 --public-dir"交给管理服务：没配 origin 时主题方法 FailedPrecondition；配了就能调，
+// ListThemes 回显规范形态的 origin 与 public_dir，面板据此给出主题的地址与"主 origin 被目录接管"的提示。
 func TestServePassesThemeOriginToAdmin(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("site"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
-		flags []string
-		want  connect.Code
-	}{{nil, connect.CodeFailedPrecondition}, {[]string{"--theme-origin", "https://status.example.com"}, 0}} {
+		flags     []string
+		want      connect.Code
+		origin    string
+		publicDir bool
+	}{
+		{nil, connect.CodeFailedPrecondition, "", false},
+		{[]string{"--theme-origin", "https://Status.Example.com/"}, 0, "https://status.example.com", false},
+		{[]string{"--theme-origin", "http://status.example.com:8081", "--public-dir", dir}, 0, "http://status.example.com:8081", true},
+	} {
 		t.Run(fmt.Sprint(tc.flags), func(t *testing.T) {
 			db := filepath.Join(t.TempDir(), "hub.db")
 			const pw = "initial sufficiently long password"
@@ -252,9 +263,12 @@ func TestServePassesThemeOriginToAdmin(t *testing.T) {
 			}
 			req := connect.NewRequest(&probev1.ListThemesRequest{})
 			req.Header().Set("Cookie", strings.Split(logged.Header().Get("Set-Cookie"), ";")[0])
-			_, err = client.ListThemes(t.Context(), req)
+			resp, err := client.ListThemes(t.Context(), req)
 			if got := connect.CodeOf(err); (err == nil && tc.want != 0) || (err != nil && got != tc.want) {
 				t.Fatalf("ListThemes with flags %v: %v, want code %v", tc.flags, err, tc.want)
+			}
+			if err == nil && (resp.Msg.GetThemeOrigin() != tc.origin || resp.Msg.GetPublicDir() != tc.publicDir) {
+				t.Fatalf("ListThemes with flags %v: theme_origin %q public_dir %v, want %q %v", tc.flags, resp.Msg.GetThemeOrigin(), resp.Msg.GetPublicDir(), tc.origin, tc.publicDir)
 			}
 		})
 	}

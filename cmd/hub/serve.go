@@ -156,7 +156,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	if err := notifier.Requeue(ctx); err != nil {
 		return err
 	}
-	admin := api.New(api.Config{TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version, Location: loc, Retention: retention, ThemeOrigin: themeOrigin != ""}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
+	admin := api.New(api.Config{TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version, Location: loc, Retention: retention, ThemeOrigin: themeOrigin, PublicDir: *publicDir != ""}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: trusted, Location: loc}, st, l, book, reg, clk, log)
 
 	mux := newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(pub.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", public))

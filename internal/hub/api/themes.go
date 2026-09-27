@@ -16,7 +16,7 @@ import (
 // 同源的主题脚本能直接 fetch AdminService，浏览器会自动附带管理员的会话 cookie，§5.3 的几条 CSRF 事实挡的是跨站请求，
 // 对同源脚本一条都不成立；能上传会让人以为差一步启用，而实际差的是一个域名。
 func (s *Service) requireThemeOrigin() error {
-	if s.cfg.ThemeOrigin {
+	if s.cfg.ThemeOrigin != "" {
 		return nil
 	}
 	return connect.NewError(connect.CodeFailedPrecondition, errors.New(
@@ -82,7 +82,7 @@ func (s *Service) ListThemes(ctx context.Context, _ *connect.Request[probev1.Lis
 		s.log.Error("listing themes failed", "err", err)
 		return nil, internalError("listing themes failed")
 	}
-	out := &probev1.ListThemesResponse{Themes: make([]*probev1.Theme, 0, len(list))}
+	out := &probev1.ListThemesResponse{Themes: make([]*probev1.Theme, 0, len(list)), ThemeOrigin: s.cfg.ThemeOrigin, PublicDir: s.cfg.PublicDir}
 	for _, t := range list {
 		out.Themes = append(out.Themes, themeProto(t))
 	}
