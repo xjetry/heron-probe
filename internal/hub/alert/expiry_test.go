@@ -157,7 +157,9 @@ func TestRenewedExpiry(t *testing.T) {
 }
 
 // 下一个日界是本地日期变化的第一个时刻：严格晚于 now，本地日期是明天，再早 1 纳秒还是今天。
-// 夏令时在零点开始的时区里零点不存在，新的一天从 01:00 开始。
+// 夏令时在零点开始的时区里零点不存在，新的一天从 01:00 开始。go1.27.1 的 time.Date 对不存在的零点给出的时刻两个方向
+// 都有：Santiago、Havana 往回给前一天的 23:00，本地日期没变，要取 ZoneBounds 的 end；Cairo、Beirut 往前给新一天的
+// 01:00，本地日期已变，它本身就是答案。两类各有用例，只认其中一类的写法会在另一类上定错日界。
 func TestNextDayStartIsTheFirstInstantOfTheNextLocalDay(t *testing.T) {
 	for _, c := range []struct {
 		loc  *time.Location
@@ -171,6 +173,8 @@ func TestNextDayStartIsTheFirstInstantOfTheNextLocalDay(t *testing.T) {
 		{zone(t, "America/Santiago"), "2026-04-04T22:00:00", "2026-04-05T00:00:00-04:00"},
 		{zone(t, "America/Havana"), "2026-03-07T22:00:00", "2026-03-08T01:00:00-04:00"},
 		{zone(t, "America/Havana"), "2026-10-31T22:00:00", "2026-11-01T00:00:00-04:00"},
+		{zone(t, "Africa/Cairo"), "2026-04-23T22:00:00", "2026-04-24T01:00:00+03:00"},
+		{zone(t, "Asia/Beirut"), "2026-03-28T22:00:00", "2026-03-29T01:00:00+03:00"},
 	} {
 		now, err := time.ParseInLocation("2006-01-02T15:04:05", c.now, c.loc)
 		if err != nil {
