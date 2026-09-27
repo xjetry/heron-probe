@@ -17,7 +17,8 @@ import (
 // （RFC 9110 §5.3），代理可以不动客户端自带的那一行、另起一行追加它看到的地址。只读第一行，
 // "从右向左"就是在客户端写的那一行里找，客户端改一个头就能换来源。只传一行（如 []string{Header.Get(…)}）
 // 照样能编译，"每一行都被读到"由多行用例钉住：ratelimit 的 TestBySourceReadsEveryForwardedForLine、
-// auth 的 TestClientIPReadsEveryForwardedForLine、api 的 TestLoginLockoutKeysOnEveryForwardedForLine。
+// auth 的 TestClientIPReadsEveryForwardedForLine、api 的 TestLoginLockoutKeysOnEveryForwardedForLine、
+// ingest 的 TestReportRecordsTheSourceHubSees/可信代理追加的转发头覆盖客户端伪造的第一行。
 func ClientIP(peerAddr string, xff []string, trusted []netip.Prefix) netip.Addr {
 	peer := peerIP(peerAddr)
 	if !peer.IsValid() || !inAny(peer, trusted) {
