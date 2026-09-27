@@ -106,6 +106,29 @@ func TestSchemaPolicyMigratesAndLogsEachStep(t *testing.T) {
 	}
 }
 
+// store.go 的注释声称"每步事务提交成功后才记日志，避免把回滚的迁移记成已完成"：
+// 让迁移 9 的第一条 ALTER 撞上已存在的同名列，使那一步的事务回滚，验证日志确实
+// 止步于最后一步已提交的迁移，不多写一行从未持久化的 to:9。
+func TestSchemaPolicyPartialMigrationLogsOnlyCommittedSteps(t *testing.T) {
+	path, raw := schemaPolicyFixture(t, schemaV7, 7)
+	if _, err := raw.Exec("ALTER TABLE node ADD COLUMN price TEXT NOT NULL DEFAULT ''"); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	st, err := Open(path, clock.Real(), slog.New(slog.NewJSONHandler(&logs, nil)), MigrateSchema)
+	if st != nil {
+		st.Close()
+	}
+	want := "duplicate column name: price"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("partial migration error = %v, want to contain %q", err, want)
+	}
+	if got := userVersion(t, raw); got != 8 {
+		t.Errorf("partial migration left user_version = %d, want 8 (only the committed 7->8 step)", got)
+	}
+	assertSchemaLogs(t, &logs, map[string]any{"level": "INFO", "msg": "database schema migrated", "from": float64(7), "to": float64(8)})
+}
+
 func TestSchemaPolicyCreatesAndReopensWithoutMigration(t *testing.T) {
 	for _, policy := range []SchemaPolicy{MigrateSchema, RequireCurrentSchema} {
 		t.Run(fmt.Sprint(policy), func(t *testing.T) {
