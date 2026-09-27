@@ -630,19 +630,25 @@ func TestPasswordVerificationUsesStoredParameters(t *testing.T) {
 // 语句顺序：判锁定与 TryLock 在同一个 mu 临界区里，拆开后，判定时尚未锁定的请求能在第
 // failLimit 次失败落账、放门之后进门；失败在放门之前记账，先放门则另一请求能在落账前进门。
 // 两处都没有测试能在不持 mu 时挂住的调用（时钟在 mu 内读），这是统计性用例：越界要调度
-// 恰好落在窗口里，所以每轮 8 个协程循环争用，跑 50 轮、每轮换一个来源。正确实现下，进门的
+// 恰好落在窗口里，所以每轮 32 个协程循环争用，跑 250 轮、每轮换一个来源。正确实现下，进门的
 // 请求判定时已看到此前全部落账，调度怎样都不越界。存储的哈希按 TestPasswordVerificationUsesStoredParameters 钉住的
 // 自带参数校验，低成本让一次尝试以微秒计。
 func TestConcurrentWrongPasswordsVerifyExactlyFailLimit(t *testing.T) {
+	const rounds, workers = 250, 32
+	// 每轮的来源必须互不相同：假时钟不走，用过的来源在整个用例里一直锁着，再用它的那一轮
+	// 开头就全是 ErrLocked，正确实现也会报校验 0 次。来源按轮次编进 198.18.0.0/15 的低两字节。
+	if rounds > 1<<16 {
+		t.Fatalf("%d rounds do not fit in the two-byte source number", rounds)
+	}
 	a, _, _ := setup(t)
 	ctx := context.Background()
 	if err := a.store.SetAdminPassword(ctx, cheapPHC(goodPassword)); err != nil {
 		t.Fatal(err)
 	}
-	for round := range 50 {
-		from := netip.AddrFrom4([4]byte{198, 51, 100, byte(round)})
+	for round := range rounds {
+		from := netip.AddrFrom4([4]byte{198, 18, byte(round >> 8), byte(round)})
 		var verified atomic.Int64
-		errs := make(chan error, 8)
+		errs := make(chan error, workers)
 		var wg sync.WaitGroup
 		for range cap(errs) {
 			wg.Go(func() {
