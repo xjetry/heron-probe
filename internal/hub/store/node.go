@@ -59,7 +59,7 @@ type Node struct {
 	SortOrder       int32
 	CreatedAt       time.Time
 	LastSeenAt      time.Time // 零值表示从未上报
-	LastSource      string    // 最近一次上报的来源地址，空串表示从未上报（见 node.last_source）
+	LastSource      string    // 最近一次上报的来源地址；空串表示 hub 没有记录到来源，含义见 node.last_source
 	TrafficResetDay int       // 周期重置日 1–28，列默认 1
 	OfflineGraceS   int       // 0 表示列为 NULL，读侧取 TTL。
 	// Facts 为 nil 表示该节点尚未上报过静态信息。

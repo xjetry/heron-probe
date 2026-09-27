@@ -43,8 +43,9 @@ func ClientIP(peerAddr string, xff []string, trusted []netip.Prefix) netip.Addr 
 }
 
 // SourceText 把 ClientIP 得到的来源地址写成存储与展示用的规范文本：IPv4 映射地址还原成 IPv4，点分；IPv6 为 RFC 5952 的
-// 压缩形式（netip 的 String）；区域标识（%eth0）去掉——它只在 hub 本机有意义。取不到对端时为空串，调用方按"没有新观测"
-// 处理，不覆盖已有的值（空在 node.last_source 里表示从未上报）。
+// 压缩形式（netip 的 String）；区域标识（%eth0）去掉——它只在 hub 本机有意义。取不到对端时为空串。live 层照常用它
+// 覆盖条目里的来源，"空串不覆盖已落盘的值"由 store.WriteMinuteBatch 那条 UPDATE 里 COALESCE(NULLIF(?, 空串), last_source)
+// 承载，不是这里或调用方；hub 只监听 TCP（serve 的 listen），这种输入在生产上不会出现。
 func SourceText(a netip.Addr) string {
 	if !a.IsValid() {
 		return ""
