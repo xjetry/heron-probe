@@ -448,7 +448,7 @@ func TestBookPersistsAndResumesWithStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	id, err := st.CreateNode(t.Context(), "n", []byte{1})
+	id, _, err := st.CreateNode(t.Context(), "n", []byte{1})
 	if err != nil {
 		t.Fatal(err)
 	}

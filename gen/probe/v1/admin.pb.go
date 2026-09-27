@@ -1854,8 +1854,11 @@ func (x *AdjustTrafficResponse) GetTraffic() *Traffic {
 type ProbeTaskDetail struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Task  *ProbeTask             `protobuf:"bytes,1,opt,name=task,proto3" json:"task,omitempty"`
-	// 分配到的节点，升序去重。
-	NodeIds       []int64 `protobuf:"varint,2,rep,packed,name=node_ids,json=nodeIds,proto3" json:"node_ids,omitempty"`
+	// 任务当前覆盖的节点，升序去重。all_nodes 为真时是 hub 展开的全部现有节点，随建删节点变化；
+	// 为假时就是显式分配，空表示不覆盖任何节点（删掉最后一个分配不会变成全部节点）。
+	NodeIds []int64 `protobuf:"varint,2,rep,packed,name=node_ids,json=nodeIds,proto3" json:"node_ids,omitempty"`
+	// 为真表示全部节点，之后新建的节点自动纳入；agent 只拿到展开后的清单，看不到这个开关。
+	AllNodes      bool `protobuf:"varint,3,opt,name=all_nodes,json=allNodes,proto3" json:"all_nodes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1904,6 +1907,13 @@ func (x *ProbeTaskDetail) GetNodeIds() []int64 {
 	return nil
 }
 
+func (x *ProbeTaskDetail) GetAllNodes() bool {
+	if x != nil {
+		return x.AllNodes
+	}
+	return false
+}
+
 type ListProbeTasksRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -1942,7 +1952,8 @@ func (*ListProbeTasksRequest) Descriptor() ([]byte, []int) {
 
 type ListProbeTasksResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// 任务与分配的全局版本；每次经管理接口的修改都变为更大的新值（不小于修改时刻的 Unix 秒）；删除节点清理分配不改；agent 用它对账。
+	// 任务与分配的全局版本；每次经管理接口的修改都变为更大的新值（不小于修改时刻的 Unix 秒），建节点（含 agent 自助注册）
+	// 也是一次修改，因为新节点继承全部 all_nodes 任务；删除节点清理分配不改；agent 用它对账。
 	Version       uint64             `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
 	Tasks         []*ProbeTaskDetail `protobuf:"bytes,2,rep,name=tasks,proto3" json:"tasks,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1995,13 +2006,16 @@ func (x *ListProbeTasksResponse) GetTasks() []*ProbeTaskDetail {
 
 type SaveProbeTaskRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// task.id 为 0 时创建，否则整体替换该任务的字段；node_ids 是保存后的完整分配列表。
+	// task.id 为 0 时创建，否则整体替换该任务的字段；all_nodes 为假时 node_ids 是保存后的完整分配列表，可以为空。
 	// 约束：interval_s 5–3600，timeout_ms 100–5000，
-	// ICMP 目标为 IP 或主机名；每节点至多 64 个任务；target 不超过 253 字节；
+	// ICMP 目标为 IP 或主机名；每节点至多 64 个任务（all_nodes 任务计入每个节点）；target 不超过 253 字节；
 	// TCP 目标必须是规范的 host:port（不带方括号包裹的主机名、不带正号或前导零的端口），
 	// 端口 1–65535；IP 字面量不带 zone。
-	Task          *ProbeTask `protobuf:"bytes,1,opt,name=task,proto3" json:"task,omitempty"`
-	NodeIds       []int64    `protobuf:"varint,2,rep,packed,name=node_ids,json=nodeIds,proto3" json:"node_ids,omitempty"`
+	Task    *ProbeTask `protobuf:"bytes,1,opt,name=task,proto3" json:"task,omitempty"`
+	NodeIds []int64    `protobuf:"varint,2,rep,packed,name=node_ids,json=nodeIds,proto3" json:"node_ids,omitempty"`
+	// 为真表示全部节点（含以后新建的），node_ids 忽略。新节点也会继承这些任务，all_nodes 任务超过 64 个时
+	// 建节点与注册会被拒绝。
+	AllNodes      bool `protobuf:"varint,3,opt,name=all_nodes,json=allNodes,proto3" json:"all_nodes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2048,6 +2062,13 @@ func (x *SaveProbeTaskRequest) GetNodeIds() []int64 {
 		return x.NodeIds
 	}
 	return nil
+}
+
+func (x *SaveProbeTaskRequest) GetAllNodes() bool {
+	if x != nil {
+		return x.AllNodes
+	}
+	return false
 }
 
 type SaveProbeTaskResponse struct {
@@ -4643,17 +4664,19 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\tperiod_rx\x18\x02 \x01(\x04R\bperiodRx\x12\x1b\n" +
 	"\tperiod_tx\x18\x03 \x01(\x04R\bperiodTx\"D\n" +
 	"\x15AdjustTrafficResponse\x12+\n" +
-	"\atraffic\x18\x01 \x01(\v2\x11.probe.v1.TrafficR\atraffic\"U\n" +
+	"\atraffic\x18\x01 \x01(\v2\x11.probe.v1.TrafficR\atraffic\"r\n" +
 	"\x0fProbeTaskDetail\x12'\n" +
 	"\x04task\x18\x01 \x01(\v2\x13.probe.v1.ProbeTaskR\x04task\x12\x19\n" +
-	"\bnode_ids\x18\x02 \x03(\x03R\anodeIds\"\x17\n" +
+	"\bnode_ids\x18\x02 \x03(\x03R\anodeIds\x12\x1b\n" +
+	"\tall_nodes\x18\x03 \x01(\bR\ballNodes\"\x17\n" +
 	"\x15ListProbeTasksRequest\"c\n" +
 	"\x16ListProbeTasksResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12/\n" +
-	"\x05tasks\x18\x02 \x03(\v2\x19.probe.v1.ProbeTaskDetailR\x05tasks\"Z\n" +
+	"\x05tasks\x18\x02 \x03(\v2\x19.probe.v1.ProbeTaskDetailR\x05tasks\"w\n" +
 	"\x14SaveProbeTaskRequest\x12'\n" +
 	"\x04task\x18\x01 \x01(\v2\x13.probe.v1.ProbeTaskR\x04task\x12\x19\n" +
-	"\bnode_ids\x18\x02 \x03(\x03R\anodeIds\"`\n" +
+	"\bnode_ids\x18\x02 \x03(\x03R\anodeIds\x12\x1b\n" +
+	"\tall_nodes\x18\x03 \x01(\bR\ballNodes\"`\n" +
 	"\x15SaveProbeTaskResponse\x12-\n" +
 	"\x04task\x18\x01 \x01(\v2\x19.probe.v1.ProbeTaskDetailR\x04task\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x04R\aversion\"(\n" +

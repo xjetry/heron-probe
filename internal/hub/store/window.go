@@ -50,8 +50,10 @@ func (s *Store) RegisterWindow(ctx context.Context) (Window, bool, error) {
 // ErrNoWindow 覆盖"没有窗口 / 已过期 / 名额用尽"，ErrBadKey 只表示窗口开着
 // 但 key 不对：调用方对外把两者映射成同一响应，但只对后者计失败次数——
 // 窗口关闭时没有可猜的秘密，计数只会误伤与他人共用出口地址的运维者。
-func (s *Store) RegisterNode(ctx context.Context, keyHash []byte, name string, tokenHash []byte) (int64, error) {
-	var id int64
+//
+// 建节点与 CreateNode 走同一个 insertNode：同样检查继承的任务上限、推进任务版本，返回推进后的版本。
+func (s *Store) RegisterNode(ctx context.Context, keyHash []byte, name string, tokenHash []byte) (int64, uint64, error) {
+	var id, version int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		var stored []byte
 		var exp int64
@@ -69,11 +71,11 @@ func (s *Store) RegisterNode(ctx context.Context, keyHash []byte, name string, t
 		if !bytes.Equal(stored, keyHash) {
 			return ErrBadKey
 		}
-		if id, err = insertNode(tx, name, tokenHash, s.clk.Now().Unix()); err != nil {
+		if id, version, err = insertNode(tx, name, tokenHash, s.clk.Now().Unix()); err != nil {
 			return err
 		}
 		_, err = tx.Exec("UPDATE register_window SET remaining = remaining - 1 WHERE id = 1")
 		return err
 	})
-	return id, err
+	return id, uint64(version), err
 }

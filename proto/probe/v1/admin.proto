@@ -24,7 +24,8 @@ service AdminService {
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse) {
     option (probe.v1.access) = ACCESS_READ;
   }
-  // 建节点并返回其 token；明文只在此处返回一次。
+  // 建节点并返回其 token；明文只在此处返回一次。新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
+  // 返回 ResourceExhausted 并说明，节点不建。
   rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
@@ -323,23 +324,30 @@ message AdjustTrafficResponse {
 
 message ProbeTaskDetail {
   ProbeTask task = 1;
-  // 分配到的节点，升序去重。
+  // 任务当前覆盖的节点，升序去重。all_nodes 为真时是 hub 展开的全部现有节点，随建删节点变化；
+  // 为假时就是显式分配，空表示不覆盖任何节点（删掉最后一个分配不会变成全部节点）。
   repeated int64 node_ids = 2;
+  // 为真表示全部节点，之后新建的节点自动纳入；agent 只拿到展开后的清单，看不到这个开关。
+  bool all_nodes = 3;
 }
 message ListProbeTasksRequest {}
 message ListProbeTasksResponse {
-  // 任务与分配的全局版本；每次经管理接口的修改都变为更大的新值（不小于修改时刻的 Unix 秒）；删除节点清理分配不改；agent 用它对账。
+  // 任务与分配的全局版本；每次经管理接口的修改都变为更大的新值（不小于修改时刻的 Unix 秒），建节点（含 agent 自助注册）
+  // 也是一次修改，因为新节点继承全部 all_nodes 任务；删除节点清理分配不改；agent 用它对账。
   uint64 version = 1;
   repeated ProbeTaskDetail tasks = 2;
 }
 message SaveProbeTaskRequest {
-  // task.id 为 0 时创建，否则整体替换该任务的字段；node_ids 是保存后的完整分配列表。
+  // task.id 为 0 时创建，否则整体替换该任务的字段；all_nodes 为假时 node_ids 是保存后的完整分配列表，可以为空。
   // 约束：interval_s 5–3600，timeout_ms 100–5000，
-  // ICMP 目标为 IP 或主机名；每节点至多 64 个任务；target 不超过 253 字节；
+  // ICMP 目标为 IP 或主机名；每节点至多 64 个任务（all_nodes 任务计入每个节点）；target 不超过 253 字节；
   // TCP 目标必须是规范的 host:port（不带方括号包裹的主机名、不带正号或前导零的端口），
   // 端口 1–65535；IP 字面量不带 zone。
   ProbeTask task = 1;
   repeated int64 node_ids = 2;
+  // 为真表示全部节点（含以后新建的），node_ids 忽略。新节点也会继承这些任务，all_nodes 任务超过 64 个时
+  // 建节点与注册会被拒绝。
+  bool all_nodes = 3;
 }
 message SaveProbeTaskResponse {
   ProbeTaskDetail task = 1;

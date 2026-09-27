@@ -22,12 +22,13 @@ var migrations = map[int]func(*sql.Tx) error{
 		}
 		return nil
 	},
-	4: execAll(migrationV4),
-	5: execAll(alertStatementsV5),
-	6: execAll([]string{ddlAPITokenV6}),
-	7: migrateDeliveryFailure,
-	8: execAll([]string{ddlSettingV8}),
-	9: execAll(migrationV9),
+	4:  execAll(migrationV4),
+	5:  execAll(alertStatementsV5),
+	6:  execAll([]string{ddlAPITokenV6}),
+	7:  migrateDeliveryFailure,
+	8:  execAll([]string{ddlSettingV8}),
+	9:  execAll(migrationV9),
+	10: execAll(migrationV10),
 }
 
 func execAll(stmts []string) func(*sql.Tx) error {
@@ -260,4 +261,9 @@ var migrationV9 = []string{
 	`ALTER TABLE node ADD COLUMN auto_renew INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE alert_rule ADD COLUMN days_before INTEGER`,
 	`ALTER TABLE alert_state ADD COLUMN fired_expires_on TEXT NOT NULL DEFAULT ''`,
+}
+
+// v10：探测任务的全部节点开关。旧任务取默认值 0，保持原来的显式分配。
+var migrationV10 = []string{
+	`ALTER TABLE probe_task ADD COLUMN all_nodes INTEGER NOT NULL DEFAULT 0`,
 }

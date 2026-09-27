@@ -7,6 +7,7 @@ import (
 	"time"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	"github.com/xjetry/probe/internal/probelimit"
 )
 
 var ErrBadOrder = errors.New("ids must list every node exactly once")
@@ -289,24 +290,41 @@ func (s *Store) DeleteNode(ctx context.Context, id int64) error {
 	})
 }
 
-func (s *Store) CreateNode(ctx context.Context, name string, tokenHash []byte) (int64, error) {
-	var id int64
+// CreateNode 返回新节点的 id 与建节点事务推进后的任务版本（见 insertNode）。
+func (s *Store) CreateNode(ctx context.Context, name string, tokenHash []byte) (int64, uint64, error) {
+	var id, version int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		var err error
-		id, err = insertNode(tx, name, tokenHash, s.clk.Now().Unix())
+		id, version, err = insertNode(tx, name, tokenHash, s.clk.Now().Unix())
 		return err
 	})
-	return id, err
+	return id, uint64(version), err
 }
 
-// 两个创建入口共用事务内的末尾序号分配，重排后的相对顺序不被新节点打断。
-func insertNode(tx *sql.Tx, name string, tokenHash []byte, createdAt int64) (int64, error) {
+// insertNode 是两个创建入口（CreateNode 与 RegisterNode）共用的建节点步骤，在调用方的写事务里完成：
+//   - 分配末尾序号，重排后的相对顺序不被新节点打断；
+//   - 检查每节点任务上限：新节点继承全部 all_nodes 任务，SaveProbeTask 的上限检查只覆盖保存那一刻已有的节点，
+//     没有节点时保存的 all_nodes 任务可以超过上限，所以建节点这一侧必须再查；超限返回 InheritedLimitError，
+//     事务回滚，节点不建；
+//   - 推进任务版本：新节点的清单从空变为全部 all_nodes 任务，按 bumpProbeVersion 的不变式必须推进。
+func insertNode(tx *sql.Tx, name string, tokenHash []byte, createdAt int64) (id, version int64, err error) {
 	res, err := tx.Exec(`INSERT INTO node (name, token_hash, created_at, sort_order)
 		SELECT ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1 FROM node`, name, tokenHash, createdAt)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return res.LastInsertId()
+	if id, err = res.LastInsertId(); err != nil {
+		return 0, 0, err
+	}
+	var tasks int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM ("+probeCoverage+") WHERE node_id = ?", id).Scan(&tasks); err != nil {
+		return 0, 0, err
+	}
+	if tasks > probelimit.MaxTasksPerNode {
+		return 0, 0, InheritedLimitError{Tasks: tasks, Max: probelimit.MaxTasksPerNode}
+	}
+	version, err = bumpProbeVersion(tx, createdAt)
+	return id, version, err
 }
 
 func (s *Store) SetTokenHash(ctx context.Context, id int64, hash []byte) error {

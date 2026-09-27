@@ -16,7 +16,7 @@ func alertFixture(t *testing.T) (*Store, []int64, []NotifyChannel, uint64) {
 	var ids []int64
 	var channels []NotifyChannel
 	for i := range 2 {
-		id, err := s.CreateNode(t.Context(), fmt.Sprint(i), hash(byte(i+1)))
+		id, _, err := s.CreateNode(t.Context(), fmt.Sprint(i), hash(byte(i+1)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -27,11 +27,11 @@ func alertFixture(t *testing.T) (*Store, []int64, []NotifyChannel, uint64) {
 		}
 		channels = append(channels, c)
 	}
-	task, _, err := s.SaveProbeTask(t.Context(), taskForTest(), []int64{ids[1], ids[0]})
+	task, _, err := s.SaveProbeTask(t.Context(), taskForTest(), false, []int64{ids[1], ids[0]})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return s, ids, channels, task.Id
+	return s, ids, channels, task.Task.Id
 }
 
 func saveRule(t *testing.T, s *Store, r AlertRule) AlertRule {

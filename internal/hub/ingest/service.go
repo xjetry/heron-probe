@@ -221,6 +221,11 @@ func (s *Service) Register(ctx context.Context, req *connect.Request[probev1.Reg
 	if errors.Is(err, auth.ErrDenied) {
 		return nil, unauthenticated()
 	}
+	// 继承的 all_nodes 任务超限只在窗口与 key 都通过之后才会发生（store.RegisterNode 先判窗口与 key，再 insertNode），
+	// 调用方已持有效 key，说明原文可以给它：修复要由管理员减少 all_nodes 任务，probe-agent register 把原文打到 stderr。
+	if errors.Is(err, store.ErrNodeLimit) {
+		return nil, connect.NewError(connect.CodeResourceExhausted, err)
+	}
 	if err != nil {
 		s.log.Error("register failed", "err", err)
 		return nil, connect.NewError(connect.CodeInternal, errors.New("registration failed"))

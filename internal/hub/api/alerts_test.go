@@ -116,7 +116,7 @@ func TestNotifyChannelRejectsUnknownKind(t *testing.T) {
 func TestSaveAlertRuleValidationTexts(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	task, _, err := h.reg.Save(t.Context(), validProbeTask(), nil)
+	task, _, err := h.reg.Save(t.Context(), validProbeTask(), false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestSaveAlertRuleValidationTexts(t *testing.T) {
 func TestProbeAlertRuleRoundTrip(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	task, _, err := h.reg.Save(t.Context(), validProbeTask(), nil)
+	task, _, err := h.reg.Save(t.Context(), validProbeTask(), false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +320,7 @@ func TestDeleteNotifyChannelInUse(t *testing.T) {
 func TestDeleteProbeTaskInUse(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	task, _, err := h.reg.Save(t.Context(), validProbeTask(), nil)
+	task, _, err := h.reg.Save(t.Context(), validProbeTask(), false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

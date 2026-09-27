@@ -129,10 +129,10 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		return err
 	}
 	defer func() { result = errors.Join(result, st.Close()) }()
-	a := auth.New(st, clk, log)
+	reg := probe.New(st, log)
+	a := auth.New(st, reg, clk, log)
 	l := live.New(clk, ttl)
 	book := traffic.New(st, clk, loc, log)
-	reg := probe.New(st, log)
 	alerts := alert.New(alert.Config{TTL: ttl, Location: loc}, st, l, clk, log)
 	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, log)
 	alerts.SetSender(notifier)

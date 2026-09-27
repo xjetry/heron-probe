@@ -58,15 +58,32 @@ func (e NotFoundError) Is(target error) bool {
 	return target == ErrNotFound
 }
 
+// NodeLimitError 是保存任务之后某个现有节点的任务数（显式分配加全部 all_nodes 任务）超过上限。
 type NodeLimitError struct {
 	NodeID int64
+	Tasks  int
 	Max    int
 }
 
 func (e NodeLimitError) Error() string {
-	return fmt.Sprintf("node %d already has %d probe tasks (maximum %d)", e.NodeID, e.Max, e.Max)
+	return fmt.Sprintf("node %d would have %d probe tasks (maximum %d)", e.NodeID, e.Tasks, e.Max)
 }
 
 func (e NodeLimitError) Is(target error) bool {
+	return target == ErrNodeLimit
+}
+
+// InheritedLimitError 是建节点时新节点会继承的 all_nodes 任务数超过上限：新节点没有显式分配，它的任务数就是
+// all_nodes 任务的个数。
+type InheritedLimitError struct {
+	Tasks int
+	Max   int
+}
+
+func (e InheritedLimitError) Error() string {
+	return fmt.Sprintf("a new node would inherit %d all-nodes probe tasks (maximum %d per node); assign some of them to explicit nodes or delete them first", e.Tasks, e.Max)
+}
+
+func (e InheritedLimitError) Is(target error) bool {
 	return target == ErrNodeLimit
 }

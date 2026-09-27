@@ -142,7 +142,8 @@ export const ReportResponseSchema: GenMessage<ReportResponse> = /*@__PURE__*/
  */
 export const AgentService: GenService<{
   /**
-   * 用注册窗口的一次性 key 换取节点 token。
+   * 用注册窗口的一次性 key 换取节点 token。新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
+   * 返回 ResourceExhausted 并说明，节点不建、窗口名额不消耗。
    *
    * @generated from rpc probe.v1.AgentService.Register
    */

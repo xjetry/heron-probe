@@ -33,7 +33,7 @@ func TestMinuteBatchUsesFamilyWatermarkKeys(t *testing.T) {
 	for _, f := range families {
 		t.Run(f.name, func(t *testing.T) {
 			s, _ := open(t)
-			id, err := s.CreateNode(t.Context(), "n", hash(1))
+			id, _, err := s.CreateNode(t.Context(), "n", hash(1))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -70,7 +70,7 @@ func TestMinuteBatchUsesFamilyWatermarkKeys(t *testing.T) {
 func TestProbeRowsMergeAdditivelyAndKeepNullRtt(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", hash(1))
 	// 先写一个只有丢包的桶：rtt_min/max 必须是 NULL 而不是 0。
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Probes: []metric.ProbeRow{probeRow(id, 600, 7, nil, 2, 0)}}); err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestProbeWriterRejectsRowsBeforeProbeWatermarkOnly(t *testing.T) {
 		t.Run(frozen, func(t *testing.T) {
 			s, _ := open(t)
 			ctx := t.Context()
-			id, _ := s.CreateNode(ctx, "n", hash(1))
+			id, _, _ := s.CreateNode(ctx, "n", hash(1))
 			if err := s.setRollupWatermark(t.Context(), frozen, 1200); err != nil {
 				t.Fatal(err)
 			}
@@ -151,7 +151,7 @@ func TestProbeWriterRejectsRowsBeforeProbeWatermarkOnly(t *testing.T) {
 
 func TestQueryProbesRebucketsPerTask(t *testing.T) {
 	s, _ := open(t)
-	id, _ := s.CreateNode(t.Context(), "n", hash(1))
+	id, _, _ := s.CreateNode(t.Context(), "n", hash(1))
 	var input []metric.ProbeRow
 	for ts := int64(600); ts < 1200; ts += 60 {
 		for _, task := range []uint64{9, 3} {
@@ -192,37 +192,37 @@ func taskForTest() *probev1.ProbeTask {
 func TestSaveProbeTaskAssignsAndBumpsVersion(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	a, _ := s.CreateNode(ctx, "a", hash(1))
-	b, _ := s.CreateNode(ctx, "b", hash(2))
-	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), []int64{b, a})
-	if err != nil || saved == nil || saved.Id != 1 || version != uint64(s.clk.Now().Unix()) {
+	a, _, _ := s.CreateNode(ctx, "a", hash(1))
+	b, base, _ := s.CreateNode(ctx, "b", hash(2))
+	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{b, a})
+	if err != nil || saved.Task.Id != 1 || !reflect.DeepEqual(saved.NodeIDs, []int64{a, b}) || version != base+1 {
 		t.Fatalf("save=%v version=%d err=%v", saved, version, err)
 	}
-	assertTasks(t, s, uint64(s.clk.Now().Unix()), []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{a, b}}})
-	saved.Target = "example.com"
-	saved.IntervalS, saved.TimeoutMs = 10, 500
-	saved, version, err = s.SaveProbeTask(ctx, saved, []int64{b})
-	if err != nil || version != uint64(s.clk.Now().Unix())+1 {
+	assertTasks(t, s, base+1, []ProbeTaskRecord{saved})
+	saved.Task.Target = "example.com"
+	saved.Task.IntervalS, saved.Task.TimeoutMs = 10, 500
+	saved, version, err = s.SaveProbeTask(ctx, saved.Task, false, []int64{b})
+	if err != nil || version != base+2 {
 		t.Fatalf("replace version=%d err=%v", version, err)
 	}
-	assertTasks(t, s, uint64(s.clk.Now().Unix())+1, []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{b}}})
+	assertTasks(t, s, base+2, []ProbeTaskRecord{{Task: saved.Task, NodeIDs: []int64{b}}})
 	absent := taskForTest()
 	absent.Id = 99
-	if _, _, err := s.SaveProbeTask(ctx, absent, nil); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "probe task 99 does not exist") {
+	if _, _, err := s.SaveProbeTask(ctx, absent, false, nil); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "probe task 99 does not exist") {
 		t.Fatalf("missing task error=%v", err)
 	}
-	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), []int64{a, 42}); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "node 42 does not exist") {
+	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{a, 42}); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "node 42 does not exist") {
 		t.Fatalf("missing node error=%v", err)
 	}
-	assertTasks(t, s, uint64(s.clk.Now().Unix())+1, []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{b}}})
-	if version, err := s.DeleteProbeTask(ctx, 1); err != nil || version != uint64(s.clk.Now().Unix())+2 {
+	assertTasks(t, s, base+2, []ProbeTaskRecord{saved})
+	if version, err := s.DeleteProbeTask(ctx, 1); err != nil || version != base+3 {
 		t.Fatalf("delete version=%d err=%v", version, err)
 	}
-	assertTasks(t, s, uint64(s.clk.Now().Unix())+2, nil)
+	assertTasks(t, s, base+3, nil)
 	if _, err := s.DeleteProbeTask(ctx, 1); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "probe task 1 does not exist") {
 		t.Fatalf("missing delete error=%v", err)
 	}
-	assertTasks(t, s, uint64(s.clk.Now().Unix())+2, nil)
+	assertTasks(t, s, base+3, nil)
 }
 
 func TestProbeVersionUsesClockAndIncreases(t *testing.T) {
@@ -232,7 +232,7 @@ func TestProbeVersionUsesClockAndIncreases(t *testing.T) {
 		if i == 2 {
 			clk.Advance(time.Hour)
 		}
-		_, version, err := s.SaveProbeTask(t.Context(), taskForTest(), nil)
+		_, version, err := s.SaveProbeTask(t.Context(), taskForTest(), false, nil)
 		if err != nil || version <= previous || version < uint64(clk.Now().Unix()) {
 			t.Fatalf("save version=%d previous=%d now=%d err=%v", version, previous, clk.Now().Unix(), err)
 		}
@@ -252,8 +252,8 @@ func assertTasks(t *testing.T, s *Store, wantVersion uint64, want []ProbeTaskRec
 		t.Fatalf("tasks=%v version=%d err=%v, want %v/%d", got, version, err, want, wantVersion)
 	}
 	for i := range want {
-		if !proto.Equal(got[i].Task, want[i].Task) || !reflect.DeepEqual(got[i].NodeIDs, want[i].NodeIDs) {
-			t.Fatalf("task %d=%v/%v, want %v/%v", i, got[i].Task, got[i].NodeIDs, want[i].Task, want[i].NodeIDs)
+		if !proto.Equal(got[i].Task, want[i].Task) || got[i].AllNodes != want[i].AllNodes || !reflect.DeepEqual(got[i].NodeIDs, want[i].NodeIDs) {
+			t.Fatalf("task %d=%v/%v/%v, want %v/%v/%v", i, got[i].Task, got[i].AllNodes, got[i].NodeIDs, want[i].Task, want[i].AllNodes, want[i].NodeIDs)
 		}
 	}
 	var assignments int
@@ -262,7 +262,9 @@ func assertTasks(t *testing.T, s *Store, wantVersion uint64, want []ProbeTaskRec
 	}
 	wantAssignments := 0
 	for _, rec := range want {
-		wantAssignments += len(rec.NodeIDs)
+		if !rec.AllNodes {
+			wantAssignments += len(rec.NodeIDs)
+		}
 	}
 	if assignments != wantAssignments {
 		t.Fatalf("assignment count=%d, want %d", assignments, wantAssignments)
@@ -272,52 +274,52 @@ func assertTasks(t *testing.T, s *Store, wantVersion uint64, want []ProbeTaskRec
 func TestSaveProbeTaskEnforcesPerNodeLimit(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _ := s.CreateNode(ctx, "n", hash(1))
+	id, base, _ := s.CreateNode(ctx, "n", hash(1))
 	for range probelimit.MaxTasksPerNode {
-		if _, _, err := s.SaveProbeTask(ctx, taskForTest(), []int64{id}); err != nil {
+		if _, _, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{id}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), []int64{id}); !errors.Is(err, ErrNodeLimit) || !strings.Contains(err.Error(), fmt.Sprintf("node %d already has 64 probe tasks (maximum 64)", id)) {
+	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{id}); !errors.Is(err, ErrNodeLimit) || !strings.Contains(err.Error(), fmt.Sprintf("node %d would have 65 probe tasks (maximum 64)", id)) {
 		t.Fatalf("65th task error=%v, want ErrNodeLimit with node", err)
 	}
 	version, tasks, err := s.LoadProbeTasks(ctx)
-	if err != nil || version != uint64(s.clk.Now().Unix())+63 || len(tasks) != 64 {
+	if err != nil || version != base+64 || len(tasks) != 64 {
 		t.Fatalf("limit rollback: version=%d tasks=%d err=%v", version, len(tasks), err)
 	}
 
 	changed := proto.Clone(tasks[0].Task).(*probev1.ProbeTask)
 	changed.Target = "example.com"
-	saved, version, err := s.SaveProbeTask(ctx, changed, []int64{id})
-	if err != nil || version != uint64(s.clk.Now().Unix())+64 || !proto.Equal(saved, changed) {
+	saved, version, err := s.SaveProbeTask(ctx, changed, false, []int64{id})
+	if err != nil || version != base+65 || !proto.Equal(saved.Task, changed) {
 		t.Fatalf("editing full node: task=%v version=%d err=%v, want task %v and a version increment", saved, version, err, changed)
 	}
 	tasks[0].Task = changed
-	assertTasks(t, s, uint64(s.clk.Now().Unix())+64, tasks)
+	assertTasks(t, s, base+65, tasks)
 }
 
 func TestDuplicateProbeAssignmentRollsBackReplacement(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _ := s.CreateNode(ctx, "n", hash(1))
-	saved, _, err := s.SaveProbeTask(ctx, taskForTest(), []int64{id})
+	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{id})
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed := proto.Clone(saved).(*probev1.ProbeTask)
+	changed := proto.Clone(saved.Task).(*probev1.ProbeTask)
 	changed.Target = "changed"
-	if _, _, err := s.SaveProbeTask(ctx, changed, []int64{id, id}); err == nil || !strings.Contains(err.Error(), "UNIQUE constraint failed") {
+	if _, _, err := s.SaveProbeTask(ctx, changed, false, []int64{id, id}); err == nil || !strings.Contains(err.Error(), "UNIQUE constraint failed") {
 		t.Fatalf("duplicate assignment error=%v", err)
 	}
-	assertTasks(t, s, uint64(s.clk.Now().Unix()), []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{id}}})
+	assertTasks(t, s, version, []ProbeTaskRecord{saved})
 }
 
 func TestDeleteNodeRemovesProbeRowsAndAssignments(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	a, _ := s.CreateNode(ctx, "a", hash(1))
-	b, _ := s.CreateNode(ctx, "b", hash(2))
-	saved, _, err := s.SaveProbeTask(ctx, taskForTest(), []int64{a, b})
+	a, _, _ := s.CreateNode(ctx, "a", hash(1))
+	b, _, _ := s.CreateNode(ctx, "b", hash(2))
+	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{a, b})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +327,7 @@ func TestDeleteNodeRemovesProbeRowsAndAssignments(t *testing.T) {
 	if err := s.DeleteNode(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	assertTasks(t, s, uint64(s.clk.Now().Unix()), []ProbeTaskRecord{{Task: saved, NodeIDs: []int64{b}}})
+	assertTasks(t, s, version, []ProbeTaskRecord{{Task: saved.Task, NodeIDs: []int64{b}}})
 	counts := rowCounts(t, s)
 	for _, table := range append(append([]string{}, probeTables...), "probe_task", "probe_task_node") {
 		if counts[table] != 1 {
@@ -367,17 +369,17 @@ func seedProbeLevels(t *testing.T, s *Store, ids []int64) {
 func TestDeleteProbeTaskKeepsHistoryAndNeverReusesID(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _ := s.CreateNode(ctx, "n", hash(1))
-	saved, _, err := s.SaveProbeTask(ctx, taskForTest(), []int64{id})
+	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	saved, _, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{id})
 	if err != nil {
 		t.Fatal(err)
 	}
 	seedProbeLevels(t, s, []int64{id})
-	if _, err := s.DeleteProbeTask(ctx, saved.Id); err != nil {
+	if _, err := s.DeleteProbeTask(ctx, saved.Task.Id); err != nil {
 		t.Fatal(err)
 	}
-	next, _, err := s.SaveProbeTask(ctx, taskForTest(), nil)
-	if err != nil || next.Id <= saved.Id {
+	next, _, err := s.SaveProbeTask(ctx, taskForTest(), false, nil)
+	if err != nil || next.Task.Id <= saved.Task.Id {
 		t.Fatalf("task id reused: next=%v old=%v err=%v", next, saved, err)
 	}
 	counts := rowCounts(t, s)
@@ -391,7 +393,7 @@ func TestDeleteProbeTaskKeepsHistoryAndNeverReusesID(t *testing.T) {
 func TestMinuteBatchRollsBackBothFamilies(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", hash(1))
 	if err := s.write(ctx, func(tx *sql.Tx) error {
 		_, err := tx.Exec("CREATE TRIGGER reject_probe BEFORE INSERT ON probe_1m BEGIN SELECT RAISE(ABORT, 'probe rejected'); END")
 		return err

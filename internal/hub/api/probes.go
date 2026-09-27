@@ -2,15 +2,18 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"connectrpc.com/connect"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/hub/probe"
+	"github.com/xjetry/probe/internal/hub/store"
 )
 
 func detailProto(d probe.Detail) *probev1.ProbeTaskDetail {
-	return &probev1.ProbeTaskDetail{Task: d.Task, NodeIds: d.NodeIDs}
+	return &probev1.ProbeTaskDetail{Task: d.Task, AllNodes: d.AllNodes, NodeIds: d.NodeIDs}
 }
 
 func (s *Service) ListProbeTasks(_ context.Context, _ *connect.Request[probev1.ListProbeTasksRequest]) (*connect.Response[probev1.ListProbeTasksResponse], error) {
@@ -28,7 +31,11 @@ func (s *Service) SaveProbeTask(ctx context.Context, req *connect.Request[probev
 	if err := checkTaskID(req.Msg.GetTask().GetId(), "task.id"); err != nil {
 		return nil, err
 	}
-	d, version, err := s.probes.Save(ctx, req.Msg.GetTask(), req.Msg.GetNodeIds())
+	d, version, err := s.probes.Save(ctx, req.Msg.GetTask(), req.Msg.GetAllNodes(), req.Msg.GetNodeIds())
+	// 超限要指向决定覆盖的字段：all_nodes 为真时 node_ids 被忽略，超限来自开关本身。
+	if req.Msg.GetAllNodes() && errors.Is(err, store.ErrNodeLimit) {
+		return nil, connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("all_nodes: %w", err))
+	}
 	if err != nil {
 		return nil, s.operationError(err, "task", "saving probe task failed")
 	}

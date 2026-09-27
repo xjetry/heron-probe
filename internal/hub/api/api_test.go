@@ -71,10 +71,10 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location) *harness 
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := auth.New(st, clk, slog.Default())
+	reg := probe.New(st, slog.Default())
+	a := auth.New(st, reg, clk, slog.Default())
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, loc, slog.Default())
-	reg := probe.New(st, slog.Default())
 	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: loc}, st, l, clk, slog.Default())
 	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, slog.Default())
 	in, err := ingest.New(ingest.Config{TTL: 30 * time.Second, TrustedProxies: prefixes}, l, st, a, book, reg, clk, slog.Default())

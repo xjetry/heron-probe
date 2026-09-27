@@ -204,7 +204,11 @@ const ddlProbeTask = `CREATE TABLE probe_task (
   target TEXT NOT NULL,
   interval_s INTEGER NOT NULL,
   timeout_ms INTEGER NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  -- 与 alert_rule.all_nodes 同一语义：为真时 SaveProbeTask 不写 probe_task_node 行，任务覆盖全部节点，
+  -- 之后新建的节点也在内；为假时分配行就是全部覆盖，空集不覆盖任何节点，DeleteNode 删掉最后一个分配行
+  -- 也不会放宽到全部。覆盖的读法只有 probeCoverage 一处。列序与迁移 10 的 ADD COLUMN 结果一致。
+  all_nodes INTEGER NOT NULL DEFAULT 0
 )`
 
 const ddlProbeTaskNode = `CREATE TABLE probe_task_node (
@@ -215,7 +219,7 @@ const ddlProbeTaskNode = `CREATE TABLE probe_task_node (
 
 const ddlProbeTaskNodeIndex = `CREATE INDEX probe_task_node_by_node ON probe_task_node (node_id)`
 
-// probe_meta.version 由任务保存与删除事务递增，agent 用它对账任务清单。
+// probe_meta.version 由任务保存与删除、建节点的事务递增，agent 用它对账任务清单（见 bumpProbeVersion）。
 // 删除节点时仅清理其分配，不递增：auth.DeleteNode 在删除成功后撤销 token，
 // 其余节点的清单不变，无需因此重新对账。
 // 单行表，CHECK 让第二行无法插入。

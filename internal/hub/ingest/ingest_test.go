@@ -59,10 +59,10 @@ func newHubWith(t *testing.T, path string, cfg Config) *hub {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	a := auth.New(st, clk, slog.Default())
+	reg := probe.New(st, slog.Default())
+	a := auth.New(st, reg, clk, slog.Default())
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, slog.Default())
-	reg := probe.New(st, slog.Default())
 	svc, err := New(cfg, l, st, a, book, reg, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)
@@ -825,7 +825,7 @@ func TestForgetDropsTrafficState(t *testing.T) {
 
 func (h *hub) task(t *testing.T, nodeID int64) uint64 {
 	t.Helper()
-	d, _, err := h.reg.Save(context.Background(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}, []int64{nodeID})
+	d, _, err := h.reg.Save(context.Background(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}, false, []int64{nodeID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -962,7 +962,8 @@ func TestReportReconcilesTaskVersion(t *testing.T) {
 		}
 		h.clk.Advance(10 * time.Second)
 	}
-	check(0, nil)
+	// 建节点推进了版本；持有该版本的 agent 不再收到清单。
+	check(h.reg.Version(), nil)
 	task := h.task(t, id)
 	savedVersion := h.reg.Version()
 	check(0, &probev1.ProbeTasks{Version: savedVersion, Tasks: []*probev1.ProbeTask{{Id: task, Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}}})

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +43,7 @@ func newFixture(t *testing.T) *fixture {
 	must(t, err)
 	t.Cleanup(func() { must(t, f.st.Close()) })
 	for i := 0; i < 2; i++ {
-		id, err := f.st.CreateNode(t.Context(), fmt.Sprintf("node%d", i+1), []byte(fmt.Sprintf("hash%d", i)))
+		id, _, err := f.st.CreateNode(t.Context(), fmt.Sprintf("node%d", i+1), []byte(fmt.Sprintf("hash%d", i)))
 		must(t, err)
 		f.ids = append(f.ids, id)
 	}
@@ -247,9 +248,9 @@ func TestSaveRuleShrinkingScopeDropsStates(t *testing.T) {
 
 func (f *fixture) task(t *testing.T, ids []int64) uint64 {
 	t.Helper()
-	p, _, err := f.st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}, ids)
+	p, _, err := f.st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}, false, ids)
 	must(t, err)
-	return p.Id
+	return p.Task.Id
 }
 func (f *fixture) minutes(t *testing.T, task uint64, node int64, start int64, buckets ...metric.ProbeBucket) {
 	t.Helper()
@@ -314,6 +315,32 @@ func TestEvaluateProbesOnlyForAssignedNodes(t *testing.T) {
 	must(t, f.e.EvaluateProbes(t.Context(), ts))
 	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
 	wantState(t, f.e, r.ID, f.ids[1], "")
+}
+
+// 探测规则的候选节点取任务的覆盖（store.ProbeTaskNodeIDs）：all_nodes 任务覆盖全部节点，含任务保存之后才建的节点；
+// 显式空分配的任务不覆盖任何节点。
+func TestEvaluateProbesFollowsTaskCoverage(t *testing.T) {
+	f := newFixture(t)
+	p, _, err := f.st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}, true, nil)
+	must(t, err)
+	all := p.Task.Id
+	none := f.task(t, nil)
+	late, _, err := f.st.CreateNode(t.Context(), "late", []byte("late"))
+	must(t, err)
+	nodes := append(slices.Clone(f.ids), late)
+	ts := f.clk.Now().Unix() - 60
+	var rules []store.AlertRule
+	for _, task := range []uint64{all, none} {
+		rules = append(rules, f.rule(t, store.AlertRule{Name: "探测", Kind: store.KindProbe, Enabled: true, AllNodes: true, TaskID: task, Metric: store.MetricLossPct, Threshold: 20, ForMinutes: 1}))
+		for _, id := range nodes {
+			f.minutes(t, task, id, ts, metric.ProbeBucket{Sent: 1, Lost: 1})
+		}
+	}
+	must(t, f.e.EvaluateProbes(t.Context(), ts))
+	for _, id := range nodes {
+		wantState(t, f.e, rules[0].ID, id, store.StateFiring)
+		wantState(t, f.e, rules[1].ID, id, "")
+	}
 }
 
 func TestFailedStateWriteDoesNotPublish(t *testing.T) {
@@ -431,7 +458,7 @@ func TestRunLoopsStopOnCancellation(t *testing.T) {
 func TestAllNodesIncludesNewNodes(t *testing.T) {
 	f := newFixture(t)
 	r := f.rule(t, offline())
-	id, err := f.st.CreateNode(t.Context(), "new", []byte("new-hash"))
+	id, _, err := f.st.CreateNode(t.Context(), "new", []byte("new-hash"))
 	must(t, err)
 	f.clk.Advance(time.Minute)
 	f.sweep(t)

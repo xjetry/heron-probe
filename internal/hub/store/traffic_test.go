@@ -19,7 +19,7 @@ func openTraffic(t *testing.T) (*Store, int64) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	id, err := st.CreateNode(context.Background(), "n", []byte{1})
+	id, _, err := st.CreateNode(context.Background(), "n", []byte{1})
 	if err != nil {
 		t.Fatal(err)
 	}

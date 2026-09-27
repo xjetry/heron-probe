@@ -11,6 +11,7 @@ import (
 
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
@@ -31,7 +32,7 @@ func openOffline(db string, create bool) (*store.Store, *auth.Auth, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	a := auth.New(st, clock.Real(), log)
+	a := auth.New(st, probe.New(st, log), clock.Real(), log)
 	if err := a.Load(context.Background()); err != nil {
 		st.Close()
 		return nil, nil, err
@@ -39,7 +40,7 @@ func openOffline(db string, create bool) (*store.Store, *auth.Auth, error) {
 	return st, a, nil
 }
 
-const restartNotice = "note: if the hub is running, restart it for this change to take effect (the token map is rebuilt at startup)"
+const restartNotice = "note: if the hub is running, restart it for this change to take effect (the token map and the probe task lists are rebuilt at startup)"
 
 func runNode(args []string) error {
 	if len(args) < 1 {
