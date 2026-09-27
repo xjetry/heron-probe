@@ -57,15 +57,23 @@ key=$(sed -n 's/^key: //p' "$work/window.txt")
 [ -n "$key" ] || { echo "no key"; exit 1; }
 echo "registration window: $(sed -n 's/^expires: //p' "$work/window.txt")"
 
+hub_log_from=0
 PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC > "$work/hub.log" 2>&1 &
 hub=$!
 
-# 就绪判据是匿名的 GetSite 返回 200：根路径的应答取决于公开页是否构建进二进制、是否换了 --public-dir，
-# GetSite 两者都不取决。
+# wait_hub：等本次启动的 hub 就绪。三者同时成立才算：
+#   - $hub 进程还在；已经退出（例如端口被占、绑定失败）就停下并打印 hub.log；
+#   - hub.log 第 $hub_log_from 行之后出现了 "hub listening"：serve 在 net.Listen 成功之后才写这一行，重启时 hub.log
+#     是追加写的，所以只看这次启动之后的内容；
+#   - 匿名的 GetSite 返回 200：根路径的应答取决于公开页是否构建进二进制、是否换了 --public-dir，GetSite 两者都不取决。
+# 只看应答不够：端口被别的进程占着时，hub 绑定失败退出，应答却来自那个进程，而且第一次探测往往早于 hub 退出，
+# 进程检查也拦不住；之后的报错（读不到启动行）与真实原因无关。启动行只由绑定成功的 hub 写出，据它区分。
 wait_hub() {
   attempt=0
   while [ "$attempt" -lt 30 ]; do
-    if status=$(curl -s -o /dev/null -w '%{http_code}' "$base/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D"); then
+    kill -0 "$hub" 2> /dev/null || { echo "FAIL: hub exited during startup"; cat "$work/hub.log"; exit 1; }
+    if tail -n "+$((hub_log_from + 1))" "$work/hub.log" | grep -q 'msg="hub listening"' &&
+      status=$(curl -s -o /dev/null -w '%{http_code}' "$base/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D"); then
       [ "$status" = 200 ] && return 0
     fi
     attempt=$((attempt + 1))
@@ -469,6 +477,7 @@ printf '%s\n' 'outside secret' > "$work/outside.txt"
 ln -s ../outside.txt "$work/site/leak.txt"
 
 # 重启：流量状态、重置日与被 Drain 出的分钟行都必须还在。
+hub_log_from=$(wc -l < "$work/hub.log")
 PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC --public-dir "$work/site" >> "$work/hub.log" 2>&1 &
 hub=$!
 wait_hub
