@@ -50,6 +50,9 @@ type NodeEdit struct {
 	OfflineGraceS   int // 0 写 NULL，读侧取 TTL
 	Billing         Billing
 	CountryPin      string // 手动指定的国家，空串表示不指定（回落到查得值）
+	// Tags 整体替换节点的标签集合，空即清空。调用方已按 §10 校验每个名字、按 TagFold 去重并限定个数；
+	// 重复的名字会撞 node_tag 的主键而让整次更新失败。
+	Tags []string
 }
 
 type Node struct {
@@ -71,6 +74,8 @@ type Node struct {
 	Country    string
 	CountryIP  string
 	CountryPin string
+	// Tags 是节点的标签名（先建的写法），按 TagFold 排序；没有标签时为 nil。
+	Tags []string
 }
 
 // CountrySource 是显示值的来源。
@@ -134,24 +139,45 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
-	rows, err := s.r.QueryContext(ctx, selectNodes+nodeOrder)
+// queryNodes 是节点的唯一读法：where 是作用于 node n 的条件（空串即全部）。节点行与它们的标签在同一个只读事务里读出，
+// 两者来自同一个快照：两次独立查询之间插进一次 UpdateNode，节点行与标签就会是不同时刻的样子。
+func (s *Store) queryNodes(ctx context.Context, where string, args ...any) ([]Node, error) {
+	tx, err := s.r.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return scanNodes(rows)
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, selectNodes+where+nodeOrder, args...)
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := scanNodes(rows)
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(nodes) == 0 {
+		return nil, nil
+	}
+	tags, err := nodeTags(ctx, tx, where, args)
+	if err != nil {
+		return nil, err
+	}
+	for i := range nodes {
+		nodes[i].Tags = tags[nodes[i].ID]
+	}
+	return nodes, nil
+}
+
+func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
+	return s.queryNodes(ctx, "")
 }
 
 // ListPublicNodes 只返回 public = 1 的节点。公开服务只经它与 NodeIsPublic 读节点，可见范围由这两处承载：
 // 这里的 WHERE n.public = 1，与 NodeIsPublic 读出的 public 列（不存在的 id 同样得到 false）。
+// 返回的 Node 带着标签，标签不公开由 PublicNode 没有这个字段承载（§10）。
 func (s *Store) ListPublicNodes(ctx context.Context) ([]Node, error) {
-	rows, err := s.r.QueryContext(ctx, selectNodes+" WHERE n.public = 1"+nodeOrder)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanNodes(rows)
+	return s.queryNodes(ctx, " WHERE n.public = 1")
 }
 
 // NodeIsPublic 对未公开的节点与不存在的节点同样返回 false：调用方无从、也不需要区分二者。
@@ -165,12 +191,7 @@ func (s *Store) NodeIsPublic(ctx context.Context, id int64) (bool, error) {
 }
 
 func (s *Store) GetNode(ctx context.Context, id int64) (Node, error) {
-	rows, err := s.r.QueryContext(ctx, selectNodes+" WHERE n.id = ?", id)
-	if err != nil {
-		return Node{}, err
-	}
-	defer rows.Close()
-	nodes, err := scanNodes(rows)
+	nodes, err := s.queryNodes(ctx, " WHERE n.id = ?", id)
 	if err != nil {
 		return Node{}, err
 	}
@@ -189,7 +210,7 @@ func (s *Store) NodeExists(ctx context.Context, id int64) (bool, error) {
 	return err == nil, err
 }
 
-// UpdateNode 整体替换可编辑字段，不存在"不改"的取值。billingChanged 报告计费五项与写入前的库内值是否不同，
+// UpdateNode 整体替换可编辑字段（含标签集合），不存在"不改"的取值。billingChanged 报告计费五项与写入前的库内值是否不同，
 // 调用方据它决定是否立即做一次到期扫描。库内值在同一个写事务里读出，RenewExpiry 也经单写协程，读与写之间插不进
 // 一次推后，所以它就是这次写入实际覆盖掉的值。表单若带着推后之前的到期日提交，库内值已是推后的日期，两者不同，
 // 调用方随即重新扫描、再推后一次。
@@ -208,6 +229,9 @@ func (s *Store) UpdateNode(ctx context.Context, id int64, e NodeEdit) (billingCh
 		if _, err := tx.Exec(`UPDATE node SET name = ?, public = ?, note = ?, traffic_reset_day = ?, offline_grace_s = NULLIF(?, 0),
 			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, auto_renew = ?, country_pin = ? WHERE id = ?`,
 			e.Name, e.Public, e.Note, e.TrafficResetDay, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, e.CountryPin, id); err != nil {
+			return err
+		}
+		if err := setNodeTags(tx, id, e.Tags); err != nil {
 			return err
 		}
 		billingChanged = old != b
@@ -328,6 +352,9 @@ func (s *Store) DeleteNode(ctx context.Context, id int64) error {
 			return err
 		}
 		if _, err := tx.Exec("DELETE FROM alert_rule_node WHERE node_id = ?", id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM node_tag WHERE node_id = ?", id); err != nil {
 			return err
 		}
 		return nil
