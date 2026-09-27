@@ -572,3 +572,40 @@ func TestServePublicDirReplacesRootButNotPanelOrRPC(t *testing.T) {
 		t.Fatalf("RPC path was shadowed: %d %q", resp.StatusCode, body)
 	}
 }
+
+// --public-dir 只接管主 origin：主题 origin 上没有启用中的主题时服务的是内置公开页，而不是目录（§10.1）。经真实 serve
+// 核对 serve 交给主题 origin 的回落处理器；主 origin 同时仍是目录。
+func TestServeThemeOriginIgnoresPublicDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("custom site"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	url, _, _ := startTestHub(t, filepath.Join(t.TempDir(), "hub.db"), clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+		"--public-dir", dir, "--theme-origin", "https://status.example.com")
+	fetch := func(host string) (int, string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, url+"/nodes/3", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = host
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp.StatusCode, string(b)
+	}
+	want := httptest.NewRecorder()
+	web.PublicHandler().ServeHTTP(want, httptest.NewRequest(http.MethodGet, "/nodes/3", nil))
+	if code, body := fetch("status.example.com"); code != want.Code || body != want.Body.String() {
+		t.Fatalf("theme origin /nodes/3: %d %q, want the built-in public page %d %q", code, body, want.Code, want.Body.String())
+	}
+	if code, body := fetch(strings.TrimPrefix(url, "http://")); code != http.StatusOK || body != "custom site" {
+		t.Fatalf("main origin /nodes/3: %d %q, want the --public-dir page", code, body)
+	}
+}

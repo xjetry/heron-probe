@@ -9,8 +9,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -26,6 +28,8 @@ import (
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/hub/traffic"
 	"github.com/xjetry/probe/internal/hub/web"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 )
 
 type mount struct {
@@ -35,8 +39,8 @@ type mount struct {
 
 func mountOf(path string, h http.Handler) mount { return mount{path: path, h: h} }
 
-// newMux 是所有服务唯一的挂载点；挂载点级测试（TestMuxRejectsAnonymousProcedures）从注册表枚举方法逐个匿名调用，
-// 所以任何进了描述符的服务都必须在这里出现。除 PublicService 外，每个服务都带着它的鉴权拦截器；PublicService
+// newMux 是面板所在 origin（主 origin）的挂载点；挂载点级测试（TestMuxRejectsAnonymousProcedures）从注册表枚举方法逐个
+// 匿名调用，所以任何进了描述符的服务都必须在这里出现。除 PublicService 外，每个服务都带着它的鉴权拦截器；PublicService
 // 按 §3.2 不鉴权，它的四个过程是那个测试里唯一的匿名白名单（publicProcedures），其余过程匿名调用必须得到 401。
 // 往 PublicService 加方法等于把它公开给任何人，没有拦截器兜底。
 func newMux(mounts ...mount) *http.ServeMux {
@@ -45,6 +49,79 @@ func newMux(mounts ...mount) *http.ServeMux {
 		mux.Handle(m.path, m.h)
 	}
 	return mux
+}
+
+// routes 是 serve 的全部 HTTP 路由；serve 与挂载点测试经同一个 newHandler 装配，测试钉住的就是 serve 实际的分流。
+type routes struct {
+	agent, admin, public mount
+	// page 是主 origin 的根路径：内置公开页，或 --public-dir 的目录。
+	page http.Handler
+	// themeOrigin 是 parseThemeOrigin 的结果，空串表示没有主题 origin；themePage 是主题 origin 的根路径。
+	themeOrigin string
+	themePage   http.Handler
+}
+
+// newHandler 按请求的 Host 在两个 origin 之间分流（§10.1）：Host 去掉端口后等于主题 origin 的主机名走 newThemeMux，其余
+// 走主 origin。只比主机名：面板的会话 cookie 是 host-only，它不区分端口，所以与面板同一主机名、只差端口的主题 origin
+// 隔离不了会话；按主机名分流时这样配置会把面板那个主机名的请求一起分到主题 origin（那里没有面板）——hub 不知道面板用
+// 哪个主机名，这一条在启动时查不出来，写在 flag 帮助与 docs/theme-guide.md。
+// 公开服务的挂载点在两个 origin 上是同一个处理器：限流的令牌桶与快照缓存只有一份。
+func newHandler(r routes) http.Handler {
+	main := newMux(r.agent, r.admin, r.public, mountOf(web.Prefix, web.Handler()), mountOf("/", r.page))
+	if r.themeOrigin == "" {
+		return main
+	}
+	u, err := url.Parse(r.themeOrigin)
+	if err != nil {
+		panic("theme origin was not parsed by parseThemeOrigin: " + err.Error())
+	}
+	themeHost := hostname(u.Host)
+	theme := newThemeMux(r.public, r.themePage)
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if hostname(req.Host) == themeHost {
+			theme.ServeHTTP(w, req)
+			return
+		}
+		main.ServeHTTP(w, req)
+	})
+}
+
+// hostname 是 host[:port] 里的主机名，小写：Host 头与 --theme-origin 都经它比较，IPv6 字面量的方括号与端口按同一规则去掉。
+func hostname(hostport string) string {
+	return strings.ToLower((&url.URL{Host: hostport}).Hostname())
+}
+
+// newThemeMux 是主题 origin 的挂载点：只挂 PublicService 与主题静态文件，"主题脚本只能调 PublicService"由挂载承载而非
+// 约定（§3.2、§10.1）。RPC 路径优先于静态文件：probe.v1 包里其余每个服务的路径前缀都挂 404，服务列表从描述符枚举——
+// 不挂的话这些路径会落到根路径、由主题回落 index.html 答 200，以后加的服务也照此自动 404。/admin 与 /admin/ 同样 404：
+// 面板不在这个 origin 上，主题也不能在这个路径下伪装出一个面板。
+func newThemeMux(public mount, page http.Handler) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.Handle(public.path, public.h)
+	for _, svc := range probeServices() {
+		if p := "/" + string(svc.FullName()) + "/"; p != public.path {
+			mux.Handle(p, http.NotFoundHandler())
+		}
+	}
+	mux.Handle("/admin", http.NotFoundHandler())
+	mux.Handle(web.Prefix, http.NotFoundHandler())
+	mux.Handle("/", page)
+	return mux
+}
+
+// probeServices 是 probe.v1 包里的全部服务，取自注册表。
+func probeServices() []protoreflect.ServiceDescriptor {
+	var out []protoreflect.ServiceDescriptor
+	protoregistry.GlobalFiles.RangeFilesByPackage("probe.v1", func(file protoreflect.FileDescriptor) bool {
+		for i := 0; i < file.Services().Len(); i++ {
+			out = append(out, file.Services().Get(i))
+		}
+		return true
+	})
+	if len(out) == 0 {
+		panic("no probe.v1 services registered")
+	}
+	return out
 }
 
 func runServe(args []string) error {
@@ -87,7 +164,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
 	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For / X-Forwarded-Proto are trusted; empty trusts none. Behind a reverse proxy, list the proxy here: the public page and agent registration are rate-limited per source (one IPv4 address, or one IPv6 /64), and failed logins are locked out per source, so without it every visitor shares the proxy address's single bucket and lockout")
 	publicDir := fs.String("public-dir", "", "serve this directory at / instead of the built-in public page; files are opened through os.Root, so paths cannot leave the directory and symbolic links are followed only if they are relative and never step outside it (absolute links are refused even when they point inside); a path that is not a file, or that has a segment starting with a dot (.git, .env, .well-known), gets the directory's index.html (404 under assets/); every response is no-cache. The directory shares the admin panel's origin: its scripts can read the panel and call the admin API with the session of any signed-in administrator who opens the page, so put only content you trust as much as the hub binary there")
-	themeOriginFlag := fs.String("theme-origin", "", "origin that serves uploaded public-page themes, e.g. https://status.example.com; point this second hostname at the hub alongside the panel's. It must be a hostname other than the panel's (a sibling subdomain works: the session cookie is host-only), not a path under it: a theme's scripts on the panel's hostname could call the admin API with a signed-in administrator's session. Empty disables theme upload and hosting")
+	themeOriginFlag := fs.String("theme-origin", "", "origin that serves uploaded public-page themes, e.g. https://status.example.com; point this second hostname at the hub alongside the panel's. It must be a hostname other than the panel's (a sibling subdomain works: the session cookie is host-only), not a path under it: a theme's scripts on the panel's hostname could call the admin API with a signed-in administrator's session. The same hostname on another port does not count: cookies do not isolate ports, and requests are routed by hostname with the port ignored, so the panel's own requests would be routed to the theme origin, where there is no panel; the hub cannot detect this at startup. On this hostname only the public API and the enabled theme are served (the built-in public page when no theme is enabled); --public-dir does not apply here. Empty disables theme upload and hosting")
 	retention := store.DefaultRetention
 	fs.DurationVar(&retention.M1, "retention-1m", retention.M1, fmt.Sprintf("how long to keep 1-minute rows (minimum %s)", store.MinRetentionM1))
 	fs.DurationVar(&retention.M5, "retention-5m", retention.M5, fmt.Sprintf("how long to keep 5-minute rows (minimum %s)", store.MinRetentionM5))
@@ -159,12 +236,15 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	admin := api.New(api.Config{TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version, Location: loc, Retention: retention, ThemeOrigin: themeOrigin, PublicDir: *publicDir != ""}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: trusted, Location: loc}, st, l, book, reg, clk, log)
 
-	mux := newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(pub.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", public))
+	handler := newHandler(routes{
+		agent: mountOf(svc.Handler()), admin: mountOf(admin.Handler()), public: mountOf(pub.Handler()), page: public,
+		themeOrigin: themeOrigin, themePage: web.ThemeHandler(st, web.PublicHandler(), log),
+	})
 	listener, err := net.Listen("tcp", *listen)
 	if err != nil {
 		return err
 	}
-	drain := &drainingHandler{next: mux}
+	drain := &drainingHandler{next: handler}
 	srv := &http.Server{
 		Addr: *listen, Handler: drain, ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second, // ReadMaxBytes 限量不限时。

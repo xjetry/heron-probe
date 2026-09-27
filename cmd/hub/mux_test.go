@@ -35,7 +35,7 @@ var publicProcedures = map[string]bool{
 	"/probe.v1.PublicService/QueryProbes":  true,
 }
 
-func newTestMux(t *testing.T) *http.ServeMux {
+func newTestMux(t *testing.T) http.Handler {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clk, slog.Default(), store.MigrateSchema)
@@ -46,8 +46,11 @@ func newTestMux(t *testing.T) *http.ServeMux {
 	return newTestMuxOn(t, st, clk)
 }
 
-// newTestMuxOn 按 serve 的装配把全部服务挂到给定的库上。
-func newTestMuxOn(t *testing.T, st *store.Store, clk clock.Clock) *http.ServeMux {
+// testThemeHost 是测试装配的主题 origin 的主机名。主 origin 的用例都带着它跑：分流器在场时主 origin 的行为不变。
+const testThemeHost = "theme.test"
+
+// newTestMuxOn 按 serve 的装配（newHandler）把全部服务挂到给定的库上，主题 origin 为 http://theme.test。
+func newTestMuxOn(t *testing.T, st *store.Store, clk clock.Clock) http.Handler {
 	t.Helper()
 	reg := probe.New(st, slog.Default())
 	a := auth.New(st, reg, clk, slog.Default())
@@ -69,7 +72,10 @@ func newTestMuxOn(t *testing.T, st *store.Store, clk clock.Clock) *http.ServeMux
 	}
 	admin := api.New(api.Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, Location: time.UTC, Retention: store.DefaultRetention}, st, a, l, svc, book, reg, alerts, notifier, clk, slog.Default())
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: 10 * time.Second, Location: time.UTC}, st, l, book, reg, clk, slog.Default())
-	return newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(pub.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", web.PublicHandler()))
+	return newHandler(routes{
+		agent: mountOf(svc.Handler()), admin: mountOf(admin.Handler()), public: mountOf(pub.Handler()), page: web.PublicHandler(),
+		themeOrigin: "http://" + testThemeHost, themePage: web.ThemeHandler(st, web.PublicHandler(), slog.Default()),
+	})
 }
 
 // RPC 路径与 /admin/ 的优先级高于根路径的公开页；ServeMux 按最长前缀匹配，三者同时挂载时，RPC 仍必须经过服务自身的鉴权。
