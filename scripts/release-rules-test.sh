@@ -28,8 +28,12 @@ for tool in docker go pnpm gh; do
   printf '#!/bin/sh\necho "%s $*" >> "%s/tripwire"\nexit 1\n' "$tool" "$work" > "$work/bin/$tool"
   chmod +x "$work/bin/$tool"
 done
+# 内层 make 的 $(MAKE) 必须是绝对路径：配方里的递归行（$(MAKE) web 等）即使在 -n 下也会真的执行，而它们
+# 跑在只有文本工具的 PATH 里。make 默认把 $(MAKE) 取自自己的 argv[0]，但同名环境变量的优先级高于这个默认值
+# （origin 为 environment 与 default 的关系），外层 Makefile 传进来的 MAKE 在按 PATH 启动 make 的系统上就是
+# 裸的 make；macOS 的 make 垫片重新 exec 时会把 argv[0] 换成绝对路径，掩盖了这一点。这里显式传绝对路径。
 MAKE() {
-  env PATH="$work/bin" "$make_path" "$@"
+  env PATH="$work/bin" MAKE="$make_path" "$make_path" "$@"
 }
 
 bad() {
