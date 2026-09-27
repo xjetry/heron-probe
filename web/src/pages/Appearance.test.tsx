@@ -1,7 +1,8 @@
+import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
+import { SettingsSchema, type Settings, type UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
 import { MAX_LOGO_BYTES } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
@@ -245,6 +246,58 @@ describe("国家 / 地区查询", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].settings).toMatchObject({ ...current, geoEnabled: true, geoUrl: "https://ipinfo.io/{ip}/country" });
     expect(appearance.getByLabelText("标题")).toHaveValue("未保存的标题");
+  });
+
+  // hub 的替身：外观整体替换、查询两项缺席不改，回显保存后的全部设置；读设置只有第一次成功，之后一直失败（hub 重启、
+  // 网络中断），保存后的刷新因此拿不到新值。
+  function hubWithFailingReads() {
+    let stored: Settings = create(SettingsSchema, withGeo);
+    let reads = 0;
+    const sent: UpdateSettingsRequest[] = [];
+    const impl: AdminImpl = {
+      getSettings: async () => {
+        if (reads++ > 0) throw new ConnectError("hub restarting", Code.Unavailable);
+        return { settings: stored };
+      },
+      updateSettings: async (req) => {
+        sent.push(req);
+        const s = req.settings!;
+        stored = create(SettingsSchema, {
+          title: s.title.trim(), theme: s.theme, accentColor: s.accentColor, logo: s.logo, customCss: s.customCss,
+          geoEnabled: s.geoEnabled ?? stored.geoEnabled, geoUrl: s.geoUrl ?? stored.geoUrl,
+        });
+        return { settings: stored };
+      },
+    };
+    return { sent, impl };
+  }
+
+  it("外观保存后刷新失败，查询表单提交的外观仍是刚保存的回显", async () => {
+    const hub = hubWithFailingReads();
+    render(hub.impl);
+    const appearance = await form();
+    fireEvent.change(appearance.getByLabelText("标题"), { target: { value: " 新标题 " } });
+    fireEvent.click(appearance.getByRole("button", { name: "保存" }));
+    expect(await appearance.findByRole("status")).toHaveTextContent("已保存");
+    expect(await screen.findByText("hub restarting")).toBeInTheDocument();
+    const f = await geoForm();
+    fireEvent.click(f.getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" }));
+    fireEvent.click(f.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(hub.sent).toHaveLength(2));
+    expect(hub.sent[1].settings).toMatchObject({ ...current, title: "新标题", geoEnabled: true });
+  });
+
+  it("查询表单保存后刷新失败，重新进入页面时显示刚保存的开关", async () => {
+    const hub = hubWithFailingReads();
+    const { router } = renderWithAdmin(hub.impl, [...routes, { path: "/elsewhere", Component: () => null }], "/appearance");
+    const f = await geoForm();
+    fireEvent.click(f.getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" }));
+    fireEvent.click(f.getByRole("button", { name: "保存" }));
+    expect(await f.findByRole("status")).toHaveTextContent("已保存");
+    expect(await screen.findByText("hub restarting")).toBeInTheDocument();
+    await act(() => router.navigate("/elsewhere"));
+    await act(() => router.navigate("/appearance"));
+    expect((await geoForm()).getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" })).toBeChecked();
   });
 
   it("外观表单不提交查询设置：hub 对缺席的两项不改", async () => {
