@@ -53,6 +53,8 @@ type Config struct {
 	// Retention 是 serve 交给维护循环的同一份保留期，存储健康按它判定最老桶是否超期。零值会把最老桶早于
 	// 一个桶长之前的表都标成超期，New 用 Retention.Validate 把它当作装配错误拒绝。
 	Retention store.Retention
+	// GeoMMDBPath 是 serve 已成功打开的本地国家库路径，空串表示 HTTP；仅回显，不落入运行设置。
+	GeoMMDBPath string
 }
 
 // NodeState 是节点在进程内的状态持有者；删除节点后由它清理。用接口而不直接依赖

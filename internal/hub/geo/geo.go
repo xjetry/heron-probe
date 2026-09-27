@@ -1,14 +1,9 @@
-// Package geo 按节点的来源地址查国家 / 地区（§4.9）：运维在设置里开启后，hub 把公网来源地址逐个发给 geo.url，
-// 把应答与所查地址成对写回节点。
+// Package geo 按公网来源地址查询国家 / 地区，把答案与所查地址成对写回节点。
 package geo
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"net/netip"
 	"strings"
 	"time"
@@ -23,8 +18,6 @@ const (
 	// RetryAfter 是一次失败之后同一节点同一地址的退避：没有退避，一个坏链路（服务宕机、限流、返回错误页）会让每一轮
 	// 巡检都对同一地址外呼一次。
 	RetryAfter = time.Hour
-	// maxResponseBytes 是读取应答体的上限。合法应答是两个字母加少量空白，超出即判失败，不再往下读。
-	maxResponseBytes = 64
 )
 
 // Placeholder 是 geo.url 里被替换为地址的占位。
@@ -78,10 +71,10 @@ func Target(tmpl string, addr netip.Addr) string {
 
 // Resolver 是 hub 内唯一的国家查询者，由 Run 在一个协程里串行调用 Sweep。
 type Resolver struct {
-	store  *store.Store
-	client *http.Client
-	clk    clock.Clock
-	log    *slog.Logger
+	store   *store.Store
+	backend Backend
+	clk     clock.Clock
+	log     *slog.Logger
 	// retryAt 是每个（节点, 地址）下次允许查询的时刻，只记失败。只在内存：hub 重启后清空，尚无答案的地址各重查
 	// 一次。只由 Sweep 读写，Sweep 不并发，所以不加锁。
 	retryAt map[target]time.Time
@@ -92,9 +85,8 @@ type target struct {
 	addr string
 }
 
-// New 的 client 应当是通知渠道用的那一个（alert.NewHTTPClient：不跟随重定向、带总超时），hub 的出站行为只有一套。
-func New(st *store.Store, client *http.Client, clk clock.Clock, log *slog.Logger) *Resolver {
-	return &Resolver{store: st, client: client, clk: clk, log: log, retryAt: map[target]time.Time{}}
+func New(st *store.Store, backend Backend, clk clock.Clock, log *slog.Logger) *Resolver {
+	return &Resolver{store: st, backend: backend, clk: clk, log: log, retryAt: map[target]time.Time{}}
 }
 
 func (r *Resolver) Run(ctx context.Context) {
@@ -113,7 +105,8 @@ func (r *Resolver) Run(ctx context.Context) {
 }
 
 // Sweep 查一轮：开关关闭时什么都不做、不出网；开启时对来源地址是公网、尚无该地址答案（last_source != country_ip）、
-// 不在退避期的节点各查一次。查询按设置里的服务地址逐个同步发出，所以同一个（节点, 地址）在一轮里至多查一次。
+// 不在退避期的节点各查一次。查询逐个同步执行，同一个（节点, 地址）在一轮里至多查一次。
+// geo.enabled 表达是否给节点标国家，后端仅改变地址是否离开本机，所以两个后端共用开关、准入与退避。
 func (r *Resolver) Sweep(ctx context.Context) error {
 	settings, err := r.store.GeoSettings(ctx)
 	if err != nil || !settings.Enabled {
@@ -138,7 +131,10 @@ func (r *Resolver) Sweep(ctx context.Context) error {
 		if at, ok := r.retryAt[k]; ok && now.Before(at) {
 			continue
 		}
-		country, err := r.lookup(ctx, settings.URL, addr)
+		country, err := r.backend.Lookup(ctx, addr)
+		if err == nil && !IsCountryCode(country) {
+			err = errNotCountry
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -164,35 +160,4 @@ func (r *Resolver) Sweep(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-var errNotCountry = errors.New("response is not two uppercase letters")
-
-// lookup 发出一次查询。请求只带地址：GET、无请求体，不设任何凭据头；服务地址不含用户信息由 api 的 UpdateSettings
-// 保证。只认 200：客户端不跟随重定向，3xx 在这里按失败处理。
-func (r *Resolver) lookup(ctx context.Context, tmpl string, addr netip.Addr) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, Target(tmpl, addr), nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("status %d", resp.StatusCode)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
-	if err != nil {
-		return "", err
-	}
-	if len(data) > maxResponseBytes {
-		return "", fmt.Errorf("response longer than %d bytes", maxResponseBytes)
-	}
-	country := strings.TrimSpace(string(data))
-	if !IsCountryCode(country) {
-		return "", errNotCountry
-	}
-	return country, nil
 }

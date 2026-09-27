@@ -146,9 +146,13 @@ func cleanGeo(in *probev1.Settings) (store.GeoUpdate, error) {
 	return out, nil
 }
 
-func settingsProto(st store.SiteSettings, g store.GeoSettings) *probev1.Settings {
+func (s *Service) settingsProto(st store.SiteSettings, g store.GeoSettings) *probev1.Settings {
+	backend := probev1.GeoBackend_GEO_BACKEND_HTTP
+	if s.cfg.GeoMMDBPath != "" {
+		backend = probev1.GeoBackend_GEO_BACKEND_MMDB
+	}
 	return &probev1.Settings{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS,
-		GeoEnabled: proto.Bool(g.Enabled), GeoUrl: proto.String(g.URL)}
+		GeoEnabled: proto.Bool(g.Enabled), GeoUrl: proto.String(g.URL), GeoBackend: backend, GeoMmdbPath: s.cfg.GeoMMDBPath}
 }
 
 func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.GetSettingsRequest]) (*connect.Response[probev1.GetSettingsResponse], error) {
@@ -157,7 +161,7 @@ func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.Ge
 		s.log.Error("reading settings failed", "err", err)
 		return nil, internalError("reading settings failed")
 	}
-	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: settingsProto(st, g)}), nil
+	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: s.settingsProto(st, g)}), nil
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probev1.UpdateSettingsRequest]) (*connect.Response[probev1.UpdateSettingsResponse], error) {
@@ -174,7 +178,7 @@ func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probe
 		s.log.Error("saving settings failed", "err", err)
 		return nil, internalError("saving settings failed")
 	}
-	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: settingsProto(st, g)}), nil
+	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: s.settingsProto(st, g)}), nil
 }
 
 func (s *Service) GetStorageStats(ctx context.Context, _ *connect.Request[probev1.GetStorageStatsRequest]) (*connect.Response[probev1.GetStorageStatsResponse], error) {

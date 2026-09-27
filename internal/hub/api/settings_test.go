@@ -85,7 +85,7 @@ func TestUpdateSettingsCleansTitleAndAccentAndEchoes(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	// 国家查询两项没有提交，回显的是从未保存过时的值。
-	want := &probev1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef", GeoEnabled: proto.Bool(false), GeoUrl: proto.String("https://ipinfo.io/{ip}/country")}
+	want := &probev1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef", GeoEnabled: proto.Bool(false), GeoUrl: proto.String("https://ipinfo.io/{ip}/country"), GeoBackend: probev1.GeoBackend_GEO_BACKEND_HTTP}
 	if got := saveSettings(t, h, &probev1.Settings{Title: " ‮\x07运行状态 \t", Theme: "light", AccentColor: "#AbCdEf"}); !proto.Equal(got, want) {
 		t.Fatalf("echo = %v, want %v", got, want)
 	}

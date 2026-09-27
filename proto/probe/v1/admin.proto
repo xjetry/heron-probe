@@ -504,8 +504,14 @@ message DeleteNotifyChannelResponse {}
 message TestNotifyChannelRequest { int64 id = 1; }
 message TestNotifyChannelResponse {}
 
-// 公开页外观与国家查询（§4.9）。外观五项整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。国家查询两项
-// 缺失表示不改：开关决定 hub 是否把节点地址发给第三方，只改外观的旧客户端与脚本不得顺手改掉它。GetSettings 与
+enum GeoBackend {
+  GEO_BACKEND_UNSPECIFIED = 0;
+  GEO_BACKEND_HTTP = 1;
+  GEO_BACKEND_MMDB = 2;
+}
+
+// 公开页外观与国家查询（§4.9）。外观五项整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。国家查询开关与 URL
+// 缺失表示不改：HTTP 后端会把节点地址发给第三方，只改外观的旧客户端与脚本不得顺手改掉它。GetSettings 与
 // UpdateSettings 的响应总带这两项。
 message Settings {
   // 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
@@ -520,13 +526,18 @@ message Settings {
   string logo = 4;
   // 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
   string custom_css = 5;
-  // 国家查询开关，从未保存过时为关。开启即由 hub 把每个节点的来源地址（Node.last_source）逐个发给 geo_url：只发公网
-  // 地址、每节点每地址至多成功查一次，失败按小时退避。
+  // 国家查询开关，从未保存过时为关。两个后端共用：开启后按公网来源地址查询，每节点每地址至多成功查一次，失败按小时退避。
+  // HTTP 后端把地址发给 geo_url；MMDB 后端只查本地文件，不出网。
   optional bool geo_enabled = 6;
   // 国家查询的服务地址：http 或 https，含 {ip} 占位（查询时替换为地址），不含用户信息，不超过 2048 字节。
   // 从未保存过时为 https://ipinfo.io/{ip}/country。可回显，不是凭据：请求只带地址，不带任何凭据。
   // 服务的响应去掉首尾空白后必须恰为两个大写字母（ISO 3166-1 alpha-2），状态码必须是 200。
   optional string geo_url = 7;
+  // 当前后端，只读；GetSettings 与 UpdateSettings 响应均回显。UpdateSettings 中缺席或给出均忽略。
+  GeoBackend geo_backend = 9;
+  // --geo-mmdb 指定的路径，HTTP 后端为空；MMDB 后端下 geo_url 保留但不生效。
+  // 部署路径只能在启动时指定，文件更新靠重启；只读，UpdateSettings 中缺席或给出均忽略，不校验、不保存。
+  string geo_mmdb_path = 10;
 }
 message GetSettingsRequest {}
 message GetSettingsResponse { Settings settings = 1; }

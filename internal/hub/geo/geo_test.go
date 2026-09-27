@@ -123,7 +123,7 @@ func newFixture(t *testing.T) *fixture {
 
 // restart 换一个新的查询器，与 hub 重启后一样没有任何内存状态；库与假服务不变。
 func (f *fixture) restart() {
-	f.r = New(f.st, alert.NewHTTPClient(), f.clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	f.r = New(f.st, NewHTTP(f.st, alert.NewHTTPClient()), f.clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 func (f *fixture) enable(on bool) {

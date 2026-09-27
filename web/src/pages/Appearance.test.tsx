@@ -1,7 +1,7 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
+import { GeoBackend, type UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
 import { MAX_LOGO_BYTES } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
@@ -221,6 +221,19 @@ it("上次保存失败后换 logo，旧的错误清掉", async () => {
 describe("国家 / 地区查询", () => {
   const geoForm = async () => within(await screen.findByRole("form", { name: "国家 / 地区查询" }));
   const withGeo = { ...current, geoEnabled: false, geoUrl: "https://ipinfo.io/{ip}/country" };
+
+  it("本地后端写明路径、不出网与服务地址不生效，不显示 HTTP 开启告知", async () => {
+    render({ getSettings: async () => ({ settings: { ...withGeo, geoBackend: GeoBackend.MMDB, geoMmdbPath: "/data/country.mmdb" } }) });
+    const f = await geoForm();
+    expect(f.getByText("当前后端：本地文件 /data/country.mmdb，不出网；服务地址不生效。")).toBeInTheDocument();
+    expect(f.queryByText(/开启即由 hub 把每个节点的来源地址发给/)).not.toBeInTheDocument();
+  });
+
+  it("HTTP 后端显示当前已保存的服务地址", async () => {
+    render({ getSettings: async () => ({ settings: { ...withGeo, geoBackend: GeoBackend.HTTP } }) });
+    const f = await geoForm();
+    expect(f.getByText("当前后端：HTTP 服务 https://ipinfo.io/{ip}/country")).toBeInTheDocument();
+  });
 
   it("开关文案写明开启即把节点地址发给哪个服务，随输入的服务地址更新", async () => {
     render({ getSettings: async () => ({ settings: withGeo }) });

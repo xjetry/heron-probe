@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type ChangeEvent, type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
-import { AdminService, type Settings } from "../gen/probe/v1/admin_pb";
+import { AdminService, GeoBackend, type Settings } from "../gen/probe/v1/admin_pb";
 import { LOGO_TYPES, MAX_TITLE_CHARS, THEMES, sizeProblems, type Theme } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
 import { DEFAULT_TITLE } from "../public/site";
@@ -135,8 +135,7 @@ type GeoDraft = { geoEnabled: boolean; geoUrl: string };
 const toGeoDraft = (s: Settings | undefined): GeoDraft => ({ geoEnabled: s?.geoEnabled ?? false, geoUrl: s?.geoUrl ?? "" });
 
 // 国家 / 地区查询的开关与服务地址。UpdateSettings 对外观五项整体替换，这里提交的外观取 hub 当前的已保存值（current），
-// 不取上面表单的草稿：只改查询设置不会顺带保存外观的未保存改动。开关决定 hub 是否把节点地址发给第三方，文案照写
-// 发给哪个地址。
+// 不取上面表单的草稿：只改查询设置不会顺带保存外观的未保存改动。出网告知按 hub 回显的部署后端裁决，不由表单草稿决定。
 function GeoLookup({ current }: { current: Settings | undefined }) {
   const qc = useQueryClient();
   const [draft, setDraft] = useState<GeoDraft | null>(null);
@@ -149,6 +148,7 @@ function GeoLookup({ current }: { current: Settings | undefined }) {
     },
   });
   const form = draft ?? toGeoDraft(current);
+  const local = current?.geoBackend === GeoBackend.MMDB;
   const edit = (patch: Partial<GeoDraft>) => {
     setDraft((d) => ({ ...(d ?? toGeoDraft(current)), ...patch }));
     setSaved(false);
@@ -162,14 +162,19 @@ function GeoLookup({ current }: { current: Settings | undefined }) {
     <>
       <h2>国家 / 地区查询</h2>
       <form className="card edit-form" aria-label="国家 / 地区查询" onSubmit={submit}>
+        <p className="muted" style={{ overflowWrap: "anywhere" }}>
+          {local ? `当前后端：本地文件 ${current.geoMmdbPath}，不出网；服务地址不生效。` : `当前后端：HTTP 服务 ${current?.geoUrl ?? ""}`}
+        </p>
         <fieldset className="bare" disabled={update.isPending}>
           <label className="inline">
             <input type="checkbox" checked={form.geoEnabled} onChange={(e) => edit({ geoEnabled: e.target.checked })} />
             按来源地址查询节点的国家 / 地区
           </label>
           <p className="muted" id="geo-disclosure">
+            {local ? "开启后仅在本地文件中查询公网来源地址；每个地址查得一次即止，查不到或国家码无效时一小时后重试。关闭时不查询。" : <>
             开启即由 hub 把每个节点的来源地址发给 {form.geoUrl || "（未填写的服务地址）"}（{"{ip}"} 处换成地址），用它的应答作为节点的国家 / 地区。
             只发公网地址，不带任何凭据；每个地址查得一次即止，失败一小时后重试。关闭时 hub 不为此出网。
+            </>}
           </p>
           <label>
             服务地址
