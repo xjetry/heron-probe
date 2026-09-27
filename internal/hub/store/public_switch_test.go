@@ -58,6 +58,9 @@ func TestPublicSwitchPersistenceAndMemory(t *testing.T) {
 // 要等第一次发布完才入队，排不进去，所以等它入队的轮询以次数为界。GOMAXPROCS 取 1：醒来的调用方没有别的处理器
 // 可用，通常要等写协程让出处理器才运行，错序才稳定出现；处理器多时它往往被空闲的处理器立刻取走，在下一次提交之前
 // 就发布完了，自由并发的保存能否撞上错序随机器负载与是否开 -race 大幅波动。
+// 这依赖当前 runtime 的调度行为：单处理器上写协程先后唤醒 A、B 且不让出时，调度器先运行最后被唤醒的 B
+// （-race 下随机化，约一半），于是 B 先发布、A 后发布，库里是 B 而内存是 A。runtime 若改了这一点，去锁时
+// 本用例只会变绿而不会误红，届时要换一种制造错序的手法。
 func TestPublicSwitchMemoryMatchesDatabaseUnderConcurrentSaves(t *testing.T) {
 	prev := runtime.GOMAXPROCS(1)
 	defer runtime.GOMAXPROCS(prev)
