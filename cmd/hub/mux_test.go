@@ -18,6 +18,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
+	"github.com/xjetry/probe/internal/hub/outbound"
 	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/hub/traffic"
@@ -48,7 +49,7 @@ func newTestMux(t *testing.T) *http.ServeMux {
 	book := traffic.New(st, clk, time.UTC, slog.Default())
 	reg := probe.New(st, slog.Default())
 	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, st, l, clk, slog.Default())
-	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, slog.Default())
+	notifier := alert.NewQueue(st, alerts.Channels, outbound.NewClient(), "", clk, nil, slog.Default())
 	alerts.SetSender(notifier)
 	svc, err := ingest.New(ingest.Config{TTL: 30 * time.Second}, l, st, a, book, reg, clk, slog.Default())
 	if err != nil {

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xjetry/probe/internal/hub/outbound"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/testwait"
 )
@@ -43,7 +44,7 @@ func TestAttemptWriteFailureSendsNothing(t *testing.T) {
 	ev := queueEvent(t, f, queueChannel(t, f, srv.URL))
 	db := deliveryDB(t, f)
 	deliverySQL(t, db, "CREATE TRIGGER fail_attempt BEFORE UPDATE ON alert_delivery BEGIN SELECT RAISE(ABORT, 'attempt write blocked'); END")
-	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
+	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, nil, f.log)
 	err := q.deliver(t.Context(), deliveryItem{ev.Deliveries[0], ev})
 	if err == nil || !strings.Contains(err.Error(), "attempt write blocked") {
 		t.Fatalf("write failure=%v", err)
@@ -79,7 +80,7 @@ func TestExhaustedUnrecordedDeliveryBecomesTerminal(t *testing.T) {
 			if last != nil {
 				must(t, f.st.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, *last))
 			}
-			q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
+			q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, nil, f.log)
 			must(t, q.deliver(t.Context(), deliveryItem{ev.Deliveries[0], ev}))
 			saved, err := f.st.GetAlertEvent(t.Context(), ev.ID)
 			must(t, err)
@@ -106,7 +107,7 @@ func TestMalformedStatusIsRetriedAsTransport(t *testing.T) {
 	endpoint, requests := rawStatusServer(t, "HTTP/1.1 099 Odd")
 	ev := queueEvent(t, f, queueChannel(t, f, endpoint))
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, func(_ context.Context, d time.Duration) error { sleeps = append(sleeps, d); return nil }, f.log)
+	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, func(_ context.Context, d time.Duration) error { sleeps = append(sleeps, d); return nil }, f.log)
 	must(t, q.deliver(t.Context(), deliveryItem{ev.Deliveries[0], ev}))
 	saved, err := f.st.GetAlertEvent(t.Context(), ev.ID)
 	must(t, err)
@@ -152,7 +153,7 @@ func TestResultWriteFailuresCannotExceedSendBudget(t *testing.T) {
 	db := deliveryDB(t, f)
 	deliverySQL(t, db, "CREATE TRIGGER fail_result BEFORE UPDATE ON alert_delivery WHEN NEW.done = 1 OR NEW.ok = 1 BEGIN SELECT RAISE(ABORT, 'result write blocked'); END")
 	sleeps := 0
-	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, func(ctx context.Context, _ time.Duration) error {
+	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, func(ctx context.Context, _ time.Duration) error {
 		sleeps++
 		if sleeps > (QueueCap+1)*(store.MaxDeliveryAttempts+1) {
 			cancel()

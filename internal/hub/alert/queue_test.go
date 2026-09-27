@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xjetry/probe/internal/hub/outbound"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/testwait"
 )
@@ -97,7 +98,7 @@ func TestQueueDeliversAndRecords(t *testing.T) {
 	ev := queueEvent(t, f, a, b)
 	var mu sync.Mutex
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, func(_ context.Context, d time.Duration) error {
+	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, func(_ context.Context, d time.Duration) error {
 		mu.Lock()
 		defer mu.Unlock()
 		sleeps = append(sleeps, d)
@@ -129,7 +130,7 @@ func TestQueueGivesUpAfterMaxAttempts(t *testing.T) {
 			defer srv.Close()
 			ev := queueEvent(t, f, queueChannel(t, f, srv.URL))
 			var sleeps []time.Duration
-			q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, func(_ context.Context, d time.Duration) error { sleeps = append(sleeps, d); return nil }, f.log)
+			q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, func(_ context.Context, d time.Duration) error { sleeps = append(sleeps, d); return nil }, f.log)
 			q.Enqueue(ev)
 			stop := startQueue(t, q)
 			ds := awaitDeliveries(t, f, ev.ID, allDone)
@@ -158,7 +159,7 @@ func TestQueueGivesUpAfterMaxAttempts(t *testing.T) {
 					t.Fatalf("deliver waited %v in total between retries, DeliveryRetryWait reports %v", total, DeliveryRetryWait())
 				}
 			}
-			fresh := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
+			fresh := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, nil, f.log)
 			must(t, fresh.Requeue(t.Context()))
 			if len(fresh.items) != 0 {
 				t.Fatalf("terminal delivery requeued: %d", len(fresh.items))
@@ -177,7 +178,7 @@ func TestQueueRequeuesPendingOnLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	must(t, f.st.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, store.DeliveryResult{Failure: store.FailureTransport, Error: "prior failure"}))
-	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
+	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, nil, f.log)
 	must(t, q.Requeue(t.Context()))
 	stop := startQueue(t, q)
 	ds := awaitDeliveries(t, f, ev.ID, allDone)
@@ -185,7 +186,7 @@ func TestQueueRequeuesPendingOnLoad(t *testing.T) {
 	if calls.Load() != 1 || ds[0].Attempts != 2 || !ds[0].OK {
 		t.Fatalf("calls=%d delivery=%+v", calls.Load(), ds[0])
 	}
-	fresh := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
+	fresh := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, nil, f.log)
 	must(t, fresh.Requeue(t.Context()))
 	if len(fresh.items) != 0 {
 		t.Fatal("successful delivery requeued")
@@ -195,7 +196,7 @@ func TestQueueRequeuesPendingOnLoad(t *testing.T) {
 func TestQueueDropsOldestWhenFull(t *testing.T) {
 	f := newFixture(t)
 	var logs bytes.Buffer
-	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, slog.New(slog.NewJSONHandler(&logs, nil)))
+	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, nil, slog.New(slog.NewJSONHandler(&logs, nil)))
 	if cap(q.items) != QueueCap || QueueCap != 256 {
 		t.Fatalf("capacity=%d", cap(q.items))
 	}
@@ -221,7 +222,7 @@ func TestSendTestDoesNotRecord(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _ = json.NewDecoder(r.Body).Decode(&got) }))
 	defer srv.Close()
 	c := queueChannel(t, f, srv.URL)
-	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
+	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, nil, f.log)
 	must(t, q.SendTest(t.Context(), c))
 	if got.Summary == "" || got.Transition != "test" {
 		t.Fatalf("test message=%+v", got)
@@ -240,7 +241,7 @@ func TestQueueMissingChannelIsTerminal(t *testing.T) {
 	f := newFixture(t)
 	c := queueChannel(t, f, "http://127.0.0.1:1")
 	ev := queueEvent(t, f, c)
-	q := NewQueue(f.st, func() []store.NotifyChannel { return nil }, NewHTTPClient(), "", f.clk, nil, f.log)
+	q := NewQueue(f.st, func() []store.NotifyChannel { return nil }, outbound.NewClient(), "", f.clk, nil, f.log)
 	q.Enqueue(ev)
 	stop := startQueue(t, q)
 	ds := awaitDeliveries(t, f, ev.ID, allDone)
@@ -256,7 +257,7 @@ func TestQueueCancellationLeavesPending(t *testing.T) {
 	defer srv.Close()
 	ev := queueEvent(t, f, queueChannel(t, f, srv.URL))
 	sleeping := make(chan struct{})
-	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, func(ctx context.Context, d time.Duration) error { close(sleeping); <-ctx.Done(); return ctx.Err() }, f.log)
+	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, func(ctx context.Context, d time.Duration) error { close(sleeping); <-ctx.Done(); return ctx.Err() }, f.log)
 	q.Enqueue(ev)
 	stop := startQueue(t, q)
 	select {
@@ -269,7 +270,7 @@ func TestQueueCancellationLeavesPending(t *testing.T) {
 	if ds[0].Done || ds[0].OK {
 		t.Fatalf("cancelled delivery=%+v", ds[0])
 	}
-	fresh := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
+	fresh := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, nil, f.log)
 	must(t, fresh.Requeue(t.Context()))
 	if len(fresh.items) != 1 {
 		t.Fatalf("pending not requeued: %d", len(fresh.items))
@@ -296,7 +297,7 @@ func TestQueueMessageUsesCurrentNamesAndHistoricalSummary(t *testing.T) {
 				must(t, f.e.DeleteRule(t.Context(), ev.RuleID))
 				must(t, f.st.DeleteNode(t.Context(), ev.NodeID))
 			}
-			q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
+			q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, nil, f.log)
 			q.Enqueue(ev)
 			stop := startQueue(t, q)
 			awaitDeliveries(t, f, ev.ID, allDone)

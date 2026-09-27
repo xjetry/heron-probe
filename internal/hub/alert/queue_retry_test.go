@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xjetry/probe/internal/hub/outbound"
 	"github.com/xjetry/probe/internal/testwait"
 )
 
@@ -25,7 +26,7 @@ func TestQueueRetriesNonterminalExitWithoutExternalOverflow(t *testing.T) {
 	db := deliveryDB(t, f)
 	deliverySQL(t, db, rejectResult)
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, func(ctx context.Context, d time.Duration) error {
+	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, func(ctx context.Context, d time.Duration) error {
 		sleeps = append(sleeps, d)
 		_, err := db.Exec("DROP TRIGGER reject_result")
 		return err
@@ -50,7 +51,7 @@ func TestQueueRefillReadFailureRetainsSignal(t *testing.T) {
 	deliverySQL(t, db, "ALTER TABLE alert_delivery RENAME TO held_deliveries")
 	slept := make(chan struct{})
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, func(ctx context.Context, d time.Duration) error {
+	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, func(ctx context.Context, d time.Duration) error {
 		sleeps = append(sleeps, d)
 		_, err := db.Exec("ALTER TABLE held_deliveries RENAME TO alert_delivery")
 		if len(sleeps) == 1 {
@@ -85,7 +86,7 @@ func TestQueueFailureBackoffCapsAndResetsAfterCompletion(t *testing.T) {
 	ready := make(chan struct{})
 	var sleeps []time.Duration
 	var mu sync.Mutex
-	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, func(ctx context.Context, d time.Duration) error {
+	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, func(ctx context.Context, d time.Duration) error {
 		mu.Lock()
 		sleeps = append(sleeps, d)
 		n := len(sleeps)

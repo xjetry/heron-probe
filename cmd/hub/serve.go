@@ -21,6 +21,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
+	"github.com/xjetry/probe/internal/hub/outbound"
 	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/hub/traffic"
@@ -134,7 +135,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	book := traffic.New(st, clk, loc, log)
 	reg := probe.New(st, log)
 	alerts := alert.New(alert.Config{TTL: ttl, Location: loc}, st, l, clk, log)
-	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, log)
+	notifier := alert.NewQueue(st, alerts.Channels, outbound.NewClient(), "", clk, nil, log)
 	alerts.SetSender(notifier)
 	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, book, reg, clk, log)
 	if err != nil {

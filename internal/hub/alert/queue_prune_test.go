@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xjetry/probe/internal/hub/outbound"
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
@@ -45,7 +46,7 @@ func TestQueuePrunedDeliveryDoesNotDelayFreshEvent(t *testing.T) {
 				}
 				return f.e.Channels()
 			}
-			q := NewQueue(f.st, channels, NewHTTPClient(), "", f.clk, func(context.Context, time.Duration) error {
+			q := NewQueue(f.st, channels, outbound.NewClient(), "", f.clk, func(context.Context, time.Duration) error {
 				sleeps.Add(1)
 				return nil
 			}, f.log)

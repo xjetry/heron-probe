@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"strings"
 	"text/template"
-	"time"
 
 	"github.com/xjetry/probe/internal/hub/store"
 )
@@ -54,10 +53,6 @@ func (e *sendFailure) retryable() bool {
 		return e.status >= 500 || e.status == 408 || e.status == 429
 	}
 	return false
-}
-
-func NewHTTPClient() *http.Client {
-	return &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
 // URL 可含渠道凭据；构造请求与传输失败共用此出口，只保留操作及底层原因。
