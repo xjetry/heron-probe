@@ -9,6 +9,13 @@ vi.mock("./Chart", () => ({ Chart: () => null }));
 
 const routes = [{ path: "/", Component: Layout }, { path: "/login", element: <h1>login</h1> }];
 
+it("安全导航进入应用的会话管理页", async () => {
+  renderWithAdmin({ listNodes: async () => ({ nodes: [] }), listSessions: async () => ({ sessions: [] }) }, appRouter.routes, "/nodes");
+  const link = screen.getByRole("link", { name: "安全" });
+  fireEvent.click(link);
+  expect(await screen.findByRole("heading", { name: "安全" })).toBeInTheDocument();
+});
+
 it("探测任务导航进入应用的任务页路由", async () => {
   renderWithAdmin({ listNodes: async () => ({ nodes: [] }), listProbeTasks: async () => ({ tasks: [] }) }, appRouter.routes, "/nodes");
   const link = screen.getByRole("link", { name: "探测任务" });

@@ -109,7 +109,7 @@ func ParsePrefixes(list string) ([]netip.Prefix, error) {
 //
 // xfProto 与 ClientIP 一样是全部字段行，取拼接后的第一个值，即最外层那一跳写的协议。这个头不带逐跳地址，
 // 没法像 X-Forwarded-For 那样跳过可信代理；代理若追加而不覆盖、客户端又自带该头，第一个值就是客户端写的。
-// 这里有意不处理：它只决定 Login/Logout 回给请求者自己的 cookie 带不带 Secure（service.go 的 sessionCookie），
+// 这里有意不处理：它只决定签发或清除请求者自己的 cookie 时带不带 Secure（service.go 的 sessionCookie），
 // 客户端只能改到自己，影响不到别的来源。
 func RequestScheme(peerAddr string, xfProto []string, trusted []netip.Prefix) string {
 	peer := peerIP(peerAddr)
