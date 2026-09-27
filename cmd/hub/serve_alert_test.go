@@ -29,7 +29,7 @@ func startAlertHub(t *testing.T, clk clock.Clock, seed func(*store.Store), flags
 		t.Fatal(err)
 	}
 	if seed != nil {
-		st, err := store.Open(db, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		st, err := store.Open(db, clk, slog.New(slog.NewTextHandler(io.Discard, nil)), store.MigrateSchema)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -267,7 +267,7 @@ func TestServeReportsDaysLeftInTheHubZone(t *testing.T) {
 	if err := runPasswdWith([]string{"--db", db}, pipeWith(t, password+"\n"), io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(db, clk, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	st, err := store.Open(db, clk, slog.New(slog.NewTextHandler(io.Discard, nil)), store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}

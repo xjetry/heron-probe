@@ -20,12 +20,12 @@ func TestDelayedSessionTouchCannotResurrectLogout(t *testing.T) {
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	path := filepath.Join(t.TempDir(), "hub.db")
-	st, err := store.Open(path, clk, log)
+	st, err := store.Open(path, clk, log, store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	other, err := store.Open(path, clk, log)
+	other, err := store.Open(path, clk, log, store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}

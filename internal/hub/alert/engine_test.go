@@ -38,7 +38,7 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{clk: clock.NewFake(time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)), loc: time.FixedZone("UTC+8", 8*3600), log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	var err error
 	f.path = filepath.Join(t.TempDir(), "hub.db")
-	f.st, err = store.Open(f.path, f.clk, f.log)
+	f.st, err = store.Open(f.path, f.clk, f.log, store.MigrateSchema)
 	must(t, err)
 	t.Cleanup(func() { must(t, f.st.Close()) })
 	for i := 0; i < 2; i++ {

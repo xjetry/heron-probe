@@ -24,7 +24,7 @@ import (
 func open(t *testing.T) (*Store, *clock.Fake) {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	s, err := Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default())
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default(), MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func hash(b byte) []byte { h := make([]byte, 32); h[0] = b; return h }
 func TestWriteAfterCloseReturnsErrClosed(t *testing.T) {
 	for _, async := range []bool{false, true} {
 		t.Run(fmt.Sprint(async), func(t *testing.T) {
-			s, err := Open(filepath.Join(t.TempDir(), "closed.db"), clock.Real(), slog.Default())
+			s, err := Open(filepath.Join(t.TempDir(), "closed.db"), clock.Real(), slog.Default(), MigrateSchema)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -94,7 +94,7 @@ func TestOpenCreatesSchemaAtCurrentVersion(t *testing.T) {
 func TestReopenKeepsData(t *testing.T) {
 	dir := t.TempDir()
 	clk := clock.NewFake(time.Unix(0, 0))
-	s, err := Open(filepath.Join(dir, "t.db"), clk, slog.Default())
+	s, err := Open(filepath.Join(dir, "t.db"), clk, slog.Default(), MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestReopenKeepsData(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Close()
-	s, err = Open(filepath.Join(dir, "t.db"), clk, slog.Default())
+	s, err = Open(filepath.Join(dir, "t.db"), clk, slog.Default(), MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -661,7 +661,7 @@ func TestOpenErrorNamesTheDatabasePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(parent, "t.db")
-	s, err := Open(path, clock.NewFake(time.Unix(0, 0)), slog.Default())
+	s, err := Open(path, clock.NewFake(time.Unix(0, 0)), slog.Default(), MigrateSchema)
 	if err == nil {
 		s.Close()
 		t.Fatalf("Open(%s) succeeded", path)

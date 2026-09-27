@@ -54,7 +54,7 @@ func newHubAt(t *testing.T, path string) *hub {
 func newHubWith(t *testing.T, path string, cfg Config) *hub {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	st, err := store.Open(path, clk, slog.Default())
+	st, err := store.Open(path, clk, slog.Default(), store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}

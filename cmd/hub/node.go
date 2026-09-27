@@ -26,8 +26,8 @@ func openOffline(db string, create bool) (*store.Store, *auth.Auth, error) {
 			return nil, nil, err
 		}
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	st, err := store.Open(db, clock.Real(), log)
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	st, err := store.Open(db, clock.Real(), log, store.RequireCurrentSchema)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -124,7 +124,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		log.Warn("listening on a non-loopback address: direct access bypasses the proxy; forwarded headers are trusted only from configured peers", "listen", *listen)
 	}
 
-	st, err := store.Open(*db, clk, log)
+	st, err := store.Open(*db, clk, log, store.MigrateSchema)
 	if err != nil {
 		return err
 	}

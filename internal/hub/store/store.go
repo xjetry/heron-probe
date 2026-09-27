@@ -54,24 +54,37 @@ func dsn(path string, extra string) string {
 	return "file:" + u.EscapedPath() + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)" + extra
 }
 
-// Open 打开库并迁移到当前 schema。SQLite 打开失败的报错不带文件名（如 unable to open database file (14)）；
+// SchemaPolicy 由打开库的入口显式选择。离线命令不得迁移旧库：否则用新二进制查看 stats
+// 就会单向升级数据库，而 migrate 的版本检查会让旧 hub 在下次启动时拒绝打开它。
+// 零值非法，避免调用方遗漏选择时意外迁移。
+type SchemaPolicy int
+
+const (
+	MigrateSchema SchemaPolicy = iota + 1
+	RequireCurrentSchema
+)
+
+// Open 按 policy 检查或迁移 schema。SQLite 打开失败的报错不带文件名（如 unable to open database file (14)）；
 // serve 与离线子命令都经这里打开库，打开过程的每一种失败都在这一层补上路径，报错才指得出是哪个文件、
 // 该查哪个目录的权限。
-func Open(path string, clk clock.Clock, log *slog.Logger) (*Store, error) {
-	s, err := openStore(path, clk, log)
+func Open(path string, clk clock.Clock, log *slog.Logger, policy SchemaPolicy) (*Store, error) {
+	if policy != MigrateSchema && policy != RequireCurrentSchema {
+		panic("store.Open requires a valid SchemaPolicy")
+	}
+	s, err := openStore(path, clk, log, policy)
 	if err != nil {
 		return nil, fmt.Errorf("open database %s: %w", path, err)
 	}
 	return s, nil
 }
 
-func openStore(path string, clk clock.Clock, log *slog.Logger) (*Store, error) {
+func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPolicy) (*Store, error) {
 	w, err := sql.Open("sqlite", dsn(path, ""))
 	if err != nil {
 		return nil, err
 	}
 	w.SetMaxOpenConns(1)
-	if err := migrate(w); err != nil {
+	if err := migrate(w, policy, log); err != nil {
 		w.Close()
 		return nil, err
 	}
@@ -177,7 +190,10 @@ func (s *Store) writeAsync(fn func(*sql.Tx) error, done func(error)) {
 
 const schemaVersion = 9
 
-func migrate(db *sql.DB) error {
+// migrate 用 user_version 保存当前版本，不在库里保存迁移历史或时间；因此本程序提供给
+// 运维判断何时迁过、该还原哪份备份的唯一时间线是日志。每步事务提交成功后才记日志，
+// 避免把回滚的迁移记成已完成。
+func migrate(db *sql.DB, policy SchemaPolicy, log *slog.Logger) error {
 	var v int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
 		return err
@@ -188,7 +204,7 @@ func migrate(db *sql.DB) error {
 	case v > schemaVersion:
 		return fmt.Errorf("database schema version %d is newer than this binary (%d)", v, schemaVersion)
 	case v == 0:
-		return inTxDB(db, func(tx *sql.Tx) error {
+		if err := inTxDB(db, func(tx *sql.Tx) error {
 			for _, stmt := range schemaStatements() {
 				if _, err := tx.Exec(stmt); err != nil {
 					return fmt.Errorf("%w in %q", err, stmt)
@@ -196,7 +212,13 @@ func migrate(db *sql.DB) error {
 			}
 			_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion))
 			return err
-		})
+		}); err != nil {
+			return err
+		}
+		log.Info("database schema created", "version", schemaVersion)
+		return nil
+	case policy == RequireCurrentSchema:
+		return fmt.Errorf("database schema version %d is older than this binary (%d); start the new probe-hub serve once to upgrade it (back up the database first)", v, schemaVersion)
 	}
 	for next := v + 1; next <= schemaVersion; next++ {
 		step, ok := migrations[next]
@@ -212,6 +234,7 @@ func migrate(db *sql.DB) error {
 		}); err != nil {
 			return err
 		}
+		log.Info("database schema migrated", "from", next-1, "to", next)
 	}
 	return nil
 }
