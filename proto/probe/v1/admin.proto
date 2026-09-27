@@ -26,7 +26,8 @@ service AdminService {
     option (probe.v1.access) = ACCESS_SESSION;
   }
   // 撤销指定会话；撤销当前会话时同时清 cookie，等同登出。
-  // 不存在或已过期的 id 也成功，便于在响应丢失后安全重试。
+  // 不存在或已过期的 id 也成功，便于在响应丢失后安全重试；撤销的若是本次请求所用的会话，
+  // cookie 已随响应清除，重试会得到 Unauthenticated 而非再次成功——凭据已失效，结果仍安全。
   rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }

@@ -149,7 +149,8 @@ type AdminServiceClient interface {
 	// API token 不能管理其它凭据，因此不能列出或撤销会话。
 	ListSessions(context.Context, *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error)
 	// 撤销指定会话；撤销当前会话时同时清 cookie，等同登出。
-	// 不存在或已过期的 id 也成功，便于在响应丢失后安全重试。
+	// 不存在或已过期的 id 也成功，便于在响应丢失后安全重试；撤销的若是本次请求所用的会话，
+	// cookie 已随响应清除，重试会得到 Unauthenticated 而非再次成功——凭据已失效，结果仍安全。
 	RevokeSession(context.Context, *connect.Request[v1.RevokeSessionRequest]) (*connect.Response[v1.RevokeSessionResponse], error)
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
 	// 建节点并返回其 token；明文只在此处返回一次。
@@ -695,7 +696,8 @@ type AdminServiceHandler interface {
 	// API token 不能管理其它凭据，因此不能列出或撤销会话。
 	ListSessions(context.Context, *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error)
 	// 撤销指定会话；撤销当前会话时同时清 cookie，等同登出。
-	// 不存在或已过期的 id 也成功，便于在响应丢失后安全重试。
+	// 不存在或已过期的 id 也成功，便于在响应丢失后安全重试；撤销的若是本次请求所用的会话，
+	// cookie 已随响应清除，重试会得到 Unauthenticated 而非再次成功——凭据已失效，结果仍安全。
 	RevokeSession(context.Context, *connect.Request[v1.RevokeSessionRequest]) (*connect.Response[v1.RevokeSessionResponse], error)
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
 	// 建节点并返回其 token；明文只在此处返回一次。
