@@ -2,10 +2,15 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
+	"log/slog"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/metric"
 )
 
@@ -101,19 +106,46 @@ func TestGeoSettingsDefaultsAndPartialUpdate(t *testing.T) {
 	}
 }
 
-// 开关只认 "true"：库里出现别的文本（手工改库、以后的写法变化）按关，出网只在显式开启时发生。
-func TestGeoEnabledReadsAnythingButTrueAsOff(t *testing.T) {
-	s, _ := open(t)
+// 开关存 0 / 1：保存写出的就是这两个值。库里出现别的文本（手工改库、别的写法）时读设置报错，既不按关也不按开；
+// 这样的库打开时就被拒绝。运行中的库读到它时，查询器因读设置失败而不出网。
+func TestGeoEnabledIsZeroOrOneAndOtherValuesRefuseToOpen(t *testing.T) {
+	s, _ := openAt(t)
 	ctx := t.Context()
-	for _, v := range []string{"1", "TRUE", "yes", ""} {
-		if err := s.write(ctx, func(tx *sql.Tx) error {
-			_, err := tx.Exec("INSERT INTO setting (key, value) VALUES ('geo.enabled', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", v)
-			return err
-		}); err != nil {
+	for on, want := range map[bool]string{true: "1", false: "0"} {
+		if _, err := s.SaveSettings(ctx, SiteSettings{Theme: DefaultTheme}, GeoUpdate{Enabled: &on}); err != nil {
 			t.Fatal(err)
 		}
-		if g, err := s.GeoSettings(ctx); err != nil || g.Enabled {
-			t.Fatalf("geo.enabled = %q read as %+v %v", v, g, err)
+		var got string
+		if err := s.r.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = 'geo.enabled'").Scan(&got); err != nil || got != want {
+			t.Fatalf("saved enabled=%v as %q %v, want %q", on, got, err, want)
 		}
+		if g, err := s.GeoSettings(ctx); err != nil || g.Enabled != on {
+			t.Fatalf("stored %q read as %+v %v", want, g, err)
+		}
+	}
+	for _, v := range []string{"true", "false", "TRUE", "yes", "", "2", " 1"} {
+		t.Run(v, func(t *testing.T) {
+			s, path := openAt(t)
+			if err := s.write(t.Context(), func(tx *sql.Tx) error {
+				_, err := tx.Exec("INSERT INTO setting (key, value) VALUES ('geo.enabled', ?)", v)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			want := fmt.Sprintf("setting geo.enabled must be 0 or 1; got %q", v)
+			if g, err := s.GeoSettings(t.Context()); err == nil || err.Error() != want {
+				t.Fatalf("running store read %q as %+v %v, want error %q", v, g, err, want)
+			}
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := Open(path, clock.NewFake(time.Now()), slog.Default(), RequireCurrentSchema)
+			if reopened != nil {
+				reopened.Close()
+			}
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("reopen with geo.enabled = %q: %v, want an error containing %q", v, err, want)
+			}
+		})
 	}
 }

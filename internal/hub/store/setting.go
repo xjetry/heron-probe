@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"strconv"
+	"fmt"
 )
 
 // SiteSettings 是公开页的外观，五项整体读写。存储不校验取值：约束由 api 的 UpdateSettings 裁决，
@@ -55,7 +55,9 @@ type GeoUpdate struct {
 	URL     *string
 }
 
-// 开关按文本存 "true" / "false"，只由 SaveSettings 写。读到其它值按关：出网只在显式开启时发生。
+// 开关存 "0" / "1"（与 §10 公开页总闸同一编码），只由 SaveSettings 写。读到别的值返回错误，不按任一方向猜：别的值
+// 只可能来自 hub 之外改库的途径，猜成关会静默停掉运维开启的查询，猜成开会在运维不知情时向第三方发地址。Open 读一次
+// 设置（见 openStore），所以这样的库在打开时就被拒绝，而不是等到查询器的第一轮才在日志里报错。
 const (
 	geoEnabledKey = "geo.enabled"
 	geoURLKey     = "geo.url"
@@ -85,7 +87,10 @@ func readSettings(ctx context.Context, q querier) (SiteSettings, GeoSettings, er
 			return SiteSettings{}, GeoSettings{}, err
 		}
 		if k == geoEnabledKey {
-			geo.Enabled = v == "true"
+			if v != "0" && v != "1" {
+				return SiteSettings{}, GeoSettings{}, fmt.Errorf("setting %s must be 0 or 1; got %q", geoEnabledKey, v)
+			}
+			geo.Enabled = v == "1"
 		} else if p := byKey[k]; p != nil {
 			*p = v
 		}
@@ -127,7 +132,11 @@ func (s *Store) SaveSettings(ctx context.Context, site SiteSettings, geo GeoUpda
 			}
 		}
 		if geo.Enabled != nil {
-			if err := put(geoEnabledKey, strconv.FormatBool(*geo.Enabled)); err != nil {
+			enabled := "0"
+			if *geo.Enabled {
+				enabled = "1"
+			}
+			if err := put(geoEnabledKey, enabled); err != nil {
 				return err
 			}
 		}

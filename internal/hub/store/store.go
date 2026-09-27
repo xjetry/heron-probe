@@ -106,6 +106,12 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 		return nil, err
 	}
 	s := &Store{w: w, r: r, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{})}
+	// 设置里有必须合法才能解释的编码（geo.enabled 只认 0 / 1）：打开时读一次，库里有非法值就拒绝打开。
+	if _, _, err := readSettings(context.Background(), r); err != nil {
+		r.Close()
+		w.Close()
+		return nil, err
+	}
 	go s.runWriter()
 	return s, nil
 }
