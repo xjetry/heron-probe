@@ -132,6 +132,29 @@ confirm_service_started() {
   case " $svc_pids " in *" $pid "*) return 0;; esac
   fail "probe-hub did not stay running (pid $pid); see journalctl -u probe-hub"
 }
+# 数据目录与三个库文件的形态核对，停服前的预检与停服后的锁内复检共用。
+# 目录在 root 属主的 /var/lib 下，服务用户换不掉这个目录项，所以对目录本身的核对不依赖锁；下文的 chown
+# 不带 -h，目录是链接就会改到链接指向的目录。库文件要么不存在，要么是链接数为 1 的普通文件：符号链接与
+# 硬链接都会让 root 的 chown、chmod 改到另一个名字所指的文件。硬链接 [ -L ] 为假、[ -f ] 为真，只有链接数
+# 看得出；链接数用 find -links 取（BSD 与 GNU 的 find 都支持，替身测试也在 macOS 上跑），find 失败时输出
+# 同样为空，所以先看它的退出码。
+data_dir_ok() {
+  if [ -L "$DATA" ] || { [ -e "$DATA" ] && [ ! -d "$DATA" ]; }; then
+    echo "$DATA exists but is not a directory" >&2; return 1
+  fi
+}
+db_files_ok() {
+  for file in "$DATA/probe.db" "$DATA/probe.db-wal" "$DATA/probe.db-shm"; do
+    [ -L "$file" ] || [ -e "$file" ] || continue
+    extra=""
+    if [ ! -L "$file" ] && [ -f "$file" ]; then
+      extra=$(find "$file" -prune -links +1) || { echo "cannot read the link count of $file" >&2; return 1; }
+    fi
+    if [ -L "$file" ] || [ ! -f "$file" ] || [ -n "$extra" ]; then
+      echo "$file exists but is not a regular file with a single link" >&2; return 1
+    fi
+  done
+}
 if [ "$UNINSTALL" = 1 ]; then
   confirm_removal
   stop_service
@@ -165,7 +188,12 @@ ca_bundle_present() {
   done
   return 1
 }
-if is_https "$BASE_URL" && ! ca_bundle_present; then
+# 不论下载地址是不是 https，hub 进程自己都要做 TLS 出站：serve 以空基址构造告警队列（cmd/hub/serve.go），
+# Telegram 于是固定走 https://api.telegram.org（internal/hub/alert/notify.go），webhook 也可以是 https。
+# Go 的 crypto/x509 在 Linux 上只从系统的证书文件与目录（或 SSL_CERT_FILE、SSL_CERT_DIR 指定的位置）加载根证书，
+# 本仓库没有引入内置根证书。缺证书包时安装照样成功、面板正常，告警投递却一直因证书校验失败被记成 transport 失败。
+# 探测按文件做，不按发行版判断。
+if ! ca_bundle_present; then
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update </dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates </dev/null
   elif command -v apk >/dev/null 2>&1; then apk add --no-cache ca-certificates </dev/null
@@ -177,7 +205,17 @@ fi
 
 work=$(mktemp -d)
 BIN_TMP=$BIN.tmp.$$
-trap 'rm -rf "$work"; rm -f "$BIN_TMP"' EXIT
+# 停服务之后、start 返回之前的任何失败都让 hub 停着，各步的报错只说自己的原因：退出时补一句服务已停，
+# 免得人以为旧服务还在跑。
+SERVICE_STOPPED=0
+on_exit() {
+  rc=$?
+  rm -rf "$work"; rm -f "$BIN_TMP"
+  if [ "$rc" != 0 ] && [ "$SERVICE_STOPPED" = 1 ]; then
+    echo 'probe-hub is stopped; rerun the installer or start it manually' >&2
+  fi
+}
+trap on_exit EXIT
 trap 'exit 1' INT TERM HUP
 dl() {
   if [ "$FETCH" = curl ]; then
@@ -317,30 +355,37 @@ check_port() {
     [ "$found" = 1 ] || fail "port $port is in use; cannot identify listener pid; old service was not stopped"
   done
 }
+# 停服前先核对一遍，这里失败时旧服务照常运行。这一遍只为早失败：目录此时是 0770，服务组还能增删其中的条目，
+# 改属主的依据是下面停服加锁之后的复检。
+if ! data_dir_ok || ! db_files_ok; then fail 'refusing to hand the database to probe-hub; old service was not stopped'; fi
 check_port
 stop_service
+SERVICE_STOPPED=1
 mv -f "$BIN_TMP" "$BIN"
 
 # SQLite 要创建和删除 WAL/SHM，目录必须可写，不能照搬只读配置目录的 0750。
-# 停服务并确认该 uid 无进程之后才收紧目录、核对文件再改属主；不跟随链接、不递归 chown。
-[ ! -L "$DATA" ] || fail 'data directory must not be a symbolic link'
+# 停服务并确认该 uid 无进程之后，先把目录交给 root 并收成 0750：此后只有 root 能增删其中的条目，复检看到的
+# 就是接下来要改属主的条目。预检之后、加锁之前，服务组仍能替换目录里的条目，所以复检不能省。复检失败时
+# 服务已停、目录留在 0750：服务用户建不了 WAL/SHM，没有现成 WAL/SHM 时 hub 被拉起也打不开库（0750 下
+# 实测报 attempt to write a readonly database），直到有人查看后重跑。不跟随链接、不递归 chown。
+data_dir_ok || fail "$DATA changed after the pre-stop check"
 mkdir -p "$DATA"
 chown root:"$SVC_USER" "$DATA"
 chmod 0750 "$DATA"
+db_files_ok || fail "database files changed after the pre-stop check; $DATA stays locked at 0750 until you inspect it and rerun the installer"
+# 新建的空库与已有的库走同一个交还步骤；umask 077 让它在交还之前也只有 root 可读。
+[ -e "$DATA/probe.db" ] || (umask 077 && : > "$DATA/probe.db")
 for file in "$DATA/probe.db" "$DATA/probe.db-wal" "$DATA/probe.db-shm"; do
-  [ ! -L "$file" ] || fail "database file must not be a symbolic link: $file"
-  if [ -e "$file" ]; then
-    [ -f "$file" ] && [ "$(stat -c %h "$file")" = 1 ] || fail "database file must be a single-link regular file: $file"
-    chown "$SVC_USER:$SVC_USER" "$file"
-    chmod 0600 "$file"
-  fi
+  [ -e "$file" ] || continue
+  chown "$SVC_USER:$SVC_USER" "$file"
+  chmod 0600 "$file"
 done
-if [ ! -e "$DATA/probe.db" ]; then install -o "$SVC_USER" -g "$SVC_USER" -m 0600 /dev/null "$DATA/probe.db"; fi
 chmod 0770 "$DATA"
 install -m 0644 "$work/unit" "$UNIT"
 systemctl daemon-reload </dev/null
 systemctl enable probe-hub </dev/null
 systemctl start probe-hub </dev/null
+SERVICE_STOPPED=0
 confirm_service_started
 echo "probe-hub installed and started (systemd, $ARCH, $PKG)"
 echo 'Set the administrator password: probe-hub passwd --db /var/lib/probe/probe.db'
