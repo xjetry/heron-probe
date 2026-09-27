@@ -1,14 +1,14 @@
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
+import { useLeaveSession } from "../api/useLeaveSession";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { AdminService } from "../gen/probe/v1/admin_pb";
 
 export function Sessions() {
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
+  const leaveSession = useLeaveSession();
   const list = useQuery(AdminService.method.listSessions, {});
   const revoke = useMutation(AdminService.method.revokeSession);
   const gate = queryGate(list);
@@ -16,8 +16,7 @@ export function Sessions() {
   const remove = (id: string, current: boolean) => revoke.mutate({ id }, {
     onSuccess: () => {
       if (current) {
-        queryClient.clear();
-        void navigate("/login", { replace: true });
+        leaveSession();
       } else {
         void queryClient.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listSessions, cardinality: "finite" }) });
       }
@@ -39,7 +38,7 @@ export function Sessions() {
                 <td>{new Date(Number(session.createdAt) * 1000).toLocaleString()}</td>
                 <td>{new Date(Number(session.lastUsedAt) * 1000).toLocaleString()}</td>
                 <td>
-                  <ConfirmDelete label={`撤销会话 ${session.id}`} confirm={`确认撤销会话 ${session.id.slice(0, 12)}`} verb="撤销"
+                  <ConfirmDelete label={`撤销会话 ${session.id.slice(0, 12)}`} confirm={`确认撤销会话 ${session.id.slice(0, 12)}`} verb="撤销"
                     note={session.current ? "将退出当前登录" : "该会话将立即失效"}
                     pending={revoke.isPending} onDelete={() => remove(session.id, session.current)} />
                 </td>
