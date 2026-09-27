@@ -1,12 +1,12 @@
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
-import { useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, Fragment, type ReactNode, useState } from "react";
 import { Link } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { CountryBadge } from "../components/CountryBadge";
 import { Secret } from "../components/Secret";
-import { AdminService, CountrySource, type Node } from "../gen/probe/v1/admin_pb";
+import { AdminService, CountrySource, type Node, type Tag } from "../gen/probe/v1/admin_pb";
 import { BillingCycle } from "../gen/probe/v1/types_pb";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
@@ -14,17 +14,27 @@ import { graceText } from "../lib/alerts";
 import { BILLING_CYCLES, expired, expiryText, priceText } from "../lib/billing";
 import { withId } from "../lib/ids";
 import { filterNodes } from "../lib/nodeSearch";
+import { sameTag, withoutTag, withTag } from "../lib/tags";
 import { lagsHub } from "../lib/version";
 
 export function Nodes() {
   const qc = useQueryClient();
   const { error, mutationOptions } = useLatestError();
-  const nodes = useQuery(AdminService.method.listNodes, {});
+  // 所选标签交给 hub 过滤（交集，§10），搜索在返回的结果上再做一次，两者取交集。换选择时保留上一份结果作占位，
+  // 列表与过滤器不因重新加载而卸载；占位期间列表不是当前选择的结果，排序入口同样关闭（见 narrowed）。
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const nodes = useQuery(AdminService.method.listNodes, { tags: tagFilter }, { placeholderData: keepPreviousData });
+  // 标签清单只供过滤器与标签管理用，不进页面门控：取不到时节点列表照常显示，过滤器处说明原因。
+  const tags = useQuery(AdminService.method.listTags, {});
   // 只用于落后标记的可选查询：不进页面门控，失败或未就绪时不标，也不卸载列表；失败时在列表上方说明标记不可用，
   // 否则用户会把"没有标记"读成"没有落后的节点"。hub 版本在进程生命周期内不变，不轮询。
   const snapshot = useQuery(AdminService.method.getSnapshot, {});
   const hubVersion = snapshot.data?.hubVersion;
-  const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) });
+  // 节点的增删改都可能改变各标签的节点数，节点列表（全部过滤条件下的缓存）与标签清单一起刷新。
+  const refresh = () => Promise.all([
+    qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) }),
+    qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listTags, cardinality: "finite" }) }),
+  ]);
   // token 只在创建与换 token 的响应里各出现一次，hub 不存明文；展示不经过 isLatest 门控——门控丢弃迟到结果时会把这唯一一份明文一起丢掉。
   // id 记下明文属于哪一行：删除的若正是这一行，卡片必须一起消失，不能继续展示已删对象的凭据。
   const [secret, setSecret] = useState<{ id: bigint; label: string; value: string } | null>(null);
@@ -62,9 +72,17 @@ export function Nodes() {
     },
   });
   const reorder = useMutation(AdminService.method.reorderNodes, { ...mutationOptions, onSuccess: refresh });
+  // 删除标签后它不能继续留在过滤条件里：hub 对不存在的标签返回空结果，过滤器上却已找不到可以取消的勾选。
+  const removeTag = useMutation(AdminService.method.deleteTag, {
+    ...mutationOptions,
+    onSuccess: (_r, req) => {
+      setTagFilter((cur) => withoutTag(cur, req.name ?? ""));
+      return refresh();
+    },
+  });
 
   const onCreate = (e: FormEvent) => { e.preventDefault(); create.mutate({ name }); };
-  // 排序接口要求全部 id 的完整排列；搜索结果是子集，搜索期间不开放排序入口。
+  // 排序接口要求全部 id 的完整排列；搜索与标签过滤的结果都是子集，这时不开放排序入口。
   const move = (list: Node[], i: number, dir: -1 | 1) => {
     const ids = list.map((n) => n.id);
     const j = i + dir;
@@ -76,6 +94,7 @@ export function Nodes() {
   const gate = queryGate(nodes);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const list = filterNodes(gate.data.nodes, search);
+  const narrowed = search !== "" || tagFilter.length > 0 || nodes.isPlaceholderData;
   return (
     <section>
       {gate.banner}
@@ -90,19 +109,22 @@ export function Nodes() {
         <label>新节点名称<input value={name} onChange={(e) => setName(e.target.value)} /></label>
         <button type="submit" disabled={create.isPending || name.trim() === ""}>创建</button>
       </form>
-      <label className="node-search">搜索节点<input type="search" placeholder="名称、备注或主机名" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
-      {search !== "" && <p className="muted">搜索中无法排序，请清空搜索后调整完整节点顺序。</p>}
-      {search !== "" && list.length === 0 && <p className="muted" role="status">没有匹配的节点。</p>}
+      <div className="node-filters">
+        <label className="node-search">搜索节点<input type="search" placeholder="名称、备注或主机名" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
+        <TagFilter tags={tags.data?.tags} error={tags.error} selected={tagFilter} onChange={setTagFilter} />
+      </div>
+      {narrowed && <p className="muted">搜索或按标签过滤时无法排序，请清空搜索与标签过滤后调整完整节点顺序。</p>}
+      {narrowed && list.length === 0 && <p className="muted" role="status">没有匹配的节点。</p>}
       {error != null && <p role="alert" className="error">{errorText(error)}</p>}
       <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
         <table className="nodes">
-          <thead><tr><th>排序</th><th>名称</th><th>公开</th><th>国家 / 地区</th><th>备注</th><th>重置日</th><th>离线宽限期</th><th>计费</th><th>创建于</th><th>操作</th></tr></thead>
+          <thead><tr><th>排序</th><th>名称</th><th>公开</th><th>国家 / 地区</th><th>标签</th><th>备注</th><th>重置日</th><th>离线宽限期</th><th>计费</th><th>创建于</th><th>操作</th></tr></thead>
           <tbody>
             {list.map((n, i) => (
-              <NodeEditor key={String(n.id)} node={n} hubVersion={hubVersion}
+              <NodeEditor key={String(n.id)} node={n} hubVersion={hubVersion} knownTags={tags.data?.tags ?? []}
                 saving={update.isPending} deleting={remove.isPending} rotating={rotate.isPending}
-                onMoveUp={search === "" ? () => move(list, i, -1) : undefined}
-                onMoveDown={search === "" ? () => move(list, i, 1) : undefined}
+                onMoveUp={narrowed ? undefined : () => move(list, i, -1)}
+                onMoveDown={narrowed ? undefined : () => move(list, i, 1)}
                 onSave={(patch, onSuccess) => update.mutate({ id: n.id, ...patch }, { onSuccess })}
                 onDelete={() => remove.mutate({ id: n.id })}
                 onRotate={() => rotate.mutate({ id: n.id })} />
@@ -110,16 +132,67 @@ export function Nodes() {
           </tbody>
         </table>
       </div>
+      <TagManager tags={tags.data?.tags} pending={removeTag.isPending} onDelete={(name) => removeTag.mutate({ name })} />
+    </section>
+  );
+}
+
+// 多选过滤取交集：只列同时带有所选全部标签的节点。已选却不在清单里的标签（在别处被删了）照样列出并保持勾选，
+// 否则结果为空而找不到可以取消的勾选。
+function TagFilter({ tags, error, selected, onChange }: {
+  tags: readonly Tag[] | undefined; error: unknown; selected: readonly string[]; onChange: (next: string[]) => void;
+}) {
+  const listed = (tags ?? []).map((t) => t.name);
+  const names = [...listed, ...selected.filter((s) => !listed.some((t) => sameTag(t, s)))];
+  const count = (name: string) => tags?.find((t) => t.name === name)?.nodeCount;
+  return (
+    <fieldset className="picks tag-filter">
+      <legend>按标签过滤（同时带有所选全部标签）</legend>
+      {error != null && <span role="alert" className="error">无法取得标签清单：{errorText(error)}</span>}
+      {error == null && tags !== undefined && names.length === 0 && <span className="muted">还没有标签。</span>}
+      {names.map((name) => {
+        const checked = selected.some((s) => sameTag(s, name));
+        const n = count(name);
+        return (
+          <label key={name}>
+            <input type="checkbox" aria-label={`按标签过滤 ${name}`} checked={checked} onChange={() => onChange(checked ? withoutTag(selected, name) : withTag(selected, name))} />
+            {name}{n !== undefined && <span className="muted">（{n}）</span>}
+          </label>
+        );
+      })}
+      {selected.length > 0 && <button type="button" className="link" onClick={() => onChange([])}>清除标签过滤</button>}
+    </fieldset>
+  );
+}
+
+// 删除标签只从节点上解除它，节点本身不受影响。
+function TagManager({ tags, pending, onDelete }: { tags: readonly Tag[] | undefined; pending: boolean; onDelete: (name: string) => void }) {
+  if (tags === undefined) return null;
+  return (
+    <section aria-label="标签">
+      <h2>标签</h2>
+      {tags.length === 0 ? <p className="muted">还没有标签；在节点的编辑里添加。</p> : (
+        <ul className="tag-list">
+          {tags.map((t) => (
+            <li key={t.name}>
+              <span className="tag">{t.name}</span> <span className="muted">{t.nodeCount} 个节点</span>{" "}
+              <ConfirmDelete label={`删除标签 ${t.name}`} confirm={`确认删除标签 ${t.name}`} note="只从节点上解除，节点不受影响" pending={pending} onDelete={() => onDelete(t.name)} />
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
 
 const validResetDay = (day: number) => Number.isInteger(day) && day >= 1 && day <= 28;
 
-// 宽限期以字符串编辑，0 表示清除（取 hub 的 PROBE_OFFLINE_AFTER）。计费五项与手动指定的国家随整行整体提交（UpdateNode
-// 整体替换，缺失即清除），节点没有 billing 时从空值开始；取值约束由 hub 裁决并把错误原文显示在列表上方，页面不另抄一份规则。
+// 宽限期以字符串编辑，0 表示清除（取 hub 的 PROBE_OFFLINE_AFTER）。计费五项、手动指定的国家与标签随整行整体提交（UpdateNode
+// 整体替换，缺失即清除，标签不带就是清空），节点没有 billing 时从空值开始；取值约束由 hub 裁决并把错误原文显示在列表上方，
+// 页面不另抄一份规则。
 const draftOf = (node: Node) => ({
   name: node.name, public: node.public, note: node.note, trafficResetDay: node.trafficResetDay, countryPin: node.countryPin,
+  tags: [...node.tags],
   offlineGraceS: String(node.offlineGraceS ?? 0),
   billing: {
     price: node.billing?.price ?? "", currency: node.billing?.currency ?? "", billingCycle: node.billing?.billingCycle ?? BillingCycle.UNSPECIFIED,
@@ -130,8 +203,8 @@ type Draft = ReturnType<typeof draftOf>;
 type BillingDraft = Draft["billing"];
 const validGrace = (s: string) => /^\d+$/.test(s);
 
-function NodeEditor({ node, hubVersion, saving, deleting, rotating, onMoveUp, onMoveDown, onSave, onDelete, onRotate }: {
-  node: Node; hubVersion: string | undefined;
+function NodeEditor({ node, hubVersion, knownTags, saving, deleting, rotating, onMoveUp, onMoveDown, onSave, onDelete, onRotate }: {
+  node: Node; hubVersion: string | undefined; knownTags: readonly Tag[];
   saving: boolean; deleting: boolean; rotating: boolean;
   onMoveUp?: () => void; onMoveDown?: () => void;
   onSave: (patch: Omit<Draft, "offlineGraceS"> & { offlineGraceS: number }, onSuccess: () => void) => void;
@@ -139,6 +212,8 @@ function NodeEditor({ node, hubVersion, saving, deleting, rotating, onMoveUp, on
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(draftOf(node));
+  // 标签输入框里还没按添加的文字在保存时一并提交：用户输完直接点保存，不应丢掉刚输入的标签。
+  const [pendingTag, setPendingTag] = useState("");
   if (editing) {
     return (
       <tr>
@@ -150,13 +225,14 @@ function NodeEditor({ node, hubVersion, saving, deleting, rotating, onMoveUp, on
           <input aria-label={`手动指定国家 / 地区 ${withId(node.name, node.id)}`} aria-describedby={`country-hint-${node.id}`} placeholder="US" value={draft.countryPin} onChange={(e) => setDraft({ ...draft, countryPin: e.target.value.toUpperCase() })} />
           <p className="muted" id={`country-hint-${node.id}`}>两个字母（ISO 3166-1），优先于查得值；留空用查得值：{node.countryIp ? `查得于 ${node.countryIp}` : "尚无查得值"}。</p>
         </td>
+        <td><TagsEditor id={node.id} label={withId(node.name, node.id)} tags={draft.tags} known={knownTags} pending={pendingTag} onPending={setPendingTag} onChange={(tags) => setDraft({ ...draft, tags })} /></td>
         <td><input aria-label={`备注 ${withId(node.name, node.id)}`} value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></td>
         <td><input type="number" min={1} max={28} aria-label={`重置日 ${withId(node.name, node.id)}`} value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><p className="muted">若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。</p></td>
         <td><input type="number" min={0} aria-label={`离线宽限期（秒） ${withId(node.name, node.id)}`} aria-describedby={`grace-hint-${node.id}`} value={draft.offlineGraceS} onChange={(e) => setDraft({ ...draft, offlineGraceS: e.target.value })} /><p className="muted" id={`grace-hint-${node.id}`}>0 表示取 hub 的 PROBE_OFFLINE_AFTER；非 0 不能小于它。</p></td>
         <td><BillingEditor label={withId(node.name, node.id)} draft={draft.billing} onChange={(patch) => setDraft({ ...draft, billing: { ...draft.billing, ...patch } })} /></td>
         <td />
         <td>
-          <button type="button" disabled={saving || !validResetDay(draft.trafficResetDay) || !validGrace(draft.offlineGraceS)} onClick={() => onSave({ ...draft, offlineGraceS: Number(draft.offlineGraceS) }, () => setEditing(false))}>保存</button>{" "}
+          <button type="button" disabled={saving || !validResetDay(draft.trafficResetDay) || !validGrace(draft.offlineGraceS)} onClick={() => onSave({ ...draft, tags: withTag(draft.tags, pendingTag), offlineGraceS: Number(draft.offlineGraceS) }, () => setEditing(false))}>保存</button>{" "}
           <button type="button" className="link" onClick={() => setEditing(false)}>取消</button>
         </td>
       </tr>
@@ -174,13 +250,14 @@ function NodeEditor({ node, hubVersion, saving, deleting, rotating, onMoveUp, on
       </td>
       <td>{node.public ? "是" : "否"}</td>
       <td><CountryCell node={node} /></td>
+      <td>{node.tags.length === 0 ? "—" : node.tags.map((t) => <span key={t} className="tag">{t}</span>)}</td>
       <td className="muted">{node.note}</td>
       <td>每月 {node.trafficResetDay} 日</td>
       <td>{graceText(node.offlineGraceS)}</td>
       <td><BillingSummary node={node} /></td>
       <td className="muted">{new Date(Number(node.createdAt) * 1000).toLocaleDateString()}</td>
       <td>
-        <button type="button" className="link" aria-label={`编辑 ${withId(node.name, node.id)}`} onClick={() => { setDraft(draftOf(node)); setEditing(true); }}>编辑</button>{" "}
+        <button type="button" className="link" aria-label={`编辑 ${withId(node.name, node.id)}`} onClick={() => { setDraft(draftOf(node)); setPendingTag(""); setEditing(true); }}>编辑</button>{" "}
         <button type="button" className="link" aria-label={`换 token ${withId(node.name, node.id)}`} onClick={onRotate} disabled={rotating}>换 token</button>{" "}
         <ConfirmDelete label={`删除 ${withId(node.name, node.id)}`} confirm={`确认删除 ${withId(node.name, node.id)}`} pending={deleting} onDelete={onDelete} />
       </td>
@@ -207,6 +284,26 @@ function BillingSummary({ node }: { node: Node }) {
   if (node.billing?.autoRenew) parts.push("自动续期");
   if (parts.length === 0) return <>—</>;
   return <>{parts.map((p, i) => <Fragment key={i}>{i > 0 && " · "}{p}</Fragment>)}</>;
+}
+
+// 标签可新建：输入已有标签以外的名字即在保存时新建。大小写不敏感，已有的标签沿用先建的写法（由 hub 裁决）；
+// 候选来自标签清单。
+function TagsEditor({ id, label, tags, known, pending, onPending, onChange }: {
+  id: bigint; label: string; tags: readonly string[]; known: readonly Tag[]; pending: string; onPending: (text: string) => void; onChange: (tags: string[]) => void;
+}) {
+  const add = () => { onChange(withTag(tags, pending)); onPending(""); };
+  return (
+    <div className="tags-edit">
+      {tags.map((t) => (
+        <span key={t} className="tag">{t}<button type="button" className="link" aria-label={`移除标签 ${t} ${label}`} onClick={() => onChange(withoutTag(tags, t))}>×</button></span>
+      ))}
+      <input aria-label={`新标签 ${label}`} list={`known-tags-${id}`} value={pending} onChange={(e) => onPending(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
+      <datalist id={`known-tags-${id}`}>{known.map((t) => <option key={t.name} value={t.name} />)}</datalist>
+      <button type="button" className="link" aria-label={`添加标签 ${label}`} onClick={add}>添加</button>
+      <p className="muted">大小写不敏感，已有的标签沿用先建的写法；每个节点至多 16 个。</p>
+    </div>
+  );
 }
 
 function BillingEditor({ label, draft, onChange }: { label: string; draft: BillingDraft; onChange: (patch: Partial<BillingDraft>) => void }) {

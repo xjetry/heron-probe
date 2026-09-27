@@ -36,6 +36,12 @@ form.row, .edit-form .row { align-items: flex-end; flex-wrap: wrap; }
 .detail-header nav { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .table-scroll { overflow-x: auto; }
 .node-search { width: min(100%, 28rem); margin: 1rem 0; }
+/* 搜索框与标签过滤器并排，窄屏时换行；两者取交集。 */
+.node-filters { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1rem; margin: 1rem 0; }
+.node-filters .node-search { margin: 0; }
+.tag { display: inline-flex; align-items: center; gap: .15rem; margin: 0 .25rem .15rem 0; padding: 0 .4rem; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; }
+.tags-edit { white-space: normal; min-width: 12rem; }
+.tag-list { list-style: none; padding: 0; display: grid; gap: .35rem; }
 table.nodes { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
 table.nodes th, table.nodes td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
 tr.offline td { color: var(--muted); }

@@ -5,7 +5,8 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Nodes } from "./Nodes";
-import { AdminService, CountrySource, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema } from "../gen/probe/v1/admin_pb";
+import { AdminService, CountrySource, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema, type ListNodesRequest } from "../gen/probe/v1/admin_pb";
+import { sameTag } from "../lib/tags";
 import { BillingCycle } from "../gen/probe/v1/types_pb";
 
 const two = [
@@ -20,9 +21,10 @@ const agentAt = (agentVersion: string) => [{ ...withVersion[0], facts: { ...with
 // 按表头文字取列号：同一行里可能有多个"—"，断言要落在指定的列上。
 const column = (header: string) => screen.getAllByRole("columnheader").findIndex((th) => th.textContent === header);
 const snapshotOf = (hubVersion: string) => async () => ({ now: 1n, reportIntervalMs: 4000, nodes: [], hubVersion });
-// 节点页总会取快照（落后标记用）；默认给一个成功的快照，需要别的版本或失败的用例覆盖 getSnapshot。
+// 节点页总会取快照（落后标记用）与标签清单（过滤器与标签管理用）；默认给一个成功的快照与空清单，需要别的版本、标签或
+// 失败的用例覆盖 getSnapshot、listTags。
 const renderNodes = (impl: AdminImpl, routes: Parameters<typeof renderWithAdmin>[1] = [{ path: "/nodes", Component: Nodes }]) =>
-  renderWithAdmin({ getSnapshot: snapshotOf("v1.1.0"), ...impl }, routes, "/nodes");
+  renderWithAdmin({ getSnapshot: snapshotOf("v1.1.0"), listTags: async () => ({ tags: [] }), ...impl }, routes, "/nodes");
 
 describe("Nodes", () => {
 
@@ -46,7 +48,7 @@ describe("Nodes", () => {
     await screen.findByRole("link", { name: "b（#2）" });
     const input = screen.getByRole("searchbox", { name: "搜索节点" });
     fireEvent.change(input, { target: { value: "b" } });
-    expect(screen.getByText("搜索中无法排序，请清空搜索后调整完整节点顺序。")).toBeInTheDocument();
+    expect(screen.getByText("搜索或按标签过滤时无法排序，请清空搜索与标签过滤后调整完整节点顺序。")).toBeInTheDocument();
     for (const button of screen.getAllByRole("button", { name: /^(上移|下移)/ })) {
       expect(button).toBeDisabled();
       fireEvent.click(button);
@@ -54,7 +56,7 @@ describe("Nodes", () => {
     await act(async () => {});
     expect(reorderNodes).not.toHaveBeenCalled();
     fireEvent.change(input, { target: { value: "" } });
-    expect(screen.queryByText("搜索中无法排序，请清空搜索后调整完整节点顺序。")).toBeNull();
+    expect(screen.queryByText("搜索或按标签过滤时无法排序，请清空搜索与标签过滤后调整完整节点顺序。")).toBeNull();
     for (const button of screen.getAllByRole("button", { name: /^(上移|下移)/ })) expect(button).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "下移 a（#1）" }));
     await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n] }), expect.anything()));
@@ -675,5 +677,138 @@ describe("Nodes", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  describe("标签", () => {
+    const tagged = [
+      { id: 1n, name: "alpha", public: false, note: "", sortOrder: 0, createdAt: 0n, trafficResetDay: 1, tags: ["db"] },
+      { id: 2n, name: "beta", public: false, note: "", sortOrder: 1, createdAt: 0n, trafficResetDay: 1, tags: ["db", "web"] },
+      { id: 3n, name: "gamma", public: false, note: "", sortOrder: 2, createdAt: 0n, trafficResetDay: 1, tags: ["web"] },
+    ];
+    // 按 hub 的语义应答：只返回同时带有全部所选标签的节点，名字大小写不敏感，空选择返回全部。
+    const listByTags = () => vi.fn(async (req: ListNodesRequest) => ({
+      nodes: tagged.filter((n) => req.tags.every((t) => n.tags.some((x) => sameTag(x, t)))),
+    }));
+    const tagList = async () => ({ tags: [{ name: "db", nodeCount: 2 }, { name: "web", nodeCount: 2 }] });
+    const shown = () => screen.queryAllByRole("link").map((link) => link.textContent);
+    const filterBox = (name: string) => screen.getByRole("checkbox", { name: `按标签过滤 ${name}` });
+
+    it("标签列显示节点的标签，没有标签是 —", async () => {
+      renderNodes({ listNodes: async () => ({ nodes: [tagged[1], two[0]] }), listTags: tagList });
+      const row = async (name: string) => within((await screen.findByRole("link", { name })).closest("tr")!);
+      expect((await row("beta（#2）")).getAllByRole("cell")[column("标签")]).toHaveTextContent(/^dbweb$/);
+      expect((await row("a（#1）")).getAllByRole("cell")[column("标签")]).toHaveTextContent(/^—$/);
+    });
+
+    it("多选过滤按所选全部标签请求 hub 并列出交集，过滤中禁用排序，清除后恢复全部", async () => {
+      const listNodes = listByTags();
+      const reorderNodes = vi.fn(async () => ({}));
+      renderNodes({ listNodes, listTags: tagList, reorderNodes });
+      await screen.findByRole("link", { name: "gamma（#3）" });
+      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: [] }), expect.anything());
+      fireEvent.click(filterBox("db"));
+      await waitFor(() => expect(shown()).toEqual(["alpha", "beta"]));
+      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: ["db"] }), expect.anything());
+      fireEvent.click(filterBox("web"));
+      await waitFor(() => expect(shown()).toEqual(["beta"]));
+      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: ["db", "web"] }), expect.anything());
+      expect(screen.getByText("搜索或按标签过滤时无法排序，请清空搜索与标签过滤后调整完整节点顺序。")).toBeInTheDocument();
+      for (const button of screen.getAllByRole("button", { name: /^(上移|下移)/ })) {
+        expect(button).toBeDisabled();
+        fireEvent.click(button);
+      }
+      await act(async () => {});
+      expect(reorderNodes).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "清除标签过滤" }));
+      await waitFor(() => expect(shown()).toEqual(["alpha", "beta", "gamma"]));
+      for (const button of screen.getAllByRole("button", { name: /^(上移|下移)/ })) expect(button).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: "下移 alpha（#1）" }));
+      await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n, 3n] }), expect.anything()));
+    });
+
+    it("标签过滤与搜索框取交集：只列同时满足两者的节点", async () => {
+      renderNodes({ listNodes: listByTags(), listTags: tagList });
+      await screen.findByRole("link", { name: "gamma（#3）" });
+      const search = screen.getByRole("searchbox", { name: "搜索节点" });
+      fireEvent.change(search, { target: { value: "alpha" } });
+      expect(shown()).toEqual(["alpha"]);
+      fireEvent.click(filterBox("web"));
+      // alpha 命中搜索但没有 web 标签；web 的节点（beta、gamma）不命中搜索。
+      await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("没有匹配的节点。"));
+      expect(shown()).toEqual([]);
+      fireEvent.change(search, { target: { value: "GAMMA" } });
+      expect(shown()).toEqual(["gamma"]);
+      fireEvent.change(search, { target: { value: "" } });
+      expect(shown()).toEqual(["beta", "gamma"]);
+    });
+
+    it("编辑：输入新建标签、按折叠去重、移除，输入框里未添加的文字随保存提交", async () => {
+      const updateNode = vi.fn(async () => ({}));
+      renderNodes({ listNodes: async () => ({ nodes: [tagged[0]] }), listTags: tagList, updateNode });
+      await screen.findByRole("link", { name: "alpha（#1）" });
+      fireEvent.click(screen.getByRole("button", { name: "编辑 alpha（#1）" }));
+      const input = screen.getByRole("combobox", { name: "新标签 alpha（#1）" });
+      fireEvent.change(input, { target: { value: " web " } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      fireEvent.change(input, { target: { value: "WEB" } });
+      fireEvent.click(screen.getByRole("button", { name: "添加标签 alpha（#1）" }));
+      fireEvent.click(screen.getByRole("button", { name: "移除标签 db alpha（#1）" }));
+      fireEvent.change(input, { target: { value: "客户A" } });
+      fireEvent.click(screen.getByRole("button", { name: "保存" }));
+      await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, tags: ["web", "客户A"] }), expect.anything()));
+    });
+
+    it("UpdateNode 整体替换，只改名称时提交体里的标签必须是节点当前的标签", async () => {
+      const updateNode = vi.fn(async () => ({}));
+      renderNodes({ listNodes: async () => ({ nodes: [tagged[1]] }), listTags: tagList, updateNode });
+      await screen.findByRole("link", { name: "beta（#2）" });
+      fireEvent.click(screen.getByRole("button", { name: "编辑 beta（#2）" }));
+      fireEvent.change(screen.getByLabelText("名称 beta（#2）"), { target: { value: "renamed" } });
+      fireEvent.click(screen.getByRole("button", { name: "保存" }));
+      await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 2n, name: "renamed", tags: ["db", "web"] }), expect.anything()));
+    });
+
+    it("标签管理：确认后删除标签，刷新列表并从过滤条件里去掉它", async () => {
+      let tags = [{ name: "db", nodeCount: 2 }, { name: "web", nodeCount: 2 }];
+      const deleteTag = vi.fn(async (req: { name: string }) => { tags = tags.filter((t) => t.name !== req.name); return {}; });
+      const listNodes = listByTags();
+      renderNodes({ listNodes, listTags: async () => ({ tags }), deleteTag });
+      const manager = within(await screen.findByRole("region", { name: "标签" }));
+      expect(manager.getByText("db").parentElement).toHaveTextContent("db 2 个节点");
+      fireEvent.click(filterBox("db"));
+      await waitFor(() => expect(shown()).toEqual(["alpha", "beta"]));
+      fireEvent.click(manager.getByRole("button", { name: "删除标签 db" }));
+      expect(deleteTag).not.toHaveBeenCalled();
+      fireEvent.click(manager.getByRole("button", { name: "确认删除标签 db" }));
+      await waitFor(() => expect(deleteTag).toHaveBeenCalledWith(expect.objectContaining({ name: "db" }), expect.anything()));
+      await waitFor(() => expect(screen.queryByRole("checkbox", { name: "按标签过滤 db" })).toBeNull());
+      await waitFor(() => expect(shown()).toEqual(["alpha", "beta", "gamma"]));
+      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: [] }), expect.anything());
+      expect(manager.queryByText("db")).toBeNull();
+    });
+
+    it("已选的标签在别处被删掉后仍列在过滤器里并可取消", async () => {
+      let tags = [{ name: "db", nodeCount: 2 }, { name: "web", nodeCount: 2 }];
+      const listNodes = listByTags();
+      renderNodes({ listNodes, listTags: async () => ({ tags }), updateNode: async () => { tags = [tags[1]]; return {}; } });
+      await screen.findByRole("link", { name: "gamma（#3）" });
+      fireEvent.click(filterBox("db"));
+      await waitFor(() => expect(shown()).toEqual(["alpha", "beta"]));
+      fireEvent.click(screen.getByRole("button", { name: "编辑 alpha（#1）" }));
+      fireEvent.click(screen.getByRole("button", { name: "保存" }));
+      await waitFor(() => expect(screen.queryByRole("region", { name: "标签" })).not.toHaveTextContent("db"));
+      expect(filterBox("db")).toBeChecked();
+      fireEvent.click(filterBox("db"));
+      await waitFor(() => expect(shown()).toEqual(["alpha", "beta", "gamma"]));
+      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: [] }), expect.anything());
+    });
+
+    it("标签清单取不到时节点列表照常显示，过滤器处说明原因", async () => {
+      renderNodes({ listNodes: async () => ({ nodes: tagged }), listTags: async () => { throw new ConnectError("tags unavailable", Code.Unavailable); } });
+      await screen.findByRole("link", { name: "gamma（#3）" });
+      expect(await screen.findByRole("alert")).toHaveTextContent("无法取得标签清单：");
+      expect(screen.getByRole("alert")).toHaveTextContent("tags unavailable");
+      expect(screen.queryByRole("region", { name: "标签" })).toBeNull();
+    });
   });
 });
