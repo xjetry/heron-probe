@@ -3,6 +3,7 @@ package deploy
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -549,5 +550,40 @@ func TestHubUninstallWithoutATerminalNeedsYes(t *testing.T) {
 	}
 	if e.exists(hubUnit) || e.exists("usr/local/bin/probe-hub") || !e.exists(hubData+"/probe.db") || !strings.Contains(e.file("etc/passwd"), "probe-hub:") {
 		t.Fatal("uninstall must remove the unit and binary and keep the data and account")
+	}
+}
+
+// 安装器认得的 serve 参数（SERVE_FLAGS 加上固定的 --db）与 cmd/hub/serve.go 定义的 flag 是同一张表的两处写法。
+// serve 加了参数而安装器没加时，装过这个参数的单元升级会在停服前被拒绝；反过来安装器会写出 serve 不认的参数，
+// hub 起不来。usage 也要列出每个可覆盖的参数。
+func TestHubFlagTableAgreesWithServe(t *testing.T) {
+	t.Parallel()
+	src, err := os.ReadFile("../cmd/hub/serve.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var serve []string
+	for _, m := range regexp.MustCompile(`\bfs\.[A-Za-z]+\((?:&[^,]+,\s*)?"([^"]+)"`).FindAllStringSubmatch(string(src), -1) {
+		serve = append(serve, m[1])
+	}
+	script, err := os.ReadFile("install-hub.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^SERVE_FLAGS='([^']*)'$`).FindStringSubmatch(string(script))
+	if m == nil {
+		t.Fatal("install-hub.sh has no SERVE_FLAGS line")
+	}
+	overridable := strings.Fields(m[1])
+	installer := append([]string{"db"}, overridable...)
+	slices.Sort(serve)
+	slices.Sort(installer)
+	if !slices.Equal(serve, installer) {
+		t.Fatalf("serve defines %q; the installer knows %q", serve, installer)
+	}
+	for _, f := range overridable {
+		if !strings.Contains(string(script), "[--"+f+" ") {
+			t.Errorf("usage does not list --%s", f)
+		}
 	}
 }

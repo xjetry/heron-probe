@@ -16,6 +16,9 @@ PROC=$ROOT/proc
 SVC_USER=probe-hub
 REPO=https://github.com/xjetry/probe
 VERSION=""; BASE_URL=""; UNINSTALL=0; PURGE=0; YES=0; OVERRIDES=""
+# 安装器写进单元的 serve 参数，与 cmd/hub/serve.go 定义的 flag 一一对应，由 deploy/installhub_test.go 核对。
+# 命令行覆盖与已装单元的解析共用这一张表；--db 固定为 /var/lib/probe/probe.db，不接受覆盖。
+SERVE_FLAGS='listen timezone trusted-proxies public-dir retention-1m retention-5m retention-1h retention-alert-events'
 nl='
 '
 cr=$(printf '\r')
@@ -42,15 +45,17 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || usage
       case "$1" in --version) VERSION=$2;; --base-url) BASE_URL=$2;; esac
       shift 2;;
-    --listen|--timezone|--trusted-proxies|--public-dir|--retention-1m|--retention-5m|--retention-1h|--retention-alert-events)
+    --uninstall) UNINSTALL=1; shift;;
+    --purge) PURGE=1; shift;;
+    --yes) YES=1; shift;;
+    --*)
+      case "${1#--}" in ''|*[!a-z0-9-]*) usage;; esac
+      case " $SERVE_FLAGS " in *" ${1#--} "*) ;; *) usage;; esac
       [ "$#" -ge 2 ] || usage
       reject_line_breaks "$2"
       # 每行一条字面值的 --flag=value，稍后与已装参数按 flag 名合并。
       OVERRIDES="$OVERRIDES$1=$2$nl"
       shift 2;;
-    --uninstall) UNINSTALL=1; shift;;
-    --purge) PURGE=1; shift;;
-    --yes) YES=1; shift;;
     *) usage;;
   esac
 done
@@ -327,13 +332,13 @@ printf '%s' "$OVERRIDES" > "$work/overrides"
 # - 顺序取 flag 首次出现的位置；已装参数里同名 flag 取最后一个值，与 serve 的解析（Go flag 包，后者覆盖前者）一致。
 # - 命令行覆盖按名替换表里的值，表里没有才追加。
 # - 写回统一为 --flag=value、每个 flag 一次：单元里只留生效的值，带同样参数重跑不会累加。
-# 接受 Go flag 包的 --f v、-f v、--f=v、-f=v 四种写法。已知 flag 与 cmd/hub/serve.go 定义的 serve 参数一一对应，
-# 两处增删要同步：表外的 flag 在停服前拒绝，而不是原样带过去。
-awk '
+# 接受 Go flag 包的 --f v、-f v、--f=v、-f=v 四种写法。认得的 flag 是 --db 加上 SERVE_FLAGS：表外的 flag 在
+# 停服前拒绝，而不是原样带过去。
+awk -v flags="db $SERVE_FLAGS" '
   function die(msg) { print msg | "cat 1>&2"; failed = 1; exit 1 }
   function set(name, value) { if (!(name in val)) order[++count] = name; val[name] = value }
   BEGIN {
-    split("db listen timezone trusted-proxies public-dir retention-1m retention-5m retention-1h retention-alert-events", names, " ")
+    split(flags, names, " ")
     for (i in names) known[names[i]] = 1
   }
   FILENAME == ARGV[1] {
