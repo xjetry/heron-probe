@@ -360,7 +360,7 @@ CREATE TABLE probe_1m (
 
 `node`（名称、排序、是否公开、备注、离线宽限期、流量重置日、token_hash，§9.4 的计费五列：价格、币种、周期、到期日、自动续期，以及 §4.9 的 `last_source`、`country`、`country_ip`、`country_pin`）、`node_facts`（facts_hash 与各静态字段）、`traffic`、`probe_task`、`probe_task_node`、`probe_meta`（任务版本号）、`alert_rule`（到期规则另有 `days_before`，其余种类为 NULL）、`alert_rule_node`（显式作用域；`alert_rule.all_nodes` 为真时不存行且覆盖全部节点，为假时无行表示不覆盖任何节点——删除作用域里最后一个节点不会放宽到全部）、`alert_rule_channel`、`alert_state`（到期规则另带进入 `firing` 时的到期日 `fired_expires_on`，恢复文案据它判断日期是否改过，§9.2）、`alert_event`、`alert_delivery`（每事件每渠道一行投递记录；失败类别、HTTP 状态码与错误原文分列存放，同一次发送覆盖的多行共享 `batch_id`，见 §9.3）、`notify_channel`、`setting`、`admin`、`admin_session`、`api_token`（名称、token_hash、创建时间、最后使用时间）、`register_window`、`rollup_state`、`tag`（名称）与 `node_tag`（节点与标签多对多，§10 的标签一条）。
 
-schema 版本记在 `PRAGMA user_version`，迁移为按版本号顺序执行的函数；空库直接建到当前版本，不重放历史。打开库时的 schema 策略由调用方显式给出：只有 `serve` 迁移旧库，每迁一步记一行日志（from、to），空库建成时也记一行；离线子命令（`passwd`、`token`、`stats`、`node`、`window`）打开比自己旧的库时拒绝并提示先用新版本 `serve` 升级（升级前备份）——否则运维用新二进制看一眼 `stats` 就把库单向迁走，旧 hub 下次重启起不来；两种策略下建空库都允许（没有旧数据可丢），比二进制新的库都拒绝。
+schema 版本记在 `PRAGMA user_version`，迁移为按版本号顺序执行的函数；空库直接建到当前版本，不重放历史。打开库时的 schema 策略由调用方显式给出：只有 `serve` 迁移旧库，每迁一步记一行日志（from、to），空库建成时也记一行；离线子命令（`passwd`、`token`、`stats`、`node`、`window`）打开比自己旧的库时拒绝并提示先用新版本 `serve` 升级（升级前备份）——否则运维用新二进制看一眼 `stats` 就把库单向迁走，旧 hub 下次重启起不来；两种策略下建空库都允许（没有旧数据可丢）——空库指没有任何对象的文件；有表却没有版本号、或版本号为负的文件不是本项目的库，拒绝打开而不是当作空库建表或当作旧库去迁（否则 `stats --db` 指错文件会往别人的库里建出全部表）；比二进制新的库都拒绝。
 
 ## 7. 流量累计
 
