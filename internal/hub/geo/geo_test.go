@@ -111,6 +111,12 @@ func newFixture(t *testing.T) *fixture {
 		reply(w, r)
 	}))
 	t.Cleanup(f.svc.srv.Close)
+	// 服务地址一开始就指向假服务，开关保持从未保存过的关：任何出网（包括开关失效时的）都落在假服务上、被记下，
+	// 不会打到默认的真实服务。
+	url := f.svc.srv.URL + "/{ip}/country"
+	if _, err := f.st.SaveSettings(t.Context(), store.SiteSettings{Theme: store.DefaultTheme}, store.GeoUpdate{URL: &url}); err != nil {
+		t.Fatal(err)
+	}
 	f.restart()
 	return f
 }
@@ -122,8 +128,7 @@ func (f *fixture) restart() {
 
 func (f *fixture) enable(on bool) {
 	f.t.Helper()
-	url := f.svc.srv.URL + "/{ip}/country"
-	if _, err := f.st.SaveSettings(f.t.Context(), store.SiteSettings{Theme: store.DefaultTheme}, store.GeoUpdate{Enabled: &on, URL: &url}); err != nil {
+	if _, err := f.st.SaveSettings(f.t.Context(), store.SiteSettings{Theme: store.DefaultTheme}, store.GeoUpdate{Enabled: &on}); err != nil {
 		f.t.Fatal(err)
 	}
 }
