@@ -126,6 +126,37 @@ it("两个表单的保存互斥，后一个带的是先一个保存之后的外�
   expect(sent[1].settings?.title).toBe("新标题");
 });
 
+// 反方向：备份保存在途时外观表单不能提交；备份保存完成、设置重新读到之后，外观表单照常保存。
+it("备份保存在途时外观表单不能提交", async () => {
+  const sent: UpdateSettingsRequest[] = [];
+  let current = saved;
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  render({
+    getSettings: async () => ({ settings: current }),
+    updateSettings: async (req) => {
+      sent.push(req);
+      if (sent.length === 1) await gate;
+      current = { ...appearanceOf(req), backup };
+      return { settings: current };
+    },
+  });
+  const appearance = await appearanceForm();
+  const form = await backupForm();
+  fireEvent.change(form.getByLabelText("配置保留份数"), { target: { value: "40" } });
+  fireEvent.click(form.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(appearance.getByRole("button", { name: "保存" })).toBeDisabled());
+  fireEvent.submit(screen.getByRole("form", { name: "公开页外观" }));
+  expect(sent).toHaveLength(1);
+  release();
+  await form.findByRole("status");
+  await waitFor(() => expect(appearance.getByRole("button", { name: "保存" })).toBeEnabled());
+  fireEvent.change(appearance.getByLabelText("标题"), { target: { value: "新标题" } });
+  fireEvent.click(appearance.getByRole("button", { name: "保存" }));
+  await appearance.findByRole("status");
+  expect(sent.map((r) => r.settings?.title)).toEqual(["机房", "新标题"]);
+});
+
 // 渠道列表读不到时不渲染备份表单：拿空列表求交会把已选渠道作为显式空集合提交，关掉备份失败通知。
 it("渠道列表读取失败时不给出备份表单", async () => {
   render({ listNotifyChannels: async () => { throw new ConnectError("channels unavailable", Code.Unavailable); } });
