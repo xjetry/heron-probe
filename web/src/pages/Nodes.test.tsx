@@ -24,6 +24,40 @@ const renderNodes = (impl: AdminImpl, routes: Parameters<typeof renderWithAdmin>
 
 describe("Nodes", () => {
 
+  it.each(["ALPHA", "CUSTOMER", "HOSTNAME"])("搜索 %s 后只显示命中节点，清空恢复全部", async (search) => {
+    const matching = { ...two[0], name: "alpha", note: "customer", facts: { hostname: "hostname.internal" } };
+    renderNodes({ listNodes: async () => ({ nodes: [matching, two[1]] }) });
+    await screen.findByRole("link", { name: "b（#2）" });
+    const input = screen.getByRole("searchbox", { name: "搜索节点" });
+    fireEvent.change(input, { target: { value: search } });
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(["alpha"]);
+    fireEvent.change(input, { target: { value: "absent" } });
+    expect(screen.queryAllByRole("link")).toEqual([]);
+    expect(screen.getByRole("status")).toHaveTextContent("没有匹配的节点。");
+    fireEvent.change(input, { target: { value: "" } });
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(["alpha", "b"]);
+  });
+
+  it("搜索中禁用全部排序入口，清空后可提交完整排列", async () => {
+    const reorderNodes = vi.fn(async () => ({}));
+    renderNodes({ listNodes: async () => ({ nodes: two }), reorderNodes });
+    await screen.findByRole("link", { name: "b（#2）" });
+    const input = screen.getByRole("searchbox", { name: "搜索节点" });
+    fireEvent.change(input, { target: { value: "b" } });
+    expect(screen.getByText("搜索中无法排序，请清空搜索后调整完整节点顺序。")).toBeInTheDocument();
+    for (const button of screen.getAllByRole("button", { name: /^(上移|下移)/ })) {
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+    }
+    await act(async () => {});
+    expect(reorderNodes).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "" } });
+    expect(screen.queryByText("搜索中无法排序，请清空搜索后调整完整节点顺序。")).toBeNull();
+    for (const button of screen.getAllByRole("button", { name: /^(上移|下移)/ })) expect(button).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "下移 a（#1）" }));
+    await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n] }), expect.anything()));
+  });
+
   it("marks nodes whose agent version lags the hub", async () => {
     renderNodes({
       listNodes: async () => ({ nodes: withVersion }),

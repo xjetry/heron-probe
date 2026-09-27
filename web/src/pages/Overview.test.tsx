@@ -1,5 +1,5 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
 import { POLL_MS } from "../lib/poll";
@@ -21,6 +21,56 @@ const snapshot = {
 afterEach(() => vi.useRealTimers());
 
 describe("Overview", () => {
+  it.each(["WEB", "CUSTOMER", "HOSTNAME"])("搜索 %s 关联节点资料并清空恢复实时列表", async (search) => {
+    renderWithAdmin({
+      getSnapshot: async () => snapshot,
+      listNodes: async () => ({ nodes: [
+        { id: 2n, name: "never", note: "unrelated", facts: { hostname: "other.internal" } },
+        { id: 1n, name: "web-01", note: "customer", facts: { hostname: "hostname.internal" } },
+      ] }),
+    }, [{ path: "/", Component: Overview }], "/");
+    await screen.findByRole("link", { name: "never（#2）" });
+    const input = screen.getByRole("searchbox", { name: "搜索节点" });
+    fireEvent.change(input, { target: { value: search } });
+    await screen.findByRole("link", { name: "web-01（#1）" });
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(["web-01"]);
+    expect(screen.getByRole("meter", { name: "42%" })).toHaveAttribute("aria-valuenow", "42");
+    fireEvent.change(input, { target: { value: "absent" } });
+    expect(screen.queryAllByRole("link")).toEqual([]);
+    expect(screen.getByRole("status")).toHaveTextContent("没有匹配的节点。");
+    fireEvent.change(input, { target: { value: "" } });
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(["web-01", "never"]);
+  });
+
+  it("搜索资料加载与失败不伪装成无匹配，清空无需等待资料", async () => {
+    let reject!: (error: unknown) => void;
+    const pending = new Promise<never>((_resolve, fail) => { reject = fail; });
+    renderWithAdmin({ getSnapshot: async () => snapshot, listNodes: () => pending }, [{ path: "/", Component: Overview }], "/");
+    await screen.findByRole("link", { name: "web-01（#1）" });
+    const input = screen.getByRole("searchbox", { name: "搜索节点" });
+    fireEvent.change(input, { target: { value: "hostname" } });
+    expect(screen.getByText("加载中…")).toBeInTheDocument();
+    expect(screen.queryByRole("table")).toBeNull();
+    await act(async () => { reject(new ConnectError("node metadata unavailable", Code.Unavailable)); });
+    expect(await screen.findByRole("alert")).toHaveTextContent("node metadata unavailable");
+    fireEvent.change(input, { target: { value: "" } });
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(["web-01", "never"]);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("搜索资料刷新失败保留结果与输入并显示错误", async () => {
+    const listNodes = vi.fn().mockResolvedValueOnce({ nodes: [{ id: 1n, name: "web-01", note: "customer" }] })
+      .mockRejectedValue(new ConnectError("metadata refresh failed", Code.Unavailable));
+    const { queryClient } = renderWithAdmin({ getSnapshot: async () => snapshot, listNodes }, [{ path: "/", Component: Overview }], "/");
+    await screen.findByRole("link", { name: "web-01（#1）" });
+    const input = screen.getByRole("searchbox", { name: "搜索节点" });
+    fireEvent.change(input, { target: { value: "customer" } });
+    await waitFor(() => expect(screen.getAllByRole("link")).toHaveLength(1));
+    await act(async () => { await queryClient.refetchQueries(); });
+    expect(await screen.findByRole("alert")).toHaveTextContent("metadata refresh failed");
+    expect(input).toHaveValue("customer");
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(["web-01"]);
+  });
   it("已有快照时请求失败仍保留表格并显示错误", async () => {
     const getSnapshot = vi.fn().mockResolvedValueOnce(snapshot).mockRejectedValue(new ConnectError("snapshot unavailable", Code.Unavailable));
     const { queryClient } = renderWithAdmin({ getSnapshot }, [{ path: "/", Component: Overview }], "/");

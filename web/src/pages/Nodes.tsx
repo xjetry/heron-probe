@@ -12,6 +12,7 @@ import { useLatestError } from "../api/useLatestError";
 import { graceText } from "../lib/alerts";
 import { BILLING_CYCLES, expired, expiryText, priceText } from "../lib/billing";
 import { withId } from "../lib/ids";
+import { filterNodes } from "../lib/nodeSearch";
 import { lagsHub } from "../lib/version";
 
 export function Nodes() {
@@ -27,6 +28,7 @@ export function Nodes() {
   // id 记下明文属于哪一行：删除的若正是这一行，卡片必须一起消失，不能继续展示已删对象的凭据。
   const [secret, setSecret] = useState<{ id: bigint; label: string; value: string } | null>(null);
   const [name, setName] = useState("");
+  const [search, setSearch] = useState("");
 
   const create = useMutation(AdminService.method.createNode, {
     ...mutationOptions,
@@ -61,7 +63,7 @@ export function Nodes() {
   const reorder = useMutation(AdminService.method.reorderNodes, { ...mutationOptions, onSuccess: refresh });
 
   const onCreate = (e: FormEvent) => { e.preventDefault(); create.mutate({ name }); };
-  // 排序接口要求给出全部 id 的完整排列：交换相邻两项后整表提交。
+  // 排序接口要求全部 id 的完整排列；搜索结果是子集，搜索期间不开放排序入口。
   const move = (list: Node[], i: number, dir: -1 | 1) => {
     const ids = list.map((n) => n.id);
     const j = i + dir;
@@ -72,7 +74,7 @@ export function Nodes() {
 
   const gate = queryGate(nodes);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
-  const list = gate.data.nodes;
+  const list = filterNodes(gate.data.nodes, search);
   return (
     <section>
       {gate.banner}
@@ -87,6 +89,9 @@ export function Nodes() {
         <label>新节点名称<input value={name} onChange={(e) => setName(e.target.value)} /></label>
         <button type="submit" disabled={create.isPending || name.trim() === ""}>创建</button>
       </form>
+      <label className="node-search">搜索节点<input type="search" placeholder="名称、备注或主机名" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
+      {search !== "" && <p className="muted">搜索中无法排序，请清空搜索后调整完整节点顺序。</p>}
+      {search !== "" && list.length === 0 && <p className="muted" role="status">没有匹配的节点。</p>}
       {error != null && <p role="alert" className="error">{errorText(error)}</p>}
       <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
         <table className="nodes">
@@ -95,7 +100,8 @@ export function Nodes() {
             {list.map((n, i) => (
               <NodeEditor key={String(n.id)} node={n} hubVersion={hubVersion}
                 saving={update.isPending} deleting={remove.isPending} rotating={rotate.isPending}
-                onMoveUp={() => move(list, i, -1)} onMoveDown={() => move(list, i, 1)}
+                onMoveUp={search === "" ? () => move(list, i, -1) : undefined}
+                onMoveDown={search === "" ? () => move(list, i, 1) : undefined}
                 onSave={(patch, onSuccess) => update.mutate({ id: n.id, ...patch }, { onSuccess })}
                 onDelete={() => remove.mutate({ id: n.id })}
                 onRotate={() => rotate.mutate({ id: n.id })} />
@@ -126,7 +132,7 @@ const validGrace = (s: string) => /^\d+$/.test(s);
 function NodeEditor({ node, hubVersion, saving, deleting, rotating, onMoveUp, onMoveDown, onSave, onDelete, onRotate }: {
   node: Node; hubVersion: string | undefined;
   saving: boolean; deleting: boolean; rotating: boolean;
-  onMoveUp: () => void; onMoveDown: () => void;
+  onMoveUp?: () => void; onMoveDown?: () => void;
   onSave: (patch: Omit<Draft, "offlineGraceS"> & { offlineGraceS: number }, onSuccess: () => void) => void;
   onDelete: () => void; onRotate: () => void;
 }) {
@@ -153,8 +159,8 @@ function NodeEditor({ node, hubVersion, saving, deleting, rotating, onMoveUp, on
   return (
     <tr>
       <td>
-        <button type="button" className="link" aria-label={`上移 ${withId(node.name, node.id)}`} onClick={onMoveUp}>↑</button>
-        <button type="button" className="link" aria-label={`下移 ${withId(node.name, node.id)}`} onClick={onMoveDown}>↓</button>
+        <button type="button" className="link" aria-label={`上移 ${withId(node.name, node.id)}`} onClick={onMoveUp} disabled={!onMoveUp}>↑</button>
+        <button type="button" className="link" aria-label={`下移 ${withId(node.name, node.id)}`} onClick={onMoveDown} disabled={!onMoveDown}>↓</button>
       </td>
       <td>
         <Link to={`/nodes/${node.id}`} aria-label={withId(node.name, node.id)}>{node.name}</Link>
