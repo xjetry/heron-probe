@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/netip"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -32,6 +33,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/hub/traffic"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 const password = "correct horse battery staple"
@@ -220,6 +222,36 @@ func TestLoginRequiresAdminAndRightPassword(t *testing.T) {
 	}
 	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{})); codeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("ListNodes after logout: %v", err)
+	}
+}
+
+func TestLoginBusyReturnsResourceExhausted(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	paused, entered, release := testwait.PauseContext(ctx)
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.auth.Login(paused, password, netip.MustParseAddr("192.0.2.1"))
+		done <- err
+	}()
+	defer func() {
+		release()
+		if err := <-done; err != nil {
+			t.Errorf("admitted login failed after release: %v", err)
+		}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(testwait.Bound):
+		t.Fatal("admitted login did not reach password read")
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, testwait.Bound)
+	defer cancel()
+	_, err := h.admin.Login(requestCtx, connect.NewRequest(&probev1.LoginRequest{Password: password}))
+	var ce *connect.Error
+	if !errors.As(err, &ce) || ce.Code() != connect.CodeResourceExhausted || ce.Message() != "password verification is busy; please try again later" {
+		t.Fatalf("busy login = %v, want ResourceExhausted with retry message", err)
 	}
 }
 

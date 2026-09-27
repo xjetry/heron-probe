@@ -331,35 +331,144 @@ func TestPasswordChangeDuringLoginDoesNotIssueSession(t *testing.T) {
 	}
 }
 
-func TestConcurrentLoginFailuresCannotBypassLock(t *testing.T) {
+func TestConcurrentLoginsRejectWithoutWaitingForPasswordVerification(t *testing.T) {
 	a, _, _ := setup(t)
 	ctx := context.Background()
 	if err := a.SetPassword(ctx, goodPassword); err != nil {
 		t.Fatal(err)
+	}
+	from := netip.MustParseAddr("10.0.0.1")
+	paused, entered, release := testwait.PauseContext(ctx)
+	first := make(chan error, 1)
+	go func() {
+		_, err := a.Login(paused, goodPassword, from)
+		first <- err
+	}()
+	defer func() {
+		release()
+		if err := <-first; err != nil {
+			t.Errorf("admitted login failed after release: %v", err)
+		}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(testwait.Bound):
+		t.Fatal("admitted login did not reach password read")
 	}
 	start := make(chan struct{})
 	done := make(chan error, failLimit+3)
 	for i := 0; i < cap(done); i++ {
 		go func() {
 			<-start
-			_, err := a.Login(ctx, "wrong", netip.MustParseAddr("10.0.0.1"))
+			_, err := a.Login(ctx, goodPassword, from)
 			done <- err
 		}()
 	}
 	close(start)
-	bad, locked := 0, 0
 	for i := 0; i < cap(done); i++ {
-		switch err := <-done; {
-		case errors.Is(err, ErrBadPassword):
-			bad++
-		case errors.Is(err, ErrLocked):
-			locked++
-		default:
-			t.Fatalf("unexpected login result: %v", err)
+		select {
+		case err := <-done:
+			if !errors.Is(err, ErrLoginBusy) {
+				t.Errorf("concurrent login = %v, want ErrLoginBusy", err)
+			}
+		case <-time.After(testwait.Bound):
+			release()
+			for remaining := i; remaining < cap(done); remaining++ {
+				<-done
+			}
+			t.Fatal("concurrent login waited for password verification")
 		}
 	}
-	if bad != failLimit || locked != 3 {
-		t.Fatalf("concurrent attempts bypassed lock: bad=%d locked=%d", bad, locked)
+	a.mu.Lock()
+	f := a.login.m[SourceKey(from)]
+	locked := a.login.locked(from, a.clk.Mono())
+	a.mu.Unlock()
+	if f != nil || locked {
+		t.Fatalf("busy attempts changed failure state: entry=%+v locked=%v", f, locked)
+	}
+}
+
+func TestLoginChecksLockoutBeforeBusyGate(t *testing.T) {
+	a, _, _ := setup(t)
+	from := netip.MustParseAddr("10.0.0.1")
+	a.mu.Lock()
+	for range failLimit {
+		a.login.record(from, a.clk.Mono())
+	}
+	a.mu.Unlock()
+	a.loginGate.Lock()
+	defer a.loginGate.Unlock()
+	if _, err := a.Login(context.Background(), goodPassword, from); !errors.Is(err, ErrLocked) {
+		t.Fatalf("locked source while gate busy = %v, want ErrLocked", err)
+	}
+}
+
+func TestSessionAuthenticationDoesNotUseLoginGate(t *testing.T) {
+	a, _, _ := setup(t)
+	ctx := context.Background()
+	if err := a.SetPassword(ctx, goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	token, err := a.Login(ctx, goodPassword, netip.MustParseAddr("10.0.0.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.loginGate.Lock()
+	release := sync.OnceFunc(a.loginGate.Unlock)
+	defer release()
+	done := make(chan error, 1)
+	go func() {
+		ok, err := a.AuthenticateSession(ctx, token)
+		if err == nil && !ok {
+			err = errors.New("live session rejected")
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("session authentication used busy login gate: %v", err)
+		}
+	case <-time.After(testwait.Bound):
+		release()
+		<-done
+		t.Fatal("session authentication waited for busy login gate")
+	}
+}
+
+func TestLoginReleasesGateBeforeSessionIssuance(t *testing.T) {
+	a, _, clk := setup(t)
+	ctx := context.Background()
+	from := netip.MustParseAddr("10.0.0.1")
+	if err := a.SetPassword(ctx, goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	gate := &observationClock{Fake: clk, entered: make(chan struct{}), release: make(chan struct{})}
+	gate.block.Store(true)
+	a.clk = gate
+	release := sync.OnceFunc(func() { close(gate.release) })
+	done := make(chan error, 1)
+	go func() {
+		_, err := a.Login(ctx, goodPassword, from)
+		done <- err
+	}()
+	defer release()
+	select {
+	case <-gate.entered:
+	case <-time.After(testwait.Bound):
+		t.Fatal("login did not reach session issuance")
+	}
+	for range failLimit {
+		if _, err := a.Login(ctx, "wrong", from); !errors.Is(err, ErrBadPassword) {
+			t.Errorf("password verification blocked by session issuance: %v", err)
+		}
+	}
+	release()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Login(ctx, goodPassword, from); !errors.Is(err, ErrLocked) {
+		t.Fatalf("session issuance cleared newer failures: %v", err)
 	}
 }
 

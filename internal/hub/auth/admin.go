@@ -21,6 +21,7 @@ var (
 	ErrNoAdmin      = errors.New("no admin password has been set")
 	ErrBadPassword  = errors.New("wrong password")
 	ErrLocked       = errors.New("too many failed logins from this source (one IPv4 address, or one IPv6 /64)")
+	ErrLoginBusy    = errors.New("password verification is busy; please try again later")
 	ErrWeakPassword = fmt.Errorf("password must be at least %d characters", MinPasswordLen)
 )
 
@@ -112,18 +113,39 @@ func (a *Auth) SetPassword(ctx context.Context, plain string) error {
 // 显式检查承载，并在日志里指明该跑 probe-hub passwd。失败按来源键计数（SourceKey：IPv4 按地址、IPv6 按 /64），
 // 锁定期间的拒绝不依赖输入的密码，正确密码也不能提前解除锁定。
 func (a *Auth) Login(ctx context.Context, password string, from netip.Addr) (string, error) {
-	// loginMu 串行化检查到记失败或签发，避免并发尝试在失败落账前越过阈值。
-	// 登录不变更节点映射，不能借用 mutMu 让节点操作等待匿名登录的慢哈希。
-	// 只按 loginMu -> mu 取锁，不持 mutMu；慢哈希和数据库等待也不持 mu。
-	a.loginMu.Lock()
-	defer a.loginMu.Unlock()
-	now := a.clk.Mono()
+	phc, err := a.verifyLoginPassword(ctx, password, from)
+	if err != nil {
+		return "", err
+	}
+	plain, h := NewToken()
+	wall := a.clk.Now()
+	if err := a.store.CreateSession(ctx, h, wall, wall.Add(SessionAbsolute), phc); err != nil {
+		if errors.Is(err, store.ErrAdminChanged) {
+			return "", ErrBadPassword
+		}
+		return "", err
+	}
+	if _, err := a.store.DeleteExpiredSessions(ctx, wall); err != nil {
+		a.log.Warn("purging expired sessions failed", "err", err)
+	}
+	return plain, nil
+}
+
+func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from netip.Addr) (string, error) {
 	a.mu.Lock()
-	locked := a.login.locked(from, now)
-	a.mu.Unlock()
-	if locked {
+	if a.login.locked(from, a.clk.Mono()) {
+		a.mu.Unlock()
 		return "", ErrLocked
 	}
+	// 排队会保留整波匿名请求的慢哈希成本，并把合法登录推到队尾，故直接拒绝。
+	// 容量固定为一：核数不是可用内存预算，按核数放大仍会挤占小机器的资源。
+	// 未进门就没有验证密码，不能记作猜测失败，否则并发洪水能锁住同出口的管理员。
+	if !a.loginGate.TryLock() {
+		a.mu.Unlock()
+		return "", ErrLoginBusy
+	}
+	a.mu.Unlock()
+	defer a.loginGate.Unlock()
 	phc, ok, err := a.store.AdminPasswordHash(ctx)
 	if err != nil {
 		return "", err
@@ -146,21 +168,12 @@ func (a *Auth) Login(ctx context.Context, password string, from netip.Addr) (str
 		}
 		return "", ErrBadPassword
 	}
-	plain, h := NewToken()
-	wall := a.clk.Now()
-	if err := a.store.CreateSession(ctx, h, wall, wall.Add(SessionAbsolute), phc); err != nil {
-		if errors.Is(err, store.ErrAdminChanged) {
-			return "", ErrBadPassword
-		}
-		return "", err
-	}
+	// 密码验证成功即清掉此前的猜测失败，并在放门前完成；会话写库不占门，
+	// 也不能在写库返回后清账，否则会抹掉随后另一次校验刚记录的失败。
 	a.mu.Lock()
 	a.login.clear(from)
 	a.mu.Unlock()
-	if _, err := a.store.DeleteExpiredSessions(ctx, wall); err != nil {
-		a.log.Warn("purging expired sessions failed", "err", err)
-	}
-	return plain, nil
+	return phc, nil
 }
 
 // AuthenticateSession 判定 cookie 里的 token 是否对应一个活着的会话。

@@ -252,6 +252,8 @@ func (s *Service) Login(ctx context.Context, req *connect.Request[probev1.LoginR
 	peer := ctx.Value(peerKey{}).(peerInfo)
 	tok, err := s.auth.Login(ctx, req.Msg.GetPassword(), peer.from)
 	switch {
+	case errors.Is(err, auth.ErrLoginBusy):
+		return nil, connect.NewError(connect.CodeResourceExhausted, errors.New("password verification is busy; please try again later"))
 	case errors.Is(err, auth.ErrLocked):
 		return nil, unauthenticated("too many failed logins from this source (one IPv4 address, or one IPv6 /64); retry in 15 minutes")
 	case errors.Is(err, auth.ErrNoAdmin), errors.Is(err, auth.ErrBadPassword):
