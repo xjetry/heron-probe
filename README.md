@@ -148,3 +148,7 @@ curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-maco
 14. 重启这台 Mac：服务开机自启、节点在线；`kern.bootsessionuuid` 换了新值；总流量没有一次性跳涨。
 15. `curl -fsSL <base>/install-macos.sh | sudo sh -s -- --uninstall`：输出 `probe-agent uninstalled`；`sudo launchctl print system/xyz.probe.agent` 退出码 113；`/usr/local/bin/probe-agent` 与 plist 不在，配置与用户仍在。再带 `--uninstall --purge` 执行：`/etc/probe-agent`、`/Library/Logs/probe-agent` 不在，`id _probe-agent` 报 no such user，`dscl . -read /Groups/_probe-agent` 报 `eDSRecordNotFound`。
 16. 有 Intel Mac 时在其上重复 1–5，装的是 amd64 包。
+
+## 许可
+
+MIT，见 [LICENSE](LICENSE)。
