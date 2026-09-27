@@ -307,3 +307,18 @@ it("切窗请求挂起时保留探测图与图例", async () => {
     await act(async () => { releaseProbes(); });
   }
 });
+
+it("主机名一格带上 hub 看到的来源地址；从未上报时不显示", async () => {
+  renderWithAdmin({ ...defaultImpl, listNodes: async () => {
+    const response = await listNodes();
+    return { nodes: [{ ...response.nodes[0], lastSource: "2001:db8::7" }] };
+  } }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  const dt = await screen.findByText("主机名");
+  expect(dt.nextElementSibling).toHaveTextContent(/^db-01\.internal（来源 2001:db8::7）$/);
+});
+
+it("来源地址为空时主机名一格只有主机名", async () => {
+  renderWithAdmin({ ...defaultImpl, listNodes }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  const dt = await screen.findByText("主机名");
+  expect(dt.nextElementSibling).toHaveTextContent(/^db-01\.internal$/);
+});

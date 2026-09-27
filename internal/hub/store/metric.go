@@ -57,7 +57,9 @@ func (s *Store) WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, 
 				return err
 			}
 			if !r.LastSeen.IsZero() {
-				if _, err := tx.Exec("UPDATE node SET last_seen_at = ? WHERE id = ?", r.LastSeen.Unix(), r.NodeID); err != nil {
+				// last_source 与 last_seen_at 取自同一次上报，同一条语句写入；空串（那次取不到对端）保留已有的值。
+				if _, err := tx.Exec("UPDATE node SET last_seen_at = ?, last_source = COALESCE(NULLIF(?, ''), last_source) WHERE id = ?",
+					r.LastSeen.Unix(), r.Source, r.NodeID); err != nil {
 					return err
 				}
 			}

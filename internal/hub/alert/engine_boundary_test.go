@@ -53,7 +53,7 @@ func TestPendingSurvivesRestartUntilGrace(t *testing.T) {
 	f.clk.Advance(59 * time.Second)
 	f.sweep(t)
 	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
-	f.l.Observe(f.ids[0], &probev1.Metrics{})
+	f.l.Observe(f.ids[0], "", &probev1.Metrics{})
 	f.sweep(t)
 	wantState(t, f.e, r.ID, f.ids[0], store.StateOK)
 }

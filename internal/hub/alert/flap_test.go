@@ -74,11 +74,11 @@ func flapFixture(t *testing.T) (*fixture, store.AlertRule) {
 	r := offline()
 	r.AllNodes, r.NodeIDs = false, f.ids[:1]
 	r = f.rule(t, r)
-	f.l.Observe(f.ids[0], &probev1.Metrics{})
+	f.l.Observe(f.ids[0], "", &probev1.Metrics{})
 	f.clk.Advance(61 * time.Second)
 	f.sweep(t)
 	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
-	f.l.Observe(f.ids[0], &probev1.Metrics{})
+	f.l.Observe(f.ids[0], "", &probev1.Metrics{})
 	f.sweep(t)
 	wantState(t, f.e, r.ID, f.ids[0], store.StateOK)
 	return f, r
@@ -99,7 +99,7 @@ func TestReofflineWithinWindowWaitsForFlapGrace(t *testing.T) {
 	f, r := flapFixture(t)
 	recoveredAt := time.Unix(f.clk.Now().Unix(), 0).UTC()
 	f.clk.Advance(10 * time.Minute)
-	f.l.Observe(f.ids[0], &probev1.Metrics{})
+	f.l.Observe(f.ids[0], "", &probev1.Metrics{})
 	f.sweep(t)
 	f.clk.Advance(61 * time.Second)
 	f.sweep(t)
@@ -131,7 +131,7 @@ func TestReofflineWithinWindowWaitsForFlapGrace(t *testing.T) {
 func TestReofflineAfterWindowUsesNodeGrace(t *testing.T) {
 	f, r := flapFixture(t)
 	f.clk.Advance(61 * time.Minute)
-	f.l.Observe(f.ids[0], &probev1.Metrics{})
+	f.l.Observe(f.ids[0], "", &probev1.Metrics{})
 	f.sweep(t)
 	f.clk.Advance(61 * time.Second)
 	f.sweep(t)
@@ -297,7 +297,7 @@ func TestNeverRecoveredPendingAfterRestartIsNotFlapping(t *testing.T) {
 func TestFlapGraceFollowsTheOfflineStartNotTheEvaluationTime(t *testing.T) {
 	f, r := flapFixture(t)
 	f.clk.Advance(50 * time.Minute)
-	f.l.Observe(f.ids[0], &probev1.Metrics{})
+	f.l.Observe(f.ids[0], "", &probev1.Metrics{})
 	f.sweep(t)
 	f.clk.Advance(11 * time.Minute)
 	f.sweep(t)

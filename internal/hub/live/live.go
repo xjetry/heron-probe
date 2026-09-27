@@ -24,6 +24,8 @@ type entry struct {
 	metrics      *probev1.Metrics
 	lastSeen     time.Duration
 	lastSeenWall time.Time
+	// source 是最近一次上报的来源地址，与 lastSeenWall 在同一次 Observe 里更新，随刷出的行一起落盘。
+	source string
 	// buckets 按桶起始（墙钟 Unix 秒，60 对齐）索引。同一节点可以同时有多个
 	// 未刷出的桶：墙钟回拨时新样本会落进更早的分钟，它们各自独立、刷出后
 	// 由写库时的加法合并并入已有的行。
@@ -40,6 +42,7 @@ type Entry struct {
 	Metrics      *probev1.Metrics
 	LastSeen     time.Duration
 	LastSeenWall time.Time
+	Source       string
 	Online       bool
 }
 
@@ -52,10 +55,10 @@ func minuteOf(t time.Time) int64 {
 	return s - s%60
 }
 
-// Observe 记录一次已通过校验的上报。返回样本所属分钟桶的起始、距该节点上一次上报的
-// 单调间隔，以及这是否是本进程里该节点的首次上报（first 为 true 时 gap 无意义）。
-// 调用方保证 m 不再被修改。
-func (l *Live) Observe(nodeID int64, m *probev1.Metrics) (ts int64, gap time.Duration, first bool) {
+// Observe 记录一次已通过校验的上报。source 是 hub 看到的来源地址（auth.SourceText），只留最后一次：与 last_seen 同为
+// "最近一次上报"的事实，v4 与 v6 交替上报时面板看到的就是最近那一次。返回样本所属分钟桶的起始、距该节点上一次上报的
+// 单调间隔，以及这是否是本进程里该节点的首次上报（first 为 true 时 gap 无意义）。调用方保证 m 不再被修改。
+func (l *Live) Observe(nodeID int64, source string, m *probev1.Metrics) (ts int64, gap time.Duration, first bool) {
 	now, wall := l.clk.Mono(), l.clk.Now()
 	ts = minuteOf(wall)
 	l.mu.Lock()
@@ -68,7 +71,7 @@ func (l *Live) Observe(nodeID int64, m *probev1.Metrics) (ts int64, gap time.Dur
 	} else {
 		gap = now - e.lastSeen
 	}
-	e.metrics, e.lastSeen, e.lastSeenWall = m, now, wall
+	e.metrics, e.lastSeen, e.lastSeenWall, e.source = m, now, wall, source
 	l.bucket(e, ts).Add(m)
 	return ts, gap, first
 }
@@ -137,7 +140,7 @@ func (l *Live) Get(nodeID int64) (Entry, bool) {
 	if !ok {
 		return Entry{}, false
 	}
-	return Entry{Metrics: e.metrics, LastSeen: e.lastSeen, LastSeenWall: e.lastSeenWall, Online: l.online(e, now)}, true
+	return Entry{Metrics: e.metrics, LastSeen: e.lastSeen, LastSeenWall: e.lastSeenWall, Source: e.source, Online: l.online(e, now)}, true
 }
 
 // Flush 取走所有已闭合的桶：起始早于当前分钟的。取走即从 live 删除——每个
@@ -160,7 +163,7 @@ func (l *Live) take(before int64) metric.Batch {
 			if ts >= before {
 				continue
 			}
-			batch.Rows = append(batch.Rows, metric.Row{NodeID: id, TS: ts, Bucket: b, LastSeen: e.lastSeenWall})
+			batch.Rows = append(batch.Rows, metric.Row{NodeID: id, TS: ts, Bucket: b, LastSeen: e.lastSeenWall, Source: e.source})
 			delete(e.buckets, ts)
 		}
 		for k, b := range e.probes {

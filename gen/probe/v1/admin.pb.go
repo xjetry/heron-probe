@@ -418,7 +418,13 @@ type Node struct {
 	// PROBE_OFFLINE_AFTER 调高后已存的更小值仍会回显，引擎按下限取值，下次编辑须改成不小于下限的值。
 	OfflineGraceS *uint32 `protobuf:"varint,11,opt,name=offline_grace_s,json=offlineGraceS,proto3,oneof" json:"offline_grace_s,omitempty"`
 	// 计费与到期（§9.4）；五项都没填时缺失。days_left 由 hub 按 --timezone 的今天算出。
-	Billing       *Billing `protobuf:"bytes,12,opt,name=billing,proto3" json:"billing,omitempty"`
+	Billing *Billing `protobuf:"bytes,12,opt,name=billing,proto3" json:"billing,omitempty"`
+	// 最近一次上报的来源地址：hub 在 Report 上看到的对端，按 --trusted-proxies 解析 X-Forwarded-For，不读其它旁路头，
+	// 也不采信 agent 自报。IPv4 点分、IPv6 压缩形式、不带区域标识；空串表示 hub 没有记录到来源：从未上报，或最近一次
+	// 上报早于 hub 开始记录来源的版本（此时 last_seen_at 有值）。只留最后一次，与 last_seen_at
+	// 同时刷出落盘，所以可能比实时状态晚约一分钟。hub 与节点同在内网或 agent 经出口代理时，这里是内网或代理地址；
+	// hub 在反代之后而未把反代列进 --trusted-proxies 时，这里是反代地址。只在管理端可见：公开节点（PublicNode）没有这个字段。
+	LastSource    string `protobuf:"bytes,13,opt,name=last_source,json=lastSource,proto3" json:"last_source,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -535,6 +541,13 @@ func (x *Node) GetBilling() *Billing {
 		return x.Billing
 	}
 	return nil
+}
+
+func (x *Node) GetLastSource() string {
+	if x != nil {
+		return x.LastSource
+	}
+	return ""
 }
 
 type ListNodesRequest struct {
@@ -4708,7 +4721,7 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\bpassword\x18\x01 \x01(\tR\bpassword\"\x0f\n" +
 	"\rLoginResponse\"\x0f\n" +
 	"\rLogoutRequest\"\x10\n" +
-	"\x0eLogoutResponse\"\xd1\x03\n" +
+	"\x0eLogoutResponse\"\xf2\x03\n" +
 	"\x04Node\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
@@ -4725,7 +4738,9 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x11traffic_reset_day\x18\n" +
 	" \x01(\rR\x0ftrafficResetDay\x12+\n" +
 	"\x0foffline_grace_s\x18\v \x01(\rH\x02R\rofflineGraceS\x88\x01\x01\x12+\n" +
-	"\abilling\x18\f \x01(\v2\x11.probe.v1.BillingR\abillingB\x0f\n" +
+	"\abilling\x18\f \x01(\v2\x11.probe.v1.BillingR\abilling\x12\x1f\n" +
+	"\vlast_source\x18\r \x01(\tR\n" +
+	"lastSourceB\x0f\n" +
 	"\r_last_seen_atB\x13\n" +
 	"\x11_facts_updated_atB\x12\n" +
 	"\x10_offline_grace_s\"\x12\n" +

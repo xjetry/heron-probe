@@ -31,6 +31,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	10: execAll(migrationV10),
 	11: execAll([]string{ddlMaintenanceStateV11}),
 	12: execAll(migrationV12),
+	13: execAll(migrationV13),
 }
 
 func execAll(stmts []string) func(*sql.Tx) error {
@@ -279,4 +280,10 @@ const ddlMaintenanceStateV11 = `CREATE TABLE maintenance_state (
 // v12：离线规则×节点上次恢复的时刻。旧行取 NULL（从未恢复过）：升级前的恢复没有记录，升级后的第一次恢复开始计窗口。
 var migrationV12 = []string{
 	`ALTER TABLE alert_state ADD COLUMN recovered_at INTEGER`,
+}
+
+// v13：节点最近一次上报的来源地址。旧行取空串：hub 在这个版本之前不记录来源，不区分从未上报与升级前上报过
+// 但此后未再上报（这类节点的 last_seen_at 仍停在升级前的值）；下一次上报后随分钟行刷出补上。
+var migrationV13 = []string{
+	`ALTER TABLE node ADD COLUMN last_source TEXT NOT NULL DEFAULT ''`,
 }
