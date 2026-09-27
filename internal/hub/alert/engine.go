@@ -36,7 +36,7 @@ type stateEntry struct {
 	// recoveredAt 与库里的 alert_state.recovered_at 同值（含义见 store.StateRow.RecoveredAt），Load 读入，apply 写库成功后发布。
 	recoveredAt time.Time
 	// flapping 是离线巡检最近一次对这对规则与节点的判定：pending 且只因抖动抑制而未进入 firing（FlapDeferred）。
-	// 它是由当前观测派生的展示量，不落库：重启后第一轮巡检即重新算出。
+	// 它是由当前观测派生的展示量，不落库：重启后第一轮巡检即重新算出。apply 把它与 state 在同一个 mu 临界区里写入。
 	flapping bool
 }
 
@@ -351,24 +351,23 @@ func (e *Engine) entry(k stateKey) stateEntry {
 	return stateEntry{state: store.StateOK}
 }
 
-// setFlapping 在 apply 成功之后更新展示用的抖动标记；状态不变时 apply 不写库，标记仍要跟着这一轮的观测走。
-// 没有状态项（ok 且从未写过）的一对不会是 pending，无需记录。调用方持 writeMu。
-func (e *Engine) setFlapping(k stateKey, flapping bool) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if s, ok := e.states[k]; ok {
-		s.flapping = flapping
-		e.states[k] = s
-	}
-}
-
 // 调用方持 writeMu；状态、事件与投递先由 store 原子提交，再发布内存并通知 Sender。
-// firedExpiresOn 只由到期扫描在进入 firing 时给出，其余调用传空。状态不变时 apply 直接返回、不写库，所以一个 firing
+// firedExpiresOn 只由到期扫描在进入 firing 时给出，其余调用传空。状态不变时 apply 不写库，所以一个 firing
 // 状态记的始终是它进入 firing 那一刻的到期日。
-func (e *Engine) apply(ctx context.Context, r store.AlertRule, nodeID int64, next store.AlertState, firedExpiresOn string, tr *store.Transition, summary string, value float64) error {
+// flapping 是同一轮观测算出的抖动标记：离线巡检传 FlapDeferred，其余种类传 false。它与状态在同一个 mu 临界区里写进
+// states，状态不变、不写库时也更新；States 在 mu 下取快照，所以 ListAlertRules 读到的状态与标记来自同一轮观测。
+func (e *Engine) apply(ctx context.Context, r store.AlertRule, nodeID int64, next store.AlertState, flapping bool, firedExpiresOn string, tr *store.Transition, summary string, value float64) error {
 	k := stateKey{r.ID, nodeID}
 	cur := e.entry(k)
 	if cur.state == next {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		// 没有状态项的一对由 entry 按 ok 处理，库里也没有它的行：状态不变说明这一轮的 next 也是 ok，而 FlapDeferred 只在
+		// next 为 pending 时为真，标记必为假。不为它建内存项，否则内存会多出一行库里没有的状态。
+		if s, ok := e.states[k]; ok {
+			s.flapping = flapping
+			e.states[k] = s
+		}
 		return nil
 	}
 	now := e.clk.Now()
@@ -395,7 +394,7 @@ func (e *Engine) apply(ctx context.Context, r store.AlertRule, nodeID int64, nex
 		return err
 	}
 	e.mu.Lock()
-	e.states[k] = stateEntry{state: next, sinceAt: since, firedExpiresOn: firedExpiresOn, recoveredAt: recoveredAt}
+	e.states[k] = stateEntry{state: next, sinceAt: since, firedExpiresOn: firedExpiresOn, recoveredAt: recoveredAt, flapping: flapping}
 	sender := e.sender
 	e.mu.Unlock()
 	// 未装配 Sender 时转换仍完整落库，投递行可供后续续投，不能因此跳过持久化。
@@ -493,11 +492,9 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 			if tr != nil && *tr == store.TransitionRecovered {
 				summary = fmt.Sprintf("节点 %s 已恢复上报（规则 %s）", node.Name, r.Name)
 			}
-			if err := e.apply(ctx, r, node.ID, next, "", tr, summary, unseen.Seconds()); err != nil {
+			if err := e.apply(ctx, r, node.ID, next, FlapDeferred(cur.state, o), "", tr, summary, unseen.Seconds()); err != nil {
 				errs = append(errs, err)
-				continue
 			}
-			e.setFlapping(k, FlapDeferred(cur.state, o))
 		}
 		if err := e.pruneCandidates(ctx, r.ID, candidates); err != nil {
 			errs = append(errs, err)
@@ -564,7 +561,7 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 			next, tr := NextProbe(e.current(stateKey{r.ID, node.ID}), samples, r.ForMinutes)
 			value := samples[len(samples)-1].Value
 			summary := fmt.Sprintf("节点 %s 规则 %s：%s %.1f", node.Name, r.Name, r.Metric, value)
-			if err := e.apply(ctx, r, node.ID, next, "", tr, summary, value); err != nil {
+			if err := e.apply(ctx, r, node.ID, next, false, "", tr, summary, value); err != nil {
 				errs = append(errs, err)
 			}
 		}

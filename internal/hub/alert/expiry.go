@@ -201,7 +201,7 @@ func (e *Engine) sweepExpiry(ctx context.Context) error {
 			if next == store.StateFiring {
 				fired = n.Billing.ExpiresOn
 			}
-			if err := e.apply(ctx, r, n.ID, next, fired, tr, summary, value); err != nil {
+			if err := e.apply(ctx, r, n.ID, next, false, fired, tr, summary, value); err != nil {
 				errs = append(errs, err)
 			}
 		}
