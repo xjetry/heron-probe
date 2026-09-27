@@ -148,7 +148,8 @@ func (e *Engine) sweepExpiry(ctx context.Context) error {
 		renewed, err := e.st.RenewExpiry(ctx, n.ID, n.Billing.Cycle, n.Billing.ExpiresOn, to)
 		if err != nil {
 			// 写回出错，本轮没有得到推后之后的日期。按未推后的快照评估，开着自动续期的节点会收到"已过期"，续期成功的
-			// 下一轮又收到"到期日已更新"，这一对通知都是假的；所以跳过它，错误随扫描返回，下一轮重试续期。
+			// 下一轮又收到"到期日已更新"，这一对通知都是假的；所以跳过它，错误随扫描返回。日界循环（RunExpirySweep）里的
+			// 扫描出错时按退避重扫、在那一次重试续期；UpdateNode 与保存规则触发的扫描出错只记日志，由下一次扫描重试。
 			errs = append(errs, err)
 			skip[n.ID] = true
 			continue
@@ -235,22 +236,47 @@ func expirySummary(n store.Node, r store.AlertRule, o ExpiryObservation, tr *sto
 	return fmt.Sprintf("节点 %s 将于 %s 到期（剩 %d 天，规则 %s）", n.Name, n.Billing.ExpiresOn, o.DaysLeft, r.Name), float64(o.DaysLeft)
 }
 
-// RunExpirySweep 先扫描一次（hub 停机跨过的零点由这一次补上），此后在 hub 时区每个日历日开始时扫描一次。
+// 到期扫描出错后的退避（§9.2）：第一次重扫在出错那一轮开始后 1 分钟，之后每次翻倍，上限 1 小时。
+const (
+	expiryRetryFirst = time.Minute
+	expiryRetryMax   = time.Hour
+)
+
+// nextSweepAt 是下一次到期扫描的时刻。start 是这一轮扫描开始前读到的钟，failures 是到这一轮为止连续失败的次数。
+// 没有失败时是 start 之后的第一个日界；有失败时是退避到期与日界中较早的那个：日界到了照常按新的一天扫描，退避只是
+// 让出错的一天不必等到下一个日界。
+func nextSweepAt(start time.Time, loc *time.Location, failures int) time.Time {
+	boundary := nextDayStart(start, loc)
+	if failures == 0 {
+		return boundary
+	}
+	backoff := expiryRetryFirst
+	for i := 1; i < failures && backoff < expiryRetryMax; i++ {
+		backoff *= 2
+	}
+	if retry := start.Add(min(backoff, expiryRetryMax)); retry.Before(boundary) {
+		return retry
+	}
+	return boundary
+}
+
+// RunExpirySweep 先扫描一次（hub 停机跨过的零点由这一次补上），此后在 hub 时区每个日历日开始时扫描一次；扫描出错时
+// 按退避重扫（nextSweepAt），成功即回到日界节奏。
 //
-// 下一次触发时刻由本轮扫描之前读到的钟算出，所以扫描期间跨过的日界至多引起一次立即的重扫，不会被跳过：next 是这次
-// 读钟之后的第一个日界。扫描在它之前结束，定时器在它到来时触发；扫描拖过了它，定时器时长为负、立即触发，重扫按新的
-// 一天评估。扫描自己若已按新的一天评估过，重扫只是重复：续期已经写回，状态没变时 apply 直接返回、不写库。反过来，
+// 下一次触发时刻由本轮扫描之前读到的钟（sweepRound 记下的 start）算出，nextSweepAt 保证它不晚于 start 之后的第一个
+// 日界：没有失败时恰是那个日界，有失败时是退避到期与它之中较早的那个。所以扫描期间跨过的日界至多引起一次立即的重扫，
+// 不会被跳过：扫描在那个时刻之前结束，定时器在它到来时触发；扫描拖过了它，定时器时长为负、立即触发，重扫按新的一天
+// 评估。扫描自己若已按新的一天评估过，重扫只是重复：续期已经写回，状态没变时 apply 直接返回、不写库。反过来，
 // 扫描之后才读钟，拖过日界的那一轮会从新的一天算出再下一个日界，新一天的续期与提醒就晚一整天。
 //
 // 定时器按单调钟走，时长在扫描之后按当时的墙钟算：墙钟被调整只影响当轮，不累积；提前触发只是多扫一次（按的仍是
 // 前一天），下一轮再按真正的日界定时。
 func (e *Engine) RunExpirySweep(ctx context.Context) {
+	failures := 0
 	for {
-		next := nextDayStart(e.clk.Now(), e.cfg.Location)
-		if err := e.SweepExpiry(ctx); err != nil {
-			e.log.Error("expiry sweep failed", "err", err)
-		}
-		timer := time.NewTimer(next.Sub(e.clk.Now()))
+		var wait time.Duration
+		wait, failures = e.sweepRound(ctx, failures)
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -258,4 +284,21 @@ func (e *Engine) RunExpirySweep(ctx context.Context) {
 		case <-timer.C:
 		}
 	}
+}
+
+// sweepRound 是 RunExpirySweep 的一轮：扫描一次，返回距下一次扫描的时长与更新后的连续失败次数（出错加一，成功清零）。
+// 下一次的时刻按扫描之前读到的钟算（nextSweepAt），时长按扫描之后读到的钟算，理由见 RunExpirySweep。
+func (e *Engine) sweepRound(ctx context.Context, failures int) (time.Duration, int) {
+	start := e.clk.Now()
+	err := e.SweepExpiry(ctx)
+	if err != nil {
+		failures++
+	} else {
+		failures = 0
+	}
+	wait := nextSweepAt(start, e.cfg.Location, failures).Sub(e.clk.Now())
+	if err != nil {
+		e.log.Error("expiry sweep failed", "err", err, "retry_in", max(wait, 0))
+	}
+	return wait, failures
 }

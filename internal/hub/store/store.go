@@ -48,10 +48,16 @@ type writeReq struct {
 	done func(error)
 }
 
+// dsn 不含 journal_mode(WAL)：这个 pragma 一旦生效就立即改写文件头（第 18—19 字节
+// 标出日志模式），比 migrate 读版本号、判定"这是不是本项目的库"更早。所有连接都带它
+// 会让身份判定本身成为一次写：外来库被拒绝时文件也已经被改成 WAL，判定分支之后没有
+// 机会撤销。WAL 只在 migrate 判定通过、库确实建成或迁移完成后由写连接显式打开，
+// 见 openStore；一旦打开，日志模式记在文件里，之后的连接（包括这里的读连接池）
+// 不需要也不应重复声明它。
 func dsn(path string, extra string) string {
 	// path 是文件名而非 URI；编码路径部分，避免 #、? 和 % 改变实际打开的数据库。
 	u := url.URL{Path: path}
-	return "file:" + u.EscapedPath() + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)" + extra
+	return "file:" + u.EscapedPath() + "?_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)" + extra
 }
 
 // SchemaPolicy 由打开库的入口显式选择。离线命令不得迁移旧库：否则用新二进制查看 stats
@@ -85,6 +91,12 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 	}
 	w.SetMaxOpenConns(1)
 	if err := migrate(w, policy, log); err != nil {
+		w.Close()
+		return nil, err
+	}
+	// migrate 返回 nil 意味着这是本项目的库（已在当前版本、刚建成、或刚迁移完成）；
+	// 只有到这里才把日志模式切到 WAL，拒绝分支在此之前已经返回，不会执行到这一行。
+	if _, err := w.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		w.Close()
 		return nil, err
 	}
@@ -203,7 +215,27 @@ func migrate(db *sql.DB, policy SchemaPolicy, log *slog.Logger) error {
 		return nil
 	case v > schemaVersion:
 		return fmt.Errorf("database schema version %d is newer than this binary (%d)", v, schemaVersion)
+	case v < 0:
+		// 写入点只有两处：建库时写 schemaVersion，每步迁移时写 next（下面的循环，从
+		// v+1 起）。两处写的都是正数，负数不会由这两处产生；0 是 SQLite 未显式设置
+		// user_version 时的缺省值，不是本程序写入的。负数只能来自这个文件不是本程序
+		// 建的库，或被外部工具改过。当成旧库去迁（落进下面的迁移循环）会去找
+		// migrations[v+1]（v=-1 时是 migrations[0]，本身不存在），报出一句与"该升级"
+		// 无关的内部错误；当成空库建表会把 schemaStatements 叠进未知内容上。两条路径
+		// 都要拒绝。
+		return fmt.Errorf("database schema version %d is invalid; not a probe database", v)
 	case v == 0:
+		// PRAGMA user_version 未显式设置时读出的也是 0，任何 SQLite 文件都满足这一条；
+		// 只有 sqlite_schema 里确实不存在任何对象才是 §6.6 定义的"空库"。有对象却没有版本号
+		// 说明这是别的程序建的库，在它上面叠加 schemaStatements 会把两套 schema 的对象混进
+		// 同一个文件——stats --db 指错文件时就会把陌生库当空库建满全部表。
+		var objects int
+		if err := db.QueryRow("SELECT count(*) FROM sqlite_schema").Scan(&objects); err != nil {
+			return err
+		}
+		if objects > 0 {
+			return errors.New("database has tables but no schema version; not a probe database")
+		}
 		if err := inTxDB(db, func(tx *sql.Tx) error {
 			for _, stmt := range schemaStatements() {
 				if _, err := tx.Exec(stmt); err != nil {

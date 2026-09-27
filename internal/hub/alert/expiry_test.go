@@ -639,3 +639,138 @@ func TestNewRequiresLocation(t *testing.T) {
 	}()
 	New(Config{TTL: time.Second}, nil, nil, nil, nil)
 }
+
+// 下一次扫描的时刻：没有失败时是下一个日界；连续失败 n 次时是扫描开始后 1 分钟 × 2^(n-1)，上限 1 小时，日界先到就取
+// 日界。start 是东八区的本地时刻。
+func TestNextSweepAt(t *testing.T) {
+	loc := time.FixedZone("UTC+8", 8*3600)
+	at := func(s string) time.Time {
+		t.Helper()
+		v, err := time.ParseInLocation("2006-01-02T15:04:05", s, loc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	midnight := at("2026-09-25T00:00:00")
+	for _, c := range []struct {
+		start    string
+		failures int
+		want     time.Time
+	}{
+		{"2026-09-24T12:00:00", 0, midnight},
+		{"2026-09-24T12:00:00", 1, at("2026-09-24T12:01:00")},
+		{"2026-09-24T12:00:00", 2, at("2026-09-24T12:02:00")},
+		{"2026-09-24T12:00:00", 3, at("2026-09-24T12:04:00")},
+		{"2026-09-24T12:00:00", 4, at("2026-09-24T12:08:00")},
+		{"2026-09-24T12:00:00", 5, at("2026-09-24T12:16:00")},
+		{"2026-09-24T12:00:00", 6, at("2026-09-24T12:32:00")},
+		{"2026-09-24T12:00:00", 7, at("2026-09-24T13:00:00")},  // 64 分钟封顶为 1 小时
+		{"2026-09-24T12:00:00", 60, at("2026-09-24T13:00:00")}, // 连续失败很多次也不溢出
+		{"2026-09-24T23:30:00", 7, midnight},                   // 日界早于退避：按日界扫
+		{"2026-09-24T23:50:00", 5, midnight},
+		{"2026-09-24T23:00:00", 7, midnight}, // 退避恰好落在日界上
+	} {
+		if got := nextSweepAt(at(c.start), loc, c.failures); !got.Equal(c.want) {
+			t.Errorf("nextSweepAt(%s, %d failures) = %s, want %s", c.start, c.failures, got.Format(time.RFC3339), c.want.Format(time.RFC3339))
+		}
+	}
+}
+
+// renewalFails 让节点的续期写回失败：UPDATE OF expires_on 一律 RAISE(ABORT)，SweepExpiry 因此返回错误。
+// 返回的函数撤掉触发器。
+func renewalFails(t *testing.T, f *fixture) (restore func()) {
+	t.Helper()
+	db, err := sql.Open("sqlite", f.path)
+	must(t, err)
+	t.Cleanup(func() { db.Close() })
+	_, err = db.ExecContext(t.Context(), "CREATE TRIGGER renew_fails BEFORE UPDATE OF expires_on ON node BEGIN SELECT RAISE(ABORT, 'renewal write failed'); END")
+	must(t, err)
+	return func() {
+		t.Helper()
+		_, err := db.ExecContext(t.Context(), "DROP TRIGGER renew_fails")
+		must(t, err)
+	}
+}
+
+// 一轮扫描出错时连续失败次数加一、按退避定下一次；成功即清零、回到日界。夹具的钟不走：UTC 12:00 是东八区 20:00，
+// 距下一个日界 4 小时。
+func TestSweepRoundBacksOffOnFailureAndResetsOnSuccess(t *testing.T) {
+	f := newFixture(t)
+	f.billing(t, f.ids[0], store.Billing{Cycle: store.CycleMonthly, ExpiresOn: "2026-09-20", AutoRenew: true})
+	restore := renewalFails(t, f)
+	for _, c := range []struct {
+		failures, wantFailures int
+		wantWait               time.Duration
+	}{
+		{0, 1, time.Minute},
+		{1, 2, 2 * time.Minute},
+		{6, 7, time.Hour},
+	} {
+		wait, failures := f.e.sweepRound(t.Context(), c.failures)
+		if wait != c.wantWait || failures != c.wantFailures {
+			t.Fatalf("failing round after %d failures: wait %s, %d failures; want %s, %d", c.failures, wait, failures, c.wantWait, c.wantFailures)
+		}
+	}
+	restore()
+	if wait, failures := f.e.sweepRound(t.Context(), 7); wait != 4*time.Hour || failures != 0 {
+		t.Fatalf("successful round after 7 failures: wait %s, %d failures; want 4h0m0s until the day boundary, 0", wait, failures)
+	}
+	if got := f.expiresOn(t, f.ids[0]); got != "2026-10-20" {
+		t.Fatalf("expires_on = %s, want 2026-10-20 after the successful round", got)
+	}
+}
+
+// syncBuffer 让循环协程写日志、用例同时读日志时不产生数据竞争。
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+
+// 扫描出错时循环按退避重扫，不等日界。钟在 arm 之后第一次读（每一轮的第一次读钟就是 sweepRound 记下的 start，这正是
+// RunExpirySweep 注释要求的不变式）返回东八区 24 日 12:00，此后一律返回 1 分钟退避到期前 1ns（扫描自己再读钟也还在
+// 同一天）：第一次失败后定时器只等 1ns 就重扫；第二次仍失败，退避翻倍为 2 分钟。日界在 12 小时之后，循环若按日界定时，
+// 第二次扫描不会在时限内发生。
+func TestRunExpirySweepRetriesAFailedSweepWithBackoff(t *testing.T) {
+	f := newFixture(t)
+	logs := &syncBuffer{}
+	f.log = slog.New(slog.NewTextHandler(logs, nil))
+	f.billing(t, f.ids[0], store.Billing{Cycle: store.CycleMonthly, ExpiresOn: "2026-09-20", AutoRenew: true})
+	renewalFails(t, f)
+	start := time.Date(2026, 9, 24, 12, 0, 0, 0, f.loc)
+	clk := &scriptedClock{before: start, after: start.Add(time.Minute - time.Nanosecond), beforeReads: 1}
+	e := New(Config{TTL: 30 * time.Second, Location: f.loc}, f.st, f.l, clk, f.log)
+	must(t, e.Load(t.Context()))
+	clk.arm()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); e.RunExpirySweep(ctx) }()
+	// 只认 msg 与行尾的 retry_in，不带驱动格式化的错误原文：驱动换了错误文本的写法，这里不该跟着等满时限。
+	retryLines := func(retryIn string) int {
+		n := 0
+		for _, line := range strings.Split(logs.String(), "\n") {
+			if strings.Contains(line, `msg="expiry sweep failed"`) && strings.HasSuffix(line, "retry_in="+retryIn) {
+				n++
+			}
+		}
+		return n
+	}
+	testwait.Until(t, 10*time.Millisecond, func() bool { return retryLines("2m0s") > 0 },
+		"no retry after the first failed sweep; logs:\n%s", testwait.When(logs.String))
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(testwait.Bound):
+		t.Fatal("RunExpirySweep did not return after cancel")
+	}
+	if n := retryLines("1ns"); n != 1 {
+		t.Fatalf("%d lines with retry_in=1ns, want 1 (the wait after the first failure counts from the clock after the sweep):\n%s", n, logs.String())
+	}
+}
