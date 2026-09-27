@@ -76,7 +76,6 @@ func TestGetStorageStatsReportsHealthWithStaleness(t *testing.T) {
 		}
 	}
 	r := store.DefaultRetention
-	secs := func(d time.Duration) uint64 { return uint64(d / time.Second) }
 	zero := int64(0)
 	before := h.storageStatsWithToken(t, tok)
 	check("before rollup", before, []row{
@@ -104,6 +103,44 @@ func TestGetStorageStatsReportsHealthWithStaleness(t *testing.T) {
 		t.Fatalf("maintenance after rollup: prune=%v rollup=%v, want rollup %d", after.LastPruneAt, after.LastRollupAt, now)
 	}
 }
+
+// GetStorageStats 的 retention_s 与两项标红都要用 api.Config.Retention（serve 传给它的那份配置），不是
+// store.DefaultRetention：这个夹具不跑 RunMaintenance，全部数据只由这条用例写入、只由这次调用读出，没有
+// 后台协程会把控制行删掉，判定不依赖任何真实时间窗。用 6 小时的 1m 保留期（远短于默认的 7 天）构造，一行
+// 7 小时前的 probe_1m 数据在配置下已超期、在默认值下不会超期，两个结论只要有一个取到默认值就会分开。
+func TestGetStorageStatsUsesTheConfiguredRetention(t *testing.T) {
+	retention := store.Retention{M1: 6 * time.Hour, M5: 168 * time.Hour, H1: 168 * time.Hour, AlertEvents: store.DefaultRetention.AlertEvents}
+	h := newZonedHarness(t, "", time.UTC, retention)
+	h.login(t)
+	_, tok := createToken(t, h, "reader")
+	node, _ := h.createNode(t, "n")
+	now := h.clk.Now().Unix()
+	staleTS := now - 7*3600
+	batch := metric.Batch{Probes: []metric.ProbeRow{{NodeID: node, TS: staleTS, TaskID: 1, Bucket: &metric.ProbeBucket{Sent: 1}}}}
+	if _, err := h.store.WriteMinuteBatch(t.Context(), batch); err != nil {
+		t.Fatal(err)
+	}
+	stats := h.storageStatsWithToken(t, tok)
+	wantRetentionS := map[string]uint64{"metric_1m": secs(retention.M1), "metric_5m": secs(retention.M5), "metric_1h": secs(retention.H1),
+		"probe_1m": secs(retention.M1), "probe_5m": secs(retention.M5), "probe_1h": secs(retention.H1)}
+	var sawProbe1m bool
+	for _, s := range stats.GetSeries() {
+		if want := wantRetentionS[s.GetTable()]; s.GetRetentionS() != want {
+			t.Errorf("%s retention_s = %d, want the configured %d", s.GetTable(), s.GetRetentionS(), want)
+		}
+		if s.GetTable() == "probe_1m" {
+			sawProbe1m = true
+			if !s.GetOldestStale() {
+				t.Error("probe_1m oldest_stale = false, want true under the configured 6h retention (it is not yet 7 days old, so a fallback to the default retention would read it as healthy)")
+			}
+		}
+	}
+	if !sawProbe1m {
+		t.Fatal("GetStorageStats did not report probe_1m")
+	}
+}
+
+func secs(d time.Duration) uint64 { return uint64(d / time.Second) }
 
 func ptrTo(v int64) *int64 { return &v }
 

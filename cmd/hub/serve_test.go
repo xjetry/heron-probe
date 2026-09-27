@@ -261,14 +261,7 @@ func TestServeRunsMaintenanceWithConfiguredRetention(t *testing.T) {
 	for _, ts := range expired {
 		rowsToWrite = append(rowsToWrite, metric.Row{NodeID: id, TS: ts, Bucket: b})
 	}
-	// probe_1m 单独放一行只按 6h 才算超期的数据：metric_1m 的最老桶已经是上面 14 天前的 1h 级控制行，
-	// 在默认保留期（7 天）下也超期，测不出 API 接错保留期；probe 族没有别的行，超期结论只取决于
-	// 这一行，能照见 GetStorageStats 用的是不是 6h 这份配置。
-	probeBucket := &metric.ProbeBucket{Sent: 1}
-	if _, err := st.WriteMinuteBatch(ctx, metric.Batch{
-		Rows:   rowsToWrite,
-		Probes: []metric.ProbeRow{{NodeID: id, TS: expired["1m"], TaskID: 1, Bucket: probeBucket}},
-	}); err != nil {
+	if _, err := st.WriteMinuteBatch(ctx, metric.Batch{Rows: rowsToWrite}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Rollup(ctx); err != nil {
@@ -282,46 +275,6 @@ func TestServeRunsMaintenanceWithConfiguredRetention(t *testing.T) {
 		}
 	}
 	url, events, stop := startTestHub(t, db, clk, "--retention-1m", "6h", "--retention-5m", "168h", "--retention-1h", "168h")
-	client := probev1connect.NewAdminServiceClient(http.DefaultClient, url)
-	logged, err := client.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: password}))
-	if err != nil {
-		t.Fatalf("login for storage stats check: %v", err)
-	}
-	cookies := (&http.Response{Header: logged.Header()}).Cookies()
-	statsReq := connect.NewRequest(&probev1.GetStorageStatsRequest{})
-	statsReq.Header().Set("Cookie", cookies[0].Name+"="+cookies[0].Value)
-	// serve 把这份保留期同时交给维护循环（RunMaintenance）与 API 装配（api.Config.Retention），是同一个
-	// 局部变量的两处消费。Prune 独立持有这份配置，不会因为 API 一侧接错而在事后的清理结果上露出破绽；只有
-	// GetStorageStats 自己的 retention_s 与标红结论能照见 API 那一份接的是不是配置值。检查要抢在这一轮维护
-	// 把下面这行 6h 超期的控制行删掉之前：nextMaintenanceAt 让首轮维护在约 2 秒后才触发，一次登录加一次查询
-	// 的本机往返远快于这个窗口。
-	statsBeforePrune, err := client.GetStorageStats(ctx, statsReq)
-	if err != nil {
-		t.Fatalf("GetStorageStats before maintenance ran: %v", err)
-	}
-	wantRetentionS := map[string]uint64{"1m": uint64(6 * time.Hour / time.Second), "5m": uint64(168 * time.Hour / time.Second), "1h": uint64(168 * time.Hour / time.Second)}
-	var sawProbe1m bool
-	for _, s := range statsBeforePrune.Msg.GetSeries() {
-		level, ok := strings.CutPrefix(s.GetTable(), "metric_")
-		if !ok {
-			level, ok = strings.CutPrefix(s.GetTable(), "probe_")
-		}
-		if !ok {
-			t.Fatalf("series table %q matches neither the metric_ nor the probe_ prefix", s.GetTable())
-		}
-		if want := wantRetentionS[level]; s.GetRetentionS() != want {
-			t.Errorf("%s retention_s = %d, want the configured %d", s.GetTable(), s.GetRetentionS(), want)
-		}
-		if s.GetTable() == "probe_1m" {
-			sawProbe1m = true
-			if !s.GetOldestStale() {
-				t.Error("probe_1m oldest_stale = false before maintenance pruned the 6h-expired control row, want true under the configured 6h retention (it is not yet 7 days old, so a fallback to the default retention would read it as healthy)")
-			}
-		}
-	}
-	if !sawProbe1m {
-		t.Fatal("GetStorageStats did not report probe_1m")
-	}
 	deadline := time.NewTimer(testwait.Bound)
 	defer deadline.Stop()
 	for {
@@ -345,6 +298,40 @@ pruned:
 	rows, err := st.ReadMinuteRows(ctx, id, recent, recent+60)
 	if err != nil || len(rows) != 1 {
 		t.Errorf("maintenance lost retained control row: %v %v", rows, err)
+	}
+	// retention_s 只取决于装配的配置，与数据和时序无关，查询挪到这里不用抢在维护之前：这条只钉住 serve
+	// 把 --retention-* 传给了 api.Config.Retention 的那份值。标红结论是否也用这份配置由
+	// internal/hub/api 的 TestGetStorageStatsUsesTheConfiguredRetention 钉住——那边的夹具不跑
+	// RunMaintenance，判定不依赖任何真实时间窗。
+	client := probev1connect.NewAdminServiceClient(http.DefaultClient, url)
+	logged, err := client.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: password}))
+	if err != nil {
+		t.Fatalf("login for storage stats check: %v", err)
+	}
+	cookies := (&http.Response{Header: logged.Header()}).Cookies()
+	statsReq := connect.NewRequest(&probev1.GetStorageStatsRequest{})
+	statsReq.Header().Set("Cookie", cookies[0].Name+"="+cookies[0].Value)
+	stats, err := client.GetStorageStats(ctx, statsReq)
+	if err != nil {
+		t.Fatalf("GetStorageStats: %v", err)
+	}
+	wantRetentionS := map[string]uint64{"1m": uint64(6 * time.Hour / time.Second), "5m": uint64(168 * time.Hour / time.Second), "1h": uint64(168 * time.Hour / time.Second)}
+	var sawSeries int
+	for _, s := range stats.Msg.GetSeries() {
+		level, ok := strings.CutPrefix(s.GetTable(), "metric_")
+		if !ok {
+			level, ok = strings.CutPrefix(s.GetTable(), "probe_")
+		}
+		if !ok {
+			t.Fatalf("series table %q matches neither the metric_ nor the probe_ prefix", s.GetTable())
+		}
+		sawSeries++
+		if want := wantRetentionS[level]; s.GetRetentionS() != want {
+			t.Errorf("%s retention_s = %d, want the configured %d", s.GetTable(), s.GetRetentionS(), want)
+		}
+	}
+	if sawSeries != 6 {
+		t.Fatalf("GetStorageStats reported %d series, want 6", sawSeries)
 	}
 	stop()
 }

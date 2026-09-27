@@ -55,11 +55,14 @@ type harness struct {
 
 func newHarness(t *testing.T, trusted string) *harness {
 	t.Helper()
-	return newZonedHarness(t, trusted, time.UTC)
+	return newZonedHarness(t, trusted, time.UTC, store.DefaultRetention)
 }
 
 // newZonedHarness 的 loc 是 hub 的 --timezone：流量周期、到期扫描与 days_left 用同一个时区，与 serve 的装配一致。
-func newZonedHarness(t *testing.T, trusted string, loc *time.Location) *harness {
+// retention 与 serve 传给 api.Config 的是同一个字段：接错保留期不会影响这个夹具本身的任何行为（它不跑
+// RunMaintenance），只会在存储健康的判定与 GetStorageStatsResponse.retention_s 上露出来，所以留给调用方传入，
+// 默认测试用 store.DefaultRetention，需要钉住"判定用的是配置保留期"的用例可以传入不同的值。
+func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention store.Retention) *harness {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default(), store.MigrateSchema)
@@ -85,7 +88,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location) *harness 
 	if err := errors.Join(a.Load(ctx), in.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}
-	svc := New(Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: store.DefaultRetention}, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
+	svc := New(Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: retention}, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
 	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, TrustedProxies: prefixes, Location: loc}, st, l, book, reg, clk, slog.Default())
 	mux := http.NewServeMux()
 	mux.Handle(in.Handler())
