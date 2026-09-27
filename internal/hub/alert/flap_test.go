@@ -6,6 +6,7 @@ import (
 	"time"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	"github.com/xjetry/probe/internal/hub/metric"
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
@@ -146,4 +147,37 @@ func TestFlapWindowSurvivesRestart(t *testing.T) {
 	f.clk.Advance(30*time.Minute - 61*time.Second)
 	f.sweep(t)
 	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
+}
+
+// 窗口按离线开始的时刻判定：恢复后 50 分钟开始的离线，到恢复后 61 分钟（已走出窗口、已满节点宽限）仍按抖动宽限
+// 停在 pending，满 30 分钟才触发。按评估时刻判定的写法会在走出窗口的那一轮改回节点宽限而提前触发。
+func TestFlapGraceFollowsTheOfflineStartNotTheEvaluationTime(t *testing.T) {
+	f, r := flapFixture(t)
+	f.clk.Advance(50 * time.Minute)
+	f.l.Observe(f.ids[0], &probev1.Metrics{})
+	f.sweep(t)
+	f.clk.Advance(11 * time.Minute)
+	f.sweep(t)
+	wantState(t, f.e, r.ID, f.ids[0], store.StatePending)
+	f.clk.Advance(19 * time.Minute)
+	f.sweep(t)
+	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
+}
+
+// 抖动抑制只属于离线规则：探测规则恢复时不记恢复时刻，状态行的 recovered_at 保持 NULL。
+func TestProbeRecoveryDoesNotRecordRecoveredAt(t *testing.T) {
+	f := newFixture(t)
+	task := f.task(t, f.ids[:1])
+	ts := f.clk.Now().Unix() - 120
+	r := f.rule(t, store.AlertRule{Name: "探测", Kind: store.KindProbe, Enabled: true, AllNodes: true, TaskID: task, Metric: store.MetricLossPct, Threshold: 20, ForMinutes: 1})
+	f.minutes(t, task, f.ids[0], ts, metric.ProbeBucket{Sent: 1, Lost: 1}, metric.ProbeBucket{Sent: 1})
+	must(t, f.e.EvaluateProbes(t.Context(), ts))
+	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
+	must(t, f.e.EvaluateProbes(t.Context(), ts+60))
+	wantState(t, f.e, r.ID, f.ids[0], store.StateOK)
+	rows, err := f.st.ListAlertStates(t.Context())
+	must(t, err)
+	if len(rows) != 1 || rows[0].State != store.StateOK || !rows[0].RecoveredAt.IsZero() {
+		t.Fatalf("probe recovery stored %+v, want ok without recovered_at", rows)
+	}
 }
