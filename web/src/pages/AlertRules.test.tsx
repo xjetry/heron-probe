@@ -499,3 +499,15 @@ it("探测规则改成到期时只带提前天数", async () => {
   expect(saved[0].rule).toEqual({ ...rttRules.rules[0], channelIds: [5n], kind: AlertKind.EXPIRY,
     taskId: 0n, metric: ProbeMetric.UNSPECIFIED, threshold: 0, forMinutes: 0, daysBefore: 7 });
 });
+
+it("待定节点按 hub 的 flapping 标出抖动中，其余待定不标", async () => {
+  render({ listAlertRules: async () => create(ListAlertRulesResponseSchema, {
+    rules: [{ id: 7n, name: "离线", kind: AlertKind.OFFLINE, enabled: true, allNodes: true }],
+    states: [
+      { ruleId: 7n, nodeId: 1n, state: "pending", flapping: true },
+      { ruleId: 7n, nodeId: 2n, state: "pending" },
+    ],
+  }) });
+  const state = await screen.findByRole("cell", { name: /待定：/ });
+  expect(state).toHaveTextContent("待定：东京（抖动中）、法兰克福");
+});
