@@ -50,6 +50,9 @@ type Config struct {
 	HubVersion string
 	// Location 是 hub 的 --timezone，days_left 按它的日历日算；New 要求非 nil。
 	Location *time.Location
+	// Retention 是 serve 交给维护循环的同一份保留期，存储健康按它判定最老桶是否超期。零值会把最老桶早于
+	// 一个桶长之前的表都标成超期，New 用 Retention.Validate 把它当作装配错误拒绝。
+	Retention store.Retention
 }
 
 // NodeState 是节点在进程内的状态持有者；删除节点后由它清理。用接口而不直接依赖
@@ -86,6 +89,9 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 	}
 	if cfg.Location == nil {
 		panic("api.Config.Location must be set")
+	}
+	if err := cfg.Retention.Validate(); err != nil {
+		panic("api.Config.Retention: " + err.Error())
 	}
 	return &Service{
 		cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, probes: probes, alerts: alerts, notifier: notifier, clk: clk, log: log,

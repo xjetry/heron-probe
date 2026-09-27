@@ -104,7 +104,7 @@ func (f *family) rollupSQL(i int) string {
 }
 
 // Rollup 对每一粗级：取水位之后、滞后期已过的下级桶，整桶重算写入本级，并在
-// 同一事务推进水位。levels 必须从细到粗：lowerUpto 取自刚完成的下级，
+// 同一事务推进水位。两族全部级别都成功后才记下 maintenance_state 的 rollup 完成时刻。levels 必须从细到粗：lowerUpto 取自刚完成的下级，
 // 按本级桶长对齐后限制上界，只消费下级已冻结的整桶。当前正常推进路径中，
 // 此上界与 ceiling 的对齐上界相同；min 显式保留两项约束，不替代处理顺序。
 func (s *Store) Rollup(ctx context.Context) error {
@@ -121,7 +121,7 @@ func (s *Store) Rollup(ctx context.Context) error {
 			lowerUpto = upto
 		}
 	}
-	return nil
+	return s.recordMaintenance(ctx, MaintenanceRollup)
 }
 
 // rollupSlice 限制每次占用写协程的历史跨度，让其他写请求能在追赶的片间提交。
@@ -211,7 +211,8 @@ func (r Retention) Validate() error {
 	return nil
 }
 
-func (r Retention) forLevel(name string) time.Duration {
+// ForLevel 是 name 这一级的保留期；Prune 的截止点与存储健康的超期判定都按它取。
+func (r Retention) ForLevel(name string) time.Duration {
 	switch name {
 	case "5m":
 		return r.M5
@@ -227,13 +228,14 @@ var pruneSlice = map[string]int64{"1m": 86400, "5m": 7 * 86400, "1h": 30 * 86400
 
 // Prune 删除各级保留期之外的行。每块一个短事务，按节点、按时间片：
 // WHERE node_id = ? AND ts >= ? AND ts < ? 走主键。节点集合取自表本身而不是
-// node 表：已删节点若留有孤儿行，也要随保留期消失。
+// node 表：已删节点若留有孤儿行，也要随保留期消失。全部表都清理完才记下 maintenance_state 的
+// prune 完成时刻；事件表的清理（PruneAlertEvents）不在其内。
 func (s *Store) Prune(ctx context.Context, r Retention) (int64, error) {
 	now := s.clk.Now().Unix()
 	var total int64
 	for _, f := range families {
 		for i, lv := range levels {
-			cutoff := alignDown(now-int64(r.forLevel(lv.Name)/time.Second), lv.Bucket)
+			cutoff := alignDown(now-int64(r.ForLevel(lv.Name)/time.Second), lv.Bucket)
 			// 初始化后只有 rollupLevel 写水位，每片 end > upto，且与聚合原子提交。
 			// 因此消费水位只前进，读到旧值至多延迟清理，不会提前删掉未聚合的行。
 			if i+1 < len(levels) {
@@ -266,7 +268,7 @@ func (s *Store) Prune(ctx context.Context, r Retention) (int64, error) {
 			}
 		}
 	}
-	return total, nil
+	return total, s.recordMaintenance(ctx, MaintenancePrune)
 }
 
 func (s *Store) distinctNodes(ctx context.Context, table string) ([]int64, error) {

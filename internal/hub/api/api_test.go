@@ -85,7 +85,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location) *harness 
 	if err := errors.Join(a.Load(ctx), in.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}
-	svc := New(Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc}, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
+	svc := New(Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: store.DefaultRetention}, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
 	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, TrustedProxies: prefixes, Location: loc}, st, l, book, reg, clk, slog.Default())
 	mux := http.NewServeMux()
 	mux.Handle(in.Handler())

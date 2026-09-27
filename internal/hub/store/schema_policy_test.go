@@ -85,7 +85,7 @@ func TestSchemaPolicyMigratesAndLogsEachStep(t *testing.T) {
 	for _, fixture := range []struct {
 		version int
 		schema  []string
-	}{{7, schemaV7}, {8, schemaV8}, {9, schemaV9}} {
+	}{{7, schemaV7}, {8, schemaV8}, {9, schemaV9}, {10, schemaV10}} {
 		t.Run(fmt.Sprint(fixture.version), func(t *testing.T) {
 			path, raw := schemaPolicyFixture(t, fixture.schema, fixture.version)
 			var logs bytes.Buffer

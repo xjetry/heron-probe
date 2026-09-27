@@ -142,7 +142,7 @@ service AdminService {
   rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
-  // 库的逻辑大小与每张表的行数，与 probe-hub stats 同一来源。
+  // 库的逻辑大小、每张表的行数与存储健康读数，与 probe-hub stats 同一来源。
   rpc GetStorageStats(GetStorageStatsRequest) returns (GetStorageStatsResponse) {
     option (probe.v1.access) = ACCESS_READ;
   }
@@ -501,6 +501,30 @@ message GetStorageStatsResponse {
   uint64 db_bytes = 1;
   // 每张表一项，按表名升序，含 hub 内部的簿记表。
   repeated TableRows tables = 2;
+  // 指标与探测的每级时序表各一项，顺序固定：metric_1m、metric_5m、metric_1h、probe_1m、probe_5m、probe_1h。
+  // 按表分别给、不合并：各级保留期不同，合并后的最老桶无法与任何一级的保留期对比。
+  repeated SeriesTableHealth series = 3;
+  // 上一次整轮成功的时序表清理（不含告警事件清理）与上卷的完成时刻，Unix 秒。只在成功时记下：缺失即从未成功
+  // 跑过；有值但很旧即此后一直失败或没有运行。
+  optional int64 last_prune_at = 4;
+  optional int64 last_rollup_at = 5;
+}
+// 一张时序表的健康读数。两个 stale 是 hub 按当前配置算出的结论，调用方直接用，不必自己重算：
+// oldest_stale：最老桶早于"现在 − 保留期 − 一个桶长"（严格早于才算）；
+// watermark_stale：水位落后现在超过三个桶长（严格超过才算）。
+// 维护每分钟一轮，最老桶在跨过桶边界之后、下一轮清理完成之前可能短暂标红；持续标红才表示清理停了。
+message SeriesTableHealth {
+  string table = 1;
+  // 本级桶长，秒。
+  uint32 bucket_s = 2;
+  // 该级当前配置的保留期，秒。
+  uint64 retention_s = 3;
+  // 表里最老一行的桶起点，Unix 秒；表为空时缺失。
+  optional int64 oldest_ts = 4;
+  // 上卷水位：rollup_state.upto_ts 的原值，本级在它之前的桶已由细一级上卷生成；最细一级（1m）没有水位，缺失。
+  optional int64 watermark_ts = 5;
+  bool oldest_stale = 6;
+  bool watermark_stale = 7;
 }
 message TableRows {
   string name = 1;

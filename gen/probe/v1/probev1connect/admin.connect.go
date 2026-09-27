@@ -200,7 +200,7 @@ type AdminServiceClient interface {
 	// 整体替换外观的五项并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
 	// 约束与期望取值，什么都不写入。
 	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
-	// 库的逻辑大小与每张表的行数，与 probe-hub stats 同一来源。
+	// 库的逻辑大小、每张表的行数与存储健康读数，与 probe-hub stats 同一来源。
 	GetStorageStats(context.Context, *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error)
 	// API token 的元数据；明文只在 CreateApiToken 的响应里出现一次，hub 只存哈希。
 	ListApiTokens(context.Context, *connect.Request[v1.ListApiTokensRequest]) (*connect.Response[v1.ListApiTokensResponse], error)
@@ -717,7 +717,7 @@ type AdminServiceHandler interface {
 	// 整体替换外观的五项并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
 	// 约束与期望取值，什么都不写入。
 	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
-	// 库的逻辑大小与每张表的行数，与 probe-hub stats 同一来源。
+	// 库的逻辑大小、每张表的行数与存储健康读数，与 probe-hub stats 同一来源。
 	GetStorageStats(context.Context, *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error)
 	// API token 的元数据；明文只在 CreateApiToken 的响应里出现一次，hub 只存哈希。
 	ListApiTokens(context.Context, *connect.Request[v1.ListApiTokensRequest]) (*connect.Response[v1.ListApiTokensResponse], error)
