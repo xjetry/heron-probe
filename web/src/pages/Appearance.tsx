@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type ChangeEvent, type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
+import { BackupFields, backupDraft, type BackupDraft } from "../components/BackupFields";
 import { AdminService, type Settings } from "../gen/probe/v1/admin_pb";
 import { LOGO_TYPES, MAX_TITLE_CHARS, THEMES, sizeProblems, type Theme } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
@@ -10,13 +11,14 @@ import { DEFAULT_TITLE } from "../public/site";
 
 const THEME_LABELS: Record<Theme, string> = { auto: "跟随访客的系统设置", light: "浅色", dark: "深色" };
 
-type Draft = { title: string; theme: string; accentColor: string; logo: string; customCss: string };
+type Draft = { title: string; theme: string; accentColor: string; logo: string; customCss: string; backup?: BackupDraft };
 
 const toDraft = (s: Settings | undefined): Draft => ({
   title: s?.title ?? "", theme: s?.theme || "auto", accentColor: s?.accentColor ?? "", logo: s?.logo ?? "", customCss: s?.customCss ?? "",
+  backup: s?.backup ? backupDraft(s.backup) : undefined,
 });
 
-// 公开页的外观：UpdateSettings 整体替换五项，表单因此总是提交全部字段。
+// 公开页的外观：UpdateSettings 整体替换五项，表单因此总是提交五个外观字段。
 //
 // 保存成功时 onSuccess 用 hub 的回显替换草稿；它不判断"是不是最新一次"，靠的是"有未结请求"与"草稿还能被改"互斥。
 // 草稿的改动来自两处：用户改字段（同步），与读 logo 文件的回调（异步，读完才改）。互斥由两处承载：
@@ -67,8 +69,9 @@ export function Appearance() {
     setReading(true);
     reader.readAsDataURL(file);
   };
-  const submit = (e: FormEvent) => {
+  const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!e.currentTarget.checkValidity()) return;
     if (problems.length === 0 && !reading && !update.isPending) update.mutate({ settings: form });
   };
   return (
@@ -118,6 +121,7 @@ export function Appearance() {
             <textarea value={form.customCss} onChange={(e) => edit({ customCss: e.target.value })} spellCheck={false} />
           </label>
           <p className="muted">排在公开页内置样式之后。只接受 CSS，不能含 &lt;/。</p>
+          <BackupFields value={form.backup} onChange={(backup) => edit({ backup })} />
           {fileError && <p role="alert" className="error">{fileError}</p>}
           {problems.map((p) => <p key={p} role="alert" className="error">{p}</p>)}
           {update.error != null && <p role="alert" className="error">{errorText(update.error)}</p>}

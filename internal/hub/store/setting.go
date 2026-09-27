@@ -64,11 +64,6 @@ func (s *Store) SiteSettings(ctx context.Context) (SiteSettings, error) {
 // 与 SiteSettings 的单条 SELECT 一起保证读侧看不到新旧混合。
 func (s *Store) SaveSiteSettings(ctx context.Context, st SiteSettings) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		for _, f := range st.fields() {
-			if _, err := tx.Exec("INSERT INTO setting (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", f.key, *f.value); err != nil {
-				return err
-			}
-		}
-		return nil
+		return saveSiteSettings(tx, st)
 	})
 }

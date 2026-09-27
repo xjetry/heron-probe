@@ -35,8 +35,11 @@ const (
 	// 它要装下 UpdateSettings 的满额设置在最坏转义下的 JSON：logo 满额（base64 字符在 JSON 里无需转义）；自定义 CSS
 	// 与清洗前的标题满额，且每个字节都转义成 6 字节的 \u00XX（控制字符就是这样）；另留 4 KiB 给明暗、主色、字段名与
 	// JSON 语法。多余的 JSON 空白、对无需转义的字符的转义不在预算内：这样的请求超出预算时得到 resource_exhausted。
-	// 各项的上限在 settings.go；每个字段的合法取值都有字节上限（明暗与主色由取值集合与格式限定）是这条推导成立的前提。
-	maxBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes + 4<<10
+	// 各项的上限在 settings.go 与 backup_settings.go；每个字段的合法取值都有字节上限
+	// （明暗与主色由取值集合与格式限定）是这条推导成立的前提。
+	// 备份字符串按每字节最多六字节 JSON 转义预算，渠道 ID 按 100 个带引号的 int64 计；
+	// 字段名、标点与其余数值仍由末尾的 4 KiB 承载。
+	maxBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes + 6*(2048+63+64+128+4096+512) + 100*22 + 4<<10
 )
 
 type Config struct {

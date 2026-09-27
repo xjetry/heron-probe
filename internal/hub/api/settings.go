@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"regexp"
 	"slices"
 	"strings"
@@ -113,17 +114,17 @@ func checkCSS(css string) error {
 	return nil
 }
 
-func settingsProto(st store.SiteSettings) *probev1.Settings {
-	return &probev1.Settings{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS}
+func settingsProto(st store.SiteSettings, backup store.BackupSettings) *probev1.Settings {
+	return &probev1.Settings{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS, Backup: backupProto(backup)}
 }
 
 func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.GetSettingsRequest]) (*connect.Response[probev1.GetSettingsResponse], error) {
-	st, err := s.store.SiteSettings(ctx)
+	st, backup, err := s.store.Settings(ctx)
 	if err != nil {
 		s.log.Error("reading settings failed", "err", err)
 		return nil, internalError("reading settings failed")
 	}
-	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: settingsProto(st)}), nil
+	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: settingsProto(st, backup)}), nil
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probev1.UpdateSettingsRequest]) (*connect.Response[probev1.UpdateSettingsResponse], error) {
@@ -131,11 +132,19 @@ func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probe
 	if err != nil {
 		return nil, err
 	}
-	if err := s.store.SaveSiteSettings(ctx, st); err != nil {
+	backup, err := cleanBackup(req.Msg.GetSettings().GetBackup())
+	if err != nil {
+		return nil, err
+	}
+	st, savedBackup, err := s.store.SaveSettings(ctx, st, backup)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, invalid("backup.channels: %s", err)
+		}
 		s.log.Error("saving settings failed", "err", err)
 		return nil, internalError("saving settings failed")
 	}
-	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: settingsProto(st)}), nil
+	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: settingsProto(st, savedBackup)}), nil
 }
 
 func (s *Service) GetStorageStats(ctx context.Context, _ *connect.Request[probev1.GetStorageStatsRequest]) (*connect.Response[probev1.GetStorageStatsResponse], error) {

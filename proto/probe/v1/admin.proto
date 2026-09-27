@@ -466,7 +466,7 @@ message DeleteNotifyChannelResponse {}
 message TestNotifyChannelRequest { int64 id = 1; }
 message TestNotifyChannelResponse {}
 
-// 公开页外观。整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。
+// 公开页外观与备份。外观五项整体替换；backup 缺席即不变。
 message Settings {
   // 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
   // 空串表示公开页用内置标题。
@@ -480,6 +480,35 @@ message Settings {
   string logo = 4;
   // 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
   string custom_css = 5;
+  BackupSettings backup = 6;
+}
+
+// 备份目标由管理员显式配置。endpoint、bucket、access_key、secret 任一为空即整体关闭。
+// 提交 backup 时，除 optional 字段外整体替换；只改外观时应省略 backup。
+message BackupSettings {
+  // http(s) URL，不含 userinfo、query、fragment，最多 2048 字节；空串关闭备份。
+  // 面板使用 path-style（兼容 R2），endpoint 可含路径前缀。
+  string endpoint = 1;
+  // 非空时为 S3 bucket 名：3-63 个小写字母、数字、点或连字符，首尾为字母或数字，无连续点。
+  string bucket = 2;
+  // 签名区域，最多 64 字节，不含斜杠或空白；空串保存为 auto（R2）。
+  string region = 3;
+  // 最多 128 字节，不含斜杠或空白；可回显，空串关闭备份。
+  string access_key = 4;
+  // 只写不读，最多 4096 字节。缺席保留旧值，显式空串清除凭据并关闭备份。
+  optional string secret = 5;
+  // 对象键前缀，最多 512 字节；允许为空。
+  string prefix = 6;
+  // 60-86400 秒；缺席不变，无存储键时默认 300；显式 0 非法。
+  optional uint32 config_interval_s = 7;
+  // 3600-604800 秒；缺席不变，无存储键时默认 86400；显式 0 非法。
+  optional uint32 metrics_interval_s = 8;
+  // 1-1000 份；缺席不变，无存储键时默认 48；显式 0 非法。
+  optional uint32 config_keep = 9;
+  // 1-1000 份；缺席不变，无存储键时默认 14；显式 0 非法。
+  optional uint32 metrics_keep = 10;
+  // notify.backup_channels：最多 100 个已存在的通知渠道 ID；空列表不发送备份通知。
+  repeated int64 channels = 11;
 }
 message GetSettingsRequest {}
 message GetSettingsResponse { Settings settings = 1; }

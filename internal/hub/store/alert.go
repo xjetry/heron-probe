@@ -468,6 +468,9 @@ func (s *Store) DeleteNotifyChannel(ctx context.Context, id int64) error {
 		if err := deleteAlertEntity(tx, "notify_channel", ObjectNotifyChannel, id); err != nil {
 			return err
 		}
+		if err := removeBackupChannel(tx, id); err != nil {
+			return err
+		}
 		_, err := tx.Exec("UPDATE alert_delivery SET done = 1, failure = ?, http_status = NULL, last_error = '' WHERE channel_id = ? AND done = 0", FailureChannelDeleted, id)
 		return err
 	})
