@@ -26,6 +26,7 @@ export function Layout() {
         <NavLink to="/channels">通知渠道</NavLink>
         <NavLink to="/tokens">API token</NavLink>
         <NavLink to="/appearance">外观</NavLink>
+        <NavLink to="/themes">主题</NavLink>
         <NavLink to="/storage">存储</NavLink>
         <NavLink to="/register">注册窗口</NavLink>
         <button type="button" className="link" onClick={() => logout.mutate({})} disabled={logout.isPending}>
