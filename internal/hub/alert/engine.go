@@ -21,11 +21,18 @@ import (
 // apply 在 writeMu 下调用 Enqueue：不得阻塞，也不得回调 Engine 的写方法，否则会阻塞全部写入或自锁。
 // 读方法只取 mu，apply 调用前已释放 mu，因此可以读取 Channels 等快照。
 type Sender interface{ Enqueue(ev store.AlertEvent) }
-type Config struct{ TTL time.Duration }
+type Config struct {
+	TTL time.Duration
+	// Location 是 hub 的 --timezone：到期日按它的日历日计（§9.4），New 要求非 nil。
+	Location *time.Location
+}
 type stateKey struct{ rule, node int64 }
 type stateEntry struct {
 	state   store.AlertState
 	sinceAt time.Time
+	// firedExpiresOn 与库里的 alert_state.fired_expires_on 同值（含义见 store.StateRow.FiredExpiresOn）：Load 从库读入，
+	// apply 在写库成功后随状态一起发布。
+	firedExpiresOn string
 }
 
 // writeMu 串行化读库、写库到内存发布；mu 只保护内存快照，不跨存储往返持有。
@@ -45,7 +52,11 @@ type Engine struct {
 	sender   Sender
 }
 
+// New 对缺时区的 Config panic：到期扫描对 nil 时区调用 time.Time.In 会在运行中 panic，装配错误应当在启动时暴露。
 func New(cfg Config, st *store.Store, l *live.Live, clk clock.Clock, log *slog.Logger) *Engine {
+	if cfg.Location == nil {
+		panic("alert.Config.Location must be set")
+	}
 	return &Engine{cfg: cfg, st: st, live: l, clk: clk, log: log, rules: map[int64]store.AlertRule{}, channels: map[int64]store.NotifyChannel{}, states: map[stateKey]stateEntry{}}
 }
 func (e *Engine) SetSender(s Sender) { e.mu.Lock(); defer e.mu.Unlock(); e.sender = s }
@@ -84,7 +95,7 @@ func (e *Engine) Load(ctx context.Context) error {
 	}
 	for _, s := range states {
 		if _, ok := validRules[s.RuleID]; ok {
-			e.states[stateKey{s.RuleID, s.NodeID}] = stateEntry{s.State, s.SinceAt}
+			e.states[stateKey{s.RuleID, s.NodeID}] = stateEntry{s.State, s.SinceAt, s.FiredExpiresOn}
 		}
 	}
 	return nil
@@ -119,7 +130,7 @@ func (e *Engine) States() []store.StateRow {
 	defer e.mu.RUnlock()
 	var out []store.StateRow
 	for k, s := range e.states {
-		out = append(out, store.StateRow{RuleID: k.rule, NodeID: k.node, State: s.state, SinceAt: s.sinceAt})
+		out = append(out, store.StateRow{RuleID: k.rule, NodeID: k.node, State: s.state, SinceAt: s.sinceAt, FiredExpiresOn: s.firedExpiresOn})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].RuleID != out[j].RuleID {
@@ -148,11 +159,24 @@ func (e *Engine) SaveRule(ctx context.Context, r store.AlertRule) (store.AlertRu
 	if err != nil {
 		return store.AlertRule{}, err
 	}
+	e.publishRule(saved)
+	// 除此之外，到期规则只在启动、日界与计费变化时评估：若不在这里评估一次，新建、启用或改了提前天数的规则要等到
+	// 下一个日界才有状态。规则已提交，扫描失败只记日志：保存本身成功了，下一次扫描会再评估。
+	if saved.Enabled && saved.Kind == store.KindExpiry {
+		if err := e.sweepExpiry(context.WithoutCancel(ctx)); err != nil {
+			e.log.Error("expiry sweep after saving rule failed", "rule_id", saved.ID, "err", err)
+		}
+	}
+	return saved, nil
+}
+
+// publishRule 在 SaveAlertRule 提交之后把规则与状态裁剪同步到内存；调用方持 writeMu。
+func (e *Engine) publishRule(saved store.AlertRule) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	previous := e.rules[saved.ID]
 	// 种类、任务或指标变化后，旧观测不再描述当前规则，与 SaveAlertRule 的状态裁剪一致。
-	// threshold 与 for_minutes 不改变身份，状态沿用，下一轮按新阈值判断是否恢复。
+	// threshold、for_minutes 与 days_before 不改变身份，状态沿用，下一轮按新值判断是否恢复。
 	identityChanged := previous.Kind != saved.Kind || previous.TaskID != saved.TaskID || previous.Metric != saved.Metric
 	e.rules[saved.ID] = cloneRule(saved)
 	// SaveAlertRule 已在同一事务裁剪状态，缓存只在提交后同步到相同集合。
@@ -161,7 +185,6 @@ func (e *Engine) SaveRule(ctx context.Context, r store.AlertRule) (store.AlertRu
 			delete(e.states, k)
 		}
 	}
-	return saved, nil
 }
 func (e *Engine) DeleteRule(ctx context.Context, id int64) error {
 	e.writeMu.Lock()
@@ -302,17 +325,22 @@ func (e *Engine) Forget(nodeID int64) {
 		e.rules[id] = r
 	}
 }
-func (e *Engine) current(k stateKey) store.AlertState {
+func (e *Engine) current(k stateKey) store.AlertState { return e.entry(k).state }
+
+// entry 是 k 的内存状态；没有状态的一对规则与节点按 ok 处理。
+func (e *Engine) entry(k stateKey) stateEntry {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	if s, ok := e.states[k]; ok {
-		return s.state
+		return s
 	}
-	return store.StateOK
+	return stateEntry{state: store.StateOK}
 }
 
 // 调用方持 writeMu；状态、事件与投递先由 store 原子提交，再发布内存并通知 Sender。
-func (e *Engine) apply(ctx context.Context, r store.AlertRule, nodeID int64, next store.AlertState, tr *store.Transition, summary string, value float64) error {
+// firedExpiresOn 只由到期扫描在进入 firing 时给出，其余调用传空。状态不变时 apply 直接返回、不写库，所以一个 firing
+// 状态记的始终是它进入 firing 那一刻的到期日。
+func (e *Engine) apply(ctx context.Context, r store.AlertRule, nodeID int64, next store.AlertState, firedExpiresOn string, tr *store.Transition, summary string, value float64) error {
 	k := stateKey{r.ID, nodeID}
 	if e.current(k) == next {
 		return nil
@@ -321,15 +349,17 @@ func (e *Engine) apply(ctx context.Context, r store.AlertRule, nodeID int64, nex
 	var ev store.AlertEvent
 	var err error
 	if tr != nil {
-		ev, err = e.st.RecordTransition(ctx, r.ID, nodeID, next, "", store.AlertEvent{Transition: *tr, At: now, Summary: summary, Value: value}, r.ChannelIDs)
+		ev, err = e.st.RecordTransition(ctx, r.ID, nodeID, next, firedExpiresOn, store.AlertEvent{Transition: *tr, At: now, Summary: summary, Value: value}, r.ChannelIDs)
 	} else {
+		// SetAlertState 不写触发日期，内存与库记同一个值。
+		firedExpiresOn = ""
 		err = e.st.SetAlertState(ctx, r.ID, nodeID, next, now)
 	}
 	if err != nil {
 		return err
 	}
 	e.mu.Lock()
-	e.states[k] = stateEntry{next, time.Unix(now.Unix(), 0).UTC()}
+	e.states[k] = stateEntry{next, time.Unix(now.Unix(), 0).UTC(), firedExpiresOn}
 	sender := e.sender
 	e.mu.Unlock()
 	// 未装配 Sender 时转换仍完整落库，投递行可供后续续投，不能因此跳过持久化。
@@ -398,7 +428,7 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 			if tr != nil && *tr == store.TransitionRecovered {
 				summary = fmt.Sprintf("节点 %s 已恢复上报（规则 %s）", node.Name, r.Name)
 			}
-			if err := e.apply(ctx, r, node.ID, next, tr, summary, unseen.Seconds()); err != nil {
+			if err := e.apply(ctx, r, node.ID, next, "", tr, summary, unseen.Seconds()); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -467,7 +497,7 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 			next, tr := NextProbe(e.current(stateKey{r.ID, node.ID}), samples, r.ForMinutes)
 			value := samples[len(samples)-1].Value
 			summary := fmt.Sprintf("节点 %s 规则 %s：%s %.1f", node.Name, r.Name, r.Metric, value)
-			if err := e.apply(ctx, r, node.ID, next, tr, summary, value); err != nil {
+			if err := e.apply(ctx, r, node.ID, next, "", tr, summary, value); err != nil {
 				errs = append(errs, err)
 			}
 		}

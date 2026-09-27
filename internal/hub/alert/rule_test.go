@@ -32,6 +32,19 @@ func TestCheckRule(t *testing.T) {
 		{"infinite", func(r *store.AlertRule) { r.Metric = store.MetricRttMs; r.Threshold = math.Inf(1) }, "threshold"},
 		{"minutes_low", func(r *store.AlertRule) { r.ForMinutes = 0 }, "for_minutes"},
 		{"minutes_high", func(r *store.AlertRule) { r.ForMinutes = 61 }, "for_minutes"},
+		{"probe_days_before", func(r *store.AlertRule) { r.DaysBefore = 7 }, "days_before"},
+		{"offline_task", func(r *store.AlertRule) { *r = offline(); r.TaskID = 1 }, "task_id"},
+		{"offline_metric", func(r *store.AlertRule) { *r = offline(); r.Metric = store.MetricLossPct }, "metric"},
+		{"offline_threshold", func(r *store.AlertRule) { *r = offline(); r.Threshold = 20 }, "threshold"},
+		{"offline_nan", func(r *store.AlertRule) { *r = offline(); r.Threshold = math.NaN() }, "threshold"},
+		{"offline_minutes", func(r *store.AlertRule) { *r = offline(); r.ForMinutes = 3 }, "for_minutes"},
+		{"offline_days_before", func(r *store.AlertRule) { *r = offline(); r.DaysBefore = 7 }, "days_before"},
+		{"expiry_days_low", func(r *store.AlertRule) { *r = expiryRule(); r.DaysBefore = 0 }, "days_before"},
+		{"expiry_days_high", func(r *store.AlertRule) { *r = expiryRule(); r.DaysBefore = 366 }, "days_before"},
+		{"expiry_task", func(r *store.AlertRule) { *r = expiryRule(); r.TaskID = 1 }, "task_id"},
+		{"expiry_metric", func(r *store.AlertRule) { *r = expiryRule(); r.Metric = store.MetricRttMs }, "metric"},
+		{"expiry_threshold", func(r *store.AlertRule) { *r = expiryRule(); r.Threshold = 1 }, "threshold"},
+		{"expiry_minutes", func(r *store.AlertRule) { *r = expiryRule(); r.ForMinutes = 1 }, "for_minutes"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -50,7 +63,9 @@ func TestCheckRule(t *testing.T) {
 		func(r *store.AlertRule) { r.Metric = store.MetricRttMs; r.Threshold = 0.1 },
 		func(r *store.AlertRule) { r.AllNodes = false; r.NodeIDs = []int64{1} },
 		func(r *store.AlertRule) { r.AllNodes = false },
-		func(r *store.AlertRule) { r.Kind = store.KindOffline; r.TaskID = 0; r.Metric = ""; r.ForMinutes = 0 },
+		func(r *store.AlertRule) { *r = offline() },
+		func(r *store.AlertRule) { *r = expiryRule(); r.DaysBefore = 1 },
+		func(r *store.AlertRule) { *r = expiryRule(); r.DaysBefore = 365 },
 	} {
 		r := base
 		change(&r)

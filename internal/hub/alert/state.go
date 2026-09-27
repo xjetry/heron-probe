@@ -69,3 +69,23 @@ func NextProbe(cur store.AlertState, samples []MinuteSample, forMinutes int) (st
 	tr := store.TransitionFiring
 	return store.StateFiring, &tr
 }
+
+// ExpiryObservation 是一个节点在一次到期扫描里的观测。HasExpiry 为假时 DaysLeft 无意义。
+type ExpiryObservation struct {
+	HasExpiry  bool
+	DaysLeft   int // 到期日减今天（hub 时区的日历日），负数是已过期天数
+	DaysBefore int // 规则的提前天数，1–365
+}
+
+// NextExpiry 没有 pending：到期是日历事件，进入窗口即触发，不存在"持续多久才算"。没有到期日按恢复处理——
+// 清除到期日是结束提醒的正当方式，不能让已触发的告警卡在 firing。
+func NextExpiry(cur store.AlertState, o ExpiryObservation) (store.AlertState, *store.Transition) {
+	if !o.HasExpiry || o.DaysLeft > o.DaysBefore {
+		return recovered(cur)
+	}
+	if cur == store.StateFiring {
+		return cur, nil
+	}
+	tr := store.TransitionFiring
+	return store.StateFiring, &tr
+}

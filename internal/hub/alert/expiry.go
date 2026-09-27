@@ -1,0 +1,252 @@
+package alert
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/xjetry/probe/internal/hub/store"
+)
+
+// 到期日按日历日计（§9.4）。日期一律表示为该日 UTC 零点的 time.Time：解析、"今天"与相减都在这种值上做，两个日期
+// 相差几天与任何时区的夏令时无关。hub 时区（--timezone）只在 Today 里出现一次：把一个时刻换成那里的日历日。
+
+// ParseDate 解析 YYYY-MM-DD。写侧（api 的 UpdateNode）与读侧（到期扫描、days_left）都用它，"合法日期"只有这一个
+// 口径：time.Parse 按 time.DateOnly 要求四位年、两位月日，并拒绝不存在的日子（2026-02-30、非闰年的 02-29）。
+func ParseDate(s string) (time.Time, error) {
+	return time.Parse(time.DateOnly, s)
+}
+
+// Today 是 now 在 loc 里的日历日。
+func Today(now time.Time, loc *time.Location) time.Time {
+	y, m, d := now.In(loc).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+}
+
+// daysBetween 用 Unix 秒相减：time.Time.Sub 相差约 292 年以上就饱和，ParseDate 接受的 0000–9999 年会算错。
+func daysBetween(from, to time.Time) int {
+	return int((to.Unix() - from.Unix()) / 86400)
+}
+
+// DaysLeft 是到期日减 today 的天数，负数是已过期天数；expiresOn 为空或不是合法日期时 ok 为假。
+func DaysLeft(expiresOn string, today time.Time) (int, bool) {
+	if expiresOn == "" {
+		return 0, false
+	}
+	d, err := ParseDate(expiresOn)
+	if err != nil {
+		return 0, false
+	}
+	return daysBetween(today, d), true
+}
+
+// cycleMonths 是自动续期每次推后的月数。store.CycleNone 与表外的值（写入口会拒绝，只可能来自手改的库）不推后：
+// 扫描自己守这一条，不依赖保存入口。
+func cycleMonths(c store.BillingCycle) (int, bool) {
+	switch c {
+	case store.CycleMonthly:
+		return 1, true
+	case store.CycleQuarterly:
+		return 3, true
+	case store.CycleSemiannual:
+		return 6, true
+	case store.CycleYearly:
+		return 12, true
+	case store.CycleBiennial:
+		return 24, true
+	case store.CycleTriennial:
+		return 36, true
+	}
+	return 0, false
+}
+
+// addMonths 把日期推后 n 个月；日号超过目标月的天数时钳到月末（1 月 31 日 + 1 个月 = 2 月 28 或 29 日）。
+func addMonths(d time.Time, n int) time.Time {
+	first := time.Date(d.Year(), d.Month()+time.Month(n), 1, 0, 0, 0, 0, time.UTC)
+	last := first.AddDate(0, 1, -1).Day()
+	return time.Date(first.Year(), first.Month(), min(d.Day(), last), 0, 0, 0, 0, time.UTC)
+}
+
+// renewedExpiry 是自动续期推后的到期日：到期日早于 today 就加一个周期，直到不早于 today。每一步从上一步的结果
+// 推后，钳到月末之后日号停在钳后的值（1 月 31 日按月推后：2 月 28 日、3 月 28 日……），这是 §9.4 接受的漂移。
+// ok 为假表示不推后：没开自动续期、没有可用的周期、没有到期日或不是合法日期、到期日不早于 today。
+func renewedExpiry(b store.Billing, today time.Time) (string, bool) {
+	if !b.AutoRenew {
+		return "", false
+	}
+	months, ok := cycleMonths(b.Cycle)
+	if !ok {
+		return "", false
+	}
+	d, err := ParseDate(b.ExpiresOn)
+	if err != nil || !d.Before(today) {
+		return "", false
+	}
+	for d.Before(today) {
+		d = addMonths(d, months)
+	}
+	return d.Format(time.DateOnly), true
+}
+
+// nextDayStart 是 now 之后 loc 里下一个日历日开始的时刻。一般就是 time.Date(y, m, d+1, 0, 0, 0, 0, loc)。
+// 夏令时在零点开始的时区（America/Santiago、America/Havana）当天的零点不存在，go1.27.1 的 time.Date 对它给出前一天的
+// 23:00（仍按旧偏移），本地日期没变；拿它定时会在旧的一天里触发，之后每一轮算出的都是这个已经过去的时刻，
+// 定时器立即触发，循环空转到夏令时生效为止。
+// 这时新的一天从夏令时生效的那一刻开始，也就是该时刻所在时段的结束处（ZoneBounds 的 end）。
+func nextDayStart(now time.Time, loc *time.Location) time.Time {
+	y, m, d := now.In(loc).Date()
+	next := time.Date(y, m, d+1, 0, 0, 0, 0, loc)
+	if ny, nm, nd := next.Date(); ny == y && nm == m && nd == d {
+		_, end := next.ZoneBounds()
+		return end
+	}
+	return next
+}
+
+// nodeExpiry 是一个节点在本次扫描里的到期观测；valid 为假表示本轮不评估这个节点，已有状态原样保留：库里的到期日
+// 读不懂，或者续期写回发现快照已经过期。
+type nodeExpiry struct {
+	hasExpiry bool
+	daysLeft  int
+	valid     bool
+}
+
+// SweepExpiry 在 writeMu 下做一次到期扫描（sweepExpiry）。评估时机共四处（§9.2）：hub 启动与每个日历日开始
+// （RunExpirySweep）、节点计费字段变化时调用它；保存启用的到期规则时，SaveRule 已持 writeMu，直接调 sweepExpiry。
+// 一次扫描先把开着自动续期且早于今天的到期日推后并落库，再按推后之后的日期评估全部启用的到期规则。两步在同一次
+// writeMu 下完成，续期带来的恢复与续期本身在同一次扫描里发生，不会先发一条"已过期"再发恢复。
+func (e *Engine) SweepExpiry(ctx context.Context) error {
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
+	return e.sweepExpiry(ctx)
+}
+
+// sweepExpiry 的调用方持 writeMu。节点在开头读一次：之后才提交的计费修改（UpdateNode 不经 writeMu 写库）不在本次
+// 快照里，本次可能按旧值多发一对转换；那次 UpdateNode 提交后自己调用 SweepExpiry，排在本次之后，按新值收敛。
+// 续期写回经 RenewExpiry 的条件更新，不会盖掉快照之后的修改。
+func (e *Engine) sweepExpiry(ctx context.Context) error {
+	today := Today(e.clk.Now(), e.cfg.Location)
+	nodes, err := e.st.ListNodes(ctx)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	stale := map[int64]bool{}
+	for i := range nodes {
+		n := &nodes[i]
+		to, ok := renewedExpiry(n.Billing, today)
+		if !ok {
+			continue
+		}
+		renewed, err := e.st.RenewExpiry(ctx, n.ID, n.Billing.Cycle, n.Billing.ExpiresOn, to)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if !renewed {
+			// 条件更新没有写入：快照之后这个节点的计费被改过。改它的 UpdateNode 提交后自己会再扫描一次，本轮按
+			// 过期的快照评估只会多发一对转换，所以跳过它。
+			stale[n.ID] = true
+			continue
+		}
+		e.log.Info("node expiry renewed", "node_id", n.ID, "node", n.Name, "cycle", string(n.Billing.Cycle), "from", n.Billing.ExpiresOn, "to", to)
+		n.Billing.ExpiresOn = to
+	}
+	observed := make(map[int64]nodeExpiry, len(nodes))
+	for _, n := range nodes {
+		o := nodeExpiry{valid: !stale[n.ID]}
+		if o.valid && n.Billing.ExpiresOn != "" {
+			d, err := ParseDate(n.Billing.ExpiresOn)
+			if err != nil {
+				// 写入口都校验过日期，只有手改的库会走到这里。跳过而不是按"没有到期日"处理：读不懂的值既不该触发，
+				// 也不该把已触发的告警当作恢复发出去。
+				e.log.Warn("node expires_on is not a YYYY-MM-DD date; expiry rules skip this node", "node_id", n.ID, "expires_on", n.Billing.ExpiresOn)
+				o.valid = false
+			} else {
+				o.hasExpiry, o.daysLeft = true, daysBetween(today, d)
+			}
+		}
+		observed[n.ID] = o
+	}
+	for _, r := range e.Rules() {
+		if !r.Enabled || r.Kind != store.KindExpiry {
+			continue
+		}
+		candidates := map[int64]bool{}
+		for _, n := range nodes {
+			if !inScope(r, n.ID) {
+				continue
+			}
+			candidates[n.ID] = true
+			ob := observed[n.ID]
+			if !ob.valid {
+				continue
+			}
+			o := ExpiryObservation{HasExpiry: ob.hasExpiry, DaysLeft: ob.daysLeft, DaysBefore: r.DaysBefore}
+			cur := e.entry(stateKey{r.ID, n.ID})
+			next, tr := NextExpiry(cur.state, o)
+			summary, value := expirySummary(n, r, o, tr, cur.firedExpiresOn)
+			// 进入 firing 的观测一定有到期日（NextExpiry 对没有到期日的观测只给 ok），记下的日期非空。
+			fired := ""
+			if next == store.StateFiring {
+				fired = n.Billing.ExpiresOn
+			}
+			if err := e.apply(ctx, r, n.ID, next, fired, tr, summary, value); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if err := e.pruneCandidates(ctx, r.ID, candidates); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// expirySummary 是 §9.2 的到期文案；value 是剩余天数，因清除到期日而恢复时为 0。一条规则对一个节点只提醒一次：
+// 触发文案按进入窗口时的剩余天数写"将于"或"已于"。此后留在 firing，NextExpiry 不给转换，apply 也跳过状态不变的
+// 写，两处各自都挡住第二条。
+// 恢复文案按离开窗口的原因。firedOn 是恢复之前那个 firing 状态记下的触发时到期日：当前到期日与它相同，日期没变，
+// 写"已不在提醒窗口内"（规则的提前天数调小了；今天往回挪——hub 换了 --timezone、墙钟被往回调——也会走到这里，
+// 这句同样成立）；
+// 不同就是到期日改过，手动修改与自动续期都算。引擎只经触发转换进入 firing 并总是记下日期，firedOn 为空的 firing
+// 只可能来自绕过引擎写的库，这时当前日期非空、与它不等，按到期日改过写。
+func expirySummary(n store.Node, r store.AlertRule, o ExpiryObservation, tr *store.Transition, firedOn string) (string, float64) {
+	recovered := tr != nil && *tr == store.TransitionRecovered
+	switch {
+	case recovered && !o.HasExpiry:
+		return fmt.Sprintf("节点 %s 已清除到期日（规则 %s）", n.Name, r.Name), 0
+	case recovered && n.Billing.ExpiresOn == firedOn:
+		return fmt.Sprintf("节点 %s 已不在提醒窗口内（规则 %s）", n.Name, r.Name), float64(o.DaysLeft)
+	case recovered:
+		return fmt.Sprintf("节点 %s 到期日已更新为 %s（规则 %s）", n.Name, n.Billing.ExpiresOn, r.Name), float64(o.DaysLeft)
+	case o.DaysLeft < 0:
+		return fmt.Sprintf("节点 %s 已于 %s 到期（已过期 %d 天，规则 %s）", n.Name, n.Billing.ExpiresOn, -o.DaysLeft, r.Name), float64(o.DaysLeft)
+	}
+	return fmt.Sprintf("节点 %s 将于 %s 到期（剩 %d 天，规则 %s）", n.Name, n.Billing.ExpiresOn, o.DaysLeft, r.Name), float64(o.DaysLeft)
+}
+
+// RunExpirySweep 先扫描一次（hub 停机跨过的零点由这一次补上），此后在 hub 时区每个日历日开始时扫描一次。
+//
+// 下一次触发时刻由本轮扫描之前读到的钟算出，所以扫描期间跨过的日界至多引起一次立即的重扫，不会被跳过：next 是这次
+// 读钟之后的第一个日界。扫描在它之前结束，定时器在它到来时触发；扫描拖过了它，定时器时长为负、立即触发，重扫按新的
+// 一天评估。扫描自己若已按新的一天评估过，重扫只是重复：续期已经写回，状态没变时 apply 直接返回、不写库。反过来，
+// 扫描之后才读钟，拖过日界的那一轮会从新的一天算出再下一个日界，新一天的续期与提醒就晚一整天。
+//
+// 定时器按单调钟走，时长在扫描之后按当时的墙钟算：墙钟被调整只影响当轮，不累积；提前触发只是多扫一次（按的仍是
+// 前一天），下一轮再按真正的日界定时。
+func (e *Engine) RunExpirySweep(ctx context.Context) {
+	for {
+		next := nextDayStart(e.clk.Now(), e.cfg.Location)
+		if err := e.SweepExpiry(ctx); err != nil {
+			e.log.Error("expiry sweep failed", "err", err)
+		}
+		timer := time.NewTimer(next.Sub(e.clk.Now()))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+}

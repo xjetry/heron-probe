@@ -47,7 +47,7 @@ func newTestMux(t *testing.T) *http.ServeMux {
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, slog.Default())
 	reg := probe.New(st, slog.Default())
-	alerts := alert.New(alert.Config{TTL: 30 * time.Second}, st, l, clk, slog.Default())
+	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, st, l, clk, slog.Default())
 	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, slog.Default())
 	alerts.SetSender(notifier)
 	svc, err := ingest.New(ingest.Config{TTL: 30 * time.Second}, l, st, a, book, reg, clk, slog.Default())

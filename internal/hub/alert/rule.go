@@ -52,14 +52,26 @@ func checkName(name string) error {
 
 // CheckRule 只校验持久化结构；DeleteNode 可把显式作用域删空，空集仍是不覆盖节点的合法规则。
 // Load 若丢弃这种规则，列表会不可见，而存储的渠道引用仍阻止删除，库与内存就会不一致。
+//
+// 种类专用的字段只属于自己的种类，由 store.CheckKindFields 一处裁决；这里在已知种类上调它，把它的结果转成协议层
+// 认得的字段错误。保存（Engine.SaveRule）与载入（Engine.Load）都经这里，所以"离线或到期规则带着探测字段"既存不
+// 进去，也不会从手改过的库里载入生效；store.SaveAlertRule 自己也用同一个谓词拒绝。
 func CheckRule(r store.AlertRule) error {
 	if err := checkName(r.Name); err != nil {
 		return err
 	}
 	switch r.Kind {
 	case store.KindOffline:
-		return nil
+		return checkKindFields(r)
+	case store.KindExpiry:
+		if r.DaysBefore < 1 || r.DaysBefore > 365 {
+			return invalid("days_before", "must be between 1 and 365")
+		}
+		return checkKindFields(r)
 	case store.KindProbe:
+		if err := checkKindFields(r); err != nil {
+			return err
+		}
 		if r.TaskID == 0 {
 			return invalid("task_id", "must not be 0")
 		}
@@ -83,8 +95,19 @@ func CheckRule(r store.AlertRule) error {
 		}
 		return nil
 	default:
-		return oneOf("kind", string(r.Kind), string(store.KindOffline), string(store.KindProbe))
+		return oneOf("kind", string(r.Kind), string(store.KindOffline), string(store.KindProbe), string(store.KindExpiry))
 	}
+}
+
+// checkKindFields 把 store.CheckKindFields 的结果转成 FieldError，字段与约束原样沿用。
+func checkKindFields(r store.AlertRule) error {
+	var kf store.KindFieldError
+	if err := store.CheckKindFields(r); errors.As(err, &kf) {
+		return FieldError{Path: kf.Field, Constraint: kf.Constraint}
+	} else if err != nil {
+		return err
+	}
+	return nil
 }
 
 type TelegramConfig struct {

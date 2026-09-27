@@ -226,3 +226,35 @@ func TestServePrunesAlertEvents(t *testing.T) {
 		})
 	}
 }
+
+// hub 启动即做一次到期扫描，天界取 --timezone：UTC 16:30 在上海已是 9 月 25 日，9 月 24 日到期、开着按月自动续期的
+// 节点推后到 10 月 24 日；按 UTC 算今天仍是 9 月 24 日，不会推后。"node expiry renewed" 只在推后的日期落库之后记。
+func TestServeRenewsExpiryAtStartupInTheHubZone(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 9, 24, 16, 30, 0, 0, time.UTC))
+	_, events, _ := startAlertHub(t, clk, func(st *store.Store) {
+		id, err := st.CreateNode(t.Context(), "renewing", make([]byte, 32))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := store.Billing{Cycle: store.CycleMonthly, ExpiresOn: "2026-09-24", AutoRenew: true}
+		if _, err := st.UpdateNode(t.Context(), id, store.NodeEdit{Name: "renewing", TrafficResetDay: 1, Billing: b}); err != nil {
+			t.Fatal(err)
+		}
+	}, "--timezone", "Asia/Shanghai")
+	deadline := time.NewTimer(testwait.Bound)
+	defer deadline.Stop()
+	for {
+		select {
+		case event := <-events:
+			if string(event["msg"]) != `"node expiry renewed"` {
+				continue
+			}
+			if from, to := string(event["from"]), string(event["to"]); from != `"2026-09-24"` || to != `"2026-10-24"` {
+				t.Fatalf("renewed from %s to %s, want 2026-09-24 to 2026-10-24", from, to)
+			}
+			return
+		case <-deadline.C:
+			t.Fatal("the startup expiry sweep did not renew the node")
+		}
+	}
+}

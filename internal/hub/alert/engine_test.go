@@ -24,6 +24,7 @@ import (
 type fixture struct {
 	st   *store.Store
 	clk  *clock.Fake
+	loc  *time.Location
 	l    *live.Live
 	e    *Engine
 	log  *slog.Logger
@@ -33,7 +34,8 @@ type fixture struct {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	f := &fixture{clk: clock.NewFake(time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)), log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	// 时区东八区：夹具时钟的 UTC 12:00 是当地 20:00，UTC 16:00 起当地已是次日，到期测试据此区分"按哪个时区取今天"。
+	f := &fixture{clk: clock.NewFake(time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)), loc: time.FixedZone("UTC+8", 8*3600), log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	var err error
 	f.path = filepath.Join(t.TempDir(), "hub.db")
 	f.st, err = store.Open(f.path, f.clk, f.log)
@@ -56,7 +58,7 @@ func must(t *testing.T, err error) {
 func (f *fixture) restart(t *testing.T) {
 	t.Helper()
 	f.l = live.New(f.clk, 30*time.Second)
-	f.e = New(Config{TTL: 30 * time.Second}, f.st, f.l, f.clk, f.log)
+	f.e = New(Config{TTL: 30 * time.Second, Location: f.loc}, f.st, f.l, f.clk, f.log)
 	must(t, f.e.Load(t.Context()))
 }
 func (f *fixture) rule(t *testing.T, r store.AlertRule) store.AlertRule {
