@@ -864,8 +864,8 @@ func (x *Traffic) GetResetDay() uint32 {
 	return 0
 }
 
-// 节点的计费与到期（§9.4）：提醒用的展示值，hub 不汇总、不换算，也不拿它做任何计算。Node 与 UpdateNodeRequest 都以它
-// 承载；公开端的 PublicBilling 由它按字段名投影生成，两者对不齐时 hub 构造公开服务就 panic。
+// 节点的计费与到期（§9.4）。价格与币种是提醒用的展示值：hub 不汇总、不换算，也不拿它们做任何计算；到期日与周期
+// 驱动 days_left、自动续期与到期规则。Node 与 UpdateNodeRequest 都以它承载；公开端的 PublicBilling 由它按字段名投影生成，两者对不齐时 hub 构造公开服务就 panic。
 type Billing struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 价格，十进制文本（如 12.50）；空表示未填。保存时须为空或匹配 ^[0-9]{1,9}(\.[0-9]{1,2})?$。
@@ -878,7 +878,7 @@ type Billing struct {
 	// 开着时，到期日早于今天（hub 时区）即按周期推后到不早于今天。hub 启动、每个日界（零点不存在的日子取新一天的
 	// 第一个时刻）、计费字段变化与保存启用的到期规则时检查。保存时要求 billing_cycle 与 expires_on 都非空。
 	AutoRenew bool `protobuf:"varint,5,opt,name=auto_renew,json=autoRenew,proto3" json:"auto_renew,omitempty"`
-	// 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日时缺失。只由 hub 填写：
+	// 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日、或库里的到期日无法解析时缺失。只由 hub 填写：
 	// 保存请求里的值忽略，与 AlertRule.created_at 同一做法。
 	DaysLeft      *int32 `protobuf:"varint,6,opt,name=days_left,json=daysLeft,proto3,oneof" json:"days_left,omitempty"`
 	unknownFields protoimpl.UnknownFields

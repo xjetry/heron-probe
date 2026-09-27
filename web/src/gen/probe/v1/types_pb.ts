@@ -386,8 +386,8 @@ export const TrafficSchema: GenMessage<Traffic> = /*@__PURE__*/
   messageDesc(file_probe_v1_types, 7);
 
 /**
- * 节点的计费与到期（§9.4）：提醒用的展示值，hub 不汇总、不换算，也不拿它做任何计算。Node 与 UpdateNodeRequest 都以它
- * 承载；公开端的 PublicBilling 由它按字段名投影生成，两者对不齐时 hub 构造公开服务就 panic。
+ * 节点的计费与到期（§9.4）。价格与币种是提醒用的展示值：hub 不汇总、不换算，也不拿它们做任何计算；到期日与周期
+ * 驱动 days_left、自动续期与到期规则。Node 与 UpdateNodeRequest 都以它承载；公开端的 PublicBilling 由它按字段名投影生成，两者对不齐时 hub 构造公开服务就 panic。
  *
  * @generated from message probe.v1.Billing
  */
@@ -427,7 +427,7 @@ export type Billing = Message<"probe.v1.Billing"> & {
   autoRenew: boolean;
 
   /**
-   * 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日时缺失。只由 hub 填写：
+   * 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日、或库里的到期日无法解析时缺失。只由 hub 填写：
    * 保存请求里的值忽略，与 AlertRule.created_at 同一做法。
    *
    * @generated from field: optional int32 days_left = 6;

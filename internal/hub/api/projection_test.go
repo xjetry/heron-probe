@@ -15,7 +15,8 @@ import (
 )
 
 // projectionFixtures 造几组消息：Src 是 int32 a = 1，Pair 是 a = 1、b = 2，Painted 是 a = 1 与枚举 c = 2；其余各在一处
-// 与它们不对齐，或（PairPublic、PaintedPublic、MsgField、EnumField 之外）按 newProjection 的某一条约束写错。
+// 与它们不对齐（OtherEnumField 是与 EnumField 不对齐），或（PairPublic、PaintedPublic、MsgField、EnumField 之外）按 newProjection
+// 的某一条约束写错。
 func projectionFixtures(t *testing.T) protoreflect.FileDescriptor {
 	t.Helper()
 	i32 := descriptorpb.FieldDescriptorProto_TYPE_INT32.Enum()

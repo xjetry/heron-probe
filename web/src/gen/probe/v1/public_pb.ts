@@ -228,7 +228,7 @@ export type PublicBilling = Message<"probe.v1.PublicBilling"> & {
   expiresOn: string;
 
   /**
-   * 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日时缺失。
+   * 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日、或库里的到期日无法解析时缺失。
    *
    * @generated from field: optional int32 days_left = 6;
    */

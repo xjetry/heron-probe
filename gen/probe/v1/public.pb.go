@@ -363,7 +363,7 @@ type PublicBilling struct {
 	BillingCycle BillingCycle `protobuf:"varint,3,opt,name=billing_cycle,json=billingCycle,proto3,enum=probe.v1.BillingCycle" json:"billing_cycle,omitempty"`
 	// 到期日 YYYY-MM-DD；空表示没有到期日。
 	ExpiresOn string `protobuf:"bytes,4,opt,name=expires_on,json=expiresOn,proto3" json:"expires_on,omitempty"`
-	// 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日时缺失。
+	// 到期日减去今天的天数，今天按 hub 的 --timezone 取日历日；负数是已过期的天数。没有到期日、或库里的到期日无法解析时缺失。
 	DaysLeft      *int32 `protobuf:"varint,6,opt,name=days_left,json=daysLeft,proto3,oneof" json:"days_left,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
