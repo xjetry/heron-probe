@@ -481,3 +481,45 @@ func TestDeleteNodeClearsAlertScopeAndStates(t *testing.T) {
 		t.Fatalf("deleted node left alert cache=%v", after.Msg)
 	}
 }
+
+// alertKinds 是协议种类与存储种类之间的翻译表。协议加了种类而这张表漏配时，编译照过；新种类若还没有协议层的用例，
+// 别的用例也不会红，功能却静默失效：
+// SaveAlertRule 在 parseEnum 处以 rule.kind 拒绝这个种类，列表回显时 enumFor 找不到它而给出 UNSPECIFIED。这里按协议
+// 枚举的全集核对：UNSPECIFIED 之外的每个值都有映射且往返一致，表里没有多出的项；反过来，映射出的每个存储种类都要被
+// alert.CheckRule 接受，免得表配上了、校验却不认这个种类。
+func TestAlertKindsMapEveryValue(t *testing.T) {
+	values := probev1.AlertKind(0).Descriptor().Values()
+	for i := 0; i < values.Len(); i++ {
+		v := probev1.AlertKind(values.Get(i).Number())
+		if v == probev1.AlertKind_ALERT_KIND_UNSPECIFIED {
+			continue
+		}
+		k, ok := alertKinds[v]
+		if !ok {
+			t.Errorf("%s has no stored kind in alertKinds", v)
+			continue
+		}
+		if enumFor(alertKinds, k) != v {
+			t.Errorf("%s does not round-trip through %q", v, k)
+		}
+	}
+	if len(alertKinds) != values.Len()-1 {
+		t.Errorf("alertKinds has %d entries, want one per protocol kind except UNSPECIFIED (%d)", len(alertKinds), values.Len()-1)
+	}
+	// 每个存储种类一条最小的合法规则：离线不带专用字段，探测带任务、指标、阈值与持续分钟，到期带提前天数。
+	minimal := map[store.AlertKind]store.AlertRule{
+		store.KindOffline: {Name: "离线", Kind: store.KindOffline, AllNodes: true},
+		store.KindProbe:   {Name: "探测", Kind: store.KindProbe, AllNodes: true, TaskID: 1, Metric: store.MetricLossPct, Threshold: 10, ForMinutes: 3},
+		store.KindExpiry:  {Name: "到期", Kind: store.KindExpiry, AllNodes: true, DaysBefore: 7},
+	}
+	for v, k := range alertKinds {
+		r, ok := minimal[k]
+		if !ok {
+			t.Errorf("no minimal valid rule for stored kind %q (%s); add one so CheckRule is checked for it", k, v)
+			continue
+		}
+		if err := alert.CheckRule(r); err != nil {
+			t.Errorf("alert.CheckRule rejects the stored kind %q of %s: %v", k, v, err)
+		}
+	}
+}
