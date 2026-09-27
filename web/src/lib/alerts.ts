@@ -34,6 +34,7 @@ export function methodOf(method: string | undefined): string {
 export const ALERT_KINDS: readonly Entry<AlertKind>[] = [
   { value: AlertKind.OFFLINE, label: "离线" },
   { value: AlertKind.PROBE, label: "探测" },
+  { value: AlertKind.EXPIRY, label: "到期" },
 ];
 // unit 与 formatUnit 的单位名一致：丢包阈值是百分数，RTT 阈值是毫秒（proto AlertRule.threshold）。
 export const PROBE_METRICS: readonly (Entry<ProbeMetric> & { unit: string })[] = [
@@ -56,6 +57,7 @@ export function taskLabels(ids: bigint[], tasks: readonly ProbeTaskDetail[] | un
 
 export function ruleCondition(rule: AlertRule, tasks: ProbeTaskDetail[] | undefined): string {
   if (rule.kind === AlertKind.OFFLINE) return "超过宽限期未上报";
+  if (rule.kind === AlertKind.EXPIRY) return `到期日距今不超过 ${rule.daysBefore} 天（含已过期）`;
   const metric = PROBE_METRICS.find((m) => m.value === rule.metric);
   const threshold = metric ? formatUnit(rule.threshold, metric.unit) : String(rule.threshold);
   return `${taskLabel(rule.taskId, tasks)} ${labelOf(PROBE_METRICS, rule.metric)} ≥ ${threshold}，连续 ${rule.forMinutes} 分钟`;
