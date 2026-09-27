@@ -26,7 +26,7 @@
 | 插件系统 | 第三方代码在 hub 进程内执行，与远程执行同类。主题的代码跑在访客浏览器里，不是同一件事 |
 | 主题市场：hub 出网拉取远程目录并自动安装 | 让 hub 携带信任去访问代码分发点，与 GeoIP 外呼被排除的理由同型。主题包由管理员上传，不由 hub 去取 |
 | OAuth、2FA、多用户 | 单管理员足够 |
-| GeoIP 外呼、计费与到期字段 | 与监控无关 |
+| GeoIP 外呼 | 与监控无关 |
 | 多数据库方言、外接时序库 | 目标规模内单文件 SQLite 足够 |
 | 资源阈值告警、流量用量告警 | 未列入需求 |
 | mTLS | 见 §5.5 |
@@ -237,7 +237,7 @@ agent 与 hub 不同时升级。hub 必须接受旧 agent 的上报（缺失的 
 hub 只监听明文 HTTP，TLS 由反代（Caddy / nginx / CDN）终止，hub 内没有证书代码。
 
 - `--listen` 默认 `127.0.0.1:8080`。监听非 loopback 地址时启动日志告警：此时任何人都能绕过反代直连并自带转发头。
-- `--timezone` 是 IANA 时区名，默认取 hub 进程的本地时区；只用于 §7 流量周期的重置日判定与面板文案，不参与任何时长计算。本地时区的名字按 `TZ`、再按 `/etc/localtime` 符号链接的目标路径里 `zoneinfo/` 之后的部分解析（在所测的 Alpine 3.21、Debian 12、Ubuntu 24.04、Rocky Linux 9 上按各自的标准方式设置时区后都是符号链接，Alpine 指向 `/etc/zoneinfo/`）；不读 `/etc/timezone`——RHEL 系没有它，Debian 与 Ubuntu 用 `timedatectl` 改时区后它仍是旧值。`/etc/localtime` 是复制出来的普通文件时（常见于 Dockerfile）取不到名字，退回 UTC 并告警。
+- `--timezone` 是 IANA 时区名，默认取 hub 进程的本地时区；只用于 §7 流量周期的重置日判定、§9.4 到期日的天边界与面板文案，不参与任何时长计算。本地时区的名字按 `TZ`、再按 `/etc/localtime` 符号链接的目标路径里 `zoneinfo/` 之后的部分解析（在所测的 Alpine 3.21、Debian 12、Ubuntu 24.04、Rocky Linux 9 上按各自的标准方式设置时区后都是符号链接，Alpine 指向 `/etc/zoneinfo/`）；不读 `/etc/timezone`——RHEL 系没有它，Debian 与 Ubuntu 用 `timedatectl` 改时区后它仍是旧值。`/etc/localtime` 是复制出来的普通文件时（常见于 Dockerfile）取不到名字，退回 UTC 并告警。
 - `--trusted-proxies` 显式给出 CIDR 列表。只有 TCP 对端地址落在列表内的请求，其 `X-Forwarded-For` / `X-Forwarded-Proto` 才被采信。`X-Forwarded-For` 可能有多行（HAProxy 的 `option forwardfor` 把真实地址另起一行追加），读取时把全部字段行按出现顺序合并后再取值，只读第一行会让键取自客户端伪造的那一行。`X-Forwarded-Proto` 同样按全部字段行合并后取第一个值，即最外层那一跳写的协议；它不带逐跳地址，没法像 `X-Forwarded-For` 那样从右向左跳过可信代理，代理追加而不覆盖时客户端自带的值排在最前。这一点有意不处理：它只决定 Login/Logout 回给请求者自己的会话 cookie 带不带 `Secure`，客户端只能改到自己，影响不到别的来源。空列表 = 不信任任何转发头、一律用 TCP 对端地址，是收紧方向。hub 不从请求头推断自己是否在反代之后。
 - hub 不生成自己的对外地址：面板里安装命令的 hub 地址取浏览器当前的 origin（§10），所以没有 `--site-url`，也不存在从 `Host` 头推断对外地址的问题。
 
@@ -345,7 +345,7 @@ CREATE TABLE probe_1m (
 
 ### 6.6 其余表
 
-`node`（名称、排序、是否公开、备注、离线宽限期、流量重置日、token_hash）、`node_facts`（facts_hash 与各静态字段）、`traffic`、`probe_task`、`probe_task_node`、`probe_meta`（任务版本号）、`alert_rule`、`alert_rule_node`（显式作用域；`alert_rule.all_nodes` 为真时不存行且覆盖全部节点，为假时无行表示不覆盖任何节点——删除作用域里最后一个节点不会放宽到全部）、`alert_rule_channel`、`alert_state`、`alert_event`、`alert_delivery`（每事件每渠道一行投递记录；失败类别、HTTP 状态码与错误原文分列存放，见 §9.3）、`notify_channel`、`setting`、`admin`、`admin_session`、`api_token`（名称、token_hash、创建时间、最后使用时间）、`register_window`、`rollup_state`。
+`node`（名称、排序、是否公开、备注、离线宽限期、流量重置日、token_hash，以及 §9.4 的计费五列：价格、币种、周期、到期日、自动续期）、`node_facts`（facts_hash 与各静态字段）、`traffic`、`probe_task`、`probe_task_node`、`probe_meta`（任务版本号）、`alert_rule`（到期规则另有 `days_before`，其余种类为 NULL）、`alert_rule_node`（显式作用域；`alert_rule.all_nodes` 为真时不存行且覆盖全部节点，为假时无行表示不覆盖任何节点——删除作用域里最后一个节点不会放宽到全部）、`alert_rule_channel`、`alert_state`、`alert_event`、`alert_delivery`（每事件每渠道一行投递记录；失败类别、HTTP 状态码与错误原文分列存放，见 §9.3）、`notify_channel`、`setting`、`admin`、`admin_session`、`api_token`（名称、token_hash、创建时间、最后使用时间）、`register_window`、`rollup_state`。
 
 schema 版本记在 `PRAGMA user_version`，迁移为按版本号顺序执行的函数；空库直接建到当前版本，不重放历史。
 
@@ -403,12 +403,15 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 
 - 离线：节点超过宽限期未上报。宽限期按节点可配，下限为 TTL（§4.4），由保存规则时的显式校验承载：宽限期短于 TTL 会在面板仍显示该节点在线时发出离线告警，两处读的是同一个 `last_seen`，口径必须同向。
 - 探测：某任务在某节点上的丢包率或平均 rtt 连续 N 分钟超过阈值。数据源为 `probe_1m`。
+- 到期：节点的到期日距今不超过 `days_before` 天（1–365，含已过期的负数）。数据源为 `node` 的到期日（§9.4）；没有到期日的节点不参与。规则的探测专用字段（任务、指标、阈值、持续分钟）对它必须为零，与"离线规则不得带探测字段"在同一处校验。
 
 ### 9.2 状态机
 
 每（规则 × 节点）一个状态：`ok → pending → firing → ok`，进入 `firing` 发告警通知，回到 `ok` 发恢复通知。状态持久化在 `alert_state`，hub 重启不会重复触发，也不会忘记尚未恢复的告警。
 
 离线规则每 10 秒巡检；探测规则在分钟桶刷出后评估。离线的恢复条件是收到一次上报（上报本身即证明）；探测的恢复条件是连续 1 分钟低于阈值。离线的 `pending` 是"未上报已超过 TTL 但未到宽限期"（面板已显示离线、告警尚未发出）；探测的 `pending` 是最近一分钟超阈但尚未连续 N 分钟。探测规则在某分钟没有数据时保持当前状态：缺数据既不是超阈也不是恢复。
+
+到期规则没有 `pending`：它是日历事件，不存在"持续多久才算"。剩余天数 ≤ `days_before` 直接 `firing`，续期把日期推出窗口或清空到期日即 `ok` 并发恢复通知；节点没有到期日按恢复处理。评估时机三处：hub 启动一次；每个 hub 时区的零点一次（按时区算出下一个零点再定时，跨过夏令时由 `time.Date` 归一化；hub 停机跨过多个零点由启动那次补上）；`UpdateNode` 改了任一计费字段后立刻一次——否则续费后要等到零点才恢复。同一次扫描先做自动续期的推后再评估规则（§9.4），推后与恢复在一次扫描里完成。文案：`节点 X 将于 2026-10-01 到期（剩 4 天，规则 R）`、`节点 X 已于 2026-09-20 到期（已过期 7 天，规则 R）`、恢复 `节点 X 到期日已更新为 2026-11-01（规则 R）`（清空到期日时写"已清除到期日"）。
 
 **重启不变式**：hub 重启后 `live` 为空，所有节点看起来都未上报。对本次启动以来尚未上报过的节点，离线时长从 hub 启动时刻起算（单调钟）；已上报过的节点从 `live` 的 `last_seen` 起算。由此重启后每个节点都获得完整的宽限期，重启本身不会触发离线告警。重启前已处于 `firing` 的告警保持 `firing`，直到该节点再次上报才恢复；重启前处于 `pending` 的从启动时刻重新计时。
 
@@ -419,6 +422,26 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 渠道：Telegram、通用 Webhook（可配方法、头、请求体模板）。投递走有界队列（单 worker），每条投递至多 3 次尝试、退避 1 s 与 4 s；每次发送前先落盘一次尝试计数，落盘失败就不发送，因此即使发送后的结果未能落盘（崩溃、写失败或关停时取消），同一条投递的发送次数也不超过上限；HTTP 4xx（除 408、429）是永久失败不重试；出站客户端不跟随重定向（3xx 当失败，凭据不随跳转外泄），响应体只读前 64 KiB。每次尝试的结果写入 `alert_delivery`；未成功且未耗尽次数的投递在 hub 重启后重新入队；运行中被挤出有界队列、或因存储故障未能记下结果的投递，由投递协程从库中补回，存储故障期间按 1 s 起、上限 60 s 的退避重试。面板显示的"已通知"只来自成功的投递记录。渠道凭据存库不回显：Telegram bot token、Webhook 的 URL（入站 webhook 的 URL 本身常是密钥）与全部头值都只写不读，列表只回显主机名与头名；保存时省略即保留旧值。hub 自己生成的出站错误文本（连接、DNS、TLS、超时、请求构造的错误）同样不含 URL；HTTP 失败的原文是接收方的响应体，见下一段。Webhook 的目标地址不做限制（含回环与内网地址），管理员因此能让 hub 向其网络可达的任意地址发请求；这是单管理员模型接受的边界，需要隔离时在网络层限制 hub 的出站。
 
 投递失败按类别记录，类别在产生失败的地方确定，不从错误文本反推：`http_status`（接收方以非 2xx 应答，另记状态码）、`transport`（没有收到合法应答：连接、DNS、TLS、超时，以及状态码不在 100–999 的应答）、`request`（请求没能构造：模板执行、编码、URL）、`channel_invalid`（渠道配置无法解析）、`channel_deleted`（渠道已删除，投递终止）、`result_unrecorded`（次数耗尽而最后一次结果未落盘）、`unclassified`（失败没有携带类别；迁移时无法从旧记录确定类别的也归入此类）。只读口径的 `ListAlertEvents` 只返回类别与状态码；错误原文——HTTP 失败时是响应体的前 200 个字符，其余是出站错误文本——只经仅会话的 `GetAlertDeliveryError` 读出：接收方可能在错误响应里回显收到的请求体，而请求体模板里可能放着密钥（§3.2）。hub 不把 URL 写进原文，但响应体的内容由接收方决定：接收方若回显请求路径或头值，会话用户也能从原文里看到这些本应只写不读的配置，这在会话的权限之内。`channel_deleted` 与 `result_unrecorded` 没有原文；`result_unrecorded` 不沿用更早一次尝试的失败——最后一次尝试已发出而结果未知，接收方可能已经收到。投递成功时类别、状态码与原文一并清空。
+
+### 9.4 节点计费与到期
+
+节点可记录费用与到期日，供运维知道每台机器花多少钱、什么时候续费；到期前由 §9.1 的到期规则提醒。这些是提醒用的展示值，不是账目：不汇总、不换算、不参与任何计算，`FEATURES.md` 里"引入计费"那条 Litestream 的重新考虑条件不因它成立。
+
+| 字段 | 存法 | 校验 | 空值含义 |
+|---|---|---|---|
+| 价格 | TEXT，十进制文本如 `12.50` | `^\d{1,9}(\.\d{1,2})?$` | 空 = 未填。展示值不是计算值，所以既不用浮点也不用最小货币单位 |
+| 币种 | TEXT | `^[A-Z]{3}$`（ISO 4217） | 空 = 未填；价格非空时币种必填，币种非空价格可空 |
+| 周期 | TEXT 枚举：月、季、半年、年、两年、三年（`BillingCycle`，在 `types.proto`，公开与管理端共用） | 枚举值之一 | 空（`UNSPECIFIED`）= 无周期（一次性或未填）；自动续期要求非空 |
+| 到期日 | TEXT `YYYY-MM-DD` | 合法日期 | 空 = 无到期；到期规则与自动续期都要求非空 |
+| 自动续期 | INTEGER 0/1 | — | 默认关。关是缺省不是放宽：到期后显示已过期、告警保持，直到管理员改日期 |
+
+校验全部在 `UpdateNode` 一处裁决，与 `traffic_reset_day`、`offline_grace_s` 同一个函数、同一格式的错误文案；另加"自动续期开着时周期与到期日都必须非空"。`UpdateNode` 是整体替换语义（缺省值即清除），五个字段沿用。
+
+日期按天计，天的边界用 `--timezone`（§5.4，与流量周期同一个时区）。剩余天数 = 到期日 − 今天，由 hub 算好作为 `days_left` 下发（`Node` 与 `PublicNode` 都带；无到期日时缺失；负数即已过期天数），面板与公开页只显示它，不在浏览器里用本地时区再算一次——跨时区的访客会看到差一天的数字。
+
+自动续期：扫描时对开着自动续期且到期日早于今天的节点，`while 到期日 < 今天: 到期日 += 周期月数`（1/3/6/12/24/36），落库并记一行日志。日号超过目标月天数时钳到月末（1 月 31 日 + 1 月 = 2 月 28/29 日），钳过之后日号停在钳后的值不再回到 31：接受这个漂移，它是提醒日期不是账单日期。周期为空的节点不推后（保存入口已拒绝这种组合，扫描里再守一次，不依赖入口）。
+
+公开：价格、币种、周期、到期日与 `days_left` 按 §10 的投影规则同号放行；自动续期是运维开关，不公开（`PublicNode` 里 reserved）。Agent 侧协议不涉及这些字段。
 
 ## 10. 前端与公开页
 
@@ -432,8 +455,8 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 
 公开页与 `PublicService` 的细节：
 
-- 内容：总览是节点卡片（名称、在线、系统与架构、CPU、内存、磁盘、网速、运行时长、本周期流量），节点页是历史图表（指标与探测，时间范围选择与面板同一组件）。图表组件与面板共用；公开入口不得引用 `AdminService` 的生成代码，由测试扫描公开入口的 import 钉住，构建后再按描述符前缀对产物做一次性 grep 核对（不是常驻检查）；依赖方向只禁止公开到管理，面板可以引用公开页的常量。配色用 `light-dark()` 加 `color-scheme`，站点设置的明暗经 `html[data-theme]` 压过系统设置，图表颜色由浏览器解析成 rgb 再交给 uPlot（canvas 不认 `light-dark()`）；浏览器下限 Chrome 123、Firefox 120、Safari 17.5。公开入口的产物在 `internal/hub/web/dist-public`。
-- 消息：`PublicSnapshot`（`now`、`report_interval_ms`、`nodes`）；`PublicNode`（id、名称、在线、最近上报、排序、`PublicFacts`、`PublicMetrics`、`Traffic`）。`PublicFacts` 只有系统、架构、CPU 型号、核数、虚拟化——不给主机名、内核版本、agent 版本、ICMP 可用性；`PublicMetrics` 与 `Metrics` 同字段但没有 `boot_id`。两者沿用源消息的字段号，不公开的号连名带号 `reserved`——要公开 `hostname` 这类字段必须先删掉 `reserved` 行，是一个显式动作；值由投影按字段名从源消息复制，字段集合由公开消息自己声明（`Metrics` 以后加字段不会自动公开），构造时逐字段核对名字、类型、基数与 presence，任一不符即 panic。`QueryMetrics` 与 `QueryProbes` 复用管理端的请求与响应类型（定义在 `query.proto`：`public.proto` 若 import `admin.proto`，protoc-gen-es 会让公开包带上 `AdminService` 的描述符）；`GetSite` 直接返回 `PublicSite`、`GetSnapshot` 直接返回 `PublicSnapshot`，第三方主题拿到的 JSON 顶层就是快照本身。把节点标为公开即公开它正在探测的目标：`ProbeSeries` 带任务的种类与目标，公开端只给当前分配给该节点的任务打标签（历史里出现、现已撤下的任务留空——它改成内网目标后从未被该节点探测过，不在公开范围内），管理端按任务当前配置标注、已删除的任务留空；面板图例也用序列自带的标签。缓存上界以 `cache_max_age_s` 方法选项写在 proto 里，与 `probe.v1.access` 同一口径：proto 是单一事实源，第三方主题在 proto 注释里就能看到。
+- 内容：总览是节点卡片（名称、在线、系统与架构、CPU、内存、磁盘、网速、运行时长、本周期流量，以及填了才显示的费用与到期——到期行带剩余天数，已过期标红），节点页是历史图表（静态信息卡同样带费用与到期两行）（指标与探测，时间范围选择与面板同一组件）。图表组件与面板共用；公开入口不得引用 `AdminService` 的生成代码，由测试扫描公开入口的 import 钉住，构建后再按描述符前缀对产物做一次性 grep 核对（不是常驻检查）；依赖方向只禁止公开到管理，面板可以引用公开页的常量。配色用 `light-dark()` 加 `color-scheme`，站点设置的明暗经 `html[data-theme]` 压过系统设置，图表颜色由浏览器解析成 rgb 再交给 uPlot（canvas 不认 `light-dark()`）；浏览器下限 Chrome 123、Firefox 120、Safari 17.5。公开入口的产物在 `internal/hub/web/dist-public`。
+- 消息：`PublicSnapshot`（`now`、`report_interval_ms`、`nodes`）；`PublicNode`（id、名称、在线、最近上报、排序、`PublicFacts`、`PublicMetrics`、`Traffic`，以及 §9.4 的价格、币种、周期、到期日与 `days_left`；自动续期 reserved）。`PublicFacts` 只有系统、架构、CPU 型号、核数、虚拟化——不给主机名、内核版本、agent 版本、ICMP 可用性；`PublicMetrics` 与 `Metrics` 同字段但没有 `boot_id`。两者沿用源消息的字段号，不公开的号连名带号 `reserved`——要公开 `hostname` 这类字段必须先删掉 `reserved` 行，是一个显式动作；值由投影按字段名从源消息复制，字段集合由公开消息自己声明（`Metrics` 以后加字段不会自动公开），构造时逐字段核对名字、类型、基数与 presence，任一不符即 panic。`QueryMetrics` 与 `QueryProbes` 复用管理端的请求与响应类型（定义在 `query.proto`：`public.proto` 若 import `admin.proto`，protoc-gen-es 会让公开包带上 `AdminService` 的描述符）；`GetSite` 直接返回 `PublicSite`、`GetSnapshot` 直接返回 `PublicSnapshot`，第三方主题拿到的 JSON 顶层就是快照本身。把节点标为公开即公开它正在探测的目标：`ProbeSeries` 带任务的种类与目标，公开端只给当前分配给该节点的任务打标签（历史里出现、现已撤下的任务留空——它改成内网目标后从未被该节点探测过，不在公开范围内），管理端按任务当前配置标注、已删除的任务留空；面板图例也用序列自带的标签。缓存上界以 `cache_max_age_s` 方法选项写在 proto 里，与 `probe.v1.access` 同一口径：proto 是单一事实源，第三方主题在 proto 注释里就能看到。
 - 限流：按来源键令牌桶，桶容量 60、每秒补充 10，超限 `ResourceExhausted`，与 `Register` 的限速同一实现（§5.2，`internal/hub/ratelimit`）。两处都是挂载点上的 HTTP 中间件而不是拦截器（`Register` 按路径恰为 `/probe.v1.AgentService/Register` 匹配，`Report` 不进桶；公开服务是整个挂载点都经过它）：解码先于拦截器，拦截器看不到解码失败的请求；公开服务还要包在快照缓存外面，缓存命中在 connect 处理器之前应答。只有这样每个请求（含解码失败的）都计数。来源键：IPv4 按单个地址，IPv6 按 /64（一台主机通常拥有整个 /64，逐地址计键等于不限流）；超限的 429 同样带 `no-store`。hub 在反向代理之后而没有配 `--trusted-proxies` 时，全部访客共用代理地址的一个桶（每个打开的总览页每 2 秒轮询一次即 0.5 次/秒，节点页另有每分钟两次历史查询与加载时的请求；补充 10 次/秒：总览页超过 20 个、节点页约 19 个起消耗持续多于补充，30 个页面时净流出约 5 次/秒、60 的桶约 10–12 秒耗尽后出现 429）——这是部署配置问题，写在 flag 帮助与 README 的反代一节，不改限流。
 - 缓存：`GetSnapshot` 的序列化结果按编码缓存 1 秒，缓存的是响应字节而不是消息：只缓存规范形态的请求（GET 不带正文——connect 对带正文的 GET 回 415，缓存不得替它应答；POST 为规范的 connect unary），键是 {GET 或 POST, codec, 协商出的压缩}，其余形态直通 connect；协商压缩只读 `Accept-Encoding` 的第一行，与 connect 一致；节点改为私有后公开快照里最多还能看到它约 2 秒（hub 缓存 1 秒加下游 `max-age=1`）。公开页只在加载时取 `GetSite`，已打开的页面刷新后才看到外观改动，刷新时浏览器还可能再用最多 5 分钟的缓存。GET 响应的 `Cache-Control`：快照 `max-age=1`、历史查询 `max-age=60`、站点配置 `max-age=300`；失败响应带 `no-store`（节点改回公开后浏览器不会继续用缓存的 NotFound）；POST 响应不带缓存头。
 - 设置：`setting` 表是键值表；`GetSettings` 为只读口径、`UpdateSettings` 仅会话。字段与上限：标题不超过 64 个字符；明暗为 `auto`、`light`、`dark` 之一；主色为 `#rrggbb`；logo 为 `data:` URL，图片类型限 png、jpeg、webp、svg，不超过 128 KiB；自定义 CSS 不超过 64 KiB，含 `</` 即拒绝（它能跳出注入点的 `<style>`）。校验错误写明字段、违反的约束与期望取值；任一项不合约束整次更新不写入。logo 只接受 `data:<type>;base64,<data>` 这一种写法（type 全小写、不带参数；data 逐字节核对标准 base64 字母表后 Strict 解码——宽松解析与浏览器解析一旦不一致，白名单就能被绕过）。CSS 不清洗、按字节原样存，只查字面 `</`（它本身不含字母，一条就覆盖全部大小写变体；CSS 转义与 HTML 实体在 `<style>` 的 RAWTEXT 里都不解码，不拒绝）。表结构 `setting(key TEXT PRIMARY KEY, value TEXT NOT NULL)`，不用 `WITHOUT ROWID`（值可达 128 KiB，超出 SQLite 对无 rowid 表的建议行大小）；键 `site.title`、`site.theme`、`site.accent_color`、`site.logo`、`site.custom_css` 是持久标识；从未保存过时明暗为 `auto`、其余为空串（空标题即内置标题）。标题有两道限：清洗前不超过 1024 字节，去掉控制字符与首尾空白后不超过 64 个字符。管理请求的解码预算由这些上限推出：`maxLogoBytes + 6 × maxCSSBytes + 6 × maxTitleBytes + 4 KiB`（CSS 与标题的每个字节在 JSON 里最坏转义成 6 字节，4 KiB 留给字段名；多余的 JSON 空白不在预算内）＝ 534528 字节，`AdminService` 只此一个预算——解码先于鉴权拦截器，所以 `AdminService` 全部过程的匿名请求读取上限随之变大但仍有界（`Register` 在 `AgentService` 上，用 ingest 自己的 256 KiB 上限，不受影响）；按路径分预算要在 connect 外再加一层与解压后上限配合的读者，不值。`GetSite` 下发这五项，公开页以 CSS 变量应用，自定义 CSS 放在其后。
@@ -524,6 +547,6 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 
 沿用自 monitor（`src/agent_ws.rs`、`src/db.rs`）：在线与最新数据同一事实；hub 侧用 `boot_id` + 内核计数器做流量差分且"无读数 ≠ 0"；历史行是整桶聚合而非边界瞬时采样；时长用单调钟；限时限量且失败计数独立的注册窗口；主键顺序按查询路径排；非法上报不改动已有状态。
 
-有意不同于 monitor：token 存 hash 而非明文；单仓库共享协议类型而非两仓库靠运行时契约检查；不从请求头推断部署形态；主题托管在与面板不同的 origin 且产物入库，而非同源落盘；无计费字段、无 GeoIP 外呼、不托管 agent 二进制。
+有意不同于 monitor：token 存 hash 而非明文；单仓库共享协议类型而非两仓库靠运行时契约检查；不从请求头推断部署形态；主题托管在与面板不同的 origin 且产物入库，而非同源落盘；无 GeoIP 外呼、不托管 agent 二进制（计费字段一度也在此列，§9.4 起作为提醒用的展示值纳入）。
 
 规避自 komari：token 经 URL 传递且有三个读取位置；WebSocket 与 HTTP 两套在线状态并存；远程执行 / 终端 / 文件管理；内嵌 JS 引擎的插件系统；三方言自研时序层。
