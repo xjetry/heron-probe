@@ -16,8 +16,10 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/probe/internal/hub/outbound"
 )
 
 var signingTime = time.Date(2026, 9, 28, 1, 2, 3, 0, time.UTC)
@@ -29,6 +31,13 @@ func clientFor(t *testing.T, endpoint string) *Client {
 		t.Fatal(err)
 	}
 	return c
+}
+
+// deadline 给每个操作一个截止时间：客户端首字节之后不限时，request 拒绝没有截止时间的 context。
+func deadline(t *testing.T) context.Context {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	t.Cleanup(cancel)
+	return ctx
 }
 
 // dialTo 让任意主机名的请求都连到 srv：虚拟主机寻址与带端口的 endpoint 不必真的解析。
@@ -88,17 +97,17 @@ func TestObjectOperations(t *testing.T) {
 			defer dialTo(c, srv).CloseIdleConnections()
 			body := bytes.NewReader(append([]byte("skip"), payload...))
 			_, _ = body.Seek(4, io.SeekStart)
-			if err := c.PutObject(t.Context(), key, body); err != nil {
+			if err := c.PutObject(deadline(t), key, body); err != nil {
 				t.Fatal(err)
 			}
 			var dst bytes.Buffer
-			if err := c.GetObject(t.Context(), key, &dst, int64(len(payload))); err != nil {
+			if err := c.GetObject(deadline(t), key, &dst, int64(len(payload))); err != nil {
 				t.Fatal(err)
 			}
 			if !bytes.Equal(dst.Bytes(), payload) {
 				t.Errorf("download = %q, want %q", dst.Bytes(), payload)
 			}
-			if err := c.DeleteObject(t.Context(), key); err != nil {
+			if err := c.DeleteObject(deadline(t), key); err != nil {
 				t.Fatal(err)
 			}
 			if got := strings.Join(methods, ","); got != "PUT,GET,DELETE" {
@@ -133,7 +142,7 @@ func TestPutObjectLeavesBodyOpenForRetry(t *testing.T) {
 	defer srv.Close()
 	c := clientFor(t, srv.URL)
 	body := &closeRecorder{Reader: bytes.NewReader(payload)}
-	err := c.PutObject(t.Context(), "config/a.db", body)
+	err := c.PutObject(deadline(t), "config/a.db", body)
 	var e *Error
 	if !errors.As(err, &e) || e.StatusCode != 503 || !e.Retryable() {
 		t.Fatalf("first upload = %v, want retryable HTTP 503", err)
@@ -144,7 +153,7 @@ func TestPutObjectLeavesBodyOpenForRetry(t *testing.T) {
 	if _, err := body.Seek(0, io.SeekStart); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.PutObject(t.Context(), "config/a.db", body); err != nil {
+	if err := c.PutObject(deadline(t), "config/a.db", body); err != nil {
 		t.Fatalf("retry with the same body: %v", err)
 	}
 	if body.closed.Load() || calls.Load() != 2 {
@@ -181,7 +190,7 @@ func TestPutObjectDoesNotReadBodyAfterReturning(t *testing.T) {
 	tr := &lateTransport{release: make(chan struct{}), done: make(chan struct{})}
 	c.http.Transport = tr
 	body := &countingReader{ReadSeeker: bytes.NewReader(bytes.Repeat([]byte("x"), 1<<20))}
-	if err := c.PutObject(t.Context(), "k", body); err == nil {
+	if err := c.PutObject(deadline(t), "k", body); err == nil {
 		t.Fatal("503 accepted")
 	}
 	before := body.reads.Load()
@@ -200,7 +209,7 @@ func TestPutObjectEmptyBodySendsContentLength(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	if err := clientFor(t, srv.URL).PutObject(t.Context(), "empty", bytes.NewReader(nil)); err != nil {
+	if err := clientFor(t, srv.URL).PutObject(deadline(t), "empty", bytes.NewReader(nil)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -224,7 +233,7 @@ func TestListPagination(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	objects, err := clientFor(t, srv.URL).ListObjectsV2(t.Context(), "a +/", 3)
+	objects, err := clientFor(t, srv.URL).ListObjectsV2(deadline(t), "a +/", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,12 +259,12 @@ func TestListStopsAtMaxObjects(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := clientFor(t, srv.URL)
-	_, err := c.ListObjectsV2(t.Context(), "", 5)
+	_, err := c.ListObjectsV2(deadline(t), "", 5)
 	var e *Error
 	if !errors.As(err, &e) || e.Kind != "response" || !strings.Contains(err.Error(), "listing exceeds 5 objects") || pages.Load() != 3 {
 		t.Fatalf("endless listing: %v after %d pages", err, pages.Load())
 	}
-	if _, err := c.ListObjectsV2(t.Context(), "", 0); !errors.As(err, &e) || e.Kind != "request" || pages.Load() != 3 {
+	if _, err := c.ListObjectsV2(deadline(t), "", 0); !errors.As(err, &e) || e.Kind != "request" || pages.Load() != 3 {
 		t.Fatalf("maxObjects 0: %v", err)
 	}
 }
@@ -273,20 +282,24 @@ func TestHTTPFailuresAndNoRedirect(t *testing.T) {
 			targetHits := 0
 			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { targetHits++ }))
 			defer target.Close()
-			body := strings.Repeat("错", 100)
+			// 300 个字符的多字节正文：原文取前 200 个字符，按字节截断会切在字符中间、得到非法 UTF-8。
+			body := strings.Repeat("错", 300)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Location", target.URL)
 				w.WriteHeader(status)
 				fmt.Fprint(w, body)
 			}))
 			defer srv.Close()
-			err := clientFor(t, srv.URL).DeleteObject(t.Context(), "credential-in-path")
+			err := clientFor(t, srv.URL).DeleteObject(deadline(t), "credential-in-path")
 			if targetHits != 0 {
 				t.Errorf("redirect leaked request: %d target hits", targetHits)
 			}
 			var e *Error
-			if !errors.As(err, &e) || e.Kind != "http_status" || e.StatusCode != status || e.Detail != body[:200] {
+			if !errors.As(err, &e) || e.Kind != "http_status" || e.StatusCode != status {
 				t.Fatalf("HTTP classification = %#v", err)
+			}
+			if !utf8.ValidString(e.Detail) || utf8.RuneCountInString(e.Detail) > outbound.SummaryChars || e.Detail != strings.Repeat("错", outbound.SummaryChars) {
+				t.Fatalf("HTTP failure detail: valid UTF-8 %v, %d characters, %q", utf8.ValidString(e.Detail), utf8.RuneCountInString(e.Detail), e.Detail)
 			}
 			wantRetry := status == 408 || status == 429 || status >= 500
 			if e.Retryable() != wantRetry {
@@ -294,12 +307,38 @@ func TestHTTPFailuresAndNoRedirect(t *testing.T) {
 			}
 		})
 	}
-	ctx, cancel := context.WithCancel(t.Context())
+	// 传输失败保留"操作: 底层原因"，不含 URL（对象键在 URL 里）。
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	cancel()
 	err := clientFor(t, "http://127.0.0.1:1").DeleteObject(ctx, "credential-in-path")
 	var e *Error
-	if !errors.As(err, &e) || e.Kind != "transport" || !e.Retryable() || strings.Contains(err.Error(), "credential-in-path") || !errors.Is(err, context.Canceled) {
+	if !errors.As(err, &e) || e.Kind != "transport" || !e.Retryable() || err.Error() != "s3 transport: Delete: context canceled" || !errors.Is(err, context.Canceled) {
 		t.Fatalf("transport classification = %v", err)
+	}
+	if errors.Unwrap(err) == nil || strings.Contains(errors.Unwrap(err).Error(), "credential-in-path") {
+		t.Fatalf("unwrapped cause = %v", errors.Unwrap(err))
+	}
+}
+
+// 没有截止时间的 context 在发出请求之前就被拒绝：客户端首字节之后不限时，这样的请求可以无限期挂住。
+func TestRequestsRequireContextDeadline(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
+	defer srv.Close()
+	c := clientFor(t, srv.URL)
+	for name, op := range map[string]func(context.Context) error{
+		"put":    func(ctx context.Context) error { return c.PutObject(ctx, "k", strings.NewReader("x")) },
+		"get":    func(ctx context.Context) error { return c.GetObject(ctx, "k", io.Discard, 1) },
+		"delete": func(ctx context.Context) error { return c.DeleteObject(ctx, "k") },
+		"list":   func(ctx context.Context) error { _, err := c.ListObjectsV2(ctx, "", 1); return err },
+	} {
+		var e *Error
+		if err := op(t.Context()); !errors.As(err, &e) || e.Kind != "request" || e.Detail != "context has no deadline" {
+			t.Errorf("%s without deadline: %v", name, err)
+		}
+	}
+	if hits != 0 {
+		t.Fatalf("%d requests reached the server without a deadline", hits)
 	}
 }
 
@@ -329,9 +368,9 @@ func TestResponseBounds(t *testing.T) {
 			var err error
 			var dst bytes.Buffer
 			if tc.list {
-				_, err = c.ListObjectsV2(t.Context(), "", 1000)
+				_, err = c.ListObjectsV2(deadline(t), "", 1000)
 			} else {
-				err = c.GetObject(t.Context(), "object", &dst, 3)
+				err = c.GetObject(deadline(t), "object", &dst, 3)
 			}
 			var e *Error
 			if !errors.As(err, &e) || e.Kind != "response" {
