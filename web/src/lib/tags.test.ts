@@ -6,6 +6,8 @@ describe("tags", () => {
     ["db", "DB", true], [" db ", "Db", true], ["Σ", "ς", true], ["K", "k", true],
     ["ß", "ss", false], ["db", "d", false], ["a.b", "axb", false], ["客户A", "客户a", true],
     ["web server", "Web Server", true], ["web server", "webserver", false],
+    // 首尾空白与 hub 的 strings.TrimSpace 同一字符集：U+0085 去掉，U+FEFF 不去。
+    ["\u0085db\u0085", "db", true], ["\uFEFFdb", "db", false], ["\u3000db", "db", true],
   ])("sameTag(%j, %j) = %s", (a, b, same) => {
     expect(sameTag(a, b)).toBe(same);
   });
@@ -16,6 +18,8 @@ describe("tags", () => {
     expect(withTag(["web server"], "WEB SERVER")).toEqual(["web server"]);
     expect(withTag(["db"], "DB")).toEqual(["db"]);
     expect(withTag(["db"], "   ")).toEqual(["db"]);
+    expect(withTag([], "\u0085web\u0085")).toEqual(["web"]);
+    expect(withTag([], "\uFEFFweb")).toEqual(["\uFEFFweb"]);
   });
 
   it("withoutTag 按折叠后的名字移除", () => {
