@@ -51,7 +51,7 @@ type Config struct {
 	// Location 是 hub 的 --timezone，days_left 按它的日历日算；New 要求非 nil。
 	Location *time.Location
 	// Retention 是 serve 交给维护循环的同一份保留期，存储健康按它判定最老桶是否超期。零值会把最老桶早于
-	// 一个桶长之前的表都标成超期，New 用 Retention.Validate 把它当作装配错误拒绝。
+	// 一个桶长加一个维护间隔之前的表都标成超期，New 用 Retention.Validate 把它当作装配错误拒绝。
 	Retention store.Retention
 }
 
