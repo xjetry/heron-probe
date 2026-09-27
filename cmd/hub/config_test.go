@@ -166,3 +166,44 @@ func TestLoadZoneRejectsExplicitLocal(t *testing.T) {
 		t.Fatalf("Local must be rejected with a flag error: %v", err)
 	}
 }
+
+func TestParseThemeOrigin(t *testing.T) {
+	for _, tc := range []struct{ in, want, err string }{
+		{"", "", ""},
+		{"https://Status.Example.com", "https://status.example.com", ""},
+		{"https://status.example.com/", "https://status.example.com", ""},
+		{"http://127.0.0.1:18180", "http://127.0.0.1:18180", ""},
+		{"status.example.com", "", "scheme must be https or http"},
+		{"ftp://status.example.com", "", "scheme must be https or http"},
+		{"https://", "", "needs a hostname"},
+		{"https:status.example.com", "", "needs a hostname"},
+		{"https://u:p@status.example.com", "", "must not carry credentials"},
+		{"https://example.com/theme", "", "without a path, query or fragment"},
+		{"https://example.com/?x=1", "", "without a path, query or fragment"},
+		{"https://example.com/#x", "", "without a path, query or fragment"},
+	} {
+		got, err := parseThemeOrigin(tc.in)
+		if tc.err == "" {
+			if err != nil || got != tc.want {
+				t.Errorf("parseThemeOrigin(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), tc.err) || !strings.Contains(err.Error(), "--theme-origin") {
+			t.Errorf("parseThemeOrigin(%q) = %q, %v; want an error naming --theme-origin and %q", tc.in, got, err, tc.err)
+		}
+	}
+}
+
+// 写错的 --theme-origin 在打开数据库之前拒绝：配置有误时 hub 不留下任何副作用。
+func TestServeRejectsInvalidThemeOriginBeforeOpeningTheDatabase(t *testing.T) {
+	t.Setenv("PROBE_OFFLINE_AFTER", "30s")
+	db := filepath.Join(t.TempDir(), "t.db")
+	err := runServe([]string{"--db", db, "--listen", "127.0.0.1:65536", "--theme-origin", "https://example.com/themes"})
+	if err == nil || !strings.Contains(err.Error(), "--theme-origin") {
+		t.Fatalf("err = %v, want a --theme-origin error", err)
+	}
+	if _, err := os.Stat(db); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid --theme-origin touched the database: %v", err)
+	}
+}
