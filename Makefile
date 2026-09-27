@@ -40,7 +40,7 @@ lint:
 	go mod tidy -diff
 	buf lint
 	@unformatted="$$(gofmt -l $$(git ls-files '*.go'))"; if [ -n "$$unformatted" ]; then printf 'gofmt: %s\n' $$unformatted >&2; exit 1; fi
-	shellcheck -s sh deploy/install.sh deploy/install-macos.sh deploy/openrc/probe-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/docker-readback-test.sh scripts/release-rules-test.sh scripts/image-platform-ref.sh scripts/docker-builder.sh
+	shellcheck -s sh deploy/install.sh deploy/install-hub.sh deploy/install-macos.sh deploy/openrc/probe-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/docker-readback-test.sh scripts/release-rules-test.sh scripts/image-platform-ref.sh scripts/docker-builder.sh
 	go vet ./...
 	GOOS=linux go vet ./...
 	GOOS=darwin go vet ./...
@@ -124,7 +124,7 @@ hub_build = env GOOS=linux GOARCH=$(1) CGO_ENABLED=0 go build $(RELEASE_GOFLAGS)
 release:
 	@$(check_version)
 	$(MAKE) web
-	rm -rf dist/build dist/*.tar.gz dist/SHA256SUMS dist/install.sh dist/install-macos.sh
+	rm -rf dist/build dist/*.tar.gz dist/SHA256SUMS dist/install.sh dist/install-hub.sh dist/install-macos.sh
 	mkdir -p dist/build
 	@set -e; for arch in $(AGENT_LINUX_ARCHES); do \
 	  case $$arch in armv7) gflags="GOARCH=arm GOARM=7" ;; *) gflags="GOARCH=$$arch" ;; esac; \
@@ -155,11 +155,13 @@ release:
 	for arch in $(HUB_LINUX_ARCHES); do \
 	  pkg="dist/pkg-hub-$$arch"; mkdir -p "$$pkg"; \
 	  cp "dist/build/probe-hub-linux-$$arch" "$$pkg/probe-hub"; \
-	  COPYFILE_DISABLE=1 tar --no-xattrs -C "$$pkg" -czf "dist/probe-hub_linux_$$arch.tar.gz" probe-hub; \
+	  cp deploy/systemd/probe-hub.service "$$pkg/probe-hub.service"; \
+	  COPYFILE_DISABLE=1 tar --no-xattrs -C "$$pkg" -czf "dist/probe-hub_linux_$$arch.tar.gz" probe-hub probe-hub.service; \
 	  rm -rf "$$pkg"; \
 	done; \
 	rm -rf dist/build
 	cp deploy/install.sh dist/install.sh
+	cp deploy/install-hub.sh dist/install-hub.sh
 	cp deploy/install-macos.sh dist/install-macos.sh
 	cd dist && sha256sum probe-*.tar.gz > SHA256SUMS
 

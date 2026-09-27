@@ -1,0 +1,27 @@
+[Unit]
+Description=probe monitoring hub
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# 安装器按有效 uid 确认退出与启动，不能在这里引入其它身份的 Exec* 进程。
+User=probe-hub
+Group=probe-hub
+ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --listen 127.0.0.1:8080
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+ReadWritePaths=/var/lib/probe
+
+[Install]
+WantedBy=multi-user.target

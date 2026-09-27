@@ -8,14 +8,47 @@ hub 是一个静态链接的二进制，数据在一个 SQLite 文件里。从 [
 
 ```sh
 tar -xzf probe-hub_linux_amd64.tar.gz
-./probe-hub passwd --db /var/lib/probe/probe.db   # 设置管理员密码
 ./probe-hub serve --db /var/lib/probe/probe.db    # 默认监听 127.0.0.1:8080
+# 等 serve 启动完成后，在另一个终端设置管理员密码
+./probe-hub passwd --db /var/lib/probe/probe.db
 ```
 
 - hub 只监听明文 HTTP，TLS 由反代（Caddy、nginx、CDN）终止；反代地址用 `--trusted-proxies` 声明，否则不信任转发头。
 - 管理面板在 `/admin/`。离线判定的时限由环境变量 `PROBE_OFFLINE_AFTER` 设定（默认 30s，10s–180s）。
 - 其余参数见 `probe-hub serve -h`；节点、注册窗口与 API token 也可在 hub 主机上用 `probe-hub node|window|token` 管理。
 - 节点可在面板里记录价格、币种、计费周期与到期日：只用于展示与提醒，hub 不汇总、不换算。公开节点填了的这几项也显示在公开页，自动续期开关除外。建「到期」类型的告警规则可在到期前若干天提醒；开着自动续期的节点过了到期日，hub 按周期把到期日推后。到期日按天计，天的边界与流量周期一样取 `--timezone`。
+
+## 安装 hub（Linux，systemd）
+
+支持 amd64、arm64，以 root 执行：
+
+```sh
+curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.sh | sh
+probe-hub passwd --db /var/lib/probe/probe.db
+```
+
+安装器校验下载包的 SHA256SUMS，以静态系统用户 `probe-hub` 启动服务，确认进程持续存活后才提示设置密码。升级时先让新版本的 `serve` 启动并完成数据库迁移，再使用 `passwd` 等离线子命令。管理员密码由你设置，脚本不生成、不打印密码。
+
+默认只监听 `127.0.0.1:8080`，TLS 交给反向代理。可用 `--listen`、`--timezone`、`--trusted-proxies`、`--public-dir` 和 `--retention-*` 设置 serve 参数；例如：
+
+```sh
+curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.sh | sh -s -- \
+  --timezone Asia/Taipei --trusted-proxies 127.0.0.1/32
+```
+
+重跑即升级，沿用 `/etc/systemd/system/probe-hub.service` 的 `ExecStart` 参数，命令行显式给出的值覆盖旧值。`--version vX.Y.Z` 指定发行版，`--base-url URL` 改用该下载目录并忽略 `--version`。安装器只接受静态参数：使用 systemd `$` / `%` 动态展开或覆盖 `ExecStart` 的 drop-in 时须先将参数合并为主单元中的静态值，无法解析时会在停服前报错，不会重置配置。不覆盖启动命令的 drop-in 保留。数据库固定为 `/var/lib/probe/probe.db`。
+
+数据目录为 `root:probe-hub 0770`，库文件为 `probe-hub:probe-hub 0600`；目录必须允许服务组创建和删除 SQLite 的 WAL/SHM 文件。单元逐项加固，将数据目录列入 `ReadWritePaths`，提供私有临时目录，不授予 `CAP_NET_RAW`。查看状态与日志：`systemctl status probe-hub`、`journalctl -u probe-hub`。
+
+卸载需确认；无终端时必须显式 `--yes`，不会读取管道里的脚本内容：
+
+```sh
+curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.sh | sh -s -- --uninstall --yes
+# 同时删除 /var/lib/probe、服务用户与组，不可恢复
+curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.sh | sh -s -- --uninstall --purge --yes
+```
+
+普通卸载保留数据和账户。安装、升级都会先核对目标端口的监听进程，排除现有 hub 自身；冲突时不停止旧服务。停止失败、旧进程未退出或新进程未持续存活均返回失败。
 
 ## 用 Docker 运行 hub
 
