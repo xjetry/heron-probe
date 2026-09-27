@@ -52,6 +52,13 @@ func chooseLoginChannels(t *testing.T, h *harness, ids ...int64) *probev1.Settin
 	return saveSettings(t, h, &probev1.Settings{LoginNotify: &probev1.LoginNotify{ChannelIds: ids}})
 }
 
+func TestLoginNotifyFieldNumberAndPresence(t *testing.T) {
+	field := (&probev1.Settings{}).ProtoReflect().Descriptor().Fields().ByName("login_notify")
+	if field == nil || field.Number() != 12 || !field.HasPresence() || field.Message() == nil {
+		t.Fatalf("settings.login_notify must be a message with presence at field 12: %v", field)
+	}
+}
+
 func loginEvents(t *testing.T, h *harness) []*probev1.AlertEvent {
 	t.Helper()
 	r, err := h.admin.ListAlertEvents(t.Context(), connect.NewRequest(&probev1.ListAlertEventsRequest{Limit: 100}))

@@ -3280,7 +3280,7 @@ type Settings struct {
 	// 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
 	CustomCss string `protobuf:"bytes,5,opt,name=custom_css,json=customCss,proto3" json:"custom_css,omitempty"`
 	// 缺席即不变；显式给出空集合即关闭。不会下发到公开页。
-	LoginNotify   *LoginNotify `protobuf:"bytes,6,opt,name=login_notify,json=loginNotify,proto3,oneof" json:"login_notify,omitempty"`
+	LoginNotify   *LoginNotify `protobuf:"bytes,12,opt,name=login_notify,json=loginNotify,proto3,oneof" json:"login_notify,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4794,7 +4794,7 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x04logo\x18\x04 \x01(\tR\x04logo\x12\x1d\n" +
 	"\n" +
 	"custom_css\x18\x05 \x01(\tR\tcustomCss\x12=\n" +
-	"\flogin_notify\x18\x06 \x01(\v2\x15.probe.v1.LoginNotifyH\x00R\vloginNotify\x88\x01\x01B\x0f\n" +
+	"\flogin_notify\x18\f \x01(\v2\x15.probe.v1.LoginNotifyH\x00R\vloginNotify\x88\x01\x01B\x0f\n" +
 	"\r_login_notify\".\n" +
 	"\vLoginNotify\x12\x1f\n" +
 	"\vchannel_ids\x18\x01 \x03(\x03R\n" +
