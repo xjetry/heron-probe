@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -611,13 +612,63 @@ func TestNodeMutationsDoNotWaitForLogin(t *testing.T) {
 	}
 }
 
-func TestPasswordVerificationUsesStoredParameters(t *testing.T) {
+// cheapPHC 按 m=32,t=1,p=1 生成 password 的 PHC，远低于新哈希的默认成本。
+func cheapPHC(password string) string {
 	salt := []byte("0123456789abcdef")
-	key := argon2.IDKey([]byte(goodPassword), salt, 1, 32, 1, 32)
+	key := argon2.IDKey([]byte(password), salt, 1, 32, 1, 32)
 	enc := base64.RawStdEncoding
-	phc := fmt.Sprintf("$argon2id$v=19$m=32,t=1,p=1$%s$%s", enc.EncodeToString(salt), enc.EncodeToString(key))
-	if ok, err := VerifyPassword(phc, goodPassword); err != nil || !ok {
+	return fmt.Sprintf("$argon2id$v=19$m=32,t=1,p=1$%s$%s", enc.EncodeToString(salt), enc.EncodeToString(key))
+}
+
+func TestPasswordVerificationUsesStoredParameters(t *testing.T) {
+	if ok, err := VerifyPassword(cheapPHC(goodPassword), goodPassword); err != nil || !ok {
 		t.Fatalf("stored parameters ignored: %v %v", ok, err)
+	}
+}
+
+// 同一来源并发猜错密码，真正走到校验的次数恰为 failLimit。钉住 verifyLoginPassword 的两处
+// 语句顺序：判锁定与 TryLock 在同一个 mu 临界区里，拆开后，判定时尚未锁定的请求能在第
+// failLimit 次失败落账、放门之后进门；失败在放门之前记账，先放门则另一请求能在落账前进门。
+// 两处都没有测试能在不持 mu 时挂住的调用（时钟在 mu 内读），这是统计性用例：越界要调度
+// 恰好落在窗口里，所以每轮 8 个协程循环争用，跑 50 轮、每轮换一个来源。正确实现下，进门的
+// 请求判定时已看到此前全部落账，调度怎样都不越界。存储的哈希按 TestPasswordVerificationUsesStoredParameters 钉住的
+// 自带参数校验，低成本让一次尝试以微秒计。
+func TestConcurrentWrongPasswordsVerifyExactlyFailLimit(t *testing.T) {
+	a, _, _ := setup(t)
+	ctx := context.Background()
+	if err := a.store.SetAdminPassword(ctx, cheapPHC(goodPassword)); err != nil {
+		t.Fatal(err)
+	}
+	for round := range 50 {
+		from := netip.AddrFrom4([4]byte{198, 51, 100, byte(round)})
+		var verified atomic.Int64
+		errs := make(chan error, 8)
+		var wg sync.WaitGroup
+		for range cap(errs) {
+			wg.Go(func() {
+				for {
+					_, err := a.Login(ctx, "wrong password here", from)
+					switch {
+					case errors.Is(err, ErrLoginBusy):
+					case errors.Is(err, ErrBadPassword):
+						verified.Add(1)
+					case errors.Is(err, ErrLocked):
+						return
+					default:
+						errs <- err
+						return
+					}
+				}
+			})
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Fatalf("round %d: unexpected login error: %v", round, err)
+		}
+		if got := verified.Load(); got != failLimit {
+			t.Fatalf("round %d: verified wrong passwords = %d, want %d", round, got, failLimit)
+		}
 	}
 }
 
