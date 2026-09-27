@@ -43,10 +43,10 @@ func newTestMux(t *testing.T) *http.ServeMux {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	a := auth.New(st, clk, slog.Default())
+	reg := probe.New(st, slog.Default())
+	a := auth.New(st, reg, clk, slog.Default())
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, slog.Default())
-	reg := probe.New(st, slog.Default())
 	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, st, l, clk, slog.Default())
 	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, slog.Default())
 	alerts.SetSender(notifier)

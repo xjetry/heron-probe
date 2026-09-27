@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/testwait"
 )
@@ -26,7 +27,7 @@ func setup(t *testing.T) (*Auth, *store.Store, *clock.Fake) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	a := New(st, clk, slog.Default())
+	a := New(st, probe.New(st, slog.Default()), clk, slog.Default())
 	if err := a.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +97,7 @@ func TestLoadRebuildsMapFromStore(t *testing.T) {
 	a, st, clk := setup(t)
 	ctx := context.Background()
 	id, plain, _ := a.CreateNode(ctx, "a")
-	b := New(st, clk, slog.Default())
+	b := New(st, probe.New(st, slog.Default()), clk, slog.Default())
 	if _, ok := b.Authenticate(plain); ok {
 		t.Fatal("fresh Auth must not know tokens before Load")
 	}
@@ -263,7 +264,7 @@ func TestAuthenticateDoesNotWaitForRegisterTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	a := New(st, clk, slog.Default())
+	a := New(st, probe.New(st, slog.Default()), clk, slog.Default())
 	ctx := context.Background()
 	id, tok, err := a.CreateNode(ctx, "existing")
 	if err != nil {
@@ -274,7 +275,7 @@ func TestAuthenticateDoesNotWaitForRegisterTransaction(t *testing.T) {
 	}
 	clk.block.Store(true)
 	gateDone := make(chan error, 1)
-	go func() { _, err := st.CreateNode(ctx, "gate", make([]byte, 32)); gateDone <- err }()
+	go func() { _, _, err := st.CreateNode(ctx, "gate", make([]byte, 32)); gateDone <- err }()
 	<-clk.entered
 	var release sync.Once
 	defer release.Do(func() { close(clk.release) })
@@ -327,7 +328,7 @@ func TestCancelledCreateNodeKeepsMapConsistentWithStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	a := New(st, clk, slog.Default())
+	a := New(st, probe.New(st, slog.Default()), clk, slog.Default())
 	if err := a.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}

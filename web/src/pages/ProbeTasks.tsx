@@ -11,12 +11,15 @@ import { ProbeKind, type ProbeTask } from "../gen/probe/v1/types_pb";
 import { ascending, withId } from "../lib/ids";
 import { PROBE_KINDS, kindLabel } from "../lib/probes";
 
-type Draft = { kind: ProbeKind; target: string; intervalS: string; timeoutMs: string; nodeIds: Set<bigint> };
+type Draft = { kind: ProbeKind; target: string; intervalS: string; timeoutMs: string; allNodes: boolean; nodeIds: Set<bigint> };
+type TaskEntry = { task: ProbeTask; allNodes: boolean; nodeIds: bigint[] };
 
-const emptyDraft = (): Draft => ({ kind: ProbeKind.ICMP, target: "", intervalS: "60", timeoutMs: "1000", nodeIds: new Set() });
-const draftOf = (task: ProbeTask, nodeIds: bigint[]): Draft => ({
+const emptyDraft = (): Draft => ({ kind: ProbeKind.ICMP, target: "", intervalS: "60", timeoutMs: "1000", allNodes: false, nodeIds: new Set() });
+// all_nodes 任务的 nodeIds 是 hub 展开的当前全部节点；编辑时取消"全部节点"即以它们作为显式分配的起点，
+// 覆盖不会因为取消勾选而一下子清空。
+const draftOf = ({ task, allNodes, nodeIds }: TaskEntry): Draft => ({
   kind: task.kind, target: task.target, intervalS: String(task.intervalS),
-  timeoutMs: String(task.timeoutMs), nodeIds: new Set(nodeIds),
+  timeoutMs: String(task.timeoutMs), allNodes, nodeIds: new Set(nodeIds),
 });
 
 export function ProbeTasks() {
@@ -38,11 +41,12 @@ export function ProbeTasks() {
   const [nodesData, listData] = gate.data;
   const nodeList = nodesData.nodes;
   const availableNodeIds = new Set(nodeList.map((n) => n.id));
-  // 当前节点列表不再包含的分配自然掉出，避免已删除节点让 hub 以 NotFound 拒绝整次保存。
+  // 当前节点列表不再包含的分配自然掉出，避免已删除节点让 hub 以 NotFound 拒绝整次保存。显式分配因此变空时照常
+  // 提交：空集不覆盖任何节点（spec §8.1，与告警规则的 all_nodes 同一语义），不会被读成全部节点。
   const submit = (m: typeof create, id: bigint, d: Draft, onSuccess?: () => void) =>
     m.mutate({ task: { id, kind: d.kind, target: d.target.trim(), intervalS: Number(d.intervalS), timeoutMs: Number(d.timeoutMs) },
-      nodeIds: ascending([...d.nodeIds].filter((id) => availableNodeIds.has(id))) }, { onSuccess });
-  const tasks = listData.tasks.flatMap((d) => d.task ? [{ task: d.task, nodeIds: d.nodeIds }] : []);
+      allNodes: d.allNodes, nodeIds: d.allNodes ? [] : ascending([...d.nodeIds].filter((id) => availableNodeIds.has(id))) }, { onSuccess });
+  const tasks: TaskEntry[] = listData.tasks.flatMap((d) => d.task ? [{ task: d.task, allNodes: d.allNodes, nodeIds: d.nodeIds }] : []);
   return (
     <section>
       {gate.banner}
@@ -54,9 +58,9 @@ export function ProbeTasks() {
         <table className="nodes">
           <thead><tr><th>类型</th><th>目标</th><th>间隔 (s)</th><th>超时 (ms)</th><th>节点</th><th>操作</th></tr></thead>
           <tbody>
-            {tasks.map(({ task, nodeIds }) => (
-              <TaskRow key={String(task.id)} task={task} nodeIds={nodeIds} nodes={nodeList} saving={update.isPending} deleting={remove.isPending}
-                onSave={(draft, onSuccess) => submit(update, task.id, draft, onSuccess)} onDelete={() => remove.mutate({ id: task.id })} />
+            {tasks.map((entry) => (
+              <TaskRow key={String(entry.task.id)} entry={entry} nodes={nodeList} saving={update.isPending} deleting={remove.isPending}
+                onSave={(draft, onSuccess) => submit(update, entry.task.id, draft, onSuccess)} onDelete={() => remove.mutate({ id: entry.task.id })} />
             ))}
           </tbody>
         </table>
@@ -90,7 +94,8 @@ function TaskForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
         <label>间隔 (s)<input type="number" required min={5} max={3600} value={draft.intervalS} onChange={(e) => setDraft({ ...draft, intervalS: e.target.value })} /></label>
         <label>超时 (ms)<input type="number" required min={100} max={5000} value={draft.timeoutMs} onChange={(e) => setDraft({ ...draft, timeoutMs: e.target.value })} /></label>
       </div>
-      <Picks legend="分配到节点" items={nodes} selected={draft.nodeIds} onChange={(nodeIds) => setDraft({ ...draft, nodeIds })} />
+      <label className="inline"><input type="checkbox" checked={draft.allNodes} onChange={(e) => setDraft({ ...draft, allNodes: e.target.checked })} />全部节点（含以后新建的节点）</label>
+      {!draft.allNodes && <Picks legend="分配到节点" items={nodes} selected={draft.nodeIds} onChange={(nodeIds) => setDraft({ ...draft, nodeIds })} />}
       <div className="row">
         <button type="submit" disabled={pending}>{onCancel ? "保存" : "创建"}</button>
         {onCancel && <button type="button" className="link" onClick={onCancel}>取消</button>}
@@ -99,15 +104,18 @@ function TaskForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
   );
 }
 
-function TaskRow({ task: t, nodeIds, nodes, saving, deleting, onSave, onDelete }: {
-  task: ProbeTask; nodeIds: bigint[]; nodes: Node[]; saving: boolean; deleting: boolean; onSave: (d: Draft, onSuccess: () => void) => void; onDelete: () => void;
+function TaskRow({ entry, nodes, saving, deleting, onSave, onDelete }: {
+  entry: TaskEntry; nodes: Node[]; saving: boolean; deleting: boolean; onSave: (d: Draft, onSuccess: () => void) => void; onDelete: () => void;
 }) {
+  const { task: t, allNodes, nodeIds } = entry;
   const [editing, setEditing] = useState(false);
   const names = nodeIds.map((id) => nodes.find((n) => n.id === id)?.name ?? `#${id}`).join("、");
+  // 显式分配为空显示"未分配"：它不覆盖任何节点，与"全部节点"区分开。
+  const coverage = allNodes ? `全部节点：${names || "暂无节点"}` : names;
   if (editing) {
     return (
       <tr><td colSpan={6}>
-        <TaskForm title={`编辑 ${withId(t.target, t.id)}`} nodes={nodes} initial={draftOf(t, nodeIds)} pending={saving}
+        <TaskForm title={`编辑 ${withId(t.target, t.id)}`} nodes={nodes} initial={draftOf(entry)} pending={saving}
           onSubmit={(d) => onSave(d, () => setEditing(false))} onCancel={() => setEditing(false)} />
       </td></tr>
     );
@@ -118,7 +126,7 @@ function TaskRow({ task: t, nodeIds, nodes, saving, deleting, onSave, onDelete }
       <td>{t.target}</td>
       <td>{t.intervalS}</td>
       <td>{t.timeoutMs}</td>
-      <td>{names || <span className="muted">未分配</span>}</td>
+      <td>{coverage || <span className="muted">未分配</span>}</td>
       <td>
         <button type="button" className="link" aria-label={`编辑 ${withId(t.target, t.id)}`} onClick={() => setEditing(true)}>编辑</button>{" "}
         <ConfirmDelete label={`删除 ${withId(t.target, t.id)}`} confirm={`确认删除 ${withId(t.target, t.id)}`} note="历史保留至到期清理" pending={deleting} onDelete={onDelete} />

@@ -6,7 +6,10 @@ import (
 	"strings"
 )
 
-var ErrNodeLimit = errors.New("node already has the maximum number of probe tasks")
+// ErrNodeLimit 是每节点任务上限的分类哨兵：保存侧的 NodeLimitError 与建节点侧的 InheritedLimitError 都经 Is 归入它，
+// 超限的是哪个节点、多少个任务由这两个类型的原文给出。哨兵文案只命名类别，不写成"某节点已满"：保存侧在写入之后
+// 计数，拒绝的是会超出上限的写入，而不是已满的节点；建节点侧被拒的节点随事务回滚，并不存在。
+var ErrNodeLimit = errors.New("probe task limit per node exceeded")
 
 var ErrInUse = errors.New("in use")
 
@@ -58,15 +61,32 @@ func (e NotFoundError) Is(target error) bool {
 	return target == ErrNotFound
 }
 
+// NodeLimitError 是保存任务之后某个现有节点的任务数（显式分配加全部 all_nodes 任务）超过上限。
 type NodeLimitError struct {
 	NodeID int64
+	Tasks  int
 	Max    int
 }
 
 func (e NodeLimitError) Error() string {
-	return fmt.Sprintf("node %d already has %d probe tasks (maximum %d)", e.NodeID, e.Max, e.Max)
+	return fmt.Sprintf("node %d would have %d probe tasks (maximum %d)", e.NodeID, e.Tasks, e.Max)
 }
 
 func (e NodeLimitError) Is(target error) bool {
+	return target == ErrNodeLimit
+}
+
+// InheritedLimitError 是建节点时新节点会继承的 all_nodes 任务数超过上限：新节点没有显式分配，它的任务数就是
+// all_nodes 任务的个数。
+type InheritedLimitError struct {
+	Tasks int
+	Max   int
+}
+
+func (e InheritedLimitError) Error() string {
+	return fmt.Sprintf("a new node would inherit %d all-nodes probe tasks (maximum %d per node); assign some of them to explicit nodes or delete them first", e.Tasks, e.Max)
+}
+
+func (e InheritedLimitError) Is(target error) bool {
 	return target == ErrNodeLimit
 }

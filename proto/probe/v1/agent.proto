@@ -9,7 +9,8 @@ import "probe/v1/types.proto";
 // agent → hub 的唯一服务。两个方法都是 unary：hub 向 agent 的下行只有低频
 // 配置，在每次上报的响应里按版本对账即可，不需要应用层连接状态。
 service AgentService {
-  // 用注册窗口的一次性 key 换取节点 token。
+  // 用注册窗口的一次性 key 换取节点 token。新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
+  // 返回 ResourceExhausted 并说明，节点不建、窗口名额不消耗。
   rpc Register(RegisterRequest) returns (RegisterResponse);
   // 周期上报。鉴权用节点 token（Authorization: Bearer）。
   rpc Report(ReportRequest) returns (ReportResponse);

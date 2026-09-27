@@ -57,9 +57,9 @@ func (r *snapshotRows) Close() error {
 func TestLoadProbeTasksReadsOneSnapshot(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	a, _ := s.CreateNode(ctx, "a", hash(1))
-	b, _ := s.CreateNode(ctx, "b", hash(2))
-	saved, savedVersion, err := s.SaveProbeTask(ctx, taskForTest(), []int64{a})
+	a, _, _ := s.CreateNode(ctx, "a", hash(1))
+	b, _, _ := s.CreateNode(ctx, "b", hash(2))
+	saved, savedVersion, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{a})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,9 +75,9 @@ func TestLoadProbeTasksReadsOneSnapshot(t *testing.T) {
 	driverName := fmt.Sprintf("snapshot-sqlite-%d", traceID.Add(1))
 	sql.Register(driverName, snapshotDriver{afterVersion: func() error {
 		next := taskForTest()
-		next.Id = saved.Id
+		next.Id = saved.Task.Id
 		next.Target = "changed"
-		_, _, err := s.SaveProbeTask(ctx, next, []int64{b})
+		_, _, err := s.SaveProbeTask(ctx, next, false, []int64{b})
 		changed = err == nil
 		return err
 	}})
@@ -92,7 +92,7 @@ func TestLoadProbeTasksReadsOneSnapshot(t *testing.T) {
 	if !changed {
 		t.Fatal("concurrent save did not run")
 	}
-	if version != savedVersion || len(tasks) != 1 || !proto.Equal(tasks[0].Task, saved) || !reflect.DeepEqual(tasks[0].NodeIDs, []int64{a}) {
+	if version != savedVersion || len(tasks) != 1 || !proto.Equal(tasks[0].Task, saved.Task) || !reflect.DeepEqual(tasks[0].NodeIDs, []int64{a}) {
 		t.Fatalf("mixed snapshot: version=%d tasks=%v, want %v/[%d] at saved version", version, tasks, saved, a)
 	}
 	var current int

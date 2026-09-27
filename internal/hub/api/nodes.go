@@ -148,6 +148,9 @@ func (s *Service) CreateNode(ctx context.Context, req *connect.Request[probev1.C
 		return nil, err
 	}
 	id, tok, err := s.auth.CreateNode(ctx, name)
+	if errors.Is(err, store.ErrNodeLimit) {
+		return nil, connect.NewError(connect.CodeResourceExhausted, err)
+	}
 	if err != nil {
 		s.log.Error("creating node failed", "err", err)
 		return nil, internalError("creating node failed")

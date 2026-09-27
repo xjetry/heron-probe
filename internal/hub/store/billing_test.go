@@ -58,7 +58,7 @@ func TestMigrationFromV8MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 func TestUpdateNodeReplacesBillingAndReportsChange(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", hash(1))
 	edit := NodeEdit{Name: "n", TrafficResetDay: 1}
 	update := func(e NodeEdit) bool {
 		t.Helper()
@@ -128,7 +128,7 @@ func TestUpdateNodeReplacesBillingAndReportsChange(t *testing.T) {
 func TestRenewExpiryWritesOnlyOverTheValuesItWasComputedFrom(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", hash(1))
 	set := func(b Billing) {
 		t.Helper()
 		if _, err := s.UpdateNode(ctx, id, NodeEdit{Name: "n", TrafficResetDay: 1, Billing: b}); err != nil {

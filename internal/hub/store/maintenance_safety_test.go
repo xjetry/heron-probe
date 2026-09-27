@@ -22,7 +22,7 @@ func TestMaintenanceAfterRollupErrorKeepsSeriesButPrunesEvents(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	clk.SetWall(clk.Now().Add(59*time.Second + 999*time.Millisecond))
-	id, err := s.CreateNode(ctx, "n", hash(1))
+	id, _, err := s.CreateNode(ctx, "n", hash(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestMaintenanceAfterRollupErrorKeepsSeriesButPrunesEvents(t *testing.T) {
 func TestPruneWaitsForConsumer(t *testing.T) {
 	s, clk := open(t)
 	ctx := context.Background()
-	id, err := s.CreateNode(ctx, "n", hash(1))
+	id, _, err := s.CreateNode(ctx, "n", hash(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestRollupCatchupCommitsBoundedSlices(t *testing.T) {
 			t.Run(f.name+"/"+lv.Name, func(t *testing.T) {
 				s, _ := open(t)
 				ctx := t.Context()
-				id, err := s.CreateNode(ctx, "n", hash(1))
+				id, _, err := s.CreateNode(ctx, "n", hash(1))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -254,11 +254,11 @@ func TestNodeCreationAppendsAfterReorder(t *testing.T) {
 		t.Run(map[bool]string{false: "CreateNode", true: "RegisterNode"}[registered], func(t *testing.T) {
 			s, clk := open(t)
 			ctx := context.Background()
-			a, err := s.CreateNode(ctx, "a", hash(1))
+			a, _, err := s.CreateNode(ctx, "a", hash(1))
 			if err != nil {
 				t.Fatal(err)
 			}
-			b, err := s.CreateNode(ctx, "b", hash(2))
+			b, _, err := s.CreateNode(ctx, "b", hash(2))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -270,9 +270,9 @@ func TestNodeCreationAppendsAfterReorder(t *testing.T) {
 				if err := s.SetRegisterWindow(ctx, hash(9), clk.Now().Add(time.Hour), 1); err != nil {
 					t.Fatal(err)
 				}
-				c, err = s.RegisterNode(ctx, hash(9), "c", hash(3))
+				c, _, err = s.RegisterNode(ctx, hash(9), "c", hash(3))
 			} else {
-				c, err = s.CreateNode(ctx, "c", hash(3))
+				c, _, err = s.CreateNode(ctx, "c", hash(3))
 			}
 			if err != nil {
 				t.Fatal(err)

@@ -60,7 +60,7 @@ func TestSchemaPolicyRequiresCurrentWithoutChangingV8(t *testing.T) {
 	if st != nil {
 		st.Close()
 	}
-	want := "database schema version 8 is older than this binary (9); start the new probe-hub serve once to upgrade it (back up the database first)"
+	want := fmt.Sprintf("database schema version 8 is older than this binary (%d); start the new probe-hub serve once to upgrade it (back up the database first)", schemaVersion)
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("RequireCurrentSchema error = %v, want %q", err, want)
 	}
@@ -85,7 +85,7 @@ func TestSchemaPolicyMigratesAndLogsEachStep(t *testing.T) {
 	for _, fixture := range []struct {
 		version int
 		schema  []string
-	}{{7, schemaV7}, {8, schemaV8}} {
+	}{{7, schemaV7}, {8, schemaV8}, {9, schemaV9}} {
 		t.Run(fmt.Sprint(fixture.version), func(t *testing.T) {
 			path, raw := schemaPolicyFixture(t, fixture.schema, fixture.version)
 			var logs bytes.Buffer
@@ -94,11 +94,11 @@ func TestSchemaPolicyMigratesAndLogsEachStep(t *testing.T) {
 				t.Fatalf("MigrateSchema failed: %v", err)
 			}
 			defer st.Close()
-			if got := userVersion(t, raw); got != 9 {
-				t.Errorf("migrated user_version = %d, want 9", got)
+			if got := userVersion(t, raw); got != schemaVersion {
+				t.Errorf("migrated user_version = %d, want %d", got, schemaVersion)
 			}
 			var want []map[string]any
-			for from := fixture.version; from < 9; from++ {
+			for from := fixture.version; from < schemaVersion; from++ {
 				want = append(want, map[string]any{"level": "INFO", "msg": "database schema migrated", "from": float64(from), "to": float64(from + 1)})
 			}
 			assertSchemaLogs(t, &logs, want...)
@@ -142,14 +142,14 @@ func TestSchemaPolicyCreatesAndReopensWithoutMigration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("empty database open failed: %v", err)
 			}
-			if got := userVersion(t, st.r); got != 9 {
-				t.Errorf("created user_version = %d, want 9", got)
+			if got := userVersion(t, st.r); got != schemaVersion {
+				t.Errorf("created user_version = %d, want %d", got, schemaVersion)
 			}
-			if _, err := st.CreateNode(t.Context(), "new", hash(1)); err != nil {
+			if _, _, err := st.CreateNode(t.Context(), "new", hash(1)); err != nil {
 				t.Errorf("created schema is not usable: %v", err)
 			}
 			st.Close()
-			assertSchemaLogs(t, &logs, map[string]any{"level": "INFO", "msg": "database schema created", "version": float64(9)})
+			assertSchemaLogs(t, &logs, map[string]any{"level": "INFO", "msg": "database schema created", "version": float64(schemaVersion)})
 			logs.Reset()
 			st, err = Open(path, clock.Real(), log, policy)
 			if err != nil {
