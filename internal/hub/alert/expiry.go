@@ -105,7 +105,7 @@ func nextDayStart(now time.Time, loc *time.Location) time.Time {
 }
 
 // nodeExpiry 是一个节点在本次扫描里的到期观测；valid 为假表示本轮不评估这个节点，已有状态原样保留：库里的到期日
-// 读不懂，或者续期写回发现快照已经过期。
+// 读不懂，或者续期写回没有落定（写回出错，或条件更新发现快照之后这一行变了）。
 type nodeExpiry struct {
 	hasExpiry bool
 	daysLeft  int
@@ -132,7 +132,8 @@ func (e *Engine) sweepExpiry(ctx context.Context) error {
 		return err
 	}
 	var errs []error
-	stale := map[int64]bool{}
+	// 续期写回没有落定的节点本轮不评估，见下面两处 skip 的说明。
+	skip := map[int64]bool{}
 	for i := range nodes {
 		n := &nodes[i]
 		to, ok := renewedExpiry(n.Billing, today)
@@ -141,13 +142,16 @@ func (e *Engine) sweepExpiry(ctx context.Context) error {
 		}
 		renewed, err := e.st.RenewExpiry(ctx, n.ID, n.Billing.Cycle, n.Billing.ExpiresOn, to)
 		if err != nil {
+			// 写回出错，本轮没有得到推后之后的日期。按未推后的快照评估，开着自动续期的节点会收到"已过期"，续期成功的
+			// 下一轮又收到"到期日已更新"，这一对通知都是假的；所以跳过它，错误随扫描返回，下一轮重试续期。
 			errs = append(errs, err)
+			skip[n.ID] = true
 			continue
 		}
 		if !renewed {
-			// 条件更新没有写入：快照之后这个节点的计费被改过。改它的 UpdateNode 提交后自己会再扫描一次，本轮按
-			// 过期的快照评估只会多发一对转换，所以跳过它。
-			stale[n.ID] = true
+			// 条件更新没有写入，说明快照之后这一行变了：计费被改过，改它的 UpdateNode 提交后自己会再扫描一次、
+			// 按新值收敛；或者节点已被删除，没有要评估的对象。两种情形都不该按过期的快照评估。
+			skip[n.ID] = true
 			continue
 		}
 		e.log.Info("node expiry renewed", "node_id", n.ID, "node", n.Name, "cycle", string(n.Billing.Cycle), "from", n.Billing.ExpiresOn, "to", to)
@@ -155,7 +159,7 @@ func (e *Engine) sweepExpiry(ctx context.Context) error {
 	}
 	observed := make(map[int64]nodeExpiry, len(nodes))
 	for _, n := range nodes {
-		o := nodeExpiry{valid: !stale[n.ID]}
+		o := nodeExpiry{valid: !skip[n.ID]}
 		if o.valid && n.Billing.ExpiresOn != "" {
 			d, err := ParseDate(n.Billing.ExpiresOn)
 			if err != nil {

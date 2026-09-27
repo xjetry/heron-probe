@@ -387,7 +387,8 @@ func TestSaveRuleEvaluatesEnabledExpiryRules(t *testing.T) {
 
 // 恢复文案按离开窗口的原因。日期没变、只是提前天数调小：已不在提醒窗口内，第一次恢复前重启过一次（日期从库里读回），
 // 第二次没有（日期来自内存）。firing 期间改过日期再调小提前天数：日期与触发时不同，写到期日已更新。每一步保存规则
-// 之前先照常扫描一次：留在 firing 的扫描不改记下的日期。
+// 之前先照常扫描一次：留在 firing 的扫描不改记下的日期。事件从这次扫描之前数起，所以重启之后的第一次扫描也在断言
+// 之内：状态由 Load 从库里读回，留在 firing 不再发第二条触发（§9.2）。
 func TestSweepExpiryRecoverySummaryFollowsTheReason(t *testing.T) {
 	f := newFixture(t)
 	node1 := f.ids[0]
@@ -408,9 +409,9 @@ func TestSweepExpiryRecoverySummaryFollowsTheReason(t *testing.T) {
 		{"2026-09-29", 7, store.StateFiring, "", 0},
 		{"2026-09-29", 4, store.StateOK, "节点 node1 到期日已更新为 2026-09-29（规则 到期）", 5},
 	} {
+		before := len(f.events(t))
 		f.billing(t, node1, store.Billing{ExpiresOn: step.expiresOn})
 		f.sweepExpiry(t)
-		before := len(f.events(t))
 		r.DaysBefore = step.daysBefore
 		r = f.rule(t, r)
 		events := f.events(t)
@@ -462,8 +463,8 @@ func TestRunExpirySweepSweepsOnStartAndStops(t *testing.T) {
 	}
 }
 
-// 续期写回没有落库，说明快照之后这个节点的计费被改过：本轮不按过期的快照评估它，不触发也不推后；库里的值与快照
-// 一致之后照常续期。触发器让续期的 UPDATE 落空，对 RenewExpiry 的效果与"扫描读快照之后、写回之前有人改了计费"
+// 续期的条件更新没有写入，说明快照之后这一行变了（计费被改过，或节点被删除）：本轮不按过期的快照评估它，不触发
+// 也不推后；库里的值与快照一致之后照常续期。触发器让续期的 UPDATE 落空，对 RenewExpiry 的效果与"扫描读快照之后、写回之前有人改了计费"
 // 相同。
 func TestSweepExpirySkipsANodeWhoseSnapshotIsStale(t *testing.T) {
 	f := newFixture(t)
@@ -484,6 +485,35 @@ func TestSweepExpirySkipsANodeWhoseSnapshotIsStale(t *testing.T) {
 	f.sweepExpiry(t)
 	if got := f.expiresOn(t, f.ids[0]); got != "2026-10-20" {
 		t.Fatalf("expires_on = %s, want 2026-10-20 once the snapshot matches", got)
+	}
+	if events := f.events(t); len(events) != 0 {
+		t.Fatalf("renewed node produced events: %+v", events)
+	}
+}
+
+// 续期写回出错时，这个节点在库里的有效到期日未定：本轮不评估它，错误随扫描返回，下一轮重试续期。若按未推后的快照
+// 评估，开着自动续期的节点会先收到"已过期"，续期成功的下一轮再收到"到期日已更新"，这一对通知都是假的。
+func TestSweepExpirySkipsANodeWhoseRenewalFailed(t *testing.T) {
+	f := newFixture(t)
+	r := f.rule(t, expiryRule())
+	f.billing(t, f.ids[0], store.Billing{Cycle: store.CycleMonthly, ExpiresOn: "2026-09-20", AutoRenew: true})
+	db, err := sql.Open("sqlite", f.path)
+	must(t, err)
+	defer db.Close()
+	_, err = db.ExecContext(t.Context(), "CREATE TRIGGER renew_fails BEFORE UPDATE OF expires_on ON node BEGIN SELECT RAISE(ABORT, 'renewal write failed'); END")
+	must(t, err)
+	if err := f.e.SweepExpiry(t.Context()); err == nil || !strings.Contains(err.Error(), "renewal write failed") {
+		t.Fatalf("SweepExpiry error = %v, want the renewal write error", err)
+	}
+	if events := f.events(t); len(events) != 0 {
+		t.Fatalf("a node whose renewal failed was evaluated: %+v", events)
+	}
+	wantState(t, f.e, r.ID, f.ids[0], "")
+	_, err = db.ExecContext(t.Context(), "DROP TRIGGER renew_fails")
+	must(t, err)
+	f.sweepExpiry(t)
+	if got := f.expiresOn(t, f.ids[0]); got != "2026-10-20" {
+		t.Fatalf("expires_on = %s, want 2026-10-20 once the renewal write succeeds", got)
 	}
 	if events := f.events(t); len(events) != 0 {
 		t.Fatalf("renewed node produced events: %+v", events)
@@ -519,51 +549,60 @@ func TestRunExpirySweepSweepsAgainAtTheDayBoundary(t *testing.T) {
 	}
 }
 
-// switchClock 在 arm 之前一律返回 before；arm 之后第一次读仍返回 before，此后一律返回 after。
-type switchClock struct {
-	mu                sync.Mutex
-	before, after     time.Time
-	armed, firstTaken bool
+// scriptedClock 在 arm 之前一律返回 before；arm 之后前 beforeReads 次读仍返回 before，此后一律返回 after。它按读钟的
+// 次序而不是真实时间切换，用例借此逐次指定循环与扫描各自读到零点前还是零点后。
+type scriptedClock struct {
+	mu            sync.Mutex
+	before, after time.Time
+	armed         bool
+	beforeReads   int
 }
 
-func (c *switchClock) arm() { c.mu.Lock(); c.armed = true; c.mu.Unlock() }
+func (c *scriptedClock) arm() { c.mu.Lock(); c.armed = true; c.mu.Unlock() }
 
-func (c *switchClock) Now() time.Time {
+func (c *scriptedClock) Now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	switch {
-	case !c.armed:
+	if !c.armed {
 		return c.before
-	case !c.firstTaken:
-		c.firstTaken = true
+	}
+	if c.beforeReads > 0 {
+		c.beforeReads--
 		return c.before
 	}
 	return c.after
 }
 
-func (c *switchClock) Mono() time.Duration { return 0 }
+func (c *scriptedClock) Mono() time.Duration { return 0 }
 
-// 一轮扫描跨过零点时，新一天的日界扫描不被跳过。钟在启动循环之前 arm：第一次读返回东八区 9 月 24 日零点前，此后一律
-// 返回 25 日零点后。循环在扫描之前读钟，下一次触发定在 25 日零点；扫描读到的已是 25 日，今天到期、开着自动续期的节点
-// 在时限内推后到 10 月 24 日。循环若在扫描之后才读钟，扫描拿到 24 日（不推后），循环拿到 25 日而定到 26 日零点，25 日
-// 的扫描被跳过，节点要约 24 小时后才推后。
+// 一轮扫描跨过零点时，新一天的扫描不被跳过。arm 之后每一轮先是循环读钟定下一次触发，再是扫描读钟取今天，扫描结束后
+// 循环再读一次钟算定时器时长（夹具里没有规则，扫描不再读钟）。零点前是东八区 9 月 24 日，零点后是 25 日；节点 24 日
+// 到期、开着按月自动续期，只有按 25 日扫描才推后到 10 月 24 日。两例各钉住一种跳过：
+//   - 前 1 次读在零点前：循环读到 24 日、定到 25 日零点，扫描已读到 25 日并推后。循环若改成扫描之后才读钟，扫描读到
+//     24 日不推后，循环读到 25 日而定到 26 日零点。
+//   - 前 2 次读在零点前：循环与扫描都读到 24 日，扫描不推后；结束时已过零点，定时器时长为负、立即触发，重扫按 25 日
+//     推后。负时长若被改成等到再下一个日界，25 日的扫描就被推到 26 日零点。
 func TestRunExpirySweepDoesNotSkipADayBoundaryCrossedDuringASweep(t *testing.T) {
-	f := newFixture(t)
-	f.billing(t, f.ids[0], store.Billing{Cycle: store.CycleMonthly, ExpiresOn: "2026-09-24", AutoRenew: true})
-	clk := &switchClock{before: time.Date(2026, 9, 24, 23, 59, 59, 900_000_000, f.loc), after: time.Date(2026, 9, 25, 0, 0, 0, 100_000_000, f.loc)}
-	e := New(Config{TTL: 30 * time.Second, Location: f.loc}, f.st, f.l, clk, f.log)
-	must(t, e.Load(t.Context()))
-	clk.arm()
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan struct{})
-	go func() { defer close(done); e.RunExpirySweep(ctx) }()
-	testwait.Until(t, 10*time.Millisecond, func() bool { return f.expiresOn(t, f.ids[0]) == "2026-10-24" },
-		"expires_on = %s, want 2026-10-24: the day boundary crossed during the sweep was skipped", testwait.When(func() string { return f.expiresOn(t, f.ids[0]) }))
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(testwait.Bound):
-		t.Fatal("RunExpirySweep did not return after cancel")
+	for _, beforeReads := range []int{1, 2} {
+		t.Run(fmt.Sprintf("%d reads before midnight", beforeReads), func(t *testing.T) {
+			f := newFixture(t)
+			f.billing(t, f.ids[0], store.Billing{Cycle: store.CycleMonthly, ExpiresOn: "2026-09-24", AutoRenew: true})
+			clk := &scriptedClock{before: time.Date(2026, 9, 24, 23, 59, 59, 900_000_000, f.loc), after: time.Date(2026, 9, 25, 0, 0, 0, 100_000_000, f.loc), beforeReads: beforeReads}
+			e := New(Config{TTL: 30 * time.Second, Location: f.loc}, f.st, f.l, clk, f.log)
+			must(t, e.Load(t.Context()))
+			clk.arm()
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan struct{})
+			go func() { defer close(done); e.RunExpirySweep(ctx) }()
+			testwait.Until(t, 10*time.Millisecond, func() bool { return f.expiresOn(t, f.ids[0]) == "2026-10-24" },
+				"expires_on = %s, want 2026-10-24: the day boundary crossed during the sweep was skipped", testwait.When(func() string { return f.expiresOn(t, f.ids[0]) }))
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(testwait.Bound):
+				t.Fatal("RunExpirySweep did not return after cancel")
+			}
+		})
 	}
 }
 
