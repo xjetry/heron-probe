@@ -305,10 +305,10 @@ func TestNotifyChannelRatePerMinute(t *testing.T) {
 	tg := &probev1.NotifyChannel{Name: "tg", Kind: probev1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &probev1.TelegramConfig{BotToken: "secret", ChatId: "chat"}}
 	saved := saveChannel(t, h, tg)
 	if saved.RatePerMinute == nil || saved.GetRatePerMinute() != 20 {
-		t.Fatalf("telegram default rate=%v, want 20", saved.RatePerMinute)
+		t.Fatalf("telegram default rate=%d (present %v), want 20", saved.GetRatePerMinute(), saved.RatePerMinute != nil)
 	}
 	if hook := saveChannel(t, h, webhook("https://example.test/notify")); hook.RatePerMinute == nil || hook.GetRatePerMinute() != 0 {
-		t.Fatalf("webhook default rate=%v, want 0", hook.RatePerMinute)
+		t.Fatalf("webhook default rate=%d (present %v), want 0", hook.GetRatePerMinute(), hook.RatePerMinute != nil)
 	}
 	for _, rate := range []uint32{5, 0} {
 		saved.RatePerMinute = proto.Uint32(rate)
@@ -321,7 +321,7 @@ func TestNotifyChannelRatePerMinute(t *testing.T) {
 			t.Fatal(err)
 		}
 		if got := list.Msg.Channels[0]; got.RatePerMinute == nil || got.GetRatePerMinute() != rate {
-			t.Fatalf("listed rate=%v, want %d", got.RatePerMinute, rate)
+			t.Fatalf("listed rate=%d (present %v), want %d", got.GetRatePerMinute(), got.RatePerMinute != nil, rate)
 		}
 	}
 	saved.RatePerMinute = nil

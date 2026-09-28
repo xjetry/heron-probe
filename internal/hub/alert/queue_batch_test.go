@@ -94,14 +94,24 @@ func wire(t *testing.T, f *fixture, base string) (*Queue, *[]time.Duration, func
 	return q, sleeps, startQueue(t, q)
 }
 
-// awaitSettled 等到库里没有待投递的批次：一次巡检的全部投递都已终态。
+// awaitSettled 等到库里没有待投递的批次：一次巡检的全部投递都已终态。失败时列出仍未终态的行。
 func awaitSettled(t *testing.T, f *fixture) {
 	t.Helper()
 	testwait.Until(t, time.Millisecond, func() bool {
 		pending, err := f.st.PendingBatches(t.Context())
 		must(t, err)
 		return len(pending) == 0
-	}, "deliveries did not settle")
+	}, "deliveries did not settle: %s", testwait.When(func() string {
+		var open []store.Delivery
+		for _, ev := range f.events(t) {
+			for _, d := range ev.Deliveries {
+				if !d.Done {
+					open = append(open, d)
+				}
+			}
+		}
+		return fmt.Sprintf("unfinished rows %+v", open)
+	}))
 }
 
 // deliveriesOf 是事件在给定渠道上的投递行，按事件 id 升序。
@@ -545,5 +555,34 @@ func TestCheckChannelRejectsNegativeRate(t *testing.T) {
 	c.RatePerMinute = -1
 	if err := CheckChannel(c); err == nil || !strings.Contains(err.Error(), "rate_per_minute") {
 		t.Fatalf("negative rate err=%v, want a rate_per_minute field error", err)
+	}
+}
+
+// countingSender 在每次 Enqueue 时回读库里已落的事件数：引擎在评估调用结束时才入队，第一次入队时这次巡检的转换都已落库。
+type countingSender struct {
+	t    *testing.T
+	st   *store.Store
+	seen []int
+}
+
+func (s *countingSender) Enqueue(store.AlertEvent) {
+	events, err := s.st.ListAlertEvents(s.t.Context(), 0, 0, 100)
+	if err != nil {
+		s.t.Error(err)
+	}
+	s.seen = append(s.seen, len(events))
+}
+
+// 事件在评估调用结束时才交给队列：此前入队，worker 可能在后续同键的行加入之前就开始发送，批次一旦开始尝试就不再接纳新行。
+func TestEngineEnqueuesAfterEvaluationCall(t *testing.T) {
+	f := newFixture(t)
+	f.nodes(t, 3)
+	c := telegramChannel(t, f, 20)
+	offlineRuleTo(t, f, "离线", c)
+	sender := &countingSender{t: t, st: f.st}
+	f.e.SetSender(sender)
+	fireAll(t, f)
+	if !slices.Equal(sender.seen, []int{3, 3, 3}) {
+		t.Fatalf("events persisted at each Enqueue=%v, want all three before the first", sender.seen)
 	}
 }
