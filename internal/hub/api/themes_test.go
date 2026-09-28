@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -264,6 +265,57 @@ func TestUploadThemeExpectIDAndReplacement(t *testing.T) {
 	}
 	if list := h.themes(t); len(list) != 1 || !proto.Equal(list[0], want) {
 		t.Fatalf("ListThemes after replacement = %v", list)
+	}
+}
+
+// 同一时刻至多一个上传在校验与入库：一个上传停在入库时，另一个上传立即得到 ResourceExhausted 并说明有上传正在进行；
+// 前一个完成后名额归还，被拒的上传同样归还。让第一个上传停在入库：store 的写入由单个写协程按序执行，
+// TouchSessionAsync 的回调就在写协程里运行，回调阻塞期间 PutTheme 排在它后面等。探测用的上传带一个不是 zip 的包：
+// 拿到名额就在校验时被拒（InvalidArgument），不写库，也就不会自己排进被阻塞的写协程。
+func TestUploadThemeAdmitsOneAtATime(t *testing.T) {
+	h := newThemeHarness(t)
+	parked, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unpark := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(unpark) // 先于 harness 注册的 store.Close 运行：写协程停着，Close 会一直等它。
+	h.store.TouchSessionAsync([32]byte{}, h.clk.Now(), func(error) {
+		close(parked)
+		<-release
+	})
+	<-parked
+	pkg := Minimal(t, "first")
+	first := make(chan error, 1)
+	go func() {
+		_, err := h.upload(t, pkg, "")
+		first <- err
+	}()
+	probe := func() error {
+		_, err := h.upload(t, []byte("not a zip"), "")
+		return err
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(time.Millisecond) {
+		err := probe()
+		if codeOf(err) == connect.CodeResourceExhausted && strings.Contains(err.Error(), "another theme upload is in progress") {
+			break
+		}
+		if codeOf(err) != connect.CodeInvalidArgument || time.Now().After(deadline) {
+			t.Fatalf("upload while another is storing: %v, want ResourceExhausted saying another upload is in progress", err)
+		}
+	}
+	select {
+	case err := <-first:
+		t.Fatalf("first upload returned while the store writer was parked: %v", err)
+	default:
+	}
+	unpark()
+	if err := <-first; err != nil {
+		t.Fatalf("first upload: %v", err)
+	}
+	if err := probe(); codeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("upload after the first finished: %v, want the package judged (InvalidArgument)", err)
+	}
+	if _, err := h.upload(t, Minimal(t, "second"), ""); err != nil {
+		t.Fatalf("upload after a rejected one: %v", err)
 	}
 }
 

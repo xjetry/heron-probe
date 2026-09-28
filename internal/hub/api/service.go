@@ -98,6 +98,11 @@ type Service struct {
 
 	// access 是 AdminService 每个过程的准入口径，New 时从描述符读出，之后只读。
 	access map[string]probev1.Access
+
+	// uploading 是容量 1 的信号量，UploadTheme 从校验到入库一直持有它：同一时刻至多一个请求在展开与入库，被引用着的
+	// 展开内容至多一份（≤ theme.MaxTotalBytes），Parse 的解压也至多一路。占用时直接拒绝而不排队：到了方法体的请求
+	// 已各自持有解码后的包，排队只会把它们攒在内存里。请求体的解码在方法体之前，不归它管，由 maxThemeBody 按请求设界。
+	uploading chan struct{}
 }
 
 func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, book *traffic.Book, probes *probe.Registry, alerts *alert.Engine, notifier *alert.Queue, clk clock.Clock, log *slog.Logger) *Service {
@@ -112,8 +117,9 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 	}
 	return &Service{
 		cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, probes: probes, alerts: alerts, notifier: notifier, clk: clk, log: log,
-		history: history{store: st, log: log},
-		access:  accessTable(probev1.File_probe_v1_admin_proto.Services().ByName("AdminService")),
+		history:   history{store: st, log: log},
+		access:    accessTable(probev1.File_probe_v1_admin_proto.Services().ByName("AdminService")),
+		uploading: make(chan struct{}, 1),
 	}
 }
 
