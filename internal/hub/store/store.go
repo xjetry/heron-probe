@@ -238,7 +238,10 @@ func schemaAdmission(ctx context.Context, db schemaReader, policy SchemaPolicy) 
 	case v > schemaVersion:
 		return 0, v, fmt.Errorf("database schema version %d is newer than this binary (%d)", v, schemaVersion)
 	case v < 0:
-		// createSchema 与 migrate 都只写正版本号；负数不能作为待迁移版本或空库放行。
+		// createSchema 写 schemaVersion，migrate 从已准入的正版本逐步写 next，两处都不产生负数。
+		// 把负数当旧库交给迁移循环会查 migrations[v+1]（v=-1 时找不到 migrations[0]），
+		// 报出与升级无关的内部错误；当空库建表则会把 schemaStatements 叠加到未知内容上。
+		// 因而负版本既不能迁移，也不能按空库放行。
 		return 0, v, fmt.Errorf("database schema version %d is invalid; not a probe database", v)
 	case v == 0:
 		// PRAGMA user_version 未显式设置时读出的也是 0，任何 SQLite 文件都满足这一条；
@@ -274,7 +277,8 @@ func logSchemaCreated(log *slog.Logger) {
 	log.Info("database schema created", "version", schemaVersion)
 }
 
-// migrate 用 user_version 保存版本，不在库里保存迁移时间；提交之后才记日志，避免把回滚记成已完成。
+// migrate 用 user_version 保存当前版本，不在库里保存迁移历史或时间；运维需要从日志判断
+// 何时迁过、该还原哪份备份。因此每步事务提交成功后都记日志，避免遗漏步骤或把回滚记成已完成。
 func migrate(db *sql.DB, policy SchemaPolicy, log *slog.Logger) error {
 	ctx := context.Background()
 	action, v, err := schemaAdmission(ctx, db, policy)
