@@ -8,8 +8,9 @@ import (
 	"time"
 )
 
-// 3xx 当作应答原样交回，由调用方按非 2xx 处理，不跟随：跳转会把请求连同凭据（Telegram 的 token 在路径里，S3 的
-// 签名头）带到配置之外的目标（§9.3）。
+// 3xx 原样交回，由调用方按非 2xx 处理：默认跳转可能向配置之外的目标泄漏原 URL 的路径与查询串（Referer，
+// 如 Telegram 路径里的 token、S3 对象路径或预签名 URL 的签名查询串），307/308 还可能重发可重放的正文。
+// Go 1.27.1 实测跨不同主机去掉 Authorization，同主机或原主机的子域保留；不能把去掉此头当作整个请求不泄密。
 func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 // NewClient 是有总时限的出站客户端：timeout 覆盖建连、写请求与读完应答体，适合请求与应答都有小上界的消费方。
