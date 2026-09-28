@@ -3,15 +3,17 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TransportProvider } from "@connectrpc/connect-query";
 import { RouterProvider } from "react-router";
+import { retryQuery } from "../retry";
 import { transport } from "./transport";
 import { router } from "./router";
 import "../styles.css";
 import "./public.css";
 
-// 公开页没有会话，不装认证跳转。失败的查询重试两次后交给页面的错误横幅；限流（ResourceExhausted）也一样。
+// 公开页没有会话，不装认证跳转。失败的查询只对网络与反代的瞬时错误至多再试两次（retry.ts 的白名单），其余直接交给页面的
+// 错误横幅：节点不公开的 NotFound 重试不会变成功，限流的 ResourceExhausted 重试只会再耗同一个桶的令牌。
 // 窗口聚焦重取全站关掉：快照靠轮询、历史图靠窗口右端前进刷新，聚焦时再取一遍只多耗匿名限流的令牌。
 // 站点设置不重取另由它自己的 staleTime: Infinity 承载（Layout.tsx），与这个开关无关。
-const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 2, refetchOnWindowFocus: false } } });
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: retryQuery, refetchOnWindowFocus: false } } });
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
