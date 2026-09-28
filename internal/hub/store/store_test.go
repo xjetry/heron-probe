@@ -311,9 +311,9 @@ func TestDeleteNodeRemovesDependentRows(t *testing.T) {
 // （deleteExpiredAlertEvents）清理：节点删了，它当时发生过的告警仍可查（TestDeleteNodeCleansAlertScopeAndState）。
 var keptOnNodeDelete = []string{"alert_event"}
 
-// DeleteNode 手写"哪些表存着节点的行"；这里从 sqlite_master 与 pragma_table_info 找出全部带 node_id 列的表，
-// 每张给待删节点与另一个节点各写一行，删后待删节点的行只能留在 keptOnNodeDelete 里，另一个节点的行一行不少。
-// 新增按节点存行的表而漏改 DeleteNode、或保留清单写了不存在 / 其实会被删的表，这里都会红。
+// DeleteNode 遍历共享的 nodeDependentTables；这里逐表写入两节点的行，验证删除确实发生，
+// 且 keptOnNodeDelete 中的历史与另一个节点的行都保留。
+// schema 与清单的集合完备性由 TestNodeDependentTablesComplete 校验。
 func TestDeleteNodeCoversEveryTableWithNodeID(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
