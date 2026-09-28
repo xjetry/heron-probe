@@ -1,61 +1,241 @@
 package api
 
 import (
+	"encoding/json"
+	"fmt"
+	"math"
+	"regexp/syntax"
+	"strconv"
+	"strings"
+
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-// settingsBudget 登记 Settings 每个叶字段的 JSON 解码上界，包含值自身的引号或方括号，
-// 不含字段名与分隔符。字符串按字节上限及编码膨胀计，不要求边界样本通过业务校验。
-// TestSettingsBudgetTableCoversEveryField 枚举 descriptor 核对表和样本的键，
-// TestSettingsBudgetEntriesAreExact 与 TestSettingsBudgetIsTheWorstBody 核对编码长度及总和。
-// 防漏项靠枚举与总和等式，不靠预算与业务合法值的贴合程度。
-var settingsBudget = map[string]int{
-	"title":                     6*maxTitleBytes + 2,
-	"theme":                     len("light") + 2,
-	"accent_color":              len("#112233") + 2,
-	"logo":                      maxLogoBytes + 2,
-	"custom_css":                6*maxCSSBytes + 2,
-	"public_enabled":            len("false"),
-	"geo_enabled":               len("false"),
-	"geo_url":                   6*maxGeoURLBytes + 2,
-	"geo_backend":               len("GEO_BACKEND_UNSPECIFIED") + 2,
-	"geo_mmdb_path":             6*maxMMDBPathBytes + 2,
-	"backup.endpoint":           6*maxEndpointBytes + 2,
-	"backup.bucket":             6*maxBucketBytes + 2,
-	"backup.region":             6*maxRegionBytes + 2,
-	"backup.access_key":         6*maxAccessKeyBytes + 2,
-	"backup.secret":             6*maxSecretBytes + 2,
-	"backup.prefix":             6*maxPrefixBytes + 2,
-	"backup.config_interval_s":  len("4294967295"),
-	"backup.metrics_interval_s": len("4294967295"),
-	"backup.config_keep":        len("4294967295"),
-	"backup.metrics_keep":       len("4294967295"),
-	"backup.notify.channel_ids": maxBackupChannels*maxChannelIDJSONBytes + 2 - 1,
-	"backup.has_secret":         len("false"),
+type budgetKind uint8
+
+const (
+	// 任意文本按 UTF-8 字节上限取界；每字节最多膨胀六倍，另计引号。
+	budgetEscapedString budgetKind = iota
+	// logo 的 data URL 前缀与标准 base64 字母表均无需 JSON 转义。
+	budgetBase64
+	// 有限字符串集合取编码最长者；bool 没有字符串集合，取较长的 false。
+	budgetLiteral
+	// protojson 用枚举名编码，取 descriptor 中最长的名字。
+	budgetEnumName
+	// 解码发生在业务范围校验之前，uint32 取类型上限的十位十进制数。
+	budgetUint32
+	// 渠道 ID 的合法域是正 int64；负数与冗余数字写法不在预算内。
+	// 与 uint32 按类型上限不同，这里由数据库从 1 开始分配的 ID 域取界。
+	budgetIDList
+)
+
+const maxJSONBytesPerUTF8Byte = 6
+
+// 类型规则同时产生字节上界和达到上界的样本，表中不再独立维护字节算式与生成器。
+// 参数按字节上限、条数或有限取值集合登记；边界样本不要求通过业务校验。
+type budgetEntry struct {
+	kind   budgetKind
+	limit  int
+	values []string
 }
 
-// budgetTotal 用 proto 原名计算字段名，避免较短的 camelCase 名低估允许的请求长度。
-// 每个对象只在字段之间计逗号；各消息的大括号和最外层请求骨架各计一次。
-func budgetTotal() int {
-	var fieldsSize func(protoreflect.MessageDescriptor, string) int
-	fieldsSize = func(md protoreflect.MessageDescriptor, prefix string) int {
-		fields := md.Fields()
-		total := max(0, fields.Len()-1)
-		for i := 0; i < fields.Len(); i++ {
-			field := fields.Get(i)
-			name := string(field.Name())
-			path := prefix + name
-			total += len(name) + len(`"":`)
-			if field.Kind() == protoreflect.MessageKind {
-				total += len(`{}`) + fieldsSize(field.Message(), path+".")
-			} else {
-				total += settingsBudget[path]
+var settingsBudget = map[string]budgetEntry{
+	"title":                     {kind: budgetEscapedString, limit: maxTitleBytes},
+	"theme":                     {kind: budgetLiteral, values: themes},
+	"accent_color":              {kind: budgetLiteral, values: []string{regexpBudgetSample(accentRE.String())}},
+	"logo":                      {kind: budgetBase64, limit: maxLogoBytes},
+	"custom_css":                {kind: budgetEscapedString, limit: maxCSSBytes},
+	"public_enabled":            {kind: budgetLiteral},
+	"geo_enabled":               {kind: budgetLiteral},
+	"geo_url":                   {kind: budgetEscapedString, limit: maxGeoURLBytes},
+	"geo_backend":               {kind: budgetEnumName},
+	"geo_mmdb_path":             {kind: budgetEscapedString, limit: maxMMDBPathBytes},
+	"backup.endpoint":           {kind: budgetEscapedString, limit: maxEndpointBytes},
+	"backup.bucket":             {kind: budgetEscapedString, limit: maxBucketBytes},
+	"backup.region":             {kind: budgetEscapedString, limit: maxRegionBytes},
+	"backup.access_key":         {kind: budgetEscapedString, limit: maxAccessKeyBytes},
+	"backup.secret":             {kind: budgetEscapedString, limit: maxSecretBytes},
+	"backup.prefix":             {kind: budgetEscapedString, limit: maxPrefixBytes},
+	"backup.config_interval_s":  {kind: budgetUint32},
+	"backup.metrics_interval_s": {kind: budgetUint32},
+	"backup.config_keep":        {kind: budgetUint32},
+	"backup.metrics_keep":       {kind: budgetUint32},
+	"backup.notify.channel_ids": {kind: budgetIDList, limit: maxBackupChannels},
+	"backup.has_secret":         {kind: budgetLiteral},
+}
+
+func jsonStringBytes(value string) int {
+	b, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return len(b)
+}
+
+func longestJSONValue(values []string) string {
+	if len(values) == 0 {
+		panic("empty settings budget literal set")
+	}
+	longest := values[0]
+	for _, value := range values[1:] {
+		if jsonStringBytes(value) > jsonStringBytes(longest) {
+			longest = value
+		}
+	}
+	return longest
+}
+
+func (e budgetEntry) boundary(fd protoreflect.FieldDescriptor) (int, any) {
+	if e.limit < 0 || fd.IsList() != (e.kind == budgetIDList) {
+		panic(fmt.Sprintf("invalid settings budget rule for %s", fd.FullName()))
+	}
+	switch {
+	case e.kind == budgetEscapedString && fd.Kind() == protoreflect.StringKind:
+		return maxJSONBytesPerUTF8Byte*e.limit + 2, strings.Repeat("\x01", e.limit)
+	case e.kind == budgetBase64 && fd.Kind() == protoreflect.StringKind:
+		return e.limit + 2, strings.Repeat("A", e.limit)
+	case e.kind == budgetLiteral && fd.Kind() == protoreflect.BoolKind:
+		return len("false"), false
+	case e.kind == budgetLiteral && fd.Kind() == protoreflect.StringKind:
+		value := longestJSONValue(e.values)
+		return jsonStringBytes(value), value
+	case e.kind == budgetEnumName && fd.Kind() == protoreflect.EnumKind:
+		values := fd.Enum().Values()
+		names := make([]string, values.Len())
+		for i := range names {
+			names[i] = string(values.Get(i).Name())
+		}
+		value := longestJSONValue(names)
+		return jsonStringBytes(value), value
+	case e.kind == budgetUint32 && fd.Kind() == protoreflect.Uint32Kind:
+		return len(strconv.FormatUint(math.MaxUint32, 10)), uint32(math.MaxUint32)
+	case e.kind == budgetIDList && fd.Kind() == protoreflect.Int64Kind:
+		ids := make([]string, e.limit)
+		for i := range ids {
+			ids[i] = strconv.FormatInt(math.MaxInt64-int64(i), 10)
+		}
+		if e.limit == 0 {
+			return len(`[]`), ids
+		}
+		return e.limit*maxChannelIDJSONBytes + 2 - 1, ids
+	default:
+		panic(fmt.Sprintf("settings budget kind %d does not model %s", e.kind, fd.FullName()))
+	}
+}
+
+// 主色样本从校验正则的有限语言取界，不能把固定六位样本与 accentRE 分开维护。
+// 无界重复等未建模的语法必须先扩展预算模型，不能悄悄截取一个较短样本。
+func regexpBudgetSample(pattern string) string {
+	re, err := syntax.Parse(pattern, syntax.Perl)
+	if err != nil {
+		panic(err)
+	}
+	var sample func(*syntax.Regexp) string
+	sample = func(re *syntax.Regexp) string {
+		switch re.Op {
+		case syntax.OpBeginText, syntax.OpEndText, syntax.OpEmptyMatch:
+			return ""
+		case syntax.OpLiteral:
+			if re.Flags&syntax.FoldCase != 0 {
+				panic("case-folded settings literal needs a budget model")
+			}
+			return string(re.Rune)
+		case syntax.OpCharClass:
+			var values []string
+			for i := 0; i < len(re.Rune); i += 2 {
+				for r := re.Rune[i]; r <= re.Rune[i+1]; r++ {
+					values = append(values, string(r))
+				}
+			}
+			return longestJSONValue(values)
+		case syntax.OpCapture, syntax.OpQuest:
+			return sample(re.Sub[0])
+		case syntax.OpRepeat:
+			if re.Max < 0 {
+				panic("unbounded settings literal needs a budget model")
+			}
+			return strings.Repeat(sample(re.Sub[0]), re.Max)
+		case syntax.OpConcat:
+			var out strings.Builder
+			for _, sub := range re.Sub {
+				out.WriteString(sample(sub))
+			}
+			return out.String()
+		case syntax.OpAlternate:
+			var values []string
+			for _, sub := range re.Sub {
+				values = append(values, sample(sub))
+			}
+			return longestJSONValue(values)
+		default:
+			panic(fmt.Sprintf("settings literal regexp %s needs a budget model", re.Op))
+		}
+	}
+	return sample(re)
+}
+
+type settingsBudgetField struct {
+	path, parent, name string
+	first              bool
+	fd                 protoreflect.FieldDescriptor
+	entry              budgetEntry
+}
+
+// 预算、覆盖检查和请求样本共用 descriptor 遍历。未建模形状必须在包初始化计算预算时失败。
+// 名字取 protojson 接受的原名与 JSON 名中编码较长者；样本也使用这一拼写。
+func walkSettings(fn func(settingsBudgetField)) {
+	root := (&probev1.Settings{}).ProtoReflect().Descriptor()
+	var walk func(protoreflect.MessageDescriptor, string)
+	walk = func(md protoreflect.MessageDescriptor, parent string) {
+		for i := 0; i < md.Fields().Len(); i++ {
+			fd := md.Fields().Get(i)
+			path := string(fd.Name())
+			if parent != "" {
+				path = parent + "." + path
+			}
+			oneof := fd.ContainingOneof()
+			if fd.IsMap() || (fd.Message() != nil && (fd.IsList() || fd.Message().ParentFile().Package() != root.ParentFile().Package())) ||
+				(oneof != nil && !oneof.IsSynthetic()) {
+				panic("settings budget: " + path + ": extend budget model before adding this field shape")
+			}
+			name := string(fd.Name())
+			if jsonStringBytes(fd.JSONName()) > jsonStringBytes(name) {
+				name = fd.JSONName()
+			}
+			field := settingsBudgetField{path: path, parent: parent, name: name, first: i == 0, fd: fd}
+			if fd.Message() == nil {
+				var ok bool
+				field.entry, ok = settingsBudget[path]
+				if !ok {
+					panic("settingsBudget missing leaf " + path)
+				}
+			}
+			fn(field)
+			if fd.Message() != nil {
+				walk(fd.Message(), path)
 			}
 		}
-		return total
 	}
-	return len(`{"settings":{}}`) + fieldsSize((&probev1.Settings{}).ProtoReflect().Descriptor(), "")
+	walk(root, "")
+}
+
+// 每个对象只在字段之间计逗号；字段名使用 JSON 编码长度，大括号与请求骨架各计一次。
+func budgetTotal() int {
+	total := len(`{"settings":{}}`)
+	walkSettings(func(field settingsBudgetField) {
+		total += jsonStringBytes(field.name) + len(`:`)
+		if !field.first {
+			total++
+		}
+		if field.fd.Message() != nil {
+			total += len(`{}`)
+		} else {
+			n, _ := field.entry.boundary(field.fd)
+			total += n
+		}
+	})
+	return total
 }
 
 var maxSettingsBody = budgetTotal()

@@ -43,10 +43,11 @@ const (
 	// resource_exhausted。
 
 	// Settings 的预算由 settingsBudget 按字段登记并由 descriptor 汇总，不留隐含语法余量。
-	// 字符串必须有字节上限：控制字符编码成 \u00XX，encoding/json 的 HTML 转义也可能将
-	// <、>、& 膨胀到六字节；只限制清洗后的字符数不足以限制解码前的请求。
-	// proto3 JSON 把正 int64 渠道 ID 编码为至多19位的十进制字符串，另计两个引号与条间逗号。
-	// 列表的方括号与末项没有逗号的差额由 settingsBudget 计算。
+	// encoding/json 默认写法下，每个码点的编码不超过其 UTF-8 字节数的六倍，逐码点用例核对这条上界。
+	// 单字节控制字符除 \b、\f、\n、\r、\t 外，以及 <、>、&，会写成六字节转义；这五个控制字符只占两字节，
+	// U+2028/2029 从三字节变成六字节。只限制清洗后的字符数不足以限制解码前的请求，字符串须有原始字节上限。
+	// protojson 把正 int64 渠道 ID 编码为至多 19 位十进制字符串，另计两个引号与条间逗号。
+	// ID 从 1 起分配，负数与冗余数字写法不在预算内；方括号及末项没有逗号的差额由类型规则计算。
 	maxChannelIDJSONBytes = 22
 
 	// maxThemeBody 是 UploadTheme 的解码预算，装下满额主题包的 JSON：bytes 在 JSON 里是带填充的标准 base64，8 MiB
