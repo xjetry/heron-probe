@@ -105,7 +105,10 @@ func TestGrowingBatchYieldsWorkerAtReadBound(t *testing.T) {
 		t.Fatalf("webhook delivered at %v with sleeps=%v, want once at %v and no backoff: the read bound is not a storage failure", hooked, sleeps, start)
 	}
 	bound := false
-	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if line == "" {
+			continue
+		}
 		var rec struct {
 			Level, Msg string
 			Reads      int
