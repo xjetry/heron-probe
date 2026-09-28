@@ -253,18 +253,26 @@ for f in probe-hub probe-hub.service; do
 done
 install -m 0755 "$work/probe-hub" "$BIN_TMP"
 
-# 单元里 [Service] 段的 ExecStart 值，每个一行。主单元与 drop-in 用这同一个谓词：注释行跳过、续行先拼接、
-# 首尾空白去掉（含 CRLF 行尾的回车），键名与等号之间允许空白（systemd 接受 `ExecStart = …`）。口径不一时，
-# drop-in 里 `ExecStart = …` 这类写法会漏过检查，systemd 却照样采用它。以续行结尾的文件视为无法解析。
+# 单元里 [Service] 段的 ExecStart 值，每个一行。主单元与 drop-in 用这同一个谓词，逐项照 systemd 的解析
+# （Debian 12 上 systemd 252 以 systemctl show -p ExecStart 与 systemd-analyze verify 实测）：
+# - 行尾的一个回车随换行算作行尾（CRLF）。行内的回车 systemd 也当作换行，这里不模仿，整个文件判为无法解析。
+# - 注释行先跳过，再判断续行：以反斜杠结尾的注释行不吞下一行。
+# - 行尾是未转义的反斜杠（行尾连续的反斜杠为奇数个）才是续行，那个反斜杠换成空格再接上下一行。反斜杠后面
+#   还有空白不算续行，systemd 把它当成一个字面的 \ 参数、下一行因缺 = 被忽略，这里随后按未完成的转义拒绝；
+#   行尾两个反斜杠也不算，那是一个转义过的 \。
+# - 首尾空白去掉，键名与等号之间允许空白（`ExecStart = …` 照样生效）。
+# 口径不一时，drop-in 里 systemd 会采用的 ExecStart 可能漏过检查，主单元的参数也会被读成另一组。以续行结尾的
+# 文件视为无法解析。
 exec_starts() {
-  awk '
-    /^[[:space:]]*[#;]/ { next }
+  awk -v cr="$cr" '
     {
       line = $0
-      sub(/[[:space:]]+$/, "", line)
+      if (substr(line, length(line), 1) == cr) line = substr(line, 1, length(line) - 1)
+      if (index(line, cr)) exit 1
+      if (line ~ /^[[:space:]]*[#;]/) next
       line = pending line; pending = ""
-      if (sub(/\\$/, " ", line)) { pending = line; next }
-      sub(/^[[:space:]]+/, "", line)
+      if (match(line, /\\+$/) && RLENGTH % 2 == 1) { pending = substr(line, 1, length(line) - 1) " "; next }
+      sub(/^[[:space:]]+/, "", line); sub(/[[:space:]]+$/, "", line)
       if (line ~ /^\[/) service = (line == "[Service]")
       else if (service && line ~ /^ExecStart[[:space:]]*=/) { sub(/^ExecStart[[:space:]]*=[[:space:]]*/, "", line); print line }
     }

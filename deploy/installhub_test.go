@@ -230,6 +230,13 @@ func TestHubExecStartForms(t *testing.T) {
 			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:8080" "--public-dir=/srv/x \"y\" $$z %%w \\v"`},
 		{name: "continuation line", exec: "ExecStart=/usr/local/bin/probe-hub serve \\\n  --db /var/lib/probe/probe.db --listen 127.0.0.1:9000",
 			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:9000"`},
+		// 续行判定与 systemd 相同：行尾未转义的反斜杠才续行（Debian 12 上 systemd 252 实测）。
+		{name: "three trailing backslashes continue", exec: "ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --public-dir=/srv/a\\\\\\\n  --listen 127.0.0.1:9000",
+			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--public-dir=/srv/a\\" "--listen=127.0.0.1:9000"`},
+		{name: "escaped backslash at the end does not continue", exec: "ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --public-dir=/srv/a\\\\\n  --listen 0.0.0.0:80",
+			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--public-dir=/srv/a\\"`},
+		{name: "CRLF continuation", crlf: true, exec: "ExecStart=/usr/local/bin/probe-hub serve \\\n  --db /var/lib/probe/probe.db --listen 127.0.0.1:9000",
+			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:9000"`},
 		{name: "spaces around the equals sign", exec: `ExecStart = /usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db`,
 			want: hubCmd + ` "--db=/var/lib/probe/probe.db"`},
 		{name: "CRLF line endings", crlf: true,
@@ -239,6 +246,12 @@ func TestHubExecStartForms(t *testing.T) {
 		{name: "drop-in without ExecStart", dropins: map[string]string{"/run/systemd/system/service.d/zzz-lxc-service.conf": "[Service]\nProtectProc=default\n"},
 			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:8080"`},
 
+		// systemd 把它当成字面参数 \、下一行因缺 = 被忽略；安装器按未完成的转义拒绝，而不是接成 --listen。
+		{name: "backslash before trailing space does not continue", exec: "ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db \\ \n  --listen 0.0.0.0:80",
+			wantErr: "unsupported quoting or escape in ExecStart"},
+		// systemd 把行内的回车当作换行，后半段成了另一条指令；安装器不模仿，拒绝。
+		{name: "carriage return inside a line", exec: "ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\rEnvironment=X=1",
+			wantErr: "cannot read ExecStart from installed unit"},
 		{name: "single dollar", exec: `ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db "--public-dir=/srv/$HOME"`,
 			wantErr: "dynamic $ or % expansion in ExecStart is not supported"},
 		{name: "single percent", exec: `ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --public-dir=/srv/%h`,
@@ -264,6 +277,10 @@ func TestHubExecStartForms(t *testing.T) {
 		{name: "drop-in sets ExecStart", dropins: map[string]string{"/etc/systemd/system/probe-hub.service.d/override.conf": "[Service]\nExecStart=\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\n"},
 			wantErr: "drop-in /etc/systemd/system/probe-hub.service.d/override.conf sets ExecStart"},
 		{name: "drop-in sets ExecStart with spaces and CRLF", dropins: map[string]string{"/etc/systemd/system/probe-hub.service.d/override.conf": "[Service] \r\nExecStart = /usr/local/bin/probe-hub serve\r\n"},
+			wantErr: "sets ExecStart"},
+		{name: "drop-in hides ExecStart behind a carriage return", dropins: map[string]string{"/etc/systemd/system/probe-hub.service.d/override.conf": "[Service]\rExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\n"},
+			wantErr: "cannot parse probe-hub drop-in /etc/systemd/system/probe-hub.service.d/override.conf"},
+		{name: "drop-in comment ending in a backslash", dropins: map[string]string{"/etc/systemd/system/probe-hub.service.d/override.conf": "[Service]\n# note \\\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\n"},
 			wantErr: "sets ExecStart"},
 		{name: "drop-in listed but missing", dropins: map[string]string{"/etc/systemd/system/probe-hub.service.d/gone.conf": ""},
 			wantErr: "cannot read probe-hub drop-in /etc/systemd/system/probe-hub.service.d/gone.conf"},
