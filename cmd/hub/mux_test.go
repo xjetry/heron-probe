@@ -55,7 +55,7 @@ func newTestMuxOn(t *testing.T, st *store.Store, clk clock.Clock) *http.ServeMux
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, slog.Default())
 	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, st, l, clk, slog.Default())
-	notifier := alert.NewQueue(st, alerts.Channels, outbound.NewClient(), "", clk, nil, slog.Default())
+	notifier := alert.NewQueue(st, alerts.Channels, outbound.NewClient(alert.NotifyTimeout), "", clk, nil, slog.Default())
 	alerts.SetSender(notifier)
 	svc, err := ingest.New(ingest.Config{TTL: 30 * time.Second}, l, st, a, book, reg, clk, slog.Default())
 	if err != nil {

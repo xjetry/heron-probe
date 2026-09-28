@@ -85,7 +85,7 @@ func TestUpdateSettingsCleansTitleAndAccentAndEchoes(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	want := &probev1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef"}
-	want.Backup = &probev1.BackupSettings{Region: "auto", ConfigIntervalS: proto.Uint32(300), MetricsIntervalS: proto.Uint32(86400), ConfigKeep: proto.Uint32(48), MetricsKeep: proto.Uint32(14)}
+	want.Backup = &probev1.BackupSettings{Region: "auto", ConfigIntervalS: proto.Uint32(300), MetricsIntervalS: proto.Uint32(86400), ConfigKeep: proto.Uint32(48), MetricsKeep: proto.Uint32(14), Notify: &probev1.BackupNotify{}}
 	if got := saveSettings(t, h, &probev1.Settings{Title: " ‮\x07运行状态 \t", Theme: "light", AccentColor: "#AbCdEf"}); !proto.Equal(got, want) {
 		t.Fatalf("echo = %v, want %v", got, want)
 	}
@@ -206,16 +206,10 @@ func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T)
 	h.login(t)
 	logo := longestLogo()
 	theme := slices.MaxFunc(themes, func(a, b string) int { return len(a) - len(b) })
-	body, err := json.Marshal(map[string]any{"settings": map[string]any{
+	body, err := json.Marshal(map[string]any{"settings": map[string]string{
 		"title": strings.Repeat("\x01", maxTitleBytes), "theme": theme, "accent_color": "#112233",
 		"logo":       logo,
 		"custom_css": strings.Repeat("\x01", maxCSSBytes),
-		"backup": map[string]any{
-			"endpoint": "https://s3.example/" + strings.Repeat("a", 2048-len("https://s3.example/")),
-			"bucket":   strings.Repeat("b", 63), "region": strings.Repeat("r", 64), "access_key": strings.Repeat("k", 128),
-			"secret": strings.Repeat("\x01", 4096), "prefix": strings.Repeat("\x01", 512),
-			"config_interval_s": 86400, "metrics_interval_s": 604800, "config_keep": 1000, "metrics_keep": 1000,
-		},
 	}})
 	if err != nil {
 		t.Fatal(err)

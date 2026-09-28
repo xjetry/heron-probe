@@ -2,7 +2,10 @@ package store
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -54,7 +57,7 @@ func TestBackupSettingsAtomicAndChannels(t *testing.T) {
 	}
 	secret := "preserve"
 	keep := uint32(24)
-	u := &BackupSettingsUpdate{Secret: &secret, ConfigKeep: &keep, Channels: []int64{channel.ID}}
+	u := &BackupSettingsUpdate{Secret: &secret, ConfigKeep: &keep, Channels: &[]int64{channel.ID}}
 	site, before, err := s.SaveSettings(ctx, SiteSettings{Theme: "auto", Title: "old"}, u)
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +87,87 @@ func TestBackupSettingsAtomicAndChannels(t *testing.T) {
 	if err != nil || len(b.Channels) != 0 {
 		t.Fatalf("deleted channel remains selected: %+v %v", b, err)
 	}
-	if _, _, err := s.SaveSettings(ctx, site, &BackupSettingsUpdate{Channels: []int64{channel.ID}}); err == nil {
-		t.Fatal("nonexistent backup channel accepted")
+	if got := storedSetting(t, s, backupChannelsKey); got != "[]" {
+		t.Fatalf("channel list after its last channel was deleted = %q, want []", got)
+	}
+	var missing NotFoundError
+	if _, _, err := s.SaveSettings(ctx, site, &BackupSettingsUpdate{Channels: &[]int64{channel.ID}}); !errors.As(err, &missing) || missing.Kind != ObjectNotifyChannel || missing.ID != channel.ID {
+		t.Fatalf("nonexistent backup channel: %v", err)
+	}
+}
+
+func storedSetting(t *testing.T, s *Store, key string) string {
+	t.Helper()
+	var v string
+	if err := s.r.QueryRowContext(t.Context(), "SELECT value FROM setting WHERE key = ?", key).Scan(&v); err != nil {
+		t.Fatalf("reading %s: %v", key, err)
+	}
+	return v
+}
+
+// 渠道列表的存储形态：缺席不写，显式空写 []（不是 JSON null），给出的列表排序去重。
+func TestBackupChannelsStoredForm(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	var ids []int64
+	for _, name := range []string{"a", "b"} {
+		c, err := s.SaveNotifyChannel(ctx, NotifyChannel{Name: name, Kind: ChannelTelegram, Config: `{}`})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, c.ID)
+	}
+	if _, _, err := s.SaveSettings(ctx, SiteSettings{Theme: "auto"}, &BackupSettingsUpdate{Channels: &[]int64{ids[1], ids[0], ids[1]}}); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("[%d,%d]", ids[0], ids[1])
+	if got := storedSetting(t, s, backupChannelsKey); got != want {
+		t.Fatalf("given channels stored as %q, want %q", got, want)
+	}
+	if _, _, err := s.SaveSettings(ctx, SiteSettings{Theme: "auto"}, &BackupSettingsUpdate{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := storedSetting(t, s, backupChannelsKey); got != want {
+		t.Fatalf("absent channels rewrote the list to %q", got)
+	}
+	var none []int64
+	if _, _, err := s.SaveSettings(ctx, SiteSettings{Theme: "auto"}, &BackupSettingsUpdate{Channels: &none}); err != nil {
+		t.Fatal(err)
+	}
+	if got := storedSetting(t, s, backupChannelsKey); got != "[]" {
+		t.Fatalf("explicit empty channels stored as %q, want []", got)
+	}
+}
+
+// 数值范围只有一张表：写侧出范围返回 BackupRangeError 且不写入；读侧遇到库里的坏值报错，但不是 BackupRangeError，
+// api 不会把库的问题当作请求的 InvalidArgument。
+func TestBackupNumbersRangeOnBothSides(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	keep := uint32(24)
+	if _, _, err := s.SaveSettings(ctx, SiteSettings{Theme: "auto"}, &BackupSettingsUpdate{ConfigKeep: &keep}); err != nil {
+		t.Fatal(err)
+	}
+	zero := uint32(0)
+	var rangeErr BackupRangeError
+	_, _, err := s.SaveSettings(ctx, SiteSettings{Theme: "dark"}, &BackupSettingsUpdate{Bucket: "changed", ConfigKeep: &zero})
+	if !errors.As(err, &rangeErr) || rangeErr.Error() != "backup.config_keep must be in [1, 1000]; got 0" {
+		t.Fatalf("out-of-range write: %v", err)
+	}
+	site, b, err := s.Settings(ctx)
+	if err != nil || site.Theme != "auto" || b.ConfigKeep != 24 || b.Target.Bucket != "" {
+		t.Fatalf("rejected write changed settings: %+v %+v %v", site, b, err)
+	}
+	for key, value := range map[string]string{"backup.config_keep": "0", "backup.metrics_keep": "1001", "backup.config_interval_s": "59", "backup.metrics_interval_s": "604801"} {
+		t.Run(key, func(t *testing.T) {
+			s, _ := open(t)
+			if err := s.write(ctx, func(tx *sql.Tx) error { return putSetting(tx, key, value) }); err != nil {
+				t.Fatal(err)
+			}
+			_, b, err := s.Settings(ctx)
+			if err == nil || errors.As(err, &rangeErr) || !strings.Contains(err.Error(), "invalid stored "+key) {
+				t.Fatalf("stored %s=%s read as %+v, %v", key, value, b, err)
+			}
+		})
 	}
 }

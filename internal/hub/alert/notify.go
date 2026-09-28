@@ -4,15 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"net/http"
-	"net/url"
 	"strings"
 	"text/template"
 
+	"github.com/xjetry/probe/internal/hub/outbound"
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
@@ -22,7 +21,7 @@ type Channel interface {
 
 // sendFailure 是渠道每条可达失败路径的唯一错误形状：类别在产生失败的地方确定，Classify 据此给出
 // 落库结果与是否重试，不从错误文本反推。detail 是落库的原文：hub 不把 URL 写进去（outboundError
-// 负责剥离），但 HTTP 失败的 detail 是响应体片段，内容由接收方决定。
+// 经 outbound.WithoutURL 剥离），但 HTTP 失败的 detail 是响应体片段，内容由接收方决定。
 type sendFailure struct {
 	failure store.DeliveryFailure
 	status  int // 仅 FailureHTTPStatus 非零。
@@ -43,39 +42,21 @@ func (e *sendFailure) Error() string {
 }
 func (e *sendFailure) Unwrap() error { return e.err }
 
-// 可重试只由类别与状态码决定：没收到合法应答与 HTTP 5xx、408、429 可重试；
-// 其余失败（其他非 2xx、请求无法构造、渠道配置无效）原样重发只会得到同样结果。
+// 可重试只由类别与状态码决定：没收到合法应答可重试，HTTP 失败按 outbound.RetryableStatus；
+// 其余失败（请求无法构造、渠道配置无效）原样重发只会得到同样结果。
 func (e *sendFailure) retryable() bool {
 	switch e.failure {
 	case store.FailureTransport:
 		return true
 	case store.FailureHTTPStatus:
-		return e.status >= 500 || e.status == 408 || e.status == 429
+		return outbound.RetryableStatus(e.status)
 	}
 	return false
 }
 
 // URL 可含渠道凭据；构造请求与传输失败共用此出口，只保留操作及底层原因。
 func outboundError(kind store.DeliveryFailure, err error) error {
-	var target *url.Error
-	if errors.As(err, &target) {
-		err = fmt.Errorf("%s: %v", target.Op, target.Err)
-	}
-	return failure(kind, err)
-}
-
-// range 只用来定位字符边界，不会改写非法字节；截断后清洗保证落库及协议 string 合法。
-func responseSummary(data []byte) string {
-	text := string(data)
-	n := 0
-	for i := range text {
-		if n == 200 {
-			text = text[:i]
-			break
-		}
-		n++
-	}
-	return strings.ToValidUTF8(text, "�")
+	return failure(kind, outbound.WithoutURL(err))
 }
 
 // 两种渠道共用出站边界：不信任响应体长度，错误诊断也只保留有限前缀。
@@ -94,14 +75,13 @@ func sendHTTP(ctx context.Context, client *http.Client, method, endpoint string,
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	// Go 的 HTTP/1.1 客户端接受任意三位数字的状态行（000–099 也照样交回）。越界的不是合法应答，
-	// 与连接中断同类；状态码不能进 http_status 类别——写侧按同一个 ValidHTTPStatus 会拒绝它，
+	// 越界的状态码不能进 http_status 类别——写侧按同一个 outbound.ValidHTTPStatus 会拒绝它，
 	// 结果就写不进库。原文只记状态码：不合法应答的响应体没有可依赖的含义。
-	if !store.ValidHTTPStatus(resp.StatusCode) {
+	if !outbound.ValidHTTPStatus(resp.StatusCode) {
 		return &sendFailure{failure: store.FailureTransport, detail: fmt.Sprintf("malformed HTTP status %d", resp.StatusCode)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &sendFailure{failure: store.FailureHTTPStatus, status: resp.StatusCode, detail: responseSummary(data)}
+		return &sendFailure{failure: store.FailureHTTPStatus, status: resp.StatusCode, detail: outbound.ResponseSummary(data)}
 	}
 	// 接收端已用 2xx 确认送达；读体中断不否定确认，重试只会重复通知。
 	return nil

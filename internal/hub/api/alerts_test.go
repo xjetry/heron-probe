@@ -258,7 +258,7 @@ func TestNotifyChannelCRUDHidesToken(t *testing.T) {
 	paths := make(chan string, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { paths <- r.URL.Path; w.WriteHeader(200) }))
 	defer srv.Close()
-	h.svc.notifier = alert.NewQueue(h.store, h.alerts.Channels, outbound.NewClient(), srv.URL, h.clk, nil, h.svc.log)
+	h.svc.notifier = alert.NewQueue(h.store, h.alerts.Channels, outbound.NewClient(alert.NotifyTimeout), srv.URL, h.clk, nil, h.svc.log)
 	c := saveChannel(t, h, &probev1.NotifyChannel{Name: "tg", Kind: probev1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &probev1.TelegramConfig{BotToken: "secret", ChatId: "chat"}})
 	want := &probev1.NotifyChannel{Id: 1, Name: "tg", Kind: probev1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &probev1.TelegramConfig{HasBotToken: true, ChatId: "chat"}, CreatedAt: h.clk.Now().Unix()}
 	if !proto.Equal(c, want) {

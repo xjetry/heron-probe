@@ -34,7 +34,7 @@ func TestOutboundErrorsDoNotExposeCredentials(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			const base = "http://127.0.0.1/private-key"
-			client := outbound.NewClient()
+			client := outbound.NewClient(NotifyTimeout)
 			client.Transport = &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) { return nil, tc.cause }}
 			defer client.CloseIdleConnections()
 			config, err := json.Marshal(TelegramConfig{BotToken: tc.token, ChatID: "chat"})
@@ -75,7 +75,7 @@ func TestResponseSummaryIsValidUTF8AndRuneBounded(t *testing.T) {
 			defer srv.Close()
 			c := queueChannel(t, f, srv.URL)
 			ev := queueEvent(t, f, c)
-			q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, nil, f.log)
+			q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, f.log)
 			q.Enqueue(ev)
 			stop := startQueue(t, q)
 			ds := awaitDeliveries(t, f, ev.ID, allDone)
@@ -83,7 +83,7 @@ func TestResponseSummaryIsValidUTF8AndRuneBounded(t *testing.T) {
 			if !utf8.ValidString(ds[0].LastError) {
 				t.Fatalf("last_error has invalid UTF-8: %q", ds[0].LastError)
 			}
-			ch, err := ParseChannel(c, outbound.NewClient(), "")
+			ch, err := ParseChannel(c, outbound.NewClient(NotifyTimeout), "")
 			must(t, err)
 			err = ch.Send(t.Context(), messageForTest())
 			var response *sendFailure
@@ -108,7 +108,7 @@ func TestQueueAccepts2xxWithInterruptedBodyOnce(t *testing.T) {
 	}))
 	defer srv.Close()
 	ev := queueEvent(t, f, queueChannel(t, f, srv.URL))
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, func(context.Context, time.Duration) error { return nil }, f.log)
+	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, func(context.Context, time.Duration) error { return nil }, f.log)
 	q.Enqueue(ev)
 	stop := startQueue(t, q)
 	ds := awaitDeliveries(t, f, ev.ID, allDone)
@@ -125,7 +125,7 @@ func TestQueueDoesNotSendQueuedTerminalDelivery(t *testing.T) {
 	defer srv.Close()
 	c := queueChannel(t, f, srv.URL)
 	first, last := queueEvent(t, f, c), queueEvent(t, f, c)
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(), "", f.clk, nil, f.log)
+	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, f.log)
 	q.Enqueue(first)
 	if _, err := f.st.BeginDeliveryAttempt(t.Context(), first.Deliveries[0].ID); err != nil {
 		t.Fatal(err)
@@ -143,7 +143,7 @@ func TestQueueDoesNotSendQueuedTerminalDelivery(t *testing.T) {
 func TestEnqueueCompletesWithBusyWorkerAndConcurrentProducers(t *testing.T) {
 	f := newFixture(t)
 	entered := make(chan struct{})
-	client := outbound.NewClient()
+	client := outbound.NewClient(NotifyTimeout)
 	// 客户端超时必须长于测试的正向等待，否则 worker 会先被客户端掐断，测不到忙着也不堵生产者。
 	client.Timeout = 2 * testwait.Bound
 	client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {

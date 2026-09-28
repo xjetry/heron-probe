@@ -1,7 +1,8 @@
 package api
 
 import (
-	"slices"
+	"strings"
+	"unicode"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/hub/s3"
@@ -9,6 +10,19 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// 备份字符串项的字节上限与渠道个数上限。service.go 的 maxBody 由这些常量推出解码预算，改这里即改预算。
+const (
+	maxEndpointBytes  = 2048
+	maxBucketBytes    = 63
+	maxRegionBytes    = 64
+	maxAccessKeyBytes = 128
+	maxSecretBytes    = 4096
+	maxPrefixBytes    = 512
+	maxBackupChannels = 100
+)
+
+// cleanBackup 校验协议层的约束并构造存储更新；nil 表示请求里没有 backup，存储不动任何备份键。
+// 四个数值的范围与渠道是否存在由 store.SaveSettings 在写事务里裁决（范围表只在 store 一处）。
 func cleanBackup(in *probev1.BackupSettings) (*store.BackupSettingsUpdate, error) {
 	if in == nil {
 		return nil, nil
@@ -17,7 +31,8 @@ func cleanBackup(in *probev1.BackupSettings) (*store.BackupSettingsUpdate, error
 		name, value string
 		max         int
 	}{
-		{"endpoint", in.Endpoint, 2048}, {"bucket", in.Bucket, 63}, {"region", in.Region, 64}, {"access_key", in.AccessKey, 128}, {"secret", in.GetSecret(), 4096}, {"prefix", in.Prefix, 512},
+		{"endpoint", in.Endpoint, maxEndpointBytes}, {"bucket", in.Bucket, maxBucketBytes}, {"region", in.Region, maxRegionBytes},
+		{"access_key", in.AccessKey, maxAccessKeyBytes}, {"secret", in.GetSecret(), maxSecretBytes}, {"prefix", in.Prefix, maxPrefixBytes},
 	} {
 		if len(f.value) > f.max {
 			return nil, invalid("backup.%s must be at most %d bytes", f.name, f.max)
@@ -38,35 +53,31 @@ func cleanBackup(in *probev1.BackupSettings) (*store.BackupSettingsUpdate, error
 			return nil, invalid("%s", err)
 		}
 	}
-	for _, f := range []struct {
-		name     string
-		value    *uint32
-		min, max uint32
-	}{
-		{"config_interval_s", in.ConfigIntervalS, 60, 86400}, {"metrics_interval_s", in.MetricsIntervalS, 3600, 604800}, {"config_keep", in.ConfigKeep, 1, 1000}, {"metrics_keep", in.MetricsKeep, 1, 1000},
-	} {
-		if f.value != nil && (*f.value < f.min || *f.value > f.max) {
-			return nil, invalid("backup.%s must be in [%d, %d]; got %d", f.name, f.min, f.max, *f.value)
-		}
-	}
-	if len(in.Channels) > 100 {
-		return nil, invalid("backup.channels must contain at most 100 IDs")
-	}
-	channels := slices.Clone(in.Channels)
-	slices.Sort(channels)
-	for i, id := range channels {
-		if id <= 0 || i > 0 && channels[i-1] == id {
-			return nil, invalid("backup.channels must contain distinct positive IDs")
-		}
+	// 对象键是 <prefix>/<层>/…。允许首尾的 / 会让同一个意图有两种写法（hub 与 hub/ 拼出 hub/config/… 与
+	// hub//config/…）：改了写法，旧对象就落在另一组键下，按当前前缀的列举与保留删除不再覆盖它们。写侧只收一种写法。
+	if strings.HasPrefix(in.Prefix, "/") || strings.HasSuffix(in.Prefix, "/") || strings.ContainsFunc(in.Prefix, unicode.IsControl) {
+		return nil, invalid("backup.prefix must not start or end with / or contain control characters")
 	}
 	region := in.Region
 	if region == "" {
 		region = "auto"
 	}
-	return &store.BackupSettingsUpdate{Endpoint: in.Endpoint, Bucket: in.Bucket, Region: region, AccessKey: in.AccessKey, Secret: in.Secret, Prefix: in.Prefix, ConfigIntervalS: in.ConfigIntervalS, MetricsIntervalS: in.MetricsIntervalS, ConfigKeep: in.ConfigKeep, MetricsKeep: in.MetricsKeep, Channels: channels}, nil
+	update := &store.BackupSettingsUpdate{Endpoint: in.Endpoint, Bucket: in.Bucket, Region: region, AccessKey: in.AccessKey, Secret: in.Secret, Prefix: in.Prefix, ConfigIntervalS: in.ConfigIntervalS, MetricsIntervalS: in.MetricsIntervalS, ConfigKeep: in.ConfigKeep, MetricsKeep: in.MetricsKeep}
+	if n := in.GetNotify(); n != nil {
+		if len(n.ChannelIds) > maxBackupChannels {
+			return nil, invalid("backup.notify.channel_ids must contain at most %d IDs; got %d", maxBackupChannels, len(n.ChannelIds))
+		}
+		ids := n.ChannelIds
+		update.Channels = &ids
+	}
+	return update, nil
 }
 
-// secret 不进入读侧消息；GetSettings 与 UpdateSettings 的回显共用此允许列表。
+// 读侧允许列表：secret 不在其中，只回显由它推出的 has_secret。GetSettings 与 UpdateSettings 的回显共用此处。
 func backupProto(b store.BackupSettings) *probev1.BackupSettings {
-	return &probev1.BackupSettings{Endpoint: b.Target.Endpoint, Bucket: b.Target.Bucket, Region: b.Target.Region, AccessKey: b.Target.AccessKey, Prefix: b.Prefix, ConfigIntervalS: proto.Uint32(b.ConfigIntervalS), MetricsIntervalS: proto.Uint32(b.MetricsIntervalS), ConfigKeep: proto.Uint32(b.ConfigKeep), MetricsKeep: proto.Uint32(b.MetricsKeep), Channels: b.Channels}
+	return &probev1.BackupSettings{
+		Endpoint: b.Target.Endpoint, Bucket: b.Target.Bucket, Region: b.Target.Region, AccessKey: b.Target.AccessKey, Prefix: b.Prefix,
+		ConfigIntervalS: proto.Uint32(b.ConfigIntervalS), MetricsIntervalS: proto.Uint32(b.MetricsIntervalS), ConfigKeep: proto.Uint32(b.ConfigKeep), MetricsKeep: proto.Uint32(b.MetricsKeep),
+		Notify: &probev1.BackupNotify{ChannelIds: b.Channels}, HasSecret: b.Target.Secret != "",
+	}
 }

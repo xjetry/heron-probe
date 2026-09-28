@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/xjetry/probe/internal/hub/outbound"
 )
 
 type AlertKind string
@@ -106,7 +108,7 @@ type Delivery struct {
 	OK         bool
 	Done       bool
 	Failure    DeliveryFailure // 最近一次失败的类别；成功或尚无结果时为空。
-	HTTPStatus int             // 仅 FailureHTTPStatus 非零，且 ValidHTTPStatus；写路径见 schema.go 的 http_status 列。
+	HTTPStatus int             // 仅 FailureHTTPStatus 非零，且 outbound.ValidHTTPStatus；写路径见 schema.go 的 http_status 列。
 	// 最近一次失败的原文：HTTP 失败时是响应体片段，其余是出站错误文本。hub 不把 URL 写进原文，
 	// 但响应体由接收方决定：接收方可能回显请求体模板里的密钥，也可能回显请求路径或头值这些只写
 	// 不读的配置。所以只经仅会话的 GetAlertDeliveryError 读出（会话本就有权管理这些配置）；
@@ -633,11 +635,6 @@ func (s *Store) UpdateDelivery(ctx context.Context, id int64, r DeliveryResult) 
 	})
 }
 
-// ValidHTTPStatus 是状态码合法性的唯一判定：产生侧（alert.sendHTTP）据它决定一次应答算不算
-// 合法应答，写侧（DeliveryResult.check）据它守住 http_status 列。两处必须同一口径，否则产生侧
-// 定下的类别会被写侧拒绝，结果写不进库。
-func ValidHTTPStatus(code int) bool { return code >= 100 && code <= 999 }
-
 // 读侧据类别解释状态码与原文、只读口径据类别给出状态码、PendingDeliveries 据 done 续投，
 // 都依赖这里的一致性；违反即拒绝，不写库，也不改写成某个"最接近"的类别。
 func (r DeliveryResult) check() error {
@@ -663,7 +660,7 @@ func (r DeliveryResult) check() error {
 	if !slices.Contains(DeliveryFailures(), r.Failure) {
 		return fmt.Errorf("delivery result: unknown failure category %q", r.Failure)
 	}
-	if r.Failure == FailureHTTPStatus && !ValidHTTPStatus(r.HTTPStatus) {
+	if r.Failure == FailureHTTPStatus && !outbound.ValidHTTPStatus(r.HTTPStatus) {
 		return fmt.Errorf("delivery result: failure %q with invalid HTTP status %d", r.Failure, r.HTTPStatus)
 	}
 	if r.Failure != FailureHTTPStatus && r.HTTPStatus != 0 {

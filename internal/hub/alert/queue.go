@@ -30,6 +30,14 @@ func DeliveryRetryWait() time.Duration {
 	return total
 }
 
+// NotifyTimeout 是一次渠道发送（建连、写请求、读至多 64 KiB 应答）的总时限，serve 用它构造通知的出站客户端
+// （outbound.NewClient）。取值受上侧约束：投递是单 worker 串行，一个挂住的接收方让一条投递占住 worker 至多
+// store.MaxDeliveryAttempts 次 NotifyTimeout 再加 DeliveryRetryWait——按当前常量 3×10s+5s = 35 秒；满队列 QueueCap
+// 条的最坏总时长（256×35s，约 2.5 小时）必须短于 store.MinRetentionAlertEvents，否则 worker 回读到的事件已被清理，
+// TestAlertRetentionCoversFullQueueDelivery 钉住这条关系。10 秒在约束之内，给冷启动的 webhook 这类应答慢的接收方
+// 留出时间，不把它们记成失败；下侧没有推导。
+const NotifyTimeout = 10 * time.Second
+
 type deliveryItem struct {
 	delivery store.Delivery
 	event    store.AlertEvent

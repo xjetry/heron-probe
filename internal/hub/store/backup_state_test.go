@@ -10,7 +10,7 @@ func TestBackupEventsUseCurrentChannelsWithoutRuleState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = s.SaveSettings(t.Context(), SiteSettings{}, &BackupSettingsUpdate{Channels: []int64{c.ID}})
+	_, _, err = s.SaveSettings(t.Context(), SiteSettings{}, &BackupSettingsUpdate{Channels: &[]int64{c.ID}})
 	if err != nil {
 		t.Fatal(err)
 	}

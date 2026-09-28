@@ -23,7 +23,7 @@ type Sender interface{ Enqueue(store.AlertEvent) }
 
 type objectStore interface {
 	PutObject(context.Context, string, io.ReadSeeker) error
-	ListObjectsV2(context.Context, string) ([]s3.Object, error)
+	ListObjectsV2(context.Context, string, int) ([]s3.Object, error)
 	DeleteObject(context.Context, string) error
 }
 
@@ -58,7 +58,7 @@ type Manager struct {
 
 func New(st *store.Store, sender Sender, clk clock.Clock, log *slog.Logger) *Manager {
 	return &Manager{st: st, sender: sender, clk: clk, log: log,
-		newClient: func(cfg s3.Config) (objectStore, error) { return s3.New(cfg) }}
+		newClient: func(cfg s3.Config) (objectStore, error) { return s3.New(cfg, clk) }}
 }
 
 func (m *Manager) Status(ctx context.Context) (Status, error) {
@@ -174,7 +174,16 @@ func (m *Manager) perform(ctx context.Context, cfg store.BackupSettings, layer s
 	}
 	prefix += layer + "/"
 	key := prefix + m.clk.Now().UTC().Format("20060102T150405.000000000Z") + ".db"
-	err = client.PutObject(ctx, key, f)
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return "snapshot"
+	}
+	// S3 客户端要求每次调用都有截止时间。上传预算按每 MiB 一秒外加五分钟给出，
+	// 这是允许占用循环的上限，不是对链路带宽的保证；超时按上传失败进入下一周期。
+	uploadCtx, cancelUpload := context.WithTimeout(ctx, 5*time.Minute+time.Duration((info.Size()+(1<<20)-1)/(1<<20))*time.Second)
+	err = client.PutObject(uploadCtx, key, f)
+	cancelUpload()
 	closeErr := f.Close()
 	if err != nil {
 		return failure("upload", err)
@@ -185,7 +194,11 @@ func (m *Manager) perform(ctx context.Context, cfg store.BackupSettings, layer s
 	if err := os.Remove(path); err != nil {
 		return "cleanup"
 	}
-	objects, err := client.ListObjectsV2(ctx, prefix)
+	// 列举与整轮删除共用五分钟预算；对象总量上限包含历史清理失败积累的额外快照。
+	// 超出上限时报告故障，不用被截断的列表裁决“最旧”，避免错删仍应保留的对象。
+	retentionCtx, cancelRetention := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancelRetention()
+	objects, err := client.ListObjectsV2(retentionCtx, prefix, 10000)
 	if err != nil {
 		return failure("list", err)
 	}
@@ -203,7 +216,7 @@ func (m *Manager) perform(ctx context.Context, cfg store.BackupSettings, layer s
 	})
 	slices.SortFunc(objects, func(a, b s3.Object) int { return strings.Compare(a.Key, b.Key) })
 	for excess := len(objects) - int(keep); excess > 0; excess-- {
-		if err := client.DeleteObject(ctx, objects[0].Key); err != nil {
+		if err := client.DeleteObject(retentionCtx, objects[0].Key); err != nil {
 			return failure("delete", err)
 		}
 		objects = objects[1:]

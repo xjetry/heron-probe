@@ -38,9 +38,10 @@ const (
 	// JSON 语法。多余的 JSON 空白、对无需转义的字符的转义不在预算内：这样的请求超出预算时得到 resource_exhausted。
 	// 各项的上限在 settings.go 与 backup_settings.go；每个字段的合法取值都有字节上限
 	// （明暗与主色由取值集合与格式限定）是这条推导成立的前提。
-	// 备份字符串按每字节最多六字节 JSON 转义预算，渠道 ID 按 100 个带引号的 int64 计；
-	// 字段名、标点与其余数值仍由末尾的 4 KiB 承载。
-	maxBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes + 6*(2048+63+64+128+4096+512) + 100*22 + 4<<10
+	// 备份的六个字符串同样按每字节最坏六字节计；渠道 ID 至多 maxBackupChannels 个，proto3 JSON 把 int64 写成带引号的
+	// 十进制串，合法 ID 为正、至多 19 位，连引号与逗号每个 22 字节。字段名、标点、四个数值与 has_secret 由末尾的 4 KiB 承载。
+	maxBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes +
+		6*(maxEndpointBytes+maxBucketBytes+maxRegionBytes+maxAccessKeyBytes+maxSecretBytes+maxPrefixBytes) + maxBackupChannels*22 + 4<<10
 )
 
 type Config struct {

@@ -51,7 +51,7 @@ func (f *fakeObjects) PutObject(_ context.Context, key string, r io.ReadSeeker) 
 	f.objects[key] = b
 	return nil
 }
-func (f *fakeObjects) ListObjectsV2(_ context.Context, prefix string) ([]s3.Object, error) {
+func (f *fakeObjects) ListObjectsV2(_ context.Context, prefix string, _ int) ([]s3.Object, error) {
 	if err := f.call("list", prefix); err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func setup(t *testing.T) (*Manager, *clock.Fake, *fakeObjects, *eventSink) {
 	}
 	secret := "secret"
 	_, _, err = st.SaveSettings(context.Background(), store.SiteSettings{}, &store.BackupSettingsUpdate{
-		Endpoint: "https://example.test", Bucket: "backups", Region: "auto", AccessKey: "key", Secret: &secret, Prefix: "tenant", Channels: []int64{ch.ID},
+		Endpoint: "https://example.test", Bucket: "backups", Region: "auto", AccessKey: "key", Secret: &secret, Prefix: "tenant", Channels: &[]int64{ch.ID},
 	})
 	if err != nil {
 		t.Fatal(err)
