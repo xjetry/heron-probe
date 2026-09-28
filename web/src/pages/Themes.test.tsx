@@ -2,7 +2,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { ListThemesResponseSchema } from "../gen/probe/v1/admin_pb";
+import { createConnectQueryKey } from "@connectrpc/connect-query";
+import { AdminService, ListThemesResponseSchema } from "../gen/probe/v1/admin_pb";
 import { retryQuery } from "../retry";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Themes } from "./Themes";
@@ -35,6 +36,27 @@ const pick = (bytes: number[], name = "theme.zip") => {
   fireEvent.change(within(form).getByLabelText(/主题包/), { target: { files: [new File([new Uint8Array(bytes)], name, { type: "application/zip" })] } });
   return form;
 };
+
+it.each(["上传", "删除", "启用"])("%s成功后使备份状态查询失效", async (operation) => {
+  const { queryClient } = render({
+    uploadTheme: async () => ({ theme: { id: "plain", name: "Plain" } }),
+    deleteTheme: async () => ({}),
+    enableTheme: async () => ({}),
+  });
+  await screen.findByRole("cell", { name: "Plain" });
+  const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+  if (operation === "上传") {
+    fireEvent.click(within(pick([1])).getByRole("button", { name: "上传" }));
+  } else if (operation === "删除") {
+    fireEvent.click(screen.getByRole("button", { name: "删除 Plain（plain）" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认删除 Plain（plain）" }));
+  } else {
+    fireEvent.click(screen.getByRole("button", { name: "启用 Plain（plain）" }));
+  }
+  await waitFor(() => expect(invalidate).toHaveBeenCalledWith({
+    queryKey: createConnectQueryKey({ schema: AdminService.method.getBackupStatus, cardinality: "finite" }),
+  }));
+});
 
 it("未配置主题 origin 时给出说明而不是错误横幅", async () => {
   render({ listThemes: async () => { throw new ConnectError("themes are disabled because this hub has no theme origin", Code.FailedPrecondition); } });
