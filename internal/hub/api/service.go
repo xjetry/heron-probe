@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"net/textproto"
 	"strings"
 	"sync"
 	"time"
@@ -255,11 +256,11 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 			// 凭据是请求体里的密码，由 Login 裁决；按来源的锁定也在那里。
 			return next(ctx, req)
 		}
-		tok, ok := sessionToken(req.Header())
-		if !ok {
+		candidates := sessionCandidates(req.Header())
+		if len(candidates) == 0 {
 			return nil, unauthenticated("no session cookie; call Login first")
 		}
-		alive, err := s.auth.AuthenticateSession(ctx, tok)
+		tok, alive, err := s.auth.AuthenticateSession(ctx, candidates)
 		if err != nil {
 			s.log.Error("session lookup failed", "err", err)
 			return nil, internalError("session lookup failed")
@@ -267,6 +268,8 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 		if !alive {
 			return nil, unauthenticated("session expired or unknown; call Login again")
 		}
+		// ctx 里放通过校验的那个 token，而不是第一个候选：Logout、撤销当前会话与会话列表的"当前"都读它。
+		// 放第一个候选时，排在前面的无效值会让 Logout 吊销一个不存在的会话，真正在用的会话照旧有效。
 		return next(context.WithValue(ctx, sessionKey{}, tok), req)
 	}
 }
@@ -281,19 +284,38 @@ func (i accessInterceptor) WrapStreamingHandler(connect.StreamingHandlerFunc) co
 	}
 }
 
-func sessionToken(h http.Header) (string, bool) {
+// sessionCandidates 按出现顺序返回请求里全部非空的 probe_session 值，跨所有 Cookie 字段行。
+//
+// 请求里的 cookie 不全由 hub 签发：与面板同属一个父域的主机能写 Domain 为父域的 cookie，浏览器把它们与管理员的
+// host-only 会话放进同一个 Cookie 行，同名时路径更长的排在前面（RFC 6265 §5.4）。会话读取的不变式是多出来的
+// cookie 不能让有效会话失效，否则任何能写父域 cookie 的主机都能把管理员锁在面板外。由此：
+//   - 返回全部同名值，由 auth.AuthenticateSession 逐个校验、任一有效即通过。
+//   - 逐对切分、只认名字，不校验其他 cookie。http.ParseCookie 在同一行里任一 cookie 不合它的语法时整行报错：
+//     没有 "="、名字不是 token、去掉两端成对的双引号之后值里仍有双引号、值里有非 ASCII 字节都算，而这些 cookie
+//     由别的主机写，形状不归 hub 管。
+//   - 不设个数上限，也不用 Request.Cookies：上限让写 cookie 的一方能用更多的值把有效值挤出去；
+//     Request.Cookies 遇到超过 3000 个 cookie 时整体返回空，http.ParseCookie 则报错。
+//     候选数与校验成本由请求头的大小上限约束，推导见 auth.AuthenticateSession。
+//
+// 每一对的切分与 Request.Cookies 相同：去掉两端空白，按第一个 "=" 分成名字与值，名字去空白后比较，值两端成对的
+// 双引号去掉。值的字节不在这里校验：不是 token 形状的值由 auth.AuthenticateSession 在哈希前丢弃。
+func sessionCandidates(h http.Header) []string {
+	var out []string
 	for _, line := range h.Values("Cookie") {
-		cookies, err := http.ParseCookie(line)
-		if err != nil {
-			continue
-		}
-		for _, c := range cookies {
-			if c.Name == SessionCookie && c.Value != "" {
-				return c.Value, true
+		for part := range strings.SplitSeq(line, ";") {
+			name, value, ok := strings.Cut(textproto.TrimString(part), "=")
+			if !ok || textproto.TrimString(name) != SessionCookie {
+				continue
+			}
+			if len(value) > 1 && value[0] == '"' && value[len(value)-1] == '"' {
+				value = value[1 : len(value)-1]
+			}
+			if value != "" {
+				out = append(out, value)
 			}
 		}
 	}
-	return "", false
+	return out
 }
 
 // sessionCookie 不设 Domain，避免会话被发送到其他子域；它不隔离同主机不同端口。
