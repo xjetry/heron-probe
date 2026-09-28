@@ -104,6 +104,18 @@ docker start probe
 - 看卷里的文件：挂同一个卷起一个带 shell 的临时容器，`docker run --rm -v probe-data:/data alpine:3.21 ls -ln /data`。
 - 从 hub 自己的网络里发请求：`docker run --rm --network container:probe alpine:3.21 wget -qO /dev/null http://127.0.0.1:8080/admin/ && echo ok`。
 
+### 备份设置损坏的恢复
+
+`setting` 中已有的备份周期或保留份数越界时，`GetSettings` 与未修复全部坏值的 `UpdateSettings` 返回 `Internal`，不会把坏值当作默认值，也不会部分保存外观或公开页总闸。hub 日志中的 `invalid stored backup.<字段>` 指出损坏的键。
+
+使用管理员登录会话调用 `POST /probe.v1.AdminService/UpdateSettings`（`Content-Type: application/json`），在 `settings.backup` 中**同时提供四个合法数值**即可覆盖坏值并恢复读取；不需要直接改库。默认值为：
+
+```json
+{"configIntervalS":300,"metricsIntervalS":86400,"configKeep":48,"metricsKeep":14}
+```
+
+这是 `backup` 的数值片段，不是完整请求：请求仍须带齐要保留的五项外观（`title`、`theme`、`accentColor`、`logo`、`customCss`，其中 `theme` 为 `auto`、`light` 或 `dark`）与备份目标（`endpoint`、`bucket`、`region`、`accessKey`、`prefix`），因为这些字段是整体替换语义。若选择关闭备份，可显式把目标字段清空、区域设为 `auto`，但四个数值仍需合法。`secret`、`notify` 和 `publicEnabled` 缺席表示不变，不要把未知旧值猜成空值或开关值。外观读取失败时应从运维留存配置取值，或明确选择恢复成内置外观。
+
 ## 安装 agent
 
 先在面板的「注册窗口」开一个窗口拿到 key（或在 hub 主机上 `probe-hub window open`）。重跑安装命令即升级：已有配置时沿用现有注册，不会在 hub 上多出节点。

@@ -265,6 +265,7 @@ func TestUpdateSettingsBudgetFitsFullBackupWithWorstCaseEscaping(t *testing.T) {
 	body, err := json.Marshal(map[string]any{"settings": map[string]any{
 		"title": strings.Repeat("\x01", maxTitleBytes), "theme": slices.MaxFunc(themes, func(a, b string) int { return len(a) - len(b) }), "accent_color": "#112233",
 		"logo": longestLogo(), "custom_css": strings.Repeat("\x01", maxCSSBytes),
+		"public_enabled": false,
 		"backup": map[string]any{
 			"endpoint": endpoint + strings.Repeat("&", maxEndpointBytes-len(endpoint)), "bucket": strings.Repeat("b", maxBucketBytes),
 			"region": strings.Repeat("<", maxRegionBytes), "access_key": strings.Repeat("<", maxAccessKeyBytes),

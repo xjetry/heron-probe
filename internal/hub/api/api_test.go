@@ -40,6 +40,7 @@ import (
 const password = "correct horse battery staple"
 
 type harness struct {
+	dbPath string
 	srv    *httptest.Server
 	http   *http.Client // 带 cookie jar
 	admin  probev1connect.AdminServiceClient
@@ -84,7 +85,8 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 		o(&deps)
 	}
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default(), store.MigrateSchema)
+	dbPath := filepath.Join(t.TempDir(), "t.db")
+	st, err := store.Open(dbPath, clk, slog.Default(), store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +119,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
 	hc := &http.Client{Jar: jar}
-	return &harness{srv: srv, http: hc, admin: probev1connect.NewAdminServiceClient(hc, srv.URL),
+	return &harness{dbPath: dbPath, srv: srv, http: hc, admin: probev1connect.NewAdminServiceClient(hc, srv.URL),
 		agent: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, book: book, reg: reg, alerts: alerts, svc: svc, pub: pub}
 }
 
