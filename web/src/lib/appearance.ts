@@ -1,6 +1,6 @@
 // 外观的取值与上限，与 hub 的 internal/hub/api/settings.go 同值，由 appearanceLimits.test.ts 逐项对照。
 // 约束的裁决在 hub：页面显示 hub 的错误原文，不另做一份校验。页面在提交前只查三个字段的字节数——
-// 超过 hub 给 UpdateSettings 的解码预算（internal/hub/api/service.go 的 maxSettingsBody）的请求在校验之前就被拒绝，
+// 超过 hub 给 UpdateSettings 的解码预算（internal/hub/api/settings_budget.go 的 settingsBudget/maxSettingsBody）的请求在校验之前就被拒绝，
 // 那时的错误说不出是哪个字段超了。
 export const MAX_TITLE_CHARS = 64;
 export const MAX_TITLE_BYTES = 1024;

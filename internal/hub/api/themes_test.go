@@ -501,7 +501,7 @@ func TestUploadThemeBudgetFitsAFullPackage(t *testing.T) {
 	}
 }
 
-// 解码预算按过程分（service.go 的 maxSettingsBody 与 maxThemeBody）。解码先于鉴权，预算也就是匿名请求被读到的上限：
+// 解码预算按过程分（settings_budget.go 的 settingsBudget/maxSettingsBody 与 service.go 的 maxThemeBody）。解码先于鉴权，预算也就是匿名请求被读到的上限：
 // 按描述符枚举 AdminService 的每个过程，匿名发一个恰比 maxSettingsBody 多一字节的请求——UploadTheme 把它读完、由拦截器
 // 给出 unauthenticated，其余过程在解码时就以 resource_exhausted（HTTP 429）拒绝并写明 maxSettingsBody；UploadTheme
 // 自己的上限是 maxThemeBody，多一字节同样被拒。1 MiB 的匿名 ListNodes 是这条界要挡的场景：借一个未知字段把请求撑大。

@@ -10,8 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// 备份字符串项的字节上限（渠道个数上限见 maxNotifyChannels）。service.go 的 maxSettingsBody 由这些常量推出解码预算，
-// 改这里即改预算。
+// 备份字符串项的字节上限（渠道个数上限见 maxNotifyChannels）。settingsBudget 由这些常量登记解码预算，改这里即改预算。
 const (
 	maxEndpointBytes  = 2048
 	maxBucketBytes    = 63

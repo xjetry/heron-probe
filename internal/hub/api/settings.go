@@ -26,13 +26,13 @@ import (
 const (
 	maxTitleRunes = 64
 	// maxTitleBytes 限制清洗前的标题：清洗会去掉控制字符与首尾空白，只限清洗后的字符数，原始标题就没有上限，
-	// 装不进解码预算的合法请求也就存在（maxSettingsBody 的推导要求每个字段都有字节上限）。
+	// 装不进解码预算的合法请求也就存在（settings_budget.go 的 settingsBudget 按每个字段的上限登记预算）。
 	maxTitleBytes = 1 << 10
 	maxLogoBytes  = 128 << 10
 	maxCSSBytes   = 64 << 10
-	// maxGeoURLBytes 限制国家查询的服务地址，同样是 maxSettingsBody 推导的前提。
+	// maxGeoURLBytes 限制国家查询的服务地址，同样是 settingsBudget 给这一项登记份额的前提。
 	maxGeoURLBytes = 2 << 10
-	// maxMMDBPathBytes 是 Settings.geo_mmdb_path 在 maxSettingsBody 里的份额。hub 只回显自己启动参数里的路径，
+	// maxMMDBPathBytes 是 Settings.geo_mmdb_path 在 settingsBudget 里登记的字节上限。hub 只回显自己启动参数里的路径，
 	// 请求里的值被忽略，但客户端可能把 GetSettings 的回显整份送回，合法回送不能被拒；任何能打开的路径不超过
 	// Linux 的 PATH_MAX 4096（macOS 为 1024），所以回显的路径落在这个份额内。比它长的路径只会来自不回送回显的
 	// 客户端自造的值，超出预算时得到 resource_exhausted。
@@ -101,14 +101,8 @@ var (
 
 // maxNotifyChannels 是一个通知渠道选择列表（backup.notify 与 login_notify，§6.7、§5.3）的条数上限，按请求里的原始
 // 条数计、重复也算：去重在解码之后，约束不了请求的字节数。没有它，合法请求的字节数就没有上界，算不出解码预算
-// （service.go 的 maxSettingsBody）。
+// （settings_budget.go 的 settingsBudget 按它登记每个渠道列表）。
 const maxNotifyChannels = 16
-
-// notifyListCount 是请求里通知渠道选择列表的个数，解码预算（maxSettingsBody）按它给列表留份额。它必须是常量才能进
-// 预算的常量表达式，所以不从 store.NotifyLists 推出，由 TestNotifyListsHaveRequestFields 核对二者相等。新增列表而
-// 不改它，预算就少算一整个满额列表（16 条 ID 共 352 字节）；这个差额目前落在预算末尾留给字段名与语法的 4 KiB 余量
-// 里，预算用例照样绿，只有登记用例红。
-const notifyListCount = 2
 
 // notifyListFields 是每个通知渠道选择列表在请求里的字段路径，条数超限与渠道不存在的错误都按它点名。store.NotifyLists
 // 里的每个列表都要在这里登记（TestNotifyListsHaveRequestFields 核对），漏登记的列表报错时点不出字段名。
@@ -170,6 +164,8 @@ func cleanAppearance(in *probev1.Settings) (store.SiteAppearance, error) {
 // checkLogo 只接受 data:<type>;base64,<data> 这一种写法：type 在白名单内、全小写、不带参数，data 是带填充的
 // 标准 base64。写法收窄到一种，"是不是白名单里的图片"就只有一个答案——宽松解析与浏览器的解析一旦不一致
 // （参数、大小写、非 base64 形态），白名单就能被绕过。公开页只把它放进 <img src>，SVG 在 <img> 里不执行脚本。
+// settingsBudget 的 logo 项按原始字节数加引号计：这里限定的前缀与 base64 字母表无需 JSON 转义。
+// 放宽为接受原始 SVG 等写法会破坏这一编码前提，必须同时调整预算规则与契约用例。
 func checkLogo(logo string) error {
 	if logo == "" {
 		return nil

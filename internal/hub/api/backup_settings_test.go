@@ -3,10 +3,8 @@ package api
 import (
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -258,13 +256,7 @@ func TestBackupNotifyChannelMustExist(t *testing.T) {
 func TestUpdateSettingsBudgetFitsFullBackupWithWorstCaseEscaping(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	if longest := len(strconv.Quote(strconv.FormatInt(math.MaxInt64, 10))) + len(","); longest != maxChannelIDJSONBytes {
-		t.Fatalf("the longest legal channel ID takes %d bytes in a JSON list; maxChannelIDJSONBytes = %d", longest, maxChannelIDJSONBytes)
-	}
-	ids := make([]string, maxNotifyChannels)
-	for i := range ids {
-		ids[i] = fmt.Sprint(int64(1<<63-1) - int64(i))
-	}
+	ids := boundaryChannelIDs()
 	status, b := postUpdateSettings(t, h, worstCaseSettings(t, ids))
 	want := fmt.Sprintf("backup.notify.channel_ids: channel %s does not exist", ids[len(ids)-1])
 	if status != http.StatusBadRequest || !strings.Contains(b, `"invalid_argument"`) || !strings.Contains(b, want) {
