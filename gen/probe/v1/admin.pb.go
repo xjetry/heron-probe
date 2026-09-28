@@ -3079,9 +3079,10 @@ type NotifyChannel struct {
 	Webhook *WebhookConfig `protobuf:"bytes,5,opt,name=webhook,proto3" json:"webhook,omitempty"`
 	// 创建墙钟，Unix 秒；保存请求中的值忽略。
 	CreatedAt int64 `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	// 出站节奏上限：任意一分钟内至多向这个渠道发出的请求数，含重试；0 表示不限。超出上限的消息排队到下一个空位
-	// 发出，不丢弃。上限属于接收方：Telegram 群聊文档值为每分钟 20 条。保存请求省略时取该种类的默认值——Telegram 20，
-	// Webhook 0；响应里恒有值。
+	// 出站节奏上限：告警与恢复通知在任意一分钟内至多向这个渠道发出的请求数，含重试；0 表示不限。超出上限的消息
+	// 排队到下一个空位发出，不丢弃。计数只在 hub 进程内：TestNotifyChannel 的测试消息不计入，hub 重启后从零计起，
+	// 一分钟内重启会让这一分钟的请求超过上限。上限属于接收方：Telegram 群聊文档值为每分钟 20 条。保存请求省略时取
+	// 该种类的默认值——Telegram 20，Webhook 0；响应里恒有值。
 	RatePerMinute *uint32 `protobuf:"varint,7,opt,name=rate_per_minute,json=ratePerMinute,proto3,oneof" json:"rate_per_minute,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
