@@ -178,6 +178,8 @@ func TestUpdateSettingsValidatesGeoURL(t *testing.T) {
 		{"bracketed placeholder with port", withURL("https://[{ip}]:8443/country"), `settings.geo_url must not put {ip} in the host or port, including the [{ip}] form: the server the lookup goes to must not depend on the node address; got "https://[{ip}]:8443/country"`},
 		// 两族样例都能解析、只有 host 不同的写法：{ip} 在 IPv6 字面量的区域标识里。
 		{"placeholder in the zone of a literal host", withURL("https://[fe80::1%25{ip}]/country"), `settings.geo_url must not put {ip} in the host or port, including the [{ip}] form`},
+		// 片段不随请求发出：两族样例填入后请求行相同，地址没有进请求。
+		{"placeholder only in the fragment", withURL("https://geo.example/country#{ip}"), `settings.geo_url must put {ip} in the path or query so the request carries the node address; a fragment (#...) is never sent; got "https://geo.example/country#{ip}"`},
 		{"placeholder as port", withURL("https://geo.example:{ip}/country"), `settings.geo_url must be an absolute http:// or https:// URL once {ip} is filled in, with {ip} outside the host and port; got "https://geo.example:{ip}/country"`},
 		{"too long", withURL("https://geo.example/{ip}?" + strings.Repeat("a", maxGeoURLBytes)), `settings.geo_url must be at most 2048 bytes; got 2073`},
 	} {

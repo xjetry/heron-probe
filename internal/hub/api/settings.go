@@ -124,7 +124,7 @@ func checkCSS(css string) error {
 var geoSamples = [2]netip.Addr{netip.MustParseAddr("192.0.2.1"), netip.MustParseAddr("2001:db8::1")}
 
 // cleanGeo 校验国家查询的两项；缺失的项不改（见 store.GeoUpdate）。服务地址是 hub 的出站目标之一（§4.9），是它
-// 唯一的写入口：只接受 http(s)、必须含 {ip}，{ip} 不得在主机或端口位置，且不含用户信息——请求只发地址、不带凭据，
+// 唯一的写入口：只接受 http(s)、必须含 {ip}，{ip} 不得在主机或端口位置、必须在路径或查询串里，且不含用户信息——请求只发地址、不带凭据，
 // 而 URL 里的用户信息会被 net/http 的客户端转成 Basic 认证的 Authorization 头；这项还会原样回显，本身也不该是凭据。
 //
 // "{ip} 不在主机或端口位置"按它要保证的性质判定，不去切分 URL 文本：两族样例各填一次，都必须解析成带 host 的绝对
@@ -160,6 +160,11 @@ func cleanGeo(in *probev1.Settings) (store.GeoUpdate, error) {
 	}
 	if v6.User != nil {
 		return store.GeoUpdate{}, invalid("settings.geo_url must not contain user information (user:password@); the lookup request carries only the address")
+	}
+	// {ip} 只有在请求真正发出的部分（路径或查询串）才起作用：片段不随请求发出。两族样例填入后请求行仍相同，说明地址
+	// 没有进请求，每个节点发出的请求都一样；服务若按请求方地址作答，所有节点都会被记成 hub 所在的国家，且地址不变就不再重查。
+	if v4.RequestURI() == v6.RequestURI() {
+		return store.GeoUpdate{}, invalid("settings.geo_url must put {ip} in the path or query so the request carries the node address; a fragment (#...) is never sent; got %q", raw)
 	}
 	out.URL = &raw
 	return out, nil
