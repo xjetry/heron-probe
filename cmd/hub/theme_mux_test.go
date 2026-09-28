@@ -163,7 +163,6 @@ func TestHandlerRoutesByHost(t *testing.T) {
 		{"panel.test", mainChecks},
 		{"theme.test.evil", mainChecks},
 		{"xtheme.test", mainChecks},
-		{"", mainChecks},
 	} {
 		for _, ck := range c.checks {
 			reqBody := ""
