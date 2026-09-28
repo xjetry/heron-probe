@@ -60,7 +60,9 @@ export function BackupSettingsForm({ current, appearance }: { current: BackupSet
     e.preventDefault();
     if (!e.currentTarget.checkValidity() || saving) return;
     const { channelIds, hasSecret: _, ...rest } = form;
-    update.mutate({ settings: { ...appearance, backup: { ...rest, notify: { channelIds: liveIds(channelIds, channelList) } } } });
+    // Pick 只约束类型，不剔除运行时的额外字段；显式投影以免把读侧总闸随备份更新回写。
+    const { title, theme, accentColor, logo, customCss } = appearance;
+    update.mutate({ settings: { title, theme, accentColor, logo, customCss, backup: { ...rest, notify: { channelIds: liveIds(channelIds, channelList) } } } });
   };
   return (
     <>

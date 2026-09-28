@@ -2,6 +2,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { expect, it } from "vitest";
 import type { UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
+import { BackupSettingsForm } from "./BackupSettingsForm";
 import { Appearance } from "../pages/Appearance";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 
@@ -17,6 +18,21 @@ const appearanceOf = (req: UpdateSettingsRequest) => {
 };
 const backupForm = async () => within(await screen.findByRole("form", { name: "备份到 S3" }));
 const appearanceForm = async () => within(await screen.findByRole("form", { name: "公开页外观" }));
+
+it("备份保存只投影五项外观，即使输入对象带总闸也不提交", async () => {
+  const sent: UpdateSettingsRequest[] = [];
+  const full = { ...saved, publicEnabled: true };
+  renderWithAdmin({ listNotifyChannels: async () => channels, updateSettings: async (req) => {
+    sent.push(req);
+    return { settings: req.settings };
+  } }, [{ path: "/backup", Component: () => <BackupSettingsForm current={undefined} appearance={full} /> }], "/backup");
+  const form = await backupForm();
+  fireEvent.click(form.getByRole("button", { name: "保存" }));
+  await form.findByRole("status");
+  expect(sent).toHaveLength(1);
+  expect(sent[0].settings?.publicEnabled).toBeUndefined();
+  expect(appearanceOf(sent[0])).toEqual({ title: saved.title, theme: saved.theme, accentColor: saved.accentColor, logo: saved.logo, customCss: saved.customCss });
+});
 
 it("备份表单保存：secret 只写且下次缺席，渠道以 notify 提交，关闭用空 endpoint", async () => {
   const sent: UpdateSettingsRequest[] = [];
