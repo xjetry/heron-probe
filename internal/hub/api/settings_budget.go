@@ -23,7 +23,8 @@ const (
 	budgetLiteral
 	// protojson 用枚举名编码，取 descriptor 中最长的名字。
 	budgetEnumName
-	// 解码发生在业务范围校验之前，uint32 取类型上限的十位十进制数。
+	// 数值没有业务字节上限常量；uint32 类型上限为十位，比当前业务上限多几字节，
+	// 按类型宽度取界使登记项不依赖 store 的业务范围表。
 	budgetUint32
 	// 渠道 ID 的合法域是正 int64；负数与冗余数字写法不在预算内。
 	// 与 uint32 按类型上限不同，这里由数据库从 1 开始分配的 ID 域取界。
@@ -32,7 +33,7 @@ const (
 
 const maxJSONBytesPerUTF8Byte = 6
 
-// 类型规则同时产生字节上界和达到上界的样本，表中不再独立维护字节算式与生成器。
+// 表只登记类型与参数，字节上界与达到上界的样本都由类型规则产生。
 // 参数按字节上限、条数或有限取值集合登记；边界样本不要求通过业务校验。
 type budgetEntry struct {
 	kind   budgetKind
