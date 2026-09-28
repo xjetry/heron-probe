@@ -135,9 +135,10 @@ func TestManyForgedSessionCookiesDoNotCrowdOutValidOne(t *testing.T) {
 	}
 }
 
-// 同一行里别的 cookie 语法不合（无名 cookie、带引号的 JSON、非 ASCII 值、名字不是 token）或个数超过
-// net/http 解析器的 3000 上限，都不能连带丢掉会话。前四种是实测中 Chromium 或 WebKit 会把兄弟主机写的 cookie
-// 与会话放进同一行发出的形状（WebKit 不发无名 cookie）。
+// 同一行里别的 cookie 语法不合（无名 cookie、带引号的 JSON、非 ASCII 值、名字不是 token、未闭合的引号）或个数
+// 超过 net/http 解析器的 3000 上限，都不能连带丢掉会话。前五种是实测中 Chromium 或 WebKit 会把兄弟主机写的
+// cookie 与会话放进同一行发出的形状（WebKit 不发无名 cookie；未闭合的引号 WebKit 排在会话之前）。切分只按分号，
+// 不认引号：按引号配对切分时，前面的未闭合引号会把会话吞进它的值里。
 func TestMalformedNeighbourCookiesDoNotHideSession(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
@@ -147,6 +148,7 @@ func TestMalformedNeighbourCookiesDoNotHideSession(t *testing.T) {
 		`j={"a":1}; ` + valid,
 		"u=é; " + valid,
 		"a:b=1; " + valid,
+		`q="x; ` + valid,
 		strings.Repeat("x=1; ", 3000) + valid,
 	} {
 		if got := cookieCall(t, h, "ListNodes", "{}", line); got.status != 200 {
@@ -155,6 +157,19 @@ func TestMalformedNeighbourCookiesDoNotHideSession(t *testing.T) {
 				shown = shown[:80] + "..."
 			}
 			t.Errorf("Cookie %q: status %d, want 200 (body %s)", shown, got.status, got.body)
+		}
+	}
+}
+
+// cookie-value 可以整体包在一对双引号里（RFC 6265 §4.1.1）。会话值与 Request.Cookies 一样去掉这对引号再校验：
+// hub 签发的值不带引号，这里钉住的是切分与 net/http 对合法输入的结果一致。
+func TestQuotedSessionCookieValueAuthenticates(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	valid := strings.TrimPrefix(sessionCookieHeader(t, h), SessionCookie+"=")
+	for _, line := range []string{pair(`"` + valid + `"`), pairs(forgedToken(t), `"`+valid+`"`)} {
+		if got := cookieCall(t, h, "ListNodes", "{}", line); got.status != 200 {
+			t.Errorf("Cookie %q: status %d, want 200 (body %s)", line, got.status, got.body)
 		}
 	}
 }

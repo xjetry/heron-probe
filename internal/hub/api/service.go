@@ -240,13 +240,14 @@ func (i accessInterceptor) WrapStreamingHandler(connect.StreamingHandlerFunc) co
 // cookie 不能让有效会话失效，否则任何能写父域 cookie 的主机都能把管理员锁在面板外。由此：
 //   - 返回全部同名值，由 auth.AuthenticateSession 逐个校验、任一有效即通过。
 //   - 逐对切分、只认名字，不校验其他 cookie。http.ParseCookie 在同一行里任一 cookie 不合它的语法时整行报错：
-//     没有 "="、名字不是 token、值里有双引号或非 ASCII 字节都算，而这些 cookie 由别的主机写，形状不归 hub 管。
+//     没有 "="、名字不是 token、去掉两端成对的双引号之后值里仍有双引号、值里有非 ASCII 字节都算，而这些 cookie
+//     由别的主机写，形状不归 hub 管。
 //   - 不设个数上限，也不用 Request.Cookies：上限让写 cookie 的一方能用更多的值把有效值挤出去；
 //     Request.Cookies 遇到超过 3000 个 cookie 时整体返回空，http.ParseCookie 则报错。
 //     候选数与校验成本由请求头的大小上限约束，推导见 auth.AuthenticateSession。
 //
 // 每一对的切分与 Request.Cookies 相同：去掉两端空白，按第一个 "=" 分成名字与值，名字去空白后比较，值两端成对的
-// 双引号去掉。值的字节不在这里校验：不是 token 形状的值由 auth.AuthenticateSession 在查库前丢弃。
+// 双引号去掉。值的字节不在这里校验：不是 token 形状的值由 auth.AuthenticateSession 在哈希前丢弃。
 func sessionCandidates(h http.Header) []string {
 	var out []string
 	for _, line := range h.Values("Cookie") {
