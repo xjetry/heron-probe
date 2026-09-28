@@ -71,10 +71,10 @@ func userVersion(t *testing.T, db *sql.DB) int {
 	return v
 }
 
-// frozenSchemas 按版本号登记每个旧版本发布时的完整 DDL。版本号只在这里与冻结文本配对一次：
-// 用例按版本号取用（migrateFrom、frozenSchemaFixture、frozenSchema），不在调用处另写一遍版本号。
-// TestFrozenSchemasFollowMigrations 核对每一对确实相符，TestFrozenSchemasReachedOnlyByVersion
-// 挡住绕过这张表、在别处引用冻结文本再另写版本号的写法。
+// frozenSchemas 按版本号登记每个旧版本发布时的完整 DDL。不变式：经 schemaV<n>、frozenSchemas、frozenSchema
+// 这三个名字拿到冻结 DDL 的途径只有 frozenSchemaFixture 与 migrateFrom 两个辅助函数，二者从同一个版本号同时
+// 得到 DDL 与 user_version，由 TestFrozenSchemasReachedOnlyByVersion 保证；拿到库之后对库的任何利用不在它的
+// 范围。每一对是否相符由 TestFrozenSchemasFollowMigrations 核对。
 var frozenSchemas = map[int][]string{
 	1:  schemaV1,
 	2:  schemaV2,
@@ -532,11 +532,7 @@ func TestMigrationFromV5MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 // 所以另要求相邻两版结构不同：某步迁移若只改数据，这里会红，届时需要把数据纳入比较。
 // 最后一个旧版本到当前版本的一步由 migrateFrom 与新建库比较，不在这里重复。
 func TestFrozenSchemasFollowMigrations(t *testing.T) {
-	for v := 1; v < schemaVersion; v++ {
-		if _, ok := frozenSchemas[v]; !ok {
-			t.Fatalf("frozenSchemas lacks version %d", v)
-		}
-	}
+	// 每个旧版本是否登记不另查：步骤循环对 v−1 与 v 都调用 frozenSchemaFixture，覆盖 1 到 schemaVersion−1，缺版本时它报错终止。
 	for v := 2; v < schemaVersion; v++ {
 		t.Run(fmt.Sprint(v), func(t *testing.T) {
 			step, ok := migrations[v]
@@ -579,38 +575,69 @@ func parseTestFiles(t *testing.T) (*token.FileSet, []*ast.File) {
 	return fset, files
 }
 
-// 冻结 DDL 只经 frozenSchemas 按版本号取用。schemaV<n> 只许出现在两处：包级 var schemaV<m> 的定义
-// （后一版可由前一版追加而来）与 frozenSchemas 登记表。其它任何位置引用它，无论是函数体里建库，
-// 还是包级派生变量再交给按参数收版本号的夹具，都得另写一遍版本号；两处可以写得不一致，
-// 而 TestFrozenSchemasFollowMigrations 只核对登记表里的配对。
+// 不变式：经 schemaV<n>、frozenSchemas、frozenSchema 这三个名字拿到冻结 DDL 的途径只有 frozenSchemaFixture 与
+// migrateFrom 两个辅助函数，由这条测试保证。三类名字各自只许出现在下列顶层声明里：
+//   - schemaV<n>：包级 var schemaV<m> 的定义（后一版可由前一版追加而来）与 var frozenSchemas 的定义。
+//   - frozenSchemas：它自身的定义与 func frozenSchema。
+//   - frozenSchema：它自身的定义、func migrateFrom 与 func frozenSchemaFixture，后二者从同一个 version 参数同时得到
+//     DDL 与 user_version。
+//
+// 在别处拿到冻结 DDL，就得在旁边另写一遍版本号，例如 schemaPolicyFixture(t, frozenSchema(t, 7), 8)；两处可以
+// 写得不一致，而 TestFrozenSchemasFollowMigrations 只核对登记表里的配对。检查以名字为单位：用例经两个辅助
+// 函数拿到库之后对库的任何利用（Exec 改结构或 user_version、读回 sqlite_schema 再另建库）都不在范围内，那是
+// 有意构造的夹具。冻结定义一行一个名字：多名字的 var 没有单一的属主名，会被判红，报错指向定义自身。
 func TestFrozenSchemasReachedOnlyByVersion(t *testing.T) {
 	frozenName := regexp.MustCompile(`^schemaV[0-9]+$`)
+	// owner 是名字所在的顶层声明："func 函数名"、"method 方法名"，或 "var 变量名"（多个名字以逗号分隔）。
+	// 方法另立前缀：放行项都是包级函数，与 migrateFrom 或 frozenSchemaFixture 同名的方法不能借名字放行。
+	mayAppearIn := func(name, owner string) (restricted, allowed bool) {
+		switch {
+		case frozenName.MatchString(name):
+			return true, owner == "var frozenSchemas" || strings.HasPrefix(owner, "var ") && frozenName.MatchString(strings.TrimPrefix(owner, "var "))
+		case name == "frozenSchemas":
+			return true, owner == "var frozenSchemas" || owner == "func frozenSchema"
+		case name == "frozenSchema":
+			return true, owner == "func frozenSchema" || owner == "func migrateFrom" || owner == "func frozenSchemaFixture"
+		}
+		return false, true
+	}
 	fset, files := parseTestFiles(t)
+	check := func(owner string, node ast.Node) {
+		ast.Inspect(node, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if restricted, allowed := mayAppearIn(id.Name, owner); restricted && !allowed {
+				t.Errorf("%s: %s is used in %q; take frozen DDL by version through frozenSchemaFixture or migrateFrom", fset.Position(id.Pos()), id.Name, owner)
+			}
+			return true
+		})
+	}
 	for _, file := range files {
 		for _, decl := range file.Decls {
-			if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.VAR {
-				for _, spec := range gen.Specs {
-					value := spec.(*ast.ValueSpec)
-					if len(value.Names) == 1 && (frozenName.MatchString(value.Names[0].Name) || value.Names[0].Name == "frozenSchemas") {
-						continue
-					}
-					reportFrozenReferences(t, fset, frozenName, value)
+			switch decl := decl.(type) {
+			case *ast.FuncDecl:
+				owner := "func " + decl.Name.Name
+				if decl.Recv != nil {
+					owner = "method " + decl.Name.Name
 				}
-				continue
+				check(owner, decl)
+			case *ast.GenDecl:
+				for _, spec := range decl.Specs {
+					owner := decl.Tok.String()
+					if value, ok := spec.(*ast.ValueSpec); ok {
+						var names []string
+						for _, name := range value.Names {
+							names = append(names, name.Name)
+						}
+						owner += " " + strings.Join(names, ", ")
+					}
+					check(owner, spec)
+				}
 			}
-			reportFrozenReferences(t, fset, frozenName, decl)
 		}
 	}
-}
-
-func reportFrozenReferences(t *testing.T, fset *token.FileSet, frozenName *regexp.Regexp, node ast.Node) {
-	t.Helper()
-	ast.Inspect(node, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && frozenName.MatchString(id.Name) {
-			t.Errorf("%s: %s is referenced outside its own definition and frozenSchemas; take frozen DDL by version through frozenSchema, frozenSchemaFixture or migrateFrom", fset.Position(id.Pos()), id.Name)
-		}
-		return true
-	})
 }
 
 // migrations 的每一步 v 都要有一条从 v−1 出发、经 migrateFrom 的用例，迁移后与新建库的结构比较才覆盖到
