@@ -87,7 +87,12 @@ func builtinPublic(path string) hostResponse {
 }
 
 // 按 Host 分流：去掉端口、不分大小写等于主题 origin 的主机名走主题 origin，其余（包括以它为后缀或前缀的主机名）走主 origin。
-// 两边各自一张 404/200 表；任何一边都不下发 CORS 允许头。
+// 两边各自一张 404/200 表。
+//
+// 表里每一行的应答都不带任何 Access-Control-Allow-* 头，包括两边对 AdminService 过程、PublicService 过程与静态路径的
+// OPTIONS 预检（带 Origin 与 Access-Control-Request-Method/-Headers）。承重的是预检：浏览器的跨源 JSON 请求先发预检，
+// 预检的应答不许可这个 origin，实际请求就不发出；一旦许可（允许源加 Allow-Credentials），兄弟子域上的主题脚本就能带着
+// 管理员的 cookie 把写请求发到面板，副作用在服务端已经发生，读不读得到响应无关紧要。
 func TestHandlerRoutesByHost(t *testing.T) {
 	srv, st := newThemeTestServer(t)
 	installTheme(t, st, "t", map[string]string{"index.html": "theme index", "assets/app.js": "console.log(1)", "admin/index.html": "shadow panel", "probe.v1.PublicService/GetSite": "shadow rpc"})
@@ -113,6 +118,13 @@ func TestHandlerRoutesByHost(t *testing.T) {
 	panel := func(r hostResponse) bool {
 		return (r.status == http.StatusOK || r.status == http.StatusServiceUnavailable) && strings.Contains(r.header.Get("Content-Security-Policy"), "default-src 'self'") && r.body != "shadow panel"
 	}
+	// 预检行不约束状态码：承重的是循环里对每一行都做的"没有 Access-Control-Allow-* 头"。
+	preflight := func(hostResponse) bool { return true }
+	preflightHeader := http.Header{
+		"Origin":                         {"http://" + testThemeHost},
+		"Access-Control-Request-Method":  {"POST"},
+		"Access-Control-Request-Headers": {"content-type, connect-protocol-version"},
+	}
 	themeChecks := []check{
 		{"GET", "/", body("theme index"), "the theme's index.html"},
 		{"GET", "/nodes/3", body("theme index"), "the theme's index.html"},
@@ -124,12 +136,20 @@ func TestHandlerRoutesByHost(t *testing.T) {
 		{"POST", report, status(404), "404"},
 		{"POST", getSite, connectJSON, "the public service"},
 		{"GET", getSite + "?connect=v1&encoding=json&message=%7B%7D", connectJSON, "the public service"},
+		{"OPTIONS", listNodes, preflight, "a preflight answer"},
+		{"OPTIONS", getSite, preflight, "a preflight answer"},
+		{"OPTIONS", "/", preflight, "a preflight answer"},
+		{"OPTIONS", "/assets/app.js", preflight, "a preflight answer"},
 	}
 	mainChecks := []check{
 		{"GET", "/", builtin, "the built-in public page"},
 		{"GET", "/admin/", panel, "the panel"},
 		{"POST", listNodes, status(401), "401 from the admin service"},
 		{"POST", getSite, connectJSON, "the public service"},
+		{"OPTIONS", listNodes, preflight, "a preflight answer"},
+		{"OPTIONS", getSite, preflight, "a preflight answer"},
+		{"OPTIONS", "/", preflight, "a preflight answer"},
+		{"OPTIONS", "/admin/", preflight, "a preflight answer"},
 	}
 	srvHost := strings.TrimPrefix(srv.URL, "http://")
 	for _, c := range []struct {
@@ -150,7 +170,11 @@ func TestHandlerRoutesByHost(t *testing.T) {
 			if ck.method == http.MethodPost {
 				reqBody = "{}"
 			}
-			r := hostDo(t, srv, ck.method, c.host, ck.path, reqBody, nil)
+			var header http.Header
+			if ck.method == http.MethodOptions {
+				header = preflightHeader
+			}
+			r := hostDo(t, srv, ck.method, c.host, ck.path, reqBody, header)
 			if !ck.ok(r) {
 				t.Errorf("Host %q %s %s: %d %q %.60q, want %s", c.host, ck.method, ck.path, r.status, r.header.Get("Content-Type"), r.body, ck.want)
 			}
