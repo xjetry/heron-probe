@@ -41,6 +41,9 @@ const Placeholder = "{ip}"
 // Address Registry 与 IANA IPv6 Special-Purpose Address Registry——里 Globally Reachable 为 False 的条目：这些地址
 // 在公网上没有归属，自然也没有国家。段内登记表另标为全球可达的更细分配列在 except，按公网处理。
 //
+// 192.88.99.0/24 是已废弃的 6to4 中继任播（RFC 7526），登记表里它的 Globally Reachable 为空而不是 False，按公网；
+// 其中单列的 192.88.99.2/32（6a44 中继任播）是 False，列在下面。
+//
 // 登记表之外的取舍：
 //   - fec0::/10 是 RFC 3879 废弃的站点本地地址，不在特殊用途登记表里（记在 IPv6 地址空间登记表），语义与 ULA 相同，
 //     按非公网处理。
@@ -60,12 +63,14 @@ var special = []struct {
 		netip.MustParsePrefix("192.0.0.10/32"), // TURN 任播，RFC 8155
 	}},
 	{prefix: netip.MustParsePrefix("192.0.2.0/24")},    // 文档，RFC 5737
+	{prefix: netip.MustParsePrefix("192.88.99.2/32")},  // 6a44 中继任播，RFC 6751；所在的 /24 见上
 	{prefix: netip.MustParsePrefix("198.18.0.0/15")},   // 基准测试，RFC 2544
 	{prefix: netip.MustParsePrefix("198.51.100.0/24")}, // 文档，RFC 5737
 	{prefix: netip.MustParsePrefix("203.0.113.0/24")},  // 文档，RFC 5737
 	{prefix: netip.MustParsePrefix("240.0.0.0/4")},     // 保留，RFC 1112；含受限广播
 	{prefix: netip.MustParsePrefix("64:ff9b:1::/48")},  // 本地 NAT64，RFC 8215
 	{prefix: netip.MustParsePrefix("100::/64")},        // 丢弃，RFC 6666
+	{prefix: netip.MustParsePrefix("100:0:0:1::/64")},  // Dummy IPv6 Prefix，RFC 9780
 	{prefix: netip.MustParsePrefix("2001::/23"), except: []netip.Prefix{ // IETF 协议分配，RFC 2928；含基准测试 2001:2::/48（RFC 5180）
 		netip.MustParsePrefix("2001::/32"),       // Teredo，RFC 4380：登记表标为 N/A，按公网处理（见上）
 		netip.MustParsePrefix("2001:1::1/128"),   // PCP 任播，RFC 7723
