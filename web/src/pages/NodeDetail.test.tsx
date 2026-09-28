@@ -70,6 +70,26 @@ it("四个查询同文刷新失败只显示一条", async () => {
   expect(screen.getByRole("heading", { name: "db-01" })).toBeInTheDocument();
 });
 
+it("listNodes 从未成功但历史与流量已就绪时仍显示图表、流量卡与切窗按钮，只加错误横幅", async () => {
+  renderWithAdmin({ ...defaultImpl, listNodes: async () => { throw new ConnectError("nodes down", Code.Unavailable); } },
+    [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  expect(await screen.findByRole("alert")).toHaveTextContent("nodes down");
+  expect(await screen.findAllByTestId("chart")).toHaveLength(7);
+  expect(screen.getByRole("button", { name: "24h" })).toBeInTheDocument();
+  expect(screen.getByText("↓ 1.0 GiB ↑ 512 MiB")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "节点 #7" })).toBeInTheDocument();
+});
+
+it("listNodes 挂起、历史就绪时图表与“加载中…”同时在", async () => {
+  let release!: (v: Awaited<ReturnType<typeof listNodes>>) => void;
+  const pending = new Promise<Awaited<ReturnType<typeof listNodes>>>((resolve) => { release = resolve; });
+  renderWithAdmin({ ...defaultImpl, listNodes: () => pending }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  expect(await screen.findAllByTestId("chart")).toHaveLength(7);
+  expect(screen.getByText("加载中…")).toBeInTheDocument();
+  expect(screen.queryByText("主机名")).toBeNull();
+  await act(async () => { release(await listNodes()); });
+});
+
 it("头部链接到该节点的告警事件", async () => {
   renderWithAdmin(defaultImpl, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   expect((await screen.findByRole("link", { name: "告警事件" }))).toHaveAttribute("href", "/events?node=7");
