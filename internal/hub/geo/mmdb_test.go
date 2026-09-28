@@ -2,7 +2,9 @@ package geo
 
 import (
 	"context"
+	"fmt"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,17 +60,25 @@ func TestMMDBPublicOnceAndPrivateNever(t *testing.T) {
 	f.wantRequests()
 }
 
+// 本地查不到（1.1.1.1 无记录、11.0.0.1 的记录缺 country）与查得的码无效（9.9.9.9 是小写 us）都按失败退避一小时。
+// 日志写明是哪一种：查不到记成"无记录"，不借用校验答案的文案。
 func TestMMDBFailuresBackOff(t *testing.T) {
-	for _, addr := range []string{"1.1.1.1", "9.9.9.9", "11.0.0.1"} {
-		t.Run(addr, func(t *testing.T) {
+	for _, c := range []struct {
+		addr string
+		err  error
+	}{{"1.1.1.1", errNoCountryRecord}, {"9.9.9.9", errNotCountry}, {"11.0.0.1", errNoCountryRecord}} {
+		t.Run(c.addr, func(t *testing.T) {
 			f := newFixture(t)
 			b := withMMDB(t, f)
 			f.enable(true)
-			id := f.report("node", addr)
+			id := f.report("node", c.addr)
 			f.sweep()
 			f.wantCountry(id, "", "")
 			if len(b.calls) != 1 {
 				t.Fatalf("initial mmdb calls = %v, want one", b.calls)
+			}
+			if logs, want := f.logs.String(), fmt.Sprintf("err=%q", c.err.Error()); !strings.Contains(logs, want) {
+				t.Errorf("failure logged as %q, want %s", logs, want)
 			}
 			f.clk.Advance(time.Hour - time.Second)
 			f.sweep()

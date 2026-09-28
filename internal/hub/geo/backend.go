@@ -22,8 +22,6 @@ type Backend interface {
 	Service(s store.GeoSettings) string
 }
 
-var errNotCountry = errors.New("response is not two uppercase letters")
-
 // maxResponseBytes 是读取应答体的上限。合法应答是两个字母加少量空白，超出即判失败，不再往下读。
 const maxResponseBytes = 64
 
@@ -124,8 +122,12 @@ func readLimited(path string, limit int64) ([]byte, error) {
 	return data, nil
 }
 
-// Lookup 只读 GeoLite2-Country 的 country.iso_code，不以 registered_country 等字段替代。
-// 查不到或缺字段得到空串，由 Resolver 的 store.IsCountryCode 校验按失败退避，不沿用其它含义的国家。
+// errNoCountryRecord 是本地库对地址没有国家的答案：库里没有这个地址的记录，或记录里没有 country.iso_code。
+var errNoCountryRecord = errors.New("no country record for address")
+
+// Lookup 只读 GeoLite2-Country 的 country.iso_code，不以 registered_country 等字段替代，不沿用其它含义的国家。
+// 查不到或缺字段返回 errNoCountryRecord，由 Resolver 按失败退避；查得的码是否合法由 Resolver 的 store.IsCountryCode
+// 判定，与 HTTP 后端同一处。
 func (m *MMDB) Lookup(ctx context.Context, _ store.GeoSettings, addr netip.Addr) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -137,6 +139,9 @@ func (m *MMDB) Lookup(ctx context.Context, _ store.GeoSettings, addr netip.Addr)
 	}
 	if err := m.db.Lookup(addr).Decode(&record); err != nil {
 		return "", err
+	}
+	if record.Country.ISOCode == "" {
+		return "", errNoCountryRecord
 	}
 	return record.Country.ISOCode, nil
 }

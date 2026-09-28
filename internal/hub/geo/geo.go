@@ -230,6 +230,9 @@ func (r *Resolver) Sweep(ctx context.Context) error {
 	return nil
 }
 
+// errNotCountry 是后端给出的答案不是两个大写字母：HTTP 的应答去掉首尾空白之后，或本地库记录里的 country.iso_code。
+var errNotCountry = errors.New("answer is not two uppercase letters")
+
 // recall 返回节点在 addr 上记住的答案，命中的地址移到最前：表里保留的是节点最近用到的地址。
 func (r *Resolver) recall(node int64, addr string) (string, bool) {
 	as := r.answers[node]
