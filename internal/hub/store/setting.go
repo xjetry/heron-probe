@@ -219,8 +219,7 @@ func (s *Store) SaveSettings(ctx context.Context, in SettingsUpdate) (Settings, 
 	defer s.siteWriteMu.Unlock()
 	var puts []settingField
 	if in.Appearance != nil {
-		appearance := *in.Appearance
-		puts = appearance.fields()
+		puts = in.Appearance.fields()
 	}
 	if in.PublicEnabled != nil {
 		puts = append(puts, flagField(publicEnabledKey, *in.PublicEnabled))
