@@ -57,6 +57,10 @@ const (
 	// AdminServiceReorderNodesProcedure is the fully-qualified name of the AdminService's ReorderNodes
 	// RPC.
 	AdminServiceReorderNodesProcedure = "/probe.v1.AdminService/ReorderNodes"
+	// AdminServiceListTagsProcedure is the fully-qualified name of the AdminService's ListTags RPC.
+	AdminServiceListTagsProcedure = "/probe.v1.AdminService/ListTags"
+	// AdminServiceDeleteTagProcedure is the fully-qualified name of the AdminService's DeleteTag RPC.
+	AdminServiceDeleteTagProcedure = "/probe.v1.AdminService/DeleteTag"
 	// AdminServiceOpenRegisterWindowProcedure is the fully-qualified name of the AdminService's
 	// OpenRegisterWindow RPC.
 	AdminServiceOpenRegisterWindowProcedure = "/probe.v1.AdminService/OpenRegisterWindow"
@@ -153,11 +157,12 @@ type AdminServiceClient interface {
 	// 第一次请求已在服务端删掉这一行，带同一 cookie 重试会得到 Unauthenticated 而非再次成功——
 	// 会话已不存在，结果仍安全。
 	RevokeSession(context.Context, *connect.Request[v1.RevokeSessionRequest]) (*connect.Response[v1.RevokeSessionResponse], error)
+	// 列出节点；可按标签过滤（ListNodesRequest.tags）。
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
 	// 建节点并返回其 token；明文只在此处返回一次。新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
 	// 返回 ResourceExhausted 并说明，节点不建。
 	CreateNode(context.Context, *connect.Request[v1.CreateNodeRequest]) (*connect.Response[v1.CreateNodeResponse], error)
-	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期）。计费字段有变化时，
+	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签）。计费字段有变化时，
 	// 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
 	// 删除节点及其全部历史；进程内的实时状态同步清理。
@@ -166,6 +171,10 @@ type AdminServiceClient interface {
 	RotateNodeToken(context.Context, *connect.Request[v1.RotateNodeTokenRequest]) (*connect.Response[v1.RotateNodeTokenResponse], error)
 	// 给出全部节点 id 的新顺序；必须恰好包含每个节点一次。
 	ReorderNodes(context.Context, *connect.Request[v1.ReorderNodesRequest]) (*connect.Response[v1.ReorderNodesResponse], error)
+	// 全部标签与各自挂在几个节点上，按名字大小写不敏感排序；没挂在任何节点上的标签也在内（节点数 0）。
+	ListTags(context.Context, *connect.Request[v1.ListTagsRequest]) (*connect.Response[v1.ListTagsResponse], error)
+	// 删除标签：从全部节点上解除它并删掉标签本身，节点不受影响。名字大小写不敏感；没有这个标签时 NotFound。
+	DeleteTag(context.Context, *connect.Request[v1.DeleteTagRequest]) (*connect.Response[v1.DeleteTagResponse], error)
 	// 开启（或替换）注册窗口，返回一次性 key。
 	OpenRegisterWindow(context.Context, *connect.Request[v1.OpenRegisterWindowRequest]) (*connect.Response[v1.OpenRegisterWindowResponse], error)
 	CloseRegisterWindow(context.Context, *connect.Request[v1.CloseRegisterWindowRequest]) (*connect.Response[v1.CloseRegisterWindowResponse], error)
@@ -295,6 +304,18 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			httpClient,
 			baseURL+AdminServiceReorderNodesProcedure,
 			connect.WithSchema(adminServiceMethods.ByName("ReorderNodes")),
+			connect.WithClientOptions(opts...),
+		),
+		listTags: connect.NewClient[v1.ListTagsRequest, v1.ListTagsResponse](
+			httpClient,
+			baseURL+AdminServiceListTagsProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListTags")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteTag: connect.NewClient[v1.DeleteTagRequest, v1.DeleteTagResponse](
+			httpClient,
+			baseURL+AdminServiceDeleteTagProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("DeleteTag")),
 			connect.WithClientOptions(opts...),
 		),
 		openRegisterWindow: connect.NewClient[v1.OpenRegisterWindowRequest, v1.OpenRegisterWindowResponse](
@@ -474,6 +495,8 @@ type adminServiceClient struct {
 	deleteNode            *connect.Client[v1.DeleteNodeRequest, v1.DeleteNodeResponse]
 	rotateNodeToken       *connect.Client[v1.RotateNodeTokenRequest, v1.RotateNodeTokenResponse]
 	reorderNodes          *connect.Client[v1.ReorderNodesRequest, v1.ReorderNodesResponse]
+	listTags              *connect.Client[v1.ListTagsRequest, v1.ListTagsResponse]
+	deleteTag             *connect.Client[v1.DeleteTagRequest, v1.DeleteTagResponse]
 	openRegisterWindow    *connect.Client[v1.OpenRegisterWindowRequest, v1.OpenRegisterWindowResponse]
 	closeRegisterWindow   *connect.Client[v1.CloseRegisterWindowRequest, v1.CloseRegisterWindowResponse]
 	getRegisterWindow     *connect.Client[v1.GetRegisterWindowRequest, v1.GetRegisterWindowResponse]
@@ -551,6 +574,16 @@ func (c *adminServiceClient) RotateNodeToken(ctx context.Context, req *connect.R
 // ReorderNodes calls probe.v1.AdminService.ReorderNodes.
 func (c *adminServiceClient) ReorderNodes(ctx context.Context, req *connect.Request[v1.ReorderNodesRequest]) (*connect.Response[v1.ReorderNodesResponse], error) {
 	return c.reorderNodes.CallUnary(ctx, req)
+}
+
+// ListTags calls probe.v1.AdminService.ListTags.
+func (c *adminServiceClient) ListTags(ctx context.Context, req *connect.Request[v1.ListTagsRequest]) (*connect.Response[v1.ListTagsResponse], error) {
+	return c.listTags.CallUnary(ctx, req)
+}
+
+// DeleteTag calls probe.v1.AdminService.DeleteTag.
+func (c *adminServiceClient) DeleteTag(ctx context.Context, req *connect.Request[v1.DeleteTagRequest]) (*connect.Response[v1.DeleteTagResponse], error) {
+	return c.deleteTag.CallUnary(ctx, req)
 }
 
 // OpenRegisterWindow calls probe.v1.AdminService.OpenRegisterWindow.
@@ -702,11 +735,12 @@ type AdminServiceHandler interface {
 	// 第一次请求已在服务端删掉这一行，带同一 cookie 重试会得到 Unauthenticated 而非再次成功——
 	// 会话已不存在，结果仍安全。
 	RevokeSession(context.Context, *connect.Request[v1.RevokeSessionRequest]) (*connect.Response[v1.RevokeSessionResponse], error)
+	// 列出节点；可按标签过滤（ListNodesRequest.tags）。
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
 	// 建节点并返回其 token；明文只在此处返回一次。新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
 	// 返回 ResourceExhausted 并说明，节点不建。
 	CreateNode(context.Context, *connect.Request[v1.CreateNodeRequest]) (*connect.Response[v1.CreateNodeResponse], error)
-	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期）。计费字段有变化时，
+	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签）。计费字段有变化时，
 	// 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
 	// 删除节点及其全部历史；进程内的实时状态同步清理。
@@ -715,6 +749,10 @@ type AdminServiceHandler interface {
 	RotateNodeToken(context.Context, *connect.Request[v1.RotateNodeTokenRequest]) (*connect.Response[v1.RotateNodeTokenResponse], error)
 	// 给出全部节点 id 的新顺序；必须恰好包含每个节点一次。
 	ReorderNodes(context.Context, *connect.Request[v1.ReorderNodesRequest]) (*connect.Response[v1.ReorderNodesResponse], error)
+	// 全部标签与各自挂在几个节点上，按名字大小写不敏感排序；没挂在任何节点上的标签也在内（节点数 0）。
+	ListTags(context.Context, *connect.Request[v1.ListTagsRequest]) (*connect.Response[v1.ListTagsResponse], error)
+	// 删除标签：从全部节点上解除它并删掉标签本身，节点不受影响。名字大小写不敏感；没有这个标签时 NotFound。
+	DeleteTag(context.Context, *connect.Request[v1.DeleteTagRequest]) (*connect.Response[v1.DeleteTagResponse], error)
 	// 开启（或替换）注册窗口，返回一次性 key。
 	OpenRegisterWindow(context.Context, *connect.Request[v1.OpenRegisterWindowRequest]) (*connect.Response[v1.OpenRegisterWindowResponse], error)
 	CloseRegisterWindow(context.Context, *connect.Request[v1.CloseRegisterWindowRequest]) (*connect.Response[v1.CloseRegisterWindowResponse], error)
@@ -840,6 +878,18 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		AdminServiceReorderNodesProcedure,
 		svc.ReorderNodes,
 		connect.WithSchema(adminServiceMethods.ByName("ReorderNodes")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceListTagsHandler := connect.NewUnaryHandler(
+		AdminServiceListTagsProcedure,
+		svc.ListTags,
+		connect.WithSchema(adminServiceMethods.ByName("ListTags")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceDeleteTagHandler := connect.NewUnaryHandler(
+		AdminServiceDeleteTagProcedure,
+		svc.DeleteTag,
+		connect.WithSchema(adminServiceMethods.ByName("DeleteTag")),
 		connect.WithHandlerOptions(opts...),
 	)
 	adminServiceOpenRegisterWindowHandler := connect.NewUnaryHandler(
@@ -1026,6 +1076,10 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceRotateNodeTokenHandler.ServeHTTP(w, r)
 		case AdminServiceReorderNodesProcedure:
 			adminServiceReorderNodesHandler.ServeHTTP(w, r)
+		case AdminServiceListTagsProcedure:
+			adminServiceListTagsHandler.ServeHTTP(w, r)
+		case AdminServiceDeleteTagProcedure:
+			adminServiceDeleteTagHandler.ServeHTTP(w, r)
 		case AdminServiceOpenRegisterWindowProcedure:
 			adminServiceOpenRegisterWindowHandler.ServeHTTP(w, r)
 		case AdminServiceCloseRegisterWindowProcedure:
@@ -1127,6 +1181,14 @@ func (UnimplementedAdminServiceHandler) RotateNodeToken(context.Context, *connec
 
 func (UnimplementedAdminServiceHandler) ReorderNodes(context.Context, *connect.Request[v1.ReorderNodesRequest]) (*connect.Response[v1.ReorderNodesResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.ReorderNodes is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListTags(context.Context, *connect.Request[v1.ListTagsRequest]) (*connect.Response[v1.ListTagsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.ListTags is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) DeleteTag(context.Context, *connect.Request[v1.DeleteTagRequest]) (*connect.Response[v1.DeleteTagResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.DeleteTag is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) OpenRegisterWindow(context.Context, *connect.Request[v1.OpenRegisterWindowRequest]) (*connect.Response[v1.OpenRegisterWindowResponse], error) {

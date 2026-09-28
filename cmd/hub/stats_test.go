@@ -33,10 +33,10 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 			if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
 				t.Fatal(err)
 			}
-			if freshVersion != 14 {
-				t.Fatalf("fixture user_version = %d, want 14; this fixture is built for schema 14 by dropping everything v9–v14 added below, rebuild the v8 fixture for the new version", freshVersion)
+			if freshVersion != 15 {
+				t.Fatalf("fixture user_version = %d, want 15; this fixture is built for schema 15 by dropping everything v9–v15 added below, rebuild the v8 fixture for the new version", freshVersion)
 			}
-			// v9–v14 只增加列与 maintenance_state 一张表；去掉它们得到可实际迁移的 v8 库，避免仅伪造版本号。
+			// v9–v15 只增加列、索引与 maintenance_state、tag、node_tag 三张表；去掉它们得到可实际迁移的 v8 库，避免仅伪造版本号。
 			// 这个夹具经 openOffline 建成，openStore 判定通过后已经把它切成 WAL；切回
 			// DELETE 是因为提前生效的 journal_mode(WAL) 只在非 WAL 的库上改写文件头：本项目
 			// 自己产出的 v8 库本就是 WAL，在它上面这个缺陷不显形，逐字节比较测不出。
@@ -55,6 +55,8 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 				"ALTER TABLE node DROP COLUMN country",
 				"ALTER TABLE node DROP COLUMN country_ip",
 				"ALTER TABLE node DROP COLUMN country_pin",
+				"DROP TABLE node_tag",
+				"DROP TABLE tag",
 				"PRAGMA user_version = 8",
 				"PRAGMA journal_mode=DELETE",
 			} {

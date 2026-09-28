@@ -33,6 +33,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	12: execAll(migrationV12),
 	13: execAll(migrationV13),
 	14: execAll(migrationV14),
+	15: execAll(migrationV15),
 }
 
 func execAll(stmts []string) func(*sql.Tx) error {
@@ -294,4 +295,19 @@ var migrationV14 = []string{
 	`ALTER TABLE node ADD COLUMN country TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE node ADD COLUMN country_ip TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE node ADD COLUMN country_pin TEXT NOT NULL DEFAULT ''`,
+}
+
+// v15：节点标签与关联。旧库升级后没有标签，节点的标签集合为空。
+var migrationV15 = []string{
+	`CREATE TABLE tag (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  name_fold TEXT NOT NULL UNIQUE
+)`,
+	`CREATE TABLE node_tag (
+  node_id INTEGER NOT NULL,
+  tag_id INTEGER NOT NULL,
+  PRIMARY KEY (node_id, tag_id)
+) WITHOUT ROWID`,
+	`CREATE INDEX node_tag_by_tag ON node_tag (tag_id)`,
 }

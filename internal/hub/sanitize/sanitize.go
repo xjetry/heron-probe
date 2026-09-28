@@ -13,7 +13,7 @@ import (
 func String(s string, maxBytes int) string {
 	var b strings.Builder
 	for _, r := range s {
-		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
+		if IsControl(r) {
 			continue
 		}
 		if b.Len()+utf8.RuneLen(r) > maxBytes {
@@ -22,6 +22,12 @@ func String(s string, maxBytes int) string {
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+// IsControl 是 String 剔除的字符集：控制字符（C0、C1、DEL）与双向控制符。拒绝而不是剔除这些字符的入口（标签名）
+// 经它判定，两处对"控制字符"是同一个口径。
+func IsControl(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)
 }
 
 // Text 是显示成一行文字的外来字符串（节点名、页面标题、agent 上报的主机名）的共同口径：String 之后再裁首尾空白。
