@@ -25,11 +25,11 @@ import (
 const (
 	maxTitleRunes = 64
 	// maxTitleBytes 限制清洗前的标题：清洗会去掉控制字符与首尾空白，只限清洗后的字符数，原始标题就没有上限，
-	// 装不进解码预算的合法请求也就存在（maxBody 的推导要求每个字段都有字节上限）。
+	// 装不进解码预算的合法请求也就存在（maxSettingsBody 的推导要求每个字段都有字节上限）。
 	maxTitleBytes = 1 << 10
 	maxLogoBytes  = 128 << 10
 	maxCSSBytes   = 64 << 10
-	// maxGeoURLBytes 限制国家查询的服务地址，同样是 maxBody 推导的前提。
+	// maxGeoURLBytes 限制国家查询的服务地址，同样是 maxSettingsBody 推导的前提。
 	maxGeoURLBytes = 2 << 10
 )
 

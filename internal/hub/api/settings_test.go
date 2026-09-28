@@ -217,7 +217,7 @@ var (
 	worstBackupSecret = strings.Repeat("\x01", maxSecretBytes)
 )
 
-// worstCaseSettings 是满额设置按 encoding/json 默认写法编码的最坏请求体（service.go 的 maxBody 写了推导），渠道 ID 由
+// worstCaseSettings 是满额设置按 encoding/json 默认写法编码的最坏请求体（service.go 的 maxSettingsBody 写了推导），渠道 ID 由
 // 调用方给出：它们存不存在决定这次保存能否写入。logo 取 longestLogo；标题、CSS 与备份的 secret 用控制字符填满，
 // json.Marshal 把每个控制字符写成 6 字节的 \u00XX，标题的控制字符清洗后不计入 64 个字符，所以这仍是合法的设置；服务
 // 地址、endpoint、区域、access key 与前缀不收控制字符，用 < 或 & 填满，json.Marshal 按 HTML 安全规则把它们同样写成
@@ -252,7 +252,7 @@ func worstCaseSettings(t *testing.T, channelIDs []string) []byte {
 	if len(body) < floor {
 		t.Fatalf("request is %d bytes, below the %d bytes of its fields at their budgeted worst case", len(body), floor)
 	}
-	t.Logf("worst-case request: %d bytes, logo %d bytes, budget %d", len(body), len(logo), maxBody)
+	t.Logf("worst-case request: %d bytes, logo %d bytes, budget %d", len(body), len(logo), maxSettingsBody)
 	return body
 }
 

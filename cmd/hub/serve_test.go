@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -228,6 +229,34 @@ func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].Bucket.N[0] != 1 || rows[0].Bucket.Sum[0] != 42 {
 		t.Fatalf("shutdown lost final minute: %v", rows)
+	}
+}
+
+// serve 把"是否配了 --theme-origin"交给管理服务：没配时主题方法 FailedPrecondition，配了就能调。
+func TestServePassesThemeOriginToAdmin(t *testing.T) {
+	for _, tc := range []struct {
+		flags []string
+		want  connect.Code
+	}{{nil, connect.CodeFailedPrecondition}, {[]string{"--theme-origin", "https://status.example.com"}, 0}} {
+		t.Run(fmt.Sprint(tc.flags), func(t *testing.T) {
+			db := filepath.Join(t.TempDir(), "hub.db")
+			const pw = "initial sufficiently long password"
+			if err := runPasswdWith([]string{"--db", db}, pipeWith(t, pw+"\n"), io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			url, _, _ := startTestHub(t, db, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), tc.flags...)
+			client := probev1connect.NewAdminServiceClient(http.DefaultClient, url)
+			logged, err := client.Login(t.Context(), connect.NewRequest(&probev1.LoginRequest{Password: pw}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := connect.NewRequest(&probev1.ListThemesRequest{})
+			req.Header().Set("Cookie", strings.Split(logged.Header().Get("Set-Cookie"), ";")[0])
+			_, err = client.ListThemes(t.Context(), req)
+			if got := connect.CodeOf(err); (err == nil && tc.want != 0) || (err != nil && got != tc.want) {
+				t.Fatalf("ListThemes with flags %v: %v, want code %v", tc.flags, err, tc.want)
+			}
+		})
 	}
 }
 

@@ -34,6 +34,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	13: execAll(migrationV13),
 	14: execAll(migrationV14),
 	15: execAll(migrationV15),
+	16: execAll(migrationV16),
 }
 
 func execAll(stmts []string) func(*sql.Tx) error {
@@ -310,4 +311,23 @@ var migrationV15 = []string{
   PRIMARY KEY (node_id, tag_id)
 ) WITHOUT ROWID`,
 	`CREATE INDEX node_tag_by_tag ON node_tag (tag_id)`,
+}
+
+// v16：公开页主题的 theme 与 theme_file 两张表。
+var migrationV16 = []string{
+	`CREATE TABLE theme (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  version TEXT NOT NULL,
+  preview TEXT NOT NULL,
+  uploaded_at INTEGER NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1))
+)`,
+	`CREATE UNIQUE INDEX theme_enabled ON theme (enabled) WHERE enabled = 1`,
+	`CREATE TABLE theme_file (
+  theme_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  content BLOB NOT NULL,
+  PRIMARY KEY (theme_id, path)
+)`,
 }
