@@ -21,13 +21,17 @@ it("设置页按层显示启用、上次成功和故障，保留从未成功的�
   expect(metrics.getByText("无当前故障")).toBeVisible();
 });
 
-it("未启用时仍显示指标层故障与历史成功", async () => {
-  renderWithAdmin({ getSettings: async () => ({}), getBackupStatus: async () => ({ enabled: false, config: {}, metrics: { lastSuccessAt: 60n, failure: { category: "snapshot", sinceAt: 120n } } }) }, routes, "/appearance");
+it("设置读不出时 enabled 为 false，仍显示配置层 settings 故障与历史成功", async () => {
+  renderWithAdmin({ getSettings: async () => ({}), getBackupStatus: async () => ({ enabled: false, config: { lastSuccessAt: 60n, failure: { category: "settings", sinceAt: 120n } }, metrics: { lastSuccessAt: 60n } }) }, routes, "/appearance");
   const region = within(await screen.findByRole("region", { name: "备份状态" }));
   expect(region.getByText("自动备份未启用")).toBeVisible();
+  const config = within(region.getByRole("article", { name: "配置与凭据" }));
+  expect(config.getByText(`上次成功：${new Date(60000).toLocaleString()}`)).toBeVisible();
+  expect(config.getByText(`当前故障：settings；自 ${new Date(120000).toLocaleString()} 起`)).toHaveClass("error");
   const metrics = within(region.getByRole("article", { name: "指标与探测历史" }));
   expect(metrics.getByText(`上次成功：${new Date(60000).toLocaleString()}`)).toBeVisible();
-  expect(metrics.getByText(`当前故障：snapshot；自 ${new Date(120000).toLocaleString()} 起`)).toHaveClass("error");
+  expect(metrics.getByText("无当前故障")).toBeVisible();
+  expect(region.getByText(/停用备份即结束两层的故障跟踪/)).toBeVisible();
 });
 
 it("状态查询失败不冒充备份正常，也不阻塞设置表单", async () => {

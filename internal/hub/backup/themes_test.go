@@ -291,3 +291,26 @@ func TestThemeSyncMissingPackageAndRecordFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestThemeFailureSharesMarkerAndDisabledLifecycle(t *testing.T) {
+	m, _, base, sink := setup(t)
+	themeStorage(m, base)
+	installTheme(t, m, "zip")
+	execFixtureSQL(t, base.databasePath, `INSERT INTO setting VALUES ('backup.config_failing_since','x')`)
+	tick(t, m)
+	if s, err := m.Status(t.Context()); err != nil || s.Config.Failure != "marker" || len(sink.events) != 1 {
+		t.Fatalf("theme wake bypassed marker preparation: %+v err=%v events=%v", s, err, sink.events)
+	}
+	base.failLayer, base.failStage = "theme", "upload"
+	tick(t, m)
+	if s := status(t, m).Config; s.Failure != "theme_upload/http_status" || len(sink.events) != 1 {
+		t.Fatalf("theme failure did not continue marker lifecycle: %+v events=%v", s, sink.events)
+	}
+	if _, err := m.st.SaveSettings(t.Context(), store.SettingsUpdate{Backup: &store.BackupSettingsUpdate{}}); err != nil {
+		t.Fatal(err)
+	}
+	tick(t, m)
+	if s := status(t, m).Config; s.Failure != "" || len(sink.events) != 2 || sink.events[1].Transition != store.TransitionDisabled {
+		t.Fatalf("theme failure did not close on disable: %+v events=%v", s, sink.events)
+	}
+}

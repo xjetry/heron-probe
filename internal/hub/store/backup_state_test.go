@@ -4,13 +4,14 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestBackupMarkerAndEventAtomic(t *testing.T) {
-	for _, transition := range []Transition{TransitionFiring, TransitionRecovered} {
+	for _, transition := range []Transition{TransitionFiring, TransitionRecovered, TransitionDisabled} {
 		t.Run(string(transition), func(t *testing.T) {
 			s, _ := open(t)
-			if transition == TransitionRecovered {
+			if transition != TransitionFiring {
 				if _, err := s.RecordBackupEvent(t.Context(), TransitionFiring, "failed", s.clk.Now()); err != nil {
 					t.Fatal(err)
 				}
@@ -45,12 +46,12 @@ func TestBackupMarkerAndEventAtomic(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if after.IsZero() != (transition == TransitionRecovered) {
+			if after.IsZero() != (transition != TransitionFiring) {
 				t.Errorf("committed event marker mismatch: transition=%s since=%s", transition, after)
 			}
 			var value string
 			err = s.r.QueryRow("SELECT value FROM setting WHERE key='backup.config_failing_since'").Scan(&value)
-			if transition == TransitionRecovered && !errors.Is(err, sql.ErrNoRows) {
+			if transition != TransitionFiring && !errors.Is(err, sql.ErrNoRows) {
 				t.Errorf("recovery did not delete marker: value=%s err=%v", value, err)
 			}
 		})
@@ -111,5 +112,27 @@ func TestBackupSuccessRejectsUnknownLayer(t *testing.T) {
 	}
 	if len(times) != 0 {
 		t.Fatalf("unknown layer created success: %+v", times)
+	}
+}
+
+// 触发只在调用方没有读到有效标记时发生；库里若留着读不懂的坏值，触发以本次首次失败时刻覆盖它。
+func TestBackupFiringOverwritesCorruptMarker(t *testing.T) {
+	s, _ := open(t)
+	err := s.write(t.Context(), func(tx *sql.Tx) error {
+		_, err := tx.Exec("INSERT INTO setting (key, value) VALUES ('backup.config_failing_since', 'x')")
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.BackupFailingSince(t.Context()); err == nil {
+		t.Fatal("corrupt marker read back without error")
+	}
+	at := s.clk.Now()
+	if _, err := s.RecordBackupEvent(t.Context(), TransitionFiring, "config 层备份失败（marker）", at); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.BackupFailingSince(t.Context()); err != nil || !got.Equal(time.Unix(at.Unix(), 0).UTC()) {
+		t.Errorf("firing left corrupt marker: got=%s err=%v", got, err)
 	}
 }

@@ -204,8 +204,10 @@ func TestCanceledUploadIsNotFailure(t *testing.T) {
 func TestBackupDirectoryAndStartupCleanup(t *testing.T) {
 	m, _, objects, _ := setup(t)
 	root := filepath.Dir(objects.databasePath)
-	stale := filepath.Join(root, "probe-backup-stale")
-	if err := os.Mkdir(stale, 0700); err != nil {
+	// 残留按生产的命名方式造：随机串的形态若变了，清理认不出它，这里会红。
+	_, prefix := m.st.BackupScratch()
+	stale, err := os.MkdirTemp(root, prefix+"*")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(stale, "snapshot.db"), []byte("partial"), 0600); err != nil {
@@ -231,9 +233,10 @@ func TestSettingsFailureRateLimitedAndRecovers(t *testing.T) {
 	var logs bytes.Buffer
 	m.log = slog.New(slog.NewTextHandler(&logs, nil))
 	execFixtureSQL(t, objects.databasePath, `INSERT INTO setting VALUES ('backup.config_interval_s','0')`)
-	for n := 0; n < 86400; n++ {
+	// 日志间隔 5 分钟，每轮推进 10 秒观察到的限频与逐秒相同：一天 288 行。
+	for n := 0; n < 8640; n++ {
 		tick(t, m)
-		clk.Advance(time.Second)
+		clk.Advance(10 * time.Second)
 	}
 	s, statusErr := m.Status(t.Context())
 	if statusErr != nil || s.Config.Failure != "settings" || len(sink.events) != 1 || strings.Count(logs.String(), "backup failed") != 288 {

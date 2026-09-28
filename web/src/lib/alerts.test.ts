@@ -127,8 +127,8 @@ it("类型表覆盖协议枚举里除未指定之外的每个种类", () => {
   }
 });
 
-it("transitionLabel 认识两种变化，未知值原样显示", () => {
-  expect([transitionLabel("firing"), transitionLabel("recovered"), transitionLabel("x")]).toEqual(["触发", "恢复", "x"]);
+it("transitionLabel 认识三种变化，未知值原样显示", () => {
+  expect([transitionLabel("firing"), transitionLabel("recovered"), transitionLabel("disabled"), transitionLabel("x")]).toEqual(["触发", "恢复", "停用", "x"]);
 });
 
 it("graceText 缺失即默认", () => {
