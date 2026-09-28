@@ -548,6 +548,55 @@ func TestHTTPBackendSendsToTheServiceReadWithTheSwitch(t *testing.T) {
 	f.wantCountry(id, "US", "8.8.8.8")
 }
 
+// saveOnFirstService 在 Sweep 第一次取退避键的服务一项时保存一次设置。Sweep 重读设置之后、调用 Lookup 之前先调用
+// Service，保存因此落在"Sweep 读完设置"与"交给后端"之间；Lookup 里核对这个先后，先后变了就不再是这个窗口。
+type saveOnFirstService struct {
+	Backend
+	t     *testing.T
+	save  func() error
+	saved bool
+}
+
+func (b *saveOnFirstService) Service(s store.GeoSettings) string {
+	if !b.saved {
+		b.saved = true
+		if err := b.save(); err != nil {
+			b.t.Error(err)
+		}
+	}
+	return b.Backend.Service(s)
+}
+
+func (b *saveOnFirstService) Lookup(ctx context.Context, s store.GeoSettings, addr netip.Addr) (string, error) {
+	if !b.saved {
+		b.t.Error("fixture: Lookup ran before Service, the save does not fall between reading and handing over")
+	}
+	return b.Backend.Lookup(ctx, s, addr)
+}
+
+// 运维恰在 Sweep 重读设置之后、把这一份交给后端之前保存"关闭 + 换成 B"：B 从未与"开启"一起被读到，一个请求都不能
+// 发往它；至多还有发往原服务的那一个。Sweep 若在交给后端之前再读一次设置、按旧的那份判定准入却把新读的那份交给
+// 后端，就会拿着这次保存的 B 发出。按新读的那份重新判定准入（读到关闭就不发）不违反这条，所以不断言原服务一定收到。
+func TestSweepHandsTheBackendTheSettingsItAdmittedWith(t *testing.T) {
+	f := newFixture(t)
+	f.enable(true)
+	f.report("a", "8.8.8.8")
+	off, other := false, f.svc.srv.URL+"/other/{ip}"
+	b := &saveOnFirstService{Backend: f.r.backend, t: t, save: func() error {
+		return f.saveGeo(t.Context(), store.GeoUpdate{Enabled: &off, URL: &other})
+	}}
+	f.r.backend = b
+	f.sweep()
+	if !b.saved {
+		t.Fatal("fixture: Sweep never asked for the service, the save did not happen")
+	}
+	for _, p := range f.svc.paths() {
+		if p != "/8.8.8.8/country" {
+			t.Errorf("request %q after the save, want at most the one to the service read together with the switch on", p)
+		}
+	}
+}
+
 // 退避的键含服务地址：旧服务失败留下的退避不挡住对新服务的查询，改了服务地址的下一轮即重查；旧服务的那一条随之丢掉。
 func TestURLChangeLiftsTheOldServicesBackoff(t *testing.T) {
 	f := newFixture(t)
