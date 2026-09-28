@@ -43,18 +43,18 @@ func (m *Manager) syncThemes(ctx context.Context, cfg store.BackupSettings, clie
 			firstCategory, firstCode, firstDetail = failure(stage, err)
 		}
 	}
-	for _, theme := range themes {
-		key := prefix + theme.ID + ".zip"
+	for _, entry := range themes {
+		key := prefix + entry.ID + ".zip"
 		exists := remote[key]
 		delete(remote, key)
 		// 缺包仅由清单快照判定；旧主题和恢复空壳都保留远端对象，由状态列表提示补传。
-		if !theme.HasPackage {
+		if !entry.HasPackage {
 			continue
 		}
-		if exists && theme.Uploaded {
+		if exists && entry.Uploaded {
 			continue
 		}
-		content, err := m.st.ThemeBackupContent(ctx, theme.ID, theme.Revision)
+		content, err := m.st.ThemeBackupContent(ctx, entry.ID, entry.Revision)
 		if errors.Is(err, store.ErrNotFound) {
 			continue
 		}
@@ -69,7 +69,7 @@ func (m *Manager) syncThemes(ctx context.Context, cfg store.BackupSettings, clie
 			record("theme_upload", err)
 			continue
 		}
-		if err := m.st.MarkThemeUploaded(ctx, theme.ID, theme.Revision); err != nil {
+		if err := m.st.MarkThemeUploaded(ctx, entry.ID, entry.Revision); err != nil {
 			record("theme_record", err)
 		}
 	}
