@@ -247,50 +247,70 @@ func TestRevokeCurrentSessionWithForgedCookie(t *testing.T) {
 	}
 }
 
-// 会话校验失败不是登录失败。两个来源从零开始交替输错密码，其中一个事先发过一批带伪造会话 cookie 的请求（只带伪造值的
-// 401 与伪造值夹着有效值的 200 各十次）；两者必须在同一次尝试上开始被锁。伪造值哪怕只被记了一次，那个来源也会早一次
-// 被锁。比较的是两个来源，与锁定阈值的具体数值无关。
+// 会话校验失败不是登录失败。伪造会话 cookie 若被记成登录失败，发过它们的来源会比没发过的来源早被锁。比较的是两个
+// 来源开始被锁的尝试序号，与锁定阈值的具体数值无关，伪造值哪怕只被记了一次，那个来源也会早一次被锁。两种部署各比一次：
+//   - 配了可信代理：同一个 hub 上的两个来源由 X-Forwarded-For 区分，其中一个先发伪造 cookie。
+//   - 不配代理：这是默认部署，来源就是 TCP 对端。起两个 hub，都从 127.0.0.1 访问，其中一个先收到伪造 cookie。
+//     只比 X-Forwarded-For 来源的那一组照不到记在 TCP 对端上的计数，而默认部署下 TCP 对端就是管理员自己的地址。
 func TestForgedSessionCookiesDoNotCountAsLoginFailures(t *testing.T) {
-	h := newHarness(t, "127.0.0.1/32")
-	h.login(t)
-	valid := strings.TrimPrefix(sessionCookieHeader(t, h), SessionCookie+"=")
-	const forgedFrom, controlFrom = "203.0.113.1", "203.0.113.2"
-	from := func(addr string, lines ...string) http.Header {
-		hdr := http.Header{"X-Forwarded-For": {addr}}
-		for _, l := range lines {
-			hdr.Add("Cookie", l)
-		}
-		return hdr
-	}
+	t.Run("behind a trusted proxy", func(t *testing.T) {
+		h := newHarness(t, "127.0.0.1/32")
+		h.login(t)
+		valid := strings.TrimPrefix(sessionCookieHeader(t, h), SessionCookie+"=")
+		forged, control := http.Header{"X-Forwarded-For": {"203.0.113.1"}}, http.Header{"X-Forwarded-For": {"203.0.113.2"}}
+		sendForgedSessionCookies(t, h, valid, forged)
+		assertSameLockout(t, wrongPasswordsUntilLocked(t, h, forged), wrongPasswordsUntilLocked(t, h, control))
+	})
+	t.Run("without a proxy", func(t *testing.T) {
+		forgedHub, controlHub := newHarness(t, ""), newHarness(t, "")
+		forgedHub.login(t)
+		controlHub.login(t)
+		valid := strings.TrimPrefix(sessionCookieHeader(t, forgedHub), SessionCookie+"=")
+		sendForgedSessionCookies(t, forgedHub, valid, http.Header{})
+		assertSameLockout(t, wrongPasswordsUntilLocked(t, forgedHub, http.Header{}), wrongPasswordsUntilLocked(t, controlHub, http.Header{}))
+	})
+}
+
+// sendForgedSessionCookies 以 source 表示的来源发十次只带伪造值的请求（401）和十次伪造值夹着有效值 valid 的请求（200）。
+func sendForgedSessionCookies(t *testing.T, h *harness, valid string, source http.Header) {
+	t.Helper()
 	for i := range 10 {
-		if got := adminCall(t, h, "ListNodes", "{}", from(forgedFrom, pairs("bogus", forgedToken(t)))); got.status != 401 {
+		if got := adminCall(t, h, "ListNodes", "{}", withCookie(source, pairs("bogus", forgedToken(t)))); got.status != 401 {
 			t.Fatalf("forged-only request %d: status %d", i, got.status)
 		}
-		if got := adminCall(t, h, "ListNodes", "{}", from(forgedFrom, pairs(forgedToken(t), valid))); got.status != 200 {
+		if got := adminCall(t, h, "ListNodes", "{}", withCookie(source, pairs(forgedToken(t), valid))); got.status != 200 {
 			t.Fatalf("forged+valid request %d: status %d", i, got.status)
 		}
 	}
-	lockedAt := map[string]int{}
-	for attempt := 1; attempt <= 100 && len(lockedAt) < 2; attempt++ {
-		for _, addr := range []string{forgedFrom, controlFrom} {
-			if lockedAt[addr] != 0 {
-				continue
-			}
-			r := adminCall(t, h, "Login", `{"password":"incorrect"}`, from(addr))
-			switch body := string(r.body); {
-			case r.status == 401 && strings.Contains(body, "too many failed logins"):
-				lockedAt[addr] = attempt
-			case r.status == 401 && strings.Contains(body, "wrong password"):
-			default:
-				t.Fatalf("wrong password from %s, attempt %d: status %d body %s", addr, attempt, r.status, body)
-			}
+}
+
+func withCookie(source http.Header, line string) http.Header {
+	hdr := source.Clone()
+	hdr.Add("Cookie", line)
+	return hdr
+}
+
+// wrongPasswordsUntilLocked 以 source 表示的来源一次次输错密码，返回第一次被拒为锁定的尝试序号。
+func wrongPasswordsUntilLocked(t *testing.T, h *harness, source http.Header) int {
+	t.Helper()
+	for attempt := 1; attempt <= 100; attempt++ {
+		r := adminCall(t, h, "Login", `{"password":"incorrect"}`, source)
+		switch body := string(r.body); {
+		case r.status == 401 && strings.Contains(body, "too many failed logins"):
+			return attempt
+		case r.status == 401 && strings.Contains(body, "wrong password"):
+		default:
+			t.Fatalf("wrong password, attempt %d: status %d body %s", attempt, r.status, body)
 		}
 	}
-	if lockedAt[controlFrom] == 0 {
-		t.Fatal("the control source was never locked out within 100 wrong passwords")
+	t.Fatal("never locked out within 100 wrong passwords")
+	return 0
+}
+
+func assertSameLockout(t *testing.T, forgedAt, controlAt int) {
+	t.Helper()
+	if forgedAt != controlAt {
+		t.Errorf("forged session cookies counted as login failures: the source that sent them was locked out from attempt %d, the control source from attempt %d", forgedAt, controlAt)
 	}
-	if lockedAt[forgedFrom] != lockedAt[controlFrom] {
-		t.Errorf("forged session cookies counted as login failures: the source that sent them was locked out from attempt %d, the control source from attempt %d", lockedAt[forgedFrom], lockedAt[controlFrom])
-	}
-	t.Logf("both sources locked out from attempt %d", lockedAt[controlFrom])
+	t.Logf("locked out from attempt %d (source that sent forged cookies) and %d (control)", forgedAt, controlAt)
 }
