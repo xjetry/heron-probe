@@ -231,9 +231,10 @@ func TestSettingsFailureRateLimitedAndRecovers(t *testing.T) {
 	var logs bytes.Buffer
 	m.log = slog.New(slog.NewTextHandler(&logs, nil))
 	execFixtureSQL(t, objects.databasePath, `INSERT INTO setting VALUES ('backup.config_interval_s','0')`)
-	for n := 0; n < 86400; n++ {
+	// 日志间隔 5 分钟，每轮推进 10 秒观察到的限频与逐秒相同：一天 288 行。
+	for n := 0; n < 8640; n++ {
 		tick(t, m)
-		clk.Advance(time.Second)
+		clk.Advance(10 * time.Second)
 	}
 	s, statusErr := m.Status(t.Context())
 	if statusErr != nil || s.Config.Failure != "settings" || len(sink.events) != 1 || strings.Count(logs.String(), "backup failed") != 288 {
