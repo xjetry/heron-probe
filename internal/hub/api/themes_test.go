@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -187,6 +189,48 @@ func TestUploadThemeRejectsBadPackagesWithoutResidue(t *testing.T) {
 	}
 }
 
+// 重叠的中央目录记录经 UploadTheme 同样在读任何内容之前被拒（theme.Parse 的注释写了推导）：InvalidArgument 写明
+// 声明的压缩字节总量与包长，库里不留行。2 秒的上限只用来区分"没有读内容"与"读了"（后者要把 1 MiB 的流解 2000 遍）。
+func TestUploadThemeRejectsOverlappingEntriesBeforeReadingThem(t *testing.T) {
+	h := newThemeHarness(t)
+	before := h.themeRows(t)
+	pkg := Overlapping(theme.MaxEntries, 1<<20)
+	start := time.Now()
+	_, err := h.upload(t, pkg, "")
+	elapsed := time.Since(start)
+	want := fmt.Sprintf("compressed bytes in total but the archive is only %d bytes", len(pkg))
+	if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "package: central directory declares") || !strings.Contains(err.Error(), want) {
+		t.Fatalf("UploadTheme = %v, want InvalidArgument containing %q", err, want)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("UploadTheme took %v to reject; the bound is checked before any content is read", elapsed)
+	}
+	if rows := h.themeRows(t); rows != before {
+		t.Fatalf("theme, theme_file rows = %v, want %v unchanged", rows, before)
+	}
+}
+
+// 贴着每条上限的合法包（展开 64 MiB、最大文件 16 MiB、包接近 8 MiB 且压缩字节之和接近包长）经 UploadTheme 装得上，
+// 每个普通文件一行。
+func TestUploadThemeAcceptsAPackageAtEveryLimit(t *testing.T) {
+	h := newThemeHarness(t)
+	pkg := AtLimits(t)
+	parsed, err := theme.Parse(pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := h.upload(t, pkg, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GetId() != "limits" {
+		t.Fatalf("UploadTheme = %v, want theme limits", got)
+	}
+	if rows, want := h.themeRows(t), [2]int64{1, int64(len(parsed.Files))}; rows != want {
+		t.Fatalf("theme, theme_file rows = %v, want %v", rows, want)
+	}
+}
+
 // expect_id：与包里的 id 不符即拒绝；目标不在即 NotFound；相符则替换，旧包独有的文件消失，启用状态沿用。
 func TestUploadThemeExpectIDAndReplacement(t *testing.T) {
 	h := newThemeHarness(t)
@@ -222,6 +266,65 @@ func TestUploadThemeExpectIDAndReplacement(t *testing.T) {
 	}
 	if list := h.themes(t); len(list) != 1 || !proto.Equal(list[0], want) {
 		t.Fatalf("ListThemes after replacement = %v", list)
+	}
+}
+
+// 同一时刻至多一个上传在校验与入库：一个上传停在入库时，另一个上传立即得到 ResourceExhausted 并说明有上传正在进行；
+// 前一个完成后名额归还，被拒的上传同样归还。让第一个上传停在入库：store 的写入由单个写协程按序执行，
+// TouchSessionAsync 的回调就在写协程里运行，回调阻塞期间 PutTheme 排在它后面等。探测用的上传带一个不是 zip 的包：
+// 拿到名额就在校验时被拒（InvalidArgument），不写库，也就不会自己排进被阻塞的写协程。
+// 先等第一个上传占住名额再探测：探测若赶在它前面，会短暂占住名额，让第一个上传反被拒绝。探测带 5 秒期限：名额
+// 被占时若改成排队，探测会一直停在信号量上，期限让用例当场以断言失败，而不是拖到 go test 的全局超时。
+func TestUploadThemeAdmitsOneAtATime(t *testing.T) {
+	h := newThemeHarness(t)
+	parked, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unpark := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(unpark) // 先于 harness 注册的 store.Close 运行：写协程停着，Close 会一直等它。
+	h.store.TouchSessionAsync([32]byte{}, h.clk.Now(), func(error) {
+		close(parked)
+		<-release
+	})
+	<-parked
+	pkg := Minimal(t, "first")
+	first := make(chan error, 1)
+	go func() {
+		_, err := h.upload(t, pkg, "")
+		first <- err
+	}()
+	for deadline := time.Now().Add(10 * time.Second); len(h.svc.uploading) == 0; time.Sleep(time.Millisecond) {
+		select {
+		case err := <-first:
+			t.Fatalf("first upload returned before taking the upload slot: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("first upload never took the upload slot")
+		}
+	}
+	probe := func() error {
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		_, err := h.admin.UploadTheme(ctx, connect.NewRequest(&probev1.UploadThemeRequest{Package: []byte("not a zip")}))
+		return err
+	}
+	if err := probe(); codeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "another theme upload is in progress") {
+		t.Fatalf("upload while another is storing: %v, want ResourceExhausted saying another upload is in progress", err)
+	}
+	select {
+	case err := <-first:
+		t.Fatalf("first upload returned while the store writer was parked: %v", err)
+	default:
+	}
+	unpark()
+	if err := <-first; err != nil {
+		t.Fatalf("first upload: %v", err)
+	}
+	if err := probe(); codeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("upload after the first finished: %v, want the package judged (InvalidArgument)", err)
+	}
+	if _, err := h.upload(t, Minimal(t, "second"), ""); err != nil {
+		t.Fatalf("upload after a rejected one: %v", err)
 	}
 }
 
@@ -329,10 +432,54 @@ func TestUploadThemeBudgetFitsAFullPackage(t *testing.T) {
 		if len(body) < 4*((c.size+2)/3)+6*32 {
 			t.Fatalf("request is %d bytes; the worst case was not constructed", len(body))
 		}
-		t.Logf("request %d bytes, budget %d", len(body), maxBody)
+		t.Logf("request %d bytes, budget %d", len(body), maxThemeBody)
 		got := rawCall(t, h, "UploadTheme", string(body), cookie)
 		if got.code != "invalid_argument" || !strings.Contains(got.message, c.want) {
 			t.Fatalf("%d-byte package: %+v, want invalid_argument containing %q", c.size, got, c.want)
 		}
 	}
+}
+
+// 解码预算按过程分（service.go 的 maxSettingsBody 与 maxThemeBody）。解码先于鉴权，预算也就是匿名请求被读到的上限：
+// 按描述符枚举 AdminService 的每个过程，匿名发一个恰比 maxSettingsBody 多一字节的请求——UploadTheme 把它读完、由拦截器
+// 给出 unauthenticated，其余过程在解码时就以 resource_exhausted（HTTP 429）拒绝并写明 maxSettingsBody；UploadTheme
+// 自己的上限是 maxThemeBody，多一字节同样被拒。1 MiB 的匿名 ListNodes 是这条界要挡的场景：借一个未知字段把请求撑大。
+func TestDecodeBudgetIsPerProcedure(t *testing.T) {
+	h := newHarness(t, "")
+	// body 恰为 n 字节：{"package":"AAAA…"} 对 UploadTheme 是合法的 bytes 字段（A 解出零字节），对其余过程是未知字段；
+	// base64 取 4 的倍数个字符，余数用 JSON 允许的前导空白补齐。
+	body := func(n int) string {
+		const frame = len(`{"package":""}`)
+		chars := (n - frame) / 4 * 4
+		return strings.Repeat(" ", n-frame-chars) + `{"package":"` + strings.Repeat("A", chars) + `"}`
+	}
+	settingsOver := body(maxSettingsBody + 1)
+	if len(settingsOver) != maxSettingsBody+1 {
+		t.Fatalf("request is %d bytes, want %d", len(settingsOver), maxSettingsBody+1)
+	}
+	refused := func(method string, size int, budget int) {
+		t.Helper()
+		got := rawCall(t, h, method, body(size), nil)
+		if got.status != http.StatusTooManyRequests || got.code != "resource_exhausted" || !strings.Contains(got.message, fmt.Sprintf("larger than configured max %d", budget)) {
+			t.Errorf("anonymous %d-byte %s: %+v, want 429 resource_exhausted naming the %d-byte budget", size, method, got, budget)
+		}
+	}
+	svc := adminService()
+	var sawUpload bool
+	for i := 0; i < svc.Methods().Len(); i++ {
+		name := string(svc.Methods().Get(i).Name())
+		if name != "UploadTheme" {
+			refused(name, maxSettingsBody+1, maxSettingsBody)
+			continue
+		}
+		sawUpload = true
+		if got := rawCall(t, h, name, settingsOver, nil); got.status != http.StatusUnauthorized || got.code != "unauthenticated" {
+			t.Errorf("anonymous %d-byte UploadTheme: %+v, want it read in full and refused by the interceptor (401 unauthenticated)", len(settingsOver), got)
+		}
+		refused(name, maxThemeBody+1, maxThemeBody)
+	}
+	if !sawUpload {
+		t.Fatal("AdminService has no UploadTheme method; the enumeration no longer covers the large budget")
+	}
+	refused("ListNodes", 1<<20, maxSettingsBody)
 }

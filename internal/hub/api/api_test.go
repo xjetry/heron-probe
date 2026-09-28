@@ -706,7 +706,7 @@ func TestSessionBoundaryAndRevocation(t *testing.T) {
 	if _, err := anonymous.ListNodes(ctx, replay); codeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("revoked cookie replay admitted: %v", err)
 	}
-	if _, err := h.admin.CreateNode(ctx, connect.NewRequest(&probev1.CreateNodeRequest{Name: strings.Repeat("x", maxBody+1)})); codeOf(err) != connect.CodeResourceExhausted {
+	if _, err := h.admin.CreateNode(ctx, connect.NewRequest(&probev1.CreateNodeRequest{Name: strings.Repeat("x", maxSettingsBody+1)})); codeOf(err) != connect.CodeResourceExhausted {
 		t.Fatalf("oversized body: %v", err)
 	}
 	for i := 0; i < 5; i++ {

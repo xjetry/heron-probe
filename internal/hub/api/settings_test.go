@@ -221,7 +221,7 @@ func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T)
 	if len(body) < len(logo)+6*maxCSSBytes+6*maxTitleBytes+6*(maxGeoURLBytes-len(geoPrefix)) {
 		t.Fatalf("request is %d bytes; the worst case was not constructed", len(body))
 	}
-	t.Logf("worst-case request: %d bytes, logo %d bytes, budget %d", len(body), len(logo), maxBody)
+	t.Logf("worst-case request: %d bytes, logo %d bytes, budget %d", len(body), len(logo), maxSettingsBody)
 	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/probe.v1.AdminService/UpdateSettings", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
