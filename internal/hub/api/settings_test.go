@@ -144,7 +144,7 @@ func TestUpdateSettingsGroupsAreIndependent(t *testing.T) {
 		{"geo only", &probev1.Settings{GeoEnabled: proto.Bool(true)}, func(s *probev1.Settings) { s.GeoEnabled = proto.Bool(true) }},
 		{"geo_url only", &probev1.Settings{GeoUrl: proto.String("https://geo.example/{ip}")}, func(s *probev1.Settings) { s.GeoUrl = proto.String("https://geo.example/{ip}") }},
 		{"public_enabled only", &probev1.Settings{PublicEnabled: proto.Bool(false)}, func(s *probev1.Settings) { s.PublicEnabled = proto.Bool(false) }},
-		{"backup only", &probev1.Settings{Backup: &probev1.BackupSettings{ConfigKeep: proto.Uint32(24)}}, func(s *probev1.Settings) { s.Backup.ConfigKeep = proto.Uint32(24) }},
+		{"backup only", &probev1.Settings{Backup: &probev1.BackupSettings{ConfigKeep: proto.Uint32(30)}}, func(s *probev1.Settings) { s.Backup.ConfigKeep = proto.Uint32(30) }},
 		{"full backup only", &probev1.Settings{Backup: fullBackup()}, func(s *probev1.Settings) { s.Backup = echoOf(fullBackup(), true) }},
 	} {
 		c.apply(want)
