@@ -9,10 +9,12 @@ import { useState } from "react";
 // 渲染变化的那一帧连同之后，沿用值清空，直到当前 identity 下的查询自己取到数据为止；不传 identity 等于
 // 调用点自己就是身份（默认行为不变，Nodes 页换过滤条件属于这一种——过滤条件变了，"节点列表"这个对象没变）。
 //
-// identity 与沿用值必须记在同一个 state 里，不能用 ref 记 identity：React 可能丢弃一次渲染再重试
-// （例如挂起的 transition），渲染期间的 state 更新随被丢弃的那次渲染一起作废，但 ref 的写入不会跟着回滚。
-// 如果 identity 单独记在 ref 里，丢弃重试后 ref 已经等于新 identity、状态却还没清空，"换对象"这一帧就
-// 漏判成"没换"，重试提交的会是新对象套着上一个对象的数据。
+// identity 必须与沿用值一样记在 state 里，不能记在 ref 里：React 可能丢弃一次渲染再重试（例如挂起的
+// transition），渲染期间的 state 更新随被丢弃的那次渲染一起作废，但 ref 的写入不会跟着回滚。如果 identity
+// 记在 ref 里，丢弃重试后 ref 已经等于新 identity、状态却还没清空，"换对象"这一帧就漏判成"没换"，重试提交的
+// 会是新对象套着上一个对象的数据。两者放进同一个 state 是实现选择，让它们一起回滚；各记一个 state 同样成立。
+// identity 必须按值可比：原始值，或跨渲染稳定的引用。每次渲染都传一个新对象时 changedIdentity 挂载后每帧为真，
+// 渲染期间的 setS 每帧都触发，React 以 Too many re-renders 中止。
 export function useRetained<Q extends { data: unknown; error: unknown }>(q: Q, identity?: unknown): { data: Q["data"]; error: Q["error"]; stale: boolean } {
   const [s, setS] = useState({ identity, last: q.data });
   const changedIdentity = s.identity !== identity;

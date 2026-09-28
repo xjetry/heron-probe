@@ -54,10 +54,11 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, enabled: boo
   const from = to - range.seconds;
   const request = { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: 1000 };
   // 窗口右端每分钟前进一次、切换 range 都会换查询键；换键期间或失败时图表与“级别…”标签不能都消失，也不能
-  // 沿用别的节点的数据。两者都由 metrics.data 派生：data 回到 undefined 时二者都不再渲染。用 useRetained
-  // 沿用本节点上一份成功数据直到当前键取到自己的数据为止，失败只由 error 表达；不用 keepPreviousData——
-  // 它只在挂起期间补位，请求一失败 data 就回到 undefined。identity 传 nodeId：切到另一个节点时丢掉上一
-  // 个节点的沿用值，否则新节点还没有自己的数据时会把上一个节点的图表当成这个节点显示。
+  // 沿用别的节点的数据。指标图与“级别…”标签由 metrics.data 派生，两张探测图由 probes.data 派生：data 回到
+  // undefined 时它们都不再渲染。用 useRetained 沿用本节点上一份成功数据直到当前键取到自己的数据为止，失败
+  // 只由 error 表达；不用 keepPreviousData——它只在挂起期间补位，请求一失败 data 就回到 undefined。identity
+  // 传 nodeId：切到另一个节点时丢掉上一个节点的沿用值，否则新节点还没有自己的数据时会把上一个节点的图表当成
+  // 这个节点显示。
   const metrics = useRetained(useQuery(methods.queryMetrics, request, { enabled }), nodeId);
   const probes = useRetained(useQuery(methods.queryProbes, request, { enabled }), nodeId);
   // useRetained 的返回值是一个不带判别字段的普通对象（不像 useQuery 按 status 分支的联合类型），narrow

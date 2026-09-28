@@ -47,7 +47,7 @@ it("identity 变化的这一帧起不沿用上一个对象的数据，直到新�
 });
 
 // react-router 的 RouterProvider 把路由状态更新包在 startTransition 里；transition 渲染中途挂起
-// （子组件 use() 一个未决的 promise）时，React 保留旧内容不提交，promise 解决后重新渲染整棵树。
+// （子组件 use() 一个未决的 promise）时，React 保留旧内容不提交，promise 解决后从根重试这次渲染，未变的子树跳过。
 // identity 若记在 ref 里，第一次（被丢弃的）渲染已经把 ref 写成了新值，重试时 ref 与新 identity 相等，
 // changedIdentity 判成"没换"，沿用值就漏判成了上一个对象的——这是本用例要钉住不发生的情况。
 it("带新 identity 的 transition 渲染被挂起丢弃后重试，不沿用上一个对象的数据", async () => {
