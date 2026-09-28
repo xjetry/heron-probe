@@ -286,8 +286,9 @@ exec_starts() {
 # （Debian 12 上 systemd 252 实测）：
 # - 单元文件还不存在时它为空，即使 probe-hub.service.d/ 里已有 drop-in。所以首装要等主单元写好之后才查得到：
 #   enable 与 start 之前再查一遍，这一遍也兜住升级时停服前那一遍之后才落盘的 drop-in。
-# - 运行中的 probe-hub 看不到之后才落盘的 drop-in，而 start 之前的 daemon-reload 会让它生效。所以每次先
-#   daemon-reload 再列：它只重读单元文件，不停也不重启运行中的服务（实测 MainPID 不变）。
+# - 运行中的 probe-hub 看不到之后才落盘的 drop-in，而新单元写好之后总要经过 reload 才能启动，那时它就生效了
+#   （实测：不先 reload 就查，旧服务被停，新进程带着这个 drop-in 起来）。所以每次先 daemon-reload 再列：
+#   它只重读单元文件，不停也不重启运行中的服务（实测 MainPID 不变）。
 # 列出的路径拼上 PROBE_INSTALL_ROOT 再读；列出来却读不到的无法判定，一并拒绝。在子 shell 里跑，set -f 不外泄。
 dropins_ok() (
   set -f
