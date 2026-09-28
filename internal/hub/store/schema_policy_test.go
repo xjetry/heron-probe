@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/probe/internal/sqlitetest"
 )
 
 func schemaPolicyFixture(t *testing.T, statements []string, version int) (string, *sql.DB) {
@@ -54,7 +55,7 @@ func assertSchemaLogs(t *testing.T, buf *bytes.Buffer, want ...map[string]any) {
 func TestSchemaPolicyRequiresCurrentWithoutChangingV8(t *testing.T) {
 	path, raw := schemaPolicyFixture(t, schemaV8, 8)
 	seedMinuteRow(t, raw)
-	before := describe(t, raw)
+	before := sqlitetest.Describe(t, raw)
 	var logs bytes.Buffer
 	st, err := Open(path, clock.Real(), slog.New(slog.NewJSONHandler(&logs, nil)), RequireCurrentSchema)
 	if st != nil {
@@ -67,7 +68,7 @@ func TestSchemaPolicyRequiresCurrentWithoutChangingV8(t *testing.T) {
 	if got := userVersion(t, raw); got != 8 {
 		t.Errorf("rejected database user_version = %d, want 8", got)
 	}
-	after := describe(t, raw)
+	after := sqlitetest.Describe(t, raw)
 	if got, want := len(after.Tables["node"]), len(before.Tables["node"]); got != want {
 		t.Errorf("rejected database node columns = %d, want %d", got, want)
 	}
@@ -264,7 +265,7 @@ func TestSchemaPolicyRejectsInvalidPolicy(t *testing.T) {
 	for _, policy := range []SchemaPolicy{0, -1, 3} {
 		t.Run(fmt.Sprint(policy), func(t *testing.T) {
 			path, raw := schemaPolicyFixture(t, schemaV8, 8)
-			before := describe(t, raw)
+			before := sqlitetest.Describe(t, raw)
 			defer func() {
 				if got := recover(); got != "store.Open requires a valid SchemaPolicy" {
 					t.Errorf("invalid policy panic = %v, want explicit SchemaPolicy panic", got)
@@ -272,7 +273,7 @@ func TestSchemaPolicyRejectsInvalidPolicy(t *testing.T) {
 				if got := userVersion(t, raw); got != 8 {
 					t.Errorf("invalid policy changed user_version to %d before panicking, want 8", got)
 				}
-				if after := describe(t, raw); !reflect.DeepEqual(after, before) {
+				if after := sqlitetest.Describe(t, raw); !reflect.DeepEqual(after, before) {
 					t.Error("invalid policy changed schema before panicking")
 				}
 			}()

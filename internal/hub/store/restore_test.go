@@ -9,6 +9,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/xjetry/probe/internal/sqlitetest"
 )
 
 func TestNodeDependentTablesComplete(t *testing.T) {
@@ -24,7 +26,7 @@ func TestNodeDependentTablesComplete(t *testing.T) {
 func TestRestoreRecordMigration(t *testing.T) {
 	schemaV13 := append(slices.Clone(schemaV12), "ALTER TABLE node ADD COLUMN last_source TEXT NOT NULL DEFAULT ''")
 	migrated, fresh := migrateFrom(t, schemaV13, 13, seedMinuteRow)
-	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
+	if got, want := sqlitetest.Describe(t, migrated.r), sqlitetest.Describe(t, fresh.r); !reflect.DeepEqual(got, want) {
 		t.Errorf("restore record migrated schema differs from fresh: got=%v want=%v", got, want)
 	}
 	var count int

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/sqlitetest"
 )
 
 func TestOfflineCommandsRejectV8(t *testing.T) {
@@ -102,25 +104,11 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 			if err := fresh.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if got, want := describeDatabaseColumns(t, raw), describeDatabaseColumns(t, restoreDB(t, freshPath)); got != want {
-				t.Errorf("migrated v8 columns differ from fresh: got=%s want=%s", got, want)
+			if got, want := sqlitetest.Describe(t, raw), sqlitetest.Describe(t, restoreDB(t, freshPath)); !reflect.DeepEqual(got, want) {
+				t.Errorf("migrated v8 schema differs from fresh: got=%v want=%v", got, want)
 			}
 		})
 	}
-}
-
-func describeDatabaseColumns(t *testing.T, db *sql.DB) string {
-	t.Helper()
-	var description string
-	err := db.QueryRow(`SELECT group_concat(row, char(10)) FROM (
-		SELECT s.name || ':' || p.cid || ':' || p.name || ':' || p.type || ':' || p."notnull" || ':' ||
-		coalesce(p.dflt_value, '<null>') || ':' || p.pk AS row
-		FROM sqlite_schema s, pragma_table_info(s.name) p WHERE s.type='table' ORDER BY s.name,p.cid
-	)`).Scan(&description)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return description
 }
 
 // openOffline 的注释声称建立状态的子命令必须放出 store 的 Info 级 schema 事件；
