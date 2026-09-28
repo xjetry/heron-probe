@@ -20,7 +20,9 @@ import (
 // REFERENCES 与外键动作、生成列表达式、ON CONFLICT 子句，以及部分/表达式索引的条件与表达式、
 // 触发器与视图的定义。它们由各项的 sql 字段承担：table_sql 每张表一项，index_sql 给 pragma
 // 描述不全的部分/表达式索引，definition 给触发器与视图。sql 字段一律经 normalizeSQL，
-// 同一结构因建法不同（ALTER TABLE ADD COLUMN、RENAME、注释与缩进）而不同的原文规范化后相同。
+// 同一结构因建法不同（ALTER TABLE ADD COLUMN、注释与缩进）而不同的原文规范化后相同；RENAME 造成的引号差异只在
+// 标识符按小写书写时（本包 DDL 的写法）规范化后相同——SQLite 给改名后的表名加双引号，引号内保留大小写，含大写的
+// 表名两侧会不同，测试红而不会放过缺陷，不为此放宽引号规则（双引号内容在找不到列时是字符串常量）。
 //
 // sqlite_sequence 保留结构与存在性，不比较数据：旧库中的序列值本就可能不同于空库。它的存在只说明
 // 库里建过 AUTOINCREMENT 表（删掉最后一张自增表后它仍在），说明不了哪张表自增，这由 table_sql 区分。
@@ -106,7 +108,7 @@ const signatureObjects = `WITH s AS (SELECT type, name, tbl_name, sql FROM main.
 	WHERE name NOT LIKE 'sqlite\_stat%' ESCAPE '\') `
 
 // normalizeSQL 把 sqlite_schema.sql 的原文化成只随语义变化的文本。同一结构的原文会因建法而异：
-// ALTER TABLE ADD COLUMN 把新列定义以 ", " 接在原文最后的右括号之前，RENAME 让 SQLite 在建表语句
+// ALTER TABLE ADD COLUMN 把新列定义以 ", " 接在最后一个列定义之后（没有表级约束时即最后的右括号之前；有表级约束时在约束列表之前，alert_state 实测插在 PRIMARY KEY 之前），RENAME 让 SQLite 在建表语句
 // 和挂在该表上的索引里把表名写成带双引号的形式，DDL 里还带注释与缩进。规范化只丢弃 SQLite 解析时不起作用的差异：
 //   - 注释（-- 到行尾、/* 到 */）与空白：两个非标点记号之间至多留一个空格，标点两侧不留。
 //   - 引号与字符串常量之外的 ASCII 大小写：SQLite 按 ASCII 不分大小写解析关键字、标识符、类型名、函数名与校对名。
