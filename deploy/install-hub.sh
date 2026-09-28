@@ -18,12 +18,12 @@ REPO=https://github.com/xjetry/probe
 VERSION=""; BASE_URL=""; UNINSTALL=0; PURGE=0; YES=0; OVERRIDES=""
 # 安装器写进单元的 serve 参数，与 cmd/hub/serve.go 定义的 flag 一一对应，由 deploy/installhub_test.go 核对。
 # 命令行覆盖与已装单元的解析共用这一张表；--db 固定为 /var/lib/probe/probe.db，不接受覆盖。
-SERVE_FLAGS='listen timezone trusted-proxies public-dir retention-1m retention-5m retention-1h retention-alert-events'
+SERVE_FLAGS='listen timezone trusted-proxies public-dir theme-origin geo-mmdb retention-1m retention-5m retention-1h retention-alert-events'
 nl='
 '
 cr=$(printf '\r')
 usage() {
-  echo 'usage: install-hub.sh [--version VERSION] [--base-url URL] [--listen ADDR] [--timezone ZONE] [--trusted-proxies CIDRS] [--public-dir DIR] [--retention-1m DURATION] [--retention-5m DURATION] [--retention-1h DURATION] [--retention-alert-events DURATION] [--yes]' >&2
+  echo 'usage: install-hub.sh [--version VERSION] [--base-url URL] [--listen ADDR] [--timezone ZONE] [--trusted-proxies CIDRS] [--public-dir DIR] [--theme-origin ORIGIN] [--geo-mmdb FILE] [--retention-1m DURATION] [--retention-5m DURATION] [--retention-1h DURATION] [--retention-alert-events DURATION] [--yes]' >&2
   echo '       install-hub.sh --uninstall [--purge] [--yes]' >&2
   exit 2
 }

@@ -31,7 +31,7 @@ probe-hub passwd --db /var/lib/probe/probe.db
 
 安装器校验下载包的 SHA256SUMS，以静态系统用户 `probe-hub` 启动服务，确认进程持续存活后才提示设置密码。主机没有 CA 证书包时安装器会装上 `ca-certificates`：不论从哪里下载，hub 发往 Telegram 的告警都走 HTTPS。升级时先让新版本的 `serve` 启动并完成数据库迁移，再使用 `passwd` 等离线子命令。管理员密码由你设置，脚本不生成、不打印密码。
 
-默认只监听 `127.0.0.1:8080`，TLS 交给反向代理。可用 `--listen`、`--timezone`、`--trusted-proxies`、`--public-dir` 和 `--retention-*` 设置 serve 参数；例如：
+默认只监听 `127.0.0.1:8080`，TLS 交给反向代理。可用 `--listen`、`--timezone`、`--trusted-proxies`、`--public-dir`、`--theme-origin`、`--geo-mmdb` 和 `--retention-*` 设置 serve 参数；例如：
 
 ```sh
 curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.sh | sh -s -- \
