@@ -90,7 +90,7 @@ func newHandler(r routes) http.Handler {
 
 // hostname 是 host[:port] 里规范过的主机名：Host 头与 --theme-origin 都经它比较，IPv6 字面量的方括号与端口按同一规则去掉，
 // 再经 canonicalHost。Host 一侧不做 IDNA：浏览器发的 Host 总是 ASCII，--theme-origin 的非 ASCII 写法由 parseThemeOrigin
-// 转成 punycode；别的客户端发来的非 ASCII Host 与之不等，落到主 origin。
+// 转成 punycode；非 ASCII 的 Host 到不了这里，net/http 以 400 拒绝（TestParseThemeOriginAcceptsOnlyHostsNetHTTPServes 钉住）。
 func hostname(hostport string) string {
 	return canonicalHost((&url.URL{Host: hostport}).Hostname())
 }
