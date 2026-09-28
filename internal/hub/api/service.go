@@ -42,22 +42,12 @@ const (
 	// 字节上限是两条推导成立的前提。多余的 JSON 空白、对无需转义的字符的转义不在预算内：这样的请求超出预算时得到
 	// resource_exhausted。
 
-	// maxSettingsBody 是除 UploadTheme 外每个过程的解码预算。它要装下 UpdateSettings 的满额设置按 encoding/json 默认
-	// 写法编码的最坏情况：logo 满额（base64 字符在 JSON 里无需转义）；自定义 CSS、清洗前的标题、国家查询的服务地址、本地库路径与备份
-	// 的六个字符串满额，且每个字节都写成 6 字节；备份通知渠道 ID 满额，每个 22 字节：proto3 JSON 把 int64 写成带引号的
-	// 十进制串，合法 ID 为正、至多 19 位，连引号与逗号共 22 字节；另留 4 KiB 给明暗、主色、总闸与国家查询开关两个布尔值、
-	// geo_backend、备份的四个数值与 has_secret、字段名与 JSON 语法。geo_mmdb_path 的份额是 maxMMDBPathBytes 的 6 倍：
-	// 请求里的值被忽略，但客户端可能把 GetSettings 的回显整份送回，合法回送不能被拒，回显的路径不超过 PATH_MAX
-	// （见 settings.go）。6 字节的来源因字段而异：CSS、标题与备份的 secret 可以含控制字符，
-	// JSON 必须把它们写成 \u00XX；服务地址、备份的 endpoint、区域、access key 与前缀不含控制字符（url.Parse 与各自的
-	// 校验拒绝），JSON 必须转义的只有 " 与 \（各 2 字节），6 倍来自 encoding/json 默认把 <、>、& 写成 \u003c 这类形式，
-	// 而这些字段的校验放行这三个字符；bucket 只含小写字母、数字、点与连字符，按 6 倍计是宽松的上界。encoding/json 默认
-	// 还把 U+2028、U+2029 写成 6 字节（原文 3 字节），同样在 6 倍之内。
-	// 各项的上限在 settings.go 与 backup_settings.go；每个字段的合法取值都有字节上限（明暗与主色由取值集合与格式限定，
-	// 总闸、国家查询开关与 has_secret 只能是 true 或 false，geo_backend 是 int32 枚举，四个数值是 uint32，渠道 ID 至多
-	// maxBackupChannels 个）是这条推导成立的前提。
-	maxSettingsBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes + 6*maxGeoURLBytes + 6*maxMMDBPathBytes +
-		6*(maxEndpointBytes+maxBucketBytes+maxRegionBytes+maxAccessKeyBytes+maxSecretBytes+maxPrefixBytes) + maxBackupChannels*22 + 4<<10
+	// Settings 的预算由 settingsBudget 按字段登记并由 descriptor 汇总，不留隐含语法余量。
+	// 字符串必须有字节上限：控制字符编码成 \u00XX，encoding/json 的 HTML 转义也可能将
+	// <、>、& 膨胀到六字节；只限制清洗后的字符数不足以限制解码前的请求。
+	// proto3 JSON 把正 int64 渠道 ID 编码为至多19位的十进制字符串，另计两个引号与条间逗号。
+	// 列表的方括号与末项没有逗号的差额由 settingsBudget 计算。
+	maxChannelIDJSONBytes = 22
 
 	// maxThemeBody 是 UploadTheme 的解码预算，装下满额主题包的 JSON：bytes 在 JSON 里是带填充的标准 base64，8 MiB
 	// 编码成 4 × ⌈8388608 / 3⌉ = 11184812 字节（base64 字母表无需转义；二进制编码是原样 8 MiB，更小）；另留 4 KiB 给

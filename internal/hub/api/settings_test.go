@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -344,43 +343,22 @@ var (
 	worstBackupSecret = strings.Repeat("\x01", maxSecretBytes)
 )
 
-// worstCaseSettings 是满额设置按 encoding/json 默认写法编码的最坏请求体（service.go 的 maxSettingsBody 写了推导），渠道 ID 由
-// 调用方给出：它们存不存在决定这次保存能否写入。logo 取 longestLogo；标题、CSS 与备份的 secret 用控制字符填满，
-// json.Marshal 把每个控制字符写成 6 字节的 \u00XX，标题的控制字符清洗后不计入 64 个字符，所以这仍是合法的设置；服务
-// 地址、endpoint、区域、access key 与前缀不收控制字符，用 < 或 & 填满，json.Marshal 按 HTML 安全规则把它们同样写成
-// 6 字节；bucket 取最长；明暗取最长的值，总闸、国家查询开关与 has_secret 取较长的 false，四个数值取各自的上限；本地库路径是回显字段，
-// 请求里的值被忽略，这里按份额用 < 填满，模拟把回显整份送回的客户端；字段名用比 camelCase 长的 proto 原名（connect 两种都收）。
+// worstCaseSettings 复用字段生成器，把编码边界中不满足业务约束的值替换为可保存的满额设置。
+// 渠道 ID 由调用方给出，其存在性决定保存结果；不在这里复制预算或语法算式。
 func worstCaseSettings(t *testing.T, channelIDs []string) []byte {
 	t.Helper()
-	logo := longestLogo()
-	body, err := json.Marshal(map[string]any{"settings": map[string]any{
-		"title": strings.Repeat("\x01", maxTitleBytes), "theme": slices.MaxFunc(themes, func(a, b string) int { return len(a) - len(b) }), "accent_color": "#112233",
-		"logo":           logo,
-		"custom_css":     strings.Repeat("\x01", maxCSSBytes),
-		"public_enabled": false,
-		"geo_enabled":    false, "geo_url": worstGeoURL, "geo_backend": "GEO_BACKEND_MMDB", "geo_mmdb_path": strings.Repeat("<", maxMMDBPathBytes),
-		"backup": map[string]any{
-			"endpoint": worstEndpoint, "bucket": strings.Repeat("b", maxBucketBytes),
-			"region": strings.Repeat("<", maxRegionBytes), "access_key": strings.Repeat("<", maxAccessKeyBytes),
-			"secret": worstBackupSecret, "prefix": worstBackupPrefix,
-			"config_interval_s": 86400, "metrics_interval_s": 604800, "config_keep": 1000, "metrics_keep": 1000,
-			"notify": map[string]any{"channel_ids": channelIDs}, "has_secret": false,
-		},
-	}})
-	if err != nil {
-		t.Fatal(err)
+	generators := settingsValueGenerators(channelIDs)
+	for path, value := range map[string]any{
+		"logo": longestLogo(), "geo_url": worstGeoURL,
+		"backup.endpoint": worstEndpoint, "backup.bucket": strings.Repeat("b", maxBucketBytes),
+		"backup.region": strings.Repeat("<", maxRegionBytes), "backup.access_key": strings.Repeat("<", maxAccessKeyBytes),
+		"backup.prefix":            worstBackupPrefix,
+		"backup.config_interval_s": 86400, "backup.metrics_interval_s": 604800,
+		"backup.config_keep": 1000, "backup.metrics_keep": 1000,
+	} {
+		generators[path] = func() any { return value }
 	}
-	// 每一项都按各自的预算项写满，才是这份预算要装下的最坏情况；任一项没有按 6 倍写出，下限就不成立。
-	floor := len(logo) + 6*maxCSSBytes + 6*maxTitleBytes + 6*(len(worstGeoURL)-len(worstGeoPrefix)) + 6*maxMMDBPathBytes +
-		6*(len(worstEndpoint)-len(worstEndpointPrefix)+maxRegionBytes+maxAccessKeyBytes+maxSecretBytes+maxPrefixBytes)
-	for _, id := range channelIDs {
-		floor += len(id) + len(`"",`)
-	}
-	if len(body) < floor {
-		t.Fatalf("request is %d bytes, below the %d bytes of its fields at their budgeted worst case", len(body), floor)
-	}
-	t.Logf("worst-case request: %d bytes, logo %d bytes, budget %d", len(body), len(logo), maxSettingsBody)
-	return body
+	return settingsBody(t, generators)
 }
 
 // postUpdateSettings 以 JSON 调 UpdateSettings：解码预算按线上的字节计，只有 JSON 请求才测得到它。
@@ -416,7 +394,11 @@ func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T)
 		ids = append(ids, id)
 		idTexts = append(idTexts, fmt.Sprint(id))
 	}
-	if status, b := postUpdateSettings(t, h, worstCaseSettings(t, idTexts)); status != http.StatusOK {
+	body := worstCaseSettings(t, idTexts)
+	// 请求长度独立于 Handler 的上限变量；上限少算一字节时，同一请求必须被拒。
+	// 空白不改变字段值，恰好达到预算仍须成功保存，证明读取上限包含等号。
+	body = append(body, bytes.Repeat([]byte(" "), budgetTotal()-len(body))...)
+	if status, b := postUpdateSettings(t, h, body); status != http.StatusOK {
 		t.Fatalf("full settings escaped worst case: %d %s", status, b)
 	}
 	if h.store.PublicEnabled() {
