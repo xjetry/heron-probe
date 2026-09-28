@@ -271,3 +271,38 @@ func TestDeletedChannelReleasesWaitingBatches(t *testing.T) {
 		}
 	}
 }
+
+// 窗口容量把在途的批次算在内：它失败后回到 waiting 只是换个位置，ready、waiting 与在途合计始终不超过 limit。
+// limit 为 1 时，在途批次之外再入队的批次留在库里，由补货在它离开后装入。
+func TestWindowCountsBatchInFlight(t *testing.T) {
+	f := newFixture(t)
+	entered, gate := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-gate
+			w.WriteHeader(500)
+		}
+	}))
+	defer srv.Close()
+	c := queueChannel(t, f, srv.URL)
+	a, b := queueEvent(t, f, c), queueEvent(t, f, c)
+	var sleeps []time.Duration
+	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, advancing(f, &sleeps), f.log)
+	q.limit = 1
+	q.Enqueue(a)
+	stop := startQueue(t, q)
+	<-entered
+	q.Enqueue(b)
+	q.mu.Lock()
+	size, overflow := q.size(), q.overflow
+	q.mu.Unlock()
+	close(gate)
+	if size != 1 || !overflow {
+		t.Fatalf("window with one batch in flight took another: size=%d overflow=%v", size, overflow)
+	}
+	awaitDeliveries(t, f, a.ID, allDone)
+	awaitDeliveries(t, f, b.ID, allDone)
+	stop()
+}
