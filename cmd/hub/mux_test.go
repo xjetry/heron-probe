@@ -43,15 +43,20 @@ func newTestMux(t *testing.T) http.Handler {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return newTestMuxOn(t, st, clk)
+	return newTestMuxOn(t, st, clk, "http://"+testThemeHost)
 }
 
 // testThemeHost 是测试装配的主题 origin 的主机名。主 origin 的用例都带着它跑：分流器在场时主 origin 的行为不变。
 const testThemeHost = "theme.test"
 
-// newTestMuxOn 按 serve 的装配（newHandler）把全部服务挂到给定的库上，主题 origin 为 http://theme.test。
-func newTestMuxOn(t *testing.T, st *store.Store, clk clock.Clock) http.Handler {
+// newTestMuxOn 按 serve 的装配（parseThemeOrigin 与 newHandler）把全部服务挂到给定的库上；themeOriginFlag 是
+// --theme-origin 的原文。
+func newTestMuxOn(t *testing.T, st *store.Store, clk clock.Clock, themeOriginFlag string) http.Handler {
 	t.Helper()
+	themeOrigin, err := parseThemeOrigin(themeOriginFlag)
+	if err != nil {
+		t.Fatal(err)
+	}
 	reg := probe.New(st, slog.Default())
 	a := auth.New(st, reg, clk, slog.Default())
 	l := live.New(clk, 30*time.Second)
@@ -74,7 +79,7 @@ func newTestMuxOn(t *testing.T, st *store.Store, clk clock.Clock) http.Handler {
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: 10 * time.Second, Location: time.UTC}, st, l, book, reg, clk, slog.Default())
 	return newHandler(routes{
 		agent: mountOf(svc.Handler()), admin: mountOf(admin.Handler()), public: mountOf(pub.Handler()), page: web.PublicHandler(),
-		themeOrigin: "http://" + testThemeHost, themePage: web.ThemeHandler(st, web.PublicHandler(), slog.Default()),
+		themeOrigin: themeOrigin, themePage: web.ThemeHandler(st, web.PublicHandler(), slog.Default()),
 	})
 }
 

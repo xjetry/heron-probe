@@ -17,7 +17,8 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 )
 
-func newThemeTestServer(t *testing.T) (*httptest.Server, *store.Store) {
+// newThemeTestServer 起一个按 serve 装配的 hub，themeOriginFlag 是 --theme-origin 的原文。
+func newThemeTestServer(t *testing.T, themeOriginFlag string) (*httptest.Server, *store.Store) {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clk, slog.Default(), store.MigrateSchema)
@@ -25,7 +26,7 @@ func newThemeTestServer(t *testing.T) (*httptest.Server, *store.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	srv := httptest.NewServer(newTestMuxOn(t, st, clk))
+	srv := httptest.NewServer(newTestMuxOn(t, st, clk, themeOriginFlag))
 	t.Cleanup(srv.Close)
 	return srv, st
 }
@@ -86,16 +87,15 @@ func builtinPublic(path string) hostResponse {
 	return hostResponse{rec.Code, rec.Header(), rec.Body.String()}
 }
 
-// 按 Host 分流：去掉端口、不分大小写等于主题 origin 的主机名走主题 origin，其余（包括以它为后缀或前缀的主机名）走主 origin。
-// 两边各自一张 404/200 表。
+// 按 Host 分流：Host 与 --theme-origin 的主机名规范之后相等（去端口、不分大小写、去一个尾点、IP 字面量按 netip、
+// 非 ASCII 的 --theme-origin 按浏览器发的 punycode）走主题 origin，其余（包括以它为后缀或前缀的主机名）走主 origin。
+// 两边各自一张 404/200 表，对主机名、IPv6 字面量、国际化域名三种 --theme-origin 各跑一遍。
 //
 // 表里每一行的应答都不带任何 Access-Control-Allow-* 头，包括两边对 AdminService 过程、PublicService 过程与静态路径的
 // OPTIONS 预检（带 Origin 与 Access-Control-Request-Method/-Headers）。承重的是预检：浏览器的跨源 JSON 请求先发预检，
 // 预检的应答不许可这个 origin，实际请求就不发出；一旦许可（允许源加 Allow-Credentials），兄弟子域上的主题脚本就能带着
 // 管理员的 cookie 把写请求发到面板，副作用在服务端已经发生，读不读得到响应无关紧要。
 func TestHandlerRoutesByHost(t *testing.T) {
-	srv, st := newThemeTestServer(t)
-	installTheme(t, st, "t", map[string]string{"index.html": "theme index", "assets/app.js": "console.log(1)", "admin/index.html": "shadow panel", "probe.v1.PublicService/GetSite": "shadow rpc"})
 	const listNodes, report, getSite = "/probe.v1.AdminService/ListNodes", "/probe.v1.AgentService/Report", "/probe.v1.PublicService/GetSite"
 	type check struct {
 		method, path string
@@ -151,35 +151,51 @@ func TestHandlerRoutesByHost(t *testing.T) {
 		{"OPTIONS", "/", preflight, "a preflight answer"},
 		{"OPTIONS", "/admin/", preflight, "a preflight answer"},
 	}
-	srvHost := strings.TrimPrefix(srv.URL, "http://")
-	for _, c := range []struct {
-		host   string
-		checks []check
+	for _, setup := range []struct {
+		flag        string
+		theme, main []string // 应分到主题 origin 与主 origin 的 Host 头；主 origin 另加 hub 自己的地址。
 	}{
-		{"theme.test", themeChecks},
-		{"theme.test:8080", themeChecks},
-		{"THEME.Test:80", themeChecks},
-		{srvHost, mainChecks},
-		{"panel.test", mainChecks},
-		{"theme.test.evil", mainChecks},
-		{"xtheme.test", mainChecks},
+		{"http://" + testThemeHost,
+			[]string{"theme.test", "theme.test:8080", "THEME.Test:80", "theme.test.", "Theme.Test.:8443"},
+			[]string{"panel.test", "theme.test.evil", "xtheme.test", "theme.test.."}},
+		{"http://[0:0::1]",
+			[]string{"[::1]", "[::1]:8080", "[0:0::1]", "[0000:0000::0001]:80"},
+			[]string{"[::2]", "[::1:0]", "[2001:db8::1]:8080"}},
+		{"https://状态.test",
+			[]string{"xn--t7t692b.test", "XN--T7T692B.test:443", "xn--t7t692b.test."},
+			[]string{"t7t692b.test", "xn--t7t692b.test.evil"}},
 	} {
-		for _, ck := range c.checks {
-			reqBody := ""
-			if ck.method == http.MethodPost {
-				reqBody = "{}"
-			}
-			var header http.Header
-			if ck.method == http.MethodOptions {
-				header = preflightHeader
-			}
-			r := hostDo(t, srv, ck.method, c.host, ck.path, reqBody, header)
-			if !ck.ok(r) {
-				t.Errorf("Host %q %s %s: %d %q %.60q, want %s", c.host, ck.method, ck.path, r.status, r.header.Get("Content-Type"), r.body, ck.want)
-			}
-			for k := range r.header {
-				if strings.HasPrefix(k, "Access-Control-Allow-") {
-					t.Errorf("Host %q %s %s: CORS header %s: %v", c.host, ck.method, ck.path, k, r.header[k])
+		srv, st := newThemeTestServer(t, setup.flag)
+		installTheme(t, st, "t", map[string]string{"index.html": "theme index", "assets/app.js": "console.log(1)", "admin/index.html": "shadow panel", "probe.v1.PublicService/GetSite": "shadow rpc"})
+		type route struct {
+			host   string
+			checks []check
+		}
+		var routes []route
+		for _, h := range setup.theme {
+			routes = append(routes, route{h, themeChecks})
+		}
+		for _, h := range append(setup.main, strings.TrimPrefix(srv.URL, "http://")) {
+			routes = append(routes, route{h, mainChecks})
+		}
+		for _, c := range routes {
+			for _, ck := range c.checks {
+				reqBody := ""
+				if ck.method == http.MethodPost {
+					reqBody = "{}"
+				}
+				var header http.Header
+				if ck.method == http.MethodOptions {
+					header = preflightHeader
+				}
+				r := hostDo(t, srv, ck.method, c.host, ck.path, reqBody, header)
+				if !ck.ok(r) {
+					t.Errorf("--theme-origin %s, Host %q %s %s: %d %q %.60q, want %s", setup.flag, c.host, ck.method, ck.path, r.status, r.header.Get("Content-Type"), r.body, ck.want)
+				}
+				for k := range r.header {
+					if strings.HasPrefix(k, "Access-Control-Allow-") {
+						t.Errorf("--theme-origin %s, Host %q %s %s: CORS header %s: %v", setup.flag, c.host, ck.method, ck.path, k, r.header[k])
+					}
 				}
 			}
 		}
@@ -189,7 +205,7 @@ func TestHandlerRoutesByHost(t *testing.T) {
 // 主题 origin 上 AdminService、AgentService（以及 probe.v1 里 PublicService 之外的任何服务）的每个过程都是 404：
 // 过程从注册表枚举，不手写。PublicService 的过程由 connect 应答（JSON），而不是落到主题的 index.html。
 func TestThemeOriginHidesEveryNonPublicProcedure(t *testing.T) {
-	srv, st := newThemeTestServer(t)
+	srv, st := newThemeTestServer(t, "http://"+testThemeHost)
 	installTheme(t, st, "t", map[string]string{"index.html": "theme index"})
 	count, public := 0, 0
 	protoregistry.GlobalFiles.RangeFilesByPackage("probe.v1", func(file protoreflect.FileDescriptor) bool {
@@ -220,7 +236,7 @@ func TestThemeOriginHidesEveryNonPublicProcedure(t *testing.T) {
 
 // 没有启用中的主题时主题 origin 服务内置公开页：从未装过、装了未启用、停用、启用中的被删掉，四种情形都与内置页逐字节相同。
 func TestThemeOriginFallsBackToBuiltinPublicPage(t *testing.T) {
-	srv, st := newThemeTestServer(t)
+	srv, st := newThemeTestServer(t, "http://"+testThemeHost)
 	assertBuiltin := func(when string) {
 		t.Helper()
 		for _, p := range []string{"/", "/nodes/3"} {
@@ -262,7 +278,7 @@ func TestThemeOriginFallsBackToBuiltinPublicPage(t *testing.T) {
 // 启用中主题的内容只经 PutTheme、EnableTheme、DeleteTheme 改变：每个写者提交之后，主题 origin 的下一个请求就看到新内容。
 // 同一秒内的两次整包替换内容不同、ETag 就不同：带上一次 ETag 的条件请求拿到新内容，而不是 304 让浏览器留着旧包。
 func TestThemeOriginServesEveryWriterCommitOnTheNextRequest(t *testing.T) {
-	srv, st := newThemeTestServer(t)
+	srv, st := newThemeTestServer(t, "http://"+testThemeHost)
 	get := func(ifNoneMatch string) hostResponse {
 		t.Helper()
 		h := http.Header{}
