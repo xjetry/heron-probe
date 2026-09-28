@@ -3,6 +3,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { create } from "@bufbuild/protobuf";
 import { ConnectError, Code } from "@connectrpc/connect";
 import { ChannelKind, ListNotifyChannelsResponseSchema, type SaveNotifyChannelRequest, type UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
+import { MAX_LOGIN_CHANNELS } from "../lib/alerts";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Channels } from "./Channels";
 
@@ -26,6 +27,46 @@ it("登录通知读取选择且只提交通知字段，空集合可关闭", asyn
   fireEvent.click(f.getByLabelText("hook（#2）"));
   fireEvent.click(f.getByRole("button", { name: "保存登录通知" }));
   await waitFor(() => expect(sent[1]?.settings?.loginNotify?.channelIds).toEqual([]));
+});
+
+// 点开删除确认，取出确认旁的提示后取消。
+async function deleteNoteOf(name: string) {
+  fireEvent.click(await screen.findByRole("button", { name: `删除 ${name}` }));
+  const cell = screen.getByRole("button", { name: `确认删除 ${name}` }).closest("td")!;
+  const note = cell.querySelector(".muted")?.textContent ?? null;
+  fireEvent.click(within(cell).getByRole("button", { name: `取消删除 ${name}` }));
+  return note;
+}
+
+it("删除登录通知唯一的接收渠道时，确认写明登录通知会关闭；不在列表里的渠道不提示", async () => {
+  render({});
+  expect([await deleteNoteOf("hook（#2）"), await deleteNoteOf("tg（#1）")]).toEqual(["它是登录通知唯一的接收渠道，删除后登录通知关闭。", null]);
+});
+
+it("删除登录通知的接收渠道之一时，确认写明不再发到它", async () => {
+  render({ getSettings: async () => ({ settings: { theme: "dark", loginNotify: { channelIds: [1n, 2n] } } }) });
+  expect(await deleteNoteOf("tg（#1）")).toBe("删除后登录通知不再发到这个渠道。");
+});
+
+it("设置没读到时删除确认照最坏的情况提醒", async () => {
+  render({ getSettings: async () => { throw new ConnectError("settings unavailable", Code.Unavailable); } });
+  await screen.findByText(/settings unavailable/);
+  expect(await deleteNoteOf("tg（#1）")).toBe("登录通知的设置未读到：它若是登录通知的接收渠道，删除后登录通知不再发到它。");
+});
+
+it("登录通知选满上限后未选的渠道不可再选", async () => {
+  const many = create(ListNotifyChannelsResponseSchema, { channels: Array.from({ length: MAX_LOGIN_CHANNELS + 1 }, (_, i) => (
+    { id: BigInt(i + 1), name: `c${i + 1}`, kind: ChannelKind.TELEGRAM, telegram: { chatId: "42", hasBotToken: true }, createdAt: 1_700_000_000n }
+  )) });
+  const chosen = Array.from({ length: MAX_LOGIN_CHANNELS }, (_, i) => BigInt(i + 1));
+  render({ listNotifyChannels: async () => many, getSettings: async () => ({ settings: { theme: "dark", loginNotify: { channelIds: chosen } } }) });
+  const f = within(await screen.findByRole("form", { name: "登录通知" }));
+  const last = `c${MAX_LOGIN_CHANNELS + 1}（#${MAX_LOGIN_CHANNELS + 1}）`;
+  expect(f.getByLabelText(last)).toBeDisabled();
+  expect(f.getByLabelText("c1（#1）")).toBeEnabled();
+  expect(f.getByText(`最多选 ${MAX_LOGIN_CHANNELS} 个渠道。`)).toBeInTheDocument();
+  fireEvent.click(f.getByLabelText("c1（#1）"));
+  expect(f.getByLabelText(last)).toBeEnabled();
 });
 
 it("登录通知保存中禁用选择，失败显示错误并保留草稿", async () => {

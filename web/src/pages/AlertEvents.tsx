@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService, type AlertDelivery, type ListAlertEventsResponse } from "../gen/probe/v1/admin_pb";
-import { deliveryText, hasErrorText, transitionLabel } from "../lib/alerts";
+import { alarming, deliveryText, hasErrorText, transitionLabel } from "../lib/alerts";
 import { withId } from "../lib/ids";
 
 // 与 hub 的默认页长一致；不足一页即已到最早的事件。
@@ -68,7 +68,7 @@ function EventList({ data, nodeName, channelName, hasNextPage, fetchingNext, onM
               <tr key={String(ev.id)}>
                 <td>{new Date(Number(ev.at) * 1000).toLocaleString()}</td>
                 <td>{nodeName(ev.nodeId)}</td>
-                <td className={ev.transition === "firing" ? "error" : undefined}>{transitionLabel(ev.transition)}</td>
+                <td className={alarming(ev.transition) ? "error" : undefined}>{transitionLabel(ev.transition)}</td>
                 <td>{ev.summary}</td>
                 <td>
                   {ev.deliveries.length === 0

@@ -79,6 +79,12 @@ export function statesOf(states: AlertStateEntry[]): Map<bigint, RuleStates> {
 
 const TRANSITIONS: Record<string, string> = { firing: "触发", recovered: "恢复", login_success: "登录成功", login_locked: "登录锁定" };
 export const transitionLabel = (t: string): string => TRANSITIONS[t] ?? t;
+// 要人立即注意的变化，事件页标红：规则触发，以及登录锁定——有人在猜管理员密码。
+export const alarming = (t: string): boolean => t === "firing" || t === "login_locked";
+
+// 登录通知渠道列表的条数上限，与 hub 的 internal/hub/api/settings.go 里 maxChannelIDs 同值，
+// 由 appearanceLimits.test.ts 对照；面板据此在提交前就不让多选。
+export const MAX_LOGIN_CHANNELS = 16;
 
 // 与 proto DeliveryFailure 逐值对齐（测试按枚举全集核对）；UNSPECIFIED 表示没有失败，不在表里。
 // 面板依赖"HTTP_STATUS 必带 http_status"，由 hub 写库前的校验（DeliveryResult.check）保证；

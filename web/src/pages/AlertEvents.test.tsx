@@ -21,6 +21,8 @@ it("零节点登录事件显示系统与登录结果", async () => {
   ] }) });
   await screen.findByText("密码登录");
   expect(screen.getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").slice(1, 3).map((c) => c.textContent))).toEqual([["系统", "登录成功"], ["系统", "登录锁定"]]);
+  // 登录锁定是有人在猜密码，与规则触发一样标红；登录成功不标。
+  expect([screen.getByRole("cell", { name: "登录锁定" }).className, screen.getByRole("cell", { name: "登录成功" }).className]).toEqual(["error", ""]);
 });
 
 it("一页满 100 条时可加载更早的事件，从本页最小 id 之前继续", async () => {

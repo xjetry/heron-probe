@@ -6,7 +6,7 @@ import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { AdminService, ChannelKind, type NotifyChannel } from "../gen/probe/v1/admin_pb";
-import { CHANNEL_KINDS, channelTarget, labelOf, methodOf } from "../lib/alerts";
+import { CHANNEL_KINDS, MAX_LOGIN_CHANNELS, channelTarget, labelOf, methodOf } from "../lib/alerts";
 import { withId } from "../lib/ids";
 
 const METHODS = ["POST", "PUT", "PATCH"] as const;
@@ -48,6 +48,14 @@ function duplicateHeader(rows: HeaderRow[]): string | undefined {
   return undefined;
 }
 
+// 删除确认里写明对登录通知的影响：hub 删渠道时把它从登录通知列表里摘除，删掉唯一的接收渠道就关闭了登录通知，
+// 而登录通知是密码泄漏当下唯一的信号。设置没读到时不知道它在不在列表里，照最坏的情况提醒，不省略。
+function loginDeleteNote(id: bigint, loginIds: readonly bigint[] | undefined): string | undefined {
+  if (loginIds === undefined) return "登录通知的设置未读到：它若是登录通知的接收渠道，删除后登录通知不再发到它。";
+  if (!loginIds.includes(id)) return undefined;
+  return loginIds.length === 1 ? "它是登录通知唯一的接收渠道，删除后登录通知关闭。" : "删除后登录通知不再发到这个渠道。";
+}
+
 export function Channels() {
   const qc = useQueryClient();
   const [creation, setCreation] = useState(0);
@@ -56,6 +64,8 @@ export function Channels() {
   // 任何新操作开始时，旧的成功提示与失败一并清除；在途请求的迟到结果由 isLatest 挡回，成功与失败同口径。
   const tracked = { ...mutationOptions, onMutate: () => { setNotice(null); return mutationOptions.onMutate(); } };
   const list = useQuery(AdminService.method.listNotifyChannels, {});
+  const settings = useQuery(AdminService.method.getSettings, {});
+  const loginIds = settings.data?.settings?.loginNotify?.channelIds;
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNotifyChannels, cardinality: "finite" }) });
   const create = useMutation(AdminService.method.saveNotifyChannel, { ...tracked, onSuccess: refresh });
   // 各行共用一个 mutation observer，重叠的 mutate 只回调最后一次；任一行保存挂起时禁用全部行的保存。
@@ -84,6 +94,7 @@ export function Channels() {
           <tbody>
             {channels.map((c) => (
               <ChannelRow key={String(c.id)} channel={c} saving={update.isPending} deleting={remove.isPending} testing={test.isPending}
+                deleteNote={loginDeleteNote(c.id, loginIds)}
                 onSave={(d, onSuccess) => update.mutate({ channel: toChannel(c.id, d) }, { onSuccess })}
                 onTest={() => test.mutate({ id: c.id }, { onSuccess: (_r, _v, op) => { if (isLatest(op)) setNotice(`已向 ${c.name} 发送测试消息`); } })}
                 onDelete={() => remove.mutate({ id: c.id })} />
@@ -111,6 +122,8 @@ function LoginNotifications({ channels, deleting }: { channels: NotifyChannel[];
   // 渠道删除后服务端会摘除引用；草稿也只能提交当前列表里仍存在的渠道。
   const selected = channels.filter((c) => (draft ?? gate.data.settings?.loginNotify?.channelIds ?? []).includes(c.id)).map((c) => c.id);
   const pending = update.isPending || deleting;
+  // hub 按原始条数最多收 MAX_LOGIN_CHANNELS 个；选满后未选的禁用，取消一个才能换选，不等提交被拒。
+  const full = selected.length >= MAX_LOGIN_CHANNELS;
   const toggle = (id: bigint) => {
     setDraft(selected.includes(id) ? selected.filter((n) => n !== id) : [...selected, id]);
     setSaved(false);
@@ -126,8 +139,12 @@ function LoginNotifications({ channels, deleting }: { channels: NotifyChannel[];
       {gate.banner}
       <fieldset className="picks" disabled={pending}>
         <legend>接收渠道</legend>
-        {channels.map((c) => <label key={String(c.id)}><input type="checkbox" checked={selected.includes(c.id)} onChange={() => toggle(c.id)} />{withId(c.name, c.id)}</label>)}
+        {channels.map((c) => {
+          const checked = selected.includes(c.id);
+          return <label key={String(c.id)}><input type="checkbox" checked={checked} disabled={full && !checked} onChange={() => toggle(c.id)} />{withId(c.name, c.id)}</label>;
+        })}
         {channels.length === 0 && <p className="muted">先创建通知渠道，再选择接收方。</p>}
+        {channels.length > MAX_LOGIN_CHANNELS && <p className="muted">最多选 {MAX_LOGIN_CHANNELS} 个渠道。</p>}
         <button type="submit">保存登录通知</button>
       </fieldset>
       {update.error != null && <p role="alert" className="error">{errorText(update.error)}</p>}
@@ -221,8 +238,8 @@ function ChannelForm({ title, initial, original, pending, onSubmit, onCancel }: 
   );
 }
 
-function ChannelRow({ channel: c, saving, deleting, testing, onSave, onTest, onDelete }: {
-  channel: NotifyChannel; saving: boolean; deleting: boolean; testing: boolean;
+function ChannelRow({ channel: c, saving, deleting, testing, deleteNote, onSave, onTest, onDelete }: {
+  channel: NotifyChannel; saving: boolean; deleting: boolean; testing: boolean; deleteNote?: string;
   onSave: (d: Draft, onSuccess: () => void) => void; onTest: () => void; onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -243,7 +260,7 @@ function ChannelRow({ channel: c, saving, deleting, testing, onSave, onTest, onD
       <td>
         <button type="button" className="link" aria-label={`编辑 ${withId(c.name, c.id)}`} onClick={() => setEditing(true)}>编辑</button>{" "}
         <button type="button" className="link" aria-label={`发送测试 ${withId(c.name, c.id)}`} disabled={testing} onClick={onTest}>发送测试</button>{" "}
-        <ConfirmDelete label={`删除 ${withId(c.name, c.id)}`} confirm={`确认删除 ${withId(c.name, c.id)}`} pending={deleting} onDelete={onDelete} />
+        <ConfirmDelete label={`删除 ${withId(c.name, c.id)}`} confirm={`确认删除 ${withId(c.name, c.id)}`} note={deleteNote} pending={deleting} onDelete={onDelete} />
       </td>
     </tr>
   );
