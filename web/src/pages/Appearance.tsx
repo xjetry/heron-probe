@@ -153,8 +153,9 @@ const toGeoDraft = (s: Settings | undefined): GeoDraft => ({ geoEnabled: s?.geoE
 
 // 国家 / 地区查询的开关与服务地址。只提交这两项：UpdateSettings 按组判定，外观、总闸与备份缺席即不改。于是只改查询设置
 // 既不会顺带保存上面表单里外观与总闸的未保存改动，也不会把缓存里可能已过时的外观写回去（别处刚改过的外观不被覆盖）。
-// current 只用来初始化草稿。保存与其余设置表单互斥（SAVE_SETTINGS）。出网告知按 hub 回显的部署后端裁决，不由表单草稿
-// 决定。
+// current 是 hub 的回显：它初始化草稿，也给出"当前后端"一行（后端种类、本地文件路径、已保存的服务地址）。保存与其余
+// 设置表单互斥（SAVE_SETTINGS）。出网告知写哪一版按回显的后端种类裁决，不由表单草稿决定；HTTP 后端下告知里的服务地址
+// 取草稿，随输入更新。
 function GeoLookup({ current }: { current: Settings | undefined }) {
   const adoptSaved = useAdoptSavedSettings();
   const [draft, setDraft] = useState<GeoDraft | null>(null);
