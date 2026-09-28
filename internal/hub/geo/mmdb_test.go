@@ -5,6 +5,8 @@ import (
 	"net/netip"
 	"testing"
 	"time"
+
+	"github.com/xjetry/probe/internal/hub/store"
 )
 
 // 计数器包住真实读取器，区分没有查询与查询但没有写入；不伪造后端结果。
@@ -13,9 +15,9 @@ type countedBackend struct {
 	calls []string
 }
 
-func (b *countedBackend) Lookup(ctx context.Context, addr netip.Addr) (string, error) {
+func (b *countedBackend) Lookup(ctx context.Context, s store.GeoSettings, addr netip.Addr) (string, error) {
 	b.calls = append(b.calls, addr.String())
-	return b.Backend.Lookup(ctx, addr)
+	return b.Backend.Lookup(ctx, s, addr)
 }
 
 func withMMDB(t *testing.T, f *fixture) *countedBackend {
@@ -86,4 +88,27 @@ func TestMMDBFailuresBackOff(t *testing.T) {
 			f.wantRequests()
 		})
 	}
+}
+
+// mmdb 下 geo.url 不生效，退避键的服务一项是库路径：查不到的地址进了退避之后改 geo.url，不到一小时仍不重查。
+func TestMMDBBackoffSurvivesAGeoURLChange(t *testing.T) {
+	f := newFixture(t)
+	b := withMMDB(t, f)
+	f.enable(true)
+	id := f.report("node", "11.0.0.1")
+	f.sweep()
+	if len(b.calls) != 1 {
+		t.Fatalf("initial mmdb calls = %v, want one", b.calls)
+	}
+	other := f.svc.srv.URL + "/other/{ip}"
+	if err := f.saveGeo(t.Context(), store.GeoUpdate{URL: &other}); err != nil {
+		t.Fatal(err)
+	}
+	f.clk.Advance(time.Minute)
+	f.sweep()
+	if len(b.calls) != 1 {
+		t.Errorf("mmdb calls after changing geo.url = %v, want the backoff to hold", b.calls)
+	}
+	f.wantCountry(id, "", "")
+	f.wantRequests()
 }

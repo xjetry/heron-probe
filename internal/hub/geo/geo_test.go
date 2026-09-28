@@ -162,7 +162,7 @@ func newFixture(t *testing.T) *fixture {
 
 // restart 换一个新的查询器，与 hub 重启后一样没有任何内存状态；库与假服务不变。
 func (f *fixture) restart() {
-	f.r = New(f.st, NewHTTP(f.st, alert.NewHTTPClient()), f.clk, slog.New(slog.NewTextHandler(f.logs, nil)))
+	f.r = New(f.st, NewHTTP(alert.NewHTTPClient()), f.clk, slog.New(slog.NewTextHandler(f.logs, nil)))
 }
 
 func (f *fixture) enable(on bool) {
@@ -481,6 +481,71 @@ func TestURLChangeMidSweepTakesEffectForTheNextRequest(t *testing.T) {
 	}
 	f.sweep()
 	f.wantRequests("/8.8.8.8/country", "/other/1.1.1.1", "/other/9.9.9.9")
+}
+
+// 一轮之中，同一次保存里关掉开关并把服务地址换成 B：这之后一个请求都不发往 B，原服务也只收到保存之前发出的那一个。
+// B 从未与"开启"一起保存过，发往 B 就是把节点地址交给运维没有授权过的服务：一次外呼用的开关与服务地址必须出自同一次
+// 读取。两条断言分开写：发往 B 说明开关与地址来自两次读取，原服务多收说明开关没在每次外呼前重读。
+func TestDisablingAndSwitchingServiceInOneSaveSendsNothingToTheNewService(t *testing.T) {
+	f := newFixture(t)
+	f.enable(true)
+	for _, addr := range []string{"8.8.8.8", "1.1.1.1"} {
+		f.report(addr, addr)
+	}
+	off, other := false, f.svc.srv.URL+"/other/{ip}"
+	f.svc.reply = func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/8.8.8.8/country" {
+			if err := f.saveGeo(r.Context(), store.GeoUpdate{Enabled: &off, URL: &other}); err != nil {
+				t.Error(err)
+			}
+		}
+		io.WriteString(w, "US")
+	}
+	f.sweep()
+	var original, switched []string
+	for _, p := range f.svc.paths() {
+		if strings.HasPrefix(p, "/other/") {
+			switched = append(switched, p)
+		} else {
+			original = append(original, p)
+		}
+	}
+	if len(switched) != 0 {
+		t.Errorf("requests to the service saved together with the switch off = %q, want none", switched)
+	}
+	if !slices.Equal(original, []string{"/8.8.8.8/country"}) {
+		t.Errorf("requests to the original service = %q, want only the one sent before the save", original)
+	}
+}
+
+// saveFirst 在把查询转交给真实后端之前先保存一次设置：保存因此落在查询器读完设置之后、后端发出之前，不依赖 Sweep
+// 内部的调用顺序。
+type saveFirst struct {
+	Backend
+	t    *testing.T
+	save func(context.Context) error
+}
+
+func (b saveFirst) Lookup(ctx context.Context, s store.GeoSettings, addr netip.Addr) (string, error) {
+	if err := b.save(ctx); err != nil {
+		b.t.Error(err)
+	}
+	return b.Backend.Lookup(ctx, s, addr)
+}
+
+// 运维恰在查询器读完设置、HTTP 后端发出之前保存"关闭 + 换成 B"：这一个请求仍发往与"开启"一起读到的原服务（不变式
+// 允许的"刚读完设置、正要发出的那一个"），不发往 B。后端若另读设置，就会拿着这次保存的 B 发出。
+func TestHTTPBackendSendsToTheServiceReadWithTheSwitch(t *testing.T) {
+	f := newFixture(t)
+	f.enable(true)
+	id := f.report("a", "8.8.8.8")
+	off, other := false, f.svc.srv.URL+"/other/{ip}"
+	f.r.backend = saveFirst{Backend: f.r.backend, t: t, save: func(ctx context.Context) error {
+		return f.saveGeo(ctx, store.GeoUpdate{Enabled: &off, URL: &other})
+	}}
+	f.sweep()
+	f.wantRequests("/8.8.8.8/country")
+	f.wantCountry(id, "US", "8.8.8.8")
 }
 
 // 退避的键含服务地址：旧服务失败留下的退避不挡住对新服务的查询，改了服务地址的下一轮即重查；旧服务的那一条随之丢掉。

@@ -18,8 +18,8 @@ const (
 	// SweepEvery 是查询器巡检节点的间隔。来源地址随分钟行刷出落盘（WriteMinuteBatch），地址变化到重查至多再等一个
 	// 间隔加上正在进行的那一轮：一轮里的查询串行发出，最坏是待查节点数乘以客户端的总超时。
 	SweepEvery = 30 * time.Second
-	// RetryAfter 是一次失败之后同一节点、同一地址、同一服务地址的退避：没有退避，一个坏链路（服务宕机、限流、返回
-	// 错误页）会让每一轮巡检都对同一地址外呼一次。
+	// RetryAfter 是一次失败之后同一节点、同一地址、同一服务（见 Backend.Service）的退避：没有退避，一个坏链路（服务
+	// 宕机、限流、返回错误页）或一个本地库里没有答案的地址会让每一轮巡检都对同一地址查一次。
 	RetryAfter = time.Hour
 	// answersPerNode 是查询器为每个节点记住答案的地址数，保留最近用到的那几个。v4 与 v6 交替上报的节点在两个地址
 	// 之间来回，记住它们，来回切换就命中而不外呼；上界让出口不断变化的节点不会让表无限增长，代价是超过这个数的地址
@@ -117,17 +117,18 @@ type Resolver struct {
 	// 一变就清空，节点换回之前查过的地址时，只要那个地址还在这张表里就由它写回、不再外呼。超过 answersPerNode 个地址
 	// 轮换时，被挤出的地址再来会再查；重启清空这张表，节点之后换到的地址各再查一次。
 	answers map[int64][]answer
-	// retryAt 是每个（节点, 地址, 服务地址）下次允许查询的单调钟时刻，只记失败。键含服务地址：运维换了服务，旧服务
-	// 留下的退避不挡住对新服务的查询。用单调钟：墙钟被拨动时退避不会提前结束或拖长（见 clock）。
+	// retryAt 是每个（节点, 地址, 服务）下次允许查询的单调钟时刻，只记失败。服务一项由后端给出（Backend.Service）：
+	// HTTP 是服务地址，运维换了服务，旧服务留下的退避不挡住对新服务的查询；mmdb 是库路径，改不生效的 geo.url 不清掉
+	// 退避。用单调钟：墙钟被拨动时退避不会提前结束或拖长（见 clock）。
 	retryAt map[target]time.Duration
 }
 
 type answer struct{ addr, country string }
 
 type target struct {
-	node int64
-	addr string
-	url  string
+	node    int64
+	addr    string
+	service string
 }
 
 func New(st *store.Store, backend Backend, clk clock.Clock, log *slog.Logger) *Resolver {
@@ -150,11 +151,13 @@ func (r *Resolver) Run(ctx context.Context) {
 }
 
 // Sweep 查一轮：对来源地址是公网、库里尚无该地址答案（last_source != country_ip）的节点，记住过这个地址的答案就
-// 直接写回，没有且不在退避期就按服务地址发出一次查询。
+// 直接写回，没有且不在退避期就向后端查询一次。
 //
 // 不变式：每次外呼都由发出时刻的开关与服务地址授权。一轮开头读一次设置，此后每个待查节点处理之前再读一次
-// （GeoSettings 是读池上的一条 SELECT），读到关闭即结束本轮，服务地址取这次读到的值；读与发出之间只有内存里的
-// 判断（答案表、退避表）。查询在本协程里串行发出，所以关闭之后至多还有一个请求——在途的，或刚读完设置、正要
+// （GeoSettings 是读池上的一条 SELECT），读到关闭即结束本轮；读到的这一份原样交给后端（Backend.Lookup 的参数），
+// 退避键的服务一项也由后端按这一份给出（Backend.Service）。两个后端都不持有 store（NewHTTP 只接出站客户端，
+// OpenMMDB 只接路径），不会另读设置，所以一次外呼的开关与服务地址出自同一次读取，退避键里的服务就是实际查询的那个。
+// 读与发出之间只有内存里的判断（答案表、退避表）。查询在本协程里串行发出，所以关闭之后至多还有一个请求——在途的，或刚读完设置、正要
 // 发出的那一个——上界是客户端的总超时。一轮最坏是待查节点数乘以总超时，只在开头读一次、整轮沿用，关闭开关或
 // 换服务就要等这么久才生效。
 //
@@ -188,12 +191,12 @@ func (r *Resolver) Sweep(ctx context.Context) error {
 			}
 			continue
 		}
-		k := target{n.ID, n.LastSource, settings.URL}
+		k := target{n.ID, n.LastSource, r.backend.Service(settings)}
 		pending[k] = true
 		if at, ok := r.retryAt[k]; ok && r.clk.Mono() < at {
 			continue
 		}
-		country, err := r.backend.Lookup(ctx, addr)
+		country, err := r.backend.Lookup(ctx, settings, addr)
 		if err == nil && !store.IsCountryCode(country) {
 			err = errNotCountry
 		}
@@ -212,7 +215,7 @@ func (r *Resolver) Sweep(ctx context.Context) error {
 		}
 	}
 	// 两张表只为仍在的节点保留：节点删除后它的答案与退避在这里丢掉。退避另外只保留这一轮仍待查的（节点, 地址,
-	// 服务地址）：节点换了地址、已有答案、运维换了服务地址之后的旧条目都丢掉，表不随地址或服务的变化增长。读到关闭时
+	// 服务）：节点换了地址、已有答案、HTTP 下运维换了服务地址之后的旧条目都丢掉，表不随地址或服务的变化增长。读到关闭时
 	// Sweep 在这之前就返回了，关闭期间的旧条目到重新开启后的第一轮才丢；关闭期间的巡检不添条目，表也不增长。
 	for id := range r.answers {
 		if !listed[id] {

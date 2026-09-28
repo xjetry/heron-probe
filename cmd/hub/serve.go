@@ -155,7 +155,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	alerts := alert.New(alert.Config{TTL: ttl, Location: loc}, st, l, clk, log)
 	// 通知渠道与国家查询共用一个出站客户端（§4.9 复用 §9.3 的那一个）：不跟随重定向、带总超时的出站行为只有一份。
 	outbound := alert.NewHTTPClient()
-	var geoBackend geo.Backend = geo.NewHTTP(st, outbound)
+	var geoBackend geo.Backend = geo.NewHTTP(outbound)
 	if localGeo != nil {
 		geoBackend = localGeo
 	}
