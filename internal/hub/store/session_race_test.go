@@ -47,7 +47,10 @@ func TestDelayedSessionTouchCannotResurrectLogout(t *testing.T) {
 		err error
 	}
 	authenticated := make(chan authentication, 1)
-	go func() { ok, err := a.AuthenticateSession(ctx, token); authenticated <- authentication{ok, err} }()
+	go func() {
+		_, ok, err := a.AuthenticateSession(ctx, []string{token})
+		authenticated <- authentication{ok, err}
+	}()
 	var result authentication
 	blocked := false
 	select {
@@ -71,14 +74,14 @@ func TestDelayedSessionTouchCannotResurrectLogout(t *testing.T) {
 	if err := auth.New(other, probe.New(other, log), clk, log).Logout(ctx, token); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := st.Session(ctx, auth.HashToken(token)); err != nil || ok {
-		t.Fatalf("logout did not remove session before refresh: %v %v", ok, err)
+	if m, err := st.SessionsByHash(ctx, [][32]byte{auth.HashToken(token)}); err != nil || len(m) != 0 {
+		t.Fatalf("logout did not remove session before refresh: %v %v", m, err)
 	}
 	release()
 	if err := drain(); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := st.Session(ctx, auth.HashToken(token)); err != nil || ok {
-		t.Fatalf("delayed refresh resurrected logged-out session: %v %v", ok, err)
+	if m, err := st.SessionsByHash(ctx, [][32]byte{auth.HashToken(token)}); err != nil || len(m) != 0 {
+		t.Fatalf("delayed refresh resurrected logged-out session: %v %v", m, err)
 	}
 }

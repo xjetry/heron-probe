@@ -103,10 +103,10 @@ func TestLoginIssuesSessionAndLocksOutAfterFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("another address must not be affected: %v", err)
 	}
-	if ok, err := a.AuthenticateSession(ctx, tok); err != nil || !ok {
+	if _, ok, err := a.AuthenticateSession(ctx, []string{tok}); err != nil || !ok {
 		t.Fatalf("fresh session rejected: %v %v", ok, err)
 	}
-	if ok, _ := a.AuthenticateSession(ctx, "not a token"); ok {
+	if _, ok, _ := a.AuthenticateSession(ctx, []string{"not a token"}); ok {
 		t.Fatal("unknown token authenticated")
 	}
 	clk.Advance(failWindow)
@@ -146,20 +146,20 @@ func TestSessionExpiresIdleAndAbsolute(t *testing.T) {
 	}
 	idle, _ := a.Login(ctx, goodPassword, from)
 	clk.Advance(SessionIdle)
-	if ok, _ := a.AuthenticateSession(ctx, idle); ok {
+	if _, ok, _ := a.AuthenticateSession(ctx, []string{idle}); ok {
 		t.Fatal("idle session survived SessionIdle")
 	}
 	active, _ := a.Login(ctx, goodPassword, from)
 	step := 12 * time.Hour
 	for elapsed := time.Duration(0); elapsed+step < SessionAbsolute; elapsed += step {
 		clk.Advance(step)
-		if ok, err := a.AuthenticateSession(ctx, active); err != nil || !ok {
+		if _, ok, err := a.AuthenticateSession(ctx, []string{active}); err != nil || !ok {
 			t.Fatalf("session used every %v died after %v: %v %v", step, elapsed+step, ok, err)
 		}
 		waitTouch(t, a, active) // 等异步记录落库，下一次空闲判定才以它为基准
 	}
 	clk.Advance(step)
-	if ok, _ := a.AuthenticateSession(ctx, active); ok {
+	if _, ok, _ := a.AuthenticateSession(ctx, []string{active}); ok {
 		t.Fatal("session survived SessionAbsolute although it was kept active")
 	}
 }
@@ -169,10 +169,12 @@ func TestSessionExpiresIdleAndAbsolute(t *testing.T) {
 func waitTouch(t *testing.T, a *Auth, token string) {
 	t.Helper()
 	testwait.Until(t, time.Millisecond, func() bool {
-		sess, ok, err := a.store.Session(context.Background(), HashToken(token))
+		h := HashToken(token)
+		m, err := a.store.SessionsByHash(context.Background(), [][32]byte{h})
 		if err != nil {
 			t.Fatal(err)
 		}
+		sess, ok := m[h]
 		return ok && sess.LastUsedAt.Equal(a.clk.Now())
 	}, "last_used_at was not recorded")
 }
@@ -188,7 +190,7 @@ func TestPasswordChangeRevokesSessions(t *testing.T) {
 	if err := a.SetPassword(ctx, "another long password"); err != nil {
 		t.Fatal(err)
 	}
-	if ok, _ := a.AuthenticateSession(ctx, tok); ok {
+	if _, ok, _ := a.AuthenticateSession(ctx, []string{tok}); ok {
 		t.Fatal("session survived a password change")
 	}
 	if _, err := a.Login(ctx, goodPassword, from); !errors.Is(err, ErrBadPassword) {
@@ -206,7 +208,7 @@ func TestLogoutEndsSession(t *testing.T) {
 	if err := a.Logout(ctx, tok); err != nil {
 		t.Fatal(err)
 	}
-	if ok, _ := a.AuthenticateSession(ctx, tok); ok {
+	if _, ok, _ := a.AuthenticateSession(ctx, []string{tok}); ok {
 		t.Fatal("session survived logout")
 	}
 }
@@ -465,7 +467,7 @@ func TestSessionAuthenticationDoesNotUseLoginGate(t *testing.T) {
 	defer release()
 	done := make(chan error, 1)
 	go func() {
-		ok, err := a.AuthenticateSession(ctx, token)
+		_, ok, err := a.AuthenticateSession(ctx, []string{token})
 		if err == nil && !ok {
 			err = errors.New("live session rejected")
 		}
@@ -779,14 +781,15 @@ func TestSessionTouchThreshold(t *testing.T) {
 	initial := clk.Now()
 	for _, elapsed := range []time.Duration{touchEvery - time.Second, time.Second} {
 		clk.Advance(elapsed)
-		if ok, err := a.AuthenticateSession(ctx, tok); err != nil || !ok {
+		if _, ok, err := a.AuthenticateSession(ctx, []string{tok}); err != nil || !ok {
 			t.Fatalf("live session rejected: %v %v", ok, err)
 		}
 		// 同步写排在异步刷新之后，完成时才读回，以免用空队列竞态证明未刷新。
 		if _, err := st.DeleteExpiredSessions(ctx, initial); err != nil {
 			t.Fatal(err)
 		}
-		sess, ok, err := st.Session(ctx, HashToken(tok))
+		m, err := st.SessionsByHash(ctx, [][32]byte{HashToken(tok)})
+		sess, ok := m[HashToken(tok)]
 		want := initial
 		if clk.Now().Sub(initial) >= touchEvery {
 			want = clk.Now()
@@ -794,5 +797,40 @@ func TestSessionTouchThreshold(t *testing.T) {
 		if err != nil || !ok || !sess.LastUsedAt.Equal(want) {
 			t.Fatalf("touch threshold: last=%v want=%v ok=%v err=%v", sess.LastUsedAt, want, ok, err)
 		}
+	}
+}
+
+// 过期的候选不挡住后面活着的那个；查到的过期会话不论排在选中的那个之前还是之后都删掉，删掉后墙钟回拨也不会复活它。
+func TestAuthenticateSessionPicksFirstLiveCandidateAndDeletesExpiredOnes(t *testing.T) {
+	for _, expiredFirst := range []bool{true, false} {
+		t.Run(fmt.Sprint("expiredFirst=", expiredFirst), func(t *testing.T) {
+			a, st, clk := setup(t)
+			ctx := context.Background()
+			from := netip.MustParseAddr("10.0.0.1")
+			if err := a.SetPassword(ctx, goodPassword); err != nil {
+				t.Fatal(err)
+			}
+			expired, err := a.Login(ctx, goodPassword, from)
+			if err != nil {
+				t.Fatal(err)
+			}
+			clk.Advance(SessionIdle)
+			live, err := a.Login(ctx, goodPassword, from)
+			if err != nil {
+				t.Fatal(err)
+			}
+			unknown, _ := NewToken()
+			candidates := []string{"not a token", unknown, expired, live}
+			if !expiredFirst {
+				candidates = []string{"not a token", unknown, live, expired}
+			}
+			got, ok, err := a.AuthenticateSession(ctx, candidates)
+			if err != nil || !ok || got != live {
+				t.Fatalf("AuthenticateSession(%v) = %q %v %v, want the live session", candidates, got, ok, err)
+			}
+			if m, err := st.SessionsByHash(ctx, [][32]byte{HashToken(expired)}); err != nil || len(m) != 0 {
+				t.Errorf("expired candidate was not deleted: %v %v", m, err)
+			}
+		})
 	}
 }

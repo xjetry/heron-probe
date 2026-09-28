@@ -17,3 +17,17 @@ func NewToken() (string, [32]byte) {
 }
 
 func HashToken(plain string) [32]byte { return sha256.Sum256([]byte(plain)) }
+
+// isTokenShaped 判定 s 是否具有 NewToken 明文的形状：64 个小写十六进制字符（hex.EncodeToString 只产生小写）。
+// 形状不符的字符串不可能是 NewToken 签发的 token，鉴权可以不查库就拒绝它。
+func isTokenShaped(s string) bool {
+	if len(s) != 2*32 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; !('0' <= c && c <= '9' || 'a' <= c && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}

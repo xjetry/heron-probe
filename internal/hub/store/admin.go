@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -66,15 +67,31 @@ func (s *Store) CreateSession(ctx context.Context, hash [32]byte, now, expires t
 	})
 }
 
-func (s *Store) Session(ctx context.Context, hash [32]byte) (Session, bool, error) {
-	sess, err := scanSession(s.r.QueryRowContext(ctx, "SELECT token_hash, created_at, last_used_at, expires_at FROM admin_session WHERE token_hash = ?", hash[:]).Scan)
-	if err == sql.ErrNoRows {
-		return Session{}, false, nil
+// SessionsByHash 用一条查询读出 hashes 中存在的会话，按 hash 索引；库里没有的 hash 不出现在结果里，重复的 hash 只算一次。
+// 每个 hash 占一个 SQL 变量，modernc.org/sqlite 内置的 SQLite 最多接受 32766 个，超过时整条查询报错；
+// 鉴权路径上候选数为何到不了这个数见 auth.AuthenticateSession。
+func (s *Store) SessionsByHash(ctx context.Context, hashes [][32]byte) (map[[32]byte]Session, error) {
+	out := map[[32]byte]Session{}
+	if len(hashes) == 0 {
+		return out, nil
 	}
+	args := make([]any, len(hashes))
+	for i := range hashes {
+		args[i] = hashes[i][:]
+	}
+	rows, err := s.r.QueryContext(ctx, "SELECT token_hash, created_at, last_used_at, expires_at FROM admin_session WHERE token_hash IN (?"+strings.Repeat(",?", len(hashes)-1)+")", args...)
 	if err != nil {
-		return Session{}, false, err
+		return nil, err
 	}
-	return sess, true, nil
+	defer rows.Close()
+	for rows.Next() {
+		sess, err := scanSession(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out[sess.TokenHash] = sess
+	}
+	return out, rows.Err()
 }
 
 // Sessions 读取持久化会话；有效性由 auth 与鉴权路径共用的判定裁决。

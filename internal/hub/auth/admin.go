@@ -187,31 +187,73 @@ func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from ne
 	return phc, nil
 }
 
-// AuthenticateSession 判定 cookie 里的 token 是否对应一个活着的会话。
+// AuthenticateSession 在会话 cookie 的全部候选值里找出第一个对应活着的会话的，返回它；一个都没有时第二个返回值为 false。
 //
-// 会话时刻必须跨重启持久化，所以过期与最近使用用墙钟；回拨会推迟过期，
-// 前拨可能提前过期。过期时尝试删除，成功后回拨也不会复活该会话；删除失败记日志。
-func (a *Auth) AuthenticateSession(ctx context.Context, token string) (bool, error) {
-	h := HashToken(token)
-	sess, ok, err := a.store.Session(ctx, h)
-	if err != nil || !ok {
-		return false, err
+// 候选是请求里全部非空的 probe_session 值，按出现顺序排列（api 包的 sessionCandidates），其中可以混着别的主机写进
+// 浏览器的值。不变式：多出来的候选不改变有效候选的结论——逐个校验、任一有效即通过，不设个数上限；设上限等于让写
+// cookie 的一方用更多的值把有效值挤出去。校验不通过只返回 false：这里不调用 Login，也不碰按来源的登录失败计数
+// （计数只在 verifyLoginPassword 里记），所以无效候选再多也不会让任何来源被锁定。
+//
+// 多个候选都有效时取顺序上第一个。hub 只有一个管理员，任一有效 token 证明的是同一身份，选哪个不影响准入；
+// 调用方把选中的那个放进 ctx，它决定 Logout 吊销哪个会话、撤销当前会话时是否清 cookie、会话列表把哪个标为当前，
+// 这里也只刷新它的最近使用时刻。按候选顺序选，会话状态不变时同一个 Cookie 头每次选中同一个会话。
+//
+// 形状不是 NewToken 明文的候选不可能是会话，查库前丢弃；其余去重后合成一条 SessionsByHash 查询，每个候选占一个
+// SQL 变量。变量数有界：一个成形的候选在 Cookie 头里至少占 79 字节（"probe_session=" 14 字节、token 64 字节、
+// 分隔符 ";" 1 字节）；net/http 为一个 HTTP/1.1 请求头读入的字节不超过 MaxHeaderBytes 加两份 4096 字节（读取上限
+// 自带的余量，以及设上限之前已在 4096 字节读缓冲区里的部分，例如空闲连接上等待下一个请求时的预读）；cmd/hub 的 http.Server
+// 在明文监听上只说 HTTP/1.1、不设 MaxHeaderBytes，取默认 1 MiB。所以候选至多 (1 MiB + 8 KiB) / 79 向下取整即
+// 13376 个，低于 SQLite 的变量上限 32766。推导在 MaxHeaderBytes 加 8 KiB 不超过 32766 × 79 字节时成立，即
+// MaxHeaderBytes 约 2.46 MiB 以内。形状过滤是推导的另一个前提：不成形的值可以只有几个字节，默认头部上限里
+// 能放下五万多个互不相同的这种值，超过变量上限。cmd/hub 的 TestServeSessionCookieFilledToHeaderLimit 在真实
+// serve 上用两种伪造值把 Cookie 头填到上限，分别钉住这两个前提。
+//
+// 会话时刻必须跨重启持久化，所以过期与最近使用用墙钟；回拨会推迟过期，前拨可能提前过期。查到的过期会话尝试删除，
+// 成功后回拨也不会复活它；删除失败记日志。
+func (a *Auth) AuthenticateSession(ctx context.Context, candidates []string) (string, bool, error) {
+	var tokens []string
+	var hashes [][32]byte
+	seen := map[string]bool{}
+	for _, c := range candidates {
+		if isTokenShaped(c) && !seen[c] {
+			seen[c] = true
+			tokens = append(tokens, c)
+			hashes = append(hashes, HashToken(c))
+		}
+	}
+	if len(tokens) == 0 {
+		return "", false, nil
+	}
+	found, err := a.store.SessionsByHash(ctx, hashes)
+	if err != nil {
+		return "", false, err
 	}
 	now := a.clk.Now()
-	if !sessionAlive(sess, now) {
-		if err := a.store.DeleteSession(ctx, h); err != nil {
-			a.log.Warn("deleting expired session failed", "err", err)
+	chosen := -1
+	for i, h := range hashes {
+		sess, ok := found[h]
+		switch {
+		case !ok:
+		case !sessionAlive(sess, now):
+			if err := a.store.DeleteSession(ctx, h); err != nil {
+				a.log.Warn("deleting expired session failed", "err", err)
+			}
+		case chosen < 0:
+			chosen = i
 		}
-		return false, nil
 	}
-	if now.Sub(sess.LastUsedAt) >= touchEvery {
+	if chosen < 0 {
+		return "", false, nil
+	}
+	h := hashes[chosen]
+	if now.Sub(found[h].LastUsedAt) >= touchEvery {
 		a.store.TouchSessionAsync(h, now, func(err error) {
 			if err != nil {
 				a.log.Warn("recording session use failed", "err", err)
 			}
 		})
 	}
-	return true, nil
+	return tokens[chosen], true, nil
 }
 
 func (a *Auth) Logout(ctx context.Context, token string) error {
