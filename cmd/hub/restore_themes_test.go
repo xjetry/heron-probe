@@ -60,6 +60,7 @@ func checkThemeRestoreSummary(t *testing.T, path string, output []byte, want the
 func TestRestoreThemesOmittedClearsAndDisables(t *testing.T) {
 	config, path := themeRestoreFixture(t)
 	var out bytes.Buffer
+	restoreExec(t, restoreDB(t, config), "UPDATE theme SET preview='old.png'")
 	if err := runRestoreWith([]string{"--db", path, "--config", config, "--yes"}, &out); err != nil {
 		t.Fatal(err)
 	}
@@ -67,6 +68,7 @@ func TestRestoreThemesOmittedClearsAndDisables(t *testing.T) {
 	restoreWant(t, db, "SELECT group_concat(id || ':' || enabled) FROM (SELECT * FROM theme ORDER BY id)", "a:0,b:0")
 	restoreWant(t, db, "SELECT count(*) FROM theme_file", "0")
 	restoreWant(t, db, "SELECT count(*) FROM theme_package", "0")
+	restoreWant(t, db, "SELECT count(*) FROM theme WHERE preview <> ''", "0")
 	checkThemeRestoreSummary(t, path, out.Bytes(), themeRestoreSummary{Missing: []string{"a", "b"}})
 }
 
@@ -101,7 +103,7 @@ func TestRestoreThemesCommand(t *testing.T) {
 }
 
 func TestRestoreThemesInvalidLeavesTargetUntouched(t *testing.T) {
-	for _, defect := range []string{"missing-directory", "bad-package", "bad-extra", "wrong-id", "oversized"} {
+	for _, defect := range []string{"missing-directory", "bad-package", "bad-extra", "wrong-id", "oversized", "invalid-filename"} {
 		for _, existing := range []bool{false, true} {
 			t.Run(defect+map[bool]string{false: "/new", true: "/existing"}[existing], func(t *testing.T) {
 				config, path := themeRestoreFixture(t)
@@ -122,6 +124,8 @@ func TestRestoreThemesInvalidLeavesTargetUntouched(t *testing.T) {
 				}
 				name, content, wantErr := "b.zip", []byte("invalid zip"), "theme package"
 				switch defect {
+				case "invalid-filename":
+					name, content, wantErr = "A (1).zip", Minimal(t, "a"), "invalid theme id"
 				case "missing-directory":
 					dir = filepath.Join(dir, "missing")
 					wantErr = "themes directory"
@@ -183,5 +187,46 @@ func TestRestoreThemesPreflightPrecedesTargetOpen(t *testing.T) {
 	err := runRestoreWith([]string{"--db", path, "--config", config, "--themes", dir, "--yes"}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "theme package") {
 		t.Fatalf("theme preflight did not precede target open: %v", err)
+	}
+}
+
+func TestRestoreThemesMissingEnabledWithDirectory(t *testing.T) {
+	config, path := themeRestoreFixture(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "b.zip"), Minimal(t, "b"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := runRestoreWith([]string{"--db", path, "--config", config, "--themes", dir, "--yes"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	restoreWant(t, restoreDB(t, path), "SELECT group_concat(id || ':' || enabled) FROM (SELECT * FROM theme ORDER BY id)", "a:0,b:0")
+	checkThemeRestoreSummary(t, path, out.Bytes(), themeRestoreSummary{Restored: []string{"b"}, Missing: []string{"a"}})
+}
+
+func TestRestoreThemesManifestMetadata(t *testing.T) {
+	config, path := themeRestoreFixture(t)
+	restoreExec(t, restoreDB(t, config), "UPDATE theme SET name='old',version='old',preview='old.png' WHERE id='a'")
+	dir := t.TempDir()
+	raw := Minimal(t, "a")
+	pkg, err := theme.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.zip"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runRestoreWith([]string{"--db", path, "--config", config, "--themes", dir, "--yes"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	db := restoreDB(t, path)
+	restoreWant(t, db, "SELECT name || ':' || version || ':' || preview || ':' || uploaded_at || ':' || enabled FROM theme WHERE id='a'", pkg.Manifest.Name+":"+pkg.Manifest.Version+"::100:1")
+}
+
+func TestRestoreThemesSourceAdmissionFirst(t *testing.T) {
+	_, metrics := restoreSnapshots(t)
+	err := runRestoreWith([]string{"--db", filepath.Join(t.TempDir(), "target.db"), "--config", metrics, "--themes", t.TempDir(), "--yes"}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "config snapshot missing table") {
+		t.Fatalf("source admission did not precede theme preflight: %v", err)
 	}
 }

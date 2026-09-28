@@ -95,6 +95,9 @@ func prepareThemeRestore(ctx context.Context, config, dir string) (*themeRestore
 			return nil, fmt.Errorf("theme package %q: %w", entry.Name(), err)
 		}
 		id := strings.TrimSuffix(entry.Name(), ".zip")
+		if !theme.ValidID(id) {
+			return nil, fmt.Errorf("theme package %q: invalid theme id", entry.Name())
+		}
 		if !slices.Contains(plan.ids, id) {
 			plan.ignored = append(plan.ignored, entry.Name())
 			continue
@@ -125,7 +128,7 @@ func restoreThemeContent(ctx context.Context, tx *sql.Tx, plan *themeRestorePlan
 	for _, id := range ids {
 		content, ok := plan.packages[id]
 		if !ok {
-			if _, err := tx.ExecContext(ctx, "UPDATE main.theme SET enabled = 0 WHERE id = ?", id); err != nil {
+			if _, err := tx.ExecContext(ctx, "UPDATE main.theme SET enabled = 0, preview = '' WHERE id = ?", id); err != nil {
 				return result, err
 			}
 			result.Missing = append(result.Missing, id)
@@ -141,6 +144,9 @@ func restoreThemeContent(ctx context.Context, tx *sql.Tx, plan *themeRestorePlan
 			files[i] = ThemeFile{Path: f.Path, Content: f.Content}
 		}
 		if err := putThemeContent(tx, id, files, content); err != nil {
+			return result, err
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE main.theme SET name=?, version=?, preview=? WHERE id=?", pkg.Manifest.Name, pkg.Manifest.Version, pkg.Manifest.Preview, id); err != nil {
 			return result, err
 		}
 		result.Restored = append(result.Restored, id)

@@ -29,15 +29,15 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 	if config == "" {
 		return result, errors.New("config snapshot is required")
 	}
-	themes, err := prepareThemeRestore(ctx, config, themesDir)
-	if err != nil {
-		return result, err
-	}
 	sources := []restoreSource{{"config", config, configSnapshotTables}}
 	if metrics != "" {
 		sources = append(sources, restoreSource{"metrics", metrics, metricsSnapshotTables})
 	}
 	if err := preflightRestoreSources(ctx, path, sources); err != nil {
+		return result, err
+	}
+	themes, err := prepareThemeRestore(ctx, config, themesDir)
+	if err != nil {
 		return result, err
 	}
 	// 独占创建成功才拥有失败清理权；预检后的 Stat 不能证明文件由本次恢复创建。
