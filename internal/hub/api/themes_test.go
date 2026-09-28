@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -272,7 +273,8 @@ func TestUploadThemeExpectIDAndReplacement(t *testing.T) {
 // 前一个完成后名额归还，被拒的上传同样归还。让第一个上传停在入库：store 的写入由单个写协程按序执行，
 // TouchSessionAsync 的回调就在写协程里运行，回调阻塞期间 PutTheme 排在它后面等。探测用的上传带一个不是 zip 的包：
 // 拿到名额就在校验时被拒（InvalidArgument），不写库，也就不会自己排进被阻塞的写协程。
-// 先等第一个上传占住名额再探测：探测若赶在它前面，会短暂占住名额，让第一个上传反被拒绝。
+// 先等第一个上传占住名额再探测：探测若赶在它前面，会短暂占住名额，让第一个上传反被拒绝。探测带 5 秒期限：名额
+// 被占时若改成排队，探测会一直停在信号量上，期限让用例当场以断言失败，而不是拖到 go test 的全局超时。
 func TestUploadThemeAdmitsOneAtATime(t *testing.T) {
 	h := newThemeHarness(t)
 	parked, release := make(chan struct{}), make(chan struct{})
@@ -301,7 +303,9 @@ func TestUploadThemeAdmitsOneAtATime(t *testing.T) {
 		}
 	}
 	probe := func() error {
-		_, err := h.upload(t, []byte("not a zip"), "")
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		_, err := h.admin.UploadTheme(ctx, connect.NewRequest(&probev1.UploadThemeRequest{Package: []byte("not a zip")}))
 		return err
 	}
 	if err := probe(); codeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "another theme upload is in progress") {
