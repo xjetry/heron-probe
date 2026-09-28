@@ -236,7 +236,11 @@ func TestRestoreExistingHighWaterAndOptionalMetrics(t *testing.T) {
 }
 
 func TestRestoreTargetSchemaPolicy(t *testing.T) {
-	for _, version := range []int{13, 15, -1, 0} {
+	var currentVersion int
+	if err := restoreDB(t, restoreTarget(t)).QueryRow("PRAGMA user_version").Scan(&currentVersion); err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []int{currentVersion - 1, currentVersion + 1, -1, 0} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			path := restoreTarget(t)
