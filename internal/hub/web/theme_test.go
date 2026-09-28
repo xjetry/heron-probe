@@ -17,8 +17,8 @@ import (
 	"time"
 )
 
-// fakeThemeSource 按 ThemeSource 的契约应答：files 为 nil 表示没有启用中的主题。每次整包读取计数，并像库一样返回新分配的
-// 字节：逐请求读的实现因此按文件大小分配，分配量用例量得出来。
+// fakeThemeSource 按 ThemeSource 的契约应答：先取代数再读内容，files 为 nil 表示没有启用中的主题。每次整包读取计数，并像库
+// 一样返回新分配的字节：逐请求读的实现因此按文件大小分配，分配量用例量得出来。
 type fakeThemeSource struct {
 	gen   atomic.Uint64
 	reads atomic.Int64
@@ -26,6 +26,9 @@ type fakeThemeSource struct {
 	mu    sync.Mutex
 	files map[string]string
 	err   error
+	// afterRead 在下一次整包读出之后、返回之前调用一次，调用时不持 mu：模拟语句的快照取定之后才提交的写，这次读返回的
+	// 仍是写之前的包与写之前的代数。
+	afterRead func()
 }
 
 func (f *fakeThemeSource) ThemeGeneration() uint64 { return f.gen.Load() }
@@ -35,18 +38,24 @@ func (f *fakeThemeSource) EnabledThemePackage(context.Context) (uint64, map[stri
 	gen := f.gen.Load()
 	time.Sleep(f.delay)
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.err != nil {
-		return 0, nil, false, f.err
+	files, err, hook := f.files, f.err, f.afterRead
+	f.afterRead = nil
+	f.mu.Unlock()
+	if err != nil {
+		return 0, nil, false, err
 	}
-	if f.files == nil {
-		return gen, nil, false, nil
+	var out map[string][]byte
+	if files != nil {
+		// set 整体替换 files，不改旧 map，所以放开 mu 之后读它是安全的。
+		out = make(map[string][]byte, len(files))
+		for p, c := range files {
+			out[p] = []byte(c)
+		}
 	}
-	out := make(map[string][]byte, len(f.files))
-	for p, c := range f.files {
-		out[p] = []byte(c)
+	if hook != nil {
+		hook()
 	}
-	return gen, out, true, nil
+	return gen, out, files != nil, nil
 }
 
 // set 像三个写者之一那样换掉启用中的主题：先提交内容，再递增代数。
@@ -170,6 +179,27 @@ func TestThemeHandlerReadsThePackageOncePerGeneration(t *testing.T) {
 	src.set(nil)
 	expect("after disabling", "/", "builtin public page", 3)
 	expect("still disabled", "/nodes/3", "builtin public page", 3)
+}
+
+// 快照标注的是读之前的代数。一次写落在整包读出之后、返回之前时，这次读拿到的是写之前的包，标注也是写之前的代数，下一个
+// 请求见代数已变就重读，拿到写之后的内容；删除（停用）同理。标注成读完之后的代数，旧包就带着新代数留下，此后每个请求都判
+// "没变"，一直服务写之前的包，包括已经删掉的主题，直到下一次主题写。
+func TestThemeHandlerLabelsTheSnapshotWithTheGenerationBeforeTheRead(t *testing.T) {
+	src := &fakeThemeSource{files: map[string]string{"index.html": "v1"}}
+	h := ThemeHandler(src, builtinSentinel, slog.Default())
+	expect := func(when, want string) {
+		t.Helper()
+		if code, _, body := serveWithin(t, h, "/"); code != http.StatusOK || body != want {
+			t.Fatalf("%s: GET /: %d %q, want %q", when, code, body, want)
+		}
+	}
+	src.afterRead = func() { src.set(map[string]string{"index.html": "v2"}) }
+	expect("the read that a replacement landed after", "v1")
+	expect("the request after a replacement that landed during the read", "v2")
+	src.set(map[string]string{"index.html": "v3"})
+	src.afterRead = func() { src.set(nil) }
+	expect("the read that a deletion landed after", "v3")
+	expect("the request after a deletion that landed during the read", "builtin public page")
 }
 
 // 代数变了之后同时到达的请求只触发一次整包读取：拿到重读锁的请求读库，其余在锁上等，拿到锁后见代数已对上就直接用新快照。
