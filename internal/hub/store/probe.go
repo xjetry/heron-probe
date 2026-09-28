@@ -65,10 +65,14 @@ type ProbeTaskRecord struct {
 	NodeIDs  []int64
 }
 
-// probeCoverage 是"任务覆盖哪些节点"的唯一读法：展开（LoadProbeTasks、SaveProbeTask 的回读、ProbeTaskNodeIDs）
-// 与每节点上限的计数（SaveProbeTask、insertNode）都从它取，两处口径因此不会分叉。UNION ALL 的两支不重叠，靠的是
-// all_nodes 任务没有分配行，由写侧保证：SaveProbeTask 更新任务时先删掉它的全部分配行、只在 all_nodes 为假时写回；
-// 新建任务的 id 由 AUTOINCREMENT 分配、不复用，DeleteProbeTask 与任务同事务删掉分配行，所以新 id 没有旧分配行。
+// probeCoverage 是"任务覆盖哪些节点"的唯一读法：展开（LoadProbeTasks、SaveProbeTask 的回读、ProbeTaskNodeIDs、
+// insertNode 返回的新节点覆盖）与每节点上限的计数（SaveProbeTask、insertNode）都从它取，两处口径因此不会分叉。
+// 探测任务注册表在重载、保存与建节点时发布的覆盖分别来自 LoadProbeTasks、SaveProbeTask 的回读与 insertNode 的
+// 返回，所以内存索引也跟着这里的口径走。
+//
+// UNION ALL 的两支不重叠，靠的是 all_nodes 任务没有分配行，由写侧保证：SaveProbeTask 更新任务时先删掉它的全部
+// 分配行、只在 all_nodes 为假时写回；新建任务的 id 由 AUTOINCREMENT 分配、不复用，DeleteProbeTask 与任务同事务
+// 删掉分配行，所以新 id 没有旧分配行。
 const probeCoverage = `SELECT t.id AS task_id, n.id AS node_id FROM probe_task t CROSS JOIN node n WHERE t.all_nodes = 1
 UNION ALL SELECT task_id, node_id FROM probe_task_node`
 

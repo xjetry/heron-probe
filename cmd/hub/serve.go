@@ -25,6 +25,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/geo"
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
+	"github.com/xjetry/probe/internal/hub/outbound"
 	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/hub/traffic"
@@ -43,7 +44,7 @@ func mountOf(path string, h http.Handler) mount { return mount{path: path, h: h}
 // newMux 是面板所在 origin（主 origin）的挂载点；挂载点级测试（TestMuxRejectsAnonymousProcedures）从注册表枚举方法逐个
 // 匿名调用，所以任何进了描述符的服务都必须在这里出现。除 PublicService 外，每个服务都带着它的鉴权拦截器；PublicService
 // 按 §3.2 不鉴权，它的四个过程是那个测试里唯一的匿名白名单（publicProcedures），其余过程匿名调用必须得到 401。
-// 往 PublicService 加方法等于把它公开给任何人，没有拦截器兜底。
+// 往 PublicService 加方法等于把它公开给任何人，总闸只决定整站是否开放，不提供身份鉴权。
 func newMux(mounts ...mount) *http.ServeMux {
 	mux := http.NewServeMux()
 	for _, m := range mounts {
@@ -177,7 +178,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	db := fs.String("db", "probe.db", "SQLite database path")
 	tz := fs.String("timezone", "", "IANA time zone for traffic period boundaries and node expiry days (default: the host's zone, resolved from TZ or /etc/localtime; UTC if neither resolves); already-persisted period starts are interpreted in the new zone; usage of the current period may be reset at the next read, report or flush")
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
-	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For / X-Forwarded-Proto are trusted; empty trusts none. Behind a reverse proxy, list the proxy here: the public page and agent registration are rate-limited per source (one IPv4 address, or one IPv6 /64), and failed logins are locked out per source, so without it every visitor shares the proxy address's single bucket and lockout")
+	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For / X-Forwarded-Proto are trusted; empty trusts none. Behind a reverse proxy, list the proxy here: the public page and agent registration are rate-limited per source (one IPv4 address, or one IPv6 /64), and failed logins are locked out per source, so without it every visitor shares the proxy address's single bucket and lockout; a node's recorded source address is also the proxy address")
 	publicDir := fs.String("public-dir", "", "serve this directory at / instead of the built-in public page; files are opened through os.Root, so paths cannot leave the directory and symbolic links are followed only if they are relative and never step outside it (absolute links are refused even when they point inside); a path that is not a file, or that has a segment starting with a dot (.git, .env, .well-known), gets the directory's index.html (404 under assets/); every response is no-cache. The directory shares the admin panel's origin: its scripts can read the panel and call the admin API with the session of any signed-in administrator who opens the page, so put only content you trust as much as the hub binary there")
 	themeOriginFlag := fs.String("theme-origin", "", "origin that serves uploaded public-page themes, e.g. https://status.example.com; point this second hostname at the hub alongside the panel's. It must be a hostname other than the panel's, not a path under it: a theme's scripts on the panel's hostname could call the admin API with a signed-in administrator's session. A sibling subdomain (status.example.com beside panel.example.com) is same-site, so SameSite=Strict does not separate the two; the facts that do are listed in docs/theme-guide.md. The same hostname on another port does not count: cookies do not isolate ports, and requests are routed by hostname with the port ignored, so the panel's own requests would be routed to the theme origin, where there is no panel; the hub cannot detect this at startup. On this hostname only the public API and the enabled theme are served (the built-in public page when no theme is enabled); --public-dir does not apply here. Empty disables theme upload and hosting")
 	retention := store.DefaultRetention
@@ -232,9 +233,11 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	l := live.New(clk, ttl)
 	book := traffic.New(st, clk, loc, log)
 	alerts := alert.New(alert.Config{TTL: ttl, Location: loc}, st, l, clk, log)
-	// 通知渠道与国家查询共用一个出站客户端（§4.9 复用 §9.3 的那一个）：不跟随重定向、带总超时的出站行为只有一份。
-	outbound := alert.NewHTTPClient()
-	notifier := alert.NewQueue(st, alerts.Channels, outbound, "", clk, nil, log)
+	// 通知渠道与国家查询共用一个出站客户端（§4.9 复用 §9.3 的那一个），两者不跟随重定向、带总时限的行为因此是同一份。
+	// 时限取 alert.NotifyTimeout，推导在通知投递一侧（见其注释）；国家查询是不带正文的 GET、应答至多读 geo 包的
+	// maxResponseBytes，同属 outbound.NewClient 所说的请求与应答都有小上界的消费方。
+	client := outbound.NewClient(alert.NotifyTimeout)
+	notifier := alert.NewQueue(st, alerts.Channels, client, "", clk, nil, log)
 	alerts.SetSender(notifier)
 	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, book, reg, clk, log)
 	if err != nil {
@@ -252,7 +255,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: trusted, Location: loc}, st, l, book, reg, clk, log)
 
 	handler := newHandler(routes{
-		agent: mountOf(svc.Handler()), admin: mountOf(admin.Handler()), public: mountOf(pub.Handler()), page: public,
+		agent: mountOf(svc.Handler()), admin: mountOf(admin.Handler()), public: mountOf(pub.Handler()), page: web.PublicGate(public, st.PublicEnabled),
 		themeOrigin: themeOrigin, themePage: web.ThemeHandler(st, web.PublicHandler(), log),
 	})
 	listener, err := net.Listen("tcp", *listen)
@@ -272,7 +275,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	defer startLoop(alerts.RunProbeEvaluation)()
 	defer startLoop(alerts.RunExpirySweep)()
 	defer startLoop(notifier.Run)()
-	defer startLoop(geo.New(st, outbound, clk, log).Run)()
+	defer startLoop(geo.New(st, client, clk, log).Run)()
 
 	// 监听在 net.Listen 返回时已建立，连接先进内核队列。runServe 装配的文本 handler 在 Info 返回前
 	// 同步写完 stderr，所以先写启动行再开始 Serve，拿到任何响应的调用方都已能在日志里读到它。

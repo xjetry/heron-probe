@@ -285,7 +285,8 @@ var migrationV12 = []string{
 	`ALTER TABLE alert_state ADD COLUMN recovered_at INTEGER`,
 }
 
-// v13：节点最近一次上报的来源地址。旧行取空串（从未上报过的记法）：升级前的上报没有记录，下一次刷出即补上。
+// v13：节点最近一次上报的来源地址。旧行取空串：hub 在这个版本之前不记录来源，不区分从未上报与升级前上报过
+// 但此后未再上报（这类节点的 last_seen_at 仍停在升级前的值）；下一次上报后随分钟行刷出补上。
 var migrationV13 = []string{
 	`ALTER TABLE node ADD COLUMN last_source TEXT NOT NULL DEFAULT ''`,
 }

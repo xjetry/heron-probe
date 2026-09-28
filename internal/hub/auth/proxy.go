@@ -17,7 +17,8 @@ import (
 // （RFC 9110 §5.3），代理可以不动客户端自带的那一行、另起一行追加它看到的地址。只读第一行，
 // "从右向左"就是在客户端写的那一行里找，客户端改一个头就能换来源。只传一行（如 []string{Header.Get(…)}）
 // 照样能编译，"每一行都被读到"由多行用例钉住：ratelimit 的 TestBySourceReadsEveryForwardedForLine、
-// auth 的 TestClientIPReadsEveryForwardedForLine、api 的 TestLoginLockoutKeysOnEveryForwardedForLine。
+// auth 的 TestClientIPReadsEveryForwardedForLine、api 的 TestLoginLockoutKeysOnEveryForwardedForLine、
+// ingest 的 TestReportRecordsTheSourceHubSees/可信代理追加的转发头覆盖客户端伪造的第一行。
 func ClientIP(peerAddr string, xff []string, trusted []netip.Prefix) netip.Addr {
 	peer := peerIP(peerAddr)
 	if !peer.IsValid() || !inAny(peer, trusted) {
@@ -42,8 +43,9 @@ func ClientIP(peerAddr string, xff []string, trusted []netip.Prefix) netip.Addr 
 }
 
 // SourceText 把 ClientIP 得到的来源地址写成存储与展示用的规范文本：IPv4 映射地址还原成 IPv4，点分；IPv6 为 RFC 5952 的
-// 压缩形式（netip 的 String）；区域标识（%eth0）去掉——它只在 hub 本机有意义。取不到对端时为空串，调用方按"没有新观测"
-// 处理，不覆盖已有的值（空在 node.last_source 里表示从未上报）。
+// 压缩形式（netip 的 String）；区域标识（%eth0）去掉——它只在 hub 本机有意义。取不到对端时为空串。live 层照常用它
+// 覆盖条目里的来源，"空串不覆盖已落盘的值"由 store.WriteMinuteBatch 那条 UPDATE 里 COALESCE(NULLIF(?, 空串), last_source)
+// 承载，不是这里或调用方；hub 只监听 TCP（serve 的 listen），这种输入在生产上不会出现。
 func SourceText(a netip.Addr) string {
 	if !a.IsValid() {
 		return ""
@@ -119,7 +121,7 @@ func ParsePrefixes(list string) ([]netip.Prefix, error) {
 //
 // xfProto 与 ClientIP 一样是全部字段行，取拼接后的第一个值，即最外层那一跳写的协议。这个头不带逐跳地址，
 // 没法像 X-Forwarded-For 那样跳过可信代理；代理若追加而不覆盖、客户端又自带该头，第一个值就是客户端写的。
-// 这里有意不处理：它只决定 Login/Logout 回给请求者自己的 cookie 带不带 Secure（service.go 的 sessionCookie），
+// 这里有意不处理：它只决定签发或清除请求者自己的 cookie 时带不带 Secure（service.go 的 sessionCookie），
 // 客户端只能改到自己，影响不到别的来源。
 func RequestScheme(peerAddr string, xfProto []string, trusted []netip.Prefix) string {
 	peer := peerIP(peerAddr)

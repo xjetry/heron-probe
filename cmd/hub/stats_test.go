@@ -113,6 +113,7 @@ func TestPasswdLogsSchemaCreationOnStderr(t *testing.T) {
 	if err := raw.QueryRow("PRAGMA user_version").Scan(&created); err != nil {
 		t.Fatal(err)
 	}
+	// 建库日志里的版本号必须是库里实际写下的那个；不写死数字，免得每次迁移都要改这里。
 	if want := `msg="database schema created" version=` + strconv.Itoa(created); created == 0 || !strings.Contains(stderr.String(), want) {
 		t.Errorf("passwd stderr = %q, want to contain %q", stderr.String(), want)
 	}

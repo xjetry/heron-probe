@@ -10,12 +10,14 @@ import (
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 )
 
-// reportFrom 以给定的请求头上报一次，返回 live 条目里记下的来源地址。
-func (h *hub) reportFrom(t *testing.T, id int64, tok string, headers map[string]string) string {
+// reportFrom 以给定的请求头上报一次，返回 live 条目里记下的来源地址。headers 保序，
+// 每个元素是一行 {字段名, 值}：map 表达不了同名字段的多行，而 X-Forwarded-For 的多行正是
+// 要钉住的场景，所以用 Header().Add 逐行加。
+func (h *hub) reportFrom(t *testing.T, id int64, tok string, headers [][2]string) string {
 	t.Helper()
 	req := report(tok, &probev1.Metrics{})
-	for k, v := range headers {
-		req.Header().Set(k, v)
+	for _, kv := range headers {
+		req.Header().Add(kv[0], kv[1])
 	}
 	if _, err := h.client.Report(context.Background(), req); err != nil {
 		t.Fatal(err)
@@ -30,22 +32,24 @@ func (h *hub) reportFrom(t *testing.T, id int64, tok string, headers map[string]
 }
 
 // 来源地址只取 hub 看到的对端，经 auth.ClientIP 按可信代理解析：直连取 TCP 对端；不可信对端带的转发头不采信；
-// 可信代理的 X-Forwarded-For 取解析后的地址；CF-Connecting-IP 无论对端是否可信都不读。
+// 可信代理的 X-Forwarded-For 取解析后的地址；CF-Connecting-IP 无论对端是否可信都不读；可信代理追加的行覆盖
+// 客户端自带的那一行——只读第一行会让来源取自客户端可自由填写的值。
 func TestReportRecordsTheSourceHubSees(t *testing.T) {
 	loopback := []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
 	cases := []struct {
 		name    string
 		trusted []netip.Prefix
-		headers map[string]string
+		headers [][2]string
 		want    string
 	}{
 		{"直连取 TCP 对端", nil, nil, "127.0.0.1"},
-		{"不可信对端的转发头不采信", nil, map[string]string{"X-Forwarded-For": "203.0.113.7"}, "127.0.0.1"},
-		{"可信代理的 X-Forwarded-For 取解析后的地址", loopback, map[string]string{"X-Forwarded-For": "203.0.113.7"}, "203.0.113.7"},
-		{"可信代理转发的 IPv6 写成压缩形式", loopback, map[string]string{"X-Forwarded-For": "2001:DB8:0:0:0:0:0:7"}, "2001:db8::7"},
-		{"直连时 CF-Connecting-IP 被忽略", nil, map[string]string{"CF-Connecting-IP": "198.51.100.9"}, "127.0.0.1"},
-		{"可信代理之后 CF-Connecting-IP 也被忽略", loopback, map[string]string{"CF-Connecting-IP": "198.51.100.9"}, "127.0.0.1"},
-		{"可信代理之后 CF-Connecting-IP 不压过 X-Forwarded-For", loopback, map[string]string{"X-Forwarded-For": "203.0.113.7", "CF-Connecting-IP": "198.51.100.9"}, "203.0.113.7"},
+		{"不可信对端的转发头不采信", nil, [][2]string{{"X-Forwarded-For", "203.0.113.7"}}, "127.0.0.1"},
+		{"可信代理的 X-Forwarded-For 取解析后的地址", loopback, [][2]string{{"X-Forwarded-For", "203.0.113.7"}}, "203.0.113.7"},
+		{"可信代理转发的 IPv6 写成压缩形式", loopback, [][2]string{{"X-Forwarded-For", "2001:DB8:0:0:0:0:0:7"}}, "2001:db8::7"},
+		{"直连时 CF-Connecting-IP 被忽略", nil, [][2]string{{"CF-Connecting-IP", "198.51.100.9"}}, "127.0.0.1"},
+		{"可信代理之后 CF-Connecting-IP 也被忽略", loopback, [][2]string{{"CF-Connecting-IP", "198.51.100.9"}}, "127.0.0.1"},
+		{"可信代理之后 CF-Connecting-IP 不压过 X-Forwarded-For", loopback, [][2]string{{"X-Forwarded-For", "203.0.113.7"}, {"CF-Connecting-IP", "198.51.100.9"}}, "203.0.113.7"},
+		{"可信代理追加的转发头覆盖客户端伪造的第一行", loopback, [][2]string{{"X-Forwarded-For", "198.51.100.66"}, {"X-Forwarded-For", "203.0.113.8"}}, "203.0.113.8"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -71,7 +75,7 @@ func (h *hub) storedSource(t *testing.T, id int64) string {
 func TestSourceIsFlushedWithMinuteRowsAndKeepsOnlyTheLast(t *testing.T) {
 	h := newHubWith(t, filepath.Join(t.TempDir(), "t.db"), Config{TTL: 30 * time.Second, TrustedProxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}})
 	id, tok := h.node(t)
-	h.reportFrom(t, id, tok, map[string]string{"X-Forwarded-For": "203.0.113.7"})
+	h.reportFrom(t, id, tok, [][2]string{{"X-Forwarded-For", "203.0.113.7"}})
 	if got := h.storedSource(t, id); got != "" {
 		t.Fatalf("source stored before any flush: %q", got)
 	}
@@ -80,8 +84,8 @@ func TestSourceIsFlushedWithMinuteRowsAndKeepsOnlyTheLast(t *testing.T) {
 	if got := h.storedSource(t, id); got != "203.0.113.7" {
 		t.Fatalf("after flush last_source = %q, want 203.0.113.7", got)
 	}
-	h.reportFrom(t, id, tok, map[string]string{"X-Forwarded-For": "203.0.113.7"})
-	h.reportFrom(t, id, tok, map[string]string{"X-Forwarded-For": "2001:db8::7"})
+	h.reportFrom(t, id, tok, [][2]string{{"X-Forwarded-For", "203.0.113.7"}})
+	h.reportFrom(t, id, tok, [][2]string{{"X-Forwarded-For", "2001:db8::7"}})
 	h.clk.Advance(time.Minute)
 	h.svc.Flush(context.Background(), false)
 	if got := h.storedSource(t, id); got != "2001:db8::7" {

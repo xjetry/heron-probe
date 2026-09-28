@@ -34,7 +34,7 @@ export function Storage() {
         上次清理完成：{finished(s.lastPruneAt)}；上次上卷完成：{finished(s.lastRollupAt)}
       </p>
       <p className="muted">
-        清理停了只表现为库慢慢变大，上卷停了只表现为长窗口的图变空：最老桶对照保留期：标红表示超期的行没有被清掉（细一级只清理已上卷的部分，上卷停了它也会标红）；水位对照当前时刻：标红表示上卷停了。
+        清理停了只表现为库慢慢变大，上卷停了只表现为长窗口的图变空。最老桶对照保留期，标红表示超期的行没有被清掉（细一级只清理已上卷的部分，上卷停了它也会标红）；水位对照当前时刻，标红表示上卷停了，新库第一轮上卷之前也会标红约一分钟。
       </p>
       <div className="table-scroll" role="region" aria-label="时序表健康" tabIndex={0}>
         <table className="nodes">

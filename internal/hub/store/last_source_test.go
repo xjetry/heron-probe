@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"reflect"
 	"slices"
 	"testing"
@@ -12,9 +13,16 @@ import (
 // v12 的完整 DDL：v11 加上告警状态的上次恢复时刻。
 var schemaV12 = append(slices.Clone(schemaV11), "ALTER TABLE alert_state ADD COLUMN recovered_at INTEGER")
 
-// 旧库的节点升级后 last_source 为空串：从未上报过的记法，不会被读成某个地址。
+// 旧库的节点升级后 last_source 为空串，即便它此前上报过：last_seen_at 保留着升级前最后一次上报的墙钟时刻，
+// 空串只说明 hub 在这个版本之前不记录来源，不能被读成"这个节点从未上报"。
 func TestMigrationFromV12AddsEmptyLastSource(t *testing.T) {
-	migrated, fresh := migrateFrom(t, schemaV12, 12, seedMinuteRow)
+	seed := func(t *testing.T, db *sql.DB) {
+		seedMinuteRow(t, db)
+		if _, err := db.Exec("UPDATE node SET last_seen_at = 1 WHERE id = 7"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	migrated, fresh := migrateFrom(t, schemaV12, 12, seed)
 	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
 		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
 	}
@@ -22,7 +30,7 @@ func TestMigrationFromV12AddsEmptyLastSource(t *testing.T) {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}
 	n, err := migrated.GetNode(t.Context(), 7)
-	if err != nil || n.Name != "kept" || n.LastSource != "" {
+	if err != nil || n.Name != "kept" || n.LastSource != "" || n.LastSeenAt.IsZero() {
 		t.Fatalf("node after migration: %+v %v", n, err)
 	}
 }

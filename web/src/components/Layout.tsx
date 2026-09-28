@@ -1,22 +1,19 @@
 import { useMutation } from "@connectrpc/connect-query";
-import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
+import { NavLink, Outlet, useLocation } from "react-router";
 import { AdminService } from "../gen/probe/v1/admin_pb";
 import { errorText } from "../api/auth";
+import { useLeaveSession } from "../api/useLeaveSession";
 
 export function Layout() {
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
+  const leaveSession = useLeaveSession();
   const location = useLocation();
-  const logout = useMutation(AdminService.method.logout, {
-    onSuccess: () => { queryClient.clear(); void navigate("/login", { replace: true }); },
-  });
+  const logout = useMutation(AdminService.method.logout, { onSuccess: leaveSession });
   const { reset } = logout;
   useEffect(() => { reset(); }, [location, reset]);
   return (
     <div className="layout">
-      <nav className="nav" aria-label="主导航">
+      <nav className="nav panel-nav" aria-label="主导航">
         <span className="brand">probe</span>
         <NavLink to="/" end>总览</NavLink>
         <NavLink to="/nodes">节点</NavLink>
@@ -28,6 +25,7 @@ export function Layout() {
         <NavLink to="/appearance">外观</NavLink>
         <NavLink to="/themes">主题</NavLink>
         <NavLink to="/storage">存储</NavLink>
+        <NavLink to="/security">安全</NavLink>
         <NavLink to="/register">注册窗口</NavLink>
         <button type="button" className="link" onClick={() => logout.mutate({})} disabled={logout.isPending}>
           登出

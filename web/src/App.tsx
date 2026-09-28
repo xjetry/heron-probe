@@ -13,6 +13,7 @@ import { ApiTokens } from "./pages/ApiTokens";
 import { Appearance } from "./pages/Appearance";
 import { Themes } from "./pages/Themes";
 import { Storage } from "./pages/Storage";
+import { Sessions } from "./pages/Sessions";
 
 // basename 与 hub 的挂载路径一致。路由不做鉴权判断：谁都能打开任何页面，
 // 页面里的第一次请求得到 Unauthenticated 就会被数据层送去登录。
@@ -34,6 +35,7 @@ export const router = createBrowserRouter(
         { path: "appearance", Component: Appearance },
         { path: "themes", Component: Themes },
         { path: "storage", Component: Storage },
+        { path: "security", Component: Sessions },
         { path: "register", Component: RegisterWindow },
       ],
     },

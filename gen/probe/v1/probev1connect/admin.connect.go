@@ -37,6 +37,12 @@ const (
 	AdminServiceLoginProcedure = "/probe.v1.AdminService/Login"
 	// AdminServiceLogoutProcedure is the fully-qualified name of the AdminService's Logout RPC.
 	AdminServiceLogoutProcedure = "/probe.v1.AdminService/Logout"
+	// AdminServiceListSessionsProcedure is the fully-qualified name of the AdminService's ListSessions
+	// RPC.
+	AdminServiceListSessionsProcedure = "/probe.v1.AdminService/ListSessions"
+	// AdminServiceRevokeSessionProcedure is the fully-qualified name of the AdminService's
+	// RevokeSession RPC.
+	AdminServiceRevokeSessionProcedure = "/probe.v1.AdminService/RevokeSession"
 	// AdminServiceListNodesProcedure is the fully-qualified name of the AdminService's ListNodes RPC.
 	AdminServiceListNodesProcedure = "/probe.v1.AdminService/ListNodes"
 	// AdminServiceCreateNodeProcedure is the fully-qualified name of the AdminService's CreateNode RPC.
@@ -157,6 +163,14 @@ type AdminServiceClient interface {
 	Login(context.Context, *connect.Request[v1.LoginRequest]) (*connect.Response[v1.LoginResponse], error)
 	// 作废当前会话并清除 cookie。
 	Logout(context.Context, *connect.Request[v1.LogoutRequest]) (*connect.Response[v1.LogoutResponse], error)
+	// 列出未绝对过期且未空闲过期的会话，按创建时刻倒序、同刻按 id 升序。
+	// API token 不能管理其它凭据，因此不能列出或撤销会话。
+	ListSessions(context.Context, *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error)
+	// 撤销指定会话；撤销当前会话时同时清 cookie，等同登出。
+	// 不存在或已过期的 id 也成功，便于在响应丢失后安全重试；撤销的若是本次请求所用的会话，
+	// 第一次请求已在服务端删掉这一行，带同一 cookie 重试会得到 Unauthenticated 而非再次成功——
+	// 会话已不存在，结果仍安全。
+	RevokeSession(context.Context, *connect.Request[v1.RevokeSessionRequest]) (*connect.Response[v1.RevokeSessionResponse], error)
 	// 列出节点；可按标签过滤（ListNodesRequest.tags）。
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
 	// 建节点并返回其 token；明文只在此处返回一次。新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
@@ -218,9 +232,9 @@ type AdminServiceClient interface {
 	DeleteNotifyChannel(context.Context, *connect.Request[v1.DeleteNotifyChannelRequest]) (*connect.Response[v1.DeleteNotifyChannelResponse], error)
 	// 向已保存的渠道同步发送测试消息；不可重试失败返回 FailedPrecondition，可重试返回 Unavailable，文本为错误原文。
 	TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error)
-	// 公开页外观：标题、明暗、主色、logo 与自定义 CSS，经 PublicService.GetSite 对外下发。
+	// 公开页设置：总闸与外观；外观在总闸开启时经 PublicService.GetSite 对外下发。
 	GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error)
-	// 整体替换外观的五项并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
+	// 整体替换公开页外观，总闸 public_enabled 缺席时保持不变，并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
 	// 约束与期望取值，什么都不写入。
 	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
 	// 上传一个主题包（zip，至多 8 MiB）并整包安装；包根的 theme.json 的 id 已安装即整体替换（启用状态沿用）。
@@ -269,6 +283,18 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			httpClient,
 			baseURL+AdminServiceLogoutProcedure,
 			connect.WithSchema(adminServiceMethods.ByName("Logout")),
+			connect.WithClientOptions(opts...),
+		),
+		listSessions: connect.NewClient[v1.ListSessionsRequest, v1.ListSessionsResponse](
+			httpClient,
+			baseURL+AdminServiceListSessionsProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListSessions")),
+			connect.WithClientOptions(opts...),
+		),
+		revokeSession: connect.NewClient[v1.RevokeSessionRequest, v1.RevokeSessionResponse](
+			httpClient,
+			baseURL+AdminServiceRevokeSessionProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("RevokeSession")),
 			connect.WithClientOptions(opts...),
 		),
 		listNodes: connect.NewClient[v1.ListNodesRequest, v1.ListNodesResponse](
@@ -518,6 +544,8 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 type adminServiceClient struct {
 	login                 *connect.Client[v1.LoginRequest, v1.LoginResponse]
 	logout                *connect.Client[v1.LogoutRequest, v1.LogoutResponse]
+	listSessions          *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
+	revokeSession         *connect.Client[v1.RevokeSessionRequest, v1.RevokeSessionResponse]
 	listNodes             *connect.Client[v1.ListNodesRequest, v1.ListNodesResponse]
 	createNode            *connect.Client[v1.CreateNodeRequest, v1.CreateNodeResponse]
 	updateNode            *connect.Client[v1.UpdateNodeRequest, v1.UpdateNodeResponse]
@@ -568,6 +596,16 @@ func (c *adminServiceClient) Login(ctx context.Context, req *connect.Request[v1.
 // Logout calls probe.v1.AdminService.Logout.
 func (c *adminServiceClient) Logout(ctx context.Context, req *connect.Request[v1.LogoutRequest]) (*connect.Response[v1.LogoutResponse], error) {
 	return c.logout.CallUnary(ctx, req)
+}
+
+// ListSessions calls probe.v1.AdminService.ListSessions.
+func (c *adminServiceClient) ListSessions(ctx context.Context, req *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error) {
+	return c.listSessions.CallUnary(ctx, req)
+}
+
+// RevokeSession calls probe.v1.AdminService.RevokeSession.
+func (c *adminServiceClient) RevokeSession(ctx context.Context, req *connect.Request[v1.RevokeSessionRequest]) (*connect.Response[v1.RevokeSessionResponse], error) {
+	return c.revokeSession.CallUnary(ctx, req)
 }
 
 // ListNodes calls probe.v1.AdminService.ListNodes.
@@ -776,6 +814,14 @@ type AdminServiceHandler interface {
 	Login(context.Context, *connect.Request[v1.LoginRequest]) (*connect.Response[v1.LoginResponse], error)
 	// 作废当前会话并清除 cookie。
 	Logout(context.Context, *connect.Request[v1.LogoutRequest]) (*connect.Response[v1.LogoutResponse], error)
+	// 列出未绝对过期且未空闲过期的会话，按创建时刻倒序、同刻按 id 升序。
+	// API token 不能管理其它凭据，因此不能列出或撤销会话。
+	ListSessions(context.Context, *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error)
+	// 撤销指定会话；撤销当前会话时同时清 cookie，等同登出。
+	// 不存在或已过期的 id 也成功，便于在响应丢失后安全重试；撤销的若是本次请求所用的会话，
+	// 第一次请求已在服务端删掉这一行，带同一 cookie 重试会得到 Unauthenticated 而非再次成功——
+	// 会话已不存在，结果仍安全。
+	RevokeSession(context.Context, *connect.Request[v1.RevokeSessionRequest]) (*connect.Response[v1.RevokeSessionResponse], error)
 	// 列出节点；可按标签过滤（ListNodesRequest.tags）。
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
 	// 建节点并返回其 token；明文只在此处返回一次。新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
@@ -837,9 +883,9 @@ type AdminServiceHandler interface {
 	DeleteNotifyChannel(context.Context, *connect.Request[v1.DeleteNotifyChannelRequest]) (*connect.Response[v1.DeleteNotifyChannelResponse], error)
 	// 向已保存的渠道同步发送测试消息；不可重试失败返回 FailedPrecondition，可重试返回 Unavailable，文本为错误原文。
 	TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error)
-	// 公开页外观：标题、明暗、主色、logo 与自定义 CSS，经 PublicService.GetSite 对外下发。
+	// 公开页设置：总闸与外观；外观在总闸开启时经 PublicService.GetSite 对外下发。
 	GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error)
-	// 整体替换外观的五项并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
+	// 整体替换公开页外观，总闸 public_enabled 缺席时保持不变，并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
 	// 约束与期望取值，什么都不写入。
 	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
 	// 上传一个主题包（zip，至多 8 MiB）并整包安装；包根的 theme.json 的 id 已安装即整体替换（启用状态沿用）。
@@ -884,6 +930,18 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		AdminServiceLogoutProcedure,
 		svc.Logout,
 		connect.WithSchema(adminServiceMethods.ByName("Logout")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceListSessionsHandler := connect.NewUnaryHandler(
+		AdminServiceListSessionsProcedure,
+		svc.ListSessions,
+		connect.WithSchema(adminServiceMethods.ByName("ListSessions")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceRevokeSessionHandler := connect.NewUnaryHandler(
+		AdminServiceRevokeSessionProcedure,
+		svc.RevokeSession,
+		connect.WithSchema(adminServiceMethods.ByName("RevokeSession")),
 		connect.WithHandlerOptions(opts...),
 	)
 	adminServiceListNodesHandler := connect.NewUnaryHandler(
@@ -1132,6 +1190,10 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceLoginHandler.ServeHTTP(w, r)
 		case AdminServiceLogoutProcedure:
 			adminServiceLogoutHandler.ServeHTTP(w, r)
+		case AdminServiceListSessionsProcedure:
+			adminServiceListSessionsHandler.ServeHTTP(w, r)
+		case AdminServiceRevokeSessionProcedure:
+			adminServiceRevokeSessionHandler.ServeHTTP(w, r)
 		case AdminServiceListNodesProcedure:
 			adminServiceListNodesHandler.ServeHTTP(w, r)
 		case AdminServiceCreateNodeProcedure:
@@ -1227,6 +1289,14 @@ func (UnimplementedAdminServiceHandler) Login(context.Context, *connect.Request[
 
 func (UnimplementedAdminServiceHandler) Logout(context.Context, *connect.Request[v1.LogoutRequest]) (*connect.Response[v1.LogoutResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.Logout is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListSessions(context.Context, *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.ListSessions is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) RevokeSession(context.Context, *connect.Request[v1.RevokeSessionRequest]) (*connect.Response[v1.RevokeSessionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.RevokeSession is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error) {

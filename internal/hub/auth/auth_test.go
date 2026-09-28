@@ -19,7 +19,7 @@ import (
 	"github.com/xjetry/probe/internal/testwait"
 )
 
-func setup(t *testing.T) (*Auth, *store.Store, *clock.Fake) {
+func setup(t testing.TB) (*Auth, *store.Store, *clock.Fake) {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default(), store.MigrateSchema)

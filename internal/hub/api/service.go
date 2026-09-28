@@ -32,22 +32,33 @@ import (
 
 const (
 	SessionCookie = "probe_session"
-	// maxBody 是管理请求的解码预算，AdminService 只此一个：按路径分预算要在 connect 外再加一层与解压后上限配合的
-	// 读者，不值。connect 先解码再进拦截器，未鉴权的请求也会被读到这个上限，所以它必须有界。它取两类最大的合法请求中
-	// 较大的一个；每个字段的合法取值都有字节上限是这条推导成立的前提。多余的 JSON 空白、对无需转义的字符的转义不在
-	// 预算内：这样的请求超出预算时得到 resource_exhausted。
-	maxBody = max(maxSettingsBody, maxThemeBody)
 
-	// maxSettingsBody 装下 UpdateSettings 的满额设置在最坏转义下的 JSON：logo 满额（base64 字符在 JSON 里无需转义）；
-	// 自定义 CSS 与清洗前的标题、国家查询的服务地址满额，且每个字节都转义成 6 字节的 \u00XX（控制字符就是这样）；另留
-	// 4 KiB 给明暗、主色、国家查询开关、字段名与 JSON 语法。各项的上限在 settings.go（明暗与主色由取值集合与格式限定）。
-	maxSettingsBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes + 6*maxGeoURLBytes + 4<<10
+	// AdminService 的解码预算按过程分两类，由 Handler 分派：UploadTheme 用 maxThemeBody，其余过程用 maxSettingsBody。
+	// connect 先解码再进拦截器，未鉴权的请求也会被读到所在过程的预算，所以两类都必须有界，而主题包那么大的预算只给
+	// 需要它的那一个过程——全部过程共用取大者，匿名请求在每个过程上都会被读到约 10.7 MiB。每个字段的合法取值都有
+	// 字节上限是两条推导成立的前提。多余的 JSON 空白、对无需转义的字符的转义不在预算内：这样的请求超出预算时得到
+	// resource_exhausted。
 
-	// maxThemeBody 装下 UploadTheme 的满额主题包的 JSON：bytes 在 JSON 里是带填充的标准 base64，8 MiB 编码成
-	// 4 × ⌈8388608 / 3⌉ = 11184812 字节（base64 字母表无需转义；二进制编码是原样 8 MiB，更小）；另留 4 KiB 给 expect_id
-	// （合法值至多 32 个 ASCII 字符，每个最坏转义成 6 字节）、字段名与 JSON 语法。合计 11188908 字节，约 10.7 MiB：
-	// 这也是匿名请求在 AdminService 上被读到的上限。包本身的 8 MiB 由 theme.Parse 另行核对——二进制编码的请求在这个
-	// 预算内能带更大的包。
+	// maxSettingsBody 是除 UploadTheme 外每个过程的解码预算。它要装下 UpdateSettings 的满额设置按 encoding/json 默认
+	// 写法编码的最坏情况：logo 满额（base64 字符在 JSON 里无需转义）；自定义 CSS、清洗前的标题、国家查询的服务地址与备份
+	// 的六个字符串满额，且每个字节都写成 6 字节；备份通知渠道 ID 满额，每个 22 字节：proto3 JSON 把 int64 写成带引号的
+	// 十进制串，合法 ID 为正、至多 19 位，连引号与逗号共 22 字节；另留 4 KiB 给明暗、主色、总闸与国家查询开关两个布尔值、
+	// 备份的四个数值与 has_secret、字段名与 JSON 语法。6 字节的来源因字段而异：CSS、标题与备份的 secret 可以含控制字符，
+	// JSON 必须把它们写成 \u00XX；服务地址、备份的 endpoint、区域、access key 与前缀不含控制字符（url.Parse 与各自的
+	// 校验拒绝），JSON 必须转义的只有 " 与 \（各 2 字节），6 倍来自 encoding/json 默认把 <、>、& 写成 \u003c 这类形式，
+	// 而这些字段的校验放行这三个字符；bucket 只含小写字母、数字、点与连字符，按 6 倍计是宽松的上界。encoding/json 默认
+	// 还把 U+2028、U+2029 写成 6 字节（原文 3 字节），同样在 6 倍之内。
+	// 各项的上限在 settings.go 与 backup_settings.go；每个字段的合法取值都有字节上限（明暗与主色由取值集合与格式限定，
+	// 总闸、国家查询开关与 has_secret 只能是 true 或 false，四个数值是 uint32，渠道 ID 至多 maxBackupChannels 个）是这条
+	// 推导成立的前提。
+	maxSettingsBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes + 6*maxGeoURLBytes +
+		6*(maxEndpointBytes+maxBucketBytes+maxRegionBytes+maxAccessKeyBytes+maxSecretBytes+maxPrefixBytes) + maxBackupChannels*22 + 4<<10
+
+	// maxThemeBody 是 UploadTheme 的解码预算，装下满额主题包的 JSON：bytes 在 JSON 里是带填充的标准 base64，8 MiB
+	// 编码成 4 × ⌈8388608 / 3⌉ = 11184812 字节（base64 字母表无需转义；二进制编码是原样 8 MiB，更小）；另留 4 KiB 给
+	// expect_id（合法值至多 32 个 ASCII 字符，每个最坏转义成 6 字节）、字段名与 JSON 语法。合计 11188908 字节，约
+	// 10.7 MiB：这也是匿名请求在 UploadTheme 上被读到的上限。包本身的 8 MiB 由 theme.Parse 另行核对——二进制编码的
+	// 请求在这个预算内能带更大的包。
 	maxThemeBody = 4*((theme.MaxPackageBytes+2)/3) + 4<<10
 )
 
@@ -63,7 +74,7 @@ type Config struct {
 	// Location 是 hub 的 --timezone，days_left 按它的日历日算；New 要求非 nil。
 	Location *time.Location
 	// Retention 是 serve 交给维护循环的同一份保留期，存储健康按它判定最老桶是否超期。零值会把最老桶早于
-	// 一个桶长之前的表都标成超期，New 用 Retention.Validate 把它当作装配错误拒绝。
+	// 一个桶长加一个维护间隔之前的表都标成超期，New 用 Retention.Validate 把它当作装配错误拒绝。
 	Retention store.Retention
 	// ThemeOrigin 是 serve 的 --theme-origin（规范形态，经 ListThemes 回显给面板）。空串时主题的五个方法一律
 	// FailedPrecondition（requireThemeOrigin）：零值是关闭，与"未配置独立 origin 即不开启上传与托管"同一方向。
@@ -99,6 +110,11 @@ type Service struct {
 
 	// access 是 AdminService 每个过程的准入口径，New 时从描述符读出，之后只读。
 	access map[string]probev1.Access
+
+	// uploading 是容量 1 的信号量，UploadTheme 从校验到入库一直持有它：同一时刻至多一个请求在展开与入库，被引用着的
+	// 展开内容至多一份（≤ theme.MaxTotalBytes），Parse 的解压也至多一路。占用时直接拒绝而不排队：到了方法体的请求
+	// 已各自持有解码后的包，排队只会把它们攒在内存里。请求体的解码在方法体之前，不归它管，由 maxThemeBody 按请求设界。
+	uploading chan struct{}
 }
 
 func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, book *traffic.Book, probes *probe.Registry, alerts *alert.Engine, notifier *alert.Queue, clk clock.Clock, log *slog.Logger) *Service {
@@ -113,18 +129,29 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 	}
 	return &Service{
 		cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, probes: probes, alerts: alerts, notifier: notifier, clk: clk, log: log,
-		history: history{store: st, log: log},
-		access:  accessTable(probev1.File_probe_v1_admin_proto.Services().ByName("AdminService")),
+		history:   history{store: st, log: log},
+		access:    accessTable(probev1.File_probe_v1_admin_proto.Services().ByName("AdminService")),
+		uploading: make(chan struct{}, 1),
 	}
 }
 
 // today 是 hub 时区（--timezone）的今天，days_left 以它为基准。
 func (s *Service) today() time.Time { return alert.Today(s.clk.Now(), s.cfg.Location) }
 
+// Handler 是 AdminService 的挂载点。两个 connect 处理器挂同一个 Service 与同一个鉴权拦截器，只差解码预算；请求按
+// 路径是否等于 UploadTheme 的过程名分给它们。生成的处理器分派过程用的也是 r.URL.Path 的精确相等，所以大预算的
+// 处理器只会执行 UploadTheme，其余过程都经小预算的处理器。
 func (s *Service) Handler() (string, http.Handler) {
-	return probev1connect.NewAdminServiceHandler(s,
-		connect.WithInterceptors(s.accessInterceptor()),
-		connect.WithReadMaxBytes(maxBody))
+	access := connect.WithInterceptors(s.accessInterceptor())
+	path, rest := probev1connect.NewAdminServiceHandler(s, access, connect.WithReadMaxBytes(maxSettingsBody))
+	_, upload := probev1connect.NewAdminServiceHandler(s, access, connect.WithReadMaxBytes(maxThemeBody))
+	return path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == probev1connect.AdminServiceUploadThemeProcedure {
+			upload.ServeHTTP(w, r)
+			return
+		}
+		rest.ServeHTTP(w, r)
+	})
 }
 
 type sessionKey struct{}
@@ -272,10 +299,17 @@ func sessionCookie(value string, secure bool, maxAge int) *http.Cookie {
 	}
 }
 
+func clearSessionCookie(ctx context.Context, header http.Header) {
+	peer := ctx.Value(peerKey{}).(peerInfo)
+	header.Add("Set-Cookie", sessionCookie("", peer.scheme == "https", -1).String())
+}
+
 func (s *Service) Login(ctx context.Context, req *connect.Request[probev1.LoginRequest]) (*connect.Response[probev1.LoginResponse], error) {
 	peer := ctx.Value(peerKey{}).(peerInfo)
 	tok, err := s.auth.Login(ctx, req.Msg.GetPassword(), peer.from)
 	switch {
+	case errors.Is(err, auth.ErrLoginBusy):
+		return nil, connect.NewError(connect.CodeResourceExhausted, errors.New("password verification is busy; please try again later"))
 	case errors.Is(err, auth.ErrLocked):
 		return nil, unauthenticated("too many failed logins from this source (one IPv4 address, or one IPv6 /64); retry in 15 minutes")
 	case errors.Is(err, auth.ErrNoAdmin), errors.Is(err, auth.ErrBadPassword):
@@ -292,12 +326,11 @@ func (s *Service) Login(ctx context.Context, req *connect.Request[probev1.LoginR
 
 func (s *Service) Logout(ctx context.Context, _ *connect.Request[probev1.LogoutRequest]) (*connect.Response[probev1.LogoutResponse], error) {
 	tok := ctx.Value(sessionKey{}).(string)
-	peer := ctx.Value(peerKey{}).(peerInfo)
 	if err := s.auth.Logout(ctx, tok); err != nil {
 		s.log.Error("logout failed", "err", err)
 		return nil, internalError("logout failed")
 	}
 	resp := connect.NewResponse(&probev1.LogoutResponse{})
-	resp.Header().Add("Set-Cookie", sessionCookie("", peer.scheme == "https", -1).String())
+	clearSessionCookie(ctx, resp.Header())
 	return resp, nil
 }

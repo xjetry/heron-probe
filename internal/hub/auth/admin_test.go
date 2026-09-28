@@ -3,16 +3,19 @@ package auth
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
-
 	"errors"
-	"golang.org/x/crypto/argon2"
+	"fmt"
+	"log/slog"
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/argon2"
+
+	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/testwait"
 )
@@ -332,114 +335,347 @@ func TestPasswordChangeDuringLoginDoesNotIssueSession(t *testing.T) {
 	}
 }
 
-func TestConcurrentLoginFailuresCannotBypassLock(t *testing.T) {
+// loginPausedInGate 让 from 的一次错误密码登录停在 "login failed" 日志上：它已记完失败、
+// 尚未放门，只持 loginGate，不持 mu，也不持数据库连接，别的请求读库与取 mu 都不受它影响。
+// 暂停点靠日志语句的位置，所以先断言门确实被占。finish 放行并返回这次登录的结果，可重复调用。
+func loginPausedInGate(t *testing.T, a *Auth, from netip.Addr) (finish func() error) {
+	t.Helper()
+	pause, entered, release := testwait.PauseAtLog(a.log.Handler(), "login failed")
+	a.log = slog.New(pause)
+	done := make(chan error, 1)
+	go func() {
+		_, err := a.Login(context.Background(), "wrong password here", from)
+		done <- err
+	}()
+	finish = sync.OnceValue(func() error {
+		release()
+		return <-done
+	})
+	t.Cleanup(func() { _ = finish() })
+	select {
+	case <-entered:
+	case <-time.After(testwait.Bound):
+		t.Fatal("wrong-password login did not reach its failure log")
+	}
+	if a.loginGate.TryLock() {
+		a.loginGate.Unlock()
+		t.Fatal("login paused at its failure log without holding the gate")
+	}
+	return finish
+}
+
+// 门不分来源，失败按请求自己的来源记。攻击者的错误密码占住门时，管理员用正确密码重试
+// failLimit+1 次，每次都立即得到 ErrLoginBusy 且不留计数；忙碌若计入失败，管理员来源在
+// 第 failLimit 次后就被锁满 failWindow。
+func TestConcurrentLoginsRejectWithoutWaitingForPasswordVerification(t *testing.T) {
 	a, _, _ := setup(t)
 	ctx := context.Background()
 	if err := a.SetPassword(ctx, goodPassword); err != nil {
 		t.Fatal(err)
 	}
+	attacker, admin := netip.MustParseAddr("198.51.100.7"), netip.MustParseAddr("203.0.113.9")
+	finish := loginPausedInGate(t, a, attacker)
 	start := make(chan struct{})
-	done := make(chan error, failLimit+3)
-	for i := 0; i < cap(done); i++ {
+	done := make(chan error, failLimit+1)
+	for range cap(done) {
 		go func() {
 			<-start
-			_, err := a.Login(ctx, "wrong", netip.MustParseAddr("10.0.0.1"))
+			_, err := a.Login(ctx, goodPassword, admin)
 			done <- err
 		}()
 	}
 	close(start)
-	bad, locked := 0, 0
-	for i := 0; i < cap(done); i++ {
-		switch err := <-done; {
-		case errors.Is(err, ErrBadPassword):
-			bad++
-		case errors.Is(err, ErrLocked):
-			locked++
-		default:
-			t.Fatalf("unexpected login result: %v", err)
+	for i := range cap(done) {
+		select {
+		case err := <-done:
+			if !errors.Is(err, ErrLoginBusy) {
+				t.Errorf("admin login while another source holds the gate = %v, want ErrLoginBusy", err)
+			}
+		case <-time.After(testwait.Bound):
+			_ = finish()
+			for range cap(done) - i {
+				<-done
+			}
+			t.Fatal("admin login waited for another source's password verification")
 		}
 	}
-	if bad != failLimit || locked != 3 {
-		t.Fatalf("concurrent attempts bypassed lock: bad=%d locked=%d", bad, locked)
+	a.mu.Lock()
+	f := a.login.m[SourceKey(admin)]
+	locked := a.login.locked(admin, a.clk.Mono())
+	a.mu.Unlock()
+	if f != nil || locked {
+		t.Fatalf("busy attempts counted against the admin source: entry=%+v locked=%v", f, locked)
+	}
+	if err := finish(); !errors.Is(err, ErrBadPassword) {
+		t.Fatalf("paused login = %v, want ErrBadPassword", err)
+	}
+	if _, err := a.Login(ctx, goodPassword, admin); err != nil {
+		t.Fatalf("admin login after the gate freed: %v", err)
 	}
 }
 
+// 门在读密码哈希之前：门被占时，已取消的 context 还没被读库用到就得到 ErrLoginBusy。
+// 门空闲时同一个 context 必须在读库处失败，否则这条用例分辨不出门在读库之前还是之后；
+// 用错误密码，是因为正确密码会走到会话写库，那里同样报取消，就证明不了读库用了 context。
+func TestLoginTakesGateBeforeReadingPassword(t *testing.T) {
+	a, _, _ := setup(t)
+	if err := a.SetPassword(context.Background(), goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	from := netip.MustParseAddr("10.0.0.1")
+	if _, err := a.Login(ctx, "wrong password here", from); !errors.Is(err, context.Canceled) {
+		t.Fatalf("login with cancelled context and free gate = %v, want context.Canceled from the password read", err)
+	}
+	a.loginGate.Lock()
+	defer a.loginGate.Unlock()
+	if _, err := a.Login(ctx, "wrong password here", from); !errors.Is(err, ErrLoginBusy) {
+		t.Fatalf("login with busy gate = %v, want ErrLoginBusy before reading the password", err)
+	}
+}
+
+func TestLoginChecksLockoutBeforeBusyGate(t *testing.T) {
+	a, _, _ := setup(t)
+	from := netip.MustParseAddr("10.0.0.1")
+	a.mu.Lock()
+	for range failLimit {
+		a.login.record(from, a.clk.Mono())
+	}
+	a.mu.Unlock()
+	a.loginGate.Lock()
+	defer a.loginGate.Unlock()
+	if _, err := a.Login(context.Background(), goodPassword, from); !errors.Is(err, ErrLocked) {
+		t.Fatalf("locked source while gate busy = %v, want ErrLocked", err)
+	}
+}
+
+func TestSessionAuthenticationDoesNotUseLoginGate(t *testing.T) {
+	a, _, _ := setup(t)
+	ctx := context.Background()
+	if err := a.SetPassword(ctx, goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	token, err := a.Login(ctx, goodPassword, netip.MustParseAddr("10.0.0.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.loginGate.Lock()
+	release := sync.OnceFunc(a.loginGate.Unlock)
+	defer release()
+	done := make(chan error, 1)
+	go func() {
+		ok, err := a.AuthenticateSession(ctx, token)
+		if err == nil && !ok {
+			err = errors.New("live session rejected")
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("session authentication used busy login gate: %v", err)
+		}
+	case <-time.After(testwait.Bound):
+		release()
+		<-done
+		t.Fatal("session authentication waited for busy login gate")
+	}
+}
+
+func TestLoginReleasesGateBeforeSessionIssuance(t *testing.T) {
+	a, _, clk := setup(t)
+	ctx := context.Background()
+	from := netip.MustParseAddr("10.0.0.1")
+	if err := a.SetPassword(ctx, goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	gate := &observationClock{Fake: clk, entered: make(chan struct{}), release: make(chan struct{})}
+	gate.block.Store(true)
+	a.clk = gate
+	release := sync.OnceFunc(func() { close(gate.release) })
+	done := make(chan error, 1)
+	go func() {
+		_, err := a.Login(ctx, goodPassword, from)
+		done <- err
+	}()
+	defer release()
+	select {
+	case <-gate.entered:
+	case <-time.After(testwait.Bound):
+		t.Fatal("login did not reach session issuance")
+	}
+	for range failLimit {
+		if _, err := a.Login(ctx, "wrong", from); !errors.Is(err, ErrBadPassword) {
+			t.Errorf("password verification blocked by session issuance: %v", err)
+		}
+	}
+	release()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Login(ctx, goodPassword, from); !errors.Is(err, ErrLocked) {
+		t.Fatalf("session issuance cleared newer failures: %v", err)
+	}
+}
+
+// 登录不占 mutMu，节点变更与 Load 不等它。两个暂停点：门内，停在读密码哈希、argon2 校验与
+// 记账之后、放门之前的失败日志上；放门之后，停在签发会话前的墙钟读取上。门内这一点照得到
+// 从取门起持有到放门的锁，照不到只包住校验那一句、在失败日志之前就释放的锁。
 func TestNodeMutationsDoNotWaitForLogin(t *testing.T) {
-	for _, operation := range []string{"Register", "CreateNode", "RotateToken", "DeleteNode", "Load"} {
-		t.Run(operation, func(t *testing.T) {
-			a, _, clk := setup(t)
-			ctx := context.Background()
-			if err := a.SetPassword(ctx, goodPassword); err != nil {
-				t.Fatal(err)
+	pauses := []struct {
+		name string
+		// start 让一次登录停在暂停点；finish 放行并核对这次登录的结果，可重复调用。
+		start func(t *testing.T, a *Auth, clk *clock.Fake) (finish func() error)
+	}{
+		{"in gate", func(t *testing.T, a *Auth, _ *clock.Fake) func() error {
+			finish := loginPausedInGate(t, a, netip.MustParseAddr("10.0.0.1"))
+			return func() error {
+				if err := finish(); !errors.Is(err, ErrBadPassword) {
+					return fmt.Errorf("paused login = %v, want ErrBadPassword", err)
+				}
+				return nil
 			}
-			id, _, err := a.CreateNode(ctx, "existing")
-			if err != nil {
-				t.Fatal(err)
-			}
-			key, _, err := a.OpenWindow(ctx, time.Hour, 1)
-			if err != nil {
-				t.Fatal(err)
-			}
+		}},
+		{"before session issuance", func(t *testing.T, a *Auth, clk *clock.Fake) func() error {
 			// 只暂停 Login 在签发前的墙钟读取，存储仍用原时钟，排除写队列阻塞。
 			gate := &observationClock{Fake: clk, entered: make(chan struct{}), release: make(chan struct{})}
 			gate.block.Store(true)
 			a.clk = gate
-			release := sync.OnceFunc(func() { close(gate.release) })
-			loginDone := make(chan error, 1)
+			done := make(chan error, 1)
 			go func() {
-				_, err := a.Login(ctx, goodPassword, netip.MustParseAddr("10.0.0.1"))
-				loginDone <- err
+				_, err := a.Login(context.Background(), goodPassword, netip.MustParseAddr("10.0.0.1"))
+				done <- err
 			}()
-			defer func() {
-				release()
-				if err := <-loginDone; err != nil {
-					t.Errorf("login failed after release: %v", err)
-				}
-			}()
+			finish := sync.OnceValue(func() error {
+				close(gate.release)
+				return <-done
+			})
+			t.Cleanup(func() { _ = finish() })
 			select {
 			case <-gate.entered:
 			case <-time.After(testwait.Bound):
 				t.Fatal("Login did not reach session issuance")
 			}
-			done := make(chan error, 1)
-			go func() {
-				var err error
-				switch operation {
-				case "Register":
-					_, _, err = a.Register(ctx, key, "registered", netip.MustParseAddr("10.0.0.2"))
-				case "CreateNode":
-					_, _, err = a.CreateNode(ctx, "new")
-				case "RotateToken":
-					_, err = a.RotateToken(ctx, id)
-				case "DeleteNode":
-					err = a.DeleteNode(ctx, id)
-				case "Load":
-					err = a.Load(ctx)
+			return finish
+		}},
+	}
+	for _, pause := range pauses {
+		for _, operation := range []string{"Register", "CreateNode", "RotateToken", "DeleteNode", "Load"} {
+			t.Run(pause.name+"/"+operation, func(t *testing.T) {
+				a, _, clk := setup(t)
+				ctx := context.Background()
+				if err := a.SetPassword(ctx, goodPassword); err != nil {
+					t.Fatal(err)
 				}
-				done <- err
-			}()
-			select {
-			case err := <-done:
+				id, _, err := a.CreateNode(ctx, "existing")
 				if err != nil {
-					t.Fatalf("%s failed while Login was pending: %v", operation, err)
+					t.Fatal(err)
 				}
-			case <-time.After(testwait.Bound):
-				// 先释放登录并等待节点操作退出，避免失败路径留下访问存储的协程。
-				release()
-				<-done
-				t.Fatalf("%s waited for unrelated Login", operation)
-			}
-		})
+				key, _, err := a.OpenWindow(ctx, time.Hour, 1)
+				if err != nil {
+					t.Fatal(err)
+				}
+				finish := pause.start(t, a, clk)
+				done := make(chan error, 1)
+				go func() {
+					var err error
+					switch operation {
+					case "Register":
+						_, _, err = a.Register(ctx, key, "registered", netip.MustParseAddr("10.0.0.2"))
+					case "CreateNode":
+						_, _, err = a.CreateNode(ctx, "new")
+					case "RotateToken":
+						_, err = a.RotateToken(ctx, id)
+					case "DeleteNode":
+						err = a.DeleteNode(ctx, id)
+					case "Load":
+						err = a.Load(ctx)
+					}
+					done <- err
+				}()
+				select {
+				case err := <-done:
+					if err != nil {
+						t.Fatalf("%s failed while Login was paused %s: %v", operation, pause.name, err)
+					}
+				case <-time.After(testwait.Bound):
+					// 先放行登录并等待节点操作退出，避免失败路径留下访问存储的协程。
+					_ = finish()
+					<-done
+					t.Fatalf("%s waited for Login paused %s", operation, pause.name)
+				}
+				if err := finish(); err != nil {
+					t.Errorf("login after release: %v", err)
+				}
+			})
+		}
 	}
 }
 
-func TestPasswordVerificationUsesStoredParameters(t *testing.T) {
+// cheapPHC 按 m=32,t=1,p=1 生成 password 的 PHC，远低于新哈希的默认成本。
+func cheapPHC(password string) string {
 	salt := []byte("0123456789abcdef")
-	key := argon2.IDKey([]byte(goodPassword), salt, 1, 32, 1, 32)
+	key := argon2.IDKey([]byte(password), salt, 1, 32, 1, 32)
 	enc := base64.RawStdEncoding
-	phc := fmt.Sprintf("$argon2id$v=19$m=32,t=1,p=1$%s$%s", enc.EncodeToString(salt), enc.EncodeToString(key))
-	if ok, err := VerifyPassword(phc, goodPassword); err != nil || !ok {
+	return fmt.Sprintf("$argon2id$v=19$m=32,t=1,p=1$%s$%s", enc.EncodeToString(salt), enc.EncodeToString(key))
+}
+
+func TestPasswordVerificationUsesStoredParameters(t *testing.T) {
+	if ok, err := VerifyPassword(cheapPHC(goodPassword), goodPassword); err != nil || !ok {
 		t.Fatalf("stored parameters ignored: %v %v", ok, err)
+	}
+}
+
+// 同一来源并发猜错密码，真正走到校验的次数恰为 failLimit。钉住 verifyLoginPassword 的两处
+// 语句顺序：判锁定与 TryLock 在同一个 mu 临界区里，拆开后，判定时尚未锁定的请求能在第
+// failLimit 次失败落账、放门之后进门；失败在放门之前记账，先放门则另一请求能在落账前进门。
+// 两处都没有测试能在不持 mu 时挂住的调用（时钟在 mu 内读），这是统计性用例：越界要调度
+// 恰好落在窗口里，所以每轮 32 个协程循环争用，跑 250 轮、每轮换一个来源。正确实现下，进门的
+// 请求判定时已看到此前全部落账，调度怎样都不越界。存储的哈希按 TestPasswordVerificationUsesStoredParameters 钉住的
+// 自带参数校验，低成本让一次尝试以微秒计。
+func TestConcurrentWrongPasswordsVerifyExactlyFailLimit(t *testing.T) {
+	const rounds, workers = 250, 32
+	// 每轮的来源必须互不相同：假时钟不走，用过的来源在整个用例里一直锁着，再用它的那一轮
+	// 开头就全是 ErrLocked，正确实现也会报校验 0 次。来源按轮次编进 198.18.0.0/15 的低两字节。
+	if rounds > 1<<16 {
+		t.Fatalf("%d rounds do not fit in the two-byte source number", rounds)
+	}
+	a, _, _ := setup(t)
+	ctx := context.Background()
+	if err := a.store.SetAdminPassword(ctx, cheapPHC(goodPassword)); err != nil {
+		t.Fatal(err)
+	}
+	for round := range rounds {
+		from := netip.AddrFrom4([4]byte{198, 18, byte(round >> 8), byte(round)})
+		var verified atomic.Int64
+		errs := make(chan error, workers)
+		var wg sync.WaitGroup
+		for range cap(errs) {
+			wg.Go(func() {
+				for {
+					_, err := a.Login(ctx, "wrong password here", from)
+					switch {
+					case errors.Is(err, ErrLoginBusy):
+					case errors.Is(err, ErrBadPassword):
+						verified.Add(1)
+					case errors.Is(err, ErrLocked):
+						return
+					default:
+						errs <- err
+						return
+					}
+				}
+			})
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Fatalf("round %d: unexpected login error: %v", round, err)
+		}
+		if got := verified.Load(); got != failLimit {
+			t.Fatalf("round %d: verified wrong passwords = %d, want %d", round, got, failLimit)
+		}
 	}
 }
 

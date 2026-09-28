@@ -36,7 +36,7 @@ type stateEntry struct {
 	// recoveredAt 与库里的 alert_state.recovered_at 同值（含义见 store.StateRow.RecoveredAt），Load 读入，apply 写库成功后发布。
 	recoveredAt time.Time
 	// flapping 是离线巡检最近一次对这对规则与节点的判定：pending 且只因抖动抑制而未进入 firing（FlapDeferred）。
-	// 它是由当前观测派生的展示量，不落库：重启后第一轮巡检即重新算出。
+	// 它是由当前观测派生的展示量，不落库：重启后第一轮巡检即重新算出。apply 把它与 state 在同一个 mu 临界区里写入。
 	flapping bool
 }
 
@@ -59,8 +59,11 @@ type Engine struct {
 	rules    map[int64]store.AlertRule
 	channels map[int64]store.NotifyChannel
 	states   map[stateKey]stateEntry
-	started  time.Duration
-	sender   Sender
+	// started 与 startedWall 是本次 Load 的时刻，分别按单调钟与墙钟记：前者是本次启动后没有上报的节点量已离线时长的起点，
+	// 后者只在库里也没有最后上报时充当离线开始（见 offlineStart）。
+	started     time.Duration
+	startedWall time.Time
+	sender      Sender
 }
 
 // New 对缺时区的 Config panic：到期扫描对 nil 时区调用 time.Time.In 会在运行中 panic，装配错误应当在启动时暴露。
@@ -97,7 +100,7 @@ func (e *Engine) Load(ctx context.Context) error {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.started = e.clk.Mono()
+	e.started, e.startedWall = e.clk.Mono(), e.clk.Now()
 	e.rules = validRules
 	e.channels = map[int64]store.NotifyChannel{}
 	e.states = map[stateKey]stateEntry{}
@@ -348,24 +351,23 @@ func (e *Engine) entry(k stateKey) stateEntry {
 	return stateEntry{state: store.StateOK}
 }
 
-// setFlapping 在 apply 成功之后更新展示用的抖动标记；状态不变时 apply 不写库，标记仍要跟着这一轮的观测走。
-// 没有状态项（ok 且从未写过）的一对不会是 pending，无需记录。调用方持 writeMu。
-func (e *Engine) setFlapping(k stateKey, flapping bool) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if s, ok := e.states[k]; ok {
-		s.flapping = flapping
-		e.states[k] = s
-	}
-}
-
 // 调用方持 writeMu；状态、事件与投递先由 store 原子提交，再发布内存并通知 Sender。
-// firedExpiresOn 只由到期扫描在进入 firing 时给出，其余调用传空。状态不变时 apply 直接返回、不写库，所以一个 firing
+// firedExpiresOn 只由到期扫描在进入 firing 时给出，其余调用传空。状态不变时 apply 不写库，所以一个 firing
 // 状态记的始终是它进入 firing 那一刻的到期日。
-func (e *Engine) apply(ctx context.Context, r store.AlertRule, nodeID int64, next store.AlertState, firedExpiresOn string, tr *store.Transition, summary string, value float64) error {
+// flapping 是同一轮观测算出的抖动标记：离线巡检传 FlapDeferred，其余种类传 false。它与状态在同一个 mu 临界区里写进
+// states，状态不变、不写库时也更新；States 在 mu 下取快照，所以 ListAlertRules 读到的状态与标记来自同一轮观测。
+func (e *Engine) apply(ctx context.Context, r store.AlertRule, nodeID int64, next store.AlertState, flapping bool, firedExpiresOn string, tr *store.Transition, summary string, value float64) error {
 	k := stateKey{r.ID, nodeID}
 	cur := e.entry(k)
 	if cur.state == next {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		// 没有状态项的一对由 entry 按 ok 处理，库里也没有它的行：状态不变说明这一轮的 next 也是 ok，而 FlapDeferred 只在
+		// next 为 pending 时为真，标记必为假。不为它建内存项，否则内存会多出一行库里没有的状态。
+		if s, ok := e.states[k]; ok {
+			s.flapping = flapping
+			e.states[k] = s
+		}
 		return nil
 	}
 	now := e.clk.Now()
@@ -392,7 +394,7 @@ func (e *Engine) apply(ctx context.Context, r store.AlertRule, nodeID int64, nex
 		return err
 	}
 	e.mu.Lock()
-	e.states[k] = stateEntry{state: next, sinceAt: since, firedExpiresOn: firedExpiresOn, recoveredAt: recoveredAt}
+	e.states[k] = stateEntry{state: next, sinceAt: since, firedExpiresOn: firedExpiresOn, recoveredAt: recoveredAt, flapping: flapping}
 	sender := e.sender
 	e.mu.Unlock()
 	// 未装配 Sender 时转换仍完整落库，投递行可供后续续投，不能因此跳过持久化。
@@ -422,6 +424,29 @@ func (e *Engine) pruneCandidates(ctx context.Context, ruleID int64, keep map[int
 	return errors.Join(errs...)
 }
 
+// offlineStart 是这次离线开始、即节点最后一次上报的墙钟，只用来与 recoveredAt 相减判定抖动窗口：recoveredAt 是落库的墙钟，
+// 离线开始也必须是跨重启可比的墙钟。
+//
+//   - 本次启动后上报过：live 的 LastSeenWall。
+//   - 否则取库里的 LastSeenAt。ingest.Service.RunFlusher 在每个分钟边界之后刷出已闭合的分钟桶、ctx 结束时刷出全部桶，
+//     store.WriteMinuteBatch 随分钟行把 live 当时的 LastSeenWall 写进 node.last_seen_at。重启前已开始、重启时仍在 pending 的
+//     离线因此保住原来的离线开始，重启前后按同一个宽限判定。
+//   - 库里也没有（没有任何上报落过库）才退回本次启动的墙钟：这时离线开始不晚于启动时刻，启动时刻是能确定的最晚值。
+//
+// 落库值不晚于真实的最后上报：正常停机时全部刷出，二者相同；异常退出丢的是还没刷出的上报，存储正常时只有退出前约一个刷出周期
+// 之内的那些。偏早只让 SinceRecovery 偏小、更偏向判进窗口，而窗口内的宽限 max(节点宽限, flapGrace) 不小于窗口外的节点宽限，
+// 所以这个偏差只会推迟触发，不会让本该抑制的离线提前触发。
+func (e *Engine) offlineStart(entry live.Entry, seen bool, node store.Node) time.Time {
+	switch {
+	case seen:
+		return entry.LastSeenWall
+	case !node.LastSeenAt.IsZero():
+		return node.LastSeenAt
+	default:
+		return e.startedWall
+	}
+}
+
 func (e *Engine) SweepOffline(ctx context.Context) error {
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
@@ -429,7 +454,7 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	now, wall := e.clk.Mono(), e.clk.Now()
+	now := e.clk.Mono()
 	var errs []error
 	for _, r := range e.Rules() {
 		if !r.Enabled || r.Kind != store.KindOffline {
@@ -443,7 +468,8 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 			candidates[node.ID] = true
 			k := stateKey{r.ID, node.ID}
 			cur := e.entry(k)
-			// LastSeenAt 是跨进程的墙钟，只供文案；无 live 条目时从本次 Load 的单调起点量时长。
+			// 已离线时长按单调钟量，不受墙钟跳变影响：有本次启动后的上报从 live 的 LastSeen 起算，否则从本次 Load 的单调起点
+			// 起算（重启不变式：重启前处于 pending 的从启动时刻重新计时）。落库的 LastSeenAt 不参与时长，用于下面的窗口判定与文案。
 			lastSeen := e.started
 			entry, seen := e.live.Get(node.ID)
 			if seen {
@@ -452,8 +478,7 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 			unseen := now - lastSeen
 			o := Observation{Reported: seen, Unseen: unseen, Grace: time.Duration(node.OfflineGraceS) * time.Second, TTL: e.cfg.TTL}
 			if !cur.recoveredAt.IsZero() {
-				// 离线开始的墙钟 = 现在 − 已离线时长；已离线时长按单调钟量，只有上次恢复时刻需要跨重启的墙钟。
-				o.Recovered, o.SinceRecovery = true, wall.Add(-unseen).Sub(cur.recoveredAt)
+				o.Recovered, o.SinceRecovery = true, e.offlineStart(entry, seen, node).Sub(cur.recoveredAt)
 			}
 			next, tr := NextOffline(cur.state, o)
 			summary := fmt.Sprintf("节点 %s 离线 %s（规则 %s）", node.Name, unseen.Round(time.Second), r.Name)
@@ -467,11 +492,9 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 			if tr != nil && *tr == store.TransitionRecovered {
 				summary = fmt.Sprintf("节点 %s 已恢复上报（规则 %s）", node.Name, r.Name)
 			}
-			if err := e.apply(ctx, r, node.ID, next, "", tr, summary, unseen.Seconds()); err != nil {
+			if err := e.apply(ctx, r, node.ID, next, FlapDeferred(cur.state, o), "", tr, summary, unseen.Seconds()); err != nil {
 				errs = append(errs, err)
-				continue
 			}
-			e.setFlapping(k, FlapDeferred(next, o))
 		}
 		if err := e.pruneCandidates(ctx, r.ID, candidates); err != nil {
 			errs = append(errs, err)
@@ -538,7 +561,7 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 			next, tr := NextProbe(e.current(stateKey{r.ID, node.ID}), samples, r.ForMinutes)
 			value := samples[len(samples)-1].Value
 			summary := fmt.Sprintf("节点 %s 规则 %s：%s %.1f", node.Name, r.Name, r.Metric, value)
-			if err := e.apply(ctx, r, node.ID, next, "", tr, summary, value); err != nil {
+			if err := e.apply(ctx, r, node.ID, next, false, "", tr, summary, value); err != nil {
 				errs = append(errs, err)
 			}
 		}

@@ -2,6 +2,11 @@
 // 去重由调用方保证（Set 或服务端唯一 id 列表）。
 export const ascending = (ids: Iterable<bigint>): bigint[] => [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
+// 提交多选时与当前列表求交：列表里已不存在的对象（在别处删掉了）自然掉出，不让 hub 因引用不存在而拒绝整次保存。
+// 结果升序，满足 hub 对 id 列表的要求。
+export const liveIds = (ids: ReadonlySet<bigint>, items: readonly { id: bigint }[]): bigint[] =>
+  ascending(items.filter((it) => ids.has(it.id)).map((it) => it.id));
+
 export function toggled(set: ReadonlySet<bigint>, id: bigint): Set<bigint> {
   const next = new Set(set);
   if (next.has(id)) next.delete(id); else next.add(id);

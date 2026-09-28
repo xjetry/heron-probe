@@ -37,6 +37,12 @@ func (s *Service) UploadTheme(ctx context.Context, req *connect.Request[probev1.
 	if err := s.requireThemeOrigin(); err != nil {
 		return nil, err
 	}
+	select {
+	case s.uploading <- struct{}{}:
+		defer func() { <-s.uploading }()
+	default:
+		return nil, connect.NewError(connect.CodeResourceExhausted, errors.New("another theme upload is in progress; retry after it finishes"))
+	}
 	pkg, err := theme.Parse(req.Msg.GetPackage())
 	var bad *theme.Error
 	if errors.As(err, &bad) {

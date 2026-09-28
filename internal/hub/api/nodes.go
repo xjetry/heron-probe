@@ -13,7 +13,6 @@ import (
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/hub/alert"
-	"github.com/xjetry/probe/internal/hub/geo"
 	"github.com/xjetry/probe/internal/hub/sanitize"
 	"github.com/xjetry/probe/internal/hub/store"
 )
@@ -105,7 +104,7 @@ var countrySources = map[store.CountrySource]probev1.CountrySource{
 // nodeProto 的 today 是 hub 时区的今天（alert.Today）。
 func nodeProto(n store.Node, today time.Time) *probev1.Node {
 	out := &probev1.Node{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, SortOrder: n.SortOrder, CreatedAt: n.CreatedAt.Unix(), Facts: n.Facts, TrafficResetDay: uint32(n.TrafficResetDay),
-		Billing: billingProto(n.Billing, today), LastSource: n.LastSource, CountryIp: n.CountryIP, CountryPin: n.CountryPin, Tags: n.Tags}
+		Billing: billingProto(n.Billing, today), LastSource: n.LastSource, CountryIp: n.CountryIP, CountryPin: n.CountryPin, CountryLookup: n.Country, Tags: n.Tags}
 	country, source := n.DisplayCountry()
 	out.Country, out.CountrySource = country, countrySources[source]
 	if !n.LastSeenAt.IsZero() {
@@ -203,7 +202,7 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 		return nil, err
 	}
 	pin := req.Msg.GetCountryPin()
-	if pin != "" && !geo.IsCountryCode(pin) {
+	if pin != "" && !store.IsCountryCode(pin) {
 		return nil, invalid("country_pin: must be empty or two uppercase letters (ISO 3166-1 alpha-2), e.g. US; got %q", pin)
 	}
 	tags, err := cleanTags("tags", req.Msg.GetTags())

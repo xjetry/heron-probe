@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
@@ -63,7 +64,7 @@ type Node struct {
 	SortOrder       int32
 	CreatedAt       time.Time
 	LastSeenAt      time.Time // 零值表示从未上报
-	LastSource      string    // 最近一次上报的来源地址，空串表示从未上报（见 node.last_source）
+	LastSource      string    // 最近一次上报的来源地址；空串表示 hub 没有记录到来源，含义见 node.last_source
 	TrafficResetDay int       // 周期重置日 1–28，列默认 1
 	OfflineGraceS   int       // 0 表示列为 NULL，读侧取 TTL。
 	// Facts 为 nil 表示该节点尚未上报过静态信息。
@@ -86,6 +87,16 @@ const (
 	CountryManual
 	CountryLookup
 )
+
+// IsCountryCode 报告 s 是否恰为两个 ASCII 大写字母：node 表两处国家（查得的 country 与手动的 country_pin）的取值域，
+// 查询应答（geo）、手动指定（api 的 UpdateNode）与 SetLookupCountry 共用这一个判定。只接受这一种形状：应答来自
+// 第三方，收窄到 [A-Z]{2} 之后它不可能携带标记、文字或别的国家写法（小写、三字母、名称），应答体也就不进入任何
+// 解释路径；页面按这两个字母算区域指示符旗帜，计算只对 A–Z 有定义。不核对是否是已分配的 ISO 3166-1 代码。
+func IsCountryCode(s string) bool {
+	return len(s) == 2 && isUpper(s[0]) && isUpper(s[1])
+}
+
+func isUpper(c byte) bool { return c >= 'A' && c <= 'Z' }
 
 // DisplayCountry 是面板与公开页显示的国家：手动值非空取手动值，否则取查得值。这是显示值唯一的判定，管理端与公开端
 // 都经它取值。
@@ -139,8 +150,9 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 	return out, rows.Err()
 }
 
-// queryNodes 是节点的唯一读法：where 是作用于 node n 的条件（空串即全部）。节点行与它们的标签在同一个只读事务里读出，
-// 两者来自同一个快照：两次独立查询之间插进一次 UpdateNode，节点行与标签就会是不同时刻的样子。
+// queryNodes 是 store.Node 值的唯一来源（selectNodes 与 scanNodes 只在这里用）：where 是作用于 node n 的条件（空串即
+// 全部）。节点行与它们的标签在同一个只读事务里读出，两者来自同一个快照：两次独立查询之间插进一次 UpdateNode，节点行与
+// 标签就会是不同时刻的样子（TestNodeRowAndTagsComeFromOneSnapshot）。
 func (s *Store) queryNodes(ctx context.Context, where string, args ...any) ([]Node, error) {
 	tx, err := s.r.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -263,8 +275,18 @@ func (s *Store) RenewExpiry(ctx context.Context, id int64, cycle BillingCycle, f
 
 // SetLookupCountry 写入对 addr 查得的国家，前提是节点的 last_source 此刻仍是 addr：查询在写协程之外发出，应答
 // 到达之前节点可能已换了出口（WriteMinuteBatch 随之清空了两列），按旧地址的答案写回就会把旧出口的国家挂到新地址上。
-// 条件不成立时不写、返回 false，新地址由查询器下一轮重查；节点已被删除时同样返回 false。
+// 条件不成立时不写、返回 false，新地址由查询器下一轮重查；节点已被删除时返回 ErrNotFound。
+//
+// country 与 country_ip 同空同非空（见 node 表的列注释）由这里的检查承载，不依赖调用方：addr 为空时条件
+// last_source = addr 对从未上报的节点成立，会写出有国家没地址的一对；country 为空则写出有地址没国家的一对。
+// 两种都返回错误、什么都不写，不是国家码的 country 同样拒绝。
 func (s *Store) SetLookupCountry(ctx context.Context, id int64, addr, country string) (bool, error) {
+	if addr == "" {
+		return false, fmt.Errorf("lookup country of node %d: empty address", id)
+	}
+	if !IsCountryCode(country) {
+		return false, fmt.Errorf("lookup country of node %d for %s: %q is not two uppercase letters", id, addr, country)
+	}
 	var set bool
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		res, err := tx.Exec("UPDATE node SET country = ?, country_ip = ? WHERE id = ? AND last_source = ?", country, addr, id, addr)
@@ -272,7 +294,17 @@ func (s *Store) SetLookupCountry(ctx context.Context, id int64, addr, country st
 			return err
 		}
 		n, err := res.RowsAffected()
-		set = n == 1
+		if err != nil {
+			return err
+		}
+		if set = n == 1; set {
+			return nil
+		}
+		var one int
+		err = tx.QueryRow("SELECT 1 FROM node WHERE id = ?", id).Scan(&one)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
 		return err
 	})
 	return set, err
@@ -354,48 +386,66 @@ func (s *Store) DeleteNode(ctx context.Context, id int64) error {
 		if _, err := tx.Exec("DELETE FROM alert_rule_node WHERE node_id = ?", id); err != nil {
 			return err
 		}
-		if _, err := tx.Exec("DELETE FROM node_tag WHERE node_id = ?", id); err != nil {
+		if _, err := tx.Exec(clearNodeTags, id); err != nil {
 			return err
 		}
 		return nil
 	})
 }
 
-// CreateNode 返回新节点的 id 与建节点事务推进后的任务版本（见 insertNode）。
-func (s *Store) CreateNode(ctx context.Context, name string, tokenHash []byte) (int64, uint64, error) {
-	var id, version int64
+// NewNodeTasks 是建节点事务提交时新节点的探测清单：Version 是该事务推进后的任务版本，TaskIDs 是同一事务里按
+// probeCoverage 读出的新节点覆盖，升序。探测任务注册表的建节点增量只取这份结果，不另行推导覆盖。
+type NewNodeTasks struct {
+	Version uint64
+	TaskIDs []uint64
+}
+
+// CreateNode 返回新节点的 id 与它在建节点事务提交时的探测清单（见 insertNode）。
+func (s *Store) CreateNode(ctx context.Context, name string, tokenHash []byte) (int64, NewNodeTasks, error) {
+	var id int64
+	var tasks NewNodeTasks
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		var err error
-		id, version, err = insertNode(tx, name, tokenHash, s.clk.Now().Unix())
+		id, tasks, err = insertNode(tx, name, tokenHash, s.clk.Now().Unix())
 		return err
 	})
-	return id, uint64(version), err
+	return id, tasks, err
 }
 
 // insertNode 是两个创建入口（CreateNode 与 RegisterNode）共用的建节点步骤，在调用方的写事务里完成：
 //   - 分配末尾序号，重排后的相对顺序不被新节点打断；
+//   - 按 probeCoverage 读出新节点覆盖的任务 id：读在本事务写入节点行之后，事务从那次写入起持有库的写锁直到提交，
+//     别的写入插不进来，所以返回的清单就是提交时库里新节点的覆盖；
 //   - 检查每节点任务上限：新节点继承全部 all_nodes 任务，SaveProbeTask 的上限检查只覆盖保存那一刻已有的节点，
 //     没有节点时保存的 all_nodes 任务可以超过上限，所以建节点这一侧必须再查；超限返回 InheritedLimitError，
 //     事务回滚，节点不建；
 //   - 推进任务版本：新节点的清单从空变为全部 all_nodes 任务，按 bumpProbeVersion 的不变式必须推进。
-func insertNode(tx *sql.Tx, name string, tokenHash []byte, createdAt int64) (id, version int64, err error) {
+func insertNode(tx *sql.Tx, name string, tokenHash []byte, createdAt int64) (int64, NewNodeTasks, error) {
 	res, err := tx.Exec(`INSERT INTO node (name, token_hash, created_at, sort_order)
 		SELECT ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1 FROM node`, name, tokenHash, createdAt)
 	if err != nil {
-		return 0, 0, err
+		return 0, NewNodeTasks{}, err
 	}
-	if id, err = res.LastInsertId(); err != nil {
-		return 0, 0, err
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, NewNodeTasks{}, err
 	}
-	var tasks int
-	if err := tx.QueryRow("SELECT COUNT(*) FROM ("+probeCoverage+") WHERE node_id = ?", id).Scan(&tasks); err != nil {
-		return 0, 0, err
+	covered, err := scanIDs(tx.Query("SELECT task_id FROM ("+probeCoverage+") WHERE node_id = ? ORDER BY task_id", id))
+	if err != nil {
+		return 0, NewNodeTasks{}, err
 	}
-	if tasks > probelimit.MaxTasksPerNode {
-		return 0, 0, InheritedLimitError{Tasks: tasks, Max: probelimit.MaxTasksPerNode}
+	if len(covered) > probelimit.MaxTasksPerNode {
+		return 0, NewNodeTasks{}, InheritedLimitError{Tasks: len(covered), Max: probelimit.MaxTasksPerNode}
 	}
-	version, err = bumpProbeVersion(tx, createdAt)
-	return id, version, err
+	version, err := bumpProbeVersion(tx, createdAt)
+	if err != nil {
+		return 0, NewNodeTasks{}, err
+	}
+	tasks := NewNodeTasks{Version: uint64(version)}
+	for _, task := range covered {
+		tasks.TaskIDs = append(tasks.TaskIDs, uint64(task))
+	}
+	return id, tasks, nil
 }
 
 func (s *Store) SetTokenHash(ctx context.Context, id int64, hash []byte) error {

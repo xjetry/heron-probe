@@ -48,7 +48,7 @@ type PublicConfig struct {
 }
 
 // Public 实现 PublicService。它不经会话或 token：挂载点只绑定按来源键（IPv4 一个地址、IPv6 一个 /64，
-// 见 ratelimit.BySource）的限流与缓存头（Handler）。
+// 见 ratelimit.BySource）的限流、缓存头与公开总闸（Handler）。
 // 可见范围由 store 的 ListPublicNodes 与 NodeIsPublic 承载，节点是否公开在每个请求里现读库；
 // 进程里只有 GetSnapshot 的响应字节有 snapshotTTL 的缓存窗口。
 type Public struct {
@@ -88,7 +88,18 @@ func NewPublic(cfg PublicConfig, st *store.Store, l *live.Live, book *traffic.Bo
 
 // connectHandler 是不带挂载点中间件的处理器。
 func (p *Public) connectHandler() (string, http.Handler) {
-	return probev1connect.NewPublicServiceHandler(p, connect.WithReadMaxBytes(publicMaxBody))
+	return probev1connect.NewPublicServiceHandler(p, connect.WithReadMaxBytes(publicMaxBody), connect.WithInterceptors(connect.UnaryInterceptorFunc(p.requireEnabled)))
+}
+
+// 总闸与节点 public 取交集，不改逐节点标记，重新打开即可恢复原范围。
+// GetSite 也在同一入口拒绝，否则关闸仍会泄漏标题与 logo；检查在快照字节缓存内侧，保留其 1 秒窗口。
+func (p *Public) requireEnabled(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		if !p.store.PublicEnabled() {
+			return nil, connect.NewError(connect.CodeNotFound, errors.New("public page is disabled"))
+		}
+		return next(ctx, req)
+	}
 }
 
 // Handler 是公开服务唯一的挂载点：cacheControl(BySource(snapshotCache(connect)))。限流包在缓存与 connect 之外，

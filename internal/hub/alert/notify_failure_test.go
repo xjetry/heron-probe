@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/xjetry/probe/internal/hub/outbound"
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
@@ -43,14 +44,14 @@ func TestEveryChannelFailurePathIsClassified(t *testing.T) {
 	}
 	sendTelegram := func(token, base string) func() error {
 		return func() error {
-			return NewTelegram(TelegramConfig{BotToken: token, ChatID: "chat"}, NewHTTPClient(), base).Send(t.Context(), messageForTest())
+			return NewTelegram(TelegramConfig{BotToken: token, ChatID: "chat"}, outbound.NewClient(NotifyTimeout), base).Send(t.Context(), messageForTest())
 		}
 	}
 	sendWebhook := func(cfg WebhookConfig) func() error {
-		return func() error { return send(NewWebhook(cfg, NewHTTPClient())) }
+		return func() error { return send(NewWebhook(cfg, outbound.NewClient(NotifyTimeout))) }
 	}
 	parse := func(row store.NotifyChannel) func() error {
-		return func() error { return send(ParseChannel(row, NewHTTPClient(), "")) }
+		return func() error { return send(ParseChannel(row, outbound.NewClient(NotifyTimeout), "")) }
 	}
 	for _, tc := range []struct {
 		name    string
@@ -69,7 +70,7 @@ func TestEveryChannelFailurePathIsClassified(t *testing.T) {
 		{"webhook/new_invalid", sendWebhook(WebhookConfig{URL: "bad", Method: "POST"}), store.FailureChannelInvalid, 0, false},
 		// 保存时的模板试运行走 else 分支；执行期失败只在 Node 为 missing 时出现。
 		{"webhook/template", func() error {
-			c, err := NewWebhook(WebhookConfig{URL: respond(200), Method: "POST", BodyTemplate: `{{if eq .Node "missing"}}{{.Missing}}{{else}}{{.Node}}{{end}}`}, NewHTTPClient())
+			c, err := NewWebhook(WebhookConfig{URL: respond(200), Method: "POST", BodyTemplate: `{{if eq .Node "missing"}}{{.Missing}}{{else}}{{.Node}}{{end}}`}, outbound.NewClient(NotifyTimeout))
 			if err != nil {
 				return fmt.Errorf("constructing channel: %w", err)
 			}
@@ -83,7 +84,7 @@ func TestEveryChannelFailurePathIsClassified(t *testing.T) {
 			if err != nil {
 				return fmt.Errorf("constructing channel: %w", err)
 			}
-			return (&webhook{WebhookConfig{URL: "http://host/%zz", Method: "POST"}, NewHTTPClient(), tmpl}).Send(t.Context(), messageForTest())
+			return (&webhook{WebhookConfig{URL: "http://host/%zz", Method: "POST"}, outbound.NewClient(NotifyTimeout), tmpl}).Send(t.Context(), messageForTest())
 		}, store.FailureRequest, 0, false},
 		{"webhook/transport", sendWebhook(WebhookConfig{URL: closedURL, Method: "POST"}), store.FailureTransport, 0, true},
 		{"webhook/302", sendWebhook(WebhookConfig{URL: respond(302), Method: "POST"}), store.FailureHTTPStatus, 302, false},
@@ -154,7 +155,7 @@ func rawStatusServer(t *testing.T, statusLine string) (string, *atomic.Int32) {
 
 func TestMalformedStatusDetailNamesTheStatus(t *testing.T) {
 	endpoint, _ := rawStatusServer(t, "HTTP/1.1 099 Odd")
-	c, err := NewWebhook(WebhookConfig{URL: endpoint, Method: "POST"}, NewHTTPClient())
+	c, err := NewWebhook(WebhookConfig{URL: endpoint, Method: "POST"}, outbound.NewClient(NotifyTimeout))
 	must(t, err)
 	r, retry := Classify(c.Send(t.Context(), messageForTest()))
 	want := store.DeliveryResult{Failure: store.FailureTransport, Error: "malformed HTTP status 99"}

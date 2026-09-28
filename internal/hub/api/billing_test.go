@@ -135,7 +135,7 @@ func TestUpdateNodeAcceptsBoundaryBillingAndIgnoresDaysLeft(t *testing.T) {
 // days_left 取 hub 时区的今天：UTC 16:30 在东八区已是次日，比按 UTC 算少一天。管理端、公开端，以及公开快照的
 // now 与 days_left 都是同一个口径。
 func TestDaysLeftUsesTheHubZone(t *testing.T) {
-	h := newZonedHarness(t, "", time.FixedZone("UTC+8", 8*3600))
+	h := newZonedHarness(t, "", time.FixedZone("UTC+8", 8*3600), store.DefaultRetention)
 	h.login(t)
 	id, _ := h.createNode(t, "n")
 	h.clk.SetWall(time.Date(2026, 1, 1, 16, 30, 0, 0, time.UTC))
@@ -229,7 +229,7 @@ func (c *steppingClock) Mono() time.Duration { return 0 }
 // 公开快照的 now 与 days_left 出自同一次读钟：第三方主题拿 now 核对 days_left，不会差一天。快照经真实的 Connect
 // 处理器取得，公开服务用每读一次就前进一天的钟构造。
 func TestPublicSnapshotReadsTheClockOnce(t *testing.T) {
-	h := newZonedHarness(t, "", time.FixedZone("UTC+8", 8*3600))
+	h := newZonedHarness(t, "", time.FixedZone("UTC+8", 8*3600), store.DefaultRetention)
 	h.login(t)
 	id, _ := h.createNode(t, "n")
 	req := billed(id, &probev1.Billing{ExpiresOn: "2026-03-01"})

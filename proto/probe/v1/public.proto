@@ -12,6 +12,7 @@ import "probe/v1/types.proto";
 // 每个来源桶容量 60、每秒补充 10，超出返回 ResourceExhausted。只对标为公开的节点应答，未公开的节点与不存在的节点得到同一个 NotFound。
 // 方法都无副作用，可用 GET 调用：/probe.v1.PublicService/<方法>?connect=v1&encoding=json&message=<URL 编码的 JSON 请求>。
 // GET 的成功响应带 Cache-Control: max-age=<cache_max_age_s>，失败响应带 no-store；POST 响应不带缓存头。
+// Settings.public_enabled 关闭时所有方法（包括 GetSite）返回 NotFound；快照字节缓存仍可在 1 秒内命中。
 service PublicService {
   // 站点外观：标题、明暗、主色、logo 与自定义 CSS。
   rpc GetSite(GetSiteRequest) returns (PublicSite) {

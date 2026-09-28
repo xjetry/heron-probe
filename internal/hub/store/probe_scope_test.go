@@ -83,10 +83,11 @@ func TestAllNodesTaskCoversEveryNodeWithoutAssignmentRows(t *testing.T) {
 		t.Fatalf("save all_nodes: %+v err=%v", saved, err)
 	}
 	assertTasks(t, s, version, []ProbeTaskRecord{{Task: saved.Task, AllNodes: true, NodeIDs: []int64{a, b}}})
-	c, version, err := s.CreateNode(ctx, "c", hash(3))
+	c, created, err := s.CreateNode(ctx, "c", hash(3))
 	if err != nil {
 		t.Fatal(err)
 	}
+	version = created.Version
 	assertTasks(t, s, version, []ProbeTaskRecord{{Task: saved.Task, AllNodes: true, NodeIDs: []int64{a, b, c}}})
 	if ids, err := s.ProbeTaskNodeIDs(ctx, saved.Task.Id); err != nil || !reflect.DeepEqual(ids, []int64{a, b, c}) {
 		t.Fatalf("ProbeTaskNodeIDs after create = %v %v, want [%d %d %d]", ids, err, a, b, c)
@@ -117,8 +118,8 @@ func TestExplicitEmptyScopeCoversNoNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, version, _ := s.CreateNode(ctx, "b", hash(2))
-	assertTasks(t, s, version, []ProbeTaskRecord{{Task: narrowed.Task}, {Task: empty.Task}})
+	b, created, _ := s.CreateNode(ctx, "b", hash(2))
+	assertTasks(t, s, created.Version, []ProbeTaskRecord{{Task: narrowed.Task}, {Task: empty.Task}})
 	for _, task := range []uint64{narrowed.Task.Id, empty.Task.Id} {
 		if ids, err := s.ProbeTaskNodeIDs(ctx, task); err != nil || ids != nil {
 			t.Fatalf("task %d covers %v (%v), want no node among %d %d", task, ids, err, a, b)
@@ -139,14 +140,16 @@ func TestCreatingNodesBumpsProbeVersionDeletingDoesNot(t *testing.T) {
 		return v
 	}
 	before := stored()
-	a, created, err := s.CreateNode(ctx, "a", hash(1))
+	a, createdNode, err := s.CreateNode(ctx, "a", hash(1))
+	created := createdNode.Version
 	if err != nil || created <= before || created != stored() {
 		t.Fatalf("CreateNode version=%d stored=%d before=%d err=%v", created, stored(), before, err)
 	}
 	if err := s.SetRegisterWindow(ctx, hash(9), clk.Now().Add(time.Hour), 1); err != nil {
 		t.Fatal(err)
 	}
-	_, registered, err := s.RegisterNode(ctx, hash(9), "r", hash(2))
+	_, registeredNode, err := s.RegisterNode(ctx, hash(9), "r", hash(2))
+	registered := registeredNode.Version
 	if err != nil || registered <= created || registered != stored() {
 		t.Fatalf("RegisterNode version=%d stored=%d created=%d err=%v", registered, stored(), created, err)
 	}
@@ -155,6 +158,63 @@ func TestCreatingNodesBumpsProbeVersionDeletingDoesNot(t *testing.T) {
 	}
 	if v := stored(); v != registered {
 		t.Fatalf("DeleteNode changed version %d -> %d", registered, v)
+	}
+}
+
+// 两个建节点入口返回的 TaskIDs 就是提交后库里新节点的覆盖，升序，Version 就是库里的版本：all_nodes 任务在内，
+// 显式分配给别的节点的任务与显式空集不在。注册表的建节点增量只取这份结果，它错了内存索引就跟着错。
+func TestCreatingNodeReturnsItsCoverage(t *testing.T) {
+	for name, create := range map[string]func(t *testing.T, s *Store) (int64, NewNodeTasks, error){
+		"create": func(t *testing.T, s *Store) (int64, NewNodeTasks, error) {
+			return s.CreateNode(t.Context(), "new", hash(9))
+		},
+		"register": func(t *testing.T, s *Store) (int64, NewNodeTasks, error) {
+			return s.RegisterNode(t.Context(), hash(8), "new", hash(9))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, clk := open(t)
+			ctx := t.Context()
+			if err := s.SetRegisterWindow(ctx, hash(8), clk.Now().Add(time.Hour), 1); err != nil {
+				t.Fatal(err)
+			}
+			a, _, _ := s.CreateNode(ctx, "a", hash(1))
+			first, _, err := s.SaveProbeTask(ctx, taskForTest(), true, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{a}); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := s.SaveProbeTask(ctx, taskForTest(), false, nil); err != nil {
+				t.Fatal(err)
+			}
+			second, _, err := s.SaveProbeTask(ctx, taskForTest(), true, []int64{a})
+			if err != nil {
+				t.Fatal(err)
+			}
+			id, created, err := create(t, s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			version, recs, err := s.LoadProbeTasks(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var covered []uint64
+			for _, rec := range recs {
+				if slices.Contains(rec.NodeIDs, id) {
+					covered = append(covered, rec.Task.Id)
+				}
+			}
+			want := NewNodeTasks{Version: version, TaskIDs: []uint64{first.Task.Id, second.Task.Id}}
+			if !reflect.DeepEqual(covered, want.TaskIDs) {
+				t.Fatalf("stored coverage of the new node = %v, want %v", covered, want.TaskIDs)
+			}
+			if !reflect.DeepEqual(created, want) {
+				t.Fatalf("%s returned %+v, want %+v", name, created, want)
+			}
+		})
 	}
 }
 

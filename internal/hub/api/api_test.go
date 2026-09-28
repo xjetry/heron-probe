@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/netip"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -29,9 +30,11 @@ import (
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/probe/internal/hub/outbound"
 	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/hub/traffic"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 const password = "correct horse battery staple"
@@ -53,20 +56,40 @@ type harness struct {
 	pub    *Public
 }
 
-func newHarness(t *testing.T, trusted string) *harness {
+func newHarness(t *testing.T, trusted string, opts ...harnessOption) *harness {
 	t.Helper()
-	return newZonedHarness(t, trusted, time.UTC)
+	return newZonedHarness(t, trusted, time.UTC, store.DefaultRetention, opts...)
+}
+
+// harnessOption 替换 newZonedHarness 装配里的个别依赖，其余照常。
+type harnessOption func(*harnessDeps)
+
+type harnessDeps struct {
+	authLog *slog.Logger
+	// config 在装配前改 api.Config 里与 serve 的 flag 对应的项（例如 --theme-origin）。
+	config func(*Config)
+}
+
+// withAuthLog 给 Auth 换 logger，用例借它的日志语句位置暂停登录。
+func withAuthLog(l *slog.Logger) harnessOption {
+	return func(d *harnessDeps) { d.authLog = l }
+}
+
+// withConfig 让用例在装配前改 api.Config 里与 serve 的 flag 对应的项（例如 --theme-origin）。
+func withConfig(edit func(*Config)) harnessOption {
+	return func(d *harnessDeps) { d.config = edit }
 }
 
 // newZonedHarness 的 loc 是 hub 的 --timezone：流量周期、到期扫描与 days_left 用同一个时区，与 serve 的装配一致。
-func newZonedHarness(t *testing.T, trusted string, loc *time.Location) *harness {
+// retention 与 serve 传给 api.Config 的是同一个字段：接错保留期不会影响这个夹具本身的任何行为（它不跑
+// RunMaintenance），只会在存储健康的判定与 GetStorageStatsResponse.retention_s 上露出来，所以留给调用方传入，
+// 默认测试用 store.DefaultRetention，需要钉住"判定用的是配置保留期"的用例可以传入不同的值。
+func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention store.Retention, opts ...harnessOption) *harness {
 	t.Helper()
-	return newConfiguredHarness(t, trusted, loc, func(*Config) {})
-}
-
-// newConfiguredHarness 让用例在装配前改 api.Config 里与 serve 的 flag 对应的项（例如 --theme-origin）。
-func newConfiguredHarness(t *testing.T, trusted string, loc *time.Location, edit func(*Config)) *harness {
-	t.Helper()
+	deps := harnessDeps{authLog: slog.Default(), config: func(*Config) {}}
+	for _, o := range opts {
+		o(&deps)
+	}
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default(), store.MigrateSchema)
 	if err != nil {
@@ -78,11 +101,11 @@ func newConfiguredHarness(t *testing.T, trusted string, loc *time.Location, edit
 		t.Fatal(err)
 	}
 	reg := probe.New(st, slog.Default())
-	a := auth.New(st, reg, clk, slog.Default())
+	a := auth.New(st, reg, clk, deps.authLog)
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, loc, slog.Default())
 	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: loc}, st, l, clk, slog.Default())
-	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, slog.Default())
+	notifier := alert.NewQueue(st, alerts.Channels, outbound.NewClient(alert.NotifyTimeout), "", clk, nil, slog.Default())
 	in, err := ingest.New(ingest.Config{TTL: 30 * time.Second, TrustedProxies: prefixes}, l, st, a, book, reg, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)
@@ -91,8 +114,8 @@ func newConfiguredHarness(t *testing.T, trusted string, loc *time.Location, edit
 	if err := errors.Join(a.Load(ctx), in.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: store.DefaultRetention}
-	edit(&cfg)
+	cfg := Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: retention}
+	deps.config(&cfg)
 	svc := New(cfg, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
 	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, TrustedProxies: prefixes, Location: loc}, st, l, book, reg, clk, slog.Default())
 	mux := http.NewServeMux()
@@ -228,6 +251,40 @@ func TestLoginRequiresAdminAndRightPassword(t *testing.T) {
 	}
 	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{})); codeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("ListNodes after logout: %v", err)
+	}
+}
+
+// 另一来源的错误密码登录停在它的失败日志上（已记账、未放门）时，管理员经 HTTP 登录得到
+// ResourceExhausted 与稍后重试的正文，不是密码错误。暂停点若不在门内，这次登录会成功而让用例变红。
+func TestLoginBusyReturnsResourceExhausted(t *testing.T) {
+	pause, entered, release := testwait.PauseAtLog(slog.Default().Handler(), "login failed")
+	h := newHarness(t, "", withAuthLog(slog.New(pause)))
+	ctx := context.Background()
+	if err := h.auth.SetPassword(ctx, password); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.auth.Login(ctx, "wrong password here", netip.MustParseAddr("198.51.100.7"))
+		done <- err
+	}()
+	defer func() {
+		release()
+		if err := <-done; !errors.Is(err, auth.ErrBadPassword) {
+			t.Errorf("paused login = %v, want ErrBadPassword", err)
+		}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(testwait.Bound):
+		t.Fatal("wrong-password login did not reach its failure log")
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, testwait.Bound)
+	defer cancel()
+	_, err := h.admin.Login(requestCtx, connect.NewRequest(&probev1.LoginRequest{Password: password}))
+	var ce *connect.Error
+	if !errors.As(err, &ce) || ce.Code() != connect.CodeResourceExhausted || ce.Message() != "password verification is busy; please try again later" {
+		t.Fatalf("busy login = %v, want ResourceExhausted with retry message", err)
 	}
 }
 
@@ -706,7 +763,7 @@ func TestSessionBoundaryAndRevocation(t *testing.T) {
 	if _, err := anonymous.ListNodes(ctx, replay); codeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("revoked cookie replay admitted: %v", err)
 	}
-	if _, err := h.admin.CreateNode(ctx, connect.NewRequest(&probev1.CreateNodeRequest{Name: strings.Repeat("x", maxBody+1)})); codeOf(err) != connect.CodeResourceExhausted {
+	if _, err := h.admin.CreateNode(ctx, connect.NewRequest(&probev1.CreateNodeRequest{Name: strings.Repeat("x", maxSettingsBody+1)})); codeOf(err) != connect.CodeResourceExhausted {
 		t.Fatalf("oversized body: %v", err)
 	}
 	for i := 0; i < 5; i++ {

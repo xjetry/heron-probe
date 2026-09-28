@@ -8,7 +8,7 @@ import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Picks } from "../components/Picks";
 import { AdminService, AlertKind, ProbeMetric, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/probe/v1/admin_pb";
 import { ALERT_KINDS, PROBE_METRICS, labelOf, ruleCondition, statesOf, taskLabels, type RuleStates } from "../lib/alerts";
-import { ascending, withId } from "../lib/ids";
+import { liveIds, withId } from "../lib/ids";
 
 type Draft = {
   name: string; kind: AlertKind; enabled: boolean; allNodes: boolean; nodeIds: Set<bigint>; channelIds: Set<bigint>;
@@ -35,13 +35,12 @@ const draftOf = (r: AlertRule): Draft => {
 // 显式作用域因此变空时由 hub 拒绝（spec §6.6：空集不等于全部节点），不会悄悄放宽成全部。
 // 种类专用字段只发当前类型的：hub 拒绝带着别的种类字段的规则（alert.CheckRule）。
 function toRule(id: bigint, d: Draft, nodes: Node[], channels: NotifyChannel[]) {
-  const live = (ids: ReadonlySet<bigint>, items: { id: bigint }[]) => ascending(items.filter((it) => ids.has(it.id)).map((it) => it.id));
   const own = d.kind === AlertKind.PROBE
     ? { taskId: BigInt(d.taskId), metric: d.metric, threshold: Number(d.threshold), forMinutes: Number(d.forMinutes) }
     : d.kind === AlertKind.EXPIRY ? { daysBefore: Number(d.daysBefore) } : {};
   return {
     id, name: d.name.trim(), kind: d.kind, enabled: d.enabled, allNodes: d.allNodes,
-    nodeIds: d.allNodes ? [] : live(d.nodeIds, nodes), channelIds: live(d.channelIds, channels), ...own,
+    nodeIds: d.allNodes ? [] : liveIds(d.nodeIds, nodes), channelIds: liveIds(d.channelIds, channels), ...own,
   };
 }
 

@@ -2,10 +2,16 @@ package store
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
+	"log/slog"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/metric"
 )
 
@@ -31,7 +37,7 @@ func TestMigrationFromV13AddsEmptyCountry(t *testing.T) {
 	}
 }
 
-// SetLookupCountry 只在 last_source 仍是所查地址时写入：地址已变、节点已删除都不写并返回 false。
+// SetLookupCountry 只在 last_source 仍是所查地址时写入：地址已变时不写、返回 false；节点不存在时返回 ErrNotFound。
 func TestSetLookupCountryIsConditionalOnTheAddress(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
@@ -52,8 +58,40 @@ func TestSetLookupCountryIsConditionalOnTheAddress(t *testing.T) {
 	if n, err := s.GetNode(ctx, id); err != nil || n.Country != "AU" || n.CountryIP != "1.1.1.1" {
 		t.Fatalf("after a matching answer: %+v %v", n, err)
 	}
-	if set, err := s.SetLookupCountry(ctx, id+1, "1.1.1.1", "AU"); err != nil || set {
-		t.Fatalf("missing node: set = %v %v", set, err)
+	if set, err := s.SetLookupCountry(ctx, id+1, "1.1.1.1", "AU"); !errors.Is(err, ErrNotFound) || set {
+		t.Fatalf("missing node: set = %v %v, want ErrNotFound", set, err)
+	}
+}
+
+// 写者自己维持"country 与 country_ip 同空同非空"：空地址（会匹配从未上报的节点）与不是国家码的值都返回错误、
+// 什么都不写，不靠调用方先过滤。
+func TestSetLookupCountryRejectsEmptyAddressAndNonCountry(t *testing.T) {
+	s, clk := open(t)
+	ctx := t.Context()
+	silent, _, _ := s.CreateNode(ctx, "never reported", hash(1))
+	reported, _, _ := s.CreateNode(ctx, "reported", hash(2))
+	row := metric.Row{NodeID: reported, TS: 600, Bucket: metric.NewBucket(), LastSeen: clk.Now(), Source: "8.8.8.8"}
+	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{row}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		id            int64
+		addr, country string
+		want          string
+	}{
+		{silent, "", "US", "lookup country of node 1: empty address"},
+		{reported, "8.8.8.8", "", `lookup country of node 2 for 8.8.8.8: "" is not two uppercase letters`},
+		{reported, "8.8.8.8", "us", `"us" is not two uppercase letters`},
+		{reported, "8.8.8.8", "USA", `"USA" is not two uppercase letters`},
+	} {
+		if set, err := s.SetLookupCountry(ctx, c.id, c.addr, c.country); set || err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("SetLookupCountry(%d, %q, %q) = %v %v, want an error containing %q", c.id, c.addr, c.country, set, err, c.want)
+		}
+	}
+	for _, id := range []int64{silent, reported} {
+		if n, err := s.GetNode(ctx, id); err != nil || n.Country != "" || n.CountryIP != "" {
+			t.Fatalf("rejected write left %+v %v", n, err)
+		}
 	}
 }
 
@@ -83,37 +121,64 @@ func TestGeoSettingsDefaultsAndPartialUpdate(t *testing.T) {
 		t.Fatalf("never saved: %+v %v", g, err)
 	}
 	on, url := true, "https://geo.example/{ip}"
-	g, err := s.SaveSettings(ctx, SiteSettings{Theme: "dark"}, GeoUpdate{Enabled: &on, URL: &url})
-	if want := (GeoSettings{Enabled: true, URL: url}); err != nil || g != want {
-		t.Fatalf("save returned %+v %v, want %+v", g, err, want)
+	saved, err := s.SaveSettings(ctx, SettingsUpdate{Theme: "dark", Geo: GeoUpdate{Enabled: &on, URL: &url}})
+	if want := (GeoSettings{Enabled: true, URL: url}); err != nil || saved.Geo != want {
+		t.Fatalf("save returned %+v %v, want %+v", saved.Geo, err, want)
 	}
-	g, err = s.SaveSettings(ctx, SiteSettings{Theme: "light", Title: "t"}, GeoUpdate{})
-	if want := (GeoSettings{Enabled: true, URL: url}); err != nil || g != want {
-		t.Fatalf("appearance-only save returned %+v %v, want %+v", g, err, want)
+	saved, err = s.SaveSettings(ctx, SettingsUpdate{Theme: "light", Title: "t"})
+	if want := (GeoSettings{Enabled: true, URL: url}); err != nil || saved.Geo != want {
+		t.Fatalf("appearance-only save returned %+v %v, want %+v", saved.Geo, err, want)
 	}
 	off := false
-	if _, err := s.SaveSettings(ctx, SiteSettings{Theme: "light"}, GeoUpdate{Enabled: &off}); err != nil {
+	if _, err := s.SaveSettings(ctx, SettingsUpdate{Theme: "light", Geo: GeoUpdate{Enabled: &off}}); err != nil {
 		t.Fatal(err)
 	}
-	site, g, err := s.Settings(ctx)
-	if want := (GeoSettings{URL: url}); err != nil || g != want || site != (SiteSettings{Theme: "light"}) {
-		t.Fatalf("settings = %+v %+v %v, want %+v", site, g, err, want)
+	st, err := s.Settings(ctx)
+	if want := (GeoSettings{URL: url}); err != nil || st.Geo != want || st.Site != (SiteSettings{Theme: "light", PublicEnabled: true}) {
+		t.Fatalf("settings = %+v %+v %v, want %+v", st.Site, st.Geo, err, want)
 	}
 }
 
-// 开关只认 "true"：库里出现别的文本（手工改库、以后的写法变化）按关，出网只在显式开启时发生。
-func TestGeoEnabledReadsAnythingButTrueAsOff(t *testing.T) {
-	s, _ := open(t)
+// 开关存 0 / 1：保存写出的就是这两个值。库里出现别的文本（手工改库、别的写法）时读设置报错，既不按关也不按开；
+// 这样的库打开时就被拒绝。运行中的库读到它时，查询器因读设置失败而不出网。
+func TestGeoEnabledIsZeroOrOneAndOtherValuesRefuseToOpen(t *testing.T) {
+	s, _ := openAt(t)
 	ctx := t.Context()
-	for _, v := range []string{"1", "TRUE", "yes", ""} {
-		if err := s.write(ctx, func(tx *sql.Tx) error {
-			_, err := tx.Exec("INSERT INTO setting (key, value) VALUES ('geo.enabled', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", v)
-			return err
-		}); err != nil {
+	for on, want := range map[bool]string{true: "1", false: "0"} {
+		if _, err := s.SaveSettings(ctx, SettingsUpdate{Theme: DefaultTheme, Geo: GeoUpdate{Enabled: &on}}); err != nil {
 			t.Fatal(err)
 		}
-		if g, err := s.GeoSettings(ctx); err != nil || g.Enabled {
-			t.Fatalf("geo.enabled = %q read as %+v %v", v, g, err)
+		var got string
+		if err := s.r.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = 'geo.enabled'").Scan(&got); err != nil || got != want {
+			t.Fatalf("saved enabled=%v as %q %v, want %q", on, got, err, want)
 		}
+		if g, err := s.GeoSettings(ctx); err != nil || g.Enabled != on {
+			t.Fatalf("stored %q read as %+v %v", want, g, err)
+		}
+	}
+	for _, v := range []string{"true", "false", "TRUE", "yes", "", "2", " 1"} {
+		t.Run(v, func(t *testing.T) {
+			s, path := openAt(t)
+			if err := s.write(t.Context(), func(tx *sql.Tx) error {
+				_, err := tx.Exec("INSERT INTO setting (key, value) VALUES ('geo.enabled', ?)", v)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			want := fmt.Sprintf("setting geo.enabled must be 0 or 1; got %q", v)
+			if g, err := s.GeoSettings(t.Context()); err == nil || err.Error() != want {
+				t.Fatalf("running store read %q as %+v %v, want error %q", v, g, err, want)
+			}
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := Open(path, clock.NewFake(time.Now()), slog.Default(), RequireCurrentSchema)
+			if reopened != nil {
+				reopened.Close()
+			}
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("reopen with geo.enabled = %q: %v, want an error containing %q", v, err, want)
+			}
+		})
 	}
 }

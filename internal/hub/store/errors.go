@@ -6,7 +6,10 @@ import (
 	"strings"
 )
 
-var ErrNodeLimit = errors.New("node already has the maximum number of probe tasks")
+// ErrNodeLimit 是每节点任务上限的分类哨兵：保存侧的 NodeLimitError 与建节点侧的 InheritedLimitError 都经 Is 归入它，
+// 超限的是哪个节点、多少个任务由这两个类型的原文给出。哨兵文案只命名类别，不写成"某节点已满"：保存侧在写入之后
+// 计数，拒绝的是会超出上限的写入，而不是已满的节点；建节点侧被拒的节点随事务回滚，并不存在。
+var ErrNodeLimit = errors.New("probe task limit per node exceeded")
 
 var ErrInUse = errors.New("in use")
 

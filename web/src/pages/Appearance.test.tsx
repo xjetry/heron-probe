@@ -1,19 +1,71 @@
+import { isFieldSet } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
+import { SettingsSchema, type UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
 import { MAX_LOGO_BYTES } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
+import { statefulHub } from "../test/settingsHub";
 import { Appearance } from "./Appearance";
 
 const current = { title: "机房", theme: "dark", accentColor: "#123abc", logo: "", customCss: "body { margin: 0 }" };
 const routes = [{ path: "/appearance", Component: Appearance }];
-const render = (impl: AdminImpl) => renderWithAdmin({ getSettings: async () => ({ settings: current }), ...impl }, routes, "/appearance");
+const render = (impl: AdminImpl) => renderWithAdmin({ getSettings: async () => ({ settings: current }), listNotifyChannels: async () => ({ channels: [] }), ...impl }, routes, "/appearance");
 
 async function form() {
   return within(await screen.findByRole("form", { name: "公开页外观" }));
 }
+
+it("公开页总闸显示当前值并显式提交 false 与 true", async () => {
+  const hub = statefulHub({ ...current, publicEnabled: true });
+  const sent = hub.sent;
+  render(hub.impl);
+  const f = await form();
+  const toggle = f.getByRole("checkbox", { name: "启用公开页" });
+  expect(toggle).toBeChecked();
+  expect(f.getByText(/节点的公开标记保留/)).toBeInTheDocument();
+  fireEvent.click(toggle);
+  hub.holdReads();
+  fireEvent.click(f.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(sent.map((r) => r.settings?.publicEnabled)).toEqual([false]));
+  expect(await f.findByRole("status")).toHaveTextContent("已保存");
+  // 保存后的重新拉取还挂着，开关此时显示的只能是写进缓存的回显。
+  await waitFor(() => expect(toggle).not.toBeChecked());
+  hub.releaseReads();
+  await waitFor(() => expect(toggle).toBeEnabled());
+  fireEvent.click(toggle);
+  fireEvent.click(f.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(sent.map((r) => r.settings?.publicEnabled)).toEqual([false, true]));
+});
+
+// 草稿是开始编辑时的快照。之后别处关了公开页，只改标题的保存不得带总闸——带上快照里的"开"就会把它重新打开。
+it("开关没动过时保存不带总闸，别处关掉的公开页不被重新打开", async () => {
+  const hub = statefulHub({ ...current, publicEnabled: true });
+  const { queryClient } = render(hub.impl);
+  const f = await form();
+  const toggle = f.getByRole("checkbox", { name: "启用公开页" });
+  expect(toggle).toBeChecked();
+  fireEvent.change(f.getByLabelText("标题"), { target: { value: "新标题" } });
+  hub.set({ publicEnabled: false });
+  await act(() => queryClient.refetchQueries());
+  // 查询通知经 setTimeout 调度，重新拉取落地后还要等一次渲染。
+  await waitFor(() => expect(toggle).not.toBeChecked());
+  expect(f.getByLabelText("标题")).toHaveValue("新标题");
+  fireEvent.click(f.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(hub.sent).toHaveLength(1));
+  expect(hub.sent[0].settings?.title).toBe("新标题");
+  expect(isFieldSet(hub.sent[0].settings!, SettingsSchema.field.publicEnabled)).toBe(false);
+  expect(await f.findByRole("status")).toHaveTextContent("已保存");
+  expect(hub.state().publicEnabled).toBe(false);
+  expect(toggle).not.toBeChecked();
+  // 动过开关才带：这次显式打开。
+  fireEvent.click(toggle);
+  fireEvent.click(f.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(hub.sent).toHaveLength(2));
+  expect(isFieldSet(hub.sent[1].settings!, SettingsSchema.field.publicEnabled)).toBe(true);
+  expect(hub.sent[1].settings?.publicEnabled).toBe(true);
+});
 
 it("表单显示当前设置，标题留空时提示内置标题", async () => {
   render({ getSettings: async () => ({ settings: { ...current, title: "" } }) });
@@ -25,7 +77,7 @@ it("表单显示当前设置，标题留空时提示内置标题", async () => {
   expect(f.getByLabelText("自定义 CSS")).toHaveValue("body { margin: 0 }");
 });
 
-it("保存提交全部五项，表单改显 hub 实际保存的值", async () => {
+it("保存提交全部外观字段，表单改显 hub 实际保存的值", async () => {
   const sent: UpdateSettingsRequest[] = [];
   render({ updateSettings: async (req) => { sent.push(req); return { settings: { ...req.settings!, title: "新标题", accentColor: "#abcdef" } }; } });
   const f = await form();
@@ -220,7 +272,11 @@ it("上次保存失败后换 logo，旧的错误清掉", async () => {
 
 describe("国家 / 地区查询", () => {
   const geoForm = async () => within(await screen.findByRole("form", { name: "国家 / 地区查询" }));
-  const withGeo = { ...current, geoEnabled: false, geoUrl: "https://ipinfo.io/{ip}/country" };
+  // hub 的 GetSettings 总带总闸、查询两项与 backup。
+  const withGeo = {
+    ...current, publicEnabled: true, geoEnabled: false, geoUrl: "https://ipinfo.io/{ip}/country",
+    backup: { region: "auto", configIntervalS: 300, metricsIntervalS: 86400, configKeep: 48, metricsKeep: 14, notify: { channelIds: [] }, hasSecret: false },
+  };
 
   it("开关文案写明开启即把节点地址发给哪个服务，随输入的服务地址更新", async () => {
     render({ getSettings: async () => ({ settings: withGeo }) });
@@ -233,18 +289,63 @@ describe("国家 / 地区查询", () => {
     expect(f.getByLabelText("服务地址")).toHaveAccessibleDescription(/^开启即由 hub 把每个节点的来源地址发给 https:\/\/geo\.example\/\{ip\}（/);
   });
 
-  it("保存提交开关与服务地址，外观取 hub 的已保存值而不是外观表单的草稿", async () => {
-    const sent: UpdateSettingsRequest[] = [];
-    render({ getSettings: async () => ({ settings: withGeo }), updateSettings: async (req) => { sent.push(req); return { settings: req.settings }; } });
+  // 文案写出"不再外呼"的上界，不许诺无条件的"每地址一次"：hub 只记住每个节点最近 4 个地址的答案。
+  it("开关说明写出答案表的上界", async () => {
+    render({ getSettings: async () => ({ settings: withGeo }) });
+    const f = await geoForm();
+    const description = f.getByLabelText("服务地址");
+    expect(description).toHaveAccessibleDescription(/节点停在同一地址时查得一次即止；hub 记住每个节点最近 4 个地址的答案，在这些地址之间切换不再外呼，\s*超过 4 个地址轮换或 hub 重启后会再查。/);
+  });
+
+  // 外观表单里未保存的总闸同样不随查询表单提交：查询表单不带总闸与 backup，hub 对缺席的这两项不改。外观表单的开关仍
+  // 显示用户动过的值，不被查询表单保存后写进缓存的回显（总闸仍开）盖掉。
+  it("保存提交开关与服务地址，外观取 hub 的已保存值而不是外观表单的草稿，也不带总闸与备份", async () => {
+    const hub = statefulHub(withGeo);
+    const sent = hub.sent;
+    render(hub.impl);
     const appearance = await form();
     fireEvent.change(appearance.getByLabelText("标题"), { target: { value: "未保存的标题" } });
+    fireEvent.click(appearance.getByRole("checkbox", { name: "启用公开页" }));
     const f = await geoForm();
     fireEvent.click(f.getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" }));
     fireEvent.click(f.getByRole("button", { name: "保存" }));
     expect(await f.findByRole("status")).toHaveTextContent("已保存");
     expect(sent).toHaveLength(1);
     expect(sent[0].settings).toMatchObject({ ...current, geoEnabled: true, geoUrl: "https://ipinfo.io/{ip}/country" });
+    expect(isFieldSet(sent[0].settings!, SettingsSchema.field.publicEnabled)).toBe(false);
+    expect(isFieldSet(sent[0].settings!, SettingsSchema.field.backup)).toBe(false);
     expect(appearance.getByLabelText("标题")).toHaveValue("未保存的标题");
+    expect(appearance.getByRole("checkbox", { name: "启用公开页" })).not.toBeChecked();
+  });
+
+  it("外观保存后刷新失败，查询表单提交的外观仍是刚保存的回显", async () => {
+    const hub = statefulHub(withGeo);
+    render(hub.impl);
+    const appearance = await form();
+    hub.failReads();
+    fireEvent.change(appearance.getByLabelText("标题"), { target: { value: " 新标题 " } });
+    fireEvent.click(appearance.getByRole("button", { name: "保存" }));
+    expect(await appearance.findByRole("status")).toHaveTextContent("已保存");
+    expect(await screen.findByText("hub restarting")).toBeInTheDocument();
+    const f = await geoForm();
+    fireEvent.click(f.getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" }));
+    fireEvent.click(f.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(hub.sent).toHaveLength(2));
+    expect(hub.sent[1].settings).toMatchObject({ ...current, title: "新标题", geoEnabled: true });
+  });
+
+  it("查询表单保存后刷新失败，重新进入页面时显示刚保存的开关", async () => {
+    const hub = statefulHub(withGeo);
+    const { router } = renderWithAdmin(hub.impl, [...routes, { path: "/elsewhere", Component: () => null }], "/appearance");
+    const f = await geoForm();
+    hub.failReads();
+    fireEvent.click(f.getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" }));
+    fireEvent.click(f.getByRole("button", { name: "保存" }));
+    expect(await f.findByRole("status")).toHaveTextContent("已保存");
+    expect(await screen.findByText("hub restarting")).toBeInTheDocument();
+    await act(() => router.navigate("/elsewhere"));
+    await act(() => router.navigate("/appearance"));
+    expect((await geoForm()).getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" })).toBeChecked();
   });
 
   it("外观表单不提交查询设置：hub 对缺席的两项不改", async () => {
@@ -256,4 +357,31 @@ describe("国家 / 地区查询", () => {
     expect(sent[0].settings?.geoEnabled).toBeUndefined();
     expect(sent[0].settings?.geoUrl).toBeUndefined();
   });
+});
+
+// 三个设置表单共用 SAVE_SETTINGS（见 api/saveSettings.ts）：任一个的保存在途时，另外两个的保存按钮禁用，直接触发 submit
+// 也不发请求；在途的保存连同之后的刷新结束，其余表单恢复。逐个把每个表单当作在途的一方：某个表单的保存漏带这把键时，
+// 以它为在途方的一组红；某个表单不按 useSettingsSaving 禁用自己时，以其余表单为在途方的两组红。
+describe("设置表单的保存互斥", () => {
+  const forms = ["公开页外观", "国家 / 地区查询", "备份到 S3"];
+  for (const busy of forms) {
+    it(`${busy}的保存在途时其余两个表单不能提交`, async () => {
+      const hub = statefulHub({ ...current, publicEnabled: true, geoEnabled: false, geoUrl: "https://ipinfo.io/{ip}/country" });
+      render(hub.impl);
+      const others = forms.filter((name) => name !== busy);
+      const saveButton = async (name: string) => within(await screen.findByRole("form", { name })).getByRole("button", { name: "保存" });
+      for (const name of others) await screen.findByRole("form", { name });
+      hub.holdSaves();
+      fireEvent.click(await saveButton(busy));
+      await waitFor(() => expect(hub.sent).toHaveLength(1));
+      for (const name of others) {
+        await waitFor(async () => expect(await saveButton(name)).toBeDisabled());
+        fireEvent.submit(screen.getByRole("form", { name }));
+      }
+      hub.releaseSaves();
+      expect(await within(screen.getByRole("form", { name: busy })).findByRole("status")).toHaveTextContent("已保存");
+      for (const name of others) await waitFor(async () => expect(await saveButton(name)).toBeEnabled());
+      expect(hub.sent).toHaveLength(1);
+    });
+  }
 });

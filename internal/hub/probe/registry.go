@@ -4,7 +4,8 @@
 // writeMu 串行化存储访问到内存发布，防止保存、删除、建节点与重载反序发布；提交与发布之间读侧仍可看到旧数据。
 // 管理写入由 store 在变更事务内递增版本；DeleteNode 对分配表只删除该节点的行，不递增，其他节点的清单未变。
 // 建节点也改变清单（新节点继承全部 all_nodes 任务），所以两个建节点入口（CreateNode、RegisterNode）经本包落库，
-// 由 store 在同一事务内推进版本，本包在 writeMu 下把新节点展开进内存索引；auth 经 auth.NodeCreator 调用它们。
+// 由 store 在同一事务内读出新节点的覆盖并推进版本，本包在 writeMu 下按这份覆盖把新节点加进内存索引；
+// auth 经 auth.NodeCreator 调用它们。
 // 离线 CLI 建节点同样推进库里的版本，但运行中的 hub 与删除一样要重启才刷新缓存（auth 的 token 映射也是如此）。
 // 进程内删除由 auth.DeleteNode 撤销 token，再由 ingest.Forget 等待在途上报退出；离线 CLI 删除需重启运行中的 hub 才刷新缓存。
 // Forget 与 Save 互斥且 Save 从提交到发布全程持 writeMu；DeleteNode 提交后调用 Forget，才能清掉较早保存发布的分配。
@@ -42,8 +43,8 @@ type Registry struct {
 	mu      sync.RWMutex
 	version uint64
 	tasks   map[uint64]*probev1.ProbeTask
-	// allNodes 是 all_nodes 任务的集合，建节点时据它把新节点展开进 byNode 与 nodesOf。byNode 与 nodesOf 总是
-	// 展开后的覆盖，读侧（TasksFor、Assigned、TargetFor、List）不区分两种任务。
+	// allNodes 是 all_nodes 任务的集合，只供 List 回显开关，不参与覆盖的推导。byNode 与 nodesOf 总是 store 按
+	// probeCoverage 读出的覆盖，读侧（TasksFor、Assigned、TargetFor、List）不区分两种任务。
 	allNodes map[uint64]struct{}
 	byNode   map[int64]map[uint64]struct{}
 	nodesOf  map[uint64][]int64
@@ -202,33 +203,42 @@ func (r *Registry) Save(ctx context.Context, t *probev1.ProbeTask, allNodes bool
 	return Detail{Task: proto.Clone(rec.Task).(*probev1.ProbeTask), AllNodes: rec.AllNodes, NodeIDs: slices.Clone(rec.NodeIDs)}, version, nil
 }
 
-// CreateNode 与 RegisterNode 是两个建节点入口，实现 auth.NodeCreator。store 在建节点事务里检查新节点继承的
-// all_nodes 任务数并推进版本；这里在 writeMu 下发布，不与 Save、Delete、Load 反序。
+// CreateNode 与 RegisterNode 是两个建节点入口，实现 auth.NodeCreator。store 在建节点事务里读出新节点的覆盖、
+// 检查上限并推进版本；这里在 writeMu 下发布，不与 Save、Delete、Load 反序。
 func (r *Registry) CreateNode(ctx context.Context, name string, tokenHash []byte) (int64, error) {
-	return r.addNode(func() (int64, uint64, error) { return r.store.CreateNode(ctx, name, tokenHash) })
+	return r.addNode(func() (int64, store.NewNodeTasks, error) { return r.store.CreateNode(ctx, name, tokenHash) })
 }
 
 func (r *Registry) RegisterNode(ctx context.Context, keyHash []byte, name string, tokenHash []byte) (int64, error) {
-	return r.addNode(func() (int64, uint64, error) { return r.store.RegisterNode(ctx, keyHash, name, tokenHash) })
+	return r.addNode(func() (int64, store.NewNodeTasks, error) { return r.store.RegisterNode(ctx, keyHash, name, tokenHash) })
 }
 
-// addNode 把新节点加进每个 all_nodes 任务的覆盖，并发布建节点事务推进后的版本：新节点的 agent 据此取到的清单
-// 就含这些任务。显式分配的任务不涉及新节点。
-func (r *Registry) addNode(insert func() (int64, uint64, error)) (int64, error) {
+// addNode 发布建节点事务的结果：新节点覆盖哪些任务只取 store 在该事务里按 probeCoverage 读出的 TaskIDs，版本取
+// 该事务推进后的值。覆盖的读法只有 probeCoverage 一处，内存增量也由它决定；若在这里按 allNodes 集合另推一遍，
+// 覆盖口径一改（all_nodes 的条件变了、多出按节点属性选中的一支），库侧读者与上限计数随之改变而内存索引不变，
+// 新节点的清单、上报准入、公开标签与 List 的节点列表就与库不符，直到相关任务再被保存或 hub 重启重载。
+//
+// 增量只动新节点，依赖两条前提：
+//   - 对 Load 过的注册表，TaskIDs 里的任务都在 tasks 里：probe_task 只经本包的 Save 与 Delete 写入，二者与
+//     addNode 都在 writeMu 下完成落库与发布，Load 在 writeMu 下整体读入，所以持 writeMu 时库里的任务集合与内存
+//     一致。离线 CLI 的注册表不 Load，这条不成立，但它的发布随进程丢弃、没有读者（见 cmd/hub 的 openOffline）；
+//   - 其余节点的覆盖不因建节点而变：probeCoverage 现在的两支（all_nodes 任务交叉全部节点、分配行）在插入一个
+//     节点后只多出以新节点为一端的覆盖对。覆盖口径若加入依赖节点集合整体的一支，这条前提要重新核对。
+func (r *Registry) addNode(insert func() (int64, store.NewNodeTasks, error)) (int64, error) {
 	r.writeMu.Lock()
 	defer r.writeMu.Unlock()
-	id, version, err := insert()
+	id, created, err := insert()
 	if err != nil {
 		return 0, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for task := range r.allNodes {
+	for _, task := range created.TaskIDs {
 		r.nodesOf[task] = append(r.nodesOf[task], id)
 		slices.Sort(r.nodesOf[task])
 		r.assign(id, task)
 	}
-	r.version = version
+	r.version = created.Version
 	return id, nil
 }
 
@@ -250,6 +260,8 @@ func (r *Registry) Delete(ctx context.Context, id uint64) (uint64, error) {
 // 它与 Save 互斥且 Save 从提交到发布全程持 writeMu；已持锁的 Save/Delete 完成存储往返与发布前，此调用会阻塞。
 // 调用方不得持有写协程回调会获取的锁：回调经 Authenticate 取 auth.mu 读锁，调用方持写锁调 Forget 即阻塞回调形成环；ingest.mu 同理。
 // 若在 ingest.stateMu 下调用且正在等待存储，全体上报也会排队等待。
+// 只摘掉被删节点的前提与 addNode 的第二条相同：删节点只少掉以该节点为一端的覆盖对。覆盖口径若加入依赖节点集合
+// 整体的一支，这里要与 addNode 一起重新核对，否则删节点后内存索引与库分叉，要到重启或相关任务被保存才收敛。
 func (r *Registry) Forget(nodeID int64) {
 	r.writeMu.Lock()
 	defer r.writeMu.Unlock()

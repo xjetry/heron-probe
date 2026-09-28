@@ -1,5 +1,5 @@
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
-import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, Fragment, type ReactNode, useState } from "react";
 import { Link } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
@@ -10,6 +10,7 @@ import { AdminService, CountrySource, type Node, type Tag } from "../gen/probe/v
 import { BillingCycle } from "../gen/probe/v1/types_pb";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
+import { useRetained } from "../api/useRetained";
 import { graceText } from "../lib/alerts";
 import { BILLING_CYCLES, expired, expiryText, priceText } from "../lib/billing";
 import { withId } from "../lib/ids";
@@ -20,10 +21,12 @@ import { lagsHub } from "../lib/version";
 export function Nodes() {
   const qc = useQueryClient();
   const { error, mutationOptions } = useLatestError();
-  // 所选标签交给 hub 过滤（交集，§10），搜索在返回的结果上再做一次，两者取交集。换选择时保留上一份结果作占位，
-  // 列表与过滤器不因重新加载而卸载；占位期间列表不是当前选择的结果，排序入口同样关闭（见 narrowed）。
+  // 所选标签交给 hub 过滤（交集，§10），搜索在返回的结果上再做一次，两者取交集。换选择即换查询键：新条件的请求挂起
+  // 或失败时沿用上一份结果（useRetained），列表与其中未保存的草稿不卸载，失败只加横幅；沿用期间列表不是当前条件的
+  // 结果，排序入口同样关闭（见 narrowed）。搜索框与过滤器是这次查询的输入，渲染在列表的门控之外：请求失败时它们
+  // 必须还在，用户才能把条件改回去。
   const [tagFilter, setTagFilter] = useState<string[]>([]);
-  const nodes = useQuery(AdminService.method.listNodes, { tags: tagFilter }, { placeholderData: keepPreviousData });
+  const nodes = useRetained(useQuery(AdminService.method.listNodes, { tags: tagFilter }));
   // 标签清单只供过滤器与标签管理用，不进页面门控：取不到时节点列表照常显示，过滤器处说明原因。
   const tags = useQuery(AdminService.method.listTags, {});
   // 只用于落后标记的可选查询：不进页面门控，失败或未就绪时不标，也不卸载列表；失败时在列表上方说明标记不可用，
@@ -72,7 +75,8 @@ export function Nodes() {
     },
   });
   const reorder = useMutation(AdminService.method.reorderNodes, { ...mutationOptions, onSuccess: refresh });
-  // 删除标签后它不能继续留在过滤条件里：hub 对不存在的标签返回空结果，过滤器上却已找不到可以取消的勾选。
+  // 删除标签是本页的显式动作。被删的名字若留在过滤条件里，hub 只会返回空结果（不存在的标签匹配不到任何节点），
+  // 所以删除后把它从条件里去掉，列表回到其余条件下的样子。
   const removeTag = useMutation(AdminService.method.deleteTag, {
     ...mutationOptions,
     onSuccess: (_r, req) => {
@@ -82,7 +86,8 @@ export function Nodes() {
   });
 
   const onCreate = (e: FormEvent) => { e.preventDefault(); create.mutate({ name }); };
-  // 排序接口要求全部 id 的完整排列；搜索与标签过滤的结果都是子集，这时不开放排序入口。
+  // 排序接口要求全部 id 的完整排列：搜索与标签过滤的结果是子集，沿用的结果属于上一个条件（当前条件为空时也可能
+  // 只是子集），这两种情况都不开放排序入口。
   const move = (list: Node[], i: number, dir: -1 | 1) => {
     const ids = list.map((n) => n.id);
     const j = i + dir;
@@ -92,30 +97,13 @@ export function Nodes() {
   };
 
   const gate = queryGate(nodes);
-  if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
-  const list = filterNodes(gate.data.nodes, search);
-  const narrowed = search !== "" || tagFilter.length > 0 || nodes.isPlaceholderData;
-  return (
-    <section>
-      {gate.banner}
-      {snapshot.error != null && (
-        <p role="alert" className="error">
-          {hubVersion === undefined ? "无法取得 hub 版本，落后标记不可用" : `刷新 hub 版本失败，落后标记按上次取得的 ${hubVersion || "空版本"} 判断`}：{errorText(snapshot.error)}
-        </p>
-      )}
-      <h1>节点</h1>
-      {secret && <Secret label={secret.label} value={secret.value} />}
-      <form onSubmit={onCreate} className="row">
-        <label>新节点名称<input value={name} onChange={(e) => setName(e.target.value)} /></label>
-        <button type="submit" disabled={create.isPending || name.trim() === ""}>创建</button>
-      </form>
-      <div className="node-filters">
-        <label className="node-search">搜索节点<input type="search" placeholder="名称、备注或主机名" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
-        <TagFilter tags={tags.data?.tags} error={tags.error} selected={tagFilter} onChange={setTagFilter} />
-      </div>
-      {narrowed && <p className="muted">搜索或按标签过滤时无法排序，请清空搜索与标签过滤后调整完整节点顺序。</p>}
+  const filtered = search !== "" || tagFilter.length > 0;
+  const narrowed = filtered || nodes.stale;
+  const table = (list: Node[]) => (
+    <>
+      {filtered && <p className="muted">搜索或按标签过滤时无法排序，请清空搜索与标签过滤后调整完整节点顺序。</p>}
+      {!filtered && nodes.stale && <p className="muted">列表还不是当前条件下的结果，暂时无法排序。</p>}
       {narrowed && list.length === 0 && <p className="muted" role="status">没有匹配的节点。</p>}
-      {error != null && <p role="alert" className="error">{errorText(error)}</p>}
       <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
         <table className="nodes">
           <thead><tr><th>排序</th><th>名称</th><th>公开</th><th>国家 / 地区</th><th>标签</th><th>备注</th><th>重置日</th><th>离线宽限期</th><th>计费</th><th>创建于</th><th>操作</th></tr></thead>
@@ -132,6 +120,28 @@ export function Nodes() {
           </tbody>
         </table>
       </div>
+    </>
+  );
+  return (
+    <section>
+      {errorBanner(nodes.error)}
+      {snapshot.error != null && (
+        <p role="alert" className="error">
+          {hubVersion === undefined ? "无法取得 hub 版本，落后标记不可用" : `刷新 hub 版本失败，落后标记按上次取得的 ${hubVersion || "空版本"} 判断`}：{errorText(snapshot.error)}
+        </p>
+      )}
+      <h1>节点</h1>
+      {secret && <Secret label={secret.label} value={secret.value} />}
+      <form onSubmit={onCreate} className="row">
+        <label>新节点名称<input value={name} onChange={(e) => setName(e.target.value)} /></label>
+        <button type="submit" disabled={create.isPending || name.trim() === ""}>创建</button>
+      </form>
+      <div className="node-filters">
+        <label className="node-search">搜索节点<input type="search" placeholder="名称、备注或主机名" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
+        <TagFilter tags={tags.data?.tags} error={tags.error} selected={tagFilter} onChange={setTagFilter} />
+      </div>
+      {error != null && <p role="alert" className="error">{errorText(error)}</p>}
+      {gate.ready ? table(filterNodes(gate.data.nodes, search)) : gate.loading}
       <TagManager tags={tags.data?.tags} pending={removeTag.isPending} onDelete={(name) => removeTag.mutate({ name })} />
     </section>
   );
@@ -223,7 +233,7 @@ function NodeEditor({ node, hubVersion, knownTags, saving, deleting, rotating, o
         <td>
           {/* 国家码都是大写，输入时就转成大写；其余取值原样交给 hub 校验。 */}
           <input aria-label={`手动指定国家 / 地区 ${withId(node.name, node.id)}`} aria-describedby={`country-hint-${node.id}`} placeholder="US" value={draft.countryPin} onChange={(e) => setDraft({ ...draft, countryPin: e.target.value.toUpperCase() })} />
-          <p className="muted" id={`country-hint-${node.id}`}>两个字母（ISO 3166-1），优先于查得值；留空用查得值：{node.countryIp ? `查得于 ${node.countryIp}` : "尚无查得值"}。</p>
+          <p className="muted" id={`country-hint-${node.id}`}>两个字母（ISO 3166-1），优先于查得值；留空用查得值：{node.countryLookup ? lookupText(node) : "尚无查得值"}。</p>
         </td>
         <td><TagsEditor id={node.id} label={withId(node.name, node.id)} tags={draft.tags} known={knownTags} pending={pendingTag} onPending={setPendingTag} onChange={(tags) => setDraft({ ...draft, tags })} /></td>
         <td><input aria-label={`备注 ${withId(node.name, node.id)}`} value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></td>
@@ -265,12 +275,16 @@ function NodeEditor({ node, hubVersion, knownTags, saving, deleting, rotating, o
   );
 }
 
-// 显示值、来源与查得于哪个地址："🇺🇸 US 查得于 8.8.8.8"、"🇯🇵 JP 手动指定"；没有国家是"—"。手动指定时查询照常进行，
-// 查得于哪个地址也照写：清空手动值即回落到它。
+// 显示值、来源与查得值："🇺🇸 US 查得于 8.8.8.8"、"🇯🇵 JP 手动指定；查得 US（于 8.8.4.4）"、"🇯🇵 JP 手动指定"；
+// 没有国家是"—"。手动指定时查询照常进行，查得值与它所属的地址也照写，清空手动值即回落到它；查得值要写出来，
+// 只写地址会读成"JP 是在 8.8.4.4 查得的"。
+const lookupText = (node: Node) => `查得 ${node.countryLookup}（于 ${node.countryIp}）`;
+
 function CountryCell({ node }: { node: Node }) {
   if (node.countrySource === CountrySource.UNSPECIFIED) return <>—</>;
-  const lookup = node.countryIp ? `查得于 ${node.countryIp}` : "";
-  const source = node.countrySource === CountrySource.MANUAL ? ["手动指定", lookup].filter(Boolean).join("；") : lookup;
+  const source = node.countrySource === CountrySource.MANUAL
+    ? ["手动指定", node.countryLookup && lookupText(node)].filter(Boolean).join("；")
+    : `查得于 ${node.countryIp}`;
   return <><CountryBadge code={node.country} />{" "}<span className="muted">{source}</span></>;
 }
 

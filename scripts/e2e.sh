@@ -190,7 +190,7 @@ jq -e '. == {theme: "auto"}' "$work/pub-site-default.json" > /dev/null || { echo
 login_body=$(jq -nc --arg password "$admin_pw" '{password: $password}')
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login"; cat "$work/Login.json"; exit 1; }
 # 外观整体替换并回显 hub 实际保存的值（主色转小写），公开页随即拿到；被拒的更新什么都不写。
-settings_body='{"settings": {"title": "e2e 状态", "theme": "dark", "accentColor": "#FF5500", "customCss": ".card { border-width: 2px; }"}}'
+settings_body='{"settings": {"title": "e2e 状态", "theme": "dark", "accentColor": "#FF5500", "customCss": ".card { border-width: 2px; }", "publicEnabled": true}}'
 [ "$(rpc UpdateSettings "$settings_body")" = 200 ] || { echo "FAIL: UpdateSettings"; cat "$work/UpdateSettings.json"; exit 1; }
 jq -e '.settings.accentColor == "#ff5500"' "$work/UpdateSettings.json" > /dev/null || { echo "FAIL: UpdateSettings echo"; cat "$work/UpdateSettings.json"; exit 1; }
 [ "$(pubget site GetSite '{}')" = 200 ] || { echo "FAIL: GetSite after update"; exit 1; }
@@ -365,6 +365,22 @@ for method in QueryMetrics QueryProbes; do
   [ "$(hdr "private-$method" Cache-Control)" = no-store ] || { echo "FAIL: $method NotFound is cacheable"; cat "$work/pub-private-$method.headers"; exit 1; }
 done
 
+# 总闸整体关闭公开接口，重新打开仍使用原外观与逐节点公开范围。
+closed_settings=$(printf '%s' "$settings_body" | jq '.settings.publicEnabled = false')
+[ "$(rpc UpdateSettings "$closed_settings")" = 200 ] || { echo "FAIL: close public page"; exit 1; }
+[ "$(pubget disabled-site GetSite '{}')" = 404 ] || { echo "FAIL: disabled GetSite must be 404"; cat "$work/pub-disabled-site.json"; exit 1; }
+# 旧客户端仅改标题，保留其它外观字段但不认识总闸；缺席不能改变任一方向的状态。
+title_settings=$(printf '%s' "$settings_body" | jq 'del(.settings.publicEnabled) | .settings.title = "e2e 标题更新"')
+[ "$(rpc UpdateSettings "$title_settings")" = 200 ] || { echo "FAIL: title update while closed"; exit 1; }
+jq -e '.settings.publicEnabled == false and .settings.title == "e2e 标题更新"' "$work/UpdateSettings.json" > /dev/null || { echo "FAIL: omitted gate must echo closed and new title"; exit 1; }
+[ "$(pubget omitted-closed-site GetSite '{}')" = 404 ] || { echo "FAIL: omitted gate reopened public page"; exit 1; }
+[ "$(rpc UpdateSettings "$settings_body")" = 200 ] || { echo "FAIL: reopen public page"; exit 1; }
+[ "$(pubget reopened-site GetSite '{}')" = 200 ] || { echo "FAIL: reopened GetSite"; cat "$work/pub-reopened-site.json"; exit 1; }
+[ "$(rpc UpdateSettings "$title_settings")" = 200 ] || { echo "FAIL: title update while open"; exit 1; }
+jq -e '.settings.publicEnabled == true and .settings.title == "e2e 标题更新"' "$work/UpdateSettings.json" > /dev/null || { echo "FAIL: omitted gate must echo open and new title"; exit 1; }
+[ "$(pubget omitted-open-site GetSite '{}')" = 200 ] || { echo "FAIL: omitted gate closed public page"; exit 1; }
+[ "$(rpc UpdateSettings "$settings_body")" = 200 ] || { echo "FAIL: restore appearance"; exit 1; }
+
 # 规则只覆盖 arm64；amd64 保持退出，node1 的流量精确复核不受后续上报影响。
 run_agent arm64 >> "$work/agent-arm64.log" 2>&1 &
 arm64=$!
@@ -439,9 +455,9 @@ initial_interval_s=$(startup_seconds "$work/agent-arm64.log" "agent starting" in
 #   offline_sweep，与 ttl 无关。连续失败没有上限可推：hub 一直不应答时节点本来就没有恢复上报。
 # 投递 delivery_retry_wait：渠道失败可重试且存储正常时，一条投递依次等过 internal/hub/alert/queue.go
 #   的 backoff 各项，总和即 DeliveryRetryWait。存储失败走 worker 级退避（1s 起翻倍、上限 1 分钟），
-#   没有总量上界，不在预算内；e2e 的库在本机磁盘上，视为正常。渠道客户端 10s 超时（notify.go 的
-#   NewHTTPClient）只在接收器挂住时才会用满；接收器在本机回环、已由 TestNotifyChannel 验证能应答，
-#   上限不为此留量。
+#   没有总量上界，不在预算内；e2e 的库在本机磁盘上，视为正常。渠道客户端的总时限（serve 构造通知客户端
+#   时交给 outbound.NewClient 的 alert.NotifyTimeout，定义在 internal/hub/alert/queue.go）只在接收器挂住时
+#   才会用满；接收器在本机回环、已由 TestNotifyChannel 验证能应答，上限不为此留量。
 # 余量一个 offline_sweep：容纳 agent 进程启动与巡检本身的耗时推迟下一轮。docker kill/start 在计数
 #   开始之前完成，不占预算。
 wait_alert_firing_s=$((ttl_s + sweep_s + retry_wait_s + sweep_s))
@@ -634,8 +650,8 @@ jq -r '.tables[].name' "$work/GetStorageStats.json" > "$work/stats-api-tables.tx
 sed -n '/^db_bytes: /d; s/^\([a-z0-9_]*\): [0-9][0-9]*$/\1/p' "$work/stats.txt" > "$work/stats-cli-tables.txt"
 [ -s "$work/stats-cli-tables.txt" ] && cmp -s "$work/stats-api-tables.txt" "$work/stats-cli-tables.txt" || { echo "FAIL: GetStorageStats and probe-hub stats list different tables"; cat "$work/stats-api-tables.txt" "$work/stats-cli-tables.txt"; exit 1; }
 [ "$(get db_bytes)" -gt 0 ] || { echo "FAIL: db_bytes"; exit 1; }
-# UpdateSettings 整体替换：请求只给了四项，存储层照样写五个 site.* 键（空 logo 也是一行）；表里目前只有外观。
-[ "$(get setting)" = 5 ] || { echo "FAIL: setting rows"; exit 1; }
+# 已显式保存总闸与五项外观，空 logo 也是一行；表里目前只有公开页设置。
+[ "$(get setting)" = 6 ] || { echo "FAIL: setting rows"; exit 1; }
 [ "$(get node)" = 2 ] || { echo "FAIL: node count"; exit 1; }
 [ "$(get theme)" = 0 ] && [ "$(get theme_file)" = 0 ] || { echo "FAIL: the deleted theme left rows"; exit 1; }
 [ "$(get alert_rule)" = 2 ] || { echo "FAIL: alert rule count"; exit 1; }
