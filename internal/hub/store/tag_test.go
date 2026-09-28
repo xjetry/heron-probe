@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // v14 的完整 DDL：v13 加上节点的国家三列。
@@ -294,14 +296,19 @@ func TestNodeRowAndTagsComeFromOneSnapshot(t *testing.T) {
 			}
 		}
 	}()
-	const reads = 500
+	// 核对只有在写者真的插进两次读之间才验证了东西。单个处理器上调度可能让写者在整段读期间一次都没提交，
+	// 所以用例期间把 GOMAXPROCS 提到至少 2，并且读满 minReads 次之后还要见过两个名字才停；到时限仍只见一个名字判为空过。
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(max(2, runtime.GOMAXPROCS(0))))
+	const minReads = 500
+	deadline := time.Now().Add(10 * time.Second)
 	names := map[string]bool{}
-	mismatches := 0
-	for range reads {
+	reads, mismatches := 0, 0
+	for reads < minReads || (len(names) < 2 && time.Now().Before(deadline)) {
 		n, err := s.GetNode(ctx, id)
 		if err != nil {
 			t.Fatal(err)
 		}
+		reads++
 		names[n.Name] = true
 		if want := []string{"t" + strings.TrimPrefix(n.Name, "n")}; !slices.Equal(n.Tags, want) {
 			mismatches++
@@ -313,8 +320,7 @@ func TestNodeRowAndTagsComeFromOneSnapshot(t *testing.T) {
 	if mismatches > 0 {
 		t.Errorf("%d of %d reads paired the node row with tags from another moment", mismatches, reads)
 	}
-	// 读者只看到一个名字说明写者没有插进任何两次读之间，上面的核对就什么也没验证。
 	if len(names) < 2 {
-		t.Fatalf("the reads saw %d distinct names; the writer never interleaved with them", len(names))
+		t.Fatalf("the reads saw %d distinct names in %d reads; the writer never interleaved with them", len(names), reads)
 	}
 }
