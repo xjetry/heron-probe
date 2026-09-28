@@ -122,6 +122,9 @@ func restoreTarget(t *testing.T) string {
 		INSERT INTO metric_1m (node_id,ts) VALUES (2,300),(5,300);
 		INSERT INTO setting VALUES ('site.title','target');
 		INSERT INTO sqlite_sequence VALUES ('target_only',19);`)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
 	return path
 }
 
@@ -308,28 +311,40 @@ func TestRestoreRejectsSnapshotsWithoutChangingTarget(t *testing.T) {
 
 func TestRestorePageSizeAgainstExistingTarget(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		metrics    bool
-		resizeBoth bool
-	}{{"both mismatch", true, true}, {"config mismatch", true, false}, {"config without metrics", false, false}} {
+		name                                string
+		targetSize, configSize, metricsSize int
+	}{
+		{"both mismatch", 4096, 8192, 8192},
+		{"config mismatch", 4096, 8192, 4096},
+		{"config without metrics", 4096, 8192, 0},
+		{"nondefault target", 8192, 4096, 8192},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			path := restoreTarget(t)
-			for _, source := range []string{config, metrics} {
-				if source == metrics && !tc.resizeBoth {
+			if tc.targetSize != 4096 {
+				restoreExec(t, restoreDB(t, path), fmt.Sprintf(`PRAGMA journal_mode=DELETE;
+					PRAGMA page_size=%d; VACUUM; PRAGMA journal_mode=WAL`, tc.targetSize))
+			}
+			for _, source := range []struct {
+				path string
+				size int
+			}{{config, tc.configSize}, {metrics, tc.metricsSize}} {
+				if source.size == 0 || source.size == 4096 {
 					continue
 				}
-				restoreExec(t, restoreDB(t, source), `CREATE TABLE saved_sequence AS SELECT * FROM sqlite_sequence;
-					PRAGMA page_size=8192; VACUUM;
+				restoreExec(t, restoreDB(t, source.path), fmt.Sprintf(`CREATE TABLE saved_sequence AS SELECT * FROM sqlite_sequence;
+					PRAGMA page_size=%d; VACUUM;
 					CREATE TABLE sequence_seed (id INTEGER PRIMARY KEY AUTOINCREMENT); DROP TABLE sequence_seed;
-					INSERT INTO sqlite_sequence SELECT * FROM saved_sequence; DROP TABLE saved_sequence`)
+					INSERT INTO sqlite_sequence SELECT * FROM saved_sequence; DROP TABLE saved_sequence`, source.size))
 			}
-			if !tc.metrics {
+			if tc.metricsSize == 0 {
 				metrics = ""
 			}
 			before := restoreDump(t, path)
 			err := runRestoreWith([]string{"--db", path, "--config", config, "--metrics", metrics, "--yes"}, &bytes.Buffer{})
-			if err == nil || !strings.Contains(err.Error(), "config snapshot page_size=8192; expected page_size=4096") {
+			wantErr := fmt.Sprintf("config snapshot page_size=%d; expected page_size=%d", tc.configSize, tc.targetSize)
+			if err == nil || !strings.Contains(err.Error(), wantErr) {
 				t.Errorf("page size must match target and name the mismatched source: %v", err)
 			}
 			if after := restoreDump(t, path); after != before {
