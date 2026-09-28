@@ -12,8 +12,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/xjetry/probe/internal/sqlitetest"
 )
 
 // v15 的完整 DDL：v14 加上节点标签的两张表与索引。
@@ -24,22 +22,20 @@ var schemaV15 = append(slices.Clone(schemaV14),
 
 // 旧库升级后与新建库结构相同，节点原样保留且没有主题；升级后的库能装主题。"至多一行启用"由两条约束共同承载，
 // 两库各自对照：部分唯一索引 theme_enabled 拒绝第二行 1，CHECK 拒绝 0 与 1 以外的值（否则 2 这样的值绕过只看
-// enabled = 1 的索引）。sqlitetest.Describe 不读 CHECK，所以这里另用写入验证 CHECK。
+// enabled = 1 的索引）。结构签名核对 DDL，违反写入另行验证真实约束行为。
 func TestMigrationFromV15AddsThemeTables(t *testing.T) {
-	migrated, fresh := migrateFrom(t, schemaV15, 15, func(t *testing.T, db *sql.DB) {
+	migrated := migrateFrom(t, 15, func(t *testing.T, db *sql.DB) {
 		if _, err := db.Exec("INSERT INTO node (id, name, token_hash, created_at) VALUES (7, 'kept', x'00', 1)"); err != nil {
 			t.Fatal(err)
 		}
 	})
-	if got, want := sqlitetest.Describe(t, migrated.r), sqlitetest.Describe(t, fresh.r); !reflect.DeepEqual(got, want) {
-		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
-	}
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}
 	if n, err := migrated.GetNode(t.Context(), 7); err != nil || n.Name != "kept" {
 		t.Fatalf("node after migration: %+v %v", n, err)
 	}
+	fresh, _ := open(t)
 	for _, s := range []*Store{migrated, fresh} {
 		kind := map[bool]string{true: "migrated", false: "fresh"}[s == migrated]
 		putTheme(t, s, "a", "index.html")

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/sqlitetest"
 )
 
 // v13 的完整 DDL：v12 加上节点的来源地址。
@@ -21,14 +19,11 @@ var schemaV13 = append(slices.Clone(schemaV12), "ALTER TABLE node ADD COLUMN las
 
 // 旧库的节点升级后三列都是空串：没有国家，已有的来源地址原样保留，查询开启后按它补查。
 func TestMigrationFromV13AddsEmptyCountry(t *testing.T) {
-	migrated, fresh := migrateFrom(t, schemaV13, 13, func(t *testing.T, db *sql.DB) {
+	migrated := migrateFrom(t, 13, func(t *testing.T, db *sql.DB) {
 		if _, err := db.Exec("INSERT INTO node (id, name, token_hash, created_at, last_source) VALUES (7, 'kept', x'00', 1, '8.8.8.8')"); err != nil {
 			t.Fatal(err)
 		}
 	})
-	if got, want := sqlitetest.Describe(t, migrated.r), sqlitetest.Describe(t, fresh.r); !reflect.DeepEqual(got, want) {
-		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
-	}
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}

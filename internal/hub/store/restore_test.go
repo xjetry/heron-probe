@@ -3,15 +3,14 @@ package store
 import (
 	"database/sql"
 	"log/slog"
+	"maps"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/sqlitetest"
 )
 
 // 快照、指标层与目标库都可能见过已清理的投递行。恢复后新批次必须越过三者的高水位，不能只越过现存行。
@@ -112,14 +111,20 @@ var schemaV16 = append(slices.Clone(schemaV15),
 )`)
 
 func TestRestoreRecordMigration(t *testing.T) {
-	migrated, fresh := migrateFrom(t, schemaV16, 16, seedMinuteRow)
-	if got, want := sqlitetest.Describe(t, migrated.r), sqlitetest.Describe(t, fresh.r); !reflect.DeepEqual(got, want) {
-		t.Errorf("restore record migrated schema differs from fresh: got=%v want=%v", got, want)
+	migrated := migrateFrom(t, 16, func(t *testing.T, db *sql.DB) {
+		seedMinuteRow(t, db)
+		if _, err := db.Exec("INSERT INTO theme (id,name,version,preview,uploaded_at,enabled) VALUES ('kept','Kept','1','',1,1)"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if got := enabledColumn(t, migrated); !maps.Equal(got, map[string]int{"kept": 1}) {
+		t.Errorf("theme.enabled after restore record migration = %v, want kept=1", got)
 	}
 	var count int
 	if err := migrated.r.QueryRow("SELECT count(*) FROM restore_record").Scan(&count); err != nil || count != 0 {
 		t.Errorf("restore record migration: count=%d err=%v", count, err)
 	}
+	fresh, _ := open(t)
 	for _, s := range []*Store{migrated, fresh} {
 		var primary int
 		if err := s.r.QueryRow("SELECT coalesce(sum(pk),0) FROM pragma_table_info('restore_record') WHERE name='id' AND type='TEXT'").Scan(&primary); err != nil {

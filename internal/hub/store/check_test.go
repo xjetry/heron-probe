@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// CHECK 约束承载的不变式只能由写入来钉：describe 比的是列、默认值、主键与索引，不读 CHECK，两份 DDL（schema.go 与
-// 冻结的迁移）同删、只删一份或只加一份，它都照样判两库相等。这条用例按条对照，不按表：
+// 结构签名核对两库的 CHECK 文本，违反写入另行核对 SQLite 的实际拒绝行为；两份 DDL 同时漏掉同一条 CHECK 时，
+// 签名仍可能相等，下面的显式清单会报缺项。这条用例按条对照，不按表：
 //   - 从新建库与从 v1 迁到当前的库的 sqlite_master 逐条取出每张表的 CHECK 表达式，两库的清单必须相同。只进 schema.go
 //     或只进迁移的 CHECK、两边写法不同的 CHECK 都在这里失败。
 //   - checkViolations 给每条 CHECK 配一次违反它的写入，按表列出的表达式必须与库里取出的相同。同一张表新加的第二条
@@ -18,7 +18,8 @@ import (
 //   - 每条写入在两库上各执行一次。SQLite 拒绝时点名未命名 CHECK 的表达式原文，据此断言拒绝它的正是配给它的那条，
 //     而不是同表的另一条。
 func TestEveryCheckConstraintRefusesItsViolation(t *testing.T) {
-	migrated, fresh := migrateFrom(t, schemaV1, 1, seedMinuteRow)
+	migrated := migrateFrom(t, 1, seedMinuteRow)
+	fresh, _ := open(t)
 	checkViolations := []struct{ table, check, write string }{
 		// 单行表：第二行插不进去。
 		{"admin", "id = 1", "INSERT INTO admin (id, password_hash, updated_at) VALUES (2, 'x', 0)"},

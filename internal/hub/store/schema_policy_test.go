@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/sqlitetest"
 )
 
 func schemaPolicyFixture(t *testing.T, statements []string, version int) (string, *sql.DB) {
@@ -35,6 +34,12 @@ func schemaPolicyFixture(t *testing.T, statements []string, version int) (string
 	return path, db
 }
 
+// frozenSchemaFixture 建一个停在指定版本的库，DDL 按版本号取自 frozenSchemas。
+func frozenSchemaFixture(t *testing.T, version int) (string, *sql.DB) {
+	t.Helper()
+	return schemaPolicyFixture(t, frozenSchema(t, version), version)
+}
+
 func assertSchemaLogs(t *testing.T, buf *bytes.Buffer, want ...map[string]any) {
 	t.Helper()
 	var got []map[string]any
@@ -53,9 +58,9 @@ func assertSchemaLogs(t *testing.T, buf *bytes.Buffer, want ...map[string]any) {
 }
 
 func TestSchemaPolicyRequiresCurrentWithoutChangingV8(t *testing.T) {
-	path, raw := schemaPolicyFixture(t, schemaV8, 8)
+	path, raw := frozenSchemaFixture(t, 8)
 	seedMinuteRow(t, raw)
-	before := sqlitetest.Describe(t, raw)
+	before := describe(t, raw)
 	var logs bytes.Buffer
 	st, err := Open(path, clock.Real(), slog.New(slog.NewJSONHandler(&logs, nil)), RequireCurrentSchema)
 	if st != nil {
@@ -68,12 +73,9 @@ func TestSchemaPolicyRequiresCurrentWithoutChangingV8(t *testing.T) {
 	if got := userVersion(t, raw); got != 8 {
 		t.Errorf("rejected database user_version = %d, want 8", got)
 	}
-	after := sqlitetest.Describe(t, raw)
-	if got, want := len(after.Tables["node"]), len(before.Tables["node"]); got != want {
-		t.Errorf("rejected database node columns = %d, want %d", got, want)
-	}
-	if !reflect.DeepEqual(after, before) {
-		t.Error("rejected database schema changed")
+	after := describe(t, raw)
+	if diff := schemaDifference(after, before, "打开后", "打开前"); diff != "" {
+		t.Errorf("rejected database schema changed:\n%s", diff)
 	}
 	var name string
 	if err := raw.QueryRow("SELECT name FROM node WHERE id = 7").Scan(&name); err != nil || name != "kept" {
@@ -83,12 +85,9 @@ func TestSchemaPolicyRequiresCurrentWithoutChangingV8(t *testing.T) {
 }
 
 func TestSchemaPolicyMigratesAndLogsEachStep(t *testing.T) {
-	for _, fixture := range []struct {
-		version int
-		schema  []string
-	}{{7, schemaV7}, {8, schemaV8}, {9, schemaV9}, {10, schemaV10}, {11, schemaV11}, {12, schemaV12}, {13, schemaV13}, {14, schemaV14}, {15, schemaV15}, {16, schemaV16}, {17, schemaV17}} {
-		t.Run(fmt.Sprint(fixture.version), func(t *testing.T) {
-			path, raw := schemaPolicyFixture(t, fixture.schema, fixture.version)
+	for _, version := range []int{7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			path, raw := frozenSchemaFixture(t, version)
 			var logs bytes.Buffer
 			st, err := Open(path, clock.Real(), slog.New(slog.NewJSONHandler(&logs, nil)), MigrateSchema)
 			if err != nil {
@@ -99,7 +98,7 @@ func TestSchemaPolicyMigratesAndLogsEachStep(t *testing.T) {
 				t.Errorf("migrated user_version = %d, want %d", got, schemaVersion)
 			}
 			var want []map[string]any
-			for from := fixture.version; from < schemaVersion; from++ {
+			for from := version; from < schemaVersion; from++ {
 				want = append(want, map[string]any{"level": "INFO", "msg": "database schema migrated", "from": float64(from), "to": float64(from + 1)})
 			}
 			assertSchemaLogs(t, &logs, want...)
@@ -111,7 +110,7 @@ func TestSchemaPolicyMigratesAndLogsEachStep(t *testing.T) {
 // 让迁移 9 的第一条 ALTER 撞上已存在的同名列，使那一步的事务回滚，验证日志确实
 // 止步于最后一步已提交的迁移，不多写一行从未持久化的 to:9。
 func TestSchemaPolicyPartialMigrationLogsOnlyCommittedSteps(t *testing.T) {
-	path, raw := schemaPolicyFixture(t, schemaV7, 7)
+	path, raw := frozenSchemaFixture(t, 7)
 	if _, err := raw.Exec("ALTER TABLE node ADD COLUMN price TEXT NOT NULL DEFAULT ''"); err != nil {
 		t.Fatal(err)
 	}
@@ -264,8 +263,8 @@ func TestSchemaPolicyRejectsNegativeVersionWithoutSuggestingServe(t *testing.T) 
 func TestSchemaPolicyRejectsInvalidPolicy(t *testing.T) {
 	for _, policy := range []SchemaPolicy{0, -1, 3} {
 		t.Run(fmt.Sprint(policy), func(t *testing.T) {
-			path, raw := schemaPolicyFixture(t, schemaV8, 8)
-			before := sqlitetest.Describe(t, raw)
+			path, raw := frozenSchemaFixture(t, 8)
+			before := describe(t, raw)
 			defer func() {
 				if got := recover(); got != "store.Open requires a valid SchemaPolicy" {
 					t.Errorf("invalid policy panic = %v, want explicit SchemaPolicy panic", got)
@@ -273,8 +272,8 @@ func TestSchemaPolicyRejectsInvalidPolicy(t *testing.T) {
 				if got := userVersion(t, raw); got != 8 {
 					t.Errorf("invalid policy changed user_version to %d before panicking, want 8", got)
 				}
-				if after := sqlitetest.Describe(t, raw); !reflect.DeepEqual(after, before) {
-					t.Error("invalid policy changed schema before panicking")
+				if diff := schemaDifference(describe(t, raw), before, "打开后", "打开前"); diff != "" {
+					t.Errorf("invalid policy changed schema before panicking:\n%s", diff)
 				}
 			}()
 			st, _ := Open(path, clock.Real(), slog.Default(), policy)

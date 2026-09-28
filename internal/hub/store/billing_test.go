@@ -8,8 +8,6 @@ import (
 	"slices"
 	"testing"
 	"time"
-
-	"github.com/xjetry/probe/internal/sqlitetest"
 )
 
 // v8 的完整 DDL：v7 加上 setting 表。
@@ -18,7 +16,7 @@ var schemaV8 = append(slices.Clone(schemaV7), "CREATE TABLE setting (\n  key TEX
 // 旧库里已有的节点、规则与状态升级后取列默认值：没有计费信息，规则没有提前天数，状态没有触发时的到期日；
 // 升级后的库能照常写入新列。
 func TestMigrationFromV8MatchesFreshSchemaAndKeepsRows(t *testing.T) {
-	migrated, fresh := migrateFrom(t, schemaV8, 8, func(t *testing.T, db *sql.DB) {
+	migrated := migrateFrom(t, 8, func(t *testing.T, db *sql.DB) {
 		seedMinuteRow(t, db)
 		for _, stmt := range []string{
 			"INSERT INTO alert_rule (id, name, kind, enabled, all_nodes, created_at) VALUES (3, 'r', 'offline', 1, 1, 1)",
@@ -29,9 +27,6 @@ func TestMigrationFromV8MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 			}
 		}
 	})
-	if got, want := sqlitetest.Describe(t, migrated.r), sqlitetest.Describe(t, fresh.r); !reflect.DeepEqual(got, want) {
-		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
-	}
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}

@@ -4,15 +4,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"reflect"
 	"runtime"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/xjetry/probe/internal/sqlitetest"
 )
 
 // v14 的完整 DDL：v13 加上节点的国家三列。
@@ -23,14 +20,11 @@ var schemaV14 = append(slices.Clone(schemaV13),
 
 // 旧库升级后与新建库结构相同，节点原样保留且没有标签；升级后的库能挂标签。
 func TestMigrationFromV14AddsTagTables(t *testing.T) {
-	migrated, fresh := migrateFrom(t, schemaV14, 14, func(t *testing.T, db *sql.DB) {
+	migrated := migrateFrom(t, 14, func(t *testing.T, db *sql.DB) {
 		if _, err := db.Exec("INSERT INTO node (id, name, token_hash, created_at, country_pin) VALUES (7, 'kept', x'00', 1, 'JP')"); err != nil {
 			t.Fatal(err)
 		}
 	})
-	if got, want := sqlitetest.Describe(t, migrated.r), sqlitetest.Describe(t, fresh.r); !reflect.DeepEqual(got, want) {
-		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
-	}
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}

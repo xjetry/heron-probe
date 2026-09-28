@@ -6,8 +6,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/xjetry/probe/internal/sqlitetest"
 )
 
 func TestSiteSettingsDefaultAndWholeReplacement(t *testing.T) {
@@ -112,10 +110,7 @@ var schemaV7 = append(slices.Clone(schemaV6),
 	"ALTER TABLE alert_delivery ADD COLUMN http_status INTEGER")
 
 func TestMigrationFromV7MatchesFreshSchemaAndKeepsRows(t *testing.T) {
-	migrated, fresh := migrateFrom(t, schemaV7, 7, seedMinuteRow)
-	if got, want := sqlitetest.Describe(t, migrated.r), sqlitetest.Describe(t, fresh.r); !reflect.DeepEqual(got, want) {
-		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
-	}
+	migrated := migrateFrom(t, 7, seedMinuteRow)
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}

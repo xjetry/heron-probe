@@ -2,13 +2,11 @@ package store
 
 import (
 	"database/sql"
-	"reflect"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/sqlitetest"
 )
 
 // v12 的完整 DDL：v11 加上告警状态的上次恢复时刻。
@@ -23,10 +21,7 @@ func TestMigrationFromV12AddsEmptyLastSource(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	migrated, fresh := migrateFrom(t, schemaV12, 12, seed)
-	if got, want := sqlitetest.Describe(t, migrated.r), sqlitetest.Describe(t, fresh.r); !reflect.DeepEqual(got, want) {
-		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
-	}
+	migrated := migrateFrom(t, 12, seed)
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}

@@ -8,18 +8,39 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/xjetry/probe/internal/sqlitetest"
 )
 
 // v17 的完整 DDL：v16 加上恢复审计记录。
 var schemaV17 = append(slices.Clone(schemaV16),
 	"CREATE TABLE restore_record (id TEXT PRIMARY KEY NOT NULL, restored_at INTEGER NOT NULL, config_taken_at INTEGER NOT NULL, metrics_taken_at INTEGER, orphans TEXT NOT NULL)")
 
+// v18 冻结重建后的投递表与渠道节奏列，不引用生产迁移，防止输入和被测实现一起漂移。
+var schemaV18 = append(slices.Clone(schemaV17),
+	`DROP TABLE alert_delivery`,
+	`CREATE TABLE alert_delivery (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  channel_id INTEGER NOT NULL,
+  batch_id INTEGER NOT NULL CHECK (batch_id > 0),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  ok INTEGER NOT NULL DEFAULT 0,
+  done INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT '',
+  delivered_at INTEGER,
+  failure TEXT NOT NULL DEFAULT '',
+  http_status INTEGER,
+  not_before INTEGER NOT NULL DEFAULT 0
+)`,
+	`CREATE INDEX alert_delivery_by_event ON alert_delivery(event_id)`,
+	`CREATE INDEX alert_delivery_pending ON alert_delivery(done, batch_id, channel_id)`,
+	`CREATE INDEX alert_delivery_by_batch ON alert_delivery(batch_id)`,
+	`ALTER TABLE notify_channel ADD COLUMN rate_per_minute INTEGER NOT NULL DEFAULT 0 CHECK (rate_per_minute >= 0)`,
+)
+
 // 升级前每行各自发送过：旧行各成一批，未终态的仍按原行续投，其余各列原样保留；旧渠道按种类取缺省节奏。重建表带上
 // 旧序列：id 50 的行已被清理，新行必须从 51 起，否则批次号会被复用。
 func TestMigrationFromV17AddsBatchesAndChannelRates(t *testing.T) {
-	migrated, fresh := migrateFrom(t, schemaV17, 17, func(t *testing.T, db *sql.DB) {
+	migrated := migrateFrom(t, 17, func(t *testing.T, db *sql.DB) {
 		for _, stmt := range []string{
 			"INSERT INTO node (id, name, token_hash, created_at) VALUES (7, 'n', x'07', 1)",
 			"INSERT INTO notify_channel (id, name, kind, config, created_at) VALUES (1, 'tg', 'telegram', '{}', 1), (2, 'hook', 'webhook', '{}', 1)",
@@ -33,9 +54,6 @@ func TestMigrationFromV17AddsBatchesAndChannelRates(t *testing.T) {
 			}
 		}
 	})
-	if got, want := sqlitetest.Describe(t, migrated.r), sqlitetest.Describe(t, fresh.r); !reflect.DeepEqual(got, want) {
-		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
-	}
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}
@@ -69,7 +87,8 @@ func TestMigrationFromV17AddsBatchesAndChannelRates(t *testing.T) {
 
 // 不写批次号的插入在写时失败（新建库与迁移库都是）：之后每个读这一列的查询都依赖它非空。
 func TestDeliveryInsertWithoutBatchFails(t *testing.T) {
-	migrated, fresh := migrateFrom(t, schemaV17, 17, func(*testing.T, *sql.DB) {})
+	migrated := migrateFrom(t, 17, func(*testing.T, *sql.DB) {})
+	fresh, _ := open(t)
 	for _, s := range []*Store{fresh, migrated} {
 		err := s.write(t.Context(), func(tx *sql.Tx) error {
 			_, err := tx.Exec("INSERT INTO alert_delivery (event_id, channel_id) VALUES (1, 1)")
