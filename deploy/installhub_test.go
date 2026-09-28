@@ -14,12 +14,14 @@ import (
 // 之前拿走进程 4242。
 // systemctl 记下参数；start 在假 /proc 里放一个以服务用户运行、exe 指向 /usr/local/bin/probe-hub 的进程 4242，
 // stop 把它拿走；show 回答 MainPID 与 DropInPaths（state/dropins 里空格分隔的路径，是目标系统里的真实路径）。
-// enable、disable 增删 state/enabled，is-enabled 按它回答。
+// enable、disable 照 systemd 252 的实测建出与删掉 multi-user.target.wants/probe-hub.service，一条指向
+// /etc/systemd/system/probe-hub.service 的符号链接（目标是目标系统里的真实路径，在临时根目录下悬空）；is-enabled
+// 按这条链接回答。
 // state/dropins 是 systemd 已加载的 drop-in，照 systemd 252 的实测：daemon-reload 时才从 state/dropins-disk
 // （磁盘上的 drop-in）取，单元文件不存在时为空。STUB_STOP_FAILS 让 stop 失败，STUB_STOP_LEAVES_PROCESS 让 stop
 // 返回 0 却留下进程，STUB_DROPIN_ON_STOP 在 stop 时把一个 drop-in 写进 state/dropins-disk。STUB_START_NO_PROCESS
 // 让 start 返回 0 却不起进程。STUB_RELOAD_FAILS 让 daemon-reload 失败，STUB_RELOAD_FAILS_ON_STOP 让它从 stop 之后
-// 开始失败。
+// 开始失败；STUB_IS_ENABLED_FAILS_WITH_RELOAD 让 is-enabled 在 reload 失败时一起失败。
 // chown 只记参数：测试以普通用户运行，改不了属主，属主由真机验收回读。chmod 记下参数后转调真的，权限断言看的
 // 是真实的文件模式。curl 只认 file:// 地址并复制文件；apt-get 记下参数，install 时建出 CA 证书包。
 // systemctl、curl、apt-get 读尽 stdin：脚本以 sh -s 从 stdin 运行，漏掉 </dev/null 的调用会吞掉脚本余下部分，
@@ -35,6 +37,8 @@ if [ -n "${STUB_START_DIES-}" ] && [ "$1" = 3 ]; then rm -rf "$PROBE_INSTALL_ROO
 cat > /dev/null
 echo "systemctl $*" >> "$STUB_STATE/calls"
 P=$PROBE_INSTALL_ROOT/proc
+W=$PROBE_INSTALL_ROOT/etc/systemd/system/multi-user.target.wants
+reload_fails() { [ -n "${STUB_RELOAD_FAILS-}" ] || [ -f "$STUB_STATE/reload-fails" ]; }
 case "$*" in
   "start probe-hub")
     [ -z "${STUB_START_FAILS-}" ] || { echo "Job for probe-hub.service failed." >&2; exit 1; }
@@ -49,14 +53,18 @@ case "$*" in
     [ -z "${STUB_DROPIN_ON_STOP-}" ] || echo "$STUB_DROPIN_ON_STOP" > "$STUB_STATE/dropins-disk"
     [ -z "${STUB_RELOAD_FAILS_ON_STOP-}" ] || : > "$STUB_STATE/reload-fails";;
   daemon-reload)
-    if [ -n "${STUB_RELOAD_FAILS-}" ] || [ -f "$STUB_STATE/reload-fails" ]; then
+    if reload_fails; then
       echo "Failed to reload daemon: Access denied" >&2; exit 1
     fi
     if [ ! -f "$PROBE_INSTALL_ROOT/etc/systemd/system/probe-hub.service" ]; then : > "$STUB_STATE/dropins"
     elif [ -f "$STUB_STATE/dropins-disk" ]; then cp "$STUB_STATE/dropins-disk" "$STUB_STATE/dropins"; fi;;
-  "enable probe-hub") : > "$STUB_STATE/enabled";;
-  "disable probe-hub") rm -f "$STUB_STATE/enabled";;
-  "is-enabled --quiet probe-hub") [ -f "$STUB_STATE/enabled" ];;
+  "enable probe-hub") mkdir -p "$W"; ln -sf /etc/systemd/system/probe-hub.service "$W/probe-hub.service";;
+  "disable probe-hub") rm -f "$W/probe-hub.service";;
+  "is-enabled --quiet probe-hub")
+    if [ -n "${STUB_IS_ENABLED_FAILS_WITH_RELOAD-}" ] && reload_fails; then
+      echo "Failed to get unit file state for probe-hub.service: Access denied" >&2; exit 1
+    fi
+    [ -L "$W/probe-hub.service" ];;
   "show probe-hub -p MainPID --value") if [ -d "$P/4242" ]; then echo 4242; else echo 0; fi;;
   "show probe-hub -p DropInPaths --value") cat "$STUB_STATE/dropins" 2>/dev/null || echo;;
 esac
@@ -102,10 +110,11 @@ fi
 }
 
 const (
-	hubUnit = "etc/systemd/system/probe-hub.service"
-	hubData = "var/lib/probe"
-	hubDone = "probe-hub installed and started (systemd, amd64, probe-hub_linux_amd64.tar.gz)"
-	hubLast = "Set the administrator password: probe-hub passwd --db /var/lib/probe/probe.db"
+	hubUnit  = "etc/systemd/system/probe-hub.service"
+	hubWants = "etc/systemd/system/multi-user.target.wants/probe-hub.service"
+	hubData  = "var/lib/probe"
+	hubDone  = "probe-hub installed and started (systemd, amd64, probe-hub_linux_amd64.tar.gz)"
+	hubLast  = "Set the administrator password: probe-hub passwd --db /var/lib/probe/probe.db"
 	// /proc/net/tcp 的表头；监听行由用例按需追加。
 	tcpHeader = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
 )
@@ -183,6 +192,16 @@ func (e *env) setExecStart(lines string) {
 		out = append(out, line)
 	}
 	e.put(hubUnit, strings.Join(out, "\n"))
+}
+
+// enableLink 报告 enable 链接在不在。链接在临时根目录下悬空，不能用跟随链接的 exists。
+func (e *env) enableLink() bool {
+	e.t.Helper()
+	fi, err := os.Lstat(filepath.Join(e.root, hubWants))
+	if err != nil && !os.IsNotExist(err) {
+		e.t.Fatal(err)
+	}
+	return err == nil && fi.Mode()&os.ModeSymlink != 0
 }
 
 // assertUntouched 断言重跑没有碰正在运行的旧服务：没发 stop、二进制还是 v1、进程 4242 还在。
@@ -755,44 +774,95 @@ func TestHubStartConfirmationFailureDoesNotSayStopped(t *testing.T) {
 }
 
 // systemctl 本身失败时 drop-in 还没被查过：报 systemctl 的原文，按失败点说该做什么，不说成 drop-in 的问题，
-// 也不叫人手动启动。停服前失败时旧服务照常运行；写好主单元之后失败时，现状按首装与升级各自说。
+// 也不叫人手动启动。停服前失败时旧服务照常运行。写好主单元之后失败时，现状按 enable 链接说：升级时上次安装的
+// 链接还在就是仍 enabled；首装、或此前被 disable 过，就是没 enable。这时的 systemctl 已经出过错，is-enabled 可能
+// 随之一起失败，每种情形都在它照常应答与一起失败两种状态下各跑一遍，说出的现状不能变。
 func TestHubSystemctlFailureIsNotReportedAsADropInProblem(t *testing.T) {
 	t.Parallel()
-	reload := "systemctl daemon-reload failed: Failed to reload daemon: Access denied"
+	const (
+		reload     = "systemctl daemon-reload failed: Failed to reload daemon: Access denied"
+		enabled    = "probe-hub is stopped but still enabled; started by hand or at the next boot, it would run with the drop-ins as they are"
+		notEnabled = "probe-hub is installed but not enabled or started"
+		hint       = "fix the systemctl problem reported above, then rerun the installer"
+	)
+	installed := func(t *testing.T) *env { return newHubInstalled(t) }
 	for _, tc := range []struct {
 		name      string
-		installed bool
+		host      func(t *testing.T) *env
 		env       string
 		want      []string
+		forbidden string
 	}{
-		{"before stopping", true, "STUB_RELOAD_FAILS=1", []string{reload, "old service was not stopped"}},
-		{"after stopping", true, "STUB_RELOAD_FAILS_ON_STOP=1", []string{reload,
-			"probe-hub is stopped but still enabled; started by hand or at the next boot, it would run with the drop-ins as they are",
-			"fix the systemctl problem reported above, then rerun the installer"}},
-		{"on first install", false, "STUB_RELOAD_FAILS=1", []string{reload,
-			"probe-hub is installed but not enabled or started",
-			"fix the systemctl problem reported above, then rerun the installer"}},
+		{"before stopping", installed, "STUB_RELOAD_FAILS=1", []string{reload, "old service was not stopped"}, ""},
+		{"after stopping", installed, "STUB_RELOAD_FAILS_ON_STOP=1", []string{reload, enabled, hint}, notEnabled},
+		{"after stopping a disabled hub", func(t *testing.T) *env {
+			e := newHubInstalled(t)
+			if !e.enableLink() {
+				t.Fatalf("an installed hub must be enabled through %s", hubWants)
+			}
+			if err := os.Remove(filepath.Join(e.root, hubWants)); err != nil {
+				t.Fatal(err)
+			}
+			return e
+		}, "STUB_RELOAD_FAILS_ON_STOP=1", []string{reload, notEnabled, hint}, enabled},
+		{"on first install", newHubHost, "STUB_RELOAD_FAILS=1", []string{reload, notEnabled, hint}, enabled},
 	} {
+		for _, isEnabled := range []struct{ name, env string }{
+			{"is-enabled answers", ""},
+			{"is-enabled fails too", "STUB_IS_ENABLED_FAILS_WITH_RELOAD=1"},
+		} {
+			t.Run(tc.name+"/"+isEnabled.name, func(t *testing.T) {
+				t.Parallel()
+				e := tc.host(t)
+				e.vars = []string{tc.env}
+				if isEnabled.env != "" {
+					e.vars = append(e.vars, isEnabled.env)
+				}
+				out, code := e.hubInstall()
+				for _, want := range tc.want {
+					if code != 1 || !strings.Contains(out, want) {
+						t.Fatalf("exit %d, want %q:\n%s", code, want, out)
+					}
+				}
+				if tc.forbidden != "" && strings.Contains(out, tc.forbidden) {
+					t.Fatalf("must not say %q:\n%s", tc.forbidden, out)
+				}
+				if strings.Contains(out, "drop-in problem") || strings.Contains(out, "start it manually") || index(e.calls(), "systemctl start") >= 0 {
+					t.Fatalf("a systemctl failure must not be reported as a drop-in problem, suggest a manual start, or start probe-hub: calls %q\n%s", e.calls(), out)
+				}
+				if tc.name == "before stopping" {
+					e.assertUntouched(out)
+				}
+			})
+		}
+	}
+}
+
+// 卸载与安装用同一个判定回答单元是否 enabled，卸载后 enable 链接不能留下。主单元还在时由 systemctl disable 删；
+// 主单元已被手动删掉、链接悬空时安装器不调 disable，由它自己删。
+func TestHubUninstallRemovesTheEnableLink(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		unitGone bool
+	}{{"unit in place", false}, {"unit already deleted", true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var e *env
-			if tc.installed {
-				e = newHubInstalled(t)
-			} else {
-				e = newHubHost(t)
+			e := newHubInstalled(t)
+			if !e.enableLink() {
+				t.Fatalf("an installed hub must be enabled through %s", hubWants)
 			}
-			e.vars = []string{tc.env}
-			out, code := e.hubInstall()
-			for _, want := range tc.want {
-				if code != 1 || !strings.Contains(out, want) {
-					t.Fatalf("exit %d, want %q:\n%s", code, want, out)
+			if tc.unitGone {
+				// 管理员已停掉服务并删了主单元，只剩悬空的 enable 链接。
+				for _, rel := range []string{hubUnit, "proc/4242"} {
+					if err := os.RemoveAll(filepath.Join(e.root, rel)); err != nil {
+						t.Fatal(err)
+					}
 				}
 			}
-			if strings.Contains(out, "drop-in problem") || strings.Contains(out, "start it manually") || index(e.calls(), "systemctl start") >= 0 {
-				t.Fatalf("a systemctl failure must not be reported as a drop-in problem, suggest a manual start, or start probe-hub: calls %q\n%s", e.calls(), out)
-			}
-			if tc.name == "before stopping" {
-				e.assertUntouched(out)
+			out, code := e.run("--uninstall", "--yes")
+			if code != 0 || !strings.Contains(out, "probe-hub uninstalled") || e.enableLink() {
+				t.Fatalf("exit %d, enable link left: %v, calls %q:\n%s", code, e.enableLink(), e.calls(), out)
 			}
 		})
 	}

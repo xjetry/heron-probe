@@ -175,11 +175,18 @@ db_files_ok() {
     fi
   done
 }
+# 单元是否 enabled 只看 $WANTS 这条链接，卸载与写好主单元之后的现状说明共用这一个判定。安装器每次写入的主单元
+# 取自发布包里的 probe-hub.service，只替换 ExecStart，[Install] 只有 WantedBy=multi-user.target，所以
+# systemctl enable 建出的就是这条链接，disable 删掉它。判定不向 systemd 查询：写好主单元之后回答它的路径里，
+# 有一条正是 systemctl 刚出过错，而 systemctl is-enabled --quiet 查询出错与 disabled 都是非零退出，照它回答会把
+# 仍 enabled 的单元说成没 enable。用 -L 不用 -e：主单元被删、链接悬空时也算，卸载要清掉它。管理员另用
+# add-wants 等挂到别的 target 下的链接不在这个判定里。
+unit_enabled() { [ -L "$WANTS" ]; }
 if [ "$UNINSTALL" = 1 ]; then
   confirm_removal
   stop_service
   if [ -f "$UNIT" ]; then systemctl disable probe-hub </dev/null; fi
-  if [ -L "$WANTS" ]; then rm -f "$WANTS"; fi
+  if unit_enabled; then rm -f "$WANTS"; fi
   rm -f "$UNIT" "$BIN"
   systemctl daemon-reload </dev/null
   if [ "$PURGE" = 1 ]; then rm -rf "$DATA"; delete_account; fi
@@ -470,10 +477,10 @@ done
 chmod 0770 "$DATA"
 install -m 0644 "$work/unit" "$UNIT"
 # 主单元写好之后再查一遍 drop-in（理由见 list_dropins 上方）。这里失败时不能叫人手动启动：设了 ExecStart 的
-# drop-in 会让单元按它的参数起来，systemctl 失败时 drop-in 则还没被查过。首装的单元还没 enable；升级时上次安装
-# 留下的 enable 还在，下次开机也会这样起来。该做什么按失败点分开说，现状由 unit_state 按 enable 与否说。
+# drop-in 会让单元按它的参数起来，systemctl 失败时 drop-in 则还没被查过。单元仍 enabled 时（升级时上次安装建的
+# 链接还在），下次开机也会这样起来。该做什么按失败点分开说，现状由 unit_state 按 unit_enabled 说。
 unit_state() {
-  if systemctl is-enabled --quiet probe-hub </dev/null; then
+  if unit_enabled; then
     echo 'probe-hub is stopped but still enabled; started by hand or at the next boot, it would run with the drop-ins as they are'
   else
     echo 'probe-hub is installed but not enabled or started'
