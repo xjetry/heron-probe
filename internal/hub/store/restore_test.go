@@ -85,7 +85,7 @@ func TestRestoreRecordUnion(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		result, err := Restore(t.Context(), target.path, config, "", time.Unix(9000, 0), slog.Default())
+		result, err := Restore(t.Context(), target.path, config, "", "", time.Unix(9000, 0), slog.Default())
 		if err != nil {
 			t.Fatalf("restore must retain independent records even at the same second: %v", err)
 		}

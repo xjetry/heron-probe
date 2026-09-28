@@ -64,7 +64,7 @@ var migrationV18 = []string{`CREATE TABLE theme_package (
   content BLOB NOT NULL,
   revision INTEGER NOT NULL CHECK (revision > 0),
   uploaded INTEGER NOT NULL DEFAULT 0 CHECK (uploaded IN (0, 1))
-)`}
+)`, `ALTER TABLE restore_record ADD COLUMN themes TEXT NOT NULL DEFAULT '{}'`}
 
 // 各迁移的输入逐字冻结在这里。当前版本的 DDL 只给 schemaStatements 用；迁移若引用它，DDL 以后
 // 一变，旧库升级就会建出与后续迁移假设不符的表（例如先带上新列，再在加列的迁移里撞上重复列）。

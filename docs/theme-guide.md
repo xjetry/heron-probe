@@ -155,10 +155,10 @@ macOS 访达的「压缩」会加入 `__MACOSX/._*` 条目，它们以 `.` 开�
 恢复时先把所需对象下载到一个目录，保留文件名 `<id>.zip`。支持主题恢复的版本使用以下离线命令，执行前须停止 hub：
 
 ```sh
-probe-hub restore --db hub.db --config config.db --themes ./theme-packages
+probe-hub restore --db hub.db --config config.db --themes ./theme-packages --yes
 ```
 
-`restore --themes` 尚未在当前版本提供。其恢复约定是：校验目录中的对应原包后恢复文件；缺包时保留主题元数据但禁用主题，不带 `--themes` 等同全部缺包；对应包校验失败或目录不存在则整体拒绝，不修改目标库。当前版本请保留下载的原包，通过面板重新上传，不要把仅含元数据的快照当成完整主题备份。
+缺包时保留主题元数据但禁用主题，不带 `--themes` 等同全部缺包；目标库原有的主题文件和原包都会清空，不沿用旧内容。目录不存在或任一 zip 校验失败则整体拒绝，不修改目标库；有效但没有对应主题的 zip 忽略。恢复输出和 `restore_record` 都记录已恢复、缺包和忽略的清单。仅含元数据的配置快照不是完整主题备份。
 
 ## 本地开发
 

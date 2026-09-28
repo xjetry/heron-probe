@@ -16,17 +16,22 @@ import (
 )
 
 type RestoreResult struct {
-	RestoredAt     int64            `json:"restored_at"`
-	ConfigTakenAt  int64            `json:"config_taken_at"`
-	MetricsTakenAt *int64           `json:"metrics_taken_at"`
-	Orphans        map[string]int64 `json:"orphans"`
+	RestoredAt     int64               `json:"restored_at"`
+	ConfigTakenAt  int64               `json:"config_taken_at"`
+	MetricsTakenAt *int64              `json:"metrics_taken_at"`
+	Orphans        map[string]int64    `json:"orphans"`
+	Themes         ThemeRestoreSummary `json:"themes"`
 }
 
 // Restore 只供停止 hub 后的离线入口使用：直接覆写库不会同步运行中 hub 的设置缓存与鉴权索引。
 // 不探测 WAL 写者来声称已停机；是否已停 hub 由命令行的显式确认承担。
-func Restore(ctx context.Context, path, config, metrics string, now time.Time, log *slog.Logger) (result RestoreResult, err error) {
+func Restore(ctx context.Context, path, config, metrics, themesDir string, now time.Time, log *slog.Logger) (result RestoreResult, err error) {
 	if config == "" {
 		return result, errors.New("config snapshot is required")
+	}
+	themes, err := prepareThemeRestore(ctx, config, themesDir)
+	if err != nil {
+		return result, err
 	}
 	sources := []restoreSource{{"config", config, configSnapshotTables}}
 	if metrics != "" {
@@ -109,6 +114,10 @@ func Restore(ctx context.Context, path, config, metrics string, now time.Time, l
 		}
 	}
 	sequenceSources := []string{"main", "config"}
+	result.Themes, err = restoreThemeContent(ctx, tx, themes)
+	if err != nil {
+		return result, err
+	}
 	if metrics != "" {
 		sequenceSources = append(sequenceSources, "metrics")
 	}
@@ -135,12 +144,16 @@ func Restore(ctx context.Context, path, config, metrics string, now time.Time, l
 	if err != nil {
 		return result, err
 	}
+	themeSummary, err := json.Marshal(result.Themes)
+	if err != nil {
+		return result, err
+	}
 	var id [16]byte
 	if _, err = rand.Read(id[:]); err != nil {
 		return result, err
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO main.restore_record (id,restored_at,config_taken_at,metrics_taken_at,orphans) VALUES (?,?,?,?,?)",
-		hex.EncodeToString(id[:]), result.RestoredAt, result.ConfigTakenAt, result.MetricsTakenAt, string(orphans)); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO main.restore_record (id,restored_at,config_taken_at,metrics_taken_at,orphans,themes) VALUES (?,?,?,?,?,?)",
+		hex.EncodeToString(id[:]), result.RestoredAt, result.ConfigTakenAt, result.MetricsTakenAt, string(orphans), string(themeSummary)); err != nil {
 		return result, err
 	}
 	err = tx.Commit()

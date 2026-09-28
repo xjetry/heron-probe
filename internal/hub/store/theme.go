@@ -52,17 +52,6 @@ func (s *Store) ThemeGeneration() uint64 { return s.themeGen.Load() }
 // 在它读到列表之后该主题被删掉时，静默装成一个新主题就是"更新"报告成功而实际做了另一件事。
 // t.Enabled 被忽略，返回值里是写入后的实际状态。
 func (s *Store) PutTheme(ctx context.Context, t Theme, files []ThemeFile, content []byte, mustExist bool, limit int) (Theme, error) {
-	if len(content) == 0 {
-		return Theme{}, errors.New("theme package is empty")
-	}
-	var revision int64
-	for revision == 0 {
-		var b [8]byte
-		if _, err := rand.Read(b[:]); err != nil {
-			return Theme{}, err
-		}
-		revision = int64(binary.LittleEndian.Uint64(b[:]) & (1<<63 - 1))
-	}
 	out := t
 	err := s.writeTheme(ctx, func(tx *sql.Tx) error {
 		var enabled bool
@@ -86,22 +75,13 @@ func (s *Store) PutTheme(ctx context.Context, t Theme, files []ThemeFile, conten
 		case err != nil:
 			return err
 		default:
-			if _, err := tx.Exec("DELETE FROM theme_file WHERE theme_id = ?", t.ID); err != nil {
-				return err
-			}
 			if _, err := tx.Exec("UPDATE theme SET name = ?, version = ?, preview = ?, uploaded_at = ? WHERE id = ?",
 				t.Name, t.Version, t.Preview, t.UploadedAt.Unix(), t.ID); err != nil {
 				return err
 			}
 		}
-		if _, err := tx.Exec(`INSERT INTO theme_package (theme_id, content, revision, uploaded) VALUES (?, ?, ?, 0)
-			ON CONFLICT (theme_id) DO UPDATE SET content = excluded.content, revision = excluded.revision, uploaded = 0`, t.ID, content, revision); err != nil {
+		if err := putThemeContent(tx, t.ID, files, content); err != nil {
 			return err
-		}
-		for _, f := range files {
-			if _, err := tx.Exec("INSERT INTO theme_file (theme_id, path, content) VALUES (?, ?, ?)", t.ID, f.Path, f.Content); err != nil {
-				return err
-			}
 		}
 		out.Enabled = enabled
 		out.UploadedAt = time.Unix(t.UploadedAt.Unix(), 0).UTC()
@@ -112,6 +92,34 @@ func (s *Store) PutTheme(ctx context.Context, t Theme, files []ThemeFile, conten
 	}
 	s.wakeThemeBackup()
 	return out, nil
+}
+
+// 在线上传与离线恢复共用原包和文件的写入；调用方的事务同时包含元数据，失败不能留下半个包。
+func putThemeContent(tx *sql.Tx, id string, files []ThemeFile, content []byte) error {
+	if len(content) == 0 {
+		return errors.New("theme package is empty")
+	}
+	var revision int64
+	for revision == 0 {
+		var b [8]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return err
+		}
+		revision = int64(binary.LittleEndian.Uint64(b[:]) & (1<<63 - 1))
+	}
+	if _, err := tx.Exec("DELETE FROM theme_file WHERE theme_id = ?", id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO theme_package (theme_id, content, revision, uploaded) VALUES (?, ?, ?, 0)
+		ON CONFLICT (theme_id) DO UPDATE SET content = excluded.content, revision = excluded.revision, uploaded = 0`, id, content, revision); err != nil {
+		return err
+	}
+	for _, f := range files {
+		if _, err := tx.Exec("INSERT INTO theme_file (theme_id, path, content) VALUES (?, ?, ?)", id, f.Path, f.Content); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ThemeChanges 由一个备份管理器消费；通知合并而不排队，持久化 uploaded 与周期同步兜住丢失的通知。

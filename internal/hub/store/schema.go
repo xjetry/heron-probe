@@ -149,7 +149,8 @@ const ddlRestoreRecord = `CREATE TABLE restore_record (
   restored_at INTEGER NOT NULL,
   config_taken_at INTEGER NOT NULL,
   metrics_taken_at INTEGER,
-  orphans TEXT NOT NULL
+  orphans TEXT NOT NULL,
+  themes TEXT NOT NULL DEFAULT '{}'
 )`
 
 // metricDDL 从描述表生成分钟表。主键顺序 (node_id, ts) 即唯一查询路径，
