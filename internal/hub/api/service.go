@@ -255,6 +255,11 @@ func sessionCookie(value string, secure bool, maxAge int) *http.Cookie {
 	}
 }
 
+func clearSessionCookie(ctx context.Context, header http.Header) {
+	peer := ctx.Value(peerKey{}).(peerInfo)
+	header.Add("Set-Cookie", sessionCookie("", peer.scheme == "https", -1).String())
+}
+
 func (s *Service) Login(ctx context.Context, req *connect.Request[probev1.LoginRequest]) (*connect.Response[probev1.LoginResponse], error) {
 	peer := ctx.Value(peerKey{}).(peerInfo)
 	tok, err := s.auth.Login(ctx, req.Msg.GetPassword(), peer.from)
@@ -277,12 +282,11 @@ func (s *Service) Login(ctx context.Context, req *connect.Request[probev1.LoginR
 
 func (s *Service) Logout(ctx context.Context, _ *connect.Request[probev1.LogoutRequest]) (*connect.Response[probev1.LogoutResponse], error) {
 	tok := ctx.Value(sessionKey{}).(string)
-	peer := ctx.Value(peerKey{}).(peerInfo)
 	if err := s.auth.Logout(ctx, tok); err != nil {
 		s.log.Error("logout failed", "err", err)
 		return nil, internalError("logout failed")
 	}
 	resp := connect.NewResponse(&probev1.LogoutResponse{})
-	resp.Header().Add("Set-Cookie", sessionCookie("", peer.scheme == "https", -1).String())
+	clearSessionCookie(ctx, resp.Header())
 	return resp, nil
 }

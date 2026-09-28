@@ -11,6 +11,7 @@ hub 的管理接口是 Connect unary：每个方法都是 `POST $PROBE_HUB/probe
 
 - `PROBE_HUB`：hub 的对外地址，如 `https://probe.example.com`，不带末尾斜杠。
 - `PROBE_TOKEN`：在面板"API token"页创建的只读 token，形如 `probe_at_` 加 64 位十六进制。它只能调只读方法；写方法返回 `permission_denied`，需要在面板上操作。
+- `ListSessions` 与 `RevokeSession` 也仅限会话 cookie，API token 不可用：只读 token 不能枚举或撤销其它凭据。
 - 每个请求带两个头：`Authorization: Bearer $PROBE_TOKEN` 与 `Content-Type: application/json`。
 
 ## 取 schema

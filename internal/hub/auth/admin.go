@@ -198,7 +198,7 @@ func (a *Auth) AuthenticateSession(ctx context.Context, token string) (bool, err
 		return false, err
 	}
 	now := a.clk.Now()
-	if !now.Before(sess.ExpiresAt) || now.Sub(sess.LastUsedAt) >= SessionIdle {
+	if !sessionAlive(sess, now) {
 		if err := a.store.DeleteSession(ctx, h); err != nil {
 			a.log.Warn("deleting expired session failed", "err", err)
 		}
