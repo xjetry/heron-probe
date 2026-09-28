@@ -41,7 +41,8 @@ func TestOutboundErrorsDoNotExposeCredentials(t *testing.T) {
 			must(t, err)
 			c, err := f.e.SaveChannel(t.Context(), store.NotifyChannel{Name: "telegram", Kind: store.ChannelTelegram, Config: string(config)})
 			must(t, err)
-			q := NewQueue(f.st, f.e.Channels, client, base, f.clk, func(context.Context, time.Duration) error { return nil }, f.log)
+			var sleeps []time.Duration
+			q := NewQueue(f.st, f.e.Channels, client, base, f.clk, advancing(f, &sleeps), f.log)
 			ev := queueEvent(t, f, c)
 			q.Enqueue(ev)
 			stop := startQueue(t, q)
@@ -108,7 +109,8 @@ func TestQueueAccepts2xxWithInterruptedBodyOnce(t *testing.T) {
 	}))
 	defer srv.Close()
 	ev := queueEvent(t, f, queueChannel(t, f, srv.URL))
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, func(context.Context, time.Duration) error { return nil }, f.log)
+	var sleeps []time.Duration
+	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, advancing(f, &sleeps), f.log)
 	q.Enqueue(ev)
 	stop := startQueue(t, q)
 	ds := awaitDeliveries(t, f, ev.ID, allDone)
@@ -127,10 +129,10 @@ func TestQueueDoesNotSendQueuedTerminalDelivery(t *testing.T) {
 	first, last := queueEvent(t, f, c), queueEvent(t, f, c)
 	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, f.log)
 	q.Enqueue(first)
-	if _, err := f.st.BeginDeliveryAttempt(t.Context(), first.Deliveries[0].ID); err != nil {
+	if _, err := f.st.BeginBatchAttempt(t.Context(), first.Deliveries[0].BatchID, []int64{first.Deliveries[0].ID}); err != nil {
 		t.Fatal(err)
 	}
-	must(t, f.st.UpdateDelivery(t.Context(), first.Deliveries[0].ID, store.DeliveryResult{Done: true, Failure: store.FailureHTTPStatus, HTTPStatus: 400, Error: "permanent failure"}))
+	must(t, f.st.UpdateBatch(t.Context(), first.Deliveries[0].BatchID, store.DeliveryResult{Done: true, Failure: store.FailureHTTPStatus, HTTPStatus: 400, Error: "permanent failure"}))
 	q.Enqueue(last)
 	stop := startQueue(t, q)
 	awaitDeliveries(t, f, last.ID, allDone)
@@ -154,7 +156,7 @@ func TestEnqueueCompletesWithBusyWorkerAndConcurrentProducers(t *testing.T) {
 	c := queueChannel(t, f, "http://127.0.0.1/busy")
 	ev := queueEvent(t, f, c)
 	q := NewQueue(f.st, f.e.Channels, client, "", f.clk, nil, f.log)
-	q.items = make(chan deliveryItem, 2)
+	q.limit = 2
 	q.Enqueue(ev)
 	stopWorker := startQueue(t, q)
 	select {
@@ -162,7 +164,7 @@ func TestEnqueueCompletesWithBusyWorkerAndConcurrentProducers(t *testing.T) {
 	case <-time.After(testwait.Bound):
 		t.Fatal("worker did not become busy")
 	}
-	for range cap(q.items) {
+	for range q.limit {
 		q.Enqueue(ev)
 	}
 	start, abort, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -185,13 +187,7 @@ func TestEnqueueCompletesWithBusyWorkerAndConcurrentProducers(t *testing.T) {
 	defer func() {
 		close(abort)
 		stopWorker()
-		for {
-			select {
-			case <-done:
-				return
-			case <-q.items:
-			}
-		}
+		<-done
 	}()
 	close(start)
 	select {

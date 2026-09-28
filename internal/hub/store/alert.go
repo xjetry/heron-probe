@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -52,6 +53,8 @@ type NotifyChannel struct {
 	Kind      ChannelKind
 	Config    string
 	CreatedAt time.Time
+	// RatePerMinute 是这个渠道每分钟至多发出的请求数（含重试），0 表示不限；上限属于接收方（§9.3）。
+	RatePerMinute int
 }
 
 type ChannelKind string
@@ -104,10 +107,12 @@ type AlertEvent struct {
 }
 
 type Delivery struct {
-	ID         int64
-	EventID    int64
-	ChannelID  int64
-	Attempts   int // 已开始的尝试次数；BeginDeliveryAttempt 在发送之前提交，发送前崩溃也计入。
+	ID        int64
+	EventID   int64
+	ChannelID int64
+	// BatchID 是发送批次（批次第一行的 id）：同批各行一次发送、共享尝试次数与结果，见 schema.go 的 batch_id 列。
+	BatchID    int64
+	Attempts   int // 已开始的尝试次数；BeginBatchAttempt 在发送之前提交，发送前崩溃也计入。
 	OK         bool
 	Done       bool
 	Failure    DeliveryFailure // 最近一次失败的类别；成功或尚无结果时为空。
@@ -118,6 +123,8 @@ type Delivery struct {
 	// 只读的 ListAlertEvents 逐字段映射 Delivery，不带这个字段。
 	LastError   string
 	DeliveredAt time.Time
+	// NotBefore 是下一次尝试的最早墙钟时刻（整秒），零值表示没有限制；见 schema.go 的 not_before 列。
+	NotBefore time.Time
 }
 
 // DeliveryFailure 在产生失败的地方确定，不从错误文本反推；与 transition、渠道 kind 一样按 TEXT 落库。
@@ -141,20 +148,29 @@ func DeliveryFailures() []DeliveryFailure {
 		FailureChannelDeleted, FailureResultUnrecorded, FailureUnclassified}
 }
 
-// DeliveryResult 是一次投递结果的完整写入；UpdateDelivery 在写库前校验字段之间的一致性。
+// DeliveryResult 是一次投递结果的完整写入；UpdateBatch 在写库前校验字段之间的一致性。
 type DeliveryResult struct {
 	OK, Done    bool
 	Failure     DeliveryFailure
 	HTTPStatus  int
 	Error       string
 	DeliveredAt time.Time
+	// NotBefore 是下一次尝试的最早墙钟时刻，只随还会重试的失败给出；零值表示没有限制。见 schema.go 的 not_before 列。
+	NotBefore time.Time
 }
 
-// 投递尝试的唯一上限；队列达到上限时写入 done，重启也不能绕过它。
+// 投递尝试的唯一上限（按批次计）；队列达到上限时写入 done，重启也不能绕过它。
 const MaxDeliveryAttempts = 3
 
 var ErrDeliveryDone = errors.New("delivery is done")
 var ErrDeliveryExhausted = errors.New("delivery attempts exhausted")
+
+// DeliveryTarget 是一次转换要投递的一个渠道。Batch 非零时请求加入这个批次（同一次发送），为零或批次已不能加入时
+// 新开一批；哪些行该合在一起发是投递层的策略（alert 包），存储层只保证批次的不变式（见 recordAlertEvent）。
+type DeliveryTarget struct {
+	ChannelID int64
+	Batch     int64
+}
 
 // 主表与关联在同一读事务中读取，不能把并发保存前后的两份作用域拼在一起。
 func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
@@ -401,7 +417,7 @@ func deleteAlertEntity(tx *sql.Tx, table string, kind ObjectKind, id int64) erro
 }
 
 func (s *Store) ListNotifyChannels(ctx context.Context) ([]NotifyChannel, error) {
-	rows, err := s.r.QueryContext(ctx, "SELECT id, name, kind, config, created_at FROM notify_channel ORDER BY id")
+	rows, err := s.r.QueryContext(ctx, "SELECT id, name, kind, config, created_at, rate_per_minute FROM notify_channel ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -410,7 +426,7 @@ func (s *Store) ListNotifyChannels(ctx context.Context) ([]NotifyChannel, error)
 	for rows.Next() {
 		var c NotifyChannel
 		var created int64
-		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &c.Config, &created); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &c.Config, &created, &c.RatePerMinute); err != nil {
 			return nil, err
 		}
 		c.CreatedAt = time.Unix(created, 0).UTC()
@@ -424,11 +440,11 @@ func (s *Store) SaveNotifyChannel(ctx context.Context, c NotifyChannel) (NotifyC
 		var created int64
 		if c.ID == 0 {
 			created = s.clk.Now().Unix()
-			if err := tx.QueryRow("INSERT INTO notify_channel (name, kind, config, created_at) VALUES (?, ?, ?, ?) RETURNING id", c.Name, c.Kind, c.Config, created).Scan(&c.ID); err != nil {
+			if err := tx.QueryRow("INSERT INTO notify_channel (name, kind, config, created_at, rate_per_minute) VALUES (?, ?, ?, ?, ?) RETURNING id", c.Name, c.Kind, c.Config, created, c.RatePerMinute).Scan(&c.ID); err != nil {
 				return err
 			}
 		} else {
-			err := tx.QueryRow("UPDATE notify_channel SET name = ?, kind = ?, config = ? WHERE id = ? RETURNING created_at", c.Name, c.Kind, c.Config, c.ID).Scan(&created)
+			err := tx.QueryRow("UPDATE notify_channel SET name = ?, kind = ?, config = ?, rate_per_minute = ? WHERE id = ? RETURNING created_at", c.Name, c.Kind, c.Config, c.RatePerMinute, c.ID).Scan(&created)
 			if errors.Is(err, sql.ErrNoRows) {
 				return NotFoundError{Kind: ObjectNotifyChannel, ID: c.ID}
 			}
@@ -546,14 +562,14 @@ func (s *Store) DeleteAlertState(ctx context.Context, ruleID, nodeID int64) erro
 
 // 状态、事件与续投队列同事务提交，崩溃不能留下已转换但没有通知记录的状态。firedExpiresOn 与 recoveredAt 随状态写入，
 // 含义见 StateRow.FiredExpiresOn 与 StateRow.RecoveredAt。
-func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, state AlertState, firedExpiresOn string, recoveredAt time.Time, ev AlertEvent, channelIDs []int64) (AlertEvent, error) {
+func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, state AlertState, firedExpiresOn string, recoveredAt time.Time, ev AlertEvent, targets []DeliveryTarget) (AlertEvent, error) {
 	ev.ID, ev.RuleID, ev.NodeID, ev.Deliveries = 0, ruleID, nodeID, nil
 	ev.At = time.Unix(ev.At.Unix(), 0).UTC()
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		if err := setAlertState(tx, ruleID, nodeID, state, ev.At, firedExpiresOn, recoveredAt); err != nil {
 			return err
 		}
-		return recordAlertEvent(tx, &ev, channelIDs)
+		return recordAlertEvent(tx, &ev, targets)
 	})
 	if err != nil {
 		return AlertEvent{}, err
@@ -561,56 +577,134 @@ func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, stat
 	return ev, nil
 }
 
-func recordAlertEvent(tx *sql.Tx, ev *AlertEvent, channelIDs []int64) error {
+// recordAlertEvent 是告警转换与备份系统事件共用的事件及投递写入路径，调用方的 Store.write 事务承载其原子性。
+// 每个目标一行投递。批次的不变式是同批各行的尝试次数与结果始终相同（schema.go 的 batch_id 列），由两处共同维持：
+// 尝试与结果只按批次整批写（BeginBatchAttempt、UpdateBatch），新行只加入还没开始尝试、且发往同一渠道的批次
+// （joinableBatch，与这里的插入同在一个写事务，和 BeginBatchAttempt 经 Store.write 串行）。请求加入的批次已开始、
+// 已终态或已不存在时新开一批。
+//
+// 加入与发送之间没有别的同步：worker 可能已经读过这个批次、正按读到的行拼消息（补货路径可以在一次巡检中途读到
+// 尚未收齐的批次）。新加入的行不会被记进那次发送，是因为 BeginBatchAttempt 只在批次当前的行集合与调用方拼消息时
+// 读到的相同时才开始尝试，否则拒绝、由调用方重读。
+func recordAlertEvent(tx *sql.Tx, ev *AlertEvent, targets []DeliveryTarget) error {
 	if err := tx.QueryRow("INSERT INTO alert_event (rule_id, node_id, transition, at, summary, value) VALUES (?, ?, ?, ?, ?, ?) RETURNING id", ev.RuleID, ev.NodeID, ev.Transition, ev.At.Unix(), ev.Summary, ev.Value).Scan(&ev.ID); err != nil {
 		return err
 	}
-	for _, channel := range channelIDs {
-		if err := requireAlertReference(tx, "notify_channel", ObjectNotifyChannel, channel); err != nil {
+	for _, target := range targets {
+		if err := requireAlertReference(tx, "notify_channel", ObjectNotifyChannel, target.ChannelID); err != nil {
 			return err
 		}
-		d := Delivery{EventID: ev.ID, ChannelID: channel}
-		if err := tx.QueryRow("INSERT INTO alert_delivery (event_id, channel_id) VALUES (?, ?) RETURNING id", d.EventID, d.ChannelID).Scan(&d.ID); err != nil {
+		d := Delivery{EventID: ev.ID, ChannelID: target.ChannelID}
+		if target.Batch != 0 {
+			open, err := joinableBatch(tx, target.Batch, target.ChannelID)
+			if err != nil {
+				return err
+			}
+			if open {
+				d.BatchID = target.Batch
+			}
+		}
+		own := d.BatchID == 0
+		if own {
+			// 新批次的批次号就是这一行将得到的 id：AUTOINCREMENT 表的新 id 是 sqlite_sequence 记下的值加一（还没有
+			// 记录时是 1）。插入后用 RETURNING 核对，对不上就报错回滚，而不是写下一个不指向自己的批次号。
+			if err := tx.QueryRow("SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'alert_delivery'), 0) + 1").Scan(&d.BatchID); err != nil {
+				return err
+			}
+		}
+		if err := tx.QueryRow("INSERT INTO alert_delivery (event_id, channel_id, batch_id) VALUES (?, ?, ?) RETURNING id", d.EventID, d.ChannelID, d.BatchID).Scan(&d.ID); err != nil {
 			return err
+		}
+		if own && d.ID != d.BatchID {
+			return fmt.Errorf("alert delivery %d was inserted as batch %d: sqlite_sequence does not predict the next id", d.ID, d.BatchID)
 		}
 		ev.Deliveries = append(ev.Deliveries, d)
 	}
 	return nil
 }
 
-// 每个已提交的尝试只授权至多一次发送，不保证恰好一次：提交后发送前崩溃也消耗名额。
-// 条件更新由 Store.write 串行化；结果写失败或重启不能重新使用已消耗的名额。
-func (s *Store) BeginDeliveryAttempt(ctx context.Context, id int64) (Delivery, error) {
-	var d Delivery
-	var refused error
-	err := s.write(ctx, func(tx *sql.Tx) error {
-		var err error
-		d, err = scanDelivery(tx.QueryRow("UPDATE alert_delivery SET attempts = attempts + 1 WHERE id = ? AND done = 0 AND attempts < ? RETURNING "+deliveryColumns, id, MaxDeliveryAttempts))
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		d, err = scanDelivery(tx.QueryRow(selectDeliveries+" WHERE id = ?", id))
-		if errors.Is(err, sql.ErrNoRows) {
-			return NotFoundError{Kind: ObjectAlertDelivery, ID: id}
-		}
-		if err != nil {
-			return err
-		}
-		if d.Done {
-			refused = ErrDeliveryDone
-		} else {
-			refused = ErrDeliveryExhausted
-		}
-		return nil
-	})
-	if err != nil {
-		return Delivery{}, err
-	}
-	return d, refused
+// joinableBatch 判断新行能否加入 batch：批次还有行、都发往 channel、且都没开始尝试也没终态。调用方在写事务里。
+func joinableBatch(tx *sql.Tx, batch, channel int64) (bool, error) {
+	var rows, closed int
+	err := tx.QueryRow("SELECT COUNT(*), COALESCE(MAX(attempts > 0 OR done = 1 OR channel_id <> ?), 0) FROM alert_delivery WHERE batch_id = ?", channel, batch).Scan(&rows, &closed)
+	return rows > 0 && closed == 0, err
 }
 
-// 结果不能改写已开始的次数；计数只由 BeginDeliveryAttempt 推进。
-func (s *Store) UpdateDelivery(ctx context.Context, id int64, r DeliveryResult) error {
+// ErrBatchChanged 表示批次当前未终态的行与调用方拼消息时读到的不同：其间有行加入，或有行随事件清理而消失。
+var ErrBatchChanged = errors.New("delivery batch changed since it was read")
+
+// BeginBatchAttempt 为整批提交一次尝试：每个已提交的尝试只授权至多一次发送，不保证恰好一次，提交后发送前崩溃也消耗名额。
+// 条件更新由 Store.write 串行化；结果写失败或重启不能重新使用已消耗的名额。
+//
+// rows 是调用方拼这次消息时读到的行。批次当前的行与它不同时拒绝（ErrBatchChanged，不消耗名额）：尝试与随后的结果
+// 只能记在这次发送真正包含的行上，否则后加入的行会被记成已送达而消息里没有它。比对与计数在同一个写事务里，
+// recordAlertEvent 的调用方也经 Store.write，所以比对通过之后到计数之间不会再有行加入。
+//
+// 同批全部行（含已耗尽名额的）的次数、终态、渠道与 not_before 必须相同（见 recordAlertEvent），不同说明批次不变式
+// 已被破坏，报错而不是按其中某行发送。返回计数之后的各行（按 id 升序）。
+func (s *Store) BeginBatchAttempt(ctx context.Context, batch int64, rows []int64) ([]Delivery, error) {
+	var ds []Delivery
+	var refused error
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		all, err := queryDeliveries(tx, selectDeliveries+" WHERE batch_id = ? ORDER BY id", batch)
+		switch {
+		case err != nil:
+			return err
+		case len(all) == 0:
+			return NotFoundError{Kind: ObjectAlertDelivery, ID: batch}
+		}
+		if err := uniformBatch(batch, all); err != nil {
+			return err
+		}
+		ids := make([]int64, len(all))
+		for i, d := range all {
+			ids[i] = d.ID
+		}
+		switch {
+		case all[0].Done:
+			refused = ErrDeliveryDone
+			return nil
+		case all[0].Attempts >= MaxDeliveryAttempts:
+			refused = ErrDeliveryExhausted
+			return nil
+		case !slices.Equal(ids, slices.Sorted(slices.Values(rows))):
+			refused = ErrBatchChanged
+			return nil
+		}
+		ds, err = queryDeliveries(tx, "UPDATE alert_delivery SET attempts = attempts + 1 WHERE batch_id = ? RETURNING "+deliveryColumns, batch)
+		slices.SortFunc(ds, func(a, b Delivery) int { return cmp.Compare(a.ID, b.ID) })
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	if refused != nil {
+		return nil, refused
+	}
+	return ds, nil
+}
+
+func queryDeliveries(tx *sql.Tx, query string, args ...any) ([]Delivery, error) {
+	rows, err := tx.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDeliveries(rows)
+}
+
+func uniformBatch(batch int64, ds []Delivery) error {
+	for _, d := range ds[1:] {
+		if d.Attempts != ds[0].Attempts || d.Done != ds[0].Done || d.ChannelID != ds[0].ChannelID || !d.NotBefore.Equal(ds[0].NotBefore) {
+			return fmt.Errorf("delivery batch %d is not uniform: row %d (attempts %d, done %v, channel %d, not_before %v) differs from row %d (attempts %d, done %v, channel %d, not_before %v)",
+				batch, d.ID, d.Attempts, d.Done, d.ChannelID, d.NotBefore, ds[0].ID, ds[0].Attempts, ds[0].Done, ds[0].ChannelID, ds[0].NotBefore)
+		}
+	}
+	return nil
+}
+
+// UpdateBatch 把一次尝试的结果写到整批未终态的行上。结果不能改写已开始的次数；计数只由 BeginBatchAttempt 推进。
+func (s *Store) UpdateBatch(ctx context.Context, batch int64, r DeliveryResult) error {
 	if err := r.check(); err != nil {
 		return err
 	}
@@ -622,7 +716,12 @@ func (s *Store) UpdateDelivery(ctx context.Context, id int64, r DeliveryResult) 
 		if r.HTTPStatus != 0 {
 			status = r.HTTPStatus
 		}
-		res, err := tx.Exec("UPDATE alert_delivery SET ok = ?, done = ?, failure = ?, http_status = ?, last_error = ?, delivered_at = ? WHERE id = ? AND done = 0", r.OK, r.Done, r.Failure, status, r.Error, delivered, id)
+		// 按秒向上取整：写成更早的时刻会让补回的批次提前重试。
+		var notBefore int64
+		if !r.NotBefore.IsZero() {
+			notBefore = r.NotBefore.Add(time.Second - time.Nanosecond).Unix()
+		}
+		res, err := tx.Exec("UPDATE alert_delivery SET ok = ?, done = ?, failure = ?, http_status = ?, last_error = ?, delivered_at = ?, not_before = ? WHERE batch_id = ? AND done = 0", r.OK, r.Done, r.Failure, status, r.Error, delivered, notBefore, batch)
 		if err != nil {
 			return err
 		}
@@ -632,20 +731,29 @@ func (s *Store) UpdateDelivery(ctx context.Context, id int64, r DeliveryResult) 
 		}
 		if n == 0 {
 			// 删除渠道或其他终止已先提交，迟到的 HTTP 结果不能把终态重新打开。
-			return requireAlertReference(tx, "alert_delivery", ObjectAlertDelivery, id)
+			var exists bool
+			if err := tx.QueryRow("SELECT EXISTS (SELECT 1 FROM alert_delivery WHERE batch_id = ?)", batch).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				return NotFoundError{Kind: ObjectAlertDelivery, ID: batch}
+			}
 		}
 		return nil
 	})
 }
 
-// 读侧据类别解释状态码与原文、只读口径据类别给出状态码、PendingDeliveries 据 done 续投，
+// 读侧据类别解释状态码与原文、只读口径据类别给出状态码、PendingBatches 据 done 续投，
 // 都依赖这里的一致性；违反即拒绝，不写库，也不改写成某个"最接近"的类别。
 func (r DeliveryResult) check() error {
 	if r.OK {
 		if r.Failure != FailureNone || r.HTTPStatus != 0 || r.Error != "" {
 			return fmt.Errorf("delivery result: success carries failure %q, status %d, error %q", r.Failure, r.HTTPStatus, r.Error)
 		}
-		// 成功未终态会被 PendingDeliveries 重新入队，接收方收到重复通知。
+		if !r.NotBefore.IsZero() {
+			return errors.New("delivery result: success carries a next-attempt time")
+		}
+		// 成功未终态会被 PendingBatches 重新入队，接收方收到重复通知。
 		if !r.Done {
 			return errors.New("delivery result: success must be done")
 		}
@@ -656,6 +764,10 @@ func (r DeliveryResult) check() error {
 	}
 	if !r.DeliveredAt.IsZero() {
 		return errors.New("delivery result: failure with delivery time")
+	}
+	// 终态不再尝试，带着"不早于"的时刻没有意义，也会让读者以为它还在等。
+	if r.Done && !r.NotBefore.IsZero() {
+		return fmt.Errorf("delivery result: finished failure %q carries a next-attempt time", r.Failure)
 	}
 	if r.Failure == FailureNone {
 		return errors.New("delivery result: failure without category")
@@ -692,14 +804,18 @@ func (s *Store) GetDeliveryError(ctx context.Context, id int64) (string, error) 
 	return text, err
 }
 
-const deliveryColumns = "id, event_id, channel_id, attempts, ok, done, failure, http_status, last_error, delivered_at"
+const deliveryColumns = "id, event_id, channel_id, batch_id, attempts, ok, done, failure, http_status, last_error, delivered_at, not_before"
 const selectDeliveries = "SELECT " + deliveryColumns + " FROM alert_delivery"
 
 func scanDelivery(row interface{ Scan(...any) error }) (Delivery, error) {
 	var d Delivery
 	var delivered, status sql.NullInt64
-	if err := row.Scan(&d.ID, &d.EventID, &d.ChannelID, &d.Attempts, &d.OK, &d.Done, &d.Failure, &status, &d.LastError, &delivered); err != nil {
+	var notBefore int64
+	if err := row.Scan(&d.ID, &d.EventID, &d.ChannelID, &d.BatchID, &d.Attempts, &d.OK, &d.Done, &d.Failure, &status, &d.LastError, &delivered, &notBefore); err != nil {
 		return Delivery{}, err
+	}
+	if notBefore != 0 {
+		d.NotBefore = time.Unix(notBefore, 0).UTC()
 	}
 	d.HTTPStatus = int(status.Int64)
 	if delivered.Valid {
@@ -720,13 +836,73 @@ func scanDeliveries(rows *sql.Rows) ([]Delivery, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) PendingDeliveries(ctx context.Context) ([]Delivery, error) {
-	rows, err := s.r.QueryContext(ctx, selectDeliveries+" WHERE done = 0 ORDER BY id")
+const selectPendingBatches = "SELECT DISTINCT batch_id, channel_id FROM alert_delivery WHERE done = 0 ORDER BY batch_id"
+
+// PendingBatch 是一个还有未终态行的批次与它发往的渠道（同批各行渠道相同，见 recordAlertEvent）。
+type PendingBatch struct{ ID, ChannelID int64 }
+
+// PendingBatches 是还有未终态行的批次，按批次号（即批次第一行的 id）升序：重启与补货按原批次重投，不重新合并。
+func (s *Store) PendingBatches(ctx context.Context) ([]PendingBatch, error) {
+	rows, err := s.r.QueryContext(ctx, selectPendingBatches)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanDeliveries(rows)
+	var out []PendingBatch
+	for rows.Next() {
+		var b PendingBatch
+		if err := rows.Scan(&b.ID, &b.ChannelID); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// DeliveryBatch 是一个批次的全部行与它们的事件：Events[i] 是 Deliveries[i] 的事件（不带 Deliveries）。一个批次只发往
+// 一个渠道（joinableBatch 只让同渠道的行加入）；引擎给出的目标来自规则的渠道列表，alert_rule_channel 的主键
+// (rule_id, channel_id) 让一个事件在每个渠道至多一行，所以同批各行的事件互不相同。
+type DeliveryBatch struct {
+	ID         int64
+	Deliveries []Delivery
+	Events     []AlertEvent
+}
+
+// GetDeliveryBatch 在一个读快照里读出批次的行与事件，按行 id 升序；批次已不存在（随事件清理）时返回 NotFoundError。
+func (s *Store) GetDeliveryBatch(ctx context.Context, batch int64) (DeliveryBatch, error) {
+	out := DeliveryBatch{ID: batch}
+	tx, err := s.r.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return out, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, selectDeliveries+" WHERE batch_id = ? ORDER BY id", batch)
+	if err != nil {
+		return out, err
+	}
+	out.Deliveries, err = scanDeliveries(rows)
+	rows.Close()
+	if err != nil {
+		return out, err
+	}
+	if len(out.Deliveries) == 0 {
+		return out, NotFoundError{Kind: ObjectAlertDelivery, ID: batch}
+	}
+	for _, d := range out.Deliveries {
+		var ev AlertEvent
+		var at int64
+		err := tx.QueryRowContext(ctx, selectAlertEvents+"WHERE id = ?", d.EventID).Scan(&ev.ID, &ev.RuleID, &ev.NodeID, &ev.Transition, &at, &ev.Summary, &ev.Value)
+		if errors.Is(err, sql.ErrNoRows) {
+			// 事件与投递由 PruneAlertEvents 在同一事务删除，同一快照里有行就有事件。
+			return out, fmt.Errorf("alert delivery %d refers to missing alert event %d", d.ID, d.EventID)
+		}
+		if err != nil {
+			return out, err
+		}
+		ev.At = time.Unix(at, 0).UTC()
+		out.Events = append(out.Events, ev)
+	}
+	return out, tx.Commit()
 }
 
 func placeholders(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }

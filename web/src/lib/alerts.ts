@@ -25,6 +25,12 @@ export function channelTarget(c: NotifyChannel): string {
   return labelOf(CHANNEL_KINDS, c.kind);
 }
 
+// 出站节奏上限（proto NotifyChannel.rate_per_minute）：0 表示不限。hub 的响应里恒有值，缺席只会来自不带这个字段的旧 hub。
+export function rateLabel(c: NotifyChannel): string {
+  if (c.ratePerMinute === undefined) return "—";
+  return c.ratePerMinute === 0 ? "不限" : `每分钟 ${c.ratePerMinute} 条`;
+}
+
 // 已保存 Webhook 的空 method 由 hub 的 Engine.SaveChannel 规范成 POST；
 // 面板为没有 Webhook 配置的渠道（例如 Telegram 渠道被编辑时）建立草稿也需要 POST 作初值。
 export function methodOf(method: string | undefined): string {

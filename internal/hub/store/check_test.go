@@ -26,6 +26,10 @@ func TestEveryCheckConstraintRefusesItsViolation(t *testing.T) {
 		{"probe_meta", "id = 1", "INSERT INTO probe_meta (id, version) VALUES (2, 0)"},
 		// 0 与 1 以外的启用值会绕过只看 enabled = 1 的 theme_enabled 索引。
 		{"theme", "enabled IN (0, 1)", "INSERT INTO theme (id, name, version, preview, uploaded_at, enabled) VALUES ('x', 'X', '1', '', 0, 2)"},
+		// 0 是"不限"，负数没有含义。
+		{"notify_channel", "rate_per_minute >= 0", "INSERT INTO notify_channel (name, kind, config, created_at, rate_per_minute) VALUES ('x', 'telegram', '{}', 0, -1)"},
+		// 批次号是批次第一行的 id，0 不指向任何行。NULL 满足 CHECK，由 NOT NULL 拒绝（TestDeliveryInsertWithoutBatchFails）。
+		{"alert_delivery", "batch_id > 0", "INSERT INTO alert_delivery (event_id, channel_id, batch_id) VALUES (1, 1, 0)"},
 	}
 	freshChecks, migratedChecks := checkConstraints(t, fresh.r), checkConstraints(t, migrated.r)
 	if !reflect.DeepEqual(freshChecks, migratedChecks) {

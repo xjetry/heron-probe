@@ -37,7 +37,7 @@ func TestQueuePrunedDeliveryDoesNotDelayFreshEvent(t *testing.T) {
 			c := queueChannel(t, f, srv.URL)
 			rule := f.rule(t, offline())
 			old, err := f.st.RecordTransition(t.Context(), rule.ID, f.ids[0], store.StateFiring, "", time.Time{},
-				store.AlertEvent{At: f.clk.Now().Add(-91 * 24 * time.Hour), Transition: store.TransitionFiring}, []int64{c.ID})
+				store.AlertEvent{At: f.clk.Now().Add(-91 * 24 * time.Hour), Transition: store.TransitionFiring}, []store.DeliveryTarget{{ChannelID: c.ID}})
 			must(t, err)
 			fresh := queueEvent(t, f, c)
 			channels := func() []store.NotifyChannel {

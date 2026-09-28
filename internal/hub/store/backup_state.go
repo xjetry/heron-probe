@@ -90,7 +90,11 @@ func (s *Store) RecordBackupEvent(ctx context.Context, transition Transition, su
 		if err != nil {
 			return err
 		}
-		return recordAlertEvent(tx, &ev, channels)
+		targets := make([]DeliveryTarget, len(channels))
+		for i, channel := range channels {
+			targets[i] = DeliveryTarget{ChannelID: channel}
+		}
+		return recordAlertEvent(tx, &ev, targets)
 	})
 	if err != nil {
 		return AlertEvent{}, err
