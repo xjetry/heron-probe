@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -23,13 +22,25 @@ type cookieResult struct {
 // cookieCall 用纯 HTTP+JSON 调一个 AdminService 方法，每个 line 作为一个 Cookie 字段行原样发出；不带 cookie jar。
 func cookieCall(t *testing.T, h *harness, method, body string, lines ...string) cookieResult {
 	t.Helper()
+	hdr := http.Header{}
+	for _, l := range lines {
+		hdr.Add("Cookie", l)
+	}
+	return adminCall(t, h, method, body, hdr)
+}
+
+// adminCall 用纯 HTTP+JSON 调一个 AdminService 方法，header 原样加到请求上；不带 cookie jar。
+func adminCall(t *testing.T, h *harness, method, body string, header http.Header) cookieResult {
+	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/probe.v1.AdminService/"+method, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	for _, l := range lines {
-		req.Header.Add("Cookie", l)
+	for k, vs := range header {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -229,27 +240,50 @@ func TestRevokeCurrentSessionWithForgedCookie(t *testing.T) {
 	}
 }
 
-// 会话校验失败不是登录失败。先发一批只带伪造值、以及伪造值与有效值混在一起的请求，再从同一来源输错 4 次密码：
-// 锁定阈值是 5 次（auth.failLimit），伪造值只要被记了一次，加上 4 次输错就满 5 次，随后的正确密码被锁在外面。
+// 会话校验失败不是登录失败。两个来源从零开始交替输错密码，其中一个事先发过一批带伪造会话 cookie 的请求（只带伪造值的
+// 401 与伪造值夹着有效值的 200 各十次）；两者必须在同一次尝试上开始被锁。伪造值哪怕只被记了一次，那个来源也会早一次
+// 被锁。比较的是两个来源，与锁定阈值的具体数值无关。
 func TestForgedSessionCookiesDoNotCountAsLoginFailures(t *testing.T) {
-	h := newHarness(t, "")
+	h := newHarness(t, "127.0.0.1/32")
 	h.login(t)
 	valid := strings.TrimPrefix(sessionCookieHeader(t, h), SessionCookie+"=")
+	const forgedFrom, controlFrom = "203.0.113.1", "203.0.113.2"
+	from := func(addr string, lines ...string) http.Header {
+		hdr := http.Header{"X-Forwarded-For": {addr}}
+		for _, l := range lines {
+			hdr.Add("Cookie", l)
+		}
+		return hdr
+	}
 	for i := range 10 {
-		if got := cookieCall(t, h, "ListNodes", "{}", pairs("bogus", forgedToken(t))); got.status != 401 {
+		if got := adminCall(t, h, "ListNodes", "{}", from(forgedFrom, pairs("bogus", forgedToken(t)))); got.status != 401 {
 			t.Fatalf("forged-only request %d: status %d", i, got.status)
 		}
-		if got := cookieCall(t, h, "ListNodes", "{}", pairs(forgedToken(t), valid)); got.status != 200 {
+		if got := adminCall(t, h, "ListNodes", "{}", from(forgedFrom, pairs(forgedToken(t), valid))); got.status != 200 {
 			t.Fatalf("forged+valid request %d: status %d", i, got.status)
 		}
 	}
-	for i := range 4 {
-		r := cookieCall(t, h, "Login", `{"password":"incorrect"}`)
-		if r.status != 401 || !strings.Contains(string(r.body), "wrong password") {
-			t.Fatalf("wrong password %d after forged cookies: status %d body %s", i+1, r.status, r.body)
+	lockedAt := map[string]int{}
+	for attempt := 1; attempt <= 100 && len(lockedAt) < 2; attempt++ {
+		for _, addr := range []string{forgedFrom, controlFrom} {
+			if lockedAt[addr] != 0 {
+				continue
+			}
+			r := adminCall(t, h, "Login", `{"password":"incorrect"}`, from(addr))
+			switch body := string(r.body); {
+			case r.status == 401 && strings.Contains(body, "too many failed logins"):
+				lockedAt[addr] = attempt
+			case r.status == 401 && strings.Contains(body, "wrong password"):
+			default:
+				t.Fatalf("wrong password from %s, attempt %d: status %d body %s", addr, attempt, r.status, body)
+			}
 		}
 	}
-	if r := cookieCall(t, h, "Login", fmt.Sprintf(`{"password":%q}`, password)); r.status != 200 {
-		t.Errorf("forged session cookies counted as login failures: status %d body %s", r.status, r.body)
+	if lockedAt[controlFrom] == 0 {
+		t.Fatal("the control source was never locked out within 100 wrong passwords")
 	}
+	if lockedAt[forgedFrom] != lockedAt[controlFrom] {
+		t.Errorf("forged session cookies counted as login failures: the source that sent them was locked out from attempt %d, the control source from attempt %d", lockedAt[forgedFrom], lockedAt[controlFrom])
+	}
+	t.Logf("both sources locked out from attempt %d", lockedAt[controlFrom])
 }
