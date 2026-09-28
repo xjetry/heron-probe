@@ -26,11 +26,6 @@ func withMMDB(t *testing.T, f *fixture) *countedBackend {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if err := db.Close(); err != nil {
-			t.Error(err)
-		}
-	})
 	b := &countedBackend{Backend: db}
 	f.r.backend = b
 	return b

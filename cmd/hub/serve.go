@@ -141,7 +141,6 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		if err != nil {
 			return err
 		}
-		defer func() { result = errors.Join(result, localGeo.Close()) }()
 	}
 
 	st, err := store.Open(*db, clk, log, store.MigrateSchema)

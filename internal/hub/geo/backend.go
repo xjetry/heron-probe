@@ -71,7 +71,8 @@ func (h *HTTP) Service(s store.GeoSettings) string { return s.URL }
 const MaxMMDBBytes = 256 << 20
 
 // MMDB 在本机查国家，不出网。OpenMMDB 把库文件整读进内存，读取器只持有这份私有副本，运行期不再访问文件：原地覆盖
-// 或截断文件都不改变运行中的答案，替换文件要重启才生效。
+// 或截断文件都不改变运行中的答案，替换文件要重启才生效。它不持有文件句柄或映射，没有要归还给系统的资源，所以没有
+// Close：关停时不需要与在途查询排先后，内存随对象回收。
 type MMDB struct {
 	path string
 	db   *maxminddb.Reader
@@ -142,6 +143,3 @@ func (m *MMDB) Lookup(ctx context.Context, _ store.GeoSettings, addr netip.Addr)
 
 // Service 是库路径，不取 geo.url：mmdb 下 geo.url 不生效，改它不应清掉查不到的地址的退避。
 func (m *MMDB) Service(store.GeoSettings) string { return m.path }
-
-// Close 必须在 Resolver 的查询循环退出后调用，读取与关闭不能并发。
-func (m *MMDB) Close() error { return m.db.Close() }
