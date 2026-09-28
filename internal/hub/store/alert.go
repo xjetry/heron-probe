@@ -548,25 +548,29 @@ func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, stat
 		if err := setAlertState(tx, ruleID, nodeID, state, ev.At, firedExpiresOn, recoveredAt); err != nil {
 			return err
 		}
-		if err := tx.QueryRow("INSERT INTO alert_event (rule_id, node_id, transition, at, summary, value) VALUES (?, ?, ?, ?, ?, ?) RETURNING id", ruleID, nodeID, ev.Transition, ev.At.Unix(), ev.Summary, ev.Value).Scan(&ev.ID); err != nil {
-			return err
-		}
-		for _, channel := range channelIDs {
-			if err := requireAlertReference(tx, "notify_channel", ObjectNotifyChannel, channel); err != nil {
-				return err
-			}
-			d := Delivery{EventID: ev.ID, ChannelID: channel}
-			if err := tx.QueryRow("INSERT INTO alert_delivery (event_id, channel_id) VALUES (?, ?) RETURNING id", d.EventID, d.ChannelID).Scan(&d.ID); err != nil {
-				return err
-			}
-			ev.Deliveries = append(ev.Deliveries, d)
-		}
-		return nil
+		return recordAlertEvent(tx, &ev, channelIDs)
 	})
 	if err != nil {
 		return AlertEvent{}, err
 	}
 	return ev, nil
+}
+
+func recordAlertEvent(tx *sql.Tx, ev *AlertEvent, channelIDs []int64) error {
+	if err := tx.QueryRow("INSERT INTO alert_event (rule_id, node_id, transition, at, summary, value) VALUES (?, ?, ?, ?, ?, ?) RETURNING id", ev.RuleID, ev.NodeID, ev.Transition, ev.At.Unix(), ev.Summary, ev.Value).Scan(&ev.ID); err != nil {
+		return err
+	}
+	for _, channel := range channelIDs {
+		if err := requireAlertReference(tx, "notify_channel", ObjectNotifyChannel, channel); err != nil {
+			return err
+		}
+		d := Delivery{EventID: ev.ID, ChannelID: channel}
+		if err := tx.QueryRow("INSERT INTO alert_delivery (event_id, channel_id) VALUES (?, ?) RETURNING id", d.EventID, d.ChannelID).Scan(&d.ID); err != nil {
+			return err
+		}
+		ev.Deliveries = append(ev.Deliveries, d)
+	}
+	return nil
 }
 
 // 每个已提交的尝试只授权至多一次发送，不保证恰好一次：提交后发送前崩溃也消耗名额。
