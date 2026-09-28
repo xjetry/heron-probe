@@ -43,7 +43,8 @@ type Store struct {
 	writes        chan writeReq
 	done          chan struct{}
 	// themeGen 是启用中主题内容的代数，见 writeTheme 与 EnabledThemePackage。
-	themeGen atomic.Uint64
+	themeGen     atomic.Uint64
+	themeChanges chan struct{}
 }
 
 type writeReq struct {
@@ -112,7 +113,7 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 		w.Close()
 		return nil, err
 	}
-	s := &Store{path: path, w: w, r: r, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{})}
+	s := &Store{path: path, w: w, r: r, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{}), themeChanges: make(chan struct{}, 1)}
 	// 打开时读一次设置，同时满足两件事：总闸的内存副本从库加载（不变式见 SaveSettings）；设置里有必须合法才能解释的
 	// 编码（两个开关只认 0 / 1，备份的数值有范围，渠道列表是 JSON 数组，见 readSettings），库里有非法值就拒绝打开。
 	settings, err := readSettings(context.Background(), r)
@@ -216,7 +217,7 @@ func (s *Store) writeAsync(fn func(*sql.Tx) error, done func(error)) {
 	}
 }
 
-const schemaVersion = 18
+const schemaVersion = 19
 
 type schemaAction int
 

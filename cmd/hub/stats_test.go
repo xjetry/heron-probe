@@ -39,10 +39,10 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 			if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
 				t.Fatal(err)
 			}
-			if freshVersion != 18 {
-				t.Fatalf("fixture user_version = %d, want 18; this fixture is built for schema 18 by undoing everything v9–v18 changed below, rebuild the v8 fixture for the new version", freshVersion)
+			if freshVersion != 19 {
+				t.Fatalf("fixture user_version = %d, want 19; rebuild the v8 fixture for the new version", freshVersion)
 			}
-			// v9–v18 增加列、索引与 maintenance_state、tag、node_tag、theme、theme_file、restore_record 六张表，并重建 alert_delivery：多出
+			// 后续 schema 增加列、索引与 maintenance_state、tag、node_tag、theme、theme_file、theme_package、restore_record 七张表，并重建 alert_delivery：多出
 			// batch_id 与 not_before 两列，alert_delivery_pending 从 (done, id) 改成 (done, batch_id, channel_id)，其余列的
 			// 名称、类型、默认值与先后不变。逐项撤回得到可实际迁移的 v8 库，避免仅伪造版本号。
 			// 这个夹具经 openOffline 建成，openStore 判定通过后已经把它切成 WAL；切回
@@ -66,6 +66,7 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 				"DROP TABLE node_tag",
 				"DROP TABLE tag",
 				"DROP TABLE theme_file",
+				"DROP TABLE theme_package",
 				"DROP TABLE theme",
 				"DROP TABLE restore_record",
 				"DROP INDEX alert_delivery_by_batch",

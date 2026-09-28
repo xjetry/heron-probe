@@ -4497,11 +4497,13 @@ type GetBackupStatusResponse struct {
 	// endpoint、bucket、access key、secret 全部非空才启用。停用即结束两层的故障跟踪：两层各自在下一轮判定时（在途的
 	// 一轮先跑完）观察到停用并清掉本层故障；配置层已通知过的故障以一条 transition 为 backup_disabled 的事件收尾并清除
 	// 未恢复标记。两层都观察到之后，设置可读且未启用时 failure 都缺席。设置读不出时这里同样为 false，配置层报 settings 故障。
-	Enabled       bool               `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
-	Config        *BackupLayerStatus `protobuf:"bytes,2,opt,name=config,proto3" json:"config,omitempty"`
-	Metrics       *BackupLayerStatus `protobuf:"bytes,3,opt,name=metrics,proto3" json:"metrics,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Enabled bool               `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	Config  *BackupLayerStatus `protobuf:"bytes,2,opt,name=config,proto3" json:"config,omitempty"`
+	Metrics *BackupLayerStatus `protobuf:"bytes,3,opt,name=metrics,proto3" json:"metrics,omitempty"`
+	// 没有原始包的主题不算配置层故障；重新上传原包后才参与主题备份。
+	ThemesWithoutPackage []string `protobuf:"bytes,4,rep,name=themes_without_package,json=themesWithoutPackage,proto3" json:"themes_without_package,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *GetBackupStatusResponse) Reset() {
@@ -4551,6 +4553,13 @@ func (x *GetBackupStatusResponse) GetConfig() *BackupLayerStatus {
 func (x *GetBackupStatusResponse) GetMetrics() *BackupLayerStatus {
 	if x != nil {
 		return x.Metrics
+	}
+	return nil
+}
+
+func (x *GetBackupStatusResponse) GetThemesWithoutPackage() []string {
+	if x != nil {
+		return x.ThemesWithoutPackage
 	}
 	return nil
 }
@@ -4612,8 +4621,12 @@ func (x *BackupLayerStatus) GetFailure() *BackupFailure {
 
 type BackupFailure struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// snapshot、client、upload、list、delete、cleanup、record、retention_config、settings、startup、marker、unrecovered；
+	// snapshot、client、upload、list、delete、cleanup、record、retention_config、settings、startup、marker、unrecovered，
+	// 以及主题同步的 theme_list（列举主题目录）、theme_read（读取数据库中的主题清单或原包）、theme_upload（上传主题包）、
+	// theme_record（保存数据库中的上传标记）、theme_delete（删除主题对象）。
 	// S3 失败在阶段后加 /transport、/http_status、/request 或 /response，不含错误原文。
+	// theme_list、theme_upload、theme_delete 是远端阶段，与 upload 一样带上述后缀；
+	// theme_read、theme_record 是数据库读写失败，不带后缀。
 	// settings 与 startup 是两层共用的前提失败（设置读不出；启动时读回成功时刻或清理本库残留暂存目录失败），
 	// 只由配置层报告，其间指标层暂停。marker 是库里的配置层未恢复标记读不出（只有 hub 写它）：此前是否通知过无从知道，
 	// 按首次失败通知一次并以本次首次失败时刻覆盖坏值，下一轮照常执行；指标层不读它，不受影响。
@@ -6760,11 +6773,12 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x12GetSettingsRequest\"E\n" +
 	"\x13GetSettingsResponse\x12.\n" +
 	"\bsettings\x18\x01 \x01(\v2\x12.probe.v1.SettingsR\bsettings\"\x18\n" +
-	"\x16GetBackupStatusRequest\"\x9f\x01\n" +
+	"\x16GetBackupStatusRequest\"\xd5\x01\n" +
 	"\x17GetBackupStatusResponse\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x123\n" +
 	"\x06config\x18\x02 \x01(\v2\x1b.probe.v1.BackupLayerStatusR\x06config\x125\n" +
-	"\ametrics\x18\x03 \x01(\v2\x1b.probe.v1.BackupLayerStatusR\ametrics\"\x87\x01\n" +
+	"\ametrics\x18\x03 \x01(\v2\x1b.probe.v1.BackupLayerStatusR\ametrics\x124\n" +
+	"\x16themes_without_package\x18\x04 \x03(\tR\x14themesWithoutPackage\"\x87\x01\n" +
 	"\x11BackupLayerStatus\x12+\n" +
 	"\x0flast_success_at\x18\x01 \x01(\x03H\x00R\rlastSuccessAt\x88\x01\x01\x121\n" +
 	"\afailure\x18\x02 \x01(\v2\x17.probe.v1.BackupFailureR\afailureB\x12\n" +

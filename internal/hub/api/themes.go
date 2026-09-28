@@ -63,7 +63,7 @@ func (s *Service) UploadTheme(ctx context.Context, req *connect.Request[probev1.
 		files[i] = store.ThemeFile{Path: f.Path, Content: f.Content}
 	}
 	meta := store.Theme{ID: id, Name: pkg.Manifest.Name, Version: pkg.Manifest.Version, Preview: pkg.Manifest.Preview, UploadedAt: s.clk.Now()}
-	got, err := s.store.PutTheme(ctx, meta, files, expect != "", theme.MaxThemes)
+	got, err := s.store.PutTheme(ctx, meta, files, req.Msg.GetPackage(), expect != "", theme.MaxThemes)
 	switch {
 	case errors.Is(err, store.ErrThemeLimit):
 		return nil, connect.NewError(connect.CodeResourceExhausted,
@@ -101,6 +101,9 @@ func (s *Service) EnableTheme(ctx context.Context, req *connect.Request[probev1.
 	}
 	id := req.Msg.GetId()
 	err := s.store.EnableTheme(ctx, id)
+	if errors.Is(err, store.ErrThemeContentMissing) {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("主题没有文件，请重新上传原包后启用"))
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, themeNotFound("id", id)
 	}

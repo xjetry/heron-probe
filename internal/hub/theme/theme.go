@@ -50,6 +50,9 @@ const (
 
 var idPattern = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
 
+// ValidID 是可安装主题的标识口径；内置公开页不对应可上传或可删除的主题包。
+func ValidID(id string) bool { return id != BuiltinID && idPattern.MatchString(id) }
+
 // Error 是一次拒绝：Field 指出违反约束的位置（package、条目路径、清单字段），Reason 说明约束与实际取值。
 type Error struct {
 	Field  string
@@ -338,11 +341,11 @@ func parseManifest(files map[string][]byte) (Manifest, error) {
 	if dec.More() {
 		return Manifest{}, reject(ManifestPath, "trailing data after the JSON object")
 	}
-	if !idPattern.MatchString(m.ID) {
-		return Manifest{}, reject(ManifestPath+" id", "must match [a-z0-9-]{1,32}; got %q", m.ID)
-	}
 	if m.ID == BuiltinID {
 		return Manifest{}, reject(ManifestPath+" id", "%q is reserved for the built-in public page", BuiltinID)
+	}
+	if !ValidID(m.ID) {
+		return Manifest{}, reject(ManifestPath+" id", "must match [a-z0-9-]{1,32}; got %q", m.ID)
 	}
 	if err := checkLabel(ManifestPath+" name", m.Name, maxNameRunes); err != nil {
 		return Manifest{}, err

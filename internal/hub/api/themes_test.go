@@ -3,8 +3,10 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -29,6 +31,51 @@ func newThemeHarness(t *testing.T) *harness {
 	h := newZonedHarness(t, "", time.UTC, store.DefaultRetention, withConfig(func(c *Config) { c.ThemeOrigin = "https://status.example.com" }))
 	h.login(t)
 	return h
+}
+
+func TestThemeWithoutContentCannotEnable(t *testing.T) {
+	h := newThemeHarness(t)
+	if _, err := h.upload(t, Minimal(t, "a"), ""); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", h.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("DELETE FROM theme_file; DELETE FROM theme_package"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.admin.EnableTheme(t.Context(), connect.NewRequest(&probev1.EnableThemeRequest{Id: "a"}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "重新上传") {
+		t.Fatalf("empty theme enable error=%v", err)
+	}
+	status, err := h.admin.GetBackupStatus(t.Context(), connect.NewRequest(&probev1.GetBackupStatusRequest{}))
+	if err != nil || !slices.Equal(status.Msg.ThemesWithoutPackage, []string{"a"}) {
+		t.Fatalf("missing packages not exposed: %v %v", status, err)
+	}
+}
+
+func TestLegacyThemeWithoutPackageCanEnable(t *testing.T) {
+	h := newThemeHarness(t)
+	if _, err := h.upload(t, Minimal(t, "legacy"), ""); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", h.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("DELETE FROM theme_package"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.admin.EnableTheme(t.Context(), connect.NewRequest(&probev1.EnableThemeRequest{Id: "legacy"})); err != nil {
+		t.Fatalf("legacy theme with files but no package cannot be enabled: %v", err)
+	}
+	status, err := h.admin.GetBackupStatus(t.Context(), connect.NewRequest(&probev1.GetBackupStatusRequest{}))
+	if err != nil || !slices.Equal(status.Msg.ThemesWithoutPackage, []string{"legacy"}) {
+		t.Fatalf("enabled legacy theme missing from backup status: %v %v", status, err)
+	}
 }
 
 func (h *harness) upload(t *testing.T, pkg []byte, expect string) (*probev1.Theme, error) {
@@ -83,6 +130,16 @@ func TestThemeRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	db, err := sql.Open("sqlite", h.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var original []byte
+	err = db.QueryRow("SELECT content FROM theme_package WHERE theme_id = 'night'").Scan(&original)
+	if err != nil || !bytes.Equal(original, pkg) {
+		t.Fatalf("UploadTheme did not preserve original zip: %v", err)
+	}
 	want := &probev1.Theme{Id: "night", Name: "Night", Version: "1.2.0", UploadedAt: h.clk.Now().Unix(), HasPreview: true}
 	if !proto.Equal(got, want) {
 		t.Fatalf("UploadTheme = %v, want %v", got, want)
@@ -108,6 +165,9 @@ func TestThemeRoundTrip(t *testing.T) {
 	}
 	if _, err := h.admin.DeleteTheme(ctx, connect.NewRequest(&probev1.DeleteThemeRequest{Id: "night"})); err != nil {
 		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT content FROM theme_package WHERE theme_id = 'night'").Scan(&original); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("DeleteTheme left original package: %v", err)
 	}
 	if list := h.themes(t); len(list) != 0 {
 		t.Fatalf("ListThemes after delete = %v", list)

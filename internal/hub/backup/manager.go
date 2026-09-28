@@ -35,8 +35,9 @@ type LayerStatus struct {
 }
 
 type Status struct {
-	Enabled         bool
-	Config, Metrics LayerStatus
+	Enabled              bool
+	Config, Metrics      LayerStatus
+	ThemesWithoutPackage []string
 }
 
 type layerState struct {
@@ -99,7 +100,8 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 	if settingsErr != nil && out.Config.Failure == "" {
 		return Status{}, settingsErr
 	}
-	return out, nil
+	out.ThemesWithoutPackage, err = m.st.ThemesWithoutPackage(ctx)
+	return out, err
 }
 
 const (
@@ -114,6 +116,14 @@ const (
 // 首轮由持久化成功时刻折算等待，之后用单调钟计周期，慢上传不积累待执行次数。
 // 墙钟用于快照、事件和成功时刻；对象名的墙钟顺序也是保留顺序，但刚上传的对象不参与删除。
 func (m *Manager) Run(ctx context.Context) {
+	ids, err := m.st.ThemesWithoutPackage(ctx)
+	if err != nil {
+		m.log.Error("reading themes without backup package failed", "err", err)
+	} else {
+		for _, id := range ids {
+			m.log.Warn("theme not backed up; upload original package again", "theme", id)
+		}
+	}
 	var wg sync.WaitGroup
 	for i := range m.layers {
 		wg.Add(1)
@@ -127,15 +137,23 @@ func (m *Manager) runLayer(ctx context.Context, i int) {
 	defer ticker.Stop()
 	var logged bool
 	var lastLog time.Duration
+	var wake <-chan struct{}
+	if i == 0 {
+		wake = m.st.ThemeChanges()
+	}
+	force := false
 	for {
-		if err := m.tickLayer(ctx, i); err != nil && ctx.Err() == nil && (!logged || m.clk.Mono()-lastLog >= failureLogInterval) {
+		if err := m.tickLayerWithWake(ctx, i, force); err != nil && ctx.Err() == nil && (!logged || m.clk.Mono()-lastLog >= failureLogInterval) {
 			m.log.Error("backup scheduling failed", "layer", i, "err", err)
 			logged, lastLog = true, m.clk.Mono()
 		}
+		force = false
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-wake:
+			force = true
 		}
 	}
 }
@@ -240,12 +258,23 @@ func (m *Manager) prepare(ctx context.Context, i int) (store.BackupSettings, str
 }
 
 func (m *Manager) tickLayer(ctx context.Context, i int) error {
+	return m.tickLayerWithWake(ctx, i, false)
+}
+
+func (m *Manager) tickLayerWithWake(ctx context.Context, i int, force bool) error {
 	m.runMu[i].Lock()
 	defer m.runMu[i].Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	cfg, category, err := m.prepare(ctx, i)
+	if err == nil && i == 0 {
+		select {
+		case <-m.st.ThemeChanges():
+			force = true
+		default:
+		}
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -269,7 +298,7 @@ func (m *Manager) tickLayer(ctx context.Context, i int) error {
 		layer = "metrics"
 		interval, keep = cfg.MetricsIntervalS, cfg.MetricsKeep
 	}
-	if state.attempted && m.clk.Mono()-state.lastAttempt < time.Duration(interval)*time.Second {
+	if !force && state.attempted && m.clk.Mono()-state.lastAttempt < time.Duration(interval)*time.Second {
 		return nil
 	}
 	category, code, detail := m.perform(ctx, cfg, layer, keep)
@@ -371,6 +400,14 @@ func (m *Manager) perform(ctx context.Context, cfg store.BackupSettings, layer s
 	}
 	if err := os.Remove(dir); err != nil {
 		return "cleanup", 0, err.Error()
+	}
+	// 唤醒和周期都执行完整配置轮；主题成功不能掩盖快照或保留的故障，整轮成功后才记账和恢复通知。
+	// 每次唤醒多产生一份配置快照，达到份数上限时挤掉最旧一份，换取最新配置快照与主题对象同步；主题写入的通知
+	// 合并而不排队（store.ThemeChanges），一轮进行中的连续写入只换来一次唤醒，写入次数是快照消耗的上界。
+	if layer == "config" {
+		if category, code, detail := m.syncThemes(ctx, cfg, client); category != "" {
+			return category, code, detail
+		}
 	}
 	if err := m.st.RecordBackupSuccess(ctx, layer); err != nil {
 		return "record", 0, err.Error()

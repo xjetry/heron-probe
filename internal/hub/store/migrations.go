@@ -37,6 +37,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	16: execAll(migrationV16),
 	17: execAll([]string{ddlRestoreRecordV17}),
 	18: execAll(migrationV18),
+	19: execAll(migrationV19),
 }
 
 const ddlRestoreRecordV17 = `CREATE TABLE restore_record (
@@ -57,6 +58,14 @@ func execAll(stmts []string) func(*sql.Tx) error {
 		return nil
 	}
 }
+
+// 旧库没有原始 zip，不能由展开文件重造；原包由管理员重新上传后补齐。
+var migrationV19 = []string{`CREATE TABLE theme_package (
+  theme_id TEXT PRIMARY KEY,
+  content BLOB NOT NULL,
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  uploaded INTEGER NOT NULL DEFAULT 0 CHECK (uploaded IN (0, 1))
+)`, `ALTER TABLE restore_record ADD COLUMN themes TEXT NOT NULL DEFAULT '{}'`}
 
 // 各迁移的输入逐字冻结在这里。当前版本的 DDL 只给 schemaStatements 用；迁移若引用它，DDL 以后
 // 一变，旧库升级就会建出与后续迁移假设不符的表（例如先带上新列，再在加列的迁移里撞上重复列）。

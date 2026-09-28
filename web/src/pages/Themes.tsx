@@ -26,6 +26,7 @@ function Preview({ theme }: { theme: Theme }) {
 export function Themes() {
   const qc = useQueryClient();
   const list = useQuery(AdminService.method.listThemes, {});
+  const backup = useQuery(AdminService.method.getBackupStatus, {}, { refetchInterval: 5000 });
   const fileInput = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   // 空串表示按包里的 id 安装（已装同 id 即替换）；非空即 expect_id：包的 id 必须是它且它必须已安装。
@@ -37,6 +38,7 @@ export function Themes() {
   const refresh = () => Promise.all([
     qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listThemes, cardinality: "finite" }) }),
     qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getThemePreview, cardinality: "finite" }) }),
+    qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getBackupStatus, cardinality: "finite" }) }),
   ]);
   const upload = useMutation(AdminService.method.uploadTheme, {
     ...mutationOptions,
@@ -91,6 +93,8 @@ export function Themes() {
     <section>
       {gate.banner}
       <h1>主题</h1>
+      {backup.error != null && errorBanner(backup.error)}
+      {backup.data?.themesWithoutPackage.map((id) => <p key={id}>主题 {id} 未备份：请重新上传原包</p>)}
       <p className="muted">
         主题是只调公开接口（PublicService）的静态前端，托管在 <a href={themeOrigin} target="_blank" rel="noreferrer">{themeOrigin}</a>：
         {enabled ? <>那里现在是主题 {enabled.name}（{enabled.id}）。</> : <>现在没有启用的主题，那里是内置公开页。</>}
