@@ -1,4 +1,5 @@
 import { useMutation } from "@connectrpc/connect-query";
+import { Code } from "@connectrpc/connect";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { useNavigate } from "react-router";
@@ -35,7 +36,7 @@ export function Login() {
         </button>
         {login.error && (
           <p role="alert" className="error">
-            {errorText(login.error)}
+            {login.error.code === Code.ResourceExhausted ? "登录繁忙，请稍后再试。" : errorText(login.error)}
           </p>
         )}
       </form>

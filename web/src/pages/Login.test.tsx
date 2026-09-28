@@ -46,4 +46,13 @@ describe("Login", () => {
     renderLogin(vi.fn(async () => ({})));
     expect(screen.getByRole("button", { name: "登录" })).toBeDisabled();
   });
+
+  it("密码校验繁忙时提示稍后重试而不是密码错误", async () => {
+    renderLogin(async () => {
+      throw new ConnectError("password verification is busy; please try again later", Code.ResourceExhausted);
+    });
+    fireEvent.change(screen.getByLabelText("管理员密码"), { target: { value: "correct horse battery" } });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/^登录繁忙，请稍后再试。$/);
+  });
 });
