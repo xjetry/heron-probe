@@ -13,6 +13,7 @@ import (
 // 不走建账户分支；id、uname、sleep 与 install.sh 的替身相同。
 // systemctl 记下参数；start 在假 /proc 里放一个以服务用户运行、exe 指向 /usr/local/bin/probe-hub 的进程 4242，
 // stop 把它拿走；show 回答 MainPID 与 DropInPaths（state/dropins 里空格分隔的路径，是目标系统里的真实路径）。
+// enable、disable 增删 state/enabled，is-enabled 按它回答。
 // state/dropins 是 systemd 已加载的 drop-in，照 systemd 252 的实测：daemon-reload 时才从 state/dropins-disk
 // （磁盘上的 drop-in）取，单元文件不存在时为空。STUB_STOP_FAILS 让 stop 失败，STUB_STOP_LEAVES_PROCESS 让 stop
 // 返回 0 却留下进程，STUB_DROPIN_ON_STOP 在 stop 时把一个 drop-in 写进 state/dropins-disk。
@@ -42,6 +43,9 @@ case "$*" in
   daemon-reload)
     if [ ! -f "$PROBE_INSTALL_ROOT/etc/systemd/system/probe-hub.service" ]; then : > "$STUB_STATE/dropins"
     elif [ -f "$STUB_STATE/dropins-disk" ]; then cp "$STUB_STATE/dropins-disk" "$STUB_STATE/dropins"; fi;;
+  "enable probe-hub") : > "$STUB_STATE/enabled";;
+  "disable probe-hub") rm -f "$STUB_STATE/enabled";;
+  "is-enabled --quiet probe-hub") [ -f "$STUB_STATE/enabled" ];;
   "show probe-hub -p MainPID --value") if [ -d "$P/4242" ]; then echo 4242; else echo 0; fi;;
   "show probe-hub -p DropInPaths --value") cat "$STUB_STATE/dropins" 2>/dev/null || echo;;
 esac
@@ -666,32 +670,50 @@ func TestHubFailedStopDoesNotSayStopped(t *testing.T) {
 }
 
 // 首装时单元文件还不存在，DropInPaths 为空，probe-hub.service.d/ 里已有的 drop-in 查不到（purge 也不删这个目录）。
-// 主单元写好之后的那一遍要拦住设了 ExecStart 的 drop-in：不 enable、不 start。
+// 主单元写好之后的那一遍要拦住设了 ExecStart 的 drop-in：不 enable、不 start。提示只说成立的事实：单元装了、
+// 没 enable 也没起；该做的是先处理 drop-in 再重跑，不能叫人手动启动，那会按 drop-in 的参数起来。
 func TestHubFirstInstallRefusesAnExecStartDropIn(t *testing.T) {
 	t.Parallel()
 	e := newHubHost(t)
 	e.put("etc/systemd/system/probe-hub.service.d/override.conf", "[Service]\nExecStart=\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\n")
 	e.write("dropins-disk", "/etc/systemd/system/probe-hub.service.d/override.conf\n")
 	out, code := e.hubInstall()
-	if code != 1 || !strings.Contains(out, "drop-in /etc/systemd/system/probe-hub.service.d/override.conf sets ExecStart") || !strings.Contains(out, "probe-hub was not enabled or started") {
-		t.Fatalf("exit %d:\n%s", code, out)
+	for _, want := range []string{
+		"drop-in /etc/systemd/system/probe-hub.service.d/override.conf sets ExecStart",
+		"probe-hub is installed but not enabled or started",
+		"fix the drop-in problem reported above, then rerun the installer",
+	} {
+		if code != 1 || !strings.Contains(out, want) {
+			t.Fatalf("exit %d, want %q:\n%s", code, want, out)
+		}
+	}
+	if strings.Contains(out, "start it manually") || strings.Contains(out, "probe-hub is stopped") {
+		t.Fatalf("a first install refused over a drop-in must not suggest starting probe-hub:\n%s", out)
 	}
 	if c := e.calls(); index(c, "systemctl enable") >= 0 || index(c, "systemctl start") >= 0 {
 		t.Fatalf("a refused first install must not enable or start probe-hub: calls %q", c)
 	}
 }
 
-// 停服前那一遍之后才落盘的 drop-in：主单元写好、start 之前的那一遍要拦住它，不启动，报错说明 hub 已停。
+// 停服前那一遍之后才落盘的 drop-in：主单元写好、start 之前的那一遍要拦住它，不启动。上次安装的 enable 还在，
+// 提示要说清 hub 已停但仍是 enabled、手动启动或下次开机都会带着 drop-in 起来，该做的是先处理 drop-in 再重跑。
 func TestHubDropInWrittenWhileStoppedIsRefusedBeforeStart(t *testing.T) {
 	t.Parallel()
 	e := newHubInstalled(t)
 	e.put("etc/systemd/system/probe-hub.service.d/late.conf", "[Service]\nExecStart=\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\n")
 	e.vars = []string{"STUB_DROPIN_ON_STOP=/etc/systemd/system/probe-hub.service.d/late.conf"}
 	out, code := e.hubInstall()
-	for _, want := range []string{"late.conf sets ExecStart", "probe-hub was not enabled or started", "probe-hub is stopped; rerun the installer or start it manually"} {
+	for _, want := range []string{
+		"late.conf sets ExecStart",
+		"probe-hub is stopped but still enabled; started by hand or at the next boot, it would run with the drop-ins as they are",
+		"fix the drop-in problem reported above, then rerun the installer",
+	} {
 		if code != 1 || !strings.Contains(out, want) {
 			t.Fatalf("exit %d, want %q:\n%s", code, want, out)
 		}
+	}
+	if strings.Contains(out, "start it manually") {
+		t.Fatalf("a drop-in refusal must not suggest starting probe-hub by hand:\n%s", out)
 	}
 	if c := e.calls(); index(c, "systemctl start") >= 0 {
 		t.Fatalf("probe-hub must not be started: calls %q", c)

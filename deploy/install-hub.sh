@@ -225,15 +225,13 @@ fi
 
 work=$(mktemp -d)
 BIN_TMP=$BIN.tmp.$$
-# 停服务之后、start 返回之前的任何失败都让 hub 停着，各步的报错只说自己的原因：退出时补一句服务已停，
-# 免得人以为旧服务还在跑。
-SERVICE_STOPPED=0
+# 停服务之后、start 返回之前的任何失败都让 hub 停着，各步的报错只说自己的原因：失败退出时在报错之后补一句
+# 现状与该做什么，免得人以为旧服务还在跑。EXIT_HINT 随步骤更新，空串表示不必补。
+EXIT_HINT=""
 on_exit() {
   rc=$?
   rm -rf "$work"; rm -f "$BIN_TMP"
-  if [ "$rc" != 0 ] && [ "$SERVICE_STOPPED" = 1 ]; then
-    echo 'probe-hub is stopped; rerun the installer or start it manually' >&2
-  fi
+  if [ "$rc" != 0 ] && [ -n "$EXIT_HINT" ]; then echo "$EXIT_HINT" >&2; fi
 }
 trap on_exit EXIT
 trap 'exit 1' INT TERM HUP
@@ -437,7 +435,7 @@ check_port() {
 if ! data_dir_ok || ! db_files_ok; then fail 'refusing to hand the database to probe-hub; old service was not stopped'; fi
 check_port
 stop_service
-SERVICE_STOPPED=1
+EXIT_HINT='probe-hub is stopped; rerun the installer or start it manually'
 mv -f "$BIN_TMP" "$BIN"
 
 # SQLite 要创建和删除 WAL/SHM，目录必须可写，不能照搬只读配置目录的 0750。
@@ -460,10 +458,18 @@ for file in "$DATA/probe.db" "$DATA/probe.db-wal" "$DATA/probe.db-shm"; do
 done
 chmod 0770 "$DATA"
 install -m 0644 "$work/unit" "$UNIT"
-dropins_ok || fail 'probe-hub was not enabled or started'
+# 主单元写好之后再查一遍 drop-in（理由见 dropins_ok）。这里失败时不能叫人手动启动：drop-in 设了 ExecStart，
+# 单元就按它的参数起来。首装的单元还没 enable；升级时上次安装留下的 enable 还在，下次开机也会这样起来。
+if ! dropins_ok; then
+  EXIT_HINT='fix the drop-in problem reported above, then rerun the installer'
+  if systemctl is-enabled --quiet probe-hub </dev/null; then
+    fail 'probe-hub is stopped but still enabled; started by hand or at the next boot, it would run with the drop-ins as they are'
+  fi
+  fail 'probe-hub is installed but not enabled or started'
+fi
 systemctl enable probe-hub </dev/null
 systemctl start probe-hub </dev/null
-SERVICE_STOPPED=0
+EXIT_HINT=""
 confirm_service_started
 echo "probe-hub installed and started (systemd, $ARCH, $PKG)"
 echo 'Set the administrator password: probe-hub passwd --db /var/lib/probe/probe.db'
