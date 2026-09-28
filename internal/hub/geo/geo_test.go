@@ -19,6 +19,7 @@ import (
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/probe/internal/hub/outbound"
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
@@ -162,7 +163,7 @@ func newFixture(t *testing.T) *fixture {
 
 // restart 换一个新的查询器，与 hub 重启后一样没有任何内存状态；库与假服务不变。
 func (f *fixture) restart() {
-	f.r = New(f.st, alert.NewHTTPClient(), f.clk, slog.New(slog.NewTextHandler(f.logs, nil)))
+	f.r = New(f.st, outbound.NewClient(alert.NotifyTimeout), f.clk, slog.New(slog.NewTextHandler(f.logs, nil)))
 }
 
 func (f *fixture) enable(on bool) {
@@ -175,7 +176,7 @@ func (f *fixture) enable(on bool) {
 // saveGeo 改国家查询设置。假服务的处理函数里也用它来模拟"查询进行中运维改了设置"：那不是测试协程，不能 Fatal，
 // 错误交给调用方报告。
 func (f *fixture) saveGeo(ctx context.Context, u store.GeoUpdate) error {
-	_, _, err := f.st.SaveSettings(ctx, store.SettingsUpdate{Geo: u})
+	_, err := f.st.SaveSettings(ctx, store.SettingsUpdate{Geo: u})
 	return err
 }
 

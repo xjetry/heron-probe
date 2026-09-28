@@ -33,15 +33,20 @@ const (
 	SessionCookie = "probe_session"
 	// maxBody 是管理请求的解码预算。connect 先解码再进拦截器，未鉴权的请求也会被读到这个上限，所以它必须有界。
 	// 它要装下 UpdateSettings 的满额设置按 encoding/json 默认写法编码的最坏情况：logo 满额（base64 字符在 JSON 里
-	// 无需转义）；自定义 CSS、清洗前的标题与国家查询的服务地址满额，且每个字节都写成 6 字节；另留 4 KiB 给明暗、主色、
-	// 总闸与国家查询开关两个布尔值、字段名与 JSON 语法。6 字节的来源因字段而异：CSS 与标题可以含控制字符，JSON 必须把
-	// 它们写成 \u00XX；服务地址不含控制字符（url.Parse 拒绝），JSON 必须转义的只有 " 与 \（各 2 字节），6 倍来自
-	// encoding/json 默认把 <、>、& 写成 \u003c 这类形式，而 url.Parse 放行这三个字符。encoding/json 默认还把 U+2028、
-	// U+2029 写成 6 字节（原文 3 字节），同样在 6 倍之内。预算外的是多余的 JSON 空白与别的非必须转义（例如把 a 写成
-	// \u0061）：这样的请求超出预算时得到 resource_exhausted。
-	// 各项的上限在 settings.go；每个字段的合法取值都有字节上限（明暗与主色由取值集合与格式限定，总闸与国家查询开关只能是
-	// true 或 false）是这条推导成立的前提。
-	maxBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes + 6*maxGeoURLBytes + 4<<10
+	// 无需转义）；自定义 CSS、清洗前的标题、国家查询的服务地址与备份的六个字符串满额，且每个字节都写成 6 字节；备份通知
+	// 渠道 ID 满额，每个 22 字节：proto3 JSON 把 int64 写成带引号的十进制串，合法 ID 为正、至多 19 位，连引号与逗号共
+	// 22 字节；另留 4 KiB 给明暗、主色、总闸与国家查询开关两个布尔值、备份的四个数值与 has_secret、字段名与 JSON 语法。
+	// 6 字节的来源因字段而异：CSS、标题与备份的 secret 可以含控制字符，JSON 必须把它们写成 \u00XX；服务地址、备份的
+	// endpoint、区域、access key 与前缀不含控制字符（url.Parse 与各自的校验拒绝），JSON 必须转义的只有 " 与 \（各 2 字节），
+	// 6 倍来自 encoding/json 默认把 <、>、& 写成 \u003c 这类形式，而这些字段的校验放行这三个字符；bucket 只含小写字母、
+	// 数字、点与连字符，按 6 倍计是宽松的上界。encoding/json 默认还把 U+2028、U+2029 写成 6 字节（原文 3 字节），同样在
+	// 6 倍之内。预算外的是多余的 JSON 空白与别的非必须转义（例如把 a 写成 \u0061）：这样的请求超出预算时得到
+	// resource_exhausted。
+	// 各项的上限在 settings.go 与 backup_settings.go；每个字段的合法取值都有字节上限（明暗与主色由取值集合与格式限定，
+	// 总闸、国家查询开关与 has_secret 只能是 true 或 false，四个数值是 uint32，渠道 ID 至多 maxBackupChannels 个）是这条
+	// 推导成立的前提。
+	maxBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes + 6*maxGeoURLBytes +
+		6*(maxEndpointBytes+maxBucketBytes+maxRegionBytes+maxAccessKeyBytes+maxSecretBytes+maxPrefixBytes) + maxBackupChannels*22 + 4<<10
 )
 
 type Config struct {

@@ -21,6 +21,11 @@ func validSettings() *probev1.Settings {
 	return &probev1.Settings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,iVBORw0KGgo=", CustomCss: "body { color: red }", PublicEnabled: proto.Bool(true)}
 }
 
+// defaultBackup 是从未保存过备份时的回显（§6.7 的默认值）：GetSettings 与 UpdateSettings 的响应总带 backup。
+func defaultBackup() *probev1.BackupSettings {
+	return &probev1.BackupSettings{Region: "auto", ConfigIntervalS: proto.Uint32(300), MetricsIntervalS: proto.Uint32(86400), ConfigKeep: proto.Uint32(48), MetricsKeep: proto.Uint32(14), Notify: &probev1.BackupNotify{}}
+}
+
 func withSettings(change func(*probev1.Settings)) *probev1.Settings {
 	s := validSettings()
 	change(s)
@@ -84,8 +89,9 @@ func TestUpdateSettingsValidatesTitleThemeAndAccent(t *testing.T) {
 func TestUpdateSettingsCleansTitleAndAccentAndEchoes(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	// 总闸与国家查询两项没有提交，回显的是从未保存过时的值。
+	// 总闸、国家查询两项与 backup 没有提交，回显的是从未保存过时的值。
 	want := &probev1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef", PublicEnabled: proto.Bool(true), GeoEnabled: proto.Bool(false), GeoUrl: proto.String("https://ipinfo.io/{ip}/country")}
+	want.Backup = defaultBackup()
 	if got := saveSettings(t, h, &probev1.Settings{Title: " ‮\x07运行状态 \t", Theme: "light", AccentColor: "#AbCdEf"}); !proto.Equal(got, want) {
 		t.Fatalf("echo = %v, want %v", got, want)
 	}
@@ -116,10 +122,11 @@ func TestTitleAndNodeNameCleanAlike(t *testing.T) {
 	}
 }
 
-const noGroup = "settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, or the country lookup (geo_enabled, geo_url)"
+const noGroup = "settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, the country lookup (geo_enabled, geo_url), or backup"
 
 // UpdateSettings 按组判定、各组彼此独立：外观五项任一非空即算给出并整体校验，所以只带 title 的请求报 theme 的错；
-// 只带国家查询或只带总闸的请求照常保存，外观原样保留；一组都没给出（含整个 settings 缺失）的请求被拒并点名各组。
+// 只带国家查询、只带总闸或只带备份的请求照常保存，其余各组原样保留；一组都没给出（含整个 settings 缺失）的请求被拒并
+// 点名各组。
 func TestUpdateSettingsGroupsAreIndependent(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
@@ -135,6 +142,7 @@ func TestUpdateSettingsGroupsAreIndependent(t *testing.T) {
 	}{
 		{"geo only", &probev1.Settings{GeoEnabled: proto.Bool(true)}, func(s *probev1.Settings) { s.GeoEnabled = proto.Bool(true) }},
 		{"public_enabled only", &probev1.Settings{PublicEnabled: proto.Bool(false)}, func(s *probev1.Settings) { s.PublicEnabled = proto.Bool(false) }},
+		{"backup only", &probev1.Settings{Backup: &probev1.BackupSettings{ConfigKeep: proto.Uint32(24)}}, func(s *probev1.Settings) { s.Backup.ConfigKeep = proto.Uint32(24) }},
 	} {
 		c.apply(want)
 		if got := saveSettings(t, h, c.in); !proto.Equal(got, want) {
@@ -250,35 +258,62 @@ func longestLogo() string {
 	return out
 }
 
-// 解码预算不够时，connect 在方法体之前就以 ResourceExhausted 拒绝，校验根本到不了。
-// 解码预算装得下满额设置在最坏转义下的 JSON（service.go 的 maxBody 写了推导）：logo 取 longestLogo；
-// 标题与 CSS 用控制字符填满，json.Marshal 把每个控制字符写成 6 字节的 \u00XX，服务地址用 < 填满（写法见下），标题的
-// 控制字符清洗后不计入 64 个字符，所以这仍是合法的设置；明暗取最长的值，总闸与国家查询开关取较长的 false，字段名用比
-// camelCase 长的 proto 原名（connect 两种都收）。connect 丢弃不认识的字段，保存后总闸、国家查询开关与服务地址确实变成
-// 请求里的值，才说明它们按字段被解码、这是一份全字段的设置；查询开关从未保存过时就是 false，所以先把它打开。
-func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T) {
-	h := newHarness(t, "")
-	h.login(t)
+// worstCaseSettings 里用例要核对保存结果的几项。服务地址与 endpoint 带固定开头才是合法值：服务地址的 {ip} 在路径里、
+// < 在查询串里；endpoint 的 & 在路径里。
+const (
+	worstGeoPrefix      = "https://geo.example/{ip}?"
+	worstEndpointPrefix = "https://s3.example/"
+)
+
+var (
+	worstGeoURL       = worstGeoPrefix + strings.Repeat("<", maxGeoURLBytes-len(worstGeoPrefix))
+	worstEndpoint     = worstEndpointPrefix + strings.Repeat("&", maxEndpointBytes-len(worstEndpointPrefix))
+	worstBackupPrefix = strings.Repeat("<", maxPrefixBytes)
+	worstBackupSecret = strings.Repeat("\x01", maxSecretBytes)
+)
+
+// worstCaseSettings 是满额设置按 encoding/json 默认写法编码的最坏请求体（service.go 的 maxBody 写了推导），渠道 ID 由
+// 调用方给出：它们存不存在决定这次保存能否写入。logo 取 longestLogo；标题、CSS 与备份的 secret 用控制字符填满，
+// json.Marshal 把每个控制字符写成 6 字节的 \u00XX，标题的控制字符清洗后不计入 64 个字符，所以这仍是合法的设置；服务
+// 地址、endpoint、区域、access key 与前缀不收控制字符，用 < 或 & 填满，json.Marshal 按 HTML 安全规则把它们同样写成
+// 6 字节；bucket 取最长；明暗取最长的值，总闸、国家查询开关与 has_secret 取较长的 false，四个数值取各自的上限；字段名
+// 用比 camelCase 长的 proto 原名（connect 两种都收）。
+func worstCaseSettings(t *testing.T, channelIDs []string) []byte {
+	t.Helper()
 	logo := longestLogo()
-	theme := slices.MaxFunc(themes, func(a, b string) int { return len(a) - len(b) })
-	saveSettings(t, h, &probev1.Settings{Theme: "auto", GeoEnabled: proto.Bool(true)})
-	// 服务地址不能含控制字符（url.Parse 拒绝），json.Marshal 把 < 同样写成 6 字节的 \u003c，url.Parse 在查询串里放行它。
-	const geoPrefix = "https://geo.example/{ip}?"
-	geoURL := geoPrefix + strings.Repeat("<", maxGeoURLBytes-len(geoPrefix))
 	body, err := json.Marshal(map[string]any{"settings": map[string]any{
-		"title": strings.Repeat("\x01", maxTitleBytes), "theme": theme, "accent_color": "#112233",
+		"title": strings.Repeat("\x01", maxTitleBytes), "theme": slices.MaxFunc(themes, func(a, b string) int { return len(a) - len(b) }), "accent_color": "#112233",
 		"logo":           logo,
 		"custom_css":     strings.Repeat("\x01", maxCSSBytes),
 		"public_enabled": false,
-		"geo_enabled":    false, "geo_url": geoURL,
+		"geo_enabled":    false, "geo_url": worstGeoURL,
+		"backup": map[string]any{
+			"endpoint": worstEndpoint, "bucket": strings.Repeat("b", maxBucketBytes),
+			"region": strings.Repeat("<", maxRegionBytes), "access_key": strings.Repeat("<", maxAccessKeyBytes),
+			"secret": worstBackupSecret, "prefix": worstBackupPrefix,
+			"config_interval_s": 86400, "metrics_interval_s": 604800, "config_keep": 1000, "metrics_keep": 1000,
+			"notify": map[string]any{"channel_ids": channelIDs}, "has_secret": false,
+		},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(body) < len(logo)+6*maxCSSBytes+6*maxTitleBytes+6*(maxGeoURLBytes-len(geoPrefix)) {
-		t.Fatalf("request is %d bytes; the worst case was not constructed", len(body))
+	// 每一项都按各自的预算项写满，才是这份预算要装下的最坏情况；任一项没有按 6 倍写出，下限就不成立。
+	floor := len(logo) + 6*maxCSSBytes + 6*maxTitleBytes + 6*(len(worstGeoURL)-len(worstGeoPrefix)) +
+		6*(len(worstEndpoint)-len(worstEndpointPrefix)+maxRegionBytes+maxAccessKeyBytes+maxSecretBytes+maxPrefixBytes)
+	for _, id := range channelIDs {
+		floor += len(id) + len(`"",`)
+	}
+	if len(body) < floor {
+		t.Fatalf("request is %d bytes, below the %d bytes of its fields at their budgeted worst case", len(body), floor)
 	}
 	t.Logf("worst-case request: %d bytes, logo %d bytes, budget %d", len(body), len(logo), maxBody)
+	return body
+}
+
+// postUpdateSettings 以 JSON 调 UpdateSettings：解码预算按线上的字节计，只有 JSON 请求才测得到它。
+func postUpdateSettings(t *testing.T, h *harness, body []byte) (int, string) {
+	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/probe.v1.AdminService/UpdateSettings", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -289,15 +324,43 @@ func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T)
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("full settings escaped worst case (%d bytes): %d %s", len(body), resp.StatusCode, b)
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+// 解码预算不够时，connect 在方法体之前就以 ResourceExhausted 拒绝，校验根本到不了。解码预算装得下满额设置在最坏转义下
+// 的 JSON（worstCaseSettings）。渠道取满额个数的已存在渠道，这次保存才能写入；它们的 ID 很短，满额长度的 ID 由
+// TestUpdateSettingsBudgetFitsFullBackupWithWorstCaseEscaping 覆盖。connect 丢弃不认识的字段，保存后总闸、国家查询两项与
+// 备份各项确实变成请求里的值，才说明它们按字段被解码、这是一份全字段的设置；查询开关从未保存过时就是 false，所以先把
+// 它打开。
+func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	saveSettings(t, h, &probev1.Settings{Theme: "auto", GeoEnabled: proto.Bool(true)})
+	var ids []int64
+	var idTexts []string
+	for i := range maxBackupChannels {
+		id := saveChannel(t, h, webhook(fmt.Sprintf("https://hooks.example/%d", i))).Id
+		ids = append(ids, id)
+		idTexts = append(idTexts, fmt.Sprint(id))
+	}
+	if status, b := postUpdateSettings(t, h, worstCaseSettings(t, idTexts)); status != http.StatusOK {
+		t.Fatalf("full settings escaped worst case: %d %s", status, b)
 	}
 	if h.store.PublicEnabled() {
 		t.Fatal("public_enabled in the worst-case request was not applied")
 	}
-	if g, err := h.store.GeoSettings(t.Context()); err != nil || g.Enabled || g.URL != geoURL {
-		t.Fatalf("geo_enabled or geo_url in the worst-case request was not applied: enabled=%v url=%.40q %v", g.Enabled, g.URL, err)
+	st, err := h.store.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Geo.Enabled || st.Geo.URL != worstGeoURL {
+		t.Fatalf("geo_enabled or geo_url in the worst-case request was not applied: enabled=%v url=%.40q", st.Geo.Enabled, st.Geo.URL)
+	}
+	if b := st.Backup; b.Target.Endpoint != worstEndpoint || b.Target.Secret != worstBackupSecret || b.Prefix != worstBackupPrefix ||
+		b.MetricsIntervalS != 604800 || b.MetricsKeep != 1000 || !slices.Equal(b.Channels, ids) {
+		t.Fatalf("backup in the worst-case request was not applied: endpoint=%.40q prefix=%.40q secret %d bytes, metrics %ds/%d, channels %v",
+			b.Target.Endpoint, b.Prefix, len(b.Target.Secret), b.MetricsIntervalS, b.MetricsKeep, b.Channels)
 	}
 }
 

@@ -136,7 +136,8 @@ type target struct {
 	url  string
 }
 
-// New 的 client 应当是通知渠道用的那一个（alert.NewHTTPClient：不跟随重定向、带总超时），hub 的出站行为只有一套。
+// New 的 client 应当是通知渠道用的那一个（serve 里的 outbound.NewClient(alert.NotifyTimeout)：不跟随重定向、带总时限），
+// 查询与通知的出站行为是同一套。
 func New(st *store.Store, client *http.Client, clk clock.Clock, log *slog.Logger) *Resolver {
 	return &Resolver{store: st, client: client, clk: clk, log: log, answers: map[int64][]answer{}, retryAt: map[target]time.Duration{}}
 }

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/netip"
 	"net/url"
 	"regexp"
@@ -42,8 +43,8 @@ var (
 //   - 外观五项是一组。proto3 的 string 没有 presence，分不开"没给"与"给了空串"，所以五项任一非空即视为给出
 //     （appearanceGiven），给出就整体替换并按整体校验（cleanAppearance：theme 必填，其余为空即清空）。按任一项非空
 //     判定，只带 title 不带 theme 的请求得到点名 theme 的错误，而不是被当作"没给外观"静默丢弃。
-//   - 总闸与国家查询两项是 presence 字段，给出即改、缺席即不变（见 store.SettingsUpdate、cleanGeo）：只改总闸或只改
-//     国家查询的客户端不必重发外观，也就不会把它手里可能已过时的外观写回去。
+//   - 总闸、国家查询两项与 backup 是 presence 字段，给出即改、缺席即不变（见 store.SettingsUpdate、cleanGeo；backup
+//     各项的 presence 见 cleanBackup）：只改其中一组的客户端不必重发外观，也就不会把它手里可能已过时的外观写回去。
 //
 // 一组都没给出的请求什么都不会改，返回 InvalidArgument 点名各组，而不是回一个看似成功的空操作。任一项不合约束即返回
 // 错误，调用方什么都不写。
@@ -64,8 +65,11 @@ func cleanSettings(in *probev1.Settings) (store.SettingsUpdate, error) {
 		return store.SettingsUpdate{}, err
 	}
 	out.Geo = geoUpdate
-	if out.Appearance == nil && out.PublicEnabled == nil && out.Geo.Enabled == nil && out.Geo.URL == nil {
-		return store.SettingsUpdate{}, invalid("settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, or the country lookup (geo_enabled, geo_url)")
+	if out.Backup, err = cleanBackup(in.GetBackup()); err != nil {
+		return store.SettingsUpdate{}, err
+	}
+	if out.Appearance == nil && out.PublicEnabled == nil && out.Geo.Enabled == nil && out.Geo.URL == nil && out.Backup == nil {
+		return store.SettingsUpdate{}, invalid("settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, the country lookup (geo_enabled, geo_url), or backup")
 	}
 	return out, nil
 }
@@ -208,18 +212,18 @@ func cleanGeo(in *probev1.Settings) (store.GeoUpdate, error) {
 	return out, nil
 }
 
-func settingsProto(st store.SiteSettings, g store.GeoSettings) *probev1.Settings {
-	return &probev1.Settings{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS,
-		PublicEnabled: proto.Bool(st.PublicEnabled), GeoEnabled: proto.Bool(g.Enabled), GeoUrl: proto.String(g.URL)}
+func settingsProto(st store.Settings) *probev1.Settings {
+	return &probev1.Settings{Title: st.Site.Title, Theme: st.Site.Theme, AccentColor: st.Site.AccentColor, Logo: st.Site.Logo, CustomCss: st.Site.CustomCSS,
+		PublicEnabled: proto.Bool(st.Site.PublicEnabled), GeoEnabled: proto.Bool(st.Geo.Enabled), GeoUrl: proto.String(st.Geo.URL), Backup: backupProto(st.Backup)}
 }
 
 func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.GetSettingsRequest]) (*connect.Response[probev1.GetSettingsResponse], error) {
-	st, g, err := s.store.Settings(ctx)
+	st, err := s.store.Settings(ctx)
 	if err != nil {
 		s.log.Error("reading settings failed", "err", err)
 		return nil, internalError("reading settings failed")
 	}
-	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: settingsProto(st, g)}), nil
+	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: settingsProto(st)}), nil
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probev1.UpdateSettingsRequest]) (*connect.Response[probev1.UpdateSettingsResponse], error) {
@@ -227,12 +231,20 @@ func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probe
 	if err != nil {
 		return nil, err
 	}
-	st, g, err := s.store.SaveSettings(ctx, in)
+	saved, err := s.store.SaveSettings(ctx, in)
 	if err != nil {
+		var missing store.NotFoundError
+		var outOfRange store.BackupRangeError
+		switch {
+		case errors.As(err, &missing) && missing.Kind == store.ObjectNotifyChannel:
+			return nil, invalid("backup.notify.channel_ids: channel %d does not exist", missing.ID)
+		case errors.As(err, &outOfRange):
+			return nil, invalid("%s", outOfRange)
+		}
 		s.log.Error("saving settings failed", "err", err)
 		return nil, internalError("saving settings failed")
 	}
-	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: settingsProto(st, g)}), nil
+	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: settingsProto(saved)}), nil
 }
 
 func (s *Service) GetStorageStats(ctx context.Context, _ *connect.Request[probev1.GetStorageStatsRequest]) (*connect.Response[probev1.GetStorageStatsResponse], error) {

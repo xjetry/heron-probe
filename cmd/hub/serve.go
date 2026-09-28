@@ -22,6 +22,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/geo"
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
+	"github.com/xjetry/probe/internal/hub/outbound"
 	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/hub/traffic"
@@ -135,9 +136,11 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	l := live.New(clk, ttl)
 	book := traffic.New(st, clk, loc, log)
 	alerts := alert.New(alert.Config{TTL: ttl, Location: loc}, st, l, clk, log)
-	// 通知渠道与国家查询共用一个出站客户端（§4.9 复用 §9.3 的那一个）：不跟随重定向、带总超时的出站行为只有一份。
-	outbound := alert.NewHTTPClient()
-	notifier := alert.NewQueue(st, alerts.Channels, outbound, "", clk, nil, log)
+	// 通知渠道与国家查询共用一个出站客户端（§4.9 复用 §9.3 的那一个），两者不跟随重定向、带总时限的行为因此是同一份。
+	// 时限取 alert.NotifyTimeout，推导在通知投递一侧（见其注释）；国家查询是不带正文的 GET、应答至多读 geo 包的
+	// maxResponseBytes，同属 outbound.NewClient 所说的请求与应答都有小上界的消费方。
+	client := outbound.NewClient(alert.NotifyTimeout)
+	notifier := alert.NewQueue(st, alerts.Channels, client, "", clk, nil, log)
 	alerts.SetSender(notifier)
 	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, book, reg, clk, log)
 	if err != nil {
@@ -172,7 +175,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	defer startLoop(alerts.RunProbeEvaluation)()
 	defer startLoop(alerts.RunExpirySweep)()
 	defer startLoop(notifier.Run)()
-	defer startLoop(geo.New(st, outbound, clk, log).Run)()
+	defer startLoop(geo.New(st, client, clk, log).Run)()
 
 	// 监听在 net.Listen 返回时已建立，连接先进内核队列。runServe 装配的文本 handler 在 Info 返回前
 	// 同步写完 stderr，所以先写启动行再开始 Serve，拿到任何响应的调用方都已能在日志里读到它。

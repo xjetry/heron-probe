@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xjetry/probe/internal/hub/outbound"
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
@@ -48,7 +49,7 @@ func TestWebhookRendersTemplateAndHeaders(t *testing.T) {
 			if custom {
 				cfg.BodyTemplate = `{"node":{{json .Node}}}`
 			}
-			c, err := NewWebhook(cfg, NewHTTPClient())
+			c, err := NewWebhook(cfg, outbound.NewClient(NotifyTimeout))
 			must(t, err)
 			must(t, c.Send(t.Context(), messageForTest()))
 			if method != "PATCH" || header != "custom" || contentType != "application/json" {
@@ -84,7 +85,7 @@ func TestWebhookRefusesRedirectAndClassifies(t *testing.T) {
 				_, _ = io.WriteString(w, "failure body")
 			}))
 			defer srv.Close()
-			c, err := NewWebhook(WebhookConfig{URL: srv.URL, Method: "POST"}, NewHTTPClient())
+			c, err := NewWebhook(WebhookConfig{URL: srv.URL, Method: "POST"}, outbound.NewClient(NotifyTimeout))
 			must(t, err)
 			err = c.Send(t.Context(), messageForTest())
 			wantRetry(t, err, status == 408 || status == 429 || status >= 500)
@@ -98,7 +99,7 @@ func TestWebhookRefusesRedirectAndClassifies(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-release }))
 		defer srv.Close()
 		defer close(release)
-		client := NewHTTPClient()
+		client := outbound.NewClient(NotifyTimeout)
 		if client.Timeout != 10*time.Second {
 			t.Fatalf("timeout=%s", client.Timeout)
 		}
@@ -118,7 +119,7 @@ func TestTelegramPostsSendMessage(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 	}))
 	defer srv.Close()
-	c := NewTelegram(TelegramConfig{BotToken: "secret", ChatID: "chat"}, NewHTTPClient(), srv.URL)
+	c := NewTelegram(TelegramConfig{BotToken: "secret", ChatID: "chat"}, outbound.NewClient(NotifyTimeout), srv.URL)
 	must(t, c.Send(t.Context(), messageForTest()))
 	if path != "/botsecret/sendMessage" || method != "POST" || contentType != "application/json" || body["chat_id"] != "chat" || !strings.Contains(body["text"], messageForTest().Summary) {
 		t.Fatalf("path=%q method=%q type=%q body=%v", path, method, contentType, body)
@@ -131,7 +132,7 @@ func TestTelegramErrorBodyIsTruncated(t *testing.T) {
 		_, _ = io.WriteString(w, strings.Repeat("x", 200)+"SECRET_TAIL")
 	}))
 	defer srv.Close()
-	err := NewTelegram(TelegramConfig{BotToken: "token", ChatID: "chat"}, NewHTTPClient(), srv.URL).Send(t.Context(), messageForTest())
+	err := NewTelegram(TelegramConfig{BotToken: "token", ChatID: "chat"}, outbound.NewClient(NotifyTimeout), srv.URL).Send(t.Context(), messageForTest())
 	wantRetry(t, err, false)
 	if !strings.Contains(err.Error(), "400") || !strings.Contains(err.Error(), strings.Repeat("x", 200)) || strings.Contains(err.Error(), "SECRET_TAIL") {
 		t.Fatalf("error=%v", err)
@@ -160,7 +161,7 @@ func TestResponseBodyIsBounded(t *testing.T) {
 	defer srv.Close()
 	var read atomic.Int64
 	var closed atomic.Bool
-	client := NewHTTPClient()
+	client := outbound.NewClient(NotifyTimeout)
 	client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		resp, err := http.DefaultTransport.RoundTrip(r)
 		if err == nil {
@@ -179,7 +180,7 @@ func TestResponseBodyIsBounded(t *testing.T) {
 func TestParseChannelSharesValidation(t *testing.T) {
 	for _, config := range []string{`{"url":"bad"}`, `{"url":"https://example.invalid","method":"GET"}`, `{"url":"https://example.invalid","body_template":"{{.Wrong}}"}`, `{"url":"https://example.invalid","headers":{"X":"bad\r\n"}}`} {
 		row := store.NotifyChannel{Name: "webhook", Kind: store.ChannelWebhook, Config: config}
-		_, err := ParseChannel(row, NewHTTPClient(), "")
+		_, err := ParseChannel(row, outbound.NewClient(NotifyTimeout), "")
 		validationErr := CheckChannel(row)
 		if !errors.Is(err, ErrInvalid) || validationErr == nil || err.Error() != validationErr.Error() {
 			t.Fatalf("validation differs: %v", err)
@@ -191,7 +192,7 @@ func TestTemplateRuntimeFailureIsNotRetryable(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
 	defer srv.Close()
-	c, err := NewWebhook(WebhookConfig{URL: srv.URL, Method: "POST", BodyTemplate: `{{if eq .Node "missing"}}{{.Missing}}{{else}}{{.Node}}{{end}}`}, NewHTTPClient())
+	c, err := NewWebhook(WebhookConfig{URL: srv.URL, Method: "POST", BodyTemplate: `{{if eq .Node "missing"}}{{.Missing}}{{else}}{{.Node}}{{end}}`}, outbound.NewClient(NotifyTimeout))
 	must(t, err)
 	m := messageForTest()
 	m.Node = "missing"
@@ -208,8 +209,8 @@ func TestDeliveryConstructionRequiresNormalizedMethod(t *testing.T) {
 	row := store.NotifyChannel{Name: "hook", Kind: store.ChannelWebhook, Config: string(b)}
 	must(t, CheckChannel(row))
 	for _, makeChannel := range []func() (Channel, error){
-		func() (Channel, error) { return NewWebhook(cfg, NewHTTPClient()) },
-		func() (Channel, error) { return ParseChannel(row, NewHTTPClient(), "") },
+		func() (Channel, error) { return NewWebhook(cfg, outbound.NewClient(NotifyTimeout)) },
+		func() (Channel, error) { return ParseChannel(row, outbound.NewClient(NotifyTimeout), "") },
 	} {
 		_, err := makeChannel()
 		if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "method") {

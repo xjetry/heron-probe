@@ -15,14 +15,14 @@ func TestSiteSettingsDefaultAndWholeReplacement(t *testing.T) {
 		t.Fatalf("never saved: %+v %v", got, err)
 	}
 	full := SiteSettings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,AAAA", CustomCSS: "body{}"}
-	if _, _, err := s.SaveSettings(t.Context(), SettingsUpdate{Appearance: &full.SiteAppearance, PublicEnabled: &full.PublicEnabled}); err != nil {
+	if _, err := s.SaveSettings(t.Context(), SettingsUpdate{Appearance: &full.SiteAppearance, PublicEnabled: &full.PublicEnabled}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.SiteSettings(t.Context()); err != nil || got != full {
 		t.Fatalf("round trip: %+v %v", got, err)
 	}
 	// 整体替换：空串写入，表示该项回到默认，不是"不改"。
-	if _, _, err := s.SaveSettings(t.Context(), SettingsUpdate{Appearance: &SiteAppearance{Theme: "auto"}}); err != nil {
+	if _, err := s.SaveSettings(t.Context(), SettingsUpdate{Appearance: &SiteAppearance{Theme: "auto"}}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.SiteSettings(t.Context()); err != nil || got != (SiteSettings{Theme: "auto"}) {
@@ -42,7 +42,7 @@ func TestSiteAppearanceRoundTripsEveryField(t *testing.T) {
 	for i := range v.NumField() {
 		v.Field(i).SetString(v.Type().Field(i).Name)
 	}
-	if _, _, err := s.SaveSettings(t.Context(), SettingsUpdate{Appearance: &want}); err != nil {
+	if _, err := s.SaveSettings(t.Context(), SettingsUpdate{Appearance: &want}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.SiteSettings(t.Context())
@@ -55,65 +55,83 @@ func TestSiteAppearanceRoundTripsEveryField(t *testing.T) {
 }
 
 // 保存中途失败时库里仍是上一套完整设置，内存里的总闸也不变：全部键在同一个写事务里，任一条失败整体回滚，失败不发布。
-// 触发器拦写入顺序里最后一个键 geo.url，拆成逐键提交的实现会留下它之前的外观、总闸与查询开关的新值。
+// 触发器拦写入顺序里最后一个键 notify.backup_channels（SaveSettings 先写外观、总闸与国家查询，再由 saveBackup 写备份，
+// 渠道列表在最后），失败时其余键都已写过：拆成多个事务提交的实现会把其中已提交的新值留在库里。
 func TestSaveSettingsIsAllOrNothing(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	first := SiteSettings{Title: "旧", Theme: "light", AccentColor: "#111111", Logo: "data:image/png;base64,AAAA", CustomCSS: "a{}", PublicEnabled: true}
-	firstGeo := GeoSettings{URL: "https://old.example/{ip}"}
-	if _, _, err := s.SaveSettings(ctx, SettingsUpdate{Appearance: &first.SiteAppearance, PublicEnabled: &first.PublicEnabled, Geo: GeoUpdate{Enabled: &firstGeo.Enabled, URL: &firstGeo.URL}}); err != nil {
+	var channels []int64
+	for _, name := range []string{"a", "b"} {
+		c, err := s.SaveNotifyChannel(ctx, NotifyChannel{Name: name, Kind: ChannelTelegram, Config: `{}`})
+		if err != nil {
+			t.Fatal(err)
+		}
+		channels = append(channels, c.ID)
+	}
+	gateOpen, geoOff, oldURL, oldSecret, oldKeep := true, false, "https://old.example/{ip}", "old-secret", uint32(10)
+	before, err := s.SaveSettings(ctx, SettingsUpdate{
+		Appearance:    &SiteAppearance{Title: "旧", Theme: "light", AccentColor: "#111111", Logo: "data:image/png;base64,AAAA", CustomCSS: "a{}"},
+		PublicEnabled: &gateOpen,
+		Geo:           GeoUpdate{Enabled: &geoOff, URL: &oldURL},
+		Backup: &BackupSettingsUpdate{Endpoint: "https://old.example", Bucket: "old-bucket", Region: "auto", AccessKey: "old", Prefix: "old",
+			Secret: &oldSecret, ConfigKeep: &oldKeep, Channels: &[]int64{channels[0]}},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := s.write(ctx, func(tx *sql.Tx) error {
-		_, err := tx.Exec("CREATE TRIGGER reject_url BEFORE INSERT ON setting WHEN NEW.key = 'geo.url' BEGIN SELECT RAISE(ABORT, 'url rejected'); END")
+		_, err := tx.Exec("CREATE TRIGGER reject_channels BEFORE INSERT ON setting WHEN NEW.key = 'notify.backup_channels' BEGIN SELECT RAISE(ABORT, 'channels rejected'); END")
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	closed, on, url := false, true, "https://new.example/{ip}"
-	_, _, err := s.SaveSettings(ctx, SettingsUpdate{
+	gateClosed, geoOn, newURL, newSecret, newKeep := false, true, "https://new.example/{ip}", "new-secret", uint32(20)
+	_, err = s.SaveSettings(ctx, SettingsUpdate{
 		Appearance:    &SiteAppearance{Title: "新", Theme: "dark", AccentColor: "#222222", CustomCSS: "b{}"},
-		PublicEnabled: &closed,
-		Geo:           GeoUpdate{Enabled: &on, URL: &url},
+		PublicEnabled: &gateClosed,
+		Geo:           GeoUpdate{Enabled: &geoOn, URL: &newURL},
+		Backup: &BackupSettingsUpdate{Endpoint: "https://new.example", Bucket: "new-bucket", Region: "us-east-1", AccessKey: "new", Prefix: "new",
+			Secret: &newSecret, ConfigKeep: &newKeep, Channels: &[]int64{channels[0], channels[1]}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "url rejected") {
+	if err == nil || !strings.Contains(err.Error(), "channels rejected") {
 		t.Fatalf("save error = %v", err)
 	}
-	if site, geo, err := s.Settings(ctx); err != nil || site != first || geo != firstGeo {
-		t.Fatalf("failed save left %+v %+v %v, want %+v %+v", site, geo, err, first, firstGeo)
+	if got, err := s.Settings(ctx); err != nil || !reflect.DeepEqual(got, before) {
+		t.Fatalf("failed save left %+v %v, want %+v", got, err, before)
 	}
 	if !s.PublicEnabled() {
 		t.Fatal("failed save published the closed gate")
 	}
 }
 
-// 各组彼此独立：只给总闸或只给国家查询的保存不写外观键，库里的外观原样保留；回显的外观在同一个写事务里读回，
-// 是库里的值而不是空的外观。
+// 各组彼此独立：只给总闸、只给国家查询或只给备份的保存不写外观键，库里的外观原样保留；回显的外观在同一个写事务里
+// 读回，是库里的值而不是空的外观。
 func TestSaveSettingsLeavesAbsentAppearance(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
 	full := SiteAppearance{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,AAAA", CustomCSS: "body{}"}
-	if _, _, err := s.SaveSettings(ctx, SettingsUpdate{Appearance: &full}); err != nil {
+	if _, err := s.SaveSettings(ctx, SettingsUpdate{Appearance: &full}); err != nil {
 		t.Fatal(err)
 	}
-	closed, on := false, true
+	closed, on, keep := false, true, uint32(24)
 	for _, c := range []struct {
 		name string
 		in   SettingsUpdate
 	}{
 		{"public_enabled only", SettingsUpdate{PublicEnabled: &closed}},
 		{"geo only", SettingsUpdate{Geo: GeoUpdate{Enabled: &on}}},
+		{"backup only", SettingsUpdate{Backup: &BackupSettingsUpdate{ConfigKeep: &keep}}},
 	} {
-		site, _, err := s.SaveSettings(ctx, c.in)
-		if err != nil || site.SiteAppearance != full {
-			t.Fatalf("%s: echoed appearance %+v %v, want %+v", c.name, site.SiteAppearance, err, full)
+		saved, err := s.SaveSettings(ctx, c.in)
+		if err != nil || saved.Site.SiteAppearance != full {
+			t.Fatalf("%s: echoed appearance %+v %v, want %+v", c.name, saved.Site.SiteAppearance, err, full)
 		}
 		if got, err := s.SiteSettings(ctx); err != nil || got.SiteAppearance != full {
 			t.Fatalf("%s: stored appearance %+v %v, want %+v", c.name, got.SiteAppearance, err, full)
 		}
 	}
-	if site, geo, err := s.Settings(ctx); err != nil || site.PublicEnabled || !geo.Enabled {
-		t.Fatalf("groups not applied: %+v %+v %v", site, geo, err)
+	if st, err := s.Settings(ctx); err != nil || st.Site.PublicEnabled || !st.Geo.Enabled || st.Backup.ConfigKeep != keep {
+		t.Fatalf("groups not applied: %+v %+v %+v %v", st.Site, st.Geo, st.Backup, err)
 	}
 }
 

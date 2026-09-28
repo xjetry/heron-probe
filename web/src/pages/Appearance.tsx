@@ -1,10 +1,10 @@
-import { create } from "@bufbuild/protobuf";
-import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@connectrpc/connect-query";
 import { type ChangeEvent, type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
-import { AdminService, GetSettingsResponseSchema, type Settings } from "../gen/probe/v1/admin_pb";
+import { SAVE_SETTINGS, useAdoptSavedSettings, useSettingsSaving } from "../api/saveSettings";
+import { BackupSettingsForm } from "../components/BackupSettingsForm";
+import { AdminService, type Settings } from "../gen/probe/v1/admin_pb";
 import { LOGO_TYPES, MAX_TITLE_CHARS, THEMES, sizeProblems, type Theme } from "../lib/appearance";
 import { ANSWERS_PER_NODE } from "../lib/country";
 import { BUILT_IN_ACCENT } from "../lib/palette";
@@ -19,27 +19,16 @@ const toDraft = (s: Settings | undefined): Draft => ({
   title: s?.title ?? "", theme: s?.theme || "auto", accentColor: s?.accentColor ?? "", logo: s?.logo ?? "", customCss: s?.customCss ?? "",
 });
 
-// 两个表单保存成功后都经它：先把 hub 的回显写进 getSettings 的缓存，再失效。回显就是库里的已保存值（外观与国家查询
-// 两项由 SaveSettings 在同一个写事务里读回，总闸是这次写入的值、缺席时是与库一致的内存值），缓存据此更新，不依赖刷新
-// 成功。只失效时，刷新一旦失败，缓存就停在保存前的值：外观表单没动过的总闸开关显示缓存值，停在保存前；重新进入页面时
-// 两个表单显示的也是保存前的值。写与失效用同一个键，作用在同一组查询上。
-function useAdoptSavedSettings() {
-  const qc = useQueryClient();
-  return (settings: Settings | undefined) => {
-    const queryKey = createConnectQueryKey({ schema: AdminService.method.getSettings, cardinality: "finite" });
-    qc.setQueriesData({ queryKey }, () => create(GetSettingsResponseSchema, { settings }));
-    return qc.invalidateQueries({ queryKey });
-  };
-}
-
 // 公开页的外观与总闸。UpdateSettings 按组判定：外观五项是一组，给出就整体替换，表单因此总是提交全部五项（明暗总有值，
 // 这一组总算给出）。总闸是另一组，缺席表示不变，草稿只在用户动过开关后才带它：草稿是开始编辑（或上次保存）时的快照，
 // 之后总闸可能被别处改过（另一个面板、脚本），把快照里的总闸随标题一起提交，会把别人刚关掉的公开页重新打开。开关没动
-// 过时显示查询缓存里 hub 的当前值，重新拉取即跟上。国家查询的两项不在这个表单里、不提交：hub 对它们缺席即不改（见 GeoLookup）。
+// 过时显示查询缓存里 hub 的当前值，重新拉取即跟上。国家查询的两项与备份设置不在这个表单里、不提交：hub 对它们缺席即
+// 不改（见 GeoLookup、BackupSettingsForm）。三个设置表单的保存互斥（SAVE_SETTINGS，见 api/saveSettings.ts），saving
+// 覆盖任一个在途。
 //
 // 保存成功时 onSuccess 用 hub 的回显替换草稿；它不判断"是不是最新一次"，靠的是"有未结请求"与"草稿还能被改"互斥。
 // 草稿的改动来自两处：用户改字段（同步），与读 logo 文件的回调（异步，读完才改）。互斥由两处承载：
-//   - 保存进行中，fieldset 的 disabled={update.isPending} 禁用整个表单，含文件输入：保存期间既改不了字段，也开始不了读取；
+//   - 保存进行中，fieldset 的 disabled={saving} 禁用整个表单，含文件输入：保存期间既改不了字段，也开始不了读取；
 //   - 读取进行中，文件输入的 disabled={reading} 让至多一个读者在飞，reading 因此恰好等于"有读者在飞"；
 //     submit 守卫（!reading）与保存按钮的禁用拒绝在这时保存。logo 字段另有第二个写者"移除 logo"，它在读取中
 //     同样禁用：否则读取中点了移除，读完的回调又把 logo 写回来，用户最后一次操作被迟到的结果覆盖。
@@ -53,7 +42,9 @@ export function Appearance() {
   const [saved, setSaved] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [reading, setReading] = useState(false);
+  const saving = useSettingsSaving();
   const update = useMutation(AdminService.method.updateSettings, {
+    mutationKey: SAVE_SETTINGS,
     onSuccess: (r) => {
       setDraft(toDraft(r.settings));
       setSaved(true);
@@ -88,9 +79,10 @@ export function Appearance() {
     setReading(true);
     reader.readAsDataURL(file);
   };
-  const submit = (e: FormEvent) => {
+  const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (problems.length === 0 && !reading && !update.isPending) update.mutate({ settings: form });
+    if (!e.currentTarget.checkValidity()) return;
+    if (problems.length === 0 && !reading && !saving) update.mutate({ settings: form });
   };
   return (
     <section>
@@ -101,7 +93,7 @@ export function Appearance() {
         要改页面结构，用 hub 的 --public-dir 换掉整个公开页。「启用公开页」是公开页与公开接口的总闸，内置页与 --public-dir 都受它约束。
       </p>
       <form className="card edit-form" aria-label="公开页外观" onSubmit={submit}>
-        <fieldset className="bare" disabled={update.isPending}>
+        <fieldset className="bare" disabled={saving}>
           <label className="row"><input type="checkbox" checked={publicEnabled} onChange={(e) => edit({ publicEnabled: e.target.checked })} />启用公开页</label>
           <p className="muted">关闭后公开页与公开接口整体不可访问，节点的公开标记保留，重新打开即可恢复。hub 内的快照缓存最多再命中 1 秒；经缓存代理时，GET 响应按各自的 max-age 过期（站点配置最长 5 分钟）。</p>
           <label>
@@ -149,6 +141,7 @@ export function Appearance() {
         </fieldset>
       </form>
       <GeoLookup current={gate.data.settings} />
+      <BackupSettingsForm current={gate.data.settings?.backup} appearance={toDraft(gate.data.settings)} />
     </section>
   );
 }
@@ -156,14 +149,17 @@ export function Appearance() {
 type GeoDraft = { geoEnabled: boolean; geoUrl: string };
 const toGeoDraft = (s: Settings | undefined): GeoDraft => ({ geoEnabled: s?.geoEnabled ?? false, geoUrl: s?.geoUrl ?? "" });
 
-// 国家 / 地区查询的开关与服务地址。只提交这两项：UpdateSettings 按组判定，外观与总闸缺席即不改。于是只改查询设置既不会
-// 顺带保存上面表单里外观与总闸的未保存改动，也不会把缓存里可能已过时的外观写回去（别处刚改过的外观不被覆盖）。current
-// 只用来初始化草稿。开关决定 hub 是否把节点地址发给第三方，文案照写发给哪个地址。
+// 国家 / 地区查询的开关与服务地址。只提交这两项：UpdateSettings 按组判定，外观、总闸与备份缺席即不改。于是只改查询设置
+// 既不会顺带保存上面表单里外观与总闸的未保存改动，也不会把缓存里可能已过时的外观写回去（别处刚改过的外观不被覆盖）。
+// current 只用来初始化草稿。保存与其余设置表单互斥（SAVE_SETTINGS）。开关决定 hub 是否把节点地址发给第三方，文案照写
+// 发给哪个地址。
 function GeoLookup({ current }: { current: Settings | undefined }) {
   const adoptSaved = useAdoptSavedSettings();
   const [draft, setDraft] = useState<GeoDraft | null>(null);
   const [saved, setSaved] = useState(false);
+  const saving = useSettingsSaving();
   const update = useMutation(AdminService.method.updateSettings, {
+    mutationKey: SAVE_SETTINGS,
     onSuccess: (r) => {
       setDraft(toGeoDraft(r.settings));
       setSaved(true);
@@ -178,13 +174,13 @@ function GeoLookup({ current }: { current: Settings | undefined }) {
   };
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (!update.isPending) update.mutate({ settings: form });
+    if (!saving) update.mutate({ settings: form });
   };
   return (
     <>
       <h2>国家 / 地区查询</h2>
       <form className="card edit-form" aria-label="国家 / 地区查询" onSubmit={submit}>
-        <fieldset className="bare" disabled={update.isPending}>
+        <fieldset className="bare" disabled={saving}>
           <label className="inline">
             <input type="checkbox" checked={form.geoEnabled} onChange={(e) => edit({ geoEnabled: e.target.checked })} />
             按来源地址查询节点的国家 / 地区
