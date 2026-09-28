@@ -115,18 +115,20 @@ func TestFullWaitingWindowDoesNotHoldOtherChannels(t *testing.T) {
 	}
 }
 
-// 满窗口的挤出顺序：先就绪批次，再节奏等待，再已写进库的重试等待；结果没写进库的重试等待（时刻只在内存里）不挤，
-// 这时新批次留在库里并记 Warn。
+// 满窗口的挤出顺序：先就绪批次，再节奏等待，再已写进库的重试等待，同类里先挤最晚到期的；结果没写进库的重试等待
+// （时刻只在内存里）不挤，这时新批次留在库里并记 Warn。
 func TestEnqueueEvictionOrder(t *testing.T) {
 	f := newFixture(t)
 	var logs bytes.Buffer
 	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, slog.New(slog.NewJSONHandler(&logs, nil)))
-	q.limit = 3
+	q.limit = 5
 	put := func(b int64, w waitEntry) { q.waiting[b], q.active[b] = w, 1 }
 	put(1, waitEntry{at: time.Hour, kind: waitUnrecorded})
 	put(2, waitEntry{at: time.Minute, kind: waitRetry})
-	put(3, waitEntry{at: time.Second, kind: waitRate})
-	for _, want := range []int64{3, 2} {
+	put(3, waitEntry{at: 2 * time.Minute, kind: waitRetry})
+	put(4, waitEntry{at: time.Second, kind: waitRate})
+	put(5, waitEntry{at: 2 * time.Second, kind: waitRate})
+	for _, want := range []int64{5, 4, 3, 2} {
 		if !q.enqueue(100+want, 1, true) {
 			t.Fatalf("enqueue refused while batch %d could be put back", want)
 		}
@@ -144,7 +146,7 @@ func TestEnqueueEvictionOrder(t *testing.T) {
 	if q.enqueue(200, 1, true) {
 		t.Fatalf("enqueue evicted an unrecorded retry; waiting=%v ready=%v", q.waiting, q.ready)
 	}
-	if !q.overflow || len(q.waiting) != 3 || !strings.Contains(logs.String(), "delivery batch left for refill") {
+	if !q.overflow || len(q.waiting) != 5 || !strings.Contains(logs.String(), "delivery batch left for refill") {
 		t.Fatalf("overflow=%v waiting=%v logs=%s", q.overflow, q.waiting, logs.String())
 	}
 }
@@ -224,6 +226,33 @@ func TestEnqueueWakesIdleWorkerAfterImmediateSleep(t *testing.T) {
 			}
 			time.Sleep(time.Millisecond)
 		}
+	}
+}
+
+// 入队落在 next 之后、idle 登记空闲之前：这时没有可取消的空闲，入队只记下 woken，idle 看到它就不睡。否则 worker
+// 要睡到最早的到期时刻（没有等待批次时是下一次入队）才看到窗口里已有的批次。
+func TestIdleReturnsAtOnceAfterEnqueueSinceNext(t *testing.T) {
+	f := newFixture(t)
+	var slept []time.Duration
+	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, func(_ context.Context, d time.Duration) error {
+		slept = append(slept, d)
+		return nil
+	}, f.log)
+	// 一个一小时后才到期的等待批次让 next 给出有期限的空闲：idle 若不看 woken，就会经 q.sleep 睡向那一刻。批次号取
+	// 库里这个用例不会分配到的值，入队的新批次才不会被当成它去重。
+	q.waiting[999], q.active[999] = waitEntry{at: f.clk.Mono() + time.Hour, kind: waitRate}, 1
+	batch, refill, until, timed := q.next()
+	if batch != 0 || refill || !timed {
+		t.Fatalf("next=%d refill=%v timed=%v, want a timed idle", batch, refill, timed)
+	}
+	ev := queueEvent(t, f, queueChannel(t, f, "http://127.0.0.1:1"))
+	q.Enqueue(ev)
+	q.idle(t.Context(), until, timed)
+	if len(slept) != 0 {
+		t.Fatalf("idle slept %v although a batch was enqueued after next", slept)
+	}
+	if b, _, _, _ := q.next(); b != ev.Deliveries[0].BatchID {
+		t.Fatalf("next after idle took batch %d, want the enqueued %d", b, ev.Deliveries[0].BatchID)
 	}
 }
 

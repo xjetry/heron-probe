@@ -3,7 +3,6 @@ package store
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -186,18 +185,27 @@ func TestBatchAttemptAndResultCoverWholeBatch(t *testing.T) {
 	}
 }
 
-// 同批各行次数不一致说明不变式已被破坏：报错并回滚，不按其中某行的次数发送。比较的是批次全部行：已耗尽名额
-// （attempts = 3）却未终态的一行不会被计数的 UPDATE 命中，同样要被发现。
+// 同批各行的次数或 not_before 不一致说明不变式已被破坏：报错并回滚，不按其中某行发送。比较的是批次全部行：已耗尽
+// 名额（attempts = 3）却未终态的一行不会被计数的 UPDATE 命中，同样要被发现；not_before 不一致时按首行判断等不等，
+// 会让另一行早于它自己的最早时刻被发出。
 func TestBeginBatchAttemptRejectsNonUniformBatch(t *testing.T) {
-	for _, attempts := range []int{1, MaxDeliveryAttempts} {
-		t.Run(fmt.Sprint(attempts), func(t *testing.T) {
+	for _, tc := range []struct {
+		name, set string
+		value     int64
+		attempts  int // 被改写的那一行改写后的次数。
+	}{
+		{"attempts_1", "attempts = ?", 1, 1},
+		{"attempts_exhausted", "attempts = ?", MaxDeliveryAttempts, MaxDeliveryAttempts},
+		{"not_before", "not_before = ?", time.Date(2026, 1, 1, 0, 1, 0, 0, time.UTC).Unix(), 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			s, ids, cs, _ := alertFixture(t)
 			r := saveRule(t, s, AlertRule{Kind: KindOffline})
 			a := recordTargets(t, s, r.ID, ids[0], DeliveryTarget{ChannelID: cs[0].ID})
 			batch := a.Deliveries[0].BatchID
 			b := recordTargets(t, s, r.ID, ids[1], DeliveryTarget{ChannelID: cs[0].ID, Batch: batch})
 			if err := s.write(t.Context(), func(tx *sql.Tx) error {
-				_, err := tx.Exec("UPDATE alert_delivery SET attempts = ? WHERE id = ?", attempts, b.Deliveries[0].ID)
+				_, err := tx.Exec("UPDATE alert_delivery SET "+tc.set+" WHERE id = ?", tc.value, b.Deliveries[0].ID)
 				return err
 			}); err != nil {
 				t.Fatal(err)
@@ -206,7 +214,7 @@ func TestBeginBatchAttemptRejectsNonUniformBatch(t *testing.T) {
 				t.Fatalf("non-uniform batch attempt err=%v", err)
 			}
 			got, err := s.GetDeliveryBatch(t.Context(), batch)
-			if err != nil || got.Deliveries[0].Attempts != 0 || got.Deliveries[1].Attempts != attempts {
+			if err != nil || got.Deliveries[0].Attempts != 0 || got.Deliveries[1].Attempts != tc.attempts {
 				t.Fatalf("rows after refused attempt=%+v err=%v, want the attempt rolled back", got.Deliveries, err)
 			}
 		})

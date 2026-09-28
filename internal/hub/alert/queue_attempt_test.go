@@ -164,6 +164,61 @@ func TestRetryAfterSurvivesResultWriteFailure(t *testing.T) {
 	}
 }
 
+// attempt 把结果没写进库的等待记成 waitUnrecorded，它不能被挤出：库里没有这次的 not_before，挤出后补货装回会立即
+// 重发，早于接收方要求的 Retry-After。窗口只有一格，429 的结果写失败后、存储退避期间，发往另一个渠道的批次到达：
+// 它留在库里，等这个批次按 Retry-After 发完、窗口有空位时才由补货装入。
+func TestUnrecordedRetryWaitIsNotEvicted(t *testing.T) {
+	f := newFixture(t)
+	base, tg := newTelegramServer(t, f, func(n int, w http.ResponseWriter) {
+		if n == 0 {
+			w.Header().Set("Retry-After", "300")
+			w.WriteHeader(http.StatusTooManyRequests)
+		}
+	})
+	var hookMu sync.Mutex
+	var hooked []time.Time
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hookMu.Lock()
+		hooked = append(hooked, f.clk.Now())
+		hookMu.Unlock()
+	}))
+	defer srv.Close()
+	ev := recordBatches(t, f, telegramChannel(t, f, 20), 1)[0]
+	hookEvent := recordBatches(t, f, queueChannel(t, f, srv.URL), 1)[0]
+	db := deliveryDB(t, f)
+	deliverySQL(t, db, "CREATE TRIGGER fail_429 BEFORE UPDATE ON alert_delivery WHEN NEW.failure = 'http_status' BEGIN SELECT RAISE(ABORT, 'result write blocked'); END")
+	var q *Queue
+	var mu sync.Mutex
+	var sleeps []time.Duration
+	q = NewQueue(f.st, f.e.Channels, NewHTTPClient(), base, f.clk, func(_ context.Context, d time.Duration) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(sleeps) == 0 {
+			// 存储退避：429 的等待已在 waiting 里，结果没写进库。
+			deliverySQL(t, db, "DROP TRIGGER fail_429")
+			q.Enqueue(hookEvent)
+		}
+		sleeps = append(sleeps, d)
+		f.clk.Advance(d)
+		return nil
+	}, f.log)
+	q.limit = 1
+	start := f.clk.Now()
+	q.Enqueue(ev)
+	stop := startQueue(t, q)
+	awaitSettled(t, f)
+	stop()
+	got := tg.messages()
+	if len(got) != 2 || !got[1].at.Equal(start.Add(300*time.Second)) {
+		t.Fatalf("telegram requests=%+v, want the retry 300s after the 429: the unrecorded wait was put back and resent early", got)
+	}
+	hookMu.Lock()
+	defer hookMu.Unlock()
+	if len(hooked) != 1 || !hooked[0].Equal(start.Add(300*time.Second)) {
+		t.Fatalf("webhook delivered at %v, want once at %v after the telegram batch left the window", hooked, start.Add(300*time.Second))
+	}
+}
+
 // Retry-After 写进库（not_before）：hub 在等待期间重启，新进程补回的批次仍等到那一刻才重发。
 func TestRetryAfterSurvivesRestart(t *testing.T) {
 	f := newFixture(t)
