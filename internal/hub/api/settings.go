@@ -14,6 +14,7 @@ import (
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/hub/geo"
@@ -79,10 +80,30 @@ func cleanSettings(in *probev1.Settings) (store.SettingsUpdate, error) {
 	return out, nil
 }
 
-// appearanceGiven 是外观这一组"给出"的判定：五项任一非空。Settings 新增外观字段时要同时加进这里与 cleanAppearance，
-// TestUpdateSettingsEveryAppearanceFieldGivesTheGroup 按 proto 描述逐个核对没有 presence 的字符串字段。
+// Settings 的每个字段属于下面三类之一，UpdateSettings 按类判定（§10），TestUpdateSettingsEveryFieldIsClassified 按
+// proto 描述枚举全部字段逐类核对：
+//   - appearanceFields：外观这一组。proto3 的 string 没有 presence，任一项非空即算给出（appearanceGiven）。
+//   - readOnlySettingsFields：只读回显，取自 hub 启动时的选择（settingsProto）。UpdateSettings 中缺席或给出均忽略，
+//     不算给出任何一组。
+//   - 其余字段都必须有 presence，各自按 presence 判定给出（cleanSettings 的"至少一组"逐个列出它们）。
+//
+// 既不在两份清单里、又没有 presence 的字段无从判定"给出"，枚举用例对它直接失败：新增字段的人必须表态它属哪一类。
+var (
+	appearanceFields       = []protoreflect.Name{"title", "theme", "accent_color", "logo", "custom_css"}
+	readOnlySettingsFields = []protoreflect.Name{"geo_backend", "geo_mmdb_path"}
+)
+
+// appearanceGiven 是外观这一组"给出"的判定：appearanceFields 任一非空。它只读这份清单，外观的取值由 cleanAppearance
+// 逐项转抄：清单新增一项而 cleanAppearance 没有转抄时，枚举用例单给那一项的样例值、核对回显，在那里失败。
 func appearanceGiven(in *probev1.Settings) bool {
-	return in.GetTitle() != "" || in.GetTheme() != "" || in.GetAccentColor() != "" || in.GetLogo() != "" || in.GetCustomCss() != ""
+	m := in.ProtoReflect()
+	fields := m.Descriptor().Fields()
+	for _, name := range appearanceFields {
+		if m.Get(fields.ByName(name)).String() != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // cleanAppearance 校验并清洗给出的外观，返回可以原样存储与下发的值。
