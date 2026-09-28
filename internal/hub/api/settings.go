@@ -147,12 +147,12 @@ func cleanGeo(in *probev1.Settings) (store.GeoUpdate, error) {
 }
 
 func (s *Service) settingsProto(st store.SiteSettings, g store.GeoSettings) *probev1.Settings {
-	backend := probev1.GeoBackend_GEO_BACKEND_HTTP
-	if s.cfg.GeoMMDBPath != "" {
+	backend, path := probev1.GeoBackend_GEO_BACKEND_HTTP, s.cfg.Geo.MMDBPath()
+	if path != "" {
 		backend = probev1.GeoBackend_GEO_BACKEND_MMDB
 	}
 	return &probev1.Settings{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS,
-		GeoEnabled: proto.Bool(g.Enabled), GeoUrl: proto.String(g.URL), GeoBackend: backend, GeoMmdbPath: s.cfg.GeoMMDBPath}
+		GeoEnabled: proto.Bool(g.Enabled), GeoUrl: proto.String(g.URL), GeoBackend: backend, GeoMmdbPath: path}
 }
 
 func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.GetSettingsRequest]) (*connect.Response[probev1.GetSettingsResponse], error) {

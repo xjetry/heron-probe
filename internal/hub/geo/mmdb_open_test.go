@@ -174,6 +174,14 @@ func TestOpenMMDBRejectsDirectoriesAndOversizedFiles(t *testing.T) {
 	})
 }
 
+// 空路径按配置错误拒绝，且拒绝来自显式检查而不是打开失败：api 以 MMDBPath 是否为空区分两个后端，空路径的本地库
+// 会被面板回显成 HTTP 服务。
+func TestOpenMMDBRejectsAnEmptyPath(t *testing.T) {
+	if _, err := OpenMMDB(""); err == nil || !strings.Contains(err.Error(), `--geo-mmdb "": empty path`) {
+		t.Errorf("empty path error = %v, want --geo-mmdb \"\": empty path", err)
+	}
+}
+
 // 报不出大小的设备文件（/dev/zero 的 Stat 大小为 0）过了读之前的检查，读取仍按上限截断并拒绝，读进内存的不超过
 // 上限：上限只由 Stat 承载时，这里会读到内存耗尽。用 1 MiB 的上限，免得用例本身读 256 MiB。
 func TestReadLimitedCapsWhatStatCannotSize(t *testing.T) {

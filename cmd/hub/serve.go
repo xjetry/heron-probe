@@ -132,15 +132,19 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	if !isLoopback(*listen) {
 		log.Warn("listening on a non-loopback address: direct access bypasses the proxy; forwarded headers are trusted only from configured peers", "listen", *listen)
 	}
+	// 通知渠道与国家查询共用一个出站客户端（§4.9 复用 §9.3 的那一个）：不跟随重定向、带总超时的出站行为只有一份。
+	outbound := alert.NewHTTPClient()
+	// 国家查询的后端只在这里选一次，同一个对象交给查询器与 api：面板回显的后端就是查询器实际用的那个。
 	// 文件路径是部署配置，由启动参数指定，设置 API 没有可改它的字段。OpenMMDB 在这里把整个文件读进内存并校验，运行期
 	// 不再访问文件，所以换文件要重启才生效，原地覆盖或截断也不影响运行中的答案。
 	// 显式选择本地库后不能静默退回 HTTP，否则运维以为不出网时会把节点地址送到外部。
-	var localGeo *geo.MMDB
+	var geoBackend geo.Backend = geo.NewHTTP(outbound)
 	if geoMMDBSet {
-		localGeo, err = geo.OpenMMDB(*geoMMDB)
+		local, err := geo.OpenMMDB(*geoMMDB)
 		if err != nil {
 			return err
 		}
+		geoBackend = local
 	}
 
 	st, err := store.Open(*db, clk, log, store.MigrateSchema)
@@ -153,12 +157,6 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	l := live.New(clk, ttl)
 	book := traffic.New(st, clk, loc, log)
 	alerts := alert.New(alert.Config{TTL: ttl, Location: loc}, st, l, clk, log)
-	// 通知渠道与国家查询共用一个出站客户端（§4.9 复用 §9.3 的那一个）：不跟随重定向、带总超时的出站行为只有一份。
-	outbound := alert.NewHTTPClient()
-	var geoBackend geo.Backend = geo.NewHTTP(outbound)
-	if localGeo != nil {
-		geoBackend = localGeo
-	}
 	notifier := alert.NewQueue(st, alerts.Channels, outbound, "", clk, nil, log)
 	alerts.SetSender(notifier)
 	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, book, reg, clk, log)
@@ -173,7 +171,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	if err := notifier.Requeue(ctx); err != nil {
 		return err
 	}
-	admin := api.New(api.Config{TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version, Location: loc, Retention: retention, GeoMMDBPath: *geoMMDB}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
+	admin := api.New(api.Config{TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version, Location: loc, Retention: retention, Geo: geoBackend}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: trusted, Location: loc}, st, l, book, reg, clk, log)
 
 	mux := newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(pub.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", public))

@@ -20,6 +20,9 @@ type Backend interface {
 	Lookup(ctx context.Context, s store.GeoSettings, addr netip.Addr) (string, error)
 	// Service 给出退避键里"服务"一项：HTTP 为 s.URL（换服务地址即换键），mmdb 为库路径（改 geo.url 不影响 mmdb 的退避）。
 	Service(s store.GeoSettings) string
+	// MMDBPath 是面板回显的本地库路径，HTTP 后端为空串。api 以它是否为空区分两个后端，MMDB 的路径非空由 OpenMMDB
+	// 拒绝空路径保证。
+	MMDBPath() string
 }
 
 // maxResponseBytes 是读取应答体的上限。合法应答是两个字母加少量空白，超出即判失败，不再往下读。
@@ -64,6 +67,8 @@ func (h *HTTP) Lookup(ctx context.Context, s store.GeoSettings, addr netip.Addr)
 // Service 是服务地址：运维换了服务，旧服务留下的退避不挡住对新服务的查询。
 func (h *HTTP) Service(s store.GeoSettings) string { return s.URL }
 
+func (h *HTTP) MMDBPath() string { return "" }
+
 // MaxMMDBBytes 是本地国家库文件的大小上限。整个文件在启动时读进内存，上限让误指向的超大文件按配置错误启动失败，
 // 而不是先占用等量的内存。
 const MaxMMDBBytes = 256 << 20
@@ -80,6 +85,10 @@ type MMDB struct {
 // 启动之后每次查询都失败退避。
 func OpenMMDB(path string) (*MMDB, error) {
 	fail := func(err error) (*MMDB, error) { return nil, fmt.Errorf("--geo-mmdb %q: %w", path, err) }
+	// 空路径在 MMDBPath 里与 HTTP 后端无法区分，面板会把本地库回显成 HTTP 服务；它也不是一个可打开的文件，按配置错误拒绝。
+	if path == "" {
+		return fail(errors.New("empty path"))
+	}
 	data, err := readLimited(path, MaxMMDBBytes)
 	if err != nil {
 		return fail(err)
@@ -148,3 +157,5 @@ func (m *MMDB) Lookup(ctx context.Context, _ store.GeoSettings, addr netip.Addr)
 
 // Service 是库路径，不取 geo.url：mmdb 下 geo.url 不生效，改它不应清掉查不到的地址的退避。
 func (m *MMDB) Service(store.GeoSettings) string { return m.path }
+
+func (m *MMDB) MMDBPath() string { return m.path }
