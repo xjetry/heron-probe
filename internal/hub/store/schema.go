@@ -133,7 +133,8 @@ func schemaStatements() []string {
 	for _, t := range probeTables {
 		out = append(out, probeDDL(t))
 	}
-	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState, ddlTag, ddlNodeTag, ddlNodeTagByTag)
+	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState, ddlTag, ddlNodeTag, ddlNodeTagByTag,
+		ddlTheme, ddlThemeEnabled, ddlThemeFile)
 }
 
 // metricDDL 从描述表生成分钟表。主键顺序 (node_id, ts) 即唯一查询路径，
@@ -394,3 +395,30 @@ const ddlNodeTag = `CREATE TABLE node_tag (
 ) WITHOUT ROWID`
 
 const ddlNodeTagByTag = `CREATE INDEX node_tag_by_tag ON node_tag (tag_id)`
+
+// theme 是已安装的公开页主题（§10.1），每个 id 只存当前包：重传同一 id 整体替换，不留版本。id 由主题清单给出
+// （theme.Parse 保证形如 [a-z0-9-]{1,32} 且不是 builtin），是面板与 expect_id 引用它的方式。preview 是包内预览图的
+// 路径，空串表示清单没有给出；它指向的文件由 theme.Parse 保证在包里，与其余文件同一事务写入 theme_file。
+// enabled 至多一行为 1，由 theme_enabled 这个部分唯一索引承载：任何写者——包括绕开 EnableTheme 直接改表的——
+// 写出第二行 1 都会失败，而不是留下"启用了哪个"无法裁决的状态。CHECK 把取值限定为 0 与 1，否则 2 这样的值会绕过
+// 只看 enabled = 1 的索引。
+const ddlTheme = `CREATE TABLE theme (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  version TEXT NOT NULL,
+  preview TEXT NOT NULL,
+  uploaded_at INTEGER NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1))
+)`
+
+const ddlThemeEnabled = `CREATE UNIQUE INDEX theme_enabled ON theme (enabled) WHERE enabled = 1`
+
+// theme_file 是主题包里的普通文件，path 是包内规范路径（theme.Parse 的 File.Path），也是托管时的键。不用
+// WITHOUT ROWID：单个文件可达 16 MiB，远超 SQLite 对无 rowid 表建议的行大小。不声明外键：删主题（DeleteTheme）与
+// 替换（PutTheme）在同一个写事务里显式删掉旧行，与其余从属表同一做法。
+const ddlThemeFile = `CREATE TABLE theme_file (
+  theme_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  content BLOB NOT NULL,
+  PRIMARY KEY (theme_id, path)
+)`

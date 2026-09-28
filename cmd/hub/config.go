@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,6 +34,30 @@ func parseTTL(s string) (time.Duration, error) {
 		return 0, fmt.Errorf("PROBE_OFFLINE_AFTER: %v is above the maximum %v", d, ingest.MaxTTL)
 	}
 	return d, nil
+}
+
+// parseThemeOrigin 解析 --theme-origin，返回规范形态 scheme://host[:port]（主机名小写）；空串表示未配置，主题功能
+// 整体关闭。只接受一个 origin：§10.1 的主题托管按请求的 Host 与它的主机名比对来分流，路径、查询串与凭据在 origin 里没有
+// 位置，写了就说明写的人以为主题能挂在某个路径下——与面板同源的路径恰恰是必须避免的。
+func parseThemeOrigin(s string) (string, error) {
+	if s == "" {
+		return "", nil
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return "", fmt.Errorf("--theme-origin %q: %w", s, err)
+	}
+	switch {
+	case u.Scheme != "http" && u.Scheme != "https":
+		return "", fmt.Errorf("--theme-origin %q: scheme must be https or http, as in https://status.example.com", s)
+	case u.Opaque != "" || u.Hostname() == "":
+		return "", fmt.Errorf("--theme-origin %q: needs a hostname, as in https://status.example.com", s)
+	case u.User != nil:
+		return "", fmt.Errorf("--theme-origin %q: must not carry credentials", s)
+	case (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "":
+		return "", fmt.Errorf("--theme-origin %q: must be an origin (scheme and host) without a path, query or fragment; themes are served at the root of their own hostname", s)
+	}
+	return u.Scheme + "://" + strings.ToLower(u.Host), nil
 }
 
 func isLoopback(listen string) bool {

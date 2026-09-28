@@ -25,12 +25,17 @@ import (
 const (
 	maxTitleRunes = 64
 	// maxTitleBytes 限制清洗前的标题：清洗会去掉控制字符与首尾空白，只限清洗后的字符数，原始标题就没有上限，
-	// 装不进解码预算的合法请求也就存在（maxBody 的推导要求每个字段都有字节上限）。
+	// 装不进解码预算的合法请求也就存在（maxSettingsBody 的推导要求每个字段都有字节上限）。
 	maxTitleBytes = 1 << 10
 	maxLogoBytes  = 128 << 10
 	maxCSSBytes   = 64 << 10
-	// maxGeoURLBytes 限制国家查询的服务地址，同样是 maxBody 推导的前提。
+	// maxGeoURLBytes 限制国家查询的服务地址，同样是 maxSettingsBody 推导的前提。
 	maxGeoURLBytes = 2 << 10
+	// maxMMDBPathBytes 是 Settings.geo_mmdb_path 在 maxSettingsBody 里的份额。hub 只回显自己启动参数里的路径，
+	// 请求里的值被忽略，但客户端可能把 GetSettings 的回显整份送回，合法回送不能被拒；任何能打开的路径不超过
+	// Linux 的 PATH_MAX 4096（macOS 为 1024），所以回显的路径落在这个份额内。比它长的路径只会来自不回送回显的
+	// 客户端自造的值，超出预算时得到 resource_exhausted。
+	maxMMDBPathBytes = 4 << 10
 )
 
 var (
@@ -212,9 +217,14 @@ func cleanGeo(in *probev1.Settings) (store.GeoUpdate, error) {
 	return out, nil
 }
 
-func settingsProto(st store.Settings) *probev1.Settings {
+func (s *Service) settingsProto(st store.Settings) *probev1.Settings {
+	backend, path := probev1.GeoBackend_GEO_BACKEND_HTTP, s.cfg.Geo.MMDBPath()
+	if path != "" {
+		backend = probev1.GeoBackend_GEO_BACKEND_MMDB
+	}
 	return &probev1.Settings{Title: st.Site.Title, Theme: st.Site.Theme, AccentColor: st.Site.AccentColor, Logo: st.Site.Logo, CustomCss: st.Site.CustomCSS,
-		PublicEnabled: proto.Bool(st.Site.PublicEnabled), GeoEnabled: proto.Bool(st.Geo.Enabled), GeoUrl: proto.String(st.Geo.URL), Backup: backupProto(st.Backup)}
+		PublicEnabled: proto.Bool(st.Site.PublicEnabled), GeoEnabled: proto.Bool(st.Geo.Enabled), GeoUrl: proto.String(st.Geo.URL),
+		GeoBackend: backend, GeoMmdbPath: path, Backup: backupProto(st.Backup)}
 }
 
 func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.GetSettingsRequest]) (*connect.Response[probev1.GetSettingsResponse], error) {
@@ -223,7 +233,7 @@ func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.Ge
 		s.log.Error("reading settings failed", "err", err)
 		return nil, internalError("reading settings failed")
 	}
-	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: settingsProto(st)}), nil
+	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: s.settingsProto(st)}), nil
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probev1.UpdateSettingsRequest]) (*connect.Response[probev1.UpdateSettingsResponse], error) {
@@ -244,7 +254,7 @@ func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probe
 		s.log.Error("saving settings failed", "err", err)
 		return nil, internalError("saving settings failed")
 	}
-	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: settingsProto(saved)}), nil
+	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: s.settingsProto(saved)}), nil
 }
 
 func (s *Service) GetStorageStats(ctx context.Context, _ *connect.Request[probev1.GetStorageStatsRequest]) (*connect.Response[probev1.GetStorageStatsResponse], error) {

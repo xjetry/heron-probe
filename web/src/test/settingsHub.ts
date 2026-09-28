@@ -23,7 +23,8 @@ function savedBackup(b: BackupSettings, old: MessageInitShape<typeof BackupSetti
 
 // 有状态的 hub 替身，与 hub 的 UpdateSettings 同语义：按组判定、各组彼此独立。外观五项任一非空即算给出，整体替换（标题
 // 去首尾空白，代表 hub 的清洗）；总闸、国家查询两项与 backup 缺席即不变（backup 各项见 savedBackup）；一组都没给出时按
-// InvalidArgument 拒绝；回显保存后的全部设置。set 模拟别处（另一个面板、脚本）改了
+// InvalidArgument 拒绝；回显保存后的全部设置。国家查询后端两项（geoBackend、geoMmdbPath）与 api 的 settingsProto 同语义：
+// 取自 hub 启动时选定的后端，请求里的值被忽略，保存不改它们。set 模拟别处（另一个面板、脚本）改了
 // 设置；holdReads 让之后的 GetSettings 挂起到 releaseReads；failReads 让之后的 GetSettings 一直失败（hub 重启、网络中断），
 // 保存后的刷新因此拿不到新值；holdSaves 让之后的 UpdateSettings 在记下请求后挂起到 releaseSaves，保存因此一直在途，
 // 状态在放行后才改。
@@ -53,6 +54,7 @@ export function statefulHub(initial: SettingsInit) {
         ...state,
         ...(appearance && { title: s.title.trim(), theme: s.theme, accentColor: s.accentColor, logo: s.logo, customCss: s.customCss }),
         publicEnabled: s.publicEnabled ?? state.publicEnabled, geoEnabled: s.geoEnabled ?? state.geoEnabled, geoUrl: s.geoUrl ?? state.geoUrl,
+        geoBackend: state.geoBackend, geoMmdbPath: state.geoMmdbPath,
         backup: s.backup ? savedBackup(s.backup, state.backup) : state.backup,
       };
       return { settings: state };

@@ -27,6 +27,7 @@ import (
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/probe/internal/hub/geo"
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/metric"
@@ -66,11 +67,18 @@ type harnessOption func(*harnessDeps)
 
 type harnessDeps struct {
 	authLog *slog.Logger
+	// config 在装配前改 api.Config 里与 serve 的 flag 对应的项（例如 --theme-origin）。
+	config func(*Config)
 }
 
 // withAuthLog 给 Auth 换 logger，用例借它的日志语句位置暂停登录。
 func withAuthLog(l *slog.Logger) harnessOption {
 	return func(d *harnessDeps) { d.authLog = l }
+}
+
+// withConfig 让用例在装配前改 api.Config 里与 serve 的 flag 对应的项（例如 --theme-origin）。
+func withConfig(edit func(*Config)) harnessOption {
+	return func(d *harnessDeps) { d.config = edit }
 }
 
 // newZonedHarness 的 loc 是 hub 的 --timezone：流量周期、到期扫描与 days_left 用同一个时区，与 serve 的装配一致。
@@ -79,7 +87,7 @@ func withAuthLog(l *slog.Logger) harnessOption {
 // 默认测试用 store.DefaultRetention，需要钉住"判定用的是配置保留期"的用例可以传入不同的值。
 func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention store.Retention, opts ...harnessOption) *harness {
 	t.Helper()
-	deps := harnessDeps{authLog: slog.Default()}
+	deps := harnessDeps{authLog: slog.Default(), config: func(*Config) {}}
 	for _, o := range opts {
 		o(&deps)
 	}
@@ -98,7 +106,9 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, loc, slog.Default())
 	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: loc}, st, l, clk, slog.Default())
-	notifier := alert.NewQueue(st, alerts.Channels, outbound.NewClient(alert.NotifyTimeout), "", clk, nil, slog.Default())
+	// 通知与国家查询共用一个出站客户端，与 serve 的装配相同。
+	client := outbound.NewClient(alert.NotifyTimeout)
+	notifier := alert.NewQueue(st, alerts.Channels, client, "", clk, nil, slog.Default())
 	in, err := ingest.New(ingest.Config{TTL: 30 * time.Second, TrustedProxies: prefixes}, l, st, a, book, reg, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +117,9 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	if err := errors.Join(a.Load(ctx), in.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}
-	svc := New(Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: retention}, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
+	cfg := Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: retention, Geo: geo.NewHTTP(client)}
+	deps.config(&cfg)
+	svc := New(cfg, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
 	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, TrustedProxies: prefixes, Location: loc}, st, l, book, reg, clk, slog.Default())
 	mux := http.NewServeMux()
 	mux.Handle(in.Handler())
@@ -753,7 +765,7 @@ func TestSessionBoundaryAndRevocation(t *testing.T) {
 	if _, err := anonymous.ListNodes(ctx, replay); codeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("revoked cookie replay admitted: %v", err)
 	}
-	if _, err := h.admin.CreateNode(ctx, connect.NewRequest(&probev1.CreateNodeRequest{Name: strings.Repeat("x", maxBody+1)})); codeOf(err) != connect.CodeResourceExhausted {
+	if _, err := h.admin.CreateNode(ctx, connect.NewRequest(&probev1.CreateNodeRequest{Name: strings.Repeat("x", maxSettingsBody+1)})); codeOf(err) != connect.CodeResourceExhausted {
 		t.Fatalf("oversized body: %v", err)
 	}
 	for i := 0; i < 5; i++ {

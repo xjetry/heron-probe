@@ -10,6 +10,7 @@ tool (
 require (
 	connectrpc.com/connect v1.21.0
 	github.com/ebitengine/purego v0.11.1
+	github.com/oschwald/maxminddb-golang/v2 v2.6.0
 	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.58.0
 	golang.org/x/sys v0.48.0

@@ -126,6 +126,20 @@ const (
 	// AdminServiceUpdateSettingsProcedure is the fully-qualified name of the AdminService's
 	// UpdateSettings RPC.
 	AdminServiceUpdateSettingsProcedure = "/probe.v1.AdminService/UpdateSettings"
+	// AdminServiceUploadThemeProcedure is the fully-qualified name of the AdminService's UploadTheme
+	// RPC.
+	AdminServiceUploadThemeProcedure = "/probe.v1.AdminService/UploadTheme"
+	// AdminServiceListThemesProcedure is the fully-qualified name of the AdminService's ListThemes RPC.
+	AdminServiceListThemesProcedure = "/probe.v1.AdminService/ListThemes"
+	// AdminServiceEnableThemeProcedure is the fully-qualified name of the AdminService's EnableTheme
+	// RPC.
+	AdminServiceEnableThemeProcedure = "/probe.v1.AdminService/EnableTheme"
+	// AdminServiceDeleteThemeProcedure is the fully-qualified name of the AdminService's DeleteTheme
+	// RPC.
+	AdminServiceDeleteThemeProcedure = "/probe.v1.AdminService/DeleteTheme"
+	// AdminServiceGetThemePreviewProcedure is the fully-qualified name of the AdminService's
+	// GetThemePreview RPC.
+	AdminServiceGetThemePreviewProcedure = "/probe.v1.AdminService/GetThemePreview"
 	// AdminServiceGetStorageStatsProcedure is the fully-qualified name of the AdminService's
 	// GetStorageStats RPC.
 	AdminServiceGetStorageStatsProcedure = "/probe.v1.AdminService/GetStorageStats"
@@ -223,6 +237,19 @@ type AdminServiceClient interface {
 	// 按组更新设置（分组与判定见 Settings）：给出的外观整体替换，给出的总闸、国家查询项与 backup 写入，缺席的组不变；回显
 	// hub 实际保存的设置。一组都没给出、或任一项不合约束即 InvalidArgument，错误写明字段、约束与期望取值，什么都不写入。
 	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
+	// 上传一个主题包（zip，至多 8 MiB）并整包安装；包根的 theme.json 的 id 已安装即整体替换（启用状态沿用）。
+	// 包的约束（条目数、展开大小、条目类型与路径、清单字段）见 UploadThemeRequest；任一不满足即 InvalidArgument，
+	// 错误写明条目或字段与原因，什么都不写入。主题数已满（20）且 id 是新的时 ResourceExhausted。
+	UploadTheme(context.Context, *connect.Request[v1.UploadThemeRequest]) (*connect.Response[v1.UploadThemeResponse], error)
+	// 已安装的主题，按 id 升序。
+	ListThemes(context.Context, *connect.Request[v1.ListThemesRequest]) (*connect.Response[v1.ListThemesResponse], error)
+	// 让一个主题成为主题 origin 上的公开页，其余主题随之停用；id 为空即不启用任何主题（主题 origin 服务内置公开页）。
+	// 没有这个主题时 NotFound，启用状态不变。
+	EnableTheme(context.Context, *connect.Request[v1.EnableThemeRequest]) (*connect.Response[v1.EnableThemeResponse], error)
+	// 删除主题及其全部文件；删的是启用中的主题时，主题 origin 回落到内置公开页。没有这个主题时 NotFound。
+	DeleteTheme(context.Context, *connect.Request[v1.DeleteThemeRequest]) (*connect.Response[v1.DeleteThemeResponse], error)
+	// 主题清单 preview 指向的预览图。主题不存在或清单没有给 preview 时 NotFound。
+	GetThemePreview(context.Context, *connect.Request[v1.GetThemePreviewRequest]) (*connect.Response[v1.GetThemePreviewResponse], error)
 	// 库的逻辑大小、每张表的行数与存储健康读数，与 probe-hub stats 同一来源。
 	GetStorageStats(context.Context, *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error)
 	// API token 的元数据；明文只在 CreateApiToken 的响应里出现一次，hub 只存哈希。
@@ -450,6 +477,36 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("UpdateSettings")),
 			connect.WithClientOptions(opts...),
 		),
+		uploadTheme: connect.NewClient[v1.UploadThemeRequest, v1.UploadThemeResponse](
+			httpClient,
+			baseURL+AdminServiceUploadThemeProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("UploadTheme")),
+			connect.WithClientOptions(opts...),
+		),
+		listThemes: connect.NewClient[v1.ListThemesRequest, v1.ListThemesResponse](
+			httpClient,
+			baseURL+AdminServiceListThemesProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListThemes")),
+			connect.WithClientOptions(opts...),
+		),
+		enableTheme: connect.NewClient[v1.EnableThemeRequest, v1.EnableThemeResponse](
+			httpClient,
+			baseURL+AdminServiceEnableThemeProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("EnableTheme")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteTheme: connect.NewClient[v1.DeleteThemeRequest, v1.DeleteThemeResponse](
+			httpClient,
+			baseURL+AdminServiceDeleteThemeProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("DeleteTheme")),
+			connect.WithClientOptions(opts...),
+		),
+		getThemePreview: connect.NewClient[v1.GetThemePreviewRequest, v1.GetThemePreviewResponse](
+			httpClient,
+			baseURL+AdminServiceGetThemePreviewProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("GetThemePreview")),
+			connect.WithClientOptions(opts...),
+		),
 		getStorageStats: connect.NewClient[v1.GetStorageStatsRequest, v1.GetStorageStatsResponse](
 			httpClient,
 			baseURL+AdminServiceGetStorageStatsProcedure,
@@ -519,6 +576,11 @@ type adminServiceClient struct {
 	testNotifyChannel     *connect.Client[v1.TestNotifyChannelRequest, v1.TestNotifyChannelResponse]
 	getSettings           *connect.Client[v1.GetSettingsRequest, v1.GetSettingsResponse]
 	updateSettings        *connect.Client[v1.UpdateSettingsRequest, v1.UpdateSettingsResponse]
+	uploadTheme           *connect.Client[v1.UploadThemeRequest, v1.UploadThemeResponse]
+	listThemes            *connect.Client[v1.ListThemesRequest, v1.ListThemesResponse]
+	enableTheme           *connect.Client[v1.EnableThemeRequest, v1.EnableThemeResponse]
+	deleteTheme           *connect.Client[v1.DeleteThemeRequest, v1.DeleteThemeResponse]
+	getThemePreview       *connect.Client[v1.GetThemePreviewRequest, v1.GetThemePreviewResponse]
 	getStorageStats       *connect.Client[v1.GetStorageStatsRequest, v1.GetStorageStatsResponse]
 	listApiTokens         *connect.Client[v1.ListApiTokensRequest, v1.ListApiTokensResponse]
 	createApiToken        *connect.Client[v1.CreateApiTokenRequest, v1.CreateApiTokenResponse]
@@ -696,6 +758,31 @@ func (c *adminServiceClient) UpdateSettings(ctx context.Context, req *connect.Re
 	return c.updateSettings.CallUnary(ctx, req)
 }
 
+// UploadTheme calls probe.v1.AdminService.UploadTheme.
+func (c *adminServiceClient) UploadTheme(ctx context.Context, req *connect.Request[v1.UploadThemeRequest]) (*connect.Response[v1.UploadThemeResponse], error) {
+	return c.uploadTheme.CallUnary(ctx, req)
+}
+
+// ListThemes calls probe.v1.AdminService.ListThemes.
+func (c *adminServiceClient) ListThemes(ctx context.Context, req *connect.Request[v1.ListThemesRequest]) (*connect.Response[v1.ListThemesResponse], error) {
+	return c.listThemes.CallUnary(ctx, req)
+}
+
+// EnableTheme calls probe.v1.AdminService.EnableTheme.
+func (c *adminServiceClient) EnableTheme(ctx context.Context, req *connect.Request[v1.EnableThemeRequest]) (*connect.Response[v1.EnableThemeResponse], error) {
+	return c.enableTheme.CallUnary(ctx, req)
+}
+
+// DeleteTheme calls probe.v1.AdminService.DeleteTheme.
+func (c *adminServiceClient) DeleteTheme(ctx context.Context, req *connect.Request[v1.DeleteThemeRequest]) (*connect.Response[v1.DeleteThemeResponse], error) {
+	return c.deleteTheme.CallUnary(ctx, req)
+}
+
+// GetThemePreview calls probe.v1.AdminService.GetThemePreview.
+func (c *adminServiceClient) GetThemePreview(ctx context.Context, req *connect.Request[v1.GetThemePreviewRequest]) (*connect.Response[v1.GetThemePreviewResponse], error) {
+	return c.getThemePreview.CallUnary(ctx, req)
+}
+
 // GetStorageStats calls probe.v1.AdminService.GetStorageStats.
 func (c *adminServiceClient) GetStorageStats(ctx context.Context, req *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error) {
 	return c.getStorageStats.CallUnary(ctx, req)
@@ -801,6 +888,19 @@ type AdminServiceHandler interface {
 	// 按组更新设置（分组与判定见 Settings）：给出的外观整体替换，给出的总闸、国家查询项与 backup 写入，缺席的组不变；回显
 	// hub 实际保存的设置。一组都没给出、或任一项不合约束即 InvalidArgument，错误写明字段、约束与期望取值，什么都不写入。
 	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
+	// 上传一个主题包（zip，至多 8 MiB）并整包安装；包根的 theme.json 的 id 已安装即整体替换（启用状态沿用）。
+	// 包的约束（条目数、展开大小、条目类型与路径、清单字段）见 UploadThemeRequest；任一不满足即 InvalidArgument，
+	// 错误写明条目或字段与原因，什么都不写入。主题数已满（20）且 id 是新的时 ResourceExhausted。
+	UploadTheme(context.Context, *connect.Request[v1.UploadThemeRequest]) (*connect.Response[v1.UploadThemeResponse], error)
+	// 已安装的主题，按 id 升序。
+	ListThemes(context.Context, *connect.Request[v1.ListThemesRequest]) (*connect.Response[v1.ListThemesResponse], error)
+	// 让一个主题成为主题 origin 上的公开页，其余主题随之停用；id 为空即不启用任何主题（主题 origin 服务内置公开页）。
+	// 没有这个主题时 NotFound，启用状态不变。
+	EnableTheme(context.Context, *connect.Request[v1.EnableThemeRequest]) (*connect.Response[v1.EnableThemeResponse], error)
+	// 删除主题及其全部文件；删的是启用中的主题时，主题 origin 回落到内置公开页。没有这个主题时 NotFound。
+	DeleteTheme(context.Context, *connect.Request[v1.DeleteThemeRequest]) (*connect.Response[v1.DeleteThemeResponse], error)
+	// 主题清单 preview 指向的预览图。主题不存在或清单没有给 preview 时 NotFound。
+	GetThemePreview(context.Context, *connect.Request[v1.GetThemePreviewRequest]) (*connect.Response[v1.GetThemePreviewResponse], error)
 	// 库的逻辑大小、每张表的行数与存储健康读数，与 probe-hub stats 同一来源。
 	GetStorageStats(context.Context, *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error)
 	// API token 的元数据；明文只在 CreateApiToken 的响应里出现一次，hub 只存哈希。
@@ -1024,6 +1124,36 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("UpdateSettings")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceUploadThemeHandler := connect.NewUnaryHandler(
+		AdminServiceUploadThemeProcedure,
+		svc.UploadTheme,
+		connect.WithSchema(adminServiceMethods.ByName("UploadTheme")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceListThemesHandler := connect.NewUnaryHandler(
+		AdminServiceListThemesProcedure,
+		svc.ListThemes,
+		connect.WithSchema(adminServiceMethods.ByName("ListThemes")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceEnableThemeHandler := connect.NewUnaryHandler(
+		AdminServiceEnableThemeProcedure,
+		svc.EnableTheme,
+		connect.WithSchema(adminServiceMethods.ByName("EnableTheme")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceDeleteThemeHandler := connect.NewUnaryHandler(
+		AdminServiceDeleteThemeProcedure,
+		svc.DeleteTheme,
+		connect.WithSchema(adminServiceMethods.ByName("DeleteTheme")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceGetThemePreviewHandler := connect.NewUnaryHandler(
+		AdminServiceGetThemePreviewProcedure,
+		svc.GetThemePreview,
+		connect.WithSchema(adminServiceMethods.ByName("GetThemePreview")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceGetStorageStatsHandler := connect.NewUnaryHandler(
 		AdminServiceGetStorageStatsProcedure,
 		svc.GetStorageStats,
@@ -1124,6 +1254,16 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceGetSettingsHandler.ServeHTTP(w, r)
 		case AdminServiceUpdateSettingsProcedure:
 			adminServiceUpdateSettingsHandler.ServeHTTP(w, r)
+		case AdminServiceUploadThemeProcedure:
+			adminServiceUploadThemeHandler.ServeHTTP(w, r)
+		case AdminServiceListThemesProcedure:
+			adminServiceListThemesHandler.ServeHTTP(w, r)
+		case AdminServiceEnableThemeProcedure:
+			adminServiceEnableThemeHandler.ServeHTTP(w, r)
+		case AdminServiceDeleteThemeProcedure:
+			adminServiceDeleteThemeHandler.ServeHTTP(w, r)
+		case AdminServiceGetThemePreviewProcedure:
+			adminServiceGetThemePreviewHandler.ServeHTTP(w, r)
 		case AdminServiceGetStorageStatsProcedure:
 			adminServiceGetStorageStatsHandler.ServeHTTP(w, r)
 		case AdminServiceListApiTokensProcedure:
@@ -1277,6 +1417,26 @@ func (UnimplementedAdminServiceHandler) GetSettings(context.Context, *connect.Re
 
 func (UnimplementedAdminServiceHandler) UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.UpdateSettings is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) UploadTheme(context.Context, *connect.Request[v1.UploadThemeRequest]) (*connect.Response[v1.UploadThemeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.UploadTheme is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListThemes(context.Context, *connect.Request[v1.ListThemesRequest]) (*connect.Response[v1.ListThemesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.ListThemes is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) EnableTheme(context.Context, *connect.Request[v1.EnableThemeRequest]) (*connect.Response[v1.EnableThemeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.EnableTheme is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) DeleteTheme(context.Context, *connect.Request[v1.DeleteThemeRequest]) (*connect.Response[v1.DeleteThemeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.DeleteTheme is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) GetThemePreview(context.Context, *connect.Request[v1.GetThemePreviewRequest]) (*connect.Response[v1.GetThemePreviewResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.GetThemePreview is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) GetStorageStats(context.Context, *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error) {

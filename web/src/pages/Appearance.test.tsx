@@ -2,7 +2,7 @@ import { isFieldSet } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SettingsSchema, type UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
+import { GeoBackend, SettingsSchema, type UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
 import { MAX_LOGO_BYTES } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
@@ -272,11 +272,43 @@ it("上次保存失败后换 logo，旧的错误清掉", async () => {
 
 describe("国家 / 地区查询", () => {
   const geoForm = async () => within(await screen.findByRole("form", { name: "国家 / 地区查询" }));
-  // hub 的 GetSettings 总带总闸、查询两项与 backup。
+  // hub 的 GetSettings 总带总闸、查询两项与 backup，并回显启动时选定的国家查询后端。
   const withGeo = {
-    ...current, publicEnabled: true, geoEnabled: false, geoUrl: "https://ipinfo.io/{ip}/country",
+    ...current, publicEnabled: true, geoEnabled: false, geoUrl: "https://ipinfo.io/{ip}/country", geoBackend: GeoBackend.HTTP, geoMmdbPath: "",
     backup: { region: "auto", configIntervalS: 300, metricsIntervalS: 86400, configKeep: 48, metricsKeep: 14, notify: { channelIds: [] }, hasSecret: false },
   };
+
+  it("本地后端写明路径、不出网与服务地址不生效，不显示 HTTP 开启告知", async () => {
+    render({ getSettings: async () => ({ settings: { ...withGeo, geoBackend: GeoBackend.MMDB, geoMmdbPath: "/data/country.mmdb" } }) });
+    const f = await geoForm();
+    expect(f.getByText("当前后端：本地文件 /data/country.mmdb，不出网；服务地址不生效。")).toBeInTheDocument();
+    expect(f.queryByText(/开启即由 hub 把每个节点的来源地址发给/)).not.toBeInTheDocument();
+    expect(f.getByLabelText("服务地址")).toHaveAccessibleDescription(/节点停在同一地址时查得一次即止；hub 记住每个节点最近 4 个地址的答案，在这些地址之间切换不再重查，\s*超过 4 个地址轮换或 hub 重启后会再查。/);
+  });
+
+  // 后端两项只回显：请求不带它们（hub 忽略请求里的值，解码预算也不为 geo_mmdb_path 留位），保存后的描述取自回显写进
+  // 缓存的那一份，本地库不会被说成 HTTP 服务。
+  it("本地后端下保存查询设置：请求不带后端两项，保存后仍写明本地文件", async () => {
+    const hub = statefulHub({ ...withGeo, geoBackend: GeoBackend.MMDB, geoMmdbPath: "/data/country.mmdb" });
+    const sent = hub.sent;
+    render(hub.impl);
+    const f = await geoForm();
+    fireEvent.click(f.getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" }));
+    hub.holdReads();
+    fireEvent.click(f.getByRole("button", { name: "保存" }));
+    expect(await f.findByRole("status")).toHaveTextContent("已保存");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].settings).toMatchObject({ geoEnabled: true, geoBackend: GeoBackend.UNSPECIFIED, geoMmdbPath: "" });
+    // 保存后的重新拉取还挂着，描述此时只能来自写进缓存的回显。
+    expect(f.getByText("当前后端：本地文件 /data/country.mmdb，不出网；服务地址不生效。")).toBeInTheDocument();
+    hub.releaseReads();
+  });
+
+  it("HTTP 后端显示当前已保存的服务地址", async () => {
+    render({ getSettings: async () => ({ settings: { ...withGeo, geoBackend: GeoBackend.HTTP } }) });
+    const f = await geoForm();
+    expect(f.getByText("当前后端：HTTP 服务 https://ipinfo.io/{ip}/country")).toBeInTheDocument();
+  });
 
   it("开关文案写明开启即把节点地址发给哪个服务，随输入的服务地址更新", async () => {
     render({ getSettings: async () => ({ settings: withGeo }) });
