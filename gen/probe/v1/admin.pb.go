@@ -3497,8 +3497,9 @@ type Settings struct {
 	// 当前后端，只读；GetSettings 与 UpdateSettings 响应均回显。UpdateSettings 中缺席或给出均忽略。
 	GeoBackend GeoBackend `protobuf:"varint,9,opt,name=geo_backend,json=geoBackend,proto3,enum=probe.v1.GeoBackend" json:"geo_backend,omitempty"`
 	// --geo-mmdb 指定的路径，HTTP 后端为空；MMDB 后端下 geo_url 保留但不生效。
-	// 部署路径只能在启动时指定；hub 启动时把该文件整读进内存并校验，运行期不再读它，原地覆盖或截断都不影响运行中的答案，
-	// 替换文件后重启才生效。只读，UpdateSettings 中缺席或给出均忽略，不校验、不保存。
+	// 部署路径只能在启动时指定；hub 启动时把该文件整读进内存并做结构校验（库文件不带校验和，值被改写查不出），运行期
+	// 不再读它，原地覆盖或截断都不影响运行中的答案，替换文件后重启才生效。只读，UpdateSettings 中缺席或给出均忽略，
+	// 不校验、不保存。
 	GeoMmdbPath   string `protobuf:"bytes,10,opt,name=geo_mmdb_path,json=geoMmdbPath,proto3" json:"geo_mmdb_path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

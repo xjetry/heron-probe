@@ -81,8 +81,16 @@ type MMDB struct {
 	db   *maxminddb.Reader
 }
 
-// OpenMMDB 把 path 处的 MaxMind 库整读进内存并校验。Verify 遍历搜索树与数据段，损坏的文件在启动时失败，而不是通过
-// 启动、等查到落在坏记录上的地址时才失败退避。
+// OpenMMDB 把 path 处的 MaxMind 库整读进内存并做结构校验。下列情形在启动时报错：
+//   - 路径为空，或不是普通文件（目录、命名管道、设备文件）：打开之前拒绝，见 readLimited；
+//   - 大小超过 MaxMMDBBytes：读之前拒绝；
+//   - 不是 MaxMind DB 格式：OpenBytes 拒绝，例如找不到元数据标记；
+//   - 结构损坏：Verify 遍历元数据、搜索树与数据段，例如元数据缺 description、搜索树指针越界、数据段分隔符不为零、
+//     数据无法按类型解码（含非法 UTF-8）。
+//
+// 库文件不带校验和，内容层面的改写查不出：把一个合法值换成另一个合法值的库（例如把某条记录的 US 改成 UT）照常打开，
+// 查询答出改写后的值。这样的答案只要是两个大写字母，也能通过 Resolver 的 store.IsCountryCode；它是不是正确的国家，
+// 只能由运维核对库的来源与版本（启动行记有库路径、数据库类型与构建时间）。
 func OpenMMDB(path string) (*MMDB, error) {
 	fail := func(err error) (*MMDB, error) { return nil, fmt.Errorf("--geo-mmdb %q: %w", path, err) }
 	// 空路径在 MMDBPath 里与 HTTP 后端无法区分，面板会把本地库回显成 HTTP 服务；它也不是一个可打开的文件，按配置错误拒绝。

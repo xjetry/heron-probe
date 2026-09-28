@@ -248,8 +248,8 @@ func TestReadAtMostCapsASourceLongerThanTheLimit(t *testing.T) {
 	}
 }
 
-// 数据段中间几个字节被改坏的库：不做校验的读取器照样能打开它（所以拒绝来自 Verify，不是打开时的格式检查），
-// OpenMMDB 在启动时就拒绝，不让它带着坏记录通过启动。
+// 结构损坏的库：翻转数据段中点的 4 个字节，那里的数据无法按类型解码。不做校验的读取器照样能打开它（所以拒绝来自
+// Verify，不是打开时的格式检查），OpenMMDB 在启动时就拒绝，不让它带着坏记录通过启动。
 func TestOpenMMDBRejectsACorruptDataSection(t *testing.T) {
 	path, data := fixtureCopy(t)
 	plain, err := maxminddb.OpenBytes(data)
