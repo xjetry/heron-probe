@@ -94,6 +94,19 @@ func TestSettingsBudgetEntriesAreExact(t *testing.T) {
 				t.Errorf("%s has no base64-only input contract", field.path)
 			}
 			want, sample := field.entry.boundary(field.fd)
+			values := field.entry.values
+			if field.entry.kind == budgetEnumName {
+				enums := field.fd.Enum().Values()
+				for i := 0; i < enums.Len(); i++ {
+					values = append(values, string(enums.Get(i).Name()))
+				}
+			}
+			// 从取值域逐值核对，不依赖 boundary 选择了哪一个样本。
+			for _, value := range values {
+				if got := jsonStringBytes(value); got > want {
+					t.Errorf("%s value %q encodes to %d bytes, above budget %d", field.path, value, got, want)
+				}
+			}
 			if field.path == "accent_color" && !accentRE.MatchString(sample.(string)) {
 				t.Errorf("accent_color budget sample %q does not match %s", sample, accentRE)
 			}
