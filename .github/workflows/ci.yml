@@ -48,11 +48,21 @@ jobs:
       matrix:
         runner: [macos-latest, macos-26-intel]
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
-      - run: go test -count=1 ./internal/agent/... ./cmd/agent/... ./deploy/...
+      # agent 的两组包保持 go test 默认的每包 10 分钟超时，卡住的测试尽早暴露。
+      - run: go test -count=1 ./internal/agent/... ./cmd/agent/...
+        env:
+          CGO_ENABLED: "0"
+      # deploy 包的替身测试每个用例都用 sh 真跑一遍安装脚本。高负载的 macOS 开发机上 go test -count=1 ./deploy/
+      # 实测 443 秒，已接近 go test 默认的每包 10 分钟超时；GitHub runner 上没有实测。所以 deploy 单独一步放宽到
+      # 20 分钟，与 Makefile 的 test 目标一致。上一步失败时照跑，覆盖与拆开之前一次跑完全部包相同。
+      # 作业级 timeout-minutes 与 Linux 作业同为 45 分钟，兜住整个作业。
+      - run: go test -count=1 -timeout 20m ./deploy/...
+        if: ${{ !cancelled() }}
         env:
           CGO_ENABLED: "0"

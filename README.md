@@ -10,14 +10,49 @@ hub 是一个静态链接的二进制，数据在一个 SQLite 文件里。从 [
 
 ```sh
 tar -xzf probe-hub_linux_amd64.tar.gz
-./probe-hub passwd --db /var/lib/probe/probe.db   # 设置管理员密码
 ./probe-hub serve --db /var/lib/probe/probe.db    # 默认监听 127.0.0.1:8080
+# 等 serve 启动完成后，在另一个终端设置管理员密码
+./probe-hub passwd --db /var/lib/probe/probe.db
 ```
 
 - hub 只监听明文 HTTP，TLS 由反代（Caddy、nginx、CDN）终止；反代地址用 `--trusted-proxies` 声明，否则不信任转发头。
 - 管理面板在 `/admin/`。离线判定的时限由环境变量 `PROBE_OFFLINE_AFTER` 设定（默认 30s，10s–180s）。
 - 其余参数见 `probe-hub serve -h`；节点、注册窗口与 API token 也可在 hub 主机上用 `probe-hub node|window|token` 管理。
 - 节点可在面板里记录价格、币种、计费周期与到期日：只用于展示与提醒，hub 不汇总、不换算。公开节点填了的这几项也显示在公开页，自动续期开关除外。建「到期」类型的告警规则可在到期前若干天提醒；开着自动续期的节点过了到期日，hub 按周期把到期日推后。到期日按天计，天的边界与流量周期一样取 `--timezone`。
+
+## 安装 hub（Linux，systemd）
+
+支持 amd64、arm64，以 root 执行：
+
+```sh
+curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.sh | sh
+probe-hub passwd --db /var/lib/probe/probe.db
+```
+
+安装器校验下载包的 SHA256SUMS，以静态系统用户 `probe-hub` 启动服务，确认进程持续存活后才提示设置密码。主机没有 CA 证书包时安装器会装上 `ca-certificates`：不论从哪里下载，hub 发往 Telegram 的告警都走 HTTPS。升级时先让新版本的 `serve` 启动并完成数据库迁移，再使用 `passwd` 等离线子命令。管理员密码由你设置，脚本不生成、不打印密码。
+
+默认只监听 `127.0.0.1:8080`，TLS 交给反向代理。可用 `--listen`、`--timezone`、`--trusted-proxies`、`--public-dir` 和 `--retention-*` 设置 serve 参数；例如：
+
+```sh
+curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.sh | sh -s -- \
+  --timezone Asia/Taipei --trusted-proxies 127.0.0.1/32
+```
+
+重跑即升级，沿用 `/etc/systemd/system/probe-hub.service` 里 `ExecStart` 的参数，命令行显式给出的值按参数名替换旧值；写回时每个参数只留一份，统一写成 `--flag=value`。`--version vX.Y.Z` 指定发行版，`--base-url URL` 改用该下载目录并忽略 `--version`。安装器只接受静态参数：用了 systemd 的 `$` / `%` 动态展开，或有 drop-in 设了 `ExecStart` 时，须先把参数合并为主单元里的静态值；无法解析时升级在停服前报错，不会重置配置。首装时已有设了 `ExecStart` 的 drop-in（例如 purge 后留在 `probe-hub.service.d/` 里的），安装器写好主单元后报错，不 enable、不 start。数据库固定为 `/var/lib/probe/probe.db`。
+
+每次安装都用发行包里的单元覆盖主单元，只保留其中 `ExecStart` 的参数：主单元里别的手工改动（例如 `Environment=PROBE_OFFLINE_AFTER=60s`）会在升级时丢失。这类定制放进 drop-in（`systemctl edit probe-hub`，写在 `/etc/systemd/system/probe-hub.service.d/`）；不设 `ExecStart` 的 drop-in 升级时保留，卸载与 purge 也不删这个目录。
+
+数据目录为 `root:probe-hub 0770`，库文件为 `probe-hub:probe-hub 0600`；目录必须允许服务组创建和删除 SQLite 的 WAL/SHM 文件。数据目录或库文件是符号链接、库文件另有硬链接时，安装器在停服前拒绝，不改动链接指向的文件。单元逐项加固，将数据目录列入 `ReadWritePaths`，提供私有临时目录，不授予 `CAP_NET_RAW`。查看状态与日志：`systemctl status probe-hub`、`journalctl -u probe-hub`。
+
+普通卸载停掉的是全部节点的展示与告警，`--purge` 删除唯一一份数据与全部节点凭据，所以两者都需确认；无终端时必须显式 `--yes`，不会读取管道里的脚本内容：
+
+```sh
+curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.sh | sh -s -- --uninstall --yes
+# 同时删除 /var/lib/probe、服务用户与组，不可恢复
+curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.sh | sh -s -- --uninstall --purge --yes
+```
+
+普通卸载保留数据和账户。安装、升级都会先核对目标端口的监听进程，排除现有 hub 自身；冲突时不停止旧服务。停止失败、旧进程未退出或新进程未持续存活均返回失败。停服之后、`systemctl start` 成功返回之前某一步失败时，安装器会提示 hub 已停，可重跑安装器或手动启动；启动之后没能持续存活时不这样提示，那时 systemd 仍按 `Restart=always` 继续拉起，按 `journalctl -u probe-hub` 排查。例外是写好主单元之后的 drop-in 检查没过：查出设了 `ExecStart` 的 drop-in 时，手动启动会按它的参数起来；`systemctl daemon-reload` 等本身出错时，drop-in 还没查过。这两种情形安装器都只说明单元是否仍 enabled，并按失败点要求先处理报出的 drop-in 或 systemctl 问题再重跑。是否 enabled 看的是 `/etc/systemd/system/multi-user.target.wants/probe-hub.service` 这条 enable 链接，不向 systemctl 查询，systemctl 出错时也答得出；升级时只要没被 disable 过，上次安装建的链接就还在，下次开机也会这样起来。另用 `systemctl add-wants` 等挂到别的 target 下的链接不在判断之内。
 
 ## 用 Docker 运行 hub
 
