@@ -703,7 +703,9 @@ message GetSettingsRequest {}
 message GetSettingsResponse { Settings settings = 1; }
 message GetBackupStatusRequest {}
 message GetBackupStatusResponse {
-  // endpoint、bucket、access key、secret 全部非空才启用。
+  // endpoint、bucket、access key、secret 全部非空才启用。停用即结束两层的故障跟踪：两层各自在下一轮判定时（在途的
+  // 一轮先跑完）观察到停用并清掉本层故障；配置层已通知过的故障以一条 transition 为 disabled 的事件收尾并清除
+  // 未恢复标记。两层都观察到之后，设置可读且未启用时 failure 都缺席。设置读不出时这里同样为 false，配置层报 settings 故障。
   bool enabled = 1;
   BackupLayerStatus config = 2;
   BackupLayerStatus metrics = 3;
@@ -711,13 +713,16 @@ message GetBackupStatusResponse {
 message BackupLayerStatus {
   // UTC Unix 秒；从未成功完成整轮时缺席，重启后仍可读。
   optional int64 last_success_at = 1;
-  // 无当前故障时缺席。配置层未恢复标记与事件一起持久化，重启后继续通知状态机；
+  // 无当前故障或备份已停用时缺席。配置层未恢复标记与事件一起持久化，重启后继续通知状态机；
   // 重启后尚未重新观察的类别为 unrecovered。指标层故障仅在进程内保存。
   BackupFailure failure = 2;
 }
 message BackupFailure {
-  // snapshot、client、upload、list、delete、cleanup、record、retention_config、settings、unrecovered；
+  // snapshot、client、upload、list、delete、cleanup、record、retention_config、settings、startup、marker、unrecovered；
   // S3 失败在阶段后加 /transport、/http_status、/request 或 /response，不含错误原文。
+  // settings 与 startup 是两层共用的前提失败（设置读不出；启动时读回成功时刻或清理本库残留暂存目录失败），
+  // 只由配置层报告，其间指标层暂停。marker 是库里的配置层未恢复标记读不出（只有 hub 写它）：此前是否通知过无从知道，
+  // 按首次失败通知一次并以本次首次失败时刻覆盖坏值，下一轮照常执行；指标层不读它，不受影响。
   string category = 1;
   // 当前连续故障首次被观察到的 UTC Unix 秒，失败类别变化不会重置。
   int64 since_at = 2;
@@ -840,7 +845,8 @@ message AlertEvent {
   int64 id = 1;
   int64 rule_id = 2;
   int64 node_id = 3;
-  // 取值为 firing 或 recovered。
+  // 取值为 firing、recovered 或 disabled。disabled 只由备份停用产生（rule_id 与 node_id 为 0）：
+  // 收尾停用前已通知的配置层备份故障，此后不再跟踪，不表示故障已恢复。
   string transition = 4;
   // 事件墙钟，Unix 秒。
   int64 at = 5;
