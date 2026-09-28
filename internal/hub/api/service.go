@@ -33,10 +33,15 @@ const (
 	SessionCookie = "probe_session"
 	// maxBody 是管理请求的解码预算。connect 先解码再进拦截器，未鉴权的请求也会被读到这个上限，所以它必须有界。
 	// 它要装下 UpdateSettings 的满额设置在最坏转义下的 JSON：logo 满额（base64 字符在 JSON 里无需转义）；自定义 CSS
-	// 与清洗前的标题满额，且每个字节都转义成 6 字节的 \u00XX（控制字符就是这样）；另留 4 KiB 给明暗、主色、字段名与
-	// JSON 语法。多余的 JSON 空白、对无需转义的字符的转义不在预算内：这样的请求超出预算时得到 resource_exhausted。
-	// 各项的上限在 settings.go；每个字段的合法取值都有字节上限（明暗与主色由取值集合与格式限定）是这条推导成立的前提。
-	maxBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes + 4<<10
+	// 与清洗前的标题满额，且每个字节都转义成 6 字节的 \u00XX（控制字符就是这样）；登录通知的渠道列表满 maxChannelIDs
+	// 条，每条按 maxInt64JSONBytes 计；另留 4 KiB 给明暗、主色、字段名与 JSON 语法（含列表的方括号与逗号）。多余的
+	// JSON 空白、对无需转义的字符的转义、数字的冗余写法（protojson 也收 1.000 与 1e000 这类写法）不在预算内：这样的
+	// 请求超出预算时得到 resource_exhausted。各项的上限在 settings.go；每个字段的合法取值都有字节上限（明暗与主色由
+	// 取值集合与格式限定，渠道列表由条数上限限定）是这条推导成立的前提。
+	maxBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes + maxChannelIDs*maxInt64JSONBytes + 4<<10
+	// maxInt64JSONBytes 是一个 int64 按 protojson 自己的写法（带引号的十进制字符串）最长的字节数，最长的是
+	// math.MinInt64。
+	maxInt64JSONBytes = len(`"-9223372036854775808"`)
 )
 
 type Config struct {

@@ -1480,7 +1480,8 @@ export const SettingsSchema: GenMessage<Settings> = /*@__PURE__*/
  */
 export type LoginNotify = Message<"probe.v1.LoginNotify"> & {
   /**
-   * 每个 ID 必须对应存在的渠道，否则整次更新返回 InvalidArgument 并点名 ID；重复 ID 合并。
+   * 每个 ID 必须对应存在的渠道，否则整次更新返回 InvalidArgument 并点名 ID。至多 16 条，按请求里的原始条数计、
+   * 重复也算，超出返回 InvalidArgument 并点名字段与上限；保存时重复 ID 合并。
    *
    * @generated from field: repeated int64 channel_ids = 1;
    */

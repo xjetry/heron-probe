@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
@@ -199,37 +202,60 @@ func longestLogo() string {
 // 解码预算不够时，connect 在方法体之前就以 ResourceExhausted 拒绝，校验根本到不了。
 // 解码预算装得下满额设置在最坏转义下的 JSON（service.go 的 maxBody 写了推导）：logo 取 longestLogo；
 // 标题与 CSS 用控制字符填满，json.Marshal 把每个控制字符写成 6 字节的 \u00XX，标题的控制字符清洗后不计入
-// 64 个字符，所以这仍是合法的设置；明暗取最长的值，字段名用比 camelCase 长的 proto 原名（connect 两种都收）。
+// 64 个字符，所以这仍是合法的外观；明暗取最长的值，字段名用比 camelCase 长的 proto 原名（connect 两种都收）。
+// 登录通知的渠道列表带满 maxChannelIDs 条、每条都是最长的 int64：这些渠道不存在，请求在方法体里被引用检查
+// 拒绝，而引用检查在外观校验之后，所以得到点名渠道的 InvalidArgument 就说明整个请求解码成功、外观也通过了校验。
+// 最坏请求按条数上限构造，前提是多一条就不合法，用例一并钉住。
 func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	logo := longestLogo()
-	theme := slices.MaxFunc(themes, func(a, b string) int { return len(a) - len(b) })
-	body, err := json.Marshal(map[string]any{"settings": map[string]string{
-		"title": strings.Repeat("\x01", maxTitleBytes), "theme": theme, "accent_color": "#112233",
-		"logo":       logo,
-		"custom_css": strings.Repeat("\x01", maxCSSBytes),
-	}})
-	if err != nil {
-		t.Fatal(err)
+	existing := saveChannel(t, h, webhook("https://example.invalid/a")).Id
+	elem := strconv.Quote(strconv.FormatInt(math.MinInt64, 10))
+	if one, err := protojson.Marshal(&probev1.LoginNotify{ChannelIds: []int64{math.MinInt64, math.MaxInt64}}); err != nil || !bytes.Contains(one, []byte(elem)) || len(elem) != maxInt64JSONBytes {
+		t.Fatalf("protojson writes int64 as %s (%v); maxInt64JSONBytes = %d, longest quoted int64 is %d bytes", one, err, maxInt64JSONBytes, len(elem))
 	}
-	if len(body) < len(logo)+6*maxCSSBytes+6*maxTitleBytes {
-		t.Fatalf("request is %d bytes; the worst case was not constructed", len(body))
-	}
-	t.Logf("worst-case request: %d bytes, logo %d bytes, budget %d", len(body), len(logo), maxBody)
-	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/probe.v1.AdminService/UpdateSettings", bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := h.http.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	post := func(ids []string) (int, []byte, int) {
+		t.Helper()
+		body, err := json.Marshal(map[string]any{"settings": map[string]any{
+			"title": strings.Repeat("\x01", maxTitleBytes), "theme": slices.MaxFunc(themes, func(a, b string) int { return len(a) - len(b) }),
+			"accent_color": "#112233", "logo": longestLogo(), "custom_css": strings.Repeat("\x01", maxCSSBytes),
+			"login_notify": map[string]any{"channel_ids": ids},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/probe.v1.AdminService/UpdateSettings", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := h.http.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
 		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("full settings escaped worst case (%d bytes): %d %s", len(body), resp.StatusCode, b)
+		return resp.StatusCode, b, len(body)
+	}
+	worst := make([]string, maxChannelIDs)
+	for i := range worst {
+		worst[i] = strconv.FormatInt(math.MinInt64+int64(i), 10)
+	}
+	status, b, n := post(worst)
+	if n < len(longestLogo())+6*maxCSSBytes+6*maxTitleBytes+maxChannelIDs*maxInt64JSONBytes {
+		t.Fatalf("request is %d bytes; the worst case was not constructed", n)
+	}
+	t.Logf("worst-case request: %d bytes, budget %d", n, maxBody)
+	if want := `settings.login_notify.channel_ids: channel -9223372036854775808 does not exist`; status != http.StatusBadRequest || !strings.Contains(string(b), want) {
+		t.Fatalf("full settings escaped worst case (%d bytes): %d %s, want 400 containing %q", n, status, b, want)
+	}
+	over := make([]string, maxChannelIDs+1)
+	for i := range over {
+		over[i] = strconv.FormatInt(existing, 10)
+	}
+	status, b, _ = post(over)
+	if want := fmt.Sprintf("settings.login_notify.channel_ids must list at most %d channel IDs, duplicates included; got %d", maxChannelIDs, maxChannelIDs+1); status != http.StatusBadRequest || !strings.Contains(string(b), want) {
+		t.Fatalf("%d copies of an existing channel: %d %s, want 400 containing %q; the worst case above is not the worst legal request", len(over), status, b, want)
 	}
 }
 

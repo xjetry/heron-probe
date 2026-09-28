@@ -3359,7 +3359,8 @@ func (x *Settings) GetLoginNotify() *LoginNotify {
 
 type LoginNotify struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// 每个 ID 必须对应存在的渠道，否则整次更新返回 InvalidArgument 并点名 ID；重复 ID 合并。
+	// 每个 ID 必须对应存在的渠道，否则整次更新返回 InvalidArgument 并点名 ID。至多 16 条，按请求里的原始条数计、
+	// 重复也算，超出返回 InvalidArgument 并点名字段与上限；保存时重复 ID 合并。
 	ChannelIds    []int64 `protobuf:"varint,1,rep,packed,name=channel_ids,json=channelIds,proto3" json:"channel_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

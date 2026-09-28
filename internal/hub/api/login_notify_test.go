@@ -97,6 +97,25 @@ func TestLoginNotifySettingsPresenceReferencesAndDeletion(t *testing.T) {
 	}
 }
 
+// 列表按请求里的原始条数计，重复也算：满上限的重复合法并合并成一个，多一条整次拒绝、什么都不写。
+func TestLoginNotifyChannelListCountsRawEntries(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	a := saveChannel(t, h, webhook("https://example.invalid/a")).Id
+	full := make([]int64, maxChannelIDs)
+	for i := range full {
+		full[i] = a
+	}
+	before := chooseLoginChannels(t, h, full...)
+	if ids := before.GetLoginNotify().GetChannelIds(); !slices.Equal(ids, []int64{a}) {
+		t.Fatalf("%d copies of one channel saved as %v, want [%d]", len(full), ids, a)
+	}
+	over := proto.Clone(before).(*probev1.Settings)
+	over.Title = "不得保存"
+	over.LoginNotify = &probev1.LoginNotify{ChannelIds: append(full, a)}
+	rejected(t, h, over, fmt.Sprintf("settings.login_notify.channel_ids must list at most %d channel IDs, duplicates included; got %d", maxChannelIDs, maxChannelIDs+1), before)
+}
+
 func TestLoginNotifySuccessDeliversAndUsesTrustedSource(t *testing.T) {
 	for _, trusted := range []bool{false, true} {
 		t.Run(fmt.Sprint(trusted), func(t *testing.T) {

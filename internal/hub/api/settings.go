@@ -24,6 +24,9 @@ const (
 	maxTitleBytes = 1 << 10
 	maxLogoBytes  = 128 << 10
 	maxCSSBytes   = 64 << 10
+	// maxChannelIDs 是登录通知渠道列表的条数上限，按请求里的原始条数计、重复也算：去重在解码之后，约束不了
+	// 请求的字节数。没有它，合法请求的字节数就没有上界，算不出解码预算的最坏请求（service.go 的 maxBody）。
+	maxChannelIDs = 16
 )
 
 var (
@@ -148,8 +151,11 @@ func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probe
 		site = &st
 	}
 	var channels *[]int64
-	if in.GetLoginNotify() != nil {
-		channels = &in.LoginNotify.ChannelIds
+	if ln := in.GetLoginNotify(); ln != nil {
+		if n := len(ln.GetChannelIds()); n > maxChannelIDs {
+			return nil, invalid("settings.login_notify.channel_ids must list at most %d channel IDs, duplicates included; got %d", maxChannelIDs, n)
+		}
+		channels = &ln.ChannelIds
 	}
 	st, err := s.store.UpdateSettings(ctx, site, channels)
 	if err != nil {
