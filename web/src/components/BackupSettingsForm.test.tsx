@@ -19,6 +19,19 @@ const appearanceOf = (req: UpdateSettingsRequest) => {
 const backupForm = async () => within(await screen.findByRole("form", { name: "备份到 S3" }));
 const appearanceForm = async () => within(await screen.findByRole("form", { name: "公开页外观" }));
 
+it("通知渠道选满 16 后禁用未选项，取消后允许重选", async () => {
+  render({ listNotifyChannels: async () => ({ channels: Array.from({ length: 17 }, (_, i) => ({ id: BigInt(i+1), name: `渠道${i+1}` })) }),
+    getSettings: async () => ({ settings: { ...saved, backup: { ...backup, notify: { channelIds: [] } } } }) });
+  const form = await backupForm();
+  const boxes = form.getAllByRole("checkbox");
+  for (const box of boxes.slice(0,16)) fireEvent.click(box);
+  expect(form.getByText("最多选 16 个渠道")).toBeInTheDocument();
+  expect(boxes[16]).toBeDisabled();
+  expect(boxes[0]).toBeEnabled();
+  fireEvent.click(boxes[0]);
+  expect(boxes[16]).toBeEnabled();
+});
+
 it("备份保存只投影五项外观，即使输入对象带总闸也不提交", async () => {
   const sent: UpdateSettingsRequest[] = [];
   const full = { ...saved, publicEnabled: true };

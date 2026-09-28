@@ -5,6 +5,7 @@ import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService, type BackupSettings, type Settings } from "../gen/probe/v1/admin_pb";
 import { liveIds } from "../lib/ids";
+import { MAX_BACKUP_CHANNELS } from "../lib/backup";
 import { Picks } from "./Picks";
 
 // 外观表单与备份表单都经 UpdateSettings 保存，共用这个 mutationKey。任一个在途时两个表单都不能提交：在途的若是备份表单，
@@ -89,7 +90,7 @@ export function BackupSettingsForm({ current, appearance }: { current: BackupSet
             <label>指标保留份数<input type="number" required min={1} max={1000} step={1} value={form.metricsKeep} onChange={(e) => edit({ metricsKeep: Number(e.target.value) })} /></label>
           </div>
           <p className="muted">配置周期 60 至 86400 秒，指标周期 3600 至 604800 秒；保留份数均为 1 至 1000。回到默认值请填写 300、86400、48、14。</p>
-          <Picks legend="备份通知渠道" items={channelList} selected={form.channelIds} onChange={(channelIds) => edit({ channelIds })} />
+          <Picks legend="备份通知渠道" max={MAX_BACKUP_CHANNELS} items={channelList} selected={form.channelIds} onChange={(channelIds) => edit({ channelIds })} />
           {update.error != null && <p role="alert" className="error">{errorText(update.error)}</p>}
           {saved && <p role="status">已保存。</p>}
           <button type="submit">保存</button>
