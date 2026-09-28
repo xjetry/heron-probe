@@ -30,30 +30,30 @@ func describe(t *testing.T, db *sql.DB) []string {
 		kind string
 		sql  string
 	}{
-		{"object", `SELECT type, name, tbl_name AS owner FROM main.sqlite_schema`},
+		{"object", `SELECT type, name, tbl_name AS owner FROM s`},
 		{"table", `SELECT s.name AS table_name, p.type, p.ncol, p.wr, p.strict
-			FROM main.sqlite_schema s JOIN pragma_table_list p ON p.name = s.name AND p.schema = 'main'
+			FROM s JOIN pragma_table_list p ON p.name = s.name AND p.schema = 'main'
 			WHERE s.type = 'table'`},
-		{"table_sql", `SELECT name AS table_name, sql FROM main.sqlite_schema WHERE type = 'table'`},
+		{"table_sql", `SELECT name AS table_name, sql FROM s WHERE type = 'table'`},
 		{"column", `SELECT s.name AS table_name, p.cid, p.name, p.type, p."notnull", p.dflt_value, p.pk, p.hidden
-			FROM main.sqlite_schema s JOIN pragma_table_xinfo(s.name, 'main') p WHERE s.type = 'table'`},
+			FROM s JOIN pragma_table_xinfo(s.name, 'main') p WHERE s.type = 'table'`},
 		{"index", `SELECT s.name AS table_name, i.name AS index_name, i."unique", i.origin,
 			CASE i.origin WHEN 'u' THEN 'UNIQUE' WHEN 'pk' THEN 'PRIMARY KEY' ELSE 'CREATE INDEX' END AS constraint_kind,
-			i.partial FROM main.sqlite_schema s JOIN pragma_index_list(s.name, 'main') i WHERE s.type = 'table'`},
+			i.partial FROM s JOIN pragma_index_list(s.name, 'main') i WHERE s.type = 'table'`},
 		{"index_column", `SELECT s.name AS table_name, i.name AS index_name, x.seqno, x.cid, x.name, x.desc, x.coll, x.key
-			FROM main.sqlite_schema s JOIN pragma_index_list(s.name, 'main') i
+			FROM s JOIN pragma_index_list(s.name, 'main') i
 			JOIN pragma_index_xinfo(i.name, 'main') x WHERE s.type = 'table'`},
 		{"index_sql", `SELECT s.name AS table_name, i.name AS index_name, d.sql
-			FROM main.sqlite_schema s JOIN pragma_index_list(s.name, 'main') i
-			JOIN main.sqlite_schema d ON d.type = 'index' AND d.name = i.name
+			FROM s JOIN pragma_index_list(s.name, 'main') i
+			JOIN s d ON d.type = 'index' AND d.name = i.name
 			WHERE s.type = 'table' AND (i.partial = 1 OR EXISTS
 				(SELECT 1 FROM pragma_index_xinfo(i.name, 'main') x WHERE x.cid = -2))`},
-		{"definition", `SELECT type, name, tbl_name AS owner, sql FROM main.sqlite_schema WHERE type IN ('trigger', 'view')`},
+		{"definition", `SELECT type, name, tbl_name AS owner, sql FROM s WHERE type IN ('trigger', 'view')`},
 	}
 	var signature []string
 	for _, query := range queries {
 		func() {
-			rows, err := db.Query(query.sql)
+			rows, err := db.Query(signatureObjects + query.sql)
 			if err != nil {
 				t.Fatalf("schema %s: %v", query.kind, err)
 			}
@@ -98,6 +98,12 @@ func describe(t *testing.T, db *sql.DB) []string {
 	slices.Sort(signature)
 	return signature
 }
+
+// signatureObjects 定义 describe 各查询共用的对象全集 s。sqlite_stat1..4 是 ANALYZE 写入的查询计划统计，
+// PRAGMA optimize 也会按需执行 ANALYZE 建出它们；它们记录数据分布而不是结构。store 当前不执行二者，
+// 这里按名字显式排除，签名不依赖"恰好没执行"。sqlite_ 前缀的名字 SQLite 不许用户建对象，按前缀排除不会漏掉用户表。
+const signatureObjects = `WITH s AS (SELECT type, name, tbl_name, sql FROM main.sqlite_schema
+	WHERE name NOT LIKE 'sqlite\_stat%' ESCAPE '\') `
 
 // normalizeSQL 把 sqlite_schema.sql 的原文化成只随语义变化的文本。同一结构的原文会因建法而异：
 // ALTER TABLE ADD COLUMN 把新列定义以 ", " 接在原文最后的右括号之前，RENAME 让 SQLite 在建表语句
@@ -415,6 +421,12 @@ func TestSchemaSignatureIgnoresEquivalentSchemas(t *testing.T) {
 			left:    []string{sample, other},
 			right:   []string{sample, other, `INSERT INTO sample(value) VALUES ('old')`, `INSERT INTO other DEFAULT VALUES`},
 			premise: `SELECT (SELECT count(*) FROM sample) = 1 AND (SELECT count(*) FROM sqlite_sequence) = 1`,
+		},
+		{
+			name:    "analyze",
+			left:    []string{sample, byID, `INSERT INTO sample(value) VALUES ('old')`},
+			right:   []string{sample, byID, `INSERT INTO sample(value) VALUES ('old')`, `ANALYZE`},
+			premise: `SELECT count(*) > 0 FROM sqlite_schema WHERE name LIKE 'sqlite\_stat%' ESCAPE '\'`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
