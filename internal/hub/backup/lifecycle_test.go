@@ -308,3 +308,36 @@ func TestStartupFailureNotifiesAndRetries(t *testing.T) {
 		t.Errorf("startup retry did not clean and recover: stat=%v status=%+v events=%v", err, s, sink.events)
 	}
 }
+
+// 重启后配置层先读回标记再做其余准备：已通知的故障遇上设置读不出或启动准备失败，都不重复触发。
+func TestRestartReadsMarkerBeforeOtherPrerequisites(t *testing.T) {
+	for _, broken := range []string{"settings", "startup"} {
+		t.Run(broken, func(t *testing.T) {
+			m, clk, objects, sink := setup(t)
+			objects.failLayer, objects.failStage = "config", "upload"
+			tick(t, m)
+			if broken == "settings" {
+				execFixtureSQL(t, objects.databasePath, `INSERT INTO setting VALUES ('backup.config_interval_s','0')`)
+			} else {
+				dir, prefix := m.st.BackupScratch()
+				stale, err := os.MkdirTemp(dir, prefix+"*")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(stale, "snapshot.db"), nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(stale, 0500); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { os.Chmod(stale, 0700) })
+			}
+			m = restart(m, objects, sink)
+			clk.Advance(time.Second)
+			tick(t, m)
+			if got := status(t, m).Config; got.Failure != broken || len(sink.events) != 1 || len(persistedEvents(t, m.st)) != 1 {
+				t.Errorf("restart re-notified a persisted failure: status=%+v enqueued=%d", got, len(sink.events))
+			}
+		})
+	}
+}
