@@ -3719,7 +3719,8 @@ func (x *TableRows) GetRows() uint64 {
 
 type ListAlertEventsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// 0 表示全部节点。
+	// 0 表示不按节点过滤，返回全部事件，含 rule_id 与 node_id 为 0 的系统事件（登录成功、登录锁定）；非 0 只返回
+	// 该节点的事件，不含系统事件。
 	NodeId int64 `protobuf:"varint,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	// 0 表示从最新事件开始，否则只返回小于此 id 的事件。
 	BeforeId int64 `protobuf:"varint,2,opt,name=before_id,json=beforeId,proto3" json:"before_id,omitempty"`

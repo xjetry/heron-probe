@@ -1630,7 +1630,8 @@ export const TableRowsSchema: GenMessage<TableRows> = /*@__PURE__*/
  */
 export type ListAlertEventsRequest = Message<"probe.v1.ListAlertEventsRequest"> & {
   /**
-   * 0 表示全部节点。
+   * 0 表示不按节点过滤，返回全部事件，含 rule_id 与 node_id 为 0 的系统事件（登录成功、登录锁定）；非 0 只返回
+   * 该节点的事件，不含系统事件。
    *
    * @generated from field: int64 node_id = 1;
    */
