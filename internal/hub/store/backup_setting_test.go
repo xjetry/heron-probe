@@ -13,12 +13,12 @@ func TestBackupSecretAndDisabled(t *testing.T) {
 	s, _ := open(t)
 	secret := "secret"
 	u := &BackupSettingsUpdate{Endpoint: "https://s3.example", Bucket: "backups", Region: "auto", AccessKey: "access", Secret: &secret}
-	_, b, err := s.SaveSettings(t.Context(), SiteSettings{Theme: "auto"}, u)
+	_, b, err := s.SaveSettings(t.Context(), SiteSettingsUpdate{Theme: "auto"}, u)
 	if err != nil || !b.Target.Enabled() || b.Target.Secret != secret {
 		t.Fatalf("backup not enabled or secret lost: %+v, %v", b, err)
 	}
 	u.Secret = nil
-	_, b, err = s.SaveSettings(t.Context(), SiteSettings{Theme: "dark"}, u)
+	_, b, err = s.SaveSettings(t.Context(), SiteSettingsUpdate{Theme: "dark"}, u)
 	if err != nil || b.Target.Secret != secret {
 		t.Fatalf("omitted secret overwritten: %+v, %v", b, err)
 	}
@@ -36,7 +36,7 @@ func TestBackupSecretAndDisabled(t *testing.T) {
 				empty := ""
 				copy.Secret = &empty
 			}
-			_, _, err := s.SaveSettings(t.Context(), SiteSettings{Theme: "auto"}, &copy)
+			_, _, err := s.SaveSettings(t.Context(), SiteSettingsUpdate{Theme: "auto"}, &copy)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -58,7 +58,7 @@ func TestBackupSettingsAtomicAndChannels(t *testing.T) {
 	secret := "preserve"
 	keep := uint32(24)
 	u := &BackupSettingsUpdate{Secret: &secret, ConfigKeep: &keep, Channels: &[]int64{channel.ID}}
-	site, before, err := s.SaveSettings(ctx, SiteSettings{Theme: "auto", Title: "old"}, u)
+	site, before, err := s.SaveSettings(ctx, SiteSettingsUpdate{Theme: "auto", Title: "old"}, u)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestBackupSettingsAtomicAndChannels(t *testing.T) {
 	}
 	newSecret := "must-not-write"
 	u.Secret = &newSecret
-	if _, _, err := s.SaveSettings(ctx, SiteSettings{Theme: "dark", Title: "new"}, u); err == nil {
+	if _, _, err := s.SaveSettings(ctx, SiteSettingsUpdate{Theme: "dark", Title: "new"}, u); err == nil {
 		t.Fatal("injected storage failure not returned")
 	}
 	gotSite, gotBackup, err := s.Settings(ctx)
@@ -91,7 +91,7 @@ func TestBackupSettingsAtomicAndChannels(t *testing.T) {
 		t.Fatalf("channel list after its last channel was deleted = %q, want []", got)
 	}
 	var missing NotFoundError
-	if _, _, err := s.SaveSettings(ctx, site, &BackupSettingsUpdate{Channels: &[]int64{channel.ID}}); !errors.As(err, &missing) || missing.Kind != ObjectNotifyChannel || missing.ID != channel.ID {
+	if _, _, err := s.SaveSettings(ctx, SiteSettingsUpdate{SiteAppearance: site.SiteAppearance}, &BackupSettingsUpdate{Channels: &[]int64{channel.ID}}); !errors.As(err, &missing) || missing.Kind != ObjectNotifyChannel || missing.ID != channel.ID {
 		t.Fatalf("nonexistent backup channel: %v", err)
 	}
 }
@@ -117,21 +117,21 @@ func TestBackupChannelsStoredForm(t *testing.T) {
 		}
 		ids = append(ids, c.ID)
 	}
-	if _, _, err := s.SaveSettings(ctx, SiteSettings{Theme: "auto"}, &BackupSettingsUpdate{Channels: &[]int64{ids[1], ids[0], ids[1]}}); err != nil {
+	if _, _, err := s.SaveSettings(ctx, SiteSettingsUpdate{Theme: "auto"}, &BackupSettingsUpdate{Channels: &[]int64{ids[1], ids[0], ids[1]}}); err != nil {
 		t.Fatal(err)
 	}
 	want := fmt.Sprintf("[%d,%d]", ids[0], ids[1])
 	if got := storedSetting(t, s, backupChannelsKey); got != want {
 		t.Fatalf("given channels stored as %q, want %q", got, want)
 	}
-	if _, _, err := s.SaveSettings(ctx, SiteSettings{Theme: "auto"}, &BackupSettingsUpdate{}); err != nil {
+	if _, _, err := s.SaveSettings(ctx, SiteSettingsUpdate{Theme: "auto"}, &BackupSettingsUpdate{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := storedSetting(t, s, backupChannelsKey); got != want {
 		t.Fatalf("absent channels rewrote the list to %q", got)
 	}
 	var none []int64
-	if _, _, err := s.SaveSettings(ctx, SiteSettings{Theme: "auto"}, &BackupSettingsUpdate{Channels: &none}); err != nil {
+	if _, _, err := s.SaveSettings(ctx, SiteSettingsUpdate{Theme: "auto"}, &BackupSettingsUpdate{Channels: &none}); err != nil {
 		t.Fatal(err)
 	}
 	if got := storedSetting(t, s, backupChannelsKey); got != "[]" {
@@ -145,12 +145,12 @@ func TestBackupNumbersRangeOnBothSides(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
 	keep := uint32(24)
-	if _, _, err := s.SaveSettings(ctx, SiteSettings{Theme: "auto"}, &BackupSettingsUpdate{ConfigKeep: &keep}); err != nil {
+	if _, _, err := s.SaveSettings(ctx, SiteSettingsUpdate{Theme: "auto"}, &BackupSettingsUpdate{ConfigKeep: &keep}); err != nil {
 		t.Fatal(err)
 	}
 	zero := uint32(0)
 	var rangeErr BackupRangeError
-	_, _, err := s.SaveSettings(ctx, SiteSettings{Theme: "dark"}, &BackupSettingsUpdate{Bucket: "changed", ConfigKeep: &zero})
+	_, _, err := s.SaveSettings(ctx, SiteSettingsUpdate{Theme: "dark"}, &BackupSettingsUpdate{Bucket: "changed", ConfigKeep: &zero})
 	if !errors.As(err, &rangeErr) || rangeErr.Error() != "backup.config_keep must be in [1, 1000]; got 0" {
 		t.Fatalf("out-of-range write: %v", err)
 	}

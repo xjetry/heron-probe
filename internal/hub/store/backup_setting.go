@@ -87,7 +87,7 @@ const backupChannelsKey = "notify.backup_channels"
 func readSettings(ctx context.Context, db interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }) (SiteSettings, BackupSettings, error) {
-	site := SiteSettings{Theme: DefaultTheme}
+	site := SiteSettings{Theme: DefaultTheme, PublicEnabled: true}
 	backup := BackupSettings{Target: s3.Config{Region: "auto"}}
 	text := map[string]*string{
 		"backup.endpoint": &backup.Target.Endpoint, "backup.bucket": &backup.Target.Bucket,
@@ -114,6 +114,12 @@ func readSettings(ctx context.Context, db interface {
 		}
 		if p := text[k]; p != nil {
 			*p = v
+		}
+		if k == publicEnabledKey {
+			if v != "0" && v != "1" {
+				return site, backup, fmt.Errorf("%s must be 0 or 1; got %q", publicEnabledKey, v)
+			}
+			site.PublicEnabled = v == "1"
 		}
 		if f, ok := numbers[k]; ok {
 			n, err := strconv.ParseUint(v, 10, 32)
@@ -145,11 +151,18 @@ func (s *Store) BackupSettings(ctx context.Context) (BackupSettings, error) {
 	return backup, err
 }
 
-func saveSiteSettings(tx *sql.Tx, site SiteSettings) error {
+func saveSiteSettings(tx *sql.Tx, site SiteSettingsUpdate) error {
 	for _, f := range site.fields() {
 		if err := putSetting(tx, f.key, *f.value); err != nil {
 			return err
 		}
+	}
+	if site.PublicEnabled != nil {
+		value := "0"
+		if *site.PublicEnabled {
+			value = "1"
+		}
+		return putSetting(tx, publicEnabledKey, value)
 	}
 	return nil
 }
@@ -242,8 +255,12 @@ func saveBackup(tx *sql.Tx, u *BackupSettingsUpdate) error {
 }
 
 // SaveSettings 把全部修改及回显快照放在同一写事务中：数值范围、渠道引用都在事务内裁决，任一不合即整体回滚，
-// 也不会在 api 的先查后写窗口里接受已经删除的渠道。update 为 nil 时只写外观。
-func (s *Store) SaveSettings(ctx context.Context, site SiteSettings, update *BackupSettingsUpdate) (SiteSettings, BackupSettings, error) {
+// 也不会在 api 的先查后写窗口里接受已经删除的渠道。update 为 nil 时不改备份设置。
+// publicEnabled 在 Open 时从库加载，此后写入只经这里；siteWriteMu 覆盖提交与发布，避免并发调用按提交的
+// 反序发布旧值。失败不发布，总闸缺席时不写也不发布；离线改库须停 hub，由下次 Open 重载。
+func (s *Store) SaveSettings(ctx context.Context, site SiteSettingsUpdate, update *BackupSettingsUpdate) (SiteSettings, BackupSettings, error) {
+	s.siteWriteMu.Lock()
+	defer s.siteWriteMu.Unlock()
 	var savedSite SiteSettings
 	var savedBackup BackupSettings
 	err := s.write(ctx, func(tx *sql.Tx) error {
@@ -259,5 +276,8 @@ func (s *Store) SaveSettings(ctx context.Context, site SiteSettings, update *Bac
 		savedSite, savedBackup, err = readSettings(ctx, tx)
 		return err
 	})
+	if err == nil && site.PublicEnabled != nil {
+		s.publicEnabled.Store(savedSite.PublicEnabled)
+	}
 	return savedSite, savedBackup, err
 }

@@ -94,7 +94,7 @@ func setup(t *testing.T) (*Manager, *clock.Fake, *fakeObjects, *eventSink) {
 		t.Fatal(err)
 	}
 	secret := "secret"
-	_, _, err = st.SaveSettings(context.Background(), store.SiteSettings{}, &store.BackupSettingsUpdate{
+	_, _, err = st.SaveSettings(context.Background(), store.SiteSettingsUpdate{}, &store.BackupSettingsUpdate{
 		Endpoint: "https://example.test", Bucket: "backups", Region: "auto", AccessKey: "key", Secret: &secret, Prefix: "tenant", Channels: &[]int64{ch.ID},
 	})
 	if err != nil {
@@ -273,7 +273,7 @@ func TestMetricsFailureAndDisable(t *testing.T) {
 	if got := status(t, m); got.Metrics.Failure != "" {
 		t.Fatalf("metrics recovery status=%+v", got)
 	}
-	_, _, err := m.st.SaveSettings(context.Background(), store.SiteSettings{}, &store.BackupSettingsUpdate{})
+	_, _, err := m.st.SaveSettings(context.Background(), store.SiteSettingsUpdate{}, &store.BackupSettingsUpdate{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +400,7 @@ func TestPeriodsUseMonotonicClockAndUpdatedSettings(t *testing.T) {
 	}
 	objects.calls = nil
 	interval := uint32(60)
-	_, _, err := m.st.SaveSettings(t.Context(), store.SiteSettings{}, &store.BackupSettingsUpdate{Endpoint: "https://example.test", Bucket: "backups", Region: "auto", AccessKey: "key", Prefix: "changed", ConfigIntervalS: &interval})
+	_, _, err := m.st.SaveSettings(t.Context(), store.SiteSettingsUpdate{}, &store.BackupSettingsUpdate{Endpoint: "https://example.test", Bucket: "backups", Region: "auto", AccessKey: "key", Prefix: "changed", ConfigIntervalS: &interval})
 	if err != nil {
 		t.Fatal(err)
 	}

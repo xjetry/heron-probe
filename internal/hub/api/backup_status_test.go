@@ -41,7 +41,7 @@ func TestBackupStatusReadAccessAndState(t *testing.T) {
 		t.Fatal(err)
 	}
 	secret := "secret"
-	_, _, err := h.store.SaveSettings(t.Context(), store.SiteSettings{}, &store.BackupSettingsUpdate{Endpoint: "://invalid", Bucket: "backup", Region: "auto", AccessKey: "key", Secret: &secret})
+	_, _, err := h.store.SaveSettings(t.Context(), store.SiteSettingsUpdate{}, &store.BackupSettingsUpdate{Endpoint: "://invalid", Bucket: "backup", Region: "auto", AccessKey: "key", Secret: &secret})
 	if err != nil {
 		t.Fatal(err)
 	}

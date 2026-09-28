@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/hub/sanitize"
@@ -33,31 +34,31 @@ var (
 	accentRE  = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 )
 
-// cleanSettings 校验并清洗外观，返回可以原样存储与下发的值；任一项不合约束即返回错误，调用方什么都不写。
+// cleanSettings 校验并清洗外观，保留总闸的 presence 交给存储层处理；任一项不合约束即返回错误，调用方什么都不写。
 // 标题会显示在页面与标签页上，与节点名（cleanName）同用 sanitize.Text 清洗；logo 与 CSS 是数据与代码，改写任何字节都可能改变含义，只校验不清洗。
-func cleanSettings(in *probev1.Settings) (store.SiteSettings, error) {
+func cleanSettings(in *probev1.Settings) (store.SiteSettingsUpdate, error) {
 	if n := len(in.GetTitle()); n > maxTitleBytes {
-		return store.SiteSettings{}, invalid("settings.title must be at most %d bytes before cleaning; got %d", maxTitleBytes, n)
+		return store.SiteSettingsUpdate{}, invalid("settings.title must be at most %d bytes before cleaning; got %d", maxTitleBytes, n)
 	}
 	title := sanitize.Text(in.GetTitle(), len(in.GetTitle()))
 	if n := utf8.RuneCountInString(title); n > maxTitleRunes {
-		return store.SiteSettings{}, invalid("settings.title must be at most %d characters after removing control characters and surrounding whitespace; got %d", maxTitleRunes, n)
+		return store.SiteSettingsUpdate{}, invalid("settings.title must be at most %d characters after removing control characters and surrounding whitespace; got %d", maxTitleRunes, n)
 	}
 	if !slices.Contains(themes, in.GetTheme()) {
-		return store.SiteSettings{}, invalid("settings.theme must be one of %s; got %q", strings.Join(themes, ", "), in.GetTheme())
+		return store.SiteSettingsUpdate{}, invalid("settings.theme must be one of %s; got %q", strings.Join(themes, ", "), in.GetTheme())
 	}
 	if c := in.GetAccentColor(); c != "" && !accentRE.MatchString(c) {
-		return store.SiteSettings{}, invalid("settings.accent_color must be empty (the default color) or #rrggbb with six hex digits; got %q", c)
+		return store.SiteSettingsUpdate{}, invalid("settings.accent_color must be empty (the default color) or #rrggbb with six hex digits; got %q", c)
 	}
 	if err := checkLogo(in.GetLogo()); err != nil {
-		return store.SiteSettings{}, err
+		return store.SiteSettingsUpdate{}, err
 	}
 	if err := checkCSS(in.GetCustomCss()); err != nil {
-		return store.SiteSettings{}, err
+		return store.SiteSettingsUpdate{}, err
 	}
-	return store.SiteSettings{
+	return store.SiteSettingsUpdate{
 		Title: title, Theme: in.GetTheme(), AccentColor: strings.ToLower(in.GetAccentColor()),
-		Logo: in.GetLogo(), CustomCSS: in.GetCustomCss(),
+		Logo: in.GetLogo(), CustomCSS: in.GetCustomCss(), PublicEnabled: in.PublicEnabled,
 	}, nil
 }
 
@@ -116,7 +117,7 @@ func checkCSS(css string) error {
 }
 
 func settingsProto(st store.SiteSettings, backup store.BackupSettings) *probev1.Settings {
-	return &probev1.Settings{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS, Backup: backupProto(backup)}
+	return &probev1.Settings{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS, Backup: backupProto(backup), PublicEnabled: proto.Bool(st.PublicEnabled)}
 }
 
 func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.GetSettingsRequest]) (*connect.Response[probev1.GetSettingsResponse], error) {
@@ -129,7 +130,7 @@ func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.Ge
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probev1.UpdateSettingsRequest]) (*connect.Response[probev1.UpdateSettingsResponse], error) {
-	st, err := cleanSettings(req.Msg.GetSettings())
+	in, err := cleanSettings(req.Msg.GetSettings())
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +138,7 @@ func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probe
 	if err != nil {
 		return nil, err
 	}
-	st, savedBackup, err := s.store.SaveSettings(ctx, st, backup)
+	st, savedBackup, err := s.store.SaveSettings(ctx, in, backup)
 	if err != nil {
 		var missing store.NotFoundError
 		var outOfRange store.BackupRangeError

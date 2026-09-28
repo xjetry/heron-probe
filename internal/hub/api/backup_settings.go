@@ -18,7 +18,7 @@ const (
 	maxAccessKeyBytes = 128
 	maxSecretBytes    = 4096
 	maxPrefixBytes    = 512
-	maxBackupChannels = 100
+	maxBackupChannels = 16
 )
 
 // cleanBackup 校验协议层的约束并构造存储更新；nil 表示请求里没有 backup，存储不动任何备份键。

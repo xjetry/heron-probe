@@ -39,7 +39,7 @@ const (
 	// 各项的上限在 settings.go 与 backup_settings.go；每个字段的合法取值都有字节上限
 	// （明暗与主色由取值集合与格式限定）是这条推导成立的前提。
 	// 备份的六个字符串同样按每字节最坏六字节计；渠道 ID 至多 maxBackupChannels 个，proto3 JSON 把 int64 写成带引号的
-	// 十进制串，合法 ID 为正、至多 19 位，连引号与逗号每个 22 字节。字段名、标点、四个数值与 has_secret 由末尾的 4 KiB 承载。
+	// 十进制串，合法 ID 为正、至多 19 位，连引号与逗号每个 22 字节。字段名、标点、四个数值、has_secret 与总闸布尔值由末尾的 4 KiB 承载。
 	maxBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes +
 		6*(maxEndpointBytes+maxBucketBytes+maxRegionBytes+maxAccessKeyBytes+maxSecretBytes+maxPrefixBytes) + maxBackupChannels*22 + 4<<10
 )
@@ -263,10 +263,17 @@ func sessionCookie(value string, secure bool, maxAge int) *http.Cookie {
 	}
 }
 
+func clearSessionCookie(ctx context.Context, header http.Header) {
+	peer := ctx.Value(peerKey{}).(peerInfo)
+	header.Add("Set-Cookie", sessionCookie("", peer.scheme == "https", -1).String())
+}
+
 func (s *Service) Login(ctx context.Context, req *connect.Request[probev1.LoginRequest]) (*connect.Response[probev1.LoginResponse], error) {
 	peer := ctx.Value(peerKey{}).(peerInfo)
 	tok, err := s.auth.Login(ctx, req.Msg.GetPassword(), peer.from)
 	switch {
+	case errors.Is(err, auth.ErrLoginBusy):
+		return nil, connect.NewError(connect.CodeResourceExhausted, errors.New("password verification is busy; please try again later"))
 	case errors.Is(err, auth.ErrLocked):
 		return nil, unauthenticated("too many failed logins from this source (one IPv4 address, or one IPv6 /64); retry in 15 minutes")
 	case errors.Is(err, auth.ErrNoAdmin), errors.Is(err, auth.ErrBadPassword):
@@ -283,12 +290,11 @@ func (s *Service) Login(ctx context.Context, req *connect.Request[probev1.LoginR
 
 func (s *Service) Logout(ctx context.Context, _ *connect.Request[probev1.LogoutRequest]) (*connect.Response[probev1.LogoutResponse], error) {
 	tok := ctx.Value(sessionKey{}).(string)
-	peer := ctx.Value(peerKey{}).(peerInfo)
 	if err := s.auth.Logout(ctx, tok); err != nil {
 		s.log.Error("logout failed", "err", err)
 		return nil, internalError("logout failed")
 	}
 	resp := connect.NewResponse(&probev1.LogoutResponse{})
-	resp.Header().Add("Set-Cookie", sessionCookie("", peer.scheme == "https", -1).String())
+	clearSessionCookie(ctx, resp.Header())
 	return resp, nil
 }

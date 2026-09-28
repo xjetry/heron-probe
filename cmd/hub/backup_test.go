@@ -73,7 +73,7 @@ func TestServeBackupUploadsAndDeliversRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 		secret := "secret"
-		_, _, err = st.SaveSettings(t.Context(), store.SiteSettings{}, &store.BackupSettingsUpdate{Endpoint: remote.URL, Bucket: "backups", Region: "auto", AccessKey: "key", Secret: &secret, Prefix: "hub", Channels: &[]int64{channel.ID}})
+		_, _, err = st.SaveSettings(t.Context(), store.SiteSettingsUpdate{}, &store.BackupSettingsUpdate{Endpoint: remote.URL, Bucket: "backups", Region: "auto", AccessKey: "key", Secret: &secret, Prefix: "hub", Channels: &[]int64{channel.ID}})
 		if err != nil {
 			t.Fatal(err)
 		}

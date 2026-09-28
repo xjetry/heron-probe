@@ -20,6 +20,18 @@ service AdminService {
   rpc Logout(LogoutRequest) returns (LogoutResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
+  // 列出未绝对过期且未空闲过期的会话，按创建时刻倒序、同刻按 id 升序。
+  // API token 不能管理其它凭据，因此不能列出或撤销会话。
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
+  // 撤销指定会话；撤销当前会话时同时清 cookie，等同登出。
+  // 不存在或已过期的 id 也成功，便于在响应丢失后安全重试；撤销的若是本次请求所用的会话，
+  // 第一次请求已在服务端删掉这一行，带同一 cookie 重试会得到 Unauthenticated 而非再次成功——
+  // 会话已不存在，结果仍安全。
+  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
 
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse) {
     option (probe.v1.access) = ACCESS_READ;
@@ -133,7 +145,7 @@ service AdminService {
   rpc TestNotifyChannel(TestNotifyChannelRequest) returns (TestNotifyChannelResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
-  // 公开页外观：标题、明暗、主色、logo 与自定义 CSS，经 PublicService.GetSite 对外下发。
+  // 公开页设置：总闸与外观；外观在总闸开启时经 PublicService.GetSite 对外下发。
   rpc GetSettings(GetSettingsRequest) returns (GetSettingsResponse) {
     option (probe.v1.access) = ACCESS_READ;
   }
@@ -141,7 +153,7 @@ service AdminService {
   rpc GetBackupStatus(GetBackupStatusRequest) returns (GetBackupStatusResponse) {
     option (probe.v1.access) = ACCESS_READ;
   }
-  // 整体替换外观的五项并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
+  // 整体替换公开页外观，总闸 public_enabled 与 backup 缺席时保持不变，并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
   // 约束与期望取值，什么都不写入。
   rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
@@ -175,6 +187,24 @@ message LoginResponse {}
 
 message LogoutRequest {}
 message LogoutResponse {}
+
+message Session {
+  // token_hash 的 64 位小写十六进制，不是 cookie 明文；知道此 id 不能冒用会话。
+  string id = 1;
+  // 创建时刻，Unix 秒。
+  int64 created_at = 2;
+  // 最近使用时刻，Unix 秒；鉴权路径按节流策略异步记录。
+  int64 last_used_at = 3;
+  // 是否本次请求所使用的会话。
+  bool current = 4;
+}
+message ListSessionsRequest {}
+message ListSessionsResponse { repeated Session sessions = 1; }
+message RevokeSessionRequest {
+  // ListSessions 返回的 id，必须为 64 位十六进制；格式不合法返回 InvalidArgument。
+  string id = 1;
+}
+message RevokeSessionResponse {}
 
 message Node {
   int64 id = 1;
@@ -488,7 +518,7 @@ message DeleteNotifyChannelResponse {}
 message TestNotifyChannelRequest { int64 id = 1; }
 message TestNotifyChannelResponse {}
 
-// 公开页外观与备份。外观五项整体替换；backup 缺席即不变。
+// 公开页外观与备份。外观五项整体替换；backup 与 public_enabled 缺席即不变。
 message Settings {
   // 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
   // 空串表示公开页用内置标题。
@@ -502,6 +532,11 @@ message Settings {
   string logo = 4;
   // 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
   string custom_css = 5;
+  // 公开页与 PublicService 的总闸。GetSettings 总是带值，从未保存过时为 true。
+  // UpdateSettings 缺席表示不变，显式 true/false 才修改；关闭公开页会中断对外服务，
+  // 不认识此字段的旧客户端修改外观时不得顺带关站，因此它有别于外观字段的整体替换语义。
+  // 关闭不修改节点的 public 标记，重新打开后恢复原来的公开范围。
+  optional bool public_enabled = 6;
   // 备份设置（§6.7）。缺席即不变：只改外观的请求不带它，备份配置与渠道都不动。不下发到公开页。
   BackupSettings backup = 11;
 }
@@ -542,7 +577,7 @@ message BackupSettings {
   bool has_secret = 12;
 }
 message BackupNotify {
-  // 最多 100 个；每个 ID 必须对应存在的渠道，否则整次更新返回 InvalidArgument 并点名 ID；重复 ID 合并。
+  // 最多 16 个；每个 ID 必须对应存在的渠道，否则整次更新返回 InvalidArgument 并点名 ID；重复 ID 合并。
   repeated int64 channel_ids = 1;
 }
 message GetSettingsRequest {}

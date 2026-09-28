@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 )
 
 type Session struct {
+	TokenHash  [32]byte
 	CreatedAt  time.Time
 	LastUsedAt time.Time
 	ExpiresAt  time.Time
@@ -65,15 +67,44 @@ func (s *Store) CreateSession(ctx context.Context, hash [32]byte, now, expires t
 }
 
 func (s *Store) Session(ctx context.Context, hash [32]byte) (Session, bool, error) {
-	var created, used, exp int64
-	err := s.r.QueryRowContext(ctx, "SELECT created_at, last_used_at, expires_at FROM admin_session WHERE token_hash = ?", hash[:]).Scan(&created, &used, &exp)
+	sess, err := scanSession(s.r.QueryRowContext(ctx, "SELECT token_hash, created_at, last_used_at, expires_at FROM admin_session WHERE token_hash = ?", hash[:]).Scan)
 	if err == sql.ErrNoRows {
 		return Session{}, false, nil
 	}
 	if err != nil {
 		return Session{}, false, err
 	}
-	return Session{CreatedAt: time.Unix(created, 0).UTC(), LastUsedAt: time.Unix(used, 0).UTC(), ExpiresAt: time.Unix(exp, 0).UTC()}, true, nil
+	return sess, true, nil
+}
+
+// Sessions 读取持久化会话；有效性由 auth 与鉴权路径共用的判定裁决。
+func (s *Store) Sessions(ctx context.Context) ([]Session, error) {
+	rows, err := s.r.QueryContext(ctx, "SELECT token_hash, created_at, last_used_at, expires_at FROM admin_session ORDER BY created_at DESC, token_hash ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Session
+	for rows.Next() {
+		sess, err := scanSession(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
+func scanSession(scan func(...any) error) (Session, error) {
+	var hash []byte
+	var created, used, exp int64
+	if err := scan(&hash, &created, &used, &exp); err != nil {
+		return Session{}, err
+	}
+	if len(hash) != 32 {
+		return Session{}, fmt.Errorf("stored session hash must have 32 bytes; got %d", len(hash))
+	}
+	return Session{TokenHash: [32]byte(hash), CreatedAt: time.Unix(created, 0).UTC(), LastUsedAt: time.Unix(used, 0).UTC(), ExpiresAt: time.Unix(exp, 0).UTC()}, nil
 }
 
 // TouchSessionAsync 只刷新已有会话的最近使用时刻，避免撤销后被延迟写入重新创建。

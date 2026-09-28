@@ -212,7 +212,7 @@ func TestBackupTargetValidation(t *testing.T) {
 		{"prefix must not start or end with /", func(b *probev1.BackupSettings) { b.Prefix = "/hub" }},
 		{"prefix must not start or end with /", func(b *probev1.BackupSettings) { b.Prefix = "hub/" }},
 		{"prefix must not start or end with / or contain control characters", func(b *probev1.BackupSettings) { b.Prefix = "hub\x7fbackups" }},
-		{"notify.channel_ids must contain at most 100 IDs; got 101", func(b *probev1.BackupSettings) {
+		{"notify.channel_ids must contain at most 16 IDs; got 17", func(b *probev1.BackupSettings) {
 			ids := make([]int64, maxBackupChannels+1)
 			for i := range ids {
 				ids[i] = int64(i + 1)
@@ -252,7 +252,7 @@ func TestBackupNotifyChannelMustExist(t *testing.T) {
 }
 
 // 解码预算装得下备份设置满额的最坏请求（service.go 的 maxBody）：字符串项用 json.Marshal 写成 6 字节的字符填满
-// （'<' 按 HTML 安全规则转义成 <，它是合法的前缀、区域与 access key 字符），渠道 ID 取 100 个 19 位正数。
+// （'<' 按 HTML 安全规则转义成 <，它是合法的前缀、区域与 access key 字符），渠道 ID 取 16 个 19 位正数。
 // 这些 ID 不存在，请求因而在写事务里以 InvalidArgument 点名 ID 结束——能走到那一步，说明解码没有超出预算。
 func TestUpdateSettingsBudgetFitsFullBackupWithWorstCaseEscaping(t *testing.T) {
 	h := newHarness(t, "")
