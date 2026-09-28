@@ -35,8 +35,9 @@ type LayerStatus struct {
 }
 
 type Status struct {
-	Enabled         bool
-	Config, Metrics LayerStatus
+	Enabled              bool
+	Config, Metrics      LayerStatus
+	ThemesWithoutPackage []string
 }
 
 type layerState struct {
@@ -99,7 +100,8 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 	if settingsErr != nil && out.Config.Failure == "" {
 		return Status{}, settingsErr
 	}
-	return out, nil
+	out.ThemesWithoutPackage, err = m.st.ThemesWithoutPackage(ctx)
+	return out, err
 }
 
 const (
@@ -114,6 +116,14 @@ const (
 // 首轮由持久化成功时刻折算等待，之后用单调钟计周期，慢上传不积累待执行次数。
 // 墙钟用于快照、事件和成功时刻；对象名的墙钟顺序也是保留顺序，但刚上传的对象不参与删除。
 func (m *Manager) Run(ctx context.Context) {
+	ids, err := m.st.ThemesWithoutPackage(ctx)
+	if err != nil {
+		m.log.Error("reading themes without backup package failed", "err", err)
+	} else {
+		for _, id := range ids {
+			m.log.Warn("theme not backed up; upload original package again", "theme", id)
+		}
+	}
 	var wg sync.WaitGroup
 	for i := range m.layers {
 		wg.Add(1)
@@ -392,6 +402,7 @@ func (m *Manager) perform(ctx context.Context, cfg store.BackupSettings, layer s
 		return "cleanup", 0, err.Error()
 	}
 	// 唤醒和周期都执行完整配置轮；主题成功不能掩盖快照或保留的故障，整轮成功后才记账和恢复通知。
+	// 每次主题写入的唤醒多产生一份配置快照，达到份数上限时挤掉最旧一份，换取最新配置快照与主题对象同步。
 	if layer == "config" {
 		if category, code, detail := m.syncThemes(ctx, cfg, client); category != "" {
 			return category, code, detail

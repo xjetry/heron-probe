@@ -16,6 +16,7 @@ func (s *Service) GetBackupStatus(ctx context.Context, _ *connect.Request[probev
 	}
 	return connect.NewResponse(&probev1.GetBackupStatusResponse{
 		Enabled: status.Enabled, Config: backupLayerProto(status.Config), Metrics: backupLayerProto(status.Metrics),
+		ThemesWithoutPackage: status.ThemesWithoutPackage,
 	}), nil
 }
 

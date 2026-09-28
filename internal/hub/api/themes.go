@@ -101,6 +101,9 @@ func (s *Service) EnableTheme(ctx context.Context, req *connect.Request[probev1.
 	}
 	id := req.Msg.GetId()
 	err := s.store.EnableTheme(ctx, id)
+	if errors.Is(err, store.ErrThemeContentMissing) {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("主题没有文件，请重新上传原包后启用"))
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, themeNotFound("id", id)
 	}

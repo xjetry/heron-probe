@@ -1,8 +1,10 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -273,22 +275,14 @@ func TestThemeSyncRunWakesAfterCommit(t *testing.T) {
 	wait("delete tenant/theme/a.zip")
 }
 
-func TestThemeSyncMissingPackageAndRecordFailure(t *testing.T) {
-	for _, stage := range []string{"package", "record"} {
-		t.Run(stage, func(t *testing.T) {
-			m, _, base, sink := setup(t)
-			themeStorage(m, base)
-			installTheme(t, m, "zip")
-			if stage == "package" {
-				execFixtureSQL(t, base.databasePath, "DELETE FROM theme_package")
-			} else {
-				execFixtureSQL(t, base.databasePath, "CREATE TRIGGER reject_mark BEFORE UPDATE OF uploaded ON theme_package BEGIN SELECT RAISE(ABORT, 'mark rejected'); END")
-			}
-			tick(t, m)
-			if s := status(t, m).Config; s.Failure != "theme_"+stage || !s.LastSuccess.IsZero() || len(sink.events) != 1 {
-				t.Fatalf("theme %s failure hidden: %+v events=%d", stage, s, len(sink.events))
-			}
-		})
+func TestThemeSyncRecordFailure(t *testing.T) {
+	m, _, base, sink := setup(t)
+	themeStorage(m, base)
+	installTheme(t, m, "zip")
+	execFixtureSQL(t, base.databasePath, "CREATE TRIGGER reject_mark BEFORE UPDATE OF uploaded ON theme_package BEGIN SELECT RAISE(ABORT, 'mark rejected'); END")
+	tick(t, m)
+	if s := status(t, m).Config; s.Failure != "theme_record" || !s.LastSuccess.IsZero() || len(sink.events) != 1 {
+		t.Fatalf("theme record failure hidden: %+v events=%d", s, len(sink.events))
 	}
 }
 
@@ -312,5 +306,123 @@ func TestThemeFailureSharesMarkerAndDisabledLifecycle(t *testing.T) {
 	tick(t, m)
 	if s := status(t, m).Config; s.Failure != "" || len(sink.events) != 2 || sink.events[1].Transition != store.TransitionDisabled {
 		t.Fatalf("theme failure did not close on disable: %+v events=%v", s, sink.events)
+	}
+}
+
+func TestThemeSyncPreservesUnmanagedKeys(t *testing.T) {
+	m, _, base, _ := setup(t)
+	keys := []string{"README.txt", "a.zip.bak", "archive/a.zip", "A (1).zip"}
+	for _, key := range keys {
+		base.objects["tenant/theme/"+key] = []byte("keep")
+	}
+	tick(t, m)
+	for _, key := range keys {
+		if string(base.objects["tenant/theme/"+key]) != "keep" {
+			t.Errorf("unmanaged theme key deleted: %s", key)
+		}
+	}
+}
+
+func TestThemeSyncMissingPackageIsNotFailure(t *testing.T) {
+	for _, files := range []bool{false, true} {
+		t.Run(map[bool]string{false: "empty", true: "legacy"}[files], func(t *testing.T) {
+			m, _, base, sink := setup(t)
+			installTheme(t, m, "zip")
+			execFixtureSQL(t, base.databasePath, "DELETE FROM theme_package")
+			if !files {
+				execFixtureSQL(t, base.databasePath, "DELETE FROM theme_file")
+			}
+			base.objects["tenant/theme/a.zip"] = []byte("only copy")
+			tick(t, m)
+			s := status(t, m)
+			if s.Config.Failure != "" || s.Config.LastSuccess.IsZero() || len(sink.events) != 0 || len(s.ThemesWithoutPackage) != 1 || s.ThemesWithoutPackage[0] != "a" || string(base.objects["tenant/theme/a.zip"]) != "only copy" {
+				t.Fatalf("missing package treated as failure or lost: %+v events=%v remote=%q", s, sink.events, base.objects["tenant/theme/a.zip"])
+			}
+		})
+	}
+}
+
+func TestThemeSyncContinuesAfterPackageFailure(t *testing.T) {
+	m, _, base, _ := setup(t)
+	themeStorage(m, base)
+	installTheme(t, m, "a")
+	if _, err := m.st.PutTheme(t.Context(), store.Theme{ID: "b"}, []store.ThemeFile{{Path: "index.html", Content: []byte("b")}}, []byte("b"), false, 20); err != nil {
+		t.Fatal(err)
+	}
+	execFixtureSQL(t, base.databasePath, "CREATE TRIGGER reject_a BEFORE UPDATE OF uploaded ON theme_package WHEN NEW.theme_id='a' BEGIN SELECT RAISE(ABORT,'reject a'); END")
+	base.objects["tenant/theme/orphan.zip"] = []byte("old")
+	tick(t, m)
+	if s := status(t, m).Config; s.Failure != "theme_record" || string(base.objects["tenant/theme/b.zip"]) != "b" {
+		t.Fatalf("theme failure blocked later package: %+v package=%q", s, base.objects["tenant/theme/b.zip"])
+	}
+	if _, ok := base.objects["tenant/theme/orphan.zip"]; ok {
+		t.Fatal("theme failure blocked orphan cleanup")
+	}
+}
+
+func TestThemeMissingPackageStartupWarning(t *testing.T) {
+	m, _, base, _ := setup(t)
+	installTheme(t, m, "a")
+	execFixtureSQL(t, base.databasePath, "DELETE FROM theme_package")
+	var output bytes.Buffer
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	m.log = slog.New(slog.NewTextHandler(cancelAfterLog{&output, cancel}, nil))
+	m.Run(ctx)
+	if strings.Count(output.String(), "level=WARN") != 1 || !strings.Contains(output.String(), "theme=a") {
+		t.Fatalf("missing package startup warning=%s", output.String())
+	}
+}
+
+type cancelAfterLog struct {
+	out    io.Writer
+	cancel context.CancelFunc
+}
+
+func (w cancelAfterLog) Write(p []byte) (int, error) {
+	n, err := w.out.Write(p)
+	w.cancel()
+	return n, err
+}
+
+func TestThemeSyncDeleteDuringUpload(t *testing.T) {
+	m, _, base, sink := setup(t)
+	o := themeStorage(m, base)
+	installTheme(t, m, "a")
+	if _, err := m.st.PutTheme(t.Context(), store.Theme{ID: "b"}, []store.ThemeFile{{Path: "index.html", Content: []byte("b")}}, []byte("b"), false, 20); err != nil {
+		t.Fatal(err)
+	}
+	o.onUpload = func() {
+		o.onUpload = nil
+		if err := m.st.DeleteTheme(t.Context(), "b"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tick(t, m)
+	if s := status(t, m).Config; s.Failure != "" || len(sink.events) != 0 {
+		t.Fatalf("concurrent deletion raised false failure: %+v events=%v", s, sink.events)
+	}
+}
+
+func TestThemeWakeKeepsSnapshotFailure(t *testing.T) {
+	m, clk, base, sink := setup(t)
+	themeStorage(m, base)
+	tick(t, m)
+	last := status(t, m).Config.LastSuccess
+	base.failLayer, base.failStage = "config", "upload"
+	clk.Advance(5 * time.Minute)
+	tick(t, m)
+	base.calls = nil
+	installTheme(t, m, "zip")
+	clk.Advance(time.Second)
+	tick(t, m)
+	retried := false
+	for _, call := range base.calls {
+		if strings.HasPrefix(call, "upload tenant/config/") {
+			retried = true
+		}
+	}
+	if s := status(t, m).Config; !retried || s.Failure != "upload/http_status" || !s.LastSuccess.Equal(last) || len(sink.events) != 1 {
+		t.Fatalf("wake skipped snapshot or cleared failure: retried=%t state=%+v events=%v", retried, s, sink.events)
 	}
 }

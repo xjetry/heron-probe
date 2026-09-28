@@ -124,11 +124,15 @@ func tick(t *testing.T, m *Manager) {
 
 func TestPeriodsRetentionAndPersistence(t *testing.T) {
 	m, clk, objects, _ := setup(t)
+	themeStorage(m, objects)
 	start := clk.Now()
 	for i := 49; i > 0; i-- {
 		objects.objects["tenant/config/"+start.Add(-time.Duration(i)*time.Minute).Format("20060102T150405.000000000Z")+".db"] = nil
 	}
-	objects.objects["foreign/theme/1.zip"] = nil
+	if _, err := m.st.PutTheme(t.Context(), store.Theme{ID: "1"}, []store.ThemeFile{{Path: "index.html", Content: []byte("1")}}, []byte("1"), false, 20); err != nil {
+		t.Fatal(err)
+	}
+	objects.objects["tenant/theme/1.zip"] = nil
 	objects.objects["foreign/config/old.db"] = nil
 	objects.objects["tenant/config/notes.txt"] = nil
 	before := status(t, m)
@@ -146,7 +150,7 @@ func TestPeriodsRetentionAndPersistence(t *testing.T) {
 	if !reflect.DeepEqual(deleted, want) {
 		t.Fatalf("retention deleted=%v want oldest=%v", deleted, want)
 	}
-	for _, key := range []string{"foreign/theme/1.zip", "foreign/config/old.db", "tenant/config/notes.txt"} {
+	for _, key := range []string{"tenant/theme/1.zip", "foreign/config/old.db", "tenant/config/notes.txt"} {
 		if _, ok := objects.objects[key]; !ok {
 			t.Errorf("retention removed unrelated object %q", key)
 		}

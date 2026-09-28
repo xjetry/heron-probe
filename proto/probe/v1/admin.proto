@@ -714,6 +714,8 @@ message GetBackupStatusResponse {
   bool enabled = 1;
   BackupLayerStatus config = 2;
   BackupLayerStatus metrics = 3;
+  // 没有原始包的主题不算配置层故障；重新上传原包后才参与主题备份。
+  repeated string themes_without_package = 4;
 }
 message BackupLayerStatus {
   // UTC Unix 秒；从未成功完成整轮时缺席，重启后仍可读。

@@ -27,11 +27,16 @@ type ThemeFile struct {
 }
 
 var ErrThemeLimit = errors.New("theme limit reached")
+var ErrThemeContentMissing = errors.New("theme has no files; upload the original package again")
+
+// 托管内容存在性只看展开文件，不以原包或启用位代替；恢复允许保留没有内容的元数据行。
+const themeHasContent = "EXISTS (SELECT 1 FROM theme_file WHERE theme_id = theme.id)"
 
 // writeTheme 是主题元数据与内容在运行期的写入口：PutTheme、EnableTheme、DeleteTheme 都经它，事务提交成功之后
 // 递增 themeGen。write 返回 nil 即已提交、返回错误即未应用（store 包注释的不变式），所以代数只随真正落库的改动前进；
 // 不改变启用中主题的提交（装一个未启用的主题、重复停用）也递增，代价是托管多读一次库，换来的是判定只有"提交了"一条。
-// 内容的其余写者都不在运行期：迁移在 Open 返回之前完成，§6.7 的恢复要求 hub 停机。新增内容写者必须经这里，
+// 影响托管内容的写者（theme 与 theme_file）的其余入口都不在运行期：迁移在 Open 返回之前完成，恢复要求 hub 停机。
+// theme_package 的 uploaded/revision 只描述备份原包，不参与托管读取，标记更新不推进代数。新增托管内容写者必须经这里，
 // 否则它的提交不让代数前进，托管会一直服务改动之前的快照，直到下一次经这里的提交。
 func (s *Store) writeTheme(ctx context.Context, fn func(*sql.Tx) error) error {
 	if err := s.write(ctx, fn); err != nil {
@@ -138,6 +143,53 @@ type ThemeBackup struct {
 	Uploaded bool
 }
 
+type ThemeBackupEntry struct {
+	ID                               string
+	Revision                         int64
+	Uploaded, HasPackage, HasContent bool
+}
+
+// 同步清单的一条语句固定元数据与原包标识的同一快照；后续内容读取只能取这一份写入。
+func (s *Store) ThemeBackupEntries(ctx context.Context) ([]ThemeBackupEntry, error) {
+	rows, err := s.r.QueryContext(ctx, "SELECT theme.id, COALESCE(p.revision,0), COALESCE(p.uploaded,0), p.theme_id IS NOT NULL, "+themeHasContent+" FROM theme LEFT JOIN theme_package p ON p.theme_id=theme.id ORDER BY theme.id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ThemeBackupEntry
+	for rows.Next() {
+		var e ThemeBackupEntry
+		if err := rows.Scan(&e.ID, &e.Revision, &e.Uploaded, &e.HasPackage, &e.HasContent); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ThemeBackupContent(ctx context.Context, id string, revision int64) ([]byte, error) {
+	var content []byte
+	err := s.r.QueryRowContext(ctx, "SELECT content FROM theme_package WHERE theme_id=? AND revision=?", id, revision).Scan(&content)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return content, err
+}
+
+func (s *Store) ThemesWithoutPackage(ctx context.Context) ([]string, error) {
+	entries, err := s.ThemeBackupEntries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, e := range entries {
+		if !e.HasPackage {
+			ids = append(ids, e.ID)
+		}
+	}
+	return ids, nil
+}
+
 // ThemeBackupPackage 用一条语句读取同一次写入的标识与原包。旧库可能只有展开文件，缺包显式报错而不重打包。
 func (s *Store) ThemeBackupPackage(ctx context.Context, id string) (ThemeBackup, error) {
 	var p ThemeBackup
@@ -192,6 +244,13 @@ func (s *Store) EnableTheme(ctx context.Context, id string) error {
 		}
 		if !exists {
 			return ErrNotFound
+		}
+		var hasContent bool
+		if err := tx.QueryRow("SELECT "+themeHasContent+" FROM theme WHERE id=?", id).Scan(&hasContent); err != nil {
+			return err
+		}
+		if !hasContent {
+			return ErrThemeContentMissing
 		}
 		if _, err := tx.Exec("UPDATE theme SET enabled = 0 WHERE enabled = 1 AND id <> ?", id); err != nil {
 			return err
