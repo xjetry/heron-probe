@@ -121,11 +121,11 @@ func settingsProto(st store.SiteSettings) *probev1.Settings {
 	return &probev1.Settings{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS}
 }
 
+// adminSettingsProto 总带 login_notify，渠道列表为空即关闭。省掉它，"已关闭"与"hub 不认识这个字段"在响应里
+// 就分不出来；把读到的整份设置原样写回时，回显的空 message 是显式关闭，与当前状态一致，读改写不改变它。
 func adminSettingsProto(st store.Settings) *probev1.Settings {
 	out := settingsProto(st.Site)
-	if len(st.LoginChannelIDs) > 0 {
-		out.LoginNotify = &probev1.LoginNotify{ChannelIds: st.LoginChannelIDs}
-	}
+	out.LoginNotify = &probev1.LoginNotify{ChannelIds: st.LoginChannelIDs}
 	return out
 }
 

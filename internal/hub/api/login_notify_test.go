@@ -116,6 +116,49 @@ func TestLoginNotifyChannelListCountsRawEntries(t *testing.T) {
 	rejected(t, h, over, fmt.Sprintf("settings.login_notify.channel_ids must list at most %d channel IDs, duplicates included; got %d", maxChannelIDs, maxChannelIDs+1), before)
 }
 
+// 响应总带 login_notify：关闭时是空 message，与"hub 不认识这个字段"可以区分。读到的整份设置原样写回，
+// 开着的保持原渠道，关着的仍关着。
+func TestLoginNotifyResponseAlwaysCarriesTheField(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	raw := func(path, body string) map[string]any {
+		t.Helper()
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, h.srv.URL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := h.http.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out struct {
+			Settings map[string]any `json:"settings"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status %d, %v", path, resp.StatusCode, err)
+		}
+		return out.Settings
+	}
+	if got, ok := raw("/probe.v1.AdminService/GetSettings", "{}")["loginNotify"]; !ok || !reflect.DeepEqual(got, map[string]any{}) {
+		t.Fatalf("GetSettings with login notification off: loginNotify = %v (present %v), want {}", got, ok)
+	}
+	if got, ok := raw("/probe.v1.AdminService/UpdateSettings", `{"settings":{"theme":"dark"}}`)["loginNotify"]; !ok || !reflect.DeepEqual(got, map[string]any{}) {
+		t.Fatalf("UpdateSettings echo with login notification off: loginNotify = %v (present %v), want {}", got, ok)
+	}
+	off := currentSettings(t, h)
+	if off.LoginNotify == nil || saveSettings(t, h, off).LoginNotify == nil || len(currentSettings(t, h).GetLoginNotify().GetChannelIds()) != 0 {
+		t.Fatalf("writing back the settings read while off: %v", currentSettings(t, h))
+	}
+	c := saveChannel(t, h, webhook("https://example.invalid/a")).Id
+	chooseLoginChannels(t, h, c)
+	on := currentSettings(t, h)
+	if ids := saveSettings(t, h, on).GetLoginNotify().GetChannelIds(); !slices.Equal(ids, []int64{c}) {
+		t.Fatalf("writing back the settings read while on: %v, want [%d]", ids, c)
+	}
+}
+
 func TestLoginNotifySuccessDeliversAndUsesTrustedSource(t *testing.T) {
 	for _, trusted := range []bool{false, true} {
 		t.Run(fmt.Sprint(trusted), func(t *testing.T) {

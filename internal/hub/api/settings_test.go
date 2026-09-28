@@ -87,7 +87,7 @@ func TestUpdateSettingsValidatesTitleThemeAndAccent(t *testing.T) {
 func TestUpdateSettingsCleansTitleAndAccentAndEchoes(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	want := &probev1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef"}
+	want := &probev1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef", LoginNotify: &probev1.LoginNotify{}}
 	if got := saveSettings(t, h, &probev1.Settings{Title: " ‮\x07运行状态 \t", Theme: "light", AccentColor: "#AbCdEf"}); !proto.Equal(got, want) {
 		t.Fatalf("echo = %v, want %v", got, want)
 	}

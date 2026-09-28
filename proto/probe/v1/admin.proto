@@ -480,7 +480,8 @@ message Settings {
   string logo = 4;
   // 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
   string custom_css = 5;
-  // 缺席即不变；显式给出空集合即关闭。不会下发到公开页。
+  // 登录通知的渠道。请求里缺席即不变，显式给出空集合即关闭；响应里总带它，channel_ids 为空表示关闭，
+  // 把读到的整份设置原样写回不改变它。不会下发到公开页。
   optional LoginNotify login_notify = 12;
 }
 message LoginNotify {

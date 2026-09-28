@@ -1461,7 +1461,8 @@ export type Settings = Message<"probe.v1.Settings"> & {
   customCss: string;
 
   /**
-   * 缺席即不变；显式给出空集合即关闭。不会下发到公开页。
+   * 登录通知的渠道。请求里缺席即不变，显式给出空集合即关闭；响应里总带它，channel_ids 为空表示关闭，
+   * 把读到的整份设置原样写回不改变它。不会下发到公开页。
    *
    * @generated from field: optional probe.v1.LoginNotify login_notify = 12;
    */

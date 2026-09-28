@@ -3279,7 +3279,8 @@ type Settings struct {
 	Logo string `protobuf:"bytes,4,opt,name=logo,proto3" json:"logo,omitempty"`
 	// 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
 	CustomCss string `protobuf:"bytes,5,opt,name=custom_css,json=customCss,proto3" json:"custom_css,omitempty"`
-	// 缺席即不变；显式给出空集合即关闭。不会下发到公开页。
+	// 登录通知的渠道。请求里缺席即不变，显式给出空集合即关闭；响应里总带它，channel_ids 为空表示关闭，
+	// 把读到的整份设置原样写回不改变它。不会下发到公开页。
 	LoginNotify   *LoginNotify `protobuf:"bytes,12,opt,name=login_notify,json=loginNotify,proto3,oneof" json:"login_notify,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
