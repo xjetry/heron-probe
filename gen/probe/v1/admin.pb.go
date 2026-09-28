@@ -482,7 +482,8 @@ type Node struct {
 	Country       string        `protobuf:"bytes,14,opt,name=country,proto3" json:"country,omitempty"`
 	CountrySource CountrySource `protobuf:"varint,15,opt,name=country_source,json=countrySource,proto3,enum=probe.v1.CountrySource" json:"country_source,omitempty"`
 	// 查得的国家所属的地址，即查询时节点的 last_source；没有查得值时为空串。查得值是对这个地址的答案：节点换了
-	// 来源地址，查得值随即清空并重查。手动指定时也照常回显（查询不看 country_pin），清空 country_pin 即回落到它。
+	// 来源地址，查得值随即清空，再按新地址取答案（hub 记得的直接写回，否则外呼，见 Settings.geo_enabled）。手动指定时
+	// 也照常回显（查询不看 country_pin），清空 country_pin 即回落到它。
 	CountryIp string `protobuf:"bytes,16,opt,name=country_ip,json=countryIp,proto3" json:"country_ip,omitempty"`
 	// 管理员手动指定的国家，空串表示不指定。
 	CountryPin string `protobuf:"bytes,17,opt,name=country_pin,json=countryPin,proto3" json:"country_pin,omitempty"`
@@ -3434,8 +3435,9 @@ type Settings struct {
 	Logo string `protobuf:"bytes,4,opt,name=logo,proto3" json:"logo,omitempty"`
 	// 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
 	CustomCss string `protobuf:"bytes,5,opt,name=custom_css,json=customCss,proto3" json:"custom_css,omitempty"`
-	// 国家查询开关，从未保存过时为关。开启即由 hub 把每个节点的来源地址（Node.last_source）逐个发给 geo_url：只发公网
-	// 地址、每节点每地址至多成功查一次，失败按小时退避。
+	// 国家查询开关，从未保存过时为关。开启即由 hub 把每个节点的来源地址（Node.last_source）逐个发给 geo_url，只发公网
+	// 地址。节点停在同一地址时查得一次即止；hub 在内存里记住每个节点最近用过的 4 个地址的答案，节点在这些地址之间切换
+	// 不再外呼，超过 4 个地址轮换时被挤出的地址会再查，hub 重启后节点换到的地址各再查一次。失败按小时退避。
 	GeoEnabled *bool `protobuf:"varint,7,opt,name=geo_enabled,json=geoEnabled,proto3,oneof" json:"geo_enabled,omitempty"`
 	// 国家查询的服务地址：http 或 https，含 {ip} 占位（查询时替换为地址），不含用户信息，不超过 2048 字节。
 	// 从未保存过时为 https://ipinfo.io/{ip}/country。可回显，不是凭据：请求只带地址，不带任何凭据。

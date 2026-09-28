@@ -177,7 +177,8 @@ export type Node = Message<"probe.v1.Node"> & {
 
   /**
    * 查得的国家所属的地址，即查询时节点的 last_source；没有查得值时为空串。查得值是对这个地址的答案：节点换了
-   * 来源地址，查得值随即清空并重查。手动指定时也照常回显（查询不看 country_pin），清空 country_pin 即回落到它。
+   * 来源地址，查得值随即清空，再按新地址取答案（hub 记得的直接写回，否则外呼，见 Settings.geo_enabled）。手动指定时
+   * 也照常回显（查询不看 country_pin），清空 country_pin 即回落到它。
    *
    * @generated from field: string country_ip = 16;
    */
@@ -1542,8 +1543,9 @@ export type Settings = Message<"probe.v1.Settings"> & {
   customCss: string;
 
   /**
-   * 国家查询开关，从未保存过时为关。开启即由 hub 把每个节点的来源地址（Node.last_source）逐个发给 geo_url：只发公网
-   * 地址、每节点每地址至多成功查一次，失败按小时退避。
+   * 国家查询开关，从未保存过时为关。开启即由 hub 把每个节点的来源地址（Node.last_source）逐个发给 geo_url，只发公网
+   * 地址。节点停在同一地址时查得一次即止；hub 在内存里记住每个节点最近用过的 4 个地址的答案，节点在这些地址之间切换
+   * 不再外呼，超过 4 个地址轮换时被挤出的地址会再查，hub 重启后节点换到的地址各再查一次。失败按小时退避。
    *
    * @generated from field: optional bool geo_enabled = 7;
    */

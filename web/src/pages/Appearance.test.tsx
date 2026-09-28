@@ -234,6 +234,14 @@ describe("国家 / 地区查询", () => {
     expect(f.getByLabelText("服务地址")).toHaveAccessibleDescription(/^开启即由 hub 把每个节点的来源地址发给 https:\/\/geo\.example\/\{ip\}（/);
   });
 
+  // 文案写出"不再外呼"的上界，不许诺无条件的"每地址一次"：hub 只记住每个节点最近 4 个地址的答案。
+  it("开关说明写出答案表的上界", async () => {
+    render({ getSettings: async () => ({ settings: withGeo }) });
+    const f = await geoForm();
+    const description = f.getByLabelText("服务地址");
+    expect(description).toHaveAccessibleDescription(/节点停在同一地址时查得一次即止；hub 记住每个节点最近 4 个地址的答案，在这些地址之间切换不再外呼，\s*超过 4 个地址轮换或 hub 重启后会再查。/);
+  });
+
   it("保存提交开关与服务地址，外观取 hub 的已保存值而不是外观表单的草稿", async () => {
     const sent: UpdateSettingsRequest[] = [];
     render({ getSettings: async () => ({ settings: withGeo }), updateSettings: async (req) => { sent.push(req); return { settings: req.settings }; } });

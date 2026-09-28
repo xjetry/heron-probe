@@ -2,11 +2,13 @@ package geo
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -549,7 +551,7 @@ func TestDeletedNodeLeavesNoRememberedState(t *testing.T) {
 	}
 }
 
-// 每节点每地址至多查一次：v4 与 v6 交替上报时两个地址各查一次，之后的切换由记住的答案直接写回、不外呼。hub 重启后
+// 最近几个地址之内不重复外呼：v4 与 v6 交替上报时两个地址各查一次，之后的切换由记住的答案直接写回、不外呼。hub 重启后
 // 记住的答案清空，两个地址各重查一次：库里那一对只属于当前地址，节点一换走就清空了。
 func TestAlternatingAddressesQueryEachAddressOnce(t *testing.T) {
 	f := newFixture(t)
@@ -627,4 +629,28 @@ func (r *Resolver) backingOff(node int64, addr string) bool {
 		}
 	}
 	return false
+}
+
+// 对外文字写出答案表的上界：agent 读的 proto 注释（Settings.geo_enabled）要写明"最近用过的 N 个地址"与"超过 N 个
+// 地址轮换会再查"，N 与 answersPerNode 一致。常量改了而注释没改，这里红；面板那一侧由 web 的 countryLimits.test.ts 对照。
+func TestExternalTextsStateTheAnswerBound(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "..", "proto", "probe", "v1", "admin.proto"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(src), "\n")
+	i := slices.IndexFunc(lines, func(l string) bool { return strings.Contains(l, "optional bool geo_enabled") })
+	if i < 0 {
+		t.Fatal("admin.proto has no geo_enabled field")
+	}
+	var comment []string
+	for j := i - 1; j >= 0 && strings.HasPrefix(strings.TrimSpace(lines[j]), "//"); j-- {
+		comment = append([]string{strings.TrimPrefix(strings.TrimSpace(lines[j]), "// ")}, comment...)
+	}
+	text := strings.Join(comment, "")
+	for _, want := range []string{fmt.Sprintf("最近用过的 %d 个地址", answersPerNode), fmt.Sprintf("超过 %d 个地址轮换时被挤出的地址会再查", answersPerNode)} {
+		if !strings.Contains(text, want) {
+			t.Errorf("Settings.geo_enabled comment lacks %q:\n%s", want, text)
+		}
+	}
 }

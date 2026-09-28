@@ -6,6 +6,7 @@ import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService, GetSettingsResponseSchema, type Settings } from "../gen/probe/v1/admin_pb";
 import { LOGO_TYPES, MAX_TITLE_CHARS, THEMES, sizeProblems, type Theme } from "../lib/appearance";
+import { ANSWERS_PER_NODE } from "../lib/country";
 import { BUILT_IN_ACCENT } from "../lib/palette";
 import { DEFAULT_TITLE } from "../public/site";
 
@@ -183,7 +184,8 @@ function GeoLookup({ current }: { current: Settings | undefined }) {
           </label>
           <p className="muted" id="geo-disclosure">
             开启即由 hub 把每个节点的来源地址发给 {form.geoUrl || "（未填写的服务地址）"}（{"{ip}"} 处换成地址），用它的应答作为节点的国家 / 地区。
-            只发公网地址，不带任何凭据；每个地址查得一次即止，失败一小时后重试。关闭时 hub 不为此出网。
+            只发公网地址，不带任何凭据。节点停在同一地址时查得一次即止；hub 记住每个节点最近 {ANSWERS_PER_NODE} 个地址的答案，在这些地址之间切换不再外呼，
+            超过 {ANSWERS_PER_NODE} 个地址轮换或 hub 重启后会再查。失败一小时后重试。关闭时 hub 不为此出网。
           </p>
           <label>
             服务地址

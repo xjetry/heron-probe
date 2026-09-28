@@ -26,7 +26,9 @@ const (
 	// 错误页）会让每一轮巡检都对同一地址外呼一次。
 	RetryAfter = time.Hour
 	// answersPerNode 是查询器为每个节点记住答案的地址数，保留最近用到的那几个。v4 与 v6 交替上报的节点在两个地址
-	// 之间来回，记住它们，来回切换就命中而不外呼；上界让出口不断变化的节点不会让表无限增长。
+	// 之间来回，记住它们，来回切换就命中而不外呼；上界让出口不断变化的节点不会让表无限增长，代价是超过这个数的地址
+	// 轮换时被挤出的地址会再查。对外文字写的是这个数：admin.proto 里 Settings.geo_enabled 的注释由
+	// TestExternalTextsStateTheAnswerBound 对照，面板的 ANSWERS_PER_NODE（web/src/lib/country.ts）由 countryLimits.test.ts 对照。
 	answersPerNode = 4
 	// maxResponseBytes 是读取应答体的上限。合法应答是两个字母加少量空白，超出即判失败，不再往下读。
 	maxResponseBytes = 64
@@ -111,9 +113,10 @@ type Resolver struct {
 	log    *slog.Logger
 	// 下面两张表只在内存、只由 Sweep 读写（Sweep 不并发，不加锁）。hub 重启后清空，尚无答案的地址各重查一次。
 	//
-	// answers 是每个节点记住的答案，最近用到的地址在前，至多 answersPerNode 个。每节点每地址至多查一次由两处合起来
-	// 承载：节点停在同一地址时，库里那一对（country、country_ip）让它不再待查，重启后也还在；库里只存当前地址的那一对，
-	// 地址一变就清空，节点换回之前查过的地址时由这张表写回、不再外呼。
+	// answers 是每个节点记住的答案，最近用到的地址在前，至多 answersPerNode 个。不重复外呼由两处合起来承载，各有边界：
+	// 节点停在同一地址时，库里那一对（country、country_ip）让它不再待查，重启后也还在；库里只存当前地址的那一对，地址
+	// 一变就清空，节点换回之前查过的地址时，只要那个地址还在这张表里就由它写回、不再外呼。超过 answersPerNode 个地址
+	// 轮换时，被挤出的地址再来会再查；重启清空这张表，节点之后换到的地址各再查一次。
 	answers map[int64][]answer
 	// retryAt 是每个（节点, 地址, 服务地址）下次允许查询的单调钟时刻，只记失败。键含服务地址：运维换了服务，旧服务
 	// 留下的退避不挡住对新服务的查询。用单调钟：墙钟被拨动时退避不会提前结束或拖长（见 clock）。
