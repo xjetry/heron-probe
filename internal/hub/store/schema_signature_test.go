@@ -79,24 +79,39 @@ func describe(t *testing.T, db *sql.DB) []string {
 			}
 		}()
 	}
-	// 对象创建顺序与 index_list.seq 不属于结构；列序与 index_xinfo.seqno 则保留在每一项中。
+	// 对象创建顺序与 index_list.seq 不属于结构，不进签名；列序与 index_xinfo.seqno 属于结构，
+	// 作为字段保留在每一项中。比较按集合进行，排序只让差异输出次序稳定、同类项相邻。
 	slices.Sort(signature)
 	return signature
 }
 
+// schemaDifference 按集合比较两组签名项，逐项列出只在一侧出现的项，不要求输入有序。
+// describe 的每一项都带对象名，列与索引列还带 cid、seqno；SQLite 保证同一库里对象名唯一、
+// 同一表的 cid 与同一索引的 seqno 唯一，所以一侧内不会有两条相同的项，按集合比较不丢信息。
 func schemaDifference(left, right []string, leftLabel, rightLabel string) string {
 	var differences []string
 	for _, side := range []struct {
 		own, other []string
 		label      string
 	}{{left, right, leftLabel}, {right, left, rightLabel}} {
+		other := make(map[string]bool, len(side.other))
+		for _, item := range side.other {
+			other[item] = true
+		}
 		for _, item := range side.own {
-			if _, exists := slices.BinarySearch(side.other, item); !exists {
+			if !other[item] {
 				differences = append(differences, fmt.Sprintf("%s有: %s", side.label, item))
 			}
 		}
 	}
 	return strings.Join(differences, "\n")
+}
+
+func TestSchemaDifferenceIgnoresInputOrder(t *testing.T) {
+	got := schemaDifference([]string{"c", "a", "b"}, []string{"d", "b", "a"}, "左", "右")
+	if want := "左有: c\n右有: d"; got != want {
+		t.Fatalf("schema difference of unsorted inputs = %q, want %q", got, want)
+	}
 }
 
 func TestSchemaSignatureDistinguishesStructure(t *testing.T) {
