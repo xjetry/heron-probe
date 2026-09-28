@@ -2,7 +2,7 @@ package store
 
 import (
 	"database/sql"
-	"maps"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -10,31 +10,46 @@ import (
 )
 
 // CHECK 约束承载的不变式只能由写入来钉：describe 比的是列、默认值、主键与索引，不读 CHECK，两份 DDL（schema.go 与
-// 冻结的迁移）同删或只删一份，它都照样判两库相等。这里在新建库与从 v1 迁到当前的库上，对每条 CHECK 各做一次违反它的
-// 写入并断言被拒；带 CHECK 的表从新建库的 sqlite_master 数出，与 checkViolations 对照，新加的 CHECK 没有对应的
-// 违反写入即失败。
+// 冻结的迁移）同删、只删一份或只加一份，它都照样判两库相等。这条用例按条对照，不按表：
+//   - 从新建库与从 v1 迁到当前的库的 sqlite_master 逐条取出每张表的 CHECK 表达式，两库的清单必须相同。只进 schema.go
+//     或只进迁移的 CHECK、两边写法不同的 CHECK 都在这里失败。
+//   - checkViolations 给每条 CHECK 配一次违反它的写入，按表列出的表达式必须与库里取出的相同。同一张表新加的第二条
+//     CHECK 没有自己的写入，也在这里失败。
+//   - 每条写入在两库上各执行一次。SQLite 拒绝时点名未命名 CHECK 的表达式原文，据此断言拒绝它的正是配给它的那条，
+//     而不是同表的另一条。
 func TestEveryCheckConstraintRefusesItsViolation(t *testing.T) {
 	migrated, fresh := migrateFrom(t, schemaV1, 1, seedMinuteRow)
-	checkViolations := map[string]string{
+	checkViolations := []struct{ table, check, write string }{
 		// 单行表：第二行插不进去。
-		"admin":           "INSERT INTO admin (id, password_hash, updated_at) VALUES (2, 'x', 0)",
-		"register_window": "INSERT INTO register_window (id, key_hash, expires_at, remaining) VALUES (2, x'00', 0, 0)",
-		"probe_meta":      "INSERT INTO probe_meta (id, version) VALUES (2, 0)",
+		{"admin", "id = 1", "INSERT INTO admin (id, password_hash, updated_at) VALUES (2, 'x', 0)"},
+		{"register_window", "id = 1", "INSERT INTO register_window (id, key_hash, expires_at, remaining) VALUES (2, x'00', 0, 0)"},
+		{"probe_meta", "id = 1", "INSERT INTO probe_meta (id, version) VALUES (2, 0)"},
 		// 0 与 1 以外的启用值会绕过只看 enabled = 1 的 theme_enabled 索引。
-		"theme": "INSERT INTO theme (id, name, version, preview, uploaded_at, enabled) VALUES ('x', 'X', '1', '', 0, 2)",
+		{"theme", "enabled IN (0, 1)", "INSERT INTO theme (id, name, version, preview, uploaded_at, enabled) VALUES ('x', 'X', '1', '', 0, 2)"},
 	}
-	if got, want := tablesWithCheck(t, fresh.r), slices.Sorted(maps.Keys(checkViolations)); !slices.Equal(got, want) {
-		t.Fatalf("tables with a CHECK constraint = %v, violations cover %v; every CHECK needs a write that violates it here", got, want)
+	freshChecks, migratedChecks := checkConstraints(t, fresh.r), checkConstraints(t, migrated.r)
+	if !reflect.DeepEqual(freshChecks, migratedChecks) {
+		t.Fatalf("CHECK constraints differ between a fresh and a migrated database:\n fresh:    %v\n migrated: %v", freshChecks, migratedChecks)
+	}
+	covered := map[string][]string{}
+	for _, v := range checkViolations {
+		covered[v.table] = append(covered[v.table], v.check)
+	}
+	for _, checks := range covered {
+		slices.Sort(checks)
+	}
+	if !reflect.DeepEqual(freshChecks, covered) {
+		t.Fatalf("CHECK constraints in the schema: %v\nviolating writes cover:        %v\nevery CHECK needs a write of its own that violates it", freshChecks, covered)
 	}
 	for _, s := range []*Store{fresh, migrated} {
 		kind := map[bool]string{true: "migrated", false: "fresh"}[s == migrated]
-		for _, table := range slices.Sorted(maps.Keys(checkViolations)) {
+		for _, v := range checkViolations {
 			err := s.write(t.Context(), func(tx *sql.Tx) error {
-				_, err := tx.Exec(checkViolations[table])
+				_, err := tx.Exec(v.write)
 				return err
 			})
-			if err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
-				t.Errorf("%s on a %s database: %v, want the CHECK on %s to refuse it", checkViolations[table], kind, err, table)
+			if want := "CHECK constraint failed: " + v.check; err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("%s on a %s database: %v, want %q", v.write, kind, err, want)
 			}
 		}
 	}
@@ -45,27 +60,56 @@ var (
 	sqlCheck       = regexp.MustCompile(`(?i)\bcheck\s*\(`)
 )
 
-// tablesWithCheck 是 DDL 里带 CHECK 约束的表，按名字排序。先去掉行注释：DDL 的注释里也会写到 CHECK 这个词。
-func tablesWithCheck(t *testing.T, db *sql.DB) []string {
+// checkConstraints 是每张带 CHECK 的表的 CHECK 表达式，逐条列出（同一张表的几条都在）并排序：ALTER TABLE 加的列排在
+// 建表语句末尾，两库里同一组 CHECK 的先后可以不同。表达式取 CHECK 后那对括号里的原文，连续空白压成一个空格。先去掉
+// 行注释：DDL 的注释里也会写到 CHECK 这个词。
+func checkConstraints(t *testing.T, db *sql.DB) map[string][]string {
 	t.Helper()
 	rows, err := db.Query("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
-	var out []string
+	out := map[string][]string{}
 	for rows.Next() {
 		var name, ddl string
 		if err := rows.Scan(&name, &ddl); err != nil {
 			t.Fatal(err)
 		}
-		if sqlCheck.MatchString(sqlLineComment.ReplaceAllString(ddl, "")) {
-			out = append(out, name)
+		ddl = sqlLineComment.ReplaceAllString(ddl, "")
+		for _, loc := range sqlCheck.FindAllStringIndex(ddl, -1) {
+			expr, ok := parenthesized(ddl[loc[1]-1:])
+			if !ok {
+				t.Fatalf("table %s: no closing parenthesis for the CHECK at byte %d of %q", name, loc[0], ddl)
+			}
+			out[name] = append(out[name], strings.Join(strings.Fields(expr), " "))
 		}
+		slices.Sort(out[name])
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	slices.Sort(out)
 	return out
+}
+
+// parenthesized 从 s 开头的 ( 找到与它配对的 )，返回两者之间的原文。单引号字符串里的括号不计；SQL 用两个单引号转义
+// 一个单引号，按开合各切换一次处理，结果相同。
+func parenthesized(s string) (string, bool) {
+	depth, quoted := 0, false
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case quoted:
+			quoted = c != '\''
+		case c == '\'':
+			quoted = true
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+			if depth == 0 {
+				return s[1:i], true
+			}
+		}
+	}
+	return "", false
 }
