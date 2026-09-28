@@ -79,7 +79,8 @@ func (s *Store) RecordBackupEvent(ctx context.Context, transition Transition, su
 			}
 			// 一个库只由一个 backup.Manager 写（serve 装配一个），它先读回标记再判定通知状态，读到有效标记即视为已通知、
 			// 不再触发；所以走到这里时库里要么没有这一行，要么是读不懂的坏值。覆盖写让提交后的标记恰为本段故障的
-			// 首次失败时刻，坏值随之修复，下一轮读回即成功，不会每轮重新触发。
+			// 首次失败时刻，坏值随之修复：下一轮读回成功、配置层照常执行，重启后也读得回而不再触发。
+			// 保留坏值则配置层每轮卡在读回、始终不执行，每次重启还会再触发一次。
 			_, err = tx.ExecContext(ctx, "INSERT INTO setting (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", backupFailingSinceKey, strconv.FormatInt(since.Unix(), 10))
 		case TransitionRecovered, TransitionDisabled:
 			_, err = tx.ExecContext(ctx, "DELETE FROM setting WHERE key = ?", backupFailingSinceKey)
