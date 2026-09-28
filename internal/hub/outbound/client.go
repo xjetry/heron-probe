@@ -8,8 +8,9 @@ import (
 	"time"
 )
 
-// 3xx 当作应答原样交回，由调用方按非 2xx 处理，不跟随：跳转会把请求连同凭据（Telegram 的 token 在路径里，S3 的
-// 签名头）带到配置之外的目标（§9.3）。
+// 3xx 原样交回，由调用方按非 2xx 处理：默认跳转可能向配置之外的目标泄漏原 URL 的路径与查询串（Referer，
+// 如 Telegram 路径里的 token、S3 对象路径或预签名 URL 的签名查询串），307/308 还可能重发可重放的正文。
+// Go 1.27.1 实测跨不同主机去掉 Authorization，同主机或原主机的子域保留；不能把去掉此头当作整个请求不泄密。
 func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 // NewClient 是有总时限的出站客户端：timeout 覆盖建连、写请求与读完应答体，适合请求与应答都有小上界的消费方。
@@ -21,7 +22,7 @@ func NewClient(timeout time.Duration) *http.Client {
 	return &http.Client{Timeout: timeout, CheckRedirect: noRedirect}
 }
 
-// NewTransferClient 不设总时限，给体量随对象变化的传输：总时长由调用方按对象大小给 context 截止时间，客户端只限
+// NewTransferClient 不设总时限，给体量随对象变化的传输：总时长由调用方按对象体量与所属周期给 context 截止时间，客户端只限
 // 建连（DNS 加 TCP、TLS 握手各自不超过 connect）与首字节（请求连同正文写完之后到收到响应头，不超过 firstByte）。
 // 首字节之后没有任何时限：应答体慢速到达时，只有 context 的截止时间能让请求结束，调用方必须给出它。
 func NewTransferClient(connect, firstByte time.Duration) *http.Client {

@@ -5,6 +5,7 @@ import { errorBanner, queryGate } from "../api/queryGate";
 import { SAVE_SETTINGS, useAdoptSavedSettings, useSettingsSaving } from "../api/saveSettings";
 import { AdminService, type BackupSettings } from "../gen/probe/v1/admin_pb";
 import { liveIds } from "../lib/ids";
+import { MAX_BACKUP_CHANNELS } from "../lib/backup";
 import { Picks } from "./Picks";
 
 // hasSecret 只来自 hub 的读侧，表单不改它；secret 只写，不从读侧复制进草稿，成功保存后随草稿重建而清空。
@@ -80,7 +81,7 @@ export function BackupSettingsForm({ current }: { current: BackupSettings | unde
             <label>指标保留份数<input type="number" required min={1} max={1000} step={1} value={form.metricsKeep} onChange={(e) => edit({ metricsKeep: Number(e.target.value) })} /></label>
           </div>
           <p className="muted">配置周期 60 至 86400 秒，指标周期 3600 至 604800 秒；保留份数均为 1 至 1000。回到默认值请填写 300、86400、48、14。</p>
-          <Picks legend="备份通知渠道" items={channelList} selected={form.channelIds} onChange={(channelIds) => edit({ channelIds })} />
+          <Picks legend="备份通知渠道" max={MAX_BACKUP_CHANNELS} items={channelList} selected={form.channelIds} onChange={(channelIds) => edit({ channelIds })} />
           {update.error != null && <p role="alert" className="error">{errorText(update.error)}</p>}
           {saved && <p role="status">已保存。</p>}
           <button type="submit">保存</button>

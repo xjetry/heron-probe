@@ -126,7 +126,7 @@ func TestTitleAndNodeNameCleanAlike(t *testing.T) {
 const noGroup = "settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, the country lookup (geo_enabled, geo_url), or backup"
 
 // UpdateSettings 按组判定、各组彼此独立：外观五项任一非空即算给出并整体校验，所以只带 title 的请求报 theme 的错；
-// 只带国家查询两项之一、只带总闸或只带备份的请求照常保存，其余各组原样保留；一组都没给出（含整个 settings 缺失）的请求被拒并
+// 只带国家查询两项之一、只带总闸或只带备份（部分项或全部项）的请求照常保存，其余各组原样保留；一组都没给出（含整个 settings 缺失）的请求被拒并
 // 点名各组。
 func TestUpdateSettingsGroupsAreIndependent(t *testing.T) {
 	h := newHarness(t, "")
@@ -145,6 +145,7 @@ func TestUpdateSettingsGroupsAreIndependent(t *testing.T) {
 		{"geo_url only", &probev1.Settings{GeoUrl: proto.String("https://geo.example/{ip}")}, func(s *probev1.Settings) { s.GeoUrl = proto.String("https://geo.example/{ip}") }},
 		{"public_enabled only", &probev1.Settings{PublicEnabled: proto.Bool(false)}, func(s *probev1.Settings) { s.PublicEnabled = proto.Bool(false) }},
 		{"backup only", &probev1.Settings{Backup: &probev1.BackupSettings{ConfigKeep: proto.Uint32(24)}}, func(s *probev1.Settings) { s.Backup.ConfigKeep = proto.Uint32(24) }},
+		{"full backup only", &probev1.Settings{Backup: fullBackup()}, func(s *probev1.Settings) { s.Backup = echoOf(fullBackup(), true) }},
 	} {
 		c.apply(want)
 		if got := saveSettings(t, h, c.in); !proto.Equal(got, want) {

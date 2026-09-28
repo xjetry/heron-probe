@@ -4,6 +4,7 @@ import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { SAVE_SETTINGS, useAdoptSavedSettings, useSettingsSaving } from "../api/saveSettings";
 import { BackupSettingsForm } from "../components/BackupSettingsForm";
+import { BackupStatus } from "../components/BackupStatus";
 import { AdminService, GeoBackend, type Settings } from "../gen/probe/v1/admin_pb";
 import { LOGO_TYPES, MAX_TITLE_CHARS, THEMES, sizeProblems, type Theme } from "../lib/appearance";
 import { ANSWERS_PER_NODE } from "../lib/country";
@@ -142,6 +143,7 @@ export function Appearance() {
       </form>
       <GeoLookup current={gate.data.settings} />
       <BackupSettingsForm current={gate.data.settings?.backup} />
+      <BackupStatus />
     </section>
   );
 }

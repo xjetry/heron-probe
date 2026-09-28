@@ -33,7 +33,7 @@ func clientFor(t *testing.T, endpoint string) *Client {
 	return c
 }
 
-// deadline 给每个操作一个截止时间：客户端首字节之后不限时，request 拒绝没有截止时间的 context。
+// deadline 给每个操作一个截止时间：客户端首字节之后不限时，操作入口拒绝没有截止时间的 context。
 func deadline(t *testing.T) context.Context {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	t.Cleanup(cancel)

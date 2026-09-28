@@ -96,7 +96,7 @@ func (c Config) Enabled() bool {
 }
 
 // 出站客户端的两个时限（outbound.NewTransferClient）。传输本身不限时：对象从几百 KB 到 GB 级，总时长由调用方按
-// 对象大小给 context 截止时间，request 拒绝没有截止时间的 context。
+// 对象大小给 context 截止时间，四个操作在入口拒绝没有截止时间的 context。
 const (
 	// connectTimeout 分别限 DNS 加 TCP 建连与 TLS 握手：这两步只交换几个往返的小包（DNS 一个、TCP 一个、TLS 1.2 两个），
 	// 与对象大小无关。按 1 秒的高延迟往返计约 4 秒，取 10 秒留出一倍多的余量。
@@ -172,10 +172,18 @@ func fail(kind, what string, err error) error {
 	return &Error{Kind: kind, Detail: detail, err: err}
 }
 
-func (c *Client) request(ctx context.Context, method, key string, query url.Values, body io.Reader, size int64, hash string) (*http.Response, error) {
-	// 客户端首字节之后不限时，没有截止时间的 context 下服务端慢速发送应答体就能让请求无限期挂住。
+// checkDeadline 在各操作读取输入之前调用：传输首字节之后没有客户端总时限，且上传散列可能遍历 GB 级文件，
+// 缺少截止时间必须在这些工作开始前拒绝，不能等到发请求才发现预算缺失。
+func checkDeadline(ctx context.Context) error {
 	if _, ok := ctx.Deadline(); !ok {
-		return nil, fail("request", "context has no deadline", nil)
+		return fail("request", "context has no deadline", nil)
+	}
+	return nil
+}
+
+func (c *Client) request(ctx context.Context, method, key string, query url.Values, body io.Reader, size int64, hash string) (*http.Response, error) {
+	if err := checkDeadline(ctx); err != nil {
+		return nil, err
 	}
 	u := *c.endpoint
 	base := strings.TrimRight(u.Path, "/")
@@ -217,6 +225,9 @@ func (c *Client) request(ctx context.Context, method, key string, query url.Valu
 // 也不用 UNSIGNED-PAYLOAD。前提是两次读取之间内容不变，由调用方保证——持有快照临时文件的消费方在 PutObject 返回
 // 之前不改写它。PutObject 返回之后不再读 body（见 uploadBody），调用方可以立即 Seek 回原位重试，或自行关闭它。
 func (c *Client) PutObject(ctx context.Context, key string, body io.ReadSeeker) error {
+	if err := checkDeadline(ctx); err != nil {
+		return err
+	}
 	if body == nil {
 		return fail("request", "object body is required", nil)
 	}
@@ -292,6 +303,9 @@ func (r *contextReader) Read(p []byte) (int, error) {
 }
 
 func (c *Client) DeleteObject(ctx context.Context, key string) error {
+	if err := checkDeadline(ctx); err != nil {
+		return err
+	}
 	resp, err := c.request(ctx, http.MethodDelete, key, nil, nil, 0, hashHex(nil))
 	if err != nil {
 		return err
@@ -304,6 +318,9 @@ func (c *Client) DeleteObject(ctx context.Context, key string) error {
 // GetObject 的上限由消费方按产物类型指定；超过上限、读中断或写失败均返回错误，
 // 调用方必须丢弃失败时的部分产物，不得把截断文件当作成功备份。
 func (c *Client) GetObject(ctx context.Context, key string, dst io.Writer, maxBytes int64) error {
+	if err := checkDeadline(ctx); err != nil {
+		return err
+	}
 	if dst == nil || maxBytes <= 0 || maxBytes == math.MaxInt64 {
 		return fail("request", "destination and positive bounded maxBytes are required", nil)
 	}
@@ -338,6 +355,9 @@ type Object struct {
 // ListObjectsV2 列出 prefix 下的全部对象。maxObjects 由消费方按自己的保留份数给出上界，列举超过它即返回错误，
 // 不无界地翻页：前缀下混进大量别的对象、或删除长期失败而对象越积越多时，报错让它可见。
 func (c *Client) ListObjectsV2(ctx context.Context, prefix string, maxObjects int) ([]Object, error) {
+	if err := checkDeadline(ctx); err != nil {
+		return nil, err
+	}
 	if maxObjects <= 0 {
 		return nil, fail("request", "positive maxObjects is required", nil)
 	}

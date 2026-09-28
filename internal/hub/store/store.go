@@ -30,6 +30,7 @@ var (
 )
 
 type Store struct {
+	path string
 	// siteWriteMu 让设置的提交与总闸发布对其它保存原子，维持的不变式写在 SaveSettings。
 	siteWriteMu   sync.Mutex
 	publicEnabled atomic.Bool
@@ -111,7 +112,7 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 		w.Close()
 		return nil, err
 	}
-	s := &Store{w: w, r: r, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{})}
+	s := &Store{path: path, w: w, r: r, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{})}
 	// 打开时读一次设置，同时满足两件事：总闸的内存副本从库加载（不变式见 SaveSettings）；设置里有必须合法才能解释的
 	// 编码（两个开关只认 0 / 1，备份的数值有范围，渠道列表是 JSON 数组，见 readSettings），库里有非法值就拒绝打开。
 	settings, err := readSettings(context.Background(), r)
@@ -215,57 +216,88 @@ func (s *Store) writeAsync(fn func(*sql.Tx) error, done func(error)) {
 	}
 }
 
-const schemaVersion = 16
+const schemaVersion = 17
 
-// migrate 用 user_version 保存当前版本，不在库里保存迁移历史或时间；因此本程序提供给
-// 运维判断何时迁过、该还原哪份备份的唯一时间线是日志。每步事务提交成功后才记日志，
-// 避免把回滚的迁移记成已完成。
-func migrate(db *sql.DB, policy SchemaPolicy, log *slog.Logger) error {
+type schemaAction int
+
+const (
+	schemaCurrent schemaAction = iota
+	schemaCreate
+	schemaMigrate
+)
+
+type schemaReader interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// schemaAdmission 只读取版本与对象数；Open 与 Restore 在任何建表或迁移之前共用这一判定。
+func schemaAdmission(ctx context.Context, db schemaReader, policy SchemaPolicy) (schemaAction, int, error) {
 	var v int
-	if err := db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
-		return err
+	if err := db.QueryRowContext(ctx, "PRAGMA main.user_version").Scan(&v); err != nil {
+		return 0, v, err
 	}
 	switch {
 	case v == schemaVersion:
-		return nil
+		return schemaCurrent, v, nil
 	case v > schemaVersion:
-		return fmt.Errorf("database schema version %d is newer than this binary (%d)", v, schemaVersion)
+		return 0, v, fmt.Errorf("database schema version %d is newer than this binary (%d)", v, schemaVersion)
 	case v < 0:
-		// 写入点只有两处：建库时写 schemaVersion，每步迁移时写 next（下面的循环，从
-		// v+1 起）。两处写的都是正数，负数不会由这两处产生；0 是 SQLite 未显式设置
-		// user_version 时的缺省值，不是本程序写入的。负数只能来自这个文件不是本程序
-		// 建的库，或被外部工具改过。当成旧库去迁（落进下面的迁移循环）会去找
-		// migrations[v+1]（v=-1 时是 migrations[0]，本身不存在），报出一句与"该升级"
-		// 无关的内部错误；当成空库建表会把 schemaStatements 叠进未知内容上。两条路径
-		// 都要拒绝。
-		return fmt.Errorf("database schema version %d is invalid; not a probe database", v)
+		// createSchema 写 schemaVersion，migrate 从已准入的正版本逐步写 next，两处都不产生负数。
+		// 把负数当旧库交给迁移循环会查 migrations[v+1]（v=-1 时找不到 migrations[0]），
+		// 报出与升级无关的内部错误；当空库建表则会把 schemaStatements 叠加到未知内容上。
+		// 因而负版本既不能迁移，也不能按空库放行。
+		return 0, v, fmt.Errorf("database schema version %d is invalid; not a probe database", v)
 	case v == 0:
 		// PRAGMA user_version 未显式设置时读出的也是 0，任何 SQLite 文件都满足这一条；
 		// 只有 sqlite_schema 里确实不存在任何对象才是 §6.6 定义的"空库"。有对象却没有版本号
 		// 说明这是别的程序建的库，在它上面叠加 schemaStatements 会把两套 schema 的对象混进
 		// 同一个文件——stats --db 指错文件时就会把陌生库当空库建满全部表。
 		var objects int
-		if err := db.QueryRow("SELECT count(*) FROM sqlite_schema").Scan(&objects); err != nil {
-			return err
+		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM main.sqlite_schema").Scan(&objects); err != nil {
+			return 0, v, err
 		}
 		if objects > 0 {
-			return errors.New("database has tables but no schema version; not a probe database")
+			return 0, v, errors.New("database has tables but no schema version; not a probe database")
 		}
-		if err := inTxDB(db, func(tx *sql.Tx) error {
-			for _, stmt := range schemaStatements() {
-				if _, err := tx.Exec(stmt); err != nil {
-					return fmt.Errorf("%w in %q", err, stmt)
-				}
-			}
-			_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion))
-			return err
-		}); err != nil {
-			return err
-		}
-		log.Info("database schema created", "version", schemaVersion)
-		return nil
+		return schemaCreate, v, nil
 	case policy == RequireCurrentSchema:
-		return fmt.Errorf("database schema version %d is older than this binary (%d); start the new probe-hub serve once to upgrade it (back up the database first)", v, schemaVersion)
+		return 0, v, fmt.Errorf("database schema version %d is older than this binary (%d); start the new probe-hub serve once to upgrade it (back up the database first)", v, schemaVersion)
+	}
+	return schemaMigrate, v, nil
+}
+
+// createSchema 使用调用方的事务，使恢复时建库与数据覆盖一并提交或回滚。
+func createSchema(ctx context.Context, tx *sql.Tx) error {
+	for _, stmt := range schemaStatements() {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("%w in %q", err, stmt)
+		}
+	}
+	_, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA main.user_version = %d", schemaVersion))
+	return err
+}
+
+func logSchemaCreated(log *slog.Logger) {
+	log.Info("database schema created", "version", schemaVersion)
+}
+
+// migrate 用 user_version 保存当前版本，不在库里保存迁移历史或时间；运维需要从日志判断
+// 何时迁过、该还原哪份备份。因此每步事务提交成功后都记日志，避免遗漏步骤或把回滚记成已完成。
+func migrate(db *sql.DB, policy SchemaPolicy, log *slog.Logger) error {
+	ctx := context.Background()
+	action, v, err := schemaAdmission(ctx, db, policy)
+	if err != nil {
+		return err
+	}
+	switch action {
+	case schemaCurrent:
+		return nil
+	case schemaCreate:
+		if err := inTxDB(db, func(tx *sql.Tx) error { return createSchema(ctx, tx) }); err != nil {
+			return err
+		}
+		logSchemaCreated(log)
+		return nil
 	}
 	for next := v + 1; next <= schemaVersion; next++ {
 		step, ok := migrations[next]

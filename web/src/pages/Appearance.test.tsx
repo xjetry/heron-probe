@@ -286,7 +286,7 @@ describe("国家 / 地区查询", () => {
     expect(f.getByLabelText("服务地址")).toHaveAccessibleDescription(/节点停在同一地址时查得一次即止；hub 记住每个节点最近 4 个地址的答案，在这些地址之间切换不再重查，\s*超过 4 个地址轮换或 hub 重启后会再查。/);
   });
 
-  // 后端两项只回显：请求不带它们（hub 忽略请求里的值，解码预算也不为 geo_mmdb_path 留位），保存后的描述取自回显写进
+  // 后端两项只回显：请求不带它们，hub 忽略请求里的值；保存后的描述取自回显写进
   // 缓存的那一份，本地库不会被说成 HTTP 服务。
   it("本地后端下保存查询设置：请求不带后端两项，保存后仍写明本地文件", async () => {
     const hub = statefulHub({ ...withGeo, geoBackend: GeoBackend.MMDB, geoMmdbPath: "/data/country.mmdb" });
@@ -382,7 +382,7 @@ describe("国家 / 地区查询", () => {
     fireEvent.click(f.getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" }));
     fireEvent.click(f.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(hub.sent).toHaveLength(2));
-    expect(hub.sent[1].settings).toMatchObject({ title: "", theme: "", geoEnabled: true });
+    expect(hub.sent[1].settings).toMatchObject({ title: "", theme: "", accentColor: "", logo: "", customCss: "", geoEnabled: true });
     expect(hub.state()).toMatchObject({ ...current, title: "新标题", geoEnabled: true });
   });
 

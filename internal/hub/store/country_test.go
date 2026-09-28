@@ -13,6 +13,7 @@ import (
 
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/probe/internal/sqlitetest"
 )
 
 // v13 的完整 DDL：v12 加上节点的来源地址。
@@ -25,7 +26,7 @@ func TestMigrationFromV13AddsEmptyCountry(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
+	if got, want := sqlitetest.Describe(t, migrated.r), sqlitetest.Describe(t, fresh.r); !reflect.DeepEqual(got, want) {
 		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
 	}
 	if v := userVersion(t, migrated.r); v != schemaVersion {

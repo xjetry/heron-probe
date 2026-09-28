@@ -1,4 +1,4 @@
-import { isFieldSet } from "@bufbuild/protobuf";
+import { isFieldSet, toJson } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { expect, it } from "vitest";
@@ -16,6 +16,19 @@ const routes = [{ path: "/appearance", Component: Appearance }];
 const render = (impl: AdminImpl) => renderWithAdmin({ getSettings: async () => ({ settings: saved }), listNotifyChannels: async () => channels, ...impl }, routes, "/appearance");
 const backupForm = async () => within(await screen.findByRole("form", { name: "备份到 S3" }));
 const appearanceForm = async () => within(await screen.findByRole("form", { name: "公开页外观" }));
+
+it("通知渠道选满 16 后禁用未选项，取消后允许重选", async () => {
+  render({ listNotifyChannels: async () => ({ channels: Array.from({ length: 17 }, (_, i) => ({ id: BigInt(i+1), name: `渠道${i+1}` })) }),
+    getSettings: async () => ({ settings: { ...saved, backup: { ...backup, notify: { channelIds: [] } } } }) });
+  const form = await backupForm();
+  const boxes = form.getAllByRole("checkbox");
+  for (const box of boxes.slice(0,16)) fireEvent.click(box);
+  expect(form.getByText("最多选 16 个渠道")).toBeInTheDocument();
+  expect(boxes[16]).toBeDisabled();
+  expect(boxes[0]).toBeEnabled();
+  fireEvent.click(boxes[0]);
+  expect(boxes[16]).toBeEnabled();
+});
 
 it("备份表单保存：secret 只写且下次缺席，渠道以 notify 提交，关闭用空 endpoint", async () => {
   const hub = statefulHub(saved);
@@ -98,7 +111,7 @@ it("备份表单只提交 backup，不带外观、总闸与国家查询", async 
   fireEvent.click(form.getByRole("button", { name: "保存" }));
   await form.findByRole("status");
   expect(sent).toHaveLength(1);
-  expect(sent[0].settings).toMatchObject({ title: "", theme: "", accentColor: "", logo: "", customCss: "" });
+  expect(Object.keys(toJson(SettingsSchema, sent[0].settings!)!)).toEqual(["backup"]);
   expect(sent[0].settings?.backup?.configKeep).toBe(40);
   for (const field of [SettingsSchema.field.publicEnabled, SettingsSchema.field.geoEnabled, SettingsSchema.field.geoUrl]) {
     expect(isFieldSet(sent[0].settings!, field)).toBe(false);

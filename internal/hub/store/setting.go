@@ -111,7 +111,7 @@ func parseFlag(key, v string) (bool, error) {
 	return v == "1", nil
 }
 
-// putSetting 是 setting 表唯一的写入语句：外观、开关、国家查询、备份与渠道列表都经它，写事务由调用方给。
+// putSetting 更新设置值：外观、开关、国家查询、备份配置与渠道列表都经它，写事务由调用方给。
 func putSetting(tx *sql.Tx, key, value string) error {
 	_, err := tx.Exec("INSERT INTO setting (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", key, value)
 	return err
