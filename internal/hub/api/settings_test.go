@@ -17,7 +17,7 @@ import (
 )
 
 func validSettings() *probev1.Settings {
-	return &probev1.Settings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,iVBORw0KGgo=", CustomCss: "body { color: red }"}
+	return &probev1.Settings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,iVBORw0KGgo=", CustomCss: "body { color: red }", PublicEnabled: proto.Bool(true)}
 }
 
 func withSettings(change func(*probev1.Settings)) *probev1.Settings {
@@ -84,7 +84,7 @@ func TestUpdateSettingsValidatesTitleThemeAndAccent(t *testing.T) {
 func TestUpdateSettingsCleansTitleAndAccentAndEchoes(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	want := &probev1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef"}
+	want := &probev1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef", PublicEnabled: proto.Bool(true)}
 	if got := saveSettings(t, h, &probev1.Settings{Title: " ‮\x07运行状态 \t", Theme: "light", AccentColor: "#AbCdEf"}); !proto.Equal(got, want) {
 		t.Fatalf("echo = %v, want %v", got, want)
 	}
@@ -199,16 +199,18 @@ func longestLogo() string {
 // 解码预算不够时，connect 在方法体之前就以 ResourceExhausted 拒绝，校验根本到不了。
 // 解码预算装得下满额设置在最坏转义下的 JSON（service.go 的 maxBody 写了推导）：logo 取 longestLogo；
 // 标题与 CSS 用控制字符填满，json.Marshal 把每个控制字符写成 6 字节的 \u00XX，标题的控制字符清洗后不计入
-// 64 个字符，所以这仍是合法的设置；明暗取最长的值，字段名用比 camelCase 长的 proto 原名（connect 两种都收）。
+// 64 个字符，所以这仍是合法的设置；明暗取最长的值，总闸取较长的 false，字段名用比 camelCase 长的 proto 原名（connect
+// 两种都收）。connect 丢弃不认识的字段，保存后总闸确实关上，才说明请求里的总闸按字段被解码、这是一份全字段的设置。
 func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	logo := longestLogo()
 	theme := slices.MaxFunc(themes, func(a, b string) int { return len(a) - len(b) })
-	body, err := json.Marshal(map[string]any{"settings": map[string]string{
+	body, err := json.Marshal(map[string]any{"settings": map[string]any{
 		"title": strings.Repeat("\x01", maxTitleBytes), "theme": theme, "accent_color": "#112233",
-		"logo":       logo,
-		"custom_css": strings.Repeat("\x01", maxCSSBytes),
+		"logo":           logo,
+		"custom_css":     strings.Repeat("\x01", maxCSSBytes),
+		"public_enabled": false,
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -230,6 +232,9 @@ func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T)
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("full settings escaped worst case (%d bytes): %d %s", len(body), resp.StatusCode, b)
+	}
+	if h.store.PublicEnabled() {
+		t.Fatal("public_enabled in the worst-case request was not applied")
 	}
 }
 

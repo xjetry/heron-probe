@@ -1,22 +1,28 @@
+import { create } from "@bufbuild/protobuf";
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { type ChangeEvent, type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
-import { AdminService, type Settings } from "../gen/probe/v1/admin_pb";
+import { AdminService, GetSettingsResponseSchema, type GetSettingsResponse, type Settings } from "../gen/probe/v1/admin_pb";
 import { LOGO_TYPES, MAX_TITLE_CHARS, THEMES, sizeProblems, type Theme } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
 import { DEFAULT_TITLE } from "../public/site";
 
 const THEME_LABELS: Record<Theme, string> = { auto: "跟随访客的系统设置", light: "浅色", dark: "深色" };
 
-type Draft = { title: string; theme: string; accentColor: string; logo: string; customCss: string };
+// publicEnabled 只在用户动过开关后才出现（经 edit），toDraft 不取它；缺席时 UpdateSettings 保持总闸不变。
+type Draft = { title: string; theme: string; accentColor: string; logo: string; customCss: string; publicEnabled?: boolean };
 
 const toDraft = (s: Settings | undefined): Draft => ({
   title: s?.title ?? "", theme: s?.theme || "auto", accentColor: s?.accentColor ?? "", logo: s?.logo ?? "", customCss: s?.customCss ?? "",
 });
 
-// 公开页的外观：UpdateSettings 整体替换五项，表单因此总是提交全部字段。
+const settingsKey = createConnectQueryKey({ schema: AdminService.method.getSettings, cardinality: "finite" });
+
+// 外观由 UpdateSettings 整体替换，草稿提交全部外观字段；总闸缺席表示不变，草稿只在用户动过开关后才带它。
+// 草稿是开始编辑（或上次保存）时的快照，之后总闸可能被别处改过（另一个面板、脚本）：把快照里的总闸随标题
+// 一起提交，会把别人刚关掉的公开页重新打开。开关没动过时显示查询缓存里 hub 的当前值，重新拉取即跟上。
 //
 // 保存成功时 onSuccess 用 hub 的回显替换草稿；它不判断"是不是最新一次"，靠的是"有未结请求"与"草稿还能被改"互斥。
 // 草稿的改动来自两处：用户改字段（同步），与读 logo 文件的回调（异步，读完才改）。互斥由两处承载：
@@ -38,12 +44,16 @@ export function Appearance() {
     onSuccess: (r) => {
       setDraft(toDraft(r.settings));
       setSaved(true);
-      return qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getSettings, cardinality: "finite" }) });
+      // 回显是 hub 此刻的设置，先写进缓存：草稿已不带总闸，开关显示缓存值，不等重新拉取就显示保存结果。
+      qc.setQueriesData<GetSettingsResponse>({ queryKey: settingsKey }, (old) => old && create(GetSettingsResponseSchema, { settings: r.settings }));
+      return qc.invalidateQueries({ queryKey: settingsKey });
     },
   });
   const gate = queryGate(settings);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const form = draft ?? toDraft(gate.data.settings);
+  // 只有 hub 明说开着才显示为开；显示值不进请求，用户点了开关才由 edit 写进草稿。
+  const publicEnabled = form.publicEnabled ?? gate.data.settings?.publicEnabled === true;
   // 用户侧对草稿的改动都经 edit：按最新的草稿合并（读 logo 的回调在读完时才调用它，选文件时的快照可能已过时），
   // 并清掉上一次保存的"已保存"与错误——改了草稿，它们就不再描述当前内容。保存成功的回显由 onSuccess
   // 直接替换草稿，那是 hub 已保存的值，"已保存"正是要留给它显示的。
@@ -77,10 +87,12 @@ export function Appearance() {
       <h1>外观</h1>
       <p className="muted">
         公开页（站点根路径 /）的标题、明暗、主色、logo 与自定义 CSS。保存后，访客刷新公开页才看到新外观；浏览器还可能再用最多 5 分钟的缓存。
-        要改页面结构，用 hub 的 --public-dir 换掉整个公开页。
+        要改页面结构，用 hub 的 --public-dir 换掉整个公开页。「启用公开页」是公开页与公开接口的总闸，内置页与 --public-dir 都受它约束。
       </p>
       <form className="card edit-form" aria-label="公开页外观" onSubmit={submit}>
         <fieldset className="bare" disabled={update.isPending}>
+          <label className="row"><input type="checkbox" checked={publicEnabled} onChange={(e) => edit({ publicEnabled: e.target.checked })} />启用公开页</label>
+          <p className="muted">关闭后公开页与公开接口整体不可访问，节点的公开标记保留，重新打开即可恢复。hub 内的快照缓存最多再命中 1 秒；经缓存代理时，GET 响应按各自的 max-age 过期（站点配置最长 5 分钟）。</p>
           <label>
             标题
             <input value={form.title} placeholder={DEFAULT_TITLE} onChange={(e) => edit({ title: e.target.value })} />

@@ -133,11 +133,11 @@ service AdminService {
   rpc TestNotifyChannel(TestNotifyChannelRequest) returns (TestNotifyChannelResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
-  // 公开页外观：标题、明暗、主色、logo 与自定义 CSS，经 PublicService.GetSite 对外下发。
+  // 公开页设置：总闸与外观；外观在总闸开启时经 PublicService.GetSite 对外下发。
   rpc GetSettings(GetSettingsRequest) returns (GetSettingsResponse) {
     option (probe.v1.access) = ACCESS_READ;
   }
-  // 整体替换外观的五项并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
+  // 整体替换公开页外观，总闸 public_enabled 缺席时保持不变，并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
   // 约束与期望取值，什么都不写入。
   rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
@@ -484,7 +484,7 @@ message DeleteNotifyChannelResponse {}
 message TestNotifyChannelRequest { int64 id = 1; }
 message TestNotifyChannelResponse {}
 
-// 公开页外观。整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。
+// 公开页设置。UpdateSettings 整体替换外观字段；public_enabled 是例外，缺席表示不变。
 message Settings {
   // 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
   // 空串表示公开页用内置标题。
@@ -498,6 +498,11 @@ message Settings {
   string logo = 4;
   // 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
   string custom_css = 5;
+  // 公开页与 PublicService 的总闸。GetSettings 总是带值，从未保存过时为 true。
+  // UpdateSettings 缺席表示不变，显式 true/false 才修改；关闭公开页会中断对外服务，
+  // 不认识此字段的旧客户端修改外观时不得顺带关站，因此它有别于外观字段的整体替换语义。
+  // 关闭不修改节点的 public 标记，重新打开后恢复原来的公开范围。
+  optional bool public_enabled = 6;
 }
 message GetSettingsRequest {}
 message GetSettingsResponse { Settings settings = 1; }

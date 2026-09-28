@@ -30,7 +30,7 @@ curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/
 - 时间是 Unix 秒；字段名以 `_ms` 结尾的是毫秒，以 `_s` 结尾的是秒，以 `_us` 结尾的是微秒。JSON 字段名是 proto 字段名的小驼峰（`last_seen_at` → `lastSeenAt`）。
 - 列表为空时字段不出现，jq 里取列表写 `(.字段 // [])`。
 - 非 `optional` 的字段取默认值（0、空串、false、空列表）时在 JSON 里省略，读不到就按默认值理解（样本 `{}` 的 `n` 是 0）。
-- `optional` 字段（proto 里标了 `optional` 的，如 `lastSeenAt` 与指标样本的 `mean`、`max`、`sum`）只要有值就出现，哪怕是 0；缺失才表示没有读数。不要把缺失当成 0，也不要把出现的 0 当成缺失。
+- `optional` 字段只要有值就出现，哪怕是 0 或 false；缺席含义见字段注释。读数（如 `lastSeenAt` 与指标样本的 `mean`、`max`、`sum`）缺席表示没有读数，不是 0；设置的 `publicEnabled` 在更新时缺席表示不变。
 - 出错时 HTTP 状态非 200，响应体是 `{"code": "...", "message": "..."}`；message 写明哪个字段、违反了什么约束、期望什么取值。
 
 ## 例子
@@ -74,7 +74,9 @@ curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/
 
 ## 公开数据
 
-标为公开的节点另经 `PublicService` 对外提供，不需要 token：只能查到公开节点，未公开与不存在的节点得到同一个 `not_found`。按来源限流（IPv4 一个地址、IPv6 一个 /64 算一个来源），每个来源瞬时 60 次、此后每秒 10 次，超出返回 `resource_exhausted`。方法与字段见 `probe/v1/public.proto`，都可以用 GET 调用，请求消息放在查询串里。
+总闸 `Settings.public_enabled` 是 `optional bool`：`GetSettings` 总是带值，未保存时为 true；`UpdateSettings` 中缺席表示不变，显式 true/false 才修改。其它外观字段仍整体替换，旧客户端修改标题等外观不会顺带改变总闸。
+
+标为公开的节点在 `Settings.public_enabled` 开启时另经 `PublicService` 对外提供，不需要 token：只能查到公开节点，未公开与不存在的节点得到同一个 `not_found`。总闸从未保存过时为开；关闭后全部公开方法（含 `GetSite`）返回 `not_found`，快照仍可能在 1 秒内命中字节缓存，节点的公开标记不变。按来源限流（IPv4 一个地址、IPv6 一个 /64 算一个来源），每个来源瞬时 60 次、此后每秒 10 次，超出返回 `resource_exhausted`，关闭后仍计数。方法与字段见 `probe/v1/public.proto`，都可以用 GET 调用，请求消息放在查询串里。
 
 公开节点的实时状态：
 
