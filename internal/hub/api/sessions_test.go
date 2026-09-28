@@ -181,8 +181,14 @@ func TestListSessionsExpiryMatchesAuthentication(t *testing.T) {
 			if _, err := client.RevokeSession(t.Context(), sessionRequest(&probev1.RevokeSessionRequest{Id: sessionID(old)}, active)); err != nil {
 				t.Errorf("expired revoke must succeed: %v", err)
 			}
-			if m, err := h.store.SessionsByHash(t.Context(), [][32]byte{hash}); err != nil || len(m) != 0 {
-				t.Errorf("expired session remains after revoke: found=%v err=%v", m, err)
+			stored, err := h.store.Sessions(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, sess := range stored {
+				if sess.TokenHash == hash {
+					t.Errorf("expired session remains after revoke: %+v", sess)
+				}
 			}
 		})
 	}

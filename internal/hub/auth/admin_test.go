@@ -17,6 +17,7 @@ import (
 
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/probe"
+	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/testwait"
 )
 
@@ -164,17 +165,27 @@ func TestSessionExpiresIdleAndAbsolute(t *testing.T) {
 	}
 }
 
+// storedSession 从会话表里取出 hash 对应的那一行；没有时第二个返回值为 false。
+func storedSession(t *testing.T, st *store.Store, h [32]byte) (store.Session, bool) {
+	t.Helper()
+	rows, err := st.Sessions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sess := range rows {
+		if sess.TokenHash == h {
+			return sess, true
+		}
+	}
+	return store.Session{}, false
+}
+
 // waitTouch 等待 last_used_at 追上当前时刻：TouchSessionAsync 投递即返回，
 // 测试要观察它的结果就得等写协程。
 func waitTouch(t *testing.T, a *Auth, token string) {
 	t.Helper()
 	testwait.Until(t, time.Millisecond, func() bool {
-		h := HashToken(token)
-		m, err := a.store.SessionsByHash(context.Background(), [][32]byte{h})
-		if err != nil {
-			t.Fatal(err)
-		}
-		sess, ok := m[h]
+		sess, ok := storedSession(t, a.store, HashToken(token))
 		return ok && sess.LastUsedAt.Equal(a.clk.Now())
 	}, "last_used_at was not recorded")
 }
@@ -788,14 +799,13 @@ func TestSessionTouchThreshold(t *testing.T) {
 		if _, err := st.DeleteExpiredSessions(ctx, initial); err != nil {
 			t.Fatal(err)
 		}
-		m, err := st.SessionsByHash(ctx, [][32]byte{HashToken(tok)})
-		sess, ok := m[HashToken(tok)]
+		sess, ok := storedSession(t, st, HashToken(tok))
 		want := initial
 		if clk.Now().Sub(initial) >= touchEvery {
 			want = clk.Now()
 		}
-		if err != nil || !ok || !sess.LastUsedAt.Equal(want) {
-			t.Fatalf("touch threshold: last=%v want=%v ok=%v err=%v", sess.LastUsedAt, want, ok, err)
+		if !ok || !sess.LastUsedAt.Equal(want) {
+			t.Fatalf("touch threshold: last=%v want=%v ok=%v", sess.LastUsedAt, want, ok)
 		}
 	}
 }
@@ -828,8 +838,8 @@ func TestAuthenticateSessionPicksFirstLiveCandidateAndDeletesExpiredOnes(t *test
 			if err != nil || !ok || got != live {
 				t.Fatalf("AuthenticateSession(%v) = %q %v %v, want the live session", candidates, got, ok, err)
 			}
-			if m, err := st.SessionsByHash(ctx, [][32]byte{HashToken(expired)}); err != nil || len(m) != 0 {
-				t.Errorf("expired candidate was not deleted: %v %v", m, err)
+			if sess, ok := storedSession(t, st, HashToken(expired)); ok {
+				t.Errorf("expired candidate was not deleted: %+v", sess)
 			}
 		})
 	}

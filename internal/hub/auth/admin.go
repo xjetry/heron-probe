@@ -198,18 +198,19 @@ func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from ne
 // 调用方把选中的那个放进 ctx，它决定 Logout 吊销哪个会话、撤销当前会话时是否清 cookie、会话列表把哪个标为当前，
 // 这里也只刷新它的最近使用时刻。按候选顺序选，会话状态不变时同一个 Cookie 头每次选中同一个会话。
 //
-// 形状不是 NewToken 明文的候选不可能是会话，查库前丢弃；其余去重后合成一条 SessionsByHash 查询，每个候选占一个
-// SQL 变量。变量数有界：一个成形的候选在 Cookie 头里至少占 79 字节（"probe_session=" 14 字节、token 64 字节、
-// 分隔符 ";" 1 字节）；net/http 为一个 HTTP/1.1 请求头读入的字节不超过 MaxHeaderBytes 加两份 4096 字节（读取上限
-// 自带的余量，以及设上限之前已在 4096 字节读缓冲区里的部分，例如空闲连接上等待下一个请求时的预读）；cmd/hub 的 http.Server
-// 在明文监听上只说 HTTP/1.1、不设 MaxHeaderBytes，取默认 1 MiB。所以候选至多 (1 MiB + 8 KiB) / 79 向下取整即
-// 13376 个，低于 SQLite 的变量上限 32766。推导在 MaxHeaderBytes 加 8 KiB 不超过 32766 × 79 字节时成立，即
-// MaxHeaderBytes 约 2.46 MiB 以内。形状过滤是推导的另一个前提：不成形的值可以只有几个字节，默认头部上限里
-// 能放下五万多个互不相同的这种值，超过变量上限。cmd/hub 的 TestServeSessionCookieFilledToHeaderLimit 在真实
-// serve 上用两种伪造值把 Cookie 头填到上限，分别钉住这两个前提。
+// 这条路径匿名可达、不经登录门，候选数又不设上限，所以成本按最坏的头部算。匹配在内存里做：读一次会话表，把候选
+// 逐个哈希后按顺序查表。
+//   - 读表的成本随会话行数变化，与请求内容无关。行只由密码校验通过的 Login 写入，匿名请求加不了行；Login 顺带删掉
+//     已绝对过期的行，清理成功时行数不超过最近一次成功登录之前 SessionAbsolute 内的成功登录次数。
+//   - 候选侧每个成形候选一次 SHA-256。n 个成形候选在 Cookie 头里至少占 79n-1 字节（"probe_session=" 14 字节、
+//     token 64 字节、除最后一个外各一个分隔符 ";"），所以次数与头部字节成正比，头部字节由 http.Server 的请求头上限约束。
+//   - 形状不是 NewToken 明文的值不可能是会话，哈希前丢弃。这只省掉不可能命中的 SHA-256，不承担正确性：
+//     不丢弃时它们的哈希在表里也查不到。
+//   - 不按候选查库：带上万个候选时，那条上万个变量的 IN 查询占了鉴权耗时的大头，端到端是同尺寸普通 Cookie 头的
+//     二三十倍（modernc.org/sqlite v1.59.0 实测）。
 //
-// 会话时刻必须跨重启持久化，所以过期与最近使用用墙钟；回拨会推迟过期，前拨可能提前过期。查到的过期会话尝试删除，
-// 成功后回拨也不会复活它；删除失败记日志。
+// 会话时刻必须跨重启持久化，所以过期与最近使用用墙钟；回拨会推迟过期，前拨可能提前过期。候选里查到的过期会话
+// 尝试删除，成功后回拨也不会复活它；删除失败记日志。
 func (a *Auth) AuthenticateSession(ctx context.Context, candidates []string) (string, bool, error) {
 	var tokens []string
 	var hashes [][32]byte
@@ -224,14 +225,18 @@ func (a *Auth) AuthenticateSession(ctx context.Context, candidates []string) (st
 	if len(tokens) == 0 {
 		return "", false, nil
 	}
-	found, err := a.store.SessionsByHash(ctx, hashes)
+	rows, err := a.store.Sessions(ctx)
 	if err != nil {
 		return "", false, err
+	}
+	stored := make(map[[32]byte]store.Session, len(rows))
+	for _, sess := range rows {
+		stored[sess.TokenHash] = sess
 	}
 	now := a.clk.Now()
 	chosen := -1
 	for i, h := range hashes {
-		sess, ok := found[h]
+		sess, ok := stored[h]
 		switch {
 		case !ok:
 		case !sessionAlive(sess, now):
@@ -246,7 +251,7 @@ func (a *Auth) AuthenticateSession(ctx context.Context, candidates []string) (st
 		return "", false, nil
 	}
 	h := hashes[chosen]
-	if now.Sub(found[h].LastUsedAt) >= touchEvery {
+	if now.Sub(stored[h].LastUsedAt) >= touchEvery {
 		a.store.TouchSessionAsync(h, now, func(err error) {
 			if err != nil {
 				a.log.Warn("recording session use failed", "err", err)

@@ -74,14 +74,30 @@ func TestDelayedSessionTouchCannotResurrectLogout(t *testing.T) {
 	if err := auth.New(other, probe.New(other, log), clk, log).Logout(ctx, token); err != nil {
 		t.Fatal(err)
 	}
-	if m, err := st.SessionsByHash(ctx, [][32]byte{auth.HashToken(token)}); err != nil || len(m) != 0 {
-		t.Fatalf("logout did not remove session before refresh: %v %v", m, err)
+	if n := countSessions(t, st, auth.HashToken(token)); n != 0 {
+		t.Fatalf("logout did not remove session before refresh: %d rows", n)
 	}
 	release()
 	if err := drain(); err != nil {
 		t.Fatal(err)
 	}
-	if m, err := st.SessionsByHash(ctx, [][32]byte{auth.HashToken(token)}); err != nil || len(m) != 0 {
-		t.Fatalf("delayed refresh resurrected logged-out session: %v %v", m, err)
+	if n := countSessions(t, st, auth.HashToken(token)); n != 0 {
+		t.Fatalf("delayed refresh resurrected logged-out session: %d rows", n)
 	}
+}
+
+// countSessions 数会话表里 hash 等于 h 的行。
+func countSessions(t *testing.T, st *store.Store, h [32]byte) int {
+	t.Helper()
+	rows, err := st.Sessions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, sess := range rows {
+		if sess.TokenHash == h {
+			n++
+		}
+	}
+	return n
 }

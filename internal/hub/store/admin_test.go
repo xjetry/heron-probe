@@ -34,15 +34,19 @@ func TestSetAdminPasswordRevokesEverySession(t *testing.T) {
 	}
 }
 
-// lookupSession 读一个 hash 对应的会话；库里没有时第二个返回值为 false。
+// lookupSession 从会话表里取出 hash 对应的那一行；没有时第二个返回值为 false。
 func lookupSession(t *testing.T, s *Store, h [32]byte) (Session, bool) {
 	t.Helper()
-	m, err := s.SessionsByHash(context.Background(), [][32]byte{h})
+	rows, err := s.Sessions(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess, ok := m[h]
-	return sess, ok
+	for _, sess := range rows {
+		if sess.TokenHash == h {
+			return sess, true
+		}
+	}
+	return Session{}, false
 }
 
 func TestNoAdminIsReportedExplicitly(t *testing.T) {
@@ -87,38 +91,5 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 	if err := s.DeleteSession(ctx, h); err != nil {
 		t.Fatalf("deleting an absent session must be a no-op: %v", err)
-	}
-}
-
-func TestSessionsByHash(t *testing.T) {
-	s, clk := open(t)
-	ctx := context.Background()
-	if err := s.SetAdminPassword(ctx, "original"); err != nil {
-		t.Fatal(err)
-	}
-	if m, err := s.SessionsByHash(ctx, nil); err != nil || len(m) != 0 {
-		t.Fatalf("no hashes: %v %v, want an empty result", m, err)
-	}
-	now := clk.Now()
-	var h1, h2, missing [32]byte
-	h1[0], h2[0], missing[0] = 1, 2, 3
-	want := map[[32]byte]time.Time{h1: now.Add(time.Hour), h2: now.Add(2 * time.Hour)}
-	for h, exp := range want {
-		if err := s.CreateSession(ctx, h, now, exp, "original"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	m, err := s.SessionsByHash(ctx, [][32]byte{missing, h1, h1, h2})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(m) != len(want) {
-		t.Fatalf("SessionsByHash = %v, want exactly the two stored sessions", m)
-	}
-	for h, exp := range want {
-		got, ok := m[h]
-		if !ok || got.TokenHash != h || !got.CreatedAt.Equal(now) || !got.LastUsedAt.Equal(now) || !got.ExpiresAt.Equal(exp) {
-			t.Errorf("session %x = %+v %v", h[0], got, ok)
-		}
 	}
 }
