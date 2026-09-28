@@ -346,6 +346,7 @@ it("编辑时带出已存的节奏上限，改写后原样提交，清空即交�
   expect(saved[1].channel!.ratePerMinute).toBeUndefined();
 });
 
+// 负数由表单校验拦在提交之前：不能靠协议编码 uint32 时报错兜底，那条路径会把编码错误当作保存失败显示出来。
 it("节奏上限不接受负数", async () => {
   const saved: SaveNotifyChannelRequest[] = [];
   render({ saveNotifyChannel: async (req) => { saved.push(req); return {}; } });
@@ -354,7 +355,10 @@ it("节奏上限不接受负数", async () => {
   fireEvent.change(within(form).getByLabelText("Bot token"), { target: { value: "123:abc" } });
   fireEvent.change(within(form).getByLabelText("Chat ID"), { target: { value: "-100" } });
   fireEvent.change(within(form).getByLabelText("每分钟上限"), { target: { value: "-1" } });
+  expect(within(form).getByLabelText("每分钟上限")).toBeInvalid();
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  await act(async () => {});
+  expect(screen.queryByRole("alert")).toBeNull();
   fireEvent.change(within(form).getByLabelText("每分钟上限"), { target: { value: "3" } });
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
   await waitFor(() => expect(saved).toHaveLength(1));
