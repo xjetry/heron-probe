@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
 import { AlertDeliverySchema, AlertKind, AlertKindSchema, AlertRuleSchema, AlertStateEntrySchema, ChannelKind, DeliveryFailure, DeliveryFailureSchema, ListProbeTasksResponseSchema, NotifyChannelSchema, ProbeMetric, ProbeTaskDetailSchema } from "../gen/probe/v1/admin_pb";
 import { ProbeKind } from "../gen/probe/v1/types_pb";
-import { ALERT_KINDS, CHANNEL_KINDS, channelTarget, deliveryText, failureText, graceText, labelOf, ruleCondition, statesOf, taskLabel, taskLabels, transitionLabel } from "./alerts";
+import { ALERT_KINDS, CHANNEL_KINDS, channelTarget, deliveryText, failureText, graceText, labelOf, rateLabel, ruleCondition, statesOf, taskLabel, taskLabels, transitionLabel } from "./alerts";
 import { PROBE_KINDS } from "./probes";
 
 describe("taskLabel", () => {
@@ -44,6 +44,14 @@ describe("channelTarget", () => {
   it("Webhook 没有头时不带头名段", () => {
     const c = create(NotifyChannelSchema, { kind: ChannelKind.WEBHOOK, webhook: { method: "PUT", hasUrl: true, urlHost: "http://10.0.0.2:8080" } });
     expect(channelTarget(c)).toBe("PUT http://10.0.0.2:8080");
+  });
+});
+
+describe("rateLabel", () => {
+  it("0 是不限，正数写每分钟条数，缺席（旧 hub）写占位", () => {
+    expect(rateLabel(create(NotifyChannelSchema, { ratePerMinute: 0 }))).toBe("不限");
+    expect(rateLabel(create(NotifyChannelSchema, { ratePerMinute: 20 }))).toBe("每分钟 20 条");
+    expect(rateLabel(create(NotifyChannelSchema, {}))).toBe("—");
   });
 });
 

@@ -6,28 +6,30 @@ import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { AdminService, ChannelKind, type NotifyChannel } from "../gen/probe/v1/admin_pb";
-import { CHANNEL_KINDS, channelTarget, labelOf, methodOf } from "../lib/alerts";
+import { CHANNEL_KINDS, channelTarget, labelOf, methodOf, rateLabel } from "../lib/alerts";
 import { withId } from "../lib/ids";
 
 const METHODS = ["POST", "PUT", "PATCH"] as const;
 type HeaderRow = { id: number; name: string; value: string };
+// rate 为空表示不给出节奏上限，由 hub 按种类取默认值（Telegram 20，Webhook 0 即不限）。
 type Draft = {
-  name: string; kind: ChannelKind; botToken: string; chatId: string;
+  name: string; kind: ChannelKind; rate: string; botToken: string; chatId: string;
   url: string; method: string; headers: HeaderRow[]; removeHeaders: Set<string>; bodyTemplate: string;
 };
 
 const emptyDraft = (): Draft => ({
-  name: "", kind: ChannelKind.TELEGRAM, botToken: "", chatId: "",
+  name: "", kind: ChannelKind.TELEGRAM, rate: "", botToken: "", chatId: "",
   url: "", method: "POST", headers: [], removeHeaders: new Set(), bodyTemplate: "",
 });
 // hub 不回显 token、URL 与头值，编辑草稿里它们恒为空；同种类时留空提交由 hub 保留已存值，换种类必须重填。
 const draftOf = (c: NotifyChannel): Draft => ({
-  ...emptyDraft(), name: c.name, kind: c.kind, chatId: c.telegram?.chatId ?? "",
+  ...emptyDraft(), name: c.name, kind: c.kind, rate: c.ratePerMinute === undefined ? "" : String(c.ratePerMinute), chatId: c.telegram?.chatId ?? "",
   method: methodOf(c.webhook?.method), bodyTemplate: c.webhook?.bodyTemplate ?? "",
 });
 
 function toChannel(id: bigint, d: Draft) {
-  const base = { id, name: d.name.trim(), kind: d.kind };
+  const rate = d.rate.trim();
+  const base = { id, name: d.name.trim(), kind: d.kind, ...(rate === "" ? {} : { ratePerMinute: Number(rate) }) };
   if (d.kind === ChannelKind.TELEGRAM) return { ...base, telegram: { botToken: d.botToken.trim(), chatId: d.chatId.trim() } };
   return { ...base, webhook: {
     url: d.url.trim(), method: d.method, bodyTemplate: d.bodyTemplate,
@@ -76,7 +78,7 @@ export function Channels() {
       <p role="status">{notice ?? ""}</p>
       <div className="table-scroll" role="region" aria-label="通知渠道管理" tabIndex={0}>
         <table className="nodes">
-          <thead><tr><th>名称</th><th>类型</th><th>目标</th><th>创建于</th><th>操作</th></tr></thead>
+          <thead><tr><th>名称</th><th>类型</th><th>目标</th><th>节奏上限</th><th>创建于</th><th>操作</th></tr></thead>
           <tbody>
             {channels.map((c) => (
               <ChannelRow key={String(c.id)} channel={c} saving={update.isPending} deleting={remove.isPending} testing={test.isPending}
@@ -168,6 +170,12 @@ function ChannelForm({ title, initial, original, pending, onSubmit, onCancel }: 
           <label>请求体模板<textarea value={draft.bodyTemplate} placeholder="留空使用默认 JSON 模板" onChange={(e) => set({ bodyTemplate: e.target.value })} /></label>
         </>
       )}
+      <div className="row">
+        <label>每分钟上限<input type="number" min={0} step={1} inputMode="numeric" value={draft.rate}
+          placeholder={`留空取默认 ${draft.kind === ChannelKind.TELEGRAM ? "20" : "0（不限）"}`}
+          onChange={(e) => set({ rate: e.target.value })} /></label>
+        <span className="muted">每分钟至多发出的消息数，含重试；0 表示不限，超出的排队到下一分钟发出</span>
+      </div>
       {problem && <p role="alert" className="error">{problem}</p>}
       <div className="row">
         <button type="submit" disabled={pending}>{onCancel ? "保存" : "创建"}</button>
@@ -184,7 +192,7 @@ function ChannelRow({ channel: c, saving, deleting, testing, onSave, onTest, onD
   const [editing, setEditing] = useState(false);
   if (editing) {
     return (
-      <tr><td colSpan={5}>
+      <tr><td colSpan={6}>
         <ChannelForm title={`编辑 ${withId(c.name, c.id)}`} initial={draftOf(c)} original={c} pending={saving}
           onSubmit={(d) => onSave(d, () => setEditing(false))} onCancel={() => setEditing(false)} />
       </td></tr>
@@ -195,6 +203,7 @@ function ChannelRow({ channel: c, saving, deleting, testing, onSave, onTest, onD
       <td>{c.name}</td>
       <td>{labelOf(CHANNEL_KINDS, c.kind)}</td>
       <td>{channelTarget(c)}</td>
+      <td>{rateLabel(c)}</td>
       <td className="muted">{new Date(Number(c.createdAt) * 1000).toLocaleDateString()}</td>
       <td>
         <button type="button" className="link" aria-label={`编辑 ${withId(c.name, c.id)}`} onClick={() => setEditing(true)}>编辑</button>{" "}
