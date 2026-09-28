@@ -75,7 +75,7 @@ curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/
 
 ## 公开数据
 
-总闸 `Settings.public_enabled` 是 `optional bool`：`GetSettings` 总是带值，未保存时为 true。`UpdateSettings` 按组判定、各组彼此独立：外观五项（`title`、`theme`、`accent_color`、`logo`、`custom_css`）是一组，任一项非空即视为给出，给出就整体替换（`theme` 必填，其余为空即清空）；总闸、国家查询的 `geo_enabled`、`geo_url` 与备份 `backup` 各自是一组，显式给出才修改，缺席表示不变（`backup` 内各项的 presence 见 `BackupSettings`）；一组都没给出返回 `invalid_argument` 并点名各组。所以只开关公开页的请求只带 `public_enabled` 即可，旧客户端修改标题等外观也不会顺带改变总闸。
+总闸 `Settings.public_enabled` 是 `optional bool`：`GetSettings` 总是带值，未保存时为 true。`UpdateSettings` 按组判定、各组彼此独立：外观五项（`title`、`theme`、`accent_color`、`logo`、`custom_css`）是一组，任一项非空即视为给出，给出就整体替换（`theme` 必填，其余为空即清空）；总闸 `public_enabled`、国家查询与备份 `backup` 各自是一组，显式给出才修改，缺席表示不变：国家查询两项（`geo_enabled`、`geo_url`）合为一组，逐项按 presence 判定，给出任一项即算这一组给出、只改给出的那项；`backup` 内各项的 presence 见 `BackupSettings`。`geo_backend`、`geo_mmdb_path` 是只读回显，请求里给出也被忽略，不算给出任何一组。一组都没给出返回 `invalid_argument` 并点名各组。所以只开关公开页的请求只带 `public_enabled` 即可，旧客户端修改标题等外观也不会顺带改变总闸。
 
 标为公开的节点在 `Settings.public_enabled` 开启时另经 `PublicService` 对外提供，不需要 token：只能查到公开节点，未公开与不存在的节点得到同一个 `not_found`。总闸从未保存过时为开；关闭后全部公开方法（含 `GetSite`）返回 `not_found`，快照仍可能在 1 秒内命中字节缓存，节点的公开标记不变。按来源限流（IPv4 一个地址、IPv6 一个 /64 算一个来源），每个来源瞬时 60 次、此后每秒 10 次，超出返回 `resource_exhausted`，关闭后仍计数。方法与字段见 `probe/v1/public.proto`，都可以用 GET 调用，请求消息放在查询串里。
 
