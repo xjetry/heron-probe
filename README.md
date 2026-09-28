@@ -36,7 +36,7 @@ curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.
   --timezone Asia/Taipei --trusted-proxies 127.0.0.1/32
 ```
 
-重跑即升级，沿用 `/etc/systemd/system/probe-hub.service` 里 `ExecStart` 的参数，命令行显式给出的值按参数名替换旧值；写回时每个参数只留一份，统一写成 `--flag=value`。`--version vX.Y.Z` 指定发行版，`--base-url URL` 改用该下载目录并忽略 `--version`。安装器只接受静态参数：用了 systemd 的 `$` / `%` 动态展开，或有 drop-in 设了 `ExecStart` 时，须先把参数合并为主单元里的静态值；无法解析时在停服前报错，不会重置配置。数据库固定为 `/var/lib/probe/probe.db`。
+重跑即升级，沿用 `/etc/systemd/system/probe-hub.service` 里 `ExecStart` 的参数，命令行显式给出的值按参数名替换旧值；写回时每个参数只留一份，统一写成 `--flag=value`。`--version vX.Y.Z` 指定发行版，`--base-url URL` 改用该下载目录并忽略 `--version`。安装器只接受静态参数：用了 systemd 的 `$` / `%` 动态展开，或有 drop-in 设了 `ExecStart` 时，须先把参数合并为主单元里的静态值；无法解析时升级在停服前报错，不会重置配置。首装时已有设了 `ExecStart` 的 drop-in（例如 purge 后留在 `probe-hub.service.d/` 里的），安装器写好主单元后报错，不 enable、不 start。数据库固定为 `/var/lib/probe/probe.db`。
 
 每次安装都用发行包里的单元覆盖主单元，只保留其中 `ExecStart` 的参数：主单元里别的手工改动（例如 `Environment=PROBE_OFFLINE_AFTER=60s`）会在升级时丢失。这类定制放进 drop-in（`systemctl edit probe-hub`，写在 `/etc/systemd/system/probe-hub.service.d/`）；不设 `ExecStart` 的 drop-in 升级时保留，卸载与 purge 也不删这个目录。
 
@@ -50,7 +50,7 @@ curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.
 curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.sh | sh -s -- --uninstall --purge --yes
 ```
 
-普通卸载保留数据和账户。安装、升级都会先核对目标端口的监听进程，排除现有 hub 自身；冲突时不停止旧服务。停止失败、旧进程未退出或新进程未持续存活均返回失败；停服之后某一步失败时，安装器会提示 hub 已停，可重跑安装器或手动启动。
+普通卸载保留数据和账户。安装、升级都会先核对目标端口的监听进程，排除现有 hub 自身；冲突时不停止旧服务。停止失败、旧进程未退出或新进程未持续存活均返回失败。停服之后、`systemctl start` 成功返回之前某一步失败时，安装器会提示 hub 已停，可重跑安装器或手动启动；启动之后没能持续存活时不这样提示，那时 systemd 仍按 `Restart=always` 继续拉起，按 `journalctl -u probe-hub` 排查。
 
 ## 用 Docker 运行 hub
 

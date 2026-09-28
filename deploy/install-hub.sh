@@ -151,7 +151,8 @@ confirm_service_started() {
   case " $svc_pids " in *" $pid "*) return 0;; esac
   fail "probe-hub did not stay running (pid $pid); see journalctl -u probe-hub"
 }
-# 数据目录与三个库文件的形态核对，停服前的预检与停服后的锁内复检共用。
+# 数据目录与三个库文件的形态核对，停服前的预检与停服后的复检共用。停服后，目录本身的复检在收紧目录之前，
+# 库文件的复检在目录收成 0750 之后（锁内）。
 # 目录在 root 属主的 /var/lib 下，服务用户换不掉这个目录项，所以对目录本身的核对不依赖锁；下文的 chown
 # 不带 -h，目录是链接就会改到链接指向的目录。库文件要么不存在，要么是链接数为 1 的普通文件：符号链接与
 # 硬链接都会让 root 的 chown、chmod 改到另一个名字所指的文件。硬链接 [ -L ] 为假、[ -f ] 为真，只有链接数
@@ -332,7 +333,7 @@ awk '
   }
   END { if (failed) exit 1 }
 ' "$work/command" > "$work/raw-args" || fail 'unsupported quoting or escape in ExecStart'
-# 写回时 quote_arg 把每个 $、% 双写。这里把读到的 $$、%% 还原成字面字符，写回去与原文逐字相同。单写的
+# 写回时 quote_arg 把每个 $、% 双写。这里把读到的 $$、%% 还原成字面字符，写回后仍是原来的 $$、%%。单写的
 # $、% 是 systemd 的动态展开（环境变量、specifier），读进来再写回会被双写成字面值、改变参数的意思；
 # 所以不论出现在哪个参数里都在停服前拒绝，而不只拒绝影响监听端口的那几个。
 awk '{
@@ -439,10 +440,11 @@ SERVICE_STOPPED=1
 mv -f "$BIN_TMP" "$BIN"
 
 # SQLite 要创建和删除 WAL/SHM，目录必须可写，不能照搬只读配置目录的 0750。
-# 停服务并确认该 uid 无进程之后，先把目录交给 root 并收成 0750：此后只有 root 能增删其中的条目，复检看到的
-# 就是接下来要改属主的条目。预检之后、加锁之前，服务组仍能替换目录里的条目，所以复检不能省。复检失败时
-# 服务已停、目录留在 0750：服务用户建不了 WAL/SHM，没有现成 WAL/SHM 时 hub 被拉起也打不开库（0750 下
-# 实测报 attempt to write a readonly database），直到有人查看后重跑。不跟随链接、不递归 chown。
+# 停服务并确认该 uid 无进程之后，先把目录交给 root 并收成 0750：此后只有 root 能增删其中的条目，库文件的复检
+# 看到的就是接下来要改属主的条目。预检之后、加锁之前，服务组仍能替换目录里的条目，所以这次复检不能省。
+# 库文件复检失败时服务已停、目录留在 0750：服务用户建不了 WAL/SHM，没有现成 WAL/SHM 时 hub 被拉起也打不开库
+# （0750 下实测报 attempt to write a readonly database），直到有人查看后重跑。目录本身的复检排在收紧之前，
+# 它失败时目录没有被改动。不跟随链接、不递归 chown。
 data_dir_ok || fail "$DATA changed after the pre-stop check"
 mkdir -p "$DATA"
 chown root:"$SVC_USER" "$DATA"
