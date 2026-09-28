@@ -45,8 +45,12 @@ lint:
 	GOOS=linux go vet ./...
 	GOOS=darwin go vet ./...
 
+# deploy 包的替身测试每个用例都用 sh 真跑一遍安装脚本，负载高时整包要六七分钟（make ci 里实测 395 秒），
+# 逼近 go test 给每个测试二进制的默认 10 分钟超时，到点被杀看起来像随机失败。只给这个包放宽到 20 分钟，其余包
+# 保持默认，卡住的测试仍尽早暴露。grep 滤空时以 1 退出、整条命令失败，不会退化成只测当前目录。
 test:
-	go test -count=1 ./...
+	pkgs=$$(go list ./... | grep -vx github.com/xjetry/probe/deploy) && go test -count=1 $$pkgs
+	go test -count=1 -timeout 20m ./deploy/
 
 # 发布规则（版本号守卫、预发布判定）与回读判定的回归检查：只跑 make 的检查、-n 展开与 docker 桩，
 # 不构建、不访问 registry。
