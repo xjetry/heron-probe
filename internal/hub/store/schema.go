@@ -289,7 +289,11 @@ const ddlNotifyChannel = `CREATE TABLE notify_channel (
   name TEXT NOT NULL,
   kind TEXT NOT NULL,
   config TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  -- 每分钟至多发出的请求数（含重试），0 表示不限（§9.3）。0 是放宽方向：DEFAULT 只为迁移 17 的 ADD COLUMN
+  -- 给旧行一个值（随后按种类改写），唯一写者 SaveNotifyChannel 总是显式写入，按种类取缺省值的是 api 层。
+  -- 列序与迁移 17 的 ADD COLUMN 结果一致。
+  rate_per_minute INTEGER NOT NULL DEFAULT 0 CHECK (rate_per_minute >= 0)
 )`
 
 // 状态只在转换时写；since_at 是墙钟，只用于展示"自何时起"。计时用引擎内存里的单调钟。
@@ -333,13 +337,25 @@ const ddlAlertDelivery = `CREATE TABLE alert_delivery (
   delivered_at INTEGER,
   -- 最近一次失败的类别（DeliveryFailure），空表示没有失败；列序与迁移 7 的 ADD COLUMN 结果一致。
   failure TEXT NOT NULL DEFAULT '',
-  -- 仅 failure = 'http_status' 时非 NULL，且在 100–999。三条写路径各自保证：UpdateDelivery 经
+  -- 仅 failure = 'http_status' 时非 NULL，且在 100–999。三条写路径各自保证：UpdateBatch 经
   -- DeliveryResult.check；DeleteNotifyChannel 写 channel_deleted 时一并写 NULL；迁移 7 只对首位
   -- 1–9 的三位数写入，其余行保持 ADD COLUMN 的 NULL。
-  http_status INTEGER
+  http_status INTEGER,
+  -- 发送批次：同一次发送覆盖的行共享它，值是批次第一行的 id（AUTOINCREMENT 不复用 id，批次号因此也不复用）。
+  -- 同批各行的尝试次数与结果一起写（BeginBatchAttempt、UpdateBatch 按 batch_id 整批更新），新行只在批次尚未
+  -- 开始尝试时加入（RecordTransition），所以同批各行的 attempts、ok、done 与失败各列始终相同。
+  -- 可为 NULL 只因 ADD COLUMN 不能给出逐行的值：迁移 17 随即写成 id，唯一插入者 RecordTransition 在同一事务里写定；
+  -- 读侧把它扫进 int64，残留的 NULL 会让读取报错而不是被当作某个批次。CHECK 排除 0 与负数这类不指向任何行的值。
+  -- 列序与迁移 17 的 ADD COLUMN 结果一致。
+  batch_id INTEGER CHECK (batch_id > 0)
 )`
 const ddlAlertDeliveryByEvent = `CREATE INDEX alert_delivery_by_event ON alert_delivery(event_id)`
-const ddlAlertDeliveryPending = `CREATE INDEX alert_delivery_pending ON alert_delivery(done, id)`
+
+// PendingBatches 按它顺序扫描未终态行，得到升序去重的批次号而不排序。
+const ddlAlertDeliveryPending = `CREATE INDEX alert_delivery_pending ON alert_delivery(done, batch_id)`
+
+// 按批次读、开始尝试与写结果（GetDeliveryBatch、BeginBatchAttempt、UpdateBatch、joinableBatch）走它。
+const ddlAlertDeliveryByBatch = `CREATE INDEX alert_delivery_by_batch ON alert_delivery(batch_id)`
 
 // api_token 是 AdminService 的程序化凭据（§5.6）。
 const ddlAPIToken = `CREATE TABLE api_token (
@@ -363,7 +379,7 @@ const ddlSetting = `CREATE TABLE setting (
 func alertStatements() []string {
 	return []string{ddlAlertRule, ddlAlertRuleNode, ddlAlertRuleNodeByNode, ddlAlertRuleChannel,
 		ddlAlertRuleChannelByChannel, ddlNotifyChannel, ddlAlertState, ddlAlertEvent,
-		ddlAlertEventByNode, ddlAlertEventByAt, ddlAlertDelivery, ddlAlertDeliveryByEvent, ddlAlertDeliveryPending}
+		ddlAlertEventByNode, ddlAlertEventByAt, ddlAlertDelivery, ddlAlertDeliveryByEvent, ddlAlertDeliveryPending, ddlAlertDeliveryByBatch}
 }
 
 // tag 是运维自定义的节点标签（§10）。name 是先建的写法，回显用；name_fold 是 TagFold(name)，UNIQUE 承载"大小写不敏感

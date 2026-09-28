@@ -145,7 +145,7 @@ func TestServeRequeuesPendingNotifications(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = st.RecordTransition(t.Context(), r.ID, id, store.StateFiring, "", time.Time{}, store.AlertEvent{Transition: store.TransitionFiring, At: time.Now()}, []int64{channel})
+		_, err = st.RecordTransition(t.Context(), r.ID, id, store.StateFiring, "", time.Time{}, store.AlertEvent{Transition: store.TransitionFiring, At: time.Now()}, []store.DeliveryTarget{{ChannelID: channel}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -194,14 +194,14 @@ func TestServePrunesAlertEvents(t *testing.T) {
 					t.Fatal(err)
 				}
 				for _, age := range []time.Duration{tc.retention + 24*time.Hour, tc.retention - 24*time.Hour} {
-					ev, err := st.RecordTransition(t.Context(), r.ID, id, store.StateFiring, "", time.Time{}, store.AlertEvent{Transition: store.TransitionFiring, At: clk.Now().Add(-age)}, []int64{channel})
+					ev, err := st.RecordTransition(t.Context(), r.ID, id, store.StateFiring, "", time.Time{}, store.AlertEvent{Transition: store.TransitionFiring, At: clk.Now().Add(-age)}, []store.DeliveryTarget{{ChannelID: channel}})
 					if err != nil {
 						t.Fatal(err)
 					}
-					if _, err := st.BeginDeliveryAttempt(t.Context(), ev.Deliveries[0].ID); err != nil {
+					if _, err := st.BeginBatchAttempt(t.Context(), ev.Deliveries[0].BatchID); err != nil {
 						t.Fatal(err)
 					}
-					if err := st.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, store.DeliveryResult{OK: true, Done: true, DeliveredAt: clk.Now()}); err != nil {
+					if err := st.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, store.DeliveryResult{OK: true, Done: true, DeliveredAt: clk.Now()}); err != nil {
 						t.Fatal(err)
 					}
 				}

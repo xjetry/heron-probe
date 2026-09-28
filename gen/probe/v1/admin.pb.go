@@ -3078,7 +3078,11 @@ type NotifyChannel struct {
 	// 选择自定义 HTTP 通知时必填。
 	Webhook *WebhookConfig `protobuf:"bytes,5,opt,name=webhook,proto3" json:"webhook,omitempty"`
 	// 创建墙钟，Unix 秒；保存请求中的值忽略。
-	CreatedAt     int64 `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	CreatedAt int64 `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// 出站节奏上限：任意一分钟内至多向这个渠道发出的请求数，含重试；0 表示不限。超出上限的消息排队到下一个空位
+	// 发出，不丢弃。上限属于接收方：Telegram 群聊文档值为每分钟 20 条。保存请求省略时取该种类的默认值——Telegram 20，
+	// Webhook 0；响应里恒有值。
+	RatePerMinute *uint32 `protobuf:"varint,7,opt,name=rate_per_minute,json=ratePerMinute,proto3,oneof" json:"rate_per_minute,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3151,6 +3155,13 @@ func (x *NotifyChannel) GetWebhook() *WebhookConfig {
 func (x *NotifyChannel) GetCreatedAt() int64 {
 	if x != nil {
 		return x.CreatedAt
+	}
+	return 0
+}
+
+func (x *NotifyChannel) GetRatePerMinute() uint32 {
+	if x != nil && x.RatePerMinute != nil {
+		return *x.RatePerMinute
 	}
 	return 0
 }
@@ -5812,7 +5823,7 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x04rule\x18\x01 \x01(\v2\x13.probe.v1.AlertRuleR\x04rule\"(\n" +
 	"\x16DeleteAlertRuleRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\"\x19\n" +
-	"\x17DeleteAlertRuleResponse\"\xe6\x01\n" +
+	"\x17DeleteAlertRuleResponse\"\xa7\x02\n" +
 	"\rNotifyChannel\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12)\n" +
@@ -5820,7 +5831,9 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\btelegram\x18\x04 \x01(\v2\x18.probe.v1.TelegramConfigR\btelegram\x121\n" +
 	"\awebhook\x18\x05 \x01(\v2\x17.probe.v1.WebhookConfigR\awebhook\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x06 \x01(\x03R\tcreatedAt\"j\n" +
+	"created_at\x18\x06 \x01(\x03R\tcreatedAt\x12+\n" +
+	"\x0frate_per_minute\x18\a \x01(\rH\x00R\rratePerMinute\x88\x01\x01B\x12\n" +
+	"\x10_rate_per_minute\"j\n" +
 	"\x0eTelegramConfig\x12\x1b\n" +
 	"\tbot_token\x18\x01 \x01(\tR\bbotToken\x12\"\n" +
 	"\rhas_bot_token\x18\x02 \x01(\bR\vhasBotToken\x12\x17\n" +
@@ -6341,6 +6354,7 @@ func file_probe_v1_admin_proto_init() {
 	file_probe_v1_admin_proto_msgTypes[4].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[9].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[30].OneofWrappers = []any{}
+	file_probe_v1_admin_proto_msgTypes[51].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[62].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[79].OneofWrappers = []any{}
 	file_probe_v1_admin_proto_msgTypes[80].OneofWrappers = []any{}

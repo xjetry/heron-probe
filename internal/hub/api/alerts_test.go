@@ -239,6 +239,7 @@ func TestWebhookConfigRoundTrip(t *testing.T) {
 	want.Webhook.HasUrl = true
 	want.Webhook.UrlHost = "https://example.test"
 	want.Webhook.HeaderNames = []string{"X-Notify"}
+	want.RatePerMinute = proto.Uint32(0)
 	if got.Id == 0 || !proto.Equal(got, want) {
 		t.Fatalf("channel=%v want=%v", got, want)
 	}
@@ -259,7 +260,7 @@ func TestNotifyChannelCRUDHidesToken(t *testing.T) {
 	defer srv.Close()
 	h.svc.notifier = alert.NewQueue(h.store, h.alerts.Channels, alert.NewHTTPClient(), srv.URL, h.clk, nil, h.svc.log)
 	c := saveChannel(t, h, &probev1.NotifyChannel{Name: "tg", Kind: probev1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &probev1.TelegramConfig{BotToken: "secret", ChatId: "chat"}})
-	want := &probev1.NotifyChannel{Id: 1, Name: "tg", Kind: probev1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &probev1.TelegramConfig{HasBotToken: true, ChatId: "chat"}, CreatedAt: h.clk.Now().Unix()}
+	want := &probev1.NotifyChannel{Id: 1, Name: "tg", Kind: probev1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &probev1.TelegramConfig{HasBotToken: true, ChatId: "chat"}, CreatedAt: h.clk.Now().Unix(), RatePerMinute: proto.Uint32(20)}
 	if !proto.Equal(c, want) {
 		t.Fatalf("saved=%v want=%v", c, want)
 	}
@@ -293,6 +294,39 @@ func TestNotifyChannelCRUDHidesToken(t *testing.T) {
 	}
 	if len(list.Msg.Channels) != 0 {
 		t.Fatalf("deleted=%v", list.Msg)
+	}
+}
+
+// 节奏上限省略时按种类取默认值（Telegram 20、Webhook 0），给出时原样保存（含 0 = 不限），响应与列表里恒有值。
+// 省略是"取默认"而不是"保留旧值"：保存是整体替换，只有只写不读的凭据才按省略保留。
+func TestNotifyChannelRatePerMinute(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	tg := &probev1.NotifyChannel{Name: "tg", Kind: probev1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &probev1.TelegramConfig{BotToken: "secret", ChatId: "chat"}}
+	saved := saveChannel(t, h, tg)
+	if saved.RatePerMinute == nil || saved.GetRatePerMinute() != 20 {
+		t.Fatalf("telegram default rate=%v, want 20", saved.RatePerMinute)
+	}
+	if hook := saveChannel(t, h, webhook("https://example.test/notify")); hook.RatePerMinute == nil || hook.GetRatePerMinute() != 0 {
+		t.Fatalf("webhook default rate=%v, want 0", hook.RatePerMinute)
+	}
+	for _, rate := range []uint32{5, 0} {
+		saved.RatePerMinute = proto.Uint32(rate)
+		saved = saveChannel(t, h, saved)
+		if saved.GetRatePerMinute() != rate {
+			t.Fatalf("explicit rate %d saved as %d", rate, saved.GetRatePerMinute())
+		}
+		list, err := h.admin.ListNotifyChannels(t.Context(), connect.NewRequest(&probev1.ListNotifyChannelsRequest{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := list.Msg.Channels[0]; got.RatePerMinute == nil || got.GetRatePerMinute() != rate {
+			t.Fatalf("listed rate=%v, want %d", got.RatePerMinute, rate)
+		}
+	}
+	saved.RatePerMinute = nil
+	if saved = saveChannel(t, h, saved); saved.GetRatePerMinute() != 20 {
+		t.Fatalf("rate after omitting it on update=%d, want the telegram default 20", saved.GetRatePerMinute())
 	}
 }
 
@@ -375,23 +409,23 @@ func TestListAlertEventsPaging(t *testing.T) {
 		if i == 0 {
 			id = n2
 		}
-		ev, err := h.store.RecordTransition(t.Context(), r.Id, id, store.StateFiring, "", time.Time{}, store.AlertEvent{Transition: store.TransitionFiring, At: h.clk.Now(), Summary: fmt.Sprint(i), Value: float64(i)}, []int64{c.Id})
+		ev, err := h.store.RecordTransition(t.Context(), r.Id, id, store.StateFiring, "", time.Time{}, store.AlertEvent{Transition: store.TransitionFiring, At: h.clk.Now(), Summary: fmt.Sprint(i), Value: float64(i)}, []store.DeliveryTarget{{ChannelID: c.Id}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		events = append(events, ev)
 	}
 	last := events[500]
-	if _, err := h.store.BeginDeliveryAttempt(t.Context(), last.Deliveries[0].ID); err != nil {
+	if _, err := h.store.BeginBatchAttempt(t.Context(), last.Deliveries[0].BatchID); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.store.UpdateDelivery(t.Context(), last.Deliveries[0].ID, store.DeliveryResult{OK: true, Done: true, DeliveredAt: h.clk.Now()}); err != nil {
+	if err := h.store.UpdateBatch(t.Context(), last.Deliveries[0].BatchID, store.DeliveryResult{OK: true, Done: true, DeliveredAt: h.clk.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.store.BeginDeliveryAttempt(t.Context(), events[499].Deliveries[0].ID); err != nil {
+	if _, err := h.store.BeginBatchAttempt(t.Context(), events[499].Deliveries[0].BatchID); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.store.UpdateDelivery(t.Context(), events[499].Deliveries[0].ID, store.DeliveryResult{Done: true, Failure: store.FailureHTTPStatus, HTTPStatus: 400, Error: "bad request body"}); err != nil {
+	if err := h.store.UpdateBatch(t.Context(), events[499].Deliveries[0].BatchID, store.DeliveryResult{Done: true, Failure: store.FailureHTTPStatus, HTTPStatus: 400, Error: "bad request body"}); err != nil {
 		t.Fatal(err)
 	}
 	query := func(node, before int64, limit uint32) *probev1.ListAlertEventsResponse {

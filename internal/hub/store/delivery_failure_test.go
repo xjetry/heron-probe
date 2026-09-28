@@ -42,7 +42,7 @@ func TestUpdateDeliveryRejectsInconsistentResult(t *testing.T) {
 			s, ids, cs, _ := alertFixture(t)
 			r := saveRule(t, s, AlertRule{Kind: KindOffline})
 			ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID})
-			if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, tc.r); err == nil {
+			if err := s.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, tc.r); err == nil {
 				t.Fatalf("inconsistent result accepted: %+v", tc.r)
 			}
 			got, err := s.GetAlertEvent(t.Context(), ev.ID)
@@ -64,7 +64,7 @@ func TestUpdateDeliveryAcceptsRetryableFailureBeforeDone(t *testing.T) {
 		s, ids, cs, _ := alertFixture(t)
 		rule := saveRule(t, s, AlertRule{Kind: KindOffline})
 		ev := recordEvent(t, s, rule.ID, ids[0], []int64{cs[0].ID})
-		if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, r); err != nil {
+		if err := s.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, r); err != nil {
 			t.Fatalf("%+v rejected: %v", r, err)
 		}
 	}
@@ -75,7 +75,7 @@ func TestUpdateDeliveryStoresFailureAndClearsItOnSuccess(t *testing.T) {
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID})
 	id := ev.Deliveries[0].ID
-	if err := s.UpdateDelivery(t.Context(), id, DeliveryResult{Failure: FailureHTTPStatus, HTTPStatus: 503, Error: "busy"}); err != nil {
+	if err := s.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, DeliveryResult{Failure: FailureHTTPStatus, HTTPStatus: 503, Error: "busy"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetAlertEvent(t.Context(), ev.ID)
@@ -83,11 +83,11 @@ func TestUpdateDeliveryStoresFailureAndClearsItOnSuccess(t *testing.T) {
 		t.Fatalf("failed attempt=%+v err=%v", d, err)
 	}
 	at := s.clk.Now()
-	if err := s.UpdateDelivery(t.Context(), id, DeliveryResult{OK: true, Done: true, DeliveredAt: at}); err != nil {
+	if err := s.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, DeliveryResult{OK: true, Done: true, DeliveredAt: at}); err != nil {
 		t.Fatal(err)
 	}
 	got, err = s.GetAlertEvent(t.Context(), ev.ID)
-	want := Delivery{ID: id, EventID: ev.ID, ChannelID: cs[0].ID, OK: true, Done: true, DeliveredAt: at}
+	want := Delivery{ID: id, EventID: ev.ID, ChannelID: cs[0].ID, BatchID: id, OK: true, Done: true, DeliveredAt: at}
 	if err != nil || got.Deliveries[0] != want {
 		t.Fatalf("delivered=%+v err=%v, want %+v", got.Deliveries[0], err, want)
 	}
@@ -101,7 +101,7 @@ func TestGetDeliveryError(t *testing.T) {
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID})
-	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, DeliveryResult{Done: true, Failure: FailureHTTPStatus, HTTPStatus: 401, Error: "echo secret"}); err != nil {
+	if err := s.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, DeliveryResult{Done: true, Failure: FailureHTTPStatus, HTTPStatus: 401, Error: "echo secret"}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.GetDeliveryError(t.Context(), ev.Deliveries[0].ID); err != nil || got != "echo secret" {

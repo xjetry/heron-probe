@@ -531,6 +531,10 @@ message NotifyChannel {
   WebhookConfig webhook = 5;
   // 创建墙钟，Unix 秒；保存请求中的值忽略。
   int64 created_at = 6;
+  // 出站节奏上限：任意一分钟内至多向这个渠道发出的请求数，含重试；0 表示不限。超出上限的消息排队到下一个空位
+  // 发出，不丢弃。上限属于接收方：Telegram 群聊文档值为每分钟 20 条。保存请求省略时取该种类的默认值——Telegram 20，
+  // Webhook 0；响应里恒有值。
+  optional uint32 rate_per_minute = 7;
 }
 message TelegramConfig {
   // 列表与保存响应里恒为空；保存时为空表示保留已存的 token（新建时必填）。

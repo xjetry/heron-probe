@@ -6,28 +6,29 @@ import (
 	"testing"
 )
 
-func TestBeginDeliveryAttemptAtomicallyCapsStarts(t *testing.T) {
+func TestBeginBatchAttemptAtomicallyCapsStarts(t *testing.T) {
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID})
+	batch := ev.Deliveries[0].BatchID
 	type result struct {
-		d   Delivery
+		ds  []Delivery
 		err error
 	}
 	results := make(chan result, 20)
 	var wg sync.WaitGroup
 	for range cap(results) {
-		wg.Go(func() { d, err := s.BeginDeliveryAttempt(t.Context(), ev.Deliveries[0].ID); results <- result{d, err} })
+		wg.Go(func() { ds, err := s.BeginBatchAttempt(t.Context(), batch); results <- result{ds, err} })
 	}
 	wg.Wait()
 	close(results)
 	starts := map[int]bool{}
 	for got := range results {
 		if got.err == nil {
-			if starts[got.d.Attempts] || got.d.Attempts < 1 || got.d.Attempts > MaxDeliveryAttempts {
-				t.Fatalf("invalid or repeated attempt: %+v", got.d)
+			if len(got.ds) != 1 || starts[got.ds[0].Attempts] || got.ds[0].Attempts < 1 || got.ds[0].Attempts > MaxDeliveryAttempts {
+				t.Fatalf("invalid or repeated attempt: %+v", got.ds)
 			}
-			starts[got.d.Attempts] = true
+			starts[got.ds[0].Attempts] = true
 		} else if !errors.Is(got.err, ErrDeliveryExhausted) {
 			t.Fatal(got.err)
 		}
@@ -35,17 +36,19 @@ func TestBeginDeliveryAttemptAtomicallyCapsStarts(t *testing.T) {
 	if len(starts) != MaxDeliveryAttempts {
 		t.Fatalf("starts=%v", starts)
 	}
-	d, err := s.BeginDeliveryAttempt(t.Context(), ev.Deliveries[0].ID)
-	if !errors.Is(err, ErrDeliveryExhausted) || d.Attempts != MaxDeliveryAttempts || d.Done {
-		t.Fatalf("exhausted row=%+v err=%v", d, err)
+	if _, err := s.BeginBatchAttempt(t.Context(), batch); !errors.Is(err, ErrDeliveryExhausted) {
+		t.Fatalf("exhausted batch err=%v", err)
 	}
-	if err := s.UpdateDelivery(t.Context(), d.ID, DeliveryResult{Done: true, Failure: FailureResultUnrecorded}); err != nil {
+	if err := s.UpdateBatch(t.Context(), batch, DeliveryResult{Done: true, Failure: FailureResultUnrecorded}); err != nil {
 		t.Fatal(err)
 	}
-	d, err = s.BeginDeliveryAttempt(t.Context(), d.ID)
-	if !errors.Is(err, ErrDeliveryDone) || !d.Done || d.Attempts != MaxDeliveryAttempts {
+	if _, err := s.BeginBatchAttempt(t.Context(), batch); !errors.Is(err, ErrDeliveryDone) {
+		t.Fatalf("terminal batch err=%v", err)
+	}
+	saved, err := s.GetAlertEvent(t.Context(), ev.ID)
+	if d := saved.Deliveries[0]; err != nil || !d.Done || d.Attempts != MaxDeliveryAttempts {
 		t.Fatalf("terminal row=%+v err=%v", d, err)
 	}
-	_, err = s.BeginDeliveryAttempt(t.Context(), 999)
+	_, err = s.BeginBatchAttempt(t.Context(), 999)
 	assertAlertNotFound(t, err, ObjectAlertDelivery, 999)
 }

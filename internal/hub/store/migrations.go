@@ -35,6 +35,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	14: execAll(migrationV14),
 	15: execAll(migrationV15),
 	16: execAll(migrationV16),
+	17: execAll(migrationV17),
 }
 
 func execAll(stmts []string) func(*sql.Tx) error {
@@ -329,4 +330,16 @@ var migrationV16 = []string{
   content BLOB NOT NULL,
   PRIMARY KEY (theme_id, path)
 )`,
+}
+
+// v17：投递的发送批次与渠道的出站节奏（§9.3）。升级前每行各自发送过，所以旧行各成一批（batch_id = id）；待投递
+// 行的索引改按批次号排列（续投按批次装填）；旧渠道按种类取缺省节奏：Telegram 20（群聊的文档值），Webhook 0（不限）。
+var migrationV17 = []string{
+	`ALTER TABLE alert_delivery ADD COLUMN batch_id INTEGER CHECK (batch_id > 0)`,
+	`UPDATE alert_delivery SET batch_id = id`,
+	`DROP INDEX alert_delivery_pending`,
+	`CREATE INDEX alert_delivery_pending ON alert_delivery(done, batch_id)`,
+	`CREATE INDEX alert_delivery_by_batch ON alert_delivery(batch_id)`,
+	`ALTER TABLE notify_channel ADD COLUMN rate_per_minute INTEGER NOT NULL DEFAULT 0 CHECK (rate_per_minute >= 0)`,
+	`UPDATE notify_channel SET rate_per_minute = 20 WHERE kind = 'telegram'`,
 }

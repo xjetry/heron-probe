@@ -34,6 +34,15 @@ func alertFixture(t *testing.T) (*Store, []int64, []NotifyChannel, uint64) {
 	return s, ids, channels, task.Task.Id
 }
 
+// newBatches 给每个渠道一个新批次的投递目标：不请求合并，各行自成一批。
+func newBatches(channels ...int64) []DeliveryTarget {
+	out := make([]DeliveryTarget, len(channels))
+	for i, c := range channels {
+		out[i] = DeliveryTarget{ChannelID: c}
+	}
+	return out
+}
+
 func saveRule(t *testing.T, s *Store, r AlertRule) AlertRule {
 	t.Helper()
 	r, err := s.SaveAlertRule(t.Context(), r)
@@ -47,7 +56,7 @@ func recordEvent(t *testing.T, s *Store, rule, node int64, channels []int64) Ale
 	t.Helper()
 	ev, err := s.RecordTransition(t.Context(), rule, node, StateFiring, "", time.Time{}, AlertEvent{
 		Transition: TransitionFiring, At: s.clk.Now(), Summary: "offline", Value: 42,
-	}, channels)
+	}, newBatches(channels...))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +193,7 @@ func TestRecordTransitionWritesStateEventAndDeliveries(t *testing.T) {
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID, cs[1].ID})
 	want := AlertEvent{ID: 1, RuleID: r.ID, NodeID: ids[0], Transition: TransitionFiring,
 		At: s.clk.Now(), Summary: "offline", Value: 42, Deliveries: []Delivery{
-			{ID: 1, EventID: 1, ChannelID: cs[0].ID}, {ID: 2, EventID: 1, ChannelID: cs[1].ID},
+			{ID: 1, EventID: 1, ChannelID: cs[0].ID, BatchID: 1}, {ID: 2, EventID: 1, ChannelID: cs[1].ID, BatchID: 2},
 		}}
 	if !reflect.DeepEqual(ev, want) {
 		t.Fatalf("transition event=%+v want=%+v", ev, want)
@@ -208,7 +217,7 @@ func TestRecordTransitionRollsBackOnDeliveryFailure(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, "", time.Time{}, AlertEvent{At: s.clk.Now()}, []int64{cs[0].ID, cs[1].ID})
+	_, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, "", time.Time{}, AlertEvent{At: s.clk.Now()}, newBatches(cs[0].ID, cs[1].ID))
 	if err == nil {
 		t.Fatal("delivery failure was accepted")
 	}
@@ -217,39 +226,45 @@ func TestRecordTransitionRollsBackOnDeliveryFailure(t *testing.T) {
 	}
 }
 
-func TestUpdateDeliveryAndPending(t *testing.T) {
+func TestUpdateBatchAndPending(t *testing.T) {
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID, cs[1].ID})
 	for _, attempts := range []int{1, 2, 3} {
-		if _, err := s.BeginDeliveryAttempt(t.Context(), ev.Deliveries[0].ID); err != nil {
+		if _, err := s.BeginBatchAttempt(t.Context(), ev.Deliveries[0].BatchID); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, DeliveryResult{Done: attempts == MaxDeliveryAttempts, Failure: FailureTransport, Error: "failed"}); err != nil {
+		done := attempts == MaxDeliveryAttempts
+		if err := s.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, DeliveryResult{Done: done, Failure: FailureTransport, Error: "failed"}); err != nil {
 			t.Fatal(err)
 		}
-		got, err := s.PendingDeliveries(t.Context())
-		want := []Delivery{{ID: 1, EventID: ev.ID, ChannelID: cs[0].ID, Attempts: attempts, Failure: FailureTransport, LastError: "failed"}, ev.Deliveries[1]}
-		if attempts == 3 {
+		got, err := s.PendingBatches(t.Context())
+		want := []int64{ev.Deliveries[0].BatchID, ev.Deliveries[1].BatchID}
+		if done {
 			want = want[1:]
 		}
 		if err != nil || !reflect.DeepEqual(got, want) {
-			t.Fatalf("pending attempt %d=%+v err=%v, want %+v", attempts, got, err, want)
+			t.Fatalf("pending batches after attempt %d=%v err=%v, want %v", attempts, got, err, want)
+		}
+		saved, err := s.GetAlertEvent(t.Context(), ev.ID)
+		row := Delivery{ID: 1, EventID: ev.ID, ChannelID: cs[0].ID, BatchID: 1, Attempts: attempts, Done: done, Failure: FailureTransport, LastError: "failed"}
+		if err != nil || !reflect.DeepEqual(saved.Deliveries, []Delivery{row, ev.Deliveries[1]}) {
+			t.Fatalf("rows after attempt %d=%+v err=%v, want %+v", attempts, saved.Deliveries, err, []Delivery{row, ev.Deliveries[1]})
 		}
 	}
 	at := s.clk.Now().Add(time.Minute)
-	if _, err := s.BeginDeliveryAttempt(t.Context(), ev.Deliveries[1].ID); err != nil {
+	if _, err := s.BeginBatchAttempt(t.Context(), ev.Deliveries[1].BatchID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[1].ID, DeliveryResult{OK: true, Done: true, DeliveredAt: at}); err != nil {
+	if err := s.UpdateBatch(t.Context(), ev.Deliveries[1].BatchID, DeliveryResult{OK: true, Done: true, DeliveredAt: at}); err != nil {
 		t.Fatal(err)
 	}
-	pending, err := s.PendingDeliveries(t.Context())
+	pending, err := s.PendingBatches(t.Context())
 	if err != nil || len(pending) != 0 {
 		t.Fatalf("successful delivery still pending: %+v %v", pending, err)
 	}
 	got, err := s.GetAlertEvent(t.Context(), ev.ID)
-	want := Delivery{ID: 2, EventID: ev.ID, ChannelID: cs[1].ID, Attempts: 1, OK: true, Done: true, DeliveredAt: at}
+	want := Delivery{ID: 2, EventID: ev.ID, ChannelID: cs[1].ID, BatchID: 2, Attempts: 1, OK: true, Done: true, DeliveredAt: at}
 	if err != nil || len(got.Deliveries) != 2 || got.Deliveries[1] != want {
 		t.Fatalf("delivered event=%+v err=%v", got, err)
 	}
@@ -262,7 +277,7 @@ func TestDeliveryTerminalStateCannotBeReopened(t *testing.T) {
 	if err := s.DeleteNotifyChannel(t.Context(), cs[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, DeliveryResult{Failure: FailureHTTPStatus, HTTPStatus: 500, Error: "late HTTP failure"}); err != nil {
+	if err := s.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, DeliveryResult{Failure: FailureHTTPStatus, HTTPStatus: 500, Error: "late HTTP failure"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetAlertEvent(t.Context(), ev.ID)
@@ -275,27 +290,36 @@ func TestDeliveryTerminalStateCannotBeReopened(t *testing.T) {
 	}
 }
 
-func TestPendingDeliveriesUsesDoneIndex(t *testing.T) {
+// 续投按批次号装填，批次读写按批次号定位：两类查询各走自己的索引，续投不为去重与排序建临时 B 树。
+func TestDeliveryBatchQueriesUseIndexes(t *testing.T) {
 	s, _ := open(t)
-	rows, err := s.r.Query("EXPLAIN QUERY PLAN " + selectDeliveries + " WHERE done = 0 ORDER BY id")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var plan string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+	for _, tc := range []struct{ query, index string }{
+		{selectPendingBatches, "USING COVERING INDEX alert_delivery_pending"},
+		{selectDeliveries + " WHERE batch_id = 1 ORDER BY id", "USING INDEX alert_delivery_by_batch (batch_id=?)"},
+		// done = 0 让它也能走 (done, batch_id) 的前缀，两个索引都是按批次号定位，不扫全表。
+		{"UPDATE alert_delivery SET attempts = attempts + 1 WHERE batch_id = 1 AND done = 0", "batch_id=?)"},
+		{"SELECT COUNT(*) FROM alert_delivery WHERE batch_id = 1", "USING COVERING INDEX alert_delivery_by_batch (batch_id=?)"},
+	} {
+		rows, err := s.r.Query("EXPLAIN QUERY PLAN " + tc.query)
+		if err != nil {
 			t.Fatal(err)
 		}
-		plan += detail
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(plan, "alert_delivery_pending") || strings.Contains(plan, "TEMP B-TREE") {
-		t.Fatalf("pending plan=%s", plan)
+		var plan string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			plan += detail
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		rows.Close()
+		if !strings.Contains(plan, tc.index) || strings.Contains(plan, "TEMP B-TREE") {
+			t.Errorf("plan for %q = %s, want index %s without a temp b-tree", tc.query, plan, tc.index)
+		}
 	}
 }
 
@@ -484,7 +508,7 @@ func TestAlertWritesRejectDeletedReferences(t *testing.T) {
 				})
 			}
 			t.Run("transition", func(t *testing.T) {
-				_, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, "", time.Time{}, AlertEvent{At: s.clk.Now()}, []int64{cs[0].ID, cs[1].ID})
+				_, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, "", time.Time{}, AlertEvent{At: s.clk.Now()}, newBatches(cs[0].ID, cs[1].ID))
 				assertAlertNotFound(t, err, missing, id)
 			})
 			for _, table := range []string{"alert_state", "alert_event", "alert_delivery"} {
@@ -546,9 +570,11 @@ func TestAlertMissingObjects(t *testing.T) {
 		{"delete_rule", ObjectAlertRule, func() error { return s.DeleteAlertRule(t.Context(), 999) }},
 		{"delete_channel", ObjectNotifyChannel, func() error { return s.DeleteNotifyChannel(t.Context(), 999) }},
 		{"save_channel", ObjectNotifyChannel, func() error { _, err := s.SaveNotifyChannel(t.Context(), NotifyChannel{ID: 999}); return err }},
-		{"update_delivery", ObjectAlertDelivery, func() error {
-			return s.UpdateDelivery(t.Context(), 999, DeliveryResult{Failure: FailureTransport, Error: "failed"})
+		{"update_batch", ObjectAlertDelivery, func() error {
+			return s.UpdateBatch(t.Context(), 999, DeliveryResult{Failure: FailureTransport, Error: "failed"})
 		}},
+		{"begin_batch_attempt", ObjectAlertDelivery, func() error { _, err := s.BeginBatchAttempt(t.Context(), 999); return err }},
+		{"get_delivery_batch", ObjectAlertDelivery, func() error { _, err := s.GetDeliveryBatch(t.Context(), 999); return err }},
 		{"get_event", ObjectAlertEvent, func() error { _, err := s.GetAlertEvent(t.Context(), 999); return err }},
 	} {
 		t.Run(tc.name, func(t *testing.T) { assertAlertNotFound(t, tc.call(), tc.kind, 999) })
@@ -559,17 +585,17 @@ func TestDeleteNotifyChannelTerminatesPendingDeliveries(t *testing.T) {
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID, cs[0].ID, cs[1].ID})
-	if _, err := s.BeginDeliveryAttempt(t.Context(), ev.Deliveries[1].ID); err != nil {
+	if _, err := s.BeginBatchAttempt(t.Context(), ev.Deliveries[1].BatchID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateDelivery(t.Context(), ev.Deliveries[1].ID, DeliveryResult{OK: true, Done: true, DeliveredAt: s.clk.Now()}); err != nil {
+	if err := s.UpdateBatch(t.Context(), ev.Deliveries[1].BatchID, DeliveryResult{OK: true, Done: true, DeliveredAt: s.clk.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteNotifyChannel(t.Context(), cs[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	pending, err := s.PendingDeliveries(t.Context())
-	if err != nil || !reflect.DeepEqual(pending, ev.Deliveries[2:]) {
+	pending, err := s.PendingBatches(t.Context())
+	if err != nil || !reflect.DeepEqual(pending, []int64{ev.Deliveries[2].BatchID}) {
 		t.Fatalf("deleted channel pending=%+v err=%v", pending, err)
 	}
 	ev.Deliveries[0].Done, ev.Deliveries[0].Failure = true, FailureChannelDeleted

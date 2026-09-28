@@ -131,6 +131,8 @@ func (e *Engine) SweepExpiry(ctx context.Context) error {
 // 快照里，本次可能按旧值多发一对转换；那次 UpdateNode 提交后自己调用 SweepExpiry，排在本次之后，按新值收敛。
 // 续期写回经 RenewExpiry 的条件更新，不会盖掉快照之后的修改。
 func (e *Engine) sweepExpiry(ctx context.Context) error {
+	cy := newCycle()
+	defer e.flush(cy)
 	today := Today(e.clk.Now(), e.cfg.Location)
 	nodes, err := e.st.ListNodes(ctx)
 	if err != nil {
@@ -202,7 +204,7 @@ func (e *Engine) sweepExpiry(ctx context.Context) error {
 			if next == store.StateFiring {
 				fired = n.Billing.ExpiresOn
 			}
-			if err := e.apply(ctx, r, n.ID, next, fired, tr, summary, value); err != nil {
+			if err := e.apply(ctx, cy, r, n.ID, next, fired, tr, summary, value); err != nil {
 				errs = append(errs, err)
 			}
 		}

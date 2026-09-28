@@ -72,12 +72,12 @@ func TestDeliveryErrorTextOnlyReachesSessions(t *testing.T) {
 	n, _ := h.createNode(t, "n")
 	r := saveRule(t, h, offlineRule())
 	c := saveChannel(t, h, webhook("http://127.0.0.1"))
-	ev, err := h.store.RecordTransition(t.Context(), r.Id, n, store.StateFiring, "", time.Time{}, store.AlertEvent{Transition: store.TransitionFiring, At: h.clk.Now(), Summary: "down"}, []int64{c.Id})
+	ev, err := h.store.RecordTransition(t.Context(), r.Id, n, store.StateFiring, "", time.Time{}, store.AlertEvent{Transition: store.TransitionFiring, At: h.clk.Now(), Summary: "down"}, []store.DeliveryTarget{{ChannelID: c.Id}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := ev.Deliveries[0].ID
-	if err := h.store.UpdateDelivery(t.Context(), id, store.DeliveryResult{Done: true, Failure: store.FailureHTTPStatus, HTTPStatus: 401, Error: echoed}); err != nil {
+	if err := h.store.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, store.DeliveryResult{Done: true, Failure: store.FailureHTTPStatus, HTTPStatus: 401, Error: echoed}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -111,9 +111,9 @@ func TestListAlertEventsReportsFailureCategory(t *testing.T) {
 		{Done: true, Failure: store.FailureChannelDeleted},
 		{},
 	}
-	channels := make([]int64, len(results))
+	channels := make([]store.DeliveryTarget, len(results))
 	for i := range channels {
-		channels[i] = c.Id
+		channels[i] = store.DeliveryTarget{ChannelID: c.Id}
 	}
 	ev, err := h.store.RecordTransition(t.Context(), r.Id, n, store.StateFiring, "", time.Time{}, store.AlertEvent{Transition: store.TransitionFiring, At: h.clk.Now()}, channels)
 	if err != nil {
@@ -123,7 +123,7 @@ func TestListAlertEventsReportsFailureCategory(t *testing.T) {
 		if res.Failure == store.FailureNone {
 			continue
 		}
-		if err := h.store.UpdateDelivery(t.Context(), ev.Deliveries[i].ID, res); err != nil {
+		if err := h.store.UpdateBatch(t.Context(), ev.Deliveries[i].BatchID, res); err != nil {
 			t.Fatal(err)
 		}
 	}

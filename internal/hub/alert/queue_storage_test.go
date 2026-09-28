@@ -44,7 +44,7 @@ func TestAttemptWriteFailureSendsNothing(t *testing.T) {
 	db := deliveryDB(t, f)
 	deliverySQL(t, db, "CREATE TRIGGER fail_attempt BEFORE UPDATE ON alert_delivery BEGIN SELECT RAISE(ABORT, 'attempt write blocked'); END")
 	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
-	err := q.deliver(t.Context(), deliveryItem{ev.Deliveries[0], ev})
+	_, err := q.attempt(t.Context(), ev.Deliveries[0].BatchID)
 	if err == nil || !strings.Contains(err.Error(), "attempt write blocked") {
 		t.Fatalf("write failure=%v", err)
 	}
@@ -73,14 +73,18 @@ func TestExhaustedUnrecordedDeliveryBecomesTerminal(t *testing.T) {
 			defer srv.Close()
 			ev := queueEvent(t, f, queueChannel(t, f, srv.URL))
 			for range store.MaxDeliveryAttempts {
-				_, err := f.st.BeginDeliveryAttempt(t.Context(), ev.Deliveries[0].ID)
+				_, err := f.st.BeginBatchAttempt(t.Context(), ev.Deliveries[0].BatchID)
 				must(t, err)
 			}
 			if last != nil {
-				must(t, f.st.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, *last))
+				must(t, f.st.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, *last))
 			}
 			q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
-			must(t, q.deliver(t.Context(), deliveryItem{ev.Deliveries[0], ev}))
+			out, err := q.attempt(t.Context(), ev.Deliveries[0].BatchID)
+			must(t, err)
+			if out.retry {
+				t.Fatalf("exhausted batch scheduled for retry: %+v", out)
+			}
 			saved, err := f.st.GetAlertEvent(t.Context(), ev.ID)
 			must(t, err)
 			d := saved.Deliveries[0]
@@ -106,11 +110,11 @@ func TestMalformedStatusIsRetriedAsTransport(t *testing.T) {
 	endpoint, requests := rawStatusServer(t, "HTTP/1.1 099 Odd")
 	ev := queueEvent(t, f, queueChannel(t, f, endpoint))
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, func(_ context.Context, d time.Duration) error { sleeps = append(sleeps, d); return nil }, f.log)
-	must(t, q.deliver(t.Context(), deliveryItem{ev.Deliveries[0], ev}))
-	saved, err := f.st.GetAlertEvent(t.Context(), ev.ID)
-	must(t, err)
-	d := saved.Deliveries[0]
+	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, advancing(f, &sleeps), f.log)
+	q.Enqueue(ev)
+	stop := startQueue(t, q)
+	d := awaitDeliveries(t, f, ev.ID, allDone)[0]
+	stop()
 	if requests.Load() != store.MaxDeliveryAttempts || d.Attempts != store.MaxDeliveryAttempts || !d.Done || d.OK ||
 		d.Failure != store.FailureTransport || d.HTTPStatus != 0 || d.LastError != "malformed HTTP status 99" {
 		t.Fatalf("requests=%d delivery=%+v", requests.Load(), d)
@@ -146,7 +150,7 @@ func TestResultWriteFailuresCannotExceedSendBudget(t *testing.T) {
 	for i := range QueueCap + 1 {
 		_, err := f.st.RecordTransition(t.Context(), rule.ID, f.ids[0], store.StateFiring, "", time.Time{}, store.AlertEvent{
 			At: f.clk.Now(), Transition: store.TransitionFiring, Summary: fmt.Sprint(i),
-		}, []int64{c.ID})
+		}, []store.DeliveryTarget{{ChannelID: c.ID}})
 		must(t, err)
 	}
 	db := deliveryDB(t, f)

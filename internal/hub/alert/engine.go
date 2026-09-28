@@ -18,9 +18,43 @@ import (
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
-// apply 在 writeMu 下调用 Enqueue：不得阻塞，也不得回调 Engine 的写方法，否则会阻塞全部写入或自锁。
-// 读方法只取 mu，apply 调用前已释放 mu，因此可以读取 Channels 等快照。
+// flush 在一次评估调用结束时、仍持 writeMu 时逐个事件调用 Enqueue：不得阻塞，也不得回调 Engine 的写方法，否则会
+// 阻塞全部写入或自锁。读方法只取 mu，flush 调用时不持 mu，因此可以读取 Channels 等快照。
 type Sender interface{ Enqueue(ev store.AlertEvent) }
+
+// cycle 是一次评估调用（一次 SweepOffline、一次 EvaluateProbes、一次 sweepExpiry）：同一次调用产生的事件属于同一个
+// 评估周期，按调用而不是时间窗划分，合并窗口因此有上界——至多一次离线巡检或一次探测评估，不为等更多事件推迟发送。
+//
+// 合并只发生在投递层，事件层不变：alert_event 仍每个规则×节点一行，事件是状态机的事实记录，合并是发送策略。
+// 合并的键是（渠道，评估周期，规则，转换方向）；firing 与 recovered 不混，一条消息里既有掉线又有恢复读不出结论。
+// batches 记下本周期里每个键已开的批次，后续同键的转换请求加入它（store.DeliveryTarget.Batch）；events 在调用结束时
+// 才交给 Sender——此前入队，worker 可能在批次收齐之前就开始发送，批次一旦开始尝试就不再接纳新行（store.RecordTransition）。
+type cycle struct {
+	batches map[batchKey]int64
+	events  []store.AlertEvent
+}
+
+type batchKey struct {
+	channel, rule int64
+	transition    store.Transition
+}
+
+func newCycle() *cycle { return &cycle{batches: map[batchKey]int64{}} }
+
+// flush 把本周期落库的事件交给 Sender。调用方持 writeMu，在评估调用返回前调用（含出错返回），已提交的转换都会入队；
+// 未装配 Sender 时转换仍完整落库，投递行可供后续续投。
+func (e *Engine) flush(cy *cycle) {
+	e.mu.RLock()
+	sender := e.sender
+	e.mu.RUnlock()
+	if sender == nil {
+		return
+	}
+	for _, ev := range cy.events {
+		sender.Enqueue(ev)
+	}
+}
+
 type Config struct {
 	TTL time.Duration
 	// Location 是 hub 的 --timezone：到期日按它的日历日计（§9.4），New 要求非 nil。
@@ -359,10 +393,10 @@ func (e *Engine) setFlapping(k stateKey, flapping bool) {
 	}
 }
 
-// 调用方持 writeMu；状态、事件与投递先由 store 原子提交，再发布内存并通知 Sender。
+// 调用方持 writeMu；状态、事件与投递先由 store 原子提交，再发布内存，事件记入 cy，在调用结束时由 flush 交给 Sender。
 // firedExpiresOn 只由到期扫描在进入 firing 时给出，其余调用传空。状态不变时 apply 直接返回、不写库，所以一个 firing
 // 状态记的始终是它进入 firing 那一刻的到期日。
-func (e *Engine) apply(ctx context.Context, r store.AlertRule, nodeID int64, next store.AlertState, firedExpiresOn string, tr *store.Transition, summary string, value float64) error {
+func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID int64, next store.AlertState, firedExpiresOn string, tr *store.Transition, summary string, value float64) error {
 	k := stateKey{r.ID, nodeID}
 	cur := e.entry(k)
 	if cur.state == next {
@@ -381,8 +415,17 @@ func (e *Engine) apply(ctx context.Context, r store.AlertRule, nodeID int64, nex
 	}
 	var ev store.AlertEvent
 	var err error
+	var merged map[int64]bool
 	if tr != nil {
-		ev, err = e.st.RecordTransition(ctx, r.ID, nodeID, next, firedExpiresOn, recoveredAt, store.AlertEvent{Transition: *tr, At: now, Summary: summary, Value: value}, r.ChannelIDs)
+		targets := make([]store.DeliveryTarget, len(r.ChannelIDs))
+		merged = e.mergedChannels(r.ChannelIDs)
+		for i, id := range r.ChannelIDs {
+			targets[i] = store.DeliveryTarget{ChannelID: id}
+			if merged[id] {
+				targets[i].Batch = cy.batches[batchKey{id, r.ID, *tr}]
+			}
+		}
+		ev, err = e.st.RecordTransition(ctx, r.ID, nodeID, next, firedExpiresOn, recoveredAt, store.AlertEvent{Transition: *tr, At: now, Summary: summary, Value: value}, targets)
 	} else {
 		// SetAlertState 不写触发日期，内存与库记同一个值。
 		firedExpiresOn = ""
@@ -393,13 +436,31 @@ func (e *Engine) apply(ctx context.Context, r store.AlertRule, nodeID int64, nex
 	}
 	e.mu.Lock()
 	e.states[k] = stateEntry{state: next, sinceAt: since, firedExpiresOn: firedExpiresOn, recoveredAt: recoveredAt}
-	sender := e.sender
 	e.mu.Unlock()
-	// 未装配 Sender 时转换仍完整落库，投递行可供后续续投，不能因此跳过持久化。
-	if tr != nil && sender != nil {
-		sender.Enqueue(ev)
+	if tr != nil {
+		// 记下实际所在的批次而不是请求的：请求加入的批次已开始尝试时，store 新开了一批，后续同键的行加入新批。
+		for _, d := range ev.Deliveries {
+			if merged[d.ChannelID] {
+				cy.batches[batchKey{d.ChannelID, r.ID, *tr}] = d.BatchID
+			}
+		}
+		cy.events = append(cy.events, ev)
 	}
 	return nil
+}
+
+// mergedChannels 按当前渠道快照给出 ids 中合并发送的渠道（mergesBatches）。已删除的渠道不在快照里，按不合并处理，
+// 随后 RecordTransition 的引用检查会拒绝它。
+func (e *Engine) mergedChannels(ids []int64) map[int64]bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	out := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		if c, ok := e.channels[id]; ok && mergesBatches(c.Kind) {
+			out[id] = true
+		}
+	}
+	return out
 }
 
 // 调用方持 writeMu 且已成功读取本规则候选集；读库失败时不能用空集代替候选集。
@@ -425,6 +486,8 @@ func (e *Engine) pruneCandidates(ctx context.Context, ruleID int64, keep map[int
 func (e *Engine) SweepOffline(ctx context.Context) error {
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
+	cy := newCycle()
+	defer e.flush(cy)
 	nodes, err := e.st.ListNodes(ctx)
 	if err != nil {
 		return err
@@ -467,7 +530,7 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 			if tr != nil && *tr == store.TransitionRecovered {
 				summary = fmt.Sprintf("节点 %s 已恢复上报（规则 %s）", node.Name, r.Name)
 			}
-			if err := e.apply(ctx, r, node.ID, next, "", tr, summary, unseen.Seconds()); err != nil {
+			if err := e.apply(ctx, cy, r, node.ID, next, "", tr, summary, unseen.Seconds()); err != nil {
 				errs = append(errs, err)
 				continue
 			}
@@ -486,6 +549,8 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 	}
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
+	cy := newCycle()
+	defer e.flush(cy)
 	nodes, err := e.st.ListNodes(ctx)
 	if err != nil {
 		return err
@@ -538,7 +603,7 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 			next, tr := NextProbe(e.current(stateKey{r.ID, node.ID}), samples, r.ForMinutes)
 			value := samples[len(samples)-1].Value
 			summary := fmt.Sprintf("节点 %s 规则 %s：%s %.1f", node.Name, r.Name, r.Metric, value)
-			if err := e.apply(ctx, r, node.ID, next, "", tr, summary, value); err != nil {
+			if err := e.apply(ctx, cy, r, node.ID, next, "", tr, summary, value); err != nil {
 				errs = append(errs, err)
 			}
 		}

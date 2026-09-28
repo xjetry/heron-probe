@@ -86,7 +86,8 @@ func (s *Service) DeleteAlertRule(ctx context.Context, req *connect.Request[prob
 }
 
 func channelProto(c store.NotifyChannel) (*probev1.NotifyChannel, error) {
-	out := &probev1.NotifyChannel{Id: c.ID, Name: c.Name, Kind: enumFor(channelKinds, c.Kind), CreatedAt: c.CreatedAt.Unix()}
+	rate := uint32(c.RatePerMinute)
+	out := &probev1.NotifyChannel{Id: c.ID, Name: c.Name, Kind: enumFor(channelKinds, c.Kind), CreatedAt: c.CreatedAt.Unix(), RatePerMinute: &rate}
 	switch c.Kind {
 	case store.ChannelTelegram:
 		var cfg alert.TelegramConfig
@@ -145,7 +146,11 @@ func (s *Service) SaveNotifyChannel(ctx context.Context, req *connect.Request[pr
 	if err != nil {
 		return nil, s.operationError(err, "channel", "encoding notify channel failed")
 	}
-	saved, err := s.alerts.SaveChannel(ctx, store.NotifyChannel{ID: c.GetId(), Name: c.GetName(), Kind: kind, Config: string(b)})
+	rate := alert.DefaultRatePerMinute(kind)
+	if c.RatePerMinute != nil {
+		rate = int(c.GetRatePerMinute())
+	}
+	saved, err := s.alerts.SaveChannel(ctx, store.NotifyChannel{ID: c.GetId(), Name: c.GetName(), Kind: kind, Config: string(b), RatePerMinute: rate})
 	if err != nil {
 		return nil, s.operationError(err, "channel", "saving notify channel failed")
 	}

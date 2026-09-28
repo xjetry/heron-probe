@@ -29,6 +29,9 @@ type sendFailure struct {
 	status  int // 仅 FailureHTTPStatus 非零。
 	detail  string
 	err     error // 底层原因，保留 errors.Is(err, ErrInvalid) 等判定；HTTP 应答失败没有。
+	// retryAfter 是 429 应答的 Retry-After 原值，其余失败为空；换算要用队列的时钟（HTTP 日期写法相对当前时刻），
+	// 所以这里不解析，由 Queue.retryWait 纳入退避。
+	retryAfter string
 }
 
 func failure(kind store.DeliveryFailure, err error) error {
@@ -106,11 +109,21 @@ func sendHTTP(ctx context.Context, client *http.Client, method, endpoint string,
 		return &sendFailure{failure: store.FailureTransport, detail: fmt.Sprintf("malformed HTTP status %d", resp.StatusCode)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &sendFailure{failure: store.FailureHTTPStatus, status: resp.StatusCode, detail: responseSummary(data)}
+		f := &sendFailure{failure: store.FailureHTTPStatus, status: resp.StatusCode, detail: responseSummary(data)}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			f.retryAfter = resp.Header.Get("Retry-After")
+		}
+		return f
 	}
 	// 接收端已用 2xx 确认送达；读体中断不否定确认，重试只会重复通知。
 	return nil
 }
+
+// mergesBatches 决定一种渠道是否把同一评估周期里同一规则、同一转换方向的多个事件合成一次发送（§9.3）。
+// Telegram 合并：它是给人看的 IM，四十个节点一起掉线就是四十条消息，超过群聊每分钟 20 条即 429。
+// Webhook 不合并：接收方多是机器，按事件处理，一次请求一个事件的请求体模板（Message 的逐事件字段）是它的契约；
+// 429 的问题也主要在 IM 渠道。
+func mergesBatches(kind store.ChannelKind) bool { return kind == store.ChannelTelegram }
 
 type telegram struct {
 	cfg    TelegramConfig

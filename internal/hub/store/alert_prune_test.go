@@ -17,14 +17,14 @@ func TestPruneAlertEventsKeepsBoundaryAndDeletesDeliveries(t *testing.T) {
 	before := s.clk.Now().Add(-90 * 24 * time.Hour)
 	var events []AlertEvent
 	for _, at := range []time.Time{before.Add(-24 * time.Hour), before, before.Add(24 * time.Hour)} {
-		ev, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, "", time.Time{}, AlertEvent{At: at, Transition: TransitionFiring}, []int64{cs[0].ID, cs[1].ID})
+		ev, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, "", time.Time{}, AlertEvent{At: at, Transition: TransitionFiring}, newBatches(cs[0].ID, cs[1].ID))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.BeginDeliveryAttempt(t.Context(), ev.Deliveries[0].ID); err != nil {
+		if _, err := s.BeginBatchAttempt(t.Context(), ev.Deliveries[0].BatchID); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, DeliveryResult{OK: true, Done: true, DeliveredAt: at}); err != nil {
+		if err := s.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, DeliveryResult{OK: true, Done: true, DeliveredAt: at}); err != nil {
 			t.Fatal(err)
 		}
 		events = append(events, ev)
