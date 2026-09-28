@@ -339,22 +339,40 @@ func TestRestorePageSizeAgainstExistingTarget(t *testing.T) {
 }
 
 func TestRestoreFailureRollsBackAllTables(t *testing.T) {
-	t.Run("fresh target", func(t *testing.T) {
-		config, metrics := restoreSnapshots(t)
-		restoreExec(t, restoreDB(t, config), "UPDATE node SET token_hash=x'01'")
-		path := filepath.Join(t.TempDir(), "new.db")
-		cmd := hubCommand(t, "restore", "--db", path, "--config", config, "--metrics", metrics, "--yes")
-		out, err := cmd.CombinedOutput()
-		if err == nil || !strings.Contains(string(out), "UNIQUE constraint failed: node.token_hash") {
-			t.Fatalf("expected mid-copy unique failure, got %v: %s", err, out)
-		}
-		if strings.Contains(string(out), "database schema created") {
-			t.Errorf("failed restore reported schema creation: %s", out)
-		}
-		db := restoreDB(t, path)
-		restoreWant(t, db, "SELECT count(*) FROM sqlite_schema", "0")
-		restoreWant(t, db, "PRAGMA user_version", "0")
-	})
+	for _, existing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("existing_empty_target=%t", existing), func(t *testing.T) {
+			config, metrics := restoreSnapshots(t)
+			restoreExec(t, restoreDB(t, config), "UPDATE node SET token_hash=x'01'")
+			path := filepath.Join(t.TempDir(), "new.db")
+			if existing {
+				if err := os.WriteFile(path, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := hubCommand(t, "restore", "--db", path, "--config", config, "--metrics", metrics, "--yes")
+			out, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(out), "UNIQUE constraint failed: node.token_hash") {
+				t.Fatalf("expected mid-copy unique failure, got %v: %s", err, out)
+			}
+			if strings.Contains(string(out), "database schema created") {
+				t.Errorf("failed restore reported schema creation: %s", out)
+			}
+			if existing {
+				if _, err := os.Stat(path); err != nil {
+					t.Fatalf("failed restore removed pre-existing target: %v", err)
+				}
+				db := restoreDB(t, path)
+				restoreWant(t, db, "SELECT count(*) FROM sqlite_schema", "0")
+				restoreWant(t, db, "PRAGMA user_version", "0")
+			} else {
+				for _, suffix := range []string{"", "-wal", "-shm"} {
+					if _, err := os.Stat(path + suffix); !os.IsNotExist(err) {
+						t.Errorf("failed restore left newly created target%s: %v", suffix, err)
+					}
+				}
+			}
+		})
+	}
 	config, metrics := restoreSnapshots(t)
 	path := restoreTarget(t)
 	db := restoreDB(t, path)

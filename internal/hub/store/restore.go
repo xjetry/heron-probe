@@ -35,7 +35,28 @@ func Restore(ctx context.Context, path, config, metrics string, now time.Time, l
 	if err := preflightRestoreSources(ctx, path, sources); err != nil {
 		return result, err
 	}
-	db, err := sql.Open("sqlite", dsn(path, ""))
+	// 独占创建成功才拥有失败清理权；预检后的 Stat 不能证明文件由本次恢复创建。
+	f, createErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if createErr != nil && !errors.Is(createErr, os.ErrExist) {
+		return result, createErr
+	}
+	created, committed := createErr == nil, false
+	defer func() {
+		// 后注册的事务回滚和连接关闭先执行；提交成功后即使 Close 报错也不能删掉恢复结果。
+		if created && !committed {
+			for _, suffix := range []string{"-wal", "-shm", ""} {
+				if e := os.Remove(path + suffix); e != nil && !errors.Is(e, os.ErrNotExist) {
+					err = errors.Join(err, e)
+				}
+			}
+		}
+	}()
+	if created {
+		if err = f.Close(); err != nil {
+			return result, err
+		}
+	}
+	db, err := sql.Open("sqlite", dsn(path, "&mode=rw"))
 	if err != nil {
 		return result, err
 	}
@@ -123,6 +144,7 @@ func Restore(ctx context.Context, path, config, metrics string, now time.Time, l
 		return result, err
 	}
 	err = tx.Commit()
+	committed = err == nil
 	if err == nil && action == schemaCreate {
 		logSchemaCreated(log)
 	}
