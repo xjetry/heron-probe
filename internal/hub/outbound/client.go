@@ -22,7 +22,7 @@ func NewClient(timeout time.Duration) *http.Client {
 	return &http.Client{Timeout: timeout, CheckRedirect: noRedirect}
 }
 
-// NewTransferClient 不设总时限，给体量随对象变化的传输：总时长由调用方按对象大小给 context 截止时间，客户端只限
+// NewTransferClient 不设总时限，给体量随对象变化的传输：总时长由调用方按对象体量与所属周期给 context 截止时间，客户端只限
 // 建连（DNS 加 TCP、TLS 握手各自不超过 connect）与首字节（请求连同正文写完之后到收到响应头，不超过 firstByte）。
 // 首字节之后没有任何时限：应答体慢速到达时，只有 context 的截止时间能让请求结束，调用方必须给出它。
 func NewTransferClient(connect, firstByte time.Duration) *http.Client {

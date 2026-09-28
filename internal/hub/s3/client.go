@@ -182,6 +182,9 @@ func checkDeadline(ctx context.Context) error {
 }
 
 func (c *Client) request(ctx context.Context, method, key string, query url.Values, body io.Reader, size int64, hash string) (*http.Response, error) {
+	if err := checkDeadline(ctx); err != nil {
+		return nil, err
+	}
 	u := *c.endpoint
 	base := strings.TrimRight(u.Path, "/")
 	if c.cfg.VirtualHost {
