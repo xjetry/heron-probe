@@ -1797,7 +1797,9 @@ export const GetBackupStatusRequestSchema: GenMessage<GetBackupStatusRequest> = 
  */
 export type GetBackupStatusResponse = Message<"probe.v1.GetBackupStatusResponse"> & {
   /**
-   * endpoint、bucket、access key、secret 全部非空才启用。
+   * endpoint、bucket、access key、secret 全部非空才启用。停用即结束两层的故障跟踪：两层各自在下一轮判定时（在途的
+   * 一轮先跑完）观察到停用并清掉本层故障；配置层已通知过的故障以一条 transition 为 disabled 的事件收尾并清除
+   * 未恢复标记。两层都观察到之后，设置可读且未启用时 failure 都缺席。设置读不出时这里同样为 false，配置层报 settings 故障。
    *
    * @generated from field: bool enabled = 1;
    */
@@ -1833,7 +1835,7 @@ export type BackupLayerStatus = Message<"probe.v1.BackupLayerStatus"> & {
   lastSuccessAt?: bigint | undefined;
 
   /**
-   * 无当前故障时缺席。配置层未恢复标记与事件一起持久化，重启后继续通知状态机；
+   * 无当前故障或备份已停用时缺席。配置层未恢复标记与事件一起持久化，重启后继续通知状态机；
    * 重启后尚未重新观察的类别为 unrecovered。指标层故障仅在进程内保存。
    *
    * @generated from field: probe.v1.BackupFailure failure = 2;
@@ -2169,7 +2171,8 @@ export type AlertEvent = Message<"probe.v1.AlertEvent"> & {
   nodeId: bigint;
 
   /**
-   * 取值为 firing 或 recovered。
+   * 取值为 firing、recovered 或 disabled。disabled 只由备份停用产生（rule_id 与 node_id 为 0）：
+   * 收尾停用前已通知的配置层备份故障，此后不再跟踪，不表示故障已恢复。
    *
    * @generated from field: string transition = 4;
    */

@@ -8,7 +8,7 @@ import (
 )
 
 func TestBackupMarkerAndEventAtomic(t *testing.T) {
-	for _, transition := range []Transition{TransitionFiring, TransitionRecovered} {
+	for _, transition := range []Transition{TransitionFiring, TransitionRecovered, TransitionDisabled} {
 		t.Run(string(transition), func(t *testing.T) {
 			s, _ := open(t)
 			if transition != TransitionFiring {

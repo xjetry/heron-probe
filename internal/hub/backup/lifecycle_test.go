@@ -26,6 +26,15 @@ func enabledTarget() store.BackupSettingsUpdate {
 	return store.BackupSettingsUpdate{Endpoint: "https://example.test", Bucket: "backups", Region: "auto", AccessKey: "key", Prefix: "tenant"}
 }
 
+func persistedEvents(t *testing.T, st *store.Store) []store.AlertEvent {
+	t.Helper()
+	events, err := st.ListAlertEvents(t.Context(), 0, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return events
+}
+
 func hasKey(objects *fakeObjects, prefix string) bool {
 	for k := range objects.objects {
 		if strings.HasPrefix(k, prefix) {
@@ -151,6 +160,57 @@ func TestCorruptMarkerNotifiesOnceWithoutBlockingMetrics(t *testing.T) {
 			tick(t, m)
 			if got := status(t, m).Config; got.Failure != "upload/http_status" || !got.Since.Equal(start) || len(sink.events) != 1 {
 				t.Fatalf("repaired marker not honored across restart: status=%+v events=%v", got, sink.events)
+			}
+		})
+	}
+}
+
+// 失败中停用：已通知的配置层故障以一条停用事件收尾并清掉标记；未通知的只清状态、不发事件。两层都不再显示旧故障。
+func TestDisableEndsFailureTracking(t *testing.T) {
+	for _, notified := range []bool{true, false} {
+		t.Run(map[bool]string{true: "notified", false: "unnotified"}[notified], func(t *testing.T) {
+			m, clk, objects, sink := setup(t)
+			objects.failLayer, objects.failStage = "config", "upload"
+			execFixtureSQL(t, objects.databasePath, "DROP TABLE metric_1m")
+			if notified {
+				tick(t, m)
+			} else {
+				// 触发事件提交不了：配置层故障已观察到，但从未通知。
+				execFixtureSQL(t, objects.databasePath, `CREATE TRIGGER reject_event BEFORE INSERT ON alert_event BEGIN SELECT RAISE(ABORT,'rejected'); END`)
+				if err := m.Tick(t.Context()); err == nil {
+					t.Fatal("rejected firing event was not reported")
+				}
+				execFixtureSQL(t, objects.databasePath, "DROP TRIGGER reject_event")
+			}
+			if s := status(t, m); s.Config.Failure != "upload/http_status" || s.Metrics.Failure != "snapshot" {
+				t.Fatalf("precondition: both layers failing, status=%+v", s)
+			}
+			saveBackup(t, m.st, store.BackupSettingsUpdate{Region: "auto"})
+			clk.Advance(time.Second)
+			tick(t, m)
+			wantSink, wantPersisted := 0, 0
+			if notified {
+				wantSink, wantPersisted = 2, 2
+			}
+			events := persistedEvents(t, m.st)
+			since, err := m.st.BackupFailingSince(t.Context())
+			s := status(t, m)
+			if s.Enabled || s.Config.Failure != "" || s.Metrics.Failure != "" || err != nil || !since.IsZero() || len(sink.events) != wantSink || len(events) != wantPersisted {
+				t.Fatalf("disable did not end failure tracking: status=%+v marker=%s err=%v enqueued=%d persisted=%d", s, since, err, len(sink.events), len(events))
+			}
+			if notified {
+				closing := sink.events[1]
+				if closing.Transition != store.TransitionDisabled || !strings.Contains(closing.Summary, "停用") || len(closing.Deliveries) != 1 || events[0].Transition != store.TransitionDisabled {
+					t.Errorf("closing event=%+v persisted=%+v", closing, events[0])
+				}
+			}
+			// 停用期间每秒一轮，收尾只发一次；重启后也不复活旧故障。
+			clk.Advance(time.Second)
+			tick(t, m)
+			m = restart(m, objects, sink)
+			tick(t, m)
+			if s := status(t, m); s.Config.Failure != "" || s.Metrics.Failure != "" || len(sink.events) != wantSink {
+				t.Errorf("disabled tracking resumed: status=%+v enqueued=%d", s, len(sink.events))
 			}
 		})
 	}

@@ -88,6 +88,9 @@ type Transition string
 const (
 	TransitionFiring    Transition = "firing"
 	TransitionRecovered Transition = "recovered"
+	// TransitionDisabled 收尾一段已通知、但因跟踪对象被停用而不会再有恢复的故障。它不是恢复：停用前的故障
+	// 可能仍在，只是 hub 不再观察。目前只有备份停用产生它（RecordBackupEvent）。
+	TransitionDisabled Transition = "disabled"
 )
 
 type AlertEvent struct {

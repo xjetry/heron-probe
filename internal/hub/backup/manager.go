@@ -260,7 +260,8 @@ func (m *Manager) tickLayer(ctx context.Context, i int) error {
 	state := &m.layers[i]
 	if !cfg.Target.Enabled() {
 		state.attempted = false
-		return nil
+		// 停用即结束两层的故障跟踪：不再执行，也就不会再有恢复。配置层已通知的故障以停用事件收尾。
+		return m.resolve(ctx, i, store.TransitionDisabled, "备份已停用，config 层先前的故障不再跟踪")
 	}
 	layer := "config"
 	interval, keep := cfg.ConfigIntervalS, cfg.ConfigKeep
@@ -395,22 +396,26 @@ func failure(stage string, err error) (string, int, string) {
 	return stage, 0, err.Error()
 }
 
+// finish 记下一轮的结果，category 为空即成功。
+// 配置层的未恢复标记与事件由 RecordBackupEvent 同事务提交，prepare 在配置层首次判定通知之前读回。
+// 因而持续故障跨重启也不重复通知；事务失败保留原通知状态，下次重试。
+// 指标缺口由后续上报继续产生新数据，不触发通知，故障仍由日志与同一状态接口可见。
 func (m *Manager) finish(ctx context.Context, i int, layer, category string, code int, detail string) error {
-	m.mu.Lock()
 	state := &m.layers[i]
-	previous := state.Failure
-	if category != "" {
-		if previous == "" {
-			state.Since = m.clk.Now()
-		}
-		state.Failure = category
-		state.StatusCode = code
-	} else {
+	if category == "" {
+		m.mu.Lock()
 		state.LastSuccess = time.Unix(m.clk.Now().Unix(), 0).UTC()
+		m.mu.Unlock()
+		return m.resolve(ctx, i, store.TransitionRecovered, "config 层备份已恢复")
 	}
-	notified := state.notified
-	since := state.Since
-	logFailure := category != "" && (!state.logged || previous != category || m.clk.Mono()-state.lastLog >= failureLogInterval)
+	m.mu.Lock()
+	previous := state.Failure
+	if previous == "" {
+		state.Since = m.clk.Now()
+	}
+	state.Failure, state.StatusCode = category, code
+	notified, since := state.notified, state.Since
+	logFailure := !state.logged || previous != category || m.clk.Mono()-state.lastLog >= failureLogInterval
 	if logFailure {
 		state.logged, state.lastLog = true, m.clk.Mono()
 	}
@@ -418,14 +423,31 @@ func (m *Manager) finish(ctx context.Context, i int, layer, category string, cod
 	if logFailure {
 		m.log.Warn("backup failed", "layer", layer, "category", category, "status_code", code, "detail", detail)
 	}
-	// 配置层的未恢复标记与事件由 RecordBackupEvent 同事务提交，prepare 在配置层首次判定通知之前读回。
-	// 因而持续故障跨重启也不重复通知；事务失败保留原通知状态，下次重试。
-	// 指标缺口由后续上报继续产生新数据，不触发通知，故障仍由日志与同一状态接口可见。
-	if i == 0 && (category != "" && !notified || category == "" && notified) {
-		transition, summary := store.TransitionFiring, fmt.Sprintf("config 层备份失败（%s）", category)
-		if category == "" {
-			transition, summary = store.TransitionRecovered, "config 层备份已恢复"
-		}
+	if i != 0 || notified {
+		return nil
+	}
+	ev, err := m.st.RecordBackupEvent(ctx, store.TransitionFiring, fmt.Sprintf("config 层备份失败（%s）", category), since)
+	if err != nil {
+		return err
+	}
+	if m.sender != nil {
+		m.sender.Enqueue(ev)
+	}
+	m.mu.Lock()
+	state.notified = true
+	m.mu.Unlock()
+	return nil
+}
+
+// resolve 结束本层当前的故障。恢复与停用走这同一条路，只差事件种类与文案：配置层已通知过的，
+// 先由 RecordBackupEvent 把收尾事件与删除标记同事务提交，提交后才清内存状态；事务失败保留通知状态，下一轮重试。
+// 未通知过（指标层，或触发事件从未提交）只清内存状态，不发事件。
+func (m *Manager) resolve(ctx context.Context, i int, transition store.Transition, summary string) error {
+	state := &m.layers[i]
+	m.mu.RLock()
+	notified, since := state.notified, state.Since
+	m.mu.RUnlock()
+	if notified {
 		ev, err := m.st.RecordBackupEvent(ctx, transition, summary, since)
 		if err != nil {
 			return err
@@ -433,15 +455,10 @@ func (m *Manager) finish(ctx context.Context, i int, layer, category string, cod
 		if m.sender != nil {
 			m.sender.Enqueue(ev)
 		}
-		m.mu.Lock()
-		state.notified = category != ""
-		m.mu.Unlock()
 	}
-	if category == "" {
-		m.mu.Lock()
-		state.Failure, state.Since = "", time.Time{}
-		state.StatusCode, state.logged = 0, false
-		m.mu.Unlock()
-	}
+	m.mu.Lock()
+	state.Failure, state.Since = "", time.Time{}
+	state.StatusCode, state.logged, state.notified = 0, false, false
+	m.mu.Unlock()
 	return nil
 }

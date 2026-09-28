@@ -3963,7 +3963,9 @@ func (*GetBackupStatusRequest) Descriptor() ([]byte, []int) {
 
 type GetBackupStatusResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// endpoint、bucket、access key、secret 全部非空才启用。
+	// endpoint、bucket、access key、secret 全部非空才启用。停用即结束两层的故障跟踪：两层各自在下一轮判定时（在途的
+	// 一轮先跑完）观察到停用并清掉本层故障；配置层已通知过的故障以一条 transition 为 disabled 的事件收尾并清除
+	// 未恢复标记。两层都观察到之后，设置可读且未启用时 failure 都缺席。设置读不出时这里同样为 false，配置层报 settings 故障。
 	Enabled       bool               `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
 	Config        *BackupLayerStatus `protobuf:"bytes,2,opt,name=config,proto3" json:"config,omitempty"`
 	Metrics       *BackupLayerStatus `protobuf:"bytes,3,opt,name=metrics,proto3" json:"metrics,omitempty"`
@@ -4026,7 +4028,7 @@ type BackupLayerStatus struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// UTC Unix 秒；从未成功完成整轮时缺席，重启后仍可读。
 	LastSuccessAt *int64 `protobuf:"varint,1,opt,name=last_success_at,json=lastSuccessAt,proto3,oneof" json:"last_success_at,omitempty"`
-	// 无当前故障时缺席。配置层未恢复标记与事件一起持久化，重启后继续通知状态机；
+	// 无当前故障或备份已停用时缺席。配置层未恢复标记与事件一起持久化，重启后继续通知状态机；
 	// 重启后尚未重新观察的类别为 unrecovered。指标层故障仅在进程内保存。
 	Failure       *BackupFailure `protobuf:"bytes,2,opt,name=failure,proto3" json:"failure,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -4705,7 +4707,8 @@ type AlertEvent struct {
 	Id     int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
 	RuleId int64                  `protobuf:"varint,2,opt,name=rule_id,json=ruleId,proto3" json:"rule_id,omitempty"`
 	NodeId int64                  `protobuf:"varint,3,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	// 取值为 firing 或 recovered。
+	// 取值为 firing、recovered 或 disabled。disabled 只由备份停用产生（rule_id 与 node_id 为 0）：
+	// 收尾停用前已通知的配置层备份故障，此后不再跟踪，不表示故障已恢复。
 	Transition string `protobuf:"bytes,4,opt,name=transition,proto3" json:"transition,omitempty"`
 	// 事件墙钟，Unix 秒。
 	At      int64  `protobuf:"varint,5,opt,name=at,proto3" json:"at,omitempty"`
