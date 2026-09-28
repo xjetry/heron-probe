@@ -844,3 +844,37 @@ func TestAuthenticateSessionPicksFirstLiveCandidateAndDeletesExpiredOnes(t *test
 		})
 	}
 }
+
+// 多个候选都有效时只刷新选中那个的最近使用时刻。空闲过期量的是会话被使用的间隔，而这次请求记在选中的会话上
+// （ctx 里放的是它，Logout 与"当前"都读它），没选中的会话这次没有被用到。
+func TestAuthenticateSessionTouchesOnlyTheChosenSession(t *testing.T) {
+	a, st, clk := setup(t)
+	ctx := context.Background()
+	from := netip.MustParseAddr("10.0.0.1")
+	if err := a.SetPassword(ctx, goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	first, err := a.Login(ctx, goodPassword, from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := a.Login(ctx, goodPassword, from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := clk.Now()
+	clk.Advance(touchEvery)
+	if got, ok, err := a.AuthenticateSession(ctx, []string{first, second}); err != nil || !ok || got != first {
+		t.Fatalf("AuthenticateSession = %q %v %v, want the first candidate", got, ok, err)
+	}
+	// 同步写排在异步刷新之后，它返回时刷新已经落库；传入 initial 时它不删任何行。
+	if _, err := st.DeleteExpiredSessions(ctx, initial); err != nil {
+		t.Fatal(err)
+	}
+	if sess, ok := storedSession(t, st, HashToken(first)); !ok || !sess.LastUsedAt.Equal(clk.Now()) {
+		t.Errorf("chosen session last used %v (found %v), want %v", sess.LastUsedAt, ok, clk.Now())
+	}
+	if sess, ok := storedSession(t, st, HashToken(second)); !ok || !sess.LastUsedAt.Equal(initial) {
+		t.Errorf("session that was not chosen last used %v (found %v), want it untouched at %v", sess.LastUsedAt, ok, initial)
+	}
+}
