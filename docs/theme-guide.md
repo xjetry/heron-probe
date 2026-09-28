@@ -16,6 +16,7 @@ probe-hub serve --db /var/lib/probe/probe.db --theme-origin https://status.examp
 - **只差端口不算另一个主机名。** cookie 不按端口隔离；hub 按主机名分流时也忽略端口，于是面板那个主机名的请求会全部被分到主题 origin，而那里没有面板。hub 不知道面板用的是哪个主机名，这种配置启动时查不出来，只能靠部署的人避开。
 - **反代必须原样转发 `Host`。** hub 按请求的 `Host` 判定：去掉端口、不分大小写、去掉一个结尾的点、IP 地址按规范写法（`[0:0::1]` 即 `[::1]`）比较，等于 `--theme-origin` 的主机名走主题 origin，其余走面板与内置公开页。`--theme-origin` 里的国际化域名按浏览器发送的 punycode 写法比较（`https://状态.example` 即 `xn--t7t692b.example`），浏览器不会原样发出的写法（带 zone 的 IPv6 地址、`127.1` 这类非四段十进制的 IPv4 写法）启动时就被拒绝。Caddy 默认转发原始 `Host`；nginx 要写 `proxy_set_header Host $host;`，否则 hub 看到的是 upstream 的地址，两个主机名都会落到面板那一边。
 - 没有配 `--theme-origin` 时主题功能整体关闭：面板的「主题」页给出说明，上传、列出、启用、删除、预览五个方法一律 `FailedPrecondition`。
+- **公开页总闸同样管主题 origin。** 在面板的「外观」页关掉公开页之后，主题 origin 上的 `PublicService` 全部 `NotFound`，页面路径（包括主题包里的文件路径）返回"公开页已关闭"的说明页，`assets/` 下 404，主题文件一个都不服务。重新打开即恢复，启用中的主题不变。
 
 主题 origin 上只有两样东西：
 
@@ -35,6 +36,7 @@ RPC 路径优先于主题文件：包里即使有 `admin/index.html` 或 `probe.
 - **跨源的 JSON 请求要先过预检，hub 对任何 origin 都不下发 CORS 允许头。** 这是安全约束，不是"主题用不着跨源"的便利说明：预检的应答不许可主题 origin，浏览器就不发出实际请求；hub 一旦许可，主题脚本就能带着来访管理员的 cookie 把写请求发到面板，副作用在服务端已经发生，读不读得到响应无关紧要。
 - **不需要预检的简单请求被拒绝。** 跨源的简单请求只能用 `text/plain`、`application/x-www-form-urlencoded`、`multipart/form-data`，connect 对这三种类型回 415；`AdminService` 不接受 GET（405）。
 - **会话 cookie 是 host-only。** 它不设 `Domain`，浏览器只把它发给签发它的那个主机名，主题 origin 上的请求不带面板的会话。
+- **同名的会话 cookie 有多个值时，任一有效即通过。** 兄弟主机能写 `Domain` 为父域的同名 `probe_session`；它带上更长的 `Path` 时，浏览器按 RFC 6265 的排序把它排在管理员的会话之前，一起发给面板。hub 对同名 cookie 的每个值逐个校验，任一有效即通过，多出来的无效值不让有效值失效，所以兄弟主机写入的同名 cookie 锁不住面板。
 - **`SameSite=Strict` 对兄弟子域不起隔离作用。** `panel.example.com` 与 `status.example.com` 同属一个注册域名，浏览器判定为同站，`SameSite` 不拦它们之间的请求；两者之间的隔离靠的是上面几条。
 
 ## `PublicService` 契约
