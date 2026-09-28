@@ -118,10 +118,16 @@ const ddlTraffic = `CREATE TABLE traffic (
   updated_at INTEGER NOT NULL
 )`
 
-// metricTables 按级别从细到粗。读者有三处：建库、DeleteNode、上卷（rollup.go 的 metricFamily.tables，
-// 必须与 levels、states 同序同长，上卷按 levels 循环，多出的表不会被上卷也不报错）。新增级别要三处同改，
+// metricTables 按级别从细到粗，供建库、节点从属清单与上卷使用（rollup.go 的 metricFamily.tables，
+// 必须与 levels、states 同序同长，上卷按 levels 循环，多出的表不会被上卷也不报错）。新增级别要同步上卷配置，
 // 已有库还需对应的增量迁移。存储统计的行数按 sqlite_master 列表，不读它；存储健康经 families 读它。
 var metricTables = []string{"metric_1m", "metric_5m", "metric_1h"}
+
+// DeleteNode 与 Restore 共用节点从属清单，显式删除不依赖外键开启或级联行为。
+// alert_event 是审计历史，删节点时也保留；系统事件的 node_id=0，不属于节点从属状态。
+var nodeDependentTables = append(append([]string{
+	"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "node_tag",
+}, metricTables...), probeTables...)
 
 // schemaStatements 是当前版本的完整 DDL：空库直接建到当前版本，不重放历史。
 func schemaStatements() []string {
@@ -134,8 +140,17 @@ func schemaStatements() []string {
 		out = append(out, probeDDL(t))
 	}
 	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState, ddlTag, ddlNodeTag, ddlNodeTagByTag,
-		ddlTheme, ddlThemeEnabled, ddlThemeFile, ddlThemePackage)
+		ddlTheme, ddlThemeEnabled, ddlThemeFile, ddlRestoreRecord, ddlThemePackage)
 }
+
+// 恢复记录随配置备份并按 id 与目标取并集；随机标识由 Restore 在创建时生成，避免秒级时刻相同的事件合并。
+const ddlRestoreRecord = `CREATE TABLE restore_record (
+  id TEXT PRIMARY KEY NOT NULL,
+  restored_at INTEGER NOT NULL,
+  config_taken_at INTEGER NOT NULL,
+  metrics_taken_at INTEGER,
+  orphans TEXT NOT NULL
+)`
 
 // metricDDL 从描述表生成分钟表。主键顺序 (node_id, ts) 即唯一查询路径，
 // WITHOUT ROWID 使主键索引就是表本身。
@@ -385,7 +400,7 @@ const ddlTag = `CREATE TABLE tag (
 //
 // 两个索引各自服务的语句如下，依据是 EXPLAIN QUERY PLAN（不跑 ANALYZE，与生产一致：store 从不跑 ANALYZE），
 // 由 TestNodeTagQueryPlans 对 tag.go 里的这些语句本身核对：
-//   - 主键 (node_id, tag_id)：按节点读标签（nodeTagsQuery），按节点清空（clearNodeTags，setNodeTags 与 DeleteNode 用）。
+//   - 主键 (node_id, tag_id)：按节点读标签（nodeTagsQuery），替换标签前按节点清空（setNodeTags 的 clearNodeTags）。
 //   - node_tag_by_tag：按标签过滤（tagFilterWhere 的交集子查询走它，按节点分组另用临时 B 树），ListTags 的计数，
 //     DeleteTag 解除关联（detachTag）。
 const ddlNodeTag = `CREATE TABLE node_tag (

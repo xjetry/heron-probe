@@ -14,7 +14,7 @@ import (
 var configSnapshotTables = []string{
 	"node", "node_facts", "traffic", "probe_task", "probe_task_node", "probe_meta",
 	"alert_rule", "alert_rule_node", "alert_rule_channel", "alert_state", "alert_event", "alert_delivery",
-	"notify_channel", "setting", "admin", "api_token", "tag", "node_tag", "theme",
+	"notify_channel", "setting", "admin", "api_token", "tag", "node_tag", "theme", "restore_record",
 }
 
 var metricsSnapshotTables = []string{
@@ -75,21 +75,22 @@ func (s *Store) snapshot(ctx context.Context, path, layer string, tables []strin
 		return err
 	}
 	at := s.clk.Now().Unix()
-	for _, table := range append(append([]string{}, tables...), "sqlite_sequence") {
+	for _, table := range tables {
 		query := "CREATE TABLE snap." + table + " AS SELECT * FROM main." + table
-		if table == "sqlite_sequence" {
-			// CREATE TABLE AS 不保留 AUTOINCREMENT；先让 SQLite 建出内部序列表，
-			// 再搬源库高水位，恢复后才不会复用已删节点的 id。
-			if _, err := tx.ExecContext(ctx, "CREATE TABLE snap.sequence_seed (id INTEGER PRIMARY KEY AUTOINCREMENT)"); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, "DROP TABLE snap.sequence_seed"); err != nil {
-				return err
-			}
-			query = "INSERT INTO snap.sqlite_sequence SELECT * FROM main.sqlite_sequence"
-		}
 		if _, err := tx.ExecContext(ctx, query); err != nil {
 			return fmt.Errorf("snapshot %s: %w", table, err)
+		}
+	}
+	// 分配高水位不是配置数据；两层各自漂移时，恢复必须知道每层曾使用过的 ID，
+	// 包括已经删掉且没有历史行的 ID。每层都在上述同一读事务里保存完整序列。
+	// CREATE TABLE AS 不保留 AUTOINCREMENT，先由 SQLite 创建内部序列表再搬高水位。
+	for _, query := range []string{
+		"CREATE TABLE snap.sequence_seed (id INTEGER PRIMARY KEY AUTOINCREMENT)",
+		"DROP TABLE snap.sequence_seed",
+		"INSERT INTO snap.sqlite_sequence SELECT * FROM main.sqlite_sequence",
+	} {
+		if _, err := tx.ExecContext(ctx, query); err != nil {
+			return err
 		}
 	}
 	if _, err := tx.ExecContext(ctx, "CREATE TABLE snap.snapshot_meta (schema_version INTEGER NOT NULL, taken_at INTEGER NOT NULL, layer TEXT NOT NULL)"); err != nil {

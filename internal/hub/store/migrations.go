@@ -35,8 +35,17 @@ var migrations = map[int]func(*sql.Tx) error{
 	14: execAll(migrationV14),
 	15: execAll(migrationV15),
 	16: execAll(migrationV16),
-	17: execAll(migrationV17),
+	17: execAll([]string{ddlRestoreRecordV17}),
+	18: execAll(migrationV18),
 }
+
+const ddlRestoreRecordV17 = `CREATE TABLE restore_record (
+  id TEXT PRIMARY KEY NOT NULL,
+  restored_at INTEGER NOT NULL,
+  config_taken_at INTEGER NOT NULL,
+  metrics_taken_at INTEGER,
+  orphans TEXT NOT NULL
+)`
 
 func execAll(stmts []string) func(*sql.Tx) error {
 	return func(tx *sql.Tx) error {
@@ -50,7 +59,7 @@ func execAll(stmts []string) func(*sql.Tx) error {
 }
 
 // 旧库没有原始 zip，不能由展开文件重造；原包由管理员重新上传后补齐。
-var migrationV17 = []string{`CREATE TABLE theme_package (
+var migrationV18 = []string{`CREATE TABLE theme_package (
   theme_id TEXT PRIMARY KEY,
   content BLOB NOT NULL,
   revision INTEGER NOT NULL CHECK (revision > 0),

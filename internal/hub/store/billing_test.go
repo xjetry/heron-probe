@@ -8,6 +8,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/xjetry/probe/internal/sqlitetest"
 )
 
 // v8 的完整 DDL：v7 加上 setting 表。
@@ -27,7 +29,7 @@ func TestMigrationFromV8MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 			}
 		}
 	})
-	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
+	if got, want := sqlitetest.Describe(t, migrated.r), sqlitetest.Describe(t, fresh.r); !reflect.DeepEqual(got, want) {
 		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
 	}
 	if v := userVersion(t, migrated.r); v != schemaVersion {

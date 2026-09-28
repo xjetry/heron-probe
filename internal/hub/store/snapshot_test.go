@@ -36,7 +36,8 @@ func tableNames(t *testing.T, db *sql.DB) []string {
 
 func TestSnapshotClassificationComplete(t *testing.T) {
 	s, _ := open(t)
-	// 会话与注册窗口不恢复；主题文件与原包按变更另存对象，序列是每层都带的簿记而非某层的数据。
+	// 会话与注册窗口不进快照，避免复活已撤销的授权；恢复记录不能自愈，随配置备份。
+	// 主题文件与原包按变更单独备份；sqlite_sequence 是每层都携带的分配簿记，不计入数据表分层等式。
 	excluded := []string{"admin_session", "register_window", "theme_file", "theme_package", "sqlite_sequence"}
 	classified := append(append(slices.Clone(configSnapshotTables), metricsSnapshotTables...), excluded...)
 	slices.Sort(classified)
@@ -83,14 +84,12 @@ func TestSnapshotFiles(t *testing.T) {
 			if version != schemaVersion || at != clk.Now().Unix() || gotLayer != layer {
 				t.Fatalf("snapshot meta=(%d,%d,%s)", version, at, gotLayer)
 			}
-			{
-				var seq int
-				if err := db.QueryRow("SELECT seq FROM sqlite_sequence WHERE name='node'").Scan(&seq); err != nil {
-					t.Fatal(err)
-				}
-				if seq != 42 {
-					t.Fatalf("node sequence=%d want=42", seq)
-				}
+			var seq int
+			if err := db.QueryRow("SELECT seq FROM sqlite_sequence WHERE name='node'").Scan(&seq); err != nil {
+				t.Fatal(err)
+			}
+			if seq != 42 {
+				t.Fatalf("node sequence=%d want=42", seq)
 			}
 			info, err := os.Stat(path)
 			if err != nil {

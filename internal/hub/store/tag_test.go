@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/xjetry/probe/internal/sqlitetest"
 )
 
 // v14 的完整 DDL：v13 加上节点的国家三列。
@@ -26,7 +28,7 @@ func TestMigrationFromV14AddsTagTables(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
+	if got, want := sqlitetest.Describe(t, migrated.r), sqlitetest.Describe(t, fresh.r); !reflect.DeepEqual(got, want) {
 		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
 	}
 	if v := userVersion(t, migrated.r); v != schemaVersion {

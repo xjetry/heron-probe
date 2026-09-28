@@ -33,6 +33,8 @@ func main() {
 		err = runWindow(os.Args[2:])
 	case "stats":
 		err = runStats(os.Args[2:])
+	case "restore":
+		err = runRestore(os.Args[2:])
 	case "version":
 		fmt.Println(version)
 	default:
@@ -55,5 +57,6 @@ commands:
   node create|list|delete|rotate-token
   window open|close|show    manage the registration window
   stats                     database size (page_count × page_size) and row counts per table
+  restore                   restore snapshots offline (stop hub first; requires --yes)
   version`)
 }

@@ -361,33 +361,10 @@ func (s *Store) DeleteNode(ctx context.Context, id int64) error {
 		if n, _ := res.RowsAffected(); n == 0 {
 			return ErrNotFound
 		}
-		if _, err := tx.Exec("DELETE FROM node_facts WHERE node_id = ?", id); err != nil {
-			return err
-		}
-		if _, err := tx.Exec("DELETE FROM traffic WHERE node_id = ?", id); err != nil {
-			return err
-		}
-		for _, t := range metricTables {
+		for _, t := range nodeDependentTables {
 			if _, err := tx.Exec("DELETE FROM "+t+" WHERE node_id = ?", id); err != nil {
 				return err
 			}
-		}
-		for _, t := range probeTables {
-			if _, err := tx.Exec("DELETE FROM "+t+" WHERE node_id = ?", id); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.Exec("DELETE FROM probe_task_node WHERE node_id = ?", id); err != nil {
-			return err
-		}
-		if _, err := tx.Exec("DELETE FROM alert_state WHERE node_id = ?", id); err != nil {
-			return err
-		}
-		if _, err := tx.Exec("DELETE FROM alert_rule_node WHERE node_id = ?", id); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(clearNodeTags, id); err != nil {
-			return err
 		}
 		return nil
 	})
