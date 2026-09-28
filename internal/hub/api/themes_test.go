@@ -272,6 +272,7 @@ func TestUploadThemeExpectIDAndReplacement(t *testing.T) {
 // 前一个完成后名额归还，被拒的上传同样归还。让第一个上传停在入库：store 的写入由单个写协程按序执行，
 // TouchSessionAsync 的回调就在写协程里运行，回调阻塞期间 PutTheme 排在它后面等。探测用的上传带一个不是 zip 的包：
 // 拿到名额就在校验时被拒（InvalidArgument），不写库，也就不会自己排进被阻塞的写协程。
+// 先等第一个上传占住名额再探测：探测若赶在它前面，会短暂占住名额，让第一个上传反被拒绝。
 func TestUploadThemeAdmitsOneAtATime(t *testing.T) {
 	h := newThemeHarness(t)
 	parked, release := make(chan struct{}), make(chan struct{})
@@ -289,18 +290,22 @@ func TestUploadThemeAdmitsOneAtATime(t *testing.T) {
 		_, err := h.upload(t, pkg, "")
 		first <- err
 	}()
+	for deadline := time.Now().Add(10 * time.Second); len(h.svc.uploading) == 0; time.Sleep(time.Millisecond) {
+		select {
+		case err := <-first:
+			t.Fatalf("first upload returned before taking the upload slot: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("first upload never took the upload slot")
+		}
+	}
 	probe := func() error {
 		_, err := h.upload(t, []byte("not a zip"), "")
 		return err
 	}
-	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(time.Millisecond) {
-		err := probe()
-		if codeOf(err) == connect.CodeResourceExhausted && strings.Contains(err.Error(), "another theme upload is in progress") {
-			break
-		}
-		if codeOf(err) != connect.CodeInvalidArgument || time.Now().After(deadline) {
-			t.Fatalf("upload while another is storing: %v, want ResourceExhausted saying another upload is in progress", err)
-		}
+	if err := probe(); codeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "another theme upload is in progress") {
+		t.Fatalf("upload while another is storing: %v, want ResourceExhausted saying another upload is in progress", err)
 	}
 	select {
 	case err := <-first:
