@@ -83,7 +83,7 @@ func newServeLogger(w io.Writer) *slog.Logger { return slog.New(slog.NewTextHand
 func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *slog.Logger) (result error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	db := fs.String("db", "probe.db", "SQLite database path")
-	geoMMDB := fs.String("geo-mmdb", "", "local MaxMind country database; overrides the HTTP lookup service without network requests; restart to reload; geo.enabled still controls lookup")
+	geoMMDB := fs.String("geo-mmdb", "", fmt.Sprintf("local MaxMind country database (at most %d MiB); overrides the HTTP lookup service and makes no network requests; read fully into memory and verified at startup and not read again while running, so a replaced file takes effect on restart; geo.enabled still controls lookup", geo.MaxMMDBBytes>>20))
 	tz := fs.String("timezone", "", "IANA time zone for traffic period boundaries and node expiry days (default: the host's zone, resolved from TZ or /etc/localtime; UTC if neither resolves); already-persisted period starts are interpreted in the new zone; usage of the current period may be reset at the next read, report or flush")
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
 	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For / X-Forwarded-Proto are trusted; empty trusts none. Behind a reverse proxy, list the proxy here: the public page and agent registration are rate-limited per source (one IPv4 address, or one IPv6 /64), and failed logins are locked out per source, so without it every visitor shares the proxy address's single bucket and lockout")
@@ -132,7 +132,8 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	if !isLoopback(*listen) {
 		log.Warn("listening on a non-loopback address: direct access bypasses the proxy; forwarded headers are trusted only from configured peers", "listen", *listen)
 	}
-	// 文件路径是部署配置，由启动参数指定并在启动期打开；更新文件靠重启，不由设置 API 热切换。
+	// 文件路径是部署配置，由启动参数指定，设置 API 没有可改它的字段。OpenMMDB 在这里把整个文件读进内存并校验，运行期
+	// 不再访问文件，所以换文件要重启才生效，原地覆盖或截断也不影响运行中的答案。
 	// 显式选择本地库后不能静默退回 HTTP，否则运维以为不出网时会把节点地址送到外部。
 	var localGeo *geo.MMDB
 	if geoMMDBSet {

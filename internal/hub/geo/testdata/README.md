@@ -10,7 +10,7 @@ go mod tidy
 ```
 
 读取器为 `github.com/oschwald/maxminddb-golang/v2`；writer 仅用于重建夹具，不是运行依赖。
-固定构建时间戳为 Unix 秒 1，IPv6 树同时支持 IPv4。
+固定构建时间戳为 Unix 秒 1，IPv6 树同时支持 IPv4。元数据带非空的 description：hub 启动时用读取器的 `Verify` 校验库文件，它要求这一项非空。
 
 | 网段 | country.iso_code |
 |---|---|

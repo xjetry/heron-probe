@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	tree, err := mmdbwriter.New(mmdbwriter.Options{DatabaseType: "Probe-Test-Country", BuildEpoch: 1, RecordSize: 24, IncludeReservedNetworks: true})
+	tree, err := mmdbwriter.New(mmdbwriter.Options{DatabaseType: "Probe-Test-Country", Description: map[string]string{"en": "Probe test country fixture"}, BuildEpoch: 1, RecordSize: 24, IncludeReservedNetworks: true})
 	if err != nil {
 		log.Fatal(err)
 	}

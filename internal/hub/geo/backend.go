@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"os"
 	"strings"
 
 	"github.com/oschwald/maxminddb-golang/v2"
@@ -65,17 +66,61 @@ func (h *HTTP) Lookup(ctx context.Context, s store.GeoSettings, addr netip.Addr)
 // Service 是服务地址：运维换了服务，旧服务留下的退避不挡住对新服务的查询。
 func (h *HTTP) Service(s store.GeoSettings) string { return s.URL }
 
+// MaxMMDBBytes 是本地国家库文件的大小上限。整个文件在启动时读进内存，上限让误指向的超大文件按配置错误启动失败，
+// 而不是先占用等量的内存。
+const MaxMMDBBytes = 256 << 20
+
+// MMDB 在本机查国家，不出网。OpenMMDB 把库文件整读进内存，读取器只持有这份私有副本，运行期不再访问文件：原地覆盖
+// 或截断文件都不改变运行中的答案，替换文件要重启才生效。
 type MMDB struct {
 	path string
 	db   *maxminddb.Reader
 }
 
+// OpenMMDB 把 path 处的 MaxMind 库整读进内存并校验。Verify 遍历搜索树与数据段，损坏的文件在启动时失败，而不是通过
+// 启动之后每次查询都失败退避。
 func OpenMMDB(path string) (*MMDB, error) {
-	db, err := maxminddb.Open(path)
+	fail := func(err error) (*MMDB, error) { return nil, fmt.Errorf("--geo-mmdb %q: %w", path, err) }
+	data, err := readLimited(path, MaxMMDBBytes)
 	if err != nil {
-		return nil, fmt.Errorf("--geo-mmdb %q: %w", path, err)
+		return fail(err)
+	}
+	db, err := maxminddb.OpenBytes(data)
+	if err != nil {
+		return fail(err)
+	}
+	if err := db.Verify(); err != nil {
+		return fail(err)
 	}
 	return &MMDB{path: path, db: db}, nil
+}
+
+// readLimited 读入 path 处的文件，至多 limit 字节。目录与 Stat 报出的大小超过 limit 的文件在读之前拒绝；读取另按
+// limit 截断，Stat 之后文件变大、或 path 是报不出大小的设备文件时，读进内存的也不超过 limit。
+func readLimited(path string, limit int64) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, errors.New("is a directory")
+	}
+	if info.Size() > limit {
+		return nil, fmt.Errorf("%d bytes exceeds the %d MiB limit", info.Size(), limit>>20)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("more than the %d MiB limit", limit>>20)
+	}
+	return data, nil
 }
 
 // Lookup 只读 GeoLite2-Country 的 country.iso_code，不以 registered_country 等字段替代。

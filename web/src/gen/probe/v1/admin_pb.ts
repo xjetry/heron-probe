@@ -1570,7 +1570,8 @@ export type Settings = Message<"probe.v1.Settings"> & {
 
   /**
    * --geo-mmdb 指定的路径，HTTP 后端为空；MMDB 后端下 geo_url 保留但不生效。
-   * 部署路径只能在启动时指定，文件更新靠重启；只读，UpdateSettings 中缺席或给出均忽略，不校验、不保存。
+   * 部署路径只能在启动时指定；hub 启动时把该文件整读进内存并校验，运行期不再读它，原地覆盖或截断都不影响运行中的答案，
+   * 替换文件后重启才生效。只读，UpdateSettings 中缺席或给出均忽略，不校验、不保存。
    *
    * @generated from field: string geo_mmdb_path = 10;
    */
