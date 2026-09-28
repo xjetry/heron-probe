@@ -4079,8 +4079,11 @@ func (x *BackupLayerStatus) GetFailure() *BackupFailure {
 
 type BackupFailure struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// snapshot、client、upload、list、delete、cleanup、record、retention_config、settings、unrecovered；
+	// snapshot、client、upload、list、delete、cleanup、record、retention_config、settings、startup、marker、unrecovered；
 	// S3 失败在阶段后加 /transport、/http_status、/request 或 /response，不含错误原文。
+	// settings 与 startup 是两层共用的前提失败（设置读不出；启动时读回成功时刻或清理本库残留暂存目录失败），
+	// 只由配置层报告，其间指标层暂停。marker 是库里的配置层未恢复标记读不出（只有 hub 写它）：此前是否通知过无从知道，
+	// 按首次失败通知一次并以本次首次失败时刻覆盖坏值，下一轮照常执行；指标层不读它，不受影响。
 	Category string `protobuf:"bytes,1,opt,name=category,proto3" json:"category,omitempty"`
 	// 当前连续故障首次被观察到的 UTC Unix 秒，失败类别变化不会重置。
 	SinceAt int64 `protobuf:"varint,2,opt,name=since_at,json=sinceAt,proto3" json:"since_at,omitempty"`

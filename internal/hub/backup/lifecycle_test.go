@@ -26,6 +26,15 @@ func enabledTarget() store.BackupSettingsUpdate {
 	return store.BackupSettingsUpdate{Endpoint: "https://example.test", Bucket: "backups", Region: "auto", AccessKey: "key", Prefix: "tenant"}
 }
 
+func hasKey(objects *fakeObjects, prefix string) bool {
+	for k := range objects.objects {
+		if strings.HasPrefix(k, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // 份数 2：两份旧快照之外还有一个排在所有时间戳之后的手工 .db。手工文件若计入份数，会顶掉较新的那份旧快照。
 func TestRetentionDoesNotCountManualDB(t *testing.T) {
 	m, clk, objects, _ := setup(t)
@@ -107,6 +116,46 @@ func TestStatusShowsPersistedMarkerBeforeFirstTick(t *testing.T) {
 	}
 }
 
+// 标记被改坏（手工改库或恢复了坏值）：配置层按 marker 类别触发一次并以覆盖写修复标记，指标层照常上传，状态可读。
+func TestCorruptMarkerNotifiesOnceWithoutBlockingMetrics(t *testing.T) {
+	for _, recovers := range []bool{true, false} {
+		t.Run(map[bool]string{true: "recovers", false: "still-failing"}[recovers], func(t *testing.T) {
+			m, clk, objects, sink := setup(t)
+			execFixtureSQL(t, objects.databasePath, `INSERT INTO setting VALUES ('backup.config_failing_since','x')`)
+			start := clk.Now()
+			tick(t, m)
+			s, err := m.Status(t.Context())
+			if err != nil || s.Config.Failure != "marker" || !s.Config.Since.Equal(start) || len(sink.events) != 1 || sink.events[0].Transition != store.TransitionFiring {
+				t.Fatalf("corrupt marker not notified as config failure: status=%+v err=%v events=%v", s, err, sink.events)
+			}
+			if !hasKey(objects, "tenant/metrics/") || s.Metrics.LastSuccess.IsZero() {
+				t.Fatalf("corrupt marker blocked metrics layer: status=%+v calls=%v", s.Metrics, objects.calls)
+			}
+			if since, err := m.st.BackupFailingSince(t.Context()); err != nil || !since.Equal(start) {
+				t.Fatalf("firing did not repair marker: since=%s err=%v", since, err)
+			}
+			if !recovers {
+				objects.failLayer, objects.failStage = "config", "upload"
+			}
+			clk.Advance(time.Second)
+			tick(t, m)
+			if recovers {
+				got := status(t, m).Config
+				if got.Failure != "" || !got.LastSuccess.Equal(clk.Now()) || len(sink.events) != 2 || sink.events[1].Transition != store.TransitionRecovered {
+					t.Fatalf("repaired marker did not let config run and recover: status=%+v events=%v", got, sink.events)
+				}
+				return
+			}
+			m = restart(m, objects, sink)
+			clk.Advance(time.Second)
+			tick(t, m)
+			if got := status(t, m).Config; got.Failure != "upload/http_status" || !got.Since.Equal(start) || len(sink.events) != 1 {
+				t.Fatalf("repaired marker not honored across restart: status=%+v events=%v", got, sink.events)
+			}
+		})
+	}
+}
+
 type heldObjects struct {
 	*fakeObjects
 	entered, release chan struct{}
@@ -162,5 +211,40 @@ func TestStartupCleanupSparesOtherDatabases(t *testing.T) {
 	}
 	if len(objects.paths) != 2 {
 		t.Errorf("own backups did not run: %v", objects.paths)
+	}
+}
+
+// 启动准备（读回成功时刻、清本库残留）失败时，配置层按 startup 类别触发一次，指标层跳过；准备成功后照常执行并恢复。
+func TestStartupFailureNotifiesAndRetries(t *testing.T) {
+	m, clk, objects, sink := setup(t)
+	dir, prefix := m.st.BackupScratch()
+	stale, err := os.MkdirTemp(dir, prefix+"*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, "snapshot.db"), []byte("partial"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// 目录不可写，里面的文件删不掉，清理失败。
+	if err := os.Chmod(stale, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(stale, 0700) })
+	start := clk.Now()
+	tick(t, m)
+	clk.Advance(time.Second)
+	tick(t, m)
+	s := status(t, m)
+	if s.Config.Failure != "startup" || !s.Config.Since.Equal(start) || len(sink.events) != 1 || len(objects.calls) != 0 {
+		t.Fatalf("startup failure not reported through config layer: status=%+v events=%d calls=%v", s, len(sink.events), objects.calls)
+	}
+	if err := os.Chmod(stale, 0700); err != nil {
+		t.Fatal(err)
+	}
+	clk.Advance(time.Second)
+	tick(t, m)
+	s = status(t, m)
+	if _, err := os.Stat(stale); !os.IsNotExist(err) || s.Config.Failure != "" || s.Metrics.LastSuccess.IsZero() || len(sink.events) != 2 || sink.events[1].Transition != store.TransitionRecovered {
+		t.Errorf("startup retry did not clean and recover: stat=%v status=%+v events=%v", err, s, sink.events)
 	}
 }

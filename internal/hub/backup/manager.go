@@ -43,9 +43,11 @@ type layerState struct {
 	LayerStatus
 	attempted   bool
 	lastAttempt time.Duration
-	notified    bool
-	logged      bool
-	lastLog     time.Duration
+	// restored 与 notified 只属于配置层：restored 表示库里的未恢复标记已读回，notified 表示本段故障已发过触发事件。
+	restored bool
+	notified bool
+	logged   bool
+	lastLog  time.Duration
 }
 
 type Manager struct {
@@ -68,7 +70,8 @@ func New(st *store.Store, sender Sender, clk clock.Clock, log *slog.Logger) *Man
 
 func (m *Manager) Status(ctx context.Context) (Status, error) {
 	cfg, err := m.st.BackupSettings(ctx)
-	// 设置不可读时仍展示已观察的故障；状态读取本身不伪造首次失败时刻。
+	// 设置或未恢复标记读不出时，配置层会把它记为当前故障（prepare 给出类别，finish 记下）；已观察到就照常展示，
+	// 尚未观察到才返回读错误，不把读不出伪装成正常。状态读取本身不伪造首次失败时刻。
 	settingsErr := err
 	times, err := m.st.BackupSuccessTimes(ctx)
 	if err != nil {
@@ -84,6 +87,7 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 		out.Metrics.LastSuccess = times[store.MaintenanceBackupMetrics]
 	}
 	if out.Config.Failure == "" {
+		// 配置层读回标记之前（重启后首轮之前）以库里的标记为准，未恢复的故障重启后立即可见。
 		since, err := m.st.BackupFailingSince(ctx)
 		if err != nil {
 			return Status{}, err
@@ -144,6 +148,7 @@ func (m *Manager) Tick(ctx context.Context) error {
 	return result
 }
 
+// initialize 是两层共用的启动准备：读回两层的成功时刻安排首轮，并清掉本库上次运行残留的暂存目录。
 func (m *Manager) initialize(ctx context.Context) error {
 	m.initMu.Lock()
 	defer m.initMu.Unlock()
@@ -151,10 +156,6 @@ func (m *Manager) initialize(ctx context.Context) error {
 		return nil
 	}
 	times, err := m.st.BackupSuccessTimes(ctx)
-	if err != nil {
-		return err
-	}
-	since, err := m.st.BackupFailingSince(ctx)
 	if err != nil {
 		return err
 	}
@@ -182,10 +183,6 @@ func (m *Manager) initialize(ctx context.Context) error {
 			state.attempted, state.lastAttempt = true, m.clk.Mono()-elapsed
 		}
 	}
-	if !since.IsZero() {
-		m.layers[0].notified = true
-		m.layers[0].Failure, m.layers[0].Since = "unrecovered", since
-	}
 	m.initialized = true
 	return nil
 }
@@ -199,19 +196,64 @@ func ownScratch(name, prefix string) bool {
 	return ok && rest != "" && strings.Trim(rest, "0123456789") == ""
 }
 
+// restoreFailure 读回库里的配置层未恢复标记：读到即视为本段故障已通知，跨重启不重复触发。
+// 只有 RecordBackupEvent 写这个标记，读不出说明库被手工改过或恢复了坏值，此时无从知道此前是否通知过。
+func (m *Manager) restoreFailure(ctx context.Context) error {
+	state := &m.layers[0]
+	if state.restored {
+		return nil
+	}
+	since, err := m.st.BackupFailingSince(ctx)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !since.IsZero() {
+		state.notified, state.Since = true, since
+		if state.Failure == "" {
+			state.Failure = "unrecovered"
+		}
+	}
+	state.restored = true
+	return nil
+}
+
+// prepare 读出一轮判定所需的持久状态与设置，任一读不出即返回对应的故障类别。
+// 配置层先读回未恢复标记：之后无论哪一步失败，判定是否已通知都须以它为准，否则重启后会重复触发。
+// 标记读不出时 restored 保持为假，本轮以 marker 类别进入 finish；没有读回的通知状态，notified 为假，于是触发一次，
+// RecordBackupEvent 的覆盖写同事务修复坏值。下一轮读回成功后照常执行，marker 故障随执行成功而恢复。
+func (m *Manager) prepare(ctx context.Context, i int) (store.BackupSettings, string, error) {
+	if i == 0 {
+		if err := m.restoreFailure(ctx); err != nil {
+			return store.BackupSettings{}, "marker", err
+		}
+	}
+	if err := m.initialize(ctx); err != nil {
+		return store.BackupSettings{}, "startup", err
+	}
+	cfg, err := m.st.BackupSettings(ctx)
+	if err != nil {
+		return store.BackupSettings{}, "settings", err
+	}
+	return cfg, "", nil
+}
+
 func (m *Manager) tickLayer(ctx context.Context, i int) error {
 	m.runMu[i].Lock()
 	defer m.runMu[i].Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := m.initialize(ctx); err != nil {
-		return err
-	}
-	cfg, err := m.st.BackupSettings(ctx)
+	cfg, category, err := m.prepare(ctx, i)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		// 前提读不出与执行失败走同一个 finish：配置层首次失败通知一次、日志限频，读得出之后按执行结果恢复。
+		// 标记只属于配置层，指标层不读；启动准备与设置是两层共用的前提，由配置层报告，指标层跳过这一轮。
 		if i == 0 {
-			return m.finish(ctx, i, "config", "settings", 0, err.Error())
+			return m.finish(ctx, i, "config", category, 0, err.Error())
 		}
 		return nil
 	}
@@ -376,7 +418,7 @@ func (m *Manager) finish(ctx context.Context, i int, layer, category string, cod
 	if logFailure {
 		m.log.Warn("backup failed", "layer", layer, "category", category, "status_code", code, "detail", detail)
 	}
-	// 配置层的未恢复标记与事件由 RecordBackupEvent 同事务提交，initialize 在首次执行前读回。
+	// 配置层的未恢复标记与事件由 RecordBackupEvent 同事务提交，prepare 在配置层首次判定通知之前读回。
 	// 因而持续故障跨重启也不重复通知；事务失败保留原通知状态，下次重试。
 	// 指标缺口由后续上报继续产生新数据，不触发通知，故障仍由日志与同一状态接口可见。
 	if i == 0 && (category != "" && !notified || category == "" && notified) {
