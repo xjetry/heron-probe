@@ -1,4 +1,4 @@
-import { isFieldSet } from "@bufbuild/protobuf";
+import { isFieldSet, toJson } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { expect, it } from "vitest";
@@ -16,6 +16,29 @@ const routes = [{ path: "/appearance", Component: Appearance }];
 const render = (impl: AdminImpl) => renderWithAdmin({ getSettings: async () => ({ settings: saved }), listNotifyChannels: async () => channels, ...impl }, routes, "/appearance");
 const backupForm = async () => within(await screen.findByRole("form", { name: "备份到 S3" }));
 const appearanceForm = async () => within(await screen.findByRole("form", { name: "公开页外观" }));
+
+it("通知渠道选满 16 后禁用未选项，取消后允许重选", async () => {
+  render({ listNotifyChannels: async () => ({ channels: Array.from({ length: 17 }, (_, i) => ({ id: BigInt(i+1), name: `渠道${i+1}` })) }),
+    getSettings: async () => ({ settings: { ...saved, backup: { ...backup, notify: { channelIds: [] } } } }) });
+  const form = await backupForm();
+  const boxes = form.getAllByRole("checkbox");
+  for (const box of boxes.slice(0,16)) fireEvent.click(box);
+  expect(form.getByText("最多选 16 个渠道")).toBeInTheDocument();
+  expect(boxes[16]).toBeDisabled();
+  expect(boxes[0]).toBeEnabled();
+  fireEvent.click(boxes[0]);
+  expect(boxes[16]).toBeEnabled();
+});
+
+it("备份保存只提交 backup 组，不回写其它设置", async () => {
+  const hub = statefulHub(saved);
+  render(hub.impl);
+  const form = await backupForm();
+  fireEvent.click(form.getByRole("button", { name: "保存" }));
+  await form.findByRole("status");
+  expect(hub.sent).toHaveLength(1);
+  expect(Object.keys(toJson(SettingsSchema, hub.sent[0].settings!)!)).toEqual(["backup"]);
+});
 
 it("备份表单保存：secret 只写且下次缺席，渠道以 notify 提交，关闭用空 endpoint", async () => {
   const hub = statefulHub(saved);
@@ -84,9 +107,8 @@ it("外观表单的保存不带 backup", async () => {
   expect(hub.state().backup).toEqual(backup);
 });
 
-// 备份表单带的外观是 hub 的已保存值，不是外观表单里还没保存的草稿；外观表单里动过的总闸与国家查询两项都不带，hub 对
-// 缺席的这几项不改。外观表单的开关仍显示用户动过的值，不被备份保存后写进缓存的回显（总闸仍开）盖掉。
-it("备份表单的保存带已保存的外观，不带外观草稿，也不带总闸与国家查询", async () => {
+// 备份不提交外观组；外观草稿也不被备份保存后的服务端回显盖掉。
+it("备份表单的保存不带外观、总闸与国家查询，保留外观草稿", async () => {
   const hub = statefulHub(saved);
   const sent = hub.sent;
   render(hub.impl);
@@ -98,7 +120,7 @@ it("备份表单的保存带已保存的外观，不带外观草稿，也不带�
   fireEvent.click(form.getByRole("button", { name: "保存" }));
   await form.findByRole("status");
   expect(sent).toHaveLength(1);
-  expect(sent[0].settings).toMatchObject({ title: "机房", theme: "dark", accentColor: "#123abc", logo: "", customCss: "body { margin: 0 }" });
+  expect(Object.keys(toJson(SettingsSchema, sent[0].settings!)!)).toEqual(["backup"]);
   expect(sent[0].settings?.backup?.configKeep).toBe(40);
   for (const field of [SettingsSchema.field.publicEnabled, SettingsSchema.field.geoEnabled, SettingsSchema.field.geoUrl]) {
     expect(isFieldSet(sent[0].settings!, field)).toBe(false);
@@ -123,8 +145,8 @@ it("备份保存后刷新失败，重新进入页面时显示刚保存的值", a
   expect((await backupForm()).getByLabelText("配置保留份数")).toHaveValue(40);
 });
 
-// 外观保存在途时备份表单不能提交；外观保存完成、设置重新读到之后，备份保存带的是新外观。
-it("两个表单的保存互斥，后一个带的是先一个保存之后的外观", async () => {
+// 外观保存在途时备份表单不能提交；完成后备份只写自己的组，已保存的外观不变。
+it("两个表单的保存互斥，备份保存不覆盖先保存的外观", async () => {
   const hub = statefulHub(saved);
   const sent = hub.sent;
   render(hub.impl);
@@ -142,7 +164,7 @@ it("两个表单的保存互斥，后一个带的是先一个保存之后的外�
   fireEvent.click(form.getByRole("button", { name: "保存" }));
   await form.findByRole("status");
   expect(sent).toHaveLength(2);
-  expect(sent[1].settings?.title).toBe("新标题");
+  expect(hub.state().title).toBe("新标题");
 });
 
 // 反方向：备份保存在途时外观表单不能提交；备份保存完成、设置重新读到之后，外观表单照常保存。
@@ -164,7 +186,7 @@ it("备份保存在途时外观表单不能提交", async () => {
   fireEvent.change(appearance.getByLabelText("标题"), { target: { value: "新标题" } });
   fireEvent.click(appearance.getByRole("button", { name: "保存" }));
   await appearance.findByRole("status");
-  expect(sent.map((r) => r.settings?.title)).toEqual(["机房", "新标题"]);
+  expect(sent.map((r) => r.settings?.title)).toEqual(["", "新标题"]);
 });
 
 // 渠道列表读不到时不渲染备份表单：拿空列表求交会把已选渠道作为显式空集合提交，关掉备份失败通知。

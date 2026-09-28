@@ -30,7 +30,7 @@ type Settings struct {
 	Backup BackupSettings
 }
 
-// SettingsUpdate 是 SaveSettings 的输入：外观整体替换；总闸与 Geo 里的各项为 nil 时不修改；Backup 为 nil 时不写任何
+// SettingsUpdate 是 SaveSettings 的输入：外观任一项非空时整体替换，全空时不改；总闸与 Geo 里的各项为 nil 时不修改；Backup 为 nil 时不写任何
 // 备份键，非 nil 时各项按 BackupSettingsUpdate 的语义写。更新与读取分用不同类型，避免把缺席误当作关闭，也避免向读者
 // 泄漏未解析的值。
 type SettingsUpdate struct {
@@ -110,7 +110,7 @@ func parseFlag(key, v string) (bool, error) {
 	return v == "1", nil
 }
 
-// putSetting 是 setting 表唯一的写入语句：外观、开关、国家查询、备份与渠道列表都经它，写事务由调用方给。
+// putSetting 更新设置值：外观、开关、国家查询、备份配置与渠道列表都经它，写事务由调用方给。
 func putSetting(tx *sql.Tx, key, value string) error {
 	_, err := tx.Exec("INSERT INTO setting (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", key, value)
 	return err
@@ -199,7 +199,7 @@ func (s *Store) BackupSettings(ctx context.Context) (BackupSettings, error) {
 // 匿名请求与静态资源都要检查总闸，读原子副本避免每次准入都占用数据库连接。
 func (s *Store) PublicEnabled() bool { return s.publicEnabled.Load() }
 
-// SaveSettings 在 s.write 的一个事务里写外观五个键、给出的总闸、Geo 里给出的项与给出的备份项，任一条失败整体回滚：
+// SaveSettings 在 s.write 的一个事务里写给出的外观组、总闸、Geo 项与备份项，任一条失败整体回滚：
 // 库里不会留下半套设置，与 readSettings 的单条 SELECT 一起保证读侧看不到新旧混合。总闸、Geo 各项与 Backup 缺席表示
 // 不变，不写对应的键。备份的数值范围与渠道是否存在也在这个事务里裁决（saveBackup）：出范围返回 BackupRangeError、
 // 渠道不存在返回 NotFoundError，同样整体回滚。渠道的存在性在这个写事务里核对，删渠道（DeleteNotifyChannel）在它自己
@@ -216,7 +216,10 @@ func (s *Store) PublicEnabled() bool { return s.publicEnabled.Load() }
 func (s *Store) SaveSettings(ctx context.Context, in SettingsUpdate) (Settings, error) {
 	s.siteWriteMu.Lock()
 	defer s.siteWriteMu.Unlock()
-	puts := in.SiteAppearance.fields()
+	var puts []settingField
+	if in.SiteAppearance != (SiteAppearance{}) {
+		puts = in.SiteAppearance.fields()
+	}
 	if in.PublicEnabled != nil {
 		puts = append(puts, flagField(publicEnabledKey, *in.PublicEnabled))
 	}

@@ -24,6 +24,7 @@ import (
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/probe/internal/hub/backup"
 	"github.com/xjetry/probe/internal/hub/geo"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/probe"
@@ -67,6 +68,7 @@ const (
 )
 
 type Config struct {
+	Backups *backup.Manager
 	// TTL 必须为正；零值会放宽宽限期下限，New 将其视为装配错误并 panic。
 	TTL time.Duration
 	// ReportInterval 是 agent 的正常上报间隔，客户端据此选择轮询节奏。
@@ -131,6 +133,9 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 	}
 	if cfg.Location == nil {
 		panic("api.Config.Location must be set")
+	}
+	if cfg.Backups == nil {
+		panic("api.Config.Backups must be set")
 	}
 	if err := cfg.Retention.Validate(); err != nil {
 		panic("api.Config.Retention: " + err.Error())

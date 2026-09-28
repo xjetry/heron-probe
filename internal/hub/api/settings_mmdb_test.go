@@ -6,6 +6,7 @@ import (
 	"time"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	"github.com/xjetry/probe/internal/hub/backup"
 	"github.com/xjetry/probe/internal/hub/geo"
 	"github.com/xjetry/probe/internal/hub/store"
 )
@@ -62,5 +63,5 @@ func TestNewRequiresTheGeoBackend(t *testing.T) {
 			t.Errorf("panic = %v, want api.Config.Geo must be set", r)
 		}
 	}()
-	New(Config{TTL: time.Second, Location: time.UTC, Retention: store.DefaultRetention}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	New(Config{Backups: &backup.Manager{}, TTL: time.Second, Location: time.UTC, Retention: store.DefaultRetention}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 }

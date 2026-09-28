@@ -27,6 +27,7 @@ import (
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/probe/internal/hub/backup"
 	"github.com/xjetry/probe/internal/hub/geo"
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
@@ -41,6 +42,7 @@ import (
 const password = "correct horse battery staple"
 
 type harness struct {
+	dbPath string
 	srv    *httptest.Server
 	http   *http.Client // 带 cookie jar
 	admin  probev1connect.AdminServiceClient
@@ -92,7 +94,8 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 		o(&deps)
 	}
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"), clk, slog.Default(), store.MigrateSchema)
+	dbPath := filepath.Join(t.TempDir(), "t.db")
+	st, err := store.Open(dbPath, clk, slog.Default(), store.MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +120,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	if err := errors.Join(a.Load(ctx), in.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: retention, Geo: geo.NewHTTP(client)}
+	cfg := Config{Backups: backup.New(st, notifier, clk, slog.Default()), TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: retention, Geo: geo.NewHTTP(client)}
 	deps.config(&cfg)
 	svc := New(cfg, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
 	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, TrustedProxies: prefixes, Location: loc}, st, l, book, reg, clk, slog.Default())
@@ -129,7 +132,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
 	hc := &http.Client{Jar: jar}
-	return &harness{srv: srv, http: hc, admin: probev1connect.NewAdminServiceClient(hc, srv.URL),
+	return &harness{dbPath: dbPath, srv: srv, http: hc, admin: probev1connect.NewAdminServiceClient(hc, srv.URL),
 		agent: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, book: book, reg: reg, alerts: alerts, svc: svc, pub: pub}
 }
 

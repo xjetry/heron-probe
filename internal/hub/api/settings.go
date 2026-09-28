@@ -44,41 +44,52 @@ var (
 	accentRE  = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 )
 
-// cleanSettings 校验并清洗一次更新：外观整体替换；总闸、国家查询两项与 backup 保留 presence 交给存储层处理（缺席即
+// cleanSettings 校验并清洗一次更新：外观任一项非空时整体校验并替换；总闸、国家查询两项与 backup 保留 presence 交给存储层处理（缺席即
 // 不变，见 store.SettingsUpdate；backup 各项的 presence 见 cleanBackup）。任一项不合约束即返回错误，调用方什么都不写。
 // 标题会显示在页面与标签页上，与节点名（cleanName）同用 sanitize.Text 清洗；logo 与 CSS 是数据与代码，改写任何字节都可能改变含义，只校验不清洗。
 func cleanSettings(in *probev1.Settings) (store.SettingsUpdate, error) {
-	if n := len(in.GetTitle()); n > maxTitleBytes {
-		return store.SettingsUpdate{}, invalid("settings.title must be at most %d bytes before cleaning; got %d", maxTitleBytes, n)
-	}
-	title := sanitize.Text(in.GetTitle(), len(in.GetTitle()))
-	if n := utf8.RuneCountInString(title); n > maxTitleRunes {
-		return store.SettingsUpdate{}, invalid("settings.title must be at most %d characters after removing control characters and surrounding whitespace; got %d", maxTitleRunes, n)
-	}
-	if !slices.Contains(themes, in.GetTheme()) {
-		return store.SettingsUpdate{}, invalid("settings.theme must be one of %s; got %q", strings.Join(themes, ", "), in.GetTheme())
-	}
-	if c := in.GetAccentColor(); c != "" && !accentRE.MatchString(c) {
-		return store.SettingsUpdate{}, invalid("settings.accent_color must be empty (the default color) or #rrggbb with six hex digits; got %q", c)
-	}
-	if err := checkLogo(in.GetLogo()); err != nil {
-		return store.SettingsUpdate{}, err
-	}
-	if err := checkCSS(in.GetCustomCss()); err != nil {
-		return store.SettingsUpdate{}, err
+	appearance := store.SiteAppearance{Title: in.GetTitle(), Theme: in.GetTheme(), AccentColor: in.GetAccentColor(), Logo: in.GetLogo(), CustomCSS: in.GetCustomCss()}
+	if appearance == (store.SiteAppearance{}) {
+		if in == nil || (in.PublicEnabled == nil && in.GeoEnabled == nil && in.GeoUrl == nil && in.Backup == nil) {
+			return store.SettingsUpdate{}, invalid("settings must provide an appearance group (theme required), public_enabled, geo_enabled, geo_url or backup")
+		}
+	} else {
+		var err error
+		appearance, err = cleanAppearance(appearance)
+		if err != nil {
+			return store.SettingsUpdate{}, err
+		}
 	}
 	geoUpdate, err := cleanGeo(in)
 	if err != nil {
 		return store.SettingsUpdate{}, err
 	}
 	backup, err := cleanBackup(in.GetBackup())
-	if err != nil {
-		return store.SettingsUpdate{}, err
+	return store.SettingsUpdate{SiteAppearance: appearance, PublicEnabled: in.PublicEnabled, Geo: geoUpdate, Backup: backup}, err
+}
+
+func cleanAppearance(in store.SiteAppearance) (store.SiteAppearance, error) {
+	if n := len(in.Title); n > maxTitleBytes {
+		return store.SiteAppearance{}, invalid("settings.title must be at most %d bytes before cleaning; got %d", maxTitleBytes, n)
 	}
-	return store.SettingsUpdate{
-		Title: title, Theme: in.GetTheme(), AccentColor: strings.ToLower(in.GetAccentColor()),
-		Logo: in.GetLogo(), CustomCSS: in.GetCustomCss(), PublicEnabled: in.PublicEnabled, Geo: geoUpdate, Backup: backup,
-	}, nil
+	title := sanitize.Text(in.Title, len(in.Title))
+	if n := utf8.RuneCountInString(title); n > maxTitleRunes {
+		return store.SiteAppearance{}, invalid("settings.title must be at most %d characters after removing control characters and surrounding whitespace; got %d", maxTitleRunes, n)
+	}
+	if !slices.Contains(themes, in.Theme) {
+		return store.SiteAppearance{}, invalid("settings.theme must be one of %s; got %q", strings.Join(themes, ", "), in.Theme)
+	}
+	if c := in.AccentColor; c != "" && !accentRE.MatchString(c) {
+		return store.SiteAppearance{}, invalid("settings.accent_color must be empty (the default color) or #rrggbb with six hex digits; got %q", c)
+	}
+	if err := checkLogo(in.Logo); err != nil {
+		return store.SiteAppearance{}, err
+	}
+	if err := checkCSS(in.CustomCSS); err != nil {
+		return store.SiteAppearance{}, err
+	}
+	in.Title, in.AccentColor = title, strings.ToLower(in.AccentColor)
+	return in, nil
 }
 
 // checkLogo 只接受 data:<type>;base64,<data> 这一种写法：type 在白名单内、全小写、不带参数，data 是带填充的

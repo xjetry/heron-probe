@@ -286,7 +286,7 @@ describe("国家 / 地区查询", () => {
     expect(f.getByLabelText("服务地址")).toHaveAccessibleDescription(/节点停在同一地址时查得一次即止；hub 记住每个节点最近 4 个地址的答案，在这些地址之间切换不再重查，\s*超过 4 个地址轮换或 hub 重启后会再查。/);
   });
 
-  // 后端两项只回显：请求不带它们（hub 忽略请求里的值，解码预算也不为 geo_mmdb_path 留位），保存后的描述取自回显写进
+  // 后端两项只回显：请求不带它们，hub 忽略请求里的值；保存后的描述取自回显写进
   // 缓存的那一份，本地库不会被说成 HTTP 服务。
   it("本地后端下保存查询设置：请求不带后端两项，保存后仍写明本地文件", async () => {
     const hub = statefulHub({ ...withGeo, geoBackend: GeoBackend.MMDB, geoMmdbPath: "/data/country.mmdb" });
@@ -331,7 +331,7 @@ describe("国家 / 地区查询", () => {
 
   // 外观表单里未保存的总闸同样不随查询表单提交：查询表单不带总闸与 backup，hub 对缺席的这两项不改。外观表单的开关仍
   // 显示用户动过的值，不被查询表单保存后写进缓存的回显（总闸仍开）盖掉。
-  it("保存提交开关与服务地址，外观取 hub 的已保存值而不是外观表单的草稿，也不带总闸与备份", async () => {
+  it("保存只提交开关与服务地址，不带外观、总闸与备份", async () => {
     const hub = statefulHub(withGeo);
     const sent = hub.sent;
     render(hub.impl);
@@ -343,14 +343,14 @@ describe("国家 / 地区查询", () => {
     fireEvent.click(f.getByRole("button", { name: "保存" }));
     expect(await f.findByRole("status")).toHaveTextContent("已保存");
     expect(sent).toHaveLength(1);
-    expect(sent[0].settings).toMatchObject({ ...current, geoEnabled: true, geoUrl: "https://ipinfo.io/{ip}/country" });
+    expect(sent[0].settings).toMatchObject({ title: "", theme: "", accentColor: "", logo: "", customCss: "", geoEnabled: true, geoUrl: "https://ipinfo.io/{ip}/country" });
     expect(isFieldSet(sent[0].settings!, SettingsSchema.field.publicEnabled)).toBe(false);
     expect(isFieldSet(sent[0].settings!, SettingsSchema.field.backup)).toBe(false);
     expect(appearance.getByLabelText("标题")).toHaveValue("未保存的标题");
     expect(appearance.getByRole("checkbox", { name: "启用公开页" })).not.toBeChecked();
   });
 
-  it("外观保存后刷新失败，查询表单提交的外观仍是刚保存的回显", async () => {
+  it("外观保存后刷新失败，查询表单不回写外观", async () => {
     const hub = statefulHub(withGeo);
     render(hub.impl);
     const appearance = await form();
@@ -363,7 +363,7 @@ describe("国家 / 地区查询", () => {
     fireEvent.click(f.getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" }));
     fireEvent.click(f.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(hub.sent).toHaveLength(2));
-    expect(hub.sent[1].settings).toMatchObject({ ...current, title: "新标题", geoEnabled: true });
+    expect(hub.sent[1].settings).toMatchObject({ title: "", theme: "", accentColor: "", logo: "", customCss: "", geoEnabled: true });
   });
 
   it("查询表单保存后刷新失败，重新进入页面时显示刚保存的开关", async () => {

@@ -21,7 +21,7 @@ function savedBackup(b: BackupSettings, old: MessageInitShape<typeof BackupSetti
   };
 }
 
-// 有状态的 hub 替身，与 store 的 SaveSettings 同语义：外观整体替换（标题去首尾空白，代表 hub 的清洗）；总闸、国家查询
+// 有状态的 hub 替身，与 store 的 SaveSettings 同语义：外观任一项非空时整体替换（标题去首尾空白，代表 hub 的清洗）；总闸、国家查询
 // 两项与 backup 缺席即不变（backup 各项见 savedBackup）；回显保存后的全部设置。国家查询后端两项（geoBackend、
 // geoMmdbPath）与 api 的 settingsProto 同语义：取自 hub 启动时选定的后端，请求里的值被忽略，保存不改它们。
 // set 模拟别处（另一个面板、脚本）改了设置；holdReads 让之后的 GetSettings 挂起到 releaseReads；failReads 让之后的
@@ -45,8 +45,11 @@ export function statefulHub(initial: SettingsInit) {
       sent.push(req);
       if (heldSaves) await heldSaves;
       const s = req.settings!;
+      const appearance = s.title || s.theme || s.accentColor || s.logo || s.customCss
+        ? { title: s.title.trim(), theme: s.theme, accentColor: s.accentColor, logo: s.logo, customCss: s.customCss }
+        : { title: state.title, theme: state.theme, accentColor: state.accentColor, logo: state.logo, customCss: state.customCss };
       state = {
-        title: s.title.trim(), theme: s.theme, accentColor: s.accentColor, logo: s.logo, customCss: s.customCss,
+        ...appearance,
         publicEnabled: s.publicEnabled ?? state.publicEnabled, geoEnabled: s.geoEnabled ?? state.geoEnabled, geoUrl: s.geoUrl ?? state.geoUrl,
         geoBackend: state.geoBackend, geoMmdbPath: state.geoMmdbPath,
         backup: s.backup ? savedBackup(s.backup, state.backup) : state.backup,

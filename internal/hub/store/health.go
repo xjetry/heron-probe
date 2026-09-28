@@ -7,14 +7,16 @@ import (
 	"time"
 )
 
-// maintenance_state 的 name 取值：维护循环里两类会停摆而不自知的任务各一行。
+// maintenance_state 的 name 取值：清理、上卷及两层备份各记最近一次整轮成功时刻。
 const (
-	MaintenancePrune  = "prune"
-	MaintenanceRollup = "rollup"
+	MaintenancePrune         = "prune"
+	MaintenanceRollup        = "rollup"
+	MaintenanceBackupConfig  = "backup_config"
+	MaintenanceBackupMetrics = "backup_metrics"
 )
 
 // recordMaintenance 记下 name 这一轮整轮成功完成的时刻，取写协程执行时的时钟。调用方只在整轮成功之后调用
-// （Rollup、Prune 的末尾）：中途失败若也写，一直失败与正常运行读出的都是一个新鲜的时刻，读侧无法把两者分开。
+// （Rollup、Prune 与备份上传及保留的末尾）：中途失败若也写，一直失败与正常运行读出的都是一个新鲜的时刻，读侧无法把两者分开。
 func (s *Store) recordMaintenance(ctx context.Context, name string) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO maintenance_state (name, finished_at) VALUES (?, ?)

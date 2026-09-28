@@ -158,7 +158,11 @@ service AdminService {
   rpc GetSettings(GetSettingsRequest) returns (GetSettingsResponse) {
     option (probe.v1.access) = ACCESS_READ;
   }
-  // 整体替换公开页外观，总闸 public_enabled 缺席时保持不变，并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
+  // 两层备份的成功时刻与当前进程观察到的故障；不返回目标凭据或远端错误原文。
+  rpc GetBackupStatus(GetBackupStatusRequest) returns (GetBackupStatusResponse) {
+    option (probe.v1.access) = ACCESS_READ;
+  }
+  // 按组更新：外观五项任一非空即整体替换；总闸、国家查询与 backup 缺席时保持不变。至少给出一组，并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
   // 约束与期望取值，什么都不写入。
   rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
@@ -610,7 +614,7 @@ enum GeoBackend {
   GEO_BACKEND_MMDB = 2;
 }
 
-// 公开页设置、国家查询（§4.9）与备份（§6.7）。外观五项整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。
+// 公开页设置、国家查询（§4.9）与备份（§6.7）。外观五项任一非空时整体替换，theme 必填；五项全空表示不改外观。
 // 公开页总闸、国家查询开关与服务地址、backup 缺失表示不改：关站是对外可见的中断，HTTP 后端下国家查询两项决定 hub
 // 是否、向谁发送节点地址，备份承载目标、凭据与失败通知渠道，只改外观的旧客户端与脚本都不得顺手改掉它们。
 // GetSettings 与 UpdateSettings 的响应总带总闸、国家查询两项与 backup，并回显 hub 实际选定的国家查询后端（geo_backend、
@@ -697,6 +701,29 @@ message BackupNotify {
 }
 message GetSettingsRequest {}
 message GetSettingsResponse { Settings settings = 1; }
+message GetBackupStatusRequest {}
+message GetBackupStatusResponse {
+  // endpoint、bucket、access key、secret 全部非空才启用。
+  bool enabled = 1;
+  BackupLayerStatus config = 2;
+  BackupLayerStatus metrics = 3;
+}
+message BackupLayerStatus {
+  // UTC Unix 秒；从未成功完成整轮时缺席，重启后仍可读。
+  optional int64 last_success_at = 1;
+  // 无当前故障时缺席。配置层未恢复标记与事件一起持久化，重启后继续通知状态机；
+  // 重启后尚未重新观察的类别为 unrecovered。指标层故障仅在进程内保存。
+  BackupFailure failure = 2;
+}
+message BackupFailure {
+  // snapshot、client、upload、list、delete、cleanup、record、retention_config、settings、unrecovered；
+  // S3 失败在阶段后加 /transport、/http_status、/request 或 /response，不含错误原文。
+  string category = 1;
+  // 当前连续故障首次被观察到的 UTC Unix 秒，失败类别变化不会重置。
+  int64 since_at = 2;
+  // 远端 HTTP 状态码；未收到 HTTP 错误应答或重启后尚未观察时为 0，不返回远端原文。
+  int32 status_code = 3;
+}
 message UpdateSettingsRequest { Settings settings = 1; }
 // hub 实际保存的值：标题已清洗，主色已转小写。
 message UpdateSettingsResponse { Settings settings = 1; }

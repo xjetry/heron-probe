@@ -3,8 +3,9 @@ import { type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { SAVE_SETTINGS, useAdoptSavedSettings, useSettingsSaving } from "../api/saveSettings";
-import { AdminService, type BackupSettings, type Settings } from "../gen/probe/v1/admin_pb";
+import { AdminService, type BackupSettings } from "../gen/probe/v1/admin_pb";
 import { liveIds } from "../lib/ids";
+import { MAX_BACKUP_CHANNELS } from "../lib/backup";
 import { Picks } from "./Picks";
 
 // hasSecret 只来自 hub 的读侧，表单不改它；secret 只写，不从读侧复制进草稿，成功保存后随草稿重建而清空。
@@ -21,15 +22,11 @@ const backupDraft = (b?: BackupSettings): BackupDraft => ({
   channelIds: new Set(b?.notify?.channelIds ?? []), secret: undefined, hasSecret: b?.hasSecret ?? false,
 });
 
-export type SavedAppearance = Pick<Settings, "title" | "theme" | "accentColor" | "logo" | "customCss">;
-
-// 备份设置单独一个表单。UpdateSettings 对外观五项整体替换，所以这里一并提交外观，取的是 hub 当前的已保存值（appearance），
-// 不是外观表单的草稿：只改备份不会顺带保存外观的未保存改动。总闸与国家查询两项不提交（appearance 里没有它们），hub 对
-// 缺席的这几项不改；外观表单与查询表单不提交 backup，hub 对缺席的 backup 不改。因为连带重发外观，保存与其余设置表单
-// 互斥（SAVE_SETTINGS）。
+// UpdateSettings 按组更新，备份表单只提交 backup，避免用旧快照覆盖其它表单或脚本刚保存的设置。
+// 三个表单共用 SAVE_SETTINGS 互斥与回显缓存，保存响应不会按完成顺序覆盖更新的设置。
 // 提交的 backup 恒带 notify（表单显示的就是完整的渠道选择，与当前渠道列表求交）；secret 留空即缺席，保留 hub 已存的值；
 // hasSecret 不提交。渠道列表读到之前不渲染表单：拿空列表求交会把已选渠道当作显式空集合提交，等于关掉备份失败通知。
-export function BackupSettingsForm({ current, appearance }: { current: BackupSettings | undefined; appearance: SavedAppearance }) {
+export function BackupSettingsForm({ current }: { current: BackupSettings | undefined }) {
   const adoptSaved = useAdoptSavedSettings();
   const channels = useQuery(AdminService.method.listNotifyChannels, {});
   const [draft, setDraft] = useState<BackupDraft | null>(null);
@@ -56,7 +53,7 @@ export function BackupSettingsForm({ current, appearance }: { current: BackupSet
     e.preventDefault();
     if (!e.currentTarget.checkValidity() || saving) return;
     const { channelIds, hasSecret: _, ...rest } = form;
-    update.mutate({ settings: { ...appearance, backup: { ...rest, notify: { channelIds: liveIds(channelIds, channelList) } } } });
+    update.mutate({ settings: { backup: { ...rest, notify: { channelIds: liveIds(channelIds, channelList) } } } });
   };
   return (
     <>
@@ -83,7 +80,7 @@ export function BackupSettingsForm({ current, appearance }: { current: BackupSet
             <label>指标保留份数<input type="number" required min={1} max={1000} step={1} value={form.metricsKeep} onChange={(e) => edit({ metricsKeep: Number(e.target.value) })} /></label>
           </div>
           <p className="muted">配置周期 60 至 86400 秒，指标周期 3600 至 604800 秒；保留份数均为 1 至 1000。回到默认值请填写 300、86400、48、14。</p>
-          <Picks legend="备份通知渠道" items={channelList} selected={form.channelIds} onChange={(channelIds) => edit({ channelIds })} />
+          <Picks legend="备份通知渠道" max={MAX_BACKUP_CHANNELS} items={channelList} selected={form.channelIds} onChange={(channelIds) => edit({ channelIds })} />
           {update.error != null && <p role="alert" className="error">{errorText(update.error)}</p>}
           {saved && <p role="status">已保存。</p>}
           <button type="submit">保存</button>

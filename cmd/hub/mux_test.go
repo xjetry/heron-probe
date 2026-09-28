@@ -16,6 +16,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/api"
 	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/probe/internal/hub/backup"
 	"github.com/xjetry/probe/internal/hub/geo"
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
@@ -79,7 +80,7 @@ func newTestMuxOn(t *testing.T, st *store.Store, clk clock.Clock, themeOriginFla
 	if err := notifier.Requeue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	admin := api.New(api.Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, Location: time.UTC, Retention: store.DefaultRetention, Geo: geo.NewHTTP(client)}, st, a, l, svc, book, reg, alerts, notifier, clk, slog.Default())
+	admin := api.New(api.Config{Backups: backup.New(st, notifier, clk, slog.Default()), TTL: 30 * time.Second, ReportInterval: 10 * time.Second, Location: time.UTC, Retention: store.DefaultRetention, Geo: geo.NewHTTP(client)}, st, a, l, svc, book, reg, alerts, notifier, clk, slog.Default())
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: 10 * time.Second, Location: time.UTC}, st, l, book, reg, clk, slog.Default())
 	return newHandler(routes{
 		agent: mountOf(svc.Handler()), admin: mountOf(admin.Handler()), public: mountOf(pub.Handler()), page: web.PublicHandler(),

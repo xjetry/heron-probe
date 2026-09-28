@@ -4,6 +4,7 @@ import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { SAVE_SETTINGS, useAdoptSavedSettings, useSettingsSaving } from "../api/saveSettings";
 import { BackupSettingsForm } from "../components/BackupSettingsForm";
+import { BackupStatus } from "../components/BackupStatus";
 import { AdminService, GeoBackend, type Settings } from "../gen/probe/v1/admin_pb";
 import { LOGO_TYPES, MAX_TITLE_CHARS, THEMES, sizeProblems, type Theme } from "../lib/appearance";
 import { ANSWERS_PER_NODE } from "../lib/country";
@@ -140,7 +141,8 @@ export function Appearance() {
         </fieldset>
       </form>
       <GeoLookup current={gate.data.settings} />
-      <BackupSettingsForm current={gate.data.settings?.backup} appearance={toDraft(gate.data.settings)} />
+      <BackupSettingsForm current={gate.data.settings?.backup} />
+      <BackupStatus />
     </section>
   );
 }
@@ -148,9 +150,8 @@ export function Appearance() {
 type GeoDraft = { geoEnabled: boolean; geoUrl: string };
 const toGeoDraft = (s: Settings | undefined): GeoDraft => ({ geoEnabled: s?.geoEnabled ?? false, geoUrl: s?.geoUrl ?? "" });
 
-// 国家 / 地区查询的开关与服务地址。UpdateSettings 对外观五项整体替换，这里提交的外观取 hub 当前的已保存值（current），
-// 不取上面表单的草稿：只改查询设置不会顺带保存外观的未保存改动。总闸与备份不提交（toDraft 不取它们），hub 对缺席的
-// 总闸与 backup 不改。因为连带重发外观，保存与其余设置表单互斥（SAVE_SETTINGS）。出网告知按 hub 回显的部署后端裁决，
+// 国家查询只提交自己的两个 presence 字段，不回写外观、总闸或备份。三个表单共用保存互斥与回显缓存。
+// 出网告知按 hub 回显的部署后端裁决，
 // 不由表单草稿决定。
 function GeoLookup({ current }: { current: Settings | undefined }) {
   const adoptSaved = useAdoptSavedSettings();
@@ -174,7 +175,7 @@ function GeoLookup({ current }: { current: Settings | undefined }) {
   };
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (!saving) update.mutate({ settings: { ...toDraft(current), ...form } });
+    if (!saving) update.mutate({ settings: form });
   };
   return (
     <>
