@@ -16,6 +16,7 @@ import (
 	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
@@ -28,7 +29,7 @@ func TestServePublicSwitchBothSources(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := auth.New(st, clk, slog.Default()).SetPassword(t.Context(), "public-switch-password"); err != nil {
+			if err := auth.New(st, probe.New(st, slog.Default()), clk, slog.Default()).SetPassword(t.Context(), "public-switch-password"); err != nil {
 				t.Fatal(err)
 			}
 			if err := st.Close(); err != nil {
