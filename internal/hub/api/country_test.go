@@ -137,8 +137,10 @@ func TestUpdateSettingsGeoFieldsAbsentMeansUnchanged(t *testing.T) {
 	in := withSettings(func(s *probev1.Settings) {
 		s.GeoEnabled, s.GeoUrl = proto.Bool(true), proto.String("http://geo.example:8080/lookup?addr={ip}")
 	})
-	if got := saveSettings(t, h, in); !proto.Equal(got, in) {
-		t.Fatalf("echo = %v, want %v", got, in)
+	want := proto.Clone(in).(*probev1.Settings)
+	want.Backup = defaultBackup()
+	if got := saveSettings(t, h, in); !proto.Equal(got, want) {
+		t.Fatalf("echo = %v, want %v", got, want)
 	}
 	got := saveSettings(t, h, withSettings(func(s *probev1.Settings) { s.Title = "只改外观" }))
 	if !got.GetGeoEnabled() || got.GetGeoUrl() != "http://geo.example:8080/lookup?addr={ip}" || got.GetTitle() != "只改外观" {

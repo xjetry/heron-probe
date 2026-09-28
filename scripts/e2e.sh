@@ -408,9 +408,9 @@ initial_interval_s=$(startup_seconds "$work/agent-arm64.log" "agent starting" in
 #   offline_sweep，与 ttl 无关。连续失败没有上限可推：hub 一直不应答时节点本来就没有恢复上报。
 # 投递 delivery_retry_wait：渠道失败可重试且存储正常时，一条投递依次等过 internal/hub/alert/queue.go
 #   的 backoff 各项，总和即 DeliveryRetryWait。存储失败走 worker 级退避（1s 起翻倍、上限 1 分钟），
-#   没有总量上界，不在预算内；e2e 的库在本机磁盘上，视为正常。渠道客户端 10s 超时（notify.go 的
-#   NewHTTPClient）只在接收器挂住时才会用满；接收器在本机回环、已由 TestNotifyChannel 验证能应答，
-#   上限不为此留量。
+#   没有总量上界，不在预算内；e2e 的库在本机磁盘上，视为正常。渠道客户端的总时限（serve 构造通知客户端
+#   时交给 outbound.NewClient 的 alert.NotifyTimeout，定义在 internal/hub/alert/queue.go）只在接收器挂住时
+#   才会用满；接收器在本机回环、已由 TestNotifyChannel 验证能应答，上限不为此留量。
 # 余量一个 offline_sweep：容纳 agent 进程启动与巡检本身的耗时推迟下一轮。docker kill/start 在计数
 #   开始之前完成，不占预算。
 wait_alert_firing_s=$((ttl_s + sweep_s + retry_wait_s + sweep_s))

@@ -121,21 +121,21 @@ func TestGeoSettingsDefaultsAndPartialUpdate(t *testing.T) {
 		t.Fatalf("never saved: %+v %v", g, err)
 	}
 	on, url := true, "https://geo.example/{ip}"
-	_, g, err := s.SaveSettings(ctx, SettingsUpdate{Theme: "dark", Geo: GeoUpdate{Enabled: &on, URL: &url}})
-	if want := (GeoSettings{Enabled: true, URL: url}); err != nil || g != want {
-		t.Fatalf("save returned %+v %v, want %+v", g, err, want)
+	saved, err := s.SaveSettings(ctx, SettingsUpdate{Theme: "dark", Geo: GeoUpdate{Enabled: &on, URL: &url}})
+	if want := (GeoSettings{Enabled: true, URL: url}); err != nil || saved.Geo != want {
+		t.Fatalf("save returned %+v %v, want %+v", saved.Geo, err, want)
 	}
-	_, g, err = s.SaveSettings(ctx, SettingsUpdate{Theme: "light", Title: "t"})
-	if want := (GeoSettings{Enabled: true, URL: url}); err != nil || g != want {
-		t.Fatalf("appearance-only save returned %+v %v, want %+v", g, err, want)
+	saved, err = s.SaveSettings(ctx, SettingsUpdate{Theme: "light", Title: "t"})
+	if want := (GeoSettings{Enabled: true, URL: url}); err != nil || saved.Geo != want {
+		t.Fatalf("appearance-only save returned %+v %v, want %+v", saved.Geo, err, want)
 	}
 	off := false
-	if _, _, err := s.SaveSettings(ctx, SettingsUpdate{Theme: "light", Geo: GeoUpdate{Enabled: &off}}); err != nil {
+	if _, err := s.SaveSettings(ctx, SettingsUpdate{Theme: "light", Geo: GeoUpdate{Enabled: &off}}); err != nil {
 		t.Fatal(err)
 	}
-	site, g, err := s.Settings(ctx)
-	if want := (GeoSettings{URL: url}); err != nil || g != want || site != (SiteSettings{Theme: "light", PublicEnabled: true}) {
-		t.Fatalf("settings = %+v %+v %v, want %+v", site, g, err, want)
+	st, err := s.Settings(ctx)
+	if want := (GeoSettings{URL: url}); err != nil || st.Geo != want || st.Site != (SiteSettings{Theme: "light", PublicEnabled: true}) {
+		t.Fatalf("settings = %+v %+v %v, want %+v", st.Site, st.Geo, err, want)
 	}
 }
 
@@ -145,7 +145,7 @@ func TestGeoEnabledIsZeroOrOneAndOtherValuesRefuseToOpen(t *testing.T) {
 	s, _ := openAt(t)
 	ctx := t.Context()
 	for on, want := range map[bool]string{true: "1", false: "0"} {
-		if _, _, err := s.SaveSettings(ctx, SettingsUpdate{Theme: DefaultTheme, Geo: GeoUpdate{Enabled: &on}}); err != nil {
+		if _, err := s.SaveSettings(ctx, SettingsUpdate{Theme: DefaultTheme, Geo: GeoUpdate{Enabled: &on}}); err != nil {
 			t.Fatal(err)
 		}
 		var got string

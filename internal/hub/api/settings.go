@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/netip"
 	"net/url"
 	"regexp"
@@ -38,8 +39,8 @@ var (
 	accentRE  = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 )
 
-// cleanSettings 校验并清洗一次更新：外观整体替换；总闸与国家查询两项保留 presence 交给存储层处理（缺席即不变，见
-// store.SettingsUpdate）。任一项不合约束即返回错误，调用方什么都不写。
+// cleanSettings 校验并清洗一次更新：外观整体替换；总闸、国家查询两项与 backup 保留 presence 交给存储层处理（缺席即
+// 不变，见 store.SettingsUpdate；backup 各项的 presence 见 cleanBackup）。任一项不合约束即返回错误，调用方什么都不写。
 // 标题会显示在页面与标签页上，与节点名（cleanName）同用 sanitize.Text 清洗；logo 与 CSS 是数据与代码，改写任何字节都可能改变含义，只校验不清洗。
 func cleanSettings(in *probev1.Settings) (store.SettingsUpdate, error) {
 	if n := len(in.GetTitle()); n > maxTitleBytes {
@@ -65,9 +66,13 @@ func cleanSettings(in *probev1.Settings) (store.SettingsUpdate, error) {
 	if err != nil {
 		return store.SettingsUpdate{}, err
 	}
+	backup, err := cleanBackup(in.GetBackup())
+	if err != nil {
+		return store.SettingsUpdate{}, err
+	}
 	return store.SettingsUpdate{
 		Title: title, Theme: in.GetTheme(), AccentColor: strings.ToLower(in.GetAccentColor()),
-		Logo: in.GetLogo(), CustomCSS: in.GetCustomCss(), PublicEnabled: in.PublicEnabled, Geo: geoUpdate,
+		Logo: in.GetLogo(), CustomCSS: in.GetCustomCss(), PublicEnabled: in.PublicEnabled, Geo: geoUpdate, Backup: backup,
 	}, nil
 }
 
@@ -175,18 +180,18 @@ func cleanGeo(in *probev1.Settings) (store.GeoUpdate, error) {
 	return out, nil
 }
 
-func settingsProto(st store.SiteSettings, g store.GeoSettings) *probev1.Settings {
-	return &probev1.Settings{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS,
-		PublicEnabled: proto.Bool(st.PublicEnabled), GeoEnabled: proto.Bool(g.Enabled), GeoUrl: proto.String(g.URL)}
+func settingsProto(st store.Settings) *probev1.Settings {
+	return &probev1.Settings{Title: st.Site.Title, Theme: st.Site.Theme, AccentColor: st.Site.AccentColor, Logo: st.Site.Logo, CustomCss: st.Site.CustomCSS,
+		PublicEnabled: proto.Bool(st.Site.PublicEnabled), GeoEnabled: proto.Bool(st.Geo.Enabled), GeoUrl: proto.String(st.Geo.URL), Backup: backupProto(st.Backup)}
 }
 
 func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.GetSettingsRequest]) (*connect.Response[probev1.GetSettingsResponse], error) {
-	st, g, err := s.store.Settings(ctx)
+	st, err := s.store.Settings(ctx)
 	if err != nil {
 		s.log.Error("reading settings failed", "err", err)
 		return nil, internalError("reading settings failed")
 	}
-	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: settingsProto(st, g)}), nil
+	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: settingsProto(st)}), nil
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probev1.UpdateSettingsRequest]) (*connect.Response[probev1.UpdateSettingsResponse], error) {
@@ -194,12 +199,20 @@ func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probe
 	if err != nil {
 		return nil, err
 	}
-	st, g, err := s.store.SaveSettings(ctx, in)
+	saved, err := s.store.SaveSettings(ctx, in)
 	if err != nil {
+		var missing store.NotFoundError
+		var outOfRange store.BackupRangeError
+		switch {
+		case errors.As(err, &missing) && missing.Kind == store.ObjectNotifyChannel:
+			return nil, invalid("backup.notify.channel_ids: channel %d does not exist", missing.ID)
+		case errors.As(err, &outOfRange):
+			return nil, invalid("%s", outOfRange)
+		}
 		s.log.Error("saving settings failed", "err", err)
 		return nil, internalError("saving settings failed")
 	}
-	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: settingsProto(st, g)}), nil
+	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: settingsProto(saved)}), nil
 }
 
 func (s *Service) GetStorageStats(ctx context.Context, _ *connect.Request[probev1.GetStorageStatsRequest]) (*connect.Response[probev1.GetStorageStatsResponse], error) {

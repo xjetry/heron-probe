@@ -1,4 +1,4 @@
-import { isFieldSet, type MessageInitShape } from "@bufbuild/protobuf";
+import { isFieldSet } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,50 +6,15 @@ import { SettingsSchema, type UpdateSettingsRequest } from "../gen/probe/v1/admi
 import { MAX_LOGO_BYTES } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
+import { statefulHub } from "../test/settingsHub";
 import { Appearance } from "./Appearance";
 
 const current = { title: "机房", theme: "dark", accentColor: "#123abc", logo: "", customCss: "body { margin: 0 }" };
 const routes = [{ path: "/appearance", Component: Appearance }];
-const render = (impl: AdminImpl) => renderWithAdmin({ getSettings: async () => ({ settings: current }), ...impl }, routes, "/appearance");
+const render = (impl: AdminImpl) => renderWithAdmin({ getSettings: async () => ({ settings: current }), listNotifyChannels: async () => ({ channels: [] }), ...impl }, routes, "/appearance");
 
 async function form() {
   return within(await screen.findByRole("form", { name: "公开页外观" }));
-}
-
-// 有状态的 hub 替身，与 store 的 SaveSettings 同语义：外观整体替换（标题去首尾空白，代表 hub 的清洗），总闸与国家查询
-// 两项缺席即不变，回显保存后的全部设置。set 模拟别处（另一个面板、脚本）改了设置；holdReads 让之后的 GetSettings 挂起
-// 到 releaseReads；failReads 让之后的 GetSettings 一直失败（hub 重启、网络中断），保存后的刷新因此拿不到新值。
-type SettingsInit = MessageInitShape<typeof SettingsSchema>;
-
-function statefulHub(initial: SettingsInit) {
-  let state: SettingsInit = initial;
-  const sent: UpdateSettingsRequest[] = [];
-  let held: Promise<void> | null = null;
-  let release = () => {};
-  let failing = false;
-  const impl: AdminImpl = {
-    getSettings: async () => {
-      if (failing) throw new ConnectError("hub restarting", Code.Unavailable);
-      if (held) await held;
-      return { settings: state };
-    },
-    updateSettings: async (req) => {
-      sent.push(req);
-      const s = req.settings!;
-      state = {
-        title: s.title.trim(), theme: s.theme, accentColor: s.accentColor, logo: s.logo, customCss: s.customCss,
-        publicEnabled: s.publicEnabled ?? state.publicEnabled, geoEnabled: s.geoEnabled ?? state.geoEnabled, geoUrl: s.geoUrl ?? state.geoUrl,
-      };
-      return { settings: state };
-    },
-  };
-  return {
-    impl, sent, state: () => state,
-    set: (patch: SettingsInit) => { state = { ...state, ...patch }; },
-    holdReads: () => { held = new Promise((r) => { release = () => { held = null; r(); }; }); },
-    releaseReads: () => release(),
-    failReads: () => { failing = true; },
-  };
 }
 
 it("公开页总闸显示当前值并显式提交 false 与 true", async () => {
@@ -307,8 +272,11 @@ it("上次保存失败后换 logo，旧的错误清掉", async () => {
 
 describe("国家 / 地区查询", () => {
   const geoForm = async () => within(await screen.findByRole("form", { name: "国家 / 地区查询" }));
-  // hub 的 GetSettings 总带总闸与查询两项。
-  const withGeo = { ...current, publicEnabled: true, geoEnabled: false, geoUrl: "https://ipinfo.io/{ip}/country" };
+  // hub 的 GetSettings 总带总闸、查询两项与 backup。
+  const withGeo = {
+    ...current, publicEnabled: true, geoEnabled: false, geoUrl: "https://ipinfo.io/{ip}/country",
+    backup: { region: "auto", configIntervalS: 300, metricsIntervalS: 86400, configKeep: 48, metricsKeep: 14, notify: { channelIds: [] }, hasSecret: false },
+  };
 
   it("开关文案写明开启即把节点地址发给哪个服务，随输入的服务地址更新", async () => {
     render({ getSettings: async () => ({ settings: withGeo }) });
@@ -329,9 +297,9 @@ describe("国家 / 地区查询", () => {
     expect(description).toHaveAccessibleDescription(/节点停在同一地址时查得一次即止；hub 记住每个节点最近 4 个地址的答案，在这些地址之间切换不再外呼，\s*超过 4 个地址轮换或 hub 重启后会再查。/);
   });
 
-  // 外观表单里未保存的总闸同样不随查询表单提交：查询表单不带总闸，hub 对缺席的总闸不改。外观表单的开关仍显示用户
-  // 动过的值，不被查询表单保存后写进缓存的回显（总闸仍开）盖掉。
-  it("保存提交开关与服务地址，外观取 hub 的已保存值而不是外观表单的草稿，也不带总闸", async () => {
+  // 外观表单里未保存的总闸同样不随查询表单提交：查询表单不带总闸与 backup，hub 对缺席的这两项不改。外观表单的开关仍
+  // 显示用户动过的值，不被查询表单保存后写进缓存的回显（总闸仍开）盖掉。
+  it("保存提交开关与服务地址，外观取 hub 的已保存值而不是外观表单的草稿，也不带总闸与备份", async () => {
     const hub = statefulHub(withGeo);
     const sent = hub.sent;
     render(hub.impl);
@@ -345,6 +313,7 @@ describe("国家 / 地区查询", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].settings).toMatchObject({ ...current, geoEnabled: true, geoUrl: "https://ipinfo.io/{ip}/country" });
     expect(isFieldSet(sent[0].settings!, SettingsSchema.field.publicEnabled)).toBe(false);
+    expect(isFieldSet(sent[0].settings!, SettingsSchema.field.backup)).toBe(false);
     expect(appearance.getByLabelText("标题")).toHaveValue("未保存的标题");
     expect(appearance.getByRole("checkbox", { name: "启用公开页" })).not.toBeChecked();
   });
@@ -388,4 +357,31 @@ describe("国家 / 地区查询", () => {
     expect(sent[0].settings?.geoEnabled).toBeUndefined();
     expect(sent[0].settings?.geoUrl).toBeUndefined();
   });
+});
+
+// 三个设置表单共用 SAVE_SETTINGS（见 api/saveSettings.ts）：任一个的保存在途时，另外两个的保存按钮禁用，直接触发 submit
+// 也不发请求；在途的保存连同之后的刷新结束，其余表单恢复。逐个把每个表单当作在途的一方：某个表单的保存漏带这把键时，
+// 以它为在途方的一组红；某个表单不按 useSettingsSaving 禁用自己时，以其余表单为在途方的两组红。
+describe("设置表单的保存互斥", () => {
+  const forms = ["公开页外观", "国家 / 地区查询", "备份到 S3"];
+  for (const busy of forms) {
+    it(`${busy}的保存在途时其余两个表单不能提交`, async () => {
+      const hub = statefulHub({ ...current, publicEnabled: true, geoEnabled: false, geoUrl: "https://ipinfo.io/{ip}/country" });
+      render(hub.impl);
+      const others = forms.filter((name) => name !== busy);
+      const saveButton = async (name: string) => within(await screen.findByRole("form", { name })).getByRole("button", { name: "保存" });
+      for (const name of others) await screen.findByRole("form", { name });
+      hub.holdSaves();
+      fireEvent.click(await saveButton(busy));
+      await waitFor(() => expect(hub.sent).toHaveLength(1));
+      for (const name of others) {
+        await waitFor(async () => expect(await saveButton(name)).toBeDisabled());
+        fireEvent.submit(screen.getByRole("form", { name }));
+      }
+      hub.releaseSaves();
+      expect(await within(screen.getByRole("form", { name: busy })).findByRole("status")).toHaveTextContent("已保存");
+      for (const name of others) await waitFor(async () => expect(await saveButton(name)).toBeEnabled());
+      expect(hub.sent).toHaveLength(1);
+    });
+  }
 });

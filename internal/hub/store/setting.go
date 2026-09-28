@@ -17,18 +17,27 @@ type SiteAppearance struct {
 	CustomCSS   string
 }
 
-// SiteSettings 是已解析默认值的公开页设置：外观与总闸。国家查询的设置见 GeoSettings。
+// SiteSettings 是已解析默认值的公开页设置：外观与总闸。国家查询与备份的设置见 GeoSettings、BackupSettings。
 type SiteSettings struct {
 	SiteAppearance
 	PublicEnabled bool
 }
 
-// SettingsUpdate 是 SaveSettings 的输入：外观整体替换；总闸与 Geo 里的各项为 nil 时不修改。
-// 更新与读取分用不同类型，避免把缺席误当作关闭，也避免向读者泄漏未解析的值。
+// Settings 是 readSettings 读出的全部设置，三组来自同一个快照。
+type Settings struct {
+	Site   SiteSettings
+	Geo    GeoSettings
+	Backup BackupSettings
+}
+
+// SettingsUpdate 是 SaveSettings 的输入：外观整体替换；总闸与 Geo 里的各项为 nil 时不修改；Backup 为 nil 时不写任何
+// 备份键，非 nil 时各项按 BackupSettingsUpdate 的语义写。更新与读取分用不同类型，避免把缺席误当作关闭，也避免向读者
+// 泄漏未解析的值。
 type SettingsUpdate struct {
 	SiteAppearance
 	PublicEnabled *bool
 	Geo           GeoUpdate
+	Backup        *BackupSettingsUpdate
 }
 
 // DefaultTheme 是从未保存过外观时的明暗：跟随访客系统。
@@ -44,7 +53,8 @@ type settingField struct {
 
 // fields 列出每项外观的键，readSettings 与 SaveSettings 都按它读写：SiteAppearance 新增的字段不在这里登记，
 // 就存不进库、读出来恒为空（TestSiteAppearanceRoundTripsEveryField 逐字段核对）。键名是库里的持久标识，改名要迁移。
-// site.* 下除这五个外观键外还有总闸（publicEnabledKey）；国家查询占 geo.* 两个键（见 GeoSettings）。
+// site.* 下除这五个外观键外还有总闸（publicEnabledKey）；国家查询占 geo.* 两个键（见 GeoSettings）；备份占 backup.*
+// 与 notify.backup_channels（见 BackupSettings）。
 func (a *SiteAppearance) fields() []settingField {
 	return []settingField{
 		{"site.title", &a.Title},
@@ -100,84 +110,115 @@ func parseFlag(key, v string) (bool, error) {
 	return v == "1", nil
 }
 
+// putSetting 是 setting 表唯一的写入语句：外观、开关、国家查询、备份与渠道列表都经它，写事务由调用方给。
+func putSetting(tx *sql.Tx, key, value string) error {
+	_, err := tx.Exec("INSERT INTO setting (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", key, value)
+	return err
+}
+
 type querier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
-// readSettings 用一条 SELECT 读出全部 site.*（外观与总闸）与 geo.* 键：单条语句在 WAL 下读同一个快照，SaveSettings
-// 又在一个写事务里写全部给出的键，两者合起来保证读者拿不到新旧混合的设置。改成逐键或分组查询会失去前一半。
-func readSettings(ctx context.Context, q querier) (SiteSettings, GeoSettings, error) {
+// readSettings 用一条 SELECT 读出全部 site.*（外观与总闸）、geo.*、backup.* 与备份通知渠道键：单条语句在 WAL 下读同一个
+// 快照，SaveSettings 又在一个写事务里写全部给出的键，两者合起来保证读者拿不到新旧混合的设置。改成逐键或分组查询会
+// 失去前一半。库里有必须合法才能解释的编码：开关只认 0 / 1（parseFlag），备份的四个数值须在 backupNumber 的范围内
+// （parseStored），渠道列表须是 JSON 整数数组（parseStoredChannels）；不合即返回错误，不按默认值猜。
+func readSettings(ctx context.Context, q querier) (Settings, error) {
 	// 只有键缺失表示默认开放；非法的已保存值不能被解释成允许公开（parseFlag 报错）。
-	site := SiteSettings{SiteAppearance: SiteAppearance{Theme: DefaultTheme}, PublicEnabled: true}
-	geo := GeoSettings{URL: DefaultGeoURL}
-	strs := map[string]*string{geoURLKey: &geo.URL}
-	for _, f := range site.fields() {
+	out := Settings{
+		Site:   SiteSettings{SiteAppearance: SiteAppearance{Theme: DefaultTheme}, PublicEnabled: true},
+		Geo:    GeoSettings{URL: DefaultGeoURL},
+		Backup: backupDefaults(),
+	}
+	strs := map[string]*string{geoURLKey: &out.Geo.URL}
+	for _, f := range out.Site.fields() {
 		strs[f.key] = f.value
 	}
-	flags := map[string]*bool{publicEnabledKey: &site.PublicEnabled, geoEnabledKey: &geo.Enabled}
-	rows, err := q.QueryContext(ctx, "SELECT key, value FROM setting WHERE key GLOB 'site.*' OR key GLOB 'geo.*'")
+	for _, f := range out.Backup.texts() {
+		strs[f.key] = f.value
+	}
+	flags := map[string]*bool{publicEnabledKey: &out.Site.PublicEnabled, geoEnabledKey: &out.Geo.Enabled}
+	numbers := map[string]numberField{}
+	for _, f := range out.Backup.numbers() {
+		numbers[f.n.key] = f
+	}
+	rows, err := q.QueryContext(ctx, "SELECT key, value FROM setting WHERE key GLOB 'site.*' OR key GLOB 'geo.*' OR key GLOB 'backup.*' OR key = ?", backupChannelsKey)
 	if err != nil {
-		return SiteSettings{}, GeoSettings{}, err
+		return Settings{}, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var k, v string
 		if err := rows.Scan(&k, &v); err != nil {
-			return SiteSettings{}, GeoSettings{}, err
+			return Settings{}, err
 		}
 		if p := flags[k]; p != nil {
 			if *p, err = parseFlag(k, v); err != nil {
-				return SiteSettings{}, GeoSettings{}, err
+				return Settings{}, err
 			}
 		} else if p := strs[k]; p != nil {
 			*p = v
+		} else if f, ok := numbers[k]; ok {
+			if err := f.parseStored(v); err != nil {
+				return Settings{}, err
+			}
+		} else if k == backupChannelsKey {
+			if out.Backup.Channels, err = parseStoredChannels(k, v); err != nil {
+				return Settings{}, err
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return SiteSettings{}, GeoSettings{}, err
+		return Settings{}, err
 	}
-	return site, geo, nil
+	return out, nil
 }
 
-// Settings 读出公开页设置与国家查询设置，两者来自同一个快照。
-func (s *Store) Settings(ctx context.Context) (SiteSettings, GeoSettings, error) {
+// Settings 读出全部设置，三组来自同一个快照。
+func (s *Store) Settings(ctx context.Context) (Settings, error) {
 	return readSettings(ctx, s.r)
 }
 
 func (s *Store) SiteSettings(ctx context.Context) (SiteSettings, error) {
-	site, _, err := readSettings(ctx, s.r)
-	return site, err
+	st, err := readSettings(ctx, s.r)
+	return st.Site, err
 }
 
 func (s *Store) GeoSettings(ctx context.Context) (GeoSettings, error) {
-	_, geo, err := readSettings(ctx, s.r)
-	return geo, err
+	st, err := readSettings(ctx, s.r)
+	return st.Geo, err
+}
+
+func (s *Store) BackupSettings(ctx context.Context) (BackupSettings, error) {
+	st, err := readSettings(ctx, s.r)
+	return st.Backup, err
 }
 
 // PublicEnabled 读启动时加载、SaveSettings 提交成功后发布的内存值。
 // 匿名请求与静态资源都要检查总闸，读原子副本避免每次准入都占用数据库连接。
 func (s *Store) PublicEnabled() bool { return s.publicEnabled.Load() }
 
-// SaveSettings 在 s.write 的一个事务里写外观五个键、给出的总闸与 Geo 里给出的项，任一条失败整体回滚：库里不会留下
-// 半套设置，与 readSettings 的单条 SELECT 一起保证读侧看不到新旧混合。总闸与 Geo 各项缺席表示不变，不写对应的键。
-// 返回的国家查询设置在同一个事务里读出（未给出的项是库里原值），就是这次写入之后的状态；返回的总闸是给出的值，缺席时
-// 是锁内的内存值。失败时不发布内存值。
+// SaveSettings 在 s.write 的一个事务里写外观五个键、给出的总闸、Geo 里给出的项与给出的备份项，任一条失败整体回滚：
+// 库里不会留下半套设置，与 readSettings 的单条 SELECT 一起保证读侧看不到新旧混合。总闸、Geo 各项与 Backup 缺席表示
+// 不变，不写对应的键。备份的数值范围与渠道是否存在也在这个事务里裁决（saveBackup）：出范围返回 BackupRangeError、
+// 渠道不存在返回 NotFoundError，同样整体回滚。渠道的存在性在这个写事务里核对，删渠道（DeleteNotifyChannel）在它自己
+// 的写事务里把渠道从列表摘除，两者由写协程串行；改成在事务之外先查再写，两步之间删掉的渠道就会留在列表里。返回值是
+// 同一个事务里写入之后读回的全部设置（未给出的项是库里原值），就是这次提交的状态。失败时不发布内存值。
 //
 // 不变式：publicEnabled 等于库里最近一次提交的总闸键（publicEnabledKey）。前提有二：Open 从库加载它；hub 运行期间
 // 只有这里写这个键（现有离线子命令都不写它；此外改库的途径，如 §6.7 整表覆盖的 restore，必须在 hub 停止时
 // 进行，由下次 Open 重新加载）。runWriter 串行提交，但各调用方醒来后的发布顺序不受它约束：不持 siteWriteMu
 // 时，两次并发保存可以按 A、B 提交却按 B、A 发布，内存与库从此分叉，直到下一次显式保存总闸或重启。所以写者持锁
-// 直到提交与发布都完成。缺席时回显取锁内的内存值，由同一不变式保证它等于库值。读总闸（PublicEnabled）不取
-// 这把锁，读到的是最近一次发布的值。国家查询没有内存副本：读者（GeoSettings）每次读库，回显在写事务里读回，
-// 它的一致性由单个写事务与单条 SELECT 承载，不依赖这把锁。
-func (s *Store) SaveSettings(ctx context.Context, in SettingsUpdate) (SiteSettings, GeoSettings, error) {
+// 直到提交与发布都完成。读总闸（PublicEnabled）不取这把锁，读到的是最近一次发布的值。国家查询与备份没有内存副本：
+// 读者（GeoSettings、BackupSettings）每次读库，回显在写事务里读回，它们的一致性由单个写事务与单条 SELECT 承载，
+// 不依赖这把锁。
+func (s *Store) SaveSettings(ctx context.Context, in SettingsUpdate) (Settings, error) {
 	s.siteWriteMu.Lock()
 	defer s.siteWriteMu.Unlock()
-	site := SiteSettings{SiteAppearance: in.SiteAppearance, PublicEnabled: s.publicEnabled.Load()}
-	puts := site.fields()
+	puts := in.SiteAppearance.fields()
 	if in.PublicEnabled != nil {
-		site.PublicEnabled = *in.PublicEnabled
-		puts = append(puts, flagField(publicEnabledKey, site.PublicEnabled))
+		puts = append(puts, flagField(publicEnabledKey, *in.PublicEnabled))
 	}
 	if in.Geo.Enabled != nil {
 		puts = append(puts, flagField(geoEnabledKey, *in.Geo.Enabled))
@@ -185,22 +226,27 @@ func (s *Store) SaveSettings(ctx context.Context, in SettingsUpdate) (SiteSettin
 	if in.Geo.URL != nil {
 		puts = append(puts, settingField{geoURLKey, in.Geo.URL})
 	}
-	var geo GeoSettings
+	var out Settings
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		for _, f := range puts {
-			if _, err := tx.Exec("INSERT INTO setting (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", f.key, *f.value); err != nil {
+			if err := putSetting(tx, f.key, *f.value); err != nil {
+				return err
+			}
+		}
+		if in.Backup != nil {
+			if err := saveBackup(tx, in.Backup); err != nil {
 				return err
 			}
 		}
 		var err error
-		_, geo, err = readSettings(ctx, tx)
+		out, err = readSettings(ctx, tx)
 		return err
 	})
 	if err != nil {
-		return SiteSettings{}, GeoSettings{}, err
+		return Settings{}, err
 	}
 	if in.PublicEnabled != nil {
-		s.publicEnabled.Store(site.PublicEnabled)
+		s.publicEnabled.Store(out.Site.PublicEnabled)
 	}
-	return site, geo, nil
+	return out, nil
 }

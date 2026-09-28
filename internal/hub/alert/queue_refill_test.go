@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xjetry/probe/internal/hub/outbound"
 	"github.com/xjetry/probe/internal/hub/store"
 	"github.com/xjetry/probe/internal/testwait"
 )
@@ -56,7 +57,7 @@ func TestQueueRefillsOverflowWithinProcess(t *testing.T) {
 				must(t, err)
 				events[i] = ev
 			}
-			q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
+			q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, f.log)
 			var stop func()
 			if running {
 				q.Enqueue(events[0])
@@ -132,7 +133,7 @@ func TestQueueDeduplicatesQueuedAndInflightIDs(t *testing.T) {
 			defer func() { release.Do(func() { close(gate) }); srv.Close() }()
 			c := queueChannel(t, f, srv.URL)
 			ev := queueEvent(t, f, c)
-			q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
+			q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, f.log)
 			q.Enqueue(ev)
 			if !running {
 				q.Enqueue(ev)

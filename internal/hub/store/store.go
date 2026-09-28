@@ -111,14 +111,14 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 	}
 	s := &Store{w: w, r: r, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{})}
 	// 打开时读一次设置，同时满足两件事：总闸的内存副本从库加载（不变式见 SaveSettings）；设置里有必须合法才能解释的
-	// 编码（site.public_enabled 与 geo.enabled 只认 0 / 1，见 parseFlag），库里有非法值就拒绝打开。
-	site, _, err := readSettings(context.Background(), r)
+	// 编码（两个开关只认 0 / 1，备份的数值有范围，渠道列表是 JSON 数组，见 readSettings），库里有非法值就拒绝打开。
+	settings, err := readSettings(context.Background(), r)
 	if err != nil {
 		r.Close()
 		w.Close()
 		return nil, err
 	}
-	s.publicEnabled.Store(site.PublicEnabled)
+	s.publicEnabled.Store(settings.Site.PublicEnabled)
 	go s.runWriter()
 	return s, nil
 }
