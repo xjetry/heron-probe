@@ -40,3 +40,9 @@ it("状态查询失败不冒充备份正常，也不阻塞设置表单", async (
   expect(screen.queryByText("无当前故障")).toBeNull();
   expect(screen.getByRole("form", { name: "公开页外观" })).toBeVisible();
 });
+
+it("缺包主题单列提示，主题上传故障给出可操作说明", async () => {
+  renderWithAdmin({ getSettings: async () => ({}), getBackupStatus: async () => ({ themesWithoutPackage: ["old"], config: { failure: { category: "theme_upload/http_status", sinceAt: 1n } } }) }, routes, "/appearance");
+  expect(await screen.findByText("主题 old 未备份：请重新上传原包")).toBeVisible();
+  expect(screen.getByText("主题包上传失败，请检查对象存储连接、凭据和写入权限")).toBeVisible();
+});

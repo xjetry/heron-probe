@@ -17,12 +17,18 @@ const listed = (publicDir = false) => create(ListThemesResponseSchema, {
 });
 const routes = [{ path: "/themes", Component: Themes }];
 const render = (impl: AdminImpl) => renderWithAdmin({
+  getBackupStatus: async () => ({}),
   listThemes: async () => listed(),
   getThemePreview: async () => ({ content: new Uint8Array([137, 80, 78, 71]), contentType: "image/png" }),
   ...impl,
 }, routes, "/themes");
 
 afterEach(() => vi.restoreAllMocks());
+
+it("主题页显示未备份的原包缺口", async () => {
+  render({ getBackupStatus: async () => ({ themesWithoutPackage: ["plain"] }) });
+  expect(await screen.findByText("主题 plain 未备份：请重新上传原包")).toBeVisible();
+});
 
 const pick = (bytes: number[], name = "theme.zip") => {
   const form = screen.getByRole("form", { name: "上传主题" });
