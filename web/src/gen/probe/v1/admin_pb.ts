@@ -1553,7 +1553,8 @@ export type Settings = Message<"probe.v1.Settings"> & {
   geoEnabled?: boolean | undefined;
 
   /**
-   * 国家查询的服务地址：http 或 https，含 {ip} 占位（查询时替换为地址），不含用户信息，不超过 2048 字节。
+   * 国家查询的服务地址：http 或 https，含 {ip} 占位（查询时替换为地址），不含用户信息，不超过 2048 字节。{ip} 不得
+   * 在主机或端口位置，含 [{ip}] 写法：hub 连到哪里只由这项决定，不随节点地址变化；{ip} 必须在路径或查询串里，# 后的片段不随请求发出。
    * 从未保存过时为 https://ipinfo.io/{ip}/country。可回显，不是凭据：请求只带地址，不带任何凭据。
    * 服务的响应去掉首尾空白后必须恰为两个大写字母（ISO 3166-1 alpha-2），状态码必须是 200。
    *
