@@ -3,6 +3,9 @@ package backup
 import (
 	"context"
 	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -101,5 +104,63 @@ func TestStatusShowsPersistedMarkerBeforeFirstTick(t *testing.T) {
 	fresh := restart(m, objects, sink)
 	if got := status(t, fresh).Config; got.Failure != "unrecovered" || !got.Since.Equal(start) {
 		t.Errorf("status before first tick ignored persisted marker: %+v", got)
+	}
+}
+
+type heldObjects struct {
+	*fakeObjects
+	entered, release chan struct{}
+	dir              string
+}
+
+func (h *heldObjects) PutObject(ctx context.Context, key string, r io.ReadSeeker) error {
+	if strings.Contains(key, "/config/") {
+		if f, ok := r.(*os.File); ok {
+			h.dir = filepath.Dir(f.Name())
+		}
+		close(h.entered)
+		<-h.release
+	}
+	return h.fakeObjects.PutObject(ctx, key, r)
+}
+
+// 同一目录下的另一个库 hub.db-2 在途时，hub.db 的启动清理不能删它的暂存目录。
+// hub.db-2 的前缀以 hub.db 的前缀开头，只按前缀匹配会误删；hub.db 自己的残留仍要删掉。
+func TestStartupCleanupSparesOtherDatabases(t *testing.T) {
+	m, clk, objects, _ := setup(t)
+	dir, prefix := m.st.BackupScratch()
+	own, err := os.MkdirTemp(dir, prefix+"*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(dir, "hub.db-2"), clk, slog.Default(), store.MigrateSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	secret := "secret"
+	u := enabledTarget()
+	u.Secret = &secret
+	saveBackup(t, st, u)
+	held := &heldObjects{fakeObjects: &fakeObjects{objects: map[string][]byte{}}, entered: make(chan struct{}), release: make(chan struct{})}
+	other := New(st, &eventSink{}, clk, slog.Default())
+	other.newClient = func(s3.Config) (objectStore, error) { return held, nil }
+	done := make(chan error, 1)
+	go func() { done <- other.tickLayer(t.Context(), 0) }()
+	<-held.entered
+	tick(t, m)
+	_, inFlightErr := os.Stat(held.dir)
+	close(held.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(own); !os.IsNotExist(err) {
+		t.Errorf("own stale scratch remains: %v", err)
+	}
+	if got := status(t, other).Config; inFlightErr != nil || got.Failure != "" || got.LastSuccess.IsZero() {
+		t.Errorf("startup cleanup removed another database's in-flight scratch %s: stat=%v status=%+v", held.dir, inFlightErr, got)
+	}
+	if len(objects.paths) != 2 {
+		t.Errorf("own backups did not run: %v", objects.paths)
 	}
 }

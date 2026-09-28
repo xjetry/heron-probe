@@ -204,8 +204,10 @@ func TestCanceledUploadIsNotFailure(t *testing.T) {
 func TestBackupDirectoryAndStartupCleanup(t *testing.T) {
 	m, _, objects, _ := setup(t)
 	root := filepath.Dir(objects.databasePath)
-	stale := filepath.Join(root, "probe-backup-stale")
-	if err := os.Mkdir(stale, 0700); err != nil {
+	// 残留按生产的命名方式造：随机串的形态若变了，清理认不出它，这里会红。
+	_, prefix := m.st.BackupScratch()
+	stale, err := os.MkdirTemp(root, prefix+"*")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(stale, "snapshot.db"), []byte("partial"), 0600); err != nil {

@@ -158,14 +158,15 @@ func (m *Manager) initialize(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(m.st.BackupDirectory())
+	dir, prefix := m.st.BackupScratch()
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
 	}
 	// serve 装配并运行一个 Manager；initMu 让清理先于该 Manager 两层创建目录完成。
 	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), "probe-backup-") {
-			if err := os.RemoveAll(filepath.Join(m.st.BackupDirectory(), entry.Name())); err != nil {
+		if entry.IsDir() && ownScratch(entry.Name(), prefix) {
+			if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
 				return err
 			}
 		}
@@ -187,6 +188,15 @@ func (m *Manager) initialize(ctx context.Context) error {
 	}
 	m.initialized = true
 	return nil
+}
+
+// ownScratch 判断目录名是否为本库建的暂存目录：prefix 之后恰为 os.MkdirTemp 换上的随机串。
+// 前提是 MkdirTemp 把模式末尾的 * 换成十进制数（Go 1.27 的 os.nextRandom），而每个库的前缀都以"库文件名-"结尾：
+// 另一个库的目录名若以本前缀开头，本前缀之后必然还含那个库名余下的部分和一个 '-'，不会全是数字。
+// 随机串若不再是纯数字，这里只会少删（残留留在盘上），不会删到别的库；启动清理用例用真实 MkdirTemp 造残留，会因此变红。
+func ownScratch(name, prefix string) bool {
+	rest, ok := strings.CutPrefix(name, prefix)
+	return ok && rest != "" && strings.Trim(rest, "0123456789") == ""
 }
 
 func (m *Manager) tickLayer(ctx context.Context, i int) error {
@@ -236,7 +246,9 @@ func (m *Manager) perform(ctx context.Context, cfg store.BackupSettings, layer s
 	if err != nil {
 		return "client", 0, err.Error()
 	}
-	dir, err := os.MkdirTemp(m.st.BackupDirectory(), "probe-backup-")
+	scratchDir, scratchPrefix := m.st.BackupScratch()
+	// 末尾显式加 *：库文件名里若也有 *，MkdirTemp 只替换最后一个。
+	dir, err := os.MkdirTemp(scratchDir, scratchPrefix+"*")
 	if err != nil {
 		return "snapshot", 0, err.Error()
 	}
