@@ -7,6 +7,7 @@ import (
 	"regexp/syntax"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -17,8 +18,8 @@ type budgetKind uint8
 const (
 	// 任意文本按 UTF-8 字节上限取界；每字节最多膨胀六倍，另计引号。
 	budgetEscapedString budgetKind = iota
-	// logo 的 data URL 前缀与标准 base64 字母表均无需 JSON 转义。
-	budgetBase64
+	// logo 的上界从 checkLogo 的接受集推出：前缀集取 JSON 编码最长的前缀，其余字节按字母表里膨胀最大的字符计。
+	budgetLogo
 	// 有限字符串集合取编码最长者；bool 没有字符串集合，取较长的 false。
 	budgetLiteral
 	// protojson 用枚举名编码，取 descriptor 中最长的名字。
@@ -45,7 +46,7 @@ var settingsBudget = map[string]budgetEntry{
 	"title":                     {kind: budgetEscapedString, limit: maxTitleBytes},
 	"theme":                     {kind: budgetLiteral, values: themes},
 	"accent_color":              {kind: budgetLiteral, values: []string{regexpBudgetSample(accentRE.String())}},
-	"logo":                      {kind: budgetBase64, limit: maxLogoBytes},
+	"logo":                      {kind: budgetLogo, limit: maxLogoBytes},
 	"custom_css":                {kind: budgetEscapedString, limit: maxCSSBytes},
 	"public_enabled":            {kind: budgetLiteral},
 	"geo_enabled":               {kind: budgetLiteral},
@@ -95,8 +96,8 @@ func (e budgetEntry) boundary(fd protoreflect.FieldDescriptor) (int, any) {
 	switch {
 	case e.kind == budgetEscapedString && fd.Kind() == protoreflect.StringKind:
 		return maxJSONBytesPerUTF8Byte*e.limit + 2, strings.Repeat("\x01", e.limit)
-	case e.kind == budgetBase64 && fd.Kind() == protoreflect.StringKind:
-		return e.limit + 2, strings.Repeat("A", e.limit)
+	case e.kind == budgetLogo && fd.Kind() == protoreflect.StringKind:
+		return logoBoundary(e.limit)
 	case e.kind == budgetLiteral && fd.Kind() == protoreflect.BoolKind:
 		return len("false"), false
 	case e.kind == budgetLiteral && fd.Kind() == protoreflect.StringKind:
@@ -124,6 +125,44 @@ func (e budgetEntry) boundary(fd protoreflect.FieldDescriptor) (int, any) {
 	default:
 		panic(fmt.Sprintf("settings budget kind %d does not model %s", e.kind, fd.FullName()))
 	}
+}
+
+// logoBoundary 从 checkLogo 的接受集（logoTypes 的前缀 × isBase64Char 的字母表）推 logo 的上界与样本：
+// 前缀取 JSON 编码后最长的一个，余下的字节全部填字母表里 JSON 膨胀最大的字符。字母表或前缀集放宽时上界
+// 随之变大，登记项不用改；字母表只建模单字节字符，出现多字节字符必须先扩展模型。
+func logoBoundary(limit int) (int, any) {
+	worstChar, factor := logoAlphabetWorst()
+	best, sample := -1, ""
+	for _, mediaType := range logoTypes {
+		prefix := logoPrefix(mediaType)
+		if len(prefix) > limit {
+			panic("settings budget: logo prefix " + prefix + " exceeds maxLogoBytes")
+		}
+		if n := jsonStringBytes(prefix) + (limit-len(prefix))*factor; n > best {
+			best, sample = n, prefix+strings.Repeat(worstChar, limit-len(prefix))
+		}
+	}
+	return best, sample
+}
+
+// logoAlphabetWorst 在 isBase64Char 接受的全部字符里找 JSON 编码最长的那个及其每字节膨胀倍数。
+func logoAlphabetWorst() (string, int) {
+	worst, factor := "", 0
+	for r := rune(0); r <= utf8.MaxRune; r++ {
+		if !isBase64Char(r) {
+			continue
+		}
+		if utf8.RuneLen(r) != 1 {
+			panic(fmt.Sprintf("settings budget: logo alphabet accepts multi-byte U+%04X; extend budget model", r))
+		}
+		if n := jsonStringBytes(string(r)) - 2; n > factor {
+			worst, factor = string(r), n
+		}
+	}
+	if factor == 0 {
+		panic("settings budget: logo alphabet is empty")
+	}
+	return worst, factor
 }
 
 // 主色样本从校验正则的有限语言取界，不能把固定六位样本与 accentRE 分开维护。

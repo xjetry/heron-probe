@@ -89,9 +89,9 @@ func TestSettingsBudgetEntriesAreExact(t *testing.T) {
 			return
 		}
 		t.Run(field.path, func(t *testing.T) {
-			// base64 规则依赖 logo 的业务字母表，descriptor 的 string 类型本身不保证无需转义。
-			if field.entry.kind == budgetBase64 && field.path != "logo" {
-				t.Errorf("%s has no base64-only input contract", field.path)
+			// logo 规则从 checkLogo 的接受集推出，只对经它校验的那个字段成立。
+			if field.entry.kind == budgetLogo && field.path != "logo" {
+				t.Errorf("%s is not validated by checkLogo", field.path)
 			}
 			want, sample := field.entry.boundary(field.fd)
 			values := field.entry.values

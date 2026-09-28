@@ -166,6 +166,13 @@ func cleanAppearance(in *probev1.Settings) (store.SiteAppearance, error) {
 // （参数、大小写、非 base64 形态），白名单就能被绕过。公开页只把它放进 <img src>，SVG 在 <img> 里不执行脚本。
 // settingsBudget 的 logo 项按原始字节数加引号计：这里限定的前缀与 base64 字母表无需 JSON 转义。
 // 放宽为接受原始 SVG 等写法会破坏这一编码前提，必须同时调整预算规则与契约用例。
+// logoPrefix 是 checkLogo 接受的 data URL 开头；接受集就是"logoTypes 的每个前缀 × isBase64Char 的字母表"，
+// 再经 Strict 解码。settings_budget.go 的 logoBoundary 从这两个谓词推 logo 的解码预算：前缀与字母表放宽时
+// 上界随之变化，登记项不用改；绕开它们另开一条接受路径，预算就会漏算，所以新的写法必须经过这两个谓词。
+func logoPrefix(mediaType string) string {
+	return "data:" + mediaType + ";base64,"
+}
+
 func checkLogo(logo string) error {
 	if logo == "" {
 		return nil
@@ -173,9 +180,13 @@ func checkLogo(logo string) error {
 	if len(logo) > maxLogoBytes {
 		return invalid("settings.logo must be at most %d bytes as a data: URL; got %d", maxLogoBytes, len(logo))
 	}
-	rest, ok := strings.CutPrefix(logo, "data:")
-	mediaType, data, found := strings.Cut(rest, ";base64,")
-	if !ok || !found || !slices.Contains(logoTypes, mediaType) {
+	data, found := "", false
+	for _, mediaType := range logoTypes {
+		if data, found = strings.CutPrefix(logo, logoPrefix(mediaType)); found {
+			break
+		}
+	}
+	if !found {
 		return invalid("settings.logo must be empty or data:<type>;base64,<data> with <type> one of %s; got a value starting with %q", strings.Join(logoTypes, ", "), head(logo))
 	}
 	const want = "settings.logo: the data after ;base64, must be non-empty standard base64 (A–Z, a–z, 0–9, + and /, padded with =)"
