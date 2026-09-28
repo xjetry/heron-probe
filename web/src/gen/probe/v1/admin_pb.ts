@@ -2074,8 +2074,12 @@ export const BackupLayerStatusSchema: GenMessage<BackupLayerStatus> = /*@__PURE_
  */
 export type BackupFailure = Message<"probe.v1.BackupFailure"> & {
   /**
-   * snapshot、client、upload、list、delete、cleanup、record、retention_config、settings、startup、marker、unrecovered；
+   * snapshot、client、upload、list、delete、cleanup、record、retention_config、settings、startup、marker、unrecovered，
+   * 以及主题同步的 theme_list（列举主题目录）、theme_read（读取数据库中的主题清单或原包）、theme_upload（上传主题包）、
+   * theme_record（保存数据库中的上传标记）、theme_delete（删除主题对象）。
    * S3 失败在阶段后加 /transport、/http_status、/request 或 /response，不含错误原文。
+   * theme_list、theme_upload、theme_delete 是远端阶段，与 upload 一样带上述后缀；
+   * theme_read、theme_record 是数据库读写失败，不带后缀。
    * settings 与 startup 是两层共用的前提失败（设置读不出；启动时读回成功时刻或清理本库残留暂存目录失败），
    * 只由配置层报告，其间指标层暂停。marker 是库里的配置层未恢复标记读不出（只有 hub 写它）：此前是否通知过无从知道，
    * 按首次失败通知一次并以本次首次失败时刻覆盖坏值，下一轮照常执行；指标层不读它，不受影响。
