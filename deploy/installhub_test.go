@@ -16,7 +16,8 @@ import (
 // enable、disable 增删 state/enabled，is-enabled 按它回答。
 // state/dropins 是 systemd 已加载的 drop-in，照 systemd 252 的实测：daemon-reload 时才从 state/dropins-disk
 // （磁盘上的 drop-in）取，单元文件不存在时为空。STUB_STOP_FAILS 让 stop 失败，STUB_STOP_LEAVES_PROCESS 让 stop
-// 返回 0 却留下进程，STUB_DROPIN_ON_STOP 在 stop 时把一个 drop-in 写进 state/dropins-disk。
+// 返回 0 却留下进程，STUB_DROPIN_ON_STOP 在 stop 时把一个 drop-in 写进 state/dropins-disk。STUB_RELOAD_FAILS 让
+// daemon-reload 失败，STUB_RELOAD_FAILS_ON_STOP 让它从 stop 之后开始失败。
 // chown 只记参数：测试以普通用户运行，改不了属主，属主由真机验收回读。chmod 记下参数后转调真的，权限断言看的
 // 是真实的文件模式。curl 只认 file:// 地址并复制文件；apt-get 记下参数，install 时建出 CA 证书包。
 // systemctl、curl、apt-get 读尽 stdin：脚本以 sh -s 从 stdin 运行，漏掉 </dev/null 的调用会吞掉脚本余下部分，
@@ -39,8 +40,12 @@ case "$*" in
   "stop probe-hub")
     [ -z "${STUB_STOP_FAILS-}" ] || { echo "Failed to stop probe-hub.service: Access denied" >&2; exit 1; }
     [ -n "${STUB_STOP_LEAVES_PROCESS-}" ] || rm -rf "$P/4242"
-    [ -z "${STUB_DROPIN_ON_STOP-}" ] || echo "$STUB_DROPIN_ON_STOP" > "$STUB_STATE/dropins-disk";;
+    [ -z "${STUB_DROPIN_ON_STOP-}" ] || echo "$STUB_DROPIN_ON_STOP" > "$STUB_STATE/dropins-disk"
+    [ -z "${STUB_RELOAD_FAILS_ON_STOP-}" ] || : > "$STUB_STATE/reload-fails";;
   daemon-reload)
+    if [ -n "${STUB_RELOAD_FAILS-}" ] || [ -f "$STUB_STATE/reload-fails" ]; then
+      echo "Failed to reload daemon: Access denied" >&2; exit 1
+    fi
     if [ ! -f "$PROBE_INSTALL_ROOT/etc/systemd/system/probe-hub.service" ]; then : > "$STUB_STATE/dropins"
     elif [ -f "$STUB_STATE/dropins-disk" ]; then cp "$STUB_STATE/dropins-disk" "$STUB_STATE/dropins"; fi;;
   "enable probe-hub") : > "$STUB_STATE/enabled";;
@@ -720,5 +725,49 @@ func TestHubDropInWrittenWhileStoppedIsRefusedBeforeStart(t *testing.T) {
 	}
 	if c := e.calls(); index(c, "systemctl start") >= 0 {
 		t.Fatalf("probe-hub must not be started: calls %q", c)
+	}
+}
+
+// systemctl 本身失败时 drop-in 还没被查过：报 systemctl 的原文，按失败点说该做什么，不说成 drop-in 的问题，
+// 也不叫人手动启动。停服前失败时旧服务照常运行；写好主单元之后失败时，现状按首装与升级各自说。
+func TestHubSystemctlFailureIsNotReportedAsADropInProblem(t *testing.T) {
+	t.Parallel()
+	reload := "systemctl daemon-reload failed: Failed to reload daemon: Access denied"
+	for _, tc := range []struct {
+		name      string
+		installed bool
+		env       string
+		want      []string
+	}{
+		{"before stopping", true, "STUB_RELOAD_FAILS=1", []string{reload, "old service was not stopped"}},
+		{"after stopping", true, "STUB_RELOAD_FAILS_ON_STOP=1", []string{reload,
+			"probe-hub is stopped but still enabled; started by hand or at the next boot, it would run with the drop-ins as they are",
+			"fix the systemctl problem reported above, then rerun the installer"}},
+		{"on first install", false, "STUB_RELOAD_FAILS=1", []string{reload,
+			"probe-hub is installed but not enabled or started",
+			"fix the systemctl problem reported above, then rerun the installer"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var e *env
+			if tc.installed {
+				e = newHubInstalled(t)
+			} else {
+				e = newHubHost(t)
+			}
+			e.vars = []string{tc.env}
+			out, code := e.hubInstall()
+			for _, want := range tc.want {
+				if code != 1 || !strings.Contains(out, want) {
+					t.Fatalf("exit %d, want %q:\n%s", code, want, out)
+				}
+			}
+			if strings.Contains(out, "drop-in problem") || strings.Contains(out, "start it manually") || index(e.calls(), "systemctl start") >= 0 {
+				t.Fatalf("a systemctl failure must not be reported as a drop-in problem, suggest a manual start, or start probe-hub: calls %q\n%s", e.calls(), out)
+			}
+			if tc.name == "before stopping" {
+				e.assertUntouched(out)
+			}
+		})
 	}
 }

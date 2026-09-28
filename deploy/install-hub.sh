@@ -287,11 +287,22 @@ exec_starts() {
 # - 运行中的 probe-hub 看不到之后才落盘的 drop-in，而新单元写好之后总要经过 reload 才能启动，那时它就生效了
 #   （实测：不先 reload 就查，旧服务被停，新进程带着这个 drop-in 起来）。所以每次先 daemon-reload 再列：
 #   它只重读单元文件，不停也不重启运行中的服务（实测 MainPID 不变）。
-# 列出的路径拼上 PROBE_INSTALL_ROOT 再读；列出来却读不到的无法判定，一并拒绝。在子 shell 里跑，set -f 不外泄。
+# 查分两步，失败的含义不同：list_dropins 失败的是 systemctl 本身，drop-in 还没被查过，报错带上 systemctl 的原文；
+# dropins_ok 失败才是某个 drop-in 的问题。
+list_dropins() {
+  if ! systemctl daemon-reload </dev/null 2>"$work/systemctl.err"; then
+    echo "systemctl daemon-reload failed: $(cat "$work/systemctl.err")" >&2; return 1
+  fi
+  cat "$work/systemctl.err" >&2
+  if ! dropins=$(systemctl show probe-hub -p DropInPaths --value </dev/null 2>"$work/systemctl.err"); then
+    echo "systemctl show probe-hub failed: $(cat "$work/systemctl.err")" >&2; return 1
+  fi
+  cat "$work/systemctl.err" >&2
+}
+# list_dropins 列出的路径拼上 PROBE_INSTALL_ROOT 再读；列出来却读不到的无法判定，一并拒绝。
+# 在子 shell 里跑，set -f 不外泄。
 dropins_ok() (
   set -f
-  systemctl daemon-reload </dev/null || fail 'systemctl daemon-reload failed'
-  dropins=$(systemctl show probe-hub -p DropInPaths --value </dev/null) || fail 'cannot list probe-hub drop-ins'
   for dropin in $dropins; do
     [ -f "$ROOT$dropin" ] || fail "cannot read probe-hub drop-in $dropin"
     exec_starts "$ROOT$dropin" > "$work/dropin-exec" || fail "cannot parse probe-hub drop-in $dropin"
@@ -303,7 +314,7 @@ dropins_ok() (
 # 未支持的 systemd 动态展开与转义在停服前拒绝，而不是静默变成另一组参数。
 source_unit=$work/probe-hub.service
 if [ -f "$UNIT" ]; then
-  dropins_ok || fail 'old service was not stopped'
+  if ! list_dropins || ! dropins_ok; then fail 'old service was not stopped'; fi
   source_unit=$UNIT
 fi
 exec_starts "$source_unit" > "$work/command" || fail 'cannot read ExecStart from installed unit'
@@ -458,14 +469,23 @@ for file in "$DATA/probe.db" "$DATA/probe.db-wal" "$DATA/probe.db-shm"; do
 done
 chmod 0770 "$DATA"
 install -m 0644 "$work/unit" "$UNIT"
-# 主单元写好之后再查一遍 drop-in（理由见 dropins_ok）。这里失败时不能叫人手动启动：drop-in 设了 ExecStart，
-# 单元就按它的参数起来。首装的单元还没 enable；升级时上次安装留下的 enable 还在，下次开机也会这样起来。
+# 主单元写好之后再查一遍 drop-in（理由见 list_dropins 上方）。这里失败时不能叫人手动启动：设了 ExecStart 的
+# drop-in 会让单元按它的参数起来，systemctl 失败时 drop-in 则还没被查过。首装的单元还没 enable；升级时上次安装
+# 留下的 enable 还在，下次开机也会这样起来。该做什么按失败点分开说，现状由 unit_state 按 enable 与否说。
+unit_state() {
+  if systemctl is-enabled --quiet probe-hub </dev/null; then
+    echo 'probe-hub is stopped but still enabled; started by hand or at the next boot, it would run with the drop-ins as they are'
+  else
+    echo 'probe-hub is installed but not enabled or started'
+  fi
+}
+if ! list_dropins; then
+  EXIT_HINT='fix the systemctl problem reported above, then rerun the installer'
+  fail "$(unit_state)"
+fi
 if ! dropins_ok; then
   EXIT_HINT='fix the drop-in problem reported above, then rerun the installer'
-  if systemctl is-enabled --quiet probe-hub </dev/null; then
-    fail 'probe-hub is stopped but still enabled; started by hand or at the next boot, it would run with the drop-ins as they are'
-  fi
-  fail 'probe-hub is installed but not enabled or started'
+  fail "$(unit_state)"
 fi
 systemctl enable probe-hub </dev/null
 systemctl start probe-hub </dev/null
