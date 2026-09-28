@@ -94,10 +94,19 @@ func billingProto(b store.Billing, today time.Time) *probev1.Billing {
 	return out
 }
 
+// countrySources 是库层显示值来源与协议枚举的一一对应；TestCountrySourcesMapEveryValue 按两侧全集核对。
+var countrySources = map[store.CountrySource]probev1.CountrySource{
+	store.CountryNone:   probev1.CountrySource_COUNTRY_SOURCE_UNSPECIFIED,
+	store.CountryManual: probev1.CountrySource_COUNTRY_SOURCE_MANUAL,
+	store.CountryLookup: probev1.CountrySource_COUNTRY_SOURCE_LOOKUP,
+}
+
 // nodeProto 的 today 是 hub 时区的今天（alert.Today）。
 func nodeProto(n store.Node, today time.Time) *probev1.Node {
 	out := &probev1.Node{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, SortOrder: n.SortOrder, CreatedAt: n.CreatedAt.Unix(), Facts: n.Facts, TrafficResetDay: uint32(n.TrafficResetDay),
-		Billing: billingProto(n.Billing, today), LastSource: n.LastSource}
+		Billing: billingProto(n.Billing, today), LastSource: n.LastSource, CountryIp: n.CountryIP, CountryPin: n.CountryPin, CountryLookup: n.Country, Tags: n.Tags}
+	country, source := n.DisplayCountry()
+	out.Country, out.CountrySource = country, countrySources[source]
 	if !n.LastSeenAt.IsZero() {
 		out.LastSeenAt = proto.Int64(n.LastSeenAt.Unix())
 	}
@@ -128,8 +137,12 @@ func cleanNote(raw string) (string, error) {
 	return note, nil
 }
 
-func (s *Service) ListNodes(ctx context.Context, _ *connect.Request[probev1.ListNodesRequest]) (*connect.Response[probev1.ListNodesResponse], error) {
-	nodes, err := s.store.ListNodes(ctx)
+func (s *Service) ListNodes(ctx context.Context, req *connect.Request[probev1.ListNodesRequest]) (*connect.Response[probev1.ListNodesResponse], error) {
+	tags, err := cleanTags("tags", req.Msg.GetTags())
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := s.store.ListNodesByTags(ctx, tags)
 	if err != nil {
 		s.log.Error("listing nodes failed", "err", err)
 		return nil, internalError("listing nodes failed")
@@ -188,7 +201,15 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 	if err != nil {
 		return nil, err
 	}
-	edit := store.NodeEdit{Name: name, Public: req.Msg.GetPublic(), Note: note, TrafficResetDay: day, OfflineGraceS: int(grace), Billing: billing}
+	pin := req.Msg.GetCountryPin()
+	if pin != "" && !store.IsCountryCode(pin) {
+		return nil, invalid("country_pin: must be empty or two uppercase letters (ISO 3166-1 alpha-2), e.g. US; got %q", pin)
+	}
+	tags, err := cleanTags("tags", req.Msg.GetTags())
+	if err != nil {
+		return nil, err
+	}
+	edit := store.NodeEdit{Name: name, Public: req.Msg.GetPublic(), Note: note, TrafficResetDay: day, OfflineGraceS: int(grace), Billing: billing, CountryPin: pin, Tags: tags}
 	s.nodeMu.Lock()
 	billingChanged, err := s.store.UpdateNode(ctx, req.Msg.GetId(), edit)
 	if err == nil {

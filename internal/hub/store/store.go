@@ -30,7 +30,7 @@ var (
 )
 
 type Store struct {
-	// siteWriteMu 让站点设置的提交与总闸发布对其它保存原子，维持的不变式写在 SaveSiteSettings。
+	// siteWriteMu 让设置的提交与总闸发布对其它保存原子，维持的不变式写在 SaveSettings。
 	siteWriteMu   sync.Mutex
 	publicEnabled atomic.Bool
 	closeMu       sync.RWMutex
@@ -110,7 +110,9 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 		return nil, err
 	}
 	s := &Store{w: w, r: r, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{})}
-	site, err := s.SiteSettings(context.Background())
+	// 打开时读一次设置，同时满足两件事：总闸的内存副本从库加载（不变式见 SaveSettings）；设置里有必须合法才能解释的
+	// 编码（site.public_enabled 与 geo.enabled 只认 0 / 1，见 parseFlag），库里有非法值就拒绝打开。
+	site, _, err := readSettings(context.Background(), r)
 	if err != nil {
 		r.Close()
 		w.Close()
@@ -211,7 +213,7 @@ func (s *Store) writeAsync(fn func(*sql.Tx) error, done func(error)) {
 	}
 }
 
-const schemaVersion = 13
+const schemaVersion = 15
 
 // migrate 用 user_version 保存当前版本，不在库里保存迁移历史或时间；因此本程序提供给
 // 运维判断何时迁过、该还原哪份备份的唯一时间线是日志。每步事务提交成功后才记日志，

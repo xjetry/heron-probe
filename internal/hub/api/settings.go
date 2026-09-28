@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"net/netip"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	"github.com/xjetry/probe/internal/hub/geo"
 	"github.com/xjetry/probe/internal/hub/sanitize"
 	"github.com/xjetry/probe/internal/hub/store"
 )
@@ -25,6 +28,8 @@ const (
 	maxTitleBytes = 1 << 10
 	maxLogoBytes  = 128 << 10
 	maxCSSBytes   = 64 << 10
+	// maxGeoURLBytes 限制国家查询的服务地址，同样是 maxBody 推导的前提。
+	maxGeoURLBytes = 2 << 10
 )
 
 var (
@@ -33,31 +38,36 @@ var (
 	accentRE  = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 )
 
-// cleanSettings 校验并清洗外观，保留总闸的 presence 交给存储层处理；任一项不合约束即返回错误，调用方什么都不写。
+// cleanSettings 校验并清洗一次更新：外观整体替换；总闸与国家查询两项保留 presence 交给存储层处理（缺席即不变，见
+// store.SettingsUpdate）。任一项不合约束即返回错误，调用方什么都不写。
 // 标题会显示在页面与标签页上，与节点名（cleanName）同用 sanitize.Text 清洗；logo 与 CSS 是数据与代码，改写任何字节都可能改变含义，只校验不清洗。
-func cleanSettings(in *probev1.Settings) (store.SiteSettingsUpdate, error) {
+func cleanSettings(in *probev1.Settings) (store.SettingsUpdate, error) {
 	if n := len(in.GetTitle()); n > maxTitleBytes {
-		return store.SiteSettingsUpdate{}, invalid("settings.title must be at most %d bytes before cleaning; got %d", maxTitleBytes, n)
+		return store.SettingsUpdate{}, invalid("settings.title must be at most %d bytes before cleaning; got %d", maxTitleBytes, n)
 	}
 	title := sanitize.Text(in.GetTitle(), len(in.GetTitle()))
 	if n := utf8.RuneCountInString(title); n > maxTitleRunes {
-		return store.SiteSettingsUpdate{}, invalid("settings.title must be at most %d characters after removing control characters and surrounding whitespace; got %d", maxTitleRunes, n)
+		return store.SettingsUpdate{}, invalid("settings.title must be at most %d characters after removing control characters and surrounding whitespace; got %d", maxTitleRunes, n)
 	}
 	if !slices.Contains(themes, in.GetTheme()) {
-		return store.SiteSettingsUpdate{}, invalid("settings.theme must be one of %s; got %q", strings.Join(themes, ", "), in.GetTheme())
+		return store.SettingsUpdate{}, invalid("settings.theme must be one of %s; got %q", strings.Join(themes, ", "), in.GetTheme())
 	}
 	if c := in.GetAccentColor(); c != "" && !accentRE.MatchString(c) {
-		return store.SiteSettingsUpdate{}, invalid("settings.accent_color must be empty (the default color) or #rrggbb with six hex digits; got %q", c)
+		return store.SettingsUpdate{}, invalid("settings.accent_color must be empty (the default color) or #rrggbb with six hex digits; got %q", c)
 	}
 	if err := checkLogo(in.GetLogo()); err != nil {
-		return store.SiteSettingsUpdate{}, err
+		return store.SettingsUpdate{}, err
 	}
 	if err := checkCSS(in.GetCustomCss()); err != nil {
-		return store.SiteSettingsUpdate{}, err
+		return store.SettingsUpdate{}, err
 	}
-	return store.SiteSettingsUpdate{
+	geoUpdate, err := cleanGeo(in)
+	if err != nil {
+		return store.SettingsUpdate{}, err
+	}
+	return store.SettingsUpdate{
 		Title: title, Theme: in.GetTheme(), AccentColor: strings.ToLower(in.GetAccentColor()),
-		Logo: in.GetLogo(), CustomCSS: in.GetCustomCss(), PublicEnabled: in.PublicEnabled,
+		Logo: in.GetLogo(), CustomCSS: in.GetCustomCss(), PublicEnabled: in.PublicEnabled, Geo: geoUpdate,
 	}, nil
 }
 
@@ -115,17 +125,68 @@ func checkCSS(css string) error {
 	return nil
 }
 
-func settingsProto(st store.SiteSettings) *probev1.Settings {
-	return &probev1.Settings{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS, PublicEnabled: proto.Bool(st.PublicEnabled)}
+// geoSamples 是校验服务地址时填入 {ip} 的样例，两个地址族各一个，都取文档地址（RFC 5737、RFC 3849）。
+var geoSamples = [2]netip.Addr{netip.MustParseAddr("192.0.2.1"), netip.MustParseAddr("2001:db8::1")}
+
+// cleanGeo 校验国家查询的两项；缺失的项不改（见 store.GeoUpdate）。服务地址是 hub 的出站目标之一（§4.9），是它
+// 唯一的写入口：只接受 http(s)、必须含 {ip}，{ip} 不得在主机或端口位置、必须在路径或查询串里，且不含用户信息——请求只发地址、不带凭据，
+// 而 URL 里的用户信息会被 net/http 的客户端转成 Basic 认证的 Authorization 头；这项还会原样回显，本身也不该是凭据。
+//
+// "{ip} 不在主机或端口位置"按它要保证的性质判定，不去切分 URL 文本：两族样例各填一次，都必须解析成带 host 的绝对
+// http(s) URL，而且 host（含端口）相同。host 随地址变化，hub 会连到哪里就读不出来（§4.9），写成 [{ip}] 时 hub 会直连
+// IPv6 节点自己的端口；只对一族能解析的模板会让另一族的节点每次查询都失败。按 go1.27 的 url.Parse 实测：裸写在主机
+// 位置或与主机名拼在一起（{ip}.example）时 IPv6 样例的冒号让解析失败；[{ip}] 时 IPv4 样例不是合法的 IP 字面量；放在
+// IPv6 字面量的区域标识里（[fe80::1%25{ip}]）时两族都能解析、host 不同。这几种都报"不得在主机或端口"。裸写在端口
+// 位置时两族都解析失败，与别的非法 URL 分不开，报通用的那条，它同样写明这条约束。
+func cleanGeo(in *probev1.Settings) (store.GeoUpdate, error) {
+	out := store.GeoUpdate{Enabled: in.GeoEnabled}
+	if in.GeoUrl == nil {
+		return out, nil
+	}
+	raw := in.GetGeoUrl()
+	if n := len(raw); n > maxGeoURLBytes {
+		return store.GeoUpdate{}, invalid("settings.geo_url must be at most %d bytes; got %d", maxGeoURLBytes, n)
+	}
+	if !strings.Contains(raw, geo.Placeholder) {
+		return store.GeoUpdate{}, invalid("settings.geo_url must contain the %s placeholder for the node address; got %q", geo.Placeholder, raw)
+	}
+	var parsed [2]*url.URL
+	for i, sample := range geoSamples {
+		if u, err := url.Parse(geo.Target(raw, sample)); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && u.Opaque == "" {
+			parsed[i] = u
+		}
+	}
+	v4, v6 := parsed[0], parsed[1]
+	switch {
+	case v4 == nil && v6 == nil:
+		return store.GeoUpdate{}, invalid("settings.geo_url must be an absolute http:// or https:// URL once {ip} is filled in, with {ip} outside the host and port; got %q", raw)
+	case v4 == nil || v6 == nil || v4.Host != v6.Host:
+		return store.GeoUpdate{}, invalid("settings.geo_url must not put {ip} in the host or port, including the [{ip}] form: the server the lookup goes to must not depend on the node address; got %q", raw)
+	}
+	if v6.User != nil {
+		return store.GeoUpdate{}, invalid("settings.geo_url must not contain user information (user:password@); the lookup request carries only the address")
+	}
+	// {ip} 只有在请求真正发出的部分（路径或查询串）才起作用：片段不随请求发出。两族样例填入后请求行仍相同，说明地址
+	// 没有进请求，每个节点发出的请求都一样；服务若按请求方地址作答，所有节点都会被记成 hub 所在的国家，且地址不变就不再重查。
+	if v4.RequestURI() == v6.RequestURI() {
+		return store.GeoUpdate{}, invalid("settings.geo_url must put {ip} in the path or query so the request carries the node address; a fragment (#...) is never sent; got %q", raw)
+	}
+	out.URL = &raw
+	return out, nil
+}
+
+func settingsProto(st store.SiteSettings, g store.GeoSettings) *probev1.Settings {
+	return &probev1.Settings{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS,
+		PublicEnabled: proto.Bool(st.PublicEnabled), GeoEnabled: proto.Bool(g.Enabled), GeoUrl: proto.String(g.URL)}
 }
 
 func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.GetSettingsRequest]) (*connect.Response[probev1.GetSettingsResponse], error) {
-	st, err := s.store.SiteSettings(ctx)
+	st, g, err := s.store.Settings(ctx)
 	if err != nil {
 		s.log.Error("reading settings failed", "err", err)
 		return nil, internalError("reading settings failed")
 	}
-	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: settingsProto(st)}), nil
+	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: settingsProto(st, g)}), nil
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probev1.UpdateSettingsRequest]) (*connect.Response[probev1.UpdateSettingsResponse], error) {
@@ -133,12 +194,12 @@ func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probe
 	if err != nil {
 		return nil, err
 	}
-	st, err := s.store.SaveSiteSettings(ctx, in)
+	st, g, err := s.store.SaveSettings(ctx, in)
 	if err != nil {
 		s.log.Error("saving settings failed", "err", err)
 		return nil, internalError("saving settings failed")
 	}
-	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: settingsProto(st)}), nil
+	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: settingsProto(st, g)}), nil
 }
 
 func (s *Service) GetStorageStats(ctx context.Context, _ *connect.Request[probev1.GetStorageStatsRequest]) (*connect.Response[probev1.GetStorageStatsResponse], error) {

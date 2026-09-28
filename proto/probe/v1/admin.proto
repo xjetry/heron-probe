@@ -33,6 +33,7 @@ service AdminService {
     option (probe.v1.access) = ACCESS_SESSION;
   }
 
+  // 列出节点；可按标签过滤（ListNodesRequest.tags）。
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse) {
     option (probe.v1.access) = ACCESS_READ;
   }
@@ -41,7 +42,7 @@ service AdminService {
   rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
-  // 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期）。计费字段有变化时，
+  // 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签）。计费字段有变化时，
   // 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
   rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
@@ -56,6 +57,14 @@ service AdminService {
   }
   // 给出全部节点 id 的新顺序；必须恰好包含每个节点一次。
   rpc ReorderNodes(ReorderNodesRequest) returns (ReorderNodesResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
+  // 全部标签与各自挂在几个节点上，按名字大小写不敏感排序；没挂在任何节点上的标签也在内（节点数 0）。
+  rpc ListTags(ListTagsRequest) returns (ListTagsResponse) {
+    option (probe.v1.access) = ACCESS_READ;
+  }
+  // 删除标签：从全部节点上解除它并删掉标签本身，节点不受影响。名字大小写不敏感；没有这个标签时 NotFound。
+  rpc DeleteTag(DeleteTagRequest) returns (DeleteTagResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
 
@@ -229,9 +238,41 @@ message Node {
   // 同时刷出落盘，所以可能比实时状态晚约一分钟。hub 与节点同在内网或 agent 经出口代理时，这里是内网或代理地址；
   // hub 在反代之后而未把反代列进 --trusted-proxies 时，这里是反代地址。只在管理端可见：公开节点（PublicNode）没有这个字段。
   string last_source = 13;
+  // 国家 / 地区（§4.9）的显示值，ISO 3166-1 alpha-2（两个大写字母）：country_pin 非空取它，否则取查得值；空串表示没有。
+  // 公开节点的 PublicNode.country 是同一个值。
+  string country = 14;
+  CountrySource country_source = 15;
+  // 查得的国家所属的地址，即查询时节点的 last_source；没有查得值时为空串。查得值是对这个地址的答案：节点换了
+  // 来源地址，查得值随即清空，再按新地址取答案（hub 记得的直接写回，否则外呼，见 Settings.geo_enabled）。手动指定时
+  // 也照常回显（查询不看 country_pin），清空 country_pin 即回落到它。
+  string country_ip = 16;
+  // 管理员手动指定的国家，空串表示不指定。
+  string country_pin = 17;
+  // 运维自定义的标签，按名字大小写不敏感排序；同一个标签无论当初写成什么大小写，都回显它第一次出现时的写法。
+  // 标签只是展示与筛选用的分类：不进公开页（PublicNode 没有这个字段——标签常写用途与归属，公开即暴露内部构成），
+  // 也不是告警规则的作用域（那会让删标签静默关掉一批告警）。
+  repeated string tags = 18;
+  // 查得的国家（对 country_ip 这个地址的答案），与 country_ip 同空同非空。手动指定时 country 是手动值，查得值仍在
+  // 这里，清空 country_pin 即回落到它。
+  string country_lookup = 19;
 }
 
-message ListNodesRequest {}
+// 国家显示值的来源。
+enum CountrySource {
+  // 没有国家：未手动指定，也没有查得值。
+  COUNTRY_SOURCE_UNSPECIFIED = 0;
+  // 管理员手动指定（Node.country_pin）。
+  COUNTRY_SOURCE_MANUAL = 1;
+  // 国家查询按来源地址查得（Node.country_ip）。
+  COUNTRY_SOURCE_LOOKUP = 2;
+}
+
+message ListNodesRequest {
+  // 只返回同时挂着这里全部标签的节点（交集：多选是逐步收窄，再选一个结果只会变少）。名字按 UpdateNodeRequest.tags
+  // 的规则校验，大小写不敏感，折叠后重复的算一个；有不存在的标签时结果为空。空列表不过滤、返回全部节点。
+  // 至多 16 个不同的标签：每个节点至多挂 16 个，更多的交集不可能匹配任何节点，按参数错误拒绝。
+  repeated string tags = 1;
+}
 message ListNodesResponse {
   repeated Node nodes = 1;
 }
@@ -259,6 +300,13 @@ message UpdateNodeRequest {
   // 计费与到期，整体替换：缺失等于五项全清，空串、未指定与 false 也是清除，没有"不改"的取值。
   // 取值约束见 Billing 各字段；days_left 由 hub 计算，这里的值忽略。
   Billing billing = 7;
+  // 手动指定的国家：两个大写字母（ISO 3166-1 alpha-2）或空串。整体替换：缺失即空串，清除手动值、回落到查得值。
+  string country_pin = 8;
+  // 标签集合，整体替换：不带与带空列表相同，都是清空节点的全部标签（repeated 没有"缺失"与"空"之分，所以也没有
+  // "不改"的取法，要保留就原样带回 Node.tags）。每个名字去掉首尾空白后 1–64 个字符、不含控制字符，允许空格与
+  // 大小写混写；大小写不敏感（Unicode 简单折叠），折叠后重复的只留第一个；已存在的标签沿用它先建的写法，不存在的
+  // 随之新建。去重后至多 16 个。
+  repeated string tags = 9;
 }
 message UpdateNodeResponse {
   Node node = 1;
@@ -281,6 +329,22 @@ message ReorderNodesRequest {
   repeated int64 ids = 1;
 }
 message ReorderNodesResponse {}
+
+message Tag {
+  // 标签第一次出现时的写法。
+  string name = 1;
+  // 挂着它的节点数。
+  uint32 node_count = 2;
+}
+message ListTagsRequest {}
+message ListTagsResponse {
+  repeated Tag tags = 1;
+}
+message DeleteTagRequest {
+  // 按 UpdateNodeRequest.tags 的规则校验，大小写不敏感。
+  string name = 1;
+}
+message DeleteTagResponse {}
 
 message OpenRegisterWindowRequest {
   // 窗口有效期，60–604800 秒。
@@ -514,7 +578,10 @@ message DeleteNotifyChannelResponse {}
 message TestNotifyChannelRequest { int64 id = 1; }
 message TestNotifyChannelResponse {}
 
-// 公开页设置。UpdateSettings 整体替换外观字段；public_enabled 是例外，缺席表示不变。
+// 公开页设置与国家查询（§4.9）。外观五项整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。公开页总闸与国家
+// 查询两项缺失表示不改：关站是对外可见的中断，国家查询开关决定 hub 是否把节点地址发给第三方，只改外观的旧客户端与
+// 脚本都不得顺手改掉它们。GetSettings 与 UpdateSettings 的响应总带这三项。字段号按架构设计 §10 的登记表分配，不各自
+// 挑号：6 属公开页总闸，7、8 属国家查询。
 message Settings {
   // 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
   // 空串表示公开页用内置标题。
@@ -533,6 +600,15 @@ message Settings {
   // 不认识此字段的旧客户端修改外观时不得顺带关站，因此它有别于外观字段的整体替换语义。
   // 关闭不修改节点的 public 标记，重新打开后恢复原来的公开范围。
   optional bool public_enabled = 6;
+  // 国家查询开关，从未保存过时为关。开启即由 hub 把每个节点的来源地址（Node.last_source）逐个发给 geo_url，只发公网
+  // 地址。节点停在同一地址时查得一次即止；hub 在内存里记住每个节点最近用过的 4 个地址的答案，节点在这些地址之间切换
+  // 不再外呼，超过 4 个地址轮换时被挤出的地址会再查，hub 重启后节点换到的地址各再查一次。失败按小时退避。
+  optional bool geo_enabled = 7;
+  // 国家查询的服务地址：http 或 https，含 {ip} 占位（查询时替换为地址），不含用户信息，不超过 2048 字节。{ip} 不得
+  // 在主机或端口位置，含 [{ip}] 写法：hub 连到哪里只由这项决定，不随节点地址变化；{ip} 必须在路径或查询串里，# 后的片段不随请求发出。
+  // 从未保存过时为 https://ipinfo.io/{ip}/country。可回显，不是凭据：请求只带地址，不带任何凭据。
+  // 服务的响应去掉首尾空白后必须恰为两个大写字母（ISO 3166-1 alpha-2），状态码必须是 200。
+  optional string geo_url = 8;
 }
 message GetSettingsRequest {}
 message GetSettingsResponse { Settings settings = 1; }

@@ -33,7 +33,19 @@ const ddlNode = `CREATE TABLE node (
   -- 上报早于 hub 开始记录来源的版本（此时 last_seen_at 有值）。与 last_seen_at 同一路径写入：分钟行刷出
   -- 与退出时由 WriteMinuteBatch 写，上报路径只碰内存。只存最后一个，是观测事实，不设手动覆盖。
   -- 列序与迁移 13 的 ADD COLUMN 结果一致。
-  last_source TEXT NOT NULL DEFAULT ''
+  last_source TEXT NOT NULL DEFAULT '',
+  -- 国家 / 地区（§4.9），ISO 3166-1 alpha-2，空串表示没有。列序与迁移 14 的 ADD COLUMN 结果一致。
+  -- country 与 country_ip 成对：country 是对 country_ip 这个地址的查询答案，不是节点属性，换了出口的节点不得沿用
+  -- 旧答案。不变式 country_ip ∈ {'', last_source} 且 country 与 country_ip 同空同非空，由两个写者各自承载：
+  -- WriteMinuteBatch 写入与 country_ip 不同的来源时同一条语句清空两列；SetLookupCountry 只在 last_source 仍是
+  -- 所查地址时写入两列，并自己拒绝空地址与不是国家码的值。查询器本就只查非空的来源、只写国家码，写者的检查让
+  -- 不变式不依赖这一点。
+  country TEXT NOT NULL DEFAULT '',
+  country_ip TEXT NOT NULL DEFAULT '',
+  -- 管理员手动指定的国家，只由 UpdateNode 写；查得两列的写者（WriteMinuteBatch、SetLookupCountry）不碰它，
+  -- UpdateNode 也不碰查得两列。没有哪个写者同时写两边，手动值不会被查询覆盖，清空手动值即回落到查得值，冲突不需要
+  -- 裁决（显示值见 Node.DisplayCountry）。
+  country_pin TEXT NOT NULL DEFAULT ''
 )`
 
 const ddlNodeFacts = `CREATE TABLE node_facts (
@@ -121,7 +133,7 @@ func schemaStatements() []string {
 	for _, t := range probeTables {
 		out = append(out, probeDDL(t))
 	}
-	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState)
+	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState, ddlTag, ddlNodeTag, ddlNodeTagByTag)
 }
 
 // metricDDL 从描述表生成分钟表。主键顺序 (node_id, ts) 即唯一查询路径，
@@ -355,3 +367,30 @@ func alertStatements() []string {
 		ddlAlertRuleChannelByChannel, ddlNotifyChannel, ddlAlertState, ddlAlertEvent,
 		ddlAlertEventByNode, ddlAlertEventByAt, ddlAlertDelivery, ddlAlertDeliveryByEvent, ddlAlertDeliveryPending}
 }
+
+// tag 是运维自定义的节点标签（§10）。name 是先建的写法，回显用；name_fold 是 TagFold(name)，UNIQUE 承载"大小写不敏感
+// 唯一"：两个只差大小写的名字落到同一行，后来的写法不覆盖先建的（插入 tag 行的只有 setNodeTags，冲突时不改行；
+// DeleteTag 只删行）。
+// AUTOINCREMENT 使 id 永不复用：node_tag 只存 tag_id，id 若复用，任何一条没被清掉的关联行都会静默挂到之后新建的
+// 同 id 标签上；不复用时这样的行 JOIN 不到标签，读侧不显示。
+const ddlTag = `CREATE TABLE tag (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  name_fold TEXT NOT NULL UNIQUE
+)`
+
+// node_tag 是节点与标签的多对多关联。不声明外键：删节点（DeleteNode）与删标签（DeleteTag）各在自己的写事务里显式删掉
+// 关联行，与其余从属表同一做法，不依赖连接是否开启外键约束。
+//
+// 两个索引各自服务的语句如下，依据是 EXPLAIN QUERY PLAN（不跑 ANALYZE，与生产一致：store 从不跑 ANALYZE），
+// 由 TestNodeTagQueryPlans 对 tag.go 里的这些语句本身核对：
+//   - 主键 (node_id, tag_id)：按节点读标签（nodeTagsQuery），按节点清空（clearNodeTags，setNodeTags 与 DeleteNode 用）。
+//   - node_tag_by_tag：按标签过滤（tagFilterWhere 的交集子查询走它，按节点分组另用临时 B 树），ListTags 的计数，
+//     DeleteTag 解除关联（detachTag）。
+const ddlNodeTag = `CREATE TABLE node_tag (
+  node_id INTEGER NOT NULL,
+  tag_id INTEGER NOT NULL,
+  PRIMARY KEY (node_id, tag_id)
+) WITHOUT ROWID`
+
+const ddlNodeTagByTag = `CREATE INDEX node_tag_by_tag ON node_tag (tag_id)`

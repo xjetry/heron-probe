@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
@@ -49,6 +50,10 @@ type NodeEdit struct {
 	TrafficResetDay int
 	OfflineGraceS   int // 0 写 NULL，读侧取 TTL
 	Billing         Billing
+	CountryPin      string // 手动指定的国家，空串表示不指定（回落到查得值）
+	// Tags 整体替换节点的标签集合，空即清空。调用方已按 §10 校验每个名字、按 TagFold 去重并限定个数；
+	// 重复的名字会撞 node_tag 的主键而让整次更新失败。
+	Tags []string
 }
 
 type Node struct {
@@ -66,10 +71,47 @@ type Node struct {
 	Facts          *probev1.Facts
 	FactsUpdatedAt time.Time
 	Billing        Billing
+	// Country 是对 CountryIP 这个地址的查询答案，两者同空同非空；CountryPin 是手动指定的国家。见 node 表的列注释。
+	Country    string
+	CountryIP  string
+	CountryPin string
+	// Tags 是节点的标签名（先建的写法），按 TagFold 排序；没有标签时为 nil。
+	Tags []string
+}
+
+// CountrySource 是显示值的来源。
+type CountrySource int
+
+const (
+	CountryNone CountrySource = iota
+	CountryManual
+	CountryLookup
+)
+
+// IsCountryCode 报告 s 是否恰为两个 ASCII 大写字母：node 表两处国家（查得的 country 与手动的 country_pin）的取值域，
+// 查询应答（geo）、手动指定（api 的 UpdateNode）与 SetLookupCountry 共用这一个判定。只接受这一种形状：应答来自
+// 第三方，收窄到 [A-Z]{2} 之后它不可能携带标记、文字或别的国家写法（小写、三字母、名称），应答体也就不进入任何
+// 解释路径；页面按这两个字母算区域指示符旗帜，计算只对 A–Z 有定义。不核对是否是已分配的 ISO 3166-1 代码。
+func IsCountryCode(s string) bool {
+	return len(s) == 2 && isUpper(s[0]) && isUpper(s[1])
+}
+
+func isUpper(c byte) bool { return c >= 'A' && c <= 'Z' }
+
+// DisplayCountry 是面板与公开页显示的国家：手动值非空取手动值，否则取查得值。这是显示值唯一的判定，管理端与公开端
+// 都经它取值。
+func (n Node) DisplayCountry() (string, CountrySource) {
+	switch {
+	case n.CountryPin != "":
+		return n.CountryPin, CountryManual
+	case n.Country != "":
+		return n.Country, CountryLookup
+	}
+	return "", CountryNone
 }
 
 const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.created_at, n.last_seen_at, n.traffic_reset_day, n.offline_grace_s,
-	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source,
+	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source, n.country, n.country_ip, n.country_pin,
 	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at
 	FROM node n LEFT JOIN node_facts f ON f.node_id = n.id`
 
@@ -86,7 +128,7 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 		var cores, icmp, factsUpdated sql.NullInt64
 		b := &n.Billing
 		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &created, &seen, &n.TrafficResetDay, &grace,
-			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource,
+			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource, &n.Country, &n.CountryIP, &n.CountryPin,
 			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated); err != nil {
 			return nil, err
 		}
@@ -108,24 +150,46 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
-	rows, err := s.r.QueryContext(ctx, selectNodes+nodeOrder)
+// queryNodes 是 store.Node 值的唯一来源（selectNodes 与 scanNodes 只在这里用）：where 是作用于 node n 的条件（空串即
+// 全部）。节点行与它们的标签在同一个只读事务里读出，两者来自同一个快照：两次独立查询之间插进一次 UpdateNode，节点行与
+// 标签就会是不同时刻的样子（TestNodeRowAndTagsComeFromOneSnapshot）。
+func (s *Store) queryNodes(ctx context.Context, where string, args ...any) ([]Node, error) {
+	tx, err := s.r.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return scanNodes(rows)
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, selectNodes+where+nodeOrder, args...)
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := scanNodes(rows)
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(nodes) == 0 {
+		return nil, nil
+	}
+	tags, err := nodeTags(ctx, tx, where, args)
+	if err != nil {
+		return nil, err
+	}
+	for i := range nodes {
+		nodes[i].Tags = tags[nodes[i].ID]
+	}
+	return nodes, nil
+}
+
+func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
+	return s.queryNodes(ctx, "")
 }
 
 // ListPublicNodes 只返回 public = 1 的节点。公开服务只经它与 NodeIsPublic 读节点，可见范围由这两处承载：
 // 这里的 WHERE n.public = 1，与 NodeIsPublic 读出的 public 列（不存在的 id 同样得到 false）。
+// 返回的 Node 带着标签，标签不公开由 PublicNode 没有这个字段承载（§10）。
 func (s *Store) ListPublicNodes(ctx context.Context) ([]Node, error) {
-	rows, err := s.r.QueryContext(ctx, selectNodes+" WHERE n.public = 1"+nodeOrder)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanNodes(rows)
+	return s.queryNodes(ctx, " WHERE n.public = 1")
 }
 
 // NodeIsPublic 对未公开的节点与不存在的节点同样返回 false：调用方无从、也不需要区分二者。
@@ -139,12 +203,7 @@ func (s *Store) NodeIsPublic(ctx context.Context, id int64) (bool, error) {
 }
 
 func (s *Store) GetNode(ctx context.Context, id int64) (Node, error) {
-	rows, err := s.r.QueryContext(ctx, selectNodes+" WHERE n.id = ?", id)
-	if err != nil {
-		return Node{}, err
-	}
-	defer rows.Close()
-	nodes, err := scanNodes(rows)
+	nodes, err := s.queryNodes(ctx, " WHERE n.id = ?", id)
 	if err != nil {
 		return Node{}, err
 	}
@@ -163,7 +222,7 @@ func (s *Store) NodeExists(ctx context.Context, id int64) (bool, error) {
 	return err == nil, err
 }
 
-// UpdateNode 整体替换可编辑字段，不存在"不改"的取值。billingChanged 报告计费五项与写入前的库内值是否不同，
+// UpdateNode 整体替换可编辑字段（含标签集合），不存在"不改"的取值。billingChanged 报告计费五项与写入前的库内值是否不同，
 // 调用方据它决定是否立即做一次到期扫描。库内值在同一个写事务里读出，RenewExpiry 也经单写协程，读与写之间插不进
 // 一次推后，所以它就是这次写入实际覆盖掉的值。表单若带着推后之前的到期日提交，库内值已是推后的日期，两者不同，
 // 调用方随即重新扫描、再推后一次。
@@ -180,8 +239,11 @@ func (s *Store) UpdateNode(ctx context.Context, id int64, e NodeEdit) (billingCh
 		}
 		b := e.Billing
 		if _, err := tx.Exec(`UPDATE node SET name = ?, public = ?, note = ?, traffic_reset_day = ?, offline_grace_s = NULLIF(?, 0),
-			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, auto_renew = ? WHERE id = ?`,
-			e.Name, e.Public, e.Note, e.TrafficResetDay, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, id); err != nil {
+			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, auto_renew = ?, country_pin = ? WHERE id = ?`,
+			e.Name, e.Public, e.Note, e.TrafficResetDay, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, e.CountryPin, id); err != nil {
+			return err
+		}
+		if err := setNodeTags(tx, id, e.Tags); err != nil {
 			return err
 		}
 		billingChanged = old != b
@@ -209,6 +271,43 @@ func (s *Store) RenewExpiry(ctx context.Context, id int64, cycle BillingCycle, f
 		return err
 	})
 	return renewed, err
+}
+
+// SetLookupCountry 写入对 addr 查得的国家，前提是节点的 last_source 此刻仍是 addr：查询在写协程之外发出，应答
+// 到达之前节点可能已换了出口（WriteMinuteBatch 随之清空了两列），按旧地址的答案写回就会把旧出口的国家挂到新地址上。
+// 条件不成立时不写、返回 false，新地址由查询器下一轮重查；节点已被删除时返回 ErrNotFound。
+//
+// country 与 country_ip 同空同非空（见 node 表的列注释）由这里的检查承载，不依赖调用方：addr 为空时条件
+// last_source = addr 对从未上报的节点成立，会写出有国家没地址的一对；country 为空则写出有地址没国家的一对。
+// 两种都返回错误、什么都不写，不是国家码的 country 同样拒绝。
+func (s *Store) SetLookupCountry(ctx context.Context, id int64, addr, country string) (bool, error) {
+	if addr == "" {
+		return false, fmt.Errorf("lookup country of node %d: empty address", id)
+	}
+	if !IsCountryCode(country) {
+		return false, fmt.Errorf("lookup country of node %d for %s: %q is not two uppercase letters", id, addr, country)
+	}
+	var set bool
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		res, err := tx.Exec("UPDATE node SET country = ?, country_ip = ? WHERE id = ? AND last_source = ?", country, addr, id, addr)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if set = n == 1; set {
+			return nil
+		}
+		var one int
+		err = tx.QueryRow("SELECT 1 FROM node WHERE id = ?", id).Scan(&one)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	})
+	return set, err
 }
 
 // ReorderNodes 在写事务中验证 ids 恰是全部节点的一个排列，再整体更新顺序。
@@ -285,6 +384,9 @@ func (s *Store) DeleteNode(ctx context.Context, id int64) error {
 			return err
 		}
 		if _, err := tx.Exec("DELETE FROM alert_rule_node WHERE node_id = ?", id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(clearNodeTags, id); err != nil {
 			return err
 		}
 		return nil

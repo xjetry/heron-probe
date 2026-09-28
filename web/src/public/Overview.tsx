@@ -2,6 +2,7 @@ import { useQuery } from "@connectrpc/connect-query";
 import { Link } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { Bar, Missing, ratio } from "../components/Bar";
+import { CountryBadge } from "../components/CountryBadge";
 import { PublicService, type PublicNode } from "../gen/probe/v1/public_pb";
 import { expired, expiryText, priceText } from "../lib/billing";
 import { ago, bytes, duration, percent } from "../lib/format";
@@ -28,7 +29,7 @@ export function PublicOverview() {
   );
 }
 
-// 卡片内容按 §10：名称、在线、系统与架构、CPU、内存、磁盘、网速、运行时长、本周期流量，以及填了才显示的费用与到期。
+// 卡片内容按 §10：名称、国家 / 地区徽章、在线、系统与架构、CPU、内存、磁盘、网速、运行时长、本周期流量，以及填了才显示的费用与到期。
 function NodeCard({ node, now }: { node: PublicNode; now: number }) {
   const m = node.metrics;
   const f = node.facts;
@@ -39,6 +40,7 @@ function NodeCard({ node, now }: { node: PublicNode; now: number }) {
       <h2>
         <span className={`dot ${node.online ? "ok" : "bad"}`} role="img" aria-label={node.online ? "在线" : "离线"} />
         <Link to={`/nodes/${node.id}`}>{node.name}</Link>
+        {node.country && <>{" "}<CountryBadge code={node.country} /></>}
       </h2>
       <p className="muted">{f ? [f.os, f.arch].filter(Boolean).join(" · ") : "系统未知"}</p>
       <dl className="facts">

@@ -1,6 +1,7 @@
 import { useQuery } from "@connectrpc/connect-query";
 import { Link, useParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
+import { CountryBadge } from "../components/CountryBadge";
 import { HistoryCharts, RangePicker, useHistory, type HistoryMethods } from "../components/History";
 import { PublicService } from "../gen/probe/v1/public_pb";
 import { expired, expiryText, priceText } from "../lib/billing";
@@ -27,7 +28,7 @@ export function NodePage() {
     <section>
       {errorBanner(snap.error, history.metrics.error, history.probes.error)}
       <header className="row detail-header">
-        <h1>{node.name}</h1>
+        <h1>{node.name}{node.country && <>{" "}<CountryBadge code={node.country} /></>}</h1>
         <RangePicker history={history} />
       </header>
       <HistoryCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。</p>} />

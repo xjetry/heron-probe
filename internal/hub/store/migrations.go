@@ -32,6 +32,8 @@ var migrations = map[int]func(*sql.Tx) error{
 	11: execAll([]string{ddlMaintenanceStateV11}),
 	12: execAll(migrationV12),
 	13: execAll(migrationV13),
+	14: execAll(migrationV14),
+	15: execAll(migrationV15),
 }
 
 func execAll(stmts []string) func(*sql.Tx) error {
@@ -286,4 +288,26 @@ var migrationV12 = []string{
 // 但此后未再上报（这类节点的 last_seen_at 仍停在升级前的值）；下一次上报后随分钟行刷出补上。
 var migrationV13 = []string{
 	`ALTER TABLE node ADD COLUMN last_source TEXT NOT NULL DEFAULT ''`,
+}
+
+// v14：节点的国家（查得值与所属地址成对）与手动指定的国家。旧行取空串：没有国家；查询开启后按来源地址补查。
+var migrationV14 = []string{
+	`ALTER TABLE node ADD COLUMN country TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE node ADD COLUMN country_ip TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE node ADD COLUMN country_pin TEXT NOT NULL DEFAULT ''`,
+}
+
+// v15：节点标签与关联。旧库升级后没有标签，节点的标签集合为空。
+var migrationV15 = []string{
+	`CREATE TABLE tag (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  name_fold TEXT NOT NULL UNIQUE
+)`,
+	`CREATE TABLE node_tag (
+  node_id INTEGER NOT NULL,
+  tag_id INTEGER NOT NULL,
+  PRIMARY KEY (node_id, tag_id)
+) WITHOUT ROWID`,
+	`CREATE INDEX node_tag_by_tag ON node_tag (tag_id)`,
 }

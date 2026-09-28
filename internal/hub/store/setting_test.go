@@ -15,14 +15,14 @@ func TestSiteSettingsDefaultAndWholeReplacement(t *testing.T) {
 		t.Fatalf("never saved: %+v %v", got, err)
 	}
 	full := SiteSettings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,AAAA", CustomCSS: "body{}"}
-	if _, err := s.SaveSiteSettings(t.Context(), SiteSettingsUpdate{SiteAppearance: full.SiteAppearance, PublicEnabled: &full.PublicEnabled}); err != nil {
+	if _, _, err := s.SaveSettings(t.Context(), SettingsUpdate{SiteAppearance: full.SiteAppearance, PublicEnabled: &full.PublicEnabled}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.SiteSettings(t.Context()); err != nil || got != full {
 		t.Fatalf("round trip: %+v %v", got, err)
 	}
 	// 整体替换：空串写入，表示该项回到默认，不是"不改"。
-	if _, err := s.SaveSiteSettings(t.Context(), SiteSettingsUpdate{Theme: "auto"}); err != nil {
+	if _, _, err := s.SaveSettings(t.Context(), SettingsUpdate{Theme: "auto"}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.SiteSettings(t.Context()); err != nil || got != (SiteSettings{Theme: "auto"}) {
@@ -42,7 +42,7 @@ func TestSiteAppearanceRoundTripsEveryField(t *testing.T) {
 	for i := range v.NumField() {
 		v.Field(i).SetString(v.Type().Field(i).Name)
 	}
-	if _, err := s.SaveSiteSettings(t.Context(), SiteSettingsUpdate{SiteAppearance: want}); err != nil {
+	if _, _, err := s.SaveSettings(t.Context(), SettingsUpdate{SiteAppearance: want}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.SiteSettings(t.Context())
@@ -54,27 +54,36 @@ func TestSiteAppearanceRoundTripsEveryField(t *testing.T) {
 	}
 }
 
-// 保存中途失败时库里仍是上一套完整设置：全部键在同一个写事务里，任一条失败整体回滚。
-// 触发器拦 CSS 键，拆成逐键提交的实现会留下前四个新值。
-func TestSaveSiteSettingsIsAllOrNothing(t *testing.T) {
+// 保存中途失败时库里仍是上一套完整设置，内存里的总闸也不变：全部键在同一个写事务里，任一条失败整体回滚，失败不发布。
+// 触发器拦写入顺序里最后一个键 geo.url，拆成逐键提交的实现会留下它之前的外观、总闸与查询开关的新值。
+func TestSaveSettingsIsAllOrNothing(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	first := SiteSettings{Title: "旧", Theme: "light", AccentColor: "#111111", Logo: "data:image/png;base64,AAAA", CustomCSS: "a{}"}
-	if _, err := s.SaveSiteSettings(ctx, SiteSettingsUpdate{SiteAppearance: first.SiteAppearance, PublicEnabled: &first.PublicEnabled}); err != nil {
+	first := SiteSettings{Title: "旧", Theme: "light", AccentColor: "#111111", Logo: "data:image/png;base64,AAAA", CustomCSS: "a{}", PublicEnabled: true}
+	firstGeo := GeoSettings{URL: "https://old.example/{ip}"}
+	if _, _, err := s.SaveSettings(ctx, SettingsUpdate{SiteAppearance: first.SiteAppearance, PublicEnabled: &first.PublicEnabled, Geo: GeoUpdate{Enabled: &firstGeo.Enabled, URL: &firstGeo.URL}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.write(ctx, func(tx *sql.Tx) error {
-		_, err := tx.Exec("CREATE TRIGGER reject_css BEFORE INSERT ON setting WHEN NEW.key = 'site.custom_css' BEGIN SELECT RAISE(ABORT, 'css rejected'); END")
+		_, err := tx.Exec("CREATE TRIGGER reject_url BEFORE INSERT ON setting WHEN NEW.key = 'geo.url' BEGIN SELECT RAISE(ABORT, 'url rejected'); END")
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := s.SaveSiteSettings(ctx, SiteSettingsUpdate{Title: "新", Theme: "dark", AccentColor: "#222222", CustomCSS: "b{}"})
-	if err == nil || !strings.Contains(err.Error(), "css rejected") {
+	closed, on, url := false, true, "https://new.example/{ip}"
+	_, _, err := s.SaveSettings(ctx, SettingsUpdate{
+		SiteAppearance: SiteAppearance{Title: "新", Theme: "dark", AccentColor: "#222222", CustomCSS: "b{}"},
+		PublicEnabled:  &closed,
+		Geo:            GeoUpdate{Enabled: &on, URL: &url},
+	})
+	if err == nil || !strings.Contains(err.Error(), "url rejected") {
 		t.Fatalf("save error = %v", err)
 	}
-	if got, err := s.SiteSettings(ctx); err != nil || got != first {
-		t.Fatalf("failed save left %+v %v, want %+v", got, err, first)
+	if site, geo, err := s.Settings(ctx); err != nil || site != first || geo != firstGeo {
+		t.Fatalf("failed save left %+v %+v %v, want %+v %+v", site, geo, err, first, firstGeo)
+	}
+	if !s.PublicEnabled() {
+		t.Fatal("failed save published the closed gate")
 	}
 }
 

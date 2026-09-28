@@ -82,6 +82,10 @@ message PublicNode {
   Traffic traffic = 8;
   // 计费与到期的公开部分（§9.4）；五项都没填时缺失。
   PublicBilling billing = 9;
+  // 国家 / 地区（§4.9）的显示值，与 Node.country 相同，空串表示没有。只放行这个值：查得于哪个地址、来源是手动还是
+  // 查得都不公开——公开页表达"在哪个区域"，不定位机器。
+  string country = 10;
+  // 节点标签（Node.tags）不在这里，也不保留字段号：标签常写用途与归属（db、客户A），公开即暴露内部构成。
 }
 
 // Billing 的公开部分，字段号与 Billing 相同，由投影按字段名生成（与 PublicFacts 同一机制）。自动续期是运维开关，
