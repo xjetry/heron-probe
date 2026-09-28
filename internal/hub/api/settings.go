@@ -137,6 +137,8 @@ func cleanAppearance(in *probev1.Settings) (store.SiteAppearance, error) {
 // checkLogo 只接受 data:<type>;base64,<data> 这一种写法：type 在白名单内、全小写、不带参数，data 是带填充的
 // 标准 base64。写法收窄到一种，"是不是白名单里的图片"就只有一个答案——宽松解析与浏览器的解析一旦不一致
 // （参数、大小写、非 base64 形态），白名单就能被绕过。公开页只把它放进 <img src>，SVG 在 <img> 里不执行脚本。
+// settingsBudget 的 logo 项按原始字节数加引号计：这里限定的前缀与 base64 字母表无需 JSON 转义。
+// 放宽为接受原始 SVG 等写法会破坏这一编码前提，必须同时调整预算规则与契约用例。
 func checkLogo(logo string) error {
 	if logo == "" {
 		return nil
