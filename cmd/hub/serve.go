@@ -138,13 +138,18 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	// 文件路径是部署配置，由启动参数指定，设置 API 没有可改它的字段。OpenMMDB 在这里把整个文件读进内存并校验，运行期
 	// 不再访问文件，所以换文件要重启才生效，原地覆盖或截断也不影响运行中的答案。
 	// 显式选择本地库后不能静默退回 HTTP，否则运维以为不出网时会把节点地址送到外部。
+	// geoLog 随选定的后端一起写出，追加在启动行末尾：运维据此确认国家查询会不会出网、加载的是哪一版本地库。
 	var geoBackend geo.Backend = geo.NewHTTP(outbound)
+	geoLog := []any{"geo_backend", "http"}
 	if geoMMDBSet {
 		local, err := geo.OpenMMDB(*geoMMDB)
 		if err != nil {
 			return err
 		}
 		geoBackend = local
+		md := local.Metadata()
+		geoLog = []any{"geo_backend", "mmdb", "geo_mmdb", local.MMDBPath(), "geo_mmdb_type", md.DatabaseType,
+			"geo_mmdb_built", md.BuildTime().UTC().Format(time.RFC3339)}
 	}
 
 	st, err := store.Open(*db, clk, log, store.MigrateSchema)
@@ -200,7 +205,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	// 恢复在首个被接受的上报之后至多等一个 offline_sweep；渠道失败可重试且存储正常时，投递另有至多
 	// delivery_retry_wait 的重试等待，存储失败时的 worker 级退避不在其内（见 alert.DeliveryRetryWait）；
 	// scripts/e2e.sh 从这一行读这些量推出告警等待上限。
-	log.Info("hub listening", "listen", listener.Addr().String(), "ttl", ttl, "interval", svc.Interval(), "offline_sweep", alert.OfflineSweepEvery, "delivery_retry_wait", alert.DeliveryRetryWait(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "retention_alert_events", retention.AlertEvents, "timezone", loc.String(), "public_dir", *publicDir, "version", version)
+	log.Info("hub listening", append([]any{"listen", listener.Addr().String(), "ttl", ttl, "interval", svc.Interval(), "offline_sweep", alert.OfflineSweepEvery, "delivery_retry_wait", alert.DeliveryRetryWait(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "retention_alert_events", retention.AlertEvents, "timezone", loc.String(), "public_dir", *publicDir, "version", version}, geoLog...)...)
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(listener) }()
 

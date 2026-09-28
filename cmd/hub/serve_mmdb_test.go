@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -94,5 +95,76 @@ func TestServeMMDBTakesPriorityAndEchoesBackend(t *testing.T) {
 	}
 	if n := requests.Load(); n != 0 {
 		t.Errorf("HTTP requests with mmdb configured = %d, want 0", n)
+	}
+}
+
+// startupLine 按 serve 的装配启动一次，取到 "hub listening" 那条记录后停下。
+func startupLine(t *testing.T, flags ...string) map[string]json.RawMessage {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	events := make(serveEvents, 128)
+	done := make(chan error, 1)
+	args := append([]string{"--db", filepath.Join(t.TempDir(), "hub.db"), "--listen", "127.0.0.1:0"}, flags...)
+	go func() {
+		done <- runServeWith(ctx, args, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), slog.New(slog.NewJSONHandler(events, nil)))
+	}()
+	timer := time.NewTimer(testwait.Bound)
+	defer timer.Stop()
+	var line map[string]json.RawMessage
+	for line == nil {
+		select {
+		case e := <-events:
+			if string(e["msg"]) == `"hub listening"` {
+				line = e
+			}
+		case err := <-done:
+			t.Fatalf("serve stopped before listening: %v", err)
+		case <-timer.C:
+			t.Fatal("serve did not bind a listener")
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("serve exit: %v", err)
+		}
+	case <-timer.C:
+		t.Error("serve did not stop")
+	}
+	return line
+}
+
+// 启动行写明选定的国家查询后端；本地库另写路径、数据库类型与构建时间（UTC 的 RFC 3339），运维据此确认不出网、加载的
+// 是哪一版库。夹具的类型是 Probe-Test-Country、构建时间是 Unix 秒 1。HTTP 后端不写本地库的三项。
+func TestServeStartupLineStatesTheGeoBackend(t *testing.T) {
+	path := "../../internal/hub/geo/testdata/country.mmdb"
+	for _, c := range []struct {
+		name  string
+		flags []string
+		want  map[string]string
+	}{
+		{"http", nil, map[string]string{"geo_backend": "http"}},
+		{"mmdb", []string{"--geo-mmdb", path}, map[string]string{
+			"geo_backend": "mmdb", "geo_mmdb": path, "geo_mmdb_type": "Probe-Test-Country", "geo_mmdb_built": "1970-01-01T00:00:01Z",
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			line := startupLine(t, c.flags...)
+			for _, key := range []string{"geo_backend", "geo_mmdb", "geo_mmdb_type", "geo_mmdb_built"} {
+				raw, present := line[key]
+				want, wanted := c.want[key]
+				var got string
+				if present {
+					if err := json.Unmarshal(raw, &got); err != nil {
+						t.Errorf("startup line %s = %s, want a string: %v", key, raw, err)
+					}
+				}
+				if present != wanted || got != want {
+					t.Errorf("startup line %s = %s (present %v), want %q (present %v)", key, raw, present, want, wanted)
+				}
+			}
+		})
 	}
 }

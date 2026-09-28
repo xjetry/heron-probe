@@ -159,3 +159,6 @@ func (m *MMDB) Lookup(ctx context.Context, _ store.GeoSettings, addr netip.Addr)
 func (m *MMDB) Service(store.GeoSettings) string { return m.path }
 
 func (m *MMDB) MMDBPath() string { return m.path }
+
+// Metadata 是库文件自带的元数据。serve 把其中的数据库类型与构建时间写进启动行，运维据此确认加载的是哪一版库。
+func (m *MMDB) Metadata() maxminddb.Metadata { return m.db.Metadata }
