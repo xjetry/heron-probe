@@ -84,7 +84,7 @@ var schemaV7 = append(slices.Clone(schemaV6),
 	"ALTER TABLE alert_delivery ADD COLUMN http_status INTEGER")
 
 func TestMigrationFromV7MatchesFreshSchemaAndKeepsRows(t *testing.T) {
-	migrated := migrateFrom(t, schemaV7, 7, seedMinuteRow)
+	migrated := migrateFrom(t, 7, seedMinuteRow)
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}

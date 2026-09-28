@@ -34,6 +34,12 @@ func schemaPolicyFixture(t *testing.T, statements []string, version int) (string
 	return path, db
 }
 
+// frozenSchemaFixture 建一个停在旧版本 version 的库，DDL 按版本号取自 frozenSchemas。
+func frozenSchemaFixture(t *testing.T, version int) (string, *sql.DB) {
+	t.Helper()
+	return schemaPolicyFixture(t, frozenSchema(t, version), version)
+}
+
 func assertSchemaLogs(t *testing.T, buf *bytes.Buffer, want ...map[string]any) {
 	t.Helper()
 	var got []map[string]any
@@ -52,7 +58,7 @@ func assertSchemaLogs(t *testing.T, buf *bytes.Buffer, want ...map[string]any) {
 }
 
 func TestSchemaPolicyRequiresCurrentWithoutChangingV8(t *testing.T) {
-	path, raw := schemaPolicyFixture(t, schemaV8, 8)
+	path, raw := frozenSchemaFixture(t, 8)
 	seedMinuteRow(t, raw)
 	before := describe(t, raw)
 	var logs bytes.Buffer
@@ -79,12 +85,9 @@ func TestSchemaPolicyRequiresCurrentWithoutChangingV8(t *testing.T) {
 }
 
 func TestSchemaPolicyMigratesAndLogsEachStep(t *testing.T) {
-	for _, fixture := range []struct {
-		version int
-		schema  []string
-	}{{7, schemaV7}, {8, schemaV8}, {9, schemaV9}, {10, schemaV10}, {11, schemaV11}, {12, schemaV12}} {
-		t.Run(fmt.Sprint(fixture.version), func(t *testing.T) {
-			path, raw := schemaPolicyFixture(t, fixture.schema, fixture.version)
+	for _, version := range []int{7, 8, 9, 10, 11, 12} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			path, raw := frozenSchemaFixture(t, version)
 			var logs bytes.Buffer
 			st, err := Open(path, clock.Real(), slog.New(slog.NewJSONHandler(&logs, nil)), MigrateSchema)
 			if err != nil {
@@ -95,7 +98,7 @@ func TestSchemaPolicyMigratesAndLogsEachStep(t *testing.T) {
 				t.Errorf("migrated user_version = %d, want %d", got, schemaVersion)
 			}
 			var want []map[string]any
-			for from := fixture.version; from < schemaVersion; from++ {
+			for from := version; from < schemaVersion; from++ {
 				want = append(want, map[string]any{"level": "INFO", "msg": "database schema migrated", "from": float64(from), "to": float64(from + 1)})
 			}
 			assertSchemaLogs(t, &logs, want...)
@@ -107,7 +110,7 @@ func TestSchemaPolicyMigratesAndLogsEachStep(t *testing.T) {
 // 让迁移 9 的第一条 ALTER 撞上已存在的同名列，使那一步的事务回滚，验证日志确实
 // 止步于最后一步已提交的迁移，不多写一行从未持久化的 to:9。
 func TestSchemaPolicyPartialMigrationLogsOnlyCommittedSteps(t *testing.T) {
-	path, raw := schemaPolicyFixture(t, schemaV7, 7)
+	path, raw := frozenSchemaFixture(t, 7)
 	if _, err := raw.Exec("ALTER TABLE node ADD COLUMN price TEXT NOT NULL DEFAULT ''"); err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +263,7 @@ func TestSchemaPolicyRejectsNegativeVersionWithoutSuggestingServe(t *testing.T) 
 func TestSchemaPolicyRejectsInvalidPolicy(t *testing.T) {
 	for _, policy := range []SchemaPolicy{0, -1, 3} {
 		t.Run(fmt.Sprint(policy), func(t *testing.T) {
-			path, raw := schemaPolicyFixture(t, schemaV8, 8)
+			path, raw := frozenSchemaFixture(t, 8)
 			before := describe(t, raw)
 			defer func() {
 				if got := recover(); got != "store.Open requires a valid SchemaPolicy" {

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -19,7 +20,7 @@ import (
 )
 
 // schemaV1 是第一个发布版本的完整 DDL，逐字冻结：迁移测试用它建起旧库，
-// 再由 Open 升级，与全新建库逐表比对。以后每个版本都在这里追加一份冻结文本。
+// 再由 Open 升级，与全新建库逐表比对。以后每个版本各冻结一份，并登记进 frozenSchemas。
 var schemaV1 = []string{
 	`CREATE TABLE node (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,8 +71,38 @@ func userVersion(t *testing.T, db *sql.DB) int {
 	return v
 }
 
-func migrateFrom(t *testing.T, stmts []string, version int, seed func(*testing.T, *sql.DB)) *Store {
+// frozenSchemas 按版本号登记每个旧版本发布时的完整 DDL。版本号只在这里与冻结文本配对一次：
+// 用例按版本号取用（migrateFrom、frozenSchemaFixture、frozenSchema），不在调用处另写一遍版本号。
+// TestFrozenSchemasFollowMigrations 核对每一对确实相符，TestFrozenSchemasReachedOnlyByVersion
+// 挡住绕过这张表、在函数体里直接引用冻结文本的写法。
+var frozenSchemas = map[int][]string{
+	1:  schemaV1,
+	2:  schemaV2,
+	3:  schemaV3,
+	4:  schemaV4,
+	5:  schemaV5,
+	6:  schemaV6,
+	7:  schemaV7,
+	8:  schemaV8,
+	9:  schemaV9,
+	10: schemaV10,
+	11: schemaV11,
+	12: schemaV12,
+}
+
+func frozenSchema(t *testing.T, version int) []string {
 	t.Helper()
+	stmts, ok := frozenSchemas[version]
+	if !ok {
+		t.Fatalf("no frozen schema registered for version %d", version)
+	}
+	return stmts
+}
+
+// migrateFrom 用 version 版的冻结 DDL 建旧库、交给 seed 写入数据，再由 Open 迁到当前版本。
+func migrateFrom(t *testing.T, version int, seed func(*testing.T, *sql.DB)) *Store {
+	t.Helper()
+	stmts := frozenSchema(t, version)
 	dir := t.TempDir()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
@@ -111,7 +142,7 @@ func migrateFrom(t *testing.T, stmts []string, version int, seed func(*testing.T
 }
 
 func TestMigrationFromV1MatchesFreshSchema(t *testing.T) {
-	migrated := migrateFrom(t, schemaV1, 1, seedMinuteRow)
+	migrated := migrateFrom(t, 1, seedMinuteRow)
 
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
@@ -246,7 +277,7 @@ var schemaV3 = []string{
 }
 
 func TestMigrationFromV3MatchesFreshSchemaAndKeepsRows(t *testing.T) {
-	migrated := migrateFrom(t, schemaV3, 3, seedMinuteRow)
+	migrated := migrateFrom(t, 3, seedMinuteRow)
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}
@@ -381,7 +412,7 @@ var schemaV4 = []string{
 }
 
 func TestMigrationFromV4MatchesFreshSchemaAndKeepsRows(t *testing.T) {
-	migrated := migrateFrom(t, schemaV4, 4, seedMinuteRow)
+	migrated := migrateFrom(t, 4, seedMinuteRow)
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}
@@ -407,25 +438,12 @@ func TestAlertMigrationRejectsExistingObjects(t *testing.T) {
 	for _, object := range objects {
 		kind, name := object.kind, object.name
 		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "conflict.db")
-			db, err := sql.Open("sqlite", dsn(path, ""))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer db.Close()
-			for _, ddl := range schemaV4 {
-				if _, err := db.Exec(ddl); err != nil {
-					t.Fatal(err)
-				}
-			}
+			path, db := frozenSchemaFixture(t, 4)
 			conflict := "CREATE TABLE " + name + " (wrong INTEGER, id INTEGER, rule_id INTEGER, node_id INTEGER, channel_id INTEGER, event_id INTEGER, ok INTEGER, attempts INTEGER)"
 			if kind == "INDEX" {
 				conflict = "CREATE INDEX " + name + " ON node(id)"
 			}
 			if _, err := db.Exec(conflict); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := db.Exec("PRAGMA user_version = 4"); err != nil {
 				t.Fatal(err)
 			}
 			st, err := Open(path, clock.NewFake(time.Unix(1, 0)), slog.Default(), MigrateSchema)
@@ -443,7 +461,7 @@ func TestAlertMigrationRejectsExistingObjects(t *testing.T) {
 }
 
 func TestMigrationFromV2MatchesFreshSchemaAndKeepsRows(t *testing.T) {
-	migrated := migrateFrom(t, schemaV2, 2, seedMinuteRow)
+	migrated := migrateFrom(t, 2, seedMinuteRow)
 	rows, err := migrated.ReadMinuteRows(t.Context(), 7, 0, 120)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("minute row lost across rebuild: %v %v", rows, err)
@@ -498,7 +516,7 @@ var schemaV5 = []string{
 }
 
 func TestMigrationFromV5MatchesFreshSchemaAndKeepsRows(t *testing.T) {
-	migrated := migrateFrom(t, schemaV5, 5, seedMinuteRow)
+	migrated := migrateFrom(t, 5, seedMinuteRow)
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}
@@ -508,53 +526,113 @@ func TestMigrationFromV5MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 	}
 }
 
-// migrations 的每一步 v 都要有一条从 v−1 出发、经 migrateFrom 的用例，迁移后与新建库的结构比较才覆盖到
-// 这一步。起点版本从各测试文件的 migrateFrom 调用处静态读取，只认 Test 函数体内的整数字面量：
-// 写成变量就读不出版本，放进辅助函数就确认不了 go test 会执行它，两种都直接判失败。
-func TestEveryMigrationHasMigrateFromCase(t *testing.T) {
+// frozenSchemas 的每一对版本号与冻结文本都要相符。v1 是第一个发布版本，逐字冻结，作为起点；此后每个 v 的
+// 冻结文本必须恰好是 v−1 的冻结文本经 migrations[v] 之后的结构。某版文本登记到错的版本号上时，它与由前一版
+// 推出的结构对不上：例如把 schemaV11 登记成 12，第 12 步两侧差出 migrations[12] 的改动。核对只看结构，
+// 所以另要求相邻两版结构不同：某步迁移若只改数据，这里会红，届时需要把数据纳入比较。
+// 最后一个旧版本到当前版本的一步由 migrateFrom 与新建库比较，不在这里重复。
+func TestFrozenSchemasFollowMigrations(t *testing.T) {
+	for v := 1; v < schemaVersion; v++ {
+		if _, ok := frozenSchemas[v]; !ok {
+			t.Fatalf("frozenSchemas lacks version %d", v)
+		}
+	}
+	for v := 2; v < schemaVersion; v++ {
+		t.Run(fmt.Sprint(v), func(t *testing.T) {
+			step, ok := migrations[v]
+			if !ok {
+				t.Fatalf("migrations has no step %d", v)
+			}
+			_, stepped := frozenSchemaFixture(t, v-1)
+			previous := describe(t, stepped)
+			if err := inTxDB(stepped, step); err != nil {
+				t.Fatalf("migrations[%d] on frozen v%d: %v", v, v-1, err)
+			}
+			_, frozen := frozenSchemaFixture(t, v)
+			want := describe(t, frozen)
+			if diff := schemaDifference(describe(t, stepped), want, fmt.Sprintf("v%d 经迁移", v-1), fmt.Sprintf("冻结 v%d", v)); diff != "" {
+				t.Errorf("frozen v%d is not frozen v%d plus migrations[%d]:\n%s", v, v-1, v, diff)
+			}
+			if slices.Equal(previous, want) {
+				t.Errorf("frozen v%d and v%d have the same structure: either a version is registered with the wrong DDL, or migrations[%d] changes only data and a structural check cannot tell the versions apart", v-1, v, v)
+			}
+		})
+	}
+}
+
+// testFuncDecls 解析本包全部 _test.go，返回其中的函数声明，供静态核对用例写法的测试使用。
+func testFuncDecls(t *testing.T) (*token.FileSet, []*ast.FuncDecl) {
+	t.Helper()
 	files, err := filepath.Glob("*_test.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	fset := token.NewFileSet()
-	covered := map[int]bool{}
+	var funcs []*ast.FuncDecl
 	for _, name := range files {
 		file, err := parser.ParseFile(fset, name, nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok {
-				continue
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				funcs = append(funcs, fn)
 			}
-			ast.Inspect(fn, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				if id, ok := call.Fun.(*ast.Ident); !ok || id.Name != "migrateFrom" {
-					return true
-				}
-				pos := fset.Position(call.Pos())
-				if !strings.HasPrefix(fn.Name.Name, "Test") {
-					t.Errorf("%s: migrateFrom is called from %s; call it directly in a Test function", pos, fn.Name.Name)
-					return true
-				}
-				lit, ok := call.Args[2].(*ast.BasicLit)
-				if !ok || lit.Kind != token.INT {
-					t.Errorf("%s: migrateFrom version must be an integer literal", pos)
-					return true
-				}
-				version, err := strconv.Atoi(lit.Value)
-				if err != nil {
-					t.Errorf("%s: %v", pos, err)
-					return true
-				}
-				covered[version] = true
-				return true
-			})
 		}
+	}
+	return fset, funcs
+}
+
+// 冻结 DDL 只经 frozenSchemas 按版本号取用。在函数体里直接引用 schemaV<n> 建库，就得另写一遍版本号
+// （user_version 或 migrateFrom 的参数），两处可以写得不一致，而 TestFrozenSchemasFollowMigrations 只核对
+// 登记表里的配对。冻结文本的定义与登记表都是包级声明，不在函数体内，不受此限。
+func TestFrozenSchemasReachedOnlyByVersion(t *testing.T) {
+	frozenName := regexp.MustCompile(`^schemaV[0-9]+$`)
+	fset, funcs := testFuncDecls(t)
+	for _, fn := range funcs {
+		ast.Inspect(fn, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && frozenName.MatchString(id.Name) {
+				t.Errorf("%s: %s references %s directly; take frozen DDL by version through frozenSchema, frozenSchemaFixture or migrateFrom", fset.Position(id.Pos()), fn.Name.Name, id.Name)
+			}
+			return true
+		})
+	}
+}
+
+// migrations 的每一步 v 都要有一条从 v−1 出发、经 migrateFrom 的用例，迁移后与新建库的结构比较才覆盖到
+// 这一步。起点版本从各测试文件的 migrateFrom 调用处静态读取，只认 Test 函数体内的整数字面量：
+// 写成变量就读不出版本，放进辅助函数就确认不了 go test 会执行它，两种都直接判失败。
+// 起点版本对应的冻结 DDL 由 frozenSchemas 给出，二者相符由 TestFrozenSchemasFollowMigrations 核对。
+func TestEveryMigrationHasMigrateFromCase(t *testing.T) {
+	fset, funcs := testFuncDecls(t)
+	covered := map[int]bool{}
+	for _, fn := range funcs {
+		ast.Inspect(fn, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if id, ok := call.Fun.(*ast.Ident); !ok || id.Name != "migrateFrom" {
+				return true
+			}
+			pos := fset.Position(call.Pos())
+			if !strings.HasPrefix(fn.Name.Name, "Test") {
+				t.Errorf("%s: migrateFrom is called from %s; call it directly in a Test function", pos, fn.Name.Name)
+				return true
+			}
+			lit, ok := call.Args[1].(*ast.BasicLit)
+			if !ok || lit.Kind != token.INT {
+				t.Errorf("%s: migrateFrom version must be an integer literal", pos)
+				return true
+			}
+			version, err := strconv.Atoi(lit.Value)
+			if err != nil {
+				t.Errorf("%s: %v", pos, err)
+				return true
+			}
+			covered[version] = true
+			return true
+		})
 	}
 	for v := range migrations {
 		if !covered[v-1] {

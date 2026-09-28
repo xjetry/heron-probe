@@ -26,7 +26,7 @@ var schemaV9 = append(slices.Clone(schemaV8),
 
 // 旧库里的任务升级后 all_nodes 取默认值 0：仍按原来的分配行覆盖，不会被放宽到全部节点。
 func TestMigrationFromV9MatchesFreshSchemaAndKeepsTaskScope(t *testing.T) {
-	migrated := migrateFrom(t, schemaV9, 9, func(t *testing.T, db *sql.DB) {
+	migrated := migrateFrom(t, 9, func(t *testing.T, db *sql.DB) {
 		seedMinuteRow(t, db)
 		for _, stmt := range []string{
 			"INSERT INTO node (id, name, token_hash, created_at) VALUES (8, 'other', x'01', 1)",

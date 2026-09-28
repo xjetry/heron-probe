@@ -156,7 +156,7 @@ func TestMigrationFromV6ClassifiesDeliveryFailures(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			migrated := migrateFrom(t, schemaV6, 6, seed)
+			migrated := migrateFrom(t, 6, seed)
 			if v := userVersion(t, migrated.r); v != schemaVersion {
 				t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 			}

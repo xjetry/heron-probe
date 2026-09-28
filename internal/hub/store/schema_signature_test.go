@@ -108,7 +108,8 @@ const signatureObjects = `WITH s AS (SELECT type, name, tbl_name, sql FROM main.
 	WHERE name NOT LIKE 'sqlite\_stat%' ESCAPE '\') `
 
 // normalizeSQL 把 sqlite_schema.sql 的原文化成只随语义变化的文本。同一结构的原文会因建法而异：
-// ALTER TABLE ADD COLUMN 把新列定义以 ", " 接在最后一个列定义之后（没有表级约束时即最后的右括号之前；有表级约束时在约束列表之前，alert_state 实测插在 PRIMARY KEY 之前），RENAME 让 SQLite 在建表语句
+// ALTER TABLE ADD COLUMN 把新列定义以 ", " 接在最后一个列定义之后（没有表级约束时即最后的右括号之前；
+// 有表级约束时在约束列表之前，alert_state 实测插在 PRIMARY KEY 之前），RENAME 让 SQLite 在建表语句
 // 和挂在该表上的索引里把表名写成带双引号的形式，DDL 里还带注释与缩进。规范化只丢弃 SQLite 解析时不起作用的差异：
 //   - 注释（-- 到行尾、/* 到 */）与空白：两个非标点记号之间至多留一个空格，标点两侧不留。
 //   - 引号与字符串常量之外的 ASCII 大小写：SQLite 按 ASCII 不分大小写解析关键字、标识符、类型名、函数名与校对名。
