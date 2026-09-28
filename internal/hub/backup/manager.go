@@ -402,7 +402,8 @@ func (m *Manager) perform(ctx context.Context, cfg store.BackupSettings, layer s
 		return "cleanup", 0, err.Error()
 	}
 	// 唤醒和周期都执行完整配置轮；主题成功不能掩盖快照或保留的故障，整轮成功后才记账和恢复通知。
-	// 每次主题写入的唤醒多产生一份配置快照，达到份数上限时挤掉最旧一份，换取最新配置快照与主题对象同步。
+	// 每次唤醒多产生一份配置快照，达到份数上限时挤掉最旧一份，换取最新配置快照与主题对象同步；主题写入的通知
+	// 合并而不排队（store.ThemeChanges），一轮进行中的连续写入只换来一次唤醒，写入次数是快照消耗的上界。
 	if layer == "config" {
 		if category, code, detail := m.syncThemes(ctx, cfg, client); category != "" {
 			return category, code, detail
