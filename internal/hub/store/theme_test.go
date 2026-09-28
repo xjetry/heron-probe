@@ -16,7 +16,9 @@ var schemaV15 = append(slices.Clone(schemaV14),
 	"CREATE TABLE node_tag (node_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (node_id, tag_id)) WITHOUT ROWID",
 	"CREATE INDEX node_tag_by_tag ON node_tag (tag_id)")
 
-// 旧库升级后与新建库结构相同，节点原样保留且没有主题；升级后的库能装主题，启用唯一性的索引也在。
+// 旧库升级后与新建库结构相同，节点原样保留且没有主题；升级后的库能装主题。"至多一行启用"由两条约束共同承载，
+// 两库各自对照：部分唯一索引 theme_enabled 拒绝第二行 1，CHECK 拒绝 0 与 1 以外的值（否则 2 这样的值绕过只看
+// enabled = 1 的索引）。describe 不读 CHECK，所以 CHECK 只能由这里的写入来钉。
 func TestMigrationFromV15AddsThemeTables(t *testing.T) {
 	migrated, fresh := migrateFrom(t, schemaV15, 15, func(t *testing.T, db *sql.DB) {
 		if _, err := db.Exec("INSERT INTO node (id, name, token_hash, created_at) VALUES (7, 'kept', x'00', 1)"); err != nil {
@@ -33,22 +35,29 @@ func TestMigrationFromV15AddsThemeTables(t *testing.T) {
 		t.Fatalf("node after migration: %+v %v", n, err)
 	}
 	for _, s := range []*Store{migrated, fresh} {
+		kind := map[bool]string{true: "migrated", false: "fresh"}[s == migrated]
 		putTheme(t, s, "a", "index.html")
 		putTheme(t, s, "b", "index.html")
 		if err := s.EnableTheme(t.Context(), "a"); err != nil {
 			t.Fatal(err)
 		}
-		if err := forceSecondEnabled(t, s); err == nil || !strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			t.Fatalf("second enabled row on a %s database: %v, want the theme_enabled index to refuse it", map[bool]string{true: "migrated", false: "fresh"}[s == migrated], err)
+		if err := forceEnabled(t, s, "b", 1); err == nil || !strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			t.Errorf("second enabled row on a %s database: %v, want the theme_enabled index to refuse it", kind, err)
+		}
+		if err := forceEnabled(t, s, "b", 2); err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
+			t.Errorf("enabled = 2 on a %s database: %v, want the CHECK on theme.enabled to refuse it", kind, err)
+		}
+		if got := enabledIDs(t, s); !slices.Equal(got, []string{"a"}) {
+			t.Errorf("enabled on a %s database after the refused writes = %v, want [a]", kind, got)
 		}
 	}
 }
 
-// forceSecondEnabled 绕开 EnableTheme 直接改表：至多一行启用由索引承载，不依赖写者自觉先清再置。
-func forceSecondEnabled(t *testing.T, s *Store) error {
+// forceEnabled 绕开 EnableTheme 直接改表：约束由 schema 承载，不依赖写者自觉先清再置、只写 0 与 1。
+func forceEnabled(t *testing.T, s *Store, id string, v int) error {
 	t.Helper()
 	return s.write(t.Context(), func(tx *sql.Tx) error {
-		_, err := tx.Exec("UPDATE theme SET enabled = 1 WHERE id = 'b'")
+		_, err := tx.Exec("UPDATE theme SET enabled = ? WHERE id = ?", v, id)
 		return err
 	})
 }
