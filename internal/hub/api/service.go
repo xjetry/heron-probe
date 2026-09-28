@@ -32,9 +32,13 @@ import (
 const (
 	SessionCookie = "probe_session"
 	// maxBody 是管理请求的解码预算。connect 先解码再进拦截器，未鉴权的请求也会被读到这个上限，所以它必须有界。
-	// 它要装下 UpdateSettings 的满额设置在最坏转义下的 JSON：logo 满额（base64 字符在 JSON 里无需转义）；自定义 CSS
-	// 与清洗前的标题、国家查询的服务地址满额，且每个字节都转义成 6 字节的 \u00XX（控制字符就是这样）；另留 4 KiB 给
-	// 明暗、主色、国家查询开关、字段名与 JSON 语法。多余的 JSON 空白、对无需转义的字符的转义不在预算内：这样的请求超出预算时得到 resource_exhausted。
+	// 它要装下 UpdateSettings 的满额设置按 encoding/json 默认写法编码的最坏情况：logo 满额（base64 字符在 JSON 里
+	// 无需转义）；自定义 CSS、清洗前的标题与国家查询的服务地址满额，且每个字节都写成 6 字节；另留 4 KiB 给明暗、主色、
+	// 国家查询开关、字段名与 JSON 语法。6 字节的来源因字段而异：CSS 与标题可以含控制字符，JSON 必须把它们写成 \u00XX；
+	// 服务地址不含控制字符（url.Parse 拒绝），JSON 必须转义的只有 " 与 \（各 2 字节），6 倍来自 encoding/json 默认把
+	// <、>、& 写成 \u003c 这类形式，而 url.Parse 放行这三个字符。encoding/json 默认还把 U+2028、U+2029 写成 6 字节
+	// （原文 3 字节），同样在 6 倍之内。预算外的是多余的 JSON 空白与别的非必须转义（例如把 a 写成 \u0061）：
+	// 这样的请求超出预算时得到 resource_exhausted。
 	// 各项的上限在 settings.go；每个字段的合法取值都有字节上限（明暗与主色由取值集合与格式限定）是这条推导成立的前提。
 	maxBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes + 6*maxGeoURLBytes + 4<<10
 )

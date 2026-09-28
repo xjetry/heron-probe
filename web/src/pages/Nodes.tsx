@@ -148,7 +148,7 @@ function NodeEditor({ node, hubVersion, saving, deleting, rotating, onMoveUp, on
         <td>
           {/* 国家码都是大写，输入时就转成大写；其余取值原样交给 hub 校验。 */}
           <input aria-label={`手动指定国家 / 地区 ${withId(node.name, node.id)}`} aria-describedby={`country-hint-${node.id}`} placeholder="US" value={draft.countryPin} onChange={(e) => setDraft({ ...draft, countryPin: e.target.value.toUpperCase() })} />
-          <p className="muted" id={`country-hint-${node.id}`}>两个字母（ISO 3166-1），优先于查得值；留空用查得值：{node.countryIp ? `查得于 ${node.countryIp}` : "尚无查得值"}。</p>
+          <p className="muted" id={`country-hint-${node.id}`}>两个字母（ISO 3166-1），优先于查得值；留空用查得值：{node.countryLookup ? lookupText(node) : "尚无查得值"}。</p>
         </td>
         <td><input aria-label={`备注 ${withId(node.name, node.id)}`} value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></td>
         <td><input type="number" min={1} max={28} aria-label={`重置日 ${withId(node.name, node.id)}`} value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><p className="muted">若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。</p></td>
@@ -188,12 +188,16 @@ function NodeEditor({ node, hubVersion, saving, deleting, rotating, onMoveUp, on
   );
 }
 
-// 显示值、来源与查得于哪个地址："🇺🇸 US 查得于 8.8.8.8"、"🇯🇵 JP 手动指定"；没有国家是"—"。手动指定时查询照常进行，
-// 查得于哪个地址也照写：清空手动值即回落到它。
+// 显示值、来源与查得值："🇺🇸 US 查得于 8.8.8.8"、"🇯🇵 JP 手动指定；查得 US（于 8.8.4.4）"、"🇯🇵 JP 手动指定"；
+// 没有国家是"—"。手动指定时查询照常进行，查得值与它所属的地址也照写，清空手动值即回落到它；查得值要写出来，
+// 只写地址会读成"JP 是在 8.8.4.4 查得的"。
+const lookupText = (node: Node) => `查得 ${node.countryLookup}（于 ${node.countryIp}）`;
+
 function CountryCell({ node }: { node: Node }) {
   if (node.countrySource === CountrySource.UNSPECIFIED) return <>—</>;
-  const lookup = node.countryIp ? `查得于 ${node.countryIp}` : "";
-  const source = node.countrySource === CountrySource.MANUAL ? ["手动指定", lookup].filter(Boolean).join("；") : lookup;
+  const source = node.countrySource === CountrySource.MANUAL
+    ? ["手动指定", node.countryLookup && lookupText(node)].filter(Boolean).join("；")
+    : `查得于 ${node.countryIp}`;
   return <><CountryBadge code={node.country} />{" "}<span className="muted">{source}</span></>;
 }
 

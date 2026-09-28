@@ -72,7 +72,7 @@ func OpenMMDB(path string) (*MMDB, error) {
 }
 
 // Lookup 只读 GeoLite2-Country 的 country.iso_code，不以 registered_country 等字段替代。
-// 查不到或缺字段得到空串，由 Resolver 的 IsCountryCode 校验按失败退避，不沿用其它含义的国家。
+// 查不到或缺字段得到空串，由 Resolver 的 store.IsCountryCode 校验按失败退避，不沿用其它含义的国家。
 func (m *MMDB) Lookup(ctx context.Context, addr netip.Addr) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err

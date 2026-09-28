@@ -53,8 +53,8 @@ func listedNode(t *testing.T, h *harness) *probev1.Node {
 	return resp.Msg.GetNodes()[0]
 }
 
-// 面板看到显示值、来源、查得于哪个地址与手动值；pin 优先，清空 pin 回落到查得值。公开快照只带显示值：原文里没有
-// 地址，也没有来源与手动值字段。
+// 面板看到显示值、来源、查得值与它所属的地址、手动值；pin 优先，查得值在手动指定时照常回显，清空 pin 回落到它。
+// 公开快照只带显示值：原文里没有地址，也没有来源、查得值与手动值字段。
 func TestNodeCountryPinWinsAndClearingFallsBack(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
@@ -69,13 +69,14 @@ func TestNodeCountryPinWinsAndClearingFallsBack(t *testing.T) {
 	}
 	check := func(stage string, n *probev1.Node, country string, source probev1.CountrySource, pin string) {
 		t.Helper()
-		if n.GetCountry() != country || n.GetCountrySource() != source || n.GetCountryIp() != "8.8.8.8" || n.GetCountryPin() != pin {
-			t.Fatalf("%s: node = %v, want country %q source %s country_ip 8.8.8.8 pin %q", stage, n, country, source, pin)
+		if n.GetCountry() != country || n.GetCountrySource() != source || n.GetCountryLookup() != "US" || n.GetCountryIp() != "8.8.8.8" || n.GetCountryPin() != pin {
+			t.Fatalf("%s: node = %v, want country %q source %s country_lookup US country_ip 8.8.8.8 pin %q", stage, n, country, source, pin)
 		}
 		h.clk.Advance(snapshotTTL)
 		snap := pubGet(t, h, "GetSnapshot", jsonQuery("{}"), nil)
 		if !bytes.Contains(snap.body, []byte(`"country":"`+country+`"`)) || bytes.Contains(snap.body, []byte("8.8.8.8")) ||
-			bytes.Contains(snap.body, []byte("countryIp")) || bytes.Contains(snap.body, []byte("countryPin")) || bytes.Contains(snap.body, []byte("countrySource")) {
+			bytes.Contains(snap.body, []byte("countryIp")) || bytes.Contains(snap.body, []byte("countryPin")) || bytes.Contains(snap.body, []byte("countrySource")) ||
+			bytes.Contains(snap.body, []byte("countryLookup")) {
 			t.Fatalf("%s: public snapshot must carry only the display country %q: %s", stage, country, snap.body)
 		}
 	}
@@ -98,7 +99,7 @@ func TestNodeWithoutCountry(t *testing.T) {
 	h.login(t)
 	id, _ := h.createNode(t, "n")
 	h.setPublic(t, id, "n", true)
-	if n := listedNode(t, h); n.GetCountry() != "" || n.GetCountrySource() != probev1.CountrySource_COUNTRY_SOURCE_UNSPECIFIED || n.GetCountryIp() != "" {
+	if n := listedNode(t, h); n.GetCountry() != "" || n.GetCountrySource() != probev1.CountrySource_COUNTRY_SOURCE_UNSPECIFIED || n.GetCountryLookup() != "" || n.GetCountryIp() != "" {
 		t.Fatalf("node = %v", n)
 	}
 	if snap := pubGet(t, h, "GetSnapshot", jsonQuery("{}"), nil); !bytes.Contains(snap.body, []byte(`"name":"n"`)) || bytes.Contains(snap.body, []byte("country")) {
@@ -171,6 +172,9 @@ func TestUpdateSettingsValidatesGeoURL(t *testing.T) {
 		{"no host", withURL("https:///{ip}"), `settings.geo_url must be an absolute http:// or https:// URL`},
 		{"control character", withURL("https://geo.example/{ip}\n"), `settings.geo_url must be an absolute http:// or https:// URL`},
 		{"user information", withURL("https://user:secret@geo.example/{ip}"), `settings.geo_url must not contain user information`},
+		// 样例地址是 IPv6：{ip} 放在主机或端口位置时，填入样例后冒号落进主机端口，不是合法 URL。
+		{"placeholder as host", withURL("https://{ip}/country"), `settings.geo_url must be an absolute http:// or https:// URL; got "https://{ip}/country"`},
+		{"placeholder as port", withURL("https://geo.example:{ip}/country"), `settings.geo_url must be an absolute http:// or https:// URL; got "https://geo.example:{ip}/country"`},
 		{"too long", withURL("https://geo.example/{ip}?" + strings.Repeat("a", maxGeoURLBytes)), `settings.geo_url must be at most 2048 bytes; got 2073`},
 	} {
 		t.Run(c.name, func(t *testing.T) { rejected(t, h, c.in, c.want, before) })

@@ -1,10 +1,12 @@
+import { create } from "@bufbuild/protobuf";
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { type ChangeEvent, type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
-import { AdminService, GeoBackend, type Settings } from "../gen/probe/v1/admin_pb";
+import { AdminService, GeoBackend, GetSettingsResponseSchema, type Settings } from "../gen/probe/v1/admin_pb";
 import { LOGO_TYPES, MAX_TITLE_CHARS, THEMES, sizeProblems, type Theme } from "../lib/appearance";
+import { ANSWERS_PER_NODE } from "../lib/country";
 import { BUILT_IN_ACCENT } from "../lib/palette";
 import { DEFAULT_TITLE } from "../public/site";
 
@@ -15,6 +17,19 @@ type Draft = { title: string; theme: string; accentColor: string; logo: string; 
 const toDraft = (s: Settings | undefined): Draft => ({
   title: s?.title ?? "", theme: s?.theme || "auto", accentColor: s?.accentColor ?? "", logo: s?.logo ?? "", customCss: s?.customCss ?? "",
 });
+
+// 两个表单保存成功后都经它：先把 hub 的回显写进 getSettings 的缓存，再失效。回显就是库里的已保存值（外观是清洗后
+// 写入的值，国家查询两项由 SaveSettings 在同一个写事务里读回），缓存据此更新，不依赖刷新成功。只失效时，刷新一旦
+// 失败，缓存就停在保存前的值：查询表单按缓存整体替换外观，会把刚保存的外观改回去；重新进入页面时查询表单显示的也是
+// 保存前的开关与地址。写与失效用同一个键，作用在同一组查询上。
+function useAdoptSavedSettings() {
+  const qc = useQueryClient();
+  return (settings: Settings | undefined) => {
+    const queryKey = createConnectQueryKey({ schema: AdminService.method.getSettings, cardinality: "finite" });
+    qc.setQueriesData({ queryKey }, () => create(GetSettingsResponseSchema, { settings }));
+    return qc.invalidateQueries({ queryKey });
+  };
+}
 
 // 公开页的外观：UpdateSettings 整体替换五项，表单因此总是提交全部字段。国家查询的两项不在这个表单里、不提交：
 // hub 对它们缺席即不改（见 GeoLookup）。
@@ -28,7 +43,7 @@ const toDraft = (s: Settings | undefined): Draft => ({
 // 所以回显覆盖的总是这次提交自己送出的内容。reading 若不对应唯一的读者（文件输入在读取中仍可用），先读完的那个
 // 把它置回 false，保存得以发出，后读完的在保存进行中改草稿，迟到的回显再把它改回去并误报"已保存"。
 export function Appearance() {
-  const qc = useQueryClient();
+  const adoptSaved = useAdoptSavedSettings();
   const settings = useQuery(AdminService.method.getSettings, {});
   // draft 为空时表单显示 hub 的当前值；保存成功后改为 hub 回显的实际保存值（标题已清洗、主色已转小写）。
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -39,7 +54,7 @@ export function Appearance() {
     onSuccess: (r) => {
       setDraft(toDraft(r.settings));
       setSaved(true);
-      return qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getSettings, cardinality: "finite" }) });
+      return adoptSaved(r.settings);
     },
   });
   const gate = queryGate(settings);
@@ -137,14 +152,14 @@ const toGeoDraft = (s: Settings | undefined): GeoDraft => ({ geoEnabled: s?.geoE
 // 国家 / 地区查询的开关与服务地址。UpdateSettings 对外观五项整体替换，这里提交的外观取 hub 当前的已保存值（current），
 // 不取上面表单的草稿：只改查询设置不会顺带保存外观的未保存改动。出网告知按 hub 回显的部署后端裁决，不由表单草稿决定。
 function GeoLookup({ current }: { current: Settings | undefined }) {
-  const qc = useQueryClient();
+  const adoptSaved = useAdoptSavedSettings();
   const [draft, setDraft] = useState<GeoDraft | null>(null);
   const [saved, setSaved] = useState(false);
   const update = useMutation(AdminService.method.updateSettings, {
     onSuccess: (r) => {
       setDraft(toGeoDraft(r.settings));
       setSaved(true);
-      return qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getSettings, cardinality: "finite" }) });
+      return adoptSaved(r.settings);
     },
   });
   const form = draft ?? toGeoDraft(current);
@@ -171,9 +186,13 @@ function GeoLookup({ current }: { current: Settings | undefined }) {
             按来源地址查询节点的国家 / 地区
           </label>
           <p className="muted" id="geo-disclosure">
-            {local ? "开启后仅在本地文件中查询公网来源地址；每个地址查得一次即止，查不到或国家码无效时一小时后重试。关闭时不查询。" : <>
+            {local ? <>
+            开启后仅在本地文件中查询公网来源地址。节点停在同一地址时查得一次即止；hub 记住每个节点最近 {ANSWERS_PER_NODE} 个地址的答案，在这些地址之间切换不再重查，
+            超过 {ANSWERS_PER_NODE} 个地址轮换或 hub 重启后会再查。查不到或国家码无效时一小时后重试。关闭时不查询。
+            </> : <>
             开启即由 hub 把每个节点的来源地址发给 {form.geoUrl || "（未填写的服务地址）"}（{"{ip}"} 处换成地址），用它的应答作为节点的国家 / 地区。
-            只发公网地址，不带任何凭据；每个地址查得一次即止，失败一小时后重试。关闭时 hub 不为此出网。
+            只发公网地址，不带任何凭据。节点停在同一地址时查得一次即止；hub 记住每个节点最近 {ANSWERS_PER_NODE} 个地址的答案，在这些地址之间切换不再外呼，
+            超过 {ANSWERS_PER_NODE} 个地址轮换或 hub 重启后会再查。失败一小时后重试。关闭时 hub 不为此出网。
             </>}
           </p>
           <label>

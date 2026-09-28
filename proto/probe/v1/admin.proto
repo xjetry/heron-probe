@@ -203,10 +203,14 @@ message Node {
   string country = 14;
   CountrySource country_source = 15;
   // 查得的国家所属的地址，即查询时节点的 last_source；没有查得值时为空串。查得值是对这个地址的答案：节点换了
-  // 来源地址，查得值随即清空并重查。手动指定时也照常回显（查询不看 country_pin），清空 country_pin 即回落到它。
+  // 来源地址，查得值随即清空，再按新地址取答案（hub 记得的直接写回，否则外呼，见 Settings.geo_enabled）。手动指定时
+  // 也照常回显（查询不看 country_pin），清空 country_pin 即回落到它。
   string country_ip = 16;
   // 管理员手动指定的国家，空串表示不指定。
   string country_pin = 17;
+  // 查得的国家（对 country_ip 这个地址的答案），与 country_ip 同空同非空。手动指定时 country 是手动值，查得值仍在
+  // 这里，清空 country_pin 即回落到它。
+  string country_lookup = 19;
 }
 
 // 国家显示值的来源。
@@ -512,7 +516,7 @@ enum GeoBackend {
 
 // 公开页外观与国家查询（§4.9）。外观五项整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。国家查询开关与 URL
 // 缺失表示不改：HTTP 后端会把节点地址发给第三方，只改外观的旧客户端与脚本不得顺手改掉它。GetSettings 与
-// UpdateSettings 的响应总带这两项。
+// UpdateSettings 的响应总带这两项。字段号按架构设计 §10 的登记表分配，不各自挑号：6 属公开页总闸，7 起属国家查询。
 message Settings {
   // 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
   // 空串表示公开页用内置标题。
@@ -526,13 +530,15 @@ message Settings {
   string logo = 4;
   // 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
   string custom_css = 5;
-  // 国家查询开关，从未保存过时为关。两个后端共用：开启后按公网来源地址查询，每节点每地址至多成功查一次，失败按小时退避。
-  // HTTP 后端把地址发给 geo_url；MMDB 后端只查本地文件，不出网。
-  optional bool geo_enabled = 6;
+  // 国家查询开关，从未保存过时为关，两个后端共用。开启即按每个节点的来源地址（Node.last_source）查国家，只查公网
+  // 地址：HTTP 后端把地址逐个发给 geo_url，MMDB 后端只查本地文件、不出网。节点停在同一地址时查得一次即止；hub 在内存里
+  // 记住每个节点最近用过的 4 个地址的答案，节点在这些地址之间切换不再重查，超过 4 个地址轮换时被挤出的地址会再查，
+  // hub 重启后节点换到的地址各再查一次。失败按小时退避。
+  optional bool geo_enabled = 7;
   // 国家查询的服务地址：http 或 https，含 {ip} 占位（查询时替换为地址），不含用户信息，不超过 2048 字节。
   // 从未保存过时为 https://ipinfo.io/{ip}/country。可回显，不是凭据：请求只带地址，不带任何凭据。
   // 服务的响应去掉首尾空白后必须恰为两个大写字母（ISO 3166-1 alpha-2），状态码必须是 200。
-  optional string geo_url = 7;
+  optional string geo_url = 8;
   // 当前后端，只读；GetSettings 与 UpdateSettings 响应均回显。UpdateSettings 中缺席或给出均忽略。
   GeoBackend geo_backend = 9;
   // --geo-mmdb 指定的路径，HTTP 后端为空；MMDB 后端下 geo_url 保留但不生效。

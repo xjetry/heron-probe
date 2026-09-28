@@ -531,10 +531,14 @@ type Node struct {
 	Country       string        `protobuf:"bytes,14,opt,name=country,proto3" json:"country,omitempty"`
 	CountrySource CountrySource `protobuf:"varint,15,opt,name=country_source,json=countrySource,proto3,enum=probe.v1.CountrySource" json:"country_source,omitempty"`
 	// 查得的国家所属的地址，即查询时节点的 last_source；没有查得值时为空串。查得值是对这个地址的答案：节点换了
-	// 来源地址，查得值随即清空并重查。手动指定时也照常回显（查询不看 country_pin），清空 country_pin 即回落到它。
+	// 来源地址，查得值随即清空，再按新地址取答案（hub 记得的直接写回，否则外呼，见 Settings.geo_enabled）。手动指定时
+	// 也照常回显（查询不看 country_pin），清空 country_pin 即回落到它。
 	CountryIp string `protobuf:"bytes,16,opt,name=country_ip,json=countryIp,proto3" json:"country_ip,omitempty"`
 	// 管理员手动指定的国家，空串表示不指定。
-	CountryPin    string `protobuf:"bytes,17,opt,name=country_pin,json=countryPin,proto3" json:"country_pin,omitempty"`
+	CountryPin string `protobuf:"bytes,17,opt,name=country_pin,json=countryPin,proto3" json:"country_pin,omitempty"`
+	// 查得的国家（对 country_ip 这个地址的答案），与 country_ip 同空同非空。手动指定时 country 是手动值，查得值仍在
+	// 这里，清空 country_pin 即回落到它。
+	CountryLookup string `protobuf:"bytes,19,opt,name=country_lookup,json=countryLookup,proto3" json:"country_lookup,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -684,6 +688,13 @@ func (x *Node) GetCountryIp() string {
 func (x *Node) GetCountryPin() string {
 	if x != nil {
 		return x.CountryPin
+	}
+	return ""
+}
+
+func (x *Node) GetCountryLookup() string {
+	if x != nil {
+		return x.CountryLookup
 	}
 	return ""
 }
@@ -3458,7 +3469,7 @@ func (*TestNotifyChannelResponse) Descriptor() ([]byte, []int) {
 
 // 公开页外观与国家查询（§4.9）。外观五项整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。国家查询开关与 URL
 // 缺失表示不改：HTTP 后端会把节点地址发给第三方，只改外观的旧客户端与脚本不得顺手改掉它。GetSettings 与
-// UpdateSettings 的响应总带这两项。
+// UpdateSettings 的响应总带这两项。字段号按架构设计 §10 的登记表分配，不各自挑号：6 属公开页总闸，7 起属国家查询。
 type Settings struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
@@ -3473,13 +3484,15 @@ type Settings struct {
 	Logo string `protobuf:"bytes,4,opt,name=logo,proto3" json:"logo,omitempty"`
 	// 追加在公开页内置样式之后的 CSS，不超过 65536 字节，不得含 "</"。只接受 CSS；要改页面结构用 --public-dir。
 	CustomCss string `protobuf:"bytes,5,opt,name=custom_css,json=customCss,proto3" json:"custom_css,omitempty"`
-	// 国家查询开关，从未保存过时为关。两个后端共用：开启后按公网来源地址查询，每节点每地址至多成功查一次，失败按小时退避。
-	// HTTP 后端把地址发给 geo_url；MMDB 后端只查本地文件，不出网。
-	GeoEnabled *bool `protobuf:"varint,6,opt,name=geo_enabled,json=geoEnabled,proto3,oneof" json:"geo_enabled,omitempty"`
+	// 国家查询开关，从未保存过时为关，两个后端共用。开启即按每个节点的来源地址（Node.last_source）查国家，只查公网
+	// 地址：HTTP 后端把地址逐个发给 geo_url，MMDB 后端只查本地文件、不出网。节点停在同一地址时查得一次即止；hub 在内存里
+	// 记住每个节点最近用过的 4 个地址的答案，节点在这些地址之间切换不再重查，超过 4 个地址轮换时被挤出的地址会再查，
+	// hub 重启后节点换到的地址各再查一次。失败按小时退避。
+	GeoEnabled *bool `protobuf:"varint,7,opt,name=geo_enabled,json=geoEnabled,proto3,oneof" json:"geo_enabled,omitempty"`
 	// 国家查询的服务地址：http 或 https，含 {ip} 占位（查询时替换为地址），不含用户信息，不超过 2048 字节。
 	// 从未保存过时为 https://ipinfo.io/{ip}/country。可回显，不是凭据：请求只带地址，不带任何凭据。
 	// 服务的响应去掉首尾空白后必须恰为两个大写字母（ISO 3166-1 alpha-2），状态码必须是 200。
-	GeoUrl *string `protobuf:"bytes,7,opt,name=geo_url,json=geoUrl,proto3,oneof" json:"geo_url,omitempty"`
+	GeoUrl *string `protobuf:"bytes,8,opt,name=geo_url,json=geoUrl,proto3,oneof" json:"geo_url,omitempty"`
 	// 当前后端，只读；GetSettings 与 UpdateSettings 响应均回显。UpdateSettings 中缺席或给出均忽略。
 	GeoBackend GeoBackend `protobuf:"varint,9,opt,name=geo_backend,json=geoBackend,proto3,enum=probe.v1.GeoBackend" json:"geo_backend,omitempty"`
 	// --geo-mmdb 指定的路径，HTTP 后端为空；MMDB 后端下 geo_url 保留但不生效。
@@ -4907,7 +4920,7 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\bpassword\x18\x01 \x01(\tR\bpassword\"\x0f\n" +
 	"\rLoginResponse\"\x0f\n" +
 	"\rLogoutRequest\"\x10\n" +
-	"\x0eLogoutResponse\"\x8c\x05\n" +
+	"\x0eLogoutResponse\"\xb3\x05\n" +
 	"\x04Node\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
@@ -4932,7 +4945,8 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\n" +
 	"country_ip\x18\x10 \x01(\tR\tcountryIp\x12\x1f\n" +
 	"\vcountry_pin\x18\x11 \x01(\tR\n" +
-	"countryPinB\x0f\n" +
+	"countryPin\x12%\n" +
+	"\x0ecountry_lookup\x18\x13 \x01(\tR\rcountryLookupB\x0f\n" +
 	"\r_last_seen_atB\x13\n" +
 	"\x11_facts_updated_atB\x12\n" +
 	"\x10_offline_grace_s\"\x12\n" +
@@ -5114,9 +5128,9 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x04logo\x18\x04 \x01(\tR\x04logo\x12\x1d\n" +
 	"\n" +
 	"custom_css\x18\x05 \x01(\tR\tcustomCss\x12$\n" +
-	"\vgeo_enabled\x18\x06 \x01(\bH\x00R\n" +
+	"\vgeo_enabled\x18\a \x01(\bH\x00R\n" +
 	"geoEnabled\x88\x01\x01\x12\x1c\n" +
-	"\ageo_url\x18\a \x01(\tH\x01R\x06geoUrl\x88\x01\x01\x125\n" +
+	"\ageo_url\x18\b \x01(\tH\x01R\x06geoUrl\x88\x01\x01\x125\n" +
 	"\vgeo_backend\x18\t \x01(\x0e2\x14.probe.v1.GeoBackendR\n" +
 	"geoBackend\x12\"\n" +
 	"\rgeo_mmdb_path\x18\n" +

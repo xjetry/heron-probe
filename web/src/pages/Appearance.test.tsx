@@ -1,7 +1,8 @@
+import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GeoBackend, type UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
+import { GeoBackend, SettingsSchema, type Settings, type UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
 import { MAX_LOGO_BYTES } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
@@ -227,6 +228,7 @@ describe("国家 / 地区查询", () => {
     const f = await geoForm();
     expect(f.getByText("当前后端：本地文件 /data/country.mmdb，不出网；服务地址不生效。")).toBeInTheDocument();
     expect(f.queryByText(/开启即由 hub 把每个节点的来源地址发给/)).not.toBeInTheDocument();
+    expect(f.getByLabelText("服务地址")).toHaveAccessibleDescription(/节点停在同一地址时查得一次即止；hub 记住每个节点最近 4 个地址的答案，在这些地址之间切换不再重查，\s*超过 4 个地址轮换或 hub 重启后会再查。/);
   });
 
   it("HTTP 后端显示当前已保存的服务地址", async () => {
@@ -246,6 +248,14 @@ describe("国家 / 地区查询", () => {
     expect(f.getByLabelText("服务地址")).toHaveAccessibleDescription(/^开启即由 hub 把每个节点的来源地址发给 https:\/\/geo\.example\/\{ip\}（/);
   });
 
+  // 文案写出"不再外呼"的上界，不许诺无条件的"每地址一次"：hub 只记住每个节点最近 4 个地址的答案。
+  it("开关说明写出答案表的上界", async () => {
+    render({ getSettings: async () => ({ settings: withGeo }) });
+    const f = await geoForm();
+    const description = f.getByLabelText("服务地址");
+    expect(description).toHaveAccessibleDescription(/节点停在同一地址时查得一次即止；hub 记住每个节点最近 4 个地址的答案，在这些地址之间切换不再外呼，\s*超过 4 个地址轮换或 hub 重启后会再查。/);
+  });
+
   it("保存提交开关与服务地址，外观取 hub 的已保存值而不是外观表单的草稿", async () => {
     const sent: UpdateSettingsRequest[] = [];
     render({ getSettings: async () => ({ settings: withGeo }), updateSettings: async (req) => { sent.push(req); return { settings: req.settings }; } });
@@ -258,6 +268,58 @@ describe("国家 / 地区查询", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].settings).toMatchObject({ ...current, geoEnabled: true, geoUrl: "https://ipinfo.io/{ip}/country" });
     expect(appearance.getByLabelText("标题")).toHaveValue("未保存的标题");
+  });
+
+  // hub 的替身：外观整体替换、查询两项缺席不改，回显保存后的全部设置；读设置只有第一次成功，之后一直失败（hub 重启、
+  // 网络中断），保存后的刷新因此拿不到新值。
+  function hubWithFailingReads() {
+    let stored: Settings = create(SettingsSchema, withGeo);
+    let reads = 0;
+    const sent: UpdateSettingsRequest[] = [];
+    const impl: AdminImpl = {
+      getSettings: async () => {
+        if (reads++ > 0) throw new ConnectError("hub restarting", Code.Unavailable);
+        return { settings: stored };
+      },
+      updateSettings: async (req) => {
+        sent.push(req);
+        const s = req.settings!;
+        stored = create(SettingsSchema, {
+          title: s.title.trim(), theme: s.theme, accentColor: s.accentColor, logo: s.logo, customCss: s.customCss,
+          geoEnabled: s.geoEnabled ?? stored.geoEnabled, geoUrl: s.geoUrl ?? stored.geoUrl,
+        });
+        return { settings: stored };
+      },
+    };
+    return { sent, impl };
+  }
+
+  it("外观保存后刷新失败，查询表单提交的外观仍是刚保存的回显", async () => {
+    const hub = hubWithFailingReads();
+    render(hub.impl);
+    const appearance = await form();
+    fireEvent.change(appearance.getByLabelText("标题"), { target: { value: " 新标题 " } });
+    fireEvent.click(appearance.getByRole("button", { name: "保存" }));
+    expect(await appearance.findByRole("status")).toHaveTextContent("已保存");
+    expect(await screen.findByText("hub restarting")).toBeInTheDocument();
+    const f = await geoForm();
+    fireEvent.click(f.getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" }));
+    fireEvent.click(f.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(hub.sent).toHaveLength(2));
+    expect(hub.sent[1].settings).toMatchObject({ ...current, title: "新标题", geoEnabled: true });
+  });
+
+  it("查询表单保存后刷新失败，重新进入页面时显示刚保存的开关", async () => {
+    const hub = hubWithFailingReads();
+    const { router } = renderWithAdmin(hub.impl, [...routes, { path: "/elsewhere", Component: () => null }], "/appearance");
+    const f = await geoForm();
+    fireEvent.click(f.getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" }));
+    fireEvent.click(f.getByRole("button", { name: "保存" }));
+    expect(await f.findByRole("status")).toHaveTextContent("已保存");
+    expect(await screen.findByText("hub restarting")).toBeInTheDocument();
+    await act(() => router.navigate("/elsewhere"));
+    await act(() => router.navigate("/appearance"));
+    expect((await geoForm()).getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" })).toBeChecked();
   });
 
   it("外观表单不提交查询设置：hub 对缺席的两项不改", async () => {
