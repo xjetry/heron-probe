@@ -48,6 +48,14 @@ it("外观导航进入应用的外观页路由", async () => {
   expect(await screen.findByRole("heading", { name: "外观" })).toBeInTheDocument();
 });
 
+it("主题导航进入应用的主题页路由", async () => {
+  renderWithAdmin({ listNodes: async () => ({ nodes: [] }), listThemes: async () => ({ themes: [], themeOrigin: "https://status.example.com" }) }, appRouter.routes, "/nodes");
+  const link = screen.getByRole("link", { name: "主题" });
+  expect(link).toHaveAttribute("href", "/themes");
+  fireEvent.click(link);
+  expect(await screen.findByRole("heading", { name: "主题" })).toBeInTheDocument();
+});
+
 it("存储导航进入应用的存储页路由", async () => {
   renderWithAdmin({ listNodes: async () => ({ nodes: [] }), getStorageStats: async () => ({}) }, appRouter.routes, "/nodes");
   const link = screen.getByRole("link", { name: "存储" });

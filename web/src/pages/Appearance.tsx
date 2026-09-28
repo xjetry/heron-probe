@@ -90,7 +90,7 @@ export function Appearance() {
       <h1>外观</h1>
       <p className="muted">
         公开页（站点根路径 /）的标题、明暗、主色、logo 与自定义 CSS。保存后，访客刷新公开页才看到新外观；浏览器还可能再用最多 5 分钟的缓存。
-        要改页面结构，用 hub 的 --public-dir 换掉整个公开页。「启用公开页」是公开页与公开接口的总闸，内置页与 --public-dir 都受它约束。
+        要改页面结构，用 hub 的 --public-dir 换掉整个公开页。「启用公开页」是公开页与公开接口的总闸，内置页、--public-dir 与主题 origin 都受它约束。
       </p>
       <form className="card edit-form" aria-label="公开页外观" onSubmit={submit}>
         <fieldset className="bare" disabled={saving}>

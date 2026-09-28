@@ -41,6 +41,8 @@ type Store struct {
 	log           *slog.Logger
 	writes        chan writeReq
 	done          chan struct{}
+	// themeGen 是启用中主题内容的代数，见 writeTheme 与 EnabledThemePackage。
+	themeGen atomic.Uint64
 }
 
 type writeReq struct {

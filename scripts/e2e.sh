@@ -57,8 +57,10 @@ key=$(sed -n 's/^key: //p' "$work/window.txt")
 [ -n "$key" ] || { echo "no key"; exit 1; }
 echo "registration window: $(sed -n 's/^expires: //p' "$work/window.txt")"
 
+# 主题 origin 的主机名：hub 按请求的 Host（去掉端口）分流，脚本以 -H "Host: theme.test" 访问同一个监听地址，不需要 DNS。
+theme_host=theme.test
 hub_log_from=0
-PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC > "$work/hub.log" 2>&1 &
+PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC --theme-origin "http://$theme_host" > "$work/hub.log" 2>&1 &
 hub=$!
 
 # wait_hub：等本次启动的 hub 就绪。三者同时成立才算：
@@ -123,6 +125,18 @@ pubget() {
 # hdr 名字 头名：打印 $work/pub-<名字>.headers 里该头的值（头名不分大小写，去掉行尾 CR）；没有这个头时不打印。
 hdr() {
   awk -v want="$2" 'BEGIN { want = tolower(want) } { sub(/\r$/, "") } tolower(substr($0, 1, length(want) + 2)) == want ": " { print substr($0, length(want) + 3) }' "$work/pub-$1.headers"
+}
+
+# themereq 名字 路径 [额外 curl 参数]：以主题 origin 的 Host 请求同一个监听地址，打印状态码；正文落 $work/theme-<名字>.body，
+# 响应头落 $work/theme-<名字>.headers。
+themereq() {
+  name=$1; path=$2; shift 2
+  curl -sS -o "$work/theme-$name.body" -D "$work/theme-$name.headers" -w '%{http_code}' -H "Host: $theme_host" "$@" "$base$path"
+}
+
+# themehdr 名字 头名：同 hdr，读 $work/theme-<名字>.headers。
+themehdr() {
+  awk -v want="$2" 'BEGIN { want = tolower(want) } { sub(/\r$/, "") } tolower(substr($0, 1, length(want) + 2)) == want ": " { print substr($0, length(want) + 3) }' "$work/theme-$1.headers"
 }
 
 # 卡片示例取自 hub 刚下发的那份。空列表由例子自己处理，空 hub 与有数据时用同一段。
@@ -193,6 +207,39 @@ run_card_examples "empty hub" ""
 [ "$(rpc DeleteApiToken "$(jq -nc --arg id "$api_token_id" '{id: $id}')")" = 200 ] || { echo "FAIL: DeleteApiToken (empty hub)"; exit 1; }
 [ "$(curl -sS -o /dev/null -w '%{http_code}' -b "$work/jar" -H 'Content-Type: text/plain' --data '{}' "$base/probe.v1.AdminService/CreateNode")" = 415 ] || { echo "FAIL: text/plain POST was not 415"; exit 1; }
 [ "$(curl -sS -o /dev/null -w '%{http_code}' -b "$work/jar" "$base/probe.v1.AdminService/CreateNode?connect=v1&encoding=json&message=%7B%7D")" = 405 ] || { echo "FAIL: GET was not 405"; exit 1; }
+
+# 主题：上传一个最小主题（包由脚本生成）并启用。主题 origin 上只有 PublicService 与主题文件：/admin/ 与 AdminService
+# 路径 404——带着有效的会话 cookie 也是 404，挂载里就没有它们；主 origin 的 / 仍是内置公开页。删除启用中的主题后
+# 主题 origin 回落内置公开页，与主 origin 的 / 逐字节相同。
+mkdir -p "$work/theme/assets"
+printf '%s\n' '<!doctype html><title>e2e theme</title><script src="/assets/app.js"></script>' > "$work/theme/index.html"
+printf '%s\n' 'console.log("e2e theme")' > "$work/theme/assets/app.js"
+printf '%s\n' '{"id": "e2e-theme", "name": "e2e theme", "version": "1"}' > "$work/theme/theme.json"
+python3 - "$work/theme" "$work/theme.zip" << 'PY'
+import os, sys, zipfile
+src, out = sys.argv[1:]
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    for root, _, files in os.walk(src):
+        for f in files:
+            path = os.path.join(root, f)
+            z.write(path, os.path.relpath(path, src))
+PY
+[ "$(rpc UploadTheme "$(jq -nc --arg pkg "$(base64 < "$work/theme.zip" | tr -d '\n')" '{package: $pkg}')")" = 200 ] || { echo "FAIL: UploadTheme"; cat "$work/UploadTheme.json"; exit 1; }
+[ "$(rpc EnableTheme '{"id": "e2e-theme"}')" = 200 ] || { echo "FAIL: EnableTheme"; cat "$work/EnableTheme.json"; exit 1; }
+[ "$(rpc ListThemes '{}')" = 200 ] || { echo "FAIL: ListThemes"; exit 1; }
+jq -e --arg origin "http://$theme_host" '.themeOrigin == $origin and (.themes | length) == 1 and .themes[0].id == "e2e-theme" and .themes[0].enabled == true' "$work/ListThemes.json" > /dev/null || { echo "FAIL: ListThemes content"; cat "$work/ListThemes.json"; exit 1; }
+[ "$(themereq index /)" = 200 ] && grep -q '<title>e2e theme</title>' "$work/theme-index.body" || { echo "FAIL: the theme origin did not serve the theme's index.html"; cat "$work/theme-index.body"; exit 1; }
+[ "$(themehdr index X-Content-Type-Options)" = nosniff ] && [ "$(themehdr index Content-Security-Policy)" = "frame-ancestors 'none'" ] && [ "$(themehdr index Cache-Control)" = no-cache ] || { echo "FAIL: theme headers"; cat "$work/theme-index.headers"; exit 1; }
+[ "$(themereq deep /nodes/1)" = 200 ] && cmp -s "$work/theme-index.body" "$work/theme-deep.body" || { echo "FAIL: a theme route did not fall back to index.html"; exit 1; }
+[ "$(themereq asset /assets/app.js)" = 200 ] && grep -q 'e2e theme' "$work/theme-asset.body" || { echo "FAIL: theme asset"; exit 1; }
+[ "$(themereq missing /assets/missing.js)" = 404 ] || { echo "FAIL: a missing theme asset must be 404"; exit 1; }
+[ "$(themereq admin /admin/)" = 404 ] || { echo "FAIL: /admin/ on the theme origin was not 404"; cat "$work/theme-admin.body"; exit 1; }
+[ "$(themereq admin-rpc /probe.v1.AdminService/ListNodes -b "$work/jar" -H 'Content-Type: application/json' --data '{}')" = 404 ] || { echo "FAIL: AdminService on the theme origin was not 404"; cat "$work/theme-admin-rpc.body"; exit 1; }
+[ "$(themereq site '/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D')" = 200 ] && cmp -s "$work/pub-site.json" "$work/theme-site.body" || { echo "FAIL: PublicService.GetSite on the theme origin"; cat "$work/theme-site.body"; exit 1; }
+[ "$(curl -sS -o "$work/pub-index-with-theme.html" -w '%{http_code}' "$base/")" = 200 ] && cmp -s "$work/pub-index.html" "$work/pub-index-with-theme.html" || { echo "FAIL: an enabled theme changed / on the main origin"; exit 1; }
+[ "$(rpc DeleteTheme '{"id": "e2e-theme"}')" = 200 ] || { echo "FAIL: DeleteTheme"; cat "$work/DeleteTheme.json"; exit 1; }
+[ "$(themereq after-delete /)" = 200 ] && cmp -s "$work/pub-index.html" "$work/theme-after-delete.body" || { echo "FAIL: after deleting the enabled theme the theme origin is not the built-in public page"; cat "$work/theme-after-delete.body"; exit 1; }
+echo "theme origin ok"
 
 register_agent() {
   arch=$1
@@ -494,7 +541,7 @@ ln -s ../outside.txt "$work/site/leak.txt"
 
 # 重启：流量状态、重置日与被 Drain 出的分钟行都必须还在。
 hub_log_from=$(wc -l < "$work/hub.log")
-PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC --public-dir "$work/site" >> "$work/hub.log" 2>&1 &
+PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC --public-dir "$work/site" --theme-origin "http://$theme_host" >> "$work/hub.log" 2>&1 &
 hub=$!
 wait_hub
 [ "$(curl -sS -o "$work/pub-dir-index.html" -D "$work/pub-dir-index.headers" -w '%{http_code}' "$base/")" = 200 ] || { echo "FAIL: --public-dir index not served"; exit 1; }
@@ -513,6 +560,8 @@ for path in /leak.txt /%2e%2e/outside.txt; do
   if grep -q 'outside secret' "$work/pub-dir-escape"; then echo "FAIL: $path read a file outside --public-dir"; exit 1; fi
   grep -q 'e2e custom public page' "$work/pub-dir-escape" || { echo "FAIL: $path did not fall back to index.html"; cat "$work/pub-dir-escape"; exit 1; }
 done
+# --public-dir 只接管主 origin：主题 origin 上没有主题时仍是内置公开页。
+[ "$(themereq after-dir /)" = 200 ] && cmp -s "$work/pub-index.html" "$work/theme-after-dir.body" || { echo "FAIL: --public-dir took over the theme origin"; cat "$work/theme-after-dir.body"; exit 1; }
 [ "$(curl -sS -o "$work/admin-after-dir.html" -w '%{http_code}' "$base/admin/")" = 200 ] && grep -q 'src="/admin/assets/' "$work/admin-after-dir.html" || { echo "FAIL: --public-dir shadowed the panel"; exit 1; }
 # 替换目录对不是文件的路径一律回落 index.html（也是 200），只看状态码分不出 RPC 是否被遮蔽：比对正文。
 # 与重启前保存的那份逐字节相同，也就钉住了外观跨重启保留（同一个二进制的 protojson 输出稳定，上面"a rejected update changed the site"那一处同样依赖这一点）。
@@ -604,6 +653,7 @@ sed -n '/^db_bytes: /d; s/^\([a-z0-9_]*\): [0-9][0-9]*$/\1/p' "$work/stats.txt" 
 # 已显式保存总闸与五项外观，空 logo 也是一行；表里目前只有公开页设置。
 [ "$(get setting)" = 6 ] || { echo "FAIL: setting rows"; exit 1; }
 [ "$(get node)" = 2 ] || { echo "FAIL: node count"; exit 1; }
+[ "$(get theme)" = 0 ] && [ "$(get theme_file)" = 0 ] || { echo "FAIL: the deleted theme left rows"; exit 1; }
 [ "$(get alert_rule)" = 2 ] || { echo "FAIL: alert rule count"; exit 1; }
 [ "$(get alert_rule_node)" = 2 ] || { echo "FAIL: alert scope count"; exit 1; }
 [ "$(get alert_event)" = 4 ] || { echo "FAIL: alert event count"; exit 1; }

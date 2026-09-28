@@ -66,17 +66,6 @@ func (s *Store) CreateSession(ctx context.Context, hash [32]byte, now, expires t
 	})
 }
 
-func (s *Store) Session(ctx context.Context, hash [32]byte) (Session, bool, error) {
-	sess, err := scanSession(s.r.QueryRowContext(ctx, "SELECT token_hash, created_at, last_used_at, expires_at FROM admin_session WHERE token_hash = ?", hash[:]).Scan)
-	if err == sql.ErrNoRows {
-		return Session{}, false, nil
-	}
-	if err != nil {
-		return Session{}, false, err
-	}
-	return sess, true, nil
-}
-
 // Sessions 读取持久化会话；有效性由 auth 与鉴权路径共用的判定裁决。
 func (s *Store) Sessions(ctx context.Context) ([]Session, error) {
 	rows, err := s.r.QueryContext(ctx, "SELECT token_hash, created_at, last_used_at, expires_at FROM admin_session ORDER BY created_at DESC, token_hash ASC")

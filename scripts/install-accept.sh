@@ -1,6 +1,9 @@
 #!/bin/sh
-# install.sh 与服务单元的真机验收：只在 OrbStack 真实启动的机器上跑，不进 CI。
+# install.sh、install-hub.sh 与服务单元的真机验收：只在 OrbStack 真实启动的机器上跑，不进 CI。
 # 机器名 pia- 前缀是隔离边界；只删除本 run 创建的机器（逐台登记）。
+# 机器名还带本 run 的 pid（$$）：同时跑的几轮不争同一个名字；清理没能执行（被 SIGKILL、宿主重启）或删除失败
+# 时留下的机器，也不再挡住下一轮的创建。代价是这类残留不再以创建失败显形，会静默累积，需要时用 orb list
+# 按 pia- 前缀清点。
 # 端口默认 18085（hub）/18086（下载服务），与 e2e 的 18080/18081、macos-accept 的 18087/18088 错开，
 # 几个验收可同时跑；本机上别的进程占着默认端口时，用环境变量 HUB_PORT、DIST_PORT 覆盖。
 set -eu
@@ -15,13 +18,18 @@ while [ $# -gt 0 ]; do
     --only)
       [ "$#" -ge 2 ] || usage
       case "$2" in
-        debian-amd64|debian-arm64|alpine-amd64|alpine-arm64|ubuntu-amd64|ubuntu-arm64|rocky-amd64|rocky-arm64) ;;
+        hub-debian-amd64|hub-debian-arm64|debian-amd64|debian-arm64|alpine-amd64|alpine-arm64|ubuntu-amd64|ubuntu-arm64|rocky-amd64|rocky-arm64) ;;
         *) echo "unknown cell: $2" >&2; usage;;
       esac
       ONLY="$ONLY $2"
       shift 2;;
     *) usage;;
   esac
+done
+RUN_AGENT=0
+if [ -z "$ONLY" ]; then RUN_AGENT=1; fi
+for selected in $ONLY; do
+  case "$selected" in hub-*) ;; *) RUN_AGENT=1;; esac
 done
 
 # OrbStack 镜像写法。运行时可用同名环境变量覆盖。二级镜像只在 --tier2 时使用。
@@ -45,24 +53,277 @@ cleanup() {
   if [ -n "$httpd" ]; then kill "$httpd" 2>/dev/null || true; wait "$httpd" 2>/dev/null || true; fi
   if [ -n "$hub" ]; then kill "$hub" 2>/dev/null || true; wait "$hub" 2>/dev/null || true; fi
   if [ -n "$rootrun" ]; then kill "$rootrun" 2>/dev/null || true; wait "$rootrun" 2>/dev/null || true; fi
-  while read -r m; do orb delete -f "$m" > /dev/null 2>&1 || true; done < "$work/machines"
+  while read -r m; do
+    case "$m" in pia-*) orb delete -f "$m" > /dev/null 2>&1 || true;; *) echo "refusing to delete non-pia machine: $m" >&2;; esac
+  done < "$work/machines"
 }
 # 被信号打断时 dash 不执行 EXIT trap（容器实测），macOS 的 /bin/sh 实测会执行但 sh 不保证：把 INT、TERM、HUP
 # 转成 exit 1，Ctrl-C 时也删掉本轮的机器、停掉 18086 上的 python（非交互 shell 的后台作业忽略 SIGINT）。
 trap cleanup EXIT
 trap 'exit 1' INT TERM HUP
 
+# 镜像下载可能瞬时 EOF；只重试创建本 run 的隔离机器，不复用或删除其它验收者的机器。
+# 名字带本 run 的 pid，同一时刻只属于本 run，所以先登记再创建：orb create 在机器已建出之后才报错时，
+# 这台也会被 cleanup 删掉。每次重试前先删掉可能半建成的同名机器，否则重试会因重名失败。
+create_machine() {
+  machine=$1; arch=$2; img=$3
+  case "$machine" in pia-*) ;; *) echo "refusing to create non-pia machine: $machine" >&2; return 1;; esac
+  echo "$machine" >> "$work/machines"
+  : > "$work/create-$machine.log"
+  for delay in 0 10 30 60; do
+    if [ "$delay" != 0 ]; then
+      echo "retry creating $machine after ${delay}s"
+      sleep "$delay"
+      orb delete -f "$machine" >> "$work/create-$machine.log" 2>&1 || true
+    fi
+    if orb create -a "$arch" "$img" "$machine" >> "$work/create-$machine.log" 2>&1; then return 0; fi
+  done
+  cat "$work/create-$machine.log" >&2
+  return 1
+}
+
 # 两个版本各打一包再复制走：第二次 make release 会清空 dist/，重跑必须能证出版本从 A 变成 B。
 make release VERSION="$VERSION_A" > "$work/release-a.log" 2>&1 || { echo "FAIL: make release A"; tail -20 "$work/release-a.log"; exit 1; }
 mkdir -p "$work/dist/a"
-cp dist/probe-*.tar.gz dist/SHA256SUMS dist/install.sh "$work/dist/a/"
+cp dist/probe-*.tar.gz dist/SHA256SUMS dist/install.sh dist/install-hub.sh "$work/dist/a/"
 make release VERSION="$VERSION_B" > "$work/release-b.log" 2>&1 || { echo "FAIL: make release B"; tail -20 "$work/release-b.log"; exit 1; }
 mkdir -p "$work/dist/b"
-cp dist/probe-*.tar.gz dist/SHA256SUMS dist/install.sh "$work/dist/b/"
-make binaries > "$work/binaries.log" 2>&1 || { echo "FAIL: make binaries"; tail -20 "$work/binaries.log"; exit 1; }
+cp dist/probe-*.tar.gz dist/SHA256SUMS dist/install.sh dist/install-hub.sh "$work/dist/b/"
+if [ "$RUN_AGENT" = 1 ]; then
+  make binaries > "$work/binaries.log" 2>&1 || { echo "FAIL: make binaries"; tail -20 "$work/binaries.log"; exit 1; }
+fi
 # 本 run 的标记，HTTP 起来后核对它。install.sh 与包内文件在 deploy/ 未改动时各轮逐字相同，
 # 比对被测文件区分不了本轮的服务与上一轮遗留的服务；$work 由本轮的 mktemp 产生，各轮必然不同。
 printf '%s\n' "$work" > "$work/dist/run-id"
+
+# 下载服务也供不需要本机 hub 的 hub 安装格使用，先核对本 run 标记再运行任何格。
+# HTTP 以 $work/dist 为根，/a 与 /b 是两个版本目录。
+# exec 让 $httpd 就是 python：子 shell 被 kill 后 python 会被 init 收养并继续占着端口，
+# 下一轮会装到上一轮的包。起来之后核对应答的是本 run 的标记，端口被占时立即失败。
+(cd "$work/dist" && exec python3 -m http.server "$DIST_PORT" --bind 127.0.0.1) > "$work/httpd.log" 2>&1 &
+httpd=$!
+attempt=0
+while [ "$attempt" -lt 50 ]; do
+  curl -fsS -o "$work/served-run-id" "http://127.0.0.1:$DIST_PORT/run-id" 2>/dev/null && break
+  attempt=$((attempt + 1)); sleep 0.2
+done
+cmp -s "$work/dist/run-id" "$work/served-run-id" || { echo "FAIL: dist HTTP is not serving this run"; cat "$work/httpd.log"; exit 1; }
+
+run_hub_cell() {
+  arch=$1
+  name="pia-hub-debian-$arch-$$"
+  echo "== cell $name =="
+  create_machine "$name" "$arch" "$IMG_DEBIAN" || { echo "FAIL($name): orb create"; exit 1; }
+  # 脚本与包都从下载服务取得，真实覆盖发布资产和管道安装入口。
+  if ! orb -m "$name" -u root sh -s -- "http://$HOST:$DIST_PORT" "$VERSION_A" "$VERSION_B" <<'HUB_ACCEPT' > "$work/hub-$name.log" 2>&1
+set -eu
+base=$1; version_a=$2; version_b=$3
+trap 'rc=$?; if [ "$rc" != 0 ]; then systemctl status probe-hub --no-pager || true; journalctl -u probe-hub -n 40 --no-pager || true; cat /etc/systemd/system/probe-hub.service || true; fi' EXIT
+fail() { echo "FAIL: $*"; exit 1; }
+fetch() {
+  if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$2" "$1" </dev/null
+  else wget -q -O "$2" "$1" </dev/null; fi
+}
+health() {
+  code=$(curl -sS -o /root/site.json -w '%{http_code}' "http://127.0.0.1:$1/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D")
+  [ "$code" = 200 ] || fail "anonymous GetSite returned $code"
+}
+# 安装器写出的单元交给真实的 systemd 解析：引号、$$、%% 都出自安装器。verify 有任何输出也算失败，不只看
+# 退出码：Debian 12 上 systemd 252 实测，未知键名（如拼错的加固项）只打印 Unknown key … ignoring，
+# 退出码仍是 0，服务照样启动；干净的单元不输出任何东西。
+verify_unit() {
+  rc=0
+  systemd-analyze verify /etc/systemd/system/probe-hub.service > /root/verify.log 2>&1 </dev/null || rc=$?
+  if [ "$rc" != 0 ] || [ -s /root/verify.log ]; then cat /root/verify.log; fail "systemd-analyze verify after $1 (exit $rc)"; fi
+  echo "systemd-analyze verify after $1: exit 0, no output"
+}
+# 目录 root:probe-hub 0770；库文件与存在时的 WAL、SHM 属服务用户 0600。
+assert_data_layout() {
+  [ "$(stat -c '%U:%G %a' /var/lib/probe)" = 'root:probe-hub 770' ] &&
+    [ "$(stat -c '%U:%G %a' /var/lib/probe/probe.db)" = 'probe-hub:probe-hub 600' ] || fail "hub data ownership or permissions $1"
+  for f in /var/lib/probe/probe.db-wal /var/lib/probe/probe.db-shm; do
+    [ ! -e "$f" ] || [ "$(stat -c '%U:%G %a' "$f")" = 'probe-hub:probe-hub 600' ] || fail "hub data ownership or permissions $1: $f"
+  done
+  stat -c '%n %U:%G %a' /var/lib/probe /var/lib/probe/probe.db*
+}
+# 按 comm 找 probe-hub 进程，写进 pids。卸载之后用户已删，不能再按有效 uid 扫。
+hub_pids() {
+  pids=""
+  for s in /proc/[0-9]*/comm; do
+    c=$(tr -d '\n' < "$s" 2>/dev/null || true)
+    if [ "$c" = probe-hub ]; then p=${s#/proc/}; pids="$pids ${p%/comm}"; fi
+  done
+}
+# purge 之后数据、二进制、单元、enable 链接、用户、组与 probe-hub 进程都不在。
+assert_purged() {
+  if [ -e /var/lib/probe ] || [ -e /usr/local/bin/probe-hub ] || [ -e /etc/systemd/system/probe-hub.service ] ||
+    [ -L /etc/systemd/system/multi-user.target.wants/probe-hub.service ] || id probe-hub || grep -q '^probe-hub:' /etc/group; then
+    fail "hub purge left data, binary, unit, enable link, user or group ($1)"
+  fi
+  hub_pids
+  [ -z "$pids" ] || fail "hub purge left probe-hub processes ($1):$pids"
+}
+systemctl --version | head -n 1
+fetch "$base/a/install-hub.sh" /root/install-hub.sh
+mkdir '/srv/probe site $literal%'
+printf '<!doctype html><title>probe acceptance</title>\n' > '/srv/probe site $literal%/index.html'
+if [ -f /etc/ssl/certs/ca-certificates.crt ]; then echo 'CA bundle present before install'; else echo 'no CA bundle before install'; fi
+cat /root/install-hub.sh | sh -s -- --base-url "$base/a" --listen 127.0.0.1:18120 --timezone Asia/Taipei --trusted-proxies 127.0.0.1/32 --public-dir '/srv/probe site $literal%'
+# 下载地址是 http，hub 自己的 Telegram 出站仍要 CA 证书包。
+[ -f /etc/ssl/certs/ca-certificates.crt ] || fail 'no CA bundle after installing over http'
+health 18120
+printf '%s\n' 'accept hub password 2026' | probe-hub passwd --db /var/lib/probe/probe.db
+[ "$(probe-hub version)" = "$version_a" ] || fail 'installed version is not A'
+pid=$(systemctl show probe-hub -p MainPID --value)
+uid=$(awk '/^Uid:/ {print $3}' "/proc/$pid/status")
+cap=$(awk '/^CapEff:/ {print $2}' "/proc/$pid/status")
+[ "$uid" = "$(id -u probe-hub)" ] && [ "$uid" != 0 ] && [ "$((0x$cap))" = 0 ] || fail 'hub identity or capabilities'
+assert_data_layout 'after install'
+verify_unit 'install'
+# 安装器判断单元是否 enabled 只看这条链接，首装后它必须在，否则升级时安装器会把仍会开机拉起的单元说成没 enable。
+[ -L /etc/systemd/system/multi-user.target.wants/probe-hub.service ] || fail 'no multi-user.target.wants link after install'
+# purge 之后按同一扫描为空才算没有残留：先确认它看得见正在运行的 hub。
+hub_pids
+case " $pids " in *" $pid "*) ;; *) fail "comm scan did not find the running hub (pid $pid):$pids";; esac
+
+# 新端口被其它进程占用时，旧服务的同一个 pid 必须仍活着，不能先停服再发现绑定失败。
+systemd-run --unit=pia-port-conflict /usr/local/bin/probe-hub serve --db /root/port-conflict.db --listen 127.0.0.1:8080 --timezone UTC </dev/null
+sleep 1
+curl -fsS -o /dev/null 'http://127.0.0.1:8080/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D'
+rc=0
+sh /root/install-hub.sh --base-url "$base/b" --listen 127.0.0.1:8080 </dev/null > /root/conflict.log 2>&1 || rc=$?
+cat /root/conflict.log
+[ "$rc" != 0 ] && [ "$(systemctl show probe-hub -p MainPID --value)" = "$pid" ] && kill -0 "$pid" || fail 'port conflict did not fail before stopping old hub'
+grep -q 'port 8080 is already in use' /root/conflict.log || fail 'port conflict did not report listener'
+systemctl stop pia-port-conflict
+
+# 单元里的参数是持久事实；重跑升级不能恢复成默认值，显式参数才覆盖。
+fetch "$base/b/install-hub.sh" /root/install-hub.sh
+sh /root/install-hub.sh --base-url "$base/b" </dev/null
+[ "$(probe-hub version)" = "$version_b" ] || fail 'upgraded version is not B'
+health 18120
+pid=$(systemctl show probe-hub -p MainPID --value)
+tr '\000' '\n' < "/proc/$pid/cmdline" > /root/args
+awk '
+  /^--timezone=/ { zone=substr($0,12) }
+  /^--trusted-proxies=/ { proxies=substr($0,19) }
+  /^--public-dir=/ { dir=substr($0,14) }
+  END { exit !(zone == "Asia/Taipei" && proxies == "127.0.0.1/32" && dir == "/srv/probe site $literal%") }
+' /root/args || fail 'upgrade lost installed arguments'
+sh /root/install-hub.sh --base-url "$base/b" --timezone UTC </dev/null
+pid=$(systemctl show probe-hub -p MainPID --value)
+tr '\000' '\n' < "/proc/$pid/cmdline" > /root/args
+# 覆盖按名替换：cmdline 里恰好一个 timezone 参数且值为 UTC。旧值留在前面、靠 flag 解析后者覆盖前者时，
+# 运行结果一样，这条断言看得出来。
+grep -E -e '^--?timezone(=|$)' /root/args > /root/timezone-args || [ "$?" = 1 ]
+[ "$(cat /root/timezone-args)" = '--timezone=UTC' ] || { cat /root/args; fail 'explicit timezone must replace the installed value exactly once'; }
+journalctl _SYSTEMD_UNIT=probe-hub.service "_PID=$pid" --no-pager -o cat > /root/startup.log
+grep -q 'timezone=UTC' /root/startup.log || fail 'running hub did not apply explicit timezone'
+health 18120
+verify_unit 'override upgrade'
+
+# 设 ExecStart 的 drop-in 会盖掉主单元里的参数。刚写到磁盘、还没 daemon-reload 时运行中的 hub 看不到它，
+# 安装器自己启动前的 daemon-reload 却会让它生效：安装器要先 reload 再查，在停服前拒绝，旧服务的同一个 pid 仍在。
+mkdir /etc/systemd/system/probe-hub.service.d
+printf '[Service]\nExecStart =\nExecStart = /usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --listen 127.0.0.1:18120 --timezone Europe/Berlin\n' > /etc/systemd/system/probe-hub.service.d/pia-exec.conf
+# 前提：此刻 DropInPaths 里还没有它，不先 reload 就查不到。
+systemctl show probe-hub -p DropInPaths --value > /root/dropins-unreloaded
+cat /root/dropins-unreloaded
+! grep -q pia-exec.conf /root/dropins-unreloaded || fail 'an unreloaded drop-in is already in DropInPaths'
+rc=0
+sh /root/install-hub.sh --base-url "$base/b" </dev/null > /root/dropin.log 2>&1 || rc=$?
+cat /root/dropin.log
+[ "$rc" != 0 ] && grep -q 'pia-exec.conf sets ExecStart' /root/dropin.log && [ "$(systemctl show probe-hub -p MainPID --value)" = "$pid" ] ||
+  fail 'unreloaded ExecStart drop-in was not refused before stopping the hub'
+# 拦下的是 systemd 真会采用的覆盖（键名两侧带空白也照样采用）：安装器 reload 之后它已生效。
+systemctl show probe-hub -p ExecStart --value | grep -q 'Europe/Berlin' || fail 'systemd did not apply the ExecStart drop-in'
+rm /etc/systemd/system/probe-hub.service.d/pia-exec.conf
+rmdir /etc/systemd/system/probe-hub.service.d
+systemctl daemon-reload
+
+# root 手工操作可能把库文件留成 root:root 0644；停服后改坏，重跑要把它交还服务用户 0600，hub 照常起来。
+systemctl stop probe-hub
+chown root:root /var/lib/probe/probe.db
+chmod 0644 /var/lib/probe/probe.db
+sh /root/install-hub.sh --base-url "$base/b" </dev/null
+assert_data_layout 'after ownership repair'
+health 18120
+
+# 在 systemd 真正启动前损坏即将安装的单元，绕开参数预检以独立验证启动后确认。
+# 使用真实二进制与 systemd；Type=simple 的 start 成功不能代替进程存活。
+mkdir /root/fault-bin
+cat > /root/fault-bin/systemctl <<'START_FAULT'
+#!/bin/sh
+if [ "$1" = start ] && [ "$2" = probe-hub ]; then
+  sed -i 's@/var/lib/probe/probe.db@/var/lib/probe/missing/probe.db@g' /etc/systemd/system/probe-hub.service
+  /usr/bin/systemctl daemon-reload
+fi
+exec /usr/bin/systemctl "$@"
+START_FAULT
+chmod +x /root/fault-bin/systemctl
+cp /etc/systemd/system/probe-hub.service /root/good-unit
+rc=0
+PATH="/root/fault-bin:$PATH" sh /root/install-hub.sh --base-url "$base/b" </dev/null > /root/start-fault.log 2>&1 || rc=$?
+cat /root/start-fault.log
+[ "$rc" != 0 ] && grep -q 'probe-hub did not' /root/start-fault.log || fail 'installer reported success for a hub with a missing database directory'
+cp /root/good-unit /etc/systemd/system/probe-hub.service
+systemctl daemon-reload
+systemctl restart probe-hub
+sleep 3
+health 18120
+
+# 不带确认的非交互卸载不得触碰服务；普通卸载保留数据和账户，purge 才删除。
+rc=0
+sh /root/install-hub.sh --uninstall </dev/null > /root/no-confirm.log 2>&1 || rc=$?
+[ "$rc" != 0 ] && systemctl is-active --quiet probe-hub || fail 'unattended uninstall did not require --yes'
+sh /root/install-hub.sh --uninstall --yes </dev/null
+[ -f /var/lib/probe/probe.db ] && id probe-hub && [ ! -e /usr/local/bin/probe-hub ] || fail 'uninstall did not preserve data and account'
+sh /root/install-hub.sh --uninstall --purge --yes </dev/null
+assert_purged 'after purge'
+
+# purge 不删 drop-in 目录。首装时单元文件还不存在，DropInPaths 查不到其中的 drop-in；安装器要在写好主单元
+# 之后、enable 与 start 之前拦住设了 ExecStart 的 drop-in。
+mkdir /etc/systemd/system/probe-hub.service.d
+printf '[Service]\nExecStart=\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --listen 127.0.0.1:18120\n' > /etc/systemd/system/probe-hub.service.d/pia-exec.conf
+# 前提：单元不存在时，reload 之后 DropInPaths 里也没有它。
+systemctl daemon-reload
+systemctl show probe-hub -p DropInPaths --value > /root/dropins-absent
+cat /root/dropins-absent
+! grep -q pia-exec.conf /root/dropins-absent || fail 'DropInPaths lists drop-ins of a unit that does not exist'
+rc=0
+sh /root/install-hub.sh --base-url "$base/b" </dev/null > /root/first-dropin.log 2>&1 || rc=$?
+cat /root/first-dropin.log
+[ "$rc" != 0 ] && grep -q 'pia-exec.conf sets ExecStart' /root/first-dropin.log && ! systemctl is-enabled --quiet probe-hub && ! systemctl is-active --quiet probe-hub ||
+  fail 'first install with an ExecStart drop-in was not refused before enabling and starting'
+rm -r /etc/systemd/system/probe-hub.service.d
+sh /root/install-hub.sh --uninstall --purge --yes </dev/null
+assert_purged 'after the refused first install'
+echo 'HUB ACCEPT OK'
+HUB_ACCEPT
+  then
+    echo "FAIL($name): hub acceptance"; cat "$work/hub-$name.log"; exit 1
+  fi
+  cat "$work/hub-$name.log"
+  # guest 脚本从 stdin 读入：其中任何一条命令读了 stdin，余下的断言就被吞掉，guest 照样以 0 退出。
+  # 退出码 0 证明不了断言都跑完了，末行必须是最后一条断言之后的标记。
+  [ "$(tail -n 1 "$work/hub-$name.log")" = 'HUB ACCEPT OK' ] || { echo "FAIL($name): hub acceptance did not reach its last assertion"; exit 1; }
+  orb delete -f "$name"
+  grep -v "^$name\$" "$work/machines" > "$work/machines.tmp" || [ "$?" = 1 ]
+  mv "$work/machines.tmp" "$work/machines"
+  echo "== cell $name OK =="
+}
+run_selected_hubs() {
+  for hub_arch in amd64 arm64; do
+    case " $ONLY " in
+      '  '|*" hub-debian-$hub_arch "*) run_hub_cell "$hub_arch";;
+    esac
+  done
+}
+if [ "$RUN_AGENT" = 0 ]; then
+  run_selected_hubs
+  echo 'INSTALL ACCEPT OK'
+  exit 0
+fi
 
 # 每格 2 个节点（服务 + root 对照）。窗口名额必须盖住本 run 会注册的节点，否则后一格 register 被拒。
 # --only 再留 1 个名额：单格注入若把重跑改成再次注册，窗口要接得住，节点数断言才看得到；
@@ -97,18 +358,6 @@ done
 # 200 也可能是别人占着 18085。本进程没打出 listening 就不是这次的 hub。
 grep -q 'hub listening' "$work/hub.log" || { echo "FAIL: hub did not bind $HUB_PORT"; cat "$work/hub.log"; exit 1; }
 printf '%s\n' "$admin_pw" | bin/probe-hub passwd --db "$work/accept.db" > "$work/passwd.log" 2>&1
-
-# HTTP 以 $work/dist 为根，/a 与 /b 是两个版本目录。
-# exec 让 $httpd 就是 python：子 shell 被 kill 后 python 会被 init 收养并继续占着端口，
-# 下一轮会装到上一轮的包。起来之后核对应答的是本 run 的标记，端口被占时立即失败。
-(cd "$work/dist" && exec python3 -m http.server "$DIST_PORT" --bind 127.0.0.1) > "$work/httpd.log" 2>&1 &
-httpd=$!
-attempt=0
-while [ "$attempt" -lt 50 ]; do
-  curl -fsS -o "$work/served-run-id" "http://127.0.0.1:$DIST_PORT/run-id" 2>/dev/null && break
-  attempt=$((attempt + 1)); sleep 0.2
-done
-cmp -s "$work/dist/run-id" "$work/served-run-id" || { echo "FAIL: dist HTTP is not serving this run"; cat "$work/httpd.log"; exit 1; }
 
 : > "$work/jar"
 base="http://127.0.0.1:$HUB_PORT"
@@ -206,10 +455,9 @@ assert_layout() {
 
 run_cell() {
   img=$1; distro=$2; arch=$3
-  name="pia-$distro-$arch"
+  name="pia-$distro-$arch-$$"
   echo "== cell $name =="
-  orb create -a "$arch" "$img" "$name" > "$work/create-$name.log" 2>&1 || { echo "FAIL($name): orb create"; exit 1; }
-  echo "$name" >> "$work/machines"
+  create_machine "$name" "$arch" "$img" || { echo "FAIL($name): orb create"; exit 1; }
 
   # 首次安装用面板命令的管道形态。无 curl 时用 wget（运行时再探一次，不把探测结果写死）；
   # 重跑下载版本 B 的 install.sh 用同一次探测的结果。
@@ -293,8 +541,12 @@ run_cell() {
 
   case "$distro" in
     debian|ubuntu|rocky)
-      orb -m "$name" -u root systemd-analyze verify /etc/systemd/system/probe-agent.service > "$work/verify-$name.log" 2>&1 \
-        || { echo "FAIL($name): systemd-analyze verify"; cat "$work/verify-$name.log"; exit 1; };;
+      # 判据与 hub 格的 verify_unit 相同：未知键名 verify 只告警、照样以 0 退出，有任何输出也算失败。
+      rc=0
+      orb -m "$name" -u root systemd-analyze verify /etc/systemd/system/probe-agent.service > "$work/verify-$name.log" 2>&1 </dev/null || rc=$?
+      if [ "$rc" != 0 ] || [ -s "$work/verify-$name.log" ]; then
+        echo "FAIL($name): systemd-analyze verify (exit $rc)"; cat "$work/verify-$name.log"; exit 1
+      fi;;
     alpine)
       # 删日志目录后重启仍须健康：start_pre 每次启动都建，不靠安装时建一次。
       orb -m "$name" -u root rm -rf /var/log/probe-agent
@@ -383,4 +635,5 @@ run_if ubuntu-amd64 2 "$IMG_UBUNTU" ubuntu amd64
 run_if ubuntu-arm64 2 "$IMG_UBUNTU" ubuntu arm64
 run_if rocky-amd64 2 "$IMG_ROCKY" rocky amd64
 run_if rocky-arm64 2 "$IMG_ROCKY" rocky arm64
+run_selected_hubs
 echo "INSTALL ACCEPT OK"

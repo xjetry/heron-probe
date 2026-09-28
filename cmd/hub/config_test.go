@@ -1,7 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -173,6 +180,32 @@ func TestParseThemeOrigin(t *testing.T) {
 		{"https://Status.Example.com", "https://status.example.com", ""},
 		{"https://status.example.com/", "https://status.example.com", ""},
 		{"http://127.0.0.1:18180", "http://127.0.0.1:18180", ""},
+		// 主机名规范成浏览器放进 Host 头的形态：非 ASCII 转 punycode（非过渡处理，ß 不折成 ss；下划线与 ab-- 这样的标签
+		// 浏览器接受，这里也接受），去一个尾点，IP 字面量经 netip。
+		{"https://状态.test", "https://xn--t7t692b.test", ""},
+		{"https://Straße.de:8443", "https://xn--strae-oqa.de:8443", ""},
+		{"https://ＳＴＡＴＵＳ.example.com", "https://status.example.com", ""},
+		{"https://my_host.ab--cd.test", "https://my_host.ab--cd.test", ""},
+		{"https://status.example.com.", "https://status.example.com", ""},
+		{"http://[0:0::1]", "http://[::1]", ""},
+		{"http://[0:0::1]:8080", "http://[::1]:8080", ""},
+		{"http://[2001:DB8::1]", "http://[2001:db8::1]", ""},
+		{"http://[::FFFF:102:304]", "http://[::ffff:1.2.3.4]", ""},
+		{"https://xn--zz.test", "", "not a valid domain name"},
+		// net/http 对 Host 里的 " < > 回 400；~ ! $ 与 % 不是主机名字符。
+		{`https://a"b.test`, "", "only letters, digits"},
+		{"https://a<b.test", "", "only letters, digits"},
+		{"https://a>b.test", "", "only letters, digits"},
+		{"https://a~b.test", "", "only letters, digits"},
+		{"https://a!b.test", "", "only letters, digits"},
+		{"https://a$b.test", "", "only letters, digits"},
+		{"https://a%25b.test", "", "only letters, digits"},
+		{"https://.", "", "needs a hostname"},
+		{"http://[fe80::1%25en0]", "", "IPv6 zone"},
+		{"http://127.1", "", "ends in a number"},
+		{"http://0x7f.0.0.1", "", "ends in a number"},
+		{"http://127.000.0.1", "", "ends in a number"},
+		{"http://status.example.123", "", "ends in a number"},
 		{"status.example.com", "", "scheme must be https or http"},
 		{"ftp://status.example.com", "", "scheme must be https or http"},
 		{"https://", "", "needs a hostname"},
@@ -192,6 +225,60 @@ func TestParseThemeOrigin(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.err) || !strings.Contains(err.Error(), "--theme-origin") {
 			t.Errorf("parseThemeOrigin(%q) = %q, %v; want an error naming --theme-origin and %q", tc.in, got, err, tc.err)
 		}
+	}
+}
+
+// parseThemeOrigin 接受的主机名，放进 Host 头都被 net/http 交给处理器（不回 400），到达时 hostname 规范的结果与
+// parseThemeOrigin 的一致：启动成功的配置，带着它的请求一定到得了分流器。把每个可见 ASCII 字节与几个非 ASCII 字符放进主机名
+// 中间逐个试。请求用原始连接发出：Go 的客户端自己会拒绝一部分 Host，照不到服务端。另钉住 hostname 注释依赖的 net/http
+// 行为：非 ASCII 的 Host 以 400 拒绝。
+func TestParseThemeOriginAcceptsOnlyHostsNetHTTPServes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, hostname(r.Host)) }))
+	t.Cleanup(srv.Close)
+	get := func(host string) (int, string) {
+		t.Helper()
+		conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", host)
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil {
+			t.Fatalf("Host %q: %v", host, err)
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp.StatusCode, string(b)
+	}
+	var hosts []string
+	for c := byte(0x21); c < 0x7f; c++ {
+		hosts = append(hosts, "a"+string(c)+"b.test")
+	}
+	hosts = append(hosts, "a%25b.test", "a状b.test", "aßb.test", "Ａb.test")
+	accepted := 0
+	for _, h := range hosts {
+		origin, err := parseThemeOrigin("https://" + h)
+		if err != nil {
+			continue
+		}
+		accepted++
+		u, err := url.Parse(origin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if code, got := get(u.Host); code != http.StatusOK || got != hostname(u.Host) {
+			t.Errorf("--theme-origin https://%s is accepted as %s, but a request with Host %q gets %d %q", h, origin, u.Host, code, got)
+		}
+	}
+	if accepted < 36 {
+		t.Fatalf("only %d of %d candidate hostnames were accepted; letters and digits alone should be", accepted, len(hosts))
+	}
+	if code, _ := get("状态.test"); code != http.StatusBadRequest {
+		t.Errorf("non-ASCII Host: %d, want net/http to reject it with 400", code)
 	}
 }
 

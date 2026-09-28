@@ -28,10 +28,25 @@ func TestSetAdminPasswordRevokesEverySession(t *testing.T) {
 		t.Fatalf("AdminPasswordHash = %q %v %v", phc, ok, err)
 	}
 	for _, h := range [][32]byte{h1, h2} {
-		if _, ok, _ := s.Session(ctx, h); ok {
+		if _, ok := lookupSession(t, s, h); ok {
 			t.Fatal("session survived a password change")
 		}
 	}
+}
+
+// lookupSession 从会话表里取出 hash 对应的那一行；没有时第二个返回值为 false。
+func lookupSession(t *testing.T, s *Store, h [32]byte) (Session, bool) {
+	t.Helper()
+	rows, err := s.Sessions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sess := range rows {
+		if sess.TokenHash == h {
+			return sess, true
+		}
+	}
+	return Session{}, false
 }
 
 func TestNoAdminIsReportedExplicitly(t *testing.T) {
@@ -53,9 +68,9 @@ func TestSessionLifecycle(t *testing.T) {
 	if err := s.CreateSession(ctx, h, now, now.Add(30*24*time.Hour), "original"); err != nil {
 		t.Fatal(err)
 	}
-	got, ok, err := s.Session(ctx, h)
-	if err != nil || !ok || !got.CreatedAt.Equal(now) || !got.LastUsedAt.Equal(now) || !got.ExpiresAt.Equal(now.Add(30*24*time.Hour)) {
-		t.Fatalf("Session = %+v %v %v", got, ok, err)
+	got, ok := lookupSession(t, s, h)
+	if !ok || !got.CreatedAt.Equal(now) || !got.LastUsedAt.Equal(now) || !got.ExpiresAt.Equal(now.Add(30*24*time.Hour)) {
+		t.Fatalf("Session = %+v %v", got, ok)
 	}
 	clk.Advance(2 * time.Hour)
 	touched := make(chan error, 1)
@@ -63,7 +78,7 @@ func TestSessionLifecycle(t *testing.T) {
 	if err := <-touched; err != nil {
 		t.Fatal(err)
 	}
-	got, _, _ = s.Session(ctx, h)
+	got, _ = lookupSession(t, s, h)
 	if !got.LastUsedAt.Equal(clk.Now()) {
 		t.Fatalf("last_used_at = %v, want %v", got.LastUsedAt, clk.Now())
 	}
@@ -71,7 +86,7 @@ func TestSessionLifecycle(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("DeleteExpiredSessions = %d %v, want 1 nil", n, err)
 	}
-	if _, ok, _ := s.Session(ctx, h); ok {
+	if _, ok := lookupSession(t, s, h); ok {
 		t.Fatal("expired session still readable")
 	}
 	if err := s.DeleteSession(ctx, h); err != nil {

@@ -23,6 +23,7 @@ export function Layout() {
         <NavLink to="/channels">通知渠道</NavLink>
         <NavLink to="/tokens">API token</NavLink>
         <NavLink to="/appearance">外观</NavLink>
+        <NavLink to="/themes">主题</NavLink>
         <NavLink to="/storage">存储</NavLink>
         <NavLink to="/security">安全</NavLink>
         <NavLink to="/register">注册窗口</NavLink>
