@@ -24,20 +24,22 @@ export function NodeDetail() {
 
   if (!validId) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
   const gate = queryGate(nodes);
-  if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
-  const node = gate.data.nodes.find((n) => n.id === nodeId);
-  if (!node) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
+  // history 与 traffic 只依赖 URL 里的 id，不依赖 listNodes；listNodes 挂起或首次失败时它们完全可能
+  // 已经就绪，不能因为 listNodes 的门控挡住这些已经就绪、不依赖它的内容。是否"不存在"只有 listNodes
+  // 真的到达后才能判断——它挂起或首次失败时无法区分"节点被删了"与"这次还没拿到列表"，按后者处理。
+  const node = gate.ready ? gate.data.nodes.find((n) => n.id === nodeId) : undefined;
+  if (gate.ready && !node) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
   return (
     <section>
       {errorBanner(nodes.error, history.metrics.error, history.probes.error, traffic.error)}
       <header className="row detail-header">
-        <h1>{node.name}</h1>
+        <h1>{node ? node.name : `节点 #${nodeId}`}</h1>
         <Link to={`/events?node=${id}`}>告警事件</Link>
         <RangePicker history={history} />
       </header>
       <TrafficCard nodeId={nodeId} data={traffic.data} />
       <HistoryCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>} />
-      {node.facts && (
+      {gate.ready ? node?.facts && (
         <dl className="card facts">
           {/* 来源地址是 hub 在上报上看到的对端，不是 agent 自报；只在管理端显示，公开页没有这个字段。 */}
           <dt>主机名</dt><dd>{node.facts.hostname}{node.lastSource && <span className="muted">（来源 {node.lastSource}）</span>}</dd>
@@ -49,7 +51,7 @@ export function NodeDetail() {
           <dt>agent</dt><dd>{node.facts.agentVersion}</dd>
           <dt>ICMP 探测</dt><dd>{node.facts.icmpAvailable ? "可用" : "不可用"}</dd>
         </dl>
-      )}
+      ) : gate.loading}
     </section>
   );
 }

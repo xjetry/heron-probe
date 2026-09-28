@@ -1,7 +1,7 @@
 import type { DescMethodUnary } from "@bufbuild/protobuf";
 import { useQuery } from "@connectrpc/connect-query";
-import { keepPreviousData } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { useRetained } from "../api/useRetained";
 import type { QueryMetricsRequestSchema, QueryMetricsResponseSchema, QueryProbesRequestSchema, QueryProbesResponseSchema } from "../gen/probe/v1/query_pb";
 import { lossPercent, rttMeanMs, seriesLabels, taskIdsOf, toProbeAligned, type ProbeValue } from "../lib/probes";
 import { toAligned, unitOf } from "../lib/series";
@@ -53,12 +53,21 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, enabled: boo
   }, []);
   const from = to - range.seconds;
   const request = { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: 1000 };
-  const metrics = useQuery(methods.queryMetrics, request, { enabled, placeholderData: keepPreviousData });
-  const probes = useQuery(methods.queryProbes, request, { enabled, placeholderData: keepPreviousData });
-  const charts = useMemo(
-    () => metrics.data ? PANELS.map((p) => ({ ...p, data: toAligned(metrics.data, p.names, from, to), unit: p.unit ?? unitOf(metrics.data, p.names[0]) })) : [],
-    [metrics.data, from, to],
-  );
+  // 窗口右端每分钟前进一次、切换 range 都会换查询键；换键期间或失败时图表与“级别…”标签不能都消失，也不能
+  // 沿用别的节点的数据。指标图与“级别…”标签由 metrics.data 派生，两张探测图由 probes.data 派生：data 回到
+  // undefined 时它们都不再渲染。用 useRetained 沿用本节点上一份成功数据直到当前键取到自己的数据为止，失败
+  // 只由 error 表达；不用 keepPreviousData——它只在挂起期间补位，请求一失败 data 就回到 undefined。identity
+  // 传 nodeId：切到另一个节点时丢掉上一个节点的沿用值，否则新节点还没有自己的数据时会把上一个节点的图表当成
+  // 这个节点显示。
+  const metrics = useRetained(useQuery(methods.queryMetrics, request, { enabled }), nodeId);
+  const probes = useRetained(useQuery(methods.queryProbes, request, { enabled }), nodeId);
+  // useRetained 的返回值是一个不带判别字段的普通对象（不像 useQuery 按 status 分支的联合类型），narrow
+  // 一次 metrics.data 只窄化这一次属性访问，不会像窄化整个联合类型变量那样带进下面 map 的回调里；
+  // 这里先取到本地变量，回调里用的是这个已经排除 undefined 的变量，不是再次访问 metrics.data。
+  const charts = useMemo(() => {
+    const data = metrics.data;
+    return data ? PANELS.map((p) => ({ ...p, data: toAligned(data, p.names, from, to), unit: p.unit ?? unitOf(data, p.names[0]) })) : [];
+  }, [metrics.data, from, to]);
   // 标签随序列下发（任务当前的种类与目标），与数据同一次响应到达，不另查任务列表。
   const probeCharts = useMemo(() => {
     if (!probes.data) return [];
@@ -66,13 +75,22 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, enabled: boo
     const labels = seriesLabels(probes.data.series);
     return PROBE_PANELS.map((p) => ({ ...p, labels, data: toProbeAligned(probes.data!, ids, from, to, p.value) }));
   }, [probes.data, from, to]);
-  return { range, setRange, metrics, probes, charts, probeCharts };
+  // stale 只说“这份数据不是当前查询键自己的”：窗口右端每分钟前进一次也会换键，请求还没回来的这一小段
+  // 时间同样是 stale，但沿用的还是同一个 range，只晚了不到一分钟，不该报成“看错窗口”。这里另记一下
+  // “当前沿用值最后一次确认属于哪个 range”：只有 metrics/probes 沿用中、且沿用值所属的 range 与当前
+  // 选中的 range 不同——也就是真的切换过 range、新 range 还没有自己的数据——才算“看错窗口”。
+  const [metricsRange, setMetricsRange] = useState(range);
+  if (!metrics.stale && metrics.data !== undefined && metricsRange !== range) setMetricsRange(range);
+  const [probesRange, setProbesRange] = useState(range);
+  if (!probes.stale && probes.data !== undefined && probesRange !== range) setProbesRange(range);
+  const rangeStale = (metrics.stale && metricsRange !== range) || (probes.stale && probesRange !== range);
+  return { range, setRange, metrics, probes, charts, probeCharts, rangeStale };
 }
 
 export type HistoryState = ReturnType<typeof useHistory>;
 
 export function RangePicker({ history }: { history: HistoryState }) {
-  const { range, setRange, metrics } = history;
+  const { range, setRange, metrics, rangeStale } = history;
   return (
     <>
       <nav aria-label="时间窗口">
@@ -83,6 +101,9 @@ export function RangePicker({ history }: { history: HistoryState }) {
         ))}
       </nav>
       {metrics.data && <span className="muted">级别 {metrics.data.level}，每点 {metrics.data.stepS}s</span>}
+      {/* rangeStale 排除了“同一个 range 里晚了不到一分钟”的情况，只在真的换过 range 还没等到新 range
+          自己的数据时才出现；不点出来，这里显示的级别与图表会被当成当前选中 range 的结果看。 */}
+      {rangeStale && <span className="muted">图表还不是 {range.label} 窗口的结果，取到之后会更新</span>}
     </>
   );
 }

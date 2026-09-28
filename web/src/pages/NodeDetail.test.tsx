@@ -3,9 +3,11 @@ import { QueryProbesResponseSchema } from "../gen/probe/v1/query_pb";
 import { ProbeKind } from "../gen/probe/v1/types_pb";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, screen, fireEvent, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { NodeDetail } from "./NodeDetail";
+
+afterEach(() => vi.useRealTimers());
 
 vi.mock("../components/Chart", () => ({
   Chart: ({ labels, unit, data }: { labels: string[]; unit: string; data: unknown[] }) => (
@@ -68,6 +70,73 @@ it("四个查询同文刷新失败只显示一条", async () => {
   await act(async () => { await queryClient.refetchQueries(); });
   expect((await screen.findAllByRole("alert")).map((a) => a.textContent)).toEqual(["hub unreachable"]);
   expect(screen.getByRole("heading", { name: "db-01" })).toBeInTheDocument();
+});
+
+it("listNodes 从未成功但历史与流量已就绪时仍显示图表、流量卡与切窗按钮，只加错误横幅", async () => {
+  renderWithAdmin({ ...defaultImpl, listNodes: async () => { throw new ConnectError("nodes down", Code.Unavailable); } },
+    [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  expect(await screen.findByRole("alert")).toHaveTextContent("nodes down");
+  expect(await screen.findAllByTestId("chart")).toHaveLength(7);
+  expect(screen.getByRole("button", { name: "24h" })).toBeInTheDocument();
+  expect(screen.getByText("↓ 1.0 GiB ↑ 512 MiB")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "节点 #7" })).toBeInTheDocument();
+});
+
+it("listNodes 挂起、历史就绪时图表与“加载中…”同时在", async () => {
+  let release!: (v: Awaited<ReturnType<typeof listNodes>>) => void;
+  const pending = new Promise<Awaited<ReturnType<typeof listNodes>>>((resolve) => { release = resolve; });
+  renderWithAdmin({ ...defaultImpl, listNodes: () => pending }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  expect(await screen.findAllByTestId("chart")).toHaveLength(7);
+  expect(screen.getByText("加载中…")).toBeInTheDocument();
+  expect(screen.queryByText("主机名")).toBeNull();
+  await act(async () => { release(await listNodes()); });
+});
+
+it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅，不误报“非当前窗口”", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  let fail = false;
+  const queryMetrics = vi.fn<NonNullable<AdminImpl["queryMetrics"]>>(async () => {
+    if (fail) throw new ConnectError("history down", Code.Unavailable);
+    return { level: "1m", stepS: 60, ts: [], series: [] };
+  });
+  renderWithAdmin({ ...defaultImpl, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  expect(await screen.findAllByTestId("chart")).toHaveLength(7);
+  await screen.findByText(/级别 1m，每点 60s/);
+  fail = true;
+  // 窗口右端每分钟前进一次（History.tsx 的 REFRESH_MS），换键后的这次请求失败。
+  await act(async () => { await vi.advanceTimersByTimeAsync(60_000 + 100); });
+  expect(await screen.findByRole("alert")).toHaveTextContent("history down");
+  expect(screen.getAllByTestId("chart")).toHaveLength(7);
+  expect(screen.getByText(/级别 1m，每点 60s/)).toBeInTheDocument();
+  // 沿用的还是 24h 这个 range 自己的数据，只是这次刷新没成功；range 没变，不该报"看错窗口"，
+  // 失败已经由上面的横幅表达。
+  expect(screen.queryByText(/图表还不是/)).toBeNull();
+});
+
+it("切到另一个节点、新节点历史未返回时不显示上一个节点的图表与级别", async () => {
+  let releaseNode8!: () => void;
+  const node8Gate = new Promise<void>((resolve) => { releaseNode8 = resolve; });
+  const listTwoNodes = async () => ({
+    nodes: [
+      { id: 7n, name: "db-07", public: false, note: "", sortOrder: 0, createdAt: 0n },
+      { id: 8n, name: "db-08", public: false, note: "", sortOrder: 1, createdAt: 0n },
+    ],
+  });
+  const queryMetrics = vi.fn<NonNullable<AdminImpl["queryMetrics"]>>(async (req) => {
+    if (req.nodeId === 8n) await node8Gate;
+    return req.nodeId === 8n ? { level: "5m", stepS: 300, ts: [], series: [] } : { level: "1m", stepS: 60, ts: [], series: [] };
+  });
+  const { router } = renderWithAdmin({ ...defaultImpl, listNodes: listTwoNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  await screen.findByRole("heading", { name: "db-07" });
+  await screen.findByText(/级别 1m，每点 60s/);
+  await act(async () => { router.navigate("/nodes/8"); });
+  expect(await screen.findByRole("heading", { name: "db-08" })).toBeInTheDocument();
+  // 8 的历史还没回来：不能把 7 的"级别 1m"标签或图表当成 8 的显示，这段时间没有图表比显示错的更安全。
+  expect(screen.queryByText(/级别 1m/)).toBeNull();
+  expect(screen.queryAllByTestId("chart")).toHaveLength(0);
+  await act(async () => { releaseNode8(); });
+  expect(await screen.findByText(/级别 5m，每点 300s/)).toBeInTheDocument();
+  expect(screen.getAllByTestId("chart")).toHaveLength(7);
 });
 
 it("头部链接到该节点的告警事件", async () => {
@@ -161,6 +230,40 @@ describe("NodeDetail", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "7d" })); await pending; });
     try { expect(screen.queryAllByTestId("chart").length).toBe(7); }
     finally { await act(async () => { release(); }); }
+  });
+
+  it("同一窗口内的每分钟刷新挂起不误报“非当前窗口”，换窗口挂起才提示", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const response = { level: "1m", stepS: 60, ts: [], series: [] };
+    let release!: () => void;
+    let started!: () => void;
+    let gate = new Promise<void>((resolve) => { release = resolve; });
+    let pending = new Promise<void>((resolve) => { started = resolve; });
+    const queryMetrics = vi.fn(async () => {
+      if (queryMetrics.mock.calls.length > 1) { started(); await gate; }
+      return response;
+    });
+    renderWithAdmin({ ...defaultImpl, getTraffic, listNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+    await screen.findByText(/级别 1m，每点 60s/);
+
+    // 窗口右端前进一分钟（History.tsx 的 REFRESH_MS），换键但 range 没变：挂起期间不该报"非当前窗口"。
+    // gate 在这一步故意不 resolve，advanceTimersByTimeAsync 会一直等它，因此只用同步的 advanceTimersByTime
+    // 触发这次换键，再单独等 pending（effect 在这次 act 里已经同步跑过，pending 这时已经 resolve）。
+    act(() => { vi.advanceTimersByTime(60_000 + 100); });
+    await pending;
+    expect(screen.queryByText(/图表还不是/)).toBeNull();
+    release();
+    await waitFor(() => expect(queryMetrics.mock.calls.length).toBeGreaterThanOrEqual(2));
+    expect(screen.queryByText(/图表还不是/)).toBeNull();
+
+    // 换成另一个 range：挂起期间沿用的是 24h 的数据，该出现提示。
+    gate = new Promise<void>((resolve) => { release = resolve; });
+    pending = new Promise<void>((resolve) => { started = resolve; });
+    fireEvent.click(screen.getByRole("button", { name: "7d" }));
+    await pending;
+    expect(screen.getByText(/图表还不是 7d 窗口的结果/)).toBeInTheDocument();
+    release();
+    await waitFor(() => expect(screen.queryByText(/图表还不是/)).toBeNull());
   });
 
   it("非数字节点路径不发查询并显示返回链接", async () => {
