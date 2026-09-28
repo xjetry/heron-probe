@@ -74,13 +74,22 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, enabled: boo
     const labels = seriesLabels(probes.data.series);
     return PROBE_PANELS.map((p) => ({ ...p, labels, data: toProbeAligned(probes.data!, ids, from, to, p.value) }));
   }, [probes.data, from, to]);
-  return { range, setRange, metrics, probes, charts, probeCharts };
+  // stale 只说“这份数据不是当前查询键自己的”：窗口右端每分钟前进一次也会换键，请求还没回来的这一小段
+  // 时间同样是 stale，但沿用的还是同一个 range，只晚了不到一分钟，不该报成“看错窗口”。这里另记一下
+  // “当前沿用值最后一次确认属于哪个 range”：只有 metrics/probes 沿用中、且沿用值所属的 range 与当前
+  // 选中的 range 不同——也就是真的切换过 range、新 range 还没有自己的数据——才算“看错窗口”。
+  const [metricsRange, setMetricsRange] = useState(range);
+  if (!metrics.stale && metrics.data !== undefined && metricsRange !== range) setMetricsRange(range);
+  const [probesRange, setProbesRange] = useState(range);
+  if (!probes.stale && probes.data !== undefined && probesRange !== range) setProbesRange(range);
+  const rangeStale = (metrics.stale && metricsRange !== range) || (probes.stale && probesRange !== range);
+  return { range, setRange, metrics, probes, charts, probeCharts, rangeStale };
 }
 
 export type HistoryState = ReturnType<typeof useHistory>;
 
 export function RangePicker({ history }: { history: HistoryState }) {
-  const { range, setRange, metrics, probes } = history;
+  const { range, setRange, metrics, rangeStale } = history;
   return (
     <>
       <nav aria-label="时间窗口">
@@ -91,8 +100,9 @@ export function RangePicker({ history }: { history: HistoryState }) {
         ))}
       </nav>
       {metrics.data && <span className="muted">级别 {metrics.data.level}，每点 {metrics.data.stepS}s</span>}
-      {/* data 沿用自上一次成功的窗口时，级别、图表都还是那个窗口的，不点出来会被当成当前 range 的结果看。 */}
-      {(metrics.stale || probes.stale) && <span className="muted">图表还不是 {range.label} 窗口的结果，取到之后会更新</span>}
+      {/* rangeStale 排除了“同一个 range 里晚了不到一分钟”的情况，只在真的换过 range 还没等到新 range
+          自己的数据时才出现；不点出来，这里显示的级别与图表会被当成当前选中 range 的结果看。 */}
+      {rangeStale && <span className="muted">图表还不是 {range.label} 窗口的结果，取到之后会更新</span>}
     </>
   );
 }

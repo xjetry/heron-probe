@@ -92,7 +92,7 @@ it("listNodes 挂起、历史就绪时图表与“加载中…”同时在", asy
   await act(async () => { release(await listNodes()); });
 });
 
-it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅和“非当前窗口”提示", async () => {
+it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅，不误报“非当前窗口”", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   let fail = false;
   const queryMetrics = vi.fn<NonNullable<AdminImpl["queryMetrics"]>>(async () => {
@@ -108,7 +108,9 @@ it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅和�
   expect(await screen.findByRole("alert")).toHaveTextContent("history down");
   expect(screen.getAllByTestId("chart")).toHaveLength(7);
   expect(screen.getByText(/级别 1m，每点 60s/)).toBeInTheDocument();
-  expect(screen.getByText(/图表还不是 24h 窗口的结果/)).toBeInTheDocument();
+  // 沿用的还是 24h 这个 range 自己的数据，只是这次刷新没成功；range 没变，不该报"看错窗口"，
+  // 失败已经由上面的横幅表达。
+  expect(screen.queryByText(/图表还不是/)).toBeNull();
 });
 
 it("切到另一个节点、新节点历史未返回时不显示上一个节点的图表与级别", async () => {
@@ -228,6 +230,40 @@ describe("NodeDetail", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "7d" })); await pending; });
     try { expect(screen.queryAllByTestId("chart").length).toBe(7); }
     finally { await act(async () => { release(); }); }
+  });
+
+  it("同一窗口内的每分钟刷新挂起不误报“非当前窗口”，换窗口挂起才提示", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const response = { level: "1m", stepS: 60, ts: [], series: [] };
+    let release!: () => void;
+    let started!: () => void;
+    let gate = new Promise<void>((resolve) => { release = resolve; });
+    let pending = new Promise<void>((resolve) => { started = resolve; });
+    const queryMetrics = vi.fn(async () => {
+      if (queryMetrics.mock.calls.length > 1) { started(); await gate; }
+      return response;
+    });
+    renderWithAdmin({ ...defaultImpl, getTraffic, listNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+    await screen.findByText(/级别 1m，每点 60s/);
+
+    // 窗口右端前进一分钟（History.tsx 的 REFRESH_MS），换键但 range 没变：挂起期间不该报"非当前窗口"。
+    // gate 在这一步故意不 resolve，advanceTimersByTimeAsync 会一直等它，因此只用同步的 advanceTimersByTime
+    // 触发这次换键，再单独等 pending（effect 在这次 act 里已经同步跑过，pending 这时已经 resolve）。
+    act(() => { vi.advanceTimersByTime(60_000 + 100); });
+    await pending;
+    expect(screen.queryByText(/图表还不是/)).toBeNull();
+    release();
+    await waitFor(() => expect(queryMetrics.mock.calls.length).toBeGreaterThanOrEqual(2));
+    expect(screen.queryByText(/图表还不是/)).toBeNull();
+
+    // 换成另一个 range：挂起期间沿用的是 24h 的数据，该出现提示。
+    gate = new Promise<void>((resolve) => { release = resolve; });
+    pending = new Promise<void>((resolve) => { started = resolve; });
+    fireEvent.click(screen.getByRole("button", { name: "7d" }));
+    await pending;
+    expect(screen.getByText(/图表还不是 7d 窗口的结果/)).toBeInTheDocument();
+    release();
+    await waitFor(() => expect(screen.queryByText(/图表还不是/)).toBeNull());
   });
 
   it("非数字节点路径不发查询并显示返回链接", async () => {
