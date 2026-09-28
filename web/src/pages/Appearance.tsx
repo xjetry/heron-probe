@@ -191,7 +191,7 @@ function GeoLookup({ current }: { current: Settings | undefined }) {
             服务地址
             <input value={form.geoUrl} aria-describedby="geo-disclosure" onChange={(e) => edit({ geoUrl: e.target.value })} spellCheck={false} />
           </label>
-          <p className="muted">http 或 https，含 {"{ip}"}；应答须恰为两个大写字母的国家码（ISO 3166-1），否则按失败处理。节点也可在节点页手动指定国家，手动值优先。</p>
+          <p className="muted">http 或 https，含 {"{ip}"}，{"{ip}"} 不能放在主机或端口里；应答须恰为两个大写字母的国家码（ISO 3166-1），否则按失败处理。节点也可在节点页手动指定国家，手动值优先。</p>
           {update.error != null && <p role="alert" className="error">{errorText(update.error)}</p>}
           {saved && <p role="status">已保存。</p>}
           <button type="submit">保存</button>
