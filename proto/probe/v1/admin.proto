@@ -543,7 +543,7 @@ message Settings {
   // 当前后端，只读；GetSettings 与 UpdateSettings 响应均回显。UpdateSettings 中缺席或给出均忽略。
   GeoBackend geo_backend = 9;
   // --geo-mmdb 指定的路径，HTTP 后端为空；MMDB 后端下 geo_url 保留但不生效。
-  // 部署路径只能在启动时指定；hub 启动时把该文件整读进内存并做结构校验（库文件不带校验和，值被改写查不出），运行期
+  // 部署路径只能在启动时指定；hub 启动时把该文件整读进内存并做结构校验（库文件不带校验和，合法值换成另一个合法值查不出；非法 UTF-8 这类结构损坏才会被拒），运行期
   // 不再读它，原地覆盖或截断都不影响运行中的答案，替换文件后重启才生效。只读，UpdateSettings 中缺席或给出均忽略，
   // 不校验、不保存。
   string geo_mmdb_path = 10;
