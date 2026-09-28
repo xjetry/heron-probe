@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -42,6 +43,35 @@ func TestTokenIs32RandomBytesHex(t *testing.T) {
 	}
 	if HashToken(p1) != h1 {
 		t.Fatal("hash must be derived from the plain token")
+	}
+}
+
+// isTokenShaped 与 NewToken 的输出一一对应：签发的 token 全部通过；长度差一、大写、十六进制之外的字节全部拒绝。
+// 收紧会把合法会话挡在外面，放宽只多算一些不可能命中的哈希；两个方向都在这里钉住。
+func TestIsTokenShapedMatchesNewToken(t *testing.T) {
+	for range 1000 {
+		if plain, _ := NewToken(); !isTokenShaped(plain) {
+			t.Fatalf("NewToken output %q rejected", plain)
+		}
+	}
+	for _, s := range []string{
+		strings.Repeat("0", 64), strings.Repeat("9", 64), strings.Repeat("a", 64), strings.Repeat("f", 64),
+	} {
+		if !isTokenShaped(s) {
+			t.Errorf("%q rejected", s)
+		}
+	}
+	a63 := strings.Repeat("a", 63)
+	for _, s := range []string{
+		"", a63, a63 + "aa",
+		a63 + "A", a63 + "F", a63 + "g",
+		a63 + "/", a63 + ":", a63 + "`", // 紧挨 '0'、'9'、'a' 两侧的字节
+		strings.Repeat("a", 62) + "\u00e9", // 64 字节，含非 ASCII
+		`"` + strings.Repeat("a", 62) + `"`,
+	} {
+		if isTokenShaped(s) {
+			t.Errorf("%q (len %d) accepted", s, len(s))
+		}
 	}
 }
 
