@@ -660,6 +660,44 @@ func TestHubFlagTableAgreesWithServe(t *testing.T) {
 	}
 }
 
+// unit_enabled 只看 $WANTS 这条链接，前提是发布包里 probe-hub.service 的 [Install] 恰好只有 WantedBy=<target>，且
+// <target> 与安装器 WANTS 路径里的 <target>.wants 是同一个：systemctl enable 建出的才正是这条链接。单元改了
+// WantedBy 而安装器没改时，enable 建的是另一条链接，安装器会把仍 enabled 的单元说成没 enable，卸载也删不掉真正
+// 的链接；替身把链接路径写死，测不出这种分叉，所以两处写法在这里静态核对。
+func TestHubUnitInstallTargetAgreesWithWantsPath(t *testing.T) {
+	t.Parallel()
+	unit, err := os.ReadFile("systemd/probe-hub.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	install := regexp.MustCompile(`(?ms)^\[Install\]\n(.*?)(?:^\[|\z)`).FindStringSubmatch(string(unit))
+	if install == nil {
+		t.Fatal("probe-hub.service has no [Install] section")
+	}
+	var wantedBy []string
+	for _, line := range strings.Split(strings.TrimSpace(install[1]), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok || key != "WantedBy" {
+			t.Fatalf("[Install] line %q: unit_enabled assumes the section holds only WantedBy", line)
+		}
+		wantedBy = append(wantedBy, value)
+	}
+	if len(wantedBy) != 1 {
+		t.Fatalf("[Install] has WantedBy %q; unit_enabled assumes exactly one wants link", wantedBy)
+	}
+	script, err := os.ReadFile("install-hub.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^WANTS=\$ROOT/etc/systemd/system/([^/]+)\.wants/probe-hub\.service$`).FindStringSubmatch(string(script))
+	if m == nil {
+		t.Fatal("install-hub.sh has no WANTS=$ROOT/etc/systemd/system/<target>.wants/probe-hub.service line")
+	}
+	if m[1] != wantedBy[0] {
+		t.Fatalf("the unit is WantedBy=%s but the installer looks for the link under %s.wants", wantedBy[0], m[1])
+	}
+}
+
 // 命令行只接受 SERVE_FLAGS 里的参数：--db 固定、表外的参数与 --flag=value 写法都以用法错误退出，什么都不做。
 // 带空格的名字按子串会命中参数表（" listen timezone " 在表里），写进单元就是 serve 不认的参数。
 func TestHubCommandLineRefusesFlagsOutsideTheTable(t *testing.T) {

@@ -180,6 +180,8 @@ cap=$(awk '/^CapEff:/ {print $2}' "/proc/$pid/status")
 [ "$uid" = "$(id -u probe-hub)" ] && [ "$uid" != 0 ] && [ "$((0x$cap))" = 0 ] || fail 'hub identity or capabilities'
 assert_data_layout 'after install'
 verify_unit 'install'
+# 安装器判断单元是否 enabled 只看这条链接，首装后它必须在，否则升级时安装器会把仍会开机拉起的单元说成没 enable。
+[ -L /etc/systemd/system/multi-user.target.wants/probe-hub.service ] || fail 'no multi-user.target.wants link after install'
 # purge 之后按同一扫描为空才算没有残留：先确认它看得见正在运行的 hub。
 hub_pids
 case " $pids " in *" $pid "*) ;; *) fail "comm scan did not find the running hub (pid $pid):$pids";; esac

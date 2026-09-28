@@ -176,8 +176,8 @@ db_files_ok() {
   done
 }
 # 单元是否 enabled 只看 $WANTS 这条链接，卸载与写好主单元之后的现状说明共用这一个判定。安装器每次写入的主单元
-# 取自发布包里的 probe-hub.service，只替换 ExecStart，[Install] 只有 WantedBy=multi-user.target，所以
-# systemctl enable 建出的就是这条链接，disable 删掉它。判定不向 systemd 查询：写好主单元之后回答它的路径里，
+# 取自发布包里的 probe-hub.service，只替换 ExecStart，[Install] 只有 WantedBy=multi-user.target（与 $WANTS 里的
+# target 一致，由 deploy/installhub_test.go 静态核对），所以 systemctl enable 建出的就是这条链接，disable 删掉它。判定不向 systemd 查询：写好主单元之后回答它的路径里，
 # 有一条正是 systemctl 刚出过错，而 systemctl is-enabled --quiet 查询出错与 disabled 都是非零退出，照它回答会把
 # 仍 enabled 的单元说成没 enable。用 -L 不用 -e：主单元被删、链接悬空时也算，卸载要清掉它。管理员另用
 # add-wants 等挂到别的 target 下的链接不在这个判定里。
