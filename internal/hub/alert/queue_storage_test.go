@@ -84,8 +84,8 @@ func TestExhaustedUnrecordedDeliveryBecomesTerminal(t *testing.T) {
 			q.Enqueue(ev) // attempt 从窗口取批次所属的渠道。
 			out, err := q.attempt(t.Context(), ev.Deliveries[0].BatchID)
 			must(t, err)
-			if out.retry {
-				t.Fatalf("exhausted batch scheduled for retry: %+v", out)
+			if out.fate != fateSettled {
+				t.Fatalf("exhausted batch not settled: %+v", out)
 			}
 			saved, err := f.st.GetAlertEvent(t.Context(), ev.ID)
 			must(t, err)

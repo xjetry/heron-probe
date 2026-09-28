@@ -3,8 +3,10 @@ package alert
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -13,8 +15,8 @@ import (
 	"github.com/xjetry/probe/internal/hub/store"
 )
 
-// joinOnRead 让 q 每次读批次之后、开始尝试之前，给批次加入一个新节点的转换，至多 n 次：模拟补货在一次巡检中途
-// 读到尚未收齐的批次。返回加入的事件。
+// joinOnRead 让 q 每次读到发往 c 的批次之后、开始尝试之前，给它加入一个新节点的转换，至多 len(nodes) 次：模拟补货
+// 在一次巡检中途读到尚未收齐的批次。发往其它渠道的批次读时不加。返回加入的事件。
 func joinOnRead(t *testing.T, f *fixture, q *Queue, r store.AlertRule, c store.NotifyChannel, nodes []int64) *[]store.AlertEvent {
 	t.Helper()
 	var mu sync.Mutex
@@ -24,7 +26,7 @@ func joinOnRead(t *testing.T, f *fixture, q *Queue, r store.AlertRule, c store.N
 		b, err := read(ctx, batch)
 		mu.Lock()
 		defer mu.Unlock()
-		if err == nil && len(*joined) < len(nodes) {
+		if err == nil && b.Deliveries[0].ChannelID == c.ID && len(*joined) < len(nodes) {
 			ev, err := f.st.RecordTransition(ctx, r.ID, nodes[len(*joined)], store.StateFiring, "", time.Time{},
 				store.AlertEvent{At: f.clk.Now(), Transition: store.TransitionFiring, Summary: "节点 joined 离线"}, []store.DeliveryTarget{{ChannelID: c.ID, Batch: batch}})
 			if err != nil {
@@ -65,19 +67,31 @@ func TestAttemptRecordsOnlyRowsItSent(t *testing.T) {
 	}
 }
 
-// 批次在每次读之后都在长：读到上限（maxBatchReads）就记 Warn、按存储故障退避，补货之后用收齐的行发出一条。
-func TestAttemptGivesUpRereadingAfterBound(t *testing.T) {
+// 批次在每次读之后都在长：读到上限（maxBatchReads）是正常去向，不是存储故障。批次离开窗口、由补货装回，worker
+// 不退避，也不记 ERROR；同时入队的另一个渠道的批次照常立即发出，不多等一次退避。补货之后批次用收齐的行发出一条。
+func TestGrowingBatchYieldsWorkerAtReadBound(t *testing.T) {
 	f := newFixture(t)
 	ids := f.nodes(t, maxBatchReads+1)
 	base, tg := newTelegramServer(t, f, nil)
+	var mu sync.Mutex
+	var hooked []time.Time
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hooked = append(hooked, f.clk.Now())
+		mu.Unlock()
+	}))
+	defer srv.Close()
 	c := telegramChannel(t, f, 20)
 	r := offlineRuleTo(t, f, "离线", c)
 	first := recordBatches(t, f, c, 1)[0]
+	hookEvent := recordBatches(t, f, queueChannel(t, f, srv.URL), 1)[0]
 	var logs bytes.Buffer
 	var sleeps []time.Duration
 	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), base, f.clk, advancing(f, &sleeps), slog.New(slog.NewJSONHandler(&logs, nil)))
 	joinOnRead(t, f, q, r, c, ids[1:])
+	start := f.clk.Now()
 	q.Enqueue(first)
+	q.Enqueue(hookEvent)
 	stop := startQueue(t, q)
 	awaitSettled(t, f)
 	stop()
@@ -85,11 +99,27 @@ func TestAttemptGivesUpRereadingAfterBound(t *testing.T) {
 	if len(got) != 1 || strings.Count(got[0].text, "节点 joined 离线") != maxBatchReads {
 		t.Fatalf("messages=%+v, want one message with the first row and %d joined rows", got, maxBatchReads)
 	}
-	if !strings.Contains(logs.String(), `"msg":"delivery batch kept changing while it was read; retrying after the storage backoff"`) || !strings.Contains(logs.String(), `"reads":3`) {
-		t.Errorf("missing bound warning: %s", logs.String())
+	mu.Lock()
+	defer mu.Unlock()
+	if len(hooked) != 1 || !hooked[0].Equal(start) || len(sleeps) != 0 {
+		t.Fatalf("webhook delivered at %v with sleeps=%v, want once at %v and no backoff: the read bound is not a storage failure", hooked, sleeps, start)
 	}
-	if len(sleeps) != 1 || sleeps[0] != time.Second {
-		t.Errorf("sleeps=%v, want one storage backoff of 1s", sleeps)
+	bound := false
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var rec struct {
+			Level, Msg string
+			Reads      int
+		}
+		must(t, json.Unmarshal([]byte(line), &rec))
+		if rec.Level == "ERROR" {
+			t.Errorf("read bound logged an error: %s", line)
+		}
+		if rec.Level == "INFO" && rec.Msg == "delivery batch still growing after repeated reads; left for refill" && rec.Reads == maxBatchReads {
+			bound = true
+		}
+	}
+	if !bound {
+		t.Errorf("missing the INFO record of the read bound: %s", logs.String())
 	}
 }
 

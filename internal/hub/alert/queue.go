@@ -33,8 +33,11 @@ const rateWindow = time.Minute
 // 全部节点同时掉线时消息必须仍能发出。
 const maxListedNodes = 20
 
-// maxBatchReads 是一次尝试里读批次、拼消息的次数上限。开始尝试时批次的行与读到的不同（ErrBatchChanged）就重读；
-// 一次巡检在写的行不会无限多，连续变化到上限说明批次一直在长，按存储故障退避，之后由补货续投。
+// maxBatchReads 是一次尝试里读批次、拼消息的次数上限。开始尝试时批次的行与读到的不同（ErrBatchChanged）就重读。
+// 连续变化到上限说明批次还在长，这是正常去向而不是故障：行只在开批的那次评估调用里加入（Engine.apply 只把本次调用
+// 开的批次号交给 RecordTransition，joinableBatch 拒绝已开始尝试的批次）。这时批次离开窗口、仍在库里待投递，由补货
+// 或那次调用结束时 flush 的入队装回；worker 不退避，先发 ready 里的其它批次——上限就是让出 worker 的点。每次被拒
+// 都对应其间至少一次行的加入或清理，所以来回的次数受这些行数约束。
 const maxBatchReads = 3
 
 // DeliveryRetryWait 是渠道失败可重试、应答不带 429 的 Retry-After、渠道节奏未满且存储正常时，retryWait 给一个批次
@@ -95,7 +98,7 @@ type Queue struct {
 	waiting   map[int64]waitEntry
 	active    map[int64]int64 // ready ∪ waiting ∪ 在途的批次 → 它发往的渠道。
 	current   int64           // 在途的批次（worker 正在尝试），0 表示没有。
-	overflow  bool            // 库中可能仍有窗口外的待投递批次，包括非终态错误出窗的项。
+	overflow  bool            // 库中可能仍有窗口外的待投递批次：满窗口没装下的、被挤出的、以 fateRefill 离开窗口的。
 	// woken 与 cancelIdle 把入队告诉空闲的 worker，都在 mu 下读写：worker 进入空闲前在 mu 下看 woken，已有入队就
 	// 不睡；否则登记本次空闲的 cancel，此后的入队调用它。next 在 mu 下清掉 woken，此前的入队都已反映在它看到的窗口里。
 	woken      bool
@@ -223,11 +226,24 @@ func (q *Queue) Requeue(ctx context.Context) error {
 	return nil
 }
 
-// outcome 是一次尝试之后批次的去向：retry 为假时批次已终态或已不存在，离开窗口；为真时进入 waiting，到 at 再试。
+// fate 是一次尝试之后批次的去向，由 Run 落到窗口上。
+type fate int
+
+const (
+	// fateRefill：批次离开窗口，仍在库里待投递，Run 留下补货信号（overflow），由补货装回。它是零值：出错返回时
+	// 批次是否已终态无从确认，交给库里的真源判断——补货只装 done=0 的批次，多补一次只多一次索引扫描。读到重读上限
+	// （maxBatchReads）也是这个去向。
+	fateRefill fate = iota
+	// fateWait：批次进入 waiting，到 at 再试，kind 说明它等的是什么。
+	fateWait
+	// fateSettled：批次已终态或已不存在，离开窗口。
+	fateSettled
+)
+
 type outcome struct {
-	retry bool
-	at    time.Duration
-	kind  waitKind
+	fate fate
+	at   time.Duration // 只对 fateWait 有意义。
+	kind waitKind      // 只对 fateWait 有意义。
 }
 
 // 由装配方启动一个 worker；退出不清空库中待投递行，下一次 Requeue 接续未完成项。
@@ -245,6 +261,10 @@ func (q *Queue) Run(ctx context.Context) {
 					return
 				}
 				q.log.Error("notification refill failed", "err", err)
+				// next 在交出补货时已清掉信号，没读成的这一次要把它留回去。
+				q.mu.Lock()
+				q.overflow = true
+				q.mu.Unlock()
 				if err := q.retryAfterFailure(ctx, &retryDelay); err != nil {
 					return
 				}
@@ -253,10 +273,14 @@ func (q *Queue) Run(ctx context.Context) {
 			out, err := q.attempt(ctx, batch)
 			q.mu.Lock()
 			q.current = 0
-			if out.retry {
+			switch out.fate {
+			case fateWait:
 				q.waiting[batch] = waitEntry{out.at, out.kind}
-			} else {
+			case fateSettled:
 				delete(q.active, batch)
+			case fateRefill:
+				delete(q.active, batch)
+				q.overflow = true
 			}
 			q.mu.Unlock()
 			if err != nil && ctx.Err() == nil {
@@ -330,13 +354,10 @@ func (q *Queue) idle(ctx context.Context, until time.Duration, timed bool) {
 	q.mu.Unlock()
 }
 
-// 非终态出窗与补货读失败都保留续投信号；故障期间不能靠窗口大小决定是否重试。
-// 单个批次的发送上限由 BeginBatchAttempt 保证；退避避免存储故障期间空转读库和高频错误日志。
-// 同一个 worker 共用退避，attempt 返回 nil（已终态、已不存在或已排入等待）时复位。
+// retryAfterFailure 是存储故障后的 worker 级退避：避免故障期间空转读库和高频错误日志。续投信号不在这里留：
+// 出错离开窗口的批次由它的去向（fateRefill）留下，补货没读成由 Run 的补货分支留回。单个批次的发送上限由
+// BeginBatchAttempt 保证。同一个 worker 共用退避，attempt 返回 nil 时复位。
 func (q *Queue) retryAfterFailure(ctx context.Context, delay *time.Duration) error {
-	q.mu.Lock()
-	q.overflow = true
-	q.mu.Unlock()
 	if *delay == 0 {
 		*delay = time.Second
 	} else {
@@ -410,11 +431,13 @@ func deliveryRemoved(err error) bool {
 //
 // 重试按批次进行——同批各行共享尝试次数与结果（store.BeginBatchAttempt、store.UpdateBatch），一次尝试发送整批合成的
 // 那一条消息。开始尝试只覆盖拼这条消息时读到的行：批次在读之后又有行加入（补货可以在一次巡检中途读到批次）时，
-// BeginBatchAttempt 拒绝，这里重读、重拼。
+// BeginBatchAttempt 拒绝，这里重读、重拼；读到 maxBatchReads 次仍在变就让出 worker（fateRefill）。
+//
+// 每条返回路径都显式给出去向；出错返回用 outcome{}，即 fateRefill（见 fate）。
 func (q *Queue) attempt(ctx context.Context, batch int64) (out outcome, err error) {
 	defer func() {
 		if deliveryRemoved(err) {
-			out, err = outcome{}, nil
+			out, err = outcome{fate: fateSettled}, nil
 		}
 	}()
 	q.mu.Lock()
@@ -429,11 +452,11 @@ func (q *Queue) attempt(ctx context.Context, batch int64) (out outcome, err erro
 	}
 	if c == nil {
 		q.releaseChannel(id)
-		return out, q.st.UpdateBatch(ctx, batch, store.DeliveryResult{Done: true, Failure: store.FailureChannelDeleted})
+		return q.settle(ctx, batch, store.DeliveryResult{Done: true, Failure: store.FailureChannelDeleted})
 	}
 	// 节奏已满时排队到下一个空位，不消耗尝试名额：超出上限的批次排队而不是丢弃。
 	if at, full := q.rateSlot(*c, q.clk.Mono()); full {
-		return outcome{retry: true, at: at, kind: waitRate}, nil
+		return outcome{fate: fateWait, at: at, kind: waitRate}, nil
 	}
 	var m Message
 	var channel Channel
@@ -441,29 +464,29 @@ func (q *Queue) attempt(ctx context.Context, batch int64) (out outcome, err erro
 	for reads := 1; ; reads++ {
 		b, err := q.readBatch(ctx, batch)
 		if err != nil {
-			return out, err
+			return outcome{}, err
 		}
 		head := b.Deliveries[0]
 		if head.Done {
-			return out, nil
+			return outcome{fate: fateSettled}, nil
 		}
 		if head.Attempts >= store.MaxDeliveryAttempts {
 			// 名额已耗尽而行仍未终态：最后一次尝试已发出，结果没落盘。接收方可能已经收到，
 			// 所以不沿用更早一次的失败，也不留下它的原文与状态码。
-			return out, q.st.UpdateBatch(ctx, batch, store.DeliveryResult{Done: true, Failure: store.FailureResultUnrecorded})
+			return q.settle(ctx, batch, store.DeliveryResult{Done: true, Failure: store.FailureResultUnrecorded})
 		}
 		// 上一次尝试写下的最早时刻（重试间隔、Retry-After）对补货与重启后装回的批次同样有效。
 		if wait := head.NotBefore.Sub(q.clk.Now()); wait > 0 {
-			return outcome{retry: true, at: q.clk.Mono() + wait, kind: waitRetry}, nil
+			return outcome{fate: fateWait, at: q.clk.Mono() + wait, kind: waitRetry}, nil
 		}
 		channel, err = ParseChannel(*c, q.client, q.telegramBase)
 		if err != nil {
 			r, _ := Classify(err)
 			r.Done = true
-			return out, q.st.UpdateBatch(ctx, batch, r)
+			return q.settle(ctx, batch, r)
 		}
 		if m, err = q.message(ctx, b); err != nil {
-			return out, err
+			return outcome{}, err
 		}
 		rows := make([]int64, len(b.Deliveries))
 		for i, d := range b.Deliveries {
@@ -472,14 +495,14 @@ func (q *Queue) attempt(ctx context.Context, batch int64) (out outcome, err erro
 		ds, err = q.st.BeginBatchAttempt(ctx, batch, rows)
 		switch {
 		case errors.Is(err, store.ErrDeliveryDone):
-			return out, nil
+			return outcome{fate: fateSettled}, nil
 		case errors.Is(err, store.ErrBatchChanged) && reads < maxBatchReads:
 			continue
 		case errors.Is(err, store.ErrBatchChanged):
-			q.log.Warn("delivery batch kept changing while it was read; retrying after the storage backoff", "batch_id", batch, "reads", reads)
-			return out, err
+			q.log.Info("delivery batch still growing after repeated reads; left for refill", "batch_id", batch, "reads", reads)
+			return outcome{fate: fateRefill}, nil
 		case err != nil:
-			return out, err
+			return outcome{}, err
 		}
 		break
 	}
@@ -487,7 +510,7 @@ func (q *Queue) attempt(ctx context.Context, batch int64) (out outcome, err erro
 	q.sent[c.ID] = append(q.sent[c.ID], q.clk.Mono())
 	sendErr := channel.Send(ctx, m)
 	if ctx.Err() != nil {
-		return out, ctx.Err()
+		return outcome{}, ctx.Err()
 	}
 	r := store.DeliveryResult{OK: true, DeliveredAt: q.clk.Now()}
 	retry := false
@@ -496,23 +519,25 @@ func (q *Queue) attempt(ctx context.Context, batch int64) (out outcome, err erro
 	}
 	attempts := ds[0].Attempts
 	r.Done = r.OK || !retry || attempts >= store.MaxDeliveryAttempts
-	var wait time.Duration
-	if !r.Done {
-		wait = q.retryWait(sendErr, attempts)
-		r.NotBefore = q.clk.Now().Add(wait)
+	if r.Done {
+		return q.settle(ctx, batch, r)
 	}
+	wait := q.retryWait(sendErr, attempts)
+	r.NotBefore = q.clk.Now().Add(wait)
 	if err := q.st.UpdateBatch(ctx, batch, r); err != nil {
-		if r.Done {
-			return out, err
-		}
 		// 请求已经发出，接收方要求的等待（Retry-After）与固定退避都已算出：结果没写进库不改变该等多久。批次按它
 		// 留在 waiting（仍在 active，补货不会再装一份），存储退避照常。
-		return outcome{retry: true, at: q.clk.Mono() + wait, kind: waitUnrecorded}, err
+		return outcome{fate: fateWait, at: q.clk.Mono() + wait, kind: waitUnrecorded}, err
 	}
-	if r.Done {
-		return out, nil
+	return outcome{fate: fateWait, at: q.clk.Mono() + wait, kind: waitRetry}, nil
+}
+
+// settle 把终态结果写到批次上：写成了批次离开窗口（fateSettled）；没写成它仍在库里待投递（fateRefill），由补货装回。
+func (q *Queue) settle(ctx context.Context, batch int64, r store.DeliveryResult) (outcome, error) {
+	if err := q.st.UpdateBatch(ctx, batch, r); err != nil {
+		return outcome{}, err
 	}
-	return outcome{retry: true, at: q.clk.Mono() + wait, kind: waitRetry}, nil
+	return outcome{fate: fateSettled}, nil
 }
 
 // releaseChannel 在读到渠道已删除时调用：它在 waiting 里的其余批次提前回到 ready，各自读到终态后离开窗口，
