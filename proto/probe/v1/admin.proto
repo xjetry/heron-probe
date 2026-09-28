@@ -592,15 +592,18 @@ message GetBackupStatusResponse {
 message BackupLayerStatus {
   // UTC Unix 秒；从未成功完成整轮时缺席，重启后仍可读。
   optional int64 last_success_at = 1;
-  // 无当前故障时缺席。故障状态只在当前 hub 进程内保存。
+  // 无当前故障时缺席。配置层未恢复标记与事件一起持久化，重启后继续通知状态机；
+  // 重启后尚未重新观察的类别为 unrecovered。指标层故障仅在进程内保存。
   BackupFailure failure = 2;
 }
 message BackupFailure {
-  // snapshot、client、upload、list、delete、cleanup、record、retention_config；
+  // snapshot、client、upload、list、delete、cleanup、record、retention_config、settings、unrecovered；
   // S3 失败在阶段后加 /transport、/http_status、/request 或 /response，不含错误原文。
   string category = 1;
   // 当前连续故障首次被观察到的 UTC Unix 秒，失败类别变化不会重置。
   int64 since_at = 2;
+  // 远端 HTTP 状态码；未收到 HTTP 错误应答或重启后尚未观察时为 0，不返回远端原文。
+  int32 status_code = 3;
 }
 message UpdateSettingsRequest { Settings settings = 1; }
 // hub 实际保存的值：标题已清洗，主色已转小写。

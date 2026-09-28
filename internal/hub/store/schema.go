@@ -65,7 +65,7 @@ const ddlRollupState = `CREATE TABLE rollup_state (
 
 const seedRollupState = `INSERT INTO rollup_state (level, upto_ts) VALUES ('5m', 0), ('1h', 0)`
 
-// maintenance_state 与 rollup_state 同类，是维护任务的簿记：name 取 health.go 的 MaintenancePrune、MaintenanceRollup，finished_at 是该任务
+// maintenance_state 与 rollup_state 同类，是维护任务的簿记：name 取 health.go 的 Maintenance 系列常量，涵盖清理、上卷与两层备份；finished_at 是该任务
 // 最近一次整轮成功完成的时刻（Unix 秒）。只在整轮成功后写（recordMaintenance），失败不写、不清，所以"无行"只表示
 // 从未成功跑过，"有行但很旧"表示此后一直失败或没跑——两者在读侧可区分，不会被一次失败抹成同一个样子。
 const ddlMaintenanceState = `CREATE TABLE maintenance_state (

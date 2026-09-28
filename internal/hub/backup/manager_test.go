@@ -291,7 +291,7 @@ func TestZeroRetentionDoesNotTouchObjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := m.perform(context.Background(), cfg, "config", 0); got != "retention_config" || len(objects.calls) != 0 {
+	if got, _, _ := m.perform(context.Background(), cfg, "config", 0); got != "retention_config" || len(objects.calls) != 0 {
 		t.Fatalf("zero retention=%s calls=%v", got, objects.calls)
 	}
 }
@@ -365,8 +365,9 @@ func TestBackupRecordFailureIsNotSuccess(t *testing.T) {
 }
 
 func TestSnapshotFailureNotifiesAndCanceledTickDoesNot(t *testing.T) {
-	m, _, _, sink := setup(t)
-	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+	m, _, objects, sink := setup(t)
+	execFixtureSQL(t, objects.databasePath, "DROP TABLE node_facts")
+	execFixtureSQL(t, objects.databasePath, "DROP TABLE metric_1m")
 	tick(t, m)
 	s := status(t, m)
 	if s.Config.Failure != "snapshot" || s.Metrics.Failure != "snapshot" || len(sink.events) != 1 {

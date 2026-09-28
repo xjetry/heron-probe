@@ -27,6 +27,7 @@ import (
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/probe/internal/hub/backup"
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/metric"
@@ -109,7 +110,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	if err := errors.Join(a.Load(ctx), in.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}
-	svc := New(Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: retention}, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
+	svc := New(Config{Backups: backup.New(st, notifier, clk, slog.Default()), TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: retention}, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
 	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, TrustedProxies: prefixes, Location: loc}, st, l, book, reg, clk, slog.Default())
 	mux := http.NewServeMux()
 	mux.Handle(in.Handler())

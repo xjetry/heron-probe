@@ -4026,7 +4026,8 @@ type BackupLayerStatus struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// UTC Unix 秒；从未成功完成整轮时缺席，重启后仍可读。
 	LastSuccessAt *int64 `protobuf:"varint,1,opt,name=last_success_at,json=lastSuccessAt,proto3,oneof" json:"last_success_at,omitempty"`
-	// 无当前故障时缺席。故障状态只在当前 hub 进程内保存。
+	// 无当前故障时缺席。配置层未恢复标记与事件一起持久化，重启后继续通知状态机；
+	// 重启后尚未重新观察的类别为 unrecovered。指标层故障仅在进程内保存。
 	Failure       *BackupFailure `protobuf:"bytes,2,opt,name=failure,proto3" json:"failure,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -4078,11 +4079,13 @@ func (x *BackupLayerStatus) GetFailure() *BackupFailure {
 
 type BackupFailure struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// snapshot、client、upload、list、delete、cleanup、record、retention_config；
+	// snapshot、client、upload、list、delete、cleanup、record、retention_config、settings、unrecovered；
 	// S3 失败在阶段后加 /transport、/http_status、/request 或 /response，不含错误原文。
 	Category string `protobuf:"bytes,1,opt,name=category,proto3" json:"category,omitempty"`
 	// 当前连续故障首次被观察到的 UTC Unix 秒，失败类别变化不会重置。
-	SinceAt       int64 `protobuf:"varint,2,opt,name=since_at,json=sinceAt,proto3" json:"since_at,omitempty"`
+	SinceAt int64 `protobuf:"varint,2,opt,name=since_at,json=sinceAt,proto3" json:"since_at,omitempty"`
+	// 远端 HTTP 状态码；未收到 HTTP 错误应答或重启后尚未观察时为 0，不返回远端原文。
+	StatusCode    int32 `protobuf:"varint,3,opt,name=status_code,json=statusCode,proto3" json:"status_code,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4127,6 +4130,13 @@ func (x *BackupFailure) GetCategory() string {
 func (x *BackupFailure) GetSinceAt() int64 {
 	if x != nil {
 		return x.SinceAt
+	}
+	return 0
+}
+
+func (x *BackupFailure) GetStatusCode() int32 {
+	if x != nil {
+		return x.StatusCode
 	}
 	return 0
 }
@@ -5631,10 +5641,12 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\x11BackupLayerStatus\x12+\n" +
 	"\x0flast_success_at\x18\x01 \x01(\x03H\x00R\rlastSuccessAt\x88\x01\x01\x121\n" +
 	"\afailure\x18\x02 \x01(\v2\x17.probe.v1.BackupFailureR\afailureB\x12\n" +
-	"\x10_last_success_at\"F\n" +
+	"\x10_last_success_at\"g\n" +
 	"\rBackupFailure\x12\x1a\n" +
 	"\bcategory\x18\x01 \x01(\tR\bcategory\x12\x19\n" +
-	"\bsince_at\x18\x02 \x01(\x03R\asinceAt\"G\n" +
+	"\bsince_at\x18\x02 \x01(\x03R\asinceAt\x12\x1f\n" +
+	"\vstatus_code\x18\x03 \x01(\x05R\n" +
+	"statusCode\"G\n" +
 	"\x15UpdateSettingsRequest\x12.\n" +
 	"\bsettings\x18\x01 \x01(\v2\x12.probe.v1.SettingsR\bsettings\"H\n" +
 	"\x16UpdateSettingsResponse\x12.\n" +

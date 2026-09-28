@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // 清单显式列出每张表，不能用名称前缀推断层：probe_task 是配置而 probe_1m 是历史。
@@ -29,13 +30,17 @@ func (s *Store) SnapshotMetrics(ctx context.Context, path string) error {
 	return s.snapshot(ctx, path, "metrics", metricsSnapshotTables)
 }
 
+// BackupDirectory 与源库同目录，快照容量随数据库所在磁盘规划，不占系统临时盘。
+func (s *Store) BackupDirectory() string { return filepath.Dir(s.path) }
+
 func (s *Store) snapshot(ctx context.Context, path, layer string, tables []string) (result error) {
 	s.closeMu.RLock()
 	defer s.closeMu.RUnlock()
 	if s.closed {
 		return ErrClosed
 	}
-	// 快照含凭据；独占创建既限制权限，也拒绝覆盖已有文件或经符号链接改写别的库。
+	// 快照含凭据；独占创建的拒绝覆盖与符号链接保护只在创建时刻成立。
+	// ATTACH 随后按路径重开，期间的路径安全由调用方 0700 的 MkdirTemp 目录承载。
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return err

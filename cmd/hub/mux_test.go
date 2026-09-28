@@ -16,6 +16,7 @@ import (
 	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/api"
 	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/probe/internal/hub/backup"
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/outbound"
@@ -68,7 +69,7 @@ func newTestMuxOn(t *testing.T, st *store.Store, clk clock.Clock) *http.ServeMux
 	if err := notifier.Requeue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	admin := api.New(api.Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, Location: time.UTC, Retention: store.DefaultRetention}, st, a, l, svc, book, reg, alerts, notifier, clk, slog.Default())
+	admin := api.New(api.Config{Backups: backup.New(st, notifier, clk, slog.Default()), TTL: 30 * time.Second, ReportInterval: 10 * time.Second, Location: time.UTC, Retention: store.DefaultRetention}, st, a, l, svc, book, reg, alerts, notifier, clk, slog.Default())
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: 10 * time.Second, Location: time.UTC}, st, l, book, reg, clk, slog.Default())
 	return newMux(mountOf(svc.Handler()), mountOf(admin.Handler()), mountOf(pub.Handler()), mountOf(web.Prefix, web.Handler()), mountOf("/", web.PublicHandler()))
 }

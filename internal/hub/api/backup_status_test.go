@@ -7,8 +7,26 @@ import (
 	"connectrpc.com/connect"
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
+	"github.com/xjetry/probe/internal/hub/backup"
 	"github.com/xjetry/probe/internal/hub/store"
 )
+
+func TestBackupRequiredAndStatusCode(t *testing.T) {
+	t.Run("required", func(t *testing.T) {
+		defer func() {
+			if got := recover(); got != "api.Config.Backups must be set" {
+				t.Errorf("missing backup manager panic=%v", got)
+			}
+		}()
+		New(Config{TTL: time.Second, Location: time.UTC, Retention: store.DefaultRetention}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	})
+	t.Run("status", func(t *testing.T) {
+		got := backupLayerProto(backup.LayerStatus{Failure: "upload/http_status", Since: time.Unix(1, 0), StatusCode: 503})
+		if got.Failure.GetStatusCode() != 503 {
+			t.Errorf("backup status lost HTTP code: %v", got)
+		}
+	})
+}
 
 func TestBackupStatusReadAccessAndState(t *testing.T) {
 	h := newHarness(t, "")
@@ -41,6 +59,8 @@ func TestBackupStatusReadAccessAndState(t *testing.T) {
 		t.Fatal(err)
 	}
 	secret := "secret"
+	wantMetrics := h.clk.Now().Unix()
+	h.clk.Advance(24 * time.Hour)
 	_, _, err := h.store.SaveSettings(t.Context(), store.SiteSettingsUpdate{}, &store.BackupSettingsUpdate{Endpoint: "://invalid", Bucket: "backup", Region: "auto", AccessKey: "key", Secret: &secret})
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +69,7 @@ func TestBackupStatusReadAccessAndState(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := read()
-	if !got.Enabled || got.Config.GetLastSuccessAt() != wantConfig || got.Metrics.GetLastSuccessAt() != h.clk.Now().Unix() {
+	if !got.Enabled || got.Config.GetLastSuccessAt() != wantConfig || got.Metrics.GetLastSuccessAt() != wantMetrics {
 		t.Fatalf("persisted API status=%v", got)
 	}
 	for _, layer := range []*probev1.BackupLayerStatus{got.Config, got.Metrics} {
@@ -57,6 +77,7 @@ func TestBackupStatusReadAccessAndState(t *testing.T) {
 			t.Fatalf("failure API status=%v", layer)
 		}
 	}
+	h.login(t)
 	session, err := h.admin.GetBackupStatus(t.Context(), connect.NewRequest(&probev1.GetBackupStatusRequest{}))
 	if err != nil || session.Msg.Config.GetLastSuccessAt() != wantConfig {
 		t.Fatalf("session status=%v err=%v", session, err)

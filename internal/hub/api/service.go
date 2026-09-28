@@ -90,14 +90,14 @@ type Service struct {
 }
 
 func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, book *traffic.Book, probes *probe.Registry, alerts *alert.Engine, notifier *alert.Queue, clk clock.Clock, log *slog.Logger) *Service {
-	if cfg.Backups == nil {
-		cfg.Backups = backup.New(st, notifier, clk, log)
-	}
 	if cfg.TTL <= 0 {
 		panic("api.Config.TTL must be positive")
 	}
 	if cfg.Location == nil {
 		panic("api.Config.Location must be set")
+	}
+	if cfg.Backups == nil {
+		panic("api.Config.Backups must be set")
 	}
 	if err := cfg.Retention.Validate(); err != nil {
 		panic("api.Config.Retention: " + err.Error())

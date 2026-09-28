@@ -26,7 +26,7 @@ func backupLayerProto(s backup.LayerStatus) *probev1.BackupLayerStatus {
 		out.LastSuccessAt = &at
 	}
 	if s.Failure != "" {
-		out.Failure = &probev1.BackupFailure{Category: s.Failure, SinceAt: s.Since.Unix()}
+		out.Failure = &probev1.BackupFailure{Category: s.Failure, SinceAt: s.Since.Unix(), StatusCode: int32(s.StatusCode)}
 	}
 	return out
 }
