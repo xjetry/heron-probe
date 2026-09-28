@@ -62,10 +62,11 @@ type routes struct {
 	themePage   http.Handler
 }
 
-// newHandler 按请求的 Host 在两个 origin 之间分流（§10.1）：Host 去掉端口后等于主题 origin 的主机名走 newThemeMux，其余
-// 走主 origin。只比主机名：面板的会话 cookie 是 host-only，它不区分端口，所以与面板同一主机名、只差端口的主题 origin
-// 隔离不了会话；按主机名分流时这样配置会把面板那个主机名的请求一起分到主题 origin（那里没有面板）——hub 不知道面板用
-// 哪个主机名，这一条在启动时查不出来，写在 flag 帮助与 docs/theme-guide.md。
+// newHandler 按请求的 Host 在两个 origin 之间分流（§10.1）：Host 的主机名（hostname）等于主题 origin 的主机名走
+// newThemeMux，其余走主 origin。只比主机名，端口不参与：浏览器的 cookie 不按端口区分，与面板同一主机名、只差端口的主题
+// origin 上"会话 cookie 是 host-only"这一条不成立，所以主题 origin 必须换主机名；这样配置时按主机名分流还会把面板那个
+// 主机名的请求一起分到主题 origin（那里没有面板）——hub 不知道面板用哪个主机名，这一条在启动时查不出来，写在 flag 帮助
+// 与 docs/theme-guide.md。
 // 公开服务的挂载点在两个 origin 上是同一个处理器：限流的令牌桶与快照缓存只有一份。
 func newHandler(r routes) http.Handler {
 	main := newMux(r.agent, r.admin, r.public, mountOf(web.Prefix, web.Handler()), mountOf("/", r.page))
@@ -178,7 +179,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
 	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For / X-Forwarded-Proto are trusted; empty trusts none. Behind a reverse proxy, list the proxy here: the public page and agent registration are rate-limited per source (one IPv4 address, or one IPv6 /64), and failed logins are locked out per source, so without it every visitor shares the proxy address's single bucket and lockout")
 	publicDir := fs.String("public-dir", "", "serve this directory at / instead of the built-in public page; files are opened through os.Root, so paths cannot leave the directory and symbolic links are followed only if they are relative and never step outside it (absolute links are refused even when they point inside); a path that is not a file, or that has a segment starting with a dot (.git, .env, .well-known), gets the directory's index.html (404 under assets/); every response is no-cache. The directory shares the admin panel's origin: its scripts can read the panel and call the admin API with the session of any signed-in administrator who opens the page, so put only content you trust as much as the hub binary there")
-	themeOriginFlag := fs.String("theme-origin", "", "origin that serves uploaded public-page themes, e.g. https://status.example.com; point this second hostname at the hub alongside the panel's. It must be a hostname other than the panel's (a sibling subdomain works: the session cookie is host-only), not a path under it: a theme's scripts on the panel's hostname could call the admin API with a signed-in administrator's session. The same hostname on another port does not count: cookies do not isolate ports, and requests are routed by hostname with the port ignored, so the panel's own requests would be routed to the theme origin, where there is no panel; the hub cannot detect this at startup. On this hostname only the public API and the enabled theme are served (the built-in public page when no theme is enabled); --public-dir does not apply here. Empty disables theme upload and hosting")
+	themeOriginFlag := fs.String("theme-origin", "", "origin that serves uploaded public-page themes, e.g. https://status.example.com; point this second hostname at the hub alongside the panel's. It must be a hostname other than the panel's, not a path under it: a theme's scripts on the panel's hostname could call the admin API with a signed-in administrator's session. A sibling subdomain (status.example.com beside panel.example.com) is same-site, so SameSite=Strict does not separate the two; the facts that do are listed in docs/theme-guide.md. The same hostname on another port does not count: cookies do not isolate ports, and requests are routed by hostname with the port ignored, so the panel's own requests would be routed to the theme origin, where there is no panel; the hub cannot detect this at startup. On this hostname only the public API and the enabled theme are served (the built-in public page when no theme is enabled); --public-dir does not apply here. Empty disables theme upload and hosting")
 	retention := store.DefaultRetention
 	fs.DurationVar(&retention.M1, "retention-1m", retention.M1, fmt.Sprintf("how long to keep 1-minute rows (minimum %s)", store.MinRetentionM1))
 	fs.DurationVar(&retention.M5, "retention-5m", retention.M5, fmt.Sprintf("how long to keep 5-minute rows (minimum %s)", store.MinRetentionM5))

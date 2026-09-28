@@ -12,9 +12,9 @@
 probe-hub serve --db /var/lib/probe/probe.db --theme-origin https://status.example.com
 ```
 
-- **主机名必须与面板不同。** 主题是第三方代码；与面板同源的主题脚本能直接调 `AdminService`，浏览器会自动带上来访管理员的会话 cookie。兄弟子域可以（`panel.example.com` 与 `status.example.com`）：会话 cookie 不设 `Domain`，只对签发它的那个主机名生效。
+- **主机名必须与面板不同。** 主题是第三方代码；与面板同源的主题脚本能直接调 `AdminService`，浏览器会自动带上来访管理员的会话 cookie。换了主机名之后，主题与面板之间靠哪些事实隔开，见下面的「主题与面板的隔离」。
 - **只差端口不算另一个主机名。** cookie 不按端口隔离；hub 按主机名分流时也忽略端口，于是面板那个主机名的请求会全部被分到主题 origin，而那里没有面板。hub 不知道面板用的是哪个主机名，这种配置启动时查不出来，只能靠部署的人避开。
-- **反代必须原样转发 `Host`。** hub 按请求的 `Host`（去掉端口、不分大小写）判定：等于 `--theme-origin` 的主机名走主题 origin，其余走面板与内置公开页。Caddy 默认转发原始 `Host`；nginx 要写 `proxy_set_header Host $host;`，否则 hub 看到的是 upstream 的地址，两个主机名都会落到面板那一边。
+- **反代必须原样转发 `Host`。** hub 按请求的 `Host` 判定：去掉端口、不分大小写、去掉一个结尾的点、IP 地址按规范写法（`[0:0::1]` 即 `[::1]`）比较，等于 `--theme-origin` 的主机名走主题 origin，其余走面板与内置公开页。`--theme-origin` 里的国际化域名按浏览器发送的 punycode 写法比较（`https://状态.example` 即 `xn--t7t692b.example`），浏览器不会原样发出的写法（带 zone 的 IPv6 地址、`127.1` 这类非四段十进制的 IPv4 写法）启动时就被拒绝。Caddy 默认转发原始 `Host`；nginx 要写 `proxy_set_header Host $host;`，否则 hub 看到的是 upstream 的地址，两个主机名都会落到面板那一边。
 - 没有配 `--theme-origin` 时主题功能整体关闭：面板的「主题」页给出说明，上传、列出、启用、删除、预览五个方法一律 `FailedPrecondition`。
 
 主题 origin 上只有两样东西：
@@ -25,7 +25,17 @@ probe-hub serve --db /var/lib/probe/probe.db --theme-origin https://status.examp
 | `/probe.v1.AdminService/…`、`/probe.v1.AgentService/…`、`/admin`、`/admin/…` | 404 |
 | 其余路径 | 启用中主题的文件；没有启用中的主题时是内置公开页 |
 
-RPC 路径优先于主题文件：包里即使有 `admin/index.html` 或 `probe.v1.PublicService/GetSite` 这样的文件，也遮蔽不了上表的前两行。`--public-dir` 只接管面板所在 origin 的公开页，与主题 origin 无关；两者同时存在时面板会标明这一点。hub 不下发任何 CORS 允许头：主题与 `PublicService` 同在主题 origin 上，用相对路径调用即可，不需要跨源。
+RPC 路径优先于主题文件：包里即使有 `admin/index.html` 或 `probe.v1.PublicService/GetSite` 这样的文件，也遮蔽不了上表的前两行。`--public-dir` 只接管面板所在 origin 的公开页，与主题 origin 无关；两者同时存在时面板会标明这一点。主题调 `PublicService` 用相对路径，请求发往主题 origin 自己。
+
+### 主题与面板的隔离
+
+主题 origin 与面板是两个 origin。下面几条各自成立、各自可验，不是其中某一条单独承担隔离：
+
+- **主题 origin 不挂 `AdminService`。** 主题脚本对自己 origin 的 `/probe.v1.AdminService/…` 发同源请求得到 404，带着有效的会话 cookie 也一样。这由挂载承载，不靠约定。
+- **跨源的 JSON 请求要先过预检，hub 对任何 origin 都不下发 CORS 允许头。** 这是安全约束，不是"主题用不着跨源"的便利说明：预检的应答不许可主题 origin，浏览器就不发出实际请求；hub 一旦许可，主题脚本就能带着来访管理员的 cookie 把写请求发到面板，副作用在服务端已经发生，读不读得到响应无关紧要。
+- **不需要预检的简单请求被拒绝。** 跨源的简单请求只能用 `text/plain`、`application/x-www-form-urlencoded`、`multipart/form-data`，connect 对这三种类型回 415；`AdminService` 不接受 GET（405）。
+- **会话 cookie 是 host-only。** 它不设 `Domain`，浏览器只把它发给签发它的那个主机名，主题 origin 上的请求不带面板的会话。
+- **`SameSite=Strict` 对兄弟子域不起隔离作用。** `panel.example.com` 与 `status.example.com` 同属一个注册域名，浏览器判定为同站，`SameSite` 不拦它们之间的请求；两者之间的隔离靠的是上面几条。
 
 ## `PublicService` 契约
 
