@@ -137,21 +137,15 @@ func (s *Store) wakeThemeBackup() {
 	}
 }
 
-type ThemeBackup struct {
-	Revision int64
-	Content  []byte
-	Uploaded bool
-}
-
 type ThemeBackupEntry struct {
-	ID                               string
-	Revision                         int64
-	Uploaded, HasPackage, HasContent bool
+	ID                   string
+	Revision             int64
+	Uploaded, HasPackage bool
 }
 
 // 同步清单的一条语句固定元数据与原包标识的同一快照；后续内容读取只能取这一份写入。
 func (s *Store) ThemeBackupEntries(ctx context.Context) ([]ThemeBackupEntry, error) {
-	rows, err := s.r.QueryContext(ctx, "SELECT theme.id, COALESCE(p.revision,0), COALESCE(p.uploaded,0), p.theme_id IS NOT NULL, "+themeHasContent+" FROM theme LEFT JOIN theme_package p ON p.theme_id=theme.id ORDER BY theme.id")
+	rows, err := s.r.QueryContext(ctx, "SELECT theme.id, COALESCE(p.revision,0), COALESCE(p.uploaded,0), p.theme_id IS NOT NULL FROM theme LEFT JOIN theme_package p ON p.theme_id=theme.id ORDER BY theme.id")
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +153,7 @@ func (s *Store) ThemeBackupEntries(ctx context.Context) ([]ThemeBackupEntry, err
 	var out []ThemeBackupEntry
 	for rows.Next() {
 		var e ThemeBackupEntry
-		if err := rows.Scan(&e.ID, &e.Revision, &e.Uploaded, &e.HasPackage, &e.HasContent); err != nil {
+		if err := rows.Scan(&e.ID, &e.Revision, &e.Uploaded, &e.HasPackage); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -188,16 +182,6 @@ func (s *Store) ThemesWithoutPackage(ctx context.Context) ([]string, error) {
 		}
 	}
 	return ids, nil
-}
-
-// ThemeBackupPackage 用一条语句读取同一次写入的标识与原包。旧库可能只有展开文件，缺包显式报错而不重打包。
-func (s *Store) ThemeBackupPackage(ctx context.Context, id string) (ThemeBackup, error) {
-	var p ThemeBackup
-	err := s.r.QueryRowContext(ctx, "SELECT revision, content, uploaded FROM theme_package WHERE theme_id = ?", id).Scan(&p.Revision, &p.Content, &p.Uploaded)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ThemeBackup{}, ErrNotFound
-	}
-	return p, err
 }
 
 // MarkThemeUploaded 只确认上传时读到的写入标识；期间的覆盖或重装保留自己的待上传状态。

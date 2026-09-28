@@ -86,13 +86,29 @@ func installTheme(t *testing.T, m *Manager, content string) {
 	}
 }
 
-func themePackage(t *testing.T, m *Manager) store.ThemeBackup {
+type themeBackup struct {
+	Revision int64
+	Content  []byte
+	Uploaded bool
+}
+
+func themePackage(t *testing.T, m *Manager) themeBackup {
 	t.Helper()
-	p, err := m.st.ThemeBackupPackage(t.Context(), "a")
+	entries, err := m.st.ThemeBackupEntries(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	return p
+	for _, entry := range entries {
+		if entry.ID == "a" {
+			content, err := m.st.ThemeBackupContent(t.Context(), entry.ID, entry.Revision)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return themeBackup{Revision: entry.Revision, Content: content, Uploaded: entry.Uploaded}
+		}
+	}
+	t.Fatal("theme a missing from backup entries")
+	return themeBackup{}
 }
 
 func TestThemeSyncReconcilesAndReplaces(t *testing.T) {

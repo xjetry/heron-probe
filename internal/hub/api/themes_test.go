@@ -108,8 +108,14 @@ func TestThemeRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	backup, err := h.store.ThemeBackupPackage(ctx, "night")
-	if err != nil || !bytes.Equal(backup.Content, pkg) {
+	db, err := sql.Open("sqlite", h.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var original []byte
+	err = db.QueryRow("SELECT content FROM theme_package WHERE theme_id = 'night'").Scan(&original)
+	if err != nil || !bytes.Equal(original, pkg) {
 		t.Fatalf("UploadTheme did not preserve original zip: %v", err)
 	}
 	want := &probev1.Theme{Id: "night", Name: "Night", Version: "1.2.0", UploadedAt: h.clk.Now().Unix(), HasPreview: true}
@@ -138,7 +144,7 @@ func TestThemeRoundTrip(t *testing.T) {
 	if _, err := h.admin.DeleteTheme(ctx, connect.NewRequest(&probev1.DeleteThemeRequest{Id: "night"})); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.store.ThemeBackupPackage(ctx, "night"); !errors.Is(err, store.ErrNotFound) {
+	if err := db.QueryRow("SELECT content FROM theme_package WHERE theme_id = 'night'").Scan(&original); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("DeleteTheme left original package: %v", err)
 	}
 	if list := h.themes(t); len(list) != 0 {
