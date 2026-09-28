@@ -64,12 +64,18 @@ func newHarness(t *testing.T, trusted string, opts ...harnessOption) *harness {
 type harnessOption func(*harnessDeps)
 
 type harnessDeps struct {
-	authLog *slog.Logger
+	authLog      *slog.Logger
+	telegramBase string
 }
 
 // withAuthLog 给 Auth 换 logger，用例借它的日志语句位置暂停登录。
 func withAuthLog(l *slog.Logger) harnessOption {
 	return func(d *harnessDeps) { d.authLog = l }
+}
+
+// withTelegramBase 让投递队列把 Telegram 请求发到 base（测试服务器），用例看得到接收方收到的正文。
+func withTelegramBase(base string) harnessOption {
+	return func(d *harnessDeps) { d.telegramBase = base }
 }
 
 // newZonedHarness 的 loc 是 hub 的 --timezone：流量周期、到期扫描与 days_left 用同一个时区，与 serve 的装配一致。
@@ -89,12 +95,12 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, opts ...h
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := auth.New(st, clk, deps.authLog)
+	a := auth.New(st, clk, loc, deps.authLog)
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, loc, slog.Default())
 	reg := probe.New(st, slog.Default())
 	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: loc}, st, l, clk, slog.Default())
-	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), "", clk, nil, slog.Default())
+	notifier := alert.NewQueue(st, alerts.Channels, alert.NewHTTPClient(), deps.telegramBase, clk, nil, slog.Default())
 	a.SetLoginSender(notifier)
 	in, err := ingest.New(ingest.Config{TTL: 30 * time.Second, TrustedProxies: prefixes}, l, st, a, book, reg, clk, slog.Default())
 	if err != nil {

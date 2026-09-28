@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"text/tabwriter"
+	"time"
 
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/auth"
@@ -31,7 +32,8 @@ func openOffline(db string, create bool) (*store.Store, *auth.Auth, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	a := auth.New(st, clock.Real(), log)
+	// 离线子命令不经过 Login，不写登录通知，时区用不到；给 UTC 只为满足 auth.New 的非 nil 要求。
+	a := auth.New(st, clock.Real(), time.UTC, log)
 	if err := a.Load(context.Background()); err != nil {
 		st.Close()
 		return nil, nil, err

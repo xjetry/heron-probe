@@ -133,7 +133,7 @@ func TestLoginNotifySuccessDeliversAndUsesTrustedSource(t *testing.T) {
 				t.Fatal(err)
 			}
 			events := loginEvents(t, h)
-			wantSummary := fmt.Sprintf("管理员登录成功：来源 %s（密码）", wantIP)
+			wantSummary := fmt.Sprintf("管理员登录成功：来源 %s（密码），时间 %s", wantIP, h.clk.Now().Format(time.RFC3339))
 			if len(events) != 1 {
 				t.Fatalf("successful login wrote %d events, want 1", len(events))
 			}
@@ -190,8 +190,82 @@ func TestLoginNotifyLockThresholdOnlyOnce(t *testing.T) {
 		}
 	}
 	ev := loginEvents(t, h)[0]
-	if ev.Transition != "login_locked" || ev.RuleId != 0 || ev.NodeId != 0 || ev.Summary != "登录失败达到锁定阈值：来源 2001:db8:1::5（密码）" || len(ev.Deliveries) != 1 || ev.Deliveries[0].ChannelId != c.Id {
+	if ev.Transition != "login_locked" || ev.RuleId != 0 || ev.NodeId != 0 || ev.Summary != "登录失败达到锁定阈值：来源 2001:db8:1::5（密码），时间 "+h.clk.Now().Format(time.RFC3339) || len(ev.Deliveries) != 1 || ev.Deliveries[0].ChannelId != c.Id {
 		t.Fatalf("lock notification content: %v", ev)
+	}
+}
+
+// 两条摘要都写进事件时刻，按 hub 的 --timezone 写成带偏移的 RFC 3339：投递会重试、重启后续投，接收方
+// 看到的送达时刻不是登录时刻，而 Telegram 只发摘要。从登录入口一直看到 Telegram 收到的正文。
+func TestLoginNotifySummaryCarriesZonedTime(t *testing.T) {
+	shanghai, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var texts []string
+	tg := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Text string `json:"text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		mu.Lock()
+		texts = append(texts, body.Text)
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer tg.Close()
+	h := newZonedHarness(t, "127.0.0.0/8", shanghai, withTelegramBase(tg.URL))
+	h.login(t)
+	c := saveChannel(t, h, &probev1.NotifyChannel{Name: "tg", Kind: probev1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &probev1.TelegramConfig{BotToken: "1:x", ChatId: "chat"}})
+	chooseLoginChannels(t, h, c.Id)
+	at := time.Date(2026, 9, 28, 2, 5, 7, 0, time.UTC)
+	h.clk.SetWall(at)
+	const stamp = "2026-09-28T10:05:07+08:00"
+	login := func(pw, from string) error {
+		req := connect.NewRequest(&probev1.LoginRequest{Password: pw})
+		req.Header().Set("X-Forwarded-For", from)
+		_, err := h.admin.Login(t.Context(), req)
+		return err
+	}
+	if err := login(password, "203.0.113.7"); err != nil {
+		t.Fatal(err)
+	}
+	// 5 是 auth 的登录失败上限，第 5 次失败设下锁定。
+	for range 5 {
+		if err := login("wrong password", "198.51.100.9"); codeOf(err) != connect.CodeUnauthenticated {
+			t.Fatalf("wrong password: %v", err)
+		}
+	}
+	want := []string{
+		"登录失败达到锁定阈值：来源 198.51.100.9（密码），时间 " + stamp,
+		"管理员登录成功：来源 203.0.113.7（密码），时间 " + stamp,
+	}
+	var summaries []string
+	for _, ev := range loginEvents(t, h) {
+		if ev.At != at.Unix() {
+			t.Errorf("event %d at %d, want %d", ev.Id, ev.At, at.Unix())
+		}
+		summaries = append(summaries, ev.Summary)
+	}
+	if !slices.Equal(summaries, want) {
+		t.Errorf("login summaries = %q, want %q", summaries, want)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); h.svc.notifier.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	testwait.Until(t, time.Millisecond, func() bool {
+		evs := loginEvents(t, h)
+		return len(evs) == 2 && evs[0].Deliveries[0].Done && evs[1].Deliveries[0].Done
+	}, "telegram deliveries did not reach terminal state")
+	mu.Lock()
+	got := slices.Sorted(slices.Values(texts))
+	mu.Unlock()
+	if !slices.Equal(got, want) {
+		t.Fatalf("telegram texts = %q, want %q", got, want)
 	}
 }
 

@@ -52,6 +52,8 @@ type Auth struct {
 	register    *failureTracker
 	login       *failureTracker
 	loginSender interface{ Enqueue(store.AlertEvent) }
+	// loc 是 hub 的 --timezone，登录通知的摘要按它写事件时刻；构造后只读。
+	loc *time.Location
 }
 
 func (a *Auth) SetLoginSender(sender interface{ Enqueue(store.AlertEvent) }) {
@@ -60,8 +62,13 @@ func (a *Auth) SetLoginSender(sender interface{ Enqueue(store.AlertEvent) }) {
 	a.loginSender = sender
 }
 
-func New(st *store.Store, clk clock.Clock, log *slog.Logger) *Auth {
-	return &Auth{store: st, clk: clk, log: log, byHash: map[[32]byte]int64{}, register: newFailureTracker(failLimit, failWindow), login: newFailureTracker(failLimit, failWindow)}
+// New 要求 loc 非 nil：通知文案里的时刻按 hub 的 --timezone 写，与面板、流量周期、到期日同一个时区；
+// 缺省成某个固定时区，通知与面板的时刻对不上，也不会有任何报错。
+func New(st *store.Store, clk clock.Clock, loc *time.Location, log *slog.Logger) *Auth {
+	if loc == nil {
+		panic("auth.New: loc must be set")
+	}
+	return &Auth{store: st, clk: clk, loc: loc, log: log, byHash: map[[32]byte]int64{}, register: newFailureTracker(failLimit, failWindow), login: newFailureTracker(failLimit, failWindow)}
 }
 
 func (a *Auth) Load(ctx context.Context) error {

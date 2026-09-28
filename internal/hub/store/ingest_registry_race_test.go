@@ -48,7 +48,7 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	a := auth.New(st, clk, log)
+	a := auth.New(st, clk, time.UTC, log)
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, log)
 	reg := probe.New(st, log)

@@ -508,7 +508,7 @@ func TestPasswordChangeDuringLoginDoesNotIssueSession(t *testing.T) {
 	}()
 	<-gate.entered
 	// 另一个 Auth 不共享锁，代表 passwd 独立于服务进程的修改。
-	other := New(st, clk, a.log)
+	other := New(st, clk, time.UTC, a.log)
 	err := other.SetPassword(ctx, "another long password")
 	close(gate.release)
 	got := <-done

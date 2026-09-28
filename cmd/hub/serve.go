@@ -129,7 +129,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		return err
 	}
 	defer func() { result = errors.Join(result, st.Close()) }()
-	a := auth.New(st, clk, log)
+	a := auth.New(st, clk, loc, log)
 	l := live.New(clk, ttl)
 	book := traffic.New(st, clk, loc, log)
 	reg := probe.New(st, log)
