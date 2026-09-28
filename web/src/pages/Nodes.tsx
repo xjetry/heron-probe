@@ -4,8 +4,9 @@ import { type FormEvent, Fragment, type ReactNode, useState } from "react";
 import { Link } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { ConfirmDelete } from "../components/ConfirmDelete";
+import { CountryBadge } from "../components/CountryBadge";
 import { Secret } from "../components/Secret";
-import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
+import { AdminService, CountrySource, type Node } from "../gen/probe/v1/admin_pb";
 import { BillingCycle } from "../gen/probe/v1/types_pb";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
@@ -95,7 +96,7 @@ export function Nodes() {
       {error != null && <p role="alert" className="error">{errorText(error)}</p>}
       <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
         <table className="nodes">
-          <thead><tr><th>排序</th><th>名称</th><th>公开</th><th>备注</th><th>重置日</th><th>离线宽限期</th><th>计费</th><th>创建于</th><th>操作</th></tr></thead>
+          <thead><tr><th>排序</th><th>名称</th><th>公开</th><th>国家 / 地区</th><th>备注</th><th>重置日</th><th>离线宽限期</th><th>计费</th><th>创建于</th><th>操作</th></tr></thead>
           <tbody>
             {list.map((n, i) => (
               <NodeEditor key={String(n.id)} node={n} hubVersion={hubVersion}
@@ -115,10 +116,10 @@ export function Nodes() {
 
 const validResetDay = (day: number) => Number.isInteger(day) && day >= 1 && day <= 28;
 
-// 宽限期以字符串编辑，0 表示清除（取 hub 的 PROBE_OFFLINE_AFTER）。计费五项随整行整体提交（UpdateNode 整体替换），
-// 节点没有 billing 时从空值开始；取值约束由 hub 裁决并把错误原文显示在列表上方，页面不另抄一份规则。
+// 宽限期以字符串编辑，0 表示清除（取 hub 的 PROBE_OFFLINE_AFTER）。计费五项与手动指定的国家随整行整体提交（UpdateNode
+// 整体替换，缺失即清除），节点没有 billing 时从空值开始；取值约束由 hub 裁决并把错误原文显示在列表上方，页面不另抄一份规则。
 const draftOf = (node: Node) => ({
-  name: node.name, public: node.public, note: node.note, trafficResetDay: node.trafficResetDay,
+  name: node.name, public: node.public, note: node.note, trafficResetDay: node.trafficResetDay, countryPin: node.countryPin,
   offlineGraceS: String(node.offlineGraceS ?? 0),
   billing: {
     price: node.billing?.price ?? "", currency: node.billing?.currency ?? "", billingCycle: node.billing?.billingCycle ?? BillingCycle.UNSPECIFIED,
@@ -144,6 +145,11 @@ function NodeEditor({ node, hubVersion, saving, deleting, rotating, onMoveUp, on
         <td />
         <td><input aria-label={`名称 ${withId(node.name, node.id)}`} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></td>
         <td><input type="checkbox" aria-label={`公开 ${withId(node.name, node.id)}`} checked={draft.public} onChange={(e) => setDraft({ ...draft, public: e.target.checked })} /></td>
+        <td>
+          {/* 国家码都是大写，输入时就转成大写；其余取值原样交给 hub 校验。 */}
+          <input aria-label={`手动指定国家 / 地区 ${withId(node.name, node.id)}`} aria-describedby={`country-hint-${node.id}`} placeholder="US" value={draft.countryPin} onChange={(e) => setDraft({ ...draft, countryPin: e.target.value.toUpperCase() })} />
+          <p className="muted" id={`country-hint-${node.id}`}>两个字母（ISO 3166-1），优先于查得值；留空用查得值：{node.countryLookup ? lookupText(node) : "尚无查得值"}。</p>
+        </td>
         <td><input aria-label={`备注 ${withId(node.name, node.id)}`} value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></td>
         <td><input type="number" min={1} max={28} aria-label={`重置日 ${withId(node.name, node.id)}`} value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><p className="muted">若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。</p></td>
         <td><input type="number" min={0} aria-label={`离线宽限期（秒） ${withId(node.name, node.id)}`} aria-describedby={`grace-hint-${node.id}`} value={draft.offlineGraceS} onChange={(e) => setDraft({ ...draft, offlineGraceS: e.target.value })} /><p className="muted" id={`grace-hint-${node.id}`}>0 表示取 hub 的 PROBE_OFFLINE_AFTER；非 0 不能小于它。</p></td>
@@ -167,6 +173,7 @@ function NodeEditor({ node, hubVersion, saving, deleting, rotating, onMoveUp, on
         {hubVersion !== undefined && lagsHub(node.facts?.agentVersion, hubVersion) && <>{" "}<span className="warn">落后于 hub</span></>}
       </td>
       <td>{node.public ? "是" : "否"}</td>
+      <td><CountryCell node={node} /></td>
       <td className="muted">{node.note}</td>
       <td>每月 {node.trafficResetDay} 日</td>
       <td>{graceText(node.offlineGraceS)}</td>
@@ -179,6 +186,19 @@ function NodeEditor({ node, hubVersion, saving, deleting, rotating, onMoveUp, on
       </td>
     </tr>
   );
+}
+
+// 显示值、来源与查得值："🇺🇸 US 查得于 8.8.8.8"、"🇯🇵 JP 手动指定；查得 US（于 8.8.4.4）"、"🇯🇵 JP 手动指定"；
+// 没有国家是"—"。手动指定时查询照常进行，查得值与它所属的地址也照写，清空手动值即回落到它；查得值要写出来，
+// 只写地址会读成"JP 是在 8.8.4.4 查得的"。
+const lookupText = (node: Node) => `查得 ${node.countryLookup}（于 ${node.countryIp}）`;
+
+function CountryCell({ node }: { node: Node }) {
+  if (node.countrySource === CountrySource.UNSPECIFIED) return <>—</>;
+  const source = node.countrySource === CountrySource.MANUAL
+    ? ["手动指定", node.countryLookup && lookupText(node)].filter(Boolean).join("；")
+    : `查得于 ${node.countryIp}`;
+  return <><CountryBadge code={node.country} />{" "}<span className="muted">{source}</span></>;
 }
 
 // "USD 12.50 / 月 · 2026-10-01（剩 4 天） · 自动续期"；已过期的那一段用告警红；全没填是"—"。

@@ -254,7 +254,10 @@ type PublicNode struct {
 	// hub 侧累计的流量；每个节点都有，从未上报的节点为零用量。
 	Traffic *Traffic `protobuf:"bytes,8,opt,name=traffic,proto3" json:"traffic,omitempty"`
 	// 计费与到期的公开部分（§9.4）；五项都没填时缺失。
-	Billing       *PublicBilling `protobuf:"bytes,9,opt,name=billing,proto3" json:"billing,omitempty"`
+	Billing *PublicBilling `protobuf:"bytes,9,opt,name=billing,proto3" json:"billing,omitempty"`
+	// 国家 / 地区（§4.9）的显示值，与 Node.country 相同，空串表示没有。只放行这个值：查得于哪个地址、来源是手动还是
+	// 查得都不公开——公开页表达"在哪个区域"，不定位机器。
+	Country       string `protobuf:"bytes,10,opt,name=country,proto3" json:"country,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -350,6 +353,13 @@ func (x *PublicNode) GetBilling() *PublicBilling {
 		return x.Billing
 	}
 	return nil
+}
+
+func (x *PublicNode) GetCountry() string {
+	if x != nil {
+		return x.Country
+	}
+	return ""
 }
 
 // Billing 的公开部分，字段号与 Billing 相同，由投影按字段名生成（与 PublicFacts 同一机制）。自动续期是运维开关，
@@ -714,7 +724,7 @@ const file_probe_v1_public_proto_rawDesc = "" +
 	"\x0ePublicSnapshot\x12\x10\n" +
 	"\x03now\x18\x01 \x01(\x03R\x03now\x12,\n" +
 	"\x12report_interval_ms\x18\x02 \x01(\rR\x10reportIntervalMs\x12*\n" +
-	"\x05nodes\x18\x03 \x03(\v2\x14.probe.v1.PublicNodeR\x05nodes\"\xdf\x02\n" +
+	"\x05nodes\x18\x03 \x03(\v2\x14.probe.v1.PublicNodeR\x05nodes\"\xf9\x02\n" +
 	"\n" +
 	"PublicNode\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
@@ -727,7 +737,9 @@ const file_probe_v1_public_proto_rawDesc = "" +
 	"\x05facts\x18\x06 \x01(\v2\x15.probe.v1.PublicFactsR\x05facts\x121\n" +
 	"\ametrics\x18\a \x01(\v2\x17.probe.v1.PublicMetricsR\ametrics\x12+\n" +
 	"\atraffic\x18\b \x01(\v2\x11.probe.v1.TrafficR\atraffic\x121\n" +
-	"\abilling\x18\t \x01(\v2\x17.probe.v1.PublicBillingR\abillingB\x0f\n" +
+	"\abilling\x18\t \x01(\v2\x17.probe.v1.PublicBillingR\abilling\x12\x18\n" +
+	"\acountry\x18\n" +
+	" \x01(\tR\acountryB\x0f\n" +
 	"\r_last_seen_at\"\xdf\x01\n" +
 	"\rPublicBilling\x12\x14\n" +
 	"\x05price\x18\x01 \x01(\tR\x05price\x12\x1a\n" +

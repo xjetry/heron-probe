@@ -4,8 +4,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type ChangeEvent, type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
-import { AdminService, GetSettingsResponseSchema, type GetSettingsResponse, type Settings } from "../gen/probe/v1/admin_pb";
+import { AdminService, GetSettingsResponseSchema, type Settings } from "../gen/probe/v1/admin_pb";
 import { LOGO_TYPES, MAX_TITLE_CHARS, THEMES, sizeProblems, type Theme } from "../lib/appearance";
+import { ANSWERS_PER_NODE } from "../lib/country";
 import { BUILT_IN_ACCENT } from "../lib/palette";
 import { DEFAULT_TITLE } from "../public/site";
 
@@ -18,11 +19,24 @@ const toDraft = (s: Settings | undefined): Draft => ({
   title: s?.title ?? "", theme: s?.theme || "auto", accentColor: s?.accentColor ?? "", logo: s?.logo ?? "", customCss: s?.customCss ?? "",
 });
 
-const settingsKey = createConnectQueryKey({ schema: AdminService.method.getSettings, cardinality: "finite" });
+// 两个表单保存成功后都经它：先把 hub 的回显写进 getSettings 的缓存，再失效。回显就是库里的已保存值（外观是清洗后
+// 写入的值，总闸是这次写入的值、缺席时是与库一致的内存值，国家查询两项由 SaveSettings 在同一个写事务里读回），缓存
+// 据此更新，不依赖刷新成功。只失效时，刷新一旦失败，缓存就停在保存前的值：查询表单按缓存整体替换外观，会把刚保存的
+// 外观改回去；外观表单没动过的总闸开关显示缓存值，也停在保存前；重新进入页面时查询表单显示的也是保存前的开关与地址。
+// 写与失效用同一个键，作用在同一组查询上。
+function useAdoptSavedSettings() {
+  const qc = useQueryClient();
+  return (settings: Settings | undefined) => {
+    const queryKey = createConnectQueryKey({ schema: AdminService.method.getSettings, cardinality: "finite" });
+    qc.setQueriesData({ queryKey }, () => create(GetSettingsResponseSchema, { settings }));
+    return qc.invalidateQueries({ queryKey });
+  };
+}
 
-// 外观由 UpdateSettings 整体替换，草稿提交全部外观字段；总闸缺席表示不变，草稿只在用户动过开关后才带它。
-// 草稿是开始编辑（或上次保存）时的快照，之后总闸可能被别处改过（另一个面板、脚本）：把快照里的总闸随标题
-// 一起提交，会把别人刚关掉的公开页重新打开。开关没动过时显示查询缓存里 hub 的当前值，重新拉取即跟上。
+// 公开页的外观与总闸：UpdateSettings 整体替换外观五项，表单因此总是提交全部外观字段。总闸缺席表示不变，草稿只在
+// 用户动过开关后才带它：草稿是开始编辑（或上次保存）时的快照，之后总闸可能被别处改过（另一个面板、脚本），把快照里的
+// 总闸随标题一起提交，会把别人刚关掉的公开页重新打开。开关没动过时显示查询缓存里 hub 的当前值，重新拉取即跟上。
+// 国家查询的两项不在这个表单里、不提交：hub 对它们缺席即不改（见 GeoLookup）。
 //
 // 保存成功时 onSuccess 用 hub 的回显替换草稿；它不判断"是不是最新一次"，靠的是"有未结请求"与"草稿还能被改"互斥。
 // 草稿的改动来自两处：用户改字段（同步），与读 logo 文件的回调（异步，读完才改）。互斥由两处承载：
@@ -33,7 +47,7 @@ const settingsKey = createConnectQueryKey({ schema: AdminService.method.getSetti
 // 所以回显覆盖的总是这次提交自己送出的内容。reading 若不对应唯一的读者（文件输入在读取中仍可用），先读完的那个
 // 把它置回 false，保存得以发出，后读完的在保存进行中改草稿，迟到的回显再把它改回去并误报"已保存"。
 export function Appearance() {
-  const qc = useQueryClient();
+  const adoptSaved = useAdoptSavedSettings();
   const settings = useQuery(AdminService.method.getSettings, {});
   // draft 为空时表单显示 hub 的当前值；保存成功后改为 hub 回显的实际保存值（标题已清洗、主色已转小写）。
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -44,9 +58,7 @@ export function Appearance() {
     onSuccess: (r) => {
       setDraft(toDraft(r.settings));
       setSaved(true);
-      // 回显是 hub 此刻的设置，先写进缓存：草稿已不带总闸，开关显示缓存值，不等重新拉取就显示保存结果。
-      qc.setQueriesData<GetSettingsResponse>({ queryKey: settingsKey }, (old) => old && create(GetSettingsResponseSchema, { settings: r.settings }));
-      return qc.invalidateQueries({ queryKey: settingsKey });
+      return adoptSaved(r.settings);
     },
   });
   const gate = queryGate(settings);
@@ -137,6 +149,62 @@ export function Appearance() {
           <button type="submit" disabled={reading || problems.length > 0}>保存</button>
         </fieldset>
       </form>
+      <GeoLookup current={gate.data.settings} />
     </section>
+  );
+}
+
+type GeoDraft = { geoEnabled: boolean; geoUrl: string };
+const toGeoDraft = (s: Settings | undefined): GeoDraft => ({ geoEnabled: s?.geoEnabled ?? false, geoUrl: s?.geoUrl ?? "" });
+
+// 国家 / 地区查询的开关与服务地址。UpdateSettings 对外观五项整体替换，这里提交的外观取 hub 当前的已保存值（current），
+// 不取上面表单的草稿：只改查询设置不会顺带保存外观的未保存改动。总闸不提交（toDraft 不取它），hub 对缺席的总闸不改。
+// 开关决定 hub 是否把节点地址发给第三方，文案照写发给哪个地址。
+function GeoLookup({ current }: { current: Settings | undefined }) {
+  const adoptSaved = useAdoptSavedSettings();
+  const [draft, setDraft] = useState<GeoDraft | null>(null);
+  const [saved, setSaved] = useState(false);
+  const update = useMutation(AdminService.method.updateSettings, {
+    onSuccess: (r) => {
+      setDraft(toGeoDraft(r.settings));
+      setSaved(true);
+      return adoptSaved(r.settings);
+    },
+  });
+  const form = draft ?? toGeoDraft(current);
+  const edit = (patch: Partial<GeoDraft>) => {
+    setDraft((d) => ({ ...(d ?? toGeoDraft(current)), ...patch }));
+    setSaved(false);
+    update.reset();
+  };
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!update.isPending) update.mutate({ settings: { ...toDraft(current), ...form } });
+  };
+  return (
+    <>
+      <h2>国家 / 地区查询</h2>
+      <form className="card edit-form" aria-label="国家 / 地区查询" onSubmit={submit}>
+        <fieldset className="bare" disabled={update.isPending}>
+          <label className="inline">
+            <input type="checkbox" checked={form.geoEnabled} onChange={(e) => edit({ geoEnabled: e.target.checked })} />
+            按来源地址查询节点的国家 / 地区
+          </label>
+          <p className="muted" id="geo-disclosure">
+            开启即由 hub 把每个节点的来源地址发给 {form.geoUrl || "（未填写的服务地址）"}（{"{ip}"} 处换成地址），用它的应答作为节点的国家 / 地区。
+            只发公网地址，不带任何凭据。节点停在同一地址时查得一次即止；hub 记住每个节点最近 {ANSWERS_PER_NODE} 个地址的答案，在这些地址之间切换不再外呼，
+            超过 {ANSWERS_PER_NODE} 个地址轮换或 hub 重启后会再查。失败一小时后重试。关闭时 hub 不为此出网。
+          </p>
+          <label>
+            服务地址
+            <input value={form.geoUrl} aria-describedby="geo-disclosure" onChange={(e) => edit({ geoUrl: e.target.value })} spellCheck={false} />
+          </label>
+          <p className="muted">http 或 https，含 {"{ip}"}，{"{ip}"} 要在路径或查询串里、不能放在主机或端口里（# 后的片段不随请求发出）；应答须恰为两个大写字母的国家码（ISO 3166-1），否则按失败处理。节点也可在节点页手动指定国家，手动值优先。</p>
+          {update.error != null && <p role="alert" className="error">{errorText(update.error)}</p>}
+          {saved && <p role="status">已保存。</p>}
+          <button type="submit">保存</button>
+        </fieldset>
+      </form>
+    </>
   );
 }

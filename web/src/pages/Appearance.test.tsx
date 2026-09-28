@@ -1,7 +1,7 @@
 import { isFieldSet, type MessageInitShape } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsSchema, type UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
 import { MAX_LOGO_BYTES } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
@@ -16,24 +16,30 @@ async function form() {
   return within(await screen.findByRole("form", { name: "公开页外观" }));
 }
 
-// 有状态的假 hub，与 SaveSiteSettings 同语义：外观整体替换，总闸缺席即不变；set 模拟别处（另一个面板、脚本）改了设置，
-// holdReads 让之后的 GetSettings 挂起到 releaseReads。
+// 有状态的 hub 替身，与 store 的 SaveSettings 同语义：外观整体替换（标题去首尾空白，代表 hub 的清洗），总闸与国家查询
+// 两项缺席即不变，回显保存后的全部设置。set 模拟别处（另一个面板、脚本）改了设置；holdReads 让之后的 GetSettings 挂起
+// 到 releaseReads；failReads 让之后的 GetSettings 一直失败（hub 重启、网络中断），保存后的刷新因此拿不到新值。
 type SettingsInit = MessageInitShape<typeof SettingsSchema>;
 
-function statefulHub(publicEnabled: boolean) {
-  let state: SettingsInit = { ...current, publicEnabled };
+function statefulHub(initial: SettingsInit) {
+  let state: SettingsInit = initial;
   const sent: UpdateSettingsRequest[] = [];
   let held: Promise<void> | null = null;
   let release = () => {};
+  let failing = false;
   const impl: AdminImpl = {
     getSettings: async () => {
+      if (failing) throw new ConnectError("hub restarting", Code.Unavailable);
       if (held) await held;
       return { settings: state };
     },
     updateSettings: async (req) => {
       sent.push(req);
-      const { title, theme, accentColor, logo, customCss, publicEnabled } = req.settings!;
-      state = { title, theme, accentColor, logo, customCss, publicEnabled: publicEnabled ?? state.publicEnabled };
+      const s = req.settings!;
+      state = {
+        title: s.title.trim(), theme: s.theme, accentColor: s.accentColor, logo: s.logo, customCss: s.customCss,
+        publicEnabled: s.publicEnabled ?? state.publicEnabled, geoEnabled: s.geoEnabled ?? state.geoEnabled, geoUrl: s.geoUrl ?? state.geoUrl,
+      };
       return { settings: state };
     },
   };
@@ -42,11 +48,12 @@ function statefulHub(publicEnabled: boolean) {
     set: (patch: SettingsInit) => { state = { ...state, ...patch }; },
     holdReads: () => { held = new Promise((r) => { release = () => { held = null; r(); }; }); },
     releaseReads: () => release(),
+    failReads: () => { failing = true; },
   };
 }
 
 it("公开页总闸显示当前值并显式提交 false 与 true", async () => {
-  const hub = statefulHub(true);
+  const hub = statefulHub({ ...current, publicEnabled: true });
   const sent = hub.sent;
   render(hub.impl);
   const f = await form();
@@ -69,7 +76,7 @@ it("公开页总闸显示当前值并显式提交 false 与 true", async () => {
 
 // 草稿是开始编辑时的快照。之后别处关了公开页，只改标题的保存不得带总闸——带上快照里的"开"就会把它重新打开。
 it("开关没动过时保存不带总闸，别处关掉的公开页不被重新打开", async () => {
-  const hub = statefulHub(true);
+  const hub = statefulHub({ ...current, publicEnabled: true });
   const { queryClient } = render(hub.impl);
   const f = await form();
   const toggle = f.getByRole("checkbox", { name: "启用公开页" });
@@ -296,4 +303,89 @@ it("上次保存失败后换 logo，旧的错误清掉", async () => {
   pick(f, "a.png");
   FakeReader.all[0].finish("data:image/png;base64,QQ==");
   expect(f.queryByRole("alert")).toBeNull();
+});
+
+describe("国家 / 地区查询", () => {
+  const geoForm = async () => within(await screen.findByRole("form", { name: "国家 / 地区查询" }));
+  // hub 的 GetSettings 总带总闸与查询两项。
+  const withGeo = { ...current, publicEnabled: true, geoEnabled: false, geoUrl: "https://ipinfo.io/{ip}/country" };
+
+  it("开关文案写明开启即把节点地址发给哪个服务，随输入的服务地址更新", async () => {
+    render({ getSettings: async () => ({ settings: withGeo }) });
+    const f = await geoForm();
+    const toggle = f.getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" });
+    expect(toggle).not.toBeChecked();
+    expect(f.getByLabelText("服务地址")).toHaveValue("https://ipinfo.io/{ip}/country");
+    expect(f.getByLabelText("服务地址")).toHaveAccessibleDescription(/^开启即由 hub 把每个节点的来源地址发给 https:\/\/ipinfo\.io\/\{ip\}\/country（\{ip\} 处换成地址）/);
+    fireEvent.change(f.getByLabelText("服务地址"), { target: { value: "https://geo.example/{ip}" } });
+    expect(f.getByLabelText("服务地址")).toHaveAccessibleDescription(/^开启即由 hub 把每个节点的来源地址发给 https:\/\/geo\.example\/\{ip\}（/);
+  });
+
+  // 文案写出"不再外呼"的上界，不许诺无条件的"每地址一次"：hub 只记住每个节点最近 4 个地址的答案。
+  it("开关说明写出答案表的上界", async () => {
+    render({ getSettings: async () => ({ settings: withGeo }) });
+    const f = await geoForm();
+    const description = f.getByLabelText("服务地址");
+    expect(description).toHaveAccessibleDescription(/节点停在同一地址时查得一次即止；hub 记住每个节点最近 4 个地址的答案，在这些地址之间切换不再外呼，\s*超过 4 个地址轮换或 hub 重启后会再查。/);
+  });
+
+  // 外观表单里未保存的总闸同样不随查询表单提交：查询表单不带总闸，hub 对缺席的总闸不改。外观表单的开关仍显示用户
+  // 动过的值，不被查询表单保存后写进缓存的回显（总闸仍开）盖掉。
+  it("保存提交开关与服务地址，外观取 hub 的已保存值而不是外观表单的草稿，也不带总闸", async () => {
+    const hub = statefulHub(withGeo);
+    const sent = hub.sent;
+    render(hub.impl);
+    const appearance = await form();
+    fireEvent.change(appearance.getByLabelText("标题"), { target: { value: "未保存的标题" } });
+    fireEvent.click(appearance.getByRole("checkbox", { name: "启用公开页" }));
+    const f = await geoForm();
+    fireEvent.click(f.getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" }));
+    fireEvent.click(f.getByRole("button", { name: "保存" }));
+    expect(await f.findByRole("status")).toHaveTextContent("已保存");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].settings).toMatchObject({ ...current, geoEnabled: true, geoUrl: "https://ipinfo.io/{ip}/country" });
+    expect(isFieldSet(sent[0].settings!, SettingsSchema.field.publicEnabled)).toBe(false);
+    expect(appearance.getByLabelText("标题")).toHaveValue("未保存的标题");
+    expect(appearance.getByRole("checkbox", { name: "启用公开页" })).not.toBeChecked();
+  });
+
+  it("外观保存后刷新失败，查询表单提交的外观仍是刚保存的回显", async () => {
+    const hub = statefulHub(withGeo);
+    render(hub.impl);
+    const appearance = await form();
+    hub.failReads();
+    fireEvent.change(appearance.getByLabelText("标题"), { target: { value: " 新标题 " } });
+    fireEvent.click(appearance.getByRole("button", { name: "保存" }));
+    expect(await appearance.findByRole("status")).toHaveTextContent("已保存");
+    expect(await screen.findByText("hub restarting")).toBeInTheDocument();
+    const f = await geoForm();
+    fireEvent.click(f.getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" }));
+    fireEvent.click(f.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(hub.sent).toHaveLength(2));
+    expect(hub.sent[1].settings).toMatchObject({ ...current, title: "新标题", geoEnabled: true });
+  });
+
+  it("查询表单保存后刷新失败，重新进入页面时显示刚保存的开关", async () => {
+    const hub = statefulHub(withGeo);
+    const { router } = renderWithAdmin(hub.impl, [...routes, { path: "/elsewhere", Component: () => null }], "/appearance");
+    const f = await geoForm();
+    hub.failReads();
+    fireEvent.click(f.getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" }));
+    fireEvent.click(f.getByRole("button", { name: "保存" }));
+    expect(await f.findByRole("status")).toHaveTextContent("已保存");
+    expect(await screen.findByText("hub restarting")).toBeInTheDocument();
+    await act(() => router.navigate("/elsewhere"));
+    await act(() => router.navigate("/appearance"));
+    expect((await geoForm()).getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" })).toBeChecked();
+  });
+
+  it("外观表单不提交查询设置：hub 对缺席的两项不改", async () => {
+    const sent: UpdateSettingsRequest[] = [];
+    render({ getSettings: async () => ({ settings: { ...withGeo, geoEnabled: true } }), updateSettings: async (req) => { sent.push(req); return { settings: { ...req.settings!, geoEnabled: true, geoUrl: withGeo.geoUrl } }; } });
+    const f = await form();
+    fireEvent.click(f.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0].settings?.geoEnabled).toBeUndefined();
+    expect(sent[0].settings?.geoUrl).toBeUndefined();
+  });
 });

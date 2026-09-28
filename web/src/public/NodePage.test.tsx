@@ -68,3 +68,11 @@ it("静态信息卡带费用与到期两行；主机信息缺失时卡片照样�
   expect(screen.getAllByRole("definition").map((d) => d.textContent)).toEqual(["2026-09-20（已过期 7 天）"]);
   expect(screen.getByText("2026-09-20（已过期 7 天）")).toHaveClass("error");
 });
+
+it("节点页标题带国家 / 地区徽章", async () => {
+  const withCountry = async () => ({ now: 1_000n, nodes: [{ id: 7n, name: "edge-1", online: true, country: "DE" }] });
+  renderWithService(PublicService, { getSnapshot: withCountry }, [{ path: "/nodes/:id", Component: NodePage }], "/nodes/7");
+  const h1 = await screen.findByRole("heading", { level: 1 });
+  expect(h1).toHaveTextContent("edge-1 \u{1F1E9}\u{1F1EA} DE");
+  expect(screen.getByTitle("国家 / 地区 DE")).toHaveTextContent("\u{1F1E9}\u{1F1EA} DE");
+});
