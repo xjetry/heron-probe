@@ -255,10 +255,7 @@ func TestBackupNotifyChannelMustExist(t *testing.T) {
 func TestUpdateSettingsBudgetFitsFullBackupWithWorstCaseEscaping(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	ids := make([]string, maxBackupChannels)
-	for i := range ids {
-		ids[i] = fmt.Sprint(int64(1<<63-1) - int64(i))
-	}
+	ids := boundaryChannelIDs()
 	status, b := postUpdateSettings(t, h, worstCaseSettings(t, ids))
 	want := fmt.Sprintf("backup.notify.channel_ids: channel %s does not exist", ids[len(ids)-1])
 	if status != http.StatusBadRequest || !strings.Contains(b, `"invalid_argument"`) || !strings.Contains(b, want) {
