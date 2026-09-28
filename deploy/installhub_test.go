@@ -10,14 +10,16 @@ import (
 )
 
 // install-hub.sh 的替身。服务用户 probe-hub（uid 481）在 $PROBE_INSTALL_ROOT/etc/passwd 与 etc/group 里，
-// 不走建账户分支；id、uname、sleep 与 install.sh 的替身相同。
+// 不走建账户分支；id、uname 与 install.sh 的替身相同。sleep 只记参数，STUB_START_DIES 时在启动确认的 3 秒复查
+// 之前拿走进程 4242。
 // systemctl 记下参数；start 在假 /proc 里放一个以服务用户运行、exe 指向 /usr/local/bin/probe-hub 的进程 4242，
 // stop 把它拿走；show 回答 MainPID 与 DropInPaths（state/dropins 里空格分隔的路径，是目标系统里的真实路径）。
 // enable、disable 增删 state/enabled，is-enabled 按它回答。
 // state/dropins 是 systemd 已加载的 drop-in，照 systemd 252 的实测：daemon-reload 时才从 state/dropins-disk
 // （磁盘上的 drop-in）取，单元文件不存在时为空。STUB_STOP_FAILS 让 stop 失败，STUB_STOP_LEAVES_PROCESS 让 stop
-// 返回 0 却留下进程，STUB_DROPIN_ON_STOP 在 stop 时把一个 drop-in 写进 state/dropins-disk。STUB_RELOAD_FAILS 让
-// daemon-reload 失败，STUB_RELOAD_FAILS_ON_STOP 让它从 stop 之后开始失败。
+// 返回 0 却留下进程，STUB_DROPIN_ON_STOP 在 stop 时把一个 drop-in 写进 state/dropins-disk。STUB_START_NO_PROCESS
+// 让 start 返回 0 却不起进程。STUB_RELOAD_FAILS 让 daemon-reload 失败，STUB_RELOAD_FAILS_ON_STOP 让它从 stop 之后
+// 开始失败。
 // chown 只记参数：测试以普通用户运行，改不了属主，属主由真机验收回读。chmod 记下参数后转调真的，权限断言看的
 // 是真实的文件模式。curl 只认 file:// 地址并复制文件；apt-get 记下参数，install 时建出 CA 证书包。
 // systemctl、curl、apt-get 读尽 stdin：脚本以 sh -s 从 stdin 运行，漏掉 </dev/null 的调用会吞掉脚本余下部分，
@@ -25,7 +27,10 @@ import (
 var hubStubs = map[string]string{
 	"id":    linuxStubs["id"],
 	"uname": linuxStubs["uname"],
-	"sleep": linuxStubs["sleep"],
+	"sleep": `#!/bin/sh
+echo "sleep $*" >> "$STUB_STATE/calls"
+if [ -n "${STUB_START_DIES-}" ] && [ "$1" = 3 ]; then rm -rf "$PROBE_INSTALL_ROOT/proc/4242"; fi
+`,
 	"systemctl": `#!/bin/sh
 cat > /dev/null
 echo "systemctl $*" >> "$STUB_STATE/calls"
@@ -33,6 +38,7 @@ P=$PROBE_INSTALL_ROOT/proc
 case "$*" in
   "start probe-hub")
     [ -z "${STUB_START_FAILS-}" ] || { echo "Job for probe-hub.service failed." >&2; exit 1; }
+    [ -z "${STUB_START_NO_PROCESS-}" ] || exit 0
     uid=$(grep '^probe-hub:' "$PROBE_INSTALL_ROOT/etc/passwd" | cut -d: -f3)
     mkdir -p "$P/4242"
     printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$P/4242/status"
@@ -725,6 +731,26 @@ func TestHubDropInWrittenWhileStoppedIsRefusedBeforeStart(t *testing.T) {
 	}
 	if c := e.calls(); index(c, "systemctl start") >= 0 {
 		t.Fatalf("probe-hub must not be started: calls %q", c)
+	}
+}
+
+// systemctl start 返回 0 之后，hub 已交给 systemd 按 Restart=always 拉起，不再是"停着"：启动确认失败只报启动失败，
+// 不补 hub 已停那句。
+func TestHubStartConfirmationFailureDoesNotSayStopped(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, env, want string }{
+		{"process never appears", "STUB_START_NO_PROCESS=1", "probe-hub did not start; see journalctl -u probe-hub"},
+		{"process exits right away", "STUB_START_DIES=1", "probe-hub did not stay running (pid 4242); see journalctl -u probe-hub"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newHubInstalled(t)
+			e.vars = []string{tc.env}
+			out, code := e.hubInstall()
+			if code != 1 || !strings.Contains(out, tc.want) || strings.Contains(out, "probe-hub is stopped") {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+		})
 	}
 }
 
