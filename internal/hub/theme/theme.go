@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	// MaxPackageBytes 是上传的 zip 本身的上限。包经单个 Connect unary 请求以 bytes 送达，AdminService 的解码预算
-	// 由它推出（api 的 maxBody）。
+	// MaxPackageBytes 是上传的 zip 本身的上限。包经单个 Connect unary 请求以 bytes 送达，UploadTheme 的解码预算
+	// 由它推出（api 的 maxThemeBody）。
 	MaxPackageBytes = 8 << 20
 	// 以下三项给展开设界，与上传体积独立：deflate 的压缩比可达约千倍，8 MiB 的包能展开出数 GiB，压缩比藏在上传
 	// 体积上限后面，所以展开总量必须有自己的界。

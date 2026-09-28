@@ -371,10 +371,54 @@ func TestUploadThemeBudgetFitsAFullPackage(t *testing.T) {
 		if len(body) < 4*((c.size+2)/3)+6*32 {
 			t.Fatalf("request is %d bytes; the worst case was not constructed", len(body))
 		}
-		t.Logf("request %d bytes, budget %d", len(body), maxBody)
+		t.Logf("request %d bytes, budget %d", len(body), maxThemeBody)
 		got := rawCall(t, h, "UploadTheme", string(body), cookie)
 		if got.code != "invalid_argument" || !strings.Contains(got.message, c.want) {
 			t.Fatalf("%d-byte package: %+v, want invalid_argument containing %q", c.size, got, c.want)
 		}
 	}
+}
+
+// 解码预算按过程分（service.go 的 maxSettingsBody 与 maxThemeBody）。解码先于鉴权，预算也就是匿名请求被读到的上限：
+// 按描述符枚举 AdminService 的每个过程，匿名发一个恰比 maxSettingsBody 多一字节的请求——UploadTheme 把它读完、由拦截器
+// 给出 unauthenticated，其余过程在解码时就以 resource_exhausted（HTTP 429）拒绝并写明 maxSettingsBody；UploadTheme
+// 自己的上限是 maxThemeBody，多一字节同样被拒。1 MiB 的匿名 ListNodes 是这条界要挡的场景：借一个未知字段把请求撑大。
+func TestDecodeBudgetIsPerProcedure(t *testing.T) {
+	h := newHarness(t, "")
+	// body 恰为 n 字节：{"package":"AAAA…"} 对 UploadTheme 是合法的 bytes 字段（A 解出零字节），对其余过程是未知字段；
+	// base64 取 4 的倍数个字符，余数用 JSON 允许的前导空白补齐。
+	body := func(n int) string {
+		const frame = len(`{"package":""}`)
+		chars := (n - frame) / 4 * 4
+		return strings.Repeat(" ", n-frame-chars) + `{"package":"` + strings.Repeat("A", chars) + `"}`
+	}
+	settingsOver := body(maxSettingsBody + 1)
+	if len(settingsOver) != maxSettingsBody+1 {
+		t.Fatalf("request is %d bytes, want %d", len(settingsOver), maxSettingsBody+1)
+	}
+	refused := func(method string, size int, budget int) {
+		t.Helper()
+		got := rawCall(t, h, method, body(size), nil)
+		if got.status != http.StatusTooManyRequests || got.code != "resource_exhausted" || !strings.Contains(got.message, fmt.Sprintf("larger than configured max %d", budget)) {
+			t.Errorf("anonymous %d-byte %s: %+v, want 429 resource_exhausted naming the %d-byte budget", size, method, got, budget)
+		}
+	}
+	svc := adminService()
+	var sawUpload bool
+	for i := 0; i < svc.Methods().Len(); i++ {
+		name := string(svc.Methods().Get(i).Name())
+		if name != "UploadTheme" {
+			refused(name, maxSettingsBody+1, maxSettingsBody)
+			continue
+		}
+		sawUpload = true
+		if got := rawCall(t, h, name, settingsOver, nil); got.status != http.StatusUnauthorized || got.code != "unauthenticated" {
+			t.Errorf("anonymous %d-byte UploadTheme: %+v, want it read in full and refused by the interceptor (401 unauthenticated)", len(settingsOver), got)
+		}
+		refused(name, maxThemeBody+1, maxThemeBody)
+	}
+	if !sawUpload {
+		t.Fatal("AdminService has no UploadTheme method; the enumeration no longer covers the large budget")
+	}
+	refused("ListNodes", 1<<20, maxSettingsBody)
 }

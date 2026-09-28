@@ -32,22 +32,24 @@ import (
 
 const (
 	SessionCookie = "probe_session"
-	// maxBody 是管理请求的解码预算，AdminService 只此一个：按路径分预算要在 connect 外再加一层与解压后上限配合的
-	// 读者，不值。connect 先解码再进拦截器，未鉴权的请求也会被读到这个上限，所以它必须有界。它取两类最大的合法请求中
-	// 较大的一个；每个字段的合法取值都有字节上限是这条推导成立的前提。多余的 JSON 空白、对无需转义的字符的转义不在
-	// 预算内：这样的请求超出预算时得到 resource_exhausted。
-	maxBody = max(maxSettingsBody, maxThemeBody)
 
-	// maxSettingsBody 装下 UpdateSettings 的满额设置在最坏转义下的 JSON：logo 满额（base64 字符在 JSON 里无需转义）；
-	// 自定义 CSS 与清洗前的标题、国家查询的服务地址满额，且每个字节都转义成 6 字节的 \u00XX（控制字符就是这样）；另留
-	// 4 KiB 给明暗、主色、国家查询开关、字段名与 JSON 语法。各项的上限在 settings.go（明暗与主色由取值集合与格式限定）。
+	// AdminService 的解码预算按过程分两类，由 Handler 分派：UploadTheme 用 maxThemeBody，其余过程用 maxSettingsBody。
+	// connect 先解码再进拦截器，未鉴权的请求也会被读到所在过程的预算，所以两类都必须有界，而主题包那么大的预算只给
+	// 需要它的那一个过程——全部过程共用取大者，匿名请求在每个过程上都会被读到约 10.7 MiB。每个字段的合法取值都有
+	// 字节上限是两条推导成立的前提。多余的 JSON 空白、对无需转义的字符的转义不在预算内：这样的请求超出预算时得到
+	// resource_exhausted。
+
+	// maxSettingsBody 是除 UploadTheme 外每个过程的解码预算。它装下 UpdateSettings 的满额设置在最坏转义下的 JSON：
+	// logo 满额（base64 字符在 JSON 里无需转义）；自定义 CSS 与清洗前的标题、国家查询的服务地址满额，且每个字节都转义成
+	// 6 字节的 \u00XX（控制字符就是这样）；另留 4 KiB 给明暗、主色、国家查询开关、字段名与 JSON 语法。各项的上限在
+	// settings.go（明暗与主色由取值集合与格式限定）。
 	maxSettingsBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes + 6*maxGeoURLBytes + 4<<10
 
-	// maxThemeBody 装下 UploadTheme 的满额主题包的 JSON：bytes 在 JSON 里是带填充的标准 base64，8 MiB 编码成
-	// 4 × ⌈8388608 / 3⌉ = 11184812 字节（base64 字母表无需转义；二进制编码是原样 8 MiB，更小）；另留 4 KiB 给 expect_id
-	// （合法值至多 32 个 ASCII 字符，每个最坏转义成 6 字节）、字段名与 JSON 语法。合计 11188908 字节，约 10.7 MiB：
-	// 这也是匿名请求在 AdminService 上被读到的上限。包本身的 8 MiB 由 theme.Parse 另行核对——二进制编码的请求在这个
-	// 预算内能带更大的包。
+	// maxThemeBody 是 UploadTheme 的解码预算，装下满额主题包的 JSON：bytes 在 JSON 里是带填充的标准 base64，8 MiB
+	// 编码成 4 × ⌈8388608 / 3⌉ = 11184812 字节（base64 字母表无需转义；二进制编码是原样 8 MiB，更小）；另留 4 KiB 给
+	// expect_id（合法值至多 32 个 ASCII 字符，每个最坏转义成 6 字节）、字段名与 JSON 语法。合计 11188908 字节，约
+	// 10.7 MiB：这也是匿名请求在 UploadTheme 上被读到的上限。包本身的 8 MiB 由 theme.Parse 另行核对——二进制编码的
+	// 请求在这个预算内能带更大的包。
 	maxThemeBody = 4*((theme.MaxPackageBytes+2)/3) + 4<<10
 )
 
@@ -118,10 +120,20 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 // today 是 hub 时区（--timezone）的今天，days_left 以它为基准。
 func (s *Service) today() time.Time { return alert.Today(s.clk.Now(), s.cfg.Location) }
 
+// Handler 是 AdminService 的挂载点。两个 connect 处理器挂同一个 Service 与同一个鉴权拦截器，只差解码预算；请求按
+// 路径是否等于 UploadTheme 的过程名分给它们。生成的处理器分派过程用的也是 r.URL.Path 的精确相等，所以大预算的
+// 处理器只会执行 UploadTheme，其余过程都经小预算的处理器。
 func (s *Service) Handler() (string, http.Handler) {
-	return probev1connect.NewAdminServiceHandler(s,
-		connect.WithInterceptors(s.accessInterceptor()),
-		connect.WithReadMaxBytes(maxBody))
+	access := connect.WithInterceptors(s.accessInterceptor())
+	path, rest := probev1connect.NewAdminServiceHandler(s, access, connect.WithReadMaxBytes(maxSettingsBody))
+	_, upload := probev1connect.NewAdminServiceHandler(s, access, connect.WithReadMaxBytes(maxThemeBody))
+	return path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == probev1connect.AdminServiceUploadThemeProcedure {
+			upload.ServeHTTP(w, r)
+			return
+		}
+		rest.ServeHTTP(w, r)
+	})
 }
 
 type sessionKey struct{}
