@@ -174,7 +174,7 @@ func (a *Auth) Register(ctx context.Context, key, name string, from netip.Addr) 
 	switch {
 	case errors.Is(err, store.ErrBadKey):
 		a.mu.Lock()
-		count := a.register.record(from, a.clk.Mono())
+		count, _ := a.register.record(from, a.clk.Mono())
 		a.mu.Unlock()
 		a.log.Warn("register key mismatch", "source", DescribeSource(SourceKey(from)), "failures", count)
 		return 0, "", ErrDenied

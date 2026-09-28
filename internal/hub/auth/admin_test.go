@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -303,17 +304,118 @@ func TestFailureWindowAndFullLockDuration(t *testing.T) {
 	}
 }
 
-func TestPasswordChangeDuringLoginDoesNotIssueSession(t *testing.T) {
-	a, st, clk := setup(t)
-	ctx := context.Background()
-	channel, err := st.SaveNotifyChannel(ctx, store.NotifyChannel{Name: "login", Kind: store.ChannelWebhook, Config: `{}`})
+// selectLoginChannel 建一个 webhook 渠道并选为登录通知渠道。没选渠道时 RecordLoginEvent 不写事件，
+// 用例就看不到通知；渠道的地址不会被访问，auth 的用例不跑投递队列。
+func selectLoginChannel(t *testing.T, st *store.Store) {
+	t.Helper()
+	channel, err := st.SaveNotifyChannel(context.Background(), store.NotifyChannel{Name: "login", Kind: store.ChannelWebhook, Config: `{}`})
 	if err != nil {
 		t.Fatal(err)
 	}
 	channels := []int64{channel.ID}
-	if _, err := st.UpdateSettings(ctx, nil, &channels); err != nil {
+	if _, err := st.UpdateSettings(context.Background(), nil, &channels); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func lockEvents(t *testing.T, st *store.Store) []store.AlertEvent {
+	t.Helper()
+	events, err := st.ListAlertEvents(context.Background(), 0, 0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return slices.DeleteFunc(events, func(ev store.AlertEvent) bool { return ev.Transition != store.TransitionLoginLocked })
+}
+
+// 每次锁定通知一条：锁满后继续猜错、锁定期间给出正确密码都不再通知；锁定到期后再猜满上限是新的一次锁定，
+// 再通知一条。第二次锁定能通知，要求到期时 record 的回收清掉了上一次锁定的失败。
+func TestEachLoginLockNotifiesOnce(t *testing.T) {
+	a, st, clk := setup(t)
+	ctx := context.Background()
+	selectLoginChannel(t, st)
+	if err := st.SetAdminPassword(ctx, cheapPHC(goodPassword)); err != nil {
+		t.Fatal(err)
+	}
+	from := netip.MustParseAddr("192.0.2.9")
+	for lock := 1; lock <= 2; lock++ {
+		for i := 1; i <= failLimit+2; i++ {
+			want := ErrBadPassword
+			if i > failLimit {
+				want = ErrLocked
+			}
+			if _, err := a.Login(ctx, "wrong password here", from); !errors.Is(err, want) {
+				t.Fatalf("lock %d, attempt %d: %v, want %v", lock, i, err, want)
+			}
+		}
+		if _, err := a.Login(ctx, goodPassword, from); !errors.Is(err, ErrLocked) {
+			t.Fatalf("lock %d: correct password during the lock: %v, want ErrLocked", lock, err)
+		}
+		if evs := lockEvents(t, st); len(evs) != lock {
+			t.Fatalf("after lock %d: %d lock notifications, want %d: %+v", lock, len(evs), lock, evs)
+		}
+		clk.Advance(failWindow)
+	}
+}
+
+// lockBeforeRecordClock 在门内的第一次单调时钟读取之前调用 lock。门内读单调时钟的只有记账那一句
+// （a.login.record(from, a.clk.Mono())），调用方此时持 mu 与门，lock 在同一协程里直接改计数器。
+// 门外的读取（判锁定）靠门是否空闲区分：那时门还没取，TryLock 成功，立刻放回。
+type lockBeforeRecordClock struct {
+	*clock.Fake
+	gate  *sync.Mutex
+	lock  func(now time.Duration)
+	fired bool
+}
+
+func (c *lockBeforeRecordClock) Mono() time.Duration {
+	now := c.Fake.Mono()
+	if c.fired {
+		return now
+	}
+	if c.gate.TryLock() {
+		c.gate.Unlock()
+		return now
+	}
+	c.fired = true
+	c.lock(now)
+	return now
+}
+
+// 记账时来源已被锁满，也就是锁定期间的请求走到了 record：这次失败不再通知。判锁定与取门在同一个 mu
+// 临界区里、门只准入一个，正常调度造不出这个交错，这里在记账前直接把来源锁满。钉住的是 Login 只按
+// record 的报告通知：改成按返回的次数等于上限推断，或 record 在锁定期间报告 true，这条都会红。
+func TestLockedSourceReachingRecordDoesNotNotifyAgain(t *testing.T) {
+	a, st, clk := setup(t)
+	ctx := context.Background()
+	selectLoginChannel(t, st)
+	if err := st.SetAdminPassword(ctx, cheapPHC(goodPassword)); err != nil {
+		t.Fatal(err)
+	}
+	from := netip.MustParseAddr("192.0.2.7")
+	hook := &lockBeforeRecordClock{Fake: clk, gate: &a.loginGate, lock: func(now time.Duration) {
+		for range failLimit {
+			a.login.record(from, now)
+		}
+	}}
+	a.clk = hook
+	if _, err := a.Login(ctx, "wrong password here", from); !errors.Is(err, ErrBadPassword) {
+		t.Fatalf("login into a lock set during its verification: %v, want ErrBadPassword", err)
+	}
+	if !hook.fired {
+		t.Fatal("login did not read the monotonic clock inside the gate; the source was never locked before its record")
+	}
+	if _, err := a.Login(ctx, goodPassword, from); !errors.Is(err, ErrLocked) {
+		t.Fatalf("source locked before the record is not locked: %v", err)
+	}
+	if evs := lockEvents(t, st); len(evs) != 0 {
+		t.Fatalf("a failure recorded into an existing lock notified: %+v", evs)
+	}
+}
+
+func TestPasswordChangeDuringLoginDoesNotIssueSession(t *testing.T) {
+	a, st, clk := setup(t)
+	ctx := context.Background()
+	selectLoginChannel(t, st)
 	if err := a.SetPassword(ctx, goodPassword); err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +434,7 @@ func TestPasswordChangeDuringLoginDoesNotIssueSession(t *testing.T) {
 	<-gate.entered
 	// 另一个 Auth 不共享锁，代表 passwd 独立于服务进程的修改。
 	other := New(st, clk, a.log)
-	err = other.SetPassword(ctx, "another long password")
+	err := other.SetPassword(ctx, "another long password")
 	close(gate.release)
 	got := <-done
 	if err != nil {

@@ -115,7 +115,8 @@ func (a *Auth) SetPassword(ctx context.Context, plain string) error {
 func (a *Auth) Login(ctx context.Context, password string, from netip.Addr) (string, error) {
 	phc, newlyLocked, err := a.verifyLoginPassword(ctx, password, from)
 	if newlyLocked {
-		// 锁定也通知：密码猜测尚未成功时就让管理员得知；已锁定请求不再记失败，不重复发送。
+		// 锁定也通知：密码猜测尚未成功时就让管理员得知。newlyLocked 原样取自 failureTracker.record，它只在
+		// 设下锁定的那次调用报告 true，所以每次锁定只通知一次。
 		a.notifyLogin(ctx, store.TransitionLoginLocked, fmt.Sprintf("登录失败达到锁定阈值：来源 %s（密码）", from))
 	}
 	if err != nil {
@@ -154,6 +155,8 @@ func (a *Auth) notifyLogin(ctx context.Context, transition store.Transition, sum
 	}
 }
 
+// verifyLoginPassword 判锁定、取门，在门内校验密码并记账。返回存储的 PHC、这次失败是否设下了锁定
+// （failureTracker.record 的报告，原样传出）与校验结果。
 func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from netip.Addr) (string, bool, error) {
 	a.mu.Lock()
 	if a.login.locked(from, a.clk.Mono()) {
@@ -189,14 +192,14 @@ func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from ne
 	}
 	if !ok || !match {
 		a.mu.Lock()
-		count := a.login.record(from, a.clk.Mono())
+		count, newlyLocked := a.login.record(from, a.clk.Mono())
 		a.mu.Unlock()
 		a.log.Warn("login failed", "from", from, "failures", count)
 		if !ok {
 			a.log.Warn("login refused: no admin password is set; run `probe-hub passwd`", "from", from)
-			return "", count == failLimit, ErrNoAdmin
+			return "", newlyLocked, ErrNoAdmin
 		}
-		return "", count == failLimit, ErrBadPassword
+		return "", newlyLocked, ErrBadPassword
 	}
 	// 清账以密码校验通过为准，不以会话签发为准。会话写库不占门，放门后另一次校验
 	// 可能已记下新的失败，写库返回后再清会把它抹掉，所以在放门前清。由此签发失败时
