@@ -211,8 +211,8 @@ func (q *Queue) currentDelivery(ctx context.Context, item deliveryItem) (store.D
 
 func (q *Queue) message(ctx context.Context, ev store.AlertEvent) (Message, error) {
 	m := Message{Rule: fmt.Sprintf("规则 #%d", ev.RuleID), Node: fmt.Sprintf("节点 #%d", ev.NodeID), Transition: string(ev.Transition), Summary: ev.Summary, Value: ev.Value, At: ev.At}
-	if ev.RuleID == 0 && ev.NodeID == 0 {
-		m.Rule, m.Node, m.Kind = "系统事件", "Hub", "login"
+	if kind, ok := store.SystemEventKind(ev.Transition); ok {
+		m.Rule, m.Node, m.Kind = "系统事件", "Hub", kind
 		return m, nil
 	}
 	rules, err := q.st.ListAlertRules(ctx)

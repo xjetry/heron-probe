@@ -86,6 +86,25 @@ const (
 	TransitionLoginLocked  Transition = "login_locked"
 )
 
+// SystemEventKind 判定 transition 是否属于系统事件并给出它的种类。系统事件是 hub 自身的事件，不属于任何
+// 规则×节点，rule_id 与 node_id 都是 0；0/0 只说明它是系统事件，说明不了是哪一种，种类由 transition 决定。
+// 表外的 transition 不是系统事件。
+//
+// 写侧据此把关：RecordLoginEvent 只收登录的 transition，并把 rule_id、node_id 写成 0；RecordTransition
+// 不收系统事件的 transition，且经 setAlertState 要求规则与节点存在，两张表的 id 都从 1 起，它写的行不会是
+// 0/0。所以库里 0/0 的行都带系统事件的 transition，规则事件的行都不带。读侧（投递队列）按 transition 给出
+// 标签与种类，不按 0/0 推断。
+func SystemEventKind(t Transition) (kind string, ok bool) {
+	switch t {
+	case TransitionLoginSuccess, TransitionLoginLocked:
+		return SystemKindLogin, true
+	}
+	return "", false
+}
+
+// SystemKindLogin 是登录成功与登录锁定两种系统事件的种类，投递时作为消息的 Kind。
+const SystemKindLogin = "login"
+
 type AlertEvent struct {
 	ID             int64
 	RuleID, NodeID int64
@@ -538,6 +557,9 @@ func (s *Store) DeleteAlertState(ctx context.Context, ruleID, nodeID int64) erro
 // 状态、事件与续投队列同事务提交，崩溃不能留下已转换但没有通知记录的状态。firedExpiresOn 随状态写入，
 // 含义见 StateRow.FiredExpiresOn。
 func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, state AlertState, firedExpiresOn string, ev AlertEvent, channelIDs []int64) (AlertEvent, error) {
+	if _, system := SystemEventKind(ev.Transition); system {
+		return AlertEvent{}, fmt.Errorf("rule %d, node %d: transition %q belongs to a system event, not to a rule and node", ruleID, nodeID, ev.Transition)
+	}
 	ev.ID, ev.RuleID, ev.NodeID, ev.Deliveries = 0, ruleID, nodeID, nil
 	ev.At = time.Unix(ev.At.Unix(), 0).UTC()
 	err := s.write(ctx, func(tx *sql.Tx) error {
@@ -572,6 +594,9 @@ func recordAlertEvent(tx *sql.Tx, ev *AlertEvent, channelIDs []int64) error {
 // 登录是 hub 的全局事件，不属于规则×节点状态机；零 ID 不建立 alert_state，也不绕过规则事件的引用检查。
 // 配置读取与事件、投递写入共用事务；删渠道和关闭通知不会与此处交错产生悬空引用。
 func (s *Store) RecordLoginEvent(ctx context.Context, ev AlertEvent) (AlertEvent, error) {
+	if kind, _ := SystemEventKind(ev.Transition); kind != SystemKindLogin {
+		return AlertEvent{}, fmt.Errorf("login event transition must be %s or %s; got %q", TransitionLoginSuccess, TransitionLoginLocked, ev.Transition)
+	}
 	ev.ID, ev.RuleID, ev.NodeID, ev.Deliveries = 0, 0, 0, nil
 	ev.At = time.Unix(ev.At.Unix(), 0).UTC()
 	err := s.write(ctx, func(tx *sql.Tx) error {
