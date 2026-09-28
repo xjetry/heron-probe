@@ -154,6 +154,15 @@ hub_pids() {
     if [ "$c" = probe-hub ]; then p=${s#/proc/}; pids="$pids ${p%/comm}"; fi
   done
 }
+# purge 之后数据、二进制、单元、enable 链接、用户、组与 probe-hub 进程都不在。
+assert_purged() {
+  if [ -e /var/lib/probe ] || [ -e /usr/local/bin/probe-hub ] || [ -e /etc/systemd/system/probe-hub.service ] ||
+    [ -L /etc/systemd/system/multi-user.target.wants/probe-hub.service ] || id probe-hub || grep -q '^probe-hub:' /etc/group; then
+    fail "hub purge left data, binary, unit, enable link, user or group ($1)"
+  fi
+  hub_pids
+  [ -z "$pids" ] || fail "hub purge left probe-hub processes ($1):$pids"
+}
 systemctl --version | head -n 1
 fetch "$base/a/install-hub.sh" /root/install-hub.sh
 mkdir '/srv/probe site $literal%'
@@ -211,18 +220,21 @@ grep -q 'timezone=UTC' /root/startup.log || fail 'running hub did not apply expl
 health 18120
 verify_unit 'override upgrade'
 
-# 设 ExecStart 的 drop-in 会盖掉主单元里的参数。systemd 真的采用了它（键名两侧带空白也照样采用）时，
-# 安装器要在停服前拒绝，旧服务的同一个 pid 仍在。
+# 设 ExecStart 的 drop-in 会盖掉主单元里的参数。刚写到磁盘、还没 daemon-reload 时运行中的 hub 看不到它，
+# 安装器自己启动前的 daemon-reload 却会让它生效：安装器要先 reload 再查，在停服前拒绝，旧服务的同一个 pid 仍在。
 mkdir /etc/systemd/system/probe-hub.service.d
 printf '[Service]\nExecStart =\nExecStart = /usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --listen 127.0.0.1:18120 --timezone Europe/Berlin\n' > /etc/systemd/system/probe-hub.service.d/pia-exec.conf
-systemctl daemon-reload
-systemctl show probe-hub -p DropInPaths --value
-systemctl show probe-hub -p ExecStart --value | grep -q 'Europe/Berlin' || fail 'systemd did not apply the ExecStart drop-in'
+# 前提：此刻 DropInPaths 里还没有它，不先 reload 就查不到。
+systemctl show probe-hub -p DropInPaths --value > /root/dropins-unreloaded
+cat /root/dropins-unreloaded
+! grep -q pia-exec.conf /root/dropins-unreloaded || fail 'an unreloaded drop-in is already in DropInPaths'
 rc=0
 sh /root/install-hub.sh --base-url "$base/b" </dev/null > /root/dropin.log 2>&1 || rc=$?
 cat /root/dropin.log
 [ "$rc" != 0 ] && grep -q 'pia-exec.conf sets ExecStart' /root/dropin.log && [ "$(systemctl show probe-hub -p MainPID --value)" = "$pid" ] ||
-  fail 'ExecStart drop-in was not refused before stopping the hub'
+  fail 'unreloaded ExecStart drop-in was not refused before stopping the hub'
+# 拦下的是 systemd 真会采用的覆盖（键名两侧带空白也照样采用）：安装器 reload 之后它已生效。
+systemctl show probe-hub -p ExecStart --value | grep -q 'Europe/Berlin' || fail 'systemd did not apply the ExecStart drop-in'
 rm /etc/systemd/system/probe-hub.service.d/pia-exec.conf
 rmdir /etc/systemd/system/probe-hub.service.d
 systemctl daemon-reload
@@ -265,12 +277,25 @@ sh /root/install-hub.sh --uninstall </dev/null > /root/no-confirm.log 2>&1 || rc
 sh /root/install-hub.sh --uninstall --yes </dev/null
 [ -f /var/lib/probe/probe.db ] && id probe-hub && [ ! -e /usr/local/bin/probe-hub ] || fail 'uninstall did not preserve data and account'
 sh /root/install-hub.sh --uninstall --purge --yes </dev/null
-if [ -e /var/lib/probe ] || [ -e /usr/local/bin/probe-hub ] || [ -e /etc/systemd/system/probe-hub.service ] ||
-  [ -L /etc/systemd/system/multi-user.target.wants/probe-hub.service ] || id probe-hub || grep -q '^probe-hub:' /etc/group; then
-  fail 'hub purge left data, binary, unit, enable link, user or group'
-fi
-hub_pids
-[ -z "$pids" ] || fail "hub purge left probe-hub processes:$pids"
+assert_purged 'after purge'
+
+# purge 不删 drop-in 目录。首装时单元文件还不存在，DropInPaths 查不到其中的 drop-in；安装器要在写好主单元
+# 之后、enable 与 start 之前拦住设了 ExecStart 的 drop-in。
+mkdir /etc/systemd/system/probe-hub.service.d
+printf '[Service]\nExecStart=\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --listen 127.0.0.1:18120\n' > /etc/systemd/system/probe-hub.service.d/pia-exec.conf
+# 前提：单元不存在时，reload 之后 DropInPaths 里也没有它。
+systemctl daemon-reload
+systemctl show probe-hub -p DropInPaths --value > /root/dropins-absent
+cat /root/dropins-absent
+! grep -q pia-exec.conf /root/dropins-absent || fail 'DropInPaths lists drop-ins of a unit that does not exist'
+rc=0
+sh /root/install-hub.sh --base-url "$base/b" </dev/null > /root/first-dropin.log 2>&1 || rc=$?
+cat /root/first-dropin.log
+[ "$rc" != 0 ] && grep -q 'pia-exec.conf sets ExecStart' /root/first-dropin.log && ! systemctl is-enabled --quiet probe-hub && ! systemctl is-active --quiet probe-hub ||
+  fail 'first install with an ExecStart drop-in was not refused before enabling and starting'
+rm -r /etc/systemd/system/probe-hub.service.d
+sh /root/install-hub.sh --uninstall --purge --yes </dev/null
+assert_purged 'after the refused first install'
 echo 'HUB ACCEPT OK'
 HUB_ACCEPT
   then
