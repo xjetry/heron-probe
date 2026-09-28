@@ -3,9 +3,11 @@ import { QueryProbesResponseSchema } from "../gen/probe/v1/query_pb";
 import { ProbeKind } from "../gen/probe/v1/types_pb";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, screen, fireEvent, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { NodeDetail } from "./NodeDetail";
+
+afterEach(() => vi.useRealTimers());
 
 vi.mock("../components/Chart", () => ({
   Chart: ({ labels, unit, data }: { labels: string[]; unit: string; data: unknown[] }) => (
@@ -88,6 +90,51 @@ it("listNodes 挂起、历史就绪时图表与“加载中…”同时在", asy
   expect(screen.getByText("加载中…")).toBeInTheDocument();
   expect(screen.queryByText("主机名")).toBeNull();
   await act(async () => { release(await listNodes()); });
+});
+
+it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅和“非当前窗口”提示", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  let fail = false;
+  const queryMetrics = vi.fn<NonNullable<AdminImpl["queryMetrics"]>>(async () => {
+    if (fail) throw new ConnectError("history down", Code.Unavailable);
+    return { level: "1m", stepS: 60, ts: [], series: [] };
+  });
+  renderWithAdmin({ ...defaultImpl, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  expect(await screen.findAllByTestId("chart")).toHaveLength(7);
+  await screen.findByText(/级别 1m，每点 60s/);
+  fail = true;
+  // 窗口右端每分钟前进一次（History.tsx 的 REFRESH_MS），换键后的这次请求失败。
+  await act(async () => { await vi.advanceTimersByTimeAsync(60_000 + 100); });
+  expect(await screen.findByRole("alert")).toHaveTextContent("history down");
+  expect(screen.getAllByTestId("chart")).toHaveLength(7);
+  expect(screen.getByText(/级别 1m，每点 60s/)).toBeInTheDocument();
+  expect(screen.getByText(/图表还不是 24h 窗口的结果/)).toBeInTheDocument();
+});
+
+it("切到另一个节点、新节点历史未返回时不显示上一个节点的图表与级别", async () => {
+  let releaseNode8!: () => void;
+  const node8Gate = new Promise<void>((resolve) => { releaseNode8 = resolve; });
+  const listTwoNodes = async () => ({
+    nodes: [
+      { id: 7n, name: "db-07", public: false, note: "", sortOrder: 0, createdAt: 0n },
+      { id: 8n, name: "db-08", public: false, note: "", sortOrder: 1, createdAt: 0n },
+    ],
+  });
+  const queryMetrics = vi.fn<NonNullable<AdminImpl["queryMetrics"]>>(async (req) => {
+    if (req.nodeId === 8n) await node8Gate;
+    return req.nodeId === 8n ? { level: "5m", stepS: 300, ts: [], series: [] } : { level: "1m", stepS: 60, ts: [], series: [] };
+  });
+  const { router } = renderWithAdmin({ ...defaultImpl, listNodes: listTwoNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  await screen.findByRole("heading", { name: "db-07" });
+  await screen.findByText(/级别 1m，每点 60s/);
+  await act(async () => { router.navigate("/nodes/8"); });
+  expect(await screen.findByRole("heading", { name: "db-08" })).toBeInTheDocument();
+  // 8 的历史还没回来：不能把 7 的"级别 1m"标签或图表当成 8 的显示，这段时间没有图表比显示错的更安全。
+  expect(screen.queryByText(/级别 1m/)).toBeNull();
+  expect(screen.queryAllByTestId("chart")).toHaveLength(0);
+  await act(async () => { releaseNode8(); });
+  expect(await screen.findByText(/级别 5m，每点 300s/)).toBeInTheDocument();
+  expect(screen.getAllByTestId("chart")).toHaveLength(7);
 });
 
 it("头部链接到该节点的告警事件", async () => {

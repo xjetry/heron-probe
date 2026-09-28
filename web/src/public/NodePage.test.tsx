@@ -1,5 +1,6 @@
 import { create } from "@bufbuild/protobuf";
-import { cleanup, screen } from "@testing-library/react";
+import { Code, ConnectError } from "@connectrpc/connect";
+import { act, cleanup, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { PublicService } from "../gen/probe/v1/public_pb";
 import { QueryProbesResponseSchema } from "../gen/probe/v1/query_pb";
@@ -67,6 +68,27 @@ it("静态信息卡带费用与到期两行；主机信息缺失时卡片照样�
   await show(10);
   expect(screen.getAllByRole("definition").map((d) => d.textContent)).toEqual(["2026-09-20（已过期 7 天）"]);
   expect(screen.getByText("2026-09-20（已过期 7 天）")).toHaveClass("error");
+});
+
+it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅和“非当前窗口”提示", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  let fail = false;
+  const queryMetrics = vi.fn(async () => {
+    if (fail) throw new ConnectError("history down", Code.Unavailable);
+    return { level: "1m", stepS: 60, ts: [], series: [] };
+  });
+  const queryProbes = vi.fn(async () => ({ level: "1m", stepS: 60, series: [] }));
+  renderWithService(PublicService, { getSnapshot: snapshot, queryMetrics, queryProbes }, [{ path: "/nodes/:id", Component: NodePage }], "/nodes/7");
+  await screen.findByRole("heading", { level: 1, name: "edge-1" });
+  expect(await screen.findAllByTestId("chart")).toHaveLength(7);
+  await screen.findByText(/级别 1m，每点 60s/);
+  fail = true;
+  // 窗口右端每分钟前进一次（History.tsx 的 REFRESH_MS），换键后的这次请求失败。
+  await act(async () => { await vi.advanceTimersByTimeAsync(60_000 + 100); });
+  expect(await screen.findByRole("alert")).toHaveTextContent("history down");
+  expect(screen.getAllByTestId("chart")).toHaveLength(7);
+  expect(screen.getByText(/级别 1m，每点 60s/)).toBeInTheDocument();
+  expect(screen.getByText(/图表还不是 24h 窗口的结果/)).toBeInTheDocument();
 });
 
 it("节点页标题带国家 / 地区徽章", async () => {
