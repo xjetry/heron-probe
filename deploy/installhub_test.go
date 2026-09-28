@@ -251,6 +251,9 @@ func TestHubExecStartForms(t *testing.T) {
 			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--public-dir=/srv/a\\"`},
 		{name: "CRLF continuation", crlf: true, exec: "ExecStart=/usr/local/bin/probe-hub serve \\\n  --db /var/lib/probe/probe.db --listen 127.0.0.1:9000",
 			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:9000"`},
+		// 注释行在续行判断之前跳过，续行中间夹的注释行不打断续行，也不被拼进命令。
+		{name: "comment inside a continuation", exec: "ExecStart=/usr/local/bin/probe-hub serve \\\n# listen only on loopback\n  --db /var/lib/probe/probe.db --listen 127.0.0.1:9000",
+			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:9000"`},
 		{name: "spaces around the equals sign", exec: `ExecStart = /usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db`,
 			want: hubCmd + ` "--db=/var/lib/probe/probe.db"`},
 		{name: "CRLF line endings", crlf: true,
