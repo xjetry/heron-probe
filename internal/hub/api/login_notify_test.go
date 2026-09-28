@@ -391,6 +391,9 @@ func TestLoginNotifyOnlyUpdatePreservesAppearance(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	before := saveSettings(t, h, validSettings())
+	// 外观任一项非空就按整体替换校验，即使请求里同时有 login_notify：只给标题、缺了 theme 的请求整次拒绝。
+	partial := &probev1.Settings{Title: "只改标题", LoginNotify: &probev1.LoginNotify{}}
+	rejected(t, h, partial, `settings.theme must be one of auto, light, dark; got ""`, before)
 	putNotifySettings(t, h, `{"settings":{"loginNotify":{}}}`, http.StatusOK)
 	after := currentSettings(t, h)
 	if after.GetTitle() != before.GetTitle() || after.GetTheme() != before.GetTheme() || after.GetAccentColor() != before.GetAccentColor() || after.GetLogo() != before.GetLogo() || after.GetCustomCss() != before.GetCustomCss() {

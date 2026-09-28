@@ -138,12 +138,18 @@ func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.Ge
 	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: adminSettingsProto(st)}), nil
 }
 
+// appearanceGiven 判定请求是否给出了外观：五项任一非空即给出，按整体替换校验（theme 必须合法，其余为空串即
+// 回到内置值）。合法外观必须带 theme，五项全空本来就不是一次有效的外观替换，把它当作"没给外观"不会吞掉任何
+// 合法写入；只提交带 presence 的设置分组（login_notify）的请求因此不碰外观，不会用空值覆盖另一页面刚保存的
+// 外观。新增的 presence 分组只需各自判定是否在场，不改这里。
+func appearanceGiven(in *probev1.Settings) bool {
+	return in.GetTitle() != "" || in.GetTheme() != "" || in.GetAccentColor() != "" || in.GetLogo() != "" || in.GetCustomCss() != ""
+}
+
 func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probev1.UpdateSettingsRequest]) (*connect.Response[probev1.UpdateSettingsResponse], error) {
 	in := req.Msg.GetSettings()
 	var site *store.SiteSettings
-	// 合法外观必须包含 theme，五项全空不是一次有效的外观替换。
-	// 独立设置请求不携带外观，不能用空值覆盖另一页面刚保存的外观。
-	if in.GetLoginNotify() == nil || in.GetTitle() != "" || in.GetTheme() != "" || in.GetAccentColor() != "" || in.GetLogo() != "" || in.GetCustomCss() != "" {
+	if appearanceGiven(in) {
 		st, err := cleanSettings(in)
 		if err != nil {
 			return nil, err
@@ -156,6 +162,11 @@ func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probe
 			return nil, invalid("settings.login_notify.channel_ids must list at most %d channel IDs, duplicates included; got %d", maxChannelIDs, n)
 		}
 		channels = &ln.ChannelIds
+	}
+	// 一组都没给出的请求什么也改不了。拒绝并点名两组，客户端漏填字段时得到能照着改的错误，而不是一次什么都
+	// 没写的"成功"。
+	if site == nil && channels == nil {
+		return nil, invalid("settings must give the appearance (settings.theme is required, one of %s) or settings.login_notify; got neither", strings.Join(themes, ", "))
 	}
 	st, err := s.store.UpdateSettings(ctx, site, channels)
 	if err != nil {

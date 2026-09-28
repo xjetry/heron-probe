@@ -1418,7 +1418,9 @@ export const TestNotifyChannelResponseSchema: GenMessage<TestNotifyChannelRespon
   messageDesc(file_probe_v1_admin, 56);
 
 /**
- * 管理设置。外观五项作为一组整体替换（必须给出合法 theme）；仅提交登录通知配置时不改外观。
+ * 管理设置。外观五项作为一组：任一项非空即视为给出外观，按整体替换校验（theme 必须合法，其余为空串即回到
+ * 内置值）；五项全为空串即视为没给外观，不改外观。login_notify 带 presence，缺席即不变。一次更新至少给出其中
+ * 一组，否则返回 InvalidArgument。
  *
  * @generated from message probe.v1.Settings
  */
