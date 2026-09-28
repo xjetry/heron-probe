@@ -182,8 +182,8 @@ func TestOpenMMDBRejectsAnEmptyPath(t *testing.T) {
 	}
 }
 
-// 报不出大小的设备文件（/dev/zero 的 Stat 大小为 0）过了读之前的检查，读取仍按上限截断并拒绝，读进内存的不超过
-// 上限：上限只由 Stat 承载时，这里会读到内存耗尽。用 1 MiB 的上限，免得用例本身读 256 MiB。
+// 报不出大小的设备文件（/dev/zero 的 Stat 大小为 0）过了读之前的检查，读取仍按上限截断并拒绝：上限只由 Stat 承载、
+// 读取不设上限时，这里会一直读下去。用 1 MiB 的上限，免得用例本身读 256 MiB。
 func TestReadLimitedCapsWhatStatCannotSize(t *testing.T) {
 	info, err := os.Stat("/dev/zero")
 	if err != nil || info.Size() > 1<<20 || info.IsDir() {
@@ -202,7 +202,7 @@ func TestReadLimitedCapsWhatStatCannotSize(t *testing.T) {
 }
 
 // 数据段中间几个字节被改坏的库：不做校验的读取器照样能打开它（所以拒绝来自 Verify，不是打开时的格式检查），
-// OpenMMDB 在启动时就拒绝，而不是通过启动之后每次查询都失败退避。
+// OpenMMDB 在启动时就拒绝，不让它带着坏记录通过启动。
 func TestOpenMMDBRejectsACorruptDataSection(t *testing.T) {
 	path, data := fixtureCopy(t)
 	plain, err := maxminddb.OpenBytes(data)

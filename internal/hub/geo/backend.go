@@ -82,7 +82,7 @@ type MMDB struct {
 }
 
 // OpenMMDB 把 path 处的 MaxMind 库整读进内存并校验。Verify 遍历搜索树与数据段，损坏的文件在启动时失败，而不是通过
-// 启动之后每次查询都失败退避。
+// 启动、等查到落在坏记录上的地址时才失败退避。
 func OpenMMDB(path string) (*MMDB, error) {
 	fail := func(err error) (*MMDB, error) { return nil, fmt.Errorf("--geo-mmdb %q: %w", path, err) }
 	// 空路径在 MMDBPath 里与 HTTP 后端无法区分，面板会把本地库回显成 HTTP 服务；它也不是一个可打开的文件，按配置错误拒绝。
@@ -104,7 +104,8 @@ func OpenMMDB(path string) (*MMDB, error) {
 }
 
 // readLimited 读入 path 处的文件，至多 limit 字节。目录与 Stat 报出的大小超过 limit 的文件在读之前拒绝；读取另按
-// limit 截断，Stat 之后文件变大、或 path 是报不出大小的设备文件时，读进内存的也不超过 limit。
+// limit 截断，Stat 之后文件变大、或 path 是报不出大小的设备文件时，读进内存的至多 limit+1 字节（多读的一个字节用来
+// 判定超限）。
 func readLimited(path string, limit int64) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
