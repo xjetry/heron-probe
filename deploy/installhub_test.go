@@ -14,8 +14,8 @@ import (
 // systemctl 记下参数；start 在假 /proc 里放一个以服务用户运行、exe 指向 /usr/local/bin/probe-hub 的进程 4242，
 // stop 把它拿走；show 回答 MainPID 与 DropInPaths（state/dropins 里空格分隔的路径，是目标系统里的真实路径）。
 // state/dropins 是 systemd 已加载的 drop-in，照 systemd 252 的实测：daemon-reload 时才从 state/dropins-disk
-// （磁盘上的 drop-in）取，单元文件不存在时为空。STUB_DROPIN_ON_STOP 在 stop 时把一个 drop-in 写进
-// state/dropins-disk。
+// （磁盘上的 drop-in）取，单元文件不存在时为空。STUB_STOP_FAILS 让 stop 失败，STUB_STOP_LEAVES_PROCESS 让 stop
+// 返回 0 却留下进程，STUB_DROPIN_ON_STOP 在 stop 时把一个 drop-in 写进 state/dropins-disk。
 // chown 只记参数：测试以普通用户运行，改不了属主，属主由真机验收回读。chmod 记下参数后转调真的，权限断言看的
 // 是真实的文件模式。curl 只认 file:// 地址并复制文件；apt-get 记下参数，install 时建出 CA 证书包。
 // systemctl、curl、apt-get 读尽 stdin：脚本以 sh -s 从 stdin 运行，漏掉 </dev/null 的调用会吞掉脚本余下部分，
@@ -36,7 +36,8 @@ case "$*" in
     printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$P/4242/status"
     rm -f "$P/4242/exe"; ln -s /usr/local/bin/probe-hub "$P/4242/exe";;
   "stop probe-hub")
-    rm -rf "$P/4242"
+    [ -z "${STUB_STOP_FAILS-}" ] || { echo "Failed to stop probe-hub.service: Access denied" >&2; exit 1; }
+    [ -n "${STUB_STOP_LEAVES_PROCESS-}" ] || rm -rf "$P/4242"
     [ -z "${STUB_DROPIN_ON_STOP-}" ] || echo "$STUB_DROPIN_ON_STOP" > "$STUB_STATE/dropins-disk";;
   daemon-reload)
     if [ ! -f "$PROBE_INSTALL_ROOT/etc/systemd/system/probe-hub.service" ]; then : > "$STUB_STATE/dropins"
@@ -639,6 +640,28 @@ func TestHubCommandLineRefusesFlagsOutsideTheTable(t *testing.T) {
 		if c := e.calls(); code != 2 || !strings.Contains(out, "usage: install-hub.sh") || len(c) != 1 || c[0] != "" {
 			t.Fatalf("%q: exit %d, calls %q:\n%s", args, code, c, out)
 		}
+	}
+}
+
+// stop 失败或旧进程不退时 hub 并没有停下：报出原因、退出非零，不说已停，也不换二进制、不启动。
+func TestHubFailedStopDoesNotSayStopped(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, env, want string }{
+		{"stop fails", "STUB_STOP_FAILS=1", "failed to stop probe-hub"},
+		{"old process lingers", "STUB_STOP_LEAVES_PROCESS=1", "probe-hub is still running: uid 481 processes: 4242"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newHubInstalled(t)
+			e.vars = []string{tc.env}
+			out, code := e.hubInstall()
+			if code != 1 || !strings.Contains(out, tc.want) || strings.Contains(out, "probe-hub is stopped") {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			if !strings.Contains(e.file("usr/local/bin/probe-hub"), "# v1 amd64") || index(e.calls(), "systemctl start") >= 0 {
+				t.Fatalf("nothing may be replaced or started after a failed stop: calls %q", e.calls())
+			}
+		})
 	}
 }
 
