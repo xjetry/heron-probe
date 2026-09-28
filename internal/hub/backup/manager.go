@@ -123,15 +123,23 @@ func (m *Manager) runLayer(ctx context.Context, i int) {
 	defer ticker.Stop()
 	var logged bool
 	var lastLog time.Duration
+	var wake <-chan struct{}
+	if i == 0 {
+		wake = m.st.ThemeChanges()
+	}
+	force := false
 	for {
-		if err := m.tickLayer(ctx, i); err != nil && ctx.Err() == nil && (!logged || m.clk.Mono()-lastLog >= failureLogInterval) {
+		if err := m.tickLayerWithWake(ctx, i, force); err != nil && ctx.Err() == nil && (!logged || m.clk.Mono()-lastLog >= failureLogInterval) {
 			m.log.Error("backup scheduling failed", "layer", i, "err", err)
 			logged, lastLog = true, m.clk.Mono()
 		}
+		force = false
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-wake:
+			force = true
 		}
 	}
 }
@@ -190,6 +198,10 @@ func (m *Manager) initialize(ctx context.Context) error {
 }
 
 func (m *Manager) tickLayer(ctx context.Context, i int) error {
+	return m.tickLayerWithWake(ctx, i, false)
+}
+
+func (m *Manager) tickLayerWithWake(ctx context.Context, i int, force bool) error {
 	m.runMu[i].Lock()
 	defer m.runMu[i].Unlock()
 	if err := ctx.Err(); err != nil {
@@ -197,6 +209,13 @@ func (m *Manager) tickLayer(ctx context.Context, i int) error {
 	}
 	if err := m.initialize(ctx); err != nil {
 		return err
+	}
+	if i == 0 {
+		select {
+		case <-m.st.ThemeChanges():
+			force = true
+		default:
+		}
 	}
 	cfg, err := m.st.BackupSettings(ctx)
 	if err != nil {
@@ -216,7 +235,7 @@ func (m *Manager) tickLayer(ctx context.Context, i int) error {
 		layer = "metrics"
 		interval, keep = cfg.MetricsIntervalS, cfg.MetricsKeep
 	}
-	if state.attempted && m.clk.Mono()-state.lastAttempt < time.Duration(interval)*time.Second {
+	if !force && state.attempted && m.clk.Mono()-state.lastAttempt < time.Duration(interval)*time.Second {
 		return nil
 	}
 	category, code, detail := m.perform(ctx, cfg, layer, keep)
@@ -316,6 +335,12 @@ func (m *Manager) perform(ctx context.Context, cfg store.BackupSettings, layer s
 	}
 	if err := os.Remove(dir); err != nil {
 		return "cleanup", 0, err.Error()
+	}
+	// 唤醒和周期都执行完整配置轮；主题成功不能掩盖快照或保留的故障，整轮成功后才记账和恢复通知。
+	if layer == "config" {
+		if category, code, detail := m.syncThemes(ctx, cfg, client); category != "" {
+			return category, code, detail
+		}
 	}
 	if err := m.st.RecordBackupSuccess(ctx, layer); err != nil {
 		return "record", 0, err.Error()
