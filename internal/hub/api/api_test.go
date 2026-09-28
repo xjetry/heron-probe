@@ -757,7 +757,8 @@ func TestSessionBoundaryAndRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	cookies := (&http.Response{Header: out.Header()}).Cookies()
-	if len(cookies) != 1 || cookies[0].MaxAge != -1 || cookies[0].Value != "" || cookies[0].Path != "/" {
+	// 清除用的 cookie 与签发的一样 host-only：带 Domain 的清除项是另一个 cookie，清不掉 host-only 的会话。
+	if len(cookies) != 1 || cookies[0].MaxAge != -1 || cookies[0].Value != "" || cookies[0].Path != "/" || cookies[0].Domain != "" {
 		t.Fatalf("logout cookie = %v", cookies)
 	}
 	replay := connect.NewRequest(&probev1.ListNodesRequest{})

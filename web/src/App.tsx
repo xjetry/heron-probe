@@ -11,6 +11,7 @@ import { AlertEvents } from "./pages/AlertEvents";
 import { Channels } from "./pages/Channels";
 import { ApiTokens } from "./pages/ApiTokens";
 import { Appearance } from "./pages/Appearance";
+import { Themes } from "./pages/Themes";
 import { Storage } from "./pages/Storage";
 import { Sessions } from "./pages/Sessions";
 
@@ -32,6 +33,7 @@ export const router = createBrowserRouter(
         { path: "channels", Component: Channels },
         { path: "tokens", Component: ApiTokens },
         { path: "appearance", Component: Appearance },
+        { path: "themes", Component: Themes },
         { path: "storage", Component: Storage },
         { path: "security", Component: Sessions },
         { path: "register", Component: RegisterWindow },

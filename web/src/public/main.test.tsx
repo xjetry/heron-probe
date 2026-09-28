@@ -1,4 +1,5 @@
-import { focusManager, onlineManager } from "@tanstack/react-query";
+import { Code, ConnectError } from "@connectrpc/connect";
+import { focusManager, onlineManager, QueryClient } from "@tanstack/react-query";
 import { act, within } from "@testing-library/react";
 import * as ReactDOM from "react-dom/client";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
@@ -14,6 +15,7 @@ vi.mock("react-dom/client", async (importOriginal) => {
 const fetches: { url: string; init?: RequestInit }[] = [];
 let root: HTMLDivElement;
 let reactRoot: ReactDOM.Root | undefined;
+let queryClient: QueryClient | undefined;
 
 function json(body: unknown) {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -31,10 +33,13 @@ beforeAll(async () => {
   document.body.append(root);
   window.history.pushState({}, "", "/");
   const createRoot = vi.mocked(ReactDOM.createRoot);
+  const mount = vi.spyOn(QueryClient.prototype, "mount");
   await act(async () => {
     await import("./main.tsx");
   });
   reactRoot = createRoot.mock.results[0]?.value;
+  queryClient = mount.mock.instances[0] as QueryClient | undefined;
+  mount.mockRestore();
 });
 
 afterAll(async () => {
@@ -48,6 +53,22 @@ test("入口在 / 挂载公开总览并应用站点设置", async () => {
   expect(await within(root).findByRole("link", { name: "机房状态" })).toBeInTheDocument();
   expect(document.documentElement.dataset.theme).toBe("dark");
   expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#123abc");
+});
+
+// 生产 client 的重试谓词是 retry.ts 的白名单：节点不公开的 NotFound、限流的 ResourceExhausted 一次就交给页面，
+// 网络与反代的瞬时错误（Unavailable）再试两次。
+test.each([
+  ["NotFound", 1, Code.NotFound],
+  ["ResourceExhausted", 1, Code.ResourceExhausted],
+  ["Unavailable", 3, Code.Unavailable],
+] as const)("查询得到 %s 时共请求 %i 次", async (_, calls, code) => {
+  const request = vi.fn(async () => {
+    throw new ConnectError("request failed", code);
+  });
+  await act(async () => {
+    await queryClient!.fetchQuery({ queryKey: ["retry", code], queryFn: request, retryDelay: 0 }).catch(() => {});
+  });
+  expect(request).toHaveBeenCalledTimes(calls);
 });
 
 // 公开请求用 GET（curl 同款的 Connect GET 形态），不带 cookie。

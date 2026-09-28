@@ -73,6 +73,12 @@ docker run -d --name probe --restart unless-stopped --stop-timeout 30 --network 
 # 反代容器以 --network probe-net 加入，把请求转给 http://probe:8080
 ```
 
+### 公开页主题
+
+公开页除了在面板的「外观」页改标题、配色、logo 与 CSS，还可以换成第三方主题：一个只调 `PublicService` 的静态前端，打成 zip 在面板的「主题」页上传、启用。主题托管在单独的主机名上，hub 以 `--theme-origin https://status.example.com` 启动，并让反代把这个主机名也转给 hub、原样转发 `Host`（nginx 要写 `proxy_set_header Host $host;`）。这个主机名必须与面板的不同，只差端口不算。不给 `--theme-origin` 时主题功能关闭。
+
+主题的开发、包布局、清单字段、上限与本地调试见 [主题开发指南](docs/theme-guide.md)。
+
 ### 时区
 
 镜像里没有 `/etc/localtime`（时区数据已嵌入二进制）。不指定时区时，hub 按 UTC 判定流量周期的重置日与节点到期日的天边界，并在启动日志里告警 `host time zone could not be resolved; using UTC`。用 `-e TZ=Asia/Shanghai` 指定（不替换默认参数），或在写全的参数里加 `--timezone Asia/Shanghai`；两者都给时以 `--timezone` 为准。

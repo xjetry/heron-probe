@@ -1,11 +1,15 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
+	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -269,4 +273,198 @@ func TestEnableThemeKeepsAtMostOneAndDeleteFallsBack(t *testing.T) {
 	if th, content, err := s.ThemePreview(ctx, "b"); err != nil || th.ID != "b" || content != nil {
 		t.Fatalf("preview of a theme without one = %+v %q %v, want the theme and no content", th, content, err)
 	}
+}
+
+// 托管读的是启用中主题的整包：别的主题里同名的文件不会被读到；没有启用中的主题与"启用了但包里没有某个路径"是两个不同的
+// 答案，前者让主题 origin 回落内置公开页，后者按包内的回落规则处理。
+func TestEnabledThemePackageReadsOnlyTheEnabledPackage(t *testing.T) {
+	s, _ := open(t)
+	read := func() (map[string]string, bool) {
+		t.Helper()
+		gen, files, enabled, err := s.EnabledThemePackage(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if now := s.ThemeGeneration(); gen != now {
+			t.Fatalf("package read at generation %d with no concurrent writes, want the current generation %d", gen, now)
+		}
+		out := map[string]string{}
+		for p, c := range files {
+			out[p] = string(c)
+		}
+		return out, enabled
+	}
+	if files, enabled := read(); enabled || len(files) != 0 {
+		t.Fatalf("no theme installed: %v %v, want nothing enabled", files, enabled)
+	}
+	putTheme(t, s, "a", "index.html", "assets/app.js")
+	putTheme(t, s, "b", "index.html", "assets/app.js", "only-b.css")
+	if files, enabled := read(); enabled || len(files) != 0 {
+		t.Fatalf("themes installed but none enabled: %v %v, want nothing enabled", files, enabled)
+	}
+	if err := s.EnableTheme(t.Context(), "a"); err != nil {
+		t.Fatal(err)
+	}
+	if files, enabled := read(); !enabled || !reflect.DeepEqual(files, map[string]string{"assets/app.js": "a:assets/app.js", "index.html": "a:index.html"}) {
+		t.Fatalf("theme a enabled: %v %v, want exactly a's package", files, enabled)
+	}
+	if err := s.DeleteTheme(t.Context(), "a"); err != nil {
+		t.Fatal(err)
+	}
+	if files, enabled := read(); enabled || len(files) != 0 {
+		t.Fatalf("enabled theme deleted: %v %v, want nothing enabled", files, enabled)
+	}
+}
+
+// 代数随 PutTheme、EnableTheme、DeleteTheme 的每次提交前进，被拒绝、未落库的写不动它：托管只在代数变了时重读，
+// 漏掉一个提交就会一直服务旧包。
+func TestThemeGenerationAdvancesOnEveryCommittedThemeWrite(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	step := func(what string, want uint64, op func() error, wantErr bool) {
+		t.Helper()
+		before := s.ThemeGeneration()
+		err := op()
+		if (err != nil) != wantErr {
+			t.Fatalf("%s: err = %v, want error %v", what, err, wantErr)
+		}
+		if got := s.ThemeGeneration() - before; got != want {
+			t.Fatalf("%s: generation advanced by %d, want %d", what, got, want)
+		}
+	}
+	put := func(id string, mustExist bool, limit int, files ...ThemeFile) func() error {
+		return func() error {
+			_, err := s.PutTheme(ctx, Theme{ID: id, Name: id, Version: "1", UploadedAt: time.Unix(100, 0)}, files, mustExist, limit)
+			return err
+		}
+	}
+	index := ThemeFile{Path: "index.html", Content: []byte("x")}
+	step("install a", 1, put("a", false, 20, index), false)
+	step("replace a", 1, put("a", true, 20, index), false)
+	step("install b", 1, put("b", false, 20, index), false)
+	step("replace with a duplicate path", 0, put("a", true, 20, index, ThemeFile{Path: "dup"}, ThemeFile{Path: "dup"}), true)
+	step("update a missing theme", 0, put("c", true, 20, index), true)
+	step("install past the limit", 0, put("c", false, 2, index), true)
+	step("enable a", 1, func() error { return s.EnableTheme(ctx, "a") }, false)
+	step("enable a missing theme", 0, func() error { return s.EnableTheme(ctx, "missing") }, true)
+	step("enable none", 1, func() error { return s.EnableTheme(ctx, "") }, false)
+	step("delete b", 1, func() error { return s.DeleteTheme(ctx, "b") }, false)
+	step("delete a missing theme", 0, func() error { return s.DeleteTheme(ctx, "b") }, true)
+}
+
+// 整包是一个快照：写者不停地整包替换、删除、重装、启用时，每次读出的要么是没有启用中的主题，要么是某一次提交的完整的包
+// （文件一个不少、全部出自同一次写入），且内容不旧于标注的代数。任何一次读拆成两条语句，两条之间落下的提交就会让
+// 读出的包缺文件或混着两次写入；代数若在读库之后才取，读的过程中落下的提交会让旧内容标上新代数。
+func TestEnabledThemePackageIsOneSnapshotNotOlderThanItsGeneration(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	const nFiles = 100
+	pad := strings.Repeat("-", 1000)
+	// 每次写入的文件内容都以写入时的序号开头：同一个包里的文件序号必须相同。
+	install := func(seq uint64) error {
+		files := make([]ThemeFile, 0, nFiles)
+		for i := range nFiles {
+			p := fmt.Sprintf("assets/f%03d.js", i)
+			if i == 0 {
+				p = "index.html"
+			}
+			files = append(files, ThemeFile{Path: p, Content: fmt.Appendf(nil, "%d|%s", seq, pad)})
+		}
+		_, err := s.PutTheme(ctx, Theme{ID: "a", Name: "a", Version: "1", UploadedAt: time.Unix(100, 0)}, files, false, 20)
+		return err
+	}
+	if err := install(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnableTheme(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
+	// state 是某一代提交之后启用中主题的样子：enabled 为假时没有启用中的主题，否则 seq 是它的包是哪一次写入的。
+	type state struct {
+		enabled bool
+		seq     uint64
+	}
+	base := s.ThemeGeneration()
+	var mu sync.Mutex
+	states := map[uint64]state{base: {true, 0}} // 代数 → 该代提交之后的状态，由写者在每次提交返回后登记。
+	done := make(chan struct{})
+	writeErr := make(chan error, 1)
+	go func() {
+		defer close(done)
+		cur := state{true, 0}
+		for seq := uint64(1); seq <= 400; seq++ {
+			var err error
+			switch seq % 6 {
+			case 0, 1, 2: // 整包替换，启用状态沿用。
+				err = install(seq)
+				cur.seq = seq
+			case 3:
+				err = s.DeleteTheme(ctx, "a")
+				cur = state{false, 0}
+			case 4: // 重装：新装的主题未启用。
+				err = install(seq)
+				cur = state{false, 0}
+			case 5:
+				err = s.EnableTheme(ctx, "a")
+				cur = state{true, seq - 1}
+			}
+			if err != nil {
+				writeErr <- err
+				return
+			}
+			mu.Lock()
+			states[s.ThemeGeneration()] = cur
+			mu.Unlock()
+		}
+	}()
+	type observation struct {
+		gen   uint64
+		state state
+	}
+	var seen []observation
+	for reading := true; reading; {
+		select {
+		case <-done:
+			reading = false
+		default:
+		}
+		gen, files, enabled, err := s.EnabledThemePackage(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		obs := observation{gen: gen, state: state{enabled: enabled}}
+		if enabled {
+			seqs := map[string]bool{}
+			for _, c := range files {
+				seqs[string(c[:bytes.IndexByte(c, '|')])] = true
+			}
+			if len(files) != nFiles || files["index.html"] == nil || len(seqs) != 1 {
+				t.Fatalf("read at generation %d: %d files (index.html present: %v) from writes %v, want all %d files of one write", gen, len(files), files["index.html"] != nil, slices.Sorted(maps.Keys(seqs)), nFiles)
+			}
+			for seq := range seqs {
+				fmt.Sscan(seq, &obs.state.seq)
+			}
+		} else if len(files) != 0 {
+			t.Fatalf("read at generation %d: no theme enabled but %d files", gen, len(files))
+		}
+		seen = append(seen, obs)
+	}
+	select {
+	case err := <-writeErr:
+		t.Fatal(err)
+	default:
+	}
+	// 标注为代数 g 的内容必须是 g 或更晚某一代的状态：写者先提交后递增，读者先取代数后读库。
+	final := s.ThemeGeneration()
+	for _, o := range seen {
+		ok := false
+		for g := o.gen; g <= final && !ok; g++ {
+			st, known := states[g]
+			ok = known && st == o.state
+		}
+		if !ok {
+			t.Fatalf("read labelled generation %d returned %+v, which is no state at or after that generation", o.gen, o.state)
+		}
+	}
+	t.Logf("%d package reads across %d writes", len(seen), final-base)
 }

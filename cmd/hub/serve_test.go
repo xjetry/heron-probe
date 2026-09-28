@@ -232,12 +232,23 @@ func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
 	}
 }
 
-// serve 把"是否配了 --theme-origin"交给管理服务：没配时主题方法 FailedPrecondition，配了就能调。
+// serve 把 --theme-origin 与"是否给了 --public-dir"交给管理服务：没配 origin 时主题方法 FailedPrecondition；配了就能调，
+// ListThemes 回显规范形态的 origin 与 public_dir，面板据此给出主题的地址与"主 origin 被目录接管"的提示。
 func TestServePassesThemeOriginToAdmin(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("site"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
-		flags []string
-		want  connect.Code
-	}{{nil, connect.CodeFailedPrecondition}, {[]string{"--theme-origin", "https://status.example.com"}, 0}} {
+		flags     []string
+		want      connect.Code
+		origin    string
+		publicDir bool
+	}{
+		{nil, connect.CodeFailedPrecondition, "", false},
+		{[]string{"--theme-origin", "https://Status.Example.com/"}, 0, "https://status.example.com", false},
+		{[]string{"--theme-origin", "http://status.example.com:8081", "--public-dir", dir}, 0, "http://status.example.com:8081", true},
+	} {
 		t.Run(fmt.Sprint(tc.flags), func(t *testing.T) {
 			db := filepath.Join(t.TempDir(), "hub.db")
 			const pw = "initial sufficiently long password"
@@ -252,9 +263,12 @@ func TestServePassesThemeOriginToAdmin(t *testing.T) {
 			}
 			req := connect.NewRequest(&probev1.ListThemesRequest{})
 			req.Header().Set("Cookie", strings.Split(logged.Header().Get("Set-Cookie"), ";")[0])
-			_, err = client.ListThemes(t.Context(), req)
+			resp, err := client.ListThemes(t.Context(), req)
 			if got := connect.CodeOf(err); (err == nil && tc.want != 0) || (err != nil && got != tc.want) {
 				t.Fatalf("ListThemes with flags %v: %v, want code %v", tc.flags, err, tc.want)
+			}
+			if err == nil && (resp.Msg.GetThemeOrigin() != tc.origin || resp.Msg.GetPublicDir() != tc.publicDir) {
+				t.Fatalf("ListThemes with flags %v: theme_origin %q public_dir %v, want %q %v", tc.flags, resp.Msg.GetThemeOrigin(), resp.Msg.GetPublicDir(), tc.origin, tc.publicDir)
 			}
 		})
 	}
@@ -594,5 +608,42 @@ func TestServePublicDirReplacesRootButNotPanelOrRPC(t *testing.T) {
 	}
 	if resp, body := fetch("/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D"); resp.StatusCode != http.StatusOK || strings.Contains(body, "shadow") {
 		t.Fatalf("RPC path was shadowed: %d %q", resp.StatusCode, body)
+	}
+}
+
+// --public-dir 只接管主 origin：主题 origin 上没有启用中的主题时服务的是内置公开页，而不是目录（§10.1）。经真实 serve
+// 核对 serve 交给主题 origin 的回落处理器；主 origin 同时仍是目录。
+func TestServeThemeOriginIgnoresPublicDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("custom site"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	url, _, _ := startTestHub(t, filepath.Join(t.TempDir(), "hub.db"), clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+		"--public-dir", dir, "--theme-origin", "https://status.example.com")
+	fetch := func(host string) (int, string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, url+"/nodes/3", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = host
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp.StatusCode, string(b)
+	}
+	want := httptest.NewRecorder()
+	web.PublicHandler().ServeHTTP(want, httptest.NewRequest(http.MethodGet, "/nodes/3", nil))
+	if code, body := fetch("status.example.com"); code != want.Code || body != want.Body.String() {
+		t.Fatalf("theme origin /nodes/3: %d %q, want the built-in public page %d %q", code, body, want.Code, want.Body.String())
+	}
+	if code, body := fetch(strings.TrimPrefix(url, "http://")); code != http.StatusOK || body != "custom site" {
+		t.Fatalf("main origin /nodes/3: %d %q, want the --public-dir page", code, body)
 	}
 }

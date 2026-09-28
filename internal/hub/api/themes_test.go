@@ -26,7 +26,7 @@ import (
 // newThemeHarness 是配了 --theme-origin 的 hub；newHarness 与 serve 的默认一样没有配。
 func newThemeHarness(t *testing.T) *harness {
 	t.Helper()
-	h := newZonedHarness(t, "", time.UTC, store.DefaultRetention, withConfig(func(c *Config) { c.ThemeOrigin = true }))
+	h := newZonedHarness(t, "", time.UTC, store.DefaultRetention, withConfig(func(c *Config) { c.ThemeOrigin = "https://status.example.com" }))
 	h.login(t)
 	return h
 }

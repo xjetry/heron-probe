@@ -1,5 +1,5 @@
-// Package web 服务 hub 的静态页面：嵌入的管理面板（/admin/）、嵌入的内置公开页（/），以及运维用
-// --public-dir 指定的替换目录。三者共用 serveFiles。
+// Package web 服务 hub 的静态页面：嵌入的管理面板（/admin/）、嵌入的内置公开页（/）、运维用 --public-dir 指定的
+// 替换目录，以及主题 origin 上启用中的主题（存在库里）。四者共用 serveFiles。
 //
 // 两份嵌入产物由 Vite 构建到本包的 dist 与 dist-public 目录，不入库；目录里只保证有一个占位文件，
 // 所以 embed 永远成立，而"有没有真的构建过"由 index.html 是否存在判定。
@@ -43,13 +43,15 @@ func PublicHandler() http.Handler { return embedded(publicDist, "dist-public", "
 // closedPage 是总闸关闭时 assets/ 之外的公开路径得到的页面。
 const closedPage = `<!doctype html><meta charset="utf-8"><title>probe</title><p>公开页已关闭</p>`
 
-// PublicGate 统一包住内置页与自定义目录；只挂在公开根路径，管理面板和 RPC 由 mux 的更具体路由承载。
-// 关闭时不调用文件服务，任何脚本或自定义资源都拿不到：文件路径（如 /theme.js）得到的是说明页而不是文件内容。
+// PublicGate 统一包住 RPC 之外的公开静态面：主 origin 的内置页或 --public-dir 的目录，以及主题 origin 的根路径（启用中
+// 主题的文件与回落的内置页）。只挂在公开根路径，管理面板和 RPC 由 mux 的更具体路由承载。
+// 关闭时不调用下游，任何脚本或自定义资源都拿不到：文件路径（如 /theme.js）得到的是说明页而不是文件内容；主题 origin
+// 上连库都不读。
 //
 // 关闭时的分流沿用 serveFiles 的回落规则，同一个 relPath 与 underAssets：assets/ 下 404，其余路径回说明页。
 // 开闸时 serveFiles 把 assets/ 之外缺失的路径交给客户端路由，分享出去的 /nodes/3 是一个页面；两处规则一旦分叉，
 // 同一个前端路由关闸后就成了 404，访客分不清是站点关了还是链接失效。说明页与 404 都带内置页的安全头，
-// 不随来源（--public-dir 的 dirHeaders）放宽。
+// 不随来源（--public-dir 与主题共用的 customHeaders）放宽。
 func PublicGate(next http.Handler, enabled func() bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if enabled() {
@@ -101,10 +103,16 @@ func embedded(root fs.FS, dir, prefix, notBuilt string) http.Handler {
 
 // opener 打开 rel：rel 已按 URL 路径语义清理，相对挂载根，不以 / 开头，不含 ..。
 // 打开不得阻塞：FIFO 在没有写端时挂住的是 open 本身，serveFiles 在打开之后才看文件类型，兜不住这一步。
-// DirHandler 以 O_NONBLOCK 打开；embed 里没有特殊文件。新增来源要自己满足这一条。
+// DirHandler 以 O_NONBLOCK 打开；embed 里没有特殊文件；ThemeHandler 从内存里的快照打开。新增来源要自己满足这一条。
 type opener func(rel string) (fs.File, error)
 
-// serveFiles 是三处静态服务共用的核心。命中普通文件就返回它；rel 在 assets 之下（underAssets）而未命中时返回 404——
+// entityTagger 是来源能给出的强校验器：打开的文件实现它时，serveRegular 把它作为 ETag 发出，ServeContent 据
+// If-None-Match 回 304。值必须随内容变化而变化（主题按内容哈希算）；给不出这样的值的来源不实现它，不发 ETag。
+type entityTagger interface {
+	EntityTag() string
+}
+
+// serveFiles 是各处静态服务共用的核心。命中普通文件就返回它；rel 在 assets 之下（underAssets）而未命中时返回 404——
 // 用 HTML 回应 script 标签会被浏览器按 MIME 拒绝，404 才能让缺失可见；其余路径回落到 index.html，交给客户端路由。
 // 不在特殊文件上挂住靠两条各自的事实：打开本身不阻塞由 opener 保证；打开之后不是普通文件（目录、FIFO、设备）
 // 就当作不存在、不读，所以任何来源都不列目录，也不从 FIFO 与设备读。
@@ -114,10 +122,7 @@ type opener func(rel string) (fs.File, error)
 func serveFiles(prefix string, headers func(http.Header), cacheFor func(rel string) string, open opener) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		headers(w.Header())
-		rel := relPath(r.URL.Path, prefix)
-		if rel == "" {
-			rel = "index.html"
-		}
+		rel := requestRel(r.URL.Path, prefix)
 		if !hidden(rel) && serveRegular(w, r, open, rel, cacheFor(rel)) {
 			return
 		}
@@ -143,9 +148,17 @@ func hidden(rel string) bool {
 	return strings.HasPrefix(rel, ".") || strings.Contains(rel, "/.")
 }
 
-// relPath 先按 URL 路径语义清理再去掉挂载前缀。三种来源对 . 与 .. 的处理不同（embed 经 fs.ValidPath 一律拒绝，
-// os.Root 接受不越界的 ..），先清理，同一个 URL 在三处才落到同一个文件名，assets/ 的 404 判定也看清理后的路径。
-// 越界由来源自己拒绝（fs.ValidPath、os.Root），不靠这里。清理后不在前缀之下的（如 /admin 本身）按挂载根处理。
+// requestRel 是请求路径对应的文件名：挂载根本身是 index.html。serveFiles 打开的只有它与回落用的 index.html。
+func requestRel(urlPath, prefix string) string {
+	if rel := relPath(urlPath, prefix); rel != "" {
+		return rel
+	}
+	return "index.html"
+}
+
+// relPath 先按 URL 路径语义清理再去掉挂载前缀。各来源对 . 与 .. 的处理不同（embed 经 fs.ValidPath 一律拒绝，
+// os.Root 接受不越界的 ..，主题按库里的键精确匹配），先清理，同一个 URL 在各处才落到同一个文件名，assets/ 的 404 判定
+// 也看清理后的路径。越界由来源自己拒绝（fs.ValidPath、os.Root；主题的键由 theme.Parse 限定为包内规范路径），不靠这里。清理后不在前缀之下的（如 /admin 本身）按挂载根处理。
 func relPath(urlPath, prefix string) string {
 	if rest, ok := strings.CutPrefix(path.Clean("/"+urlPath), prefix); ok {
 		return rest
@@ -169,6 +182,9 @@ func serveRegular(w http.ResponseWriter, r *http.Request, open opener, rel, cach
 		return false
 	}
 	w.Header().Set("Cache-Control", cacheControl)
+	if e, ok := f.(entityTagger); ok {
+		w.Header().Set("ETag", e.EntityTag())
+	}
 	http.ServeContent(w, r, info.Name(), info.ModTime(), content)
 	return true
 }

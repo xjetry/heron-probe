@@ -4702,8 +4702,13 @@ func (*ListThemesRequest) Descriptor() ([]byte, []int) {
 }
 
 type ListThemesResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Themes        []*Theme               `protobuf:"bytes,1,rep,name=themes,proto3" json:"themes,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Themes []*Theme               `protobuf:"bytes,1,rep,name=themes,proto3" json:"themes,omitempty"`
+	// hub 的 --theme-origin，规范形态 scheme://host[:port]：启用中的主题在这个 origin 的根路径上托管，没有启用中的主题时
+	// 那里是内置公开页。
+	ThemeOrigin string `protobuf:"bytes,2,opt,name=theme_origin,json=themeOrigin,proto3" json:"theme_origin,omitempty"`
+	// hub 给了 --public-dir：面板所在 origin 的公开页由那个目录接管，与主题无关；启用主题只改变 theme_origin 上的页面。
+	PublicDir     bool `protobuf:"varint,3,opt,name=public_dir,json=publicDir,proto3" json:"public_dir,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4743,6 +4748,20 @@ func (x *ListThemesResponse) GetThemes() []*Theme {
 		return x.Themes
 	}
 	return nil
+}
+
+func (x *ListThemesResponse) GetThemeOrigin() string {
+	if x != nil {
+		return x.ThemeOrigin
+	}
+	return ""
+}
+
+func (x *ListThemesResponse) GetPublicDir() bool {
+	if x != nil {
+		return x.PublicDir
+	}
+	return false
 }
 
 type EnableThemeRequest struct {
@@ -6456,9 +6475,12 @@ const file_probe_v1_admin_proto_rawDesc = "" +
 	"\texpect_id\x18\x02 \x01(\tR\bexpectId\"<\n" +
 	"\x13UploadThemeResponse\x12%\n" +
 	"\x05theme\x18\x01 \x01(\v2\x0f.probe.v1.ThemeR\x05theme\"\x13\n" +
-	"\x11ListThemesRequest\"=\n" +
+	"\x11ListThemesRequest\"\x7f\n" +
 	"\x12ListThemesResponse\x12'\n" +
-	"\x06themes\x18\x01 \x03(\v2\x0f.probe.v1.ThemeR\x06themes\"$\n" +
+	"\x06themes\x18\x01 \x03(\v2\x0f.probe.v1.ThemeR\x06themes\x12!\n" +
+	"\ftheme_origin\x18\x02 \x01(\tR\vthemeOrigin\x12\x1d\n" +
+	"\n" +
+	"public_dir\x18\x03 \x01(\bR\tpublicDir\"$\n" +
 	"\x12EnableThemeRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"\x15\n" +
 	"\x13EnableThemeResponse\"$\n" +

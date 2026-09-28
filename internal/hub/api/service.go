@@ -80,9 +80,12 @@ type Config struct {
 	// Retention 是 serve 交给维护循环的同一份保留期，存储健康按它判定最老桶是否超期。零值会把最老桶早于
 	// 一个桶长加一个维护间隔之前的表都标成超期，New 用 Retention.Validate 把它当作装配错误拒绝。
 	Retention store.Retention
-	// ThemeOrigin 为真表示 serve 给了 --theme-origin。为假时主题的五个方法一律 FailedPrecondition（requireThemeOrigin）：
-	// 零值是关闭，与"未配置独立 origin 即不开启上传与托管"同一方向。
-	ThemeOrigin bool
+	// ThemeOrigin 是 serve 的 --theme-origin（规范形态，经 ListThemes 回显给面板）。空串时主题的五个方法一律
+	// FailedPrecondition（requireThemeOrigin）：零值是关闭，与"未配置独立 origin 即不开启上传与托管"同一方向。
+	ThemeOrigin string
+	// PublicDir 为真表示 serve 给了 --public-dir，面板所在 origin 的公开页由目录接管；经 ListThemes 回显，面板据此
+	// 标明启用主题不影响那一页。
+	PublicDir bool
 	// Geo 是 serve 选定并交给国家查询器的同一个后端对象，New 要求非 nil。面板回显的后端与本地库路径取自它
 	// （Settings.geo_backend、geo_mmdb_path），不另由启动参数推导，回显因此不会与查询器实际用的后端分叉；仅回显，
 	// 不落入运行设置。
