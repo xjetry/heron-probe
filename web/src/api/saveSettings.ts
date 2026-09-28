@@ -10,6 +10,7 @@ import { AdminService, GetSettingsResponseSchema, type Settings } from "../gen/p
 // 为什么互斥：每个表单保存成功后都把 hub 的回显整份写进 getSettings 的缓存（useAdoptSavedSettings）。回显是那次提交
 // 之后的库，只有它是最后一次提交时，写进缓存的才是库的现状。两个保存同时在途时，runWriter 按先后提交，两个响应却各走
 // 各的请求，可以按与提交相反的顺序到达：后写进缓存的是先提交的那份回显，缺了另一次保存的改动，要等重新拉取成功才纠正。
+// 在重新拉取成功之前，从缓存初始化的表单会把较早那份回显里的旧值再提交一次（再保存即写回），另一次保存的改动就此丢失。
 // 键上有在途的保存时，其余表单都不能提交；各表单的 onSuccess 返回 useAdoptSavedSettings 的 promise，在途一直持续到
 // 重新拉取结束，同一时刻至多一份回显在写缓存。
 export const SAVE_SETTINGS = ["probe.v1.AdminService/UpdateSettings"] as const;
@@ -19,7 +20,8 @@ export const useSettingsSaving = (): boolean => useIsMutating({ mutationKey: SAV
 // 设置表单保存成功后都经它：先把 hub 的回显写进 getSettings 的缓存，再失效。回显就是库里的已保存值（外观、总闸、国家
 // 查询两项与备份都由 SaveSettings 在同一个写事务里读回），缓存据此更新，不依赖刷新成功。只失效时，刷新一旦失败，缓存就
 // 停在保存前的值：外观表单没动过的总闸开关显示缓存值，停在保存前；重新进入页面时三个表单显示的也是保存前的值。写与
-// 失效用同一个键，作用在同一组查询上。
+// 失效用同一个键，作用在同一组查询上。写进缓存的回显必须是库的现状：在重新拉取成功之前，从缓存初始化的表单会把较早那份
+// 回显里的旧值再提交一次（再保存即写回），所以它依赖 SAVE_SETTINGS 的互斥保证同一时刻至多一份回显在写缓存。
 export function useAdoptSavedSettings() {
   const qc = useQueryClient();
   return (settings: Settings | undefined) => {

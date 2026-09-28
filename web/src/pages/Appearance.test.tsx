@@ -436,4 +436,45 @@ describe("设置表单的保存互斥", () => {
       expect(hub.sent).toHaveLength(1);
     });
   }
+
+  // 互斥的理由而不是它的机制：两个保存同时在途、响应逆序到达时，后写进缓存的是先提交的那份回显，缺了另一次保存的改动；
+  // 刷新失败时缓存一直停在那里，重新进入页面的表单从它初始化，再保存即把旧值写回。断言写这些后果，换成别的机制也照样约束。
+  it("两个表单的保存响应逆序到达，重新进入的表单也不会把旧值写回", async () => {
+    const hub = statefulHub({ ...current, publicEnabled: true, geoEnabled: true, geoUrl: "https://ipinfo.io/{ip}/country" });
+    const { router, queryClient } = renderWithAdmin(hub.impl, [...routes, { path: "/elsewhere", Component: () => null }], "/appearance");
+    const appearance = await form();
+    const geo = async () => within(await screen.findByRole("form", { name: "国家 / 地区查询" }));
+    const toggle = async () => (await geo()).getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" });
+    expect(await toggle()).toBeChecked();
+    hub.failReads();
+    hub.holdResponses();
+    fireEvent.change(appearance.getByLabelText("标题"), { target: { value: "新标题" } });
+    fireEvent.click(appearance.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(hub.sent).toHaveLength(1));
+    fireEvent.click(await toggle());
+    fireEvent.submit(screen.getByRole("form", { name: "国家 / 地区查询" }));
+    // 放行前等在途的保存都到达 hub（互斥时查询表单的提交不发出，在途的只有外观那一个），放行后等它们连同刷新都结束。
+    await waitFor(() => expect(hub.sent).toHaveLength(queryClient.isMutating()));
+    hub.deliverNewestFirst();
+    await waitFor(() => expect(queryClient.isMutating()).toBe(0));
+    expect(appearance.getByRole("status")).toHaveTextContent("已保存");
+    if (!(await geo()).queryByRole("status")) {
+      const save = (await geo()).getByRole("button", { name: "保存" });
+      await waitFor(() => expect(save).toBeEnabled());
+      fireEvent.click(save);
+      await waitFor(() => expect(hub.sent).toHaveLength(2));
+      hub.deliverNewestFirst();
+    }
+    expect(await (await geo()).findByRole("status")).toHaveTextContent("已保存");
+    expect(hub.state()).toMatchObject({ title: "新标题", geoEnabled: false });
+    await act(() => router.navigate("/elsewhere"));
+    await act(() => router.navigate("/appearance"));
+    expect(await toggle()).not.toBeChecked();
+    fireEvent.change((await geo()).getByLabelText("服务地址"), { target: { value: "https://geo.example/{ip}" } });
+    fireEvent.click((await geo()).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(hub.sent).toHaveLength(3));
+    hub.deliverNewestFirst();
+    expect(await (await geo()).findByRole("status")).toHaveTextContent("已保存");
+    expect(hub.state().geoEnabled).toBe(false);
+  });
 });
