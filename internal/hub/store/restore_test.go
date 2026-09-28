@@ -10,8 +10,78 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/sqlitetest"
 )
+
+// 快照、指标层与目标库都可能见过已清理的投递行。恢复后新批次必须越过三者的高水位，不能只越过现存行。
+func TestRestoreThenRecordTransitionPreservesBatchSequence(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		metrics          bool
+		targetHigh, want int64
+	}{
+		{"config_highest", false, 30, 51},
+		{"metrics_highest", true, 30, 71},
+		{"target_highest", true, 90, 91},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, ids, channels, _ := alertFixture(t)
+			rule := saveRule(t, source, AlertRule{Kind: KindOffline})
+			event := recordTargets(t, source, rule.ID, ids[0], DeliveryTarget{ChannelID: channels[0].ID})
+			retire := func(s *Store, high int64) {
+				t.Helper()
+				err := s.write(t.Context(), func(tx *sql.Tx) error {
+					if _, err := tx.Exec("INSERT INTO alert_delivery (id,event_id,channel_id,batch_id) VALUES (?,?,?,?)", high, event.ID, channels[0].ID, high); err != nil {
+						return err
+					}
+					_, err := tx.Exec("DELETE FROM alert_delivery WHERE id=?", high)
+					return err
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			retire(source, 50)
+			config := filepath.Join(t.TempDir(), "config.db")
+			if err := source.SnapshotConfig(t.Context(), config); err != nil {
+				t.Fatal(err)
+			}
+			metrics := ""
+			if tc.metrics {
+				retire(source, 70)
+				metrics = filepath.Join(t.TempDir(), "metrics.db")
+				if err := source.SnapshotMetrics(t.Context(), metrics); err != nil {
+					t.Fatal(err)
+				}
+			}
+			target, _, _, _ := alertFixture(t)
+			retire(target, tc.targetHigh)
+			if err := target.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Restore(t.Context(), target.path, config, metrics, "", source.clk.Now(), slog.Default()); err != nil {
+				t.Fatal(err)
+			}
+			restored, err := Open(target.path, clock.Real(), slog.Default(), RequireCurrentSchema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer restored.Close()
+			next, err := restored.RecordTransition(t.Context(), rule.ID, ids[0], StateOK, "", time.Time{}, AlertEvent{Transition: TransitionRecovered, At: source.clk.Now()}, []DeliveryTarget{{ChannelID: channels[0].ID}})
+			if err != nil {
+				t.Fatalf("record transition after restore: %v", err)
+			}
+			saved, err := restored.GetAlertEvent(t.Context(), next.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(saved.Deliveries) != 1 || saved.Deliveries[0].ID != tc.want || saved.Deliveries[0].BatchID != tc.want {
+				t.Fatalf("delivery after restore=%+v, want new row id and batch %d", saved.Deliveries, tc.want)
+			}
+		})
+	}
+}
 
 func TestNodeDependentTablesComplete(t *testing.T) {
 	s, _ := open(t)

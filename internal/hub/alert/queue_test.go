@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,13 +38,26 @@ func queueChannel(t *testing.T, f *fixture, url string) store.NotifyChannel {
 func queueEvent(t *testing.T, f *fixture, cs ...store.NotifyChannel) store.AlertEvent {
 	t.Helper()
 	r := f.rule(t, offline())
-	var ids []int64
+	var ids []store.DeliveryTarget
 	for _, c := range cs {
-		ids = append(ids, c.ID)
+		ids = append(ids, store.DeliveryTarget{ChannelID: c.ID})
 	}
 	ev, err := f.st.RecordTransition(t.Context(), r.ID, f.ids[0], store.StateFiring, "", time.Time{}, store.AlertEvent{At: f.clk.Now(), Summary: "persisted summary", Value: 5, Transition: store.TransitionFiring}, ids)
 	must(t, err)
 	return ev
+}
+
+// advancing 是记录等待并推进夹具时钟的 sleep：worker 空闲时按单调钟等到最早的重试时刻，时钟不走它就一直等不到。
+// 调用方在 worker 停下之后读 sleeps。
+func advancing(f *fixture, sleeps *[]time.Duration) func(context.Context, time.Duration) error {
+	var mu sync.Mutex
+	return func(_ context.Context, d time.Duration) error {
+		mu.Lock()
+		defer mu.Unlock()
+		*sleeps = append(*sleeps, d)
+		f.clk.Advance(d)
+		return nil
+	}
 }
 func startQueue(t *testing.T, q *Queue) func() {
 	t.Helper()
@@ -96,14 +110,9 @@ func TestQueueDeliversAndRecords(t *testing.T) {
 	defer srv.Close()
 	a, b := queueChannel(t, f, srv.URL+"/one"), queueChannel(t, f, srv.URL+"/two")
 	ev := queueEvent(t, f, a, b)
-	var mu sync.Mutex
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, func(_ context.Context, d time.Duration) error {
-		mu.Lock()
-		defer mu.Unlock()
-		sleeps = append(sleeps, d)
-		return nil
-	}, f.log)
+	start := f.clk.Now()
+	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, advancing(f, &sleeps), f.log)
 	q.Enqueue(ev)
 	stop := startQueue(t, q)
 	ds := awaitDeliveries(t, f, ev.ID, allDone)
@@ -111,9 +120,11 @@ func TestQueueDeliversAndRecords(t *testing.T) {
 	if one.Load() != 1 || two.Load() != 2 || ds[0].Attempts != 1 || ds[1].Attempts != 2 {
 		t.Fatalf("calls=%d/%d deliveries=%+v", one.Load(), two.Load(), ds)
 	}
-	for _, d := range ds {
-		if !d.OK || !d.Done || d.Failure != store.FailureNone || d.HTTPStatus != 0 || d.LastError != "" || !d.DeliveredAt.Equal(f.clk.Now()) {
-			t.Fatalf("delivery=%+v", d)
+	for i, d := range ds {
+		// 第二个渠道在第一次失败后等过 1 s 才成功，送达时刻随之推后。
+		at := start.Add(time.Duration(i) * time.Second)
+		if !d.OK || !d.Done || d.Failure != store.FailureNone || d.HTTPStatus != 0 || d.LastError != "" || !d.DeliveredAt.Equal(at) {
+			t.Fatalf("delivery=%+v, want delivered at %v", d, at)
 		}
 	}
 	if !reflect.DeepEqual(sleeps, []time.Duration{time.Second}) {
@@ -130,7 +141,7 @@ func TestQueueGivesUpAfterMaxAttempts(t *testing.T) {
 			defer srv.Close()
 			ev := queueEvent(t, f, queueChannel(t, f, srv.URL))
 			var sleeps []time.Duration
-			q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, func(_ context.Context, d time.Duration) error { sleeps = append(sleeps, d); return nil }, f.log)
+			q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, advancing(f, &sleeps), f.log)
 			q.Enqueue(ev)
 			stop := startQueue(t, q)
 			ds := awaitDeliveries(t, f, ev.ID, allDone)
@@ -148,21 +159,22 @@ func TestQueueGivesUpAfterMaxAttempts(t *testing.T) {
 			if !reflect.DeepEqual(sleeps, backoffs) {
 				t.Fatalf("backoff=%v want %v", sleeps, backoffs)
 			}
-			// 启动行的 delivery_retry_wait 与 e2e 的等待上限都取 DeliveryRetryWait；这里把它钉到 deliver
-			// 在可重试的渠道失败下实际等过的总和上，两者分叉时在这里红，而不是让上限静默偏离真实等待。
+			// 启动行的 delivery_retry_wait 与 e2e 的等待上限都取 DeliveryRetryWait；这里把它钉到 worker
+			// 在可重试的渠道失败下实际等过的总和上，两者分叉时在这里红，而不是让上限静默偏离真实等待。夹具墙钟停在
+			// 整秒，not_before 的取整不添等待；墙钟不在整秒时每次重试多等不到 1 s（见 DeliveryRetryWait）。
 			if status == 500 {
 				var total time.Duration
 				for _, d := range sleeps {
 					total += d
 				}
 				if total != DeliveryRetryWait() {
-					t.Fatalf("deliver waited %v in total between retries, DeliveryRetryWait reports %v", total, DeliveryRetryWait())
+					t.Fatalf("worker waited %v in total between retries, DeliveryRetryWait reports %v", total, DeliveryRetryWait())
 				}
 			}
 			fresh := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, f.log)
 			must(t, fresh.Requeue(t.Context()))
-			if len(fresh.items) != 0 {
-				t.Fatalf("terminal delivery requeued: %d", len(fresh.items))
+			if len(fresh.ready) != 0 {
+				t.Fatalf("terminal delivery requeued: %d", len(fresh.ready))
 			}
 		})
 	}
@@ -174,10 +186,10 @@ func TestQueueRequeuesPendingOnLoad(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
 	defer srv.Close()
 	ev := queueEvent(t, f, queueChannel(t, f, srv.URL))
-	if _, err := f.st.BeginDeliveryAttempt(t.Context(), ev.Deliveries[0].ID); err != nil {
+	if _, err := f.st.BeginBatchAttempt(t.Context(), ev.Deliveries[0].BatchID, []int64{ev.Deliveries[0].ID}); err != nil {
 		t.Fatal(err)
 	}
-	must(t, f.st.UpdateDelivery(t.Context(), ev.Deliveries[0].ID, store.DeliveryResult{Failure: store.FailureTransport, Error: "prior failure"}))
+	must(t, f.st.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, store.DeliveryResult{Failure: store.FailureTransport, Error: "prior failure"}))
 	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, f.log)
 	must(t, q.Requeue(t.Context()))
 	stop := startQueue(t, q)
@@ -188,7 +200,7 @@ func TestQueueRequeuesPendingOnLoad(t *testing.T) {
 	}
 	fresh := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, f.log)
 	must(t, fresh.Requeue(t.Context()))
-	if len(fresh.items) != 0 {
+	if len(fresh.ready) != 0 {
 		t.Fatal("successful delivery requeued")
 	}
 }
@@ -197,21 +209,17 @@ func TestQueueDropsOldestWhenFull(t *testing.T) {
 	f := newFixture(t)
 	var logs bytes.Buffer
 	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, slog.New(slog.NewJSONHandler(&logs, nil)))
-	if cap(q.items) != QueueCap || QueueCap != 256 {
-		t.Fatalf("capacity=%d", cap(q.items))
+	if q.limit != QueueCap || QueueCap != 256 {
+		t.Fatalf("capacity=%d", q.limit)
 	}
-	q.items = make(chan deliveryItem, 2)
+	q.limit = 2
 	for id := int64(1); id <= 3; id++ {
-		q.Enqueue(store.AlertEvent{ID: id, Deliveries: []store.Delivery{{ID: id, EventID: id}}})
+		q.Enqueue(store.AlertEvent{ID: id, Deliveries: []store.Delivery{{ID: id, EventID: id, BatchID: id}}})
 	}
-	if len(q.items) != 2 {
-		t.Fatalf("len=%d", len(q.items))
+	if !slices.Equal(q.ready, []int64{2, 3}) || !q.overflow {
+		t.Fatalf("retained=%v overflow=%v", q.ready, q.overflow)
 	}
-	a, b := <-q.items, <-q.items
-	if a.delivery.ID != 2 || b.delivery.ID != 3 {
-		t.Fatalf("retained=%d,%d", a.delivery.ID, b.delivery.ID)
-	}
-	if !strings.Contains(logs.String(), `"level":"WARN"`) || !strings.Contains(logs.String(), `"delivery_id":1`) {
+	if !strings.Contains(logs.String(), `"level":"WARN"`) || !strings.Contains(logs.String(), `"batch_id":1`) {
 		t.Fatalf("missing drop warning: %s", logs.String())
 	}
 }
@@ -230,7 +238,7 @@ func TestSendTestDoesNotRecord(t *testing.T) {
 	if len(f.events(t)) != 0 {
 		t.Fatal("test notification persisted event")
 	}
-	pending, err := f.st.PendingDeliveries(t.Context())
+	pending, err := f.st.PendingBatches(t.Context())
 	must(t, err)
 	if len(pending) != 0 {
 		t.Fatal("test notification persisted delivery")
@@ -272,8 +280,8 @@ func TestQueueCancellationLeavesPending(t *testing.T) {
 	}
 	fresh := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, f.log)
 	must(t, fresh.Requeue(t.Context()))
-	if len(fresh.items) != 1 {
-		t.Fatalf("pending not requeued: %d", len(fresh.items))
+	if len(fresh.ready) != 1 {
+		t.Fatalf("pending not requeued: %d", len(fresh.ready))
 	}
 }
 

@@ -233,6 +233,9 @@ func parseChannelConfig(c store.NotifyChannel) (channelConfig, error) {
 	if err := checkName(c.Name); err != nil {
 		return parsed, err
 	}
+	if c.RatePerMinute < 0 {
+		return parsed, invalid("rate_per_minute", "must not be negative (0 means unlimited)")
+	}
 	switch c.Kind {
 	case store.ChannelTelegram:
 		cfg, err := decodeTelegram(c.Config)
@@ -260,6 +263,15 @@ func parseChannelConfig(c store.NotifyChannel) (channelConfig, error) {
 		return parsed, oneOf("kind", string(c.Kind), string(store.ChannelTelegram), string(store.ChannelWebhook))
 	}
 	return parsed, nil
+}
+
+// DefaultRatePerMinute 是保存渠道时未给出节奏上限所取的值（§9.3）：Telegram 20，群聊的文档值；Webhook 0（不限），
+// 接收方多是机器，没有公认的上限。
+func DefaultRatePerMinute(kind store.ChannelKind) int {
+	if kind == store.ChannelTelegram {
+		return 20
+	}
+	return 0
 }
 
 func CheckChannel(c store.NotifyChannel) error {

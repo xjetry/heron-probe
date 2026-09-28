@@ -7,8 +7,8 @@ import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Channels } from "./Channels";
 
 const channels = create(ListNotifyChannelsResponseSchema, { channels: [
-  { id: 1n, name: "tg", kind: ChannelKind.TELEGRAM, telegram: { chatId: "42", hasBotToken: true }, createdAt: 1_700_000_000n },
-  { id: 2n, name: "hook", kind: ChannelKind.WEBHOOK, webhook: { method: "POST", hasUrl: true, urlHost: "https://hooks.example", headerNames: ["Authorization"], bodyTemplate: "{{.Summary}}" }, createdAt: 1_700_000_000n },
+  { id: 1n, name: "tg", kind: ChannelKind.TELEGRAM, telegram: { chatId: "42", hasBotToken: true }, createdAt: 1_700_000_000n, ratePerMinute: 20 },
+  { id: 2n, name: "hook", kind: ChannelKind.WEBHOOK, webhook: { method: "POST", hasUrl: true, urlHost: "https://hooks.example", headerNames: ["Authorization"], bodyTemplate: "{{.Summary}}" }, createdAt: 1_700_000_000n, ratePerMinute: 0 },
 ] });
 const routes = [{ path: "/channels", Component: Channels }];
 const render = (impl: AdminImpl) => renderWithAdmin({ listNotifyChannels: async () => channels, ...impl }, routes, "/channels");
@@ -39,6 +39,8 @@ it("列表只显示非凭据字段", async () => {
   render({});
   expect(await screen.findByRole("cell", { name: "会话 42" })).toBeInTheDocument();
   expect(screen.getByRole("cell", { name: "POST https://hooks.example，头 Authorization" })).toBeInTheDocument();
+  expect(screen.getByRole("cell", { name: "每分钟 20 条" })).toBeInTheDocument();
+  expect(screen.getByRole("cell", { name: "不限" })).toBeInTheDocument();
 });
 
 it("新建 Telegram 渠道只发 telegram 配置，成功后表单复位", async () => {
@@ -51,8 +53,9 @@ it("新建 Telegram 渠道只发 telegram 配置，成功后表单复位", async
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
   await waitFor(() => expect(saved).toHaveLength(1));
   const c = saved[0].channel!;
-  expect({ id: c.id, name: c.name, kind: c.kind, token: c.telegram?.botToken, chat: c.telegram?.chatId, webhook: c.webhook }).toEqual(
-    { id: 0n, name: "值班群", kind: ChannelKind.TELEGRAM, token: "123:abc", chat: "-100", webhook: undefined });
+  // 节奏上限留空时不发这个字段，由 hub 按种类取默认值。
+  expect({ id: c.id, name: c.name, kind: c.kind, token: c.telegram?.botToken, chat: c.telegram?.chatId, webhook: c.webhook, rate: c.ratePerMinute }).toEqual(
+    { id: 0n, name: "值班群", kind: ChannelKind.TELEGRAM, token: "123:abc", chat: "-100", webhook: undefined, rate: undefined });
   await waitFor(() => expect(within(screen.getByRole("form", { name: "新建通知渠道" })).getByLabelText("名称")).toHaveValue(""));
 });
 
@@ -321,4 +324,62 @@ it("移除中间请求头行不搬动其余行的输入节点", async () => {
   const rest = within(form).getAllByLabelText("请求头值");
   expect(rest.map((el) => (el as HTMLInputElement).value)).toEqual(["v1", "v3"]);
   expect(rest[1]).toBe(third);
+});
+
+it("编辑时带出已存的节奏上限，改写后原样提交，清空即交给 hub 取默认值", async () => {
+  const saved: SaveNotifyChannelRequest[] = [];
+  render({ saveNotifyChannel: async (req) => { saved.push(req); return {}; } });
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 tg（#1）" }));
+  let form = screen.getByRole("form", { name: "编辑 tg（#1）" });
+  const rate = within(form).getByLabelText("每分钟上限");
+  expect(rate).toHaveValue(20);
+  fireEvent.change(rate, { target: { value: "0" } });
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].channel!.ratePerMinute).toBe(0);
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 tg（#1）" }));
+  form = screen.getByRole("form", { name: "编辑 tg（#1）" });
+  fireEvent.change(within(form).getByLabelText("每分钟上限"), { target: { value: "" } });
+  expect(within(form).getByLabelText("每分钟上限")).toHaveAttribute("placeholder", "留空取默认 20");
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(saved).toHaveLength(2));
+  expect(saved[1].channel!.ratePerMinute).toBeUndefined();
+});
+
+// 负数由表单校验拦在提交之前：不能靠协议编码 uint32 时报错兜底，那条路径会把编码错误当作保存失败显示出来。
+it("节奏上限不接受负数", async () => {
+  const saved: SaveNotifyChannelRequest[] = [];
+  render({ saveNotifyChannel: async (req) => { saved.push(req); return {}; } });
+  const form = await screen.findByRole("form", { name: "新建通知渠道" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "值班群" } });
+  fireEvent.change(within(form).getByLabelText("Bot token"), { target: { value: "123:abc" } });
+  fireEvent.change(within(form).getByLabelText("Chat ID"), { target: { value: "-100" } });
+  fireEvent.change(within(form).getByLabelText("每分钟上限"), { target: { value: "-1" } });
+  expect(within(form).getByLabelText("每分钟上限")).toBeInvalid();
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  await act(async () => {});
+  expect(screen.queryByRole("alert")).toBeNull();
+  fireEvent.change(within(form).getByLabelText("每分钟上限"), { target: { value: "3" } });
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].channel!.ratePerMinute).toBe(3);
+});
+
+// 协议里是 uint32：更大的数由表单校验拦下，而不是在编码时报出一个看不出原因的错误。
+it("节奏上限不超过 uint32", async () => {
+  const saved: SaveNotifyChannelRequest[] = [];
+  render({ saveNotifyChannel: async (req) => { saved.push(req); return {}; } });
+  const form = await screen.findByRole("form", { name: "新建通知渠道" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "值班群" } });
+  fireEvent.change(within(form).getByLabelText("Bot token"), { target: { value: "123:abc" } });
+  fireEvent.change(within(form).getByLabelText("Chat ID"), { target: { value: "-100" } });
+  fireEvent.change(within(form).getByLabelText("每分钟上限"), { target: { value: "4294967296" } });
+  expect(within(form).getByLabelText("每分钟上限")).toBeInvalid();
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  await act(async () => {});
+  expect(screen.queryByRole("alert")).toBeNull();
+  fireEvent.change(within(form).getByLabelText("每分钟上限"), { target: { value: "4294967295" } });
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].channel!.ratePerMinute).toBe(4294967295);
 });

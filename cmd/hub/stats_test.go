@@ -39,11 +39,12 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 			if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
 				t.Fatal(err)
 			}
-			if freshVersion != 18 {
-				t.Fatalf("fixture user_version = %d, want 18; rebuild the v8 fixture for the new version", freshVersion)
+			if freshVersion != 19 {
+				t.Fatalf("fixture user_version = %d, want 19; rebuild the v8 fixture for the new version", freshVersion)
 			}
-			// 后续 schema 只增加列、索引与下面列出的七张表；去掉它们得到可实际迁移的
-			// v8 库，避免仅伪造版本号。
+			// 后续 schema 增加列、索引与 maintenance_state、tag、node_tag、theme、theme_file、theme_package、restore_record 七张表，并重建 alert_delivery：多出
+			// batch_id 与 not_before 两列，alert_delivery_pending 从 (done, id) 改成 (done, batch_id, channel_id)，其余列的
+			// 名称、类型、默认值与先后不变。逐项撤回得到可实际迁移的 v8 库，避免仅伪造版本号。
 			// 这个夹具经 openOffline 建成，openStore 判定通过后已经把它切成 WAL；切回
 			// DELETE 是因为提前生效的 journal_mode(WAL) 只在非 WAL 的库上改写文件头：本项目
 			// 自己产出的 v8 库本就是 WAL，在它上面这个缺陷不显形，逐字节比较测不出。
@@ -68,6 +69,12 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 				"DROP TABLE theme_package",
 				"DROP TABLE theme",
 				"DROP TABLE restore_record",
+				"DROP INDEX alert_delivery_by_batch",
+				"DROP INDEX alert_delivery_pending",
+				"ALTER TABLE alert_delivery DROP COLUMN batch_id",
+				"ALTER TABLE alert_delivery DROP COLUMN not_before",
+				"CREATE INDEX alert_delivery_pending ON alert_delivery(done, id)",
+				"ALTER TABLE notify_channel DROP COLUMN rate_per_minute",
 				"PRAGMA user_version = 8",
 				"PRAGMA journal_mode=DELETE",
 			} {

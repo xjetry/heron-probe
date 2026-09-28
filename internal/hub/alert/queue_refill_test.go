@@ -3,6 +3,7 @@ package alert
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -53,7 +54,7 @@ func TestQueueRefillsOverflowWithinProcess(t *testing.T) {
 			events := make([]store.AlertEvent, count)
 			for i := range events {
 				ev, err := f.st.RecordTransition(t.Context(), rule.ID, f.ids[0], store.StateFiring, "", time.Time{},
-					store.AlertEvent{At: f.clk.Now(), Transition: store.TransitionFiring, Summary: fmt.Sprint(i)}, []int64{c.ID})
+					store.AlertEvent{At: f.clk.Now(), Transition: store.TransitionFiring, Summary: fmt.Sprint(i)}, []store.DeliveryTarget{{ChannelID: c.ID}})
 				must(t, err)
 				events[i] = ev
 			}
@@ -86,11 +87,11 @@ func TestQueueRefillsOverflowWithinProcess(t *testing.T) {
 			}
 			// 全部送达即结束；上界只作为失败界，不参与“会不会补货”这个性质。
 			testwait.Until(t, 10*time.Millisecond, func() bool {
-				pending, err := f.st.PendingDeliveries(t.Context())
+				pending, err := f.st.PendingBatches(t.Context())
 				must(t, err)
 				return len(pending) == 0
 			}, "overflow deliveries not refilled: pending=%s", testwait.When(func() string {
-				pending, err := f.st.PendingDeliveries(t.Context())
+				pending, err := f.st.PendingBatches(t.Context())
 				if err != nil {
 					return err.Error()
 				}
@@ -138,7 +139,7 @@ func TestQueueDeduplicatesQueuedAndInflightIDs(t *testing.T) {
 			if !running {
 				q.Enqueue(ev)
 				must(t, q.Requeue(t.Context()))
-				assertQueueIDs(t, q, []int64{ev.Deliveries[0].ID}, 0)
+				assertQueueIDs(t, q, []int64{ev.Deliveries[0].BatchID}, 0)
 				return
 			}
 			stop := startQueue(t, q)
@@ -150,7 +151,7 @@ func TestQueueDeduplicatesQueuedAndInflightIDs(t *testing.T) {
 			}
 			q.Enqueue(ev)
 			must(t, q.Requeue(t.Context()))
-			assertQueueIDs(t, q, nil, ev.Deliveries[0].ID)
+			assertQueueIDs(t, q, nil, ev.Deliveries[0].BatchID)
 			release.Do(func() { close(gate) })
 			awaitDeliveries(t, f, ev.ID, allDone)
 			stop()
@@ -168,16 +169,12 @@ func assertQueueIDs(t *testing.T, q *Queue, want []int64, inflight int64) {
 	if inflight != 0 {
 		seen[inflight] = true
 	}
-	n := len(q.items)
-	ids := make([]int64, 0, n)
-	for range n {
-		item := <-q.items
-		ids = append(ids, item.delivery.ID)
-		q.items <- item
-		if seen[item.delivery.ID] {
-			t.Fatalf("duplicate queued/inflight id %d", item.delivery.ID)
+	ids := slices.Clone(q.ready)
+	for _, id := range append(slices.Clone(q.ready), slices.Collect(maps.Keys(q.waiting))...) {
+		if seen[id] {
+			t.Fatalf("duplicate queued/inflight id %d", id)
 		}
-		seen[item.delivery.ID] = true
+		seen[id] = true
 	}
 	if !slices.Equal(ids, want) {
 		t.Errorf("queued IDs=%v want %v", ids, want)

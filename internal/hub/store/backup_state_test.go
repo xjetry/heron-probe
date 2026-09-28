@@ -75,6 +75,10 @@ func TestBackupEventsUseCurrentChannelsWithoutRuleState(t *testing.T) {
 	if ev.RuleID != 0 || ev.NodeID != 0 || len(ev.Deliveries) != 1 || ev.Deliveries[0].ChannelID != c.ID {
 		t.Fatalf("backup event=%+v", ev)
 	}
+	batch, err := s.GetDeliveryBatch(t.Context(), ev.Deliveries[0].ID)
+	if err != nil || len(batch.Deliveries) != 1 || batch.Deliveries[0].BatchID != ev.Deliveries[0].ID || len(batch.Events) != 1 || batch.Events[0].ID != ev.ID {
+		t.Fatalf("backup event must create its own readable batch: batch=%+v err=%v event=%+v", batch, err, ev)
+	}
 	var states int
 	if err := s.r.QueryRow("SELECT count(*) FROM alert_state").Scan(&states); err != nil {
 		t.Fatal(err)
