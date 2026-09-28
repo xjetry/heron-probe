@@ -84,8 +84,14 @@ type Package struct {
 
 // Parse 校验 pkg 并展开。任一守卫不满足即返回 *Error，不返回部分结果。
 //
-// 顺序有意为之：先只读中央目录判出展开的上界（条目数、每条与总计的声明大小、路径、条目类型），全部通过后才读任何条目
-// 的内容；读内容时再按实际展开的字节逐条核对，不信任中央目录的声明。
+// 顺序有意为之：先只读中央目录判出展开的上界（条目数、每条与总计的声明大小、路径、条目类型）与读入的压缩字节总量的
+// 上界，全部通过后才读任何条目的内容；读内容时再按实际展开的字节逐条核对，不信任中央目录的声明。
+//
+// 压缩字节总量的界：expand 读一条的压缩数据以该条声明的压缩大小为界（OpenRaw 按它截取），解压的 CPU 随读入的压缩
+// 字节增长，而展开的界（declared 与 expand 的逐条核对）只约束产出。格式正确的包里各条的压缩数据是包内互不相交的
+// 片段，合计必小于包长；合计超过包长，只能是多条记录指向同一段数据（重叠）或声明了包里没有的字节。重叠时读者每打开
+// 一条都把同一段从头解一遍：一段只解出 0 字节的 deflate 流不占展开额度，MaxEntries 条记录就把它解 MaxEntries 遍。
+// 要求合计不超过包长，Parse 读入的压缩字节总量就不超过包本身。
 func Parse(pkg []byte) (*Package, error) {
 	if len(pkg) > MaxPackageBytes {
 		return nil, reject("package", "%d bytes; at most %d (8 MiB)", len(pkg), MaxPackageBytes)
@@ -100,7 +106,7 @@ func Parse(pkg []byte) (*Package, error) {
 		return nil, reject("package", "%d entries; at most %d", n, MaxEntries)
 	}
 
-	var declared uint64
+	var declared, compressed uint64
 	seen := make(map[string]bool, len(zr.File))
 	var files []*zip.File
 	var paths []string
@@ -116,6 +122,13 @@ func Parse(pkg []byte) (*Package, error) {
 			return nil, reject(entryField(p), "appears more than once in the archive; which copy wins would depend on the reader")
 		}
 		seen[p] = true
+		// 单条先与包长比：zip.NewReader 不核对压缩大小（Go 1.27.1 实测，接近 2^64 的声明也照收）。每条界在包长
+		// （≤ MaxPackageBytes）以内、至多 MaxEntries 条，合计才不会回绕 uint64。目录条目也计入：它们的压缩数据同样
+		// 是包内互不相交的片段。
+		if f.CompressedSize64 > uint64(len(pkg)) {
+			return nil, reject(entryField(p), "central directory declares %d compressed bytes but the archive is only %d bytes", f.CompressedSize64, len(pkg))
+		}
+		compressed += f.CompressedSize64
 		if dir {
 			// 目录条目不入库、不读内容；声明了内容的目录条目是自相矛盾的包。
 			if f.UncompressedSize64 != 0 {
@@ -133,6 +146,9 @@ func Parse(pkg []byte) (*Package, error) {
 	}
 	if declared > MaxTotalBytes {
 		return nil, reject("package", "central directory declares %d bytes uncompressed in total; at most %d (64 MiB)", declared, MaxTotalBytes)
+	}
+	if compressed > uint64(len(pkg)) {
+		return nil, reject("package", "central directory declares %d compressed bytes in total but the archive is only %d bytes; entries overlap or claim data the archive does not hold", compressed, len(pkg))
 	}
 
 	out := &Package{Files: make([]File, 0, len(files))}

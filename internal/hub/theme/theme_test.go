@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io/fs"
+	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xjetry/probe/internal/hub/theme"
 	. "github.com/xjetry/probe/internal/hub/theme/themetest"
@@ -41,6 +43,92 @@ func TestParseAcceptsAMinimalPackageWithDirectoriesAndPreview(t *testing.T) {
 	}
 	if ct := theme.PreviewContentType(got.Manifest.Preview); ct != "image/png" {
 		t.Fatalf("preview content type = %q", ct)
+	}
+}
+
+// 贴着每条上限的合法包照收：展开合计恰为 64 MiB、最大的文件恰为 16 MiB，各条的压缩字节之和接近包长——压缩字节
+// 总量的界是"合计不超过包长"，合法包的合计总在包长以内。
+func TestParseAcceptsAPackageAtEveryLimit(t *testing.T) {
+	pkg := AtLimits(t)
+	zr, err := zip.NewReader(bytes.NewReader(pkg), int64(len(pkg)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compressed uint64
+	for _, f := range zr.File {
+		compressed += f.CompressedSize64
+	}
+	t.Logf("package %d bytes, entries declare %d compressed bytes", len(pkg), compressed)
+	if compressed < uint64(len(pkg))-4<<10 {
+		t.Fatalf("the fixture's entries declare %d compressed bytes, not within 4 KiB of the %d-byte package; it no longer sits at the limit", compressed, len(pkg))
+	}
+	got, err := theme.Parse(pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var total, largest int
+	for _, f := range got.Files {
+		total += len(f.Content)
+		largest = max(largest, len(f.Content))
+	}
+	if total != theme.MaxTotalBytes || largest != theme.MaxFileBytes {
+		t.Fatalf("expanded %d bytes, largest file %d; want exactly %d and %d", total, largest, theme.MaxTotalBytes, theme.MaxFileBytes)
+	}
+}
+
+// 读入的压缩字节总量以包长为界（Parse 的注释写了推导）。2000 条记录重叠地指向同一段 1 MiB、解出 0 字节的 deflate
+// 流：展开总量的守卫全部放行，没有这条界时 Parse 要把这段流解 2000 遍才发现缺 index.html。这条界在读任何内容之前
+// 判完，所以拒绝几乎不花时间；1 秒的上限只用来区分"没有读内容"与"读了"，不是性能要求。
+func TestParseRejectsOverlappingEntriesBeforeReadingThem(t *testing.T) {
+	pkg := Overlapping(theme.MaxEntries, 1<<20)
+	zr, err := zip.NewReader(bytes.NewReader(pkg), int64(len(pkg)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compressed, declared uint64
+	for _, f := range zr.File {
+		compressed += f.CompressedSize64
+		declared += f.UncompressedSize64
+	}
+	if len(zr.File) != theme.MaxEntries || declared != 0 {
+		t.Fatalf("fixture has %d entries declaring %d bytes uncompressed; want %d declaring 0", len(zr.File), declared, theme.MaxEntries)
+	}
+	start := time.Now()
+	_, err = theme.Parse(pkg)
+	elapsed := time.Since(start)
+	want := fmt.Sprintf("package: central directory declares %d compressed bytes in total but the archive is only %d bytes", compressed, len(pkg))
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Parse error = %v, want it to contain %q", err, want)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("Parse took %v to reject; the bound is checked before any content is read", elapsed)
+	}
+}
+
+// 单条的压缩大小先与包长比，合计才不会回绕：两条分别声明 2^64-16 与 32 字节，直接相加回绕成 16，看起来远小于包长。
+func TestParseRejectsACompressedSizeLargerThanThePackage(t *testing.T) {
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	for _, e := range []Entry{Manifest(t, "ok", "Ok", "1", ""), File("index.html", "x")} {
+		fw, _ := w.Create(e.Name)
+		fw.Write(e.Content)
+	}
+	for _, h := range []zip.FileHeader{
+		{Name: "a", Method: zip.Store, CRC32: crc32.ChecksumIEEE([]byte("hello")), CompressedSize64: math.MaxUint64 - 15, UncompressedSize64: 5},
+		{Name: "b", Method: zip.Store, CRC32: crc32.ChecksumIEEE([]byte("hello")), CompressedSize64: 32, UncompressedSize64: 5},
+	} {
+		raw, err := w.CreateRaw(&h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw.Write([]byte("hello"))
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf(`entry "a": central directory declares %d compressed bytes but the archive is only %d bytes`, uint64(math.MaxUint64-15), buf.Len())
+	if _, err := theme.Parse(buf.Bytes()); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Parse error = %v, want it to contain %q", err, want)
 	}
 }
 

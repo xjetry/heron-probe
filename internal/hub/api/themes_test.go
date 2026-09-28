@@ -187,6 +187,48 @@ func TestUploadThemeRejectsBadPackagesWithoutResidue(t *testing.T) {
 	}
 }
 
+// 重叠的中央目录记录经 UploadTheme 同样在读任何内容之前被拒（theme.Parse 的注释写了推导）：InvalidArgument 写明
+// 声明的压缩字节总量与包长，库里不留行。2 秒的上限只用来区分"没有读内容"与"读了"（后者要把 1 MiB 的流解 2000 遍）。
+func TestUploadThemeRejectsOverlappingEntriesBeforeReadingThem(t *testing.T) {
+	h := newThemeHarness(t)
+	before := h.themeRows(t)
+	pkg := Overlapping(theme.MaxEntries, 1<<20)
+	start := time.Now()
+	_, err := h.upload(t, pkg, "")
+	elapsed := time.Since(start)
+	want := fmt.Sprintf("compressed bytes in total but the archive is only %d bytes", len(pkg))
+	if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "package: central directory declares") || !strings.Contains(err.Error(), want) {
+		t.Fatalf("UploadTheme = %v, want InvalidArgument containing %q", err, want)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("UploadTheme took %v to reject; the bound is checked before any content is read", elapsed)
+	}
+	if rows := h.themeRows(t); rows != before {
+		t.Fatalf("theme, theme_file rows = %v, want %v unchanged", rows, before)
+	}
+}
+
+// 贴着每条上限的合法包（展开 64 MiB、最大文件 16 MiB、包接近 8 MiB 且压缩字节之和接近包长）经 UploadTheme 装得上，
+// 每个普通文件一行。
+func TestUploadThemeAcceptsAPackageAtEveryLimit(t *testing.T) {
+	h := newThemeHarness(t)
+	pkg := AtLimits(t)
+	parsed, err := theme.Parse(pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := h.upload(t, pkg, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GetId() != "limits" {
+		t.Fatalf("UploadTheme = %v, want theme limits", got)
+	}
+	if rows, want := h.themeRows(t), [2]int64{1, int64(len(parsed.Files))}; rows != want {
+		t.Fatalf("theme, theme_file rows = %v, want %v", rows, want)
+	}
+}
+
 // expect_id：与包里的 id 不符即拒绝；目标不在即 NotFound；相符则替换，旧包独有的文件消失，启用状态沿用。
 func TestUploadThemeExpectIDAndReplacement(t *testing.T) {
 	h := newThemeHarness(t)
