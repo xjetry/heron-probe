@@ -134,19 +134,21 @@ func TestSchemaSignatureDistinguishesStructure(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, left := schemaPolicyFixture(t, []string{tc.left}, 0)
 			_, right := schemaPolicyFixture(t, []string{tc.right}, 0)
-			for _, direction := range []struct {
-				left, right *sql.DB
-				label       string
-			}{{left, right, "新建"}, {right, left, "迁移后"}} {
-				diff := schemaDifference(describe(t, direction.left), describe(t, direction.right), "迁移后", "新建")
+			// want 取自右侧夹具独有的项。两种参数顺序各比一次，标签跟着夹具走而不跟参数位置走：
+			// 右侧独有的项先作第二个参数、再作第一个参数的独有项，两次都必须以"右有"报出。
+			for _, order := range []struct {
+				first, second           *sql.DB
+				firstLabel, secondLabel string
+			}{{left, right, "左", "右"}, {right, left, "右", "左"}} {
+				diff := schemaDifference(describe(t, order.first), describe(t, order.second), order.firstLabel, order.secondLabel)
 				found := false
 				for _, line := range strings.Split(diff, "\n") {
-					if strings.HasPrefix(line, direction.label+"有: ") && strings.Contains(line, tc.want) {
+					if strings.HasPrefix(line, "右有: ") && strings.Contains(line, tc.want) {
 						found = true
 					}
 				}
 				if !found {
-					t.Errorf("schema difference must identify %s有 %q:\n%s", direction.label, tc.want, diff)
+					t.Errorf("schema difference with %s first must report 右有 %q:\n%s", order.firstLabel, tc.want, diff)
 				}
 			}
 		})
