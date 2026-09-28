@@ -1,4 +1,4 @@
-import { isFieldSet, type MessageInitShape } from "@bufbuild/protobuf";
+import { isFieldSet } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -18,10 +18,8 @@ async function form() {
 
 // 有状态的假 hub，与 SaveSiteSettings 同语义：外观整体替换，总闸缺席即不变；set 模拟别处（另一个面板、脚本）改了设置，
 // holdReads 让之后的 GetSettings 挂起到 releaseReads。
-type SettingsInit = MessageInitShape<typeof SettingsSchema>;
-
 function statefulHub(publicEnabled: boolean) {
-  let state: SettingsInit = { ...current, publicEnabled };
+  let state = { ...current, publicEnabled };
   const sent: UpdateSettingsRequest[] = [];
   let held: Promise<void> | null = null;
   let release = () => {};
@@ -39,7 +37,7 @@ function statefulHub(publicEnabled: boolean) {
   };
   return {
     impl, sent, state: () => state,
-    set: (patch: SettingsInit) => { state = { ...state, ...patch }; },
+    set: (patch: Partial<typeof state>) => { state = { ...state, ...patch }; },
     holdReads: () => { held = new Promise((r) => { release = () => { held = null; r(); }; }); },
     releaseReads: () => release(),
   };
