@@ -50,7 +50,7 @@ curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.
 curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.sh | sh -s -- --uninstall --purge --yes
 ```
 
-普通卸载保留数据和账户。安装、升级都会先核对目标端口的监听进程，排除现有 hub 自身；冲突时不停止旧服务。停止失败、旧进程未退出或新进程未持续存活均返回失败。停服之后、`systemctl start` 成功返回之前某一步失败时，安装器会提示 hub 已停，可重跑安装器或手动启动；启动之后没能持续存活时不这样提示，那时 systemd 仍按 `Restart=always` 继续拉起，按 `journalctl -u probe-hub` 排查。例外是写好主单元之后才查出设了 `ExecStart` 的 drop-in：此时手动启动会按 drop-in 的参数起来，安装器只说明单元是否仍 enabled（升级时仍是，下次开机也会这样起来），并要求先处理 drop-in 再重跑。
+普通卸载保留数据和账户。安装、升级都会先核对目标端口的监听进程，排除现有 hub 自身；冲突时不停止旧服务。停止失败、旧进程未退出或新进程未持续存活均返回失败。停服之后、`systemctl start` 成功返回之前某一步失败时，安装器会提示 hub 已停，可重跑安装器或手动启动；启动之后没能持续存活时不这样提示，那时 systemd 仍按 `Restart=always` 继续拉起，按 `journalctl -u probe-hub` 排查。例外是写好主单元之后的 drop-in 检查没过：查出设了 `ExecStart` 的 drop-in 时，手动启动会按它的参数起来；`systemctl daemon-reload` 等本身出错时，drop-in 还没查过。这两种情形安装器都只说明单元是否仍 enabled（升级时仍是，下次开机也会这样起来），并按失败点要求先处理报出的 drop-in 或 systemctl 问题再重跑。
 
 ## 用 Docker 运行 hub
 
