@@ -61,6 +61,9 @@ type routes struct {
 	// themeOrigin 是 parseThemeOrigin 的结果，空串表示没有主题 origin；themePage 是主题 origin 的根路径。
 	themeOrigin string
 	themePage   http.Handler
+	// publicEnabled 是公开页总闸（store.Store.PublicEnabled，读内存副本）。page 与 themePage 都不自带总闸，由 newHandler
+	// 统一包上。必填：缺了它不能当作"总开"，newHandler 在装配时拒绝。
+	publicEnabled func() bool
 }
 
 // newHandler 按请求的 Host 在两个 origin 之间分流（§10.1）：Host 的主机名（hostname）等于主题 origin 的主机名走
@@ -69,8 +72,15 @@ type routes struct {
 // 主机名的请求一起分到主题 origin（那里没有面板）——hub 不知道面板用哪个主机名，这一条在启动时查不出来，写在 flag 帮助
 // 与 docs/theme-guide.md。
 // 公开服务的挂载点在两个 origin 上是同一个处理器：限流的令牌桶与快照缓存只有一份。
+//
+// 总闸约束 RPC 之外的整个公开静态面（§10）：主 origin 的根路径与主题 origin 的根路径（主题文件与回落的内置页）在这里包进
+// 同一个 web.PublicGate，serve 与测试装配走的是同一处，不会一边包了一边没包。关闸时 PublicGate 不调用下游，主题 origin
+// 因此不读库、不服务任何主题文件。PublicService 由它自己的拦截器读同一个开关回 NotFound，两个 origin 挂的是同一个处理器。
 func newHandler(r routes) http.Handler {
-	main := newMux(r.agent, r.admin, r.public, mountOf(web.Prefix, web.Handler()), mountOf("/", r.page))
+	if r.publicEnabled == nil {
+		panic("routes.publicEnabled is required: a missing public switch must not mean the public pages are always open")
+	}
+	main := newMux(r.agent, r.admin, r.public, mountOf(web.Prefix, web.Handler()), mountOf("/", web.PublicGate(r.page, r.publicEnabled)))
 	if r.themeOrigin == "" {
 		return main
 	}
@@ -79,7 +89,7 @@ func newHandler(r routes) http.Handler {
 		panic("theme origin was not parsed by parseThemeOrigin: " + err.Error())
 	}
 	themeHost := hostname(u.Host)
-	theme := newThemeMux(r.public, r.themePage)
+	theme := newThemeMux(r.public, web.PublicGate(r.themePage, r.publicEnabled))
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if hostname(req.Host) == themeHost {
 			theme.ServeHTTP(w, req)
@@ -255,8 +265,8 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: trusted, Location: loc}, st, l, book, reg, clk, log)
 
 	handler := newHandler(routes{
-		agent: mountOf(svc.Handler()), admin: mountOf(admin.Handler()), public: mountOf(pub.Handler()), page: web.PublicGate(public, st.PublicEnabled),
-		themeOrigin: themeOrigin, themePage: web.ThemeHandler(st, web.PublicHandler(), log),
+		agent: mountOf(svc.Handler()), admin: mountOf(admin.Handler()), public: mountOf(pub.Handler()), page: public,
+		themeOrigin: themeOrigin, themePage: web.ThemeHandler(st, web.PublicHandler(), log), publicEnabled: st.PublicEnabled,
 	})
 	listener, err := net.Listen("tcp", *listen)
 	if err != nil {

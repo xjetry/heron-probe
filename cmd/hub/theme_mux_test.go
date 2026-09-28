@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -343,4 +344,106 @@ func TestThemeOriginServesEveryWriterCommitOnTheNextRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	builtin("DeleteTheme of the enabled theme")
+}
+
+// 总闸约束主题 origin 上 RPC 之外的整个静态面（§10）：关闸后页面路径（包括主题包里的文件路径）是"公开页已关闭"的说明页，
+// 带内置页的安全头，assets/ 下 404，主题文件的内容一处都不出现；PublicService 全部 NotFound；/admin 仍是 404。重新打开即
+// 恢复，启用中的主题不变。
+func TestThemeOriginObeysThePublicSwitch(t *testing.T) {
+	srv, st := newThemeTestServer(t, "http://"+testThemeHost)
+	installTheme(t, st, "t", map[string]string{"index.html": "theme index", "theme.js": "theme script", "assets/x.js": "theme asset"})
+	setPublic := func(on bool) {
+		t.Helper()
+		if _, err := st.SaveSettings(t.Context(), store.SettingsUpdate{SiteAppearance: store.SiteAppearance{Theme: store.DefaultTheme}, PublicEnabled: &on}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	get := func(path string) hostResponse { return hostDo(t, srv, http.MethodGet, testThemeHost, path, "", nil) }
+	getSite := func() hostResponse {
+		return hostDo(t, srv, http.MethodPost, testThemeHost, "/probe.v1.PublicService/GetSite", "{}", nil)
+	}
+	builtinCSP := builtinPublic("/").header.Get("Content-Security-Policy")
+
+	setPublic(false)
+	for _, p := range []string{"/", "/nodes/3", "/theme.js", "/index.html"} {
+		r := get(p)
+		if r.status != http.StatusOK || !strings.Contains(r.body, "公开页已关闭") || strings.Contains(r.body, "theme") {
+			t.Errorf("closed: GET %s on the theme origin: %d %.80q, want the closed page", p, r.status, r.body)
+		}
+		if r.header.Get("Content-Security-Policy") != builtinCSP || r.header.Get("Cache-Control") != "no-store" {
+			t.Errorf("closed: GET %s on the theme origin: CSP %q, Cache-Control %q; want the built-in CSP and no-store", p, r.header.Get("Content-Security-Policy"), r.header.Get("Cache-Control"))
+		}
+	}
+	for _, p := range []string{"/assets/x.js", "/assets/missing.js"} {
+		if r := get(p); r.status != http.StatusNotFound || strings.Contains(r.body, "theme") {
+			t.Errorf("closed: GET %s on the theme origin: %d %.80q, want 404", p, r.status, r.body)
+		}
+	}
+	if r := getSite(); r.status != http.StatusNotFound || !strings.Contains(r.body, `"not_found"`) {
+		t.Errorf("closed: PublicService/GetSite on the theme origin: %d %.80q, want NotFound", r.status, r.body)
+	}
+	if r := get("/admin/"); r.status != http.StatusNotFound {
+		t.Errorf("closed: GET /admin/ on the theme origin: %d, want 404", r.status)
+	}
+
+	setPublic(true)
+	if r := get("/nodes/3"); r.status != http.StatusOK || r.body != "theme index" {
+		t.Errorf("reopened: GET /nodes/3 on the theme origin: %d %.80q, want the theme's index.html", r.status, r.body)
+	}
+	if r := get("/assets/x.js"); r.status != http.StatusOK || r.body != "theme asset" {
+		t.Errorf("reopened: GET /assets/x.js on the theme origin: %d %.80q, want the theme's file", r.status, r.body)
+	}
+	if r := getSite(); r.status != http.StatusOK {
+		t.Errorf("reopened: PublicService/GetSite on the theme origin: %d %.80q, want 200", r.status, r.body)
+	}
+	if list, err := st.ListThemes(t.Context()); err != nil || len(list) != 1 || !list[0].Enabled {
+		t.Errorf("themes after closing and reopening: %+v %v, want theme t still enabled", list, err)
+	}
+}
+
+// 关闸时两个 origin 的根路径处理器一次都不被调用：主题 origin 的托管因此不读库（ThemeHandler 只在被调用时比代数、重读），
+// 也交不出主题文件。newHandler 是 serve 与测试共用的装配处，这里直接给它计数的处理器。publicEnabled 缺席时装配即拒绝，
+// 不能退化成"总开"。
+func TestNewHandlerKeepsBothStaticSurfacesBehindThePublicSwitch(t *testing.T) {
+	var open atomic.Bool
+	var pageCalls, themePageCalls atomic.Int64
+	counting := func(n *atomic.Int64) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			n.Add(1)
+			io.WriteString(w, "static surface")
+		})
+	}
+	r := routes{
+		agent:  mountOf("/probe.v1.AgentService/", http.NotFoundHandler()),
+		admin:  mountOf("/probe.v1.AdminService/", http.NotFoundHandler()),
+		public: mountOf("/probe.v1.PublicService/", http.NotFoundHandler()),
+		page:   counting(&pageCalls), themeOrigin: "http://" + testThemeHost, themePage: counting(&themePageCalls),
+		publicEnabled: open.Load,
+	}
+	h := newHandler(r)
+	serveAll := func() {
+		for _, host := range []string{testThemeHost, "panel.test"} {
+			for _, p := range []string{"/", "/nodes/3", "/theme.js", "/assets/x.js"} {
+				req := httptest.NewRequest(http.MethodGet, p, nil)
+				req.Host = host
+				h.ServeHTTP(httptest.NewRecorder(), req)
+			}
+		}
+	}
+	serveAll()
+	if pageCalls.Load() != 0 || themePageCalls.Load() != 0 {
+		t.Fatalf("closed: the main origin's page was called %d times and the theme origin's %d times, want neither", pageCalls.Load(), themePageCalls.Load())
+	}
+	open.Store(true)
+	serveAll()
+	if pageCalls.Load() != 4 || themePageCalls.Load() != 4 {
+		t.Fatalf("open: the main origin's page was called %d times and the theme origin's %d times, want 4 each", pageCalls.Load(), themePageCalls.Load())
+	}
+	r.publicEnabled = nil
+	defer func() {
+		if recover() == nil {
+			t.Fatal("newHandler accepted routes without a public switch")
+		}
+	}()
+	newHandler(r)
 }

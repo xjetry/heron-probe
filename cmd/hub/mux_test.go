@@ -80,7 +80,7 @@ func newTestMuxOn(t *testing.T, st *store.Store, clk clock.Clock, themeOriginFla
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: 10 * time.Second, Location: time.UTC}, st, l, book, reg, clk, slog.Default())
 	return newHandler(routes{
 		agent: mountOf(svc.Handler()), admin: mountOf(admin.Handler()), public: mountOf(pub.Handler()), page: web.PublicHandler(),
-		themeOrigin: themeOrigin, themePage: web.ThemeHandler(st, web.PublicHandler(), slog.Default()),
+		themeOrigin: themeOrigin, themePage: web.ThemeHandler(st, web.PublicHandler(), slog.Default()), publicEnabled: st.PublicEnabled,
 	})
 }
 
