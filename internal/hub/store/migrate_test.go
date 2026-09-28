@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -101,7 +102,8 @@ func migrateFrom(t *testing.T, stmts []string, version int, seed func(*testing.T
 	}
 	t.Cleanup(func() { fresh.Close() })
 
-	// 每个旧版本都经过此入口；集中比较可防止新增迁移用例只验数据而漏验结构。
+	// 逐版迁移用例经此入口建库，结构比较随入口自动生效，用例不必各自再比结构。
+	// TestEveryMigrationHasMigrateFromCase 要求 migrations 的每一步都有一条从上一版本出发、经此入口的用例。
 	if diff := schemaDifference(describe(t, migrated.r), describe(t, fresh.r), "迁移后", "新建"); diff != "" {
 		t.Fatalf("migrated schema differs from fresh schema:\n%s", diff)
 	}
@@ -503,6 +505,61 @@ func TestMigrationFromV5MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 	rows, err := migrated.ReadMinuteRows(t.Context(), 7, 0, 120)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("minute row lost across migration: %v %v", rows, err)
+	}
+}
+
+// migrations 的每一步 v 都要有一条从 v−1 出发、经 migrateFrom 的用例，迁移后与新建库的结构比较才覆盖到
+// 这一步。起点版本从各测试文件的 migrateFrom 调用处静态读取，只认 Test 函数体内的整数字面量：
+// 写成变量就读不出版本，放进辅助函数就确认不了 go test 会执行它，两种都直接判失败。
+func TestEveryMigrationHasMigrateFromCase(t *testing.T) {
+	files, err := filepath.Glob("*_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	covered := map[int]bool{}
+	for _, name := range files {
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			ast.Inspect(fn, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				if id, ok := call.Fun.(*ast.Ident); !ok || id.Name != "migrateFrom" {
+					return true
+				}
+				pos := fset.Position(call.Pos())
+				if !strings.HasPrefix(fn.Name.Name, "Test") {
+					t.Errorf("%s: migrateFrom is called from %s; call it directly in a Test function", pos, fn.Name.Name)
+					return true
+				}
+				lit, ok := call.Args[2].(*ast.BasicLit)
+				if !ok || lit.Kind != token.INT {
+					t.Errorf("%s: migrateFrom version must be an integer literal", pos)
+					return true
+				}
+				version, err := strconv.Atoi(lit.Value)
+				if err != nil {
+					t.Errorf("%s: %v", pos, err)
+					return true
+				}
+				covered[version] = true
+				return true
+			})
+		}
+	}
+	for v := range migrations {
+		if !covered[v-1] {
+			t.Errorf("migrations[%d] has no migrateFrom case starting at version %d", v, v-1)
+		}
 	}
 }
 
