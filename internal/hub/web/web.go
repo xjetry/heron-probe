@@ -74,8 +74,14 @@ func embedded(root fs.FS, dir, prefix, notBuilt string) http.Handler {
 
 // opener 打开 rel：rel 已按 URL 路径语义清理，相对挂载根，不以 / 开头，不含 ..。
 // 打开不得阻塞：FIFO 在没有写端时挂住的是 open 本身，serveFiles 在打开之后才看文件类型，兜不住这一步。
-// DirHandler 以 O_NONBLOCK 打开；embed 里没有特殊文件；ThemeHandler 从已读进内存的内容打开。新增来源要自己满足这一条。
+// DirHandler 以 O_NONBLOCK 打开；embed 里没有特殊文件；ThemeHandler 从内存里的快照打开。新增来源要自己满足这一条。
 type opener func(rel string) (fs.File, error)
+
+// entityTagger 是来源能给出的强校验器：打开的文件实现它时，serveRegular 把它作为 ETag 发出，ServeContent 据
+// If-None-Match 回 304。值必须随内容变化而变化（主题按内容哈希算）；给不出这样的值的来源不实现它，不发 ETag。
+type entityTagger interface {
+	EntityTag() string
+}
 
 // serveFiles 是各处静态服务共用的核心。命中普通文件就返回它；rel 在 assets 之下（underAssets）而未命中时返回 404——
 // 用 HTML 回应 script 标签会被浏览器按 MIME 拒绝，404 才能让缺失可见；其余路径回落到 index.html，交给客户端路由。
@@ -113,8 +119,7 @@ func hidden(rel string) bool {
 	return strings.HasPrefix(rel, ".") || strings.Contains(rel, "/.")
 }
 
-// requestRel 是请求路径对应的文件名：挂载根本身是 index.html。serveFiles 打开的只有它与回落用的 index.html，
-// ThemeHandler 按这一条预先读出这两份。
+// requestRel 是请求路径对应的文件名：挂载根本身是 index.html。serveFiles 打开的只有它与回落用的 index.html。
 func requestRel(urlPath, prefix string) string {
 	if rel := relPath(urlPath, prefix); rel != "" {
 		return rel
@@ -148,6 +153,9 @@ func serveRegular(w http.ResponseWriter, r *http.Request, open opener, rel, cach
 		return false
 	}
 	w.Header().Set("Cache-Control", cacheControl)
+	if e, ok := f.(entityTagger); ok {
+		w.Header().Set("ETag", e.EntityTag())
+	}
 	http.ServeContent(w, r, info.Name(), info.ModTime(), content)
 	return true
 }

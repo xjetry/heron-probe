@@ -51,8 +51,8 @@ type hostResponse struct {
 	body   string
 }
 
-// hostDo 以给定的 Host 头发请求，不跟随重定向。
-func hostDo(t *testing.T, srv *httptest.Server, method, host, path, body string) hostResponse {
+// hostDo 以给定的 Host 头发请求，不跟随重定向。每个请求都带一个别处的 Origin，header 里的头在此之上覆盖或追加。
+func hostDo(t *testing.T, srv *httptest.Server, method, host, path, body string, header http.Header) hostResponse {
 	t.Helper()
 	req, err := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
 	if err != nil {
@@ -63,6 +63,9 @@ func hostDo(t *testing.T, srv *httptest.Server, method, host, path, body string)
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Origin", "https://elsewhere.example")
+	for k, v := range header {
+		req.Header[k] = v
+	}
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -147,7 +150,7 @@ func TestHandlerRoutesByHost(t *testing.T) {
 			if ck.method == http.MethodPost {
 				reqBody = "{}"
 			}
-			r := hostDo(t, srv, ck.method, c.host, ck.path, reqBody)
+			r := hostDo(t, srv, ck.method, c.host, ck.path, reqBody, nil)
 			if !ck.ok(r) {
 				t.Errorf("Host %q %s %s: %d %q %.60q, want %s", c.host, ck.method, ck.path, r.status, r.header.Get("Content-Type"), r.body, ck.want)
 			}
@@ -172,7 +175,7 @@ func TestThemeOriginHidesEveryNonPublicProcedure(t *testing.T) {
 			for j := 0; j < svc.Methods().Len(); j++ {
 				path := "/" + string(svc.FullName()) + "/" + string(svc.Methods().Get(j).Name())
 				count++
-				r := hostDo(t, srv, http.MethodPost, testThemeHost, path, "{}")
+				r := hostDo(t, srv, http.MethodPost, testThemeHost, path, "{}", nil)
 				if publicProcedures[path] {
 					public++
 					if r.status == http.StatusNotFound || r.header.Get("Content-Type") != "application/json" {
@@ -198,7 +201,7 @@ func TestThemeOriginFallsBackToBuiltinPublicPage(t *testing.T) {
 	assertBuiltin := func(when string) {
 		t.Helper()
 		for _, p := range []string{"/", "/nodes/3"} {
-			got, want := hostDo(t, srv, http.MethodGet, testThemeHost, p, ""), builtinPublic(p)
+			got, want := hostDo(t, srv, http.MethodGet, testThemeHost, p, "", nil), builtinPublic(p)
 			if got.status != want.status || got.body != want.body || got.header.Get("Content-Security-Policy") != want.header.Get("Content-Security-Policy") {
 				t.Errorf("%s: GET %s on the theme origin: %d %.60q, want the built-in public page %d %.60q", when, p, got.status, got.body, want.status, want.body)
 			}
@@ -206,7 +209,7 @@ func TestThemeOriginFallsBackToBuiltinPublicPage(t *testing.T) {
 	}
 	assertTheme := func(when string) {
 		t.Helper()
-		if got := hostDo(t, srv, http.MethodGet, testThemeHost, "/", ""); got.status != http.StatusOK || got.body != "theme index" {
+		if got := hostDo(t, srv, http.MethodGet, testThemeHost, "/", "", nil); got.status != http.StatusOK || got.body != "theme index" {
 			t.Fatalf("%s: GET / on the theme origin: %d %.60q, want the theme", when, got.status, got.body)
 		}
 	}
@@ -231,4 +234,74 @@ func TestThemeOriginFallsBackToBuiltinPublicPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertBuiltin("enabled theme deleted")
+}
+
+// 启用中主题的内容只经 PutTheme、EnableTheme、DeleteTheme 改变：每个写者提交之后，主题 origin 的下一个请求就看到新内容。
+// 同一秒内的两次整包替换内容不同、ETag 就不同：带上一次 ETag 的条件请求拿到新内容，而不是 304 让浏览器留着旧包。
+func TestThemeOriginServesEveryWriterCommitOnTheNextRequest(t *testing.T) {
+	srv, st := newThemeTestServer(t)
+	get := func(ifNoneMatch string) hostResponse {
+		t.Helper()
+		h := http.Header{}
+		if ifNoneMatch != "" {
+			h.Set("If-None-Match", ifNoneMatch)
+		}
+		return hostDo(t, srv, http.MethodGet, testThemeHost, "/", "", h)
+	}
+	// 上传时刻固定为同一秒：ETag 必须由内容区分，不能靠时间。
+	put := func(id, index string) {
+		t.Helper()
+		if _, err := st.PutTheme(t.Context(), store.Theme{ID: id, Name: id, Version: "1", UploadedAt: time.Unix(100, 0)},
+			[]store.ThemeFile{{Path: "index.html", Content: []byte(index)}}, false, 20); err != nil {
+			t.Fatal(err)
+		}
+	}
+	enable := func(id string) {
+		t.Helper()
+		if err := st.EnableTheme(t.Context(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	theme := func(when, ifNoneMatch, want string) string {
+		t.Helper()
+		r := get(ifNoneMatch)
+		etag := r.header.Get("ETag")
+		if r.status != http.StatusOK || r.body != want || etag == "" || etag == ifNoneMatch {
+			t.Fatalf("%s: GET / on the theme origin with If-None-Match %q: %d %.60q ETag %q, want 200 %q with a new ETag", when, ifNoneMatch, r.status, r.body, etag, want)
+		}
+		return etag
+	}
+	builtin := func(when string) {
+		t.Helper()
+		got, want := get(""), builtinPublic("/")
+		if got.status != want.status || got.body != want.body {
+			t.Fatalf("%s: GET / on the theme origin: %d %.60q, want the built-in public page", when, got.status, got.body)
+		}
+	}
+	builtin("nothing installed")
+	put("a", "a v1")
+	builtin("installed, not enabled")
+	enable("a")
+	e1 := theme("EnableTheme a", "", "a v1")
+	if r := get(e1); r.status != http.StatusNotModified {
+		t.Fatalf("unchanged theme with its ETag: %d, want 304", r.status)
+	}
+	put("a", "a v2")
+	e2 := theme("PutTheme replacing the enabled theme", e1, "a v2")
+	put("a", "a v3")
+	e3 := theme("second PutTheme within the same second", e2, "a v3")
+	put("b", "b v1")
+	if r := get(e3); r.status != http.StatusNotModified {
+		t.Fatalf("installing another theme changed the enabled one: %d %.60q, want 304", r.status, r.body)
+	}
+	enable("b")
+	theme("EnableTheme b", e3, "b v1")
+	enable("")
+	builtin("EnableTheme none")
+	enable("b")
+	theme("EnableTheme b again", "", "b v1")
+	if err := st.DeleteTheme(t.Context(), "b"); err != nil {
+		t.Fatal(err)
+	}
+	builtin("DeleteTheme of the enabled theme")
 }

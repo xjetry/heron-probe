@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 	"time"
 )
 
@@ -27,6 +26,22 @@ type ThemeFile struct {
 
 var ErrThemeLimit = errors.New("theme limit reached")
 
+// writeTheme 是 theme 与 theme_file 在运行期的唯一写入口：PutTheme、EnableTheme、DeleteTheme 都经它，事务提交成功之后
+// 递增 themeGen。write 返回 nil 即已提交、返回错误即未应用（store 包注释的不变式），所以代数只随真正落库的改动前进；
+// 不改变启用中主题的提交（装一个未启用的主题、重复停用）也递增，代价是托管多读一次库，换来的是判定只有"提交了"一条。
+// 这两张表的其余写者都不在运行期：迁移在 Open 返回之前完成，§6.7 的恢复要求 hub 停机。新增写者必须经这里，
+// 否则它的提交不让代数前进，托管会一直服务改动之前的快照，直到下一次经这里的提交。
+func (s *Store) writeTheme(ctx context.Context, fn func(*sql.Tx) error) error {
+	if err := s.write(ctx, fn); err != nil {
+		return err
+	}
+	s.themeGen.Add(1)
+	return nil
+}
+
+// ThemeGeneration 是启用中主题内容的代数：只增不减，启用中主题的内容每变一次它至少增一。只读一个原子量，不碰库。
+func (s *Store) ThemeGeneration() uint64 { return s.themeGen.Load() }
+
 // PutTheme 把一个校验过的主题包整体写入：元数据与全部文件在同一个写事务里，提交前对任何读者不可见，失败则库里
 // 什么都没变——托管读到的永远是某一个完整的包，不会是新旧文件的混合。t.ID 已存在即替换：删掉旧包的全部文件再写入
 // 新的，启用状态沿用（更新启用中的主题不应让公开页回落）。不存在即新建（未启用），此时计数与插入在同一事务里，
@@ -36,7 +51,7 @@ var ErrThemeLimit = errors.New("theme limit reached")
 // t.Enabled 被忽略，返回值里是写入后的实际状态。
 func (s *Store) PutTheme(ctx context.Context, t Theme, files []ThemeFile, mustExist bool, limit int) (Theme, error) {
 	out := t
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err := s.writeTheme(ctx, func(tx *sql.Tx) error {
 		var enabled bool
 		err := tx.QueryRow("SELECT enabled FROM theme WHERE id = ?", t.ID).Scan(&enabled)
 		switch {
@@ -104,7 +119,7 @@ func (s *Store) ListThemes(ctx context.Context) ([]Theme, error) {
 // EnableTheme 让 id 成为唯一启用的主题；id 不存在时返回 ErrNotFound，什么都不改。先清掉现有的启用行再置位，
 // 顺序由 theme_enabled 索引要求：反过来会在同一事务里短暂出现两行 1 而被索引拒绝。
 func (s *Store) EnableTheme(ctx context.Context, id string) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
+	return s.writeTheme(ctx, func(tx *sql.Tx) error {
 		// 空 id 表示"不启用任何主题"（回到内置公开页），不是"匹配一切"：显式分支，不让它落进下面按 id 查找的路径
 		// 变成 NotFound。
 		if id == "" {
@@ -129,7 +144,7 @@ func (s *Store) EnableTheme(ctx context.Context, id string) error {
 // DeleteTheme 删除主题及其全部文件；不存在时返回 ErrNotFound。删掉的若是启用中的主题，删除之后就没有启用行，
 // 按 §10.1 即回落内置公开页——公开页是匿名入口，不因一次管理操作变成 404。
 func (s *Store) DeleteTheme(ctx context.Context, id string) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
+	return s.writeTheme(ctx, func(tx *sql.Tx) error {
 		res, err := tx.Exec("DELETE FROM theme WHERE id = ?", id)
 		if err != nil {
 			return err
@@ -173,23 +188,23 @@ func (s *Store) ThemePreview(ctx context.Context, id string) (Theme, []byte, err
 	return t, content, nil
 }
 
-// EnabledThemeFiles 在启用中的主题里按路径取文件内容，返回 path→content（没有的路径不在其中）与"是否有启用中的主题"。
-// 全部路径在一条语句里读出：SQLite 的单条语句读的是同一个快照，所以返回的文件同属一个完整的包——托管在请求路径未命中时
-// 回落 index.html，两者分两次读的话，中间换了启用主题或整包替换会拼出两个包的混合，删掉主题则让回落读空。
-// 没有启用中的主题时 enabled 为假：调用方据此回落内置公开页，而不是把它当作"文件都不存在"。
-func (s *Store) EnabledThemeFiles(ctx context.Context, paths []string) (files map[string][]byte, enabled bool, err error) {
-	if len(paths) == 0 {
-		return nil, false, errors.New("EnabledThemeFiles: no paths")
-	}
-	args := make([]any, len(paths))
-	for i, p := range paths {
-		args[i] = p
-	}
-	// LEFT JOIN 让启用中的主题至少产出一行（路径都没命中时 path 为 NULL），零行才表示没有启用中的主题。
-	rows, err := s.r.QueryContext(ctx, "SELECT f.path, f.content FROM theme t LEFT JOIN theme_file f ON f.theme_id = t.id AND f.path IN (?"+
-		strings.Repeat(", ?", len(paths)-1)+") WHERE t.enabled = 1", args...)
+// EnabledThemePackage 读出启用中主题的整包（path → content）与读之前取到的代数；没有启用中的主题时 enabled 为假，
+// 调用方据此回落内置公开页，而不是把它当作"包里没有文件"。
+//
+// 整包在一条语句里读出：SQLite 的一条语句在一个隐式读事务里执行，从第一行到最后一行看到的是同一个快照，所以返回的
+// 文件同属一个完整的包。拆成两次读就没有这一条：把 index.html 与其余文件分开读时，两次之间提交的替换或切换让两部分
+// 出自两个包；先查启用的是哪个主题再读它的文件时，两次之间提交的删除让一个启用中的主题读出来是空包。
+//
+// 代数必须在语句之前读：读到 g 时，把代数递增到 g 的那些提交都已完成（writeTheme 先提交后递增），随后开始的语句看得到
+// 它们，所以返回的内容至少与 g 一样新——比 g 新也无妨，调用方只会在下一次比较时多读一次。先读库后取代数则不然：
+// 语句开始之后、取代数之前提交并递增的写，会让语句读到的旧内容标上新代数，调用方此后比较代数都相等，一直服务旧包，
+// 直到下一次写。
+func (s *Store) EnabledThemePackage(ctx context.Context) (gen uint64, files map[string][]byte, enabled bool, err error) {
+	gen = s.themeGen.Load()
+	// LEFT JOIN 让启用中的主题至少产出一行（包里没有文件时 path 为 NULL），零行才表示没有启用中的主题。
+	rows, err := s.r.QueryContext(ctx, "SELECT f.path, f.content FROM theme t LEFT JOIN theme_file f ON f.theme_id = t.id WHERE t.enabled = 1")
 	if err != nil {
-		return nil, false, err
+		return 0, nil, false, err
 	}
 	defer rows.Close()
 	files = map[string][]byte{}
@@ -198,14 +213,14 @@ func (s *Store) EnabledThemeFiles(ctx context.Context, paths []string) (files ma
 		var path sql.NullString
 		var content []byte
 		if err := rows.Scan(&path, &content); err != nil {
-			return nil, false, err
+			return 0, nil, false, err
 		}
 		if path.Valid {
 			files[path.String] = content
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, false, err
+		return 0, nil, false, err
 	}
-	return files, enabled, nil
+	return gen, files, enabled, nil
 }
