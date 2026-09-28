@@ -242,10 +242,16 @@ func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T)
 		worst[i] = strconv.FormatInt(math.MinInt64+int64(i), 10)
 	}
 	status, b, n := post(worst)
-	if n < len(longestLogo())+6*maxCSSBytes+6*maxTitleBytes+maxChannelIDs*maxInt64JSONBytes {
+	content := len(longestLogo()) + 6*maxCSSBytes + 6*maxTitleBytes + maxChannelIDs*len(elem)
+	if n < content {
 		t.Fatalf("request is %d bytes; the worst case was not constructed", n)
 	}
-	t.Logf("worst-case request: %d bytes, budget %d", n, maxBody)
+	t.Logf("worst-case request: %d bytes, of which %d are field contents; budget %d", n, content, maxBody)
+	// 4 KiB 只留给明暗、主色、字段名与 JSON 语法。最坏请求实际只用掉其中很少一部分，漏掉的内容项会被余量吞下、
+	// 请求照样装得下，所以单独核对：各字段的内容由各自的预算项装下，不挤占这 4 KiB。
+	if content > maxBody-4<<10 {
+		t.Fatalf("field contents of the worst case need %d bytes; maxBody leaves %d outside the 4 KiB syntax allowance", content, maxBody-4<<10)
+	}
 	if want := `settings.login_notify.channel_ids: channel -9223372036854775808 does not exist`; status != http.StatusBadRequest || !strings.Contains(string(b), want) {
 		t.Fatalf("full settings escaped worst case (%d bytes): %d %s, want 400 containing %q", n, status, b, want)
 	}
