@@ -36,8 +36,9 @@ func tableNames(t *testing.T, db *sql.DB) []string {
 
 func TestSnapshotClassificationComplete(t *testing.T) {
 	s, _ := open(t)
-	// 会话与注册窗口恢复后会复活已撤销的授权，明确排除而非按名称猜测。
-	excluded := []string{"admin_session", "register_window"}
+	// 会话与注册窗口不进快照，避免复活已撤销的授权；恢复记录属于目标库的审计历史。
+	// sqlite_sequence 是每层都携带的分配簿记，不计入数据表分层等式。
+	excluded := []string{"admin_session", "register_window", "sqlite_sequence", "restore_record"}
 	classified := append(append(slices.Clone(configSnapshotTables), metricsSnapshotTables...), excluded...)
 	slices.Sort(classified)
 	if actual := tableNames(t, s.r); !reflect.DeepEqual(actual, classified) {
@@ -69,7 +70,7 @@ func TestSnapshotFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer db.Close()
-			want := append(slices.Clone(tables), "snapshot_meta")
+			want := append(slices.Clone(tables), "snapshot_meta", "sqlite_sequence")
 			slices.Sort(want)
 			if got := tableNames(t, db); !reflect.DeepEqual(got, want) {
 				t.Fatalf("snapshot tables=%v want=%v", got, want)
@@ -83,14 +84,12 @@ func TestSnapshotFiles(t *testing.T) {
 			if version != schemaVersion || at != clk.Now().Unix() || gotLayer != layer {
 				t.Fatalf("snapshot meta=(%d,%d,%s)", version, at, gotLayer)
 			}
-			if layer == "config" {
-				var seq int
-				if err := db.QueryRow("SELECT seq FROM sqlite_sequence WHERE name='node'").Scan(&seq); err != nil {
-					t.Fatal(err)
-				}
-				if seq != 42 {
-					t.Fatalf("node sequence=%d want=42", seq)
-				}
+			var seq int
+			if err := db.QueryRow("SELECT seq FROM sqlite_sequence WHERE name='node'").Scan(&seq); err != nil {
+				t.Fatal(err)
+			}
+			if seq != 42 {
+				t.Fatalf("node sequence=%d want=42", seq)
 			}
 			info, err := os.Stat(path)
 			if err != nil {

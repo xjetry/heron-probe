@@ -121,8 +121,16 @@ func schemaStatements() []string {
 	for _, t := range probeTables {
 		out = append(out, probeDDL(t))
 	}
-	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState)
+	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState, ddlRestoreRecord)
 }
+
+// 恢复记录留在目标库，不随配置回退；两层时刻与逐表清理数用于解释历史空洞的来源。
+const ddlRestoreRecord = `CREATE TABLE restore_record (
+  restored_at INTEGER NOT NULL,
+  config_taken_at INTEGER NOT NULL,
+  metrics_taken_at INTEGER,
+  orphans TEXT NOT NULL
+)`
 
 // metricDDL 从描述表生成分钟表。主键顺序 (node_id, ts) 即唯一查询路径，
 // WITHOUT ROWID 使主键索引就是表本身。

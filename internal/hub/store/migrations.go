@@ -32,7 +32,15 @@ var migrations = map[int]func(*sql.Tx) error{
 	11: execAll([]string{ddlMaintenanceStateV11}),
 	12: execAll(migrationV12),
 	13: execAll(migrationV13),
+	14: execAll([]string{ddlRestoreRecordV14}),
 }
+
+const ddlRestoreRecordV14 = `CREATE TABLE restore_record (
+  restored_at INTEGER NOT NULL,
+  config_taken_at INTEGER NOT NULL,
+  metrics_taken_at INTEGER,
+  orphans TEXT NOT NULL
+)`
 
 func execAll(stmts []string) func(*sql.Tx) error {
 	return func(tx *sql.Tx) error {

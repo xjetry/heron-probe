@@ -33,11 +33,11 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 			if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
 				t.Fatal(err)
 			}
-			if freshVersion != 13 {
-				t.Fatalf("fixture user_version = %d, want 13; this fixture is built for schema 13 by dropping everything v9–v13 added below, rebuild the v8 fixture for the new version", freshVersion)
+			if freshVersion != 14 {
+				t.Fatalf("fixture user_version = %d, want 14; this fixture is built for schema 14 by dropping everything v9–v14 added below, rebuild the v8 fixture for the new version", freshVersion)
 			}
 			// v9 只增加计费与到期列，v10 只增加 probe_task.all_nodes，v11 只增加 maintenance_state 一张表，v12 只增加
-			// alert_state.recovered_at，v13 只增加 node.last_source；去掉它们得到可实际迁移的 v8 库，避免仅伪造版本号。
+			// alert_state.recovered_at，v13 只增加 node.last_source，v14 只增加 restore_record；去掉它们得到可实际迁移的 v8 库，避免仅伪造版本号。
 			// 这个夹具经 openOffline 建成，openStore 判定通过后已经把它切成 WAL；切回
 			// DELETE 是因为提前生效的 journal_mode(WAL) 只在非 WAL 的库上改写文件头：本项目
 			// 自己产出的 v8 库本就是 WAL，在它上面这个缺陷不显形，逐字节比较测不出。
@@ -53,6 +53,7 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 				"DROP TABLE maintenance_state",
 				"ALTER TABLE alert_state DROP COLUMN recovered_at",
 				"ALTER TABLE node DROP COLUMN last_source",
+				"DROP TABLE restore_record",
 				"PRAGMA user_version = 8",
 				"PRAGMA journal_mode=DELETE",
 			} {
