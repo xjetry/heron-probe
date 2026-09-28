@@ -239,6 +239,53 @@ func TestParseRejectsByEntryAttributes(t *testing.T) {
 	}
 }
 
+// Unix 类型位不看创建者（checkKind 的注释写了为什么）：每个创建者上，0120777 都按符号链接拒绝，0100644 的普通文件与
+// 高 16 位为 0 的条目都照收。创建者覆盖 FAT（0）、实测 unzip 会还原出符号链接的 2、3、5、16、30 与不会的 10、19。
+func TestParseJudgesUnixTypeBitsWhateverTheCreator(t *testing.T) {
+	for _, creator := range []uint16{0, 2, 3, 5, 10, 16, 19, 30} {
+		for _, c := range []struct {
+			name  string
+			attrs uint32
+			want  string // 空串表示照收
+		}{
+			{"symlink", 0o120777 << 16, `entry "e": Unix mode 0120777 marks a symbolic link`},
+			{"regular", 0o100644 << 16, ""},
+			{"no unix mode", 0, ""},
+		} {
+			t.Run(fmt.Sprintf("creator %d %s", creator, c.name), func(t *testing.T) {
+				var buf bytes.Buffer
+				w := zip.NewWriter(&buf)
+				for _, e := range []Entry{Manifest(t, "ok", "Ok", "1", ""), File("index.html", "x")} {
+					fw, _ := w.Create(e.Name)
+					fw.Write(e.Content)
+				}
+				fw, err := w.CreateHeader(&zip.FileHeader{Name: "e", CreatorVersion: creator << 8, ExternalAttrs: c.attrs})
+				if err != nil {
+					t.Fatal(err)
+				}
+				fw.Write([]byte("/etc/passwd"))
+				if err := w.Close(); err != nil {
+					t.Fatal(err)
+				}
+				zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if f := zr.File[2]; f.CreatorVersion>>8 != creator || f.ExternalAttrs != c.attrs {
+					t.Fatalf("fixture wrote creator %d, attributes %#o; want %d, %#o", f.CreatorVersion>>8, f.ExternalAttrs, creator, c.attrs)
+				}
+				_, err = theme.Parse(buf.Bytes())
+				switch {
+				case c.want == "" && err != nil:
+					t.Fatalf("Parse error = %v, want the entry accepted", err)
+				case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+					t.Fatalf("Parse error = %v, want it to contain %q", err, c.want)
+				}
+			})
+		}
+	}
+}
+
 // 条目内容与中央目录的其余声明不符：CRC、压缩方式、展开得比声明少、目录条目声明了内容。
 func TestParseRejectsEntriesThatContradictTheCentralDirectory(t *testing.T) {
 	for _, c := range []struct {
