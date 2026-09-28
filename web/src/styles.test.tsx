@@ -7,31 +7,46 @@ import { PublicLayout } from "./public/Layout";
 import { PublicService } from "./gen/probe/v1/public_pb";
 import { renderWithAdmin, renderWithService } from "./test/harness";
 
-// styles.css 是管理面板与公开页共用的唯一全局样式表：两边的 header 都套 .nav 取同一份
-// flex 布局。面板专用的 nowrap 规则必须锁在 .panel-nav 上——放在共享的 .nav 上会连带
-// 命中公开页头部的站点标题链接，标题变长时不再折行，整页横向溢出。
-function nowrapSelector(): string {
+// 两端构建各自只有一份入口 CSS，由 index.html 直接 <link>，每一页都加载：公开端那份合并了
+// styles.css、public.css 与 uPlot 的规则，管理端那份合并了 styles.css 与 uPlot。两端共用的是
+// styles.css 与 uPlot 两份；uPlot 只含 .uplot 与 .u-* 选择器、没有 white-space 规则，碰不到公开页头部，
+// 所以本测试只核对 styles.css 里的规则不外溢到公开页头部；public.css（单独给
+// `.nav .brand` 定样式）与运行期注入的站点自定义 CSS 不共用给两端，不存在"外溢"这回事，因此不在
+// 覆盖范围内。面板专用的 nowrap 规则必须锁在 .panel-nav 上——styles.css 里任何一条 nowrap 规则，
+// 只要选择器写成两边共用的 .nav 类（公开页上就是 header.nav 及其直接子元素），就会连带命中公开页
+// 头部的站点标题链接，标题变长时不再折行，整页横向溢出；因此要连 @media、@supports 等分组规则内
+// 的一起枚举逐条核对，不能只看顶层规则。
+function nowrapSelectors(): string[] {
   const css = readFileSync(join(import.meta.dirname, "styles.css"), "utf8");
   const style = document.createElement("style");
   style.textContent = css;
   document.head.appendChild(style);
-  for (const rule of Array.from(style.sheet!.cssRules)) {
-    if (rule instanceof CSSStyleRule && rule.style.getPropertyValue("white-space") === "nowrap") {
-      return rule.selectorText;
-    }
-  }
-  throw new Error("styles.css: 没有找到 white-space: nowrap 的规则");
+  // @media、@supports 等分组规则（CSSGroupingRule）把成员规则嵌在自己的 cssRules 里，不出现在
+  // 样式表的顶层 cssRules 中；要展开成一条不分层级的规则列表才能不漏。
+  const flatten = (rules: CSSRuleList): CSSRule[] =>
+    Array.from(rules).flatMap((rule) => [rule, ...("cssRules" in rule ? flatten((rule as CSSGroupingRule).cssRules) : [])]);
+  const selectors = flatten(style.sheet!.cssRules)
+    .filter((rule): rule is CSSStyleRule => rule instanceof CSSStyleRule && rule.style.getPropertyValue("white-space") === "nowrap")
+    .map((rule) => rule.selectorText);
+  if (selectors.length === 0) throw new Error("styles.css: 没有找到 white-space: nowrap 的规则");
+  return selectors;
 }
 
-it("面板导航的 nowrap 规则命中面板链接、不命中公开页头部链接", async () => {
-  const selector = nowrapSelector();
+it("styles.css 的每条 nowrap 规则（含分组规则内的）都不命中公开页头部或其直接子元素", async () => {
+  const selectors = nowrapSelectors();
 
   renderWithService(PublicService, { getSite: async () => ({}) }, [{ path: "/", Component: PublicLayout }], "/");
-  const brand = await screen.findByRole("link");
-  expect(brand.matches(selector)).toBe(false);
+  await screen.findByRole("link");
+  const header = document.querySelector("header.nav")!;
+  const targets = [header, ...Array.from(header.children)];
+  for (const selector of selectors) {
+    for (const el of targets) {
+      expect(el.matches(selector), `选择器「${selector}」命中了公开页头部的 <${el.tagName.toLowerCase()} class="${el.className}">`).toBe(false);
+    }
+  }
 
   renderWithAdmin({}, [{ path: "/", Component: Layout, children: [{ index: true, element: <p /> }] }], "/");
-  // 正控制：同一选择器确实命中面板导航链接，排除“选择器写错、两边都不命中”这种误判为通过的可能。
+  // 正控制：面板导航链接确实命中其中一条 nowrap 规则，排除“选择器全部写错、两边都不命中”这种误判为通过的可能。
   const overview = screen.getByRole("link", { name: "总览" });
-  expect(overview.matches(selector)).toBe(true);
+  expect(selectors.some((selector) => overview.matches(selector)), `没有任何 nowrap 选择器命中面板导航链接，已枚举的选择器：${selectors.join("、")}`).toBe(true);
 });
