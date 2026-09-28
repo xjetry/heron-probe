@@ -364,3 +364,22 @@ it("节奏上限不接受负数", async () => {
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0].channel!.ratePerMinute).toBe(3);
 });
+
+// 协议里是 uint32：更大的数由表单校验拦下，而不是在编码时报出一个看不出原因的错误。
+it("节奏上限不超过 uint32", async () => {
+  const saved: SaveNotifyChannelRequest[] = [];
+  render({ saveNotifyChannel: async (req) => { saved.push(req); return {}; } });
+  const form = await screen.findByRole("form", { name: "新建通知渠道" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "值班群" } });
+  fireEvent.change(within(form).getByLabelText("Bot token"), { target: { value: "123:abc" } });
+  fireEvent.change(within(form).getByLabelText("Chat ID"), { target: { value: "-100" } });
+  fireEvent.change(within(form).getByLabelText("每分钟上限"), { target: { value: "4294967296" } });
+  expect(within(form).getByLabelText("每分钟上限")).toBeInvalid();
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  await act(async () => {});
+  expect(screen.queryByRole("alert")).toBeNull();
+  fireEvent.change(within(form).getByLabelText("每分钟上限"), { target: { value: "4294967295" } });
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].channel!.ratePerMinute).toBe(4294967295);
+});

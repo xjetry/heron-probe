@@ -171,7 +171,7 @@ function ChannelForm({ title, initial, original, pending, onSubmit, onCancel }: 
         </>
       )}
       <div className="row">
-        <label>每分钟上限<input type="number" min={0} step={1} inputMode="numeric" value={draft.rate}
+        <label>每分钟上限<input type="number" min={0} max={4294967295} step={1} inputMode="numeric" value={draft.rate}
           placeholder={`留空取默认 ${draft.kind === ChannelKind.TELEGRAM ? "20" : "0（不限）"}`}
           onChange={(e) => set({ rate: e.target.value })} /></label>
         <span className="muted">每分钟至多发出的消息数，含重试；0 表示不限，超出的排队到下一分钟发出</span>
