@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -33,8 +34,12 @@ type fakeThemeSource struct {
 
 func (f *fakeThemeSource) ThemeGeneration() uint64 { return f.gen.Load() }
 
-func (f *fakeThemeSource) EnabledThemePackage(context.Context) (uint64, map[string][]byte, bool, error) {
+func (f *fakeThemeSource) EnabledThemePackage(ctx context.Context) (uint64, map[string][]byte, bool, error) {
 	f.reads.Add(1)
+	// 与库一样：ctx 已取消时读以 ctx 的错误失败（QueryContext 不开始执行）。
+	if err := ctx.Err(); err != nil {
+		return 0, nil, false, err
+	}
 	gen := f.gen.Load()
 	time.Sleep(f.delay)
 	f.mu.Lock()
@@ -200,6 +205,30 @@ func TestThemeHandlerLabelsTheSnapshotWithTheGenerationBeforeTheRead(t *testing.
 	src.afterRead = func() { src.set(nil) }
 	expect("the read that a deletion landed after", "v3")
 	expect("the request after a deletion that landed during the read", "builtin public page")
+}
+
+// 触发重读的请求在重读时已经断开：重读照样完成并换上快照，下一个请求不再读库，也不记任何日志。重读的结果供所有请求使用，
+// 不随第一个请求的 ctx 取消。
+func TestThemeHandlerReloadDoesNotDependOnTheTriggeringRequest(t *testing.T) {
+	var logs bytes.Buffer
+	src := &fakeThemeSource{files: map[string]string{"index.html": "v1"}}
+	h := ThemeHandler(src, builtinSentinel, slog.New(slog.NewTextHandler(&logs, nil)))
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil).WithContext(gone))
+	if rec.Code != http.StatusOK || rec.Body.String() != "v1" {
+		t.Fatalf("GET / from a client that had gone: %d %q, want the reload to complete and serve v1", rec.Code, rec.Body.String())
+	}
+	if code, _, body := serveWithin(t, h, "/"); code != http.StatusOK || body != "v1" {
+		t.Fatalf("GET / after that: %d %q, want v1", code, body)
+	}
+	if got := src.reads.Load(); got != 1 {
+		t.Fatalf("%d package reads, want 1: the reload triggered by the gone client must have installed the snapshot", got)
+	}
+	if logs.Len() != 0 {
+		t.Fatalf("logged %q; a client going away is not a failure of the shared reload", logs.String())
+	}
 }
 
 // 代数变了之后同时到达的请求只触发一次整包读取：拿到重读锁的请求读库，其余在锁上等，拿到锁后见代数已对上就直接用新快照。

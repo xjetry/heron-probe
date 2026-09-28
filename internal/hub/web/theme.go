@@ -36,9 +36,16 @@ type ThemeSource interface {
 // 临时分配只随重读次数发生，与请求数无关。
 //
 // 读库失败回 500、不换快照，下一个请求重试：回落内置页会把一次故障伪装成"主题被停用了"。
+//
+// 重读用的 ctx 不随触发它的请求取消：读出的快照供此刻等在 mu 上的请求与之后的所有请求使用，触发它的访客断开不是这次读
+// 失败的理由；随请求取消的话，这次读以 context canceled 失败并记一条 Error，快照要等下一个拿到 mu 的请求再读一次。
+// themeReloadTimeout 给它一个上界，库挂住时等在 mu 上的请求不至于无限期挂着。
 func ThemeHandler(src ThemeSource, builtin http.Handler, log *slog.Logger) http.Handler {
 	return &themeHandler{src: src, builtin: builtin, log: log}
 }
+
+// themeReloadTimeout 是一次整包重读的时长上界，见 ThemeHandler。
+const themeReloadTimeout = 30 * time.Second
 
 type themeHandler struct {
 	src     ThemeSource
@@ -80,6 +87,8 @@ func (h *themeHandler) snapshot(ctx context.Context) (*themeSnapshot, error) {
 	if s := h.cur.Load(); s != nil && s.gen == h.src.ThemeGeneration() {
 		return s, nil
 	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), themeReloadTimeout)
+	defer cancel()
 	gen, files, enabled, err := h.src.EnabledThemePackage(ctx)
 	if err != nil {
 		return nil, err
