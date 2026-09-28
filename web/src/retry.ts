@@ -15,7 +15,7 @@ export const retryableCodes: ReadonlySet<Code> = new Set([Code.Unavailable, Code
 // （internal/hub/api/public.go），一个公开页稳态每秒约 0.5 个请求（快照每 2 秒轮询一次，历史图每 60 秒刷新），自己耗不空
 // 它。页面收到 429 时，桶是被同一个桶上的其他请求耗掉的：其他标签页、反代后没配 --trusted-proxies 时的全部访客、同一
 // IPv4 或 IPv6 /64 后面的其他人。超额持续时，每秒放行的请求数由补充速率决定，重试不增加放行数，只多一个请求去争同一批
-// 令牌；一次性的突发一秒内就补回令牌，那时重试能成功，不重试的代价是这一次查询显示错误。
+// 令牌；一次性的突发一秒内就补回令牌，那时重试能成功，不重试的代价是这一次查询显示错误：轮询的查询下一轮（2 秒后）就恢复，只在加载时取一次的站点设置会带着错误横幅停到刷新页面。
 // 只供枚举用例核对每个码都被有意归了类，谓词只看 retryableCodes。
 export const nonRetryableCodes: ReadonlySet<Code> = new Set([
   Code.Canceled,
