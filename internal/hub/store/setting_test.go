@@ -15,14 +15,14 @@ func TestSiteSettingsDefaultAndWholeReplacement(t *testing.T) {
 		t.Fatalf("never saved: %+v %v", got, err)
 	}
 	full := SiteSettings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,AAAA", CustomCSS: "body{}"}
-	if _, _, err := s.SaveSettings(t.Context(), SettingsUpdate{SiteAppearance: full.SiteAppearance, PublicEnabled: &full.PublicEnabled}); err != nil {
+	if _, _, err := s.SaveSettings(t.Context(), SettingsUpdate{Appearance: &full.SiteAppearance, PublicEnabled: &full.PublicEnabled}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.SiteSettings(t.Context()); err != nil || got != full {
 		t.Fatalf("round trip: %+v %v", got, err)
 	}
 	// 整体替换：空串写入，表示该项回到默认，不是"不改"。
-	if _, _, err := s.SaveSettings(t.Context(), SettingsUpdate{Theme: "auto"}); err != nil {
+	if _, _, err := s.SaveSettings(t.Context(), SettingsUpdate{Appearance: &SiteAppearance{Theme: "auto"}}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.SiteSettings(t.Context()); err != nil || got != (SiteSettings{Theme: "auto"}) {
@@ -42,7 +42,7 @@ func TestSiteAppearanceRoundTripsEveryField(t *testing.T) {
 	for i := range v.NumField() {
 		v.Field(i).SetString(v.Type().Field(i).Name)
 	}
-	if _, _, err := s.SaveSettings(t.Context(), SettingsUpdate{SiteAppearance: want}); err != nil {
+	if _, _, err := s.SaveSettings(t.Context(), SettingsUpdate{Appearance: &want}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.SiteSettings(t.Context())
@@ -61,7 +61,7 @@ func TestSaveSettingsIsAllOrNothing(t *testing.T) {
 	ctx := t.Context()
 	first := SiteSettings{Title: "旧", Theme: "light", AccentColor: "#111111", Logo: "data:image/png;base64,AAAA", CustomCSS: "a{}", PublicEnabled: true}
 	firstGeo := GeoSettings{URL: "https://old.example/{ip}"}
-	if _, _, err := s.SaveSettings(ctx, SettingsUpdate{SiteAppearance: first.SiteAppearance, PublicEnabled: &first.PublicEnabled, Geo: GeoUpdate{Enabled: &firstGeo.Enabled, URL: &firstGeo.URL}}); err != nil {
+	if _, _, err := s.SaveSettings(ctx, SettingsUpdate{Appearance: &first.SiteAppearance, PublicEnabled: &first.PublicEnabled, Geo: GeoUpdate{Enabled: &firstGeo.Enabled, URL: &firstGeo.URL}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.write(ctx, func(tx *sql.Tx) error {
@@ -72,9 +72,9 @@ func TestSaveSettingsIsAllOrNothing(t *testing.T) {
 	}
 	closed, on, url := false, true, "https://new.example/{ip}"
 	_, _, err := s.SaveSettings(ctx, SettingsUpdate{
-		SiteAppearance: SiteAppearance{Title: "新", Theme: "dark", AccentColor: "#222222", CustomCSS: "b{}"},
-		PublicEnabled:  &closed,
-		Geo:            GeoUpdate{Enabled: &on, URL: &url},
+		Appearance:    &SiteAppearance{Title: "新", Theme: "dark", AccentColor: "#222222", CustomCSS: "b{}"},
+		PublicEnabled: &closed,
+		Geo:           GeoUpdate{Enabled: &on, URL: &url},
 	})
 	if err == nil || !strings.Contains(err.Error(), "url rejected") {
 		t.Fatalf("save error = %v", err)
@@ -84,6 +84,36 @@ func TestSaveSettingsIsAllOrNothing(t *testing.T) {
 	}
 	if !s.PublicEnabled() {
 		t.Fatal("failed save published the closed gate")
+	}
+}
+
+// 各组彼此独立：只给总闸或只给国家查询的保存不写外观键，库里的外观原样保留；回显的外观在同一个写事务里读回，
+// 是库里的值而不是空的外观。
+func TestSaveSettingsLeavesAbsentAppearance(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	full := SiteAppearance{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,AAAA", CustomCSS: "body{}"}
+	if _, _, err := s.SaveSettings(ctx, SettingsUpdate{Appearance: &full}); err != nil {
+		t.Fatal(err)
+	}
+	closed, on := false, true
+	for _, c := range []struct {
+		name string
+		in   SettingsUpdate
+	}{
+		{"public_enabled only", SettingsUpdate{PublicEnabled: &closed}},
+		{"geo only", SettingsUpdate{Geo: GeoUpdate{Enabled: &on}}},
+	} {
+		site, _, err := s.SaveSettings(ctx, c.in)
+		if err != nil || site.SiteAppearance != full {
+			t.Fatalf("%s: echoed appearance %+v %v, want %+v", c.name, site.SiteAppearance, err, full)
+		}
+		if got, err := s.SiteSettings(ctx); err != nil || got.SiteAppearance != full {
+			t.Fatalf("%s: stored appearance %+v %v, want %+v", c.name, got.SiteAppearance, err, full)
+		}
+	}
+	if site, geo, err := s.Settings(ctx); err != nil || site.PublicEnabled || !geo.Enabled {
+		t.Fatalf("groups not applied: %+v %+v %v", site, geo, err)
 	}
 }
 

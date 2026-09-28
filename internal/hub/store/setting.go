@@ -6,9 +6,9 @@ import (
 	"fmt"
 )
 
-// SiteAppearance 是公开页外观，UpdateSettings 整体替换它：标题、主色、logo、自定义 CSS 为空串表示使用内置值，
-// 明暗由 api 限定为 auto/light/dark；约束由 api 的 UpdateSettings 裁决。读写两种设置类型都嵌入它，保存时整体
-// 取用而不逐字段转抄：转抄漏掉的外观项编译照过，每次保存都被写成空串。
+// SiteAppearance 是公开页外观，给出时 UpdateSettings 整体替换它：标题、主色、logo、自定义 CSS 为空串表示使用内置值，
+// 明暗由 api 限定为 auto/light/dark；约束由 api 的 UpdateSettings 裁决。SiteSettings 嵌入它，SettingsUpdate 整个
+// 持有它，保存时整体取用而不逐字段转抄：转抄漏掉的外观项编译照过，每次保存都被写成空串。
 type SiteAppearance struct {
 	Title       string
 	Theme       string
@@ -23,10 +23,11 @@ type SiteSettings struct {
 	PublicEnabled bool
 }
 
-// SettingsUpdate 是 SaveSettings 的输入：外观整体替换；总闸与 Geo 里的各项为 nil 时不修改。
+// SettingsUpdate 是 SaveSettings 的输入，按组给出、各组彼此独立：Appearance 非 nil 时整体替换五项外观；PublicEnabled
+// 与 Geo 里的各项非 nil 时写入。nil 表示这一组（项）不改。"哪一组算给出"由 api 的 UpdateSettings 按请求判定。
 // 更新与读取分用不同类型，避免把缺席误当作关闭，也避免向读者泄漏未解析的值。
 type SettingsUpdate struct {
-	SiteAppearance
+	Appearance    *SiteAppearance
 	PublicEnabled *bool
 	Geo           GeoUpdate
 }
@@ -158,10 +159,10 @@ func (s *Store) GeoSettings(ctx context.Context) (GeoSettings, error) {
 // 匿名请求与静态资源都要检查总闸，读原子副本避免每次准入都占用数据库连接。
 func (s *Store) PublicEnabled() bool { return s.publicEnabled.Load() }
 
-// SaveSettings 在 s.write 的一个事务里写外观五个键、给出的总闸与 Geo 里给出的项，任一条失败整体回滚：库里不会留下
-// 半套设置，与 readSettings 的单条 SELECT 一起保证读侧看不到新旧混合。总闸与 Geo 各项缺席表示不变，不写对应的键。
-// 返回的国家查询设置在同一个事务里读出（未给出的项是库里原值），就是这次写入之后的状态；返回的总闸是给出的值，缺席时
-// 是锁内的内存值。失败时不发布内存值。
+// SaveSettings 在 s.write 的一个事务里写给出的外观（五个键整体）、给出的总闸与 Geo 里给出的项，任一条失败整体回滚：
+// 库里不会留下半套设置，与 readSettings 的单条 SELECT 一起保证读侧看不到新旧混合。缺席的组（项）不写对应的键。
+// 返回的外观与国家查询设置在同一个事务里读出（未给出的是库里原值），就是这次写入之后的状态；返回的总闸是给出的值，
+// 缺席时是锁内的内存值。失败时不发布内存值。
 //
 // 不变式：publicEnabled 等于库里最近一次提交的总闸键（publicEnabledKey）。前提有二：Open 从库加载它；hub 运行期间
 // 只有这里写这个键（现有离线子命令都不写它；此外改库的途径，如 §6.7 整表覆盖的 restore，必须在 hub 停止时
@@ -173,11 +174,13 @@ func (s *Store) PublicEnabled() bool { return s.publicEnabled.Load() }
 func (s *Store) SaveSettings(ctx context.Context, in SettingsUpdate) (SiteSettings, GeoSettings, error) {
 	s.siteWriteMu.Lock()
 	defer s.siteWriteMu.Unlock()
-	site := SiteSettings{SiteAppearance: in.SiteAppearance, PublicEnabled: s.publicEnabled.Load()}
-	puts := site.fields()
+	var puts []settingField
+	if in.Appearance != nil {
+		appearance := *in.Appearance
+		puts = appearance.fields()
+	}
 	if in.PublicEnabled != nil {
-		site.PublicEnabled = *in.PublicEnabled
-		puts = append(puts, flagField(publicEnabledKey, site.PublicEnabled))
+		puts = append(puts, flagField(publicEnabledKey, *in.PublicEnabled))
 	}
 	if in.Geo.Enabled != nil {
 		puts = append(puts, flagField(geoEnabledKey, *in.Geo.Enabled))
@@ -185,6 +188,7 @@ func (s *Store) SaveSettings(ctx context.Context, in SettingsUpdate) (SiteSettin
 	if in.Geo.URL != nil {
 		puts = append(puts, settingField{geoURLKey, in.Geo.URL})
 	}
+	var site SiteSettings
 	var geo GeoSettings
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		for _, f := range puts {
@@ -193,13 +197,15 @@ func (s *Store) SaveSettings(ctx context.Context, in SettingsUpdate) (SiteSettin
 			}
 		}
 		var err error
-		_, geo, err = readSettings(ctx, tx)
+		site, geo, err = readSettings(ctx, tx)
 		return err
 	})
 	if err != nil {
 		return SiteSettings{}, GeoSettings{}, err
 	}
+	site.PublicEnabled = s.publicEnabled.Load()
 	if in.PublicEnabled != nil {
+		site.PublicEnabled = *in.PublicEnabled
 		s.publicEnabled.Store(site.PublicEnabled)
 	}
 	return site, geo, nil

@@ -12,6 +12,7 @@ import (
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 )
@@ -71,7 +72,6 @@ func TestUpdateSettingsValidatesTitleThemeAndAccent(t *testing.T) {
 		{"title raw bytes", withSettings(func(s *probev1.Settings) { s.Title = strings.Repeat(" ", maxTitleBytes) + "a" }), "settings.title must be at most 1024 bytes before cleaning; got 1025"},
 		{"theme empty", withSettings(func(s *probev1.Settings) { s.Theme = "" }), `settings.theme must be one of auto, light, dark; got ""`},
 		{"theme case", withSettings(func(s *probev1.Settings) { s.Theme = "Dark" }), `settings.theme must be one of auto, light, dark; got "Dark"`},
-		{"settings missing", nil, `settings.theme must be one of auto, light, dark; got ""`},
 		{"accent short", withSettings(func(s *probev1.Settings) { s.AccentColor = "#12345" }), `settings.accent_color must be empty (the default color) or #rrggbb with six hex digits; got "#12345"`},
 		{"accent long", withSettings(func(s *probev1.Settings) { s.AccentColor = "#1234567" }), `got "#1234567"`},
 		{"accent without hash", withSettings(func(s *probev1.Settings) { s.AccentColor = "123456" }), `got "123456"`},
@@ -106,13 +106,66 @@ func TestTitleAndNodeNameCleanAlike(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		st, err := cleanSettings(&probev1.Settings{Title: raw, Theme: "auto"})
+		a, err := cleanAppearance(&probev1.Settings{Title: raw, Theme: "auto"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if st.Title != name {
-			t.Fatalf("title %q, node name %q from %q", st.Title, name, raw)
+		if a.Title != name {
+			t.Fatalf("title %q, node name %q from %q", a.Title, name, raw)
 		}
+	}
+}
+
+const noGroup = "settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, or the country lookup (geo_enabled, geo_url)"
+
+// UpdateSettings 按组判定、各组彼此独立：外观五项任一非空即算给出并整体校验，所以只带 title 的请求报 theme 的错；
+// 只带国家查询或只带总闸的请求照常保存，外观原样保留；一组都没给出（含整个 settings 缺失）的请求被拒并点名各组。
+func TestUpdateSettingsGroupsAreIndependent(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	before := saveSettings(t, h, validSettings())
+	rejected(t, h, &probev1.Settings{Title: "只改标题"}, `settings.theme must be one of auto, light, dark; got ""`, before)
+	rejected(t, h, &probev1.Settings{}, noGroup, before)
+	rejected(t, h, nil, noGroup, before)
+	want := proto.Clone(before).(*probev1.Settings)
+	for _, c := range []struct {
+		name  string
+		in    *probev1.Settings
+		apply func(*probev1.Settings)
+	}{
+		{"geo only", &probev1.Settings{GeoEnabled: proto.Bool(true)}, func(s *probev1.Settings) { s.GeoEnabled = proto.Bool(true) }},
+		{"public_enabled only", &probev1.Settings{PublicEnabled: proto.Bool(false)}, func(s *probev1.Settings) { s.PublicEnabled = proto.Bool(false) }},
+	} {
+		c.apply(want)
+		if got := saveSettings(t, h, c.in); !proto.Equal(got, want) {
+			t.Fatalf("%s: echo = %v, want %v", c.name, got, want)
+		}
+		if got := currentSettings(t, h); !proto.Equal(got, want) {
+			t.Fatalf("%s: stored = %v, want %v", c.name, got, want)
+		}
+	}
+}
+
+// 外观这一组按"任一项非空"判定给出（appearanceGiven）。按 proto 描述枚举 Settings 里没有 presence 的字符串字段，即外观
+// 各项（新增的外观字段自动纳入），逐个单独给一个非空值：每个都必须让请求按外观组整体校验、报 theme 的错，而不是被当作
+// 一组都没给。
+func TestUpdateSettingsEveryAppearanceFieldGivesTheGroup(t *testing.T) {
+	fields := (&probev1.Settings{}).ProtoReflect().Descriptor().Fields()
+	n := 0
+	for i := range fields.Len() {
+		fd := fields.Get(i)
+		if fd.HasPresence() || fd.Kind() != protoreflect.StringKind {
+			continue
+		}
+		n++
+		in := &probev1.Settings{}
+		in.ProtoReflect().Set(fd, protoreflect.ValueOfString("x"))
+		if _, err := cleanSettings(in); err == nil || !strings.Contains(err.Error(), "settings.theme must be one of auto, light, dark") {
+			t.Errorf("%s alone: %v, want the appearance group's theme error", fd.Name(), err)
+		}
+	}
+	if n == 0 {
+		t.Fatal("no appearance fields enumerated")
 	}
 }
 

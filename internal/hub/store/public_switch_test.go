@@ -25,7 +25,7 @@ func TestPublicSwitchPersistenceAndMemory(t *testing.T) {
 		t.Fatal("new store gate is closed")
 	}
 	for _, enabled := range []bool{false, true, false} {
-		if _, _, err := s.SaveSettings(t.Context(), SettingsUpdate{Theme: "auto", PublicEnabled: &enabled}); err != nil {
+		if _, _, err := s.SaveSettings(t.Context(), SettingsUpdate{PublicEnabled: &enabled}); err != nil {
 			t.Fatal(err)
 		}
 		var raw string
@@ -74,7 +74,7 @@ func TestPublicSwitchMemoryMatchesDatabaseUnderConcurrentSaves(t *testing.T) {
 		var wg sync.WaitGroup
 		for queued, enabled := range []bool{round%2 == 0, round%2 != 0} {
 			wg.Go(func() {
-				if _, _, err := s.SaveSettings(t.Context(), SettingsUpdate{Theme: "auto", PublicEnabled: &enabled}); err != nil {
+				if _, _, err := s.SaveSettings(t.Context(), SettingsUpdate{PublicEnabled: &enabled}); err != nil {
 					t.Error(err)
 				}
 			})
@@ -105,7 +105,7 @@ func TestPublicSwitchFailedSaveKeepsMemory(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := s.SaveSettings(t.Context(), SettingsUpdate{Theme: "auto", PublicEnabled: new(bool)})
+	_, _, err := s.SaveSettings(t.Context(), SettingsUpdate{Appearance: &SiteAppearance{Theme: "auto"}, PublicEnabled: new(bool)})
 	if err == nil || !strings.Contains(err.Error(), "gate rejected") {
 		t.Fatalf("save err=%v", err)
 	}

@@ -38,36 +38,69 @@ var (
 	accentRE  = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 )
 
-// cleanSettings 校验并清洗一次更新：外观整体替换；总闸与国家查询两项保留 presence 交给存储层处理（缺席即不变，见
-// store.SettingsUpdate）。任一项不合约束即返回错误，调用方什么都不写。
-// 标题会显示在页面与标签页上，与节点名（cleanName）同用 sanitize.Text 清洗；logo 与 CSS 是数据与代码，改写任何字节都可能改变含义，只校验不清洗。
+// cleanSettings 按组判定并校验一次更新，各组彼此独立（§10）：
+//   - 外观五项是一组。proto3 的 string 没有 presence，分不开"没给"与"给了空串"，所以五项任一非空即视为给出
+//     （appearanceGiven），给出就整体替换并按整体校验（cleanAppearance：theme 必填，其余为空即清空）。按任一项非空
+//     判定，只带 title 不带 theme 的请求得到点名 theme 的错误，而不是被当作"没给外观"静默丢弃。
+//   - 总闸与国家查询两项是 presence 字段，给出即改、缺席即不变（见 store.SettingsUpdate、cleanGeo）：只改总闸或只改
+//     国家查询的客户端不必重发外观，也就不会把它手里可能已过时的外观写回去。
+//
+// 一组都没给出的请求什么都不会改，返回 InvalidArgument 点名各组，而不是回一个看似成功的空操作。任一项不合约束即返回
+// 错误，调用方什么都不写。
 func cleanSettings(in *probev1.Settings) (store.SettingsUpdate, error) {
-	if n := len(in.GetTitle()); n > maxTitleBytes {
-		return store.SettingsUpdate{}, invalid("settings.title must be at most %d bytes before cleaning; got %d", maxTitleBytes, n)
+	if in == nil {
+		in = &probev1.Settings{}
 	}
-	title := sanitize.Text(in.GetTitle(), len(in.GetTitle()))
-	if n := utf8.RuneCountInString(title); n > maxTitleRunes {
-		return store.SettingsUpdate{}, invalid("settings.title must be at most %d characters after removing control characters and surrounding whitespace; got %d", maxTitleRunes, n)
-	}
-	if !slices.Contains(themes, in.GetTheme()) {
-		return store.SettingsUpdate{}, invalid("settings.theme must be one of %s; got %q", strings.Join(themes, ", "), in.GetTheme())
-	}
-	if c := in.GetAccentColor(); c != "" && !accentRE.MatchString(c) {
-		return store.SettingsUpdate{}, invalid("settings.accent_color must be empty (the default color) or #rrggbb with six hex digits; got %q", c)
-	}
-	if err := checkLogo(in.GetLogo()); err != nil {
-		return store.SettingsUpdate{}, err
-	}
-	if err := checkCSS(in.GetCustomCss()); err != nil {
-		return store.SettingsUpdate{}, err
+	out := store.SettingsUpdate{PublicEnabled: in.PublicEnabled}
+	if appearanceGiven(in) {
+		appearance, err := cleanAppearance(in)
+		if err != nil {
+			return store.SettingsUpdate{}, err
+		}
+		out.Appearance = &appearance
 	}
 	geoUpdate, err := cleanGeo(in)
 	if err != nil {
 		return store.SettingsUpdate{}, err
 	}
-	return store.SettingsUpdate{
+	out.Geo = geoUpdate
+	if out.Appearance == nil && out.PublicEnabled == nil && out.Geo.Enabled == nil && out.Geo.URL == nil {
+		return store.SettingsUpdate{}, invalid("settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, or the country lookup (geo_enabled, geo_url)")
+	}
+	return out, nil
+}
+
+// appearanceGiven 是外观这一组"给出"的判定：五项任一非空。Settings 新增外观字段时要同时加进这里与 cleanAppearance，
+// TestUpdateSettingsEveryAppearanceFieldGivesTheGroup 按 proto 描述逐个核对没有 presence 的字符串字段。
+func appearanceGiven(in *probev1.Settings) bool {
+	return in.GetTitle() != "" || in.GetTheme() != "" || in.GetAccentColor() != "" || in.GetLogo() != "" || in.GetCustomCss() != ""
+}
+
+// cleanAppearance 校验并清洗给出的外观，返回可以原样存储与下发的值。
+// 标题会显示在页面与标签页上，与节点名（cleanName）同用 sanitize.Text 清洗；logo 与 CSS 是数据与代码，改写任何字节都可能改变含义，只校验不清洗。
+func cleanAppearance(in *probev1.Settings) (store.SiteAppearance, error) {
+	if n := len(in.GetTitle()); n > maxTitleBytes {
+		return store.SiteAppearance{}, invalid("settings.title must be at most %d bytes before cleaning; got %d", maxTitleBytes, n)
+	}
+	title := sanitize.Text(in.GetTitle(), len(in.GetTitle()))
+	if n := utf8.RuneCountInString(title); n > maxTitleRunes {
+		return store.SiteAppearance{}, invalid("settings.title must be at most %d characters after removing control characters and surrounding whitespace; got %d", maxTitleRunes, n)
+	}
+	if !slices.Contains(themes, in.GetTheme()) {
+		return store.SiteAppearance{}, invalid("settings.theme must be one of %s; got %q", strings.Join(themes, ", "), in.GetTheme())
+	}
+	if c := in.GetAccentColor(); c != "" && !accentRE.MatchString(c) {
+		return store.SiteAppearance{}, invalid("settings.accent_color must be empty (the default color) or #rrggbb with six hex digits; got %q", c)
+	}
+	if err := checkLogo(in.GetLogo()); err != nil {
+		return store.SiteAppearance{}, err
+	}
+	if err := checkCSS(in.GetCustomCss()); err != nil {
+		return store.SiteAppearance{}, err
+	}
+	return store.SiteAppearance{
 		Title: title, Theme: in.GetTheme(), AccentColor: strings.ToLower(in.GetAccentColor()),
-		Logo: in.GetLogo(), CustomCSS: in.GetCustomCss(), PublicEnabled: in.PublicEnabled, Geo: geoUpdate,
+		Logo: in.GetLogo(), CustomCSS: in.GetCustomCss(),
 	}, nil
 }
 

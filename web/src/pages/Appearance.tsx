@@ -19,11 +19,10 @@ const toDraft = (s: Settings | undefined): Draft => ({
   title: s?.title ?? "", theme: s?.theme || "auto", accentColor: s?.accentColor ?? "", logo: s?.logo ?? "", customCss: s?.customCss ?? "",
 });
 
-// 两个表单保存成功后都经它：先把 hub 的回显写进 getSettings 的缓存，再失效。回显就是库里的已保存值（外观是清洗后
-// 写入的值，总闸是这次写入的值、缺席时是与库一致的内存值，国家查询两项由 SaveSettings 在同一个写事务里读回），缓存
-// 据此更新，不依赖刷新成功。只失效时，刷新一旦失败，缓存就停在保存前的值：查询表单按缓存整体替换外观，会把刚保存的
-// 外观改回去；外观表单没动过的总闸开关显示缓存值，也停在保存前；重新进入页面时查询表单显示的也是保存前的开关与地址。
-// 写与失效用同一个键，作用在同一组查询上。
+// 两个表单保存成功后都经它：先把 hub 的回显写进 getSettings 的缓存，再失效。回显就是库里的已保存值（外观与国家查询
+// 两项由 SaveSettings 在同一个写事务里读回，总闸是这次写入的值、缺席时是与库一致的内存值），缓存据此更新，不依赖刷新
+// 成功。只失效时，刷新一旦失败，缓存就停在保存前的值：外观表单没动过的总闸开关显示缓存值，停在保存前；重新进入页面时
+// 两个表单显示的也是保存前的值。写与失效用同一个键，作用在同一组查询上。
 function useAdoptSavedSettings() {
   const qc = useQueryClient();
   return (settings: Settings | undefined) => {
@@ -33,10 +32,10 @@ function useAdoptSavedSettings() {
   };
 }
 
-// 公开页的外观与总闸：UpdateSettings 整体替换外观五项，表单因此总是提交全部外观字段。总闸缺席表示不变，草稿只在
-// 用户动过开关后才带它：草稿是开始编辑（或上次保存）时的快照，之后总闸可能被别处改过（另一个面板、脚本），把快照里的
-// 总闸随标题一起提交，会把别人刚关掉的公开页重新打开。开关没动过时显示查询缓存里 hub 的当前值，重新拉取即跟上。
-// 国家查询的两项不在这个表单里、不提交：hub 对它们缺席即不改（见 GeoLookup）。
+// 公开页的外观与总闸。UpdateSettings 按组判定：外观五项是一组，给出就整体替换，表单因此总是提交全部五项（明暗总有值，
+// 这一组总算给出）。总闸是另一组，缺席表示不变，草稿只在用户动过开关后才带它：草稿是开始编辑（或上次保存）时的快照，
+// 之后总闸可能被别处改过（另一个面板、脚本），把快照里的总闸随标题一起提交，会把别人刚关掉的公开页重新打开。开关没动
+// 过时显示查询缓存里 hub 的当前值，重新拉取即跟上。国家查询的两项不在这个表单里、不提交：hub 对它们缺席即不改（见 GeoLookup）。
 //
 // 保存成功时 onSuccess 用 hub 的回显替换草稿；它不判断"是不是最新一次"，靠的是"有未结请求"与"草稿还能被改"互斥。
 // 草稿的改动来自两处：用户改字段（同步），与读 logo 文件的回调（异步，读完才改）。互斥由两处承载：
@@ -157,9 +156,9 @@ export function Appearance() {
 type GeoDraft = { geoEnabled: boolean; geoUrl: string };
 const toGeoDraft = (s: Settings | undefined): GeoDraft => ({ geoEnabled: s?.geoEnabled ?? false, geoUrl: s?.geoUrl ?? "" });
 
-// 国家 / 地区查询的开关与服务地址。UpdateSettings 对外观五项整体替换，这里提交的外观取 hub 当前的已保存值（current），
-// 不取上面表单的草稿：只改查询设置不会顺带保存外观的未保存改动。总闸不提交（toDraft 不取它），hub 对缺席的总闸不改。
-// 开关决定 hub 是否把节点地址发给第三方，文案照写发给哪个地址。
+// 国家 / 地区查询的开关与服务地址。只提交这两项：UpdateSettings 按组判定，外观与总闸缺席即不改。于是只改查询设置既不会
+// 顺带保存上面表单里外观与总闸的未保存改动，也不会把缓存里可能已过时的外观写回去（别处刚改过的外观不被覆盖）。current
+// 只用来初始化草稿。开关决定 hub 是否把节点地址发给第三方，文案照写发给哪个地址。
 function GeoLookup({ current }: { current: Settings | undefined }) {
   const adoptSaved = useAdoptSavedSettings();
   const [draft, setDraft] = useState<GeoDraft | null>(null);
@@ -179,7 +178,7 @@ function GeoLookup({ current }: { current: Settings | undefined }) {
   };
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (!update.isPending) update.mutate({ settings: { ...toDraft(current), ...form } });
+    if (!update.isPending) update.mutate({ settings: form });
   };
   return (
     <>

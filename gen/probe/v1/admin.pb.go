@@ -3901,10 +3901,12 @@ func (*TestNotifyChannelResponse) Descriptor() ([]byte, []int) {
 	return file_probe_v1_admin_proto_rawDescGZIP(), []int{66}
 }
 
-// 公开页设置与国家查询（§4.9）。外观五项整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。公开页总闸与国家
-// 查询两项缺失表示不改：关站是对外可见的中断，国家查询开关决定 hub 是否把节点地址发给第三方，只改外观的旧客户端与
-// 脚本都不得顺手改掉它们。GetSettings 与 UpdateSettings 的响应总带这三项。字段号按架构设计 §10 的登记表分配，不各自
-// 挑号：6 属公开页总闸，7、8 属国家查询。
+// 公开页设置与国家查询（§4.9）。UpdateSettings 按组判定、各组彼此独立。外观五项（1–5）是一组：proto3 的 string 没有
+// presence，所以任一项非空即视为给出，给出就整体替换并按整体校验（theme 必填，其余为空即清空）；只带 title 不带 theme
+// 的请求因此得到点名 theme 的错误，而不是被静默丢弃。公开页总闸与国家查询两项是 presence 字段，给出即改、缺席即不变：
+// 关站是对外可见的中断，国家查询开关决定 hub 是否把节点地址发给第三方，只改外观的旧客户端与脚本都不得顺手改掉它们；
+// 只改它们的客户端也不必重发外观。一次请求至少给出一组，否则 InvalidArgument 点名各组。GetSettings 与 UpdateSettings
+// 的响应总带全部字段。字段号按架构设计 §10 的登记表分配，不各自挑号：6 属公开页总闸，7、8 属国家查询。
 type Settings struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
