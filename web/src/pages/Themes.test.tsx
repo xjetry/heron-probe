@@ -3,6 +3,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { ListThemesResponseSchema } from "../gen/probe/v1/admin_pb";
+import { retryQuery } from "../retry";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Themes } from "./Themes";
 
@@ -37,6 +38,20 @@ it("未配置主题 origin 时给出说明而不是错误横幅", async () => {
   expect(note).toHaveTextContent("themes are disabled because this hub has no theme origin");
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByRole("form", { name: "上传主题" })).toBeNull();
+});
+
+// 生产的重试谓词下，FailedPrecondition 是配置态、不重试：说明一次请求就出现。退避设成一分钟，长于 findByRole 的等待上界
+// （test/async-timeout.ts），一旦重试说明就等不出来；calls 另外钉住只发了一次请求，不依赖这两个时长的大小关系。
+it("未配置主题 origin 时说明不等重试退避", async () => {
+  let calls = 0;
+  renderWithAdmin({
+    listThemes: async () => {
+      calls++;
+      throw new ConnectError("themes are disabled because this hub has no theme origin", Code.FailedPrecondition);
+    },
+  }, routes, "/themes", { retry: retryQuery, retryDelay: 60_000 });
+  expect(await screen.findByRole("note", { name: "主题未开启" })).toBeInTheDocument();
+  expect(calls).toBe(1);
 });
 
 it("其他错误照常显示为错误横幅", async () => {

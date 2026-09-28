@@ -6,10 +6,11 @@ import { RouterProvider } from "react-router";
 import { transport } from "./api/transport";
 import { isUnauthenticated } from "./api/auth";
 import { router } from "./App";
+import { retryQuery } from "./retry";
 import "./styles.css";
 
 // 任何查询或变更得到 Unauthenticated 都跳登录页：由数据层统一识别，页面不各自判断。
-// Unauthenticated 不重试——重试不会让会话复活。
+// 查询只对可能自行恢复的错误重试（retry.ts 的白名单）；Unauthenticated 不在其中，重试不会让会话复活。变更不重试。
 const onError = (err: unknown) => {
   if (isUnauthenticated(err)) void router.navigate("/login", { replace: true });
 };
@@ -17,7 +18,7 @@ const queryClient = new QueryClient({
   queryCache: new QueryCache({ onError }),
   mutationCache: new MutationCache({ onError }),
   defaultOptions: {
-    queries: { retry: (count, err) => !isUnauthenticated(err) && count < 2, refetchOnWindowFocus: false },
+    queries: { retry: retryQuery, refetchOnWindowFocus: false },
   },
 });
 

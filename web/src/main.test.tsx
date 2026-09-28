@@ -73,8 +73,15 @@ test.each(["query", "mutation"] as const)("%s 的 Unauthenticated 回到登录�
   expect(request).toHaveBeenCalledTimes(1);
 });
 
-test.each(["query", "mutation"] as const)("%s 的其他错误不跳登录页，查询只重试两次", async (kind) => {
+// 生产 client 的重试谓词是 retry.ts 的白名单：确定性错误一次就交给页面，瞬时错误查询再试两次，变更一律不重试。
+test.each(["query", "mutation"] as const)("%s 的确定性错误不跳登录页也不重试", async (kind) => {
   const request = await failRequest(kind, Code.PermissionDenied);
+  expect(window.location.pathname).toBe("/admin");
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+test.each(["query", "mutation"] as const)("%s 的 Unavailable 不跳登录页，查询再试两次", async (kind) => {
+  const request = await failRequest(kind, Code.Unavailable);
   expect(window.location.pathname).toBe("/admin");
   expect(request).toHaveBeenCalledTimes(kind === "query" ? 3 : 1);
 });
