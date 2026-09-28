@@ -216,7 +216,8 @@ func checkPath(name string) (p string, dir bool, err error) {
 	return p, dir, nil
 }
 
-// zip 外部属性的两种口径：高 16 位是 Unix 的 st_mode，低 16 位是 MS-DOS 属性（各平台的工具都写）。
+// zip 外部属性的两种口径：高 16 位是 Unix 的 st_mode，低 16 位是 MS-DOS 属性。两部分都可能是 0（archive/zip 不经
+// SetMode 时整体为 0），为 0 时不说明条目类型，按名字判。
 const (
 	unixTypeMask = 0o170000
 	unixRegular  = 0o100000
@@ -235,8 +236,8 @@ const (
 // （实测），这样的条目就是普通文件。
 // Unix 类型位对每个条目都判，不看创建者：解包工具对哪些创建者按 Unix 类型位还原各不相同，macOS 自带的 Info-ZIP
 // unzip 6.00 对创建者 2、3、5、16、30 的 0120777 条目都还原出真符号链接，对 0、10、19 还原成普通文件（实测）；
-// 只在某几个创建者上判，就会放进另一些创建者的链接条目。只写 MS-DOS 属性的条目（archive/zip 不经 SetMode 写出的
-// 就是这样）高 16 位为 0，类型位落在"未记录"，按名字判。
+// 只在某几个创建者上判，就会放进另一些创建者的链接条目。不写外部属性的条目（archive/zip 不经 SetMode 时，文件与
+// 目录条目的外部属性整体为 0，Go 1.27.1 实测）高 16 位为 0，类型位落在"未记录"，按名字判。
 // 名字与属性必须一致：名字以 / 结尾而属性说是普通文件（或反过来），不同的解包工具会还原出不同的东西。
 func checkKind(f *zip.File, p string, dir bool) error {
 	field := entryField(p)
