@@ -141,7 +141,7 @@ export function Appearance() {
         </fieldset>
       </form>
       <GeoLookup current={gate.data.settings} />
-      <BackupSettingsForm current={gate.data.settings?.backup} appearance={toDraft(gate.data.settings)} />
+      <BackupSettingsForm current={gate.data.settings?.backup} />
     </section>
   );
 }

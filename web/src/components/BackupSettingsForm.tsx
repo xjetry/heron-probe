@@ -3,7 +3,7 @@ import { type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { SAVE_SETTINGS, useAdoptSavedSettings, useSettingsSaving } from "../api/saveSettings";
-import { AdminService, type BackupSettings, type Settings } from "../gen/probe/v1/admin_pb";
+import { AdminService, type BackupSettings } from "../gen/probe/v1/admin_pb";
 import { liveIds } from "../lib/ids";
 import { Picks } from "./Picks";
 
@@ -21,15 +21,12 @@ const backupDraft = (b?: BackupSettings): BackupDraft => ({
   channelIds: new Set(b?.notify?.channelIds ?? []), secret: undefined, hasSecret: b?.hasSecret ?? false,
 });
 
-export type SavedAppearance = Pick<Settings, "title" | "theme" | "accentColor" | "logo" | "customCss">;
-
-// 备份设置单独一个表单。UpdateSettings 对外观五项整体替换，所以这里一并提交外观，取的是 hub 当前的已保存值（appearance），
-// 不是外观表单的草稿：只改备份不会顺带保存外观的未保存改动。总闸与国家查询两项不提交（appearance 里没有它们），hub 对
-// 缺席的这几项不改；外观表单与查询表单不提交 backup，hub 对缺席的 backup 不改。因为连带重发外观，保存与其余设置表单
-// 互斥（SAVE_SETTINGS）。
+// 备份设置单独一个表单，只提交 backup 这一组：UpdateSettings 按组判定，外观、总闸与国家查询两项缺席即不改。于是只改
+// 备份既不会顺带保存外观表单的未保存改动，也不会把缓存里可能已过时的外观写回去；外观表单与查询表单不提交 backup，hub
+// 对缺席的 backup 不改。保存与其余设置表单互斥（SAVE_SETTINGS）。
 // 提交的 backup 恒带 notify（表单显示的就是完整的渠道选择，与当前渠道列表求交）；secret 留空即缺席，保留 hub 已存的值；
 // hasSecret 不提交。渠道列表读到之前不渲染表单：拿空列表求交会把已选渠道当作显式空集合提交，等于关掉备份失败通知。
-export function BackupSettingsForm({ current, appearance }: { current: BackupSettings | undefined; appearance: SavedAppearance }) {
+export function BackupSettingsForm({ current }: { current: BackupSettings | undefined }) {
   const adoptSaved = useAdoptSavedSettings();
   const channels = useQuery(AdminService.method.listNotifyChannels, {});
   const [draft, setDraft] = useState<BackupDraft | null>(null);
@@ -56,7 +53,7 @@ export function BackupSettingsForm({ current, appearance }: { current: BackupSet
     e.preventDefault();
     if (!e.currentTarget.checkValidity() || saving) return;
     const { channelIds, hasSecret: _, ...rest } = form;
-    update.mutate({ settings: { ...appearance, backup: { ...rest, notify: { channelIds: liveIds(channelIds, channelList) } } } });
+    update.mutate({ settings: { backup: { ...rest, notify: { channelIds: liveIds(channelIds, channelList) } } } });
   };
   return (
     <>
