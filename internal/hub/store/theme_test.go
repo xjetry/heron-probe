@@ -47,10 +47,33 @@ func TestMigrationFromV15AddsThemeTables(t *testing.T) {
 		if err := forceEnabled(t, s, "b", 2); err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
 			t.Errorf("enabled = 2 on a %s database: %v, want the CHECK on theme.enabled to refuse it", kind, err)
 		}
-		if got := enabledIDs(t, s); !slices.Equal(got, []string{"a"}) {
-			t.Errorf("enabled on a %s database after the refused writes = %v, want [a]", kind, got)
+		if got := enabledColumn(t, s); !reflect.DeepEqual(got, map[string]int{"a": 1, "b": 0}) {
+			t.Errorf("theme.enabled on a %s database after the refused writes = %v, want a=1 b=0", kind, got)
 		}
 	}
+}
+
+// enabledColumn 直接读 theme.enabled 的原值：约束失守时列里可能是 2，经 ListThemes 读会在扫描成 bool 时出错。
+func enabledColumn(t *testing.T, s *Store) map[string]int {
+	t.Helper()
+	rows, err := s.r.Query("SELECT id, enabled FROM theme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var v int
+		if err := rows.Scan(&id, &v); err != nil {
+			t.Fatal(err)
+		}
+		out[id] = v
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 // forceEnabled 绕开 EnableTheme 直接改表：约束由 schema 承载，不依赖写者自觉先清再置、只写 0 与 1。
