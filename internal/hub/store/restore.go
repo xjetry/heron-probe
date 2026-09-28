@@ -88,12 +88,9 @@ func Restore(ctx context.Context, path, config, metrics string, now time.Time) (
 	}
 	// node 来自配置快照，始终由它决定哪些节点存在，与两层时刻的先后无关。
 	// schema 没有级联外键，整表替换也不能表达跨层清理；逐表显式删除并记录数量。
-	// alert_event 是审计历史，允许引用已删节点（含系统事件的 node_id=0），不属节点从属状态。
+	// nodeDependentTables 同时约束 DeleteNode，审计历史的排除口径不在恢复侧另列。
 	result.Orphans = make(map[string]int64)
-	dependent := []string{"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state"}
-	dependent = append(dependent, metricTables...)
-	dependent = append(dependent, probeTables...)
-	for _, table := range dependent {
+	for _, table := range nodeDependentTables {
 		res, e := tx.ExecContext(ctx, "DELETE FROM main."+table+" WHERE NOT EXISTS (SELECT 1 FROM main.node WHERE id = "+table+".node_id)")
 		if e != nil {
 			return result, e

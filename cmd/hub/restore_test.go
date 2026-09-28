@@ -164,7 +164,8 @@ func testRestoreTimeline(t *testing.T, configAt int64) {
 		restoreWant(t, db, query, want)
 	}
 	wantOrphans := make(map[string]int64)
-	for _, table := range []string{"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "metric_1m", "metric_5m", "metric_1h", "probe_1m", "probe_5m", "probe_1h"} {
+	// Restore 按共享的节点从属清单输出每张表（含零计数）；表集合由存储层完备性用例钉住。
+	for table := range summary.Orphans {
 		restoreWant(t, db, "SELECT group_concat(node_id) FROM "+table, "2")
 		wantOrphans[table] = 1
 	}
