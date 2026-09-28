@@ -42,11 +42,19 @@ const maxBatchReads = 3
 
 // DeliveryRetryWait 是渠道失败可重试、应答不带 429 的 Retry-After、渠道节奏未满且存储正常时，retryWait 给一个批次
 // 各次重试间隔的总和：第 n 次尝试得到可重试的渠道失败且未到 store.MaxDeliveryAttempts 时间隔是 backoff[n-1]，
-// 所以依次是 backoff 的每一项。实际两次尝试之间还可能更久，有四种：429 的 Retry-After 把单次间隔拉长到至多
-// MaxRetryAfter；渠道节奏已满时批次排队到下一个空位（rateSlot）；间隔到期后批次回到 ready 队尾，唯一的 worker 要先
-// 发完排在它前面的批次；存储失败时 Run 经 retryAfterFailure 退避（1s 起翻倍、上限 1 分钟），存储持续失败时没有总量
-// 上界。启动行以 delivery_retry_wait 报出，scripts/e2e.sh 据此推出告警等待上限——e2e 的接收器是不限节奏的 Webhook
-// 渠道、不回 429，同一时刻只有一个批次在投；TestQueueGivesUpAfterMaxAttempts 把它钉到只有一个批次时实际等过的总和上。
+// 所以依次是 backoff 的每一项。实际两次尝试之间可能更久，至少有下面这些情形（不是全部）：
+//   - 429 的 Retry-After 把单次间隔拉长到至多 MaxRetryAfter；
+//   - 渠道节奏已满时批次排队到下一个空位（rateSlot）；
+//   - 间隔到期后批次回到 ready 队尾，唯一的 worker 要先发完排在它前面的批次；
+//   - 下一次尝试的最早时刻随结果落库（not_before）时按秒向上取整，间隔到期后重读批次时按它再等，墙钟不在整秒时
+//     比内存里算出的间隔多出不到 1 s；
+//   - 满窗口时被挤出的等待批次（evictLocked）回到库里，要等 ready 取空且窗口有空位时的补货才装回，补货按批次号
+//     先装更早的批次，所以可能在它的最早时刻之后很久；
+//   - 存储失败时 Run 经 retryAfterFailure 退避（1s 起翻倍、上限 1 分钟），存储持续失败时没有总量上界。
+//
+// 启动行以 delivery_retry_wait 报出，scripts/e2e.sh 据此推出告警等待上限——e2e 的接收器是不限节奏的 Webhook
+// 渠道、总回 200，同一时刻只有一个批次在投。TestQueueGivesUpAfterMaxAttempts 把它钉到只有一个批次、夹具墙钟停在
+// 整秒时实际等过的总和上。
 func DeliveryRetryWait() time.Duration {
 	var total time.Duration
 	for _, d := range backoff {
@@ -579,9 +587,9 @@ func (q *Queue) rateSlot(c store.NotifyChannel, now time.Duration) (time.Duratio
 	return log[len(log)-c.RatePerMinute] + rateWindow, true
 }
 
-// retryWait 是第 attempts 次尝试以可重试失败告终后到下一次尝试的间隔：固定退避 backoff[attempts-1]；429 应答带
-// Retry-After 时取两者较大者，Retry-After 至多计 MaxRetryAfter。固定退避是下限：Retry-After 为 0 或已过去的日期
-// 不让重试比没有它时更密。
+// retryWait 是第 attempts 次尝试以可重试失败告终后到下一次尝试的最短间隔（更久的情形见 DeliveryRetryWait）：固定退避
+// backoff[attempts-1]；429 应答带 Retry-After 时取两者较大者，Retry-After 至多计 MaxRetryAfter。固定退避是下限：
+// Retry-After 为 0 或已过去的日期不让重试比没有它时更密。
 func (q *Queue) retryWait(err error, attempts int) time.Duration {
 	wait := backoff[attempts-1]
 	var f *sendFailure

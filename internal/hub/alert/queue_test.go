@@ -159,7 +159,8 @@ func TestQueueGivesUpAfterMaxAttempts(t *testing.T) {
 				t.Fatalf("backoff=%v want %v", sleeps, backoffs)
 			}
 			// 启动行的 delivery_retry_wait 与 e2e 的等待上限都取 DeliveryRetryWait；这里把它钉到 worker
-			// 在可重试的渠道失败下实际等过的总和上，两者分叉时在这里红，而不是让上限静默偏离真实等待。
+			// 在可重试的渠道失败下实际等过的总和上，两者分叉时在这里红，而不是让上限静默偏离真实等待。夹具墙钟停在
+			// 整秒，not_before 的取整不添等待；墙钟不在整秒时每次重试多等不到 1 s（见 DeliveryRetryWait）。
 			if status == 500 {
 				var total time.Duration
 				for _, d := range sleeps {

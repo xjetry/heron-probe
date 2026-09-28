@@ -438,8 +438,9 @@ initial_interval_s=$(startup_seconds "$work/agent-arm64.log" "agent starting" in
 #   上报，任何一轮巡检看到的未上报时长都小于 TTL，首个成功上报之后的第一轮巡检就判恢复，至多一个
 #   offline_sweep，与 ttl 无关。连续失败没有上限可推：hub 一直不应答时节点本来就没有恢复上报。
 # 投递 delivery_retry_wait：渠道失败可重试且存储正常时，一个批次依次等过 internal/hub/alert/queue.go
-#   的 backoff 各项，总和即 DeliveryRetryWait。429 的 Retry-After 与渠道节奏排队会等得更久，都不在预算内：
-#   接收器是 Webhook 渠道（保存时省略节奏上限，取默认 0 即不限），且从不回 429。存储失败走 worker 级退避
+#   的 backoff 各项，总和即 DeliveryRetryWait。429 的 Retry-After、渠道节奏排队与 not_before 的整秒取整（每次
+#   重试多等不到 1 s）会等得更久，都不在预算内：接收器是 Webhook 渠道（保存时省略节奏上限，取默认 0 即不限），
+#   总回 200，既不回 429 也不让批次重试。存储失败走 worker 级退避
 #   （1s 起翻倍、上限 1 分钟），没有总量上界，不在预算内；e2e 的库在本机磁盘上，视为正常。渠道客户端 10s 超时（notify.go 的
 #   NewHTTPClient）只在接收器挂住时才会用满；接收器在本机回环、已由 TestNotifyChannel 验证能应答，
 #   上限不为此留量。
