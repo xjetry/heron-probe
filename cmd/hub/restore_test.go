@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -135,7 +137,10 @@ func testRestoreTimeline(t *testing.T, configAt int64) {
 	restoreExec(t, restoreDB(t, config), fmt.Sprintf("UPDATE snapshot_meta SET taken_at=%d", configAt))
 	path := filepath.Join(t.TempDir(), "restored.db")
 	start := time.Now().Unix()
-	out, err := hubCommand(t, "restore", "--db", path, "--config", config, "--metrics", metrics, "--yes").CombinedOutput()
+	cmd := hubCommand(t, "restore", "--db", path, "--config", config, "--metrics", metrics, "--yes")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("restore command: %v %s", err, out)
 	}
@@ -147,6 +152,13 @@ func testRestoreTimeline(t *testing.T, configAt int64) {
 		t.Errorf("restore summary timestamps: %+v", summary)
 	}
 	db := restoreDB(t, path)
+	var version int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if want := `msg="database schema created" version=` + strconv.Itoa(version); !strings.Contains(stderr.String(), want) {
+		t.Errorf("restore stderr = %q, want %q", stderr.String(), want)
+	}
 	restoreWant(t, db, "SELECT seq FROM sqlite_sequence WHERE name='metrics_only'", "23")
 	for query, want := range map[string]string{
 		"SELECT group_concat(id) FROM node":                                     "1,2",
@@ -228,6 +240,10 @@ func TestRestoreTargetSchemaPolicy(t *testing.T) {
 			restoreExec(t, db, fmt.Sprintf("PRAGMA user_version=%d", version))
 			before := restoreDump(t, path)
 			err := runRestoreWith([]string{"--db", path, "--config", config, "--metrics", metrics, "--yes"}, &bytes.Buffer{})
+			statsErr := runStatsWith([]string{"--db", path}, &bytes.Buffer{})
+			if err == nil || statsErr == nil || err.Error() != statsErr.Error() {
+				t.Errorf("restore/stats admission differs: restore=%v stats=%v", err, statsErr)
+			}
 			if err == nil || !strings.Contains(err.Error(), "schema version") {
 				t.Errorf("target version %d must be rejected without migration: %v", version, err)
 			}
@@ -241,7 +257,7 @@ func TestRestoreTargetSchemaPolicy(t *testing.T) {
 
 func TestRestoreRejectsSnapshotsWithoutChangingTarget(t *testing.T) {
 	for _, layer := range []string{"config", "metrics"} {
-		for _, defect := range []string{"schema", "page", "table", "layer", "metadata"} {
+		for _, defect := range []string{"schema", "page", "table", "layer", "metadata", "empty metadata"} {
 			t.Run(layer+"/"+defect, func(t *testing.T) {
 				config, metrics := restoreSnapshots(t)
 				path := restoreTarget(t)
@@ -272,6 +288,8 @@ func TestRestoreRejectsSnapshotsWithoutChangingTarget(t *testing.T) {
 					query, wantErr = "UPDATE snapshot_meta SET layer='wrong'", `layer="wrong"`
 				case "metadata":
 					query, wantErr = "INSERT INTO snapshot_meta SELECT * FROM snapshot_meta", "rows=2"
+				case "empty metadata":
+					query, wantErr = "DELETE FROM snapshot_meta", "rows=0"
 				}
 				restoreExec(t, db, query)
 				before := restoreDump(t, path)
@@ -288,6 +306,22 @@ func TestRestoreRejectsSnapshotsWithoutChangingTarget(t *testing.T) {
 }
 
 func TestRestoreFailureRollsBackAllTables(t *testing.T) {
+	t.Run("fresh target", func(t *testing.T) {
+		config, metrics := restoreSnapshots(t)
+		restoreExec(t, restoreDB(t, config), "UPDATE node SET token_hash=x'01'")
+		path := filepath.Join(t.TempDir(), "new.db")
+		cmd := hubCommand(t, "restore", "--db", path, "--config", config, "--metrics", metrics, "--yes")
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "UNIQUE constraint failed: node.token_hash") {
+			t.Fatalf("expected mid-copy unique failure, got %v: %s", err, out)
+		}
+		if strings.Contains(string(out), "database schema created") {
+			t.Errorf("failed restore reported schema creation: %s", out)
+		}
+		db := restoreDB(t, path)
+		restoreWant(t, db, "SELECT count(*) FROM sqlite_schema", "0")
+		restoreWant(t, db, "PRAGMA user_version", "0")
+	})
 	config, metrics := restoreSnapshots(t)
 	path := restoreTarget(t)
 	db := restoreDB(t, path)
@@ -300,6 +334,52 @@ func TestRestoreFailureRollsBackAllTables(t *testing.T) {
 	if after := restoreDump(t, path); after != before {
 		t.Error("late restore failure changed target database: config, metrics, sequences and record must roll back together")
 	}
+}
+
+func TestRestoreValidatesSourcesBeforeCreatingTarget(t *testing.T) {
+	for _, defect := range []string{"missing config", "missing metrics", "invalid config", "invalid metrics", "page config"} {
+		t.Run(defect, func(t *testing.T) {
+			config, metrics := restoreSnapshots(t)
+			missing := filepath.Join(t.TempDir(), "missing.db")
+			switch defect {
+			case "missing config":
+				config = missing
+			case "missing metrics":
+				metrics = missing
+			case "invalid config":
+				restoreExec(t, restoreDB(t, config), "DELETE FROM snapshot_meta")
+			case "invalid metrics":
+				restoreExec(t, restoreDB(t, metrics), "DELETE FROM snapshot_meta")
+			case "page config":
+				metrics = ""
+				restoreExec(t, restoreDB(t, config), `CREATE TABLE saved_sequence AS SELECT * FROM sqlite_sequence;
+					PRAGMA page_size=8192; VACUUM;
+					CREATE TABLE sequence_seed (id INTEGER PRIMARY KEY AUTOINCREMENT); DROP TABLE sequence_seed;
+					INSERT INTO sqlite_sequence SELECT * FROM saved_sequence; DROP TABLE saved_sequence`)
+			}
+			path := filepath.Join(t.TempDir(), "target.db")
+			if err := runRestoreWith([]string{"--db", path, "--config", config, "--metrics", metrics, "--yes"}, &bytes.Buffer{}); err == nil {
+				t.Error("invalid source must be rejected")
+			}
+			if _, err := os.Stat(missing); !os.IsNotExist(err) {
+				t.Errorf("restore created missing snapshot: %v", err)
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Errorf("source validation failure created target: %v", err)
+			}
+		})
+	}
+}
+
+func TestRestoreCopiesColumnsByName(t *testing.T) {
+	config, metrics := restoreSnapshots(t)
+	restoreExec(t, restoreDB(t, config), `ALTER TABLE setting RENAME TO old_setting;
+		CREATE TABLE setting AS SELECT value,key FROM old_setting; DROP TABLE old_setting`)
+	path := restoreTarget(t)
+	if err := runRestoreWith([]string{"--db", path, "--config", config, "--metrics", metrics, "--yes"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	restoreWant(t, restoreDB(t, path), "SELECT value FROM setting WHERE key='site.title'", "snapshot")
 }
 
 func TestRestoreRequiresExplicitConfirmation(t *testing.T) {

@@ -36,6 +36,7 @@ var migrations = map[int]func(*sql.Tx) error{
 }
 
 const ddlRestoreRecordV14 = `CREATE TABLE restore_record (
+  id TEXT PRIMARY KEY NOT NULL,
   restored_at INTEGER NOT NULL,
   config_taken_at INTEGER NOT NULL,
   metrics_taken_at INTEGER,

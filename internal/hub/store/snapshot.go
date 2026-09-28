@@ -13,7 +13,7 @@ import (
 var configSnapshotTables = []string{
 	"node", "node_facts", "traffic", "probe_task", "probe_task_node", "probe_meta",
 	"alert_rule", "alert_rule_node", "alert_rule_channel", "alert_state", "alert_event", "alert_delivery",
-	"notify_channel", "setting", "admin", "api_token",
+	"notify_channel", "setting", "admin", "api_token", "restore_record",
 }
 
 var metricsSnapshotTables = []string{

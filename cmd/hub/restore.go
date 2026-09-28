@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"time"
 
@@ -33,7 +34,8 @@ func runRestoreWith(args []string, out io.Writer) error {
 	if *config == "" {
 		return errors.New("restore requires --config <snapshot>")
 	}
-	result, err := store.Restore(context.Background(), *db, *config, *metrics, time.Now())
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	result, err := store.Restore(context.Background(), *db, *config, *metrics, time.Now(), log)
 	if err != nil {
 		return err
 	}

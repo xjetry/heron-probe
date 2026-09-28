@@ -2,10 +2,14 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -20,9 +24,16 @@ type RestoreResult struct {
 
 // Restore 只供停止 hub 后的离线入口使用：直接覆写库不会同步运行中 hub 的设置缓存与鉴权索引。
 // 不探测 WAL 写者来声称已停机；是否已停 hub 由命令行的显式确认承担。
-func Restore(ctx context.Context, path, config, metrics string, now time.Time) (result RestoreResult, err error) {
+func Restore(ctx context.Context, path, config, metrics string, now time.Time, log *slog.Logger) (result RestoreResult, err error) {
 	if config == "" {
 		return result, errors.New("config snapshot is required")
+	}
+	sources := []restoreSource{{"config", config, configSnapshotTables}}
+	if metrics != "" {
+		sources = append(sources, restoreSource{"metrics", metrics, metricsSnapshotTables})
+	}
+	if err := preflightRestoreSources(ctx, path, sources); err != nil {
+		return result, err
 	}
 	db, err := sql.Open("sqlite", dsn(path, ""))
 	if err != nil {
@@ -30,18 +41,8 @@ func Restore(ctx context.Context, path, config, metrics string, now time.Time) (
 	}
 	defer func() { err = errors.Join(err, db.Close()) }()
 	db.SetMaxOpenConns(1)
-	type source struct {
-		layer, path string
-		tables      []string
-	}
-	sources := []source{{"config", config, configSnapshotTables}}
-	if metrics != "" {
-		sources = append(sources, source{"metrics", metrics, metricsSnapshotTables})
-	}
-	for _, src := range sources {
-		if _, err = db.ExecContext(ctx, "ATTACH DATABASE ? AS "+src.layer, dsn(src.path, "&mode=ro")); err != nil {
-			return result, fmt.Errorf("attach %s snapshot: %w", src.layer, err)
-		}
+	if err = attachRestoreSources(ctx, db, sources); err != nil {
+		return result, err
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -52,7 +53,7 @@ func Restore(ctx context.Context, path, config, metrics string, now time.Time) (
 	if err = tx.QueryRowContext(ctx, "PRAGMA main.page_size").Scan(&pageSize); err != nil {
 		return result, err
 	}
-	// 校验和读取在同一事务中固定每份来源；检查失败前不建表、不迁移或改写目标数据。
+	// 预检不打开目标；这里再次校验并在恢复事务内固定来源，避免预检后来源被替换而绕过检查。
 	for _, src := range sources {
 		at, e := validateSnapshot(ctx, tx, src.layer, src.tables, pageSize)
 		if e != nil {
@@ -64,18 +65,32 @@ func Restore(ctx context.Context, path, config, metrics string, now time.Time) (
 			result.MetricsTakenAt = &at
 		}
 	}
-	if err = prepareRestoreTarget(ctx, tx); err != nil {
-		return result, err
+	action, _, err := schemaAdmission(ctx, tx, RequireCurrentSchema)
+	if err != nil {
+		return result, fmt.Errorf("open database %s: %w", path, err)
+	}
+	if action == schemaCreate {
+		if err = createSchema(ctx, tx); err != nil {
+			return result, err
+		}
 	}
 	for _, src := range sources {
 		for _, table := range src.tables {
-			for _, query := range []string{
-				"DELETE FROM main." + table,
-				"INSERT INTO main." + table + " SELECT * FROM " + src.layer + "." + table,
-			} {
-				if _, err = tx.ExecContext(ctx, query); err != nil {
+			columns, e := restoreColumnList(ctx, tx, table)
+			if e != nil {
+				return result, e
+			}
+			insert := "INSERT INTO "
+			if table == "restore_record" {
+				// 审计事件以创建时的 id 标识，回退配置不能删除目标已有的历史，重复快照也不重复记账。
+				insert = "INSERT OR IGNORE INTO "
+			} else {
+				if _, err = tx.ExecContext(ctx, "DELETE FROM main."+table); err != nil {
 					return result, fmt.Errorf("restore %s.%s: %w", src.layer, table, err)
 				}
+			}
+			if _, err = tx.ExecContext(ctx, insert+"main."+table+" ("+columns+") SELECT "+columns+" FROM "+src.layer+"."+table); err != nil {
+				return result, fmt.Errorf("restore %s.%s: %w", src.layer, table, err)
 			}
 		}
 	}
@@ -106,12 +121,85 @@ func Restore(ctx context.Context, path, config, metrics string, now time.Time) (
 	if err != nil {
 		return result, err
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO main.restore_record (restored_at,config_taken_at,metrics_taken_at,orphans) VALUES (?,?,?,?)",
-		result.RestoredAt, result.ConfigTakenAt, result.MetricsTakenAt, string(orphans)); err != nil {
+	var id [16]byte
+	if _, err = rand.Read(id[:]); err != nil {
+		return result, err
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO main.restore_record (id,restored_at,config_taken_at,metrics_taken_at,orphans) VALUES (?,?,?,?,?)",
+		hex.EncodeToString(id[:]), result.RestoredAt, result.ConfigTakenAt, result.MetricsTakenAt, string(orphans)); err != nil {
 		return result, err
 	}
 	err = tx.Commit()
+	if err == nil && action == schemaCreate {
+		logSchemaCreated(log)
+	}
 	return result, err
+}
+
+type restoreSource struct {
+	layer, path string
+	tables      []string
+}
+
+func attachRestoreSources(ctx context.Context, db *sql.DB, sources []restoreSource) error {
+	for _, src := range sources {
+		if _, err := db.ExecContext(ctx, "ATTACH DATABASE ? AS "+src.layer, dsn(src.path, "&mode=ro")); err != nil {
+			return fmt.Errorf("attach %s snapshot: %w", src.layer, err)
+		}
+	}
+	return nil
+}
+
+func preflightRestoreSources(ctx context.Context, target string, sources []restoreSource) (err error) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, db.Close()) }()
+	db.SetMaxOpenConns(1)
+	if err := attachRestoreSources(ctx, db, sources); err != nil {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var pageSize int
+	pageSchema := "config"
+	if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
+		// 空的 main 库给出 SQLite 默认页大小，新目标采用这个值；创建文件之前就拒绝不匹配的来源。
+		pageSchema = "main"
+	} else if err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, "PRAGMA "+pageSchema+".page_size").Scan(&pageSize); err != nil {
+		return err
+	}
+	for _, src := range sources {
+		if _, err := validateSnapshot(ctx, tx, src.layer, src.tables, pageSize); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func restoreColumnList(ctx context.Context, tx *sql.Tx, table string) (string, error) {
+	// 目标 schema 决定要恢复的列，INSERT 与 SELECT 共用列名，不依赖快照中列的物理顺序。
+	rows, err := tx.QueryContext(ctx, "SELECT name FROM pragma_table_info(?, 'main') ORDER BY cid", table)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var columns []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return "", err
+		}
+		columns = append(columns, `"`+strings.ReplaceAll(name, `"`, `""`)+`"`)
+	}
+	return strings.Join(columns, ","), rows.Err()
 }
 
 func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []string, pageSize int) (int64, error) {
@@ -124,49 +212,22 @@ func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []st
 			return 0, fmt.Errorf("%s snapshot missing table %s", layer, table)
 		}
 	}
-	var count, version, size int
-	var at int64
-	var gotLayer string
+	var count, size int
+	var version, at sql.NullInt64
+	var gotLayer sql.NullString
 	if err := tx.QueryRowContext(ctx, "SELECT count(*),max(schema_version),max(taken_at),max(layer) FROM "+layer+".snapshot_meta").Scan(&count, &version, &at, &gotLayer); err != nil {
 		return 0, fmt.Errorf("%s snapshot metadata: %w", layer, err)
 	}
-	if count != 1 || version != schemaVersion || gotLayer != layer {
-		return 0, fmt.Errorf("%s snapshot metadata: rows=%d schema_version=%d layer=%q; want one row, schema_version=%d layer=%q", layer, count, version, gotLayer, schemaVersion, layer)
+	if count != 1 || version.Int64 != schemaVersion || gotLayer.String != layer {
+		return 0, fmt.Errorf("%s snapshot metadata: rows=%d schema_version=%d layer=%q; want one row, schema_version=%d layer=%q", layer, count, version.Int64, gotLayer.String, schemaVersion, layer)
 	}
 	if err := tx.QueryRowContext(ctx, "PRAGMA "+layer+".page_size").Scan(&size); err != nil {
 		return 0, err
 	}
 	if size != pageSize {
-		return 0, fmt.Errorf("%s snapshot page_size=%d; target page_size=%d", layer, size, pageSize)
+		return 0, fmt.Errorf("%s snapshot page_size=%d; expected page_size=%d", layer, size, pageSize)
 	}
-	return at, nil
-}
-
-func prepareRestoreTarget(ctx context.Context, tx *sql.Tx) error {
-	var version int
-	if err := tx.QueryRowContext(ctx, "PRAGMA main.user_version").Scan(&version); err != nil {
-		return err
-	}
-	if version == schemaVersion {
-		return nil
-	}
-	if version != 0 {
-		return fmt.Errorf("target schema version %d differs from current %d; upgrade older databases with probe-hub serve first (back up the database first)", version, schemaVersion)
-	}
-	var objects int
-	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM main.sqlite_schema").Scan(&objects); err != nil {
-		return err
-	}
-	if objects != 0 {
-		return errors.New("target database has objects but no schema version; not a probe database")
-	}
-	for _, stmt := range schemaStatements() {
-		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			return err
-		}
-	}
-	_, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA main.user_version = %d", schemaVersion))
-	return err
+	return at.Int64, nil
 }
 
 func restoreSequences(ctx context.Context, tx *sql.Tx, sources []string) error {

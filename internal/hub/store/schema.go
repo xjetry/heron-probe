@@ -130,8 +130,9 @@ func schemaStatements() []string {
 	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState, ddlRestoreRecord)
 }
 
-// 恢复记录留在目标库，不随配置回退；两层时刻与逐表清理数用于解释历史空洞的来源。
+// 恢复记录随配置备份并按 id 与目标取并集；随机标识由 Restore 在创建时生成，避免秒级时刻相同的事件合并。
 const ddlRestoreRecord = `CREATE TABLE restore_record (
+  id TEXT PRIMARY KEY NOT NULL,
   restored_at INTEGER NOT NULL,
   config_taken_at INTEGER NOT NULL,
   metrics_taken_at INTEGER,
