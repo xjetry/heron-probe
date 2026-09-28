@@ -3,15 +3,19 @@ package geo
 import (
 	"bytes"
 	"crypto/sha256"
+	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/oschwald/maxminddb-golang/v2"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 // fixtureCopy 把提交的夹具复制到临时目录：用例改写的是副本，不动夹具本身。
@@ -137,41 +141,75 @@ func TestMMDBIgnoresTruncation(t *testing.T) {
 	}
 }
 
-// 目录与超过上限的文件按配置错误拒绝，错误写明路径与原因。上限写字面值 256 MiB，不引用常量：常量改了而 spec 没改，
-// 这里要红。超限文件是稀疏文件，"在读之前拒绝"由分配量证明：读进内存就至少分配 256 MiB。
-func TestOpenMMDBRejectsDirectoriesAndOversizedFiles(t *testing.T) {
-	t.Run("directory", func(t *testing.T) {
-		dir := t.TempDir()
-		if _, err := OpenMMDB(dir); err == nil || !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), "is a directory") {
-			t.Errorf("directory error = %v, want path %q and \"is a directory\"", err, dir)
-		}
-	})
-	t.Run("oversized", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "huge.mmdb")
-		f, err := os.Create(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := f.Close(); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Truncate(path, 256<<20+1); err != nil {
-			t.Fatal(err)
-		}
-		if info, err := os.Stat(path); err != nil || info.Size() != 256<<20+1 {
-			t.Fatalf("fixture: oversized file = %v %v, want 256 MiB + 1 byte", info, err)
-		}
-		var before, after runtime.MemStats
-		runtime.ReadMemStats(&before)
-		_, err = OpenMMDB(path)
-		runtime.ReadMemStats(&after)
-		if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "256 MiB") {
-			t.Errorf("oversized error = %v, want path %q and the 256 MiB limit", err, path)
-		}
-		if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 16<<20 {
-			t.Errorf("rejecting the oversized file allocated %d bytes, want it rejected before reading", alloc)
-		}
-	})
+// 不是普通文件的路径在打开之前按配置错误拒绝，错误写明路径与原因，而且立即返回。命名管道没有写者：打开它会一直
+// 阻塞，等不到返回就说明 OpenMMDB 去打开了它。等待的上界只为阻塞时能以失败结束；超时后以写端打开一次，放走被阻塞
+// 的那次打开。
+func TestOpenMMDBRejectsNonRegularFiles(t *testing.T) {
+	fifo := filepath.Join(t.TempDir(), "country.mmdb")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(fifo); err != nil || info.Mode().Type() != os.ModeNamedPipe {
+		t.Fatalf("fixture: %s = %v %v, want a named pipe", fifo, info, err)
+	}
+	for _, c := range []struct{ name, path string }{
+		{"directory", t.TempDir()},
+		{"named pipe", fifo},
+		{"device", "/dev/zero"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := os.Stat(c.path); err != nil {
+				t.Skipf("no %s here: %v", c.path, err)
+			}
+			done := make(chan error, 1)
+			go func() {
+				_, err := OpenMMDB(c.path)
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if err == nil || !strings.Contains(err.Error(), c.path) || !strings.Contains(err.Error(), "not a regular file") {
+					t.Errorf("%s error = %v, want path %q and \"not a regular file\"", c.name, err, c.path)
+				}
+			case <-time.After(testwait.Bound):
+				t.Errorf("OpenMMDB(%s) still blocked after %v, want it rejected before opening", c.path, testwait.Bound)
+				if c.path == fifo {
+					if w, err := os.OpenFile(fifo, os.O_WRONLY, 0); err == nil {
+						w.Close()
+					}
+				}
+			}
+		})
+	}
+}
+
+// 超过上限的文件按配置错误拒绝，错误写明路径与原因。上限写字面值 256 MiB，不引用常量：常量改了而 spec 没改，这里要红。
+// 超限文件是稀疏文件，"在读之前拒绝"由分配量证明：读进内存就至少分配 256 MiB。
+func TestOpenMMDBRejectsOversizedFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "huge.mmdb")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(path, 256<<20+1); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(path); err != nil || info.Size() != 256<<20+1 {
+		t.Fatalf("fixture: oversized file = %v %v, want 256 MiB + 1 byte", info, err)
+	}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err = OpenMMDB(path)
+	runtime.ReadMemStats(&after)
+	if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "256 MiB") {
+		t.Errorf("oversized error = %v, want path %q and the 256 MiB limit", err, path)
+	}
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 16<<20 {
+		t.Errorf("rejecting the oversized file allocated %d bytes, want it rejected before reading", alloc)
+	}
 }
 
 // 空路径按配置错误拒绝，且拒绝来自显式检查而不是打开失败：api 以 MMDBPath 是否为空区分两个后端，空路径的本地库
@@ -182,22 +220,31 @@ func TestOpenMMDBRejectsAnEmptyPath(t *testing.T) {
 	}
 }
 
-// 报不出大小的设备文件（/dev/zero 的 Stat 大小为 0）过了读之前的检查，读取仍按上限截断并拒绝：上限只由 Stat 承载、
-// 读取不设上限时，这里会一直读下去。用 1 MiB 的上限，免得用例本身读 256 MiB。
-func TestReadLimitedCapsWhatStatCannotSize(t *testing.T) {
-	info, err := os.Stat("/dev/zero")
-	if err != nil || info.Size() > 1<<20 || info.IsDir() {
-		t.Skipf("no sizeless /dev/zero here: %v %v", info, err)
+// zeros 是一段 n 字节的全零输入。
+type zeros struct{ n int64 }
+
+func (z *zeros) Read(p []byte) (int, error) {
+	if z.n <= 0 {
+		return 0, io.EOF
 	}
+	k := min(int64(len(p)), z.n)
+	clear(p[:k])
+	z.n -= k
+	return int(k), nil
+}
+
+// 读取本身按上限截断：Stat 之后变大的文件过了读之前的大小检查，读到的比 Stat 报的多。这里用一段 64 MiB 的输入与
+// 1 MiB 的上限代替它，断言报出上限，且读进内存的不超过上限太多；读取不截断时会把 64 MiB 全读进来。
+func TestReadAtMostCapsASourceLongerThanTheLimit(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	_, err = readLimited("/dev/zero", 1<<20)
+	_, err := readAtMost(&zeros{n: 64 << 20}, 1<<20)
 	runtime.ReadMemStats(&after)
 	if err == nil || !strings.Contains(err.Error(), "1 MiB limit") {
-		t.Errorf("reading /dev/zero = %v, want the 1 MiB limit", err)
+		t.Errorf("reading 64 MiB with a 1 MiB limit = %v, want the 1 MiB limit", err)
 	}
 	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 16<<20 {
-		t.Errorf("reading /dev/zero allocated %d bytes, want at most about the 1 MiB limit", alloc)
+		t.Errorf("reading with a 1 MiB limit allocated %d bytes, want at most about the limit", alloc)
 	}
 }
 

@@ -103,16 +103,16 @@ func OpenMMDB(path string) (*MMDB, error) {
 	return &MMDB{path: path, db: db}, nil
 }
 
-// readLimited 读入 path 处的文件，至多 limit 字节。目录与 Stat 报出的大小超过 limit 的文件在读之前拒绝；读取另按
-// limit 截断，Stat 之后文件变大、或 path 是报不出大小的设备文件时，读进内存的至多 limit+1 字节（多读的一个字节用来
-// 判定超限）。
+// readLimited 读入 path 处的普通文件，至多 limit 字节。打开之前按 os.Stat 拒绝两类：不是普通文件的（目录、命名管道、
+// 设备文件）——打开一个没有写者的命名管道会一直阻塞，hub 会在打开数据库与监听之前无日志地挂住；Stat 报出的大小超过
+// limit 的。读取另由 readAtMost 按 limit 截断，挡住 Stat 之后变大的文件。
 func readLimited(path string, limit int64) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
 	}
-	if info.IsDir() {
-		return nil, errors.New("is a directory")
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a regular file (mode %v)", info.Mode())
 	}
 	if info.Size() > limit {
 		return nil, fmt.Errorf("%d bytes exceeds the %d MiB limit", info.Size(), limit>>20)
@@ -122,7 +122,12 @@ func readLimited(path string, limit int64) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	return readAtMost(f, limit)
+}
+
+// readAtMost 读出 r 的全部内容，多于 limit 字节即报错；读进内存的至多 limit+1 字节（多读的一个字节用来判定超限）。
+func readAtMost(r io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
 	if err != nil {
 		return nil, err
 	}

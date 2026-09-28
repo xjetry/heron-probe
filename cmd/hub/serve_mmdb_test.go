@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -49,6 +50,38 @@ func TestServeRejectsBadMMDBBeforeOpeningDatabase(t *testing.T) {
 				t.Errorf("bad mmdb touched database: %v", err)
 			}
 		})
+	}
+}
+
+// --geo-mmdb 指向没有写者的命名管道：serve 在打开数据库之前报错退出，不挂住。打开这样的管道会一直等写者，等不到
+// 返回就说明 serve 去打开了它。等待的上界只为阻塞时能以失败结束；超时后以写端打开一次，放走被阻塞的那次打开。
+func TestServeRejectsANamedPipeWithoutBlocking(t *testing.T) {
+	fifo := filepath.Join(t.TempDir(), "country.mmdb")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db := filepath.Join(t.TempDir(), "hub.db")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- runServeWith(ctx, []string{"--db", db, "--listen", "127.0.0.1:0", "--geo-mmdb", fifo},
+			clock.NewFake(time.Now()), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), fifo) || !strings.Contains(err.Error(), "not a regular file") {
+			t.Errorf("named pipe startup error = %v, want path %q and \"not a regular file\"", err, fifo)
+		}
+	case <-time.After(testwait.Bound):
+		t.Errorf("serve still blocked on the named pipe after %v, want it to exit before opening the database", testwait.Bound)
+		if w, err := os.OpenFile(fifo, os.O_WRONLY, 0); err == nil {
+			w.Close()
+		}
+		<-done
+	}
+	if _, err := os.Stat(db); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("named pipe touched database: %v", err)
 	}
 }
 
