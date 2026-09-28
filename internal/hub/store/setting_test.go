@@ -15,14 +15,14 @@ func TestSiteSettingsDefaultAndWholeReplacement(t *testing.T) {
 		t.Fatalf("never saved: %+v %v", got, err)
 	}
 	full := SiteSettings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,AAAA", CustomCSS: "body{}"}
-	if err := s.SaveSiteSettings(t.Context(), full); err != nil {
+	if _, err := s.UpdateSettings(t.Context(), &full, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.SiteSettings(t.Context()); err != nil || got != full {
 		t.Fatalf("round trip: %+v %v", got, err)
 	}
 	// 整体替换：空串写入，表示该项回到默认，不是"不改"。
-	if err := s.SaveSiteSettings(t.Context(), SiteSettings{Theme: "auto"}); err != nil {
+	if _, err := s.UpdateSettings(t.Context(), &SiteSettings{Theme: "auto"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.SiteSettings(t.Context()); err != nil || got != (SiteSettings{Theme: "auto"}) {
@@ -35,11 +35,11 @@ func TestSiteSettingsDefaultAndWholeReplacement(t *testing.T) {
 
 // 保存中途失败时库里仍是上一套完整外观：五个键在同一个写事务里，任一条失败整体回滚。
 // 触发器只拦最后一个键，拆成逐键提交的实现会留下前四个新值。
-func TestSaveSiteSettingsIsAllOrNothing(t *testing.T) {
+func TestUpdateSettingsAppearanceIsAllOrNothing(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
 	first := SiteSettings{Title: "旧", Theme: "light", AccentColor: "#111111", Logo: "data:image/png;base64,AAAA", CustomCSS: "a{}"}
-	if err := s.SaveSiteSettings(ctx, first); err != nil {
+	if _, err := s.UpdateSettings(ctx, &first, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.write(ctx, func(tx *sql.Tx) error {
@@ -48,12 +48,31 @@ func TestSaveSiteSettingsIsAllOrNothing(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	err := s.SaveSiteSettings(ctx, SiteSettings{Title: "新", Theme: "dark", AccentColor: "#222222", CustomCSS: "b{}"})
+	_, err := s.UpdateSettings(ctx, &SiteSettings{Title: "新", Theme: "dark", AccentColor: "#222222", CustomCSS: "b{}"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "css rejected") {
 		t.Fatalf("save error = %v", err)
 	}
 	if got, err := s.SiteSettings(ctx); err != nil || got != first {
 		t.Fatalf("failed save left %+v %v, want %+v", got, err, first)
+	}
+}
+
+// 公开页只读外观，不读登录通知的渠道列表：列表的值损坏时管理设置报错并点名键，公开页照常。
+func TestSiteSettingsDoNotReadLoginChannels(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	site := SiteSettings{Title: "状态", Theme: "dark"}
+	if _, err := s.UpdateSettings(ctx, &site, &[]int64{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.write(ctx, func(tx *sql.Tx) error { return saveSetting(tx, loginChannelsKey, "not json") }); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.SiteSettings(ctx); err != nil || got != site {
+		t.Fatalf("public appearance with a corrupt login channel list: %+v %v", got, err)
+	}
+	if _, err := s.Settings(ctx); err == nil || !strings.Contains(err.Error(), loginChannelsKey) {
+		t.Fatalf("admin settings with a corrupt login channel list: err = %v, want one naming %s", err, loginChannelsKey)
 	}
 }
 
