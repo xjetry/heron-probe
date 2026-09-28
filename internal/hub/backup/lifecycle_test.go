@@ -132,7 +132,12 @@ func TestCorruptMarkerNotifiesOnceWithoutBlockingMetrics(t *testing.T) {
 			m, clk, objects, sink := setup(t)
 			execFixtureSQL(t, objects.databasePath, `INSERT INTO setting VALUES ('backup.config_failing_since','x')`)
 			start := clk.Now()
-			tick(t, m)
+			// 两层在 Run 里并发，指标层可能先于配置层修复标记执行；先跑指标层，它若依赖标记就会在这里被挡住。
+			for _, i := range []int{1, 0} {
+				if err := m.tickLayer(t.Context(), i); err != nil {
+					t.Fatal(err)
+				}
+			}
 			s, err := m.Status(t.Context())
 			if err != nil || s.Config.Failure != "marker" || !s.Config.Since.Equal(start) || len(sink.events) != 1 || sink.events[0].Transition != store.TransitionFiring {
 				t.Fatalf("corrupt marker not notified as config failure: status=%+v err=%v events=%v", s, err, sink.events)
