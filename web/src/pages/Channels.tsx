@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useRef, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
+import { SAVE_SETTINGS, useSettingsSaving } from "../api/saveSettings";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { AdminService, ChannelKind, type NotifyChannel } from "../gen/probe/v1/admin_pb";
@@ -112,7 +113,9 @@ function LoginNotifications({ channels, deleting }: { channels: NotifyChannel[];
   const settings = useQuery(AdminService.method.getSettings, {});
   const [draft, setDraft] = useState<bigint[] | null>(null);
   const [saved, setSaved] = useState(false);
-  const update = useMutation(AdminService.method.updateSettings, { onSuccess: async (r) => {
+  // 与其它设置表单互斥（SAVE_SETTINGS）：saving 覆盖任一设置表单在途，包括这里自己的保存。
+  const saving = useSettingsSaving();
+  const update = useMutation(AdminService.method.updateSettings, { mutationKey: SAVE_SETTINGS, onSuccess: async (r) => {
     setDraft(r.settings?.loginNotify?.channelIds ?? []);
     setSaved(true);
     await qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getSettings, cardinality: "finite" }) });
@@ -121,7 +124,7 @@ function LoginNotifications({ channels, deleting }: { channels: NotifyChannel[];
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   // 渠道删除后服务端会摘除引用；草稿也只能提交当前列表里仍存在的渠道。
   const selected = channels.filter((c) => (draft ?? gate.data.settings?.loginNotify?.channelIds ?? []).includes(c.id)).map((c) => c.id);
-  const pending = update.isPending || deleting;
+  const pending = saving || deleting;
   // hub 按原始条数最多收 MAX_LOGIN_CHANNELS 个；选满后未选的禁用，取消一个才能换选，不等提交被拒。
   const full = selected.length >= MAX_LOGIN_CHANNELS;
   const toggle = (id: bigint) => {

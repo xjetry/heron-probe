@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type ChangeEvent, type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
+import { SAVE_SETTINGS, useSettingsSaving } from "../api/saveSettings";
 import { AdminService, type Settings } from "../gen/probe/v1/admin_pb";
 import { LOGO_TYPES, MAX_TITLE_CHARS, THEMES, sizeProblems, type Theme } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
@@ -16,11 +17,12 @@ const toDraft = (s: Settings | undefined): Draft => ({
   title: s?.title ?? "", theme: s?.theme || "auto", accentColor: s?.accentColor ?? "", logo: s?.logo ?? "", customCss: s?.customCss ?? "",
 });
 
-// 公开页的外观：UpdateSettings 整体替换五项，表单因此总是提交全部字段。
+// 公开页的外观：UpdateSettings 整体替换五项，表单因此总是提交全部字段。保存与其它设置表单互斥（SAVE_SETTINGS），
+// saving 覆盖任一设置表单在途。
 //
 // 保存成功时 onSuccess 用 hub 的回显替换草稿；它不判断"是不是最新一次"，靠的是"有未结请求"与"草稿还能被改"互斥。
 // 草稿的改动来自两处：用户改字段（同步），与读 logo 文件的回调（异步，读完才改）。互斥由两处承载：
-//   - 保存进行中，fieldset 的 disabled={update.isPending} 禁用整个表单，含文件输入：保存期间既改不了字段，也开始不了读取；
+//   - 保存进行中，fieldset 的 disabled={saving} 禁用整个表单，含文件输入：保存期间既改不了字段，也开始不了读取；
 //   - 读取进行中，文件输入的 disabled={reading} 让至多一个读者在飞，reading 因此恰好等于"有读者在飞"；
 //     submit 守卫（!reading）与保存按钮的禁用拒绝在这时保存。logo 字段另有第二个写者"移除 logo"，它在读取中
 //     同样禁用：否则读取中点了移除，读完的回调又把 logo 写回来，用户最后一次操作被迟到的结果覆盖。
@@ -34,7 +36,9 @@ export function Appearance() {
   const [saved, setSaved] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [reading, setReading] = useState(false);
+  const saving = useSettingsSaving();
   const update = useMutation(AdminService.method.updateSettings, {
+    mutationKey: SAVE_SETTINGS,
     onSuccess: (r) => {
       setDraft(toDraft(r.settings));
       setSaved(true);
@@ -69,7 +73,7 @@ export function Appearance() {
   };
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (problems.length === 0 && !reading && !update.isPending) update.mutate({ settings: form });
+    if (problems.length === 0 && !reading && !saving) update.mutate({ settings: form });
   };
   return (
     <section>
@@ -80,7 +84,7 @@ export function Appearance() {
         要改页面结构，用 hub 的 --public-dir 换掉整个公开页。
       </p>
       <form className="card edit-form" aria-label="公开页外观" onSubmit={submit}>
-        <fieldset className="bare" disabled={update.isPending}>
+        <fieldset className="bare" disabled={saving}>
           <label>
             标题
             <input value={form.title} placeholder={DEFAULT_TITLE} onChange={(e) => edit({ title: e.target.value })} />
