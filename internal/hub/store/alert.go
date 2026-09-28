@@ -591,8 +591,19 @@ func recordAlertEvent(tx *sql.Tx, ev *AlertEvent, channelIDs []int64) error {
 	return nil
 }
 
-// 登录是 hub 的全局事件，不属于规则×节点状态机；零 ID 不建立 alert_state，也不绕过规则事件的引用检查。
-// 配置读取与事件、投递写入共用事务；删渠道和关闭通知不会与此处交错产生悬空引用。
+// RecordLoginEvent 记一条登录事件（系统事件，rule_id、node_id 为 0），给设置里选定的每个渠道各建一条投递；
+// 没选渠道时什么都不写，返回的事件 ID 为 0。
+//
+// 登录不走规则×节点：它没有节点，也没有恢复，规则×节点的状态机与以 (rule_id, node_id) 为主键的 alert_state
+// 都装不下它，所以不建 alert_state。渠道的引用检查与规则事件共用 recordAlertEvent。
+//
+// 读渠道列表与写事件、投递在同一个写事务里；s.write 经单写协程提交，这个事务与改设置（UpdateSettings）、
+// 删渠道（DeleteNotifyChannel）串行，两种交错各有结果：
+//   - 与删渠道：删渠道先提交，这里读到的列表已摘除该渠道（删渠道在同一事务里摘除）；这里先提交，删渠道随后
+//     把这条尚未完成的投递置为终态（FailureChannelDeleted）。列表里若残留不存在的 ID，recordAlertEvent 的
+//     引用检查让整条事件失败、什么都不写，不会留下指向不存在渠道的投递。
+//   - 与关闭通知：关闭先提交，这里读到空列表，不写事件；这里先提交，已记下的这条照常投递，所以关闭之后仍可能
+//     收到关闭提交前已记下的通知。
 func (s *Store) RecordLoginEvent(ctx context.Context, ev AlertEvent) (AlertEvent, error) {
 	if kind, _ := SystemEventKind(ev.Transition); kind != SystemKindLogin {
 		return AlertEvent{}, fmt.Errorf("login event transition must be %s or %s; got %q", TransitionLoginSuccess, TransitionLoginLocked, ev.Transition)
