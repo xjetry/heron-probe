@@ -134,7 +134,7 @@ func schemaStatements() []string {
 		out = append(out, probeDDL(t))
 	}
 	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState, ddlTag, ddlNodeTag, ddlNodeTagByTag,
-		ddlTheme, ddlThemeEnabled, ddlThemeFile)
+		ddlTheme, ddlThemeEnabled, ddlThemeFile, ddlThemePackage)
 }
 
 // metricDDL 从描述表生成分钟表。主键顺序 (node_id, ts) 即唯一查询路径，
@@ -412,6 +412,15 @@ const ddlTheme = `CREATE TABLE theme (
 )`
 
 const ddlThemeEnabled = `CREATE UNIQUE INDEX theme_enabled ON theme (enabled) WHERE enabled = 1`
+
+// 原始 zip 只按变更备份，不进入任一快照层。revision 是随机写入标识而非递增版本，
+// 上传完成以它匹配所读的包；删除重装不依赖已删除行的计数。
+const ddlThemePackage = `CREATE TABLE theme_package (
+  theme_id TEXT PRIMARY KEY,
+  content BLOB NOT NULL,
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  uploaded INTEGER NOT NULL DEFAULT 0 CHECK (uploaded IN (0, 1))
+)`
 
 // theme_file 是主题包里的普通文件，path 是包内规范路径（theme.Parse 的 File.Path），也是托管时的键。不用
 // WITHOUT ROWID：单个文件可达 16 MiB，远超 SQLite 对无 rowid 表建议的行大小。不声明外键：删主题（DeleteTheme）与

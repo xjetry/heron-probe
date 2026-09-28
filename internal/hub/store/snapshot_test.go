@@ -36,8 +36,8 @@ func tableNames(t *testing.T, db *sql.DB) []string {
 
 func TestSnapshotClassificationComplete(t *testing.T) {
 	s, _ := open(t)
-	// 会话与注册窗口不恢复；主题文件另存对象，序列是每层都带的簿记而非某层的数据。
-	excluded := []string{"admin_session", "register_window", "theme_file", "sqlite_sequence"}
+	// 会话与注册窗口不恢复；主题文件与原包按变更另存对象，序列是每层都带的簿记而非某层的数据。
+	excluded := []string{"admin_session", "register_window", "theme_file", "theme_package", "sqlite_sequence"}
 	classified := append(append(slices.Clone(configSnapshotTables), metricsSnapshotTables...), excluded...)
 	slices.Sort(classified)
 	if actual := tableNames(t, s.r); !reflect.DeepEqual(actual, classified) {

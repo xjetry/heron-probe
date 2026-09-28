@@ -95,7 +95,7 @@ func putTheme(t *testing.T, s *Store, id string, paths ...string) Theme {
 	for _, p := range paths {
 		files = append(files, ThemeFile{Path: p, Content: []byte(id + ":" + p)})
 	}
-	th, err := s.PutTheme(t.Context(), Theme{ID: id, Name: "Theme " + id, Version: "1", UploadedAt: time.Unix(100, 0)}, files, false, 20)
+	th, err := s.PutTheme(t.Context(), Theme{ID: id, Name: "Theme " + id, Version: "1", UploadedAt: time.Unix(100, 0)}, files, []byte("original zip"), false, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestPutThemeReplacesTheWholePackageAndKeepsEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := s.PutTheme(t.Context(), Theme{ID: "a", Name: "Renamed", Version: "2", Preview: "p.png", UploadedAt: time.Unix(200, 0)},
-		[]ThemeFile{{Path: "index.html", Content: []byte("new")}, {Path: "p.png", Content: []byte("png")}, {Path: "empty.css", Content: []byte{}}}, true, 20)
+		[]ThemeFile{{Path: "index.html", Content: []byte("new")}, {Path: "p.png", Content: []byte("png")}, {Path: "empty.css", Content: []byte{}}}, []byte("original zip"), true, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestPutThemeFailureLeavesThePreviousPackageIntact(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = s.PutTheme(t.Context(), Theme{ID: "a", Name: "Broken", Version: "2", UploadedAt: time.Unix(300, 0)},
-		[]ThemeFile{{Path: "index.html", Content: []byte("new")}, {Path: "dup", Content: []byte("1")}, {Path: "dup", Content: []byte("2")}}, true, 20)
+		[]ThemeFile{{Path: "index.html", Content: []byte("new")}, {Path: "dup", Content: []byte("1")}, {Path: "dup", Content: []byte("2")}}, []byte("original zip"), true, 20)
 	if err == nil {
 		t.Fatal("PutTheme with a duplicate path succeeded")
 	}
@@ -185,7 +185,7 @@ func TestPutThemeFailureLeavesThePreviousPackageIntact(t *testing.T) {
 	}
 	// 新建时失败同样不留下元数据行。
 	if _, err := s.PutTheme(t.Context(), Theme{ID: "b", Name: "B", Version: "1", UploadedAt: time.Unix(300, 0)},
-		[]ThemeFile{{Path: "dup", Content: []byte("1")}, {Path: "dup", Content: []byte("2")}}, false, 20); err == nil {
+		[]ThemeFile{{Path: "dup", Content: []byte("1")}, {Path: "dup", Content: []byte("2")}}, []byte("original zip"), false, 20); err == nil {
 		t.Fatal("PutTheme with a duplicate path succeeded")
 	}
 	if list, _ := s.ListThemes(t.Context()); len(list) != 1 || len(themeFiles(t, s, "b")) != 0 {
@@ -199,14 +199,14 @@ func TestPutThemeLimitCountsOnlyNewIDs(t *testing.T) {
 	for i := range 3 {
 		putTheme(t, s, string(rune('a'+i)), "index.html")
 	}
-	_, err := s.PutTheme(t.Context(), Theme{ID: "d", Name: "D", Version: "1"}, []ThemeFile{{Path: "index.html", Content: []byte("d")}}, false, 3)
+	_, err := s.PutTheme(t.Context(), Theme{ID: "d", Name: "D", Version: "1"}, []ThemeFile{{Path: "index.html", Content: []byte("d")}}, []byte("original zip"), false, 3)
 	if !errors.Is(err, ErrThemeLimit) {
 		t.Fatalf("fourth theme with limit 3: %v, want ErrThemeLimit", err)
 	}
 	if files := themeFiles(t, s, "d"); len(files) != 0 {
 		t.Fatalf("rejected theme left files: %v", files)
 	}
-	if _, err := s.PutTheme(t.Context(), Theme{ID: "b", Name: "B2", Version: "2"}, []ThemeFile{{Path: "index.html", Content: []byte("b2")}}, true, 3); err != nil {
+	if _, err := s.PutTheme(t.Context(), Theme{ID: "b", Name: "B2", Version: "2"}, []ThemeFile{{Path: "index.html", Content: []byte("b2")}}, []byte("original zip"), true, 3); err != nil {
 		t.Fatalf("replacing an installed theme at the limit: %v", err)
 	}
 }
@@ -214,7 +214,7 @@ func TestPutThemeLimitCountsOnlyNewIDs(t *testing.T) {
 // mustExist：声明为更新而目标不在，什么都不写。
 func TestPutThemeMustExist(t *testing.T) {
 	s, _ := open(t)
-	_, err := s.PutTheme(t.Context(), Theme{ID: "a", Name: "A", Version: "1"}, []ThemeFile{{Path: "index.html", Content: []byte("a")}}, true, 20)
+	_, err := s.PutTheme(t.Context(), Theme{ID: "a", Name: "A", Version: "1"}, []ThemeFile{{Path: "index.html", Content: []byte("a")}}, []byte("original zip"), true, 20)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("update of a missing theme: %v, want ErrNotFound", err)
 	}
@@ -334,7 +334,7 @@ func TestThemeGenerationAdvancesOnEveryCommittedThemeWrite(t *testing.T) {
 	}
 	put := func(id string, mustExist bool, limit int, files ...ThemeFile) func() error {
 		return func() error {
-			_, err := s.PutTheme(ctx, Theme{ID: id, Name: id, Version: "1", UploadedAt: time.Unix(100, 0)}, files, mustExist, limit)
+			_, err := s.PutTheme(ctx, Theme{ID: id, Name: id, Version: "1", UploadedAt: time.Unix(100, 0)}, files, []byte("original zip"), mustExist, limit)
 			return err
 		}
 	}
@@ -370,7 +370,7 @@ func TestEnabledThemePackageIsOneSnapshotNotOlderThanItsGeneration(t *testing.T)
 			}
 			files = append(files, ThemeFile{Path: p, Content: fmt.Appendf(nil, "%d|%s", seq, pad)})
 		}
-		_, err := s.PutTheme(ctx, Theme{ID: "a", Name: "a", Version: "1", UploadedAt: time.Unix(100, 0)}, files, false, 20)
+		_, err := s.PutTheme(ctx, Theme{ID: "a", Name: "a", Version: "1", UploadedAt: time.Unix(100, 0)}, files, []byte("original zip"), false, 20)
 		return err
 	}
 	if err := install(0); err != nil {

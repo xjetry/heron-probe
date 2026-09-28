@@ -2,12 +2,14 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"time"
 )
 
-// Theme 是一个已安装主题的元数据；内容在 theme_file。
+// Theme 是一个已安装主题的元数据；展开内容在 theme_file，原始 zip 在 theme_package。
 type Theme struct {
 	ID      string
 	Name    string
@@ -26,10 +28,10 @@ type ThemeFile struct {
 
 var ErrThemeLimit = errors.New("theme limit reached")
 
-// writeTheme 是 theme 与 theme_file 在运行期的唯一写入口：PutTheme、EnableTheme、DeleteTheme 都经它，事务提交成功之后
+// writeTheme 是主题元数据与内容在运行期的写入口：PutTheme、EnableTheme、DeleteTheme 都经它，事务提交成功之后
 // 递增 themeGen。write 返回 nil 即已提交、返回错误即未应用（store 包注释的不变式），所以代数只随真正落库的改动前进；
 // 不改变启用中主题的提交（装一个未启用的主题、重复停用）也递增，代价是托管多读一次库，换来的是判定只有"提交了"一条。
-// 这两张表的其余写者都不在运行期：迁移在 Open 返回之前完成，§6.7 的恢复要求 hub 停机。新增写者必须经这里，
+// 内容的其余写者都不在运行期：迁移在 Open 返回之前完成，§6.7 的恢复要求 hub 停机。新增内容写者必须经这里，
 // 否则它的提交不让代数前进，托管会一直服务改动之前的快照，直到下一次经这里的提交。
 func (s *Store) writeTheme(ctx context.Context, fn func(*sql.Tx) error) error {
 	if err := s.write(ctx, fn); err != nil {
@@ -42,14 +44,25 @@ func (s *Store) writeTheme(ctx context.Context, fn func(*sql.Tx) error) error {
 // ThemeGeneration 是启用中主题内容的代数：只增不减，启用中主题的内容每变一次它至少增一。只读一个原子量，不碰库。
 func (s *Store) ThemeGeneration() uint64 { return s.themeGen.Load() }
 
-// PutTheme 把一个校验过的主题包整体写入：元数据与全部文件在同一个写事务里，提交前对任何读者不可见，失败则库里
+// PutTheme 把一个校验过的主题包整体写入：元数据、原始 zip 与全部文件在同一个写事务里，提交前对任何读者不可见，失败则库里
 // 什么都没变——托管读到的永远是某一个完整的包，不会是新旧文件的混合。t.ID 已存在即替换：删掉旧包的全部文件再写入
 // 新的，启用状态沿用（更新启用中的主题不应让公开页回落）。不存在即新建（未启用），此时计数与插入在同一事务里，
 // 并发上传不会都看到 limit−1 而一起越过上限；替换不计入上限。
 // mustExist 为真时 t.ID 必须已安装，否则返回 ErrNotFound 且什么都不写：调用方声明这是一次更新（expect_id），
 // 在它读到列表之后该主题被删掉时，静默装成一个新主题就是"更新"报告成功而实际做了另一件事。
 // t.Enabled 被忽略，返回值里是写入后的实际状态。
-func (s *Store) PutTheme(ctx context.Context, t Theme, files []ThemeFile, mustExist bool, limit int) (Theme, error) {
+func (s *Store) PutTheme(ctx context.Context, t Theme, files []ThemeFile, content []byte, mustExist bool, limit int) (Theme, error) {
+	if len(content) == 0 {
+		return Theme{}, errors.New("theme package is empty")
+	}
+	var revision int64
+	for revision == 0 {
+		var b [8]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return Theme{}, err
+		}
+		revision = int64(binary.LittleEndian.Uint64(b[:]) & (1<<63 - 1))
+	}
 	out := t
 	err := s.writeTheme(ctx, func(tx *sql.Tx) error {
 		var enabled bool
@@ -81,6 +94,10 @@ func (s *Store) PutTheme(ctx context.Context, t Theme, files []ThemeFile, mustEx
 				return err
 			}
 		}
+		if _, err := tx.Exec(`INSERT INTO theme_package (theme_id, content, revision, uploaded) VALUES (?, ?, ?, 0)
+			ON CONFLICT (theme_id) DO UPDATE SET content = excluded.content, revision = excluded.revision, uploaded = 0`, t.ID, content, revision); err != nil {
+			return err
+		}
 		for _, f := range files {
 			if _, err := tx.Exec("INSERT INTO theme_file (theme_id, path, content) VALUES (?, ?, ?)", t.ID, f.Path, f.Content); err != nil {
 				return err
@@ -93,7 +110,42 @@ func (s *Store) PutTheme(ctx context.Context, t Theme, files []ThemeFile, mustEx
 	if err != nil {
 		return Theme{}, err
 	}
+	s.wakeThemeBackup()
 	return out, nil
+}
+
+// ThemeChanges 由一个备份管理器消费；通知合并而不排队，持久化 uploaded 与周期同步兜住丢失的通知。
+func (s *Store) ThemeChanges() <-chan struct{} { return s.themeChanges }
+
+func (s *Store) wakeThemeBackup() {
+	select {
+	case s.themeChanges <- struct{}{}:
+	default:
+	}
+}
+
+type ThemeBackup struct {
+	Revision int64
+	Content  []byte
+	Uploaded bool
+}
+
+// ThemeBackupPackage 用一条语句读取同一次写入的标识与原包。旧库可能只有展开文件，缺包显式报错而不重打包。
+func (s *Store) ThemeBackupPackage(ctx context.Context, id string) (ThemeBackup, error) {
+	var p ThemeBackup
+	err := s.r.QueryRowContext(ctx, "SELECT revision, content, uploaded FROM theme_package WHERE theme_id = ?", id).Scan(&p.Revision, &p.Content, &p.Uploaded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ThemeBackup{}, ErrNotFound
+	}
+	return p, err
+}
+
+// MarkThemeUploaded 只确认上传时读到的写入标识；期间的覆盖或重装保留自己的待上传状态。
+func (s *Store) MarkThemeUploaded(ctx context.Context, id string, revision int64) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec("UPDATE theme_package SET uploaded = 1 WHERE theme_id = ? AND revision = ?", id, revision)
+		return err
+	})
 }
 
 // ListThemes 按 id 升序列出已安装的主题。
@@ -141,10 +193,10 @@ func (s *Store) EnableTheme(ctx context.Context, id string) error {
 	})
 }
 
-// DeleteTheme 删除主题及其全部文件；不存在时返回 ErrNotFound。删掉的若是启用中的主题，删除之后就没有启用行，
+// DeleteTheme 删除主题、原始 zip 及其全部文件；不存在时返回 ErrNotFound。删掉的若是启用中的主题，删除之后就没有启用行，
 // 按 §10.1 即回落内置公开页——公开页是匿名入口，不因一次管理操作变成 404。
 func (s *Store) DeleteTheme(ctx context.Context, id string) error {
-	return s.writeTheme(ctx, func(tx *sql.Tx) error {
+	err := s.writeTheme(ctx, func(tx *sql.Tx) error {
 		res, err := tx.Exec("DELETE FROM theme WHERE id = ?", id)
 		if err != nil {
 			return err
@@ -154,9 +206,16 @@ func (s *Store) DeleteTheme(ctx context.Context, id string) error {
 		} else if n == 0 {
 			return ErrNotFound
 		}
+		if _, err := tx.Exec("DELETE FROM theme_package WHERE theme_id = ?", id); err != nil {
+			return err
+		}
 		_, err = tx.Exec("DELETE FROM theme_file WHERE theme_id = ?", id)
 		return err
 	})
+	if err == nil {
+		s.wakeThemeBackup()
+	}
+	return err
 }
 
 // ThemePreview 读出主题的元数据与预览图内容；主题不存在时返回 ErrNotFound，没有预览图时 content 为 nil。两次读在

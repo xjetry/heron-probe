@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -83,6 +84,10 @@ func TestThemeRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	backup, err := h.store.ThemeBackupPackage(ctx, "night")
+	if err != nil || !bytes.Equal(backup.Content, pkg) {
+		t.Fatalf("UploadTheme did not preserve original zip: %v", err)
+	}
 	want := &probev1.Theme{Id: "night", Name: "Night", Version: "1.2.0", UploadedAt: h.clk.Now().Unix(), HasPreview: true}
 	if !proto.Equal(got, want) {
 		t.Fatalf("UploadTheme = %v, want %v", got, want)
@@ -108,6 +113,9 @@ func TestThemeRoundTrip(t *testing.T) {
 	}
 	if _, err := h.admin.DeleteTheme(ctx, connect.NewRequest(&probev1.DeleteThemeRequest{Id: "night"})); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := h.store.ThemeBackupPackage(ctx, "night"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("DeleteTheme left original package: %v", err)
 	}
 	if list := h.themes(t); len(list) != 0 {
 		t.Fatalf("ListThemes after delete = %v", list)

@@ -39,7 +39,7 @@ func installTheme(t *testing.T, st *store.Store, id string, files map[string]str
 	for p, c := range files {
 		list = append(list, store.ThemeFile{Path: p, Content: []byte(c)})
 	}
-	if _, err := st.PutTheme(t.Context(), store.Theme{ID: id, Name: id, Version: "1", UploadedAt: time.Unix(100, 0)}, list, false, 20); err != nil {
+	if _, err := st.PutTheme(t.Context(), store.Theme{ID: id, Name: id, Version: "1", UploadedAt: time.Unix(100, 0)}, list, []byte("original zip"), false, 20); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.EnableTheme(t.Context(), id); err != nil {
@@ -254,7 +254,7 @@ func TestThemeOriginFallsBackToBuiltinPublicPage(t *testing.T) {
 		}
 	}
 	assertBuiltin("no theme installed")
-	if _, err := st.PutTheme(t.Context(), store.Theme{ID: "t", Name: "t", Version: "1", UploadedAt: time.Unix(100, 0)}, []store.ThemeFile{{Path: "index.html", Content: []byte("theme index")}}, false, 20); err != nil {
+	if _, err := st.PutTheme(t.Context(), store.Theme{ID: "t", Name: "t", Version: "1", UploadedAt: time.Unix(100, 0)}, []store.ThemeFile{{Path: "index.html", Content: []byte("theme index")}}, []byte("original zip"), false, 20); err != nil {
 		t.Fatal(err)
 	}
 	assertBuiltin("theme installed but not enabled")
@@ -292,7 +292,7 @@ func TestThemeOriginServesEveryWriterCommitOnTheNextRequest(t *testing.T) {
 	put := func(id, index string) {
 		t.Helper()
 		if _, err := st.PutTheme(t.Context(), store.Theme{ID: id, Name: id, Version: "1", UploadedAt: time.Unix(100, 0)},
-			[]store.ThemeFile{{Path: "index.html", Content: []byte(index)}}, false, 20); err != nil {
+			[]store.ThemeFile{{Path: "index.html", Content: []byte(index)}}, []byte("original zip"), false, 20); err != nil {
 			t.Fatal(err)
 		}
 	}

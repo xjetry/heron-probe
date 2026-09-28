@@ -26,6 +26,8 @@ func TestEveryCheckConstraintRefusesItsViolation(t *testing.T) {
 		{"probe_meta", "id = 1", "INSERT INTO probe_meta (id, version) VALUES (2, 0)"},
 		// 0 与 1 以外的启用值会绕过只看 enabled = 1 的 theme_enabled 索引。
 		{"theme", "enabled IN (0, 1)", "INSERT INTO theme (id, name, version, preview, uploaded_at, enabled) VALUES ('x', 'X', '1', '', 0, 2)"},
+		{"theme_package", "revision > 0", "INSERT INTO theme_package (theme_id, content, revision) VALUES ('x', x'00', 0)"},
+		{"theme_package", "uploaded IN (0, 1)", "INSERT INTO theme_package (theme_id, content, revision, uploaded) VALUES ('y', x'00', 1, 2)"},
 	}
 	freshChecks, migratedChecks := checkConstraints(t, fresh.r), checkConstraints(t, migrated.r)
 	if !reflect.DeepEqual(freshChecks, migratedChecks) {

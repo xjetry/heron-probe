@@ -63,7 +63,7 @@ func (s *Service) UploadTheme(ctx context.Context, req *connect.Request[probev1.
 		files[i] = store.ThemeFile{Path: f.Path, Content: f.Content}
 	}
 	meta := store.Theme{ID: id, Name: pkg.Manifest.Name, Version: pkg.Manifest.Version, Preview: pkg.Manifest.Preview, UploadedAt: s.clk.Now()}
-	got, err := s.store.PutTheme(ctx, meta, files, expect != "", theme.MaxThemes)
+	got, err := s.store.PutTheme(ctx, meta, files, req.Msg.GetPackage(), expect != "", theme.MaxThemes)
 	switch {
 	case errors.Is(err, store.ErrThemeLimit):
 		return nil, connect.NewError(connect.CodeResourceExhausted,
