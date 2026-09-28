@@ -280,21 +280,30 @@ exec_starts() {
   ' "$1"
 }
 
+# 设了 ExecStart 的 drop-in 会盖掉写进主单元的参数，显式覆盖也随之失效；不涉及命令的 drop-in（如全局加固项）
+# 不受影响。drop-in 列表取 systemd 自己报告的 DropInPaths。它反映的是 systemd 已加载的单元，与磁盘可能不一致
+# （Debian 12 上 systemd 252 实测）：
+# - 单元文件还不存在时它为空，即使 probe-hub.service.d/ 里已有 drop-in。所以首装要等主单元写好之后才查得到：
+#   enable 与 start 之前再查一遍，这一遍也兜住升级时停服前那一遍之后才落盘的 drop-in。
+# - 运行中的 probe-hub 看不到之后才落盘的 drop-in，而 start 之前的 daemon-reload 会让它生效。所以每次先
+#   daemon-reload 再列：它只重读单元文件，不停也不重启运行中的服务（实测 MainPID 不变）。
+# 列出的路径拼上 PROBE_INSTALL_ROOT 再读；列出来却读不到的无法判定，一并拒绝。在子 shell 里跑，set -f 不外泄。
+dropins_ok() (
+  set -f
+  systemctl daemon-reload </dev/null || fail 'systemctl daemon-reload failed'
+  dropins=$(systemctl show probe-hub -p DropInPaths --value </dev/null) || fail 'cannot list probe-hub drop-ins'
+  for dropin in $dropins; do
+    [ -f "$ROOT$dropin" ] || fail "cannot read probe-hub drop-in $dropin"
+    exec_starts "$ROOT$dropin" > "$work/dropin-exec" || fail "cannot parse probe-hub drop-in $dropin"
+    [ ! -s "$work/dropin-exec" ] || fail "drop-in $dropin sets ExecStart; merge it into probe-hub.service"
+  done
+)
+
 # 不执行单元内容，也不按空格粗拆：带引号的目录必须作为一个参数保留。
 # 未支持的 systemd 动态展开与转义在停服前拒绝，而不是静默变成另一组参数。
 source_unit=$work/probe-hub.service
 if [ -f "$UNIT" ]; then
-  # 保留下来的 drop-in 若设 ExecStart，会盖掉写进主单元的参数，显式覆盖也随之失效；不涉及命令的 drop-in
-  # （如全局加固项）不受影响。drop-in 列表取 systemd 自己报告的 DropInPaths，拼上 PROBE_INSTALL_ROOT 再读；
-  # 列出来却读不到的无法判定，一并拒绝。
-  dropins=$(systemctl show probe-hub -p DropInPaths --value </dev/null) || fail 'cannot list probe-hub drop-ins'
-  set -f
-  for dropin in $dropins; do
-    [ -f "$ROOT$dropin" ] || fail "cannot read probe-hub drop-in $dropin"
-    exec_starts "$ROOT$dropin" > "$work/dropin-exec" || fail "cannot parse probe-hub drop-in $dropin"
-    [ ! -s "$work/dropin-exec" ] || fail "drop-in $dropin sets ExecStart; merge it into probe-hub.service before upgrading"
-  done
-  set +f
+  dropins_ok || fail 'old service was not stopped'
   source_unit=$UNIT
 fi
 exec_starts "$source_unit" > "$work/command" || fail 'cannot read ExecStart from installed unit'
@@ -448,7 +457,7 @@ for file in "$DATA/probe.db" "$DATA/probe.db-wal" "$DATA/probe.db-shm"; do
 done
 chmod 0770 "$DATA"
 install -m 0644 "$work/unit" "$UNIT"
-systemctl daemon-reload </dev/null
+dropins_ok || fail 'probe-hub was not enabled or started'
 systemctl enable probe-hub </dev/null
 systemctl start probe-hub </dev/null
 SERVICE_STOPPED=0

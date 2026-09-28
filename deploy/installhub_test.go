@@ -13,6 +13,9 @@ import (
 // 不走建账户分支；id、uname、sleep 与 install.sh 的替身相同。
 // systemctl 记下参数；start 在假 /proc 里放一个以服务用户运行、exe 指向 /usr/local/bin/probe-hub 的进程 4242，
 // stop 把它拿走；show 回答 MainPID 与 DropInPaths（state/dropins 里空格分隔的路径，是目标系统里的真实路径）。
+// state/dropins 是 systemd 已加载的 drop-in，照 systemd 252 的实测：daemon-reload 时才从 state/dropins-disk
+// （磁盘上的 drop-in）取，单元文件不存在时为空。STUB_DROPIN_ON_STOP 在 stop 时把一个 drop-in 写进
+// state/dropins-disk。
 // chown 只记参数：测试以普通用户运行，改不了属主，属主由真机验收回读。chmod 记下参数后转调真的，权限断言看的
 // 是真实的文件模式。curl 只认 file:// 地址并复制文件；apt-get 记下参数，install 时建出 CA 证书包。
 // systemctl、curl、apt-get 读尽 stdin：脚本以 sh -s 从 stdin 运行，漏掉 </dev/null 的调用会吞掉脚本余下部分，
@@ -32,7 +35,12 @@ case "$*" in
     mkdir -p "$P/4242"
     printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$P/4242/status"
     rm -f "$P/4242/exe"; ln -s /usr/local/bin/probe-hub "$P/4242/exe";;
-  "stop probe-hub") rm -rf "$P/4242";;
+  "stop probe-hub")
+    rm -rf "$P/4242"
+    [ -z "${STUB_DROPIN_ON_STOP-}" ] || echo "$STUB_DROPIN_ON_STOP" > "$STUB_STATE/dropins-disk";;
+  daemon-reload)
+    if [ ! -f "$PROBE_INSTALL_ROOT/etc/systemd/system/probe-hub.service" ]; then : > "$STUB_STATE/dropins"
+    elif [ -f "$STUB_STATE/dropins-disk" ]; then cp "$STUB_STATE/dropins-disk" "$STUB_STATE/dropins"; fi;;
   "show probe-hub -p MainPID --value") if [ -d "$P/4242" ]; then echo 4242; else echo 0; fi;;
   "show probe-hub -p DropInPaths --value") cat "$STUB_STATE/dropins" 2>/dev/null || echo;;
 esac
@@ -210,6 +218,7 @@ func TestHubExecStartForms(t *testing.T) {
 		exec     string            // 已装单元里代替 ExecStart 行的内容
 		crlf     bool              // 已装单元改成 CRLF 行尾
 		dropins  map[string]string // drop-in 的真实路径到内容；空内容表示列出来却不存在
+		unloaded bool              // drop-in 只在磁盘上，systemd 还没 daemon-reload
 		args     []string
 		want     string // 重跑后的 ExecStart；为空时 wantErr 非空
 		wantErr  string
@@ -282,6 +291,9 @@ func TestHubExecStartForms(t *testing.T) {
 			wantErr: "cannot parse probe-hub drop-in /etc/systemd/system/probe-hub.service.d/override.conf"},
 		{name: "drop-in comment ending in a backslash", dropins: map[string]string{"/etc/systemd/system/probe-hub.service.d/override.conf": "[Service]\n# note \\\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\n"},
 			wantErr: "sets ExecStart"},
+		// 运行中的 hub 看不到后来落盘的 drop-in，安装器启动前的 daemon-reload 却会让它生效：要先 reload 再查。
+		{name: "drop-in written but not yet reloaded", unloaded: true, dropins: map[string]string{"/etc/systemd/system/probe-hub.service.d/late.conf": "[Service]\nExecStart=\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\n"},
+			wantErr: "drop-in /etc/systemd/system/probe-hub.service.d/late.conf sets ExecStart"},
 		{name: "drop-in listed but missing", dropins: map[string]string{"/etc/systemd/system/probe-hub.service.d/gone.conf": ""},
 			wantErr: "cannot read probe-hub drop-in /etc/systemd/system/probe-hub.service.d/gone.conf"},
 		{name: "line feed in an override", args: []string{"--timezone", "UTC\n--listen=0.0.0.0:80"},
@@ -308,7 +320,12 @@ func TestHubExecStartForms(t *testing.T) {
 					e.put(strings.TrimPrefix(path, "/"), body)
 				}
 			}
-			e.write("dropins", strings.Join(paths, " ")+"\n")
+			if tc.unloaded {
+				e.write("dropins", "\n")
+				e.write("dropins-disk", strings.Join(paths, " ")+"\n")
+			} else {
+				e.write("dropins", strings.Join(paths, " ")+"\n")
+			}
 			before := e.file(hubUnit)
 			out, code := e.hubInstall(tc.args...)
 			if tc.wantErr != "" {
@@ -622,5 +639,38 @@ func TestHubCommandLineRefusesFlagsOutsideTheTable(t *testing.T) {
 		if c := e.calls(); code != 2 || !strings.Contains(out, "usage: install-hub.sh") || len(c) != 1 || c[0] != "" {
 			t.Fatalf("%q: exit %d, calls %q:\n%s", args, code, c, out)
 		}
+	}
+}
+
+// 首装时单元文件还不存在，DropInPaths 为空，probe-hub.service.d/ 里已有的 drop-in 查不到（purge 也不删这个目录）。
+// 主单元写好之后的那一遍要拦住设了 ExecStart 的 drop-in：不 enable、不 start。
+func TestHubFirstInstallRefusesAnExecStartDropIn(t *testing.T) {
+	t.Parallel()
+	e := newHubHost(t)
+	e.put("etc/systemd/system/probe-hub.service.d/override.conf", "[Service]\nExecStart=\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\n")
+	e.write("dropins-disk", "/etc/systemd/system/probe-hub.service.d/override.conf\n")
+	out, code := e.hubInstall()
+	if code != 1 || !strings.Contains(out, "drop-in /etc/systemd/system/probe-hub.service.d/override.conf sets ExecStart") || !strings.Contains(out, "probe-hub was not enabled or started") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if c := e.calls(); index(c, "systemctl enable") >= 0 || index(c, "systemctl start") >= 0 {
+		t.Fatalf("a refused first install must not enable or start probe-hub: calls %q", c)
+	}
+}
+
+// 停服前那一遍之后才落盘的 drop-in：主单元写好、start 之前的那一遍要拦住它，不启动，报错说明 hub 已停。
+func TestHubDropInWrittenWhileStoppedIsRefusedBeforeStart(t *testing.T) {
+	t.Parallel()
+	e := newHubInstalled(t)
+	e.put("etc/systemd/system/probe-hub.service.d/late.conf", "[Service]\nExecStart=\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\n")
+	e.vars = []string{"STUB_DROPIN_ON_STOP=/etc/systemd/system/probe-hub.service.d/late.conf"}
+	out, code := e.hubInstall()
+	for _, want := range []string{"late.conf sets ExecStart", "probe-hub was not enabled or started", "probe-hub is stopped; rerun the installer or start it manually"} {
+		if code != 1 || !strings.Contains(out, want) {
+			t.Fatalf("exit %d, want %q:\n%s", code, want, out)
+		}
+	}
+	if c := e.calls(); index(c, "systemctl start") >= 0 {
+		t.Fatalf("probe-hub must not be started: calls %q", c)
 	}
 }
