@@ -137,6 +137,10 @@ service AdminService {
   rpc GetSettings(GetSettingsRequest) returns (GetSettingsResponse) {
     option (probe.v1.access) = ACCESS_READ;
   }
+  // 两层备份的成功时刻与当前进程观察到的故障；不返回目标凭据或远端错误原文。
+  rpc GetBackupStatus(GetBackupStatusRequest) returns (GetBackupStatusResponse) {
+    option (probe.v1.access) = ACCESS_READ;
+  }
   // 整体替换外观的五项并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
   // 约束与期望取值，什么都不写入。
   rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse) {
@@ -530,6 +534,26 @@ message BackupSettings {
 }
 message GetSettingsRequest {}
 message GetSettingsResponse { Settings settings = 1; }
+message GetBackupStatusRequest {}
+message GetBackupStatusResponse {
+  // endpoint、bucket、access key、secret 全部非空才启用。
+  bool enabled = 1;
+  BackupLayerStatus config = 2;
+  BackupLayerStatus metrics = 3;
+}
+message BackupLayerStatus {
+  // UTC Unix 秒；从未成功完成整轮时缺席，重启后仍可读。
+  optional int64 last_success_at = 1;
+  // 无当前故障时缺席。故障状态只在当前 hub 进程内保存。
+  BackupFailure failure = 2;
+}
+message BackupFailure {
+  // snapshot、client、upload、list、delete、cleanup、record、retention_config；
+  // S3 失败在阶段后加 /transport、/http_status、/request 或 /response，不含错误原文。
+  string category = 1;
+  // 当前连续故障首次被观察到的 UTC Unix 秒，失败类别变化不会重置。
+  int64 since_at = 2;
+}
 message UpdateSettingsRequest { Settings settings = 1; }
 // hub 实际保存的值：标题已清洗，主色已转小写。
 message UpdateSettingsResponse { Settings settings = 1; }

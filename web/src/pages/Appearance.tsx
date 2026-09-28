@@ -4,6 +4,7 @@ import { type ChangeEvent, type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { BackupFields, backupDraft, type BackupDraft } from "../components/BackupFields";
+import { BackupStatus } from "../components/BackupStatus";
 import { AdminService, type Settings } from "../gen/probe/v1/admin_pb";
 import { LOGO_TYPES, MAX_TITLE_CHARS, THEMES, sizeProblems, type Theme } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
@@ -129,6 +130,7 @@ export function Appearance() {
           <button type="submit" disabled={reading || problems.length > 0}>保存</button>
         </fieldset>
       </form>
+      <BackupStatus />
     </section>
   );
 }

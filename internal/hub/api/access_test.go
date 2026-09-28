@@ -17,7 +17,7 @@ import (
 var readMethods = []string{
 	"ListNodes", "GetRegisterWindow", "GetSnapshot", "QueryMetrics", "GetTraffic",
 	"ListProbeTasks", "QueryProbes", "ListAlertRules", "ListAlertEvents",
-	"GetSettings", "GetStorageStats", "GetApiReference",
+	"GetSettings", "GetBackupStatus", "GetStorageStats", "GetApiReference",
 }
 
 func adminService() protoreflect.ServiceDescriptor {

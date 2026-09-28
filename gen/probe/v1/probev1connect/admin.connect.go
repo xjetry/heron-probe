@@ -113,6 +113,9 @@ const (
 	// AdminServiceGetSettingsProcedure is the fully-qualified name of the AdminService's GetSettings
 	// RPC.
 	AdminServiceGetSettingsProcedure = "/probe.v1.AdminService/GetSettings"
+	// AdminServiceGetBackupStatusProcedure is the fully-qualified name of the AdminService's
+	// GetBackupStatus RPC.
+	AdminServiceGetBackupStatusProcedure = "/probe.v1.AdminService/GetBackupStatus"
 	// AdminServiceUpdateSettingsProcedure is the fully-qualified name of the AdminService's
 	// UpdateSettings RPC.
 	AdminServiceUpdateSettingsProcedure = "/probe.v1.AdminService/UpdateSettings"
@@ -197,6 +200,8 @@ type AdminServiceClient interface {
 	TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error)
 	// 公开页外观：标题、明暗、主色、logo 与自定义 CSS，经 PublicService.GetSite 对外下发。
 	GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error)
+	// 两层备份的成功时刻与当前进程观察到的故障；不返回目标凭据或远端错误原文。
+	GetBackupStatus(context.Context, *connect.Request[v1.GetBackupStatusRequest]) (*connect.Response[v1.GetBackupStatusResponse], error)
 	// 整体替换外观的五项并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
 	// 约束与期望取值，什么都不写入。
 	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
@@ -397,6 +402,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("GetSettings")),
 			connect.WithClientOptions(opts...),
 		),
+		getBackupStatus: connect.NewClient[v1.GetBackupStatusRequest, v1.GetBackupStatusResponse](
+			httpClient,
+			baseURL+AdminServiceGetBackupStatusProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("GetBackupStatus")),
+			connect.WithClientOptions(opts...),
+		),
 		updateSettings: connect.NewClient[v1.UpdateSettingsRequest, v1.UpdateSettingsResponse](
 			httpClient,
 			baseURL+AdminServiceUpdateSettingsProcedure,
@@ -467,6 +478,7 @@ type adminServiceClient struct {
 	deleteNotifyChannel   *connect.Client[v1.DeleteNotifyChannelRequest, v1.DeleteNotifyChannelResponse]
 	testNotifyChannel     *connect.Client[v1.TestNotifyChannelRequest, v1.TestNotifyChannelResponse]
 	getSettings           *connect.Client[v1.GetSettingsRequest, v1.GetSettingsResponse]
+	getBackupStatus       *connect.Client[v1.GetBackupStatusRequest, v1.GetBackupStatusResponse]
 	updateSettings        *connect.Client[v1.UpdateSettingsRequest, v1.UpdateSettingsResponse]
 	getStorageStats       *connect.Client[v1.GetStorageStatsRequest, v1.GetStorageStatsResponse]
 	listApiTokens         *connect.Client[v1.ListApiTokensRequest, v1.ListApiTokensResponse]
@@ -620,6 +632,11 @@ func (c *adminServiceClient) GetSettings(ctx context.Context, req *connect.Reque
 	return c.getSettings.CallUnary(ctx, req)
 }
 
+// GetBackupStatus calls probe.v1.AdminService.GetBackupStatus.
+func (c *adminServiceClient) GetBackupStatus(ctx context.Context, req *connect.Request[v1.GetBackupStatusRequest]) (*connect.Response[v1.GetBackupStatusResponse], error) {
+	return c.getBackupStatus.CallUnary(ctx, req)
+}
+
 // UpdateSettings calls probe.v1.AdminService.UpdateSettings.
 func (c *adminServiceClient) UpdateSettings(ctx context.Context, req *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error) {
 	return c.updateSettings.CallUnary(ctx, req)
@@ -714,6 +731,8 @@ type AdminServiceHandler interface {
 	TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error)
 	// 公开页外观：标题、明暗、主色、logo 与自定义 CSS，经 PublicService.GetSite 对外下发。
 	GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error)
+	// 两层备份的成功时刻与当前进程观察到的故障；不返回目标凭据或远端错误原文。
+	GetBackupStatus(context.Context, *connect.Request[v1.GetBackupStatusRequest]) (*connect.Response[v1.GetBackupStatusResponse], error)
 	// 整体替换外观的五项并回显 hub 实际保存的值。任一项不合约束即 InvalidArgument，错误写明字段、
 	// 约束与期望取值，什么都不写入。
 	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
@@ -910,6 +929,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("GetSettings")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceGetBackupStatusHandler := connect.NewUnaryHandler(
+		AdminServiceGetBackupStatusProcedure,
+		svc.GetBackupStatus,
+		connect.WithSchema(adminServiceMethods.ByName("GetBackupStatus")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceUpdateSettingsHandler := connect.NewUnaryHandler(
 		AdminServiceUpdateSettingsProcedure,
 		svc.UpdateSettings,
@@ -1006,6 +1031,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceTestNotifyChannelHandler.ServeHTTP(w, r)
 		case AdminServiceGetSettingsProcedure:
 			adminServiceGetSettingsHandler.ServeHTTP(w, r)
+		case AdminServiceGetBackupStatusProcedure:
+			adminServiceGetBackupStatusHandler.ServeHTTP(w, r)
 		case AdminServiceUpdateSettingsProcedure:
 			adminServiceUpdateSettingsHandler.ServeHTTP(w, r)
 		case AdminServiceGetStorageStatsProcedure:
@@ -1141,6 +1168,10 @@ func (UnimplementedAdminServiceHandler) TestNotifyChannel(context.Context, *conn
 
 func (UnimplementedAdminServiceHandler) GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.GetSettings is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) GetBackupStatus(context.Context, *connect.Request[v1.GetBackupStatusRequest]) (*connect.Response[v1.GetBackupStatusResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.GetBackupStatus is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error) {

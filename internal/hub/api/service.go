@@ -23,6 +23,7 @@ import (
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/probe/internal/hub/backup"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
@@ -43,6 +44,7 @@ const (
 )
 
 type Config struct {
+	Backups *backup.Manager
 	// TTL 必须为正；零值会放宽宽限期下限，New 将其视为装配错误并 panic。
 	TTL time.Duration
 	// ReportInterval 是 agent 的正常上报间隔，客户端据此选择轮询节奏。
@@ -87,6 +89,9 @@ type Service struct {
 }
 
 func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, book *traffic.Book, probes *probe.Registry, alerts *alert.Engine, notifier *alert.Queue, clk clock.Clock, log *slog.Logger) *Service {
+	if cfg.Backups == nil {
+		cfg.Backups = backup.New(st, notifier, clk, log)
+	}
 	if cfg.TTL <= 0 {
 		panic("api.Config.TTL must be positive")
 	}
