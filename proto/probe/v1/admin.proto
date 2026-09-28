@@ -604,11 +604,18 @@ message DeleteNotifyChannelResponse {}
 message TestNotifyChannelRequest { int64 id = 1; }
 message TestNotifyChannelResponse {}
 
+enum GeoBackend {
+  GEO_BACKEND_UNSPECIFIED = 0;
+  GEO_BACKEND_HTTP = 1;
+  GEO_BACKEND_MMDB = 2;
+}
+
 // 公开页设置、国家查询（§4.9）与备份（§6.7）。外观五项整体替换：UpdateSettings 写入全部五项，没有"不改"的取值。
-// 公开页总闸、国家查询两项与 backup 缺失表示不改：关站是对外可见的中断，国家查询开关决定 hub 是否把节点地址发给第三方，
-// 备份承载目标、凭据与失败通知渠道，只改外观的旧客户端与脚本都不得顺手改掉它们。GetSettings 与 UpdateSettings 的响应
-// 总带总闸、国家查询两项与 backup。字段号按架构设计 §10 的登记表分配，不各自挑号：6 属公开页总闸，7、8 属国家查询，
-// 11 属备份。
+// 公开页总闸、国家查询开关与服务地址、backup 缺失表示不改：关站是对外可见的中断，HTTP 后端下国家查询两项决定 hub
+// 是否、向谁发送节点地址，备份承载目标、凭据与失败通知渠道，只改外观的旧客户端与脚本都不得顺手改掉它们。
+// GetSettings 与 UpdateSettings 的响应总带总闸、国家查询两项与 backup，并回显 hub 实际选定的国家查询后端（geo_backend、
+// geo_mmdb_path，只读，请求里的值被忽略）。字段号按架构设计 §10 的登记表分配，不各自挑号：6 属公开页总闸，7–10 属
+// 国家查询，11 属备份。
 message Settings {
   // 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
   // 空串表示公开页用内置标题。
@@ -627,15 +634,23 @@ message Settings {
   // 不认识此字段的旧客户端修改外观时不得顺带关站，因此它有别于外观字段的整体替换语义。
   // 关闭不修改节点的 public 标记，重新打开后恢复原来的公开范围。
   optional bool public_enabled = 6;
-  // 国家查询开关，从未保存过时为关。开启即由 hub 把每个节点的来源地址（Node.last_source）逐个发给 geo_url，只发公网
-  // 地址。节点停在同一地址时查得一次即止；hub 在内存里记住每个节点最近用过的 4 个地址的答案，节点在这些地址之间切换
-  // 不再外呼，超过 4 个地址轮换时被挤出的地址会再查，hub 重启后节点换到的地址各再查一次。失败按小时退避。
+  // 国家查询开关，从未保存过时为关，两个后端共用。开启即按每个节点的来源地址（Node.last_source）查国家，只查公网
+  // 地址：HTTP 后端把地址逐个发给 geo_url，MMDB 后端只查本地文件、不出网。节点停在同一地址时查得一次即止；hub 在内存里
+  // 记住每个节点最近用过的 4 个地址的答案，节点在这些地址之间切换不再重查，超过 4 个地址轮换时被挤出的地址会再查，
+  // hub 重启后节点换到的地址各再查一次。失败按小时退避。
   optional bool geo_enabled = 7;
   // 国家查询的服务地址：http 或 https，含 {ip} 占位（查询时替换为地址），不含用户信息，不超过 2048 字节。{ip} 不得
   // 在主机或端口位置，含 [{ip}] 写法：hub 连到哪里只由这项决定，不随节点地址变化；{ip} 必须在路径或查询串里，# 后的片段不随请求发出。
   // 从未保存过时为 https://ipinfo.io/{ip}/country。可回显，不是凭据：请求只带地址，不带任何凭据。
   // 服务的响应去掉首尾空白后必须恰为两个大写字母（ISO 3166-1 alpha-2），状态码必须是 200。
   optional string geo_url = 8;
+  // 当前后端，只读；GetSettings 与 UpdateSettings 响应均回显。UpdateSettings 中缺席或给出均忽略。
+  GeoBackend geo_backend = 9;
+  // --geo-mmdb 指定的路径，HTTP 后端为空；MMDB 后端下 geo_url 保留但不生效。部署路径只能在启动时指定；hub 启动时把
+  // 该文件整读进内存并做结构校验（库文件不带校验和，合法值换成另一个合法值查不出；非法 UTF-8 这类结构损坏才会被拒），
+  // 运行期不再读它，原地覆盖或截断都不影响运行中的答案，替换文件后重启才生效。只读，UpdateSettings 中缺席或给出均
+  // 忽略，不校验、不保存。
+  string geo_mmdb_path = 10;
   // 备份设置（§6.7）。缺席即不变：只改外观的请求不带它，备份配置与渠道都不动。不下发到公开页。
   BackupSettings backup = 11;
 }

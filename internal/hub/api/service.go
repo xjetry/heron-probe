@@ -23,6 +23,7 @@ import (
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/probe/internal/hub/geo"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/probe"
 	"github.com/xjetry/probe/internal/hub/store"
@@ -43,14 +44,16 @@ const (
 	// 写法编码的最坏情况：logo 满额（base64 字符在 JSON 里无需转义）；自定义 CSS、清洗前的标题、国家查询的服务地址与备份
 	// 的六个字符串满额，且每个字节都写成 6 字节；备份通知渠道 ID 满额，每个 22 字节：proto3 JSON 把 int64 写成带引号的
 	// 十进制串，合法 ID 为正、至多 19 位，连引号与逗号共 22 字节；另留 4 KiB 给明暗、主色、总闸与国家查询开关两个布尔值、
-	// 备份的四个数值与 has_secret、字段名与 JSON 语法。6 字节的来源因字段而异：CSS、标题与备份的 secret 可以含控制字符，
+	// geo_backend、备份的四个数值与 has_secret、字段名与 JSON 语法。geo_mmdb_path 不计入：它只回显 hub 选定的本地库，
+	// 请求里的值被忽略，没有请求侧的上限，满额的合法请求不必带它；把回显原样送回的请求由它占用上面的余量，超出时得到
+	// resource_exhausted。6 字节的来源因字段而异：CSS、标题与备份的 secret 可以含控制字符，
 	// JSON 必须把它们写成 \u00XX；服务地址、备份的 endpoint、区域、access key 与前缀不含控制字符（url.Parse 与各自的
 	// 校验拒绝），JSON 必须转义的只有 " 与 \（各 2 字节），6 倍来自 encoding/json 默认把 <、>、& 写成 \u003c 这类形式，
 	// 而这些字段的校验放行这三个字符；bucket 只含小写字母、数字、点与连字符，按 6 倍计是宽松的上界。encoding/json 默认
 	// 还把 U+2028、U+2029 写成 6 字节（原文 3 字节），同样在 6 倍之内。
 	// 各项的上限在 settings.go 与 backup_settings.go；每个字段的合法取值都有字节上限（明暗与主色由取值集合与格式限定，
-	// 总闸、国家查询开关与 has_secret 只能是 true 或 false，四个数值是 uint32，渠道 ID 至多 maxBackupChannels 个）是这条
-	// 推导成立的前提。
+	// 总闸、国家查询开关与 has_secret 只能是 true 或 false，geo_backend 是 int32 枚举，四个数值是 uint32，渠道 ID 至多
+	// maxBackupChannels 个）是这条推导成立的前提。
 	maxSettingsBody = maxLogoBytes + 6*maxCSSBytes + 6*maxTitleBytes + 6*maxGeoURLBytes +
 		6*(maxEndpointBytes+maxBucketBytes+maxRegionBytes+maxAccessKeyBytes+maxSecretBytes+maxPrefixBytes) + maxBackupChannels*22 + 4<<10
 
@@ -79,6 +82,10 @@ type Config struct {
 	// ThemeOrigin 为真表示 serve 给了 --theme-origin。为假时主题的五个方法一律 FailedPrecondition（requireThemeOrigin）：
 	// 零值是关闭，与"未配置独立 origin 即不开启上传与托管"同一方向。
 	ThemeOrigin bool
+	// Geo 是 serve 选定并交给国家查询器的同一个后端对象，New 要求非 nil。面板回显的后端与本地库路径取自它
+	// （Settings.geo_backend、geo_mmdb_path），不另由启动参数推导，回显因此不会与查询器实际用的后端分叉；仅回显，
+	// 不落入运行设置。
+	Geo geo.Backend
 }
 
 // NodeState 是节点在进程内的状态持有者；删除节点后由它清理。用接口而不直接依赖
@@ -123,6 +130,9 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 	}
 	if err := cfg.Retention.Validate(); err != nil {
 		panic("api.Config.Retention: " + err.Error())
+	}
+	if cfg.Geo == nil {
+		panic("api.Config.Geo must be set")
 	}
 	return &Service{
 		cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, probes: probes, alerts: alerts, notifier: notifier, clk: clk, log: log,

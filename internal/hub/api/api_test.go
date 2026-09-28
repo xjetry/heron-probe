@@ -27,6 +27,7 @@ import (
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/probe/internal/hub/geo"
 	"github.com/xjetry/probe/internal/hub/ingest"
 	"github.com/xjetry/probe/internal/hub/live"
 	"github.com/xjetry/probe/internal/hub/metric"
@@ -105,7 +106,9 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, loc, slog.Default())
 	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: loc}, st, l, clk, slog.Default())
-	notifier := alert.NewQueue(st, alerts.Channels, outbound.NewClient(alert.NotifyTimeout), "", clk, nil, slog.Default())
+	// 通知与国家查询共用一个出站客户端，与 serve 的装配相同。
+	client := outbound.NewClient(alert.NotifyTimeout)
+	notifier := alert.NewQueue(st, alerts.Channels, client, "", clk, nil, slog.Default())
 	in, err := ingest.New(ingest.Config{TTL: 30 * time.Second, TrustedProxies: prefixes}, l, st, a, book, reg, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +117,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	if err := errors.Join(a.Load(ctx), in.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: retention}
+	cfg := Config{TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: retention, Geo: geo.NewHTTP(client)}
 	deps.config(&cfg)
 	svc := New(cfg, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
 	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, TrustedProxies: prefixes, Location: loc}, st, l, book, reg, clk, slog.Default())

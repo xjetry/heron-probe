@@ -180,9 +180,14 @@ func cleanGeo(in *probev1.Settings) (store.GeoUpdate, error) {
 	return out, nil
 }
 
-func settingsProto(st store.Settings) *probev1.Settings {
+func (s *Service) settingsProto(st store.Settings) *probev1.Settings {
+	backend, path := probev1.GeoBackend_GEO_BACKEND_HTTP, s.cfg.Geo.MMDBPath()
+	if path != "" {
+		backend = probev1.GeoBackend_GEO_BACKEND_MMDB
+	}
 	return &probev1.Settings{Title: st.Site.Title, Theme: st.Site.Theme, AccentColor: st.Site.AccentColor, Logo: st.Site.Logo, CustomCss: st.Site.CustomCSS,
-		PublicEnabled: proto.Bool(st.Site.PublicEnabled), GeoEnabled: proto.Bool(st.Geo.Enabled), GeoUrl: proto.String(st.Geo.URL), Backup: backupProto(st.Backup)}
+		PublicEnabled: proto.Bool(st.Site.PublicEnabled), GeoEnabled: proto.Bool(st.Geo.Enabled), GeoUrl: proto.String(st.Geo.URL),
+		GeoBackend: backend, GeoMmdbPath: path, Backup: backupProto(st.Backup)}
 }
 
 func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.GetSettingsRequest]) (*connect.Response[probev1.GetSettingsResponse], error) {
@@ -191,7 +196,7 @@ func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.Ge
 		s.log.Error("reading settings failed", "err", err)
 		return nil, internalError("reading settings failed")
 	}
-	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: settingsProto(st)}), nil
+	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: s.settingsProto(st)}), nil
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probev1.UpdateSettingsRequest]) (*connect.Response[probev1.UpdateSettingsResponse], error) {
@@ -212,7 +217,7 @@ func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probe
 		s.log.Error("saving settings failed", "err", err)
 		return nil, internalError("saving settings failed")
 	}
-	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: settingsProto(saved)}), nil
+	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: s.settingsProto(saved)}), nil
 }
 
 func (s *Service) GetStorageStats(ctx context.Context, _ *connect.Request[probev1.GetStorageStatsRequest]) (*connect.Response[probev1.GetStorageStatsResponse], error) {
