@@ -27,8 +27,10 @@ type Sender interface{ Enqueue(ev store.AlertEvent) }
 //
 // 合并只发生在投递层，事件层不变：alert_event 仍每个规则×节点一行，事件是状态机的事实记录，合并是发送策略。
 // 合并的键是（渠道，评估周期，规则，转换方向）；firing 与 recovered 不混，一条消息里既有掉线又有恢复读不出结论。
-// batches 记下本周期里每个键已开的批次，后续同键的转换请求加入它（store.DeliveryTarget.Batch）；events 在调用结束时
-// 才交给 Sender——此前入队，worker 可能在批次收齐之前就开始发送，批次一旦开始尝试就不再接纳新行（store.RecordTransition）。
+// batches 记下本周期里每个键已开的批次，后续同键的转换请求加入它（store.DeliveryTarget.Batch）。events 在调用结束时
+// 才交给 Sender：经这条路径入队的批次，worker 第一次读到它时已经收齐。worker 从库里补货（窗口曾满、启动积压或存储
+// 故障之后）不经过这里，可能在调用中途读到尚未收齐的批次；那时一次发送覆盖哪些行由 store.BeginBatchAttempt 保证与
+// 拼消息时读到的相同，此后加入的行要么让它拒绝、worker 重读后一并发出，要么因批次已开始尝试而新开一批。
 type cycle struct {
 	batches map[batchKey]int64
 	events  []store.AlertEvent

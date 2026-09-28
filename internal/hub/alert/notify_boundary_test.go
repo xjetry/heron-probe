@@ -128,7 +128,7 @@ func TestQueueDoesNotSendQueuedTerminalDelivery(t *testing.T) {
 	first, last := queueEvent(t, f, c), queueEvent(t, f, c)
 	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
 	q.Enqueue(first)
-	if _, err := f.st.BeginBatchAttempt(t.Context(), first.Deliveries[0].BatchID); err != nil {
+	if _, err := f.st.BeginBatchAttempt(t.Context(), first.Deliveries[0].BatchID, []int64{first.Deliveries[0].ID}); err != nil {
 		t.Fatal(err)
 	}
 	must(t, f.st.UpdateBatch(t.Context(), first.Deliveries[0].BatchID, store.DeliveryResult{Done: true, Failure: store.FailureHTTPStatus, HTTPStatus: 400, Error: "permanent failure"}))

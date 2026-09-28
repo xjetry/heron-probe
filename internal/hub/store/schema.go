@@ -324,35 +324,38 @@ const ddlAlertEvent = `CREATE TABLE alert_event (
 const ddlAlertEventByNode = `CREATE INDEX alert_event_by_node ON alert_event(node_id, id)`
 const ddlAlertEventByAt = `CREATE INDEX alert_event_by_at ON alert_event(at)`
 
-// 每渠道一行；done 显式区分可续投与终态，不用虚增 attempts 冒充不可重试。
+// 每渠道一行；done 显式区分可续投与终态，不用虚增 attempts 冒充不可重试。列序是迁移 17 重建这张表之后的列序。
 const ddlAlertDelivery = `CREATE TABLE alert_delivery (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   event_id INTEGER NOT NULL,
   channel_id INTEGER NOT NULL,
+  -- 发送批次：同一次发送覆盖的行共享它，值是批次第一行的 id。AUTOINCREMENT 不复用 id，批次号因此也不复用——批次的
+  -- 第一行随事件清理掉、其余行还在时，新行也不会拿到这个号；迁移 17 重建这张表时把 sqlite_sequence 一并带过来，
+  -- 正是为了这一点。同批各行的尝试次数与结果一起写（BeginBatchAttempt、UpdateBatch 按 batch_id 整批更新），新行只在
+  -- 批次尚未开始尝试时加入（RecordTransition），所以同批各行的 attempts、ok、done、失败各列与 not_before 始终相同。
+  -- NOT NULL 与 CHECK 让不知道批次的插入在写时失败，而不是留下一行让之后每个读它的查询报错。
+  batch_id INTEGER NOT NULL CHECK (batch_id > 0),
   attempts INTEGER NOT NULL DEFAULT 0,
   ok INTEGER NOT NULL DEFAULT 0,
   done INTEGER NOT NULL DEFAULT 0,
   -- 最近一次失败的原文，谁能读到它见 Delivery.LastError。
   last_error TEXT NOT NULL DEFAULT '',
   delivered_at INTEGER,
-  -- 最近一次失败的类别（DeliveryFailure），空表示没有失败；列序与迁移 7 的 ADD COLUMN 结果一致。
+  -- 最近一次失败的类别（DeliveryFailure），空表示没有失败。
   failure TEXT NOT NULL DEFAULT '',
   -- 仅 failure = 'http_status' 时非 NULL，且在 100–999。三条写路径各自保证：UpdateBatch 经
   -- DeliveryResult.check；DeleteNotifyChannel 写 channel_deleted 时一并写 NULL；迁移 7 只对首位
-  -- 1–9 的三位数写入，其余行保持 ADD COLUMN 的 NULL。
+  -- 1–9 的三位数写入，其余行保持 ADD COLUMN 的 NULL（迁移 17 原样复制）。
   http_status INTEGER,
-  -- 发送批次：同一次发送覆盖的行共享它，值是批次第一行的 id（AUTOINCREMENT 不复用 id，批次号因此也不复用）。
-  -- 同批各行的尝试次数与结果一起写（BeginBatchAttempt、UpdateBatch 按 batch_id 整批更新），新行只在批次尚未
-  -- 开始尝试时加入（RecordTransition），所以同批各行的 attempts、ok、done 与失败各列始终相同。
-  -- 可为 NULL 只因 ADD COLUMN 不能给出逐行的值：迁移 17 随即写成 id，唯一插入者 RecordTransition 在同一事务里写定；
-  -- 读侧把它扫进 int64，残留的 NULL 会让读取报错而不是被当作某个批次。CHECK 排除 0 与负数这类不指向任何行的值。
-  -- 列序与迁移 17 的 ADD COLUMN 结果一致。
-  batch_id INTEGER CHECK (batch_id > 0)
+  -- 下一次尝试不早于这个墙钟时刻（Unix 秒），0 表示没有限制。只由 UpdateBatch 随可重试的失败写入（重试间隔，含
+  -- 429 的 Retry-After），所以补货与重启后按库里的行续投时仍遵守它（Queue.attempt）。0 是缺省：新行、成功与终态
+  -- 都不再等待。
+  not_before INTEGER NOT NULL DEFAULT 0
 )`
 const ddlAlertDeliveryByEvent = `CREATE INDEX alert_delivery_by_event ON alert_delivery(event_id)`
 
-// PendingBatches 按它顺序扫描未终态行，得到升序去重的批次号而不排序。
-const ddlAlertDeliveryPending = `CREATE INDEX alert_delivery_pending ON alert_delivery(done, batch_id)`
+// PendingBatches 按它顺序扫描未终态行（覆盖索引），得到升序去重的批次号与渠道而不排序。
+const ddlAlertDeliveryPending = `CREATE INDEX alert_delivery_pending ON alert_delivery(done, batch_id, channel_id)`
 
 // 按批次读、开始尝试与写结果（GetDeliveryBatch、BeginBatchAttempt、UpdateBatch、joinableBatch）走它。
 const ddlAlertDeliveryByBatch = `CREATE INDEX alert_delivery_by_batch ON alert_delivery(batch_id)`

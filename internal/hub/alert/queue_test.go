@@ -184,7 +184,7 @@ func TestQueueRequeuesPendingOnLoad(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
 	defer srv.Close()
 	ev := queueEvent(t, f, queueChannel(t, f, srv.URL))
-	if _, err := f.st.BeginBatchAttempt(t.Context(), ev.Deliveries[0].BatchID); err != nil {
+	if _, err := f.st.BeginBatchAttempt(t.Context(), ev.Deliveries[0].BatchID, []int64{ev.Deliveries[0].ID}); err != nil {
 		t.Fatal(err)
 	}
 	must(t, f.st.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, store.DeliveryResult{Failure: store.FailureTransport, Error: "prior failure"}))

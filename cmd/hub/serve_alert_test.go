@@ -198,7 +198,7 @@ func TestServePrunesAlertEvents(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if _, err := st.BeginBatchAttempt(t.Context(), ev.Deliveries[0].BatchID); err != nil {
+					if _, err := st.BeginBatchAttempt(t.Context(), ev.Deliveries[0].BatchID, []int64{ev.Deliveries[0].ID}); err != nil {
 						t.Fatal(err)
 					}
 					if err := st.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, store.DeliveryResult{OK: true, Done: true, DeliveredAt: clk.Now()}); err != nil {

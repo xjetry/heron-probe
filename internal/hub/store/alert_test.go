@@ -231,7 +231,7 @@ func TestUpdateBatchAndPending(t *testing.T) {
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID, cs[1].ID})
 	for _, attempts := range []int{1, 2, 3} {
-		if _, err := s.BeginBatchAttempt(t.Context(), ev.Deliveries[0].BatchID); err != nil {
+		if _, err := s.BeginBatchAttempt(t.Context(), ev.Deliveries[0].BatchID, []int64{ev.Deliveries[0].ID}); err != nil {
 			t.Fatal(err)
 		}
 		done := attempts == MaxDeliveryAttempts
@@ -239,7 +239,7 @@ func TestUpdateBatchAndPending(t *testing.T) {
 			t.Fatal(err)
 		}
 		got, err := s.PendingBatches(t.Context())
-		want := []int64{ev.Deliveries[0].BatchID, ev.Deliveries[1].BatchID}
+		want := []PendingBatch{{ev.Deliveries[0].BatchID, cs[0].ID}, {ev.Deliveries[1].BatchID, cs[1].ID}}
 		if done {
 			want = want[1:]
 		}
@@ -253,7 +253,7 @@ func TestUpdateBatchAndPending(t *testing.T) {
 		}
 	}
 	at := s.clk.Now().Add(time.Minute)
-	if _, err := s.BeginBatchAttempt(t.Context(), ev.Deliveries[1].BatchID); err != nil {
+	if _, err := s.BeginBatchAttempt(t.Context(), ev.Deliveries[1].BatchID, []int64{ev.Deliveries[1].ID}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.UpdateBatch(t.Context(), ev.Deliveries[1].BatchID, DeliveryResult{OK: true, Done: true, DeliveredAt: at}); err != nil {
@@ -573,7 +573,7 @@ func TestAlertMissingObjects(t *testing.T) {
 		{"update_batch", ObjectAlertDelivery, func() error {
 			return s.UpdateBatch(t.Context(), 999, DeliveryResult{Failure: FailureTransport, Error: "failed"})
 		}},
-		{"begin_batch_attempt", ObjectAlertDelivery, func() error { _, err := s.BeginBatchAttempt(t.Context(), 999); return err }},
+		{"begin_batch_attempt", ObjectAlertDelivery, func() error { _, err := s.BeginBatchAttempt(t.Context(), 999, []int64{999}); return err }},
 		{"get_delivery_batch", ObjectAlertDelivery, func() error { _, err := s.GetDeliveryBatch(t.Context(), 999); return err }},
 		{"get_event", ObjectAlertEvent, func() error { _, err := s.GetAlertEvent(t.Context(), 999); return err }},
 	} {
@@ -585,7 +585,7 @@ func TestDeleteNotifyChannelTerminatesPendingDeliveries(t *testing.T) {
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID, cs[0].ID, cs[1].ID})
-	if _, err := s.BeginBatchAttempt(t.Context(), ev.Deliveries[1].BatchID); err != nil {
+	if _, err := s.BeginBatchAttempt(t.Context(), ev.Deliveries[1].BatchID, []int64{ev.Deliveries[1].ID}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.UpdateBatch(t.Context(), ev.Deliveries[1].BatchID, DeliveryResult{OK: true, Done: true, DeliveredAt: s.clk.Now()}); err != nil {
@@ -595,7 +595,7 @@ func TestDeleteNotifyChannelTerminatesPendingDeliveries(t *testing.T) {
 		t.Fatal(err)
 	}
 	pending, err := s.PendingBatches(t.Context())
-	if err != nil || !reflect.DeepEqual(pending, []int64{ev.Deliveries[2].BatchID}) {
+	if err != nil || !reflect.DeepEqual(pending, []PendingBatch{{ev.Deliveries[2].BatchID, cs[1].ID}}) {
 		t.Fatalf("deleted channel pending=%+v err=%v", pending, err)
 	}
 	ev.Deliveries[0].Done, ev.Deliveries[0].Failure = true, FailureChannelDeleted

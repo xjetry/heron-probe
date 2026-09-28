@@ -44,6 +44,7 @@ func TestAttemptWriteFailureSendsNothing(t *testing.T) {
 	db := deliveryDB(t, f)
 	deliverySQL(t, db, "CREATE TRIGGER fail_attempt BEFORE UPDATE ON alert_delivery BEGIN SELECT RAISE(ABORT, 'attempt write blocked'); END")
 	q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
+	q.Enqueue(ev) // attempt 从窗口取批次所属的渠道。
 	_, err := q.attempt(t.Context(), ev.Deliveries[0].BatchID)
 	if err == nil || !strings.Contains(err.Error(), "attempt write blocked") {
 		t.Fatalf("write failure=%v", err)
@@ -73,13 +74,14 @@ func TestExhaustedUnrecordedDeliveryBecomesTerminal(t *testing.T) {
 			defer srv.Close()
 			ev := queueEvent(t, f, queueChannel(t, f, srv.URL))
 			for range store.MaxDeliveryAttempts {
-				_, err := f.st.BeginBatchAttempt(t.Context(), ev.Deliveries[0].BatchID)
+				_, err := f.st.BeginBatchAttempt(t.Context(), ev.Deliveries[0].BatchID, []int64{ev.Deliveries[0].ID})
 				must(t, err)
 			}
 			if last != nil {
 				must(t, f.st.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, *last))
 			}
 			q := NewQueue(f.st, f.e.Channels, NewHTTPClient(), "", f.clk, nil, f.log)
+			q.Enqueue(ev) // attempt 从窗口取批次所属的渠道。
 			out, err := q.attempt(t.Context(), ev.Deliveries[0].BatchID)
 			must(t, err)
 			if out.retry {

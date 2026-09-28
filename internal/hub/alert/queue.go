@@ -23,7 +23,7 @@ const QueueCap = 256
 var backoff = [...]time.Duration{time.Second, 4 * time.Second}
 
 // MaxRetryAfter 是 429 应答的 Retry-After 纳入退避时的上限（§9.3）：固定的 1 s 与 4 s 短于 Telegram 常见的几十秒，
-// 照它重试多数投递会以失败告终；不设上限则一个接收方就能让批次在内存里等上任意久。
+// 照它重试多数投递会以失败告终；不设上限则一个接收方就能让批次等上任意久。
 const MaxRetryAfter = 5 * time.Minute
 
 // rateWindow 是渠道节奏上限的计量窗口：rate_per_minute 限的是任意一段 rateWindow 内发出的请求数。
@@ -33,12 +33,17 @@ const rateWindow = time.Minute
 // 全部节点同时掉线时消息必须仍能发出。
 const maxListedNodes = 20
 
-// DeliveryRetryWait 是渠道失败可重试、应答不带 429 的 Retry-After、渠道节奏未满且存储正常时，一个批次在各次尝试之间
-// 至多等待的总和：第 n 次尝试得到可重试的渠道失败且未到 store.MaxDeliveryAttempts 时，retryWait 给出 backoff[n-1]，
-// 所以至多依次等过 backoff 的每一项。不在其内的等待有三种：429 的 Retry-After 把单次等待拉长到至多 MaxRetryAfter；
-// 渠道节奏已满时批次排队到下一个空位（rateSlot）；存储失败时 Run 经 retryAfterFailure 退避（1s 起翻倍、上限 1 分钟），
-// 存储持续失败时没有总量上界。启动行以 delivery_retry_wait 报出，scripts/e2e.sh 据此推出告警等待上限——e2e 的接收器
-// 是不限节奏的 Webhook 渠道且不回 429；TestQueueGivesUpAfterMaxAttempts 把它钉到实际等过的总和上。
+// maxBatchReads 是一次尝试里读批次、拼消息的次数上限。开始尝试时批次的行与读到的不同（ErrBatchChanged）就重读；
+// 一次巡检在写的行不会无限多，连续变化到上限说明批次一直在长，按存储故障退避，之后由补货续投。
+const maxBatchReads = 3
+
+// DeliveryRetryWait 是渠道失败可重试、应答不带 429 的 Retry-After、渠道节奏未满且存储正常时，retryWait 给一个批次
+// 各次重试间隔的总和：第 n 次尝试得到可重试的渠道失败且未到 store.MaxDeliveryAttempts 时间隔是 backoff[n-1]，
+// 所以依次是 backoff 的每一项。实际两次尝试之间还可能更久，有四种：429 的 Retry-After 把单次间隔拉长到至多
+// MaxRetryAfter；渠道节奏已满时批次排队到下一个空位（rateSlot）；间隔到期后批次回到 ready 队尾，唯一的 worker 要先
+// 发完排在它前面的批次；存储失败时 Run 经 retryAfterFailure 退避（1s 起翻倍、上限 1 分钟），存储持续失败时没有总量
+// 上界。启动行以 delivery_retry_wait 报出，scripts/e2e.sh 据此推出告警等待上限——e2e 的接收器是不限节奏的 Webhook
+// 渠道、不回 429，同一时刻只有一个批次在投；TestQueueGivesUpAfterMaxAttempts 把它钉到只有一个批次时实际等过的总和上。
 func DeliveryRetryWait() time.Duration {
 	var total time.Duration
 	for _, d := range backoff {
@@ -47,12 +52,33 @@ func DeliveryRetryWait() time.Duration {
 	return total
 }
 
+// waitKind 是批次在 waiting 里等什么，决定满窗口时能不能把它挤回库里：挤出的批次由补货装回，装回后第一件事是
+// 重新判断能不能发（Queue.attempt），所以只有这个判断能复原原来的等待时，挤出才不会让它提前发送。
+type waitKind int
+
+const (
+	// waitRate：等渠道节奏空位。空位由 sent 重算（rateSlot），挤出后装回照样等到那一刻。
+	waitRate waitKind = iota
+	// waitRetry：等重试间隔，下一次尝试的最早时刻已随这次的结果写进库（not_before），装回后照样等到那一刻。
+	waitRetry
+	// waitUnrecorded：等重试间隔，但这次的结果没写进库，那一刻只在内存里：挤出后装回会立即重试。
+	waitUnrecorded
+)
+
+type waitEntry struct {
+	at   time.Duration // 最早可尝试的单调时刻（clk.Mono）。
+	kind waitKind
+}
+
 // Queue 是投递的有界窗口与唯一的 worker。窗口里的单位是发送批次（store.DeliveryBatch）：批次在入库时已经定下，
 // 队列只按批次号装填、发送与重试，不再合并或拆分——重启后按原批次重投，结果与崩溃前"发了什么"一致。
 //
-// 窗口分两部分：ready 是可以立即尝试的批次（先进先出），waiting 是等待重试间隔或渠道节奏空位的批次。等待不占用
-// worker：一个接收方要求的几分钟 Retry-After 或一个渠道的节奏上限，不能拖住发往其它渠道的批次，也不能让满队列的
-// 最坏投递时长超过告警事件的最短保留期（TestAlertRetentionCoversFullQueueDelivery）。
+// 窗口分三部分：ready 是可以立即尝试的批次（先进先出），waiting 是等待重试间隔或渠道节奏空位的批次，外加 worker
+// 正在尝试的那一批（current）。三者合计至多 limit 个（enqueue 检查；在途的批次回到 waiting 只是换个位置，不增加合计）。
+// 等待不占用 worker：一个接收方要求的几分钟 Retry-After 或一个渠道的节奏上限不让 worker 停下，满队列的最坏投递时长
+// 因此不超过告警事件的最短保留期（TestAlertRetentionCoversFullQueueDelivery）。等待也不把发往其它渠道的新批次挡在
+// 窗口外，前提是窗口里有可挤出的批次：满窗口时先挤掉最旧的就绪批次，没有就绪批次时挤掉一个等待时刻能复原的批次
+// （waitRate、waitRetry）；窗口里只剩 waitUnrecorded 与在途批次时，新批次留在库里，等窗口有空位时由补货装入。
 type Queue struct {
 	st           *store.Store
 	channels     func() []store.NotifyChannel
@@ -61,15 +87,21 @@ type Queue struct {
 	clk          clock.Clock
 	sleep        func(context.Context, time.Duration) error
 	log          *slog.Logger
-	limit        int           // ready 与 waiting 合计至多这么多批次；NewQueue 取 QueueCap。
-	wake         chan struct{} // 容量 1：enqueue 放入批次后发出，worker 空闲时据此醒来。
-	mu           sync.Mutex
-	ready        []int64
-	waiting      map[int64]time.Duration // 批次 → 最早可尝试的单调时刻（clk.Mono）。
-	active       map[int64]struct{}      // ready ∪ waiting ∪ 正在尝试的批次。
-	overflow     bool                    // 库中可能仍有窗口外的待投递批次，包括非终态错误出窗的项。
+	// readBatch 是读批次的唯一入口（NewQueue 取 store.GetDeliveryBatch），每次尝试前回读。
+	readBatch func(context.Context, int64) (store.DeliveryBatch, error)
+	limit     int // ready、waiting 与在途合计至多这么多批次；NewQueue 取 QueueCap。
+	mu        sync.Mutex
+	ready     []int64
+	waiting   map[int64]waitEntry
+	active    map[int64]int64 // ready ∪ waiting ∪ 在途的批次 → 它发往的渠道。
+	current   int64           // 在途的批次（worker 正在尝试），0 表示没有。
+	overflow  bool            // 库中可能仍有窗口外的待投递批次，包括非终态错误出窗的项。
+	// woken 与 cancelIdle 把入队告诉空闲的 worker，都在 mu 下读写：worker 进入空闲前在 mu 下看 woken，已有入队就
+	// 不睡；否则登记本次空闲的 cancel，此后的入队调用它。next 在 mu 下清掉 woken，此前的入队都已反映在它看到的窗口里。
+	woken      bool
+	cancelIdle context.CancelFunc
 	// sent 只由 worker 读写，不经 mu：渠道 → 最近 rateWindow 内各次请求的单调时刻，升序。进程重启后为空，
-	// 所以重启后的第一分钟可能与上一个进程的最后一分钟叠加出至多两倍的请求数。
+	// 所以一段 rateWindow 里重启 k 次时，这段时间内发出的请求至多是上限的 k+1 倍（每个进程各自至多一倍）。
 	sent map[int64][]time.Duration
 }
 
@@ -79,8 +111,8 @@ func NewQueue(st *store.Store, channels func() []store.NotifyChannel, client *ht
 	if sleep == nil {
 		sleep = sleepContext
 	}
-	return &Queue{st: st, channels: channels, client: client, telegramBase: telegramBase, clk: clk, sleep: sleep, log: log, limit: QueueCap,
-		wake: make(chan struct{}, 1), waiting: make(map[int64]time.Duration), active: make(map[int64]struct{}), sent: make(map[int64][]time.Duration)}
+	return &Queue{st: st, channels: channels, client: client, telegramBase: telegramBase, clk: clk, sleep: sleep, log: log,
+		readBatch: st.GetDeliveryBatch, limit: QueueCap, waiting: make(map[int64]waitEntry), active: make(map[int64]int64), sent: make(map[int64][]time.Duration)}
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {
@@ -94,36 +126,75 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// size 是窗口里的批次数：ready、waiting 与在途。调用方持 mu。
+func (q *Queue) size() int {
+	n := len(q.ready) + len(q.waiting)
+	if q.current != 0 {
+		n++
+	}
+	return n
+}
+
+// wakeLocked 把入队告诉 worker：它正在空闲就取消那次空闲，否则记下，让它下次进入空闲前看到。调用方持 mu。
+func (q *Queue) wakeLocked() {
+	if q.cancelIdle != nil {
+		q.cancelIdle()
+		q.cancelIdle = nil
+		return
+	}
+	q.woken = true
+}
+
 // mu 同时保护窗口和 active；去重让有界窗口只装不同批次，同一批次的多行、重复的 Enqueue 与并发的 Requeue 都只占一格。
 // worker 每次尝试前回读批次，保证已终态的旧项不再发送，包括并发 Requeue 读到的旧快照。
-func (q *Queue) enqueue(batch int64, evict bool) bool {
+func (q *Queue) enqueue(batch, channel int64, evict bool) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if _, exists := q.active[batch]; exists {
 		return true
 	}
-	if len(q.ready)+len(q.waiting) >= q.limit {
+	if q.size() >= q.limit {
 		q.overflow = true
 		if !evict {
 			return false
 		}
-		if len(q.ready) == 0 {
-			// 窗口全是等待中的批次：它们的等待时刻只在内存里，挤出后由补货装回会提前重试；新批次留在库里，
-			// 等窗口有空位时由补货装入。
-			q.log.Warn("notification queue full of waiting batches; delivery batch left for refill", "batch_id", batch)
+		if !q.evictLocked() {
+			q.log.Warn("notification queue full of batches that cannot be put back; delivery batch left for refill", "batch_id", batch)
 			return false
 		}
+	}
+	q.ready = append(q.ready, batch)
+	q.active[batch] = channel
+	q.wakeLocked()
+	return true
+}
+
+// evictLocked 给新批次腾出一格，挤出的批次仍在库里保持 done=0，由补货装回。先挤最旧的就绪批次；没有就绪批次时挤
+// 一个等待时刻能复原的等待批次（见 waitKind），节奏等待优先——它的时刻由内存里的 sent 重算，装回不用读库就能判断；
+// 同类里挤最晚到期的那个。在途与 waitUnrecorded 的批次不挤。调用方持 mu。
+func (q *Queue) evictLocked() bool {
+	if len(q.ready) > 0 {
 		old := q.ready[0]
 		q.ready = q.ready[1:]
 		delete(q.active, old)
 		q.log.Warn("notification queue full; oldest delivery batch dropped", "batch_id", old)
+		return true
 	}
-	q.ready = append(q.ready, batch)
-	q.active[batch] = struct{}{}
-	select {
-	case q.wake <- struct{}{}:
-	default:
+	var victim int64
+	for b, w := range q.waiting {
+		if w.kind == waitUnrecorded {
+			continue
+		}
+		if cur, ok := q.waiting[victim]; !ok || w.kind < cur.kind || w.kind == cur.kind && (w.at > cur.at || w.at == cur.at && b > victim) {
+			victim = b
+		}
 	}
+	if victim == 0 {
+		return false
+	}
+	delete(q.waiting, victim)
+	delete(q.active, victim)
+	q.log.Warn("notification queue full; waiting delivery batch put back for refill", "batch_id", victim)
 	return true
 }
 
@@ -133,7 +204,7 @@ func (q *Queue) enqueue(batch int64, evict bool) bool {
 func (q *Queue) Enqueue(ev store.AlertEvent) {
 	for _, d := range ev.Deliveries {
 		if !d.Done {
-			q.enqueue(d.BatchID, true)
+			q.enqueue(d.BatchID, d.ChannelID, true)
 		}
 	}
 }
@@ -145,7 +216,7 @@ func (q *Queue) Requeue(ctx context.Context) error {
 		return err
 	}
 	for _, b := range batches {
-		if !q.enqueue(b, false) {
+		if !q.enqueue(b.ID, b.ChannelID, false) {
 			break
 		}
 	}
@@ -156,6 +227,7 @@ func (q *Queue) Requeue(ctx context.Context) error {
 type outcome struct {
 	retry bool
 	at    time.Duration
+	kind  waitKind
 }
 
 // 由装配方启动一个 worker；退出不清空库中待投递行，下一次 Requeue 接续未完成项。
@@ -180,8 +252,9 @@ func (q *Queue) Run(ctx context.Context) {
 		case batch != 0:
 			out, err := q.attempt(ctx, batch)
 			q.mu.Lock()
-			if err == nil && out.retry {
-				q.waiting[batch] = out.at
+			q.current = 0
+			if out.retry {
+				q.waiting[batch] = waitEntry{out.at, out.kind}
 			} else {
 				delete(q.active, batch)
 			}
@@ -200,63 +273,61 @@ func (q *Queue) Run(ctx context.Context) {
 	}
 }
 
-// next 取下一件事：到期的等待批次先按到期先后回到 ready 队尾；ready 取空且可能有库中余项时补货（窗口全是等待中的
-// 批次时不补——装不进任何一项，只会空转读库）；否则取 ready 队首。都没有时给出最早的到期时刻供 idle 等待。
-// 在 mu 下清掉 wake：此前的入队都已反映在这次看到的窗口里，之后的入队会重新发出。
+// next 取下一件事：到期的等待批次先按到期先后回到 ready 队尾；ready 取空且可能有库中余项时补货（窗口已满时不补——
+// 装不进任何一项，只会空转读库）；否则取 ready 队首作为在途批次。都没有时给出最早的到期时刻供 idle 等待。
 func (q *Queue) next() (batch int64, refill bool, until time.Duration, timed bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	select {
-	case <-q.wake:
-	default:
-	}
+	q.woken = false
 	now := q.clk.Mono()
 	var due []int64
-	for b, at := range q.waiting {
-		if at <= now {
+	for b, w := range q.waiting {
+		if w.at <= now {
 			due = append(due, b)
 		}
 	}
-	slices.SortFunc(due, func(a, b int64) int { return cmp.Or(cmp.Compare(q.waiting[a], q.waiting[b]), cmp.Compare(a, b)) })
+	slices.SortFunc(due, func(a, b int64) int { return cmp.Or(cmp.Compare(q.waiting[a].at, q.waiting[b].at), cmp.Compare(a, b)) })
 	for _, b := range due {
 		delete(q.waiting, b)
 		q.ready = append(q.ready, b)
 	}
-	if len(q.ready) == 0 && q.overflow && len(q.waiting) < q.limit {
+	if len(q.ready) == 0 && q.overflow && q.size() < q.limit {
 		q.overflow = false
 		return 0, true, 0, false
 	}
 	if len(q.ready) > 0 {
 		batch, q.ready = q.ready[0], q.ready[1:]
+		q.current = batch
 		return batch, false, 0, false
 	}
-	for _, at := range q.waiting {
-		if !timed || at < until {
-			until, timed = at, true
+	for _, w := range q.waiting {
+		if !timed || w.at < until {
+			until, timed = w.at, true
 		}
 	}
 	return 0, false, until, timed
 }
 
-// idle 在没有可做的事时等待：有新入队即醒；有等待中的批次时最迟醒在最早的到期时刻。等待经 q.sleep，测试据此推进时钟。
+// idle 在没有可做的事时等待：有新入队即醒（enqueue 经 wakeLocked 取消这次等待）；有等待中的批次时最迟醒在最早的
+// 到期时刻。等待经 q.sleep，测试据此推进时钟。
 func (q *Queue) idle(ctx context.Context, until time.Duration, timed bool) {
-	if !timed {
-		select {
-		case <-ctx.Done():
-		case <-q.wake:
-		}
+	q.mu.Lock()
+	if q.woken {
+		q.mu.Unlock()
 		return
 	}
 	wctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go func() {
-		select {
-		case <-q.wake:
-			cancel()
-		case <-wctx.Done():
-		}
-	}()
-	_ = q.sleep(wctx, until-q.clk.Mono())
+	q.cancelIdle = cancel
+	q.mu.Unlock()
+	if timed {
+		_ = q.sleep(wctx, until-q.clk.Mono())
+	} else {
+		<-wctx.Done()
+	}
+	q.mu.Lock()
+	q.cancelIdle = nil
+	q.mu.Unlock()
 }
 
 // 非终态出窗与补货读失败都保留续投信号；故障期间不能靠窗口大小决定是否重试。
@@ -335,57 +406,82 @@ func deliveryRemoved(err error) bool {
 }
 
 // attempt 对批次做至多一次尝试。批次在库里的行是真源，每次都回读：渠道删除会把行置为终态，已读到终态的旧队列项
-// 不再发送。重试按批次进行——同批各行共享尝试次数与结果（store.BeginBatchAttempt、store.UpdateBatch），一次尝试
-// 发送整批合成的那一条消息，不会把批次拆成多条重发。
+// 不再发送。节奏在读批次之前判断：同一渠道的多个批次等同一个空位时，空位打开前谁也不读库。
+//
+// 重试按批次进行——同批各行共享尝试次数与结果（store.BeginBatchAttempt、store.UpdateBatch），一次尝试发送整批合成的
+// 那一条消息。开始尝试只覆盖拼这条消息时读到的行：批次在读之后又有行加入（补货可以在一次巡检中途读到批次）时，
+// BeginBatchAttempt 拒绝，这里重读、重拼。
 func (q *Queue) attempt(ctx context.Context, batch int64) (out outcome, err error) {
 	defer func() {
 		if deliveryRemoved(err) {
 			out, err = outcome{}, nil
 		}
 	}()
-	b, err := q.st.GetDeliveryBatch(ctx, batch)
-	if err != nil {
-		return out, err
-	}
-	head := b.Deliveries[0]
-	if head.Done {
-		return out, nil
-	}
-	if head.Attempts >= store.MaxDeliveryAttempts {
-		// 名额已耗尽而行仍未终态：最后一次尝试已发出，结果没落盘。接收方可能已经收到，
-		// 所以不沿用更早一次的失败，也不留下它的原文与状态码。
-		return out, q.st.UpdateBatch(ctx, batch, store.DeliveryResult{Done: true, Failure: store.FailureResultUnrecorded})
-	}
+	q.mu.Lock()
+	id := q.active[batch]
+	q.mu.Unlock()
 	var c *store.NotifyChannel
 	for _, row := range q.channels() {
-		if row.ID == head.ChannelID {
+		if row.ID == id {
 			c = &row
 			break
 		}
 	}
 	if c == nil {
+		q.releaseChannel(id)
 		return out, q.st.UpdateBatch(ctx, batch, store.DeliveryResult{Done: true, Failure: store.FailureChannelDeleted})
-	}
-	channel, err := ParseChannel(*c, q.client, q.telegramBase)
-	if err != nil {
-		r, _ := Classify(err)
-		r.Done = true
-		return out, q.st.UpdateBatch(ctx, batch, r)
 	}
 	// 节奏已满时排队到下一个空位，不消耗尝试名额：超出上限的批次排队而不是丢弃。
 	if at, full := q.rateSlot(*c, q.clk.Mono()); full {
-		return outcome{retry: true, at: at}, nil
+		return outcome{retry: true, at: at, kind: waitRate}, nil
 	}
-	m, err := q.message(ctx, b)
-	if err != nil {
-		return out, err
-	}
-	ds, err := q.st.BeginBatchAttempt(ctx, batch)
-	if errors.Is(err, store.ErrDeliveryDone) {
-		return out, nil
-	}
-	if err != nil {
-		return out, err
+	var m Message
+	var channel Channel
+	var ds []store.Delivery
+	for reads := 1; ; reads++ {
+		b, err := q.readBatch(ctx, batch)
+		if err != nil {
+			return out, err
+		}
+		head := b.Deliveries[0]
+		if head.Done {
+			return out, nil
+		}
+		if head.Attempts >= store.MaxDeliveryAttempts {
+			// 名额已耗尽而行仍未终态：最后一次尝试已发出，结果没落盘。接收方可能已经收到，
+			// 所以不沿用更早一次的失败，也不留下它的原文与状态码。
+			return out, q.st.UpdateBatch(ctx, batch, store.DeliveryResult{Done: true, Failure: store.FailureResultUnrecorded})
+		}
+		// 上一次尝试写下的最早时刻（重试间隔、Retry-After）对补货与重启后装回的批次同样有效。
+		if wait := head.NotBefore.Sub(q.clk.Now()); wait > 0 {
+			return outcome{retry: true, at: q.clk.Mono() + wait, kind: waitRetry}, nil
+		}
+		channel, err = ParseChannel(*c, q.client, q.telegramBase)
+		if err != nil {
+			r, _ := Classify(err)
+			r.Done = true
+			return out, q.st.UpdateBatch(ctx, batch, r)
+		}
+		if m, err = q.message(ctx, b); err != nil {
+			return out, err
+		}
+		rows := make([]int64, len(b.Deliveries))
+		for i, d := range b.Deliveries {
+			rows[i] = d.ID
+		}
+		ds, err = q.st.BeginBatchAttempt(ctx, batch, rows)
+		switch {
+		case errors.Is(err, store.ErrDeliveryDone):
+			return out, nil
+		case errors.Is(err, store.ErrBatchChanged) && reads < maxBatchReads:
+			continue
+		case errors.Is(err, store.ErrBatchChanged):
+			q.log.Warn("delivery batch kept changing while it was read; retrying after the storage backoff", "batch_id", batch, "reads", reads)
+			return out, err
+		case err != nil:
+			return out, err
+		}
+		break
 	}
 	// 尝试已落盘即计入节奏：请求可能已到达接收方，无论结果如何都占用它的额度。
 	q.sent[c.ID] = append(q.sent[c.ID], q.clk.Mono())
@@ -400,13 +496,42 @@ func (q *Queue) attempt(ctx context.Context, batch int64) (out outcome, err erro
 	}
 	attempts := ds[0].Attempts
 	r.Done = r.OK || !retry || attempts >= store.MaxDeliveryAttempts
+	var wait time.Duration
+	if !r.Done {
+		wait = q.retryWait(sendErr, attempts)
+		r.NotBefore = q.clk.Now().Add(wait)
+	}
 	if err := q.st.UpdateBatch(ctx, batch, r); err != nil {
-		return out, err
+		if r.Done {
+			return out, err
+		}
+		// 请求已经发出，接收方要求的等待（Retry-After）与固定退避都已算出：结果没写进库不改变该等多久。批次按它
+		// 留在 waiting（仍在 active，补货不会再装一份），存储退避照常。
+		return outcome{retry: true, at: q.clk.Mono() + wait, kind: waitUnrecorded}, err
 	}
 	if r.Done {
 		return out, nil
 	}
-	return outcome{retry: true, at: q.clk.Mono() + q.retryWait(sendErr, attempts)}, nil
+	return outcome{retry: true, at: q.clk.Mono() + wait, kind: waitRetry}, nil
+}
+
+// releaseChannel 在读到渠道已删除时调用：它在 waiting 里的其余批次提前回到 ready，各自读到终态后离开窗口，
+// 不再占着格子等到原定时刻；它的节奏记录一并丢掉。只由 worker 调用（sent 不经 mu）。
+func (q *Queue) releaseChannel(channel int64) {
+	delete(q.sent, channel)
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	var freed []int64
+	for b := range q.waiting {
+		if q.active[b] == channel {
+			freed = append(freed, b)
+		}
+	}
+	slices.Sort(freed)
+	for _, b := range freed {
+		delete(q.waiting, b)
+		q.ready = append(q.ready, b)
+	}
 }
 
 // rateSlot 在渠道最近 rateWindow 内的请求数已达 RatePerMinute 时给出下一个空位的单调时刻：第 RatePerMinute 近的

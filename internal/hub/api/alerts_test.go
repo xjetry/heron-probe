@@ -416,13 +416,13 @@ func TestListAlertEventsPaging(t *testing.T) {
 		events = append(events, ev)
 	}
 	last := events[500]
-	if _, err := h.store.BeginBatchAttempt(t.Context(), last.Deliveries[0].BatchID); err != nil {
+	if _, err := h.store.BeginBatchAttempt(t.Context(), last.Deliveries[0].BatchID, []int64{last.Deliveries[0].ID}); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.store.UpdateBatch(t.Context(), last.Deliveries[0].BatchID, store.DeliveryResult{OK: true, Done: true, DeliveredAt: h.clk.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.store.BeginBatchAttempt(t.Context(), events[499].Deliveries[0].BatchID); err != nil {
+	if _, err := h.store.BeginBatchAttempt(t.Context(), events[499].Deliveries[0].BatchID, []int64{events[499].Deliveries[0].ID}); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.store.UpdateBatch(t.Context(), events[499].Deliveries[0].BatchID, store.DeliveryResult{Done: true, Failure: store.FailureHTTPStatus, HTTPStatus: 400, Error: "bad request body"}); err != nil {

@@ -2,6 +2,8 @@ package store
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -15,13 +17,17 @@ var schemaV16 = append(slices.Clone(schemaV15),
 	"CREATE UNIQUE INDEX theme_enabled ON theme (enabled) WHERE enabled = 1",
 	"CREATE TABLE theme_file (theme_id TEXT NOT NULL, path TEXT NOT NULL, content BLOB NOT NULL, PRIMARY KEY (theme_id, path))")
 
-// 升级前每行各自发送过：旧行各成一批，未终态的仍按原行续投；旧渠道按种类取缺省节奏。
+// 升级前每行各自发送过：旧行各成一批，未终态的仍按原行续投，其余各列原样保留；旧渠道按种类取缺省节奏。重建表带上
+// 旧序列：id 50 的行已被清理，新行必须从 51 起，否则批次号会被复用。
 func TestMigrationFromV16AddsBatchesAndChannelRates(t *testing.T) {
 	migrated, fresh := migrateFrom(t, schemaV16, 16, func(t *testing.T, db *sql.DB) {
 		for _, stmt := range []string{
+			"INSERT INTO node (id, name, token_hash, created_at) VALUES (7, 'n', x'07', 1)",
 			"INSERT INTO notify_channel (id, name, kind, config, created_at) VALUES (1, 'tg', 'telegram', '{}', 1), (2, 'hook', 'webhook', '{}', 1)",
 			"INSERT INTO alert_event (id, rule_id, node_id, transition, at, summary, value) VALUES (5, 3, 7, 'firing', 1, 's', 0)",
-			"INSERT INTO alert_delivery (id, event_id, channel_id, attempts, done) VALUES (10, 5, 1, 1, 0), (11, 5, 2, 3, 1)",
+			"INSERT INTO alert_delivery (id, event_id, channel_id, attempts, done, failure, http_status, last_error) VALUES (10, 5, 1, 1, 0, 'http_status', 503, 'busy'), (11, 5, 2, 3, 1, '', NULL, '')",
+			"INSERT INTO alert_delivery (id, event_id, channel_id) VALUES (50, 5, 1)",
+			"DELETE FROM alert_delivery WHERE id = 50",
 		} {
 			if _, err := db.Exec(stmt); err != nil {
 				t.Fatal(err)
@@ -39,11 +45,40 @@ func TestMigrationFromV16AddsBatchesAndChannelRates(t *testing.T) {
 		t.Fatalf("channels after migration: %+v %v, want telegram 20 and webhook 0", channels, err)
 	}
 	ev, err := migrated.GetAlertEvent(t.Context(), 5)
-	if err != nil || len(ev.Deliveries) != 2 || ev.Deliveries[0].BatchID != 10 || ev.Deliveries[1].BatchID != 11 {
-		t.Fatalf("deliveries after migration: %+v %v, want each row its own batch", ev.Deliveries, err)
+	want := []Delivery{
+		{ID: 10, EventID: 5, ChannelID: 1, BatchID: 10, Attempts: 1, Failure: FailureHTTPStatus, HTTPStatus: 503, LastError: "busy"},
+		{ID: 11, EventID: 5, ChannelID: 2, BatchID: 11, Attempts: 3, Done: true},
 	}
-	if pending, err := migrated.PendingBatches(t.Context()); err != nil || !slices.Equal(pending, []int64{10}) {
-		t.Fatalf("pending batches after migration: %v %v, want [10]", pending, err)
+	if err != nil || !reflect.DeepEqual(ev.Deliveries, want) {
+		t.Fatalf("deliveries after migration: %+v %v, want %+v", ev.Deliveries, err, want)
+	}
+	if pending, err := migrated.PendingBatches(t.Context()); err != nil || !slices.Equal(pending, []PendingBatch{{ID: 10, ChannelID: 1}}) {
+		t.Fatalf("pending batches after migration: %v %v, want [{10 1}]", pending, err)
+	}
+	var seq, leftover int64
+	if err := migrated.r.QueryRow("SELECT seq FROM sqlite_sequence WHERE name = 'alert_delivery'").Scan(&seq); err != nil || seq != 50 {
+		t.Fatalf("alert_delivery sequence after migration: %d %v, want 50", seq, err)
+	}
+	if err := migrated.r.QueryRow("SELECT COUNT(*) FROM sqlite_sequence WHERE name = 'alert_delivery_v17'").Scan(&leftover); err != nil || leftover != 0 {
+		t.Fatalf("sequence rows left under the temporary name: %d %v", leftover, err)
+	}
+	r := saveRule(t, migrated, AlertRule{Kind: KindOffline})
+	if d := recordTargets(t, migrated, r.ID, 7, DeliveryTarget{ChannelID: 1}).Deliveries[0]; d.ID != 51 || d.BatchID != 51 {
+		t.Fatalf("first delivery after migration: %+v, want id and batch 51", d)
+	}
+}
+
+// 不写批次号的插入在写时失败（新建库与迁移库都是）：之后每个读这一列的查询都依赖它非空。
+func TestDeliveryInsertWithoutBatchFails(t *testing.T) {
+	migrated, fresh := migrateFrom(t, schemaV16, 16, func(*testing.T, *sql.DB) {})
+	for _, s := range []*Store{fresh, migrated} {
+		err := s.write(t.Context(), func(tx *sql.Tx) error {
+			_, err := tx.Exec("INSERT INTO alert_delivery (event_id, channel_id) VALUES (1, 1)")
+			return err
+		})
+		if err == nil || !strings.Contains(err.Error(), "NOT NULL constraint failed: alert_delivery.batch_id") {
+			t.Errorf("insert without batch_id on a %s database: %v", map[bool]string{true: "migrated", false: "fresh"}[s == migrated], err)
+		}
 	}
 }
 
@@ -76,7 +111,7 @@ func TestRecordTransitionJoinsOnlyOpenBatchOfSameChannel(t *testing.T) {
 		t.Fatalf("row asking for a missing batch got batch %d, want its own %d", ghost.BatchID, ghost.ID)
 	}
 
-	ds, err := s.BeginBatchAttempt(t.Context(), batch)
+	ds, err := s.BeginBatchAttempt(t.Context(), batch, []int64{first.Deliveries[0].ID, joined.Deliveries[0].ID})
 	if err != nil || len(ds) != 2 || ds[0].ID != first.Deliveries[0].ID || ds[1].ID != joined.Deliveries[0].ID || ds[0].Attempts != 1 || ds[1].Attempts != 1 {
 		t.Fatalf("batch attempt rows=%+v err=%v", ds, err)
 	}
@@ -102,10 +137,12 @@ func TestBatchAttemptAndResultCoverWholeBatch(t *testing.T) {
 	batch := a.Deliveries[0].BatchID
 	b := recordTargets(t, s, r.ID, ids[1], DeliveryTarget{ChannelID: cs[0].ID, Batch: batch})
 	other := recordTargets(t, s, r.ID, ids[0], DeliveryTarget{ChannelID: cs[0].ID})
-	if _, err := s.BeginBatchAttempt(t.Context(), batch); err != nil {
+	rows := []int64{b.Deliveries[0].ID, a.Deliveries[0].ID}
+	if _, err := s.BeginBatchAttempt(t.Context(), batch, rows); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateBatch(t.Context(), batch, DeliveryResult{Failure: FailureHTTPStatus, HTTPStatus: 503, Error: "busy"}); err != nil {
+	next := s.clk.Now().Add(1500 * time.Millisecond)
+	if err := s.UpdateBatch(t.Context(), batch, DeliveryResult{Failure: FailureHTTPStatus, HTTPStatus: 503, Error: "busy", NotBefore: next}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetDeliveryBatch(t.Context(), batch)
@@ -116,7 +153,8 @@ func TestBatchAttemptAndResultCoverWholeBatch(t *testing.T) {
 		t.Fatalf("batch=%+v", got)
 	}
 	for i, d := range got.Deliveries {
-		if d.Attempts != 1 || d.Done || d.Failure != FailureHTTPStatus || d.HTTPStatus != 503 || d.LastError != "busy" || d.BatchID != batch {
+		// not_before 按秒向上取整：写成更早的时刻会让补回的批次提前重试。
+		if d.Attempts != 1 || d.Done || d.Failure != FailureHTTPStatus || d.HTTPStatus != 503 || d.LastError != "busy" || d.BatchID != batch || !d.NotBefore.Equal(s.clk.Now().Add(2*time.Second)) {
 			t.Fatalf("row %d after a failed attempt=%+v", i, d)
 		}
 		if got.Events[i].ID != d.EventID || got.Events[i].Summary != "down" || got.Events[i].Deliveries != nil {
@@ -127,7 +165,7 @@ func TestBatchAttemptAndResultCoverWholeBatch(t *testing.T) {
 		t.Fatalf("batch events=%d,%d want %d,%d in row order", got.Events[0].ID, got.Events[1].ID, a.ID, b.ID)
 	}
 	at := s.clk.Now()
-	if _, err := s.BeginBatchAttempt(t.Context(), batch); err != nil {
+	if _, err := s.BeginBatchAttempt(t.Context(), batch, rows); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.UpdateBatch(t.Context(), batch, DeliveryResult{OK: true, Done: true, DeliveredAt: at}); err != nil {
@@ -138,7 +176,7 @@ func TestBatchAttemptAndResultCoverWholeBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i, d := range got.Deliveries {
-		if d.Attempts != 2 || !d.OK || !d.Done || d.Failure != FailureNone || d.HTTPStatus != 0 || d.LastError != "" || !d.DeliveredAt.Equal(at) {
+		if d.Attempts != 2 || !d.OK || !d.Done || d.Failure != FailureNone || d.HTTPStatus != 0 || d.LastError != "" || !d.DeliveredAt.Equal(at) || !d.NotBefore.IsZero() {
 			t.Fatalf("row %d after success=%+v", i, d)
 		}
 	}
@@ -148,45 +186,76 @@ func TestBatchAttemptAndResultCoverWholeBatch(t *testing.T) {
 	}
 }
 
-// 同批各行次数不一致说明不变式已被破坏：报错并回滚，不按其中某行的次数发送。
+// 同批各行次数不一致说明不变式已被破坏：报错并回滚，不按其中某行的次数发送。比较的是批次全部行：已耗尽名额
+// （attempts = 3）却未终态的一行不会被计数的 UPDATE 命中，同样要被发现。
 func TestBeginBatchAttemptRejectsNonUniformBatch(t *testing.T) {
+	for _, attempts := range []int{1, MaxDeliveryAttempts} {
+		t.Run(fmt.Sprint(attempts), func(t *testing.T) {
+			s, ids, cs, _ := alertFixture(t)
+			r := saveRule(t, s, AlertRule{Kind: KindOffline})
+			a := recordTargets(t, s, r.ID, ids[0], DeliveryTarget{ChannelID: cs[0].ID})
+			batch := a.Deliveries[0].BatchID
+			b := recordTargets(t, s, r.ID, ids[1], DeliveryTarget{ChannelID: cs[0].ID, Batch: batch})
+			if err := s.write(t.Context(), func(tx *sql.Tx) error {
+				_, err := tx.Exec("UPDATE alert_delivery SET attempts = ? WHERE id = ?", attempts, b.Deliveries[0].ID)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.BeginBatchAttempt(t.Context(), batch, []int64{a.Deliveries[0].ID, b.Deliveries[0].ID}); err == nil || !strings.Contains(err.Error(), "not uniform") {
+				t.Fatalf("non-uniform batch attempt err=%v", err)
+			}
+			got, err := s.GetDeliveryBatch(t.Context(), batch)
+			if err != nil || got.Deliveries[0].Attempts != 0 || got.Deliveries[1].Attempts != attempts {
+				t.Fatalf("rows after refused attempt=%+v err=%v, want the attempt rolled back", got.Deliveries, err)
+			}
+		})
+	}
+}
+
+// 开始尝试只覆盖调用方拼消息时读到的那组行：少了后加入的行、多了已清理的行、或者一行都没给，都拒绝且不消耗名额；
+// 调用方重读后用批次当前的行集合（顺序不限）才能开始。
+func TestBeginBatchAttemptRejectsChangedRowSet(t *testing.T) {
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	a := recordTargets(t, s, r.ID, ids[0], DeliveryTarget{ChannelID: cs[0].ID})
 	batch := a.Deliveries[0].BatchID
 	b := recordTargets(t, s, r.ID, ids[1], DeliveryTarget{ChannelID: cs[0].ID, Batch: batch})
-	if err := s.write(t.Context(), func(tx *sql.Tx) error {
-		_, err := tx.Exec("UPDATE alert_delivery SET attempts = 1 WHERE id = ?", b.Deliveries[0].ID)
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.BeginBatchAttempt(t.Context(), batch); err == nil || !strings.Contains(err.Error(), "not uniform") {
-		t.Fatalf("non-uniform batch attempt err=%v", err)
+	current := []int64{a.Deliveries[0].ID, b.Deliveries[0].ID}
+	for _, stale := range [][]int64{{a.Deliveries[0].ID}, {a.Deliveries[0].ID, b.Deliveries[0].ID, 999}, nil} {
+		if ds, err := s.BeginBatchAttempt(t.Context(), batch, stale); !errors.Is(err, ErrBatchChanged) || ds != nil {
+			t.Fatalf("attempt with rows %v on batch rows %v: %+v %v, want ErrBatchChanged", stale, current, ds, err)
+		}
 	}
 	got, err := s.GetDeliveryBatch(t.Context(), batch)
-	if err != nil || got.Deliveries[0].Attempts != 0 || got.Deliveries[1].Attempts != 1 {
-		t.Fatalf("rows after refused attempt=%+v err=%v, want the attempt rolled back", got.Deliveries, err)
+	if err != nil || got.Deliveries[0].Attempts != 0 || got.Deliveries[1].Attempts != 0 {
+		t.Fatalf("rows after refused attempts=%+v err=%v, want no attempt consumed", got.Deliveries, err)
+	}
+	ds, err := s.BeginBatchAttempt(t.Context(), batch, []int64{b.Deliveries[0].ID, a.Deliveries[0].ID})
+	if err != nil || len(ds) != 2 || ds[0].Attempts != 1 || ds[1].Attempts != 1 {
+		t.Fatalf("attempt with the current rows=%+v err=%v", ds, err)
 	}
 }
 
-// 批次号必须指向一行（正数）；节奏上限不能为负。两条约束由列上的 CHECK 承载，绕开写入口也写不进去。
-func TestDeliveryBatchAndRateColumnsRejectInvalidValues(t *testing.T) {
+// 下一次尝试的时刻只属于还会重试的失败：成功或终态的结果带着它被拒绝，不写库。
+func TestDeliveryResultRejectsNotBeforeOnFinishedResult(t *testing.T) {
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordTargets(t, s, r.ID, ids[0], DeliveryTarget{ChannelID: cs[0].ID})
-	for _, v := range []int64{0, -1} {
-		err := s.write(t.Context(), func(tx *sql.Tx) error {
-			_, err := tx.Exec("UPDATE alert_delivery SET batch_id = ? WHERE id = ?", v, ev.Deliveries[0].ID)
-			return err
-		})
-		if err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
-			t.Fatalf("batch_id %d accepted: %v", v, err)
+	later := s.clk.Now().Add(time.Minute)
+	for _, res := range []DeliveryResult{
+		{OK: true, Done: true, DeliveredAt: s.clk.Now(), NotBefore: later},
+		{Done: true, Failure: FailureHTTPStatus, HTTPStatus: 400, Error: "bad", NotBefore: later},
+	} {
+		if err := s.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, res); err == nil || !strings.Contains(err.Error(), "next-attempt time") {
+			t.Errorf("result %+v accepted: %v", res, err)
 		}
 	}
-	if _, err := s.SaveNotifyChannel(t.Context(), NotifyChannel{Name: "neg", Kind: ChannelTelegram, Config: `{}`, RatePerMinute: -1}); err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
-		t.Fatalf("negative rate accepted: %v", err)
-	}
+}
+
+// 节奏上限原样往返，更新时改写。取值约束（非负）由列上的 CHECK 承载，见 TestEveryCheckConstraintRefusesItsViolation。
+func TestNotifyChannelRateRoundTrip(t *testing.T) {
+	s, _ := open(t)
 	saved, err := s.SaveNotifyChannel(t.Context(), NotifyChannel{Name: "tg", Kind: ChannelTelegram, Config: `{}`, RatePerMinute: 7})
 	if err != nil {
 		t.Fatal(err)
@@ -196,7 +265,7 @@ func TestDeliveryBatchAndRateColumnsRejectInvalidValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	channels, err := s.ListNotifyChannels(t.Context())
-	if err != nil || channels[len(channels)-1].RatePerMinute != 0 || channels[len(channels)-1].ID != saved.ID {
+	if err != nil || len(channels) != 1 || channels[0].RatePerMinute != 0 || channels[0].ID != saved.ID {
 		t.Fatalf("rate after update=%+v %v, want 0", channels, err)
 	}
 }

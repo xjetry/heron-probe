@@ -319,7 +319,7 @@ func TestRestartResendsPersistedBatchesWithoutRemerging(t *testing.T) {
 		t.Fatalf("rows before restart=%+v, want node1 and node2 in one batch and node3 in another", ds)
 	}
 	// 崩溃前第一批已开始一次尝试，结果没落盘。
-	if _, err := f.st.BeginBatchAttempt(t.Context(), ds[0].BatchID); err != nil {
+	if _, err := f.st.BeginBatchAttempt(t.Context(), ds[0].BatchID, []int64{ds[0].ID, ds[1].ID}); err != nil {
 		t.Fatal(err)
 	}
 	f.restart(t)

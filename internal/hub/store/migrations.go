@@ -332,13 +332,37 @@ var migrationV16 = []string{
 )`,
 }
 
-// v17：投递的发送批次与渠道的出站节奏（§9.3）。升级前每行各自发送过，所以旧行各成一批（batch_id = id）；待投递
-// 行的索引改按批次号排列（续投按批次装填）；旧渠道按种类取缺省节奏：Telegram 20（群聊的文档值），Webhook 0（不限）。
+// v17：投递的发送批次、下一次尝试的最早时刻与渠道的出站节奏（§9.3）。
+//
+// alert_delivery 重建而不是 ADD COLUMN：batch_id 要 NOT NULL，而 ADD COLUMN 的 NOT NULL 列必须带一个对所有旧行都相同的
+// 默认值，给不出"等于自己的 id"。升级前每行各自发送过，所以旧行各成一批（batch_id = id）；not_before 取 0（没有限制）。
+// 重建时旧表的 sqlite_sequence 一并带到新表：batch_id 就是行 id，序列若退回到现存最大的 id，第一行已被清理的批次号
+// 会被新行复用。新表以 alert_delivery_v17 建成、复制、接上序列，再删旧表并改名——改名时 SQLite 连 sqlite_sequence 里
+// 的表名一起改。待投递行的索引改按批次号与渠道排列（续投按批次装填、窗口按渠道判节奏）。
+// 旧渠道按种类取缺省节奏：Telegram 20（群聊的文档值），Webhook 0（不限）。
 var migrationV17 = []string{
-	`ALTER TABLE alert_delivery ADD COLUMN batch_id INTEGER CHECK (batch_id > 0)`,
-	`UPDATE alert_delivery SET batch_id = id`,
-	`DROP INDEX alert_delivery_pending`,
-	`CREATE INDEX alert_delivery_pending ON alert_delivery(done, batch_id)`,
+	`CREATE TABLE alert_delivery_v17 (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  channel_id INTEGER NOT NULL,
+  batch_id INTEGER NOT NULL CHECK (batch_id > 0),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  ok INTEGER NOT NULL DEFAULT 0,
+  done INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT '',
+  delivered_at INTEGER,
+  failure TEXT NOT NULL DEFAULT '',
+  http_status INTEGER,
+  not_before INTEGER NOT NULL DEFAULT 0
+)`,
+	`INSERT INTO alert_delivery_v17 (id, event_id, channel_id, batch_id, attempts, ok, done, last_error, delivered_at, failure, http_status)
+  SELECT id, event_id, channel_id, id, attempts, ok, done, last_error, delivered_at, failure, http_status FROM alert_delivery`,
+	`DELETE FROM sqlite_sequence WHERE name = 'alert_delivery_v17'`,
+	`INSERT INTO sqlite_sequence (name, seq) SELECT 'alert_delivery_v17', seq FROM sqlite_sequence WHERE name = 'alert_delivery'`,
+	`DROP TABLE alert_delivery`,
+	`ALTER TABLE alert_delivery_v17 RENAME TO alert_delivery`,
+	`CREATE INDEX alert_delivery_by_event ON alert_delivery(event_id)`,
+	`CREATE INDEX alert_delivery_pending ON alert_delivery(done, batch_id, channel_id)`,
 	`CREATE INDEX alert_delivery_by_batch ON alert_delivery(batch_id)`,
 	`ALTER TABLE notify_channel ADD COLUMN rate_per_minute INTEGER NOT NULL DEFAULT 0 CHECK (rate_per_minute >= 0)`,
 	`UPDATE notify_channel SET rate_per_minute = 20 WHERE kind = 'telegram'`,
