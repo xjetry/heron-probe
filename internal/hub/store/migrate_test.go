@@ -74,7 +74,7 @@ func userVersion(t *testing.T, db *sql.DB) int {
 // frozenSchemas 按版本号登记每个旧版本发布时的完整 DDL。版本号只在这里与冻结文本配对一次：
 // 用例按版本号取用（migrateFrom、frozenSchemaFixture、frozenSchema），不在调用处另写一遍版本号。
 // TestFrozenSchemasFollowMigrations 核对每一对确实相符，TestFrozenSchemasReachedOnlyByVersion
-// 挡住绕过这张表、在函数体里直接引用冻结文本的写法。
+// 挡住绕过这张表、在别处引用冻结文本再另写版本号的写法。
 var frozenSchemas = map[int][]string{
 	1:  schemaV1,
 	2:  schemaV2,
@@ -560,43 +560,57 @@ func TestFrozenSchemasFollowMigrations(t *testing.T) {
 	}
 }
 
-// testFuncDecls 解析本包全部 _test.go，返回其中的函数声明，供静态核对用例写法的测试使用。
-func testFuncDecls(t *testing.T) (*token.FileSet, []*ast.FuncDecl) {
+// parseTestFiles 解析本包全部 _test.go，供静态核对用例写法的测试使用。
+func parseTestFiles(t *testing.T) (*token.FileSet, []*ast.File) {
 	t.Helper()
-	files, err := filepath.Glob("*_test.go")
+	names, err := filepath.Glob("*_test.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	fset := token.NewFileSet()
-	var funcs []*ast.FuncDecl
-	for _, name := range files {
+	var files []*ast.File
+	for _, name := range names {
 		file, err := parser.ParseFile(fset, name, nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, decl := range file.Decls {
-			if fn, ok := decl.(*ast.FuncDecl); ok {
-				funcs = append(funcs, fn)
-			}
-		}
+		files = append(files, file)
 	}
-	return fset, funcs
+	return fset, files
 }
 
-// 冻结 DDL 只经 frozenSchemas 按版本号取用。在函数体里直接引用 schemaV<n> 建库，就得另写一遍版本号
-// （user_version 或 migrateFrom 的参数），两处可以写得不一致，而 TestFrozenSchemasFollowMigrations 只核对
-// 登记表里的配对。冻结文本的定义与登记表都是包级声明，不在函数体内，不受此限。
+// 冻结 DDL 只经 frozenSchemas 按版本号取用。schemaV<n> 只许出现在两处：包级 var schemaV<m> 的定义
+// （后一版可由前一版追加而来）与 frozenSchemas 登记表。其它任何位置引用它，无论是函数体里建库，
+// 还是包级派生变量再交给按参数收版本号的夹具，都得另写一遍版本号；两处可以写得不一致，
+// 而 TestFrozenSchemasFollowMigrations 只核对登记表里的配对。
 func TestFrozenSchemasReachedOnlyByVersion(t *testing.T) {
 	frozenName := regexp.MustCompile(`^schemaV[0-9]+$`)
-	fset, funcs := testFuncDecls(t)
-	for _, fn := range funcs {
-		ast.Inspect(fn, func(n ast.Node) bool {
-			if id, ok := n.(*ast.Ident); ok && frozenName.MatchString(id.Name) {
-				t.Errorf("%s: %s references %s directly; take frozen DDL by version through frozenSchema, frozenSchemaFixture or migrateFrom", fset.Position(id.Pos()), fn.Name.Name, id.Name)
+	fset, files := parseTestFiles(t)
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.VAR {
+				for _, spec := range gen.Specs {
+					value := spec.(*ast.ValueSpec)
+					if len(value.Names) == 1 && (frozenName.MatchString(value.Names[0].Name) || value.Names[0].Name == "frozenSchemas") {
+						continue
+					}
+					reportFrozenReferences(t, fset, frozenName, value)
+				}
+				continue
 			}
-			return true
-		})
+			reportFrozenReferences(t, fset, frozenName, decl)
+		}
 	}
+}
+
+func reportFrozenReferences(t *testing.T, fset *token.FileSet, frozenName *regexp.Regexp, node ast.Node) {
+	t.Helper()
+	ast.Inspect(node, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && frozenName.MatchString(id.Name) {
+			t.Errorf("%s: %s is referenced outside its own definition and frozenSchemas; take frozen DDL by version through frozenSchema, frozenSchemaFixture or migrateFrom", fset.Position(id.Pos()), id.Name)
+		}
+		return true
+	})
 }
 
 // migrations 的每一步 v 都要有一条从 v−1 出发、经 migrateFrom 的用例，迁移后与新建库的结构比较才覆盖到
@@ -604,35 +618,41 @@ func TestFrozenSchemasReachedOnlyByVersion(t *testing.T) {
 // 写成变量就读不出版本，放进辅助函数就确认不了 go test 会执行它，两种都直接判失败。
 // 起点版本对应的冻结 DDL 由 frozenSchemas 给出，二者相符由 TestFrozenSchemasFollowMigrations 核对。
 func TestEveryMigrationHasMigrateFromCase(t *testing.T) {
-	fset, funcs := testFuncDecls(t)
+	fset, files := parseTestFiles(t)
 	covered := map[int]bool{}
-	for _, fn := range funcs {
-		ast.Inspect(fn, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
 			if !ok {
-				return true
+				continue
 			}
-			if id, ok := call.Fun.(*ast.Ident); !ok || id.Name != "migrateFrom" {
+			ast.Inspect(fn, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				if id, ok := call.Fun.(*ast.Ident); !ok || id.Name != "migrateFrom" {
+					return true
+				}
+				pos := fset.Position(call.Pos())
+				if !strings.HasPrefix(fn.Name.Name, "Test") {
+					t.Errorf("%s: migrateFrom is called from %s; call it directly in a Test function", pos, fn.Name.Name)
+					return true
+				}
+				lit, ok := call.Args[1].(*ast.BasicLit)
+				if !ok || lit.Kind != token.INT {
+					t.Errorf("%s: migrateFrom version must be an integer literal", pos)
+					return true
+				}
+				version, err := strconv.Atoi(lit.Value)
+				if err != nil {
+					t.Errorf("%s: %v", pos, err)
+					return true
+				}
+				covered[version] = true
 				return true
-			}
-			pos := fset.Position(call.Pos())
-			if !strings.HasPrefix(fn.Name.Name, "Test") {
-				t.Errorf("%s: migrateFrom is called from %s; call it directly in a Test function", pos, fn.Name.Name)
-				return true
-			}
-			lit, ok := call.Args[1].(*ast.BasicLit)
-			if !ok || lit.Kind != token.INT {
-				t.Errorf("%s: migrateFrom version must be an integer literal", pos)
-				return true
-			}
-			version, err := strconv.Atoi(lit.Value)
-			if err != nil {
-				t.Errorf("%s: %v", pos, err)
-				return true
-			}
-			covered[version] = true
-			return true
-		})
+			})
+		}
 	}
 	for v := range migrations {
 		if !covered[v-1] {
