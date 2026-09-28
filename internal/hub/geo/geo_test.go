@@ -176,7 +176,7 @@ func (f *fixture) enable(on bool) {
 // saveGeo 改国家查询设置。假服务的处理函数里也用它来模拟"查询进行中运维改了设置"：那不是测试协程，不能 Fatal，
 // 错误交给调用方报告。
 func (f *fixture) saveGeo(ctx context.Context, u store.GeoUpdate) error {
-	_, err := f.st.SaveSettings(ctx, store.SettingsUpdate{Theme: store.DefaultTheme, Geo: u})
+	_, err := f.st.SaveSettings(ctx, store.SettingsUpdate{Geo: u})
 	return err
 }
 

@@ -329,8 +329,8 @@ describe("国家 / 地区查询", () => {
     expect(description).toHaveAccessibleDescription(/节点停在同一地址时查得一次即止；hub 记住每个节点最近 4 个地址的答案，在这些地址之间切换不再外呼，\s*超过 4 个地址轮换或 hub 重启后会再查。/);
   });
 
-  // 外观表单里未保存的总闸同样不随查询表单提交：查询表单不带总闸与 backup，hub 对缺席的这两项不改。外观表单的开关仍
-  // 显示用户动过的值，不被查询表单保存后写进缓存的回显（总闸仍开）盖掉。
+  // 查询表单只提交自己这一组：外观五项全空（hub 按"这一组没给"对待外观，原样保留）、不带总闸与 backup。外观表单里未
+  // 保存的标题与总闸既不随它提交，也仍留在外观表单的草稿里，不被查询表单保存后写进缓存的回显（总闸仍开）盖掉。
   it("保存只提交开关与服务地址，不带外观、总闸与备份", async () => {
     const hub = statefulHub(withGeo);
     const sent = hub.sent;
@@ -346,11 +346,30 @@ describe("国家 / 地区查询", () => {
     expect(sent[0].settings).toMatchObject({ title: "", theme: "", accentColor: "", logo: "", customCss: "", geoEnabled: true, geoUrl: "https://ipinfo.io/{ip}/country" });
     expect(isFieldSet(sent[0].settings!, SettingsSchema.field.publicEnabled)).toBe(false);
     expect(isFieldSet(sent[0].settings!, SettingsSchema.field.backup)).toBe(false);
+    expect(hub.state()).toMatchObject({ ...current, publicEnabled: true, geoEnabled: true });
     expect(appearance.getByLabelText("标题")).toHaveValue("未保存的标题");
     expect(appearance.getByRole("checkbox", { name: "启用公开页" })).not.toBeChecked();
   });
 
-  it("外观保存后刷新失败，查询表单不回写外观", async () => {
+  // hub 对"一组都没给出"的请求报错。三个表单不改任何值直接保存也各自带着自己的组：外观表单带全部外观（明暗总有值），
+  // 查询表单显式带开关与服务地址，备份表单带 backup，所以都不会撞上这条拒绝。
+  it("三个表单不改值直接保存，各自带着自己的组", async () => {
+    const hub = statefulHub(withGeo);
+    render(hub.impl);
+    for (const name of ["公开页外观", "国家 / 地区查询", "备份到 S3"]) {
+      const f = within(await screen.findByRole("form", { name }));
+      await waitFor(() => expect(f.getByRole("button", { name: "保存" })).toBeEnabled());
+      fireEvent.click(f.getByRole("button", { name: "保存" }));
+      expect(await f.findByRole("status")).toHaveTextContent("已保存");
+    }
+    expect(hub.sent).toHaveLength(3);
+    expect(hub.sent[0].settings?.theme).toBe("dark");
+    expect(isFieldSet(hub.sent[1].settings!, SettingsSchema.field.geoEnabled)).toBe(true);
+    expect(isFieldSet(hub.sent[1].settings!, SettingsSchema.field.geoUrl)).toBe(true);
+    expect(isFieldSet(hub.sent[2].settings!, SettingsSchema.field.backup)).toBe(true);
+  });
+
+  it("外观保存后刷新失败，查询表单保存不会把外观改回去", async () => {
     const hub = statefulHub(withGeo);
     render(hub.impl);
     const appearance = await form();
@@ -364,6 +383,7 @@ describe("国家 / 地区查询", () => {
     fireEvent.click(f.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(hub.sent).toHaveLength(2));
     expect(hub.sent[1].settings).toMatchObject({ title: "", theme: "", accentColor: "", logo: "", customCss: "", geoEnabled: true });
+    expect(hub.state()).toMatchObject({ ...current, title: "新标题", geoEnabled: true });
   });
 
   it("查询表单保存后刷新失败，重新进入页面时显示刚保存的开关", async () => {
@@ -416,4 +436,45 @@ describe("设置表单的保存互斥", () => {
       expect(hub.sent).toHaveLength(1);
     });
   }
+
+  // 互斥的理由而不是它的机制：两个保存同时在途、响应逆序到达时，后写进缓存的是先提交的那份回显，缺了另一次保存的改动；
+  // 刷新失败时缓存一直停在那里，重新进入页面的表单从它初始化，再保存即把旧值写回。断言写这些后果，换成别的机制也照样约束。
+  it("两个表单的保存响应逆序到达，重新进入的表单也不会把旧值写回", async () => {
+    const hub = statefulHub({ ...current, publicEnabled: true, geoEnabled: true, geoUrl: "https://ipinfo.io/{ip}/country" });
+    const { router, queryClient } = renderWithAdmin(hub.impl, [...routes, { path: "/elsewhere", Component: () => null }], "/appearance");
+    const appearance = await form();
+    const geo = async () => within(await screen.findByRole("form", { name: "国家 / 地区查询" }));
+    const toggle = async () => (await geo()).getByRole("checkbox", { name: "按来源地址查询节点的国家 / 地区" });
+    expect(await toggle()).toBeChecked();
+    hub.failReads();
+    hub.holdResponses();
+    fireEvent.change(appearance.getByLabelText("标题"), { target: { value: "新标题" } });
+    fireEvent.click(appearance.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(hub.sent).toHaveLength(1));
+    fireEvent.click(await toggle());
+    fireEvent.submit(screen.getByRole("form", { name: "国家 / 地区查询" }));
+    // 放行前等在途的保存都到达 hub（互斥时查询表单的提交不发出，在途的只有外观那一个），放行后等它们连同刷新都结束。
+    await waitFor(() => expect(hub.sent).toHaveLength(queryClient.isMutating()));
+    hub.deliverNewestFirst();
+    await waitFor(() => expect(queryClient.isMutating()).toBe(0));
+    expect(appearance.getByRole("status")).toHaveTextContent("已保存");
+    if (!(await geo()).queryByRole("status")) {
+      const save = (await geo()).getByRole("button", { name: "保存" });
+      await waitFor(() => expect(save).toBeEnabled());
+      fireEvent.click(save);
+      await waitFor(() => expect(hub.sent).toHaveLength(2));
+      hub.deliverNewestFirst();
+    }
+    expect(await (await geo()).findByRole("status")).toHaveTextContent("已保存");
+    expect(hub.state()).toMatchObject({ title: "新标题", geoEnabled: false });
+    await act(() => router.navigate("/elsewhere"));
+    await act(() => router.navigate("/appearance"));
+    expect(await toggle()).not.toBeChecked();
+    fireEvent.change((await geo()).getByLabelText("服务地址"), { target: { value: "https://geo.example/{ip}" } });
+    fireEvent.click((await geo()).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(hub.sent).toHaveLength(3));
+    hub.deliverNewestFirst();
+    expect(await (await geo()).findByRole("status")).toHaveTextContent("已保存");
+    expect(hub.state().geoEnabled).toBe(false);
+  });
 });

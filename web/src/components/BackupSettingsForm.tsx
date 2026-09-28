@@ -22,8 +22,9 @@ const backupDraft = (b?: BackupSettings): BackupDraft => ({
   channelIds: new Set(b?.notify?.channelIds ?? []), secret: undefined, hasSecret: b?.hasSecret ?? false,
 });
 
-// UpdateSettings 按组更新，备份表单只提交 backup，避免用旧快照覆盖其它表单或脚本刚保存的设置。
-// 三个表单共用 SAVE_SETTINGS 互斥与回显缓存，保存响应不会按完成顺序覆盖更新的设置。
+// 备份设置单独一个表单，只提交 backup 这一组：UpdateSettings 按组判定，外观、总闸与国家查询两项缺席即不改。于是只改
+// 备份既不会顺带保存外观表单的未保存改动，也不会把缓存里可能已过时的外观写回去；外观表单与查询表单不提交 backup，hub
+// 对缺席的 backup 不改。保存与其余设置表单互斥（SAVE_SETTINGS）。
 // 提交的 backup 恒带 notify（表单显示的就是完整的渠道选择，与当前渠道列表求交）；secret 留空即缺席，保留 hub 已存的值；
 // hasSecret 不提交。渠道列表读到之前不渲染表单：拿空列表求交会把已选渠道当作显式空集合提交，等于关掉备份失败通知。
 export function BackupSettingsForm({ current }: { current: BackupSettings | undefined }) {

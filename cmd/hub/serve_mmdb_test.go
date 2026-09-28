@@ -95,7 +95,7 @@ func TestServeMMDBTakesPriorityAndEchoesBackend(t *testing.T) {
 	clk := clock.NewFake(time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC))
 	path := "../../internal/hub/geo/testdata/country.mmdb"
 	client, _, stop := startAlertHub(t, clk, func(st *store.Store) {
-		if _, err := st.SaveSettings(t.Context(), store.SettingsUpdate{Theme: store.DefaultTheme, Geo: store.GeoUpdate{Enabled: proto.Bool(true), URL: proto.String(srv.URL + "/{ip}")}}); err != nil {
+		if _, err := st.SaveSettings(t.Context(), store.SettingsUpdate{Geo: store.GeoUpdate{Enabled: proto.Bool(true), URL: proto.String(srv.URL + "/{ip}")}}); err != nil {
 			t.Fatal(err)
 		}
 		id, _, err := st.CreateNode(t.Context(), "public", []byte("node"))

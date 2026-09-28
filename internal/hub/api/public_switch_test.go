@@ -57,6 +57,28 @@ func TestPublicSwitchOmittedSettings(t *testing.T) {
 	}
 }
 
+// 总闸自成一组：只带 public_enabled 的请求照常生效，外观与国家查询原样保留；一组都没给出的请求被拒，总闸不变。
+func TestPublicSwitchAloneIsAGroup(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	before := saveSettings(t, h, validSettings())
+	want := proto.Clone(before).(*probev1.Settings)
+	want.PublicEnabled = proto.Bool(false)
+	if got := saveSettings(t, h, &probev1.Settings{PublicEnabled: proto.Bool(false)}); !proto.Equal(got, want) {
+		t.Fatalf("gate-only echo = %v, want %v", got, want)
+	}
+	if got := pubGet(t, h, "GetSite", jsonQuery("{}"), nil); got.status != http.StatusNotFound {
+		t.Fatalf("gate-only close: GetSite status = %d, want %d", got.status, http.StatusNotFound)
+	}
+	_, err := h.admin.UpdateSettings(t.Context(), connect.NewRequest(&probev1.UpdateSettingsRequest{Settings: &probev1.Settings{}}))
+	if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), noGroup) {
+		t.Fatalf("empty update err = %v, want InvalidArgument containing %q", err, noGroup)
+	}
+	if got := currentSettings(t, h); !proto.Equal(got, want) || h.store.PublicEnabled() {
+		t.Fatalf("rejected empty update changed settings to %v (gate in memory %v)", got, h.store.PublicEnabled())
+	}
+}
+
 func TestPublicSwitchAllMethodsAndNodePreservation(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
@@ -105,7 +127,7 @@ func TestPublicSwitchSnapshotCacheWindow(t *testing.T) {
 		t.Fatalf("prime snapshot: %d %s", first.status, first.body)
 	}
 	h.clk.Advance(500 * time.Millisecond)
-	saveSettings(t, h, &probev1.Settings{Theme: "auto", PublicEnabled: proto.Bool(false)})
+	saveSettings(t, h, &probev1.Settings{PublicEnabled: proto.Bool(false)})
 	cached := pubGet(t, h, "GetSnapshot", jsonQuery("{}"), nil)
 	if cached.status != 200 || !bytes.Equal(cached.body, first.body) {
 		t.Fatalf("snapshot inside 1s cache window: %d %s", cached.status, cached.body)
@@ -120,7 +142,7 @@ func TestPublicSwitchSnapshotCacheWindow(t *testing.T) {
 func TestPublicSwitchStillRateLimits(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	saveSettings(t, h, &probev1.Settings{Theme: "auto", PublicEnabled: proto.Bool(false)})
+	saveSettings(t, h, &probev1.Settings{PublicEnabled: proto.Bool(false)})
 	for i := 0; i <= publicBurst; i++ {
 		got := pubGet(t, h, "GetSite", jsonQuery("{}"), nil)
 		want := 404
@@ -139,7 +161,7 @@ func TestPublicSwitchStillRateLimits(t *testing.T) {
 func TestPublicSwitchDoesNotReadDatabase(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	saveSettings(t, h, &probev1.Settings{Theme: "auto", PublicEnabled: proto.Bool(false)})
+	saveSettings(t, h, &probev1.Settings{PublicEnabled: proto.Bool(false)})
 	if err := h.store.Close(); err != nil {
 		t.Fatal(err)
 	}

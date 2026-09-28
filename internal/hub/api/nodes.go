@@ -119,7 +119,7 @@ func nodeProto(n store.Node, today time.Time) *probev1.Node {
 	return out
 }
 
-// cleanName 按 sanitize.Text 清洗，页面标题（cleanSettings）用同一个口径。
+// cleanName 按 sanitize.Text 清洗，页面标题（cleanAppearance）用同一个口径。
 // 按完整清洗结果计字符数；先截字节会把超长输入变成合法名称。
 func cleanName(raw string) (string, error) {
 	name := sanitize.Text(raw, len(raw))

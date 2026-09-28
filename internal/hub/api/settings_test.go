@@ -12,6 +12,7 @@ import (
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 )
@@ -76,7 +77,6 @@ func TestUpdateSettingsValidatesTitleThemeAndAccent(t *testing.T) {
 		{"title raw bytes", withSettings(func(s *probev1.Settings) { s.Title = strings.Repeat(" ", maxTitleBytes) + "a" }), "settings.title must be at most 1024 bytes before cleaning; got 1025"},
 		{"theme empty", withSettings(func(s *probev1.Settings) { s.Theme = "" }), `settings.theme must be one of auto, light, dark; got ""`},
 		{"theme case", withSettings(func(s *probev1.Settings) { s.Theme = "Dark" }), `settings.theme must be one of auto, light, dark; got "Dark"`},
-		{"settings missing", nil, `settings must provide an appearance group (theme required), public_enabled, geo_enabled, geo_url or backup`},
 		{"accent short", withSettings(func(s *probev1.Settings) { s.AccentColor = "#12345" }), `settings.accent_color must be empty (the default color) or #rrggbb with six hex digits; got "#12345"`},
 		{"accent long", withSettings(func(s *probev1.Settings) { s.AccentColor = "#1234567" }), `got "#1234567"`},
 		{"accent without hash", withSettings(func(s *probev1.Settings) { s.AccentColor = "123456" }), `got "123456"`},
@@ -113,13 +113,139 @@ func TestTitleAndNodeNameCleanAlike(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		st, err := cleanSettings(&probev1.Settings{Title: raw, Theme: "auto"})
+		a, err := cleanAppearance(&probev1.Settings{Title: raw, Theme: "auto"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if st.Title != name {
-			t.Fatalf("title %q, node name %q from %q", st.Title, name, raw)
+		if a.Title != name {
+			t.Fatalf("title %q, node name %q from %q", a.Title, name, raw)
 		}
+	}
+}
+
+const noGroup = "settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, the country lookup (geo_enabled, geo_url), or backup"
+
+// UpdateSettings 按组判定、各组彼此独立：外观五项任一非空即算给出并整体校验，所以只带 title 的请求报 theme 的错；
+// 只带国家查询两项之一、只带总闸或只带备份（部分项或全部项）的请求照常保存，其余各组原样保留；一组都没给出（含整个 settings 缺失）的请求被拒并
+// 点名各组。
+func TestUpdateSettingsGroupsAreIndependent(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	before := saveSettings(t, h, validSettings())
+	rejected(t, h, &probev1.Settings{Title: "只改标题"}, `settings.theme must be one of auto, light, dark; got ""`, before)
+	rejected(t, h, &probev1.Settings{}, noGroup, before)
+	rejected(t, h, nil, noGroup, before)
+	want := proto.Clone(before).(*probev1.Settings)
+	for _, c := range []struct {
+		name  string
+		in    *probev1.Settings
+		apply func(*probev1.Settings)
+	}{
+		{"geo only", &probev1.Settings{GeoEnabled: proto.Bool(true)}, func(s *probev1.Settings) { s.GeoEnabled = proto.Bool(true) }},
+		{"geo_url only", &probev1.Settings{GeoUrl: proto.String("https://geo.example/{ip}")}, func(s *probev1.Settings) { s.GeoUrl = proto.String("https://geo.example/{ip}") }},
+		{"public_enabled only", &probev1.Settings{PublicEnabled: proto.Bool(false)}, func(s *probev1.Settings) { s.PublicEnabled = proto.Bool(false) }},
+		{"backup only", &probev1.Settings{Backup: &probev1.BackupSettings{ConfigKeep: proto.Uint32(30)}}, func(s *probev1.Settings) { s.Backup.ConfigKeep = proto.Uint32(30) }},
+		{"full backup only", &probev1.Settings{Backup: fullBackup()}, func(s *probev1.Settings) { s.Backup = echoOf(fullBackup(), true) }},
+	} {
+		c.apply(want)
+		if got := saveSettings(t, h, c.in); !proto.Equal(got, want) {
+			t.Fatalf("%s: echo = %v, want %v", c.name, got, want)
+		}
+		if got := currentSettings(t, h); !proto.Equal(got, want) {
+			t.Fatalf("%s: stored = %v, want %v", c.name, got, want)
+		}
+	}
+}
+
+// Settings 的每个字段都必须归进 appearanceFields、readOnlySettingsFields 或"有 presence 的独立一组"之一，并按所属的类
+// 生效。按 proto 描述枚举全部字段，逐个单独给出：
+//   - 外观字段：单给报 theme 的错（外观按组整体校验，不被当作一组都没给）；配上 theme 给出其合法样例值，回显的外观恰是
+//     theme 与这一项、其余外观项清空，钉住 cleanAppearance 逐项转抄与整组替换。
+//   - 只读回显字段：单给等于一组都没给。
+//   - 有 presence 的字段：单给照常保存，回显里只有这一项被写入，外观与其余各组原样保留。
+//   - 其余字段直接失败：新增字段的人必须表态它属哪一类。
+//
+// 样例值取清洗后的形式，回显与输入逐字相同。新增的外观字符串字段没有样例时按 "x" 试，新增的 presence 布尔字段按 true 试；
+// 取值有约束的新字段把合法样例补进这里。
+func TestUpdateSettingsEveryFieldIsClassified(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	before := saveSettings(t, h, validSettings())
+	fields := before.ProtoReflect().Descriptor().Fields()
+	for _, name := range slices.Concat(appearanceFields, readOnlySettingsFields) {
+		if fields.ByName(name) == nil {
+			t.Errorf("classified field %s is not in Settings", name)
+		}
+	}
+	appearance := map[protoreflect.Name]string{"title": "新标题", "theme": "light", "accent_color": "#abcdef", "logo": "data:image/png;base64,iVBORw0KGgo=", "custom_css": "a{}"}
+	type sample struct{ in, echo func(*probev1.Settings) }
+	presence := map[protoreflect.Name]sample{
+		"public_enabled": {in: func(s *probev1.Settings) { s.PublicEnabled = proto.Bool(false) }},
+		"geo_enabled":    {in: func(s *probev1.Settings) { s.GeoEnabled = proto.Bool(true) }},
+		"geo_url":        {in: func(s *probev1.Settings) { s.GeoUrl = proto.String("https://geo.example/{ip}") }},
+		"backup": {
+			in:   func(s *probev1.Settings) { s.Backup = &probev1.BackupSettings{ConfigKeep: proto.Uint32(24)} },
+			echo: func(s *probev1.Settings) { s.Backup.ConfigKeep = proto.Uint32(24) },
+		},
+	}
+	for i := range fields.Len() {
+		fd := fields.Get(i)
+		t.Run(string(fd.Name()), func(t *testing.T) {
+			in := &probev1.Settings{}
+			want := proto.Clone(before).(*probev1.Settings)
+			switch {
+			case slices.Contains(appearanceFields, fd.Name()):
+				v, ok := appearance[fd.Name()]
+				if !ok {
+					v = "x"
+				}
+				if fd.Name() != "theme" {
+					alone := &probev1.Settings{}
+					alone.ProtoReflect().Set(fd, protoreflect.ValueOfString(v))
+					rejected(t, h, alone, `settings.theme must be one of auto, light, dark; got ""`, before)
+					in.Theme, want.Theme = "auto", "auto"
+				}
+				for _, name := range appearanceFields {
+					want.ProtoReflect().Clear(fields.ByName(name))
+				}
+				in.ProtoReflect().Set(fd, protoreflect.ValueOfString(v))
+				want.ProtoReflect().Set(fd, protoreflect.ValueOfString(v))
+				if fd.Name() != "theme" {
+					want.Theme = "auto"
+				}
+			case slices.Contains(readOnlySettingsFields, fd.Name()):
+				switch fd.Kind() {
+				case protoreflect.StringKind:
+					in.ProtoReflect().Set(fd, protoreflect.ValueOfString("x"))
+				case protoreflect.EnumKind:
+					in.ProtoReflect().Set(fd, protoreflect.ValueOfEnum(1))
+				default:
+					t.Fatalf("no sample for read-only field %s of kind %s", fd.Name(), fd.Kind())
+				}
+				rejected(t, h, in, noGroup, before)
+				return
+			case fd.HasPresence():
+				c, ok := presence[fd.Name()]
+				switch {
+				case ok:
+				case fd.Kind() == protoreflect.BoolKind:
+					c.in = func(s *probev1.Settings) { s.ProtoReflect().Set(fd, protoreflect.ValueOfBool(true)) }
+				default:
+					t.Fatalf("no sample for presence field %s of kind %s", fd.Name(), fd.Kind())
+				}
+				if c.echo == nil {
+					c.echo = c.in
+				}
+				c.in(in)
+				c.echo(want)
+			default:
+				t.Fatalf("field %s is neither in appearanceFields nor in readOnlySettingsFields and has no presence: classify it", fd.Name())
+			}
+			saveSettings(t, h, before)
+			if got := saveSettings(t, h, in); !proto.Equal(got, want) {
+				t.Fatalf("%s alone: echo = %v, want %v", fd.Name(), got, want)
+			}
+		})
 	}
 }
 

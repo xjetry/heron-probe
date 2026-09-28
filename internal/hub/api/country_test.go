@@ -127,7 +127,7 @@ func TestUpdateNodeValidatesCountryPin(t *testing.T) {
 	}
 }
 
-// 国家查询的两项：从未保存过为关与默认服务地址；提交了就保存并回显；外观的整体替换不提交它们时不改。
+// 国家查询的两项：从未保存过为关与默认服务地址；提交了就保存并回显；只改外观的请求不带它们时不改。
 func TestUpdateSettingsGeoFieldsAbsentMeansUnchanged(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)

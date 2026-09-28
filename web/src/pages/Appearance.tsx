@@ -20,11 +20,12 @@ const toDraft = (s: Settings | undefined): Draft => ({
   title: s?.title ?? "", theme: s?.theme || "auto", accentColor: s?.accentColor ?? "", logo: s?.logo ?? "", customCss: s?.customCss ?? "",
 });
 
-// 公开页的外观与总闸：UpdateSettings 整体替换外观五项，表单因此总是提交全部外观字段。总闸缺席表示不变，草稿只在
-// 用户动过开关后才带它：草稿是开始编辑（或上次保存）时的快照，之后总闸可能被别处改过（另一个面板、脚本），把快照里的
-// 总闸随标题一起提交，会把别人刚关掉的公开页重新打开。开关没动过时显示查询缓存里 hub 的当前值，重新拉取即跟上。
-// 国家查询的两项与备份设置不在这个表单里、不提交：hub 对它们缺席即不改（见 GeoLookup、BackupSettingsForm）。三个设置
-// 表单的保存互斥（SAVE_SETTINGS，见 api/saveSettings.ts），saving 覆盖任一个在途。
+// 公开页的外观与总闸。UpdateSettings 按组判定：外观五项是一组，给出就整体替换，表单因此总是提交全部五项（明暗总有值，
+// 这一组总算给出）。总闸是另一组，缺席表示不变，草稿只在用户动过开关后才带它：草稿是开始编辑（或上次保存）时的快照，
+// 之后总闸可能被别处改过（另一个面板、脚本），把快照里的总闸随标题一起提交，会把别人刚关掉的公开页重新打开。开关没动
+// 过时显示查询缓存里 hub 的当前值，重新拉取即跟上。国家查询的两项与备份设置不在这个表单里、不提交：hub 对它们缺席即
+// 不改（见 GeoLookup、BackupSettingsForm）。三个设置表单的保存互斥（SAVE_SETTINGS，见 api/saveSettings.ts），saving
+// 覆盖任一个在途。
 //
 // 保存成功时 onSuccess 用 hub 的回显替换草稿；它不判断"是不是最新一次"，靠的是"有未结请求"与"草稿还能被改"互斥。
 // 草稿的改动来自两处：用户改字段（同步），与读 logo 文件的回调（异步，读完才改）。互斥由两处承载：
@@ -150,9 +151,11 @@ export function Appearance() {
 type GeoDraft = { geoEnabled: boolean; geoUrl: string };
 const toGeoDraft = (s: Settings | undefined): GeoDraft => ({ geoEnabled: s?.geoEnabled ?? false, geoUrl: s?.geoUrl ?? "" });
 
-// 国家查询只提交自己的两个 presence 字段，不回写外观、总闸或备份。三个表单共用保存互斥与回显缓存。
-// 出网告知按 hub 回显的部署后端裁决，
-// 不由表单草稿决定。
+// 国家 / 地区查询的开关与服务地址。只提交这两项：UpdateSettings 按组判定，外观、总闸与备份缺席即不改。于是只改查询设置
+// 既不会顺带保存上面表单里外观与总闸的未保存改动，也不会把缓存里可能已过时的外观写回去（别处刚改过的外观不被覆盖）。
+// current 是 hub 的回显：它初始化草稿，也给出"当前后端"一行（后端种类、本地文件路径、已保存的服务地址）。保存与其余
+// 设置表单互斥（SAVE_SETTINGS）。出网告知写哪一版按回显的后端种类裁决，不由表单草稿决定；HTTP 后端下告知里的服务地址
+// 取草稿，随输入更新。
 function GeoLookup({ current }: { current: Settings | undefined }) {
   const adoptSaved = useAdoptSavedSettings();
   const [draft, setDraft] = useState<GeoDraft | null>(null);

@@ -354,7 +354,7 @@ func TestThemeOriginObeysThePublicSwitch(t *testing.T) {
 	installTheme(t, st, "t", map[string]string{"index.html": "theme index", "theme.js": "theme script", "assets/x.js": "theme asset"})
 	setPublic := func(on bool) {
 		t.Helper()
-		if _, err := st.SaveSettings(t.Context(), store.SettingsUpdate{SiteAppearance: store.SiteAppearance{Theme: store.DefaultTheme}, PublicEnabled: &on}); err != nil {
+		if _, err := st.SaveSettings(t.Context(), store.SettingsUpdate{PublicEnabled: &on}); err != nil {
 			t.Fatal(err)
 		}
 	}

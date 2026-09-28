@@ -15,14 +15,14 @@ func TestSiteSettingsDefaultAndWholeReplacement(t *testing.T) {
 		t.Fatalf("never saved: %+v %v", got, err)
 	}
 	full := SiteSettings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,AAAA", CustomCSS: "body{}"}
-	if _, err := s.SaveSettings(t.Context(), SettingsUpdate{SiteAppearance: full.SiteAppearance, PublicEnabled: &full.PublicEnabled}); err != nil {
+	if _, err := s.SaveSettings(t.Context(), SettingsUpdate{Appearance: &full.SiteAppearance, PublicEnabled: &full.PublicEnabled}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.SiteSettings(t.Context()); err != nil || got != full {
 		t.Fatalf("round trip: %+v %v", got, err)
 	}
 	// 整体替换：空串写入，表示该项回到默认，不是"不改"。
-	if _, err := s.SaveSettings(t.Context(), SettingsUpdate{Theme: "auto"}); err != nil {
+	if _, err := s.SaveSettings(t.Context(), SettingsUpdate{Appearance: &SiteAppearance{Theme: "auto"}}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.SiteSettings(t.Context()); err != nil || got != (SiteSettings{Theme: "auto"}) {
@@ -42,7 +42,7 @@ func TestSiteAppearanceRoundTripsEveryField(t *testing.T) {
 	for i := range v.NumField() {
 		v.Field(i).SetString(v.Type().Field(i).Name)
 	}
-	if _, err := s.SaveSettings(t.Context(), SettingsUpdate{SiteAppearance: want}); err != nil {
+	if _, err := s.SaveSettings(t.Context(), SettingsUpdate{Appearance: &want}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.SiteSettings(t.Context())
@@ -70,9 +70,9 @@ func TestSaveSettingsIsAllOrNothing(t *testing.T) {
 	}
 	gateOpen, geoOff, oldURL, oldSecret, oldKeep := true, false, "https://old.example/{ip}", "old-secret", uint32(10)
 	before, err := s.SaveSettings(ctx, SettingsUpdate{
-		SiteAppearance: SiteAppearance{Title: "旧", Theme: "light", AccentColor: "#111111", Logo: "data:image/png;base64,AAAA", CustomCSS: "a{}"},
-		PublicEnabled:  &gateOpen,
-		Geo:            GeoUpdate{Enabled: &geoOff, URL: &oldURL},
+		Appearance:    &SiteAppearance{Title: "旧", Theme: "light", AccentColor: "#111111", Logo: "data:image/png;base64,AAAA", CustomCSS: "a{}"},
+		PublicEnabled: &gateOpen,
+		Geo:           GeoUpdate{Enabled: &geoOff, URL: &oldURL},
 		Backup: &BackupSettingsUpdate{Endpoint: "https://old.example", Bucket: "old-bucket", Region: "auto", AccessKey: "old", Prefix: "old",
 			Secret: &oldSecret, ConfigKeep: &oldKeep, Channels: &[]int64{channels[0]}},
 	})
@@ -87,9 +87,9 @@ func TestSaveSettingsIsAllOrNothing(t *testing.T) {
 	}
 	gateClosed, geoOn, newURL, newSecret, newKeep := false, true, "https://new.example/{ip}", "new-secret", uint32(20)
 	_, err = s.SaveSettings(ctx, SettingsUpdate{
-		SiteAppearance: SiteAppearance{Title: "新", Theme: "dark", AccentColor: "#222222", CustomCSS: "b{}"},
-		PublicEnabled:  &gateClosed,
-		Geo:            GeoUpdate{Enabled: &geoOn, URL: &newURL},
+		Appearance:    &SiteAppearance{Title: "新", Theme: "dark", AccentColor: "#222222", CustomCSS: "b{}"},
+		PublicEnabled: &gateClosed,
+		Geo:           GeoUpdate{Enabled: &geoOn, URL: &newURL},
 		Backup: &BackupSettingsUpdate{Endpoint: "https://new.example", Bucket: "new-bucket", Region: "us-east-1", AccessKey: "new", Prefix: "new",
 			Secret: &newSecret, ConfigKeep: &newKeep, Channels: &[]int64{channels[0], channels[1]}},
 	})
@@ -101,6 +101,37 @@ func TestSaveSettingsIsAllOrNothing(t *testing.T) {
 	}
 	if !s.PublicEnabled() {
 		t.Fatal("failed save published the closed gate")
+	}
+}
+
+// 各组彼此独立：只给总闸、只给国家查询或只给备份的保存不写外观键，库里的外观原样保留；回显的外观在同一个写事务里
+// 读回，是库里的值而不是空的外观。
+func TestSaveSettingsLeavesAbsentAppearance(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	full := SiteAppearance{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,AAAA", CustomCSS: "body{}"}
+	if _, err := s.SaveSettings(ctx, SettingsUpdate{Appearance: &full}); err != nil {
+		t.Fatal(err)
+	}
+	closed, on, keep := false, true, uint32(24)
+	for _, c := range []struct {
+		name string
+		in   SettingsUpdate
+	}{
+		{"public_enabled only", SettingsUpdate{PublicEnabled: &closed}},
+		{"geo only", SettingsUpdate{Geo: GeoUpdate{Enabled: &on}}},
+		{"backup only", SettingsUpdate{Backup: &BackupSettingsUpdate{ConfigKeep: &keep}}},
+	} {
+		saved, err := s.SaveSettings(ctx, c.in)
+		if err != nil || saved.Site.SiteAppearance != full {
+			t.Fatalf("%s: echoed appearance %+v %v, want %+v", c.name, saved.Site.SiteAppearance, err, full)
+		}
+		if got, err := s.SiteSettings(ctx); err != nil || got.SiteAppearance != full {
+			t.Fatalf("%s: stored appearance %+v %v, want %+v", c.name, got.SiteAppearance, err, full)
+		}
+	}
+	if st, err := s.Settings(ctx); err != nil || st.Site.PublicEnabled || !st.Geo.Enabled || st.Backup.ConfigKeep != keep {
+		t.Fatalf("groups not applied: %+v %+v %+v %v", st.Site, st.Geo, st.Backup, err)
 	}
 }
 

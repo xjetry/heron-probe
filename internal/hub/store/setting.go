@@ -6,9 +6,9 @@ import (
 	"fmt"
 )
 
-// SiteAppearance 是公开页外观，UpdateSettings 整体替换它：标题、主色、logo、自定义 CSS 为空串表示使用内置值，
-// 明暗由 api 限定为 auto/light/dark；约束由 api 的 UpdateSettings 裁决。读写两种设置类型都嵌入它，保存时整体
-// 取用而不逐字段转抄：转抄漏掉的外观项编译照过，每次保存都被写成空串。
+// SiteAppearance 是公开页外观，给出时 UpdateSettings 整体替换它：标题、主色、logo、自定义 CSS 为空串表示使用内置值，
+// 明暗由 api 限定为 auto/light/dark；约束由 api 的 UpdateSettings 裁决。SiteSettings 嵌入它，SettingsUpdate 整个
+// 持有它，保存时整体取用而不逐字段转抄：转抄漏掉的外观项编译照过，每次保存都被写成空串。
 type SiteAppearance struct {
 	Title       string
 	Theme       string
@@ -30,11 +30,12 @@ type Settings struct {
 	Backup BackupSettings
 }
 
-// SettingsUpdate 是 SaveSettings 的输入：外观任一项非空时整体替换，全空时不改；总闸与 Geo 里的各项为 nil 时不修改；Backup 为 nil 时不写任何
-// 备份键，非 nil 时各项按 BackupSettingsUpdate 的语义写。更新与读取分用不同类型，避免把缺席误当作关闭，也避免向读者
-// 泄漏未解析的值。
+// SettingsUpdate 是 SaveSettings 的输入，按组给出、各组彼此独立：Appearance 非 nil 时整体替换五项外观；PublicEnabled
+// 与 Geo 里的各项非 nil 时写入；Backup 非 nil 时各项按 BackupSettingsUpdate 的语义写。nil 表示这一组（项）不改，
+// 不写对应的键。"哪一组算给出"由 api 的 UpdateSettings 按请求判定。更新与读取分用不同类型，避免把缺席误当作关闭，
+// 也避免向读者泄漏未解析的值。
 type SettingsUpdate struct {
-	SiteAppearance
+	Appearance    *SiteAppearance
 	PublicEnabled *bool
 	Geo           GeoUpdate
 	Backup        *BackupSettingsUpdate
@@ -199,8 +200,8 @@ func (s *Store) BackupSettings(ctx context.Context) (BackupSettings, error) {
 // 匿名请求与静态资源都要检查总闸，读原子副本避免每次准入都占用数据库连接。
 func (s *Store) PublicEnabled() bool { return s.publicEnabled.Load() }
 
-// SaveSettings 在 s.write 的一个事务里写给出的外观组、总闸、Geo 项与备份项，任一条失败整体回滚：
-// 库里不会留下半套设置，与 readSettings 的单条 SELECT 一起保证读侧看不到新旧混合。总闸、Geo 各项与 Backup 缺席表示
+// SaveSettings 在 s.write 的一个事务里写给出的外观（五个键整体）、给出的总闸、Geo 里给出的项与给出的备份项，任一条
+// 失败整体回滚：库里不会留下半套设置，与 readSettings 的单条 SELECT 一起保证读侧看不到新旧混合。缺席的组（项）表示
 // 不变，不写对应的键。备份的数值范围与渠道是否存在也在这个事务里裁决（saveBackup）：出范围返回 BackupRangeError、
 // 渠道不存在返回 NotFoundError，同样整体回滚。渠道的存在性在这个写事务里核对，删渠道（DeleteNotifyChannel）在它自己
 // 的写事务里把渠道从列表摘除，两者由写协程串行；改成在事务之外先查再写，两步之间删掉的渠道就会留在列表里。返回值是
@@ -217,8 +218,8 @@ func (s *Store) SaveSettings(ctx context.Context, in SettingsUpdate) (Settings, 
 	s.siteWriteMu.Lock()
 	defer s.siteWriteMu.Unlock()
 	var puts []settingField
-	if in.SiteAppearance != (SiteAppearance{}) {
-		puts = in.SiteAppearance.fields()
+	if in.Appearance != nil {
+		puts = in.Appearance.fields()
 	}
 	if in.PublicEnabled != nil {
 		puts = append(puts, flagField(publicEnabledKey, *in.PublicEnabled))

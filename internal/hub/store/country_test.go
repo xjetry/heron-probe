@@ -109,7 +109,7 @@ func TestDisplayCountry(t *testing.T) {
 	}
 }
 
-// 国家查询设置：从未保存过为关、默认服务地址；GeoUpdate 里缺席的项不改；外观整体替换不碰它们。
+// 国家查询设置：从未保存过为关、默认服务地址；GeoUpdate 里缺席的项不改；只给外观的保存不碰它们。
 func TestGeoSettingsDefaultsAndPartialUpdate(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
@@ -117,16 +117,16 @@ func TestGeoSettingsDefaultsAndPartialUpdate(t *testing.T) {
 		t.Fatalf("never saved: %+v %v", g, err)
 	}
 	on, url := true, "https://geo.example/{ip}"
-	saved, err := s.SaveSettings(ctx, SettingsUpdate{Theme: "dark", Geo: GeoUpdate{Enabled: &on, URL: &url}})
+	saved, err := s.SaveSettings(ctx, SettingsUpdate{Appearance: &SiteAppearance{Theme: "dark"}, Geo: GeoUpdate{Enabled: &on, URL: &url}})
 	if want := (GeoSettings{Enabled: true, URL: url}); err != nil || saved.Geo != want {
 		t.Fatalf("save returned %+v %v, want %+v", saved.Geo, err, want)
 	}
-	saved, err = s.SaveSettings(ctx, SettingsUpdate{Theme: "light", Title: "t"})
+	saved, err = s.SaveSettings(ctx, SettingsUpdate{Appearance: &SiteAppearance{Theme: "light", Title: "t"}})
 	if want := (GeoSettings{Enabled: true, URL: url}); err != nil || saved.Geo != want {
 		t.Fatalf("appearance-only save returned %+v %v, want %+v", saved.Geo, err, want)
 	}
 	off := false
-	if _, err := s.SaveSettings(ctx, SettingsUpdate{Theme: "light", Geo: GeoUpdate{Enabled: &off}}); err != nil {
+	if _, err := s.SaveSettings(ctx, SettingsUpdate{Appearance: &SiteAppearance{Theme: "light"}, Geo: GeoUpdate{Enabled: &off}}); err != nil {
 		t.Fatal(err)
 	}
 	st, err := s.Settings(ctx)
@@ -141,7 +141,7 @@ func TestGeoEnabledIsZeroOrOneAndOtherValuesRefuseToOpen(t *testing.T) {
 	s, _ := openAt(t)
 	ctx := t.Context()
 	for on, want := range map[bool]string{true: "1", false: "0"} {
-		if _, err := s.SaveSettings(ctx, SettingsUpdate{Theme: DefaultTheme, Geo: GeoUpdate{Enabled: &on}}); err != nil {
+		if _, err := s.SaveSettings(ctx, SettingsUpdate{Geo: GeoUpdate{Enabled: &on}}); err != nil {
 			t.Fatal(err)
 		}
 		var got string

@@ -30,16 +30,6 @@ it("通知渠道选满 16 后禁用未选项，取消后允许重选", async () 
   expect(boxes[16]).toBeEnabled();
 });
 
-it("备份保存只提交 backup 组，不回写其它设置", async () => {
-  const hub = statefulHub(saved);
-  render(hub.impl);
-  const form = await backupForm();
-  fireEvent.click(form.getByRole("button", { name: "保存" }));
-  await form.findByRole("status");
-  expect(hub.sent).toHaveLength(1);
-  expect(Object.keys(toJson(SettingsSchema, hub.sent[0].settings!)!)).toEqual(["backup"]);
-});
-
 it("备份表单保存：secret 只写且下次缺席，渠道以 notify 提交，关闭用空 endpoint", async () => {
   const hub = statefulHub(saved);
   const sent = hub.sent;
@@ -107,8 +97,9 @@ it("外观表单的保存不带 backup", async () => {
   expect(hub.state().backup).toEqual(backup);
 });
 
-// 备份不提交外观组；外观草稿也不被备份保存后的服务端回显盖掉。
-it("备份表单的保存不带外观、总闸与国家查询，保留外观草稿", async () => {
+// 备份表单只提交 backup 这一组：外观五项全空（hub 按"这一组没给"对待外观，原样保留），总闸与国家查询两项都不带，hub
+// 对缺席的这几组不改。外观表单里未保存的标题与总闸仍留在草稿里，不被备份保存后写进缓存的回显（总闸仍开）盖掉。
+it("备份表单只提交 backup，不带外观、总闸与国家查询", async () => {
   const hub = statefulHub(saved);
   const sent = hub.sent;
   render(hub.impl);
@@ -125,7 +116,8 @@ it("备份表单的保存不带外观、总闸与国家查询，保留外观草�
   for (const field of [SettingsSchema.field.publicEnabled, SettingsSchema.field.geoEnabled, SettingsSchema.field.geoUrl]) {
     expect(isFieldSet(sent[0].settings!, field)).toBe(false);
   }
-  expect(hub.state().publicEnabled).toBe(true);
+  expect(hub.state()).toMatchObject({ title: "机房", theme: "dark", accentColor: "#123abc", customCss: "body { margin: 0 }", publicEnabled: true });
+  expect(hub.state().backup?.configKeep).toBe(40);
   expect(appearance.getByLabelText("标题")).toHaveValue("未保存的标题");
   expect(appearance.getByRole("checkbox", { name: "启用公开页" })).not.toBeChecked();
 });
@@ -145,8 +137,8 @@ it("备份保存后刷新失败，重新进入页面时显示刚保存的值", a
   expect((await backupForm()).getByLabelText("配置保留份数")).toHaveValue(40);
 });
 
-// 外观保存在途时备份表单不能提交；完成后备份只写自己的组，已保存的外观不变。
-it("两个表单的保存互斥，备份保存不覆盖先保存的外观", async () => {
+// 外观保存在途时备份表单不能提交；外观保存完成之后备份表单照常保存，只带 backup，hub 里新外观与新备份都在。
+it("两个表单的保存互斥，外观保存完成后备份照常保存", async () => {
   const hub = statefulHub(saved);
   const sent = hub.sent;
   render(hub.impl);
@@ -161,10 +153,13 @@ it("两个表单的保存互斥，备份保存不覆盖先保存的外观", asyn
   hub.releaseSaves();
   await appearance.findByRole("status");
   await waitFor(() => expect(form.getByRole("button", { name: "保存" })).toBeEnabled());
+  fireEvent.change(form.getByLabelText("配置保留份数"), { target: { value: "40" } });
   fireEvent.click(form.getByRole("button", { name: "保存" }));
   await form.findByRole("status");
   expect(sent).toHaveLength(2);
+  expect(sent[1].settings?.title).toBe("");
   expect(hub.state().title).toBe("新标题");
+  expect(hub.state().backup?.configKeep).toBe(40);
 });
 
 // 反方向：备份保存在途时外观表单不能提交；备份保存完成、设置重新读到之后，外观表单照常保存。
@@ -186,6 +181,7 @@ it("备份保存在途时外观表单不能提交", async () => {
   fireEvent.change(appearance.getByLabelText("标题"), { target: { value: "新标题" } });
   fireEvent.click(appearance.getByRole("button", { name: "保存" }));
   await appearance.findByRole("status");
+  // 备份表单只带 backup，标题为空串；外观表单的保存带的是新标题。
   expect(sent.map((r) => r.settings?.title)).toEqual(["", "新标题"]);
 });
 

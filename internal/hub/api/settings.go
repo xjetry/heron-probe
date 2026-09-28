@@ -14,6 +14,7 @@ import (
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/hub/geo"
@@ -44,52 +45,93 @@ var (
 	accentRE  = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 )
 
-// cleanSettings 校验并清洗一次更新：外观任一项非空时整体校验并替换；总闸、国家查询两项与 backup 保留 presence 交给存储层处理（缺席即
-// 不变，见 store.SettingsUpdate；backup 各项的 presence 见 cleanBackup）。任一项不合约束即返回错误，调用方什么都不写。
-// 标题会显示在页面与标签页上，与节点名（cleanName）同用 sanitize.Text 清洗；logo 与 CSS 是数据与代码，改写任何字节都可能改变含义，只校验不清洗。
+// cleanSettings 按组判定并校验一次更新，各组彼此独立（§10）：
+//   - 外观五项是一组。proto3 的 string 没有 presence，分不开"没给"与"给了空串"，所以五项任一非空即视为给出
+//     （appearanceGiven），给出就整体替换并按整体校验（cleanAppearance：theme 必填，其余为空即清空）。按任一项非空
+//     判定，只带 title 不带 theme 的请求得到点名 theme 的错误，而不是被当作"没给外观"静默丢弃。
+//   - 总闸、国家查询两项与 backup 是 presence 字段，给出即改、缺席即不变（见 store.SettingsUpdate、cleanGeo；backup
+//     各项的 presence 见 cleanBackup）：只改其中一组的客户端不必重发外观，也就不会把它手里可能已过时的外观写回去。
+//
+// 一组都没给出的请求什么都不会改，返回 InvalidArgument 点名各组，而不是回一个看似成功的空操作。任一项不合约束即返回
+// 错误，调用方什么都不写。
 func cleanSettings(in *probev1.Settings) (store.SettingsUpdate, error) {
-	appearance := store.SiteAppearance{Title: in.GetTitle(), Theme: in.GetTheme(), AccentColor: in.GetAccentColor(), Logo: in.GetLogo(), CustomCSS: in.GetCustomCss()}
-	if appearance == (store.SiteAppearance{}) {
-		if in == nil || (in.PublicEnabled == nil && in.GeoEnabled == nil && in.GeoUrl == nil && in.Backup == nil) {
-			return store.SettingsUpdate{}, invalid("settings must provide an appearance group (theme required), public_enabled, geo_enabled, geo_url or backup")
-		}
-	} else {
-		var err error
-		appearance, err = cleanAppearance(appearance)
+	if in == nil {
+		in = &probev1.Settings{}
+	}
+	out := store.SettingsUpdate{PublicEnabled: in.PublicEnabled}
+	if appearanceGiven(in) {
+		appearance, err := cleanAppearance(in)
 		if err != nil {
 			return store.SettingsUpdate{}, err
 		}
+		out.Appearance = &appearance
 	}
 	geoUpdate, err := cleanGeo(in)
 	if err != nil {
 		return store.SettingsUpdate{}, err
 	}
-	backup, err := cleanBackup(in.GetBackup())
-	return store.SettingsUpdate{SiteAppearance: appearance, PublicEnabled: in.PublicEnabled, Geo: geoUpdate, Backup: backup}, err
+	out.Geo = geoUpdate
+	if out.Backup, err = cleanBackup(in.GetBackup()); err != nil {
+		return store.SettingsUpdate{}, err
+	}
+	if out.Appearance == nil && out.PublicEnabled == nil && out.Geo.Enabled == nil && out.Geo.URL == nil && out.Backup == nil {
+		return store.SettingsUpdate{}, invalid("settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, the country lookup (geo_enabled, geo_url), or backup")
+	}
+	return out, nil
 }
 
-func cleanAppearance(in store.SiteAppearance) (store.SiteAppearance, error) {
-	if n := len(in.Title); n > maxTitleBytes {
+// Settings 的每个字段属于下面三类之一，UpdateSettings 按类判定（§10），TestUpdateSettingsEveryFieldIsClassified 按
+// proto 描述枚举全部字段逐类核对：
+//   - appearanceFields：外观这一组。proto3 的 string 没有 presence，任一项非空即算给出（appearanceGiven）。
+//   - readOnlySettingsFields：只读回显，取自 hub 启动时的选择（settingsProto）。UpdateSettings 中缺席或给出均忽略，
+//     不算给出任何一组。
+//   - 其余字段都必须有 presence，各自按 presence 判定给出（cleanSettings 的"至少一组"逐个列出它们）。
+//
+// 既不在两份清单里、又没有 presence 的字段无从判定"给出"，枚举用例对它直接失败：新增字段的人必须表态它属哪一类。
+var (
+	appearanceFields       = []protoreflect.Name{"title", "theme", "accent_color", "logo", "custom_css"}
+	readOnlySettingsFields = []protoreflect.Name{"geo_backend", "geo_mmdb_path"}
+)
+
+// appearanceGiven 是外观这一组"给出"的判定：appearanceFields 任一非空。它只读这份清单，外观的取值由 cleanAppearance
+// 逐项转抄：清单新增一项而 cleanAppearance 没有转抄时，枚举用例单给那一项的样例值、核对回显，在那里失败。
+func appearanceGiven(in *probev1.Settings) bool {
+	m := in.ProtoReflect()
+	fields := m.Descriptor().Fields()
+	for _, name := range appearanceFields {
+		if m.Get(fields.ByName(name)).String() != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// cleanAppearance 校验并清洗给出的外观，返回可以原样存储与下发的值。
+// 标题会显示在页面与标签页上，与节点名（cleanName）同用 sanitize.Text 清洗；logo 与 CSS 是数据与代码，改写任何字节都可能改变含义，只校验不清洗。
+func cleanAppearance(in *probev1.Settings) (store.SiteAppearance, error) {
+	if n := len(in.GetTitle()); n > maxTitleBytes {
 		return store.SiteAppearance{}, invalid("settings.title must be at most %d bytes before cleaning; got %d", maxTitleBytes, n)
 	}
-	title := sanitize.Text(in.Title, len(in.Title))
+	title := sanitize.Text(in.GetTitle(), len(in.GetTitle()))
 	if n := utf8.RuneCountInString(title); n > maxTitleRunes {
 		return store.SiteAppearance{}, invalid("settings.title must be at most %d characters after removing control characters and surrounding whitespace; got %d", maxTitleRunes, n)
 	}
-	if !slices.Contains(themes, in.Theme) {
-		return store.SiteAppearance{}, invalid("settings.theme must be one of %s; got %q", strings.Join(themes, ", "), in.Theme)
+	if !slices.Contains(themes, in.GetTheme()) {
+		return store.SiteAppearance{}, invalid("settings.theme must be one of %s; got %q", strings.Join(themes, ", "), in.GetTheme())
 	}
-	if c := in.AccentColor; c != "" && !accentRE.MatchString(c) {
+	if c := in.GetAccentColor(); c != "" && !accentRE.MatchString(c) {
 		return store.SiteAppearance{}, invalid("settings.accent_color must be empty (the default color) or #rrggbb with six hex digits; got %q", c)
 	}
-	if err := checkLogo(in.Logo); err != nil {
+	if err := checkLogo(in.GetLogo()); err != nil {
 		return store.SiteAppearance{}, err
 	}
-	if err := checkCSS(in.CustomCSS); err != nil {
+	if err := checkCSS(in.GetCustomCss()); err != nil {
 		return store.SiteAppearance{}, err
 	}
-	in.Title, in.AccentColor = title, strings.ToLower(in.AccentColor)
-	return in, nil
+	return store.SiteAppearance{
+		Title: title, Theme: in.GetTheme(), AccentColor: strings.ToLower(in.GetAccentColor()),
+		Logo: in.GetLogo(), CustomCSS: in.GetCustomCss(),
+	}, nil
 }
 
 // checkLogo 只接受 data:<type>;base64,<data> 这一种写法：type 在白名单内、全小写、不带参数，data 是带填充的
