@@ -277,7 +277,7 @@ func TestRestoreRejectsSnapshotsWithoutChangingTarget(t *testing.T) {
 						CREATE TABLE sequence_seed (id INTEGER PRIMARY KEY AUTOINCREMENT);
 						DROP TABLE sequence_seed;
 						INSERT INTO sqlite_sequence SELECT * FROM saved_sequence;
-						DROP TABLE saved_sequence`, "page_size=8192"
+						DROP TABLE saved_sequence`, layer+" snapshot page_size=8192"
 				case "table":
 					if layer == "config" {
 						query, wantErr = "DROP TABLE alert_rule", "missing table alert_rule"
@@ -302,6 +302,39 @@ func TestRestoreRejectsSnapshotsWithoutChangingTarget(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestRestorePageSizeAgainstExistingTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		metrics    bool
+		resizeBoth bool
+	}{{"both mismatch", true, true}, {"config mismatch", true, false}, {"config without metrics", false, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			config, metrics := restoreSnapshots(t)
+			path := restoreTarget(t)
+			for _, source := range []string{config, metrics} {
+				if source == metrics && !tc.resizeBoth {
+					continue
+				}
+				restoreExec(t, restoreDB(t, source), `CREATE TABLE saved_sequence AS SELECT * FROM sqlite_sequence;
+					PRAGMA page_size=8192; VACUUM;
+					CREATE TABLE sequence_seed (id INTEGER PRIMARY KEY AUTOINCREMENT); DROP TABLE sequence_seed;
+					INSERT INTO sqlite_sequence SELECT * FROM saved_sequence; DROP TABLE saved_sequence`)
+			}
+			if !tc.metrics {
+				metrics = ""
+			}
+			before := restoreDump(t, path)
+			err := runRestoreWith([]string{"--db", path, "--config", config, "--metrics", metrics, "--yes"}, &bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), "config snapshot page_size=8192; expected page_size=4096") {
+				t.Errorf("page size must match target and name the mismatched source: %v", err)
+			}
+			if after := restoreDump(t, path); after != before {
+				t.Error("page size mismatch changed existing target")
+			}
+		})
 	}
 }
 

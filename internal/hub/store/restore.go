@@ -49,21 +49,14 @@ func Restore(ctx context.Context, path, config, metrics string, now time.Time, l
 		return result, err
 	}
 	defer tx.Rollback()
-	var pageSize int
-	if err = tx.QueryRowContext(ctx, "PRAGMA main.page_size").Scan(&pageSize); err != nil {
+	// 两次校验之间目标或来源可能变化；在写事务内重新按目标校验，并固定来源的读取视图。
+	takenAt, err := validateRestoreSources(ctx, tx, sources)
+	if err != nil {
 		return result, err
 	}
-	// 预检不打开目标；这里再次校验并在恢复事务内固定来源，避免预检后来源被替换而绕过检查。
-	for _, src := range sources {
-		at, e := validateSnapshot(ctx, tx, src.layer, src.tables, pageSize)
-		if e != nil {
-			return result, e
-		}
-		if src.layer == "config" {
-			result.ConfigTakenAt = at
-		} else {
-			result.MetricsTakenAt = &at
-		}
+	result.ConfigTakenAt = takenAt["config"]
+	if at, ok := takenAt["metrics"]; ok {
+		result.MetricsTakenAt = &at
 	}
 	action, _, err := schemaAdmission(ctx, tx, RequireCurrentSchema)
 	if err != nil {
@@ -151,7 +144,14 @@ func attachRestoreSources(ctx context.Context, db *sql.DB, sources []restoreSour
 }
 
 func preflightRestoreSources(ctx context.Context, target string, sources []restoreSource) (err error) {
-	db, err := sql.Open("sqlite", ":memory:")
+	targetDSN := dsn(target, "&mode=ro")
+	if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
+		// 内存空库给出 SQLite 默认页大小；新目标采用它，在创建文件前拒绝不匹配的来源。
+		targetDSN = ":memory:"
+	} else if err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", targetDSN)
 	if err != nil {
 		return err
 	}
@@ -165,23 +165,24 @@ func preflightRestoreSources(ctx context.Context, target string, sources []resto
 		return err
 	}
 	defer tx.Rollback()
+	_, err = validateRestoreSources(ctx, tx, sources)
+	return err
+}
+
+func validateRestoreSources(ctx context.Context, tx *sql.Tx, sources []restoreSource) (map[string]int64, error) {
 	var pageSize int
-	pageSchema := "config"
-	if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
-		// 空的 main 库给出 SQLite 默认页大小，新目标采用这个值；创建文件之前就拒绝不匹配的来源。
-		pageSchema = "main"
-	} else if err != nil {
-		return err
+	if err := tx.QueryRowContext(ctx, "PRAGMA main.page_size").Scan(&pageSize); err != nil {
+		return nil, err
 	}
-	if err := tx.QueryRowContext(ctx, "PRAGMA "+pageSchema+".page_size").Scan(&pageSize); err != nil {
-		return err
-	}
+	takenAt := make(map[string]int64, len(sources))
 	for _, src := range sources {
-		if _, err := validateSnapshot(ctx, tx, src.layer, src.tables, pageSize); err != nil {
-			return err
+		at, err := validateSnapshot(ctx, tx, src.layer, src.tables, pageSize)
+		if err != nil {
+			return nil, err
 		}
+		takenAt[src.layer] = at
 	}
-	return nil
+	return takenAt, nil
 }
 
 func restoreColumnList(ctx context.Context, tx *sql.Tx, table string) (string, error) {
