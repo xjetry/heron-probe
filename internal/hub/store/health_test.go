@@ -15,10 +15,7 @@ var schemaV10 = append(slices.Clone(schemaV9), "ALTER TABLE probe_task ADD COLUM
 
 // 旧库升级后簿记表存在但没有行：从未成功跑过，不能被读成"刚跑过"。
 func TestMigrationFromV10AddsEmptyMaintenanceState(t *testing.T) {
-	migrated, fresh := migrateFrom(t, schemaV10, 10, seedMinuteRow)
-	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
-		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
-	}
+	migrated := migrateFrom(t, schemaV10, 10, seedMinuteRow)
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}

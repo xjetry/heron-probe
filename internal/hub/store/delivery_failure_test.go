@@ -156,10 +156,7 @@ func TestMigrationFromV6ClassifiesDeliveryFailures(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			migrated, fresh := migrateFrom(t, schemaV6, 6, seed)
-			if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
-				t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
-			}
+			migrated := migrateFrom(t, schemaV6, 6, seed)
 			if v := userVersion(t, migrated.r); v != schemaVersion {
 				t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 			}

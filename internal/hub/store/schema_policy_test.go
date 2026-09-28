@@ -68,11 +68,8 @@ func TestSchemaPolicyRequiresCurrentWithoutChangingV8(t *testing.T) {
 		t.Errorf("rejected database user_version = %d, want 8", got)
 	}
 	after := describe(t, raw)
-	if got, want := len(after.Tables["node"]), len(before.Tables["node"]); got != want {
-		t.Errorf("rejected database node columns = %d, want %d", got, want)
-	}
-	if !reflect.DeepEqual(after, before) {
-		t.Error("rejected database schema changed")
+	if diff := schemaDifference(after, before, "打开后", "打开前"); diff != "" {
+		t.Errorf("rejected database schema changed:\n%s", diff)
 	}
 	var name string
 	if err := raw.QueryRow("SELECT name FROM node WHERE id = 7").Scan(&name); err != nil || name != "kept" {
@@ -272,8 +269,8 @@ func TestSchemaPolicyRejectsInvalidPolicy(t *testing.T) {
 				if got := userVersion(t, raw); got != 8 {
 					t.Errorf("invalid policy changed user_version to %d before panicking, want 8", got)
 				}
-				if after := describe(t, raw); !reflect.DeepEqual(after, before) {
-					t.Error("invalid policy changed schema before panicking")
+				if diff := schemaDifference(describe(t, raw), before, "打开后", "打开前"); diff != "" {
+					t.Errorf("invalid policy changed schema before panicking:\n%s", diff)
 				}
 			}()
 			st, _ := Open(path, clock.Real(), slog.Default(), policy)

@@ -8,7 +8,6 @@ import (
 	"go/token"
 	"log/slog"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -61,119 +60,6 @@ var schemaV1 = []string{
 	`CREATE TABLE metric_1m (node_id INTEGER NOT NULL, ts INTEGER NOT NULL, cpu_sum REAL NOT NULL, cpu_n INTEGER NOT NULL, cpu_max REAL NOT NULL, mem_used_sum INTEGER NOT NULL, mem_used_n INTEGER NOT NULL, mem_used_max INTEGER NOT NULL, swap_used_sum INTEGER NOT NULL, swap_used_n INTEGER NOT NULL, disk_used_sum INTEGER NOT NULL, disk_used_n INTEGER NOT NULL, load1_sum REAL NOT NULL, load1_n INTEGER NOT NULL, tcp_sum INTEGER NOT NULL, tcp_n INTEGER NOT NULL, udp_sum INTEGER NOT NULL, udp_n INTEGER NOT NULL, procs_sum INTEGER NOT NULL, procs_n INTEGER NOT NULL, PRIMARY KEY (node_id, ts)) WITHOUT ROWID`,
 }
 
-type column struct {
-	Name, Type string
-	NotNull    bool
-	Default    sql.NullString
-	PK         int
-}
-
-type schemaDescription struct {
-	Tables  map[string][]column
-	Indexes map[string]indexDescription
-}
-
-type indexDescription struct {
-	Table   string
-	Columns []string
-	Unique  bool
-}
-
-// describe 比较结构而不是 SQL 原文：空白与注释不改变结构，索引列序与唯一性会改变访问路径或约束。
-func describe(t *testing.T, db *sql.DB) schemaDescription {
-	t.Helper()
-	rows, err := db.Query("SELECT name, type, tbl_name FROM sqlite_master WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%' ORDER BY name")
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := schemaDescription{Tables: map[string][]column{}, Indexes: map[string]indexDescription{}}
-	for rows.Next() {
-		var name, kind, table string
-		if err := rows.Scan(&name, &kind, &table); err != nil {
-			t.Fatal(err)
-		}
-		if kind == "table" {
-			out.Tables[name] = nil
-		} else {
-			out.Indexes[name] = indexDescription{Table: table}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	if err := rows.Close(); err != nil {
-		t.Fatal(err)
-	}
-	for table := range out.Tables {
-		info, err := db.Query(fmt.Sprintf("PRAGMA table_info(%q)", table))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for info.Next() {
-			var cid int
-			var c column
-			if err := info.Scan(&cid, &c.Name, &c.Type, &c.NotNull, &c.Default, &c.PK); err != nil {
-				t.Fatal(err)
-			}
-			out.Tables[table] = append(out.Tables[table], c)
-		}
-		if err := info.Err(); err != nil {
-			t.Fatal(err)
-		}
-		if err := info.Close(); err != nil {
-			t.Fatal(err)
-		}
-
-		indexes, err := db.Query(fmt.Sprintf("PRAGMA index_list(%q)", table))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for indexes.Next() {
-			var seq int
-			var name, origin string
-			var unique, partial bool
-			if err := indexes.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
-				t.Fatal(err)
-			}
-			if index, ok := out.Indexes[name]; ok {
-				index.Unique = unique
-				out.Indexes[name] = index
-			}
-		}
-		if err := indexes.Err(); err != nil {
-			t.Fatal(err)
-		}
-		if err := indexes.Close(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for name, index := range out.Indexes {
-		info, err := db.Query(fmt.Sprintf("PRAGMA index_info(%q)", name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for info.Next() {
-			var seq, cid int
-			var column string
-			if err := info.Scan(&seq, &cid, &column); err != nil {
-				t.Fatal(err)
-			}
-			for len(index.Columns) <= seq {
-				index.Columns = append(index.Columns, "")
-			}
-			index.Columns[seq] = column
-		}
-		if err := info.Err(); err != nil {
-			t.Fatal(err)
-		}
-		if err := info.Close(); err != nil {
-			t.Fatal(err)
-		}
-		out.Indexes[name] = index
-	}
-	return out
-}
-
 func userVersion(t *testing.T, db *sql.DB) int {
 	t.Helper()
 	var v int
@@ -183,7 +69,7 @@ func userVersion(t *testing.T, db *sql.DB) int {
 	return v
 }
 
-func migrateFrom(t *testing.T, stmts []string, version int, seed func(*testing.T, *sql.DB)) (migrated, fresh *Store) {
+func migrateFrom(t *testing.T, stmts []string, version int, seed func(*testing.T, *sql.DB)) *Store {
 	t.Helper()
 	dir := t.TempDir()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -204,26 +90,27 @@ func migrateFrom(t *testing.T, stmts []string, version int, seed func(*testing.T
 	seed(t, raw)
 	raw.Close()
 
-	migrated, err = Open(old, clk, slog.Default(), MigrateSchema)
+	migrated, err := Open(old, clk, slog.Default(), MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { migrated.Close() })
-	fresh, err = Open(filepath.Join(dir, "fresh.db"), clk, slog.Default(), MigrateSchema)
+	fresh, err := Open(filepath.Join(dir, "fresh.db"), clk, slog.Default(), MigrateSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { fresh.Close() })
 
-	return migrated, fresh
+	// 每个旧版本都经过此入口；集中比较可防止新增迁移用例只验数据而漏验结构。
+	if diff := schemaDifference(describe(t, migrated.r), describe(t, fresh.r), "迁移后", "新建"); diff != "" {
+		t.Fatalf("migrated schema differs from fresh schema:\n%s", diff)
+	}
+	return migrated
 }
 
 func TestMigrationFromV1MatchesFreshSchema(t *testing.T) {
-	migrated, fresh := migrateFrom(t, schemaV1, 1, seedMinuteRow)
+	migrated := migrateFrom(t, schemaV1, 1, seedMinuteRow)
 
-	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
-		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
-	}
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}
@@ -357,10 +244,7 @@ var schemaV3 = []string{
 }
 
 func TestMigrationFromV3MatchesFreshSchemaAndKeepsRows(t *testing.T) {
-	migrated, fresh := migrateFrom(t, schemaV3, 3, seedMinuteRow)
-	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
-		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
-	}
+	migrated := migrateFrom(t, schemaV3, 3, seedMinuteRow)
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}
@@ -495,10 +379,7 @@ var schemaV4 = []string{
 }
 
 func TestMigrationFromV4MatchesFreshSchemaAndKeepsRows(t *testing.T) {
-	migrated, fresh := migrateFrom(t, schemaV4, 4, seedMinuteRow)
-	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
-		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
-	}
+	migrated := migrateFrom(t, schemaV4, 4, seedMinuteRow)
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}
@@ -560,10 +441,7 @@ func TestAlertMigrationRejectsExistingObjects(t *testing.T) {
 }
 
 func TestMigrationFromV2MatchesFreshSchemaAndKeepsRows(t *testing.T) {
-	migrated, fresh := migrateFrom(t, schemaV2, 2, seedMinuteRow)
-	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
-		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
-	}
+	migrated := migrateFrom(t, schemaV2, 2, seedMinuteRow)
 	rows, err := migrated.ReadMinuteRows(t.Context(), 7, 0, 120)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("minute row lost across rebuild: %v %v", rows, err)
@@ -618,10 +496,7 @@ var schemaV5 = []string{
 }
 
 func TestMigrationFromV5MatchesFreshSchemaAndKeepsRows(t *testing.T) {
-	migrated, fresh := migrateFrom(t, schemaV5, 5, seedMinuteRow)
-	if got, want := describe(t, migrated.r), describe(t, fresh.r); !reflect.DeepEqual(got, want) {
-		t.Fatalf("migrated schema differs from fresh schema:\n got: %+v\nwant: %+v", got, want)
-	}
+	migrated := migrateFrom(t, schemaV5, 5, seedMinuteRow)
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
 	}
