@@ -222,8 +222,8 @@ var (
 // 调用方给出：它们存不存在决定这次保存能否写入。logo 取 longestLogo；标题、CSS 与备份的 secret 用控制字符填满，
 // json.Marshal 把每个控制字符写成 6 字节的 \u00XX，标题的控制字符清洗后不计入 64 个字符，所以这仍是合法的设置；服务
 // 地址、endpoint、区域、access key 与前缀不收控制字符，用 < 或 & 填满，json.Marshal 按 HTML 安全规则把它们同样写成
-// 6 字节；bucket 取最长；明暗取最长的值，总闸、国家查询开关与 has_secret 取较长的 false，四个数值取各自的上限；字段名
-// 用比 camelCase 长的 proto 原名（connect 两种都收）。
+// 6 字节；bucket 取最长；明暗取最长的值，总闸、国家查询开关与 has_secret 取较长的 false，四个数值取各自的上限；本地库路径是回显字段，
+// 请求里的值被忽略，这里按份额用 < 填满，模拟把回显整份送回的客户端；字段名用比 camelCase 长的 proto 原名（connect 两种都收）。
 func worstCaseSettings(t *testing.T, channelIDs []string) []byte {
 	t.Helper()
 	logo := longestLogo()
@@ -232,7 +232,7 @@ func worstCaseSettings(t *testing.T, channelIDs []string) []byte {
 		"logo":           logo,
 		"custom_css":     strings.Repeat("\x01", maxCSSBytes),
 		"public_enabled": false,
-		"geo_enabled":    false, "geo_url": worstGeoURL,
+		"geo_enabled":    false, "geo_url": worstGeoURL, "geo_backend": "GEO_BACKEND_MMDB", "geo_mmdb_path": strings.Repeat("<", maxMMDBPathBytes),
 		"backup": map[string]any{
 			"endpoint": worstEndpoint, "bucket": strings.Repeat("b", maxBucketBytes),
 			"region": strings.Repeat("<", maxRegionBytes), "access_key": strings.Repeat("<", maxAccessKeyBytes),
@@ -245,7 +245,7 @@ func worstCaseSettings(t *testing.T, channelIDs []string) []byte {
 		t.Fatal(err)
 	}
 	// 每一项都按各自的预算项写满，才是这份预算要装下的最坏情况；任一项没有按 6 倍写出，下限就不成立。
-	floor := len(logo) + 6*maxCSSBytes + 6*maxTitleBytes + 6*(len(worstGeoURL)-len(worstGeoPrefix)) +
+	floor := len(logo) + 6*maxCSSBytes + 6*maxTitleBytes + 6*(len(worstGeoURL)-len(worstGeoPrefix)) + 6*maxMMDBPathBytes +
 		6*(len(worstEndpoint)-len(worstEndpointPrefix)+maxRegionBytes+maxAccessKeyBytes+maxSecretBytes+maxPrefixBytes)
 	for _, id := range channelIDs {
 		floor += len(id) + len(`"",`)

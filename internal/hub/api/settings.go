@@ -31,6 +31,11 @@ const (
 	maxCSSBytes   = 64 << 10
 	// maxGeoURLBytes 限制国家查询的服务地址，同样是 maxSettingsBody 推导的前提。
 	maxGeoURLBytes = 2 << 10
+	// maxMMDBPathBytes 是 Settings.geo_mmdb_path 在 maxSettingsBody 里的份额。hub 只回显自己启动参数里的路径，
+	// 请求里的值被忽略，但客户端可能把 GetSettings 的回显整份送回，合法回送不能被拒；任何能打开的路径不超过
+	// Linux 的 PATH_MAX 4096（macOS 为 1024），所以回显的路径落在这个份额内。比它长的路径只会来自不回送回显的
+	// 客户端自造的值，超出预算时得到 resource_exhausted。
+	maxMMDBPathBytes = 4 << 10
 )
 
 var (
