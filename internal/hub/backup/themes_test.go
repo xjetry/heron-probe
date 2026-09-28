@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/xjetry/probe/internal/hub/s3"
@@ -377,28 +378,28 @@ func TestThemeSyncContinuesAfterPackageFailure(t *testing.T) {
 }
 
 func TestThemeMissingPackageStartupWarning(t *testing.T) {
-	m, _, base, _ := setup(t)
-	installTheme(t, m, "a")
-	execFixtureSQL(t, base.databasePath, "DELETE FROM theme_package")
-	var output bytes.Buffer
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	m.log = slog.New(slog.NewTextHandler(cancelAfterLog{&output, cancel}, nil))
-	m.Run(ctx)
-	if strings.Count(output.String(), "level=WARN") != 1 || !strings.Contains(output.String(), "theme=a") {
-		t.Fatalf("missing package startup warning=%s", output.String())
-	}
-}
-
-type cancelAfterLog struct {
-	out    io.Writer
-	cancel context.CancelFunc
-}
-
-func (w cancelAfterLog) Write(p []byte) (int, error) {
-	n, err := w.out.Write(p)
-	w.cancel()
-	return n, err
+	synctest.Test(t, func(t *testing.T) {
+		m, _, base, _ := setup(t)
+		installTheme(t, m, "a")
+		execFixtureSQL(t, base.databasePath, "DELETE FROM theme_package")
+		var output bytes.Buffer
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		m.log = slog.New(slog.NewTextHandler(&output, nil))
+		done := make(chan struct{})
+		go func() { defer close(done); m.Run(ctx) }()
+		// synctest 推进真实 ticker 使用的虚拟时间；先等首轮完成，再跨过两个每秒判定周期。
+		synctest.Wait()
+		time.Sleep(2500 * time.Millisecond)
+		cancel()
+		<-done
+		if n := strings.Count(output.String(), "level=WARN"); n != 1 {
+			t.Fatalf("missing-package warning logged %d times over several ticks: %s", n, output.String())
+		}
+		if !strings.Contains(output.String(), "theme=a") {
+			t.Fatalf("missing package startup warning=%s", output.String())
+		}
+	})
 }
 
 func TestThemeSyncDeleteDuringUpload(t *testing.T) {
