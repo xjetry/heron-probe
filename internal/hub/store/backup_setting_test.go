@@ -92,7 +92,7 @@ func TestBackupSettingsAtomicAndChannels(t *testing.T) {
 	if err != nil || len(b.Channels) != 0 {
 		t.Fatalf("deleted channel remains selected: %+v %v", b, err)
 	}
-	if got := storedSetting(t, s, backupChannelsKey); got != "[]" {
+	if got := storedSetting(t, s, string(BackupNotifyList)); got != "[]" {
 		t.Fatalf("channel list after its last channel was deleted = %q, want []", got)
 	}
 	var missing NotFoundError
@@ -126,20 +126,20 @@ func TestBackupChannelsStoredForm(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := fmt.Sprintf("[%d,%d]", ids[0], ids[1])
-	if got := storedSetting(t, s, backupChannelsKey); got != want {
+	if got := storedSetting(t, s, string(BackupNotifyList)); got != want {
 		t.Fatalf("given channels stored as %q, want %q", got, want)
 	}
 	if _, err := s.SaveSettings(ctx, SettingsUpdate{Backup: &BackupSettingsUpdate{}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := storedSetting(t, s, backupChannelsKey); got != want {
+	if got := storedSetting(t, s, string(BackupNotifyList)); got != want {
 		t.Fatalf("absent channels rewrote the list to %q", got)
 	}
 	var none []int64
 	if _, err := s.SaveSettings(ctx, SettingsUpdate{Backup: &BackupSettingsUpdate{Channels: &none}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := storedSetting(t, s, backupChannelsKey); got != "[]" {
+	if got := storedSetting(t, s, string(BackupNotifyList)); got != "[]" {
 		t.Fatalf("explicit empty channels stored as %q, want []", got)
 	}
 }
@@ -163,7 +163,7 @@ func TestBackupNumbersRangeOnBothSides(t *testing.T) {
 	if err != nil || got.Site.Theme != "auto" || got.Backup.ConfigKeep != 24 || got.Backup.Target.Bucket != "" {
 		t.Fatalf("rejected write changed settings: %+v %+v %v", got.Site, got.Backup, err)
 	}
-	for key, value := range map[string]string{"backup.config_keep": "0", "backup.metrics_keep": "1001", "backup.config_interval_s": "59", "backup.metrics_interval_s": "604801", backupChannelsKey: "[1,"} {
+	for key, value := range map[string]string{"backup.config_keep": "0", "backup.metrics_keep": "1001", "backup.config_interval_s": "59", "backup.metrics_interval_s": "604801", string(BackupNotifyList): "[1,"} {
 		t.Run(key, func(t *testing.T) {
 			s, path := openAt(t)
 			if err := s.write(ctx, func(tx *sql.Tx) error { return putSetting(tx, key, value) }); err != nil {

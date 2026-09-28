@@ -40,9 +40,9 @@ func TestRestartFailureTransitions(t *testing.T) {
 			}
 			f, r := 0, 0
 			for _, ev := range events {
-				if ev.Transition == store.TransitionFiring {
+				if ev.Transition == store.TransitionBackupFailed {
 					f++
-				} else if ev.Transition == store.TransitionRecovered {
+				} else if ev.Transition == store.TransitionBackupRecovered {
 					r++
 				}
 			}
@@ -244,7 +244,7 @@ func TestSettingsFailureRateLimitedAndRecovers(t *testing.T) {
 	}
 	execFixtureSQL(t, objects.databasePath, `UPDATE setting SET value='300' WHERE key='backup.config_interval_s'`)
 	tick(t, m)
-	if status(t, m).Config.Failure != "" || len(sink.events) != 2 || sink.events[1].Transition != store.TransitionRecovered {
+	if status(t, m).Config.Failure != "" || len(sink.events) != 2 || sink.events[1].Transition != store.TransitionBackupRecovered {
 		t.Errorf("settings recovery missing: status=%+v events=%v", status(t, m), sink.events)
 	}
 }

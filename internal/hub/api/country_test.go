@@ -140,6 +140,7 @@ func TestUpdateSettingsGeoFieldsAbsentMeansUnchanged(t *testing.T) {
 	want := proto.Clone(in).(*probev1.Settings)
 	want.Backup = defaultBackup()
 	want.GeoBackend = probev1.GeoBackend_GEO_BACKEND_HTTP
+	want.LoginNotify = &probev1.LoginNotify{}
 	if got := saveSettings(t, h, in); !proto.Equal(got, want) {
 		t.Fatalf("echo = %v, want %v", got, want)
 	}

@@ -13,6 +13,14 @@ const current = { title: "机房", theme: "dark", accentColor: "#123abc", logo: 
 const routes = [{ path: "/appearance", Component: Appearance }];
 const render = (impl: AdminImpl) => renderWithAdmin({ getSettings: async () => ({ settings: current }), listNotifyChannels: async () => ({ channels: [] }), ...impl }, routes, "/appearance");
 
+it("保存外观不回传登录通知配置", async () => {
+  const sent: UpdateSettingsRequest[] = [];
+  render({ getSettings: async () => ({ settings: { ...current, loginNotify: { channelIds: [7n] } } }), updateSettings: async (r) => { sent.push(r); return { settings: r.settings }; } });
+  const f = await form();
+  fireEvent.click(f.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(sent.map((r) => ({ title: r.settings?.title, login: r.settings?.loginNotify }))).toEqual([{ title: "机房", login: undefined }]));
+});
+
 async function form() {
   return within(await screen.findByRole("form", { name: "公开页外观" }));
 }
@@ -411,7 +419,8 @@ describe("国家 / 地区查询", () => {
   });
 });
 
-// 三个设置表单共用 SAVE_SETTINGS（见 api/saveSettings.ts）：任一个的保存在途时，另外两个的保存按钮禁用，直接触发 submit
+// 外观页的三个设置表单共用 SAVE_SETTINGS（见 api/saveSettings.ts；登录通知表单在通知页，它与外观表单的互斥见
+// SettingsForms.test.tsx）：任一个的保存在途时，另外两个的保存按钮禁用，直接触发 submit
 // 也不发请求；在途的保存连同之后的刷新结束，其余表单恢复。逐个把每个表单当作在途的一方：某个表单的保存漏带这把键时，
 // 以它为在途方的一组红；某个表单不按 useSettingsSaving 禁用自己时，以其余表单为在途方的两组红。
 describe("设置表单的保存互斥", () => {

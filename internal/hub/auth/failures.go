@@ -50,7 +50,13 @@ func (t *failureTracker) locked(from netip.Addr, now time.Duration) bool {
 	return f != nil && now < f.until
 }
 
-func (t *failureTracker) record(from netip.Addr, now time.Duration) int {
+// record 记下一次失败，返回窗口内的失败次数与这次调用是否设下了锁定。
+//
+// 设下锁定的调用恰好一次报告 true：锁定期间的调用不追加、报告 false，返回的次数此时仍等于 limit，所以
+// "是否新锁定"不能由次数等于 limit 推出。until 是设下锁定那次失败的时刻加 window，锁定到期时窗口里已没有
+// 失败，sweep 删掉整条记录，下一次锁定要重新累计满 limit 次，再报告一次 true。登录的锁定通知按这个报告
+// 发送：锁定期间的请求即使走到了 record，也不会再发一条。
+func (t *failureTracker) record(from netip.Addr, now time.Duration) (count int, newlyLocked bool) {
 	t.sweep(now)
 	from = SourceKey(from)
 	f := t.m[from]
@@ -59,13 +65,14 @@ func (t *failureTracker) record(from netip.Addr, now time.Duration) int {
 		t.m[from] = f
 	}
 	if now < f.until {
-		return len(f.attempts)
+		return len(f.attempts), false
 	}
 	f.attempts = append(f.attempts, now)
 	if len(f.attempts) >= t.limit {
 		f.until = now + t.window
+		return len(f.attempts), true
 	}
-	return len(f.attempts)
+	return len(f.attempts), false
 }
 
 func (t *failureTracker) clear(from netip.Addr) { delete(t.m, SourceKey(from)) }

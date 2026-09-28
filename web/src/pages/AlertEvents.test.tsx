@@ -14,6 +14,21 @@ const routes = [{ path: "/events", Component: AlertEvents }];
 const render = (impl: AdminImpl, path = "/events") =>
   renderWithAdmin({ listNodes: async () => nodes, listNotifyChannels: async () => channels, ...impl }, routes, path);
 
+it("零节点的系统事件显示系统与登录、备份结果", async () => {
+  render({ listAlertEvents: async () => ({ events: [
+    { id: 1n, ruleId: 0n, nodeId: 0n, transition: "login_success", summary: "密码登录" },
+    { id: 2n, ruleId: 0n, nodeId: 0n, transition: "login_locked", summary: "密码锁定" },
+    { id: 3n, ruleId: 0n, nodeId: 0n, transition: "backup_failed", summary: "config 层备份失败" },
+    { id: 4n, ruleId: 0n, nodeId: 0n, transition: "backup_recovered", summary: "config 层备份已恢复" },
+  ] }) });
+  await screen.findByText("密码登录");
+  expect(screen.getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").slice(1, 3).map((c) => c.textContent))).toEqual([
+    ["系统", "登录成功"], ["系统", "登录锁定"], ["系统", "备份失败"], ["系统", "备份恢复"],
+  ]);
+  // 登录锁定是有人在猜密码、备份失败是 RPO 在变长，与规则触发一样标红；登录成功与备份恢复不标。
+  expect(["登录锁定", "登录成功", "备份失败", "备份恢复"].map((name) => screen.getByRole("cell", { name }).className)).toEqual(["error", "", "error", ""]);
+});
+
 it("一页满 100 条时可加载更早的事件，从本页最小 id 之前继续", async () => {
   const requests: ListAlertEventsRequest[] = [];
   render({ listAlertEvents: async (req) => {

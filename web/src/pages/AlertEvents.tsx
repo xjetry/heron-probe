@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService, type AlertDelivery, type ListAlertEventsResponse } from "../gen/probe/v1/admin_pb";
-import { deliveryText, hasErrorText, transitionLabel } from "../lib/alerts";
+import { alarming, deliveryText, hasErrorText, transitionLabel } from "../lib/alerts";
 import { withId } from "../lib/ids";
 
 // 与 hub 的默认页长一致；不足一页即已到最早的事件。
@@ -28,7 +28,7 @@ export function AlertEvents() {
   const shell = queryGate(nodes);
   if (!shell.ready) return shell.loading ?? errorBanner(...shell.errors);
   const nodeList = shell.data.nodes;
-  const nodeName = (id: bigint) => nodeList.find((n) => n.id === id)?.name ?? `节点 #${id}`;
+  const nodeName = (id: bigint) => id === 0n ? "系统" : nodeList.find((n) => n.id === id)?.name ?? `节点 #${id}`;
   // 渠道只提供名称：它的失败只进横幅，不阻断事件；名称缺失时按编号回退。
   const channelName = (id: bigint) => channels.data?.channels.find((c) => c.id === id)?.name ?? `渠道 #${id}`;
   const region = queryGate(events);
@@ -68,7 +68,7 @@ function EventList({ data, nodeName, channelName, hasNextPage, fetchingNext, onM
               <tr key={String(ev.id)}>
                 <td>{new Date(Number(ev.at) * 1000).toLocaleString()}</td>
                 <td>{nodeName(ev.nodeId)}</td>
-                <td className={ev.transition === "firing" ? "error" : undefined}>{transitionLabel(ev.transition)}</td>
+                <td className={alarming(ev.transition) ? "error" : undefined}>{transitionLabel(ev.transition)}</td>
                 <td>{ev.summary}</td>
                 <td>
                   {ev.deliveries.length === 0

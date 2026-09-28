@@ -31,7 +31,7 @@ func TestDelayedSessionTouchCannotResurrectLogout(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer other.Close()
-	a := auth.New(st, probe.New(st, log), clk, log)
+	a := auth.New(st, probe.New(st, log), nil, clk, time.UTC, log)
 	if err := a.SetPassword(ctx, "a sufficiently long password"); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestDelayedSessionTouchCannotResurrectLogout(t *testing.T) {
 		t.Fatalf("refresh not queued: %d writes", n)
 	}
 	// 单实例队列是 FIFO；另一连接先撤销才会产生延迟刷新晚于登出的真实交错。
-	if err := auth.New(other, probe.New(other, log), clk, log).Logout(ctx, token); err != nil {
+	if err := auth.New(other, probe.New(other, log), nil, clk, time.UTC, log).Logout(ctx, token); err != nil {
 		t.Fatal(err)
 	}
 	if n := countSessions(t, st, auth.HashToken(token)); n != 0 {

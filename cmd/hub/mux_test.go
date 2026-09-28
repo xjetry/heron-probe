@@ -61,7 +61,6 @@ func newTestMuxOn(t *testing.T, st *store.Store, clk clock.Clock, themeOriginFla
 		t.Fatal(err)
 	}
 	reg := probe.New(st, slog.Default())
-	a := auth.New(st, reg, clk, slog.Default())
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, slog.Default())
 	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, st, l, clk, slog.Default())
@@ -69,6 +68,7 @@ func newTestMuxOn(t *testing.T, st *store.Store, clk clock.Clock, themeOriginFla
 	client := outbound.NewClient(alert.NotifyTimeout)
 	notifier := alert.NewQueue(st, alerts.Channels, client, "", clk, nil, slog.Default())
 	alerts.SetSender(notifier)
+	a := auth.New(st, reg, notifier, clk, time.UTC, slog.Default())
 	svc, err := ingest.New(ingest.Config{TTL: 30 * time.Second}, l, st, a, book, reg, clk, slog.Default())
 	if err != nil {
 		t.Fatal(err)

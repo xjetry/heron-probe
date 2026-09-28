@@ -89,11 +89,40 @@ type StateRow struct {
 type Transition string
 
 const (
-	TransitionFiring    Transition = "firing"
-	TransitionRecovered Transition = "recovered"
-	// TransitionDisabled 收尾一段已通知、但因跟踪对象被停用而不会再有恢复的故障。它不是恢复：停用前的故障
-	// 可能仍在，只是 hub 不再观察。目前只有备份停用产生它（RecordBackupEvent）。
-	TransitionDisabled Transition = "disabled"
+	TransitionFiring       Transition = "firing"
+	TransitionRecovered    Transition = "recovered"
+	TransitionLoginSuccess Transition = "login_success"
+	TransitionLoginLocked  Transition = "login_locked"
+	// 配置层备份失败与恢复（§6.7），同一故障只在首次失败与恢复时各写一条。
+	TransitionBackupFailed    Transition = "backup_failed"
+	TransitionBackupRecovered Transition = "backup_recovered"
+	// TransitionBackupDisabled 收尾一段已通知、但因备份被停用而不会再有恢复的配置层故障。它不是恢复：停用前的故障
+	// 可能仍在，只是 hub 不再观察。
+	TransitionBackupDisabled Transition = "backup_disabled"
+)
+
+// SystemEventKind 判定 transition 是否属于系统事件并给出它的种类。系统事件是 hub 自身的事件，不属于任何
+// 规则×节点，rule_id 与 node_id 都是 0；0/0 只说明它是系统事件，说明不了是哪一种，种类由 transition 决定。
+// 表外的 transition 不是系统事件。
+//
+// 写侧据此把关：RecordLoginEvent 只收登录的 transition、RecordBackupEvent 只收备份的 transition，两者都把
+// rule_id、node_id 写成 0；RecordTransition 不收系统事件的 transition，且经 setAlertState 要求规则与节点存在，
+// 两张表的 id 都从 1 起，它写的行不会是 0/0。所以库里 0/0 的行都带系统事件的 transition，规则事件的行都不带。
+// 读侧（投递队列、面板）按 transition 给出标签与种类，不按 0/0 推断。
+func SystemEventKind(t Transition) (kind string, ok bool) {
+	switch t {
+	case TransitionLoginSuccess, TransitionLoginLocked:
+		return SystemKindLogin, true
+	case TransitionBackupFailed, TransitionBackupRecovered, TransitionBackupDisabled:
+		return SystemKindBackup, true
+	}
+	return "", false
+}
+
+// SystemKindLogin、SystemKindBackup 是系统事件的种类，投递时作为消息的 Kind。
+const (
+	SystemKindLogin  = "login"
+	SystemKindBackup = "backup"
 )
 
 type AlertEvent struct {
@@ -493,8 +522,10 @@ func (s *Store) DeleteNotifyChannel(ctx context.Context, id int64) error {
 		if err := deleteAlertEntity(tx, "notify_channel", ObjectNotifyChannel, id); err != nil {
 			return err
 		}
-		if err := removeBackupChannel(tx, id); err != nil {
-			return err
+		for _, l := range NotifyLists {
+			if err := removeChannelID(tx, l.List, id); err != nil {
+				return err
+			}
 		}
 		_, err := tx.Exec("UPDATE alert_delivery SET done = 1, failure = ?, http_status = NULL, last_error = '' WHERE channel_id = ? AND done = 0", FailureChannelDeleted, id)
 		return err
@@ -563,6 +594,9 @@ func (s *Store) DeleteAlertState(ctx context.Context, ruleID, nodeID int64) erro
 // 状态、事件与续投队列同事务提交，崩溃不能留下已转换但没有通知记录的状态。firedExpiresOn 与 recoveredAt 随状态写入，
 // 含义见 StateRow.FiredExpiresOn 与 StateRow.RecoveredAt。
 func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, state AlertState, firedExpiresOn string, recoveredAt time.Time, ev AlertEvent, targets []DeliveryTarget) (AlertEvent, error) {
+	if _, system := SystemEventKind(ev.Transition); system {
+		return AlertEvent{}, fmt.Errorf("rule %d, node %d: transition %q belongs to a system event, not to a rule and node", ruleID, nodeID, ev.Transition)
+	}
 	ev.ID, ev.RuleID, ev.NodeID, ev.Deliveries = 0, ruleID, nodeID, nil
 	ev.At = time.Unix(ev.At.Unix(), 0).UTC()
 	err := s.write(ctx, func(tx *sql.Tx) error {
@@ -577,7 +611,54 @@ func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, stat
 	return ev, nil
 }
 
-// recordAlertEvent 是告警转换与备份系统事件共用的事件及投递写入路径，调用方的 Store.write 事务承载其原子性。
+// RecordLoginEvent 记一条登录事件（系统事件，rule_id、node_id 为 0），给设置里选定的每个渠道各建一条投递；
+// 没选渠道时什么都不写，返回的事件 ID 为 0。
+//
+// 登录不走规则×节点：它没有节点，也没有恢复，规则×节点的状态机与以 (rule_id, node_id) 为主键的 alert_state
+// 都装不下它，所以不建 alert_state。事件与投递的写入（渠道引用检查、入批）与规则事件、备份事件共用
+// recordAlertEvent，每个渠道新开一批（systemTargets）。
+//
+// 读渠道列表与写事件、投递在同一个写事务里；s.write 经单写协程提交，这个事务与改设置（SaveSettings）、
+// 删渠道（DeleteNotifyChannel）串行，两种交错各有结果：
+//   - 与删渠道：删渠道先提交，这里读到的列表已摘除该渠道（删渠道在同一事务里摘除）；这里先提交，删渠道随后
+//     把这条尚未完成的投递置为终态（FailureChannelDeleted）。列表里若残留不存在的 ID，recordAlertEvent 的
+//     引用检查让整条事件失败、什么都不写，不会留下指向不存在渠道的投递。
+//   - 与关闭通知：关闭先提交，这里读到空列表，不写事件；这里先提交，已记下的这条照常投递，所以关闭之后仍可能
+//     收到关闭提交前已记下的通知。
+func (s *Store) RecordLoginEvent(ctx context.Context, ev AlertEvent) (AlertEvent, error) {
+	if kind, _ := SystemEventKind(ev.Transition); kind != SystemKindLogin {
+		return AlertEvent{}, fmt.Errorf("login event transition must be %s or %s; got %q", TransitionLoginSuccess, TransitionLoginLocked, ev.Transition)
+	}
+	ev.ID, ev.RuleID, ev.NodeID, ev.Deliveries = 0, 0, 0, nil
+	ev.At = time.Unix(ev.At.Unix(), 0).UTC()
+	err := s.write(ctx, func(tx *sql.Tx) error {
+		ids, err := storedChannelIDs(tx, LoginNotifyList)
+		if err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		return recordAlertEvent(tx, &ev, systemTargets(ids))
+	})
+	if err != nil {
+		return AlertEvent{}, err
+	}
+	return ev, nil
+}
+
+// systemTargets 是系统事件（登录、备份）的投递目标：每个选定的渠道新开一批。合批是告警转换的投递策略（alert 包的
+// Engine.apply 按渠道、评估周期、规则与转换方向决定加入哪一批）；系统事件各自单独成批，与所有批次一样受渠道的节奏
+// 上限约束（Queue.rateSlot）。
+func systemTargets(channels []int64) []DeliveryTarget {
+	targets := make([]DeliveryTarget, len(channels))
+	for i, channel := range channels {
+		targets[i] = DeliveryTarget{ChannelID: channel}
+	}
+	return targets
+}
+
+// recordAlertEvent 是告警转换与系统事件（登录、备份）共用的事件及投递写入路径，调用方的 Store.write 事务承载其原子性。
 // 每个目标一行投递。批次的不变式是同批各行的尝试次数与结果始终相同（schema.go 的 batch_id 列），由两处共同维持：
 // 尝试与结果只按批次整批写（BeginBatchAttempt、UpdateBatch），新行只加入还没开始尝试、且发往同一渠道的批次
 // （joinableBatch，与这里的插入同在一个写事务，和 BeginBatchAttempt 经 Store.write 串行）。请求加入的批次已开始、

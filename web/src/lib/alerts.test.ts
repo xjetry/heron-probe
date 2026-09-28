@@ -135,8 +135,9 @@ it("类型表覆盖协议枚举里除未指定之外的每个种类", () => {
   }
 });
 
-it("transitionLabel 认识三种变化，未知值原样显示", () => {
-  expect([transitionLabel("firing"), transitionLabel("recovered"), transitionLabel("disabled"), transitionLabel("x")]).toEqual(["触发", "恢复", "停用", "x"]);
+it("transitionLabel 认识规则事件与系统事件的每种变化，未知值原样显示", () => {
+  const all = ["firing", "recovered", "login_success", "login_locked", "backup_failed", "backup_recovered", "backup_disabled", "x"];
+  expect(all.map(transitionLabel)).toEqual(["触发", "恢复", "登录成功", "登录锁定", "备份失败", "备份恢复", "备份停用", "x"]);
 });
 
 it("graceText 缺失即默认", () => {

@@ -29,7 +29,7 @@ func TestServePublicSwitchBothSources(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := auth.New(st, probe.New(st, slog.Default()), clk, slog.Default()).SetPassword(t.Context(), "public-switch-password"); err != nil {
+			if err := auth.New(st, probe.New(st, slog.Default()), nil, clk, time.UTC, slog.Default()).SetPassword(t.Context(), "public-switch-password"); err != nil {
 				t.Fatal(err)
 			}
 			if err := st.Close(); err != nil {

@@ -49,7 +49,7 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 		}
 	})
 	reg := probe.New(st, log)
-	a := auth.New(st, reg, clk, log)
+	a := auth.New(st, reg, nil, clk, time.UTC, log)
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, log)
 	tasks := &notifiedTasks{Registry: reg, entered: make(chan struct{})}

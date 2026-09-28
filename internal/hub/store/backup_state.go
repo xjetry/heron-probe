@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -59,21 +58,17 @@ func (s *Store) BackupFailingSince(ctx context.Context) (time.Time, error) {
 // 失败标记与事件同属配置层，由此事务一起提交或回滚；事件历史被清理也不丢失未恢复状态。
 // 触发写入标记，恢复与停用都结束这段故障、删除标记，两者只以事件的 transition 区分。
 // 渠道在同一写事务读取，删除渠道也经写队列更新设置，不落下悬空投递。
-// 不读取备份数值：设置损坏本身也须能记录故障。系统事件不写告警规则的 alert_state。
+// 不读取备份数值：设置损坏本身也须能记录故障。事件是系统事件（rule_id、node_id 为 0，种类见 SystemEventKind），
+// 不写告警规则的 alert_state。
 func (s *Store) RecordBackupEvent(ctx context.Context, transition Transition, summary string, since time.Time) (AlertEvent, error) {
 	ev := AlertEvent{Transition: transition, Summary: summary, At: time.Unix(s.clk.Now().Unix(), 0).UTC()}
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		var value string
-		var channels []int64
-		err := tx.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?", backupChannelsKey).Scan(&value)
-		if err == nil {
-			err = json.Unmarshal([]byte(value), &channels)
-		}
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		channels, err := storedChannelIDs(tx, BackupNotifyList)
+		if err != nil {
 			return err
 		}
 		switch transition {
-		case TransitionFiring:
+		case TransitionBackupFailed:
 			if since.IsZero() {
 				return fmt.Errorf("backup failure time must be set")
 			}
@@ -82,7 +77,7 @@ func (s *Store) RecordBackupEvent(ctx context.Context, transition Transition, su
 			// 首次失败时刻，坏值随之修复：下一轮读回成功、配置层照常执行，重启后也读得回而不再触发。
 			// 保留坏值则配置层每轮卡在读回、始终不执行，每次重启还会再触发一次。
 			_, err = tx.ExecContext(ctx, "INSERT INTO setting (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", backupFailingSinceKey, strconv.FormatInt(since.Unix(), 10))
-		case TransitionRecovered, TransitionDisabled:
+		case TransitionBackupRecovered, TransitionBackupDisabled:
 			_, err = tx.ExecContext(ctx, "DELETE FROM setting WHERE key = ?", backupFailingSinceKey)
 		default:
 			return fmt.Errorf("invalid backup transition %q", transition)
@@ -90,11 +85,7 @@ func (s *Store) RecordBackupEvent(ctx context.Context, transition Transition, su
 		if err != nil {
 			return err
 		}
-		targets := make([]DeliveryTarget, len(channels))
-		for i, channel := range channels {
-			targets[i] = DeliveryTarget{ChannelID: channel}
-		}
-		return recordAlertEvent(tx, &ev, targets)
+		return recordAlertEvent(tx, &ev, systemTargets(channels))
 	})
 	if err != nil {
 		return AlertEvent{}, err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // SiteAppearance 是公开页外观，给出时 UpdateSettings 整体替换它：标题、主色、logo、自定义 CSS 为空串表示使用内置值，
@@ -23,22 +24,25 @@ type SiteSettings struct {
 	PublicEnabled bool
 }
 
-// Settings 是 readSettings 读出的全部设置，三组来自同一个快照。
+// Settings 是 readSettings 读出的全部设置，各组来自同一个快照。LoginChannelIDs 是登录通知（§5.3）选定的渠道，
+// 空即不通知。
 type Settings struct {
-	Site   SiteSettings
-	Geo    GeoSettings
-	Backup BackupSettings
+	Site            SiteSettings
+	Geo             GeoSettings
+	Backup          BackupSettings
+	LoginChannelIDs []int64
 }
 
 // SettingsUpdate 是 SaveSettings 的输入，按组给出、各组彼此独立：Appearance 非 nil 时整体替换五项外观；PublicEnabled
-// 与 Geo 里的各项非 nil 时写入；Backup 非 nil 时各项按 BackupSettingsUpdate 的语义写。nil 表示这一组（项）不改，
-// 不写对应的键。"哪一组算给出"由 api 的 UpdateSettings 按请求判定。更新与读取分用不同类型，避免把缺席误当作关闭，
-// 也避免向读者泄漏未解析的值。
+// 与 Geo 里的各项非 nil 时写入；Backup 非 nil 时各项按 BackupSettingsUpdate 的语义写；LoginChannels 非 nil 时替换
+// 登录通知的渠道列表，指向空列表是显式关闭。nil 表示这一组（项）不改，不写对应的键。"哪一组算给出"由 api 的
+// UpdateSettings 按请求判定。更新与读取分用不同类型，避免把缺席误当作关闭，也避免向读者泄漏未解析的值。
 type SettingsUpdate struct {
 	Appearance    *SiteAppearance
 	PublicEnabled *bool
 	Geo           GeoUpdate
 	Backup        *BackupSettingsUpdate
+	LoginChannels *[]int64
 }
 
 // DefaultTheme 是从未保存过外观时的明暗：跟随访客系统。
@@ -55,7 +59,7 @@ type settingField struct {
 // fields 列出每项外观的键，readSettings 与 SaveSettings 都按它读写：SiteAppearance 新增的字段不在这里登记，
 // 就存不进库、读出来恒为空（TestSiteAppearanceRoundTripsEveryField 逐字段核对）。键名是库里的持久标识，改名要迁移。
 // site.* 下除这五个外观键外还有总闸（publicEnabledKey）；国家查询占 geo.* 两个键（见 GeoSettings）；备份占 backup.*
-// 与 notify.backup_channels（见 BackupSettings）。
+// （见 BackupSettings）；备份失败通知与登录通知的渠道列表各占一个 notify.* 键（见 NotifyLists）。
 func (a *SiteAppearance) fields() []settingField {
 	return []settingField{
 		{"site.title", &a.Title},
@@ -121,10 +125,11 @@ type querier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
-// readSettings 用一条 SELECT 读出全部 site.*（外观与总闸）、geo.*、backup.* 与备份通知渠道键：单条语句在 WAL 下读同一个
-// 快照，SaveSettings 又在一个写事务里写全部给出的键，两者合起来保证读者拿不到新旧混合的设置。改成逐键或分组查询会
-// 失去前一半。库里有必须合法才能解释的编码：开关只认 0 / 1（parseFlag），备份的四个数值须在 backupNumber 的范围内
-// （parseStored），渠道列表须是 JSON 整数数组（parseStoredChannels）；不合即返回错误，不按默认值猜。
+// readSettings 用一条 SELECT 读出全部 site.*（外观与总闸）、geo.*、backup.* 与 NotifyLists 登记的每个通知渠道
+// 列表键：单条语句在 WAL 下读同一个快照，SaveSettings 又在一个写事务里写全部给出的键，两者合起来保证读者拿不到新旧
+// 混合的设置。改成逐键或分组查询会失去前一半。库里有必须合法才能解释的编码：开关只认 0 / 1（parseFlag），备份的
+// 四个数值须在 backupNumber 的范围内（parseStored），渠道列表须是 JSON 整数数组（parseStoredChannels）；不合即
+// 返回错误，不按默认值猜。
 func readSettings(ctx context.Context, q querier) (Settings, error) {
 	// 只有键缺失表示默认开放；非法的已保存值不能被解释成允许公开（parseFlag 报错）。
 	out := Settings{
@@ -144,7 +149,15 @@ func readSettings(ctx context.Context, q querier) (Settings, error) {
 	for _, f := range out.Backup.numbers() {
 		numbers[f.n.key] = f
 	}
-	rows, err := q.QueryContext(ctx, "SELECT key, value FROM setting WHERE key GLOB 'site.*' OR key GLOB 'geo.*' OR key GLOB 'backup.*' OR key = ?", backupChannelsKey)
+	lists := map[NotifyList]*[]int64{}
+	listKeys := make([]any, 0, len(NotifyLists))
+	for _, l := range NotifyLists {
+		lists[l.List] = l.settings(&out)
+		listKeys = append(listKeys, l.List)
+	}
+	query := "SELECT key, value FROM setting WHERE key GLOB 'site.*' OR key GLOB 'geo.*' OR key GLOB 'backup.*' OR key IN (" +
+		strings.TrimSuffix(strings.Repeat("?, ", len(listKeys)), ", ") + ")"
+	rows, err := q.QueryContext(ctx, query, listKeys...)
 	if err != nil {
 		return Settings{}, err
 	}
@@ -164,8 +177,8 @@ func readSettings(ctx context.Context, q querier) (Settings, error) {
 			if err := f.parseStored(v); err != nil {
 				return Settings{}, err
 			}
-		} else if k == backupChannelsKey {
-			if out.Backup.Channels, err = parseStoredChannels(k, v); err != nil {
+		} else if p := lists[NotifyList(k)]; p != nil {
+			if *p, err = parseStoredChannels(NotifyList(k), v); err != nil {
 				return Settings{}, err
 			}
 		}
@@ -176,7 +189,7 @@ func readSettings(ctx context.Context, q querier) (Settings, error) {
 	return out, nil
 }
 
-// Settings 读出全部设置，三组来自同一个快照。
+// Settings 读出全部设置，各组来自同一个快照。
 func (s *Store) Settings(ctx context.Context) (Settings, error) {
 	return readSettings(ctx, s.r)
 }
@@ -200,12 +213,14 @@ func (s *Store) BackupSettings(ctx context.Context) (BackupSettings, error) {
 // 匿名请求与静态资源都要检查总闸，读原子副本避免每次准入都占用数据库连接。
 func (s *Store) PublicEnabled() bool { return s.publicEnabled.Load() }
 
-// SaveSettings 在 s.write 的一个事务里写给出的外观（五个键整体）、给出的总闸、Geo 里给出的项与给出的备份项，任一条
-// 失败整体回滚：库里不会留下半套设置，与 readSettings 的单条 SELECT 一起保证读侧看不到新旧混合。缺席的组（项）表示
-// 不变，不写对应的键。备份的数值范围与渠道是否存在也在这个事务里裁决（saveBackup）：出范围返回 BackupRangeError、
-// 渠道不存在返回 NotFoundError，同样整体回滚。渠道的存在性在这个写事务里核对，删渠道（DeleteNotifyChannel）在它自己
-// 的写事务里把渠道从列表摘除，两者由写协程串行；改成在事务之外先查再写，两步之间删掉的渠道就会留在列表里。返回值是
-// 同一个事务里写入之后读回的全部设置（未给出的项是库里原值），就是这次提交的状态。失败时不发布内存值。
+// SaveSettings 在 s.write 的一个事务里写给出的外观（五个键整体）、给出的总闸、Geo 里给出的项、给出的备份项与给出的
+// 登录通知渠道列表，任一条失败整体回滚：库里不会留下半套设置，与 readSettings 的单条 SELECT 一起保证读侧看不到新旧
+// 混合。缺席的组（项）表示不变，不写对应的键。备份的数值范围与两个渠道列表里的渠道是否存在也在这个事务里裁决
+// （saveBackup、saveChannelIDs）：出范围返回 BackupRangeError；渠道不存在返回点名列表的 ChannelListError，其 Err
+// 是 NotFoundError（errors.As 可取出）；同样整体回滚。渠道的存在性在这个写事务里核对，删渠道（DeleteNotifyChannel）
+// 在它自己的写事务里把渠道从 NotifyLists 的每个列表摘除，两者由写协程串行；改成在事务之外先查再写，两步之间删掉的
+// 渠道就会留在列表里。返回值是同一个事务里写入之后读回的全部设置（未给出的项是库里原值），就是这次提交的状态。失败时
+// 不发布内存值。
 //
 // 不变式：publicEnabled 等于库里最近一次提交的总闸键（publicEnabledKey）。前提有二：Open 从库加载它；hub 运行期间
 // 只有这里写这个键（现有离线子命令都不写它；此外改库的途径，如 §6.7 整表覆盖的 restore，必须在 hub 停止时
@@ -239,6 +254,11 @@ func (s *Store) SaveSettings(ctx context.Context, in SettingsUpdate) (Settings, 
 		}
 		if in.Backup != nil {
 			if err := saveBackup(tx, in.Backup); err != nil {
+				return err
+			}
+		}
+		if in.LoginChannels != nil {
+			if err := saveChannelIDs(tx, LoginNotifyList, *in.LoginChannels); err != nil {
 				return err
 			}
 		}

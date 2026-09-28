@@ -28,11 +28,20 @@ func setup(t testing.TB) (*Auth, *store.Store, *clock.Fake) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	a := New(st, probe.New(st, slog.Default()), clk, slog.Default())
+	a := New(st, probe.New(st, slog.Default()), nil, clk, time.UTC, slog.Default())
 	if err := a.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return a, st, clk
+}
+
+func TestNewRequiresLocation(t *testing.T) {
+	defer func() {
+		if r := recover(); r != "auth.New: loc must be set" {
+			t.Fatalf("panic = %v", r)
+		}
+	}()
+	New(nil, nil, nil, nil, nil, nil)
 }
 
 func TestTokenIs32RandomBytesHex(t *testing.T) {
@@ -127,7 +136,7 @@ func TestLoadRebuildsMapFromStore(t *testing.T) {
 	a, st, clk := setup(t)
 	ctx := context.Background()
 	id, plain, _ := a.CreateNode(ctx, "a")
-	b := New(st, probe.New(st, slog.Default()), clk, slog.Default())
+	b := New(st, probe.New(st, slog.Default()), nil, clk, time.UTC, slog.Default())
 	if _, ok := b.Authenticate(plain); ok {
 		t.Fatal("fresh Auth must not know tokens before Load")
 	}
@@ -294,7 +303,7 @@ func TestAuthenticateDoesNotWaitForRegisterTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	a := New(st, probe.New(st, slog.Default()), clk, slog.Default())
+	a := New(st, probe.New(st, slog.Default()), nil, clk, time.UTC, slog.Default())
 	ctx := context.Background()
 	id, tok, err := a.CreateNode(ctx, "existing")
 	if err != nil {
@@ -358,7 +367,7 @@ func TestCancelledCreateNodeKeepsMapConsistentWithStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	a := New(st, probe.New(st, slog.Default()), clk, slog.Default())
+	a := New(st, probe.New(st, slog.Default()), nil, clk, time.UTC, slog.Default())
 	if err := a.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}

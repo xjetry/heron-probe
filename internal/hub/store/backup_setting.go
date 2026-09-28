@@ -2,10 +2,7 @@ package store
 
 import (
 	"database/sql"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 
 	"github.com/xjetry/probe/internal/hub/s3"
@@ -81,8 +78,6 @@ func (u *BackupSettingsUpdate) numbers() []numberField {
 	return []numberField{{configInterval, u.ConfigIntervalS}, {metricsInterval, u.MetricsIntervalS}, {configKeep, u.ConfigKeep}, {metricsKeep, u.MetricsKeep}}
 }
 
-const backupChannelsKey = "notify.backup_channels"
-
 // backupDefaults 是库里没有任何备份键时的读侧值：区域 auto（R2），四个数值取各自的 fallback，其余为空；Target 因而
 // 未启用（s3.Config.Enabled）。
 func backupDefaults() BackupSettings {
@@ -116,62 +111,6 @@ func (f numberField) parseStored(v string) error {
 	return nil
 }
 
-func parseStoredChannels(key, v string) ([]int64, error) {
-	var ids []int64
-	if err := json.Unmarshal([]byte(v), &ids); err != nil {
-		return nil, fmt.Errorf("invalid stored %s", key)
-	}
-	return ids, nil
-}
-
-// saveChannelIDs 保存一个通知渠道选择列表：重复 ID 合并（与告警规则同用 sortedAlertIDs）；每个 ID 在这个写事务里
-// 核对存在，与删渠道串行，不会留下指向已删渠道的引用；空选择写 "[]"，不写 JSON null。
-func saveChannelIDs(tx *sql.Tx, key string, ids []int64) error {
-	ids = sortedAlertIDs(ids)
-	for _, id := range ids {
-		if err := requireAlertReference(tx, "notify_channel", ObjectNotifyChannel, id); err != nil {
-			return err
-		}
-	}
-	return putChannelIDs(tx, key, ids)
-}
-
-func putChannelIDs(tx *sql.Tx, key string, ids []int64) error {
-	if len(ids) == 0 {
-		ids = []int64{}
-	}
-	data, err := json.Marshal(ids)
-	if err != nil {
-		return err
-	}
-	return putSetting(tx, key, string(data))
-}
-
-// removeChannelID 在删渠道的同一事务里把它从一个选择列表中摘除；键不存在即没有选择，不写。其余 ID 不重新核对：
-// 它们由 saveChannelIDs 写入时核对过，此后每次删渠道都在同一事务里摘除，列表里只会有存在的渠道。
-func removeChannelID(tx *sql.Tx, key string, id int64) error {
-	var value string
-	err := tx.QueryRow("SELECT value FROM setting WHERE key = ?", key).Scan(&value)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	var ids []int64
-	if err := json.Unmarshal([]byte(value), &ids); err != nil {
-		return err
-	}
-	if !slices.Contains(ids, id) {
-		return nil
-	}
-	return putChannelIDs(tx, key, slices.DeleteFunc(ids, func(v int64) bool { return v == id }))
-}
-
-func removeBackupChannel(tx *sql.Tx, id int64) error {
-	return removeChannelID(tx, backupChannelsKey, id)
-}
-
 func saveBackup(tx *sql.Tx, u *BackupSettingsUpdate) error {
 	for _, f := range u.numbers() {
 		if f.value != nil {
@@ -201,7 +140,7 @@ func saveBackup(tx *sql.Tx, u *BackupSettingsUpdate) error {
 		}
 	}
 	if u.Channels != nil {
-		return saveChannelIDs(tx, backupChannelsKey, *u.Channels)
+		return saveChannelIDs(tx, BackupNotifyList, *u.Channels)
 	}
 	return nil
 }

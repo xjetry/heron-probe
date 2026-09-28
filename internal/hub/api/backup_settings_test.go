@@ -3,8 +3,10 @@ package api
 import (
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -210,8 +212,8 @@ func TestBackupTargetValidation(t *testing.T) {
 		{"prefix must not start or end with /", func(b *probev1.BackupSettings) { b.Prefix = "/hub" }},
 		{"prefix must not start or end with /", func(b *probev1.BackupSettings) { b.Prefix = "hub/" }},
 		{"prefix must not start or end with / or contain control characters", func(b *probev1.BackupSettings) { b.Prefix = "hub\x7fbackups" }},
-		{"notify.channel_ids must contain at most 16 IDs; got 17", func(b *probev1.BackupSettings) {
-			ids := make([]int64, maxBackupChannels+1)
+		{"notify.channel_ids must list at most 16 channel IDs, duplicates included; got 17", func(b *probev1.BackupSettings) {
+			ids := make([]int64, maxNotifyChannels+1)
 			for i := range ids {
 				ids[i] = int64(i + 1)
 			}
@@ -249,13 +251,17 @@ func TestBackupNotifyChannelMustExist(t *testing.T) {
 	rejected(t, h, in, "backup.notify.channel_ids: channel 999 does not exist", before)
 }
 
-// 解码预算装得下满额设置的最坏请求（worstCaseSettings），渠道 ID 取满额个数的 19 位正数，每个都占满预算里的 22 字节。
-// 这些 ID 不存在，请求因而在写事务里以 InvalidArgument 点名 ID 结束——能走到那一步，说明解码没有超出预算。点名的是
-// 排序后第一个不存在的 ID，即请求里最后、最小的那个，所以它也说明整个列表都被解码了。
+// 解码预算装得下满额设置的最坏请求（worstCaseSettings），两个渠道列表的 ID 都取满额个数的 19 位正数，每个都占满预算里
+// 的 maxChannelIDJSONBytes。这些 ID 不存在，请求因而在写事务里以 InvalidArgument 点名 ID 结束——能走到那一步，说明解码
+// 没有超出预算。SaveSettings 先存备份再存登录通知，点名的是备份列表里排序后第一个不存在的 ID，即请求里最后、最小的
+// 那个，所以它也说明整个列表都被解码了。
 func TestUpdateSettingsBudgetFitsFullBackupWithWorstCaseEscaping(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	ids := make([]string, maxBackupChannels)
+	if longest := len(strconv.Quote(strconv.FormatInt(math.MaxInt64, 10))) + len(","); longest != maxChannelIDJSONBytes {
+		t.Fatalf("the longest legal channel ID takes %d bytes in a JSON list; maxChannelIDJSONBytes = %d", longest, maxChannelIDJSONBytes)
+	}
+	ids := make([]string, maxNotifyChannels)
 	for i := range ids {
 		ids[i] = fmt.Sprint(int64(1<<63-1) - int64(i))
 	}

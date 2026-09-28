@@ -113,7 +113,15 @@ func (a *Auth) SetPassword(ctx context.Context, plain string) error {
 // 显式检查承载，并在日志里指明该跑 probe-hub passwd。失败按来源键计数（SourceKey：IPv4 按地址、IPv6 按 /64），
 // 锁定期间的拒绝不依赖输入的密码，正确密码也不能提前解除锁定。
 func (a *Auth) Login(ctx context.Context, password string, from netip.Addr) (string, error) {
-	phc, err := a.verifyLoginPassword(ctx, password, from)
+	phc, newlyLocked, err := a.verifyLoginPassword(ctx, password, from)
+	if newlyLocked {
+		// 锁定也通知：密码猜测尚未成功时就让管理员得知。newlyLocked 原样取自 failureTracker.record，它只在
+		// 设下锁定的那次调用报告 true，所以每次锁定只通知一次。
+		// 通知在 verifyLoginPassword 返回之后发，门此时已由它的 defer 放开。通知写库经 store 的单写协程排队，
+		// 等多久由积压决定；这段时间若计入持门时间，并发到达的登录会更多地得到忙碌拒绝，合法管理员在猜测
+		// 洪水里更难进门。
+		a.notifyLogin(ctx, store.TransitionLoginLocked, "登录失败达到锁定阈值", from, a.clk.Now())
+	}
 	if err != nil {
 		return "", err
 	}
@@ -128,14 +136,39 @@ func (a *Auth) Login(ctx context.Context, password string, from netip.Addr) (str
 	if _, err := a.store.DeleteExpiredSessions(ctx, wall); err != nil {
 		a.log.Warn("purging expired sessions failed", "err", err)
 	}
+	a.notifyLogin(ctx, store.TransitionLoginSuccess, "管理员登录成功", from, wall)
 	return plain, nil
 }
 
-func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from netip.Addr) (string, error) {
+// notifyLogin 记一条登录事件并交给投递队列，at 是事件时刻。
+//
+// 只在密码登录入口调用，不在会话/API token 鉴权中调用：自动化轮询不是一次人工登录，不应刷屏。
+// 会话或锁定已经生效后，请求断开不能取消记账，所以用 WithoutCancel；写入不设期限：store.write 入队后无条件等
+// 单写协程执行完这条写，期限到点缩短不了入队之后的等待，只会在轮到它时把这条通知丢掉——登录通知是安全事件，宁可晚到
+// 不可丢。等待时间由写协程的积压决定，与别的登录签发会话的写同一条队列。失败记录日志且不伪报身份判定失败。
+//
+// 摘要自带事件时刻：投递会重试、重启后续投，接收方看到的送达时刻不是登录时刻；Telegram 只发摘要，
+// 只引用摘要的 webhook 模板也一样，时刻不写进摘要就到不了这些接收方。时刻按 a.loc 写成带偏移的
+// RFC 3339，只到秒，与库里事件的 at（RecordLoginEvent 截到秒）是同一秒。
+func (a *Auth) notifyLogin(ctx context.Context, transition store.Transition, what string, from netip.Addr, at time.Time) {
+	summary := fmt.Sprintf("%s：来源 %s（密码），时间 %s", what, from, at.In(a.loc).Format(time.RFC3339))
+	ev, err := a.store.RecordLoginEvent(context.WithoutCancel(ctx), store.AlertEvent{Transition: transition, At: at, Summary: summary})
+	if err != nil {
+		a.log.Error("recording login notification failed", "err", err)
+		return
+	}
+	if ev.ID != 0 && a.loginSender != nil {
+		a.loginSender.Enqueue(ev)
+	}
+}
+
+// verifyLoginPassword 判锁定、取门，在门内校验密码并记账。返回存储的 PHC、这次失败是否设下了锁定
+// （failureTracker.record 的报告，原样传出）与校验结果。
+func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from netip.Addr) (string, bool, error) {
 	a.mu.Lock()
 	if a.login.locked(from, a.clk.Mono()) {
 		a.mu.Unlock()
-		return "", ErrLocked
+		return "", false, ErrLocked
 	}
 	// 排队会保留整波匿名请求的慢哈希成本，并把合法登录推到队尾，故直接拒绝。
 	//
@@ -149,31 +182,31 @@ func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from ne
 	// 管理员重试几次后被锁满 failWindow。
 	if !a.loginGate.TryLock() {
 		a.mu.Unlock()
-		return "", ErrLoginBusy
+		return "", false, ErrLoginBusy
 	}
 	a.mu.Unlock()
 	defer a.loginGate.Unlock()
 	phc, ok, err := a.store.AdminPasswordHash(ctx)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if !ok {
 		phc = absentAdminPHC
 	}
 	match, err := VerifyPassword(phc, password)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if !ok || !match {
 		a.mu.Lock()
-		count := a.login.record(from, a.clk.Mono())
+		count, newlyLocked := a.login.record(from, a.clk.Mono())
 		a.mu.Unlock()
 		a.log.Warn("login failed", "from", from, "failures", count)
 		if !ok {
 			a.log.Warn("login refused: no admin password is set; run `probe-hub passwd`", "from", from)
-			return "", ErrNoAdmin
+			return "", newlyLocked, ErrNoAdmin
 		}
-		return "", ErrBadPassword
+		return "", newlyLocked, ErrBadPassword
 	}
 	// 清账以密码校验通过为准，不以会话签发为准。会话写库不占门，放门后另一次校验
 	// 可能已记下新的失败，写库返回后再清会把它抹掉，所以在放门前清。由此签发失败时
@@ -184,7 +217,7 @@ func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from ne
 	a.mu.Lock()
 	a.login.clear(from)
 	a.mu.Unlock()
-	return phc, nil
+	return phc, false, nil
 }
 
 // AuthenticateSession 在会话 cookie 的全部候选值里找出第一个对应活着的会话的，返回它；一个都没有时第二个返回值为 false。

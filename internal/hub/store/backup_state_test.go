@@ -8,11 +8,11 @@ import (
 )
 
 func TestBackupMarkerAndEventAtomic(t *testing.T) {
-	for _, transition := range []Transition{TransitionFiring, TransitionRecovered, TransitionDisabled} {
+	for _, transition := range []Transition{TransitionBackupFailed, TransitionBackupRecovered, TransitionBackupDisabled} {
 		t.Run(string(transition), func(t *testing.T) {
 			s, _ := open(t)
-			if transition != TransitionFiring {
-				if _, err := s.RecordBackupEvent(t.Context(), TransitionFiring, "failed", s.clk.Now()); err != nil {
+			if transition != TransitionBackupFailed {
+				if _, err := s.RecordBackupEvent(t.Context(), TransitionBackupFailed, "failed", s.clk.Now()); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -46,12 +46,12 @@ func TestBackupMarkerAndEventAtomic(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if after.IsZero() != (transition != TransitionFiring) {
+			if after.IsZero() != (transition != TransitionBackupFailed) {
 				t.Errorf("committed event marker mismatch: transition=%s since=%s", transition, after)
 			}
 			var value string
 			err = s.r.QueryRow("SELECT value FROM setting WHERE key='backup.config_failing_since'").Scan(&value)
-			if transition != TransitionFiring && !errors.Is(err, sql.ErrNoRows) {
+			if transition != TransitionBackupFailed && !errors.Is(err, sql.ErrNoRows) {
 				t.Errorf("recovery did not delete marker: value=%s err=%v", value, err)
 			}
 		})
@@ -68,7 +68,7 @@ func TestBackupEventsUseCurrentChannelsWithoutRuleState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ev, err := s.RecordBackupEvent(t.Context(), TransitionFiring, "config 失败", s.clk.Now())
+	ev, err := s.RecordBackupEvent(t.Context(), TransitionBackupFailed, "config 失败", s.clk.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestBackupEventsUseCurrentChannelsWithoutRuleState(t *testing.T) {
 	if err := s.DeleteNotifyChannel(t.Context(), c.ID); err != nil {
 		t.Fatal(err)
 	}
-	ev, err = s.RecordBackupEvent(t.Context(), TransitionRecovered, "config 已恢复", s.clk.Now())
+	ev, err = s.RecordBackupEvent(t.Context(), TransitionBackupRecovered, "config 已恢复", s.clk.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestBackupEventsUseCurrentChannelsWithoutRuleState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Transition != TransitionRecovered || stored.Summary != "config 已恢复" {
+	if stored.Transition != TransitionBackupRecovered || stored.Summary != "config 已恢复" {
 		t.Fatalf("recovery not stored: %+v", stored)
 	}
 }
@@ -133,7 +133,7 @@ func TestBackupFiringOverwritesCorruptMarker(t *testing.T) {
 		t.Fatal("corrupt marker read back without error")
 	}
 	at := s.clk.Now()
-	if _, err := s.RecordBackupEvent(t.Context(), TransitionFiring, "config 层备份失败（marker）", at); err != nil {
+	if _, err := s.RecordBackupEvent(t.Context(), TransitionBackupFailed, "config 层备份失败（marker）", at); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.BackupFailingSince(t.Context()); err != nil || !got.Equal(time.Unix(at.Unix(), 0).UTC()) {

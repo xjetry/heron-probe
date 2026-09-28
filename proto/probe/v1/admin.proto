@@ -154,7 +154,7 @@ service AdminService {
   rpc TestNotifyChannel(TestNotifyChannelRequest) returns (TestNotifyChannelResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
-  // 公开页设置（总闸与外观）、国家查询与备份设置；外观在总闸开启时经 PublicService.GetSite 对外下发。
+  // 公开页设置（总闸与外观）、国家查询、备份与登录通知设置；外观在总闸开启时经 PublicService.GetSite 对外下发。
   rpc GetSettings(GetSettingsRequest) returns (GetSettingsResponse) {
     option (probe.v1.access) = ACCESS_READ;
   }
@@ -162,8 +162,9 @@ service AdminService {
   rpc GetBackupStatus(GetBackupStatusRequest) returns (GetBackupStatusResponse) {
     option (probe.v1.access) = ACCESS_READ;
   }
-  // 按组更新设置（分组与判定见 Settings）：给出的外观整体替换，给出的总闸、国家查询项与 backup 写入，缺席的组不变；回显
-  // hub 实际保存的设置。一组都没给出、或任一项不合约束即 InvalidArgument，错误写明字段、约束与期望取值，什么都不写入。
+  // 按组更新设置（分组与判定见 Settings）：给出的外观整体替换，给出的总闸、国家查询项、backup 与 login_notify 写入，
+  // 缺席的组不变；回显 hub 实际保存的设置。一组都没给出、或任一项不合约束即 InvalidArgument，错误写明字段、约束与
+  // 期望取值，什么都不写入。
   rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
@@ -623,11 +624,12 @@ enum GeoBackend {
 // 的 string 没有 presence，所以任一项非空即视为给出，给出就整体替换并按整体校验（theme 必填，其余为空即清空）；只带
 // title 不带 theme 的请求因此得到点名 theme 的错误，而不是被静默丢弃。公开页总闸、国家查询两项与 backup 是 presence
 // 字段，给出即改、缺席即不变：关站是对外可见的中断，HTTP 后端下国家查询两项决定 hub 是否、向谁发送节点地址，备份承载
-// 目标、凭据与失败通知渠道，只改外观的旧客户端与脚本都不得顺手改掉它们；只改它们的客户端也不必重发外观。国家查询的两项
-// 是一组，逐项 presence，任一项给出即算这一组给出。geo_backend、geo_mmdb_path 是只读回显，UpdateSettings 中缺席或给出
-// 均忽略，也不算给出任何一组。一次请求至少给出一组，否则 InvalidArgument 点名各组。GetSettings 与 UpdateSettings 的
-// 响应总带外观、总闸、国家查询两项、hub 实际选定的国家查询后端（geo_backend、geo_mmdb_path）与 backup。字段号按架构
-// 设计 §10 的登记表分配，不各自挑号：6 属公开页总闸，7–10 属国家查询，11 属备份。
+// 目标、凭据与失败通知渠道，登录通知（login_notify）选定密码泄漏当下唯一的信号发往哪里，只改外观的旧客户端与脚本都
+// 不得顺手改掉它们；只改它们的客户端也不必重发外观。login_notify 同样是 presence 字段，自成一组。国家查询的两项是一组，
+// 逐项 presence，任一项给出即算这一组给出。geo_backend、geo_mmdb_path 是只读回显，UpdateSettings 中缺席或给出均忽略，
+// 也不算给出任何一组。一次请求至少给出一组，否则 InvalidArgument 点名各组。GetSettings 与 UpdateSettings 的响应总带
+// 外观、总闸、国家查询两项、hub 实际选定的国家查询后端（geo_backend、geo_mmdb_path）、backup 与 login_notify。字段号
+// 按架构设计 §10 的登记表分配，不各自挑号：6 属公开页总闸，7–10 属国家查询，11 属备份，12 属登录通知。
 message Settings {
   // 页面标题：清洗前最多 1024 字节，去掉控制字符与首尾空白之后最多 64 个字符，hub 保存去掉之后的值；
   // 空串表示公开页用内置标题。
@@ -665,6 +667,9 @@ message Settings {
   string geo_mmdb_path = 10;
   // 备份设置（§6.7）。缺席即不变：只改外观的请求不带它，备份配置与渠道都不动。不下发到公开页。
   BackupSettings backup = 11;
+  // 登录通知的渠道（§5.3，键 notify.login_channels）。请求里缺席即不变，显式给出空集合即关闭；响应里总带它，
+  // channel_ids 为空表示关闭，把读到的整份设置原样写回不改变它。不会下发到公开页。
+  optional LoginNotify login_notify = 12;
 }
 
 // 备份目标、两层周期与份数、失败通知渠道。endpoint、bucket、access_key、secret 任一为空即整体关闭；
@@ -707,12 +712,17 @@ message BackupNotify {
   // ID；重复 ID 合并。
   repeated int64 channel_ids = 1;
 }
+message LoginNotify {
+  // 与 BackupNotify 同一约束：最多 16 个（按请求里的原始条数计，含重复），超出返回 InvalidArgument 并点名字段与上限；
+  // 每个 ID 必须对应存在的渠道，否则整次更新返回 InvalidArgument 并点名 ID；重复 ID 合并。
+  repeated int64 channel_ids = 1;
+}
 message GetSettingsRequest {}
 message GetSettingsResponse { Settings settings = 1; }
 message GetBackupStatusRequest {}
 message GetBackupStatusResponse {
   // endpoint、bucket、access key、secret 全部非空才启用。停用即结束两层的故障跟踪：两层各自在下一轮判定时（在途的
-  // 一轮先跑完）观察到停用并清掉本层故障；配置层已通知过的故障以一条 transition 为 disabled 的事件收尾并清除
+  // 一轮先跑完）观察到停用并清掉本层故障；配置层已通知过的故障以一条 transition 为 backup_disabled 的事件收尾并清除
   // 未恢复标记。两层都观察到之后，设置可读且未启用时 failure 都缺席。设置读不出时这里同样为 false，配置层报 settings 故障。
   bool enabled = 1;
   BackupLayerStatus config = 2;
@@ -839,7 +849,8 @@ message TableRows {
 }
 
 message ListAlertEventsRequest {
-  // 0 表示全部节点。
+  // 0 表示不按节点过滤，返回全部事件，含 rule_id 与 node_id 为 0 的系统事件（登录、备份）；非 0 只返回
+  // 该节点的事件，不含系统事件。
   int64 node_id = 1;
   // 0 表示从最新事件开始，否则只返回小于此 id 的事件。
   int64 before_id = 2;
@@ -853,8 +864,9 @@ message AlertEvent {
   int64 id = 1;
   int64 rule_id = 2;
   int64 node_id = 3;
-  // 取值为 firing、recovered 或 disabled。disabled 只由备份停用产生（rule_id 与 node_id 为 0）：
-  // 收尾停用前已通知的配置层备份故障，此后不再跟踪，不表示故障已恢复。
+  // 规则事件为 firing 或 recovered；系统事件的 rule_id/node_id 均为 0，为 login_success、login_locked（登录通知，
+  // §5.3）或 backup_failed、backup_recovered、backup_disabled（配置层备份，§6.7）。backup_disabled 收尾停用前已通知
+  // 的配置层备份故障，此后不再跟踪，不表示故障已恢复。
   string transition = 4;
   // 事件墙钟，Unix 秒。
   int64 at = 5;

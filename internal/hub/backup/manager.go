@@ -261,7 +261,7 @@ func (m *Manager) tickLayer(ctx context.Context, i int) error {
 	if !cfg.Target.Enabled() {
 		state.attempted = false
 		// 停用即结束两层的故障跟踪：不再执行，也就不会再有恢复。配置层已通知的故障以停用事件收尾。
-		return m.resolve(ctx, i, store.TransitionDisabled, "备份已停用，config 层先前的故障不再跟踪")
+		return m.resolve(ctx, i, store.TransitionBackupDisabled, "备份已停用，config 层先前的故障不再跟踪")
 	}
 	layer := "config"
 	interval, keep := cfg.ConfigIntervalS, cfg.ConfigKeep
@@ -406,7 +406,7 @@ func (m *Manager) finish(ctx context.Context, i int, layer, category string, cod
 		m.mu.Lock()
 		state.LastSuccess = time.Unix(m.clk.Now().Unix(), 0).UTC()
 		m.mu.Unlock()
-		return m.resolve(ctx, i, store.TransitionRecovered, "config 层备份已恢复")
+		return m.resolve(ctx, i, store.TransitionBackupRecovered, "config 层备份已恢复")
 	}
 	m.mu.Lock()
 	previous := state.Failure
@@ -426,7 +426,7 @@ func (m *Manager) finish(ctx context.Context, i int, layer, category string, cod
 	if i != 0 || notified {
 		return nil
 	}
-	ev, err := m.st.RecordBackupEvent(ctx, store.TransitionFiring, fmt.Sprintf("config 层备份失败（%s）", category), since)
+	ev, err := m.st.RecordBackupEvent(ctx, store.TransitionBackupFailed, fmt.Sprintf("config 层备份失败（%s）", category), since)
 	if err != nil {
 		return err
 	}

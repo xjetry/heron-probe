@@ -60,7 +60,7 @@ func newHubWith(t *testing.T, path string, cfg Config) *hub {
 	}
 	t.Cleanup(func() { st.Close() })
 	reg := probe.New(st, slog.Default())
-	a := auth.New(st, reg, clk, slog.Default())
+	a := auth.New(st, reg, nil, clk, time.UTC, slog.Default())
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, slog.Default())
 	svc, err := New(cfg, l, st, a, book, reg, clk, slog.Default())

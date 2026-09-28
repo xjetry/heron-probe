@@ -10,7 +10,7 @@
 // 登录不占用 mutMu，密码校验和会话写入不让节点变更与 Load 等待。
 // 持 mu 时只 TryLock 门、不等待门；持门时可以取 mu 记账，因此不会形成等待环。
 //
-// mu 只保护 byHash 与两个失败计数器，临界区不含 I/O。CreateNode、Register、
+// mu 保护 byHash 与两个失败计数器，临界区不含 I/O；通知发送者在构造时给定、之后只读，不在 mu 之下。CreateNode、Register、
 // DeleteNode 与 RotateToken 在 store 返回成功后、取得 mu.Lock 前存在可见
 // 间隙：Authenticate 可能仍接受已删除或轮换的旧 token，或尚不认识新 token。
 // 这个间隙跨越一次 mu.Lock 的获取，包含调度与锁竞争等待，并无固定时长上界；
@@ -61,10 +61,25 @@ type Auth struct {
 	byHash    map[[32]byte]int64
 	register  *failureTracker
 	login     *failureTracker
+	// loginSender 与 loc 构造后只读。loc 是 hub 的 --timezone，登录通知的摘要按它写事件时刻。
+	loginSender LoginSender
+	loc         *time.Location
 }
 
-func New(st *store.Store, nodes NodeCreator, clk clock.Clock, log *slog.Logger) *Auth {
-	return &Auth{store: st, nodes: nodes, clk: clk, log: log, byHash: map[[32]byte]int64{}, register: newFailureTracker(failLimit, failWindow), login: newFailureTracker(failLimit, failWindow)}
+// LoginSender 把已落库的登录通知交给投递队列（serve 里是 alert.Queue）。
+type LoginSender interface{ Enqueue(store.AlertEvent) }
+
+// New 要求 loc 非 nil：通知文案里的时刻按 hub 的 --timezone 写，与面板、流量周期、到期日同一个时区；
+// 缺省成某个固定时区，通知与面板的时刻对不上，也不会有任何报错。
+//
+// sender 为 nil 时登录通知只写库、不入队：投递队列只在启动时的 Requeue 与溢出后的补货里从库取行，已写库的通知要
+// 等 hub 下次重启才发出，而且没有任何报错。所以只有不经过 Login 的调用方（离线子命令）可以传 nil；serve 必须先建
+// 投递队列再建 Auth（TestServeDeliversLoginNotification 从 serve 入口核对）。
+func New(st *store.Store, nodes NodeCreator, sender LoginSender, clk clock.Clock, loc *time.Location, log *slog.Logger) *Auth {
+	if loc == nil {
+		panic("auth.New: loc must be set")
+	}
+	return &Auth{store: st, nodes: nodes, loginSender: sender, clk: clk, loc: loc, log: log, byHash: map[[32]byte]int64{}, register: newFailureTracker(failLimit, failWindow), login: newFailureTracker(failLimit, failWindow)}
 }
 
 func (a *Auth) Load(ctx context.Context) error {
@@ -177,7 +192,7 @@ func (a *Auth) Register(ctx context.Context, key, name string, from netip.Addr) 
 	switch {
 	case errors.Is(err, store.ErrBadKey):
 		a.mu.Lock()
-		count := a.register.record(from, a.clk.Mono())
+		count, _ := a.register.record(from, a.clk.Mono())
 		a.mu.Unlock()
 		a.log.Warn("register key mismatch", "source", DescribeSource(SourceKey(from)), "failures", count)
 		return 0, "", ErrDenied

@@ -8,7 +8,7 @@ import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { statefulHub } from "../test/settingsHub";
 
 const backup = { endpoint: "https://s3.example", bucket: "private-backups", region: "auto", accessKey: "access", prefix: "hub", configIntervalS: 300, metricsIntervalS: 86400, configKeep: 48, metricsKeep: 14, notify: { channelIds: [7n] }, hasSecret: true };
-// hub 的 GetSettings 总带总闸、国家查询两项与 backup。
+// hub 的 GetSettings 总带总闸、国家查询两项与 backup（还有 login_notify，这里的表单不读它，略去）。
 const saved = { title: "机房", theme: "dark", accentColor: "#123abc", logo: "", customCss: "body { margin: 0 }", publicEnabled: true, geoEnabled: false, geoUrl: "https://ipinfo.io/{ip}/country", backup };
 const channels = { channels: [{ id: 7n, name: "运维" }, { id: 8n, name: "值班" }] };
 

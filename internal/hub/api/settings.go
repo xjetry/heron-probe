@@ -49,8 +49,9 @@ var (
 //   - 外观五项是一组。proto3 的 string 没有 presence，分不开"没给"与"给了空串"，所以五项任一非空即视为给出
 //     （appearanceGiven），给出就整体替换并按整体校验（cleanAppearance：theme 必填，其余为空即清空）。按任一项非空
 //     判定，只带 title 不带 theme 的请求得到点名 theme 的错误，而不是被当作"没给外观"静默丢弃。
-//   - 总闸、国家查询两项与 backup 是 presence 字段，给出即改、缺席即不变（见 store.SettingsUpdate、cleanGeo；backup
-//     各项的 presence 见 cleanBackup）：只改其中一组的客户端不必重发外观，也就不会把它手里可能已过时的外观写回去。
+//   - 总闸、国家查询两项、backup 与 login_notify 是 presence 字段，给出即改、缺席即不变（见 store.SettingsUpdate、
+//     cleanGeo；backup 各项的 presence 见 cleanBackup；login_notify 给出空列表是显式关闭）：只改其中一组的客户端不必
+//     重发外观，也就不会把它手里可能已过时的外观写回去。
 //
 // 一组都没给出的请求什么都不会改，返回 InvalidArgument 点名各组，而不是回一个看似成功的空操作。任一项不合约束即返回
 // 错误，调用方什么都不写。
@@ -74,8 +75,13 @@ func cleanSettings(in *probev1.Settings) (store.SettingsUpdate, error) {
 	if out.Backup, err = cleanBackup(in.GetBackup()); err != nil {
 		return store.SettingsUpdate{}, err
 	}
-	if out.Appearance == nil && out.PublicEnabled == nil && out.Geo.Enabled == nil && out.Geo.URL == nil && out.Backup == nil {
-		return store.SettingsUpdate{}, invalid("settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, the country lookup (geo_enabled, geo_url), or backup")
+	if ln := in.GetLoginNotify(); ln != nil {
+		if out.LoginChannels, err = cleanChannelIDs(store.LoginNotifyList, ln.GetChannelIds()); err != nil {
+			return store.SettingsUpdate{}, err
+		}
+	}
+	if out.Appearance == nil && out.PublicEnabled == nil && out.Geo.Enabled == nil && out.Geo.URL == nil && out.Backup == nil && out.LoginChannels == nil {
+		return store.SettingsUpdate{}, invalid("settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, the country lookup (geo_enabled, geo_url), backup, or login_notify")
 	}
 	return out, nil
 }
@@ -92,6 +98,33 @@ var (
 	appearanceFields       = []protoreflect.Name{"title", "theme", "accent_color", "logo", "custom_css"}
 	readOnlySettingsFields = []protoreflect.Name{"geo_backend", "geo_mmdb_path"}
 )
+
+// maxNotifyChannels 是一个通知渠道选择列表（backup.notify 与 login_notify，§6.7、§5.3）的条数上限，按请求里的原始
+// 条数计、重复也算：去重在解码之后，约束不了请求的字节数。没有它，合法请求的字节数就没有上界，算不出解码预算
+// （service.go 的 maxSettingsBody）。
+const maxNotifyChannels = 16
+
+// notifyListCount 是请求里通知渠道选择列表的个数，解码预算（maxSettingsBody）按它给列表留份额。它必须是常量才能进
+// 预算的常量表达式，所以不从 store.NotifyLists 推出，由 TestNotifyListsHaveRequestFields 核对二者相等。新增列表而
+// 不改它，预算就少算一整个满额列表（16 条 ID 共 352 字节）；这个差额目前落在预算末尾留给字段名与语法的 4 KiB 余量
+// 里，预算用例照样绿，只有登记用例红。
+const notifyListCount = 2
+
+// notifyListFields 是每个通知渠道选择列表在请求里的字段路径，条数超限与渠道不存在的错误都按它点名。store.NotifyLists
+// 里的每个列表都要在这里登记（TestNotifyListsHaveRequestFields 核对），漏登记的列表报错时点不出字段名。
+var notifyListFields = map[store.NotifyList]string{
+	store.BackupNotifyList: "backup.notify.channel_ids",
+	store.LoginNotifyList:  "settings.login_notify.channel_ids",
+}
+
+// cleanChannelIDs 是两个通知渠道选择列表共用的协议层校验：只核对条数；渠道是否存在由 store.SaveSettings 在写事务里
+// 裁决（saveChannelIDs），不存在时返回点名列表的 store.ChannelListError。
+func cleanChannelIDs(list store.NotifyList, ids []int64) (*[]int64, error) {
+	if len(ids) > maxNotifyChannels {
+		return nil, invalid("%s must list at most %d channel IDs, duplicates included; got %d", notifyListFields[list], maxNotifyChannels, len(ids))
+	}
+	return &ids, nil
+}
 
 // appearanceGiven 是外观这一组"给出"的判定：appearanceFields 任一非空。它只读这份清单，外观的取值由 cleanAppearance
 // 逐项转抄：清单新增一项而 cleanAppearance 没有转抄时，枚举用例单给那一项的样例值、核对回显，在那里失败。
@@ -238,6 +271,9 @@ func cleanGeo(in *probev1.Settings) (store.GeoUpdate, error) {
 	return out, nil
 }
 
+// settingsProto 是 GetSettings 与 UpdateSettings 共用的回显。login_notify 总带，渠道列表为空即关闭：省掉它，"已关闭"
+// 与"hub 不认识这个字段"在响应里就分不出来；把读到的整份设置原样写回时，回显的空 message 是显式关闭，与当前状态
+// 一致，读改写不改变它。
 func (s *Service) settingsProto(st store.Settings) *probev1.Settings {
 	backend, path := probev1.GeoBackend_GEO_BACKEND_HTTP, s.cfg.Geo.MMDBPath()
 	if path != "" {
@@ -245,7 +281,7 @@ func (s *Service) settingsProto(st store.Settings) *probev1.Settings {
 	}
 	return &probev1.Settings{Title: st.Site.Title, Theme: st.Site.Theme, AccentColor: st.Site.AccentColor, Logo: st.Site.Logo, CustomCss: st.Site.CustomCSS,
 		PublicEnabled: proto.Bool(st.Site.PublicEnabled), GeoEnabled: proto.Bool(st.Geo.Enabled), GeoUrl: proto.String(st.Geo.URL),
-		GeoBackend: backend, GeoMmdbPath: path, Backup: backupProto(st.Backup)}
+		GeoBackend: backend, GeoMmdbPath: path, Backup: backupProto(st.Backup), LoginNotify: &probev1.LoginNotify{ChannelIds: st.LoginChannelIDs}}
 }
 
 func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.GetSettingsRequest]) (*connect.Response[probev1.GetSettingsResponse], error) {
@@ -264,11 +300,12 @@ func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probe
 	}
 	saved, err := s.store.SaveSettings(ctx, in)
 	if err != nil {
+		var list store.ChannelListError
 		var missing store.NotFoundError
 		var outOfRange store.BackupRangeError
 		switch {
-		case errors.As(err, &missing) && missing.Kind == store.ObjectNotifyChannel:
-			return nil, invalid("backup.notify.channel_ids: channel %d does not exist", missing.ID)
+		case errors.As(err, &list) && errors.As(list.Err, &missing) && missing.Kind == store.ObjectNotifyChannel:
+			return nil, invalid("%s: channel %d does not exist", notifyListFields[list.List], missing.ID)
 		case errors.As(err, &outOfRange):
 			return nil, invalid("%s", outOfRange)
 		}

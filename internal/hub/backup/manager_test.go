@@ -229,9 +229,9 @@ func TestFailureTransitions(t *testing.T) {
 				t.Fatalf("persisted events=%d want=2", len(events))
 			}
 			for i, ev := range sink.events {
-				want := store.TransitionFiring
+				want := store.TransitionBackupFailed
 				if i == 1 {
-					want = store.TransitionRecovered
+					want = store.TransitionBackupRecovered
 				}
 				if ev.RuleID != 0 || ev.NodeID != 0 || ev.Transition != want || len(ev.Deliveries) != 1 || !strings.Contains(ev.Summary, "config") || strings.Contains(ev.Summary, "SECRET") {
 					t.Errorf("event=%+v", ev)
@@ -340,7 +340,7 @@ func TestEventWriteFailureDoesNotBlockMetricsAndRetries(t *testing.T) {
 	execFixtureSQL(t, objects.databasePath, "DROP TRIGGER reject_backup_event")
 	clk.Advance(5 * time.Minute)
 	tick(t, m)
-	if len(sink.events) != 2 || sink.events[1].Transition != store.TransitionRecovered {
+	if len(sink.events) != 2 || sink.events[1].Transition != store.TransitionBackupRecovered {
 		t.Fatalf("failed recovery was not retried: events=%v", sink.events)
 	}
 }

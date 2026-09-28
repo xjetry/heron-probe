@@ -55,8 +55,8 @@ func TestSiteAppearanceRoundTripsEveryField(t *testing.T) {
 }
 
 // 保存中途失败时库里仍是上一套完整设置，内存里的总闸也不变：全部键在同一个写事务里，任一条失败整体回滚，失败不发布。
-// 触发器拦写入顺序里最后一个键 notify.backup_channels（SaveSettings 先写外观、总闸与国家查询，再由 saveBackup 写备份，
-// 渠道列表在最后），失败时其余键都已写过：拆成多个事务提交的实现会把其中已提交的新值留在库里。
+// 触发器拦写入顺序里最后一个键 notify.login_channels（SaveSettings 先写外观、总闸与国家查询，再由 saveBackup 写备份，
+// 登录通知的渠道列表在最后），失败时其余键都已写过：拆成多个事务提交的实现会把其中已提交的新值留在库里。
 func TestSaveSettingsIsAllOrNothing(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
@@ -75,12 +75,13 @@ func TestSaveSettingsIsAllOrNothing(t *testing.T) {
 		Geo:           GeoUpdate{Enabled: &geoOff, URL: &oldURL},
 		Backup: &BackupSettingsUpdate{Endpoint: "https://old.example", Bucket: "old-bucket", Region: "auto", AccessKey: "old", Prefix: "old",
 			Secret: &oldSecret, ConfigKeep: &oldKeep, Channels: &[]int64{channels[0]}},
+		LoginChannels: &[]int64{channels[0]},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := s.write(ctx, func(tx *sql.Tx) error {
-		_, err := tx.Exec("CREATE TRIGGER reject_channels BEFORE INSERT ON setting WHEN NEW.key = 'notify.backup_channels' BEGIN SELECT RAISE(ABORT, 'channels rejected'); END")
+		_, err := tx.Exec("CREATE TRIGGER reject_channels BEFORE INSERT ON setting WHEN NEW.key = 'notify.login_channels' BEGIN SELECT RAISE(ABORT, 'channels rejected'); END")
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -92,6 +93,7 @@ func TestSaveSettingsIsAllOrNothing(t *testing.T) {
 		Geo:           GeoUpdate{Enabled: &geoOn, URL: &newURL},
 		Backup: &BackupSettingsUpdate{Endpoint: "https://new.example", Bucket: "new-bucket", Region: "us-east-1", AccessKey: "new", Prefix: "new",
 			Secret: &newSecret, ConfigKeep: &newKeep, Channels: &[]int64{channels[0], channels[1]}},
+		LoginChannels: &[]int64{channels[0], channels[1]},
 	})
 	if err == nil || !strings.Contains(err.Error(), "channels rejected") {
 		t.Fatalf("save error = %v", err)
@@ -104,7 +106,7 @@ func TestSaveSettingsIsAllOrNothing(t *testing.T) {
 	}
 }
 
-// 各组彼此独立：只给总闸、只给国家查询或只给备份的保存不写外观键，库里的外观原样保留；回显的外观在同一个写事务里
+// 各组彼此独立：只给总闸、只给国家查询、只给备份或只给登录通知渠道的保存不写外观键，库里的外观原样保留；回显的外观在同一个写事务里
 // 读回，是库里的值而不是空的外观。
 func TestSaveSettingsLeavesAbsentAppearance(t *testing.T) {
 	s, _ := open(t)
@@ -121,6 +123,7 @@ func TestSaveSettingsLeavesAbsentAppearance(t *testing.T) {
 		{"public_enabled only", SettingsUpdate{PublicEnabled: &closed}},
 		{"geo only", SettingsUpdate{Geo: GeoUpdate{Enabled: &on}}},
 		{"backup only", SettingsUpdate{Backup: &BackupSettingsUpdate{ConfigKeep: &keep}}},
+		{"login_notify only", SettingsUpdate{LoginChannels: &[]int64{}}},
 	} {
 		saved, err := s.SaveSettings(ctx, c.in)
 		if err != nil || saved.Site.SiteAppearance != full {
@@ -132,6 +135,21 @@ func TestSaveSettingsLeavesAbsentAppearance(t *testing.T) {
 	}
 	if st, err := s.Settings(ctx); err != nil || st.Site.PublicEnabled || !st.Geo.Enabled || st.Backup.ConfigKeep != keep {
 		t.Fatalf("groups not applied: %+v %+v %+v %v", st.Site, st.Geo, st.Backup, err)
+	}
+}
+
+// 登录通知的渠道列表与备份的一样是必须合法才能解释的编码：值损坏时读设置报错并点名键，不按"不通知"猜。
+func TestSettingsRejectCorruptLoginChannels(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	if _, err := s.SaveSettings(ctx, SettingsUpdate{LoginChannels: &[]int64{}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.write(ctx, func(tx *sql.Tx) error { return putSetting(tx, string(LoginNotifyList), "not json") }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Settings(ctx); err == nil || !strings.Contains(err.Error(), string(LoginNotifyList)) {
+		t.Fatalf("settings with a corrupt login channel list: err = %v, want one naming %s", err, LoginNotifyList)
 	}
 }
 

@@ -235,12 +235,13 @@ type AdminServiceClient interface {
 	DeleteNotifyChannel(context.Context, *connect.Request[v1.DeleteNotifyChannelRequest]) (*connect.Response[v1.DeleteNotifyChannelResponse], error)
 	// 向已保存的渠道同步发送测试消息；不可重试失败返回 FailedPrecondition，可重试返回 Unavailable，文本为错误原文。
 	TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error)
-	// 公开页设置（总闸与外观）、国家查询与备份设置；外观在总闸开启时经 PublicService.GetSite 对外下发。
+	// 公开页设置（总闸与外观）、国家查询、备份与登录通知设置；外观在总闸开启时经 PublicService.GetSite 对外下发。
 	GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error)
 	// 两层备份的成功时刻与当前进程观察到的故障；不返回目标凭据或远端错误原文。
 	GetBackupStatus(context.Context, *connect.Request[v1.GetBackupStatusRequest]) (*connect.Response[v1.GetBackupStatusResponse], error)
-	// 按组更新设置（分组与判定见 Settings）：给出的外观整体替换，给出的总闸、国家查询项与 backup 写入，缺席的组不变；回显
-	// hub 实际保存的设置。一组都没给出、或任一项不合约束即 InvalidArgument，错误写明字段、约束与期望取值，什么都不写入。
+	// 按组更新设置（分组与判定见 Settings）：给出的外观整体替换，给出的总闸、国家查询项、backup 与 login_notify 写入，
+	// 缺席的组不变；回显 hub 实际保存的设置。一组都没给出、或任一项不合约束即 InvalidArgument，错误写明字段、约束与
+	// 期望取值，什么都不写入。
 	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
 	// 上传一个主题包（zip，至多 8 MiB）并整包安装；包根的 theme.json 的 id 已安装即整体替换（启用状态沿用）。
 	// 包的约束（条目数、展开大小、条目类型与路径、清单字段）见 UploadThemeRequest；任一不满足即 InvalidArgument，
@@ -900,12 +901,13 @@ type AdminServiceHandler interface {
 	DeleteNotifyChannel(context.Context, *connect.Request[v1.DeleteNotifyChannelRequest]) (*connect.Response[v1.DeleteNotifyChannelResponse], error)
 	// 向已保存的渠道同步发送测试消息；不可重试失败返回 FailedPrecondition，可重试返回 Unavailable，文本为错误原文。
 	TestNotifyChannel(context.Context, *connect.Request[v1.TestNotifyChannelRequest]) (*connect.Response[v1.TestNotifyChannelResponse], error)
-	// 公开页设置（总闸与外观）、国家查询与备份设置；外观在总闸开启时经 PublicService.GetSite 对外下发。
+	// 公开页设置（总闸与外观）、国家查询、备份与登录通知设置；外观在总闸开启时经 PublicService.GetSite 对外下发。
 	GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error)
 	// 两层备份的成功时刻与当前进程观察到的故障；不返回目标凭据或远端错误原文。
 	GetBackupStatus(context.Context, *connect.Request[v1.GetBackupStatusRequest]) (*connect.Response[v1.GetBackupStatusResponse], error)
-	// 按组更新设置（分组与判定见 Settings）：给出的外观整体替换，给出的总闸、国家查询项与 backup 写入，缺席的组不变；回显
-	// hub 实际保存的设置。一组都没给出、或任一项不合约束即 InvalidArgument，错误写明字段、约束与期望取值，什么都不写入。
+	// 按组更新设置（分组与判定见 Settings）：给出的外观整体替换，给出的总闸、国家查询项、backup 与 login_notify 写入，
+	// 缺席的组不变；回显 hub 实际保存的设置。一组都没给出、或任一项不合约束即 InvalidArgument，错误写明字段、约束与
+	// 期望取值，什么都不写入。
 	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
 	// 上传一个主题包（zip，至多 8 MiB）并整包安装；包根的 theme.json 的 id 已安装即整体替换（启用状态沿用）。
 	// 包的约束（条目数、展开大小、条目类型与路径、清单字段）见 UploadThemeRequest；任一不满足即 InvalidArgument，

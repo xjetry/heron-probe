@@ -10,7 +10,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// 备份字符串项的字节上限与渠道个数上限。service.go 的 maxSettingsBody 由这些常量推出解码预算，改这里即改预算。
+// 备份字符串项的字节上限（渠道个数上限见 maxNotifyChannels）。service.go 的 maxSettingsBody 由这些常量推出解码预算，
+// 改这里即改预算。
 const (
 	maxEndpointBytes  = 2048
 	maxBucketBytes    = 63
@@ -18,8 +19,6 @@ const (
 	maxAccessKeyBytes = 128
 	maxSecretBytes    = 4096
 	maxPrefixBytes    = 512
-	// maxBackupChannels 按请求里的原始条数计（含重复），与登录通知渠道同为 16（§6.7、§5.3）。
-	maxBackupChannels = 16
 )
 
 // cleanBackup 校验协议层的约束并构造存储更新；nil 表示请求里没有 backup，存储不动任何备份键。
@@ -65,11 +64,10 @@ func cleanBackup(in *probev1.BackupSettings) (*store.BackupSettingsUpdate, error
 	}
 	update := &store.BackupSettingsUpdate{Endpoint: in.Endpoint, Bucket: in.Bucket, Region: region, AccessKey: in.AccessKey, Secret: in.Secret, Prefix: in.Prefix, ConfigIntervalS: in.ConfigIntervalS, MetricsIntervalS: in.MetricsIntervalS, ConfigKeep: in.ConfigKeep, MetricsKeep: in.MetricsKeep}
 	if n := in.GetNotify(); n != nil {
-		if len(n.ChannelIds) > maxBackupChannels {
-			return nil, invalid("backup.notify.channel_ids must contain at most %d IDs; got %d", maxBackupChannels, len(n.ChannelIds))
+		var err error
+		if update.Channels, err = cleanChannelIDs(store.BackupNotifyList, n.ChannelIds); err != nil {
+			return nil, err
 		}
-		ids := n.ChannelIds
-		update.Channels = &ids
 	}
 	return update, nil
 }

@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	"github.com/xjetry/probe/internal/hub/store"
 )
 
 func validSettings() *probev1.Settings {
@@ -89,9 +90,10 @@ func TestUpdateSettingsValidatesTitleThemeAndAccent(t *testing.T) {
 func TestUpdateSettingsCleansTitleAndAccentAndEchoes(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	// 总闸、国家查询两项与 backup 没有提交，回显的是从未保存过时的值；后端回显夹具装配的 HTTP 后端。
+	// 总闸、国家查询两项、backup 与 login_notify 没有提交，回显的是从未保存过时的值（login_notify 关闭即空 message）；
+	// 后端回显夹具装配的 HTTP 后端。
 	want := &probev1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef", PublicEnabled: proto.Bool(true), GeoEnabled: proto.Bool(false), GeoUrl: proto.String("https://ipinfo.io/{ip}/country"),
-		GeoBackend: probev1.GeoBackend_GEO_BACKEND_HTTP}
+		GeoBackend: probev1.GeoBackend_GEO_BACKEND_HTTP, LoginNotify: &probev1.LoginNotify{}}
 	want.Backup = defaultBackup()
 	if got := saveSettings(t, h, &probev1.Settings{Title: " ‮\x07运行状态 \t", Theme: "light", AccentColor: "#AbCdEf"}); !proto.Equal(got, want) {
 		t.Fatalf("echo = %v, want %v", got, want)
@@ -123,7 +125,7 @@ func TestTitleAndNodeNameCleanAlike(t *testing.T) {
 	}
 }
 
-const noGroup = "settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, the country lookup (geo_enabled, geo_url), or backup"
+const noGroup = "settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, the country lookup (geo_enabled, geo_url), backup, or login_notify"
 
 // UpdateSettings 按组判定、各组彼此独立：外观五项任一非空即算给出并整体校验，所以只带 title 的请求报 theme 的错；
 // 只带国家查询两项之一、只带总闸或只带备份（部分项或全部项）的请求照常保存，其余各组原样保留；一组都没给出（含整个 settings 缺失）的请求被拒并
@@ -177,6 +179,7 @@ func TestUpdateSettingsEveryFieldIsClassified(t *testing.T) {
 			t.Errorf("classified field %s is not in Settings", name)
 		}
 	}
+	channel := saveChannel(t, h, webhook("https://hooks.example/classified")).Id
 	appearance := map[protoreflect.Name]string{"title": "新标题", "theme": "light", "accent_color": "#abcdef", "logo": "data:image/png;base64,iVBORw0KGgo=", "custom_css": "a{}"}
 	type sample struct{ in, echo func(*probev1.Settings) }
 	presence := map[protoreflect.Name]sample{
@@ -187,6 +190,7 @@ func TestUpdateSettingsEveryFieldIsClassified(t *testing.T) {
 			in:   func(s *probev1.Settings) { s.Backup = &probev1.BackupSettings{ConfigKeep: proto.Uint32(24)} },
 			echo: func(s *probev1.Settings) { s.Backup.ConfigKeep = proto.Uint32(24) },
 		},
+		"login_notify": {in: func(s *probev1.Settings) { s.LoginNotify = &probev1.LoginNotify{ChannelIds: []int64{channel}} }},
 	}
 	for i := range fields.Len() {
 		fd := fields.Get(i)
@@ -345,7 +349,7 @@ var (
 )
 
 // worstCaseSettings 是满额设置按 encoding/json 默认写法编码的最坏请求体（service.go 的 maxSettingsBody 写了推导），渠道 ID 由
-// 调用方给出：它们存不存在决定这次保存能否写入。logo 取 longestLogo；标题、CSS 与备份的 secret 用控制字符填满，
+// 调用方给出、同时填进备份通知与登录通知两个列表：它们存不存在决定这次保存能否写入。logo 取 longestLogo；标题、CSS 与备份的 secret 用控制字符填满，
 // json.Marshal 把每个控制字符写成 6 字节的 \u00XX，标题的控制字符清洗后不计入 64 个字符，所以这仍是合法的设置；服务
 // 地址、endpoint、区域、access key 与前缀不收控制字符，用 < 或 & 填满，json.Marshal 按 HTML 安全规则把它们同样写成
 // 6 字节；bucket 取最长；明暗取最长的值，总闸、国家查询开关与 has_secret 取较长的 false，四个数值取各自的上限；本地库路径是回显字段，
@@ -366,6 +370,7 @@ func worstCaseSettings(t *testing.T, channelIDs []string) []byte {
 			"config_interval_s": 86400, "metrics_interval_s": 604800, "config_keep": 1000, "metrics_keep": 1000,
 			"notify": map[string]any{"channel_ids": channelIDs}, "has_secret": false,
 		},
+		"login_notify": map[string]any{"channel_ids": channelIDs},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -374,10 +379,15 @@ func worstCaseSettings(t *testing.T, channelIDs []string) []byte {
 	floor := len(logo) + 6*maxCSSBytes + 6*maxTitleBytes + 6*(len(worstGeoURL)-len(worstGeoPrefix)) + 6*maxMMDBPathBytes +
 		6*(len(worstEndpoint)-len(worstEndpointPrefix)+maxRegionBytes+maxAccessKeyBytes+maxSecretBytes+maxPrefixBytes)
 	for _, id := range channelIDs {
-		floor += len(id) + len(`"",`)
+		floor += 2 * (len(id) + len(`"",`))
 	}
 	if len(body) < floor {
 		t.Fatalf("request is %d bytes, below the %d bytes of its fields at their budgeted worst case", len(body), floor)
+	}
+	// 4 KiB 只留给明暗、主色、开关、数值、字段名与 JSON 语法。最坏请求实际只用掉其中很少一部分，漏掉的内容项会被余量
+	// 吞下、请求照样装得下，所以单独核对：各字段的内容由各自的预算项装下，不挤占这 4 KiB。
+	if floor > maxSettingsBody-4<<10 {
+		t.Fatalf("field contents of the worst case need %d bytes; maxSettingsBody leaves %d outside the 4 KiB syntax allowance", floor, maxSettingsBody-4<<10)
 	}
 	t.Logf("worst-case request: %d bytes, logo %d bytes, budget %d", len(body), len(logo), maxSettingsBody)
 	return body
@@ -402,16 +412,16 @@ func postUpdateSettings(t *testing.T, h *harness, body []byte) (int, string) {
 
 // 解码预算不够时，connect 在方法体之前就以 ResourceExhausted 拒绝，校验根本到不了。解码预算装得下满额设置在最坏转义下
 // 的 JSON（worstCaseSettings）。渠道取满额个数的已存在渠道，这次保存才能写入；它们的 ID 很短，满额长度的 ID 由
-// TestUpdateSettingsBudgetFitsFullBackupWithWorstCaseEscaping 覆盖。connect 丢弃不认识的字段，保存后总闸、国家查询两项与
-// 备份各项确实变成请求里的值，才说明它们按字段被解码、这是一份全字段的设置；查询开关从未保存过时就是 false，所以先把
-// 它打开。
+// TestUpdateSettingsBudgetFitsFullBackupWithWorstCaseEscaping 覆盖。connect 丢弃不认识的字段，保存后总闸、国家查询两项、
+// 备份各项与登录通知渠道确实变成请求里的值，才说明它们按字段被解码、这是一份全字段的设置；查询开关从未保存过时就是
+// false，所以先把它打开。
 func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	saveSettings(t, h, &probev1.Settings{Theme: "auto", GeoEnabled: proto.Bool(true)})
 	var ids []int64
 	var idTexts []string
-	for i := range maxBackupChannels {
+	for i := range maxNotifyChannels {
 		id := saveChannel(t, h, webhook(fmt.Sprintf("https://hooks.example/%d", i))).Id
 		ids = append(ids, id)
 		idTexts = append(idTexts, fmt.Sprint(id))
@@ -434,6 +444,9 @@ func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T)
 		t.Fatalf("backup in the worst-case request was not applied: endpoint=%.40q prefix=%.40q secret %d bytes, metrics %ds/%d, channels %v",
 			b.Target.Endpoint, b.Prefix, len(b.Target.Secret), b.MetricsIntervalS, b.MetricsKeep, b.Channels)
 	}
+	if !slices.Equal(st.LoginChannelIDs, ids) {
+		t.Fatalf("login_notify in the worst-case request was not applied: %v, want %v", st.LoginChannelIDs, ids)
+	}
 }
 
 func TestGetStorageStatsMatchesTheStore(t *testing.T) {
@@ -454,5 +467,22 @@ func TestGetStorageStatsMatchesTheStore(t *testing.T) {
 	}
 	if resp.Msg.GetDbBytes() == 0 || len(names) != len(counts) || !slices.IsSorted(names) || counts["node"] != 1 {
 		t.Fatalf("stats = %v, store = %v", resp.Msg, counts)
+	}
+}
+
+// store.NotifyLists 是全部通知渠道选择列表；api 为每个列表登记请求里的字段路径（notifyListFields），解码预算按
+// notifyListCount 个列表留份额。两边都不能与登记表脱节：漏登记路径的列表报错时点不出字段；少算列表的预算差额眼下藏在
+// 表达式末尾的余量里，预算用例看不出来，只有这里能看出来。
+func TestNotifyListsHaveRequestFields(t *testing.T) {
+	for _, l := range store.NotifyLists {
+		if notifyListFields[l.List] == "" {
+			t.Errorf("notify list %s has no request field path in notifyListFields", l.List)
+		}
+	}
+	if len(notifyListFields) != len(store.NotifyLists) {
+		t.Errorf("notifyListFields registers %d lists; store.NotifyLists has %d", len(notifyListFields), len(store.NotifyLists))
+	}
+	if notifyListCount != len(store.NotifyLists) {
+		t.Errorf("the decode budget counts notifyListCount = %d lists; store.NotifyLists has %d", notifyListCount, len(store.NotifyLists))
 	}
 }

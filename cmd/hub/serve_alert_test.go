@@ -65,7 +65,8 @@ func alertReceiver(t *testing.T) (string, <-chan string) {
 	return srv.URL, bodies
 }
 
-func awaitDelivered(t *testing.T, client probev1connect.AdminServiceClient, bodies <-chan string, timeout time.Duration) {
+// awaitDelivered 等唯一一条事件带着 transition 送达：库里记成已送达，接收端也收到了同一 transition 的正文。
+func awaitDelivered(t *testing.T, client probev1connect.AdminServiceClient, bodies <-chan string, transition string, timeout time.Duration) {
 	t.Helper()
 	started := time.Now()
 	deadline := time.NewTimer(timeout)
@@ -79,25 +80,25 @@ func awaitDelivered(t *testing.T, client probev1connect.AdminServiceClient, bodi
 		}
 		if len(events.Msg.Events) == 1 {
 			ev := events.Msg.Events[0]
-			if ev.Transition == "firing" && len(ev.Deliveries) == 1 && ev.Deliveries[0].Ok {
+			if ev.Transition == transition && len(ev.Deliveries) == 1 && ev.Deliveries[0].Ok {
 				select {
 				case body := <-bodies:
 					var payload struct {
 						Transition string `json:"transition"`
 					}
-					if err := json.Unmarshal([]byte(body), &payload); err != nil || payload.Transition != "firing" {
+					if err := json.Unmarshal([]byte(body), &payload); err != nil || payload.Transition != transition {
 						t.Fatalf("webhook body=%s err=%v", body, err)
 					}
 				default:
 					t.Fatal("delivery marked ok without webhook body")
 				}
-				t.Logf("firing delivered after %s", time.Since(started))
+				t.Logf("%s delivered after %s", transition, time.Since(started))
 				return
 			}
 		}
 		select {
 		case <-deadline.C:
-			t.Fatalf("firing was not delivered within %s: %v", timeout, events.Msg)
+			t.Fatalf("%s was not delivered within %s: %v", transition, timeout, events.Msg)
 		case <-ticker.C:
 		}
 	}
@@ -120,7 +121,7 @@ func TestServeDeliversOfflineAlerts(t *testing.T) {
 	}
 	// 节点要先过 PROBE_OFFLINE_AFTER（minTTL），再赶上 OfflineSweepEvery 的巡检才会投递。
 	// 上界只覆盖这两段之后的挂死，不把“多久内必须送达”当成被测性质。
-	awaitDelivered(t, client, bodies, minTTL+alert.OfflineSweepEvery+testwait.Bound)
+	awaitDelivered(t, client, bodies, "firing", minTTL+alert.OfflineSweepEvery+testwait.Bound)
 }
 
 func seedAlertChannel(t *testing.T, st *store.Store, url string) (int64, int64) {
@@ -150,7 +151,7 @@ func TestServeRequeuesPendingNotifications(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	awaitDelivered(t, client, bodies, testwait.Bound)
+	awaitDelivered(t, client, bodies, "firing", testwait.Bound)
 }
 
 func TestServeEvaluatesProbeAlerts(t *testing.T) {
@@ -173,7 +174,7 @@ func TestServeEvaluatesProbeAlerts(t *testing.T) {
 	})
 	// 墙钟固定，评估分钟由它决定；真实计时器只提供 3.001s 等待。
 	// 首次读钟与测试线程拨钟没有同步点，拨钟可能让协程等下一分钟，所以不推进墙钟。
-	awaitDelivered(t, client, bodies, testwait.Bound)
+	awaitDelivered(t, client, bodies, "firing", testwait.Bound)
 }
 
 func TestServePrunesAlertEvents(t *testing.T) {

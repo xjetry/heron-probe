@@ -110,7 +110,7 @@ func TestServeBackupUploadsAndDeliversRecovery(t *testing.T) {
 		}
 	}
 	waitStatus(false)
-	awaitDelivered(t, client, bodies, testwait.Bound)
+	awaitDelivered(t, client, bodies, "backup_failed", testwait.Bound)
 	mu.Lock()
 	fail = false
 	mu.Unlock()
@@ -118,7 +118,7 @@ func TestServeBackupUploadsAndDeliversRecovery(t *testing.T) {
 	waitStatus(true)
 	select {
 	case body := <-bodies:
-		if !strings.Contains(body, "recovered") || !strings.Contains(body, "已恢复") {
+		if !strings.Contains(body, `"transition":"backup_recovered"`) || !strings.Contains(body, `"kind":"backup"`) || !strings.Contains(body, "已恢复") {
 			t.Fatalf("recovery webhook=%s", body)
 		}
 	case <-time.After(testwait.Bound):

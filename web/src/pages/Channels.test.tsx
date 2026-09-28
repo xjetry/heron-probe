@@ -2,8 +2,10 @@ import { expect, it, vi } from "vitest";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
 import { ConnectError, Code } from "@connectrpc/connect";
-import { ChannelKind, ListNotifyChannelsResponseSchema, type SaveNotifyChannelRequest } from "../gen/probe/v1/admin_pb";
+import { ChannelKind, ListNotifyChannelsResponseSchema, type SaveNotifyChannelRequest, type UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
+import { MAX_NOTIFY_CHANNELS } from "../lib/alerts";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
+import { statefulHub } from "../test/settingsHub";
 import { Channels } from "./Channels";
 
 const channels = create(ListNotifyChannelsResponseSchema, { channels: [
@@ -11,7 +13,134 @@ const channels = create(ListNotifyChannelsResponseSchema, { channels: [
   { id: 2n, name: "hook", kind: ChannelKind.WEBHOOK, webhook: { method: "POST", hasUrl: true, urlHost: "https://hooks.example", headerNames: ["Authorization"], bodyTemplate: "{{.Summary}}" }, createdAt: 1_700_000_000n, ratePerMinute: 0 },
 ] });
 const routes = [{ path: "/channels", Component: Channels }];
-const render = (impl: AdminImpl) => renderWithAdmin({ listNotifyChannels: async () => channels, ...impl }, routes, "/channels");
+const render = (impl: AdminImpl) => renderWithAdmin({ listNotifyChannels: async () => channels, getSettings: async () => ({ settings: { theme: "dark", title: "站点", loginNotify: { channelIds: [2n] } } }), ...impl }, routes, "/channels");
+
+it("登录通知读取选择且只提交通知字段，空集合可关闭", async () => {
+  const sent: UpdateSettingsRequest[] = [];
+  render({ updateSettings: async (r) => { sent.push(r); return { settings: r.settings }; } });
+  const f = within(await screen.findByRole("form", { name: "登录通知" }));
+  expect([f.getByLabelText("tg（#1）"), f.getByLabelText("hook（#2）")].map((c) => (c as HTMLInputElement).checked)).toEqual([false, true]);
+  fireEvent.click(f.getByLabelText("tg（#1）"));
+  fireEvent.click(f.getByRole("button", { name: "保存登录通知" }));
+  await waitFor(() => expect(sent.map((r) => ({ title: r.settings?.title, theme: r.settings?.theme, ids: r.settings?.loginNotify?.channelIds }))).toEqual([{ title: "", theme: "", ids: [1n, 2n] }]));
+  await waitFor(() => expect(f.getByRole("button", { name: "保存登录通知" })).toBeEnabled());
+  fireEvent.click(f.getByLabelText("tg（#1）"));
+  fireEvent.click(f.getByLabelText("hook（#2）"));
+  fireEvent.click(f.getByRole("button", { name: "保存登录通知" }));
+  await waitFor(() => expect(sent[1]?.settings?.loginNotify?.channelIds).toEqual([]));
+});
+
+// 登录通知表单与其余设置表单一样经 useAdoptSavedSettings：保存后的刷新失败时，缓存里已是 hub 的回显，重新进入页面
+// 显示刚保存的选择；请求只带 login_notify 这一组，hub 照常保存，外观不变。
+it("登录通知保存后刷新失败，重新进入页面时显示刚保存的渠道", async () => {
+  const hub = statefulHub({ title: "站点", theme: "dark", loginNotify: { channelIds: [2n] } });
+  const { router } = renderWithAdmin({ ...hub.impl, listNotifyChannels: async () => channels }, [...routes, { path: "/elsewhere", Component: () => null }], "/channels");
+  const f = within(await screen.findByRole("form", { name: "登录通知" }));
+  hub.failReads();
+  fireEvent.click(f.getByLabelText("tg（#1）"));
+  fireEvent.click(f.getByRole("button", { name: "保存登录通知" }));
+  expect(await f.findByRole("status")).toHaveTextContent("登录通知已保存");
+  expect(hub.state()).toMatchObject({ title: "站点", theme: "dark", loginNotify: { channelIds: [1n, 2n] } });
+  await act(() => router.navigate("/elsewhere"));
+  await act(() => router.navigate("/channels"));
+  const again = within(await screen.findByRole("form", { name: "登录通知" }));
+  expect([again.getByLabelText("tg（#1）"), again.getByLabelText("hook（#2）")].map((c) => (c as HTMLInputElement).checked)).toEqual([true, true]);
+});
+
+// 点开删除确认，取出确认旁的提示后取消。
+async function deleteNoteOf(name: string) {
+  fireEvent.click(await screen.findByRole("button", { name: `删除 ${name}` }));
+  const cell = screen.getByRole("button", { name: `确认删除 ${name}` }).closest("td")!;
+  const note = cell.querySelector(".muted")?.textContent ?? null;
+  fireEvent.click(within(cell).getByRole("button", { name: `取消删除 ${name}` }));
+  return note;
+}
+
+it("删除登录通知唯一的接收渠道时，确认写明登录通知会关闭；不在列表里的渠道不提示", async () => {
+  render({});
+  expect([await deleteNoteOf("hook（#2）"), await deleteNoteOf("tg（#1）")]).toEqual(["它是登录通知唯一的接收渠道，删除后登录通知关闭。", null]);
+});
+
+// 删渠道成功后要重读设置：hub 在同一事务里把它从登录通知列表摘除，面板若沿用删之前的设置，剩下那个渠道的确认会
+// 少算"唯一接收渠道"这一条后果。重读完成的信号是确认按钮恢复可用：删除在途时它禁用（ConfirmDelete 的 pending），
+// remove 的 onSuccess 等列表与设置都重新拉取完才返回，在途一直持续到那时。删除之后的设置读取先挂起，钉住"重读期间
+// 仍在途"：在途若不覆盖重读，按钮在放行前就可用，用户这时点确认读到的是旧提示。放行后等按钮可用，读一次提示即可，
+// 不在 waitFor 里反复点开取消——那样失败时要等满超时才红。
+it("删掉一个登录通知渠道后，剩下那个的删除确认按重读的设置写明是唯一接收渠道", async () => {
+  let listed = channels.channels;
+  let loginIds = [1n, 2n];
+  let reread: Promise<void> = Promise.resolve();
+  let release = () => {};
+  render({
+    listNotifyChannels: async () => ({ channels: listed }),
+    getSettings: async () => {
+      await reread;
+      return { settings: { theme: "dark", loginNotify: { channelIds: loginIds } } };
+    },
+    deleteNotifyChannel: async (r) => {
+      listed = listed.filter((c) => c.id !== r.id);
+      loginIds = loginIds.filter((id) => id !== r.id);
+      reread = new Promise((done) => { release = done; });
+      return {};
+    },
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "删除 tg（#1）" }));
+  fireEvent.click(screen.getByRole("button", { name: "确认删除 tg（#1）" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "删除 tg（#1）" })).toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: "删除 hook（#2）" }));
+  const confirm = screen.getByRole("button", { name: "确认删除 hook（#2）" });
+  expect(confirm).toBeDisabled();
+  release();
+  await waitFor(() => expect(confirm).toBeEnabled());
+  expect(confirm.closest("td")!.querySelector(".muted")?.textContent).toBe("它是登录通知唯一的接收渠道，删除后登录通知关闭。");
+});
+
+// 备份失败通知与登录通知同为设置里的渠道列表，删除确认按同一份逻辑逐个列表写明影响。
+it("删除确认逐个列表写明影响：备份失败通知唯一的渠道、两个列表都含的渠道", async () => {
+  render({ getSettings: async () => ({ settings: { theme: "dark", loginNotify: { channelIds: [1n, 2n] }, backup: { notify: { channelIds: [1n] } } } }) });
+  expect([await deleteNoteOf("tg（#1）"), await deleteNoteOf("hook（#2）")]).toEqual([
+    "删除后登录通知不再发到这个渠道。它是备份失败通知唯一的接收渠道，删除后备份失败通知关闭。",
+    "删除后登录通知不再发到这个渠道。",
+  ]);
+});
+
+it("删除登录通知的接收渠道之一时，确认写明不再发到它", async () => {
+  render({ getSettings: async () => ({ settings: { theme: "dark", loginNotify: { channelIds: [1n, 2n] } } }) });
+  expect(await deleteNoteOf("tg（#1）")).toBe("删除后登录通知不再发到这个渠道。");
+});
+
+it("设置没读到时删除确认照最坏的情况提醒", async () => {
+  render({ getSettings: async () => { throw new ConnectError("settings unavailable", Code.Unavailable); } });
+  await screen.findByText(/settings unavailable/);
+  expect(await deleteNoteOf("tg（#1）")).toBe("通知设置未读到：它若是登录通知或备份失败通知的接收渠道，删除后不再发到它。");
+});
+
+it("登录通知选满上限后未选的渠道不可再选", async () => {
+  const many = create(ListNotifyChannelsResponseSchema, { channels: Array.from({ length: MAX_NOTIFY_CHANNELS + 1 }, (_, i) => (
+    { id: BigInt(i + 1), name: `c${i + 1}`, kind: ChannelKind.TELEGRAM, telegram: { chatId: "42", hasBotToken: true }, createdAt: 1_700_000_000n }
+  )) });
+  const chosen = Array.from({ length: MAX_NOTIFY_CHANNELS }, (_, i) => BigInt(i + 1));
+  render({ listNotifyChannels: async () => many, getSettings: async () => ({ settings: { theme: "dark", loginNotify: { channelIds: chosen } } }) });
+  const f = within(await screen.findByRole("form", { name: "登录通知" }));
+  const last = `c${MAX_NOTIFY_CHANNELS + 1}（#${MAX_NOTIFY_CHANNELS + 1}）`;
+  expect(f.getByLabelText(last)).toBeDisabled();
+  expect(f.getByLabelText("c1（#1）")).toBeEnabled();
+  expect(f.getByText(`最多选 ${MAX_NOTIFY_CHANNELS} 个渠道`)).toBeInTheDocument();
+  fireEvent.click(f.getByLabelText("c1（#1）"));
+  expect(f.getByLabelText(last)).toBeEnabled();
+});
+
+it("登录通知保存中禁用选择，失败显示错误并保留草稿", async () => {
+  let reject!: (err: Error) => void;
+  render({ updateSettings: () => new Promise((_resolve, r) => { reject = r; }) });
+  const f = within(await screen.findByRole("form", { name: "登录通知" }));
+  fireEvent.click(f.getByLabelText("tg（#1）"));
+  fireEvent.click(f.getByRole("button", { name: "保存登录通知" }));
+  await waitFor(() => expect(f.getByLabelText("tg（#1）")).toBeDisabled());
+  await act(async () => { reject(new ConnectError("channel 1 does not exist", Code.InvalidArgument)); });
+  await f.findByRole("alert");
+  expect({ error: f.getByRole("alert").textContent, checked: (f.getByLabelText("tg（#1）") as HTMLInputElement).checked }).toEqual({ error: "channel 1 does not exist", checked: true });
+});
 
 it("渠道刷新失败保留同一编辑表单与草稿", async () => {
   let fail = false;

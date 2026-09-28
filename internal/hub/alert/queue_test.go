@@ -322,6 +322,32 @@ func TestQueueMessageUsesCurrentNamesAndHistoricalSummary(t *testing.T) {
 	}
 }
 
+// 系统事件的标签与种类按 transition 给出：0/0 只说明事件不属于任何规则×节点，同为 0/0 的系统事件有登录与备份
+// 两种。表外的 transition 即使是 0/0 也不冒充系统事件，退回规则事件的编号标签。
+func TestQueueMessageKindFollowsTransition(t *testing.T) {
+	f := newFixture(t)
+	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, f.log)
+	for _, c := range []struct {
+		transition       store.Transition
+		rule, node, kind string
+	}{
+		{store.TransitionLoginSuccess, "系统事件", "Hub", "login"},
+		{store.TransitionLoginLocked, "系统事件", "Hub", "login"},
+		{store.TransitionBackupFailed, "系统事件", "Hub", "backup"},
+		{store.TransitionBackupRecovered, "系统事件", "Hub", "backup"},
+		{store.TransitionBackupDisabled, "系统事件", "Hub", "backup"},
+		{"unlisted_system", "规则 #0", "节点 #0", ""},
+	} {
+		m, err := q.message(t.Context(), store.DeliveryBatch{Events: []store.AlertEvent{{Transition: c.transition, At: f.clk.Now()}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.Rule != c.rule || m.Node != c.node || m.Kind != c.kind {
+			t.Errorf("0/0 event with transition %q: rule=%q node=%q kind=%q, want %q %q %q", c.transition, m.Rule, m.Node, m.Kind, c.rule, c.node, c.kind)
+		}
+	}
+}
+
 func TestQueueRealSleepCanBeCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

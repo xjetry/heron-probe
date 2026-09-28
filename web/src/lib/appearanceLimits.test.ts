@@ -5,12 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { LOGO_TYPES, MAX_CSS_BYTES, MAX_LOGO_BYTES, MAX_TITLE_BYTES, MAX_TITLE_CHARS, THEMES, sizeProblems } from "./appearance";
-import { MAX_BACKUP_CHANNELS } from "./backup";
-
-it("备份通知上限与 hub 一致", () => {
-  const go = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../../internal/hub/api/backup_settings.go"), "utf8");
-  expect(MAX_BACKUP_CHANNELS).toBe(Number(go.match(/\bmaxBackupChannels\s*=\s*(\d+)/)?.[1]));
-});
+import { MAX_NOTIFY_CHANNELS } from "./alerts";
 
 const settingsGo = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../../internal/hub/api/settings.go"), "utf8");
 
@@ -34,6 +29,7 @@ it("上限与取值和 hub 的 settings.go 一致", () => {
   expect(MAX_CSS_BYTES).toBe(goConst("maxCSSBytes"));
   expect([...THEMES]).toEqual(goStrings("themes"));
   expect([...LOGO_TYPES]).toEqual(goStrings("logoTypes"));
+  expect(MAX_NOTIFY_CHANNELS).toBe(goConst("maxNotifyChannels"));
 });
 
 it("大小按 UTF-8 字节计，恰在上限时不报", () => {

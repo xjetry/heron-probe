@@ -115,7 +115,7 @@ func TestConfigUploadBudgetFollowsObjectSize(t *testing.T) {
 func TestStatusShowsPersistedMarkerBeforeFirstTick(t *testing.T) {
 	m, clk, objects, sink := setup(t)
 	start := clk.Now()
-	if _, err := m.st.RecordBackupEvent(t.Context(), store.TransitionFiring, "config 层备份失败（upload）", start); err != nil {
+	if _, err := m.st.RecordBackupEvent(t.Context(), store.TransitionBackupFailed, "config 层备份失败（upload）", start); err != nil {
 		t.Fatal(err)
 	}
 	clk.Advance(time.Hour)
@@ -139,7 +139,7 @@ func TestCorruptMarkerNotifiesOnceWithoutBlockingMetrics(t *testing.T) {
 				}
 			}
 			s, err := m.Status(t.Context())
-			if err != nil || s.Config.Failure != "marker" || !s.Config.Since.Equal(start) || len(sink.events) != 1 || sink.events[0].Transition != store.TransitionFiring {
+			if err != nil || s.Config.Failure != "marker" || !s.Config.Since.Equal(start) || len(sink.events) != 1 || sink.events[0].Transition != store.TransitionBackupFailed {
 				t.Fatalf("corrupt marker not notified as config failure: status=%+v err=%v events=%v", s, err, sink.events)
 			}
 			if !hasKey(objects, "tenant/metrics/") || s.Metrics.LastSuccess.IsZero() {
@@ -155,7 +155,7 @@ func TestCorruptMarkerNotifiesOnceWithoutBlockingMetrics(t *testing.T) {
 			tick(t, m)
 			if recovers {
 				got := status(t, m).Config
-				if got.Failure != "" || !got.LastSuccess.Equal(clk.Now()) || len(sink.events) != 2 || sink.events[1].Transition != store.TransitionRecovered {
+				if got.Failure != "" || !got.LastSuccess.Equal(clk.Now()) || len(sink.events) != 2 || sink.events[1].Transition != store.TransitionBackupRecovered {
 					t.Fatalf("repaired marker did not let config run and recover: status=%+v events=%v", got, sink.events)
 				}
 				return
@@ -205,7 +205,7 @@ func TestDisableEndsFailureTracking(t *testing.T) {
 			}
 			if notified {
 				closing := sink.events[1]
-				if closing.Transition != store.TransitionDisabled || !strings.Contains(closing.Summary, "停用") || len(closing.Deliveries) != 1 || events[0].Transition != store.TransitionDisabled {
+				if closing.Transition != store.TransitionBackupDisabled || !strings.Contains(closing.Summary, "停用") || len(closing.Deliveries) != 1 || events[0].Transition != store.TransitionBackupDisabled {
 					t.Errorf("closing event=%+v persisted=%+v", closing, events[0])
 				}
 			}
@@ -309,7 +309,7 @@ func TestStartupFailureNotifiesAndRetries(t *testing.T) {
 	clk.Advance(time.Second)
 	tick(t, m)
 	s = status(t, m)
-	if _, err := os.Stat(stale); !os.IsNotExist(err) || s.Config.Failure != "" || s.Metrics.LastSuccess.IsZero() || len(sink.events) != 2 || sink.events[1].Transition != store.TransitionRecovered {
+	if _, err := os.Stat(stale); !os.IsNotExist(err) || s.Config.Failure != "" || s.Metrics.LastSuccess.IsZero() || len(sink.events) != 2 || sink.events[1].Transition != store.TransitionBackupRecovered {
 		t.Errorf("startup retry did not clean and recover: stat=%v status=%+v events=%v", err, s, sink.events)
 	}
 }

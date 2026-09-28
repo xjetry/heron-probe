@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"sync"
 	"testing"
+	"time"
 )
 
 // locked 不回收别的来源：被登录门拒绝的请求在 mu 写锁下调它，扫表会让持锁时长随表大小增长。
@@ -24,6 +25,28 @@ func TestFailureLockCheckLeavesReclamationToRecord(t *testing.T) {
 	tr.record(fresh, failWindow)
 	if len(tr.m) != 1 || tr.m[fresh] == nil {
 		t.Fatalf("record kept an expired source: %v", tr.m)
+	}
+}
+
+// 只有设下锁定的那次 record 报告 true。锁定期间的调用返回的次数仍等于上限，报告必须是 false；
+// 锁定到期后重新累计满上限，下一次锁定再报告一次。登录的锁定通知按这个报告发送。
+func TestFailureRecordReportsOnlyTheCallThatSetsTheLock(t *testing.T) {
+	tr := newFailureTracker(failLimit, failWindow)
+	from := netip.MustParseAddr("203.0.113.1")
+	var now time.Duration
+	for lock := range 2 {
+		for i := 1; i <= failLimit; i++ {
+			count, newlyLocked := tr.record(from, now)
+			if count != i || newlyLocked != (i == failLimit) {
+				t.Fatalf("lock %d, failure %d: record = (%d, %v), want (%d, %v)", lock, i, count, newlyLocked, i, i == failLimit)
+			}
+		}
+		for _, during := range []time.Duration{0, time.Second, failWindow - time.Nanosecond} {
+			if count, newlyLocked := tr.record(from, now+during); count != failLimit || newlyLocked {
+				t.Fatalf("lock %d: record %v into the lock = (%d, %v), want (%d, false)", lock, during, count, newlyLocked, failLimit)
+			}
+		}
+		now += failWindow
 	}
 }
 
