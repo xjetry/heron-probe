@@ -117,6 +117,9 @@ func (a *Auth) Login(ctx context.Context, password string, from netip.Addr) (str
 	if newlyLocked {
 		// 锁定也通知：密码猜测尚未成功时就让管理员得知。newlyLocked 原样取自 failureTracker.record，它只在
 		// 设下锁定的那次调用报告 true，所以每次锁定只通知一次。
+		// 通知在 verifyLoginPassword 返回之后发，门此时已由它的 defer 放开。通知写库经 store 的单写协程，最长
+		// 等 loginNotifyTimeout；这段时间若计入持门时间，并发到达的登录会更多地得到忙碌拒绝，合法管理员在猜测
+		// 洪水里更难进门。
 		a.notifyLogin(ctx, store.TransitionLoginLocked, fmt.Sprintf("登录失败达到锁定阈值：来源 %s（密码）", from))
 	}
 	if err != nil {
@@ -137,10 +140,14 @@ func (a *Auth) Login(ctx context.Context, password string, from netip.Addr) (str
 	return plain, nil
 }
 
+// loginNotifyTimeout 是登录通知写库的期限。通知不在登录门内，写库慢只拖住发起这次登录的请求自己，
+// 不拖住别的登录；期限防止写协程卡住时这个请求无限期挂着。
+const loginNotifyTimeout = 5 * time.Second
+
 // 只在密码登录入口调用，不在会话/API token 鉴权中调用：自动化轮询不是一次人工登录，不应刷屏。
 // 会话或锁定已经生效后，请求断开不能取消记账；写入有期限，失败记录日志且不伪报身份判定失败。
 func (a *Auth) notifyLogin(ctx context.Context, transition store.Transition, summary string) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), loginNotifyTimeout)
 	defer cancel()
 	ev, err := a.store.RecordLoginEvent(ctx, store.AlertEvent{Transition: transition, At: a.clk.Now(), Summary: summary})
 	if err != nil {

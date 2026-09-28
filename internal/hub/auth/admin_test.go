@@ -412,6 +412,81 @@ func TestLockedSourceReachingRecordDoesNotNotifyAgain(t *testing.T) {
 	}
 }
 
+// 锁定通知在门外发：停在达到阈值那次失败的通知步骤上时，另一来源的一次校验立即得到 ErrBadPassword，
+// 而不是 ErrLoginBusy。暂停点是 Auth 的墙钟读取：门内只读单调时钟，这条路径上第一次读墙钟就是通知
+// 取事件时刻，它先于通知写库。
+func TestLockNotificationIsOutsideGate(t *testing.T) {
+	a, st, clk := setup(t)
+	ctx := context.Background()
+	selectLoginChannel(t, st)
+	if err := st.SetAdminPassword(ctx, cheapPHC(goodPassword)); err != nil {
+		t.Fatal(err)
+	}
+	from, other := netip.MustParseAddr("192.0.2.1"), netip.MustParseAddr("192.0.2.2")
+	for range failLimit - 1 {
+		if _, err := a.Login(ctx, "wrong password here", from); !errors.Is(err, ErrBadPassword) {
+			t.Fatal(err)
+		}
+	}
+	gate := &observationClock{Fake: clk, entered: make(chan struct{}), release: make(chan struct{})}
+	gate.block.Store(true)
+	a.clk = gate
+	release := sync.OnceFunc(func() { close(gate.release) })
+	defer release()
+	done := make(chan error, 1)
+	go func() {
+		_, err := a.Login(ctx, "wrong password here", from)
+		done <- err
+	}()
+	select {
+	case <-gate.entered:
+	case <-time.After(testwait.Bound):
+		t.Fatal("the threshold failure never reached the lock notification")
+	}
+	otherDone := make(chan error, 1)
+	go func() {
+		_, err := a.Login(ctx, "wrong password here", other)
+		otherDone <- err
+	}()
+	select {
+	case err := <-otherDone:
+		if !errors.Is(err, ErrBadPassword) {
+			t.Errorf("another source while the lock notification is in progress: %v, want ErrBadPassword", err)
+		}
+	case <-time.After(testwait.Bound):
+		release()
+		<-otherDone
+		t.Error("another source waited for the lock notification")
+	}
+	release()
+	if err := <-done; !errors.Is(err, ErrBadPassword) {
+		t.Fatalf("threshold failure: %v, want ErrBadPassword", err)
+	}
+	if evs := lockEvents(t, st); len(evs) != 1 {
+		t.Fatalf("lock notifications: %+v, want one", evs)
+	}
+}
+
+// 没设管理员时登录一律失败，失败照常计数；猜满上限同样锁定并通知一条：有人在对一个还没设密码的 hub
+// 反复尝试，运维者同样要知道。
+func TestLockWithoutAdminNotifies(t *testing.T) {
+	a, st, _ := setup(t)
+	ctx := context.Background()
+	selectLoginChannel(t, st)
+	from := netip.MustParseAddr("192.0.2.3")
+	for i := 1; i <= failLimit; i++ {
+		if _, err := a.Login(ctx, goodPassword, from); !errors.Is(err, ErrNoAdmin) {
+			t.Fatalf("attempt %d without an admin: %v, want ErrNoAdmin", i, err)
+		}
+	}
+	if _, err := a.Login(ctx, goodPassword, from); !errors.Is(err, ErrLocked) {
+		t.Fatalf("after %d failures without an admin: %v, want ErrLocked", failLimit, err)
+	}
+	if evs := lockEvents(t, st); len(evs) != 1 {
+		t.Fatalf("lock notifications without an admin: %+v, want one", evs)
+	}
+}
+
 func TestPasswordChangeDuringLoginDoesNotIssueSession(t *testing.T) {
 	a, st, clk := setup(t)
 	ctx := context.Background()
