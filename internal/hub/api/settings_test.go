@@ -397,6 +397,9 @@ func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T)
 	body := worstCaseSettings(t, idTexts)
 	// 请求长度独立于 Handler 的上限变量；上限少算一字节时，同一请求必须被拒。
 	// 空白不改变字段值，恰好达到预算仍须成功保存，证明读取上限包含等号。
+	if len(body) > budgetTotal() {
+		t.Fatalf("full settings body=%d exceeds budget=%d", len(body), budgetTotal())
+	}
 	body = append(body, bytes.Repeat([]byte(" "), budgetTotal()-len(body))...)
 	if status, b := postUpdateSettings(t, h, body); status != http.StatusOK {
 		t.Fatalf("full settings escaped worst case: %d %s", status, b)
