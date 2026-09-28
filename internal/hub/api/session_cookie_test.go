@@ -147,9 +147,16 @@ func TestManyForgedSessionCookiesDoNotCrowdOutValidOne(t *testing.T) {
 }
 
 // 同一行里别的 cookie 语法不合（无名 cookie、带引号的 JSON、非 ASCII 值、名字不是 token、未闭合的引号）或个数
-// 超过 net/http 解析器的 3000 上限，都不能连带丢掉会话。前五种是实测中 Chromium 或 WebKit 会把兄弟主机写的
-// cookie 与会话放进同一行发出的形状（WebKit 不发无名 cookie；未闭合的引号 WebKit 排在会话之前）。切分只按分号，
-// 不认引号：按引号配对切分时，前面的未闭合引号会把会话吞进它的值里。
+// 超过 net/http 解析器的 3000 上限，都不能连带丢掉会话。前五种是 Chromium 148.0.7778.96 或 WebKit 26.4 实测会把
+// 兄弟主机写的 cookie 与会话放进同一行发出的形状（WebKit 不发无名 cookie）。
+//
+// 切分只按分号、不认引号：按引号配对切分时，排在会话前面的未闭合引号会把会话吞进它的值里。它排在前还是后，在上面
+// 两个浏览器版本上实测如下。会话是 host-only、Path=/，q="x 由兄弟主机写在父域上，会话与 q="x 的写入先后、q="x 的
+// Path 为 / 或更长各取两种：
+//   - WebKit：四种组合都把 q="x 排在会话之前。
+//   - Chromium：q="x 的 Path 更长或比会话先写入时排在前；只有同为 Path=/ 且晚于会话写入时排在后。
+//
+// Path 由写 cookie 的兄弟主机决定，给更长的 Path 就能在两种浏览器里都排到会话前面。
 func TestMalformedNeighbourCookiesDoNotHideSession(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
