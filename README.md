@@ -280,7 +280,7 @@ sudo systemctl restart probe-agent   # OpenRC：rc-service probe-agent restart�
 
 - 默认拒绝的目标：本机（`127.0.0.0/8`、`::1`、`0.0.0.0/8`、`::`）、链路本地（`169.254.0.0/16`，含云厂商的 metadata 地址 `169.254.169.254`；`fe80::/10`）、组播与广播。检查的是解析之后实际要连的地址，用域名绕不过去。被拒的任务在面板上显示为错误，写明地址和命中的前缀。
 - 规则按最长前缀匹配；前缀一样长时，本地规则优先于默认规则。前缀必须写成规范形式（`10.0.0.0/8`，不能写 `10.1.2.3/8`）；同一前缀不能同时出现在两个列表里。
-- 连 hub 必须用 https。只有 hub 地址是回环 IP（`127.0.0.1`、`[::1]`）时才允许 http；其他情况用 http 要显式放行，放行后节点 token 和指标会以明文传输。首次安装时加 `--insecure-http`；已经用 http 部署的节点升级之后会拒绝启动，这时执行 `sudo probe-agent configure --insecure-http=true` 并重启服务（或重跑安装脚本并加 `--insecure-http`）。
+- 连 hub 必须用 https，例外与 `--insecure-http` 的含义见上面「安装 agent」。不重跑安装脚本、只修正已部署节点时：`sudo probe-agent configure --insecure-http=true`，再重启服务。
 
 ## 许可
 
