@@ -634,7 +634,7 @@ describe("Nodes", () => {
       expect(select).toHaveValue("");
       fireEvent.change(select, { target: { value: currency } });
       fireEvent.change(screen.getByLabelText("周期 a（#1）"), { target: { value: String(BillingCycle.YEARLY) } });
-      fireEvent.change(screen.getByLabelText("到期日 a（#1）"), { target: { value: "2027-01-31" } });
+      fireEvent.change(screen.getByLabelText("到期日 a（#1）", { selector: "input" }), { target: { value: "2027-01-31" } });
       fireEvent.click(screen.getByLabelText("自动续期 a（#1）"));
       expect(select).toHaveValue(currency);
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -671,13 +671,13 @@ describe("Nodes", () => {
         price: (screen.getByLabelText("价格 a（#1）") as HTMLInputElement).value,
         currency: (screen.getByLabelText("币种 a（#1）") as HTMLSelectElement).value,
         cycle: (screen.getByLabelText("周期 a（#1）") as HTMLSelectElement).value,
-        expiresOn: (screen.getByLabelText("到期日 a（#1）") as HTMLInputElement).value,
+        expiresOn: (screen.getByLabelText("到期日 a（#1）", { selector: "input" }) as HTMLInputElement).value,
         autoRenew: (screen.getByLabelText("自动续期 a（#1）") as HTMLInputElement).checked,
       }).toEqual({ price: "9", currency: "EUR", cycle: String(BillingCycle.QUARTERLY), expiresOn: "2026-12-01", autoRenew: true });
       fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "" } });
       fireEvent.change(screen.getByLabelText("币种 a（#1）"), { target: { value: "" } });
       fireEvent.change(screen.getByLabelText("周期 a（#1）"), { target: { value: String(BillingCycle.UNSPECIFIED) } });
-      fireEvent.change(screen.getByLabelText("到期日 a（#1）"), { target: { value: "" } });
+      fireEvent.change(screen.getByLabelText("到期日 a（#1）", { selector: "input" }), { target: { value: "" } });
       fireEvent.click(screen.getByLabelText("自动续期 a（#1）"));
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
       await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({
@@ -694,7 +694,7 @@ describe("Nodes", () => {
       fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "abc" } });
       fireEvent.change(screen.getByLabelText("币种 a（#1）"), { target: { value: "USD" } });
       fireEvent.change(screen.getByLabelText("周期 a（#1）"), { target: { value: String(BillingCycle.MONTHLY) } });
-      fireEvent.change(screen.getByLabelText("到期日 a（#1）"), { target: { value: "2030-07-01" } });
+      fireEvent.change(screen.getByLabelText("到期日 a（#1）", { selector: "input" }), { target: { value: "2030-07-01" } });
       fireEvent.click(screen.getByLabelText("自动续期 a（#1）"));
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
       expect(await screen.findByRole("alert")).toHaveTextContent(message);
@@ -703,7 +703,7 @@ describe("Nodes", () => {
         price: (screen.getByLabelText("价格 a（#1）") as HTMLInputElement).value,
         currency: (screen.getByLabelText("币种 a（#1）") as HTMLSelectElement).value,
         cycle: (screen.getByLabelText("周期 a（#1）") as HTMLSelectElement).value,
-        expiresOn: (screen.getByLabelText("到期日 a（#1）") as HTMLInputElement).value,
+        expiresOn: (screen.getByLabelText("到期日 a（#1）", { selector: "input" }) as HTMLInputElement).value,
         autoRenew: (screen.getByLabelText("自动续期 a（#1）") as HTMLInputElement).checked,
       }).toEqual({ price: "abc", currency: "USD", cycle: String(BillingCycle.MONTHLY), expiresOn: "2030-07-01", autoRenew: true });
     });

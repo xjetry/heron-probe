@@ -6,6 +6,7 @@ import { BILLING_CYCLES } from "../lib/billing";
 import { withId } from "../lib/ids";
 import { withTag, withoutTag } from "../lib/tags";
 import { Modal } from "../components/Modal";
+import { DateInput } from "../components/DateInput";
 import { NodeAddresses } from "../components/NodeAddresses";
 import { lookupText, NodeCountry } from "../components/NodeCountry";
 
@@ -99,7 +100,7 @@ function BillingEditor({ label, draft, onChange }: { label: string; draft: Draft
     <label>付款周期<select aria-label={`周期 ${label}`} value={draft.billingCycle} onChange={(e) => onChange({ billingCycle: Number(e.target.value) as BillingCycle })}>
       <option value={BillingCycle.UNSPECIFIED}>无周期</option>{BILLING_CYCLES.map(({ value, label: cycle }) => <option key={value} value={value}>每{cycle}</option>)}
     </select></label>
-    <label>到期日<input type="date" aria-label={`到期日 ${label}`} value={draft.expiresOn} onChange={(e) => onChange({ expiresOn: e.target.value })} /></label>
+    <DateInput label={`到期日 ${label}`} value={draft.expiresOn} onChange={(expiresOn) => onChange({ expiresOn })} />
     <label className="switch-field"><span>自动续期<small>到期后自动按付款周期推后日期</small></span><input type="checkbox" aria-label={`自动续期 ${label}`} checked={draft.autoRenew} onChange={(e) => onChange({ autoRenew: e.target.checked })} /></label>
     <p className="muted">只用于展示与到期提醒。开着自动续期时，到期日过了 hub 按周期推后；需要周期与到期日。</p>
   </div>;

@@ -163,6 +163,12 @@
 .switch-field input:checked::before { background: var(--card); transform: translateX(14px); }
 .admin-shell .billing-edit { min-width: 0; gap: 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .billing-edit .switch-field { grid-column: 1 / -1; }
+.date-field { display: grid; gap: .25rem; min-width: 0; }
+.date-input { position: relative; display: grid; grid-template-columns: minmax(4.5rem, 1.5fr) repeat(2, minmax(3rem, 1fr)) auto auto; align-items: end; gap: .25rem; }
+.date-input label { min-width: 0; font-size: .85rem; }
+.admin-shell .date-input label input { width: 100%; padding: .65rem .4rem; text-align: center; font-variant-numeric: tabular-nums; }
+.admin-shell .date-input .icon-button { width: 28px; height: 40px; }
+.admin-shell .date-input .date-picker-native { position: absolute; bottom: 0; left: 0; width: 1px; height: 1px; min-height: 0; padding: 0; opacity: 0; pointer-events: none; }
 .admin-shell .tags-edit { min-width: 0; }
 .tags-input-row { display: flex; gap: 8px; }
 .tags-input-row input { flex: 1; }
