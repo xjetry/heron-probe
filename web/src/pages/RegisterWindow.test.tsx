@@ -7,7 +7,7 @@ import { renderWithAdmin } from "../test/harness";
 import { InstallCommands, RegisterWindow } from "./RegisterWindow";
 import { AdminService, GetSnapshotResponseSchema, ListNodesResponseSchema } from "../gen/heron/v1/admin_pb";
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); window.getSelection()?.removeAllRanges(); });
 
 const snapshotOf = (hubVersion: string) => async () => ({ now: 1n, reportIntervalMs: 4000, nodes: [], hubVersion });
 const renderOpen = (hubVersion: string) =>
@@ -18,6 +18,37 @@ const renderOpen = (hubVersion: string) =>
   }, [{ path: "/register", Component: RegisterWindow }], "/register");
 
 describe("RegisterWindow", () => {
+  it.each(["curl", "wget"])("一键复制完整的 %s 安装命令并独立反馈", async (tool) => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(<InstallCommands hubVersion="v1.2.3" origin="http://hub.example:8080" registerKey="copy-test-key" />);
+    fireEvent.click(screen.getByRole("button", { name: `复制 ${tool} 命令` }));
+    const prefix = tool === "curl" ? "curl -fsSL" : "wget -qO-";
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${prefix} https://github.com/xjetry/heron-probe/releases/download/v1.2.3/install.sh | sh -s -- --hub http://hub.example:8080 --key copy-test-key --insecure-http`));
+    await waitFor(() => expect(screen.getByRole("button", { name: `复制 ${tool} 命令` })).toHaveTextContent("已复制"));
+    expect(screen.getByRole("button", { name: `复制 ${tool === "curl" ? "wget" : "curl"} 命令` })).toHaveTextContent("复制");
+  });
+
+  it.each(["missing", "rejected"])("剪贴板 %s 时提示并选中完整命令", async (failure) => {
+    vi.stubGlobal("navigator", failure === "missing" ? {} : { clipboard: { writeText: async () => { throw new Error("denied"); } } });
+    render(<InstallCommands hubVersion="v1.2.3" origin="https://hub.example" registerKey="copy-test-key" />);
+    fireEvent.click(screen.getByRole("button", { name: "复制 wget 命令" }));
+    expect(await screen.findByText("复制失败，请手动选择")).toBeInTheDocument();
+    expect(window.getSelection()?.toString()).toBe("wget -qO- https://github.com/xjetry/heron-probe/releases/download/v1.2.3/install.sh | sh -s -- --hub https://hub.example --key copy-test-key");
+  });
+
+  it.each(["copied", "failed"])("命令变化后忽略旧复制请求迟到的 %s 结果", async (result) => {
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve, reject) => { finish = () => result === "copied" ? resolve() : reject(new Error("denied")); });
+    vi.stubGlobal("navigator", { clipboard: { writeText: () => pending } });
+    const { rerender } = render(<InstallCommands hubVersion="v1.2.3" origin="https://hub.example" registerKey="old-key" />);
+    fireEvent.click(screen.getByRole("button", { name: "复制 curl 命令" }));
+    rerender(<InstallCommands hubVersion="v1.2.4" origin="https://hub.example" registerKey="new-key" />);
+    await act(async () => finish());
+    expect(screen.getByRole("button", { name: "复制 curl 命令" })).toHaveTextContent(/^复制$/);
+    expect(screen.queryByText("复制失败，请手动选择")).not.toBeInTheDocument();
+    expect(window.getSelection()?.toString()).toBe("");
+  });
   it.each(["open", "close"])("%s 只失效注册窗口，不标脏其他查询", async (operation) => {
     let opened = operation === "close";
     const getRegisterWindow = vi.fn(async () => ({ open: opened, expiresAt: 4_000_000_000n, remaining: 3 }));

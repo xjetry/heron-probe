@@ -9,6 +9,32 @@ async function rpc(page: Page, method: string, body: unknown = {}) {
   }, { method, body });
 }
 
+test('注册命令复制与移动端布局', async ({ page, context, browserName }, testInfo) => {
+  await page.goto('/admin/login');
+  await rpc(page, 'Login', { password: 'local-browser-test-password' });
+  await page.goto('/admin/register');
+  await page.getByRole('button', { name: '开启新窗口' }).click();
+  await expect(page.getByLabel('curl 安装命令')).toBeVisible();
+  if (browserName === 'chromium') {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    for (const tool of ['curl', 'wget']) {
+      const command = await page.getByLabel(`${tool} 安装命令`).textContent();
+      await page.getByRole('button', { name: `复制 ${tool} 命令` }).click();
+      await expect(page.getByRole('button', { name: `复制 ${tool} 命令` })).toHaveText('已复制');
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(command);
+    }
+  }
+  await page.screenshot({ path: testInfo.outputPath('register-copy-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 375, height: 812 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
+  await expect(page.getByRole('button', { name: '复制 curl 命令' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '复制 wget 命令' })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('register-copy-mobile.png'), fullPage: true });
+  await page.getByRole('button', { name: '关闭窗口' }).click();
+  await expect(page.getByRole('button', { name: '复制 curl 命令' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '复制 wget 命令' })).toHaveCount(0);
+});
+
 test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', async ({ page, browserName }, testInfo) => {
   const ids: string[] = [];
   await page.emulateMedia({ reducedMotion: 'reduce' });
