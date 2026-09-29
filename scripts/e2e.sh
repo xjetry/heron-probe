@@ -598,14 +598,15 @@ jq -e --arg id "$node1" --arg exp "$soon" '.nodes[] | select(.id == $id) | .bill
 # 在响应之前同步做完，之后再数事件，不与启动扫描赛跑。离线一对加到期的触发，共三条，都已送达。
 [ "$(rpc SaveAlertRule "$(expiry_rule_body "$expiry_rule")")" = 200 ] || { echo "FAIL: SaveAlertRule expiry after restart"; cat "$work/SaveAlertRule.json"; exit 1; }
 [ "$(rpc ListAlertEvents '{}')" = 200 ] || { echo "FAIL: ListAlertEvents after restart"; exit 1; }
-jq -e '(.events | length) == 3 and all(.events[]; any(.deliveries[]; (.ok // false) == true))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: restart changed the alert events (lost, undelivered or fired again)"; cat "$work/ListAlertEvents.json"; exit 1; }
+# 系统事件（登录、认证变更）同样进 alert_event，rule_id 为 0、JSON 里没有 ruleId（§5.3）；这里数的是规则事件，按 ruleId 筛出。
+jq -e '[.events[] | select(.ruleId != null)] | length == 3 and all(.[]; any(.deliveries[]; (.ok // false) == true))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: restart changed the alert events (lost, undelivered or fired again)"; cat "$work/ListAlertEvents.json"; exit 1; }
 # 重启之后续期：60 天后到期，恢复事件送达，文案写新日期。
 later=$(jq -rn 'now + 60 * 86400 | strftime("%Y-%m-%d")')
 [ "$(rpc UpdateNode "$(node_body "$later" false)")" = 200 ] || { echo "FAIL: UpdateNode renewal"; cat "$work/UpdateNode.json"; exit 1; }
 jq -e '.node.billing | .daysLeft >= 59 and .daysLeft <= 60' "$work/UpdateNode.json" > /dev/null || { echo "FAIL: renewed days_left"; cat "$work/UpdateNode.json"; exit 1; }
 wait_alert "$node1" recovered "$wait_expiry_s"
 jq -e --arg n "$node1" --arg exp "$later" '[.events[] | select(.nodeId == $n and .transition == "recovered")][0].summary == "节点 e2e-amd64 到期日已更新为 " + $exp + "（规则 e2e expiry）"' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: expiry recovered summary"; cat "$work/ListAlertEvents.json"; exit 1; }
-jq -e '(.events | length) == 4 and all(.events[]; any(.deliveries[]; (.ok // false) == true))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: alert events after renewal"; cat "$work/ListAlertEvents.json"; exit 1; }
+jq -e '[.events[] | select(.ruleId != null)] | length == 4 and all(.[]; any(.deliveries[]; (.ok // false) == true))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: alert events after renewal"; cat "$work/ListAlertEvents.json"; exit 1; }
 [ "$(rpc ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks after restart"; exit 1; }
 jq -e --arg version "$task_version" --arg icmp "$icmp_task" --arg tcp "$tcp_task" '.version == $version and (.tasks | length) == 2 and all(.tasks[]; (.nodeIds | length) == 2) and ([.tasks[].task.id] | sort) == ([$icmp, $tcp] | sort)' "$work/ListProbeTasks.json" > /dev/null || { echo "FAIL: tasks lost across restart"; cat "$work/ListProbeTasks.json"; exit 1; }
 echo "probe task version after restart: $(jq -r '.version' "$work/ListProbeTasks.json")"
