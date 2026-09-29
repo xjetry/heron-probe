@@ -273,7 +273,7 @@ GOT_SHA256=${GOT_SHA256%% *}
   fail "checksum mismatch for $PKG from $BASE_URL: got ${GOT_SHA256:-nothing}, release $RELEASE_VERSION embeds $WANT_SHA256"
 tar -xzf "$work/$PKG" -C "$work"
 for f in heron-hub heron-hub.service; do
-  [ -f "$work/$f" ] && [ ! -L "$work/$f" ] || fail "package is missing regular file $f"
+  if ! { [ -f "$work/$f" ] && [ ! -L "$work/$f" ]; }; then fail "package is missing regular file $f"; fi
 done
 install -m 0755 "$work/heron-hub" "$BIN_TMP"
 
@@ -433,7 +433,7 @@ done < "$work/merged"
 [ "$db" = /var/lib/heron/heron.db ] || fail 'installed unit must use --db /var/lib/heron/heron.db'
 port=${listen##*:}
 case "$port" in ''|*[!0-9]*) fail "listen address must end in a numeric TCP port: $listen";; esac
-[ "$port" -ge 1 ] && [ "$port" -le 65535 ] || fail "invalid TCP port: $port"
+if ! { [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; }; then fail "invalid TCP port: $port"; fi
 HERON_HUB_EXEC=${EXEC# }
 export HERON_HUB_EXEC
 awk '/^ExecStart=/ { print "ExecStart=" ENVIRON["HERON_HUB_EXEC"]; next } { print }' "$work/heron-hub.service" > "$work/unit"

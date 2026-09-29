@@ -82,7 +82,7 @@ cp "$work/pin.json" "$work/scripts/compat-agent.json"
 export FAIL_DOWNLOAD=1
 rc=0
 "$work/scripts/compat-download.sh" "$work/output" > "$work/result" 2>&1 || rc=$?
-[ "$rc" = 22 ] && [ ! -e "$work/output" ] || { echo "FAIL: failed release download was skipped or left artifacts (exit $rc)" >&2; cat "$work/result" >&2; exit 1; }
+if ! { [ "$rc" = 22 ] && [ ! -e "$work/output" ]; }; then echo "FAIL: failed release download was skipped or left artifacts (exit $rc)" >&2; cat "$work/result" >&2; exit 1; fi
 unset FAIL_DOWNLOAD
 echo "rejected unavailable release: exit $rc"
 

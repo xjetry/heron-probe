@@ -40,7 +40,7 @@ for arch in amd64 arm64; do
   [ "$actual" = "$expected" ] || { echo "FAIL: SHA256 mismatch for $tag/$asset: $actual, expected $expected" >&2; exit 1; }
   # 校验成功之后才解包，且只取固定名称；其它包内路径不能写入输出目录。
   tar -xzf "$out/$asset" -C "$out" heron-agent
-  [ -f "$out/heron-agent" ] && [ ! -L "$out/heron-agent" ] || { echo "FAIL: $asset has no regular heron-agent" >&2; exit 1; }
+  if ! { [ -f "$out/heron-agent" ] && [ ! -L "$out/heron-agent" ]; }; then echo "FAIL: $asset has no regular heron-agent" >&2; exit 1; fi
   mv "$out/heron-agent" "$out/heron-agent-linux-$arch"
   chmod +x "$out/heron-agent-linux-$arch"
   rm "$out/$asset"
