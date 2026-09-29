@@ -186,6 +186,10 @@ verify_unit 'install'
 hub_pids
 case " $pids " in *" $pid "*) ;; *) fail "comm scan did not find the running hub (pid $pid):$pids";; esac
 
+# 升级到 B 用 B 的脚本：脚本只装自己所属的版本，A 的脚本按内嵌的 A 哈希拒绝 B 的包（§5.7），
+# 用它做下面的端口冲突检查会先红在哈希上、走不到端口判定。
+fetch "$base/b/install-hub.sh" /root/install-hub.sh
+
 # 新端口被其它进程占用时，旧服务的同一个 pid 必须仍活着，不能先停服再发现绑定失败。
 systemd-run --unit=pia-port-conflict /usr/local/bin/probe-hub serve --db /root/port-conflict.db --listen 127.0.0.1:8080 --timezone UTC </dev/null
 sleep 1
@@ -198,7 +202,6 @@ grep -q 'port 8080 is already in use' /root/conflict.log || fail 'port conflict 
 systemctl stop pia-port-conflict
 
 # 单元里的参数是持久事实；重跑升级不能恢复成默认值，显式参数才覆盖。
-fetch "$base/b/install-hub.sh" /root/install-hub.sh
 sh /root/install-hub.sh --base-url "$base/b" </dev/null
 [ "$(probe-hub version)" = "$version_b" ] || fail 'upgraded version is not B'
 health 18120
