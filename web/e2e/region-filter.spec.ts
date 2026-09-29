@@ -28,11 +28,13 @@ test('公开页地区多选与家宽标签交集，未知和手机布局', async
     const regions = page.getByRole('group', { name: '按地区筛选' });
     const cards = page.getByRole('article');
     await expect(cards).toHaveCount(6);
-    await expect(regions.getByRole('button')).toHaveText(['HK', 'JP', 'US', '未知']);
-    await expect(regions.getByRole('button', { name: '全部', exact: true })).toHaveCount(0);
+    await expect(regions.getByRole('button')).toHaveText(['全部', 'HK', 'JP', 'US', '未知']);
+    await expect(regions.getByRole('button', { name: '全部', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByText('地区', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('可多选，未选则显示全部地区', { exact: true })).toHaveCount(0);
     await page.getByRole('group', { name: '按标签筛选' }).getByRole('button', { name: '家宽', exact: true }).click();
     await regions.getByRole('button', { name: 'HK', exact: true }).click();
-    await regions.getByRole('button', { name: 'JP', exact: true }).click();
+    await regions.getByRole('button', { name: 'JP', exact: true }).click({ modifiers: ['Shift'] });
     await expect(cards).toHaveCount(2);
     await expect(cards.nth(0)).toHaveAttribute('aria-label', `香港家宽-${browserName}`);
     await expect(cards.nth(1)).toHaveAttribute('aria-label', `日本家宽-${browserName}`);
@@ -41,8 +43,7 @@ test('公开页地区多选与家宽标签交集，未知和手机布局', async
     await page.setViewportSize({ width: 375, height: 812 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
     await page.screenshot({ path: testInfo.outputPath('regions-mobile.png'), fullPage: true });
-    await regions.getByRole('button', { name: 'HK', exact: true }).click();
-    await regions.getByRole('button', { name: 'JP', exact: true }).click();
+    await regions.getByRole('button', { name: '全部', exact: true }).click();
     await expect(cards).toHaveCount(4);
     await regions.getByRole('button', { name: '未知', exact: true }).click();
     await expect(cards).toHaveCount(1);

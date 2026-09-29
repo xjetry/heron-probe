@@ -20,14 +20,19 @@ afterEach(() => vi.useRealTimers());
 it("地区自动去重按代码排序，未知最后；切换只过滤，不改变节点顺序", async () => {
   render();
   await screen.findByRole("article", { name: "us" });
-  expect(region().getAllByRole("button").map((b) => b.textContent)).toEqual(["HK", "JP", "US", "未知"]);
+  expect(region().getAllByRole("button").map((b) => b.textContent)).toEqual(["全部", "HK", "JP", "US", "未知"]);
+  expect(region().getByRole("button", { name: "全部" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.queryByText("地区", { exact: true })).toBeNull();
+  expect(screen.queryByText("可多选，未选则显示全部地区")).toBeNull();
   fireEvent.click(region().getByRole("button", { name: "JP" }));
   expect(shown()).toEqual(["jp-off", "jp-on"]);
   expect(screen.getByText("1 / 2 在线")).toBeInTheDocument();
   expect(region().getByRole("button", { name: "JP" })).toHaveAttribute("aria-pressed", "true");
-  fireEvent.click(region().getByRole("button", { name: "未知" }));
+  fireEvent.click(region().getByRole("button", { name: "未知" }), { shiftKey: true });
   expect(shown()).toEqual(["jp-off", "unknown", "jp-on"]);
   fireEvent.click(region().getByRole("button", { name: "JP" }));
+  expect(shown()).toEqual(["jp-off", "jp-on"]);
+  fireEvent.click(region().getByRole("button", { name: "未知" }));
   expect(shown()).toEqual(["unknown"]);
   fireEvent.click(region().getByRole("button", { name: "未知" }));
   expect(shown()).toEqual(["us", "jp-off", "hk", "unknown", "jp-on"]);
@@ -46,7 +51,7 @@ it("地区与标签、离线、到期排序叠加，分类不随过滤结果消�
   fireEvent.click(region().getByRole("button", { name: "HK" }));
   expect(shown()).toEqual([]);
   expect(screen.getByText("没有符合筛选条件的节点。")).toBeInTheDocument();
-  expect(region().getAllByRole("button")).toHaveLength(4);
+  expect(region().getAllByRole("button")).toHaveLength(5);
 });
 
 it("未知节点探测成功后分类更新，已消失的选择回到全部且不会隐式恢复", async () => {
@@ -59,7 +64,7 @@ it("未知节点探测成功后分类更新，已消失的选择回到全部且�
   await act(async () => vi.advanceTimersByTimeAsync(POLL_MS + 100));
   expect(region().queryByRole("button", { name: "未知" })).toBeNull();
   expect(region().getByRole("button", { name: "CA" })).toBeInTheDocument();
-  expect(region().getAllByRole("button").every((button) => button.getAttribute("aria-pressed") === "false")).toBe(true);
+  expect(region().getByRole("button", { name: "全部" })).toHaveAttribute("aria-pressed", "true");
   current = nodes;
   await act(async () => vi.advanceTimersByTimeAsync(POLL_MS + 100));
   expect(region().getByRole("button", { name: "未知" })).toHaveAttribute("aria-pressed", "false");
@@ -84,9 +89,8 @@ it("家宽标签与香港日本地区取交集，地区之间取并集", async (
   await screen.findByRole("article", { name: "香港家宽" });
   fireEvent.click(within(screen.getByRole("group", { name: "按标签筛选" })).getByRole("button", { name: "家宽" }));
   fireEvent.click(region().getByRole("button", { name: "HK" }));
-  fireEvent.click(region().getByRole("button", { name: "JP" }));
+  fireEvent.click(region().getByRole("button", { name: "JP" }), { shiftKey: true });
   expect(shown()).toEqual(["香港家宽", "日本家宽"]);
-  fireEvent.click(region().getByRole("button", { name: "HK" }));
-  fireEvent.click(region().getByRole("button", { name: "JP" }));
+  fireEvent.click(region().getByRole("button", { name: "全部" }));
   expect(shown()).toEqual(["香港家宽", "日本家宽", "美国家宽"]);
 });

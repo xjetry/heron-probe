@@ -8,8 +8,8 @@ import { PublicService, type PublicNode } from "../gen/heron/v1/public_pb";
 import { expired, expiryText, priceText, sortByExpiry } from "../lib/billing";
 import { ago, bytes, duration, percent } from "../lib/format";
 import { POLL_MS } from "../lib/poll";
-import { matchesTags, nextSelection, sameTag } from "../lib/tags";
-import { TagBar } from "./TagBar";
+import { matchesTags, sameTag } from "../lib/tags";
+import { FilterBar } from "./FilterBar";
 import { ViewOptions } from "./ViewOptions";
 
 export function PublicOverview() {
@@ -44,12 +44,8 @@ export function PublicOverview() {
       {gate.banner}
       {all.length > 0 && (
         <div className="view-bar">
-          <div className="region-filter" role="group" aria-label="按地区筛选">
-            <span className="filter-label">地区</span>
-            {regions.map((region) => <button key={region} type="button" className="chip" aria-pressed={effectiveRegions.includes(region)} onClick={() => setSelectedRegions(effectiveRegions.includes(region) ? effectiveRegions.filter((value) => value !== region) : [...effectiveRegions, region])}>{region || "未知"}</button>)}
-            <span className="muted region-hint">可多选，未选则显示全部地区</span>
-          </div>
-          {tags.length > 0 && <TagBar tags={tags} selected={effective} onSelect={(t, shift) => setSelected(nextSelection(effective, t, shift))} onClear={() => setSelected([])} />}
+          <FilterBar label="按地区筛选" options={regions.map((value) => ({ value, label: value || "未知" }))} selected={effectiveRegions} onChange={setSelectedRegions} />
+          {tags.length > 0 && <FilterBar label="按标签筛选" options={tags.map((value) => ({ value, label: value }))} selected={effective} onChange={setSelected} />}
           <ViewOptions offlineOnly={offlineOnly} byExpiry={byExpiry} onOfflineOnly={setOfflineOnly} onByExpiry={setByExpiry} />
         </div>
       )}
