@@ -285,3 +285,45 @@ func TestPublicSnapshotCarriesTagsOfPublicNodesOnly(t *testing.T) {
 		t.Fatalf("private node's tag leaked into the public snapshot: %s", raw.body)
 	}
 }
+
+// PublicSnapshot.tags 是公开节点标签的并集，顺序与 ListTags 相同（按 name_fold）：公开页的标签栏照它渲染，
+// 页面不复刻 TagFold。名字选成码元序与折叠序不同的一组（'Z' < '_' < 'a'，而折叠后 "ALPHA" < "ZETA" < "_X"），
+// 按码元排序的实现在这里红；私有节点独有的标签不在其中。
+func TestPublicSnapshotTagsFollowTagFoldOrder(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	p1, _ := h.createNode(t, "p1")
+	p2, _ := h.createNode(t, "p2")
+	priv, _ := h.createNode(t, "priv")
+	for _, u := range []struct {
+		id     int64
+		name   string
+		public bool
+		tags   []string
+	}{{p1, "p1", true, []string{"Zeta", "_x"}}, {p2, "p2", true, []string{"alpha", "Zeta"}}, {priv, "priv", false, []string{"secret", "alpha"}}} {
+		if _, err := updateTags(t, h, u.id, u.name, u.public, u.tags...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resp, err := h.publicClient().GetSnapshot(t.Context(), connect.NewRequest(&probev1.PublicServiceGetSnapshotRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := resp.Msg.GetTags(), []string{"alpha", "Zeta", "_x"}; !slices.Equal(got, want) {
+		t.Fatalf("snapshot tags = %q, want %q", got, want)
+	}
+	// 与管理端同一顺序：ListTags 去掉只挂在私有节点上的 secret 后，应与快照逐项相同。
+	all, err := h.admin.ListTags(t.Context(), connect.NewRequest(&probev1.ListTagsRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var admin []string
+	for _, tg := range all.Msg.GetTags() {
+		if tg.GetName() != "secret" {
+			admin = append(admin, tg.GetName())
+		}
+	}
+	if !slices.Equal(resp.Msg.GetTags(), admin) {
+		t.Fatalf("snapshot tags = %q, ListTags order = %q", resp.Msg.GetTags(), admin)
+	}
+}

@@ -894,3 +894,17 @@ describe("Nodes", () => {
     });
   });
 });
+
+it("编辑公开节点时提示标签对访客可见，取消公开即不再提示", async () => {
+  renderNodes({ listNodes: async () => ({ nodes: two }) });
+  await screen.findByRole("link", { name: "a（#1）" });
+  fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+  const box = screen.getByLabelText("公开 a（#1）") as HTMLInputElement;
+  const hint = "公开节点的标签在公开页对访客可见。";
+  expect(box.checked).toBe(false);
+  expect(screen.queryByText(hint)).toBeNull();
+  fireEvent.click(box);
+  expect(screen.getByText(hint)).toBeInTheDocument();
+  fireEvent.click(box);
+  expect(screen.queryByText(hint)).toBeNull();
+});

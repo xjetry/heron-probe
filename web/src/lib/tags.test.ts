@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchesTags, nextSelection, presentTags, sameTag, withTag, withoutTag } from "./tags";
+import { matchesTags, nextSelection, sameTag, withTag, withoutTag } from "./tags";
 
 describe("tags", () => {
   it.each([
@@ -54,14 +54,6 @@ describe("tags", () => {
       expect(matchesTags(["db"], ["web", "db"])).toBe(false);
       expect(matchesTags(["DB"], ["db"])).toBe(true);
       expect(matchesTags([], ["db"])).toBe(false);
-    });
-  });
-
-  describe("presentTags", () => {
-    it("跨节点按折叠去重，保留先出现的写法，按码元序排序", () => {
-      expect(presentTags([{ tags: ["web", "db"] }, { tags: ["DB", "cache"] }, { tags: [] }])).toEqual(["cache", "db", "web"]);
-      expect(presentTags([{ tags: ["DB"] }, { tags: ["db"] }])).toEqual(["DB"]);
-      expect(presentTags([])).toEqual([]);
     });
   });
 });

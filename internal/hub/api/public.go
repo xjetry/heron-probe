@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -262,7 +264,24 @@ func (p *Public) GetSnapshot(ctx context.Context, _ *connect.Request[probev1.Pub
 		}
 		out.Nodes = append(out.Nodes, pn)
 	}
+	out.Tags = unionTags(nodes)
 	return connect.NewResponse(out), nil
+}
+
+// unionTags 是 nodes 各自标签的并集，按 store.TagFold 排序，与 ListTags 的 ORDER BY name_fold 同序：name_fold 就是
+// TagFold 的结果，SQLite 的 BINARY 比较与 Go 的字符串比较都是逐字节比较 UTF-8。同一个标签在 tag 表里只有一行
+// （name_fold 唯一），各节点的 Tags 里写法相同，按折叠键去重不会丢掉另一种写法。
+func unionTags(nodes []store.Node) []string {
+	var out []string
+	for _, n := range nodes {
+		for _, t := range n.Tags {
+			if !slices.ContainsFunc(out, func(o string) bool { return store.TagFold(o) == store.TagFold(t) }) {
+				out = append(out, t)
+			}
+		}
+	}
+	slices.SortFunc(out, func(a, b string) int { return strings.Compare(store.TagFold(a), store.TagFold(b)) })
+	return out
 }
 
 func (p *Public) QueryMetrics(ctx context.Context, req *connect.Request[probev1.QueryMetricsRequest]) (*connect.Response[probev1.QueryMetricsResponse], error) {

@@ -235,7 +235,7 @@ function NodeEditor({ node, hubVersion, knownTags, saving, deleting, rotating, o
           <input aria-label={`手动指定国家 / 地区 ${withId(node.name, node.id)}`} aria-describedby={`country-hint-${node.id}`} placeholder="US" value={draft.countryPin} onChange={(e) => setDraft({ ...draft, countryPin: e.target.value.toUpperCase() })} />
           <p className="muted" id={`country-hint-${node.id}`}>两个字母（ISO 3166-1），优先于查得值；留空用查得值：{node.countryLookup ? lookupText(node) : "尚无查得值"}。</p>
         </td>
-        <td><TagsEditor id={node.id} label={withId(node.name, node.id)} tags={draft.tags} known={knownTags} pending={pendingTag} onPending={setPendingTag} onChange={(tags) => setDraft({ ...draft, tags })} /></td>
+        <td><TagsEditor id={node.id} label={withId(node.name, node.id)} isPublic={draft.public} tags={draft.tags} known={knownTags} pending={pendingTag} onPending={setPendingTag} onChange={(tags) => setDraft({ ...draft, tags })} /></td>
         <td><input aria-label={`备注 ${withId(node.name, node.id)}`} value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></td>
         <td><input type="number" min={1} max={28} aria-label={`重置日 ${withId(node.name, node.id)}`} value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><p className="muted">若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。</p></td>
         <td><input type="number" min={0} aria-label={`离线宽限期（秒） ${withId(node.name, node.id)}`} aria-describedby={`grace-hint-${node.id}`} value={draft.offlineGraceS} onChange={(e) => setDraft({ ...draft, offlineGraceS: e.target.value })} /><p className="muted" id={`grace-hint-${node.id}`}>0 表示取 hub 的 PROBE_OFFLINE_AFTER；非 0 不能小于它。</p></td>
@@ -301,9 +301,9 @@ function BillingSummary({ node }: { node: Node }) {
 }
 
 // 标签可新建：输入已有标签以外的名字即在保存时新建。大小写不敏感，已有的标签沿用先建的写法（由 hub 裁决）；
-// 候选来自标签清单。
-function TagsEditor({ id, label, tags, known, pending, onPending, onChange }: {
-  id: bigint; label: string; tags: readonly string[]; known: readonly Tag[]; pending: string; onPending: (text: string) => void; onChange: (tags: string[]) => void;
+// 候选来自标签清单。公开节点的标签随公开快照对匿名访客可见（PublicNode.tags），按草稿里的公开开关提示，勾选的当下就能看到。
+function TagsEditor({ id, label, isPublic, tags, known, pending, onPending, onChange }: {
+  id: bigint; label: string; isPublic: boolean; tags: readonly string[]; known: readonly Tag[]; pending: string; onPending: (text: string) => void; onChange: (tags: string[]) => void;
 }) {
   const add = () => { onChange(withTag(tags, pending)); onPending(""); };
   return (
@@ -316,6 +316,7 @@ function TagsEditor({ id, label, tags, known, pending, onPending, onChange }: {
       <datalist id={`known-tags-${id}`}>{known.map((t) => <option key={t.name} value={t.name} />)}</datalist>
       <button type="button" className="link" aria-label={`添加标签 ${label}`} onClick={add}>添加</button>
       <p className="muted">大小写不敏感，已有的标签沿用先建的写法；每个节点至多 16 个。</p>
+      {isPublic && <p className="muted">公开节点的标签在公开页对访客可见。</p>}
     </div>
   );
 }

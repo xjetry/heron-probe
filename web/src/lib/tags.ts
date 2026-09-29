@@ -36,10 +36,3 @@ export function matchesTags(nodeTags: readonly string[], selected: readonly stri
   if (selected.length === 0) return true;
   return selected.every((s) => nodeTags.some((t) => sameTag(t, s)));
 }
-
-// 快照里出现过的标签：跨节点按折叠去重、保留先出现的写法，按码元序排序（不用 localeCompare：顺序不随浏览器语言变）。
-export function presentTags(nodes: readonly { tags: readonly string[] }[]): string[] {
-  const out: string[] = [];
-  for (const n of nodes) for (const t of n.tags) if (!out.some((o) => sameTag(o, t))) out.push(t);
-  return out.sort();
-}
