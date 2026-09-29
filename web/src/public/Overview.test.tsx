@@ -120,7 +120,7 @@ it("标签栏：默认显示全部，标签按折叠去重", async () => {
   expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
   expect(chip("全部")).toHaveAttribute("aria-pressed", "true");
   // db 与 DB 是同一个标签：只有一个按钮，保留先出现的写法。
-  expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["全部", "db", "prod", "web"]);
+  expect(within(screen.getByRole("group", { name: "按标签筛选" })).getAllByRole("button").map((b) => b.textContent)).toEqual(["全部", "db", "prod", "web"]);
 });
 
 it("没有任何节点带标签时不画标签栏", async () => {
@@ -169,7 +169,7 @@ it("过滤后没有节点时给出说明，标签栏仍在", async () => {
   fireEvent.click(chip("web"));
   fireEvent.click(chip("db"), { shiftKey: true });
   expect(shown()).toEqual([]);
-  expect(screen.getByText("没有符合所选标签的节点。")).toBeInTheDocument();
+  expect(screen.getByText("没有符合筛选条件的节点。")).toBeInTheDocument();
   expect(chip("web")).toBeInTheDocument();
 });
 
@@ -185,4 +185,77 @@ it("被选中的标签从快照里消失后回到显示全部，而不是留下�
   await waitFor(() => expect(screen.queryByRole("button", { name: "web" })).toBeNull());
   expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
   expect(chip("全部")).toHaveAttribute("aria-pressed", "true");
+});
+
+const due = (daysLeft?: number) => ({ price: "", currency: "", expiresOn: daysLeft === undefined ? "" : "2030-07-01", daysLeft });
+const billed = {
+  now: 1_000n,
+  reportIntervalMs: 4000,
+  nodes: [
+    { id: 1n, name: "a-on-far", online: true, sortOrder: 0, tags: ["prod"], billing: due(30) },
+    { id: 2n, name: "b-off-soon", online: false, sortOrder: 1, tags: ["prod"], billing: due(5) },
+    { id: 3n, name: "c-off-none", online: false, sortOrder: 2, tags: ["dev"] },
+    { id: 4n, name: "d-off-gone", online: false, sortOrder: 3, tags: ["dev"], billing: due(-3) },
+    { id: 5n, name: "e-on-soon", online: true, sortOrder: 4, tags: ["prod"], billing: due(5) },
+  ],
+};
+const renderBilled = () => renderWithService(PublicService, { getSnapshot: async () => billed }, [{ path: "/", Component: PublicOverview }], "/");
+const toggle = (name: string) => screen.getByRole("button", { name });
+
+it("仅离线：只留离线节点，计数按显示的节点算；再点一次恢复全部", async () => {
+  renderBilled();
+  await screen.findByText("2 / 5 在线");
+  expect(toggle("仅离线")).toHaveAttribute("aria-pressed", "false");
+  fireEvent.click(toggle("仅离线"));
+  expect(toggle("仅离线")).toHaveAttribute("aria-pressed", "true");
+  expect(shown()).toEqual(["b-off-soon", "c-off-none", "d-off-gone"]);
+  expect(screen.getByText("0 / 3 在线")).toBeInTheDocument();
+  fireEvent.click(toggle("仅离线"));
+  expect(shown()).toEqual(["a-on-far", "b-off-soon", "c-off-none", "d-off-gone", "e-on-soon"]);
+});
+
+it("没有任何标签时开关照常可用", async () => {
+  renderWithService(PublicService, { getSnapshot: async () => snapshot }, [{ path: "/", Component: PublicOverview }], "/");
+  await screen.findByText("1 / 2 在线");
+  fireEvent.click(toggle("仅离线"));
+  expect(shown()).toEqual(["db-1"]);
+});
+
+it("按到期时间排序：到期早的在前，已过期最前，没有到期日最后，同到期保持面板顺序；关掉恢复面板顺序", async () => {
+  renderBilled();
+  await screen.findByText("2 / 5 在线");
+  expect(toggle("按到期时间排序")).toHaveAttribute("aria-pressed", "false");
+  fireEvent.click(toggle("按到期时间排序"));
+  expect(toggle("按到期时间排序")).toHaveAttribute("aria-pressed", "true");
+  expect(shown()).toEqual(["d-off-gone", "b-off-soon", "e-on-soon", "a-on-far", "c-off-none"]);
+  fireEvent.click(toggle("按到期时间排序"));
+  expect(shown()).toEqual(["a-on-far", "b-off-soon", "c-off-none", "d-off-gone", "e-on-soon"]);
+});
+
+it("标签、仅离线与排序叠加：先取交集再排序", async () => {
+  renderBilled();
+  await screen.findByText("2 / 5 在线");
+  fireEvent.click(chip("prod"));
+  fireEvent.click(toggle("仅离线"));
+  expect(shown()).toEqual(["b-off-soon"]);
+  fireEvent.click(chip("prod"));
+  fireEvent.click(chip("dev"), { shiftKey: true });
+  // 当前恰好只选 prod，再点一次清空回到全部；Shift+dev 在空选择上加入 dev，此刻只选 dev。
+  expect(shown()).toEqual(["c-off-none", "d-off-gone"]);
+  fireEvent.click(toggle("按到期时间排序"));
+  expect(shown()).toEqual(["d-off-gone", "c-off-none"]);
+  fireEvent.click(toggle("仅离线"));
+  expect(shown()).toEqual(["d-off-gone", "c-off-none"]);
+  fireEvent.click(chip("dev"), { shiftKey: true });
+  expect(shown()).toEqual(["d-off-gone", "b-off-soon", "e-on-soon", "a-on-far", "c-off-none"]);
+});
+
+it("筛选条件把节点滤空时给出说明", async () => {
+  renderBilled();
+  await screen.findByText("2 / 5 在线");
+  fireEvent.click(chip("prod"));
+  fireEvent.click(toggle("仅离线"));
+  fireEvent.click(chip("dev"), { shiftKey: true });
+  expect(shown()).toEqual([]);
+  expect(screen.getByText("没有符合筛选条件的节点。")).toBeInTheDocument();
 });

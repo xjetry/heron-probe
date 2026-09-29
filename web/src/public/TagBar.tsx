@@ -8,9 +8,9 @@ export function TagBar({ tags, selected, onSelect, onClear }: {
 }) {
   return (
     <div className="tag-bar" role="group" aria-label="按标签筛选">
-      <button type="button" className="tag-chip" aria-pressed={selected.length === 0} onClick={onClear}>全部</button>
+      <button type="button" className="chip" aria-pressed={selected.length === 0} onClick={onClear}>全部</button>
       {tags.map((t) => (
-        <button key={t} type="button" className="tag-chip" aria-pressed={selected.includes(t)} onClick={(e) => onSelect(t, e.shiftKey)}>{t}</button>
+        <button key={t} type="button" className="chip" aria-pressed={selected.includes(t)} onClick={(e) => onSelect(t, e.shiftKey)}>{t}</button>
       ))}
     </div>
   );

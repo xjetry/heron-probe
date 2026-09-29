@@ -44,3 +44,16 @@ export function expiryText(b: BillingView | undefined): string {
 }
 
 export const expired = (b: BillingView | undefined): boolean => b?.daysLeft !== undefined && b.daysLeft < 0;
+
+// 按到期从早到晚排：已过期的到期最早，排最前；没有到期日、或到期日无法解析（hub 不下发 daysLeft）的排最后。
+// 排序键取 hub 下发的 daysLeft 而不是 expiresOn 字符串：同一次 GetSnapshot 里所有节点的 daysLeft 由同一个 today 算出，
+// 按它排就是按到期日排；无法解析的到期日没有顺序可言，字符串比较会把它按字典序塞进有效日期之间。到期相同的保持传入的
+// 相对顺序（Array.prototype.sort 自 ES2019 起稳定）；不改动传入的数组。
+export function sortByExpiry<T extends { billing?: BillingView }>(nodes: readonly T[]): T[] {
+  const key = (n: T) => n.billing?.daysLeft ?? Infinity;
+  return [...nodes].sort((a, b) => {
+    const ka = key(a);
+    const kb = key(b);
+    return ka === kb ? 0 : ka < kb ? -1 : 1;
+  });
+}
