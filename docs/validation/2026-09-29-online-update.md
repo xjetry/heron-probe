@@ -2,7 +2,7 @@
 
 ## 范围与版本
 
-- 工作树基点：`bac9c75`，本记录与在线更新实现一同提交；尚未发布或部署。
+- 工作树基点：`bac9c75`；在线更新及 systemd 权限修复已随 `v0.3.2` 发布部署，生产结果见末节。
 - 支持 Linux systemd 的 Hub 与 Agent，仅固定官方正式 Release。更新器和服务定义仍由 root 安装器更新。
 - schema 24 保存节点更新授权；快照不包含授权，恢复不会重放旧更新任务。
 - 以下隔离测试使用测试专用版本 `v0.3.0` 至 `v0.6.0`，不代表这些版本已正式发布。
@@ -53,6 +53,17 @@
 - Hub 与 Agent 更新器单元同步修正。`scripts/update-credentials-accept.sh` 加载仓库真实单元，显式恢复 OrbStack 全局覆盖掉的加固；`TestSystemCredentialDrop` 使用产品共享的 `credentials()` 启动子进程，验证非 root UID/GID、清空附加组、无 permitted/effective/ambient capability、继承 `NoNewPrivileges`，且不能切回 root。
 - 相同脚本在 systemd 252（`pia-update-20260929`）与 257（`pia-update257-20260929`）两种角色均退出 0。旧单元先准确失败于降权执行；分别注入 root UID/GID、附加组 0、子进程 ambient `CAP_SETUID`，测试准确失败于对应身份、组、可用 capability 断言。恢复后同命令均通过。
 - 原始日志位于 `build/validation/update-credentials-*`。一次隔离测试出现 `NAMESPACE` 目录不存在；另一次共享文件刚修改后读取到不完整脚本，后续语法检查及重跑通过。这些失败保留，不声称已证明为既有 flake，也不据此修改生产加固。
-- `v0.3.0` tag 的发行流水线因安装器 ShellCheck 规则失败，未创建 Release；保留该 tag，不改写历史。`v0.3.1` 发行与主干 CI 均成功，GitHub latest 与 GHCR latest 已回读；本节权限修复尚待新版本发布与生产在线更新回读。
+- `v0.3.0` tag 的发行流水线因安装器 ShellCheck 规则失败，未创建 Release；保留该 tag，不改写历史。`v0.3.1` 发行与主干 CI 均成功；权限修复随后随 `v0.3.2` 发布。
 - 本轮 `make ci` 完整运行两次均退出 0。审查后仅加强测试完成握手：子进程完成所有断言后输出标记，父测试检查后输出另一个标记，脚本检查本次独立日志，避免 Go 无匹配测试仍退出 0 的假绿。旧测试程序与错误子测试名分别验红，恢复后 systemd 252/257 两角色通过。
 - 本轮审查已实际运行独立 Claude 只读检查与本地安全/正确性复核；无产品修复缺陷，测试假绿发现已关闭。收尾代理受线程限额阻断，receipt 为 `failed`，不称完整审查通过。`Code review: skipped (ce-code-review unavailable)`：技能顶层已终止且无法产生完整 receipt，按不可用路径补人工全 diff 检查。审查记录：`/tmp/compound-engineering-501/ce-code-review/systemd257-20260930`。
+
+## 正式发布与生产在线更新
+
+- `v0.3.2` 对应 `80c81c7218cba68a2015334d194f1afca46dce34`。GitHub Release 流水线 `36596623409`、主干 CI `36596571520` 均成功，GitHub latest 回读为 `v0.3.2`。
+- GHCR `v0.3.2` 与 `latest` 摘要均为 `sha256:b6d79f0152ea033c8a48381442b9bfda3f027de35e61aaf0b91678b985bde3e4`。
+- 两台机器先安装 `v0.3.2` 更新器及修正后的单元，再从真实后台提交主程序 `v0.3.1` 至 `v0.3.2` 的更新；未通过手工替换主程序冒充在线更新。
+- `spartan-seattle` Hub 任务 `203697317e70d6bf21c37b1b42489f07` 回读 `succeeded`。磁盘主程序与 `/proc/613435/exe` 摘要均为 `5f034a1c175ced7a162f783452244efc4be77cc62d6cefa2d4b63771e6c272a0`，版本 `v0.3.2`，服务用户仍为 `heron-hub`。
+- `radonet-kddi` Agent 任务 `c17b778da6dc799abfcfa1a6d7de49ce` 回读 `succeeded`。磁盘主程序与 `/proc/142414/exe` 摘要均为 `6305951143a0ed0cbc9395dd4cf7bb4a53b5d357c76ea1439b2fa4338d28a106`，版本 `v0.3.2`，服务用户仍为 `heron-agent`，快照节点 1 在线。
+- 两台更新器摘要均为 `eeb9660094765b962dd37dbc8794155ffc9aa3b9f53a40b17a905fb9ef4c505e`。正式资产位于本地 `build/validation/readback-v0.3.2/`，已校验发行摘要。
+- Hub 原监听、数据库、时区和可信代理参数保留；未修改 Caddy/CDN。部署备份位于各机 `/var/backups/heron/`，在线更新另保留 previous 与数据库恢复副本。
+- 原始证据：`build/validation/update-production-{hub,agent}-updater.log`、`update-v0.3.2-{hub,agent}-result.log`、`production-updates-v0.3.2.png`。
