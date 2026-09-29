@@ -47,6 +47,10 @@ jobs:
           image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
           platforms: arm64
           cache-image: false
+      # 发布前验证当前 agent 与固定旧版 agent；没有发布基线或下载失败必须阻止发布。
+      - run: make e2e compat-e2e
+        env:
+          E2E_LISTEN_HOST: 0.0.0.0
       # registry 由 Makefile 的 DOCKER_IMAGE 推出，登录与推送不会指向两个不同的 registry。
       - id: registry
         run: |

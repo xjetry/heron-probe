@@ -23,7 +23,7 @@ message Metrics {
   // 内核累计计数器，hub 侧做差分。
   optional uint64 net_rx_total = 12;
   optional uint64 net_tx_total = 13;
-  // agent 自测的瞬时速率，仅供实时视图。
+  // agent 按本地采样间隔测得的 bytes/s；用于实时视图和历史采样峰值。
   optional uint64 net_rx_bps = 14;
   optional uint64 net_tx_bps = 15;
   optional uint32 tcp_conns = 16;
@@ -114,6 +114,8 @@ enum BillingCycle {
   BILLING_CYCLE_BIENNIAL = 5;
   // 36 个月。
   BILLING_CYCLE_TRIENNIAL = 6;
+  // 60 个月。
+  BILLING_CYCLE_QUINQUENNIAL = 7;
 }
 
 // 节点的计费与到期（§9.4）。价格与币种是提醒用的展示值：hub 不汇总、不换算，也不拿它们做任何计算；到期日与周期

@@ -56,6 +56,25 @@ func TestBillingCyclesMapEveryValue(t *testing.T) {
 	}
 }
 
+func TestFiveYearBillingRoundTripsAndRenews(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	id, _ := h.createNode(t, "five-year")
+	request := billed(id, &probev1.Billing{Price: "150", Currency: "TWD", BillingCycle: 7, ExpiresOn: "2024-02-29", AutoRenew: true})
+	request.Public = true
+	n := h.update(t, request)
+	if n.GetBilling().GetBillingCycle() != 7 || n.GetBilling().GetExpiresOn() != "2029-02-28" {
+		t.Fatalf("five-year billing = %v", n.GetBilling())
+	}
+	public, err := h.publicClient().GetSnapshot(t.Context(), connect.NewRequest(&probev1.PublicServiceGetSnapshotRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(public.Msg.Nodes) != 1 || public.Msg.Nodes[0].GetBilling().GetBillingCycle() != 7 || public.Msg.Nodes[0].GetBilling().GetExpiresOn() != "2029-02-28" {
+		t.Fatalf("public five-year billing = %v", public.Msg)
+	}
+}
+
 // 每种不合格的取值都被拒绝，错误以请求路径写明字段、约束与收到的值，库里的计费不变。
 func TestUpdateNodeRejectsMalformedBilling(t *testing.T) {
 	h := newHarness(t, "")
@@ -79,7 +98,7 @@ func TestUpdateNodeRejectsMalformedBilling(t *testing.T) {
 		{&probev1.Billing{Price: "12"}, "billing.currency: required when billing.price is set"},
 		{&probev1.Billing{Currency: "usd"}, `billing.currency: must be three uppercase letters (ISO 4217), e.g. USD; got "usd"`},
 		{&probev1.Billing{Currency: "USDT"}, `billing.currency: must be three uppercase letters (ISO 4217), e.g. USD; got "USDT"`},
-		{&probev1.Billing{BillingCycle: 99}, "billing.billing_cycle: must be one of BILLING_CYCLE_UNSPECIFIED, BILLING_CYCLE_MONTHLY, BILLING_CYCLE_QUARTERLY, BILLING_CYCLE_SEMIANNUAL, BILLING_CYCLE_YEARLY, BILLING_CYCLE_BIENNIAL, BILLING_CYCLE_TRIENNIAL; got 99"},
+		{&probev1.Billing{BillingCycle: 99}, "billing.billing_cycle: must be one of BILLING_CYCLE_UNSPECIFIED, BILLING_CYCLE_MONTHLY, BILLING_CYCLE_QUARTERLY, BILLING_CYCLE_SEMIANNUAL, BILLING_CYCLE_YEARLY, BILLING_CYCLE_BIENNIAL, BILLING_CYCLE_TRIENNIAL, BILLING_CYCLE_QUINQUENNIAL; got 99"},
 		{&probev1.Billing{ExpiresOn: "2026-02-29"}, date + `"2026-02-29"`},
 		{&probev1.Billing{ExpiresOn: "2026-1-05"}, date + `"2026-1-05"`},
 		{&probev1.Billing{ExpiresOn: "2026-10-01T00:00:00Z"}, date + `"2026-10-01T00:00:00Z"`},

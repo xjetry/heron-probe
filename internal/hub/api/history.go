@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -90,7 +91,7 @@ func (h history) metrics(ctx context.Context, m *probev1.QueryMetricsRequest, ma
 	return resp, nil
 }
 
-func (h history) probeSeries(ctx context.Context, m *probev1.QueryProbesRequest, maxPoints int, label taskLabel) (*probev1.QueryProbesResponse, error) {
+func (h history) probeSeries(ctx context.Context, m *probev1.QueryProbesRequest, maxPoints int, label taskLabel, order []uint64) (*probev1.QueryProbesResponse, error) {
 	lv, step := store.ChooseLevel(m.GetFrom(), m.GetTo(), maxPoints)
 	rows, err := h.store.QueryProbes(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), lv, step)
 	if err != nil {
@@ -114,6 +115,22 @@ func (h history) probeSeries(ctx context.Context, m *probev1.QueryProbesRequest,
 		}
 		cur.Samples = append(cur.Samples, sample)
 	}
+	rank := make(map[uint64]int, len(order))
+	for i, id := range order {
+		rank[id] = i
+	}
+	sort.Slice(resp.Series, func(i, j int) bool {
+		a, b := resp.Series[i].TaskId, resp.Series[j].TaskId
+		ra, knownA := rank[a]
+		rb, knownB := rank[b]
+		if knownA != knownB {
+			return knownA
+		}
+		if knownA {
+			return ra < rb
+		}
+		return a < b
+	})
 	return resp, nil
 }
 

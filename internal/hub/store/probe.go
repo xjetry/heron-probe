@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"math"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/hub/metric"
@@ -63,6 +64,7 @@ type ProbeTaskRecord struct {
 	AllNodes     bool
 	NodeIDs      []int64
 	SelectorTags []string
+	SortOrder    int64
 }
 
 // probeCoverage 是"任务覆盖哪些节点"的唯一读法：展开（LoadProbeTasks、SaveProbeTask 的回读、ProbeTaskNodeIDs、
@@ -83,7 +85,7 @@ func (s *Store) LoadProbeTasks(ctx context.Context) (uint64, []ProbeTaskRecord, 
 	if err := tx.QueryRowContext(ctx, "SELECT version FROM probe_meta WHERE id = 1").Scan(&version); err != nil {
 		return 0, nil, err
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT id, kind, target, interval_s, timeout_ms, all_nodes FROM probe_task ORDER BY id")
+	rows, err := tx.QueryContext(ctx, "SELECT id, kind, target, interval_s, timeout_ms, all_nodes, sort_order FROM probe_task ORDER BY sort_order, id")
 	if err != nil {
 		return 0, nil, err
 	}
@@ -92,14 +94,14 @@ func (s *Store) LoadProbeTasks(ctx context.Context) (uint64, []ProbeTaskRecord, 
 	index := map[uint64]int{}
 	for rows.Next() {
 		t := &probev1.ProbeTask{}
-		var id, kind, interval, timeout int64
+		var id, kind, interval, timeout, order int64
 		var all bool
-		if err := rows.Scan(&id, &kind, &t.Target, &interval, &timeout, &all); err != nil {
+		if err := rows.Scan(&id, &kind, &t.Target, &interval, &timeout, &all, &order); err != nil {
 			return 0, nil, err
 		}
 		t.Id, t.Kind, t.IntervalS, t.TimeoutMs = uint64(id), probev1.ProbeKind(kind), uint32(interval), uint32(timeout)
 		index[t.Id] = len(out)
-		out = append(out, ProbeTaskRecord{Task: t, AllNodes: all})
+		out = append(out, ProbeTaskRecord{Task: t, AllNodes: all, SortOrder: order})
 	}
 	if err := rows.Err(); err != nil {
 		return 0, nil, err
@@ -149,7 +151,7 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, selecto
 	var version int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		if saved.Id == 0 {
-			res, err := tx.Exec("INSERT INTO probe_task (kind, target, interval_s, timeout_ms, created_at, all_nodes) VALUES (?, ?, ?, ?, ?, ?)",
+			res, err := tx.Exec("INSERT INTO probe_task (kind, target, interval_s, timeout_ms, created_at, all_nodes, sort_order) SELECT ?, ?, ?, ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1 FROM probe_task",
 				int64(saved.Kind), saved.Target, int64(saved.IntervalS), int64(saved.TimeoutMs), s.clk.Now().Unix(), allNodes)
 			if err != nil {
 				return err
@@ -199,6 +201,9 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, selecto
 		if rec.NodeIDs, err = coveredNodesTx(tx, saved.Id); err != nil {
 			return err
 		}
+		if err := tx.QueryRow("SELECT sort_order FROM probe_task WHERE id = ?", int64(saved.Id)).Scan(&rec.SortOrder); err != nil {
+			return err
+		}
 		v, err := bumpProbeVersion(tx, s.clk.Now().Unix())
 		version = v
 		return err
@@ -211,6 +216,18 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, selecto
 
 func coveredNodesTx(tx *sql.Tx, taskID uint64) ([]int64, error) {
 	return scanIDs(tx.Query(coveredNodesQuery, int64(taskID)))
+}
+
+// ReorderProbeTasks 只改变展示顺序，不改变 agent 的任务配置或版本。
+func (s *Store) ReorderProbeTasks(ctx context.Context, ids []uint64) error {
+	signed := make([]int64, len(ids))
+	for i, id := range ids {
+		if id == 0 || id > math.MaxInt64 {
+			return ErrBadOrder
+		}
+		signed[i] = int64(id)
+	}
+	return s.reorder(ctx, "probe_task", signed)
 }
 
 // DeleteProbeTask 删任务与分配并加版本；历史行不删（§8.3），到期由 prune 清理。

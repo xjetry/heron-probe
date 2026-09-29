@@ -35,6 +35,7 @@ button.danger { color: var(--bad); border-color: var(--bad); }
 .row { display: flex; align-items: baseline; gap: 1rem; }
 form.row, .edit-form .row { align-items: flex-end; flex-wrap: wrap; }
 .detail-header { flex-wrap: wrap; }
+.detail-header h1 { max-width: 100%; overflow-wrap: anywhere; }
 .detail-header nav { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .table-scroll { overflow-x: auto; }
 .node-search { width: min(100%, 28rem); margin: 1rem 0; }
@@ -46,6 +47,33 @@ form.row, .edit-form .row { align-items: flex-end; flex-wrap: wrap; }
 .tag-list { list-style: none; padding: 0; display: grid; gap: .35rem; }
 table.nodes { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
 table.nodes th, table.nodes td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+/* 管理表的自由文本不能决定整张表的宽度；移动端保留每项数据与标签，按节点收拢为卡片。 */
+table.node-management { table-layout: fixed; }
+table.node-management th, table.node-management td { white-space: normal; overflow-wrap: anywhere; vertical-align: top; padding: .5rem; }
+table.node-management th:nth-child(1) { width: 3.5rem; }
+table.node-management th:nth-child(3) { width: 3rem; }
+table.node-management th:nth-child(6) { width: 14%; }
+table.node-management th:nth-child(7), table.node-management th:nth-child(10) { width: 5.5rem; }
+table.node-management th:nth-child(11) { width: 5rem; }
+.node-management td[data-column="order"] button { min-width: 1.2rem; min-height: 2rem; }
+.node-management td[data-column="actions"] button { min-height: 2rem; }
+.node-management input:not([type="checkbox"]), .node-management select, .node-management textarea { width: 100%; min-width: 0; }
+.node-management textarea { min-height: 6rem; resize: vertical; }
+.node-management .tags-edit { min-width: 0; }
+.node-management .billing-edit { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.node-management .tag { max-width: 100%; }
+@media (max-width: 760px) {
+  table.node-management, .node-management tbody { display: block; border: 0; background: none; }
+  .node-management thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .node-management tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 1rem; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+  table.node-management td { min-width: 0; border: 0; }
+  .node-management td::before { content: attr(data-label); display: block; margin-bottom: .2rem; color: var(--muted); font-size: .8rem; }
+  .node-management td[data-column="name"], .node-management td[data-column="note"], .node-management td[data-column="tags"], .node-management td[data-column="billing"], .node-management td[data-column="actions"] { grid-column: 1 / -1; }
+  .node-management td[data-column="name"] { grid-row: 1; font-weight: 600; }
+  .node-management td[data-column="order"] button { min-width: 2.5rem; min-height: 2.5rem; }
+  .node-management td[data-column="actions"] button { margin-right: .75rem; min-height: 2.5rem; }
+  .node-management .billing-edit { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 tr.offline td { color: var(--muted); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 0.5rem; }
 .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }

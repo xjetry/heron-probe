@@ -4,7 +4,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useRetained } from "../api/useRetained";
 import type { QueryMetricsRequestSchema, QueryMetricsResponseSchema, QueryProbesRequestSchema, QueryProbesResponseSchema } from "../gen/probe/v1/query_pb";
 import { lossPercent, rttMeanMs, seriesLabels, taskIdsOf, toProbeAligned, type ProbeValue } from "../lib/probes";
-import { toAligned, unitOf } from "../lib/series";
+import { toAligned, unitOf, type SeriesSelection } from "../lib/series";
 import { Chart } from "./Chart";
 
 const RANGES = [
@@ -15,16 +15,31 @@ const RANGES = [
   { label: "30d", seconds: 30 * 86400 },
 ];
 
-// 每个面板画哪些指标；名字与 hub 的描述表一致，单位随数据来。可加量（字节增量）以速率
-// 作图，单位由面板指定：数据里的 bytes 是一个点内的总和，图上要的是 bytes/s。
-const PANELS: { title: string; names: string[]; unit?: string }[] = [
-  { title: "CPU", names: ["cpu"] },
-  { title: "内存 / 交换", names: ["mem_used", "swap_used"] },
-  { title: "磁盘", names: ["disk_used"] },
-  { title: "负载（1 分钟）", names: ["load1"] },
-  { title: "连接数", names: ["tcp", "udp"] },
-  { title: "进程数", names: ["procs"] },
-  { title: "网络", names: ["rx_bytes", "tx_bytes"], unit: "bytes/s" },
+// 指标名与 hub 的描述表一致；网络均值由累计字节增量除以桶宽，峰值取 agent 已测得的速率，
+// 两者来源不同，不能以均值补峰值。可加量的数据单位是 bytes，图上速率统一指定为 bytes/s。
+const PANELS: { title: string; selections: SeriesSelection[]; unit?: string }[] = [
+  { title: "CPU", selections: [
+    { name: "cpu", value: "mean", label: "CPU 均值" },
+    { name: "cpu", value: "max", label: "CPU 峰值" },
+  ] },
+  { title: "内存 / 交换", selections: [
+    { name: "mem_used", value: "mean", label: "内存均值" },
+    { name: "mem_used", value: "max", label: "内存峰值" },
+    { name: "swap_used", value: "mean", label: "交换均值" },
+  ] },
+  { title: "磁盘", selections: [{ name: "disk_used", value: "mean", label: "已用均值" }] },
+  { title: "负载（1 分钟）", selections: [{ name: "load1", value: "mean", label: "负载均值" }] },
+  { title: "连接数", selections: [
+    { name: "tcp", value: "mean", label: "TCP 均值" },
+    { name: "udp", value: "mean", label: "UDP 均值" },
+  ] },
+  { title: "进程数", selections: [{ name: "procs", value: "mean", label: "进程均值" }] },
+  { title: "网络", unit: "bytes/s", selections: [
+    { name: "rx_bytes", value: "sum-rate", label: "下行均值" },
+    { name: "tx_bytes", value: "sum-rate", label: "上行均值" },
+    { name: "net_rx_bps", value: "max", label: "下行峰值" },
+    { name: "net_tx_bps", value: "max", label: "上行峰值" },
+  ] },
 ];
 
 // 探测图两张：丢包率与 RTT 均值，每个任务一条线。单位不随数据来——探测样本没有 unit 字段，
@@ -66,7 +81,12 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, enabled: boo
   // 这里先取到本地变量，回调里用的是这个已经排除 undefined 的变量，不是再次访问 metrics.data。
   const charts = useMemo(() => {
     const data = metrics.data;
-    return data ? PANELS.map((p) => ({ ...p, data: toAligned(data, p.names, from, to), unit: p.unit ?? unitOf(data, p.names[0]) })) : [];
+    return data ? PANELS.map((p) => ({
+      ...p,
+      labels: p.selections.map((selection) => selection.label),
+      data: toAligned(data, p.selections, from, to),
+      unit: p.unit ?? unitOf(data, p.selections[0].name),
+    })) : [];
   }, [metrics.data, from, to]);
   // 标签随序列下发（任务当前的种类与目标），与数据同一次响应到达，不另查任务列表。
   const probeCharts = useMemo(() => {
@@ -113,11 +133,12 @@ export function HistoryCharts({ history, noProbes }: { history: HistoryState; no
   const { charts, probeCharts, probes } = history;
   return (
     <>
+      {charts.length > 0 && <p className="muted">峰值为每个图表时间桶内已采集样本的最大值，不代表采样间隔内的瞬时最高值；缺少峰值时留空。</p>}
       <div className="grid">
         {charts.map((c) => (
           <div className="card" key={c.title}>
             <h2>{c.title}</h2>
-            <Chart data={c.data} labels={c.names} unit={c.unit} />
+            <Chart data={c.data} labels={c.labels} unit={c.unit} />
           </div>
         ))}
       </div>

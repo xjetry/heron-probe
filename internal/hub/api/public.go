@@ -312,7 +312,7 @@ func (p *Public) QueryProbes(ctx context.Context, req *connect.Request[probev1.Q
 	node := m.GetNodeId()
 	resp, err := p.history.probeSeries(ctx, m, maxPoints, func(id uint64) (probev1.ProbeKind, string, bool) {
 		return p.probes.TargetFor(node, id)
-	})
+	}, p.probes.OrderedIDs())
 	if err != nil {
 		return nil, err
 	}

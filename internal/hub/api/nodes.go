@@ -30,13 +30,14 @@ const (
 
 // billingCycles 是协议枚举与库里周期文本的一一对应，未指定对应"没有周期"；TestBillingCyclesMapEveryValue 按两侧全集核对。
 var billingCycles = map[probev1.BillingCycle]store.BillingCycle{
-	probev1.BillingCycle_BILLING_CYCLE_UNSPECIFIED: store.CycleNone,
-	probev1.BillingCycle_BILLING_CYCLE_MONTHLY:     store.CycleMonthly,
-	probev1.BillingCycle_BILLING_CYCLE_QUARTERLY:   store.CycleQuarterly,
-	probev1.BillingCycle_BILLING_CYCLE_SEMIANNUAL:  store.CycleSemiannual,
-	probev1.BillingCycle_BILLING_CYCLE_YEARLY:      store.CycleYearly,
-	probev1.BillingCycle_BILLING_CYCLE_BIENNIAL:    store.CycleBiennial,
-	probev1.BillingCycle_BILLING_CYCLE_TRIENNIAL:   store.CycleTriennial,
+	probev1.BillingCycle_BILLING_CYCLE_UNSPECIFIED:  store.CycleNone,
+	probev1.BillingCycle_BILLING_CYCLE_MONTHLY:      store.CycleMonthly,
+	probev1.BillingCycle_BILLING_CYCLE_QUARTERLY:    store.CycleQuarterly,
+	probev1.BillingCycle_BILLING_CYCLE_SEMIANNUAL:   store.CycleSemiannual,
+	probev1.BillingCycle_BILLING_CYCLE_YEARLY:       store.CycleYearly,
+	probev1.BillingCycle_BILLING_CYCLE_BIENNIAL:     store.CycleBiennial,
+	probev1.BillingCycle_BILLING_CYCLE_TRIENNIAL:    store.CycleTriennial,
+	probev1.BillingCycle_BILLING_CYCLE_QUINQUENNIAL: store.CycleQuinquennial,
 }
 
 // 价格与币种的形状按 §9.4。RE2 的 \d 只匹配 ASCII 数字，全角数字不算。

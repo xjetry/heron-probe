@@ -144,7 +144,7 @@ message Metrics {
   optional uint64 swap_total = 8;  optional uint64 swap_used = 9;
   optional uint64 disk_total = 10; optional uint64 disk_used = 11;
   optional uint64 net_rx_total = 12; optional uint64 net_tx_total = 13; // 内核累计计数器
-  optional uint64 net_rx_bps = 14;   optional uint64 net_tx_bps = 15;   // agent 自测瞬时速率，仅供实时视图
+  optional uint64 net_rx_bps = 14;   optional uint64 net_tx_bps = 15;   // agent 本地采样速率，用于实时与历史峰值
   optional uint32 tcp_conns = 16;  optional uint32 udp_conns = 17;
   optional uint32 procs = 18;      optional uint64 uptime_s = 19;
 }
@@ -314,6 +314,7 @@ CREATE TABLE metric_1m (
 - hub 在一分钟中途重启时，退出前刷出的半桶与重启后的半桶落在同一主键上，用加法合并（`ON CONFLICT DO UPDATE SET x_sum = x_sum + excluded.x_sum, x_n = x_n + excluded.x_n, x_max = max(x_max, excluded.x_max)`）。这条合并正确的前提是每个内存桶至多成功写入一次：刷出时在 `live` 的锁内"取走并清零"，再交给写协程；写事务失败则该桶留在有界的待重试列表，事务原子性保证失败即未应用，重试不会重复计入。
 - 最大值一路保留到 1h 级，短时尖峰不会被抹平。
 - 流量列是字节增量的**和**（描述表里的 `Sum` 种类）而不是均值：`rx_bytes_n` 记录该分钟有多少次上报入了账——计数器缺失、以及按 §7 只进总量不进桶的增量都不计数，因此 `rx_bytes_n = 0` 与其他列一样是空洞而不是 0。查询对 `Sum` 列下发 `sum`（`MetricSample.sum`）而不下发均值与最大值，速率 = `sum / 桶长`；上卷仍是求和。
+- `net_rx_bps` / `net_tx_bps` 单独使用 `MeanMax` 聚合，记录 agent 本地采样速率（bytes/s）的 sum、n、max；上卷保留最大采样值，不从请求到达间隔推算。网络图均值仍采用上述流量口径，峰值取速率 max。schema 21 给三个指标层追加列，旧行 n=0，不伪造旧历史峰值；配置层和指标层快照恢复同步迁移。
 
 主键顺序即唯一查询路径（某节点 + 时间窗），`WITHOUT ROWID` 使主键索引就是表本身。
 
@@ -408,6 +409,8 @@ agent 默认汇总除回环与虚拟网卡外的全部网卡（Linux：`lo`、`d
 
 探测任务可声明作用于全部节点（`ProbeTaskDetail.all_nodes`，管理端字段；agent 只拿展开后的清单）。语义与 `alert_rule.all_nodes` 完全一致：为真时不存分配行、覆盖全部节点，之后新建的节点自动纳入；为假时空分配集不覆盖任何节点，删掉最后一个分配不放宽——同一形状的开关只有一种语义。每节点任务数上限（§8.4 的 64）在保存任务与建节点两处都校验：新建节点会继承全部 `all_nodes` 任务，超限时建节点失败并说明。建节点（面板的 `CreateNode` 与 agent 的自助注册共用同一入口）必须推进任务版本：版本的不变式是"任何一个节点的清单变了，版本就变"，新节点的清单从空变为全部 `all_nodes` 任务；agent 只比较相等，不能指望它恰好持有别的值（刚启动的 agent 报 0，编辑过任务的 hub 版本不小于 Unix 秒，两者不等只是巧合，不是机制）。删除节点仍不推。`ListProbeTasks` 对 `all_nodes` 任务回显当前展开的节点列表并带开关，面板与 agent 都不必自己展开；公开端的任务标签规则不变：`all_nodes` 任务对每个公开节点都算"当前分配"。
 
+展示顺序单独保存在 `probe_task.sort_order`。`ReorderProbeTasks` 只接受全部现存任务 ID 的完整排列，在写事务中拒绝重复、缺漏和未知 ID；新任务追加到末尾，编辑保留顺序。管理清单、管理端和公开端历史使用同一顺序，已删除任务的历史排在现存任务之后并按 ID 排列。重排不改变任务内容或分配，因此不推进 `probe_meta.version`；agent 清单仍按 ID 下发，展示偏好不改变执行配置。
+
 ### 8.2 执行
 
 - ICMP：优先用非特权数据报 ICMP socket；不可用且进程持有 `CAP_NET_RAW` 时退到 raw socket；都不可用则每次回报 `error`，面板显示原因，而不是静默呈现为 100% 丢包。
@@ -470,7 +473,7 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 |---|---|---|---|
 | 价格 | TEXT，十进制文本如 `12.50` | `^\d{1,9}(\.\d{1,2})?$` | 空 = 未填。展示值不是计算值，所以既不用浮点也不用最小货币单位 |
 | 币种 | TEXT | `^[A-Z]{3}$`（ISO 4217） | 空 = 未填；价格非空时币种必填，币种非空价格可空 |
-| 周期 | TEXT 枚举：月、季、半年、年、两年、三年（`BillingCycle`，在 `types.proto`，公开与管理端共用） | 枚举值之一 | 空（`UNSPECIFIED`）= 无周期（一次性或未填）；自动续期要求非空 |
+| 周期 | TEXT 枚举：月、季、半年、年、两年、三年、五年（`BillingCycle`，在 `types.proto`，公开与管理端共用） | 枚举值之一，对应 1/3/6/12/24/36/60 月 | 空（`UNSPECIFIED`）= 无周期（一次性或未填）；自动续期要求非空 |
 | 到期日 | TEXT `YYYY-MM-DD` | 合法日期 | 空 = 无到期；到期规则与自动续期都要求非空 |
 | 自动续期 | INTEGER 0/1 | — | 默认关。关是缺省不是放宽：到期后显示已过期、告警保持，直到管理员改日期 |
 

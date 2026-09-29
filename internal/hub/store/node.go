@@ -11,25 +11,26 @@ import (
 	"github.com/xjetry/probe/internal/probelimit"
 )
 
-var ErrBadOrder = errors.New("ids must list every node exactly once")
+var ErrBadOrder = errors.New("ids must list every item exactly once")
 
 // BillingCycle 按 TEXT 落库，空串表示没有周期。与协议枚举的对应在 api 的 billingCycles 表，周期的月数在
 // alert 的 cycleMonths；两处的测试都按 BillingCycles 核对一一对应。
 type BillingCycle string
 
 const (
-	CycleNone       BillingCycle = ""
-	CycleMonthly    BillingCycle = "monthly"
-	CycleQuarterly  BillingCycle = "quarterly"
-	CycleSemiannual BillingCycle = "semiannual"
-	CycleYearly     BillingCycle = "yearly"
-	CycleBiennial   BillingCycle = "biennial"
-	CycleTriennial  BillingCycle = "triennial"
+	CycleNone         BillingCycle = ""
+	CycleMonthly      BillingCycle = "monthly"
+	CycleQuarterly    BillingCycle = "quarterly"
+	CycleSemiannual   BillingCycle = "semiannual"
+	CycleYearly       BillingCycle = "yearly"
+	CycleBiennial     BillingCycle = "biennial"
+	CycleTriennial    BillingCycle = "triennial"
+	CycleQuinquennial BillingCycle = "quinquennial"
 )
 
 // BillingCycles 列出全部非空周期。
 func BillingCycles() []BillingCycle {
-	return []BillingCycle{CycleMonthly, CycleQuarterly, CycleSemiannual, CycleYearly, CycleBiennial, CycleTriennial}
+	return []BillingCycle{CycleMonthly, CycleQuarterly, CycleSemiannual, CycleYearly, CycleBiennial, CycleTriennial, CycleQuinquennial}
 }
 
 // Billing 是节点的计费与到期（§9.4），随 UpdateNode 整体替换，零值即"都没填"。存储不校验取值：写入口有两个，
@@ -344,8 +345,13 @@ func (s *Store) SetLookupCountry(ctx context.Context, id int64, addr, country st
 // ReorderNodes 在写事务中验证 ids 恰是全部节点的一个排列，再整体更新顺序。
 // 部分列表可能让未列出的节点与列出的节点共用 sort_order，转而由 id 决定相对次序。
 func (s *Store) ReorderNodes(ctx context.Context, ids []int64) error {
+	return s.reorder(ctx, "node", ids)
+}
+
+// table 只来自本包固定调用点；完整集合校验和更新共用写事务，避免并发增删留下部分排列。
+func (s *Store) reorder(ctx context.Context, table string, ids []int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.Query("SELECT id FROM node")
+		rows, err := tx.Query("SELECT id FROM " + table)
 		if err != nil {
 			return err
 		}
@@ -373,7 +379,7 @@ func (s *Store) ReorderNodes(ctx context.Context, ids []int64) error {
 			seen[id] = true
 		}
 		for i, id := range ids {
-			if _, err := tx.Exec("UPDATE node SET sort_order = ? WHERE id = ?", i, id); err != nil {
+			if _, err := tx.Exec("UPDATE "+table+" SET sort_order = ? WHERE id = ?", i, id); err != nil {
 				return err
 			}
 		}

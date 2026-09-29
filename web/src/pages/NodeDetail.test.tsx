@@ -285,10 +285,10 @@ describe("NodeDetail", () => {
     expect(await screen.findByText(/级别 5m，每点 300s/)).toBeInTheDocument();
     const charts = screen.getAllByTestId("chart");
     expect(charts).toHaveLength(7);
-    expect(charts[6]).toHaveAttribute("data-labels", "rx_bytes,tx_bytes");
+    expect(charts[6]).toHaveAttribute("data-labels", "下行均值,上行均值,下行峰值,上行峰值");
     expect(charts[6]).toHaveAttribute("data-unit", "bytes/s");
     expect(charts[0]).toHaveAttribute("data-unit", "percent");
-    expect(charts[1]).toHaveAttribute("data-labels", "mem_used,swap_used");
+    expect(charts[1]).toHaveAttribute("data-labels", "内存均值,内存峰值,交换均值");
     expect(charts[1]).toHaveAttribute("data-unit", "bytes");
     expect(screen.getByText("db-01.internal")).toBeInTheDocument();
     const req = queryMetrics.mock.calls[0][0] as { nodeId: bigint; from: bigint; to: bigint; maxPoints: number };

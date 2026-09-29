@@ -36,7 +36,7 @@ type Column struct {
 	Name string
 	Kind Kind
 	Type Type
-	// Unit 随查询结果下发：percent、bytes、count；load 无单位为空串。
+	// Unit 随查询结果下发：percent、bytes、bytes/s、count；load 无单位为空串。
 	// 数据自带单位，图表与 agent 都不必查表才知道该怎么读。
 	Unit string
 	// Get 从一次上报里取读数；false 表示无读数，此时既不进 sum 也不进 n。Sum 列为 nil。
@@ -67,6 +67,10 @@ var Columns = []Column{
 	{"tx_bytes", Sum, Int, "bytes", nil},
 	{"memory_used_pct", Mean, Float, "percent", func(m *probev1.Metrics) (float64, bool) { return usedPercent(m.MemUsed, m.MemTotal) }},
 	{"disk_used_pct", Mean, Float, "percent", func(m *probev1.Metrics) (float64, bool) { return usedPercent(m.DiskUsed, m.DiskTotal) }},
+	// 速率取 agent 按本地采样间隔测得的值；请求到达间隔受网络拥塞影响，不用于推算峰值。
+	// 字节增量仍单独由入账方累计，采样速率的均值不能替代总字节数除以桶长。
+	{"net_rx_bps", MeanMax, Int, "bytes/s", func(m *probev1.Metrics) (float64, bool) { return f64(m.GetNetRxBps()), m.NetRxBps != nil }},
+	{"net_tx_bps", MeanMax, Int, "bytes/s", func(m *probev1.Metrics) (float64, bool) { return f64(m.GetNetTxBps()), m.NetTxBps != nil }},
 }
 
 // 同一次采样的分子、分母必须都存在且容量非零；先算比例再聚合，不能把不同采样的均值相除。

@@ -1,12 +1,13 @@
-import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
+import { createConnectQueryKey, createQueryOptions, useMutation, useQuery, useTransport } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGateAll } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
+import { useOrder } from "../api/useOrder";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { NodeSelector, type NodeSelection } from "../components/NodeSelector";
-import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
+import { AdminService, type Node, type ProbeTaskDetail } from "../gen/probe/v1/admin_pb";
 import { ProbeKind, type ProbeTask } from "../gen/probe/v1/types_pb";
 import { ascending, withId } from "../lib/ids";
 import { PROBE_KINDS, kindLabel } from "../lib/probes";
@@ -15,6 +16,7 @@ type Draft = NodeSelection & { kind: ProbeKind; target: string; intervalS: strin
 type TaskEntry = { task: ProbeTask; allNodes: boolean; nodeIds: bigint[]; selectorTags: string[] };
 
 const emptyDraft = (): Draft => ({ kind: ProbeKind.ICMP, target: "", intervalS: "60", timeoutMs: "1000", allNodes: false, nodeIds: new Set(), selectorTags: [], dynamic: false });
+const taskEntries = (tasks: readonly ProbeTaskDetail[]): TaskEntry[] => tasks.flatMap((d) => d.task ? [{ task: d.task, allNodes: d.allNodes, nodeIds: d.nodeIds, selectorTags: d.selectorTags }] : []);
 // all_nodes 任务的 nodeIds 是 hub 展开的当前全部节点；编辑时取消"全部节点"即以它们作为显式分配的起点，
 // 覆盖不会因为取消勾选而一下子清空。
 const draftOf = ({ task, allNodes, nodeIds, selectorTags }: TaskEntry): Draft => ({
@@ -24,6 +26,7 @@ const draftOf = ({ task, allNodes, nodeIds, selectorTags }: TaskEntry): Draft =>
 
 export function ProbeTasks() {
   const qc = useQueryClient();
+  const transport = useTransport();
   const [creation, setCreation] = useState(0);
   const { error, mutationOptions } = useLatestError();
   const nodes = useQuery(AdminService.method.listNodes, {});
@@ -35,10 +38,21 @@ export function ProbeTasks() {
   // 返回刷新 promise，编辑态在列表显示已保存值之后才关闭。
   const update = useMutation(AdminService.method.saveProbeTask, { ...mutationOptions, onSuccess: refresh });
   const remove = useMutation(AdminService.method.deleteProbeTask, { ...mutationOptions, onSuccess: refresh });
+  const reorder = useMutation(AdminService.method.reorderProbeTasks);
+  const order = useOrder({
+    items: list.data?.tasks ?? [], id: (entry) => entry.task?.id ?? 0n,
+    enabled: list.data !== undefined && !list.isError,
+    save: (ids) => reorder.mutateAsync({ ids }),
+    reload: async () => {
+      const options = createQueryOptions(AdminService.method.listProbeTasks, {}, { transport });
+      await qc.cancelQueries({ queryKey: options.queryKey, exact: true });
+      return (await qc.fetchQuery({ ...options, staleTime: 0 })).tasks;
+    },
+  });
   // 分配求交依赖节点列表已到达；未到达前不渲染任何可提交的表单。
   const gate = queryGateAll(nodes, list);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
-  const [nodesData, listData] = gate.data;
+  const [nodesData] = gate.data;
   const nodeList = nodesData.nodes;
   const availableNodeIds = new Set(nodeList.map((n) => n.id));
   // 当前节点列表不再包含的分配自然掉出，避免已删除节点让 hub 以 NotFound 拒绝整次保存。显式分配因此变空时照常
@@ -47,7 +61,7 @@ export function ProbeTasks() {
     m.mutate({ task: { id, kind: d.kind, target: d.target.trim(), intervalS: Number(d.intervalS), timeoutMs: Number(d.timeoutMs) },
       allNodes: d.allNodes, nodeIds: d.allNodes || d.dynamic ? [] : ascending([...d.nodeIds].filter((id) => availableNodeIds.has(id))),
       selectorTags: !d.allNodes && d.dynamic ? d.selectorTags : [] }, { onSuccess });
-  const tasks: TaskEntry[] = listData.tasks.flatMap((d) => d.task ? [{ task: d.task, allNodes: d.allNodes, nodeIds: d.nodeIds, selectorTags: d.selectorTags }] : []);
+  const tasks = taskEntries(order.items);
   return (
     <section>
       {gate.banner}
@@ -55,12 +69,16 @@ export function ProbeTasks() {
       <TaskForm key={creation} title="新建探测任务" nodes={nodeList} initial={emptyDraft()} pending={create.isPending}
         onSubmit={(d) => submit(create, 0n, d, () => setCreation((key) => key + 1))} />
       {error != null && <p role="alert" className="error">{errorText(error)}</p>}
+      {order.error != null && <p role="alert" className="error">排序未完成：{errorText(order.error)}</p>}
+      {order.pending && <p role="status" className="muted">正在保存并确认排序…</p>}
+      {order.blocked && <button type="button" onClick={order.recover} disabled={order.pending}>重新读取排序</button>}
       <div className="table-scroll" role="region" aria-label="探测任务管理" tabIndex={0}>
         <table className="nodes">
-          <thead><tr><th>类型</th><th>目标</th><th>间隔 (s)</th><th>超时 (ms)</th><th>节点</th><th>操作</th></tr></thead>
+          <thead><tr><th>排序</th><th>类型</th><th>目标</th><th>间隔 (s)</th><th>超时 (ms)</th><th>节点</th><th>操作</th></tr></thead>
           <tbody>
             {tasks.map((entry) => (
               <TaskRow key={String(entry.task.id)} entry={entry} nodes={nodeList} saving={update.isPending} deleting={remove.isPending}
+                onMove={order.blocked || list.isError ? undefined : (direction) => order.move(entry.task.id, direction)}
                 onSave={(draft, onSuccess) => submit(update, entry.task.id, draft, onSuccess)} onDelete={() => remove.mutate({ id: entry.task.id })} />
             ))}
           </tbody>
@@ -104,8 +122,9 @@ function TaskForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
   );
 }
 
-function TaskRow({ entry, nodes, saving, deleting, onSave, onDelete }: {
+function TaskRow({ entry, nodes, saving, deleting, onSave, onDelete, onMove }: {
   entry: TaskEntry; nodes: Node[]; saving: boolean; deleting: boolean; onSave: (d: Draft, onSuccess: () => void) => void; onDelete: () => void;
+  onMove?: (direction: -1 | 1) => void;
 }) {
   const { task: t, allNodes, nodeIds } = entry;
   const [editing, setEditing] = useState(false);
@@ -114,7 +133,7 @@ function TaskRow({ entry, nodes, saving, deleting, onSave, onDelete }: {
   const coverage = allNodes ? `全部节点：${names || "暂无节点"}` : entry.selectorTags.length ? `动态标签：${entry.selectorTags.join(" ∩ ")}；当前：${names || "无匹配"}` : names;
   if (editing) {
     return (
-      <tr><td colSpan={6}>
+      <tr><td colSpan={7}>
         <TaskForm title={`编辑 ${withId(t.target, t.id)}`} nodes={nodes} initial={draftOf(entry)} pending={saving}
           onSubmit={(d) => onSave(d, () => setEditing(false))} onCancel={() => setEditing(false)} />
       </td></tr>
@@ -122,6 +141,10 @@ function TaskRow({ entry, nodes, saving, deleting, onSave, onDelete }: {
   }
   return (
     <tr>
+      <td>
+        <button type="button" className="link" aria-label={`上移 ${withId(t.target, t.id)}`} disabled={!onMove} onClick={() => onMove?.(-1)}>↑</button>
+        <button type="button" className="link" aria-label={`下移 ${withId(t.target, t.id)}`} disabled={!onMove} onClick={() => onMove?.(1)}>↓</button>
+      </td>
       <td>{kindLabel(t.kind)}</td>
       <td>{t.target}</td>
       <td>{t.intervalS}</td>

@@ -50,6 +50,7 @@ type Registry struct {
 	byNode       map[int64]map[uint64]struct{}
 	nodesOf      map[uint64][]int64
 	selectorTags map[uint64][]string
+	sortOrder    map[uint64]int64
 }
 
 func New(st *store.Store, log *slog.Logger) *Registry {
@@ -61,6 +62,7 @@ func New(st *store.Store, log *slog.Logger) *Registry {
 func (r *Registry) reset() {
 	r.tasks, r.allNodes, r.byNode, r.nodesOf = map[uint64]*probev1.ProbeTask{}, map[uint64]struct{}{}, map[int64]map[uint64]struct{}{}, map[uint64][]int64{}
 	r.selectorTags = map[uint64][]string{}
+	r.sortOrder = map[uint64]int64{}
 }
 
 // Load 的读取与发布和其他写入口互斥，避免旧的重载快照覆盖刚发布的保存结果。
@@ -91,6 +93,7 @@ func (r *Registry) put(rec store.ProbeTaskRecord) {
 	}
 	r.nodesOf[id] = slices.Clone(rec.NodeIDs)
 	r.selectorTags[id] = slices.Clone(rec.SelectorTags)
+	r.sortOrder[id] = rec.SortOrder
 	for _, node := range rec.NodeIDs {
 		r.assign(node, id)
 	}
@@ -114,6 +117,7 @@ func (r *Registry) remove(id uint64) {
 	delete(r.allNodes, id)
 	delete(r.nodesOf, id)
 	delete(r.selectorTags, id)
+	delete(r.sortOrder, id)
 }
 
 func (r *Registry) Version() uint64 {
@@ -146,12 +150,48 @@ func (r *Registry) List() (uint64, []Detail) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var out []Detail
-	for id, task := range r.tasks {
+	for _, id := range r.orderedIDsLocked() {
+		task := r.tasks[id]
 		_, all := r.allNodes[id]
 		out = append(out, Detail{Task: proto.Clone(task).(*probev1.ProbeTask), AllNodes: all, NodeIDs: slices.Clone(r.nodesOf[id]), SelectorTags: slices.Clone(r.selectorTags[id])})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Task.Id < out[j].Task.Id })
 	return r.version, out
+}
+
+func (r *Registry) orderedIDsLocked() []uint64 {
+	ids := make([]uint64, 0, len(r.tasks))
+	for id := range r.tasks {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		a, b := ids[i], ids[j]
+		if r.sortOrder[a] != r.sortOrder[b] {
+			return r.sortOrder[a] < r.sortOrder[b]
+		}
+		return a < b
+	})
+	return ids
+}
+
+// OrderedIDs 是展示顺序快照；TasksFor 保持按编号下发，不受展示重排影响。
+func (r *Registry) OrderedIDs() []uint64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.orderedIDsLocked()
+}
+
+func (r *Registry) Reorder(ctx context.Context, ids []uint64) error {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
+	if err := r.store.ReorderProbeTasks(ctx, ids); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, id := range ids {
+		r.sortOrder[id] = int64(i)
+	}
+	return nil
 }
 
 // Target 返回任务当前的种类与目标，是管理端标注历史序列的口径。任务不在清单里时 ok 为 false。

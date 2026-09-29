@@ -102,6 +102,9 @@ const (
 	// AdminServiceDeleteProbeTaskProcedure is the fully-qualified name of the AdminService's
 	// DeleteProbeTask RPC.
 	AdminServiceDeleteProbeTaskProcedure = "/probe.v1.AdminService/DeleteProbeTask"
+	// AdminServiceReorderProbeTasksProcedure is the fully-qualified name of the AdminService's
+	// ReorderProbeTasks RPC.
+	AdminServiceReorderProbeTasksProcedure = "/probe.v1.AdminService/ReorderProbeTasks"
 	// AdminServiceQueryProbesProcedure is the fully-qualified name of the AdminService's QueryProbes
 	// RPC.
 	AdminServiceQueryProbesProcedure = "/probe.v1.AdminService/QueryProbes"
@@ -223,12 +226,14 @@ type AdminServiceClient interface {
 	GetTraffic(context.Context, *connect.Request[v1.GetTrafficRequest]) (*connect.Response[v1.GetTrafficResponse], error)
 	// 把某节点当前周期的用量覆盖为给定值；总量按同一差值调整且不低于 0，计数器基线不动。
 	AdjustTraffic(context.Context, *connect.Request[v1.AdjustTrafficRequest]) (*connect.Response[v1.AdjustTrafficResponse], error)
-	// 列出全部探测任务及其分配。
+	// 按展示顺序列出全部探测任务及其分配。
 	ListProbeTasks(context.Context, *connect.Request[v1.ListProbeTasksRequest]) (*connect.Response[v1.ListProbeTasksResponse], error)
 	// 保存探测任务：id 为 0 即创建，提交整份分配列表。
 	SaveProbeTask(context.Context, *connect.Request[v1.SaveProbeTaskRequest]) (*connect.Response[v1.SaveProbeTaskResponse], error)
 	// 删除探测任务：不删历史，到期由清理删除。
 	DeleteProbeTask(context.Context, *connect.Request[v1.DeleteProbeTaskRequest]) (*connect.Response[v1.DeleteProbeTaskResponse], error)
+	// 整体重排探测任务的展示顺序，不改变 agent 执行清单或任务版本。
+	ReorderProbeTasks(context.Context, *connect.Request[v1.ReorderProbeTasksRequest]) (*connect.Response[v1.ReorderProbeTasksResponse], error)
 	// 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
 	QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error)
 	// 列出规则及其当前节点状态。
@@ -454,6 +459,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("DeleteProbeTask")),
 			connect.WithClientOptions(opts...),
 		),
+		reorderProbeTasks: connect.NewClient[v1.ReorderProbeTasksRequest, v1.ReorderProbeTasksResponse](
+			httpClient,
+			baseURL+AdminServiceReorderProbeTasksProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ReorderProbeTasks")),
+			connect.WithClientOptions(opts...),
+		),
 		queryProbes: connect.NewClient[v1.QueryProbesRequest, v1.QueryProbesResponse](
 			httpClient,
 			baseURL+AdminServiceQueryProbesProcedure,
@@ -623,6 +634,7 @@ type adminServiceClient struct {
 	listProbeTasks        *connect.Client[v1.ListProbeTasksRequest, v1.ListProbeTasksResponse]
 	saveProbeTask         *connect.Client[v1.SaveProbeTaskRequest, v1.SaveProbeTaskResponse]
 	deleteProbeTask       *connect.Client[v1.DeleteProbeTaskRequest, v1.DeleteProbeTaskResponse]
+	reorderProbeTasks     *connect.Client[v1.ReorderProbeTasksRequest, v1.ReorderProbeTasksResponse]
 	queryProbes           *connect.Client[v1.QueryProbesRequest, v1.QueryProbesResponse]
 	listAlertRules        *connect.Client[v1.ListAlertRulesRequest, v1.ListAlertRulesResponse]
 	saveAlertRule         *connect.Client[v1.SaveAlertRuleRequest, v1.SaveAlertRuleResponse]
@@ -776,6 +788,11 @@ func (c *adminServiceClient) SaveProbeTask(ctx context.Context, req *connect.Req
 // DeleteProbeTask calls probe.v1.AdminService.DeleteProbeTask.
 func (c *adminServiceClient) DeleteProbeTask(ctx context.Context, req *connect.Request[v1.DeleteProbeTaskRequest]) (*connect.Response[v1.DeleteProbeTaskResponse], error) {
 	return c.deleteProbeTask.CallUnary(ctx, req)
+}
+
+// ReorderProbeTasks calls probe.v1.AdminService.ReorderProbeTasks.
+func (c *adminServiceClient) ReorderProbeTasks(ctx context.Context, req *connect.Request[v1.ReorderProbeTasksRequest]) (*connect.Response[v1.ReorderProbeTasksResponse], error) {
+	return c.reorderProbeTasks.CallUnary(ctx, req)
 }
 
 // QueryProbes calls probe.v1.AdminService.QueryProbes.
@@ -944,12 +961,14 @@ type AdminServiceHandler interface {
 	GetTraffic(context.Context, *connect.Request[v1.GetTrafficRequest]) (*connect.Response[v1.GetTrafficResponse], error)
 	// 把某节点当前周期的用量覆盖为给定值；总量按同一差值调整且不低于 0，计数器基线不动。
 	AdjustTraffic(context.Context, *connect.Request[v1.AdjustTrafficRequest]) (*connect.Response[v1.AdjustTrafficResponse], error)
-	// 列出全部探测任务及其分配。
+	// 按展示顺序列出全部探测任务及其分配。
 	ListProbeTasks(context.Context, *connect.Request[v1.ListProbeTasksRequest]) (*connect.Response[v1.ListProbeTasksResponse], error)
 	// 保存探测任务：id 为 0 即创建，提交整份分配列表。
 	SaveProbeTask(context.Context, *connect.Request[v1.SaveProbeTaskRequest]) (*connect.Response[v1.SaveProbeTaskResponse], error)
 	// 删除探测任务：不删历史，到期由清理删除。
 	DeleteProbeTask(context.Context, *connect.Request[v1.DeleteProbeTaskRequest]) (*connect.Response[v1.DeleteProbeTaskResponse], error)
+	// 整体重排探测任务的展示顺序，不改变 agent 执行清单或任务版本。
+	ReorderProbeTasks(context.Context, *connect.Request[v1.ReorderProbeTasksRequest]) (*connect.Response[v1.ReorderProbeTasksResponse], error)
 	// 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
 	QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error)
 	// 列出规则及其当前节点状态。
@@ -1171,6 +1190,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("DeleteProbeTask")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceReorderProbeTasksHandler := connect.NewUnaryHandler(
+		AdminServiceReorderProbeTasksProcedure,
+		svc.ReorderProbeTasks,
+		connect.WithSchema(adminServiceMethods.ByName("ReorderProbeTasks")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceQueryProbesHandler := connect.NewUnaryHandler(
 		AdminServiceQueryProbesProcedure,
 		svc.QueryProbes,
@@ -1363,6 +1388,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceSaveProbeTaskHandler.ServeHTTP(w, r)
 		case AdminServiceDeleteProbeTaskProcedure:
 			adminServiceDeleteProbeTaskHandler.ServeHTTP(w, r)
+		case AdminServiceReorderProbeTasksProcedure:
+			adminServiceReorderProbeTasksHandler.ServeHTTP(w, r)
 		case AdminServiceQueryProbesProcedure:
 			adminServiceQueryProbesHandler.ServeHTTP(w, r)
 		case AdminServiceListAlertRulesProcedure:
@@ -1520,6 +1547,10 @@ func (UnimplementedAdminServiceHandler) SaveProbeTask(context.Context, *connect.
 
 func (UnimplementedAdminServiceHandler) DeleteProbeTask(context.Context, *connect.Request[v1.DeleteProbeTaskRequest]) (*connect.Response[v1.DeleteProbeTaskResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.DeleteProbeTask is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ReorderProbeTasks(context.Context, *connect.Request[v1.ReorderProbeTasksRequest]) (*connect.Response[v1.ReorderProbeTasksResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.ReorderProbeTasks is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error) {

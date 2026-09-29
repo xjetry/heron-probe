@@ -66,6 +66,7 @@ func TestColumnsCoverSpecifiedMetrics(t *testing.T) {
 		"disk_used": {Mean, Int}, "load1": {Mean, Float}, "tcp": {Mean, Int},
 		"udp": {Mean, Int}, "procs": {Mean, Int}, "rx_bytes": {Sum, Int}, "tx_bytes": {Sum, Int},
 		"memory_used_pct": {Mean, Float}, "disk_used_pct": {Mean, Float},
+		"net_rx_bps": {MeanMax, Int}, "net_tx_bps": {MeanMax, Int},
 	}
 	if len(Columns) != len(want) {
 		t.Fatalf("%d columns, want %d", len(Columns), len(want))
@@ -82,10 +83,10 @@ func TestColumnsCoverSpecifiedMetrics(t *testing.T) {
 }
 
 func TestEveryColumnDeclaresItsUnit(t *testing.T) {
-	allowed := map[string]bool{"percent": true, "bytes": true, "count": true, "": true}
+	allowed := map[string]bool{"percent": true, "bytes": true, "bytes/s": true, "count": true, "": true}
 	for _, c := range Columns {
 		if !allowed[c.Unit] {
-			t.Fatalf("%s: unit %q is not one of percent/bytes/count/\"\"", c.Name, c.Unit)
+			t.Fatalf("%s: unit %q is not one of percent/bytes/bytes/s/count/\"\"", c.Name, c.Unit)
 		}
 		if c.Unit == "" && c.Name != "load1" {
 			t.Fatalf("%s: only load has no unit", c.Name)

@@ -18,7 +18,9 @@ tar -xzf probe-hub_linux_amd64.tar.gz
 - hub 只监听明文 HTTP，TLS 由反代（Caddy、nginx、CDN）终止；反代地址用 `--trusted-proxies` 声明，否则不信任转发头。
 - 管理面板在 `/admin/`。离线判定的时限由环境变量 `PROBE_OFFLINE_AFTER` 设定（默认 30s，10s–180s）。
 - 其余参数见 `probe-hub serve -h`；节点、注册窗口与 API token 也可在 hub 主机上用 `probe-hub node|window|token` 管理。
-- 节点可在面板里记录价格、币种、计费周期与到期日：只用于展示与提醒，hub 不汇总、不换算。公开节点填了的这几项也显示在公开页，自动续期开关除外。建「到期」类型的告警规则可在到期前若干天提醒；开着自动续期的节点过了到期日，hub 按周期把到期日推后。到期日按天计，天的边界与流量周期一样取 `--timezone`。
+- 节点可在面板里记录价格、币种、计费周期与到期日，周期支持 1 月、3 月、半年、1 年、2 年、3 年、5 年：只用于展示与提醒，hub 不汇总、不换算。公开节点填了的这几项也显示在公开页，自动续期开关除外。建「到期」类型的告警规则可在到期前若干天提醒；开着自动续期的节点过了到期日，hub 按周期把到期日推后。到期日按天计，天的边界与流量周期一样取 `--timezone`。
+- 历史图展示 CPU、内存和网络采样峰值。网络均值仍是桶内入账字节数除以桶长；峰值是 agent 采样速率的最大值，不能代表未采到的瞬时尖峰。升级前历史和没有速率读数的旧 agent 保持空洞，不补零。
+- 探测任务可调整展示顺序，管理清单和两端历史图同步采用；重排不会改变 agent 执行清单或任务版本。节点管理支持连续排序、失败回读恢复和窄屏卡片布局。
 - 节点可挂多个标签，面板按标签过滤。公开节点的标签也显示在公开页，访客可以按标签筛选；标签常写用途与归属，挂到公开节点前先确认可以对外公开，没有单独隐藏标签的开关。
 
 ## 安装 hub（Linux，systemd）
@@ -172,7 +174,7 @@ docker exec probe probe-hub security-reset --db /data/probe.db --yes
 probe-hub restore --db probe.db --config config.db --metrics metrics.db --themes ./themes --yes
 ```
 
-`themes` 目录放摘要命名的 `<SHA-256>.zip`。新格式快照指定 `--themes` 时严格校验主题引用，缺包或摘要不符拒绝恢复；省略该参数则恢复配置但停用全部主题。恢复接受明确支持的 schema 17–20，旧快照在私有副本中迁移，不改写来源；未来版本、未知格式或结构不符拒绝。旧格式按原有 `<主题 id>.zip` 导入，缺包主题保留但停用。恢复不复活会话或注册窗口，并写入恢复记录和手动恢复事件。两层时刻可不同，以配置层节点为准清理孤儿历史。
+`themes` 目录放摘要命名的 `<SHA-256>.zip`。新格式快照指定 `--themes` 时严格校验主题引用，缺包或摘要不符拒绝恢复；省略该参数则恢复配置但停用全部主题。恢复接受明确支持的 schema 17–21，旧快照在私有副本中迁移，不改写来源；未来版本、未知格式或结构不符拒绝。旧格式按原有 `<主题 id>.zip` 导入，缺包主题保留但停用。恢复不复活会话或注册窗口，并写入恢复记录和手动恢复事件。两层时刻可不同，以配置层节点为准清理孤儿历史。
 
 若不使用在线快照，可停机备份整个卷：
 
@@ -253,6 +255,12 @@ curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-maco
 14. 重启这台 Mac：服务开机自启、节点在线；`kern.bootsessionuuid` 换了新值；总流量没有一次性跳涨。
 15. `curl -fsSL <base>/install-macos.sh | sudo sh -s -- --uninstall`：输出 `probe-agent uninstalled`；`sudo launchctl print system/xyz.probe.agent` 退出码 113；`/usr/local/bin/probe-agent` 与 plist 不在，配置与用户仍在。再带 `--uninstall --purge` 执行：`/etc/probe-agent`、`/Library/Logs/probe-agent` 不在，`id _probe-agent` 报 no such user，`dscl . -read /Groups/_probe-agent` 报 `eDSRecordNotFound`。
 16. 有 Intel Mac 时在其上重复 1–5，装的是 amd64 包。
+
+## 开发验收
+
+`make test`、`make lint`、`make build` 分别运行后端测试、静态检查和跨平台编译；前端在 `web/` 执行 `pnpm test` 与 `pnpm run build`。
+
+`make e2e compat-e2e` 使用真实 hub，在 Debian、Alpine 的 amd64、arm64 容器中分别运行当前源码 agent 和固定已发布 agent。兼容基线在 `scripts/compat-agent.json` 固定 tag、发布渠道和两架构 SHA256，不使用浮动 latest；更新基线时必须核对发布资产和摘要，再运行完整兼容矩阵。当前基线 `v0.1.0-rc.1` 是预发布版，项目尚无稳定正式版基线。Linux runner 需设置 `E2E_LISTEN_HOST=0.0.0.0` 供 bridge 容器连接，开发机默认只监听回环。
 
 ## 许可
 

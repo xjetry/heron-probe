@@ -50,6 +50,8 @@ RPC 路径优先于主题文件：包里即使有 `admin/index.html` 或 `probe.
 | `QueryMetrics` | `{"nodeId": "3", "from": "…", "to": "…", "maxPoints": 720}` | 指标历史 | 60 |
 | `QueryProbes` | 同上 | 探测历史 | 60 |
 
+历史网络均值从 `rx_bytes` / `tx_bytes` 的 `sum / stepS` 计算；采样峰值取 `net_rx_bps` / `net_tx_bps` 的 `max`，单位 bytes/s。CPU、内存同样提供 `max`。缺少系列、`n=0` 或缺少值时保留空洞，有效零值则正常画出。峰值只覆盖 agent 已采到的读数，不保证捕获采样间隔内的所有尖峰。`QueryProbes` 的系列顺序由管理员排序决定；已删除任务的历史最后按编号排列，不要在主题里重新按 ID 排序。
+
 - **调用方式。** Connect unary 就是 HTTP POST + JSON：
 
   ```js

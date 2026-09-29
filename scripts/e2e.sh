@@ -1,7 +1,7 @@
 #!/bin/sh
 # 端到端：hub 跑在宿主机，agent 跑在 Linux 容器里经 host.docker.internal 上报；
 # 管理 API 用 curl + jq 走纯 HTTP + JSON——这是面向 agent 设计的验收方式，不用生成客户端。
-# 两个平台都必须实际运行；依赖 Docker 多架构模拟，OrbStack / Docker Desktop 自带。
+# 两个平台都必须实际运行；依赖 Docker 多架构模拟，CI 显式安装，OrbStack / Docker Desktop 自带。
 # 验收凭据是库里出现两个节点、facts 与分钟行，且管理 API 看到它们在线并查到历史。
 set -eu
 # 镜像与期望系统名成对给出：缺一个就无法证明容器真的换成了目标发行版，不能退化成不检查。
@@ -9,6 +9,11 @@ set -eu
 : "${EXPECT_OS:?EXPECT_OS is required, e.g. Alpine}"
 echo "agent image: $AGENT_IMAGE (expect os containing \"$EXPECT_OS\")"
 cd "$(cd "$(dirname "$0")/.." && pwd)"
+# hub 始终来自当前源码；agent 可来自校验过的发布包，不覆盖当前源码构建的产物。
+agent_bin=$(cd "${E2E_AGENT_BIN_DIR:-$PWD/bin}" && pwd)
+for arch in amd64 arm64; do
+  [ -x "$agent_bin/probe-agent-linux-$arch" ] || { echo "FAIL: missing executable agent for $arch" >&2; exit 1; }
+done
 work=$(mktemp -d)
 echo "E2E artifacts: $work"
 db="$work/e2e.db"
@@ -17,6 +22,9 @@ db="$work/e2e.db"
 port=${E2E_HUB_PORT:-18080}
 hook_port=${E2E_HOOK_PORT:-18081}
 base="http://127.0.0.1:$port"
+# 原生 Linux 上 host-gateway 指向网桥而非宿主回环；CI 使用一次性运行器，显式允许监听网桥。
+# 开发机默认仍只监听回环，不因本地验收向其它网卡暴露管理端口。
+listen_host=${E2E_LISTEN_HOST:-127.0.0.1}
 admin_pw="e2e admin password 2026"
 : > "$work/jar"
 hookrecv=""
@@ -48,7 +56,11 @@ trap 'exit 1' INT TERM HUP
 # 任一架构准备失败就直接退出，不进入注册阶段。注册与上报复用这两个容器。
 for arch in amd64 arm64; do
   docker run -d --cidfile "$work/cid-$arch" --platform "linux/$arch" --add-host=host.docker.internal:host-gateway \
-    -v "$PWD/bin:/probe:ro" "$AGENT_IMAGE" sleep infinity > /dev/null
+    -v "$agent_bin:/probe:ro" "$AGENT_IMAGE" sleep infinity > /dev/null
+  if [ -n "${E2E_AGENT_VERSION:-}" ]; then
+    actual=$(docker exec "$(cat "$work/cid-$arch")" "/probe/probe-agent-linux-$arch" version)
+    [ "$actual" = "$E2E_AGENT_VERSION" ] || { echo "FAIL: $arch agent version $actual, expected $E2E_AGENT_VERSION" >&2; exit 1; }
+  fi
 done
 echo "agent containers ready: $AGENT_IMAGE"
 
@@ -60,7 +72,7 @@ echo "registration window: $(sed -n 's/^expires: //p' "$work/window.txt")"
 # 主题 origin 的主机名：hub 按请求的 Host（去掉端口）分流，脚本以 -H "Host: theme.test" 访问同一个监听地址，不需要 DNS。
 theme_host=theme.test
 hub_log_from=0
-PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC --theme-origin "http://$theme_host" > "$work/hub.log" 2>&1 &
+PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "$listen_host:$port" --timezone UTC --theme-origin "http://$theme_host" > "$work/hub.log" 2>&1 &
 hub=$!
 
 # wait_hub：等本次启动的 hub 就绪。三者同时成立才算：
@@ -273,6 +285,9 @@ jq -e '.reportIntervalMs == 4000 and all(.nodes[]; .metrics.cpuPct != null)' "$w
 [ "$(rpc ListNodes '{}')" = 200 ] || { echo "FAIL: ListNodes"; exit 1; }
 jq -e '[.nodes[] | select(.facts.arch == "amd64" or .facts.arch == "arm64")] | length == 2' "$work/ListNodes.json" > /dev/null || { echo "FAIL: facts not reported"; cat "$work/ListNodes.json"; exit 1; }
 jq -e --arg os "$EXPECT_OS" '(.nodes | length) == 2 and all(.nodes[]; (.facts.os // "") | contains($os))' "$work/ListNodes.json" > /dev/null || { echo "FAIL: nodes did not report an OS containing \"$EXPECT_OS\""; cat "$work/ListNodes.json"; exit 1; }
+if [ -n "${E2E_AGENT_VERSION:-}" ]; then
+  jq -e --arg version "$E2E_AGENT_VERSION" 'all(.nodes[]; .facts.agentVersion == $version)' "$work/ListNodes.json" > /dev/null || { echo "FAIL: reported agent version differs from the compatibility baseline"; cat "$work/ListNodes.json"; exit 1; }
+fi
 node1=$(jq -r '.nodes[] | select(.facts.arch == "amd64") | .id' "$work/ListNodes.json")
 node2=$(jq -r '.nodes[] | select(.facts.arch == "arm64") | .id' "$work/ListNodes.json")
 icmp_body=$(jq -nc --arg a "$node1" --arg b "$node2" '{task: {kind: "PROBE_KIND_ICMP", target: "127.0.0.1", intervalS: 5, timeoutMs: 1000}, nodeIds: [$a, $b]}')
@@ -531,6 +546,10 @@ case "$api_token" in probe_at_*) ;; *) echo "FAIL: API token lacks the probe_at_
 # token 与会话是两条独立口径：登出不影响 token。
 [ "$(bearer GetSnapshot '{}')" = 200 ] || { echo "FAIL: API token stopped working after logout"; cat "$work/bearer-GetSnapshot.json"; exit 1; }
 
+# 节点更新也会推进任务版本；重启的不变式以全部写请求结束后的完整快照为准，包含展示顺序与覆盖范围。
+[ "$(bearer ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks before restart"; exit 1; }
+jq '{version, tasks}' "$work/bearer-ListProbeTasks.json" > "$work/tasks-before-restart.json"
+task_version=$(jq -r .version "$work/tasks-before-restart.json")
 kill "$hub"; wait "$hub"
 hub=""
 
@@ -543,9 +562,14 @@ ln -s ../outside.txt "$work/site/leak.txt"
 
 # 重启：流量状态、重置日与被 Drain 出的分钟行都必须还在。
 hub_log_from=$(wc -l < "$work/hub.log")
-PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "127.0.0.1:$port" --timezone UTC --public-dir "$work/site" --theme-origin "http://$theme_host" >> "$work/hub.log" 2>&1 &
+PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "$listen_host:$port" --timezone UTC --public-dir "$work/site" --theme-origin "http://$theme_host" >> "$work/hub.log" 2>&1 &
 hub=$!
 wait_hub
+# 在登录、续期等写请求之前回读；比较整个有序任务清单，不只比较任务 ID 的集合。
+[ "$(bearer ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks after restart"; exit 1; }
+jq '{version, tasks}' "$work/bearer-ListProbeTasks.json" > "$work/tasks-after-restart.json"
+cmp -s "$work/tasks-before-restart.json" "$work/tasks-after-restart.json" || { echo "FAIL: task version, order or configuration changed across restart"; cat "$work/tasks-before-restart.json" "$work/tasks-after-restart.json"; exit 1; }
+echo "probe task version after restart: $task_version"
 [ "$(curl -sS -o "$work/pub-dir-index.html" -D "$work/pub-dir-index.headers" -w '%{http_code}' "$base/")" = 200 ] || { echo "FAIL: --public-dir index not served"; exit 1; }
 grep -q 'e2e custom public page' "$work/pub-dir-index.html" || { echo "FAIL: / is not the --public-dir index"; cat "$work/pub-dir-index.html"; exit 1; }
 [ "$(hdr dir-index Content-Security-Policy)" = "frame-ancestors 'none'" ] || { echo "FAIL: --public-dir CSP"; cat "$work/pub-dir-index.headers"; exit 1; }
@@ -595,20 +619,22 @@ jq -e '(.rules | length) == 2 and any(.rules[]; .kind == "ALERT_KIND_EXPIRY" and
 [ "$(rpc ListNodes '{}')" = 200 ] || { echo "FAIL: ListNodes after restart"; exit 1; }
 jq -e --arg id "$node1" --arg exp "$soon" '.nodes[] | select(.id == $id) | .billing | .price == "12.50" and .currency == "USD" and .billingCycle == "BILLING_CYCLE_MONTHLY" and .expiresOn == $exp and (.autoRenew // false) == false and .daysLeft >= 4 and .daysLeft <= 5' "$work/ListNodes.json" > /dev/null || { echo "FAIL: billing lost across restart"; cat "$work/ListNodes.json"; exit 1; }
 # node1 在 firing 状态下重启：状态从 alert_state 读回，启动扫描不再发第二条触发。再保存一次同一条规则，让一次扫描
-# 在响应之前同步做完，之后再数事件，不与启动扫描赛跑。离线一对加到期的触发，共三条，都已送达。
+# 在响应之前同步做完，之后再数规则事件，不与启动扫描赛跑。审计事件没有 ruleId，不属于规则生命周期。
+# 离线一对加到期的触发，共三条规则事件，都已送达。
 [ "$(rpc SaveAlertRule "$(expiry_rule_body "$expiry_rule")")" = 200 ] || { echo "FAIL: SaveAlertRule expiry after restart"; cat "$work/SaveAlertRule.json"; exit 1; }
 [ "$(rpc ListAlertEvents '{}')" = 200 ] || { echo "FAIL: ListAlertEvents after restart"; exit 1; }
-jq -e '(.events | length) == 3 and all(.events[]; any(.deliveries[]; (.ok // false) == true))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: restart changed the alert events (lost, undelivered or fired again)"; cat "$work/ListAlertEvents.json"; exit 1; }
+jq -e '[.events[] | select(.ruleId != null)] | length == 3 and all(.[]; any(.deliveries[]; (.ok // false) == true))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: restart changed the rule events (lost, undelivered or fired again)"; cat "$work/ListAlertEvents.json"; exit 1; }
 # 重启之后续期：60 天后到期，恢复事件送达，文案写新日期。
 later=$(jq -rn 'now + 60 * 86400 | strftime("%Y-%m-%d")')
 [ "$(rpc UpdateNode "$(node_body "$later" false)")" = 200 ] || { echo "FAIL: UpdateNode renewal"; cat "$work/UpdateNode.json"; exit 1; }
 jq -e '.node.billing | .daysLeft >= 59 and .daysLeft <= 60' "$work/UpdateNode.json" > /dev/null || { echo "FAIL: renewed days_left"; cat "$work/UpdateNode.json"; exit 1; }
 wait_alert "$node1" recovered "$wait_expiry_s"
 jq -e --arg n "$node1" --arg exp "$later" '[.events[] | select(.nodeId == $n and .transition == "recovered")][0].summary == "节点 e2e-amd64 到期日已更新为 " + $exp + "（规则 e2e expiry）"' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: expiry recovered summary"; cat "$work/ListAlertEvents.json"; exit 1; }
-jq -e '(.events | length) == 4 and all(.events[]; any(.deliveries[]; (.ok // false) == true))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: alert events after renewal"; cat "$work/ListAlertEvents.json"; exit 1; }
-[ "$(rpc ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks after restart"; exit 1; }
-jq -e --arg version "$task_version" --arg icmp "$icmp_task" --arg tcp "$tcp_task" '.version == $version and (.tasks | length) == 2 and all(.tasks[]; (.nodeIds | length) == 2) and ([.tasks[].task.id] | sort) == ([$icmp, $tcp] | sort)' "$work/ListProbeTasks.json" > /dev/null || { echo "FAIL: tasks lost across restart"; cat "$work/ListProbeTasks.json"; exit 1; }
-echo "probe task version after restart: $(jq -r '.version' "$work/ListProbeTasks.json")"
+jq -e '[.events[] | select(.ruleId != null)] | length == 4 and all(.[]; any(.deliveries[]; (.ok // false) == true))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: rule events after renewal"; cat "$work/ListAlertEvents.json"; exit 1; }
+# 后续流程不再产生登录、改密或规则状态变化；CLI 与 API 对照的是规则及审计事件的完整集合。
+event_count=$(jq '.events | length' "$work/ListAlertEvents.json")
+[ "$(rpc ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks before deletion"; exit 1; }
+task_version=$(jq -r '.version' "$work/ListProbeTasks.json")
 [ "$(rpc DeleteProbeTask "$(jq -nc --arg id "$tcp_task" '{id: $id}')")" = 200 ] || { echo "FAIL: DeleteProbeTask"; exit 1; }
 [ "$(rpc ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks after deletion"; exit 1; }
 jq -e --arg version "$task_version" --arg icmp "$icmp_task" '(.version | tonumber) > ($version | tonumber) and (.tasks | length) == 1 and .tasks[0].task.id == $icmp' "$work/ListProbeTasks.json" > /dev/null || { echo "FAIL: task deletion not reflected"; cat "$work/ListProbeTasks.json"; exit 1; }
@@ -658,7 +684,7 @@ sed -n '/^db_bytes: /d; s/^\([a-z0-9_]*\): [0-9][0-9]*$/\1/p' "$work/stats.txt" 
 [ "$(get theme)" = 0 ] && [ "$(get theme_file)" = 0 ] || { echo "FAIL: the deleted theme left rows"; exit 1; }
 [ "$(get alert_rule)" = 2 ] || { echo "FAIL: alert rule count"; exit 1; }
 [ "$(get alert_rule_node)" = 2 ] || { echo "FAIL: alert scope count"; exit 1; }
-[ "$(get alert_event)" = 4 ] || { echo "FAIL: alert event count"; exit 1; }
+[ "$(get alert_event)" = "$event_count" ] || { echo "FAIL: alert event count differs from the API"; exit 1; }
 [ "$(get alert_delivery)" = 4 ] || { echo "FAIL: alert delivery count"; exit 1; }
 [ "$(get notify_channel)" = 1 ] || { echo "FAIL: channel count"; exit 1; }
 [ "$(get probe_task)" = 1 ] || { echo "FAIL: task count"; exit 1; }

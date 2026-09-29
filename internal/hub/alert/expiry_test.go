@@ -29,6 +29,18 @@ func date(s string) time.Time {
 	return d
 }
 
+func TestFiveYearRenewal(t *testing.T) {
+	for _, c := range []struct{ from, today, want string }{
+		{"2024-02-29", "2026-01-01", "2029-02-28"},
+		{"2000-01-31", "2026-01-01", "2030-01-31"},
+	} {
+		got, ok := renewedExpiry(store.Billing{Cycle: "quinquennial", ExpiresOn: c.from, AutoRenew: true}, date(c.today))
+		if !ok || got != c.want {
+			t.Fatalf("five-year renewal %s -> %q,%v; want %s", c.from, got, ok, c.want)
+		}
+	}
+}
+
 func zone(t *testing.T, name string) *time.Location {
 	t.Helper()
 	loc, err := time.LoadLocation(name)
@@ -98,7 +110,7 @@ func TestDaysLeftCountsCalendarDays(t *testing.T) {
 
 func TestCycleMonthsCoversEveryStoredCycle(t *testing.T) {
 	want := map[store.BillingCycle]int{store.CycleMonthly: 1, store.CycleQuarterly: 3, store.CycleSemiannual: 6,
-		store.CycleYearly: 12, store.CycleBiennial: 24, store.CycleTriennial: 36}
+		store.CycleYearly: 12, store.CycleBiennial: 24, store.CycleTriennial: 36, store.CycleQuinquennial: 60}
 	cycles := store.BillingCycles()
 	if len(cycles) != len(want) {
 		t.Fatalf("store.BillingCycles() = %v, want the %d cycles of §9.4", cycles, len(want))

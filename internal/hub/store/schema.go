@@ -270,7 +270,8 @@ const ddlProbeTask = `CREATE TABLE probe_task (
   -- 与 alert_rule.all_nodes 同一语义：为真时 SaveProbeTask 不写 probe_task_node 行，任务覆盖全部节点，
   -- 之后新建的节点也在内；为假时分配行就是全部覆盖，空集不覆盖任何节点，DeleteNode 删掉最后一个分配行
   -- 也不会放宽到全部。覆盖的读法只有 probeCoverage 一处。列序与迁移 10 的 ADD COLUMN 结果一致。
-  all_nodes INTEGER NOT NULL DEFAULT 0
+  all_nodes INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0
 )`
 
 const ddlProbeTaskNode = `CREATE TABLE probe_task_node (

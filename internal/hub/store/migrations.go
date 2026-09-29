@@ -39,7 +39,23 @@ var migrations = map[int]func(*sql.Tx) error{
 	18: execAll(migrationV18),
 	19: execAll(migrationV19),
 	20: execAll(migrationV20),
+	21: execAll(append(append([]string{}, migrationV21Config...), migrationV21Metrics...)),
 }
+
+var migrationV21Config = []string{`ALTER TABLE probe_task ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`}
+
+// 新列的 n=0 表示历史没有速率采样，不把旧平均速率伪装成已测峰值。
+var migrationV21Metrics = func() []string {
+	var out []string
+	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+		for _, column := range []string{"net_rx_bps", "net_tx_bps"} {
+			for _, suffix := range []string{"_sum", "_n", "_max"} {
+				out = append(out, "ALTER TABLE "+table+" ADD COLUMN "+column+suffix+" INTEGER NOT NULL DEFAULT 0")
+			}
+		}
+	}
+	return out
+}()
 
 var migrationV20 = func() []string {
 	out := []string{
