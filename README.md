@@ -30,7 +30,7 @@ curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.
 probe-hub passwd --db /var/lib/probe/probe.db
 ```
 
-安装器校验下载包的 SHA256SUMS，以静态系统用户 `probe-hub` 启动服务，确认进程持续存活后才提示设置密码。主机没有 CA 证书包时安装器会装上 `ca-certificates`：不论从哪里下载，hub 发往 Telegram 的告警都走 HTTPS。升级时先让新版本的 `serve` 启动并完成数据库迁移，再使用 `passwd` 等离线子命令。管理员密码由你设置，脚本不生成、不打印密码。
+安装器只按脚本里内嵌的本版 SHA-256 校验下载包（发布时写进脚本；release 里的 `SHA256SUMS` 供人工核对，不是脚本的校验依据），以静态系统用户 `probe-hub` 启动服务，确认进程持续存活后才提示设置密码。主机没有 CA 证书包时安装器会装上 `ca-certificates`：不论从哪里下载，hub 发往 Telegram 的告警都走 HTTPS。升级时先让新版本的 `serve` 启动并完成数据库迁移，再使用 `passwd` 等离线子命令。管理员密码由你设置，脚本不生成、不打印密码。
 
 默认只监听 `127.0.0.1:8080`，TLS 交给反向代理。可用 `--listen`、`--timezone`、`--trusted-proxies`、`--public-dir`、`--theme-origin`、`--admin-origin`、`--geo-mmdb` 和 `--retention-*` 设置 serve 参数；例如：
 
@@ -39,7 +39,7 @@ curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.
   --timezone Asia/Taipei --trusted-proxies 127.0.0.1/32
 ```
 
-重跑即升级，沿用 `/etc/systemd/system/probe-hub.service` 里 `ExecStart` 的参数，命令行显式给出的值按参数名替换旧值；写回时每个参数只留一份，统一写成 `--flag=value`。`--version vX.Y.Z` 指定发行版，`--base-url URL` 改用该下载目录并忽略 `--version`。安装器只接受静态参数：用了 systemd 的 `$` / `%` 动态展开，或有 drop-in 设了 `ExecStart` 时，须先把参数合并为主单元里的静态值；无法解析时升级在停服前报错，不会重置配置。首装时已有设了 `ExecStart` 的 drop-in（例如预先写入 `probe-hub.service.d/` 的），安装器写好主单元后报错，不 enable、不 start。数据库固定为 `/var/lib/probe/probe.db`。
+重跑即升级，沿用 `/etc/systemd/system/probe-hub.service` 里 `ExecStart` 的参数，命令行显式给出的值按参数名替换旧值；写回时每个参数只留一份，统一写成 `--flag=value`。脚本只装自己所属的版本，没有 `--version`：`releases/latest/download/install-hub.sh` 装最新正式版，要装或升级到指定版本就取该版本的脚本，`https://github.com/xjetry/probe/releases/download/vX.Y.Z/install-hub.sh`。`--base-url URL` 只改从哪个目录下载，接受哪些字节仍由内嵌的 SHA-256 决定。安装器只接受静态参数：用了 systemd 的 `$` / `%` 动态展开，或有 drop-in 设了 `ExecStart` 时，须先把参数合并为主单元里的静态值；无法解析时升级在停服前报错，不会重置配置。首装时已有设了 `ExecStart` 的 drop-in（例如预先写入 `probe-hub.service.d/` 的），安装器写好主单元后报错，不 enable、不 start。数据库固定为 `/var/lib/probe/probe.db`。
 
 每次安装都用发行包里的单元覆盖主单元，只保留其中 `ExecStart` 的参数：主单元里别的手工改动（例如 `Environment=PROBE_OFFLINE_AFTER=60s`）会在升级时丢失。这类定制放进 drop-in（`systemctl edit probe-hub`，写在 `/etc/systemd/system/probe-hub.service.d/`）；不设 `ExecStart` 的 drop-in 升级时保留。普通卸载保留 drop-in，`--purge` 删除 `/etc/systemd/system/probe-hub.service.d/` 与 `/run/systemd/system/probe-hub.service.d/`，包括手工定制；目录为符号链接时只删除链接，不删除目标内容。共享 drop-in、发行版提供的配置和系统 journal 不清理，journal 由系统日志保留策略处理。
 
@@ -210,13 +210,23 @@ docker start probe
 
 先在面板的「注册窗口」开一个窗口拿到 key（或在 hub 主机上 `probe-hub window open`）。重跑安装命令即升级：已有配置时沿用现有注册，不会在 hub 上多出节点。
 
+安装命令以本 README 与 GitHub Release 为准，不以 hub 面板为准：面板由 hub 提供，hub 失守时面板上的命令可以被整条换掉，这一点产品内防不住。面板的命令只是为了方便，复制前核对脚本地址是 `https://github.com/xjetry/probe/releases/…`。
+
+两个 agent 脚本与 hub 脚本共同的规则：
+
+- 脚本只装自己所属的版本，没有 `--version`。`releases/latest/download/<脚本>` 装最新正式版；要装或升级到指定版本就取该版本的脚本，`https://github.com/xjetry/probe/releases/download/vX.Y.Z/<脚本>`。
+- 脚本里内嵌本版全部 tar 包的 SHA-256，只按它校验下载的包。`--base-url URL` 只改从哪个目录下载（镜像、本地构建），接受哪些字节不变：指向的目录里即使放了与篡改包相符的 `SHA256SUMS` 也装不上。仓库里的源码脚本没有内嵌哈希，只能卸载，安装请用 release 里的脚本。
+- `--insecure-http`（只在两个 agent 脚本上，hub 脚本没有 hub 地址）：hub 地址是 `http://` 且主机不是 loopback IP（`127.0.0.0/8`、`[::1]`；`localhost` 不算）时必须给出，agent 否则拒绝注册与启动。它把"接受明文 http"写进 agent 的本地配置，意味着节点 token 与指标明文传输，链路上的中间人与 hub 失守等价；能用 https 就用 https。首次安装时交给 `probe-agent register`，重跑时交给 `probe-agent configure`：已有的 http 部署升级时在命令里加上它，一次重跑即可恢复。面板在这种地址上给出的命令会自动带上它。
+
 ### Linux
 
-用面板注册窗口页给出的命令，形如：
+面板注册窗口页给出的命令形如下面这条（hub 为正式版本时脚本地址是 hub 同版本的 `releases/download/vX.Y.Z/install.sh`，装上的 agent 与 hub 同版本）：
 
 ```sh
 curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install.sh | sh -s -- --hub https://probe.example.com --key <key>
 ```
+
+参数：`--hub`、`--key`（首次安装必需）、`--name`、`--insecure-http`、`--base-url`，含义见上。
 
 以 root 运行，支持 systemd 与 OpenRC。卸载：同一条命令把参数换成 `--uninstall`，加 `--purge` 一并删除配置、专用日志目录、`probe-agent` 用户与同名组。systemd 普通卸载保留手工 drop-in；`--purge` 还删除 `/etc/systemd/system/probe-agent.service.d/` 与 `/run/systemd/system/probe-agent.service.d/`。目录为符号链接时只删除链接，不删除目标内容；共享 drop-in、发行版提供的配置和系统 journal 不清理。
 
@@ -229,13 +239,13 @@ curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-maco
 ```
 
 - agent 装成 LaunchDaemon `xyz.probe.agent`，以隐藏的系统用户 `_probe-agent` 运行；二进制在 `/usr/local/bin/probe-agent`，配置在 `/etc/probe-agent/`，日志在 `/Library/Logs/probe-agent/`。
-- 参数与 Linux 脚本相同：`--name`、`--version vX.Y.Z`（钉住版本）、`--base-url`（下载目录，用于镜像或本地构建）。
+- 参数与 Linux 脚本相同：`--name`、`--insecure-http`、`--base-url`（下载目录，用于镜像或本地构建；校验依据仍是脚本内嵌的 SHA-256）。没有 `--version`，指定版本取 `releases/download/vX.Y.Z/install-macos.sh`。
 - 卸载：`… | sudo sh -s -- --uninstall`；加 `--purge` 一并删除配置、日志、用户与同名组。
 - 默认不计入流量的网卡（回环、隧道与 VPN、桥与虚拟机网卡等）见 `probe-agent run -h`。
 
 #### 真机核对
 
-没有 macOS 虚拟机可做自动验收，改动 `deploy/install-macos.sh` 或 `deploy/launchd/xyz.probe.agent.plist` 后、发版前在一台 Mac 上逐条执行。未发布的构建用 `make release VERSION=v0.0.0-check` 产出 `dist/`，`python3 -m http.server 18089 --directory dist` 提供下载，下面的 `<base>` 即该地址，安装时加 `--base-url <base>`。端口避开仓库里各验收脚本占用的号：e2e 用 18080/18081，Linux 安装验收用 18085/18086（下载服务就在 18086），macOS 本机验收用 18087/18088；同一台机器上同时跑时，后起的一方会绑不上端口。
+没有 macOS 虚拟机可做自动验收，改动 `deploy/install-macos.sh` 或 `deploy/launchd/xyz.probe.agent.plist` 后、发版前在一台 Mac 上逐条执行。未发布的构建用 `make release VERSION=v0.0.0-check` 产出 `dist/`（其中的脚本已写入这次构建的哈希；仓库里的 `deploy/install-macos.sh` 不能安装），`python3 -m http.server 18089 --directory dist` 提供下载，下面的 `<base>` 即该地址，安装时加 `--base-url <base>`。端口避开仓库里各验收脚本占用的号：e2e 用 18080/18081，Linux 安装验收用 18085/18086（下载服务就在 18086），macOS 本机验收用 18087/18088；同一台机器上同时跑时，后起的一方会绑不上端口。
 
 1. `curl -fsSL <base>/install-macos.sh | sudo sh -s -- --hub <hub> --key <key> --base-url <base>`：最后一行是 `probe-agent installed and started (launchd, arm64, probe-agent_darwin_arm64.tar.gz)`（Intel 为 amd64）。
 2. `dscl . -read /Users/_probe-agent UniqueID PrimaryGroupID UserShell NFSHomeDirectory`：UniqueID 是 300–499 中从 499 往下第一个两个命名空间都空闲的号（通常就是 499），PrimaryGroupID 等于 `dscl . -read /Groups/_probe-agent PrimaryGroupID` 的值、与 UniqueID 相同，UserShell 为 `/usr/bin/false`，NFSHomeDirectory 为 `/var/empty`；`id -gn _probe-agent` 输出 `_probe-agent`；登录窗口里看不到这个用户。
@@ -244,7 +254,7 @@ curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-maco
 5. 面板：节点在线；详情页系统为 `macOS <sw_vers -productVersion>`、架构为 `arm64`（Intel 为 `amd64`）、CPU 型号等于 `sysctl -n machdep.cpu.brand_string`、ICMP 可用；实时视图每项指标都有值；内存已用与活动监视器的"已使用内存"接近。
 6. 给节点建一个 ICMP 任务，目标取网关（`route -n get default | awk '/gateway/ {print $2}'`）或 1.1.1.1：一分钟后有 RTT，与 `ping -c 10 <目标>` 的平均值同一量级。
 7. hub 在局域网地址（如 192.168.x.x）上时节点同样上线，ICMP 到局域网主机有结果（macOS 15 起的本地网络隐私不应拦截这个 LaunchDaemon）。
-8. 带同一个 `--key` 重跑第 1 条：输出含 `existing config found; keeping the current registration (--key ignored)`，面板节点数不变；换一个版本重跑：面板上的 agent 版本随之改变。
+8. 带同一个 `--key` 重跑第 1 条：输出含 `existing config found; keeping the current registration (--key ignored)`，面板节点数不变；取另一个版本构建的 `install-macos.sh` 与对应的 `<base>` 重跑：面板上的 agent 版本随之改变。
 9. hub 用 https 地址安装，节点上线后列出服务 uid 的全部进程：`ps -axo uid=,pid=,comm= | awk -v u=$(id -u _probe-agent) '$1 == u'`。agent 那一行的 comm 是 `/usr/local/bin/probe-agent`（安装脚本按 uid 加这个路径认进程）；若还有 cfprefsd、trustd 之类的辅助进程，把输出记下来，再重跑第 1 条与第 15 条的卸载各一次，都应成功而不报 `still running`。
 10. `sudo launchctl disable system/xyz.probe.agent` 后重跑第 1 条：成功，服务在跑。
 11. `sudo kill -9 $(pgrep -u _probe-agent probe-agent)`：约 5 秒内出现新的 pid，节点保持或恢复在线。
