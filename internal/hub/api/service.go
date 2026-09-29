@@ -31,6 +31,8 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/theme"
 	"github.com/xjetry/heron-probe/internal/hub/traffic"
+	"github.com/xjetry/heron-probe/internal/hub/updates"
+	"github.com/xjetry/heron-probe/internal/update"
 )
 
 const (
@@ -61,6 +63,7 @@ const (
 )
 
 type Config struct {
+	Updates *updates.Manager
 	Backups *backup.Manager
 	// TTL 必须为正；零值会放宽宽限期下限，New 将其视为装配错误并 panic。
 	TTL time.Duration
@@ -113,10 +116,12 @@ type Service struct {
 	// uploading 是容量 1 的信号量，UploadTheme 从校验到入库一直持有它：同一时刻至多一个请求在展开与入库，被引用着的
 	// 展开内容至多一份（≤ theme.MaxTotalBytes），Parse 的解压也至多一路。占用时直接拒绝而不排队：到了方法体的请求
 	// 已各自持有解码后的包，排队只会把它们攒在内存里。请求体的解码在方法体之前，不归它管，由 maxThemeBody 按请求设界。
-	uploading chan struct{}
-	github    *theme.GitHubClient
-	previewMu sync.Mutex
-	previews  map[string]themePreviewGrant
+	uploading    chan struct{}
+	github       *theme.GitHubClient
+	previewMu    sync.Mutex
+	previews     map[string]themePreviewGrant
+	updateLocal  localUpdateClient
+	updateSource releaseSource
 }
 
 func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, book *traffic.Book, probes *probe.Registry, alerts *alert.Engine, notifier *alert.Queue, clk clock.Clock, log *slog.Logger) *Service {
@@ -141,6 +146,7 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 		access:    accessTable(heronv1.File_heron_v1_admin_proto.Services().ByName("AdminService")),
 		uploading: make(chan struct{}, 1),
 		github:    theme.NewGitHubClient(), previews: make(map[string]themePreviewGrant),
+		updateLocal: update.NewClient("hub"), updateSource: update.NewOfficialSource(),
 	}
 }
 

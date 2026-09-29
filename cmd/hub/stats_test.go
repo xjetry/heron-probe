@@ -39,8 +39,8 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 			if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
 				t.Fatal(err)
 			}
-			if freshVersion != 23 {
-				t.Fatalf("fixture user_version = %d, want 23; rebuild the v8 fixture for the new version", freshVersion)
+			if freshVersion != 24 {
+				t.Fatalf("fixture user_version = %d, want 24; rebuild the v8 fixture for the new version", freshVersion)
 			}
 			removeV21Columns(t, raw, raw)
 			// 后续 schema 增加列、索引及维护状态、标签、主题、恢复记录、认证配置与选择器关联表，并重建 alert_delivery：多出
@@ -50,6 +50,7 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 			// DELETE 是因为提前生效的 journal_mode(WAL) 只在非 WAL 的库上改写文件头：本项目
 			// 自己产出的 v8 库本就是 WAL，在它上面这个缺陷不显形，逐字节比较测不出。
 			for _, stmt := range []string{
+				"DROP TABLE node_update",
 				"ALTER TABLE node_facts DROP COLUMN network",
 				"DROP TABLE theme_selection",
 				"DROP TABLE theme_version",

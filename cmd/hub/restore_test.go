@@ -241,6 +241,12 @@ func testRestoreTimeline(t *testing.T, configAt int64) {
 	// Restore 按共享的节点从属清单输出每张表（含零计数）；TestRestoreRecordUnion 校验摘要键与清单一致，
 	// TestNodeDependentTablesComplete 校验 schema 中的 node_id 表与清理、保留清单的集合关系。
 	for table := range summary.Orphans {
+		if table == "node_update" {
+			// 更新授权是运行簿记，不进快照，恢复后即使节点存在也不能重放。
+			restoreWant(t, db, "SELECT count(*) FROM node_update", "0")
+			wantOrphans[table] = 0
+			continue
+		}
 		restoreWant(t, db, "SELECT group_concat(node_id) FROM "+table, "2")
 		wantOrphans[table] = 1
 	}

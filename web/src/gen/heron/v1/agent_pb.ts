@@ -6,13 +6,15 @@ import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegen
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Facts, Metrics, ProbeResult, ProbeTasks } from "./types_pb";
 import { file_heron_v1_types } from "./types_pb";
+import type { UpdateStatus, UpdateTask } from "./update_pb";
+import { file_heron_v1_update } from "./update_pb";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file heron/v1/agent.proto.
  */
 export const file_heron_v1_agent: GenFile = /*@__PURE__*/
-  fileDesc("ChRoZXJvbi92MS9hZ2VudC5wcm90bxIIaGVyb24udjEiLAoPUmVnaXN0ZXJSZXF1ZXN0EgsKA2tleRgBIAEoCRIMCgRuYW1lGAIgASgJIjIKEFJlZ2lzdGVyUmVzcG9uc2USDwoHbm9kZV9pZBgBIAEoAxINCgV0b2tlbhgCIAEoCSKsAQoNUmVwb3J0UmVxdWVzdBIiCgdtZXRyaWNzGAEgASgLMhEuaGVyb24udjEuTWV0cmljcxIsCg1wcm9iZV9yZXN1bHRzGAIgAygLMhUuaGVyb24udjEuUHJvYmVSZXN1bHQSFQoNdGFza3NfdmVyc2lvbhgDIAEoBBISCgpmYWN0c19oYXNoGAQgASgGEh4KBWZhY3RzGAUgASgLMg8uaGVyb24udjEuRmFjdHMiZQoOUmVwb3J0UmVzcG9uc2USGgoScmVwb3J0X2ludGVydmFsX21zGAEgASgNEiMKBXRhc2tzGAIgASgLMhQuaGVyb24udjEuUHJvYmVUYXNrcxISCgp3YW50X2ZhY3RzGAMgASgIMo4BCgxBZ2VudFNlcnZpY2USQQoIUmVnaXN0ZXISGS5oZXJvbi52MS5SZWdpc3RlclJlcXVlc3QaGi5oZXJvbi52MS5SZWdpc3RlclJlc3BvbnNlEjsKBlJlcG9ydBIXLmhlcm9uLnYxLlJlcG9ydFJlcXVlc3QaGC5oZXJvbi52MS5SZXBvcnRSZXNwb25zZUI0WjJnaXRodWIuY29tL3hqZXRyeS9oZXJvbi1wcm9iZS9nZW4vaGVyb24vdjE7aGVyb252MWIGcHJvdG8z", [file_heron_v1_types]);
+  fileDesc("ChRoZXJvbi92MS9hZ2VudC5wcm90bxIIaGVyb24udjEiLAoPUmVnaXN0ZXJSZXF1ZXN0EgsKA2tleRgBIAEoCRIMCgRuYW1lGAIgASgJIjIKEFJlZ2lzdGVyUmVzcG9uc2USDwoHbm9kZV9pZBgBIAEoAxINCgV0b2tlbhgCIAEoCSLUAQoNUmVwb3J0UmVxdWVzdBIiCgdtZXRyaWNzGAEgASgLMhEuaGVyb24udjEuTWV0cmljcxIsCg1wcm9iZV9yZXN1bHRzGAIgAygLMhUuaGVyb24udjEuUHJvYmVSZXN1bHQSFQoNdGFza3NfdmVyc2lvbhgDIAEoBBISCgpmYWN0c19oYXNoGAQgASgGEh4KBWZhY3RzGAUgASgLMg8uaGVyb24udjEuRmFjdHMSJgoGdXBkYXRlGAYgASgLMhYuaGVyb24udjEuVXBkYXRlU3RhdHVzIosBCg5SZXBvcnRSZXNwb25zZRIaChJyZXBvcnRfaW50ZXJ2YWxfbXMYASABKA0SIwoFdGFza3MYAiABKAsyFC5oZXJvbi52MS5Qcm9iZVRhc2tzEhIKCndhbnRfZmFjdHMYAyABKAgSJAoGdXBkYXRlGAQgASgLMhQuaGVyb24udjEuVXBkYXRlVGFzazKOAQoMQWdlbnRTZXJ2aWNlEkEKCFJlZ2lzdGVyEhkuaGVyb24udjEuUmVnaXN0ZXJSZXF1ZXN0GhouaGVyb24udjEuUmVnaXN0ZXJSZXNwb25zZRI7CgZSZXBvcnQSFy5oZXJvbi52MS5SZXBvcnRSZXF1ZXN0GhguaGVyb24udjEuUmVwb3J0UmVzcG9uc2VCNFoyZ2l0aHViLmNvbS94amV0cnkvaGVyb24tcHJvYmUvZ2VuL2hlcm9uL3YxO2hlcm9udjFiBnByb3RvMw", [file_heron_v1_types, file_heron_v1_update]);
 
 /**
  * @generated from message heron.v1.RegisterRequest
@@ -94,6 +96,13 @@ export type ReportRequest = Message<"heron.v1.ReportRequest"> & {
    * @generated from field: heron.v1.Facts facts = 5;
    */
   facts?: Facts | undefined;
+
+  /**
+   * 来自本机更新器的能力与结果；缺席表示旧 agent，不支持远程更新。
+   *
+   * @generated from field: heron.v1.UpdateStatus update = 6;
+   */
+  update?: UpdateStatus | undefined;
 };
 
 /**
@@ -130,6 +139,13 @@ export type ReportResponse = Message<"heron.v1.ReportResponse"> & {
    * @generated from field: bool want_facts = 3;
    */
   wantFacts: boolean;
+
+  /**
+   * 幂等更新任务。agent 交给本机受限更新器，不能自行执行下载地址或命令。
+   *
+   * @generated from field: heron.v1.UpdateTask update = 4;
+   */
+  update?: UpdateTask | undefined;
 };
 
 /**

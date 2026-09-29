@@ -34,7 +34,7 @@ type Job struct {
 
 func (j Job) Active() bool {
 	switch j.State {
-	case "queued", "downloading", "stopping", "installing", "verifying":
+	case "queued", "downloading", "stopping", "installing", "verifying", "rolling_back":
 		return true
 	}
 	return false
@@ -107,6 +107,14 @@ func (c *Client) Status(ctx context.Context) Status {
 	if runtime.GOOS != "linux" {
 		return Status{Reason: "online updates require Linux systemd"}
 	}
+	for _, marker := range []string{"/.dockerenv", "/run/.containerenv"} {
+		if _, err := os.Stat(marker); err == nil {
+			return Status{Reason: "container deployments must update their image; online updates are unsupported"}
+		}
+	}
+	if _, err := os.Stat("/run/systemd/system"); errors.Is(err, os.ErrNotExist) {
+		return Status{Reason: "online updates require Linux systemd; use the platform installer"}
+	}
 	if err := c.call(ctx, "status", nil, &s); err != nil {
 		return Status{Reason: "local updater unavailable; install with the current systemd installer"}
 	}
@@ -131,6 +139,12 @@ func (c *Client) Ready(ctx context.Context, version string) error {
 	return c.call(ctx, "ready", struct {
 		Version string `json:"version"`
 	}{version}, &s)
+}
+
+// Maintenance 只供 root 安装器调用；服务用户不能借此暂停更新器。
+func (c *Client) Maintenance(ctx context.Context) error {
+	var out struct{}
+	return c.call(ctx, "maintenance", nil, &out)
 }
 
 // Gate 在受管理的候选启动期间保持关闭；普通安装没有进行中的事务，无须等待。

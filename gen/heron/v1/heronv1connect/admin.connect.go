@@ -33,6 +33,14 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
+	// AdminServiceGetUpdatesProcedure is the fully-qualified name of the AdminService's GetUpdates RPC.
+	AdminServiceGetUpdatesProcedure = "/heron.v1.AdminService/GetUpdates"
+	// AdminServiceStartUpdateProcedure is the fully-qualified name of the AdminService's StartUpdate
+	// RPC.
+	AdminServiceStartUpdateProcedure = "/heron.v1.AdminService/StartUpdate"
+	// AdminServiceCancelUpdateProcedure is the fully-qualified name of the AdminService's CancelUpdate
+	// RPC.
+	AdminServiceCancelUpdateProcedure = "/heron.v1.AdminService/CancelUpdate"
 	// AdminServiceLoginProcedure is the fully-qualified name of the AdminService's Login RPC.
 	AdminServiceLoginProcedure = "/heron.v1.AdminService/Login"
 	// AdminServiceBeginPasskeyLoginProcedure is the fully-qualified name of the AdminService's
@@ -192,6 +200,13 @@ const (
 
 // AdminServiceClient is a client for the heron.v1.AdminService service.
 type AdminServiceClient interface {
+	// 读取 hub 与节点的更新能力和最新任务。检查官方版本需显式 check_latest。
+	GetUpdates(context.Context, *connect.Request[v1.GetUpdatesRequest]) (*connect.Response[v1.GetUpdatesResponse], error)
+	// 创建单目标更新。node_id=0 为 hub；只允许比当前版本新的官方正式版。
+	// 节点离线时排队，24 小时过期；同一目标不能同时有多个活动任务。
+	StartUpdate(context.Context, *connect.Request[v1.StartUpdateRequest]) (*connect.Response[v1.StartUpdateResponse], error)
+	// 仅可取消尚未下发的 queued 节点任务；已下发或 hub 任务不能取消。
+	CancelUpdate(context.Context, *connect.Request[v1.CancelUpdateRequest]) (*connect.Response[v1.CancelUpdateResponse], error)
 	// 用管理员密码换取会话 cookie（Set-Cookie 在响应头里）。
 	Login(context.Context, *connect.Request[v1.LoginRequest]) (*connect.Response[v1.LoginResponse], error)
 	// 发起无密码 Passkey 登录；挑战只可消费一次。
@@ -329,6 +344,24 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 	baseURL = strings.TrimRight(baseURL, "/")
 	adminServiceMethods := v1.File_heron_v1_admin_proto.Services().ByName("AdminService").Methods()
 	return &adminServiceClient{
+		getUpdates: connect.NewClient[v1.GetUpdatesRequest, v1.GetUpdatesResponse](
+			httpClient,
+			baseURL+AdminServiceGetUpdatesProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("GetUpdates")),
+			connect.WithClientOptions(opts...),
+		),
+		startUpdate: connect.NewClient[v1.StartUpdateRequest, v1.StartUpdateResponse](
+			httpClient,
+			baseURL+AdminServiceStartUpdateProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("StartUpdate")),
+			connect.WithClientOptions(opts...),
+		),
+		cancelUpdate: connect.NewClient[v1.CancelUpdateRequest, v1.CancelUpdateResponse](
+			httpClient,
+			baseURL+AdminServiceCancelUpdateProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("CancelUpdate")),
+			connect.WithClientOptions(opts...),
+		),
 		login: connect.NewClient[v1.LoginRequest, v1.LoginResponse](
 			httpClient,
 			baseURL+AdminServiceLoginProcedure,
@@ -664,6 +697,9 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 
 // adminServiceClient implements AdminServiceClient.
 type adminServiceClient struct {
+	getUpdates            *connect.Client[v1.GetUpdatesRequest, v1.GetUpdatesResponse]
+	startUpdate           *connect.Client[v1.StartUpdateRequest, v1.StartUpdateResponse]
+	cancelUpdate          *connect.Client[v1.CancelUpdateRequest, v1.CancelUpdateResponse]
 	login                 *connect.Client[v1.LoginRequest, v1.LoginResponse]
 	beginPasskeyLogin     *connect.Client[v1.BeginPasskeyLoginRequest, v1.BeginPasskeyLoginResponse]
 	finishPasskeyLogin    *connect.Client[v1.FinishPasskeyLoginRequest, v1.FinishPasskeyLoginResponse]
@@ -719,6 +755,21 @@ type adminServiceClient struct {
 	createApiToken        *connect.Client[v1.CreateApiTokenRequest, v1.CreateApiTokenResponse]
 	deleteApiToken        *connect.Client[v1.DeleteApiTokenRequest, v1.DeleteApiTokenResponse]
 	getApiReference       *connect.Client[v1.GetApiReferenceRequest, v1.GetApiReferenceResponse]
+}
+
+// GetUpdates calls heron.v1.AdminService.GetUpdates.
+func (c *adminServiceClient) GetUpdates(ctx context.Context, req *connect.Request[v1.GetUpdatesRequest]) (*connect.Response[v1.GetUpdatesResponse], error) {
+	return c.getUpdates.CallUnary(ctx, req)
+}
+
+// StartUpdate calls heron.v1.AdminService.StartUpdate.
+func (c *adminServiceClient) StartUpdate(ctx context.Context, req *connect.Request[v1.StartUpdateRequest]) (*connect.Response[v1.StartUpdateResponse], error) {
+	return c.startUpdate.CallUnary(ctx, req)
+}
+
+// CancelUpdate calls heron.v1.AdminService.CancelUpdate.
+func (c *adminServiceClient) CancelUpdate(ctx context.Context, req *connect.Request[v1.CancelUpdateRequest]) (*connect.Response[v1.CancelUpdateResponse], error) {
+	return c.cancelUpdate.CallUnary(ctx, req)
 }
 
 // Login calls heron.v1.AdminService.Login.
@@ -998,6 +1049,13 @@ func (c *adminServiceClient) GetApiReference(ctx context.Context, req *connect.R
 
 // AdminServiceHandler is an implementation of the heron.v1.AdminService service.
 type AdminServiceHandler interface {
+	// 读取 hub 与节点的更新能力和最新任务。检查官方版本需显式 check_latest。
+	GetUpdates(context.Context, *connect.Request[v1.GetUpdatesRequest]) (*connect.Response[v1.GetUpdatesResponse], error)
+	// 创建单目标更新。node_id=0 为 hub；只允许比当前版本新的官方正式版。
+	// 节点离线时排队，24 小时过期；同一目标不能同时有多个活动任务。
+	StartUpdate(context.Context, *connect.Request[v1.StartUpdateRequest]) (*connect.Response[v1.StartUpdateResponse], error)
+	// 仅可取消尚未下发的 queued 节点任务；已下发或 hub 任务不能取消。
+	CancelUpdate(context.Context, *connect.Request[v1.CancelUpdateRequest]) (*connect.Response[v1.CancelUpdateResponse], error)
 	// 用管理员密码换取会话 cookie（Set-Cookie 在响应头里）。
 	Login(context.Context, *connect.Request[v1.LoginRequest]) (*connect.Response[v1.LoginResponse], error)
 	// 发起无密码 Passkey 登录；挑战只可消费一次。
@@ -1131,6 +1189,24 @@ type AdminServiceHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	adminServiceMethods := v1.File_heron_v1_admin_proto.Services().ByName("AdminService").Methods()
+	adminServiceGetUpdatesHandler := connect.NewUnaryHandler(
+		AdminServiceGetUpdatesProcedure,
+		svc.GetUpdates,
+		connect.WithSchema(adminServiceMethods.ByName("GetUpdates")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceStartUpdateHandler := connect.NewUnaryHandler(
+		AdminServiceStartUpdateProcedure,
+		svc.StartUpdate,
+		connect.WithSchema(adminServiceMethods.ByName("StartUpdate")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceCancelUpdateHandler := connect.NewUnaryHandler(
+		AdminServiceCancelUpdateProcedure,
+		svc.CancelUpdate,
+		connect.WithSchema(adminServiceMethods.ByName("CancelUpdate")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceLoginHandler := connect.NewUnaryHandler(
 		AdminServiceLoginProcedure,
 		svc.Login,
@@ -1463,6 +1539,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 	)
 	return "/heron.v1.AdminService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case AdminServiceGetUpdatesProcedure:
+			adminServiceGetUpdatesHandler.ServeHTTP(w, r)
+		case AdminServiceStartUpdateProcedure:
+			adminServiceStartUpdateHandler.ServeHTTP(w, r)
+		case AdminServiceCancelUpdateProcedure:
+			adminServiceCancelUpdateHandler.ServeHTTP(w, r)
 		case AdminServiceLoginProcedure:
 			adminServiceLoginHandler.ServeHTTP(w, r)
 		case AdminServiceBeginPasskeyLoginProcedure:
@@ -1581,6 +1663,18 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 
 // UnimplementedAdminServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedAdminServiceHandler struct{}
+
+func (UnimplementedAdminServiceHandler) GetUpdates(context.Context, *connect.Request[v1.GetUpdatesRequest]) (*connect.Response[v1.GetUpdatesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.GetUpdates is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) StartUpdate(context.Context, *connect.Request[v1.StartUpdateRequest]) (*connect.Response[v1.StartUpdateResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.StartUpdate is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) CancelUpdate(context.Context, *connect.Request[v1.CancelUpdateRequest]) (*connect.Response[v1.CancelUpdateResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.CancelUpdate is not implemented"))
+}
 
 func (UnimplementedAdminServiceHandler) Login(context.Context, *connect.Request[v1.LoginRequest]) (*connect.Response[v1.LoginResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.Login is not implemented"))

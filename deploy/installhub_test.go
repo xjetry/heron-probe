@@ -27,6 +27,7 @@ import (
 // systemctl、curl、apt-get 读尽 stdin：脚本以 sh -s 从 stdin 运行，漏掉 </dev/null 的调用会吞掉脚本余下部分，
 // 安装在中途无声结束，测试看不到最后一行。真实的 systemd 解析、起停与属主由 scripts/install-accept.sh 在真机上验证。
 var hubStubs = map[string]string{
+	"flock": linuxStubs["flock"],
 	"id":    linuxStubs["id"],
 	"uname": linuxStubs["uname"],
 	"sleep": `#!/bin/sh
@@ -36,6 +37,10 @@ if [ -n "${STUB_START_DIES-}" ] && [ "$1" = 3 ]; then rm -rf "$HERON_INSTALL_ROO
 	"systemctl": `#!/bin/sh
 cat > /dev/null
 echo "systemctl $*" >> "$STUB_STATE/calls"
+case "$*" in
+  "show heron-updater-hub -p ActiveState --value") echo "${STUB_UPDATER_STATE:-active}"; exit 0;;
+  *heron-updater-hub*) exit 0;;
+esac
 P=$HERON_INSTALL_ROOT/proc
 W=$HERON_INSTALL_ROOT/etc/systemd/system/multi-user.target.wants
 reload_fails() { [ -n "${STUB_RELOAD_FAILS-}" ] || [ -f "$STUB_STATE/reload-fails" ]; }
@@ -134,6 +139,7 @@ func (e *env) hubRelease(version string) {
 // hubPackage 按 make release 的形状把 hub 包打进 dir：heron-hub 与仓库里的 systemd 单元原件。
 func (e *env) hubPackage(dir, version string) {
 	e.t.Helper()
+	e.updaterPackage(dir, "amd64", version)
 	unit, err := os.ReadFile("systemd/heron-hub.service")
 	if err != nil {
 		e.t.Fatal(err)
@@ -515,7 +521,7 @@ func TestHubDatabaseSwappedAfterThePreStopCheckIsRefused(t *testing.T) {
 	e.mode("etc/outside", 0o644)
 	e.mode(hubData, 0o750)
 	c := e.calls()
-	if index(c, "chown heron-hub:heron-hub") >= 0 || index(c, "systemctl start") >= 0 {
+	if index(c, "chown heron-hub:heron-hub") >= 0 || index(c, "systemctl start heron-hub") >= 0 {
 		t.Fatalf("nothing may be handed to heron-hub or started: calls %q", c)
 	}
 }
@@ -743,7 +749,7 @@ func TestHubFailedStopDoesNotSayStopped(t *testing.T) {
 			if code != 1 || !strings.Contains(out, tc.want) || strings.Contains(out, "heron-hub is stopped") {
 				t.Fatalf("exit %d:\n%s", code, out)
 			}
-			if !strings.Contains(e.file("usr/local/bin/heron-hub"), "# v1 amd64") || index(e.calls(), "systemctl start") >= 0 {
+			if !strings.Contains(e.file("usr/local/bin/heron-hub"), "# v1 amd64") || index(e.calls(), "systemctl start heron-hub") >= 0 {
 				t.Fatalf("nothing may be replaced or started after a failed stop: calls %q", e.calls())
 			}
 		})
@@ -771,7 +777,7 @@ func TestHubFirstInstallRefusesAnExecStartDropIn(t *testing.T) {
 	if strings.Contains(out, "start it manually") || strings.Contains(out, "heron-hub is stopped") {
 		t.Fatalf("a first install refused over a drop-in must not suggest starting heron-hub:\n%s", out)
 	}
-	if c := e.calls(); index(c, "systemctl enable") >= 0 || index(c, "systemctl start") >= 0 {
+	if c := e.calls(); index(c, "systemctl enable heron-hub") >= 0 || index(c, "systemctl start heron-hub") >= 0 {
 		t.Fatalf("a refused first install must not enable or start heron-hub: calls %q", c)
 	}
 }
@@ -796,7 +802,7 @@ func TestHubDropInWrittenWhileStoppedIsRefusedBeforeStart(t *testing.T) {
 	if strings.Contains(out, "start it manually") {
 		t.Fatalf("a drop-in refusal must not suggest starting heron-hub by hand:\n%s", out)
 	}
-	if c := e.calls(); index(c, "systemctl start") >= 0 {
+	if c := e.calls(); index(c, "systemctl start heron-hub") >= 0 {
 		t.Fatalf("heron-hub must not be started: calls %q", c)
 	}
 }
@@ -875,7 +881,7 @@ func TestHubSystemctlFailureIsNotReportedAsADropInProblem(t *testing.T) {
 				if tc.forbidden != "" && strings.Contains(out, tc.forbidden) {
 					t.Fatalf("must not say %q:\n%s", tc.forbidden, out)
 				}
-				if strings.Contains(out, "drop-in problem") || strings.Contains(out, "start it manually") || index(e.calls(), "systemctl start") >= 0 {
+				if strings.Contains(out, "drop-in problem") || strings.Contains(out, "start it manually") || index(e.calls(), "systemctl start heron-hub") >= 0 {
 					t.Fatalf("a systemctl failure must not be reported as a drop-in problem, suggest a manual start, or start heron-hub: calls %q\n%s", e.calls(), out)
 				}
 				if tc.name == "before stopping" {

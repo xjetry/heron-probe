@@ -1,0 +1,27 @@
+[Unit]
+Description=Heron agent official release updater
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/heron-updater-agent --role agent
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+ReadWritePaths=/usr/local/bin /var/lib/heron-update-agent /run/heron-update-agent
+RuntimeDirectory=heron-update-agent
+RuntimeDirectoryMode=0755
+StateDirectory=heron-update-agent
+StateDirectoryMode=0755
+
+[Install]
+WantedBy=multi-user.target

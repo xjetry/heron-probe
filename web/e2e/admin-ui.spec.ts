@@ -138,7 +138,7 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
     await page.setViewportSize({ width: 375, height: 812 });
     for (const [route, heading] of [
       ['probes', '探测任务'], ['alerts', '告警规则'], ['events', '告警事件'], ['channels', '通知渠道'],
-      ['appearance', '外观'], ['themes', '主题'], ['storage', '存储'], ['security', '安全'],
+      ['appearance', '外观'], ['themes', '主题'], ['storage', '存储'], ['updates', '在线更新'], ['security', '安全'],
       ['security/credentials', '账户安全'], ['tokens', 'API token'], ['register', '注册窗口'],
     ]) {
       await page.goto('/admin/' + route);
@@ -150,4 +150,21 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
   } finally {
     for (const id of ids) await rpc(page, 'DeleteNode', { id });
   }
+});
+
+test('在线更新展示实际平台能力并禁止不支持的更新', async ({ page }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/admin/login');
+  await rpc(page, 'Login', { password: 'local-browser-test-password' });
+  await page.goto('/admin/updates');
+  await expect(page.getByRole('heading', { name: '在线更新', exact: true })).toBeVisible();
+  await expect(page.getByText(/不支持在线更新：/).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: '更新 Hub', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '更新选中节点（0）', exact: true })).toBeDisabled();
+  await page.setViewportSize({ width: 1440, height: 960 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1440);
+  await page.screenshot({ path: testInfo.outputPath('updates-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 375, height: 812 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
+  await page.screenshot({ path: testInfo.outputPath('updates-mobile.png'), fullPage: true });
 });

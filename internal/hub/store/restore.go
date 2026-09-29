@@ -105,6 +105,10 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 	if _, err = tx.ExecContext(ctx, "DELETE FROM main.admin_session"); err != nil {
 		return result, err
 	}
+	// 更新授权不随配置快照恢复；目标库残留的排队任务也必须撤下。
+	if _, err = tx.ExecContext(ctx, "DELETE FROM main.node_update"); err != nil {
+		return result, err
+	}
 	for _, src := range sources {
 		for _, table := range src.tables {
 			columns, e := restoreColumnList(ctx, tx, table)
@@ -380,6 +384,8 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			if layer == "config" {
 				statements = migrationV23
 			}
+		case 24:
+			// node_update 不属于任一备份层。
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}

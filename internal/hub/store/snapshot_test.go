@@ -38,7 +38,7 @@ func TestSnapshotClassificationComplete(t *testing.T) {
 	s, _ := open(t)
 	// 会话与注册窗口不进快照，避免复活已撤销的授权；恢复记录不能自愈，随配置备份。
 	// 主题文件与原包按变更单独备份；sqlite_sequence 是每层都携带的分配簿记，不计入数据表分层等式。
-	excluded := []string{"admin_session", "register_window", "theme_file", "theme_package", "sqlite_sequence"}
+	excluded := []string{"admin_session", "register_window", "theme_file", "theme_package", "sqlite_sequence", "node_update"}
 	classified := append(append(slices.Clone(configSnapshotTables), metricsSnapshotTables...), excluded...)
 	slices.Sort(classified)
 	if actual := tableNames(t, s.r); !reflect.DeepEqual(actual, classified) {

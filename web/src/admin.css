@@ -70,6 +70,10 @@
 .admin-shell .page-heading h1 { margin: 0 0 7px; }
 .page-heading p { margin: 0; color: var(--muted); font-size: 12px; }
 .page-heading-actions { display: flex; gap: 10px; align-items: center; }
+.update-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 18px; margin-bottom: 28px; }
+.update-summary .card { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.update-summary button { margin-top: 18px; }
+.update-progress { display: grid; gap: 5px; max-width: 460px; overflow-wrap: anywhere; }
 .eyebrow { color: var(--muted); font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 7px; }
 .admin-shell .card, .admin-shell fieldset:not(.bare):not(.picks) { border: 1px solid var(--line); background: var(--card); border-radius: 12px; padding: 22px; margin: 0 0 20px; min-width: 0; }
 .admin-shell fieldset legend { color: var(--fg); font-size: 13px; font-weight: 600; padding: 0 8px; }

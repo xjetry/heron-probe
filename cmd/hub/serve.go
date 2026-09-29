@@ -27,7 +27,9 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/probe"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/traffic"
+	"github.com/xjetry/heron-probe/internal/hub/updates"
 	"github.com/xjetry/heron-probe/internal/hub/web"
+	"github.com/xjetry/heron-probe/internal/update"
 )
 
 type mount struct {
@@ -193,12 +195,13 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	if *adminOrigin != "" {
 		log.Warn("--admin-origin is only for legacy Passkey migration; persisted bindings take precedence, remove this flag after migration")
 	}
-	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, book, reg, clk, log)
+	updateManager := updates.New(st, clk, log)
+	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted, Updates: updateManager}, l, st, a, book, reg, clk, log)
 	if err != nil {
 		return err
 	}
 	ctx := context.Background()
-	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
+	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx), updateManager.Load(ctx)); err != nil {
 		return err
 	}
 	// 续投读取已加载的渠道快照；所有 Load 成功后才入队，后台 worker 尚未启动。
@@ -206,7 +209,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		return err
 	}
 	backups := backup.New(st, notifier, clk, log)
-	admin := api.New(api.Config{Backups: backups, TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version, Location: loc, Retention: retention, PublicDir: *publicDir != "", Geo: geoBackend}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
+	admin := api.New(api.Config{Updates: updateManager, Backups: backups, TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version, Location: loc, Retention: retention, PublicDir: *publicDir != "", Geo: geoBackend}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: trusted, Location: loc}, st, l, book, reg, clk, log)
 
 	themes := web.ThemeHandler(st, public, admin.ThemePreviewAccess, log)
@@ -223,6 +226,10 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	if err != nil {
 		return err
 	}
+	if err := update.NewClient("hub").Gate(stopCtx, version); err != nil {
+		_ = listener.Close()
+		return fmt.Errorf("update startup gate: %w", err)
+	}
 	drain := &drainingHandler{next: handler}
 	srv := &http.Server{
 		Addr: *listen, Handler: drain, ReadHeaderTimeout: 10 * time.Second,
@@ -230,6 +237,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	}
 
 	defer startLoop(svc.RunFlusher)()
+	defer startLoop(updateManager.Run)()
 	defer startLoop(func(ctx context.Context) { st.RunMaintenance(ctx, retention) })()
 	defer startLoop(book.Run)()
 	stopSweep := startLoop(alerts.RunOfflineSweep)

@@ -175,6 +175,9 @@ func runRun(args []string) error {
 	network := netinfo.New()
 	go network.Run(ctx)
 	r.Network = network
+	updater := client.NewUpdateCoordinator(version, log)
+	go updater.Run(ctx)
+	r.Updates = updater
 	logStarting(log, cfg.Hub)
 	if err := r.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err

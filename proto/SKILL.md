@@ -12,6 +12,7 @@ hub 的管理接口是 Connect unary：每个方法都是 `POST $HERON_HUB/heron
 - `HERON_HUB`：hub 的对外地址，如 `https://heron.example.com`，不带末尾斜杠。
 - `HERON_TOKEN`：在面板"API token"页创建的只读 token，形如 `heron_at_` 加 64 位十六进制。它只能调只读方法；写方法返回 `permission_denied`，需要在面板上操作。
 - `ListSessions` 与 `RevokeSession` 也仅限会话 cookie，API token 不可用：只读 token 不能枚举或撤销其它凭据。
+- `GetUpdates` 可用只读 token 查询 hub 与节点的在线更新能力和任务；`checkLatest: true` 显式查询官方最新正式版。`StartUpdate` 与 `CancelUpdate` 只接受管理员会话，不能使用 API token 授权安装。
 - 每个请求带两个头：`Authorization: Bearer $HERON_TOKEN` 与 `Content-Type: application/json`。
 
 ## 取 schema

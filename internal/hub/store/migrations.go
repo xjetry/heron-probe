@@ -42,7 +42,10 @@ var migrations = map[int]func(*sql.Tx) error{
 	21: execAll(append(append([]string{}, migrationV21Config...), migrationV21Metrics...)),
 	22: migrateThemeVersions,
 	23: execAll(migrationV23),
+	24: execAll([]string{ddlNodeUpdateV24}),
 }
+
+const ddlNodeUpdateV24 = `CREATE TABLE node_update (node_id INTEGER PRIMARY KEY, data TEXT NOT NULL)`
 
 var migrationV23 = []string{`ALTER TABLE node_facts ADD COLUMN network TEXT NOT NULL DEFAULT '{}'`}
 

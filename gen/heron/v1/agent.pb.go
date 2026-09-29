@@ -135,7 +135,9 @@ type ReportRequest struct {
 	// agent 静态信息的摘要，每次都带。
 	FactsHash uint64 `protobuf:"fixed64,4,opt,name=facts_hash,json=factsHash,proto3" json:"facts_hash,omitempty"`
 	// 进程启动后的首次上报携带；此后仅在 hub 要求时携带。
-	Facts         *Facts `protobuf:"bytes,5,opt,name=facts,proto3" json:"facts,omitempty"`
+	Facts *Facts `protobuf:"bytes,5,opt,name=facts,proto3" json:"facts,omitempty"`
+	// 来自本机更新器的能力与结果；缺席表示旧 agent，不支持远程更新。
+	Update        *UpdateStatus `protobuf:"bytes,6,opt,name=update,proto3" json:"update,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -205,6 +207,13 @@ func (x *ReportRequest) GetFacts() *Facts {
 	return nil
 }
 
+func (x *ReportRequest) GetUpdate() *UpdateStatus {
+	if x != nil {
+		return x.Update
+	}
+	return nil
+}
+
 // ReportResponse 与 RegisterResponse 是 hub 对 agent 的全部下行，也就是 hub 失守时能对 agent 施加的全部影响
 // （spec §5.7）。新增字段时须在那里写明它交给了 hub 什么能力。
 type ReportResponse struct {
@@ -214,7 +223,9 @@ type ReportResponse struct {
 	// 仅当 tasks_version 与 hub 不一致时携带。
 	Tasks *ProbeTasks `protobuf:"bytes,2,opt,name=tasks,proto3" json:"tasks,omitempty"`
 	// hub 持有的 facts_hash 与请求不一致。
-	WantFacts     bool `protobuf:"varint,3,opt,name=want_facts,json=wantFacts,proto3" json:"want_facts,omitempty"`
+	WantFacts bool `protobuf:"varint,3,opt,name=want_facts,json=wantFacts,proto3" json:"want_facts,omitempty"`
+	// 幂等更新任务。agent 交给本机受限更新器，不能自行执行下载地址或命令。
+	Update        *UpdateTask `protobuf:"bytes,4,opt,name=update,proto3" json:"update,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -270,29 +281,38 @@ func (x *ReportResponse) GetWantFacts() bool {
 	return false
 }
 
+func (x *ReportResponse) GetUpdate() *UpdateTask {
+	if x != nil {
+		return x.Update
+	}
+	return nil
+}
+
 var File_heron_v1_agent_proto protoreflect.FileDescriptor
 
 const file_heron_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x14heron/v1/agent.proto\x12\bheron.v1\x1a\x14heron/v1/types.proto\"7\n" +
+	"\x14heron/v1/agent.proto\x12\bheron.v1\x1a\x14heron/v1/types.proto\x1a\x15heron/v1/update.proto\"7\n" +
 	"\x0fRegisterRequest\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\"A\n" +
 	"\x10RegisterResponse\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\x03R\x06nodeId\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"\xe3\x01\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\x93\x02\n" +
 	"\rReportRequest\x12+\n" +
 	"\ametrics\x18\x01 \x01(\v2\x11.heron.v1.MetricsR\ametrics\x12:\n" +
 	"\rprobe_results\x18\x02 \x03(\v2\x15.heron.v1.ProbeResultR\fprobeResults\x12#\n" +
 	"\rtasks_version\x18\x03 \x01(\x04R\ftasksVersion\x12\x1d\n" +
 	"\n" +
 	"facts_hash\x18\x04 \x01(\x06R\tfactsHash\x12%\n" +
-	"\x05facts\x18\x05 \x01(\v2\x0f.heron.v1.FactsR\x05facts\"\x89\x01\n" +
+	"\x05facts\x18\x05 \x01(\v2\x0f.heron.v1.FactsR\x05facts\x12.\n" +
+	"\x06update\x18\x06 \x01(\v2\x16.heron.v1.UpdateStatusR\x06update\"\xb7\x01\n" +
 	"\x0eReportResponse\x12,\n" +
 	"\x12report_interval_ms\x18\x01 \x01(\rR\x10reportIntervalMs\x12*\n" +
 	"\x05tasks\x18\x02 \x01(\v2\x14.heron.v1.ProbeTasksR\x05tasks\x12\x1d\n" +
 	"\n" +
-	"want_facts\x18\x03 \x01(\bR\twantFacts2\x8e\x01\n" +
+	"want_facts\x18\x03 \x01(\bR\twantFacts\x12,\n" +
+	"\x06update\x18\x04 \x01(\v2\x14.heron.v1.UpdateTaskR\x06update2\x8e\x01\n" +
 	"\fAgentService\x12A\n" +
 	"\bRegister\x12\x19.heron.v1.RegisterRequest\x1a\x1a.heron.v1.RegisterResponse\x12;\n" +
 	"\x06Report\x12\x17.heron.v1.ReportRequest\x1a\x18.heron.v1.ReportResponseB4Z2github.com/xjetry/heron-probe/gen/heron/v1;heronv1b\x06proto3"
@@ -318,22 +338,26 @@ var file_heron_v1_agent_proto_goTypes = []any{
 	(*Metrics)(nil),          // 4: heron.v1.Metrics
 	(*ProbeResult)(nil),      // 5: heron.v1.ProbeResult
 	(*Facts)(nil),            // 6: heron.v1.Facts
-	(*ProbeTasks)(nil),       // 7: heron.v1.ProbeTasks
+	(*UpdateStatus)(nil),     // 7: heron.v1.UpdateStatus
+	(*ProbeTasks)(nil),       // 8: heron.v1.ProbeTasks
+	(*UpdateTask)(nil),       // 9: heron.v1.UpdateTask
 }
 var file_heron_v1_agent_proto_depIdxs = []int32{
 	4, // 0: heron.v1.ReportRequest.metrics:type_name -> heron.v1.Metrics
 	5, // 1: heron.v1.ReportRequest.probe_results:type_name -> heron.v1.ProbeResult
 	6, // 2: heron.v1.ReportRequest.facts:type_name -> heron.v1.Facts
-	7, // 3: heron.v1.ReportResponse.tasks:type_name -> heron.v1.ProbeTasks
-	0, // 4: heron.v1.AgentService.Register:input_type -> heron.v1.RegisterRequest
-	2, // 5: heron.v1.AgentService.Report:input_type -> heron.v1.ReportRequest
-	1, // 6: heron.v1.AgentService.Register:output_type -> heron.v1.RegisterResponse
-	3, // 7: heron.v1.AgentService.Report:output_type -> heron.v1.ReportResponse
-	6, // [6:8] is the sub-list for method output_type
-	4, // [4:6] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	7, // 3: heron.v1.ReportRequest.update:type_name -> heron.v1.UpdateStatus
+	8, // 4: heron.v1.ReportResponse.tasks:type_name -> heron.v1.ProbeTasks
+	9, // 5: heron.v1.ReportResponse.update:type_name -> heron.v1.UpdateTask
+	0, // 6: heron.v1.AgentService.Register:input_type -> heron.v1.RegisterRequest
+	2, // 7: heron.v1.AgentService.Report:input_type -> heron.v1.ReportRequest
+	1, // 8: heron.v1.AgentService.Register:output_type -> heron.v1.RegisterResponse
+	3, // 9: heron.v1.AgentService.Report:output_type -> heron.v1.ReportResponse
+	8, // [8:10] is the sub-list for method output_type
+	6, // [6:8] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_heron_v1_agent_proto_init() }
@@ -342,6 +366,7 @@ func file_heron_v1_agent_proto_init() {
 		return
 	}
 	file_heron_v1_types_proto_init()
+	file_heron_v1_update_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

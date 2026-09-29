@@ -16,6 +16,7 @@
 - 节点费用与到期：价格、币种、周期、到期日与自动续期的展示值，以及到期提醒（§9.4）
 - 公开页主题：在管理后台上传或从公开 GitHub Release 安装构建产物，预览、按不可变版本启用和回滚；同域名公开页通过可信容器中的不透明来源沙箱运行主题，并提供主题 SDK 与开发指南。
 - 节点的国家 / 地区徽章：由运维显式开启的查询服务按节点来源地址得出，或由管理员手动指定；默认不出网
+- 管理员显式触发官方正式 Release 在线更新：Linux systemd 的 hub 与 agent 使用独立本机更新器，不开放任意代码或命令下发。
 
 已确认要做、但尚未在本文成形的功能点记在仓库根的 `FEATURES.md`；其中某条进入里程碑时，设计并入本文并从那里删除。
 
@@ -24,7 +25,7 @@
 | 排除项 | 原因 |
 |---|---|
 | 远程终端、命令执行、文件管理 | 会让 hub 成为对全部节点的远程代码执行入口；hub 失守即全部节点失守 |
-| agent 自动更新、hub 托管 agent 二进制 | 本质是"hub 可向全部节点推送代码"，与上一条同类 |
+| 无人值守自动更新、hub 托管或指定 agent 二进制 | 仅支持管理员触发且由本机独立校验的官方正式 Release 更新，不接受 hub 提供的程序、下载源或命令 |
 | 插件系统 | 第三方代码在 hub 进程内执行，与远程执行同类。主题的代码跑在访客浏览器里，不是同一件事 |
 | 自动主题市场与任意 URL 安装 | 不维护远程市场目录，不自动发现或更新主题。管理员可显式选择公开 GitHub Release 的已构建 ZIP 资产，hub 按限定目标、重定向和地址策略下载并校验后本地托管，不执行源码构建 |
 | OAuth、多用户 | 单管理员足够；支持 TOTP 与无密码 Passkey |
@@ -106,7 +107,7 @@ deploy/               install.sh、systemd 单元、OpenRC 服务脚本（§14�
 
 ### 4.1 为什么是 unary 而不是长连接
 
-hub → agent 的下行只有探测任务列表与上报间隔，都是低频变更的配置，可以在每次上报的响应里按版本对账。由此 agent 与 hub 之间不需要应用层连接状态，下列问题不存在：连接替换时迟到的拆除误删新会话、半开连接探测、出站队列满导致推送丢失、握手与首报之间的在线语义、hub 重启后的重连风暴（每个 agent 本来就是每周期一个请求，恢复后的负载就是稳态负载）。
+hub → agent 的下行包含探测任务列表、上报间隔、facts 请求及受限更新授权，可以在每次上报响应里按版本或任务 ID 对账。更新授权先持久化再下发，同一 ID 的重复交付由本机更新器幂等处理。由此 agent 与 hub 之间不需要应用层连接状态，下列问题不存在：连接替换时迟到的拆除误删新会话、半开连接探测、出站队列满导致推送丢失、握手与首报之间的在线语义、hub 重启后的重连风暴（每个 agent 本来就是每周期一个请求，恢复后的负载就是稳态负载）。
 
 unary 是普通 HTTP POST，HTTP/1.1 即可，过反代与 CDN 无需特殊配置。不使用 bidi streaming：它要求 HTTP/2 端到端，反代到 hub 这一跳需要显式配置。
 
@@ -128,12 +129,14 @@ message ReportRequest {
   uint64  tasks_version = 3;   // agent 当前持有的探测任务版本
   fixed64 facts_hash = 4;      // agent 静态信息的摘要
   Facts   facts = 5;           // 进程启动后的首次上报携带；此后仅在 hub 要求时携带
+  UpdateStatus update = 6;     // 本机更新能力、当前版本和最新任务状态
 }
 
 message ReportResponse {
   uint32     report_interval_ms = 1;
   ProbeTasks tasks = 2;        // 仅当 tasks_version 与 hub 不一致时携带
   bool       want_facts = 3;   // hub 持有的 facts_hash 与请求不一致
+  UpdateTask update = 4;       // 已持久化的受限官方更新授权
 }
 
 message Metrics {
@@ -254,7 +257,7 @@ hub 只监听明文 HTTP，TLS 由反代（Caddy / nginx / CDN）终止，hub �
 - `--listen` 默认 `127.0.0.1:8080`。监听非 loopback 地址时启动日志告警：此时任何人都能绕过反代直连并自带转发头。
 - `--timezone` 是 IANA 时区名，默认取 hub 进程的本地时区；只用于 §7 流量周期的重置日判定、§9.4 到期日的天边界、面板文案与通知文案里的时刻（§5.3 登录通知的摘要按它写 RFC 3339 时间），不参与任何时长计算。本地时区的名字按 `TZ`、再按 `/etc/localtime` 符号链接的目标路径里 `zoneinfo/` 之后的部分解析（在所测的 Alpine 3.21、Debian 12、Ubuntu 24.04、Rocky Linux 9 上按各自的标准方式设置时区后都是符号链接，Alpine 指向 `/etc/zoneinfo/`）；不读 `/etc/timezone`——RHEL 系没有它，Debian 与 Ubuntu 用 `timedatectl` 改时区后它仍是旧值。`/etc/localtime` 是复制出来的普通文件时（常见于 Dockerfile）取不到名字，退回 UTC 并告警。
 - `--trusted-proxies` 显式给出 CIDR 列表。只有 TCP 对端地址落在列表内的请求，其 `X-Forwarded-For` / `X-Forwarded-Proto` 才被采信。`X-Forwarded-For` 可能有多行（HAProxy 的 `option forwardfor` 把真实地址另起一行追加），读取时把全部字段行按出现顺序合并后再取值，只读第一行会让键取自客户端伪造的那一行。`X-Forwarded-Proto` 同样按全部字段行合并后取第一个值，即最外层那一跳写的协议；它不带逐跳地址，没法像 `X-Forwarded-For` 那样从右向左跳过可信代理，代理追加而不覆盖时客户端自带的值排在最前。这一点有意不处理：它只决定签发或清除请求者自己的会话 cookie（Login、Logout、撤销当前会话）时带不带 `Secure`，客户端只能改到自己，影响不到别的来源。空列表 = 不信任任何转发头、一律用 TCP 对端地址，是收紧方向。hub 不从请求头推断自己是否在反代之后。
-- hub 主动出网的目标只有两类，都由配置显式给出、默认没有：通知渠道（§9.3）、国家查询（§4.9）与分层备份（§6.7）；代码内不得另有出站目标。
+- hub 按配置主动访问通知渠道（§9.3）、国家查询（§4.9）与分层备份（§6.7）；管理员操作还可触发 GitHub 主题查询/安装，以及固定官方仓库的正式版本查询。实际程序下载由独立本机更新器完成，访问目标受官方源策略限制。
 - 主题不需要独立主机名或启动参数。旧 `--theme-origin` 已移除，升级前必须从启动配置中删除；后台直接选择同域名公开页的主题版本。
 - hub 不生成自己的对外地址：面板里安装命令的 hub 地址取浏览器当前的 origin（§10），所以没有 `--site-url`，也不存在从 `Host` 头推断对外地址的问题。
 
@@ -281,11 +284,12 @@ mTLS 相对 bearer token 的增量是"凭据不过线"与"在 HTTP 层之前拒�
 
 ### 5.7 hub 失守时 agent 宿主机的边界
 
-威胁模型：攻击者完全控制 hub（进程、数据库、面板页面），或处在 agent 与 hub 之间的明文链路上。要守住的性质：攻击者不能在 agent 宿主机上执行代码、不能读写宿主机文件、不能让 agent 耗尽宿主机资源（内存与日志）、不能让 agent 探测宿主机本机（回环与本机接口上的地址）与链路本地地址。攻击者仍能做的：伪造展示、停掉监控，以及按 §8.4 的速率上限探测本地策略允许的地址（私网默认允许）。下面各条分别承载其中一部分，互不替代，不指定哪一条是主要防线：
+威胁模型：攻击者完全控制 hub（进程、数据库、面板页面），或处在 agent 与 hub 之间的明文链路上。要守住的性质：攻击者不能在 agent 宿主机上执行任意代码、不能任意读写宿主机文件、不能让 agent 耗尽宿主机资源（内存与日志）、不能让 agent 探测宿主机本机（回环与本机接口上的地址）与链路本地地址。攻击者仍能做的：伪造展示、停掉监控、请求安装比当前版本新的官方正式 Release，以及按 §8.4 的速率上限探测本地策略允许的地址（私网默认允许）。官方发行权限属于更新信任根。下面各条分别承载其中一部分，互不替代，不指定哪一条是主要防线：
 
-- 下行面：agent 从 hub 收到的只有 `RegisterResponse` 与 `ReportResponse` 的三个字段；agent 不监听端口、不执行外部命令、不自我升级、运行期不写配置。新增下行字段时必须在本节写明它交给了 hub 什么能力。
+- 下行面：agent 从 hub 收到的只有 `RegisterResponse` 与 `ReportResponse`；后者包含上报间隔、探测任务、facts 请求和受限更新任务。agent 不监听入站端口、不执行外部命令、运行期不写配置。更新任务只将版本号、任务 ID 与到期时间提交给对应服务用户可访问的本机 Unix socket；独立 root 更新器验证固定官方源、正式版本递增、摘要、归档及固定 systemd 目标后替换主程序，不接受 URL、仓库、路径、摘要或命令。新增下行字段必须在本节写明授予 hub 的能力。
+- 在线更新事务：管理员会话可创建和取消任务，只读 API token 只能读取。每节点最新任务与能力持久化，后台先将 dispatched 写入数据库，Report 才下发；Report 本身不等待数据库或本机 socket。排队任务最多 24 小时，仅 queued 可取消。更新器独立保存任务 ID 防重放记录、备份和事务阶段，崩溃后按持久化阶段恢复。Hub 候选绑定监听但在确认前不开始 Serve，避免回滚覆盖已接受业务数据；Agent 需新进程成功上报才确认。就绪还需匹配 systemd MainPID、Unix 对端 PID 和实际 exe 摘要。更新器本身及服务定义只能由 root 安装器升级，安装器通过 root-only 维护握手与更新事务互斥。节点任务不进入分层快照，恢复时清空，避免重放旧升级命令。
 - 上报间隔：agent 把 `report_interval_ms` 限定在 hub 能合法配置的范围内，即 TTL 取 `MinTTL` 与 `MaxTTL` 时的间隔（间隔 = TTL / `ReportsPerTTL`）。越界（含 0）取最近的边界并告警，值变化时告警一次。TTL 边界、`ReportsPerTTL` 与间隔的换算只在 `internal/agentwire` 定义一次，hub 的 TTL 准入、hub 的间隔下发、agent 的限定与 agent 的退避上限（§4.7）都读它。没有这一条，hub 下发 1 ms 就能让 agent 不停地采集与上报。
-- 响应体：agent 在 HTTP 层限读响应正文 `agentwire.MaxResponseBytes`（64 KiB），成功与错误响应都经过这一层；超出即报错，不截断（截断的正文可能恰好解码成一条更短的合法消息），按普通失败退避。agent 不接受压缩：connect 不声明 gzip，HTTP Transport 也不自行声明与解压，hub 不顾声明回 gzip 时按不认识的编码报错；读到的字节因此就是解码前的全部大小，响应本来不超过上限，压缩没有收益。connect-go（v1.21.0 实测）的 `ReadMaxBytes` 只管成功响应的消息：256 MiB 的错误正文让客户端分配了 1282 MiB，47 KiB 的 gzip 错误正文分配了 128 MiB，所以限读不能交给它。hub 侧有测试钉住满载 `ReportResponse` 的编码不超过上限（当前 18199 字节）。响应头另设 32 KiB 上限（Go 默认 10 MiB）。
+- 响应体：agent 在 HTTP 层限读响应正文 `agentwire.MaxResponseBytes`（64 KiB），成功与错误响应都经过这一层；超出即报错，不截断（截断的正文可能恰好解码成一条更短的合法消息），按普通失败退避。agent 不接受压缩：connect 不声明 gzip，HTTP Transport 也不自行声明与解压，hub 不顾声明回 gzip 时按不认识的编码报错；读到的字节因此就是解码前的全部大小，响应本来不超过上限，压缩没有收益。connect-go（v1.21.0 实测）的 `ReadMaxBytes` 只管成功响应的消息：256 MiB 的错误正文让客户端分配了 1282 MiB，47 KiB 的 gzip 错误正文分配了 128 MiB，所以限读不能交给它。hub 侧有测试钉住满载 `ReportResponse` 的编码不超过上限（含受限更新任务）。响应头另设 32 KiB 上限（Go 默认 10 MiB）。
 - 重定向：agent 的 HTTP 客户端不跟随任何重定向，`Register` 与 `Report` 都没有需要重定向的场景。Go 的 http.Client 跟随同主机重定向时会保留 `Authorization`，而协议不参与判断，https 到同主机 http 的重定向会把节点 token 明文发出。
 - 传输：hub 地址必须是 https。http 只在两种情形下接受：主机是 loopback IP 字面量（`127.0.0.0/8`、`::1`；`localhost` 这类名字要经解析，不在豁免内），或配置里有 `insecure_http: true`（由 `register --insecure-http` 或 `configure --insecure-http=true` 写入）。`register` 在发请求之前、`run` 在加载配置时调用同一个校验函数。不满足时 `run` 拒绝启动，报错里给出两种放行方式。已有的非 loopback http 部署升级后会停在这一步，安装脚本的启动确认随之失败并指向日志；这是有意的，明文链路上的中间人与 hub 失守等价，不能静默延续。
 - 探测目标：agent 解析出地址之后、发包之前，按宿主机本地策略检查实际要连的地址（§8.4）。策略只来自本地配置，hub 改不了。
@@ -603,7 +607,7 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 - hub 安装脚本 `install-hub.sh`（`deploy/`，以 root 运行）：在 Linux 主机上一条命令装好 hub 的 systemd 服务，重跑即升级，`--uninstall` 与 `--purge` 的删除范围与 agent 脚本同语义，但两者都要确认（无终端时须 `--yes`）：agent 卸了重装即回，hub 的普通卸载停掉的是全部节点的展示与告警，purge 删的是唯一一份数据与全部节点凭据；不用 Docker 的自托管者由此有一条能直接跑的路径。与 agent 脚本同一套约束（POSIX sh、按实际存在的工具分支、curl 或 wget、按内嵌哈希校验且没有 `--version`（§5.7）、静态系统用户 `heron-hub`、先建用户再下载、停服务后确认进程退出、启动后确认进程活着），不另立口径。单元 `deploy/systemd/heron-hub.service` 用静态 `User=` 并逐项加固，不需要 `CAP_NET_RAW`；`--listen` 默认 `127.0.0.1:8080` 不变，脚本不替用户决定对外监听。数据目录固定 `/var/lib/heron`，root 属主、服务用户组可写（0770），库文件属服务用户 0600：SQLite 要在目录里建删 `-wal`/`-shm`，服务用户必须能增删目录项，agent 配置目录那套只读的 0750 不适用；目录留 root 属主是为了升级时能锁住它——脚本在停服务并确认该 uid 没有进程之后先把目录收成 0750，此时只有 root 能增删目录项，再核对库文件不是链接、只有一个硬链接才改属主，改完放回 0770；服务用户拥有目录的话这一步没有可靠的锁。管理员密码在脚本末尾提示用 `heron-hub passwd --db /var/lib/heron/heron.db` 设置，脚本自己不生成、不打印密码。无终端时不交互、取默认值，需要确认的动作要求 `--yes`。升级时 `--listen`、`--timezone`、`--trusted-proxies` 等参数沿用已装单元里的值，除非命令行显式给出——重跑即升级不能把用户改过的参数重置回默认。停旧服务之前先查端口冲突，按 pid 排除 hub 自己。只做 systemd；不做菜单，只做参数式（菜单是交互层不是功能）。release 产物加这两个文件，`scripts/install-accept.sh` 加 hub 一格并在真机验收，README 加一节。
 - macOS agent：采集在 `CGO_ENABLED=0` 下实现（§13 第 1 项的实验定案）：`x/sys/unix` 的 sysctl 取启动标识（`kern.bootsessionuuid`）、内存总量、负载、swap、连接数（`net.inet.tcp.pcbcount`/`net.inet.udp.pcbcount`）、网卡计数器（`net.link.generic.ifdata`）与 facts；`statfs` 取磁盘；`clock_gettime(CLOCK_MONOTONIC)` 取运行时长；purego 调 libSystem 取逐 CPU tick、VM 统计、页大小与进程数。采集分层为平台取原始读数的 `Host` 与平台无关的差分、过滤与 `used ≤ total` 检查；darwin 的字节布局解析不带 build tag、Linux 上可测，只有系统调用层带 darwin 约束并引用 purego，其依赖不链入 Linux 二进制。darwin 二进制按平台约定动态链接 libSystem，静态门禁只查 Linux 产物。产物 `heron-agent_darwin_<arch>.tar.gz`（二进制、launchd plist）。安装脚本 `install-macos.sh` 以 root 运行：检测架构 → 用 `dscl` 建 `_heron-agent` 用户与组（uid/gid 从 499 向下取空闲号：Apple 逐版从 300 向上追加系统账户，升级会替换低号段的第三方账户）→ 下载并用 `shasum -a 256` 按内嵌哈希校验（§5.7，参数与 Linux 脚本同口径：没有 `--version`，有 `--insecure-http`）→ 停止已装的 LaunchDaemon 并确认进程退出 → 替换二进制 → 没有配置时 `heron-agent register` → 配置属主同 Linux（`/etc/heron-agent`，目录 root 属主、组 `_heron-agent`、0750，文件 0600）→ 写 `/Library/LaunchDaemons/xyz.heron.agent.plist`（`UserName` 为该用户、`KeepAlive`、`ThrottleInterval` 5 秒——两次拉起的最小间隔，进程跑满 5 秒后退出会立即拉起，`KeepAlive` 为真时 0 退出也拉起，与 Linux 的重启间隔同量级、日志在 `/Library/Logs/heron-agent/`：目录属 root:wheel 0755，服务用户不能在其中放条目，launchd 无论以什么身份打开日志都不会被链接引到别处；两个日志文件每次安装预建并交给服务用户 0640；安装脚本先把目录交给 root、`chmod -N` 去掉 ACL（服务用户曾为属主时可能加过允许项，数字 chmod 与 chown 都不去掉它），再检查文件是不存在或链接数为 1 的普通文件；预建、属主、权限这些依赖外部条件的操作全部在停服务之前完成，停服务之后只剩换二进制、写 plist、bootstrap。文件被删后若 launchd 以服务用户身份打开会反复 EX_CONFIG，重跑安装恢复；launchd 以什么身份打开由真机清单判别，不在代码里假设）→ `launchctl enable` 后 `bootstrap system`（enable 清掉可能残留的禁用覆盖）→ 确认进程活着（`ps -axo uid=,pid=,comm=` 按有效 uid 与可执行路径，macOS 没有 /proc；只按 uid 不够：launchd 会以该 uid 派生 cfprefsd、trustd 之类的辅助进程，停止确认与启动确认都要把它们排除）。是否发 `bootout` 看作业是否已载入 system 域（`launchctl print`），不看 plist 文件在不在：launchd 按已载入的作业管进程。架构按 `hw.optional.arm64` 判定再看 `uname -m`（Rosetta 终端里 `uname -m` 报 x86_64）。不装 CA：macOS 自带 curl 与系统信任库。重跑即升级，`--uninstall`、`--purge` 语义同 Linux。没有 macOS 虚拟机可用：脚本逻辑用桩测试，真机验收由人在 Mac 上执行，脚本随附检查清单。面板的安装命令只给 Linux 的两条，macOS 的写在 README。CI 含 macOS runner 跑 agent 的测试。
 - hub Docker 镜像：`ghcr.io/xjetry/heron-hub:<version>`，预发布不打 `latest`；`FROM scratch`，只含静态二进制（`/usr/local/bin/heron-hub`，让 `docker exec … heron-hub` 按名字可执行：`/` 不在容器默认 PATH 里）、CA 证书（通知出站 HTTPS 要用）、非 root 用户、属于该用户的空 `/data` 与 1777 的 `/tmp`（SQLite 的排序溢出、临时表与建索引要写临时文件，没有 `/tmp` 时报 `disk I/O error`，小查询不触发）；时区数据已嵌入二进制。根文件系统由 `scripts/checkimage` 逐条目核对，多出或缺少任一条即失败。数据卷 `/data`，默认参数 `serve --db /data/heron.db --listen 0.0.0.0:8080`；容器里监听非 loopback 是预期的，启动告警照旧，反代与 `--trusted-proxies` 由部署者配。管理员密码经 `docker exec -i … heron-hub passwd --db /data/heron.db` 设置；不带 `-i` 时容器内 stdin 立即 EOF，`passwd` 单独报没有输入。镜像的构建与推送都在 Makefile（构建器是按 digest 固定的 BuildKit，本地与发布同一版本），release 流水线不另用 build-push 类 action；镜像先于 GitHub Release 推送并回读：先只推版本 tag，回读时逐平台拉回、冒烟并把导出的根文件系统交给 `scripts/checkimage` 核对（核对的是 registry 上实际存在的内容，不是构建时的中间产物），正式版本再把 `latest` 指向已回读的 digest 并回读 `latest`——`latest` 只会指向回读通过的镜像；回读里"取不到"与"读取失败"分开判定，读取失败不放行；同组 release 运行串行；任何一步失败重跑 job 即可；带构建元数据（`+`）的 tag 不能成为 Docker tag，这类 tag 的发布整体失败、什么都不发布；新建的 ghcr 包首次发布须手工设为公开。`make docker` 在本地构建、核对并冒烟（起容器、`/admin/` 返回 200 的面板页而不是"未构建"说明、`passwd` 可执行）。
-- 升级 = 重跑安装脚本（见上）。hub 版本经 `GetSnapshotResponse.hub_version` 下发：面板据此生成与 hub 同版本的安装命令（§10），并显示各节点 agent 版本、标出落后于 hub 的节点：按 semver 2.0 优先级比较（预发布低于对应的正式版，构建元数据不参与），任一方不是带 `v` 前缀的合法 semver 时不标。
+- Linux systemd 部署安装新版安装器后可在后台更新 Hub、批量下发节点 Agent 更新；只支持版本递增的官方正式版，本机更新器与服务定义仍由 root 重跑安装器更新。Docker、OpenRC、macOS 沿用原安装方式。hub 版本经 `GetSnapshotResponse.hub_version` 下发：面板据此生成与 hub 同版本的安装命令（§10），并显示各节点 agent 版本、标出落后于 hub 的节点：按 semver 2.0 优先级比较（预发布低于对应的正式版，构建元数据不参与），任一方不是带 `v` 前缀的合法 semver 时不标。
 
 ## 15. 里程碑
 

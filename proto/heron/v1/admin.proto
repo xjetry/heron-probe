@@ -7,11 +7,25 @@ option go_package = "github.com/xjetry/heron-probe/gen/heron/v1;heronv1";
 import "heron/v1/types.proto";
 import "heron/v1/access.proto";
 import "heron/v1/query.proto";
+import "heron/v1/update.proto";
 
 // 管理面板与 agent → hub。每个方法以 heron.v1.access 声明准入口径（见 access.proto），
 // 由挂载时绑定的拦截器裁决。全部方法都是 unary，且没有一个标为无副作用：本服务不接受 GET，
 // 这是抵御跨站请求伪造的几条各自独立的事实之一。
 service AdminService {
+  // 读取 hub 与节点的更新能力和最新任务。检查官方版本需显式 check_latest。
+  rpc GetUpdates(GetUpdatesRequest) returns (GetUpdatesResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 创建单目标更新。node_id=0 为 hub；只允许比当前版本新的官方正式版。
+  // 节点离线时排队，24 小时过期；同一目标不能同时有多个活动任务。
+  rpc StartUpdate(StartUpdateRequest) returns (StartUpdateResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 仅可取消尚未下发的 queued 节点任务；已下发或 hub 任务不能取消。
+  rpc CancelUpdate(CancelUpdateRequest) returns (CancelUpdateResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
   // 用管理员密码换取会话 cookie（Set-Cookie 在响应头里）。
   rpc Login(LoginRequest) returns (LoginResponse) {
     option (heron.v1.access) = ACCESS_LOGIN;
@@ -252,6 +266,17 @@ service AdminService {
     option (heron.v1.access) = ACCESS_READ;
   }
 }
+
+message GetUpdatesRequest { bool check_latest = 1; }
+message GetUpdatesResponse {
+  repeated UpdateTarget targets = 1;
+  string latest_version = 2;
+  string check_error = 3;
+}
+message StartUpdateRequest { int64 node_id = 1; string version = 2; }
+message StartUpdateResponse { UpdateTask task = 1; }
+message CancelUpdateRequest { int64 node_id = 1; string id = 2; }
+message CancelUpdateResponse {}
 
 message LoginRequest {
   string password = 1;

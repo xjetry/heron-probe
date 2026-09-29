@@ -115,7 +115,7 @@ e2e-matrix: binaries
 compat-e2e: hub-binary
 	scripts/compat-e2e.sh $(E2E_TIER1)
 
-# 发布产物矩阵：agent 五个 Linux 架构与两个 darwin 架构，hub 两个 Linux 架构。架构集合只在这三个变量维护，
+# 发布产物矩阵：agent 与更新器五个 Linux 架构，agent 两个 darwin 架构，hub 两个 Linux 架构。架构集合只在这三个变量维护，
 # 静态门禁与打包清单都由它们展开，不存在第二份文件清单。
 AGENT_LINUX_ARCHES := amd64 arm64 armv7 386 riscv64
 AGENT_DARWIN_ARCHES := amd64 arm64
@@ -150,6 +150,7 @@ release:
 	@set -e; for arch in $(AGENT_LINUX_ARCHES); do \
 	  case $$arch in armv7) gflags="GOARCH=arm GOARM=7" ;; *) gflags="GOARCH=$$arch" ;; esac; \
 	  env GOOS=linux CGO_ENABLED=0 $$gflags go build $(RELEASE_GOFLAGS) -o "dist/build/heron-agent-linux-$$arch" ./cmd/agent; \
+	  env GOOS=linux CGO_ENABLED=0 $$gflags go build $(RELEASE_GOFLAGS) -o "dist/build/heron-updater-linux-$$arch" ./cmd/updater; \
 	done; \
 	for arch in $(AGENT_DARWIN_ARCHES); do \
 	  env GOOS=darwin GOARCH=$$arch CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$(VERSION)" -o "dist/build/heron-agent-darwin-$$arch" ./cmd/agent; \
@@ -157,13 +158,16 @@ release:
 	for arch in $(HUB_LINUX_ARCHES); do \
 	  $(call hub_build,$$arch,dist/build/heron-hub-linux-$$arch); \
 	done
-	go run ./scripts/checkstatic $(addprefix dist/build/heron-agent-linux-,$(AGENT_LINUX_ARCHES)) $(addprefix dist/build/heron-hub-linux-,$(HUB_LINUX_ARCHES))
+	go run ./scripts/checkstatic $(addprefix dist/build/heron-agent-linux-,$(AGENT_LINUX_ARCHES)) $(addprefix dist/build/heron-updater-linux-,$(AGENT_LINUX_ARCHES)) $(addprefix dist/build/heron-hub-linux-,$(HUB_LINUX_ARCHES))
 	@set -e; for arch in $(AGENT_LINUX_ARCHES); do \
 	  pkg="dist/pkg-$$arch"; mkdir -p "$$pkg"; \
 	  cp "dist/build/heron-agent-linux-$$arch" "$$pkg/heron-agent"; \
 	  cp deploy/systemd/heron-agent.service "$$pkg/heron-agent.service"; \
 	  cp deploy/openrc/heron-agent "$$pkg/heron-agent.openrc"; \
 	  COPYFILE_DISABLE=1 tar --no-xattrs -C "$$pkg" -czf "dist/heron-agent_linux_$$arch.tar.gz" heron-agent heron-agent.service heron-agent.openrc; \
+	  cp "dist/build/heron-updater-linux-$$arch" "$$pkg/heron-updater"; \
+	  cp deploy/systemd/heron-updater-agent.service deploy/systemd/heron-updater-hub.service "$$pkg/"; \
+	  COPYFILE_DISABLE=1 tar --no-xattrs -C "$$pkg" -czf "dist/heron-updater_linux_$$arch.tar.gz" heron-updater heron-updater-agent.service heron-updater-hub.service; \
 	  rm -rf "$$pkg"; \
 	done; \
 	for arch in $(AGENT_DARWIN_ARCHES); do \
