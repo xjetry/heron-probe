@@ -417,6 +417,41 @@ assert_service_identity() {
   cat "$work/ident-$cell.log"
 }
 
+# systemd 的声明不代表进程已受限：按 MainPID 的实际 cgroup 回读内核值，安装与升级都检查。
+# 期望只来自已安装单元；声明缺失也必须失败，不能把未设置的 max 当成合法上限。
+assert_memory_limit() {
+  cell=$1
+  tag=$2
+  rc=0
+  orb -m "$cell" -u root sh -s <<'MEMORY_LIMIT' > "$work/memory-$tag-$cell.log" 2>&1 || rc=$?
+set -eu
+pid=$(systemctl show probe-agent -p MainPID --value)
+cg=$(awk -F: '$1 == "0" {print $3}' "/proc/$pid/cgroup")
+[ -n "$cg" ] || { echo "no cgroup v2 path for agent pid=$pid"; exit 1; }
+actual=$(cat "/sys/fs/cgroup$cg/memory.max")
+declared=$(awk '
+  /^\[/ { service = ($0 == "[Service]") }
+  service && /^[[:space:]]*MemoryMax[[:space:]]*=/ {
+    sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); value=$0
+  }
+  END { print value }
+' /etc/systemd/system/probe-agent.service)
+# 仓库单元使用正整数字节或二进制单位；拒绝空值、infinity 与百分比，不替无上限生成期望。
+expected=$(awk -v value="$declared" 'BEGIN {
+  if (value !~ /^[0-9]+[KMGTPE]?$/) exit 1
+  unit=substr(value, length(value), 1)
+  power=index("KMGTPE", unit)
+  bytes=(value + 0) * (1024 ^ power)
+  if (bytes <= 0) exit 1
+  printf "%.0f", bytes
+}') || { echo "memory.max mismatch: pid=$pid cgroup=$cg actual=$actual MemoryMax=${declared:-<missing>} (finite limit required)"; exit 1; }
+echo "pid=$pid cgroup=$cg MemoryMax=$declared expected=$expected memory.max=$actual"
+[ "$actual" = "$expected" ] || { echo "memory.max mismatch: actual=$actual expected=$expected"; exit 1; }
+MEMORY_LIMIT
+  cat "$work/memory-$tag-$cell.log"
+  [ "$rc" = 0 ] || { echo "FAIL($cell): memory.max ($tag)"; exit 1; }
+}
+
 # 配置目录必须是 root:probe-agent 0750：服务用户能读配置，但不能增删目录项，
 # root 对配置文件的后续操作才不会被链接劫持。配置文件属主必须是 probe-agent、0600：
 # register 以 root 写入，不改属主服务就读不到。这两条由 install.sh 在 register 之后保证。
@@ -475,6 +510,9 @@ run_cell() {
 
   node_field "$name" '.online == true and .metrics.cpuPct != null' || { echo "FAIL($name): node did not come online"; exit 1; }
   assert_service_identity "$name"
+  case "$distro" in
+    debian|ubuntu|rocky) assert_memory_limit "$name" install;;
+  esac
   case "$distro" in
     alpine) assert_layout "$name" 1 layout;;
     *) assert_layout "$name" 0 layout;;
@@ -556,6 +594,9 @@ run_cell() {
     *) assert_layout "$name" 0 layout-rereg;;
   esac
   node_field "$name" '.online == true and .metrics.cpuPct != null' || { echo "FAIL($name): not online after ownership repair"; exit 1; }
+  case "$distro" in
+    debian|ubuntu|rocky) assert_memory_limit "$name" upgrade;;
+  esac
 
   case "$distro" in
     debian|ubuntu|rocky)
