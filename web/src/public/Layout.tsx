@@ -16,7 +16,7 @@ export function PublicLayout() {
   const site = useQuery(PublicService.method.getSite, {}, { staleTime: Infinity });
   useEffect(() => applySite(site.data ?? create(PublicSiteSchema)), [site.data]);
   return (
-    <div className="layout">
+    <div className="layout public-layout">
       <header className="nav">
         <Link to="/" className="brand">
           {site.data?.logo ? <img src={site.data.logo} alt="" className="logo" /> : <HeronMark />}

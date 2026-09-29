@@ -34,14 +34,18 @@ it("每个公开节点一张卡片：名称、在线、系统与架构、读数�
   expect(web.getByRole("meter", { name: "512 MiB / 1.0 GiB" })).toHaveAttribute("aria-valuenow", "50");
   // 读数为 0 与无读数是两个事实：0 画成空条，不是破折号。
   expect(web.getByRole("meter", { name: "0 B / 10 GiB" })).toHaveAttribute("aria-valuenow", "0");
-  expect(web.getByText("↓ 2.0 KiB/s ↑ 1.0 KiB/s")).toBeInTheDocument();
-  expect(web.getByText("1d 1h")).toBeInTheDocument();
-  expect(web.getByText("↓ 1.0 GiB ↑ 0 B")).toBeInTheDocument();
+  expect(web.getByRole("group", { name: "下载" })).toHaveTextContent("2.0 KiB/s");
+  expect(web.getByRole("group", { name: "上传" })).toHaveTextContent("1.0 KiB/s");
+  expect(web.getByText("运行 1d 1h")).toBeInTheDocument();
+  expect(web.getByRole("group", { name: "下载" })).toHaveTextContent("本周期 1.0 GiB");
+  expect(web.getByRole("group", { name: "上传" })).toHaveTextContent("本周期 0 B");
   expect(web.getByText("最近上报 刚刚")).toBeInTheDocument();
   const db = within(screen.getByRole("article", { name: "db-1" }));
   expect(db.getByRole("img", { name: "离线" })).toBeInTheDocument();
   expect(db.getByText("系统未知")).toBeInTheDocument();
-  expect(db.getAllByLabelText("无读数")).toHaveLength(6);
+  expect(db.queryAllByRole("meter")).toHaveLength(0);
+  expect(within(db.getByRole("group", { name: "下载" })).getAllByLabelText("无读数")).toHaveLength(2);
+  expect(db.getByText("运行时长未知")).toBeInTheDocument();
   expect(db.getByText("从未上报")).toBeInTheDocument();
 });
 
@@ -89,7 +93,7 @@ it("卡片名称旁是国家 / 地区徽章：旗帜由国家码算出，照写�
   renderWithService(PublicService, { getSnapshot: async () => withCountry }, [{ path: "/", Component: PublicOverview }], "/");
   const web = within(await screen.findByRole("article", { name: "web-1" }));
   expect(web.getByTitle("国家 / 地区 JP")).toHaveTextContent("\u{1F1EF}\u{1F1F5} JP");
-  expect(web.getByRole("heading", { level: 2 })).toHaveTextContent("web-1 \u{1F1EF}\u{1F1F5} JP");
+  expect(web.getByRole("heading", { level: 2 })).toHaveTextContent(/^web-1$/);
   // 徽章在链接之外，不改变链接的可访问名。
   expect(web.getByRole("link", { name: "web-1" })).toBeInTheDocument();
   const db = within(screen.getByRole("article", { name: "db-1" }));
