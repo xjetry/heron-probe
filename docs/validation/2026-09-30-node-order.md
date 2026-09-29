@@ -21,3 +21,14 @@
 - `ce-code-review`：`status: complete`、`Ready to merge`、无遗留发现，记录 `/tmp/compound-engineering-501/ce-code-review/node-order-20260930/review.json`。独立 Claude 对抗与正确性检查已完成；之后新增三条方向测试，未改变产品代码。
 - 简化按复用、可维护性、效率串行完成，排序算法未复制到页面，未削弱错误恢复与准入。
 - 未测真实屏幕阅读器；页面真实拖拽覆盖下半区 after，上半区 before 由共享算法测试覆盖，不宣称已有真实上半区拖放验收。
+
+## 发布与生产回读
+
+- 正式版本 `v0.3.3` 对应 `f93d640c151fd2aa8b8200b66adf63268c2df80c`。主干 CI `36601368929`、Release `36601369032` 均成功；GitHub latest 为 `v0.3.3`，不是草稿或预发行版。
+- GHCR `v0.3.3` 与 `latest` 均指向 `sha256:498cdd541e99ae0f89ce463b553f71340479be6e4362481ba69cd068838109fb`。正式 amd64 Hub/Agent 包下载至 `build/validation/readback-v0.3.3/`，`shasum -a 256 -c SHA256SUMS --ignore-missing` 两项均 OK。
+- 通过真实后台在线更新 Hub 与节点 Agent；更新器保持 `v0.3.2`，未替换更新器或服务定义。
+- Hub 任务 `932d3a166ba4f5e3c2f3a3812072c22b` 回读 `succeeded`、`v0.3.3`。磁盘程序和 `/proc/615396/exe` 均匹配正式程序摘要 `f0c5d2bcd0223c2582b2d818d635342de82c18e1080bd78a09a63a1a63916f39`。
+- Agent 任务 `4379c1e220353f726774d1b6b157e74a` 回读 `succeeded`、`v0.3.3`。磁盘程序和 `/proc/147524/exe` 均匹配正式程序摘要 `df9305e0463a8432be39fae06b5391bb1e62dba90a00f241b3ac38dbb23e00e0`。后台 GetSnapshot 回读节点 1 在线。
+- 线上 `/admin/nodes` DOM 已显示排序说明、手柄序号、上移/下移/置顶/置底菜单；生产只有一个节点，两种控件均正确禁用。未为演示添加生产节点。
+- 部署前曾出现浏览器及 curl 公网访问超时，同期 SSH 回读 Hub 仍运行旧版本且内部 HTTP 可访问。重试后公网恢复，未修改代理或重启服务；不对该次网络超时作未经证实的归因。
+- 原始证据：`build/validation/update-v0.3.3-{hub,agent}-result.log`、`node-order-production-rpc.json`、`node-order-release-watch.log`。名为 `node-order-production.png` 的截图实际捕获到主题页，不作为节点页视觉凭据；节点页视觉验收使用隔离环境三浏览器截图。
