@@ -18,6 +18,7 @@ import (
 	"connectrpc.com/connect"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	"github.com/xjetry/probe/internal/agent/agentlog"
 	"github.com/xjetry/probe/internal/agent/client"
 	"github.com/xjetry/probe/internal/agent/collect"
 	"github.com/xjetry/probe/internal/agent/prober"
@@ -162,8 +163,10 @@ func runRun(args []string) error {
 }
 
 // newLogger 是 run 的日志装配。启动行的文本格式有外部读者（scripts/e2e.sh 按整秒读字段），测试经同一个
-// 函数装配日志，才钉得住读者实际看到的格式。
-func newLogger(w io.Writer) *slog.Logger { return slog.New(slog.NewTextHandler(w, nil)) }
+// 函数装配日志，才钉得住读者实际看到的格式。agentlog 给全部输出设速率与长度上界：不少行由 hub 的应答触发（§5.7）。
+func newLogger(w io.Writer) *slog.Logger {
+	return slog.New(agentlog.New(slog.NewTextHandler(w, nil), nil))
+}
 
 func logStarting(log *slog.Logger, hub string) {
 	log.Info("agent starting", "hub", hub, "request_timeout", requestTimeout, "initial_interval", initialInterval, "version", version)

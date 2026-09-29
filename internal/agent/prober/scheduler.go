@@ -57,24 +57,38 @@ func (s *Scheduler) Version() uint64 {
 
 // Apply 整份替换任务集；未变的任务不重启计时。字段规则由 CheckTask 保证，数量由本入口限制，
 // hub 保存时用同一份 probelimit 校验字段，store 在事务内守住每节点数量上限；同版本正常部署不会下发被拒清单。
-// 应用时为每个被拒任务留一条 error 并 Warn 原因；若按间隔持续产出，超限清单会绕过每节点上限对结果量的约束。
+// 每个被拒任务留一条 error 结果（结果队列有容量上限，面板靠它显示原因），日志每次 Apply 至多一行汇总：清单来自 hub，
+// 失守的 hub 可以在一个 64 KiB 响应里塞进数万个空任务并每次上报都重发，逐条告警会把受限的响应放大成无界的日志（§5.7）。
 func (s *Scheduler) Apply(tasks *probev1.ProbeTasks) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.version = tasks.GetVersion()
 	want := map[uint64]*probev1.ProbeTask{}
 	sorted := slices.SortedFunc(slices.Values(tasks.GetTasks()), func(a, b *probev1.ProbeTask) int { return cmp.Compare(a.GetId(), b.GetId()) })
+	rejected := 0
+	var firstID uint64
+	var firstWhy string
+	reject := func(t *probev1.ProbeTask, why string) {
+		s.queue.Push(Result{TaskID: t.GetId(), Outcome: Outcome{Err: why}, At: s.clk.Mono()})
+		if rejected == 0 {
+			firstID, firstWhy = t.GetId(), why
+		}
+		rejected++
+	}
 	for i, t := range sorted {
 		if i >= probelimit.MaxTasksPerNode {
-			s.reject(t, fmt.Sprintf("more than %d tasks assigned; task dropped", probelimit.MaxTasksPerNode))
+			reject(t, fmt.Sprintf("more than %d tasks assigned; task dropped", probelimit.MaxTasksPerNode))
 			continue
 		}
 		if err := probelimit.CheckTask(t); err != nil {
-			s.reject(t, err.Error())
+			reject(t, err.Error())
 			continue
 		}
 		// 调度器持有独立快照，调用方复用消息不能绕过 Apply 改变正在执行的任务。
 		want[t.GetId()] = proto.Clone(t).(*probev1.ProbeTask)
+	}
+	if rejected > 0 {
+		s.log.Warn("probe tasks rejected", "count", rejected, "first_task", firstID, "first_reason", firstWhy)
 	}
 	for id, r := range s.running {
 		if t, ok := want[id]; !ok || !proto.Equal(t, r.task) {
@@ -91,11 +105,6 @@ func (s *Scheduler) Apply(tasks *probev1.ProbeTasks) {
 		s.wg.Add(1)
 		go s.run(ctx, t)
 	}
-}
-
-func (s *Scheduler) reject(t *probev1.ProbeTask, why string) {
-	s.queue.Push(Result{TaskID: t.GetId(), Outcome: Outcome{Err: why}, At: s.clk.Mono()})
-	s.log.Warn("probe task rejected", "task", t.GetId(), "reason", why)
 }
 
 // 首次偏移避免齐发；后续周期从触发时刻计算，不把探测耗时累加到周期。
