@@ -44,10 +44,10 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           main_files=$(git ls-tree -r --name-only origin/main)
-          if grep -q '\.proto$' <<< "$main_files"; then
+          if grep -q '^proto/heron/.*\.proto$' <<< "$main_files"; then
             buf breaking --against '.git#branch=origin/main'
           else
-            echo "main has no .proto files yet; nothing to compare against"
+            echo "main has no Heron protocol baseline; probe.v1 is outside the compatibility contract"
           fi
   # darwin 的采集文件带 build tag，Linux 上的 go test 照不到（spec §12）；安装脚本的逻辑测试在这里
   # 跑的是 macOS 自带的 /bin/sh（bash 3.2 的 sh 模式），ubuntu 上跑的是 dash。

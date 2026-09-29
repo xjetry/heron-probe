@@ -2,7 +2,7 @@ import { useQuery } from "@connectrpc/connect-query";
 import { useState } from "react";
 import { Link } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
-import { AdminService, type NodeStatus } from "../gen/probe/v1/admin_pb";
+import { AdminService, type NodeStatus } from "../gen/heron/v1/admin_pb";
 import { ago, bytes, percent } from "../lib/format";
 import { withId } from "../lib/ids";
 import { filterNodes } from "../lib/nodeSearch";

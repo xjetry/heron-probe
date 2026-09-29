@@ -15,19 +15,19 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/hub/alert"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/hub/alert"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // billed 是一次 UpdateNode 请求：名称 n<id>（几个节点在失败输出里分得开）、重置日 1、宽限期取默认，计费取 b
 // （nil 即不带 billing）。
-func billed(id int64, b *probev1.Billing) *probev1.UpdateNodeRequest {
-	return &probev1.UpdateNodeRequest{Id: id, Name: fmt.Sprintf("n%d", id), TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0), Billing: b}
+func billed(id int64, b *heronv1.Billing) *heronv1.UpdateNodeRequest {
+	return &heronv1.UpdateNodeRequest{Id: id, Name: fmt.Sprintf("n%d", id), TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0), Billing: b}
 }
 
-func (h *harness) update(t *testing.T, req *probev1.UpdateNodeRequest) *probev1.Node {
+func (h *harness) update(t *testing.T, req *heronv1.UpdateNodeRequest) *heronv1.Node {
 	t.Helper()
 	resp, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(req))
 	if err != nil {
@@ -37,10 +37,10 @@ func (h *harness) update(t *testing.T, req *probev1.UpdateNodeRequest) *probev1.
 }
 
 func TestBillingCyclesMapEveryValue(t *testing.T) {
-	values := probev1.BillingCycle(0).Descriptor().Values()
+	values := heronv1.BillingCycle(0).Descriptor().Values()
 	var stored []store.BillingCycle
 	for i := 0; i < values.Len(); i++ {
-		v := probev1.BillingCycle(values.Get(i).Number())
+		v := heronv1.BillingCycle(values.Get(i).Number())
 		c, ok := billingCycles[v]
 		if !ok {
 			t.Fatalf("%s has no stored form", v)
@@ -60,13 +60,13 @@ func TestFiveYearBillingRoundTripsAndRenews(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "five-year")
-	request := billed(id, &probev1.Billing{Price: "150", Currency: "TWD", BillingCycle: 7, ExpiresOn: "2024-02-29", AutoRenew: true})
+	request := billed(id, &heronv1.Billing{Price: "150", Currency: "TWD", BillingCycle: 7, ExpiresOn: "2024-02-29", AutoRenew: true})
 	request.Public = true
 	n := h.update(t, request)
 	if n.GetBilling().GetBillingCycle() != 7 || n.GetBilling().GetExpiresOn() != "2029-02-28" {
 		t.Fatalf("five-year billing = %v", n.GetBilling())
 	}
-	public, err := h.publicClient().GetSnapshot(t.Context(), connect.NewRequest(&probev1.PublicServiceGetSnapshotRequest{}))
+	public, err := h.publicClient().GetSnapshot(t.Context(), connect.NewRequest(&heronv1.PublicServiceGetSnapshotRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,37 +80,37 @@ func TestUpdateNodeRejectsMalformedBilling(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
-	kept := h.update(t, billed(id, &probev1.Billing{Price: "5", Currency: "EUR", ExpiresOn: "2026-06-01"}))
+	kept := h.update(t, billed(id, &heronv1.Billing{Price: "5", Currency: "EUR", ExpiresOn: "2026-06-01"}))
 	const price = `billing.price: must match ^\d{1,9}(\.\d{1,2})?$, e.g. 12.50; got `
 	const date = `billing.expires_on: must be an existing date in YYYY-MM-DD form; got `
 	for _, c := range []struct {
-		b    *probev1.Billing
+		b    *heronv1.Billing
 		want string
 	}{
-		{&probev1.Billing{Price: "12.345", Currency: "USD"}, price + `"12.345"`},
-		{&probev1.Billing{Price: "1234567890", Currency: "USD"}, price + `"1234567890"`},
-		{&probev1.Billing{Price: "-1", Currency: "USD"}, price + `"-1"`},
-		{&probev1.Billing{Price: "12.", Currency: "USD"}, price + `"12."`},
-		{&probev1.Billing{Price: ".5", Currency: "USD"}, price + `".5"`},
-		{&probev1.Billing{Price: "1e3", Currency: "USD"}, price + `"1e3"`},
-		{&probev1.Billing{Price: " 12", Currency: "USD"}, price + `" 12"`},
-		{&probev1.Billing{Price: "１２", Currency: "USD"}, price + `"１２"`},
-		{&probev1.Billing{Price: "12"}, "billing.currency: required when billing.price is set"},
-		{&probev1.Billing{Currency: "usd"}, `billing.currency: must be three uppercase letters (ISO 4217), e.g. USD; got "usd"`},
-		{&probev1.Billing{Currency: "USDT"}, `billing.currency: must be three uppercase letters (ISO 4217), e.g. USD; got "USDT"`},
-		{&probev1.Billing{BillingCycle: 99}, "billing.billing_cycle: must be one of BILLING_CYCLE_UNSPECIFIED, BILLING_CYCLE_MONTHLY, BILLING_CYCLE_QUARTERLY, BILLING_CYCLE_SEMIANNUAL, BILLING_CYCLE_YEARLY, BILLING_CYCLE_BIENNIAL, BILLING_CYCLE_TRIENNIAL, BILLING_CYCLE_QUINQUENNIAL; got 99"},
-		{&probev1.Billing{ExpiresOn: "2026-02-29"}, date + `"2026-02-29"`},
-		{&probev1.Billing{ExpiresOn: "2026-1-05"}, date + `"2026-1-05"`},
-		{&probev1.Billing{ExpiresOn: "2026-10-01T00:00:00Z"}, date + `"2026-10-01T00:00:00Z"`},
-		{&probev1.Billing{AutoRenew: true, ExpiresOn: "2026-10-01"}, "billing.auto_renew: requires billing.billing_cycle and billing.expires_on to be set"},
-		{&probev1.Billing{AutoRenew: true, BillingCycle: probev1.BillingCycle_BILLING_CYCLE_MONTHLY}, "billing.auto_renew: requires billing.billing_cycle and billing.expires_on to be set"},
+		{&heronv1.Billing{Price: "12.345", Currency: "USD"}, price + `"12.345"`},
+		{&heronv1.Billing{Price: "1234567890", Currency: "USD"}, price + `"1234567890"`},
+		{&heronv1.Billing{Price: "-1", Currency: "USD"}, price + `"-1"`},
+		{&heronv1.Billing{Price: "12.", Currency: "USD"}, price + `"12."`},
+		{&heronv1.Billing{Price: ".5", Currency: "USD"}, price + `".5"`},
+		{&heronv1.Billing{Price: "1e3", Currency: "USD"}, price + `"1e3"`},
+		{&heronv1.Billing{Price: " 12", Currency: "USD"}, price + `" 12"`},
+		{&heronv1.Billing{Price: "１２", Currency: "USD"}, price + `"１２"`},
+		{&heronv1.Billing{Price: "12"}, "billing.currency: required when billing.price is set"},
+		{&heronv1.Billing{Currency: "usd"}, `billing.currency: must be three uppercase letters (ISO 4217), e.g. USD; got "usd"`},
+		{&heronv1.Billing{Currency: "USDT"}, `billing.currency: must be three uppercase letters (ISO 4217), e.g. USD; got "USDT"`},
+		{&heronv1.Billing{BillingCycle: 99}, "billing.billing_cycle: must be one of BILLING_CYCLE_UNSPECIFIED, BILLING_CYCLE_MONTHLY, BILLING_CYCLE_QUARTERLY, BILLING_CYCLE_SEMIANNUAL, BILLING_CYCLE_YEARLY, BILLING_CYCLE_BIENNIAL, BILLING_CYCLE_TRIENNIAL, BILLING_CYCLE_QUINQUENNIAL; got 99"},
+		{&heronv1.Billing{ExpiresOn: "2026-02-29"}, date + `"2026-02-29"`},
+		{&heronv1.Billing{ExpiresOn: "2026-1-05"}, date + `"2026-1-05"`},
+		{&heronv1.Billing{ExpiresOn: "2026-10-01T00:00:00Z"}, date + `"2026-10-01T00:00:00Z"`},
+		{&heronv1.Billing{AutoRenew: true, ExpiresOn: "2026-10-01"}, "billing.auto_renew: requires billing.billing_cycle and billing.expires_on to be set"},
+		{&heronv1.Billing{AutoRenew: true, BillingCycle: heronv1.BillingCycle_BILLING_CYCLE_MONTHLY}, "billing.auto_renew: requires billing.billing_cycle and billing.expires_on to be set"},
 	} {
 		_, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(billed(id, c.b)))
 		if codeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: "+c.want {
 			t.Errorf("%v: err = %v, want %s", c.b, err, c.want)
 		}
 	}
-	list, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&probev1.ListNodesRequest{}))
+	list, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&heronv1.ListNodesRequest{}))
 	if err != nil || !proto.Equal(list.Msg.GetNodes()[0], kept) {
 		t.Fatalf("rejected updates changed the node: %v %v, want %v", list, err, kept)
 	}
@@ -122,10 +122,10 @@ func TestUpdateNodeAcceptsBoundaryBillingAndIgnoresDaysLeft(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
-	for _, b := range []*probev1.Billing{
+	for _, b := range []*heronv1.Billing{
 		{Price: "0", Currency: "USD"},
-		{Price: "999999999.99", Currency: "JPY", BillingCycle: probev1.BillingCycle_BILLING_CYCLE_TRIENNIAL},
-		{Price: "12.5", Currency: "CNY", BillingCycle: probev1.BillingCycle_BILLING_CYCLE_MONTHLY, ExpiresOn: "2028-02-29", AutoRenew: true},
+		{Price: "999999999.99", Currency: "JPY", BillingCycle: heronv1.BillingCycle_BILLING_CYCLE_TRIENNIAL},
+		{Price: "12.5", Currency: "CNY", BillingCycle: heronv1.BillingCycle_BILLING_CYCLE_MONTHLY, ExpiresOn: "2028-02-29", AutoRenew: true},
 		{Currency: "EUR"},
 		{ExpiresOn: "9999-12-31"},
 	} {
@@ -136,15 +136,15 @@ func TestUpdateNodeAcceptsBoundaryBillingAndIgnoresDaysLeft(t *testing.T) {
 		}
 	}
 	// 时钟是 2026-01-01（UTC），2026-01-10 剩 9 天；请求里的 999 不起作用。
-	if got := h.update(t, billed(id, &probev1.Billing{ExpiresOn: "2026-01-10", DaysLeft: proto.Int32(999)})).GetBilling(); got.GetDaysLeft() != 9 {
+	if got := h.update(t, billed(id, &heronv1.Billing{ExpiresOn: "2026-01-10", DaysLeft: proto.Int32(999)})).GetBilling(); got.GetDaysLeft() != 9 {
 		t.Fatalf("days_left = %d, want 9 computed by the hub", got.GetDaysLeft())
 	}
-	for _, b := range []*probev1.Billing{{}, nil} {
-		h.update(t, billed(id, &probev1.Billing{Price: "5", Currency: "EUR", ExpiresOn: "2026-06-01"}))
+	for _, b := range []*heronv1.Billing{{}, nil} {
+		h.update(t, billed(id, &heronv1.Billing{Price: "5", Currency: "EUR", ExpiresOn: "2026-06-01"}))
 		if got := h.update(t, billed(id, b)); got.Billing != nil {
 			t.Fatalf("billing %v did not clear: %v", b, got)
 		}
-		list, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&probev1.ListNodesRequest{}))
+		list, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&heronv1.ListNodesRequest{}))
 		if err != nil || list.Msg.GetNodes()[0].Billing != nil {
 			t.Fatalf("billing %v: ListNodes = %v %v", b, list, err)
 		}
@@ -158,16 +158,16 @@ func TestDaysLeftUsesTheHubZone(t *testing.T) {
 	h.login(t)
 	id, _ := h.createNode(t, "n")
 	h.clk.SetWall(time.Date(2026, 1, 1, 16, 30, 0, 0, time.UTC))
-	req := billed(id, &probev1.Billing{ExpiresOn: "2026-01-10"})
+	req := billed(id, &heronv1.Billing{ExpiresOn: "2026-01-10"})
 	req.Public = true
 	if got := h.update(t, req).GetBilling().GetDaysLeft(); got != 8 {
 		t.Fatalf("UpdateNode days_left = %d, want 8", got)
 	}
-	list, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&probev1.ListNodesRequest{}))
+	list, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&heronv1.ListNodesRequest{}))
 	if err != nil || list.Msg.GetNodes()[0].GetBilling().GetDaysLeft() != 8 {
 		t.Fatalf("ListNodes = %v %v", list, err)
 	}
-	snap, err := h.publicClient().GetSnapshot(t.Context(), connect.NewRequest(&probev1.PublicServiceGetSnapshotRequest{}))
+	snap, err := h.publicClient().GetSnapshot(t.Context(), connect.NewRequest(&heronv1.PublicServiceGetSnapshotRequest{}))
 	if err != nil || snap.Msg.GetNow() != h.clk.Now().Unix() || snap.Msg.GetNodes()[0].GetBilling().GetDaysLeft() != 8 {
 		t.Fatalf("public snapshot = %v %v", snap, err)
 	}
@@ -181,26 +181,26 @@ func TestPublicSnapshotCarriesBillingWithoutAutoRenew(t *testing.T) {
 	a, _ := h.createNode(t, "a")
 	b, _ := h.createNode(t, "b")
 	c, _ := h.createNode(t, "c")
-	for _, req := range []*probev1.UpdateNodeRequest{
-		billed(a, &probev1.Billing{Price: "12.50", Currency: "USD", BillingCycle: probev1.BillingCycle_BILLING_CYCLE_YEARLY, ExpiresOn: "2025-12-29"}),
-		billed(b, &probev1.Billing{Price: "3", Currency: "EUR", BillingCycle: probev1.BillingCycle_BILLING_CYCLE_MONTHLY, ExpiresOn: "2026-03-01", AutoRenew: true}),
+	for _, req := range []*heronv1.UpdateNodeRequest{
+		billed(a, &heronv1.Billing{Price: "12.50", Currency: "USD", BillingCycle: heronv1.BillingCycle_BILLING_CYCLE_YEARLY, ExpiresOn: "2025-12-29"}),
+		billed(b, &heronv1.Billing{Price: "3", Currency: "EUR", BillingCycle: heronv1.BillingCycle_BILLING_CYCLE_MONTHLY, ExpiresOn: "2026-03-01", AutoRenew: true}),
 		billed(c, nil),
 	} {
 		req.Public = true
 		h.update(t, req)
 	}
-	snap, err := h.publicClient().GetSnapshot(t.Context(), connect.NewRequest(&probev1.PublicServiceGetSnapshotRequest{}))
+	snap, err := h.publicClient().GetSnapshot(t.Context(), connect.NewRequest(&heronv1.PublicServiceGetSnapshotRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &probev1.PublicBilling{Price: "12.50", Currency: "USD", BillingCycle: probev1.BillingCycle_BILLING_CYCLE_YEARLY, ExpiresOn: "2025-12-29", DaysLeft: proto.Int32(-3)}
+	want := &heronv1.PublicBilling{Price: "12.50", Currency: "USD", BillingCycle: heronv1.BillingCycle_BILLING_CYCLE_YEARLY, ExpiresOn: "2025-12-29", DaysLeft: proto.Int32(-3)}
 	if got := snap.Msg.GetNodes()[0].GetBilling(); !proto.Equal(got, want) {
 		t.Fatalf("public billing of a = %v, want %v", got, want)
 	}
 	if got := snap.Msg.GetNodes()[2]; got.Billing != nil {
 		t.Fatalf("node without billing = %v", got)
 	}
-	upd := billed(b, &probev1.Billing{Price: "3", Currency: "EUR"})
+	upd := billed(b, &heronv1.Billing{Price: "3", Currency: "EUR"})
 	upd.Public = true
 	h.update(t, upd)
 	h.clk.Advance(2 * time.Second) // 越过快照缓存的 1 秒窗口
@@ -221,7 +221,7 @@ func TestUnreadableExpiresOnHasNoDaysLeft(t *testing.T) {
 	if _, err := h.store.UpdateNode(t.Context(), id, store.NodeEdit{Name: "n", TrafficResetDay: 1, Billing: store.Billing{ExpiresOn: "2026-02-30"}}); err != nil {
 		t.Fatal(err)
 	}
-	list, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&probev1.ListNodesRequest{}))
+	list, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&heronv1.ListNodesRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,20 +251,20 @@ func TestPublicSnapshotReadsTheClockOnce(t *testing.T) {
 	h := newZonedHarness(t, "", time.FixedZone("UTC+8", 8*3600), store.DefaultRetention)
 	h.login(t)
 	id, _ := h.createNode(t, "n")
-	req := billed(id, &probev1.Billing{ExpiresOn: "2026-03-01"})
+	req := billed(id, &heronv1.Billing{ExpiresOn: "2026-03-01"})
 	req.Public = true
 	h.update(t, req)
 	loc := time.FixedZone("UTC+8", 8*3600)
 	clk := &steppingClock{next: time.Date(2026, 1, 1, 23, 59, 59, 0, loc)}
 	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, Location: loc}, h.store, h.live, h.book, h.reg, clk, slog.Default())
-	path, handler := probev1connect.NewPublicServiceHandler(pub)
+	path, handler := heronv1connect.NewPublicServiceHandler(pub)
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
-	client := probev1connect.NewPublicServiceClient(srv.Client(), srv.URL)
+	client := heronv1connect.NewPublicServiceClient(srv.Client(), srv.URL)
 	for range 3 {
-		snap, err := client.GetSnapshot(t.Context(), connect.NewRequest(&probev1.PublicServiceGetSnapshotRequest{}))
+		snap, err := client.GetSnapshot(t.Context(), connect.NewRequest(&heronv1.PublicServiceGetSnapshotRequest{}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -281,8 +281,8 @@ func TestUpdateNodeSweepsExpiryWhenBillingChanges(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
-	renewing := func() *probev1.Billing {
-		return &probev1.Billing{BillingCycle: probev1.BillingCycle_BILLING_CYCLE_MONTHLY, ExpiresOn: "2026-01-15", AutoRenew: true}
+	renewing := func() *heronv1.Billing {
+		return &heronv1.Billing{BillingCycle: heronv1.BillingCycle_BILLING_CYCLE_MONTHLY, ExpiresOn: "2026-01-15", AutoRenew: true}
 	}
 	if got := h.update(t, billed(id, renewing())).GetBilling().GetExpiresOn(); got != "2026-01-15" {
 		t.Fatalf("expires_on = %s", got)
@@ -310,26 +310,26 @@ func TestUpdateNodeFiresAndRecoversExpiryAlerts(t *testing.T) {
 	h.login(t)
 	id, _ := h.createNode(t, "n")
 	saveRule(t, h, expiryRuleProto())
-	events := func() []*probev1.AlertEvent {
+	events := func() []*heronv1.AlertEvent {
 		t.Helper()
-		resp, err := h.admin.ListAlertEvents(t.Context(), connect.NewRequest(&probev1.ListAlertEventsRequest{NodeId: id}))
+		resp, err := h.admin.ListAlertEvents(t.Context(), connect.NewRequest(&heronv1.ListAlertEventsRequest{NodeId: id}))
 		if err != nil {
 			t.Fatal(err)
 		}
 		return resp.Msg.GetEvents()
 	}
-	h.update(t, billed(id, &probev1.Billing{ExpiresOn: "2026-01-04"}))
+	h.update(t, billed(id, &heronv1.Billing{ExpiresOn: "2026-01-04"}))
 	if ev := events(); len(ev) != 1 || ev[0].GetTransition() != "firing" || ev[0].GetSummary() != "节点 n1 将于 2026-01-04 到期（剩 3 天，规则 到期）" || ev[0].GetValue() != 3 {
 		t.Fatalf("events after setting a close date: %v", ev)
 	}
-	h.update(t, billed(id, &probev1.Billing{ExpiresOn: "2027-01-04"}))
+	h.update(t, billed(id, &heronv1.Billing{ExpiresOn: "2027-01-04"}))
 	if ev := events(); len(ev) != 2 || ev[0].GetTransition() != "recovered" || ev[0].GetSummary() != "节点 n1 到期日已更新为 2027-01-04（规则 到期）" {
 		t.Fatalf("events after renewing: %v", ev)
 	}
 }
 
-func expiryRuleProto() *probev1.AlertRule {
-	return &probev1.AlertRule{Name: "到期", Kind: probev1.AlertKind_ALERT_KIND_EXPIRY, Enabled: true, AllNodes: true, DaysBefore: 7}
+func expiryRuleProto() *heronv1.AlertRule {
+	return &heronv1.AlertRule{Name: "到期", Kind: heronv1.AlertKind_ALERT_KIND_EXPIRY, Enabled: true, AllNodes: true, DaysBefore: 7}
 }
 
 // 到期规则经协议保存并回显提前天数；提前天数越界或带着探测字段时，错误以请求路径写明字段与约束。
@@ -337,27 +337,27 @@ func TestSaveAlertRuleExpiryKind(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	saved := saveRule(t, h, expiryRuleProto())
-	if saved.GetKind() != probev1.AlertKind_ALERT_KIND_EXPIRY || saved.GetDaysBefore() != 7 {
+	if saved.GetKind() != heronv1.AlertKind_ALERT_KIND_EXPIRY || saved.GetDaysBefore() != 7 {
 		t.Fatalf("saved %v", saved)
 	}
-	list, err := h.admin.ListAlertRules(t.Context(), connect.NewRequest(&probev1.ListAlertRulesRequest{}))
+	list, err := h.admin.ListAlertRules(t.Context(), connect.NewRequest(&heronv1.ListAlertRulesRequest{}))
 	if err != nil || len(list.Msg.GetRules()) != 1 || list.Msg.GetRules()[0].GetDaysBefore() != 7 {
 		t.Fatalf("listed %v %v", list, err)
 	}
 	for _, c := range []struct {
-		change func(*probev1.AlertRule)
+		change func(*heronv1.AlertRule)
 		want   string
 	}{
-		{func(r *probev1.AlertRule) { r.DaysBefore = 0 }, "rule.days_before must be between 1 and 365"},
-		{func(r *probev1.AlertRule) { r.DaysBefore = 366 }, "rule.days_before must be between 1 and 365"},
-		{func(r *probev1.AlertRule) { r.TaskId = 1 }, "rule.task_id must be 0 unless kind is probe"},
-		{func(r *probev1.AlertRule) { r.Metric = probev1.ProbeMetric_PROBE_METRIC_LOSS_PCT }, "rule.metric must be unspecified unless kind is probe"},
-		{func(r *probev1.AlertRule) { r.Threshold = 1 }, "rule.threshold must be 0 unless kind is probe or resource"},
-		{func(r *probev1.AlertRule) { r.ForMinutes = 1 }, "rule.for_minutes must be 0 unless kind is probe or resource"},
+		{func(r *heronv1.AlertRule) { r.DaysBefore = 0 }, "rule.days_before must be between 1 and 365"},
+		{func(r *heronv1.AlertRule) { r.DaysBefore = 366 }, "rule.days_before must be between 1 and 365"},
+		{func(r *heronv1.AlertRule) { r.TaskId = 1 }, "rule.task_id must be 0 unless kind is probe"},
+		{func(r *heronv1.AlertRule) { r.Metric = heronv1.ProbeMetric_PROBE_METRIC_LOSS_PCT }, "rule.metric must be unspecified unless kind is probe"},
+		{func(r *heronv1.AlertRule) { r.Threshold = 1 }, "rule.threshold must be 0 unless kind is probe or resource"},
+		{func(r *heronv1.AlertRule) { r.ForMinutes = 1 }, "rule.for_minutes must be 0 unless kind is probe or resource"},
 	} {
 		r := expiryRuleProto()
 		c.change(r)
-		_, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&probev1.SaveAlertRuleRequest{Rule: r}))
+		_, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&heronv1.SaveAlertRuleRequest{Rule: r}))
 		if codeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: "+c.want {
 			t.Errorf("%v: err = %v, want %s", r, err, c.want)
 		}
@@ -369,26 +369,26 @@ func TestSaveAlertRuleExpiryKind(t *testing.T) {
 func TestSaveAlertRuleRejectsFieldsOfOtherKinds(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	offline := func(change func(*probev1.AlertRule)) *probev1.AlertRule { r := offlineRule(); change(r); return r }
-	probeWithDays := &probev1.AlertRule{Name: "丢包", Kind: probev1.AlertKind_ALERT_KIND_PROBE, Enabled: true, AllNodes: true,
-		TaskId: 1, Metric: probev1.ProbeMetric_PROBE_METRIC_LOSS_PCT, Threshold: 20, ForMinutes: 3, DaysBefore: 7}
+	offline := func(change func(*heronv1.AlertRule)) *heronv1.AlertRule { r := offlineRule(); change(r); return r }
+	probeWithDays := &heronv1.AlertRule{Name: "丢包", Kind: heronv1.AlertKind_ALERT_KIND_PROBE, Enabled: true, AllNodes: true,
+		TaskId: 1, Metric: heronv1.ProbeMetric_PROBE_METRIC_LOSS_PCT, Threshold: 20, ForMinutes: 3, DaysBefore: 7}
 	for _, c := range []struct {
-		rule *probev1.AlertRule
+		rule *heronv1.AlertRule
 		want string
 	}{
-		{offline(func(r *probev1.AlertRule) { r.TaskId = 1 }), "rule.task_id must be 0 unless kind is probe"},
-		{offline(func(r *probev1.AlertRule) { r.Metric = probev1.ProbeMetric_PROBE_METRIC_RTT_MS }), "rule.metric must be unspecified unless kind is probe"},
-		{offline(func(r *probev1.AlertRule) { r.Threshold = 5 }), "rule.threshold must be 0 unless kind is probe or resource"},
-		{offline(func(r *probev1.AlertRule) { r.ForMinutes = 3 }), "rule.for_minutes must be 0 unless kind is probe or resource"},
-		{offline(func(r *probev1.AlertRule) { r.DaysBefore = 7 }), "rule.days_before must be 0 unless kind is expiry"},
+		{offline(func(r *heronv1.AlertRule) { r.TaskId = 1 }), "rule.task_id must be 0 unless kind is probe"},
+		{offline(func(r *heronv1.AlertRule) { r.Metric = heronv1.ProbeMetric_PROBE_METRIC_RTT_MS }), "rule.metric must be unspecified unless kind is probe"},
+		{offline(func(r *heronv1.AlertRule) { r.Threshold = 5 }), "rule.threshold must be 0 unless kind is probe or resource"},
+		{offline(func(r *heronv1.AlertRule) { r.ForMinutes = 3 }), "rule.for_minutes must be 0 unless kind is probe or resource"},
+		{offline(func(r *heronv1.AlertRule) { r.DaysBefore = 7 }), "rule.days_before must be 0 unless kind is expiry"},
 		{probeWithDays, "rule.days_before must be 0 unless kind is expiry"},
 	} {
-		_, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&probev1.SaveAlertRuleRequest{Rule: c.rule}))
+		_, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&heronv1.SaveAlertRuleRequest{Rule: c.rule}))
 		if codeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: "+c.want {
 			t.Errorf("%v: err = %v, want %s", c.rule, err, c.want)
 		}
 	}
-	list, err := h.admin.ListAlertRules(t.Context(), connect.NewRequest(&probev1.ListAlertRulesRequest{}))
+	list, err := h.admin.ListAlertRules(t.Context(), connect.NewRequest(&heronv1.ListAlertRulesRequest{}))
 	if err != nil || len(list.Msg.GetRules()) != 0 {
 		t.Fatalf("rejected rules were saved: %v %v", list, err)
 	}

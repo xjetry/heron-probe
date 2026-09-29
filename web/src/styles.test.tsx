@@ -4,7 +4,7 @@ import { screen } from "@testing-library/react";
 import { expect, it } from "vitest";
 import { Layout } from "./components/Layout";
 import { PublicLayout } from "./public/Layout";
-import { PublicService } from "./gen/probe/v1/public_pb";
+import { PublicService } from "./gen/heron/v1/public_pb";
 import { renderWithAdmin, renderWithService } from "./test/harness";
 
 // 两端构建各自只有一份入口 CSS，由 index.html 直接 <link>，每一页都加载：公开端那份合并了

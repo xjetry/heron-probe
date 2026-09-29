@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/alert"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/hub/outbound"
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/alert"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // 每一段都钉住内外两侧：段内的首末地址（not）不是公网，紧邻段外的地址（public）是公网；紧邻的若是另一类非公网段，
@@ -751,7 +751,7 @@ func (r *Resolver) backingOff(node int64, addr string) bool {
 // 对外文字写出答案表的上界：agent 读的 proto 注释（Settings.geo_enabled）要写明"最近用过的 N 个地址"与"超过 N 个
 // 地址轮换会再查"，N 与 answersPerNode 一致。常量改了而注释没改，这里红；面板那一侧由 web 的 countryLimits.test.ts 对照。
 func TestExternalTextsStateTheAnswerBound(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "..", "..", "proto", "probe", "v1", "admin.proto"))
+	src, err := os.ReadFile(filepath.Join("..", "..", "..", "proto", "heron", "v1", "admin.proto"))
 	if err != nil {
 		t.Fatal(err)
 	}

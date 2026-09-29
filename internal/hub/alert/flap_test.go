@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // 抖动抑制的状态机：离线开始时距上次恢复不足一小时（不含一小时），宽限取 max(节点宽限, 30 分钟)。每行都从 pending、
@@ -74,11 +74,11 @@ func flapFixture(t *testing.T) (*fixture, store.AlertRule) {
 	r := offline()
 	r.AllNodes, r.NodeIDs = false, f.ids[:1]
 	r = f.rule(t, r)
-	f.l.Observe(f.ids[0], "", &probev1.Metrics{})
+	f.l.Observe(f.ids[0], "", &heronv1.Metrics{})
 	f.clk.Advance(61 * time.Second)
 	f.sweep(t)
 	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
-	f.l.Observe(f.ids[0], "", &probev1.Metrics{})
+	f.l.Observe(f.ids[0], "", &heronv1.Metrics{})
 	f.sweep(t)
 	wantState(t, f.e, r.ID, f.ids[0], store.StateOK)
 	return f, r
@@ -99,7 +99,7 @@ func TestReofflineWithinWindowWaitsForFlapGrace(t *testing.T) {
 	f, r := flapFixture(t)
 	recoveredAt := time.Unix(f.clk.Now().Unix(), 0).UTC()
 	f.clk.Advance(10 * time.Minute)
-	f.l.Observe(f.ids[0], "", &probev1.Metrics{})
+	f.l.Observe(f.ids[0], "", &heronv1.Metrics{})
 	f.sweep(t)
 	f.clk.Advance(61 * time.Second)
 	f.sweep(t)
@@ -131,7 +131,7 @@ func TestReofflineWithinWindowWaitsForFlapGrace(t *testing.T) {
 func TestReofflineAfterWindowUsesNodeGrace(t *testing.T) {
 	f, r := flapFixture(t)
 	f.clk.Advance(61 * time.Minute)
-	f.l.Observe(f.ids[0], "", &probev1.Metrics{})
+	f.l.Observe(f.ids[0], "", &heronv1.Metrics{})
 	f.sweep(t)
 	f.clk.Advance(61 * time.Second)
 	f.sweep(t)
@@ -206,7 +206,7 @@ func TestFlapGraceSurvivesRestartDuringPending(t *testing.T) {
 				f, r := flapFixture(t)
 				recoveredAt := f.clk.Now()
 				f.clk.Advance(c.lastReport)
-				f.l.Observe(f.ids[0], "", &probev1.Metrics{})
+				f.l.Observe(f.ids[0], "", &heronv1.Metrics{})
 				f.sweep(t)
 				checks := []check{
 					{c.lastReport + 61*time.Second, store.StatePending, true},
@@ -297,7 +297,7 @@ func TestNeverRecoveredPendingAfterRestartIsNotFlapping(t *testing.T) {
 func TestFlapGraceFollowsTheOfflineStartNotTheEvaluationTime(t *testing.T) {
 	f, r := flapFixture(t)
 	f.clk.Advance(50 * time.Minute)
-	f.l.Observe(f.ids[0], "", &probev1.Metrics{})
+	f.l.Observe(f.ids[0], "", &heronv1.Metrics{})
 	f.sweep(t)
 	f.clk.Advance(11 * time.Minute)
 	f.sweep(t)

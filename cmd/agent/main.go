@@ -1,4 +1,4 @@
-// probe-agent：register 用注册窗口 key 换 token 并写入配置；configure 修改宿主机本地策略；run 进入上报循环。
+// heron-agent：register 用注册窗口 key 换 token 并写入配置；configure 修改宿主机本地策略；run 进入上报循环。
 package main
 
 import (
@@ -17,19 +17,19 @@ import (
 
 	"connectrpc.com/connect"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/agent/agentlog"
-	"github.com/xjetry/probe/internal/agent/client"
-	"github.com/xjetry/probe/internal/agent/collect"
-	"github.com/xjetry/probe/internal/agent/prober"
-	"github.com/xjetry/probe/internal/clock"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/agent/agentlog"
+	"github.com/xjetry/heron-probe/internal/agent/client"
+	"github.com/xjetry/heron-probe/internal/agent/collect"
+	"github.com/xjetry/heron-probe/internal/agent/prober"
+	"github.com/xjetry/heron-probe/internal/clock"
 )
 
 var version = "dev"
 
-const defaultConfig = "/etc/probe-agent/config.json"
+const defaultConfig = "/etc/heron-agent/config.json"
 
-const usage = "usage: probe-agent register|configure|run|version [flags]"
+const usage = "usage: heron-agent register|configure|run|version [flags]"
 
 // requestTimeout 是单次 RPC 的上限：hub 不应答时一次上报至多挂这么久才进入退避。
 // initialInterval 是收到 hub 第一个响应之前的上报间隔，也是这段时间里 client.Backoff 的基数。
@@ -81,8 +81,8 @@ func errorLine(err error) string {
 
 func runRegister(args []string) error {
 	fs := flag.NewFlagSet("register", flag.ContinueOnError)
-	hub := fs.String("hub", "", "hub base URL, e.g. https://probe.example.com")
-	key := fs.String("key", "", "registration key from `probe-hub window open`")
+	hub := fs.String("hub", "", "hub base URL, e.g. https://heron.example.com")
+	key := fs.String("key", "", "registration key from `heron-hub window open`")
 	name := fs.String("name", "", "node name (default: hostname)")
 	cfgPath := fs.String("config", defaultConfig, "where to write the agent config")
 	insecure := fs.Bool("insecure-http", false, "accept a plain http hub address (the node token and metrics travel unencrypted)")
@@ -111,7 +111,7 @@ func runRegister(args []string) error {
 		return fmt.Errorf("existing config: %w", err)
 	}
 	c := client.NewServiceClient(base, requestTimeout)
-	resp, err := c.Register(context.Background(), connect.NewRequest(&probev1.RegisterRequest{Key: *key, Name: *name}))
+	resp, err := c.Register(context.Background(), connect.NewRequest(&heronv1.RegisterRequest{Key: *key, Name: *name}))
 	if err != nil {
 		return fmt.Errorf("register: %w", err)
 	}
@@ -238,6 +238,6 @@ func runConfigure(args []string, out io.Writer) error {
 		return err
 	}
 	policy, _ := cfg.Policy()
-	fmt.Fprintf(out, "insecure_http=%v %s\nrestart the probe-agent service to apply\n", cfg.InsecureHTTP, policy)
+	fmt.Fprintf(out, "insecure_http=%v %s\nrestart the heron-agent service to apply\n", cfg.InsecureHTTP, policy)
 	return nil
 }

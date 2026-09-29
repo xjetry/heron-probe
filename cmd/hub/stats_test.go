@@ -14,9 +14,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/sqlitetest"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/sqlitetest"
 )
 
 func TestOfflineCommandsRejectV8(t *testing.T) {

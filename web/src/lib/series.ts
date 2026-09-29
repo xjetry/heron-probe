@@ -1,5 +1,5 @@
 import type { AlignedData } from "uplot";
-import type { QueryMetricsResponse } from "../gen/probe/v1/query_pb";
+import type { QueryMetricsResponse } from "../gen/heron/v1/query_pb";
 
 // x 轴按 step 补全 [from, to) 的网格；起点向下对齐到 step 的整数倍，与 hub 的点对齐规则一致。
 export function gridOf(step: number, from: number, to: number): number[] {

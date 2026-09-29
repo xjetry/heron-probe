@@ -9,9 +9,9 @@ import (
 
 	"connectrpc.com/connect"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/sanitize"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/sanitize"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 const (
@@ -56,20 +56,20 @@ func cleanTags(field string, raw []string) ([]string, error) {
 	return out, nil
 }
 
-func (s *Service) ListTags(ctx context.Context, _ *connect.Request[probev1.ListTagsRequest]) (*connect.Response[probev1.ListTagsResponse], error) {
+func (s *Service) ListTags(ctx context.Context, _ *connect.Request[heronv1.ListTagsRequest]) (*connect.Response[heronv1.ListTagsResponse], error) {
 	tags, err := s.store.ListTags(ctx)
 	if err != nil {
 		s.log.Error("listing tags failed", "err", err)
 		return nil, internalError("listing tags failed")
 	}
-	out := make([]*probev1.Tag, 0, len(tags))
+	out := make([]*heronv1.Tag, 0, len(tags))
 	for _, t := range tags {
-		out = append(out, &probev1.Tag{Name: t.Name, NodeCount: uint32(t.Nodes)})
+		out = append(out, &heronv1.Tag{Name: t.Name, NodeCount: uint32(t.Nodes)})
 	}
-	return connect.NewResponse(&probev1.ListTagsResponse{Tags: out}), nil
+	return connect.NewResponse(&heronv1.ListTagsResponse{Tags: out}), nil
 }
 
-func (s *Service) DeleteTag(ctx context.Context, req *connect.Request[probev1.DeleteTagRequest]) (*connect.Response[probev1.DeleteTagResponse], error) {
+func (s *Service) DeleteTag(ctx context.Context, req *connect.Request[heronv1.DeleteTagRequest]) (*connect.Response[heronv1.DeleteTagResponse], error) {
 	name, err := cleanTag("name", req.Msg.GetName())
 	if err != nil {
 		return nil, err
@@ -86,5 +86,5 @@ func (s *Service) DeleteTag(ctx context.Context, req *connect.Request[probev1.De
 		return nil, internalError("deleting tag failed")
 	}
 	s.log.Info("tag deleted", "tag", name)
-	return connect.NewResponse(&probev1.DeleteTagResponse{}), nil
+	return connect.NewResponse(&heronv1.DeleteTagResponse{}), nil
 }

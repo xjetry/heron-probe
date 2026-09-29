@@ -17,24 +17,24 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	agentclient "github.com/xjetry/probe/internal/agent/client"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/auth"
-	"github.com/xjetry/probe/internal/hub/live"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/hub/probe"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/hub/traffic"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	agentclient "github.com/xjetry/heron-probe/internal/agent/client"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
+	"github.com/xjetry/heron-probe/internal/hub/live"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/probe"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/traffic"
+	"github.com/xjetry/heron-probe/internal/testwait"
 	"google.golang.org/protobuf/proto"
 )
 
 type hub struct {
 	svc    *Service
 	srv    *httptest.Server
-	client probev1connect.AgentServiceClient
+	client heronv1connect.AgentServiceClient
 	clk    *clock.Fake
 	store  *store.Store
 	auth   *auth.Auth
@@ -88,8 +88,8 @@ func (h *hub) node(t *testing.T) (int64, string) {
 	return id, tok
 }
 
-func report(tok string, m *probev1.Metrics) *connect.Request[probev1.ReportRequest] {
-	req := connect.NewRequest(&probev1.ReportRequest{Metrics: m})
+func report(tok string, m *heronv1.Metrics) *connect.Request[heronv1.ReportRequest] {
+	req := connect.NewRequest(&heronv1.ReportRequest{Metrics: m})
 	if tok != "" {
 		req.Header().Set("Authorization", "Bearer "+tok)
 	}
@@ -115,11 +115,11 @@ func TestNewEnforcesTTLBounds(t *testing.T) {
 
 func TestReportWithoutTokenIsUnauthenticated(t *testing.T) {
 	h := newHub(t)
-	_, err := h.client.Report(context.Background(), report("", &probev1.Metrics{}))
+	_, err := h.client.Report(context.Background(), report("", &heronv1.Metrics{}))
 	if connect.CodeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("err = %v", err)
 	}
-	_, err = h.client.Report(context.Background(), report("bogus", &probev1.Metrics{}))
+	_, err = h.client.Report(context.Background(), report("bogus", &heronv1.Metrics{}))
 	if connect.CodeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("err = %v", err)
 	}
@@ -128,7 +128,7 @@ func TestReportWithoutTokenIsUnauthenticated(t *testing.T) {
 // 从服务描述符枚举全部 RPC，逐个无凭据调用：新增方法自动入测，不可能漏掉鉴权。
 func TestEveryProcedureRejectsAnonymousCalls(t *testing.T) {
 	h := newHub(t)
-	services := probev1.File_probe_v1_agent_proto.Services()
+	services := heronv1.File_heron_v1_agent_proto.Services()
 	count := 0
 	for i := 0; i < services.Len(); i++ {
 		svc := services.Get(i)
@@ -158,7 +158,7 @@ func TestEveryProcedureRejectsAnonymousCalls(t *testing.T) {
 func TestReportUpdatesLiveAndReturnsInterval(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
-	resp, err := h.client.Report(context.Background(), report(tok, &probev1.Metrics{CpuPct: proto.Float64(12)}))
+	resp, err := h.client.Report(context.Background(), report(tok, &heronv1.Metrics{CpuPct: proto.Float64(12)}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestReportUpdatesLiveAndReturnsInterval(t *testing.T) {
 func TestInvalidMetricsRejectedWholeWithoutSideEffect(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
-	cases := map[string]*probev1.Metrics{
+	cases := map[string]*heronv1.Metrics{
 		"nan":          {CpuPct: proto.Float64(math.NaN())},
 		"inf":          {Load1: proto.Float64(math.Inf(1)), Load5: proto.Float64(0), Load15: proto.Float64(0)},
 		"negative":     {CpuPct: proto.Float64(-1)},
@@ -198,8 +198,8 @@ func TestFactsAreStoredAndReconciledByHash(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
 	ctx := context.Background()
-	req := report(tok, &probev1.Metrics{})
-	req.Msg.Facts = &probev1.Facts{Hostname: "box", CpuCores: 2}
+	req := report(tok, &heronv1.Metrics{})
+	req.Msg.Facts = &heronv1.Facts{Hostname: "box", CpuCores: 2}
 	req.Msg.FactsHash = 41
 	resp, err := h.client.Report(ctx, req)
 	if err != nil || resp.Msg.WantFacts {
@@ -208,14 +208,14 @@ func TestFactsAreStoredAndReconciledByHash(t *testing.T) {
 	waitFor(t, func() bool { m, _ := h.store.FactsHashes(ctx); return m[id] == 41 })
 
 	h.clk.Advance(10 * time.Second)
-	req = report(tok, &probev1.Metrics{})
+	req = report(tok, &heronv1.Metrics{})
 	req.Msg.FactsHash = 41
 	resp, _ = h.client.Report(ctx, req)
 	if resp.Msg.WantFacts {
 		t.Fatal("same hash must not ask for facts")
 	}
 	h.clk.Advance(10 * time.Second)
-	req = report(tok, &probev1.Metrics{})
+	req = report(tok, &heronv1.Metrics{})
 	req.Msg.FactsHash = 42
 	resp, _ = h.client.Report(ctx, req)
 	if !resp.Msg.WantFacts {
@@ -227,8 +227,8 @@ func TestFactsStringsAreSanitized(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
 	ctx := context.Background()
-	req := report(tok, &probev1.Metrics{})
-	req.Msg.Facts = &probev1.Facts{Hostname: "a\x00b\x1fc\x7fd\u0085\u009b\u202e\u200c", Os: strings.Repeat("x", maxHostString)}
+	req := report(tok, &heronv1.Metrics{})
+	req.Msg.Facts = &heronv1.Facts{Hostname: "a\x00b\x1fc\x7fd\u0085\u009b\u202e\u200c", Os: strings.Repeat("x", maxHostString)}
 	req.Msg.FactsHash = 1
 	if _, err := h.client.Report(ctx, req); err != nil {
 		t.Fatal(err)
@@ -249,17 +249,17 @@ func TestRateLimitIsTwiceTheReportRate(t *testing.T) {
 	ctx := context.Background()
 	var last error
 	for i := 0; i < burst+1; i++ {
-		_, last = h.client.Report(ctx, report(tok, &probev1.Metrics{}))
+		_, last = h.client.Report(ctx, report(tok, &heronv1.Metrics{}))
 	}
 	if connect.CodeOf(last) != connect.CodeResourceExhausted {
 		t.Fatalf("burst+1 immediate reports: err = %v, want ResourceExhausted", last)
 	}
 	h.clk.Advance(h.svc.Interval()/2 - time.Millisecond)
-	if _, err := h.client.Report(ctx, report(tok, &probev1.Metrics{})); connect.CodeOf(err) != connect.CodeResourceExhausted {
+	if _, err := h.client.Report(ctx, report(tok, &heronv1.Metrics{})); connect.CodeOf(err) != connect.CodeResourceExhausted {
 		t.Fatalf("before half interval: err = %v, want ResourceExhausted", err)
 	}
 	h.clk.Advance(time.Millisecond) // 2× 速率 = 每半个间隔补一个令牌
-	if _, err := h.client.Report(ctx, report(tok, &probev1.Metrics{})); err != nil {
+	if _, err := h.client.Report(ctx, report(tok, &heronv1.Metrics{})); err != nil {
 		t.Fatalf("after refill: %v", err)
 	}
 }
@@ -268,8 +268,8 @@ func TestRateLimitIsTwiceTheReportRate(t *testing.T) {
 func TestOversizedBodyIsRejected(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
-	req := report(tok, &probev1.Metrics{})
-	req.Msg.Facts = &probev1.Facts{Os: strings.Repeat("x", maxBody+1024)}
+	req := report(tok, &heronv1.Metrics{})
+	req.Msg.Facts = &heronv1.Facts{Os: strings.Repeat("x", maxBody+1024)}
 	_, err := h.client.Report(context.Background(), req)
 	if connect.CodeOf(err) != connect.CodeResourceExhausted {
 		t.Fatalf("oversized body: err = %v, want ResourceExhausted", err)
@@ -282,7 +282,7 @@ func TestOversizedBodyIsRejected(t *testing.T) {
 func TestRegisterIsRateLimitedPerSourceAddress(t *testing.T) {
 	h := newHubWith(t, filepath.Join(t.TempDir(), "t.db"), Config{TTL: 30 * time.Second, TrustedProxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}})
 	call := func(ip string) connect.Code {
-		req := connect.NewRequest(&probev1.RegisterRequest{Key: "wrong", Name: "n"})
+		req := connect.NewRequest(&heronv1.RegisterRequest{Key: "wrong", Name: "n"})
 		req.Header().Set("X-Forwarded-For", ip)
 		_, err := h.client.Register(context.Background(), req)
 		return connect.CodeOf(err)
@@ -315,7 +315,7 @@ func TestRegisterLogsTheSourceKey(t *testing.T) {
 	var logs bytes.Buffer
 	h.svc.log = slog.New(slog.NewJSONHandler(&logs, nil))
 	key, _, _ := h.auth.OpenWindow(t.Context(), time.Hour, 1)
-	req := connect.NewRequest(&probev1.RegisterRequest{Key: key, Name: "x"})
+	req := connect.NewRequest(&heronv1.RegisterRequest{Key: key, Name: "x"})
 	req.Header().Set("X-Forwarded-For", "2001:db8:1:2::abcd")
 	if _, err := h.client.Register(t.Context(), req); err != nil {
 		t.Fatal(err)
@@ -332,16 +332,16 @@ func TestRegisterLogsTheSourceKey(t *testing.T) {
 func TestRegisterThenReport(t *testing.T) {
 	h := newHub(t)
 	ctx := context.Background()
-	_, err := h.client.Register(ctx, connect.NewRequest(&probev1.RegisterRequest{Key: "nope", Name: "x"}))
+	_, err := h.client.Register(ctx, connect.NewRequest(&heronv1.RegisterRequest{Key: "nope", Name: "x"}))
 	if connect.CodeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("closed window: err = %v", err)
 	}
 	key, _, _ := h.auth.OpenWindow(ctx, time.Hour, 1)
-	resp, err := h.client.Register(ctx, connect.NewRequest(&probev1.RegisterRequest{Key: key, Name: "x"}))
+	resp, err := h.client.Register(ctx, connect.NewRequest(&heronv1.RegisterRequest{Key: key, Name: "x"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.client.Report(ctx, report(resp.Msg.Token, &probev1.Metrics{})); err != nil {
+	if _, err := h.client.Report(ctx, report(resp.Msg.Token, &heronv1.Metrics{})); err != nil {
 		t.Fatalf("token from Register must work: %v", err)
 	}
 	if !h.live.Online(resp.Msg.NodeId) {
@@ -353,7 +353,7 @@ func TestFlushWritesClosedBucketsOnly(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
 	ctx := context.Background()
-	h.client.Report(ctx, report(tok, &probev1.Metrics{CpuPct: proto.Float64(10)}))
+	h.client.Report(ctx, report(tok, &heronv1.Metrics{CpuPct: proto.Float64(10)}))
 	h.svc.Flush(ctx, false)
 	if rows, _ := h.store.ReadMinuteRows(ctx, id, 0, math.MaxInt64); len(rows) != 0 {
 		t.Fatalf("open bucket was written: %+v", rows)
@@ -375,7 +375,7 @@ type failingWriter struct {
 	failFacts bool
 }
 
-func (f *failingWriter) UpsertFactsAsync(nodeID int64, hash uint64, facts *probev1.Facts, done func(error)) {
+func (f *failingWriter) UpsertFactsAsync(nodeID int64, hash uint64, facts *heronv1.Facts, done func(error)) {
 	if f.failFacts {
 		done(errors.New("disk on fire"))
 		return
@@ -396,7 +396,7 @@ func TestFlushRetriesFailedBatchesLater(t *testing.T) {
 	ctx := context.Background()
 	fw := &failingWriter{Store: h.store, fail: true}
 	h.svc.writer = fw
-	h.client.Report(ctx, report(tok, &probev1.Metrics{CpuPct: proto.Float64(10)}))
+	h.client.Report(ctx, report(tok, &heronv1.Metrics{CpuPct: proto.Float64(10)}))
 	h.clk.Advance(61 * time.Second)
 	h.svc.Flush(ctx, false)
 	if rows, _ := h.store.ReadMinuteRows(ctx, id, 0, math.MaxInt64); len(rows) != 0 {
@@ -413,7 +413,7 @@ func TestDrainOnShutdownWritesOpenBucket(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
 	ctx := context.Background()
-	h.client.Report(ctx, report(tok, &probev1.Metrics{CpuPct: proto.Float64(10)}))
+	h.client.Report(ctx, report(tok, &heronv1.Metrics{CpuPct: proto.Float64(10)}))
 	h.svc.Flush(ctx, true)
 	if rows, _ := h.store.ReadMinuteRows(ctx, id, 0, math.MaxInt64); len(rows) != 1 {
 		t.Fatalf("rows = %+v", rows)
@@ -432,14 +432,14 @@ func TestFactsHashNotRecordedWhenWriteFails(t *testing.T) {
 	ctx := context.Background()
 	fw := &failingWriter{Store: h.store, failFacts: true}
 	h.svc.writer = fw
-	req := report(tok, &probev1.Metrics{})
-	req.Msg.Facts = &probev1.Facts{Hostname: "box"}
+	req := report(tok, &heronv1.Metrics{})
+	req.Msg.Facts = &heronv1.Facts{Hostname: "box"}
 	req.Msg.FactsHash = 41
 	if _, err := h.client.Report(ctx, req); err != nil {
 		t.Fatal(err)
 	}
 	h.clk.Advance(h.svc.Interval())
-	req = report(tok, &probev1.Metrics{})
+	req = report(tok, &heronv1.Metrics{})
 	req.Msg.FactsHash = 41
 	resp, err := h.client.Report(ctx, req)
 	if err != nil {
@@ -450,15 +450,15 @@ func TestFactsHashNotRecordedWhenWriteFails(t *testing.T) {
 	}
 	fw.failFacts = false
 	h.clk.Advance(h.svc.Interval())
-	req = report(tok, &probev1.Metrics{})
-	req.Msg.Facts = &probev1.Facts{Hostname: "box"}
+	req = report(tok, &heronv1.Metrics{})
+	req.Msg.Facts = &heronv1.Facts{Hostname: "box"}
 	req.Msg.FactsHash = 41
 	if _, err := h.client.Report(ctx, req); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { m, _ := h.store.FactsHashes(ctx); return m[id] == 41 })
 	h.clk.Advance(h.svc.Interval())
-	req = report(tok, &probev1.Metrics{})
+	req = report(tok, &heronv1.Metrics{})
 	req.Msg.FactsHash = 41
 	resp, err = h.client.Report(ctx, req)
 	if err != nil {
@@ -495,7 +495,7 @@ func TestInterceptorPassesStreamingClientsThrough(t *testing.T) {
 func TestRegisterRateLimitCountsUndecodableRequests(t *testing.T) {
 	h := newHub(t)
 	for i := 1; i <= 30; i++ {
-		resp, err := http.Post(h.srv.URL+probev1connect.AgentServiceRegisterProcedure, "application/json", strings.NewReader("{"))
+		resp, err := http.Post(h.srv.URL+heronv1connect.AgentServiceRegisterProcedure, "application/json", strings.NewReader("{"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -504,7 +504,7 @@ func TestRegisterRateLimitCountsUndecodableRequests(t *testing.T) {
 			t.Fatalf("malformed request %d: %d, want 400 from the decoder", i, resp.StatusCode)
 		}
 	}
-	_, err := h.client.Register(context.Background(), connect.NewRequest(&probev1.RegisterRequest{Key: "wrong", Name: "n"}))
+	_, err := h.client.Register(context.Background(), connect.NewRequest(&heronv1.RegisterRequest{Key: "wrong", Name: "n"}))
 	if code := connect.CodeOf(err); code != connect.CodeResourceExhausted {
 		t.Fatalf("well-formed request after 30 malformed ones: %v, want ResourceExhausted", err)
 	}
@@ -515,12 +515,12 @@ func TestRegisterRateLimitDoesNotChargeReports(t *testing.T) {
 	h := newHub(t)
 	_, tok := h.node(t)
 	for i := 1; i <= 31; i++ {
-		_, err := h.client.Register(context.Background(), connect.NewRequest(&probev1.RegisterRequest{Key: "wrong", Name: "n"}))
+		_, err := h.client.Register(context.Background(), connect.NewRequest(&heronv1.RegisterRequest{Key: "wrong", Name: "n"}))
 		if want := map[bool]connect.Code{false: connect.CodeUnauthenticated, true: connect.CodeResourceExhausted}[i == 31]; connect.CodeOf(err) != want {
 			t.Fatalf("register %d: %v, want %v", i, err, want)
 		}
 	}
-	if _, err := h.client.Report(context.Background(), report(tok, &probev1.Metrics{CpuPct: proto.Float64(1)})); err != nil {
+	if _, err := h.client.Report(context.Background(), report(tok, &heronv1.Metrics{CpuPct: proto.Float64(1)})); err != nil {
 		t.Fatalf("report from an address whose register bucket is empty: %v", err)
 	}
 }
@@ -532,7 +532,7 @@ func TestInterceptorDeniesUnlistedProcedures(t *testing.T) {
 		called = true
 		return nil, nil
 	})
-	req := connect.NewRequest(&probev1.ReportRequest{}) // 未经客户端发送，Spec().Procedure 为空
+	req := connect.NewRequest(&heronv1.ReportRequest{}) // 未经客户端发送，Spec().Procedure 为空
 	req.Header().Set("Authorization", "Bearer whatever")
 	_, err := h.svc.authInterceptor().WrapUnary(next)(context.Background(), req)
 	if connect.CodeOf(err) != connect.CodeUnauthenticated {
@@ -546,8 +546,8 @@ func TestInterceptorDeniesUnlistedProcedures(t *testing.T) {
 func TestForgetClearsNodeState(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
-	req := report(tok, &probev1.Metrics{CpuPct: proto.Float64(1)})
-	req.Msg.Facts = &probev1.Facts{Hostname: "h"}
+	req := report(tok, &heronv1.Metrics{CpuPct: proto.Float64(1)})
+	req.Msg.Facts = &heronv1.Facts{Hostname: "h"}
 	req.Msg.FactsHash = 5
 	if _, err := h.client.Report(context.Background(), req); err != nil {
 		t.Fatal(err)
@@ -576,7 +576,7 @@ type delayedFactsCallback struct {
 	callbacks chan func()
 }
 
-func (w *delayedFactsCallback) UpsertFactsAsync(id int64, hash uint64, f *probev1.Facts, done func(error)) {
+func (w *delayedFactsCallback) UpsertFactsAsync(id int64, hash uint64, f *heronv1.Facts, done func(error)) {
 	w.Store.UpsertFactsAsync(id, hash, f, func(err error) { w.callbacks <- func() { done(err) } })
 }
 
@@ -585,8 +585,8 @@ func TestForgetDiscardsDelayedFactsCallback(t *testing.T) {
 	id, tok := h.node(t)
 	w := &delayedFactsCallback{Store: h.store, callbacks: make(chan func(), 1)}
 	h.svc.writer = w
-	req := report(tok, &probev1.Metrics{})
-	req.Msg.Facts = &probev1.Facts{Hostname: "h"}
+	req := report(tok, &heronv1.Metrics{})
+	req.Msg.Facts = &heronv1.Facts{Hostname: "h"}
 	req.Msg.FactsHash = 9
 	if _, err := h.client.Report(context.Background(), req); err != nil {
 		t.Fatal(err)
@@ -612,7 +612,7 @@ func TestForgetDropsPendingRowsWithoutLosingOtherNodes(t *testing.T) {
 	fw := &failingWriter{Store: h.store, fail: true}
 	h.svc.writer = fw
 	for _, token := range []string{tok, other} {
-		if _, err := h.client.Report(context.Background(), report(token, &probev1.Metrics{CpuPct: proto.Float64(1)})); err != nil {
+		if _, err := h.client.Report(context.Background(), report(token, &heronv1.Metrics{CpuPct: proto.Float64(1)})); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -662,7 +662,7 @@ func TestForgetWaitsForAdmittedReport(t *testing.T) {
 	gate.armed.Store(true)
 	reported := make(chan error, 1)
 	go func() {
-		_, err := h.client.Report(context.Background(), report(tok, &probev1.Metrics{}))
+		_, err := h.client.Report(context.Background(), report(tok, &heronv1.Metrics{}))
 		reported <- err
 	}()
 	select {
@@ -708,7 +708,7 @@ func TestRegisterTrimsAfterRemovingControls(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct{ raw, want string }{{"  host \x00 ", "host"}, {"\x00 \u202e", "node"}} {
-		out, err := h.client.Register(ctx, connect.NewRequest(&probev1.RegisterRequest{Key: key, Name: tc.raw}))
+		out, err := h.client.Register(ctx, connect.NewRequest(&heronv1.RegisterRequest{Key: key, Name: tc.raw}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -722,11 +722,11 @@ func TestRegisterTrimsAfterRemovingControls(t *testing.T) {
 	}
 }
 
-func netCounters(boot string, rx, tx uint64) *probev1.Metrics {
-	return &probev1.Metrics{BootId: boot, NetRxTotal: proto.Uint64(rx), NetTxTotal: proto.Uint64(tx)}
+func netCounters(boot string, rx, tx uint64) *heronv1.Metrics {
+	return &heronv1.Metrics{BootId: boot, NetRxTotal: proto.Uint64(rx), NetTxTotal: proto.Uint64(tx)}
 }
 
-func (h *hub) mustReport(t *testing.T, tok string, m *probev1.Metrics) {
+func (h *hub) mustReport(t *testing.T, tok string, m *heronv1.Metrics) {
 	t.Helper()
 	if _, err := h.client.Report(context.Background(), report(tok, m)); err != nil {
 		t.Fatal(err)
@@ -826,15 +826,15 @@ func TestForgetDropsTrafficState(t *testing.T) {
 
 func (h *hub) task(t *testing.T, nodeID int64) uint64 {
 	t.Helper()
-	d, _, err := h.reg.Save(context.Background(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}, store.NodeSelector{AllNodes: false, NodeIDs: []int64{nodeID}})
+	d, _, err := h.reg.Save(context.Background(), &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}, store.NodeSelector{AllNodes: false, NodeIDs: []int64{nodeID}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return d.Task.Id
 }
 
-func rtt(task uint64, ageMs, us uint32) *probev1.ProbeResult {
-	return &probev1.ProbeResult{TaskId: task, AgeMs: ageMs, Outcome: &probev1.ProbeResult_RttUs{RttUs: us}}
+func rtt(task uint64, ageMs, us uint32) *heronv1.ProbeResult {
+	return &heronv1.ProbeResult{TaskId: task, AgeMs: ageMs, Outcome: &heronv1.ProbeResult_RttUs{RttUs: us}}
 }
 
 func TestReportFoldsResultsIntoMeasuredMinuteBuckets(t *testing.T) {
@@ -843,10 +843,10 @@ func TestReportFoldsResultsIntoMeasuredMinuteBuckets(t *testing.T) {
 	task := h.task(t, id)
 	// 墙钟 00:00:30；age 0 落进 00:00 的桶，age 45 000 ms 落进 23:59 的桶。
 	h.clk.SetWall(time.Date(2026, 1, 1, 0, 0, 30, 0, time.UTC))
-	req := report(tok, &probev1.Metrics{})
+	req := report(tok, &heronv1.Metrics{})
 	req.Msg.TasksVersion = h.reg.Version()
-	req.Msg.ProbeResults = []*probev1.ProbeResult{rtt(task, 0, 1200), rtt(task, 45_000, 800),
-		{TaskId: task, Outcome: &probev1.ProbeResult_Timeout{Timeout: &probev1.Timeout{}}}}
+	req.Msg.ProbeResults = []*heronv1.ProbeResult{rtt(task, 0, 1200), rtt(task, 45_000, 800),
+		{TaskId: task, Outcome: &heronv1.ProbeResult_Timeout{Timeout: &heronv1.Timeout{}}}}
 	if _, err := h.client.Report(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
@@ -891,8 +891,8 @@ func TestReportDropsUnassignedAndStaleResultsButKeepsTheRest(t *testing.T) {
 		}
 		logs.Reset()
 	}
-	req := report(otherToken, &probev1.Metrics{})
-	req.Msg.ProbeResults = []*probev1.ProbeResult{rtt(task, 0, 100)}
+	req := report(otherToken, &heronv1.Metrics{})
+	req.Msg.ProbeResults = []*heronv1.ProbeResult{rtt(task, 0, 100)}
 	if _, err := h.client.Report(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
@@ -900,8 +900,8 @@ func TestReportDropsUnassignedAndStaleResultsButKeepsTheRest(t *testing.T) {
 		t.Fatalf("unassigned results entered live: %+v", got.Probes)
 	}
 	checkLog(other, 1, 0)
-	req = report(tok, &probev1.Metrics{})
-	req.Msg.ProbeResults = []*probev1.ProbeResult{rtt(task, 120_001, 100), rtt(task, 120_000, 200), rtt(task+999, 0, 300)}
+	req = report(tok, &heronv1.Metrics{})
+	req.Msg.ProbeResults = []*heronv1.ProbeResult{rtt(task, 120_001, 100), rtt(task, 120_000, 200), rtt(task+999, 0, 300)}
 	if _, err := h.client.Report(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
@@ -915,9 +915,9 @@ func TestReportDropsUnassignedAndStaleResultsButKeepsTheRest(t *testing.T) {
 func TestMalformedResultRejectsWholeReport(t *testing.T) {
 	for _, tc := range []struct {
 		name, field string
-		result      *probev1.ProbeResult
+		result      *heronv1.ProbeResult
 	}{
-		{"missing_outcome", "probe_results[0].outcome", &probev1.ProbeResult{}},
+		{"missing_outcome", "probe_results[0].outcome", &heronv1.ProbeResult{}},
 		{"excessive_rtt", "probe_results[0].rtt_us", rtt(0, 0, 5_000_001)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -926,7 +926,7 @@ func TestMalformedResultRejectsWholeReport(t *testing.T) {
 			task := h.task(t, id)
 			tc.result.TaskId = task
 			req := report(tok, netCounters("boot", 1000, 2000))
-			req.Msg.ProbeResults = []*probev1.ProbeResult{tc.result, rtt(task, 0, 100)}
+			req.Msg.ProbeResults = []*heronv1.ProbeResult{tc.result, rtt(task, 0, 100)}
 			_, err := h.client.Report(t.Context(), req)
 			if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), tc.field) {
 				t.Errorf("malformed error=%v want=%s", err, tc.field)
@@ -950,9 +950,9 @@ func TestMalformedResultRejectsWholeReport(t *testing.T) {
 func TestReportReconcilesTaskVersion(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
-	check := func(version uint64, want *probev1.ProbeTasks) {
+	check := func(version uint64, want *heronv1.ProbeTasks) {
 		t.Helper()
-		req := report(tok, &probev1.Metrics{})
+		req := report(tok, &heronv1.Metrics{})
 		req.Msg.TasksVersion = version
 		resp, err := h.client.Report(t.Context(), req)
 		if err != nil {
@@ -967,21 +967,21 @@ func TestReportReconcilesTaskVersion(t *testing.T) {
 	check(h.reg.Version(), nil)
 	task := h.task(t, id)
 	savedVersion := h.reg.Version()
-	check(0, &probev1.ProbeTasks{Version: savedVersion, Tasks: []*probev1.ProbeTask{{Id: task, Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}}})
+	check(0, &heronv1.ProbeTasks{Version: savedVersion, Tasks: []*heronv1.ProbeTask{{Id: task, Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}}})
 	check(savedVersion, nil)
 	if _, err := h.reg.Delete(t.Context(), task); err != nil {
 		t.Fatal(err)
 	}
-	check(savedVersion, &probev1.ProbeTasks{Version: h.reg.Version()})
+	check(savedVersion, &heronv1.ProbeTasks{Version: h.reg.Version()})
 }
 
 func TestReportAcceptsRttBoundaryAndProbeErrors(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
 	task := h.task(t, id)
-	req := report(tok, &probev1.Metrics{})
-	req.Msg.ProbeResults = []*probev1.ProbeResult{rtt(task, 0, 0), rtt(task, 0, 5_000_000),
-		{TaskId: task, Outcome: &probev1.ProbeResult_Error{Error: &probev1.ProbeError{Message: "socket unavailable"}}}}
+	req := report(tok, &heronv1.Metrics{})
+	req.Msg.ProbeResults = []*heronv1.ProbeResult{rtt(task, 0, 0), rtt(task, 0, 5_000_000),
+		{TaskId: task, Outcome: &heronv1.ProbeResult_Error{Error: &heronv1.ProbeError{Message: "socket unavailable"}}}}
 	if _, err := h.client.Report(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
@@ -1005,7 +1005,7 @@ func TestMalformedResultLeavesExistingStateUnchanged(t *testing.T) {
 	h.live.Drain()
 	h.clk.Advance(10 * time.Second)
 	req := report(tok, netCounters("boot", 1100, 2300))
-	req.Msg.ProbeResults = []*probev1.ProbeResult{rtt(task, 0, 5_000_001)}
+	req.Msg.ProbeResults = []*heronv1.ProbeResult{rtt(task, 0, 5_000_001)}
 	_, err := h.client.Report(t.Context(), req)
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Errorf("malformed error=%v", err)
@@ -1038,8 +1038,8 @@ func TestFlushWritesBothFamiliesInOneBatchAndRetriesTogether(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
 	task := h.task(t, id)
-	req := report(tok, &probev1.Metrics{CpuPct: proto.Float64(10)})
-	req.Msg.ProbeResults = []*probev1.ProbeResult{rtt(task, 0, 100)}
+	req := report(tok, &heronv1.Metrics{CpuPct: proto.Float64(10)})
+	req.Msg.ProbeResults = []*heronv1.ProbeResult{rtt(task, 0, 100)}
 	if _, err := h.client.Report(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
@@ -1085,8 +1085,8 @@ func TestForgetDropsPendingProbeRowsAndAssignments(t *testing.T) {
 		token string
 		task  uint64
 	}{{tok, deletedTask}, {other, keptTask}} {
-		req := report(tc.token, &probev1.Metrics{CpuPct: proto.Float64(1)})
-		req.Msg.ProbeResults = []*probev1.ProbeResult{rtt(tc.task, 0, 100)}
+		req := report(tc.token, &heronv1.Metrics{CpuPct: proto.Float64(1)})
+		req.Msg.ProbeResults = []*heronv1.ProbeResult{rtt(tc.task, 0, 100)}
 		if _, err := h.client.Report(t.Context(), req); err != nil {
 			t.Fatal(err)
 		}
@@ -1125,7 +1125,7 @@ func TestFlushBoundsPendingBothFamilies(t *testing.T) {
 	h.svc.log = slog.New(slog.NewJSONHandler(&logs, nil))
 	h.svc.writer = &failingWriter{Store: h.store, fail: true}
 	for range maxPendingBatches + 1 {
-		h.live.Observe(id, "", &probev1.Metrics{})
+		h.live.Observe(id, "", &heronv1.Metrics{})
 		h.live.AddProbe(id, h.clk.Now(), task, rtt(task, 0, 100))
 		h.clk.Advance(time.Minute)
 		h.svc.Flush(t.Context(), false)

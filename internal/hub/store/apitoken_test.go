@@ -13,7 +13,7 @@ import (
 func TestAPITokenLifecycle(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
-	h := sha256.Sum256([]byte("probe_at_x"))
+	h := sha256.Sum256([]byte("heron_at_x"))
 	tok, err := s.CreateAPIToken(ctx, "ci", h, clk.Now(), 100)
 	if err != nil || tok.ID == 0 || tok.Name != "ci" || !tok.CreatedAt.Equal(clk.Now().Truncate(time.Second)) || !tok.LastUsedAt.IsZero() {
 		t.Fatalf("create: %+v %v", tok, err)

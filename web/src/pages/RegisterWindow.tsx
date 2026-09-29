@@ -5,7 +5,7 @@ import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { Secret } from "../components/Secret";
-import { AdminService } from "../gen/probe/v1/admin_pb";
+import { AdminService } from "../gen/heron/v1/admin_pb";
 import { needsInsecureHTTP } from "../lib/transport";
 import { isRelease } from "../lib/version";
 
@@ -13,8 +13,8 @@ import { isRelease } from "../lib/version";
 // semver，与节点落后判定同一个解析）时取同版本 release 的脚本，装上的 agent 与 hub 同版本；否则只能取最新 release。
 const scriptUrl = (hubVersion: string) =>
   isRelease(hubVersion)
-    ? `https://github.com/xjetry/probe/releases/download/${hubVersion}/install.sh`
-    : "https://github.com/xjetry/probe/releases/latest/download/install.sh";
+    ? `https://github.com/xjetry/heron-probe/releases/download/${hubVersion}/install.sh`
+    : "https://github.com/xjetry/heron-probe/releases/latest/download/install.sh";
 
 const TTLS = [
   { label: "10 分钟", seconds: 600 },

@@ -3,7 +3,7 @@ package client
 import (
 	"time"
 
-	"github.com/xjetry/probe/internal/agentwire"
+	"github.com/xjetry/heron-probe/internal/agentwire"
 )
 
 // Backoff 给出第 attempt 次失败后的等待：指数增长，上限 ReportsPerTTL × interval。

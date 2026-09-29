@@ -6,9 +6,9 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir "$work/scripts" "$work/bin" "$work/package"
 cp "$root/scripts/compat-download.sh" "$work/scripts/"
-printf '#!/bin/sh\nprintf "published fixture\\n"\n' > "$work/package/probe-agent"
-chmod +x "$work/package/probe-agent"
-COPYFILE_DISABLE=1 tar --no-xattrs -czf "$work/fixture.tar.gz" -C "$work/package" probe-agent
+printf '#!/bin/sh\nprintf "published fixture\\n"\n' > "$work/package/heron-agent"
+chmod +x "$work/package/heron-agent"
+COPYFILE_DISABLE=1 tar --no-xattrs -czf "$work/fixture.tar.gz" -C "$work/package" heron-agent
 digest=$(sha256sum "$work/fixture.tar.gz")
 digest=${digest%% *}
 jq --arg digest "$digest" '.tag = "v9.8.7-rc.1" | .releaseKind = "prerelease" | .assets[].sha256 = $digest' "$root/scripts/compat-agent.json" > "$work/pin.json"
@@ -25,7 +25,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 case "$url" in
-  https://github.com/xjetry/probe/releases/download/v9.8.7-rc.1/probe-agent_linux_amd64.tar.gz|https://github.com/xjetry/probe/releases/download/v9.8.7-rc.1/probe-agent_linux_arm64.tar.gz) ;;
+  https://github.com/xjetry/heron-probe/releases/download/v9.8.7-rc.1/heron-agent_linux_amd64.tar.gz|https://github.com/xjetry/heron-probe/releases/download/v9.8.7-rc.1/heron-agent_linux_arm64.tar.gz) ;;
   *) echo "unexpected release URL: $url" >&2; exit 1 ;;
 esac
 cp "$FIXTURE_ROOT/fixture.tar.gz" "$out"
@@ -48,7 +48,7 @@ rejects() {
 cp "$work/pin.json" "$work/scripts/compat-agent.json"
 "$work/scripts/compat-download.sh" "$work/output" > "$work/result" 2>&1
 for arch in amd64 arm64; do
-  [ "$("$work/output/probe-agent-linux-$arch")" = "published fixture" ] || { echo "FAIL: missing verified $arch agent" >&2; exit 1; }
+  [ "$("$work/output/heron-agent-linux-$arch")" = "published fixture" ] || { echo "FAIL: missing verified $arch agent" >&2; exit 1; }
 done
 [ "$(awk 'END { print NR }' "$work/curl-calls")" = 2 ] || { echo "FAIL: did not download both release assets" >&2; exit 1; }
 rm -rf "$work/output"
@@ -82,6 +82,6 @@ echo "rejected unavailable release: exit $rc"
 # 恢复摘要与下载后仍须通过，避免负例破坏替身而产生虚假的验红。
 "$work/scripts/compat-download.sh" "$work/output" > "$work/result" 2>&1
 for arch in amd64 arm64; do
-  [ "$("$work/output/probe-agent-linux-$arch")" = "published fixture" ] || { echo "FAIL: restored $arch baseline failed" >&2; exit 1; }
+  [ "$("$work/output/heron-agent-linux-$arch")" = "published fixture" ] || { echo "FAIL: restored $arch baseline failed" >&2; exit 1; }
 done
 echo "compatibility download checks OK"

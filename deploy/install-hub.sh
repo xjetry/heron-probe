@@ -3,18 +3,18 @@
 # 管道安装时 stdin 是脚本源码，外部命令不能读取它；确认只从 /dev/tty 读取。
 set -eu
 
-# 脚本读写的系统路径都挂在 PROBE_INSTALL_ROOT 下。生产运行时它为空，即真实根目录；deploy/installhub_test.go
+# 脚本读写的系统路径都挂在 HERON_INSTALL_ROOT 下。生产运行时它为空，即真实根目录；deploy/installhub_test.go
 # 把它指向临时目录，连同 PATH 上的 systemctl、chown、curl 等替身一起运行，不触碰真实系统路径。它只改变本脚本
 # 读写的位置：写进单元的可执行路径与库路径、systemctl 报告的 drop-in 路径都是目标系统里的真实路径，读文件时
 # 才拼上这个前缀。
-ROOT=${PROBE_INSTALL_ROOT-}
-BIN=$ROOT/usr/local/bin/probe-hub
-DATA=$ROOT/var/lib/probe
-UNIT=$ROOT/etc/systemd/system/probe-hub.service
-WANTS=$ROOT/etc/systemd/system/multi-user.target.wants/probe-hub.service
+ROOT=${HERON_INSTALL_ROOT-}
+BIN=$ROOT/usr/local/bin/heron-hub
+DATA=$ROOT/var/lib/heron
+UNIT=$ROOT/etc/systemd/system/heron-hub.service
+WANTS=$ROOT/etc/systemd/system/multi-user.target.wants/heron-hub.service
 PROC=$ROOT/proc
-SVC_USER=probe-hub
-REPO=https://github.com/xjetry/probe
+SVC_USER=heron-hub
+REPO=https://github.com/xjetry/heron-probe
 # 本脚本所属的版本与该版全部 tar 包的 SHA-256（每行 "<64 位十六进制>  <文件名>"），由 make release 经
 # deploy/releasestamp 写进下面两行标记之间；源码里为空，这时拒绝安装（卸载不下载，照常可用）。下载的包只按这份
 # 清单校验：--base-url 能换掉下载目录里的每个文件，同目录的 SHA256SUMS 也在其中，拿它作依据挡不住篡改。
@@ -24,7 +24,7 @@ RELEASE_SHA256=""
 # <<< release stamp <<<
 BASE_URL=""; UNINSTALL=0; PURGE=0; YES=0; OVERRIDES=""
 # 安装器写进单元的 serve 参数，与 cmd/hub/serve.go 定义的 flag 一一对应，由 deploy/installhub_test.go 核对。
-# 命令行覆盖与已装单元的解析共用这一张表；--db 固定为 /var/lib/probe/probe.db，不接受覆盖。
+# 命令行覆盖与已装单元的解析共用这一张表；--db 固定为 /var/lib/heron/heron.db，不接受覆盖。
 SERVE_FLAGS='listen timezone trusted-proxies public-dir theme-origin admin-origin geo-mmdb retention-1m retention-5m retention-1h retention-alert-events'
 nl='
 '
@@ -81,7 +81,7 @@ confirm_removal() {
   if [ ! -t 1 ] || ! ( : </dev/tty ) 2>/dev/null; then
     fail 'uninstall requires --yes without a terminal'
   fi
-  printf 'Stop and remove probe-hub (purge data: %s)? [y/N] ' "$PURGE" > /dev/tty
+  printf 'Stop and remove heron-hub (purge data: %s)? [y/N] ' "$PURGE" > /dev/tty
   IFS= read -r answer < /dev/tty || fail 'confirmation canceled'
   case "$answer" in y|Y|yes|YES) ;; *) fail 'confirmation canceled';; esac
 }
@@ -93,7 +93,7 @@ create_account() {
   if id "$SVC_USER" >/dev/null 2>&1; then
     actual_group=$(id -gn "$SVC_USER") || fail "primary group missing for $SVC_USER"
     [ "$actual_group" = "$SVC_USER" ] || fail "user $SVC_USER has primary group $actual_group; expected $SVC_USER"
-    [ "$(id -u "$SVC_USER")" != 0 ] || fail 'probe-hub must not have uid 0'
+    [ "$(id -u "$SVC_USER")" != 0 ] || fail 'heron-hub must not have uid 0'
     return
   fi
   if ! local_group_exists; then
@@ -135,32 +135,32 @@ scan_uid_pids() {
   done
 }
 stop_service() {
-  if [ -f "$UNIT" ]; then systemctl stop probe-hub </dev/null || fail 'failed to stop probe-hub'; fi
+  if [ -f "$UNIT" ]; then systemctl stop heron-hub </dev/null || fail 'failed to stop heron-hub'; fi
   id "$SVC_USER" >/dev/null 2>&1 || return 0
   svc_uid=$(id -u "$SVC_USER")
   polls=0
   while :; do
     scan_uid_pids "$svc_uid"
     [ -n "$svc_pids" ] || return 0
-    [ "$polls" -lt 10 ] || fail "probe-hub is still running: uid $svc_uid processes:$svc_pids"
+    [ "$polls" -lt 10 ] || fail "heron-hub is still running: uid $svc_uid processes:$svc_pids"
     sleep 1
     polls=$((polls + 1))
   done
 }
 confirm_service_started() {
-  svc_uid=$(id -u "$SVC_USER") || fail 'no service user probe-hub; see journalctl -u probe-hub'
+  svc_uid=$(id -u "$SVC_USER") || fail 'no service user heron-hub; see journalctl -u heron-hub'
   polls=0; pid=""
   while :; do
     scan_uid_pids "$svc_uid"
     if [ -n "$svc_pids" ]; then pid=${svc_pids# }; pid=${pid%% *}; break; fi
-    [ "$polls" -lt 10 ] || fail 'probe-hub did not start; see journalctl -u probe-hub'
+    [ "$polls" -lt 10 ] || fail 'heron-hub did not start; see journalctl -u heron-hub'
     sleep 1
     polls=$((polls + 1))
   done
   sleep 3
   scan_uid_pids "$svc_uid"
   case " $svc_pids " in *" $pid "*) return 0;; esac
-  fail "probe-hub did not stay running (pid $pid); see journalctl -u probe-hub"
+  fail "heron-hub did not stay running (pid $pid); see journalctl -u heron-hub"
 }
 # 数据目录与三个库文件的形态核对，停服前的预检与停服后的复检共用。停服后，目录本身的复检在收紧目录之前，
 # 库文件的复检在目录收成 0750 之后（锁内）。
@@ -175,7 +175,7 @@ data_dir_ok() {
   fi
 }
 db_files_ok() {
-  for file in "$DATA/probe.db" "$DATA/probe.db-wal" "$DATA/probe.db-shm"; do
+  for file in "$DATA/heron.db" "$DATA/heron.db-wal" "$DATA/heron.db-shm"; do
     [ -L "$file" ] || [ -e "$file" ] || continue
     extra=""
     if [ ! -L "$file" ] && [ -f "$file" ]; then
@@ -187,7 +187,7 @@ db_files_ok() {
   done
 }
 # 单元是否 enabled 只看 $WANTS 这条链接，卸载与写好主单元之后的现状说明共用这一个判定。安装器每次写入的主单元
-# 取自发布包里的 probe-hub.service，只替换 ExecStart，[Install] 只有 WantedBy=multi-user.target（与 $WANTS 里的
+# 取自发布包里的 heron-hub.service，只替换 ExecStart，[Install] 只有 WantedBy=multi-user.target（与 $WANTS 里的
 # target 一致，由 deploy/installhub_test.go 静态核对），所以 systemctl enable 建出的就是这条链接，disable 删掉它。判定不向 systemd 查询：写好主单元之后回答它的路径里，
 # 有一条正是 systemctl 刚出过错，而 systemctl is-enabled --quiet 查询出错与 disabled 都是非零退出，照它回答会把
 # 仍 enabled 的单元说成没 enable。用 -L 不用 -e：主单元被删、链接悬空时也算，卸载要清掉它。管理员另用
@@ -196,16 +196,16 @@ unit_enabled() { [ -L "$WANTS" ]; }
 if [ "$UNINSTALL" = 1 ]; then
   confirm_removal
   stop_service
-  if [ -f "$UNIT" ]; then systemctl disable probe-hub </dev/null; fi
+  if [ -f "$UNIT" ]; then systemctl disable heron-hub </dev/null; fi
   if unit_enabled; then rm -f "$WANTS"; fi
   rm -f "$UNIT" "$BIN"
   # 只清除本服务的本地定制；不用 DropInPaths 展开共享配置，也不跟随目录符号链接。
   if [ "$PURGE" = 1 ]; then
-    rm -rf "$UNIT.d" "$ROOT/run/systemd/system/probe-hub.service.d"
+    rm -rf "$UNIT.d" "$ROOT/run/systemd/system/heron-hub.service.d"
   fi
   systemctl daemon-reload </dev/null
   if [ "$PURGE" = 1 ]; then rm -rf "$DATA"; delete_account; fi
-  echo 'probe-hub uninstalled'
+  echo 'heron-hub uninstalled'
   exit 0
 fi
 case "$(uname -m)" in
@@ -213,7 +213,7 @@ case "$(uname -m)" in
   *) fail "unsupported architecture: $(uname -m)";;
 esac
 # 内嵌清单在任何网络操作与账户改动之前查：源码脚本、或清单里没有本机的包，都不该先建用户、装 CA 再失败。
-PKG=probe-hub_linux_$ARCH.tar.gz
+PKG=heron-hub_linux_$ARCH.tar.gz
 [ -n "$RELEASE_VERSION" ] ||
   fail "this install-hub.sh has no embedded release checksums (it is the source copy); use the install-hub.sh attached to a release: $REPO/releases"
 WANT_SHA256=$(printf '%s\n' "$RELEASE_SHA256" | awk -v p="$PKG" '$2 == p { print $1; n++ } END { exit n != 1 }') ||
@@ -272,10 +272,10 @@ GOT_SHA256=${GOT_SHA256%% *}
 [ "$GOT_SHA256" = "$WANT_SHA256" ] ||
   fail "checksum mismatch for $PKG from $BASE_URL: got ${GOT_SHA256:-nothing}, release $RELEASE_VERSION embeds $WANT_SHA256"
 tar -xzf "$work/$PKG" -C "$work"
-for f in probe-hub probe-hub.service; do
+for f in heron-hub heron-hub.service; do
   [ -f "$work/$f" ] && [ ! -L "$work/$f" ] || fail "package is missing regular file $f"
 done
-install -m 0755 "$work/probe-hub" "$BIN_TMP"
+install -m 0755 "$work/heron-hub" "$BIN_TMP"
 
 # 单元里 [Service] 段的 ExecStart 值，每个一行。主单元与 drop-in 用这同一个谓词，逐项照 systemd 的解析
 # （Debian 12 上 systemd 252 以 systemctl show -p ExecStart 与 systemd-analyze verify 实测）：
@@ -307,9 +307,9 @@ exec_starts() {
 # 设了 ExecStart 的 drop-in 会盖掉写进主单元的参数，显式覆盖也随之失效；不涉及命令的 drop-in（如全局加固项）
 # 不受影响。drop-in 列表取 systemd 自己报告的 DropInPaths。它反映的是 systemd 已加载的单元，与磁盘可能不一致
 # （Debian 12 上 systemd 252 实测）：
-# - 单元文件还不存在时它为空，即使 probe-hub.service.d/ 里已有 drop-in。所以首装要等主单元写好之后才查得到：
+# - 单元文件还不存在时它为空，即使 heron-hub.service.d/ 里已有 drop-in。所以首装要等主单元写好之后才查得到：
 #   enable 与 start 之前再查一遍，这一遍也兜住升级时停服前那一遍之后才落盘的 drop-in。
-# - 运行中的 probe-hub 看不到之后才落盘的 drop-in，而新单元写好之后总要经过 reload 才能启动，那时它就生效了
+# - 运行中的 heron-hub 看不到之后才落盘的 drop-in，而新单元写好之后总要经过 reload 才能启动，那时它就生效了
 #   （实测：不先 reload 就查，旧服务被停，新进程带着这个 drop-in 起来）。所以每次先 daemon-reload 再列：
 #   它只重读单元文件，不停也不重启运行中的服务（实测 MainPID 不变）。
 # 查分两步，失败的含义不同：list_dropins 失败的是 systemctl 本身，drop-in 还没被查过，报错带上 systemctl 的原文；
@@ -319,25 +319,25 @@ list_dropins() {
     echo "systemctl daemon-reload failed: $(cat "$work/systemctl.err")" >&2; return 1
   fi
   cat "$work/systemctl.err" >&2
-  if ! dropins=$(systemctl show probe-hub -p DropInPaths --value </dev/null 2>"$work/systemctl.err"); then
-    echo "systemctl show probe-hub failed: $(cat "$work/systemctl.err")" >&2; return 1
+  if ! dropins=$(systemctl show heron-hub -p DropInPaths --value </dev/null 2>"$work/systemctl.err"); then
+    echo "systemctl show heron-hub failed: $(cat "$work/systemctl.err")" >&2; return 1
   fi
   cat "$work/systemctl.err" >&2
 }
-# list_dropins 列出的路径拼上 PROBE_INSTALL_ROOT 再读；列出来却读不到的无法判定，一并拒绝。
+# list_dropins 列出的路径拼上 HERON_INSTALL_ROOT 再读；列出来却读不到的无法判定，一并拒绝。
 # 在子 shell 里跑，set -f 不外泄。
 dropins_ok() (
   set -f
   for dropin in $dropins; do
-    [ -f "$ROOT$dropin" ] || fail "cannot read probe-hub drop-in $dropin"
-    exec_starts "$ROOT$dropin" > "$work/dropin-exec" || fail "cannot parse probe-hub drop-in $dropin"
-    [ ! -s "$work/dropin-exec" ] || fail "drop-in $dropin sets ExecStart; merge it into probe-hub.service"
+    [ -f "$ROOT$dropin" ] || fail "cannot read heron-hub drop-in $dropin"
+    exec_starts "$ROOT$dropin" > "$work/dropin-exec" || fail "cannot parse heron-hub drop-in $dropin"
+    [ ! -s "$work/dropin-exec" ] || fail "drop-in $dropin sets ExecStart; merge it into heron-hub.service"
   done
 )
 
 # 不执行单元内容，也不按空格粗拆：带引号的目录必须作为一个参数保留。
 # 未支持的 systemd 动态展开与转义在停服前拒绝，而不是静默变成另一组参数。
-source_unit=$work/probe-hub.service
+source_unit=$work/heron-hub.service
 if [ -f "$UNIT" ]; then
   if ! list_dropins || ! dropins_ok; then fail 'old service was not stopped'; fi
   source_unit=$UNIT
@@ -397,7 +397,7 @@ awk -v flags="db $SERVE_FLAGS" '
   FILENAME == ARGV[1] {
     position++
     if (position <= 2) {
-      if ($0 != (position == 1 ? "/usr/local/bin/probe-hub" : "serve")) die("ExecStart must invoke /usr/local/bin/probe-hub serve")
+      if ($0 != (position == 1 ? "/usr/local/bin/heron-hub" : "serve")) die("ExecStart must invoke /usr/local/bin/heron-hub serve")
       next
     }
     if (pending != "") { set(pending, $0); pending = ""; next }
@@ -416,7 +416,7 @@ awk -v flags="db $SERVE_FLAGS" '
   END {
     if (failed) exit 1
     if (position < 2 || pending != "") die("incomplete ExecStart arguments")
-    print "/usr/local/bin/probe-hub"; print "serve"
+    print "/usr/local/bin/heron-hub"; print "serve"
     for (i = 1; i <= count; i++) print "--" order[i] "=" val[order[i]]
   }
 ' "$work/args" "$work/overrides" > "$work/merged" || exit 1
@@ -430,23 +430,23 @@ while IFS= read -r arg; do
   quote_arg "$arg"
   EXEC="$EXEC $quoted"
 done < "$work/merged"
-[ "$db" = /var/lib/probe/probe.db ] || fail 'installed unit must use --db /var/lib/probe/probe.db'
+[ "$db" = /var/lib/heron/heron.db ] || fail 'installed unit must use --db /var/lib/heron/heron.db'
 port=${listen##*:}
 case "$port" in ''|*[!0-9]*) fail "listen address must end in a numeric TCP port: $listen";; esac
 [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || fail "invalid TCP port: $port"
-PROBE_HUB_EXEC=${EXEC# }
-export PROBE_HUB_EXEC
-awk '/^ExecStart=/ { print "ExecStart=" ENVIRON["PROBE_HUB_EXEC"]; next } { print }' "$work/probe-hub.service" > "$work/unit"
+HERON_HUB_EXEC=${EXEC# }
+export HERON_HUB_EXEC
+awk '/^ExecStart=/ { print "ExecStart=" ENVIRON["HERON_HUB_EXEC"]; next } { print }' "$work/heron-hub.service" > "$work/unit"
 
 check_port() {
   # /proc 提供监听 inode，再经 fd 定位持有者；不能只按进程名排除，另一个同名进程也会占端口。
   own=0
   if [ -f "$UNIT" ]; then
-    own=$(systemctl show probe-hub -p MainPID --value </dev/null)
+    own=$(systemctl show heron-hub -p MainPID --value </dev/null)
     case "$own" in ''|*[!0-9]*) fail 'cannot determine existing hub MainPID';; esac
     if [ "$own" != 0 ]; then
       exe=$(readlink "$PROC/$own/exe") || fail 'cannot inspect existing hub executable'
-      [ "$exe" = /usr/local/bin/probe-hub ] || fail "unexpected executable for existing hub: $exe"
+      [ "$exe" = /usr/local/bin/heron-hub ] || fail "unexpected executable for existing hub: $exe"
     fi
   fi
   hex=$(printf '%04X' "$port")
@@ -468,10 +468,10 @@ check_port() {
 }
 # 停服前先核对一遍，这里失败时旧服务照常运行。这一遍只为早失败：目录此时是 0770，服务组还能增删其中的条目，
 # 改属主的依据是下面停服加锁之后的复检。
-if ! data_dir_ok || ! db_files_ok; then fail 'refusing to hand the database to probe-hub; old service was not stopped'; fi
+if ! data_dir_ok || ! db_files_ok; then fail 'refusing to hand the database to heron-hub; old service was not stopped'; fi
 check_port
 stop_service
-EXIT_HINT='probe-hub is stopped; rerun the installer or start it manually'
+EXIT_HINT='heron-hub is stopped; rerun the installer or start it manually'
 mv -f "$BIN_TMP" "$BIN"
 
 # SQLite 要创建和删除 WAL/SHM，目录必须可写，不能照搬只读配置目录的 0750。
@@ -486,8 +486,8 @@ chown root:"$SVC_USER" "$DATA"
 chmod 0750 "$DATA"
 db_files_ok || fail "database files changed after the pre-stop check; $DATA stays locked at 0750 until you inspect it and rerun the installer"
 # 新建的空库与已有的库走同一个交还步骤；umask 077 让它在交还之前也只有 root 可读。
-[ -e "$DATA/probe.db" ] || (umask 077 && : > "$DATA/probe.db")
-for file in "$DATA/probe.db" "$DATA/probe.db-wal" "$DATA/probe.db-shm"; do
+[ -e "$DATA/heron.db" ] || (umask 077 && : > "$DATA/heron.db")
+for file in "$DATA/heron.db" "$DATA/heron.db-wal" "$DATA/heron.db-shm"; do
   [ -e "$file" ] || continue
   chown "$SVC_USER:$SVC_USER" "$file"
   chmod 0600 "$file"
@@ -499,9 +499,9 @@ install -m 0644 "$work/unit" "$UNIT"
 # 链接还在），下次开机也会这样起来。该做什么按失败点分开说，现状由 unit_state 按 unit_enabled 说。
 unit_state() {
   if unit_enabled; then
-    echo 'probe-hub is stopped but still enabled; started by hand or at the next boot, it would run with the drop-ins as they are'
+    echo 'heron-hub is stopped but still enabled; started by hand or at the next boot, it would run with the drop-ins as they are'
   else
-    echo 'probe-hub is installed but not enabled or started'
+    echo 'heron-hub is installed but not enabled or started'
   fi
 }
 if ! list_dropins; then
@@ -512,9 +512,9 @@ if ! dropins_ok; then
   EXIT_HINT='fix the drop-in problem reported above, then rerun the installer'
   fail "$(unit_state)"
 fi
-systemctl enable probe-hub </dev/null
-systemctl start probe-hub </dev/null
+systemctl enable heron-hub </dev/null
+systemctl start heron-hub </dev/null
 EXIT_HINT=""
 confirm_service_started
-echo "probe-hub installed and started (systemd, $ARCH, $PKG)"
-echo 'Set the administrator password: probe-hub passwd --db /var/lib/probe/probe.db'
+echo "heron-hub installed and started (systemd, $ARCH, $PKG)"
+echo 'Set the administrator password: heron-hub passwd --db /var/lib/heron/heron.db'

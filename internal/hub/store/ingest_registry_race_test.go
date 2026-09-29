@@ -13,16 +13,16 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/auth"
-	"github.com/xjetry/probe/internal/hub/ingest"
-	"github.com/xjetry/probe/internal/hub/live"
-	"github.com/xjetry/probe/internal/hub/probe"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/hub/traffic"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
+	"github.com/xjetry/heron-probe/internal/hub/ingest"
+	"github.com/xjetry/heron-probe/internal/hub/live"
+	"github.com/xjetry/heron-probe/internal/hub/probe"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/traffic"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 type notifiedTasks struct {
@@ -68,7 +68,7 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "localhost", IntervalS: 5, TimeoutMs: 1000}
+	task := &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "localhost", IntervalS: 5, TimeoutMs: 1000}
 	d, _, err := reg.Save(ctx, task, store.NodeSelector{AllNodes: false, NodeIDs: []int64{deleted}})
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 	mux.Handle(svc.Handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	client := probev1connect.NewAgentServiceClient(srv.Client(), srv.URL)
+	client := heronv1connect.NewAgentServiceClient(srv.Client(), srv.URL)
 	release, pending, drain := st.HoldWriterForTest()
 	defer release()
 	saved := make(chan error, 1)
@@ -98,7 +98,7 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 	}
 	reported := make(chan error, 1)
 	go func() {
-		req := connect.NewRequest(&probev1.ReportRequest{Metrics: &probev1.Metrics{}})
+		req := connect.NewRequest(&heronv1.ReportRequest{Metrics: &heronv1.Metrics{}})
 		req.Header().Set("Authorization", "Bearer "+token)
 		_, err := client.Report(ctx, req)
 		reported <- err

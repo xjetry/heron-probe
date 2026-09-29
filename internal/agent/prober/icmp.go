@@ -15,8 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
@@ -159,7 +159,7 @@ func (c *icmpConn) deliver(key pendingKey, at time.Duration) {
 	}
 }
 
-func (e *ICMP) Probe(ctx context.Context, t *probev1.ProbeTask) Outcome {
+func (e *ICMP) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 	select {
 	case <-e.done:
 		return Outcome{Err: "icmp closed"}

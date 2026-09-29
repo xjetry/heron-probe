@@ -4,10 +4,18 @@ import { expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
 import { Layout } from "./Layout";
 import { router as appRouter } from "../App";
+import heron from "../assets/heron.svg";
 
 vi.mock("./Chart", () => ({ Chart: () => null }));
 
 const routes = [{ path: "/", Component: Layout }, { path: "/login", element: <h1>login</h1> }];
+
+it("管理导航显示 Heron 字标与装饰性鹭鸟图标", () => {
+  renderWithAdmin({}, routes, "/");
+  const brand = screen.getByText("Heron");
+  expect(brand.querySelector("img")).toHaveAttribute("alt", "");
+  expect(brand.querySelector("img")).toHaveAttribute("src", heron);
+});
 
 it("安全导航进入应用的会话管理页", async () => {
   renderWithAdmin({ listNodes: async () => ({ nodes: [] }), listSessions: async () => ({ sessions: [] }) }, appRouter.routes, "/nodes");

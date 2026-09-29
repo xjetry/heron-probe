@@ -11,8 +11,8 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/xjetry/probe/internal/hub/outbound"
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 type Channel interface {

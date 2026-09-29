@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 )
 
 type Outcome struct {
@@ -18,17 +18,17 @@ type Outcome struct {
 
 // Engine 的 ctx 被调用方取消后返回的 Outcome 无意义，调用方必须丢弃。
 type Engine interface {
-	Probe(ctx context.Context, t *probev1.ProbeTask) Outcome
+	Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome
 }
 
 // Multi 按任务种类分派；未知种类是 hub 与 agent 版本偏斜的信号，按 error 回报而不是静默跳过。
 type Multi struct{ ICMP, TCP Engine }
 
-func (m Multi) Probe(ctx context.Context, t *probev1.ProbeTask) Outcome {
+func (m Multi) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 	switch t.GetKind() {
-	case probev1.ProbeKind_PROBE_KIND_ICMP:
+	case heronv1.ProbeKind_PROBE_KIND_ICMP:
 		return m.ICMP.Probe(ctx, t)
-	case probev1.ProbeKind_PROBE_KIND_TCP:
+	case heronv1.ProbeKind_PROBE_KIND_TCP:
 		return m.TCP.Probe(ctx, t)
 	}
 	return Outcome{Err: fmt.Sprintf("unsupported probe kind %s", t.GetKind())}

@@ -3,8 +3,8 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { create } from "@bufbuild/protobuf";
 import { createConnectQueryKey } from "@connectrpc/connect-query";
 import { ConnectError, Code } from "@connectrpc/connect";
-import { AdminService, AlertKind, ChannelKind, ListAlertRulesResponseSchema, ListNodesResponseSchema, ListNotifyChannelsResponseSchema, ListProbeTasksResponseSchema, ProbeMetric, type SaveAlertRuleRequest } from "../gen/probe/v1/admin_pb";
-import { ProbeKind } from "../gen/probe/v1/types_pb";
+import { AdminService, AlertKind, ChannelKind, ListAlertRulesResponseSchema, ListNodesResponseSchema, ListNotifyChannelsResponseSchema, ListProbeTasksResponseSchema, ProbeMetric, type SaveAlertRuleRequest } from "../gen/heron/v1/admin_pb";
+import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { AlertRules } from "./AlertRules";
 

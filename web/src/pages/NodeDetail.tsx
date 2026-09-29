@@ -4,7 +4,7 @@ import { type FormEvent, useState } from "react";
 import { Link, useParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { HistoryCharts, RangePicker, useHistory, type HistoryMethods } from "../components/History";
-import { AdminService, type GetTrafficResponse } from "../gen/probe/v1/admin_pb";
+import { AdminService, type GetTrafficResponse } from "../gen/heron/v1/admin_pb";
 import { bytes } from "../lib/format";
 import { errorText } from "../api/auth";
 

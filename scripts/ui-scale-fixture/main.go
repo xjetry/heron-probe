@@ -33,7 +33,7 @@ func (c rpcClient) call(ctx context.Context, service, method, token string, inpu
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/probe.v1."+service+"/"+method, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/heron.v1."+service+"/"+method, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func run(ctx context.Context, base string, count int, password string) error {
 		return errors.New("hub 必须是本机回环 HTTP 地址，不能连接已有部署")
 	}
 	if count < 1 || count > 500 || password == "" {
-		return errors.New("nodes 必须在 1..500，且 PROBE_FIXTURE_PASSWORD 必须非空")
+		return errors.New("nodes 必须在 1..500，且 HERON_FIXTURE_PASSWORD 必须非空")
 	}
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -192,7 +192,7 @@ func main() {
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, *base, *count, os.Getenv("PROBE_FIXTURE_PASSWORD")); err != nil {
+	if err := run(ctx, *base, *count, os.Getenv("HERON_FIXTURE_PASSWORD")); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

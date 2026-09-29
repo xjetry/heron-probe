@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { SecurityActionKind } from "../gen/probe/v1/admin_pb";
+import { SecurityActionKind } from "../gen/heron/v1/admin_pb";
 import { renderWithAdmin } from "../test/harness";
 import { Security } from "./Security";
 

@@ -187,7 +187,7 @@ type restoreSource struct {
 // 每层快照不是完整数据库，不能直接重放所有 live 迁移。这里只列出已审定的分层迁移，
 // 新版本必须补上各层投影；版本不在清单内时拒绝恢复，不猜测缺失列的默认含义。
 func prepareRestoreSources(ctx context.Context, sources []restoreSource) (prepared []restoreSource, cleanup func(), err error) {
-	dir, err := os.MkdirTemp("", "probe-restore-*")
+	dir, err := os.MkdirTemp("", "heron-restore-*")
 	if err != nil {
 		return nil, nil, err
 	}

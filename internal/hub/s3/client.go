@@ -20,8 +20,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
 )
 
 // responseLimit 是非 2xx 应答体（摘要取前 outbound.SummaryChars 个字符）与 PutObject、DeleteObject 成功应答体排空时的

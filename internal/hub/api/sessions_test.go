@@ -10,9 +10,9 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/hub/auth"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
 )
 
 func sessionRequest[T any](msg *T, token string) *connect.Request[T] {
@@ -26,10 +26,10 @@ func sessionID(token string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func listSessions(t *testing.T, h *harness, token string) []*probev1.Session {
+func listSessions(t *testing.T, h *harness, token string) []*heronv1.Session {
 	t.Helper()
-	client := probev1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
-	r, err := client.ListSessions(t.Context(), sessionRequest(&probev1.ListSessionsRequest{}, token))
+	client := heronv1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
+	r, err := client.ListSessions(t.Context(), sessionRequest(&heronv1.ListSessionsRequest{}, token))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,26 +43,26 @@ func TestSessionsListAndRevoke(t *testing.T) {
 	created := h.clk.Now().Unix()
 	h.clk.Advance(10 * time.Second)
 	second := loginRaw(t, h, "").Cookies()[0].Value
-	client := probev1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
+	client := heronv1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
 	for _, token := range []string{first, second} {
 		rows := listSessions(t, h, token)
-		want := []*probev1.Session{
+		want := []*heronv1.Session{
 			{Id: sessionID(second), CreatedAt: created + 10, LastUsedAt: created + 10, Current: token == second},
 			{Id: sessionID(first), CreatedAt: created, LastUsedAt: created, Current: token == first},
 		}
-		if !proto.Equal(&probev1.ListSessionsResponse{Sessions: rows}, &probev1.ListSessionsResponse{Sessions: want}) {
+		if !proto.Equal(&heronv1.ListSessionsResponse{Sessions: rows}, &heronv1.ListSessionsResponse{Sessions: want}) {
 			t.Errorf("session list metadata/current/order: got %v, want %v", rows, want)
 		}
 	}
-	before := &probev1.ListSessionsResponse{Sessions: listSessions(t, h, first)}
-	if _, err := client.RevokeSession(t.Context(), sessionRequest(&probev1.RevokeSessionRequest{Id: strings.Repeat("f", 64)}, first)); err != nil {
+	before := &heronv1.ListSessionsResponse{Sessions: listSessions(t, h, first)}
+	if _, err := client.RevokeSession(t.Context(), sessionRequest(&heronv1.RevokeSessionRequest{Id: strings.Repeat("f", 64)}, first)); err != nil {
 		t.Fatalf("revoke unknown session must succeed: %v", err)
 	}
-	if after := (&probev1.ListSessionsResponse{Sessions: listSessions(t, h, first)}); !proto.Equal(before, after) {
+	if after := (&heronv1.ListSessionsResponse{Sessions: listSessions(t, h, first)}); !proto.Equal(before, after) {
 		t.Errorf("unknown revoke changed list: %v", after)
 	}
 	for range 2 {
-		r, err := client.RevokeSession(t.Context(), sessionRequest(&probev1.RevokeSessionRequest{Id: sessionID(second)}, first))
+		r, err := client.RevokeSession(t.Context(), sessionRequest(&heronv1.RevokeSessionRequest{Id: sessionID(second)}, first))
 		if err != nil {
 			t.Fatalf("revoke other/repeat must succeed: %v", err)
 		}
@@ -100,9 +100,9 @@ func TestRevokeCurrentSessionClearsCookie(t *testing.T) {
 			h := newHarness(t, "127.0.0.1/32")
 			h.login(t)
 			token := strings.TrimPrefix(sessionCookieHeader(t, h), SessionCookie+"=")
-			req := sessionRequest(&probev1.RevokeSessionRequest{Id: strings.ToUpper(sessionID(token))}, token)
+			req := sessionRequest(&heronv1.RevokeSessionRequest{Id: strings.ToUpper(sessionID(token))}, token)
 			req.Header().Set("X-Forwarded-Proto", scheme)
-			client := probev1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
+			client := heronv1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
 			r, err := client.RevokeSession(t.Context(), req)
 			if err != nil {
 				t.Fatal(err)
@@ -173,12 +173,12 @@ func TestListSessionsExpiryMatchesAuthentication(t *testing.T) {
 			if got := rawCall(t, h, "ListNodes", "{}", map[string][]string{"Cookie": {SessionCookie + "=" + old}}); got.status != 401 {
 				t.Errorf("expired %s cookie authenticates: %+v", kind, got)
 			}
-			client := probev1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
+			client := heronv1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
 			// 鉴权已清掉旧行，重新写入同一过期会话，覆盖仍在库中的过期 hash 撤销。
 			if err := h.store.CreateSession(t.Context(), hash, created, expires, phc); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := client.RevokeSession(t.Context(), sessionRequest(&probev1.RevokeSessionRequest{Id: sessionID(old)}, active)); err != nil {
+			if _, err := client.RevokeSession(t.Context(), sessionRequest(&heronv1.RevokeSessionRequest{Id: sessionID(old)}, active)); err != nil {
 				t.Errorf("expired revoke must succeed: %v", err)
 			}
 			stored, err := h.store.Sessions(t.Context())
@@ -209,7 +209,7 @@ func TestRevokeSessionRejectsMalformedID(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	for _, id := range []string{"", strings.Repeat("a", 62), strings.Repeat("a", 66), strings.Repeat("z", 64)} {
-		_, err := h.admin.RevokeSession(t.Context(), connect.NewRequest(&probev1.RevokeSessionRequest{Id: id}))
+		_, err := h.admin.RevokeSession(t.Context(), connect.NewRequest(&heronv1.RevokeSessionRequest{Id: id}))
 		if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "id must be 64 hexadecimal characters") {
 			t.Errorf("malformed id %q accepted or unexplained: %v", id, err)
 		}

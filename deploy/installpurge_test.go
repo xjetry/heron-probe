@@ -9,7 +9,7 @@ import (
 )
 
 func TestSystemdUninstallDropInScope(t *testing.T) {
-	for _, service := range []string{"probe-agent", "probe-hub"} {
+	for _, service := range []string{"heron-agent", "heron-hub"} {
 		for _, purge := range []bool{false, true} {
 			for _, unitMissing := range []bool{false, true} {
 				for _, linked := range []bool{false, true} {
@@ -17,7 +17,7 @@ func TestSystemdUninstallDropInScope(t *testing.T) {
 						t.Parallel()
 						e := newLinuxHost(t)
 						args := []string{"--uninstall"}
-						if service == "probe-hub" {
+						if service == "heron-hub" {
 							e.script = "install-hub.sh"
 							args = append(args, "--yes")
 						}
@@ -31,7 +31,7 @@ func TestSystemdUninstallDropInScope(t *testing.T) {
 							"var/log/journal/machine/system.journal",
 							"run/log/journal/machine/system.journal",
 							"etc/systemd/system/service.d/shared.conf",
-							"etc/systemd/system/probe-.service.d/shared.conf",
+							"etc/systemd/system/heron-.service.d/shared.conf",
 							"etc/systemd/system/other.service.d/override.conf",
 							"usr/lib/systemd/system/" + service + ".service.d/vendor.conf",
 							"srv/custom/override.conf",

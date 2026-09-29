@@ -12,9 +12,9 @@ import (
 
 	"connectrpc.com/connect"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/clock"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/clock"
 )
 
 // 会话读取不设候选数上限，这里在真实 serve 上确认整条路径上也没有别的上限：用互不相同的 token 形状伪造值把 Cookie 头
@@ -30,7 +30,7 @@ func TestServeSessionCookieFilledToHeaderLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	url, _, _ := startTestHub(t, db, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
-	logged, err := probev1connect.NewAdminServiceClient(http.DefaultClient, url).Login(context.Background(), connect.NewRequest(&probev1.LoginRequest{Password: pw}))
+	logged, err := heronv1connect.NewAdminServiceClient(http.DefaultClient, url).Login(context.Background(), connect.NewRequest(&heronv1.LoginRequest{Password: pw}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,10 +44,10 @@ func TestServeSessionCookieFilledToHeaderLimit(t *testing.T) {
 	call := func(n int) int {
 		var b strings.Builder
 		for i := range n {
-			fmt.Fprintf(&b, "probe_session=%064x;", i)
+			fmt.Fprintf(&b, "heron_session=%064x;", i)
 		}
 		b.WriteString(valid)
-		req, err := http.NewRequest(http.MethodPost, url+"/probe.v1.AdminService/ListNodes", strings.NewReader("{}"))
+		req, err := http.NewRequest(http.MethodPost, url+"/heron.v1.AdminService/ListNodes", strings.NewReader("{}"))
 		if err != nil {
 			t.Fatal(err)
 		}

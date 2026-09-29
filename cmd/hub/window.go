@@ -10,10 +10,10 @@ import (
 
 func runWindow(args []string) error {
 	if len(args) < 1 {
-		return errors.New("usage: probe-hub window open|close|show [flags]")
+		return errors.New("usage: heron-hub window open|close|show [flags]")
 	}
 	fs := flag.NewFlagSet("window "+args[0], flag.ContinueOnError)
-	db := fs.String("db", "probe.db", "SQLite database path")
+	db := fs.String("db", "heron.db", "SQLite database path")
 	ttl := fs.Duration("ttl", time.Hour, "how long the window stays open (open)")
 	maxNodes := fs.Int("max", 10, "how many nodes may register (open)")
 	if err := fs.Parse(args[1:]); err != nil {

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/probelimit"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 )
 
 var ErrBadOrder = errors.New("ids must list every item exactly once")
@@ -69,7 +69,7 @@ type Node struct {
 	TrafficResetDay int       // 周期重置日 1–28，列默认 1
 	OfflineGraceS   int       // 0 表示列为 NULL，读侧取 TTL。
 	// Facts 为 nil 表示该节点尚未上报过静态信息。
-	Facts          *probev1.Facts
+	Facts          *heronv1.Facts
 	FactsUpdatedAt time.Time
 	Billing        Billing
 	// Country 是对 CountryIP 这个地址的查询答案，两者同空同非空；CountryPin 是手动指定的国家。见 node 表的列注释。
@@ -139,7 +139,7 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 			n.LastSeenAt = time.Unix(seen.Int64, 0).UTC()
 		}
 		if factsUpdated.Valid {
-			n.Facts = &probev1.Facts{
+			n.Facts = &heronv1.Facts{
 				Hostname: hostname.String, Os: os.String, Kernel: kernel.String, Arch: arch.String,
 				Virtualization: virt.String, CpuModel: cpuModel.String, CpuCores: uint32(cores.Int64),
 				AgentVersion: agentVersion.String, IcmpAvailable: icmp.Int64 != 0,

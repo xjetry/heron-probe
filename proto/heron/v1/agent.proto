@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package heron.v1;
+
+option go_package = "github.com/xjetry/heron-probe/gen/heron/v1;heronv1";
+
+import "heron/v1/types.proto";
+
+// agent → hub 的唯一服务。两个方法都是 unary：hub 向 agent 的下行只有低频
+// 配置，在每次上报的响应里按版本对账即可，不需要应用层连接状态。
+service AgentService {
+  // 用注册窗口的一次性 key 换取节点 token。新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
+  // 返回 ResourceExhausted 并说明，节点不建、窗口名额不消耗。
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  // 周期上报。鉴权用节点 token（Authorization: Bearer）。
+  rpc Report(ReportRequest) returns (ReportResponse);
+}
+
+message RegisterRequest {
+  string key = 1;
+  string name = 2;
+}
+
+message RegisterResponse {
+  int64 node_id = 1;
+  // 明文 token 只在此处返回一次。
+  string token = 2;
+}
+
+message ReportRequest {
+  Metrics metrics = 1;
+  repeated ProbeResult probe_results = 2;
+  // agent 当前持有的探测任务版本。
+  uint64 tasks_version = 3;
+  // agent 静态信息的摘要，每次都带。
+  fixed64 facts_hash = 4;
+  // 进程启动后的首次上报携带；此后仅在 hub 要求时携带。
+  Facts facts = 5;
+}
+
+// ReportResponse 与 RegisterResponse 是 hub 对 agent 的全部下行，也就是 hub 失守时能对 agent 施加的全部影响
+// （spec §5.7）。新增字段时须在那里写明它交给了 hub 什么能力。
+message ReportResponse {
+  // 上报间隔。agent 把它限定在 TTL 取准入边界时的编码值之间（internal/agentwire），越界（含 0）取最近的边界。
+  uint32 report_interval_ms = 1;
+  // 仅当 tasks_version 与 hub 不一致时携带。
+  ProbeTasks tasks = 2;
+  // hub 持有的 facts_hash 与请求不一致。
+  bool want_facts = 3;
+}

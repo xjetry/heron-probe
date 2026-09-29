@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { screen, within } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
-import { GetStorageStatsResponseSchema } from "../gen/probe/v1/admin_pb";
+import { GetStorageStatsResponseSchema } from "../gen/heron/v1/admin_pb";
 import { renderWithAdmin } from "../test/harness";
 import { Storage } from "./Storage";
 

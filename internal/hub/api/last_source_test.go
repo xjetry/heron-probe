@@ -7,8 +7,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
 )
 
 // ListNodes 回显来源地址，API token 可读；同一个节点公开之后，公开快照的原文里没有这个地址。
@@ -18,13 +18,13 @@ func TestListNodesEchoesLastSourceButPublicSnapshotDoesNot(t *testing.T) {
 	_, tok := createToken(t, h, "reader")
 	id, nodeTok := h.createNode(t, "n")
 	h.setPublic(t, id, "n", true)
-	if err := h.report(t, nodeTok, &probev1.Metrics{}); err != nil {
+	if err := h.report(t, nodeTok, &heronv1.Metrics{}); err != nil {
 		t.Fatal(err)
 	}
 	h.ingest.Flush(context.Background(), true)
 
-	client := probev1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
-	req := connect.NewRequest(&probev1.ListNodesRequest{})
+	client := heronv1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
+	req := connect.NewRequest(&heronv1.ListNodesRequest{})
 	req.Header().Set("Authorization", "Bearer "+tok)
 	resp, err := client.ListNodes(t.Context(), req)
 	if err != nil {

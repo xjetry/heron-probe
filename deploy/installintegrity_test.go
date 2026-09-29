@@ -29,36 +29,36 @@ var installers = []installer{
 		script: "install.sh",
 		fresh: func(t *testing.T) *env {
 			e := newLinuxHost(t)
-			e.appendTo("etc/passwd", "probe-agent:x:480:480::/nonexistent:/usr/sbin/nologin\n")
-			e.appendTo("etc/group", "probe-agent:x:480:\n")
+			e.appendTo("etc/passwd", "heron-agent:x:480:480::/nonexistent:/usr/sbin/nologin\n")
+			e.appendTo("etc/group", "heron-agent:x:480:\n")
 			e.linuxRelease("amd64", "v1")
 			return e
 		},
-		pkg:       "probe-agent_linux_amd64.tar.gz",
+		pkg:       "heron-agent_linux_amd64.tar.gz",
 		build:     func(e *env, dir, version string) { e.linuxPackage(dir, "amd64", version) },
 		creds:     []string{"--hub", "http://hub.test", "--key", "k"},
 		uninstall: []string{"--uninstall"},
-		stop:      "systemctl stop probe-agent",
-		bin:       "usr/local/bin/probe-agent",
+		stop:      "systemctl stop heron-agent",
+		bin:       "usr/local/bin/heron-agent",
 	},
 	{
 		script:    "install-macos.sh",
 		fresh:     newEnv,
-		pkg:       "probe-agent_darwin_arm64.tar.gz",
+		pkg:       "heron-agent_darwin_arm64.tar.gz",
 		build:     func(e *env, dir, version string) { e.darwinPackage(dir, "arm64", version) },
 		creds:     []string{"--hub", "http://hub.test", "--key", "k"},
 		uninstall: []string{"--uninstall"},
 		stop:      "launchctl bootout",
-		bin:       "usr/local/bin/probe-agent",
+		bin:       "usr/local/bin/heron-agent",
 	},
 	{
 		script:    "install-hub.sh",
 		fresh:     newHubHost,
-		pkg:       "probe-hub_linux_amd64.tar.gz",
+		pkg:       "heron-hub_linux_amd64.tar.gz",
 		build:     func(e *env, dir, version string) { e.hubPackage(dir, version) },
 		uninstall: []string{"--uninstall", "--yes"},
-		stop:      "systemctl stop probe-hub",
-		bin:       "usr/local/bin/probe-hub",
+		stop:      "systemctl stop heron-hub",
+		bin:       "usr/local/bin/heron-hub",
 	},
 }
 
@@ -115,7 +115,7 @@ func TestSourceScriptRefusesToInstall(t *testing.T) {
 		e := in.installed(t)
 		e.script = e.source
 		out, code := in.install(e, "file://"+e.dist)
-		if code != 1 || !strings.Contains(out, "this "+in.script+" has no embedded release checksums") || !strings.Contains(out, "https://github.com/xjetry/probe/releases") {
+		if code != 1 || !strings.Contains(out, "this "+in.script+" has no embedded release checksums") || !strings.Contains(out, "https://github.com/xjetry/heron-probe/releases") {
 			t.Fatalf("exit %d:\n%s", code, out)
 		}
 		assertNothingDownloaded(t, e, out)
@@ -190,7 +190,7 @@ func TestVersionFlagIsRefused(t *testing.T) {
 		e := in.installed(t)
 		for _, v := range [][]string{{"--version", "v1"}, {"--version=v1"}, {"--version"}} {
 			out, code := in.install(e, "file://"+e.dist, v...)
-			if code != 2 || !strings.Contains(out, "has no --version") || !strings.Contains(out, "https://github.com/xjetry/probe/releases/download/<tag>/"+in.script) {
+			if code != 2 || !strings.Contains(out, "has no --version") || !strings.Contains(out, "https://github.com/xjetry/heron-probe/releases/download/<tag>/"+in.script) {
 				t.Fatalf("%q: exit %d:\n%s", v, code, out)
 			}
 		}
@@ -211,7 +211,7 @@ func TestDefaultDownloadDirIsTheEmbeddedVersion(t *testing.T) {
 		if code == 0 {
 			t.Fatalf("the curl stub refuses https, the install must fail:\n%s", out)
 		}
-		want := "https://github.com/xjetry/probe/releases/download/v9.8.7/" + in.pkg
+		want := "https://github.com/xjetry/heron-probe/releases/download/v9.8.7/" + in.pkg
 		i := index(e.calls(), "curl ")
 		if i < 0 || !strings.HasSuffix(e.calls()[i], " "+want) {
 			t.Fatalf("want a download of %s, calls %q\n%s", want, e.calls(), out)
@@ -231,7 +231,7 @@ func TestInsecureHTTPReachesRegisterOnFirstInstall(t *testing.T) {
 				t.Parallel()
 				e := in.fresh(t)
 				var extra []string
-				want := "probe-agent register --hub http://hub.test --key k --config " + e.root + "/etc/probe-agent/config.json"
+				want := "heron-agent register --hub http://hub.test --key k --config " + e.root + "/etc/heron-agent/config.json"
 				if insecure {
 					extra = []string{"--insecure-http"}
 					want += " --insecure-http"
@@ -244,7 +244,7 @@ func TestInsecureHTTPReachesRegisterOnFirstInstall(t *testing.T) {
 				if !slices.Contains(c, want) {
 					t.Fatalf("want the call %q, got %q", want, c)
 				}
-				if i := index(c, "probe-agent configure"); i >= 0 {
+				if i := index(c, "heron-agent configure"); i >= 0 {
 					t.Fatalf("a first install registers; configure is for reruns: %q", c)
 				}
 			})
@@ -271,12 +271,12 @@ func TestInsecureHTTPReachesConfigureBeforeStoppingOnRerun(t *testing.T) {
 				t.Fatalf("exit %d:\n%s", code, out)
 			}
 			c := e.calls()
-			want := "probe-agent configure --config " + e.root + "/etc/probe-agent/config.json --insecure-http=true"
+			want := "heron-agent configure --config " + e.root + "/etc/heron-agent/config.json --insecure-http=true"
 			conf, stop := slices.Index(c, want), index(c, in.stop)
 			if conf < 0 || stop < 0 || conf > stop {
 				t.Fatalf("want %q before %q, calls %q", want, in.stop, c)
 			}
-			if index(c, "probe-agent register") >= 0 {
+			if index(c, "heron-agent register") >= 0 {
 				t.Fatalf("a rerun must not register: %q", c)
 			}
 		})
@@ -288,7 +288,7 @@ func TestInsecureHTTPReachesConfigureBeforeStoppingOnRerun(t *testing.T) {
 			if out, code := in.install(e, "file://"+e.dist); code != 0 {
 				t.Fatalf("exit %d:\n%s", code, out)
 			}
-			if i := index(e.calls(), "probe-agent configure"); i >= 0 {
+			if i := index(e.calls(), "heron-agent configure"); i >= 0 {
 				t.Fatalf("no --insecure-http, no configure: %q", e.calls())
 			}
 		})

@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/oschwald/maxminddb-golang/v2"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/testwait"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 // fixtureCopy 把提交的夹具复制到临时目录：用例改写的是副本，不动夹具本身。

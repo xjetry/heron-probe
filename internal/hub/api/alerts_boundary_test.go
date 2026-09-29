@@ -11,15 +11,15 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/alert"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/alert"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestAlertEnumGotUsesProtocolVocabulary(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	resp, err := h.http.Post(h.srv.URL+"/probe.v1.AdminService/SaveAlertRule", "application/json", strings.NewReader(`{"rule":{"name":"offline","kind":"offline","allNodes":true}}`))
+	resp, err := h.http.Post(h.srv.URL+"/heron.v1.AdminService/SaveAlertRule", "application/json", strings.NewReader(`{"rule":{"name":"offline","kind":"offline","allNodes":true}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestWebhookHeaderNamesAreUnambiguous(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c := webhook("http://host")
 			c.Webhook.Headers, c.Webhook.RemoveHeaders = tc.headers, tc.remove
-			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{Channel: c}))
+			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&heronv1.SaveNotifyChannelRequest{Channel: c}))
 			if codeOf(err) != connect.CodeInvalidArgument {
 				t.Fatalf("err=%v", err)
 			}
@@ -65,7 +65,7 @@ func TestUpdateNodeRequiresExplicitGrace(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
-	_, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 1}))
+	_, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(&heronv1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 1}))
 	if codeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: offline_grace_s: required; 0 clears it" {
 		t.Fatalf("err=%v", err)
 	}
@@ -95,17 +95,17 @@ func TestTaskIDsMustFitStorage(t *testing.T) {
 		{"rule", func(id uint64) error {
 			r := offlineRule()
 			r.TaskId = id
-			_, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&probev1.SaveAlertRuleRequest{Rule: r}))
+			_, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&heronv1.SaveAlertRuleRequest{Rule: r}))
 			return err
 		}, "rule.task_id"},
 		{"delete", func(id uint64) error {
-			_, err := h.admin.DeleteProbeTask(t.Context(), connect.NewRequest(&probev1.DeleteProbeTaskRequest{Id: id}))
+			_, err := h.admin.DeleteProbeTask(t.Context(), connect.NewRequest(&heronv1.DeleteProbeTaskRequest{Id: id}))
 			return err
 		}, "id"},
 		{"save", func(id uint64) error {
 			task := validProbeTask()
 			task.Id = id
-			_, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: task}))
+			_, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&heronv1.SaveProbeTaskRequest{Task: task}))
 			return err
 		}, "task.id"},
 	} {
@@ -129,34 +129,34 @@ func TestAlertFieldErrorsUseProtocolVocabulary(t *testing.T) {
 		{"rule_kind", func() error {
 			r := offlineRule()
 			r.Kind = 0
-			_, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&probev1.SaveAlertRuleRequest{Rule: r}))
+			_, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&heronv1.SaveAlertRuleRequest{Rule: r}))
 			return err
 		}, []string{"rule.kind", "ALERT_KIND_OFFLINE", "ALERT_KIND_PROBE"}},
 		{"metric", func() error {
 			r := offlineRule()
-			r.Kind = probev1.AlertKind_ALERT_KIND_PROBE
+			r.Kind = heronv1.AlertKind_ALERT_KIND_PROBE
 			r.TaskId = 1
-			_, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&probev1.SaveAlertRuleRequest{Rule: r}))
+			_, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&heronv1.SaveAlertRuleRequest{Rule: r}))
 			return err
 		}, []string{"rule.metric", "PROBE_METRIC_LOSS_PCT", "PROBE_METRIC_RTT_MS"}},
 		{"channel_kind", func() error {
 			c := webhook("http://host")
 			c.Kind = 0
-			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{Channel: c}))
+			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&heronv1.SaveNotifyChannelRequest{Channel: c}))
 			return err
 		}, []string{"channel.kind", "CHANNEL_KIND_TELEGRAM", "CHANNEL_KIND_WEBHOOK"}},
 		{"url", func() error {
-			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{Channel: webhook("bad")}))
+			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&heronv1.SaveNotifyChannelRequest{Channel: webhook("bad")}))
 			return err
 		}, []string{"channel.webhook.url"}},
 		{"method", func() error {
 			c := webhook("http://host")
 			c.Webhook.Method = "GET"
-			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{Channel: c}))
+			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&heronv1.SaveNotifyChannelRequest{Channel: c}))
 			return err
 		}, []string{"channel.webhook.method", "POST", "PUT", "PATCH"}},
 		{"chat", func() error {
-			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{Channel: &probev1.NotifyChannel{Name: "tg", Kind: probev1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &probev1.TelegramConfig{BotToken: "secret"}}}))
+			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&heronv1.SaveNotifyChannelRequest{Channel: &heronv1.NotifyChannel{Name: "tg", Kind: heronv1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &heronv1.TelegramConfig{BotToken: "secret"}}}))
 			return err
 		}, []string{"channel.telegram.chat_id"}},
 	} {
@@ -187,7 +187,7 @@ func TestTestNotifyChannelClassifiesFailures(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status); fmt.Fprint(w, "reason") }))
 			defer srv.Close()
 			c := saveChannel(t, h, webhook(srv.URL))
-			_, err := h.admin.TestNotifyChannel(t.Context(), connect.NewRequest(&probev1.TestNotifyChannelRequest{Id: c.Id}))
+			_, err := h.admin.TestNotifyChannel(t.Context(), connect.NewRequest(&heronv1.TestNotifyChannelRequest{Id: c.Id}))
 			want := connect.CodeUnavailable
 			if status == 400 {
 				want = connect.CodeFailedPrecondition
@@ -211,15 +211,15 @@ func TestWebhookCredentialsAreWriteOnlyAndMerged(t *testing.T) {
 	c := webhook(strings.Replace(srv.URL, "://", "://user:password@", 1) + "/secret?key=hidden")
 	c.Webhook.Headers = map[string]string{"authorization": "Bearer hidden", "X-Keep": "kept", "X-Replace": "old"}
 	c = saveChannel(t, h, c)
-	check := func(c *probev1.NotifyChannel) {
+	check := func(c *heronv1.NotifyChannel) {
 		t.Helper()
-		want := &probev1.WebhookConfig{Method: "POST", HasUrl: true, UrlHost: srv.URL, HeaderNames: []string{"Authorization", "X-Keep", "X-Replace"}}
+		want := &heronv1.WebhookConfig{Method: "POST", HasUrl: true, UrlHost: srv.URL, HeaderNames: []string{"Authorization", "X-Keep", "X-Replace"}}
 		if !proto.Equal(c.Webhook, want) {
 			t.Fatalf("credentials response=%v", c.Webhook)
 		}
 	}
 	check(c)
-	list, err := h.admin.ListNotifyChannels(t.Context(), connect.NewRequest(&probev1.ListNotifyChannelsRequest{}))
+	list, err := h.admin.ListNotifyChannels(t.Context(), connect.NewRequest(&heronv1.ListNotifyChannelsRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestWebhookCredentialsAreWriteOnlyAndMerged(t *testing.T) {
 	check(c)
 	send := func() request {
 		t.Helper()
-		if _, err := h.admin.TestNotifyChannel(t.Context(), connect.NewRequest(&probev1.TestNotifyChannelRequest{Id: c.Id})); err != nil {
+		if _, err := h.admin.TestNotifyChannel(t.Context(), connect.NewRequest(&heronv1.TestNotifyChannelRequest{Id: c.Id})); err != nil {
 			t.Fatal(err)
 		}
 		return <-requests

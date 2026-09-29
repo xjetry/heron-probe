@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/xjetry/probe/internal/hub/outbound"
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // 队列落库的类别与 TestNotifyChannel 的错误码都来自 Classify；每条可达的真实失败路径都必须在产生处带上类别，不能落到 unclassified。

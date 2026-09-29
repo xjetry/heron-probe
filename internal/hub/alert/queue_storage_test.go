@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/outbound"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/testwait"
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 // 外部连接只在故障用例中安装/移除 SQLite 故障；不向 Store 或 Queue 暴露生产钩子。

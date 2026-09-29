@@ -7,7 +7,7 @@ import "embed"
 
 // Files 用通配而不是逐个列出：新增的 proto 文件自动随 hub 下发，不会漏。
 //
-//go:embed probe/v1/*.proto
+//go:embed heron/v1/*.proto
 var Files embed.FS
 
 //go:embed SKILL.md

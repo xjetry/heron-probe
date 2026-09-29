@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/probelimit"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -47,8 +47,8 @@ func registryStore(t *testing.T) (*Registry, *store.Store, []int64) {
 // setupVersion 是 registryStore 返回时的任务版本：时钟停在 Unix 0，每次建节点推进 1，两个节点即 2。
 const setupVersion = 2
 
-func task(target string) *probev1.ProbeTask {
-	return &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: target, IntervalS: 5, TimeoutMs: 1000}
+func task(target string) *heronv1.ProbeTask {
+	return &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: target, IntervalS: 5, TimeoutMs: 1000}
 }
 
 func save(t *testing.T, r *Registry, target string, ids []int64) Detail {
@@ -84,7 +84,7 @@ func assertState(t *testing.T, r *Registry, version uint64, want []Detail, nodes
 	}
 	assertDetails(t, got, want)
 	for _, node := range nodes {
-		wt := &probev1.ProbeTasks{Version: version}
+		wt := &heronv1.ProbeTasks{Version: version}
 		for _, d := range want {
 			assigned := slices.Contains(d.NodeIDs, node)
 			if r.Assigned(node, d.Task.Id) != assigned {
@@ -171,7 +171,7 @@ func TestRegistryReloadMatchesMemory(t *testing.T) {
 	b := save(t, r, "b.example", nil)
 	c := save(t, r, "c.example", ids)
 	d := save(t, r, "d.example", nil)
-	edit := proto.Clone(a.Task).(*probev1.ProbeTask)
+	edit := proto.Clone(a.Task).(*heronv1.ProbeTask)
 	edit.Target = "changed.example"
 	a, _, err := r.Save(t.Context(), edit, store.NodeSelector{AllNodes: false, NodeIDs: ids[1:]})
 	if err != nil {
@@ -221,7 +221,7 @@ func TestRegistrySnapshotsDoNotAliasCache(t *testing.T) {
 		t.Run(source, func(t *testing.T) {
 			r, _, ids := registryStore(t)
 			d := save(t, r, "a.example", ids)
-			want := Detail{Task: proto.Clone(d.Task).(*probev1.ProbeTask), NodeIDs: slices.Clone(ids)}
+			want := Detail{Task: proto.Clone(d.Task).(*heronv1.ProbeTask), NodeIDs: slices.Clone(ids)}
 			switch source {
 			case "save":
 				d.Task.Target = "corrupted"
@@ -342,14 +342,14 @@ func TestRegistryCreatedNodeCoverageFollowsStore(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			stored := &probev1.ProbeTasks{Version: version}
+			stored := &heronv1.ProbeTasks{Version: version}
 			for _, rec := range recs {
 				if slices.Contains(rec.NodeIDs, node) {
 					stored.Tasks = append(stored.Tasks, rec.Task)
 				}
 			}
 			// 前提：分叉确实落在新节点上，库给它的是 widened 而不是 narrowed；否则下面的比较证明不了什么。
-			if want := (&probev1.ProbeTasks{Version: version, Tasks: []*probev1.ProbeTask{widened.Task}}); !proto.Equal(stored, want) {
+			if want := (&heronv1.ProbeTasks{Version: version, Tasks: []*heronv1.ProbeTask{widened.Task}}); !proto.Equal(stored, want) {
 				t.Fatalf("store coverage of the new node = %v, want %v", stored, want)
 			}
 			if got := r.TasksFor(node); !proto.Equal(got, stored) {

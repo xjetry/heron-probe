@@ -4,7 +4,7 @@ import { Link } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { Bar, Missing, ratio } from "../components/Bar";
 import { CountryBadge } from "../components/CountryBadge";
-import { PublicService, type PublicNode } from "../gen/probe/v1/public_pb";
+import { PublicService, type PublicNode } from "../gen/heron/v1/public_pb";
 import { expired, expiryText, priceText, sortByExpiry } from "../lib/billing";
 import { ago, bytes, duration, percent } from "../lib/format";
 import { POLL_MS } from "../lib/poll";

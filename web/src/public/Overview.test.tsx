@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { PublicService } from "../gen/probe/v1/public_pb";
-import { BillingCycle } from "../gen/probe/v1/types_pb";
+import { PublicService } from "../gen/heron/v1/public_pb";
+import { BillingCycle } from "../gen/heron/v1/types_pb";
 import { POLL_MS } from "../lib/poll";
 import { renderWithService } from "../test/harness";
 import { PublicOverview } from "./Overview";

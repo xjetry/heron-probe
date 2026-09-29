@@ -12,19 +12,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/alert"
-	"github.com/xjetry/probe/internal/hub/api"
-	"github.com/xjetry/probe/internal/hub/auth"
-	"github.com/xjetry/probe/internal/hub/backup"
-	"github.com/xjetry/probe/internal/hub/geo"
-	"github.com/xjetry/probe/internal/hub/ingest"
-	"github.com/xjetry/probe/internal/hub/live"
-	"github.com/xjetry/probe/internal/hub/outbound"
-	"github.com/xjetry/probe/internal/hub/probe"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/hub/traffic"
-	"github.com/xjetry/probe/internal/hub/web"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/alert"
+	"github.com/xjetry/heron-probe/internal/hub/api"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
+	"github.com/xjetry/heron-probe/internal/hub/backup"
+	"github.com/xjetry/heron-probe/internal/hub/geo"
+	"github.com/xjetry/heron-probe/internal/hub/ingest"
+	"github.com/xjetry/heron-probe/internal/hub/live"
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/hub/probe"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/traffic"
+	"github.com/xjetry/heron-probe/internal/hub/web"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 )
@@ -32,10 +32,10 @@ import (
 // publicProcedures 是匿名可达的全部过程：只有 PublicService（§12）。Register 与 Login 的凭据在请求体里，
 // 用 {} 调用时由方法体返回 Unauthenticated（没有注册窗口、没有管理员），与其他过程一样断言 401。
 var publicProcedures = map[string]bool{
-	"/probe.v1.PublicService/GetSite":      true,
-	"/probe.v1.PublicService/GetSnapshot":  true,
-	"/probe.v1.PublicService/QueryMetrics": true,
-	"/probe.v1.PublicService/QueryProbes":  true,
+	"/heron.v1.PublicService/GetSite":      true,
+	"/heron.v1.PublicService/GetSnapshot":  true,
+	"/heron.v1.PublicService/QueryMetrics": true,
+	"/heron.v1.PublicService/QueryProbes":  true,
 }
 
 func newTestMux(t *testing.T) http.Handler {
@@ -111,7 +111,7 @@ func TestMuxRoutesPanelAndRootAroundRPC(t *testing.T) {
 	if (resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusServiceUnavailable) || resp.Header.Get("Content-Security-Policy") == "" {
 		t.Fatalf("/admin/nodes/1: %d, want the panel handler (200 when built, 503 when not) with CSP", resp.StatusCode)
 	}
-	resp, err = client.Post(srv.URL+"/probe.v1.AdminService/ListNodes", "application/json", strings.NewReader("{}"))
+	resp, err = client.Post(srv.URL+"/heron.v1.AdminService/ListNodes", "application/json", strings.NewReader("{}"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestMuxRejectsAnonymousProcedures(t *testing.T) {
 	seen := map[string]bool{}
 	count := 0
 	protoregistry.GlobalFiles.RangeFiles(func(file protoreflect.FileDescriptor) bool {
-		if file.Package() != "probe.v1" {
+		if file.Package() != "heron.v1" {
 			return true
 		}
 		services := file.Services()
@@ -186,7 +186,7 @@ func TestMuxAcceptsGETOnlyOnPublicService(t *testing.T) {
 	t.Cleanup(srv.Close)
 	count := 0
 	protoregistry.GlobalFiles.RangeFiles(func(file protoreflect.FileDescriptor) bool {
-		if file.Package() != "probe.v1" {
+		if file.Package() != "heron.v1" {
 			return true
 		}
 		for i := 0; i < file.Services().Len(); i++ {
@@ -199,7 +199,7 @@ func TestMuxAcceptsGETOnlyOnPublicService(t *testing.T) {
 					t.Fatal(err)
 				}
 				resp.Body.Close()
-				switch public := svc.FullName() == "probe.v1.PublicService"; {
+				switch public := svc.FullName() == "heron.v1.PublicService"; {
 				// 公开过程的应答必须来自 connect：没挂载的过程落到根路径的公开页，也可能是 200，只是不是 JSON。
 				case public && (resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusBadRequest || resp.Header.Get("Content-Type") != "application/json"):
 					t.Errorf("%s: GET status %d %q, want the public service to answer (200, or 400 for an empty window)", path, resp.StatusCode, resp.Header.Get("Content-Type"))

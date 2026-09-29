@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/clock"
 )
 
 // snapshotTTL 是 GetSnapshot 响应字节的缓存窗口（§10：1 秒），从填充开始（进 connect 处理器之前）计。
@@ -55,7 +55,7 @@ func newSnapshotCache(next http.Handler, clk clock.Clock) http.Handler {
 }
 
 func (c *snapshotCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != probev1connect.PublicServiceGetSnapshotProcedure {
+	if r.URL.Path != heronv1connect.PublicServiceGetSnapshotProcedure {
 		c.next.ServeHTTP(w, r)
 		return
 	}

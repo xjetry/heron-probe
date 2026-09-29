@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"math"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/sanitize"
-	"github.com/xjetry/probe/internal/probelimit"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/sanitize"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 )
 
 // validateMetrics 对整条上报做准入：任何一个字段非法就整条拒绝，live 不变。
 // 无符号整数由协议类型定界；浮点、load 三元组和 boot_id 长度在此检查。
-func validateMetrics(m *probev1.Metrics) error {
+func validateMetrics(m *heronv1.Metrics) error {
 	if m == nil {
 		return errors.New("metrics: required")
 	}
@@ -49,19 +49,19 @@ func validateMetrics(m *probev1.Metrics) error {
 // 而不是 rtt，由 agent 的 prober 保证；任务超时不超过 MaxTimeoutMs，由 probelimit.CheckTask 保证。
 // 任一守卫违反都整批 InvalidArgument；Runner 丢弃本批而不回队，否则确定性拒绝会反复发生。
 // 归属与超龄不是结构问题，由 Report 逐条丢弃而不是整条拒绝。
-func validateResults(rs []*probev1.ProbeResult) error {
+func validateResults(rs []*heronv1.ProbeResult) error {
 	if len(rs) > probelimit.MaxResultsPerReport {
 		return fmt.Errorf("probe_results: must contain at most %d results; got %d", probelimit.MaxResultsPerReport, len(rs))
 	}
 	for i, r := range rs {
 		switch o := r.GetOutcome().(type) {
-		case *probev1.ProbeResult_Error:
+		case *heronv1.ProbeResult_Error:
 			if len(o.Error.GetMessage()) > probelimit.MaxErrorMessageLen {
 				return fmt.Errorf("probe_results[%d].error.message: must be at most %d bytes; got %d", i, probelimit.MaxErrorMessageLen, len(o.Error.GetMessage()))
 			}
 		case nil:
 			return fmt.Errorf("probe_results[%d].outcome: required (rtt_us, timeout or error)", i)
-		case *probev1.ProbeResult_RttUs:
+		case *heronv1.ProbeResult_RttUs:
 			if o.RttUs > probelimit.MaxTimeoutMs*1000 {
 				return fmt.Errorf("probe_results[%d].rtt_us: must not exceed %d (the maximum probe timeout in microseconds); got %d", i, probelimit.MaxTimeoutMs*1000, o.RttUs)
 			}
@@ -81,7 +81,7 @@ func validateHostString(name, value string) error {
 }
 
 // 准入长度校验与公开字段清理共用清单，不能只限制落库副本而放过原始请求。
-func factStrings(f *probev1.Facts) []struct {
+func factStrings(f *heronv1.Facts) []struct {
 	name  string
 	value *string
 } {
@@ -95,7 +95,7 @@ func factStrings(f *probev1.Facts) []struct {
 	}
 }
 
-func validateFacts(f *probev1.Facts) error {
+func validateFacts(f *heronv1.Facts) error {
 	if f != nil {
 		for _, field := range factStrings(f) {
 			if err := validateHostString(field.name, *field.value); err != nil {
@@ -106,7 +106,7 @@ func validateFacts(f *probev1.Facts) error {
 	return nil
 }
 
-func sanitizeFacts(f *probev1.Facts) {
+func sanitizeFacts(f *heronv1.Facts) {
 	for _, field := range factStrings(f) {
 		*field.value = sanitize.String(*field.value, maxHostString)
 	}

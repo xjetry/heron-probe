@@ -19,10 +19,10 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/agent/agentlog"
-	"github.com/xjetry/probe/internal/agent/client"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/agent/agentlog"
+	"github.com/xjetry/heron-probe/internal/agent/client"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 type syncBuffer struct {
@@ -45,7 +45,7 @@ func TestStandardLogGoesThroughTheBoundedExit(t *testing.T) {
 	var out syncBuffer
 	agentlog.Install(newHandler(&out))
 
-	body, err := proto.Marshal(&probev1.ReportResponse{ReportIntervalMs: 10000})
+	body, err := proto.Marshal(&heronv1.ReportResponse{ReportIntervalMs: 10000})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestStandardLogGoesThroughTheBoundedExit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	req := connect.NewRequest(&probev1.ReportRequest{})
+	req := connect.NewRequest(&heronv1.ReportRequest{})
 	if _, err := client.NewServiceClient(srv.URL, 5*time.Second).Report(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}

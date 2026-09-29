@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 func runPasswd(args []string) error { return runPasswdWith(args, os.Stdin, os.Stderr) }
@@ -22,7 +22,7 @@ func runPasswd(args []string) error { return runPasswdWith(args, os.Stdin, os.St
 // 事务里被清空。
 func runPasswdWith(args []string, in *os.File, prompt io.Writer) error {
 	fs := flag.NewFlagSet("passwd", flag.ContinueOnError)
-	db := fs.String("db", "probe.db", "SQLite database path")
+	db := fs.String("db", "heron.db", "SQLite database path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -68,7 +68,7 @@ func reviewAPITokens(ctx context.Context, st *store.Store, w io.Writer, ask func
 	}
 	if ask == nil {
 		// 提示会被人粘贴进 shell。路径按 POSIX 单引号引用：空格与元字符按字面处理，单引号本身不能留在引号内。
-		fmt.Fprintf(w, "to revoke them: probe-hub token revoke --all --db %s\n", shellSingle(db))
+		fmt.Fprintf(w, "to revoke them: heron-hub token revoke --all --db %s\n", shellSingle(db))
 		return nil
 	}
 	yes, err := ask()

@@ -10,10 +10,10 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/auth"
-	"github.com/xjetry/probe/internal/hub/probe"
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
+	"github.com/xjetry/heron-probe/internal/hub/probe"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // openOffline 打开已有库，或在 create 时建立新库。
@@ -55,10 +55,10 @@ const restartNotice = "note: if the hub is running, restart it for this change t
 
 func runNode(args []string) error {
 	if len(args) < 1 {
-		return errors.New("usage: probe-hub node create|list|delete|rotate-token [flags]")
+		return errors.New("usage: heron-hub node create|list|delete|rotate-token [flags]")
 	}
 	fs := flag.NewFlagSet("node "+args[0], flag.ContinueOnError)
-	db := fs.String("db", "probe.db", "SQLite database path")
+	db := fs.String("db", "heron.db", "SQLite database path")
 	name := fs.String("name", "", "node name (create)")
 	id := fs.Int64("id", 0, "node id (delete, rotate-token)")
 	if err := fs.Parse(args[1:]); err != nil {

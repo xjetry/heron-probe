@@ -12,26 +12,26 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/agent/prober"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/probelimit"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/agent/prober"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 	"google.golang.org/protobuf/proto"
 )
 
 type quietEngine struct{}
 
-func (quietEngine) Probe(context.Context, *probev1.ProbeTask) prober.Outcome {
+func (quietEngine) Probe(context.Context, *heronv1.ProbeTask) prober.Outcome {
 	return prober.Outcome{RttUs: 10}
 }
 
 func TestRunnerReportsResultsAndReconcilesVersion(t *testing.T) {
-	hub := &fakeHub{tasks: &probev1.ProbeTasks{Version: 8}}
+	hub := &fakeHub{tasks: &heronv1.ProbeTasks{Version: 8}}
 	r, _ := newRunner(t, hub)
 	q := prober.NewQueue(prober.QueueCap)
 	s := prober.NewScheduler(quietEngine{}, q, r.Clock, r.Log)
 	defer s.Stop()
-	s.Apply(&probev1.ProbeTasks{Version: 7})
+	s.Apply(&heronv1.ProbeTasks{Version: 7})
 	r.Prober, r.Results = s, q
 	r.Collector.IcmpAvailable = true
 	q.Push(prober.Result{TaskID: 42, Outcome: prober.Outcome{RttUs: 321}, At: r.Clock.Mono() - time.Second})
@@ -54,7 +54,7 @@ func TestRunnerReportsResultsAndReconcilesVersion(t *testing.T) {
 	if len(reports) != 2 {
 		t.Fatalf("reports = %d, want 2", len(reports))
 	}
-	want := &probev1.ProbeResult{TaskId: 42, AgeMs: 1000, Outcome: &probev1.ProbeResult_RttUs{RttUs: 321}}
+	want := &heronv1.ProbeResult{TaskId: 42, AgeMs: 1000, Outcome: &heronv1.ProbeResult_RttUs{RttUs: 321}}
 	if len(reports[0].ProbeResults) != 1 || !proto.Equal(reports[0].ProbeResults[0], want) {
 		t.Fatalf("first results = %v, want %v", reports[0].ProbeResults, want)
 	}
@@ -118,7 +118,7 @@ func TestRunnerFailureRetainsOnlyRetryableResults(t *testing.T) {
 					t.Fatalf("discard warning missing: %s", logs.String())
 				}
 			} else {
-				want := &probev1.ProbeResult{TaskId: 42, AgeMs: 2000, Outcome: &probev1.ProbeResult_Timeout{Timeout: &probev1.Timeout{}}}
+				want := &heronv1.ProbeResult{TaskId: 42, AgeMs: 2000, Outcome: &heronv1.ProbeResult_Timeout{Timeout: &heronv1.Timeout{}}}
 				if len(reports[1].ProbeResults) != 1 || !proto.Equal(reports[1].ProbeResults[0], want) {
 					t.Fatalf("retry results = %v, want %v", reports[1].ProbeResults, want)
 				}
@@ -128,7 +128,7 @@ func TestRunnerFailureRetainsOnlyRetryableResults(t *testing.T) {
 }
 
 func TestRunnerEmptySchedulerReportsNoResultsOrVersion(t *testing.T) {
-	hub := &fakeHub{tasks: &probev1.ProbeTasks{Version: 8}}
+	hub := &fakeHub{tasks: &heronv1.ProbeTasks{Version: 8}}
 	r, _ := newRunner(t, hub)
 	r.Sleep = func(context.Context, time.Duration) error { return context.Canceled }
 	if err := r.Run(context.Background()); !errors.Is(err, context.Canceled) {

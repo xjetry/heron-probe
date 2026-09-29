@@ -6,7 +6,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 failures=0
-repo=reg.example/probe-hub
+repo=reg.example/heron-hub
 tag_digest=sha256:$(printf 'a%.0s' $(seq 64))
 other_digest=sha256:$(printf 'b%.0s' $(seq 64))
 
@@ -82,7 +82,7 @@ run() {
   shift 4
   rc=0
   env PATH="$work/bin:$PATH" IMAGE_REPO=$repo VERSION=v1.2.3 RECORD="$STATE/record" ARCHES='amd64 arm64' \
-    BUILDER=probe-hub-buildkit-test SMOKE="$work/bin/smoke" CHECKIMAGE="$work/bin/checkimage" TOOL_IMAGE=tool \
+    BUILDER=heron-hub-buildkit-test SMOKE="$work/bin/smoke" CHECKIMAGE="$work/bin/checkimage" TOOL_IMAGE=tool \
     "$@" "$here/docker-readback.sh" "$sub" > "$STATE/out" 2>&1 || rc=$?
   if [ "$rc" != "$want_exit" ] || ! grep -qF -- "$want_text" "$STATE/out"; then
     echo "FAIL: $name: exit $rc (want $want_exit), want output containing '$want_text'" >&2

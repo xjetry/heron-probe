@@ -11,7 +11,7 @@ import (
 	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/dynamicpb"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 )
 
 // projectionFixtures 造几组消息：Src 是 int32 a = 1，Pair 是 a = 1、b = 2，Painted 是 a = 1 与枚举 c = 2；其余各在一处
@@ -117,9 +117,9 @@ func TestNewProjectionRejectsMisalignedFields(t *testing.T) {
 
 // 只复制源里存在的字段：optional 缺失仍是缺失，显式的 0 仍是 0；目标没有的字段（boot_id）不出现。
 func TestProjectionKeepsPresenceAndDropsUndeclaredFields(t *testing.T) {
-	p := newProjection((&probev1.PublicMetrics{}).ProtoReflect().Type(), (&probev1.Metrics{}).ProtoReflect().Descriptor())
-	got := p.apply(&probev1.Metrics{BootId: "b", MemUsed: proto.Uint64(0), Load1: proto.Float64(0.5)}).(*probev1.PublicMetrics)
-	if want := (&probev1.PublicMetrics{MemUsed: proto.Uint64(0), Load1: proto.Float64(0.5)}); !proto.Equal(got, want) || got.CpuPct != nil {
+	p := newProjection((&heronv1.PublicMetrics{}).ProtoReflect().Type(), (&heronv1.Metrics{}).ProtoReflect().Descriptor())
+	got := p.apply(&heronv1.Metrics{BootId: "b", MemUsed: proto.Uint64(0), Load1: proto.Float64(0.5)}).(*heronv1.PublicMetrics)
+	if want := (&heronv1.PublicMetrics{MemUsed: proto.Uint64(0), Load1: proto.Float64(0.5)}); !proto.Equal(got, want) || got.CpuPct != nil {
 		t.Fatalf("projected = %v, want %v", got, want)
 	}
 }
@@ -127,17 +127,17 @@ func TestProjectionKeepsPresenceAndDropsUndeclaredFields(t *testing.T) {
 // PublicBilling 由 Billing 投影：周期按编号原样复制，自动续期不出现，days_left 的缺失与 0 各自保留。期望值从 JSON 读入、
 // days_left 经反射取：两个消息对不齐时本测试照常编译，红在构造投影的 panic 上。
 func TestPublicBillingProjectsFromBilling(t *testing.T) {
-	p := newProjection((&probev1.PublicBilling{}).ProtoReflect().Type(), (&probev1.Billing{}).ProtoReflect().Descriptor())
-	got := p.apply(&probev1.Billing{Price: "12.50", Currency: "USD", BillingCycle: probev1.BillingCycle_BILLING_CYCLE_YEARLY,
+	p := newProjection((&heronv1.PublicBilling{}).ProtoReflect().Type(), (&heronv1.Billing{}).ProtoReflect().Descriptor())
+	got := p.apply(&heronv1.Billing{Price: "12.50", Currency: "USD", BillingCycle: heronv1.BillingCycle_BILLING_CYCLE_YEARLY,
 		ExpiresOn: "2026-10-01", AutoRenew: true, DaysLeft: proto.Int32(0)})
-	want := &probev1.PublicBilling{}
+	want := &heronv1.PublicBilling{}
 	if err := protojson.Unmarshal([]byte(`{"price": "12.50", "currency": "USD", "billingCycle": "BILLING_CYCLE_YEARLY", "expiresOn": "2026-10-01", "daysLeft": 0}`), want); err != nil {
 		t.Fatal(err)
 	}
 	if !proto.Equal(got, want) {
 		t.Fatalf("projected = %v, want %v", got, want)
 	}
-	noDate := p.apply(&probev1.Billing{Price: "5", Currency: "EUR"}).ProtoReflect()
+	noDate := p.apply(&heronv1.Billing{Price: "5", Currency: "EUR"}).ProtoReflect()
 	if noDate.Has(noDate.Descriptor().Fields().ByName("days_left")) {
 		t.Fatalf("no expiry date projected days_left: %v", noDate.Interface())
 	}

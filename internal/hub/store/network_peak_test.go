@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/metric"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -23,7 +23,7 @@ func TestNetworkPeaksSurviveEveryRollupAndQueryBucket(t *testing.T) {
 	}
 	for i, rate := range []uint64{0, 900, 10} {
 		b := metric.NewBucket()
-		b.Add(&probev1.Metrics{NetRxBps: proto.Uint64(rate), NetTxBps: proto.Uint64(0)})
+		b.Add(&heronv1.Metrics{NetRxBps: proto.Uint64(rate), NetTxBps: proto.Uint64(0)})
 		b.AddSum(metric.RxBytes, 60)
 		if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: base + int64(i)*60, Bucket: b}}}); err != nil {
 			t.Fatal(err)

@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/outbound"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 type sentMessage struct {
@@ -185,7 +185,7 @@ func TestTelegramKeepsFiringAndRecoveredApart(t *testing.T) {
 	fireAll(t, f) // 只有宽限为 0 的 node4 触发。
 	awaitSettled(t, f)
 	f.clk.Advance(90 * time.Second)
-	f.l.Observe(ids[3], "", &probev1.Metrics{})
+	f.l.Observe(ids[3], "", &heronv1.Metrics{})
 	f.sweep(t)
 	awaitSettled(t, f)
 	stop()

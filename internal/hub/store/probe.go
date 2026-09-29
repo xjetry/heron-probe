@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"math"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/metric"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
 )
 
 func probeValueColumns() []string {
@@ -60,7 +60,7 @@ func scanProbeRows(rows *sql.Rows, nodeID int64) ([]metric.ProbeRow, error) {
 // ProbeTaskRecord 的 NodeIDs 始终是读取时刻的覆盖集合：全部节点与标签交集先展开，显式分配直接读取关联。
 // SelectorTags 只描述动态条件，写入请求不能把已展开的 NodeIDs 与条件同时提交。
 type ProbeTaskRecord struct {
-	Task         *probev1.ProbeTask
+	Task         *heronv1.ProbeTask
 	AllNodes     bool
 	NodeIDs      []int64
 	SelectorTags []string
@@ -93,13 +93,13 @@ func (s *Store) LoadProbeTasks(ctx context.Context) (uint64, []ProbeTaskRecord, 
 	var out []ProbeTaskRecord
 	index := map[uint64]int{}
 	for rows.Next() {
-		t := &probev1.ProbeTask{}
+		t := &heronv1.ProbeTask{}
 		var id, kind, interval, timeout, order int64
 		var all bool
 		if err := rows.Scan(&id, &kind, &t.Target, &interval, &timeout, &all, &order); err != nil {
 			return 0, nil, err
 		}
-		t.Id, t.Kind, t.IntervalS, t.TimeoutMs = uint64(id), probev1.ProbeKind(kind), uint32(interval), uint32(timeout)
+		t.Id, t.Kind, t.IntervalS, t.TimeoutMs = uint64(id), heronv1.ProbeKind(kind), uint32(interval), uint32(timeout)
 		index[t.Id] = len(out)
 		out = append(out, ProbeTaskRecord{Task: t, AllNodes: all, SortOrder: order})
 	}
@@ -141,12 +141,12 @@ func (s *Store) LoadProbeTasks(ctx context.Context) (uint64, []ProbeTaskRecord, 
 // 上限在这里而不是调用方检查，因为只有事务内的计数才与其他保存互斥。它按写入之后的覆盖计数，所以 all_nodes 任务
 // 计入每个现有节点，显式分配与标签选择器只计入命中节点。insertNode 与 UpdateNodeTasks 在建节点和修改标签时
 // 再按同一覆盖谓词检查，任务保存不能替代未来的覆盖变更检查。
-func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, selector NodeSelector) (ProbeTaskRecord, uint64, error) {
+func (s *Store) SaveProbeTask(ctx context.Context, t *heronv1.ProbeTask, selector NodeSelector) (ProbeTaskRecord, uint64, error) {
 	if err := selector.Check(); err != nil {
 		return ProbeTaskRecord{}, 0, err
 	}
 	allNodes, nodeIDs, tags := selector.AllNodes, selector.NodeIDs, selector.Tags
-	saved := &probev1.ProbeTask{Id: t.GetId(), Kind: t.GetKind(), Target: t.GetTarget(), IntervalS: t.GetIntervalS(), TimeoutMs: t.GetTimeoutMs()}
+	saved := &heronv1.ProbeTask{Id: t.GetId(), Kind: t.GetKind(), Target: t.GetTarget(), IntervalS: t.GetIntervalS(), TimeoutMs: t.GetTimeoutMs()}
 	rec := ProbeTaskRecord{Task: saved, AllNodes: allNodes}
 	var version int64
 	err := s.write(ctx, func(tx *sql.Tx) error {

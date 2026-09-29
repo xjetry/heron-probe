@@ -9,30 +9,30 @@ import (
 
 	"connectrpc.com/connect"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 )
 
 // 与仓库里的文件逐个比对：嵌入的通配若漏了文件或内容过期，这里红。
 func TestApiReferenceServesTheRepositoryProtoAndGuide(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	resp, err := h.admin.GetApiReference(context.Background(), connect.NewRequest(&probev1.GetApiReferenceRequest{}))
+	resp, err := h.admin.GetApiReference(context.Background(), connect.NewRequest(&heronv1.GetApiReferenceRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	root := filepath.Join("..", "..", "..", "proto")
 	want := map[string]string{}
-	entries, err := os.ReadDir(filepath.Join(root, "probe", "v1"))
+	entries, err := os.ReadDir(filepath.Join(root, "heron", "v1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), ".proto") {
-			b, err := os.ReadFile(filepath.Join(root, "probe", "v1", e.Name()))
+			b, err := os.ReadFile(filepath.Join(root, "heron", "v1", e.Name()))
 			if err != nil {
 				t.Fatal(err)
 			}
-			want["probe/v1/"+e.Name()] = string(b)
+			want["heron/v1/"+e.Name()] = string(b)
 		}
 	}
 	got := map[string]string{}
@@ -61,7 +61,7 @@ func TestApiReferenceServesTheRepositoryProtoAndGuide(t *testing.T) {
 	if resp.Msg.GetGuide() != string(guide) {
 		t.Error("served guide differs from proto/SKILL.md")
 	}
-	for _, s := range []string{"PROBE_HUB", "PROBE_TOKEN", "```sh example"} {
+	for _, s := range []string{"HERON_HUB", "HERON_TOKEN", "```sh example"} {
 		if !strings.Contains(resp.Msg.GetGuide(), s) {
 			t.Errorf("guide lacks %q", s)
 		}

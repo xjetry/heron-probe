@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -16,13 +16,13 @@ func TestNetworkPeaksFromReportToBothHistoryAPIs(t *testing.T) {
 	h.setPublic(t, id, "peaks", true)
 	base := h.clk.Now().Truncate(time.Hour).Unix()
 	for i, rate := range []uint64{800, 20, 100} {
-		if err := h.report(t, token, &probev1.Metrics{BootId: "boot", NetRxTotal: proto.Uint64(uint64(i) * 300), NetTxTotal: proto.Uint64(0), NetRxBps: proto.Uint64(rate), NetTxBps: proto.Uint64(0)}); err != nil {
+		if err := h.report(t, token, &heronv1.Metrics{BootId: "boot", NetRxTotal: proto.Uint64(uint64(i) * 300), NetTxTotal: proto.Uint64(0), NetRxBps: proto.Uint64(rate), NetTxBps: proto.Uint64(0)}); err != nil {
 			t.Fatal(err)
 		}
 		h.clk.Advance(10 * time.Second)
 	}
 	h.clk.Advance(time.Minute)
-	if err := h.report(t, token, &probev1.Metrics{BootId: "boot"}); err != nil {
+	if err := h.report(t, token, &heronv1.Metrics{BootId: "boot"}); err != nil {
 		t.Fatal(err)
 	}
 	h.ingest.Flush(t.Context(), true)
@@ -31,7 +31,7 @@ func TestNetworkPeaksFromReportToBothHistoryAPIs(t *testing.T) {
 		if err := h.store.Rollup(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		q := &probev1.QueryMetricsRequest{NodeId: id, From: base, To: base + window, MaxPoints: 2000}
+		q := &heronv1.QueryMetricsRequest{NodeId: id, From: base, To: base + window, MaxPoints: 2000}
 		admin, err := h.admin.QueryMetrics(t.Context(), connect.NewRequest(q))
 		if err != nil {
 			t.Fatal(err)
@@ -43,7 +43,7 @@ func TestNetworkPeaksFromReportToBothHistoryAPIs(t *testing.T) {
 		if !proto.Equal(admin.Msg, public.Msg) {
 			t.Fatalf("history projections differ: %v / %v", admin.Msg, public.Msg)
 		}
-		series := map[string]*probev1.MetricSeries{}
+		series := map[string]*heronv1.MetricSeries{}
 		for _, s := range admin.Msg.Series {
 			series[s.Name] = s
 		}

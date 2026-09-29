@@ -3,8 +3,9 @@ import { useQuery } from "@connectrpc/connect-query";
 import { useEffect } from "react";
 import { Link, Outlet } from "react-router";
 import { errorBanner } from "../api/queryGate";
-import { PublicService, PublicSiteSchema } from "../gen/probe/v1/public_pb";
+import { PublicService, PublicSiteSchema } from "../gen/heron/v1/public_pb";
 import { applySite, DEFAULT_TITLE } from "./site";
+import { HeronMark } from "../components/HeronMark";
 
 // 外观只在页面加载时取，之后不再重取：已打开的页面刷新后才看到改动，刷新时浏览器还可能再用最多 5 分钟的缓存
 // （hub 对 GetSite 下发 max-age=300）。react-query 的窗口聚焦、断网重连与重新挂载三种自动重取都只针对已过期的查询，
@@ -18,7 +19,7 @@ export function PublicLayout() {
     <div className="layout">
       <header className="nav">
         <Link to="/" className="brand">
-          {site.data?.logo && <img src={site.data.logo} alt="" className="logo" />}
+          {site.data?.logo ? <img src={site.data.logo} alt="" className="logo" /> : <HeronMark />}
           {site.data?.title || DEFAULT_TITLE}
         </Link>
       </header>

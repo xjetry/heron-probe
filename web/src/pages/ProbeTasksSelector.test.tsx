@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { renderWithAdmin } from "../test/harness";
-import { type SaveProbeTaskRequest } from "../gen/probe/v1/admin_pb";
+import { type SaveProbeTaskRequest } from "../gen/heron/v1/admin_pb";
 import { ProbeTasks } from "./ProbeTasks";
 
 it("标签批量选择保存固定节点，动态选择器只保存非空标签", async () => {

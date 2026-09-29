@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/live"
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/live"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // flush 在一次评估调用结束时、仍持 writeMu 时逐个事件调用 Enqueue：不得阻塞，也不得回调 Engine 的写方法，否则会

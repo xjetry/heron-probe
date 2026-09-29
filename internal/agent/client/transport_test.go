@@ -16,16 +16,16 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/agentwire"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/agentwire"
 )
 
 // 以下测试直接对 connect-go 的实际行为下结论（本仓库 go.mod 固定的版本），换版本要重跑而不是改断言。
 
-func report(t *testing.T, c probev1connect.AgentServiceClient) error {
+func report(t *testing.T, c heronv1connect.AgentServiceClient) error {
 	t.Helper()
-	req := connect.NewRequest(&probev1.ReportRequest{})
+	req := connect.NewRequest(&heronv1.ReportRequest{})
 	req.Header().Set("Authorization", "Bearer tok")
 	_, err := c.Report(context.Background(), req)
 	return err
@@ -49,8 +49,8 @@ func protoResponder(t *testing.T, msg proto.Message, gz bool) http.HandlerFunc {
 	}
 }
 
-func oversizedResponse() *probev1.ReportResponse {
-	return &probev1.ReportResponse{Tasks: &probev1.ProbeTasks{Tasks: []*probev1.ProbeTask{{Target: strings.Repeat("a", agentwire.MaxResponseBytes)}}}}
+func oversizedResponse() *heronv1.ReportResponse {
+	return &heronv1.ReportResponse{Tasks: &heronv1.ProbeTasks{Tasks: []*heronv1.ProbeTask{{Target: strings.Repeat("a", agentwire.MaxResponseBytes)}}}}
 }
 
 func TestClientRejectsOversizedResponse(t *testing.T) {
@@ -64,7 +64,7 @@ func TestClientRejectsOversizedResponse(t *testing.T) {
 
 // 对照组：上限之内的响应照常解码，说明上一个测试红在大小上而不是别的解码失败上。
 func TestClientAcceptsResponseWithinLimit(t *testing.T) {
-	resp := &probev1.ReportResponse{ReportIntervalMs: 10000, Tasks: &probev1.ProbeTasks{Tasks: []*probev1.ProbeTask{{Target: strings.Repeat("a", agentwire.MaxResponseBytes-64)}}}}
+	resp := &heronv1.ReportResponse{ReportIntervalMs: 10000, Tasks: &heronv1.ProbeTasks{Tasks: []*heronv1.ProbeTask{{Target: strings.Repeat("a", agentwire.MaxResponseBytes-64)}}}}
 	srv := httptest.NewServer(protoResponder(t, resp, false))
 	defer srv.Close()
 	if err := report(t, NewServiceClient(srv.URL, 5*time.Second)); err != nil {
@@ -77,7 +77,7 @@ func TestClientRefusesCompressedResponse(t *testing.T) {
 	var accept atomic.Value
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		accept.Store(r.Header.Get("Accept-Encoding") + "|" + r.Header.Get("Connect-Accept-Encoding"))
-		protoResponder(t, &probev1.ReportResponse{ReportIntervalMs: 10000}, true)(w, r)
+		protoResponder(t, &heronv1.ReportResponse{ReportIntervalMs: 10000}, true)(w, r)
 	}))
 	defer srv.Close()
 	err := report(t, NewServiceClient(srv.URL, 5*time.Second))
@@ -179,7 +179,7 @@ func TestClientDoesNotFollowRedirects(t *testing.T) {
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reached.Store(true)
 		leaked.Store(r.Header.Get("Authorization"))
-		protoResponder(t, &probev1.ReportResponse{ReportIntervalMs: 10000}, false)(w, r)
+		protoResponder(t, &heronv1.ReportResponse{ReportIntervalMs: 10000}, false)(w, r)
 	}))
 	defer target.Close()
 	for _, code := range []int{http.StatusMovedPermanently, http.StatusFound, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
@@ -205,7 +205,7 @@ func TestClientBoundsResponseHeaders(t *testing.T) {
 	}{{maxResponseHeaderBytes / 2, true}, {maxResponseHeaderBytes * 2, false}} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Pad", strings.Repeat("a", tc.size))
-			protoResponder(t, &probev1.ReportResponse{ReportIntervalMs: 10000}, false)(w, r)
+			protoResponder(t, &heronv1.ReportResponse{ReportIntervalMs: 10000}, false)(w, r)
 		}))
 		err := report(t, NewServiceClient(srv.URL, 5*time.Second))
 		srv.Close()

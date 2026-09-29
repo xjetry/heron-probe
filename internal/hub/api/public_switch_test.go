@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -39,7 +39,7 @@ func TestPublicSwitchOmittedSettings(t *testing.T) {
 			in := validSettings()
 			in.PublicEnabled = proto.Bool(enabled)
 			saveSettings(t, h, in)
-			out := saveSettings(t, h, &probev1.Settings{Title: "旧客户端改标题", Theme: "auto"})
+			out := saveSettings(t, h, &heronv1.Settings{Title: "旧客户端改标题", Theme: "auto"})
 			if out.PublicEnabled == nil || out.GetPublicEnabled() != enabled {
 				t.Errorf("omitted gate echo must be present and %v: %v", enabled, out)
 			}
@@ -62,15 +62,15 @@ func TestPublicSwitchAloneIsAGroup(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	before := saveSettings(t, h, validSettings())
-	want := proto.Clone(before).(*probev1.Settings)
+	want := proto.Clone(before).(*heronv1.Settings)
 	want.PublicEnabled = proto.Bool(false)
-	if got := saveSettings(t, h, &probev1.Settings{PublicEnabled: proto.Bool(false)}); !proto.Equal(got, want) {
+	if got := saveSettings(t, h, &heronv1.Settings{PublicEnabled: proto.Bool(false)}); !proto.Equal(got, want) {
 		t.Fatalf("gate-only echo = %v, want %v", got, want)
 	}
 	if got := pubGet(t, h, "GetSite", jsonQuery("{}"), nil); got.status != http.StatusNotFound {
 		t.Fatalf("gate-only close: GetSite status = %d, want %d", got.status, http.StatusNotFound)
 	}
-	_, err := h.admin.UpdateSettings(t.Context(), connect.NewRequest(&probev1.UpdateSettingsRequest{Settings: &probev1.Settings{}}))
+	_, err := h.admin.UpdateSettings(t.Context(), connect.NewRequest(&heronv1.UpdateSettingsRequest{Settings: &heronv1.Settings{}}))
 	if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), noGroup) {
 		t.Fatalf("empty update err = %v, want InvalidArgument containing %q", err, noGroup)
 	}
@@ -85,7 +85,7 @@ func TestPublicSwitchAllMethodsAndNodePreservation(t *testing.T) {
 	id, _ := h.createNode(t, "public")
 	h.setPublic(t, id, "public", true)
 	private, _ := h.createNode(t, "private")
-	methods := probev1.File_probe_v1_public_proto.Services().ByName("PublicService").Methods()
+	methods := heronv1.File_heron_v1_public_proto.Services().ByName("PublicService").Methods()
 	if methods.Len() == 0 {
 		t.Fatal("PublicService has no methods")
 	}
@@ -113,7 +113,7 @@ func TestPublicSwitchAllMethodsAndNodePreservation(t *testing.T) {
 			}
 		}
 	}
-	snap, err := h.publicClient().GetSnapshot(t.Context(), connect.NewRequest(&probev1.PublicServiceGetSnapshotRequest{}))
+	snap, err := h.publicClient().GetSnapshot(t.Context(), connect.NewRequest(&heronv1.PublicServiceGetSnapshotRequest{}))
 	if err != nil || len(snap.Msg.Nodes) != 1 || snap.Msg.Nodes[0].Id != id {
 		t.Fatalf("reopened snapshot lost public node: %v %v", snap, err)
 	}
@@ -127,7 +127,7 @@ func TestPublicSwitchSnapshotCacheWindow(t *testing.T) {
 		t.Fatalf("prime snapshot: %d %s", first.status, first.body)
 	}
 	h.clk.Advance(500 * time.Millisecond)
-	saveSettings(t, h, &probev1.Settings{PublicEnabled: proto.Bool(false)})
+	saveSettings(t, h, &heronv1.Settings{PublicEnabled: proto.Bool(false)})
 	cached := pubGet(t, h, "GetSnapshot", jsonQuery("{}"), nil)
 	if cached.status != 200 || !bytes.Equal(cached.body, first.body) {
 		t.Fatalf("snapshot inside 1s cache window: %d %s", cached.status, cached.body)
@@ -142,7 +142,7 @@ func TestPublicSwitchSnapshotCacheWindow(t *testing.T) {
 func TestPublicSwitchStillRateLimits(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	saveSettings(t, h, &probev1.Settings{PublicEnabled: proto.Bool(false)})
+	saveSettings(t, h, &heronv1.Settings{PublicEnabled: proto.Bool(false)})
 	for i := 0; i <= publicBurst; i++ {
 		got := pubGet(t, h, "GetSite", jsonQuery("{}"), nil)
 		want := 404
@@ -161,7 +161,7 @@ func TestPublicSwitchStillRateLimits(t *testing.T) {
 func TestPublicSwitchDoesNotReadDatabase(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	saveSettings(t, h, &probev1.Settings{PublicEnabled: proto.Bool(false)})
+	saveSettings(t, h, &heronv1.Settings{PublicEnabled: proto.Bool(false)})
 	if err := h.store.Close(); err != nil {
 		t.Fatal(err)
 	}

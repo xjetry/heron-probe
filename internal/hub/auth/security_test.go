@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 func TestTOTPEnrollmentLoginRecoveryAndRevocation(t *testing.T) {

@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/probelimit"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/probelimit"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 type dnsAnswer int
@@ -113,9 +113,9 @@ func tcpListener(t *testing.T) (string, <-chan net.Conn) {
 	return ln.Addr().String(), accepted
 }
 
-func tcpTask(target string) *probev1.ProbeTask {
+func tcpTask(target string) *heronv1.ProbeTask {
 	t := task(1)
-	t.Kind, t.Target = probev1.ProbeKind_PROBE_KIND_TCP, target
+	t.Kind, t.Target = heronv1.ProbeKind_PROBE_KIND_TCP, target
 	return t
 }
 

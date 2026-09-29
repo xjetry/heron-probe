@@ -1,26 +1,26 @@
 #!/bin/sh
-# probe-agent 安装脚本：下载、校验、注册并安装服务；重跑即升级。
+# heron-agent 安装脚本：下载、校验、注册并安装服务；重跑即升级。
 # 与 libc 无关由静态链接产物承载（发布流水线的静态门禁保证），本脚本不处理。
 # 以 curl … | sh -s -- 运行时，脚本本身来自 stdin。脚本里任何读 stdin 的命令都会吞掉
 # 脚本余下部分，安装在中途无声结束。所以每个可能读 stdin 的外部命令都显式 </dev/null。
 # 不能用 exec </dev/null：那会切断脚本自己的来源。
 set -eu
 
-# 脚本读写的系统路径都挂在 PROBE_INSTALL_ROOT 下。生产运行时它为空，即真实根目录；脚本的逻辑测试以普通用户
+# 脚本读写的系统路径都挂在 HERON_INSTALL_ROOT 下。生产运行时它为空，即真实根目录；脚本的逻辑测试以普通用户
 # 把它指向临时目录，连同 PATH 上的 id、systemctl、userdel 等替身一起运行，不触碰真实系统路径。
 # 它只改变本脚本读写的位置：服务定义里的可执行路径、传给 useradd 的 shell 是目标系统里的真实路径。
-ROOT=${PROBE_INSTALL_ROOT-}
-BIN=$ROOT/usr/local/bin/probe-agent
-CFG_DIR=$ROOT/etc/probe-agent
+ROOT=${HERON_INSTALL_ROOT-}
+BIN=$ROOT/usr/local/bin/heron-agent
+CFG_DIR=$ROOT/etc/heron-agent
 CFG=$CFG_DIR/config.json
-LOG_DIR=$ROOT/var/log/probe-agent
-SVC_USER=probe-agent
-SYSTEMD_UNIT=$ROOT/etc/systemd/system/probe-agent.service
-SYSTEMD_WANTS=$ROOT/etc/systemd/system/multi-user.target.wants/probe-agent.service
-OPENRC_SCRIPT=$ROOT/etc/init.d/probe-agent
-OPENRC_LINK=$ROOT/etc/runlevels/default/probe-agent
+LOG_DIR=$ROOT/var/log/heron-agent
+SVC_USER=heron-agent
+SYSTEMD_UNIT=$ROOT/etc/systemd/system/heron-agent.service
+SYSTEMD_WANTS=$ROOT/etc/systemd/system/multi-user.target.wants/heron-agent.service
+OPENRC_SCRIPT=$ROOT/etc/init.d/heron-agent
+OPENRC_LINK=$ROOT/etc/runlevels/default/heron-agent
 PROC=$ROOT/proc
-REPO=https://github.com/xjetry/probe
+REPO=https://github.com/xjetry/heron-probe
 
 # 本脚本所属的版本与该版全部 tar 包的 SHA-256（每行 "<64 位十六进制>  <文件名>"），由 make release 经
 # deploy/releasestamp 写进下面两行标记之间；源码里为空，这时拒绝安装（卸载不下载，照常可用）。下载的包只按这份
@@ -98,8 +98,8 @@ scan_uid_pids() {
 # "Unable to shut down the supervisor" 却返回 0，之后 status 为 stopped（3），子进程仍在运行。
 # 判据"有效 uid 等于服务用户的 uid"与"是本服务的进程"等价，两个方向各有担保：
 # - 以服务用户运行的进程都属于本服务：$SVC_USER 是专供 agent 的 nologin 账户，由 create_account 建立。
-# - 本服务的每个进程都以服务用户运行：由 systemd 单元的 User=probe-agent（deploy/systemd/probe-agent.service）
-#   与 OpenRC 脚本的 command_user（deploy/openrc/probe-agent）保证。给服务定义加以其他身份运行的进程
+# - 本服务的每个进程都以服务用户运行：由 systemd 单元的 User=heron-agent（deploy/systemd/heron-agent.service）
+#   与 OpenRC 脚本的 command_user（deploy/openrc/heron-agent）保证。给服务定义加以其他身份运行的进程
 #   （例如以 root 执行的 ExecStartPre=+）或改用 DynamicUser= 时，这里会漏查，必须同步改判据。
 # 用户不存在时没有可比对的 uid，直接通过。这让以下情形查不到仍在运行的旧进程：
 # - 卸载路径不建账户：账户被带外删除后，这里直接通过。
@@ -116,7 +116,7 @@ confirm_service_stopped() {
     sleep "$STOP_POLL_INTERVAL"
     polls=$((polls + 1))
   done
-  echo "probe-agent is still running: processes with uid $svc_uid ($SVC_USER):$svc_pids" >&2
+  echo "heron-agent is still running: processes with uid $svc_uid ($SVC_USER):$svc_pids" >&2
   return 1
 }
 
@@ -127,8 +127,8 @@ confirm_service_stopped() {
 # 秒退再拉起会换成新 pid，不能算起来了。前提与停服务确认相同，由 create_account 与服务定义保证。
 start_log_hint() {
   case "$INIT" in
-    systemd) echo "see journalctl -u probe-agent" >&2;;
-    openrc) echo "see /var/log/probe-agent/probe-agent.err" >&2;;
+    systemd) echo "see journalctl -u heron-agent" >&2;;
+    openrc) echo "see /var/log/heron-agent/heron-agent.err" >&2;;
   esac
 }
 confirm_service_started() {
@@ -147,7 +147,7 @@ confirm_service_started() {
     polls=$((polls + 1))
   done
   if [ -z "$pid" ]; then
-    echo "probe-agent did not start" >&2
+    echo "heron-agent did not start" >&2
     start_log_hint
     return 1
   fi
@@ -156,7 +156,7 @@ confirm_service_started() {
   case " $svc_pids " in
     *" $pid "*) return 0;;
   esac
-  echo "probe-agent did not stay running (pid $pid)" >&2
+  echo "heron-agent did not stay running (pid $pid)" >&2
   start_log_hint
   return 1
 }
@@ -166,9 +166,9 @@ confirm_service_started() {
 stop_service() {
   if service_installed; then
     case "$INIT" in
-      systemd) systemctl stop probe-agent </dev/null;;
-      openrc) rc-service probe-agent stop </dev/null;;
-    esac || { echo "failed to stop probe-agent" >&2; return 1; }
+      systemd) systemctl stop heron-agent </dev/null;;
+      openrc) rc-service heron-agent stop </dev/null;;
+    esac || { echo "failed to stop heron-agent" >&2; return 1; }
   fi
   confirm_service_stopped
 }
@@ -201,7 +201,7 @@ if [ "$UNINSTALL" = 1 ]; then
   case "$INIT" in
     systemd)
       if service_installed; then
-        systemctl disable probe-agent </dev/null
+        systemctl disable heron-agent </dev/null
       fi
       # enable 按单元 [Install] 段的 WantedBy=multi-user.target 建这个链接，两处改一处必须同步。
       # 单元文件被手工删掉时上面不发 disable，链接悬空留下；判链接本身（-L），与 OpenRC 侧同口径。
@@ -211,14 +211,14 @@ if [ "$UNINSTALL" = 1 ]; then
       rm -f "$SYSTEMD_UNIT"
       # 只清除本服务的本地定制；不用 DropInPaths 展开共享配置，也不跟随目录符号链接。
       if [ "$PURGE" = 1 ]; then
-        rm -rf "$SYSTEMD_UNIT.d" "$ROOT/run/systemd/system/probe-agent.service.d"
+        rm -rf "$SYSTEMD_UNIT.d" "$ROOT/run/systemd/system/heron-agent.service.d"
       fi
       systemctl daemon-reload </dev/null;;
     openrc)
       # 判链接本身（-L）而不跟随它：init 脚本被删后链接悬空，-e 会判为不存在而留下它。
       # OpenRC 0.55.1 实测：init 脚本不存在时 rc-update del 仍删掉悬空链接并返回 0。
       if [ -L "$OPENRC_LINK" ]; then
-        rc-update del probe-agent default </dev/null
+        rc-update del heron-agent default </dev/null
       fi
       rm -f "$OPENRC_SCRIPT";;
   esac
@@ -227,7 +227,7 @@ if [ "$UNINSTALL" = 1 ]; then
     rm -rf "$CFG_DIR" "$LOG_DIR"
     delete_account
   fi
-  echo "probe-agent uninstalled"
+  echo "heron-agent uninstalled"
   exit 0
 fi
 
@@ -239,7 +239,7 @@ case "$(uname -m)" in
 esac
 
 # 内嵌清单在任何网络操作与账户改动之前查：源码脚本、或清单里没有本机的包，都不该先建用户、装 CA 再失败。
-PKG="probe-agent_linux_$ARCH.tar.gz"
+PKG="heron-agent_linux_$ARCH.tar.gz"
 [ -n "$RELEASE_VERSION" ] || {
   echo "this install.sh has no embedded release checksums (it is the source copy); use the install.sh attached to a release: $REPO/releases" >&2
   exit 1
@@ -255,7 +255,7 @@ if [ ! -f "$CFG" ] && { [ -z "$HUB" ] || [ -z "$KEY" ]; }; then
 fi
 
 # 建用户排在下载与注册之前：它若失败，注册窗口的名额尚未消耗、旧服务尚未停止。
-# 主组必须是同名组：OpenRC 的 command_user 与配置文件属主都写 probe-agent:probe-agent，
+# 主组必须是同名组：OpenRC 的 command_user 与配置文件属主都写 heron-agent:heron-agent，
 # 而 busybox 的 adduser 不指定组时会把用户放进 nogroup。先建组、再以它为主组建用户，建完回查。
 create_account() {
   nologin=/sbin/nologin
@@ -363,10 +363,10 @@ GOT_SHA256=${GOT_SHA256%% *}
 # （磁盘满、新二进制秒退），失败时服务已停、脚本以非零退出。前面的步骤都不需要服务停下：
 # agent 只在启动时读一次配置（cmd/agent 的 run 只调用 LoadConfig）。
 tar -xzf "$work/$PKG" -C "$work"
-for f in probe-agent probe-agent.service probe-agent.openrc; do
+for f in heron-agent heron-agent.service heron-agent.openrc; do
   [ -f "$work/$f" ] || { echo "package is missing $f" >&2; exit 1; }
 done
-install -m 0755 "$work/probe-agent" "$BIN_TMP"
+install -m 0755 "$work/heron-agent" "$BIN_TMP"
 
 if [ ! -f "$CFG" ]; then
   # 注册只在没有配置时发生；配置落盘后重跑不再注册，所以注册之后的步骤失败时，重跑不会多耗窗口名额。
@@ -407,15 +407,15 @@ mv -f "$BIN_TMP" "$BIN"
 # 所以用 start，不依赖 restart 对已停服务等价于 start。
 case "$INIT" in
   systemd)
-    install -m 0644 "$work/probe-agent.service" "$SYSTEMD_UNIT"
+    install -m 0644 "$work/heron-agent.service" "$SYSTEMD_UNIT"
     systemctl daemon-reload </dev/null
-    systemctl enable probe-agent </dev/null
-    systemctl start probe-agent </dev/null;;
+    systemctl enable heron-agent </dev/null
+    systemctl start heron-agent </dev/null;;
   openrc)
-    install -m 0755 "$work/probe-agent.openrc" "$OPENRC_SCRIPT"
+    install -m 0755 "$work/heron-agent.openrc" "$OPENRC_SCRIPT"
     # 重跑时它已在 default runlevel 里；只在不在时才加，不依赖 rc-update 对重复 add 的退出码。
-    [ -L "$OPENRC_LINK" ] || rc-update add probe-agent default </dev/null
-    rc-service probe-agent start </dev/null;;
+    [ -L "$OPENRC_LINK" ] || rc-update add heron-agent default </dev/null
+    rc-service heron-agent start </dev/null;;
 esac
 confirm_service_started
-echo "probe-agent installed and started ($INIT, $ARCH, $PKG)"
+echo "heron-agent installed and started ($INIT, $ARCH, $PKG)"

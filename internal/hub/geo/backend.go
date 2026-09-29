@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/oschwald/maxminddb-golang/v2"
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // Backend 只负责一次查询；准入、校验、退避与条件写入由 Resolver 承载。

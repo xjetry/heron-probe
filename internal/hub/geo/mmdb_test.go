@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // 计数器包住真实读取器，区分没有查询与查询但没有写入；不伪造后端结果。

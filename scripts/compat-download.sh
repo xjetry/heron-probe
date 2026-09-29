@@ -25,7 +25,7 @@ trap cleanup EXIT
 trap 'exit 1' INT TERM HUP
 echo "compatibility baseline: $repository $tag ($kind)"
 for arch in amd64 arm64; do
-  asset="probe-agent_linux_$arch.tar.gz"
+  asset="heron-agent_linux_$arch.tar.gz"
   expected=$(jq -r --arg arch "$arch" '.assets[] | select(.arch == $arch) | .sha256' "$pin")
   curl --fail --show-error --silent --location --retry 3 --connect-timeout 15 --max-time 180 \
     "https://github.com/$repository/releases/download/$tag/$asset" -o "$out/$asset"
@@ -33,10 +33,10 @@ for arch in amd64 arm64; do
   actual=${actual%% *}
   [ "$actual" = "$expected" ] || { echo "FAIL: SHA256 mismatch for $tag/$asset: $actual, expected $expected" >&2; exit 1; }
   # 校验成功之后才解包，且只取固定名称；其它包内路径不能写入输出目录。
-  tar -xzf "$out/$asset" -C "$out" probe-agent
-  [ -f "$out/probe-agent" ] && [ ! -L "$out/probe-agent" ] || { echo "FAIL: $asset has no regular probe-agent" >&2; exit 1; }
-  mv "$out/probe-agent" "$out/probe-agent-linux-$arch"
-  chmod +x "$out/probe-agent-linux-$arch"
+  tar -xzf "$out/$asset" -C "$out" heron-agent
+  [ -f "$out/heron-agent" ] && [ ! -L "$out/heron-agent" ] || { echo "FAIL: $asset has no regular heron-agent" >&2; exit 1; }
+  mv "$out/heron-agent" "$out/heron-agent-linux-$arch"
+  chmod +x "$out/heron-agent-linux-$arch"
   rm "$out/$asset"
   echo "verified $tag/$asset sha256:$expected"
 done

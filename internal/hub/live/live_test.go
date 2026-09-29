@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/metric"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -18,7 +18,7 @@ func TestOnlineIsLastSeenWithinTTL(t *testing.T) {
 	if l.Online(1) {
 		t.Fatal("never-reported node must be offline")
 	}
-	l.Observe(1, "", &probev1.Metrics{})
+	l.Observe(1, "", &heronv1.Metrics{})
 	if !l.Online(1) {
 		t.Fatal("node must be online from its first report")
 	}
@@ -35,7 +35,7 @@ func TestOnlineIsLastSeenWithinTTL(t *testing.T) {
 func TestOnlineUsesMonotonicClock(t *testing.T) {
 	clk := clock.NewFake(at(600))
 	l := New(clk, 30*time.Second)
-	l.Observe(1, "", &probev1.Metrics{})
+	l.Observe(1, "", &heronv1.Metrics{})
 	clk.SetWall(at(600 + 3600)) // 墙钟前跳一小时，单调钟不动
 	if !l.Online(1) {
 		t.Fatal("wall clock jump must not affect online state")
@@ -45,12 +45,12 @@ func TestOnlineUsesMonotonicClock(t *testing.T) {
 func TestFlushTakesOnlyClosedBuckets(t *testing.T) {
 	clk := clock.NewFake(at(600)) // 分钟 600 的起点
 	l := New(clk, 30*time.Second)
-	l.Observe(1, "", &probev1.Metrics{CpuPct: proto.Float64(10)})
+	l.Observe(1, "", &heronv1.Metrics{CpuPct: proto.Float64(10)})
 	if rows := l.Flush().Rows; len(rows) != 0 {
 		t.Fatalf("bucket for the current minute must stay open, got %d rows", len(rows))
 	}
 	clk.Advance(60 * time.Second)
-	l.Observe(1, "", &probev1.Metrics{CpuPct: proto.Float64(50)})
+	l.Observe(1, "", &heronv1.Metrics{CpuPct: proto.Float64(50)})
 	rows := l.Flush().Rows
 	if len(rows) != 1 || rows[0].TS != 600 || rows[0].NodeID != 1 {
 		t.Fatalf("rows = %+v, want one row for ts 600", rows)
@@ -66,8 +66,8 @@ func TestFlushTakesOnlyClosedBuckets(t *testing.T) {
 func TestDrainTakesEverything(t *testing.T) {
 	clk := clock.NewFake(at(600))
 	l := New(clk, 30*time.Second)
-	l.Observe(1, "", &probev1.Metrics{CpuPct: proto.Float64(1)})
-	l.Observe(2, "", &probev1.Metrics{CpuPct: proto.Float64(2)})
+	l.Observe(1, "", &heronv1.Metrics{CpuPct: proto.Float64(1)})
+	l.Observe(2, "", &heronv1.Metrics{CpuPct: proto.Float64(2)})
 	if rows := l.Drain().Rows; len(rows) != 2 {
 		t.Fatalf("drain returned %d rows, want 2", len(rows))
 	}
@@ -76,9 +76,9 @@ func TestDrainTakesEverything(t *testing.T) {
 func TestWallClockSetBackLandsInEarlierMinute(t *testing.T) {
 	clk := clock.NewFake(at(660))
 	l := New(clk, 30*time.Second)
-	l.Observe(1, "", &probev1.Metrics{CpuPct: proto.Float64(1)})
+	l.Observe(1, "", &heronv1.Metrics{CpuPct: proto.Float64(1)})
 	clk.SetWall(at(610)) // 回拨到上一分钟
-	l.Observe(1, "", &probev1.Metrics{CpuPct: proto.Float64(3)})
+	l.Observe(1, "", &heronv1.Metrics{CpuPct: proto.Float64(3)})
 	clk.SetWall(at(720))
 	rows := l.Flush().Rows
 	if len(rows) != 2 {
@@ -96,7 +96,7 @@ func TestWallClockSetBackLandsInEarlierMinute(t *testing.T) {
 func TestGetReflectsLatestReport(t *testing.T) {
 	clk := clock.NewFake(at(600))
 	l := New(clk, 30*time.Second)
-	l.Observe(7, "", &probev1.Metrics{CpuPct: proto.Float64(42)})
+	l.Observe(7, "", &heronv1.Metrics{CpuPct: proto.Float64(42)})
 	e, ok := l.Get(7)
 	if !ok || e.Metrics.GetCpuPct() != 42 || !e.Online {
 		t.Fatalf("entry = %+v ok=%v", e, ok)
@@ -110,18 +110,18 @@ func TestGetReflectsLatestReport(t *testing.T) {
 func TestObserveReportsFirstAndMonotonicGap(t *testing.T) {
 	clk := clock.NewFake(at(600))
 	l := New(clk, 30*time.Second)
-	ts, gap, first := l.Observe(1, "", &probev1.Metrics{})
+	ts, gap, first := l.Observe(1, "", &heronv1.Metrics{})
 	if ts != 600 || !first || gap != 0 {
 		t.Fatalf("first observe: ts=%d gap=%v first=%v", ts, gap, first)
 	}
 	clk.Advance(45 * time.Second)
-	ts, gap, first = l.Observe(1, "", &probev1.Metrics{})
+	ts, gap, first = l.Observe(1, "", &heronv1.Metrics{})
 	if ts != 600 || first || gap != 45*time.Second {
 		t.Fatalf("second observe: ts=%d gap=%v first=%v, want 600 45s false", ts, gap, first)
 	}
 	clk.Advance(10 * time.Second)
 	clk.SetWall(at(100)) // 墙钟回拨：间隔仍由单调钟给出
-	if _, gap, _ = l.Observe(1, "", &probev1.Metrics{}); gap != 10*time.Second {
+	if _, gap, _ = l.Observe(1, "", &heronv1.Metrics{}); gap != 10*time.Second {
 		t.Fatalf("gap after wall clock set back = %v, want 10s", gap)
 	}
 }
@@ -129,7 +129,7 @@ func TestObserveReportsFirstAndMonotonicGap(t *testing.T) {
 func TestAddBytesLandsInTheGivenBucketOnly(t *testing.T) {
 	clk := clock.NewFake(at(600))
 	l := New(clk, 30*time.Second)
-	ts, _, _ := l.Observe(1, "", &probev1.Metrics{})
+	ts, _, _ := l.Observe(1, "", &heronv1.Metrics{})
 	l.AddBytes(1, ts, 1500, 700)
 	l.AddBytes(1, ts, 500, 300)
 	l.AddBytes(2, ts, 9, 9) // 从未 Observe 的节点：丢弃，不凭空建条目
@@ -150,11 +150,11 @@ func TestAddBytesLandsInTheGivenBucketOnly(t *testing.T) {
 func TestAddProbeFoldsIntoMeasuredMinuteAndFlushesWithMetrics(t *testing.T) {
 	clk := clock.NewFake(at(600))
 	l := New(clk, 30*time.Second)
-	l.Observe(1, "", &probev1.Metrics{CpuPct: proto.Float64(10)})
+	l.Observe(1, "", &heronv1.Metrics{CpuPct: proto.Float64(10)})
 	clk.Advance(time.Minute)
-	l.AddProbe(1, at(670), 7, &probev1.ProbeResult{Outcome: &probev1.ProbeResult_RttUs{RttUs: 1200}})
-	l.AddProbe(1, at(675), 7, &probev1.ProbeResult{Outcome: &probev1.ProbeResult_Timeout{Timeout: &probev1.Timeout{}}})
-	l.AddProbe(1, at(630), 9, &probev1.ProbeResult{Outcome: &probev1.ProbeResult_RttUs{RttUs: 800}})
+	l.AddProbe(1, at(670), 7, &heronv1.ProbeResult{Outcome: &heronv1.ProbeResult_RttUs{RttUs: 1200}})
+	l.AddProbe(1, at(675), 7, &heronv1.ProbeResult{Outcome: &heronv1.ProbeResult_Timeout{Timeout: &heronv1.Timeout{}}})
+	l.AddProbe(1, at(630), 9, &heronv1.ProbeResult{Outcome: &heronv1.ProbeResult_RttUs{RttUs: 800}})
 	batch := l.Flush()
 	if len(batch.Rows) != 1 || batch.Rows[0].TS != 600 || batch.Rows[0].NodeID != 1 || batch.Rows[0].Bucket.Sum[metric.Index("cpu")] != 10 {
 		t.Fatalf("closed metrics=%+v", batch.Rows)
@@ -166,7 +166,7 @@ func TestAddProbeFoldsIntoMeasuredMinuteAndFlushesWithMetrics(t *testing.T) {
 		t.Fatal("second Flush returned already taken rows")
 	}
 	// 已刷出的分钟可再次接到迟到结果，但新内存桶不能再携带上次已交出的计数。
-	l.AddProbe(1, at(630), 9, &probev1.ProbeResult{Outcome: &probev1.ProbeResult_RttUs{RttUs: 400}})
+	l.AddProbe(1, at(630), 9, &heronv1.ProbeResult{Outcome: &heronv1.ProbeResult_RttUs{RttUs: 400}})
 	late := l.Flush()
 	if len(late.Probes) != 1 || late.Probes[0].Bucket.Sent != 1 || late.Probes[0].Bucket.RttSumUs != 400 {
 		t.Fatalf("late probes=%+v", late.Probes)
@@ -183,7 +183,7 @@ func TestAddProbeFoldsIntoMeasuredMinuteAndFlushesWithMetrics(t *testing.T) {
 		t.Fatal("second Drain returned already taken rows")
 	}
 	l.Forget(1)
-	l.AddProbe(1, at(670), 7, &probev1.ProbeResult{Outcome: &probev1.ProbeResult_RttUs{RttUs: 1}})
+	l.AddProbe(1, at(670), 7, &heronv1.ProbeResult{Outcome: &heronv1.ProbeResult_RttUs{RttUs: 1}})
 	if _, ok := l.Get(1); ok {
 		t.Error("AddProbe revived forgotten node")
 	}

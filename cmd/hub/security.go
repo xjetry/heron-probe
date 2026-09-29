@@ -10,7 +10,7 @@ import (
 
 func runSecurityReset(args []string) error {
 	fs := flag.NewFlagSet("security-reset", flag.ContinueOnError)
-	db := fs.String("db", "probe.db", "SQLite database path")
+	db := fs.String("db", "heron.db", "SQLite database path")
 	yes := fs.Bool("yes", false, "confirm removal of TOTP, recovery codes and Passkeys")
 	if err := fs.Parse(args); err != nil {
 		return err

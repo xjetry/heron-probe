@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/outbound"
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // 满队列（QueueCap 个批次、每批至多 MaxDeliveryAttempts 次请求）排空之前，任一时刻至少处于三种情形之一：

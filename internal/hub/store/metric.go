@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
 )
 
 var (

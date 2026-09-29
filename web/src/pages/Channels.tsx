@@ -7,7 +7,7 @@ import { SAVE_SETTINGS, useAdoptSavedSettings, useSettingsSaving } from "../api/
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Picks } from "../components/Picks";
-import { AdminService, ChannelKind, type NotifyChannel, type Settings } from "../gen/probe/v1/admin_pb";
+import { AdminService, ChannelKind, type NotifyChannel, type Settings } from "../gen/heron/v1/admin_pb";
 import { CHANNEL_KINDS, MAX_NOTIFY_CHANNELS, NOTIFY_LISTS, channelTarget, labelOf, methodOf, rateLabel } from "../lib/alerts";
 import { withId } from "../lib/ids";
 

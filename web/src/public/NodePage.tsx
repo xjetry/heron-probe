@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { CountryBadge } from "../components/CountryBadge";
 import { HistoryCharts, RangePicker, useHistory, type HistoryMethods } from "../components/History";
-import { PublicService } from "../gen/probe/v1/public_pb";
+import { PublicService } from "../gen/heron/v1/public_pb";
 import { expired, expiryText, priceText } from "../lib/billing";
 import { POLL_MS } from "../lib/poll";
 

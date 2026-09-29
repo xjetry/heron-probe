@@ -5,7 +5,7 @@
 # 不依赖镜像内 shell 的排查办法。创建的容器与卷全部带本次运行的前缀，由 cleanup 删除；工件目录保留，
 # 路径在开头打印。
 set -eu
-: "${IMAGE:?IMAGE is required, e.g. ghcr.io/xjetry/probe-hub:v0.1.0}"
+: "${IMAGE:?IMAGE is required, e.g. ghcr.io/xjetry/heron-hub:v0.1.0}"
 : "${VERSION:?VERSION is required: the image must report exactly this version}"
 # 空表示 docker 的默认平台；发布后回读时逐个架构给出。
 platform=${SMOKE_PLATFORM:-}
@@ -25,7 +25,7 @@ stop_timeout=30
 
 work=$(mktemp -d)
 echo "docker smoke artifacts: $work (image $IMAGE${platform:+, platform $platform})"
-run_id=probe-smoke-$(basename "$work")
+run_id=heron-smoke-$(basename "$work")
 hub=$run_id-hub
 denied=$run_id-denied
 data=$run_id-data
@@ -98,8 +98,8 @@ run_to_exit() {
 }
 
 # 有时限：ENTRYPOINT 若被改成带 serve 的形式，version 会被当作 serve 的多余参数，hub 起来后不退出。
-run_to_exit "$run_id-version" "probe-hub version did not exit" "$IMAGE" version
-[ "$code" = 0 ] || fail "probe-hub version exited $code" "$work/$run_id-version.out" "$work/$run_id-version.err"
+run_to_exit "$run_id-version" "heron-hub version did not exit" "$IMAGE" version
+[ "$code" = 0 ] || fail "heron-hub version exited $code" "$work/$run_id-version.out" "$work/$run_id-version.err"
 got=$(cat "$work/$run_id-version.out")
 [ "$got" = "$VERSION" ] || fail "image reports version '$got', want '$VERSION'"
 echo "version ok: $got"
@@ -161,34 +161,34 @@ grep -q 'host time zone could not be resolved; using UTC' "$work/hub.log" ||
   fail "startup log lacks the UTC fallback warning" "$work/hub.log"
 echo "startup warnings ok"
 
-# README 与 §14 的命令按名字执行 probe-hub：二进制必须在容器的默认 PATH 里。
+# README 与 §14 的命令按名字执行 heron-hub：二进制必须在容器的默认 PATH 里。
 # 两个流都落到同一个文件：exec 本身失败时（如 executable file not found in $PATH），docker CLI 把
 # OCI 运行时的报错写在 stdout 上，只收 stderr 会让诊断丢失。
-docker exec "$hub" probe-hub version > "$work/exec.log" 2>&1 ||
-  fail "docker exec $hub probe-hub version failed: probe-hub is not runnable by name" "$work/exec.log"
+docker exec "$hub" heron-hub version > "$work/exec.log" 2>&1 ||
+  fail "docker exec $hub heron-hub version failed: heron-hub is not runnable by name" "$work/exec.log"
 got=$(cat "$work/exec.log")
-[ "$got" = "$VERSION" ] || fail "docker exec probe-hub version printed '$got', want '$VERSION'"
+[ "$got" = "$VERSION" ] || fail "docker exec heron-hub version printed '$got', want '$VERSION'"
 
 # 不带 -i 时容器里的 stdin 是 /dev/null：passwd 必须报没有收到密码，且不改管理员表。
 rc=0
-docker exec "$hub" probe-hub passwd --db /data/probe.db > "$work/passwd-noinput.log" 2>&1 || rc=$?
+docker exec "$hub" heron-hub passwd --db /data/heron.db > "$work/passwd-noinput.log" 2>&1 || rc=$?
 [ "$rc" != 0 ] || fail "passwd without -i succeeded" "$work/passwd-noinput.log"
 grep -q 'no password on stdin' "$work/passwd-noinput.log" ||
   fail "passwd without -i did not report the missing input" "$work/passwd-noinput.log"
-docker exec "$hub" probe-hub stats --db /data/probe.db > "$work/stats.log" 2>&1 ||
-  fail "probe-hub stats" "$work/stats.log"
+docker exec "$hub" heron-hub stats --db /data/heron.db > "$work/stats.log" 2>&1 ||
+  fail "heron-hub stats" "$work/stats.log"
 grep -qx 'admin: 0' "$work/stats.log" || fail "passwd without input changed the admin table" "$work/stats.log"
 echo "passwd without -i ok"
 
 pw='smoke admin password 2026'
-printf '%s\n' "$pw" | docker exec -i "$hub" probe-hub passwd --db /data/probe.db > "$work/passwd.log" 2>&1 ||
+printf '%s\n' "$pw" | docker exec -i "$hub" heron-hub passwd --db /data/heron.db > "$work/passwd.log" 2>&1 ||
   fail "passwd via docker exec -i" "$work/passwd.log"
 # login NAME PASSWORD：打印 HTTP 状态码（连不上时 curl 打印 000）；每次调用有自己的响应文件，
 # 失败时看到的不会是上一次调用留下的内容。
 login() {
   rm -f "$work/login-$1.json" "$work/login-$1.headers" "$work/login-$1.curl"
   curl -sS --max-time 10 -o "$work/login-$1.json" -D "$work/login-$1.headers" -w '%{http_code}' \
-    -H 'Content-Type: application/json' --data "{\"password\":\"$2\"}" "$base/probe.v1.AdminService/Login" \
+    -H 'Content-Type: application/json' --data "{\"password\":\"$2\"}" "$base/heron.v1.AdminService/Login" \
     2> "$work/login-$1.curl"
 }
 rc=0
@@ -199,16 +199,16 @@ rc=0
 status=$(login right "$pw") || rc=$?
 [ "$status" = 200 ] ||
   fail "login with the password set through docker exec (got $status, curl exit $rc)" "$work/login-right.json" "$work/login-right.curl"
-grep -qi '^set-cookie: probe_session=' "$work/login-right.headers" ||
+grep -qi '^set-cookie: heron_session=' "$work/login-right.headers" ||
   fail "login did not set the session cookie" "$work/login-right.headers"
 echo "passwd and login ok"
 
 # 两个属主各有来源。/data 属 65532：Dockerfile 把镜像里的 /data 交给 65532，空卷挂上时 Docker 沿用镜像里
-# 该目录的属主。probe.db 属 65532：文件属于创建它的进程的 uid，即以 USER 65532:65532 运行的 hub——
+# 该目录的属主。heron.db 属 65532：文件属于创建它的进程的 uid，即以 USER 65532:65532 运行的 hub——
 # 镜像配置里的 USER 在这里得到核对（checkimage 看的导出 tar 里没有镜像配置）；USER 为 root 时后面"库目录
 # 不可写"一段同样会红。
 docker run --rm --name "$run_id-owner" -v "$data:/data" "$tool" \
-  stat -c '%u:%g %n' /data /data/probe.db > "$work/owner.log" 2> "$work/owner.err" ||
+  stat -c '%u:%g %n' /data /data/heron.db > "$work/owner.log" 2> "$work/owner.err" ||
   fail "stat the data volume" "$work/owner.log" "$work/owner.err"
 awk '$1 != "65532:65532" { bad = 1 } END { exit bad || NR != 2 }' "$work/owner.log" ||
   fail "data volume entries are not owned by 65532:65532" "$work/owner.log"
@@ -242,7 +242,7 @@ docker run --rm --name "$run_id-prepare" -v "$denied_data:/data" "$tool" \
   fail "prepare the root-owned volume"
 run_to_exit "$denied" "hub kept running on an unwritable /data" -v "$denied_data:/data" "$IMAGE"
 [ "$code" = 1 ] || fail "hub on an unwritable /data exited $code, want 1" "$work/$denied.out" "$work/$denied.err"
-grep -q 'open database /data/probe.db' "$work/$denied.err" ||
+grep -q 'open database /data/heron.db' "$work/$denied.err" ||
   fail "error on an unwritable /data does not name the database path" "$work/$denied.out" "$work/$denied.err"
 echo "unwritable data dir ok"
 echo "docker smoke passed: $IMAGE${platform:+ ($platform)}"

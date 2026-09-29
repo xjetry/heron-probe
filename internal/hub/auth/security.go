@@ -24,7 +24,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 	"golang.org/x/net/idna"
 )
 
@@ -44,7 +44,7 @@ type securityState struct {
 
 func (s securityState) WebAuthnID() []byte          { return s.UserID }
 func (s securityState) WebAuthnName() string        { return "admin" }
-func (s securityState) WebAuthnDisplayName() string { return "probe 管理员" }
+func (s securityState) WebAuthnDisplayName() string { return "Heron 管理员" }
 func (s securityState) WebAuthnCredentials() []webauthn.Credential {
 	out := make([]webauthn.Credential, 0, len(s.Passkeys))
 	for _, p := range s.Passkeys {
@@ -128,7 +128,7 @@ func (a *Auth) ConfigureWebAuthn(origin, themeOrigin string) error {
 	} else if strings.Contains(host, ":") {
 		u.Host = "[" + host + "]"
 	}
-	w, err := webauthn.New(&webauthn.Config{RPDisplayName: "probe", RPID: host, RPOrigins: []string{u.Scheme + "://" + u.Host}, AuthenticatorSelection: protocol.AuthenticatorSelection{ResidentKey: protocol.ResidentKeyRequirementRequired, UserVerification: protocol.VerificationRequired}})
+	w, err := webauthn.New(&webauthn.Config{RPDisplayName: "Heron", RPID: host, RPOrigins: []string{u.Scheme + "://" + u.Host}, AuthenticatorSelection: protocol.AuthenticatorSelection{ResidentKey: protocol.ResidentKeyRequirementRequired, UserVerification: protocol.VerificationRequired}})
 	if err != nil {
 		return err
 	}
@@ -535,7 +535,7 @@ func (a *Auth) SecurityAction(ctx context.Context, in SecurityInput, session str
 				return out, err
 			}
 			out.TOTPSecret = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret[:])
-			out.TOTPURI = "otpauth://totp/probe:admin?issuer=probe&algorithm=SHA1&digits=6&period=30&secret=" + out.TOTPSecret
+			out.TOTPURI = "otpauth://totp/Heron:admin?issuer=Heron&algorithm=SHA1&digits=6&period=30&secret=" + out.TOTPSecret
 			if err = a.commitSecurity(ctx, b, s, false, nil); err != nil {
 				return out, err
 			}

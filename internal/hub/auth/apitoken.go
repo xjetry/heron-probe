@@ -6,12 +6,12 @@ import (
 	"encoding/hex"
 	"strings"
 
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 const (
 	// APITokenPrefix 让泄漏到日志、配置或代码仓库里的 token 能被审查与 secret scanning 认出。
-	APITokenPrefix = "probe_at_"
+	APITokenPrefix = "heron_at_"
 	MaxAPITokens   = 100
 )
 
@@ -33,7 +33,7 @@ func (a *Auth) CreateAPIToken(ctx context.Context, name string) (store.APIToken,
 	return tok, plain, nil
 }
 
-// AuthenticateAPIToken 每次都查库、不缓存：吊销在下一个请求即生效，包括 probe-hub 在另一进程里的删除。
+// AuthenticateAPIToken 每次都查库、不缓存：吊销在下一个请求即生效，包括 heron-hub 在另一进程里的删除。
 // 最近使用时刻与会话同一口径——从未使用或距已落库值满 touchEvery 才异步刷新，刷新只 UPDATE。
 func (a *Auth) AuthenticateAPIToken(ctx context.Context, plain string) (bool, error) {
 	if !strings.HasPrefix(plain, APITokenPrefix) {

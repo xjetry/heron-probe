@@ -1,4 +1,4 @@
-import type { PublicSite } from "../gen/probe/v1/public_pb";
+import type { PublicSite } from "../gen/heron/v1/public_pb";
 
 // 站点设置里标题为空时用的标题；面板的外观页拿它作占位提示。
 export const DEFAULT_TITLE = "服务器状态";

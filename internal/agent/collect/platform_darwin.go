@@ -12,7 +12,7 @@ import (
 	"github.com/ebitengine/purego"
 	"golang.org/x/sys/unix"
 
-	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/clock"
 )
 
 func NewPlatform(version string, clk clock.Clock, netInclude, netExclude []string) (*Collector, error) {

@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/auth"
-	"github.com/xjetry/probe/internal/hub/probe"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
+	"github.com/xjetry/heron-probe/internal/hub/probe"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 func TestServePublicSwitchBothSources(t *testing.T) {
@@ -54,8 +54,8 @@ func TestServePublicSwitchBothSources(t *testing.T) {
 			base, _, _ := startTestHub(t, db, clk, flags...)
 			jar, _ := cookiejar.New(nil)
 			client := &http.Client{Jar: jar}
-			admin := probev1connect.NewAdminServiceClient(client, base)
-			if _, err := admin.Login(t.Context(), connect.NewRequest(&probev1.LoginRequest{Password: "public-switch-password"})); err != nil {
+			admin := heronv1connect.NewAdminServiceClient(client, base)
+			if _, err := admin.Login(t.Context(), connect.NewRequest(&heronv1.LoginRequest{Password: "public-switch-password"})); err != nil {
 				t.Fatal(err)
 			}
 			fetch := func(path string) (int, string, http.Header) {
@@ -87,7 +87,7 @@ func TestServePublicSwitchBothSources(t *testing.T) {
 				}
 			}
 			for _, enabled := range []bool{false, true} {
-				if _, err := admin.UpdateSettings(t.Context(), connect.NewRequest(&probev1.UpdateSettingsRequest{Settings: &probev1.Settings{Theme: "auto", PublicEnabled: &enabled}})); err != nil {
+				if _, err := admin.UpdateSettings(t.Context(), connect.NewRequest(&heronv1.UpdateSettingsRequest{Settings: &heronv1.Settings{Theme: "auto", PublicEnabled: &enabled}})); err != nil {
 					t.Fatal(err)
 				}
 				code, body, _ := fetch("/")
@@ -111,7 +111,7 @@ func TestServePublicSwitchBothSources(t *testing.T) {
 				if code, body, _ := fetch("/admin/"); code != adminCode || body != adminBody {
 					t.Fatalf("admin affected: %d %s", code, body)
 				}
-				if _, err := admin.GetSettings(t.Context(), connect.NewRequest(&probev1.GetSettingsRequest{})); err != nil {
+				if _, err := admin.GetSettings(t.Context(), connect.NewRequest(&heronv1.GetSettingsRequest{})); err != nil {
 					t.Fatalf("admin RPC affected: %v", err)
 				}
 			}

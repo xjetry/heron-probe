@@ -12,10 +12,10 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 // memStore 是 Storage 的内存实现：记录每次写入，可注入失败。
@@ -88,8 +88,8 @@ func newBook(t *testing.T, st *memStore) (*Book, *clock.Fake) {
 	return b, clk
 }
 
-func counters(boot string, rx, tx uint64) *probev1.Metrics {
-	return &probev1.Metrics{BootId: boot, NetRxTotal: proto.Uint64(rx), NetTxTotal: proto.Uint64(tx)}
+func counters(boot string, rx, tx uint64) *heronv1.Metrics {
+	return &heronv1.Metrics{BootId: boot, NetRxTotal: proto.Uint64(rx), NetTxTotal: proto.Uint64(tx)}
 }
 
 func TestFirstReportOnlySetsBaseline(t *testing.T) {
@@ -155,7 +155,7 @@ func TestCounterBelowBaselineResetsBaseline(t *testing.T) {
 func TestMissingCountersLeaveBaselineUntouched(t *testing.T) {
 	b, _ := newBook(t, newMem())
 	b.Account(1, counters("b1", 1000, 2000))
-	if d, ok := b.Account(1, &probev1.Metrics{BootId: "b1"}); ok || d != (Delta{}) {
+	if d, ok := b.Account(1, &heronv1.Metrics{BootId: "b1"}); ok || d != (Delta{}) {
 		t.Fatalf("missing counters accounted %+v", d)
 	}
 	// 基线仍是 1000/2000：下一次的增量是 5/5，不是把 0 当基线算出的整值。

@@ -6,7 +6,7 @@ import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Secret } from "../components/Secret";
-import { AdminService } from "../gen/probe/v1/admin_pb";
+import { AdminService } from "../gen/heron/v1/admin_pb";
 import { withId } from "../lib/ids";
 
 // 卡片内容以 hub 下发的为准：与 hub 同版本，面板不另存一份。
@@ -58,7 +58,7 @@ export function ApiTokens() {
       <h1>API token</h1>
       <p className="muted">
         只读凭据，供 agent 与脚本调用：以 <code>Authorization: Bearer &lt;token&gt;</code> 调用只读方法，写操作仍需在面板上完成。
-        保存为 agent 的 skills 目录下的 probe-hub/SKILL.md（Claude Code 为 ~/.claude/skills/probe-hub/SKILL.md），并设置 <code>PROBE_HUB={window.location.origin}</code> 与 <code>PROBE_TOKEN</code>。
+        保存为 agent 的 skills 目录下的 heron-hub/SKILL.md（Claude Code 为 ~/.claude/skills/heron-hub/SKILL.md），并设置 <code>HERON_HUB={window.location.origin}</code> 与 <code>HERON_TOKEN</code>。
       </p>
       <p>
         <button type="button" onClick={() => reference.mutate({})} disabled={reference.isPending}>下载入口卡片</button>

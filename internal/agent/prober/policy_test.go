@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/probelimit"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 )
 
 // loopbackTargets 放行本机回环：引擎测试只连本机的服务，不依赖宿主网络。

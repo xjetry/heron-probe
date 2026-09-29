@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
-import { ChannelKind, ListNotifyChannelsResponseSchema, SettingsSchema, type UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
+import { ChannelKind, ListNotifyChannelsResponseSchema, SettingsSchema, type UpdateSettingsRequest } from "../gen/heron/v1/admin_pb";
 import { renderWithAdmin } from "../test/harness";
 import { Appearance } from "./Appearance";
 import { Channels } from "./Channels";

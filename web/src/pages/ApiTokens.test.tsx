@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { ListApiTokensResponseSchema } from "../gen/probe/v1/admin_pb";
+import { ListApiTokensResponseSchema } from "../gen/heron/v1/admin_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { ApiTokens } from "./ApiTokens";
 
@@ -31,12 +31,12 @@ it("创建后只显示一次明文并刷新列表", async () => {
   const created: string[] = [];
   render({
     listApiTokens: async () => { lists++; return tokens; },
-    createApiToken: async (req) => { created.push(req.name); return { apiToken: { id: 3n, name: req.name, createdAt: 1n }, token: "probe_at_abc" }; },
+    createApiToken: async (req) => { created.push(req.name); return { apiToken: { id: 3n, name: req.name, createdAt: 1n }, token: "heron_at_abc" }; },
   });
   const form = await screen.findByRole("form", { name: "新建 API token" });
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "agent" } });
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
-  expect(await screen.findByLabelText("API token agent（#3）")).toHaveTextContent("probe_at_abc");
+  expect(await screen.findByLabelText("API token agent（#3）")).toHaveTextContent("heron_at_abc");
   expect(created).toEqual(["agent"]);
   await waitFor(() => expect(lists).toBe(2));
   expect(within(form).getByLabelText("名称")).toHaveValue("");
@@ -77,7 +77,7 @@ it("吊销卡片所属 token 时清掉明文，吊销别的保留", async () => 
       { id: 3n, name: "agent", createdAt: 1n },
       { id: 4n, name: "other", createdAt: 1n },
     ] }),
-    createApiToken: async (req) => ({ apiToken: { id: 3n, name: req.name, createdAt: 1n }, token: "probe_at_abc" }),
+    createApiToken: async (req) => ({ apiToken: { id: 3n, name: req.name, createdAt: 1n }, token: "heron_at_abc" }),
     deleteApiToken: async () => ({}),
   });
   const form = await screen.findByRole("form", { name: "新建 API token" });
@@ -94,7 +94,7 @@ it("吊销卡片所属 token 时清掉明文，吊销别的保留", async () => 
 
 it("说明入口卡片的保存路径", async () => {
   render({});
-  expect(await screen.findByText(/~\/\.claude\/skills\/probe-hub\/SKILL\.md/)).toBeInTheDocument();
+  expect(await screen.findByText(/~\/\.claude\/skills\/heron-hub\/SKILL\.md/)).toBeInTheDocument();
 });
 
 it("下载的入口卡片就是 hub 下发的 guide", async () => {
@@ -105,12 +105,12 @@ it("下载的入口卡片就是 hub 下发的 guide", async () => {
   vi.spyOn(URL, "createObjectURL").mockImplementation((b) => { blobs.push(b as Blob); return "blob:card"; });
   const clicked: HTMLAnchorElement[] = [];
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { clicked.push(this); });
-  render({ getApiReference: async () => ({ guide: "---\nname: probe-hub\n---\n卡片", files: [] }) });
+  render({ getApiReference: async () => ({ guide: "---\nname: heron-hub\n---\n卡片", files: [] }) });
   fireEvent.click(await screen.findByRole("button", { name: "下载入口卡片" }));
   await waitFor(() => expect(clicked).toHaveLength(1));
   expect(clicked[0].download).toBe("SKILL.md");
   // undici 的 Response 不认 jsdom 的 Blob，读出来是 "[object Blob]"；这个 jsdom 实现了 Blob.text。
-  expect(await blobs[0].text()).toBe("---\nname: probe-hub\n---\n卡片");
+  expect(await blobs[0].text()).toBe("---\nname: heron-hub\n---\n卡片");
   expect(revoke).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(60_000);
   expect(revoke).toHaveBeenCalledWith("blob:card");

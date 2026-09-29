@@ -17,19 +17,19 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 // 子进程执行真实 main，使 os.Exit 与信号处理不会终止测试宿主。
 func TestHubCommandChild(t *testing.T) {
-	if os.Getenv("PROBE_HUB_COMMAND_CHILD") != "1" {
+	if os.Getenv("HERON_HUB_COMMAND_CHILD") != "1" {
 		return
 	}
 	for i, arg := range os.Args {
 		if arg == "--" {
-			os.Args = append([]string{"probe-hub"}, os.Args[i+1:]...)
+			os.Args = append([]string{"heron-hub"}, os.Args[i+1:]...)
 			main()
 			os.Exit(0)
 		}
@@ -44,7 +44,7 @@ func hubCommand(t *testing.T, args ...string) *exec.Cmd {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(exe, append([]string{"-test.run=^TestHubCommandChild$", "--"}, args...)...)
-	cmd.Env = append(os.Environ(), "PROBE_HUB_COMMAND_CHILD=1")
+	cmd.Env = append(os.Environ(), "HERON_HUB_COMMAND_CHILD=1")
 	return cmd
 }
 
@@ -61,7 +61,7 @@ func (b *commandOutput) Write(p []byte) (int, error) {
 func (b *commandOutput) String() string { b.mu.Lock(); defer b.mu.Unlock(); return b.buf.String() }
 
 func TestMainPasswdServeAndSignal(t *testing.T) {
-	t.Setenv("PROBE_OFFLINE_AFTER", "45s")
+	t.Setenv("HERON_OFFLINE_AFTER", "45s")
 	db := filepath.Join(t.TempDir(), "hub.db")
 	password := "command password with enough characters"
 	set := hubCommand(t, "passwd", "--db", db)
@@ -93,8 +93,8 @@ func TestMainPasswdServeAndSignal(t *testing.T) {
 		}
 		return addr != ""
 	}, "serve command never listened: %s", output)
-	client := probev1connect.NewAdminServiceClient(&http.Client{Timeout: testwait.Bound}, "http://"+addr)
-	if _, err := client.Login(context.Background(), connect.NewRequest(&probev1.LoginRequest{Password: password})); err != nil {
+	client := heronv1connect.NewAdminServiceClient(&http.Client{Timeout: testwait.Bound}, "http://"+addr)
+	if _, err := client.Login(context.Background(), connect.NewRequest(&heronv1.LoginRequest{Password: password})); err != nil {
 		t.Fatalf("command password cannot authenticate real serve: %v", err)
 	}
 	// 排空超时的 ctx 在进程收到信号、进入 shutdownHTTP 之后才开始计。
@@ -136,7 +136,7 @@ func TestRepeatedTerminationCompletesDrain(t *testing.T) {
 
 func checkRepeatedSignalDuringDrain(t *testing.T, sig syscall.Signal) {
 	t.Helper()
-	t.Setenv("PROBE_OFFLINE_AFTER", "30s")
+	t.Setenv("HERON_OFFLINE_AFTER", "30s")
 	cmd := hubCommand(t, "serve", "--db", filepath.Join(t.TempDir(), "hub.db"), "--listen", "127.0.0.1:0")
 	output := &commandOutput{}
 	cmd.Stdout, cmd.Stderr = output, output
@@ -165,7 +165,7 @@ func checkRepeatedSignalDuringDrain(t *testing.T, sig syscall.Signal) {
 		t.Fatal(err)
 	}
 	// 100 Continue 证明处理器已开始读请求体；故意不发完整正文，让首次信号进入排空等待。
-	if _, err := fmt.Fprintf(conn, "POST /probe.v1.AdminService/Login HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 100\r\nExpect: 100-continue\r\n\r\n", addr); err != nil {
+	if _, err := fmt.Fprintf(conn, "POST /heron.v1.AdminService/Login HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 100\r\nExpect: 100-continue\r\n\r\n", addr); err != nil {
 		t.Fatal(err)
 	}
 	reader := bufio.NewReader(conn)

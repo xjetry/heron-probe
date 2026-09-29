@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -101,10 +101,10 @@ func TestToProtoMapsAgeAndOutcomes(t *testing.T) {
 		{TaskID: 3, At: 1999 * time.Millisecond, Outcome: Outcome{Err: "socket denied"}},
 	}
 	got := ToProto(rs, 2*time.Second)
-	want := []*probev1.ProbeResult{
-		{TaskId: 1, AgeMs: 1000, Outcome: &probev1.ProbeResult_RttUs{RttUs: 0}},
-		{TaskId: 2, AgeMs: 500, Outcome: &probev1.ProbeResult_Timeout{Timeout: &probev1.Timeout{}}},
-		{TaskId: 3, AgeMs: 1, Outcome: &probev1.ProbeResult_Error{Error: &probev1.ProbeError{Message: "socket denied"}}},
+	want := []*heronv1.ProbeResult{
+		{TaskId: 1, AgeMs: 1000, Outcome: &heronv1.ProbeResult_RttUs{RttUs: 0}},
+		{TaskId: 2, AgeMs: 500, Outcome: &heronv1.ProbeResult_Timeout{Timeout: &heronv1.Timeout{}}},
+		{TaskId: 3, AgeMs: 1, Outcome: &heronv1.ProbeResult_Error{Error: &heronv1.ProbeError{Message: "socket denied"}}},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("results=%v", got)
@@ -116,7 +116,7 @@ func TestToProtoMapsAgeAndOutcomes(t *testing.T) {
 	}
 }
 
-type engineFunc func(context.Context, *probev1.ProbeTask) Outcome
+type engineFunc func(context.Context, *heronv1.ProbeTask) Outcome
 
 func TestToProtoClampsAge(t *testing.T) {
 	got := ToProto([]Result{{At: time.Second}, {At: -(time.Duration(math.MaxUint32) + 1) * time.Millisecond}}, 0)
@@ -125,22 +125,22 @@ func TestToProtoClampsAge(t *testing.T) {
 	}
 }
 
-func (f engineFunc) Probe(ctx context.Context, task *probev1.ProbeTask) Outcome { return f(ctx, task) }
+func (f engineFunc) Probe(ctx context.Context, task *heronv1.ProbeTask) Outcome { return f(ctx, task) }
 
 func TestMultiDispatchesByKind(t *testing.T) {
 	m := Multi{
-		ICMP: engineFunc(func(context.Context, *probev1.ProbeTask) Outcome { return Outcome{RttUs: 11} }),
-		TCP:  engineFunc(func(context.Context, *probev1.ProbeTask) Outcome { return Outcome{RttUs: 22} }),
+		ICMP: engineFunc(func(context.Context, *heronv1.ProbeTask) Outcome { return Outcome{RttUs: 11} }),
+		TCP:  engineFunc(func(context.Context, *heronv1.ProbeTask) Outcome { return Outcome{RttUs: 22} }),
 	}
 	for _, tc := range []struct {
-		kind probev1.ProbeKind
+		kind heronv1.ProbeKind
 		want Outcome
 	}{
-		{probev1.ProbeKind_PROBE_KIND_ICMP, Outcome{RttUs: 11}},
-		{probev1.ProbeKind_PROBE_KIND_TCP, Outcome{RttUs: 22}},
-		{probev1.ProbeKind_PROBE_KIND_UNSPECIFIED, Outcome{Err: "unsupported probe kind PROBE_KIND_UNSPECIFIED"}},
+		{heronv1.ProbeKind_PROBE_KIND_ICMP, Outcome{RttUs: 11}},
+		{heronv1.ProbeKind_PROBE_KIND_TCP, Outcome{RttUs: 22}},
+		{heronv1.ProbeKind_PROBE_KIND_UNSPECIFIED, Outcome{Err: "unsupported probe kind PROBE_KIND_UNSPECIFIED"}},
 	} {
-		if got := m.Probe(t.Context(), &probev1.ProbeTask{Kind: tc.kind}); got != tc.want {
+		if got := m.Probe(t.Context(), &heronv1.ProbeTask{Kind: tc.kind}); got != tc.want {
 			t.Errorf("kind=%v got=%v want=%v", tc.kind, got, tc.want)
 		}
 	}

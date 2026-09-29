@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/outbound"
-	"github.com/xjetry/probe/internal/testwait"
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 const rejectResult = "CREATE TRIGGER reject_result BEFORE UPDATE ON alert_delivery WHEN NEW.done = 1 OR NEW.ok = 1 BEGIN SELECT RAISE(ABORT, 'result write blocked'); END"

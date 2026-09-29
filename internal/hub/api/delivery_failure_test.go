@@ -10,14 +10,14 @@ import (
 
 	"connectrpc.com/connect"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // 存储类别与协议枚举必须一一对应：漏一个映射会让 ListAlertEvents 整页 internal，
 // 两个类别映到同一枚举值会让只读口径分不清它们。
 func TestDeliveryFailureMappingIsOneToOne(t *testing.T) {
-	seen := map[probev1.DeliveryFailure]store.DeliveryFailure{}
+	seen := map[heronv1.DeliveryFailure]store.DeliveryFailure{}
 	for _, f := range append([]store.DeliveryFailure{store.FailureNone}, store.DeliveryFailures()...) {
 		v, err := deliveryFailureProto(f)
 		if err != nil {
@@ -28,13 +28,13 @@ func TestDeliveryFailureMappingIsOneToOne(t *testing.T) {
 		}
 		seen[v] = f
 	}
-	if got, want := len(seen), len(probev1.DeliveryFailure_name); got != want {
+	if got, want := len(seen), len(heronv1.DeliveryFailure_name); got != want {
 		t.Fatalf("store categories cover %d of %d protocol values: %v", got, want, seen)
 	}
 	if v, err := deliveryFailureProto("bogus"); err == nil {
 		t.Fatalf("unknown category mapped to %v instead of failing", v)
 	}
-	if seen[probev1.DeliveryFailure_DELIVERY_FAILURE_UNSPECIFIED] != store.FailureNone {
+	if seen[heronv1.DeliveryFailure_DELIVERY_FAILURE_UNSPECIFIED] != store.FailureNone {
 		t.Fatal("UNSPECIFIED must mean no failure")
 	}
 }
@@ -42,7 +42,7 @@ func TestDeliveryFailureMappingIsOneToOne(t *testing.T) {
 // rawBody 用纯 HTTP+JSON 调一个 AdminService 方法并返回整个响应体，断言针对的是序列化后真正出线的字节。
 func rawBody(t *testing.T, h *harness, method, body string, headers map[string][]string) (int, string) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/probe.v1.AdminService/"+method, strings.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/heron.v1.AdminService/"+method, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestDeliveryErrorTextOnlyReachesSessions(t *testing.T) {
 		t.Fatalf("token ListAlertEvents lacks category or status: %s", body)
 	}
 
-	resp, err := h.admin.GetAlertDeliveryError(t.Context(), connect.NewRequest(&probev1.GetAlertDeliveryErrorRequest{DeliveryId: id}))
+	resp, err := h.admin.GetAlertDeliveryError(t.Context(), connect.NewRequest(&heronv1.GetAlertDeliveryErrorRequest{DeliveryId: id}))
 	if err != nil || resp.Msg.GetError() != echoed {
 		t.Fatalf("session GetAlertDeliveryError=%v err=%v, want %q", resp, err, echoed)
 	}
@@ -127,12 +127,12 @@ func TestListAlertEventsReportsFailureCategory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	resp, err := h.admin.ListAlertEvents(t.Context(), connect.NewRequest(&probev1.ListAlertEventsRequest{}))
+	resp, err := h.admin.ListAlertEvents(t.Context(), connect.NewRequest(&heronv1.ListAlertEventsRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ds := resp.Msg.GetEvents()[0].GetDeliveries()
-	for i, want := range []probev1.DeliveryFailure{probev1.DeliveryFailure_DELIVERY_FAILURE_TRANSPORT, probev1.DeliveryFailure_DELIVERY_FAILURE_CHANNEL_DELETED, probev1.DeliveryFailure_DELIVERY_FAILURE_UNSPECIFIED} {
+	for i, want := range []heronv1.DeliveryFailure{heronv1.DeliveryFailure_DELIVERY_FAILURE_TRANSPORT, heronv1.DeliveryFailure_DELIVERY_FAILURE_CHANNEL_DELETED, heronv1.DeliveryFailure_DELIVERY_FAILURE_UNSPECIFIED} {
 		if d := ds[i]; d.GetId() != ev.Deliveries[i].ID || d.GetFailure() != want || d.HttpStatus != nil {
 			t.Errorf("delivery %d = %v, want id %d failure %v without http_status", i, d, ev.Deliveries[i].ID, want)
 		}
@@ -142,7 +142,7 @@ func TestListAlertEventsReportsFailureCategory(t *testing.T) {
 func TestGetAlertDeliveryErrorNotFound(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	_, err := h.admin.GetAlertDeliveryError(t.Context(), connect.NewRequest(&probev1.GetAlertDeliveryErrorRequest{DeliveryId: 999}))
+	_, err := h.admin.GetAlertDeliveryError(t.Context(), connect.NewRequest(&heronv1.GetAlertDeliveryErrorRequest{DeliveryId: 999}))
 	if codeOf(err) != connect.CodeNotFound || err.Error() != "not_found: delivery_id: alert delivery 999 does not exist" {
 		t.Fatalf("err=%v", err)
 	}

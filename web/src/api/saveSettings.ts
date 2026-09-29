@@ -1,7 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { createConnectQueryKey } from "@connectrpc/connect-query";
 import { useIsMutating, useQueryClient } from "@tanstack/react-query";
-import { AdminService, GetSettingsResponseSchema, type Settings } from "../gen/probe/v1/admin_pb";
+import { AdminService, GetSettingsResponseSchema, type Settings } from "../gen/heron/v1/admin_pb";
 
 // SAVE_SETTINGS 是全部 UpdateSettings 表单共用的 mutationKey，做保存互斥。消费者：外观页的外观表单与国家 / 地区查询表单
 // （pages/Appearance.tsx）、备份表单（components/BackupSettingsForm.tsx）、通知页的登录通知表单（pages/Channels.tsx）。
@@ -14,7 +14,7 @@ import { AdminService, GetSettingsResponseSchema, type Settings } from "../gen/p
 // 在重新拉取成功之前，从缓存初始化的表单会把较早那份回显里的旧值再提交一次（再保存即写回），另一次保存的改动就此丢失。
 // 键上有在途的保存时，其余表单都不能提交；各表单的 onSuccess 返回 useAdoptSavedSettings 的 promise，在途一直持续到
 // 重新拉取结束，同一时刻至多一份回显在写缓存。
-export const SAVE_SETTINGS = ["probe.v1.AdminService/UpdateSettings"] as const;
+export const SAVE_SETTINGS = ["heron.v1.AdminService/UpdateSettings"] as const;
 
 export const useSettingsSaving = (): boolean => useIsMutating({ mutationKey: SAVE_SETTINGS }) > 0;
 

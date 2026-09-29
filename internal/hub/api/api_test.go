@@ -22,21 +22,21 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/alert"
-	"github.com/xjetry/probe/internal/hub/auth"
-	"github.com/xjetry/probe/internal/hub/backup"
-	"github.com/xjetry/probe/internal/hub/geo"
-	"github.com/xjetry/probe/internal/hub/ingest"
-	"github.com/xjetry/probe/internal/hub/live"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/hub/outbound"
-	"github.com/xjetry/probe/internal/hub/probe"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/hub/traffic"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/alert"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
+	"github.com/xjetry/heron-probe/internal/hub/backup"
+	"github.com/xjetry/heron-probe/internal/hub/geo"
+	"github.com/xjetry/heron-probe/internal/hub/ingest"
+	"github.com/xjetry/heron-probe/internal/hub/live"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/hub/probe"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/traffic"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 const password = "correct horse battery staple"
@@ -45,8 +45,8 @@ type harness struct {
 	dbPath string
 	srv    *httptest.Server
 	http   *http.Client // 带 cookie jar
-	admin  probev1connect.AdminServiceClient
-	agent  probev1connect.AgentServiceClient
+	admin  heronv1connect.AdminServiceClient
+	agent  heronv1connect.AgentServiceClient
 	clk    *clock.Fake
 	store  *store.Store
 	auth   *auth.Auth
@@ -138,8 +138,8 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
 	hc := &http.Client{Jar: jar}
-	return &harness{dbPath: dbPath, srv: srv, http: hc, admin: probev1connect.NewAdminServiceClient(hc, srv.URL),
-		agent: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, book: book, reg: reg, alerts: alerts, svc: svc, pub: pub}
+	return &harness{dbPath: dbPath, srv: srv, http: hc, admin: heronv1connect.NewAdminServiceClient(hc, srv.URL),
+		agent: heronv1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, book: book, reg: reg, alerts: alerts, svc: svc, pub: pub}
 }
 
 func (h *harness) login(t *testing.T) {
@@ -147,37 +147,37 @@ func (h *harness) login(t *testing.T) {
 	if err := h.auth.SetPassword(context.Background(), password); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.admin.Login(context.Background(), connect.NewRequest(&probev1.LoginRequest{Password: password})); err != nil {
+	if _, err := h.admin.Login(context.Background(), connect.NewRequest(&heronv1.LoginRequest{Password: password})); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func (h *harness) createNode(t *testing.T, name string) (int64, string) {
 	t.Helper()
-	resp, err := h.admin.CreateNode(context.Background(), connect.NewRequest(&probev1.CreateNodeRequest{Name: name}))
+	resp, err := h.admin.CreateNode(context.Background(), connect.NewRequest(&heronv1.CreateNodeRequest{Name: name}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return resp.Msg.GetNode().GetId(), resp.Msg.GetToken()
 }
 
-func (h *harness) report(t *testing.T, tok string, m *probev1.Metrics) error {
+func (h *harness) report(t *testing.T, tok string, m *heronv1.Metrics) error {
 	t.Helper()
-	req := connect.NewRequest(&probev1.ReportRequest{Metrics: m})
+	req := connect.NewRequest(&heronv1.ReportRequest{Metrics: m})
 	req.Header().Set("Authorization", "Bearer "+tok)
 	_, err := h.agent.Report(context.Background(), req)
 	return err
 }
 
 // publicClient 是不带任何凭据的公开服务客户端：harness.http 带着会话 cookie jar，这里用裸客户端。
-func (h *harness) publicClient(opts ...connect.ClientOption) probev1connect.PublicServiceClient {
-	return probev1connect.NewPublicServiceClient(h.srv.Client(), h.srv.URL, opts...)
+func (h *harness) publicClient(opts ...connect.ClientOption) heronv1connect.PublicServiceClient {
+	return heronv1connect.NewPublicServiceClient(h.srv.Client(), h.srv.URL, opts...)
 }
 
 // setPublic 只改公开与否；UpdateNode 整体替换可编辑字段，其余取建节点时的默认值（重置日 1、宽限期取 TTL）。
 func (h *harness) setPublic(t *testing.T, id int64, name string, public bool) {
 	t.Helper()
-	req := &probev1.UpdateNodeRequest{Id: id, Name: name, Public: public, TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0)}
+	req := &heronv1.UpdateNodeRequest{Id: id, Name: name, Public: public, TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0)}
 	if _, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(req)); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func (h *harness) setPublic(t *testing.T, id int64, name string, public bool) {
 
 func codeOf(err error) connect.Code { return connect.CodeOf(err) }
 
-// rowCounts 按表名取行数，来源与 GetStorageStats、probe-hub stats 相同。
+// rowCounts 按表名取行数，来源与 GetStorageStats、heron-hub stats 相同。
 func rowCounts(t *testing.T, st *store.Store) map[string]int64 {
 	t.Helper()
 	stats, err := st.StorageStats(t.Context())
@@ -201,7 +201,7 @@ func rowCounts(t *testing.T, st *store.Store) map[string]int64 {
 
 func TestEveryAdminProcedureRejectsAnonymousCalls(t *testing.T) {
 	h := newHarness(t, "")
-	services := probev1.File_probe_v1_admin_proto.Services()
+	services := heronv1.File_heron_v1_admin_proto.Services()
 	count := 0
 	for i := 0; i < services.Len(); i++ {
 		svc := services.Get(i)
@@ -209,7 +209,7 @@ func TestEveryAdminProcedureRejectsAnonymousCalls(t *testing.T) {
 			method := svc.Methods().Get(j)
 			path := "/" + string(svc.FullName()) + "/" + string(method.Name())
 			// LOGIN 方法的凭据在请求体里，匿名白名单由 cmd/hub/mux_test 守；无管理员的 Login 失败不能证明拦截器存在。
-			if h.svc.access[path] == probev1.Access_ACCESS_LOGIN {
+			if h.svc.access[path] == heronv1.Access_ACCESS_LOGIN {
 				continue
 			}
 			count++
@@ -238,30 +238,30 @@ func TestEveryAdminProcedureRejectsAnonymousCalls(t *testing.T) {
 func TestLoginRequiresAdminAndRightPassword(t *testing.T) {
 	h := newHarness(t, "")
 	ctx := context.Background()
-	_, err := h.admin.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: password}))
+	_, err := h.admin.Login(ctx, connect.NewRequest(&heronv1.LoginRequest{Password: password}))
 	if codeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("login with empty admin table: %v", err)
 	}
 	if err := h.auth.SetPassword(ctx, password); err != nil {
 		t.Fatal(err)
 	}
-	_, err = h.admin.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: "not it, definitely"}))
+	_, err = h.admin.Login(ctx, connect.NewRequest(&heronv1.LoginRequest{Password: "not it, definitely"}))
 	if codeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("wrong password: %v", err)
 	}
-	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{})); codeOf(err) != connect.CodeUnauthenticated {
+	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&heronv1.ListNodesRequest{})); codeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("ListNodes before login: %v", err)
 	}
-	if _, err := h.admin.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: password})); err != nil {
+	if _, err := h.admin.Login(ctx, connect.NewRequest(&heronv1.LoginRequest{Password: password})); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{})); err != nil {
+	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&heronv1.ListNodesRequest{})); err != nil {
 		t.Fatalf("ListNodes after login: %v", err)
 	}
-	if _, err := h.admin.Logout(ctx, connect.NewRequest(&probev1.LogoutRequest{})); err != nil {
+	if _, err := h.admin.Logout(ctx, connect.NewRequest(&heronv1.LogoutRequest{})); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{})); codeOf(err) != connect.CodeUnauthenticated {
+	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&heronv1.ListNodesRequest{})); codeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("ListNodes after logout: %v", err)
 	}
 }
@@ -293,7 +293,7 @@ func TestLoginBusyReturnsResourceExhausted(t *testing.T) {
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, testwait.Bound)
 	defer cancel()
-	_, err := h.admin.Login(requestCtx, connect.NewRequest(&probev1.LoginRequest{Password: password}))
+	_, err := h.admin.Login(requestCtx, connect.NewRequest(&heronv1.LoginRequest{Password: password}))
 	var ce *connect.Error
 	if !errors.As(err, &ce) || ce.Code() != connect.CodeResourceExhausted || ce.Message() != "password verification is busy; please try again later" {
 		t.Fatalf("busy login = %v, want ResourceExhausted with retry message", err)
@@ -302,7 +302,7 @@ func TestLoginBusyReturnsResourceExhausted(t *testing.T) {
 
 func loginRaw(t *testing.T, h *harness, xfProto string) *http.Response {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodPost, h.srv.URL+"/probe.v1.AdminService/Login", strings.NewReader(`{"password":"`+password+`"}`))
+	req, _ := http.NewRequest(http.MethodPost, h.srv.URL+"/heron.v1.AdminService/Login", strings.NewReader(`{"password":"`+password+`"}`))
 	req.Header.Set("Content-Type", "application/json")
 	if xfProto != "" {
 		req.Header.Set("X-Forwarded-Proto", xfProto)
@@ -324,7 +324,7 @@ func TestLoginLockoutKeysOnEveryForwardedForLine(t *testing.T) {
 	h := newHarness(t, "127.0.0.1/32")
 	h.auth.SetPassword(t.Context(), password)
 	login := func(pw string, forged int) (int, string) {
-		req, _ := http.NewRequest(http.MethodPost, h.srv.URL+"/probe.v1.AdminService/Login", strings.NewReader(`{"password":"`+pw+`"}`))
+		req, _ := http.NewRequest(http.MethodPost, h.srv.URL+"/heron.v1.AdminService/Login", strings.NewReader(`{"password":"`+pw+`"}`))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Add("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", forged))
 		req.Header.Add("X-Forwarded-For", "198.51.100.9")
@@ -360,7 +360,7 @@ func TestSessionCookieIsHostOnlyStrictAndSecureOnlyBehindTLSProxy(t *testing.T) 
 		t.Fatalf("cookies = %v", cookies)
 	}
 	c := cookies[0]
-	if c.Name != "probe_session" || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Domain != "" || c.Path != "/" || c.Secure || c.MaxAge != 30*24*60*60 {
+	if c.Name != "heron_session" || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Domain != "" || c.Path != "/" || c.Secure || c.MaxAge != 30*24*60*60 {
 		t.Errorf("cookie = %+v", c)
 	}
 	if len(c.Value) != 64 {
@@ -386,7 +386,7 @@ func TestCrossSiteRequestShapesAreRejectedWithoutSideEffects(t *testing.T) {
 	outbound := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
 	defer outbound.Close()
 	c := saveChannel(t, h, webhook(outbound.URL))
-	if _, err := h.admin.TestNotifyChannel(t.Context(), connect.NewRequest(&probev1.TestNotifyChannelRequest{Id: c.Id})); err != nil {
+	if _, err := h.admin.TestNotifyChannel(t.Context(), connect.NewRequest(&heronv1.TestNotifyChannelRequest{Id: c.Id})); err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 1 {
@@ -394,7 +394,7 @@ func TestCrossSiteRequestShapesAreRejectedWithoutSideEffects(t *testing.T) {
 	}
 	calls.Store(0)
 	before := rowCounts(t, h.store)
-	services := probev1.File_probe_v1_admin_proto.Services()
+	services := heronv1.File_heron_v1_admin_proto.Services()
 	for i := 0; i < services.Len(); i++ {
 		service := services.Get(i)
 		for j := 0; j < service.Methods().Len(); j++ {
@@ -427,7 +427,7 @@ func TestCrossSiteRequestShapesAreRejectedWithoutSideEffects(t *testing.T) {
 	if !reflect.DeepEqual(before, after) {
 		t.Fatalf("cross-site changed counts: before=%v after=%v", before, after)
 	}
-	resp, err := h.http.Get(h.srv.URL + "/probe.v1.AdminService/CreateNode?connect=v1&encoding=json&message=%7B%22name%22%3A%22csrf%22%7D")
+	resp, err := h.http.Get(h.srv.URL + "/heron.v1.AdminService/CreateNode?connect=v1&encoding=json&message=%7B%22name%22%3A%22csrf%22%7D")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,14 +444,14 @@ func TestPasswordChangeAndExpiryEndSessions(t *testing.T) {
 	if err := h.auth.SetPassword(ctx, "a completely new password"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{})); codeOf(err) != connect.CodeUnauthenticated {
+	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&heronv1.ListNodesRequest{})); codeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("session survived password change: %v", err)
 	}
-	if _, err := h.admin.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: "a completely new password"})); err != nil {
+	if _, err := h.admin.Login(ctx, connect.NewRequest(&heronv1.LoginRequest{Password: "a completely new password"})); err != nil {
 		t.Fatal(err)
 	}
 	h.clk.Advance(auth.SessionIdle)
-	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{})); codeOf(err) != connect.CodeUnauthenticated {
+	if _, err := h.admin.ListNodes(ctx, connect.NewRequest(&heronv1.ListNodesRequest{})); codeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("idle session survived: %v", err)
 	}
 }
@@ -464,22 +464,22 @@ func TestCreatedTokenReportsAndDeleteForgetsEverything(t *testing.T) {
 	if n, _ := h.store.GetNode(ctx, id); n.Name != "web-01" {
 		t.Fatalf("name = %q, want trimmed and sanitized", n.Name)
 	}
-	if err := h.report(t, tok, &probev1.Metrics{CpuPct: proto.Float64(3)}); err != nil {
+	if err := h.report(t, tok, &heronv1.Metrics{CpuPct: proto.Float64(3)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := h.live.Get(id); !ok {
 		t.Fatal("report did not reach live")
 	}
-	if _, err := h.admin.DeleteNode(ctx, connect.NewRequest(&probev1.DeleteNodeRequest{Id: id})); err != nil {
+	if _, err := h.admin.DeleteNode(ctx, connect.NewRequest(&heronv1.DeleteNodeRequest{Id: id})); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := h.live.Get(id); ok {
 		t.Fatal("live state survived DeleteNode")
 	}
-	if err := h.report(t, tok, &probev1.Metrics{}); codeOf(err) != connect.CodeUnauthenticated {
+	if err := h.report(t, tok, &heronv1.Metrics{}); codeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("deleted node's token still reports: %v", err)
 	}
-	if _, err := h.admin.DeleteNode(ctx, connect.NewRequest(&probev1.DeleteNodeRequest{Id: id})); codeOf(err) != connect.CodeNotFound {
+	if _, err := h.admin.DeleteNode(ctx, connect.NewRequest(&heronv1.DeleteNodeRequest{Id: id})); codeOf(err) != connect.CodeNotFound {
 		t.Fatalf("deleting twice: %v, want NotFound", err)
 	}
 }
@@ -489,17 +489,17 @@ func TestRotateTokenInvalidatesTheOldOne(t *testing.T) {
 	h.login(t)
 	ctx := context.Background()
 	id, old := h.createNode(t, "n")
-	resp, err := h.admin.RotateNodeToken(ctx, connect.NewRequest(&probev1.RotateNodeTokenRequest{Id: id}))
+	resp, err := h.admin.RotateNodeToken(ctx, connect.NewRequest(&heronv1.RotateNodeTokenRequest{Id: id}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := h.report(t, old, &probev1.Metrics{}); codeOf(err) != connect.CodeUnauthenticated {
+	if err := h.report(t, old, &heronv1.Metrics{}); codeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("old token still accepted: %v", err)
 	}
-	if err := h.report(t, resp.Msg.GetToken(), &probev1.Metrics{}); err != nil {
+	if err := h.report(t, resp.Msg.GetToken(), &heronv1.Metrics{}); err != nil {
 		t.Fatalf("new token rejected: %v", err)
 	}
-	if _, err := h.admin.RotateNodeToken(ctx, connect.NewRequest(&probev1.RotateNodeTokenRequest{Id: 999})); codeOf(err) != connect.CodeNotFound {
+	if _, err := h.admin.RotateNodeToken(ctx, connect.NewRequest(&heronv1.RotateNodeTokenRequest{Id: 999})); codeOf(err) != connect.CodeNotFound {
 		t.Fatalf("unknown node: %v", err)
 	}
 }
@@ -510,23 +510,23 @@ func TestUpdateAndReorderNodes(t *testing.T) {
 	ctx := context.Background()
 	a, _ := h.createNode(t, "a")
 	b, _ := h.createNode(t, "b")
-	upd, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: a, Name: "a2", Public: true, Note: "note‮", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0)}))
+	upd, err := h.admin.UpdateNode(ctx, connect.NewRequest(&heronv1.UpdateNodeRequest{Id: a, Name: "a2", Public: true, Note: "note‮", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0)}))
 	if err != nil || upd.Msg.GetNode().GetName() != "a2" || !upd.Msg.GetNode().GetPublic() || upd.Msg.GetNode().GetNote() != "note" {
 		t.Fatalf("UpdateNode = %v %v", upd, err)
 	}
-	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: a, Name: strings.Repeat("x", 65), OfflineGraceS: proto.Uint32(0)})); codeOf(err) != connect.CodeInvalidArgument {
+	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&heronv1.UpdateNodeRequest{Id: a, Name: strings.Repeat("x", 65), OfflineGraceS: proto.Uint32(0)})); codeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("65-char name: %v", err)
 	}
-	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: 999, Name: "x", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0)})); codeOf(err) != connect.CodeNotFound {
+	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&heronv1.UpdateNodeRequest{Id: 999, Name: "x", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0)})); codeOf(err) != connect.CodeNotFound {
 		t.Fatalf("unknown node: %v", err)
 	}
-	if _, err := h.admin.ReorderNodes(ctx, connect.NewRequest(&probev1.ReorderNodesRequest{Ids: []int64{b}})); codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "exactly once") {
+	if _, err := h.admin.ReorderNodes(ctx, connect.NewRequest(&heronv1.ReorderNodesRequest{Ids: []int64{b}})); codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "exactly once") {
 		t.Fatalf("partial reorder: %v", err)
 	}
-	if _, err := h.admin.ReorderNodes(ctx, connect.NewRequest(&probev1.ReorderNodesRequest{Ids: []int64{b, a}})); err != nil {
+	if _, err := h.admin.ReorderNodes(ctx, connect.NewRequest(&heronv1.ReorderNodesRequest{Ids: []int64{b, a}})); err != nil {
 		t.Fatal(err)
 	}
-	list, _ := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{}))
+	list, _ := h.admin.ListNodes(ctx, connect.NewRequest(&heronv1.ListNodesRequest{}))
 	if ids := []int64{list.Msg.Nodes[0].Id, list.Msg.Nodes[1].Id}; ids[0] != b || ids[1] != a {
 		t.Fatalf("order = %v, want [b a]", ids)
 	}
@@ -536,38 +536,38 @@ func TestRegisterWindowLifecycle(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
-	if _, err := h.admin.OpenRegisterWindow(ctx, connect.NewRequest(&probev1.OpenRegisterWindowRequest{TtlS: 10, MaxNodes: 1})); codeOf(err) != connect.CodeInvalidArgument {
+	if _, err := h.admin.OpenRegisterWindow(ctx, connect.NewRequest(&heronv1.OpenRegisterWindowRequest{TtlS: 10, MaxNodes: 1})); codeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("ttl 10s: %v", err)
 	}
-	opened, err := h.admin.OpenRegisterWindow(ctx, connect.NewRequest(&probev1.OpenRegisterWindowRequest{TtlS: 3600, MaxNodes: 2}))
+	opened, err := h.admin.OpenRegisterWindow(ctx, connect.NewRequest(&heronv1.OpenRegisterWindowRequest{TtlS: 3600, MaxNodes: 2}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if opened.Msg.GetExpiresAt() != h.clk.Now().Add(time.Hour).Unix() || len(opened.Msg.GetKey()) != 64 {
 		t.Fatalf("opened = %v", opened.Msg)
 	}
-	got, _ := h.admin.GetRegisterWindow(ctx, connect.NewRequest(&probev1.GetRegisterWindowRequest{}))
+	got, _ := h.admin.GetRegisterWindow(ctx, connect.NewRequest(&heronv1.GetRegisterWindowRequest{}))
 	if !got.Msg.GetOpen() || got.Msg.GetRemaining() != 2 {
 		t.Fatalf("window = %v", got.Msg)
 	}
-	if _, err := h.agent.Register(ctx, connect.NewRequest(&probev1.RegisterRequest{Key: opened.Msg.GetKey(), Name: "via-window"})); err != nil {
+	if _, err := h.agent.Register(ctx, connect.NewRequest(&heronv1.RegisterRequest{Key: opened.Msg.GetKey(), Name: "via-window"})); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = h.admin.GetRegisterWindow(ctx, connect.NewRequest(&probev1.GetRegisterWindowRequest{}))
+	got, _ = h.admin.GetRegisterWindow(ctx, connect.NewRequest(&heronv1.GetRegisterWindowRequest{}))
 	if got.Msg.GetRemaining() != 1 {
 		t.Fatalf("remaining = %d after one registration", got.Msg.GetRemaining())
 	}
-	if _, err := h.admin.CloseRegisterWindow(ctx, connect.NewRequest(&probev1.CloseRegisterWindowRequest{})); err != nil {
+	if _, err := h.admin.CloseRegisterWindow(ctx, connect.NewRequest(&heronv1.CloseRegisterWindowRequest{})); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ = h.admin.GetRegisterWindow(ctx, connect.NewRequest(&probev1.GetRegisterWindowRequest{})); got.Msg.GetOpen() {
+	if got, _ = h.admin.GetRegisterWindow(ctx, connect.NewRequest(&heronv1.GetRegisterWindowRequest{})); got.Msg.GetOpen() {
 		t.Fatal("closed window reported open")
 	}
-	if _, err := h.admin.OpenRegisterWindow(ctx, connect.NewRequest(&probev1.OpenRegisterWindowRequest{TtlS: 3600, MaxNodes: 1})); err != nil {
+	if _, err := h.admin.OpenRegisterWindow(ctx, connect.NewRequest(&heronv1.OpenRegisterWindowRequest{TtlS: 3600, MaxNodes: 1})); err != nil {
 		t.Fatal(err)
 	}
 	h.clk.Advance(time.Hour)
-	if got, _ = h.admin.GetRegisterWindow(ctx, connect.NewRequest(&probev1.GetRegisterWindowRequest{})); got.Msg.GetOpen() {
+	if got, _ = h.admin.GetRegisterWindow(ctx, connect.NewRequest(&heronv1.GetRegisterWindowRequest{})); got.Msg.GetOpen() {
 		t.Fatal("expired window reported open")
 	}
 }
@@ -575,7 +575,7 @@ func TestRegisterWindowLifecycle(t *testing.T) {
 func TestGetSnapshotReportsHubVersion(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	resp, err := h.admin.GetSnapshot(context.Background(), connect.NewRequest(&probev1.GetSnapshotRequest{}))
+	resp, err := h.admin.GetSnapshot(context.Background(), connect.NewRequest(&heronv1.GetSnapshotRequest{}))
 	if err != nil {
 		t.Fatalf("GetSnapshot: %v", err)
 	}
@@ -590,17 +590,17 @@ func TestSnapshotReflectsLiveState(t *testing.T) {
 	ctx := context.Background()
 	online, tok := h.createNode(t, "online")
 	silent, _ := h.createNode(t, "silent")
-	if err := h.report(t, tok, &probev1.Metrics{CpuPct: proto.Float64(42)}); err != nil {
+	if err := h.report(t, tok, &heronv1.Metrics{CpuPct: proto.Float64(42)}); err != nil {
 		t.Fatal(err)
 	}
-	snap, err := h.admin.GetSnapshot(ctx, connect.NewRequest(&probev1.GetSnapshotRequest{}))
+	snap, err := h.admin.GetSnapshot(ctx, connect.NewRequest(&heronv1.GetSnapshotRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if snap.Msg.GetNow() != h.clk.Now().Unix() || snap.Msg.GetReportIntervalMs() != 10_000 || len(snap.Msg.Nodes) != 2 {
 		t.Fatalf("snapshot = %v", snap.Msg)
 	}
-	byID := map[int64]*probev1.NodeStatus{}
+	byID := map[int64]*heronv1.NodeStatus{}
 	for _, n := range snap.Msg.Nodes {
 		byID[n.Id] = n
 	}
@@ -611,7 +611,7 @@ func TestSnapshotReflectsLiveState(t *testing.T) {
 		t.Fatalf("silent node = %v", n)
 	}
 	h.clk.Advance(31 * time.Second)
-	snap, _ = h.admin.GetSnapshot(ctx, connect.NewRequest(&probev1.GetSnapshotRequest{}))
+	snap, _ = h.admin.GetSnapshot(ctx, connect.NewRequest(&heronv1.GetSnapshotRequest{}))
 	for _, n := range snap.Msg.Nodes {
 		if n.Id == online && (n.GetOnline() || n.GetMetrics().GetCpuPct() != 42) {
 			t.Fatalf("after TTL: %v (must be offline but keep the last readings)", n)
@@ -628,13 +628,13 @@ func TestQueryMetricsShapeAndValidation(t *testing.T) {
 	var rows []metric.Row
 	for i := int64(0); i < 10; i++ {
 		b := metric.NewBucket()
-		b.Add(&probev1.Metrics{CpuPct: proto.Float64(float64(i)), MemUsed: proto.Uint64(100)})
+		b.Add(&heronv1.Metrics{CpuPct: proto.Float64(float64(i)), MemUsed: proto.Uint64(100)})
 		rows = append(rows, metric.Row{NodeID: id, TS: base + i*60, Bucket: b})
 	}
 	if _, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: rows}); err != nil {
 		t.Fatal(err)
 	}
-	resp, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&probev1.QueryMetricsRequest{NodeId: id, From: base + 30, To: base + 600, MaxPoints: 4}))
+	resp, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&heronv1.QueryMetricsRequest{NodeId: id, From: base + 30, To: base + 600, MaxPoints: 4}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -659,7 +659,7 @@ func TestQueryMetricsShapeAndValidation(t *testing.T) {
 		t.Fatalf("load series = %v", load)
 	}
 
-	for name, req := range map[string]*probev1.QueryMetricsRequest{
+	for name, req := range map[string]*heronv1.QueryMetricsRequest{
 		"from >= to":        {NodeId: id, From: base + 600, To: base + 600},
 		"span > 400d":       {NodeId: id, From: base, To: base + 401*86400},
 		"max_points > 2000": {NodeId: id, From: base, To: base + 600, MaxPoints: 2001},
@@ -668,7 +668,7 @@ func TestQueryMetricsShapeAndValidation(t *testing.T) {
 			t.Fatalf("%s: %v, want InvalidArgument", name, err)
 		}
 	}
-	if _, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&probev1.QueryMetricsRequest{NodeId: 999, From: base, To: base + 600})); codeOf(err) != connect.CodeNotFound {
+	if _, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&heronv1.QueryMetricsRequest{NodeId: 999, From: base, To: base + 600})); codeOf(err) != connect.CodeNotFound {
 		t.Fatalf("unknown node: %v, want NotFound", err)
 	}
 }
@@ -679,19 +679,19 @@ func TestUnicodeValidationAndQueryRangeEdges(t *testing.T) {
 	ctx := context.Background()
 	for _, name := range []string{"", "\x00\u202e ", strings.Repeat("😀", 65)} {
 		t.Run("name/"+name, func(t *testing.T) {
-			if _, err := h.admin.CreateNode(ctx, connect.NewRequest(&probev1.CreateNodeRequest{Name: name})); codeOf(err) != connect.CodeInvalidArgument {
+			if _, err := h.admin.CreateNode(ctx, connect.NewRequest(&heronv1.CreateNodeRequest{Name: name})); codeOf(err) != connect.CodeInvalidArgument {
 				t.Fatalf("invalid name accepted: %v", err)
 			}
 		})
 	}
 	id, _ := h.createNode(t, strings.Repeat("😀", 64))
 	for _, n := range []int{1024, 1025} {
-		_, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", Note: strings.Repeat("😀", n), TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0)}))
+		_, err := h.admin.UpdateNode(ctx, connect.NewRequest(&heronv1.UpdateNodeRequest{Id: id, Name: "n", Note: strings.Repeat("😀", n), TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0)}))
 		if (n == 1024 && err != nil) || (n == 1025 && codeOf(err) != connect.CodeInvalidArgument) {
 			t.Errorf("note length %d: %v", n, err)
 		}
 	}
-	for _, q := range []*probev1.QueryMetricsRequest{
+	for _, q := range []*heronv1.QueryMetricsRequest{
 		{NodeId: id, From: -1, To: 60},
 		{NodeId: id, From: math.MinInt64, To: math.MaxInt64},
 		{NodeId: id, From: 1, To: 1 + 18446744074},
@@ -702,12 +702,12 @@ func TestUnicodeValidationAndQueryRangeEdges(t *testing.T) {
 	}
 
 	b := metric.NewBucket()
-	b.Add(&probev1.Metrics{CpuPct: proto.Float64(7)})
+	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(7)})
 	ts := int64(math.MaxInt64 - math.MaxInt64%60)
 	if _, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: ts, Bucket: b}}}); err != nil {
 		t.Fatal(err)
 	}
-	out, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&probev1.QueryMetricsRequest{NodeId: id, From: math.MaxInt64 - 60, To: math.MaxInt64}))
+	out, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&heronv1.QueryMetricsRequest{NodeId: id, From: math.MaxInt64 - 60, To: math.MaxInt64}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -721,14 +721,14 @@ func TestDeletedNodeRejectsLateStorageWrites(t *testing.T) {
 	h.login(t)
 	ctx := context.Background()
 	id, _ := h.createNode(t, "deleted")
-	if _, err := h.admin.DeleteNode(ctx, connect.NewRequest(&probev1.DeleteNodeRequest{Id: id})); err != nil {
+	if _, err := h.admin.DeleteNode(ctx, connect.NewRequest(&heronv1.DeleteNodeRequest{Id: id})); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.store.UpsertFacts(ctx, id, 1, &probev1.Facts{Hostname: "late"}); !errors.Is(err, store.ErrNotFound) {
+	if err := h.store.UpsertFacts(ctx, id, 1, &heronv1.Facts{Hostname: "late"}); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("late facts write: %v, want ErrNotFound", err)
 	}
 	b := metric.NewBucket()
-	b.Add(&probev1.Metrics{CpuPct: proto.Float64(1)})
+	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(1)})
 	if n, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: h.clk.Now().Unix(), Bucket: b}}}); err != nil || n != 1 {
 		t.Errorf("late metric write: rejected=%d err=%v", n, err)
 	}
@@ -743,13 +743,13 @@ func TestSessionBoundaryAndRevocation(t *testing.T) {
 	h.login(t)
 	ctx := context.Background()
 	raw := loginRaw(t, h, "").Cookies()[0].Value
-	anonymous := probev1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
+	anonymous := heronv1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
 	for _, header := range []http.Header{
 		{"Authorization": []string{"Bearer " + raw}},
-		{"Cookie": []string{"probe_session=not-a-session"}},
-		{"Cookie": []string{"probe_session="}},
+		{"Cookie": []string{"heron_session=not-a-session"}},
+		{"Cookie": []string{"heron_session="}},
 	} {
-		req := connect.NewRequest(&probev1.ListNodesRequest{})
+		req := connect.NewRequest(&heronv1.ListNodesRequest{})
 		for key, values := range header {
 			for _, v := range values {
 				req.Header().Add(key, v)
@@ -759,7 +759,7 @@ func TestSessionBoundaryAndRevocation(t *testing.T) {
 			t.Errorf("invalid credentials admitted: %v err=%v", header, err)
 		}
 	}
-	logout := connect.NewRequest(&probev1.LogoutRequest{})
+	logout := connect.NewRequest(&heronv1.LogoutRequest{})
 	logout.Header().Set("Cookie", SessionCookie+"="+raw)
 	out, err := anonymous.Logout(ctx, logout)
 	if err != nil {
@@ -770,20 +770,20 @@ func TestSessionBoundaryAndRevocation(t *testing.T) {
 	if len(cookies) != 1 || cookies[0].MaxAge != -1 || cookies[0].Value != "" || cookies[0].Path != "/" || cookies[0].Domain != "" {
 		t.Fatalf("logout cookie = %v", cookies)
 	}
-	replay := connect.NewRequest(&probev1.ListNodesRequest{})
+	replay := connect.NewRequest(&heronv1.ListNodesRequest{})
 	replay.Header().Set("Cookie", SessionCookie+"="+raw)
 	if _, err := anonymous.ListNodes(ctx, replay); codeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("revoked cookie replay admitted: %v", err)
 	}
-	if _, err := h.admin.CreateNode(ctx, connect.NewRequest(&probev1.CreateNodeRequest{Name: strings.Repeat("x", maxSettingsBody+1)})); codeOf(err) != connect.CodeResourceExhausted {
+	if _, err := h.admin.CreateNode(ctx, connect.NewRequest(&heronv1.CreateNodeRequest{Name: strings.Repeat("x", maxSettingsBody+1)})); codeOf(err) != connect.CodeResourceExhausted {
 		t.Fatalf("oversized body: %v", err)
 	}
 	for i := 0; i < 5; i++ {
-		if _, err := anonymous.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: "incorrect"})); codeOf(err) != connect.CodeUnauthenticated {
+		if _, err := anonymous.Login(ctx, connect.NewRequest(&heronv1.LoginRequest{Password: "incorrect"})); codeOf(err) != connect.CodeUnauthenticated {
 			t.Fatalf("failed login %d: %v", i, err)
 		}
 	}
-	if _, err := anonymous.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: password})); codeOf(err) != connect.CodeUnauthenticated || !strings.Contains(err.Error(), "15 minutes") {
+	if _, err := anonymous.Login(ctx, connect.NewRequest(&heronv1.LoginRequest{Password: password})); codeOf(err) != connect.CodeUnauthenticated || !strings.Contains(err.Error(), "15 minutes") {
 		t.Fatalf("locked login: %v", err)
 	}
 }
@@ -792,14 +792,14 @@ func TestWindowAndQueryAdmissionBounds(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
-	for _, r := range []*probev1.OpenRegisterWindowRequest{
+	for _, r := range []*heronv1.OpenRegisterWindowRequest{
 		{TtlS: 604801, MaxNodes: 1}, {TtlS: 60, MaxNodes: 0}, {TtlS: 60, MaxNodes: 1001},
 	} {
 		if _, err := h.admin.OpenRegisterWindow(ctx, connect.NewRequest(r)); codeOf(err) != connect.CodeInvalidArgument {
 			t.Errorf("invalid window accepted: %v err=%v", r, err)
 		}
 	}
-	for _, r := range []*probev1.OpenRegisterWindowRequest{{TtlS: 60, MaxNodes: 1}, {TtlS: 604800, MaxNodes: 1000}} {
+	for _, r := range []*heronv1.OpenRegisterWindowRequest{{TtlS: 60, MaxNodes: 1}, {TtlS: 604800, MaxNodes: 1000}} {
 		if _, err := h.admin.OpenRegisterWindow(ctx, connect.NewRequest(r)); err != nil {
 			t.Fatalf("window boundary rejected: %v err=%v", r, err)
 		}
@@ -812,7 +812,7 @@ func TestWindowAndQueryAdmissionBounds(t *testing.T) {
 	}{
 		{6 * 3600, "1m", 60}, {6*3600 + 1, "5m", 300}, {7 * 86400, "5m", 900}, {7*86400 + 1, "1h", 3600},
 	} {
-		resp, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&probev1.QueryMetricsRequest{NodeId: id, From: 0, To: tc.span}))
+		resp, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&heronv1.QueryMetricsRequest{NodeId: id, From: 0, To: tc.span}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -822,8 +822,8 @@ func TestWindowAndQueryAdmissionBounds(t *testing.T) {
 	}
 }
 
-func netCounters(boot string, rx, tx uint64) *probev1.Metrics {
-	return &probev1.Metrics{BootId: boot, NetRxTotal: proto.Uint64(rx), NetTxTotal: proto.Uint64(tx)}
+func netCounters(boot string, rx, tx uint64) *heronv1.Metrics {
+	return &heronv1.Metrics{BootId: boot, NetRxTotal: proto.Uint64(rx), NetTxTotal: proto.Uint64(tx)}
 }
 
 func TestTrafficIsReportedAdjustedAndConfigured(t *testing.T) {
@@ -840,14 +840,14 @@ func TestTrafficIsReportedAdjustedAndConfigured(t *testing.T) {
 	}
 	jan1, feb1, jan15 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Unix(), time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC).Unix(), time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC).Unix()
 
-	snap, err := h.admin.GetSnapshot(ctx, connect.NewRequest(&probev1.GetSnapshotRequest{}))
+	snap, err := h.admin.GetSnapshot(ctx, connect.NewRequest(&heronv1.GetSnapshotRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if tr := snap.Msg.Nodes[0].GetTraffic(); tr.GetTotalRx() != 1<<20 || tr.GetPeriodRx() != 1<<20 || tr.GetTotalTx() != 1000 || tr.GetResetDay() != 1 || tr.GetPeriodStart() != jan1 || tr.GetNextResetAt() != feb1 {
 		t.Fatalf("snapshot traffic = %v", tr)
 	}
-	all, err := h.admin.GetTraffic(ctx, connect.NewRequest(&probev1.GetTrafficRequest{}))
+	all, err := h.admin.GetTraffic(ctx, connect.NewRequest(&heronv1.GetTrafficRequest{}))
 	if err != nil || len(all.Msg.Nodes) != 1 || all.Msg.Nodes[0].GetNodeId() != id || all.Msg.Nodes[0].GetName() != "n" || all.Msg.Nodes[0].GetTraffic().GetTotalTx() != 1000 || all.Msg.GetNow() != h.clk.Now().Unix() {
 		t.Fatalf("GetTraffic = %v %v", all, err)
 	}
@@ -856,7 +856,7 @@ func TestTrafficIsReportedAdjustedAndConfigured(t *testing.T) {
 		t.Fatalf("timezone = %q, want UTC", all.Msg.GetTimezone())
 	}
 
-	adj, err := h.admin.AdjustTraffic(ctx, connect.NewRequest(&probev1.AdjustTrafficRequest{NodeId: id, PeriodRx: 5 << 30, PeriodTx: 0}))
+	adj, err := h.admin.AdjustTraffic(ctx, connect.NewRequest(&heronv1.AdjustTrafficRequest{NodeId: id, PeriodRx: 5 << 30, PeriodTx: 0}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -870,33 +870,33 @@ func TestTrafficIsReportedAdjustedAndConfigured(t *testing.T) {
 	if e, _ := h.book.Get(id); e.PeriodRx != 5<<30+100 || e.LastRx != 1000+1<<20+100 {
 		t.Fatalf("baseline must survive the adjustment: %+v", e)
 	}
-	if _, err := h.admin.AdjustTraffic(ctx, connect.NewRequest(&probev1.AdjustTrafficRequest{NodeId: 999, PeriodRx: 1})); codeOf(err) != connect.CodeNotFound {
+	if _, err := h.admin.AdjustTraffic(ctx, connect.NewRequest(&heronv1.AdjustTrafficRequest{NodeId: 999, PeriodRx: 1})); codeOf(err) != connect.CodeNotFound {
 		t.Fatalf("adjust unknown node: %v, want NotFound", err)
 	}
 	if _, ok := h.book.Get(999); ok {
 		t.Fatal("rejected adjustment left a traffic entry behind")
 	}
 
-	upd, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 15, OfflineGraceS: proto.Uint32(0)}))
+	upd, err := h.admin.UpdateNode(ctx, connect.NewRequest(&heronv1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 15, OfflineGraceS: proto.Uint32(0)}))
 	if err != nil || upd.Msg.GetNode().GetTrafficResetDay() != 15 {
 		t.Fatalf("UpdateNode reset day: %v %v", upd, err)
 	}
-	all, _ = h.admin.GetTraffic(ctx, connect.NewRequest(&probev1.GetTrafficRequest{}))
+	all, _ = h.admin.GetTraffic(ctx, connect.NewRequest(&heronv1.GetTrafficRequest{}))
 	if tr := all.Msg.Nodes[0].GetTraffic(); tr.GetResetDay() != 15 || tr.GetNextResetAt() != jan15 {
 		t.Fatalf("traffic after changing the reset day: %v", tr)
 	}
 	for _, day := range []uint32{0, 29} {
-		_, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: day, OfflineGraceS: proto.Uint32(0)}))
+		_, err := h.admin.UpdateNode(ctx, connect.NewRequest(&heronv1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: day, OfflineGraceS: proto.Uint32(0)}))
 		if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "traffic_reset_day") {
 			t.Fatalf("reset day %d: %v, want InvalidArgument naming the field", day, err)
 		}
 	}
-	list, _ := h.admin.ListNodes(ctx, connect.NewRequest(&probev1.ListNodesRequest{}))
+	list, _ := h.admin.ListNodes(ctx, connect.NewRequest(&heronv1.ListNodesRequest{}))
 	if list.Msg.Nodes[0].GetTrafficResetDay() != 15 {
 		t.Fatalf("rejected updates must not change the reset day: %v", list.Msg.Nodes[0])
 	}
 	// 库里没有的节点：更新失败，内存里的重置日也不得被改。
-	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&probev1.UpdateNodeRequest{Id: 999, Name: "x", TrafficResetDay: 20, OfflineGraceS: proto.Uint32(0)})); codeOf(err) != connect.CodeNotFound {
+	if _, err := h.admin.UpdateNode(ctx, connect.NewRequest(&heronv1.UpdateNodeRequest{Id: 999, Name: "x", TrafficResetDay: 20, OfflineGraceS: proto.Uint32(0)})); codeOf(err) != connect.CodeNotFound {
 		t.Fatalf("unknown node: %v", err)
 	}
 	if day := h.book.View(999).ResetDay; day != 1 {
@@ -914,15 +914,15 @@ func TestQueryMetricsEmitsSumForAdditiveColumns(t *testing.T) {
 	filled.AddSum(metric.RxBytes, 1500)
 	filled.AddSum(metric.RxBytes, 500)
 	empty := metric.NewBucket()
-	empty.Add(&probev1.Metrics{CpuPct: proto.Float64(1)})
+	empty.Add(&heronv1.Metrics{CpuPct: proto.Float64(1)})
 	if _, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: base, Bucket: filled}, {NodeID: id, TS: base + 60, Bucket: empty}}}); err != nil {
 		t.Fatal(err)
 	}
-	resp, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&probev1.QueryMetricsRequest{NodeId: id, From: base, To: base + 120, MaxPoints: 2}))
+	resp, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&heronv1.QueryMetricsRequest{NodeId: id, From: base, To: base + 120, MaxPoints: 2}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var rx *probev1.MetricSeries
+	var rx *heronv1.MetricSeries
 	for _, s := range resp.Msg.Series {
 		if s.GetName() == "rx_bytes" {
 			rx = s
@@ -951,7 +951,7 @@ func TestAdjustTrafficRejectsOutOfRangeUsage(t *testing.T) {
 		rx, tx uint64
 	}{{"period_rx", math.MaxUint64, 0}, {"period_tx", 0, math.MaxUint64}} {
 		t.Run(tc.field, func(t *testing.T) {
-			_, err := h.admin.AdjustTraffic(t.Context(), connect.NewRequest(&probev1.AdjustTrafficRequest{NodeId: id, PeriodRx: tc.rx, PeriodTx: tc.tx}))
+			_, err := h.admin.AdjustTraffic(t.Context(), connect.NewRequest(&heronv1.AdjustTrafficRequest{NodeId: id, PeriodRx: tc.rx, PeriodTx: tc.tx}))
 			if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), tc.field) {
 				t.Fatalf("%s: %v, want InvalidArgument naming the field", tc.field, err)
 			}

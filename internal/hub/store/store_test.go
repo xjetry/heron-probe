@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/testwait"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -189,7 +189,7 @@ func TestFacts(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "a", hash(1))
-	f := &probev1.Facts{Hostname: "h", Os: "o", CpuCores: 4}
+	f := &heronv1.Facts{Hostname: "h", Os: "o", CpuCores: 4}
 	if err := s.UpsertFacts(ctx, id, 77, f); err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestFacts(t *testing.T) {
 
 func bucket(cpu float64) *metric.Bucket {
 	b := metric.NewBucket()
-	b.Add(&probev1.Metrics{CpuPct: proto.Float64(cpu)})
+	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(cpu)})
 	return b
 }
 
@@ -219,7 +219,7 @@ func TestHalfBucketsMergeAdditively(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := bucket(30)
-	b.Add(&probev1.Metrics{CpuPct: proto.Float64(50)})
+	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(50)})
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 600, Bucket: b}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestDeleteNodeRemovesDependentRows(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "a", hash(1))
-	_ = s.UpsertFacts(ctx, id, 1, &probev1.Facts{})
+	_ = s.UpsertFacts(ctx, id, 1, &heronv1.Facts{})
 	_, _ = s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 600, Bucket: bucket(1)}}})
 	if err := s.DeleteNode(ctx, id); err != nil {
 		t.Fatal(err)
@@ -455,11 +455,11 @@ func TestAsyncCallbackObservesCommittedWrite(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "a", hash(1))
-	if err := s.UpsertFacts(ctx, id, 77, &probev1.Facts{}); err != nil {
+	if err := s.UpsertFacts(ctx, id, 77, &heronv1.Facts{}); err != nil {
 		t.Fatal(err)
 	}
 	seen := make(chan uint64, 1)
-	s.UpsertFactsAsync(id, 78, &probev1.Facts{}, func(err error) {
+	s.UpsertFactsAsync(id, 78, &heronv1.Facts{}, func(err error) {
 		if err != nil {
 			t.Error(err)
 		}
@@ -546,7 +546,7 @@ func TestListNodesCarriesFactsAndOrder(t *testing.T) {
 	ctx := context.Background()
 	a, _, _ := s.CreateNode(ctx, "a", hash(1))
 	b, _, _ := s.CreateNode(ctx, "b", hash(2))
-	if err := s.UpsertFacts(ctx, b, 7, &probev1.Facts{Hostname: "hb", CpuCores: 4, IcmpAvailable: true}); err != nil {
+	if err := s.UpsertFacts(ctx, b, 7, &heronv1.Facts{Hostname: "hb", CpuCores: 4, IcmpAvailable: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.ReorderNodes(ctx, []int64{b, a}); err != nil {

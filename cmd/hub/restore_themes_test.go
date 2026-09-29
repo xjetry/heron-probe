@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xjetry/probe/internal/hub/theme"
-	. "github.com/xjetry/probe/internal/hub/theme/themetest"
+	"github.com/xjetry/heron-probe/internal/hub/theme"
+	. "github.com/xjetry/heron-probe/internal/hub/theme/themetest"
 )
 
 func TestRestoreThemesSnapshotDigest(t *testing.T) {

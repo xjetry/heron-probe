@@ -10,12 +10,12 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 )
 
-func updateTags(t *testing.T, h *harness, id int64, name string, public bool, tags ...string) (*probev1.Node, error) {
+func updateTags(t *testing.T, h *harness, id int64, name string, public bool, tags ...string) (*heronv1.Node, error) {
 	t.Helper()
-	req := &probev1.UpdateNodeRequest{Id: id, Name: name, Public: public, TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0), Tags: tags}
+	req := &heronv1.UpdateNodeRequest{Id: id, Name: name, Public: public, TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0), Tags: tags}
 	resp, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(req))
 	if err != nil {
 		return nil, err
@@ -23,7 +23,7 @@ func updateTags(t *testing.T, h *harness, id int64, name string, public bool, ta
 	return resp.Msg.GetNode(), nil
 }
 
-func mustUpdateTags(t *testing.T, h *harness, id int64, name string, tags ...string) *probev1.Node {
+func mustUpdateTags(t *testing.T, h *harness, id int64, name string, tags ...string) *heronv1.Node {
 	t.Helper()
 	n, err := updateTags(t, h, id, name, false, tags...)
 	if err != nil {
@@ -34,7 +34,7 @@ func mustUpdateTags(t *testing.T, h *harness, id int64, name string, tags ...str
 
 func listByTags(t *testing.T, h *harness, tags ...string) ([]string, error) {
 	t.Helper()
-	resp, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&probev1.ListNodesRequest{Tags: tags}))
+	resp, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&heronv1.ListNodesRequest{Tags: tags}))
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func listByTags(t *testing.T, h *harness, tags ...string) ([]string, error) {
 
 func listTags(t *testing.T, h *harness) []string {
 	t.Helper()
-	resp, err := h.admin.ListTags(t.Context(), connect.NewRequest(&probev1.ListTagsRequest{}))
+	resp, err := h.admin.ListTags(t.Context(), connect.NewRequest(&heronv1.ListTagsRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestDeleteTagDetachesItFromNodes(t *testing.T) {
 	h.login(t)
 	id, _ := h.createNode(t, "n")
 	mustUpdateTags(t, h, id, "n", "db", "web")
-	if _, err := h.admin.DeleteTag(t.Context(), connect.NewRequest(&probev1.DeleteTagRequest{Name: " DB "})); err != nil {
+	if _, err := h.admin.DeleteTag(t.Context(), connect.NewRequest(&heronv1.DeleteTagRequest{Name: " DB "})); err != nil {
 		t.Fatal(err)
 	}
 	if n := listedNode(t, h); n.GetId() != id || !slices.Equal(n.GetTags(), []string{"web"}) {
@@ -215,11 +215,11 @@ func TestDeleteTagDetachesItFromNodes(t *testing.T) {
 	if got := listTags(t, h); !slices.Equal(got, []string{"web:1"}) {
 		t.Fatalf("ListTags = %q", got)
 	}
-	_, err := h.admin.DeleteTag(t.Context(), connect.NewRequest(&probev1.DeleteTagRequest{Name: "db"}))
+	_, err := h.admin.DeleteTag(t.Context(), connect.NewRequest(&heronv1.DeleteTagRequest{Name: "db"}))
 	if codeOf(err) != connect.CodeNotFound || !strings.Contains(err.Error(), `tag "db" does not exist`) {
 		t.Fatalf("deleting a missing tag: %v", err)
 	}
-	_, err = h.admin.DeleteTag(t.Context(), connect.NewRequest(&probev1.DeleteTagRequest{Name: ""}))
+	_, err = h.admin.DeleteTag(t.Context(), connect.NewRequest(&heronv1.DeleteTagRequest{Name: ""}))
 	if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "name: must be 1–64 characters") {
 		t.Fatalf("deleting an empty name: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestDeleteNodeLeavesNoTagRows(t *testing.T) {
 	kept, _ := h.createNode(t, "kept")
 	mustUpdateTags(t, h, gone, "gone", "a", "b")
 	mustUpdateTags(t, h, kept, "kept", "a")
-	if _, err := h.admin.DeleteNode(t.Context(), connect.NewRequest(&probev1.DeleteNodeRequest{Id: gone})); err != nil {
+	if _, err := h.admin.DeleteNode(t.Context(), connect.NewRequest(&heronv1.DeleteNodeRequest{Id: gone})); err != nil {
 		t.Fatal(err)
 	}
 	if rows := rowCounts(t, h.store); rows["node_tag"] != 1 || rows["tag"] != 2 {
@@ -258,7 +258,7 @@ func TestPublicSnapshotCarriesTagsOfPublicNodesOnly(t *testing.T) {
 	if _, err := updateTags(t, h, priv, "priv", false, "internal-billing-db"); err != nil {
 		t.Fatal(err)
 	}
-	resp, err := h.publicClient().GetSnapshot(t.Context(), connect.NewRequest(&probev1.PublicServiceGetSnapshotRequest{}))
+	resp, err := h.publicClient().GetSnapshot(t.Context(), connect.NewRequest(&heronv1.PublicServiceGetSnapshotRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestPublicSnapshotCarriesTagsOfPublicNodesOnly(t *testing.T) {
 		t.Fatalf("snapshot nodes = %v, want only the public node", nodes)
 	}
 	// 与管理端 Node.tags 同一口径：先建的写法，按折叠排序。不用 mustUpdateTags 取值：它会把节点改回私有。
-	adminNodes, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&probev1.ListNodesRequest{}))
+	adminNodes, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&heronv1.ListNodesRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +305,7 @@ func TestPublicSnapshotTagsFollowTagFoldOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	resp, err := h.publicClient().GetSnapshot(t.Context(), connect.NewRequest(&probev1.PublicServiceGetSnapshotRequest{}))
+	resp, err := h.publicClient().GetSnapshot(t.Context(), connect.NewRequest(&heronv1.PublicServiceGetSnapshotRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestPublicSnapshotTagsFollowTagFoldOrder(t *testing.T) {
 		t.Fatalf("snapshot tags = %q, want %q", got, want)
 	}
 	// 与管理端同一顺序：ListTags 去掉只挂在私有节点上的 secret 后，应与快照逐项相同。
-	all, err := h.admin.ListTags(t.Context(), connect.NewRequest(&probev1.ListTagsRequest{}))
+	all, err := h.admin.ListTags(t.Context(), connect.NewRequest(&heronv1.ListTagsRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}

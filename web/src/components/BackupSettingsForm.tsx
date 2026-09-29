@@ -3,7 +3,7 @@ import { type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { SAVE_SETTINGS, useAdoptSavedSettings, useSettingsSaving } from "../api/saveSettings";
-import { AdminService, type BackupSettings } from "../gen/probe/v1/admin_pb";
+import { AdminService, type BackupSettings } from "../gen/heron/v1/admin_pb";
 import { MAX_NOTIFY_CHANNELS } from "../lib/alerts";
 import { liveIds } from "../lib/ids";
 import { Picks } from "./Picks";

@@ -8,7 +8,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/xjetry/probe/deploy/releasestamp"
+	"github.com/xjetry/heron-probe/deploy/releasestamp"
 )
 
 func run(args []string, stderr io.Writer) int {

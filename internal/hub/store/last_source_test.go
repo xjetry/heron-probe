@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
 )
 
 // v12 的完整 DDL：v11 加上告警状态的上次恢复时刻。

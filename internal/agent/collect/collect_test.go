@@ -13,8 +13,8 @@ import (
 	"testing/fstest"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
@@ -334,7 +334,7 @@ func TestProcsCountsProcessDirectoriesNotSchedulingEntities(t *testing.T) {
 		"proc/loadavg":      {Data: []byte("0.10 0.20 0.30 3/900 77\n")},
 		"proc/1/comm":       {Data: []byte("init\n")},
 		"proc/42/comm":      {Data: []byte("sshd\n")},
-		"proc/4242/comm":    {Data: []byte("probe-agent\n")},
+		"proc/4242/comm":    {Data: []byte("heron-agent\n")},
 		"proc/self":         {Data: []byte("4242")},
 		"proc/sys/kernel/x": {Data: []byte("")},
 		"proc/1a/comm":      {Data: []byte("")},
@@ -382,7 +382,7 @@ func TestGoldenMetricsFromRealProcSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected read failures: %v", err)
 	}
-	want := &probev1.Metrics{
+	want := &heronv1.Metrics{
 		BootId:     "319b05cd-78d2-479e-b8ef-4c2478582043",     // proc/sys/kernel/random/boot_id
 		MemTotal:   proto.Uint64(16424476 * 1024),              // meminfo MemTotal
 		MemUsed:    proto.Uint64((16424476 - 14608052) * 1024), // MemTotal − MemAvailable
@@ -404,7 +404,7 @@ func TestGoldenMetricsFromRealProcSnapshot(t *testing.T) {
 		t.Fatalf("metrics differ from the snapshot:\n%s", strings.Join(d, "\n"))
 	}
 	f := fixture(t).Facts()
-	wantFacts := &probev1.Facts{
+	wantFacts := &heronv1.Facts{
 		Hostname: "fa6437c2745e", Os: "Debian GNU/Linux 12 (bookworm)", Kernel: "7.0.14-orbstack-00380-ga7e0a2dc9535",
 		Arch: runtime.GOARCH, CpuCores: 16, AgentVersion: "test",
 	}
@@ -425,7 +425,7 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 		"proc/net/sockstat6":                     {Data: []byte(sockstat6)},
 		"proc/1/comm":                            {Data: []byte("init\n")},
 		"proc/42/comm":                           {Data: []byte("sshd\n")},
-		"proc/99/comm":                           {Data: []byte("probe-agent\n")},
+		"proc/99/comm":                           {Data: []byte("heron-agent\n")},
 		"proc/sys/kernel/hostname":               {Data: []byte("synth\n")},
 		"proc/sys/kernel/osrelease":              {Data: []byte("6.1.0-synth\n")},
 		"proc/cpuinfo":                           {Data: []byte("processor: 0\nmodel name: Synth CPU\nprocessor: 1\nmodel name: Synth CPU\nprocessor: 2\nmodel name: Synth CPU\n")},
@@ -450,7 +450,7 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second sample: %v", err)
 	}
-	want := &probev1.Metrics{
+	want := &heronv1.Metrics{
 		BootId:     "0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f",
 		CpuPct:     proto.Float64(100 * (1 - 60.0/200)),
 		MemTotal:   proto.Uint64(8000 * 1024),
@@ -474,7 +474,7 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 	if d := protoDiff(m, want); d != nil {
 		t.Fatalf("metrics differ:\n%s", strings.Join(d, "\n"))
 	}
-	wantFacts := &probev1.Facts{
+	wantFacts := &heronv1.Facts{
 		Hostname: "synth", Os: "Synth Linux 1", Kernel: "6.1.0-synth", Arch: runtime.GOARCH, Virtualization: "lxc",
 		CpuModel: "Synth CPU", CpuCores: 3, AgentVersion: "v9", IcmpAvailable: true,
 	}
@@ -488,8 +488,8 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 func TestProcsMissingWhenOtherProcessesAreHidden(t *testing.T) {
 	fsys := fstest.MapFS{
 		"proc/loadavg":   {Data: []byte("0.10 0.20 0.30 3/900 77\n")},
-		"proc/4242/comm": {Data: []byte("probe-agent\n")},
-		"proc/4243/comm": {Data: []byte("probe-agent\n")},
+		"proc/4242/comm": {Data: []byte("heron-agent\n")},
+		"proc/4243/comm": {Data: []byte("heron-agent\n")},
 	}
 	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clock.NewFake(time.Unix(0, 0))}
 	m, err := c.Metrics()

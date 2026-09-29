@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 func TestSweepConcurrentRuleWrites(t *testing.T) {

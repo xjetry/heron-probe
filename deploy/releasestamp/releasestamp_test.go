@@ -17,8 +17,8 @@ func asset(name, body string) Asset { return Asset{Name: name, SHA256: sha256.Su
 // 写入后的脚本在 sh 里求值得到的就是写进去的版本号与清单，清单按文件名排序，与传入顺序无关；
 // 同一组输入写两次逐字节相同。
 func TestScriptEmbedsSortedManifest(t *testing.T) {
-	b := asset("probe-agent_linux_amd64.tar.gz", "b")
-	a := asset("probe-agent_darwin_arm64.tar.gz", "a")
+	b := asset("heron-agent_linux_amd64.tar.gz", "b")
+	a := asset("heron-agent_darwin_arm64.tar.gz", "a")
 	out, err := Script([]byte(src), "v1.2.3-rc.1", []Asset{b, a})
 	if err != nil {
 		t.Fatal(err)
@@ -35,8 +35,8 @@ func TestScriptEmbedsSortedManifest(t *testing.T) {
 		t.Fatalf("%v\n%s", err, got)
 	}
 	want := "v1.2.3-rc.1\n" +
-		"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb  probe-agent_darwin_arm64.tar.gz\n" +
-		"3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d  probe-agent_linux_amd64.tar.gz\n"
+		"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb  heron-agent_darwin_arm64.tar.gz\n" +
+		"3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d  heron-agent_linux_amd64.tar.gz\n"
 	if string(got) != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -48,7 +48,7 @@ func TestScriptEmbedsSortedManifest(t *testing.T) {
 
 // 能改写 shell 源码的值一律拒绝：引号、换行、空白、$、非 ASCII，以及以 . 或 - 开头的写法。
 func TestScriptRefusesValuesOutsideTheCharset(t *testing.T) {
-	ok := asset("probe-hub_linux_amd64.tar.gz", "x")
+	ok := asset("heron-hub_linux_amd64.tar.gz", "x")
 	for _, v := range []string{"", "v1'x'", "v1\nx", "v1 x", "v1$(id)", "-v1", ".v1", "v1+meta", "v1é", strings.Repeat("a", 129)} {
 		if _, err := Script([]byte(src), v, []Asset{ok}); err == nil || !strings.Contains(err.Error(), "version") {
 			t.Errorf("version %q accepted (err %v)", v, err)
@@ -72,7 +72,7 @@ func TestScriptRefusesValuesOutsideTheCharset(t *testing.T) {
 
 // 边界必须可机器判定：两行各一次、整行相同、相邻。已写入的脚本不再写入。
 func TestScriptRegionMustBeEmptyAndUnique(t *testing.T) {
-	ok := []Asset{asset("probe-hub_linux_amd64.tar.gz", "x")}
+	ok := []Asset{asset("heron-hub_linux_amd64.tar.gz", "x")}
 	stamped, err := Script([]byte(src), "v1", ok)
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestWriteDir(t *testing.T) {
 	if err := WriteDir("v1", dist, script); err == nil || !strings.Contains(err.Error(), "no *.tar.gz") {
 		t.Fatalf("empty dir: %v", err)
 	}
-	for name, body := range map[string]string{"probe-hub_linux_amd64.tar.gz": "h", "SHA256SUMS": "ignored", "notes.txt": "ignored"} {
+	for name, body := range map[string]string{"heron-hub_linux_amd64.tar.gz": "h", "SHA256SUMS": "ignored", "notes.txt": "ignored"} {
 		os.WriteFile(filepath.Join(dist, name), []byte(body), 0o644)
 	}
 	if err := WriteDir("v1", dist, script); err != nil {
@@ -115,7 +115,7 @@ func TestWriteDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, _ := Script([]byte(src), "v1", []Asset{asset("probe-hub_linux_amd64.tar.gz", "h")})
+	want, _ := Script([]byte(src), "v1", []Asset{asset("heron-hub_linux_amd64.tar.gz", "h")})
 	if !bytes.Equal(out, want) {
 		t.Fatalf("got:\n%s\nwant:\n%s", out, want)
 	}
@@ -126,7 +126,7 @@ func TestWriteDir(t *testing.T) {
 
 // 三个源码安装脚本都带一个空的写入区，WriteDir 能写入。
 func TestSourceScriptsHaveAnEmptyRegion(t *testing.T) {
-	ok := []Asset{asset("probe-hub_linux_amd64.tar.gz", "x")}
+	ok := []Asset{asset("heron-hub_linux_amd64.tar.gz", "x")}
 	for _, s := range []string{"install.sh", "install-macos.sh", "install-hub.sh"} {
 		b, err := os.ReadFile(filepath.Join("..", s))
 		if err != nil {

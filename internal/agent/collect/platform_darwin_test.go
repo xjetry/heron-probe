@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
 )
 
 // 本文件把系统调用层的读数与系统自带命令行工具的输出对照：命令行工具走的是另一条代码路径，
@@ -356,7 +356,7 @@ func TestDarwinFactsMatchCLI(t *testing.T) {
 }
 
 // 两次采样之后的全部读数；第二次才有 cpu_pct。
-func twoSamples(t *testing.T, c *Collector) (*probev1.Metrics, error) {
+func twoSamples(t *testing.T, c *Collector) (*heronv1.Metrics, error) {
 	t.Helper()
 	c.Metrics()
 	time.Sleep(1100 * time.Millisecond)

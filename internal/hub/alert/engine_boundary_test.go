@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 func TestUnreportedOfflineCannotRecover(t *testing.T) {
@@ -53,7 +53,7 @@ func TestPendingSurvivesRestartUntilGrace(t *testing.T) {
 	f.clk.Advance(59 * time.Second)
 	f.sweep(t)
 	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
-	f.l.Observe(f.ids[0], "", &probev1.Metrics{})
+	f.l.Observe(f.ids[0], "", &heronv1.Metrics{})
 	f.sweep(t)
 	wantState(t, f.e, r.ID, f.ids[0], store.StateOK)
 }
@@ -70,7 +70,7 @@ func TestProbeCandidateRemovalPrunesPersistedState(t *testing.T) {
 	f.minutes(t, task, f.ids[0], ts, metric.ProbeBucket{Sent: 1, Lost: 1})
 	must(t, f.e.EvaluateProbes(t.Context(), ts))
 	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
-	_, _, err := f.st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Id: task, Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}, store.NodeSelector{AllNodes: false, NodeIDs: f.ids[1:]})
+	_, _, err := f.st.SaveProbeTask(t.Context(), &heronv1.ProbeTask{Id: task, Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}, store.NodeSelector{AllNodes: false, NodeIDs: f.ids[1:]})
 	must(t, err)
 	var logs bytes.Buffer
 	f.e.log = slog.New(slog.NewJSONHandler(&logs, nil))

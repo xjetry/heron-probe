@@ -7,7 +7,7 @@ import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Picks } from "../components/Picks";
 import { NodeSelector, type NodeSelection } from "../components/NodeSelector";
-import { AdminService, AlertKind, ProbeMetric, ResourceMetric, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/probe/v1/admin_pb";
+import { AdminService, AlertKind, ProbeMetric, ResourceMetric, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/heron/v1/admin_pb";
 import { ALERT_KINDS, PROBE_METRICS, RESOURCE_METRICS, labelOf, ruleCondition, statesOf, taskLabels, type RuleStates } from "../lib/alerts";
 import { liveIds, withId } from "../lib/ids";
 
@@ -172,7 +172,7 @@ function RuleForm({ title, nodes, channels, tasks, initial, pending, onSubmit, o
           <label>连续分钟<input type="number" required min={1} max={60} value={draft.forMinutes} onChange={(e) => set({ forMinutes: e.target.value })} /></label>
         </div>
       ) : (
-        <p className="muted">节点超过离线宽限期未上报即触发，收到上报即恢复；宽限期在节点页按节点设置，未设置时取 hub 的 PROBE_OFFLINE_AFTER。</p>
+        <p className="muted">节点超过离线宽限期未上报即触发，收到上报即恢复；宽限期在节点页按节点设置，未设置时取 hub 的 HERON_OFFLINE_AFTER。</p>
       )}
       <NodeSelector nodes={nodes} value={draft} onChange={set} legend="作用域节点" />
       {probe && <p className="muted">探测规则只在既属于作用域、又分配了该任务的节点上评估。</p>}

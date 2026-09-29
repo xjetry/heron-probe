@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
 import { ConnectError, Code } from "@connectrpc/connect";
-import { ChannelKind, ListNotifyChannelsResponseSchema, type SaveNotifyChannelRequest, type UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
+import { ChannelKind, ListNotifyChannelsResponseSchema, type SaveNotifyChannelRequest, type UpdateSettingsRequest } from "../gen/heron/v1/admin_pb";
 import { MAX_NOTIFY_CHANNELS } from "../lib/alerts";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { statefulHub } from "../test/settingsHub";

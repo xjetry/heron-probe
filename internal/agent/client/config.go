@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/xjetry/probe/internal/agent/prober"
+	"github.com/xjetry/heron-probe/internal/agent/prober"
 )
 
 // Config 是 agent 的配置文件。Hub、Token、Name 由 register 写入；其余字段是宿主机的本地策略（§4.8、§5.7），
@@ -85,7 +85,7 @@ func CheckHub(raw string, insecure bool) error {
 		if insecure {
 			return nil
 		}
-		return fmt.Errorf("hub %q uses plain http, so the node token and metrics would travel unencrypted; use https, or accept this explicitly with `probe-agent register --insecure-http` or `probe-agent configure --insecure-http=true`", raw)
+		return fmt.Errorf("hub %q uses plain http, so the node token and metrics would travel unencrypted; use https, or accept this explicitly with `heron-agent register --insecure-http` or `heron-agent configure --insecure-http=true`", raw)
 	}
 	return fmt.Errorf("hub %q must be an https:// URL", raw)
 }

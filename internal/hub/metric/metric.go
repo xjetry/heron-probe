@@ -8,7 +8,7 @@ package metric
 import (
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 )
 
 type Kind uint8
@@ -40,7 +40,7 @@ type Column struct {
 	// 数据自带单位，图表与 agent 都不必查表才知道该怎么读。
 	Unit string
 	// Get 从一次上报里取读数；false 表示无读数，此时既不进 sum 也不进 n。Sum 列为 nil。
-	Get func(*probev1.Metrics) (float64, bool)
+	Get func(*heronv1.Metrics) (float64, bool)
 }
 
 func (c Column) SQLType() string {
@@ -55,22 +55,22 @@ func f64(v uint64) float64 { return float64(v) }
 // Columns 的顺序就是 Bucket 各切片的下标，也是 SQL 里列的顺序。
 // 只能在末尾追加：中间插入会让已存在的桶与行错位。
 var Columns = []Column{
-	{"cpu", MeanMax, Float, "percent", func(m *probev1.Metrics) (float64, bool) { return m.GetCpuPct(), m.CpuPct != nil }},
-	{"mem_used", MeanMax, Int, "bytes", func(m *probev1.Metrics) (float64, bool) { return f64(m.GetMemUsed()), m.MemUsed != nil }},
-	{"swap_used", Mean, Int, "bytes", func(m *probev1.Metrics) (float64, bool) { return f64(m.GetSwapUsed()), m.SwapUsed != nil }},
-	{"disk_used", Mean, Int, "bytes", func(m *probev1.Metrics) (float64, bool) { return f64(m.GetDiskUsed()), m.DiskUsed != nil }},
-	{"load1", Mean, Float, "", func(m *probev1.Metrics) (float64, bool) { return m.GetLoad1(), m.Load1 != nil }},
-	{"tcp", Mean, Int, "count", func(m *probev1.Metrics) (float64, bool) { return f64(uint64(m.GetTcpConns())), m.TcpConns != nil }},
-	{"udp", Mean, Int, "count", func(m *probev1.Metrics) (float64, bool) { return f64(uint64(m.GetUdpConns())), m.UdpConns != nil }},
-	{"procs", Mean, Int, "count", func(m *probev1.Metrics) (float64, bool) { return f64(uint64(m.GetProcs())), m.Procs != nil }},
+	{"cpu", MeanMax, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return m.GetCpuPct(), m.CpuPct != nil }},
+	{"mem_used", MeanMax, Int, "bytes", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetMemUsed()), m.MemUsed != nil }},
+	{"swap_used", Mean, Int, "bytes", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetSwapUsed()), m.SwapUsed != nil }},
+	{"disk_used", Mean, Int, "bytes", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetDiskUsed()), m.DiskUsed != nil }},
+	{"load1", Mean, Float, "", func(m *heronv1.Metrics) (float64, bool) { return m.GetLoad1(), m.Load1 != nil }},
+	{"tcp", Mean, Int, "count", func(m *heronv1.Metrics) (float64, bool) { return f64(uint64(m.GetTcpConns())), m.TcpConns != nil }},
+	{"udp", Mean, Int, "count", func(m *heronv1.Metrics) (float64, bool) { return f64(uint64(m.GetUdpConns())), m.UdpConns != nil }},
+	{"procs", Mean, Int, "count", func(m *heronv1.Metrics) (float64, bool) { return f64(uint64(m.GetProcs())), m.Procs != nil }},
 	{"rx_bytes", Sum, Int, "bytes", nil},
 	{"tx_bytes", Sum, Int, "bytes", nil},
-	{"memory_used_pct", Mean, Float, "percent", func(m *probev1.Metrics) (float64, bool) { return usedPercent(m.MemUsed, m.MemTotal) }},
-	{"disk_used_pct", Mean, Float, "percent", func(m *probev1.Metrics) (float64, bool) { return usedPercent(m.DiskUsed, m.DiskTotal) }},
+	{"memory_used_pct", Mean, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return usedPercent(m.MemUsed, m.MemTotal) }},
+	{"disk_used_pct", Mean, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return usedPercent(m.DiskUsed, m.DiskTotal) }},
 	// 速率取 agent 按本地采样间隔测得的值；请求到达间隔受网络拥塞影响，不用于推算峰值。
 	// 字节增量仍单独由入账方累计，采样速率的均值不能替代总字节数除以桶长。
-	{"net_rx_bps", MeanMax, Int, "bytes/s", func(m *probev1.Metrics) (float64, bool) { return f64(m.GetNetRxBps()), m.NetRxBps != nil }},
-	{"net_tx_bps", MeanMax, Int, "bytes/s", func(m *probev1.Metrics) (float64, bool) { return f64(m.GetNetTxBps()), m.NetTxBps != nil }},
+	{"net_rx_bps", MeanMax, Int, "bytes/s", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetNetRxBps()), m.NetRxBps != nil }},
+	{"net_tx_bps", MeanMax, Int, "bytes/s", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetNetTxBps()), m.NetTxBps != nil }},
 }
 
 // 同一次采样的分子、分母必须都存在且容量非零；先算比例再聚合，不能把不同采样的均值相除。
@@ -118,7 +118,7 @@ func NewBucket() *Bucket {
 	return &Bucket{Sum: make([]float64, n), N: make([]uint32, n), Max: make([]float64, n)}
 }
 
-func (b *Bucket) Add(m *probev1.Metrics) {
+func (b *Bucket) Add(m *heronv1.Metrics) {
 	for i, c := range Columns {
 		if c.Get == nil {
 			continue

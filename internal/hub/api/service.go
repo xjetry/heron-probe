@@ -1,6 +1,6 @@
 // Package api 实现 AdminService。
 //
-// 鉴权在挂载点的拦截器里裁决：每个方法以 probe.v1.access 声明准入口径，流式调用一律拒绝，
+// 鉴权在挂载点的拦截器里裁决：每个方法以 heron.v1.access 声明准入口径，流式调用一律拒绝，
 // 方法体只在准入通过后执行。凭据有两条路径：Authorization 的 scheme 为 Bearer 时走 API token，
 // 此后不看 cookie；否则走会话 cookie。两条路径互不回退——若互相回退，实际生效的是较弱的那条。
 package api
@@ -19,22 +19,22 @@ import (
 
 	"connectrpc.com/connect"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/alert"
-	"github.com/xjetry/probe/internal/hub/auth"
-	"github.com/xjetry/probe/internal/hub/backup"
-	"github.com/xjetry/probe/internal/hub/geo"
-	"github.com/xjetry/probe/internal/hub/live"
-	"github.com/xjetry/probe/internal/hub/probe"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/hub/theme"
-	"github.com/xjetry/probe/internal/hub/traffic"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/alert"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
+	"github.com/xjetry/heron-probe/internal/hub/backup"
+	"github.com/xjetry/heron-probe/internal/hub/geo"
+	"github.com/xjetry/heron-probe/internal/hub/live"
+	"github.com/xjetry/heron-probe/internal/hub/probe"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/theme"
+	"github.com/xjetry/heron-probe/internal/hub/traffic"
 )
 
 const (
-	SessionCookie = "probe_session"
+	SessionCookie = "heron_session"
 
 	// AdminService 的解码预算按过程分两类，由 Handler 分派：UploadTheme 用 maxThemeBody，其余过程用 maxSettingsBody。
 	// connect 先解码再进拦截器，未鉴权的请求也会被读到所在过程的预算，所以两类都必须有界，而主题包那么大的预算只给
@@ -112,7 +112,7 @@ type Service struct {
 	history  history
 
 	// access 是 AdminService 每个过程的准入口径，New 时从描述符读出，之后只读。
-	access map[string]probev1.Access
+	access map[string]heronv1.Access
 
 	// uploading 是容量 1 的信号量，UploadTheme 从校验到入库一直持有它：同一时刻至多一个请求在展开与入库，被引用着的
 	// 展开内容至多一份（≤ theme.MaxTotalBytes），Parse 的解压也至多一路。占用时直接拒绝而不排队：到了方法体的请求
@@ -139,7 +139,7 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 	return &Service{
 		cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, probes: probes, alerts: alerts, notifier: notifier, clk: clk, log: log,
 		history:   history{store: st, log: log},
-		access:    accessTable(probev1.File_probe_v1_admin_proto.Services().ByName("AdminService")),
+		access:    accessTable(heronv1.File_heron_v1_admin_proto.Services().ByName("AdminService")),
 		uploading: make(chan struct{}, 1),
 	}
 }
@@ -152,10 +152,10 @@ func (s *Service) today() time.Time { return alert.Today(s.clk.Now(), s.cfg.Loca
 // 处理器只会执行 UploadTheme，其余过程都经小预算的处理器。
 func (s *Service) Handler() (string, http.Handler) {
 	access := connect.WithInterceptors(s.accessInterceptor())
-	path, rest := probev1connect.NewAdminServiceHandler(s, access, connect.WithReadMaxBytes(maxSettingsBody))
-	_, upload := probev1connect.NewAdminServiceHandler(s, access, connect.WithReadMaxBytes(maxThemeBody))
+	path, rest := heronv1connect.NewAdminServiceHandler(s, access, connect.WithReadMaxBytes(maxSettingsBody))
+	_, upload := heronv1connect.NewAdminServiceHandler(s, access, connect.WithReadMaxBytes(maxThemeBody))
 	return path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == probev1connect.AdminServiceUploadThemeProcedure {
+		if r.URL.Path == heronv1connect.AdminServiceUploadThemeProcedure {
 			upload.ServeHTTP(w, r)
 			return
 		}
@@ -245,15 +245,15 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 			if !ok {
 				return nil, unauthenticated("API token unknown or revoked")
 			}
-			if level != probev1.Access_ACCESS_READ {
-				if level == probev1.Access_ACCESS_LOGIN {
+			if level != heronv1.Access_ACCESS_READ {
+				if level == heronv1.Access_ACCESS_LOGIN {
 					return nil, permissionDenied("%s: API tokens cannot log in; send the admin password without an Authorization: Bearer header", req.Spec().Procedure)
 				}
 				return nil, permissionDenied("%s: API tokens are read-only; this method requires a panel session", req.Spec().Procedure)
 			}
 			return next(ctx, req)
 		}
-		if level == probev1.Access_ACCESS_LOGIN {
+		if level == heronv1.Access_ACCESS_LOGIN {
 			// 凭据是请求体里的密码，由 Login 裁决；按来源的锁定也在那里。
 			return next(ctx, req)
 		}
@@ -285,7 +285,7 @@ func (i accessInterceptor) WrapStreamingHandler(connect.StreamingHandlerFunc) co
 	}
 }
 
-// sessionCandidates 按出现顺序返回请求里全部非空的 probe_session 值，跨所有 Cookie 字段行。
+// sessionCandidates 按出现顺序返回请求里全部非空的 heron_session 值，跨所有 Cookie 字段行。
 //
 // 请求里的 cookie 不全由 hub 签发：与面板同属一个父域的主机能写 Domain 为父域的 cookie，浏览器把它们与管理员的
 // host-only 会话放进同一个 Cookie 行，同名时路径更长的排在前面（RFC 6265 §5.4）。会话读取的不变式是多出来的
@@ -334,7 +334,7 @@ func clearSessionCookie(ctx context.Context, header http.Header) {
 	header.Add("Set-Cookie", sessionCookie("", peer.scheme == "https", -1).String())
 }
 
-func (s *Service) Login(ctx context.Context, req *connect.Request[probev1.LoginRequest]) (*connect.Response[probev1.LoginResponse], error) {
+func (s *Service) Login(ctx context.Context, req *connect.Request[heronv1.LoginRequest]) (*connect.Response[heronv1.LoginResponse], error) {
 	peer := ctx.Value(peerKey{}).(peerInfo)
 	tok, err := s.auth.LoginFactors(ctx, req.Msg.GetPassword(), req.Msg.GetOtp(), req.Msg.GetRecoveryCode(), peer.from)
 	switch {
@@ -349,18 +349,18 @@ func (s *Service) Login(ctx context.Context, req *connect.Request[probev1.LoginR
 		s.log.Error("login failed", "err", err)
 		return nil, internalError("login failed")
 	}
-	resp := connect.NewResponse(&probev1.LoginResponse{})
+	resp := connect.NewResponse(&heronv1.LoginResponse{})
 	resp.Header().Add("Set-Cookie", sessionCookie(tok, peer.scheme == "https", int(auth.SessionAbsolute/time.Second)).String())
 	return resp, nil
 }
 
-func (s *Service) Logout(ctx context.Context, _ *connect.Request[probev1.LogoutRequest]) (*connect.Response[probev1.LogoutResponse], error) {
+func (s *Service) Logout(ctx context.Context, _ *connect.Request[heronv1.LogoutRequest]) (*connect.Response[heronv1.LogoutResponse], error) {
 	tok := ctx.Value(sessionKey{}).(string)
 	if err := s.auth.Logout(ctx, tok); err != nil {
 		s.log.Error("logout failed", "err", err)
 		return nil, internalError("logout failed")
 	}
-	resp := connect.NewResponse(&probev1.LogoutResponse{})
+	resp := connect.NewResponse(&heronv1.LogoutResponse{})
 	clearSessionCookie(ctx, resp.Header())
 	return resp, nil
 }

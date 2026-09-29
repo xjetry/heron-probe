@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/metric"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -18,7 +18,7 @@ func minuteRows(nodeID int64, from, to int64) []metric.Row {
 	var rows []metric.Row
 	for i, ts := 0, from; ts < to; i, ts = i+1, ts+60 {
 		b := metric.NewBucket()
-		b.Add(&probev1.Metrics{CpuPct: proto.Float64(float64(i)), MemUsed: proto.Uint64(100)})
+		b.Add(&heronv1.Metrics{CpuPct: proto.Float64(float64(i)), MemUsed: proto.Uint64(100)})
 		rows = append(rows, metric.Row{NodeID: nodeID, TS: ts, Bucket: b})
 	}
 	return rows
@@ -229,7 +229,7 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 	for d := int64(0); d < 10; d++ {
 		for _, node := range []int64{id, orphan} {
 			b := metric.NewBucket()
-			b.Add(&probev1.Metrics{CpuPct: proto.Float64(1)})
+			b.Add(&heronv1.Metrics{CpuPct: proto.Float64(1)})
 			rows = append(rows, metric.Row{NodeID: node, TS: now.Unix() - d*86400, Bucket: b})
 		}
 	}

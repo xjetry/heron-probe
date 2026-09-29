@@ -8,7 +8,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 func runStats(args []string) error { return runStatsWith(args, os.Stdout) }
@@ -19,7 +19,7 @@ func runStats(args []string) error { return runStatsWith(args, os.Stdout) }
 // 离线命令不知道运行中 hub 的保留期配置，所以只给原值，不给标红结论（标红见 GetStorageStats）。
 func runStatsWith(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("stats", flag.ContinueOnError)
-	db := fs.String("db", "probe.db", "SQLite database path")
+	db := fs.String("db", "heron.db", "SQLite database path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

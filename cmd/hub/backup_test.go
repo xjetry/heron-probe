@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/s3"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/s3"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 func TestServeBackupUploadsAndDeliversRecovery(t *testing.T) {
@@ -86,7 +86,7 @@ func TestServeBackupUploadsAndDeliversRecovery(t *testing.T) {
 		ticker := time.NewTicker(20 * time.Millisecond)
 		defer ticker.Stop()
 		for {
-			resp, err := client.GetBackupStatus(t.Context(), connect.NewRequest(&probev1.GetBackupStatusRequest{}))
+			resp, err := client.GetBackupStatus(t.Context(), connect.NewRequest(&heronv1.GetBackupStatusRequest{}))
 			if err != nil {
 				t.Fatal(err)
 			}

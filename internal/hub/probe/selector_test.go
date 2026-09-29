@@ -2,8 +2,8 @@ package probe
 
 import (
 	"errors"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/probelimit"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 	"slices"
 	"strings"
 	"testing"

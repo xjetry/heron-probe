@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/outbound"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/testwait"
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 // gatedSleep 在 gate 关闭之前让每次等待都挂起到被唤醒（ctx 取消，不推进时钟）；关闭之后推进夹具时钟并立即返回。

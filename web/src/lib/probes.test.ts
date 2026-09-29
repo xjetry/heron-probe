@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
-import { ProbeSeriesSchema, QueryProbesResponseSchema } from "../gen/probe/v1/query_pb";
-import { ProbeKind } from "../gen/probe/v1/types_pb";
+import { ProbeSeriesSchema, QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
+import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { PROBE_KINDS, kindLabel, lossPercent, rttMeanMs, seriesLabels, taskIdsOf, toProbeAligned } from "./probes";
 
 it.each([

@@ -12,7 +12,7 @@ cd "$(cd "$(dirname "$0")/.." && pwd)"
 # hub 始终来自当前源码；agent 可来自校验过的发布包，不覆盖当前源码构建的产物。
 agent_bin=$(cd "${E2E_AGENT_BIN_DIR:-$PWD/bin}" && pwd)
 for arch in amd64 arm64; do
-  [ -x "$agent_bin/probe-agent-linux-$arch" ] || { echo "FAIL: missing executable agent for $arch" >&2; exit 1; }
+  [ -x "$agent_bin/heron-agent-linux-$arch" ] || { echo "FAIL: missing executable agent for $arch" >&2; exit 1; }
 done
 work=$(mktemp -d)
 echo "E2E artifacts: $work"
@@ -56,15 +56,15 @@ trap 'exit 1' INT TERM HUP
 # 任一架构准备失败就直接退出，不进入注册阶段。注册与上报复用这两个容器。
 for arch in amd64 arm64; do
   docker run -d --cidfile "$work/cid-$arch" --platform "linux/$arch" --add-host=host.docker.internal:host-gateway \
-    -v "$agent_bin:/probe:ro" "$AGENT_IMAGE" sleep infinity > /dev/null
+    -v "$agent_bin:/heron:ro" "$AGENT_IMAGE" sleep infinity > /dev/null
   if [ -n "${E2E_AGENT_VERSION:-}" ]; then
-    actual=$(docker exec "$(cat "$work/cid-$arch")" "/probe/probe-agent-linux-$arch" version)
+    actual=$(docker exec "$(cat "$work/cid-$arch")" "/heron/heron-agent-linux-$arch" version)
     [ "$actual" = "$E2E_AGENT_VERSION" ] || { echo "FAIL: $arch agent version $actual, expected $E2E_AGENT_VERSION" >&2; exit 1; }
   fi
 done
 echo "agent containers ready: $AGENT_IMAGE"
 
-bin/probe-hub window open --db "$db" --ttl 10m --max 2 > "$work/window.txt"
+bin/heron-hub window open --db "$db" --ttl 10m --max 2 > "$work/window.txt"
 key=$(sed -n 's/^key: //p' "$work/window.txt")
 [ -n "$key" ] || { echo "no key"; exit 1; }
 echo "registration window: $(sed -n 's/^expires: //p' "$work/window.txt")"
@@ -72,7 +72,7 @@ echo "registration window: $(sed -n 's/^expires: //p' "$work/window.txt")"
 # 主题 origin 的主机名：hub 按请求的 Host（去掉端口）分流，脚本以 -H "Host: theme.test" 访问同一个监听地址，不需要 DNS。
 theme_host=theme.test
 hub_log_from=0
-PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "$listen_host:$port" --timezone UTC --theme-origin "http://$theme_host" > "$work/hub.log" 2>&1 &
+HERON_OFFLINE_AFTER=12s bin/heron-hub serve --db "$db" --listen "$listen_host:$port" --timezone UTC --theme-origin "http://$theme_host" > "$work/hub.log" 2>&1 &
 hub=$!
 
 # wait_hub：等本次启动的 hub 就绪。三者同时成立才算：
@@ -87,7 +87,7 @@ wait_hub() {
   while [ "$attempt" -lt 30 ]; do
     kill -0 "$hub" 2> /dev/null || { echo "FAIL: hub exited during startup"; cat "$work/hub.log"; exit 1; }
     if tail -n "+$((hub_log_from + 1))" "$work/hub.log" | grep -q 'msg="hub listening"' &&
-      status=$(curl -s -o /dev/null -w '%{http_code}' "$base/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D"); then
+      status=$(curl -s -o /dev/null -w '%{http_code}' "$base/heron.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D"); then
       [ "$status" = 200 ] && return 0
     fi
     attempt=$((attempt + 1))
@@ -110,20 +110,20 @@ retry_wait_s=$(startup_seconds "$work/hub.log" "hub listening" delivery_retry_wa
 [ -n "$ttl_s" ] && [ -n "$sweep_s" ] && [ -n "$retry_wait_s" ] || { echo "FAIL: hub startup line does not state ttl, offline_sweep and delivery_retry_wait in whole seconds"; cat "$work/hub.log"; exit 1; }
 
 # 运行中设密码：另一进程经 WAL 写库，登录路径每次读库，不需要重启 hub。
-printf '%s\n' "$admin_pw" | bin/probe-hub passwd --db "$db" > "$work/passwd.log" 2>&1
+printf '%s\n' "$admin_pw" | bin/heron-hub passwd --db "$db" > "$work/passwd.log" 2>&1
 
 # rpc 名字 请求体 [额外 curl 参数]：向 AdminService 发 JSON，打印 HTTP 状态码，响应体落 $work/<名字>.json。
 rpc() {
   name=$1; body=$2; shift 2
   curl -sS -o "$work/$name.json" -w '%{http_code}' -H 'Content-Type: application/json' \
-    -b "$work/jar" -c "$work/jar" "$@" --data "$body" "$base/probe.v1.AdminService/$name"
+    -b "$work/jar" -c "$work/jar" "$@" --data "$body" "$base/heron.v1.AdminService/$name"
 }
 
 # bearer 名字 请求体：用 API token 调 AdminService，不带 cookie；打印状态码，响应体落 $work/bearer-<名字>.json。
 bearer() {
   name=$1; body=$2
   curl -sS -o "$work/bearer-$name.json" -w '%{http_code}' -H 'Content-Type: application/json' \
-    -H "Authorization: Bearer $api_token" --data "$body" "$base/probe.v1.AdminService/$name"
+    -H "Authorization: Bearer $api_token" --data "$body" "$base/heron.v1.AdminService/$name"
 }
 
 # pubget 名字 方法 请求消息：以 GET 匿名调用 PublicService，不带 cookie 与 token；打印状态码，
@@ -131,7 +131,7 @@ bearer() {
 pubget() {
   name=$1; method=$2; msg=$3
   curl -sS -G -o "$work/pub-$name.json" -D "$work/pub-$name.headers" -w '%{http_code}' \
-    --data-urlencode connect=v1 --data-urlencode encoding=json --data-urlencode "message=$msg" "$base/probe.v1.PublicService/$method"
+    --data-urlencode connect=v1 --data-urlencode encoding=json --data-urlencode "message=$msg" "$base/heron.v1.PublicService/$method"
 }
 
 # hdr 名字 头名：打印 $work/pub-<名字>.headers 里该头的值（头名不分大小写，去掉行尾 CR）；没有这个头时不打印。
@@ -170,7 +170,7 @@ run_card_examples() {
   [ "$examples" -ge 3 ] || { echo "FAIL: expected at least 3 card examples, found $examples"; exit 1; }
   for ex in "$work"/card-example-*.sh; do
     status=0
-    PROBE_HUB=$base PROBE_TOKEN=$api_token sh -eu "$ex" > "$ex.out" 2> "$ex.err" || status=$?
+    HERON_HUB=$base HERON_TOKEN=$api_token sh -eu "$ex" > "$ex.out" 2> "$ex.err" || status=$?
     [ "$status" = 0 ] || { echo "FAIL: card example $ex exited $status"; cat "$ex" "$ex.err"; exit 1; }
     [ -s "$ex.out" ] && jq -e . "$ex.out" > /dev/null || { echo "FAIL: card example $ex did not print JSON"; cat "$ex" "$ex.out" "$ex.err"; exit 1; }
     # null 的 length 是 0，不能靠 length 单独把 null 当成有内容；空对象与空数组的 length 也是 0。
@@ -217,8 +217,8 @@ api_token_id=$(jq -r '.apiToken.id' "$work/CreateApiToken.json")
 [ "$(bearer GetApiReference '{}')" = 200 ] || { echo "FAIL: GetApiReference on empty hub"; cat "$work/bearer-GetApiReference.json"; exit 1; }
 run_card_examples "empty hub" ""
 [ "$(rpc DeleteApiToken "$(jq -nc --arg id "$api_token_id" '{id: $id}')")" = 200 ] || { echo "FAIL: DeleteApiToken (empty hub)"; exit 1; }
-[ "$(curl -sS -o /dev/null -w '%{http_code}' -b "$work/jar" -H 'Content-Type: text/plain' --data '{}' "$base/probe.v1.AdminService/CreateNode")" = 415 ] || { echo "FAIL: text/plain POST was not 415"; exit 1; }
-[ "$(curl -sS -o /dev/null -w '%{http_code}' -b "$work/jar" "$base/probe.v1.AdminService/CreateNode?connect=v1&encoding=json&message=%7B%7D")" = 405 ] || { echo "FAIL: GET was not 405"; exit 1; }
+[ "$(curl -sS -o /dev/null -w '%{http_code}' -b "$work/jar" -H 'Content-Type: text/plain' --data '{}' "$base/heron.v1.AdminService/CreateNode")" = 415 ] || { echo "FAIL: text/plain POST was not 415"; exit 1; }
+[ "$(curl -sS -o /dev/null -w '%{http_code}' -b "$work/jar" "$base/heron.v1.AdminService/CreateNode?connect=v1&encoding=json&message=%7B%7D")" = 405 ] || { echo "FAIL: GET was not 405"; exit 1; }
 
 # 主题：上传一个最小主题（包由脚本生成）并启用。主题 origin 上只有 PublicService 与主题文件：/admin/ 与 AdminService
 # 路径 404——带着有效的会话 cookie 也是 404，挂载里就没有它们；主 origin 的 / 仍是内置公开页。删除启用中的主题后
@@ -246,8 +246,8 @@ jq -e --arg origin "http://$theme_host" '.themeOrigin == $origin and (.themes | 
 [ "$(themereq asset /assets/app.js)" = 200 ] && grep -q 'e2e theme' "$work/theme-asset.body" || { echo "FAIL: theme asset"; exit 1; }
 [ "$(themereq missing /assets/missing.js)" = 404 ] || { echo "FAIL: a missing theme asset must be 404"; exit 1; }
 [ "$(themereq admin /admin/)" = 404 ] || { echo "FAIL: /admin/ on the theme origin was not 404"; cat "$work/theme-admin.body"; exit 1; }
-[ "$(themereq admin-rpc /probe.v1.AdminService/ListNodes -b "$work/jar" -H 'Content-Type: application/json' --data '{}')" = 404 ] || { echo "FAIL: AdminService on the theme origin was not 404"; cat "$work/theme-admin-rpc.body"; exit 1; }
-[ "$(themereq site '/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D')" = 200 ] && cmp -s "$work/pub-site.json" "$work/theme-site.body" || { echo "FAIL: PublicService.GetSite on the theme origin"; cat "$work/theme-site.body"; exit 1; }
+[ "$(themereq admin-rpc /heron.v1.AdminService/ListNodes -b "$work/jar" -H 'Content-Type: application/json' --data '{}')" = 404 ] || { echo "FAIL: AdminService on the theme origin was not 404"; cat "$work/theme-admin-rpc.body"; exit 1; }
+[ "$(themereq site '/heron.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D')" = 200 ] && cmp -s "$work/pub-site.json" "$work/theme-site.body" || { echo "FAIL: PublicService.GetSite on the theme origin"; cat "$work/theme-site.body"; exit 1; }
 [ "$(curl -sS -o "$work/pub-index-with-theme.html" -w '%{http_code}' "$base/")" = 200 ] && cmp -s "$work/pub-index.html" "$work/pub-index-with-theme.html" || { echo "FAIL: an enabled theme changed / on the main origin"; exit 1; }
 [ "$(rpc DeleteTheme '{"id": "e2e-theme"}')" = 200 ] || { echo "FAIL: DeleteTheme"; cat "$work/DeleteTheme.json"; exit 1; }
 [ "$(themereq after-delete /)" = 200 ] && cmp -s "$work/pub-index.html" "$work/theme-after-delete.body" || { echo "FAIL: after deleting the enabled theme the theme origin is not the built-in public page"; cat "$work/theme-after-delete.body"; exit 1; }
@@ -256,7 +256,7 @@ echo "theme origin ok"
 register_agent() {
   arch=$1
   cid=$(cat "$work/cid-$arch")
-  agent="/probe/probe-agent-linux-$arch"
+  agent="/heron/heron-agent-linux-$arch"
   # 被测 agent 可能是当前源码，也可能是 compat-e2e 下载的已发布版本；按它自己的用法行判断有没有本地策略
   # （configure 子命令与 hub 地址的 https 规则同时引入），不按版本号猜。没有本地策略的 agent 不认识下面的
   # --insecure-http 与 configure，也不需要它们：它不拒绝明文 hub，也不按本地策略拒绝探测目标。
@@ -281,9 +281,9 @@ register_agent() {
 run_agent() {
   arch=$1
   if [ "$#" -gt 1 ]; then
-    docker exec "$(cat "$work/cid-$arch")" timeout "$2" "/probe/probe-agent-linux-$arch" run --config /tmp/agent.json || [ "$?" = 124 ]
+    docker exec "$(cat "$work/cid-$arch")" timeout "$2" "/heron/heron-agent-linux-$arch" run --config /tmp/agent.json || [ "$?" = 124 ]
   else
-    docker exec "$(cat "$work/cid-$arch")" "/probe/probe-agent-linux-$arch" run --config /tmp/agent.json
+    docker exec "$(cat "$work/cid-$arch")" "/heron/heron-agent-linux-$arch" run --config /tmp/agent.json
   fi
 }
 first_agent() {
@@ -382,7 +382,7 @@ done
 jq -e --arg os "$EXPECT_OS" '.reportIntervalMs == 4000 and (.nodes[0].facts | (.os | contains($os)) and .arch == "amd64" and (keys - ["os", "arch", "virtualization", "cpuModel", "cpuCores"]) == []) and (.nodes[0].metrics | type == "object" and .memTotal != null and (has("bootId") | not))' "$work/pub-snapshot.json" > /dev/null || { echo "FAIL: public snapshot shape"; cat "$work/pub-snapshot.json"; exit 1; }
 [ "$(hdr snapshot Cache-Control)" = "max-age=1" ] || { echo "FAIL: GetSnapshot Cache-Control"; cat "$work/pub-snapshot.headers"; exit 1; }
 # 缓存头只给 GET：POST 的响应不进浏览器缓存，不带这个头。
-[ "$(curl -sS -o /dev/null -D "$work/pub-post.headers" -w '%{http_code}' -H 'Content-Type: application/json' --data '{}' "$base/probe.v1.PublicService/GetSnapshot")" = 200 ] || { echo "FAIL: POST GetSnapshot"; exit 1; }
+[ "$(curl -sS -o /dev/null -D "$work/pub-post.headers" -w '%{http_code}' -H 'Content-Type: application/json' --data '{}' "$base/heron.v1.PublicService/GetSnapshot")" = 200 ] || { echo "FAIL: POST GetSnapshot"; exit 1; }
 [ -z "$(hdr post Cache-Control)" ] || { echo "FAIL: POST response carries Cache-Control"; cat "$work/pub-post.headers"; exit 1; }
 [ "$(pubget metrics QueryMetrics "$query_body")" = 200 ] || { echo "FAIL: public QueryMetrics"; cat "$work/pub-metrics.json"; exit 1; }
 jq -e '.level == "1m" and any(.series[] | select(.name == "cpu") | .samples[]; .n > 0)' "$work/pub-metrics.json" > /dev/null || { echo "FAIL: public QueryMetrics shape"; cat "$work/pub-metrics.json"; exit 1; }
@@ -559,7 +559,7 @@ traffic_before=$(jq -c --arg id "$node1" '.nodes[] | select(.nodeId == $id) | .t
 [ "$(rpc CreateApiToken '{"name":"e2e"}')" = 200 ] || { echo "FAIL: CreateApiToken"; cat "$work/CreateApiToken.json"; exit 1; }
 api_token=$(jq -r '.token' "$work/CreateApiToken.json")
 api_token_id=$(jq -r '.apiToken.id' "$work/CreateApiToken.json")
-case "$api_token" in probe_at_*) ;; *) echo "FAIL: API token lacks the probe_at_ prefix"; exit 1 ;; esac
+case "$api_token" in heron_at_*) ;; *) echo "FAIL: API token lacks the heron_at_ prefix"; exit 1 ;; esac
 
 [ "$(rpc Logout '{}')" = 200 ] || { echo "FAIL: logout"; exit 1; }
 [ "$(rpc GetSnapshot '{}')" = 401 ] || { echo "FAIL: session survived logout"; exit 1; }
@@ -581,7 +581,7 @@ ln -s ../outside.txt "$work/site/leak.txt"
 
 # 重启：流量状态、重置日与被 Drain 出的分钟行都必须还在。
 hub_log_from=$(wc -l < "$work/hub.log")
-PROBE_OFFLINE_AFTER=12s bin/probe-hub serve --db "$db" --listen "$listen_host:$port" --timezone UTC --public-dir "$work/site" --theme-origin "http://$theme_host" >> "$work/hub.log" 2>&1 &
+HERON_OFFLINE_AFTER=12s bin/heron-hub serve --db "$db" --listen "$listen_host:$port" --timezone UTC --public-dir "$work/site" --theme-origin "http://$theme_host" >> "$work/hub.log" 2>&1 &
 hub=$!
 wait_hub
 # 在登录、续期等写请求之前回读；比较整个有序任务清单，不只比较任务 ID 的集合。
@@ -618,7 +618,7 @@ jq -e '(.nodes | length) == 2' "$work/bearer-ListNodes.json" > /dev/null || { ec
 [ "$(bearer CreateNode '{"name":"via-token"}')" = 403 ] || { echo "FAIL: API token was allowed to write"; cat "$work/bearer-CreateNode.json"; exit 1; }
 jq -e '.code == "permission_denied"' "$work/bearer-CreateNode.json" > /dev/null || { echo "FAIL: write via token not permission_denied"; exit 1; }
 [ "$(bearer GetApiReference '{}')" = 200 ] || { echo "FAIL: GetApiReference via token"; exit 1; }
-jq -e 'any(.files[]; .path == "probe/v1/admin.proto") and (.guide | contains("PROBE_TOKEN"))' "$work/bearer-GetApiReference.json" > /dev/null || { echo "FAIL: GetApiReference content"; exit 1; }
+jq -e 'any(.files[]; .path == "heron/v1/admin.proto") and (.guide | contains("HERON_TOKEN"))' "$work/bearer-GetApiReference.json" > /dev/null || { echo "FAIL: GetApiReference content"; exit 1; }
 run_card_examples "" nonempty
 [ "$(rpc DeleteApiToken "$(jq -nc --arg id "$api_token_id" '{id: $id}')")" = 200 ] || { echo "FAIL: DeleteApiToken"; exit 1; }
 [ "$(bearer ListNodes '{}')" = 401 ] || { echo "FAIL: revoked API token still accepted"; exit 1; }
@@ -626,11 +626,11 @@ run_card_examples "" nonempty
 [ "$(rpc CreateApiToken '{"name":"e2e-cli"}')" = 200 ] || { echo "FAIL: CreateApiToken (cli)"; exit 1; }
 api_token=$(jq -r '.token' "$work/CreateApiToken.json")
 api_token_id=$(jq -r '.apiToken.id' "$work/CreateApiToken.json")
-printf '%s\n' "$admin_pw" | bin/probe-hub passwd --db "$db" > "$work/passwd2.log" 2>&1
+printf '%s\n' "$admin_pw" | bin/heron-hub passwd --db "$db" > "$work/passwd2.log" 2>&1
 grep -q 'API tokens are not revoked' "$work/passwd2.log" || { echo "FAIL: passwd did not list API tokens"; cat "$work/passwd2.log"; exit 1; }
 [ "$(rpc GetSnapshot '{}')" = 401 ] || { echo "FAIL: session survived password change"; exit 1; }
 [ "$(bearer GetSnapshot '{}')" = 200 ] || { echo "FAIL: password change revoked the API token"; exit 1; }
-bin/probe-hub token revoke --db "$db" --id "$api_token_id" > "$work/token-revoke.log" 2>&1 || { echo "FAIL: probe-hub token revoke"; cat "$work/token-revoke.log"; exit 1; }
+bin/heron-hub token revoke --db "$db" --id "$api_token_id" > "$work/token-revoke.log" 2>&1 || { echo "FAIL: heron-hub token revoke"; cat "$work/token-revoke.log"; exit 1; }
 [ "$(bearer GetSnapshot '{}')" = 401 ] || { echo "FAIL: CLI revocation not effective on a running hub"; exit 1; }
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login after password change"; exit 1; }
 [ "$(rpc ListAlertRules '{}')" = 200 ] || { echo "FAIL: ListAlertRules after restart"; exit 1; }
@@ -689,16 +689,16 @@ echo "--- agent-amd64.log (tail) ---"; tail -5 "$work/agent-amd64.log"
 echo "--- agent-arm64.log (tail) ---"; tail -5 "$work/agent-arm64.log"
 [ "$agent_status" = 0 ] || { echo "FAIL: agent container failed"; exit 1; }
 echo "--- stats ---"
-bin/probe-hub stats --db "$db" > "$work/stats.txt"
+bin/heron-hub stats --db "$db" > "$work/stats.txt"
 cat "$work/stats.txt"
-bin/probe-hub node list --db "$db" > "$work/nodes.txt"
+bin/heron-hub node list --db "$db" > "$work/nodes.txt"
 cat "$work/nodes.txt"
 
 get() { sed -n "s/^$1: //p" "$work/stats.txt"; }
 # API 与 CLI 同一来源：两边列出同一组表（行数在两次读取之间会变，只比表名）。
 jq -r '.tables[].name' "$work/GetStorageStats.json" > "$work/stats-api-tables.txt"
 sed -n '/^db_bytes: /d; s/^\([a-z0-9_]*\): [0-9][0-9]*$/\1/p' "$work/stats.txt" > "$work/stats-cli-tables.txt"
-[ -s "$work/stats-cli-tables.txt" ] && cmp -s "$work/stats-api-tables.txt" "$work/stats-cli-tables.txt" || { echo "FAIL: GetStorageStats and probe-hub stats list different tables"; cat "$work/stats-api-tables.txt" "$work/stats-cli-tables.txt"; exit 1; }
+[ -s "$work/stats-cli-tables.txt" ] && cmp -s "$work/stats-api-tables.txt" "$work/stats-cli-tables.txt" || { echo "FAIL: GetStorageStats and heron-hub stats list different tables"; cat "$work/stats-api-tables.txt" "$work/stats-cli-tables.txt"; exit 1; }
 [ "$(get db_bytes)" -gt 0 ] || { echo "FAIL: db_bytes"; exit 1; }
 # 已显式保存总闸与五项外观，空 logo 也是一行；表里目前只有公开页设置。
 [ "$(get setting)" = 6 ] || { echo "FAIL: setting rows"; exit 1; }

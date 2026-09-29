@@ -32,10 +32,10 @@ func deps(t *testing.T, goos, pkg string) []string {
 // 各平台照样编译通过，Linux 产物却链入了它。这里按依赖图检查，缺陷在引入它的那次提交就红。
 // darwin 一侧必须看得见 purego：否则这条检查对"列表为空"与"确实没有"分不出来。
 func TestPuregoOnlyLinksIntoDarwin(t *testing.T) {
-	if !slices.Contains(deps(t, "darwin", "github.com/xjetry/probe/cmd/agent"), purego) {
+	if !slices.Contains(deps(t, "darwin", "github.com/xjetry/heron-probe/cmd/agent"), purego) {
 		t.Fatal("darwin agent does not depend on purego; the Linux check below would pass vacuously")
 	}
-	for _, pkg := range []string{"github.com/xjetry/probe/cmd/agent", "github.com/xjetry/probe/cmd/hub"} {
+	for _, pkg := range []string{"github.com/xjetry/heron-probe/cmd/agent", "github.com/xjetry/heron-probe/cmd/hub"} {
 		if slices.Contains(deps(t, "linux", pkg), purego) {
 			t.Fatalf("%s links %s on linux", pkg, purego)
 		}

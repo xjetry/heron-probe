@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/metric"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -20,7 +20,7 @@ func TestProbeDisplayOrderAcrossAPIStorageAndAgent(t *testing.T) {
 	h.setPublic(t, node, "public", true)
 	createTask := func() uint64 {
 		t.Helper()
-		r, err := h.admin.SaveProbeTask(ctx, connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: validProbeTask(), AllNodes: true}))
+		r, err := h.admin.SaveProbeTask(ctx, connect.NewRequest(&heronv1.SaveProbeTaskRequest{Task: validProbeTask(), AllNodes: true}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -30,7 +30,7 @@ func TestProbeDisplayOrderAcrossAPIStorageAndAgent(t *testing.T) {
 	before := h.reg.TasksFor(node)
 	check := func(want []uint64) {
 		t.Helper()
-		list, err := h.admin.ListProbeTasks(ctx, connect.NewRequest(&probev1.ListProbeTasksRequest{}))
+		list, err := h.admin.ListProbeTasks(ctx, connect.NewRequest(&heronv1.ListProbeTasksRequest{}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -54,7 +54,7 @@ func TestProbeDisplayOrderAcrossAPIStorageAndAgent(t *testing.T) {
 		}
 	}
 	reorder := func(ids []uint64) error {
-		_, err := h.admin.ReorderProbeTasks(ctx, connect.NewRequest(&probev1.ReorderProbeTasksRequest{Ids: ids}))
+		_, err := h.admin.ReorderProbeTasks(ctx, connect.NewRequest(&heronv1.ReorderProbeTasksRequest{Ids: ids}))
 		return err
 	}
 	if err := reorder([]uint64{c, a, b}); err != nil {
@@ -82,7 +82,7 @@ func TestProbeDisplayOrderAcrossAPIStorageAndAgent(t *testing.T) {
 	}
 	edit := validProbeTask()
 	edit.Id, edit.Target = a, "192.0.2.1"
-	if _, err := h.admin.SaveProbeTask(ctx, connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: edit, AllNodes: true})); err != nil {
+	if _, err := h.admin.SaveProbeTask(ctx, connect.NewRequest(&heronv1.SaveProbeTaskRequest{Task: edit, AllNodes: true})); err != nil {
 		t.Fatal(err)
 	}
 	d := createTask()
@@ -95,7 +95,7 @@ func TestProbeDisplayOrderAcrossAPIStorageAndAgent(t *testing.T) {
 	if _, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Probes: rows}); err != nil {
 		t.Fatal(err)
 	}
-	query := &probev1.QueryProbesRequest{NodeId: node, From: base, To: base + 3600}
+	query := &heronv1.QueryProbesRequest{NodeId: node, From: base, To: base + 3600}
 	checkHistory := func(want []uint64) {
 		t.Helper()
 		admin, err := h.admin.QueryProbes(ctx, connect.NewRequest(query))
@@ -106,7 +106,7 @@ func TestProbeDisplayOrderAcrossAPIStorageAndAgent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, r := range []*probev1.QueryProbesResponse{admin.Msg, public.Msg} {
+		for _, r := range []*heronv1.QueryProbesResponse{admin.Msg, public.Msg} {
 			var ids []uint64
 			for _, s := range r.Series {
 				ids = append(ids, s.TaskId)
@@ -117,7 +117,7 @@ func TestProbeDisplayOrderAcrossAPIStorageAndAgent(t *testing.T) {
 		}
 	}
 	checkHistory([]uint64{c, a, b, d})
-	if _, err := h.admin.DeleteProbeTask(ctx, connect.NewRequest(&probev1.DeleteProbeTaskRequest{Id: a})); err != nil {
+	if _, err := h.admin.DeleteProbeTask(ctx, connect.NewRequest(&heronv1.DeleteProbeTaskRequest{Id: a})); err != nil {
 		t.Fatal(err)
 	}
 	check([]uint64{c, b, d})

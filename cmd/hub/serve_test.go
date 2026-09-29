@@ -19,17 +19,17 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	agentclient "github.com/xjetry/probe/internal/agent/client"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/alert"
-	"github.com/xjetry/probe/internal/hub/auth"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/hub/web"
-	"github.com/xjetry/probe/internal/testlog"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	agentclient "github.com/xjetry/heron-probe/internal/agent/client"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/alert"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/web"
+	"github.com/xjetry/heron-probe/internal/testlog"
+	"github.com/xjetry/heron-probe/internal/testwait"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -54,7 +54,7 @@ func startTestHub(t *testing.T, db string, clk clock.Clock, flags ...string) (st
 
 func startTestHubWithTTL(t *testing.T, db string, clk clock.Clock, ttl string, flags ...string) (string, serveEvents, func()) {
 	t.Helper()
-	t.Setenv("PROBE_OFFLINE_AFTER", ttl)
+	t.Setenv("HERON_OFFLINE_AFTER", ttl)
 	ctx, cancel := context.WithCancel(context.Background())
 	events := make(serveEvents, 128)
 	done := make(chan struct{})
@@ -122,7 +122,7 @@ func (b *lockedBuffer) String() string {
 // runServe 同一个 newServeLogger 装配日志，按脚本同形的 testlog.WholeSeconds 取值再与常量比较：字段缺失、
 // 改名、不再是整秒写法或不跟常量走时 make ci 先红，而不是等到 e2e 才停下。
 func TestServeStartupLineStatesAlertTiming(t *testing.T) {
-	t.Setenv("PROBE_OFFLINE_AFTER", "12s")
+	t.Setenv("HERON_OFFLINE_AFTER", "12s")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := &lockedBuffer{}
@@ -164,9 +164,9 @@ func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
 	}
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	url, _, stop := startTestHub(t, db, clk, "--trusted-proxies", "127.0.0.1/32")
-	client := probev1connect.NewAdminServiceClient(http.DefaultClient, url)
+	client := heronv1connect.NewAdminServiceClient(http.DefaultClient, url)
 	ctx := context.Background()
-	login := connect.NewRequest(&probev1.LoginRequest{Password: old})
+	login := connect.NewRequest(&heronv1.LoginRequest{Password: old})
 	login.Header().Set("X-Forwarded-Proto", "https")
 	logged, err := client.Login(ctx, login)
 	if err != nil {
@@ -177,19 +177,19 @@ func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
 		t.Fatalf("serve did not pass trusted proxies: %v", cookies)
 	}
 	cookie := cookies[0].Name + "=" + cookies[0].Value
-	create := connect.NewRequest(&probev1.CreateNodeRequest{Name: "n"})
+	create := connect.NewRequest(&heronv1.CreateNodeRequest{Name: "n"})
 	create.Header().Set("Cookie", cookie)
 	node, err := client.CreateNode(ctx, create)
 	if err != nil {
 		t.Fatal(err)
 	}
-	report := connect.NewRequest(&probev1.ReportRequest{Metrics: &probev1.Metrics{CpuPct: proto.Float64(42)}})
+	report := connect.NewRequest(&heronv1.ReportRequest{Metrics: &heronv1.Metrics{CpuPct: proto.Float64(42)}})
 	report.Header().Set("Authorization", "Bearer "+node.Msg.Token)
 	agent := agentclient.NewServiceClient(url, 5*time.Second)
 	if _, err := agent.Report(ctx, report); err != nil {
 		t.Fatal(err)
 	}
-	snapReq := connect.NewRequest(&probev1.GetSnapshotRequest{})
+	snapReq := connect.NewRequest(&heronv1.GetSnapshotRequest{})
 	snapReq.Header().Set("Cookie", cookie)
 	snap, err := client.GetSnapshot(ctx, snapReq)
 	if err != nil {
@@ -211,10 +211,10 @@ func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
 	if _, err := client.GetSnapshot(ctx, snapReq); connect.CodeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("session survived live passwd: %v", err)
 	}
-	if _, err := client.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: old})); connect.CodeOf(err) != connect.CodeUnauthenticated {
+	if _, err := client.Login(ctx, connect.NewRequest(&heronv1.LoginRequest{Password: old})); connect.CodeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("old password still logs in: %v", err)
 	}
-	if _, err := client.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: newPassword})); err != nil {
+	if _, err := client.Login(ctx, connect.NewRequest(&heronv1.LoginRequest{Password: newPassword})); err != nil {
 		t.Fatalf("new password requires restart: %v", err)
 	}
 	stop()
@@ -257,12 +257,12 @@ func TestServePassesThemeOriginToAdmin(t *testing.T) {
 				t.Fatal(err)
 			}
 			url, _, _ := startTestHub(t, db, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), tc.flags...)
-			client := probev1connect.NewAdminServiceClient(http.DefaultClient, url)
-			logged, err := client.Login(t.Context(), connect.NewRequest(&probev1.LoginRequest{Password: pw}))
+			client := heronv1connect.NewAdminServiceClient(http.DefaultClient, url)
+			logged, err := client.Login(t.Context(), connect.NewRequest(&heronv1.LoginRequest{Password: pw}))
 			if err != nil {
 				t.Fatal(err)
 			}
-			req := connect.NewRequest(&probev1.ListThemesRequest{})
+			req := connect.NewRequest(&heronv1.ListThemesRequest{})
 			req.Header().Set("Cookie", strings.Split(logged.Header().Get("Set-Cookie"), ";")[0])
 			resp, err := client.ListThemes(t.Context(), req)
 			if got := connect.CodeOf(err); (err == nil && tc.want != 0) || (err != nil && got != tc.want) {
@@ -300,7 +300,7 @@ func TestServeRunsMaintenanceWithConfiguredRetention(t *testing.T) {
 	}
 	recent := clk.Now().Add(-20 * time.Minute).Truncate(time.Minute).Unix()
 	b := metric.NewBucket()
-	b.Add(&probev1.Metrics{CpuPct: proto.Float64(1)})
+	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(1)})
 	rowsToWrite := []metric.Row{{NodeID: id, TS: recent, Bucket: b}}
 	for _, ts := range expired {
 		rowsToWrite = append(rowsToWrite, metric.Row{NodeID: id, TS: ts, Bucket: b})
@@ -347,13 +347,13 @@ pruned:
 	// 把 --retention-* 传给了 api.Config.Retention 的那份值。标红结论是否也用这份配置由
 	// internal/hub/api 的 TestGetStorageStatsUsesTheConfiguredRetention 钉住——那边的夹具不跑
 	// RunMaintenance，判定不依赖任何真实时间窗。
-	client := probev1connect.NewAdminServiceClient(http.DefaultClient, url)
-	logged, err := client.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: password}))
+	client := heronv1connect.NewAdminServiceClient(http.DefaultClient, url)
+	logged, err := client.Login(ctx, connect.NewRequest(&heronv1.LoginRequest{Password: password}))
 	if err != nil {
 		t.Fatalf("login for storage stats check: %v", err)
 	}
 	cookies := (&http.Response{Header: logged.Header()}).Cookies()
-	statsReq := connect.NewRequest(&probev1.GetStorageStatsRequest{})
+	statsReq := connect.NewRequest(&heronv1.GetStorageStatsRequest{})
 	statsReq.Header().Set("Cookie", cookies[0].Name+"="+cookies[0].Value)
 	stats, err := client.GetStorageStats(ctx, statsReq)
 	if err != nil {
@@ -457,25 +457,25 @@ func TestServeFlushesTrafficOnShutdown(t *testing.T) {
 	}
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	url, _, stop := startTestHub(t, db, clk, "--timezone", "UTC")
-	client := probev1connect.NewAdminServiceClient(http.DefaultClient, url)
+	client := heronv1connect.NewAdminServiceClient(http.DefaultClient, url)
 	ctx := context.Background()
-	logged, err := client.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: password}))
+	logged, err := client.Login(ctx, connect.NewRequest(&heronv1.LoginRequest{Password: password}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	cookies := (&http.Response{Header: logged.Header()}).Cookies()
-	create := connect.NewRequest(&probev1.CreateNodeRequest{Name: "n"})
+	create := connect.NewRequest(&heronv1.CreateNodeRequest{Name: "n"})
 	create.Header().Set("Cookie", cookies[0].Name+"="+cookies[0].Value)
 	node, err := client.CreateNode(ctx, create)
 	if err != nil {
 		t.Fatal(err)
 	}
 	agent := agentclient.NewServiceClient(url, 5*time.Second)
-	for _, m := range []*probev1.Metrics{
+	for _, m := range []*heronv1.Metrics{
 		{BootId: "b", NetRxTotal: proto.Uint64(1000), NetTxTotal: proto.Uint64(5000)},
 		{BootId: "b", NetRxTotal: proto.Uint64(1200), NetTxTotal: proto.Uint64(5001)},
 	} {
-		report := connect.NewRequest(&probev1.ReportRequest{Metrics: m})
+		report := connect.NewRequest(&heronv1.ReportRequest{Metrics: m})
 		report.Header().Set("Authorization", "Bearer "+node.Msg.Token)
 		if _, err := agent.Report(ctx, report); err != nil {
 			t.Fatal(err)
@@ -520,7 +520,7 @@ func TestServeWarnsWhenLocalTimezoneCannotBeResolved(t *testing.T) {
 func TestServeMountsPublicService(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "hub.db")
 	url, _, _ := startTestHub(t, db, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
-	resp, err := http.Get(url + "/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D")
+	resp, err := http.Get(url + "/heron.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -577,7 +577,7 @@ func TestServePublicDirReplacesRootButNotPanelOrRPC(t *testing.T) {
 	for name, content := range map[string]string{
 		"index.html":                     "custom site",
 		"admin/index.html":               "shadow panel",
-		"probe.v1.PublicService/GetSite": "shadow rpc",
+		"heron.v1.PublicService/GetSite": "shadow rpc",
 	} {
 		path := filepath.Join(dir, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -607,7 +607,7 @@ func TestServePublicDirReplacesRootButNotPanelOrRPC(t *testing.T) {
 	if resp, body := fetch("/admin/"); strings.Contains(body, "shadow") || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "default-src 'self'") {
 		t.Fatalf("/admin/ was shadowed: %d %q", resp.StatusCode, body)
 	}
-	if resp, body := fetch("/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D"); resp.StatusCode != http.StatusOK || strings.Contains(body, "shadow") {
+	if resp, body := fetch("/heron.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D"); resp.StatusCode != http.StatusOK || strings.Contains(body, "shadow") {
 		t.Fatalf("RPC path was shadowed: %d %q", resp.StatusCode, body)
 	}
 }

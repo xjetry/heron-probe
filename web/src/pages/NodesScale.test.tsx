@@ -1,7 +1,7 @@
 import { createConnectQueryKey } from "@connectrpc/connect-query";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AdminService } from "../gen/probe/v1/admin_pb";
+import { AdminService } from "../gen/heron/v1/admin_pb";
 import { renderWithAdmin } from "../test/harness";
 import { Nodes } from "./Nodes";
 

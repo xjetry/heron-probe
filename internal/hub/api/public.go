@@ -18,15 +18,15 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/descriptorpb"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/alert"
-	"github.com/xjetry/probe/internal/hub/live"
-	"github.com/xjetry/probe/internal/hub/probe"
-	"github.com/xjetry/probe/internal/hub/ratelimit"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/hub/traffic"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/alert"
+	"github.com/xjetry/heron-probe/internal/hub/live"
+	"github.com/xjetry/heron-probe/internal/hub/probe"
+	"github.com/xjetry/heron-probe/internal/hub/ratelimit"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/traffic"
 )
 
 // publicMaxBody 是公开请求的解码预算。公开请求的字段只有历史查询的几个数值与节点 id，正常客户端发出的
@@ -80,9 +80,9 @@ func NewPublic(cfg PublicConfig, st *store.Store, l *live.Live, book *traffic.Bo
 	return &Public{
 		cfg: cfg, store: st, live: l, traffic: book, probes: probes, clk: clk, log: log,
 		history: history{store: st, log: log},
-		facts:   newProjection((&probev1.PublicFacts{}).ProtoReflect().Type(), (&probev1.Facts{}).ProtoReflect().Descriptor()),
-		metrics: newProjection((&probev1.PublicMetrics{}).ProtoReflect().Type(), (&probev1.Metrics{}).ProtoReflect().Descriptor()),
-		billing: newProjection((&probev1.PublicBilling{}).ProtoReflect().Type(), (&probev1.Billing{}).ProtoReflect().Descriptor()),
+		facts:   newProjection((&heronv1.PublicFacts{}).ProtoReflect().Type(), (&heronv1.Facts{}).ProtoReflect().Descriptor()),
+		metrics: newProjection((&heronv1.PublicMetrics{}).ProtoReflect().Type(), (&heronv1.Metrics{}).ProtoReflect().Descriptor()),
+		billing: newProjection((&heronv1.PublicBilling{}).ProtoReflect().Type(), (&heronv1.Billing{}).ProtoReflect().Descriptor()),
 		limit:   ratelimit.New[netip.Addr](publicBurst, publicRefill),
 		maxAge:  cachePolicy(probeServices()),
 	}
@@ -90,7 +90,7 @@ func NewPublic(cfg PublicConfig, st *store.Store, l *live.Live, book *traffic.Bo
 
 // connectHandler 是不带挂载点中间件的处理器。
 func (p *Public) connectHandler() (string, http.Handler) {
-	return probev1connect.NewPublicServiceHandler(p, connect.WithReadMaxBytes(publicMaxBody), connect.WithInterceptors(connect.UnaryInterceptorFunc(p.requireEnabled)))
+	return heronv1connect.NewPublicServiceHandler(p, connect.WithReadMaxBytes(publicMaxBody), connect.WithInterceptors(connect.UnaryInterceptorFunc(p.requireEnabled)))
 }
 
 // 总闸与节点 public 取交集，不改逐节点标记，重新打开即可恢复原范围。
@@ -178,12 +178,12 @@ func cachePolicy(services []protoreflect.ServiceDescriptor) map[string]uint32 {
 			m := methods.Get(i)
 			opts, _ := m.Options().(*descriptorpb.MethodOptions)
 			get := opts.GetIdempotencyLevel() == descriptorpb.MethodOptions_NO_SIDE_EFFECTS
-			v, _ := proto.GetExtension(m.Options(), probev1.E_CacheMaxAgeS).(uint32)
+			v, _ := proto.GetExtension(m.Options(), heronv1.E_CacheMaxAgeS).(uint32)
 			switch {
 			case get && v == 0:
-				panic(fmt.Sprintf("%s accepts GET (idempotency_level = NO_SIDE_EFFECTS) but does not declare a positive probe.v1.cache_max_age_s", m.FullName()))
+				panic(fmt.Sprintf("%s accepts GET (idempotency_level = NO_SIDE_EFFECTS) but does not declare a positive heron.v1.cache_max_age_s", m.FullName()))
 			case !get && v != 0:
-				panic(fmt.Sprintf("%s declares probe.v1.cache_max_age_s but does not accept GET (idempotency_level is not NO_SIDE_EFFECTS)", m.FullName()))
+				panic(fmt.Sprintf("%s declares heron.v1.cache_max_age_s but does not accept GET (idempotency_level is not NO_SIDE_EFFECTS)", m.FullName()))
 			case get:
 				table["/"+string(svc.FullName())+"/"+string(m.Name())] = v
 			}
@@ -192,11 +192,11 @@ func cachePolicy(services []protoreflect.ServiceDescriptor) map[string]uint32 {
 	return table
 }
 
-// probeServices 是 probe.v1 包里的全部服务。包里每个 proto 文件的生成代码都在 gen/probe/v1 这一个 Go 包里，
+// probeServices 是 heron.v1 包里的全部服务。包里每个 proto 文件的生成代码都在 gen/heron/v1 这一个 Go 包里，
 // 本包 import 了它，所以它们都已登记进 protoregistry.GlobalFiles。
 func probeServices() []protoreflect.ServiceDescriptor {
 	var out []protoreflect.ServiceDescriptor
-	protoregistry.GlobalFiles.RangeFilesByPackage("probe.v1", func(fd protoreflect.FileDescriptor) bool {
+	protoregistry.GlobalFiles.RangeFilesByPackage("heron.v1", func(fd protoreflect.FileDescriptor) bool {
 		for i := 0; i < fd.Services().Len(); i++ {
 			out = append(out, fd.Services().Get(i))
 		}
@@ -226,16 +226,16 @@ func (p *Public) requirePublic(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (p *Public) GetSite(ctx context.Context, _ *connect.Request[probev1.GetSiteRequest]) (*connect.Response[probev1.PublicSite], error) {
+func (p *Public) GetSite(ctx context.Context, _ *connect.Request[heronv1.GetSiteRequest]) (*connect.Response[heronv1.PublicSite], error) {
 	st, err := p.store.SiteSettings(ctx)
 	if err != nil {
 		p.log.Error("reading settings failed", "err", err)
 		return nil, internalError("reading settings failed")
 	}
-	return connect.NewResponse(&probev1.PublicSite{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS}), nil
+	return connect.NewResponse(&heronv1.PublicSite{Title: st.Title, Theme: st.Theme, AccentColor: st.AccentColor, Logo: st.Logo, CustomCss: st.CustomCSS}), nil
 }
 
-func (p *Public) GetSnapshot(ctx context.Context, _ *connect.Request[probev1.PublicServiceGetSnapshotRequest]) (*connect.Response[probev1.PublicSnapshot], error) {
+func (p *Public) GetSnapshot(ctx context.Context, _ *connect.Request[heronv1.PublicServiceGetSnapshotRequest]) (*connect.Response[heronv1.PublicSnapshot], error) {
 	nodes, err := p.store.ListPublicNodes(ctx)
 	if err != nil {
 		p.log.Error("listing public nodes failed", "err", err)
@@ -244,23 +244,23 @@ func (p *Public) GetSnapshot(ctx context.Context, _ *connect.Request[probev1.Pub
 	// now 只读一次：快照的 now 与每个节点的 days_left 出自同一时刻，调用方拿 now 核对 days_left 不会差一天。
 	now := p.clk.Now()
 	today := alert.Today(now, p.cfg.Location)
-	out := &probev1.PublicSnapshot{Now: now.Unix(), ReportIntervalMs: uint32(p.cfg.ReportInterval / time.Millisecond)}
+	out := &heronv1.PublicSnapshot{Now: now.Unix(), ReportIntervalMs: uint32(p.cfg.ReportInterval / time.Millisecond)}
 	for _, n := range nodes {
 		online, seen, m := liveState(p.live, n)
-		pn := &probev1.PublicNode{Id: n.ID, Name: n.Name, Online: online, LastSeenAt: seen, SortOrder: n.SortOrder, Traffic: trafficProto(p.traffic.View(n.ID))}
+		pn := &heronv1.PublicNode{Id: n.ID, Name: n.Name, Online: online, LastSeenAt: seen, SortOrder: n.SortOrder, Traffic: trafficProto(p.traffic.View(n.ID))}
 		// 国家只放行显示值：查得于哪个地址与来源不公开，公开页表达"在哪个区域"，不定位机器（§4.9）。
 		pn.Country, _ = n.DisplayCountry()
 		// 标签随公开节点公开：n 来自 ListPublicNodes，只含 public = 1 的节点，私有节点的标签不会走到这里。
 		pn.Tags = n.Tags
 		// 计费经投影公开：PublicBilling 没有 auto_renew（reserved），它与 Billing 的对齐由 NewPublic 构造投影时核对。
 		if b := billingProto(n.Billing, today); b != nil {
-			pn.Billing = p.billing.apply(b).(*probev1.PublicBilling)
+			pn.Billing = p.billing.apply(b).(*heronv1.PublicBilling)
 		}
 		if n.Facts != nil {
-			pn.Facts = p.facts.apply(n.Facts).(*probev1.PublicFacts)
+			pn.Facts = p.facts.apply(n.Facts).(*heronv1.PublicFacts)
 		}
 		if m != nil {
-			pn.Metrics = p.metrics.apply(m).(*probev1.PublicMetrics)
+			pn.Metrics = p.metrics.apply(m).(*heronv1.PublicMetrics)
 		}
 		out.Nodes = append(out.Nodes, pn)
 	}
@@ -284,7 +284,7 @@ func unionTags(nodes []store.Node) []string {
 	return out
 }
 
-func (p *Public) QueryMetrics(ctx context.Context, req *connect.Request[probev1.QueryMetricsRequest]) (*connect.Response[probev1.QueryMetricsResponse], error) {
+func (p *Public) QueryMetrics(ctx context.Context, req *connect.Request[heronv1.QueryMetricsRequest]) (*connect.Response[heronv1.QueryMetricsResponse], error) {
 	m := req.Msg
 	maxPoints, err := checkWindow(m.GetFrom(), m.GetTo(), m.GetMaxPoints())
 	if err != nil {
@@ -300,7 +300,7 @@ func (p *Public) QueryMetrics(ctx context.Context, req *connect.Request[probev1.
 	return connect.NewResponse(resp), nil
 }
 
-func (p *Public) QueryProbes(ctx context.Context, req *connect.Request[probev1.QueryProbesRequest]) (*connect.Response[probev1.QueryProbesResponse], error) {
+func (p *Public) QueryProbes(ctx context.Context, req *connect.Request[heronv1.QueryProbesRequest]) (*connect.Response[heronv1.QueryProbesResponse], error) {
 	m := req.Msg
 	maxPoints, err := checkWindow(m.GetFrom(), m.GetTo(), m.GetMaxPoints())
 	if err != nil {
@@ -310,7 +310,7 @@ func (p *Public) QueryProbes(ctx context.Context, req *connect.Request[probev1.Q
 		return nil, err
 	}
 	node := m.GetNodeId()
-	resp, err := p.history.probeSeries(ctx, m, maxPoints, func(id uint64) (probev1.ProbeKind, string, bool) {
+	resp, err := p.history.probeSeries(ctx, m, maxPoints, func(id uint64) (heronv1.ProbeKind, string, bool) {
 		return p.probes.TargetFor(node, id)
 	}, p.probes.OrderedIDs())
 	if err != nil {

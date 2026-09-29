@@ -3,19 +3,19 @@ package metric
 import (
 	"testing"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestNetworkPeaksKeepSamplesSeparateFromTraffic(t *testing.T) {
 	rx, tx := idx(t, "net_rx_bps"), idx(t, "net_tx_bps")
 	b := NewBucket()
-	b.Add(&probev1.Metrics{NetRxBps: proto.Uint64(800), NetTxBps: proto.Uint64(0)})
-	b.Add(&probev1.Metrics{NetRxBps: proto.Uint64(20)})
-	b.Add(&probev1.Metrics{})
+	b.Add(&heronv1.Metrics{NetRxBps: proto.Uint64(800), NetTxBps: proto.Uint64(0)})
+	b.Add(&heronv1.Metrics{NetRxBps: proto.Uint64(20)})
+	b.Add(&heronv1.Metrics{})
 	b.AddSum(RxBytes, 1200)
 	other := NewBucket()
-	other.Add(&probev1.Metrics{NetRxBps: proto.Uint64(100), NetTxBps: proto.Uint64(50)})
+	other.Add(&heronv1.Metrics{NetRxBps: proto.Uint64(100), NetTxBps: proto.Uint64(50)})
 	other.AddSum(RxBytes, 300)
 	b.Merge(other)
 	if b.Max[rx] != 800 || b.N[rx] != 3 || b.Max[tx] != 50 || b.N[tx] != 2 {
@@ -25,11 +25,11 @@ func TestNetworkPeaksKeepSamplesSeparateFromTraffic(t *testing.T) {
 		t.Fatalf("sampling rates changed traffic: %+v", b)
 	}
 	empty := NewBucket()
-	empty.Add(&probev1.Metrics{NetRxTotal: proto.Uint64(800)})
+	empty.Add(&heronv1.Metrics{NetRxTotal: proto.Uint64(800)})
 	if empty.N[rx] != 0 || empty.N[tx] != 0 {
 		t.Fatal("a cumulative counter is not a sampled rate")
 	}
-	empty.Add(&probev1.Metrics{NetRxBps: proto.Uint64(0)})
+	empty.Add(&heronv1.Metrics{NetRxBps: proto.Uint64(0)})
 	if empty.N[rx] != 1 || empty.Max[rx] != 0 || empty.N[tx] != 0 {
 		t.Fatal("zero and missing rates must stay distinct")
 	}

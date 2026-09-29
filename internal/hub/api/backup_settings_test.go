@@ -9,24 +9,24 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"google.golang.org/protobuf/proto"
 )
 
-func fullBackup() *probev1.BackupSettings {
-	return &probev1.BackupSettings{Endpoint: "https://account.r2.cloudflarestorage.com", Bucket: "private-backups", Region: "auto", AccessKey: "access", Secret: proto.String("never-echo-this"), Prefix: "hub", ConfigIntervalS: proto.Uint32(600), MetricsIntervalS: proto.Uint32(7200), ConfigKeep: proto.Uint32(24), MetricsKeep: proto.Uint32(7)}
+func fullBackup() *heronv1.BackupSettings {
+	return &heronv1.BackupSettings{Endpoint: "https://account.r2.cloudflarestorage.com", Bucket: "private-backups", Region: "auto", AccessKey: "access", Secret: proto.String("never-echo-this"), Prefix: "hub", ConfigIntervalS: proto.Uint32(600), MetricsIntervalS: proto.Uint32(7200), ConfigKeep: proto.Uint32(24), MetricsKeep: proto.Uint32(7)}
 }
 
 // echoOf 是 in 保存之后的回显：secret 不回显、换成 has_secret，notify 恒给出。
-func echoOf(in *probev1.BackupSettings, hasSecret bool, channels ...int64) *probev1.BackupSettings {
-	want := proto.Clone(in).(*probev1.BackupSettings)
+func echoOf(in *heronv1.BackupSettings, hasSecret bool, channels ...int64) *heronv1.BackupSettings {
+	want := proto.Clone(in).(*heronv1.BackupSettings)
 	want.Secret = nil
 	want.HasSecret = hasSecret
-	want.Notify = &probev1.BackupNotify{ChannelIds: channels}
+	want.Notify = &heronv1.BackupNotify{ChannelIds: channels}
 	return want
 }
 
-func backupChannels(s *probev1.Settings) []int64 { return s.GetBackup().GetNotify().GetChannelIds() }
+func backupChannels(s *heronv1.Settings) []int64 { return s.GetBackup().GetNotify().GetChannelIds() }
 
 func TestBackupSettingsDefaultsWriteOnlyAndOmission(t *testing.T) {
 	h := newHarness(t, "")
@@ -98,7 +98,7 @@ func TestBackupNotifyPresence(t *testing.T) {
 	b := saveChannel(t, h, webhook("https://hooks.example/b")).Id
 	in := validSettings()
 	in.Backup = fullBackup()
-	in.Backup.Notify = &probev1.BackupNotify{ChannelIds: []int64{b, a, b}}
+	in.Backup.Notify = &heronv1.BackupNotify{ChannelIds: []int64{b, a, b}}
 	if got := backupChannels(saveSettings(t, h, in)); !slices.Equal(got, []int64{a, b}) {
 		t.Fatalf("given channels saved as %v, want %v (sorted, duplicates merged)", got, []int64{a, b})
 	}
@@ -107,11 +107,11 @@ func TestBackupNotifyPresence(t *testing.T) {
 	if !slices.Equal(backupChannels(got), []int64{a, b}) || got.GetBackup().GetConfigIntervalS() != 900 {
 		t.Fatalf("interval-only update without notify changed channels: %v", got.GetBackup())
 	}
-	in.Backup.Notify = &probev1.BackupNotify{ChannelIds: []int64{b}}
+	in.Backup.Notify = &heronv1.BackupNotify{ChannelIds: []int64{b}}
 	if got := backupChannels(saveSettings(t, h, in)); !slices.Equal(got, []int64{b}) {
 		t.Fatalf("given channels did not replace the old ones: %v", got)
 	}
-	in.Backup.Notify = &probev1.BackupNotify{}
+	in.Backup.Notify = &heronv1.BackupNotify{}
 	if got := backupChannels(saveSettings(t, h, in)); len(got) != 0 {
 		t.Fatalf("explicit empty notify did not turn notifications off: %v", got)
 	}
@@ -119,7 +119,7 @@ func TestBackupNotifyPresence(t *testing.T) {
 		t.Fatalf("read after explicit empty notify: %v", read.GetBackup())
 	}
 	// JSON 客户端的写法：{} 是给出的空集合，省略才是缺席。
-	in.Backup.Notify = &probev1.BackupNotify{ChannelIds: []int64{a}}
+	in.Backup.Notify = &heronv1.BackupNotify{ChannelIds: []int64{a}}
 	saveSettings(t, h, in)
 	postBackupJSON(t, h, `{"endpoint":"https://s3.example","bucket":"private-backups","accessKey":"access"}`)
 	if got := backupChannels(currentSettings(t, h)); !slices.Equal(got, []int64{a}) {
@@ -134,7 +134,7 @@ func TestBackupNotifyPresence(t *testing.T) {
 func postBackupJSON(t *testing.T, h *harness, backup string) {
 	t.Helper()
 	body := `{"settings":{"theme":"auto","backup":` + backup + `}}`
-	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/probe.v1.AdminService/UpdateSettings", strings.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/heron.v1.AdminService/UpdateSettings", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,12 +154,12 @@ func TestBackupSettingsRanges(t *testing.T) {
 	for _, tc := range []struct {
 		field    string
 		min, max uint32
-		set      func(*probev1.BackupSettings, *uint32)
+		set      func(*heronv1.BackupSettings, *uint32)
 	}{
-		{"config_interval_s", 60, 86400, func(b *probev1.BackupSettings, v *uint32) { b.ConfigIntervalS = v }},
-		{"metrics_interval_s", 3600, 604800, func(b *probev1.BackupSettings, v *uint32) { b.MetricsIntervalS = v }},
-		{"config_keep", 1, 1000, func(b *probev1.BackupSettings, v *uint32) { b.ConfigKeep = v }},
-		{"metrics_keep", 1, 1000, func(b *probev1.BackupSettings, v *uint32) { b.MetricsKeep = v }},
+		{"config_interval_s", 60, 86400, func(b *heronv1.BackupSettings, v *uint32) { b.ConfigIntervalS = v }},
+		{"metrics_interval_s", 3600, 604800, func(b *heronv1.BackupSettings, v *uint32) { b.MetricsIntervalS = v }},
+		{"config_keep", 1, 1000, func(b *heronv1.BackupSettings, v *uint32) { b.ConfigKeep = v }},
+		{"metrics_keep", 1, 1000, func(b *heronv1.BackupSettings, v *uint32) { b.MetricsKeep = v }},
 	} {
 		t.Run(tc.field, func(t *testing.T) {
 			h := newHarness(t, "")
@@ -171,7 +171,7 @@ func TestBackupSettingsRanges(t *testing.T) {
 				saveSettings(t, h, before)
 				tc.set(in.Backup, &bad)
 				in.Title = "must-not-be-saved"
-				_, err := h.admin.UpdateSettings(t.Context(), connect.NewRequest(&probev1.UpdateSettingsRequest{Settings: in}))
+				_, err := h.admin.UpdateSettings(t.Context(), connect.NewRequest(&heronv1.UpdateSettingsRequest{Settings: in}))
 				want := fmt.Sprintf("backup.%s must be in [%d, %d]; got %d", tc.field, tc.min, tc.max, bad)
 				if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), want) {
 					t.Errorf("%s=%d: want InvalidArgument %q, got %v", tc.field, bad, want, err)
@@ -196,26 +196,26 @@ func TestBackupTargetValidation(t *testing.T) {
 	before := saveSettings(t, h, in)
 	for _, tc := range []struct {
 		want   string
-		change func(*probev1.BackupSettings)
+		change func(*heronv1.BackupSettings)
 	}{
-		{"endpoint", func(b *probev1.BackupSettings) { b.Endpoint = "file:///tmp/backup" }},
-		{"endpoint", func(b *probev1.BackupSettings) { b.Endpoint = "https://user:secret@host" }},
-		{"bucket", func(b *probev1.BackupSettings) { b.Bucket = "../escape" }},
-		{"region", func(b *probev1.BackupSettings) { b.Region = "region/escape" }},
-		{"access_key", func(b *probev1.BackupSettings) { b.AccessKey = "key\nheader" }},
-		{"secret", func(b *probev1.BackupSettings) { b.Secret = proto.String(strings.Repeat("s", 4097)) }},
-		{"prefix", func(b *probev1.BackupSettings) { b.Prefix = strings.Repeat("p", 513) }},
-		{"endpoint host must be ASCII", func(b *probev1.BackupSettings) { b.Endpoint = "https://例子.example" }},
-		{"endpoint host must be ASCII", func(b *probev1.BackupSettings) { b.Endpoint = "http://[fe80::1%25en0]:9000" }},
-		{"prefix must not start or end with /", func(b *probev1.BackupSettings) { b.Prefix = "/hub" }},
-		{"prefix must not start or end with /", func(b *probev1.BackupSettings) { b.Prefix = "hub/" }},
-		{"prefix must not start or end with / or contain control characters", func(b *probev1.BackupSettings) { b.Prefix = "hub\x7fbackups" }},
-		{"notify.channel_ids must list at most 16 channel IDs, duplicates included; got 17", func(b *probev1.BackupSettings) {
+		{"endpoint", func(b *heronv1.BackupSettings) { b.Endpoint = "file:///tmp/backup" }},
+		{"endpoint", func(b *heronv1.BackupSettings) { b.Endpoint = "https://user:secret@host" }},
+		{"bucket", func(b *heronv1.BackupSettings) { b.Bucket = "../escape" }},
+		{"region", func(b *heronv1.BackupSettings) { b.Region = "region/escape" }},
+		{"access_key", func(b *heronv1.BackupSettings) { b.AccessKey = "key\nheader" }},
+		{"secret", func(b *heronv1.BackupSettings) { b.Secret = proto.String(strings.Repeat("s", 4097)) }},
+		{"prefix", func(b *heronv1.BackupSettings) { b.Prefix = strings.Repeat("p", 513) }},
+		{"endpoint host must be ASCII", func(b *heronv1.BackupSettings) { b.Endpoint = "https://例子.example" }},
+		{"endpoint host must be ASCII", func(b *heronv1.BackupSettings) { b.Endpoint = "http://[fe80::1%25en0]:9000" }},
+		{"prefix must not start or end with /", func(b *heronv1.BackupSettings) { b.Prefix = "/hub" }},
+		{"prefix must not start or end with /", func(b *heronv1.BackupSettings) { b.Prefix = "hub/" }},
+		{"prefix must not start or end with / or contain control characters", func(b *heronv1.BackupSettings) { b.Prefix = "hub\x7fbackups" }},
+		{"notify.channel_ids must list at most 16 channel IDs, duplicates included; got 17", func(b *heronv1.BackupSettings) {
 			ids := make([]int64, maxNotifyChannels+1)
 			for i := range ids {
 				ids[i] = int64(i + 1)
 			}
-			b.Notify = &probev1.BackupNotify{ChannelIds: ids}
+			b.Notify = &heronv1.BackupNotify{ChannelIds: ids}
 		}},
 	} {
 		t.Run(tc.want, func(t *testing.T) {
@@ -224,10 +224,10 @@ func TestBackupTargetValidation(t *testing.T) {
 			rejected(t, h, in, "backup."+tc.want, before)
 		})
 	}
-	for _, change := range []func(*probev1.BackupSettings){
-		func(b *probev1.BackupSettings) { b.Endpoint = "https://xn--fsqu00a.example:9000/base" },
-		func(b *probev1.BackupSettings) { b.Prefix = "hub/nested backups" },
-		func(b *probev1.BackupSettings) { b.Prefix = "" },
+	for _, change := range []func(*heronv1.BackupSettings){
+		func(b *heronv1.BackupSettings) { b.Endpoint = "https://xn--fsqu00a.example:9000/base" },
+		func(b *heronv1.BackupSettings) { b.Prefix = "hub/nested backups" },
+		func(b *heronv1.BackupSettings) { b.Prefix = "" },
 	} {
 		in.Backup = fullBackup()
 		change(in.Backup)
@@ -242,9 +242,9 @@ func TestBackupNotifyChannelMustExist(t *testing.T) {
 	a := saveChannel(t, h, webhook("https://hooks.example/a")).Id
 	in := validSettings()
 	in.Backup = fullBackup()
-	in.Backup.Notify = &probev1.BackupNotify{ChannelIds: []int64{a}}
+	in.Backup.Notify = &heronv1.BackupNotify{ChannelIds: []int64{a}}
 	before := saveSettings(t, h, in)
-	in.Backup.Notify = &probev1.BackupNotify{ChannelIds: []int64{a, 999}}
+	in.Backup.Notify = &heronv1.BackupNotify{ChannelIds: []int64{a, 999}}
 	in.Title = "must-not-be-saved"
 	rejected(t, h, in, "backup.notify.channel_ids: channel 999 does not exist", before)
 }

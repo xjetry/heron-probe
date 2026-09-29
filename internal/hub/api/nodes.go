@@ -11,10 +11,10 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/alert"
-	"github.com/xjetry/probe/internal/hub/sanitize"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/alert"
+	"github.com/xjetry/heron-probe/internal/hub/sanitize"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 const (
@@ -29,15 +29,15 @@ const (
 )
 
 // billingCycles 是协议枚举与库里周期文本的一一对应，未指定对应"没有周期"；TestBillingCyclesMapEveryValue 按两侧全集核对。
-var billingCycles = map[probev1.BillingCycle]store.BillingCycle{
-	probev1.BillingCycle_BILLING_CYCLE_UNSPECIFIED:  store.CycleNone,
-	probev1.BillingCycle_BILLING_CYCLE_MONTHLY:      store.CycleMonthly,
-	probev1.BillingCycle_BILLING_CYCLE_QUARTERLY:    store.CycleQuarterly,
-	probev1.BillingCycle_BILLING_CYCLE_SEMIANNUAL:   store.CycleSemiannual,
-	probev1.BillingCycle_BILLING_CYCLE_YEARLY:       store.CycleYearly,
-	probev1.BillingCycle_BILLING_CYCLE_BIENNIAL:     store.CycleBiennial,
-	probev1.BillingCycle_BILLING_CYCLE_TRIENNIAL:    store.CycleTriennial,
-	probev1.BillingCycle_BILLING_CYCLE_QUINQUENNIAL: store.CycleQuinquennial,
+var billingCycles = map[heronv1.BillingCycle]store.BillingCycle{
+	heronv1.BillingCycle_BILLING_CYCLE_UNSPECIFIED:  store.CycleNone,
+	heronv1.BillingCycle_BILLING_CYCLE_MONTHLY:      store.CycleMonthly,
+	heronv1.BillingCycle_BILLING_CYCLE_QUARTERLY:    store.CycleQuarterly,
+	heronv1.BillingCycle_BILLING_CYCLE_SEMIANNUAL:   store.CycleSemiannual,
+	heronv1.BillingCycle_BILLING_CYCLE_YEARLY:       store.CycleYearly,
+	heronv1.BillingCycle_BILLING_CYCLE_BIENNIAL:     store.CycleBiennial,
+	heronv1.BillingCycle_BILLING_CYCLE_TRIENNIAL:    store.CycleTriennial,
+	heronv1.BillingCycle_BILLING_CYCLE_QUINQUENNIAL: store.CycleQuinquennial,
 }
 
 // 价格与币种的形状按 §9.4。RE2 的 \d 只匹配 ASCII 数字，全角数字不算。
@@ -50,7 +50,7 @@ var (
 // （请求没带 billing）时各项取零值，即五项全清。days_left 由 hub 计算，请求里的值不读。到期日与到期扫描、days_left
 // 共用 alert.ParseDate，写进去的日期读侧一定读得懂。自动续期要求周期与到期日都非空：推后需要这两项。扫描对缺周期
 // 另有守卫（alert.cycleMonths），不依赖这里。
-func billingOf(m *probev1.Billing) (store.Billing, error) {
+func billingOf(m *heronv1.Billing) (store.Billing, error) {
 	b := store.Billing{Price: m.GetPrice(), Currency: m.GetCurrency(), ExpiresOn: m.GetExpiresOn(), AutoRenew: m.GetAutoRenew()}
 	if b.Price != "" && !pricePattern.MatchString(b.Price) {
 		return store.Billing{}, invalid("billing.price: must match %s, e.g. 12.50; got %q", pricePattern, b.Price)
@@ -63,7 +63,7 @@ func billingOf(m *probev1.Billing) (store.Billing, error) {
 	}
 	cycle, ok := billingCycles[m.GetBillingCycle()]
 	if !ok {
-		values := probev1.BillingCycle(0).Descriptor().Values()
+		values := heronv1.BillingCycle(0).Descriptor().Values()
 		names := make([]string, values.Len())
 		for i := range names {
 			names[i] = string(values.Get(i).Name())
@@ -84,11 +84,11 @@ func billingOf(m *probev1.Billing) (store.Billing, error) {
 
 // billingProto 是 Node.billing，也是公开端 PublicBilling 的投影来源。五项都没填时为 nil，字段缺失。today 是 hub 时区的
 // 今天（alert.Today）；没有到期日或库里的值读不懂时 days_left 缺失。
-func billingProto(b store.Billing, today time.Time) *probev1.Billing {
+func billingProto(b store.Billing, today time.Time) *heronv1.Billing {
 	if b == (store.Billing{}) {
 		return nil
 	}
-	out := &probev1.Billing{Price: b.Price, Currency: b.Currency, BillingCycle: enumFor(billingCycles, b.Cycle), ExpiresOn: b.ExpiresOn, AutoRenew: b.AutoRenew}
+	out := &heronv1.Billing{Price: b.Price, Currency: b.Currency, BillingCycle: enumFor(billingCycles, b.Cycle), ExpiresOn: b.ExpiresOn, AutoRenew: b.AutoRenew}
 	if d, ok := alert.DaysLeft(b.ExpiresOn, today); ok {
 		out.DaysLeft = proto.Int32(int32(d))
 	}
@@ -96,15 +96,15 @@ func billingProto(b store.Billing, today time.Time) *probev1.Billing {
 }
 
 // countrySources 是库层显示值来源与协议枚举的一一对应；TestCountrySourcesMapEveryValue 按两侧全集核对。
-var countrySources = map[store.CountrySource]probev1.CountrySource{
-	store.CountryNone:   probev1.CountrySource_COUNTRY_SOURCE_UNSPECIFIED,
-	store.CountryManual: probev1.CountrySource_COUNTRY_SOURCE_MANUAL,
-	store.CountryLookup: probev1.CountrySource_COUNTRY_SOURCE_LOOKUP,
+var countrySources = map[store.CountrySource]heronv1.CountrySource{
+	store.CountryNone:   heronv1.CountrySource_COUNTRY_SOURCE_UNSPECIFIED,
+	store.CountryManual: heronv1.CountrySource_COUNTRY_SOURCE_MANUAL,
+	store.CountryLookup: heronv1.CountrySource_COUNTRY_SOURCE_LOOKUP,
 }
 
 // nodeProto 的 today 是 hub 时区的今天（alert.Today）。
-func nodeProto(n store.Node, today time.Time) *probev1.Node {
-	out := &probev1.Node{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, SortOrder: n.SortOrder, CreatedAt: n.CreatedAt.Unix(), Facts: n.Facts, TrafficResetDay: uint32(n.TrafficResetDay),
+func nodeProto(n store.Node, today time.Time) *heronv1.Node {
+	out := &heronv1.Node{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, SortOrder: n.SortOrder, CreatedAt: n.CreatedAt.Unix(), Facts: n.Facts, TrafficResetDay: uint32(n.TrafficResetDay),
 		Billing: billingProto(n.Billing, today), LastSource: n.LastSource, CountryIp: n.CountryIP, CountryPin: n.CountryPin, CountryLookup: n.Country, Tags: n.Tags}
 	country, source := n.DisplayCountry()
 	out.Country, out.CountrySource = country, countrySources[source]
@@ -138,7 +138,7 @@ func cleanNote(raw string) (string, error) {
 	return note, nil
 }
 
-func (s *Service) ListNodes(ctx context.Context, req *connect.Request[probev1.ListNodesRequest]) (*connect.Response[probev1.ListNodesResponse], error) {
+func (s *Service) ListNodes(ctx context.Context, req *connect.Request[heronv1.ListNodesRequest]) (*connect.Response[heronv1.ListNodesResponse], error) {
 	tags, err := cleanTags("tags", req.Msg.GetTags())
 	if err != nil {
 		return nil, err
@@ -148,15 +148,15 @@ func (s *Service) ListNodes(ctx context.Context, req *connect.Request[probev1.Li
 		s.log.Error("listing nodes failed", "err", err)
 		return nil, internalError("listing nodes failed")
 	}
-	out := make([]*probev1.Node, 0, len(nodes))
+	out := make([]*heronv1.Node, 0, len(nodes))
 	today := s.today()
 	for _, n := range nodes {
 		out = append(out, nodeProto(n, today))
 	}
-	return connect.NewResponse(&probev1.ListNodesResponse{Nodes: out}), nil
+	return connect.NewResponse(&heronv1.ListNodesResponse{Nodes: out}), nil
 }
 
-func (s *Service) CreateNode(ctx context.Context, req *connect.Request[probev1.CreateNodeRequest]) (*connect.Response[probev1.CreateNodeResponse], error) {
+func (s *Service) CreateNode(ctx context.Context, req *connect.Request[heronv1.CreateNodeRequest]) (*connect.Response[heronv1.CreateNodeResponse], error) {
 	name, err := cleanName(req.Msg.GetName())
 	if err != nil {
 		return nil, err
@@ -175,10 +175,10 @@ func (s *Service) CreateNode(ctx context.Context, req *connect.Request[probev1.C
 		return nil, internalError("reading created node failed")
 	}
 	s.log.Info("node created", "node", id, "name", name)
-	return connect.NewResponse(&probev1.CreateNodeResponse{Node: nodeProto(n, s.today()), Token: tok}), nil
+	return connect.NewResponse(&heronv1.CreateNodeResponse{Node: nodeProto(n, s.today()), Token: tok}), nil
 }
 
-func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.UpdateNodeRequest]) (*connect.Response[probev1.UpdateNodeResponse], error) {
+func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.UpdateNodeRequest]) (*connect.Response[heronv1.UpdateNodeResponse], error) {
 	name, err := cleanName(req.Msg.GetName())
 	if err != nil {
 		return nil, err
@@ -196,7 +196,7 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 	}
 	grace := req.Msg.GetOfflineGraceS()
 	if grace != 0 && time.Duration(grace)*time.Second < s.cfg.TTL {
-		return nil, invalid("offline_grace_s: must be 0 or at least %d seconds (PROBE_OFFLINE_AFTER); got %d", (s.cfg.TTL+time.Second-1)/time.Second, grace)
+		return nil, invalid("offline_grace_s: must be 0 or at least %d seconds (HERON_OFFLINE_AFTER); got %d", (s.cfg.TTL+time.Second-1)/time.Second, grace)
 	}
 	billing, err := billingOf(req.Msg.GetBilling())
 	if err != nil {
@@ -246,12 +246,12 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 		s.log.Error("reading updated node failed", "err", err)
 		return nil, internalError("reading updated node failed")
 	}
-	return connect.NewResponse(&probev1.UpdateNodeResponse{Node: nodeProto(n, s.today())}), nil
+	return connect.NewResponse(&heronv1.UpdateNodeResponse{Node: nodeProto(n, s.today())}), nil
 }
 
 // DeleteNode 先由 auth 删除库记录和 token，再由状态持有者等待在途上报并清理。
 // 返回成功必须同时意味着持久化删除完成与进程内状态清除。
-func (s *Service) DeleteNode(ctx context.Context, req *connect.Request[probev1.DeleteNodeRequest]) (*connect.Response[probev1.DeleteNodeResponse], error) {
+func (s *Service) DeleteNode(ctx context.Context, req *connect.Request[heronv1.DeleteNodeRequest]) (*connect.Response[heronv1.DeleteNodeResponse], error) {
 	s.nodeMu.Lock()
 	err := s.auth.DeleteNode(ctx, req.Msg.GetId())
 	s.nodeMu.Unlock()
@@ -268,10 +268,10 @@ func (s *Service) DeleteNode(ctx context.Context, req *connect.Request[probev1.D
 	// auth.DeleteNode 已提交且释放鉴权锁；同步清掉告警缓存，列表不能残留已删除节点的作用域与状态。
 	s.alerts.Forget(req.Msg.GetId())
 	s.log.Info("node deleted", "node", req.Msg.GetId())
-	return connect.NewResponse(&probev1.DeleteNodeResponse{}), nil
+	return connect.NewResponse(&heronv1.DeleteNodeResponse{}), nil
 }
 
-func (s *Service) RotateNodeToken(ctx context.Context, req *connect.Request[probev1.RotateNodeTokenRequest]) (*connect.Response[probev1.RotateNodeTokenResponse], error) {
+func (s *Service) RotateNodeToken(ctx context.Context, req *connect.Request[heronv1.RotateNodeTokenRequest]) (*connect.Response[heronv1.RotateNodeTokenResponse], error) {
 	tok, err := s.auth.RotateToken(ctx, req.Msg.GetId())
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, notFound(req.Msg.GetId())
@@ -281,10 +281,10 @@ func (s *Service) RotateNodeToken(ctx context.Context, req *connect.Request[prob
 		return nil, internalError("rotating token failed")
 	}
 	s.log.Info("node token rotated", "node", req.Msg.GetId())
-	return connect.NewResponse(&probev1.RotateNodeTokenResponse{Token: tok}), nil
+	return connect.NewResponse(&heronv1.RotateNodeTokenResponse{Token: tok}), nil
 }
 
-func (s *Service) ReorderNodes(ctx context.Context, req *connect.Request[probev1.ReorderNodesRequest]) (*connect.Response[probev1.ReorderNodesResponse], error) {
+func (s *Service) ReorderNodes(ctx context.Context, req *connect.Request[heronv1.ReorderNodesRequest]) (*connect.Response[heronv1.ReorderNodesResponse], error) {
 	err := s.store.ReorderNodes(ctx, req.Msg.GetIds())
 	if errors.Is(err, store.ErrBadOrder) {
 		return nil, invalid("ids must list every existing node exactly once; got %d ids", len(req.Msg.GetIds()))
@@ -293,10 +293,10 @@ func (s *Service) ReorderNodes(ctx context.Context, req *connect.Request[probev1
 		s.log.Error("reordering nodes failed", "err", err)
 		return nil, internalError("reordering nodes failed")
 	}
-	return connect.NewResponse(&probev1.ReorderNodesResponse{}), nil
+	return connect.NewResponse(&heronv1.ReorderNodesResponse{}), nil
 }
 
-func (s *Service) OpenRegisterWindow(ctx context.Context, req *connect.Request[probev1.OpenRegisterWindowRequest]) (*connect.Response[probev1.OpenRegisterWindowResponse], error) {
+func (s *Service) OpenRegisterWindow(ctx context.Context, req *connect.Request[heronv1.OpenRegisterWindowRequest]) (*connect.Response[heronv1.OpenRegisterWindowResponse], error) {
 	ttl := time.Duration(req.Msg.GetTtlS()) * time.Second
 	if ttl < minWindowTTL || ttl > maxWindowTTL {
 		return nil, invalid("ttl_s must be between %d and %d seconds; got %d", int(minWindowTTL/time.Second), int(maxWindowTTL/time.Second), req.Msg.GetTtlS())
@@ -311,26 +311,26 @@ func (s *Service) OpenRegisterWindow(ctx context.Context, req *connect.Request[p
 		return nil, internalError("opening register window failed")
 	}
 	s.log.Info("register window opened", "expires_at", until, "max_nodes", maxNodes)
-	return connect.NewResponse(&probev1.OpenRegisterWindowResponse{Key: key, ExpiresAt: until.Unix(), MaxNodes: maxNodes}), nil
+	return connect.NewResponse(&heronv1.OpenRegisterWindowResponse{Key: key, ExpiresAt: until.Unix(), MaxNodes: maxNodes}), nil
 }
 
-func (s *Service) CloseRegisterWindow(ctx context.Context, _ *connect.Request[probev1.CloseRegisterWindowRequest]) (*connect.Response[probev1.CloseRegisterWindowResponse], error) {
+func (s *Service) CloseRegisterWindow(ctx context.Context, _ *connect.Request[heronv1.CloseRegisterWindowRequest]) (*connect.Response[heronv1.CloseRegisterWindowResponse], error) {
 	if err := s.auth.CloseWindow(ctx); err != nil {
 		s.log.Error("closing register window failed", "err", err)
 		return nil, internalError("closing register window failed")
 	}
-	return connect.NewResponse(&probev1.CloseRegisterWindowResponse{}), nil
+	return connect.NewResponse(&heronv1.CloseRegisterWindowResponse{}), nil
 }
 
 // GetRegisterWindow 的 open 与 RegisterNode 事务里的判定同口径：存在、未到期、有名额。
-func (s *Service) GetRegisterWindow(ctx context.Context, _ *connect.Request[probev1.GetRegisterWindowRequest]) (*connect.Response[probev1.GetRegisterWindowResponse], error) {
+func (s *Service) GetRegisterWindow(ctx context.Context, _ *connect.Request[heronv1.GetRegisterWindowRequest]) (*connect.Response[heronv1.GetRegisterWindowResponse], error) {
 	w, ok, err := s.auth.Window(ctx)
 	if err != nil {
 		s.log.Error("reading register window failed", "err", err)
 		return nil, internalError("reading register window failed")
 	}
 	if !ok || !s.clk.Now().Before(w.ExpiresAt) || w.Remaining <= 0 {
-		return connect.NewResponse(&probev1.GetRegisterWindowResponse{Open: false}), nil
+		return connect.NewResponse(&heronv1.GetRegisterWindowResponse{Open: false}), nil
 	}
-	return connect.NewResponse(&probev1.GetRegisterWindowResponse{Open: true, ExpiresAt: w.ExpiresAt.Unix(), Remaining: uint32(w.Remaining)}), nil
+	return connect.NewResponse(&heronv1.GetRegisterWindowResponse{Open: true, ExpiresAt: w.ExpiresAt.Unix(), Remaining: uint32(w.Remaining)}), nil
 }

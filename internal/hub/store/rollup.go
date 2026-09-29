@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
 )
 
 // RollupLag 是上卷不越过的滞后：只上卷结束时刻不晚于 now − RollupLag 的桶。

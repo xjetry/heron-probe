@@ -10,9 +10,9 @@ import (
 
 	"connectrpc.com/connect"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/auth"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 type rawResult struct {
@@ -24,7 +24,7 @@ type rawResult struct {
 // rawCall 用纯 HTTP+JSON 调一个 AdminService 方法，headers 原样加到请求上；不带 cookie jar。
 func rawCall(t *testing.T, h *harness, method string, body string, headers map[string][]string) rawResult {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/probe.v1.AdminService/"+method, strings.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/heron.v1.AdminService/"+method, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func sessionCookieHeader(t *testing.T, h *harness) string {
 
 func createToken(t *testing.T, h *harness, name string) (int64, string) {
 	t.Helper()
-	resp, err := h.admin.CreateApiToken(context.Background(), connect.NewRequest(&probev1.CreateApiTokenRequest{Name: name}))
+	resp, err := h.admin.CreateApiToken(context.Background(), connect.NewRequest(&heronv1.CreateApiTokenRequest{Name: name}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestAPITokenReachesExactlyTheReadMethods(t *testing.T) {
 	for i := 0; i < svc.Methods().Len(); i++ {
 		name := string(svc.Methods().Get(i).Name())
 		got := rawCall(t, h, name, "{}", bearer(tok))
-		if h.svc.access["/probe.v1.AdminService/"+name] == probev1.Access_ACCESS_READ {
+		if h.svc.access["/heron.v1.AdminService/"+name] == heronv1.Access_ACCESS_READ {
 			if got.code == "unauthenticated" || got.code == "permission_denied" {
 				t.Errorf("%s: read method refused a valid token: %+v", name, got)
 			}
@@ -135,7 +135,7 @@ func TestCredentialsDoNotCrossServices(t *testing.T) {
 	h.login(t)
 	_, apiTok := createToken(t, h, "x")
 	_, nodeTok := h.createNode(t, "n1")
-	if err := h.report(t, apiTok, &probev1.Metrics{}); connect.CodeOf(err) != connect.CodeUnauthenticated {
+	if err := h.report(t, apiTok, &heronv1.Metrics{}); connect.CodeOf(err) != connect.CodeUnauthenticated {
 		t.Errorf("API token accepted by AgentService.Report: %v", err)
 	}
 	if got := rawCall(t, h, "ListNodes", "{}", bearer(nodeTok)); got.status != 401 {
@@ -150,13 +150,13 @@ func TestRevocationTakesEffectOnTheNextRequest(t *testing.T) {
 	if got := rawCall(t, h, "ListNodes", "{}", bearer(tok)); got.status != 200 {
 		t.Fatalf("before revocation: %+v", got)
 	}
-	if _, err := h.admin.DeleteApiToken(context.Background(), connect.NewRequest(&probev1.DeleteApiTokenRequest{Id: id})); err != nil {
+	if _, err := h.admin.DeleteApiToken(context.Background(), connect.NewRequest(&heronv1.DeleteApiTokenRequest{Id: id})); err != nil {
 		t.Fatal(err)
 	}
 	if got := rawCall(t, h, "ListNodes", "{}", bearer(tok)); got.status != 401 {
 		t.Fatalf("after DeleteApiToken: %+v", got)
 	}
-	// probe-hub token revoke 在另一进程里直接删行：不经 api 层，同样必须立即生效。
+	// heron-hub token revoke 在另一进程里直接删行：不经 api 层，同样必须立即生效。
 	id2, tok2 := createToken(t, h, "gone-offline")
 	if _, err := h.store.DeleteAPIToken(context.Background(), id2); err != nil {
 		t.Fatal(err)
@@ -171,23 +171,23 @@ func TestAPITokenManagementValidation(t *testing.T) {
 	h.login(t)
 	ctx := context.Background()
 	for _, name := range []string{"", "  \x01  ", strings.Repeat("字", 65)} {
-		_, err := h.admin.CreateApiToken(ctx, connect.NewRequest(&probev1.CreateApiTokenRequest{Name: name}))
+		_, err := h.admin.CreateApiToken(ctx, connect.NewRequest(&heronv1.CreateApiTokenRequest{Name: name}))
 		if connect.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Errorf("name %q: %v, want InvalidArgument", name, err)
 		}
 	}
-	resp, err := h.admin.CreateApiToken(ctx, connect.NewRequest(&probev1.CreateApiTokenRequest{Name: "  ci\x07  "}))
+	resp, err := h.admin.CreateApiToken(ctx, connect.NewRequest(&heronv1.CreateApiTokenRequest{Name: "  ci\x07  "}))
 	if err != nil || resp.Msg.GetApiToken().GetName() != "ci" || !strings.HasPrefix(resp.Msg.GetToken(), auth.APITokenPrefix) {
 		t.Fatalf("cleaned create: %v %v", resp, err)
 	}
 	for i := 1; i < auth.MaxAPITokens; i++ {
 		createToken(t, h, "n")
 	}
-	_, err = h.admin.CreateApiToken(ctx, connect.NewRequest(&probev1.CreateApiTokenRequest{Name: "one too many"}))
+	_, err = h.admin.CreateApiToken(ctx, connect.NewRequest(&heronv1.CreateApiTokenRequest{Name: "one too many"}))
 	if connect.CodeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "100") {
 		t.Fatalf("token %d: %v, want ResourceExhausted naming the limit", auth.MaxAPITokens+1, err)
 	}
-	_, err = h.admin.DeleteApiToken(ctx, connect.NewRequest(&probev1.DeleteApiTokenRequest{Id: 999999}))
+	_, err = h.admin.DeleteApiToken(ctx, connect.NewRequest(&heronv1.DeleteApiTokenRequest{Id: 999999}))
 	if connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("delete unknown: %v, want NotFound", err)
 	}
@@ -200,7 +200,7 @@ func TestListApiTokensShowsLastUse(t *testing.T) {
 	createToken(t, h, "unseen")
 	rawCall(t, h, "ListNodes", "{}", bearer(tok))
 	testwait.Until(t, 5*time.Millisecond, func() bool {
-		resp, err := h.admin.ListApiTokens(context.Background(), connect.NewRequest(&probev1.ListApiTokensRequest{}))
+		resp, err := h.admin.ListApiTokens(context.Background(), connect.NewRequest(&heronv1.ListApiTokensRequest{}))
 		if err != nil {
 			t.Fatal(err)
 		}

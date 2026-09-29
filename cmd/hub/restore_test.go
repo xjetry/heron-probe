@@ -19,11 +19,11 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 func restoreDB(t *testing.T, path string) *sql.DB {
@@ -67,8 +67,8 @@ func TestRestoreStartsHubWithRecoveredConfig(t *testing.T) {
 		}
 		return addr != ""
 	}, "restored hub never listened: %s", output)
-	client := probev1connect.NewPublicServiceClient(&http.Client{Timeout: testwait.Bound}, "http://"+addr)
-	site, err := client.GetSite(context.Background(), connect.NewRequest(&probev1.GetSiteRequest{}))
+	client := heronv1connect.NewPublicServiceClient(&http.Client{Timeout: testwait.Bound}, "http://"+addr)
+	site, err := client.GetSite(context.Background(), connect.NewRequest(&heronv1.GetSiteRequest{}))
 	if err != nil || site.Msg.Title != "snapshot" {
 		t.Fatalf("restored configuration not served: %v %v", site, err)
 	}

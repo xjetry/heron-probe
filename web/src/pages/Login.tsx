@@ -3,10 +3,11 @@ import { Code } from "@connectrpc/connect";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { useNavigate } from "react-router";
-import { AdminService } from "../gen/probe/v1/admin_pb";
+import { AdminService } from "../gen/heron/v1/admin_pb";
 import { errorText } from "../api/auth";
 import { createClient } from "@connectrpc/connect";
 import { passkeyCredential } from "../lib/passkey";
+import { HeronMark } from "../components/HeronMark";
 
 export function Login() {
   const transport = useTransport();
@@ -38,7 +39,8 @@ export function Login() {
   return (
     <main className="login">
       <form onSubmit={onSubmit} className="card">
-        <h1>probe</h1>
+        <h1 className="brand"><HeronMark />Heron</h1>
+        <p className="login-description">轻量自托管主机监控</p>
         <label>
           管理员密码
           <input

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"runtime"
 
-	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/clock"
 )
 
 func NewPlatform(string, clock.Clock, []string, []string) (*Collector, error) {

@@ -9,7 +9,7 @@
 主题功能要求 hub 以 `--theme-origin` 启动，并把第二个主机名也指向 hub：
 
 ```sh
-probe-hub serve --db /var/lib/probe/probe.db --theme-origin https://status.example.com
+heron-hub serve --db /var/lib/heron/heron.db --theme-origin https://status.example.com
 ```
 
 - **主机名必须与面板不同。** 主题是第三方代码；与面板同源的主题脚本能直接调 `AdminService`，浏览器会自动带上来访管理员的会话 cookie。换了主机名之后，主题与面板之间靠哪些事实隔开，见下面的「主题与面板的隔离」。
@@ -22,26 +22,26 @@ probe-hub serve --db /var/lib/probe/probe.db --theme-origin https://status.examp
 
 | 路径 | 内容 |
 |---|---|
-| `/probe.v1.PublicService/<方法>` | 公开接口，与面板所在 origin 上的同一个挂载点（同一套限流与缓存） |
-| `/probe.v1.AdminService/…`、`/probe.v1.AgentService/…`、`/admin`、`/admin/…` | 404 |
+| `/heron.v1.PublicService/<方法>` | 公开接口，与面板所在 origin 上的同一个挂载点（同一套限流与缓存） |
+| `/heron.v1.AdminService/…`、`/heron.v1.AgentService/…`、`/admin`、`/admin/…` | 404 |
 | 其余路径 | 启用中主题的文件；没有启用中的主题时是内置公开页 |
 
-RPC 路径优先于主题文件：包里即使有 `admin/index.html` 或 `probe.v1.PublicService/GetSite` 这样的文件，也遮蔽不了上表的前两行。`--public-dir` 只接管面板所在 origin 的公开页，与主题 origin 无关；两者同时存在时面板会标明这一点。主题调 `PublicService` 用相对路径，请求发往主题 origin 自己。
+RPC 路径优先于主题文件：包里即使有 `admin/index.html` 或 `heron.v1.PublicService/GetSite` 这样的文件，也遮蔽不了上表的前两行。`--public-dir` 只接管面板所在 origin 的公开页，与主题 origin 无关；两者同时存在时面板会标明这一点。主题调 `PublicService` 用相对路径，请求发往主题 origin 自己。
 
 ### 主题与面板的隔离
 
 主题 origin 与面板是两个 origin。下面几条各自成立、各自可验，不是其中某一条单独承担隔离：
 
-- **主题 origin 不挂 `AdminService`。** 主题脚本对自己 origin 的 `/probe.v1.AdminService/…` 发同源请求得到 404，带着有效的会话 cookie 也一样。这由挂载承载，不靠约定。
+- **主题 origin 不挂 `AdminService`。** 主题脚本对自己 origin 的 `/heron.v1.AdminService/…` 发同源请求得到 404，带着有效的会话 cookie 也一样。这由挂载承载，不靠约定。
 - **跨源的 JSON 请求要先过预检，hub 对任何 origin 都不下发 CORS 允许头。** 这是安全约束，不是"主题用不着跨源"的便利说明：预检的应答不许可主题 origin，浏览器就不发出实际请求；hub 一旦许可，主题脚本就能带着来访管理员的 cookie 把写请求发到面板，副作用在服务端已经发生，读不读得到响应无关紧要。
 - **不需要预检的简单请求被拒绝。** 跨源的简单请求只能用 `text/plain`、`application/x-www-form-urlencoded`、`multipart/form-data`，connect 对这三种类型回 415；`AdminService` 不接受 GET（405）。
 - **会话 cookie 是 host-only。** 它不设 `Domain`，浏览器只把它发给签发它的那个主机名，主题 origin 上的请求不带面板的会话。
-- **同名的会话 cookie 有多个值时，任一有效即通过。** 兄弟主机能写 `Domain` 为父域的同名 `probe_session`。它与管理员的 host-only 会话是两个 cookie，路径匹配时浏览器把两者一起发给面板。排在前面的未必是管理员那个：RFC 6265 §5.4 建议（SHOULD，并注明不是所有浏览器都如此）把 `Path` 更长的排在前面、`Path` 同长时先建的在前；Chromium 实测带更长 `Path` 的伪造值排在最前，`Path` 同为 `/` 时，管理员重新登录后伪造值也排到前面。hub 不看顺序，对同名 cookie 的每个值逐个校验，任一有效即通过，多出来的无效值不让有效值失效，所以兄弟主机写入的同名 cookie 锁不住面板。
+- **同名的会话 cookie 有多个值时，任一有效即通过。** 兄弟主机能写 `Domain` 为父域的同名 `heron_session`。它与管理员的 host-only 会话是两个 cookie，路径匹配时浏览器把两者一起发给面板。排在前面的未必是管理员那个：RFC 6265 §5.4 建议（SHOULD，并注明不是所有浏览器都如此）把 `Path` 更长的排在前面、`Path` 同长时先建的在前；Chromium 实测带更长 `Path` 的伪造值排在最前，`Path` 同为 `/` 时，管理员重新登录后伪造值也排到前面。hub 不看顺序，对同名 cookie 的每个值逐个校验，任一有效即通过，多出来的无效值不让有效值失效，所以兄弟主机写入的同名 cookie 锁不住面板。
 - **`SameSite=Strict` 对兄弟子域不起隔离作用。** `panel.example.com` 与 `status.example.com` 同属一个注册域名，浏览器判定为同站，`SameSite` 不拦它们之间的请求；两者之间的隔离靠的是上面几条。
 
 ## `PublicService` 契约
 
-权威定义是 `proto/probe/v1/public.proto`（请求与响应类型另见同目录的 `query.proto`、`types.proto`），注释写明了每个字段的含义。
+权威定义是 `proto/heron/v1/public.proto`（请求与响应类型另见同目录的 `query.proto`、`types.proto`），注释写明了每个字段的含义。
 
 | 方法 | 请求 | 返回 | `cache_max_age_s` |
 |---|---|---|---|
@@ -55,7 +55,7 @@ RPC 路径优先于主题文件：包里即使有 `admin/index.html` 或 `probe.
 - **调用方式。** Connect unary 就是 HTTP POST + JSON：
 
   ```js
-  const res = await fetch("/probe.v1.PublicService/GetSnapshot", {
+  const res = await fetch("/heron.v1.PublicService/GetSnapshot", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: "{}",
@@ -63,7 +63,7 @@ RPC 路径优先于主题文件：包里即使有 `admin/index.html` 或 `probe.
   const snapshot = await res.json(); // 顶层就是 PublicSnapshot
   ```
 
-  四个方法都无副作用，也可以用 GET：`/probe.v1.PublicService/GetSnapshot?connect=v1&encoding=json&message=%7B%7D`（`message` 是 URL 编码的 JSON 请求）。GET 带请求体会被拒绝（415）。
+  四个方法都无副作用，也可以用 GET：`/heron.v1.PublicService/GetSnapshot?connect=v1&encoding=json&message=%7B%7D`（`message` 是 URL 编码的 JSON 请求）。GET 带请求体会被拒绝（415）。
 - **JSON 形态。** 字段名是 lowerCamelCase；`int64` 字段（节点 id、`now`、`lastSeenAt`、`from`、`to` 等）在 JSON 里是字符串；没有显式存在性的字段取默认值（`false`、`0`、空串、空列表）时不出现在响应里，读取时按默认值补齐；proto 里标了 `optional` 的字段不出现表示没有这个值（例如从未上报过的节点没有 `lastSeenAt`）。
 - **缓存。** GET 的成功响应带 `Cache-Control: max-age=<cache_max_age_s>`，失败响应带 `no-store`；POST 响应不带缓存头。`GetSnapshot` 的结果 hub 另缓存 1 秒，轮询间隔短于 1 秒没有意义；按 `reportIntervalMs` 或 2 秒轮询即可。主题若只在加载时取一次 `GetSite`，已打开的页面刷新后才看到外观改动；用 GET 取时，刷新后浏览器还可能再用最多 5 分钟的缓存。
 - **限流。** 按来源计：IPv4 一个地址、IPv6 一个 /64 算一个来源，桶容量 60、每秒补充 10，超出得到 HTTP 429（Connect 错误码 `resource_exhausted`，带 `no-store`）。hub 在反代之后而没有配 `--trusted-proxies` 时，所有访客共用反代地址的一个桶；量级估算见 README 的反代一节。
@@ -159,7 +159,7 @@ macOS 访达的「压缩」会加入 `__MACOSX/._*` 条目，它们以 `.` 开�
 恢复时先把所需对象下载到一个目录，保留文件名 `<id>.zip`。支持主题恢复的版本使用以下离线命令，执行前须停止 hub：
 
 ```sh
-probe-hub restore --db hub.db --config config.db --themes ./theme-packages --yes
+heron-hub restore --db hub.db --config config.db --themes ./theme-packages --yes
 ```
 
 缺包时保留主题元数据但禁用主题、清空预览路径；重新上传后才能启用。不带 `--themes` 等同全部缺包；目标库原有的主题文件和原包都会清空，不沿用旧内容。有包时名称、版本和预览路径取包内清单，启用状态与上传时间取配置快照。目录不存在或任一 zip 校验失败则整体拒绝，不修改目标库；恢复目录里的包文件名必须是 `<合法 id>.zip`，id 遵守上文[清单 `theme.json`](#清单-themejson) 中的规则，浏览器重复下载得到的 `a (1).zip` 会让整次恢复被拒绝。有效但没有对应主题的 zip 忽略。恢复输出和 `restore_record` 都记录已恢复、缺包和忽略的清单。仅含元数据的配置快照不是完整主题备份。
@@ -169,16 +169,16 @@ probe-hub restore --db hub.db --config config.db --themes ./theme-packages --yes
 在本机起一个 hub，让主题 origin 用 `localhost`、面板用 `127.0.0.1`——两个不同的主机名指向同一个 hub：
 
 ```sh
-probe-hub passwd --db dev.db
-probe-hub serve --db dev.db --listen 127.0.0.1:18180 --theme-origin http://localhost:18180
+heron-hub passwd --db dev.db
+heron-hub serve --db dev.db --listen 127.0.0.1:18180 --theme-origin http://localhost:18180
 ```
 
 - 面板：`http://127.0.0.1:18180/admin/`；主题 origin：`http://localhost:18180/`（没有启用主题时是内置公开页）。
-- 开发时用框架自己的开发服务器，把 `/probe.v1.PublicService/` 代理到 hub。以 Vite 为例：
+- 开发时用框架自己的开发服务器，把 `/heron.v1.PublicService/` 代理到 hub。以 Vite 为例：
 
   ```js
   // vite.config.js
-  export default { server: { proxy: { "/probe.v1.PublicService": "http://localhost:18180" } } };
+  export default { server: { proxy: { "/heron.v1.PublicService": "http://localhost:18180" } } };
   ```
 
   `PublicService` 在两个主机名上都有，代理到哪一个都行。

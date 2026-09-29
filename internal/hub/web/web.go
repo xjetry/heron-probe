@@ -28,10 +28,10 @@ const Prefix = "/admin/"
 // img-src 带 data:：logo 是 data: URL。
 const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 
-const notBuiltAdmin = `<!doctype html><meta charset="utf-8"><title>probe</title>
+const notBuiltAdmin = `<!doctype html><meta charset="utf-8"><title>Heron</title>
 <p>The admin panel has not been built into this binary. Run <code>make web</code> before <code>go build</code>, or use a release build.</p>`
 
-const notBuiltPublic = `<!doctype html><meta charset="utf-8"><title>probe</title>
+const notBuiltPublic = `<!doctype html><meta charset="utf-8"><title>Heron</title>
 <p>The public page has not been built into this binary. Run <code>make web</code> before <code>go build</code>, or use a release build.</p>`
 
 // Handler 服务 /admin/ 下的管理面板。
@@ -41,7 +41,7 @@ func Handler() http.Handler { return embedded(adminDist, "dist", Prefix, notBuil
 func PublicHandler() http.Handler { return embedded(publicDist, "dist-public", "/", notBuiltPublic) }
 
 // closedPage 是总闸关闭时 assets/ 之外的公开路径得到的页面。
-const closedPage = `<!doctype html><meta charset="utf-8"><title>probe</title><p>公开页已关闭</p>`
+const closedPage = `<!doctype html><meta charset="utf-8"><title>Heron</title><p>公开页已关闭</p>`
 
 // PublicGate 统一包住 RPC 之外的公开静态面：主 origin 的内置页或 --public-dir 的目录，以及主题 origin 的根路径（启用中
 // 主题的文件与回落的内置页）。只挂在公开根路径，管理面板和 RPC 由 mux 的更具体路由承载。

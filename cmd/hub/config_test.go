@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 func TestParseTTL(t *testing.T) {
@@ -75,7 +75,7 @@ func TestIsLoopback(t *testing.T) {
 }
 
 func TestServeRejectsInvalidRetention(t *testing.T) {
-	t.Setenv("PROBE_OFFLINE_AFTER", "30s")
+	t.Setenv("HERON_OFFLINE_AFTER", "30s")
 	for _, tc := range []struct{ flag, value, want string }{
 		{"--retention-1m", "5h59m59s", "minimum is 6h"},
 		{"--retention-1m", "40d", `invalid value "40d"`},
@@ -284,7 +284,7 @@ func TestParseThemeOriginAcceptsOnlyHostsNetHTTPServes(t *testing.T) {
 
 // 写错的 --theme-origin 在打开数据库之前拒绝：配置有误时 hub 不留下任何副作用。
 func TestServeRejectsInvalidThemeOriginBeforeOpeningTheDatabase(t *testing.T) {
-	t.Setenv("PROBE_OFFLINE_AFTER", "30s")
+	t.Setenv("HERON_OFFLINE_AFTER", "30s")
 	db := filepath.Join(t.TempDir(), "t.db")
 	err := runServe([]string{"--db", db, "--listen", "127.0.0.1:65536", "--theme-origin", "https://example.com/themes"})
 	if err == nil || !strings.Contains(err.Error(), "--theme-origin") {

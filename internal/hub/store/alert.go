@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
 )
 
 type AlertKind string

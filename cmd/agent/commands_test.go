@@ -16,26 +16,26 @@ import (
 
 	"connectrpc.com/connect"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/agent/client"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/agent/client"
 )
 
 type registerHub struct {
-	probev1connect.UnimplementedAgentServiceHandler
+	heronv1connect.UnimplementedAgentServiceHandler
 	calls atomic.Int32
 }
 
-func (h *registerHub) Register(context.Context, *connect.Request[probev1.RegisterRequest]) (*connect.Response[probev1.RegisterResponse], error) {
+func (h *registerHub) Register(context.Context, *connect.Request[heronv1.RegisterRequest]) (*connect.Response[heronv1.RegisterResponse], error) {
 	h.calls.Add(1)
-	return connect.NewResponse(&probev1.RegisterResponse{NodeId: 7, Token: "fresh"}), nil
+	return connect.NewResponse(&heronv1.RegisterResponse{NodeId: 7, Token: "fresh"}), nil
 }
 
 func startRegisterHub(t *testing.T) (*registerHub, string) {
 	t.Helper()
 	h := &registerHub{}
 	mux := http.NewServeMux()
-	mux.Handle(probev1connect.NewAgentServiceHandler(h))
+	mux.Handle(heronv1connect.NewAgentServiceHandler(h))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return h, srv.URL

@@ -9,27 +9,27 @@ import (
 
 	"connectrpc.com/connect"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/probelimit"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 )
 
-func probeTask(target string) *probev1.ProbeTask {
-	return &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: target, IntervalS: 30, TimeoutMs: 1000}
+func probeTask(target string) *heronv1.ProbeTask {
+	return &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: target, IntervalS: 30, TimeoutMs: 1000}
 }
 
-func (h *harness) saveAllNodesTask(t *testing.T, target string) *probev1.ProbeTaskDetail {
+func (h *harness) saveAllNodesTask(t *testing.T, target string) *heronv1.ProbeTaskDetail {
 	t.Helper()
-	resp, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: probeTask(target), AllNodes: true}))
+	resp, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&heronv1.SaveProbeTaskRequest{Task: probeTask(target), AllNodes: true}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return resp.Msg.GetTask()
 }
 
-func (h *harness) listProbeTasks(t *testing.T) *probev1.ListProbeTasksResponse {
+func (h *harness) listProbeTasks(t *testing.T) *heronv1.ListProbeTasksResponse {
 	t.Helper()
-	resp, err := h.admin.ListProbeTasks(t.Context(), connect.NewRequest(&probev1.ListProbeTasksRequest{}))
+	resp, err := h.admin.ListProbeTasks(t.Context(), connect.NewRequest(&heronv1.ListProbeTasksRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,9 +37,9 @@ func (h *harness) listProbeTasks(t *testing.T) *probev1.ListProbeTasksResponse {
 }
 
 // reportTasks 以给定的 tasks_version 上报一次，返回 hub 下发的清单（版本一致时为 nil）。
-func (h *harness) reportTasks(t *testing.T, tok string, version uint64) *probev1.ProbeTasks {
+func (h *harness) reportTasks(t *testing.T, tok string, version uint64) *heronv1.ProbeTasks {
 	t.Helper()
-	req := connect.NewRequest(&probev1.ReportRequest{Metrics: &probev1.Metrics{}, TasksVersion: version})
+	req := connect.NewRequest(&heronv1.ReportRequest{Metrics: &heronv1.Metrics{}, TasksVersion: version})
 	req.Header().Set("Authorization", "Bearer "+tok)
 	resp, err := h.agent.Report(t.Context(), req)
 	if err != nil {
@@ -50,7 +50,7 @@ func (h *harness) reportTasks(t *testing.T, tok string, version uint64) *probev1
 	return resp.Msg.GetTasks()
 }
 
-func taskIDs(tasks *probev1.ProbeTasks) []uint64 {
+func taskIDs(tasks *heronv1.ProbeTasks) []uint64 {
 	var ids []uint64
 	for _, task := range tasks.GetTasks() {
 		ids = append(ids, task.GetId())
@@ -64,7 +64,7 @@ func TestListProbeTasksExpandsAllNodesAcrossNodeCreationAndDeletion(t *testing.T
 	h := newHarness(t, "")
 	h.login(t)
 	a, _ := h.createNode(t, "a")
-	saved, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: probeTask("192.0.2.1"), AllNodes: true}))
+	saved, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&heronv1.SaveProbeTaskRequest{Task: probeTask("192.0.2.1"), AllNodes: true}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestListProbeTasksExpandsAllNodesAcrossNodeCreationAndDeletion(t *testing.T
 	if created <= saveVersion {
 		t.Fatalf("creating a node left the version at %d (was %d)", created, saveVersion)
 	}
-	if _, err := h.admin.DeleteNode(t.Context(), connect.NewRequest(&probev1.DeleteNodeRequest{Id: a})); err != nil {
+	if _, err := h.admin.DeleteNode(t.Context(), connect.NewRequest(&heronv1.DeleteNodeRequest{Id: a})); err != nil {
 		t.Fatal(err)
 	}
 	if deleted := expanded(b); deleted != created {
@@ -100,7 +100,7 @@ func TestAgentsRefetchAllNodesTasksAfterNodeCreation(t *testing.T) {
 	h.login(t)
 	_, tokA := h.createNode(t, "a")
 	all := h.saveAllNodesTask(t, "192.0.2.1")
-	if _, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: probeTask("192.0.2.2")})); err != nil {
+	if _, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&heronv1.SaveProbeTaskRequest{Task: probeTask("192.0.2.2")})); err != nil {
 		t.Fatal(err)
 	}
 	old := h.listProbeTasks(t).GetVersion()
@@ -116,7 +116,7 @@ func TestAgentsRefetchAllNodesTasksAfterNodeCreation(t *testing.T) {
 		}
 	}
 	current := h.listProbeTasks(t).GetVersion()
-	if _, err := h.admin.DeleteNode(t.Context(), connect.NewRequest(&probev1.DeleteNodeRequest{Id: b})); err != nil {
+	if _, err := h.admin.DeleteNode(t.Context(), connect.NewRequest(&heronv1.DeleteNodeRequest{Id: b})); err != nil {
 		t.Fatal(err)
 	}
 	if got := h.reportTasks(t, tokA, current); got != nil {
@@ -132,7 +132,7 @@ func TestSaveAllNodesProbeTaskPastTheLimitIsRejected(t *testing.T) {
 	for range probelimit.MaxTasksPerNode {
 		h.saveAllNodesTask(t, "192.0.2.1")
 	}
-	_, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: probeTask("192.0.2.1"), AllNodes: true}))
+	_, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&heronv1.SaveProbeTaskRequest{Task: probeTask("192.0.2.1"), AllNodes: true}))
 	want := fmt.Sprintf("resource_exhausted: all_nodes: node %d would have 65 probe tasks (maximum 64)", id)
 	if codeOf(err) != connect.CodeResourceExhausted || err.Error() != want {
 		t.Fatalf("65th all_nodes task error = %v, want %q", err, want)
@@ -146,26 +146,26 @@ func TestSaveAllNodesProbeTaskPastTheLimitIsRejected(t *testing.T) {
 func TestCreatingNodeInheritingTooManyTasksIsRejected(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	var tasks []*probev1.ProbeTaskDetail
+	var tasks []*heronv1.ProbeTaskDetail
 	for range probelimit.MaxTasksPerNode + 1 {
 		tasks = append(tasks, h.saveAllNodesTask(t, "192.0.2.1"))
 	}
 	want := "resource_exhausted: a new node would inherit 65 all-nodes probe tasks (maximum 64 per node); assign some of them to explicit nodes or delete them first"
-	if _, err := h.admin.CreateNode(t.Context(), connect.NewRequest(&probev1.CreateNodeRequest{Name: "n"})); codeOf(err) != connect.CodeResourceExhausted || err.Error() != want {
+	if _, err := h.admin.CreateNode(t.Context(), connect.NewRequest(&heronv1.CreateNodeRequest{Name: "n"})); codeOf(err) != connect.CodeResourceExhausted || err.Error() != want {
 		t.Fatalf("CreateNode error = %v, want %q", err, want)
 	}
-	opened, err := h.admin.OpenRegisterWindow(t.Context(), connect.NewRequest(&probev1.OpenRegisterWindowRequest{TtlS: 600, MaxNodes: 1}))
+	opened, err := h.admin.OpenRegisterWindow(t.Context(), connect.NewRequest(&heronv1.OpenRegisterWindowRequest{TtlS: 600, MaxNodes: 1}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.agent.Register(t.Context(), connect.NewRequest(&probev1.RegisterRequest{Key: opened.Msg.GetKey(), Name: "r"})); codeOf(err) != connect.CodeResourceExhausted || err.Error() != want {
+	if _, err := h.agent.Register(t.Context(), connect.NewRequest(&heronv1.RegisterRequest{Key: opened.Msg.GetKey(), Name: "r"})); codeOf(err) != connect.CodeResourceExhausted || err.Error() != want {
 		t.Fatalf("Register error = %v, want %q", err, want)
 	}
-	nodes, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&probev1.ListNodesRequest{}))
+	nodes, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&heronv1.ListNodesRequest{}))
 	if err != nil || len(nodes.Msg.GetNodes()) != 0 {
 		t.Fatalf("rejected creation left nodes: %v %v", nodes, err)
 	}
-	if _, err := h.admin.DeleteProbeTask(t.Context(), connect.NewRequest(&probev1.DeleteProbeTaskRequest{Id: tasks[0].GetTask().GetId()})); err != nil {
+	if _, err := h.admin.DeleteProbeTask(t.Context(), connect.NewRequest(&heronv1.DeleteProbeTaskRequest{Id: tasks[0].GetTask().GetId()})); err != nil {
 		t.Fatal(err)
 	}
 	h.createNode(t, "n")
@@ -183,7 +183,7 @@ func TestPublicProbeLabelsIncludeAllNodesTasks(t *testing.T) {
 	if _, err := h.store.WriteMinuteBatch(t.Context(), metric.Batch{Probes: rows}); err != nil {
 		t.Fatal(err)
 	}
-	resp, err := h.publicClient().QueryProbes(t.Context(), connect.NewRequest(&probev1.QueryProbesRequest{NodeId: pub, From: base, To: base + 3600}))
+	resp, err := h.publicClient().QueryProbes(t.Context(), connect.NewRequest(&heronv1.QueryProbesRequest{NodeId: pub, From: base, To: base + 3600}))
 	if err != nil {
 		t.Fatal(err)
 	}

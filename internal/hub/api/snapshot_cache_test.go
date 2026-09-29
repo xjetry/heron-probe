@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/testwait"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 // observed 是一次响应里缓存必须与直连 connect 一致的部分；gzip 正文先解开再比，压缩字节本身不是契约。
@@ -50,7 +50,7 @@ func observe(t *testing.T, h http.Handler, newReq func() *http.Request) observed
 
 func snapshotRequest(method, query, body string, header map[string]string) func() *http.Request {
 	return func() *http.Request {
-		target := probev1connect.PublicServiceGetSnapshotProcedure
+		target := heronv1connect.PublicServiceGetSnapshotProcedure
 		if query != "" {
 			target += "?" + query
 		}

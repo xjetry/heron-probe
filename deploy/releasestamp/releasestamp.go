@@ -33,7 +33,7 @@ const (
 // 至多 128 个字符）。make release 已经先拦过一次；这里再核对，是因为写入的安全不能依赖调用方做过检查。
 var versionRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
 
-// release 资产名的字符集：Makefile 打出的 tar 包名（probe-agent_linux_amd64.tar.gz 之类）都在其中。
+// release 资产名的字符集：Makefile 打出的 tar 包名（heron-agent_linux_amd64.tar.gz 之类）都在其中。
 var assetRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,200}\.tar\.gz$`)
 
 // Asset 是清单里的一行：release 资产名与它的 SHA-256。

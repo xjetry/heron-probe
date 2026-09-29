@@ -6,8 +6,8 @@ import { errorBanner, queryGate } from "../api/queryGate";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { CountryBadge } from "../components/CountryBadge";
 import { Secret } from "../components/Secret";
-import { AdminService, CountrySource, type Node, type Tag } from "../gen/probe/v1/admin_pb";
-import { BillingCycle } from "../gen/probe/v1/types_pb";
+import { AdminService, CountrySource, type Node, type Tag } from "../gen/heron/v1/admin_pb";
+import { BillingCycle } from "../gen/heron/v1/types_pb";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
 import { useRetained } from "../api/useRetained";
@@ -202,7 +202,7 @@ function TagManager({ tags, pending, onDelete }: { tags: readonly Tag[] | undefi
 
 const validResetDay = (day: number) => Number.isInteger(day) && day >= 1 && day <= 28;
 
-// 宽限期以字符串编辑，0 表示清除（取 hub 的 PROBE_OFFLINE_AFTER）。计费五项、手动指定的国家与标签随整行整体提交（UpdateNode
+// 宽限期以字符串编辑，0 表示清除（取 hub 的 HERON_OFFLINE_AFTER）。计费五项、手动指定的国家与标签随整行整体提交（UpdateNode
 // 整体替换，缺失即清除，标签不带就是清空），节点没有 billing 时从空值开始；取值约束由 hub 裁决并把错误原文显示在列表上方，
 // 页面不另抄一份规则。
 const draftOf = (node: Node) => ({
@@ -243,7 +243,7 @@ function NodeEditor({ node, hubVersion, knownTags, saving, deleting, rotating, o
         <td data-column="tags" data-label="标签"><TagsEditor id={node.id} label={withId(node.name, node.id)} isPublic={draft.public} tags={draft.tags} known={knownTags} pending={pendingTag} onPending={setPendingTag} onChange={(tags) => setDraft({ ...draft, tags })} /></td>
         <td data-column="note" data-label="备注"><textarea aria-label={`备注 ${withId(node.name, node.id)}`} value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></td>
         <td data-label="重置日"><input type="number" min={1} max={28} aria-label={`重置日 ${withId(node.name, node.id)}`} value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><p className="muted">若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。</p></td>
-        <td data-label="离线宽限期"><input type="number" min={0} aria-label={`离线宽限期（秒） ${withId(node.name, node.id)}`} aria-describedby={`grace-hint-${node.id}`} value={draft.offlineGraceS} onChange={(e) => setDraft({ ...draft, offlineGraceS: e.target.value })} /><p className="muted" id={`grace-hint-${node.id}`}>0 表示取 hub 的 PROBE_OFFLINE_AFTER；非 0 不能小于它。</p></td>
+        <td data-label="离线宽限期"><input type="number" min={0} aria-label={`离线宽限期（秒） ${withId(node.name, node.id)}`} aria-describedby={`grace-hint-${node.id}`} value={draft.offlineGraceS} onChange={(e) => setDraft({ ...draft, offlineGraceS: e.target.value })} /><p className="muted" id={`grace-hint-${node.id}`}>0 表示取 hub 的 HERON_OFFLINE_AFTER；非 0 不能小于它。</p></td>
         <td data-column="billing" data-label="计费"><BillingEditor label={withId(node.name, node.id)} draft={draft.billing} onChange={(patch) => setDraft({ ...draft, billing: { ...draft.billing, ...patch } })} /></td>
         <td data-label="创建于" />
         <td data-column="actions" data-label="操作">

@@ -14,7 +14,7 @@ func TestCheckHub(t *testing.T) {
 		insecure bool
 		want     string // 空即接受
 	}{
-		{"https://probe.example.com", false, ""},
+		{"https://heron.example.com", false, ""},
 		{"https://10.0.0.1:8443/sub", false, ""},
 		{"http://127.0.0.1:8080", false, ""},
 		{"http://127.9.9.9", false, ""},

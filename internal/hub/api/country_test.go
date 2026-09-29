@@ -9,15 +9,15 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // 库层的三种来源与协议枚举的全部取值一一对应。
 func TestCountrySourcesMapEveryValue(t *testing.T) {
-	values := probev1.CountrySource(0).Descriptor().Values()
-	var got []probev1.CountrySource
+	values := heronv1.CountrySource(0).Descriptor().Values()
+	var got []heronv1.CountrySource
 	for _, s := range []store.CountrySource{store.CountryNone, store.CountryManual, store.CountryLookup} {
 		v, ok := countrySources[s]
 		if !ok {
@@ -25,18 +25,18 @@ func TestCountrySourcesMapEveryValue(t *testing.T) {
 		}
 		got = append(got, v)
 	}
-	var want []probev1.CountrySource
+	var want []heronv1.CountrySource
 	for i := 0; i < values.Len(); i++ {
-		want = append(want, probev1.CountrySource(values.Get(i).Number()))
+		want = append(want, heronv1.CountrySource(values.Get(i).Number()))
 	}
 	if len(countrySources) != values.Len() || !slices.Equal(got, want) {
 		t.Fatalf("protocol values %v, want %v", got, want)
 	}
 }
 
-func updateCountryPin(t *testing.T, h *harness, id int64, pin string) (*probev1.Node, error) {
+func updateCountryPin(t *testing.T, h *harness, id int64, pin string) (*heronv1.Node, error) {
 	t.Helper()
-	req := &probev1.UpdateNodeRequest{Id: id, Name: "n", Public: true, TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0), CountryPin: pin}
+	req := &heronv1.UpdateNodeRequest{Id: id, Name: "n", Public: true, TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0), CountryPin: pin}
 	resp, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(req))
 	if err != nil {
 		return nil, err
@@ -44,9 +44,9 @@ func updateCountryPin(t *testing.T, h *harness, id int64, pin string) (*probev1.
 	return resp.Msg.GetNode(), nil
 }
 
-func listedNode(t *testing.T, h *harness) *probev1.Node {
+func listedNode(t *testing.T, h *harness) *heronv1.Node {
 	t.Helper()
-	resp, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&probev1.ListNodesRequest{}))
+	resp, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&heronv1.ListNodesRequest{}))
 	if err != nil || len(resp.Msg.GetNodes()) != 1 {
 		t.Fatalf("ListNodes = %v %v", resp, err)
 	}
@@ -67,7 +67,7 @@ func TestNodeCountryPinWinsAndClearingFallsBack(t *testing.T) {
 	if set, err := h.store.SetLookupCountry(t.Context(), id, "8.8.8.8", "US"); err != nil || !set {
 		t.Fatalf("SetLookupCountry = %v %v", set, err)
 	}
-	check := func(stage string, n *probev1.Node, country string, source probev1.CountrySource, pin string) {
+	check := func(stage string, n *heronv1.Node, country string, source heronv1.CountrySource, pin string) {
 		t.Helper()
 		if n.GetCountry() != country || n.GetCountrySource() != source || n.GetCountryLookup() != "US" || n.GetCountryIp() != "8.8.8.8" || n.GetCountryPin() != pin {
 			t.Fatalf("%s: node = %v, want country %q source %s country_lookup US country_ip 8.8.8.8 pin %q", stage, n, country, source, pin)
@@ -80,17 +80,17 @@ func TestNodeCountryPinWinsAndClearingFallsBack(t *testing.T) {
 			t.Fatalf("%s: public snapshot must carry only the display country %q: %s", stage, country, snap.body)
 		}
 	}
-	check("lookup only", listedNode(t, h), "US", probev1.CountrySource_COUNTRY_SOURCE_LOOKUP, "")
+	check("lookup only", listedNode(t, h), "US", heronv1.CountrySource_COUNTRY_SOURCE_LOOKUP, "")
 	n, err := updateCountryPin(t, h, id, "JP")
 	if err != nil {
 		t.Fatal(err)
 	}
-	check("pinned (response)", n, "JP", probev1.CountrySource_COUNTRY_SOURCE_MANUAL, "JP")
-	check("pinned", listedNode(t, h), "JP", probev1.CountrySource_COUNTRY_SOURCE_MANUAL, "JP")
+	check("pinned (response)", n, "JP", heronv1.CountrySource_COUNTRY_SOURCE_MANUAL, "JP")
+	check("pinned", listedNode(t, h), "JP", heronv1.CountrySource_COUNTRY_SOURCE_MANUAL, "JP")
 	if n, err = updateCountryPin(t, h, id, ""); err != nil {
 		t.Fatal(err)
 	}
-	check("pin cleared", n, "US", probev1.CountrySource_COUNTRY_SOURCE_LOOKUP, "")
+	check("pin cleared", n, "US", heronv1.CountrySource_COUNTRY_SOURCE_LOOKUP, "")
 }
 
 // 没有国家时来源为未指定（none），公开快照的 country 为空串（JSON 里省略）。
@@ -99,7 +99,7 @@ func TestNodeWithoutCountry(t *testing.T) {
 	h.login(t)
 	id, _ := h.createNode(t, "n")
 	h.setPublic(t, id, "n", true)
-	if n := listedNode(t, h); n.GetCountry() != "" || n.GetCountrySource() != probev1.CountrySource_COUNTRY_SOURCE_UNSPECIFIED || n.GetCountryLookup() != "" || n.GetCountryIp() != "" {
+	if n := listedNode(t, h); n.GetCountry() != "" || n.GetCountrySource() != heronv1.CountrySource_COUNTRY_SOURCE_UNSPECIFIED || n.GetCountryLookup() != "" || n.GetCountryIp() != "" {
 		t.Fatalf("node = %v", n)
 	}
 	if snap := pubGet(t, h, "GetSnapshot", jsonQuery("{}"), nil); !bytes.Contains(snap.body, []byte(`"name":"n"`)) || bytes.Contains(snap.body, []byte("country")) {
@@ -134,17 +134,17 @@ func TestUpdateSettingsGeoFieldsAbsentMeansUnchanged(t *testing.T) {
 	if got := currentSettings(t, h); got.GeoEnabled == nil || got.GetGeoEnabled() || got.GetGeoUrl() != "https://ipinfo.io/{ip}/country" {
 		t.Fatalf("never saved: %v", got)
 	}
-	in := withSettings(func(s *probev1.Settings) {
+	in := withSettings(func(s *heronv1.Settings) {
 		s.GeoEnabled, s.GeoUrl = proto.Bool(true), proto.String("http://geo.example:8080/lookup?addr={ip}")
 	})
-	want := proto.Clone(in).(*probev1.Settings)
+	want := proto.Clone(in).(*heronv1.Settings)
 	want.Backup = defaultBackup()
-	want.GeoBackend = probev1.GeoBackend_GEO_BACKEND_HTTP
-	want.LoginNotify = &probev1.LoginNotify{}
+	want.GeoBackend = heronv1.GeoBackend_GEO_BACKEND_HTTP
+	want.LoginNotify = &heronv1.LoginNotify{}
 	if got := saveSettings(t, h, in); !proto.Equal(got, want) {
 		t.Fatalf("echo = %v, want %v", got, want)
 	}
-	got := saveSettings(t, h, withSettings(func(s *probev1.Settings) { s.Title = "只改外观" }))
+	got := saveSettings(t, h, withSettings(func(s *heronv1.Settings) { s.Title = "只改外观" }))
 	if !got.GetGeoEnabled() || got.GetGeoUrl() != "http://geo.example:8080/lookup?addr={ip}" || got.GetTitle() != "只改外观" {
 		t.Fatalf("appearance-only update: %v", got)
 	}
@@ -156,15 +156,15 @@ func TestUpdateSettingsGeoFieldsAbsentMeansUnchanged(t *testing.T) {
 func TestUpdateSettingsValidatesGeoURL(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	before := saveSettings(t, h, withSettings(func(s *probev1.Settings) {
+	before := saveSettings(t, h, withSettings(func(s *heronv1.Settings) {
 		s.GeoEnabled, s.GeoUrl = proto.Bool(true), proto.String("https://geo.example/{ip}")
 	}))
-	withURL := func(u string) *probev1.Settings {
-		return withSettings(func(s *probev1.Settings) { s.GeoUrl = proto.String(u) })
+	withURL := func(u string) *heronv1.Settings {
+		return withSettings(func(s *heronv1.Settings) { s.GeoUrl = proto.String(u) })
 	}
 	for _, c := range []struct {
 		name string
-		in   *probev1.Settings
+		in   *heronv1.Settings
 		want string
 	}{
 		{"no placeholder", withURL("https://geo.example/lookup"), `settings.geo_url must contain the {ip} placeholder for the node address; got "https://geo.example/lookup"`},

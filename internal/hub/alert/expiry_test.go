@@ -13,8 +13,8 @@ import (
 	"time"
 	_ "time/tzdata" // 夏令时用例要真实时区库；嵌入的库让结论不随测试机的系统时区库变化。
 
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/testwait"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 func expiryRule() store.AlertRule {
@@ -374,7 +374,7 @@ func TestSweepExpiryHonoursScopeAndEnabled(t *testing.T) {
 	}
 }
 
-// 另一个进程删掉的节点（probe-hub node delete 删了库里的状态行，没经过 Forget）不再是候选，内存里的状态随扫描清掉。
+// 另一个进程删掉的节点（heron-hub node delete 删了库里的状态行，没经过 Forget）不再是候选，内存里的状态随扫描清掉。
 func TestSweepExpiryDropsStatesOfNodesDeletedElsewhere(t *testing.T) {
 	f := newFixture(t)
 	r := f.rule(t, expiryRule())

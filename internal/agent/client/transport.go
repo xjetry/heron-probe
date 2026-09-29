@@ -9,8 +9,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/agentwire"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/agentwire"
 )
 
 // NewServiceClient 是 agent 连 hub 的唯一构造，register 与 run 都经过它，下面几条对 hub 的约束因此对两条路径同时成立（§5.7）：
@@ -21,7 +21,7 @@ import (
 //     MaxResponseBytes，压缩没有收益。
 //   - 不跟随重定向。http.Client 跟随同主机重定向时保留 Authorization 而不看协议，https 到同主机 http 的重定向
 //     会把节点 token 明文发出；AgentService 没有需要重定向的场景。
-func NewServiceClient(hub string, timeout time.Duration) probev1connect.AgentServiceClient {
+func NewServiceClient(hub string, timeout time.Duration) heronv1connect.AgentServiceClient {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.DisableCompression = true
 	tr.MaxResponseHeaderBytes = maxResponseHeaderBytes
@@ -30,7 +30,7 @@ func NewServiceClient(hub string, timeout time.Duration) probev1connect.AgentSer
 		Transport:     limitedTransport{base: tr, max: agentwire.MaxResponseBytes},
 		CheckRedirect: refuseRedirect,
 	}
-	return probev1connect.NewAgentServiceClient(hc, hub, connect.WithAcceptCompression("gzip", nil, nil))
+	return heronv1connect.NewAgentServiceClient(hc, hub, connect.WithAcceptCompression("gzip", nil, nil))
 }
 
 // maxResponseHeaderBytes 是响应头的上限。Go 的默认值是 10 MiB，远大于正文的 64 KiB；AgentService 的响应头只有
