@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { Icon } from "./Icon";
 
-export function CopyableText({ label, value, copyLabel }: { label: string; value: string; copyLabel?: string }) {
+export function CopyableText({ label, value, copyLabel, compact = false }: { label: string; value: string; copyLabel?: string; compact?: boolean }) {
   const code = useRef<HTMLElement>(null);
   const [result, setResult] = useState<"idle" | "copied" | "failed">("idle");
   const generation = useRef(0);
@@ -29,11 +30,13 @@ export function CopyableText({ label, value, copyLabel }: { label: string; value
       selection?.addRange(range);
     }
   };
-  return <div className="copyable-text">
-    <code ref={code} className="secret" aria-label={label}>{value}</code>
+  return <div className={`copyable-text${compact ? " copyable-inline" : ""}`}>
+    <code ref={code} className={compact ? undefined : "secret"} aria-label={label}>{value}</code>
     <p className="copyable-actions">
-      <button type="button" aria-label={copyLabel} onClick={copy}>{result === "copied" ? "已复制" : "复制"}</button>
-      <span role="status">{result === "failed" ? "复制失败，请手动选择" : ""}</span>
+      <button type="button" className={compact ? "icon-button copy-button" : undefined} aria-label={copyLabel ?? (compact ? `复制 ${label}` : undefined)} title={result === "copied" ? "已复制" : "复制"} onClick={copy}>
+        {compact ? <Icon name={result === "copied" ? "check" : "copy"} /> : result === "copied" ? "已复制" : "复制"}
+      </button>
+      <span role="status" className={compact && result !== "failed" ? "sr-only" : "copy-feedback"}>{result === "failed" ? "复制失败，请手动选择" : compact && result === "copied" ? `已复制 ${value}` : ""}</span>
     </p>
   </div>;
 }

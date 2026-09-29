@@ -13,6 +13,8 @@ const paths = {
   database: "M20 6c0 2-4 3-8 3s-8-1-8-3 4-3 8-3 8 1 8 3z M4 6v12c0 2 4 3 8 3s8-1 8-3V6 M4 12c0 2 4 3 8 3s8-1 8-3",
   shield: "m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3z m-4 9 3 3 5-6",
   plus: "M12 5v14 M5 12h14",
+  copy: "M9 9h12v12H9z M15 9V3H3v12h6",
+  check: "m5 12 4 4L19 6",
   external: "M14 3h7v7 M21 3l-9 9 M10 3H4v17h17v-7",
   logout: "M10 3H4v18h6 M8 12h13 m-5-5 5 5-5 5",
   menu: "M4 6h16 M4 12h16 M4 18h16",

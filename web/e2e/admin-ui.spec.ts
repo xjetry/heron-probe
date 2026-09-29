@@ -35,7 +35,7 @@ test('注册命令复制与移动端布局', async ({ page, context, browserName
   await expect(page.getByRole('button', { name: '复制 wget 命令' })).toHaveCount(0);
 });
 
-test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', async ({ page, browserName }, testInfo) => {
+test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', async ({ page, context, browserName }, testInfo) => {
   const ids: string[] = [];
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/admin/login');
@@ -64,11 +64,24 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
     await expect(page.getByText('2606:4700:4700::1111').first()).toBeVisible();
     await expect(page.getByText('不支持', { exact: true })).toBeVisible();
     await expect(page.getByText('探测失败', { exact: true })).toBeVisible();
+    const copy4 = page.getByRole('button', { name: '复制 IPv4 8.8.8.8', exact: true });
+    const copy6 = page.getByRole('button', { name: '复制 IPv6 2606:4700:4700::1111', exact: true }).first();
+    await expect(copy4).toBeVisible();
+    await expect(copy6).toBeVisible();
+    if (browserName === 'chromium') {
+      await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+      for (const [button, address] of [[copy4, '8.8.8.8'], [copy6, '2606:4700:4700::1111']] as const) {
+        await button.click();
+        await expect(button).toHaveAttribute('title', '已复制');
+        expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(address);
+      }
+    }
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1440);
     await page.screenshot({ path: testInfo.outputPath('nodes-dark-desktop.png'), fullPage: true });
     const edit = page.getByRole('button', { name: `编辑 tokyo-edge-${browserName}（#${ids[0]}）`, exact: true });
     await edit.click();
     const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('button', { name: '复制 IPv4 8.8.8.8', exact: true })).toBeVisible();
     const name = dialog.getByLabel(`名称 tokyo-edge-${browserName}（#${ids[0]}）`, { exact: true });
     await expect(name).toBeFocused();
     await name.fill('tokyo-renamed');
@@ -118,6 +131,8 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
     await page.screenshot({ path: testInfo.outputPath('nodes-light-desktop.png'), fullPage: true });
     await page.setViewportSize({ width: 375, height: 812 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
+    await expect(copy4).toBeVisible();
+    await expect(copy6).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('nodes-mobile.png'), fullPage: true });
     await renamedEdit.click();
     expect(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
