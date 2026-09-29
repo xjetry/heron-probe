@@ -181,14 +181,20 @@ func TestConfigureRejectsResultRunWouldRefuse(t *testing.T) {
 	}
 }
 
-// 命令的最终错误行有上限：register 的错误可能带着 hub 应答里的文本。
+// 命令的最终错误行有上限，按写出的整行计（前缀、标记、换行都在内）：register 的错误可能带着 hub 应答里的文本。
 func TestErrorLineIsBounded(t *testing.T) {
 	short := errors.New("load config: boom")
-	if got := errorLine(short); got != short.Error() {
+	if got := errorLine(short); got != "error: load config: boom\n" {
 		t.Fatalf("short error changed: %q", got)
 	}
-	got := errorLine(errors.New("register: " + strings.Repeat("é", 10000)))
-	if len(got) > maxErrorLine+len("…(truncated)") || !strings.HasSuffix(got, "…(truncated)") || !utf8.ValidString(got) {
-		t.Fatalf("bounded error line is %d bytes, valid=%v", len(got), utf8.ValidString(got))
+	fits := strings.Repeat("a", maxErrorLine-len("error: \n"))
+	if got := errorLine(errors.New(fits)); len(got) != maxErrorLine || strings.Contains(got, "truncated") {
+		t.Fatalf("an error that fits exactly was altered: %d bytes", len(got))
+	}
+	for _, long := range []string{fits + "a", strings.Repeat("é", 10000), "register: " + strings.Repeat("x", 10000)} {
+		got := errorLine(errors.New(long))
+		if len(got) > maxErrorLine || !strings.HasSuffix(got, "…(truncated)\n") || !strings.HasPrefix(got, "error: ") || !utf8.ValidString(got) {
+			t.Fatalf("error line is %d bytes (limit %d), valid=%v, tail %q", len(got), maxErrorLine, utf8.ValidString(got), got[max(0, len(got)-20):])
+		}
 	}
 }

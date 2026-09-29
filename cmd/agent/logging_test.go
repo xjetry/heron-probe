@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -75,5 +77,19 @@ func TestStandardLogGoesThroughTheBoundedExit(t *testing.T) {
 		if len(line) > 4*agentlog.MaxValueLen {
 			t.Fatalf("line of %d bytes escaped the value bound: %.200s", len(line), line)
 		}
+	}
+}
+
+// 生产入口本身接管标准库 log，而且在加载配置之前：上面的测试自己调用 Install，删掉 runRun 里的那一行它照样通过。
+// 这里给一个读不到的配置让 runRun 在第一步就返回，接管必须已经发生。
+func TestRunInstallsTheBoundedExitFirst(t *testing.T) {
+	prevDefault, prevFlags, prevOut := slog.Default(), log.Flags(), log.Writer()
+	t.Cleanup(func() { slog.SetDefault(prevDefault); log.SetOutput(prevOut); log.SetFlags(prevFlags) })
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := runRun([]string{"--config", filepath.Join(t.TempDir(), "missing.json")}); err == nil {
+		t.Fatal("runRun accepted a missing config")
+	}
+	if _, ok := slog.Default().Handler().(*agentlog.Handler); !ok {
+		t.Fatalf("after runRun the default handler is %T, want *agentlog.Handler: the standard-library log would bypass the bound", slog.Default().Handler())
 	}
 }

@@ -59,21 +59,24 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", errorLine(err))
+		os.Stderr.WriteString(errorLine(err))
 		os.Exit(1)
 	}
 }
 
-// maxErrorLine 是命令最终错误行的上限。register 的错误可能带着 hub 应答里的文本（§5.7），不能原样全写出来；
-// 本地产生的错误（配置、地址校验）都远短于它。
+// maxErrorLine 是命令最终错误行的上限，按写出的整行计：前缀、截断标记与换行都在内。register 的错误可能带着
+// hub 应答里的文本（§5.7），不能原样全写出来；本地产生的错误（配置、地址校验）都远短于它。
 const maxErrorLine = 4 << 10
 
+// errorLine 返回要写到 stderr 的整行。
 func errorLine(err error) string {
+	const prefix, marker, newline = "error: ", "…(truncated)", "\n"
 	msg := strings.ToValidUTF8(err.Error(), "\uFFFD")
-	if len(msg) <= maxErrorLine {
-		return msg
+	if len(prefix)+len(msg)+len(newline) <= maxErrorLine {
+		return prefix + msg + newline
 	}
-	return strings.ToValidUTF8(msg[:maxErrorLine], "") + "…(truncated)"
+	keep := maxErrorLine - len(prefix) - len(marker) - len(newline)
+	return prefix + strings.ToValidUTF8(msg[:keep], "") + marker + newline
 }
 
 func runRegister(args []string) error {
