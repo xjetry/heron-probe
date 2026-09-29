@@ -22,6 +22,7 @@ const paths = {
   edit: "m15 4 5 5 M4 15 16 3l5 5L9 20l-6 1 1-6z",
   calendar: "M4 5h16v16H4z M4 10h16 M8 3v4 M16 3v4 M8 14h3 M8 17h6",
   chevronUp: "m6 15 6-6 6 6",
+  grip: "M9 5h.01 M15 5h.01 M9 12h.01 M15 12h.01 M9 19h.01 M15 19h.01",
   chevronDown: "m6 9 6 6 6-6",
   globe: "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0 M3 12h18 M12 3c5 5 5 13 0 18-5-5-5-13 0-18",
   arrowDown: "M12 3v18 m-6-6 6 6 6-6",

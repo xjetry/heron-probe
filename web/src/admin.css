@@ -122,14 +122,25 @@
 .admin-shell .tag-filter { border: 0; padding: 0; flex: 1; margin: 0; min-width: 180px; }
 .admin-shell .tag-filter legend { padding: 0; font-size: 11px; color: var(--muted); font-weight: 400; margin-bottom: 7px; }
 .admin-shell table.node-management { min-width: 1080px; table-layout: fixed; }
-.admin-shell table.node-management th[data-column="order"] { width: 38px; padding: 12px 3px; }
+.admin-shell table.node-management th[data-column="order"] { width: 82px; padding: 12px 8px; }
 .admin-shell table.node-management th[data-column="name"] { width: 21%; }
 .admin-shell table.node-management th[data-column="addresses"] { width: 23%; }
 .admin-shell table.node-management th[data-column="status"] { width: 85px; }
 .admin-shell table.node-management th[data-column="actions"] { width: 112px; }
 .admin-shell table.node-management td { padding: 17px 12px; }
-.admin-shell table.node-management td[data-column="order"] { padding: 8px 3px; }
-.node-management td[data-column="order"] .icon-button { width: 28px; height: 28px; min-height: 28px; }
+.admin-shell table.node-management td[data-column="order"] { padding: 8px; }
+.node-order-control { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.admin-shell .node-order-control .order-handle { width: 52px; height: 30px; min-height: 30px; cursor: grab; }
+.admin-shell .node-order-control .order-handle:active { cursor: grabbing; }
+.admin-shell .node-order-control .order-handle:disabled { cursor: not-allowed; }
+.order-position { font-size: 10px; font-variant-numeric: tabular-nums; min-width: 16px; }
+.admin-shell select.order-menu { min-height: 28px; font-size: 11px; padding: 2px 4px; width: 64px; border-color: transparent; color: var(--muted); background: transparent; }
+.admin-shell select.order-menu:hover:not(:disabled) { border-color: var(--line); color: var(--fg); }
+.node-management tr.is-dragging { opacity: .4; }
+.node-management tr.drop-before > td { box-shadow: inset 0 3px var(--accent); }
+.node-management tr.drop-after > td { box-shadow: inset 0 -3px var(--accent); }
+.order-help { margin: 0 0 8px; max-width: 680px; }
+.order-saved { font-size: 12px; color: var(--ok); }
 .node-name-line { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 5px; }
 .node-name-line a { color: var(--fg); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .node-name-line .country-badge { font-size: 11px; }
@@ -216,6 +227,11 @@
   .node-management td[data-column="name"] { grid-row: 1; }
   .node-management td[data-column="name"]::before, .node-management td[data-column="actions"]::before, .node-management td[data-column="order"]::before { display: none; }
   .admin-shell .node-management td[data-column="order"] { grid-row: 6; display: flex; align-items: center; padding: 9px; }
+  .node-order-control { flex-direction: row; }
+  .admin-shell .node-order-control .order-handle, .admin-shell select.order-menu { min-height: 44px; }
+  .node-management tr.drop-before { box-shadow: 0 -3px var(--accent); }
+  .node-management tr.drop-after { box-shadow: 0 3px var(--accent); }
+  .node-management tr.drop-before > td, .node-management tr.drop-after > td { box-shadow: none; }
   .node-management td[data-column="actions"] { grid-row: 6; grid-column: 2; }
   .node-management td[data-column="billing"] { grid-column: auto; }
   .node-management td[data-column="actions"] button { margin: 0; min-height: 32px; }

@@ -107,7 +107,7 @@ describe("Nodes", () => {
     const input = screen.getByRole("searchbox", { name: "搜索节点" });
     fireEvent.change(input, { target: { value: "b" } });
     expect(screen.getByText("搜索或按标签过滤时无法排序，请清空搜索与标签过滤后调整完整节点顺序。")).toBeInTheDocument();
-    for (const button of screen.getAllByRole("button", { name: /^(上移|下移)/ })) {
+    for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) {
       expect(button).toBeDisabled();
       fireEvent.click(button);
     }
@@ -115,8 +115,8 @@ describe("Nodes", () => {
     expect(reorderNodes).not.toHaveBeenCalled();
     fireEvent.change(input, { target: { value: "" } });
     expect(screen.queryByText("搜索或按标签过滤时无法排序，请清空搜索与标签过滤后调整完整节点顺序。")).toBeNull();
-    for (const button of screen.getAllByRole("button", { name: /^(上移|下移)/ })) expect(button).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "下移 a（#1）" }));
+    for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) expect(button).toBeEnabled();
+    fireEvent.change(screen.getByRole("combobox", { name: "移动 a（#1）" }), { target: { value: "down" } });
     await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n] }), expect.anything()));
   });
 
@@ -267,7 +267,8 @@ describe("Nodes", () => {
     vi.useFakeTimers();
     try {
       await act(async () => {
-        fireEvent.click(screen.getByRole("button", { name: operation === "rotate" ? "换 token a（#1）" : "下移 a（#1）" }));
+        if (operation === "rotate") fireEvent.click(screen.getByRole("button", { name: "换 token a（#1）" }));
+        else fireEvent.change(screen.getByRole("combobox", { name: "移动 a（#1）" }), { target: { value: "down" } });
         await vi.advanceTimersByTimeAsync(100);
       });
       expect(listNodes).toHaveBeenCalledTimes(2);
@@ -523,13 +524,45 @@ describe("Nodes", () => {
     await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 11n, name: "renamed" }), expect.anything()));
   });
 
-  it.each(["下移 a（#1）", "上移 b（#2）"])("%s 提交完整排列", async (button) => {
+  it.each([["a（#1）", "down"], ["b（#2）", "up"]])("移动 %s %s 提交完整排列", async (label, value) => {
     const reorderNodes = vi.fn(async () => ({}));
     const three = [...two, { ...two[0], id: 3n, name: "c", sortOrder: 2 }];
     renderNodes({ listNodes: async () => ({ nodes: three }), reorderNodes });
     await screen.findByRole("link", { name: "a（#1）" });
-    fireEvent.click(screen.getByRole("button", { name: button }));
+    fireEvent.change(screen.getByRole("combobox", { name: `移动 ${label}` }), { target: { value } });
     await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n, 3n] }), expect.anything()));
+  });
+
+  it("拖动手柄放到目标节点之后提交插入排列，并展示保存反馈", async () => {
+    let rows = [...two, { ...two[0], id: 3n, name: "c", sortOrder: 2 }];
+    const reorderNodes = vi.fn(async ({ ids }: { ids: bigint[] }) => {
+      rows = ids.map((id) => rows.find((node) => node.id === id)!);
+      return {};
+    });
+    renderNodes({ listNodes: async () => ({ nodes: rows }), reorderNodes });
+    const handle = await screen.findByRole("button", { name: "调整顺序 a（#1）" });
+    const row = screen.getByRole("link", { name: "c（#3）" }).closest("tr")!;
+    const dataTransfer = { setData: vi.fn(), effectAllowed: "", dropEffect: "" };
+    fireEvent.dragStart(handle, { dataTransfer });
+    fireEvent.dragOver(row, { dataTransfer, clientY: 10 });
+    expect(row).toHaveClass("drop-after");
+    fireEvent.drop(row, { dataTransfer, clientY: 10 });
+    await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 3n, 1n] }), expect.anything()));
+    expect(await screen.findByText("顺序已保存")).toBeVisible();
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(["b", "c", "a"]);
+  });
+
+  it("拖动中切换筛选后放下不能提交子集排列，外部拖入也不提交", async () => {
+    const reorderNodes = vi.fn(async () => ({}));
+    renderNodes({ listNodes: async () => ({ nodes: two }), reorderNodes });
+    const handle = await screen.findByRole("button", { name: "调整顺序 a（#1）" });
+    const row = screen.getByRole("link", { name: "b（#2）" }).closest("tr")!;
+    const dataTransfer = { setData: vi.fn(), effectAllowed: "", dropEffect: "" };
+    fireEvent.drop(row, { dataTransfer, clientY: 10 });
+    fireEvent.dragStart(handle, { dataTransfer });
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索节点" }), { target: { value: "b" } });
+    fireEvent.drop(row, { dataTransfer, clientY: 10 });
+    expect(reorderNodes).not.toHaveBeenCalled();
   });
 
   it("编辑回传全部字段，没碰的计费也按当前值回传", async () => {
@@ -833,7 +866,7 @@ describe("Nodes", () => {
       await waitFor(() => expect(shown()).toEqual(["beta"]));
       expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: ["db", "web"] }), expect.anything());
       expect(screen.getByText("搜索或按标签过滤时无法排序，请清空搜索与标签过滤后调整完整节点顺序。")).toBeInTheDocument();
-      for (const button of screen.getAllByRole("button", { name: /^(上移|下移)/ })) {
+      for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) {
         expect(button).toBeDisabled();
         fireEvent.click(button);
       }
@@ -841,8 +874,8 @@ describe("Nodes", () => {
       expect(reorderNodes).not.toHaveBeenCalled();
       fireEvent.click(screen.getByRole("button", { name: "清除标签过滤" }));
       await waitFor(() => expect(shown()).toEqual(["alpha", "beta", "gamma"]));
-      for (const button of screen.getAllByRole("button", { name: /^(上移|下移)/ })) expect(button).toBeEnabled();
-      fireEvent.click(screen.getByRole("button", { name: "下移 alpha（#1）" }));
+      for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) expect(button).toBeEnabled();
+      fireEvent.change(screen.getByRole("combobox", { name: "移动 alpha（#1）" }), { target: { value: "down" } });
       await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n, 3n] }), expect.anything()));
     });
 
@@ -991,7 +1024,7 @@ describe("Nodes", () => {
       expect(await screen.findByRole("alert")).toHaveTextContent("hub unavailable");
       expect(shown()).toEqual(["alpha", "beta"]);
       expect(screen.getByText("列表还不是当前条件下的结果，暂时无法排序。")).toBeInTheDocument();
-      for (const button of screen.getAllByRole("button", { name: /^(上移|下移)/ })) {
+      for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) {
         expect(button).toBeDisabled();
         fireEvent.click(button);
       }

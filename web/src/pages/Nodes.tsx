@@ -1,17 +1,18 @@
 import { createConnectQueryKey, createQueryOptions, useMutation, useQuery, useTransport } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { type DragEvent, type FormEvent, type ReactNode, useState } from "react";
 import { Link } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
 import { useRetained } from "../api/useRetained";
-import { useOrder } from "../api/useOrder";
+import { type OrderMove, useOrder } from "../api/useOrder";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Icon } from "../components/Icon";
 import { Modal } from "../components/Modal";
 import { NodeAddresses } from "../components/NodeAddresses";
 import { NodeCountry } from "../components/NodeCountry";
+import { NodeOrderControl } from "../components/NodeOrderControl";
 import { Secret } from "../components/Secret";
 import { AdminService, type Node, type NodeStatus, type Tag } from "../gen/heron/v1/admin_pb";
 import { expired, expiryText, priceText } from "../lib/billing";
@@ -43,6 +44,8 @@ export function Nodes() {
   const [creating, setCreating] = useState<HTMLElement | null>(null);
   const [name, setName] = useState("");
   const [search, setSearch] = useState("");
+  const [drag, setDrag] = useState<{ id: bigint; members: string } | null>(null);
+  const [drop, setDrop] = useState<{ target: bigint; edge: "before" | "after" } | null>(null);
   const [editor, setEditor] = useState<{ node: Node; mode: "general" | "billing"; opener: HTMLElement } | null>(null);
   const create = useMutation(AdminService.method.createNode, {
     ...mutationOptions,
@@ -96,6 +99,18 @@ export function Nodes() {
   const gate = queryGate(nodes);
   const list = filterNodes(order.items, search);
   const editing = editor !== null || creating !== null;
+  const sortable = !narrowed && !order.blocked && !editing && list.length > 1;
+  const members = list.map((node) => String(node.id)).sort().join(",");
+  const dragging = sortable && drag?.members === members ? drag.id : null;
+  const moveNode = (id: bigint, move: OrderMove) => {
+    if (!sortable) return;
+    order.move(id, move);
+  };
+  const endDrag = () => { setDrag(null); setDrop(null); };
+  const dropPosition = (event: DragEvent<HTMLTableRowElement>, target: bigint): { target: bigint; edge: "before" | "after" } => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return { target, edge: event.clientY < bounds.top + bounds.height / 2 ? "before" : "after" };
+  };
   const openEditor = (node: Node, mode: "general" | "billing", opener: HTMLElement) => {
     if (editing) return;
     update.reset();
@@ -117,18 +132,38 @@ export function Nodes() {
     {!editing && errorBanner(error)}
     {order.error != null && <p role="alert" className="error">排序未完成：{errorText(order.error)}</p>}
     {order.pending && <p role="status" className="muted">正在保存并确认排序…</p>}
+    {order.confirmed && <p className="order-saved" aria-live="polite">顺序已保存</p>}
     {order.blocked && <button type="button" onClick={order.recover} disabled={order.pending}>重新读取排序</button>}
     {filtered && <p className="node-subtext">搜索或按标签过滤时无法排序，请清空搜索与标签过滤后调整完整节点顺序。</p>}
     {!filtered && nodes.stale && <p className="node-subtext">列表还不是当前条件下的结果，暂时无法排序。</p>}
     {gate.ready ? <>
       <div className="section-heading"><h2>节点清单 <span className="muted">{list.length}</span></h2><span className="live-caption">双栈出口由 agent 独立探测</span></div>
+      <p className="node-subtext order-help" id="node-order-help">拖动手柄调整顺序，松开后自动保存。也可使用移动菜单，或聚焦手柄后按方向键、Home / End。</p>
       {list.length === 0 && <p className="node-empty" role="status">{narrowed ? "没有匹配的节点。" : "还没有节点，添加节点后安装 agent 即可开始监控。"}</p>}
       <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
         <table className="nodes node-management"><thead><tr><th data-column="order"><span className="sr-only">排序</span></th><th data-column="name">节点</th><th data-column="addresses">IP 地址</th><th data-column="status">状态</th><th>本周期流量</th><th>计费</th><th>到期</th><th data-column="actions">操作</th></tr></thead>
-          <tbody>{list.map((node) => <NodeRow key={String(node.id)} node={node} status={statusById.get(node.id)} hubVersion={hubVersion}
+          <tbody>{list.map((node, index) => <NodeRow key={String(node.id)} node={node} status={statusById.get(node.id)} hubVersion={hubVersion}
             editing={editing} deleting={remove.isPending} rotating={rotate.isPending}
-            onMoveUp={narrowed || order.blocked ? undefined : () => order.move(node.id, -1)}
-            onMoveDown={narrowed || order.blocked ? undefined : () => order.move(node.id, 1)}
+            orderClass={dragging === node.id ? "is-dragging" : dragging !== null && drop?.target === node.id ? `drop-${drop.edge}` : undefined}
+            onDragOver={(event) => {
+              if (dragging === null || dragging === node.id) return;
+              event.preventDefault(); event.dataTransfer.dropEffect = "move";
+              setDrop(dropPosition(event, node.id));
+            }}
+            onDrop={(event) => {
+              if (dragging !== null && dragging !== node.id) {
+                event.preventDefault(); moveNode(dragging, dropPosition(event, node.id));
+              }
+              endDrag();
+            }}
+            orderControl={<NodeOrderControl label={withId(node.name, node.id)} index={index} count={list.length} disabled={!sortable}
+              onMove={(move) => moveNode(node.id, move)} onDragEnd={endDrag}
+              onDragStart={(event) => {
+                if (!sortable) { event.preventDefault(); return; }
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", String(node.id));
+                setDrag({ id: node.id, members }); setDrop(null);
+              }} />}
             onEdit={(mode, opener) => openEditor(node, mode, opener)} onDelete={() => remove.mutate({ id: node.id })} onRotate={() => rotate.mutate({ id: node.id })} />)}</tbody>
         </table>
       </div>
@@ -145,13 +180,14 @@ export function Nodes() {
   </section>;
 }
 
-function NodeRow({ node, status, hubVersion, editing, deleting, rotating, onMoveUp, onMoveDown, onEdit, onDelete, onRotate }: {
+function NodeRow({ node, status, hubVersion, editing, deleting, rotating, orderControl, orderClass, onDragOver, onDrop, onEdit, onDelete, onRotate }: {
   node: Node; status?: NodeStatus; hubVersion?: string; editing: boolean; deleting: boolean; rotating: boolean;
-  onMoveUp?: () => void; onMoveDown?: () => void; onEdit: (mode: "general" | "billing", opener: HTMLElement) => void; onDelete: () => void; onRotate: () => void;
+  orderControl: ReactNode; orderClass?: string; onDragOver: (event: DragEvent<HTMLTableRowElement>) => void; onDrop: (event: DragEvent<HTMLTableRowElement>) => void;
+  onEdit: (mode: "general" | "billing", opener: HTMLElement) => void; onDelete: () => void; onRotate: () => void;
 }) {
   const label = withId(node.name, node.id);
-  return <tr>
-    <td data-column="order" data-label="排序"><button type="button" className="icon-button" aria-label={`上移 ${label}`} onClick={onMoveUp} disabled={!onMoveUp}><Icon name="chevronUp" /></button><button type="button" className="icon-button" aria-label={`下移 ${label}`} onClick={onMoveDown} disabled={!onMoveDown}><Icon name="chevronDown" /></button></td>
+  return <tr className={orderClass} onDragOver={onDragOver} onDrop={onDrop}>
+    <td data-column="order" data-label="排序">{orderControl}</td>
     <td data-column="name" data-label="节点"><div className="node-name-line"><Link to={`/nodes/${node.id}`} aria-label={label}>{node.name}</Link><NodeCountry node={node} /></div>
       <div aria-label={`标签 ${label}`}>{node.tags.map((tag) => <span key={tag} className="tag">{tag}</span>)}</div>
       {node.note && <p className="node-subtext node-note" title={node.note}>{node.note}</p>}

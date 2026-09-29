@@ -152,6 +152,55 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
   }
 });
 
+test('节点拖拽、键盘和移动端菜单保存同一完整顺序', async ({ page, browserName }, testInfo) => {
+  await page.goto('/admin/login');
+  await rpc(page, 'Login', { password: 'local-browser-test-password' });
+  const ids: string[] = [];
+  const label = (index: number) => `order-${index}-${browserName}（#${ids[index]}）`;
+  const actual = async () => (await rpc(page, 'ListNodes')).nodes.filter((node: { id: string }) => ids.includes(node.id)).map((node: { id: string }) => node.id);
+  try {
+    for (let i = 0; i < 3; i++) ids.push((await rpc(page, 'CreateNode', { name: `order-${i}-${browserName}` })).node.id);
+    await page.goto('/admin/nodes');
+    await page.setViewportSize({ width: 1440, height: 960 });
+    const handle = page.getByRole('button', { name: `调整顺序 ${label(0)}`, exact: true });
+    const target = page.getByRole('link', { name: label(2), exact: true }).locator('xpath=ancestor::tr');
+    await expect(handle).toBeEnabled();
+    const box = await target.boundingBox();
+    expect(box).not.toBeNull();
+    await handle.dragTo(target, { targetPosition: { x: 30, y: box!.height - 5 } });
+    await expect(page.getByText('顺序已保存', { exact: true })).toBeVisible();
+    await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
+    await handle.focus();
+    await handle.press('Home');
+    await expect.poll(actual).toEqual([ids[0], ids[1], ids[2]]);
+    await expect(handle).toBeFocused();
+    await handle.press('ArrowDown');
+    await expect(handle).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(handle).toBeFocused();
+    await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
+    await handle.press('Home');
+    await expect.poll(actual).toEqual([ids[0], ids[1], ids[2]]);
+    await handle.press('End');
+    await expect(handle).toBeFocused();
+    await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
+    await handle.press('Home');
+    await expect.poll(actual).toEqual([ids[0], ids[1], ids[2]]);
+    await page.screenshot({ path: testInfo.outputPath('node-order-desktop.png'), fullPage: true });
+    await page.getByRole('searchbox', { name: '搜索节点' }).fill(`order-0-${browserName}`);
+    await expect(handle).toBeDisabled();
+    await expect(page.getByRole('combobox', { name: `移动 ${label(0)}`, exact: true })).toBeDisabled();
+    await page.getByRole('searchbox', { name: '搜索节点' }).fill('');
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.getByRole('combobox', { name: `移动 ${label(0)}`, exact: true }).selectOption('last');
+    await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
+    await page.screenshot({ path: testInfo.outputPath('node-order-mobile.png'), fullPage: true });
+  } finally {
+    for (const id of ids) await rpc(page, 'DeleteNode', { id });
+  }
+});
+
 test('在线更新展示实际平台能力并禁止不支持的更新', async ({ page }, testInfo) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/admin/login');
