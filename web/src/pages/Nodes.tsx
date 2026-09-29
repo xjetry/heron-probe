@@ -1,4 +1,4 @@
-import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
+import { createConnectQueryKey, createQueryOptions, useMutation, useQuery, useTransport } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, Fragment, type ReactNode, useState } from "react";
 import { Link } from "react-router";
@@ -11,6 +11,7 @@ import { BillingCycle } from "../gen/probe/v1/types_pb";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
 import { useRetained } from "../api/useRetained";
+import { useOrder } from "../api/useOrder";
 import { graceText } from "../lib/alerts";
 import { BILLING_CYCLES, expired, expiryText, priceText } from "../lib/billing";
 import { withId } from "../lib/ids";
@@ -20,6 +21,7 @@ import { lagsHub } from "../lib/version";
 
 export function Nodes() {
   const qc = useQueryClient();
+  const transport = useTransport();
   const { error, mutationOptions } = useLatestError();
   // 所选标签交给 hub 过滤（交集，§10），搜索在返回的结果上再做一次，两者取交集。换选择即换查询键：新条件的请求挂起
   // 或失败时沿用上一份结果（useRetained），列表与其中未保存的草稿不卸载，失败只加横幅；沿用期间列表不是当前条件的
@@ -74,7 +76,19 @@ export function Nodes() {
       return refresh();
     },
   });
-  const reorder = useMutation(AdminService.method.reorderNodes, { ...mutationOptions, onSuccess: refresh });
+  const reorder = useMutation(AdminService.method.reorderNodes);
+  const filtered = search !== "" || tagFilter.length > 0;
+  const narrowed = filtered || nodes.stale;
+  const order = useOrder({
+    items: nodes.data?.nodes ?? [], id: (node) => node.id, enabled: !narrowed && nodes.data !== undefined,
+    save: (ids) => reorder.mutateAsync({ ids }),
+    reload: async () => {
+      // 排序只接受完整排列；回读固定使用空过滤条件，切换过滤器不能把恢复请求变成子集查询。
+      const options = createQueryOptions(AdminService.method.listNodes, { tags: [] }, { transport });
+      await qc.cancelQueries({ queryKey: options.queryKey, exact: true });
+      return (await qc.fetchQuery({ ...options, staleTime: 0 })).nodes;
+    },
+  });
   // 删除标签是本页的显式动作。被删的名字若留在过滤条件里，hub 只会返回空结果（不存在的标签匹配不到任何节点），
   // 所以删除后把它从条件里去掉，列表回到其余条件下的样子。
   const removeTag = useMutation(AdminService.method.deleteTag, {
@@ -86,33 +100,21 @@ export function Nodes() {
   });
 
   const onCreate = (e: FormEvent) => { e.preventDefault(); create.mutate({ name }); };
-  // 排序接口要求全部 id 的完整排列：搜索与标签过滤的结果是子集，沿用的结果属于上一个条件（当前条件为空时也可能
-  // 只是子集），这两种情况都不开放排序入口。
-  const move = (list: Node[], i: number, dir: -1 | 1) => {
-    const ids = list.map((n) => n.id);
-    const j = i + dir;
-    if (j < 0 || j >= ids.length) return;
-    [ids[i], ids[j]] = [ids[j], ids[i]];
-    reorder.mutate({ ids });
-  };
-
   const gate = queryGate(nodes);
-  const filtered = search !== "" || tagFilter.length > 0;
-  const narrowed = filtered || nodes.stale;
   const table = (list: Node[]) => (
     <>
       {filtered && <p className="muted">搜索或按标签过滤时无法排序，请清空搜索与标签过滤后调整完整节点顺序。</p>}
       {!filtered && nodes.stale && <p className="muted">列表还不是当前条件下的结果，暂时无法排序。</p>}
       {narrowed && list.length === 0 && <p className="muted" role="status">没有匹配的节点。</p>}
       <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
-        <table className="nodes">
+        <table className="nodes node-management">
           <thead><tr><th>排序</th><th>名称</th><th>公开</th><th>国家 / 地区</th><th>标签</th><th>备注</th><th>重置日</th><th>离线宽限期</th><th>计费</th><th>创建于</th><th>操作</th></tr></thead>
           <tbody>
-            {list.map((n, i) => (
+            {list.map((n) => (
               <NodeEditor key={String(n.id)} node={n} hubVersion={hubVersion} knownTags={tags.data?.tags ?? []}
                 saving={update.isPending} deleting={remove.isPending} rotating={rotate.isPending}
-                onMoveUp={narrowed ? undefined : () => move(list, i, -1)}
-                onMoveDown={narrowed ? undefined : () => move(list, i, 1)}
+                onMoveUp={narrowed || order.blocked ? undefined : () => order.move(n.id, -1)}
+                onMoveDown={narrowed || order.blocked ? undefined : () => order.move(n.id, 1)}
                 onSave={(patch, onSuccess) => update.mutate({ id: n.id, ...patch }, { onSuccess })}
                 onDelete={() => remove.mutate({ id: n.id })}
                 onRotate={() => rotate.mutate({ id: n.id })} />
@@ -141,7 +143,10 @@ export function Nodes() {
         <TagFilter tags={tags.data?.tags} error={tags.error} selected={tagFilter} onChange={setTagFilter} />
       </div>
       {error != null && <p role="alert" className="error">{errorText(error)}</p>}
-      {gate.ready ? table(filterNodes(gate.data.nodes, search)) : gate.loading}
+      {order.error != null && <p role="alert" className="error">排序未完成：{errorText(order.error)}</p>}
+      {order.pending && <p role="status" className="muted">正在保存并确认排序…</p>}
+      {order.blocked && <button type="button" onClick={order.recover} disabled={order.pending}>重新读取排序</button>}
+      {gate.ready ? table(filterNodes(order.items, search)) : gate.loading}
       <TagManager tags={tags.data?.tags} pending={removeTag.isPending} onDelete={(name) => removeTag.mutate({ name })} />
     </section>
   );
@@ -226,22 +231,22 @@ function NodeEditor({ node, hubVersion, knownTags, saving, deleting, rotating, o
   const [pendingTag, setPendingTag] = useState("");
   if (editing) {
     return (
-      <tr>
-        <td />
-        <td><input aria-label={`名称 ${withId(node.name, node.id)}`} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></td>
-        <td><input type="checkbox" aria-label={`公开 ${withId(node.name, node.id)}`} checked={draft.public} onChange={(e) => setDraft({ ...draft, public: e.target.checked })} /></td>
-        <td>
+      <tr className="node-edit-row">
+        <td data-column="order" data-label="排序" />
+        <td data-column="name" data-label="名称"><input aria-label={`名称 ${withId(node.name, node.id)}`} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></td>
+        <td data-label="公开"><input type="checkbox" aria-label={`公开 ${withId(node.name, node.id)}`} checked={draft.public} onChange={(e) => setDraft({ ...draft, public: e.target.checked })} /></td>
+        <td data-label="国家 / 地区">
           {/* 国家码都是大写，输入时就转成大写；其余取值原样交给 hub 校验。 */}
           <input aria-label={`手动指定国家 / 地区 ${withId(node.name, node.id)}`} aria-describedby={`country-hint-${node.id}`} placeholder="US" value={draft.countryPin} onChange={(e) => setDraft({ ...draft, countryPin: e.target.value.toUpperCase() })} />
           <p className="muted" id={`country-hint-${node.id}`}>两个字母（ISO 3166-1），优先于查得值；留空用查得值：{node.countryLookup ? lookupText(node) : "尚无查得值"}。</p>
         </td>
-        <td><TagsEditor id={node.id} label={withId(node.name, node.id)} isPublic={draft.public} tags={draft.tags} known={knownTags} pending={pendingTag} onPending={setPendingTag} onChange={(tags) => setDraft({ ...draft, tags })} /></td>
-        <td><input aria-label={`备注 ${withId(node.name, node.id)}`} value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></td>
-        <td><input type="number" min={1} max={28} aria-label={`重置日 ${withId(node.name, node.id)}`} value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><p className="muted">若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。</p></td>
-        <td><input type="number" min={0} aria-label={`离线宽限期（秒） ${withId(node.name, node.id)}`} aria-describedby={`grace-hint-${node.id}`} value={draft.offlineGraceS} onChange={(e) => setDraft({ ...draft, offlineGraceS: e.target.value })} /><p className="muted" id={`grace-hint-${node.id}`}>0 表示取 hub 的 PROBE_OFFLINE_AFTER；非 0 不能小于它。</p></td>
-        <td><BillingEditor label={withId(node.name, node.id)} draft={draft.billing} onChange={(patch) => setDraft({ ...draft, billing: { ...draft.billing, ...patch } })} /></td>
-        <td />
-        <td>
+        <td data-column="tags" data-label="标签"><TagsEditor id={node.id} label={withId(node.name, node.id)} isPublic={draft.public} tags={draft.tags} known={knownTags} pending={pendingTag} onPending={setPendingTag} onChange={(tags) => setDraft({ ...draft, tags })} /></td>
+        <td data-column="note" data-label="备注"><textarea aria-label={`备注 ${withId(node.name, node.id)}`} value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></td>
+        <td data-label="重置日"><input type="number" min={1} max={28} aria-label={`重置日 ${withId(node.name, node.id)}`} value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><p className="muted">若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。</p></td>
+        <td data-label="离线宽限期"><input type="number" min={0} aria-label={`离线宽限期（秒） ${withId(node.name, node.id)}`} aria-describedby={`grace-hint-${node.id}`} value={draft.offlineGraceS} onChange={(e) => setDraft({ ...draft, offlineGraceS: e.target.value })} /><p className="muted" id={`grace-hint-${node.id}`}>0 表示取 hub 的 PROBE_OFFLINE_AFTER；非 0 不能小于它。</p></td>
+        <td data-column="billing" data-label="计费"><BillingEditor label={withId(node.name, node.id)} draft={draft.billing} onChange={(patch) => setDraft({ ...draft, billing: { ...draft.billing, ...patch } })} /></td>
+        <td data-label="创建于" />
+        <td data-column="actions" data-label="操作">
           <button type="button" disabled={saving || !validResetDay(draft.trafficResetDay) || !validGrace(draft.offlineGraceS)} onClick={() => onSave({ ...draft, tags: withTag(draft.tags, pendingTag), offlineGraceS: Number(draft.offlineGraceS) }, () => setEditing(false))}>保存</button>{" "}
           <button type="button" className="link" onClick={() => setEditing(false)}>取消</button>
         </td>
@@ -250,23 +255,23 @@ function NodeEditor({ node, hubVersion, knownTags, saving, deleting, rotating, o
   }
   return (
     <tr>
-      <td>
+      <td data-column="order" data-label="排序">
         <button type="button" className="link" aria-label={`上移 ${withId(node.name, node.id)}`} onClick={onMoveUp} disabled={!onMoveUp}>↑</button>
         <button type="button" className="link" aria-label={`下移 ${withId(node.name, node.id)}`} onClick={onMoveDown} disabled={!onMoveDown}>↓</button>
       </td>
-      <td>
+      <td data-column="name" data-label="名称">
         <Link to={`/nodes/${node.id}`} aria-label={withId(node.name, node.id)}>{node.name}</Link>
         {hubVersion !== undefined && lagsHub(node.facts?.agentVersion, hubVersion) && <>{" "}<span className="warn">落后于 hub</span></>}
       </td>
-      <td>{node.public ? "是" : "否"}</td>
-      <td><CountryCell node={node} /></td>
-      <td>{node.tags.length === 0 ? "—" : node.tags.map((t) => <span key={t} className="tag">{t}</span>)}</td>
-      <td className="muted">{node.note}</td>
-      <td>每月 {node.trafficResetDay} 日</td>
-      <td>{graceText(node.offlineGraceS)}</td>
-      <td><BillingSummary node={node} /></td>
-      <td className="muted">{new Date(Number(node.createdAt) * 1000).toLocaleDateString()}</td>
-      <td>
+      <td data-label="公开">{node.public ? "是" : "否"}</td>
+      <td data-label="国家 / 地区"><CountryCell node={node} /></td>
+      <td data-column="tags" data-label="标签">{node.tags.length === 0 ? "—" : node.tags.map((t) => <span key={t} className="tag">{t}</span>)}</td>
+      <td data-column="note" data-label="备注" className="muted">{node.note}</td>
+      <td data-label="重置日">每月 {node.trafficResetDay} 日</td>
+      <td data-label="离线宽限期">{graceText(node.offlineGraceS)}</td>
+      <td data-column="billing" data-label="计费"><BillingSummary node={node} /></td>
+      <td data-label="创建于" className="muted">{new Date(Number(node.createdAt) * 1000).toLocaleDateString()}</td>
+      <td data-column="actions" data-label="操作">
         <button type="button" className="link" aria-label={`编辑 ${withId(node.name, node.id)}`} onClick={() => { setDraft(draftOf(node)); setPendingTag(""); setEditing(true); }}>编辑</button>{" "}
         <button type="button" className="link" aria-label={`换 token ${withId(node.name, node.id)}`} onClick={onRotate} disabled={rotating}>换 token</button>{" "}
         <ConfirmDelete label={`删除 ${withId(node.name, node.id)}`} confirm={`确认删除 ${withId(node.name, node.id)}`} pending={deleting} onDelete={onDelete} />

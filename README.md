@@ -18,7 +18,9 @@ tar -xzf probe-hub_linux_amd64.tar.gz
 - hub 只监听明文 HTTP，TLS 由反代（Caddy、nginx、CDN）终止；反代地址用 `--trusted-proxies` 声明，否则不信任转发头。
 - 管理面板在 `/admin/`。离线判定的时限由环境变量 `PROBE_OFFLINE_AFTER` 设定（默认 30s，10s–180s）。
 - 其余参数见 `probe-hub serve -h`；节点、注册窗口与 API token 也可在 hub 主机上用 `probe-hub node|window|token` 管理。
-- 节点可在面板里记录价格、币种、计费周期与到期日：只用于展示与提醒，hub 不汇总、不换算。公开节点填了的这几项也显示在公开页，自动续期开关除外。建「到期」类型的告警规则可在到期前若干天提醒；开着自动续期的节点过了到期日，hub 按周期把到期日推后。到期日按天计，天的边界与流量周期一样取 `--timezone`。
+- 节点可在面板里记录价格、币种、计费周期与到期日，周期支持 1 月、3 月、半年、1 年、2 年、3 年、5 年：只用于展示与提醒，hub 不汇总、不换算。公开节点填了的这几项也显示在公开页，自动续期开关除外。建「到期」类型的告警规则可在到期前若干天提醒；开着自动续期的节点过了到期日，hub 按周期把到期日推后。到期日按天计，天的边界与流量周期一样取 `--timezone`。
+- 历史图展示 CPU、内存和网络采样峰值。网络均值仍是桶内入账字节数除以桶长；峰值是 agent 采样速率的最大值，不能代表未采到的瞬时尖峰。升级前历史和没有速率读数的旧 agent 保持空洞，不补零。
+- 探测任务可调整展示顺序，管理清单和两端历史图同步采用；重排不会改变 agent 执行清单或任务版本。节点管理支持连续排序、失败回读恢复和窄屏卡片布局。
 - 节点可挂多个标签，面板按标签过滤。公开节点的标签也显示在公开页，访客可以按标签筛选；标签常写用途与归属，挂到公开节点前先确认可以对外公开，没有单独隐藏标签的开关。
 
 ## 安装 hub（Linux，systemd）
@@ -172,7 +174,7 @@ docker exec probe probe-hub security-reset --db /data/probe.db --yes
 probe-hub restore --db probe.db --config config.db --metrics metrics.db --themes ./themes --yes
 ```
 
-`themes` 目录放摘要命名的 `<SHA-256>.zip`。新格式快照指定 `--themes` 时严格校验主题引用，缺包或摘要不符拒绝恢复；省略该参数则恢复配置但停用全部主题。恢复接受明确支持的 schema 17–20，旧快照在私有副本中迁移，不改写来源；未来版本、未知格式或结构不符拒绝。旧格式按原有 `<主题 id>.zip` 导入，缺包主题保留但停用。恢复不复活会话或注册窗口，并写入恢复记录和手动恢复事件。两层时刻可不同，以配置层节点为准清理孤儿历史。
+`themes` 目录放摘要命名的 `<SHA-256>.zip`。新格式快照指定 `--themes` 时严格校验主题引用，缺包或摘要不符拒绝恢复；省略该参数则恢复配置但停用全部主题。恢复接受明确支持的 schema 17–21，旧快照在私有副本中迁移，不改写来源；未来版本、未知格式或结构不符拒绝。旧格式按原有 `<主题 id>.zip` 导入，缺包主题保留但停用。恢复不复活会话或注册窗口，并写入恢复记录和手动恢复事件。两层时刻可不同，以配置层节点为准清理孤儿历史。
 
 若不使用在线快照，可停机备份整个卷：
 
@@ -282,6 +284,12 @@ sudo systemctl restart probe-agent   # OpenRC：rc-service probe-agent restart�
 - 规则按最长前缀匹配；前缀一样长时，本地规则优先于默认规则。前缀必须写成规范形式（`10.0.0.0/8`，不能写 `10.1.2.3/8`），IPv4 要写成 IPv4 形式（不能写 `::ffff:10.0.0.0/104`）；同一前缀不能同时出现在两个列表里。配置文件里有不认识的字段或多余内容时 agent 拒绝启动，免得拼错的规则被静默忽略。
 - agent 的日志有总量上限（突发 20 行，此后每 30 秒至多一行，被压掉的行数记在下一行的 `suppressed_before` 上；每个值至多 256 字节）。systemd 下日志进 journald；OpenRC 与 launchd 的日志文件不自动轮转，由宿主机的日志管理处理。
 - 连 hub 必须用 https，例外与 `--insecure-http` 的含义见上面「安装 agent」。不重跑安装脚本、只修正已部署节点时：`sudo probe-agent configure --insecure-http=true`，再重启服务。
+
+## 开发验收
+
+`make test`、`make lint`、`make build` 分别运行后端测试、静态检查和跨平台编译；前端在 `web/` 执行 `pnpm test` 与 `pnpm run build`。
+
+`make e2e compat-e2e` 使用真实 hub，在 Debian、Alpine 的 amd64、arm64 容器中分别运行当前源码 agent 和固定已发布 agent。兼容基线在 `scripts/compat-agent.json` 固定 tag、发布渠道和两架构 SHA256，不使用浮动 latest；更新基线时必须核对发布资产和摘要，再运行完整兼容矩阵。当前基线 `v0.1.0-rc.1` 是预发布版，项目尚无稳定正式版基线。Linux runner 需设置 `E2E_LISTEN_HOST=0.0.0.0` 供 bridge 容器连接，开发机默认只监听回环。
 
 ## 许可
 

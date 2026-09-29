@@ -96,14 +96,15 @@ export const QueryMetricsResponseSchema: GenMessage<QueryMetricsResponse> = /*@_
  */
 export type MetricSeries = Message<"probe.v1.MetricSeries"> & {
   /**
-   * cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs、rx_bytes、tx_bytes。
+   * cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs、rx_bytes、tx_bytes、
+   * memory_used_pct、disk_used_pct、net_rx_bps、net_tx_bps。
    *
    * @generated from field: string name = 1;
    */
   name: string;
 
   /**
-   * percent、bytes、count；load 无单位为空串。
+   * percent、bytes、bytes/s、count；load 无单位为空串。
    *
    * @generated from field: string unit = 2;
    */
@@ -136,12 +137,15 @@ export type MetricSample = Message<"probe.v1.MetricSample"> & {
   n: number;
 
   /**
+   * 采样算术均值。net_rx_bps/net_tx_bps 的采样均值不代替字节增量除以桶长所得的平均速率。
+   *
    * @generated from field: optional double mean = 2;
    */
   mean?: number | undefined;
 
   /**
-   * 只有带最大值的指标（cpu、mem_used）才有。
+   * 只有带最大值的指标（cpu、mem_used、net_rx_bps、net_tx_bps）才有。
+   * 网络峰值为 agent 各采样间隔速率的最大值，不是未被采样捕获的瞬时最高值；旧历史缺失。
    *
    * @generated from field: optional double max = 3;
    */
@@ -218,7 +222,7 @@ export type QueryProbesResponse = Message<"probe.v1.QueryProbesResponse"> & {
   stepS: number;
 
   /**
-   * 每个任务一条，按 task_id 升序；只含在窗口内有结果的任务，已删除任务的历史同样按 task_id 返回。
+   * 每个任务一条，按当前展示顺序；只含窗口内有结果的任务。已删除任务排在现有任务之后、按 task_id 升序。
    *
    * @generated from field: repeated probe.v1.ProbeSeries series = 3;
    */

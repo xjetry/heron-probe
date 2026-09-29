@@ -33,9 +33,10 @@ message QueryMetricsResponse {
 }
 
 message MetricSeries {
-  // cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs、rx_bytes、tx_bytes。
+  // cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs、rx_bytes、tx_bytes、
+  // memory_used_pct、disk_used_pct、net_rx_bps、net_tx_bps。
   string name = 1;
-  // percent、bytes、count；load 无单位为空串。
+  // percent、bytes、bytes/s、count；load 无单位为空串。
   string unit = 2;
   // 与 ts 一一对应。
   repeated MetricSample samples = 3;
@@ -44,8 +45,10 @@ message MetricSeries {
 message MetricSample {
   // 该点内的样本数；0 表示该指标在这段时间没有任何读数，此时 mean、max 与 sum 都缺失。
   uint32 n = 1;
+  // 采样算术均值。net_rx_bps/net_tx_bps 的采样均值不代替字节增量除以桶长所得的平均速率。
   optional double mean = 2;
-  // 只有带最大值的指标（cpu、mem_used）才有。
+  // 只有带最大值的指标（cpu、mem_used、net_rx_bps、net_tx_bps）才有。
+  // 网络峰值为 agent 各采样间隔速率的最大值，不是未被采样捕获的瞬时最高值；旧历史缺失。
   optional double max = 3;
   // 只有可加量指标（rx_bytes、tx_bytes）才有：该点内的字节总和，没有 mean 与 max。
   // 速率 = sum / step_s。
@@ -66,7 +69,7 @@ message QueryProbesResponse {
   string level = 1;
   // 每个点覆盖的秒数；是所选级别桶长的整数倍。
   uint32 step_s = 2;
-  // 每个任务一条，按 task_id 升序；只含在窗口内有结果的任务，已删除任务的历史同样按 task_id 返回。
+  // 每个任务一条，按当前展示顺序；只含窗口内有结果的任务。已删除任务排在现有任务之后、按 task_id 升序。
   repeated ProbeSeries series = 3;
 }
 

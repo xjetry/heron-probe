@@ -66,9 +66,24 @@ func (s *Service) QueryProbes(ctx context.Context, req *connect.Request[probev1.
 	if err := s.requireNode(ctx, m.GetNodeId()); err != nil {
 		return nil, err
 	}
-	resp, err := s.history.probeSeries(ctx, m, maxPoints, s.probes.Target)
+	resp, err := s.history.probeSeries(ctx, m, maxPoints, s.probes.Target, s.probes.OrderedIDs())
 	if err != nil {
 		return nil, err
 	}
 	return connect.NewResponse(resp), nil
+}
+
+func (s *Service) ReorderProbeTasks(ctx context.Context, req *connect.Request[probev1.ReorderProbeTasksRequest]) (*connect.Response[probev1.ReorderProbeTasksResponse], error) {
+	for _, id := range req.Msg.GetIds() {
+		if err := checkTaskID(id, "ids"); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.probes.Reorder(ctx, req.Msg.GetIds()); err != nil {
+		if errors.Is(err, store.ErrBadOrder) {
+			return nil, invalid("ids must list every probe task exactly once")
+		}
+		return nil, s.operationError(err, "ids", "reordering probe tasks failed")
+	}
+	return connect.NewResponse(&probev1.ReorderProbeTasksResponse{}), nil
 }

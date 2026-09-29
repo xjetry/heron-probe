@@ -19,6 +19,7 @@ export const BILLING_CYCLES: readonly { value: BillingCycle; label: string }[] =
   { value: BillingCycle.YEARLY, label: "年" },
   { value: BillingCycle.BIENNIAL, label: "两年" },
   { value: BillingCycle.TRIENNIAL, label: "三年" },
+  { value: BillingCycle.QUINQUENNIAL, label: "五年" },
 ];
 
 // 未指定是"没有周期"，给空串；表外的值（hub 比页面新）显示编号而不是空，免得读成没有周期。

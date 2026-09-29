@@ -36,6 +36,10 @@ curl -fsS -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/
 
 ## 例子
 
+历史网络速率有两种口径：`rx_bytes` / `tx_bytes` 的 `sum / stepS` 是桶均值；`net_rx_bps` / `net_tx_bps` 的 `max` 是 agent 本地采样速率峰值（bytes/s）。`n=0` 或缺少速率序列表示没有读数，不能补零或拿均值代替峰值。CPU 与内存的 `max` 同样表示采样峰值。
+
+`ListProbeTasks` 与 `QueryProbes` 返回展示顺序，已删除任务的历史排在最后，按编号升序。`ReorderProbeTasks` 只接受完整任务 ID 排列且仅允许会话调用，不改变 agent 的执行配置版本。付款周期枚举为月、季、半年、年、两年、三年、五年；五年对应 `BILLING_CYCLE_QUINQUENNIAL`。
+
 全部节点与最近一次上报时刻：
 
 ```sh example

@@ -111,7 +111,7 @@ service AdminService {
     option (probe.v1.access) = ACCESS_SESSION;
   }
 
-  // 列出全部探测任务及其分配。
+  // 按展示顺序列出全部探测任务及其分配。
   rpc ListProbeTasks(ListProbeTasksRequest) returns (ListProbeTasksResponse) {
     option (probe.v1.access) = ACCESS_READ;
   }
@@ -121,6 +121,10 @@ service AdminService {
   }
   // 删除探测任务：不删历史，到期由清理删除。
   rpc DeleteProbeTask(DeleteProbeTaskRequest) returns (DeleteProbeTaskResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
+  // 整体重排探测任务的展示顺序，不改变 agent 执行清单或任务版本。
+  rpc ReorderProbeTasks(ReorderProbeTasksRequest) returns (ReorderProbeTasksResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
   // 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
@@ -535,8 +539,8 @@ message ProbeTaskDetail {
 }
 message ListProbeTasksRequest {}
 message ListProbeTasksResponse {
-  // 任务与分配的全局版本；每次经管理接口的修改都变为更大的新值（不小于修改时刻的 Unix 秒），建节点（含 agent 自助注册）
-  // 也是一次修改，因为新节点继承全部 all_nodes 任务；删除节点清理分配不改；agent 用它对账。
+  // 任务与分配的全局版本；保存、删除任务和更新节点覆盖时变为更大的新值（不小于修改时刻的 Unix 秒），建节点（含 agent 自助注册）
+  // 也是一次修改，因为新节点继承全部 all_nodes 任务；删除节点清理分配和纯展示重排不改；agent 用它对账。
   uint64 version = 1;
   repeated ProbeTaskDetail tasks = 2;
 }
@@ -560,6 +564,12 @@ message SaveProbeTaskResponse {
 }
 message DeleteProbeTaskRequest { uint64 id = 1; }
 message DeleteProbeTaskResponse { uint64 version = 1; }
+
+message ReorderProbeTasksRequest {
+  // 必须恰好包含全部现有任务 id 各一次；遗漏、重复或未知 id 整体拒绝。
+  repeated uint64 ids = 1;
+}
+message ReorderProbeTasksResponse {}
 
 enum AlertKind {
   ALERT_KIND_UNSPECIFIED = 0;

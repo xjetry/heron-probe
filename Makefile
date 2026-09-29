@@ -27,7 +27,7 @@ check_version = if [ -z "$$VERSION" ]; then echo "VERSION is required, e.g. VERS
 	if [ "$$(printf '%s/' "$$VERSION" | LC_ALL=C tr -d 'A-Za-z0-9_.-')" != / ] || [ -z "$${VERSION\#\#[.-]*}" ] || [ $${\#VERSION} -gt 128 ]; then \
 	  echo "VERSION '$$VERSION' cannot be an image tag: only [A-Za-z0-9_.-], not starting with . or -, at most 128 characters, no + build metadata" >&2; exit 1; fi
 
-.PHONY: gen lint test build binaries ci e2e e2e-matrix fixtures web-install web-test web release script-test docker docker-smoke release-channel docker-registry docker-push docker-readback docker-promote
+.PHONY: gen lint test build hub-binary binaries ci e2e e2e-matrix compat-e2e fixtures web-install web-test web release script-test docker docker-smoke release-channel docker-registry docker-push docker-readback docker-promote
 
 web-install:
 	pnpm --dir web install --frozen-lockfile
@@ -41,6 +41,7 @@ lint:
 	buf lint
 	@unformatted="$$(gofmt -l $$(git ls-files '*.go'))"; if [ -n "$$unformatted" ]; then printf 'gofmt: %s\n' $$unformatted >&2; exit 1; fi
 	shellcheck -s sh deploy/install.sh deploy/install-hub.sh deploy/install-macos.sh deploy/openrc/probe-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/docker-readback-test.sh scripts/release-rules-test.sh scripts/image-platform-ref.sh scripts/docker-builder.sh
+	shellcheck -s sh scripts/compat-download.sh scripts/compat-e2e.sh scripts/compat-download-test.sh
 	go vet ./...
 	GOOS=linux go vet ./...
 	GOOS=darwin go vet ./...
@@ -58,6 +59,7 @@ test:
 script-test:
 	MAKE='$(MAKE)' scripts/release-rules-test.sh
 	scripts/docker-readback-test.sh
+	scripts/compat-download-test.sh
 
 web-test: web-install
 	pnpm --dir web exec vitest run
@@ -76,8 +78,10 @@ build:
 	GOOS=darwin GOARCH=amd64 go build ./...
 	GOOS=darwin GOARCH=arm64 go build ./...
 
-binaries: web
+hub-binary: web
 	go build -o bin/probe-hub ./cmd/hub
+
+binaries: hub-binary
 	GOOS=linux GOARCH=amd64 go build -o bin/probe-agent-linux-amd64 ./cmd/agent
 	GOOS=linux GOARCH=arm64 go build -o bin/probe-agent-linux-arm64 ./cmd/agent
 	go run ./scripts/checkstatic bin/probe-agent-linux-amd64 bin/probe-agent-linux-arm64
@@ -102,6 +106,10 @@ e2e-matrix: binaries
 	@for pair in $(E2E_TIER1) $(E2E_TIER2); do \
 	  AGENT_IMAGE="$${pair%%=*}" EXPECT_OS="$${pair#*=}" scripts/e2e.sh || exit $$?; \
 	done
+
+# 只构建当前 hub：旧 agent 只从固定发布包取得，不在工作区构建或覆盖。
+compat-e2e: hub-binary
+	scripts/compat-e2e.sh $(E2E_TIER1)
 
 # 发布产物矩阵：agent 五个 Linux 架构与两个 darwin 架构，hub 两个 Linux 架构。架构集合只在这三个变量维护，
 # 静态门禁与打包清单都由它们展开，不存在第二份文件清单。

@@ -88,6 +88,8 @@ const (
 	BillingCycle_BILLING_CYCLE_BIENNIAL BillingCycle = 5
 	// 36 个月。
 	BillingCycle_BILLING_CYCLE_TRIENNIAL BillingCycle = 6
+	// 60 个月。
+	BillingCycle_BILLING_CYCLE_QUINQUENNIAL BillingCycle = 7
 )
 
 // Enum value maps for BillingCycle.
@@ -100,15 +102,17 @@ var (
 		4: "BILLING_CYCLE_YEARLY",
 		5: "BILLING_CYCLE_BIENNIAL",
 		6: "BILLING_CYCLE_TRIENNIAL",
+		7: "BILLING_CYCLE_QUINQUENNIAL",
 	}
 	BillingCycle_value = map[string]int32{
-		"BILLING_CYCLE_UNSPECIFIED": 0,
-		"BILLING_CYCLE_MONTHLY":     1,
-		"BILLING_CYCLE_QUARTERLY":   2,
-		"BILLING_CYCLE_SEMIANNUAL":  3,
-		"BILLING_CYCLE_YEARLY":      4,
-		"BILLING_CYCLE_BIENNIAL":    5,
-		"BILLING_CYCLE_TRIENNIAL":   6,
+		"BILLING_CYCLE_UNSPECIFIED":  0,
+		"BILLING_CYCLE_MONTHLY":      1,
+		"BILLING_CYCLE_QUARTERLY":    2,
+		"BILLING_CYCLE_SEMIANNUAL":   3,
+		"BILLING_CYCLE_YEARLY":       4,
+		"BILLING_CYCLE_BIENNIAL":     5,
+		"BILLING_CYCLE_TRIENNIAL":    6,
+		"BILLING_CYCLE_QUINQUENNIAL": 7,
 	}
 )
 
@@ -159,7 +163,7 @@ type Metrics struct {
 	// 内核累计计数器，hub 侧做差分。
 	NetRxTotal *uint64 `protobuf:"varint,12,opt,name=net_rx_total,json=netRxTotal,proto3,oneof" json:"net_rx_total,omitempty"`
 	NetTxTotal *uint64 `protobuf:"varint,13,opt,name=net_tx_total,json=netTxTotal,proto3,oneof" json:"net_tx_total,omitempty"`
-	// agent 自测的瞬时速率，仅供实时视图。
+	// agent 按本地采样间隔测得的 bytes/s；用于实时视图和历史采样峰值。
 	NetRxBps      *uint64 `protobuf:"varint,14,opt,name=net_rx_bps,json=netRxBps,proto3,oneof" json:"net_rx_bps,omitempty"`
 	NetTxBps      *uint64 `protobuf:"varint,15,opt,name=net_tx_bps,json=netTxBps,proto3,oneof" json:"net_tx_bps,omitempty"`
 	TcpConns      *uint32 `protobuf:"varint,16,opt,name=tcp_conns,json=tcpConns,proto3,oneof" json:"tcp_conns,omitempty"`
@@ -1069,7 +1073,7 @@ const file_probe_v1_types_proto_rawDesc = "" +
 	"\tProbeKind\x12\x1a\n" +
 	"\x16PROBE_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fPROBE_KIND_ICMP\x10\x01\x12\x12\n" +
-	"\x0ePROBE_KIND_TCP\x10\x02*\xd6\x01\n" +
+	"\x0ePROBE_KIND_TCP\x10\x02*\xf6\x01\n" +
 	"\fBillingCycle\x12\x1d\n" +
 	"\x19BILLING_CYCLE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15BILLING_CYCLE_MONTHLY\x10\x01\x12\x1b\n" +
@@ -1077,7 +1081,8 @@ const file_probe_v1_types_proto_rawDesc = "" +
 	"\x18BILLING_CYCLE_SEMIANNUAL\x10\x03\x12\x18\n" +
 	"\x14BILLING_CYCLE_YEARLY\x10\x04\x12\x1a\n" +
 	"\x16BILLING_CYCLE_BIENNIAL\x10\x05\x12\x1b\n" +
-	"\x17BILLING_CYCLE_TRIENNIAL\x10\x06B.Z,github.com/xjetry/probe/gen/probe/v1;probev1b\x06proto3"
+	"\x17BILLING_CYCLE_TRIENNIAL\x10\x06\x12\x1e\n" +
+	"\x1aBILLING_CYCLE_QUINQUENNIAL\x10\aB.Z,github.com/xjetry/probe/gen/probe/v1;probev1b\x06proto3"
 
 var (
 	file_probe_v1_types_proto_rawDescOnce sync.Once

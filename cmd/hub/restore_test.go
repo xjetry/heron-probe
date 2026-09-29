@@ -268,6 +268,8 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
+			met := restoreDB(t, metrics)
+			removeV21Columns(t, cfg, met)
 			restoreExec(t, cfg, `DROP TABLE admin_security; DROP TABLE probe_task_tag; DROP TABLE alert_rule_tag;
 				ALTER TABLE alert_rule DROP COLUMN resource_metric; ALTER TABLE alert_rule DROP COLUMN recovery_threshold;
 				DROP TABLE snapshot_theme; ALTER TABLE snapshot_meta DROP COLUMN format_version`)
@@ -278,7 +280,6 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 				restoreExec(t, cfg, `ALTER TABLE alert_delivery DROP COLUMN batch_id; ALTER TABLE alert_delivery DROP COLUMN not_before; ALTER TABLE notify_channel DROP COLUMN rate_per_minute`)
 			}
 			restoreExec(t, cfg, fmt.Sprintf("UPDATE snapshot_meta SET schema_version=%d", version))
-			met := restoreDB(t, metrics)
 			for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
 				for _, column := range []string{"memory_used_pct_sum", "memory_used_pct_n", "disk_used_pct_sum", "disk_used_pct_n"} {
 					restoreExec(t, met, "ALTER TABLE "+table+" DROP COLUMN "+column)
@@ -301,6 +302,17 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 				t.Fatal("historical snapshot changed during migration")
 			}
 		})
+	}
+}
+
+// 降级夹具必须同时撤回真实列与版本号，不能让当前列伪装成旧 schema。
+func removeV21Columns(t *testing.T, config, metrics *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "ALTER TABLE probe_task DROP COLUMN sort_order")
+	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+		for _, column := range []string{"net_rx_bps_sum", "net_rx_bps_n", "net_rx_bps_max", "net_tx_bps_sum", "net_tx_bps_n", "net_tx_bps_max"} {
+			restoreExec(t, metrics, "ALTER TABLE "+table+" DROP COLUMN "+column)
+		}
 	}
 }
 

@@ -166,9 +166,10 @@ func (x *QueryMetricsResponse) GetSeries() []*MetricSeries {
 
 type MetricSeries struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs、rx_bytes、tx_bytes。
+	// cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs、rx_bytes、tx_bytes、
+	// memory_used_pct、disk_used_pct、net_rx_bps、net_tx_bps。
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// percent、bytes、count；load 无单位为空串。
+	// percent、bytes、bytes/s、count；load 无单位为空串。
 	Unit string `protobuf:"bytes,2,opt,name=unit,proto3" json:"unit,omitempty"`
 	// 与 ts 一一对应。
 	Samples       []*MetricSample `protobuf:"bytes,3,rep,name=samples,proto3" json:"samples,omitempty"`
@@ -230,9 +231,11 @@ func (x *MetricSeries) GetSamples() []*MetricSample {
 type MetricSample struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 该点内的样本数；0 表示该指标在这段时间没有任何读数，此时 mean、max 与 sum 都缺失。
-	N    uint32   `protobuf:"varint,1,opt,name=n,proto3" json:"n,omitempty"`
+	N uint32 `protobuf:"varint,1,opt,name=n,proto3" json:"n,omitempty"`
+	// 采样算术均值。net_rx_bps/net_tx_bps 的采样均值不代替字节增量除以桶长所得的平均速率。
 	Mean *float64 `protobuf:"fixed64,2,opt,name=mean,proto3,oneof" json:"mean,omitempty"`
-	// 只有带最大值的指标（cpu、mem_used）才有。
+	// 只有带最大值的指标（cpu、mem_used、net_rx_bps、net_tx_bps）才有。
+	// 网络峰值为 agent 各采样间隔速率的最大值，不是未被采样捕获的瞬时最高值；旧历史缺失。
 	Max *float64 `protobuf:"fixed64,3,opt,name=max,proto3,oneof" json:"max,omitempty"`
 	// 只有可加量指标（rx_bytes、tx_bytes）才有：该点内的字节总和，没有 mean 与 max。
 	// 速率 = sum / step_s。
@@ -375,7 +378,7 @@ type QueryProbesResponse struct {
 	Level string `protobuf:"bytes,1,opt,name=level,proto3" json:"level,omitempty"`
 	// 每个点覆盖的秒数；是所选级别桶长的整数倍。
 	StepS uint32 `protobuf:"varint,2,opt,name=step_s,json=stepS,proto3" json:"step_s,omitempty"`
-	// 每个任务一条，按 task_id 升序；只含在窗口内有结果的任务，已删除任务的历史同样按 task_id 返回。
+	// 每个任务一条，按当前展示顺序；只含窗口内有结果的任务。已删除任务排在现有任务之后、按 task_id 升序。
 	Series        []*ProbeSeries `protobuf:"bytes,3,rep,name=series,proto3" json:"series,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

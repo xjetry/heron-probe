@@ -19,7 +19,7 @@ describe("cycleLabel", () => {
       if (number === BillingCycle.UNSPECIFIED) continue;
       expect(cycleLabel(number), name).not.toMatch(/^(|未知（\d+）)$/);
     }
-    expect(BILLING_CYCLES.map((e) => e.label)).toEqual(["月", "季", "半年", "年", "两年", "三年"]);
+    expect(BILLING_CYCLES.map((e) => e.label)).toEqual(["月", "季", "半年", "年", "两年", "三年", "五年"]);
   });
   it("未指定是没有周期，表外值显示编号", () => {
     expect([cycleLabel(BillingCycle.UNSPECIFIED), cycleLabel(9 as BillingCycle)]).toEqual(["", "未知（9）"]);
@@ -30,6 +30,7 @@ describe("priceText", () => {
   it.each([
     [{ price: "12.50", currency: "USD", billingCycle: BillingCycle.MONTHLY }, "USD 12.50 / 月"],
     [{ price: "99", currency: "EUR", billingCycle: BillingCycle.TRIENNIAL }, "EUR 99 / 三年"],
+    [{ price: "150", currency: "TWD", billingCycle: BillingCycle.QUINQUENNIAL }, "TWD 150 / 五年"],
     [{ price: "30", currency: "CNY" }, "CNY 30"],
     [{ billingCycle: BillingCycle.YEARLY }, "每年"],
     [{ currency: "USD" }, ""],

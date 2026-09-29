@@ -14,6 +14,31 @@ const tasks = create(ListProbeTasksResponseSchema, { version: 9n, tasks: [
 ] });
 const routes = [{ path: "/probes", Component: ProbeTasks }];
 
+it("连续排序串行保存完整排列，最终回读顺序保留到刷新之后", async () => {
+  let current = create(ListProbeTasksResponseSchema, { tasks: [1n, 2n, 3n].map((id) => ({ task: { id, target: `task-${id}`, kind: ProbeKind.ICMP } })) });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const writes: bigint[][] = [];
+  const { queryClient } = renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => current,
+    reorderProbeTasks: async ({ ids }) => {
+      writes.push(ids);
+      if (writes.length === 1) await gate;
+      current = create(ListProbeTasksResponseSchema, { tasks: ids.map((id) => current.tasks.find((d) => d.task?.id === id)!) });
+      return {};
+    },
+  }, routes, "/probes");
+  const order = () => screen.getAllByRole("button", { name: /^上移 task-/ }).map((b) => b.getAttribute("aria-label"));
+  fireEvent.click(await screen.findByRole("button", { name: "上移 task-3（#3）" }));
+  await waitFor(() => expect(writes).toEqual([[1n, 3n, 2n]]));
+  fireEvent.click(screen.getByRole("button", { name: "上移 task-3（#3）" }));
+  expect(order()).toEqual(["上移 task-3（#3）", "上移 task-1（#1）", "上移 task-2（#2）"]);
+  await act(async () => { release(); });
+  await waitFor(() => expect(writes).toEqual([[1n, 3n, 2n], [3n, 1n, 2n]]));
+  await waitFor(() => expect(screen.queryByText("正在保存并确认排序…")).toBeNull());
+  await act(async () => { await queryClient.refetchQueries(); });
+  expect(order()).toEqual(["上移 task-3（#3）", "上移 task-1（#1）", "上移 task-2（#2）"]);
+});
+
 it("探测任务刷新失败保留同一编辑表单与草稿", async () => {
   let fail = false;
   const { queryClient } = renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => {

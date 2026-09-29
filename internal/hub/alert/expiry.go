@@ -58,6 +58,8 @@ func cycleMonths(c store.BillingCycle) (int, bool) {
 		return 24, true
 	case store.CycleTriennial:
 		return 36, true
+	case store.CycleQuinquennial:
+		return 60, true
 	}
 	return 0, false
 }

@@ -213,9 +213,11 @@ describe("Nodes", () => {
         await vi.runAllTimersAsync();
       });
       expect(listNodes).toHaveBeenCalledTimes(2);
-      expect(queryClient.isMutating()).toBe(1);
+      if (operation === "rotate") expect(queryClient.isMutating()).toBe(1);
+      else expect(screen.getByRole("status")).toHaveTextContent("正在保存并确认排序");
     } finally { vi.useRealTimers(); await act(async () => { release(); }); }
     await waitFor(() => expect(queryClient.isMutating()).toBe(0));
+    if (operation === "reorder") await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
   });
 
   it("A 行保存挂起时 B 行保存禁用，刷新完成才关闭 A 行", async () => {
