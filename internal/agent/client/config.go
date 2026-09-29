@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/netip"
 	"net/url"
@@ -36,7 +37,7 @@ func LoadConfig(path string) (Config, error) {
 }
 
 // ReadConfig 只解析不校验，供 configure 修正一份当前不合规的配置（例如升级后才被拒的明文 hub 地址）。
-// 未知字段是错误：本地策略字段拼错时静默忽略，宿主机以为拒绝了的地址实际放行。
+// 未知字段与第一个对象之后的任何内容都是错误：本地策略字段拼错或写进了第二个对象时静默忽略，宿主机以为拒绝了的地址实际放行。
 func ReadConfig(path string) (Config, error) {
 	var c Config
 	b, err := os.ReadFile(path)
@@ -47,6 +48,9 @@ func ReadConfig(path string) (Config, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&c); err != nil {
 		return c, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := dec.Decode(&json.RawMessage{}); !errors.Is(err, io.EOF) {
+		return c, fmt.Errorf("%s: unexpected content after the configuration object", path)
 	}
 	return c, nil
 }

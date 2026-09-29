@@ -196,3 +196,21 @@ func TestClientDoesNotFollowRedirects(t *testing.T) {
 		}
 	}
 }
+
+// 响应头同样受限：hub 可以在正文之前先送一个巨大的头。对照组是上限之内的头照常通过。
+func TestClientBoundsResponseHeaders(t *testing.T) {
+	for _, tc := range []struct {
+		size int
+		ok   bool
+	}{{maxResponseHeaderBytes / 2, true}, {maxResponseHeaderBytes * 2, false}} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Pad", strings.Repeat("a", tc.size))
+			protoResponder(t, &probev1.ReportResponse{ReportIntervalMs: 10000}, false)(w, r)
+		}))
+		err := report(t, NewServiceClient(srv.URL, 5*time.Second))
+		srv.Close()
+		if (err == nil) != tc.ok {
+			t.Fatalf("header of %d bytes: err = %v, want ok=%v", tc.size, err, tc.ok)
+		}
+	}
+}

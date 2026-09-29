@@ -61,6 +61,9 @@ func TestLoadConfigValidates(t *testing.T) {
 		{"policy", `{"hub":"https://h","token":"t","probe_allow":["127.0.0.0/8"],"probe_deny":["10.0.0.0/8"]}`, ""},
 		{"bad_policy", `{"hub":"https://h","token":"t","probe_deny":["10.1.2.3/8"]}`, "host bits set"},
 		{"typo_field", `{"hub":"https://h","token":"t","probe_dney":["10.0.0.0/8"]}`, `unknown field "probe_dney"`},
+		{"trailing_space", "{\"hub\":\"https://h\",\"token\":\"t\"}\n\n  ", ""},
+		{"second_object", `{"hub":"https://h","token":"t"} {"probe_deny":["10.0.0.0/8"]}`, "unexpected content after the configuration object"},
+		{"trailing_garbage", `{"hub":"https://h","token":"t"} trailing garbage`, "unexpected content after the configuration object"},
 	} {
 		_, err := LoadConfig(writeConfig(t, tc.body))
 		if tc.want == "" && err != nil {

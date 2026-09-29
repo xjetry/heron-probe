@@ -24,6 +24,7 @@ import (
 func NewServiceClient(hub string, timeout time.Duration) probev1connect.AgentServiceClient {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.DisableCompression = true
+	tr.MaxResponseHeaderBytes = maxResponseHeaderBytes
 	hc := &http.Client{
 		Timeout:       timeout,
 		Transport:     limitedTransport{base: tr, max: agentwire.MaxResponseBytes},
@@ -31,6 +32,10 @@ func NewServiceClient(hub string, timeout time.Duration) probev1connect.AgentSer
 	}
 	return probev1connect.NewAgentServiceClient(hc, hub, connect.WithAcceptCompression("gzip", nil, nil))
 }
+
+// maxResponseHeaderBytes 是响应头的上限。Go 的默认值是 10 MiB，远大于正文的 64 KiB；AgentService 的响应头只有
+// Content-Type 与反代加的几行，32 KiB 容得下常见 CDN 附加的头。
+const maxResponseHeaderBytes = 32 << 10
 
 var errRedirect = errors.New("hub answered with a redirect; the agent does not follow redirects, so configure the final hub URL")
 
