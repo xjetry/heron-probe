@@ -429,7 +429,9 @@ if [ "$INIT" = systemd ]; then
   mkdir "$work/updater"
   tar -xzf "$work/$UPDATER_PKG" -C "$work/updater"
   for f in heron-updater heron-updater-agent.service heron-updater-hub.service; do
-    [ -f "$work/updater/$f" ] && [ ! -L "$work/updater/$f" ] || { echo "package is missing regular file $f" >&2; exit 1; }
+    if ! { [ -f "$work/updater/$f" ] && [ ! -L "$work/updater/$f" ]; }; then
+      echo "package is missing regular file $f" >&2; exit 1
+    fi
   done
   install -m 0755 "$work/updater/heron-updater" "$UPDATER_TMP"
 fi

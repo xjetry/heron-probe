@@ -335,7 +335,9 @@ got=$(sha256sum "$work/$UPDATER_PKG" </dev/null) || got=""
 mkdir "$work/updater"
 tar -xzf "$work/$UPDATER_PKG" -C "$work/updater"
 for f in heron-updater heron-updater-agent.service heron-updater-hub.service; do
-  [ -f "$work/updater/$f" ] && [ ! -L "$work/updater/$f" ] || fail "package is missing regular file $f"
+  if ! { [ -f "$work/updater/$f" ] && [ ! -L "$work/updater/$f" ]; }; then
+    fail "package is missing regular file $f"
+  fi
 done
 install -m 0755 "$work/updater/heron-updater" "$UPDATER_TMP"
 
