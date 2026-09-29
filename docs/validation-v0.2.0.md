@@ -40,8 +40,43 @@
 
 ## 发布与线上回读
 
-尚未发布、尚未升级。radonet-kddi 实际 IPv4 回显为 `106.178.162.144`；强制 IPv6 回显连接失败。独立接口/路由检查显示 eth0 只有 `10.10.10.13/28` 和链路本地 IPv6，IPv6 路由只有 `fe80::/64`，访问公网 IPv6 返回 Network is unreachable。最终状态须以新 agent 上报回读确认。
+发布前，radonet-kddi 实际 IPv4 回显为 `106.178.162.144`；强制 IPv6 回显连接失败。独立接口/路由检查显示 eth0 只有 `10.10.10.13/28` 和链路本地 IPv6，IPv6 路由只有 `fe80::/64`，访问公网 IPv6 返回 Network is unreachable。以下正式部署回读与该观察一致。
 
 生产数据库一致性副本、旧二进制和单元文件保存于 spartan-seattle 的 `/var/backups/heron/v0.2.0-preflight-20260929`，schema 21、integrity ok、1 节点。在独立网络命名空间中以副本启动候选 hub，GetSite 返回 200、进程在监听、schema 升至 23、integrity ok、1 节点保留、旧 network 为 `{}`。首次演练误与尚在进行的 scp 重叠，Text file busy；等待传输退出 0 并校验 SHA 后使用相同命令重跑通过，没有触碰线上数据库。该候选哈希 `ade193b1e305ebd490d639f324bb96bd6b88692df6763270d076ead468c7726e`，早于后补 checked_at 上限；正式部署必须使用最终 Release 产物并重做回读。
 
 完整边界修复后的本地 `make release` 产物再次演练通过，二进制 SHA-256 为 `e364bb49dcab0b33c2e0fe1583e3d100f4f8432754be6925570cba68f7bcbd7a`，本地与服务器回读一致。独立网络命名空间中 GetSite 200，schema 23、integrity ok、1 节点保留、旧 network `{}`；数据库为备份目录内 `final-rehearsal.db`，线上原库未变。
+
+### 正式发布
+
+代码提交 `1898a7db8f55a4f9c403e2a1afc8fea52d104e90` 已快进推送至 `heron/main`。对应 [CI 36567943170](https://github.com/xjetry/heron-probe/actions/runs/36567943170) 的 Linux、Intel macOS 与 Apple Silicon macOS 三个作业全部成功，`gh run watch --exit-status` 退出 0。前端 697 项通过，浏览器 7 通过、2 明确跳过，Debian/Alpine 各自打印 `E2E OK`，Docker 构建与冒烟通过。
+
+`v0.2.0` 注解标签回读指向上述提交。[发布流水线 36569056112](https://github.com/xjetry/heron-probe/actions/runs/36569056112) 成功，watch 退出 0；[GitHub Release](https://github.com/xjetry/heron-probe/releases/tag/v0.2.0) 于 2026-09-29 12:44:27 UTC 发布，非草稿、非预发布，GitHub latest 回读为 v0.2.0。发布说明已上传并回读。
+
+下载全部官方资产后执行 `sha256sum -c SHA256SUMS`，9 个归档和 3 个安装脚本全部 OK。`go version -m` 确认正式 hub 为 v0.2.0、VCS revision 与标签相同、`vcs.modified=false`。镜像按摘要逐架构回读通过；本地再次查询确认 `ghcr.io/xjetry/heron-hub:v0.2.0` 与 `latest` 均为 `sha256:cac302cc6a23dc5b41621318390a0d1b2dceab832e9c0417cf4ab912e22135ed`。
+
+### 正式部署
+
+2026-09-29 20:47 至 20:53（Asia/Taipei），spartan-seattle hub 与 radonet-kddi agent 均已从官方 Release 升级至 v0.2.0。安装文件与 `/proc/<MainPID>/exe` 回读 SHA-256 一致：
+
+| 服务 | SHA-256 |
+| --- | --- |
+| hub | `460d3c64ed0d9a2a4a6e5f93a54b66fe895df0c6d056c039af83a84d6809c954` |
+| agent | `bbc0883015a39bce675d250ae0cd9d101596b232681010a19aa8481a8197651e` |
+
+hub 停服后的一致性旧库、旧二进制及单元文件保存在 `/var/backups/heron/v0.2.0-deploy-20260929`。agent 最终升级前的二进制、配置及单元在 `/var/backups/heron/v0.2.0-deploy-20260929-confirmed`，第一次尝试的备份目录也保留。两项最终部署命令均退出 0。Caddy 未改动或重启。
+
+部署时实际观察到两项环境时序问题，均未修改产品代码：
+
+- hub 初次预检在停服前退出 1：`/run` 为 `noexec`。将两台机器的候选路径改为 `/usr/local/bin/*.stage`，保留挂载安全配置，重新执行部署成功。
+- agent 首次启动检查退出 1 并自动恢复 v0.1.0。独立临时 systemd 服务实测，Type=simple 的 start 返回后 `/proc/<pid>/exe` 仍为 `systemd-executor`，0.2 秒后才是目标程序。部署脚本改为有上限地等待目标可执行文件后再核对 SHA；重试日志捕获同一过渡，随后成功。旧版恢复后的文件哈希与备份一致，节点继续在线。
+
+正式回读观察：
+
+- `systemctl is-active` 两项均为 active，版本均为 v0.2.0；hub 数据库 schema 23、integrity ok、1 个节点和 1 条 facts。
+- 管理 GetSnapshot、ListNodes、GetSecurity、ListThemes 均为 HTTP 200，hub 与 agent 版本均为 v0.2.0，radonet-kddi 在线。
+- IPv4 为 AVAILABLE、地址 `106.178.162.144`、checked_at `1790686205`；IPv6 为 UNSUPPORTED、无地址、checked_at `1790686204`。数据库持久值、管理 API、刷新后的节点页及编辑弹窗一致，地区 JP 显示 emoji 国旗。
+- 主题页显示 GitHub Release 安装与本地 ZIP 上传，不再报缺少 theme origin；未替用户安装或启用第三方主题。
+- GetSecurity 返回 `passkeyAvailable=true`、`currentOrigin=https://heron.o1.pw`，尚未绑定来源。真实 Passkey 留给用户在 `/admin/security/credentials` 注册与登录验收。
+- 以 `credentials: omit` 请求公开 GetSnapshot 返回 200、节点在线及 JP；逐字段回读确认不含源 IP、network 或 checkedAt，正文不含该 IPv4。
+
+本地证据：`build/validation/github-ci-full.log`、`github-release-full.log`、`deploy-hub-result.log`、`deploy-agent-result.log`；官方资产位于 `build/validation/github-release-v0.2.0/`。线上节点页与编辑弹窗截图 `production-nodes.png`、`production-editor.png` 已实际查看。
