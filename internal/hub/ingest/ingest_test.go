@@ -19,6 +19,7 @@ import (
 	"connectrpc.com/connect"
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
+	agentclient "github.com/xjetry/probe/internal/agent/client"
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/live"
@@ -75,7 +76,7 @@ func newHubWith(t *testing.T, path string, cfg Config) *hub {
 	mux.Handle(svc.Handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return &hub{svc: svc, srv: srv, client: probev1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, book: book, reg: reg}
+	return &hub{svc: svc, srv: srv, client: agentclient.NewServiceClient(srv.URL, 5*time.Second), clk: clk, store: st, auth: a, live: l, book: book, reg: reg}
 }
 
 func (h *hub) node(t *testing.T) (int64, string) {

@@ -11,7 +11,7 @@ import (
 // state/remote-passwd 里的账户由 NSS 的非本地源解析得到：id 查得到，本地文件里没有。
 // userdel、groupdel 只改本地文件，找不到记录时照 shadow 4.13 实测的报错与退出码（6）失败。
 // systemctl 记下参数；start 在假 /proc 里放一个以服务用户运行的进程，stop 把它拿走，供脚本的起停确认读取。
-// 服务的真实起停由 scripts/install-accept.sh 在容器里验证。
+// curl 是三个脚本共用的 fileCurl。服务的真实起停由 scripts/install-accept.sh 在容器里验证。
 var linuxStubs = map[string]string{
 	"id": `#!/bin/sh
 S=$STUB_STATE
@@ -66,6 +66,7 @@ grep -v "^$1:" "$f" > "$f.new"; mv "$f.new" "$f"
 	"sleep": `#!/bin/sh
 echo "sleep $*" >> "$STUB_STATE/calls"
 `,
+	"curl": fileCurl,
 }
 
 // newLinuxHost 是一台 systemd 主机：服务用户不在本地账户文件里，由各用例按需加上；
@@ -153,8 +154,15 @@ func TestLinuxPurgeDecidesDeletionFromTheLocalRecord(t *testing.T) {
 	}
 }
 
-// linuxRelease 按 make release 的形状打 Linux 包：probe-agent 与仓库里的 systemd 单元、OpenRC 脚本原件。
+// linuxRelease 发布 version：打出 arch 的包，写入脚本。
 func (e *env) linuxRelease(arch, version string) {
+	e.t.Helper()
+	e.linuxPackage(e.dist, arch, version)
+	e.publish(version)
+}
+
+// linuxPackage 按 make release 的形状把 arch 的 Linux 包打进 dir：probe-agent 与仓库里的 systemd 单元、OpenRC 脚本原件。
+func (e *env) linuxPackage(dir, arch, version string) {
 	e.t.Helper()
 	unit, err := os.ReadFile("systemd/probe-agent.service")
 	if err != nil {
@@ -164,7 +172,7 @@ func (e *env) linuxRelease(arch, version string) {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	e.pack("probe-agent_linux_"+arch+".tar.gz", []packFile{
+	e.pack(dir, "probe-agent_linux_"+arch+".tar.gz", []packFile{
 		{"probe-agent", fakeAgent + "# " + version + " " + arch + "\n", 0o755},
 		{"probe-agent.service", string(unit), 0o644},
 		{"probe-agent.openrc", string(openrc), 0o755},

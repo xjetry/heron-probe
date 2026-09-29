@@ -1,6 +1,7 @@
 package prober
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -270,5 +271,21 @@ func TestSleepHonorsCancellation(t *testing.T) {
 	}
 	if err := sleep(t.Context(), 0); err != nil {
 		t.Fatalf("zero sleep=%v", err)
+	}
+}
+
+// 一个塞满空任务的清单只留一行日志：受限的响应不能被逐条告警放大成无界的日志（§5.7）。
+func TestApplyLogsOneSummaryForAnyNumberOfRejections(t *testing.T) {
+	var logs bytes.Buffer
+	q := NewQueue(QueueCap)
+	s := NewScheduler(engineFunc(func(context.Context, *probev1.ProbeTask) Outcome { return Outcome{} }), q, clock.NewFake(time.Unix(0, 0)), slog.New(slog.NewTextHandler(&logs, nil)))
+	defer s.Stop()
+	tasks := make([]*probev1.ProbeTask, 32750)
+	for i := range tasks {
+		tasks[i] = &probev1.ProbeTask{}
+	}
+	s.Apply(&probev1.ProbeTasks{Version: 1, Tasks: tasks})
+	if n := strings.Count(logs.String(), "\n"); n != 1 || !strings.Contains(logs.String(), "count=32750") {
+		t.Fatalf("%d log lines (%d bytes), want one summary with count=32750:\n%.500s", n, logs.Len(), logs.String())
 	}
 }

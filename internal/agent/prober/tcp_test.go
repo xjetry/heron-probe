@@ -142,7 +142,7 @@ func (c *measuredClock) Mono() time.Duration {
 
 func TestTCPOutcomes(t *testing.T) {
 	addr, _ := tcpListener(t)
-	p := TCP{Clock: clock.Real()}
+	p := TCP{Clock: clock.Real(), Targets: loopbackTargets(t, nil)}
 	loopback := tcpTask(addr)
 	// 等的是本机回包，性质不是时长。用产品允许的超时上限，负载下连接变慢不会被判成探测超时。
 	loopback.TimeoutMs = probelimit.MaxTimeoutMs
@@ -158,7 +158,7 @@ func TestTCPOutcomes(t *testing.T) {
 	if out := p.Probe(t.Context(), tcpTask(closed)); !out.Timeout || out.Err != "" {
 		t.Fatalf("refused=%+v", out)
 	}
-	p.Resolver = localDNS(t, dnsMissing, nil)
+	p.Targets.Resolver = localDNS(t, dnsMissing, nil)
 	if out := p.Probe(t.Context(), tcpTask("missing.prober.invalid:9")); !strings.Contains(out.Err, "missing.prober.invalid") || out.Timeout {
 		t.Fatalf("dns=%+v", out)
 	}
@@ -204,12 +204,12 @@ func TestTCPMeasuresOnlyConnectionAndCapsRTT(t *testing.T) {
 	}
 	connected := tcpTask(net.JoinHostPort("local.prober.invalid", port))
 	connected.TimeoutMs = probelimit.MaxTimeoutMs
-	out := (TCP{Clock: clk, Resolver: resolver}).Probe(t.Context(), connected)
+	out := (TCP{Clock: clk, Targets: loopbackTargets(t, resolver)}).Probe(t.Context(), connected)
 	if out != (Outcome{RttUs: 1000}) || closedEarly {
 		t.Fatalf("connection=%+v closed_before_measurement=%v", out, closedEarly)
 	}
 	late := &measuredClock{Fake: clock.NewFake(time.Unix(0, 0)), step: 1001 * time.Millisecond}
-	if out := (TCP{Clock: late}).Probe(t.Context(), tcpTask(addr)); !out.Timeout || out.Err != "" || out.RttUs != 0 {
+	if out := (TCP{Clock: late, Targets: loopbackTargets(t, nil)}).Probe(t.Context(), tcpTask(addr)); !out.Timeout || out.Err != "" || out.RttUs != 0 {
 		t.Fatalf("late=%+v", out)
 	}
 }
@@ -285,7 +285,7 @@ func TestResolversRemainIndependent(t *testing.T) {
 
 func TestTCPUsesInjectedResolver(t *testing.T) {
 	var destination string
-	p := TCP{Clock: clock.Real(), Resolver: localDNS(t, dnsMapped, nil),
+	p := TCP{Clock: clock.Real(), Targets: loopbackTargets(t, localDNS(t, dnsMapped, nil)),
 		DialContext: func(_ context.Context, _ string, target string) (net.Conn, error) {
 			destination = target
 			return nil, syscall.ENETUNREACH

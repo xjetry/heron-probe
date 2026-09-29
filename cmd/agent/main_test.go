@@ -9,7 +9,7 @@ import (
 )
 
 // scripts/e2e.sh 从 agent 的启动行按整秒读出 request_timeout 与 initial_interval，推出告警恢复的等待上限。
-// 这里经 runRun 同一个 newLogger 与 logStarting 产出启动行，按脚本同形的 testlog.WholeSeconds 取值再与常量
+// 这里经 runRun 同一个 newHandler 与 logStarting 产出启动行，按脚本同形的 testlog.WholeSeconds 取值再与常量
 // 比较：字段缺失、改名、不再是整秒写法或不跟常量走时 make ci 先红，而不是等到 e2e 才停下。
 func TestStartingLineStatesReportTiming(t *testing.T) {
 	var out bytes.Buffer

@@ -22,21 +22,33 @@ OPENRC_LINK=$ROOT/etc/runlevels/default/probe-agent
 PROC=$ROOT/proc
 REPO=https://github.com/xjetry/probe
 
+# 本脚本所属的版本与该版全部 tar 包的 SHA-256（每行 "<64 位十六进制>  <文件名>"），由 make release 经
+# deploy/releasestamp 写进下面两行标记之间；源码里为空，这时拒绝安装（卸载不下载，照常可用）。下载的包只按这份
+# 清单校验：--base-url 能换掉下载目录里的每个文件，同目录的 SHA256SUMS 也在其中，拿它作依据挡不住篡改。
+RELEASE_VERSION=""
+RELEASE_SHA256=""
+# >>> release stamp >>>
+# <<< release stamp <<<
+
 usage() {
-  echo "usage: install.sh --hub URL --key KEY [--name N] [--version vX.Y.Z] [--base-url URL]" >&2
+  echo "usage: install.sh --hub URL --key KEY [--name N] [--insecure-http] [--base-url URL]" >&2
   echo "       install.sh --uninstall [--purge]" >&2
   exit 2
 }
 
-HUB=""; KEY=""; NAME=""; VERSION=""; BASE_URL=""; UNINSTALL=0; PURGE=0
+HUB=""; KEY=""; NAME=""; INSECURE_HTTP=0; BASE_URL=""; UNINSTALL=0; PURGE=0
 need_value() { [ "$#" -ge 2 ] || usage; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --hub) need_value "$@"; HUB=$2; shift 2;;
     --key) need_value "$@"; KEY=$2; shift 2;;
     --name) need_value "$@"; NAME=$2; shift 2;;
-    --version) need_value "$@"; VERSION=$2; shift 2;;
+    --insecure-http) INSECURE_HTTP=1; shift;;
     --base-url) need_value "$@"; BASE_URL=$2; shift 2;;
+    # 脚本只装自己所属的版本：版本由取哪个 URL 的脚本决定，没有第二个来源可以和内嵌清单不一致。
+    --version|--version=*)
+      echo "install.sh has no --version: it installs only the release it belongs to; for another version run $REPO/releases/download/<tag>/install.sh" >&2
+      exit 2;;
     --uninstall) UNINSTALL=1; shift;;
     --purge) PURGE=1; shift;;
     *) usage;;
@@ -226,6 +238,16 @@ case "$(uname -m)" in
   *) echo "unsupported architecture: $(uname -m)" >&2; exit 1;;
 esac
 
+# 内嵌清单在任何网络操作与账户改动之前查：源码脚本、或清单里没有本机的包，都不该先建用户、装 CA 再失败。
+PKG="probe-agent_linux_$ARCH.tar.gz"
+[ -n "$RELEASE_VERSION" ] || {
+  echo "this install.sh has no embedded release checksums (it is the source copy); use the install.sh attached to a release: $REPO/releases" >&2
+  exit 1
+}
+WANT_SHA256=$(printf '%s\n' "$RELEASE_SHA256" | awk -v p="$PKG" '$2 == p { print $1; n++ } END { exit n != 1 }') || {
+  echo "release $RELEASE_VERSION has no embedded checksum for $PKG" >&2; exit 1
+}
+
 # 首次安装必须有注册凭据；升级沿用现有配置，不需要也不接受重新注册。
 if [ ! -f "$CFG" ] && { [ -z "$HUB" ] || [ -z "$KEY" ]; }; then
   echo "--hub and --key are required for the first install" >&2
@@ -279,18 +301,10 @@ create_account() {
 }
 create_account
 
-# 给了 --base-url 时它就是下载目录，--version 不参与地址。与 --key 被忽略时一样说出来，
-# 避免人以为钉住了版本。
-if [ -n "$BASE_URL" ] && [ -n "$VERSION" ]; then
-  echo "--base-url is the download directory (--version ignored)"
-fi
-[ -n "$BASE_URL" ] || {
-  if [ -n "$VERSION" ]; then BASE_URL="$REPO/releases/download/$VERSION"
-  else BASE_URL="$REPO/releases/latest/download"; fi
-}
+# --base-url 只改变从哪里取字节，接受哪些字节仍由内嵌清单决定。
+[ -n "$BASE_URL" ] || BASE_URL="$REPO/releases/download/$RELEASE_VERSION"
 
 # 缺下载器或 sha256sum 时在任何网络操作之前退出：否则会先 apt-get update 装 CA，再报没有 curl。
-PKG="probe-agent_linux_$ARCH.tar.gz"
 if command -v curl >/dev/null 2>&1; then FETCH=curl
 elif command -v wget >/dev/null 2>&1; then FETCH=wget
 else echo "neither curl nor wget is available to download $PKG" >&2; exit 1; fi
@@ -332,21 +346,19 @@ dl() {
   # 下载地址为 https 时，请求和重定向都只走 https。http（本地验收）不加：--proto '=https' 会拒绝它。
   # wget 没有对应开关。
   if [ "$FETCH" = curl ]; then
-    if is_https "$1"; then curl --proto '=https' --proto-redir '=https' -fsSL -o "$2" "$1"
-    else curl -fsSL -o "$2" "$1"; fi
-  else wget -q -O "$2" "$1"; fi
+    if is_https "$1"; then curl --proto '=https' --proto-redir '=https' -fsSL -o "$2" "$1" </dev/null
+    else curl -fsSL -o "$2" "$1" </dev/null; fi
+  else wget -q -O "$2" "$1" </dev/null; fi
 }
 dl "$BASE_URL/$PKG" "$work/$PKG"
-dl "$BASE_URL/SHA256SUMS" "$work/SHA256SUMS"
-# SHA256SUMS 含全部资产，只核对本包那一行；busybox 的 sha256sum 没有 --ignore-missing。
-# 行格式是 64 位十六进制、空白、文件名；二进制模式带 * 前缀的行按第二字段取不到。
-(cd "$work" && awk -v p="$PKG" '$2 == p' SHA256SUMS > verify.txt)
-[ -s "$work/verify.txt" ] || {
-  echo "SHA256SUMS has no entry for $PKG" >&2; exit 1
+# sha256sum 的输出以摘要开头、空白之后是文件名（GNU 与 busybox 相同）；它失败时摘要为空，同样按不符拒绝。
+GOT_SHA256=$(sha256sum "$work/$PKG" </dev/null) || GOT_SHA256=""
+GOT_SHA256=${GOT_SHA256%% *}
+[ "$GOT_SHA256" = "$WANT_SHA256" ] || {
+  echo "checksum mismatch for $PKG from $BASE_URL: got ${GOT_SHA256:-nothing}, release $RELEASE_VERSION embeds $WANT_SHA256" >&2; exit 1
 }
-(cd "$work" && sha256sum -c verify.txt)
 
-# 依赖外部条件的操作都在停服务之前做完：解包、检查包内文件、写临时二进制、注册、设配置的属主与权限。
+# 依赖外部条件的操作都在停服务之前做完：解包、检查包内文件、写临时二进制、注册或 configure、设配置的属主与权限。
 # 这些失败时正在运行的旧服务不受影响；停服务之后只剩替换二进制、装服务定义、启动，这几步本身也可能失败
 # （磁盘满、新二进制秒退），失败时服务已停、脚本以非零退出。前面的步骤都不需要服务停下：
 # agent 只在启动时读一次配置（cmd/agent 的 run 只调用 LoadConfig）。
@@ -361,18 +373,25 @@ if [ ! -f "$CFG" ]; then
   # 用还没换上的新二进制注册：注册可能失败（hub 不可达、key 失效），必须在停服务之前。
   set -- register --hub "$HUB" --key "$KEY" --config "$CFG"
   if [ -n "$NAME" ]; then set -- "$@" --name "$NAME"; fi
+  if [ "$INSECURE_HTTP" = 1 ]; then set -- "$@" --insecure-http; fi
   "$BIN_TMP" "$@" </dev/null
 else
   if [ -n "$KEY" ]; then echo "existing config found; keeping the current registration (--key ignored)"; fi
   if [ -n "$NAME" ]; then echo "existing config found; --name ignored"; fi
+  # 放行明文 http 是宿主机本地策略，只有 configure 能改（§4.8）；已有的 http 部署升级后 run 会拒绝启动，
+  # 靠这一步在同一次重跑里补上。它会重写配置，可能失败（新二进制拒绝现有配置），所以与注册同在停服务之前、
+  # 改属主之前：属主与权限由下面的 chown、chmod 每次重设。
+  if [ "$INSECURE_HTTP" = 1 ]; then
+    "$BIN_TMP" configure --config "$CFG" --insecure-http=true </dev/null
+  fi
 fi
 # 每次安装都做，不只在注册之后。只做一次会留下服务用户读不到或别人读得到的配置：
-# - 手工重新注册以 root 重写配置（SaveConfig 新建 0600，属主是调用者）
+# - 配置不存在时以 root 手工注册（SaveConfig 只对已存在的文件沿用属主，新建的文件属调用者）
 # - 注册之后、改属主之前被信号打断，重跑走已有配置分支
 # - 账户被删后以新 uid 重建，配置仍属旧 uid
 # - 人工编辑后权限变了（0600 只由 SaveConfig 在注册时保证）
 # 目录属 root、0750：服务用户不能增删目录项，这里的 chown 不会被链接劫持。
-# 目录无需对服务用户可写：写配置只发生在以 root 执行的 register 里，cmd/agent 的 run 只调用 LoadConfig、不调用 SaveConfig。
+# 目录无需对服务用户可写：写配置只发生在以 root 执行的 register 与 configure 里，cmd/agent 的 run 只读配置、不写配置。
 chown root:"$SVC_USER" "$CFG_DIR"
 chmod 0750 "$CFG_DIR"
 chown "$SVC_USER:$SVC_USER" "$CFG"

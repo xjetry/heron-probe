@@ -186,6 +186,10 @@ verify_unit 'install'
 hub_pids
 case " $pids " in *" $pid "*) ;; *) fail "comm scan did not find the running hub (pid $pid):$pids";; esac
 
+# 升级到 B 用 B 的脚本：脚本只装自己所属的版本，A 的脚本按内嵌的 A 哈希拒绝 B 的包（§5.7），
+# 用它做下面的端口冲突检查会先红在哈希上、走不到端口判定。
+fetch "$base/b/install-hub.sh" /root/install-hub.sh
+
 # 新端口被其它进程占用时，旧服务的同一个 pid 必须仍活着，不能先停服再发现绑定失败。
 systemd-run --unit=pia-port-conflict /usr/local/bin/probe-hub serve --db /root/port-conflict.db --listen 127.0.0.1:8080 --timezone UTC </dev/null
 sleep 1
@@ -198,7 +202,6 @@ grep -q 'port 8080 is already in use' /root/conflict.log || fail 'port conflict 
 systemctl stop pia-port-conflict
 
 # 单元里的参数是持久事实；重跑升级不能恢复成默认值，显式参数才覆盖。
-fetch "$base/b/install-hub.sh" /root/install-hub.sh
 sh /root/install-hub.sh --base-url "$base/b" </dev/null
 [ "$(probe-hub version)" = "$version_b" ] || fail 'upgraded version is not B'
 health 18120
@@ -417,6 +420,41 @@ assert_service_identity() {
   cat "$work/ident-$cell.log"
 }
 
+# systemd 的声明不代表进程已受限：按 MainPID 的实际 cgroup 回读内核值，安装与升级都检查。
+# 期望只来自已安装单元；声明缺失也必须失败，不能把未设置的 max 当成合法上限。
+assert_memory_limit() {
+  cell=$1
+  tag=$2
+  rc=0
+  orb -m "$cell" -u root sh -s <<'MEMORY_LIMIT' > "$work/memory-$tag-$cell.log" 2>&1 || rc=$?
+set -eu
+pid=$(systemctl show probe-agent -p MainPID --value)
+cg=$(awk -F: '$1 == "0" {print $3}' "/proc/$pid/cgroup")
+[ -n "$cg" ] || { echo "no cgroup v2 path for agent pid=$pid"; exit 1; }
+actual=$(cat "/sys/fs/cgroup$cg/memory.max")
+declared=$(awk '
+  /^\[/ { service = ($0 == "[Service]") }
+  service && /^[[:space:]]*MemoryMax[[:space:]]*=/ {
+    sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); value=$0
+  }
+  END { print value }
+' /etc/systemd/system/probe-agent.service)
+# 仓库单元使用正整数字节或二进制单位；拒绝空值、infinity 与百分比，不替无上限生成期望。
+expected=$(awk -v value="$declared" 'BEGIN {
+  if (value !~ /^[0-9]+[KMGTPE]?$/) exit 1
+  unit=substr(value, length(value), 1)
+  power=index("KMGTPE", unit)
+  bytes=(value + 0) * (1024 ^ power)
+  if (bytes <= 0) exit 1
+  printf "%.0f", bytes
+}') || { echo "memory.max mismatch: pid=$pid cgroup=$cg actual=$actual MemoryMax=${declared:-<missing>} (finite limit required)"; exit 1; }
+echo "pid=$pid cgroup=$cg MemoryMax=$declared expected=$expected memory.max=$actual"
+[ "$actual" = "$expected" ] || { echo "memory.max mismatch: actual=$actual expected=$expected"; exit 1; }
+MEMORY_LIMIT
+  cat "$work/memory-$tag-$cell.log"
+  [ "$rc" = 0 ] || { echo "FAIL($cell): memory.max ($tag)"; exit 1; }
+}
+
 # 配置目录必须是 root:probe-agent 0750：服务用户能读配置，但不能增删目录项，
 # root 对配置文件的后续操作才不会被链接劫持。配置文件属主必须是 probe-agent、0600：
 # register 以 root 写入，不改属主服务就读不到。这两条由 install.sh 在 register 之后保证。
@@ -461,6 +499,8 @@ run_cell() {
 
   # 首次安装用面板命令的管道形态。无 curl 时用 wget（运行时再探一次，不把探测结果写死）；
   # 重跑下载版本 B 的 install.sh 用同一次探测的结果。
+  # hub 地址是宿主机上的 http（$HOST 不是 loopback IP 字面量），agent 只在配置放行明文 http 时接受它（spec §5.7），
+  # 安装与 register 都带 --insecure-http，与面板对这种 origin 给出的命令相同。
   if orb -m "$name" -u root command -v curl >/dev/null 2>&1; then
     fetch="curl -fsSL http://$HOST:$DIST_PORT/a/install.sh"
     fetch_b="curl -fsSL -o /root/install.sh http://$HOST:$DIST_PORT/b/install.sh"
@@ -468,11 +508,14 @@ run_cell() {
     fetch="wget -qO- http://$HOST:$DIST_PORT/a/install.sh"
     fetch_b="wget -q -O /root/install.sh http://$HOST:$DIST_PORT/b/install.sh"
   fi
-  orb -m "$name" -u root sh -c "$fetch | sh -s -- --hub http://$HOST:$HUB_PORT --key $key --base-url http://$HOST:$DIST_PORT/a" \
+  orb -m "$name" -u root sh -c "$fetch | sh -s -- --hub http://$HOST:$HUB_PORT --key $key --insecure-http --base-url http://$HOST:$DIST_PORT/a" \
     > "$work/install-$name.log" 2>&1 || { echo "FAIL($name): install"; tail -20 "$work/install-$name.log"; exit 1; }
 
   node_field "$name" '.online == true and .metrics.cpuPct != null' || { echo "FAIL($name): node did not come online"; exit 1; }
   assert_service_identity "$name"
+  case "$distro" in
+    debian|ubuntu|rocky) assert_memory_limit "$name" install;;
+  esac
   case "$distro" in
     alpine) assert_layout "$name" 1 layout;;
     *) assert_layout "$name" 0 layout;;
@@ -481,6 +524,21 @@ run_cell() {
   list_nodes || { echo "FAIL($name): ListNodes"; exit 1; }
   jq -e --arg n "$name" --arg v "$VERSION_A" '.nodes[] | select(.name == $n) | .facts.icmpAvailable == true and .facts.agentVersion == $v' "$work/ListNodes.json" > /dev/null \
     || { echo "FAIL($name): icmpAvailable or agentVersion A"; jq -r --arg n "$name" '.nodes[] | select(.name == $n) | .facts' "$work/ListNodes.json"; exit 1; }
+
+  # 下面的 ICMP 任务探测本机回环，而回环在 agent 的默认拒绝集里（spec §8.4）。按宿主机放行的正规方式打开：
+  # root 执行 configure，再重启服务让 agent 重新读配置（它只在启动时读）。configure 以 root 重写配置之后，
+  # 配置仍须属服务用户、0600，否则重启后的服务读不到它；assert_layout 在真机上钉住这一点。
+  orb -m "$name" -u root /usr/local/bin/probe-agent configure --config /etc/probe-agent/config.json --probe-allow 127.0.0.0/8 \
+    > "$work/configure-$name.log" 2>&1 </dev/null || { echo "FAIL($name): configure --probe-allow"; cat "$work/configure-$name.log"; exit 1; }
+  case "$distro" in
+    alpine) orb -m "$name" -u root rc-service probe-agent restart > "$work/restart-$name.log" 2>&1 </dev/null;;
+    *) orb -m "$name" -u root systemctl restart probe-agent > "$work/restart-$name.log" 2>&1 </dev/null;;
+  esac || { echo "FAIL($name): restart after configure"; cat "$work/restart-$name.log"; exit 1; }
+  node_field "$name" '.online == true and .metrics.cpuPct != null' || { echo "FAIL($name): not online after configure"; exit 1; }
+  case "$distro" in
+    alpine) assert_layout "$name" 1 layout-configure;;
+    *) assert_layout "$name" 0 layout-configure;;
+  esac
 
   # ICMP 任务下发并等到有结果：能力由 init 授予，非 root 服务必须有可用 ICMP。
   node_id=$(jq -r --arg n "$name" '.nodes[] | select(.name == $n) | .id' "$work/ListNodes.json")
@@ -498,7 +556,7 @@ run_cell() {
 
   # 加固不得让采集缩水：字段集合、内存总量与 bootId 与 root 对照一致；根分区是不是同一个由
   # assert_service_identity 按设备号判定。网卡只以合计计数器上报，逐网卡集合经接口观测不到，不作断言（§12）。
-  orb -m "$name" -u root /usr/local/bin/probe-agent register --hub "http://$HOST:$HUB_PORT" --key "$key" \
+  orb -m "$name" -u root /usr/local/bin/probe-agent register --hub "http://$HOST:$HUB_PORT" --key "$key" --insecure-http \
     --config /root/root-agent.json --name "$name-root" > "$work/regroot-$name.log" 2>&1 || { echo "FAIL($name): root register"; exit 1; }
   orb -m "$name" -u root timeout 35 /usr/local/bin/probe-agent run --config /root/root-agent.json > "$work/runroot-$name.log" 2>&1 &
   rootrun=$!
@@ -519,9 +577,10 @@ run_cell() {
   orb -m "$name" -u root sh -c "$fetch_b" \
     > "$work/fetchb-$name.log" 2>&1 || { echo "FAIL($name): fetch rerun install.sh"; exit 1; }
   # 手工 register 以 root 重写配置，文件属主回到 root；人工编辑留下 0644。重跑必须都改回来，节点仍在线。
+  # 重跑带 --insecure-http 走沿用配置时的 configure 分支（已有 http 部署的升级路径），它在改属主之前执行。
   orb -m "$name" -u root chown root:root /etc/probe-agent/config.json
   orb -m "$name" -u root chmod 0644 /etc/probe-agent/config.json
-  orb -m "$name" -u root sh /root/install.sh --hub "http://$HOST:$HUB_PORT" --key "$key" --base-url "http://$HOST:$DIST_PORT/b" \
+  orb -m "$name" -u root sh /root/install.sh --hub "http://$HOST:$HUB_PORT" --key "$key" --insecure-http --base-url "http://$HOST:$DIST_PORT/b" \
     > "$work/rerun-$name.log" 2>&1 || { echo "FAIL($name): rerun"; tail -20 "$work/rerun-$name.log"; exit 1; }
   grep -q 'keeping the current registration' "$work/rerun-$name.log" || { echo "FAIL($name): rerun did not keep registration"; exit 1; }
   list_nodes || { echo "FAIL($name): ListNodes after rerun"; exit 1; }
@@ -538,6 +597,9 @@ run_cell() {
     *) assert_layout "$name" 0 layout-rereg;;
   esac
   node_field "$name" '.online == true and .metrics.cpuPct != null' || { echo "FAIL($name): not online after ownership repair"; exit 1; }
+  case "$distro" in
+    debian|ubuntu|rocky) assert_memory_limit "$name" upgrade;;
+  esac
 
   case "$distro" in
     debian|ubuntu|rocky)

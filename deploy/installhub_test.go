@@ -23,7 +23,7 @@ import (
 // 让 start 返回 0 却不起进程。STUB_RELOAD_FAILS 让 daemon-reload 失败，STUB_RELOAD_FAILS_ON_STOP 让它从 stop 之后
 // 开始失败；STUB_IS_ENABLED_FAILS_WITH_RELOAD 让 is-enabled 在 reload 失败时一起失败。
 // chown 只记参数：测试以普通用户运行，改不了属主，属主由真机验收回读。chmod 记下参数后转调真的，权限断言看的
-// 是真实的文件模式。curl 只认 file:// 地址并复制文件；apt-get 记下参数，install 时建出 CA 证书包。
+// 是真实的文件模式。curl 是三个脚本共用的 fileCurl；apt-get 记下参数，install 时建出 CA 证书包。
 // systemctl、curl、apt-get 读尽 stdin：脚本以 sh -s 从 stdin 运行，漏掉 </dev/null 的调用会吞掉脚本余下部分，
 // 安装在中途无声结束，测试看不到最后一行。真实的 systemd 解析、起停与属主由 scripts/install-accept.sh 在真机上验证。
 var hubStubs = map[string]string{
@@ -82,23 +82,7 @@ fi
 echo "chmod $*" >> "$STUB_STATE/calls"
 exec /bin/chmod "$@"
 `,
-	"curl": `#!/bin/sh
-cat > /dev/null
-echo "curl $*" >> "$STUB_STATE/calls"
-out=""; url=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) out=$2; shift 2;;
-    --proto|--proto-redir) shift 2;;
-    -*) shift;;
-    *) url=$1; shift;;
-  esac
-done
-case "$url" in
-  file://*) cp "${url#file://}" "$out";;
-  *) echo "curl: (6) unexpected URL $url" >&2; exit 6;;
-esac
-`,
+	"curl": fileCurl,
 	"apt-get": `#!/bin/sh
 cat > /dev/null
 echo "apt-get $*" >> "$STUB_STATE/calls"
@@ -140,14 +124,21 @@ func newHubHost(t *testing.T) *env {
 	return e
 }
 
-// hubRelease 按 make release 的形状打 hub 包：probe-hub 与仓库里的 systemd 单元原件。
+// hubRelease 发布 version：打出 hub 包，写入脚本。
 func (e *env) hubRelease(version string) {
+	e.t.Helper()
+	e.hubPackage(e.dist, version)
+	e.publish(version)
+}
+
+// hubPackage 按 make release 的形状把 hub 包打进 dir：probe-hub 与仓库里的 systemd 单元原件。
+func (e *env) hubPackage(dir, version string) {
 	e.t.Helper()
 	unit, err := os.ReadFile("systemd/probe-hub.service")
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	e.pack("probe-hub_linux_amd64.tar.gz", []packFile{
+	e.pack(dir, "probe-hub_linux_amd64.tar.gz", []packFile{
 		{"probe-hub", "#!/bin/sh\n# " + version + " amd64\n", 0o755},
 		{"probe-hub.service", string(unit), 0o644},
 	})

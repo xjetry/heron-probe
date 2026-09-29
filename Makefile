@@ -126,6 +126,10 @@ hub_build = env GOOS=linux GOARCH=$(1) CGO_ENABLED=0 go build $(RELEASE_GOFLAGS)
 # 发起系统调用，macOS 也不提供静态链接的系统库，"不带动态依赖"在这里不成立也无须成立。
 # darwin 的 CGO_ENABLED=0 由下面的显式 env 承载。
 # VERSION 在构建前端之前检查：不合规时立即报错，不等 web 目标跑完。
+# 三个安装脚本在全部 tar 包打好之后写入本版版本号与每个 tar 包的 SHA-256（deploy/releasestamp，§5.7），脚本只按
+# 写进去的清单校验；写入读的是 dist 下的 *.tar.gz，所以必须排在打包之后。SHA256SUMS 最后生成，覆盖写入后的脚本，
+# 供人工核对，脚本不以它为依据。写入后的脚本在这里过 shellcheck：make lint 只查源码，这一步查的是实际发布的字节，
+# 写入格式出错时在发布任何东西之前失败（release.yml 先跑 make ci，shellcheck 已在运行器上）。
 release:
 	@$(check_version)
 	$(MAKE) web
@@ -165,10 +169,9 @@ release:
 	  rm -rf "$$pkg"; \
 	done; \
 	rm -rf dist/build
-	cp deploy/install.sh dist/install.sh
-	cp deploy/install-hub.sh dist/install-hub.sh
-	cp deploy/install-macos.sh dist/install-macos.sh
-	cd dist && sha256sum probe-*.tar.gz > SHA256SUMS
+	go run ./scripts/stampinstall -version $(VERSION) -dir dist deploy/install.sh deploy/install-hub.sh deploy/install-macos.sh
+	shellcheck -s sh dist/install.sh dist/install-hub.sh dist/install-macos.sh
+	cd dist && sha256sum *.tar.gz install.sh install-hub.sh install-macos.sh > SHA256SUMS
 
 # hub 镜像（§14）：ghcr.io/xjetry/probe-hub:<version>，平台由 HUB_LINUX_ARCHES 展开。
 # 镜像里不编译 Go：hub 二进制经 hub_build 构建到 IMAGE_BIN_DIR，Dockerfile 按 TARGETARCH 取用。

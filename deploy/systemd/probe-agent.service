@@ -20,6 +20,13 @@ Restart=on-failure
 # 间隔 5 秒。同一台 Debian 12 机器上，RestartSec=5 与 StartLimitIntervalSec=0 在非法 JSON 下
 # 72 秒内 NRestarts 从 0 增到 13，相邻两次增加间隔约 5 秒，没有进入 failed。
 RestartSec=5
+# agent 的 prober.Scheduler.Apply 与 client.limitedTransport 分别限制任务数和响应体；此处只作纵深防御。
+# 2026-09-29，OrbStack LXC Debian 12.15 arm64 / systemd 252.39-1~deb12u2 / cgroup v2，
+# 连接一个 hub，64 个 ICMP 任务以 5 秒间隔探测已放行的 127.0.0.1，全部有结果后持续 3 分钟：
+# VmHWM 结束时 12344 KiB（期间采样最高 13444 KiB），服务 cgroup memory.peak 为 21389312 字节。
+# cgroup 峰值约 20.40 MiB，取六倍后向上取整到 128 MiB，为 Go GC、并发探测及不同平台留余量；
+# 该负载不代表所有负载的最坏峰值。内核须提供 memory 控制器，安装验收按主进程 cgroup 回读生效值。
+MemoryMax=128M
 # 裸机 Debian/Ubuntu/Alpine 的 ping_group_range 默认关闭，没有 CAP_NET_RAW 时
 # ICMP 探测只能回报 error；Rocky 9 放开是发行版默认值，不作依赖（§13 第 2 项）。
 AmbientCapabilities=CAP_NET_RAW

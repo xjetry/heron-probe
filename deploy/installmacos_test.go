@@ -1,6 +1,8 @@
 // Package deploy 的测试以普通用户运行安装脚本：脚本读写的系统路径经 PROBE_INSTALL_ROOT 挂到临时目录，
-// 系统管理命令由 PATH 上的替身接管。本文件测 install-macos.sh：dscl、launchctl、ps、id、sysctl、uname、
-// chown、sleep 是替身，find、chmod 经替身记下参数后转调真的，curl、shasum、tar 用真的；真实 launchd、目录服务与 root 属主只在真机上验证
+// 系统管理命令由 PATH 上的替身接管。下载的脚本是 make release 那种写入了本版清单的脚本：dist 里的包由各平台的
+// 发布函数打出，再由 deploy/releasestamp（make release 用的同一个写入实现）写进脚本，用例执行的是写入后的副本。
+// 本文件测 install-macos.sh：dscl、launchctl、ps、id、sysctl、uname、chown、sleep、curl 是替身，find、chmod 经替身
+// 记下参数后转调真的，shasum、tar 用真的；真实 launchd、目录服务与 root 属主只在真机上验证
 // （spec §14：没有 macOS 虚拟机可用）。install.sh 的替身在 installlinux_test.go。
 package deploy
 
@@ -16,6 +18,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/xjetry/probe/deploy/releasestamp"
 )
 
 const svcUser = "_probe-agent"
@@ -143,6 +147,7 @@ fi
 	"sleep": `#!/bin/sh
 echo "sleep $*" >> "$STUB_STATE/calls"
 `,
+	"curl": fileCurl,
 	// find 用真的，先记下参数；STUB_FIND_FAILS 让它像读不到文件时那样只报错、stdout 为空、退出 1。
 	"find": `#!/bin/sh
 echo "find $*" >> "$STUB_STATE/calls"
@@ -159,10 +164,32 @@ exec /bin/chmod "$@"
 `,
 }
 
-// fakeAgent 是包里的 probe-agent：register 写出配置并记下参数，与真 agent 的 SaveConfig 同为 0600。
+// fileCurl 是三个安装脚本共用的 curl 替身：记下参数（用例据此判断有没有发生下载、下载的是哪个地址），只认 file://
+// 地址并复制文件，其余地址像解析失败那样以 6 退出。读尽 stdin，理由同其他替身。
+const fileCurl = `#!/bin/sh
+cat > /dev/null
+echo "curl $*" >> "$STUB_STATE/calls"
+out=""; url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) out=$2; shift 2;;
+    --proto|--proto-redir) shift 2;;
+    -*) shift;;
+    *) url=$1; shift;;
+  esac
+done
+case "$url" in
+  file://*) cp "${url#file://}" "$out";;
+  *) echo "curl: (6) unexpected URL $url" >&2; exit 6;;
+esac
+`
+
+// fakeAgent 是包里的 probe-agent：register 写出配置并记下参数，与真 agent 的 SaveConfig 同为 0600；
+// configure 只记参数，STUB_CONFIGURE_FAILS 时像拒绝现有配置那样失败。
 const fakeAgent = `#!/bin/sh
 cat > /dev/null
 echo "probe-agent $*" >> "$STUB_STATE/calls"
+if [ "$1" = configure ] && [ -n "${STUB_CONFIGURE_FAILS-}" ]; then echo "configure: invalid config" >&2; exit 1; fi
 [ "$1" = register ] || exit 0
 [ -z "${STUB_REGISTER_FAILS-}" ] || { echo "register: hub unreachable" >&2; exit 1; }
 while [ $# -gt 0 ]; do [ "$1" = --config ] && cfg=$2; shift; done
@@ -172,9 +199,10 @@ chmod 0600 "$cfg"
 echo "registered as node 1; config written to $cfg"
 `
 
+// script 是 run 执行的脚本：起初是仓库里的源码 source（没有写入清单，只能卸载），publish 之后是 dist 里写入后的副本。
 type env struct {
 	t                *testing.T
-	script           string
+	source, script   string
 	root, state, bin string
 	dist             string
 	vars             []string
@@ -184,7 +212,7 @@ type env struct {
 func newStubEnv(t *testing.T, script string, stubs map[string]string) *env {
 	t.Helper()
 	d := t.TempDir()
-	e := &env{t: t, script: script, root: filepath.Join(d, "root"), state: filepath.Join(d, "state"), bin: filepath.Join(d, "bin"), dist: filepath.Join(d, "dist")}
+	e := &env{t: t, source: script, script: script, root: filepath.Join(d, "root"), state: filepath.Join(d, "state"), bin: filepath.Join(d, "bin"), dist: filepath.Join(d, "dist")}
 	for _, dir := range []string{e.root, e.state, e.bin, e.dist} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
@@ -224,14 +252,21 @@ func (e *env) write(name, body string) {
 	}
 }
 
-// release 按 make release 的形状打包：包内是 probe-agent 与仓库里的 plist 原件。
+// release 发布 version：打出 arch 的包，写入脚本。
 func (e *env) release(arch, version string) {
+	e.t.Helper()
+	e.darwinPackage(e.dist, arch, version)
+	e.publish(version)
+}
+
+// darwinPackage 按 make release 的形状把 arch 的包打进 dir：包内是 probe-agent 与仓库里的 plist 原件。
+func (e *env) darwinPackage(dir, arch, version string) {
 	e.t.Helper()
 	plist, err := os.ReadFile("launchd/xyz.probe.agent.plist")
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	e.pack("probe-agent_darwin_"+arch+".tar.gz", []packFile{
+	e.pack(dir, "probe-agent_darwin_"+arch+".tar.gz", []packFile{
 		{"probe-agent", fakeAgent + "# " + version + " " + arch + "\n", 0o755},
 		{"xyz.probe.agent.plist", string(plist), 0o644},
 	})
@@ -242,10 +277,11 @@ type packFile struct {
 	mode       int64
 }
 
-// pack 把 files 打成 dist 下的 pkg，并重写 SHA256SUMS。
-func (e *env) pack(pkg string, files []packFile) {
+// pack 把 files 打成 dir 下的 pkg。只打包，不写入脚本：写入由 publish 做，篡改用例靠这一点让脚本里的清单
+// 与包不符。
+func (e *env) pack(dir, pkg string, files []packFile) {
 	e.t.Helper()
-	f, err := os.Create(filepath.Join(e.dist, pkg))
+	f, err := os.Create(filepath.Join(dir, pkg))
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -260,13 +296,23 @@ func (e *env) pack(pkg string, files []packFile) {
 	tw.Close()
 	gz.Close()
 	f.Close()
-	e.sums()
 }
 
-// sums 按 dist 下现有的包写 SHA256SUMS，与发布产物同一格式。
-func (e *env) sums() {
+// publish 照 make release 的顺序发布 dist 里现有的包：用 make release 的同一个写入实现把版本号与清单写进源码脚本、
+// 输出到 dist，再写 SHA256SUMS；此后 run 执行写入后的脚本。
+func (e *env) publish(version string) {
 	e.t.Helper()
-	pkgs, err := filepath.Glob(filepath.Join(e.dist, "*.tar.gz"))
+	if err := releasestamp.WriteDir(version, e.dist, e.source); err != nil {
+		e.t.Fatal(err)
+	}
+	e.script = filepath.Join(e.dist, filepath.Base(e.source))
+	e.sums(e.dist)
+}
+
+// sums 按 dir 下现有的包写 SHA256SUMS，与发布产物同一格式。
+func (e *env) sums(dir string) {
+	e.t.Helper()
+	pkgs, err := filepath.Glob(filepath.Join(dir, "*.tar.gz"))
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -278,7 +324,7 @@ func (e *env) sums() {
 		}
 		fmt.Fprintf(&b, "%x  %s\n", sha256.Sum256(data), filepath.Base(p))
 	}
-	if err := os.WriteFile(filepath.Join(e.dist, "SHA256SUMS"), []byte(b.String()), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "SHA256SUMS"), []byte(b.String()), 0o644); err != nil {
 		e.t.Fatal(err)
 	}
 }
@@ -617,28 +663,6 @@ func TestUnloadedJobIsNotBootedOut(t *testing.T) {
 	}
 	if index(e.calls(), "launchctl bootout") >= 0 {
 		t.Fatalf("an unloaded job must not be booted out: %q", e.calls())
-	}
-}
-
-func TestChecksumMismatchLeavesRunningServiceAlone(t *testing.T) {
-	t.Parallel()
-	e := newEnv(t)
-	if out, code := e.install(); code != 0 {
-		t.Fatalf("first install exit %d:\n%s", code, out)
-	}
-	sums := filepath.Join(e.dist, "SHA256SUMS")
-	os.WriteFile(sums, []byte(strings.Repeat("0", 64)+"  probe-agent_darwin_arm64.tar.gz\n"), 0o644)
-	e.resetCalls()
-	out, code := e.install()
-	if code == 0 || !strings.Contains(out, "FAILED") {
-		t.Fatalf("exit %d, want shasum failure:\n%s", code, out)
-	}
-	if index(e.calls(), "launchctl bootout") >= 0 {
-		t.Fatalf("a bad download must not stop the running service: %q", e.calls())
-	}
-	os.WriteFile(sums, []byte(strings.Repeat("0", 64)+"  probe-agent_darwin_amd64.tar.gz\n"), 0o644)
-	if out, code := e.install(); code == 0 || !strings.Contains(out, "SHA256SUMS has no entry for probe-agent_darwin_arm64.tar.gz") {
-		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }
 

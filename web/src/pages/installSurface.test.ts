@@ -19,6 +19,14 @@ describe("面板安装命令与 install.sh", () => {
     }
   });
 
+  // 脚本只装自己所属的版本：版本由面板取哪个 URL 的脚本决定，命令里没有第二个版本来源。
+  it("install.sh 不接受 --version，面板命令也不带", () => {
+    const accepted = new Set([...installSh.matchAll(/^\s*(--[A-Za-z0-9-]+)\)/gm)].map((m) => m[1]));
+    expect(accepted).toContain("--insecure-http");
+    expect(accepted).not.toContain("--version");
+    expect(panel).not.toMatch(/--version\b/);
+  });
+
   it("install.sh 的 REPO 与面板里的仓库地址一致", () => {
     const repo = installSh.match(/^REPO=(\S+)/m)?.[1];
     expect(repo).toBeTruthy();

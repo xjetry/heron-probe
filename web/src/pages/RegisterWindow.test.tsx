@@ -1,10 +1,10 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { create } from "@bufbuild/protobuf";
 import { createConnectQueryKey } from "@connectrpc/connect-query";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
-import { RegisterWindow } from "./RegisterWindow";
+import { InstallCommands, RegisterWindow } from "./RegisterWindow";
 import { AdminService, GetSnapshotResponseSchema, ListNodesResponseSchema } from "../gen/probe/v1/admin_pb";
 
 afterEach(() => vi.useRealTimers());
@@ -139,7 +139,7 @@ describe("RegisterWindow", () => {
     expect(screen.queryByLabelText("注册 key")).not.toBeInTheDocument();
     expect(screen.queryByText(/install\.sh/)).not.toBeInTheDocument();
   });
-  it("install commands use the hub release URL and --version", async () => {
+  it("正式版本的 hub 取同版本 release 的脚本，命令不带 --version", async () => {
     renderOpen("v1.2.3");
     fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
     const pres = await screen.findAllByText(/install\.sh \| sh -s --/);
@@ -148,10 +148,40 @@ describe("RegisterWindow", () => {
     expect(pres[1].textContent).toContain("wget -qO-");
     for (const p of pres) {
       expect(p.textContent).toContain("https://github.com/xjetry/probe/releases/download/v1.2.3/install.sh");
-      expect(p.textContent).toContain("--version v1.2.3");
+      expect(p.textContent).not.toContain("--version");
       expect(p.textContent).toContain("--key k1");
     }
     expect(screen.getByText(/以 root 执行/)).toBeInTheDocument();
+    expect(screen.queryByText(/将安装最新 release/)).toBeNull();
+    expect(screen.getByText(/安装命令的可信来源是 README 与 GitHub Release/)).toBeInTheDocument();
+  });
+
+  // jsdom 的 origin 是 http://localhost:3000：localhost 是名字不是 loopback IP 字面量，命令要带 --insecure-http。
+  it("面板的 origin 是非 loopback 的 http 时命令带 --insecure-http 并提示明文传输", async () => {
+    expect(window.location.origin).toMatch(/^http:\/\/localhost(:\d+)?$/);
+    renderOpen("v1.2.3");
+    fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
+    for (const p of await screen.findAllByText(/install\.sh \| sh -s --/)) {
+      expect(p.textContent).toMatch(new RegExp(`--hub ${window.location.origin} --key k1 --insecure-http$`));
+    }
+    expect(screen.getByText(/token 与指标将明文传输/)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["https://hub.example", false],
+    ["http://127.0.0.1:8080", false],
+    ["http://[::1]:8080", false],
+    ["http://10.0.0.1", true],
+  ])("origin %s：带 --insecure-http 为 %s", (origin, insecure) => {
+    render(<InstallCommands hubVersion="v1.2.3" origin={origin} registerKey="k1" />);
+    const pres = screen.getAllByText(/install\.sh \| sh -s --/);
+    expect(pres).toHaveLength(2);
+    for (const p of pres) {
+      expect(p.textContent).toContain(`--hub ${origin} --key k1`);
+      expect(p.textContent?.includes("--insecure-http")).toBe(insecure);
+    }
+    expect(screen.queryByText(/token 与指标将明文传输/) !== null).toBe(insecure);
+    expect(screen.getByText(/安装命令的可信来源是 README 与 GitHub Release/)).toBeInTheDocument();
   });
 
   it("v1.0 不是合法 semver，走 latest、不带 --version", async () => {

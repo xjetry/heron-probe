@@ -125,6 +125,10 @@ until_node() {
 }
 
 "$bin" register --hub "$base" --key "$key" --config "$work/agent.json" --name macos-accept > "$work/register.log" 2>&1 || { echo "FAIL: register"; cat "$work/register.log"; exit 1; }
+# 下面的 ICMP 与 TCP 任务探测本机回环，而回环在 agent 的默认拒绝集里（spec §8.4）。按宿主机放行的正规方式打开：
+# configure 改本地策略。agent 只在启动时读配置，这里在第一次 run 之前改，不必重启。hub 在 127.0.0.1 上，是 loopback
+# IP 字面量，register 不需要 --insecure-http。
+"$bin" configure --config "$work/agent.json" --probe-allow 127.0.0.0/8 > "$work/configure.log" 2>&1 || { echo "FAIL: configure --probe-allow"; cat "$work/configure.log"; exit 1; }
 "$bin" run --config "$work/agent.json" > "$work/agent.log" 2>&1 &
 agent=$!
 

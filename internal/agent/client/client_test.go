@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
@@ -19,13 +21,14 @@ import (
 	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
 	"github.com/xjetry/probe/internal/agent/collect"
 	"github.com/xjetry/probe/internal/agent/prober"
+	"github.com/xjetry/probe/internal/agentwire"
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/testwait"
 )
 
 func TestConfigRoundTripAndPermissions(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "sub", "config.json")
-	if err := SaveConfig(p, Config{Hub: "http://h", Token: "t", Name: "n"}); err != nil {
+	if err := SaveConfig(p, Config{Hub: "https://h", Token: "t", Name: "n"}); err != nil {
 		t.Fatal(err)
 	}
 	st, _ := os.Stat(p)
@@ -33,7 +36,7 @@ func TestConfigRoundTripAndPermissions(t *testing.T) {
 		t.Fatalf("perm = %o, want 600", st.Mode().Perm())
 	}
 	c, err := LoadConfig(p)
-	if err != nil || c.Hub != "http://h" || c.Token != "t" || c.Name != "n" {
+	if err != nil || c.Hub != "https://h" || c.Token != "t" || c.Name != "n" {
 		t.Fatalf("%+v %v", c, err)
 	}
 }
@@ -47,7 +50,7 @@ func TestSaveConfigEnforcesModeOverStaleFiles(t *testing.T) {
 	if err := os.WriteFile(p, []byte("old"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := SaveConfig(p, Config{Hub: "h", Token: "t"}); err != nil {
+	if err := SaveConfig(p, Config{Hub: "https://h", Token: "t"}); err != nil {
 		t.Fatal(err)
 	}
 	st, err := os.Stat(p)
@@ -155,7 +158,7 @@ func newRunner(t *testing.T, hub *fakeHub) (*Runner, chan time.Duration) {
 	sleeps := make(chan time.Duration, 100)
 	r := &Runner{
 		Collector: &collect.Collector{Host: &collect.ProcFS{FS: fstest.MapFS{"proc/loadavg": {Data: []byte("0 0 0 1/2 3\n")}}, DiskUsage: func(string) (uint64, uint64, error) { return 1, 1, nil }}, Clock: clock.NewFake(time.Unix(0, 0)), Version: "t"},
-		Client:    probev1connect.NewAgentServiceClient(srv.Client(), srv.URL),
+		Client:    NewServiceClient(srv.URL, 5*time.Second),
 		Token:     "tok",
 		Clock:     clock.NewFake(time.Unix(0, 0)),
 		Sleep: func(ctx context.Context, d time.Duration) error {
@@ -296,5 +299,52 @@ func TestFailureBacksOffWithinThreeIntervals(t *testing.T) {
 		if d != 30*time.Second {
 			t.Fatalf("backoff %v exceeds cap 3×interval", d)
 		}
+	}
+}
+
+// hub 下发越界的间隔时 agent 取边界而不是照办，同一个越界值只告警一次；回到合法值后照常采用。
+func TestClampsAssignedIntervalOutOfBounds(t *testing.T) {
+	lo := time.Duration(agentwire.ReportIntervalMs(agentwire.MinTTL)) * time.Millisecond
+	hi := time.Duration(agentwire.ReportIntervalMs(agentwire.MaxTTL)) * time.Millisecond
+	for _, tc := range []struct {
+		name     string
+		assigned []uint32
+		want     []time.Duration
+		warns    int
+	}{
+		{"zero", []uint32{0, 0, 0}, []time.Duration{lo, lo, lo}, 1},
+		{"tiny", []uint32{1, 1, 1}, []time.Duration{lo, lo, lo}, 1},
+		{"huge", []uint32{^uint32(0), ^uint32(0)}, []time.Duration{hi, hi}, 1},
+		{"change", []uint32{1, 2, 2}, []time.Duration{lo, lo, lo}, 2},
+		{"recover", []uint32{1, 7000, 1}, []time.Duration{lo, 7 * time.Second, lo}, 2},
+		{"legal", []uint32{agentwire.ReportIntervalMs(agentwire.MinTTL), agentwire.ReportIntervalMs(agentwire.MaxTTL)}, []time.Duration{lo, hi}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hub := &fakeHub{}
+			r, _ := newRunner(t, hub)
+			var logs bytes.Buffer
+			r.Log = slog.New(slog.NewTextHandler(&logs, nil))
+			var slept []time.Duration
+			hub.interval = tc.assigned[0]
+			r.Sleep = func(_ context.Context, d time.Duration) error {
+				slept = append(slept, d)
+				if len(slept) == len(tc.assigned) {
+					return context.Canceled
+				}
+				hub.mu.Lock()
+				hub.interval = tc.assigned[len(slept)]
+				hub.mu.Unlock()
+				return nil
+			}
+			if err := r.Run(context.Background()); !errors.Is(err, context.Canceled) {
+				t.Fatal(err)
+			}
+			if fmt.Sprint(slept) != fmt.Sprint(tc.want) {
+				t.Fatalf("slept %v, want %v", slept, tc.want)
+			}
+			if n := strings.Count(logs.String(), "outside the protocol bounds"); n != tc.warns {
+				t.Fatalf("%d clamp warnings, want %d:\n%s", n, tc.warns, logs.String())
+			}
+		})
 	}
 }
