@@ -254,6 +254,24 @@ curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-maco
 15. `curl -fsSL <base>/install-macos.sh | sudo sh -s -- --uninstall`：输出 `probe-agent uninstalled`；`sudo launchctl print system/xyz.probe.agent` 退出码 113；`/usr/local/bin/probe-agent` 与 plist 不在，配置与用户仍在。再带 `--uninstall --purge` 执行：`/etc/probe-agent`、`/Library/Logs/probe-agent` 不在，`id _probe-agent` 报 no such user，`dscl . -read /Groups/_probe-agent` 报 `eDSRecordNotFound`。
 16. 有 Intel Mac 时在其上重复 1–5，装的是 amd64 包。
 
+### 宿主机本地策略
+
+agent 不照单执行 hub 的指令：hub 被攻陷时，它能改变的只有 agent 上报的节奏（限在合法范围内）和探测任务（限在下面的本地策略内）。hub 不能让 agent 执行命令、读写文件或升级自己。本地策略写在配置文件 `/etc/probe-agent/config.json` 里，hub 改不了它，用 `probe-agent configure` 修改，改完重启服务生效：
+
+```sh
+# 放行对本机回环与某个内网段的探测（默认拒绝本机回环）
+sudo probe-agent configure --probe-allow 127.0.0.0/8,10.20.0.0/16
+# 另外拒绝整个私网（私网默认允许）
+sudo probe-agent configure --probe-deny 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+# 清空某个列表
+sudo probe-agent configure --probe-deny ""
+sudo systemctl restart probe-agent   # OpenRC：rc-service probe-agent restart；macOS：launchctl kickstart -k system/xyz.probe.agent
+```
+
+- 默认拒绝的目标：本机（`127.0.0.0/8`、`::1`、`0.0.0.0/8`、`::`）、链路本地（`169.254.0.0/16`，含云厂商的 metadata 地址 `169.254.169.254`；`fe80::/10`）、组播与广播。检查的是解析之后实际要连的地址，用域名绕不过去。被拒的任务在面板上显示为错误，写明地址和命中的前缀。
+- 规则按最长前缀匹配；前缀一样长时，本地规则优先于默认规则。前缀必须写成规范形式（`10.0.0.0/8`，不能写 `10.1.2.3/8`）；同一前缀不能同时出现在两个列表里。
+- 连 hub 必须用 https。只有 hub 地址是回环 IP（`127.0.0.1`、`[::1]`）时才允许 http；其他情况用 http 要显式放行，放行后节点 token 和指标会以明文传输。首次安装时加 `--insecure-http`；已经用 http 部署的节点升级之后会拒绝启动，这时执行 `sudo probe-agent configure --insecure-http=true` 并重启服务（或重跑安装脚本并加 `--insecure-http`）。
+
 ## 许可
 
 MIT，见 [LICENSE](LICENSE)。
