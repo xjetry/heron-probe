@@ -181,7 +181,10 @@ type PublicSnapshot struct {
 	// hub 下发给 agent 的上报间隔；实时状态不会比它更新得更快。
 	ReportIntervalMs uint32 `protobuf:"varint,2,opt,name=report_interval_ms,json=reportIntervalMs,proto3" json:"report_interval_ms,omitempty"`
 	// 按 sort_order、id 升序。
-	Nodes         []*PublicNode `protobuf:"bytes,3,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	Nodes []*PublicNode `protobuf:"bytes,3,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	// nodes 里各节点标签的并集，每个标签一次（Node.tags 的写法），按标签名的大小写折叠键排序，与管理端 ListTags 同序。
+	// 公开页的标签栏照它渲染：顺序由 hub 的折叠键定，客户端不必复刻折叠规则。
+	Tags          []string `protobuf:"bytes,4,rep,name=tags,proto3" json:"tags,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -233,6 +236,13 @@ func (x *PublicSnapshot) GetReportIntervalMs() uint32 {
 func (x *PublicSnapshot) GetNodes() []*PublicNode {
 	if x != nil {
 		return x.Nodes
+	}
+	return nil
+}
+
+func (x *PublicSnapshot) GetTags() []string {
+	if x != nil {
+		return x.Tags
 	}
 	return nil
 }
@@ -730,11 +740,12 @@ const file_probe_v1_public_proto_rawDesc = "" +
 	"\x04logo\x18\x04 \x01(\tR\x04logo\x12\x1d\n" +
 	"\n" +
 	"custom_css\x18\x05 \x01(\tR\tcustomCss\"!\n" +
-	"\x1fPublicServiceGetSnapshotRequest\"|\n" +
+	"\x1fPublicServiceGetSnapshotRequest\"\x90\x01\n" +
 	"\x0ePublicSnapshot\x12\x10\n" +
 	"\x03now\x18\x01 \x01(\x03R\x03now\x12,\n" +
 	"\x12report_interval_ms\x18\x02 \x01(\rR\x10reportIntervalMs\x12*\n" +
-	"\x05nodes\x18\x03 \x03(\v2\x14.probe.v1.PublicNodeR\x05nodes\"\x8d\x03\n" +
+	"\x05nodes\x18\x03 \x03(\v2\x14.probe.v1.PublicNodeR\x05nodes\x12\x12\n" +
+	"\x04tags\x18\x04 \x03(\tR\x04tags\"\x8d\x03\n" +
 	"\n" +
 	"PublicNode\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +

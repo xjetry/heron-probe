@@ -96,9 +96,12 @@ it("卡片名称旁是国家 / 地区徽章：旗帜由国家码算出，照写�
   expect(db.getByRole("heading", { level: 2 })).toHaveTextContent(/^db-1$/);
 });
 
+// tags 是 hub 下发的公开标签并集（按折叠键排序）；lab-1 的 "DB" 在真实数据里不会出现（name_fold 唯一，写法统一），
+// 留着它钉住节点标签与所选标签按折叠比较。
 const tagged = {
   now: 1_000n,
   reportIntervalMs: 4000,
+  tags: ["db", "prod", "web"],
   nodes: [
     { id: 1n, name: "web-1", online: true, sortOrder: 0, tags: ["web", "prod"] },
     { id: 2n, name: "db-1", online: false, sortOrder: 1, tags: ["db", "prod"] },
@@ -107,6 +110,11 @@ const tagged = {
   ],
 };
 
+// 模拟轮询后某个标签从全部公开节点上摘掉：hub 的快照里它同时从节点与并集里消失。
+const without = (snap: typeof tagged, tag: string) => ({
+  ...snap, tags: snap.tags.filter((t) => t !== tag), nodes: snap.nodes.map((n) => ({ ...n, tags: n.tags.filter((t) => t !== tag) })),
+});
+
 const shown = () => screen.queryAllByRole("article").map((a) => a.getAttribute("aria-label"));
 const chip = (name: string) => screen.getByRole("button", { name });
 
@@ -114,12 +122,11 @@ function renderTagged(getSnapshot: () => Promise<typeof tagged> = async () => ta
   renderWithService(PublicService, { getSnapshot }, [{ path: "/", Component: PublicOverview }], "/");
 }
 
-it("标签栏：默认显示全部，标签按折叠去重", async () => {
+it("标签栏：默认显示全部，按钮照快照的 tags 列出", async () => {
   renderTagged();
   await screen.findByText("3 / 4 在线");
   expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
   expect(chip("全部")).toHaveAttribute("aria-pressed", "true");
-  // db 与 DB 是同一个标签：只有一个按钮，保留先出现的写法。
   expect(within(screen.getByRole("group", { name: "按标签筛选" })).getAllByRole("button").map((b) => b.textContent)).toEqual(["全部", "db", "prod", "web"]);
 });
 
@@ -180,7 +187,7 @@ it("被选中的标签从快照里消失后回到显示全部，而不是留下�
   await screen.findByText("3 / 4 在线");
   fireEvent.click(chip("web"));
   expect(shown()).toEqual(["web-1"]);
-  current = { ...tagged, nodes: tagged.nodes.map((n) => ({ ...n, tags: n.tags.filter((t) => t !== "web") })) };
+  current = without(tagged, "web");
   await act(async () => vi.advanceTimersByTimeAsync(POLL_MS + 100));
   await waitFor(() => expect(screen.queryByRole("button", { name: "web" })).toBeNull());
   expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
@@ -191,6 +198,7 @@ const due = (daysLeft?: number) => ({ price: "", currency: "", expiresOn: daysLe
 const billed = {
   now: 1_000n,
   reportIntervalMs: 4000,
+  tags: ["dev", "prod"],
   nodes: [
     { id: 1n, name: "a-on-far", online: true, sortOrder: 0, tags: ["prod"], billing: due(30) },
     { id: 2n, name: "b-off-soon", online: false, sortOrder: 1, tags: ["prod"], billing: due(5) },
@@ -258,4 +266,28 @@ it("筛选条件把节点滤空时给出说明", async () => {
   fireEvent.click(chip("dev"), { shiftKey: true });
   expect(shown()).toEqual([]);
   expect(screen.getByText("没有符合筛选条件的节点。")).toBeInTheDocument();
+});
+
+it("标签栏按 hub 给的顺序排列，页面不自己重排", async () => {
+  // hub 按折叠键排序（"ALPHA" < "ZETA" < "_X"）；按码元排会变成 Zeta、_x、alpha。
+  const snap = { now: 1n, tags: ["alpha", "Zeta", "_x"], nodes: [{ id: 1n, name: "n", online: true, sortOrder: 0, tags: ["Zeta", "_x", "alpha"] }] };
+  renderWithService(PublicService, { getSnapshot: async () => snap }, [{ path: "/", Component: PublicOverview }], "/");
+  await screen.findByText("1 / 1 在线");
+  expect(within(screen.getByRole("group", { name: "按标签筛选" })).getAllByRole("button").map((b) => b.textContent)).toEqual(["全部", "alpha", "Zeta", "_x"]);
+});
+
+it("多选时部分标签从快照里消失：只按仍在的标签过滤，不回到全部", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  let current: typeof tagged = tagged;
+  renderTagged(async () => current);
+  await screen.findByText("3 / 4 在线");
+  fireEvent.click(chip("prod"));
+  fireEvent.click(chip("web"), { shiftKey: true });
+  expect(shown()).toEqual(["web-1"]);
+  current = without(tagged, "web");
+  await act(async () => vi.advanceTimersByTimeAsync(POLL_MS + 100));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "web" })).toBeNull());
+  expect(shown()).toEqual(["web-1", "db-1"]);
+  expect(chip("prod")).toHaveAttribute("aria-pressed", "true");
+  expect(chip("全部")).toHaveAttribute("aria-pressed", "false");
 });

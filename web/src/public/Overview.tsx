@@ -8,7 +8,7 @@ import { PublicService, type PublicNode } from "../gen/probe/v1/public_pb";
 import { expired, expiryText, priceText, sortByExpiry } from "../lib/billing";
 import { ago, bytes, duration, percent } from "../lib/format";
 import { POLL_MS } from "../lib/poll";
-import { matchesTags, nextSelection, presentTags, sameTag } from "../lib/tags";
+import { matchesTags, nextSelection, sameTag } from "../lib/tags";
 import { TagBar } from "./TagBar";
 import { ViewOptions } from "./ViewOptions";
 
@@ -21,7 +21,8 @@ export function PublicOverview() {
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const now = Number(gate.data.now);
   const all = gate.data.nodes;
-  const tags = presentTags(all);
+  // 标签栏的集合与顺序取 hub 下发的并集（按折叠键排序，与面板同序），页面不自己汇总、排序：折叠规则只在 hub 一处。
+  const tags = gate.data.tags;
   // 生效的选择集只取当前快照里仍存在的标签，并换成标签栏上的写法：被选的标签在轮询后消失时，页面回到显示全部，
   // 而不是留下一个看不见的过滤条件。状态里存的写法可能与快照当前的写法只差折叠，经这一步统一。
   const effective = tags.filter((t) => selected.some((s) => sameTag(s, t)));

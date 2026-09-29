@@ -63,6 +63,9 @@ message PublicSnapshot {
   uint32 report_interval_ms = 2;
   // 按 sort_order、id 升序。
   repeated PublicNode nodes = 3;
+  // nodes 里各节点标签的并集，每个标签一次（Node.tags 的写法），按标签名的大小写折叠键排序，与管理端 ListTags 同序。
+  // 公开页的标签栏照它渲染：顺序由 hub 的折叠键定，客户端不必复刻折叠规则。
+  repeated string tags = 4;
 }
 
 message PublicNode {
