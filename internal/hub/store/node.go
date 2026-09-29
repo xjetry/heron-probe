@@ -187,7 +187,7 @@ func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
 
 // ListPublicNodes 只返回 public = 1 的节点。公开服务只经它与 NodeIsPublic 读节点，可见范围由这两处承载：
 // 这里的 WHERE n.public = 1，与 NodeIsPublic 读出的 public 列（不存在的 id 同样得到 false）。
-// 返回的 Node 带着标签，标签不公开由 PublicNode 没有这个字段承载（§10）。
+// 返回的 Node 带着标签：公开快照据此公开公开节点的标签（§10），私有节点不在结果里，它的标签无从带出。
 func (s *Store) ListPublicNodes(ctx context.Context) ([]Node, error) {
 	return s.queryNodes(ctx, " WHERE n.public = 1")
 }

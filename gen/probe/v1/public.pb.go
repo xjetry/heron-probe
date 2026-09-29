@@ -257,7 +257,10 @@ type PublicNode struct {
 	Billing *PublicBilling `protobuf:"bytes,9,opt,name=billing,proto3" json:"billing,omitempty"`
 	// 国家 / 地区（§4.9）的显示值，与 Node.country 相同，空串表示没有。只放行这个值：查得于哪个地址、来源是手动还是
 	// 查得都不公开——公开页表达"在哪个区域"，不定位机器。
-	Country       string `protobuf:"bytes,10,opt,name=country,proto3" json:"country,omitempty"` // 节点标签（Node.tags）不在这里，也不保留字段号：标签常写用途与归属（db、客户A），公开即暴露内部构成。
+	Country string `protobuf:"bytes,10,opt,name=country,proto3" json:"country,omitempty"`
+	// 节点标签，与 Node.tags 同一口径（先建的写法、按折叠排序）。只有公开节点进快照，私有节点的标签不出现；标签常写用途与
+	// 归属（db、客户A），挂在公开节点上即对外可见，没有单独的公开开关。
+	Tags          []string `protobuf:"bytes,11,rep,name=tags,proto3" json:"tags,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -360,6 +363,13 @@ func (x *PublicNode) GetCountry() string {
 		return x.Country
 	}
 	return ""
+}
+
+func (x *PublicNode) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
 }
 
 // Billing 的公开部分，字段号与 Billing 相同，由投影按字段名生成（与 PublicFacts 同一机制）。自动续期是运维开关，
@@ -724,7 +734,7 @@ const file_probe_v1_public_proto_rawDesc = "" +
 	"\x0ePublicSnapshot\x12\x10\n" +
 	"\x03now\x18\x01 \x01(\x03R\x03now\x12,\n" +
 	"\x12report_interval_ms\x18\x02 \x01(\rR\x10reportIntervalMs\x12*\n" +
-	"\x05nodes\x18\x03 \x03(\v2\x14.probe.v1.PublicNodeR\x05nodes\"\xf9\x02\n" +
+	"\x05nodes\x18\x03 \x03(\v2\x14.probe.v1.PublicNodeR\x05nodes\"\x8d\x03\n" +
 	"\n" +
 	"PublicNode\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
@@ -739,7 +749,8 @@ const file_probe_v1_public_proto_rawDesc = "" +
 	"\atraffic\x18\b \x01(\v2\x11.probe.v1.TrafficR\atraffic\x121\n" +
 	"\abilling\x18\t \x01(\v2\x17.probe.v1.PublicBillingR\abilling\x12\x18\n" +
 	"\acountry\x18\n" +
-	" \x01(\tR\acountryB\x0f\n" +
+	" \x01(\tR\acountry\x12\x12\n" +
+	"\x04tags\x18\v \x03(\tR\x04tagsB\x0f\n" +
 	"\r_last_seen_at\"\xdf\x01\n" +
 	"\rPublicBilling\x12\x14\n" +
 	"\x05price\x18\x01 \x01(\tR\x05price\x12\x1a\n" +
