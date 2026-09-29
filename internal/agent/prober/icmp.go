@@ -38,7 +38,7 @@ import (
 type ICMP struct {
 	clk       clock.Clock
 	log       *slog.Logger
-	Resolver  *net.Resolver
+	Targets   Targets
 	nonce     [8]byte
 	seq       atomic.Uint32
 	v4, v6    *icmpConn
@@ -175,7 +175,7 @@ func (e *ICMP) Probe(ctx context.Context, t *probev1.ProbeTask) Outcome {
 	timeout := time.Duration(t.GetTimeoutMs()) * time.Millisecond
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	ip, err := resolve(ctx, e.Resolver, t.GetTarget(), e.v4 != nil, e.v6 != nil)
+	ip, err := e.Targets.Resolve(ctx, t.GetTarget(), e.v4 != nil, e.v6 != nil)
 	if err != nil {
 		return Outcome{Err: err.Error()}
 	}

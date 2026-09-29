@@ -204,9 +204,9 @@ agent 与 hub 不同时升级。hub 必须接受旧 agent 的上报（缺失的 
 
 ### 4.8 注册
 
-`probe-agent register --hub <url> --key <key> [--name <name>] [--insecure-http]` 调 `Register`，把节点 token 写入配置文件（权限 0600）。hub 地址在发请求之前按 §5.7 的传输规则校验，`--insecure-http` 把放行明文 http 的决定写进配置。安装脚本只负责下载、校验、调用这条命令与安装服务单元，脚本里不解析 JSON。
+`probe-agent register --hub <url> --key <key> [--name <name>] [--insecure-http]` 调 `Register`，把节点 token 写入配置文件（权限 0600）。hub 地址在发请求之前按 §5.7 的传输规则校验（被拒时 key 不出线、窗口名额不消耗），`--insecure-http` 把放行明文 http 的决定写进配置。已有配置时沿用其中的 `probe_allow`、`probe_deny`：重新注册换的是 hub 身份，探测策略属于宿主机；已有配置读不出来时报错，不静默丢掉它。安装脚本只负责下载、校验、调用这条命令与安装服务单元，脚本里不解析 JSON。
 
-配置里除 hub 地址、token 与名字外的字段都是宿主机本地策略（`insecure_http`、`probe_allow`、`probe_deny`，§5.7、§8.4），由 `probe-agent configure --config <path> [--insecure-http=true|false] [--probe-allow CIDR,...] [--probe-deny CIDR,...]` 修改：只改命令行上显式给出的项，列表给空串即清空，写入前按 `run` 加载时的同一套规则校验，打印修改后的本地策略；目标文件已存在时保留它的属主与权限（root 执行 configure 不能把服务用户读不到的文件留给 `run`）。agent 只在启动时读配置，改完要重启服务。hub 无法修改这些字段：agent 运行期不写配置，下行消息里也没有对应字段。
+配置里除 hub 地址、token 与名字外的字段都是宿主机本地策略（`insecure_http`、`probe_allow`、`probe_deny`，§5.7、§8.4），由 `probe-agent configure --config <path> [--insecure-http=true|false] [--probe-allow CIDR,...] [--probe-deny CIDR,...]` 修改：只改命令行上显式给出的项，列表给空串即清空；读取时不校验（才能修正一份升级后被 `run` 拒绝的配置），写入前按 `run` 加载时的同一套规则校验整份配置，打印修改后的本地策略；目标文件已存在时保留它的属主与权限（root 执行 configure 不能把服务用户读不到的文件留给 `run`）。配置里的未知字段是错误：策略字段拼错时若静默忽略，宿主机以为拒绝了的地址实际放行。agent 只在启动时读配置，改完要重启服务。hub 无法修改这些字段：agent 运行期不写配置，下行消息里也没有对应字段。
 
 ### 4.9 节点来源地址与国家 / 地区
 

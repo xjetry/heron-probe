@@ -28,7 +28,7 @@ import (
 
 func TestConfigRoundTripAndPermissions(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "sub", "config.json")
-	if err := SaveConfig(p, Config{Hub: "http://h", Token: "t", Name: "n"}); err != nil {
+	if err := SaveConfig(p, Config{Hub: "https://h", Token: "t", Name: "n"}); err != nil {
 		t.Fatal(err)
 	}
 	st, _ := os.Stat(p)
@@ -36,7 +36,7 @@ func TestConfigRoundTripAndPermissions(t *testing.T) {
 		t.Fatalf("perm = %o, want 600", st.Mode().Perm())
 	}
 	c, err := LoadConfig(p)
-	if err != nil || c.Hub != "http://h" || c.Token != "t" || c.Name != "n" {
+	if err != nil || c.Hub != "https://h" || c.Token != "t" || c.Name != "n" {
 		t.Fatalf("%+v %v", c, err)
 	}
 }
@@ -50,7 +50,7 @@ func TestSaveConfigEnforcesModeOverStaleFiles(t *testing.T) {
 	if err := os.WriteFile(p, []byte("old"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := SaveConfig(p, Config{Hub: "h", Token: "t"}); err != nil {
+	if err := SaveConfig(p, Config{Hub: "https://h", Token: "t"}); err != nil {
 		t.Fatal(err)
 	}
 	st, err := os.Stat(p)

@@ -36,7 +36,7 @@ func TestEnginesReportLocalFileExhaustion(t *testing.T) {
 	socket := newQuietSocket()
 	socket.write = func([]byte, net.Addr) (int, error) { return 0, syscall.EMFILE }
 	ic := icmpWithSocket(t, socket)
-	tcp := TCP{Clock: clock.Real(), DialContext: func(context.Context, string, string) (net.Conn, error) { return nil, syscall.EMFILE }}
+	tcp := TCP{Clock: clock.Real(), Targets: loopbackTargets(t, nil), DialContext: func(context.Context, string, string) (net.Conn, error) { return nil, syscall.EMFILE }}
 	for name, out := range map[string]Outcome{"icmp": ic.Probe(t.Context(), task(1)), "tcp": tcp.Probe(t.Context(), tcpTask("127.0.0.1:9"))} {
 		if out.Timeout || !strings.Contains(out.Err, syscall.EMFILE.Error()) {
 			t.Errorf("%s local exhaustion=%+v", name, out)

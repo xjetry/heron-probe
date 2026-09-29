@@ -82,6 +82,7 @@ func TestICMPDatagramWireAndPayload(t *testing.T) {
 func availableICMP(t *testing.T, clk clock.Clock) *ICMP {
 	t.Helper()
 	e := NewICMP(clk, logger())
+	e.Targets = loopbackTargets(t, nil)
 	t.Cleanup(e.Close)
 	if !e.Available() {
 		t.Skipf("ICMP unavailable: %v", e.InitErrors())
@@ -212,7 +213,7 @@ func (s *quietSocket) Close() error {
 func icmpWithSocket(t *testing.T, socket icmpSocket) *ICMP {
 	t.Helper()
 	e := &ICMP{clk: clock.Real(), log: logger(), done: make(chan struct{}),
-		v4: &icmpConn{pc: socket, proto: 1, pending: map[pendingKey]chan time.Duration{}}}
+		v4: &icmpConn{pc: socket, proto: 1, pending: map[pendingKey]chan time.Duration{}}, Targets: loopbackTargets(t, nil)}
 	e.wg.Add(1)
 	go func() { defer e.wg.Done(); e.read(e.v4) }()
 	t.Cleanup(e.Close)
@@ -441,7 +442,7 @@ func TestICMPUnavailableReportsRelevantFamily(t *testing.T) {
 		{"selected-v4", "127.0.0.1", false, true, "udp4: denied; ip4:icmp: denied"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e := &ICMP{clk: clock.Real(), done: make(chan struct{}),
+			e := &ICMP{clk: clock.Real(), done: make(chan struct{}), Targets: loopbackTargets(t, nil),
 				initErr4: []string{"udp4: denied", "ip4:icmp: denied"},
 				initErr6: []string{"udp6: denied", "ip6:ipv6-icmp: denied"}}
 			if tc.v4 {
@@ -485,7 +486,7 @@ func TestICMPUsesInjectedResolver(t *testing.T) {
 		return 0, syscall.EPERM
 	}
 	e := icmpWithSocket(t, socket)
-	e.Resolver = localDNS(t, dnsMapped, nil)
+	e.Targets = loopbackTargets(t, localDNS(t, dnsMapped, nil))
 	probe := task(1)
 	probe.Target = "mapped.prober.invalid"
 	out := e.Probe(t.Context(), probe)

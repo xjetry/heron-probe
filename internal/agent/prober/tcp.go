@@ -9,11 +9,11 @@ import (
 	"github.com/xjetry/probe/internal/clock"
 )
 
-// TCP 只测量连接建立耗时；解析与连接共用预算，解析失败与地址非法是 error。
+// TCP 只测量连接建立耗时；解析与连接共用预算，解析失败、地址非法与本地策略拒绝是 error。
 // 连接或发送失败经 classify 区分可达性与本地故障。
 type TCP struct {
 	Clock       clock.Clock
-	Resolver    *net.Resolver
+	Targets     Targets
 	DialContext func(context.Context, string, string) (net.Conn, error)
 }
 
@@ -25,7 +25,7 @@ func (p TCP) Probe(ctx context.Context, t *probev1.ProbeTask) Outcome {
 	if err != nil {
 		return Outcome{Err: err.Error()}
 	}
-	ip, err := resolve(ctx, p.Resolver, host, true, true)
+	ip, err := p.Targets.Resolve(ctx, host, true, true)
 	if err != nil {
 		return Outcome{Err: err.Error()}
 	}

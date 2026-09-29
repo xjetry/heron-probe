@@ -243,8 +243,17 @@ echo "theme origin ok"
 
 register_agent() {
   arch=$1
-  docker exec "$(cat "$work/cid-$arch")" "/probe/probe-agent-linux-$arch" register \
-    --hub "http://host.docker.internal:$port" --key "$key" --config /tmp/agent.json --name "e2e-$arch"
+  cid=$(cat "$work/cid-$arch")
+  # hub 经 host.docker.internal 以明文 http 访问，不是 loopback 字面量，注册时必须显式放行（§5.7）。
+  docker exec "$cid" "/probe/probe-agent-linux-$arch" register \
+    --hub "http://host.docker.internal:$port" --key "$key" --config /tmp/agent.json --name "e2e-$arch" --insecure-http
+  # 两个探测任务的目标是容器回环（ICMP）与宿主上的 hub（TCP）。回环在默认拒绝集里；host.docker.internal 在
+  # OrbStack 上解析到 0.250.250.254，落在默认拒绝的 0.0.0.0/8，其他运行时可能是私网地址。两者都由宿主机本地策略
+  # 放行（§8.4），宿主地址取容器里实际解析出的那个，不写死某个运行时的约定。
+  host_ip=$(docker exec "$cid" getent hosts host.docker.internal | awk '{print $1; exit}')
+  [ -n "$host_ip" ] || { echo "FAIL: host.docker.internal does not resolve in the $arch container"; return 1; }
+  case "$host_ip" in *:*) host_prefix="$host_ip/128";; *) host_prefix="$host_ip/32";; esac
+  docker exec "$cid" "/probe/probe-agent-linux-$arch" configure --config /tmp/agent.json --probe-allow "127.0.0.0/8,$host_prefix"
 }
 run_agent() {
   arch=$1
