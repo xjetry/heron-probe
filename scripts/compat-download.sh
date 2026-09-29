@@ -1,11 +1,17 @@
 #!/bin/sh
 # 兼容基线是仓库内审查过的 tag 与摘要，而不是可变的 latest 或下载时取得的校验和。
-# 当前只有已发布预发布版；明确输出渠道，不把它当作稳定版本的兼容凭据。
+# 明确输出渠道，不把预发布版当作稳定版本的兼容凭据。
 set -eu
 [ "$#" = 1 ] || { echo "usage: $0 NEW_OUTPUT_DIRECTORY" >&2; exit 1; }
 pin="$(cd "$(dirname "$0")" && pwd)/compat-agent.json"
+# tag 为 null 是"尚无 Heron 发布基线"：更名为 Heron 时 RPC 命名空间从 probe.v1 换成 heron.v1 且不兼容旧路径，
+# 更名前的发布不能当基线。没有基线就失败而不是跳过；CI 在首个 Heron 发布钉进这里之前不调用 compat-e2e。
+if jq -e '.tag == null' "$pin" > /dev/null 2>&1; then
+  echo "FAIL: no published Heron release is pinned as the compatibility baseline yet (scripts/compat-agent.json has tag null)" >&2
+  exit 1
+fi
 jq -e '
-  .repository == "xjetry/probe" and
+  .repository == "xjetry/heron-probe" and
   (.tag | type == "string" and test("^v[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9.-]+)?$")) and
   (.releaseKind == (if .tag | contains("-") then "prerelease" else "stable" end)) and
   ([.assets[].arch] | sort) == ["amd64", "arm64"] and

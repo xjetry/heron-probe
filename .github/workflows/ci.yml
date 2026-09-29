@@ -35,7 +35,9 @@ jobs:
           platforms: arm64
           cache-image: false
       # 原生 Linux 的 bridge 容器从 host-gateway 访问宿主，回环监听不能接收这些请求。
-      - run: make e2e compat-e2e
+      # 已发布 agent 的兼容验收（make compat-e2e）暂不在这里跑：更名为 Heron 后还没有 Heron 发布可作基线
+      # （scripts/compat-agent.json 的 tag 为 null），首个 Heron 发布钉进基线后再接回。
+      - run: make e2e
         env:
           E2E_LISTEN_HOST: 0.0.0.0
       # 镜像的构建与冒烟（§12）：两个平台构建并核对根文件系统，本机平台装进 docker 后冒烟；不推送。

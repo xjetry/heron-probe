@@ -293,7 +293,7 @@ sudo systemctl restart heron-agent   # OpenRC：rc-service heron-agent restart�
 
 `make test`、`make lint`、`make build` 分别运行后端测试、静态检查和跨平台编译；前端在 `web/` 执行 `pnpm test` 与 `pnpm run build`。
 
-`make e2e compat-e2e` 使用真实 hub，在 Debian、Alpine 的 amd64、arm64 容器中分别运行当前源码 agent 和固定已发布 agent。兼容基线在 `scripts/compat-agent.json` 固定 tag、发布渠道和两架构 SHA256，不使用浮动 latest；更新基线时必须核对发布资产和摘要，再运行完整兼容矩阵。当前基线 `v0.1.0-rc.1` 是预发布版，项目尚无稳定正式版基线。Linux runner 需设置 `E2E_LISTEN_HOST=0.0.0.0` 供 bridge 容器连接，开发机默认只监听回环。
+`make e2e compat-e2e` 使用真实 hub，在 Debian、Alpine 的 amd64、arm64 容器中分别运行当前源码 agent 和固定已发布 agent。兼容基线在 `scripts/compat-agent.json` 固定 tag、发布渠道和两架构 SHA256，不使用浮动 latest；更新基线时必须核对发布资产和摘要，再运行完整兼容矩阵。更名为 Heron 后 RPC 命名空间换成了 `heron.v1`，更名前的发布不能作基线，目前还没有 Heron 发布：`scripts/compat-agent.json` 的 `tag` 为 `null`，`make compat-e2e` 会明确失败，CI 与发布流程暂不调用它；首个 Heron 发布之后把它的 tag 与两架构摘要钉进去，再接回 CI。Linux runner 需设置 `E2E_LISTEN_HOST=0.0.0.0` 供 bridge 容器连接，开发机默认只监听回环。
 
 ## 许可
 
