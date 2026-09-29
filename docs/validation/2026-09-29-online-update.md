@@ -45,3 +45,14 @@
 - `git diff --check` 对 buf 新生成的 `update_pb.ts` 报文件末尾空行；保持生成器原样输出，不手改生成物。
 - SHA256SUMS 与资产共享官方发布信任根，不是独立签名。真实触控/安全密钥 Passkey 验收仍由用户本人完成。
 - 真实完整更新验收为 arm64；amd64 经构建、静态检查及后续生产版本回读，不将编译等同于完整故障注入。
+
+## systemd 257 权限兼容
+
+- 基点 `de56b6f`，`v0.3.1` 正式发布后部署到 Debian 13 Hub，主服务可用，但更新器 `/status` 返回 `supported:false`、版本查询 `fork/exec ... operation not permitted`。Agent 部署因此暂停，没有将服务启动视为在线更新通过。
+- 生产与隔离 Debian 13 / systemd `257.13-1~deb13u1` 均用最小 systemd 服务复现：显式 `User=root`、`RestrictSUIDSGID=yes` 与 `NoNewPrivileges=yes` 下 `CapEff` 缺少 `CAP_SETUID`，`runuser` 同样失败。仅关闭 `PrivateTmp` 仍失败；关闭 `RestrictSUIDSGID` 成功。最终保留所有原加固并显式声明 `AmbientCapabilities=CAP_SETUID`，相同操作成功。
+- Hub 与 Agent 更新器单元同步修正。`scripts/update-credentials-accept.sh` 加载仓库真实单元，显式恢复 OrbStack 全局覆盖掉的加固；`TestSystemCredentialDrop` 使用产品共享的 `credentials()` 启动子进程，验证非 root UID/GID、清空附加组、无 permitted/effective/ambient capability、继承 `NoNewPrivileges`，且不能切回 root。
+- 相同脚本在 systemd 252（`pia-update-20260929`）与 257（`pia-update257-20260929`）两种角色均退出 0。旧单元先准确失败于降权执行；分别注入 root UID/GID、附加组 0、子进程 ambient `CAP_SETUID`，测试准确失败于对应身份、组、可用 capability 断言。恢复后同命令均通过。
+- 原始日志位于 `build/validation/update-credentials-*`。一次隔离测试出现 `NAMESPACE` 目录不存在；另一次共享文件刚修改后读取到不完整脚本，后续语法检查及重跑通过。这些失败保留，不声称已证明为既有 flake，也不据此修改生产加固。
+- `v0.3.0` tag 的发行流水线因安装器 ShellCheck 规则失败，未创建 Release；保留该 tag，不改写历史。`v0.3.1` 发行与主干 CI 均成功，GitHub latest 与 GHCR latest 已回读；本节权限修复尚待新版本发布与生产在线更新回读。
+- 本轮 `make ci` 完整运行两次均退出 0。审查后仅加强测试完成握手：子进程完成所有断言后输出标记，父测试检查后输出另一个标记，脚本检查本次独立日志，避免 Go 无匹配测试仍退出 0 的假绿。旧测试程序与错误子测试名分别验红，恢复后 systemd 252/257 两角色通过。
+- 本轮审查已实际运行独立 Claude 只读检查与本地安全/正确性复核；无产品修复缺陷，测试假绿发现已关闭。收尾代理受线程限额阻断，receipt 为 `failed`，不称完整审查通过。`Code review: skipped (ce-code-review unavailable)`：技能顶层已终止且无法产生完整 receipt，按不可用路径补人工全 diff 检查。审查记录：`/tmp/compound-engineering-501/ce-code-review/systemd257-20260930`。
