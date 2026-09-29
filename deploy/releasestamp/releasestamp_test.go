@@ -123,3 +123,17 @@ func TestWriteDir(t *testing.T) {
 		t.Fatalf("mode %v, want 0755", st.Mode())
 	}
 }
+
+// 三个源码安装脚本都带一个空的写入区，WriteDir 能写入。
+func TestSourceScriptsHaveAnEmptyRegion(t *testing.T) {
+	ok := []Asset{asset("probe-hub_linux_amd64.tar.gz", "x")}
+	for _, s := range []string{"install.sh", "install-macos.sh", "install-hub.sh"} {
+		b, err := os.ReadFile(filepath.Join("..", s))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Script(b, "v1", ok); err != nil {
+			t.Errorf("%s: %v", s, err)
+		}
+	}
+}
