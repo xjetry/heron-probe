@@ -9,6 +9,11 @@
 .node-card .facts dd { margin: 0; }
 .view-bar { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; margin: 0 0 1rem; }
 .tag-bar, .view-options { display: flex; flex-wrap: wrap; gap: .4rem; }
+.region-filter { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem; flex-basis: 100%; }
+.filter-label { color: var(--muted); font-size: 12px; margin-right: .25rem; }
+.region-hint { font-size: 12px; margin-left: .25rem; }
+.region-filter .chip { min-height: 32px; min-width: 42px; }
+@media (pointer: coarse) { .region-filter .chip { min-height: 44px; min-width: 44px; } }
 /* Shift+单击会在按钮文字上触发浏览器的范围选中，选中高亮与点击语义无关，关掉。 */
 .chip { user-select: none; padding: 0 .6rem; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--fg); font-size: 12px; cursor: pointer; }
 .chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--bg); }
