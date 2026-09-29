@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"unicode/utf8"
 
 	"connectrpc.com/connect"
 
@@ -177,5 +178,17 @@ func TestConfigureRejectsResultRunWouldRefuse(t *testing.T) {
 	}
 	if cfg, err := client.LoadConfig(cfgPath); err != nil || !cfg.InsecureHTTP {
 		t.Fatalf("cfg=%+v err=%v", cfg, err)
+	}
+}
+
+// 命令的最终错误行有上限：register 的错误可能带着 hub 应答里的文本。
+func TestErrorLineIsBounded(t *testing.T) {
+	short := errors.New("load config: boom")
+	if got := errorLine(short); got != short.Error() {
+		t.Fatalf("short error changed: %q", got)
+	}
+	got := errorLine(errors.New("register: " + strings.Repeat("é", 10000)))
+	if len(got) > maxErrorLine+len("…(truncated)") || !strings.HasSuffix(got, "…(truncated)") || !utf8.ValidString(got) {
+		t.Fatalf("bounded error line is %d bytes, valid=%v", len(got), utf8.ValidString(got))
 	}
 }

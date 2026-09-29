@@ -59,9 +59,21 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		fmt.Fprintln(os.Stderr, "error:", errorLine(err))
 		os.Exit(1)
 	}
+}
+
+// maxErrorLine 是命令最终错误行的上限。register 的错误可能带着 hub 应答里的文本（§5.7），不能原样全写出来；
+// 本地产生的错误（配置、地址校验）都远短于它。
+const maxErrorLine = 4 << 10
+
+func errorLine(err error) string {
+	msg := strings.ToValidUTF8(err.Error(), "\uFFFD")
+	if len(msg) <= maxErrorLine {
+		return msg
+	}
+	return strings.ToValidUTF8(msg[:maxErrorLine], "") + "…(truncated)"
 }
 
 func runRegister(args []string) error {
@@ -116,6 +128,8 @@ func runRun(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// 先接管标准库 log，再创建任何网络客户端：net/http 会用它写出对端给的内容（agentlog.Install）。
+	log := agentlog.Install(newHandler(os.Stderr))
 	cfg, err := client.LoadConfig(*cfgPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -130,7 +144,6 @@ func runRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	log := newLogger(os.Stderr)
 	log.Info("probe target policy", "policy", policy.String())
 	ic := prober.NewICMP(clk, log)
 	ic.Targets = targets
@@ -162,11 +175,13 @@ func runRun(args []string) error {
 	return nil
 }
 
-// newLogger 是 run 的日志装配。启动行的文本格式有外部读者（scripts/e2e.sh 按整秒读字段），测试经同一个
+// newHandler 是 run 的日志出口。启动行的文本格式有外部读者（scripts/e2e.sh 按整秒读字段），测试经同一个
 // 函数装配日志，才钉得住读者实际看到的格式。agentlog 给全部输出设速率与长度上界：不少行由 hub 的应答触发（§5.7）。
-func newLogger(w io.Writer) *slog.Logger {
-	return slog.New(agentlog.New(slog.NewTextHandler(w, nil), nil))
+func newHandler(w io.Writer) *agentlog.Handler {
+	return agentlog.New(slog.NewTextHandler(w, nil), nil)
 }
+
+func newLogger(w io.Writer) *slog.Logger { return slog.New(newHandler(w)) }
 
 func logStarting(log *slog.Logger, hub string) {
 	log.Info("agent starting", "hub", hub, "request_timeout", requestTimeout, "initial_interval", initialInterval, "version", version)

@@ -2,6 +2,7 @@ package agentlog
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -37,12 +38,12 @@ func TestRateBound(t *testing.T) {
 	clk.t = clk.t.Add(RefillEvery)
 	log.Warn("report failed")
 	got := lines(buf)
-	if len(got) != 2 || !strings.Contains(got[0], "suppressed") || !strings.Contains(got[0], "count=980") || !strings.Contains(got[1], "report failed") {
+	if len(got) != 1 || !strings.Contains(got[0], "report failed") || !strings.Contains(got[0], "suppressed_before=980") {
 		t.Fatalf("after refill: %q", got)
 	}
 	buf.Reset()
 	// 跨 steps 个 RefillEvery/100 的持续洪水（每步 100 次调用）：行数由经过的时间决定，与调用次数无关。
-	// 经过 steps/100 个 RefillEvery，至多补充这么多令牌（再加取整的一个），每个令牌至多两行。
+	// 经过 steps/100 个 RefillEvery，至多补充这么多令牌（再加取整的一个），每个令牌恰好一行。
 	const steps = 2880
 	for range steps {
 		clk.t = clk.t.Add(RefillEvery / 100)
@@ -50,7 +51,7 @@ func TestRateBound(t *testing.T) {
 			log.Warn("x")
 		}
 	}
-	if n, most := len(lines(buf)), 2*(steps/100+1); n > most {
+	if n, most := len(lines(buf)), steps/100+1; n > most {
 		t.Fatalf("%d lines for %d refill periods of flood, want at most %d", n, steps/100, most)
 	}
 }
@@ -79,5 +80,23 @@ func TestValuesAreTruncated(t *testing.T) {
 	}
 	if strings.Count(out, "…(truncated)") != 5 || !strings.Contains(out, "g.n=42") || !utf8.ValidString(out) {
 		t.Fatalf("unexpected line:\n%s", out)
+	}
+}
+
+// 每个值（消息、字符串、error、分组里的值）截断后至多 MaxValueLen 字节，标记计在内；按 JSON 解码逐个量。
+func TestEachValueFitsTheBudget(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(New(slog.NewJSONHandler(&buf, nil), nil))
+	long := strings.Repeat("é", 1000) + strings.Repeat("a", 1000)
+	log.Warn(long, "s", long, "err", errors.New(long), slog.Group("g", "v", long))
+	var rec map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatal(err)
+	}
+	vals := []any{rec["msg"], rec["s"], rec["err"], rec["g"].(map[string]any)["v"]}
+	for i, v := range vals {
+		if n := len(v.(string)); n > MaxValueLen || !strings.HasSuffix(v.(string), "…(truncated)") {
+			t.Errorf("value %d is %d bytes: %.40q", i, n, v)
+		}
 	}
 }

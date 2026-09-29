@@ -157,6 +157,14 @@ func TestPolicyHostAddresses(t *testing.T) {
 	if err := check(wide, "127.0.0.1"); err != nil {
 		t.Errorf("allowing 127.0.0.0/8 must open loopback even though 127.0.0.1 is on lo: %v", err)
 	}
+	// 固定集里的本机地址随固定前缀：等长或更长的放行打开它，更短的不行。
+	ll := []netip.Addr{netip.MustParseAddr("169.254.1.2")}
+	for allow, want := range map[string]bool{"169.254.0.0/16": true, "169.254.1.0/24": true, "169.0.0.0/8": false} {
+		p, _ := ParsePolicy([]string{allow}, nil)
+		if err := p.Check(netip.MustParseAddr("169.254.1.2"), ll); (err == nil) != want {
+			t.Errorf("allow %s for a link-local host address: err=%v, want allowed=%v", allow, err, want)
+		}
+	}
 	exact, _ := ParsePolicy([]string{"10.0.0.5/32"}, nil)
 	if err := check(exact, "10.0.0.5"); err != nil {
 		t.Errorf("an exact allow must open this host's address: %v", err)
