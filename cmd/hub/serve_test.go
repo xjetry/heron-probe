@@ -21,6 +21,7 @@ import (
 	"connectrpc.com/connect"
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
+	agentclient "github.com/xjetry/probe/internal/agent/client"
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/alert"
 	"github.com/xjetry/probe/internal/hub/auth"
@@ -184,7 +185,7 @@ func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
 	}
 	report := connect.NewRequest(&probev1.ReportRequest{Metrics: &probev1.Metrics{CpuPct: proto.Float64(42)}})
 	report.Header().Set("Authorization", "Bearer "+node.Msg.Token)
-	agent := probev1connect.NewAgentServiceClient(http.DefaultClient, url)
+	agent := agentclient.NewServiceClient(url, 5*time.Second)
 	if _, err := agent.Report(ctx, report); err != nil {
 		t.Fatal(err)
 	}
@@ -469,7 +470,7 @@ func TestServeFlushesTrafficOnShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent := probev1connect.NewAgentServiceClient(http.DefaultClient, url)
+	agent := agentclient.NewServiceClient(url, 5*time.Second)
 	for _, m := range []*probev1.Metrics{
 		{BootId: "b", NetRxTotal: proto.Uint64(1000), NetTxTotal: proto.Uint64(5000)},
 		{BootId: "b", NetRxTotal: proto.Uint64(1200), NetTxTotal: proto.Uint64(5001)},

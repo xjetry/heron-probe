@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -18,7 +17,6 @@ import (
 	"connectrpc.com/connect"
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
 	"github.com/xjetry/probe/internal/agent/client"
 	"github.com/xjetry/probe/internal/agent/collect"
 	"github.com/xjetry/probe/internal/agent/prober"
@@ -75,7 +73,7 @@ func runRegister(args []string) error {
 	if *name == "" {
 		*name, _ = os.Hostname()
 	}
-	c := probev1connect.NewAgentServiceClient(&http.Client{Timeout: requestTimeout}, strings.TrimRight(*hub, "/"))
+	c := client.NewServiceClient(strings.TrimRight(*hub, "/"), requestTimeout)
 	resp, err := c.Register(context.Background(), connect.NewRequest(&probev1.RegisterRequest{Key: *key, Name: *name}))
 	if err != nil {
 		return fmt.Errorf("register: %w", err)
@@ -117,7 +115,7 @@ func runRun(args []string) error {
 	defer sched.Stop()
 	r := &client.Runner{
 		Collector: col,
-		Client:    probev1connect.NewAgentServiceClient(&http.Client{Timeout: requestTimeout}, cfg.Hub),
+		Client:    client.NewServiceClient(cfg.Hub, requestTimeout),
 		Token:     cfg.Token,
 		Clock:     clk,
 		Log:       log,

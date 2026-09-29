@@ -14,12 +14,12 @@ import (
 
 	"golang.org/x/net/idna"
 
-	"github.com/xjetry/probe/internal/hub/ingest"
+	"github.com/xjetry/probe/internal/agentwire"
 )
 
 const (
 	defaultTTL = 30 * time.Second
-	minTTL     = ingest.MinTTL
+	minTTL     = agentwire.MinTTL
 )
 
 // parseTTL 解析 PROBE_OFFLINE_AFTER。TTL 是离线发现延迟的上界，也是这条链上
@@ -35,8 +35,8 @@ func parseTTL(s string) (time.Duration, error) {
 	if d < minTTL {
 		return 0, fmt.Errorf("PROBE_OFFLINE_AFTER: %v is below the minimum %v", d, minTTL)
 	}
-	if d > ingest.MaxTTL {
-		return 0, fmt.Errorf("PROBE_OFFLINE_AFTER: %v is above the maximum %v", d, ingest.MaxTTL)
+	if d > agentwire.MaxTTL {
+		return 0, fmt.Errorf("PROBE_OFFLINE_AFTER: %v is above the maximum %v", d, agentwire.MaxTTL)
 	}
 	return d, nil
 }

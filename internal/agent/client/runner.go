@@ -13,6 +13,7 @@ import (
 	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
 	"github.com/xjetry/probe/internal/agent/collect"
 	"github.com/xjetry/probe/internal/agent/prober"
+	"github.com/xjetry/probe/internal/agentwire"
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/probelimit"
 )
@@ -29,7 +30,7 @@ type Runner struct {
 	Prober *prober.Scheduler
 	// Results 必填，与 Prober 共用同一个结果队列。
 	Results *prober.Queue
-	// Interval 是收到第一个响应之前使用的间隔；之后一律用 hub 下发的。
+	// Interval 是收到第一个响应之前使用的间隔；之后用 hub 下发的，经 agentwire.ClampReportInterval 限定。
 	Interval time.Duration
 }
 
@@ -64,6 +65,8 @@ func (r *Runner) Run(ctx context.Context) error {
 	sendFacts := true
 	attempt := 0
 	var dropped uint64
+	var clamped bool
+	var clampedMs uint32
 	for {
 		m, err := r.Collector.Metrics()
 		if err != nil {
@@ -120,9 +123,14 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 		attempt = 0
 		sendFacts = resp.Msg.WantFacts
-		if ms := resp.Msg.ReportIntervalMs; ms > 0 {
-			interval = time.Duration(ms) * time.Millisecond
+		// 间隔来自 hub，而 hub 可能失守（§5.7）：越界值取边界，同一个越界值只告警一次，不随每次上报刷屏。
+		ms := resp.Msg.ReportIntervalMs
+		d, ok := agentwire.ClampReportInterval(ms)
+		if !ok && (!clamped || ms != clampedMs) {
+			r.Log.Warn("hub assigned a report interval outside the protocol bounds; using the nearest bound", "assigned_ms", ms, "using", d)
 		}
+		clamped, clampedMs = !ok, ms
+		interval = d
 		if err := r.Sleep(ctx, interval); err != nil {
 			return err
 		}

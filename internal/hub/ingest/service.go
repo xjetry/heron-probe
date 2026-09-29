@@ -19,6 +19,7 @@ import (
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
+	"github.com/xjetry/probe/internal/agentwire"
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/auth"
 	"github.com/xjetry/probe/internal/hub/live"
@@ -46,13 +47,6 @@ const (
 
 // 非探测部分加上整批最坏编码不能超过读上限；单结果由 TestMaxProbeResultWire 钉住。
 const _ = uint(maxBody - metricsBudget - probelimit.MaxResultsPerReport*maxResultWire)
-
-// MinTTL 与 MaxTTL 限制离线判定时长，命令行与直接构造共用同一准入边界。
-const (
-	MinTTL        = 10 * time.Second
-	MaxTTL        = 180 * time.Second
-	reportsPerTTL = 3
-)
 
 const (
 	// burst 是上报的令牌桶容量：允许上报间隔的抖动与一次立即重试，再多就是异常。
@@ -106,16 +100,16 @@ type Service struct {
 }
 
 func New(cfg Config, l *live.Live, st *store.Store, a *auth.Auth, book *traffic.Book, tasks TaskSource, clk clock.Clock, log *slog.Logger) (*Service, error) {
-	if cfg.TTL < MinTTL {
-		return nil, fmt.Errorf("TTL %v is below the minimum %v", cfg.TTL, MinTTL)
+	if cfg.TTL < agentwire.MinTTL {
+		return nil, fmt.Errorf("TTL %v is below the minimum %v", cfg.TTL, agentwire.MinTTL)
 	}
-	if cfg.TTL > MaxTTL {
-		return nil, fmt.Errorf("TTL %v is above the maximum %v", cfg.TTL, MaxTTL)
+	if cfg.TTL > agentwire.MaxTTL {
+		return nil, fmt.Errorf("TTL %v is above the maximum %v", cfg.TTL, agentwire.MaxTTL)
 	}
 	// 上报的补充周期是下发间隔的一半：允许正常间隔内的一次重试。间隔由 TTL 决定，服务存续期间不变；
 	// 限速与下发都经 interval 算，下发间隔改了，限速跟着改。
 	return &Service{cfg: cfg, live: l, traffic: book, tasks: tasks, store: st, writer: st, auth: a, clk: clk, log: log,
-		limit: ratelimit.New[int64](burst, interval(cfg.TTL)/2), registerLimit: ratelimit.New[netip.Addr](registerBurst, registerRefillPer),
+		limit: ratelimit.New[int64](burst, agentwire.ReportInterval(cfg.TTL)/2), registerLimit: ratelimit.New[netip.Addr](registerBurst, registerRefillPer),
 		factsHash: map[int64]uint64{}}, nil
 }
 
@@ -131,15 +125,11 @@ func (s *Service) Load(ctx context.Context) error {
 }
 
 // Interval 是下发给 agent 的上报间隔。
-func (s *Service) Interval() time.Duration { return interval(s.cfg.TTL) }
+func (s *Service) Interval() time.Duration { return agentwire.ReportInterval(s.cfg.TTL) }
 
-// interval 是上报间隔的唯一算法：TTL 内三次上报机会，容得下两次连续失败。下发给 agent 的间隔（Interval）
-// 与上报限速的补充周期（New）都从它推出。
-func interval(ttl time.Duration) time.Duration { return ttl / reportsPerTTL }
-
-// New 将 TTL 限在 MaxTTL 内；间隔为 interval(TTL) = TTL/reportsPerTTL，满速产出
-// MaxTasksPerNode×(TTL/reportsPerTTL)/MinIntervalS 条，单批上限必须容纳它。
-const _ = uint(probelimit.MaxResultsPerReport*probelimit.MinIntervalS*reportsPerTTL - probelimit.MaxTasksPerNode*int(MaxTTL/time.Second))
+// New 将 TTL 限在 MaxTTL 内；间隔为 ReportInterval(TTL) = TTL/ReportsPerTTL，满速产出
+// MaxTasksPerNode×(TTL/ReportsPerTTL)/MinIntervalS 条，单批上限必须容纳它。
+const _ = uint(probelimit.MaxResultsPerReport*probelimit.MinIntervalS*agentwire.ReportsPerTTL - probelimit.MaxTasksPerNode*int(agentwire.MaxTTL/time.Second))
 
 // Handler 挂载 AgentService。Register 是唯一的匿名方法，按来源键限速（§5.2；IPv4 一个地址一桶、IPv6 一个 /64 一桶，见 ratelimit.BySource），限流中间件包在 connect 外面，
 // 解码失败的请求同样计数（ratelimit.BySource 的注释写了理由）。Report 不进这个桶：同一出口地址后面可以有很多
@@ -265,7 +255,7 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[probev1.Repor
 	s.foldResults(id, req.Msg.GetProbeResults())
 	want := s.reconcileFacts(id, ctx.Value(nodeTokenKey{}).(string), req.Msg.GetFactsHash(), req.Msg.GetFacts())
 	resp := &probev1.ReportResponse{
-		ReportIntervalMs: uint32(s.Interval() / time.Millisecond),
+		ReportIntervalMs: agentwire.ReportIntervalMs(s.cfg.TTL),
 		WantFacts:        want,
 	}
 	// 电平触发：agent 报它持有的版本，hub 只在不一致时下发整份清单；空清单让 agent 停掉已消失的任务。

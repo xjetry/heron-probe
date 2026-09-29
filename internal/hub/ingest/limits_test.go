@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	"github.com/xjetry/probe/internal/agentwire"
 	"github.com/xjetry/probe/internal/probelimit"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -133,5 +134,79 @@ func TestReportResultLimits(t *testing.T) {
 				t.Fatalf("invalid batch error=%v want %s", err, tc.field)
 			}
 		})
+	}
+}
+
+// maxReportResponse 按每个字段的准入上界填满 ReportResponse。上界不明的字段（新加的字符串、repeated）让测试失败，
+// 逼新增字段的人先给出上界，而不是让它默默落在 agent 的读取上限之外。
+func maxReportResponse(t *testing.T) *probev1.ReportResponse {
+	t.Helper()
+	strLen := map[protoreflect.FullName]int{"probe.v1.ProbeTask.target": probelimit.MaxTargetLen}
+	count := map[protoreflect.FullName]int{"probe.v1.ProbeTasks.tasks": probelimit.MaxTasksPerNode}
+	var fill func(msg protoreflect.Message)
+	scalar := func(msg protoreflect.Message, fd protoreflect.FieldDescriptor) protoreflect.Value {
+		switch fd.Kind() {
+		case protoreflect.StringKind:
+			n, ok := strLen[fd.FullName()]
+			if !ok {
+				t.Fatalf("string field %s has no known bound", fd.FullName())
+			}
+			return protoreflect.ValueOfString(strings.Repeat("x", n))
+		case protoreflect.Uint32Kind:
+			return protoreflect.ValueOfUint32(math.MaxUint32)
+		case protoreflect.Uint64Kind:
+			return protoreflect.ValueOfUint64(math.MaxUint64)
+		case protoreflect.BoolKind:
+			return protoreflect.ValueOfBool(true)
+		case protoreflect.EnumKind:
+			values := fd.Enum().Values()
+			return protoreflect.ValueOfEnum(values.Get(values.Len() - 1).Number())
+		case protoreflect.MessageKind:
+			v := msg.NewField(fd)
+			fill(v.Message())
+			return v
+		}
+		t.Fatalf("field %s of kind %s has no known bound", fd.FullName(), fd.Kind())
+		return protoreflect.Value{}
+	}
+	fill = func(msg protoreflect.Message) {
+		fields := msg.Descriptor().Fields()
+		for i := 0; i < fields.Len(); i++ {
+			fd := fields.Get(i)
+			if !fd.IsList() {
+				msg.Set(fd, scalar(msg, fd))
+				continue
+			}
+			n, ok := count[fd.FullName()]
+			if !ok {
+				t.Fatalf("repeated field %s has no known bound", fd.FullName())
+			}
+			list := msg.Mutable(fd).List()
+			for j := 0; j < n; j++ {
+				if fd.Kind() == protoreflect.MessageKind {
+					e := list.NewElement()
+					fill(e.Message())
+					list.Append(e)
+				} else {
+					list.Append(scalar(msg, fd))
+				}
+			}
+		}
+	}
+	r := &probev1.ReportResponse{}
+	fill(r.ProtoReflect())
+	return r
+}
+
+// hub 能下发的最大 ReportResponse 必须在 agent 的读取上限之内，否则满载节点每次收到清单都失败、永远拿不到任务。
+func TestMaxReportResponseFitsAgentLimit(t *testing.T) {
+	r := maxReportResponse(t)
+	if len(r.GetTasks().GetTasks()) != probelimit.MaxTasksPerNode {
+		t.Fatalf("filled %d tasks, want %d", len(r.GetTasks().GetTasks()), probelimit.MaxTasksPerNode)
+	}
+	size := proto.Size(r)
+	t.Logf("max ReportResponse=%d limit=%d", size, agentwire.MaxResponseBytes)
+	if size > agentwire.MaxResponseBytes {
+		t.Fatalf("max ReportResponse=%d exceeds the agent read limit %d", size, agentwire.MaxResponseBytes)
 	}
 }

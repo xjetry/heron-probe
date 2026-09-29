@@ -285,7 +285,7 @@ mTLS 相对 bearer token 的增量是"凭据不过线"与"在 HTTP 层之前拒�
 
 - 下行面：agent 从 hub 收到的只有 `RegisterResponse` 与 `ReportResponse` 的三个字段；agent 不监听端口、不执行外部命令、不自我升级、运行期不写配置。新增下行字段时必须在本节写明它交给了 hub 什么能力。
 - 上报间隔：agent 把 `report_interval_ms` 限定在 hub 能合法配置的范围内，即 TTL 取 `MinTTL` 与 `MaxTTL` 时的间隔（间隔 = TTL / `ReportsPerTTL`）。越界（含 0）取最近的边界并告警，值变化时告警一次。TTL 边界、`ReportsPerTTL` 与间隔的换算只在 `internal/agentwire` 定义一次，hub 的 TTL 准入、hub 的间隔下发、agent 的限定与 agent 的退避上限（§4.7）都读它。没有这一条，hub 下发 1 ms 就能让 agent 不停地采集与上报。
-- 响应体：agent 的 Connect 客户端设 `ReadMaxBytes` 为 `agentwire.MaxResponseBytes`（64 KiB，限的是解压后的大小），hub 侧有测试钉住满载 `ReportResponse` 的编码不超过它。connect-go 默认不限读取大小，也就不限解压后的大小，hub 可以用一个很小的 gzip 响应撑爆 agent 的内存。超限按普通失败退避。
+- 响应体：agent 在 HTTP 层限读响应正文 `agentwire.MaxResponseBytes`（64 KiB），成功与错误响应都经过这一层；超出即报错，不截断（截断的正文可能恰好解码成一条更短的合法消息），按普通失败退避。agent 不接受压缩：connect 不声明 gzip，HTTP Transport 也不自行声明与解压，hub 不顾声明回 gzip 时按不认识的编码报错；读到的字节因此就是解码前的全部大小，响应本来不超过上限，压缩没有收益。connect-go（v1.21.0 实测）的 `ReadMaxBytes` 只管成功响应的消息：256 MiB 的错误正文让客户端分配了 1282 MiB，47 KiB 的 gzip 错误正文分配了 128 MiB，所以限读不能交给它。hub 侧有测试钉住满载 `ReportResponse` 的编码不超过上限（当前 18199 字节）。
 - 重定向：agent 的 HTTP 客户端不跟随任何重定向，`Register` 与 `Report` 都没有需要重定向的场景。Go 的 http.Client 跟随同主机重定向时会保留 `Authorization`，而协议不参与判断，https 到同主机 http 的重定向会把节点 token 明文发出。
 - 传输：hub 地址必须是 https。http 只在两种情形下接受：主机是 loopback IP 字面量（`127.0.0.0/8`、`::1`；`localhost` 这类名字要经解析，不在豁免内），或配置里有 `insecure_http: true`（由 `register --insecure-http` 或 `configure --insecure-http=true` 写入）。`register` 在发请求之前、`run` 在加载配置时调用同一个校验函数。不满足时 `run` 拒绝启动，报错里给出两种放行方式。已有的非 loopback http 部署升级后会停在这一步，安装脚本的启动确认随之失败并指向日志；这是有意的，明文链路上的中间人与 hub 失守等价，不能静默延续。
 - 探测目标：agent 解析出地址之后、发包之前，按宿主机本地策略检查实际要连的地址（§8.4）。策略只来自本地配置，hub 改不了。
