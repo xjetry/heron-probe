@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BillingCycle, BillingCycleSchema } from "../gen/probe/v1/types_pb";
-import { BILLING_CYCLES, cycleLabel, expired, expiryText, priceText, type BillingView } from "./billing";
+import { BILLING_CYCLES, cycleLabel, expired, expiryText, priceText, sortByExpiry, type BillingView } from "./billing";
 
 const none: BillingView = { price: "", currency: "", billingCycle: BillingCycle.UNSPECIFIED, expiresOn: "" };
 
@@ -55,5 +55,39 @@ describe("expiryText", () => {
 describe("没有 billing 的节点", () => {
   it("三个函数都当作什么都没填", () => {
     expect([priceText(undefined), expiryText(undefined), expired(undefined)]).toEqual(["", "", false]);
+  });
+});
+
+describe("sortByExpiry", () => {
+  const due = (days: number | undefined): BillingView => ({ ...none, expiresOn: days === undefined ? "" : "2030-07-01", daysLeft: days });
+  const names = (xs: { name: string }[]) => xs.map((x) => x.name);
+
+  it("到期早的在前：已过期最前，其后按剩余天数升序", () => {
+    const nodes = [
+      { name: "c", billing: due(30) }, { name: "a", billing: due(-3) }, { name: "b", billing: due(5) },
+    ];
+    expect(names(sortByExpiry(nodes))).toEqual(["a", "b", "c"]);
+  });
+
+  it("没有到期日的排最后：没有 billing、没填到期日、到期日无法解析（daysLeft 缺失）都算没有", () => {
+    const nodes = [
+      { name: "none" }, { name: "blank", billing: due(undefined) },
+      { name: "bad", billing: { ...none, expiresOn: "not-a-date" } }, { name: "soon", billing: due(1) },
+    ];
+    expect(names(sortByExpiry(nodes))).toEqual(["soon", "none", "blank", "bad"]);
+  });
+
+  it("到期相同的保持原有相对顺序，并且不改动传入的数组", () => {
+    const nodes = [
+      { name: "x", billing: due(7) }, { name: "y", billing: due(2) }, { name: "z", billing: due(7) }, { name: "w", billing: due(2) },
+    ];
+    const before = names(nodes);
+    expect(names(sortByExpiry(nodes))).toEqual(["y", "w", "x", "z"]);
+    expect(names(nodes)).toEqual(before);
+  });
+
+  it("今天到期（0 天）排在已过期之后、未到期之前", () => {
+    const nodes = [{ name: "later", billing: due(1) }, { name: "today", billing: due(0) }, { name: "gone", billing: due(-1) }];
+    expect(names(sortByExpiry(nodes))).toEqual(["gone", "today", "later"]);
   });
 });

@@ -244,16 +244,44 @@ func TestDeleteNodeLeavesNoTagRows(t *testing.T) {
 	}
 }
 
-// 公开节点的标签不出现在公开快照里（PublicNode 没有这个字段，字段允许列表见 public_test）。
-func TestTagsStayOffThePublicSnapshot(t *testing.T) {
+// 公开节点的标签随快照公开，私有节点的标签不出现：快照只含 public = 1 的节点（store.ListPublicNodes），
+// 标签跟着节点行读出，节点不在快照里它的标签就无处可出。两个方向同库断言，只测一个方向分不出
+// "标签被过滤掉"与"标签根本没被读出"。
+func TestPublicSnapshotCarriesTagsOfPublicNodesOnly(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	id, _ := h.createNode(t, "n")
-	if _, err := updateTags(t, h, id, "n", true, "internal-billing-db"); err != nil {
+	pub, _ := h.createNode(t, "pub")
+	priv, _ := h.createNode(t, "priv")
+	if _, err := updateTags(t, h, pub, "pub", true, "web", "客户A"); err != nil {
 		t.Fatal(err)
 	}
-	snap := pubGet(t, h, "GetSnapshot", jsonQuery("{}"), nil)
-	if !bytes.Contains(snap.body, []byte(`"name":"n"`)) || bytes.Contains(snap.body, []byte("internal-billing-db")) || bytes.Contains(snap.body, []byte("tags")) {
-		t.Fatalf("public snapshot must list the node without its tags: %s", snap.body)
+	if _, err := updateTags(t, h, priv, "priv", false, "internal-billing-db"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := h.publicClient().GetSnapshot(t.Context(), connect.NewRequest(&probev1.PublicServiceGetSnapshotRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := resp.Msg.GetNodes()
+	if len(nodes) != 1 || nodes[0].GetId() != pub {
+		t.Fatalf("snapshot nodes = %v, want only the public node", nodes)
+	}
+	// 与管理端 Node.tags 同一口径：先建的写法，按折叠排序。不用 mustUpdateTags 取值：它会把节点改回私有。
+	adminNodes, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&probev1.ListNodesRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []string
+	for _, n := range adminNodes.Msg.GetNodes() {
+		if n.GetId() == pub {
+			want = n.GetTags()
+		}
+	}
+	if !slices.Equal(nodes[0].GetTags(), want) || len(want) != 2 {
+		t.Fatalf("public tags = %v, admin tags = %v", nodes[0].GetTags(), want)
+	}
+	raw := pubGet(t, h, "GetSnapshot", jsonQuery("{}"), nil)
+	if bytes.Contains(raw.body, []byte("internal-billing-db")) {
+		t.Fatalf("private node's tag leaked into the public snapshot: %s", raw.body)
 	}
 }

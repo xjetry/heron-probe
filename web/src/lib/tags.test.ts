@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sameTag, withTag, withoutTag } from "./tags";
+import { matchesTags, nextSelection, presentTags, sameTag, withTag, withoutTag } from "./tags";
 
 describe("tags", () => {
   it.each([
@@ -24,5 +24,44 @@ describe("tags", () => {
 
   it("withoutTag 按折叠后的名字移除", () => {
     expect(withoutTag(["db", "web"], "DB")).toEqual(["web"]);
+  });
+  describe("nextSelection", () => {
+    it("单击：未选时变成只选这一个，覆盖其余", () => {
+      expect(nextSelection([], "db", false)).toEqual(["db"]);
+      expect(nextSelection(["web"], "db", false)).toEqual(["db"]);
+      expect(nextSelection(["web", "db"], "cache", false)).toEqual(["cache"]);
+    });
+    it("单击：多选之一时收成只选它；恰好只选它时清空回到全部", () => {
+      expect(nextSelection(["web", "db"], "db", false)).toEqual(["db"]);
+      expect(nextSelection(["db"], "db", false)).toEqual([]);
+      expect(nextSelection(["db"], "DB", false)).toEqual([]);
+    });
+    it("Shift+单击：其余不动，只翻转被点的一个", () => {
+      expect(nextSelection([], "db", true)).toEqual(["db"]);
+      expect(nextSelection(["web"], "db", true)).toEqual(["web", "db"]);
+      expect(nextSelection(["web", "db"], "web", true)).toEqual(["db"]);
+      expect(nextSelection(["db"], "DB", true)).toEqual([]);
+    });
+  });
+
+  describe("matchesTags", () => {
+    it("空选择匹配一切，含没有标签的节点", () => {
+      expect(matchesTags([], [])).toBe(true);
+      expect(matchesTags(["db"], [])).toBe(true);
+    });
+    it("多选取交集，按折叠比较", () => {
+      expect(matchesTags(["db", "web"], ["web", "db"])).toBe(true);
+      expect(matchesTags(["db"], ["web", "db"])).toBe(false);
+      expect(matchesTags(["DB"], ["db"])).toBe(true);
+      expect(matchesTags([], ["db"])).toBe(false);
+    });
+  });
+
+  describe("presentTags", () => {
+    it("跨节点按折叠去重，保留先出现的写法，按码元序排序", () => {
+      expect(presentTags([{ tags: ["web", "db"] }, { tags: ["DB", "cache"] }, { tags: [] }])).toEqual(["cache", "db", "web"]);
+      expect(presentTags([{ tags: ["DB"] }, { tags: ["db"] }])).toEqual(["DB"]);
+      expect(presentTags([])).toEqual([]);
+    });
   });
 });
