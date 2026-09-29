@@ -57,6 +57,7 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
     await expect(page.getByRole('link', { name: `tokyo-renamed（#${ids[0]}）` })).toBeVisible();
     await page.getByRole('button', { name: `计费 tokyo-renamed（#${ids[0]}）` }).click();
     await dialog.getByLabel(`价格 tokyo-renamed（#${ids[0]}）`).fill('29.50');
+    await page.screenshot({ path: testInfo.outputPath('billing-desktop.png'), fullPage: true });
     await dialog.getByRole('button', { name: '保存', exact: true }).click();
     await expect(dialog).toHaveCount(0);
     await expect(page.getByText('USD 29.50 / 月')).toBeVisible();
@@ -73,6 +74,9 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
     await renamedEdit.click();
     expect(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath('node-editor-mobile.png'), fullPage: true });
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: `计费 tokyo-renamed（#${ids[0]}）` }).click();
+    await page.screenshot({ path: testInfo.outputPath('billing-mobile.png'), fullPage: true });
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: '打开导航' }).click();
     await dialog.getByRole('link', { name: '总览', exact: true }).click();

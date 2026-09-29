@@ -69,7 +69,7 @@ describe("Nodes", () => {
     expect(screen.getByRole("dialog")).toHaveAccessibleName("计费设置 · a（#1）");
     expect(screen.queryByLabelText("名称 a（#1）")).toBeNull();
     fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "5" } });
-    fireEvent.change(screen.getByLabelText("币种 a（#1）"), { target: { value: "usd" } });
+    fireEvent.change(screen.getByLabelText("币种 a（#1）"), { target: { value: "USD" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, name: "a", public: false, note: "保留", countryPin: "JP", tags: ["prod"], offlineGraceS: 90, trafficResetDay: 1, billing: expect.objectContaining({ price: "5", currency: "USD" }) }), expect.anything()));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -621,21 +621,44 @@ describe("Nodes", () => {
       expect((await row("c（#3）")).getAllByRole("cell")[column("计费")]).toHaveTextContent("未设置");
     });
 
-    it("编辑计费随整行整体提交，币种输入即转大写", async () => {
+    it.each(["CNY", "USD", "HKD", "CAD", "EUR", "GBP"])("币种下拉框固定六种选项，选择 %s 后随计费整体提交", async (currency) => {
       const updateNode = vi.fn(async () => ({}));
       renderNodes({ listNodes: async () => ({ nodes: two }), updateNode });
       await screen.findByRole("link", { name: "a（#1）" });
       fireEvent.click(screen.getByRole("button", { name: "计费 a（#1）" }));
       fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "12.50" } });
-      fireEvent.change(screen.getByLabelText("币种 a（#1）"), { target: { value: "usd" } });
+      const select = screen.getByRole("combobox", { name: "币种 a（#1）" });
+      expect(within(select).getAllByRole("option").map((option) => [option.getAttribute("value"), option.textContent])).toEqual([
+        ["", "未设置"], ["CNY", "CNY"], ["USD", "USD"], ["HKD", "HKD"], ["CAD", "CAD"], ["EUR", "EUR"], ["GBP", "GBP"],
+      ]);
+      expect(select).toHaveValue("");
+      fireEvent.change(select, { target: { value: currency } });
       fireEvent.change(screen.getByLabelText("周期 a（#1）"), { target: { value: String(BillingCycle.YEARLY) } });
       fireEvent.change(screen.getByLabelText("到期日 a（#1）"), { target: { value: "2027-01-31" } });
       fireEvent.click(screen.getByLabelText("自动续期 a（#1）"));
-      expect(screen.getByLabelText("币种 a（#1）")).toHaveValue("USD");
+      expect(select).toHaveValue(currency);
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
       await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({
-        id: 1n, name: "a", billing: expect.objectContaining({ price: "12.50", currency: "USD", billingCycle: BillingCycle.YEARLY, expiresOn: "2027-01-31", autoRenew: true }),
+        id: 1n, name: "a", billing: expect.objectContaining({ price: "12.50", currency, billingCycle: BillingCycle.YEARLY, expiresOn: "2027-01-31", autoRenew: true }),
       }), expect.anything()));
+    });
+
+    it("可选范围外的当前币种只读回显，不自动改写，仍可改选支持币种", async () => {
+      const updateNode = vi.fn(async () => ({}));
+      renderNodes({ listNodes: async () => ({ nodes: [{ ...two[0], billing: { price: "9", currency: "TWD" } }] }), updateNode });
+      fireEvent.click(await screen.findByRole("button", { name: "计费 a（#1）" }));
+      const select = screen.getByRole("combobox", { name: "币种 a（#1）" });
+      expect(select).toHaveValue("TWD");
+      expect(within(select).getByRole("option", { name: "TWD（当前值）" })).toBeDisabled();
+      fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "10" } });
+      fireEvent.click(screen.getByRole("button", { name: "保存" }));
+      await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ billing: expect.objectContaining({ price: "10", currency: "TWD" }) }), expect.anything()));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      fireEvent.click(screen.getByRole("button", { name: "计费 a（#1）" }));
+      fireEvent.change(screen.getByRole("combobox", { name: "币种 a（#1）" }), { target: { value: "CNY" } });
+      expect(screen.queryByRole("option", { name: "TWD（当前值）" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "保存" }));
+      await waitFor(() => expect(updateNode).toHaveBeenLastCalledWith(expect.objectContaining({ billing: expect.objectContaining({ currency: "CNY" }) }), expect.anything()));
     });
 
     it("编辑从节点当前的计费开始，清空之后提交的是空值", async () => {
@@ -646,7 +669,7 @@ describe("Nodes", () => {
       fireEvent.click(screen.getByRole("button", { name: "计费 a（#1）" }));
       expect({
         price: (screen.getByLabelText("价格 a（#1）") as HTMLInputElement).value,
-        currency: (screen.getByLabelText("币种 a（#1）") as HTMLInputElement).value,
+        currency: (screen.getByLabelText("币种 a（#1）") as HTMLSelectElement).value,
         cycle: (screen.getByLabelText("周期 a（#1）") as HTMLSelectElement).value,
         expiresOn: (screen.getByLabelText("到期日 a（#1）") as HTMLInputElement).value,
         autoRenew: (screen.getByLabelText("自动续期 a（#1）") as HTMLInputElement).checked,
@@ -663,13 +686,13 @@ describe("Nodes", () => {
     });
 
     it("hub 拒绝计费取值时显示错误原文，编辑行与五项草稿保留", async () => {
-      const message = "billing.currency: must be three uppercase letters (ISO 4217); got \"US\"";
+      const message = "billing.price: invalid decimal price";
       const updateNode = vi.fn(async () => { throw new ConnectError(message, Code.InvalidArgument); });
       renderNodes({ listNodes: async () => ({ nodes: two }), updateNode });
       await screen.findByRole("link", { name: "a（#1）" });
       fireEvent.click(screen.getByRole("button", { name: "计费 a（#1）" }));
-      fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "12.50" } });
-      fireEvent.change(screen.getByLabelText("币种 a（#1）"), { target: { value: "us" } });
+      fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "abc" } });
+      fireEvent.change(screen.getByLabelText("币种 a（#1）"), { target: { value: "USD" } });
       fireEvent.change(screen.getByLabelText("周期 a（#1）"), { target: { value: String(BillingCycle.MONTHLY) } });
       fireEvent.change(screen.getByLabelText("到期日 a（#1）"), { target: { value: "2030-07-01" } });
       fireEvent.click(screen.getByLabelText("自动续期 a（#1）"));
@@ -678,11 +701,11 @@ describe("Nodes", () => {
       expect(updateNode).toHaveBeenCalledTimes(1);
       expect({
         price: (screen.getByLabelText("价格 a（#1）") as HTMLInputElement).value,
-        currency: (screen.getByLabelText("币种 a（#1）") as HTMLInputElement).value,
+        currency: (screen.getByLabelText("币种 a（#1）") as HTMLSelectElement).value,
         cycle: (screen.getByLabelText("周期 a（#1）") as HTMLSelectElement).value,
         expiresOn: (screen.getByLabelText("到期日 a（#1）") as HTMLInputElement).value,
         autoRenew: (screen.getByLabelText("自动续期 a（#1）") as HTMLInputElement).checked,
-      }).toEqual({ price: "12.50", currency: "US", cycle: String(BillingCycle.MONTHLY), expiresOn: "2030-07-01", autoRenew: true });
+      }).toEqual({ price: "abc", currency: "USD", cycle: String(BillingCycle.MONTHLY), expiresOn: "2030-07-01", autoRenew: true });
     });
   });
 

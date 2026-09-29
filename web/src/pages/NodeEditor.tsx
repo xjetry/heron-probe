@@ -9,6 +9,8 @@ import { Modal } from "../components/Modal";
 import { NodeAddresses } from "../components/NodeAddresses";
 import { lookupText, NodeCountry } from "../components/NodeCountry";
 
+const BILLING_CURRENCIES = ["CNY", "USD", "HKD", "CAD", "EUR", "GBP"];
+
 // UpdateNode 整体替换全部可编辑字段；独立计费入口也必须保留未编辑字段，不能用缺席表达“不变”。
 const draftOf = (node: Node) => ({
   name: node.name, public: node.public, note: node.note, trafficResetDay: node.trafficResetDay, countryPin: node.countryPin,
@@ -89,7 +91,11 @@ function TagsEditor({ id, label, isPublic, tags, known, pending, onPending, onCh
 function BillingEditor({ label, draft, onChange }: { label: string; draft: Draft["billing"]; onChange: (patch: Partial<Draft["billing"]>) => void }) {
   return <div className="billing-edit">
     <label>价格<input data-autofocus aria-label={`价格 ${label}`} inputMode="decimal" placeholder="12.50" value={draft.price} onChange={(e) => onChange({ price: e.target.value })} /></label>
-    <label>币种<input aria-label={`币种 ${label}`} placeholder="USD" value={draft.currency} onChange={(e) => onChange({ currency: e.target.value.toUpperCase() })} /></label>
+    <label>币种<select aria-label={`币种 ${label}`} value={draft.currency} onChange={(e) => onChange({ currency: e.target.value })}>
+      <option value="">未设置</option>
+      {draft.currency && !BILLING_CURRENCIES.includes(draft.currency) && <option value={draft.currency} disabled>{draft.currency}（当前值）</option>}
+      {BILLING_CURRENCIES.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
+    </select></label>
     <label>付款周期<select aria-label={`周期 ${label}`} value={draft.billingCycle} onChange={(e) => onChange({ billingCycle: Number(e.target.value) as BillingCycle })}>
       <option value={BillingCycle.UNSPECIFIED}>无周期</option>{BILLING_CYCLES.map(({ value, label: cycle }) => <option key={value} value={value}>每{cycle}</option>)}
     </select></label>
