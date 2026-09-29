@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -14,7 +15,7 @@ import (
 var configSnapshotTables = []string{
 	"node", "node_facts", "traffic", "probe_task", "probe_task_node", "probe_meta",
 	"alert_rule", "alert_rule_node", "alert_rule_channel", "alert_state", "alert_event", "alert_delivery",
-	"notify_channel", "setting", "admin", "api_token", "tag", "node_tag", "theme", "restore_record",
+	"notify_channel", "setting", "admin", "admin_security", "api_token", "tag", "node_tag", "theme", "restore_record", "probe_task_tag", "alert_rule_tag",
 }
 
 var metricsSnapshotTables = []string{
@@ -23,11 +24,36 @@ var metricsSnapshotTables = []string{
 }
 
 func (s *Store) SnapshotConfig(ctx context.Context, path string) error {
-	return s.snapshot(ctx, path, "config", configSnapshotTables)
+	return s.snapshot(ctx, path, "config", configSnapshotTables, nil)
 }
 
 func (s *Store) SnapshotMetrics(ctx context.Context, path string) error {
-	return s.snapshot(ctx, path, "metrics", metricsSnapshotTables)
+	return s.snapshot(ctx, path, "metrics", metricsSnapshotTables, nil)
+}
+
+type SnapshotThemePackage struct {
+	ID, SHA256, Path string
+	Revision         int64
+}
+
+// SnapshotConfigWithThemes 把原包写到调用方拥有的私有目录；每次只在内存保留一个包。
+// 清单、配置和原包均来自同一读事务，主题并发替换不能改变这份快照的引用。
+func (s *Store) SnapshotConfigWithThemes(ctx context.Context, path, packageDir string) ([]SnapshotThemePackage, error) {
+	var packages []SnapshotThemePackage
+	err := s.snapshot(ctx, path, "config", configSnapshotTables, func(id, digest string, revision int64, content []byte) error {
+		packagePath := filepath.Join(packageDir, digest+".zip")
+		f, err := os.OpenFile(packagePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
+		_, err = f.Write(content)
+		if err = errors.Join(err, f.Close()); err != nil {
+			return err
+		}
+		packages = append(packages, SnapshotThemePackage{ID: id, SHA256: digest, Path: packagePath, Revision: revision})
+		return nil
+	})
+	return packages, err
 }
 
 // BackupScratch 给出备份快照暂存目录的位置与名字前缀。位置与源库同目录，快照容量随数据库所在磁盘规划，
@@ -36,7 +62,7 @@ func (s *Store) BackupScratch() (dir, prefix string) {
 	return filepath.Dir(s.path), "probe-backup-" + filepath.Base(s.path) + "-"
 }
 
-func (s *Store) snapshot(ctx context.Context, path, layer string, tables []string) (result error) {
+func (s *Store) snapshot(ctx context.Context, path, layer string, tables []string, packageSink func(string, string, int64, []byte) error) (result error) {
 	s.closeMu.RLock()
 	defer s.closeMu.RUnlock()
 	if s.closed {
@@ -84,6 +110,41 @@ func (s *Store) snapshot(ctx context.Context, path, layer string, tables []strin
 			return fmt.Errorf("snapshot %s: %w", table, err)
 		}
 	}
+	if layer == "config" {
+		if _, err := tx.ExecContext(ctx, "CREATE TABLE snap.snapshot_theme (theme_id TEXT PRIMARY KEY, sha256 TEXT NOT NULL)"); err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, "SELECT t.id,p.content,p.revision FROM main.theme t LEFT JOIN main.theme_package p ON p.theme_id=t.id ORDER BY t.id")
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id string
+			var content []byte
+			var revision sql.NullInt64
+			if err := rows.Scan(&id, &content, &revision); err != nil {
+				rows.Close()
+				return err
+			}
+			digest := ""
+			if revision.Valid {
+				digest = fmt.Sprintf("%x", sha256.Sum256(content))
+				if packageSink != nil {
+					if err := packageSink(id, digest, revision.Int64, content); err != nil {
+						rows.Close()
+						return err
+					}
+				}
+			}
+			if _, err := tx.ExecContext(ctx, "INSERT INTO snap.snapshot_theme VALUES (?,?)", id, digest); err != nil {
+				rows.Close()
+				return err
+			}
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+	}
 	// 分配高水位不是配置数据；两层各自漂移时，恢复必须知道每层曾使用过的 ID，
 	// 包括已经删掉且没有历史行的 ID。每层都在上述同一读事务里保存完整序列。
 	// CREATE TABLE AS 不保留 AUTOINCREMENT，先由 SQLite 创建内部序列表再搬高水位。
@@ -96,10 +157,10 @@ func (s *Store) snapshot(ctx context.Context, path, layer string, tables []strin
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, "CREATE TABLE snap.snapshot_meta (schema_version INTEGER NOT NULL, taken_at INTEGER NOT NULL, layer TEXT NOT NULL)"); err != nil {
+	if _, err := tx.ExecContext(ctx, "CREATE TABLE snap.snapshot_meta (schema_version INTEGER NOT NULL, taken_at INTEGER NOT NULL, layer TEXT NOT NULL, format_version INTEGER NOT NULL)"); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO snap.snapshot_meta VALUES (?, ?, ?)", version, at, layer); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO snap.snapshot_meta VALUES (?, ?, ?, 2)", version, at, layer); err != nil {
 		return err
 	}
 	return tx.Commit()

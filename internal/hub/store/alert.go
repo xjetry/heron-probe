@@ -16,9 +16,10 @@ import (
 type AlertKind string
 
 const (
-	KindOffline AlertKind = "offline"
-	KindProbe   AlertKind = "probe"
-	KindExpiry  AlertKind = "expiry"
+	KindOffline  AlertKind = "offline"
+	KindProbe    AlertKind = "probe"
+	KindExpiry   AlertKind = "expiry"
+	KindResource AlertKind = "resource"
 )
 
 type ProbeMetric string
@@ -28,20 +29,30 @@ const (
 	MetricRttMs   ProbeMetric = "rtt_ms"
 )
 
+type ResourceMetric string
+
+const (
+	MetricMemoryUsedPct ResourceMetric = "memory_used_pct"
+	MetricDiskUsedPct   ResourceMetric = "disk_used_pct"
+)
+
 type AlertRule struct {
 	ID      int64
 	Name    string
 	Kind    AlertKind
 	Enabled bool
-	// AllNodes 为真时不存联结行；否则 NodeIDs 是升序去重的显式集合，空集合不覆盖任何节点。
-	// DeleteNode 只删联结行、不改 AllNodes，因此删除最后一个作用域节点不会放宽到全部节点。
-	AllNodes   bool
-	NodeIDs    []int64
-	ChannelIDs []int64
-	TaskID     uint64
-	Metric     ProbeMetric
-	Threshold  float64
-	ForMinutes int
+	// AllNodes 为真时不存选择关联；SelectorTags 非空时 NodeIDs 是当前标签交集的展开结果，否则是显式集合。
+	// 空覆盖不代表全部节点，DeleteNode 只删关联、不改模式，因此删除最后一个作用域节点不会放宽。
+	AllNodes          bool
+	NodeIDs           []int64
+	SelectorTags      []string
+	ChannelIDs        []int64
+	TaskID            uint64
+	Metric            ProbeMetric
+	Threshold         float64
+	ForMinutes        int
+	ResourceMetric    ResourceMetric
+	RecoveryThreshold float64
 	// DaysBefore 只属于到期规则。它与 Threshold、ForMinutes 一样不是规则身份：改它保留状态（见 SaveAlertRule）。
 	DaysBefore int
 	CreatedAt  time.Time
@@ -89,10 +100,14 @@ type StateRow struct {
 type Transition string
 
 const (
-	TransitionFiring       Transition = "firing"
-	TransitionRecovered    Transition = "recovered"
-	TransitionLoginSuccess Transition = "login_success"
-	TransitionLoginLocked  Transition = "login_locked"
+	TransitionFiring         Transition = "firing"
+	TransitionRecovered      Transition = "recovered"
+	TransitionLoginSuccess   Transition = "login_success"
+	TransitionLoginLocked    Transition = "login_locked"
+	TransitionLoginFailed    Transition = "login_failed"
+	TransitionAuthChanged    Transition = "auth_changed"
+	TransitionBackupSuccess  Transition = "backup_success"
+	TransitionBackupRestored Transition = "backup_restored"
 	// 配置层备份失败与恢复（§6.7），同一故障只在首次失败与恢复时各写一条。
 	TransitionBackupFailed    Transition = "backup_failed"
 	TransitionBackupRecovered Transition = "backup_recovered"
@@ -111,9 +126,9 @@ const (
 // 读侧（投递队列、面板）按 transition 给出标签与种类，不按 0/0 推断。
 func SystemEventKind(t Transition) (kind string, ok bool) {
 	switch t {
-	case TransitionLoginSuccess, TransitionLoginLocked:
+	case TransitionLoginSuccess, TransitionLoginLocked, TransitionLoginFailed, TransitionAuthChanged:
 		return SystemKindLogin, true
-	case TransitionBackupFailed, TransitionBackupRecovered, TransitionBackupDisabled:
+	case TransitionBackupFailed, TransitionBackupRecovered, TransitionBackupDisabled, TransitionBackupSuccess, TransitionBackupRestored:
 		return SystemKindBackup, true
 	}
 	return "", false
@@ -208,7 +223,18 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT id, name, kind, enabled, all_nodes, task_id, metric, threshold, for_minutes, days_before, created_at FROM alert_rule ORDER BY id`)
+	out, err := listAlertRulesTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func listAlertRulesTx(ctx context.Context, tx *sql.Tx) ([]AlertRule, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, name, kind, enabled, all_nodes, task_id, metric, threshold, for_minutes, days_before, created_at, resource_metric, recovery_threshold FROM alert_rule ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -220,12 +246,15 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 		var task, minutes, daysBefore sql.NullInt64
 		var metric sql.NullString
 		var threshold sql.NullFloat64
+		var resourceMetric sql.NullString
+		var recovery sql.NullFloat64
 		var created int64
-		if err := rows.Scan(&r.ID, &r.Name, &r.Kind, &r.Enabled, &r.AllNodes, &task, &metric, &threshold, &minutes, &daysBefore, &created); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.Kind, &r.Enabled, &r.AllNodes, &task, &metric, &threshold, &minutes, &daysBefore, &created, &resourceMetric, &recovery); err != nil {
 			return nil, err
 		}
 		r.TaskID, r.Metric, r.Threshold, r.ForMinutes = uint64(task.Int64), ProbeMetric(metric.String), threshold.Float64, int(minutes.Int64)
 		r.DaysBefore = int(daysBefore.Int64)
+		r.ResourceMetric, r.RecoveryThreshold = ResourceMetric(resourceMetric.String), recovery.Float64
 		r.CreatedAt = time.Unix(created, 0).UTC()
 		index[r.ID] = len(out)
 		out = append(out, r)
@@ -262,8 +291,17 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 			return nil, err
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
+	for i := range out {
+		out[i].SelectorTags, err = selectorTags(tx, "alert_rule", "rule_id", out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		if len(out[i].SelectorTags) > 0 {
+			out[i].NodeIDs, err = scanIDs(tx.Query("SELECT node_id FROM ("+alertCoverage+") WHERE owner_id = ? ORDER BY node_id", out[i].ID))
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	return out, nil
 }
@@ -274,15 +312,15 @@ func sortedAlertIDs(ids []int64) []int64 {
 	return slices.Compact(out)
 }
 
-// KindFieldError 是规则带着不属于它种类的专用字段。Field 是协议里的字段名，Constraint 是违反的约束。
+// KindFieldError 表示字段组合违反存储约束。Field 是协议字段名，Constraint 是违反的约束。
 type KindFieldError struct {
 	Field, Constraint string
 }
 
 func (e KindFieldError) Error() string { return e.Field + " " + e.Constraint }
 
-// CheckKindFields 裁决种类与专用字段的组合：探测四项（任务、指标、阈值、持续分钟）只属于探测规则，days_before
-// 只属于到期规则，别的种类上必须是零值。它是这条规则唯一的实现：SaveAlertRule 对非法组合报错而不改写，
+// CheckKindFields 裁决种类与专用字段的组合：任务与探测指标只属于探测，资源指标与恢复阈值只属于资源；
+// 阈值和持续分钟由探测与资源共用，days_before 只属于到期，其余种类必须是零值。SaveAlertRule 对非法组合报错而不改写，
 // alert.CheckRule 在保存与载入时调它，协议层经 CheckRule 得到同样的字段与约束（§9.1）。阈值用 != 0 判：NaN 与任何数
 // 都不等，也被拒绝。种类本身是否合法不在这里判断。
 func CheckKindFields(r AlertRule) error {
@@ -292,10 +330,22 @@ func CheckKindFields(r AlertRule) error {
 			return KindFieldError{"task_id", "must be 0 unless kind is probe"}
 		case r.Metric != "":
 			return KindFieldError{"metric", "must be unspecified unless kind is probe"}
-		case r.Threshold != 0:
-			return KindFieldError{"threshold", "must be 0 unless kind is probe"}
-		case r.ForMinutes != 0:
-			return KindFieldError{"for_minutes", "must be 0 unless kind is probe"}
+		}
+	}
+	if r.Kind != KindProbe && r.Kind != KindResource {
+		if r.Threshold != 0 {
+			return KindFieldError{"threshold", "must be 0 unless kind is probe or resource"}
+		}
+		if r.ForMinutes != 0 {
+			return KindFieldError{"for_minutes", "must be 0 unless kind is probe or resource"}
+		}
+	}
+	if r.Kind != KindResource {
+		if r.ResourceMetric != "" {
+			return KindFieldError{"resource_metric", "must be unspecified unless kind is resource"}
+		}
+		if r.RecoveryThreshold != 0 {
+			return KindFieldError{"recovery_threshold", "must be 0 unless kind is resource"}
 		}
 	}
 	if r.Kind != KindExpiry && r.DaysBefore != 0 {
@@ -306,6 +356,9 @@ func CheckKindFields(r AlertRule) error {
 
 // 引用检查与保存同在单写事务，删除不能插入两者之间造成孤儿引用。
 func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, error) {
+	if err := (NodeSelector{AllNodes: r.AllNodes, NodeIDs: r.NodeIDs, Tags: r.SelectorTags}).Check(); err != nil {
+		return AlertRule{}, err
+	}
 	// 非法组合报错而不是清零：静默清零是放宽方向，调用方发了什么、存下的却是零值，无从察觉（§9.1）。
 	if err := CheckKindFields(r); err != nil {
 		return AlertRule{}, err
@@ -331,7 +384,7 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 		}
 		// 每种规则只落自己的专用列，其余列写 NULL。CheckKindFields 已保证别的种类的专用字段都是零值，NULL 与回显的
 		// 零值一致。
-		var task, metric, threshold, minutes, daysBefore any
+		var task, metric, threshold, minutes, daysBefore, resourceMetric, recovery any
 		if r.Kind == KindProbe {
 			if err := requireAlertReference(tx, "probe_task", ObjectProbeTask, int64(r.TaskID)); err != nil {
 				return err
@@ -341,25 +394,28 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 		if r.Kind == KindExpiry {
 			daysBefore = r.DaysBefore
 		}
+		if r.Kind == KindResource {
+			resourceMetric, recovery, threshold, minutes = r.ResourceMetric, r.RecoveryThreshold, r.Threshold, r.ForMinutes
+		}
 		var created int64
 		var identityChanged bool
 		if r.ID == 0 {
 			created = s.clk.Now().Unix()
-			err := tx.QueryRow(`INSERT INTO alert_rule (name, kind, enabled, all_nodes, task_id, metric, threshold, for_minutes, days_before, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`, r.Name, r.Kind, r.Enabled, r.AllNodes, task, metric, threshold, minutes, daysBefore, created).Scan(&r.ID)
+			err := tx.QueryRow(`INSERT INTO alert_rule (name, kind, enabled, all_nodes, task_id, metric, threshold, for_minutes, days_before, created_at, resource_metric, recovery_threshold)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`, r.Name, r.Kind, r.Enabled, r.AllNodes, task, metric, threshold, minutes, daysBefore, created, resourceMetric, recovery).Scan(&r.ID)
 			if err != nil {
 				return err
 			}
 		} else {
-			err := tx.QueryRow(`SELECT kind != ? OR COALESCE(task_id, 0) != ? OR COALESCE(metric, '') != ? FROM alert_rule WHERE id = ?`, r.Kind, r.TaskID, r.Metric, r.ID).Scan(&identityChanged)
+			err := tx.QueryRow(`SELECT kind != ? OR COALESCE(task_id, 0) != ? OR COALESCE(metric, '') != ? OR COALESCE(resource_metric, '') != ? FROM alert_rule WHERE id = ?`, r.Kind, r.TaskID, r.Metric, r.ResourceMetric, r.ID).Scan(&identityChanged)
 			if errors.Is(err, sql.ErrNoRows) {
 				return NotFoundError{Kind: ObjectAlertRule, ID: r.ID}
 			}
 			if err != nil {
 				return err
 			}
-			err = tx.QueryRow(`UPDATE alert_rule SET name = ?, kind = ?, enabled = ?, all_nodes = ?, task_id = ?, metric = ?, threshold = ?, for_minutes = ?, days_before = ?
-				WHERE id = ? RETURNING created_at`, r.Name, r.Kind, r.Enabled, r.AllNodes, task, metric, threshold, minutes, daysBefore, r.ID).Scan(&created)
+			err = tx.QueryRow(`UPDATE alert_rule SET name = ?, kind = ?, enabled = ?, all_nodes = ?, task_id = ?, metric = ?, threshold = ?, for_minutes = ?, days_before = ?, resource_metric = ?, recovery_threshold = ?
+				WHERE id = ? RETURNING created_at`, r.Name, r.Kind, r.Enabled, r.AllNodes, task, metric, threshold, minutes, daysBefore, resourceMetric, recovery, r.ID).Scan(&created)
 			if errors.Is(err, sql.ErrNoRows) {
 				return NotFoundError{Kind: ObjectAlertRule, ID: r.ID}
 			}
@@ -381,6 +437,20 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 				if _, err := tx.Exec("INSERT INTO "+rel.table+" (rule_id, "+rel.column+") VALUES (?, ?)", r.ID, id); err != nil {
 					return err
 				}
+			}
+		}
+		if err := setSelectorTags(tx, "alert_rule", "rule_id", r.ID, r.SelectorTags); err != nil {
+			return err
+		}
+		var err error
+		r.SelectorTags, err = selectorTags(tx, "alert_rule", "rule_id", r.ID)
+		if err != nil {
+			return err
+		}
+		if len(r.SelectorTags) > 0 {
+			r.NodeIDs, err = scanIDs(tx.Query("SELECT node_id FROM ("+alertCoverage+") WHERE owner_id = ? ORDER BY node_id", r.ID))
+			if err != nil {
+				return err
 			}
 		}
 		// 规则与状态由本次写事务一起提交；种类、任务或指标变化后，旧观测不再描述当前规则。
@@ -421,7 +491,7 @@ func (s *Store) DeleteAlertRule(ctx context.Context, id int64) error {
 		if err := deleteAlertEntity(tx, "alert_rule", ObjectAlertRule, id); err != nil {
 			return err
 		}
-		for _, table := range []string{"alert_rule_node", "alert_rule_channel", "alert_state"} {
+		for _, table := range []string{"alert_rule_node", "alert_rule_channel", "alert_rule_tag", "alert_state"} {
 			if _, err := tx.Exec("DELETE FROM "+table+" WHERE rule_id = ?", id); err != nil {
 				return err
 			}
@@ -612,7 +682,7 @@ func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, stat
 }
 
 // RecordLoginEvent 记一条登录事件（系统事件，rule_id、node_id 为 0），给设置里选定的每个渠道各建一条投递；
-// 没选渠道时什么都不写，返回的事件 ID 为 0。
+// 没选渠道也保留审计；普通认证失败只写事件，不投递通知。
 //
 // 登录不走规则×节点：它没有节点，也没有恢复，规则×节点的状态机与以 (rule_id, node_id) 为主键的 alert_state
 // 都装不下它，所以不建 alert_state。事件与投递的写入（渠道引用检查、入批）与规则事件、备份事件共用
@@ -623,21 +693,22 @@ func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, stat
 //   - 与删渠道：删渠道先提交，这里读到的列表已摘除该渠道（删渠道在同一事务里摘除）；这里先提交，删渠道随后
 //     把这条尚未完成的投递置为终态（FailureChannelDeleted）。列表里若残留不存在的 ID，recordAlertEvent 的
 //     引用检查让整条事件失败、什么都不写，不会留下指向不存在渠道的投递。
-//   - 与关闭通知：关闭先提交，这里读到空列表，不写事件；这里先提交，已记下的这条照常投递，所以关闭之后仍可能
+//   - 与关闭通知：关闭先提交，这里读到空列表，只记事件；这里先提交，已记下的这条照常投递，所以关闭之后仍可能
 //     收到关闭提交前已记下的通知。
 func (s *Store) RecordLoginEvent(ctx context.Context, ev AlertEvent) (AlertEvent, error) {
 	if kind, _ := SystemEventKind(ev.Transition); kind != SystemKindLogin {
-		return AlertEvent{}, fmt.Errorf("login event transition must be %s or %s; got %q", TransitionLoginSuccess, TransitionLoginLocked, ev.Transition)
+		return AlertEvent{}, fmt.Errorf("invalid login event transition %q", ev.Transition)
 	}
 	ev.ID, ev.RuleID, ev.NodeID, ev.Deliveries = 0, 0, 0, nil
 	ev.At = time.Unix(ev.At.Unix(), 0).UTC()
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		ids, err := storedChannelIDs(tx, LoginNotifyList)
-		if err != nil {
-			return err
-		}
-		if len(ids) == 0 {
-			return nil
+		var ids []int64
+		if ev.Transition != TransitionLoginFailed {
+			var err error
+			ids, err = storedChannelIDs(tx, LoginNotifyList)
+			if err != nil {
+				return err
+			}
 		}
 		return recordAlertEvent(tx, &ev, systemTargets(ids))
 	})

@@ -16,6 +16,21 @@ service AdminService {
   rpc Login(LoginRequest) returns (LoginResponse) {
     option (probe.v1.access) = ACCESS_LOGIN;
   }
+  // 发起无密码 Passkey 登录；挑战只可消费一次。
+  rpc BeginPasskeyLogin(BeginPasskeyLoginRequest) returns (BeginPasskeyLoginResponse) {
+    option (probe.v1.access) = ACCESS_LOGIN;
+  }
+  rpc FinishPasskeyLogin(FinishPasskeyLoginRequest) returns (FinishPasskeyLoginResponse) {
+    option (probe.v1.access) = ACCESS_LOGIN;
+  }
+  // 安全凭据仅允许会话访问，不返回 TOTP 密钥或恢复码。
+  rpc GetSecurity(GetSecurityRequest) returns (GetSecurityResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
+  // 修改凭据需要重新认证；挑战绑定当前会话与凭据版本。修改成功撤销现有会话。
+  rpc SecurityAction(SecurityActionRequest) returns (SecurityActionResponse) {
+    option (probe.v1.access) = ACCESS_SESSION;
+  }
   // 作废当前会话并清除 cookie。
   rpc Logout(LogoutRequest) returns (LogoutResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
@@ -63,7 +78,7 @@ service AdminService {
   rpc ListTags(ListTagsRequest) returns (ListTagsResponse) {
     option (probe.v1.access) = ACCESS_READ;
   }
-  // 删除标签：从全部节点上解除它并删掉标签本身，节点不受影响。名字大小写不敏感；没有这个标签时 NotFound。
+  // 删除标签：被探测或告警动态选择器引用时拒绝；否则解除节点关联并删除。名字大小写不敏感；不存在时 NotFound。
   rpc DeleteTag(DeleteTagRequest) returns (DeleteTagResponse) {
     option (probe.v1.access) = ACCESS_SESSION;
   }
@@ -218,8 +233,62 @@ service AdminService {
 
 message LoginRequest {
   string password = 1;
+  string otp = 2;
+  string recovery_code = 3;
 }
 message LoginResponse {}
+message BeginPasskeyLoginRequest {}
+message BeginPasskeyLoginResponse {
+  string challenge_id = 1;
+  string options_json = 2;
+}
+message FinishPasskeyLoginRequest {
+  string challenge_id = 1;
+  string credential_json = 2;
+}
+message FinishPasskeyLoginResponse {}
+message GetSecurityRequest {}
+message SecurityCredential {
+  string id = 1;
+  string name = 2;
+}
+message GetSecurityResponse {
+  bool totp_enabled = 1;
+  bool passkey_available = 2;
+  repeated SecurityCredential passkeys = 3;
+  uint32 recovery_codes_remaining = 4;
+}
+enum SecurityActionKind {
+  SECURITY_ACTION_KIND_UNSPECIFIED = 0;
+  SECURITY_ACTION_KIND_TOTP_BEGIN = 1;
+  SECURITY_ACTION_KIND_TOTP_ENABLE = 2;
+  SECURITY_ACTION_KIND_TOTP_DISABLE = 3;
+  SECURITY_ACTION_KIND_PASSKEY_BEGIN = 4;
+  SECURITY_ACTION_KIND_PASSKEY_REGISTER = 5;
+  SECURITY_ACTION_KIND_PASSKEY_DELETE = 6;
+  SECURITY_ACTION_KIND_REAUTH_BEGIN = 7;
+  SECURITY_ACTION_KIND_REAUTH_FINISH = 8;
+  SECURITY_ACTION_KIND_RECOVERY_REGENERATE = 9;
+}
+message SecurityActionRequest {
+  SecurityActionKind action = 1;
+  string password = 2;
+  string otp = 3;
+  string recovery_code = 4;
+  string challenge_id = 5;
+  string credential_json = 6;
+  string name = 7;
+  string credential_id = 8;
+  string proof_token = 9;
+}
+message SecurityActionResponse {
+  string challenge_id = 1;
+  string options_json = 2;
+  string totp_secret = 3;
+  string totp_uri = 4;
+  repeated string recovery_codes = 5;
+  string proof_token = 6;
+}
 
 message LogoutRequest {}
 message LogoutResponse {}
@@ -460,6 +529,8 @@ message ProbeTaskDetail {
   repeated int64 node_ids = 2;
   // 为真表示全部节点，之后新建的节点自动纳入；agent 只拿到展开后的清单，看不到这个开关。
   bool all_nodes = 3;
+  // 动态作用域：匹配同时拥有全部标签的节点。非空时 node_ids 是当前展开值。
+  repeated string selector_tags = 4;
 }
 message ListProbeTasksRequest {}
 message ListProbeTasksResponse {
@@ -476,9 +547,11 @@ message SaveProbeTaskRequest {
   // 端口 1–65535；IP 字面量不带 zone。
   ProbeTask task = 1;
   repeated int64 node_ids = 2;
-  // 为真表示全部节点（含以后新建的），node_ids 忽略。新节点也会继承这些任务，all_nodes 任务超过 64 个时
+  // 为真表示全部节点（含以后新建的），不得同时给 node_ids 或 selector_tags。新节点也会继承这些任务，all_nodes 任务超过 64 个时
   // 建节点与注册会被拒绝。
   bool all_nodes = 3;
+  // 动态标签交集，与 all_nodes 和非空 node_ids 互斥；标签必须已存在。
+  repeated string selector_tags = 4;
 }
 message SaveProbeTaskResponse {
   ProbeTaskDetail task = 1;
@@ -493,6 +566,12 @@ enum AlertKind {
   ALERT_KIND_PROBE = 2;
   // 节点到期日距今不超过 days_before 天（含已过期）即触发，数据源是节点的到期日。
   ALERT_KIND_EXPIRY = 3;
+  ALERT_KIND_RESOURCE = 4;
+}
+enum ResourceMetric {
+  RESOURCE_METRIC_UNSPECIFIED = 0;
+  RESOURCE_METRIC_MEMORY_USED_PCT = 1;
+  RESOURCE_METRIC_DISK_USED_PCT = 2;
 }
 enum ProbeMetric {
   PROBE_METRIC_UNSPECIFIED = 0;
@@ -504,30 +583,37 @@ message AlertRule {
   int64 id = 1;
   // 1–64 个字符。
   string name = 2;
-  // 必须为离线、探测或到期，未指定值不允许保存。
+  // 必须为离线、探测、到期或资源，未指定值不允许保存。
   AlertKind kind = 3;
   bool enabled = 4;
   // 显式作用域，升序去重；all_nodes 为假时就是作用域，保存时不可为空。
   repeated int64 node_ids = 5;
   // 已保存渠道的 id，升序去重；空表示只记事件不投递。
   repeated int64 channel_ids = 6;
-  // 以下四个字段仅用于探测规则，task_id 必须是已存在的非零任务 id；离线与到期规则四项都必须为零值。
+  // task_id 与 metric 仅用于探测规则；threshold、for_minutes 用于探测和资源规则，离线与到期规则必须为零值。
+  // 探测的 task_id 必须是已存在的非零任务 id。
   uint64 task_id = 7;
   // 探测规则必须选择丢包百分比或往返毫秒数。
   ProbeMetric metric = 8;
-  // 丢包百分比 0–100；往返毫秒数 > 0。
+  // 丢包百分比 0–100；往返毫秒数 > 0；资源百分比 > 0 且 <= 100。
   double threshold = 9;
   // 1–60：连续多少个已闭合分钟达到阈值才触发。
   uint32 for_minutes = 10;
   // 创建墙钟，Unix 秒；保存请求中的值忽略。
   int64 created_at = 11;
-  // 为真表示全部节点，新建节点自动纳入，node_ids 忽略且回显为空；
+  // 为真表示全部节点，新建节点自动纳入，不得同时提交 node_ids 或 selector_tags；
   // 为假时 node_ids 是显式作用域，删除节点后空集不等于全部。
   bool all_nodes = 12;
   // 仅用于到期规则：1–365，节点到期日减今天（hub 时区）不超过它即触发，已过期的也算；其余种类必须为 0。
   // 保存启用的到期规则后立即评估一次，此后在 hub 启动、每个日界（零点不存在的日子取新一天的第一个时刻）与节点
   // 计费字段变化时评估。
   uint32 days_before = 13;
+  // 仅资源规则：同一次上报的已用 / 总量百分比，按已闭合分钟平均。
+  ResourceMetric resource_metric = 14;
+  // 仅资源规则：连续 for_minutes 个完整分钟不高于此阈值才恢复，必须小于触发阈值；缺失读数不能恢复。
+  double recovery_threshold = 15;
+  // 动态标签交集，与 all_nodes 和显式 node_ids 互斥。
+  repeated string selector_tags = 16;
 }
 message ListAlertRulesRequest {}
 message ListAlertRulesResponse {

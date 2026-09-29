@@ -6,7 +6,6 @@ import (
 
 	probev1 "github.com/xjetry/probe/gen/probe/v1"
 	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/probelimit"
 )
 
 func probeValueColumns() []string {
@@ -57,26 +56,21 @@ func scanProbeRows(rows *sql.Rows, nodeID int64) ([]metric.ProbeRow, error) {
 	return out, rows.Err()
 }
 
-// ProbeTaskRecord 是任务与它当前覆盖的节点。AllNodes 为真时 NodeIDs 是读取时刻全部节点的展开结果，库里没有
-// 对应的分配行；为假时 NodeIDs 就是分配行。两种情形 NodeIDs 都升序去重，读侧不必再区分。
+// ProbeTaskRecord 的 NodeIDs 始终是读取时刻的覆盖集合：全部节点与标签交集先展开，显式分配直接读取关联。
+// SelectorTags 只描述动态条件，写入请求不能把已展开的 NodeIDs 与条件同时提交。
 type ProbeTaskRecord struct {
-	Task     *probev1.ProbeTask
-	AllNodes bool
-	NodeIDs  []int64
+	Task         *probev1.ProbeTask
+	AllNodes     bool
+	NodeIDs      []int64
+	SelectorTags []string
 }
 
 // probeCoverage 是"任务覆盖哪些节点"的唯一读法：展开（LoadProbeTasks、SaveProbeTask 的回读、ProbeTaskNodeIDs、
-// insertNode 返回的新节点覆盖）与每节点上限的计数（SaveProbeTask、insertNode）都从它取，两处口径因此不会分叉。
-// 探测任务注册表在重载、保存与建节点时发布的覆盖分别来自 LoadProbeTasks、SaveProbeTask 的回读与 insertNode 的
-// 返回，所以内存索引也跟着这里的口径走。
-//
-// UNION ALL 的两支不重叠，靠的是 all_nodes 任务没有分配行，由写侧保证：SaveProbeTask 更新任务时先删掉它的全部
-// 分配行、只在 all_nodes 为假时写回；新建任务的 id 由 AUTOINCREMENT 分配、不复用，DeleteProbeTask 与任务同事务
-// 删掉分配行，所以新 id 没有旧分配行。
-const probeCoverage = `SELECT t.id AS task_id, n.id AS node_id FROM probe_task t CROSS JOIN node n WHERE t.all_nodes = 1
-UNION ALL SELECT task_id, node_id FROM probe_task_node`
+// insertNode 返回的新节点覆盖）与每节点上限的计数（SaveProbeTask、insertNode、UpdateNodeTasks）都从它取。
+// 注册表在重载、保存、建节点和修改标签后发布的覆盖也来自这些事务的回读，因此所有读者使用同一口径。
+var probeCoverage = "SELECT owner_id AS task_id, node_id FROM (" + coverageSQL("probe_task", "task_id") + ")"
 
-const coveredNodesQuery = "SELECT node_id FROM (" + probeCoverage + ") WHERE task_id = ? ORDER BY node_id"
+var coveredNodesQuery = "SELECT node_id FROM (" + probeCoverage + ") WHERE task_id = ? ORDER BY node_id"
 
 // LoadProbeTasks 在同一读事务内取得版本、任务和覆盖；并发保存不能把不同版本的行拼成一个清单。
 func (s *Store) LoadProbeTasks(ctx context.Context) (uint64, []ProbeTaskRecord, error) {
@@ -127,6 +121,12 @@ func (s *Store) LoadProbeTasks(ctx context.Context) (uint64, []ProbeTaskRecord, 
 	if err := cover.Err(); err != nil {
 		return 0, nil, err
 	}
+	for i := range out {
+		out[i].SelectorTags, err = selectorTags(tx, "probe_task", "task_id", int64(out[i].Task.Id))
+		if err != nil {
+			return 0, nil, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return 0, nil, err
 	}
@@ -134,12 +134,16 @@ func (s *Store) LoadProbeTasks(ctx context.Context) (uint64, []ProbeTaskRecord, 
 }
 
 // SaveProbeTask 在一个事务里写任务、整份替换分配、检查每节点上限、更新版本，并回读保存后的覆盖。
-// allNodes 为真时 nodeIDs 被忽略、不写分配行。
+// 三种选择器模式互斥：全部节点、非空标签交集、显式节点；只有显式模式写 nodeIDs 分配行。
 //
 // 上限在这里而不是调用方检查，因为只有事务内的计数才与其他保存互斥。它按写入之后的覆盖计数，所以 all_nodes 任务
-// 计入每个现有节点，显式分配只计入被分配的节点。之后新建的节点也会继承 all_nodes 任务，这里管不到它们，
-// 由 insertNode 在建节点时再查一次。
-func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, allNodes bool, nodeIDs []int64) (ProbeTaskRecord, uint64, error) {
+// 计入每个现有节点，显式分配与标签选择器只计入命中节点。insertNode 与 UpdateNodeTasks 在建节点和修改标签时
+// 再按同一覆盖谓词检查，任务保存不能替代未来的覆盖变更检查。
+func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, selector NodeSelector) (ProbeTaskRecord, uint64, error) {
+	if err := selector.Check(); err != nil {
+		return ProbeTaskRecord{}, 0, err
+	}
+	allNodes, nodeIDs, tags := selector.AllNodes, selector.NodeIDs, selector.Tags
 	saved := &probev1.ProbeTask{Id: t.GetId(), Kind: t.GetKind(), Target: t.GetTarget(), IntervalS: t.GetIntervalS(), TimeoutMs: t.GetTimeoutMs()}
 	rec := ProbeTaskRecord{Task: saved, AllNodes: allNodes}
 	var version int64
@@ -182,13 +186,14 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *probev1.ProbeTask, allNode
 				}
 			}
 		}
-		var over, tasks int64
-		err := tx.QueryRow("SELECT node_id, COUNT(*) FROM ("+probeCoverage+") GROUP BY node_id HAVING COUNT(*) > ? ORDER BY node_id LIMIT 1",
-			probelimit.MaxTasksPerNode).Scan(&over, &tasks)
-		if err == nil {
-			return NodeLimitError{NodeID: over, Tasks: int(tasks), Max: probelimit.MaxTasksPerNode}
+		if err := setSelectorTags(tx, "probe_task", "task_id", int64(saved.Id), tags); err != nil {
+			return err
 		}
-		if err != sql.ErrNoRows {
+		if err := checkProbeCoverageLimit(tx); err != nil {
+			return err
+		}
+		var err error
+		if rec.SelectorTags, err = selectorTags(tx, "probe_task", "task_id", int64(saved.Id)); err != nil {
 			return err
 		}
 		if rec.NodeIDs, err = coveredNodesTx(tx, saved.Id); err != nil {
@@ -225,6 +230,9 @@ func (s *Store) DeleteProbeTask(ctx context.Context, id uint64) (uint64, error) 
 		if _, err := tx.Exec("DELETE FROM probe_task_node WHERE task_id = ?", int64(id)); err != nil {
 			return err
 		}
+		if _, err := tx.Exec("DELETE FROM probe_task_tag WHERE task_id = ?", int64(id)); err != nil {
+			return err
+		}
 		v, err := bumpProbeVersion(tx, s.clk.Now().Unix())
 		version = v
 		return err
@@ -233,8 +241,8 @@ func (s *Store) DeleteProbeTask(ctx context.Context, id uint64) (uint64, error) 
 }
 
 // 版本的不变式：任何一个节点的清单变了，版本就变。agent 只比较相等，版本相同即认定清单未变、不再重取，所以
-// 每个改变某节点清单的事务都必须调用它：任务的保存与删除，以及建节点——新节点的清单从空变为全部 all_nodes 任务
-// （insertNode）。删除节点不调用：只有被删节点的清单消失，它的 token 已撤销，其余节点的清单不变。
+// 每个可能改变节点清单的事务都调用它：任务保存与删除、insertNode 建节点、UpdateNodeTasks 替换节点标签。
+// 删除节点不调用：只有被删节点的清单消失，它的 token 已撤销，其余节点的清单不变。
 //
 // 版本与任务及分配同事务更新，并以修改时刻的 Unix 秒托底。恢复后修改的 Unix 秒大于旧库最后版本值时不会碰撞；
 // 同秒重做、时钟回拨或旧版本超前仍可能碰撞，此时需重启 agent 使它重新对账，不能把时间托底当作全局唯一保证。

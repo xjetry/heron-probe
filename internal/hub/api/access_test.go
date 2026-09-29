@@ -38,7 +38,7 @@ func TestAdminAccessTableMatchesDeclaredPolicy(t *testing.T) {
 		name := string(svc.Methods().Get(i).Name())
 		want := probev1.Access_ACCESS_SESSION
 		switch {
-		case name == "Login":
+		case name == "Login" || name == "BeginPasskeyLogin" || name == "FinishPasskeyLogin":
 			want = probev1.Access_ACCESS_LOGIN
 		case read[name]:
 			want = probev1.Access_ACCESS_READ

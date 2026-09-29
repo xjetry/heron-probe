@@ -3,8 +3,13 @@ package backup
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +19,43 @@ import (
 	"github.com/xjetry/probe/internal/hub/s3"
 	"github.com/xjetry/probe/internal/hub/store"
 )
+
+func immutableThemeKey(content string) string {
+	return fmt.Sprintf("tenant/theme/sha256/%x.zip", sha256.Sum256([]byte(content)))
+}
+
+func TestThemeSnapshotUsesImmutablePackages(t *testing.T) {
+	m, _, base, _ := setup(t)
+	themeStorage(m, base)
+	installTheme(t, m, "old zip")
+	tick(t, m)
+	if got := string(base.objects[immutableThemeKey("old zip")]); got != "old zip" {
+		t.Fatalf("immutable package missing: %q", got)
+	}
+	installTheme(t, m, "new zip")
+	tick(t, m)
+	if err := m.st.DeleteTheme(t.Context(), "a"); err != nil {
+		t.Fatal(err)
+	}
+	tick(t, m)
+	for _, content := range []string{"old zip", "new zip"} {
+		if string(base.objects[immutableThemeKey(content)]) != content {
+			t.Fatalf("historical package lost: %s", content)
+		}
+	}
+	seenPackage := false
+	for _, call := range base.calls {
+		if call == "upload "+immutableThemeKey("old zip") {
+			seenPackage = true
+		}
+		if strings.HasPrefix(call, "upload tenant/config/") {
+			if !seenPackage {
+				t.Fatal("snapshot published before referenced package")
+			}
+			break
+		}
+	}
+}
 
 type themeObjects struct {
 	mu       sync.Mutex
@@ -52,7 +94,7 @@ func (o *themeObjects) PutObject(ctx context.Context, key string, r io.ReadSeeke
 func (o *themeObjects) ListObjectsV2(ctx context.Context, prefix string, n int) ([]s3.Object, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if strings.HasSuffix(prefix, "/theme/") {
+	if strings.Contains(prefix, "/theme/sha256/") {
 		if d, ok := ctx.Deadline(); ok {
 			o.budgets["list"] = time.Until(d)
 		}
@@ -119,11 +161,11 @@ func TestThemeSyncReconcilesAndReplaces(t *testing.T) {
 	base.objects["tenant/theme/deleted.zip"] = []byte("old")
 	base.objects["foreign/theme/keep.zip"] = []byte("foreign")
 	tick(t, m)
-	if got := string(base.objects["tenant/theme/a.zip"]); got != "original zip" {
+	if got := string(base.objects[immutableThemeKey("original zip")]); got != "original zip" {
 		t.Fatalf("uploaded package=%q", got)
 	}
-	if _, ok := base.objects["tenant/theme/deleted.zip"]; ok {
-		t.Fatal("orphan theme object survived synchronization")
+	if _, ok := base.objects["tenant/theme/deleted.zip"]; !ok {
+		t.Fatal("historical theme object was deleted")
 	}
 	if got := string(base.objects["foreign/theme/keep.zip"]); got != "foreign" {
 		t.Fatalf("foreign object changed: %q", got)
@@ -141,7 +183,7 @@ func TestThemeSyncReconcilesAndReplaces(t *testing.T) {
 	clk.Advance(5 * time.Minute)
 	tick(t, m)
 	for _, c := range base.calls {
-		if c == "upload tenant/theme/a.zip" {
+		if c == "upload "+immutableThemeKey("original zip") {
 			t.Fatal("unchanged package uploaded again")
 		}
 	}
@@ -150,13 +192,13 @@ func TestThemeSyncReconcilesAndReplaces(t *testing.T) {
 		t.Fatal("replacement did not reset uploaded")
 	}
 	tick(t, m)
-	if got := string(base.objects["tenant/theme/a.zip"]); got != "replacement zip" {
+	if got := string(base.objects[immutableThemeKey("replacement zip")]); got != "replacement zip" {
 		t.Fatalf("replacement not uploaded: %q", got)
 	}
-	delete(base.objects, "tenant/theme/a.zip")
+	delete(base.objects, immutableThemeKey("replacement zip"))
 	clk.Advance(5 * time.Minute)
 	tick(t, m)
-	if got := string(base.objects["tenant/theme/a.zip"]); got != "replacement zip" {
+	if got := string(base.objects[immutableThemeKey("replacement zip")]); got != "replacement zip" {
 		t.Fatalf("missing object not repaired: %q", got)
 	}
 	if _, err := m.st.SaveSettings(t.Context(), store.SettingsUpdate{Backup: &store.BackupSettingsUpdate{Endpoint: "https://example.test", Bucket: "other", Region: "auto", AccessKey: "key", Prefix: "other"}}); err != nil {
@@ -164,7 +206,7 @@ func TestThemeSyncReconcilesAndReplaces(t *testing.T) {
 	}
 	clk.Advance(5 * time.Minute)
 	tick(t, m)
-	if got := string(base.objects["other/theme/a.zip"]); got != "replacement zip" {
+	if got := string(base.objects[strings.Replace(immutableThemeKey("replacement zip"), "tenant/", "other/", 1)]); got != "replacement zip" {
 		t.Fatalf("new target not populated: %q", got)
 	}
 }
@@ -190,12 +232,36 @@ func TestThemeSyncConcurrentWrite(t *testing.T) {
 				installTheme(t, m, "new zip")
 			}
 			tick(t, m)
+			published := false
+			for key, data := range base.objects {
+				if !strings.HasPrefix(key, "tenant/config/") {
+					continue
+				}
+				published = true
+				path := filepath.Join(t.TempDir(), "snapshot.db")
+				if err := os.WriteFile(path, data, 0600); err != nil {
+					t.Fatal(err)
+				}
+				db, err := sql.Open("sqlite", path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var digest string
+				err = db.QueryRow("SELECT sha256 FROM snapshot_theme WHERE theme_id='a'").Scan(&digest)
+				db.Close()
+				if err != nil || digest != fmt.Sprintf("%x", sha256.Sum256([]byte("old zip"))) {
+					t.Fatalf("concurrent write changed frozen snapshot reference: digest=%q err=%v", digest, err)
+				}
+			}
+			if !published {
+				t.Fatal("configuration snapshot was not published")
+			}
 			p := themePackage(t, m)
 			if p.Uploaded || p.Revision == old.Revision || string(p.Content) != "new zip" {
 				t.Fatalf("in-flight write marked new package uploaded: %+v old=%d", p, old.Revision)
 			}
 			tick(t, m)
-			if got := string(base.objects["tenant/theme/a.zip"]); got != "new zip" || !themePackage(t, m).Uploaded {
+			if got := string(base.objects[immutableThemeKey("new zip")]); got != "new zip" || !themePackage(t, m).Uploaded {
 				t.Fatalf("next synchronization did not upload new package: %q", got)
 			}
 		})
@@ -203,12 +269,22 @@ func TestThemeSyncConcurrentWrite(t *testing.T) {
 }
 
 func TestThemeSyncFailureAndLostWake(t *testing.T) {
-	for _, stage := range []string{"upload", "list", "delete"} {
+	for _, stage := range []string{"upload", "list"} {
 		t.Run(stage, func(t *testing.T) {
 			m, clk, base, sink := setup(t)
 			themeStorage(m, base)
 			tick(t, m)
 			last := status(t, m).Config.LastSuccess
+			configKeys := func() int {
+				count := 0
+				for key := range base.objects {
+					if strings.HasPrefix(key, "tenant/config/") {
+						count++
+					}
+				}
+				return count
+			}
+			published := configKeys()
 			installTheme(t, m, "zip")
 			<-m.st.ThemeChanges()
 			base.objects["tenant/theme/orphan.zip"] = nil
@@ -216,6 +292,9 @@ func TestThemeSyncFailureAndLostWake(t *testing.T) {
 			clk.Advance(5 * time.Minute)
 			tick(t, m)
 			s := status(t, m).Config
+			if configKeys() != published {
+				t.Fatal("snapshot with unavailable theme reference was published")
+			}
 			if s.Failure != "theme_"+stage+"/http_status" || s.Since.IsZero() || !s.LastSuccess.Equal(last) || len(sink.events) != 1 {
 				t.Fatalf("theme failure not in config state: %+v events=%d", s, len(sink.events))
 			}
@@ -230,7 +309,7 @@ func TestThemeSyncFailureAndLostWake(t *testing.T) {
 			base.failStage = ""
 			clk.Advance(5 * time.Minute)
 			tick(t, m)
-			if got := string(base.objects["tenant/theme/a.zip"]); got != "zip" {
+			if got := string(base.objects[immutableThemeKey("zip")]); got != "zip" {
 				t.Fatalf("lost wake not repaired by period: %q", got)
 			}
 			if s := status(t, m).Config; s.Failure != "" || len(sink.events) != 2 || sink.events[1].Transition != store.TransitionBackupRecovered {
@@ -259,7 +338,7 @@ func TestThemeSyncDisabledThenConfigured(t *testing.T) {
 		t.Fatal(err)
 	}
 	tick(t, m)
-	if got := string(base.objects["tenant/theme/a.zip"]); got != "zip" {
+	if got := string(base.objects[immutableThemeKey("zip")]); got != "zip" {
 		t.Fatalf("later configuration did not upload package: %q", got)
 	}
 }
@@ -285,11 +364,16 @@ func TestThemeSyncRunWakesAfterCommit(t *testing.T) {
 		}
 	}
 	installTheme(t, m, "zip")
-	wait("put tenant/theme/a.zip")
+	wait("put " + immutableThemeKey("zip"))
 	if err := m.st.DeleteTheme(t.Context(), "a"); err != nil {
 		t.Fatal(err)
 	}
-	wait("delete tenant/theme/a.zip")
+	cancel()
+	<-done
+	// 删除当前主题不能删除仍被已发布快照引用的原包。
+	if string(base.objects[immutableThemeKey("zip")]) != "zip" {
+		t.Fatal("historical package deleted")
+	}
 }
 
 func TestThemeSyncRecordFailure(t *testing.T) {
@@ -369,11 +453,11 @@ func TestThemeSyncContinuesAfterPackageFailure(t *testing.T) {
 	execFixtureSQL(t, base.databasePath, "CREATE TRIGGER reject_a BEFORE UPDATE OF uploaded ON theme_package WHEN NEW.theme_id='a' BEGIN SELECT RAISE(ABORT,'reject a'); END")
 	base.objects["tenant/theme/orphan.zip"] = []byte("old")
 	tick(t, m)
-	if s := status(t, m).Config; s.Failure != "theme_record" || string(base.objects["tenant/theme/b.zip"]) != "b" {
-		t.Fatalf("theme failure blocked later package: %+v package=%q", s, base.objects["tenant/theme/b.zip"])
+	if s := status(t, m).Config; s.Failure != "theme_record" || string(base.objects[immutableThemeKey("b")]) != "b" {
+		t.Fatalf("theme failure blocked later package: %+v package=%q", s, base.objects[immutableThemeKey("b")])
 	}
-	if _, ok := base.objects["tenant/theme/orphan.zip"]; ok {
-		t.Fatal("theme failure blocked orphan cleanup")
+	if _, ok := base.objects["tenant/theme/orphan.zip"]; !ok {
+		t.Fatal("historical package deleted")
 	}
 }
 

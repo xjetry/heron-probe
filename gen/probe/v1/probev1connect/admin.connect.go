@@ -35,6 +35,18 @@ const (
 const (
 	// AdminServiceLoginProcedure is the fully-qualified name of the AdminService's Login RPC.
 	AdminServiceLoginProcedure = "/probe.v1.AdminService/Login"
+	// AdminServiceBeginPasskeyLoginProcedure is the fully-qualified name of the AdminService's
+	// BeginPasskeyLogin RPC.
+	AdminServiceBeginPasskeyLoginProcedure = "/probe.v1.AdminService/BeginPasskeyLogin"
+	// AdminServiceFinishPasskeyLoginProcedure is the fully-qualified name of the AdminService's
+	// FinishPasskeyLogin RPC.
+	AdminServiceFinishPasskeyLoginProcedure = "/probe.v1.AdminService/FinishPasskeyLogin"
+	// AdminServiceGetSecurityProcedure is the fully-qualified name of the AdminService's GetSecurity
+	// RPC.
+	AdminServiceGetSecurityProcedure = "/probe.v1.AdminService/GetSecurity"
+	// AdminServiceSecurityActionProcedure is the fully-qualified name of the AdminService's
+	// SecurityAction RPC.
+	AdminServiceSecurityActionProcedure = "/probe.v1.AdminService/SecurityAction"
 	// AdminServiceLogoutProcedure is the fully-qualified name of the AdminService's Logout RPC.
 	AdminServiceLogoutProcedure = "/probe.v1.AdminService/Logout"
 	// AdminServiceListSessionsProcedure is the fully-qualified name of the AdminService's ListSessions
@@ -164,6 +176,13 @@ const (
 type AdminServiceClient interface {
 	// 用管理员密码换取会话 cookie（Set-Cookie 在响应头里）。
 	Login(context.Context, *connect.Request[v1.LoginRequest]) (*connect.Response[v1.LoginResponse], error)
+	// 发起无密码 Passkey 登录；挑战只可消费一次。
+	BeginPasskeyLogin(context.Context, *connect.Request[v1.BeginPasskeyLoginRequest]) (*connect.Response[v1.BeginPasskeyLoginResponse], error)
+	FinishPasskeyLogin(context.Context, *connect.Request[v1.FinishPasskeyLoginRequest]) (*connect.Response[v1.FinishPasskeyLoginResponse], error)
+	// 安全凭据仅允许会话访问，不返回 TOTP 密钥或恢复码。
+	GetSecurity(context.Context, *connect.Request[v1.GetSecurityRequest]) (*connect.Response[v1.GetSecurityResponse], error)
+	// 修改凭据需要重新认证；挑战绑定当前会话与凭据版本。修改成功撤销现有会话。
+	SecurityAction(context.Context, *connect.Request[v1.SecurityActionRequest]) (*connect.Response[v1.SecurityActionResponse], error)
 	// 作废当前会话并清除 cookie。
 	Logout(context.Context, *connect.Request[v1.LogoutRequest]) (*connect.Response[v1.LogoutResponse], error)
 	// 列出未绝对过期且未空闲过期的会话，按创建时刻倒序、同刻按 id 升序。
@@ -190,7 +209,7 @@ type AdminServiceClient interface {
 	ReorderNodes(context.Context, *connect.Request[v1.ReorderNodesRequest]) (*connect.Response[v1.ReorderNodesResponse], error)
 	// 全部标签与各自挂在几个节点上，按名字大小写不敏感排序；没挂在任何节点上的标签也在内（节点数 0）。
 	ListTags(context.Context, *connect.Request[v1.ListTagsRequest]) (*connect.Response[v1.ListTagsResponse], error)
-	// 删除标签：从全部节点上解除它并删掉标签本身，节点不受影响。名字大小写不敏感；没有这个标签时 NotFound。
+	// 删除标签：被探测或告警动态选择器引用时拒绝；否则解除节点关联并删除。名字大小写不敏感；不存在时 NotFound。
 	DeleteTag(context.Context, *connect.Request[v1.DeleteTagRequest]) (*connect.Response[v1.DeleteTagResponse], error)
 	// 开启（或替换）注册窗口，返回一次性 key。
 	OpenRegisterWindow(context.Context, *connect.Request[v1.OpenRegisterWindowRequest]) (*connect.Response[v1.OpenRegisterWindowResponse], error)
@@ -283,6 +302,30 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			httpClient,
 			baseURL+AdminServiceLoginProcedure,
 			connect.WithSchema(adminServiceMethods.ByName("Login")),
+			connect.WithClientOptions(opts...),
+		),
+		beginPasskeyLogin: connect.NewClient[v1.BeginPasskeyLoginRequest, v1.BeginPasskeyLoginResponse](
+			httpClient,
+			baseURL+AdminServiceBeginPasskeyLoginProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("BeginPasskeyLogin")),
+			connect.WithClientOptions(opts...),
+		),
+		finishPasskeyLogin: connect.NewClient[v1.FinishPasskeyLoginRequest, v1.FinishPasskeyLoginResponse](
+			httpClient,
+			baseURL+AdminServiceFinishPasskeyLoginProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("FinishPasskeyLogin")),
+			connect.WithClientOptions(opts...),
+		),
+		getSecurity: connect.NewClient[v1.GetSecurityRequest, v1.GetSecurityResponse](
+			httpClient,
+			baseURL+AdminServiceGetSecurityProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("GetSecurity")),
+			connect.WithClientOptions(opts...),
+		),
+		securityAction: connect.NewClient[v1.SecurityActionRequest, v1.SecurityActionResponse](
+			httpClient,
+			baseURL+AdminServiceSecurityActionProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("SecurityAction")),
 			connect.WithClientOptions(opts...),
 		),
 		logout: connect.NewClient[v1.LogoutRequest, v1.LogoutResponse](
@@ -555,6 +598,10 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 // adminServiceClient implements AdminServiceClient.
 type adminServiceClient struct {
 	login                 *connect.Client[v1.LoginRequest, v1.LoginResponse]
+	beginPasskeyLogin     *connect.Client[v1.BeginPasskeyLoginRequest, v1.BeginPasskeyLoginResponse]
+	finishPasskeyLogin    *connect.Client[v1.FinishPasskeyLoginRequest, v1.FinishPasskeyLoginResponse]
+	getSecurity           *connect.Client[v1.GetSecurityRequest, v1.GetSecurityResponse]
+	securityAction        *connect.Client[v1.SecurityActionRequest, v1.SecurityActionResponse]
 	logout                *connect.Client[v1.LogoutRequest, v1.LogoutResponse]
 	listSessions          *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
 	revokeSession         *connect.Client[v1.RevokeSessionRequest, v1.RevokeSessionResponse]
@@ -604,6 +651,26 @@ type adminServiceClient struct {
 // Login calls probe.v1.AdminService.Login.
 func (c *adminServiceClient) Login(ctx context.Context, req *connect.Request[v1.LoginRequest]) (*connect.Response[v1.LoginResponse], error) {
 	return c.login.CallUnary(ctx, req)
+}
+
+// BeginPasskeyLogin calls probe.v1.AdminService.BeginPasskeyLogin.
+func (c *adminServiceClient) BeginPasskeyLogin(ctx context.Context, req *connect.Request[v1.BeginPasskeyLoginRequest]) (*connect.Response[v1.BeginPasskeyLoginResponse], error) {
+	return c.beginPasskeyLogin.CallUnary(ctx, req)
+}
+
+// FinishPasskeyLogin calls probe.v1.AdminService.FinishPasskeyLogin.
+func (c *adminServiceClient) FinishPasskeyLogin(ctx context.Context, req *connect.Request[v1.FinishPasskeyLoginRequest]) (*connect.Response[v1.FinishPasskeyLoginResponse], error) {
+	return c.finishPasskeyLogin.CallUnary(ctx, req)
+}
+
+// GetSecurity calls probe.v1.AdminService.GetSecurity.
+func (c *adminServiceClient) GetSecurity(ctx context.Context, req *connect.Request[v1.GetSecurityRequest]) (*connect.Response[v1.GetSecurityResponse], error) {
+	return c.getSecurity.CallUnary(ctx, req)
+}
+
+// SecurityAction calls probe.v1.AdminService.SecurityAction.
+func (c *adminServiceClient) SecurityAction(ctx context.Context, req *connect.Request[v1.SecurityActionRequest]) (*connect.Response[v1.SecurityActionResponse], error) {
+	return c.securityAction.CallUnary(ctx, req)
 }
 
 // Logout calls probe.v1.AdminService.Logout.
@@ -830,6 +897,13 @@ func (c *adminServiceClient) GetApiReference(ctx context.Context, req *connect.R
 type AdminServiceHandler interface {
 	// 用管理员密码换取会话 cookie（Set-Cookie 在响应头里）。
 	Login(context.Context, *connect.Request[v1.LoginRequest]) (*connect.Response[v1.LoginResponse], error)
+	// 发起无密码 Passkey 登录；挑战只可消费一次。
+	BeginPasskeyLogin(context.Context, *connect.Request[v1.BeginPasskeyLoginRequest]) (*connect.Response[v1.BeginPasskeyLoginResponse], error)
+	FinishPasskeyLogin(context.Context, *connect.Request[v1.FinishPasskeyLoginRequest]) (*connect.Response[v1.FinishPasskeyLoginResponse], error)
+	// 安全凭据仅允许会话访问，不返回 TOTP 密钥或恢复码。
+	GetSecurity(context.Context, *connect.Request[v1.GetSecurityRequest]) (*connect.Response[v1.GetSecurityResponse], error)
+	// 修改凭据需要重新认证；挑战绑定当前会话与凭据版本。修改成功撤销现有会话。
+	SecurityAction(context.Context, *connect.Request[v1.SecurityActionRequest]) (*connect.Response[v1.SecurityActionResponse], error)
 	// 作废当前会话并清除 cookie。
 	Logout(context.Context, *connect.Request[v1.LogoutRequest]) (*connect.Response[v1.LogoutResponse], error)
 	// 列出未绝对过期且未空闲过期的会话，按创建时刻倒序、同刻按 id 升序。
@@ -856,7 +930,7 @@ type AdminServiceHandler interface {
 	ReorderNodes(context.Context, *connect.Request[v1.ReorderNodesRequest]) (*connect.Response[v1.ReorderNodesResponse], error)
 	// 全部标签与各自挂在几个节点上，按名字大小写不敏感排序；没挂在任何节点上的标签也在内（节点数 0）。
 	ListTags(context.Context, *connect.Request[v1.ListTagsRequest]) (*connect.Response[v1.ListTagsResponse], error)
-	// 删除标签：从全部节点上解除它并删掉标签本身，节点不受影响。名字大小写不敏感；没有这个标签时 NotFound。
+	// 删除标签：被探测或告警动态选择器引用时拒绝；否则解除节点关联并删除。名字大小写不敏感；不存在时 NotFound。
 	DeleteTag(context.Context, *connect.Request[v1.DeleteTagRequest]) (*connect.Response[v1.DeleteTagResponse], error)
 	// 开启（或替换）注册窗口，返回一次性 key。
 	OpenRegisterWindow(context.Context, *connect.Request[v1.OpenRegisterWindowRequest]) (*connect.Response[v1.OpenRegisterWindowResponse], error)
@@ -945,6 +1019,30 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		AdminServiceLoginProcedure,
 		svc.Login,
 		connect.WithSchema(adminServiceMethods.ByName("Login")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceBeginPasskeyLoginHandler := connect.NewUnaryHandler(
+		AdminServiceBeginPasskeyLoginProcedure,
+		svc.BeginPasskeyLogin,
+		connect.WithSchema(adminServiceMethods.ByName("BeginPasskeyLogin")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceFinishPasskeyLoginHandler := connect.NewUnaryHandler(
+		AdminServiceFinishPasskeyLoginProcedure,
+		svc.FinishPasskeyLogin,
+		connect.WithSchema(adminServiceMethods.ByName("FinishPasskeyLogin")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceGetSecurityHandler := connect.NewUnaryHandler(
+		AdminServiceGetSecurityProcedure,
+		svc.GetSecurity,
+		connect.WithSchema(adminServiceMethods.ByName("GetSecurity")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceSecurityActionHandler := connect.NewUnaryHandler(
+		AdminServiceSecurityActionProcedure,
+		svc.SecurityAction,
+		connect.WithSchema(adminServiceMethods.ByName("SecurityAction")),
 		connect.WithHandlerOptions(opts...),
 	)
 	adminServiceLogoutHandler := connect.NewUnaryHandler(
@@ -1215,6 +1313,14 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		switch r.URL.Path {
 		case AdminServiceLoginProcedure:
 			adminServiceLoginHandler.ServeHTTP(w, r)
+		case AdminServiceBeginPasskeyLoginProcedure:
+			adminServiceBeginPasskeyLoginHandler.ServeHTTP(w, r)
+		case AdminServiceFinishPasskeyLoginProcedure:
+			adminServiceFinishPasskeyLoginHandler.ServeHTTP(w, r)
+		case AdminServiceGetSecurityProcedure:
+			adminServiceGetSecurityHandler.ServeHTTP(w, r)
+		case AdminServiceSecurityActionProcedure:
+			adminServiceSecurityActionHandler.ServeHTTP(w, r)
 		case AdminServiceLogoutProcedure:
 			adminServiceLogoutHandler.ServeHTTP(w, r)
 		case AdminServiceListSessionsProcedure:
@@ -1314,6 +1420,22 @@ type UnimplementedAdminServiceHandler struct{}
 
 func (UnimplementedAdminServiceHandler) Login(context.Context, *connect.Request[v1.LoginRequest]) (*connect.Response[v1.LoginResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.Login is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) BeginPasskeyLogin(context.Context, *connect.Request[v1.BeginPasskeyLoginRequest]) (*connect.Response[v1.BeginPasskeyLoginResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.BeginPasskeyLogin is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) FinishPasskeyLogin(context.Context, *connect.Request[v1.FinishPasskeyLoginRequest]) (*connect.Response[v1.FinishPasskeyLoginResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.FinishPasskeyLogin is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) GetSecurity(context.Context, *connect.Request[v1.GetSecurityRequest]) (*connect.Response[v1.GetSecurityResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.GetSecurity is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) SecurityAction(context.Context, *connect.Request[v1.SecurityActionRequest]) (*connect.Response[v1.SecurityActionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("probe.v1.AdminService.SecurityAction is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) Logout(context.Context, *connect.Request[v1.LogoutRequest]) (*connect.Response[v1.LogoutResponse], error) {

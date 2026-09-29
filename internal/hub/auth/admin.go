@@ -113,36 +113,12 @@ func (a *Auth) SetPassword(ctx context.Context, plain string) error {
 // 显式检查承载，并在日志里指明该跑 probe-hub passwd。失败按来源键计数（SourceKey：IPv4 按地址、IPv6 按 /64），
 // 锁定期间的拒绝不依赖输入的密码，正确密码也不能提前解除锁定。
 func (a *Auth) Login(ctx context.Context, password string, from netip.Addr) (string, error) {
-	phc, newlyLocked, err := a.verifyLoginPassword(ctx, password, from)
-	if newlyLocked {
-		// 锁定也通知：密码猜测尚未成功时就让管理员得知。newlyLocked 原样取自 failureTracker.record，它只在
-		// 设下锁定的那次调用报告 true，所以每次锁定只通知一次。
-		// 通知在 verifyLoginPassword 返回之后发，门此时已由它的 defer 放开。通知写库经 store 的单写协程排队，
-		// 等多久由积压决定；这段时间若计入持门时间，并发到达的登录会更多地得到忙碌拒绝，合法管理员在猜测
-		// 洪水里更难进门。
-		a.notifyLogin(ctx, store.TransitionLoginLocked, "登录失败达到锁定阈值", from, a.clk.Now())
-	}
-	if err != nil {
-		return "", err
-	}
-	plain, h := NewToken()
-	wall := a.clk.Now()
-	if err := a.store.CreateSession(ctx, h, wall, wall.Add(SessionAbsolute), phc); err != nil {
-		if errors.Is(err, store.ErrAdminChanged) {
-			return "", ErrBadPassword
-		}
-		return "", err
-	}
-	if _, err := a.store.DeleteExpiredSessions(ctx, wall); err != nil {
-		a.log.Warn("purging expired sessions failed", "err", err)
-	}
-	a.notifyLogin(ctx, store.TransitionLoginSuccess, "管理员登录成功", from, wall)
-	return plain, nil
+	return a.LoginFactors(ctx, password, "", "", from)
 }
 
 // notifyLogin 记一条登录事件并交给投递队列，at 是事件时刻。
 //
-// 只在密码登录入口调用，不在会话/API token 鉴权中调用：自动化轮询不是一次人工登录，不应刷屏。
+// 只在密码、Passkey 登录和主动重新认证入口调用，不在会话/API token 鉴权中调用：自动化轮询不是一次人工登录，不应刷屏。
 // 会话或锁定已经生效后，请求断开不能取消记账，所以用 WithoutCancel；写入不设期限：store.write 入队后无条件等
 // 单写协程执行完这条写，期限到点缩短不了入队之后的等待，只会在轮到它时把这条通知丢掉——登录通知是安全事件，宁可晚到
 // 不可丢。等待时间由写协程的积压决定，与别的登录签发会话的写同一条队列。失败记录日志且不伪报身份判定失败。
@@ -151,7 +127,7 @@ func (a *Auth) Login(ctx context.Context, password string, from netip.Addr) (str
 // 只引用摘要的 webhook 模板也一样，时刻不写进摘要就到不了这些接收方。时刻按 a.loc 写成带偏移的
 // RFC 3339，只到秒，与库里事件的 at（RecordLoginEvent 截到秒）是同一秒。
 func (a *Auth) notifyLogin(ctx context.Context, transition store.Transition, what string, from netip.Addr, at time.Time) {
-	summary := fmt.Sprintf("%s：来源 %s（密码），时间 %s", what, from, at.In(a.loc).Format(time.RFC3339))
+	summary := fmt.Sprintf("%s：来源 %s，时间 %s", what, from, at.In(a.loc).Format(time.RFC3339))
 	ev, err := a.store.RecordLoginEvent(context.WithoutCancel(ctx), store.AlertEvent{Transition: transition, At: at, Summary: summary})
 	if err != nil {
 		a.log.Error("recording login notification failed", "err", err)
@@ -208,15 +184,7 @@ func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from ne
 		}
 		return "", newlyLocked, ErrBadPassword
 	}
-	// 清账以密码校验通过为准，不以会话签发为准。会话写库不占门，放门后另一次校验
-	// 可能已记下新的失败，写库返回后再清会把它抹掉，所以在放门前清。由此签发失败时
-	// （写库出错，或改密并发使 CreateSession 返回 ErrAdminChanged）计数也已清掉：
-	// 是否签发了会话只看 Login 的返回，以签发成功为条件的动作不能挂在这里。
-	// 清零只删请求自己的来源键，且以给出校验当时有效的密码为前提；成功登录本来就会
-	// 清零，这里不多给能力。
-	a.mu.Lock()
-	a.login.clear(from)
-	a.mu.Unlock()
+	// 密码只是一个因子；第二因素消费和会话签发成功后，登录入口才清除来源失败记录。
 	return phc, false, nil
 }
 
@@ -225,7 +193,7 @@ func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from ne
 // 候选是请求里全部非空的 probe_session 值，按出现顺序排列（api 包的 sessionCandidates），其中可以混着别的主机写进
 // 浏览器的值。不变式：多出来的候选不改变有效候选的结论——逐个校验、任一有效即通过，不设个数上限；设上限等于让写
 // cookie 的一方用更多的值把有效值挤出去。校验不通过只返回 false：这里不调用 Login，也不碰按来源的登录失败计数
-// （计数只在 verifyLoginPassword 里记），所以无效候选再多也不会让任何来源被锁定。
+// （计数只在主动认证入口记），所以无效候选再多也不会让任何来源被锁定。
 //
 // 多个候选都有效时取顺序上第一个。hub 只有一个管理员，任一有效 token 证明的是同一身份，选哪个不影响准入；
 // 调用方把选中的那个放进 ctx，它决定 Logout 吊销哪个会话、撤销当前会话时是否清 cookie、会话列表把哪个标为当前，

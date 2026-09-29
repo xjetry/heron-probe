@@ -211,7 +211,9 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 	}
 	edit := store.NodeEdit{Name: name, Public: req.Msg.GetPublic(), Note: note, TrafficResetDay: day, OfflineGraceS: int(grace), Billing: billing, CountryPin: pin, Tags: tags}
 	s.nodeMu.Lock()
-	billingChanged, err := s.store.UpdateNode(ctx, req.Msg.GetId(), edit)
+	billingChanged, err := s.alerts.UpdateScope(func() (store.NodeUpdateResult, error) {
+		return s.probes.UpdateNode(ctx, req.Msg.GetId(), edit)
+	})
 	if err == nil {
 		// 只有库提交成功才改内存；nodeMu 跨越两次写入并与删除共用，失败或并发请求都不能使两者分叉。
 		s.traffic.SetResetDay(req.Msg.GetId(), day)
@@ -221,8 +223,7 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[probev1.U
 		return nil, notFound(req.Msg.GetId())
 	}
 	if err != nil {
-		s.log.Error("updating node failed", "err", err)
-		return nil, internalError("updating node failed")
+		return nil, s.operationError(err, "tags", "updating node failed")
 	}
 	// 计费字段变了就立刻按新值扫描一次（§9.2）：续费之后不等到零点才恢复。修改已提交，扫描失败只记日志，下一次扫描
 	// 会再评估。扫描放在 nodeMu 之外：它要等 writeMu（离线巡检、探测评估、日界扫描都可能正持有），再做一整轮续期

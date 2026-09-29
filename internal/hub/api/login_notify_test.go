@@ -195,9 +195,12 @@ func TestLoginNotifySuccessDeliversAndUsesTrustedSource(t *testing.T) {
 				t.Fatal(err)
 			}
 			events := loginEvents(t, h)
-			wantSummary := fmt.Sprintf("管理员登录成功：来源 %s（密码），时间 %s", wantIP, h.clk.Now().Format(time.RFC3339))
-			if len(events) != 1 {
-				t.Fatalf("successful login wrote %d events, want 1", len(events))
+			wantSummary := fmt.Sprintf("管理员登录成功（密码）：来源 %s，时间 %s", wantIP, h.clk.Now().Format(time.RFC3339))
+			if len(events) != 2 {
+				t.Fatalf("successful logins wrote %d events, want 2", len(events))
+			}
+			if initial := events[1]; initial.Transition != "login_success" || len(initial.Deliveries) != 0 {
+				t.Fatalf("login without channels must retain audit without deliveries: %v", initial)
 			}
 			ev := events[0]
 			if ev.RuleId != 0 || ev.NodeId != 0 || ev.Transition != "login_success" || ev.At != h.clk.Now().Unix() || ev.Summary != wantSummary || len(ev.Deliveries) != 2 {
@@ -209,7 +212,7 @@ func TestLoginNotifySuccessDeliversAndUsesTrustedSource(t *testing.T) {
 			defer func() { cancel(); <-done }()
 			testwait.Until(t, time.Millisecond, func() bool {
 				evs := loginEvents(t, h)
-				return len(evs) == 1 && len(evs[0].Deliveries) == 2 && evs[0].Deliveries[0].Done && evs[0].Deliveries[1].Done
+				return len(evs) == 2 && len(evs[0].Deliveries) == 2 && evs[0].Deliveries[0].Done && evs[0].Deliveries[1].Done
 			}, "login deliveries did not reach terminal state")
 			var delivered []int64
 			for _, d := range loginEvents(t, h)[0].Deliveries {
@@ -235,6 +238,7 @@ func TestLoginNotifyLockThresholdOnlyOnce(t *testing.T) {
 	h.login(t)
 	c := saveChannel(t, h, webhook("https://example.invalid/hook"))
 	chooseLoginChannels(t, h, c.Id)
+	var locked *probev1.AlertEvent
 	for i := 1; i <= 8; i++ {
 		req := connect.NewRequest(&probev1.LoginRequest{Password: "wrong password"})
 		req.Header().Set("X-Forwarded-For", "2001:db8:1::"+fmt.Sprint(i))
@@ -243,16 +247,25 @@ func TestLoginNotifyLockThresholdOnlyOnce(t *testing.T) {
 			t.Fatalf("failed login %d: %v", i, err)
 		}
 		evs := loginEvents(t, h)
-		want := 0
+		wantLocked := 0
 		if i >= 5 {
-			want = 1
+			wantLocked = 1
 		}
-		if len(evs) != want {
-			t.Fatalf("attempt %d wrote %d lock events, want %d", i, len(evs), want)
+		counts := make(map[string]int)
+		for _, ev := range evs {
+			counts[ev.Transition]++
+			if ev.Transition == "login_locked" {
+				locked = ev
+			} else if len(ev.Deliveries) != 0 {
+				t.Fatalf("ordinary failure or initial login must not notify: %v", ev)
+			}
+		}
+		if counts["login_success"] != 1 || counts["login_failed"] != min(i, 5) || counts["login_locked"] != wantLocked || len(evs) != 1+min(i, 5)+wantLocked {
+			t.Fatalf("attempt %d audit counts=%v total=%d, want success=1 failed=%d locked=%d", i, counts, len(evs), min(i, 5), wantLocked)
 		}
 	}
-	ev := loginEvents(t, h)[0]
-	if ev.Transition != "login_locked" || ev.RuleId != 0 || ev.NodeId != 0 || ev.Summary != "登录失败达到锁定阈值：来源 2001:db8:1::5（密码），时间 "+h.clk.Now().Format(time.RFC3339) || len(ev.Deliveries) != 1 || ev.Deliveries[0].ChannelId != c.Id {
+	ev := locked
+	if ev == nil || ev.RuleId != 0 || ev.NodeId != 0 || ev.Summary != "登录失败达到锁定阈值：来源 2001:db8:1::5，时间 "+h.clk.Now().Format(time.RFC3339) || len(ev.Deliveries) != 1 || ev.Deliveries[0].ChannelId != c.Id {
 		t.Fatalf("lock notification content: %v", ev)
 	}
 }
@@ -281,6 +294,10 @@ func TestLoginNotifySummaryCarriesZonedTime(t *testing.T) {
 	defer tg.Close()
 	h := newZonedHarness(t, "127.0.0.0/8", shanghai, store.DefaultRetention, withTelegramBase(tg.URL))
 	h.login(t)
+	initial := loginEvents(t, h)
+	if len(initial) != 1 || initial[0].Transition != "login_success" || len(initial[0].Deliveries) != 0 {
+		t.Fatalf("initial login audit: %v", initial)
+	}
 	c := saveChannel(t, h, &probev1.NotifyChannel{Name: "tg", Kind: probev1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &probev1.TelegramConfig{BotToken: "1:x", ChatId: "chat"}})
 	chooseLoginChannels(t, h, c.Id)
 	at := time.Date(2026, 9, 28, 2, 5, 7, 0, time.UTC)
@@ -302,18 +319,33 @@ func TestLoginNotifySummaryCarriesZonedTime(t *testing.T) {
 		}
 	}
 	want := []string{
-		"登录失败达到锁定阈值：来源 198.51.100.9（密码），时间 " + stamp,
-		"管理员登录成功：来源 203.0.113.7（密码），时间 " + stamp,
+		"登录失败达到锁定阈值：来源 198.51.100.9，时间 " + stamp,
+		"管理员登录成功（密码）：来源 203.0.113.7，时间 " + stamp,
 	}
 	var summaries []string
-	for _, ev := range loginEvents(t, h) {
+	events := loginEvents(t, h)
+	if len(events) != 8 || !proto.Equal(events[len(events)-1], initial[0]) {
+		t.Fatalf("login audits must retain initial login and all new attempts: %v", events)
+	}
+	failed := 0
+	for _, ev := range events[:len(events)-1] {
 		if ev.At != at.Unix() {
 			t.Errorf("event %d at %d, want %d", ev.Id, ev.At, at.Unix())
 		}
+		if ev.Transition == "login_failed" {
+			failed++
+			if len(ev.Deliveries) != 0 || ev.Summary != "管理员认证失败：来源 198.51.100.9，时间 "+stamp {
+				t.Errorf("ordinary failure audit: %v", ev)
+			}
+			continue
+		}
+		if len(ev.Deliveries) != 1 || ev.Deliveries[0].ChannelId != c.Id {
+			t.Errorf("login notification target: %v", ev)
+		}
 		summaries = append(summaries, ev.Summary)
 	}
-	if !slices.Equal(summaries, want) {
-		t.Errorf("login summaries = %q, want %q", summaries, want)
+	if failed != 5 || !slices.Equal(summaries, want) {
+		t.Errorf("login summaries = %q, failures=%d, want %q and 5 failures", summaries, failed, want)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
@@ -321,7 +353,15 @@ func TestLoginNotifySummaryCarriesZonedTime(t *testing.T) {
 	defer func() { cancel(); <-done }()
 	testwait.Until(t, time.Millisecond, func() bool {
 		evs := loginEvents(t, h)
-		return len(evs) == 2 && evs[0].Deliveries[0].Done && evs[1].Deliveries[0].Done
+		delivered := 0
+		for _, ev := range evs {
+			for _, d := range ev.Deliveries {
+				if d.Done && d.Ok {
+					delivered++
+				}
+			}
+		}
+		return len(evs) == 8 && delivered == 2
 	}, "telegram deliveries did not reach terminal state")
 	mu.Lock()
 	got := slices.Sorted(slices.Values(texts))
@@ -339,20 +379,21 @@ func TestLoginNotifyTokenReadsAndCleanup(t *testing.T) {
 	c := saveChannel(t, h, webhook("https://example.invalid/hook"))
 	_, token := createToken(t, h, "reader")
 	chooseLoginChannels(t, h, c.Id)
+	beforeRead := loginEvents(t, h)
 	req := connect.NewRequest(&probev1.GetSettingsRequest{})
 	req.Header().Set("Authorization", "Bearer "+token)
 	if _, err := h.admin.GetSettings(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
-	if evs := loginEvents(t, h); len(evs) != 0 {
+	if evs := loginEvents(t, h); !reflect.DeepEqual(evs, beforeRead) {
 		t.Fatalf("API token read emitted login events: %v", evs)
 	}
 	if _, err := h.admin.Login(t.Context(), connect.NewRequest(&probev1.LoginRequest{Password: password})); err != nil {
 		t.Fatal(err)
 	}
 	before := loginEvents(t, h)
-	if len(before) != 1 {
-		t.Fatalf("cleanup fixture has %d login events, want 1", len(before))
+	if len(before) != 2 {
+		t.Fatalf("cleanup fixture has %d login events, want 2", len(before))
 	}
 	if _, err := h.admin.DeleteNode(t.Context(), connect.NewRequest(&probev1.DeleteNodeRequest{Id: node})); err != nil {
 		t.Fatal(err)
@@ -407,7 +448,12 @@ func TestLoginNotifyOnlyUpdatePreservesAppearance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 0 {
-		t.Fatalf("disabled login notification wrote %d events", len(events))
+	if len(events) != 2 {
+		t.Fatalf("disabled login notification must retain both audits: %v", events)
+	}
+	for _, ev := range events {
+		if ev.Transition != store.TransitionLoginSuccess || len(ev.Deliveries) != 0 {
+			t.Fatalf("disabled login notification must retain audit without deliveries: %v", ev)
+		}
 	}
 }

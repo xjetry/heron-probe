@@ -2,21 +2,28 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
+	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
 	"github.com/xjetry/probe/internal/clock"
 	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/probe/internal/testwait"
 )
 
 func restoreDB(t *testing.T, path string) *sql.DB {
@@ -27,6 +34,55 @@ func restoreDB(t *testing.T, path string) *sql.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	return db
+}
+
+func TestRestoreStartsHubWithRecoveredConfig(t *testing.T) {
+	config, metrics := restoreSnapshots(t)
+	restoreExec(t, restoreDB(t, config), "INSERT INTO setting VALUES ('site.public_enabled','1')")
+	path := filepath.Join(t.TempDir(), "restored.db")
+	if out, err := hubCommand(t, "restore", "--db", path, "--config", config, "--metrics", metrics, "--yes").CombinedOutput(); err != nil {
+		t.Fatalf("restore: %v %s", err, out)
+	}
+	cmd := hubCommand(t, "serve", "--db", path, "--listen", "127.0.0.1:0")
+	output := &commandOutput{}
+	cmd.Stdout, cmd.Stderr = output, output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan struct{})
+	var result error
+	go func() { result = cmd.Wait(); close(finished) }()
+	defer func() { _ = cmd.Process.Kill(); <-finished }()
+	var addr string
+	testwait.Until(t, 10*time.Millisecond, func() bool {
+		for _, field := range strings.Fields(output.String()) {
+			if strings.HasPrefix(field, "listen=") {
+				addr = strings.Trim(strings.TrimPrefix(field, "listen="), `"`)
+			}
+		}
+		select {
+		case <-finished:
+			t.Fatalf("restored hub exited: %v %s", result, output.String())
+		default:
+		}
+		return addr != ""
+	}, "restored hub never listened: %s", output)
+	client := probev1connect.NewPublicServiceClient(&http.Client{Timeout: testwait.Bound}, "http://"+addr)
+	site, err := client.GetSite(context.Background(), connect.NewRequest(&probev1.GetSiteRequest{}))
+	if err != nil || site.Msg.Title != "snapshot" {
+		t.Fatalf("restored configuration not served: %v %v", site, err)
+	}
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-finished:
+		if result != nil {
+			t.Fatal(result)
+		}
+	case <-time.After(testwait.Bound):
+		t.Fatal("restored hub did not stop")
+	}
 }
 
 func restoreExec(t *testing.T, db *sql.DB, query string) {
@@ -176,7 +232,8 @@ func testRestoreTimeline(t *testing.T, configAt int64) {
 		"SELECT config_taken_at || ',' || metrics_taken_at FROM restore_record": fmt.Sprintf("%d,2000", configAt),
 		"SELECT count(*) FROM rollup_state WHERE upto_ts=600":                   "4",
 		"SELECT finished_at FROM maintenance_state WHERE name='prune'":          "2000",
-		"SELECT count(*) FROM alert_event":                                      "2",
+		"SELECT count(*) FROM alert_event":                                      "3",
+		"SELECT count(*) FROM alert_event WHERE transition='backup_restored'":   "1",
 	} {
 		restoreWant(t, db, query, want)
 	}
@@ -204,6 +261,47 @@ func testRestoreTimeline(t *testing.T, configAt int64) {
 	}
 	restoreExec(t, db, "INSERT INTO node (name,token_hash,created_at) VALUES ('next',x'04',0)")
 	restoreWant(t, db, "SELECT id FROM node WHERE name='next'", "4")
+}
+
+func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
+	for _, version := range []int{17, 18, 19} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			config, metrics := restoreSnapshots(t)
+			cfg := restoreDB(t, config)
+			restoreExec(t, cfg, `DROP TABLE admin_security; DROP TABLE probe_task_tag; DROP TABLE alert_rule_tag;
+				ALTER TABLE alert_rule DROP COLUMN resource_metric; ALTER TABLE alert_rule DROP COLUMN recovery_threshold;
+				DROP TABLE snapshot_theme; ALTER TABLE snapshot_meta DROP COLUMN format_version`)
+			if version < 19 {
+				restoreExec(t, cfg, "ALTER TABLE restore_record DROP COLUMN themes")
+			}
+			if version < 18 {
+				restoreExec(t, cfg, `ALTER TABLE alert_delivery DROP COLUMN batch_id; ALTER TABLE alert_delivery DROP COLUMN not_before; ALTER TABLE notify_channel DROP COLUMN rate_per_minute`)
+			}
+			restoreExec(t, cfg, fmt.Sprintf("UPDATE snapshot_meta SET schema_version=%d", version))
+			met := restoreDB(t, metrics)
+			for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+				for _, column := range []string{"memory_used_pct_sum", "memory_used_pct_n", "disk_used_pct_sum", "disk_used_pct_n"} {
+					restoreExec(t, met, "ALTER TABLE "+table+" DROP COLUMN "+column)
+				}
+			}
+			restoreExec(t, met, fmt.Sprintf("ALTER TABLE snapshot_meta DROP COLUMN format_version; UPDATE snapshot_meta SET schema_version=%d", version))
+			beforeConfig, beforeMetrics := restoreDump(t, config), restoreDump(t, metrics)
+			path := restoreTarget(t)
+			restoreExec(t, restoreDB(t, path), "INSERT INTO admin_session (token_hash,created_at,last_used_at,expires_at) VALUES(x'01',1,1,9999999999)")
+			if err := runRestoreWith([]string{"--db", path, "--config", config, "--metrics", metrics, "--yes"}, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			db := restoreDB(t, path)
+			restoreWant(t, db, "SELECT data FROM admin_security WHERE id=1", "{}")
+			restoreWant(t, db, "SELECT count(*) FROM admin_session", "0")
+			restoreWant(t, db, "SELECT count(*) FROM node", "2")
+			restoreWant(t, db, "SELECT count(*) FROM metric_1m", "1")
+			restoreWant(t, db, "SELECT memory_used_pct_n+disk_used_pct_n FROM metric_1m", "0")
+			if restoreDump(t, config) != beforeConfig || restoreDump(t, metrics) != beforeMetrics {
+				t.Fatal("historical snapshot changed during migration")
+			}
+		})
+	}
 }
 
 func TestRestoreExistingHighWaterAndOptionalMetrics(t *testing.T) {
@@ -267,7 +365,7 @@ func TestRestoreTargetSchemaPolicy(t *testing.T) {
 
 func TestRestoreRejectsSnapshotsWithoutChangingTarget(t *testing.T) {
 	for _, layer := range []string{"config", "metrics"} {
-		for _, defect := range []string{"schema", "page", "table", "layer", "metadata", "empty metadata"} {
+		for _, defect := range []string{"schema", "future schema", "page", "table", "layer", "metadata", "empty metadata"} {
 			t.Run(layer+"/"+defect, func(t *testing.T) {
 				config, metrics := restoreSnapshots(t)
 				path := restoreTarget(t)
@@ -280,6 +378,8 @@ func TestRestoreRejectsSnapshotsWithoutChangingTarget(t *testing.T) {
 				switch defect {
 				case "schema":
 					query, wantErr = "UPDATE snapshot_meta SET schema_version=-1", "schema_version=-1"
+				case "future schema":
+					query, wantErr = "UPDATE snapshot_meta SET schema_version=999", "schema_version=999"
 				case "page":
 					// VACUUM 会移除没有 AUTOINCREMENT 表的内部序列表；保留簿记，避免先撞缺表守卫。
 					query, wantErr = `CREATE TABLE saved_sequence AS SELECT * FROM sqlite_sequence;

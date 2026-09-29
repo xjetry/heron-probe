@@ -3,6 +3,9 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
 import { Login } from "./Login";
+import { passkeyCredential } from "../lib/passkey";
+
+vi.mock("../lib/passkey", () => ({ passkeyCredential: vi.fn() }));
 
 function renderLogin(login: (req: { password: string }) => Promise<Record<string, never>>) {
   return renderWithAdmin(
@@ -16,6 +19,17 @@ function renderLogin(login: (req: { password: string }) => Promise<Record<string
 }
 
 describe("Login", () => {
+  it("Passkey 无密码登录依次完成挑战、浏览器证明与会话签发", async () => {
+    const order: string[] = [];
+    const beginPasskeyLogin = vi.fn(async () => { order.push("begin"); return { challengeId: "challenge", optionsJson: "options" }; });
+    vi.mocked(passkeyCredential).mockImplementationOnce(async (options) => { expect(options).toBe("options"); order.push("credential"); return "assertion"; });
+    const finishPasskeyLogin = vi.fn(async () => { order.push("finish"); return {}; });
+    const { router } = renderWithAdmin({ beginPasskeyLogin, finishPasskeyLogin }, [{ path: "/login", Component: Login }, { path: "/", element: <h1>home</h1> }], "/login");
+    fireEvent.click(screen.getByRole("button", { name: "使用 Passkey 登录" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+    expect(order).toEqual(["begin", "credential", "finish"]);
+    expect(finishPasskeyLogin).toHaveBeenCalledWith(expect.objectContaining({ challengeId: "challenge", credentialJson: "assertion" }), expect.anything());
+  });
   it("提交密码，成功后回到首页", async () => {
     const login = vi.fn(async () => ({}));
     const { router, queryClient } = renderLogin(login);

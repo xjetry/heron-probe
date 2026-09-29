@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"unicode"
 )
@@ -143,6 +144,29 @@ func (s *Store) DeleteTag(ctx context.Context, name string) error {
 		}
 		if err != nil {
 			return err
+		}
+		rows, err := tx.Query(`SELECT 'probe task', p.id, p.target FROM probe_task_tag st JOIN probe_task p ON p.id = st.task_id WHERE st.tag_id = ?
+UNION ALL SELECT 'alert rule', r.id, r.name FROM alert_rule_tag st JOIN alert_rule r ON r.id = st.rule_id WHERE st.tag_id = ?`, id, id)
+		if err != nil {
+			return err
+		}
+		var refs []string
+		for rows.Next() {
+			var kind, label string
+			var owner int64
+			if err := rows.Scan(&kind, &owner, &label); err != nil {
+				rows.Close()
+				return err
+			}
+			refs = append(refs, fmt.Sprintf("%s %d (%s)", kind, owner, label))
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		if len(refs) > 0 {
+			return fmt.Errorf("%w: tag %q referenced by %s", ErrInUse, name, strings.Join(refs, ", "))
 		}
 		if _, err := tx.Exec(detachTag, id); err != nil {
 			return err

@@ -85,7 +85,7 @@ func TestAPITokenReachesExactlyTheReadMethods(t *testing.T) {
 			}
 			continue
 		}
-		if name == "Login" {
+		if name == "Login" || name == "BeginPasskeyLogin" || name == "FinishPasskeyLogin" {
 			if got.status != http.StatusForbidden || got.code != "permission_denied" ||
 				!strings.Contains(got.message, name) || !strings.Contains(got.message, "cannot log in") {
 				t.Errorf("%s: %+v, want 403 permission_denied naming the method and that tokens cannot log in", name, got)

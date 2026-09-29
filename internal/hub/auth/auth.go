@@ -5,8 +5,8 @@
 // 等待成功、后改映射则由每个变更者内部的语句顺序保证，写库失败不改映射。
 // 绕开 mutMu 会让提交与映射更新顺序分叉；仅持有它不能代替上述语句顺序。
 //
-// loginGate 只准入一个密码校验，争用者不排队；mu 保护锁定检查与 TryLock 的
-// 同一次裁决，校验结果在放门前记账，避免后续校验越过尚未落账的锁定阈值。
+// loginGate 只准入一个密码或匿名 Passkey 校验，争用者不排队；mu 保护锁定检查与 TryLock 的
+// 同一次裁决，密码错误或 Passkey 验证失败在放门前记账；密码正确后的第二因素仍须另外消费。
 // 登录不占用 mutMu，密码校验和会话写入不让节点变更与 Load 等待。
 // 持 mu 时只 TryLock 门、不等待门；持门时可以取 mu 记账，因此不会形成等待环。
 //
@@ -64,6 +64,7 @@ type Auth struct {
 	// loginSender 与 loc 构造后只读。loc 是 hub 的 --timezone，登录通知的摘要按它写事件时刻。
 	loginSender LoginSender
 	loc         *time.Location
+	security    securityRuntime
 }
 
 // LoginSender 把已落库的登录通知交给投递队列（serve 里是 alert.Queue）。

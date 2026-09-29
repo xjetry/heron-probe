@@ -59,7 +59,7 @@ func TestLoadProbeTasksReadsOneSnapshot(t *testing.T) {
 	ctx := t.Context()
 	a, _, _ := s.CreateNode(ctx, "a", hash(1))
 	b, _, _ := s.CreateNode(ctx, "b", hash(2))
-	saved, savedVersion, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{a})
+	saved, savedVersion, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{a}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestLoadProbeTasksReadsOneSnapshot(t *testing.T) {
 		next := taskForTest()
 		next.Id = saved.Task.Id
 		next.Target = "changed"
-		_, _, err := s.SaveProbeTask(ctx, next, false, []int64{b})
+		_, _, err := s.SaveProbeTask(ctx, next, NodeSelector{AllNodes: false, NodeIDs: []int64{b}})
 		changed = err == nil
 		return err
 	}})

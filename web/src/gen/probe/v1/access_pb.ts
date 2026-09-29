@@ -27,7 +27,7 @@ export enum Access {
   UNSPECIFIED = 0,
 
   /**
-   * 仅 Login：凭据是请求体里的密码，不需要会话或 API token。
+   * 登录入口：校验请求体里的密码与第二因素，或 Passkey 挑战响应，不需要现有会话或 API token。
    *
    * @generated from enum value: ACCESS_LOGIN = 1;
    */

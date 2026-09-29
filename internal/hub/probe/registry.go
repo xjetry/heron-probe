@@ -30,9 +30,10 @@ var ErrInvalid = errors.New("invalid probe task")
 
 // Detail 的 NodeIDs 是任务当前覆盖的节点，升序；AllNodes 为真时它是展开结果，随建删节点变化。
 type Detail struct {
-	Task     *probev1.ProbeTask
-	AllNodes bool
-	NodeIDs  []int64
+	Task         *probev1.ProbeTask
+	AllNodes     bool
+	NodeIDs      []int64
+	SelectorTags []string
 }
 
 type Registry struct {
@@ -44,10 +45,11 @@ type Registry struct {
 	version uint64
 	tasks   map[uint64]*probev1.ProbeTask
 	// allNodes 是 all_nodes 任务的集合，只供 List 回显开关，不参与覆盖的推导。byNode 与 nodesOf 总是 store 按
-	// probeCoverage 读出的覆盖，读侧（TasksFor、Assigned、TargetFor、List）不区分两种任务。
-	allNodes map[uint64]struct{}
-	byNode   map[int64]map[uint64]struct{}
-	nodesOf  map[uint64][]int64
+	// probeCoverage 读出的覆盖，读侧（TasksFor、Assigned、TargetFor、List）不区分选择器模式。
+	allNodes     map[uint64]struct{}
+	byNode       map[int64]map[uint64]struct{}
+	nodesOf      map[uint64][]int64
+	selectorTags map[uint64][]string
 }
 
 func New(st *store.Store, log *slog.Logger) *Registry {
@@ -58,6 +60,7 @@ func New(st *store.Store, log *slog.Logger) *Registry {
 
 func (r *Registry) reset() {
 	r.tasks, r.allNodes, r.byNode, r.nodesOf = map[uint64]*probev1.ProbeTask{}, map[uint64]struct{}{}, map[int64]map[uint64]struct{}{}, map[uint64][]int64{}
+	r.selectorTags = map[uint64][]string{}
 }
 
 // Load 的读取与发布和其他写入口互斥，避免旧的重载快照覆盖刚发布的保存结果。
@@ -87,6 +90,7 @@ func (r *Registry) put(rec store.ProbeTaskRecord) {
 		r.allNodes[id] = struct{}{}
 	}
 	r.nodesOf[id] = slices.Clone(rec.NodeIDs)
+	r.selectorTags[id] = slices.Clone(rec.SelectorTags)
 	for _, node := range rec.NodeIDs {
 		r.assign(node, id)
 	}
@@ -109,6 +113,7 @@ func (r *Registry) remove(id uint64) {
 	delete(r.tasks, id)
 	delete(r.allNodes, id)
 	delete(r.nodesOf, id)
+	delete(r.selectorTags, id)
 }
 
 func (r *Registry) Version() uint64 {
@@ -143,7 +148,7 @@ func (r *Registry) List() (uint64, []Detail) {
 	var out []Detail
 	for id, task := range r.tasks {
 		_, all := r.allNodes[id]
-		out = append(out, Detail{Task: proto.Clone(task).(*probev1.ProbeTask), AllNodes: all, NodeIDs: slices.Clone(r.nodesOf[id])})
+		out = append(out, Detail{Task: proto.Clone(task).(*probev1.ProbeTask), AllNodes: all, NodeIDs: slices.Clone(r.nodesOf[id]), SelectorTags: slices.Clone(r.selectorTags[id])})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Task.Id < out[j].Task.Id })
 	return r.version, out
@@ -183,15 +188,18 @@ func dedupSorted(ids []int64) []int64 {
 }
 
 // Save 的内存发布只发生在事务成功后，拒绝的保存不能改变任务、分配或版本。
-// allNodes 为真时 nodeIDs 被忽略，与告警规则的 all_nodes 同一口径；为假时 nodeIDs 就是全部分配，空集合法且
-// 不覆盖任何节点——同一形状的开关只有一种语义，显式空集若被读成"全部"，删掉最后一个分配就会静默放宽。
-func (r *Registry) Save(ctx context.Context, t *probev1.ProbeTask, allNodes bool, nodeIDs []int64) (Detail, uint64, error) {
+// 全部节点、标签交集和显式分配互斥，与告警规则使用同一校验。显式空集合法且不覆盖任何节点，不能静默放宽。
+func (r *Registry) Save(ctx context.Context, t *probev1.ProbeTask, selector store.NodeSelector) (Detail, uint64, error) {
 	if err := probelimit.CheckTask(t); err != nil {
 		return Detail{}, 0, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
 	r.writeMu.Lock()
 	defer r.writeMu.Unlock()
-	rec, version, err := r.store.SaveProbeTask(ctx, t, allNodes, dedupSorted(nodeIDs))
+	if err := selector.Check(); err != nil {
+		return Detail{}, 0, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	selector.NodeIDs = dedupSorted(selector.NodeIDs)
+	rec, version, err := r.store.SaveProbeTask(ctx, t, selector)
 	if err != nil {
 		return Detail{}, 0, err
 	}
@@ -200,7 +208,30 @@ func (r *Registry) Save(ctx context.Context, t *probev1.ProbeTask, allNodes bool
 	r.remove(rec.Task.Id)
 	r.put(rec)
 	r.version = version
-	return Detail{Task: proto.Clone(rec.Task).(*probev1.ProbeTask), AllNodes: rec.AllNodes, NodeIDs: slices.Clone(rec.NodeIDs)}, version, nil
+	return Detail{Task: proto.Clone(rec.Task).(*probev1.ProbeTask), AllNodes: rec.AllNodes, NodeIDs: slices.Clone(rec.NodeIDs), SelectorTags: slices.Clone(rec.SelectorTags)}, version, nil
+}
+
+// UpdateNode 与任务保存共用 writeMu，标签变更提交后按事务回读的覆盖发布，不能由较旧的任务快照覆盖。
+func (r *Registry) UpdateNode(ctx context.Context, id int64, edit store.NodeEdit) (store.NodeUpdateResult, error) {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
+	result, err := r.store.UpdateNodeTasks(ctx, id, edit)
+	if err != nil {
+		return store.NodeUpdateResult{}, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for task := range r.byNode[id] {
+		r.nodesOf[task] = slices.DeleteFunc(r.nodesOf[task], func(node int64) bool { return node == id })
+	}
+	delete(r.byNode, id)
+	for _, task := range result.Tasks.TaskIDs {
+		r.nodesOf[task] = append(r.nodesOf[task], id)
+		slices.Sort(r.nodesOf[task])
+		r.assign(id, task)
+	}
+	r.version = result.Tasks.Version
+	return result, nil
 }
 
 // CreateNode 与 RegisterNode 是两个建节点入口，实现 auth.NodeCreator。store 在建节点事务里读出新节点的覆盖、
@@ -222,8 +253,8 @@ func (r *Registry) RegisterNode(ctx context.Context, keyHash []byte, name string
 //   - 对 Load 过的注册表，TaskIDs 里的任务都在 tasks 里：probe_task 只经本包的 Save 与 Delete 写入，二者与
 //     addNode 都在 writeMu 下完成落库与发布，Load 在 writeMu 下整体读入，所以持 writeMu 时库里的任务集合与内存
 //     一致。离线 CLI 的注册表不 Load，这条不成立，但它的发布随进程丢弃、没有读者（见 cmd/hub 的 openOffline）；
-//   - 其余节点的覆盖不因建节点而变：probeCoverage 现在的两支（all_nodes 任务交叉全部节点、分配行）在插入一个
-//     节点后只多出以新节点为一端的覆盖对。覆盖口径若加入依赖节点集合整体的一支，这条前提要重新核对。
+//   - 其余节点的覆盖不因建节点而变：probeCoverage 的全部节点、分配行、标签交集分支都逐节点判断，插入一个
+//     节点后只可能多出以新节点为一端的覆盖对。覆盖口径若加入依赖节点集合整体的条件，这条前提要重新核对。
 func (r *Registry) addNode(insert func() (int64, store.NewNodeTasks, error)) (int64, error) {
 	r.writeMu.Lock()
 	defer r.writeMu.Unlock()

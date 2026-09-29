@@ -94,8 +94,25 @@ func CheckRule(r store.AlertRule) error {
 			return invalid("for_minutes", "must be between 1 and 60")
 		}
 		return nil
+	case store.KindResource:
+		if err := checkKindFields(r); err != nil {
+			return err
+		}
+		if r.ResourceMetric != store.MetricMemoryUsedPct && r.ResourceMetric != store.MetricDiskUsedPct {
+			return oneOf("resource_metric", string(r.ResourceMetric), string(store.MetricMemoryUsedPct), string(store.MetricDiskUsedPct))
+		}
+		if math.IsNaN(r.Threshold) || math.IsInf(r.Threshold, 0) || r.Threshold <= 0 || r.Threshold > 100 {
+			return invalid("threshold", "must be greater than 0 and at most 100")
+		}
+		if math.IsNaN(r.RecoveryThreshold) || math.IsInf(r.RecoveryThreshold, 0) || r.RecoveryThreshold < 0 || r.RecoveryThreshold >= r.Threshold {
+			return invalid("recovery_threshold", "must be nonnegative and less than threshold")
+		}
+		if r.ForMinutes < 1 || r.ForMinutes > 60 {
+			return invalid("for_minutes", "must be between 1 and 60")
+		}
+		return nil
 	default:
-		return oneOf("kind", string(r.Kind), string(store.KindOffline), string(store.KindProbe), string(store.KindExpiry))
+		return oneOf("kind", string(r.Kind), string(store.KindOffline), string(store.KindProbe), string(store.KindExpiry), string(store.KindResource))
 	}
 }
 

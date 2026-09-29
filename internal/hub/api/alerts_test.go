@@ -48,7 +48,6 @@ func TestAlertRuleCRUD(t *testing.T) {
 	n1, _ := h.createNode(t, "a")
 	n2, _ := h.createNode(t, "b")
 	r := offlineRule()
-	r.NodeIds = []int64{999}
 	created := saveRule(t, h, r)
 	want := offlineRule()
 	want.Id = 1
@@ -117,7 +116,7 @@ func TestNotifyChannelRejectsUnknownKind(t *testing.T) {
 func TestSaveAlertRuleValidationTexts(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	task, _, err := h.reg.Save(t.Context(), validProbeTask(), false, nil)
+	task, _, err := h.reg.Save(t.Context(), validProbeTask(), store.NodeSelector{AllNodes: false, NodeIDs: nil})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +156,7 @@ func TestSaveAlertRuleValidationTexts(t *testing.T) {
 func TestProbeAlertRuleRoundTrip(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	task, _, err := h.reg.Save(t.Context(), validProbeTask(), false, nil)
+	task, _, err := h.reg.Save(t.Context(), validProbeTask(), store.NodeSelector{AllNodes: false, NodeIDs: nil})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +354,7 @@ func TestDeleteNotifyChannelInUse(t *testing.T) {
 func TestDeleteProbeTaskInUse(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	task, _, err := h.reg.Save(t.Context(), validProbeTask(), false, nil)
+	task, _, err := h.reg.Save(t.Context(), validProbeTask(), store.NodeSelector{AllNodes: false, NodeIDs: nil})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -543,9 +542,10 @@ func TestAlertKindsMapEveryValue(t *testing.T) {
 	}
 	// 每个存储种类一条最小的合法规则：离线不带专用字段，探测带任务、指标、阈值与持续分钟，到期带提前天数。
 	minimal := map[store.AlertKind]store.AlertRule{
-		store.KindOffline: {Name: "离线", Kind: store.KindOffline, AllNodes: true},
-		store.KindProbe:   {Name: "探测", Kind: store.KindProbe, AllNodes: true, TaskID: 1, Metric: store.MetricLossPct, Threshold: 10, ForMinutes: 3},
-		store.KindExpiry:  {Name: "到期", Kind: store.KindExpiry, AllNodes: true, DaysBefore: 7},
+		store.KindOffline:  {Name: "离线", Kind: store.KindOffline, AllNodes: true},
+		store.KindProbe:    {Name: "探测", Kind: store.KindProbe, AllNodes: true, TaskID: 1, Metric: store.MetricLossPct, Threshold: 10, ForMinutes: 3},
+		store.KindExpiry:   {Name: "到期", Kind: store.KindExpiry, AllNodes: true, DaysBefore: 7},
+		store.KindResource: {Name: "资源", Kind: store.KindResource, AllNodes: true, ResourceMetric: store.MetricMemoryUsedPct, Threshold: 90, RecoveryThreshold: 80, ForMinutes: 3},
 	}
 	for v, k := range alertKinds {
 		r, ok := minimal[k]

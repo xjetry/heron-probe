@@ -740,7 +740,7 @@ func TestHubFailedStopDoesNotSayStopped(t *testing.T) {
 	}
 }
 
-// 首装时单元文件还不存在，DropInPaths 为空，probe-hub.service.d/ 里已有的 drop-in 查不到（purge 也不删这个目录）。
+// 首装时单元文件还不存在，DropInPaths 为空，probe-hub.service.d/ 里预先写入的 drop-in 查不到。
 // 主单元写好之后的那一遍要拦住设了 ExecStart 的 drop-in：不 enable、不 start。提示只说成立的事实：单元装了、
 // 没 enable 也没起；该做的是先处理 drop-in 再重跑，不能叫人手动启动，那会按 drop-in 的参数起来。
 func TestHubFirstInstallRefusesAnExecStartDropIn(t *testing.T) {

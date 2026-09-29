@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -24,6 +25,7 @@ type themeRestorePlan struct {
 	ids      []string
 	packages map[string][]byte
 	ignored  []string
+	digests  map[string]string
 }
 
 func themeIDs(ctx context.Context, q interface {
@@ -68,6 +70,46 @@ func prepareThemeRestore(ctx context.Context, config, dir string) (*themeRestore
 	if len(plan.ids) > theme.MaxThemes {
 		return nil, fmt.Errorf("config snapshot has more than %d themes", theme.MaxThemes)
 	}
+	var formatColumn int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('snapshot_meta') WHERE name='format_version'").Scan(&formatColumn); err != nil {
+		return nil, err
+	}
+	if formatColumn == 1 {
+		var format int
+		if err := db.QueryRowContext(ctx, "SELECT format_version FROM snapshot_meta").Scan(&format); err != nil {
+			return nil, err
+		}
+		if format != 2 {
+			return nil, fmt.Errorf("unsupported snapshot format_version=%d", format)
+		}
+		plan.digests = make(map[string]string)
+		rows, err := db.QueryContext(ctx, "SELECT theme_id,sha256 FROM snapshot_theme")
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id, digest string
+			if err := rows.Scan(&id, &digest); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if !slices.Contains(plan.ids, id) || (digest != "" && (len(digest) != 64 || strings.Trim(digest, "0123456789abcdef") != "")) {
+				rows.Close()
+				return nil, fmt.Errorf("invalid snapshot theme reference %q", id)
+			}
+			if _, exists := plan.digests[id]; exists {
+				rows.Close()
+				return nil, fmt.Errorf("duplicate snapshot theme reference %q", id)
+			}
+			plan.digests[id] = digest
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return nil, err
+		}
+		if len(plan.digests) != len(plan.ids) {
+			return nil, errors.New("snapshot theme references do not cover all themes")
+		}
+	}
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -95,6 +137,9 @@ func prepareThemeRestore(ctx context.Context, config, dir string) (*themeRestore
 			return nil, fmt.Errorf("theme package %q: %w", entry.Name(), err)
 		}
 		id := strings.TrimSuffix(entry.Name(), ".zip")
+		if plan.digests != nil {
+			id = pkg.Manifest.ID
+		}
 		if !theme.ValidID(id) {
 			return nil, fmt.Errorf("theme package %q: invalid theme id", entry.Name())
 		}
@@ -102,10 +147,27 @@ func prepareThemeRestore(ctx context.Context, config, dir string) (*themeRestore
 			plan.ignored = append(plan.ignored, entry.Name())
 			continue
 		}
+		if plan.digests != nil {
+			digest := fmt.Sprintf("%x", sha256.Sum256(content))
+			if strings.TrimSuffix(entry.Name(), ".zip") != digest {
+				return nil, fmt.Errorf("theme package %q: SHA256 does not match filename", entry.Name())
+			}
+			if plan.digests[id] != digest {
+				plan.ignored = append(plan.ignored, entry.Name())
+				continue
+			}
+		}
 		if pkg.Manifest.ID != id {
 			return nil, fmt.Errorf("theme package %q: id %q does not match %q", entry.Name(), pkg.Manifest.ID, id)
 		}
 		plan.packages[id] = content
+	}
+	if plan.digests != nil {
+		for _, id := range plan.ids {
+			if _, ok := plan.packages[id]; !ok {
+				return nil, fmt.Errorf("theme %q: required package %q missing; omit --themes to restore with themes disabled", id, plan.digests[id])
+			}
+		}
 	}
 	return plan, nil
 }

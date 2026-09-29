@@ -71,6 +71,9 @@ func TestSnapshotFiles(t *testing.T) {
 			}
 			defer db.Close()
 			want := append(slices.Clone(tables), "snapshot_meta", "sqlite_sequence")
+			if layer == "config" {
+				want = append(want, "snapshot_theme")
+			}
 			slices.Sort(want)
 			if got := tableNames(t, db); !reflect.DeepEqual(got, want) {
 				t.Fatalf("snapshot tables=%v want=%v", got, want)

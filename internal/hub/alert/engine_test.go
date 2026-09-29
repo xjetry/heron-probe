@@ -249,7 +249,7 @@ func TestSaveRuleShrinkingScopeDropsStates(t *testing.T) {
 
 func (f *fixture) task(t *testing.T, ids []int64) uint64 {
 	t.Helper()
-	p, _, err := f.st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}, false, ids)
+	p, _, err := f.st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}, store.NodeSelector{AllNodes: false, NodeIDs: ids})
 	must(t, err)
 	return p.Task.Id
 }
@@ -322,7 +322,7 @@ func TestEvaluateProbesOnlyForAssignedNodes(t *testing.T) {
 // 显式空分配的任务不覆盖任何节点。
 func TestEvaluateProbesFollowsTaskCoverage(t *testing.T) {
 	f := newFixture(t)
-	p, _, err := f.st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}, true, nil)
+	p, _, err := f.st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}, store.NodeSelector{AllNodes: true, NodeIDs: nil})
 	must(t, err)
 	all := p.Task.Id
 	none := f.task(t, nil)

@@ -15,9 +15,14 @@ import (
 )
 
 var alertKinds = map[probev1.AlertKind]store.AlertKind{
-	probev1.AlertKind_ALERT_KIND_OFFLINE: store.KindOffline,
-	probev1.AlertKind_ALERT_KIND_PROBE:   store.KindProbe,
-	probev1.AlertKind_ALERT_KIND_EXPIRY:  store.KindExpiry,
+	probev1.AlertKind_ALERT_KIND_OFFLINE:  store.KindOffline,
+	probev1.AlertKind_ALERT_KIND_PROBE:    store.KindProbe,
+	probev1.AlertKind_ALERT_KIND_EXPIRY:   store.KindExpiry,
+	probev1.AlertKind_ALERT_KIND_RESOURCE: store.KindResource,
+}
+var resourceMetrics = map[probev1.ResourceMetric]store.ResourceMetric{
+	probev1.ResourceMetric_RESOURCE_METRIC_MEMORY_USED_PCT: store.MetricMemoryUsedPct,
+	probev1.ResourceMetric_RESOURCE_METRIC_DISK_USED_PCT:   store.MetricDiskUsedPct,
 }
 var probeMetrics = map[probev1.ProbeMetric]store.ProbeMetric{
 	probev1.ProbeMetric_PROBE_METRIC_LOSS_PCT: store.MetricLossPct,
@@ -39,7 +44,7 @@ func enumFor[K comparable, V comparable](values map[K]V, value V) K {
 }
 
 func ruleProto(r store.AlertRule) *probev1.AlertRule {
-	return &probev1.AlertRule{Id: r.ID, Name: r.Name, Kind: enumFor(alertKinds, r.Kind), Enabled: r.Enabled, AllNodes: r.AllNodes, NodeIds: r.NodeIDs, ChannelIds: r.ChannelIDs, TaskId: r.TaskID, Metric: enumFor(probeMetrics, r.Metric), Threshold: r.Threshold, ForMinutes: uint32(r.ForMinutes), DaysBefore: uint32(r.DaysBefore), CreatedAt: r.CreatedAt.Unix()}
+	return &probev1.AlertRule{Id: r.ID, Name: r.Name, Kind: enumFor(alertKinds, r.Kind), Enabled: r.Enabled, AllNodes: r.AllNodes, NodeIds: r.NodeIDs, ChannelIds: r.ChannelIDs, TaskId: r.TaskID, Metric: enumFor(probeMetrics, r.Metric), Threshold: r.Threshold, ForMinutes: uint32(r.ForMinutes), DaysBefore: uint32(r.DaysBefore), CreatedAt: r.CreatedAt.Unix(), ResourceMetric: enumFor(resourceMetrics, r.ResourceMetric), RecoveryThreshold: r.RecoveryThreshold, SelectorTags: r.SelectorTags}
 }
 
 func (s *Service) ListAlertRules(_ context.Context, _ *connect.Request[probev1.ListAlertRulesRequest]) (*connect.Response[probev1.ListAlertRulesResponse], error) {
@@ -71,7 +76,18 @@ func (s *Service) SaveAlertRule(ctx context.Context, req *connect.Request[probev
 			return nil, err
 		}
 	}
-	saved, err := s.alerts.SaveRule(ctx, store.AlertRule{ID: r.GetId(), Name: r.GetName(), Kind: kind, Enabled: r.GetEnabled(), AllNodes: r.GetAllNodes(), NodeIDs: r.GetNodeIds(), ChannelIDs: r.GetChannelIds(), TaskID: r.GetTaskId(), Metric: metric, Threshold: r.GetThreshold(), ForMinutes: int(r.GetForMinutes()), DaysBefore: int(r.GetDaysBefore())})
+	var resourceMetric store.ResourceMetric
+	if kind == store.KindResource || r.GetResourceMetric() != probev1.ResourceMetric_RESOURCE_METRIC_UNSPECIFIED {
+		resourceMetric, err = parseEnum(resourceMetrics, r.GetResourceMetric(), "rule", "resource_metric")
+		if err != nil {
+			return nil, err
+		}
+	}
+	tags, err := cleanTags("rule.selector_tags", r.GetSelectorTags())
+	if err != nil {
+		return nil, err
+	}
+	saved, err := s.alerts.SaveRule(ctx, store.AlertRule{ID: r.GetId(), Name: r.GetName(), Kind: kind, Enabled: r.GetEnabled(), AllNodes: r.GetAllNodes(), NodeIDs: r.GetNodeIds(), ChannelIDs: r.GetChannelIds(), TaskID: r.GetTaskId(), Metric: metric, Threshold: r.GetThreshold(), ForMinutes: int(r.GetForMinutes()), DaysBefore: int(r.GetDaysBefore()), ResourceMetric: resourceMetric, RecoveryThreshold: r.GetRecoveryThreshold(), SelectorTags: tags})
 	if err != nil {
 		return nil, s.operationError(err, "rule", "saving alert rule failed")
 	}

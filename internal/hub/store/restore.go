@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -33,6 +34,13 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 	if metrics != "" {
 		sources = append(sources, restoreSource{"metrics", metrics, metricsSnapshotTables})
 	}
+	prepared, cleanup, err := prepareRestoreSources(ctx, sources)
+	if err != nil {
+		return result, err
+	}
+	defer cleanup()
+	sources = prepared
+	config = sources[0].path
 	if err := preflightRestoreSources(ctx, path, sources); err != nil {
 		return result, err
 	}
@@ -92,6 +100,10 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 		if err = createSchema(ctx, tx); err != nil {
 			return result, err
 		}
+	}
+	// 配置恢复改变账户凭据；会话不在快照中，也不能沿用目标数据库已有的授权。
+	if _, err = tx.ExecContext(ctx, "DELETE FROM main.admin_session"); err != nil {
+		return result, err
 	}
 	for _, src := range sources {
 		for _, table := range src.tables {
@@ -156,6 +168,9 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 		hex.EncodeToString(id[:]), result.RestoredAt, result.ConfigTakenAt, result.MetricsTakenAt, string(orphans), string(themeSummary)); err != nil {
 		return result, err
 	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO main.alert_event (rule_id,node_id,transition,at,summary,value) VALUES (0,0,?,?,'已从备份恢复配置',0)", TransitionBackupRestored, result.RestoredAt); err != nil {
+		return result, err
+	}
 	err = tx.Commit()
 	committed = err == nil
 	if err == nil && action == schemaCreate {
@@ -167,6 +182,184 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 type restoreSource struct {
 	layer, path string
 	tables      []string
+}
+
+// 每层快照不是完整数据库，不能直接重放所有 live 迁移。这里只列出已审定的分层迁移，
+// 新版本必须补上各层投影；版本不在清单内时拒绝恢复，不猜测缺失列的默认含义。
+func prepareRestoreSources(ctx context.Context, sources []restoreSource) (prepared []restoreSource, cleanup func(), err error) {
+	dir, err := os.MkdirTemp("", "probe-restore-*")
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup = func() { _ = os.RemoveAll(dir) }
+	defer func() {
+		if err != nil {
+			cleanup()
+		}
+	}()
+	for _, src := range sources {
+		db, e := sql.Open("sqlite", dsn(src.path, "&mode=ro"))
+		if e != nil {
+			return nil, cleanup, e
+		}
+		db.SetMaxOpenConns(1)
+		var count, version int
+		e = db.QueryRowContext(ctx, "SELECT count(*),coalesce(max(schema_version),0) FROM snapshot_meta").Scan(&count, &version)
+		if e != nil {
+			db.Close()
+			return nil, cleanup, fmt.Errorf("%s snapshot metadata: %w", src.layer, e)
+		}
+		if count != 1 || version < 17 || version > schemaVersion {
+			db.Close()
+			return nil, cleanup, fmt.Errorf("%s snapshot metadata: rows=%d schema_version=%d; supported schema versions 17..%d", src.layer, count, version, schemaVersion)
+		}
+		copyPath := filepath.Join(dir, src.layer+".db")
+		e = copySnapshot(ctx, db, copyPath)
+		e = errors.Join(e, db.Close())
+		if e != nil {
+			return nil, cleanup, e
+		}
+		if e := os.Chmod(copyPath, 0600); e != nil {
+			return nil, cleanup, e
+		}
+		copyDB, e := sql.Open("sqlite", dsn(copyPath, "&mode=rw"))
+		if e != nil {
+			return nil, cleanup, e
+		}
+		var sequences int
+		e = copyDB.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name='sqlite_sequence'").Scan(&sequences)
+		if e != nil || sequences != 1 {
+			copyDB.Close()
+			if e != nil {
+				return nil, cleanup, e
+			}
+			return nil, cleanup, fmt.Errorf("%s snapshot missing table sqlite_sequence", src.layer)
+		}
+		e = copyDB.QueryRowContext(ctx, "SELECT count(*),coalesce(max(schema_version),0) FROM snapshot_meta").Scan(&count, &version)
+		if e == nil && (count != 1 || version < 17 || version > schemaVersion) {
+			e = fmt.Errorf("%s snapshot metadata changed: rows=%d schema_version=%d", src.layer, count, version)
+		}
+		if e == nil {
+			e = migrateSnapshot(ctx, copyDB, src.layer, version)
+		}
+		e = errors.Join(e, copyDB.Close())
+		if e != nil {
+			return nil, cleanup, e
+		}
+		src.path = copyPath
+		prepared = append(prepared, src)
+	}
+	return prepared, cleanup, nil
+}
+
+// 快照表没有 AUTOINCREMENT 约束，VACUUM 会丢弃它们单独保存的 sqlite_sequence；
+// 因此逐表复制数据并显式保留序列，所有读取使用同一事务视图。
+func copySnapshot(ctx context.Context, db *sql.DB, path string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, "ATTACH DATABASE ? AS copy", path); err != nil {
+		return err
+	}
+	var pageSize int
+	if err := db.QueryRowContext(ctx, "PRAGMA main.page_size").Scan(&pageSize); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("PRAGMA copy.page_size=%d", pageSize)); err != nil {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, "SELECT name FROM main.sqlite_schema WHERE type='table' ORDER BY name")
+	if err != nil {
+		return err
+	}
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return err
+		}
+		tables = append(tables, name)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	for _, table := range tables {
+		if strings.HasPrefix(table, "sqlite_") {
+			if table != "sqlite_sequence" {
+				continue
+			}
+			for _, query := range []string{"CREATE TABLE copy.sequence_seed (id INTEGER PRIMARY KEY AUTOINCREMENT)", "DROP TABLE copy.sequence_seed", "INSERT INTO copy.sqlite_sequence SELECT * FROM main.sqlite_sequence"} {
+				if _, err := tx.ExecContext(ctx, query); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		quoted := `"` + strings.ReplaceAll(table, `"`, `""`) + `"`
+		if _, err := tx.ExecContext(ctx, "CREATE TABLE copy."+quoted+" AS SELECT * FROM main."+quoted); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for next := version + 1; next <= schemaVersion; next++ {
+		var statements []string
+		switch next {
+		case 18:
+			if layer == "config" {
+				statements = migrationV18
+			}
+		case 19:
+			if layer == "config" {
+				statements = []string{`ALTER TABLE restore_record ADD COLUMN themes TEXT NOT NULL DEFAULT '{}'`}
+			}
+		case 20:
+			if layer == "config" {
+				statements = []string{
+					`CREATE TABLE admin_security (id INTEGER PRIMARY KEY CHECK(id=1),generation INTEGER NOT NULL DEFAULT 0,data TEXT NOT NULL DEFAULT '{}')`,
+					`INSERT INTO admin_security (id) VALUES (1)`,
+					`CREATE TABLE probe_task_tag (task_id INTEGER NOT NULL,tag_id INTEGER NOT NULL,PRIMARY KEY(task_id,tag_id))`,
+					`CREATE TABLE alert_rule_tag (rule_id INTEGER NOT NULL,tag_id INTEGER NOT NULL,PRIMARY KEY(rule_id,tag_id))`,
+					`ALTER TABLE alert_rule ADD COLUMN resource_metric TEXT`,
+					`ALTER TABLE alert_rule ADD COLUMN recovery_threshold REAL`,
+				}
+			} else {
+				for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+					for _, column := range []string{"memory_used_pct_sum REAL", "memory_used_pct_n INTEGER", "disk_used_pct_sum REAL", "disk_used_pct_n INTEGER"} {
+						statements = append(statements, "ALTER TABLE "+table+" ADD COLUMN "+column+" NOT NULL DEFAULT 0")
+					}
+				}
+			}
+		default:
+			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
+		}
+		for _, stmt := range statements {
+			if _, err := tx.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("migrate %s snapshot to %d: %w", layer, next, err)
+			}
+		}
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE snapshot_meta SET schema_version=?", schemaVersion); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func attachRestoreSources(ctx context.Context, db *sql.DB, sources []restoreSource) error {
@@ -256,6 +449,28 @@ func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []st
 	}
 	if count != 1 || version.Int64 != schemaVersion || gotLayer.String != layer {
 		return 0, fmt.Errorf("%s snapshot metadata: rows=%d schema_version=%d layer=%q; want one row, schema_version=%d layer=%q", layer, count, version.Int64, gotLayer.String, schemaVersion, layer)
+	}
+	var formatColumn int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('snapshot_meta', ?) WHERE name='format_version'", layer).Scan(&formatColumn); err != nil {
+		return 0, err
+	}
+	if formatColumn == 1 {
+		var format int
+		if err := tx.QueryRowContext(ctx, "SELECT format_version FROM "+layer+".snapshot_meta").Scan(&format); err != nil {
+			return 0, err
+		}
+		if format != 2 {
+			return 0, fmt.Errorf("%s snapshot unsupported format_version=%d", layer, format)
+		}
+		if layer == "config" {
+			var unmatched int
+			if err := tx.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM config.theme WHERE id NOT IN (SELECT theme_id FROM config.snapshot_theme)) + (SELECT count(*) FROM config.snapshot_theme WHERE theme_id NOT IN (SELECT id FROM config.theme))").Scan(&unmatched); err != nil {
+				return 0, err
+			}
+			if unmatched != 0 {
+				return 0, errors.New("snapshot theme references do not match configuration")
+			}
+		}
 	}
 	if err := tx.QueryRowContext(ctx, "PRAGMA "+layer+".page_size").Scan(&size); err != nil {
 		return 0, err

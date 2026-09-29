@@ -33,6 +33,8 @@ func renderField(root string, field alert.FieldError) alert.FieldError {
 			return enumFor(alertKinds, store.AlertKind(v)).String()
 		case root == "rule" && field.Path == "metric":
 			return enumFor(probeMetrics, store.ProbeMetric(v)).String()
+		case root == "rule" && field.Path == "resource_metric":
+			return enumFor(resourceMetrics, store.ResourceMetric(v)).String()
 		case root == "channel" && field.Path == "kind":
 			return enumFor(channelKinds, store.ChannelKind(v)).String()
 		default:
@@ -92,6 +94,10 @@ func missingField(root string, kind store.ObjectKind) string {
 }
 
 func (s *Service) operationError(err error, root, operation string) error {
+	var kindField store.KindFieldError
+	if errors.As(err, &kindField) {
+		return invalid("%s.%s %s", root, kindField.Field, kindField.Constraint)
+	}
 	switch {
 	case errors.Is(err, alert.ErrInvalid):
 		var field alert.FieldError

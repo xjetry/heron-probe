@@ -65,6 +65,16 @@ var Columns = []Column{
 	{"procs", Mean, Int, "count", func(m *probev1.Metrics) (float64, bool) { return f64(uint64(m.GetProcs())), m.Procs != nil }},
 	{"rx_bytes", Sum, Int, "bytes", nil},
 	{"tx_bytes", Sum, Int, "bytes", nil},
+	{"memory_used_pct", Mean, Float, "percent", func(m *probev1.Metrics) (float64, bool) { return usedPercent(m.MemUsed, m.MemTotal) }},
+	{"disk_used_pct", Mean, Float, "percent", func(m *probev1.Metrics) (float64, bool) { return usedPercent(m.DiskUsed, m.DiskTotal) }},
+}
+
+// 同一次采样的分子、分母必须都存在且容量非零；先算比例再聚合，不能把不同采样的均值相除。
+func usedPercent(used, total *uint64) (float64, bool) {
+	if used == nil || total == nil || *total == 0 {
+		return 0, false
+	}
+	return float64(*used) / float64(*total) * 100, true
 }
 
 // AddSum 把一次入账的可加量加进第 i 列并计一次入账；只对 Sum 列有意义。

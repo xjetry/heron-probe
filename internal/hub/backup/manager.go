@@ -330,13 +330,25 @@ func (m *Manager) perform(ctx context.Context, cfg store.BackupSettings, layer s
 		}
 	}()
 	path := filepath.Join(dir, "snapshot.db")
-	snapshot := m.st.SnapshotConfig
+	var packages []store.SnapshotThemePackage
 	if layer == "metrics" {
-		snapshot = m.st.SnapshotMetrics
+		err = m.st.SnapshotMetrics(ctx, path)
+	} else {
+		packages, err = m.st.SnapshotConfigWithThemes(ctx, path, dir)
 	}
-	if err := snapshot(ctx, path); err != nil {
+	if err != nil {
 		m.log.Error("backup snapshot failed", "layer", layer, "err", err)
 		return "snapshot", 0, err.Error()
+	}
+	if layer == "config" {
+		if category, code, detail := m.syncThemes(ctx, cfg, client, packages); category != "" {
+			return category, code, detail
+		}
+		for _, pkg := range packages {
+			if err := os.Remove(pkg.Path); err != nil {
+				return "cleanup", 0, err.Error()
+			}
+		}
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -400,14 +412,6 @@ func (m *Manager) perform(ctx context.Context, cfg store.BackupSettings, layer s
 	}
 	if err := os.Remove(dir); err != nil {
 		return "cleanup", 0, err.Error()
-	}
-	// 唤醒和周期都执行完整配置轮；主题成功不能掩盖快照或保留的故障，整轮成功后才记账和恢复通知。
-	// 每次唤醒多产生一份配置快照，达到份数上限时挤掉最旧一份，换取最新配置快照与主题对象同步；主题写入的通知
-	// 合并而不排队（store.ThemeChanges），一轮进行中的连续写入只换来一次唤醒，写入次数是快照消耗的上界。
-	if layer == "config" {
-		if category, code, detail := m.syncThemes(ctx, cfg, client); category != "" {
-			return category, code, detail
-		}
 	}
 	if err := m.st.RecordBackupSuccess(ctx, layer); err != nil {
 		return "record", 0, err.Error()

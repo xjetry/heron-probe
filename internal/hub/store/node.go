@@ -227,6 +227,18 @@ func (s *Store) NodeExists(ctx context.Context, id int64) (bool, error) {
 // 一次推后，所以它就是这次写入实际覆盖掉的值。表单若带着推后之前的到期日提交，库内值已是推后的日期，两者不同，
 // 调用方随即重新扫描、再推后一次。
 func (s *Store) UpdateNode(ctx context.Context, id int64, e NodeEdit) (billingChanged bool, err error) {
+	result, err := s.UpdateNodeTasks(ctx, id, e)
+	return result.BillingChanged, err
+}
+
+type NodeUpdateResult struct {
+	BillingChanged bool
+	Tasks          NewNodeTasks
+	Rules          []AlertRule
+}
+
+// UpdateNodeTasks 在标签替换的同一事务内裁决任务上限、推进版本并读取新覆盖；注册表只发布这份已提交结果。
+func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (result NodeUpdateResult, err error) {
 	err = s.write(ctx, func(tx *sql.Tx) error {
 		var old Billing
 		err := tx.QueryRow("SELECT price, currency, billing_cycle, expires_on, auto_renew FROM node WHERE id = ?", id).
@@ -246,13 +258,32 @@ func (s *Store) UpdateNode(ctx context.Context, id int64, e NodeEdit) (billingCh
 		if err := setNodeTags(tx, id, e.Tags); err != nil {
 			return err
 		}
-		billingChanged = old != b
-		return nil
+		if err := checkProbeCoverageLimit(tx); err != nil {
+			return err
+		}
+		if err := pruneAlertScopes(tx); err != nil {
+			return err
+		}
+		ids, err := scanIDs(tx.Query("SELECT task_id FROM ("+probeCoverage+") WHERE node_id = ? ORDER BY task_id", id))
+		if err != nil {
+			return err
+		}
+		for _, taskID := range ids {
+			result.Tasks.TaskIDs = append(result.Tasks.TaskIDs, uint64(taskID))
+		}
+		version, err := bumpProbeVersion(tx, s.clk.Now().Unix())
+		if err != nil {
+			return err
+		}
+		result.Tasks.Version = uint64(version)
+		result.BillingChanged = old != b
+		result.Rules, err = listAlertRulesTx(ctx, tx)
+		return err
 	})
 	if err != nil {
-		return false, err
+		return NodeUpdateResult{}, err
 	}
-	return billingChanged, nil
+	return result, nil
 }
 
 // RenewExpiry 把自动续期推后的到期日写回，前提是该行此刻仍是推后所依据的那组取值（开着自动续期、周期与

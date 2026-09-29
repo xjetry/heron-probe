@@ -6,13 +6,15 @@ import { errorBanner, queryGateAll } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Picks } from "../components/Picks";
-import { AdminService, AlertKind, ProbeMetric, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/probe/v1/admin_pb";
-import { ALERT_KINDS, PROBE_METRICS, labelOf, ruleCondition, statesOf, taskLabels, type RuleStates } from "../lib/alerts";
+import { NodeSelector, type NodeSelection } from "../components/NodeSelector";
+import { AdminService, AlertKind, ProbeMetric, ResourceMetric, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/probe/v1/admin_pb";
+import { ALERT_KINDS, PROBE_METRICS, RESOURCE_METRICS, labelOf, ruleCondition, statesOf, taskLabels, type RuleStates } from "../lib/alerts";
 import { liveIds, withId } from "../lib/ids";
 
-type Draft = {
+type Draft = NodeSelection & {
   name: string; kind: AlertKind; enabled: boolean; allNodes: boolean; nodeIds: Set<bigint>; channelIds: Set<bigint>;
   taskId: string; metric: ProbeMetric; threshold: string; forMinutes: string; daysBefore: string;
+  resourceMetric: ResourceMetric; recoveryThreshold: string;
 };
 
 // 种类专用字段里有默认值的是指标（丢包率）、连续分钟 3 与提前天数 7；探测任务与阈值留空，切到探测时由表单的 required
@@ -20,14 +22,18 @@ type Draft = {
 const emptyDraft = (): Draft => ({
   name: "", kind: AlertKind.OFFLINE, enabled: true, allNodes: true, nodeIds: new Set(), channelIds: new Set(),
   taskId: "", metric: ProbeMetric.LOSS_PCT, threshold: "", forMinutes: "3", daysBefore: "7",
+  selectorTags: [], dynamic: false, resourceMetric: ResourceMetric.MEMORY_USED_PCT, recoveryThreshold: "80",
 });
 const draftOf = (r: AlertRule): Draft => {
   const probe = r.kind === AlertKind.PROBE;
   return {
     name: r.name, kind: r.kind, enabled: r.enabled, allNodes: r.allNodes, nodeIds: new Set(r.nodeIds), channelIds: new Set(r.channelIds),
     taskId: probe ? String(r.taskId) : "", metric: probe ? r.metric : ProbeMetric.LOSS_PCT,
-    threshold: probe ? String(r.threshold) : "", forMinutes: probe ? String(r.forMinutes) : "3",
+    threshold: probe || r.kind === AlertKind.RESOURCE ? String(r.threshold) : "", forMinutes: probe || r.kind === AlertKind.RESOURCE ? String(r.forMinutes) : "3",
     daysBefore: r.kind === AlertKind.EXPIRY ? String(r.daysBefore) : "7",
+    selectorTags: r.selectorTags, dynamic: r.selectorTags.length > 0,
+    resourceMetric: r.kind === AlertKind.RESOURCE ? r.resourceMetric : ResourceMetric.MEMORY_USED_PCT,
+    recoveryThreshold: r.kind === AlertKind.RESOURCE ? String(r.recoveryThreshold) : "80",
   };
 };
 
@@ -37,10 +43,11 @@ const draftOf = (r: AlertRule): Draft => {
 function toRule(id: bigint, d: Draft, nodes: Node[], channels: NotifyChannel[]) {
   const own = d.kind === AlertKind.PROBE
     ? { taskId: BigInt(d.taskId), metric: d.metric, threshold: Number(d.threshold), forMinutes: Number(d.forMinutes) }
-    : d.kind === AlertKind.EXPIRY ? { daysBefore: Number(d.daysBefore) } : {};
+    : d.kind === AlertKind.EXPIRY ? { daysBefore: Number(d.daysBefore) }
+      : d.kind === AlertKind.RESOURCE ? { resourceMetric: d.resourceMetric, threshold: Number(d.threshold), recoveryThreshold: Number(d.recoveryThreshold), forMinutes: Number(d.forMinutes) } : {};
   return {
     id, name: d.name.trim(), kind: d.kind, enabled: d.enabled, allNodes: d.allNodes,
-    nodeIds: d.allNodes ? [] : liveIds(d.nodeIds, nodes), channelIds: liveIds(d.channelIds, channels), ...own,
+    nodeIds: d.allNodes || d.dynamic ? [] : liveIds(d.nodeIds, nodes), selectorTags: !d.allNodes && d.dynamic ? d.selectorTags : [], channelIds: liveIds(d.channelIds, channels), ...own,
   };
 }
 
@@ -135,6 +142,18 @@ function RuleForm({ title, nodes, channels, tasks, initial, pending, onSubmit, o
           </div>
           <p className="muted">节点到期日距今不超过提前天数即触发（已过期的也算）；到期日改到这个范围之外、清除到期日，或调小提前天数使它落到范围之外，即恢复。续期后的到期日仍在范围内时不恢复。到期日在节点页设置。保存后立即评估，此后在 hub 启动时、hub 时区的每个日界（零点不存在的日子取新一天的第一个时刻）与修改节点计费时评估。</p>
         </>
+      ) : draft.kind === AlertKind.RESOURCE ? (
+        <>
+          <div className="row">
+            <label>资源指标<select value={draft.resourceMetric} onChange={(e) => set({ resourceMetric: Number(e.target.value) as ResourceMetric })}>
+              {RESOURCE_METRICS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
+            </select></label>
+            <label>触发阈值（%）<input type="number" required step="any" min={0} max={100} value={draft.threshold} onChange={(e) => set({ threshold: e.target.value })} /></label>
+            <label>恢复阈值（%）<input type="number" required step="any" min={0} max={100} value={draft.recoveryThreshold} onChange={(e) => set({ recoveryThreshold: e.target.value })} /></label>
+            <label>连续分钟<input type="number" required min={1} max={60} value={draft.forMinutes} onChange={(e) => set({ forMinutes: e.target.value })} /></label>
+          </div>
+          <p className="muted">恢复阈值必须低于触发阈值。按同次采样的使用量与总量计算百分比，再取每分钟均值；触发与恢复均需完整连续窗口，缺失读数不会恢复。</p>
+        </>
       ) : probe ? (
         <div className="row">
           <label>探测任务
@@ -155,8 +174,7 @@ function RuleForm({ title, nodes, channels, tasks, initial, pending, onSubmit, o
       ) : (
         <p className="muted">节点超过离线宽限期未上报即触发，收到上报即恢复；宽限期在节点页按节点设置，未设置时取 hub 的 PROBE_OFFLINE_AFTER。</p>
       )}
-      <label className="inline"><input type="checkbox" checked={draft.allNodes} onChange={(e) => set({ allNodes: e.target.checked })} />全部节点（含以后新建的节点）</label>
-      {!draft.allNodes && <Picks legend="作用域节点" items={nodes} selected={draft.nodeIds} onChange={(nodeIds) => set({ nodeIds })} />}
+      <NodeSelector nodes={nodes} value={draft} onChange={set} legend="作用域节点" />
       {probe && <p className="muted">探测规则只在既属于作用域、又分配了该任务的节点上评估。</p>}
       {channels.length > 0
         ? <Picks legend="通知渠道" items={channels} selected={draft.channelIds} onChange={(channelIds) => set({ channelIds })} />
@@ -187,7 +205,7 @@ function RuleRow({ rule: r, states, nodes, channels, tasks, nodeName, channelNam
       <td>{r.name}</td>
       <td>{labelOf(ALERT_KINDS, r.kind)}</td>
       <td>{ruleCondition(r, tasks)}</td>
-      <td>{r.allNodes ? "全部节点" : r.nodeIds.map(nodeName).join("、") || "无节点"}</td>
+      <td>{r.allNodes ? "全部节点" : r.selectorTags.length ? `动态标签：${r.selectorTags.join(" ∩ ")}；当前 ${r.nodeIds.length} 个节点` : r.nodeIds.map(nodeName).join("、") || "无节点"}</td>
       <td>{r.channelIds.map(channelName).join("、") || "只记事件"}</td>
       <td><RuleState enabled={r.enabled} states={states} nodeName={nodeName} /></td>
       <td>

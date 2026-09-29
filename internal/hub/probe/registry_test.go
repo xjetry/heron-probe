@@ -53,7 +53,7 @@ func task(target string) *probev1.ProbeTask {
 
 func save(t *testing.T, r *Registry, target string, ids []int64) Detail {
 	t.Helper()
-	d, _, err := r.Save(t.Context(), task(target), false, ids)
+	d, _, err := r.Save(t.Context(), task(target), store.NodeSelector{AllNodes: false, NodeIDs: ids})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func assertState(t *testing.T, r *Registry, version uint64, want []Detail, nodes
 
 func TestRegistrySaveDeleteVersionAndAssignments(t *testing.T) {
 	r, _, ids := registryStore(t)
-	a, v, err := r.Save(t.Context(), task("a.example"), false, []int64{ids[1], ids[0], ids[0]})
+	a, v, err := r.Save(t.Context(), task("a.example"), store.NodeSelector{AllNodes: false, NodeIDs: []int64{ids[1], ids[0], ids[0]}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestRegistrySaveDeleteVersionAndAssignments(t *testing.T) {
 		t.Errorf("saved=%+v version=%d", a, v)
 	}
 	assertState(t, r, setupVersion+1, []Detail{a}, ids...)
-	b, v, err := r.Save(t.Context(), task("b.example"), false, nil)
+	b, v, err := r.Save(t.Context(), task("b.example"), store.NodeSelector{AllNodes: false, NodeIDs: nil})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestRegistryRejectsInvalidTaskWithoutTouchingStore(t *testing.T) {
 	r, st, ids := registryStore(t)
 	bad := task("example.com")
 	bad.IntervalS = 1
-	_, _, err := r.Save(t.Context(), bad, false, ids)
+	_, _, err := r.Save(t.Context(), bad, store.NodeSelector{AllNodes: false, NodeIDs: ids})
 	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "interval_s must be between") {
 		t.Errorf("invalid error=%v", err)
 	}
@@ -145,7 +145,7 @@ func TestRegistryRejectsInvalidTaskWithoutTouchingStore(t *testing.T) {
 
 func TestRegistryPassesThroughNotFoundAndLimit(t *testing.T) {
 	r, _, ids := registryStore(t)
-	_, _, err := r.Save(t.Context(), task("example.com"), false, []int64{42})
+	_, _, err := r.Save(t.Context(), task("example.com"), store.NodeSelector{AllNodes: false, NodeIDs: []int64{42}})
 	if !errors.Is(err, store.ErrNotFound) || !strings.Contains(err.Error(), "node 42 does not exist") {
 		t.Errorf("missing node error=%v", err)
 	}
@@ -154,7 +154,7 @@ func TestRegistryPassesThroughNotFoundAndLimit(t *testing.T) {
 	for range probelimit.MaxTasksPerNode {
 		want = append(want, save(t, r, "example.com", ids[:1]))
 	}
-	_, _, err = r.Save(t.Context(), task("example.com"), false, ids[:1])
+	_, _, err = r.Save(t.Context(), task("example.com"), store.NodeSelector{AllNodes: false, NodeIDs: ids[:1]})
 	if !errors.Is(err, store.ErrNodeLimit) || !strings.Contains(err.Error(), "node 1 would have 65 probe tasks (maximum 64)") {
 		t.Errorf("limit error=%v", err)
 	}
@@ -173,7 +173,7 @@ func TestRegistryReloadMatchesMemory(t *testing.T) {
 	d := save(t, r, "d.example", nil)
 	edit := proto.Clone(a.Task).(*probev1.ProbeTask)
 	edit.Target = "changed.example"
-	a, _, err := r.Save(t.Context(), edit, false, ids[1:])
+	a, _, err := r.Save(t.Context(), edit, store.NodeSelector{AllNodes: false, NodeIDs: ids[1:]})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestRegistryLoadWaitsForPublication(t *testing.T) {
 	// 负向窗口：持锁期间 Load 不应返回。窗口短只会漏掉稍晚才提前返回的缺陷，不会把仍在等锁的 Load 判失败。
 	case <-time.After(100 * time.Millisecond):
 	}
-	saved, version, err := st.SaveProbeTask(t.Context(), task("new.example"), false, ids)
+	saved, version, err := st.SaveProbeTask(t.Context(), task("new.example"), store.NodeSelector{AllNodes: false, NodeIDs: ids})
 	r.writeMu.Unlock()
 	if !early {
 		loadErr = <-loaded
@@ -258,7 +258,7 @@ func TestRegistryForgetPreservesOtherAssignmentsAndVersion(t *testing.T) {
 // 版本随建节点前进；Forget 只摘掉被删的节点；重载得到同一份展开结果。
 func TestRegistryExpandsAllNodesTasksOntoCreatedNodes(t *testing.T) {
 	r, st, ids := registryStore(t)
-	all, _, err := r.Save(t.Context(), task("all.example"), true, ids[:1])
+	all, _, err := r.Save(t.Context(), task("all.example"), store.NodeSelector{AllNodes: true, NodeIDs: nil})
 	if err != nil || !all.AllNodes || !slices.Equal(all.NodeIDs, ids) {
 		t.Fatalf("save all_nodes: %+v err=%v", all, err)
 	}
@@ -324,14 +324,14 @@ func TestRegistryCreatedNodeCoverageFollowsStore(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r, st, ids := registryStore(t)
 			widened := save(t, r, "widened.example", ids[:1])
-			narrowed, _, err := r.Save(t.Context(), task("narrowed.example"), true, nil)
+			narrowed, _, err := r.Save(t.Context(), task("narrowed.example"), store.NodeSelector{AllNodes: true, NodeIDs: nil})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := st.SaveProbeTask(t.Context(), widened.Task, true, nil); err != nil {
+			if _, _, err := st.SaveProbeTask(t.Context(), widened.Task, store.NodeSelector{AllNodes: true, NodeIDs: nil}); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := st.SaveProbeTask(t.Context(), narrowed.Task, false, ids[:1]); err != nil {
+			if _, _, err := st.SaveProbeTask(t.Context(), narrowed.Task, store.NodeSelector{AllNodes: false, NodeIDs: ids[:1]}); err != nil {
 				t.Fatal(err)
 			}
 			node, err := create(t, r, st)

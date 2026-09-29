@@ -13,17 +13,19 @@ import (
 // locked 只查本键，耗时与表里有多少别的来源无关：被登录门拒绝的请求也要在 mu 写锁下
 // 调它，而 mu 同时是上报鉴权 Authenticate 的读锁，扫全表会让洪水按表大小拖住上报。
 // 可回收的条目 until 已过，不影响 locked 的答案，所以回收放在 record：条目只在 record
-// 里创建，每次先回收再记，表的上界仍是一个窗口内记过失败的来源数。record 在登录路径上
-// 只由持门的请求调用，按校验速率运行。
+// 里创建，每次先回收再记，表的上界仍是一个窗口内记过失败的来源数。密码和 Passkey 校验
+// 共用登录门；第二因素失败与其他主动认证失败也在 Auth.mu 下进入同一来源计数。
 type failureTracker struct {
-	limit  int
-	window time.Duration
-	m      map[netip.Addr]*failure
+	limit    int
+	window   time.Duration
+	m        map[netip.Addr]*failure
+	sequence uint64
 }
 
 type failure struct {
 	attempts []time.Duration
 	until    time.Duration
+	sequence uint64
 }
 
 func newFailureTracker(limit int, window time.Duration) *failureTracker {
@@ -68,6 +70,8 @@ func (t *failureTracker) record(from netip.Addr, now time.Duration) (count int, 
 		return len(f.attempts), false
 	}
 	f.attempts = append(f.attempts, now)
+	t.sequence++
+	f.sequence = t.sequence
 	if len(f.attempts) >= t.limit {
 		f.until = now + t.window
 		return len(f.attempts), true
@@ -76,3 +80,10 @@ func (t *failureTracker) record(from netip.Addr, now time.Duration) (count int, 
 }
 
 func (t *failureTracker) clear(from netip.Addr) { delete(t.m, SourceKey(from)) }
+
+// 认证成功只清除开始验证之前的失败；签发等待期间的新失败仍属于后来的尝试。
+func (t *failureTracker) clearThrough(from netip.Addr, sequence uint64) {
+	if f := t.m[SourceKey(from)]; f != nil && f.sequence <= sequence {
+		t.clear(from)
+	}
+}

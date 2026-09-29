@@ -58,13 +58,13 @@ func taskIDs(tasks *probev1.ProbeTasks) []uint64 {
 	return ids
 }
 
-// ListProbeTasks 对 all_nodes 任务回显当前展开的节点：保存时请求里的 node_ids 被忽略，之后建的节点纳入、删的节点
+// ListProbeTasks 对 all_nodes 任务回显当前展开的节点：保存请求不混入显式节点，之后建的节点纳入、删的节点
 // 掉出。建节点推进版本，删节点不推。
 func TestListProbeTasksExpandsAllNodesAcrossNodeCreationAndDeletion(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	a, _ := h.createNode(t, "a")
-	saved, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: probeTask("192.0.2.1"), AllNodes: true, NodeIds: []int64{999}}))
+	saved, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{Task: probeTask("192.0.2.1"), AllNodes: true}))
 	if err != nil {
 		t.Fatal(err)
 	}

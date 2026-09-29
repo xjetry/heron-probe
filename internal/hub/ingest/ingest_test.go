@@ -825,7 +825,7 @@ func TestForgetDropsTrafficState(t *testing.T) {
 
 func (h *hub) task(t *testing.T, nodeID int64) uint64 {
 	t.Helper()
-	d, _, err := h.reg.Save(context.Background(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}, false, []int64{nodeID})
+	d, _, err := h.reg.Save(context.Background(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}, store.NodeSelector{AllNodes: false, NodeIDs: []int64{nodeID}})
 	if err != nil {
 		t.Fatal(err)
 	}

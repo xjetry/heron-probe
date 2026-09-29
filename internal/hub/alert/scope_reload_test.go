@@ -30,7 +30,7 @@ func TestDeletedScopeSurvivesReload(t *testing.T) {
 	}
 	_, err := f.e.SaveRule(t.Context(), rules[0])
 	var field FieldError
-	if !errors.As(err, &field) || field.Path != "node_ids" || field.Constraint != "must not be empty unless all_nodes is true" {
+	if !errors.As(err, &field) || field.Path != "node_ids" || field.Constraint != "must not be empty unless all_nodes or selector_tags is set" {
 		t.Fatalf("empty save scope error=%v", err)
 	}
 }

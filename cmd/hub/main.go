@@ -25,6 +25,8 @@ func main() {
 		err = runServe(os.Args[2:])
 	case "passwd":
 		err = runPasswd(os.Args[2:])
+	case "security-reset":
+		err = runSecurityReset(os.Args[2:])
 	case "token":
 		err = runToken(os.Args[2:])
 	case "node":
@@ -53,6 +55,7 @@ func usage() {
 commands:
   serve                     start the hub
   passwd                    set the admin password (reads stdin when not a terminal)
+  security-reset            clear TOTP and Passkeys and revoke sessions (requires --yes)
   token list|revoke         list or revoke API tokens (effective immediately)
   node create|list|delete|rotate-token
   window open|close|show    manage the registration window

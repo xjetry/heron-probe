@@ -1,4 +1,4 @@
-import { AlertKind, ChannelKind, DeliveryFailure, ProbeMetric, type AlertDelivery, type AlertRule, type AlertStateEntry, type NotifyChannel, type ProbeTaskDetail, type Settings } from "../gen/probe/v1/admin_pb";
+import { AlertKind, ChannelKind, DeliveryFailure, ProbeMetric, ResourceMetric, type AlertDelivery, type AlertRule, type AlertStateEntry, type NotifyChannel, type ProbeTaskDetail, type Settings } from "../gen/probe/v1/admin_pb";
 import { formatUnit } from "./format";
 import { disambiguate, kindLabel } from "./probes";
 
@@ -41,6 +41,11 @@ export const ALERT_KINDS: readonly Entry<AlertKind>[] = [
   { value: AlertKind.OFFLINE, label: "离线" },
   { value: AlertKind.PROBE, label: "探测" },
   { value: AlertKind.EXPIRY, label: "到期" },
+  { value: AlertKind.RESOURCE, label: "资源" },
+];
+export const RESOURCE_METRICS: readonly Entry<ResourceMetric>[] = [
+  { value: ResourceMetric.MEMORY_USED_PCT, label: "内存使用率" },
+  { value: ResourceMetric.DISK_USED_PCT, label: "磁盘使用率" },
 ];
 // unit 与 formatUnit 的单位名一致：丢包阈值是百分数，RTT 阈值是毫秒（proto AlertRule.threshold）。
 export const PROBE_METRICS: readonly (Entry<ProbeMetric> & { unit: string })[] = [
@@ -64,6 +69,7 @@ export function taskLabels(ids: bigint[], tasks: readonly ProbeTaskDetail[] | un
 export function ruleCondition(rule: AlertRule, tasks: ProbeTaskDetail[] | undefined): string {
   if (rule.kind === AlertKind.OFFLINE) return "超过宽限期未上报";
   if (rule.kind === AlertKind.EXPIRY) return `到期日距今不超过 ${rule.daysBefore} 天（含已过期）`;
+  if (rule.kind === AlertKind.RESOURCE) return `${labelOf(RESOURCE_METRICS, rule.resourceMetric)} ≥ ${rule.threshold}%，恢复 ≤ ${rule.recoveryThreshold}%，各连续 ${rule.forMinutes} 分钟`;
   const metric = PROBE_METRICS.find((m) => m.value === rule.metric);
   const threshold = metric ? formatUnit(rule.threshold, metric.unit) : String(rule.threshold);
   return `${taskLabel(rule.taskId, tasks)} ${labelOf(PROBE_METRICS, rule.metric)} ≥ ${threshold}，连续 ${rule.forMinutes} 分钟`;
@@ -88,6 +94,7 @@ export function statesOf(states: AlertStateEntry[]): Map<bigint, RuleStates> {
 export const TRANSITIONS: Readonly<Record<string, string>> = {
   firing: "触发", recovered: "恢复", login_success: "登录成功", login_locked: "登录锁定",
   backup_failed: "备份失败", backup_recovered: "备份恢复", backup_disabled: "备份停用",
+  login_failed: "登录失败", auth_changed: "认证方式变更", backup_success: "备份成功", backup_restored: "手动恢复",
 };
 export const transitionLabel = (t: string): string => TRANSITIONS[t] ?? t;
 // 要人立即注意的变化，事件页标红：规则触发；登录锁定——有人在猜管理员密码；配置层备份失败——RPO 正在无声变长。

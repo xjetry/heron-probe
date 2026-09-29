@@ -69,13 +69,13 @@ func TestMigrationFromV9MatchesFreshSchemaAndKeepsTaskScope(t *testing.T) {
 }
 
 // all_nodes 任务不写分配行，覆盖在读取时从节点表展开：保存时已有的节点、之后新建的节点都在内，删除的节点不在；
-// 请求里带的 nodeIDs 被忽略。
+// 请求只带一个作用域模式，不能混入显式分配。
 func TestAllNodesTaskCoversEveryNodeWithoutAssignmentRows(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
 	a, _, _ := s.CreateNode(ctx, "a", hash(1))
 	b, _, _ := s.CreateNode(ctx, "b", hash(2))
-	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), true, []int64{a})
+	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: true, NodeIDs: nil})
 	if err != nil || !saved.AllNodes || !reflect.DeepEqual(saved.NodeIDs, []int64{a, b}) {
 		t.Fatalf("save all_nodes: %+v err=%v", saved, err)
 	}
@@ -103,15 +103,15 @@ func TestExplicitEmptyScopeCoversNoNode(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
 	a, _, _ := s.CreateNode(ctx, "a", hash(1))
-	all, _, err := s.SaveProbeTask(ctx, taskForTest(), true, nil)
+	all, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: true, NodeIDs: nil})
 	if err != nil {
 		t.Fatal(err)
 	}
-	narrowed, _, err := s.SaveProbeTask(ctx, all.Task, false, nil)
+	narrowed, _, err := s.SaveProbeTask(ctx, all.Task, NodeSelector{AllNodes: false, NodeIDs: nil})
 	if err != nil || narrowed.AllNodes || narrowed.NodeIDs != nil {
 		t.Fatalf("all_nodes switched off with no nodes: %+v err=%v", narrowed, err)
 	}
-	empty, _, err := s.SaveProbeTask(ctx, taskForTest(), false, nil)
+	empty, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: nil})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,17 +176,17 @@ func TestCreatingNodeReturnsItsCoverage(t *testing.T) {
 				t.Fatal(err)
 			}
 			a, _, _ := s.CreateNode(ctx, "a", hash(1))
-			first, _, err := s.SaveProbeTask(ctx, taskForTest(), true, nil)
+			first, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: true, NodeIDs: nil})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{a}); err != nil {
+			if _, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{a}}); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := s.SaveProbeTask(ctx, taskForTest(), false, nil); err != nil {
+			if _, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: nil}); err != nil {
 				t.Fatal(err)
 			}
-			second, _, err := s.SaveProbeTask(ctx, taskForTest(), true, []int64{a})
+			second, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: true, NodeIDs: nil})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -219,7 +219,7 @@ func saveAllNodesTasks(t *testing.T, s *Store, n int) []ProbeTaskRecord {
 	t.Helper()
 	var out []ProbeTaskRecord
 	for range n {
-		rec, _, err := s.SaveProbeTask(t.Context(), taskForTest(), true, nil)
+		rec, _, err := s.SaveProbeTask(t.Context(), taskForTest(), NodeSelector{AllNodes: true, NodeIDs: nil})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -235,23 +235,23 @@ func TestSavingAllNodesTaskCountsTowardEveryNodesLimit(t *testing.T) {
 	a, _, _ := s.CreateNode(ctx, "a", hash(1))
 	b, _, _ := s.CreateNode(ctx, "b", hash(2))
 	saveAllNodesTasks(t, s, probelimit.MaxTasksPerNode-1)
-	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{b}); err != nil {
+	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{b}}); err != nil {
 		t.Fatal(err)
 	}
 	version, before, err := s.LoadProbeTasks(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = s.SaveProbeTask(ctx, taskForTest(), true, nil)
+	_, _, err = s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: true, NodeIDs: nil})
 	if !errors.Is(err, ErrNodeLimit) || err.Error() != fmt.Sprintf("node %d would have 65 probe tasks (maximum 64)", b) {
 		t.Fatalf("65th task on node b error=%v", err)
 	}
 	assertTasks(t, s, version, before)
 	// a 只有 63 个 all_nodes 任务，再来一个显式分配到 a 的任务是它的第 64 个，放行。
-	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{a}); err != nil {
+	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{a}}); err != nil {
 		t.Fatalf("64th task on node a rejected: %v", err)
 	}
-	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), true, nil); !errors.Is(err, ErrNodeLimit) || !strings.Contains(err.Error(), fmt.Sprintf("node %d would have 65", a)) {
+	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: true, NodeIDs: nil}); !errors.Is(err, ErrNodeLimit) || !strings.Contains(err.Error(), fmt.Sprintf("node %d would have 65", a)) {
 		t.Fatalf("all_nodes task past the limit of both nodes error=%v", err)
 	}
 }

@@ -65,6 +65,7 @@ func TestColumnsCoverSpecifiedMetrics(t *testing.T) {
 		"cpu": {MeanMax, Float}, "mem_used": {MeanMax, Int}, "swap_used": {Mean, Int},
 		"disk_used": {Mean, Int}, "load1": {Mean, Float}, "tcp": {Mean, Int},
 		"udp": {Mean, Int}, "procs": {Mean, Int}, "rx_bytes": {Sum, Int}, "tx_bytes": {Sum, Int},
+		"memory_used_pct": {Mean, Float}, "disk_used_pct": {Mean, Float},
 	}
 	if len(Columns) != len(want) {
 		t.Fatalf("%d columns, want %d", len(Columns), len(want))
@@ -115,8 +116,8 @@ func TestSumColumnsAreFedByAddSumNotByMetrics(t *testing.T) {
 }
 
 func TestIndexLocatesColumnsByName(t *testing.T) {
-	if Index("rx_bytes") != len(Columns)-2 || Index("tx_bytes") != len(Columns)-1 {
-		t.Fatalf("rx_bytes/tx_bytes at %d/%d, want the last two columns", Index("rx_bytes"), Index("tx_bytes"))
+	if Index("rx_bytes") != 8 || Index("tx_bytes") != 9 {
+		t.Fatalf("rx_bytes/tx_bytes at %d/%d, want stable indices 8/9", Index("rx_bytes"), Index("tx_bytes"))
 	}
 	if Index("nope") != -1 {
 		t.Fatal("unknown name must be -1")

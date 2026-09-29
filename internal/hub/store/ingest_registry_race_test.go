@@ -69,7 +69,7 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "localhost", IntervalS: 5, TimeoutMs: 1000}
-	d, _, err := reg.Save(ctx, task, false, []int64{deleted})
+	d, _, err := reg.Save(ctx, task, store.NodeSelector{AllNodes: false, NodeIDs: []int64{deleted}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,10 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 	release, pending, drain := st.HoldWriterForTest()
 	defer release()
 	saved := make(chan error, 1)
-	go func() { _, _, err := reg.Save(ctx, task, false, []int64{keep}); saved <- err }()
+	go func() {
+		_, _, err := reg.Save(ctx, task, store.NodeSelector{AllNodes: false, NodeIDs: []int64{keep}})
+		saved <- err
+	}()
 	waitRegistryWrite(t, pending)
 	forgotten := make(chan struct{})
 	go func() { svc.Forget(deleted); close(forgotten) }()

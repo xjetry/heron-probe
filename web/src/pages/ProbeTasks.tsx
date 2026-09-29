@@ -5,21 +5,21 @@ import { errorText } from "../api/auth";
 import { errorBanner, queryGateAll } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
-import { Picks } from "../components/Picks";
+import { NodeSelector, type NodeSelection } from "../components/NodeSelector";
 import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
 import { ProbeKind, type ProbeTask } from "../gen/probe/v1/types_pb";
 import { ascending, withId } from "../lib/ids";
 import { PROBE_KINDS, kindLabel } from "../lib/probes";
 
-type Draft = { kind: ProbeKind; target: string; intervalS: string; timeoutMs: string; allNodes: boolean; nodeIds: Set<bigint> };
-type TaskEntry = { task: ProbeTask; allNodes: boolean; nodeIds: bigint[] };
+type Draft = NodeSelection & { kind: ProbeKind; target: string; intervalS: string; timeoutMs: string };
+type TaskEntry = { task: ProbeTask; allNodes: boolean; nodeIds: bigint[]; selectorTags: string[] };
 
-const emptyDraft = (): Draft => ({ kind: ProbeKind.ICMP, target: "", intervalS: "60", timeoutMs: "1000", allNodes: false, nodeIds: new Set() });
+const emptyDraft = (): Draft => ({ kind: ProbeKind.ICMP, target: "", intervalS: "60", timeoutMs: "1000", allNodes: false, nodeIds: new Set(), selectorTags: [], dynamic: false });
 // all_nodes 任务的 nodeIds 是 hub 展开的当前全部节点；编辑时取消"全部节点"即以它们作为显式分配的起点，
 // 覆盖不会因为取消勾选而一下子清空。
-const draftOf = ({ task, allNodes, nodeIds }: TaskEntry): Draft => ({
+const draftOf = ({ task, allNodes, nodeIds, selectorTags }: TaskEntry): Draft => ({
   kind: task.kind, target: task.target, intervalS: String(task.intervalS),
-  timeoutMs: String(task.timeoutMs), allNodes, nodeIds: new Set(nodeIds),
+  timeoutMs: String(task.timeoutMs), allNodes, nodeIds: new Set(nodeIds), selectorTags, dynamic: selectorTags.length > 0,
 });
 
 export function ProbeTasks() {
@@ -45,8 +45,9 @@ export function ProbeTasks() {
   // 提交：空集不覆盖任何节点（spec §8.1，与告警规则的 all_nodes 同一语义），不会被读成全部节点。
   const submit = (m: typeof create, id: bigint, d: Draft, onSuccess?: () => void) =>
     m.mutate({ task: { id, kind: d.kind, target: d.target.trim(), intervalS: Number(d.intervalS), timeoutMs: Number(d.timeoutMs) },
-      allNodes: d.allNodes, nodeIds: d.allNodes ? [] : ascending([...d.nodeIds].filter((id) => availableNodeIds.has(id))) }, { onSuccess });
-  const tasks: TaskEntry[] = listData.tasks.flatMap((d) => d.task ? [{ task: d.task, allNodes: d.allNodes, nodeIds: d.nodeIds }] : []);
+      allNodes: d.allNodes, nodeIds: d.allNodes || d.dynamic ? [] : ascending([...d.nodeIds].filter((id) => availableNodeIds.has(id))),
+      selectorTags: !d.allNodes && d.dynamic ? d.selectorTags : [] }, { onSuccess });
+  const tasks: TaskEntry[] = listData.tasks.flatMap((d) => d.task ? [{ task: d.task, allNodes: d.allNodes, nodeIds: d.nodeIds, selectorTags: d.selectorTags }] : []);
   return (
     <section>
       {gate.banner}
@@ -94,8 +95,7 @@ function TaskForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
         <label>间隔 (s)<input type="number" required min={5} max={3600} value={draft.intervalS} onChange={(e) => setDraft({ ...draft, intervalS: e.target.value })} /></label>
         <label>超时 (ms)<input type="number" required min={100} max={5000} value={draft.timeoutMs} onChange={(e) => setDraft({ ...draft, timeoutMs: e.target.value })} /></label>
       </div>
-      <label className="inline"><input type="checkbox" checked={draft.allNodes} onChange={(e) => setDraft({ ...draft, allNodes: e.target.checked })} />全部节点（含以后新建的节点）</label>
-      {!draft.allNodes && <Picks legend="分配到节点" items={nodes} selected={draft.nodeIds} onChange={(nodeIds) => setDraft({ ...draft, nodeIds })} />}
+      <NodeSelector nodes={nodes} value={draft} onChange={(patch) => setDraft({ ...draft, ...patch })} legend="分配到节点" />
       <div className="row">
         <button type="submit" disabled={pending}>{onCancel ? "保存" : "创建"}</button>
         {onCancel && <button type="button" className="link" onClick={onCancel}>取消</button>}
@@ -111,7 +111,7 @@ function TaskRow({ entry, nodes, saving, deleting, onSave, onDelete }: {
   const [editing, setEditing] = useState(false);
   const names = nodeIds.map((id) => nodes.find((n) => n.id === id)?.name ?? `#${id}`).join("、");
   // 显式分配为空显示"未分配"：它不覆盖任何节点，与"全部节点"区分开。
-  const coverage = allNodes ? `全部节点：${names || "暂无节点"}` : names;
+  const coverage = allNodes ? `全部节点：${names || "暂无节点"}` : entry.selectorTags.length ? `动态标签：${entry.selectorTags.join(" ∩ ")}；当前：${names || "无匹配"}` : names;
   if (editing) {
     return (
       <tr><td colSpan={6}>

@@ -229,8 +229,8 @@ func TestFailureTransitions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(events) != 2 {
-				t.Fatalf("persisted events=%d want=2", len(events))
+			if len(events) != 4 {
+				t.Fatalf("persisted events=%d want=4 (failure, recovery and two layer successes)", len(events))
 			}
 			for i, ev := range sink.events {
 				want := store.TransitionBackupFailed
@@ -314,7 +314,7 @@ func execFixtureSQL(t *testing.T, path, query string) {
 
 func TestEventWriteFailureDoesNotBlockMetricsAndRetries(t *testing.T) {
 	m, clk, objects, sink := setup(t)
-	execFixtureSQL(t, objects.databasePath, `CREATE TRIGGER reject_backup_event BEFORE INSERT ON alert_event BEGIN SELECT RAISE(ABORT, 'event rejected'); END`)
+	execFixtureSQL(t, objects.databasePath, `CREATE TRIGGER reject_backup_event BEFORE INSERT ON alert_event WHEN NEW.transition='backup_failed' BEGIN SELECT RAISE(ABORT, 'event rejected'); END`)
 	objects.failLayer, objects.failStage = "config", "upload"
 	err := m.Tick(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "event rejected") {
@@ -333,7 +333,7 @@ func TestEventWriteFailureDoesNotBlockMetricsAndRetries(t *testing.T) {
 		t.Fatalf("failed event was not retried: events=%d", len(sink.events))
 	}
 	objects.failStage = ""
-	execFixtureSQL(t, objects.databasePath, `CREATE TRIGGER reject_backup_event BEFORE INSERT ON alert_event BEGIN SELECT RAISE(ABORT, 'event rejected'); END`)
+	execFixtureSQL(t, objects.databasePath, `CREATE TRIGGER reject_backup_event BEFORE INSERT ON alert_event WHEN NEW.transition='backup_recovered' BEGIN SELECT RAISE(ABORT, 'event rejected'); END`)
 	clk.Advance(5 * time.Minute)
 	if err := m.Tick(t.Context()); err == nil {
 		t.Fatal("recovery event write error was hidden")

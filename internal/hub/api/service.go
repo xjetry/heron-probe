@@ -336,15 +336,15 @@ func clearSessionCookie(ctx context.Context, header http.Header) {
 
 func (s *Service) Login(ctx context.Context, req *connect.Request[probev1.LoginRequest]) (*connect.Response[probev1.LoginResponse], error) {
 	peer := ctx.Value(peerKey{}).(peerInfo)
-	tok, err := s.auth.Login(ctx, req.Msg.GetPassword(), peer.from)
+	tok, err := s.auth.LoginFactors(ctx, req.Msg.GetPassword(), req.Msg.GetOtp(), req.Msg.GetRecoveryCode(), peer.from)
 	switch {
 	case errors.Is(err, auth.ErrLoginBusy):
 		return nil, connect.NewError(connect.CodeResourceExhausted, errors.New("password verification is busy; please try again later"))
 	case errors.Is(err, auth.ErrLocked):
 		return nil, unauthenticated("too many failed logins from this source (one IPv4 address, or one IPv6 /64); retry in 15 minutes")
-	case errors.Is(err, auth.ErrNoAdmin), errors.Is(err, auth.ErrBadPassword):
+	case errors.Is(err, auth.ErrNoAdmin), errors.Is(err, auth.ErrBadPassword), errors.Is(err, auth.ErrSecurity), errors.Is(err, store.ErrAdminChanged):
 		// 对外同一响应，避免匿名调用方由错误内容判断管理员是否已配置。
-		return nil, unauthenticated("wrong password")
+		return nil, unauthenticated("密码或第二认证因素无效")
 	case err != nil:
 		s.log.Error("login failed", "err", err)
 		return nil, internalError("login failed")

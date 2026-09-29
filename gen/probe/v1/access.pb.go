@@ -29,7 +29,7 @@ type Access int32
 
 const (
 	Access_ACCESS_UNSPECIFIED Access = 0
-	// 仅 Login：凭据是请求体里的密码，不需要会话或 API token。
+	// 登录入口：校验请求体里的密码与第二因素，或 Passkey 挑战响应，不需要现有会话或 API token。
 	Access_ACCESS_LOGIN Access = 1
 	// 无副作用，不列出或管理任何凭据，也不回显可能含密钥的内容——配置本身，或外部接收方对它的回显：
 	// 会话与 API token 都可调用。把方法改成 ACCESS_READ 就是扩大 API token 的权限。

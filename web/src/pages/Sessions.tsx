@@ -5,6 +5,7 @@ import { errorBanner, queryGate } from "../api/queryGate";
 import { useLeaveSession } from "../api/useLeaveSession";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { AdminService } from "../gen/probe/v1/admin_pb";
+import { Link } from "react-router";
 
 export function Sessions() {
   const queryClient = useQueryClient();
@@ -26,6 +27,7 @@ export function Sessions() {
     <section>
       {gate.banner}
       <h1>安全</h1>
+      <p><Link to="/security/credentials">管理 TOTP、恢复码与 Passkey</Link></p>
       <p className="muted">有效登录会话。撤销后，该会话立即失效；撤销当前会话会返回登录页。</p>
       {revoke.error && <p role="alert" className="error">{errorText(revoke.error)}</p>}
       <div className="table-scroll" role="region" aria-label="登录会话" tabIndex={0}>

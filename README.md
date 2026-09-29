@@ -4,7 +4,7 @@
 
 ## 运行 hub
 
-升级前备份库；新版本 `serve` 会迁移库，迁移后旧版本无法再打开。离线子命令遇到旧库会拒绝操作，并提示先用新版本 `serve` 升级。备份方法见下文"数据卷与备份"：运行中直接复制可能得到损坏的备份，需要先停 hub，再连同 `-wal`、`-shm` 一起复制。
+升级前备份库；新版本 `serve` 会迁移库，迁移后旧版本无法再打开。离线子命令遇到旧库会拒绝操作，并提示先用新版本 `serve` 升级。可使用内置 S3 分层快照在线备份，或停 hub 后复制整个数据卷，详见下文“数据卷与备份”。
 
 hub 是一个静态链接的二进制，数据在一个 SQLite 文件里。从 [Releases](https://github.com/xjetry/probe/releases/latest) 下载 `probe-hub_linux_<arch>.tar.gz`（amd64、arm64）：
 
@@ -31,16 +31,16 @@ probe-hub passwd --db /var/lib/probe/probe.db
 
 安装器校验下载包的 SHA256SUMS，以静态系统用户 `probe-hub` 启动服务，确认进程持续存活后才提示设置密码。主机没有 CA 证书包时安装器会装上 `ca-certificates`：不论从哪里下载，hub 发往 Telegram 的告警都走 HTTPS。升级时先让新版本的 `serve` 启动并完成数据库迁移，再使用 `passwd` 等离线子命令。管理员密码由你设置，脚本不生成、不打印密码。
 
-默认只监听 `127.0.0.1:8080`，TLS 交给反向代理。可用 `--listen`、`--timezone`、`--trusted-proxies`、`--public-dir`、`--theme-origin`、`--geo-mmdb` 和 `--retention-*` 设置 serve 参数；例如：
+默认只监听 `127.0.0.1:8080`，TLS 交给反向代理。可用 `--listen`、`--timezone`、`--trusted-proxies`、`--public-dir`、`--theme-origin`、`--admin-origin`、`--geo-mmdb` 和 `--retention-*` 设置 serve 参数；例如：
 
 ```sh
 curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install-hub.sh | sh -s -- \
   --timezone Asia/Taipei --trusted-proxies 127.0.0.1/32
 ```
 
-重跑即升级，沿用 `/etc/systemd/system/probe-hub.service` 里 `ExecStart` 的参数，命令行显式给出的值按参数名替换旧值；写回时每个参数只留一份，统一写成 `--flag=value`。`--version vX.Y.Z` 指定发行版，`--base-url URL` 改用该下载目录并忽略 `--version`。安装器只接受静态参数：用了 systemd 的 `$` / `%` 动态展开，或有 drop-in 设了 `ExecStart` 时，须先把参数合并为主单元里的静态值；无法解析时升级在停服前报错，不会重置配置。首装时已有设了 `ExecStart` 的 drop-in（例如 purge 后留在 `probe-hub.service.d/` 里的），安装器写好主单元后报错，不 enable、不 start。数据库固定为 `/var/lib/probe/probe.db`。
+重跑即升级，沿用 `/etc/systemd/system/probe-hub.service` 里 `ExecStart` 的参数，命令行显式给出的值按参数名替换旧值；写回时每个参数只留一份，统一写成 `--flag=value`。`--version vX.Y.Z` 指定发行版，`--base-url URL` 改用该下载目录并忽略 `--version`。安装器只接受静态参数：用了 systemd 的 `$` / `%` 动态展开，或有 drop-in 设了 `ExecStart` 时，须先把参数合并为主单元里的静态值；无法解析时升级在停服前报错，不会重置配置。首装时已有设了 `ExecStart` 的 drop-in（例如预先写入 `probe-hub.service.d/` 的），安装器写好主单元后报错，不 enable、不 start。数据库固定为 `/var/lib/probe/probe.db`。
 
-每次安装都用发行包里的单元覆盖主单元，只保留其中 `ExecStart` 的参数：主单元里别的手工改动（例如 `Environment=PROBE_OFFLINE_AFTER=60s`）会在升级时丢失。这类定制放进 drop-in（`systemctl edit probe-hub`，写在 `/etc/systemd/system/probe-hub.service.d/`）；不设 `ExecStart` 的 drop-in 升级时保留，卸载与 purge 也不删这个目录。
+每次安装都用发行包里的单元覆盖主单元，只保留其中 `ExecStart` 的参数：主单元里别的手工改动（例如 `Environment=PROBE_OFFLINE_AFTER=60s`）会在升级时丢失。这类定制放进 drop-in（`systemctl edit probe-hub`，写在 `/etc/systemd/system/probe-hub.service.d/`）；不设 `ExecStart` 的 drop-in 升级时保留。普通卸载保留 drop-in，`--purge` 删除 `/etc/systemd/system/probe-hub.service.d/` 与 `/run/systemd/system/probe-hub.service.d/`，包括手工定制；目录为符号链接时只删除链接，不删除目标内容。共享 drop-in、发行版提供的配置和系统 journal 不清理，journal 由系统日志保留策略处理。
 
 数据目录为 `root:probe-hub 0770`，库文件为 `probe-hub:probe-hub 0600`；目录必须允许服务组创建和删除 SQLite 的 WAL/SHM 文件。数据目录或库文件是符号链接、库文件另有硬链接时，安装器在停服前拒绝，不改动链接指向的文件。单元逐项加固，将数据目录列入 `ReadWritePaths`，提供私有临时目录，不授予 `CAP_NET_RAW`。查看状态与日志：`systemctl status probe-hub`、`journalctl -u probe-hub`。
 
@@ -108,6 +108,38 @@ docker run -d --name probe --restart unless-stopped --stop-timeout 30 --network 
 # 反代容器以 --network probe-net 加入，把请求转给 http://probe:8080
 ```
 
+### 账户安全
+
+在面板「安全」进入认证器管理，可启用 TOTP、生成一次性恢复码、注册或删除 Passkey。启用 TOTP 后，密码登录必须同时提供六位动态验证码或一个恢复码；恢复码只显示一次，使用后失效，重新生成会作废旧码。修改认证方式需要重新证明身份，并撤销全部旧会话。
+
+Passkey 支持无密码登录，需启动参数 `--admin-origin https://panel.example.com` 固定可信管理来源。反代须提供 HTTPS，浏览器须支持 WebAuthn；本地开发仅允许 localhost/回环地址使用 HTTP。该主机名必须与 `--theme-origin` 不同。未配置 `--admin-origin` 时 TOTP 和密码仍可使用，Passkey 关闭。注册的是可发现凭据，登录时要求认证器执行用户验证。
+
+认证器丢失时先用恢复码登录；密码或全部认证器丢失时，可登录 hub 服务器，使用对数据库有读写权限的账号执行以下命令，不需要提供旧密码或认证器证明：
+
+```bash
+# 重设密码，终端交互输入且不回显；不会清除 TOTP 或 Passkey
+probe-hub passwd --db /var/lib/probe/probe.db
+# 清除 TOTP、恢复码和全部 Passkey；不改变密码或 API token
+probe-hub security-reset --db /var/lib/probe/probe.db --yes
+```
+
+密码和认证器全部丢失时执行两条；两者都撤销全部登录会话，无需重启 hub。`passwd` 会列出现有 API token，并在交互终端询问是否一并撤销；非交互时默认保留。必须指定实际使用的数据库；`security-reset` 拒绝不存在的库，`passwd` 也可用于首次建库。旧库须先由新版本 `serve` 完成迁移。
+
+Docker 部署对应为：
+
+```bash
+docker exec -it probe probe-hub passwd --db /data/probe.db
+docker exec probe probe-hub security-reset --db /data/probe.db --yes
+```
+
+备份包含认证密钥，须按凭据管理，不应公开 bucket 或分享快照。
+
+### 标签与告警
+
+探测任务和告警规则可按标签一次性批量选中节点，保存后是固定节点列表；也可选择动态标签交集，自动覆盖同时拥有全部所选标签的节点。动态选择器与显式节点、全部节点互斥，标签变更会更新探测分配和告警作用域。被动态选择器引用的标签不能删除，须先修改引用它的任务或规则；匹配空集不表示全部节点。
+
+资源规则支持内存与磁盘已用百分比，按同一次采样的已用量／总量计算，连续指定数量的已闭合分钟达到阈值才触发，连续相同数量的完整分钟不高于独立恢复阈值才恢复。缺失读数不算恢复。登录成功、失败、锁定、认证方式变更，以及备份成功、故障、故障恢复、停用和手动恢复都会保留事件；普通登录失败、周期备份成功及手动恢复只记审计，不默认投递通知。
+
 ### 公开页主题
 
 公开页除了在面板的「外观」页改标题、配色、logo 与 CSS，还可以换成第三方主题：一个只调 `PublicService` 的静态前端，打成 zip 在面板的「主题」页上传、启用。主题托管在单独的主机名上，hub 以 `--theme-origin https://status.example.com` 启动，并让反代把这个主机名也转给 hub、原样转发 `Host`（nginx 要写 `proxy_set_header Host $host;`）。这个主机名必须与面板的不同，只差端口不算。不给 `--theme-origin` 时主题功能关闭。
@@ -126,6 +158,22 @@ docker run -d --name probe --restart unless-stopped --stop-timeout 30 --network 
 | `PROBE_OFFLINE_AFTER` | 节点离线判定时长（Go duration，`10s` 到 `3m`，默认 `30s`）；上报间隔、退避上限与告警宽限期的下限都由它推出 |
 
 ### 数据卷与备份
+
+面板中配置 S3 兼容 endpoint、bucket、区域、access key、secret 和前缀后，hub 自动生成一致性分层快照：配置层默认每 5 分钟一次、保留 48 份；指标层默认每天一次、保留 14 份。周期与份数可配置，两层状态可从面板读取。周期成功只记事件，配置层故障与恢复按设置的渠道通知。bucket 必须私有，并使用 HTTPS；快照不额外加密。
+
+配置快照带主题摘要清单，先上传 `theme/sha256/<SHA-256>.zip` 不可变主题包，再上传引用它的快照。更新或删除当前主题不会覆盖、删除旧快照需要的包；主题对象不按当前安装清单自动清理，需另行评估保留空间。
+
+可用 `sqlite3 config.db 'SELECT theme_id,sha256 FROM snapshot_theme ORDER BY theme_id;'` 查看所需主题版本，只下载清单引用的包。空摘要表示该主题没有原包，需重新上传后再备份；恢复该快照时可省略 `--themes` 并停用主题。
+
+恢复前停止 hub，将配置快照、可选的指标快照和所引用的主题包下载到本地：
+
+```sh
+probe-hub restore --db probe.db --config config.db --metrics metrics.db --themes ./themes --yes
+```
+
+`themes` 目录放摘要命名的 `<SHA-256>.zip`。新格式快照指定 `--themes` 时严格校验主题引用，缺包或摘要不符拒绝恢复；省略该参数则恢复配置但停用全部主题。恢复接受明确支持的 schema 17–20，旧快照在私有副本中迁移，不改写来源；未来版本、未知格式或结构不符拒绝。旧格式按原有 `<主题 id>.zip` 导入，缺包主题保留但停用。恢复不复活会话或注册窗口，并写入恢复记录和手动恢复事件。两层时刻可不同，以配置层节点为准清理孤儿历史。
+
+若不使用在线快照，可停机备份整个卷：
 
 - `/data` 由 uid 65532 写入。新建的命名卷或匿名卷挂上时，Docker 把镜像里 `/data` 的属主带过去，无需处理。绑定宿主目录（`-v /srv/probe:/data`）时，目录须可被 uid 65532 写入（Linux 宿主上 `chown 65532:65532 /srv/probe`），否则 hub 启动即退出，报错 `open database /data/probe.db: …`。
 - 库由 `probe.db` 与同名的 `probe.db-wal`、`probe.db-shm` 三个文件组成，已提交但尚未写回 `probe.db` 的数据只在 `-wal` 里：运行中只复制 `probe.db` 会丢数据。备份时先停容器，再把三个文件（或整个卷）一起复制：
@@ -169,7 +217,7 @@ docker start probe
 curl -fsSL https://github.com/xjetry/probe/releases/latest/download/install.sh | sh -s -- --hub https://probe.example.com --key <key>
 ```
 
-以 root 运行，支持 systemd 与 OpenRC。卸载：同一条命令把参数换成 `--uninstall`，加 `--purge` 一并删除配置、日志与 `probe-agent` 用户。
+以 root 运行，支持 systemd 与 OpenRC。卸载：同一条命令把参数换成 `--uninstall`，加 `--purge` 一并删除配置、专用日志目录、`probe-agent` 用户与同名组。systemd 普通卸载保留手工 drop-in；`--purge` 还删除 `/etc/systemd/system/probe-agent.service.d/` 与 `/run/systemd/system/probe-agent.service.d/`。目录为符号链接时只删除链接，不删除目标内容；共享 drop-in、发行版提供的配置和系统 journal 不清理。
 
 ### macOS
 

@@ -38,7 +38,28 @@ var migrations = map[int]func(*sql.Tx) error{
 	17: execAll([]string{ddlRestoreRecordV17}),
 	18: execAll(migrationV18),
 	19: execAll(migrationV19),
+	20: execAll(migrationV20),
 }
+
+var migrationV20 = func() []string {
+	out := []string{
+		`CREATE TABLE admin_security (id INTEGER PRIMARY KEY CHECK (id = 1), generation INTEGER NOT NULL DEFAULT 0, data TEXT NOT NULL DEFAULT '{}')`,
+		`INSERT INTO admin_security (id) VALUES (1)`,
+		`CREATE TABLE probe_task_tag (task_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (task_id, tag_id)) WITHOUT ROWID`,
+		`CREATE INDEX probe_task_tag_by_tag ON probe_task_tag (tag_id)`,
+		`CREATE TABLE alert_rule_tag (rule_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (rule_id, tag_id)) WITHOUT ROWID`,
+		`CREATE INDEX alert_rule_tag_by_tag ON alert_rule_tag (tag_id)`,
+		`ALTER TABLE alert_rule ADD COLUMN resource_metric TEXT`,
+		`ALTER TABLE alert_rule ADD COLUMN recovery_threshold REAL`,
+	}
+	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+		for _, column := range []string{"memory_used_pct", "disk_used_pct"} {
+			out = append(out, "ALTER TABLE "+table+" ADD COLUMN "+column+"_sum REAL NOT NULL DEFAULT 0",
+				"ALTER TABLE "+table+" ADD COLUMN "+column+"_n INTEGER NOT NULL DEFAULT 0")
+		}
+	}
+	return out
+}()
 
 const ddlRestoreRecordV17 = `CREATE TABLE restore_record (
   id TEXT PRIMARY KEY NOT NULL,

@@ -195,24 +195,24 @@ func TestSaveProbeTaskAssignsAndBumpsVersion(t *testing.T) {
 	a, _, _ := s.CreateNode(ctx, "a", hash(1))
 	b, created, _ := s.CreateNode(ctx, "b", hash(2))
 	base := created.Version
-	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{b, a})
+	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{b, a}})
 	if err != nil || saved.Task.Id != 1 || !reflect.DeepEqual(saved.NodeIDs, []int64{a, b}) || version != base+1 {
 		t.Fatalf("save=%v version=%d err=%v", saved, version, err)
 	}
 	assertTasks(t, s, base+1, []ProbeTaskRecord{saved})
 	saved.Task.Target = "example.com"
 	saved.Task.IntervalS, saved.Task.TimeoutMs = 10, 500
-	saved, version, err = s.SaveProbeTask(ctx, saved.Task, false, []int64{b})
+	saved, version, err = s.SaveProbeTask(ctx, saved.Task, NodeSelector{AllNodes: false, NodeIDs: []int64{b}})
 	if err != nil || version != base+2 {
 		t.Fatalf("replace version=%d err=%v", version, err)
 	}
 	assertTasks(t, s, base+2, []ProbeTaskRecord{{Task: saved.Task, NodeIDs: []int64{b}}})
 	absent := taskForTest()
 	absent.Id = 99
-	if _, _, err := s.SaveProbeTask(ctx, absent, false, nil); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "probe task 99 does not exist") {
+	if _, _, err := s.SaveProbeTask(ctx, absent, NodeSelector{AllNodes: false, NodeIDs: nil}); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "probe task 99 does not exist") {
 		t.Fatalf("missing task error=%v", err)
 	}
-	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{a, 42}); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "node 42 does not exist") {
+	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{a, 42}}); !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "node 42 does not exist") {
 		t.Fatalf("missing node error=%v", err)
 	}
 	assertTasks(t, s, base+2, []ProbeTaskRecord{saved})
@@ -233,7 +233,7 @@ func TestProbeVersionUsesClockAndIncreases(t *testing.T) {
 		if i == 2 {
 			clk.Advance(time.Hour)
 		}
-		_, version, err := s.SaveProbeTask(t.Context(), taskForTest(), false, nil)
+		_, version, err := s.SaveProbeTask(t.Context(), taskForTest(), NodeSelector{AllNodes: false, NodeIDs: nil})
 		if err != nil || version <= previous || version < uint64(clk.Now().Unix()) {
 			t.Fatalf("save version=%d previous=%d now=%d err=%v", version, previous, clk.Now().Unix(), err)
 		}
@@ -278,11 +278,11 @@ func TestSaveProbeTaskEnforcesPerNodeLimit(t *testing.T) {
 	id, created, _ := s.CreateNode(ctx, "n", hash(1))
 	base := created.Version
 	for range probelimit.MaxTasksPerNode {
-		if _, _, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{id}); err != nil {
+		if _, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{id}}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{id}); !errors.Is(err, ErrNodeLimit) || !strings.Contains(err.Error(), fmt.Sprintf("node %d would have 65 probe tasks (maximum 64)", id)) {
+	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{id}}); !errors.Is(err, ErrNodeLimit) || !strings.Contains(err.Error(), fmt.Sprintf("node %d would have 65 probe tasks (maximum 64)", id)) {
 		t.Fatalf("65th task error=%v, want ErrNodeLimit with node", err)
 	}
 	version, tasks, err := s.LoadProbeTasks(ctx)
@@ -292,7 +292,7 @@ func TestSaveProbeTaskEnforcesPerNodeLimit(t *testing.T) {
 
 	changed := proto.Clone(tasks[0].Task).(*probev1.ProbeTask)
 	changed.Target = "example.com"
-	saved, version, err := s.SaveProbeTask(ctx, changed, false, []int64{id})
+	saved, version, err := s.SaveProbeTask(ctx, changed, NodeSelector{AllNodes: false, NodeIDs: []int64{id}})
 	if err != nil || version != base+65 || !proto.Equal(saved.Task, changed) {
 		t.Fatalf("editing full node: task=%v version=%d err=%v, want task %v and a version increment", saved, version, err, changed)
 	}
@@ -304,13 +304,13 @@ func TestDuplicateProbeAssignmentRollsBackReplacement(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", hash(1))
-	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{id})
+	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{id}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	changed := proto.Clone(saved.Task).(*probev1.ProbeTask)
 	changed.Target = "changed"
-	if _, _, err := s.SaveProbeTask(ctx, changed, false, []int64{id, id}); err == nil || !strings.Contains(err.Error(), "UNIQUE constraint failed") {
+	if _, _, err := s.SaveProbeTask(ctx, changed, NodeSelector{AllNodes: false, NodeIDs: []int64{id, id}}); err == nil || !strings.Contains(err.Error(), "UNIQUE constraint failed") {
 		t.Fatalf("duplicate assignment error=%v", err)
 	}
 	assertTasks(t, s, version, []ProbeTaskRecord{saved})
@@ -321,7 +321,7 @@ func TestDeleteNodeRemovesProbeRowsAndAssignments(t *testing.T) {
 	ctx := t.Context()
 	a, _, _ := s.CreateNode(ctx, "a", hash(1))
 	b, _, _ := s.CreateNode(ctx, "b", hash(2))
-	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{a, b})
+	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{a, b}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +372,7 @@ func TestDeleteProbeTaskKeepsHistoryAndNeverReusesID(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", hash(1))
-	saved, _, err := s.SaveProbeTask(ctx, taskForTest(), false, []int64{id})
+	saved, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{id}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +380,7 @@ func TestDeleteProbeTaskKeepsHistoryAndNeverReusesID(t *testing.T) {
 	if _, err := s.DeleteProbeTask(ctx, saved.Task.Id); err != nil {
 		t.Fatal(err)
 	}
-	next, _, err := s.SaveProbeTask(ctx, taskForTest(), false, nil)
+	next, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: nil})
 	if err != nil || next.Task.Id <= saved.Task.Id {
 		t.Fatalf("task id reused: next=%v old=%v err=%v", next, saved, err)
 	}

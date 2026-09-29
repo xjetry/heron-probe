@@ -27,7 +27,7 @@ func alertFixture(t *testing.T) (*Store, []int64, []NotifyChannel, uint64) {
 		}
 		channels = append(channels, c)
 	}
-	task, _, err := s.SaveProbeTask(t.Context(), taskForTest(), false, []int64{ids[1], ids[0]})
+	task, _, err := s.SaveProbeTask(t.Context(), taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{ids[1], ids[0]}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +452,7 @@ func TestNotifyChannelRoundTrip(t *testing.T) {
 func TestAlertScopeDoesNotWidenAfterLastNodeDeletion(t *testing.T) {
 	s, ids, _, _ := alertFixture(t)
 	scoped := saveRule(t, s, AlertRule{Name: "scoped", Kind: KindOffline, Enabled: true, NodeIDs: ids[:1]})
-	all := saveRule(t, s, AlertRule{Name: "all", Kind: KindOffline, Enabled: true, AllNodes: true, NodeIDs: ids})
+	all := saveRule(t, s, AlertRule{Name: "all", Kind: KindOffline, Enabled: true, AllNodes: true})
 	if !all.AllNodes || len(all.NodeIDs) != 0 {
 		t.Fatalf("all scope=%+v", all)
 	}

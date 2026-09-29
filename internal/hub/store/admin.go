@@ -19,13 +19,25 @@ type Session struct {
 // 同事务保证不存在"密码已换、旧会话仍活"的窗口。
 func (s *Store) SetAdminPassword(ctx context.Context, phc string) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
+		var existed int
+		if err := tx.QueryRow(`SELECT count(*) FROM admin WHERE id=1`).Scan(&existed); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(`INSERT INTO admin (id, password_hash, updated_at) VALUES (1, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET password_hash = excluded.password_hash, updated_at = excluded.updated_at`,
 			phc, s.clk.Now().Unix()); err != nil {
 			return err
 		}
-		_, err := tx.Exec("DELETE FROM admin_session")
-		return err
+		if _, err := tx.Exec("UPDATE admin_security SET generation=generation+1 WHERE id=1"); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM admin_session"); err != nil {
+			return err
+		}
+		if existed != 0 {
+			return recordSecurityChange(tx, &AlertEvent{Transition: TransitionAuthChanged, At: s.clk.Now(), Summary: "管理员密码已由本机更新"})
+		}
+		return nil
 	})
 }
 
@@ -50,7 +62,8 @@ var ErrAdminChanged = errors.New("admin password changed before session creation
 func (s *Store) CreateSession(ctx context.Context, hash [32]byte, now, expires time.Time, verifiedPHC string) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
 		res, err := tx.Exec(`INSERT INTO admin_session (token_hash, created_at, last_used_at, expires_at)
-			SELECT ?, ?, ?, ? FROM admin WHERE id = 1 AND password_hash = ?`,
+			SELECT ?, ?, ?, ? FROM admin WHERE id = 1 AND password_hash = ?
+			AND EXISTS(SELECT 1 FROM admin_security WHERE id=1 AND COALESCE(json_extract(data,'$.secret'),'')='')`,
 			hash[:], now.Unix(), now.Unix(), expires.Unix(), verifiedPHC)
 		if err != nil {
 			return err

@@ -281,7 +281,7 @@ sh /root/install-hub.sh --uninstall --yes </dev/null
 sh /root/install-hub.sh --uninstall --purge --yes </dev/null
 assert_purged 'after purge'
 
-# purge 不删 drop-in 目录。首装时单元文件还不存在，DropInPaths 查不到其中的 drop-in；安装器要在写好主单元
+# 首装前手工放置 drop-in。单元文件还不存在时，DropInPaths 查不到其中的 drop-in；安装器要在写好主单元
 # 之后、enable 与 start 之前拦住设了 ExecStart 的 drop-in。
 mkdir /etc/systemd/system/probe-hub.service.d
 printf '[Service]\nExecStart=\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --listen 127.0.0.1:18120\n' > /etc/systemd/system/probe-hub.service.d/pia-exec.conf

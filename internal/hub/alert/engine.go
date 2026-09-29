@@ -153,6 +153,7 @@ func (e *Engine) Load(ctx context.Context) error {
 func cloneRule(r store.AlertRule) store.AlertRule {
 	r.NodeIDs = slices.Clone(r.NodeIDs)
 	r.ChannelIDs = slices.Clone(r.ChannelIDs)
+	r.SelectorTags = slices.Clone(r.SelectorTags)
 	return r
 }
 func (e *Engine) Rules() []store.AlertRule {
@@ -193,12 +194,19 @@ func (e *Engine) States() []StateView {
 
 // AllNodes 是唯一的放宽开关；SweepOffline 每轮从 store 枚举节点，因此新建节点自动纳入。
 // 显式空集可能由删除节点产生，不能解释为全部节点。
-func inScope(r store.AlertRule, id int64) bool { return r.AllNodes || slices.Contains(r.NodeIDs, id) }
+func inScope(r store.AlertRule, id int64) bool { return store.ScopeContains(r.AllNodes, r.NodeIDs, id) }
 
 func (e *Engine) SaveRule(ctx context.Context, r store.AlertRule) (store.AlertRule, error) {
 	// 保存请求必须明确指定非空作用域；这不限制 DeleteNode 留下的持久化空集。
-	if !r.AllNodes && len(r.NodeIDs) == 0 {
-		return store.AlertRule{}, invalid("node_ids", "must not be empty unless all_nodes is true")
+	if err := (store.NodeSelector{AllNodes: r.AllNodes, NodeIDs: r.NodeIDs, Tags: r.SelectorTags}).Check(); err != nil {
+		var field store.KindFieldError
+		if errors.As(err, &field) {
+			return store.AlertRule{}, FieldError{Path: field.Field, Constraint: field.Constraint}
+		}
+		return store.AlertRule{}, err
+	}
+	if !r.AllNodes && len(r.NodeIDs) == 0 && len(r.SelectorTags) == 0 {
+		return store.AlertRule{}, invalid("node_ids", "must not be empty unless all_nodes or selector_tags is set")
 	}
 	if err := CheckRule(r); err != nil {
 		return store.AlertRule{}, err
@@ -227,7 +235,7 @@ func (e *Engine) publishRule(saved store.AlertRule) {
 	previous := e.rules[saved.ID]
 	// 种类、任务或指标变化后，旧观测不再描述当前规则，与 SaveAlertRule 的状态裁剪一致。
 	// threshold、for_minutes 与 days_before 不改变身份，状态沿用，下一轮按新值判断是否恢复。
-	identityChanged := previous.Kind != saved.Kind || previous.TaskID != saved.TaskID || previous.Metric != saved.Metric
+	identityChanged := previous.Kind != saved.Kind || previous.TaskID != saved.TaskID || previous.Metric != saved.Metric || previous.ResourceMetric != saved.ResourceMetric
 	e.rules[saved.ID] = cloneRule(saved)
 	// SaveAlertRule 已在同一事务裁剪状态，缓存只在提交后同步到相同集合。
 	for k := range e.states {
@@ -235,6 +243,24 @@ func (e *Engine) publishRule(saved store.AlertRule) {
 			delete(e.states, k)
 		}
 	}
+}
+
+// UpdateScope 把节点标签修改与规则覆盖刷新串在评估写锁内，避免在途评估重新发布已退出作用域的状态。
+// 刷新只替换规则并裁剪状态，不调用 Load；启动单调时钟属于本次进程，不能因编辑标签重新计时。
+func (e *Engine) UpdateScope(mutate func() (store.NodeUpdateResult, error)) (bool, error) {
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
+	result, err := mutate()
+	if err != nil {
+		return false, err
+	}
+	for _, rule := range result.Rules {
+		if err := CheckRule(rule); err != nil {
+			continue
+		}
+		e.publishRule(rule)
+	}
+	return result.BillingChanged, nil
 }
 func (e *Engine) DeleteRule(ctx context.Context, id int64) error {
 	e.writeMu.Lock()
@@ -681,6 +707,9 @@ func (e *Engine) RunProbeEvaluation(ctx context.Context) {
 		minuteTS := probeMinuteAt(e.clk.Now())
 		if err := e.EvaluateProbes(ctx, minuteTS); err != nil {
 			e.log.Error("probe evaluation failed", "err", err)
+		}
+		if err := e.EvaluateResources(ctx, minuteTS); err != nil {
+			e.log.Error("resource evaluation failed", "err", err)
 		}
 	}
 }

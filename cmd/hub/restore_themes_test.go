@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,9 +15,64 @@ import (
 	. "github.com/xjetry/probe/internal/hub/theme/themetest"
 )
 
+func TestRestoreThemesSnapshotDigest(t *testing.T) {
+	for _, defect := range []string{"valid", "missing", "replacement", "wrong-filename", "future-format"} {
+		t.Run(defect, func(t *testing.T) {
+			config, path := themeRestoreFixture(t)
+			db := restoreDB(t, config)
+			raw := Minimal(t, "a")
+			digest := fmt.Sprintf("%x", sha256.Sum256(raw))
+			restoreExec(t, db, `DELETE FROM theme WHERE id='b'; ALTER TABLE snapshot_meta ADD COLUMN format_version INTEGER NOT NULL DEFAULT 2; CREATE TABLE snapshot_theme(theme_id TEXT PRIMARY KEY,sha256 TEXT NOT NULL)`)
+			restoreExec(t, db, fmt.Sprintf("INSERT INTO snapshot_theme VALUES ('a','%s')", digest))
+			dir := t.TempDir()
+			name, content, wantErr := digest+".zip", raw, ""
+			switch defect {
+			case "missing":
+				wantErr = "required package"
+			case "replacement":
+				content = Minimal(t, "a", File("changed.txt", "new"))
+				name = fmt.Sprintf("%x.zip", sha256.Sum256(content))
+				wantErr = "required package"
+			case "wrong-filename":
+				content = Minimal(t, "a", File("changed.txt", "new"))
+				wantErr = "SHA256"
+			case "future-format":
+				restoreExec(t, db, "UPDATE snapshot_meta SET format_version=3")
+				wantErr = "format_version=3"
+			}
+			if defect != "missing" {
+				if err := os.WriteFile(filepath.Join(dir, name), content, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := restoreDump(t, path)
+			sourceBefore := restoreDump(t, config)
+			err := runRestoreWith([]string{"--db", path, "--config", config, "--themes", dir, "--yes"}, &bytes.Buffer{})
+			if wantErr == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				restoreWant(t, restoreDB(t, path), "SELECT count(*) FROM theme_package", "1")
+			} else {
+				if err == nil || !strings.Contains(err.Error(), wantErr) {
+					t.Fatalf("err=%v want=%q", err, wantErr)
+				}
+				if restoreDump(t, path) != before {
+					t.Fatal("rejected restore changed target")
+				}
+			}
+			if restoreDump(t, config) != sourceBefore {
+				t.Fatal("restore mutated source snapshot")
+			}
+		})
+	}
+}
+
 func themeRestoreFixture(t *testing.T) (string, string) {
 	t.Helper()
 	config, _ := restoreSnapshots(t)
+	// 这些用例钉住无摘要清单的历史格式；新格式的摘要准入由独立用例覆盖。
+	restoreExec(t, restoreDB(t, config), "ALTER TABLE snapshot_meta DROP COLUMN format_version; DROP TABLE snapshot_theme")
 	restoreExec(t, restoreDB(t, config), "INSERT INTO theme VALUES ('a','A','1','',100,1),('b','B','1','',100,0)")
 	path := restoreTarget(t)
 	db := restoreDB(t, path)

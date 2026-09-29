@@ -293,7 +293,7 @@ func TestUpdateNodeFiresAndRecoversExpiryAlerts(t *testing.T) {
 	saveRule(t, h, expiryRuleProto())
 	events := func() []*probev1.AlertEvent {
 		t.Helper()
-		resp, err := h.admin.ListAlertEvents(t.Context(), connect.NewRequest(&probev1.ListAlertEventsRequest{}))
+		resp, err := h.admin.ListAlertEvents(t.Context(), connect.NewRequest(&probev1.ListAlertEventsRequest{NodeId: id}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -333,8 +333,8 @@ func TestSaveAlertRuleExpiryKind(t *testing.T) {
 		{func(r *probev1.AlertRule) { r.DaysBefore = 366 }, "rule.days_before must be between 1 and 365"},
 		{func(r *probev1.AlertRule) { r.TaskId = 1 }, "rule.task_id must be 0 unless kind is probe"},
 		{func(r *probev1.AlertRule) { r.Metric = probev1.ProbeMetric_PROBE_METRIC_LOSS_PCT }, "rule.metric must be unspecified unless kind is probe"},
-		{func(r *probev1.AlertRule) { r.Threshold = 1 }, "rule.threshold must be 0 unless kind is probe"},
-		{func(r *probev1.AlertRule) { r.ForMinutes = 1 }, "rule.for_minutes must be 0 unless kind is probe"},
+		{func(r *probev1.AlertRule) { r.Threshold = 1 }, "rule.threshold must be 0 unless kind is probe or resource"},
+		{func(r *probev1.AlertRule) { r.ForMinutes = 1 }, "rule.for_minutes must be 0 unless kind is probe or resource"},
 	} {
 		r := expiryRuleProto()
 		c.change(r)
@@ -359,8 +359,8 @@ func TestSaveAlertRuleRejectsFieldsOfOtherKinds(t *testing.T) {
 	}{
 		{offline(func(r *probev1.AlertRule) { r.TaskId = 1 }), "rule.task_id must be 0 unless kind is probe"},
 		{offline(func(r *probev1.AlertRule) { r.Metric = probev1.ProbeMetric_PROBE_METRIC_RTT_MS }), "rule.metric must be unspecified unless kind is probe"},
-		{offline(func(r *probev1.AlertRule) { r.Threshold = 5 }), "rule.threshold must be 0 unless kind is probe"},
-		{offline(func(r *probev1.AlertRule) { r.ForMinutes = 3 }), "rule.for_minutes must be 0 unless kind is probe"},
+		{offline(func(r *probev1.AlertRule) { r.Threshold = 5 }), "rule.threshold must be 0 unless kind is probe or resource"},
+		{offline(func(r *probev1.AlertRule) { r.ForMinutes = 3 }), "rule.for_minutes must be 0 unless kind is probe or resource"},
 		{offline(func(r *probev1.AlertRule) { r.DaysBefore = 7 }), "rule.days_before must be 0 unless kind is expiry"},
 		{probeWithDays, "rule.days_before must be 0 unless kind is expiry"},
 	} {

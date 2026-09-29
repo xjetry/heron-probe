@@ -75,6 +75,9 @@ func (s *Service) DeleteTag(ctx context.Context, req *connect.Request[probev1.De
 		return nil, err
 	}
 	err = s.store.DeleteTag(ctx, name)
+	if errors.Is(err, store.ErrInUse) {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("tag %q does not exist", name))
 	}

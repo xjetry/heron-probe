@@ -18,7 +18,14 @@ func (s *Store) RecordBackupSuccess(ctx context.Context, layer string) error {
 	} else if layer != "config" {
 		return fmt.Errorf("unknown backup layer %q", layer)
 	}
-	return s.recordMaintenance(ctx, name)
+	return s.write(ctx, func(tx *sql.Tx) error {
+		at := s.clk.Now()
+		if _, err := tx.ExecContext(ctx, "INSERT INTO maintenance_state (name, finished_at) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET finished_at = excluded.finished_at", name, at.Unix()); err != nil {
+			return err
+		}
+		ev := AlertEvent{Transition: TransitionBackupSuccess, At: at, Summary: "备份成功（" + layer + "）"}
+		return recordAlertEvent(tx, &ev, nil)
+	})
 }
 
 func (s *Store) BackupSuccessTimes(ctx context.Context) (map[string]time.Time, error) {

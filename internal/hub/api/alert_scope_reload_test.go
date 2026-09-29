@@ -42,7 +42,7 @@ func TestDeletedAlertScopeRemainsListedAfterReload(t *testing.T) {
 		t.Fatalf("explicit empty rule missing or widened: %v", list.Msg)
 	}
 	_, err = client.SaveAlertRule(t.Context(), connect.NewRequest(&probev1.SaveAlertRuleRequest{Rule: list.Msg.Rules[0]}))
-	if connect.CodeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: rule.node_ids must not be empty unless all_nodes is true" {
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: rule.node_ids must not be empty unless all_nodes or selector_tags is set" {
 		t.Fatalf("empty save scope error=%v", err)
 	}
 }

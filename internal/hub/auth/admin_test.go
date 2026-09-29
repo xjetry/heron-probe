@@ -535,8 +535,8 @@ func TestPasswordChangeDuringLoginDoesNotIssueSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 0 {
-		t.Fatalf("session issuance failure emitted login notification: %v", events)
+	if len(events) != 1 || events[0].Transition != store.TransitionAuthChanged {
+		t.Fatalf("password change must emit only its audit, not login success: %v", events)
 	}
 }
 

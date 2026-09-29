@@ -298,7 +298,7 @@ func wrongPasswordsUntilLocked(t *testing.T, h *harness, source http.Header) int
 		switch body := string(r.body); {
 		case r.status == 401 && strings.Contains(body, "too many failed logins"):
 			return attempt
-		case r.status == 401 && strings.Contains(body, "wrong password"):
+		case r.status == 401 && strings.Contains(body, "密码或第二认证因素无效"):
 		default:
 			t.Fatalf("wrong password, attempt %d: status %d body %s", attempt, r.status, body)
 		}

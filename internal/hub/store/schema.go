@@ -140,8 +140,28 @@ func schemaStatements() []string {
 		out = append(out, probeDDL(t))
 	}
 	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState, ddlTag, ddlNodeTag, ddlNodeTagByTag,
-		ddlTheme, ddlThemeEnabled, ddlThemeFile, ddlRestoreRecord, ddlThemePackage)
+		ddlTheme, ddlThemeEnabled, ddlThemeFile, ddlRestoreRecord, ddlThemePackage,
+		ddlAdminSecurity, seedAdminSecurity, ddlProbeTaskTag, ddlProbeTaskTagIndex, ddlAlertRuleTag, ddlAlertRuleTagIndex)
 }
+
+const ddlAdminSecurity = `CREATE TABLE admin_security (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  generation INTEGER NOT NULL DEFAULT 0,
+  data TEXT NOT NULL DEFAULT '{}'
+)`
+const seedAdminSecurity = `INSERT INTO admin_security (id) VALUES (1)`
+const ddlProbeTaskTag = `CREATE TABLE probe_task_tag (
+  task_id INTEGER NOT NULL,
+  tag_id INTEGER NOT NULL,
+  PRIMARY KEY (task_id, tag_id)
+) WITHOUT ROWID`
+const ddlProbeTaskTagIndex = `CREATE INDEX probe_task_tag_by_tag ON probe_task_tag (tag_id)`
+const ddlAlertRuleTag = `CREATE TABLE alert_rule_tag (
+  rule_id INTEGER NOT NULL,
+  tag_id INTEGER NOT NULL,
+  PRIMARY KEY (rule_id, tag_id)
+) WITHOUT ROWID`
+const ddlAlertRuleTagIndex = `CREATE INDEX alert_rule_tag_by_tag ON alert_rule_tag (tag_id)`
 
 // 恢复记录随配置备份并按 id 与目标取并集；随机标识由 Restore 在创建时生成，避免秒级时刻相同的事件合并。
 const ddlRestoreRecord = `CREATE TABLE restore_record (
@@ -289,7 +309,9 @@ const ddlAlertRule = `CREATE TABLE alert_rule (
   created_at INTEGER NOT NULL,
   -- 非到期规则写 NULL：SaveAlertRule 只为到期规则落这一列，CheckKindFields 拒绝别的种类带非零值。到期规则的
   -- 1–365 由 alert.CheckRule 在保存与载入时裁决，存储层不查。列序与迁移 9 的 ADD COLUMN 结果一致。
-  days_before INTEGER
+  days_before INTEGER,
+  resource_metric TEXT,
+  recovery_threshold REAL
 )`
 const ddlAlertRuleNode = `CREATE TABLE alert_rule_node (
   rule_id INTEGER NOT NULL,

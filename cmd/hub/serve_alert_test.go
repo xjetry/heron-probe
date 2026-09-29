@@ -65,7 +65,7 @@ func alertReceiver(t *testing.T) (string, <-chan string) {
 	return srv.URL, bodies
 }
 
-// awaitDelivered 等唯一一条事件带着 transition 送达：库里记成已送达，接收端也收到了同一 transition 的正文。
+// awaitDelivered 等待指定 transition 的事件送达；列表还可能包含不投递的系统审计。
 func awaitDelivered(t *testing.T, client probev1connect.AdminServiceClient, bodies <-chan string, transition string, timeout time.Duration) {
 	t.Helper()
 	started := time.Now()
@@ -78,8 +78,7 @@ func awaitDelivered(t *testing.T, client probev1connect.AdminServiceClient, bodi
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(events.Msg.Events) == 1 {
-			ev := events.Msg.Events[0]
+		for _, ev := range events.Msg.Events {
 			if ev.Transition == transition && len(ev.Deliveries) == 1 && ev.Deliveries[0].Ok {
 				select {
 				case body := <-bodies:
@@ -159,7 +158,7 @@ func TestServeEvaluatesProbeAlerts(t *testing.T) {
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 59, 999000000, time.UTC))
 	client, _, _ := startAlertHub(t, clk, func(st *store.Store) {
 		id, channel := seedAlertChannel(t, st, url)
-		task, _, err := st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}, false, []int64{id})
+		task, _, err := st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}, store.NodeSelector{NodeIDs: []int64{id}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -188,8 +187,10 @@ func TestServePrunesAlertEvents(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 59, 999000000, time.UTC))
+			var nodeID, retainedID int64
 			client, events, _ := startAlertHub(t, clk, func(st *store.Store) {
 				id, channel := seedAlertChannel(t, st, "http://127.0.0.1:1")
+				nodeID = id
 				r, err := st.SaveAlertRule(t.Context(), store.AlertRule{Name: "offline", Kind: store.KindOffline, AllNodes: true})
 				if err != nil {
 					t.Fatal(err)
@@ -199,6 +200,7 @@ func TestServePrunesAlertEvents(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+					retainedID = ev.ID
 					if _, err := st.BeginBatchAttempt(t.Context(), ev.Deliveries[0].BatchID, []int64{ev.Deliveries[0].ID}); err != nil {
 						t.Fatal(err)
 					}
@@ -215,8 +217,8 @@ func TestServePrunesAlertEvents(t *testing.T) {
 					if string(event["msg"]) != `"pruned expired alert events"` {
 						continue
 					}
-					got, err := client.ListAlertEvents(t.Context(), connect.NewRequest(&probev1.ListAlertEventsRequest{}))
-					if err != nil || len(got.Msg.Events) != 1 || got.Msg.Events[0].Id != 2 || len(got.Msg.Events[0].Deliveries) != 1 {
+					got, err := client.ListAlertEvents(t.Context(), connect.NewRequest(&probev1.ListAlertEventsRequest{NodeId: nodeID}))
+					if err != nil || len(got.Msg.Events) != 1 || got.Msg.Events[0].Id != retainedID || len(got.Msg.Events[0].Deliveries) != 1 {
 						t.Fatalf("retained events=%v err=%v", got, err)
 					}
 					return

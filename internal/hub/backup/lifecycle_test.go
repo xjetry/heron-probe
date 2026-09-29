@@ -340,7 +340,7 @@ func TestRestartReadsMarkerBeforeOtherPrerequisites(t *testing.T) {
 			m = restart(m, objects, sink)
 			clk.Advance(time.Second)
 			tick(t, m)
-			if got := status(t, m).Config; got.Failure != broken || len(sink.events) != 1 || len(persistedEvents(t, m.st)) != 1 {
+			if got := status(t, m).Config; got.Failure != broken || len(sink.events) != 1 || len(persistedEvents(t, m.st)) != 2 {
 				t.Errorf("restart re-notified a persisted failure: status=%+v enqueued=%d", got, len(sink.events))
 			}
 		})

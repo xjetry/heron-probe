@@ -197,6 +197,10 @@ if [ "$UNINSTALL" = 1 ]; then
         rm -f "$SYSTEMD_WANTS"
       fi
       rm -f "$SYSTEMD_UNIT"
+      # 只清除本服务的本地定制；不用 DropInPaths 展开共享配置，也不跟随目录符号链接。
+      if [ "$PURGE" = 1 ]; then
+        rm -rf "$SYSTEMD_UNIT.d" "$ROOT/run/systemd/system/probe-agent.service.d"
+      fi
       systemctl daemon-reload </dev/null;;
     openrc)
       # 判链接本身（-L）而不跟随它：init 脚本被删后链接悬空，-e 会判为不存在而留下它。
