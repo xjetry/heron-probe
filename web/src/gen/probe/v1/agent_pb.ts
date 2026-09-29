@@ -104,10 +104,15 @@ export const ReportRequestSchema: GenMessage<ReportRequest> = /*@__PURE__*/
   messageDesc(file_probe_v1_agent, 2);
 
 /**
+ * ReportResponse 与 RegisterResponse 是 hub 对 agent 的全部下行，也就是 hub 失守时能对 agent 施加的全部影响
+ * （spec §5.7）。新增字段时须在那里写明它交给了 hub 什么能力。
+ *
  * @generated from message probe.v1.ReportResponse
  */
 export type ReportResponse = Message<"probe.v1.ReportResponse"> & {
   /**
+   * 上报间隔。agent 把它限定在 TTL 取准入边界时的编码值之间（internal/agentwire），越界（含 0）取最近的边界。
+   *
    * @generated from field: uint32 report_interval_ms = 1;
    */
   reportIntervalMs: number;

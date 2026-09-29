@@ -205,9 +205,12 @@ func (x *ReportRequest) GetFacts() *Facts {
 	return nil
 }
 
+// ReportResponse 与 RegisterResponse 是 hub 对 agent 的全部下行，也就是 hub 失守时能对 agent 施加的全部影响
+// （spec §5.7）。新增字段时须在那里写明它交给了 hub 什么能力。
 type ReportResponse struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	ReportIntervalMs uint32                 `protobuf:"varint,1,opt,name=report_interval_ms,json=reportIntervalMs,proto3" json:"report_interval_ms,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 上报间隔。agent 把它限定在 TTL 取准入边界时的编码值之间（internal/agentwire），越界（含 0）取最近的边界。
+	ReportIntervalMs uint32 `protobuf:"varint,1,opt,name=report_interval_ms,json=reportIntervalMs,proto3" json:"report_interval_ms,omitempty"`
 	// 仅当 tasks_version 与 hub 不一致时携带。
 	Tasks *ProbeTasks `protobuf:"bytes,2,opt,name=tasks,proto3" json:"tasks,omitempty"`
 	// hub 持有的 facts_hash 与请求不一致。
