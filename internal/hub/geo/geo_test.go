@@ -21,6 +21,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/metric"
 	"github.com/xjetry/heron-probe/internal/hub/outbound"
 	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/netaddr"
 )
 
 // 每一段都钉住内外两侧：段内的首末地址（not）不是公网，紧邻段外的地址（public）是公网；紧邻的若是另一类非公网段，
@@ -74,13 +75,13 @@ func TestIsPublic(t *testing.T) {
 	} {
 		for want, addrs := range map[bool][]string{false: c.not, true: c.public} {
 			for _, a := range addrs {
-				if got := IsPublic(netip.MustParseAddr(a)); got != want {
+				if got := netaddr.IsPublic(netip.MustParseAddr(a)); got != want {
 					t.Errorf("%s: IsPublic(%s) = %v, want %v", c.class, a, got, want)
 				}
 			}
 		}
 	}
-	if IsPublic(netip.Addr{}) {
+	if netaddr.IsPublic(netip.Addr{}) {
 		t.Error("the zero Addr is public")
 	}
 }

@@ -4,178 +4,252 @@ import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { createConnectQueryKey } from "@connectrpc/connect-query";
 import { AdminService, ListThemesResponseSchema } from "../gen/heron/v1/admin_pb";
-import { retryQuery } from "../retry";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Themes } from "./Themes";
 
-const origin = "https://status.example.com";
+const current = "a".repeat(64), previous = "b".repeat(64), available = "c".repeat(64), legacy = "d".repeat(64);
+const label = (name: string, id: string, version: string, digest: string) => `${name}（${id}）${version} [${digest.slice(0, 12)}]`;
+const dark = label("Dark", "dark", "1.2", current), old = label("Dark", "dark", "1.1", previous), plain = label("Plain", "plain", "0.1", available);
 const listed = (publicDir = false) => create(ListThemesResponseSchema, {
-  themeOrigin: origin, publicDir,
+  publicDir,
   themes: [
-    { id: "dark", name: "Dark", version: "1.2", uploadedAt: 1_700_000_000n, enabled: true, hasPreview: true },
-    { id: "plain", name: "Plain", version: "0.1", uploadedAt: 1_700_000_000n },
+    { id: "dark", digest: current, sdk: 1, name: "Dark", version: "1.2", uploadedAt: 1_700_000_000n, enabled: true, published: true, hasPreview: true, repository: "owner/theme", release: "v1.2", asset: "theme.zip" },
+    { id: "dark", digest: previous, sdk: 1, name: "Dark", version: "1.1", uploadedAt: 1_700_000_000n, previous: true, published: true },
+    { id: "plain", digest: available, sdk: 1, name: "Plain", version: "0.1", uploadedAt: 1_700_000_000n },
+    { id: "legacy", digest: legacy, sdk: 0, name: "Legacy", version: "0.0", uploadedAt: 1_700_000_000n },
   ],
 });
 const routes = [{ path: "/themes", Component: Themes }];
-const render = (impl: AdminImpl) => renderWithAdmin({
-  getBackupStatus: async () => ({}),
-  listThemes: async () => listed(),
-  getThemePreview: async () => ({ content: new Uint8Array([137, 80, 78, 71]), contentType: "image/png" }),
-  ...impl,
-}, routes, "/themes");
-
-afterEach(() => vi.restoreAllMocks());
-
-it("主题页显示未备份的原包缺口", async () => {
-  render({ getBackupStatus: async () => ({ themesWithoutPackage: ["plain"] }) });
-  expect(await screen.findByText("主题 plain 未备份：请重新上传原包")).toBeVisible();
-});
-
-const pick = (bytes: number[], name = "theme.zip") => {
+const render = (impl: AdminImpl = {}) => renderWithAdmin({ getBackupStatus: async () => ({}), listThemes: async () => listed(), getThemePreview: async () => ({ content: new Uint8Array([1]), contentType: "image/png" }), ...impl }, routes, "/themes");
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+const pick = (bytes: number[]) => {
   const form = screen.getByRole("form", { name: "上传主题" });
-  fireEvent.change(within(form).getByLabelText(/主题包/), { target: { files: [new File([new Uint8Array(bytes)], name, { type: "application/zip" })] } });
+  fireEvent.change(within(form).getByLabelText(/主题包/), { target: { files: [new File([new Uint8Array(bytes)], "theme.zip", { type: "application/zip" })] } });
   return form;
 };
 
-it.each(["上传", "删除", "启用"])("%s成功后使备份状态查询失效", async (operation) => {
-  const { queryClient } = render({
-    uploadTheme: async () => ({ theme: { id: "plain", name: "Plain" } }),
-    deleteTheme: async () => ({}),
-    enableTheme: async () => ({}),
-  });
-  await screen.findByRole("cell", { name: "Plain" });
-  const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-  if (operation === "上传") {
-    fireEvent.click(within(pick([1])).getByRole("button", { name: "上传" }));
-  } else if (operation === "删除") {
-    fireEvent.click(screen.getByRole("button", { name: "删除 Plain（plain）" }));
-    fireEvent.click(screen.getByRole("button", { name: "确认删除 Plain（plain）" }));
-  } else {
-    fireEvent.click(screen.getByRole("button", { name: "启用 Plain（plain）" }));
-  }
-  await waitFor(() => expect(invalidate).toHaveBeenCalledWith({
-    queryKey: createConnectQueryKey({ schema: AdminService.method.getBackupStatus, cardinality: "finite" }),
-  }));
+it("当前域名首页、来源和保留版本可见，不再要求独立 origin", async () => {
+  render();
+  expect(await screen.findByRole("link", { name: "打开公开首页" })).toHaveAttribute("href", "/");
+  expect(screen.getByText(/当前启用 Dark/)).toBeVisible();
+  expect(screen.getByText("可回滚")).toBeVisible();
+  expect(screen.getByText("owner/theme · v1.2 · theme.zip")).toBeVisible();
+  expect(screen.queryByText(/theme-origin/)).toBeNull();
+  expect(screen.getByRole("button", { name: `回滚 ${old}` })).toBeEnabled();
 });
 
-it("未配置主题 origin 时给出说明而不是错误横幅", async () => {
-  render({ listThemes: async () => { throw new ConnectError("themes are disabled because this hub has no theme origin", Code.FailedPrecondition); } });
-  const note = await screen.findByRole("note", { name: "主题未开启" });
-  expect(note).toHaveTextContent("--theme-origin https://status.example.com");
-  expect(note).toHaveTextContent("只换端口不算另一个主机名");
-  expect(note).toHaveTextContent("themes are disabled because this hub has no theme origin");
-  expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.queryByRole("form", { name: "上传主题" })).toBeNull();
+it("未启用主题时说明使用内置页", async () => {
+  render({ listThemes: async () => ({ themes: [] }) });
+  expect(await screen.findByText(/当前使用内置公开页/)).toBeVisible();
+  expect(screen.getByText("还没有主题。")).toBeVisible();
 });
 
-// 生产的重试谓词下，FailedPrecondition 是配置态、不重试：说明一次请求就出现。退避设成一分钟，长于 findByRole 的等待上界
-// （test/async-timeout.ts），一旦重试说明就等不出来；calls 另外钉住只发了一次请求，不依赖这两个时长的大小关系。
-it("未配置主题 origin 时说明不等重试退避", async () => {
-  let calls = 0;
-  renderWithAdmin({
-    listThemes: async () => {
-      calls++;
-      throw new ConnectError("themes are disabled because this hub has no theme origin", Code.FailedPrecondition);
-    },
-  }, routes, "/themes", { retry: retryQuery, retryDelay: 60_000 });
-  expect(await screen.findByRole("note", { name: "主题未开启" })).toBeInTheDocument();
-  expect(calls).toBe(1);
+it("主题读取失败不伪装成配置缺失", async () => {
+  render({ listThemes: async () => { throw new ConnectError("cannot load versions", Code.FailedPrecondition); } });
+  expect(await screen.findByRole("alert")).toHaveTextContent("cannot load versions");
+  expect(screen.queryByText(/theme-origin/)).toBeNull();
 });
 
-it("其他错误照常显示为错误横幅", async () => {
-  render({ listThemes: async () => { throw new ConnectError("listing themes failed", Code.Internal); } });
-  expect(await screen.findByRole("alert")).toHaveTextContent("listing themes failed");
-  expect(screen.queryByRole("note", { name: "主题未开启" })).toBeNull();
-});
-
-it("列表显示状态、主题 origin 与启用中的主题；没有 --public-dir 时不提示接管", async () => {
-  render({});
-  const dark = (await screen.findByRole("cell", { name: "Dark" })).closest("tr")!;
-  expect(within(dark).getByText("启用中")).toBeInTheDocument();
-  expect(within(screen.getByRole("cell", { name: "Plain" }).closest("tr")!).getByText("未启用")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: origin })).toHaveAttribute("href", origin);
-  expect(screen.getByText(/那里现在是主题 Dark（dark）/)).toBeInTheDocument();
-  expect(screen.queryByText(/--public-dir/)).toBeNull();
-});
-
-it("没有启用的主题时说明主题 origin 是内置公开页", async () => {
-  render({ listThemes: async () => create(ListThemesResponseSchema, { themeOrigin: origin, themes: [] }) });
-  expect(await screen.findByText(/现在没有启用的主题，那里是内置公开页/)).toBeInTheDocument();
-  expect(screen.getByText("还没有主题。")).toBeInTheDocument();
-});
-
-it("给了 --public-dir 时标明主 origin 被目录接管", async () => {
+it("public-dir 接管阻止启用和回滚但仍可安装", async () => {
   render({ listThemes: async () => listed(true) });
-  const note = await screen.findByRole("note");
-  expect(note).toHaveTextContent("由 --public-dir 的目录接管");
-  expect(note).toHaveTextContent(`启用主题只改变 ${origin} 上的页面`);
+  expect(await screen.findByRole("note", { name: "公开页由目录接管" })).toHaveTextContent("不能启用托管主题");
+  expect(screen.getByRole("button", { name: `启用 ${plain}` })).toBeDisabled();
+  expect(screen.getByRole("button", { name: `回滚 ${old}` })).toBeDisabled();
+  expect(screen.getByRole("form", { name: "上传主题" })).toBeVisible();
 });
 
-it("有预览图的显示 data: 图片，没有的不请求", async () => {
-  const asked: string[] = [];
-  render({ getThemePreview: async (req) => { asked.push(req.id); return { content: new Uint8Array([1, 2, 3]), contentType: "image/webp" }; } });
-  const img = await screen.findByRole("img", { name: "Dark 预览图" });
-  expect(img).toHaveAttribute("src", "data:image/webp;base64,AQID");
-  expect(within(screen.getByRole("cell", { name: "Plain" }).closest("tr")!).getByText("无")).toBeInTheDocument();
-  expect(asked).toEqual(["dark"]);
+it("旧 SDK 包只归档，不能预览或启用", async () => {
+  render();
+  const row = (await screen.findByRole("cell", { name: "Legacy" })).closest("tr")!;
+  expect(within(row).getByRole("button", { name: /^预览 / })).toBeDisabled();
+  expect(within(row).getByRole("button", { name: /^启用 / })).toBeDisabled();
+  expect(within(row).getByText(/不支持 SDK/)).toBeVisible();
 });
 
-it("上传把文件原样作为 package 发出，成功后刷新列表与预览", async () => {
-  const sent: { pkg: number[]; expect: string }[] = [];
-  let lists = 0, previews = 0;
+it("当前和上一版本不能删除，其他版本确认后按摘要删除", async () => {
+  const remove = vi.fn(async () => ({}));
+  render({ deleteThemeVersion: remove });
+  await screen.findByRole("cell", { name: "Plain" });
+  expect(screen.getByRole("button", { name: `删除 ${dark}` })).toBeDisabled();
+  expect(screen.getByRole("button", { name: `删除 ${old}` })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: `删除 ${plain}` }));
+  expect(remove).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: `确认删除 ${plain}` }));
+  await waitFor(() => expect(remove).toHaveBeenCalledWith(expect.objectContaining({ id: "plain", digest: available }), expect.anything()));
+});
+
+it("启用和回滚发送精确版本，切回内置页发送空引用", async () => {
+  const enable = vi.fn(async () => ({}));
+  render({ enableTheme: enable });
+  for (const [name, id, digest] of [[`启用 ${plain}`, "plain", available], [`回滚 ${old}`, "dark", previous], ["切回内置主题", "", ""]]) {
+    await waitFor(() => expect(screen.getByRole("button", { name })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name }));
+    await waitFor(() => expect(enable).toHaveBeenLastCalledWith(expect.objectContaining({ id, digest }), expect.anything()));
+  }
+});
+
+it("每个主题仅有一个整包卸载入口，确认后清理全部版本并回落内置", async () => {
+  let removed = false;
+  const uninstall = vi.fn(async () => { removed = true; return {}; });
+  render({ listThemes: async () => {
+    const response = listed();
+    if (removed) response.themes = response.themes.filter((theme) => theme.id !== "dark");
+    return response;
+  }, deleteTheme: uninstall });
+  const button = await screen.findByRole("button", { name: "卸载全部版本 Dark（dark）" });
+  expect(screen.getAllByRole("button", { name: "卸载全部版本 Dark（dark）" })).toHaveLength(1);
+  fireEvent.click(button);
+  expect(uninstall).not.toHaveBeenCalled();
+  expect(screen.getByText(/将删除该主题的全部版本；若正在启用则回落到内置页/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "确认卸载全部版本 Dark（dark）" }));
+  await waitFor(() => expect(uninstall).toHaveBeenCalledWith(expect.objectContaining({ id: "dark" }), expect.anything()));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "卸载全部版本 Dark（dark）" })).toBeNull());
+  expect(screen.getByRole("cell", { name: "Plain" })).toBeVisible();
+  expect(screen.getByText(/当前使用内置公开页/)).toBeVisible();
+});
+
+it("沙箱预览固定版本并给出新标签链接，不改变启用状态", async () => {
+  const preview = vi.fn(async () => ({ url: "/_theme/preview/secret/" })), enable = vi.fn(async () => ({}));
+  render({ previewTheme: preview, enableTheme: enable });
+  fireEvent.click(await screen.findByRole("button", { name: `预览 ${plain}` }));
+  const link = await screen.findByRole("link", { name: "打开沙箱预览" });
+  expect(link).toHaveAttribute("href", "/_theme/preview/secret/");
+  expect(link).toHaveAttribute("target", "_blank");
+  expect(preview).toHaveBeenCalledWith(expect.objectContaining({ id: "plain", digest: available }), expect.anything());
+  expect(enable).not.toHaveBeenCalled();
+});
+
+it.each(["启用", "删除", "上传", "GitHub 安装"])("%s成功后移除已撤销的预览链接", async (operation) => {
   render({
-    listThemes: async () => { lists++; return listed(); },
-    getThemePreview: async () => { previews++; return { content: new Uint8Array([1]), contentType: "image/png" }; },
-    uploadTheme: async (req) => { sent.push({ pkg: [...req.package], expect: req.expectId }); return { theme: { id: "dark", name: "Dark", version: "1.3" } }; },
+    previewTheme: async () => ({ url: "/_heron/preview/token/" }),
+    enableTheme: async () => ({}), deleteThemeVersion: async () => ({}),
+    uploadTheme: async () => ({}), installThemeRelease: async () => ({}),
+    listThemeReleases: async () => ({ releases: [{ tag: "v1", assets: [{ id: 1n, name: "theme.zip", size: 1n }] }] }),
   });
+  fireEvent.click(await screen.findByRole("button", { name: `预览 ${plain}` }));
+  await screen.findByRole("link", { name: "打开沙箱预览" });
+  if (operation === "启用") fireEvent.click(screen.getByRole("button", { name: `启用 ${plain}` }));
+  if (operation === "删除") {
+    fireEvent.click(screen.getByRole("button", { name: `删除 ${plain}` }));
+    fireEvent.click(screen.getByRole("button", { name: `确认删除 ${plain}` }));
+  }
+  if (operation === "上传") fireEvent.click(within(pick([1])).getByRole("button", { name: "上传" }));
+  if (operation === "GitHub 安装") {
+    fireEvent.change(screen.getByLabelText("GitHub 仓库或 Release 链接"), { target: { value: "owner/theme" } });
+    fireEvent.click(screen.getByRole("button", { name: "查询版本" }));
+    fireEvent.change(await screen.findByLabelText("Release 版本"), { target: { value: "v1" } });
+    fireEvent.change(screen.getByLabelText("ZIP 资产"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "安装所选资产" }));
+  }
+  await waitFor(() => expect(screen.queryByRole("link", { name: "打开沙箱预览" })).toBeNull());
+});
+
+it("预览图按摘要查询，不混用版本", async () => {
+  const asked: string[] = [];
+  render({ getThemePreview: async (req) => { asked.push(`${req.id}/${req.digest}`); return { content: new Uint8Array([1, 2, 3]), contentType: "image/webp" }; } });
+  expect(await screen.findByRole("img", { name: "Dark 预览图" })).toHaveAttribute("src", "data:image/webp;base64,AQID");
+  expect(asked).toEqual([`dark/${current}`]);
+});
+
+it("旧 SDK 原包按摘要下载为 ZIP，并释放 Blob URL", async () => {
+  const archive = vi.fn(async () => ({ package: new Uint8Array([80, 75, 3, 4]) }));
+  const createObjectURL = vi.fn((_blob: Blob) => "blob:theme-package"), revokeObjectURL = vi.fn();
+  vi.stubGlobal("URL", class extends URL { static createObjectURL = createObjectURL; static revokeObjectURL = revokeObjectURL; });
+  const clicked: { href: string; download: string }[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { clicked.push({ href: this.href, download: this.download }); });
+  render({ getThemePackage: archive });
+  const row = (await screen.findByRole("cell", { name: "Legacy" })).closest("tr")!;
+  fireEvent.click(within(row).getByRole("button", { name: /^下载原包 / }));
+  await waitFor(() => expect(archive).toHaveBeenCalledWith(expect.objectContaining({ id: "legacy", digest: legacy }), expect.anything()));
+  await waitFor(() => expect(clicked).toEqual([{ href: "blob:theme-package", download: `legacy-${legacy}.zip` }]));
+  const blob = createObjectURL.mock.calls[0][0] as Blob;
+  expect(blob.type).toBe("application/zip");
+  expect([...new Uint8Array(await blob.arrayBuffer())]).toEqual([80, 75, 3, 4]);
+  expect(revokeObjectURL).toHaveBeenCalledWith("blob:theme-package");
+});
+
+it("缺少产物摘要时不能下载原包", async () => {
+  render({ listThemes: async () => ({ themes: [{ id: "old", name: "Old" }] }) });
+  const row = (await screen.findByRole("cell", { name: "Old" })).closest("tr")!;
+  expect(within(row).getByRole("button", { name: /^下载原包 / })).toBeDisabled();
+});
+
+it("上传发送原包和更新目标，刷新列表与备份但不自动启用", async () => {
+  const upload = vi.fn(async () => ({ theme: { id: "dark", name: "Dark", version: "1.3" } })), enable = vi.fn(async () => ({}));
+  const { queryClient } = render({ uploadTheme: upload, enableTheme: enable });
   await screen.findByRole("img", { name: "Dark 预览图" });
-  const form = pick([80, 75, 3, 4, 9]);
+  const invalidate = vi.spyOn(queryClient, "invalidateQueries"), form = pick([80, 75, 3, 4]);
+  fireEvent.change(within(form).getByLabelText("用途"), { target: { value: "dark" } });
+  expect(within(form).getAllByRole("option")).toHaveLength(4);
   fireEvent.click(within(form).getByRole("button", { name: "上传" }));
-  expect(await screen.findByRole("status")).toHaveTextContent("已上传 Dark（dark）版本 1.3");
-  expect(sent).toEqual([{ pkg: [80, 75, 3, 4, 9], expect: "" }]);
-  await waitFor(() => expect(lists).toBe(2));
-  await waitFor(() => expect(previews).toBe(2));
+  expect(await screen.findByRole("status")).toHaveTextContent("已安装 Dark（dark）版本 1.3，尚未启用");
+  expect(upload).toHaveBeenCalledWith(expect.objectContaining({ package: new Uint8Array([80, 75, 3, 4]), expectId: "dark" }), expect.anything());
+  for (const queryKey of [
+    createConnectQueryKey({ schema: AdminService.method.listThemes, cardinality: "finite" }),
+    createConnectQueryKey({ schema: AdminService.method.getThemePreview, cardinality: "finite" }),
+    createConnectQueryKey({ schema: AdminService.method.getBackupStatus, cardinality: "finite" }),
+  ]) expect(invalidate).toHaveBeenCalledWith({ queryKey });
+  expect(enable).not.toHaveBeenCalled();
   expect(within(form).getByRole("button", { name: "上传" })).toBeDisabled();
 });
 
-it("选了更新某个主题时带上 expect_id", async () => {
-  const expects: string[] = [];
-  render({ uploadTheme: async (req) => { expects.push(req.expectId); return { theme: { id: "plain", name: "Plain", version: "0.2" } }; } });
+it("上传失败保留当前主题并展示错误", async () => {
+  render({ uploadTheme: async () => { throw new ConnectError("SDK protocol is required", Code.InvalidArgument); } });
   await screen.findByRole("cell", { name: "Plain" });
-  const form = pick([1]);
-  fireEvent.change(within(form).getByLabelText("用途"), { target: { value: "plain" } });
-  fireEvent.click(within(form).getByRole("button", { name: "上传" }));
-  await waitFor(() => expect(expects).toEqual(["plain"]));
+  fireEvent.click(within(pick([1])).getByRole("button", { name: "上传" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("SDK protocol is required");
+  expect(screen.getByText(/当前启用 Dark/)).toBeVisible();
 });
 
-it("上传失败显示 hub 的错误原文", async () => {
-  render({ uploadTheme: async () => { throw new ConnectError(`entry "../x": path must stay inside the package`, Code.InvalidArgument); } });
-  await screen.findByRole("cell", { name: "Dark" });
-  const form = pick([1]);
-  fireEvent.click(within(form).getByRole("button", { name: "上传" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(`entry "../x": path must stay inside the package`);
+it("GitHub 必须显式选择版本和资产，切换版本或仓库清除旧选择", async () => {
+  const install = vi.fn(async () => ({ theme: { id: "plain", name: "Plain", version: "0.2" } }));
+  const lookup = vi.fn(async () => ({ releases: [{ name: "Beta", tag: "v2", prerelease: true, assets: [{ id: 7n, name: "theme.zip", size: 42n }, { id: 8n, name: "extra.zip", size: 48n }] }, { name: "Stable", tag: "v1", assets: [{ id: 9n, name: "stable.zip", size: 32n }] }] }));
+  render({ listThemeReleases: lookup, installThemeRelease: install });
+  fireEvent.change(await screen.findByLabelText("GitHub 仓库或 Release 链接"), { target: { value: "owner/theme" } });
+  fireEvent.click(screen.getByRole("button", { name: "查询版本" }));
+  const select = await screen.findByLabelText("Release 版本");
+  expect(screen.getByRole("button", { name: "安装所选资产" })).toBeDisabled();
+  fireEvent.change(select, { target: { value: "v2" } });
+  expect(screen.getByRole("option", { name: /Beta.*预发布/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "安装所选资产" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("ZIP 资产"), { target: { value: "8" } });
+  fireEvent.change(select, { target: { value: "v1" } });
+  expect(screen.getByLabelText("ZIP 资产")).toHaveValue("");
+  expect(screen.getByRole("button", { name: "安装所选资产" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("ZIP 资产"), { target: { value: "9" } });
+  fireEvent.change(screen.getByLabelText("GitHub 安装用途"), { target: { value: "plain" } });
+  fireEvent.click(screen.getByRole("button", { name: "安装所选资产" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("已安装 Plain（plain）版本 0.2，尚未启用");
+  expect(lookup).toHaveBeenCalledWith(expect.objectContaining({ repository: "owner/theme" }), expect.anything());
+  expect(install).toHaveBeenCalledWith(expect.objectContaining({ repository: "owner/theme", tag: "v1", assetId: 9n, expectId: "plain" }), expect.anything());
+  fireEvent.change(screen.getByLabelText("GitHub 仓库或 Release 链接"), { target: { value: "other/theme" } });
+  expect(screen.queryByLabelText("Release 版本")).toBeNull();
 });
 
-it("说明上传的 30 秒时限", async () => {
-  render({});
-  expect(await screen.findByText(/30 秒内传完/)).toBeInTheDocument();
+it("GitHub 空版本、无资产和超限资产均明确提示", async () => {
+  let empty = true;
+  render({ listThemeReleases: async () => ({ releases: empty ? [] : [{ tag: "v1", assets: [] }, { tag: "v2", assets: [{ id: 8n, name: "large.zip", size: 8_388_609n }] }] }) });
+  fireEvent.change(await screen.findByLabelText("GitHub 仓库或 Release 链接"), { target: { value: "owner/theme" } });
+  fireEvent.click(screen.getByRole("button", { name: "查询版本" }));
+  expect(await screen.findByText("没有公开的 Release。可上传作者提供的已构建主题包。")).toBeVisible();
+  empty = false;
+  fireEvent.click(screen.getByRole("button", { name: "查询版本" }));
+  fireEvent.change(await screen.findByLabelText("Release 版本"), { target: { value: "v1" } });
+  expect(screen.getByText("这个版本没有 ZIP 资产；GitHub 自动生成的源码归档不能安装。")).toBeVisible();
+  fireEvent.change(screen.getByLabelText("Release 版本"), { target: { value: "v2" } });
+  expect(screen.getByRole("option", { name: /large.zip.*超过 8 MiB/ })).toBeDisabled();
 });
 
-it("启用按 id，停用发空 id", async () => {
-  const ids: string[] = [];
-  render({ enableTheme: async (req) => { ids.push(req.id); return {}; } });
-  fireEvent.click(await screen.findByRole("button", { name: "启用 Plain（plain）" }));
-  await waitFor(() => expect(ids).toEqual(["plain"]));
-  fireEvent.click(screen.getByRole("button", { name: "停用 Dark（dark）" }));
-  await waitFor(() => expect(ids).toEqual(["plain", ""]));
+it("GitHub 限流错误不会隐藏当前主题", async () => {
+  render({ listThemeReleases: async () => { throw new ConnectError("GitHub rate limit", Code.Unavailable); } });
+  fireEvent.change(await screen.findByLabelText("GitHub 仓库或 Release 链接"), { target: { value: "owner/theme" } });
+  fireEvent.click(screen.getByRole("button", { name: "查询版本" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("GitHub rate limit");
+  expect(screen.getByText(/当前启用 Dark/)).toBeVisible();
 });
 
-it("删除需要确认；删启用中的主题时说明回落内置公开页", async () => {
-  const deleted: string[] = [];
-  render({ deleteTheme: async (req) => { deleted.push(req.id); return {}; } });
-  fireEvent.click(await screen.findByRole("button", { name: "删除 Dark（dark）" }));
-  expect(deleted).toEqual([]);
-  expect(screen.getByText(`删除后 ${origin} 回落内置公开页`)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "确认删除 Dark（dark）" }));
-  await waitFor(() => expect(deleted).toEqual(["dark"]));
+it("显示原包备份缺口和上传时限", async () => {
+  render({ getBackupStatus: async () => ({ themesWithoutPackage: ["plain"] }) });
+  expect(await screen.findByText("主题 plain 未备份：请重新上传原包")).toBeVisible();
+  expect(screen.getByText(/30 秒内传完/)).toBeVisible();
 });

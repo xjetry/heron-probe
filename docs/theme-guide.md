@@ -1,186 +1,141 @@
 # 公开页主题开发指南
 
-主题是一个只调 `PublicService` 的静态前端：框架自选，构建产物打成 zip，在管理面板的「主题」页上传、启用。hub 把产物存进库，在一个单独的主机名（主题 origin）的根路径上托管；hub 只接收产物，不执行任何构建。
+主题是运行在浏览器中的静态前端。管理员在 `/admin/` 的「主题」页安装、预览和启用，访客在同一域名的 `/` 查看；切换不改域名、不重启 hub。hub 只接收构建产物，不执行主题仓库里的构建脚本。
 
-设计依据见[架构设计](superpowers/specs/2026-09-17-probe-architecture-design.md) §10.1。
+## 安装与升级
 
-## 部署：主题 origin
+在后台填写 `owner/repo`、GitHub 仓库 HTTPS 地址或指定 Release 地址，选择已发布 Release 的 ZIP 资产安装。也可以上传本地 ZIP。只支持公开仓库，不接受 GitHub 自动生成的源码压缩包；主题作者必须发布已经构建的产物。
 
-主题功能要求 hub 以 `--theme-origin` 启动，并把第二个主机名也指向 hub：
+GitHub 是安装来源，不是运行时依赖。下载完成并校验后，原包与文件存入 hub 数据库；GitHub 不可用不会影响已启用版本。安装新版本不会自动启用，也不会覆盖当前版本。主题列表保存仓库、Release、资产名称和 SHA256，更新指定主题时包内 `id` 必须与目标一致。
 
-```sh
-heron-hub serve --db /var/lib/heron/heron.db --theme-origin https://status.example.com
+- `id` 标识主题，原始 ZIP 的 SHA256 标识不可变安装产物；清单 `version` 只是展示文字。
+- 全站保存当前版本与上一个版本。启用后可以切回上一个版本，也可以切回内置公开页。
+- 最多安装 20 个主题，每个主题最多保留 3 个版本。超限时须显式清理，不自动挤掉当前版本或回滚版本。
+- 单版本清理不能删除当前或回滚版本；删除整个主题会清除它的选择引用，若它正在启用则回到内置公开页。
+- 预览不改变全站选择。未发布版本只通过绑定管理员会话的短期预览地址读取，不能把预览地址当作公开分享链接。
+- 页面和资源 URL 固定同一摘要。切换后，已经打开的页面仍读取原版本的资源；显式清理该版本后，它的资源不再提供。
+- 主题管理需要管理员会话，API token 不可调用。
+
+`--public-dir` 是运维手动提供的公开页替代目录，不属于上传主题。使用它时公开页由该目录接管，后台会阻止启用第三方主题，须先移除该参数并重启。
+
+## 同域名与隔离
+
+主题页面由 hub 自己的容器加载到 `sandbox="allow-scripts"` iframe 中，不授予 `allow-same-origin`。地址栏仍是公开站点域名，但主题脚本的来源是不透明来源，不具有管理面板的同源权限。
+
+主题 HTML、JS、错误响应和缓存验证响应都带沙箱 CSP；直接打开包内 HTML 也不能恢复同源权限。主题不能读取父文档、会话 cookie 或管理存储，不能注册 Service Worker，也不能直接使用 WebAuthn。页面不开放任意网络代理：公开数据经 SDK 的消息通道请求，由可信容器只调用四个固定的只读公开方法，请求不带管理员凭据。
+
+主题可以加载脚本、样式、字体和图片，但直接 `fetch`、XHR、WebSocket 受 CSP 限制。第三方脚本仍是主题作者供应链的一部分；沙箱隔离权限，不替作者担保页面内容。
+
+公开页总闸同时约束内置页、主题容器、主题资源和公开数据接口。关闭公开页不影响 `/admin/`；重新打开后保留原主题选择。
+
+### 旧部署迁移
+
+新版本移除 `--theme-origin`。升级前从 systemd 主单元、Docker 参数或其他启动配置删除它；安装器发现旧参数会在停服前明确报错，不静默更改路由。公开页和后台现在共用同一域名，无须另配主题域名。
+
+旧主题域名若继续指向 hub，也会提供管理入口，不再隔离成主题专用主机。升级时同步撤销旧域名的反代路由或重定向到保留的域名。HTTPS 反代必须保留访问 Host、发送正确的 `X-Forwarded-Proto`，并在 hub 配置实际代理的 `--trusted-proxies`，否则包括登录在内的管理请求会被同源检查拒绝。
+
+未声明 SDK 或 SDK 不兼容的旧包仍保留原包与元数据，并可备份、恢复，但不能预览或启用。原启用包不兼容时回到内置页。旧包必须适配 SDK、重新构建并安装，不能只修改清单数字而保留直接调用 API 的代码。
+
+## 主题 SDK
+
+清单声明 `"sdk": 1`，通过 hub 提供的模块获取公开数据和路由：
+
+```html
+<!doctype html>
+<html lang="zh">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>主题示例</title>
+<h1 id="title"></h1>
+<pre id="nodes"></pre>
+<script type="module">
+import { getSite, getSnapshot, queryMetrics, queryProbes, navigate, onRoute } from '/_heron/theme-sdk.js';
+
+const site = await getSite();
+document.querySelector('#title').textContent = site.title || 'Heron';
+document.querySelector('#nodes').textContent = JSON.stringify(await getSnapshot(), null, 2);
+await onRoute(path => {
+  // 路由由可信容器同步，主题不直接修改父页面地址。
+  console.log(path);
+});
+</script>
+</html>
 ```
 
-- **主机名必须与面板不同。** 主题是第三方代码；与面板同源的主题脚本能直接调 `AdminService`，浏览器会自动带上来访管理员的会话 cookie。换了主机名之后，主题与面板之间靠哪些事实隔开，见下面的「主题与面板的隔离」。
-- **只差端口不算另一个主机名。** cookie 不按端口隔离；hub 按主机名分流时也忽略端口，于是面板那个主机名的请求会全部被分到主题 origin，而那里没有面板。hub 不知道面板用的是哪个主机名，这种配置启动时查不出来，只能靠部署的人避开。
-- **反代必须原样转发 `Host`。** hub 按请求的 `Host` 判定：去掉端口、不分大小写、去掉一个结尾的点、IP 地址按规范写法（`[0:0::1]` 即 `[::1]`）比较，等于 `--theme-origin` 的主机名走主题 origin，其余走面板与内置公开页。`--theme-origin` 里的国际化域名按浏览器发送的 punycode 写法比较（`https://状态.example` 即 `xn--t7t692b.example`），浏览器不会原样发出的写法（带 zone 的 IPv6 地址、`127.1` 这类非四段十进制的 IPv4 写法）启动时就被拒绝。Caddy 默认转发原始 `Host`；nginx 要写 `proxy_set_header Host $host;`，否则 hub 看到的是 upstream 的地址，两个主机名都会落到面板那一边。
-- 没有配 `--theme-origin` 时主题功能整体关闭：面板的「主题」页给出说明，上传、列出、启用、删除、预览五个方法一律 `FailedPrecondition`。
-- **公开页总闸同样管主题 origin。** 在面板的「外观」页关掉公开页之后，主题 origin 上的 `PublicService` 全部 `NotFound`，页面路径（包括主题包里的文件路径）返回"公开页已关闭"的说明页，`assets/` 下 404，主题文件一个都不服务。重新打开即恢复，启用中的主题不变。
-
-主题 origin 上只有两样东西：
-
-| 路径 | 内容 |
-|---|---|
-| `/heron.v1.PublicService/<方法>` | 公开接口，与面板所在 origin 上的同一个挂载点（同一套限流与缓存） |
-| `/heron.v1.AdminService/…`、`/heron.v1.AgentService/…`、`/admin`、`/admin/…` | 404 |
-| 其余路径 | 启用中主题的文件；没有启用中的主题时是内置公开页 |
-
-RPC 路径优先于主题文件：包里即使有 `admin/index.html` 或 `heron.v1.PublicService/GetSite` 这样的文件，也遮蔽不了上表的前两行。`--public-dir` 只接管面板所在 origin 的公开页，与主题 origin 无关；两者同时存在时面板会标明这一点。主题调 `PublicService` 用相对路径，请求发往主题 origin 自己。
-
-### 主题与面板的隔离
-
-主题 origin 与面板是两个 origin。下面几条各自成立、各自可验，不是其中某一条单独承担隔离：
-
-- **主题 origin 不挂 `AdminService`。** 主题脚本对自己 origin 的 `/heron.v1.AdminService/…` 发同源请求得到 404，带着有效的会话 cookie 也一样。这由挂载承载，不靠约定。
-- **跨源的 JSON 请求要先过预检，hub 对任何 origin 都不下发 CORS 允许头。** 这是安全约束，不是"主题用不着跨源"的便利说明：预检的应答不许可主题 origin，浏览器就不发出实际请求；hub 一旦许可，主题脚本就能带着来访管理员的 cookie 把写请求发到面板，副作用在服务端已经发生，读不读得到响应无关紧要。
-- **不需要预检的简单请求被拒绝。** 跨源的简单请求只能用 `text/plain`、`application/x-www-form-urlencoded`、`multipart/form-data`，connect 对这三种类型回 415；`AdminService` 不接受 GET（405）。
-- **会话 cookie 是 host-only。** 它不设 `Domain`，浏览器只把它发给签发它的那个主机名，主题 origin 上的请求不带面板的会话。
-- **同名的会话 cookie 有多个值时，任一有效即通过。** 兄弟主机能写 `Domain` 为父域的同名 `heron_session`。它与管理员的 host-only 会话是两个 cookie，路径匹配时浏览器把两者一起发给面板。排在前面的未必是管理员那个：RFC 6265 §5.4 建议（SHOULD，并注明不是所有浏览器都如此）把 `Path` 更长的排在前面、`Path` 同长时先建的在前；Chromium 实测带更长 `Path` 的伪造值排在最前，`Path` 同为 `/` 时，管理员重新登录后伪造值也排到前面。hub 不看顺序，对同名 cookie 的每个值逐个校验，任一有效即通过，多出来的无效值不让有效值失效，所以兄弟主机写入的同名 cookie 锁不住面板。
-- **`SameSite=Strict` 对兄弟子域不起隔离作用。** `panel.example.com` 与 `status.example.com` 同属一个注册域名，浏览器判定为同站，`SameSite` 不拦它们之间的请求；两者之间的隔离靠的是上面几条。
-
-## `PublicService` 契约
-
-权威定义是 `proto/heron/v1/public.proto`（请求与响应类型另见同目录的 `query.proto`、`types.proto`），注释写明了每个字段的含义。
-
-| 方法 | 请求 | 返回 | `cache_max_age_s` |
-|---|---|---|---|
-| `GetSite` | `{}` | `PublicSite`：标题、明暗（`auto`/`light`/`dark`）、主色、logo（`data:` URL）、自定义 CSS；`adminPath` 在主题 origin 上恒为空串（这里没有面板） | 300 |
-| `GetSnapshot` | `{}` | `PublicSnapshot`：`now`、`reportIntervalMs`、全部公开节点的实时状态 | 1 |
-| `QueryMetrics` | `{"nodeId": "3", "from": "…", "to": "…", "maxPoints": 720}` | 指标历史 | 60 |
-| `QueryProbes` | 同上 | 探测历史 | 60 |
-
-历史网络均值从 `rx_bytes` / `tx_bytes` 的 `sum / stepS` 计算；采样峰值取 `net_rx_bps` / `net_tx_bps` 的 `max`，单位 bytes/s。CPU、内存同样提供 `max`。缺少系列、`n=0` 或缺少值时保留空洞，有效零值则正常画出。峰值只覆盖 agent 已采到的读数，不保证捕获采样间隔内的所有尖峰。`QueryProbes` 的系列顺序由管理员排序决定；已删除任务的历史最后按编号排列，不要在主题里重新按 ID 排序。
-
-- **调用方式。** Connect unary 就是 HTTP POST + JSON：
-
-  ```js
-  const res = await fetch("/heron.v1.PublicService/GetSnapshot", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: "{}",
-  });
-  const snapshot = await res.json(); // 顶层就是 PublicSnapshot
-  ```
-
-  四个方法都无副作用，也可以用 GET：`/heron.v1.PublicService/GetSnapshot?connect=v1&encoding=json&message=%7B%7D`（`message` 是 URL 编码的 JSON 请求）。GET 带请求体会被拒绝（415）。
-- **JSON 形态。** 字段名是 lowerCamelCase；`int64` 字段（节点 id、`now`、`lastSeenAt`、`from`、`to` 等）在 JSON 里是字符串；没有显式存在性的字段取默认值（`false`、`0`、空串、空列表）时不出现在响应里，读取时按默认值补齐；proto 里标了 `optional` 的字段不出现表示没有这个值（例如从未上报过的节点没有 `lastSeenAt`）。
-- **缓存。** GET 的成功响应带 `Cache-Control: max-age=<cache_max_age_s>`，失败响应带 `no-store`；POST 响应不带缓存头。`GetSnapshot` 的结果 hub 另缓存 1 秒，轮询间隔短于 1 秒没有意义；按 `reportIntervalMs` 或 2 秒轮询即可。主题若只在加载时取一次 `GetSite`，已打开的页面刷新后才看到外观改动；用 GET 取时，刷新后浏览器还可能再用最多 5 分钟的缓存。
-- **限流。** 按来源计：IPv4 一个地址、IPv6 一个 /64 算一个来源，桶容量 60、每秒补充 10，超出得到 HTTP 429（Connect 错误码 `resource_exhausted`，带 `no-store`）。hub 在反代之后而没有配 `--trusted-proxies` 时，所有访客共用反代地址的一个桶；量级估算见 README 的反代一节。
-- **可见范围。** 只有标为公开的节点出现在快照里；对未公开的节点与不存在的节点，`QueryMetrics`、`QueryProbes` 返回同一个 `not_found`。
-- **错误。** 失败时响应体是 `{"code": "...", "message": "..."}`，`message` 供人阅读。
-
-主题不声明配置项：外观由 `GetSite` 下发，主题自己决定用不用。
-
-## 包布局
-
-包是一个 zip，**包根**（不是某个子目录）必须有 `index.html` 与 `theme.json`：
-
-```
-theme.zip
-├── theme.json
-├── index.html
-├── preview.png          可选，theme.json 的 preview 指向它
-└── assets/
-    ├── index-3f9a1c.js
-    └── index-b27e4d.css
-```
-
-托管规则与 `--public-dir` 相同：
-
-- 请求路径命中包里的文件就返回它；`/` 是 `index.html`。
-- `assets/` 下未命中返回 404——用 HTML 回应 `<script>` 会被浏览器按 MIME 拒绝，404 让缺失可见。
-- 其余未命中的路径回落到 `index.html`，交给前端路由；因此节点页这类深链接可以直接分享。
-- 主题在主题 origin 的根路径上托管：Vite 的 `base` 保持默认的 `/`。
-- 响应头：`X-Content-Type-Options: nosniff`、`Content-Security-Policy: frame-ancestors 'none'`（主题页不能被嵌进 iframe）、`Cache-Control: no-cache`（每次都向 hub 重新验证，文件名带不带哈希都一样）；不限制脚本与外部资源，字体与图片可以从别的站点加载。内容类型按扩展名决定。
-
-打包时进入产物目录再压缩，让文件落在包根：
-
-```sh
-cd dist && zip -r -X ../theme.zip . && cd ..
-```
-
-macOS 访达的「压缩」会加入 `__MACOSX/._*` 条目，它们以 `.` 开头，整包会被拒绝；用上面的命令行打包。
-
-## 清单 `theme.json`
-
-一个 JSON 对象，只允许这些字段（出现别的字段整包拒绝）：
-
-| 字段 | 必填 | 约束 |
+| 方法 | 请求 | 返回 |
 |---|---|---|
-| `id` | 是 | `[a-z0-9-]{1,32}`；不得是 `builtin`（内置公开页的标识，主题不得自报内置） |
-| `name` | 是 | 去掉首尾空白后非空，至多 64 个字符，不含控制字符 |
-| `version` | 是 | 同 `name` |
-| `preview` | 否 | 包内 `.png`、`.jpg`、`.jpeg` 或 `.webp` 文件的路径，内容必须真是该类型的图片；面板的主题列表显示它 |
+| `getSite()` | 无 | `PublicSite`：标题、明暗、主色、logo、自定义 CSS；不含管理入口 |
+| `getSnapshot()` | 无 | `PublicSnapshot`：时间、建议上报间隔、公开节点实时状态 |
+| `queryMetrics(args)` | `{ nodeId, from, to, maxPoints }` | 节点指标历史 |
+| `queryProbes(args)` | `{ nodeId, from, to, maxPoints }` | 节点探测历史 |
+| `navigate(path, replace?)` | `/` 或 `/nodes/<正整数>`，可选替换历史记录 | 更新公开页地址并通知路由订阅者 |
+| `onRoute(listener)` | 接收路径的函数 | Promise，解析为取消订阅函数；订阅后立即收到当前路径 |
+
+数据字段定义见 `proto/heron/v1/public.proto`、`query.proto` 和 `types.proto`。JSON 使用 lowerCamelCase；`int64` 字段是字符串；普通字段缺席时使用 protobuf 默认值，`optional` 字段缺席表示没有读数。SDK 返回的是响应数据本身，不是 `Response` 对象，失败会拒绝 Promise。
+
+只公开标为公开的节点。查询私有节点和不存在的节点都得到 `not_found`。公开接口沿用来源限流；可信容器另限制消息大小、请求并发与频率，不支持任意 URL 或方法名。快照按约 2 秒轮询即可，不要高频重试。
+
+历史网络均值从 `rx_bytes` / `tx_bytes` 的 `sum / stepS` 计算，采样峰值取 `net_rx_bps` / `net_tx_bps` 的 `max`，单位 bytes/s。缺少系列、`n=0` 或缺少值时保留空洞，有效零值正常显示。探测系列沿用服务端顺序，不在主题内重新按 ID 排序。
+
+## 包布局与清单
+
+ZIP 包根必须有 `index.html` 和 `theme.json`，不能再套一层仓库或 `dist` 目录。其余资源例如 `assets/app.js`、`assets/app.css`、`preview.png` 使用包内相对路径。
 
 ```json
-{ "id": "dark-cards", "name": "Dark cards", "version": "1.0.0", "preview": "preview.png" }
+{
+  "id": "dark-cards",
+  "name": "Dark cards",
+  "version": "1.0.0",
+  "sdk": 1,
+  "preview": "preview.png"
+}
 ```
 
-`id` 是主题的身份：再次上传同一 `id` 即整体替换（不留旧版本，也不能回滚），启用状态沿用。更新已装的主题时在面板上选「更新 <主题>」（接口上是 `UploadTheme` 的 `expect_id`）：包的 `id` 必须与之一致、且该主题必须已安装，否则拒绝——包装错了主题时不会静默装出第二个主题或覆盖无关的那个。
-
-## 上限
-
-| 项 | 上限 |
+| 字段 | 约束 |
 |---|---|
-| zip 包本身 | 8 MiB |
-| 条目数 | 2000 |
-| 单个文件展开后 | 16 MiB |
-| 全部文件展开后合计 | 64 MiB |
-| 已安装主题数 | 20（替换同一 `id` 不计入） |
-| 上传耗时 | 30 秒 |
+| `id` | 必填，`[a-z0-9-]{1,32}`，不得是 `builtin` |
+| `name`、`version` | 必填，去除首尾空白后非空，最多 64 字符，无控制字符 |
+| `sdk` | 新安装必须为 `1`；缺席或不支持的值只可用于旧包归档恢复 |
+| `preview` | 可选，包内 PNG/JPEG/WebP 路径；内容必须与扩展名匹配 |
 
-- 展开大小在读取任何条目之前按 zip 中央目录声明的大小判一次，实际展开时逐条再核对一次；任一超出整包拒绝。压缩方式只接受 store 与 deflate。
-- 30 秒是 hub 读取一个请求的时限（`http.Server` 的 `ReadTimeout`），整个上传请求必须在这之内传完。面板用 JSON 上传，包以 base64 编码，8 MiB 的包约 11 MB，需要约 3 Mbit/s 的上行；上行更慢时把包做小，或在离 hub 更近的网络里上传。
+未知清单字段会拒绝。外观数据由 `getSite()` 提供，不支持自定义清单配置项。
 
-## 被拒绝的内容
-
-以下任一出现即拒绝整包，什么都不写入；错误信息写明是哪个条目或哪个字段、违反了什么：
-
-- **条目类型**：只接受普通文件与目录。符号链接、硬链接、设备节点、FIFO 一律拒绝——路径检查看的是条目名，看不见链接指向哪里；跳过而不拒绝会让"装上了"与"装对了"分不开。
-- **条目路径**：必须相对包根、以 `/` 分隔、规范化后仍在包内。含 `..`、绝对路径、反斜杠、空段、控制字符，或任一段以 `.` 开头（`.env`、`.git/`、`.well-known/`、`__MACOSX/._x`）都拒绝；同一路径不得出现两次。
-- **清单**：缺 `index.html` 或 `theme.json`，清单不是合法 JSON、有未知字段、字段不合上表的约束，`preview` 指向的文件不存在或内容不是声明的图片类型。
-
-## 启用、停用与删除
-
-- 至多一个主题处于启用状态；启用一个即停用其余。面板上的「停用」让主题 origin 回到内置公开页（接口上是 `EnableTheme` 传空 `id`）。
-- 删除启用中的主题后，主题 origin 回落内置公开页，不会变成 404。
-- 整包在一个事务里写入，提交前访客看不到新包；访客的每个请求读到的都是某一个完整的包。
-- 主题的管理方法只接受管理员会话，API token 调不了。
-
-## 主题包随备份
-
-配置 S3 兼容备份后，主题的原始 zip 保存为 `<前缀>/theme/<id>.zip`；同 ID 更新会覆盖该对象，删除主题会删除对象，不保留旧版本。原包与元数据、展开文件同事务落库，不重新打包。配置层快照只带主题元数据，`theme_file` 和 `theme_package` 均不进入配置层或指标层快照。
-
-上传或删除提交后唤醒备份，配置层每个周期也同步一次。上传失败、丢失唤醒或之后才配置备份，均可在后续同步补齐；未配置备份时不访问对象存储。主题同步失败显示在现有的配置层备份故障中，并使用同一组首次失败和恢复通知。没有原始 zip 的主题在备份状态和主题页列为“未备份：请重新上传原包”，不算配置层故障、不触发通知；hub 启动时按主题 id 记录警告。hub 不会把展开文件重打包冒充原包，缺包主题的远端对象也不会删除。
-
-主题写入会唤醒配置层执行一轮完整的备份并同步主题对象，每次唤醒多占一份配置层保留名额（`config_keep`），换取最新的配置快照与主题对象一致；一轮进行中或尚未开始时的连续写入合并成一次唤醒，所以写入次数只是名额消耗的上界。调试主题期间反复上传仍会缩短配置层可回溯的时间窗。
-
-恢复时先把所需对象下载到一个目录，保留文件名 `<id>.zip`。支持主题恢复的版本使用以下离线命令，执行前须停止 hub：
+包内资源用 `./assets/app.js` 等相对地址；Vite 构建应配置 `base: './'`。不要将包资源写成 `/assets/...`，也不要通过 `<base>` 改写基址。主题文档实际位于带摘要的资源路径，公开深链接由可信容器通过 `onRoute` 传入，不能把 iframe 的 `location.pathname` 当作站点路由。
 
 ```sh
+cd dist && zip -r -X ../theme.zip .
+```
+
+macOS Finder 的“压缩”可能加入 `__MACOSX/._*`，这些隐藏条目会被拒绝。
+
+## 包限制
+
+ZIP 最多 8 MiB，最多 2000 条目；单文件展开后最多 16 MiB，总展开大小最多 64 MiB。只接受 store、deflate 压缩以及普通文件和目录。解析器在读文件前检查声明上限，再核对实际展开大小和 CRC。
+
+绝对路径、`..`、反斜杠、空路径段、控制字符、以 `.` 开头的路径段、重复路径、链接和设备文件都会拒绝整包。安装失败不影响当前主题，也不留下部分版本。
+
+上传经过一个 JSON 请求，原包以 base64 编码；8 MiB ZIP 的请求约 11 MB，受服务端 30 秒读请求超时约束。GitHub 下载也有独立超时与压缩包大小限制。
+
+## 备份与恢复
+
+配置快照保存全部保留版本、当前与回滚引用，以及 `snapshot_theme(theme_id,digest,sha256)` 原包清单。原包先上传到 `<前缀>/theme/sha256/<SHA256>.zip`，成功后才发布引用它的配置快照。更新、清理或卸载本地主题不删除历史快照引用的远端原包；远端主题对象目前不自动回收。
+
+```sh
+sqlite3 config.db 'SELECT theme_id,digest,sha256 FROM snapshot_theme ORDER BY theme_id,digest;'
 heron-hub restore --db hub.db --config config.db --themes ./theme-packages --yes
 ```
 
-缺包时保留主题元数据但禁用主题、清空预览路径；重新上传后才能启用。不带 `--themes` 等同全部缺包；目标库原有的主题文件和原包都会清空，不沿用旧内容。有包时名称、版本和预览路径取包内清单，启用状态与上传时间取配置快照。目录不存在或任一 zip 校验失败则整体拒绝，不修改目标库；恢复目录里的包文件名必须是 `<合法 id>.zip`，id 遵守上文[清单 `theme.json`](#清单-themejson) 中的规则，浏览器重复下载得到的 `a (1).zip` 会让整次恢复被拒绝。有效但没有对应主题的 zip 忽略。恢复输出和 `restore_record` 都记录已恢复、缺包和忽略的清单。仅含元数据的配置快照不是完整主题备份。
+恢复前停止 hub。目录内使用 `<SHA256>.zip`，必须匹配快照摘要和包内 ID，不从 GitHub 重新下载。指定目录时，快照要求的原包缺失或校验失败会拒绝恢复；空 `sha256` 表示快照本来就没有该原包，保留缺包元数据。省略 `--themes` 会清空主题文件、原包与选择，保留元数据，管理员重新上传原包后再启用。
+
+旧 schema 快照在私有副本中迁移，不改原文件。没有摘要清单的历史格式仍可读取 `<主题 id>.zip`；旧 SDK 包恢复后仍不可执行。有原包时恢复清单元数据和文件，无原包时不沿用目标库旧内容。恢复输出记录已恢复、缺包与忽略的主题。
+
+主题内容写入或删除会唤醒配置备份，周期同步补偿丢失的唤醒。备份状态列出缺原包的主题，但不把它当作对象存储故障。密集安装会多占用配置快照保留名额；原包和快照包含站点配置，应放在私有存储中。
 
 ## 本地开发
 
-在本机起一个 hub，让主题 origin 用 `localhost`、面板用 `127.0.0.1`——两个不同的主机名指向同一个 hub：
-
 ```sh
+heron-hub serve --db dev.db --listen 127.0.0.1:18180
 heron-hub passwd --db dev.db
-heron-hub serve --db dev.db --listen 127.0.0.1:18180 --theme-origin http://localhost:18180
 ```
 
-- 面板：`http://127.0.0.1:18180/admin/`；主题 origin：`http://localhost:18180/`（没有启用主题时是内置公开页）。
-- 开发时用框架自己的开发服务器，把 `/heron.v1.PublicService/` 代理到 hub。以 Vite 为例：
-
-  ```js
-  // vite.config.js
-  export default { server: { proxy: { "/heron.v1.PublicService": "http://localhost:18180" } } };
-  ```
-
-  `PublicService` 在两个主机名上都有，代理到哪一个都行。
-- 要有数据可看，先在面板上建节点并把它标为公开，再在另一台机器（或本机）上装 agent 指向这个 hub。
-- 成品验证：`vite build`，按上文打包，在面板上传并启用，打开 `http://localhost:18180/` 与一个深链接（如 `/nodes/1`），确认资源路径与前端路由在根路径下都对。
+访问 `http://127.0.0.1:18180/admin/`，创建公开节点并接入 agent。将产物上传后先预览，再启用并访问 `http://127.0.0.1:18180/`。SDK 依赖可信容器的消息通道，直接用框架开发服务器打开主题不具备这条通道；成品验证应通过 hub 预览，检查相对资源、`/nodes/1` 深链接、前进后退、切换版本和公开页关闭行为。

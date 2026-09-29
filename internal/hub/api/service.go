@@ -75,11 +75,7 @@ type Config struct {
 	// Retention 是 serve 交给维护循环的同一份保留期，存储健康按它判定最老桶是否超期。零值会把最老桶早于
 	// 一个桶长加一个维护间隔之前的表都标成超期，New 用 Retention.Validate 把它当作装配错误拒绝。
 	Retention store.Retention
-	// ThemeOrigin 是 serve 的 --theme-origin（规范形态，经 ListThemes 回显给面板）。空串时主题的五个方法一律
-	// FailedPrecondition（requireThemeOrigin）：零值是关闭，与"未配置独立 origin 即不开启上传与托管"同一方向。
-	ThemeOrigin string
-	// PublicDir 为真表示 serve 给了 --public-dir，面板所在 origin 的公开页由目录接管；经 ListThemes 回显，面板据此
-	// 标明启用主题不影响那一页。
+	// PublicDir 为真时可信目录接管公开页，禁止启用托管主题。
 	PublicDir bool
 	// Geo 是 serve 选定并交给国家查询器的同一个后端对象，New 要求非 nil。面板回显的后端与本地库路径取自它
 	// （Settings.geo_backend、geo_mmdb_path），不另由启动参数推导，回显因此不会与查询器实际用的后端分叉；仅回显，
@@ -118,6 +114,9 @@ type Service struct {
 	// 展开内容至多一份（≤ theme.MaxTotalBytes），Parse 的解压也至多一路。占用时直接拒绝而不排队：到了方法体的请求
 	// 已各自持有解码后的包，排队只会把它们攒在内存里。请求体的解码在方法体之前，不归它管，由 maxThemeBody 按请求设界。
 	uploading chan struct{}
+	github    *theme.GitHubClient
+	previewMu sync.Mutex
+	previews  map[string]themePreviewGrant
 }
 
 func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, book *traffic.Book, probes *probe.Registry, alerts *alert.Engine, notifier *alert.Queue, clk clock.Clock, log *slog.Logger) *Service {
@@ -141,6 +140,7 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 		history:   history{store: st, log: log},
 		access:    accessTable(heronv1.File_heron_v1_admin_proto.Services().ByName("AdminService")),
 		uploading: make(chan struct{}, 1),
+		github:    theme.NewGitHubClient(), previews: make(map[string]themePreviewGrant),
 	}
 }
 
@@ -154,17 +154,30 @@ func (s *Service) Handler() (string, http.Handler) {
 	access := connect.WithInterceptors(s.accessInterceptor())
 	path, rest := heronv1connect.NewAdminServiceHandler(s, access, connect.WithReadMaxBytes(maxSettingsBody))
 	_, upload := heronv1connect.NewAdminServiceHandler(s, access, connect.WithReadMaxBytes(maxThemeBody))
-	return path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return path, auth.WebAuthnContext(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 不透明沙箱和跨源浏览器请求在解码与鉴权之前拒绝，不能依赖 CORS 阻止副作用。
+		if !auth.SameOriginRequest(r, s.cfg.TrustedProxies) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"code":"permission_denied","message":"管理请求来源不匹配；使用 HTTPS 反代时请保留 Host、转发协议并配置 --trusted-proxies"}`))
+			return
+		}
+		scheme, err := auth.TrustedRequestScheme(r, s.cfg.TrustedProxies)
+		if err != nil {
+			scheme = "http"
+		}
+		r = r.WithContext(context.WithValue(r.Context(), schemeKey{}, scheme))
 		if r.URL.Path == heronv1connect.AdminServiceUploadThemeProcedure {
 			upload.ServeHTTP(w, r)
 			return
 		}
 		rest.ServeHTTP(w, r)
-	})
+	}), s.cfg.TrustedProxies)
 }
 
 type sessionKey struct{}
 type peerKey struct{}
+type schemeKey struct{}
 
 // peerInfo 由拦截器统一计算；转发头只有来自可信代理时才参与来源地址与协议判定。
 type peerInfo struct {
@@ -226,9 +239,10 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 		if !ok {
 			return nil, unauthenticated("unauthenticated")
 		}
+		scheme, _ := ctx.Value(schemeKey{}).(string)
 		peer := peerInfo{
 			from:   auth.ClientIP(req.Peer().Addr, req.Header().Values("X-Forwarded-For"), s.cfg.TrustedProxies),
-			scheme: auth.RequestScheme(req.Peer().Addr, req.Header().Values("X-Forwarded-Proto"), s.cfg.TrustedProxies),
+			scheme: scheme,
 		}
 		ctx = context.WithValue(ctx, peerKey{}, peer)
 		// 先鉴别身份再裁决权限：无效 token 调任何方法都是 401，有效 token 调非 READ 方法是 403。

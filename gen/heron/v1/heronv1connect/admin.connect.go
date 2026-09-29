@@ -158,6 +158,21 @@ const (
 	// AdminServiceGetThemePreviewProcedure is the fully-qualified name of the AdminService's
 	// GetThemePreview RPC.
 	AdminServiceGetThemePreviewProcedure = "/heron.v1.AdminService/GetThemePreview"
+	// AdminServiceDeleteThemeVersionProcedure is the fully-qualified name of the AdminService's
+	// DeleteThemeVersion RPC.
+	AdminServiceDeleteThemeVersionProcedure = "/heron.v1.AdminService/DeleteThemeVersion"
+	// AdminServiceListThemeReleasesProcedure is the fully-qualified name of the AdminService's
+	// ListThemeReleases RPC.
+	AdminServiceListThemeReleasesProcedure = "/heron.v1.AdminService/ListThemeReleases"
+	// AdminServiceInstallThemeReleaseProcedure is the fully-qualified name of the AdminService's
+	// InstallThemeRelease RPC.
+	AdminServiceInstallThemeReleaseProcedure = "/heron.v1.AdminService/InstallThemeRelease"
+	// AdminServicePreviewThemeProcedure is the fully-qualified name of the AdminService's PreviewTheme
+	// RPC.
+	AdminServicePreviewThemeProcedure = "/heron.v1.AdminService/PreviewTheme"
+	// AdminServiceGetThemePackageProcedure is the fully-qualified name of the AdminService's
+	// GetThemePackage RPC.
+	AdminServiceGetThemePackageProcedure = "/heron.v1.AdminService/GetThemePackage"
 	// AdminServiceGetStorageStatsProcedure is the fully-qualified name of the AdminService's
 	// GetStorageStats RPC.
 	AdminServiceGetStorageStatsProcedure = "/heron.v1.AdminService/GetStorageStats"
@@ -267,19 +282,30 @@ type AdminServiceClient interface {
 	// 缺席的组不变；回显 hub 实际保存的设置。一组都没给出、或任一项不合约束即 InvalidArgument，错误写明字段、约束与
 	// 期望取值，什么都不写入。
 	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
-	// 上传一个主题包（zip，至多 8 MiB）并整包安装；包根的 theme.json 的 id 已安装即整体替换（启用状态沿用）。
+	// 主题在同域的受限沙箱运行，安装与启用分离。
+	// 上传一个主题包（zip，至多 8 MiB）并安装不可变版本，不改变当前公开页。
 	// 包的约束（条目数、展开大小、条目类型与路径、清单字段）见 UploadThemeRequest；任一不满足即 InvalidArgument，
 	// 错误写明条目或字段与原因，什么都不写入。主题数已满（20）且 id 是新的时 ResourceExhausted。
 	UploadTheme(context.Context, *connect.Request[v1.UploadThemeRequest]) (*connect.Response[v1.UploadThemeResponse], error)
 	// 已安装的主题，按 id 升序。
 	ListThemes(context.Context, *connect.Request[v1.ListThemesRequest]) (*connect.Response[v1.ListThemesResponse], error)
-	// 让一个主题成为主题 origin 上的公开页，其余主题随之停用；id 为空即不启用任何主题（主题 origin 服务内置公开页）。
+	// 启用指定摘要的主题版本；id 为空即切回内置公开页。
 	// 没有这个主题时 NotFound，启用状态不变。
 	EnableTheme(context.Context, *connect.Request[v1.EnableThemeRequest]) (*connect.Response[v1.EnableThemeResponse], error)
-	// 删除主题及其全部文件；删的是启用中的主题时，主题 origin 回落到内置公开页。没有这个主题时 NotFound。
+	// 删除主题及其全部文件；删的是启用中的主题时回落到内置公开页。没有这个主题时 NotFound。
 	DeleteTheme(context.Context, *connect.Request[v1.DeleteThemeRequest]) (*connect.Response[v1.DeleteThemeResponse], error)
 	// 主题清单 preview 指向的预览图。主题不存在或清单没有给 preview 时 NotFound。
 	GetThemePreview(context.Context, *connect.Request[v1.GetThemePreviewRequest]) (*connect.Response[v1.GetThemePreviewResponse], error)
+	// 删除未使用版本，不允许删除当前或上一回滚版本。
+	DeleteThemeVersion(context.Context, *connect.Request[v1.DeleteThemeVersionRequest]) (*connect.Response[v1.DeleteThemeVersionResponse], error)
+	// 读取公开 GitHub 仓库的 Release 列表，不安装任何内容。
+	ListThemeReleases(context.Context, *connect.Request[v1.ListThemeReleasesRequest]) (*connect.Response[v1.ListThemeReleasesResponse], error)
+	// 安装明确选定的 Release ZIP 资产；不执行源码构建，不自动启用。
+	InstallThemeRelease(context.Context, *connect.Request[v1.InstallThemeReleaseRequest]) (*connect.Response[v1.InstallThemeReleaseResponse], error)
+	// 为当前会话创建短期交互预览；不会公开或启用该版本。
+	PreviewTheme(context.Context, *connect.Request[v1.PreviewThemeRequest]) (*connect.Response[v1.PreviewThemeResponse], error)
+	// 下载保留的原始 ZIP；旧 SDK 归档也可下载，但不因此取得执行权限。
+	GetThemePackage(context.Context, *connect.Request[v1.GetThemePackageRequest]) (*connect.Response[v1.GetThemePackageResponse], error)
 	// 库的逻辑大小、每张表的行数与存储健康读数，与 heron-hub stats 同一来源。
 	GetStorageStats(context.Context, *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error)
 	// API token 的元数据；明文只在 CreateApiToken 的响应里出现一次，hub 只存哈希。
@@ -573,6 +599,36 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("GetThemePreview")),
 			connect.WithClientOptions(opts...),
 		),
+		deleteThemeVersion: connect.NewClient[v1.DeleteThemeVersionRequest, v1.DeleteThemeVersionResponse](
+			httpClient,
+			baseURL+AdminServiceDeleteThemeVersionProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("DeleteThemeVersion")),
+			connect.WithClientOptions(opts...),
+		),
+		listThemeReleases: connect.NewClient[v1.ListThemeReleasesRequest, v1.ListThemeReleasesResponse](
+			httpClient,
+			baseURL+AdminServiceListThemeReleasesProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListThemeReleases")),
+			connect.WithClientOptions(opts...),
+		),
+		installThemeRelease: connect.NewClient[v1.InstallThemeReleaseRequest, v1.InstallThemeReleaseResponse](
+			httpClient,
+			baseURL+AdminServiceInstallThemeReleaseProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("InstallThemeRelease")),
+			connect.WithClientOptions(opts...),
+		),
+		previewTheme: connect.NewClient[v1.PreviewThemeRequest, v1.PreviewThemeResponse](
+			httpClient,
+			baseURL+AdminServicePreviewThemeProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("PreviewTheme")),
+			connect.WithClientOptions(opts...),
+		),
+		getThemePackage: connect.NewClient[v1.GetThemePackageRequest, v1.GetThemePackageResponse](
+			httpClient,
+			baseURL+AdminServiceGetThemePackageProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("GetThemePackage")),
+			connect.WithClientOptions(opts...),
+		),
 		getStorageStats: connect.NewClient[v1.GetStorageStatsRequest, v1.GetStorageStatsResponse](
 			httpClient,
 			baseURL+AdminServiceGetStorageStatsProcedure,
@@ -653,6 +709,11 @@ type adminServiceClient struct {
 	enableTheme           *connect.Client[v1.EnableThemeRequest, v1.EnableThemeResponse]
 	deleteTheme           *connect.Client[v1.DeleteThemeRequest, v1.DeleteThemeResponse]
 	getThemePreview       *connect.Client[v1.GetThemePreviewRequest, v1.GetThemePreviewResponse]
+	deleteThemeVersion    *connect.Client[v1.DeleteThemeVersionRequest, v1.DeleteThemeVersionResponse]
+	listThemeReleases     *connect.Client[v1.ListThemeReleasesRequest, v1.ListThemeReleasesResponse]
+	installThemeRelease   *connect.Client[v1.InstallThemeReleaseRequest, v1.InstallThemeReleaseResponse]
+	previewTheme          *connect.Client[v1.PreviewThemeRequest, v1.PreviewThemeResponse]
+	getThemePackage       *connect.Client[v1.GetThemePackageRequest, v1.GetThemePackageResponse]
 	getStorageStats       *connect.Client[v1.GetStorageStatsRequest, v1.GetStorageStatsResponse]
 	listApiTokens         *connect.Client[v1.ListApiTokensRequest, v1.ListApiTokensResponse]
 	createApiToken        *connect.Client[v1.CreateApiTokenRequest, v1.CreateApiTokenResponse]
@@ -885,6 +946,31 @@ func (c *adminServiceClient) GetThemePreview(ctx context.Context, req *connect.R
 	return c.getThemePreview.CallUnary(ctx, req)
 }
 
+// DeleteThemeVersion calls heron.v1.AdminService.DeleteThemeVersion.
+func (c *adminServiceClient) DeleteThemeVersion(ctx context.Context, req *connect.Request[v1.DeleteThemeVersionRequest]) (*connect.Response[v1.DeleteThemeVersionResponse], error) {
+	return c.deleteThemeVersion.CallUnary(ctx, req)
+}
+
+// ListThemeReleases calls heron.v1.AdminService.ListThemeReleases.
+func (c *adminServiceClient) ListThemeReleases(ctx context.Context, req *connect.Request[v1.ListThemeReleasesRequest]) (*connect.Response[v1.ListThemeReleasesResponse], error) {
+	return c.listThemeReleases.CallUnary(ctx, req)
+}
+
+// InstallThemeRelease calls heron.v1.AdminService.InstallThemeRelease.
+func (c *adminServiceClient) InstallThemeRelease(ctx context.Context, req *connect.Request[v1.InstallThemeReleaseRequest]) (*connect.Response[v1.InstallThemeReleaseResponse], error) {
+	return c.installThemeRelease.CallUnary(ctx, req)
+}
+
+// PreviewTheme calls heron.v1.AdminService.PreviewTheme.
+func (c *adminServiceClient) PreviewTheme(ctx context.Context, req *connect.Request[v1.PreviewThemeRequest]) (*connect.Response[v1.PreviewThemeResponse], error) {
+	return c.previewTheme.CallUnary(ctx, req)
+}
+
+// GetThemePackage calls heron.v1.AdminService.GetThemePackage.
+func (c *adminServiceClient) GetThemePackage(ctx context.Context, req *connect.Request[v1.GetThemePackageRequest]) (*connect.Response[v1.GetThemePackageResponse], error) {
+	return c.getThemePackage.CallUnary(ctx, req)
+}
+
 // GetStorageStats calls heron.v1.AdminService.GetStorageStats.
 func (c *adminServiceClient) GetStorageStats(ctx context.Context, req *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error) {
 	return c.getStorageStats.CallUnary(ctx, req)
@@ -1002,19 +1088,30 @@ type AdminServiceHandler interface {
 	// 缺席的组不变；回显 hub 实际保存的设置。一组都没给出、或任一项不合约束即 InvalidArgument，错误写明字段、约束与
 	// 期望取值，什么都不写入。
 	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
-	// 上传一个主题包（zip，至多 8 MiB）并整包安装；包根的 theme.json 的 id 已安装即整体替换（启用状态沿用）。
+	// 主题在同域的受限沙箱运行，安装与启用分离。
+	// 上传一个主题包（zip，至多 8 MiB）并安装不可变版本，不改变当前公开页。
 	// 包的约束（条目数、展开大小、条目类型与路径、清单字段）见 UploadThemeRequest；任一不满足即 InvalidArgument，
 	// 错误写明条目或字段与原因，什么都不写入。主题数已满（20）且 id 是新的时 ResourceExhausted。
 	UploadTheme(context.Context, *connect.Request[v1.UploadThemeRequest]) (*connect.Response[v1.UploadThemeResponse], error)
 	// 已安装的主题，按 id 升序。
 	ListThemes(context.Context, *connect.Request[v1.ListThemesRequest]) (*connect.Response[v1.ListThemesResponse], error)
-	// 让一个主题成为主题 origin 上的公开页，其余主题随之停用；id 为空即不启用任何主题（主题 origin 服务内置公开页）。
+	// 启用指定摘要的主题版本；id 为空即切回内置公开页。
 	// 没有这个主题时 NotFound，启用状态不变。
 	EnableTheme(context.Context, *connect.Request[v1.EnableThemeRequest]) (*connect.Response[v1.EnableThemeResponse], error)
-	// 删除主题及其全部文件；删的是启用中的主题时，主题 origin 回落到内置公开页。没有这个主题时 NotFound。
+	// 删除主题及其全部文件；删的是启用中的主题时回落到内置公开页。没有这个主题时 NotFound。
 	DeleteTheme(context.Context, *connect.Request[v1.DeleteThemeRequest]) (*connect.Response[v1.DeleteThemeResponse], error)
 	// 主题清单 preview 指向的预览图。主题不存在或清单没有给 preview 时 NotFound。
 	GetThemePreview(context.Context, *connect.Request[v1.GetThemePreviewRequest]) (*connect.Response[v1.GetThemePreviewResponse], error)
+	// 删除未使用版本，不允许删除当前或上一回滚版本。
+	DeleteThemeVersion(context.Context, *connect.Request[v1.DeleteThemeVersionRequest]) (*connect.Response[v1.DeleteThemeVersionResponse], error)
+	// 读取公开 GitHub 仓库的 Release 列表，不安装任何内容。
+	ListThemeReleases(context.Context, *connect.Request[v1.ListThemeReleasesRequest]) (*connect.Response[v1.ListThemeReleasesResponse], error)
+	// 安装明确选定的 Release ZIP 资产；不执行源码构建，不自动启用。
+	InstallThemeRelease(context.Context, *connect.Request[v1.InstallThemeReleaseRequest]) (*connect.Response[v1.InstallThemeReleaseResponse], error)
+	// 为当前会话创建短期交互预览；不会公开或启用该版本。
+	PreviewTheme(context.Context, *connect.Request[v1.PreviewThemeRequest]) (*connect.Response[v1.PreviewThemeResponse], error)
+	// 下载保留的原始 ZIP；旧 SDK 归档也可下载，但不因此取得执行权限。
+	GetThemePackage(context.Context, *connect.Request[v1.GetThemePackageRequest]) (*connect.Response[v1.GetThemePackageResponse], error)
 	// 库的逻辑大小、每张表的行数与存储健康读数，与 heron-hub stats 同一来源。
 	GetStorageStats(context.Context, *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error)
 	// API token 的元数据；明文只在 CreateApiToken 的响应里出现一次，hub 只存哈希。
@@ -1304,6 +1401,36 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("GetThemePreview")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceDeleteThemeVersionHandler := connect.NewUnaryHandler(
+		AdminServiceDeleteThemeVersionProcedure,
+		svc.DeleteThemeVersion,
+		connect.WithSchema(adminServiceMethods.ByName("DeleteThemeVersion")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceListThemeReleasesHandler := connect.NewUnaryHandler(
+		AdminServiceListThemeReleasesProcedure,
+		svc.ListThemeReleases,
+		connect.WithSchema(adminServiceMethods.ByName("ListThemeReleases")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceInstallThemeReleaseHandler := connect.NewUnaryHandler(
+		AdminServiceInstallThemeReleaseProcedure,
+		svc.InstallThemeRelease,
+		connect.WithSchema(adminServiceMethods.ByName("InstallThemeRelease")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServicePreviewThemeHandler := connect.NewUnaryHandler(
+		AdminServicePreviewThemeProcedure,
+		svc.PreviewTheme,
+		connect.WithSchema(adminServiceMethods.ByName("PreviewTheme")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceGetThemePackageHandler := connect.NewUnaryHandler(
+		AdminServiceGetThemePackageProcedure,
+		svc.GetThemePackage,
+		connect.WithSchema(adminServiceMethods.ByName("GetThemePackage")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceGetStorageStatsHandler := connect.NewUnaryHandler(
 		AdminServiceGetStorageStatsProcedure,
 		svc.GetStorageStats,
@@ -1426,6 +1553,16 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceDeleteThemeHandler.ServeHTTP(w, r)
 		case AdminServiceGetThemePreviewProcedure:
 			adminServiceGetThemePreviewHandler.ServeHTTP(w, r)
+		case AdminServiceDeleteThemeVersionProcedure:
+			adminServiceDeleteThemeVersionHandler.ServeHTTP(w, r)
+		case AdminServiceListThemeReleasesProcedure:
+			adminServiceListThemeReleasesHandler.ServeHTTP(w, r)
+		case AdminServiceInstallThemeReleaseProcedure:
+			adminServiceInstallThemeReleaseHandler.ServeHTTP(w, r)
+		case AdminServicePreviewThemeProcedure:
+			adminServicePreviewThemeHandler.ServeHTTP(w, r)
+		case AdminServiceGetThemePackageProcedure:
+			adminServiceGetThemePackageHandler.ServeHTTP(w, r)
 		case AdminServiceGetStorageStatsProcedure:
 			adminServiceGetStorageStatsHandler.ServeHTTP(w, r)
 		case AdminServiceListApiTokensProcedure:
@@ -1623,6 +1760,26 @@ func (UnimplementedAdminServiceHandler) DeleteTheme(context.Context, *connect.Re
 
 func (UnimplementedAdminServiceHandler) GetThemePreview(context.Context, *connect.Request[v1.GetThemePreviewRequest]) (*connect.Response[v1.GetThemePreviewResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.GetThemePreview is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) DeleteThemeVersion(context.Context, *connect.Request[v1.DeleteThemeVersionRequest]) (*connect.Response[v1.DeleteThemeVersionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.DeleteThemeVersion is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListThemeReleases(context.Context, *connect.Request[v1.ListThemeReleasesRequest]) (*connect.Response[v1.ListThemeReleasesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.ListThemeReleases is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) InstallThemeRelease(context.Context, *connect.Request[v1.InstallThemeReleaseRequest]) (*connect.Response[v1.InstallThemeReleaseResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.InstallThemeRelease is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) PreviewTheme(context.Context, *connect.Request[v1.PreviewThemeRequest]) (*connect.Response[v1.PreviewThemeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.PreviewTheme is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) GetThemePackage(context.Context, *connect.Request[v1.GetThemePackageRequest]) (*connect.Response[v1.GetThemePackageResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.GetThemePackage is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) GetStorageStats(context.Context, *connect.Request[v1.GetStorageStatsRequest]) (*connect.Response[v1.GetStorageStatsResponse], error) {

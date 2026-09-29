@@ -9,11 +9,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/netip"
-	"net/url"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -31,8 +28,6 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/traffic"
 	"github.com/xjetry/heron-probe/internal/hub/web"
-	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/reflect/protoregistry"
 )
 
 type mount struct {
@@ -54,102 +49,22 @@ func newMux(mounts ...mount) *http.ServeMux {
 	return mux
 }
 
-// routes 是 serve 的全部 HTTP 路由；serve 与挂载点测试经同一个 newHandler 装配，测试钉住的就是 serve 实际的分流。
+// routes 是生产服务与挂载点测试共用的 HTTP 装配。
 type routes struct {
 	agent, admin, public mount
-	// page 是主 origin 的根路径：内置公开页，或 --public-dir 的目录。
-	page http.Handler
-	// themeOrigin 是 parseThemeOrigin 的结果，空串表示没有主题 origin；themePage 是主题 origin 的根路径。
-	themeOrigin string
-	themePage   http.Handler
-	// publicEnabled 是公开页总闸（store.Store.PublicEnabled，读内存副本）。page 与 themePage 都不自带总闸，由 newHandler
-	// 统一包上。必填：缺了它不能当作"总开"，newHandler 在装配时拒绝。
-	publicEnabled func() bool
+	page                 http.Handler
+	publicEnabled        func() bool
 }
 
-// newHandler 按请求的 Host 在两个 origin 之间分流（§10.1）：Host 的主机名（hostname）等于主题 origin 的主机名走
-// newThemeMux，其余走主 origin。只比主机名，端口不参与：浏览器的 cookie 不按端口区分，与面板同一主机名、只差端口的主题
-// origin 上"会话 cookie 是 host-only"这一条不成立，所以主题 origin 必须换主机名；这样配置时按主机名分流还会把面板那个
-// 主机名的请求一起分到主题 origin（那里没有面板）——hub 不知道面板用哪个主机名，这一条在启动时查不出来，写在 flag 帮助
-// 与 docs/theme-guide.md。
-// 公开服务的挂载点在两个 origin 上是同一个处理器：限流的令牌桶与快照缓存只有一份。
-//
-// 总闸约束 RPC 之外的整个公开静态面（§10）：主 origin 的根路径与主题 origin 的根路径（主题文件与回落的内置页）在这里包进
-// 同一个 web.PublicGate，serve 与测试装配走的是同一处，不会一边包了一边没包。关闸时 PublicGate 不调用下游，主题 origin
-// 因此不读库、不服务任何主题文件。PublicService 由它自己的拦截器读同一个开关回 NotFound，两个 origin 挂的是同一个处理器。
+// 管理面板与 RPC 使用明确挂载点；其余路径统一经过公开总闸，包含主题资源与预览。
 func newHandler(r routes) http.Handler {
 	if r.publicEnabled == nil {
-		panic("routes.publicEnabled is required: a missing public switch must not mean the public pages are always open")
+		panic("routes.publicEnabled is required")
 	}
-	// 面板挂在 web.Prefix 上的只有主 origin，公开服务在这里带上同一个路径，公开页据它放登录入口；主题 origin 不带。
-	main := newMux(r.agent, r.admin, mountOf(r.public.path, api.WithAdminPath(r.public.h, web.Prefix)), mountOf(web.Prefix, web.Handler()), mountOf("/", web.PublicGate(r.page, r.publicEnabled)))
-	if r.themeOrigin == "" {
-		return main
-	}
-	u, err := url.Parse(r.themeOrigin)
-	if err != nil {
-		panic("theme origin was not parsed by parseThemeOrigin: " + err.Error())
-	}
-	themeHost := hostname(u.Host)
-	theme := newThemeMux(r.public, web.PublicGate(r.themePage, r.publicEnabled))
-	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if hostname(req.Host) == themeHost {
-			theme.ServeHTTP(w, req)
-			return
-		}
-		main.ServeHTTP(w, req)
-	})
-}
-
-// hostname 是 host[:port] 里规范过的主机名：Host 头与 --theme-origin 都经它比较，IPv6 字面量的方括号与端口按同一规则去掉，
-// 再经 canonicalHost。Host 一侧不做 IDNA：浏览器发的 Host 总是 ASCII，--theme-origin 的非 ASCII 写法由 parseThemeOrigin
-// 转成 punycode；非 ASCII 的 Host 到不了这里，net/http 以 400 拒绝（TestParseThemeOriginAcceptsOnlyHostsNetHTTPServes 钉住）。
-func hostname(hostport string) string {
-	return canonicalHost((&url.URL{Host: hostport}).Hostname())
-}
-
-// canonicalHost 是比较主机名用的形态：小写；去掉一个 FQDN 尾点（theme.test. 与 theme.test 是同一个 DNS 名字的两种写法，
-// URL 里写了尾点，Host 头里就带着它）；IP 字面量经 netip 规范（0:0::1 与 ::1 是同一个地址，IPv4 映射地址的点分与十六进制
-// 两种写法也归一）。
-func canonicalHost(h string) string {
-	h = strings.TrimSuffix(strings.ToLower(h), ".")
-	if a, err := netip.ParseAddr(h); err == nil {
-		return a.String()
-	}
-	return h
-}
-
-// newThemeMux 是主题 origin 的挂载点：只挂 PublicService 与主题静态文件，"主题脚本只能调 PublicService"由挂载承载而非
-// 约定（§3.2、§10.1）。RPC 路径优先于静态文件：heron.v1 包里其余每个服务的路径前缀都挂 404，服务列表从描述符枚举——
-// 不挂的话这些路径会落到根路径、由主题回落 index.html 答 200，以后加的服务也照此自动 404。/admin 与 /admin/ 同样 404：
-// 面板不在这个 origin 上，主题也不能在这个路径下伪装出一个面板。
-func newThemeMux(public mount, page http.Handler) *http.ServeMux {
-	mux := http.NewServeMux()
-	mux.Handle(public.path, public.h)
-	for _, svc := range probeServices() {
-		if p := "/" + string(svc.FullName()) + "/"; p != public.path {
-			mux.Handle(p, http.NotFoundHandler())
-		}
-	}
-	mux.Handle("/admin", http.NotFoundHandler())
-	mux.Handle(web.Prefix, http.NotFoundHandler())
-	mux.Handle("/", page)
-	return mux
-}
-
-// probeServices 是 heron.v1 包里的全部服务，取自注册表。
-func probeServices() []protoreflect.ServiceDescriptor {
-	var out []protoreflect.ServiceDescriptor
-	protoregistry.GlobalFiles.RangeFilesByPackage("heron.v1", func(file protoreflect.FileDescriptor) bool {
-		for i := 0; i < file.Services().Len(); i++ {
-			out = append(out, file.Services().Get(i))
-		}
-		return true
-	})
-	if len(out) == 0 {
-		panic("no heron.v1 services registered")
-	}
-	return out
+	return newMux(r.agent, r.admin,
+		mountOf(r.public.path, api.WithAdminPath(r.public.h, web.Prefix)),
+		mountOf(web.Prefix, web.Handler()),
+		mountOf("/", web.PublicGate(r.page, r.publicEnabled)))
 }
 
 func runServe(args []string) error {
@@ -191,10 +106,9 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	geoMMDB := fs.String("geo-mmdb", "", fmt.Sprintf("local MaxMind country database (at most %d MiB); overrides the HTTP lookup service and makes no network requests; read fully into memory and structurally verified at startup (the file carries no checksum, so a value replaced by another valid value is not detected, only structural damage such as invalid UTF-8 is) and not read again while running, so a replaced file takes effect on restart; geo.enabled still controls lookup", geo.MaxMMDBBytes>>20))
 	tz := fs.String("timezone", "", "IANA time zone for traffic period boundaries and node expiry days (default: the host's zone, resolved from TZ or /etc/localtime; UTC if neither resolves); already-persisted period starts are interpreted in the new zone; usage of the current period may be reset at the next read, report or flush")
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
-	adminOrigin := fs.String("admin-origin", "", "trusted HTTPS origin of the admin panel for Passkey, e.g. https://panel.example.com; empty disables Passkey; HTTP is permitted only on localhost")
+	adminOrigin := fs.String("admin-origin", "", "legacy Passkey origin, used only to migrate existing credentials without a persisted binding; new registrations bind the current HTTPS origin automatically")
 	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For / X-Forwarded-Proto are trusted; empty trusts none. Behind a reverse proxy, list the proxy here: the public page and agent registration are rate-limited per source (one IPv4 address, or one IPv6 /64), and failed logins are locked out per source, so without it every visitor shares the proxy address's single bucket and lockout; a node's recorded source address is also the proxy address")
 	publicDir := fs.String("public-dir", "", "serve this directory at / instead of the built-in public page; files are opened through os.Root, so paths cannot leave the directory and symbolic links are followed only if they are relative and never step outside it (absolute links are refused even when they point inside); a path that is not a file, or that has a segment starting with a dot (.git, .env, .well-known), gets the directory's index.html (404 under assets/); every response is no-cache. The directory shares the admin panel's origin: its scripts can read the panel and call the admin API with the session of any signed-in administrator who opens the page, so put only content you trust as much as the hub binary there")
-	themeOriginFlag := fs.String("theme-origin", "", "origin that serves uploaded public-page themes, e.g. https://status.example.com; point this second hostname at the hub alongside the panel's. It must be a hostname other than the panel's, not a path under it: a theme's scripts on the panel's hostname could call the admin API with a signed-in administrator's session. A sibling subdomain (status.example.com beside panel.example.com) is same-site, so SameSite=Strict does not separate the two; the facts that do are listed in docs/theme-guide.md. The same hostname on another port does not count: cookies do not isolate ports, and requests are routed by hostname with the port ignored, so the panel's own requests would be routed to the theme origin, where there is no panel; the hub cannot detect this at startup. On this hostname only the public API and the enabled theme are served (the built-in public page when no theme is enabled); --public-dir does not apply here. Empty disables theme upload and hosting")
 	retention := store.DefaultRetention
 	fs.DurationVar(&retention.M1, "retention-1m", retention.M1, fmt.Sprintf("how long to keep 1-minute rows (minimum %s)", store.MinRetentionM1))
 	fs.DurationVar(&retention.M5, "retention-5m", retention.M5, fmt.Sprintf("how long to keep 5-minute rows (minimum %s)", store.MinRetentionM5))
@@ -226,10 +140,6 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		return err
 	}
 	trusted, err := auth.ParsePrefixes(*proxies)
-	if err != nil {
-		return err
-	}
-	themeOrigin, err := parseThemeOrigin(*themeOriginFlag)
 	if err != nil {
 		return err
 	}
@@ -277,8 +187,11 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	notifier := alert.NewQueue(st, alerts.Channels, client, "", clk, nil, log)
 	alerts.SetSender(notifier)
 	a := auth.New(st, reg, notifier, clk, loc, log)
-	if err := a.ConfigureWebAuthn(*adminOrigin, themeOrigin); err != nil {
+	if err := a.ConfigureWebAuthn(*adminOrigin); err != nil {
 		return fmt.Errorf("--admin-origin: %w", err)
+	}
+	if *adminOrigin != "" {
+		log.Warn("--admin-origin is only for legacy Passkey migration; persisted bindings take precedence, remove this flag after migration")
 	}
 	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted}, l, st, a, book, reg, clk, log)
 	if err != nil {
@@ -293,12 +206,18 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		return err
 	}
 	backups := backup.New(st, notifier, clk, log)
-	admin := api.New(api.Config{Backups: backups, TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version, Location: loc, Retention: retention, ThemeOrigin: themeOrigin, PublicDir: *publicDir != "", Geo: geoBackend}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
+	admin := api.New(api.Config{Backups: backups, TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version, Location: loc, Retention: retention, PublicDir: *publicDir != "", Geo: geoBackend}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: trusted, Location: loc}, st, l, book, reg, clk, log)
 
+	themes := web.ThemeHandler(st, public, admin.ThemePreviewAccess, log)
+	if *publicDir == "" {
+		public = themes
+	} else {
+		public = newMux(mountOf("/_heron/", themes), mountOf("/", public))
+	}
 	handler := newHandler(routes{
 		agent: mountOf(svc.Handler()), admin: mountOf(admin.Handler()), public: mountOf(pub.Handler()), page: public,
-		themeOrigin: themeOrigin, themePage: web.ThemeHandler(st, web.PublicHandler(), log), publicEnabled: st.PublicEnabled,
+		publicEnabled: st.PublicEnabled,
 	})
 	listener, err := net.Listen("tcp", *listen)
 	if err != nil {
@@ -326,7 +245,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	// 恢复在首个被接受的上报之后至多等一个 offline_sweep；delivery_retry_wait 只给出固定重试间隔的总和，不是投递
 	// 等待上界：Retry-After、排队、not_before 的整秒取整与存储退避还会增加等待（见 alert.DeliveryRetryWait）。
 	// scripts/e2e.sh 用不限节奏且总回 200 的 Webhook 接收器，从这一行读出其场景的等待预算。
-	log.Info("hub listening", append([]any{"listen", listener.Addr().String(), "ttl", ttl, "interval", svc.Interval(), "offline_sweep", alert.OfflineSweepEvery, "delivery_retry_wait", alert.DeliveryRetryWait(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "retention_alert_events", retention.AlertEvents, "timezone", loc.String(), "public_dir", *publicDir, "theme_origin", themeOrigin, "version", version}, geoLog...)...)
+	log.Info("hub listening", append([]any{"listen", listener.Addr().String(), "ttl", ttl, "interval", svc.Interval(), "offline_sweep", alert.OfflineSweepEvery, "delivery_retry_wait", alert.DeliveryRetryWait(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "retention_alert_events", retention.AlertEvents, "timezone", loc.String(), "public_dir", *publicDir, "version", version}, geoLog...)...)
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(listener) }()
 

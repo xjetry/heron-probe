@@ -42,7 +42,7 @@ type Store struct {
 	log           *slog.Logger
 	writes        chan writeReq
 	done          chan struct{}
-	// themeGen 是启用中主题内容的代数，见 writeTheme 与 EnabledThemePackage。
+	// themeGen 是主题版本与全站选择的代数；在线写者统一经 writeTheme 推进。
 	themeGen     atomic.Uint64
 	themeChanges chan struct{}
 }
@@ -217,7 +217,7 @@ func (s *Store) writeAsync(fn func(*sql.Tx) error, done func(error)) {
 	}
 }
 
-const schemaVersion = 21
+const schemaVersion = 23
 
 type schemaAction int
 

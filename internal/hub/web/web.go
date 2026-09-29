@@ -1,5 +1,5 @@
 // Package web 服务 hub 的静态页面：嵌入的管理面板（/admin/）、嵌入的内置公开页（/）、运维用 --public-dir 指定的
-// 替换目录，以及主题 origin 上启用中的主题（存在库里）。四者共用 serveFiles。
+// 替换目录，以及同域沙箱承载的第三方主题（存在库里）。
 //
 // 两份嵌入产物由 Vite 构建到本包的 dist 与 dist-public 目录，不入库；目录里只保证有一个占位文件，
 // 所以 embed 永远成立，而"有没有真的构建过"由 index.html 是否存在判定。
@@ -43,10 +43,8 @@ func PublicHandler() http.Handler { return embedded(publicDist, "dist-public", "
 // closedPage 是总闸关闭时 assets/ 之外的公开路径得到的页面。
 const closedPage = `<!doctype html><meta charset="utf-8"><title>Heron</title><p>公开页已关闭</p>`
 
-// PublicGate 统一包住 RPC 之外的公开静态面：主 origin 的内置页或 --public-dir 的目录，以及主题 origin 的根路径（启用中
-// 主题的文件与回落的内置页）。只挂在公开根路径，管理面板和 RPC 由 mux 的更具体路由承载。
-// 关闭时不调用下游，任何脚本或自定义资源都拿不到：文件路径（如 /theme.js）得到的是说明页而不是文件内容；主题 origin
-// 上连库都不读。
+// PublicGate 统一包住 RPC 之外的公开静态面，包括内置页、可信目录、主题容器、历史产物及预览。
+// 管理面板和 RPC 由更具体路由承载；关闭时不调用下游，也不读主题库。
 //
 // 关闭时的分流沿用 serveFiles 的回落规则，同一个 relPath 与 underAssets：assets/ 下 404，其余路径回说明页。
 // 开闸时 serveFiles 把 assets/ 之外缺失的路径交给客户端路由，分享出去的 /nodes/3 是一个页面；两处规则一旦分叉，

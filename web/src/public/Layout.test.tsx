@@ -29,7 +29,7 @@ it("自定义站点标题与 logo 不被 Heron 默认品牌覆盖", async () => 
   await waitFor(() => expect(document.title).toBe("我的机房"));
 });
 
-// 登录入口跟着 hub 下发的 admin_path 走：有值即链到它（整页跳转到面板入口），空串（主题 origin）与取不到站点设置时都不出现。
+// 登录入口跟着 hub 下发的 admin_path 走：有值即整页跳转，空串与取不到站点设置时都不出现。
 it("hub 下发面板路径时页头有登录入口", async () => {
   renderWithService(PublicService, { getSite: async () => ({ adminPath: "/admin/" }) },
     [{ path: "/", Component: PublicLayout }], "/");

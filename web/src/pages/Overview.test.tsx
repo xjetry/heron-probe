@@ -21,6 +21,26 @@ const snapshot = {
 afterEach(() => vi.useRealTimers());
 
 describe("Overview", () => {
+  it("摘要只统计在线有读数节点，真实零值不当作缺失", async () => {
+    renderWithAdmin({ getSnapshot: async () => ({ ...snapshot, nodes: [
+      { id: 1n, name: "zero", online: true, metrics: { cpuPct: 0, netRxBps: 0n, netTxBps: 0n } },
+      { id: 2n, name: "active", online: true, metrics: { cpuPct: 60, netRxBps: 1024n, netTxBps: 2048n } },
+      { id: 3n, name: "missing", online: true },
+      { id: 4n, name: "offline", online: false, metrics: { cpuPct: 100, netRxBps: 900000n, netTxBps: 900000n } },
+    ] }) }, [{ path: "/", Component: Overview }], "/");
+    await screen.findByText("3 / 4 在线");
+    const cards = screen.getAllByRole("definition");
+    expect(cards.map((card) => card.textContent)).toEqual(["4", "30%", "1.0 KiB/s", "2.0 KiB/s"]);
+    expect(screen.getByText("2 个在线节点有读数")).toBeInTheDocument();
+    expect(screen.getAllByText("2 个在线节点合计")).toHaveLength(2);
+  });
+
+  it("无在线读数时不把缺失统计显示成零", async () => {
+    renderWithAdmin({ getSnapshot: async () => ({ ...snapshot, nodes: [{ id: 1n, name: "missing", online: true }] }) }, [{ path: "/", Component: Overview }], "/");
+    await screen.findByText("1 / 1 在线");
+    expect(screen.getAllByRole("definition").map((card) => card.textContent)).toEqual(["1", "暂无读数", "暂无读数", "暂无读数"]);
+  });
+
   it.each(["WEB", "CUSTOMER", "HOSTNAME"])("搜索 %s 关联节点资料并清空恢复实时列表", async (search) => {
     renderWithAdmin({
       getSnapshot: async () => snapshot,

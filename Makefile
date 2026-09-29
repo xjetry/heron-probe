@@ -27,7 +27,7 @@ check_version = if [ -z "$$VERSION" ]; then echo "VERSION is required, e.g. VERS
 	if [ "$$(printf '%s/' "$$VERSION" | LC_ALL=C tr -d 'A-Za-z0-9_.-')" != / ] || [ -z "$${VERSION\#\#[.-]*}" ] || [ $${\#VERSION} -gt 128 ]; then \
 	  echo "VERSION '$$VERSION' cannot be an image tag: only [A-Za-z0-9_.-], not starting with . or -, at most 128 characters, no + build metadata" >&2; exit 1; fi
 
-.PHONY: gen lint test build hub-binary binaries ci e2e e2e-matrix compat-e2e fixtures web-install web-test web release script-test docker docker-smoke release-channel docker-registry docker-push docker-readback docker-promote
+.PHONY: gen lint test build hub-binary binaries ci e2e e2e-matrix compat-e2e fixtures web-install web-test web-e2e web release script-test docker docker-smoke release-channel docker-registry docker-push docker-readback docker-promote
 
 web-install:
 	pnpm --dir web install --frozen-lockfile
@@ -63,6 +63,10 @@ script-test:
 
 web-test: web-install
 	pnpm --dir web exec vitest run
+
+# 真实浏览器验证正式 hub 的同域主题与 Passkey；运行前执行 pnpm --dir web exec playwright install。
+web-e2e: hub-binary
+	pnpm --dir web exec playwright test
 
 # 两个入口的产物落在 internal/hub/web/dist（面板）与 dist-public（公开页）供 go:embed；不入库，缺产物时 hub 也能编译并给出说明页。
 web: web-install

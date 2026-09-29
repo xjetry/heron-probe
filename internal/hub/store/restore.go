@@ -353,6 +353,33 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			} else {
 				statements = migrationV21Metrics
 			}
+		case 22:
+			if layer == "config" {
+				if err := migrateThemeSnapshot(tx); err != nil {
+					return fmt.Errorf("migrate config themes: %w", err)
+				}
+			} else {
+				var columns int
+				if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('snapshot_meta') WHERE name='format_version'").Scan(&columns); err != nil {
+					return err
+				}
+				if columns == 1 {
+					var format int
+					if err := tx.QueryRowContext(ctx, "SELECT format_version FROM snapshot_meta").Scan(&format); err != nil {
+						return err
+					}
+					if format != 2 {
+						return fmt.Errorf("metrics snapshot unsupported format_version=%d", format)
+					}
+					statements = []string{"UPDATE snapshot_meta SET format_version=3"}
+				} else {
+					statements = []string{"ALTER TABLE snapshot_meta ADD COLUMN format_version INTEGER NOT NULL DEFAULT 3"}
+				}
+			}
+		case 23:
+			if layer == "config" {
+				statements = migrationV23
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}
@@ -460,22 +487,30 @@ func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []st
 	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('snapshot_meta', ?) WHERE name='format_version'", layer).Scan(&formatColumn); err != nil {
 		return 0, err
 	}
-	if formatColumn == 1 {
-		var format int
-		if err := tx.QueryRowContext(ctx, "SELECT format_version FROM "+layer+".snapshot_meta").Scan(&format); err != nil {
+	if formatColumn != 1 {
+		return 0, fmt.Errorf("%s snapshot missing format_version", layer)
+	}
+	var format int
+	if err := tx.QueryRowContext(ctx, "SELECT format_version FROM "+layer+".snapshot_meta").Scan(&format); err != nil {
+		return 0, err
+	}
+	if format != 3 {
+		return 0, fmt.Errorf("%s snapshot unsupported format_version=%d", layer, format)
+	}
+	if layer == "config" {
+		if err := validateSnapshotNetworks(ctx, tx); err != nil {
 			return 0, err
 		}
-		if format != 2 {
-			return 0, fmt.Errorf("%s snapshot unsupported format_version=%d", layer, format)
+		var unmatched int
+		if err := tx.QueryRowContext(ctx, `SELECT
+				(SELECT count(*) FROM config.theme_version v WHERE NOT EXISTS(SELECT 1 FROM config.snapshot_theme s WHERE s.theme_id=v.theme_id AND s.digest=v.digest)) +
+				(SELECT count(*) FROM config.snapshot_theme s WHERE NOT EXISTS(SELECT 1 FROM config.theme_version v WHERE s.theme_id=v.theme_id AND s.digest=v.digest)) +
+				(SELECT count(*) FROM config.theme t WHERE NOT EXISTS(SELECT 1 FROM config.theme_version v WHERE v.theme_id=t.id)) +
+				(SELECT count(*) FROM config.theme_version v WHERE NOT EXISTS(SELECT 1 FROM config.theme t WHERE v.theme_id=t.id))`).Scan(&unmatched); err != nil {
+			return 0, err
 		}
-		if layer == "config" {
-			var unmatched int
-			if err := tx.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM config.theme WHERE id NOT IN (SELECT theme_id FROM config.snapshot_theme)) + (SELECT count(*) FROM config.snapshot_theme WHERE theme_id NOT IN (SELECT id FROM config.theme))").Scan(&unmatched); err != nil {
-				return 0, err
-			}
-			if unmatched != 0 {
-				return 0, errors.New("snapshot theme references do not match configuration")
-			}
+		if unmatched != 0 {
+			return 0, errors.New("snapshot theme references do not match configuration")
 		}
 	}
 	if err := tx.QueryRowContext(ctx, "PRAGMA "+layer+".page_size").Scan(&size); err != nil {
@@ -485,6 +520,25 @@ func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []st
 		return 0, fmt.Errorf("%s snapshot page_size=%d; expected page_size=%d", layer, size, pageSize)
 	}
 	return at.Int64, nil
+}
+
+func validateSnapshotNetworks(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, "SELECT node_id,network FROM config.node_facts")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var text string
+		if err := rows.Scan(&id, &text); err != nil {
+			return err
+		}
+		if _, err := decodeNetwork(text); err != nil {
+			return fmt.Errorf("config node %d network: %w", id, err)
+		}
+	}
+	return rows.Err()
 }
 
 func restoreSequences(ctx context.Context, tx *sql.Tx, sources []string) error {

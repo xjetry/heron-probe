@@ -44,6 +44,28 @@ message Facts {
   string agent_version = 8;
   // 两种 ICMP socket 是否至少一种可用。
   bool icmp_available = 9;
+  // agent 自报的双栈出口，仅用于管理展示；hub 不据此鉴权或查询国家。
+  NetworkInfo network = 10;
+}
+
+message NetworkInfo {
+  AddressDetection ipv4 = 1;
+  AddressDetection ipv6 = 2;
+}
+
+enum AddressDetectionState {
+  ADDRESS_DETECTION_STATE_UNSPECIFIED = 0;
+  ADDRESS_DETECTION_STATE_AVAILABLE = 1;
+  ADDRESS_DETECTION_STATE_UNSUPPORTED = 2;
+  ADDRESS_DETECTION_STATE_FAILED = 3;
+}
+
+message AddressDetection {
+  AddressDetectionState state = 1;
+  // 仅 AVAILABLE 有地址，且必须与所在字段的地址族相符。
+  string address = 2;
+  // 探测完成时间，Unix 秒；未探测为 0，已探测范围为 1..253402300799（9999 年末）。
+  int64 checked_at = 3;
 }
 
 message ProbeResult {

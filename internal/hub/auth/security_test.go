@@ -11,11 +11,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/netip"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
@@ -152,30 +154,60 @@ func TestSecurityCASAndChallengeBindings(t *testing.T) {
 func TestWebAuthnOrigins(t *testing.T) {
 	a, _, _ := setup(t)
 	for _, origin := range []string{"http://example.com", "https://admin.example/path", "https://user:pass@admin.example", "https://admin.example?x=1"} {
-		if err := a.ConfigureWebAuthn(origin, ""); err == nil {
+		if err := a.ConfigureWebAuthn(origin); err == nil {
 			t.Fatalf("bad origin accepted: %s", origin)
 		}
 	}
-	if err := a.ConfigureWebAuthn("https://admin.example", "https://admin.example:9443"); err == nil {
-		t.Fatal("theme host accepted as RP")
-	}
-	if err := a.ConfigureWebAuthn("https://ADMIN.example.", "https://admin.example:9443"); err == nil {
-		t.Fatal("canonical theme host bypassed RP separation")
-	}
-	if err := a.ConfigureWebAuthn("http://localhost:8080", ""); err != nil {
+	if err := a.ConfigureWebAuthn("https://ADMIN.example."); err != nil {
 		t.Fatal(err)
+	}
+	if err := a.ConfigureWebAuthn("http://localhost:8080"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWebAuthnMissingRequestOriginRejected(t *testing.T) {
+	a, st, _ := setup(t)
+	ctx := context.Background()
+	if err := st.SetAdminPassword(ctx, cheapPHC(goodPassword)); err != nil {
+		t.Fatal(err)
+	}
+	b, s, err := a.readSecurity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Passkeys = []Passkey{{Credential: webauthn.Credential{ID: []byte("bound-key")}}}
+	if err = a.commitSecurity(ctx, b, s, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ConfigureWebAuthn("https://admin.example"); err != nil {
+		t.Fatal(err)
+	}
+	from := netip.MustParseAddr("192.0.2.1")
+	if _, err := a.BeginPasskeyLogin(ctx, from); !errors.Is(err, ErrSecurity) {
+		t.Fatalf("missing request origin accepted: %v", err)
+	}
+	if _, err := a.BeginPasskeyLogin(WithWebAuthnOrigin(ctx, "https://admin.example"), from); err != nil {
+		t.Fatal("valid request origin could not begin login", err)
 	}
 }
 
 func TestPasskeyChallengeAndVerificationAdmission(t *testing.T) {
 	a, st, _ := setup(t)
-	ctx := context.Background()
+	ctx := WithWebAuthnOrigin(context.Background(), "https://admin.example")
 	first := netip.MustParseAddr("2001:db8:1::1")
 	second := netip.MustParseAddr("2001:db8:2::1")
 	if err := st.SetAdminPassword(ctx, cheapPHC(goodPassword)); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.ConfigureWebAuthn("https://admin.example", ""); err != nil {
+	b, s, err := a.readSecurity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Origin = "https://admin.example"
+	s.RPID = "admin.example"
+	s.Passkeys = []Passkey{{Credential: webauthn.Credential{ID: []byte("admission-test")}}}
+	if err := a.commitSecurity(ctx, b, s, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	for range 3 {
@@ -190,7 +222,7 @@ func TestPasskeyChallengeAndVerificationAdmission(t *testing.T) {
 		t.Fatal("one source denied independent source")
 	}
 	a.loginGate.Lock()
-	_, err := a.FinishPasskeyLogin(ctx, "unknown", "{}", second)
+	_, err = a.FinishPasskeyLogin(ctx, "unknown", "{}", second)
 	a.loginGate.Unlock()
 	if !errors.Is(err, ErrLoginBusy) {
 		t.Fatal("Passkey verification bypassed shared gate")
@@ -229,7 +261,11 @@ func softwareCredential(t *testing.T, key *ecdsa.PrivateKey, id, userID []byte, 
 		typ = "webauthn.create"
 	}
 	client, _ := json.Marshal(map[string]any{"type": typ, "challenge": challenge, "origin": origin, "crossOrigin": false})
-	rp := sha256.Sum256([]byte("admin.example"))
+	u, err := url.Parse(origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rp := sha256.Sum256([]byte(u.Hostname()))
 	data := append([]byte{}, rp[:]...)
 	flags := byte(5)
 	if register {
@@ -273,12 +309,9 @@ func softwareCredential(t *testing.T, key *ecdsa.PrivateKey, id, userID []byte, 
 
 func TestPasskeyRegistrationLoginOriginProofAndDeletion(t *testing.T) {
 	a, st, _ := setup(t)
-	ctx := context.Background()
+	ctx := WithWebAuthnOrigin(context.Background(), "https://admin.example")
 	from := netip.MustParseAddr("192.0.2.1")
 	if err := st.SetAdminPassword(ctx, cheapPHC(goodPassword)); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.ConfigureWebAuthn("https://admin.example", ""); err != nil {
 		t.Fatal(err)
 	}
 	session, err := a.Login(ctx, goodPassword, from)
@@ -348,5 +381,375 @@ func TestPasskeyRegistrationLoginOriginProofAndDeletion(t *testing.T) {
 	_, state, err = a.readSecurity(ctx)
 	if err != nil || len(state.Passkeys) != 0 {
 		t.Fatal("credential removal did not persist")
+	}
+}
+
+func TestPasskeyFirstSuccessfulRegistrationBindsOrigin(t *testing.T) {
+	a, st, _ := setup(t)
+	ctx := WithWebAuthnOrigin(context.Background(), "https://ADMIN.example:443")
+	from := netip.MustParseAddr("192.0.2.1")
+	if err := st.SetAdminPassword(ctx, cheapPHC(goodPassword)); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ConfigureWebAuthn("https://unused.example"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := a.SecurityInfo(ctx)
+	if err != nil || !info.PasskeyAvailable || info.Origin != "" || info.CurrentOrigin != "https://admin.example" {
+		t.Fatalf("unbound security info: %+v, %v", info, err)
+	}
+	if _, err := a.BeginPasskeyLogin(ctx, from); !errors.Is(err, ErrSecurity) {
+		t.Fatal("anonymous login initialized an unbound origin")
+	}
+	session, err := a.Login(ctx, goodPassword, from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, attempt := range []string{"cancelled", "invalid credential", "different request origin", "successful"} {
+		t.Run(attempt, func(t *testing.T) {
+			begin, err := a.SecurityAction(ctx, SecurityInput{Action: SecurityPasskeyBegin, Password: goodPassword}, session, from)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, s, err := a.readSecurity(ctx)
+			if err != nil || s.Origin != "" || len(s.Passkeys) != 0 {
+				t.Fatal("beginning registration changed the binding")
+			}
+			if attempt == "cancelled" {
+				return
+			}
+			raw := softwareCredential(t, key, []byte("new-credential"), nil, challengeValue(t, begin.OptionsJSON), "https://admin.example", true, 0)
+			finishCtx := ctx
+			if attempt == "invalid credential" {
+				raw = "{}"
+			} else if attempt == "different request origin" {
+				finishCtx = WithWebAuthnOrigin(ctx, "https://other.example")
+			}
+			result, err := a.SecurityAction(finishCtx, SecurityInput{Action: SecurityPasskeyRegister, ChallengeID: begin.ChallengeID, CredentialJSON: raw, Name: "new"}, session, from)
+			_, s, readErr := a.readSecurity(ctx)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if attempt != "successful" {
+				if !errors.Is(err, ErrSecurity) || s.Origin != "" || len(s.Passkeys) != 0 {
+					t.Fatalf("failed registration altered binding: state = %+v, err = %v", s, err)
+				}
+				return
+			}
+			if err != nil || !result.RevokeSession || s.Origin != "https://admin.example" || len(s.Passkeys) != 1 {
+				t.Fatalf("successful registration did not atomically bind: state = %+v, err = %v", s, err)
+			}
+		})
+	}
+	if _, ok, err := a.AuthenticateSession(ctx, []string{session}); err != nil || ok {
+		t.Fatal("registration retained previous session")
+	}
+	other := WithWebAuthnOrigin(ctx, "https://other.example")
+	info, err = a.SecurityInfo(other)
+	if err != nil || info.PasskeyAvailable || info.UnavailableReason != "origin_mismatch" || info.Origin != "https://admin.example" || info.CurrentOrigin != "https://other.example" {
+		t.Fatalf("wrong domain not diagnosed: %+v, %v", info, err)
+	}
+	if _, err = a.BeginPasskeyLogin(other, from); !errors.Is(err, ErrSecurity) {
+		t.Fatal("foreign request origin began bound login")
+	}
+	if err = a.ConfigureWebAuthn("not a valid old flag"); err != nil {
+		t.Fatal("old flag prevented startup after persistent binding", err)
+	}
+	info, err = a.SecurityInfo(ctx)
+	if err != nil || !info.PasskeyAvailable || info.Origin != "https://admin.example" {
+		t.Fatal("old flag changed persistent binding")
+	}
+	stored, err := st.AdminSecurity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted map[string]any
+	if err := json.Unmarshal([]byte(stored.Data), &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted["rp_id"] != "admin.example" {
+		t.Fatalf("RP ID was not persisted with its origin: %v", persisted["rp_id"])
+	}
+}
+
+func TestPasskeyLegacyOriginMigration(t *testing.T) {
+	for _, oldOrigin := range []string{"", "https://ADMIN.example.:443"} {
+		t.Run(oldOrigin, func(t *testing.T) {
+			a, st, _ := setup(t)
+			ctx := WithWebAuthnOrigin(context.Background(), "https://admin.example")
+			if err := st.SetAdminPassword(ctx, cheapPHC(goodPassword)); err != nil {
+				t.Fatal(err)
+			}
+			b, s, err := a.readSecurity(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.Passkeys = []Passkey{{Name: "legacy", Credential: webauthn.Credential{ID: []byte("legacy-key")}}}
+			if err = a.commitSecurity(ctx, b, s, false, nil); err != nil {
+				t.Fatal(err)
+			}
+			if err = a.ConfigureWebAuthn(oldOrigin); err != nil {
+				t.Fatal(err)
+			}
+			info, err := a.SecurityInfo(ctx)
+			if err != nil || len(info.Passkeys) != 1 {
+				t.Fatal("legacy credentials were lost")
+			}
+			if oldOrigin == "" {
+				if info.Origin != "" || info.PasskeyAvailable || info.UnavailableReason != "binding_missing" {
+					t.Fatalf("legacy missing origin guessed from request: %+v", info)
+				}
+				if _, err := a.BeginPasskeyLogin(ctx, netip.MustParseAddr("192.0.2.1")); !errors.Is(err, ErrSecurity) {
+					t.Fatal("unbound legacy credential used for login")
+				}
+			} else if info.Origin != "https://admin.example" || !info.PasskeyAvailable {
+				t.Fatalf("trusted origin not imported: %+v", info)
+			}
+			_, state, err := a.readSecurity(ctx)
+			if err != nil || (oldOrigin != "" && state.RPID != "admin.example") || (oldOrigin == "" && state.RPID != "") {
+				t.Fatalf("legacy RP ID did not follow trusted migration input: %q, %v", state.RPID, err)
+			}
+		})
+	}
+}
+
+func TestPasskeyRebindingRequiresPasswordAndCommitsAtomically(t *testing.T) {
+	a, st, _ := setup(t)
+	ctx := WithWebAuthnOrigin(context.Background(), "https://old.example")
+	newCtx := WithWebAuthnOrigin(ctx, "https://new.example:8443")
+	from := netip.MustParseAddr("192.0.2.1")
+	if err := st.SetAdminPassword(ctx, cheapPHC(goodPassword)); err != nil {
+		t.Fatal(err)
+	}
+	b, s, err := a.readSecurity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Origin = "https://old.example"
+	s.RPID = "old.example"
+	s.UserID = []byte("existing-admin-identity")
+	s.Passkeys = []Passkey{{Name: "old", Credential: webauthn.Credential{ID: []byte("old-key")}}}
+	if err = a.commitSecurity(ctx, b, s, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	session, err := a.Login(newCtx, goodPassword, from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, err = a.readSecurity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := a.putChallenge(securityChallenge{Kind: "proof", Session: session, Generation: b.Generation, Origin: "https://new.example:8443"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.SecurityAction(newCtx, SecurityInput{Action: SecurityPasskeyRebindBegin, ProofToken: proof}, session, from); !errors.Is(err, ErrSecurity) {
+		t.Fatal("proof token replaced password during rebind")
+	}
+	if _, err = a.SecurityAction(newCtx, SecurityInput{Action: SecurityPasskeyBegin, Password: goodPassword}, session, from); !errors.Is(err, ErrSecurity) {
+		t.Fatal("ordinary registration replaced another domain binding")
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, valid := range []bool{false, true} {
+		begin, err := a.SecurityAction(newCtx, SecurityInput{Action: SecurityPasskeyRebindBegin, Password: goodPassword}, session, from)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, before, err := a.readSecurity(ctx)
+		if err != nil || before.Origin != "https://old.example" || len(before.Passkeys) != 1 || before.Passkeys[0].Name != "old" {
+			t.Fatal("rebind beginning replaced old credentials")
+		}
+		raw := "{}"
+		if valid {
+			raw = softwareCredential(t, key, []byte("replacement-key"), nil, challengeValue(t, begin.OptionsJSON), "https://new.example:8443", true, 0)
+		}
+		out, err := a.SecurityAction(newCtx, SecurityInput{Action: SecurityPasskeyRegister, ChallengeID: begin.ChallengeID, CredentialJSON: raw, Name: "replacement"}, session, from)
+		if !valid {
+			if !errors.Is(err, ErrSecurity) {
+				t.Fatal("invalid replacement credential accepted")
+			}
+			_, after, err := a.readSecurity(ctx)
+			if err != nil || after.Origin != before.Origin || len(after.Passkeys) != 1 || after.Passkeys[0].Name != "old" {
+				t.Fatal("failed rebind changed persisted credentials")
+			}
+			continue
+		}
+		if err != nil || !out.RevokeSession {
+			t.Fatalf("successful rebind: %+v, %v", out, err)
+		}
+	}
+	_, s, err = a.readSecurity(newCtx)
+	if err != nil || s.Origin != "https://new.example:8443" || s.RPID != "new.example" || len(s.Passkeys) != 1 || s.Passkeys[0].Name != "replacement" {
+		t.Fatalf("rebind did not replace binding and credentials together: %+v, %v", s, err)
+	}
+	if _, ok, err := a.AuthenticateSession(ctx, []string{session}); err != nil || ok {
+		t.Fatal("rebind retained previous session")
+	}
+	if _, err := a.BeginPasskeyLogin(ctx, from); !errors.Is(err, ErrSecurity) {
+		t.Fatal("old domain remained available after rebind")
+	}
+	login, err := a.BeginPasskeyLogin(newCtx, from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := softwareCredential(t, key, []byte("replacement-key"), s.UserID, challengeValue(t, login.OptionsJSON), "https://new.example:8443", false, 1)
+	if _, err := a.FinishPasskeyLogin(newCtx, login.ChallengeID, raw, from); err != nil {
+		t.Fatal("replacement credential could not authenticate", err)
+	}
+}
+
+func TestPasskeyRejectsInconsistentPersistedBinding(t *testing.T) {
+	for _, rpID := range []string{"", "example", "other.example"} {
+		t.Run(rpID, func(t *testing.T) {
+			a, st, _ := setup(t)
+			ctx := WithWebAuthnOrigin(context.Background(), "https://admin.example")
+			from := netip.MustParseAddr("192.0.2.1")
+			if err := st.SetAdminPassword(ctx, cheapPHC(goodPassword)); err != nil {
+				t.Fatal(err)
+			}
+			b, state, err := a.readSecurity(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state.Origin, state.RPID = "https://admin.example", rpID
+			state.Passkeys = []Passkey{{Credential: webauthn.Credential{ID: []byte("bound-key")}}}
+			if err := a.commitSecurity(ctx, b, state, false, nil); err != nil {
+				t.Fatal(err)
+			}
+			info, err := a.SecurityInfo(ctx)
+			if err != nil || info.PasskeyAvailable || info.UnavailableReason != "binding_invalid" {
+				t.Fatalf("inconsistent binding was available: %+v, %v", info, err)
+			}
+			if _, err := a.BeginPasskeyLogin(ctx, from); !errors.Is(err, ErrSecurity) {
+				t.Fatal("inconsistent persisted RP ID began login")
+			}
+			session, err := a.Login(ctx, goodPassword, from)
+			if err != nil {
+				t.Fatal("inconsistent passkey binding prevented password recovery", err)
+			}
+			for _, action := range []SecurityActionKind{SecurityPasskeyBegin, SecurityReauthBegin} {
+				if _, err := a.SecurityAction(ctx, SecurityInput{Action: action, Password: goodPassword}, session, from); !errors.Is(err, ErrSecurity) {
+					t.Fatalf("inconsistent RP ID accepted action %s: %v", action, err)
+				}
+			}
+			begin, err := a.SecurityAction(ctx, SecurityInput{Action: SecurityPasskeyRebindBegin, Password: goodPassword}, session, from)
+			if err != nil {
+				t.Fatal("explicit rebind recovery was unavailable", err)
+			}
+			a.security.mu.Lock()
+			challenge := a.security.pending[begin.ChallengeID]
+			a.security.mu.Unlock()
+			if challenge.Origin != "https://admin.example" || challenge.RPID != "admin.example" || !challenge.Rebind {
+				t.Fatalf("rebind did not freeze the candidate configuration: %+v", challenge)
+			}
+		})
+	}
+}
+
+func TestPasskeyRebindingConsumesEnabledSecondFactor(t *testing.T) {
+	for _, factor := range []string{"missing", "totp", "recovery"} {
+		t.Run(factor, func(t *testing.T) {
+			a, st, clk := setup(t)
+			ctx := WithWebAuthnOrigin(context.Background(), "https://new.example")
+			from := netip.MustParseAddr("192.0.2.1")
+			if err := st.SetAdminPassword(ctx, cheapPHC(goodPassword)); err != nil {
+				t.Fatal(err)
+			}
+			b, s, err := a.readSecurity(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.Origin = "https://old.example"
+			s.RPID = "old.example"
+			s.Secret = "JBSWY3DPEHPK3PXP"
+			s.Passkeys = []Passkey{{Name: "old", Credential: webauthn.Credential{ID: []byte("old-key")}}}
+			recovery := newRecovery(&s)
+			if err = a.commitSecurity(ctx, b, s, false, nil); err != nil {
+				t.Fatal(err)
+			}
+			session, err := a.LoginFactors(ctx, goodPassword, "", recovery[0], from)
+			if err != nil {
+				t.Fatal(err)
+			}
+			in := SecurityInput{Action: SecurityPasskeyRebindBegin, Password: goodPassword}
+			if factor == "totp" {
+				in.OTP = totpCode(s.Secret, clk.Now().Unix()/30)
+			} else if factor == "recovery" {
+				in.RecoveryCode = recovery[1]
+			}
+			result, err := a.SecurityAction(ctx, in, session, from)
+			_, after, readErr := a.readSecurity(ctx)
+			if readErr != nil || after.Origin != s.Origin || len(after.Passkeys) != 1 {
+				t.Fatal("rebind preparation altered the existing binding")
+			}
+			if factor == "missing" {
+				if !errors.Is(err, ErrSecurity) || result.ChallengeID != "" || len(after.Recovery) != 9 {
+					t.Fatal("password alone bypassed enabled second factor")
+				}
+				return
+			}
+			if err != nil || result.ChallengeID == "" {
+				t.Fatalf("valid second factor rejected: %v", err)
+			}
+			if factor == "totp" && after.LastStep != clk.Now().Unix()/30 {
+				t.Fatal("TOTP consumption was not persisted")
+			}
+			if factor == "recovery" && len(after.Recovery) != 8 {
+				t.Fatal("recovery consumption was not persisted")
+			}
+			if _, err = a.SecurityAction(ctx, in, session, from); !errors.Is(err, ErrSecurity) {
+				t.Fatal("rebind reused a consumed factor")
+			}
+		})
+	}
+}
+
+func TestPasskeyRebindingRejectsRevokedSession(t *testing.T) {
+	a, st, _ := setup(t)
+	ctx := WithWebAuthnOrigin(context.Background(), "https://new.example")
+	from := netip.MustParseAddr("192.0.2.1")
+	if err := st.SetAdminPassword(ctx, cheapPHC(goodPassword)); err != nil {
+		t.Fatal(err)
+	}
+	b, s, err := a.readSecurity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Origin = "https://old.example"
+	s.RPID = "old.example"
+	s.Passkeys = []Passkey{{Name: "old", Credential: webauthn.Credential{ID: []byte("old-key")}}}
+	if err = a.commitSecurity(ctx, b, s, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	session, err := a.Login(ctx, goodPassword, from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin, err := a.SecurityAction(ctx, SecurityInput{Action: SecurityPasskeyRebindBegin, Password: goodPassword}, session, from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Logout(ctx, session); err != nil {
+		t.Fatal(err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := softwareCredential(t, key, []byte("replacement-key"), nil, challengeValue(t, begin.OptionsJSON), "https://new.example", true, 0)
+	if _, err := a.SecurityAction(ctx, SecurityInput{Action: SecurityPasskeyRegister, ChallengeID: begin.ChallengeID, CredentialJSON: raw, Name: "replacement"}, session, from); !errors.Is(err, store.ErrAdminChanged) {
+		t.Fatalf("revoked session completed rebind: %v", err)
+	}
+	_, s, err = a.readSecurity(ctx)
+	if err != nil || s.Origin != "https://old.example" || len(s.Passkeys) != 1 || s.Passkeys[0].Name != "old" {
+		t.Fatal("failed rebind transaction changed the old binding")
 	}
 }

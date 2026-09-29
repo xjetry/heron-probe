@@ -133,7 +133,7 @@ func restoreSnapshots(t *testing.T) (config, metrics string) {
 		INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at) VALUES (7,1,'localhost',60,1000,0);
 		DELETE FROM probe_task;`)
 	for _, id := range []int{2, 3} {
-		restoreExec(t, db, fmt.Sprintf(`INSERT INTO node_facts VALUES (%[1]d,0,'','','','','','',0,'',0,0);
+		restoreExec(t, db, fmt.Sprintf(`INSERT INTO node_facts VALUES (%[1]d,0,'','','','','','',0,'',0,0,'{}');
 			INSERT INTO node_tag (node_id,tag_id) VALUES (%[1]d,1);
 			INSERT INTO traffic VALUES (%[1]d,'',0,0,0,0,0,0,0,0);
 			INSERT INTO probe_task_node VALUES (1,%[1]d);
@@ -269,6 +269,8 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			restoreExec(t, cfg, "ALTER TABLE node_facts DROP COLUMN network")
+			removeV22ThemeConfig(t, cfg)
 			removeV21Columns(t, cfg, met)
 			restoreExec(t, cfg, `DROP TABLE admin_security; DROP TABLE probe_task_tag; DROP TABLE alert_rule_tag;
 				ALTER TABLE alert_rule DROP COLUMN resource_metric; ALTER TABLE alert_rule DROP COLUMN recovery_threshold;
@@ -303,6 +305,13 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// 历史快照必须真实还原主题表结构；只改版本号会跳过或重复当前版本的迁移。
+func removeV22ThemeConfig(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, `DROP TABLE theme_selection; DROP TABLE theme_version; DROP TABLE theme;
+		CREATE TABLE theme(id TEXT PRIMARY KEY,name TEXT NOT NULL,version TEXT NOT NULL,preview TEXT NOT NULL,uploaded_at INTEGER NOT NULL,enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN(0,1)))`)
 }
 
 // 降级夹具必须同时撤回真实列与版本号，不能让当前列伪装成旧 schema。

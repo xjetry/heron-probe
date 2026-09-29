@@ -239,8 +239,8 @@ func (p *Public) GetSite(ctx context.Context, _ *connect.Request[heronv1.GetSite
 type adminPathKey struct{}
 
 // WithAdminPath 包在挂着管理面板的那个 origin 的公开服务挂载点外面，path 是面板在该 origin 上的挂载路径，经
-// GetSite 的 admin_path 下发给公开页作登录入口。"这个 origin 上有没有面板"只有挂载点知道：同一个 Public 处理器
-// 同时挂在主 origin 与主题 origin 上（共用限流与快照缓存），它自己分不出请求来自哪边。没包的挂载点 GetSite 回空串，
+// GetSite 的 admin_path 由生产挂载点下发给内置公开页作登录入口；主题 SDK 桥接不转交此字段。
+// 没包的挂载点 GetSite 回空串，
 // 缺席即"这里没有面板"：漏包只会少一个入口，不会让公开页链到一个 404。
 func WithAdminPath(h http.Handler, path string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -300,6 +300,12 @@ func TestHubExecStartForms(t *testing.T) {
 			wantErr: "unsupported quoting or escape in ExecStart"},
 		{name: "unknown flag", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db --foo=bar`,
 			wantErr: "unsupported serve flag in ExecStart: --foo=bar"},
+		{name: "removed theme origin", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db --theme-origin https://status.example.com`,
+			wantErr: "remove --theme-origin from the installed unit before upgrading"},
+		{name: "removed theme origin equals", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db -theme-origin=https://status.example.com`,
+			wantErr: "remove --theme-origin from the installed unit before upgrading"},
+		{name: "legacy passkey origin", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db --admin-origin https://panel.example.com`,
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--admin-origin=https://panel.example.com"`},
 		{name: "positional argument", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db extra`,
 			wantErr: "unexpected positional argument in ExecStart: extra"},
 		{name: "another database", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /srv/other.db`,
@@ -705,6 +711,19 @@ func TestHubCommandLineRefusesFlagsOutsideTheTable(t *testing.T) {
 		// calls 为空文件时 e.calls() 是一个空串。
 		if c := e.calls(); code != 2 || !strings.Contains(out, "usage: install-hub.sh") || len(c) != 1 || c[0] != "" {
 			t.Fatalf("%q: exit %d, calls %q:\n%s", args, code, c, out)
+		}
+	}
+}
+
+func TestHubRemovedThemeOriginIsExplained(t *testing.T) {
+	for _, args := range [][]string{{"--theme-origin", "https://status.example.com"}, {"--theme-origin=https://status.example.com"}} {
+		e := newHubHost(t)
+		out, code := e.hubInstall(args...)
+		if code != 2 || !strings.Contains(out, "themes now use the panel hostname") {
+			t.Fatalf("removed theme flag: exit=%d output=%s", code, out)
+		}
+		if c := e.calls(); len(c) != 1 || c[0] != "" {
+			t.Fatalf("removed flag touched host: %v", c)
 		}
 	}
 }

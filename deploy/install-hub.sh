@@ -25,12 +25,13 @@ RELEASE_SHA256=""
 BASE_URL=""; UNINSTALL=0; PURGE=0; YES=0; OVERRIDES=""
 # 安装器写进单元的 serve 参数，与 cmd/hub/serve.go 定义的 flag 一一对应，由 deploy/installhub_test.go 核对。
 # 命令行覆盖与已装单元的解析共用这一张表；--db 固定为 /var/lib/heron/heron.db，不接受覆盖。
-SERVE_FLAGS='listen timezone trusted-proxies public-dir theme-origin admin-origin geo-mmdb retention-1m retention-5m retention-1h retention-alert-events'
+SERVE_FLAGS='listen timezone trusted-proxies public-dir admin-origin geo-mmdb retention-1m retention-5m retention-1h retention-alert-events'
 nl='
 '
 cr=$(printf '\r')
 usage() {
-  echo 'usage: install-hub.sh [--base-url URL] [--listen ADDR] [--timezone ZONE] [--trusted-proxies CIDRS] [--public-dir DIR] [--theme-origin ORIGIN] [--admin-origin ORIGIN] [--geo-mmdb FILE] [--retention-1m DURATION] [--retention-5m DURATION] [--retention-1h DURATION] [--retention-alert-events DURATION] [--yes]' >&2
+  echo 'usage: install-hub.sh [--base-url URL] [--listen ADDR] [--timezone ZONE] [--trusted-proxies CIDRS] [--public-dir DIR] [--admin-origin ORIGIN] [--geo-mmdb FILE] [--retention-1m DURATION] [--retention-5m DURATION] [--retention-1h DURATION] [--retention-alert-events DURATION] [--yes]' >&2
+  echo '       --admin-origin is only for migrating existing Passkeys; new registrations bind the current HTTPS hostname' >&2
   echo '       install-hub.sh --uninstall [--purge] [--yes]' >&2
   exit 2
 }
@@ -55,6 +56,9 @@ while [ "$#" -gt 0 ]; do
     # 脚本只装自己所属的版本：版本由取哪个 URL 的脚本决定，没有第二个来源可以和内嵌清单不一致。
     --version|--version=*)
       echo "install-hub.sh has no --version: it installs only the release it belongs to; for another version run $REPO/releases/download/<tag>/install-hub.sh" >&2
+      exit 2;;
+    --theme-origin|--theme-origin=*)
+      echo 'themes now use the panel hostname; remove --theme-origin and manage themes in /admin/' >&2
       exit 2;;
     --uninstall) UNINSTALL=1; shift;;
     --purge) PURGE=1; shift;;
@@ -405,6 +409,7 @@ awk -v flags="db $SERVE_FLAGS" '
     name = $0; sub(/^--?/, "", name)
     eq = index(name, "=")
     if (eq) { value = substr(name, eq + 1); name = substr(name, 1, eq - 1) }
+    if (name == "theme-origin") die("remove --theme-origin from the installed unit before upgrading; themes now use the panel hostname; old service was not stopped")
     if (!(name in known)) die("unsupported serve flag in ExecStart: " $0)
     if (eq) set(name, value); else pending = name
     next

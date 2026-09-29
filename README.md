@@ -20,7 +20,7 @@ tar -xzf heron-hub_linux_amd64.tar.gz
 ```
 
 - hub 只监听明文 HTTP，TLS 由反代（Caddy、nginx、CDN）终止；反代地址用 `--trusted-proxies` 声明，否则不信任转发头。
-- 管理面板在 `/admin/`，内置公开页页头的「登录」链到它（主题 origin 上没有面板，不显示）。离线判定的时限由环境变量 `HERON_OFFLINE_AFTER` 设定（默认 30s，10s–180s）。
+- 管理面板在 `/admin/`，内置公开页页头的「登录」链到它；第三方主题与面板共用域名，但在沙箱中运行。离线判定的时限由环境变量 `HERON_OFFLINE_AFTER` 设定（默认 30s，10s–180s）。
 - 其余参数见 `heron-hub serve -h`；节点、注册窗口与 API token 也可在 hub 主机上用 `heron-hub node|window|token` 管理。
 - 节点可在面板里记录价格、币种、计费周期与到期日，周期支持 1 月、3 月、半年、1 年、2 年、3 年、5 年：只用于展示与提醒，hub 不汇总、不换算。公开节点填了的这几项也显示在公开页，自动续期开关除外。建「到期」类型的告警规则可在到期前若干天提醒；开着自动续期的节点过了到期日，hub 按周期把到期日推后。到期日按天计，天的边界与流量周期一样取 `--timezone`。
 - 历史图展示 CPU、内存和网络采样峰值。网络均值仍是桶内入账字节数除以桶长；峰值是 agent 采样速率的最大值，不能代表未采到的瞬时尖峰。升级前历史和没有速率读数的旧 agent 保持空洞，不补零。
@@ -38,7 +38,7 @@ heron-hub passwd --db /var/lib/heron/heron.db
 
 安装器只按脚本里内嵌的本版 SHA-256 校验下载包（发布时写进脚本；release 里的 `SHA256SUMS` 供人工核对，不是脚本的校验依据），以静态系统用户 `heron-hub` 启动服务，确认进程持续存活后才提示设置密码。主机没有 CA 证书包时安装器会装上 `ca-certificates`：不论从哪里下载，hub 发往 Telegram 的告警都走 HTTPS。升级时先让新版本的 `serve` 启动并完成数据库迁移，再使用 `passwd` 等离线子命令。管理员密码由你设置，脚本不生成、不打印密码。
 
-默认只监听 `127.0.0.1:8080`，TLS 交给反向代理。可用 `--listen`、`--timezone`、`--trusted-proxies`、`--public-dir`、`--theme-origin`、`--admin-origin`、`--geo-mmdb` 和 `--retention-*` 设置 serve 参数；例如：
+默认只监听 `127.0.0.1:8080`，TLS 交给反向代理。可用 `--listen`、`--timezone`、`--trusted-proxies`、`--public-dir`、`--geo-mmdb` 和 `--retention-*` 设置 serve 参数；`--admin-origin` 仅保留给旧 Passkey 凭据迁移，新安装不需要。例如：
 
 ```sh
 curl -fsSL https://github.com/xjetry/heron-probe/releases/latest/download/install-hub.sh | sh -s -- \
@@ -103,7 +103,8 @@ printf '%s\n' "$ADMIN_PASSWORD" | docker exec -i heron heron-hub passwd --db /da
 hub 只提供明文 HTTP，TLS 由反代（Caddy、nginx、CDN）终止。容器里监听 `0.0.0.0` 是预期的，启动日志里的 `listening on a non-loopback address` 告警照旧出现：能直连这个端口的人可以绕过反代并自带转发头。因此：
 
 - 端口只发布到本机回环（`-p 127.0.0.1:8080:8080`，反代在宿主上），或者不发布端口，让反代容器与 hub 在同一个 Docker 网络里转发到 `http://heron:8080`。
-- `--trusted-proxies` 写 hub 看到的反代地址（TCP 对端；CIDR 列表，逗号分隔）。只有来自这些地址的 `X-Forwarded-For`、`X-Forwarded-Proto` 才被采信。不设置时一律不信：公开页与注册的限流按来源地址计，反代后不配它，所有访客共用代理地址的一个桶；登录失败锁定同样按代理地址计，会话 cookie 也不带 `Secure`；节点的来源地址（面板节点详情的主机名一格）也记成反代地址。量级：公开服务每个来源的桶容量 60、每秒补充 10；每个打开的总览页每 2 秒轮询一次快照（每秒 0.5 次），节点页另有每分钟两次历史查询，页面加载时还有几次请求。同时打开的总览页超过 20 个、或节点页约 19 个起，消耗就持续多于补充，60 次的余量用完后访客开始收到 429（30 个页面时约 10–12 秒后）。
+- `--trusted-proxies` 写 hub 看到的反代地址（TCP 对端；CIDR 列表，逗号分隔）。只有来自这些地址的 `X-Forwarded-For`、`X-Forwarded-Proto` 才被采信。HTTPS 反代必须保留浏览器访问的 Host（含非默认端口），设置 `X-Forwarded-Proto: https`，并配置可信代理；否则管理接口的同源检查会拒绝浏览器请求，包括密码登录，返回 403。升级前先核对这些配置；不要通过改写或删除浏览器 Origin 头绕过检查。
+- 不信任转发头时，公开页与注册的限流按 TCP 对端地址计，反代后的访客共用代理地址的一个桶；节点来源 IP 也记成代理地址。配置可信代理和正确的 `X-Forwarded-For` 后才能记录实际节点来源。量级：公开服务每个来源的桶容量 60、每秒补充 10；每个打开的总览页每 2 秒轮询一次快照（每秒 0.5 次），节点页另有每分钟两次历史查询，页面加载时还有几次请求。同时打开的总览页超过 20 个、或节点页约 19 个起，消耗就持续多于补充，60 次的余量用完后访客开始收到 429（30 个页面时约 10–12 秒后）。
 
 反代与 hub 在同一个网络时，给网络固定网段、只让这两个容器加入，并信任这个网段：
 
@@ -115,11 +116,19 @@ docker run -d --name heron --restart unless-stopped --stop-timeout 30 --network 
 # 反代容器以 --network heron-net 加入，把请求转给 http://heron:8080
 ```
 
+经过 CDN 时还要核对上游一跳。若节点来源显示 Docker 内网地址，先检查 hub 信任的网段是否与反代实际 TCP 地址一致；若显示 CDN 地址，则需要在反代验证 CDN 来源后解析真实客户端地址，再转发给 hub。Caddy 可用 `trusted_proxies` 限定 Cloudflare 官方网段、`trusted_proxies_strict` 和 `client_ip_headers CF-Connecting-IP` 解析来源，并在 hub 的 `reverse_proxy` 中用 `header_up X-Forwarded-For {client_ip}` 传递已核实的地址。不要无条件信任客户端自带的 `CF-Connecting-IP` 或 `X-Forwarded-For`。国家查询只处理公网来源；地址要等下一次分钟写入后更新，查询完成后刷新管理节点列表。
+
+节点双栈出口由新版 agent 在启动后立即、此后每 5 分钟分别经 IPv4/IPv6 请求 `https://api64.ipify.org`，不走环境代理、不跟随重定向，单次超时 10 秒，不阻塞指标采集。每族独立显示可用地址、不支持、探测失败或等待上报；只有没有可用该族接口地址，或系统明确报告无路由/地址族不支持，才标记不支持。DNS、TLS、超时和回显错误属于探测失败，失败清空旧地址。私网 IPv4 与 IPv6 ULA 仍会尝试探测，支持 NAT 出口。旧 agent 没有双栈结果，需要升级后才会出现。双栈结果只向管理员展示，是 agent 自报信息，不替代上报来源，不用于身份校验或国家查询。
+
 ### 账户安全
 
 在面板「安全」进入认证器管理，可启用 TOTP、生成一次性恢复码、注册或删除 Passkey。启用 TOTP 后，密码登录必须同时提供六位动态验证码或一个恢复码；恢复码只显示一次，使用后失效，重新生成会作废旧码。修改认证方式需要重新证明身份，并撤销全部旧会话。
 
-Passkey 支持无密码登录，需启动参数 `--admin-origin https://panel.example.com` 固定可信管理来源。反代须提供 HTTPS，浏览器须支持 WebAuthn；本地开发仅允许 localhost/回环地址使用 HTTP。该主机名必须与 `--theme-origin` 不同。未配置 `--admin-origin` 时 TOTP 和密码仍可使用，Passkey 关闭。注册的是可发现凭据，登录时要求认证器执行用户验证。
+Passkey 支持无密码登录，无需手填域名或 `--admin-origin`。通过当前 HTTPS 域名进入「安全」页，浏览器支持 WebAuthn 时即可添加；首次注册成功才把完整 Origin 与主机名 RP ID 持久绑定。后续访问别的域名不会自动改绑。管理界面要求 HTTPS，本地开发也应通过 TLS 反代访问；注册和登录均要求认证器执行用户验证。
+
+反代必须保留访问 Host、正确声明 HTTPS，并用 `--trusted-proxies` 只信任实际代理地址；不可信来源的转发头不会让 HTTP 请求冒充 HTTPS。换域名后用密码及现有第二因素登录，在「安全」页重新绑定并注册新 Passkey；改绑会撤销旧 Passkey 和旧会话。备份恢复保留原绑定，不根据恢复时的访问域名自动更改。
+
+旧部署已有 Passkey、却没有数据库绑定时，升级首次启动仍保留原 `--admin-origin https://panel.example.com` 用于一次性导入；导入后以数据库为准，可以移除参数。缺少可信原配置时旧凭据保留但不可使用，需恢复原配置或通过密码及第二因素重新绑定，不会猜测 RP ID。
 
 认证器丢失时先用恢复码登录；密码或全部认证器丢失时，可登录 hub 服务器，使用对数据库有读写权限的账号执行以下命令，不需要提供旧密码或认证器证明：
 
@@ -149,7 +158,13 @@ docker exec heron heron-hub security-reset --db /data/heron.db --yes
 
 ### 公开页主题
 
-公开页除了在面板的「外观」页改标题、配色、logo 与 CSS，还可以换成第三方主题：一个只调 `PublicService` 的静态前端，打成 zip 在面板的「主题」页上传、启用。主题托管在单独的主机名上，hub 以 `--theme-origin https://status.example.com` 启动，并让反代把这个主机名也转给 hub、原样转发 `Host`（nginx 要写 `proxy_set_header Host $host;`）。这个主机名必须与面板的不同，只差端口不算。不给 `--theme-origin` 时主题功能关闭。
+在管理面板「主题」页选择公开 GitHub 仓库的 Release ZIP 资产，或上传已构建 ZIP，再预览和启用。公开页 `/` 与后台 `/admin/` 共用域名，切换无需改启动参数或重启。GitHub 仅用于安装，运行时由 hub 托管本地副本；主题在沙箱中通过 SDK 读取公开数据，不能获得管理员会话权限。
+
+安装新版本不覆盖当前版本，也不自动启用。每主题最多保留 3 个版本、共 20 个主题，可切回上个版本或内置公开页；单版本清理保护当前和回滚版本，整主题卸载可回落内置页。`--public-dir` 接管公开页时不能启用第三方主题。
+
+升级前删除旧启动配置的 `--theme-origin`，安装器会在停服前拒绝残留参数并说明迁移方式。未声明 SDK 1 的旧主题只保留归档和备份恢复能力，不在同域运行；需要主题作者适配 SDK 后重新发布。
+
+旧主题域名不再按 Host 分流：仍指向 hub 时，也会提供 `/admin/` 及管理 API 的认证入口。若只保留一个域名，应撤掉旧域名的反代配置或将其重定向到新域名；不能继续依赖旧的“主题域名不承载管理入口”行为。
 
 主题的开发、包布局、清单字段、上限与本地调试见 [主题开发指南](docs/theme-guide.md)。
 
@@ -170,7 +185,7 @@ docker exec heron heron-hub security-reset --db /data/heron.db --yes
 
 配置快照带主题摘要清单，先上传 `theme/sha256/<SHA-256>.zip` 不可变主题包，再上传引用它的快照。更新或删除当前主题不会覆盖、删除旧快照需要的包；主题对象不按当前安装清单自动清理，需另行评估保留空间。
 
-可用 `sqlite3 config.db 'SELECT theme_id,sha256 FROM snapshot_theme ORDER BY theme_id;'` 查看所需主题版本，只下载清单引用的包。空摘要表示该主题没有原包，需重新上传后再备份；恢复该快照时可省略 `--themes` 并停用主题。
+可用 `sqlite3 config.db 'SELECT theme_id,digest,sha256 FROM snapshot_theme ORDER BY theme_id,digest;'` 查看所需主题版本，只下载清单引用的包。快照包含全部保留版本和当前、回滚选择。空 `sha256` 表示该版本没有原包，需重新上传后再备份；恢复该快照时可省略 `--themes` 并停用主题。
 
 恢复前停止 hub，将配置快照、可选的指标快照和所引用的主题包下载到本地：
 
@@ -178,7 +193,7 @@ docker exec heron heron-hub security-reset --db /data/heron.db --yes
 heron-hub restore --db heron.db --config config.db --metrics metrics.db --themes ./themes --yes
 ```
 
-`themes` 目录放摘要命名的 `<SHA-256>.zip`。新格式快照指定 `--themes` 时严格校验主题引用，缺包或摘要不符拒绝恢复；省略该参数则恢复配置但停用全部主题。恢复接受明确支持的 schema 17–21，旧快照在私有副本中迁移，不改写来源；未来版本、未知格式或结构不符拒绝。旧格式按原有 `<主题 id>.zip` 导入，缺包主题保留但停用。恢复不复活会话或注册窗口，并写入恢复记录和手动恢复事件。两层时刻可不同，以配置层节点为准清理孤儿历史。
+`themes` 目录放摘要命名的 `<SHA-256>.zip`。新格式快照指定 `--themes` 时严格校验主题引用，要求的原包缺失或摘要不符拒绝恢复；省略该参数则恢复配置但停用全部主题。恢复接受明确支持的 schema 17–23，旧快照在私有副本中迁移，不改写来源；未来版本、未知格式或结构不符拒绝。旧格式按原有 `<主题 id>.zip` 导入，缺包主题保留但停用，不兼容 SDK 的旧包恢复后仍不可执行。恢复不复活会话或注册窗口，并写入恢复记录和手动恢复事件。两层时刻可不同，以配置层节点为准清理孤儿历史。
 
 若不使用在线快照，可停机备份整个卷：
 

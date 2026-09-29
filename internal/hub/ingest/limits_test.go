@@ -79,6 +79,14 @@ func maxHostReport(t *testing.T) *heronv1.ReportRequest {
 			fd := fields.Get(i)
 			var value protoreflect.Value
 			switch fd.Kind() {
+			case protoreflect.MessageKind:
+				if fd.FullName() != "heron.v1.Facts.network" {
+					t.Fatalf("unbounded host message %s", fd.FullName())
+				}
+				value = protoreflect.ValueOfMessage((&heronv1.NetworkInfo{
+					Ipv4: &heronv1.AddressDetection{State: heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_AVAILABLE, Address: "223.255.255.255", CheckedAt: agentwire.MaxDetectionTime},
+					Ipv6: &heronv1.AddressDetection{State: heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_AVAILABLE, Address: "2606:ffff:ffff:ffff:ffff:ffff:ffff:ffff", CheckedAt: agentwire.MaxDetectionTime},
+				}).ProtoReflect())
 			case protoreflect.StringKind:
 				value = protoreflect.ValueOfString(strings.Repeat("x", maxHostString))
 			case protoreflect.Uint32Kind:

@@ -2,16 +2,40 @@
 
 ## 范围
 
-登录及认证变更审计、备份成功与恢复审计、持续资源告警、快照版本准入与不可变主题、标签批量选择与动态选择器、TOTP 和无密码 Passkey；同步 README。
+登录及认证变更审计、备份成功与恢复审计、持续资源告警、快照版本准入与不可变主题、标签批量选择与动态选择器、TOTP 和无密码 Passkey；同域名主题 SDK、版本安装与后台切换、Passkey 访问域名自动绑定；同步 README 与架构文档。
 
 ## 实现状态
 
-2026-09-29，基点 `bffd1485fe2a0ea34da0b2900ff2b014b17de2d3` 上的提交前工作树验证，未发布。数据库 schema 20、Go/TS 协议及上述功能已实现，README 与架构文档已同步。认证动作使用域内强类型，节点选择使用统一值对象；生成物不作为独立协议来源。
+2026-09-29，当前未发布工作树的数据库为 schema 23。主题身份、不可变产物和全站选择已分离，快照格式为 3；Go/TS 协议、同域主题容器和 Passkey 绑定接口同步演进中。双栈出口由 agent 异步探测并随 Facts 对账，保存在 node_facts.network；只进入管理读面，国家查询仍以可信上报来源为准。下列为当前实现口径，不表示全部浏览器与部署验收已经完成。后面的早期验收与补验章节是各自所列代码版本的历史记录，不能直接作为当前工作树通过凭据。
 
-- Passkey 注册后可以独立无密码登录，固定可信来源由 `--admin-origin` 指定；TOTP 约束密码登录，恢复码单次消费。
+- Passkey 首次注册成功时绑定当前可信 HTTPS Origin 与主机名 RP ID，无需新装参数；后续域名不随请求自动变化。`--admin-origin` 仅为旧凭据无持久绑定时导入原配置，已有绑定后以数据库为准。TOTP 约束密码登录，恢复码单次消费。
 - 主机 CLI `passwd` 重设密码，`security-reset --yes` 清除 TOTP、恢复码及 Passkey。两者撤销会话，不需要旧认证证明；重设密码不隐式清除认证器。
-- 配置快照先上传摘要命名的不可变主题包，再发布引用它的配置。恢复接受 schema 17–20，在私有副本迁移，显式保留序列；源文件不改写。
+- 主题通过同域可信容器的沙箱运行，SDK 1 提供固定公开数据与路由桥接。安装公开 GitHub Release ZIP 或本地 ZIP 不自动启用；最多 20 个主题、每主题 3 个版本，当前与回滚版本受单版本清理保护。整主题卸载可回落内置页。
+- 配置快照先上传全部保留版本的摘要命名原包，再发布元数据及当前、回滚引用。恢复接受 schema 17–22，在私有副本迁移，显式保留序列；源文件不改写。旧 SDK 包归档后仍可备份、恢复，但不可预览或启用。
 - 固定标签批量选择与动态标签交集分开；任务和规则共享覆盖谓词。资源告警使用完整连续窗口与触发/恢复双阈值。
+
+## 主题存储与安装器局部验证
+
+2026-09-29 17:37，目录 `/Users/xjetry/work/vibe/probe` 的 schema 22 未提交工作树，执行 `go test ./internal/hub/store ./internal/hub/backup -count=1`：退出 0，store 8.255 秒、backup 7.878 秒。观察包括同 ID 两版共存、安装不激活、回滚引用保护、并发主题/版本上限、真实 ZIP 的旧库与两种历史快照迁移、所有保留版本及选择恢复、SDK 0 归档仍拒绝执行、缺原包重传修复。
+
+存储缺陷注入均先回读确认落地：去掉主题数限制得到 30 次成功而非 20；去掉版本数限制得到 10 次新增成功而非 2；去掉选择保护导致当前版删除返回成功；旧包 SDK 强制设为 1 导致它自动启用；快照仅写当前版导致清单只有 1 包而非 3；切换不写 previous 导致回滚引用丢失。对应测试均退出 1，恢复实现后执行上述两包完整命令通过。最初的双版本断言在改实现前退出 1，实际只读到后上传的一版。
+
+安装器的旧参数用例在改脚本前退出 1，观察到 `--theme-origin` 被保留且报告安装成功。移除参数表项并加迁移提示后，`go test ./deploy -run 'TestHubRemovedThemeOriginIsExplained|TestHubExecStartForms|TestHubFlagTableAgreesWithServe|TestHubCommandLineRefusesFlagsOutsideTheTable' -count=1` 退出 0，33.675 秒。测试实际执行 POSIX shell 脚本，主机目录、systemctl 与下载器为隔离替身；这不是 Linux 真机 systemd 启动验收。
+
+2026-09-29 17:52 补验：恢复预检中跳过主题身份与版本清单对应检查、跳过历史 metrics 快照格式检查，先回读确认注入后，`TestThemeRestoreRejectsUnmatchedIdentityAndVersion` 与 `TestLegacyMetricsSnapshotRejectsUnknownFormat` 均退出 1，分别观察到孤儿主题、孤儿版本、空清单及格式 99 被错误接受。恢复实现后，`go test ./internal/hub/store ./internal/hub/backup -count=1` 退出 0，store 17.120 秒、backup 13.538 秒；`go vet ./internal/hub/store ./internal/hub/backup ./deploy`、`sh -n deploy/install-hub.sh` 均退出 0。完整 `go test ./deploy -count=1` 退出 0，387.844 秒，无跳过参数。
+
+本次局部验证对象 SHA-256：
+
+```text
+d8fb52f2c7824755b3a70a15a7e2e3ed2d5dab81d0cc4894451779d63784d0f2  internal/hub/store/theme.go
+4010467202118d6057c1136aa0bbeeff48b330e27aaf81164759b0d3cc15fe2a  internal/hub/store/theme_migration.go
+0474b3cd6e3208c42a70f2712904442ea69e903dacb2c51c07af169913ddd357  internal/hub/store/restore_themes.go
+685497f7dc046e94f55e1b689356589cc9298baee49b5cb949e67a52e045d181  internal/hub/store/restore.go
+c1cc34ca1e2508bd8fc62dca8d85830e2c3a31c2a380c5d8beecfbb38cfaabb8  internal/hub/store/snapshot.go
+3b40ef712159082252fd5edb28fd0b08c99107b960d2403bc505e62f191c22b5  deploy/install-hub.sh
+```
+
+这些局部结果不覆盖当前主题 UI、真实浏览器权限隔离、硬件 Passkey、真实 GitHub 出网或 Linux 服务启动，须由当前集成验收补齐。后续修改存储、恢复或安装器后必须重跑对应命令，不能沿用这里的时效。
 
 ## 早期受限环境验收
 

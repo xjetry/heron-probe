@@ -40,7 +40,11 @@ var migrations = map[int]func(*sql.Tx) error{
 	19: execAll(migrationV19),
 	20: execAll(migrationV20),
 	21: execAll(append(append([]string{}, migrationV21Config...), migrationV21Metrics...)),
+	22: migrateThemeVersions,
+	23: execAll(migrationV23),
 }
+
+var migrationV23 = []string{`ALTER TABLE node_facts ADD COLUMN network TEXT NOT NULL DEFAULT '{}'`}
 
 var migrationV21Config = []string{`ALTER TABLE probe_task ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`}
 

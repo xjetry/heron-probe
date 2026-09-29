@@ -1,298 +1,301 @@
 package web
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
+
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
-// fakeThemeSource 按 ThemeSource 的契约应答：先取代数再读内容，files 为 nil 表示没有启用中的主题。每次整包读取计数，并像库
-// 一样返回新分配的字节：逐请求读的实现因此按文件大小分配，分配量用例量得出来。
 type fakeThemeSource struct {
-	gen   atomic.Uint64
-	reads atomic.Int64
-	delay time.Duration // 每次整包读取的耗时，让并发请求在读的过程中到达。
-	mu    sync.Mutex
-	files map[string]string
-	err   error
-	// afterRead 在下一次整包读出之后、返回之前调用一次，调用时不持 mu：模拟语句的快照取定之后才提交的写，这次读返回的
-	// 仍是写之前的包与写之前的代数。
+	gen       uint64
+	current   store.Theme
+	versions  map[string]themePackage
+	reads     int
+	err       error
 	afterRead func()
 }
 
-func (f *fakeThemeSource) ThemeGeneration() uint64 { return f.gen.Load() }
+type themePackage struct {
+	meta  store.Theme
+	files map[string][]byte
+}
 
-func (f *fakeThemeSource) EnabledThemePackage(ctx context.Context) (uint64, map[string][]byte, bool, error) {
-	f.reads.Add(1)
-	// 与库一样：ctx 已取消时读以 ctx 的错误失败（QueryContext 不开始执行）。
-	if err := ctx.Err(); err != nil {
-		return 0, nil, false, err
+func (f *fakeThemeSource) ThemeGeneration() uint64 { return f.gen }
+func (f *fakeThemeSource) ThemeSelection(ctx context.Context) (store.Theme, store.Theme, error) {
+	if ctx.Err() != nil {
+		return store.Theme{}, store.Theme{}, ctx.Err()
 	}
-	gen := f.gen.Load()
-	time.Sleep(f.delay)
-	f.mu.Lock()
-	files, err, hook := f.files, f.err, f.afterRead
-	f.afterRead = nil
-	f.mu.Unlock()
-	if err != nil {
-		return 0, nil, false, err
-	}
-	var out map[string][]byte
-	if files != nil {
-		// set 整体替换 files，不改旧 map，所以放开 mu 之后读它是安全的。
-		out = make(map[string][]byte, len(files))
-		for p, c := range files {
-			out[p] = []byte(c)
-		}
-	}
-	if hook != nil {
+	cur := f.current
+	if f.afterRead != nil {
+		hook := f.afterRead
+		f.afterRead = nil
 		hook()
 	}
-	return gen, out, files != nil, nil
+	return cur, store.Theme{}, f.err
+}
+func (f *fakeThemeSource) ThemeVersionFile(ctx context.Context, id, digest, path string) (store.Theme, []byte, error) {
+	f.reads++
+	if ctx.Err() != nil {
+		return store.Theme{}, nil, ctx.Err()
+	}
+	if f.err != nil {
+		return store.Theme{}, nil, f.err
+	}
+	p, ok := f.versions[digest]
+	if !ok || p.meta.ID != id {
+		return store.Theme{}, nil, store.ErrNotFound
+	}
+	content, ok := p.files[path]
+	if !ok {
+		return store.Theme{}, nil, store.ErrNotFound
+	}
+	return p.meta, append([]byte{}, content...), nil
+}
+func testThemeSource() *fakeThemeSource {
+	meta := store.Theme{ID: "night", Digest: strings.Repeat("a", 64), SDK: 1, Published: true}
+	return &fakeThemeSource{current: meta, versions: map[string]themePackage{meta.Digest: {meta: meta, files: map[string][]byte{"index.html": []byte("theme HTML"), "app.js": []byte("module"), "view.svg": []byte("<svg/>"), "data.unknown": []byte("<script/>")}}}}
 }
 
-// set 像三个写者之一那样换掉启用中的主题：先提交内容，再递增代数。
-func (f *fakeThemeSource) set(files map[string]string) {
-	f.mu.Lock()
-	f.files = files
-	f.mu.Unlock()
-	f.gen.Add(1)
+var builtinSentinel = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "builtin") })
+
+func themePath(meta store.Theme, file string) string {
+	return "/_heron/themes/" + meta.ID + "/" + meta.Digest + "/" + file
 }
 
-func etagOf(content string) string {
-	sum := sha256.Sum256([]byte(content))
-	return `"` + hex.EncodeToString(sum[:]) + `"`
+func TestThemeDocumentsAreAlwaysSandboxed(t *testing.T) {
+	src := testThemeSource()
+	h := ThemeHandler(src, builtinSentinel, nil, slog.Default())
+	for _, url := range []string{"/", "/nodes/3"} {
+		code, _, body := serveWithin(t, h, url)
+		if code != 200 || !strings.Contains(body, `sandbox="allow-scripts"`) || !strings.Contains(body, themePath(src.current, "index.html")) || strings.Contains(body, "theme HTML") {
+			t.Fatalf("shell %s: %d %s", url, code, body)
+		}
+	}
+	for _, file := range []string{"index.html", "app.js", "view.svg", "data.unknown", "missing.html", "assets/missing.js", ".secret"} {
+		code, hdr, _ := serveWithin(t, h, themePath(src.current, file))
+		if code != 200 && code != 404 {
+			t.Fatalf("file %s: %d", file, code)
+		}
+		if !strings.Contains(hdr.Get("Content-Security-Policy"), "sandbox allow-scripts;") || strings.Contains(hdr.Get("Content-Security-Policy"), "allow-same-origin") || hdr.Get("X-Content-Type-Options") != "nosniff" || hdr.Get("Cache-Control") != "no-store" {
+			t.Fatalf("unsafe %s: %v", file, hdr)
+		}
+		if file == "data.unknown" && hdr.Get("Content-Type") != "application/octet-stream" {
+			t.Fatalf("sniffed unknown type: %v", hdr)
+		}
+	}
+	r := httptest.NewRequest("GET", themePath(src.current, "index.html"), nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	r.Header.Set("If-None-Match", w.Header().Get("ETag"))
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 304 || !strings.Contains(w.Header().Get("Content-Security-Policy"), "sandbox allow-scripts") {
+		t.Fatalf("unsafe cache response: %v", w)
+	}
 }
 
-var builtinSentinel = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("X-Builtin", "1")
-	io.WriteString(w, "builtin public page")
-})
+func TestThemePublishedAdmissionAndPreview(t *testing.T) {
+	src := testThemeSource()
+	meta := src.current
+	meta.Published = false
+	p := src.versions[meta.Digest]
+	p.meta = meta
+	src.versions[meta.Digest] = p
+	valid := true
+	h := ThemeHandler(src, builtinSentinel, func(_ context.Context, token string) (string, string, bool) {
+		return meta.ID, meta.Digest, valid && token == "cap"
+	}, slog.Default())
+	if code, _, _ := serveWithin(t, h, themePath(meta, "index.html")); code != 404 {
+		t.Fatalf("unpublished is public: %d", code)
+	}
+	if code, _, body := serveWithin(t, h, "/_heron/preview/cap/files/index.html"); code != 200 || body != "theme HTML" {
+		t.Fatalf("preview: %d %s", code, body)
+	}
+	valid = false
+	if code, _, _ := serveWithin(t, h, "/_heron/preview/cap/files/index.html"); code != 404 {
+		t.Fatalf("revoked preview: %d", code)
+	}
+	valid = true
+	p.meta.SDK = 0
+	p.meta.Published = true
+	src.versions[meta.Digest] = p
+	src.current = p.meta
+	src.gen++
+	for _, url := range []string{themePath(meta, "index.html"), "/_heron/preview/cap/files/index.html"} {
+		if code, _, _ := serveWithin(t, h, url); code != 404 {
+			t.Fatalf("old SDK executed: %s %d", url, code)
+		}
+	}
+	if _, _, body := serveWithin(t, h, "/"); body != "builtin" {
+		t.Fatalf("old SDK fallback: %s", body)
+	}
+}
 
-func TestThemeHandlerServesTheEnabledPackageWithCustomHeaders(t *testing.T) {
-	h := ThemeHandler(&fakeThemeSource{files: map[string]string{
-		"index.html":    "theme index",
-		"assets/app.js": "console.log(1)",
-		"style.css":     "body{}",
-		"sub/page.txt":  "sub page",
-	}}, builtinSentinel, slog.Default())
-	for _, c := range []struct {
-		path, want, contentType string
-		status                  int
-	}{
-		{"/", "theme index", "text/html; charset=utf-8", 200},
-		{"/index.html", "theme index", "text/html; charset=utf-8", 200},
-		{"/assets/app.js", "console.log(1)", "text/javascript; charset=utf-8", 200},
-		{"/style.css", "body{}", "text/css; charset=utf-8", 200},
-		{"/sub/page.txt", "sub page", "text/plain; charset=utf-8", 200},
-		// 客户端路由：包里没有的路径回落 index.html。
-		{"/nodes/3", "theme index", "text/html; charset=utf-8", 200},
-		{"/sub/../style.css", "body{}", "text/css; charset=utf-8", 200},
-		// assets/ 下未命中 404：用 HTML 回应 script 标签会被浏览器按 MIME 拒绝，缺失要可见。
-		{"/assets/missing.js", "", "", 404},
-		{"/assets", "", "", 404},
+func TestThemeResourceRequiresCompleteIdentity(t *testing.T) {
+	src := testThemeSource()
+	h := ThemeHandler(src, builtinSentinel, nil, slog.Default())
+	for _, url := range []string{
+		"/_heron/themes//" + src.current.Digest + "/index.html",
+		"/_heron/themes/" + src.current.ID + "//index.html",
 	} {
-		code, hdr, body := serveWithin(t, h, c.path)
-		if code != c.status || (c.status == 200 && (body != c.want || hdr.Get("Content-Type") != c.contentType)) {
-			t.Errorf("GET %s: %d %q %q, want %d %q %q", c.path, code, hdr.Get("Content-Type"), body, c.status, c.contentType, c.want)
-		}
-		if hdr.Get("X-Builtin") != "" {
-			t.Errorf("GET %s: answered by the built-in page while a theme is enabled", c.path)
-		}
-		// 三条头对命中、回落与 404 一样。
-		if hdr.Get("X-Content-Type-Options") != "nosniff" || hdr.Get("Content-Security-Policy") != "frame-ancestors 'none'" || hdr.Get("Cache-Control") != "no-cache" {
-			t.Errorf("GET %s: headers nosniff=%q csp=%q cache=%q", c.path, hdr.Get("X-Content-Type-Options"), hdr.Get("Content-Security-Policy"), hdr.Get("Cache-Control"))
-		}
-		// 没有 Last-Modified：整秒的上传时刻分不出同一秒内的两次替换，不能作为 304 的依据。校验器是按所服务内容算的
-		// 强 ETag（回落的是 index.html 的），404 不带。
-		if hdr.Get("Last-Modified") != "" {
-			t.Errorf("GET %s: Last-Modified %q", c.path, hdr.Get("Last-Modified"))
-		}
-		wantETag := ""
-		if c.status == 200 {
-			wantETag = etagOf(c.want)
-		}
-		if got := hdr.Get("ETag"); got != wantETag {
-			t.Errorf("GET %s: ETag %q, want %q", c.path, got, wantETag)
+		if code, _, _ := serveWithin(t, h, url); code != 404 {
+			t.Fatalf("incomplete identity %s: %d", url, code)
 		}
 	}
 }
 
-// 没有启用中的主题时主题 origin 服务内置公开页，任何路径都一样；不是 404。
-func TestThemeHandlerFallsBackToBuiltinWithoutEnabledTheme(t *testing.T) {
-	h := ThemeHandler(&fakeThemeSource{}, builtinSentinel, slog.Default())
-	for _, p := range []string{"/", "/nodes/3", "/assets/app.js"} {
-		code, hdr, body := serveWithin(t, h, p)
-		if code != 200 || body != "builtin public page" || hdr.Get("X-Builtin") != "1" {
-			t.Errorf("GET %s: %d %q, want the built-in public page", p, code, body)
-		}
+func TestThemeSnapshotGenerationAndFailure(t *testing.T) {
+	src := testThemeSource()
+	h := ThemeHandler(src, builtinSentinel, nil, slog.Default())
+	first := src.current
+	src.afterRead = func() { src.current = store.Theme{}; src.gen++ }
+	if _, _, body := serveWithin(t, h, "/"); !strings.Contains(body, first.Digest) {
+		t.Fatal("current read lost its snapshot")
 	}
-}
-
-// 读库失败是 500，而不是回落内置页：回落会把一次故障伪装成"主题被停用了"。失败不留下快照，库恢复后下一个请求就读到。
-func TestThemeHandlerReportsStoreFailure(t *testing.T) {
-	src := &fakeThemeSource{err: errors.New("disk I/O error"), files: map[string]string{"index.html": "theme index"}}
-	h := ThemeHandler(src, builtinSentinel, slog.Default())
-	code, hdr, body := serveWithin(t, h, "/")
-	if code != http.StatusInternalServerError || hdr.Get("X-Builtin") != "" || body == "builtin public page" {
-		t.Fatalf("GET / on store failure: %d %q", code, body)
+	if _, _, body := serveWithin(t, h, "/"); body != "builtin" {
+		t.Fatal("stale generation hid deletion")
 	}
-	if hdr.Get("X-Content-Type-Options") != "nosniff" || hdr.Get("Cache-Control") != "no-cache" {
-		t.Fatalf("GET / on store failure: headers %v", hdr)
+	src.err = errors.New("disk failure")
+	src.gen++
+	if code, _, _ := serveWithin(t, h, "/"); code != 500 {
+		t.Fatalf("error became fallback: %d", code)
 	}
-	src.mu.Lock()
+	if code, hdr, _ := serveWithin(t, h, themePath(first, "index.html")); code != 500 || !strings.Contains(hdr.Get("Content-Security-Policy"), "sandbox allow-scripts") {
+		t.Fatalf("resource read error masked as missing: %d %v", code, hdr)
+	}
 	src.err = nil
-	src.mu.Unlock()
-	if code, _, body := serveWithin(t, h, "/"); code != http.StatusOK || body != "theme index" {
-		t.Fatalf("GET / after the store recovered: %d %q, want the theme", code, body)
-	}
-}
-
-// 代数不变时所有请求共用一次整包读取；代数一变，下一个请求就读到新内容，停用后回落内置页。
-func TestThemeHandlerReadsThePackageOncePerGeneration(t *testing.T) {
-	src := &fakeThemeSource{files: map[string]string{"index.html": "v1 index", "assets/app.js": "v1 app"}}
-	h := ThemeHandler(src, builtinSentinel, slog.Default())
-	expect := func(when, path, want string, reads int64) {
-		t.Helper()
-		if code, _, body := serveWithin(t, h, path); code != http.StatusOK || body != want {
-			t.Fatalf("%s: GET %s: %d %q, want %q", when, path, code, body, want)
-		}
-		if got := src.reads.Load(); got != reads {
-			t.Fatalf("%s: %d package reads, want %d", when, got, reads)
-		}
-	}
-	for i := range 50 {
-		expect("first generation", []string{"/", "/assets/app.js", "/nodes/3"}[i%3], map[bool]string{true: "v1 app", false: "v1 index"}[i%3 == 1], 1)
-	}
-	src.set(map[string]string{"index.html": "v2 index", "assets/app.js": "v2 app"})
-	expect("after a replacement", "/assets/app.js", "v2 app", 2)
-	for range 50 {
-		expect("second generation", "/", "v2 index", 2)
-	}
-	src.set(nil)
-	expect("after disabling", "/", "builtin public page", 3)
-	expect("still disabled", "/nodes/3", "builtin public page", 3)
-}
-
-// 快照标注的是读之前的代数。一次写落在整包读出之后、返回之前时，这次读拿到的是写之前的包，标注也是写之前的代数，下一个
-// 请求见代数已变就重读，拿到写之后的内容；删除（停用）同理。标注成读完之后的代数，旧包就带着新代数留下，此后每个请求都判
-// "没变"，一直服务写之前的包，包括已经删掉的主题，直到下一次主题写。
-func TestThemeHandlerLabelsTheSnapshotWithTheGenerationBeforeTheRead(t *testing.T) {
-	src := &fakeThemeSource{files: map[string]string{"index.html": "v1"}}
-	h := ThemeHandler(src, builtinSentinel, slog.Default())
-	expect := func(when, want string) {
-		t.Helper()
-		if code, _, body := serveWithin(t, h, "/"); code != http.StatusOK || body != want {
-			t.Fatalf("%s: GET /: %d %q, want %q", when, code, body, want)
-		}
-	}
-	src.afterRead = func() { src.set(map[string]string{"index.html": "v2"}) }
-	expect("the read that a replacement landed after", "v1")
-	expect("the request after a replacement that landed during the read", "v2")
-	src.set(map[string]string{"index.html": "v3"})
-	src.afterRead = func() { src.set(nil) }
-	expect("the read that a deletion landed after", "v3")
-	expect("the request after a deletion that landed during the read", "builtin public page")
-}
-
-// 触发重读的请求在重读时已经断开：重读照样完成并换上快照，下一个请求不再读库，也不记任何日志。重读的结果供所有请求使用，
-// 不随第一个请求的 ctx 取消。
-func TestThemeHandlerReloadDoesNotDependOnTheTriggeringRequest(t *testing.T) {
-	var logs bytes.Buffer
-	src := &fakeThemeSource{files: map[string]string{"index.html": "v1"}}
-	h := ThemeHandler(src, builtinSentinel, slog.New(slog.NewTextHandler(&logs, nil)))
-	gone, cancel := context.WithCancel(context.Background())
+	src.current = first
+	gone, cancel := context.WithCancel(t.Context())
 	cancel()
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil).WithContext(gone))
-	if rec.Code != http.StatusOK || rec.Body.String() != "v1" {
-		t.Fatalf("GET / from a client that had gone: %d %q, want the reload to complete and serve v1", rec.Code, rec.Body.String())
-	}
-	if code, _, body := serveWithin(t, h, "/"); code != http.StatusOK || body != "v1" {
-		t.Fatalf("GET / after that: %d %q, want v1", code, body)
-	}
-	if got := src.reads.Load(); got != 1 {
-		t.Fatalf("%d package reads, want 1: the reload triggered by the gone client must have installed the snapshot", got)
-	}
-	if logs.Len() != 0 {
-		t.Fatalf("logged %q; a client going away is not a failure of the shared reload", logs.String())
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil).WithContext(gone))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), first.Digest) {
+		t.Fatalf("cancelled trigger lost shared reload: %d", w.Code)
 	}
 }
 
-// 代数变了之后同时到达的请求只触发一次整包读取：拿到重读锁的请求读库，其余在锁上等，拿到锁后见代数已对上就直接用新快照。
-func TestThemeHandlerConcurrentRequestsAfterAChangeReadOnce(t *testing.T) {
-	src := &fakeThemeSource{files: map[string]string{"index.html": "v1"}, delay: 50 * time.Millisecond}
-	h := ThemeHandler(src, builtinSentinel, slog.Default())
-	if code, _, body := serveWithin(t, h, "/"); code != http.StatusOK || body != "v1" {
-		t.Fatalf("GET /: %d %q", code, body)
-	}
-	src.set(map[string]string{"index.html": "v2"})
-	const n = 32
-	start := make(chan struct{})
-	bodies := make(chan string, n)
+func TestThemeConcurrentResourcesReuseSnapshot(t *testing.T) {
+	src := testThemeSource()
+	h := ThemeHandler(src, builtinSentinel, nil, slog.Default())
 	var wg sync.WaitGroup
-	for range n {
+	for range 32 {
 		wg.Go(func() {
-			<-start
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-			bodies <- rec.Body.String()
+			code, _, body := serveWithin(t, h, themePath(src.current, "app.js"))
+			if code != 200 || body != "module" {
+				t.Errorf("resource: %d %s", code, body)
+			}
 		})
 	}
-	close(start)
 	wg.Wait()
-	close(bodies)
-	for b := range bodies {
-		if b != "v2" {
-			t.Errorf("concurrent GET / after the change: %q, want v2", b)
-		}
+	if src.reads != 1 {
+		t.Fatalf("package reads=%d", src.reads)
 	}
-	if got := src.reads.Load(); got != 2 {
-		t.Fatalf("%d package reads for %d concurrent requests after one change, want 2 in total (one per generation)", got, n)
+	delete(src.versions, src.current.Digest)
+	src.gen++
+	if code, _, _ := serveWithin(t, h, themePath(src.current, "app.js")); code != 404 {
+		t.Fatalf("deleted package cached: %d", code)
 	}
 }
 
-// 强 ETag 让未变的文件回 304；内容换了（哪怕同一秒内）ETag 随之改变，带旧 ETag 的条件请求拿到新内容。
-func TestThemeHandlerRevalidatesByContentETag(t *testing.T) {
-	src := &fakeThemeSource{files: map[string]string{"index.html": "v1 index", "assets/app.js": "v1 app"}}
-	h := ThemeHandler(src, builtinSentinel, slog.Default())
-	get := func(path, ifNoneMatch string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
-		if ifNoneMatch != "" {
-			req.Header.Set("If-None-Match", ifNoneMatch)
+func TestThemeHandlerAllocationPerRequestIsIndependentOfFileSize(t *testing.T) {
+	perRequest := func(size int) float64 {
+		src := testThemeSource()
+		p := src.versions[src.current.Digest]
+		p.files["file.bin"] = []byte(strings.Repeat("x", size))
+		return allocBytesPerRequest(t, ThemeHandler(src, builtinSentinel, nil, slog.Default()), themePath(src.current, "file.bin"), int64(size))
+	}
+	small, big := perRequest(1024), perRequest(16<<20)
+	if big > 2*small+4096 || big > (16<<20)/256 {
+		t.Fatalf("per-request allocation small=%f big=%f", small, big)
+	}
+}
+
+func TestThemeResourceAllocationIgnoresUnrelatedPackageFiles(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clock.Real(), slog.Default(), store.MigrateSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	var paths []string
+	for i := range 3 {
+		id := fmt.Sprintf("theme%d", i)
+		meta, err := s.PutTheme(t.Context(), store.Theme{ID: id, SDK: 1}, []store.ThemeFile{
+			{Path: "index.html", Content: []byte("index")}, {Path: "app.js", Content: []byte("module")},
+			{Path: "unused.bin", Content: make([]byte, 8<<20)},
+		}, []byte(id), false, 20)
+		if err != nil {
+			t.Fatal(err)
 		}
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		return rec
+		if err := s.EnableTheme(t.Context(), id, meta.Digest); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, themePath(meta, "app.js"))
 	}
-	first := get("/assets/app.js", "")
-	e1 := first.Header().Get("ETag")
-	if first.Code != http.StatusOK || e1 != etagOf("v1 app") {
-		t.Fatalf("GET /assets/app.js: %d ETag %q, want 200 with the content's ETag", first.Code, e1)
+	measure := func(versions int, cold bool) uint64 {
+		h := ThemeHandler(s, builtinSentinel, nil, slog.Default())
+		read := func(i int) {
+			if cold {
+				h = ThemeHandler(s, builtinSentinel, nil, slog.Default())
+			}
+			code, _, body := serveWithin(t, h, paths[i%versions])
+			if code != 200 || body != "module" {
+				t.Fatalf("resource=%d %q", code, body)
+			}
+		}
+		for i := range versions {
+			read(i)
+		}
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		for i := range 9 {
+			read(i)
+		}
+		runtime.ReadMemStats(&after)
+		return (after.TotalAlloc - before.TotalAlloc) / 9
 	}
-	if r := get("/assets/app.js", e1); r.Code != http.StatusNotModified || r.Body.Len() != 0 {
-		t.Fatalf("GET /assets/app.js with its ETag: %d %q, want 304 without a body", r.Code, r.Body.String())
+	single, rotated, cold := measure(1, false), measure(3, false), measure(1, true)
+	t.Logf("bytes/request single=%d three=%d cold=%d", single, rotated, cold)
+	if rotated > single+(1<<20) || cold > single+(1<<20) {
+		t.Fatalf("small resource loaded unrelated package: single=%d three=%d cold=%d", single, rotated, cold)
 	}
-	// 回落到 index.html 的路径按 index.html 的内容校验。
-	if r := get("/nodes/3", etagOf("v1 index")); r.Code != http.StatusNotModified {
-		t.Fatalf("GET /nodes/3 with index.html's ETag: %d, want 304", r.Code)
-	}
-	src.set(map[string]string{"index.html": "v1 index", "assets/app.js": "v2 app"})
-	r := get("/assets/app.js", e1)
-	if r.Code != http.StatusOK || r.Body.String() != "v2 app" || r.Header().Get("ETag") != etagOf("v2 app") || r.Header().Get("ETag") == e1 {
-		t.Fatalf("GET /assets/app.js with the old ETag after a replacement: %d %q ETag %q, want 200 \"v2 app\" with a new ETag", r.Code, r.Body.String(), r.Header().Get("ETag"))
+}
+
+func TestThemeResourceCacheIsBounded(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		size, count int
+	}{
+		{"bytes", 16 << 20, 3}, {"entries", 0, 257},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := testThemeSource()
+			p := src.versions[src.current.Digest]
+			h := ThemeHandler(src, builtinSentinel, nil, slog.Default()).(*themeHandler)
+			for i := range tc.count {
+				file := fmt.Sprintf("file%d.bin", i)
+				p.files[file] = make([]byte, tc.size)
+				w := &discardWriter{header: http.Header{}}
+				h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, themePath(src.current, file), nil))
+				if w.code != 200 || w.n != int64(tc.size) {
+					t.Fatalf("response=%d %d", w.code, w.n)
+				}
+			}
+			if h.cacheBytes > 32<<20 || len(h.resources) > 256 {
+				t.Fatalf("unbounded cache: %d bytes %d entries", h.cacheBytes, len(h.resources))
+			}
+		})
 	}
 }
 
@@ -343,21 +346,4 @@ func allocBytesPerRequest(t *testing.T, h http.Handler, path string, size int64)
 	}
 	runtime.ReadMemStats(&after)
 	return float64(after.TotalAlloc-before.TotalAlloc) / runs
-}
-
-// 每个请求的分配量与所服务文件的大小无关：一个包里是 16 MiB 的文件、另一个包里是 1 KiB 的文件，各自每请求分配同一
-// 量级，都远小于文件本身。匿名慢连接因此放大不了 hub 的内存——每个请求只在共享快照上开一个 reader，不各自持有一份
-// 文件内容。两个包分开装：放在同一个包里时，逐请求读整包的实现对两个文件的分配一样大，比不出与文件大小的关系。
-func TestThemeHandlerAllocationPerRequestIsIndependentOfFileSize(t *testing.T) {
-	const small, big = 1 << 10, 16 << 20
-	perRequest := func(size int) float64 {
-		t.Helper()
-		src := &fakeThemeSource{files: map[string]string{"index.html": "theme index", "assets/file.bin": strings.Repeat("x", size)}}
-		return allocBytesPerRequest(t, ThemeHandler(src, builtinSentinel, slog.Default()), "/assets/file.bin", int64(size))
-	}
-	perSmall, perBig := perRequest(small), perRequest(big)
-	t.Logf("bytes allocated per request: %.0f for a %d-byte file, %.0f for a %d-byte file", perSmall, small, perBig, big)
-	if perBig > 2*perSmall+4096 || perBig > big/256 {
-		t.Fatalf("serving a %d-byte file allocates %.0f bytes per request (%.0f for a %d-byte file); per-request allocation must not grow with file size", big, perBig, perSmall, small)
-	}
 }

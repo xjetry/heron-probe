@@ -34,9 +34,7 @@ func TestThemeSnapshotUsesImmutablePackages(t *testing.T) {
 	}
 	installTheme(t, m, "new zip")
 	tick(t, m)
-	if err := m.st.DeleteTheme(t.Context(), "a"); err != nil {
-		t.Fatal(err)
-	}
+	deleteThemeVersions(t, m, "a")
 	tick(t, m)
 	for _, content := range []string{"old zip", "new zip"} {
 		if string(base.objects[immutableThemeKey(content)]) != content {
@@ -122,7 +120,7 @@ func themeStorage(m *Manager, base *fakeObjects) *themeObjects {
 
 func installTheme(t *testing.T, m *Manager, content string) {
 	t.Helper()
-	_, err := m.st.PutTheme(t.Context(), store.Theme{ID: "a", Name: "A", UploadedAt: time.Now()},
+	_, err := m.st.PutTheme(t.Context(), store.Theme{ID: "a", Name: "A", SDK: 1, UploadedAt: time.Now()},
 		[]store.ThemeFile{{Path: "index.html", Content: []byte(content)}}, []byte(content), false, 20)
 	if err != nil {
 		t.Fatal(err)
@@ -135,15 +133,30 @@ type themeBackup struct {
 	Uploaded bool
 }
 
-func themePackage(t *testing.T, m *Manager) themeBackup {
+func deleteThemeVersions(t *testing.T, m *Manager, id string) {
+	t.Helper()
+	versions, err := m.st.ListThemes(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range versions {
+		if version.ID == id {
+			if err := m.st.DeleteThemeVersion(t.Context(), id, version.Digest); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func themePackage(t *testing.T, m *Manager, want string) themeBackup {
 	t.Helper()
 	entries, err := m.st.ThemeBackupEntries(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if entry.ID == "a" {
-			content, err := m.st.ThemeBackupContent(t.Context(), entry.ID, entry.Revision)
+		if entry.ID == "a" && entry.Digest == fmt.Sprintf("%x", sha256.Sum256([]byte(want))) {
+			content, err := m.st.ThemeBackupContent(t.Context(), entry.ID, entry.Digest, entry.Revision)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -170,7 +183,7 @@ func TestThemeSyncReconcilesAndReplaces(t *testing.T) {
 	if got := string(base.objects["foreign/theme/keep.zip"]); got != "foreign" {
 		t.Fatalf("foreign object changed: %q", got)
 	}
-	if !themePackage(t, m).Uploaded {
+	if !themePackage(t, m, "original zip").Uploaded {
 		t.Fatal("successful upload was not recorded")
 	}
 	if d := o.budgets["upload"]; d <= 5*time.Minute || d > 5*time.Minute+time.Second {
@@ -188,7 +201,7 @@ func TestThemeSyncReconcilesAndReplaces(t *testing.T) {
 		}
 	}
 	installTheme(t, m, "replacement zip")
-	if themePackage(t, m).Uploaded {
+	if themePackage(t, m, "replacement zip").Uploaded {
 		t.Fatal("replacement did not reset uploaded")
 	}
 	tick(t, m)
@@ -221,13 +234,11 @@ func TestThemeSyncConcurrentWrite(t *testing.T) {
 			m, _, base, _ := setup(t)
 			o := themeStorage(m, base)
 			installTheme(t, m, "old zip")
-			old := themePackage(t, m)
+			old := themePackage(t, m, "old zip")
 			o.onUpload = func() {
 				o.onUpload = nil
 				if recreate {
-					if err := m.st.DeleteTheme(t.Context(), "a"); err != nil {
-						t.Fatal(err)
-					}
+					deleteThemeVersions(t, m, "a")
 				}
 				installTheme(t, m, "new zip")
 			}
@@ -256,12 +267,12 @@ func TestThemeSyncConcurrentWrite(t *testing.T) {
 			if !published {
 				t.Fatal("configuration snapshot was not published")
 			}
-			p := themePackage(t, m)
+			p := themePackage(t, m, "new zip")
 			if p.Uploaded || p.Revision == old.Revision || string(p.Content) != "new zip" {
 				t.Fatalf("in-flight write marked new package uploaded: %+v old=%d", p, old.Revision)
 			}
 			tick(t, m)
-			if got := string(base.objects[immutableThemeKey("new zip")]); got != "new zip" || !themePackage(t, m).Uploaded {
+			if got := string(base.objects[immutableThemeKey("new zip")]); got != "new zip" || !themePackage(t, m, "new zip").Uploaded {
 				t.Fatalf("next synchronization did not upload new package: %q", got)
 			}
 		})
@@ -365,9 +376,7 @@ func TestThemeSyncRunWakesAfterCommit(t *testing.T) {
 	}
 	installTheme(t, m, "zip")
 	wait("put " + immutableThemeKey("zip"))
-	if err := m.st.DeleteTheme(t.Context(), "a"); err != nil {
-		t.Fatal(err)
-	}
+	deleteThemeVersions(t, m, "a")
 	cancel()
 	<-done
 	// 删除当前主题不能删除仍被已发布快照引用的原包。
@@ -447,7 +456,7 @@ func TestThemeSyncContinuesAfterPackageFailure(t *testing.T) {
 	m, _, base, _ := setup(t)
 	themeStorage(m, base)
 	installTheme(t, m, "a")
-	if _, err := m.st.PutTheme(t.Context(), store.Theme{ID: "b"}, []store.ThemeFile{{Path: "index.html", Content: []byte("b")}}, []byte("b"), false, 20); err != nil {
+	if _, err := m.st.PutTheme(t.Context(), store.Theme{ID: "b", SDK: 1}, []store.ThemeFile{{Path: "index.html", Content: []byte("b")}}, []byte("b"), false, 20); err != nil {
 		t.Fatal(err)
 	}
 	execFixtureSQL(t, base.databasePath, "CREATE TRIGGER reject_a BEFORE UPDATE OF uploaded ON theme_package WHEN NEW.theme_id='a' BEGIN SELECT RAISE(ABORT,'reject a'); END")
@@ -490,14 +499,12 @@ func TestThemeSyncDeleteDuringUpload(t *testing.T) {
 	m, _, base, sink := setup(t)
 	o := themeStorage(m, base)
 	installTheme(t, m, "a")
-	if _, err := m.st.PutTheme(t.Context(), store.Theme{ID: "b"}, []store.ThemeFile{{Path: "index.html", Content: []byte("b")}}, []byte("b"), false, 20); err != nil {
+	if _, err := m.st.PutTheme(t.Context(), store.Theme{ID: "b", SDK: 1}, []store.ThemeFile{{Path: "index.html", Content: []byte("b")}}, []byte("b"), false, 20); err != nil {
 		t.Fatal(err)
 	}
 	o.onUpload = func() {
 		o.onUpload = nil
-		if err := m.st.DeleteTheme(t.Context(), "b"); err != nil {
-			t.Fatal(err)
-		}
+		deleteThemeVersions(t, m, "b")
 	}
 	tick(t, m)
 	if s := status(t, m).Config; s.Failure != "" || len(sink.events) != 0 {

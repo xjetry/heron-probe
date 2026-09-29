@@ -73,7 +73,7 @@ func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	srv := httptest.NewServer(newTestMuxOn(t, st, clk, "http://"+testThemeHost))
+	srv := httptest.NewServer(newTestMuxOn(t, st, clk))
 	t.Cleanup(srv.Close)
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/heron.v1.AdminService/GetStorageStats", strings.NewReader("{}"))
 	if err != nil {

@@ -14,18 +14,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/xjetry/heron-probe/internal/hub/store"
-	"golang.org/x/net/idna"
 )
 
 var ErrSecurity = errors.New("authentication proof invalid or expired")
@@ -40,6 +36,8 @@ type securityState struct {
 	Recovery []string  `json:"recovery,omitempty"`
 	UserID   []byte    `json:"user_id,omitempty"`
 	Passkeys []Passkey `json:"passkeys,omitempty"`
+	Origin   string    `json:"origin,omitempty"`
+	RPID     string    `json:"rp_id,omitempty"`
 }
 
 func (s securityState) WebAuthnID() []byte          { return s.UserID }
@@ -55,19 +53,22 @@ func (s securityState) WebAuthnCredentials() []webauthn.Credential {
 
 type securityChallenge struct {
 	Kind, Session, Secret string
+	Origin                string
+	RPID                  string
+	Rebind                bool
 	Generation            int64
 	Expires               time.Time
 	Data                  *webauthn.SessionData
 }
 type securityRuntime struct {
 	mu      sync.Mutex
-	web     *webauthn.WebAuthn
 	pending map[string]securityChallenge
 }
 type SecurityInfo struct {
-	TOTPEnabled, PasskeyAvailable bool
-	Passkeys                      []Passkey
-	RecoveryRemaining             int
+	TOTPEnabled, PasskeyAvailable            bool
+	Passkeys                                 []Passkey
+	RecoveryRemaining                        int
+	Origin, CurrentOrigin, UnavailableReason string
 }
 type SecurityActionKind string
 
@@ -76,6 +77,7 @@ const (
 	SecurityTOTPEnable         SecurityActionKind = "totp_enable"
 	SecurityTOTPDisable        SecurityActionKind = "totp_disable"
 	SecurityPasskeyBegin       SecurityActionKind = "passkey_begin"
+	SecurityPasskeyRebindBegin SecurityActionKind = "passkey_rebind_begin"
 	SecurityPasskeyRegister    SecurityActionKind = "passkey_register"
 	SecurityPasskeyDelete      SecurityActionKind = "passkey_delete"
 	SecurityReauthBegin        SecurityActionKind = "reauth_begin"
@@ -93,55 +95,29 @@ type SecurityResult struct {
 	RecoveryCodes                                             []string
 }
 
-// ConfigureWebAuthn 只在启动时调用。RP 来源由部署者指定，不信任请求 Host 或转发头。
-func (a *Auth) ConfigureWebAuthn(origin, themeOrigin string) error {
+// ConfigureWebAuthn 只导入已有凭据的可信原始来源；持久绑定存在后，旧参数不再影响认证或启动。
+func (a *Auth) ConfigureWebAuthn(origin string) error {
+	ctx := context.Background()
+	b, s, readErr := a.readSecurity(ctx)
+	if readErr != nil && !errors.Is(readErr, store.ErrAdminChanged) {
+		return readErr
+	}
+	if s.Origin != "" || s.RPID != "" {
+		return nil
+	}
 	if origin == "" {
 		return nil
 	}
-	u, err := url.Parse(origin)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-		return errors.New("invalid admin origin")
-	}
-	if u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1")) {
-		return errors.New("admin origin requires HTTPS except localhost")
-	}
-	host, err := securityHostname(u.Hostname())
-	if err != nil {
-		return errors.New("invalid admin hostname")
-	}
-	if host == "" {
-		return errors.New("invalid admin hostname")
-	}
-	if t, e := url.Parse(themeOrigin); e == nil && t.Hostname() != "" {
-		themeHost, err := securityHostname(t.Hostname())
-		if err != nil {
-			return errors.New("invalid theme hostname")
-		}
-		if themeHost == host {
-			return errors.New("admin and theme must use different hostnames")
-		}
-	}
-	port := u.Port()
-	u.Host = host
-	if port != "" {
-		u.Host = net.JoinHostPort(host, port)
-	} else if strings.Contains(host, ":") {
-		u.Host = "[" + host + "]"
-	}
-	w, err := webauthn.New(&webauthn.Config{RPDisplayName: "Heron", RPID: host, RPOrigins: []string{u.Scheme + "://" + u.Host}, AuthenticatorSelection: protocol.AuthenticatorSelection{ResidentKey: protocol.ResidentKeyRequirementRequired, UserVerification: protocol.VerificationRequired}})
+	normalized, rpID, err := normalizePasskeyOrigin(origin)
 	if err != nil {
 		return err
 	}
-	a.security.web = w
-	return nil
-}
-
-func securityHostname(host string) (string, error) {
-	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	if ip, err := netip.ParseAddr(host); err == nil {
-		return ip.String(), nil
+	if len(s.Passkeys) == 0 {
+		return nil
 	}
-	return idna.Lookup.ToASCII(host)
+	s.Origin = normalized
+	s.RPID = rpID
+	return a.commitSecurity(ctx, b, s, false, nil)
 }
 func (a *Auth) readSecurity(ctx context.Context) (store.AdminSecurity, securityState, error) {
 	b, err := a.store.AdminSecurity(ctx)
@@ -168,7 +144,17 @@ func (a *Auth) commitSecurity(ctx context.Context, b store.AdminSecurity, s secu
 }
 func (a *Auth) SecurityInfo(ctx context.Context) (SecurityInfo, error) {
 	_, s, err := a.readSecurity(ctx)
-	return SecurityInfo{s.Secret != "", a.security.web != nil, s.Passkeys, len(s.Recovery)}, err
+	origin, reason := currentWebAuthnOrigin(ctx)
+	if reason == "" {
+		if s.Origin == "" && len(s.Passkeys) > 0 {
+			reason = "binding_missing"
+		} else if (s.Origin != "" || s.RPID != "") && !validPasskeyBinding(s.Origin, s.RPID) {
+			reason = "binding_invalid"
+		} else if s.Origin != "" && s.Origin != origin {
+			reason = "origin_mismatch"
+		}
+	}
+	return SecurityInfo{TOTPEnabled: s.Secret != "", PasskeyAvailable: reason == "", Passkeys: s.Passkeys, RecoveryRemaining: len(s.Recovery), Origin: s.Origin, CurrentOrigin: origin, UnavailableReason: reason}, err
 }
 func totpCode(secret string, step int64) string {
 	key, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secret)
@@ -329,27 +315,36 @@ func (a *Auth) BeginPasskeyLogin(ctx context.Context, from netip.Addr) (Security
 	if err := a.checkLoginSource(from); err != nil {
 		return SecurityResult{}, err
 	}
-	if a.security.web == nil {
+	b, s, err := a.readSecurity(ctx)
+	if err != nil {
+		return SecurityResult{}, err
+	}
+	origin, err := passkeyOrigin(ctx, s, false)
+	if err != nil || len(s.Passkeys) == 0 {
 		return SecurityResult{}, ErrSecurity
 	}
-	b, _, err := a.readSecurity(ctx)
+	w, err := webAuthnForBinding(origin, s.RPID)
 	if err != nil {
 		return SecurityResult{}, err
 	}
-	options, data, err := a.security.web.BeginDiscoverableLogin()
+	options, data, err := w.BeginDiscoverableLogin()
 	if err != nil {
 		return SecurityResult{}, err
 	}
-	id, err := a.putChallenge(securityChallenge{Kind: "login", Session: SourceKey(from).String(), Generation: b.Generation, Data: data})
+	id, err := a.putChallenge(securityChallenge{Kind: "login", Session: SourceKey(from).String(), Generation: b.Generation, Origin: origin, RPID: s.RPID, Data: data})
 	raw, _ := json.Marshal(options)
 	return SecurityResult{ChallengeID: id, OptionsJSON: string(raw)}, err
 }
-func (a *Auth) verifyAssertion(s *securityState, c securityChallenge, raw string) error {
+func (a *Auth) verifyAssertion(ctx context.Context, s *securityState, c securityChallenge, raw string) error {
+	w, err := challengeWebAuthn(ctx, c)
+	if err != nil || s.Origin != c.Origin || s.RPID != c.RPID {
+		return ErrSecurity
+	}
 	r, err := http.NewRequest(http.MethodPost, "https://localhost", strings.NewReader(raw))
 	if err != nil {
 		return err
 	}
-	credential, err := a.security.web.FinishDiscoverableLogin(func(rawID, userHandle []byte) (webauthn.User, error) {
+	credential, err := w.FinishDiscoverableLogin(func(rawID, userHandle []byte) (webauthn.User, error) {
 		if len(s.UserID) == 0 || !bytes.Equal(userHandle, s.UserID) {
 			return nil, ErrSecurity
 		}
@@ -387,16 +382,13 @@ func (a *Auth) FinishPasskeyLogin(ctx context.Context, id, raw string, from neti
 			a.loginGate.Unlock()
 		}
 	}()
-	if a.security.web == nil {
-		return "", ErrSecurity
-	}
 	b, s, err := a.readSecurity(ctx)
 	if err != nil {
 		return "", err
 	}
 	c, err := a.takeChallenge(id, "login", SourceKey(from).String(), b.Generation)
 	if err == nil {
-		err = a.verifyAssertion(&s, c, raw)
+		err = a.verifyAssertion(ctx, &s, c, raw)
 	}
 	if err != nil {
 		a.mu.Lock()
@@ -424,7 +416,11 @@ func (a *Auth) proveSecurity(ctx context.Context, b store.AdminSecurity, s *secu
 		return err
 	}
 	if in.ProofToken != "" {
-		_, err := a.takeChallenge(in.ProofToken, "proof", session, b.Generation)
+		c, err := a.takeChallenge(in.ProofToken, "proof", session, b.Generation)
+		origin, reason := currentWebAuthnOrigin(ctx)
+		if reason != "" || origin == "" || c.Origin != origin || c.RPID != s.RPID || !validPasskeyBinding(c.Origin, c.RPID) {
+			return ErrSecurity
+		}
 		return err
 	}
 	phc, locked, err := a.verifyLoginPassword(ctx, in.Password, from)
@@ -452,31 +448,33 @@ func (a *Auth) SecurityAction(ctx context.Context, in SecurityInput, session str
 	h := HashToken(session)
 	b.SessionHash = &h
 	if in.Action == SecurityReauthBegin {
-		if a.security.web == nil {
+		origin, e := passkeyOrigin(ctx, s, false)
+		if e != nil || len(s.Passkeys) == 0 {
 			return out, ErrSecurity
 		}
 		if err = a.checkLoginSource(from); err != nil {
 			return out, err
 		}
-		options, data, e := a.security.web.BeginDiscoverableLogin()
+		w, e := webAuthnForBinding(origin, s.RPID)
 		if e != nil {
 			return out, e
 		}
-		out.ChallengeID, err = a.putChallenge(securityChallenge{Kind: "reauth", Session: session, Generation: b.Generation, Data: data})
+		options, data, e := w.BeginDiscoverableLogin()
+		if e != nil {
+			return out, e
+		}
+		out.ChallengeID, err = a.putChallenge(securityChallenge{Kind: "reauth", Session: session, Generation: b.Generation, Origin: origin, RPID: s.RPID, Data: data})
 		raw, _ := json.Marshal(options)
 		out.OptionsJSON = string(raw)
 		return out, err
 	}
 	if in.Action == SecurityReauthFinish {
-		if a.security.web == nil {
-			return out, ErrSecurity
-		}
 		if err = a.checkLoginSource(from); err != nil {
 			return out, err
 		}
 		c, e := a.takeChallenge(in.ChallengeID, "reauth", session, b.Generation)
 		if e == nil {
-			e = a.verifyAssertion(&s, c, in.CredentialJSON)
+			e = a.verifyAssertion(ctx, &s, c, in.CredentialJSON)
 		}
 		if e != nil {
 			a.securityFailure(ctx, from)
@@ -485,7 +483,7 @@ func (a *Auth) SecurityAction(ctx context.Context, in SecurityInput, session str
 		if err = a.commitSecurity(ctx, b, s, false, nil); err != nil {
 			return out, err
 		}
-		out.ProofToken, err = a.putChallenge(securityChallenge{Kind: "proof", Session: session, Generation: b.Generation + 1})
+		out.ProofToken, err = a.putChallenge(securityChallenge{Kind: "proof", Session: session, Generation: b.Generation + 1, Origin: c.Origin, RPID: c.RPID})
 		return out, err
 	}
 	if in.Action == SecurityTOTPEnable || in.Action == SecurityPasskeyRegister {
@@ -506,13 +504,20 @@ func (a *Auth) SecurityAction(ctx context.Context, in SecurityInput, session str
 			}
 			out.RecoveryCodes = newRecovery(&s)
 		} else {
-			if a.security.web == nil || len(in.Name) > 128 || strings.TrimSpace(in.Name) == "" {
+			w, e := challengeWebAuthn(ctx, c)
+			if e != nil || len(in.Name) > 128 || strings.TrimSpace(in.Name) == "" {
+				return out, ErrSecurity
+			}
+			if !c.Rebind && ((s.Origin != "" && (s.Origin != c.Origin || s.RPID != c.RPID)) || (s.Origin == "" && len(s.Passkeys) != 0)) {
 				return out, ErrSecurity
 			}
 			r, _ := http.NewRequest(http.MethodPost, "https://localhost", strings.NewReader(in.CredentialJSON))
-			credential, e := a.security.web.FinishRegistration(s, *c.Data, r)
+			credential, e := w.FinishRegistration(s, *c.Data, r)
 			if e != nil {
 				return out, ErrSecurity
+			}
+			if c.Rebind {
+				s.Passkeys = nil
 			}
 			for _, p := range s.Passkeys {
 				if bytes.Equal(p.Credential.ID, credential.ID) {
@@ -520,8 +525,13 @@ func (a *Auth) SecurityAction(ctx context.Context, in SecurityInput, session str
 				}
 			}
 			s.Passkeys = append(s.Passkeys, Passkey{Name: strings.TrimSpace(in.Name), Credential: *credential})
+			s.Origin = c.Origin
+			s.RPID = c.RPID
 		}
 	} else {
+		if in.Action == SecurityPasskeyRebindBegin && in.ProofToken != "" {
+			return out, ErrSecurity
+		}
 		if err = a.proveSecurity(ctx, b, &s, in, session, from); err != nil {
 			return out, err
 		}
@@ -541,8 +551,23 @@ func (a *Auth) SecurityAction(ctx context.Context, in SecurityInput, session str
 			}
 			out.ChallengeID, err = a.putChallenge(securityChallenge{Kind: "totp", Session: session, Generation: b.Generation + 1, Secret: out.TOTPSecret})
 			return out, err
-		case SecurityPasskeyBegin:
-			if a.security.web == nil || len(s.Passkeys) >= 20 {
+		case SecurityPasskeyBegin, SecurityPasskeyRebindBegin:
+			rebind := in.Action == SecurityPasskeyRebindBegin
+			origin, reason := currentWebAuthnOrigin(ctx)
+			if reason != "" || origin == "" || (rebind && s.Origin == "" && s.RPID == "" && len(s.Passkeys) == 0) {
+				return out, ErrSecurity
+			}
+			if !rebind {
+				if _, e := passkeyOrigin(ctx, s, true); e != nil || len(s.Passkeys) >= 20 {
+					return out, ErrSecurity
+				}
+			}
+			_, rpID, e := normalizePasskeyOrigin(origin)
+			if e != nil {
+				return out, ErrSecurity
+			}
+			w, e := webAuthnForBinding(origin, rpID)
+			if e != nil {
 				return out, ErrSecurity
 			}
 			if len(s.UserID) == 0 {
@@ -551,14 +576,18 @@ func (a *Auth) SecurityAction(ctx context.Context, in SecurityInput, session str
 					return out, err
 				}
 			}
-			options, data, e := a.security.web.BeginRegistration(s)
+			registration := s
+			if rebind {
+				registration.Passkeys = nil
+			}
+			options, data, e := w.BeginRegistration(registration)
 			if e != nil {
 				return out, e
 			}
 			if err = a.commitSecurity(ctx, b, s, false, nil); err != nil {
 				return out, err
 			}
-			out.ChallengeID, err = a.putChallenge(securityChallenge{Kind: "register", Session: session, Generation: b.Generation + 1, Data: data})
+			out.ChallengeID, err = a.putChallenge(securityChallenge{Kind: "register", Session: session, Generation: b.Generation + 1, Origin: origin, RPID: rpID, Rebind: rebind, Data: data})
 			raw, _ := json.Marshal(options)
 			out.OptionsJSON = string(raw)
 			return out, err

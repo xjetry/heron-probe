@@ -233,22 +233,18 @@ func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
 	}
 }
 
-// serve 把 --theme-origin 与"是否给了 --public-dir"交给管理服务：没配 origin 时主题方法 FailedPrecondition；配了就能调，
-// ListThemes 回显规范形态的 origin 与 public_dir，面板据此给出主题的地址与"主 origin 被目录接管"的提示。
-func TestServePassesThemeOriginToAdmin(t *testing.T) {
+// 主题管理无需额外域名参数；public-dir 只限制启用，不使已安装主题失去管理入口。
+func TestServeThemesAreAvailableWithoutOriginConfiguration(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("site"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
 		flags     []string
-		want      connect.Code
-		origin    string
 		publicDir bool
 	}{
-		{nil, connect.CodeFailedPrecondition, "", false},
-		{[]string{"--theme-origin", "https://Status.Example.com/"}, 0, "https://status.example.com", false},
-		{[]string{"--theme-origin", "http://status.example.com:8081", "--public-dir", dir}, 0, "http://status.example.com:8081", true},
+		{nil, false},
+		{[]string{"--public-dir", dir}, true},
 	} {
 		t.Run(fmt.Sprint(tc.flags), func(t *testing.T) {
 			db := filepath.Join(t.TempDir(), "hub.db")
@@ -265,11 +261,21 @@ func TestServePassesThemeOriginToAdmin(t *testing.T) {
 			req := connect.NewRequest(&heronv1.ListThemesRequest{})
 			req.Header().Set("Cookie", strings.Split(logged.Header().Get("Set-Cookie"), ";")[0])
 			resp, err := client.ListThemes(t.Context(), req)
-			if got := connect.CodeOf(err); (err == nil && tc.want != 0) || (err != nil && got != tc.want) {
-				t.Fatalf("ListThemes with flags %v: %v, want code %v", tc.flags, err, tc.want)
+			if err != nil {
+				t.Fatalf("ListThemes without origin: %v", err)
 			}
-			if err == nil && (resp.Msg.GetThemeOrigin() != tc.origin || resp.Msg.GetPublicDir() != tc.publicDir) {
-				t.Fatalf("ListThemes with flags %v: theme_origin %q public_dir %v, want %q %v", tc.flags, resp.Msg.GetThemeOrigin(), resp.Msg.GetPublicDir(), tc.origin, tc.publicDir)
+			if resp.Msg.GetPublicDir() != tc.publicDir {
+				t.Fatalf("ListThemes with flags %v: public_dir %v, want %v", tc.flags, resp.Msg.GetPublicDir(), tc.publicDir)
+			}
+			enable := connect.NewRequest(&heronv1.EnableThemeRequest{Id: "uninstalled", Digest: strings.Repeat("a", 64)})
+			enable.Header().Set("Cookie", req.Header().Get("Cookie"))
+			_, err = client.EnableTheme(t.Context(), enable)
+			want := connect.CodeNotFound
+			if tc.publicDir {
+				want = connect.CodeFailedPrecondition
+			}
+			if connect.CodeOf(err) != want {
+				t.Fatalf("EnableTheme public_dir=%v: %v, want %v", tc.publicDir, err, want)
 			}
 		})
 	}
@@ -612,15 +618,23 @@ func TestServePublicDirReplacesRootButNotPanelOrRPC(t *testing.T) {
 	}
 }
 
-// --public-dir 只接管主 origin：主题 origin 上没有启用中的主题时服务的是内置公开页，而不是目录（§10.1）。经真实 serve
-// 核对 serve 交给主题 origin 的回落处理器；主 origin 同时仍是目录。
-func TestServeThemeOriginIgnoresPublicDir(t *testing.T) {
+// public-dir 是显式选择的受信页面；即使数据库保留已启用主题，也不能绕过该选择暴露第三方主题文件。
+func TestServePublicDirOverridesStoredTheme(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("custom site"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	url, _, _ := startTestHub(t, filepath.Join(t.TempDir(), "hub.db"), clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
-		"--public-dir", dir, "--theme-origin", "https://status.example.com")
+	db := filepath.Join(t.TempDir(), "hub.db")
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	st, err := store.Open(db, clk, slog.Default(), store.MigrateSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installTheme(t, st, "stored", map[string]string{"index.html": "stored theme"})
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	url, _, _ := startTestHub(t, db, clk, "--public-dir", dir)
 	fetch := func(host string) (int, string) {
 		t.Helper()
 		req, err := http.NewRequest(http.MethodGet, url+"/nodes/3", nil)
@@ -639,12 +653,9 @@ func TestServeThemeOriginIgnoresPublicDir(t *testing.T) {
 		}
 		return resp.StatusCode, string(b)
 	}
-	want := httptest.NewRecorder()
-	web.PublicHandler().ServeHTTP(want, httptest.NewRequest(http.MethodGet, "/nodes/3", nil))
-	if code, body := fetch("status.example.com"); code != want.Code || body != want.Body.String() {
-		t.Fatalf("theme origin /nodes/3: %d %q, want the built-in public page %d %q", code, body, want.Code, want.Body.String())
-	}
-	if code, body := fetch(strings.TrimPrefix(url, "http://")); code != http.StatusOK || body != "custom site" {
-		t.Fatalf("main origin /nodes/3: %d %q, want the --public-dir page", code, body)
+	for _, host := range []string{"status.example.com", strings.TrimPrefix(url, "http://")} {
+		if code, body := fetch(host); code != http.StatusOK || body != "custom site" {
+			t.Fatalf("Host %s /nodes/3: %d %q, want public-dir page", host, code, body)
+		}
 	}
 }

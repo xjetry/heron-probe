@@ -28,7 +28,7 @@ func TestParseAcceptsAMinimalPackageWithDirectoriesAndPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (theme.Manifest{ID: "night-sky", Name: "Night Sky", Version: "2.1.0", Preview: "shots/preview.png"}); got.Manifest != want {
+	if want := (theme.Manifest{SDK: theme.SDKVersion, ID: "night-sky", Name: "Night Sky", Version: "2.1.0", Preview: "shots/preview.png"}); got.Manifest != want {
 		t.Fatalf("manifest = %+v, want %+v", got.Manifest, want)
 	}
 	var paths []string

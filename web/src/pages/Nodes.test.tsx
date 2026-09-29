@@ -7,7 +7,7 @@ import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Nodes } from "./Nodes";
 import { AdminService, CountrySource, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema, type ListNodesRequest } from "../gen/heron/v1/admin_pb";
 import { sameTag } from "../lib/tags";
-import { BillingCycle } from "../gen/heron/v1/types_pb";
+import { AddressDetectionState, BillingCycle } from "../gen/heron/v1/types_pb";
 
 const two = [
   { id: 1n, name: "a", public: false, note: "", sortOrder: 0, createdAt: 0n, trafficResetDay: 1, offlineGraceS: 90 },
@@ -27,6 +27,64 @@ const renderNodes = (impl: AdminImpl, routes: Parameters<typeof renderWithAdmin>
   renderWithAdmin({ getSnapshot: snapshotOf("v1.1.0"), listTags: async () => ({ tags: [] }), ...impl }, routes, "/nodes");
 
 describe("Nodes", () => {
+
+  it("双栈结果区分地址、不支持、失败与未上报，并在详情显示探测时间", async () => {
+    renderNodes({ listNodes: async () => ({ nodes: [
+      { ...two[0], facts: { network: { ipv4: { state: AddressDetectionState.AVAILABLE, address: "8.8.8.8", checkedAt: 1790679000n }, ipv6: { state: AddressDetectionState.UNSUPPORTED, checkedAt: 1790679000n } } } },
+      { ...two[1], facts: { network: { ipv4: { state: AddressDetectionState.FAILED, checkedAt: 1790679000n } } } },
+    ] }) });
+    const a = within((await screen.findByRole("link", { name: "a（#1）" })).closest("tr")!);
+    expect(a.getByLabelText("IPv4")).toHaveTextContent("8.8.8.8");
+    expect(a.getByLabelText("IPv6")).toHaveTextContent("不支持");
+    const b = within(screen.getByRole("link", { name: "b（#2）" }).closest("tr")!);
+    expect(b.getByLabelText("IPv4")).toHaveTextContent("探测失败");
+    expect(b.getByLabelText("IPv6")).toHaveTextContent("等待上报");
+    fireEvent.click(a.getByRole("button", { name: "编辑 a（#1）" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("IPv4").querySelector("time")).toHaveAttribute("datetime", "2026-09-29T10:50:00.000Z");
+  });
+
+  it("打开单一弹窗后不能切换节点，取消与 Escape 关闭时不提交", async () => {
+    const updateNode = vi.fn(async () => ({}));
+    renderNodes({ listNodes: async () => ({ nodes: two }), updateNode });
+    fireEvent.click(await screen.findByRole("button", { name: "编辑 a（#1）" }));
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "编辑 b（#2）" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("编辑节点 · a（#1）");
+    fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "discarded" } });
+    fireEvent(screen.getByRole("dialog"), new Event("cancel", { bubbles: true, cancelable: true }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(updateNode).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    expect(screen.getByLabelText("名称 a（#1）")).toHaveValue("a");
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("独立计费保存保留基础信息、标签、国家与宽限期", async () => {
+    const updateNode = vi.fn(async () => ({}));
+    renderNodes({ listNodes: async () => ({ nodes: [{ ...two[0], note: "保留", countryPin: "JP", tags: ["prod"] }] }), updateNode });
+    fireEvent.click(await screen.findByRole("button", { name: "计费 a（#1）" }));
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("计费设置 · a（#1）");
+    expect(screen.queryByLabelText("名称 a（#1）")).toBeNull();
+    fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("币种 a（#1）"), { target: { value: "usd" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, name: "a", public: false, note: "保留", countryPin: "JP", tags: ["prod"], offlineGraceS: 90, trafficResetDay: 1, billing: expect.objectContaining({ price: "5", currency: "USD" }) }), expect.anything()));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("来源 IP 在编辑诊断中保留，未记录时明确提示", async () => {
+    renderNodes({ listNodes: async () => ({ nodes: [{ ...two[0], lastSource: "203.0.113.7" }, two[1]] }) });
+    await screen.findByRole("link", { name: "a（#1）" });
+    expect(screen.getByRole("columnheader", { name: "IP 地址" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    expect(within(screen.getByRole("dialog")).getByText("203.0.113.7")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
+    expect(within(screen.getByRole("dialog")).getByText("尚未记录来源")).toBeInTheDocument();
+  });
 
   it.each(["ALPHA", "CUSTOMER", "HOSTNAME"])("搜索 %s 后只显示命中节点，清空恢复全部", async (search) => {
     const matching = { ...two[0], name: "alpha", note: "customer", facts: { hostname: "hostname.internal" } };
@@ -114,7 +172,7 @@ describe("Nodes", () => {
     });
     expect(await screen.findByRole("alert")).toHaveTextContent(/落后标记不可用.*snapshot unavailable/);
     expect(screen.getByRole("link", { name: "a（#1）" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "创建" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "添加节点" })).toBeInTheDocument();
     expect(screen.queryByText("落后于 hub")).toBeNull();
   });
 
@@ -160,7 +218,7 @@ describe("Nodes", () => {
     expect(screen.queryByRole("region", { name: "节点管理" })).toBeNull();
     expect(screen.getByRole("searchbox", { name: "搜索节点" })).toBeInTheDocument();
     expect(await screen.findByRole("checkbox", { name: "按标签过滤 db" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "创建" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "添加节点" })).toBeInTheDocument();
   });
 
   it("确认删除在列表刷新完成前保持禁用", async () => {
@@ -176,7 +234,7 @@ describe("Nodes", () => {
     const button = screen.getByRole("button", { name: "确认删除 a（#1）" });
     vi.useFakeTimers();
     try {
-      await act(async () => { fireEvent.click(button); await vi.runAllTimersAsync(); });
+      await act(async () => { fireEvent.click(button); await vi.advanceTimersByTimeAsync(100); });
       expect(listNodes).toHaveBeenCalledTimes(2);
       expect(screen.getByRole("button", { name: "确认删除 a（#1）" })).toBeDisabled();
     } finally { vi.useRealTimers(); await act(async () => { release(); }); }
@@ -210,7 +268,7 @@ describe("Nodes", () => {
     try {
       await act(async () => {
         fireEvent.click(screen.getByRole("button", { name: operation === "rotate" ? "换 token a（#1）" : "下移 a（#1）" }));
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(100);
       });
       expect(listNodes).toHaveBeenCalledTimes(2);
       if (operation === "rotate") expect(queryClient.isMutating()).toBe(1);
@@ -220,7 +278,7 @@ describe("Nodes", () => {
     if (operation === "reorder") await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
   });
 
-  it("A 行保存挂起时 B 行保存禁用，刷新完成才关闭 A 行", async () => {
+  it("保存挂起时禁止切换和关闭，刷新完成才关闭弹窗", async () => {
     let releaseSave!: () => void;
     let releaseList!: () => void;
     const saveGate = new Promise<void>((r) => { releaseSave = r; });
@@ -229,23 +287,43 @@ describe("Nodes", () => {
     const listNodes = vi.fn(async () => { if (listNodes.mock.calls.length > 1) await listGate; return { nodes: current }; });
     const updateNode = vi.fn(async () => { await saveGate; current = [{ ...two[0], name: "changed" }, two[1]]; return {}; });
     renderNodes({ listNodes, updateNode });
-    await screen.findByRole("link", { name: "a（#1）" });
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
-    fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
+    fireEvent.click(await screen.findByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "changed" } });
-    const [a, b] = screen.getAllByRole("button", { name: "保存" });
-    const aRow = a.closest("tr")!;
-    fireEvent.click(a);
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
     try {
       await waitFor(() => expect(updateNode).toHaveBeenCalledTimes(1));
-      expect(b).toBeDisabled();
+      expect(screen.getByRole("button", { name: "编辑 b（#2）" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
+      fireEvent(screen.getByRole("dialog"), new Event("cancel", { bubbles: true, cancelable: true }));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
       vi.useFakeTimers();
-      await act(async () => { releaseSave(); await vi.runAllTimersAsync(); });
+      await act(async () => { releaseSave(); await vi.advanceTimersByTimeAsync(100); });
       expect(listNodes).toHaveBeenCalledTimes(2);
-      expect(within(aRow).queryByRole("button", { name: "保存" })).toBeInTheDocument();
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
     } finally { vi.useRealTimers(); await act(async () => { releaseSave(); releaseList(); }); }
-    expect(await screen.findByRole("link", { name: "changed（#1）" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "保存" })).toEqual([b]);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByRole("link", { name: "changed（#1）" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "编辑 b（#2）" })).toBeEnabled();
+  });
+
+  it.each(["编辑", "计费"])("%s保存成功但回读失败时保留草稿并说明已经保存", async (mode) => {
+    let failRead = false;
+    const updateNode = vi.fn(async () => { failRead = true; return {}; });
+    renderNodes({ listNodes: async () => {
+      if (failRead) throw new ConnectError("readback unavailable", Code.Unavailable);
+      return { nodes: two };
+    }, updateNode });
+    fireEvent.click(await screen.findByRole("button", { name: `${mode} a（#1）` }));
+    const field = screen.getByLabelText(`${mode === "编辑" ? "名称" : "价格"} a（#1）`);
+    const value = mode === "编辑" ? "draft" : "12.50";
+    fireEvent.change(field, { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await screen.findByText(/已保存，但回读失败/);
+    expect(field).toHaveValue(value);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
+    expect(updateNode).toHaveBeenCalledTimes(1);
   });
 
   it("最新操作清掉创建旧错误，编辑失败显示自己的正文", async () => {
@@ -255,9 +333,11 @@ describe("Nodes", () => {
       updateNode: async () => { if (rejectEdit) throw new ConnectError("edit rejected", Code.InvalidArgument); return {}; },
     });
     await screen.findByRole("link", { name: "a（#1）" });
+    fireEvent.click(screen.getByRole("button", { name: "添加节点" }));
     fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "x" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/^create rejected$/);
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(screen.queryByLabelText("名称 a（#1）")).toBeNull());
@@ -308,9 +388,10 @@ describe("Nodes", () => {
     expect(screen.getByText("若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。")).toBeInTheDocument();
   });
 
-  it("列表显示重置日", async () => {
+  it("编辑回显重置日", async () => {
     renderNodes({ listNodes: async () => ({ nodes: [{ ...two[0], trafficResetDay: 20 }] }) });
-    expect(await screen.findByRole("cell", { name: "每月 20 日" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "编辑 a（#1）" }));
+    expect(screen.getByLabelText("重置日 a（#1）")).toHaveValue(20);
   });
 
   it("变更只失效节点列表，不失效快照与注册窗口", async () => {
@@ -321,6 +402,7 @@ describe("Nodes", () => {
     queryClient.setQueryData(snapshotKey, create(GetSnapshotResponseSchema));
     queryClient.setQueryData(windowKey, create(GetRegisterWindowResponseSchema));
     await screen.findByRole("link", { name: "a（#1）" });
+    fireEvent.click(screen.getByRole("button", { name: "添加节点" }));
     fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
     await waitFor(() => expect(listNodes).toHaveBeenCalledTimes(2));
@@ -362,7 +444,8 @@ describe("Nodes", () => {
     renderNodes({ listNodes: source === "list" ? fail : async () => ({ nodes: two }), createNode: fail });
     if (source === "create") {
       await screen.findByRole("link", { name: "a（#1）" });
-      fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
+      fireEvent.click(screen.getByRole("button", { name: "添加节点" }));
+    fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
       fireEvent.click(screen.getByRole("button", { name: "创建" }));
     }
     expect(await screen.findByRole("alert")).toHaveTextContent(/^request failed$/);
@@ -373,6 +456,7 @@ describe("Nodes", () => {
       { path: "/nodes", Component: Nodes }, { path: "/away", element: <h1>away</h1> },
     ]);
     await screen.findByRole("link", { name: "a（#1）" });
+    fireEvent.click(screen.getByRole("button", { name: "添加节点" }));
     fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
     expect(await screen.findByLabelText("节点 c（#3） 的 token")).toHaveTextContent("deadbeef");
@@ -391,6 +475,7 @@ describe("Nodes", () => {
       deleteNode: async () => ({}),
     });
     await screen.findByRole("link", { name: "c（#3）" });
+    fireEvent.click(screen.getByRole("button", { name: "添加节点" }));
     fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
     expect(await screen.findByLabelText("节点 c（#3） 的 token")).toBeInTheDocument();
@@ -422,18 +507,19 @@ describe("Nodes", () => {
     await waitFor(() => expect(deleteNode).toHaveBeenCalledWith(expect.objectContaining({ id: 11n }), expect.anything()));
   });
 
-  it("同名节点同时编辑时保存的是被改的那一行", async () => {
+  it("同名节点先取消再编辑时按 id 保存正确目标", async () => {
     const sameName = [two[0], { ...two[1], id: 11n, name: "a" }];
     const updateNode = vi.fn(async () => ({}));
     renderNodes({ listNodes: async () => ({ nodes: sameName }), updateNode });
     await screen.findAllByRole("link", { name: /^a（#/ });
     const edits = screen.getAllByRole("button", { name: /^编辑 a/ });
     fireEvent.click(edits[0]);
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
     fireEvent.click(edits[1]);
     // 带 id 时只命中第二行；名称不含 id 时两行同名，getBy 必须报多个。
     const nameInput = screen.getByLabelText((label) => label === "名称 a（#11）" || label === "名称 a");
     fireEvent.change(nameInput, { target: { value: "renamed" } });
-    fireEvent.click(within(nameInput.closest("tr")!).getByRole("button", { name: "保存" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "保存" }));
     await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 11n, name: "renamed" }), expect.anything()));
   });
 
@@ -472,14 +558,16 @@ describe("Nodes", () => {
       { ...two[0], id: 4n, name: "d", country: "DE", countrySource: CountrySource.MANUAL, countryPin: "DE" },
     ];
     const row = async (name: string) => within((await screen.findByRole("link", { name })).closest("tr")!);
-    const countryCell = async (name: string) => (await row(name)).getAllByRole("cell")[column("国家 / 地区")];
+    const countryCell = async (name: string) => (await row(name)).getByLabelText(`国家 / 地区 ${name}`);
 
     it("列出显示值的徽章、来源与查得值，手动指定时查得值与它所属的地址照写，没有国家是破折号", async () => {
       renderNodes({ listNodes: async () => ({ nodes: located }) });
-      expect(await countryCell("a（#1）")).toHaveTextContent(/^\u{1F1FA}\u{1F1F8} US 查得于 8\.8\.8\.8$/u);
-      expect(await countryCell("b（#2）")).toHaveTextContent(/^\u{1F1EF}\u{1F1F5} JP 手动指定；查得 US（于 8\.8\.4\.4）$/u);
-      expect(await countryCell("c（#3）")).toHaveTextContent(/^—$/);
-      expect(await countryCell("d（#4）")).toHaveTextContent(/^\u{1F1E9}\u{1F1EA} DE 手动指定$/u);
+      expect(await countryCell("a（#1）")).toHaveTextContent(/^\u{1F1FA}\u{1F1F8} US$/u);
+      expect(await countryCell("a（#1）")).toHaveAttribute("title", "查得于 8.8.8.8");
+      expect(await countryCell("b（#2）")).toHaveTextContent(/^\u{1F1EF}\u{1F1F5} JP$/u);
+      expect(await countryCell("b（#2）")).toHaveAttribute("title", "手动指定；查得 US（于 8.8.4.4）");
+      expect(await countryCell("c（#3）")).toHaveTextContent("地区未知");
+      expect(await countryCell("d（#4）")).toHaveAttribute("title", "手动指定");
     });
 
     it("编辑表单回显手动值并转成大写提交；只改别的字段时手动值按当前值回传；提示查得值与它所属的地址", async () => {
@@ -494,7 +582,8 @@ describe("Nodes", () => {
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
       await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 2n, note: "moved", countryPin: "JP" }), expect.anything()));
 
-      fireEvent.click(await screen.findByRole("button", { name: "编辑 a（#1）" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
       expect(screen.getByLabelText("手动指定国家 / 地区 a（#1）")).toHaveValue("");
       fireEvent.change(screen.getByLabelText("手动指定国家 / 地区 a（#1）"), { target: { value: "de" } });
       expect(screen.getByLabelText("手动指定国家 / 地区 a（#1）")).toHaveValue("DE");
@@ -526,27 +615,26 @@ describe("Nodes", () => {
         { ...two[0], id: 3n, name: "c" },
       ] }) });
       const row = async (name: string) => within((await screen.findByRole("link", { name })).closest("tr")!);
-      expect((await row("a（#1）")).getByRole("cell", { name: "USD 12.50 / 月 · 2026-10-01（剩 4 天） · 自动续期" })).toBeInTheDocument();
+      expect((await row("a（#1）")).getByRole("cell", { name: "USD 12.50 / 月 自动续期" })).toBeInTheDocument();
       expect((await row("a（#1）")).getByText("2026-10-01（剩 4 天）")).not.toHaveClass("error");
       expect((await row("b（#2）")).getByText("2026-09-24（已过期 3 天）")).toHaveClass("error");
-      expect((await row("c（#3）")).getAllByRole("cell")[column("计费")]).toHaveTextContent(/^—$/);
+      expect((await row("c（#3）")).getAllByRole("cell")[column("计费")]).toHaveTextContent("未设置");
     });
 
     it("编辑计费随整行整体提交，币种输入即转大写", async () => {
       const updateNode = vi.fn(async () => ({}));
       renderNodes({ listNodes: async () => ({ nodes: two }), updateNode });
       await screen.findByRole("link", { name: "a（#1）" });
-      fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+      fireEvent.click(screen.getByRole("button", { name: "计费 a（#1）" }));
       fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "12.50" } });
       fireEvent.change(screen.getByLabelText("币种 a（#1）"), { target: { value: "usd" } });
       fireEvent.change(screen.getByLabelText("周期 a（#1）"), { target: { value: String(BillingCycle.YEARLY) } });
       fireEvent.change(screen.getByLabelText("到期日 a（#1）"), { target: { value: "2027-01-31" } });
       fireEvent.click(screen.getByLabelText("自动续期 a（#1）"));
       expect(screen.getByLabelText("币种 a（#1）")).toHaveValue("USD");
-      fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "a2" } });
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
       await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({
-        id: 1n, name: "a2", billing: expect.objectContaining({ price: "12.50", currency: "USD", billingCycle: BillingCycle.YEARLY, expiresOn: "2027-01-31", autoRenew: true }),
+        id: 1n, name: "a", billing: expect.objectContaining({ price: "12.50", currency: "USD", billingCycle: BillingCycle.YEARLY, expiresOn: "2027-01-31", autoRenew: true }),
       }), expect.anything()));
     });
 
@@ -555,7 +643,7 @@ describe("Nodes", () => {
       const current = { ...two[0], billing: { price: "9", currency: "EUR", billingCycle: BillingCycle.QUARTERLY, expiresOn: "2026-12-01", daysLeft: 60, autoRenew: true } };
       renderNodes({ listNodes: async () => ({ nodes: [current] }), updateNode });
       await screen.findByRole("link", { name: "a（#1）" });
-      fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+      fireEvent.click(screen.getByRole("button", { name: "计费 a（#1）" }));
       expect({
         price: (screen.getByLabelText("价格 a（#1）") as HTMLInputElement).value,
         currency: (screen.getByLabelText("币种 a（#1）") as HTMLInputElement).value,
@@ -579,7 +667,7 @@ describe("Nodes", () => {
       const updateNode = vi.fn(async () => { throw new ConnectError(message, Code.InvalidArgument); });
       renderNodes({ listNodes: async () => ({ nodes: two }), updateNode });
       await screen.findByRole("link", { name: "a（#1）" });
-      fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+      fireEvent.click(screen.getByRole("button", { name: "计费 a（#1）" }));
       fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "12.50" } });
       fireEvent.change(screen.getByLabelText("币种 a（#1）"), { target: { value: "us" } });
       fireEvent.change(screen.getByLabelText("周期 a（#1）"), { target: { value: String(BillingCycle.MONTHLY) } });
@@ -598,12 +686,13 @@ describe("Nodes", () => {
     });
   });
 
-  it("宽限期列显示默认与秒数", async () => {
+  it("宽限期编辑显示当前秒数与默认值", async () => {
     renderNodes({ listNodes: async () => ({ nodes: two }) });
-    const a = within((await screen.findByRole("link", { name: "a（#1）" })).closest("tr")!);
-    expect(a.getByRole("cell", { name: "90 秒" })).toBeInTheDocument();
-    const b = within(screen.getByRole("link", { name: "b（#2）" }).closest("tr")!);
-    expect(b.getByRole("cell", { name: "默认" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "编辑 a（#1）" }));
+    expect(screen.getByLabelText("离线宽限期（秒） a（#1）")).toHaveValue(90);
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
+    expect(screen.getByLabelText("离线宽限期（秒） b（#2）")).toHaveValue(0);
   });
 
   it("编辑宽限期与非宽限期节点的保存载荷", async () => {
@@ -625,11 +714,10 @@ describe("Nodes", () => {
     try {
       await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, offlineGraceS: 120 }), expect.anything()));
       await waitFor(() => expect(listNodes).toHaveBeenCalledTimes(2));
-      // 刷新被闸住期间 A 仍在编辑；其它行的编辑按钮随时可用，不能作为 A 已退出的依据。
-      expect(screen.queryByRole("button", { name: "编辑 a（#1）" })).toBeNull();
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "编辑 b（#2）" })).toBeDisabled();
     } finally { await act(async () => { releaseList(); }); }
-    // A 保存与列表刷新都完成后才退出编辑，"编辑 a（#1）"重新出现。
-    await screen.findByRole("button", { name: "编辑 a（#1）" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
     fireEvent.change(screen.getByLabelText("名称 b（#2）"), { target: { value: "b2" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -647,8 +735,9 @@ describe("Nodes", () => {
     fireEvent.change(screen.getByLabelText("离线宽限期（秒） a（#1）"), { target: { value: "0" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, offlineGraceS: 0 }), expect.anything()));
-    const a = within((await screen.findByRole("link", { name: "a（#1）" })).closest("tr")!);
-    expect(a.getByRole("cell", { name: "默认" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    expect(screen.getByLabelText("离线宽限期（秒） a（#1）")).toHaveValue(0);
   });
 
   it("非法宽限期禁用保存", async () => {
@@ -704,8 +793,8 @@ describe("Nodes", () => {
     it("标签列显示节点的标签，没有标签是 —", async () => {
       renderNodes({ listNodes: async () => ({ nodes: [tagged[1], two[0]] }), listTags: tagList });
       const row = async (name: string) => within((await screen.findByRole("link", { name })).closest("tr")!);
-      expect((await row("beta（#2）")).getAllByRole("cell")[column("标签")]).toHaveTextContent(/^dbweb$/);
-      expect((await row("a（#1）")).getAllByRole("cell")[column("标签")]).toHaveTextContent(/^—$/);
+      expect((await row("beta（#2）")).getByLabelText("标签 beta（#2）")).toHaveTextContent(/^dbweb$/);
+      expect((await row("a（#1）")).getByLabelText("标签 a（#1）")).toBeEmptyDOMElement();
     });
 
     it("多选过滤按所选全部标签请求 hub 并列出交集，过滤中禁用排序，清除后恢复全部", async () => {
@@ -849,7 +938,7 @@ describe("Nodes", () => {
       expect(filterBox("web")).toBeChecked();
       expect(screen.getByLabelText("名称 alpha（#1）")).toBe(input);
       expect(input).toHaveValue("尚未保存");
-      expect(shown()).toEqual(["beta", "gamma"]);
+      expect(shown()).toEqual(["alpha", "beta", "gamma"]);
       fireEvent.click(filterBox("web"));
       await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
       expect(screen.getByLabelText("名称 alpha（#1）")).toBe(input);

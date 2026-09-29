@@ -32,6 +32,8 @@ type Runner struct {
 	Results *prober.Queue
 	// Interval 是收到第一个响应之前使用的间隔；之后用 hub 下发的，经 agentwire.ClampReportInterval 限定。
 	Interval time.Duration
+	// Network 只读后台检测结果；为空时不做出口探测，保持采集循环无额外网络依赖。
+	Network interface{ Snapshot() *heronv1.NetworkInfo }
 }
 
 func sleepReal(ctx context.Context, d time.Duration) error {
@@ -81,6 +83,9 @@ func (r *Runner) Run(ctx context.Context) error {
 		req.Header().Set("Authorization", "Bearer "+r.Token)
 		// Facts 只读几个小文件；每轮重算才能让 hub 从摘要变化发现运行期间的变更。
 		f := r.Collector.Facts()
+		if r.Network != nil {
+			f.Network = r.Network.Snapshot()
+		}
 		hash := FactsHash(f)
 		if sendFacts {
 			req.Msg.Facts = f

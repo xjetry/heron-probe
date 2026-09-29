@@ -9,3 +9,9 @@ afterEach(cleanup);
 
 // 上界只为挂死时能结束，不参与被测性质。显式传入 timeout 的查找不受这里影响。
 configure({ asyncUtilTimeout });
+
+// jsdom 不实现原生 dialog 的顶层与焦点管理；这里仅模拟 open，焦点约束在真实浏览器验收。
+if (typeof HTMLDialogElement !== "undefined") {
+  HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+  HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
+}

@@ -59,7 +59,7 @@ func (m *Manager) syncThemes(ctx context.Context, cfg store.BackupSettings, clie
 				continue
 			}
 		}
-		if err := m.st.MarkThemeUploaded(ctx, entry.ID, entry.Revision); err != nil {
+		if err := m.st.MarkThemeUploaded(ctx, entry.ID, entry.SHA256, entry.Revision); err != nil {
 			record("theme_record", err)
 		}
 	}

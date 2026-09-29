@@ -3,7 +3,6 @@ package store
 import (
 	"database/sql"
 	"log/slog"
-	"maps"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -117,8 +116,8 @@ func TestRestoreRecordMigration(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if got := enabledColumn(t, migrated); !maps.Equal(got, map[string]int{"kept": 1}) {
-		t.Errorf("theme.enabled after restore record migration = %v, want kept=1", got)
+	if current, _, err := migrated.ThemeSelection(t.Context()); err != nil || current.ID != "" {
+		t.Errorf("legacy theme selection = %+v %v, want builtin", current, err)
 	}
 	var count int
 	if err := migrated.r.QueryRow("SELECT count(*) FROM restore_record").Scan(&count); err != nil || count != 0 {

@@ -15,7 +15,7 @@ import (
 var configSnapshotTables = []string{
 	"node", "node_facts", "traffic", "probe_task", "probe_task_node", "probe_meta",
 	"alert_rule", "alert_rule_node", "alert_rule_channel", "alert_state", "alert_event", "alert_delivery",
-	"notify_channel", "setting", "admin", "admin_security", "api_token", "tag", "node_tag", "theme", "restore_record", "probe_task_tag", "alert_rule_tag",
+	"notify_channel", "setting", "admin", "admin_security", "api_token", "tag", "node_tag", "theme", "theme_version", "theme_selection", "restore_record", "probe_task_tag", "alert_rule_tag",
 }
 
 var metricsSnapshotTables = []string{
@@ -111,24 +111,28 @@ func (s *Store) snapshot(ctx context.Context, path, layer string, tables []strin
 		}
 	}
 	if layer == "config" {
-		if _, err := tx.ExecContext(ctx, "CREATE TABLE snap.snapshot_theme (theme_id TEXT PRIMARY KEY, sha256 TEXT NOT NULL)"); err != nil {
+		if _, err := tx.ExecContext(ctx, "CREATE TABLE snap.snapshot_theme (theme_id TEXT NOT NULL, digest TEXT NOT NULL, sha256 TEXT NOT NULL, PRIMARY KEY(theme_id,digest))"); err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, "SELECT t.id,p.content,p.revision FROM main.theme t LEFT JOIN main.theme_package p ON p.theme_id=t.id ORDER BY t.id")
+		rows, err := tx.QueryContext(ctx, "SELECT v.theme_id,v.digest,p.content,p.revision FROM main.theme_version v LEFT JOIN main.theme_package p ON p.theme_id=v.theme_id AND p.digest=v.digest ORDER BY v.theme_id,v.digest")
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
-			var id string
+			var id, versionDigest string
 			var content []byte
 			var revision sql.NullInt64
-			if err := rows.Scan(&id, &content, &revision); err != nil {
+			if err := rows.Scan(&id, &versionDigest, &content, &revision); err != nil {
 				rows.Close()
 				return err
 			}
 			digest := ""
 			if revision.Valid {
 				digest = fmt.Sprintf("%x", sha256.Sum256(content))
+				if digest != versionDigest {
+					rows.Close()
+					return fmt.Errorf("theme %q: stored package digest mismatch", id)
+				}
 				if packageSink != nil {
 					if err := packageSink(id, digest, revision.Int64, content); err != nil {
 						rows.Close()
@@ -136,7 +140,7 @@ func (s *Store) snapshot(ctx context.Context, path, layer string, tables []strin
 					}
 				}
 			}
-			if _, err := tx.ExecContext(ctx, "INSERT INTO snap.snapshot_theme VALUES (?,?)", id, digest); err != nil {
+			if _, err := tx.ExecContext(ctx, "INSERT INTO snap.snapshot_theme VALUES (?,?,?)", id, versionDigest, digest); err != nil {
 				rows.Close()
 				return err
 			}
@@ -160,7 +164,7 @@ func (s *Store) snapshot(ctx context.Context, path, layer string, tables []strin
 	if _, err := tx.ExecContext(ctx, "CREATE TABLE snap.snapshot_meta (schema_version INTEGER NOT NULL, taken_at INTEGER NOT NULL, layer TEXT NOT NULL, format_version INTEGER NOT NULL)"); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO snap.snapshot_meta VALUES (?, ?, ?, 2)", version, at, layer); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO snap.snapshot_meta VALUES (?, ?, ?, 3)", version, at, layer); err != nil {
 		return err
 	}
 	return tx.Commit()
