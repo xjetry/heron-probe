@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { PublicService } from "../gen/probe/v1/public_pb";
 import { BillingCycle } from "../gen/probe/v1/types_pb";
@@ -94,4 +94,95 @@ it("卡片名称旁是国家 / 地区徽章：旗帜由国家码算出，照写�
   expect(web.getByRole("link", { name: "web-1" })).toBeInTheDocument();
   const db = within(screen.getByRole("article", { name: "db-1" }));
   expect(db.getByRole("heading", { level: 2 })).toHaveTextContent(/^db-1$/);
+});
+
+const tagged = {
+  now: 1_000n,
+  reportIntervalMs: 4000,
+  nodes: [
+    { id: 1n, name: "web-1", online: true, sortOrder: 0, tags: ["web", "prod"] },
+    { id: 2n, name: "db-1", online: false, sortOrder: 1, tags: ["db", "prod"] },
+    { id: 3n, name: "lab-1", online: true, sortOrder: 2, tags: ["DB"] },
+    { id: 4n, name: "bare-1", online: true, sortOrder: 3, tags: [] },
+  ],
+};
+
+const shown = () => screen.queryAllByRole("article").map((a) => a.getAttribute("aria-label"));
+const chip = (name: string) => screen.getByRole("button", { name });
+
+function renderTagged(getSnapshot: () => Promise<typeof tagged> = async () => tagged) {
+  renderWithService(PublicService, { getSnapshot }, [{ path: "/", Component: PublicOverview }], "/");
+}
+
+it("标签栏：默认显示全部，标签按折叠去重", async () => {
+  renderTagged();
+  await screen.findByText("3 / 4 在线");
+  expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
+  expect(chip("全部")).toHaveAttribute("aria-pressed", "true");
+  // db 与 DB 是同一个标签：只有一个按钮，保留先出现的写法。
+  expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["全部", "db", "prod", "web"]);
+});
+
+it("没有任何节点带标签时不画标签栏", async () => {
+  renderWithService(PublicService, { getSnapshot: async () => snapshot }, [{ path: "/", Component: PublicOverview }], "/");
+  await screen.findByText("1 / 2 在线");
+  expect(screen.queryByRole("button", { name: "全部" })).toBeNull();
+});
+
+it("单击只选这一个；再点同一个回到全部；点「全部」清空", async () => {
+  renderTagged();
+  await screen.findByText("3 / 4 在线");
+  fireEvent.click(chip("prod"));
+  expect(shown()).toEqual(["web-1", "db-1"]);
+  expect(chip("prod")).toHaveAttribute("aria-pressed", "true");
+  expect(chip("全部")).toHaveAttribute("aria-pressed", "false");
+  // 顶部计数按过滤后的节点算。
+  expect(screen.getByText("1 / 2 在线")).toBeInTheDocument();
+  fireEvent.click(chip("web"));
+  expect(shown()).toEqual(["web-1"]);
+  expect(chip("prod")).toHaveAttribute("aria-pressed", "false");
+  fireEvent.click(chip("web"));
+  expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
+  fireEvent.click(chip("db"));
+  fireEvent.click(chip("全部"));
+  expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
+});
+
+it("Shift+单击在其余标签状态不变的前提下翻转被点的一个，多选取交集", async () => {
+  renderTagged();
+  await screen.findByText("3 / 4 在线");
+  fireEvent.click(chip("prod"));
+  fireEvent.click(chip("db"), { shiftKey: true });
+  expect(shown()).toEqual(["db-1"]);
+  expect(chip("prod")).toHaveAttribute("aria-pressed", "true");
+  expect(chip("db")).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(chip("prod"), { shiftKey: true });
+  // 只剩 db：DB 与 db 折叠后是同一个标签，两个节点都命中。
+  expect(shown()).toEqual(["db-1", "lab-1"]);
+  fireEvent.click(chip("db"), { shiftKey: true });
+  expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
+});
+
+it("过滤后没有节点时给出说明，标签栏仍在", async () => {
+  renderTagged();
+  await screen.findByText("3 / 4 在线");
+  fireEvent.click(chip("web"));
+  fireEvent.click(chip("db"), { shiftKey: true });
+  expect(shown()).toEqual([]);
+  expect(screen.getByText("没有符合所选标签的节点。")).toBeInTheDocument();
+  expect(chip("web")).toBeInTheDocument();
+});
+
+it("被选中的标签从快照里消失后回到显示全部，而不是留下看不见的过滤", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  let current: typeof tagged = tagged;
+  renderTagged(async () => current);
+  await screen.findByText("3 / 4 在线");
+  fireEvent.click(chip("web"));
+  expect(shown()).toEqual(["web-1"]);
+  current = { ...tagged, nodes: tagged.nodes.map((n) => ({ ...n, tags: n.tags.filter((t) => t !== "web") })) };
+  await act(async () => vi.advanceTimersByTimeAsync(POLL_MS + 100));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "web" })).toBeNull());
+  expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
+  expect(chip("全部")).toHaveAttribute("aria-pressed", "true");
 });

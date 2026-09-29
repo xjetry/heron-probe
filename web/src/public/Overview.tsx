@@ -1,4 +1,5 @@
 import { useQuery } from "@connectrpc/connect-query";
+import { useState } from "react";
 import { Link } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { Bar, Missing, ratio } from "../components/Bar";
@@ -7,23 +8,34 @@ import { PublicService, type PublicNode } from "../gen/probe/v1/public_pb";
 import { expired, expiryText, priceText } from "../lib/billing";
 import { ago, bytes, duration, percent } from "../lib/format";
 import { POLL_MS } from "../lib/poll";
+import { matchesTags, nextSelection, presentTags, sameTag } from "../lib/tags";
+import { TagBar } from "./TagBar";
 
 export function PublicOverview() {
   const snap = useQuery(PublicService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
+  const [selected, setSelected] = useState<string[]>([]);
   const gate = queryGate(snap);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const now = Number(gate.data.now);
-  const online = gate.data.nodes.filter((n) => n.online).length;
+  const all = gate.data.nodes;
+  const tags = presentTags(all);
+  // 生效的选择集只取当前快照里仍存在的标签，并换成标签栏上的写法：被选的标签在轮询后消失时，页面回到显示全部，
+  // 而不是留下一个看不见的过滤条件。状态里存的写法可能与快照当前的写法只差折叠，经这一步统一。
+  const effective = tags.filter((t) => selected.some((s) => sameTag(s, t)));
+  const nodes = all.filter((n) => matchesTags(n.tags, effective));
+  const online = nodes.filter((n) => n.online).length;
   return (
     <section>
       <header className="row">
         <h1>节点</h1>
-        <span className="muted">{online} / {gate.data.nodes.length} 在线</span>
+        <span className="muted">{online} / {nodes.length} 在线</span>
       </header>
       {gate.banner}
-      {gate.data.nodes.length === 0 && <p className="muted">没有公开的节点。</p>}
+      {tags.length > 0 && <TagBar tags={tags} selected={effective} onSelect={(t, shift) => setSelected(nextSelection(effective, t, shift))} onClear={() => setSelected([])} />}
+      {all.length === 0 && <p className="muted">没有公开的节点。</p>}
+      {all.length > 0 && nodes.length === 0 && <p className="muted">没有符合所选标签的节点。</p>}
       <div className="cards">
-        {gate.data.nodes.map((n) => <NodeCard key={String(n.id)} node={n} now={now} />)}
+        {nodes.map((n) => <NodeCard key={String(n.id)} node={n} now={now} />)}
       </div>
     </section>
   );
