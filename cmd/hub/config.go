@@ -14,7 +14,7 @@ import (
 
 	"golang.org/x/net/idna"
 
-	"github.com/xjetry/probe/internal/hub/ingest"
+	"github.com/xjetry/heron-probe/internal/hub/ingest"
 )
 
 const (
@@ -22,7 +22,7 @@ const (
 	minTTL     = ingest.MinTTL
 )
 
-// parseTTL 解析 PROBE_OFFLINE_AFTER。TTL 是离线发现延迟的上界，也是这条链上
+// parseTTL 解析 HERON_OFFLINE_AFTER。TTL 是离线发现延迟的上界，也是这条链上
 // 唯一被直接配置的量：上报间隔、退避上限、告警宽限期下限都由它反推。
 func parseTTL(s string) (time.Duration, error) {
 	if s == "" {
@@ -30,13 +30,13 @@ func parseTTL(s string) (time.Duration, error) {
 	}
 	d, err := time.ParseDuration(s)
 	if err != nil {
-		return 0, fmt.Errorf("PROBE_OFFLINE_AFTER: %w", err)
+		return 0, fmt.Errorf("HERON_OFFLINE_AFTER: %w", err)
 	}
 	if d < minTTL {
-		return 0, fmt.Errorf("PROBE_OFFLINE_AFTER: %v is below the minimum %v", d, minTTL)
+		return 0, fmt.Errorf("HERON_OFFLINE_AFTER: %v is below the minimum %v", d, minTTL)
 	}
 	if d > ingest.MaxTTL {
-		return 0, fmt.Errorf("PROBE_OFFLINE_AFTER: %v is above the maximum %v", d, ingest.MaxTTL)
+		return 0, fmt.Errorf("HERON_OFFLINE_AFTER: %v is above the maximum %v", d, ingest.MaxTTL)
 	}
 	return d, nil
 }

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
 )
 
 // 这些用例钉住会话读取的不变式：请求里多出来的 cookie（兄弟主机写进浏览器的父域同名 cookie、语法不合的邻居）
@@ -32,7 +32,7 @@ func cookieCall(t *testing.T, h *harness, method, body string, lines ...string) 
 // adminCall 用纯 HTTP+JSON 调一个 AdminService 方法，header 原样加到请求上；不带 cookie jar。
 func adminCall(t *testing.T, h *harness, method, body string, header http.Header) cookieResult {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/probe.v1.AdminService/"+method, strings.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/heron.v1.AdminService/"+method, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}

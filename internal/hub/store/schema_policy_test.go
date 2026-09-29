@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/clock"
 )
 
 func schemaPolicyFixture(t *testing.T, statements []string, version int) (string, *sql.DB) {
@@ -66,7 +66,7 @@ func TestSchemaPolicyRequiresCurrentWithoutChangingV8(t *testing.T) {
 	if st != nil {
 		st.Close()
 	}
-	want := fmt.Sprintf("database schema version 8 is older than this binary (%d); start the new probe-hub serve once to upgrade it (back up the database first)", schemaVersion)
+	want := fmt.Sprintf("database schema version 8 is older than this binary (%d); start the new heron-hub serve once to upgrade it (back up the database first)", schemaVersion)
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("RequireCurrentSchema error = %v, want %q", err, want)
 	}
@@ -178,7 +178,7 @@ func TestSchemaPolicyRejectsDatabaseWithTablesButNoVersion(t *testing.T) {
 			if _, err := raw.Exec("CREATE TABLE unrelated (id INTEGER PRIMARY KEY, note TEXT)"); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := raw.Exec("INSERT INTO unrelated (note) VALUES ('not a probe database')"); err != nil {
+			if _, err := raw.Exec("INSERT INTO unrelated (note) VALUES ('not a Heron database')"); err != nil {
 				t.Fatal(err)
 			}
 			before, err := os.ReadFile(path)
@@ -189,7 +189,7 @@ func TestSchemaPolicyRejectsDatabaseWithTablesButNoVersion(t *testing.T) {
 			if st != nil {
 				st.Close()
 			}
-			want := "not a probe database"
+			want := "not a Heron database"
 			if err == nil {
 				t.Fatalf("foreign database open error = <nil>, want to contain %q", want)
 			}
@@ -234,7 +234,7 @@ func TestSchemaPolicyRejectsNegativeVersionWithoutSuggestingServe(t *testing.T) 
 			if st != nil {
 				st.Close()
 			}
-			want := "not a probe database"
+			want := "not a Heron database"
 			if err == nil {
 				t.Fatalf("negative version open error = <nil>, want to contain %q", want)
 			}

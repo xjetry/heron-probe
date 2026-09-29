@@ -15,7 +15,7 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"github.com/xjetry/probe/internal/hub/theme"
+	"github.com/xjetry/heron-probe/internal/hub/theme"
 )
 
 // PNG 以 PNG 签名开头，http.DetectContentType 把它嗅探为 image/png。

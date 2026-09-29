@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
 )
 
 // schemaV1 是第一个发布版本的完整 DDL，逐字冻结：迁移测试用它建起旧库，

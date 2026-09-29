@@ -7,9 +7,9 @@ import (
 	"sort"
 
 	"connectrpc.com/connect"
-	"github.com/xjetry/probe/internal/hub/alert"
-	"github.com/xjetry/probe/internal/hub/probe"
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/alert"
+	"github.com/xjetry/heron-probe/internal/hub/probe"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // SQLite 的任务编号为有符号整数；拒绝不能表示的协议值，不能让它回绕成另一个编号。

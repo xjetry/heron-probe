@@ -4,7 +4,7 @@ import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { useLeaveSession } from "../api/useLeaveSession";
 import { ConfirmDelete } from "../components/ConfirmDelete";
-import { AdminService } from "../gen/probe/v1/admin_pb";
+import { AdminService } from "../gen/heron/v1/admin_pb";
 import { Link } from "react-router";
 
 export function Sessions() {

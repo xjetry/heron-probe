@@ -1,5 +1,5 @@
 #!/bin/sh
-# probe-agent 的 macOS 安装脚本：下载、校验、注册并装成 LaunchDaemon；重跑即升级。
+# heron-agent 的 macOS 安装脚本：下载、校验、注册并装成 LaunchDaemon；重跑即升级。
 # 参数、步骤顺序与提示与 Linux 的 install.sh 同形，差异只在平台工具：dscl 建账户、shasum 校验、
 # launchctl 管服务、ps 扫进程（macOS 没有 /proc）。
 # 以 curl … | sh -s -- 运行时，脚本本身来自 stdin。脚本里任何读 stdin 的命令都会吞掉
@@ -7,20 +7,20 @@
 # 不能用 exec </dev/null：那会切断脚本自己的来源。
 set -eu
 
-# 落盘路径都挂在 PROBE_INSTALL_ROOT 下。生产运行时它为空，即真实根目录；脚本的逻辑测试以普通用户
+# 落盘路径都挂在 HERON_INSTALL_ROOT 下。生产运行时它为空，即真实根目录；脚本的逻辑测试以普通用户
 # 把它指向临时目录，连同 PATH 上的 dscl、launchctl、ps 等替身一起运行，不触碰真实系统路径。
 # 它只改变本脚本写文件的位置：plist 里的 ProgramArguments 与日志路径是固定的真实路径。
-ROOT=${PROBE_INSTALL_ROOT-}
+ROOT=${HERON_INSTALL_ROOT-}
 # 服务进程的可执行路径，即 plist 的 ProgramArguments[0]；按它认进程，所以不带 ROOT 前缀。
-SVC_BIN=/usr/local/bin/probe-agent
+SVC_BIN=/usr/local/bin/heron-agent
 BIN=$ROOT$SVC_BIN
-CFG_DIR=$ROOT/etc/probe-agent
+CFG_DIR=$ROOT/etc/heron-agent
 CFG=$CFG_DIR/config.json
-LOG_DIR=$ROOT/Library/Logs/probe-agent
-LABEL=xyz.probe.agent
+LOG_DIR=$ROOT/Library/Logs/heron-agent
+LABEL=xyz.heron.agent
 PLIST=$ROOT/Library/LaunchDaemons/$LABEL.plist
-SVC_USER=_probe-agent
-REPO=https://github.com/xjetry/probe
+SVC_USER=_heron-agent
+REPO=https://github.com/xjetry/heron-probe
 
 usage() {
   echo "usage: install-macos.sh --hub URL --key KEY [--name N] [--version vX.Y.Z] [--base-url URL]" >&2
@@ -70,7 +70,7 @@ scan_svc_pids() {
 # - 选中的都是本服务的进程：$SVC_USER 是专供 agent 的账户（登录 shell /usr/bin/false），由 create_account 建立；
 #   launchd 会以该 uid 按需派生 cfprefsd、trustd 之类的辅助进程，只看 uid 会把它们算进来（升级、卸载误报仍在运行，
 #   秒退的 agent 被辅助进程顶替成"已启动"），可执行路径把它们排除。
-# - 本服务的每个进程都被选中：plist 的 UserName 与 ProgramArguments[0]（deploy/launchd/xyz.probe.agent.plist）
+# - 本服务的每个进程都被选中：plist 的 UserName 与 ProgramArguments[0]（deploy/launchd/xyz.heron.agent.plist）
 #   保证，TestPlistAgreesWithScript 把两处钉在一起。plist 若改以别的身份或别的程序运行任何进程，这里会漏查，必须同步改判据。
 # 用户不存在时没有可比对的 uid，直接通过；此时查不到仍在运行的旧进程，与 Linux 脚本相同。
 confirm_service_stopped() {
@@ -84,14 +84,14 @@ confirm_service_stopped() {
     sleep "$STOP_POLL_INTERVAL"
     polls=$((polls + 1))
   done
-  echo "probe-agent is still running: processes with uid $svc_uid ($SVC_USER):$svc_pids" >&2
+  echo "heron-agent is still running: processes with uid $svc_uid ($SVC_USER):$svc_pids" >&2
   return 1
 }
 
 # 启动之后确认服务进程活着：bootstrap 返回 0 只说明作业已载入，证明不了子进程没有秒退。
 # 先等到出现本服务的进程，记下 pid，3 秒后同一个 pid 仍在；
 # 秒退再被 KeepAlive 拉起会换成新 pid，不能算起来了。判据与 confirm_service_stopped 同一处。
-start_log_hint() { echo "see $LOG_DIR/probe-agent.err" >&2; }
+start_log_hint() { echo "see $LOG_DIR/heron-agent.err" >&2; }
 confirm_service_started() {
   svc_uid=$(id -u "$SVC_USER") || { echo "no service user $SVC_USER" >&2; start_log_hint; return 1; }
   polls=0
@@ -108,7 +108,7 @@ confirm_service_started() {
     polls=$((polls + 1))
   done
   if [ -z "$pid" ]; then
-    echo "probe-agent did not start" >&2
+    echo "heron-agent did not start" >&2
     start_log_hint
     return 1
   fi
@@ -117,7 +117,7 @@ confirm_service_started() {
   case " $svc_pids " in
     *" $pid "*) return 0;;
   esac
-  echo "probe-agent did not stay running (pid $pid)" >&2
+  echo "heron-agent did not stay running (pid $pid)" >&2
   start_log_hint
   return 1
 }
@@ -128,7 +128,7 @@ confirm_service_started() {
 service_loaded() { launchctl print "system/$LABEL" >/dev/null 2>&1 </dev/null; }
 stop_service() {
   if service_loaded; then
-    launchctl bootout "system/$LABEL" </dev/null || { echo "failed to stop probe-agent" >&2; return 1; }
+    launchctl bootout "system/$LABEL" </dev/null || { echo "failed to stop heron-agent" >&2; return 1; }
   fi
   confirm_service_stopped
 }
@@ -156,7 +156,7 @@ if [ "$UNINSTALL" = 1 ]; then
     rm -rf "$CFG_DIR" "$LOG_DIR"
     delete_account
   fi
-  echo "probe-agent uninstalled"
+  echo "heron-agent uninstalled"
   exit 0
 fi
 
@@ -209,14 +209,14 @@ create_account() {
     gid=$(free_id) || exit 1
     uid=$gid
     dscl . -create "/Groups/$SVC_USER" PrimaryGroupID "$gid" </dev/null
-    dscl . -create "/Groups/$SVC_USER" RealName "probe agent" </dev/null
+    dscl . -create "/Groups/$SVC_USER" RealName "Heron agent" </dev/null
     dscl . -create "/Groups/$SVC_USER" Password '*' </dev/null
   fi
   dscl . -create "/Users/$SVC_USER" UniqueID "$uid" </dev/null
   dscl . -create "/Users/$SVC_USER" PrimaryGroupID "$gid" </dev/null
   dscl . -create "/Users/$SVC_USER" UserShell /usr/bin/false </dev/null
   dscl . -create "/Users/$SVC_USER" NFSHomeDirectory /var/empty </dev/null
-  dscl . -create "/Users/$SVC_USER" RealName "probe agent" </dev/null
+  dscl . -create "/Users/$SVC_USER" RealName "Heron agent" </dev/null
   dscl . -create "/Users/$SVC_USER" Password '*' </dev/null
   dscl . -create "/Users/$SVC_USER" IsHidden 1 </dev/null
   id "$SVC_USER" >/dev/null 2>&1 || { echo "failed to create system user $SVC_USER" >&2; exit 1; }
@@ -238,7 +238,7 @@ fi
 }
 
 # 缺下载器或 shasum 时在任何网络操作之前退出。macOS 自带二者与系统 CA，不需要装 CA 的分支。
-PKG="probe-agent_darwin_$ARCH.tar.gz"
+PKG="heron-agent_darwin_$ARCH.tar.gz"
 command -v curl >/dev/null 2>&1 || { echo "curl is required to download $PKG" >&2; exit 1; }
 command -v shasum >/dev/null 2>&1 || { echo "shasum is required to verify downloads" >&2; exit 1; }
 
@@ -266,11 +266,11 @@ dl "$BASE_URL/SHA256SUMS" "$work/SHA256SUMS"
 
 # 解包、检查包内文件、写临时二进制都在停服务之前做完：这些准备失败时，正在运行的旧服务不受影响。
 tar -xzf "$work/$PKG" -C "$work"
-for f in probe-agent "$LABEL.plist"; do
+for f in heron-agent "$LABEL.plist"; do
   [ -f "$work/$f" ] || { echo "package is missing $f" >&2; exit 1; }
 done
 mkdir -p "$(dirname "$BIN")"
-install -m 0755 "$work/probe-agent" "$BIN_TMP"
+install -m 0755 "$work/heron-agent" "$BIN_TMP"
 # 依赖外部条件的操作（注册、账户、目录与文件的属主权限）都在停服务之前完成：它们失败时旧服务照常运行。停服务
 # 之后只剩换二进制、写 plist、enable/bootstrap 与启动确认，这几步本身也可能失败（bootout 刚返回就 bootstrap 可能报
 # EIO、磁盘满、新二进制秒退），失败时服务已停、脚本以非零退出并留下报错，但不再有需要回滚的外部副作用。注册可能因 hub
@@ -299,7 +299,7 @@ mkdir -p "$LOG_DIR"
 chown root:wheel "$LOG_DIR"
 chmod 0755 "$LOG_DIR"
 chmod -N "$LOG_DIR"
-for f in "$LOG_DIR/probe-agent.log" "$LOG_DIR/probe-agent.err"; do
+for f in "$LOG_DIR/heron-agent.log" "$LOG_DIR/heron-agent.err"; do
   if [ -L "$f" ] || [ -e "$f" ]; then
     extra=""
     if [ ! -L "$f" ] && [ -f "$f" ]; then
@@ -319,7 +319,7 @@ done
 # 退出。所以文件被删后，若 launchd 以服务用户身份打开，作业会反复以 EX_CONFIG 退出，直到重跑本脚本把文件
 # 建回来。这是健壮性问题，不是安全问题；launchd 实际以哪个身份打开由 README 真机核对第 12 条记录。
 # 这里操作的条目就是上面检查过的那两个：目录那时已属 root 且没有 ACL，之后只有 root 能增删其中的条目。
-for f in "$LOG_DIR/probe-agent.log" "$LOG_DIR/probe-agent.err"; do
+for f in "$LOG_DIR/heron-agent.log" "$LOG_DIR/heron-agent.err"; do
   [ -e "$f" ] || : > "$f"
   chown "$SVC_USER:$SVC_USER" "$f"
   chmod 0640 "$f"
@@ -363,4 +363,4 @@ chown root:wheel "$PLIST"
 launchctl enable "system/$LABEL" </dev/null
 launchctl bootstrap system "$PLIST" </dev/null
 confirm_service_started
-echo "probe-agent installed and started (launchd, $ARCH, $PKG)"
+echo "heron-agent installed and started (launchd, $ARCH, $PKG)"

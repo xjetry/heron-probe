@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/xjetry/probe/internal/hub/s3"
+	"github.com/xjetry/heron-probe/internal/hub/s3"
 )
 
 // BackupSettings 是读侧的备份设置：Target 交给 s3.New，Prefix 与四个数值交给调度与保留，Channels 是失败通知的渠道。

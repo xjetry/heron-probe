@@ -13,7 +13,7 @@ $(error VERSION '$(value VERSION)' contains '$$', which make would expand as a v
 endif
 
 # shell 层（check_version）：每个消费 VERSION 的目标第一行调用它，只此一份。镜像 tag 与版本号逐字相同
-# （probe-hub version 打印的就是 tag），Docker 的 tag 只允许 [A-Za-z0-9_.-]、首字符不为 . 与 -、至多 128 个
+# （heron-hub version 打印的就是 tag），Docker 的 tag 只允许 [A-Za-z0-9_.-]、首字符不为 . 与 -、至多 128 个
 # 字符；带构建元数据（+）的 tag 因而不能成为镜像 tag，§14 规定这类 tag 的发布整体失败，release 的 tar 包
 # 与镜像用同一规则，不单独放宽。
 # 检查读配方环境里的 $$VERSION，不把 $(VERSION) 拼进 shell 源码：git tag 名允许 ' ( 等字符，拼进去的值
@@ -40,7 +40,7 @@ lint:
 	go mod tidy -diff
 	buf lint
 	@unformatted="$$(gofmt -l $$(git ls-files '*.go'))"; if [ -n "$$unformatted" ]; then printf 'gofmt: %s\n' $$unformatted >&2; exit 1; fi
-	shellcheck -s sh deploy/install.sh deploy/install-hub.sh deploy/install-macos.sh deploy/openrc/probe-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/docker-readback-test.sh scripts/release-rules-test.sh scripts/image-platform-ref.sh scripts/docker-builder.sh
+	shellcheck -s sh deploy/install.sh deploy/install-hub.sh deploy/install-macos.sh deploy/openrc/heron-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/docker-readback-test.sh scripts/release-rules-test.sh scripts/image-platform-ref.sh scripts/docker-builder.sh
 	go vet ./...
 	GOOS=linux go vet ./...
 	GOOS=darwin go vet ./...
@@ -50,7 +50,7 @@ lint:
 # 保持默认，卡住的测试仍尽早暴露。包清单先落到变量：go list 失败或清单为空时整条命令失败，它的退出码不会被管道
 # 吞掉；再滤掉 deploy，滤空时 grep 以 1 退出、同样失败。两处都防的是退化成不带包参数、只测当前目录。
 test:
-	all=$$(go list ./...) && [ -n "$$all" ] && pkgs=$$(printf '%s\n' "$$all" | grep -vx github.com/xjetry/probe/deploy) && go test -count=1 $$pkgs
+	all=$$(go list ./...) && [ -n "$$all" ] && pkgs=$$(printf '%s\n' "$$all" | grep -vx github.com/xjetry/heron-probe/deploy) && go test -count=1 $$pkgs
 	go test -count=1 -timeout 20m ./deploy/
 
 # 发布规则（版本号守卫、预发布判定）与回读判定的回归检查：只跑 make 的检查、-n 展开与 docker 桩，
@@ -77,10 +77,10 @@ build:
 	GOOS=darwin GOARCH=arm64 go build ./...
 
 binaries: web
-	go build -o bin/probe-hub ./cmd/hub
-	GOOS=linux GOARCH=amd64 go build -o bin/probe-agent-linux-amd64 ./cmd/agent
-	GOOS=linux GOARCH=arm64 go build -o bin/probe-agent-linux-arm64 ./cmd/agent
-	go run ./scripts/checkstatic bin/probe-agent-linux-amd64 bin/probe-agent-linux-arm64
+	go build -o bin/heron-hub ./cmd/hub
+	GOOS=linux GOARCH=amd64 go build -o bin/heron-agent-linux-amd64 ./cmd/agent
+	GOOS=linux GOARCH=arm64 go build -o bin/heron-agent-linux-arm64 ./cmd/agent
+	go run ./scripts/checkstatic bin/heron-agent-linux-amd64 bin/heron-agent-linux-arm64
 
 ci: gen lint test script-test web-test web build
 	status="$$(git status --porcelain -- gen web/src/gen)" || exit $$?; \
@@ -133,53 +133,53 @@ release:
 	mkdir -p dist/build
 	@set -e; for arch in $(AGENT_LINUX_ARCHES); do \
 	  case $$arch in armv7) gflags="GOARCH=arm GOARM=7" ;; *) gflags="GOARCH=$$arch" ;; esac; \
-	  env GOOS=linux CGO_ENABLED=0 $$gflags go build $(RELEASE_GOFLAGS) -o "dist/build/probe-agent-linux-$$arch" ./cmd/agent; \
+	  env GOOS=linux CGO_ENABLED=0 $$gflags go build $(RELEASE_GOFLAGS) -o "dist/build/heron-agent-linux-$$arch" ./cmd/agent; \
 	done; \
 	for arch in $(AGENT_DARWIN_ARCHES); do \
-	  env GOOS=darwin GOARCH=$$arch CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$(VERSION)" -o "dist/build/probe-agent-darwin-$$arch" ./cmd/agent; \
+	  env GOOS=darwin GOARCH=$$arch CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$(VERSION)" -o "dist/build/heron-agent-darwin-$$arch" ./cmd/agent; \
 	done; \
 	for arch in $(HUB_LINUX_ARCHES); do \
-	  $(call hub_build,$$arch,dist/build/probe-hub-linux-$$arch); \
+	  $(call hub_build,$$arch,dist/build/heron-hub-linux-$$arch); \
 	done
-	go run ./scripts/checkstatic $(addprefix dist/build/probe-agent-linux-,$(AGENT_LINUX_ARCHES)) $(addprefix dist/build/probe-hub-linux-,$(HUB_LINUX_ARCHES))
+	go run ./scripts/checkstatic $(addprefix dist/build/heron-agent-linux-,$(AGENT_LINUX_ARCHES)) $(addprefix dist/build/heron-hub-linux-,$(HUB_LINUX_ARCHES))
 	@set -e; for arch in $(AGENT_LINUX_ARCHES); do \
 	  pkg="dist/pkg-$$arch"; mkdir -p "$$pkg"; \
-	  cp "dist/build/probe-agent-linux-$$arch" "$$pkg/probe-agent"; \
-	  cp deploy/systemd/probe-agent.service "$$pkg/probe-agent.service"; \
-	  cp deploy/openrc/probe-agent "$$pkg/probe-agent.openrc"; \
-	  COPYFILE_DISABLE=1 tar --no-xattrs -C "$$pkg" -czf "dist/probe-agent_linux_$$arch.tar.gz" probe-agent probe-agent.service probe-agent.openrc; \
+	  cp "dist/build/heron-agent-linux-$$arch" "$$pkg/heron-agent"; \
+	  cp deploy/systemd/heron-agent.service "$$pkg/heron-agent.service"; \
+	  cp deploy/openrc/heron-agent "$$pkg/heron-agent.openrc"; \
+	  COPYFILE_DISABLE=1 tar --no-xattrs -C "$$pkg" -czf "dist/heron-agent_linux_$$arch.tar.gz" heron-agent heron-agent.service heron-agent.openrc; \
 	  rm -rf "$$pkg"; \
 	done; \
 	for arch in $(AGENT_DARWIN_ARCHES); do \
 	  pkg="dist/pkg-darwin-$$arch"; mkdir -p "$$pkg"; \
-	  cp "dist/build/probe-agent-darwin-$$arch" "$$pkg/probe-agent"; \
-	  cp deploy/launchd/xyz.probe.agent.plist "$$pkg/xyz.probe.agent.plist"; \
-	  COPYFILE_DISABLE=1 tar --no-xattrs -C "$$pkg" -czf "dist/probe-agent_darwin_$$arch.tar.gz" probe-agent xyz.probe.agent.plist; \
+	  cp "dist/build/heron-agent-darwin-$$arch" "$$pkg/heron-agent"; \
+	  cp deploy/launchd/xyz.heron.agent.plist "$$pkg/xyz.heron.agent.plist"; \
+	  COPYFILE_DISABLE=1 tar --no-xattrs -C "$$pkg" -czf "dist/heron-agent_darwin_$$arch.tar.gz" heron-agent xyz.heron.agent.plist; \
 	  rm -rf "$$pkg"; \
 	done; \
 	for arch in $(HUB_LINUX_ARCHES); do \
 	  pkg="dist/pkg-hub-$$arch"; mkdir -p "$$pkg"; \
-	  cp "dist/build/probe-hub-linux-$$arch" "$$pkg/probe-hub"; \
-	  cp deploy/systemd/probe-hub.service "$$pkg/probe-hub.service"; \
-	  COPYFILE_DISABLE=1 tar --no-xattrs -C "$$pkg" -czf "dist/probe-hub_linux_$$arch.tar.gz" probe-hub probe-hub.service; \
+	  cp "dist/build/heron-hub-linux-$$arch" "$$pkg/heron-hub"; \
+	  cp deploy/systemd/heron-hub.service "$$pkg/heron-hub.service"; \
+	  COPYFILE_DISABLE=1 tar --no-xattrs -C "$$pkg" -czf "dist/heron-hub_linux_$$arch.tar.gz" heron-hub heron-hub.service; \
 	  rm -rf "$$pkg"; \
 	done; \
 	rm -rf dist/build
 	cp deploy/install.sh dist/install.sh
 	cp deploy/install-hub.sh dist/install-hub.sh
 	cp deploy/install-macos.sh dist/install-macos.sh
-	cd dist && sha256sum probe-*.tar.gz > SHA256SUMS
+	cd dist && sha256sum heron-*.tar.gz > SHA256SUMS
 
-# hub 镜像（§14）：ghcr.io/xjetry/probe-hub:<version>，平台由 HUB_LINUX_ARCHES 展开。
+# hub 镜像（§14）：ghcr.io/xjetry/heron-hub:<version>，平台由 HUB_LINUX_ARCHES 展开。
 # 镜像里不编译 Go：hub 二进制经 hub_build 构建到 IMAGE_BIN_DIR，Dockerfile 按 TARGETARCH 取用。
-DOCKER_IMAGE := ghcr.io/xjetry/probe-hub
+DOCKER_IMAGE := ghcr.io/xjetry/heron-hub
 # registry 主机只由 DOCKER_IMAGE 推出；release.yml 登录时经 make docker-registry 取用，不另写一份。
 DOCKER_REGISTRY = $(firstword $(subst /, ,$(DOCKER_IMAGE)))
 comma := ,
 empty :=
 space := $(empty) $(empty)
 DOCKER_PLATFORMS := $(subst $(space),$(comma),$(addprefix linux/,$(HUB_LINUX_ARCHES)))
-# 构建上下文里的二进制按 linux/<arch>/probe-hub 排列，.dockerignore 只放行这些文件。
+# 构建上下文里的二进制按 linux/<arch>/heron-hub 排列，.dockerignore 只放行这些文件。
 # 不放在 dist/ 下：release.yml 以 dist/* 整体上传发布资产，而镜像在 make release 之后、
 # gh release create 之前构建，目录混进 dist/ 就会被 dist/* 展开进上传参数。
 IMAGE_BIN_DIR := build/image
@@ -189,7 +189,7 @@ IMAGE_BIN_DIR := build/image
 # 同名构建器由 scripts/docker-builder.sh 核对驱动与镜像后才沿用（只改 digest 时名字不变），不存在时创建。
 BUILDKIT_VERSION := v0.33.0
 BUILDKIT_IMAGE := moby/buildkit:$(BUILDKIT_VERSION)@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
-DOCKER_BUILDER := probe-hub-buildkit-$(BUILDKIT_VERSION)
+DOCKER_BUILDER := heron-hub-buildkit-$(BUILDKIT_VERSION)
 # alpine 按 digest 固定，只在这里定义：Dockerfile 的 rootfs 阶段经 --build-arg 取用，冒烟的工具镜像
 # （读卷属主、预置不可写的卷、在 hub 的网络命名空间里发请求）经环境变量 TOOL_IMAGE 取用。
 ALPINE_IMAGE := alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
@@ -206,9 +206,9 @@ docker:
 	rm -rf $(IMAGE_BIN_DIR)
 	@set -e; for arch in $(HUB_LINUX_ARCHES); do \
 	  mkdir -p "$(IMAGE_BIN_DIR)/linux/$$arch"; \
-	  $(call hub_build,$$arch,$(IMAGE_BIN_DIR)/linux/$$arch/probe-hub); \
+	  $(call hub_build,$$arch,$(IMAGE_BIN_DIR)/linux/$$arch/heron-hub); \
 	done
-	go run ./scripts/checkstatic $(foreach a,$(HUB_LINUX_ARCHES),$(IMAGE_BIN_DIR)/linux/$(a)/probe-hub)
+	go run ./scripts/checkstatic $(foreach a,$(HUB_LINUX_ARCHES),$(IMAGE_BIN_DIR)/linux/$(a)/heron-hub)
 	$(ensure_builder)
 	$(docker_build) --platform $(DOCKER_PLATFORMS) --output type=tar,dest=$(IMAGE_BIN_DIR)/rootfs.tar .
 	go run ./scripts/checkimage $(IMAGE_BIN_DIR)/rootfs.tar $(HUB_LINUX_ARCHES)

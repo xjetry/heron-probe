@@ -16,7 +16,7 @@ PORT=${PORT:-18087}
 BLOB_PORT=${BLOB_PORT:-18088}
 base="http://127.0.0.1:$PORT"
 uid=$(id -u)
-label="xyz.probe.agent.accept.$$"
+label="xyz.heron.agent.accept.$$"
 work=$(mktemp -d)
 echo "work=$work"
 admin_pw="macos accept password 2026"
@@ -36,7 +36,7 @@ trap 'exit 1' INT TERM HUP
 
 # SIGKILL 与断电 trap 不到，标签又按 $$ 生成，之后没有哪一轮会卸下上一轮的孤儿作业。开始前列出来，
 # 只报不卸：它可能属于同时在跑的另一轮。
-orphans=$(launchctl print "gui/$uid" | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^xyz\.probe\.agent\.accept\./) print $i }' | sort -u)
+orphans=$(launchctl print "gui/$uid" | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^xyz\.heron\.agent\.accept\./) print $i }' | sort -u)
 if [ -n "$orphans" ]; then
   echo "FAIL: launchd jobs left by an earlier run:"
   for o in $orphans; do echo "  launchctl bootout gui/$uid/$o"; done
@@ -48,10 +48,10 @@ if [ "$(sysctl -in hw.optional.arm64)" = 1 ]; then arch=arm64; else arch=amd64; 
 make release VERSION="$VERSION" > "$work/release.log" 2>&1 || { echo "FAIL: make release"; tail -20 "$work/release.log"; exit 1; }
 for a in amd64 arm64; do
   mkdir -p "$work/pkg-$a"
-  tar -xzf "dist/probe-agent_darwin_$a.tar.gz" -C "$work/pkg-$a"
-  [ -x "$work/pkg-$a/probe-agent" ] && [ -f "$work/pkg-$a/xyz.probe.agent.plist" ] || { echo "FAIL: darwin/$a package contents"; ls -l "$work/pkg-$a"; exit 1; }
+  tar -xzf "dist/heron-agent_darwin_$a.tar.gz" -C "$work/pkg-$a"
+  [ -x "$work/pkg-$a/heron-agent" ] && [ -f "$work/pkg-$a/xyz.heron.agent.plist" ] || { echo "FAIL: darwin/$a package contents"; ls -l "$work/pkg-$a"; exit 1; }
 done
-bin="$work/pkg-$arch/probe-agent"
+bin="$work/pkg-$arch/heron-agent"
 [ "$("$bin" version)" = "$VERSION" ] || { echo "FAIL: $arch binary version"; exit 1; }
 # 上一行原生执行本机架构的产物。arm64 原生执行必须有签名：Go 的链接器为 darwin/arm64 写入 ad-hoc 签名，
 # 去掉签名的 arm64 二进制被内核杀掉（实测退出 137）。
@@ -62,35 +62,35 @@ bin="$work/pkg-$arch/probe-agent"
 amd64_note=""
 if [ "$arch" = arm64 ]; then
   if arch -x86_64 /usr/bin/true > "$work/rosetta.log" 2>&1; then
-    [ "$(arch -x86_64 "$work/pkg-amd64/probe-agent" version)" = "$VERSION" ] || { echo "FAIL: amd64 binary under Rosetta"; exit 1; }
+    [ "$(arch -x86_64 "$work/pkg-amd64/heron-agent" version)" = "$VERSION" ] || { echo "FAIL: amd64 binary under Rosetta"; exit 1; }
   elif [ "${ACCEPT_SKIP_ROSETTA-}" = 1 ]; then
     amd64_note=", amd64 not executed"
   else
     echo "FAIL: cannot run x86_64 code (Rosetta); set ACCEPT_SKIP_ROSETTA=1 to accept without it"; cat "$work/rosetta.log"; exit 1
   fi
 fi
-pkg_plist="$work/pkg-$arch/xyz.probe.agent.plist"
+pkg_plist="$work/pkg-$arch/xyz.heron.agent.plist"
 plutil -lint "$pkg_plist" > /dev/null || { echo "FAIL: packaged plist does not lint"; exit 1; }
 # 用户域作业只替换路径与 Label；包里的程序参数一变，这里就红，不让验收悄悄跑一份与发布不同的参数。
 plutil -extract ProgramArguments json -o - "$pkg_plist" |
-  jq -e '. == ["/usr/local/bin/probe-agent", "run", "--config", "/etc/probe-agent/config.json"]' > /dev/null ||
+  jq -e '. == ["/usr/local/bin/heron-agent", "run", "--config", "/etc/heron-agent/config.json"]' > /dev/null ||
   { echo "FAIL: packaged ProgramArguments changed"; plutil -extract ProgramArguments json -o - "$pkg_plist"; exit 1; }
 for k in UserName GroupName; do
-  [ "$(plutil -extract "$k" raw -o - "$pkg_plist")" = _probe-agent ] || { echo "FAIL: packaged $k is not _probe-agent"; exit 1; }
+  [ "$(plutil -extract "$k" raw -o - "$pkg_plist")" = _heron-agent ] || { echo "FAIL: packaged $k is not _heron-agent"; exit 1; }
 done
 
-go build -o "$work/probe-hub" ./cmd/hub
-"$work/probe-hub" window open --db "$work/hub.db" --ttl 10m --max 1 > "$work/window.txt"
+go build -o "$work/heron-hub" ./cmd/hub
+"$work/heron-hub" window open --db "$work/hub.db" --ttl 10m --max 1 > "$work/window.txt"
 key=$(sed -n 's/^key: //p' "$work/window.txt")
 [ -n "$key" ] || { echo "FAIL: no window key"; exit 1; }
 
 # TTL 12s → 上报间隔 4s、agent 退避上限 12s（spec §4.4）。
 start_hub() {
-  PROBE_OFFLINE_AFTER=12s "$work/probe-hub" serve --db "$work/hub.db" --listen "127.0.0.1:$PORT" --timezone UTC >> "$work/hub.log" 2>&1 &
+  HERON_OFFLINE_AFTER=12s "$work/heron-hub" serve --db "$work/hub.db" --listen "127.0.0.1:$PORT" --timezone UTC >> "$work/hub.log" 2>&1 &
   hub=$!
   i=0
   # 就绪判据是匿名的 GetSite 返回 200，不取决于根路径服务什么（公开页是否构建、是否换了 --public-dir）。
-  until [ "$(curl -s -o /dev/null -w '%{http_code}' "$base/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D")" = 200 ]; do
+  until [ "$(curl -s -o /dev/null -w '%{http_code}' "$base/heron.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D")" = 200 ]; do
     i=$((i + 1)); [ "$i" -lt 50 ] || { echo "FAIL: hub did not answer"; cat "$work/hub.log"; exit 1; }
     sleep 0.2
   done
@@ -105,13 +105,13 @@ stop_child() {
   wait "$1" || true
 }
 start_hub
-printf '%s\n' "$admin_pw" | "$work/probe-hub" passwd --db "$work/hub.db" > "$work/passwd.log" 2>&1
+printf '%s\n' "$admin_pw" | "$work/heron-hub" passwd --db "$work/hub.db" > "$work/passwd.log" 2>&1
 
 : > "$work/jar"
 rpc() {
   name=$1; body=$2
   curl -sS -o "$work/$name.json" -w '%{http_code}' -H 'Content-Type: application/json' \
-    -b "$work/jar" -c "$work/jar" --data "$body" "$base/probe.v1.AdminService/$name"
+    -b "$work/jar" -c "$work/jar" --data "$body" "$base/heron.v1.AdminService/$name"
 }
 login() { [ "$(rpc Login "$(jq -nc --arg p "$admin_pw" '{password: $p}')")" = 200 ] || { echo "FAIL: login"; exit 1; }; }
 login
@@ -131,7 +131,7 @@ agent=$!
 # cpu_pct 与 net_*_bps 要两次采样才有；第二次上报后每个字段都必须在。字段表从 proto 的 message Metrics
 # 枚举（proto3 JSON 用 lowerCamel 名、省略未设置的 optional 字段），proto 新增的字段自动进入检查。
 until_node 60 '.online and .metrics.cpuPct != null and .metrics.netRxBps != null'
-metric_fields=$(awk '/^message Metrics \{/ { m = 1; next } m && /^\}/ { m = 0 } m && /= [0-9]+;/ { print ($1 == "optional" ? $3 : $2) }' proto/probe/v1/*.proto |
+metric_fields=$(awk '/^message Metrics \{/ { m = 1; next } m && /^\}/ { m = 0 } m && /= [0-9]+;/ { print ($1 == "optional" ? $3 : $2) }' proto/heron/v1/*.proto |
   jq -Rsc 'split("\n") | map(select(. != "") | split("_") | .[0] + ([.[1:][] | (.[:1] | ascii_upcase) + .[1:]] | join("")))')
 [ "$(printf '%s' "$metric_fields" | jq 'length')" -gt 0 ] || { echo "FAIL: no fields enumerated from message Metrics"; exit 1; }
 missing=$(jq -c --argjson f "$metric_fields" '.nodes[0].metrics as $m | [$f[] | select($m[.] == null)]' "$work/GetSnapshot.json")
@@ -215,8 +215,8 @@ plutil -replace ProgramArguments -json "[\"$bin\", \"run\", \"--config\", \"$wor
 plutil -remove UserName "$job_plist"
 plutil -remove GroupName "$job_plist"
 mkdir -p "$work/logs"
-plutil -replace StandardOutPath -string "$work/logs/probe-agent.log" "$job_plist"
-plutil -replace StandardErrorPath -string "$work/logs/probe-agent.err" "$job_plist"
+plutil -replace StandardOutPath -string "$work/logs/heron-agent.log" "$job_plist"
+plutil -replace StandardErrorPath -string "$work/logs/heron-agent.err" "$job_plist"
 plutil -lint "$job_plist" > /dev/null
 t_job=$(date +%s)
 launchctl bootstrap "gui/$uid" "$job_plist"
@@ -248,8 +248,8 @@ until_node 30 "(.lastSeenAt | tonumber) > $t_job"
 # 子进程的 comm 是 xpcproxy（实测），所以等作业有一份上报落地、必然已 exec 之后再核对。
 comm=$(ps -o comm= -p "$pid1") || { echo "FAIL: ps -p $pid1"; exit 1; }
 [ "$comm" = "$bin" ] || { echo "FAIL: job comm $comm is not ProgramArguments[0] $bin"; exit 1; }
-[ -f "$work/logs/probe-agent.err" ] && [ -f "$work/logs/probe-agent.log" ] || { echo "FAIL: launchd did not create the log files"; ls -l "$work/logs"; exit 1; }
-grep -q 'agent starting' "$work/logs/probe-agent.err" || { echo "FAIL: agent log not in StandardErrorPath"; cat "$work/logs/probe-agent.err"; exit 1; }
+[ -f "$work/logs/heron-agent.err" ] && [ -f "$work/logs/heron-agent.log" ] || { echo "FAIL: launchd did not create the log files"; ls -l "$work/logs"; exit 1; }
+grep -q 'agent starting' "$work/logs/heron-agent.err" || { echo "FAIL: agent log not in StandardErrorPath"; cat "$work/logs/heron-agent.err"; exit 1; }
 
 # hub 停 15 秒：agent 在进程内退避，不能退出让 launchd 拉起（pid 不变）；hub 回来后重新在线。
 # 这里分不出退避有没有上限（15 秒停机、30 秒窗口），上限由 internal/agent/client 的测试钉住。
@@ -278,7 +278,7 @@ echo "launchd: pids $pid1 -> $pid2 -> $pid3, throttled respawn ${gap}s"
 # 普通用户下每个来源都读得到：采集失败只让字段缺失并记日志（不以失败显形），所以直接查日志。
 # 只有退出码 1 是"没有匹配"；0 是有匹配，2 是文件读不到——检查没跑成与通过不能长得一样。
 rc=0
-grep -h 'partial collection' "$work/agent.log" "$work/logs/probe-agent.err" || rc=$?
+grep -h 'partial collection' "$work/agent.log" "$work/logs/heron-agent.err" || rc=$?
 case $rc in
   1) ;;
   0) echo "FAIL: collection errors as a normal user"; exit 1;;

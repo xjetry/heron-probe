@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/live"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/live"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 type fixture struct {
@@ -114,7 +114,7 @@ func TestSweepOfflineFollowsRestartInvariant(t *testing.T) {
 	r = f.rule(t, r)
 	sender := &recorder{}
 	f.e.SetSender(sender)
-	f.l.Observe(f.ids[0], "", &probev1.Metrics{})
+	f.l.Observe(f.ids[0], "", &heronv1.Metrics{})
 	f.sweep(t)
 	if len(f.events(t)) != 0 {
 		t.Fatal("startup must not fire from zero monotonic baseline")
@@ -139,7 +139,7 @@ func TestSweepOfflineFollowsRestartInvariant(t *testing.T) {
 			t.Fatalf("event=%+v", ev)
 		}
 	}
-	f.l.Observe(f.ids[0], "", &probev1.Metrics{})
+	f.l.Observe(f.ids[0], "", &heronv1.Metrics{})
 	f.sweep(t)
 	wantState(t, f.e, r.ID, f.ids[0], store.StateOK)
 	wantState(t, f.e, r.ID, f.ids[1], store.StateFiring)
@@ -160,7 +160,7 @@ func TestSweepOfflineFollowsRestartInvariant(t *testing.T) {
 	for _, id := range f.ids {
 		wantState(t, f.e, r.ID, id, store.StateFiring)
 	}
-	f.l.Observe(f.ids[0], "", &probev1.Metrics{})
+	f.l.Observe(f.ids[0], "", &heronv1.Metrics{})
 	f.sweep(t)
 	if ev := f.events(t); len(ev) != 5 || ev[0].Transition != store.TransitionRecovered {
 		t.Fatalf("restart recovery events=%+v", ev)
@@ -249,7 +249,7 @@ func TestSaveRuleShrinkingScopeDropsStates(t *testing.T) {
 
 func (f *fixture) task(t *testing.T, ids []int64) uint64 {
 	t.Helper()
-	p, _, err := f.st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}, store.NodeSelector{AllNodes: false, NodeIDs: ids})
+	p, _, err := f.st.SaveProbeTask(t.Context(), &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}, store.NodeSelector{AllNodes: false, NodeIDs: ids})
 	must(t, err)
 	return p.Task.Id
 }
@@ -322,7 +322,7 @@ func TestEvaluateProbesOnlyForAssignedNodes(t *testing.T) {
 // 显式空分配的任务不覆盖任何节点。
 func TestEvaluateProbesFollowsTaskCoverage(t *testing.T) {
 	f := newFixture(t)
-	p, _, err := f.st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}, store.NodeSelector{AllNodes: true, NodeIDs: nil})
+	p, _, err := f.st.SaveProbeTask(t.Context(), &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}, store.NodeSelector{AllNodes: true, NodeIDs: nil})
 	must(t, err)
 	all := p.Task.Id
 	none := f.task(t, nil)

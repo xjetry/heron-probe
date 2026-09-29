@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/backup"
-	"github.com/xjetry/probe/internal/hub/geo"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/backup"
+	"github.com/xjetry/heron-probe/internal/hub/geo"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // 回显的后端与路径取自装配给 api 的后端对象，UpdateSettings 对两项的缺席、给出、伪造与未知枚举一律忽略。
@@ -21,11 +21,11 @@ func TestSettingsGeoBackendIsReadOnly(t *testing.T) {
 	for _, c := range []struct {
 		name    string
 		backend geo.Backend // nil 即夹具装配的 HTTP 后端
-		want    probev1.GeoBackend
+		want    heronv1.GeoBackend
 		path    string
 	}{
-		{"http", nil, probev1.GeoBackend_GEO_BACKEND_HTTP, ""},
-		{"mmdb", local, probev1.GeoBackend_GEO_BACKEND_MMDB, mmdbPath},
+		{"http", nil, heronv1.GeoBackend_GEO_BACKEND_HTTP, ""},
+		{"mmdb", local, heronv1.GeoBackend_GEO_BACKEND_MMDB, mmdbPath},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var opts []harnessOption
@@ -34,7 +34,7 @@ func TestSettingsGeoBackendIsReadOnly(t *testing.T) {
 			}
 			h := newHarness(t, "", opts...)
 			h.login(t)
-			check := func(s *probev1.Settings) {
+			check := func(s *heronv1.Settings) {
 				t.Helper()
 				if s.GeoBackend != c.want || s.GeoMmdbPath != c.path {
 					t.Errorf("backend = %v path = %q, want %v %q", s.GeoBackend, s.GeoMmdbPath, c.want, c.path)
@@ -42,10 +42,10 @@ func TestSettingsGeoBackendIsReadOnly(t *testing.T) {
 			}
 			check(currentSettings(t, h))
 			for _, value := range []struct {
-				backend probev1.GeoBackend
+				backend heronv1.GeoBackend
 				path    string
 			}{
-				{}, {probev1.GeoBackend_GEO_BACKEND_HTTP, ""}, {probev1.GeoBackend_GEO_BACKEND_MMDB, "/other.mmdb"}, {999, "\x00invalid"},
+				{}, {heronv1.GeoBackend_GEO_BACKEND_HTTP, ""}, {heronv1.GeoBackend_GEO_BACKEND_MMDB, "/other.mmdb"}, {999, "\x00invalid"},
 			} {
 				in := validSettings()
 				in.GeoBackend, in.GeoMmdbPath = value.backend, value.path

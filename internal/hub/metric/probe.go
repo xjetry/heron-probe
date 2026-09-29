@@ -1,6 +1,6 @@
 package metric
 
-import probev1 "github.com/xjetry/probe/gen/probe/v1"
+import heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 
 // ProbeBucket 是一分钟内某任务探测结果的可加折叠。
 // ingest 负责在结构校验时拒绝缺 outcome 的结果；这里也只统计三种明确的结果，
@@ -15,15 +15,15 @@ type ProbeBucket struct {
 	RttMinUs, RttMaxUs uint32
 }
 
-func (b *ProbeBucket) Add(r *probev1.ProbeResult) {
+func (b *ProbeBucket) Add(r *heronv1.ProbeResult) {
 	switch o := r.GetOutcome().(type) {
-	case *probev1.ProbeResult_RttUs:
+	case *heronv1.ProbeResult_RttUs:
 		b.Sent++
 		b.addRtt(o.RttUs)
-	case *probev1.ProbeResult_Timeout:
+	case *heronv1.ProbeResult_Timeout:
 		b.Sent++
 		b.Lost++
-	case *probev1.ProbeResult_Error:
+	case *heronv1.ProbeResult_Error:
 		b.Sent++
 		b.Errors++
 	}

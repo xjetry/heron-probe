@@ -19,11 +19,11 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 func TestServeRejectsBadMMDBBeforeOpeningDatabase(t *testing.T) {
@@ -106,16 +106,16 @@ func TestServeMMDBTakesPriorityAndEchoesBackend(t *testing.T) {
 			t.Fatal(err)
 		}
 	}, "--geo-mmdb", path)
-	settings, err := client.GetSettings(t.Context(), connect.NewRequest(&probev1.GetSettingsRequest{}))
+	settings, err := client.GetSettings(t.Context(), connect.NewRequest(&heronv1.GetSettingsRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := settings.Msg.Settings; s.GeoBackend != probev1.GeoBackend_GEO_BACKEND_MMDB || s.GeoMmdbPath != path {
+	if s := settings.Msg.Settings; s.GeoBackend != heronv1.GeoBackend_GEO_BACKEND_MMDB || s.GeoMmdbPath != path {
 		t.Errorf("serve backend = %v path = %q, want MMDB %q", s.GeoBackend, s.GeoMmdbPath, path)
 	}
 	var country string
 	testwait.Until(t, 10*time.Millisecond, func() bool {
-		nodes, err := client.ListNodes(t.Context(), connect.NewRequest(&probev1.ListNodesRequest{}))
+		nodes, err := client.ListNodes(t.Context(), connect.NewRequest(&heronv1.ListNodesRequest{}))
 		if err != nil {
 			t.Fatal(err)
 		}

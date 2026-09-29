@@ -13,37 +13,37 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
-func validSettings() *probev1.Settings {
-	return &probev1.Settings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,iVBORw0KGgo=", CustomCss: "body { color: red }", PublicEnabled: proto.Bool(true)}
+func validSettings() *heronv1.Settings {
+	return &heronv1.Settings{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,iVBORw0KGgo=", CustomCss: "body { color: red }", PublicEnabled: proto.Bool(true)}
 }
 
 // defaultBackup 是从未保存过备份时的回显（§6.7 的默认值）：GetSettings 与 UpdateSettings 的响应总带 backup。
-func defaultBackup() *probev1.BackupSettings {
-	return &probev1.BackupSettings{Region: "auto", ConfigIntervalS: proto.Uint32(300), MetricsIntervalS: proto.Uint32(86400), ConfigKeep: proto.Uint32(48), MetricsKeep: proto.Uint32(14), Notify: &probev1.BackupNotify{}}
+func defaultBackup() *heronv1.BackupSettings {
+	return &heronv1.BackupSettings{Region: "auto", ConfigIntervalS: proto.Uint32(300), MetricsIntervalS: proto.Uint32(86400), ConfigKeep: proto.Uint32(48), MetricsKeep: proto.Uint32(14), Notify: &heronv1.BackupNotify{}}
 }
 
-func withSettings(change func(*probev1.Settings)) *probev1.Settings {
+func withSettings(change func(*heronv1.Settings)) *heronv1.Settings {
 	s := validSettings()
 	change(s)
 	return s
 }
 
-func saveSettings(t *testing.T, h *harness, in *probev1.Settings) *probev1.Settings {
+func saveSettings(t *testing.T, h *harness, in *heronv1.Settings) *heronv1.Settings {
 	t.Helper()
-	resp, err := h.admin.UpdateSettings(t.Context(), connect.NewRequest(&probev1.UpdateSettingsRequest{Settings: in}))
+	resp, err := h.admin.UpdateSettings(t.Context(), connect.NewRequest(&heronv1.UpdateSettingsRequest{Settings: in}))
 	if err != nil {
 		t.Fatalf("UpdateSettings(%v): %v", in, err)
 	}
 	return resp.Msg.GetSettings()
 }
 
-func currentSettings(t *testing.T, h *harness) *probev1.Settings {
+func currentSettings(t *testing.T, h *harness) *heronv1.Settings {
 	t.Helper()
-	resp, err := h.admin.GetSettings(t.Context(), connect.NewRequest(&probev1.GetSettingsRequest{}))
+	resp, err := h.admin.GetSettings(t.Context(), connect.NewRequest(&heronv1.GetSettingsRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,10 +52,10 @@ func currentSettings(t *testing.T, h *harness) *probev1.Settings {
 
 // rejected 断言更新被拒、错误含 want，且库里的外观仍是 before：一项不合约束，整次更新什么都不写。
 // 先把库复位到 before，每个子用例都从同一状态开始：前一个子用例被错误接受时，红只落在它自己身上。
-func rejected(t *testing.T, h *harness, in *probev1.Settings, want string, before *probev1.Settings) {
+func rejected(t *testing.T, h *harness, in *heronv1.Settings, want string, before *heronv1.Settings) {
 	t.Helper()
 	saveSettings(t, h, before)
-	_, err := h.admin.UpdateSettings(t.Context(), connect.NewRequest(&probev1.UpdateSettingsRequest{Settings: in}))
+	_, err := h.admin.UpdateSettings(t.Context(), connect.NewRequest(&heronv1.UpdateSettingsRequest{Settings: in}))
 	if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %v, want InvalidArgument containing %q", err, want)
 	}
@@ -70,17 +70,17 @@ func TestUpdateSettingsValidatesTitleThemeAndAccent(t *testing.T) {
 	before := saveSettings(t, h, validSettings())
 	for _, c := range []struct {
 		name string
-		in   *probev1.Settings
+		in   *heronv1.Settings
 		want string
 	}{
-		{"title", withSettings(func(s *probev1.Settings) { s.Title = strings.Repeat("字", 65) }), "settings.title must be at most 64 characters after removing control characters and surrounding whitespace; got 65"},
-		{"title raw bytes", withSettings(func(s *probev1.Settings) { s.Title = strings.Repeat(" ", maxTitleBytes) + "a" }), "settings.title must be at most 1024 bytes before cleaning; got 1025"},
-		{"theme empty", withSettings(func(s *probev1.Settings) { s.Theme = "" }), `settings.theme must be one of auto, light, dark; got ""`},
-		{"theme case", withSettings(func(s *probev1.Settings) { s.Theme = "Dark" }), `settings.theme must be one of auto, light, dark; got "Dark"`},
-		{"accent short", withSettings(func(s *probev1.Settings) { s.AccentColor = "#12345" }), `settings.accent_color must be empty (the default color) or #rrggbb with six hex digits; got "#12345"`},
-		{"accent long", withSettings(func(s *probev1.Settings) { s.AccentColor = "#1234567" }), `got "#1234567"`},
-		{"accent without hash", withSettings(func(s *probev1.Settings) { s.AccentColor = "123456" }), `got "123456"`},
-		{"accent not hex", withSettings(func(s *probev1.Settings) { s.AccentColor = "#gggggg" }), `got "#gggggg"`},
+		{"title", withSettings(func(s *heronv1.Settings) { s.Title = strings.Repeat("字", 65) }), "settings.title must be at most 64 characters after removing control characters and surrounding whitespace; got 65"},
+		{"title raw bytes", withSettings(func(s *heronv1.Settings) { s.Title = strings.Repeat(" ", maxTitleBytes) + "a" }), "settings.title must be at most 1024 bytes before cleaning; got 1025"},
+		{"theme empty", withSettings(func(s *heronv1.Settings) { s.Theme = "" }), `settings.theme must be one of auto, light, dark; got ""`},
+		{"theme case", withSettings(func(s *heronv1.Settings) { s.Theme = "Dark" }), `settings.theme must be one of auto, light, dark; got "Dark"`},
+		{"accent short", withSettings(func(s *heronv1.Settings) { s.AccentColor = "#12345" }), `settings.accent_color must be empty (the default color) or #rrggbb with six hex digits; got "#12345"`},
+		{"accent long", withSettings(func(s *heronv1.Settings) { s.AccentColor = "#1234567" }), `got "#1234567"`},
+		{"accent without hash", withSettings(func(s *heronv1.Settings) { s.AccentColor = "123456" }), `got "123456"`},
+		{"accent not hex", withSettings(func(s *heronv1.Settings) { s.AccentColor = "#gggggg" }), `got "#gggggg"`},
 	} {
 		t.Run(c.name, func(t *testing.T) { rejected(t, h, c.in, c.want, before) })
 	}
@@ -91,18 +91,18 @@ func TestUpdateSettingsCleansTitleAndAccentAndEchoes(t *testing.T) {
 	h.login(t)
 	// 总闸、国家查询两项、backup 与 login_notify 没有提交，回显的是从未保存过时的值（login_notify 关闭即空 message）；
 	// 后端回显夹具装配的 HTTP 后端。
-	want := &probev1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef", PublicEnabled: proto.Bool(true), GeoEnabled: proto.Bool(false), GeoUrl: proto.String("https://ipinfo.io/{ip}/country"),
-		GeoBackend: probev1.GeoBackend_GEO_BACKEND_HTTP, LoginNotify: &probev1.LoginNotify{}}
+	want := &heronv1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef", PublicEnabled: proto.Bool(true), GeoEnabled: proto.Bool(false), GeoUrl: proto.String("https://ipinfo.io/{ip}/country"),
+		GeoBackend: heronv1.GeoBackend_GEO_BACKEND_HTTP, LoginNotify: &heronv1.LoginNotify{}}
 	want.Backup = defaultBackup()
-	if got := saveSettings(t, h, &probev1.Settings{Title: " ‮\x07运行状态 \t", Theme: "light", AccentColor: "#AbCdEf"}); !proto.Equal(got, want) {
+	if got := saveSettings(t, h, &heronv1.Settings{Title: " ‮\x07运行状态 \t", Theme: "light", AccentColor: "#AbCdEf"}); !proto.Equal(got, want) {
 		t.Fatalf("echo = %v, want %v", got, want)
 	}
 	if got := currentSettings(t, h); !proto.Equal(got, want) {
 		t.Fatalf("stored = %v, want %v", got, want)
 	}
 	// 控制字符不计入 64 个字符；清洗前的字节上限恰好用满也照常保存。
-	saveSettings(t, h, &probev1.Settings{Title: strings.Repeat("字", 64) + "\x00\x01", Theme: "auto"})
-	if got := saveSettings(t, h, &probev1.Settings{Title: strings.Repeat(" ", maxTitleBytes-1) + "a", Theme: "auto"}); got.GetTitle() != "a" {
+	saveSettings(t, h, &heronv1.Settings{Title: strings.Repeat("字", 64) + "\x00\x01", Theme: "auto"})
+	if got := saveSettings(t, h, &heronv1.Settings{Title: strings.Repeat(" ", maxTitleBytes-1) + "a", Theme: "auto"}); got.GetTitle() != "a" {
 		t.Fatalf("title at the raw byte limit: echo %q, want \"a\"", got.GetTitle())
 	}
 }
@@ -114,7 +114,7 @@ func TestTitleAndNodeNameCleanAlike(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		a, err := cleanAppearance(&probev1.Settings{Title: raw, Theme: "auto"})
+		a, err := cleanAppearance(&heronv1.Settings{Title: raw, Theme: "auto"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -133,20 +133,20 @@ func TestUpdateSettingsGroupsAreIndependent(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	before := saveSettings(t, h, validSettings())
-	rejected(t, h, &probev1.Settings{Title: "只改标题"}, `settings.theme must be one of auto, light, dark; got ""`, before)
-	rejected(t, h, &probev1.Settings{}, noGroup, before)
+	rejected(t, h, &heronv1.Settings{Title: "只改标题"}, `settings.theme must be one of auto, light, dark; got ""`, before)
+	rejected(t, h, &heronv1.Settings{}, noGroup, before)
 	rejected(t, h, nil, noGroup, before)
-	want := proto.Clone(before).(*probev1.Settings)
+	want := proto.Clone(before).(*heronv1.Settings)
 	for _, c := range []struct {
 		name  string
-		in    *probev1.Settings
-		apply func(*probev1.Settings)
+		in    *heronv1.Settings
+		apply func(*heronv1.Settings)
 	}{
-		{"geo only", &probev1.Settings{GeoEnabled: proto.Bool(true)}, func(s *probev1.Settings) { s.GeoEnabled = proto.Bool(true) }},
-		{"geo_url only", &probev1.Settings{GeoUrl: proto.String("https://geo.example/{ip}")}, func(s *probev1.Settings) { s.GeoUrl = proto.String("https://geo.example/{ip}") }},
-		{"public_enabled only", &probev1.Settings{PublicEnabled: proto.Bool(false)}, func(s *probev1.Settings) { s.PublicEnabled = proto.Bool(false) }},
-		{"backup only", &probev1.Settings{Backup: &probev1.BackupSettings{ConfigKeep: proto.Uint32(30)}}, func(s *probev1.Settings) { s.Backup.ConfigKeep = proto.Uint32(30) }},
-		{"full backup only", &probev1.Settings{Backup: fullBackup()}, func(s *probev1.Settings) { s.Backup = echoOf(fullBackup(), true) }},
+		{"geo only", &heronv1.Settings{GeoEnabled: proto.Bool(true)}, func(s *heronv1.Settings) { s.GeoEnabled = proto.Bool(true) }},
+		{"geo_url only", &heronv1.Settings{GeoUrl: proto.String("https://geo.example/{ip}")}, func(s *heronv1.Settings) { s.GeoUrl = proto.String("https://geo.example/{ip}") }},
+		{"public_enabled only", &heronv1.Settings{PublicEnabled: proto.Bool(false)}, func(s *heronv1.Settings) { s.PublicEnabled = proto.Bool(false) }},
+		{"backup only", &heronv1.Settings{Backup: &heronv1.BackupSettings{ConfigKeep: proto.Uint32(30)}}, func(s *heronv1.Settings) { s.Backup.ConfigKeep = proto.Uint32(30) }},
+		{"full backup only", &heronv1.Settings{Backup: fullBackup()}, func(s *heronv1.Settings) { s.Backup = echoOf(fullBackup(), true) }},
 	} {
 		c.apply(want)
 		if got := saveSettings(t, h, c.in); !proto.Equal(got, want) {
@@ -180,22 +180,22 @@ func TestUpdateSettingsEveryFieldIsClassified(t *testing.T) {
 	}
 	channel := saveChannel(t, h, webhook("https://hooks.example/classified")).Id
 	appearance := map[protoreflect.Name]string{"title": "新标题", "theme": "light", "accent_color": "#abcdef", "logo": "data:image/png;base64,iVBORw0KGgo=", "custom_css": "a{}"}
-	type sample struct{ in, echo func(*probev1.Settings) }
+	type sample struct{ in, echo func(*heronv1.Settings) }
 	presence := map[protoreflect.Name]sample{
-		"public_enabled": {in: func(s *probev1.Settings) { s.PublicEnabled = proto.Bool(false) }},
-		"geo_enabled":    {in: func(s *probev1.Settings) { s.GeoEnabled = proto.Bool(true) }},
-		"geo_url":        {in: func(s *probev1.Settings) { s.GeoUrl = proto.String("https://geo.example/{ip}") }},
+		"public_enabled": {in: func(s *heronv1.Settings) { s.PublicEnabled = proto.Bool(false) }},
+		"geo_enabled":    {in: func(s *heronv1.Settings) { s.GeoEnabled = proto.Bool(true) }},
+		"geo_url":        {in: func(s *heronv1.Settings) { s.GeoUrl = proto.String("https://geo.example/{ip}") }},
 		"backup": {
-			in:   func(s *probev1.Settings) { s.Backup = &probev1.BackupSettings{ConfigKeep: proto.Uint32(24)} },
-			echo: func(s *probev1.Settings) { s.Backup.ConfigKeep = proto.Uint32(24) },
+			in:   func(s *heronv1.Settings) { s.Backup = &heronv1.BackupSettings{ConfigKeep: proto.Uint32(24)} },
+			echo: func(s *heronv1.Settings) { s.Backup.ConfigKeep = proto.Uint32(24) },
 		},
-		"login_notify": {in: func(s *probev1.Settings) { s.LoginNotify = &probev1.LoginNotify{ChannelIds: []int64{channel}} }},
+		"login_notify": {in: func(s *heronv1.Settings) { s.LoginNotify = &heronv1.LoginNotify{ChannelIds: []int64{channel}} }},
 	}
 	for i := range fields.Len() {
 		fd := fields.Get(i)
 		t.Run(string(fd.Name()), func(t *testing.T) {
-			in := &probev1.Settings{}
-			want := proto.Clone(before).(*probev1.Settings)
+			in := &heronv1.Settings{}
+			want := proto.Clone(before).(*heronv1.Settings)
 			switch {
 			case slices.Contains(appearanceFields, fd.Name()):
 				v, ok := appearance[fd.Name()]
@@ -203,7 +203,7 @@ func TestUpdateSettingsEveryFieldIsClassified(t *testing.T) {
 					v = "x"
 				}
 				if fd.Name() != "theme" {
-					alone := &probev1.Settings{}
+					alone := &heronv1.Settings{}
 					alone.ProtoReflect().Set(fd, protoreflect.ValueOfString(v))
 					rejected(t, h, alone, `settings.theme must be one of auto, light, dark; got ""`, before)
 					in.Theme, want.Theme = "auto", "auto"
@@ -232,7 +232,7 @@ func TestUpdateSettingsEveryFieldIsClassified(t *testing.T) {
 				switch {
 				case ok:
 				case fd.Kind() == protoreflect.BoolKind:
-					c.in = func(s *probev1.Settings) { s.ProtoReflect().Set(fd, protoreflect.ValueOfBool(true)) }
+					c.in = func(s *heronv1.Settings) { s.ProtoReflect().Set(fd, protoreflect.ValueOfBool(true)) }
 				default:
 					t.Fatalf("no sample for presence field %s of kind %s", fd.Name(), fd.Kind())
 				}
@@ -280,7 +280,7 @@ func TestUpdateSettingsLogoAcceptsOnlyOneShape(t *testing.T) {
 		{"one byte over", "data:image/png;base64," + strings.Repeat("A", 131051), "settings.logo must be at most 131072 bytes as a data: URL; got 131073"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			rejected(t, h, withSettings(func(s *probev1.Settings) { s.Logo = c.logo }), c.want, before)
+			rejected(t, h, withSettings(func(s *heronv1.Settings) { s.Logo = c.logo }), c.want, before)
 		})
 	}
 	for _, logo := range []string{
@@ -291,7 +291,7 @@ func TestUpdateSettingsLogoAcceptsOnlyOneShape(t *testing.T) {
 		longestLogo(),
 		"",
 	} {
-		if got := saveSettings(t, h, withSettings(func(s *probev1.Settings) { s.Logo = logo })); got.GetLogo() != logo {
+		if got := saveSettings(t, h, withSettings(func(s *heronv1.Settings) { s.Logo = logo })); got.GetLogo() != logo {
 			t.Fatalf("logo not stored verbatim: %.40q", got.GetLogo())
 		}
 	}
@@ -307,13 +307,13 @@ func TestUpdateSettingsCustomCSSRejectsOnlyLiteralEndTagOpen(t *testing.T) {
 	}{{"</style>", 0}, {"a{}</STYLE>", 3}, {"</ style>", 0}, {"a</b", 1}, {"</", 0}} {
 		t.Run(c.css, func(t *testing.T) {
 			want := fmt.Sprintf(`settings.custom_css must not contain "</" (it could end the page's <style> element); found at byte %d`, c.at)
-			rejected(t, h, withSettings(func(s *probev1.Settings) { s.CustomCss = c.css }), want, before)
+			rejected(t, h, withSettings(func(s *heronv1.Settings) { s.CustomCss = c.css }), want, before)
 		})
 	}
-	rejected(t, h, withSettings(func(s *probev1.Settings) { s.CustomCss = strings.Repeat("a", 65537) }), "settings.custom_css must be at most 65536 bytes; got 65537", before)
+	rejected(t, h, withSettings(func(s *heronv1.Settings) { s.CustomCss = strings.Repeat("a", 65537) }), "settings.custom_css must be at most 65536 bytes; got 65537", before)
 	// 到不了 HTML 标记化器的写法：CSS 转义与 HTML 实体在 <style> 的 RAWTEXT 里都不被解码。
 	for _, css := range []string{`a::before { content: "\3c/style>" }`, "/* &lt;/style> */", `a::after { content: "<\/style>" }`, "/* ＜/style> */", "a < /style {}", strings.Repeat("a", 65536)} {
-		if got := saveSettings(t, h, withSettings(func(s *probev1.Settings) { s.CustomCss = css })); got.GetCustomCss() != css {
+		if got := saveSettings(t, h, withSettings(func(s *heronv1.Settings) { s.CustomCss = css })); got.GetCustomCss() != css {
 			t.Fatalf("css not stored verbatim: %.40q", got.GetCustomCss())
 		}
 	}
@@ -368,7 +368,7 @@ func worstCaseSettings(t *testing.T, channelIDs []string) []byte {
 // postUpdateSettings 以 JSON 调 UpdateSettings：解码预算按线上的字节计，只有 JSON 请求才测得到它。
 func postUpdateSettings(t *testing.T, h *harness, body []byte) (int, string) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/probe.v1.AdminService/UpdateSettings", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/heron.v1.AdminService/UpdateSettings", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +390,7 @@ func postUpdateSettings(t *testing.T, h *harness, body []byte) (int, string) {
 func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	saveSettings(t, h, &probev1.Settings{Theme: "auto", GeoEnabled: proto.Bool(true)})
+	saveSettings(t, h, &heronv1.Settings{Theme: "auto", GeoEnabled: proto.Bool(true)})
 	var ids []int64
 	var idTexts []string
 	for i := range maxNotifyChannels {
@@ -432,7 +432,7 @@ func TestGetStorageStatsMatchesTheStore(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	h.createNode(t, "n")
-	resp, err := h.admin.GetStorageStats(t.Context(), connect.NewRequest(&probev1.GetStorageStatsRequest{}))
+	resp, err := h.admin.GetStorageStats(t.Context(), connect.NewRequest(&heronv1.GetStorageStatsRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}

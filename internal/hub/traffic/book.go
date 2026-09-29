@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // FlushPeriod 是脏条目落盘的周期；退出时另刷一次。正常刷出下崩溃最多丢一个周期的内存增量；
@@ -156,7 +156,7 @@ func (b *Book) fresh(nodeID int64, now time.Time) State {
 
 // Account 入账一次上报：返回应进分钟桶的增量；false 表示这次没有增量（首次、重启、
 // 回绕、缺读数）。增量是否真的进桶由调用方按上报间隔判定。
-func (b *Book) Account(nodeID int64, m *probev1.Metrics) (Delta, bool) {
+func (b *Book) Account(nodeID int64, m *heronv1.Metrics) (Delta, bool) {
 	if m.NetRxTotal == nil || m.NetTxTotal == nil {
 		// 无读数不是 0：基线不动，下一次仍相对旧基线做差分。
 		return Delta{}, false

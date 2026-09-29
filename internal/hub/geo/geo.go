@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 const (

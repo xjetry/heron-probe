@@ -8,16 +8,16 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
-func (h *harness) storageStatsWithToken(t *testing.T, tok string) *probev1.GetStorageStatsResponse {
+func (h *harness) storageStatsWithToken(t *testing.T, tok string) *heronv1.GetStorageStatsResponse {
 	t.Helper()
-	client := probev1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
-	req := connect.NewRequest(&probev1.GetStorageStatsRequest{})
+	client := heronv1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
+	req := connect.NewRequest(&heronv1.GetStorageStatsRequest{})
 	req.Header().Set("Authorization", "Bearer "+tok)
 	resp, err := client.GetStorageStats(t.Context(), req)
 	if err != nil {
@@ -39,7 +39,7 @@ func TestGetStorageStatsReportsHealthWithStaleness(t *testing.T) {
 	// 阈值 = 保留期 7 天 + 桶长 60 秒 + 维护间隔 60 秒（spec §6.5 的字面值）。
 	edge := now - 7*day - 60 - 60
 	b := metric.NewBucket()
-	b.Add(&probev1.Metrics{CpuPct: proto.Float64(5)})
+	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(5)})
 	batch := metric.Batch{
 		Rows:   []metric.Row{{NodeID: node, TS: edge - 60, Bucket: b}},
 		Probes: []metric.ProbeRow{{NodeID: node, TS: edge, TaskID: 1, Bucket: &metric.ProbeBucket{Sent: 1}}},
@@ -54,14 +54,14 @@ func TestGetStorageStatsReportsHealthWithStaleness(t *testing.T) {
 		oldest, watermark       *int64
 		oldestStale, waterStale bool
 	}
-	got := func(msg *probev1.GetStorageStatsResponse) []row {
+	got := func(msg *heronv1.GetStorageStatsResponse) []row {
 		var out []row
 		for _, s := range msg.GetSeries() {
 			out = append(out, row{s.GetTable(), s.GetBucketS(), s.GetRetentionS(), s.OldestTs, s.WatermarkTs, s.GetOldestStale(), s.GetWatermarkStale()})
 		}
 		return out
 	}
-	check := func(label string, msg *probev1.GetStorageStatsResponse, want []row) {
+	check := func(label string, msg *heronv1.GetStorageStatsResponse, want []row) {
 		t.Helper()
 		rows := got(msg)
 		if len(rows) != len(want) {

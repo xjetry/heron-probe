@@ -2,7 +2,7 @@ import type { DescMethodUnary } from "@bufbuild/protobuf";
 import { useQuery } from "@connectrpc/connect-query";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useRetained } from "../api/useRetained";
-import type { QueryMetricsRequestSchema, QueryMetricsResponseSchema, QueryProbesRequestSchema, QueryProbesResponseSchema } from "../gen/probe/v1/query_pb";
+import type { QueryMetricsRequestSchema, QueryMetricsResponseSchema, QueryProbesRequestSchema, QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
 import { lossPercent, rttMeanMs, seriesLabels, taskIdsOf, toProbeAligned, type ProbeValue } from "../lib/probes";
 import { toAligned, unitOf } from "../lib/series";
 import { Chart } from "./Chart";

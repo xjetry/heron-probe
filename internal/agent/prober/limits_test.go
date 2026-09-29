@@ -6,7 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/xjetry/probe/internal/probelimit"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 	"google.golang.org/protobuf/proto"
 )
 

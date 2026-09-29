@@ -6,14 +6,14 @@ import (
 
 	"connectrpc.com/connect"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	protosrc "github.com/xjetry/probe/proto"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	protosrc "github.com/xjetry/heron-probe/proto"
 )
 
 // GetApiReference 下发构建时嵌入的卡片与 proto 源文件。WalkDir 按字典序遍历，
 // 响应顺序因而稳定；嵌入的文件系统只读且随二进制固定，读失败只可能是构建缺陷。
-func (s *Service) GetApiReference(ctx context.Context, _ *connect.Request[probev1.GetApiReferenceRequest]) (*connect.Response[probev1.GetApiReferenceResponse], error) {
-	out := &probev1.GetApiReferenceResponse{Guide: protosrc.Guide}
+func (s *Service) GetApiReference(ctx context.Context, _ *connect.Request[heronv1.GetApiReferenceRequest]) (*connect.Response[heronv1.GetApiReferenceResponse], error) {
+	out := &heronv1.GetApiReferenceResponse{Guide: protosrc.Guide}
 	err := fs.WalkDir(protosrc.Files, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -22,7 +22,7 @@ func (s *Service) GetApiReference(ctx context.Context, _ *connect.Request[probev
 		if err != nil {
 			return err
 		}
-		out.Files = append(out.Files, &probev1.ProtoFile{Path: path, Content: string(b)})
+		out.Files = append(out.Files, &heronv1.ProtoFile{Path: path, Content: string(b)})
 		return nil
 	})
 	if err != nil {

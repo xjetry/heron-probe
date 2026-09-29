@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 )
 
 const (
@@ -35,7 +35,7 @@ const (
 const _ = uint(MinIntervalS*1000 - MaxTimeoutMs)
 
 // CheckTask 校验一个任务的字段。错误文本说清字段、约束与期望取值——agent 手上只有这个字符串。
-func CheckTask(t *probev1.ProbeTask) error {
+func CheckTask(t *heronv1.ProbeTask) error {
 	if t == nil {
 		return errors.New("task: required")
 	}
@@ -49,11 +49,11 @@ func CheckTask(t *probev1.ProbeTask) error {
 		return fmt.Errorf("target must be at most %d bytes; got %d", MaxTargetLen, len(t.GetTarget()))
 	}
 	switch t.GetKind() {
-	case probev1.ProbeKind_PROBE_KIND_ICMP:
+	case heronv1.ProbeKind_PROBE_KIND_ICMP:
 		if !validHost(t.GetTarget()) {
 			return fmt.Errorf("target for an ICMP task must be an IP address or a host name; got %q", t.GetTarget())
 		}
-	case probev1.ProbeKind_PROBE_KIND_TCP:
+	case heronv1.ProbeKind_PROBE_KIND_TCP:
 		host, port, err := net.SplitHostPort(t.GetTarget())
 		if err != nil {
 			return fmt.Errorf("target for a TCP task must be host:port; got %q", t.GetTarget())

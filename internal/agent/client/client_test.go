@@ -15,12 +15,12 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/agent/collect"
-	"github.com/xjetry/probe/internal/agent/prober"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/agent/collect"
+	"github.com/xjetry/heron-probe/internal/agent/prober"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 func TestConfigRoundTripAndPermissions(t *testing.T) {
@@ -64,8 +64,8 @@ func TestSaveConfigEnforcesModeOverStaleFiles(t *testing.T) {
 }
 
 func TestFactsHashIsStableAndSensitive(t *testing.T) {
-	a := &probev1.Facts{Hostname: "h", CpuCores: 2}
-	b := &probev1.Facts{Hostname: "h", CpuCores: 2}
+	a := &heronv1.Facts{Hostname: "h", CpuCores: 2}
+	b := &heronv1.Facts{Hostname: "h", CpuCores: 2}
 	if FactsHash(a) != FactsHash(b) {
 		t.Fatal("equal facts must hash equal")
 	}
@@ -100,19 +100,19 @@ type fakeHub struct {
 	reconcile  bool
 	factsHash  uint64
 	mu         sync.Mutex
-	reports    []*probev1.ReportRequest
+	reports    []*heronv1.ReportRequest
 	wantNext   bool
 	fail       bool
 	interval   uint32
-	tasks      *probev1.ProbeTasks
+	tasks      *heronv1.ProbeTasks
 	probeError connect.Code
 }
 
-func (f *fakeHub) Register(context.Context, *connect.Request[probev1.RegisterRequest]) (*connect.Response[probev1.RegisterResponse], error) {
+func (f *fakeHub) Register(context.Context, *connect.Request[heronv1.RegisterRequest]) (*connect.Response[heronv1.RegisterResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, nil)
 }
 
-func (f *fakeHub) Report(_ context.Context, req *connect.Request[probev1.ReportRequest]) (*connect.Response[probev1.ReportResponse], error) {
+func (f *fakeHub) Report(_ context.Context, req *connect.Request[heronv1.ReportRequest]) (*connect.Response[heronv1.ReportResponse], error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if req.Header().Get("Authorization") != "Bearer tok" {
@@ -133,29 +133,29 @@ func (f *fakeHub) Report(_ context.Context, req *connect.Request[probev1.ReportR
 		want = req.Msg.FactsHash != f.factsHash
 	}
 	f.wantNext = false
-	return connect.NewResponse(&probev1.ReportResponse{ReportIntervalMs: f.interval, WantFacts: want, Tasks: f.tasks}), nil
+	return connect.NewResponse(&heronv1.ReportResponse{ReportIntervalMs: f.interval, WantFacts: want, Tasks: f.tasks}), nil
 }
 
 func (f *fakeHub) count() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.reports) }
 
 // Report 只追加记录，不修改已收到的请求；取消 runner 不保证服务端已处理完
 // 在途请求，因此读者必须在 mu 下复制切片，不能直接读取仍可能被追加的 reports。
-func (f *fakeHub) received() []*probev1.ReportRequest {
+func (f *fakeHub) received() []*heronv1.ReportRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]*probev1.ReportRequest(nil), f.reports...)
+	return append([]*heronv1.ReportRequest(nil), f.reports...)
 }
 
 func newRunner(t *testing.T, hub *fakeHub) (*Runner, chan time.Duration) {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.Handle(probev1connect.NewAgentServiceHandler(hub))
+	mux.Handle(heronv1connect.NewAgentServiceHandler(hub))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	sleeps := make(chan time.Duration, 100)
 	r := &Runner{
 		Collector: &collect.Collector{Host: &collect.ProcFS{FS: fstest.MapFS{"proc/loadavg": {Data: []byte("0 0 0 1/2 3\n")}}, DiskUsage: func(string) (uint64, uint64, error) { return 1, 1, nil }}, Clock: clock.NewFake(time.Unix(0, 0)), Version: "t"},
-		Client:    probev1connect.NewAgentServiceClient(srv.Client(), srv.URL),
+		Client:    heronv1connect.NewAgentServiceClient(srv.Client(), srv.URL),
 		Token:     "tok",
 		Clock:     clock.NewFake(time.Unix(0, 0)),
 		Sleep: func(ctx context.Context, d time.Duration) error {

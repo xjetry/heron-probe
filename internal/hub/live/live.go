@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/metric"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
 )
 
 type Live struct {
@@ -21,7 +21,7 @@ type Live struct {
 }
 
 type entry struct {
-	metrics      *probev1.Metrics
+	metrics      *heronv1.Metrics
 	lastSeen     time.Duration
 	lastSeenWall time.Time
 	// source 是最近一次上报的来源地址，与 lastSeenWall 在同一次 Observe 里更新，随刷出的行一起落盘。
@@ -39,7 +39,7 @@ type probeKey struct {
 }
 
 type Entry struct {
-	Metrics      *probev1.Metrics
+	Metrics      *heronv1.Metrics
 	LastSeen     time.Duration
 	LastSeenWall time.Time
 	Source       string
@@ -58,7 +58,7 @@ func minuteOf(t time.Time) int64 {
 // Observe 记录一次已通过校验的上报。source 是 hub 看到的来源地址（auth.SourceText），只留最后一次：与 last_seen 同为
 // "最近一次上报"的事实，v4 与 v6 交替上报时面板看到的就是最近那一次。返回样本所属分钟桶的起始、距该节点上一次上报的
 // 单调间隔，以及这是否是本进程里该节点的首次上报（first 为 true 时 gap 无意义）。调用方保证 m 不再被修改。
-func (l *Live) Observe(nodeID int64, source string, m *probev1.Metrics) (ts int64, gap time.Duration, first bool) {
+func (l *Live) Observe(nodeID int64, source string, m *heronv1.Metrics) (ts int64, gap time.Duration, first bool) {
 	now, wall := l.clk.Mono(), l.clk.Now()
 	ts = minuteOf(wall)
 	l.mu.Lock()
@@ -103,7 +103,7 @@ func (l *Live) AddBytes(nodeID int64, ts int64, rx, tx int64) {
 // AddProbe 把一条结果折叠进测量时刻所在分钟的 (任务) 桶。at 由调用方按 收到时刻 − age_ms 算出，
 // 所以同一次上报里的结果可以落进不同分钟；迟到结果所属的分钟若已刷出，会在这里开一个同键的
 // 新桶，刷出后由写库的加法合并并入已有的行。节点已被 Forget 时丢弃——Forget 之后不得再建内存状态。
-func (l *Live) AddProbe(nodeID int64, at time.Time, taskID uint64, r *probev1.ProbeResult) {
+func (l *Live) AddProbe(nodeID int64, at time.Time, taskID uint64, r *heronv1.ProbeResult) {
 	ts := minuteOf(at)
 	l.mu.Lock()
 	defer l.mu.Unlock()

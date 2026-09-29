@@ -1,4 +1,4 @@
-import { BillingCycle } from "../gen/probe/v1/types_pb";
+import { BillingCycle } from "../gen/heron/v1/types_pb";
 
 // 面板的 Billing（types_pb）与公开页的 PublicBilling（public_pb）共有的字段（§9.4）；自动续期只在管理端有，这里不用。
 // 节点五项都没填时 hub 不下发 billing，所以下面的函数都接受 undefined。

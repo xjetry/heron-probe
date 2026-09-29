@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/clock"
 )
 
 func TestBackupSecretAndDisabled(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // sessionAlive 同时供鉴权与会话列表使用，避免列表展示的有效会话与 cookie 准入分叉。

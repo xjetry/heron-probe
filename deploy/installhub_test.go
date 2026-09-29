@@ -9,13 +9,13 @@ import (
 	"testing"
 )
 
-// install-hub.sh 的替身。服务用户 probe-hub（uid 481）在 $PROBE_INSTALL_ROOT/etc/passwd 与 etc/group 里，
+// install-hub.sh 的替身。服务用户 heron-hub（uid 481）在 $HERON_INSTALL_ROOT/etc/passwd 与 etc/group 里，
 // 不走建账户分支；id、uname 与 install.sh 的替身相同。sleep 只记参数，STUB_START_DIES 时在启动确认的 3 秒复查
 // 之前拿走进程 4242。
-// systemctl 记下参数；start 在假 /proc 里放一个以服务用户运行、exe 指向 /usr/local/bin/probe-hub 的进程 4242，
+// systemctl 记下参数；start 在假 /proc 里放一个以服务用户运行、exe 指向 /usr/local/bin/heron-hub 的进程 4242，
 // stop 把它拿走；show 回答 MainPID 与 DropInPaths（state/dropins 里空格分隔的路径，是目标系统里的真实路径）。
-// enable、disable 照 systemd 252 的实测建出与删掉 multi-user.target.wants/probe-hub.service，一条指向
-// /etc/systemd/system/probe-hub.service 的符号链接（目标是目标系统里的真实路径，在临时根目录下悬空）；is-enabled
+// enable、disable 照 systemd 252 的实测建出与删掉 multi-user.target.wants/heron-hub.service，一条指向
+// /etc/systemd/system/heron-hub.service 的符号链接（目标是目标系统里的真实路径，在临时根目录下悬空）；is-enabled
 // 按这条链接回答。
 // state/dropins 是 systemd 已加载的 drop-in，照 systemd 252 的实测：daemon-reload 时才从 state/dropins-disk
 // （磁盘上的 drop-in）取，单元文件不存在时为空。STUB_STOP_FAILS 让 stop 失败，STUB_STOP_LEAVES_PROCESS 让 stop
@@ -31,24 +31,24 @@ var hubStubs = map[string]string{
 	"uname": linuxStubs["uname"],
 	"sleep": `#!/bin/sh
 echo "sleep $*" >> "$STUB_STATE/calls"
-if [ -n "${STUB_START_DIES-}" ] && [ "$1" = 3 ]; then rm -rf "$PROBE_INSTALL_ROOT/proc/4242"; fi
+if [ -n "${STUB_START_DIES-}" ] && [ "$1" = 3 ]; then rm -rf "$HERON_INSTALL_ROOT/proc/4242"; fi
 `,
 	"systemctl": `#!/bin/sh
 cat > /dev/null
 echo "systemctl $*" >> "$STUB_STATE/calls"
-P=$PROBE_INSTALL_ROOT/proc
-W=$PROBE_INSTALL_ROOT/etc/systemd/system/multi-user.target.wants
+P=$HERON_INSTALL_ROOT/proc
+W=$HERON_INSTALL_ROOT/etc/systemd/system/multi-user.target.wants
 reload_fails() { [ -n "${STUB_RELOAD_FAILS-}" ] || [ -f "$STUB_STATE/reload-fails" ]; }
 case "$*" in
-  "start probe-hub")
-    [ -z "${STUB_START_FAILS-}" ] || { echo "Job for probe-hub.service failed." >&2; exit 1; }
+  "start heron-hub")
+    [ -z "${STUB_START_FAILS-}" ] || { echo "Job for heron-hub.service failed." >&2; exit 1; }
     [ -z "${STUB_START_NO_PROCESS-}" ] || exit 0
-    uid=$(grep '^probe-hub:' "$PROBE_INSTALL_ROOT/etc/passwd" | cut -d: -f3)
+    uid=$(grep '^heron-hub:' "$HERON_INSTALL_ROOT/etc/passwd" | cut -d: -f3)
     mkdir -p "$P/4242"
     printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$P/4242/status"
-    rm -f "$P/4242/exe"; ln -s /usr/local/bin/probe-hub "$P/4242/exe";;
-  "stop probe-hub")
-    [ -z "${STUB_STOP_FAILS-}" ] || { echo "Failed to stop probe-hub.service: Access denied" >&2; exit 1; }
+    rm -f "$P/4242/exe"; ln -s /usr/local/bin/heron-hub "$P/4242/exe";;
+  "stop heron-hub")
+    [ -z "${STUB_STOP_FAILS-}" ] || { echo "Failed to stop heron-hub.service: Access denied" >&2; exit 1; }
     [ -n "${STUB_STOP_LEAVES_PROCESS-}" ] || rm -rf "$P/4242"
     [ -z "${STUB_DROPIN_ON_STOP-}" ] || echo "$STUB_DROPIN_ON_STOP" > "$STUB_STATE/dropins-disk"
     [ -z "${STUB_RELOAD_FAILS_ON_STOP-}" ] || : > "$STUB_STATE/reload-fails";;
@@ -56,26 +56,26 @@ case "$*" in
     if reload_fails; then
       echo "Failed to reload daemon: Access denied" >&2; exit 1
     fi
-    if [ ! -f "$PROBE_INSTALL_ROOT/etc/systemd/system/probe-hub.service" ]; then : > "$STUB_STATE/dropins"
+    if [ ! -f "$HERON_INSTALL_ROOT/etc/systemd/system/heron-hub.service" ]; then : > "$STUB_STATE/dropins"
     elif [ -f "$STUB_STATE/dropins-disk" ]; then cp "$STUB_STATE/dropins-disk" "$STUB_STATE/dropins"; fi;;
-  "enable probe-hub") mkdir -p "$W"; ln -sf /etc/systemd/system/probe-hub.service "$W/probe-hub.service";;
-  "disable probe-hub") rm -f "$W/probe-hub.service";;
-  "is-enabled --quiet probe-hub")
+  "enable heron-hub") mkdir -p "$W"; ln -sf /etc/systemd/system/heron-hub.service "$W/heron-hub.service";;
+  "disable heron-hub") rm -f "$W/heron-hub.service";;
+  "is-enabled --quiet heron-hub")
     if [ -n "${STUB_IS_ENABLED_FAILS_WITH_RELOAD-}" ] && reload_fails; then
-      echo "Failed to get unit file state for probe-hub.service: Access denied" >&2; exit 1
+      echo "Failed to get unit file state for heron-hub.service: Access denied" >&2; exit 1
     fi
-    [ -L "$W/probe-hub.service" ];;
-  "show probe-hub -p MainPID --value") if [ -d "$P/4242" ]; then echo 4242; else echo 0; fi;;
-  "show probe-hub -p DropInPaths --value") cat "$STUB_STATE/dropins" 2>/dev/null || echo;;
+    [ -L "$W/heron-hub.service" ];;
+  "show heron-hub -p MainPID --value") if [ -d "$P/4242" ]; then echo 4242; else echo 0; fi;;
+  "show heron-hub -p DropInPaths --value") cat "$STUB_STATE/dropins" 2>/dev/null || echo;;
 esac
 `,
-	// STUB_SWAP_DB 是目录外的一个文件：数据目录交给 root 的那一刻，把 probe.db 换成指向它的硬链接，
+	// STUB_SWAP_DB 是目录外的一个文件：数据目录交给 root 的那一刻，把 heron.db 换成指向它的硬链接，
 	// 模拟停服前预检之后、加锁之前服务组替换了库文件。
 	"chown": `#!/bin/sh
 echo "chown $*" >> "$STUB_STATE/calls"
-d=$PROBE_INSTALL_ROOT/var/lib/probe
-if [ -n "${STUB_SWAP_DB-}" ] && [ "$1" = root:probe-hub ] && [ "$2" = "$d" ]; then
-  rm -f "$d/probe.db"; ln "$STUB_SWAP_DB" "$d/probe.db"
+d=$HERON_INSTALL_ROOT/var/lib/heron
+if [ -n "${STUB_SWAP_DB-}" ] && [ "$1" = root:heron-hub ] && [ "$2" = "$d" ]; then
+  rm -f "$d/heron.db"; ln "$STUB_SWAP_DB" "$d/heron.db"
 fi
 `,
 	"chmod": `#!/bin/sh
@@ -103,18 +103,18 @@ esac
 cat > /dev/null
 echo "apt-get $*" >> "$STUB_STATE/calls"
 if [ "$1" = install ]; then
-  mkdir -p "$PROBE_INSTALL_ROOT/etc/ssl/certs"
-  : > "$PROBE_INSTALL_ROOT/etc/ssl/certs/ca-certificates.crt"
+  mkdir -p "$HERON_INSTALL_ROOT/etc/ssl/certs"
+  : > "$HERON_INSTALL_ROOT/etc/ssl/certs/ca-certificates.crt"
 fi
 `,
 }
 
 const (
-	hubUnit  = "etc/systemd/system/probe-hub.service"
-	hubWants = "etc/systemd/system/multi-user.target.wants/probe-hub.service"
-	hubData  = "var/lib/probe"
-	hubDone  = "probe-hub installed and started (systemd, amd64, probe-hub_linux_amd64.tar.gz)"
-	hubLast  = "Set the administrator password: probe-hub passwd --db /var/lib/probe/probe.db"
+	hubUnit  = "etc/systemd/system/heron-hub.service"
+	hubWants = "etc/systemd/system/multi-user.target.wants/heron-hub.service"
+	hubData  = "var/lib/heron"
+	hubDone  = "heron-hub installed and started (systemd, amd64, heron-hub_linux_amd64.tar.gz)"
+	hubLast  = "Set the administrator password: heron-hub passwd --db /var/lib/heron/heron.db"
 	// /proc/net/tcp 的表头；监听行由用例按需追加。
 	tcpHeader = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
 )
@@ -131,8 +131,8 @@ func newHubHost(t *testing.T) *env {
 		"etc/ssl/certs/ca-certificates.crt": "",
 		"proc/self/status":                  "Uid:\t1000\t1000\t1000\t1000\n",
 		"proc/net/tcp":                      tcpHeader,
-		"etc/passwd":                        "root:x:0:0:root:/root:/bin/sh\nprobe-hub:x:481:481::/nonexistent:/usr/sbin/nologin\n",
-		"etc/group":                         "root:x:0:\nprobe-hub:x:481:\n",
+		"etc/passwd":                        "root:x:0:0:root:/root:/bin/sh\nheron-hub:x:481:481::/nonexistent:/usr/sbin/nologin\n",
+		"etc/group":                         "root:x:0:\nheron-hub:x:481:\n",
 	} {
 		e.put(rel, body)
 	}
@@ -140,16 +140,16 @@ func newHubHost(t *testing.T) *env {
 	return e
 }
 
-// hubRelease 按 make release 的形状打 hub 包：probe-hub 与仓库里的 systemd 单元原件。
+// hubRelease 按 make release 的形状打 hub 包：heron-hub 与仓库里的 systemd 单元原件。
 func (e *env) hubRelease(version string) {
 	e.t.Helper()
-	unit, err := os.ReadFile("systemd/probe-hub.service")
+	unit, err := os.ReadFile("systemd/heron-hub.service")
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	e.pack("probe-hub_linux_amd64.tar.gz", []packFile{
-		{"probe-hub", "#!/bin/sh\n# " + version + " amd64\n", 0o755},
-		{"probe-hub.service", string(unit), 0o644},
+	e.pack("heron-hub_linux_amd64.tar.gz", []packFile{
+		{"heron-hub", "#!/bin/sh\n# " + version + " amd64\n", 0o755},
+		{"heron-hub.service", string(unit), 0o644},
 	})
 }
 
@@ -207,15 +207,15 @@ func (e *env) enableLink() bool {
 // assertUntouched 断言重跑没有碰正在运行的旧服务：没发 stop、二进制还是 v1、进程 4242 还在。
 func (e *env) assertUntouched(out string) {
 	e.t.Helper()
-	if index(e.calls(), "systemctl stop") >= 0 || !strings.Contains(e.file("usr/local/bin/probe-hub"), "# v1 amd64") || !e.exists("proc/4242/status") {
+	if index(e.calls(), "systemctl stop") >= 0 || !strings.Contains(e.file("usr/local/bin/heron-hub"), "# v1 amd64") || !e.exists("proc/4242/status") {
 		e.t.Fatalf("the running hub must be left alone: calls %q\n%s", e.calls(), out)
 	}
-	if strings.Contains(out, "probe-hub is stopped") {
+	if strings.Contains(out, "heron-hub is stopped") {
 		e.t.Fatalf("nothing was stopped, but the installer says so:\n%s", out)
 	}
 }
 
-const hubCmd = `"/usr/local/bin/probe-hub" "serve"`
+const hubCmd = `"/usr/local/bin/heron-hub" "serve"`
 
 func TestHubFreshInstallFromStdin(t *testing.T) {
 	t.Parallel()
@@ -225,13 +225,13 @@ func TestHubFreshInstallFromStdin(t *testing.T) {
 	if code != 0 || !strings.Contains(out, hubDone) || !strings.HasSuffix(strings.TrimSpace(out), hubLast) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if got, want := e.execStart(), hubCmd+` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:9000" "--timezone=Asia/Taipei"`; got != want {
+	if got, want := e.execStart(), hubCmd+` "--db=/var/lib/heron/heron.db" "--listen=127.0.0.1:9000" "--timezone=Asia/Taipei"`; got != want {
 		t.Fatalf("ExecStart=%s\nwant      %s", got, want)
 	}
 	e.mode(hubData, 0o770)
-	e.mode(hubData+"/probe.db", 0o600)
+	e.mode(hubData+"/heron.db", 0o600)
 	c := e.calls()
-	for _, want := range []string{"chown root:probe-hub " + e.root + "/" + hubData, "chown probe-hub:probe-hub " + e.root + "/" + hubData + "/probe.db"} {
+	for _, want := range []string{"chown root:heron-hub " + e.root + "/" + hubData, "chown heron-hub:heron-hub " + e.root + "/" + hubData + "/heron.db"} {
 		if !slices.Contains(c, want) {
 			t.Errorf("missing %q in calls %q", want, c)
 		}
@@ -239,7 +239,7 @@ func TestHubFreshInstallFromStdin(t *testing.T) {
 	if index(c, "apt-get") >= 0 {
 		t.Errorf("a CA bundle is present; no package manager call expected: %q", c)
 	}
-	if !strings.Contains(e.file("usr/local/bin/probe-hub"), "# v1 amd64") {
+	if !strings.Contains(e.file("usr/local/bin/heron-hub"), "# v1 amd64") {
 		t.Fatal("v1 was not installed")
 	}
 }
@@ -259,81 +259,81 @@ func TestHubExecStartForms(t *testing.T) {
 		wantErr  string
 		preamble string // 加在已装单元开头的行
 	}{
-		{name: "inherited", exec: `ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --listen 127.0.0.1:9000 --timezone Asia/Taipei --trusted-proxies 10.0.0.0/8`,
-			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:9000" "--timezone=Asia/Taipei" "--trusted-proxies=10.0.0.0/8"`},
-		{name: "go flag spellings", exec: `ExecStart=/usr/local/bin/probe-hub serve -db /var/lib/probe/probe.db --listen=127.0.0.1:9000 -timezone=UTC --retention-1m 72h`,
-			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:9000" "--timezone=UTC" "--retention-1m=72h"`},
-		{name: "override replaces by name and appends", exec: `ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --timezone Asia/Taipei --listen 127.0.0.1:9000`,
+		{name: "inherited", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db --listen 127.0.0.1:9000 --timezone Asia/Taipei --trusted-proxies 10.0.0.0/8`,
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--listen=127.0.0.1:9000" "--timezone=Asia/Taipei" "--trusted-proxies=10.0.0.0/8"`},
+		{name: "go flag spellings", exec: `ExecStart=/usr/local/bin/heron-hub serve -db /var/lib/heron/heron.db --listen=127.0.0.1:9000 -timezone=UTC --retention-1m 72h`,
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--listen=127.0.0.1:9000" "--timezone=UTC" "--retention-1m=72h"`},
+		{name: "override replaces by name and appends", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db --timezone Asia/Taipei --listen 127.0.0.1:9000`,
 			args: []string{"--listen", "127.0.0.1:9100", "--public-dir", "/srv/site"},
-			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--timezone=Asia/Taipei" "--listen=127.0.0.1:9100" "--public-dir=/srv/site"`},
-		{name: "repeated flag keeps its first place and last value", exec: `ExecStart=/usr/local/bin/probe-hub serve --timezone Asia/Taipei --db /var/lib/probe/probe.db --timezone=UTC`,
-			want: hubCmd + ` "--timezone=UTC" "--db=/var/lib/probe/probe.db"`},
-		{name: "quotes and escapes round-trip", exec: `ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db "--public-dir=/srv/probe site \"x\" $$literal%% \\end" '--trusted-proxies=10.0.0.0/8'`,
-			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--public-dir=/srv/probe site \"x\" $$literal%% \\end" "--trusted-proxies=10.0.0.0/8"`},
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--timezone=Asia/Taipei" "--listen=127.0.0.1:9100" "--public-dir=/srv/site"`},
+		{name: "repeated flag keeps its first place and last value", exec: `ExecStart=/usr/local/bin/heron-hub serve --timezone Asia/Taipei --db /var/lib/heron/heron.db --timezone=UTC`,
+			want: hubCmd + ` "--timezone=UTC" "--db=/var/lib/heron/heron.db"`},
+		{name: "quotes and escapes round-trip", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db "--public-dir=/srv/heron site \"x\" $$literal%% \\end" '--trusted-proxies=10.0.0.0/8'`,
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--public-dir=/srv/heron site \"x\" $$literal%% \\end" "--trusted-proxies=10.0.0.0/8"`},
 		{name: "override value is kept literally", args: []string{"--public-dir", `/srv/x "y" $z %w \v`},
-			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:8080" "--public-dir=/srv/x \"y\" $$z %%w \\v"`},
-		{name: "continuation line", exec: "ExecStart=/usr/local/bin/probe-hub serve \\\n  --db /var/lib/probe/probe.db --listen 127.0.0.1:9000",
-			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:9000"`},
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--listen=127.0.0.1:8080" "--public-dir=/srv/x \"y\" $$z %%w \\v"`},
+		{name: "continuation line", exec: "ExecStart=/usr/local/bin/heron-hub serve \\\n  --db /var/lib/heron/heron.db --listen 127.0.0.1:9000",
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--listen=127.0.0.1:9000"`},
 		// 续行判定与 systemd 相同：行尾未转义的反斜杠才续行（Debian 12 上 systemd 252 实测）。
-		{name: "three trailing backslashes continue", exec: "ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --public-dir=/srv/a\\\\\\\n  --listen 127.0.0.1:9000",
-			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--public-dir=/srv/a\\" "--listen=127.0.0.1:9000"`},
-		{name: "escaped backslash at the end does not continue", exec: "ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --public-dir=/srv/a\\\\\n  --listen 0.0.0.0:80",
-			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--public-dir=/srv/a\\"`},
-		{name: "CRLF continuation", crlf: true, exec: "ExecStart=/usr/local/bin/probe-hub serve \\\n  --db /var/lib/probe/probe.db --listen 127.0.0.1:9000",
-			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:9000"`},
+		{name: "three trailing backslashes continue", exec: "ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db --public-dir=/srv/a\\\\\\\n  --listen 127.0.0.1:9000",
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--public-dir=/srv/a\\" "--listen=127.0.0.1:9000"`},
+		{name: "escaped backslash at the end does not continue", exec: "ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db --public-dir=/srv/a\\\\\n  --listen 0.0.0.0:80",
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--public-dir=/srv/a\\"`},
+		{name: "CRLF continuation", crlf: true, exec: "ExecStart=/usr/local/bin/heron-hub serve \\\n  --db /var/lib/heron/heron.db --listen 127.0.0.1:9000",
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--listen=127.0.0.1:9000"`},
 		// 注释行在续行判断之前跳过，续行中间夹的注释行不打断续行，也不被拼进命令。
-		{name: "comment inside a continuation", exec: "ExecStart=/usr/local/bin/probe-hub serve \\\n# listen only on loopback\n  --db /var/lib/probe/probe.db --listen 127.0.0.1:9000",
-			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:9000"`},
-		{name: "spaces around the equals sign", exec: `ExecStart = /usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db`,
-			want: hubCmd + ` "--db=/var/lib/probe/probe.db"`},
+		{name: "comment inside a continuation", exec: "ExecStart=/usr/local/bin/heron-hub serve \\\n# listen only on loopback\n  --db /var/lib/heron/heron.db --listen 127.0.0.1:9000",
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--listen=127.0.0.1:9000"`},
+		{name: "spaces around the equals sign", exec: `ExecStart = /usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db`,
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db"`},
 		{name: "CRLF line endings", crlf: true,
-			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:8080"`},
-		{name: "comment naming a path", preamble: "# /var/lib/probe holds the database",
-			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:8080"`},
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--listen=127.0.0.1:8080"`},
+		{name: "comment naming a path", preamble: "# /var/lib/heron holds the database",
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--listen=127.0.0.1:8080"`},
 		{name: "drop-in without ExecStart", dropins: map[string]string{"/run/systemd/system/service.d/zzz-lxc-service.conf": "[Service]\nProtectProc=default\n"},
-			want: hubCmd + ` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:8080"`},
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--listen=127.0.0.1:8080"`},
 
 		// systemd 把它当成字面参数 \、下一行因缺 = 被忽略；安装器按未完成的转义拒绝，而不是接成 --listen。
-		{name: "backslash before trailing space does not continue", exec: "ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db \\ \n  --listen 0.0.0.0:80",
+		{name: "backslash before trailing space does not continue", exec: "ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db \\ \n  --listen 0.0.0.0:80",
 			wantErr: "unsupported quoting or escape in ExecStart"},
 		// systemd 把行内的回车当作换行，后半段成了另一条指令；安装器不模仿，拒绝。
-		{name: "carriage return inside a line", exec: "ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\rEnvironment=X=1",
+		{name: "carriage return inside a line", exec: "ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db\rEnvironment=X=1",
 			wantErr: "cannot read ExecStart from installed unit"},
-		{name: "single dollar", exec: `ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db "--public-dir=/srv/$HOME"`,
+		{name: "single dollar", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db "--public-dir=/srv/$HOME"`,
 			wantErr: "dynamic $ or % expansion in ExecStart is not supported"},
-		{name: "single percent", exec: `ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --public-dir=/srv/%h`,
+		{name: "single percent", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db --public-dir=/srv/%h`,
 			wantErr: "dynamic $ or % expansion in ExecStart is not supported"},
-		{name: "hex escape", exec: `ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db "--public-dir=/srv\x20a"`,
+		{name: "hex escape", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db "--public-dir=/srv\x20a"`,
 			wantErr: "unsupported quoting or escape in ExecStart"},
-		{name: "unclosed quote", exec: `ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db "--public-dir=/srv/a`,
+		{name: "unclosed quote", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db "--public-dir=/srv/a`,
 			wantErr: "unsupported quoting or escape in ExecStart"},
-		{name: "unknown flag", exec: `ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --foo=bar`,
+		{name: "unknown flag", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db --foo=bar`,
 			wantErr: "unsupported serve flag in ExecStart: --foo=bar"},
-		{name: "positional argument", exec: `ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db extra`,
+		{name: "positional argument", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db extra`,
 			wantErr: "unexpected positional argument in ExecStart: extra"},
-		{name: "another database", exec: `ExecStart=/usr/local/bin/probe-hub serve --db /srv/other.db`,
-			wantErr: "installed unit must use --db /var/lib/probe/probe.db"},
-		{name: "no database", exec: `ExecStart=/usr/local/bin/probe-hub serve --listen 127.0.0.1:9000`,
-			wantErr: "installed unit must use --db /var/lib/probe/probe.db"},
-		{name: "another binary", exec: `ExecStart=/usr/bin/probe-hub serve --db /var/lib/probe/probe.db`,
-			wantErr: "ExecStart must invoke /usr/local/bin/probe-hub serve"},
-		{name: "flag without value", exec: `ExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --listen`,
+		{name: "another database", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /srv/other.db`,
+			wantErr: "installed unit must use --db /var/lib/heron/heron.db"},
+		{name: "no database", exec: `ExecStart=/usr/local/bin/heron-hub serve --listen 127.0.0.1:9000`,
+			wantErr: "installed unit must use --db /var/lib/heron/heron.db"},
+		{name: "another binary", exec: `ExecStart=/usr/bin/heron-hub serve --db /var/lib/heron/heron.db`,
+			wantErr: "ExecStart must invoke /usr/local/bin/heron-hub serve"},
+		{name: "flag without value", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db --listen`,
 			wantErr: "incomplete ExecStart arguments"},
-		{name: "ExecStart set twice", exec: "ExecStart=\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db",
+		{name: "ExecStart set twice", exec: "ExecStart=\nExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db",
 			wantErr: "installed unit must set ExecStart exactly once"},
-		{name: "drop-in sets ExecStart", dropins: map[string]string{"/etc/systemd/system/probe-hub.service.d/override.conf": "[Service]\nExecStart=\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\n"},
-			wantErr: "drop-in /etc/systemd/system/probe-hub.service.d/override.conf sets ExecStart"},
-		{name: "drop-in sets ExecStart with spaces and CRLF", dropins: map[string]string{"/etc/systemd/system/probe-hub.service.d/override.conf": "[Service] \r\nExecStart = /usr/local/bin/probe-hub serve\r\n"},
+		{name: "drop-in sets ExecStart", dropins: map[string]string{"/etc/systemd/system/heron-hub.service.d/override.conf": "[Service]\nExecStart=\nExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db\n"},
+			wantErr: "drop-in /etc/systemd/system/heron-hub.service.d/override.conf sets ExecStart"},
+		{name: "drop-in sets ExecStart with spaces and CRLF", dropins: map[string]string{"/etc/systemd/system/heron-hub.service.d/override.conf": "[Service] \r\nExecStart = /usr/local/bin/heron-hub serve\r\n"},
 			wantErr: "sets ExecStart"},
-		{name: "drop-in hides ExecStart behind a carriage return", dropins: map[string]string{"/etc/systemd/system/probe-hub.service.d/override.conf": "[Service]\rExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\n"},
-			wantErr: "cannot parse probe-hub drop-in /etc/systemd/system/probe-hub.service.d/override.conf"},
-		{name: "drop-in comment ending in a backslash", dropins: map[string]string{"/etc/systemd/system/probe-hub.service.d/override.conf": "[Service]\n# note \\\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\n"},
+		{name: "drop-in hides ExecStart behind a carriage return", dropins: map[string]string{"/etc/systemd/system/heron-hub.service.d/override.conf": "[Service]\rExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db\n"},
+			wantErr: "cannot parse heron-hub drop-in /etc/systemd/system/heron-hub.service.d/override.conf"},
+		{name: "drop-in comment ending in a backslash", dropins: map[string]string{"/etc/systemd/system/heron-hub.service.d/override.conf": "[Service]\n# note \\\nExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db\n"},
 			wantErr: "sets ExecStart"},
 		// 运行中的 hub 看不到后来落盘的 drop-in，安装器启动前的 daemon-reload 却会让它生效：要先 reload 再查。
-		{name: "drop-in written but not yet reloaded", unloaded: true, dropins: map[string]string{"/etc/systemd/system/probe-hub.service.d/late.conf": "[Service]\nExecStart=\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\n"},
-			wantErr: "drop-in /etc/systemd/system/probe-hub.service.d/late.conf sets ExecStart"},
-		{name: "drop-in listed but missing", dropins: map[string]string{"/etc/systemd/system/probe-hub.service.d/gone.conf": ""},
-			wantErr: "cannot read probe-hub drop-in /etc/systemd/system/probe-hub.service.d/gone.conf"},
+		{name: "drop-in written but not yet reloaded", unloaded: true, dropins: map[string]string{"/etc/systemd/system/heron-hub.service.d/late.conf": "[Service]\nExecStart=\nExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db\n"},
+			wantErr: "drop-in /etc/systemd/system/heron-hub.service.d/late.conf sets ExecStart"},
+		{name: "drop-in listed but missing", dropins: map[string]string{"/etc/systemd/system/heron-hub.service.d/gone.conf": ""},
+			wantErr: "cannot read heron-hub drop-in /etc/systemd/system/heron-hub.service.d/gone.conf"},
 		{name: "line feed in an override", args: []string{"--timezone", "UTC\n--listen=0.0.0.0:80"},
 			wantErr: "arguments must not contain line breaks"},
 		{name: "carriage return in an override", args: []string{"--timezone", "UTC\r"},
@@ -389,9 +389,9 @@ func TestHubExecStartForms(t *testing.T) {
 // 带同一组参数重跑任意次、再不带参数重跑，单元逐字不变：覆盖按 flag 名替换，不累加。
 func TestHubRerunsDoNotAccumulateArguments(t *testing.T) {
 	t.Parallel()
-	args := []string{"--listen", "127.0.0.1:9000", "--public-dir", `/srv/probe site "x" $literal% \end`, "--timezone", "UTC"}
+	args := []string{"--listen", "127.0.0.1:9000", "--public-dir", `/srv/heron site "x" $literal% \end`, "--timezone", "UTC"}
 	e := newHubInstalled(t, args...)
-	want := hubCmd + ` "--db=/var/lib/probe/probe.db" "--listen=127.0.0.1:9000" "--public-dir=/srv/probe site \"x\" $$literal%% \\end" "--timezone=UTC"`
+	want := hubCmd + ` "--db=/var/lib/heron/heron.db" "--listen=127.0.0.1:9000" "--public-dir=/srv/heron site \"x\" $$literal%% \\end" "--timezone=UTC"`
 	if got := e.execStart(); got != want {
 		t.Fatalf("first install ExecStart=%s\nwant                    %s", got, want)
 	}
@@ -455,13 +455,13 @@ func TestHubDatabaseThatIsNotPlainIsRefusedBeforeStopping(t *testing.T) {
 		name, rel, want string
 		plant           func(path, outside string) error
 	}{
-		{"database symlink", "probe.db", notPlain, func(p, outside string) error { os.Remove(p); return os.Symlink(outside, p) }},
-		{"dangling database symlink", "probe.db", notPlain, func(p, outside string) error { os.Remove(p); return os.Symlink(outside+".missing", p) }},
+		{"database symlink", "heron.db", notPlain, func(p, outside string) error { os.Remove(p); return os.Symlink(outside, p) }},
+		{"dangling database symlink", "heron.db", notPlain, func(p, outside string) error { os.Remove(p); return os.Symlink(outside+".missing", p) }},
 		// 硬链接：[ -L ] 为假、[ -f ] 为真，只有链接数看得出它另有名字。
-		{"database hard link", "probe.db", notPlain, func(p, outside string) error { os.Remove(p); return os.Link(outside, p) }},
-		{"WAL symlink", "probe.db-wal", notPlain, func(p, outside string) error { return os.Symlink(outside, p) }},
-		{"WAL hard link", "probe.db-wal", notPlain, func(p, outside string) error { return os.Link(outside, p) }},
-		{"SHM is a directory", "probe.db-shm", notPlain, func(p, _ string) error { return os.Mkdir(p, 0o755) }},
+		{"database hard link", "heron.db", notPlain, func(p, outside string) error { os.Remove(p); return os.Link(outside, p) }},
+		{"WAL symlink", "heron.db-wal", notPlain, func(p, outside string) error { return os.Symlink(outside, p) }},
+		{"WAL hard link", "heron.db-wal", notPlain, func(p, outside string) error { return os.Link(outside, p) }},
+		{"SHM is a directory", "heron.db-shm", notPlain, func(p, _ string) error { return os.Mkdir(p, 0o755) }},
 		{"data directory symlink", "", "exists but is not a directory", func(p, outside string) error {
 			if err := os.RemoveAll(p); err != nil {
 				return err
@@ -478,8 +478,8 @@ func TestHubDatabaseThatIsNotPlainIsRefusedBeforeStopping(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			e := newHubInstalled(t)
-			e.put("etc/outside/probe.db", "root's\n")
-			outside := filepath.Join(e.root, "etc/outside/probe.db")
+			e.put("etc/outside/heron.db", "root's\n")
+			outside := filepath.Join(e.root, "etc/outside/heron.db")
 			if err := tc.plant(filepath.Join(e.root, hubData, tc.rel), outside); err != nil {
 				t.Fatal(err)
 			}
@@ -493,12 +493,12 @@ func TestHubDatabaseThatIsNotPlainIsRefusedBeforeStopping(t *testing.T) {
 					t.Errorf("%q runs although the upgrade was refused", call)
 				}
 			}
-			e.mode("etc/outside/probe.db", 0o644)
+			e.mode("etc/outside/heron.db", 0o644)
 		})
 	}
 }
 
-// 停服前的预检通过之后、目录交给 root 之前，服务组还能替换其中的条目。替身在目录 chown 的那一刻把 probe.db
+// 停服前的预检通过之后、目录交给 root 之前，服务组还能替换其中的条目。替身在目录 chown 的那一刻把 heron.db
 // 换成指向目录外文件的硬链接：锁内复检要看到它并拒绝，目录外的文件不被改动，目录留在 0750，报错说明 hub 已停。
 func TestHubDatabaseSwappedAfterThePreStopCheckIsRefused(t *testing.T) {
 	t.Parallel()
@@ -507,9 +507,9 @@ func TestHubDatabaseSwappedAfterThePreStopCheckIsRefused(t *testing.T) {
 	e.vars = []string{"STUB_SWAP_DB=" + filepath.Join(e.root, "etc/outside")}
 	out, code := e.hubInstall()
 	for _, want := range []string{
-		"probe.db exists but is not a regular file with a single link",
+		"heron.db exists but is not a regular file with a single link",
 		"database files changed after the pre-stop check; " + e.root + "/" + hubData + " stays locked at 0750",
-		"probe-hub is stopped; rerun the installer or start it manually",
+		"heron-hub is stopped; rerun the installer or start it manually",
 	} {
 		if code != 1 || !strings.Contains(out, want) {
 			t.Fatalf("exit %d, want %q:\n%s", code, want, out)
@@ -518,8 +518,8 @@ func TestHubDatabaseSwappedAfterThePreStopCheckIsRefused(t *testing.T) {
 	e.mode("etc/outside", 0o644)
 	e.mode(hubData, 0o750)
 	c := e.calls()
-	if index(c, "chown probe-hub:probe-hub") >= 0 || index(c, "systemctl start") >= 0 {
-		t.Fatalf("nothing may be handed to probe-hub or started: calls %q", c)
+	if index(c, "chown heron-hub:heron-hub") >= 0 || index(c, "systemctl start") >= 0 {
+		t.Fatalf("nothing may be handed to heron-hub or started: calls %q", c)
 	}
 }
 
@@ -529,10 +529,10 @@ func TestHubDatabaseOwnershipIsRestoredOnEveryInstall(t *testing.T) {
 	t.Parallel()
 	e := newHubInstalled(t)
 	dir := filepath.Join(e.root, hubData)
-	if err := os.Chmod(filepath.Join(dir, "probe.db"), 0o644); err != nil {
+	if err := os.Chmod(filepath.Join(dir, "heron.db"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	e.put(hubData+"/probe.db-wal", "")
+	e.put(hubData+"/heron.db-wal", "")
 	if err := os.Chmod(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -541,8 +541,8 @@ func TestHubDatabaseOwnershipIsRestoredOnEveryInstall(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	e.mode(hubData, 0o770)
-	e.mode(hubData+"/probe.db", 0o600)
-	e.mode(hubData+"/probe.db-wal", 0o600)
+	e.mode(hubData+"/heron.db", 0o600)
+	e.mode(hubData+"/heron.db-wal", 0o600)
 	c := e.calls()
 	at := func(call string) int {
 		i := slices.Index(c, call)
@@ -551,16 +551,16 @@ func TestHubDatabaseOwnershipIsRestoredOnEveryInstall(t *testing.T) {
 		}
 		return i
 	}
-	stop := at("systemctl stop probe-hub")
-	take := at("chown root:probe-hub " + dir)
+	stop := at("systemctl stop heron-hub")
+	take := at("chown root:heron-hub " + dir)
 	lock := at("chmod 0750 " + dir)
 	release := at("chmod 0770 " + dir)
-	start := at("systemctl start probe-hub")
+	start := at("systemctl start heron-hub")
 	if !(stop < take && take < lock && lock < release && release < start) {
-		t.Fatalf("want stop < chown root:probe-hub < chmod 0750 < chmod 0770 < start, calls %q", c)
+		t.Fatalf("want stop < chown root:heron-hub < chmod 0750 < chmod 0770 < start, calls %q", c)
 	}
-	for _, f := range []string{"probe.db", "probe.db-wal"} {
-		for _, call := range []string{"chown probe-hub:probe-hub " + dir + "/" + f, "chmod 0600 " + dir + "/" + f} {
+	for _, f := range []string{"heron.db", "heron.db-wal"} {
+		for _, call := range []string{"chown heron-hub:heron-hub " + dir + "/" + f, "chmod 0600 " + dir + "/" + f} {
 			if i := at(call); i < lock || i > release {
 				t.Errorf("%q must run while the directory is locked, calls %q", call, c)
 			}
@@ -590,12 +590,12 @@ func TestHubSaysItIsStoppedOnlyAfterStopping(t *testing.T) {
 	e := newHubInstalled(t)
 	e.vars = []string{"STUB_START_FAILS=1"}
 	out, code := e.hubInstall()
-	if code == 0 || !strings.Contains(out, "Job for probe-hub.service failed.") || !strings.Contains(out, "probe-hub is stopped; rerun the installer or start it manually") {
+	if code == 0 || !strings.Contains(out, "Job for heron-hub.service failed.") || !strings.Contains(out, "heron-hub is stopped; rerun the installer or start it manually") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	e.vars = nil
 	out, code = e.hubInstall()
-	if code != 0 || strings.Contains(out, "probe-hub is stopped") {
+	if code != 0 || strings.Contains(out, "heron-hub is stopped") {
 		t.Fatalf("a successful rerun must not say the hub is stopped: exit %d:\n%s", code, out)
 	}
 	e.resetCalls()
@@ -603,7 +603,7 @@ func TestHubSaysItIsStoppedOnlyAfterStopping(t *testing.T) {
 	if code != 1 || !strings.Contains(out, "listen address must end in a numeric TCP port") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if index(e.calls(), "systemctl stop") >= 0 || !e.exists("proc/4242/status") || strings.Contains(out, "probe-hub is stopped") {
+	if index(e.calls(), "systemctl stop") >= 0 || !e.exists("proc/4242/status") || strings.Contains(out, "heron-hub is stopped") {
 		t.Fatalf("a failure before stopping must leave the hub running and not say it is stopped: calls %q\n%s", e.calls(), out)
 	}
 }
@@ -617,10 +617,10 @@ func TestHubUninstallWithoutATerminalNeedsYes(t *testing.T) {
 		t.Fatalf("exit %d, calls %q:\n%s", code, e.calls(), out)
 	}
 	out, code = e.run("--uninstall", "--yes")
-	if code != 0 || !strings.Contains(out, "probe-hub uninstalled") {
+	if code != 0 || !strings.Contains(out, "heron-hub uninstalled") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if e.exists(hubUnit) || e.exists("usr/local/bin/probe-hub") || !e.exists(hubData+"/probe.db") || !strings.Contains(e.file("etc/passwd"), "probe-hub:") {
+	if e.exists(hubUnit) || e.exists("usr/local/bin/heron-hub") || !e.exists(hubData+"/heron.db") || !strings.Contains(e.file("etc/passwd"), "heron-hub:") {
 		t.Fatal("uninstall must remove the unit and binary and keep the data and account")
 	}
 }
@@ -660,19 +660,19 @@ func TestHubFlagTableAgreesWithServe(t *testing.T) {
 	}
 }
 
-// unit_enabled 只看 $WANTS 这条链接，前提是发布包里 probe-hub.service 的 [Install] 恰好只有 WantedBy=<target>，且
+// unit_enabled 只看 $WANTS 这条链接，前提是发布包里 heron-hub.service 的 [Install] 恰好只有 WantedBy=<target>，且
 // <target> 与安装器 WANTS 路径里的 <target>.wants 是同一个：systemctl enable 建出的才正是这条链接。单元改了
 // WantedBy 而安装器没改时，enable 建的是另一条链接，安装器会把仍 enabled 的单元说成没 enable，卸载也删不掉真正
 // 的链接；替身把链接路径写死，测不出这种分叉，所以两处写法在这里静态核对。
 func TestHubUnitInstallTargetAgreesWithWantsPath(t *testing.T) {
 	t.Parallel()
-	unit, err := os.ReadFile("systemd/probe-hub.service")
+	unit, err := os.ReadFile("systemd/heron-hub.service")
 	if err != nil {
 		t.Fatal(err)
 	}
 	install := regexp.MustCompile(`(?ms)^\[Install\]\n(.*?)(?:^\[|\z)`).FindStringSubmatch(string(unit))
 	if install == nil {
-		t.Fatal("probe-hub.service has no [Install] section")
+		t.Fatal("heron-hub.service has no [Install] section")
 	}
 	var wantedBy []string
 	for _, line := range strings.Split(strings.TrimSpace(install[1]), "\n") {
@@ -689,9 +689,9 @@ func TestHubUnitInstallTargetAgreesWithWantsPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := regexp.MustCompile(`(?m)^WANTS=\$ROOT/etc/systemd/system/([^/]+)\.wants/probe-hub\.service$`).FindStringSubmatch(string(script))
+	m := regexp.MustCompile(`(?m)^WANTS=\$ROOT/etc/systemd/system/([^/]+)\.wants/heron-hub\.service$`).FindStringSubmatch(string(script))
 	if m == nil {
-		t.Fatal("install-hub.sh has no WANTS=$ROOT/etc/systemd/system/<target>.wants/probe-hub.service line")
+		t.Fatal("install-hub.sh has no WANTS=$ROOT/etc/systemd/system/<target>.wants/heron-hub.service line")
 	}
 	if m[1] != wantedBy[0] {
 		t.Fatalf("the unit is WantedBy=%s but the installer looks for the link under %s.wants", wantedBy[0], m[1])
@@ -722,47 +722,47 @@ func TestHubCommandLineRefusesFlagsOutsideTheTable(t *testing.T) {
 func TestHubFailedStopDoesNotSayStopped(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, env, want string }{
-		{"stop fails", "STUB_STOP_FAILS=1", "failed to stop probe-hub"},
-		{"old process lingers", "STUB_STOP_LEAVES_PROCESS=1", "probe-hub is still running: uid 481 processes: 4242"},
+		{"stop fails", "STUB_STOP_FAILS=1", "failed to stop heron-hub"},
+		{"old process lingers", "STUB_STOP_LEAVES_PROCESS=1", "heron-hub is still running: uid 481 processes: 4242"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			e := newHubInstalled(t)
 			e.vars = []string{tc.env}
 			out, code := e.hubInstall()
-			if code != 1 || !strings.Contains(out, tc.want) || strings.Contains(out, "probe-hub is stopped") {
+			if code != 1 || !strings.Contains(out, tc.want) || strings.Contains(out, "heron-hub is stopped") {
 				t.Fatalf("exit %d:\n%s", code, out)
 			}
-			if !strings.Contains(e.file("usr/local/bin/probe-hub"), "# v1 amd64") || index(e.calls(), "systemctl start") >= 0 {
+			if !strings.Contains(e.file("usr/local/bin/heron-hub"), "# v1 amd64") || index(e.calls(), "systemctl start") >= 0 {
 				t.Fatalf("nothing may be replaced or started after a failed stop: calls %q", e.calls())
 			}
 		})
 	}
 }
 
-// 首装时单元文件还不存在，DropInPaths 为空，probe-hub.service.d/ 里预先写入的 drop-in 查不到。
+// 首装时单元文件还不存在，DropInPaths 为空，heron-hub.service.d/ 里预先写入的 drop-in 查不到。
 // 主单元写好之后的那一遍要拦住设了 ExecStart 的 drop-in：不 enable、不 start。提示只说成立的事实：单元装了、
 // 没 enable 也没起；该做的是先处理 drop-in 再重跑，不能叫人手动启动，那会按 drop-in 的参数起来。
 func TestHubFirstInstallRefusesAnExecStartDropIn(t *testing.T) {
 	t.Parallel()
 	e := newHubHost(t)
-	e.put("etc/systemd/system/probe-hub.service.d/override.conf", "[Service]\nExecStart=\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\n")
-	e.write("dropins-disk", "/etc/systemd/system/probe-hub.service.d/override.conf\n")
+	e.put("etc/systemd/system/heron-hub.service.d/override.conf", "[Service]\nExecStart=\nExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db\n")
+	e.write("dropins-disk", "/etc/systemd/system/heron-hub.service.d/override.conf\n")
 	out, code := e.hubInstall()
 	for _, want := range []string{
-		"drop-in /etc/systemd/system/probe-hub.service.d/override.conf sets ExecStart",
-		"probe-hub is installed but not enabled or started",
+		"drop-in /etc/systemd/system/heron-hub.service.d/override.conf sets ExecStart",
+		"heron-hub is installed but not enabled or started",
 		"fix the drop-in problem reported above, then rerun the installer",
 	} {
 		if code != 1 || !strings.Contains(out, want) {
 			t.Fatalf("exit %d, want %q:\n%s", code, want, out)
 		}
 	}
-	if strings.Contains(out, "start it manually") || strings.Contains(out, "probe-hub is stopped") {
-		t.Fatalf("a first install refused over a drop-in must not suggest starting probe-hub:\n%s", out)
+	if strings.Contains(out, "start it manually") || strings.Contains(out, "heron-hub is stopped") {
+		t.Fatalf("a first install refused over a drop-in must not suggest starting heron-hub:\n%s", out)
 	}
 	if c := e.calls(); index(c, "systemctl enable") >= 0 || index(c, "systemctl start") >= 0 {
-		t.Fatalf("a refused first install must not enable or start probe-hub: calls %q", c)
+		t.Fatalf("a refused first install must not enable or start heron-hub: calls %q", c)
 	}
 }
 
@@ -771,12 +771,12 @@ func TestHubFirstInstallRefusesAnExecStartDropIn(t *testing.T) {
 func TestHubDropInWrittenWhileStoppedIsRefusedBeforeStart(t *testing.T) {
 	t.Parallel()
 	e := newHubInstalled(t)
-	e.put("etc/systemd/system/probe-hub.service.d/late.conf", "[Service]\nExecStart=\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db\n")
-	e.vars = []string{"STUB_DROPIN_ON_STOP=/etc/systemd/system/probe-hub.service.d/late.conf"}
+	e.put("etc/systemd/system/heron-hub.service.d/late.conf", "[Service]\nExecStart=\nExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db\n")
+	e.vars = []string{"STUB_DROPIN_ON_STOP=/etc/systemd/system/heron-hub.service.d/late.conf"}
 	out, code := e.hubInstall()
 	for _, want := range []string{
 		"late.conf sets ExecStart",
-		"probe-hub is stopped but still enabled; started by hand or at the next boot, it would run with the drop-ins as they are",
+		"heron-hub is stopped but still enabled; started by hand or at the next boot, it would run with the drop-ins as they are",
 		"fix the drop-in problem reported above, then rerun the installer",
 	} {
 		if code != 1 || !strings.Contains(out, want) {
@@ -784,10 +784,10 @@ func TestHubDropInWrittenWhileStoppedIsRefusedBeforeStart(t *testing.T) {
 		}
 	}
 	if strings.Contains(out, "start it manually") {
-		t.Fatalf("a drop-in refusal must not suggest starting probe-hub by hand:\n%s", out)
+		t.Fatalf("a drop-in refusal must not suggest starting heron-hub by hand:\n%s", out)
 	}
 	if c := e.calls(); index(c, "systemctl start") >= 0 {
-		t.Fatalf("probe-hub must not be started: calls %q", c)
+		t.Fatalf("heron-hub must not be started: calls %q", c)
 	}
 }
 
@@ -796,15 +796,15 @@ func TestHubDropInWrittenWhileStoppedIsRefusedBeforeStart(t *testing.T) {
 func TestHubStartConfirmationFailureDoesNotSayStopped(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, env, want string }{
-		{"process never appears", "STUB_START_NO_PROCESS=1", "probe-hub did not start; see journalctl -u probe-hub"},
-		{"process exits right away", "STUB_START_DIES=1", "probe-hub did not stay running (pid 4242); see journalctl -u probe-hub"},
+		{"process never appears", "STUB_START_NO_PROCESS=1", "heron-hub did not start; see journalctl -u heron-hub"},
+		{"process exits right away", "STUB_START_DIES=1", "heron-hub did not stay running (pid 4242); see journalctl -u heron-hub"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			e := newHubInstalled(t)
 			e.vars = []string{tc.env}
 			out, code := e.hubInstall()
-			if code != 1 || !strings.Contains(out, tc.want) || strings.Contains(out, "probe-hub is stopped") {
+			if code != 1 || !strings.Contains(out, tc.want) || strings.Contains(out, "heron-hub is stopped") {
 				t.Fatalf("exit %d:\n%s", code, out)
 			}
 		})
@@ -819,8 +819,8 @@ func TestHubSystemctlFailureIsNotReportedAsADropInProblem(t *testing.T) {
 	t.Parallel()
 	const (
 		reload     = "systemctl daemon-reload failed: Failed to reload daemon: Access denied"
-		enabled    = "probe-hub is stopped but still enabled; started by hand or at the next boot, it would run with the drop-ins as they are"
-		notEnabled = "probe-hub is installed but not enabled or started"
+		enabled    = "heron-hub is stopped but still enabled; started by hand or at the next boot, it would run with the drop-ins as they are"
+		notEnabled = "heron-hub is installed but not enabled or started"
 		hint       = "fix the systemctl problem reported above, then rerun the installer"
 	)
 	installed := func(t *testing.T) *env { return newHubInstalled(t) }
@@ -866,7 +866,7 @@ func TestHubSystemctlFailureIsNotReportedAsADropInProblem(t *testing.T) {
 					t.Fatalf("must not say %q:\n%s", tc.forbidden, out)
 				}
 				if strings.Contains(out, "drop-in problem") || strings.Contains(out, "start it manually") || index(e.calls(), "systemctl start") >= 0 {
-					t.Fatalf("a systemctl failure must not be reported as a drop-in problem, suggest a manual start, or start probe-hub: calls %q\n%s", e.calls(), out)
+					t.Fatalf("a systemctl failure must not be reported as a drop-in problem, suggest a manual start, or start heron-hub: calls %q\n%s", e.calls(), out)
 				}
 				if tc.name == "before stopping" {
 					e.assertUntouched(out)
@@ -899,7 +899,7 @@ func TestHubUninstallRemovesTheEnableLink(t *testing.T) {
 				}
 			}
 			out, code := e.run("--uninstall", "--yes")
-			if code != 0 || !strings.Contains(out, "probe-hub uninstalled") || e.enableLink() {
+			if code != 0 || !strings.Contains(out, "heron-hub uninstalled") || e.enableLink() {
 				t.Fatalf("exit %d, enable link left: %v, calls %q:\n%s", code, e.enableLink(), e.calls(), out)
 			}
 		})

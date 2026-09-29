@@ -5,8 +5,8 @@ import (
 	"net"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
 )
 
 // TCP 只测量连接建立耗时；解析与连接共用预算，解析失败与地址非法是 error。
@@ -17,7 +17,7 @@ type TCP struct {
 	DialContext func(context.Context, string, string) (net.Conn, error)
 }
 
-func (p TCP) Probe(ctx context.Context, t *probev1.ProbeTask) Outcome {
+func (p TCP) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 	timeout := time.Duration(t.GetTimeoutMs()) * time.Millisecond
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

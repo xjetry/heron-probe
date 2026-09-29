@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/hub/web"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/web"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 )
@@ -97,7 +97,7 @@ func builtinPublic(path string) hostResponse {
 // 预检的应答不许可这个 origin，实际请求就不发出；一旦许可（允许源加 Allow-Credentials），兄弟子域上的主题脚本就能带着
 // 管理员的 cookie 把写请求发到面板，副作用在服务端已经发生，读不读得到响应无关紧要。
 func TestHandlerRoutesByHost(t *testing.T) {
-	const listNodes, report, getSite = "/probe.v1.AdminService/ListNodes", "/probe.v1.AgentService/Report", "/probe.v1.PublicService/GetSite"
+	const listNodes, report, getSite = "/heron.v1.AdminService/ListNodes", "/heron.v1.AgentService/Report", "/heron.v1.PublicService/GetSite"
 	type check struct {
 		method, path string
 		ok           func(hostResponse) bool
@@ -107,7 +107,7 @@ func TestHandlerRoutesByHost(t *testing.T) {
 	body := func(want string) func(hostResponse) bool {
 		return func(r hostResponse) bool { return r.status == http.StatusOK && r.body == want }
 	}
-	// RPC 路径优先于主题文件：包里的 probe.v1.PublicService/GetSite 遮蔽不了公开服务。
+	// RPC 路径优先于主题文件：包里的 heron.v1.PublicService/GetSite 遮蔽不了公开服务。
 	connectJSON := func(r hostResponse) bool {
 		return r.status == http.StatusOK && r.header.Get("Content-Type") == "application/json" && r.body != "shadow rpc"
 	}
@@ -167,7 +167,7 @@ func TestHandlerRoutesByHost(t *testing.T) {
 			[]string{"t7t692b.test", "xn--t7t692b.test.evil"}},
 	} {
 		srv, st := newThemeTestServer(t, setup.flag)
-		installTheme(t, st, "t", map[string]string{"index.html": "theme index", "assets/app.js": "console.log(1)", "admin/index.html": "shadow panel", "probe.v1.PublicService/GetSite": "shadow rpc"})
+		installTheme(t, st, "t", map[string]string{"index.html": "theme index", "assets/app.js": "console.log(1)", "admin/index.html": "shadow panel", "heron.v1.PublicService/GetSite": "shadow rpc"})
 		type route struct {
 			host   string
 			checks []check
@@ -203,13 +203,13 @@ func TestHandlerRoutesByHost(t *testing.T) {
 	}
 }
 
-// 主题 origin 上 AdminService、AgentService（以及 probe.v1 里 PublicService 之外的任何服务）的每个过程都是 404：
+// 主题 origin 上 AdminService、AgentService（以及 heron.v1 里 PublicService 之外的任何服务）的每个过程都是 404：
 // 过程从注册表枚举，不手写。PublicService 的过程由 connect 应答（JSON），而不是落到主题的 index.html。
 func TestThemeOriginHidesEveryNonPublicProcedure(t *testing.T) {
 	srv, st := newThemeTestServer(t, "http://"+testThemeHost)
 	installTheme(t, st, "t", map[string]string{"index.html": "theme index"})
 	count, public := 0, 0
-	protoregistry.GlobalFiles.RangeFilesByPackage("probe.v1", func(file protoreflect.FileDescriptor) bool {
+	protoregistry.GlobalFiles.RangeFilesByPackage("heron.v1", func(file protoreflect.FileDescriptor) bool {
 		for i := 0; i < file.Services().Len(); i++ {
 			svc := file.Services().Get(i)
 			for j := 0; j < svc.Methods().Len(); j++ {
@@ -231,7 +231,7 @@ func TestThemeOriginHidesEveryNonPublicProcedure(t *testing.T) {
 		return true
 	})
 	if count == 0 || public != len(publicProcedures) || count == public {
-		t.Fatalf("enumerated %d procedures, %d public; want every probe.v1 procedure including all %d public ones", count, public, len(publicProcedures))
+		t.Fatalf("enumerated %d procedures, %d public; want every heron.v1 procedure including all %d public ones", count, public, len(publicProcedures))
 	}
 }
 
@@ -360,7 +360,7 @@ func TestThemeOriginObeysThePublicSwitch(t *testing.T) {
 	}
 	get := func(path string) hostResponse { return hostDo(t, srv, http.MethodGet, testThemeHost, path, "", nil) }
 	getSite := func() hostResponse {
-		return hostDo(t, srv, http.MethodPost, testThemeHost, "/probe.v1.PublicService/GetSite", "{}", nil)
+		return hostDo(t, srv, http.MethodPost, testThemeHost, "/heron.v1.PublicService/GetSite", "{}", nil)
 	}
 	builtinCSP := builtinPublic("/").header.Get("Content-Security-Policy")
 
@@ -414,9 +414,9 @@ func TestNewHandlerKeepsBothStaticSurfacesBehindThePublicSwitch(t *testing.T) {
 		})
 	}
 	r := routes{
-		agent:  mountOf("/probe.v1.AgentService/", http.NotFoundHandler()),
-		admin:  mountOf("/probe.v1.AdminService/", http.NotFoundHandler()),
-		public: mountOf("/probe.v1.PublicService/", http.NotFoundHandler()),
+		agent:  mountOf("/heron.v1.AgentService/", http.NotFoundHandler()),
+		admin:  mountOf("/heron.v1.AdminService/", http.NotFoundHandler()),
+		public: mountOf("/heron.v1.PublicService/", http.NotFoundHandler()),
 		page:   counting(&pageCalls), themeOrigin: "http://" + testThemeHost, themePage: counting(&themePageCalls),
 		publicEnabled: open.Load,
 	}

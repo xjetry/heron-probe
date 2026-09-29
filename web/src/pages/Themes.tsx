@@ -6,7 +6,7 @@ import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
-import { AdminService, type Theme } from "../gen/probe/v1/admin_pb";
+import { AdminService, type Theme } from "../gen/heron/v1/admin_pb";
 import { toBase64 } from "../lib/base64";
 
 // hub 没有配 --theme-origin 时五个主题方法一律 FailedPrecondition：这是配置状态而不是故障，页面给出说明，不当作错误横幅。
@@ -60,7 +60,7 @@ export function Themes() {
           <p>这个 hub 没有配置主题 origin，主题的上传与托管不开启。</p>
           <p className="muted">
             主题是第三方的前端代码，必须放在与面板不同的主机名上：与面板同源的主题脚本能带着来访管理员的会话调管理接口。
-            把第二个主机名（例如 status.example.com）也指向 hub，并以 <code>probe-hub serve --theme-origin https://status.example.com</code> 启动。
+            把第二个主机名（例如 status.example.com）也指向 hub，并以 <code>heron-hub serve --theme-origin https://status.example.com</code> 启动。
             只换端口不算另一个主机名：cookie 不隔离端口，hub 按主机名分流，会把面板的请求一起分到主题那边。
           </p>
           <p className="muted">hub 的原文：{errorText(list.error)}</p>

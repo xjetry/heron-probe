@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/clock"
 )
 
 // 通用 SigV4 套件：前四组复制自上游，后三组的期望值由 botocore 算出（来源与生成方式见 testdata/README.md）。

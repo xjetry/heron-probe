@@ -2,7 +2,7 @@ import { isFieldSet } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GeoBackend, SettingsSchema, type UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
+import { GeoBackend, SettingsSchema, type UpdateSettingsRequest } from "../gen/heron/v1/admin_pb";
 import { MAX_LOGO_BYTES } from "../lib/appearance";
 import { BUILT_IN_ACCENT } from "../lib/palette";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";

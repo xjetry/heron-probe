@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
 )
 
 func pipeWith(t *testing.T, content string) *os.File {

@@ -5,21 +5,21 @@ import (
 	"encoding/hex"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/auth"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
 )
 
-func (s *Service) ListSessions(ctx context.Context, _ *connect.Request[probev1.ListSessionsRequest]) (*connect.Response[probev1.ListSessionsResponse], error) {
+func (s *Service) ListSessions(ctx context.Context, _ *connect.Request[heronv1.ListSessionsRequest]) (*connect.Response[heronv1.ListSessionsResponse], error) {
 	rows, err := s.auth.ListSessions(ctx)
 	if err != nil {
 		s.log.Error("listing sessions failed", "err", err)
 		return nil, internalError("listing sessions failed")
 	}
 	current := auth.HashToken(ctx.Value(sessionKey{}).(string))
-	out := &probev1.ListSessionsResponse{}
+	out := &heronv1.ListSessionsResponse{}
 	for _, sess := range rows {
 		// 库与响应只持有 hash；鉴权仍须对 cookie 明文哈希，列表 id 不能成为登录凭据。
-		out.Sessions = append(out.Sessions, &probev1.Session{
+		out.Sessions = append(out.Sessions, &heronv1.Session{
 			Id: hex.EncodeToString(sess.TokenHash[:]), CreatedAt: sess.CreatedAt.Unix(),
 			LastUsedAt: sess.LastUsedAt.Unix(), Current: sess.TokenHash == current,
 		})
@@ -27,7 +27,7 @@ func (s *Service) ListSessions(ctx context.Context, _ *connect.Request[probev1.L
 	return connect.NewResponse(out), nil
 }
 
-func (s *Service) RevokeSession(ctx context.Context, req *connect.Request[probev1.RevokeSessionRequest]) (*connect.Response[probev1.RevokeSessionResponse], error) {
+func (s *Service) RevokeSession(ctx context.Context, req *connect.Request[heronv1.RevokeSessionRequest]) (*connect.Response[heronv1.RevokeSessionResponse], error) {
 	raw, err := hex.DecodeString(req.Msg.Id)
 	if err != nil || len(raw) != 32 {
 		return nil, invalid("id must be 64 hexadecimal characters from ListSessions")
@@ -38,7 +38,7 @@ func (s *Service) RevokeSession(ctx context.Context, req *connect.Request[probev
 		s.log.Error("revoking session failed", "err", err)
 		return nil, internalError("revoking session failed")
 	}
-	resp := connect.NewResponse(&probev1.RevokeSessionResponse{})
+	resp := connect.NewResponse(&heronv1.RevokeSessionResponse{})
 	if hash == auth.HashToken(ctx.Value(sessionKey{}).(string)) {
 		clearSessionCookie(ctx, resp.Header())
 	}

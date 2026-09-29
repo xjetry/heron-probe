@@ -19,8 +19,8 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/metric"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
 )
 
 // pubResult 是一次原样 HTTP 调用的结果：公开服务的断言常要比较整段响应字节与响应头。
@@ -56,7 +56,7 @@ func pubDo(t *testing.T, req *http.Request, header map[string]string) pubResult 
 // pubGet 用 curl 同款的 Connect GET 形态调公开服务，不带任何凭据；query 是已编码的查询串。
 func pubGet(t *testing.T, h *harness, method, query string, header map[string]string) pubResult {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, h.srv.URL+"/probe.v1.PublicService/"+method+"?"+query, nil)
+	req, err := http.NewRequest(http.MethodGet, h.srv.URL+"/heron.v1.PublicService/"+method+"?"+query, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func pubGet(t *testing.T, h *harness, method, query string, header map[string]st
 // pubPost 以 JSON POST 调公开服务；header 里的 Content-Type 覆盖默认值。
 func pubPost(t *testing.T, h *harness, method, body string, header map[string]string) pubResult {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/probe.v1.PublicService/"+method, strings.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/heron.v1.PublicService/"+method, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,8 +146,8 @@ func TestPublicHistorySharesWindowValidation(t *testing.T) {
 		{"missing", 999, 0, 3600, 0, connect.CodeNotFound, "node_id: no public node has this id"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, pe := client.QueryProbes(t.Context(), connect.NewRequest(&probev1.QueryProbesRequest{NodeId: tc.node, From: tc.from, To: tc.to, MaxPoints: tc.max}))
-			_, me := client.QueryMetrics(t.Context(), connect.NewRequest(&probev1.QueryMetricsRequest{NodeId: tc.node, From: tc.from, To: tc.to, MaxPoints: tc.max}))
+			_, pe := client.QueryProbes(t.Context(), connect.NewRequest(&heronv1.QueryProbesRequest{NodeId: tc.node, From: tc.from, To: tc.to, MaxPoints: tc.max}))
+			_, me := client.QueryMetrics(t.Context(), connect.NewRequest(&heronv1.QueryMetricsRequest{NodeId: tc.node, From: tc.from, To: tc.to, MaxPoints: tc.max}))
 			for _, err := range []error{pe, me} {
 				if codeOf(err) != tc.code || !strings.Contains(err.Error(), tc.text) {
 					t.Errorf("error=%v want=%s %q", err, tc.code, tc.text)
@@ -166,18 +166,18 @@ func TestPublicSnapshotListsOnlyPublicNodesWithPublicFields(t *testing.T) {
 	c, _ := h.createNode(t, "c")
 	h.setPublic(t, a, "a", true)
 	h.setPublic(t, c, "c", true)
-	if _, err := h.admin.ReorderNodes(ctx, connect.NewRequest(&probev1.ReorderNodesRequest{Ids: []int64{c, b, a}})); err != nil {
+	if _, err := h.admin.ReorderNodes(ctx, connect.NewRequest(&heronv1.ReorderNodesRequest{Ids: []int64{c, b, a}})); err != nil {
 		t.Fatal(err)
 	}
-	facts := &probev1.Facts{Hostname: "secret-host", Os: "Debian 12", Kernel: "6.1.0-secret", Arch: "amd64", Virtualization: "kvm",
+	facts := &heronv1.Facts{Hostname: "secret-host", Os: "Debian 12", Kernel: "6.1.0-secret", Arch: "amd64", Virtualization: "kvm",
 		CpuModel: "EPYC", CpuCores: 4, AgentVersion: "v9.9.9-secret", IcmpAvailable: true}
 	if err := h.store.UpsertFacts(ctx, a, 1, facts); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.report(t, tokA, &probev1.Metrics{BootId: "boot-secret", CpuPct: proto.Float64(12.5), MemUsed: proto.Uint64(0), MemTotal: proto.Uint64(1 << 30)}); err != nil {
+	if err := h.report(t, tokA, &heronv1.Metrics{BootId: "boot-secret", CpuPct: proto.Float64(12.5), MemUsed: proto.Uint64(0), MemTotal: proto.Uint64(1 << 30)}); err != nil {
 		t.Fatal(err)
 	}
-	resp, err := h.publicClient().GetSnapshot(ctx, connect.NewRequest(&probev1.PublicServiceGetSnapshotRequest{}))
+	resp, err := h.publicClient().GetSnapshot(ctx, connect.NewRequest(&heronv1.PublicServiceGetSnapshotRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,8 +192,8 @@ func TestPublicSnapshotListsOnlyPublicNodesWithPublicFields(t *testing.T) {
 	if first.GetOnline() || first.LastSeenAt != nil || first.Facts != nil || first.Metrics != nil || first.Traffic == nil {
 		t.Fatalf("never-reported node = %v", first)
 	}
-	wantFacts := &probev1.PublicFacts{Os: "Debian 12", Arch: "amd64", Virtualization: "kvm", CpuModel: "EPYC", CpuCores: 4}
-	wantMetrics := &probev1.PublicMetrics{CpuPct: proto.Float64(12.5), MemUsed: proto.Uint64(0), MemTotal: proto.Uint64(1 << 30)}
+	wantFacts := &heronv1.PublicFacts{Os: "Debian 12", Arch: "amd64", Virtualization: "kvm", CpuModel: "EPYC", CpuCores: 4}
+	wantMetrics := &heronv1.PublicMetrics{CpuPct: proto.Float64(12.5), MemUsed: proto.Uint64(0), MemTotal: proto.Uint64(1 << 30)}
 	if !second.GetOnline() || second.GetLastSeenAt() != h.clk.Now().Unix() || !proto.Equal(second.GetFacts(), wantFacts) ||
 		!proto.Equal(second.GetMetrics(), wantMetrics) || second.Traffic == nil {
 		t.Fatalf("reported node = %v", second)
@@ -211,13 +211,13 @@ func TestPublicSiteServesSavedSettings(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	client := h.publicClient()
-	got, err := client.GetSite(t.Context(), connect.NewRequest(&probev1.GetSiteRequest{}))
-	if err != nil || !proto.Equal(got.Msg, &probev1.PublicSite{Theme: "auto"}) {
+	got, err := client.GetSite(t.Context(), connect.NewRequest(&heronv1.GetSiteRequest{}))
+	if err != nil || !proto.Equal(got.Msg, &heronv1.PublicSite{Theme: "auto"}) {
 		t.Fatalf("never saved: %v %v", got, err)
 	}
 	saveSettings(t, h, validSettings())
-	got, err = client.GetSite(t.Context(), connect.NewRequest(&probev1.GetSiteRequest{}))
-	want := &probev1.PublicSite{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,iVBORw0KGgo=", CustomCss: "body { color: red }"}
+	got, err = client.GetSite(t.Context(), connect.NewRequest(&heronv1.GetSiteRequest{}))
+	want := &heronv1.PublicSite{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,iVBORw0KGgo=", CustomCss: "body { color: red }"}
 	if err != nil || !proto.Equal(got.Msg, want) {
 		t.Fatalf("site = %v %v, want %v", got, err, want)
 	}
@@ -227,24 +227,24 @@ func TestPublicSiteServesSavedSettings(t *testing.T) {
 // 必须同时改这份清单——与 access_test 的 readMethods 同一口径。共用的 Traffic 与历史查询类型同样在列：
 // 给它们加字段也会出现在公开页。
 var publicFields = map[protoreflect.FullName][]protoreflect.Name{
-	"probe.v1.PublicSite":     {"title", "theme", "accent_color", "logo", "custom_css"},
-	"probe.v1.PublicSnapshot": {"now", "report_interval_ms", "nodes", "tags"},
-	"probe.v1.PublicNode":     {"id", "name", "online", "last_seen_at", "sort_order", "facts", "metrics", "traffic", "billing", "country", "tags"},
-	"probe.v1.PublicFacts":    {"os", "arch", "virtualization", "cpu_model", "cpu_cores"},
-	"probe.v1.PublicBilling":  {"price", "currency", "billing_cycle", "expires_on", "days_left"},
-	"probe.v1.PublicMetrics": {"cpu_pct", "load1", "load5", "load15", "mem_total", "mem_used", "swap_total", "swap_used",
+	"heron.v1.PublicSite":     {"title", "theme", "accent_color", "logo", "custom_css"},
+	"heron.v1.PublicSnapshot": {"now", "report_interval_ms", "nodes", "tags"},
+	"heron.v1.PublicNode":     {"id", "name", "online", "last_seen_at", "sort_order", "facts", "metrics", "traffic", "billing", "country", "tags"},
+	"heron.v1.PublicFacts":    {"os", "arch", "virtualization", "cpu_model", "cpu_cores"},
+	"heron.v1.PublicBilling":  {"price", "currency", "billing_cycle", "expires_on", "days_left"},
+	"heron.v1.PublicMetrics": {"cpu_pct", "load1", "load5", "load15", "mem_total", "mem_used", "swap_total", "swap_used",
 		"disk_total", "disk_used", "net_rx_total", "net_tx_total", "net_rx_bps", "net_tx_bps", "tcp_conns", "udp_conns", "procs", "uptime_s"},
-	"probe.v1.Traffic":              {"total_rx", "total_tx", "period_rx", "period_tx", "period_start", "next_reset_at", "reset_day"},
-	"probe.v1.QueryMetricsResponse": {"level", "step_s", "ts", "series"},
-	"probe.v1.MetricSeries":         {"name", "unit", "samples"},
-	"probe.v1.MetricSample":         {"n", "mean", "max", "sum"},
-	"probe.v1.QueryProbesResponse":  {"level", "step_s", "series"},
-	"probe.v1.ProbeSeries":          {"task_id", "samples", "kind", "target"},
-	"probe.v1.ProbeSample":          {"ts", "sent", "lost", "errors", "rtt_mean_us", "rtt_min_us", "rtt_max_us"},
+	"heron.v1.Traffic":              {"total_rx", "total_tx", "period_rx", "period_tx", "period_start", "next_reset_at", "reset_day"},
+	"heron.v1.QueryMetricsResponse": {"level", "step_s", "ts", "series"},
+	"heron.v1.MetricSeries":         {"name", "unit", "samples"},
+	"heron.v1.MetricSample":         {"n", "mean", "max", "sum"},
+	"heron.v1.QueryProbesResponse":  {"level", "step_s", "series"},
+	"heron.v1.ProbeSeries":          {"task_id", "samples", "kind", "target"},
+	"heron.v1.ProbeSample":          {"ts", "sent", "lost", "errors", "rtt_mean_us", "rtt_min_us", "rtt_max_us"},
 }
 
 func TestPublicResponsesExposeOnlyAllowlistedFields(t *testing.T) {
-	svc := probev1.File_probe_v1_public_proto.Services().ByName("PublicService")
+	svc := heronv1.File_heron_v1_public_proto.Services().ByName("PublicService")
 	seen := map[protoreflect.FullName]bool{}
 	var walk func(md protoreflect.MessageDescriptor)
 	walk = func(md protoreflect.MessageDescriptor) {
@@ -290,8 +290,8 @@ func TestPublicHistoryMatchesAdminForAPublicNode(t *testing.T) {
 	h.login(t)
 	id, _ := h.createNode(t, "pub")
 	h.setPublic(t, id, "pub", true)
-	saved, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{
-		Task:    &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "192.0.2.1", IntervalS: 30, TimeoutMs: 1000},
+	saved, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&heronv1.SaveProbeTaskRequest{
+		Task:    &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "192.0.2.1", IntervalS: 30, TimeoutMs: 1000},
 		NodeIds: []int64{id},
 	}))
 	if err != nil {
@@ -299,7 +299,7 @@ func TestPublicHistoryMatchesAdminForAPublicNode(t *testing.T) {
 	}
 	base := h.clk.Now().Truncate(time.Hour).Unix()
 	b := metric.NewBucket()
-	b.Add(&probev1.Metrics{CpuPct: proto.Float64(7)})
+	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(7)})
 	batch := metric.Batch{
 		Rows:   []metric.Row{{NodeID: id, TS: base, Bucket: b}},
 		Probes: []metric.ProbeRow{{NodeID: id, TS: base, TaskID: saved.Msg.GetTask().GetTask().GetId(), Bucket: &metric.ProbeBucket{Sent: 2, Lost: 1}}},
@@ -308,7 +308,7 @@ func TestPublicHistoryMatchesAdminForAPublicNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	pub := h.publicClient()
-	metrics := &probev1.QueryMetricsRequest{NodeId: id, From: base, To: base + 3600}
+	metrics := &heronv1.QueryMetricsRequest{NodeId: id, From: base, To: base + 3600}
 	pm, err := pub.QueryMetrics(t.Context(), connect.NewRequest(metrics))
 	if err != nil {
 		t.Fatal(err)
@@ -320,7 +320,7 @@ func TestPublicHistoryMatchesAdminForAPublicNode(t *testing.T) {
 	if len(am.Msg.GetTs()) != 1 || !proto.Equal(pm.Msg, am.Msg) {
 		t.Errorf("public QueryMetrics = %v\nadmin QueryMetrics = %v", pm.Msg, am.Msg)
 	}
-	probes := &probev1.QueryProbesRequest{NodeId: id, From: base, To: base + 3600}
+	probes := &heronv1.QueryProbesRequest{NodeId: id, From: base, To: base + 3600}
 	pp, err := pub.QueryProbes(t.Context(), connect.NewRequest(probes))
 	if err != nil {
 		t.Fatal(err)
@@ -344,8 +344,8 @@ func TestPublicProbeLabelsOnlyTasksAssignedToTheNode(t *testing.T) {
 	h.setPublic(t, pub, "pub", true)
 	save := func(id uint64, target string, node int64) uint64 {
 		t.Helper()
-		resp, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&probev1.SaveProbeTaskRequest{
-			Task:    &probev1.ProbeTask{Id: id, Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: target, IntervalS: 30, TimeoutMs: 1000},
+		resp, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&heronv1.SaveProbeTaskRequest{
+			Task:    &heronv1.ProbeTask{Id: id, Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: target, IntervalS: 30, TimeoutMs: 1000},
 			NodeIds: []int64{node},
 		}))
 		if err != nil {
@@ -364,8 +364,8 @@ func TestPublicProbeLabelsOnlyTasksAssignedToTheNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	save(moved, "10.0.0.5", priv)
-	req := &probev1.QueryProbesRequest{NodeId: pub, From: base, To: base + 3600}
-	labels := func(series []*probev1.ProbeSeries) map[uint64]string {
+	req := &heronv1.QueryProbesRequest{NodeId: pub, From: base, To: base + 3600}
+	labels := func(series []*heronv1.ProbeSeries) map[uint64]string {
 		out := map[uint64]string{}
 		for _, s := range series {
 			out[s.GetTaskId()] = fmt.Sprintf("%v %q", s.GetKind(), s.GetTarget())
@@ -473,9 +473,9 @@ func TestPublicCacheControlPerMethod(t *testing.T) {
 
 // next 什么都不写就返回时，net/http 会隐式补 200；缓存头仍须按表写出，而不是缺席。
 func TestCacheControlCoversImplicitOK(t *testing.T) {
-	p := &Public{maxAge: map[string]uint32{"/probe.v1.PublicService/GetSite": 60}}
+	p := &Public{maxAge: map[string]uint32{"/heron.v1.PublicService/GetSite": 60}}
 	rec := httptest.NewRecorder()
-	p.cacheControl(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/probe.v1.PublicService/GetSite", nil))
+	p.cacheControl(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/heron.v1.PublicService/GetSite", nil))
 	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "max-age=60" {
 		t.Fatalf("empty handler: %d Cache-Control %q, want 200 max-age=60", rec.Code, rec.Header().Get("Cache-Control"))
 	}
@@ -488,7 +488,7 @@ func TestCachePolicyRequiresGETAndMaxAgeTogether(t *testing.T) {
 			o.IdempotencyLevel = descriptorpb.MethodOptions_NO_SIDE_EFFECTS.Enum()
 		}
 		if set {
-			proto.SetExtension(o, probev1.E_CacheMaxAgeS, maxAge)
+			proto.SetExtension(o, heronv1.E_CacheMaxAgeS, maxAge)
 		}
 		return o
 	}
@@ -497,24 +497,24 @@ func TestCachePolicyRequiresGETAndMaxAgeTogether(t *testing.T) {
 	}
 	expectPanic(t, "synthetic.S.Bare accepts GET", func() { cachePolicy(one(opts(true, 0, false))) })
 	expectPanic(t, "synthetic.S.Bare accepts GET", func() { cachePolicy(one(opts(true, 0, true))) })
-	expectPanic(t, "synthetic.S.Bare declares probe.v1.cache_max_age_s but does not accept GET", func() { cachePolicy(one(opts(false, 30, true))) })
+	expectPanic(t, "synthetic.S.Bare declares heron.v1.cache_max_age_s but does not accept GET", func() { cachePolicy(one(opts(false, 30, true))) })
 	if got := cachePolicy(one(opts(false, 0, false))); len(got) != 0 {
 		t.Fatalf("a POST-only method without a max-age: table = %v, want empty", got)
 	}
-	// 装配时核对的是 probe.v1 的全部服务，不只是 PublicService：枚举本身不能是空的。
+	// 装配时核对的是 heron.v1 的全部服务，不只是 PublicService：枚举本身不能是空的。
 	services := probeServices()
 	var names []string
 	for _, s := range services {
 		names = append(names, string(s.FullName()))
 	}
 	slices.Sort(names)
-	if want := []string{"probe.v1.AdminService", "probe.v1.AgentService", "probe.v1.PublicService"}; !slices.Equal(names, want) {
-		t.Fatalf("probe.v1 services = %v, want %v", names, want)
+	if want := []string{"heron.v1.AdminService", "heron.v1.AgentService", "heron.v1.PublicService"}; !slices.Equal(names, want) {
+		t.Fatalf("heron.v1 services = %v, want %v", names, want)
 	}
 	got := cachePolicy(services)
 	want := map[string]uint32{
-		"/probe.v1.PublicService/GetSite": 300, "/probe.v1.PublicService/GetSnapshot": 1,
-		"/probe.v1.PublicService/QueryMetrics": 60, "/probe.v1.PublicService/QueryProbes": 60,
+		"/heron.v1.PublicService/GetSite": 300, "/heron.v1.PublicService/GetSnapshot": 1,
+		"/heron.v1.PublicService/QueryMetrics": 60, "/heron.v1.PublicService/QueryProbes": 60,
 	}
 	if !maps.Equal(got, want) {
 		t.Fatalf("table = %v, want %v", got, want)

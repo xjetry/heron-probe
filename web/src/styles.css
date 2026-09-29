@@ -15,7 +15,9 @@ a { color: var(--accent); text-decoration: none; }
 .layout { min-height: 100vh; display: flex; flex-direction: column; }
 .nav { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; padding: 0.6rem 1rem; border-bottom: 1px solid var(--line); background: var(--card); }
 .panel-nav > a, .panel-nav > button { white-space: nowrap; }
-.nav .brand { font-weight: 600; margin-right: 1rem; }
+.brand { display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 600; }
+.heron-mark { display: block; flex: none; }
+.nav .brand { margin-right: 1rem; }
 .nav a.active { font-weight: 600; text-decoration: underline; }
 .nav .link { margin-left: auto; }
 .main { padding: 1rem; max-width: 1200px; width: 100%; margin: 0 auto; }
@@ -23,6 +25,9 @@ a { color: var(--accent); text-decoration: none; }
 .theme-preview { display: block; max-width: 8rem; max-height: 5rem; }
 .login { min-height: 100vh; display: grid; place-items: center; padding: 1rem; }
 .login .card { width: min(320px, 100%); display: grid; gap: 0.75rem; }
+.login .brand { margin: 0; font-size: 1.75rem; letter-spacing: -0.04em; }
+.login .heron-mark { width: 44px; height: 44px; }
+.login-description { margin: 0 0 0.5rem; color: var(--muted); }
 label { display: grid; gap: 0.25rem; }
 input, select, button, textarea { font: inherit; padding: 0.4rem 0.6rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); }
 button { cursor: pointer; }

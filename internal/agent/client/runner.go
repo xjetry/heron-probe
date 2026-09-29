@@ -9,17 +9,17 @@ import (
 
 	"connectrpc.com/connect"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/agent/collect"
-	"github.com/xjetry/probe/internal/agent/prober"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/probelimit"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/agent/collect"
+	"github.com/xjetry/heron-probe/internal/agent/prober"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 )
 
 type Runner struct {
 	Collector *collect.Collector
-	Client    probev1connect.AgentServiceClient
+	Client    heronv1connect.AgentServiceClient
 	Token     string
 	Clock     clock.Clock
 	Sleep     func(context.Context, time.Duration) error
@@ -69,7 +69,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		if err != nil {
 			r.Log.Warn("partial collection", "err", err)
 		}
-		req := connect.NewRequest(&probev1.ReportRequest{Metrics: m})
+		req := connect.NewRequest(&heronv1.ReportRequest{Metrics: m})
 		// 超龄过滤与 age_ms 必须取同一时刻，否则刚通过过滤的结果可能以大于 MaxResultAge 的年龄发出并被 hub 丢弃。
 		now := r.Clock.Mono()
 		taken := r.Results.Take(now, probelimit.MaxResultAge, probelimit.MaxResultsPerReport)

@@ -3,7 +3,7 @@ package metric
 import (
 	"testing"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -20,8 +20,8 @@ func idx(t *testing.T, name string) int {
 
 func TestAddCountsOnlyPresentReadings(t *testing.T) {
 	b := NewBucket()
-	b.Add(&probev1.Metrics{CpuPct: proto.Float64(10), MemUsed: proto.Uint64(100)})
-	b.Add(&probev1.Metrics{CpuPct: proto.Float64(30)}) // 无 mem_used 读数
+	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(10), MemUsed: proto.Uint64(100)})
+	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(30)}) // 无 mem_used 读数
 	cpu, mem := idx(t, "cpu"), idx(t, "mem_used")
 	if got, ok := b.Mean(cpu); !ok || got != 20 {
 		t.Fatalf("cpu mean = %v,%v want 20,true", got, ok)
@@ -39,7 +39,7 @@ func TestAddCountsOnlyPresentReadings(t *testing.T) {
 
 func TestMeanOfEmptyColumnIsNoData(t *testing.T) {
 	b := NewBucket()
-	b.Add(&probev1.Metrics{CpuPct: proto.Float64(1)})
+	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(1)})
 	if _, ok := b.Mean(idx(t, "swap_used")); ok {
 		t.Fatal("swap_used had no readings; mean must report no-data, not 0")
 	}
@@ -47,9 +47,9 @@ func TestMeanOfEmptyColumnIsNoData(t *testing.T) {
 
 func TestMergeIsAdditive(t *testing.T) {
 	a, b := NewBucket(), NewBucket()
-	a.Add(&probev1.Metrics{CpuPct: proto.Float64(10)})
-	b.Add(&probev1.Metrics{CpuPct: proto.Float64(20)})
-	b.Add(&probev1.Metrics{CpuPct: proto.Float64(60)})
+	a.Add(&heronv1.Metrics{CpuPct: proto.Float64(10)})
+	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(20)})
+	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(60)})
 	a.Merge(b)
 	cpu := idx(t, "cpu")
 	if a.Sum[cpu] != 90 || a.N[cpu] != 3 || a.Max[cpu] != 60 {
@@ -95,7 +95,7 @@ func TestEveryColumnDeclaresItsUnit(t *testing.T) {
 
 func TestSumColumnsAreFedByAddSumNotByMetrics(t *testing.T) {
 	b := NewBucket()
-	b.Add(&probev1.Metrics{NetRxTotal: proto.Uint64(5), NetTxTotal: proto.Uint64(7)})
+	b.Add(&heronv1.Metrics{NetRxTotal: proto.Uint64(5), NetTxTotal: proto.Uint64(7)})
 	if b.N[RxBytes] != 0 || b.N[TxBytes] != 0 {
 		t.Fatalf("Sum columns took a value from Metrics: n = %d/%d, want 0/0", b.N[RxBytes], b.N[TxBytes])
 	}

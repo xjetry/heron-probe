@@ -15,15 +15,15 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testwait"
 	"google.golang.org/protobuf/proto"
 )
 
 func putNotifySettings(t *testing.T, h *harness, body string, status int) map[string]any {
 	t.Helper()
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, h.srv.URL+"/probe.v1.AdminService/UpdateSettings", strings.NewReader(body))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, h.srv.URL+"/heron.v1.AdminService/UpdateSettings", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,21 +47,21 @@ func putNotifySettings(t *testing.T, h *harness, body string, status int) map[st
 	return out
 }
 
-func chooseLoginChannels(t *testing.T, h *harness, ids ...int64) *probev1.Settings {
+func chooseLoginChannels(t *testing.T, h *harness, ids ...int64) *heronv1.Settings {
 	t.Helper()
-	return saveSettings(t, h, &probev1.Settings{LoginNotify: &probev1.LoginNotify{ChannelIds: ids}})
+	return saveSettings(t, h, &heronv1.Settings{LoginNotify: &heronv1.LoginNotify{ChannelIds: ids}})
 }
 
 func TestLoginNotifyFieldNumberAndPresence(t *testing.T) {
-	field := (&probev1.Settings{}).ProtoReflect().Descriptor().Fields().ByName("login_notify")
+	field := (&heronv1.Settings{}).ProtoReflect().Descriptor().Fields().ByName("login_notify")
 	if field == nil || field.Number() != 12 || !field.HasPresence() || field.Message() == nil {
 		t.Fatalf("settings.login_notify must be a message with presence at field 12: %v", field)
 	}
 }
 
-func loginEvents(t *testing.T, h *harness) []*probev1.AlertEvent {
+func loginEvents(t *testing.T, h *harness) []*heronv1.AlertEvent {
 	t.Helper()
-	r, err := h.admin.ListAlertEvents(t.Context(), connect.NewRequest(&probev1.ListAlertEventsRequest{Limit: 100}))
+	r, err := h.admin.ListAlertEvents(t.Context(), connect.NewRequest(&heronv1.ListAlertEventsRequest{Limit: 100}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,12 +80,12 @@ func TestLoginNotifySettingsPresenceReferencesAndDeletion(t *testing.T) {
 		t.Fatalf("appearance update cleared or failed to canonicalize login channels: %v", got)
 	}
 	for _, id := range []int64{0, -1, 987654} {
-		bad := proto.Clone(appearance).(*probev1.Settings)
+		bad := proto.Clone(appearance).(*heronv1.Settings)
 		bad.Title = "不得保存"
-		bad.LoginNotify = &probev1.LoginNotify{ChannelIds: []int64{a, id}}
+		bad.LoginNotify = &heronv1.LoginNotify{ChannelIds: []int64{a, id}}
 		rejected(t, h, bad, fmt.Sprintf("settings.login_notify.channel_ids: channel %d does not exist", id), got)
 	}
-	if _, err := h.admin.DeleteNotifyChannel(t.Context(), connect.NewRequest(&probev1.DeleteNotifyChannelRequest{Id: a})); err != nil {
+	if _, err := h.admin.DeleteNotifyChannel(t.Context(), connect.NewRequest(&heronv1.DeleteNotifyChannelRequest{Id: a})); err != nil {
 		t.Fatal(err)
 	}
 	if ids := currentSettings(t, h).GetLoginNotify().GetChannelIds(); !slices.Equal(ids, []int64{b}) {
@@ -110,9 +110,9 @@ func TestLoginNotifyChannelListCountsRawEntries(t *testing.T) {
 	if ids := before.GetLoginNotify().GetChannelIds(); !slices.Equal(ids, []int64{a}) {
 		t.Fatalf("%d copies of one channel saved as %v, want [%d]", len(full), ids, a)
 	}
-	over := proto.Clone(before).(*probev1.Settings)
+	over := proto.Clone(before).(*heronv1.Settings)
 	over.Title = "不得保存"
-	over.LoginNotify = &probev1.LoginNotify{ChannelIds: append(full, a)}
+	over.LoginNotify = &heronv1.LoginNotify{ChannelIds: append(full, a)}
 	rejected(t, h, over, fmt.Sprintf("settings.login_notify.channel_ids must list at most %d channel IDs, duplicates included; got %d", maxNotifyChannels, maxNotifyChannels+1), before)
 }
 
@@ -141,10 +141,10 @@ func TestLoginNotifyResponseAlwaysCarriesTheField(t *testing.T) {
 		}
 		return out.Settings
 	}
-	if got, ok := raw("/probe.v1.AdminService/GetSettings", "{}")["loginNotify"]; !ok || !reflect.DeepEqual(got, map[string]any{}) {
+	if got, ok := raw("/heron.v1.AdminService/GetSettings", "{}")["loginNotify"]; !ok || !reflect.DeepEqual(got, map[string]any{}) {
 		t.Fatalf("GetSettings with login notification off: loginNotify = %v (present %v), want {}", got, ok)
 	}
-	if got, ok := raw("/probe.v1.AdminService/UpdateSettings", `{"settings":{"theme":"dark"}}`)["loginNotify"]; !ok || !reflect.DeepEqual(got, map[string]any{}) {
+	if got, ok := raw("/heron.v1.AdminService/UpdateSettings", `{"settings":{"theme":"dark"}}`)["loginNotify"]; !ok || !reflect.DeepEqual(got, map[string]any{}) {
 		t.Fatalf("UpdateSettings echo with login notification off: loginNotify = %v (present %v), want {}", got, ok)
 	}
 	off := currentSettings(t, h)
@@ -189,7 +189,7 @@ func TestLoginNotifySuccessDeliversAndUsesTrustedSource(t *testing.T) {
 				ids = append(ids, saveChannel(t, h, c).Id)
 			}
 			chooseLoginChannels(t, h, ids...)
-			req := connect.NewRequest(&probev1.LoginRequest{Password: password})
+			req := connect.NewRequest(&heronv1.LoginRequest{Password: password})
 			req.Header().Set("X-Forwarded-For", "203.0.113.7")
 			if _, err := h.admin.Login(t.Context(), req); err != nil {
 				t.Fatal(err)
@@ -238,9 +238,9 @@ func TestLoginNotifyLockThresholdOnlyOnce(t *testing.T) {
 	h.login(t)
 	c := saveChannel(t, h, webhook("https://example.invalid/hook"))
 	chooseLoginChannels(t, h, c.Id)
-	var locked *probev1.AlertEvent
+	var locked *heronv1.AlertEvent
 	for i := 1; i <= 8; i++ {
-		req := connect.NewRequest(&probev1.LoginRequest{Password: "wrong password"})
+		req := connect.NewRequest(&heronv1.LoginRequest{Password: "wrong password"})
 		req.Header().Set("X-Forwarded-For", "2001:db8:1::"+fmt.Sprint(i))
 		_, err := h.admin.Login(t.Context(), req)
 		if codeOf(err) != connect.CodeUnauthenticated {
@@ -298,13 +298,13 @@ func TestLoginNotifySummaryCarriesZonedTime(t *testing.T) {
 	if len(initial) != 1 || initial[0].Transition != "login_success" || len(initial[0].Deliveries) != 0 {
 		t.Fatalf("initial login audit: %v", initial)
 	}
-	c := saveChannel(t, h, &probev1.NotifyChannel{Name: "tg", Kind: probev1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &probev1.TelegramConfig{BotToken: "1:x", ChatId: "chat"}})
+	c := saveChannel(t, h, &heronv1.NotifyChannel{Name: "tg", Kind: heronv1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &heronv1.TelegramConfig{BotToken: "1:x", ChatId: "chat"}})
 	chooseLoginChannels(t, h, c.Id)
 	at := time.Date(2026, 9, 28, 2, 5, 7, 0, time.UTC)
 	h.clk.SetWall(at)
 	const stamp = "2026-09-28T10:05:07+08:00"
 	login := func(pw, from string) error {
-		req := connect.NewRequest(&probev1.LoginRequest{Password: pw})
+		req := connect.NewRequest(&heronv1.LoginRequest{Password: pw})
 		req.Header().Set("X-Forwarded-For", from)
 		_, err := h.admin.Login(t.Context(), req)
 		return err
@@ -380,7 +380,7 @@ func TestLoginNotifyTokenReadsAndCleanup(t *testing.T) {
 	_, token := createToken(t, h, "reader")
 	chooseLoginChannels(t, h, c.Id)
 	beforeRead := loginEvents(t, h)
-	req := connect.NewRequest(&probev1.GetSettingsRequest{})
+	req := connect.NewRequest(&heronv1.GetSettingsRequest{})
 	req.Header().Set("Authorization", "Bearer "+token)
 	if _, err := h.admin.GetSettings(t.Context(), req); err != nil {
 		t.Fatal(err)
@@ -388,20 +388,20 @@ func TestLoginNotifyTokenReadsAndCleanup(t *testing.T) {
 	if evs := loginEvents(t, h); !reflect.DeepEqual(evs, beforeRead) {
 		t.Fatalf("API token read emitted login events: %v", evs)
 	}
-	if _, err := h.admin.Login(t.Context(), connect.NewRequest(&probev1.LoginRequest{Password: password})); err != nil {
+	if _, err := h.admin.Login(t.Context(), connect.NewRequest(&heronv1.LoginRequest{Password: password})); err != nil {
 		t.Fatal(err)
 	}
 	before := loginEvents(t, h)
 	if len(before) != 2 {
 		t.Fatalf("cleanup fixture has %d login events, want 2", len(before))
 	}
-	if _, err := h.admin.DeleteNode(t.Context(), connect.NewRequest(&probev1.DeleteNodeRequest{Id: node})); err != nil {
+	if _, err := h.admin.DeleteNode(t.Context(), connect.NewRequest(&heronv1.DeleteNodeRequest{Id: node})); err != nil {
 		t.Fatal(err)
 	}
 	if after := loginEvents(t, h); !reflect.DeepEqual(after, before) {
 		t.Fatalf("DeleteNode/Forget changed system events: %v", after)
 	}
-	if _, err := h.admin.DeleteAlertRule(t.Context(), connect.NewRequest(&probev1.DeleteAlertRuleRequest{Id: rule.Id})); err != nil {
+	if _, err := h.admin.DeleteAlertRule(t.Context(), connect.NewRequest(&heronv1.DeleteAlertRuleRequest{Id: rule.Id})); err != nil {
 		t.Fatal(err)
 	}
 	if after := loginEvents(t, h); !reflect.DeepEqual(after, before) {
@@ -433,14 +433,14 @@ func TestLoginNotifyOnlyUpdatePreservesAppearance(t *testing.T) {
 	h.login(t)
 	before := saveSettings(t, h, validSettings())
 	// 外观任一项非空就按整体替换校验，即使请求里同时有 login_notify：只给标题、缺了 theme 的请求整次拒绝。
-	partial := &probev1.Settings{Title: "只改标题", LoginNotify: &probev1.LoginNotify{}}
+	partial := &heronv1.Settings{Title: "只改标题", LoginNotify: &heronv1.LoginNotify{}}
 	rejected(t, h, partial, `settings.theme must be one of auto, light, dark; got ""`, before)
 	putNotifySettings(t, h, `{"settings":{"loginNotify":{}}}`, http.StatusOK)
 	after := currentSettings(t, h)
 	if after.GetTitle() != before.GetTitle() || after.GetTheme() != before.GetTheme() || after.GetAccentColor() != before.GetAccentColor() || after.GetLogo() != before.GetLogo() || after.GetCustomCss() != before.GetCustomCss() {
 		t.Fatalf("login-only update changed appearance: got %v, before %v", after, before)
 	}
-	_, err := h.admin.Login(t.Context(), connect.NewRequest(&probev1.LoginRequest{Password: password}))
+	_, err := h.admin.Login(t.Context(), connect.NewRequest(&heronv1.LoginRequest{Password: password}))
 	if err != nil {
 		t.Fatal(err)
 	}

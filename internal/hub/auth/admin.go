@@ -14,7 +14,7 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 var (
@@ -94,7 +94,7 @@ func VerifyPassword(phc, plain string) (bool, error) {
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
 
-// SetPassword 只由 hub 主机上的 probe-hub passwd 调用：没有经网络的首次设置页，
+// SetPassword 只由 hub 主机上的 heron-hub passwd 调用：没有经网络的首次设置页，
 // 也就没有"谁先访问谁占有"的窗口。写库的同一事务清空全部会话（store 保证）。
 func (a *Auth) SetPassword(ctx context.Context, plain string) error {
 	if utf8.RuneCountInString(plain) < MinPasswordLen {
@@ -110,7 +110,7 @@ func (a *Auth) SetPassword(ctx context.Context, plain string) error {
 // Login 用密码换会话 token，明文只返回这一次。
 //
 // admin 表为空时一律失败：空表的语义是"无人可登录"而不是"无需认证"，由这里的
-// 显式检查承载，并在日志里指明该跑 probe-hub passwd。失败按来源键计数（SourceKey：IPv4 按地址、IPv6 按 /64），
+// 显式检查承载，并在日志里指明该跑 heron-hub passwd。失败按来源键计数（SourceKey：IPv4 按地址、IPv6 按 /64），
 // 锁定期间的拒绝不依赖输入的密码，正确密码也不能提前解除锁定。
 func (a *Auth) Login(ctx context.Context, password string, from netip.Addr) (string, error) {
 	return a.LoginFactors(ctx, password, "", "", from)
@@ -179,7 +179,7 @@ func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from ne
 		a.mu.Unlock()
 		a.log.Warn("login failed", "from", from, "failures", count)
 		if !ok {
-			a.log.Warn("login refused: no admin password is set; run `probe-hub passwd`", "from", from)
+			a.log.Warn("login refused: no admin password is set; run `heron-hub passwd`", "from", from)
 			return "", newlyLocked, ErrNoAdmin
 		}
 		return "", newlyLocked, ErrBadPassword
@@ -190,7 +190,7 @@ func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from ne
 
 // AuthenticateSession 在会话 cookie 的全部候选值里找出第一个对应活着的会话的，返回它；一个都没有时第二个返回值为 false。
 //
-// 候选是请求里全部非空的 probe_session 值，按出现顺序排列（api 包的 sessionCandidates），其中可以混着别的主机写进
+// 候选是请求里全部非空的 heron_session 值，按出现顺序排列（api 包的 sessionCandidates），其中可以混着别的主机写进
 // 浏览器的值。不变式：多出来的候选不改变有效候选的结论——逐个校验、任一有效即通过，不设个数上限；设上限等于让写
 // cookie 的一方用更多的值把有效值挤出去。校验不通过只返回 false：这里不调用 Login，也不碰按来源的登录失败计数
 // （计数只在主动认证入口记），所以无效候选再多也不会让任何来源被锁定。
@@ -203,7 +203,7 @@ func (a *Auth) verifyLoginPassword(ctx context.Context, password string, from ne
 // 逐个哈希后按顺序查表。
 //   - 读表的成本随会话行数变化，与请求内容无关。行只由密码校验通过的 Login 写入，匿名请求加不了行；Login 顺带删掉
 //     已绝对过期的行，清理成功时行数不超过最近一次成功登录之前 SessionAbsolute 内的成功登录次数。
-//   - 候选侧每个成形候选一次 SHA-256。n 个成形候选在 Cookie 头里至少占 79n-1 字节（"probe_session=" 14 字节、
+//   - 候选侧每个成形候选一次 SHA-256。n 个成形候选在 Cookie 头里至少占 79n-1 字节（"heron_session=" 14 字节、
 //     token 64 字节、除最后一个外各一个分隔符 ";"），所以次数与头部字节成正比，头部字节由 http.Server 的请求头上限约束。
 //   - 形状不是 NewToken 明文的值不可能是会话，哈希前丢弃。这只省掉不可能命中的 SHA-256，不承担正确性：
 //     不丢弃时它们的哈希在表里也查不到。

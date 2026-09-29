@@ -33,7 +33,7 @@ const (
 	passwdPath = "etc/passwd"
 	groupPath  = "etc/group"
 	caPath     = "etc/ssl/certs/ca-certificates.crt"
-	binPath    = "usr/local/bin/probe-hub"
+	binPath    = "usr/local/bin/heron-hub"
 )
 
 type entry struct {

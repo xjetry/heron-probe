@@ -1,4 +1,4 @@
-// Package deploy 的测试以普通用户运行安装脚本：脚本读写的系统路径经 PROBE_INSTALL_ROOT 挂到临时目录，
+// Package deploy 的测试以普通用户运行安装脚本：脚本读写的系统路径经 HERON_INSTALL_ROOT 挂到临时目录，
 // 系统管理命令由 PATH 上的替身接管。本文件测 install-macos.sh：dscl、launchctl、ps、id、sysctl、uname、
 // chown、sleep 是替身，find、chmod 经替身记下参数后转调真的，curl、shasum、tar 用真的；真实 launchd、目录服务与 root 属主只在真机上验证
 // （spec §14：没有 macOS 虚拟机可用）。install.sh 的替身在 installlinux_test.go。
@@ -18,7 +18,7 @@ import (
 	"testing"
 )
 
-const svcUser = "_probe-agent"
+const svcUser = "_heron-agent"
 
 // 替身共用的状态目录：users/<名> 存 "uid gid"，groups/<名> 存 "gid"，procs 每行 "uid pid comm"，
 // loaded 表示作业已载入，calls 按调用顺序记下每个替身收到的参数。
@@ -91,7 +91,7 @@ case "$1" in
     [ -f "$S/loaded" ] || { echo "Boot-out failed: 3: No such process" >&2; exit 3; }
     rm -f "$S/loaded"
     if [ -z "${STUB_BOOTOUT_LEAVES_PROCESS-}" ]; then
-      grep -v ' /usr/local/bin/probe-agent$' "$S/procs" > "$S/procs.new"; mv "$S/procs.new" "$S/procs"
+      grep -v ' /usr/local/bin/heron-agent$' "$S/procs" > "$S/procs.new"; mv "$S/procs.new" "$S/procs"
     fi
     exit 0;;
   enable) exit 0;;
@@ -99,10 +99,10 @@ case "$1" in
     [ -f "$3" ] || { echo "Bootstrap failed: 2: No such file or directory" >&2; exit 5; }
     cp "$3" "$S/bootstrapped.plist"
     : > "$S/loaded"
-    read -r uid gid < "$S/users/_probe-agent"
+    read -r uid gid < "$S/users/_heron-agent"
     [ -z "${STUB_HELPER-}" ] || grep -q ' 999 ' "$S/procs" || echo "$uid 999 /usr/libexec/cfprefsd" >> "$S/procs"
     [ -n "${STUB_START_FAILS-}" ] && exit 0
-    echo "$uid 4242 /usr/local/bin/probe-agent" >> "$S/procs"
+    echo "$uid 4242 /usr/local/bin/heron-agent" >> "$S/procs"
     exit 0;;
 esac
 exit 64
@@ -113,7 +113,7 @@ S=$STUB_STATE
 echo "    0     1 /sbin/launchd"
 echo "  501   777 /Applications/Some App.app/Contents/MacOS/Some App"
 if [ -n "${STUB_RESPAWN-}" ] && [ -s "$S/procs" ]; then
-  awk '$3 == "/usr/local/bin/probe-agent" { $2 = $2 + 1 } { print }' "$S/procs" > "$S/procs.new" && mv "$S/procs.new" "$S/procs"
+  awk '$3 == "/usr/local/bin/heron-agent" { $2 = $2 + 1 } { print }' "$S/procs" > "$S/procs.new" && mv "$S/procs.new" "$S/procs"
 fi
 cat "$S/procs" 2>/dev/null
 exit 0
@@ -129,11 +129,11 @@ echo "${STUB_UNAME_M:-arm64}"
 `,
 	"chown": `#!/bin/sh
 echo "chown $*" >> "$STUB_STATE/calls"
-# STUB_SWAP_LOG 模拟日志目录此前对服务用户可写：在目录交给 root 的那一刻之前，服务用户把 probe-agent.log
+# STUB_SWAP_LOG 模拟日志目录此前对服务用户可写：在目录交给 root 的那一刻之前，服务用户把 heron-agent.log
 # 换成指向目录外文件的硬链接。
-d=$PROBE_INSTALL_ROOT/Library/Logs/probe-agent
+d=$HERON_INSTALL_ROOT/Library/Logs/heron-agent
 if [ -n "${STUB_SWAP_LOG-}" ] && [ "$1" = root:wheel ] && [ "$2" = "$d" ]; then
-  rm -f "$d/probe-agent.log"; ln "$STUB_SWAP_LOG" "$d/probe-agent.log"
+  rm -f "$d/heron-agent.log"; ln "$STUB_SWAP_LOG" "$d/heron-agent.log"
 fi
 # STUB_CHOWN_FAILS 是一个路径：对它 chown 时像文件带了不可变标志那样失败。
 if [ -n "${STUB_CHOWN_FAILS-}" ] && [ "$2" = "$STUB_CHOWN_FAILS" ]; then
@@ -159,10 +159,10 @@ exec /bin/chmod "$@"
 `,
 }
 
-// fakeAgent 是包里的 probe-agent：register 写出配置并记下参数，与真 agent 的 SaveConfig 同为 0600。
+// fakeAgent 是包里的 heron-agent：register 写出配置并记下参数，与真 agent 的 SaveConfig 同为 0600。
 const fakeAgent = `#!/bin/sh
 cat > /dev/null
-echo "probe-agent $*" >> "$STUB_STATE/calls"
+echo "heron-agent $*" >> "$STUB_STATE/calls"
 [ "$1" = register ] || exit 0
 [ -z "${STUB_REGISTER_FAILS-}" ] || { echo "register: hub unreachable" >&2; exit 1; }
 while [ $# -gt 0 ]; do [ "$1" = --config ] && cfg=$2; shift; done
@@ -224,16 +224,16 @@ func (e *env) write(name, body string) {
 	}
 }
 
-// release 按 make release 的形状打包：包内是 probe-agent 与仓库里的 plist 原件。
+// release 按 make release 的形状打包：包内是 heron-agent 与仓库里的 plist 原件。
 func (e *env) release(arch, version string) {
 	e.t.Helper()
-	plist, err := os.ReadFile("launchd/xyz.probe.agent.plist")
+	plist, err := os.ReadFile("launchd/xyz.heron.agent.plist")
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	e.pack("probe-agent_darwin_"+arch+".tar.gz", []packFile{
-		{"probe-agent", fakeAgent + "# " + version + " " + arch + "\n", 0o755},
-		{"xyz.probe.agent.plist", string(plist), 0o644},
+	e.pack("heron-agent_darwin_"+arch+".tar.gz", []packFile{
+		{"heron-agent", fakeAgent + "# " + version + " " + arch + "\n", 0o755},
+		{"xyz.heron.agent.plist", string(plist), 0o644},
 	})
 }
 
@@ -295,7 +295,7 @@ func (e *env) run(args ...string) (string, int) {
 	cmd.Stdin = script
 	// 末尾补上 sbin：macOS 的 sha256sum 在 /sbin。
 	cmd.Env = append(os.Environ(), "PATH="+e.bin+string(os.PathListSeparator)+os.Getenv("PATH")+":/usr/sbin:/sbin",
-		"PROBE_INSTALL_ROOT="+e.root, "STUB_STATE="+e.state)
+		"HERON_INSTALL_ROOT="+e.root, "STUB_STATE="+e.state)
 	cmd.Env = append(cmd.Env, e.vars...)
 	out, err := cmd.CombinedOutput()
 	code := 0
@@ -341,7 +341,7 @@ func (e *env) exists(rel string) bool {
 	return err == nil
 }
 
-const done = "probe-agent installed and started (launchd, arm64, probe-agent_darwin_arm64.tar.gz)"
+const done = "heron-agent installed and started (launchd, arm64, heron-agent_darwin_arm64.tar.gz)"
 
 func TestFreshInstallFromStdin(t *testing.T) {
 	t.Parallel()
@@ -352,40 +352,40 @@ func TestFreshInstallFromStdin(t *testing.T) {
 	}
 	c := e.calls()
 	// 从 499 往下的第一个空闲号同时给组与用户，不取 Apple 追加前沿上的 309；组先于用户建。
-	if g, u := index(c, "dscl . -create /Groups/_probe-agent PrimaryGroupID 499"), index(c, "dscl . -create /Users/_probe-agent UniqueID 499"); g < 0 || u < g {
+	if g, u := index(c, "dscl . -create /Groups/_heron-agent PrimaryGroupID 499"), index(c, "dscl . -create /Users/_heron-agent UniqueID 499"); g < 0 || u < g {
 		t.Fatalf("group then user with id 499, got %q", c)
 	}
-	reg := index(c, "probe-agent register --hub http://hub.test --key k --config "+e.root+"/etc/probe-agent/config.json --name mac-1")
-	boot := index(c, "launchctl bootstrap system "+e.root+"/Library/LaunchDaemons/xyz.probe.agent.plist")
+	reg := index(c, "heron-agent register --hub http://hub.test --key k --config "+e.root+"/etc/heron-agent/config.json --name mac-1")
+	boot := index(c, "launchctl bootstrap system "+e.root+"/Library/LaunchDaemons/xyz.heron.agent.plist")
 	if reg < 0 || boot < reg || index(c, "launchctl bootout") >= 0 {
 		t.Fatalf("register before bootstrap and no bootout on a fresh host, got %q", c)
 	}
 	// 注册在停服务（它的第一步是 launchctl print）之前：注册失败时不留下停掉的服务。
-	if stop := index(c, "launchctl print system/xyz.probe.agent"); stop < reg {
+	if stop := index(c, "launchctl print system/xyz.heron.agent"); stop < reg {
 		t.Fatalf("register must precede stopping the service, got %q", c)
 	}
 	for _, want := range []string{
-		"chown root:_probe-agent " + e.root + "/etc/probe-agent",
-		"chown _probe-agent:_probe-agent " + e.root + "/etc/probe-agent/config.json",
-		"chown root:wheel " + e.root + "/Library/LaunchDaemons/xyz.probe.agent.plist",
-		"chown root:wheel " + e.root + "/Library/Logs/probe-agent",
-		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent/probe-agent.log",
-		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent/probe-agent.err",
-		"launchctl enable system/xyz.probe.agent",
+		"chown root:_heron-agent " + e.root + "/etc/heron-agent",
+		"chown _heron-agent:_heron-agent " + e.root + "/etc/heron-agent/config.json",
+		"chown root:wheel " + e.root + "/Library/LaunchDaemons/xyz.heron.agent.plist",
+		"chown root:wheel " + e.root + "/Library/Logs/heron-agent",
+		"chown _heron-agent:_heron-agent " + e.root + "/Library/Logs/heron-agent/heron-agent.log",
+		"chown _heron-agent:_heron-agent " + e.root + "/Library/Logs/heron-agent/heron-agent.err",
+		"launchctl enable system/xyz.heron.agent",
 	} {
 		if i := index(c, want); i < 0 || i > boot {
 			t.Errorf("missing %q before bootstrap in %q", want, c)
 		}
 	}
-	if !strings.Contains(e.file("usr/local/bin/probe-agent"), "# v1 arm64") {
+	if !strings.Contains(e.file("usr/local/bin/heron-agent"), "# v1 arm64") {
 		t.Fatal("installed binary is not the arm64 package's")
 	}
-	e.mode("etc/probe-agent", 0o750)
-	e.mode("etc/probe-agent/config.json", 0o600)
+	e.mode("etc/heron-agent", 0o750)
+	e.mode("etc/heron-agent/config.json", 0o600)
 	// 目录属 root，两个日志文件由脚本建好交给服务用户：launchd 不论以哪个身份打开都写得进去。
-	e.mode("Library/Logs/probe-agent", 0o755)
-	e.mode("Library/Logs/probe-agent/probe-agent.log", 0o640)
-	e.mode("Library/Logs/probe-agent/probe-agent.err", 0o640)
+	e.mode("Library/Logs/heron-agent", 0o755)
+	e.mode("Library/Logs/heron-agent/heron-agent.log", 0o640)
+	e.mode("Library/Logs/heron-agent/heron-agent.err", 0o640)
 }
 
 func (e *env) mode(rel string, want os.FileMode) {
@@ -407,7 +407,7 @@ func TestFreeIDMustBeFreeInBothNamespaces(t *testing.T) {
 	if out, code := e.install(); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if c := e.calls(); index(c, "dscl . -create /Users/_probe-agent UniqueID 498") < 0 {
+	if c := e.calls(); index(c, "dscl . -create /Users/_heron-agent UniqueID 498") < 0 {
 		t.Fatalf("want id 498, got %q", c)
 	}
 }
@@ -416,7 +416,7 @@ func TestFreeIDMustBeFreeInBothNamespaces(t *testing.T) {
 func TestExistingGroupWithoutUserIsReused(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	e.write("groups/_probe-agent", "310\n")
+	e.write("groups/_heron-agent", "310\n")
 	if out, code := e.install(); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
@@ -424,7 +424,7 @@ func TestExistingGroupWithoutUserIsReused(t *testing.T) {
 	if index(c, "dscl . -create /Groups/") >= 0 {
 		t.Fatalf("the existing group must be reused, got %q", c)
 	}
-	if index(c, "dscl . -create /Users/_probe-agent PrimaryGroupID 310") < 0 || index(c, "dscl . -create /Users/_probe-agent UniqueID 499") < 0 {
+	if index(c, "dscl . -create /Users/_heron-agent PrimaryGroupID 310") < 0 || index(c, "dscl . -create /Users/_heron-agent UniqueID 499") < 0 {
 		t.Fatalf("user must join group 310 with a free id, got %q", c)
 	}
 }
@@ -433,13 +433,13 @@ func TestExistingGroupWithoutUserIsReused(t *testing.T) {
 func TestExistingUserWithWrongPrimaryGroupIsRefused(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	e.write("users/_probe-agent", "450 20\n")
+	e.write("users/_heron-agent", "450 20\n")
 	e.write("groups/staff", "20\n")
 	out, code := e.install()
-	if code != 1 || !strings.Contains(out, "exists with primary group staff; expected _probe-agent") {
+	if code != 1 || !strings.Contains(out, "exists with primary group staff; expected _heron-agent") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if index(e.calls(), "dscl . -create") >= 0 || e.exists("usr/local/bin/probe-agent") {
+	if index(e.calls(), "dscl . -create") >= 0 || e.exists("usr/local/bin/heron-agent") {
 		t.Fatal("nothing may be created or downloaded")
 	}
 }
@@ -452,29 +452,29 @@ func TestOwnershipIsRestoredOnEveryInstall(t *testing.T) {
 	if out, code := e.install(); code != 0 {
 		t.Fatalf("first install exit %d:\n%s", code, out)
 	}
-	os.Chmod(filepath.Join(e.root, "etc/probe-agent"), 0o755)
-	os.Chmod(filepath.Join(e.root, "etc/probe-agent/config.json"), 0o644)
-	os.Chmod(filepath.Join(e.root, "Library/Logs/probe-agent"), 0o700)
-	os.Chmod(filepath.Join(e.root, "Library/Logs/probe-agent/probe-agent.err"), 0o644)
+	os.Chmod(filepath.Join(e.root, "etc/heron-agent"), 0o755)
+	os.Chmod(filepath.Join(e.root, "etc/heron-agent/config.json"), 0o644)
+	os.Chmod(filepath.Join(e.root, "Library/Logs/heron-agent"), 0o700)
+	os.Chmod(filepath.Join(e.root, "Library/Logs/heron-agent/heron-agent.err"), 0o644)
 	// 日志文件被删后，以服务用户身份打开它的 launchd 建不回来；重跑安装脚本把它建回来。
-	os.Remove(filepath.Join(e.root, "Library/Logs/probe-agent/probe-agent.log"))
+	os.Remove(filepath.Join(e.root, "Library/Logs/heron-agent/heron-agent.log"))
 	e.resetCalls()
 	if out, code := e.install(); code != 0 {
 		t.Fatalf("rerun exit %d:\n%s", code, out)
 	}
 	c := e.calls()
-	if index(c, "probe-agent register") >= 0 {
+	if index(c, "heron-agent register") >= 0 {
 		t.Fatalf("rerun must not register: %q", c)
 	}
 	out, boot := index(c, "launchctl bootout"), index(c, "launchctl bootstrap")
 	// 日志目录先交给 root、再去掉 ACL，然后才查其中的文件，这些都在停服务之前。
-	logDir := e.root + "/Library/Logs/probe-agent"
-	take, noACL, check := index(c, "chown root:wheel "+logDir), index(c, "chmod -N "+logDir), index(c, "find "+logDir+"/probe-agent.err")
+	logDir := e.root + "/Library/Logs/heron-agent"
+	take, noACL, check := index(c, "chown root:wheel "+logDir), index(c, "chmod -N "+logDir), index(c, "find "+logDir+"/heron-agent.err")
 	if take < 0 || noACL < take || check < noACL || out < check {
 		t.Errorf("rerun: want chown root:wheel < chmod -N < the file check < bootout on the log directory, calls %q", c)
 	}
 	// 每个按数字模式设权限的对象都去掉 ACL：数字 chmod 与 chown 都不动 ACL。
-	for _, rel := range []string{"etc/probe-agent", "etc/probe-agent/config.json", "Library/Logs/probe-agent/probe-agent.log", "Library/Logs/probe-agent/probe-agent.err"} {
+	for _, rel := range []string{"etc/heron-agent", "etc/heron-agent/config.json", "Library/Logs/heron-agent/heron-agent.log", "Library/Logs/heron-agent/heron-agent.err"} {
 		if i := index(c, "chmod -N "+e.root+"/"+rel); i < 0 || i > out {
 			t.Errorf("rerun: missing chmod -N %s before bootout, calls %q", rel, c)
 		}
@@ -482,27 +482,27 @@ func TestOwnershipIsRestoredOnEveryInstall(t *testing.T) {
 	// 可能失败的操作都在停服务之前：失败时旧服务照常运行。停服务之后只剩替换二进制、写 plist、bootstrap，
 	// bootout 与 bootstrap 之间的 chown、chmod 只作用于 plist。
 	for _, call := range c[out+1 : boot] {
-		for _, p := range []string{"chown ", "chmod ", "find ", "probe-agent "} {
-			if strings.HasPrefix(call, p) && !strings.HasSuffix(call, "/Library/LaunchDaemons/xyz.probe.agent.plist") {
+		for _, p := range []string{"chown ", "chmod ", "find ", "heron-agent "} {
+			if strings.HasPrefix(call, p) && !strings.HasSuffix(call, "/Library/LaunchDaemons/xyz.heron.agent.plist") {
 				t.Errorf("rerun: %q runs after the service is stopped", call)
 			}
 		}
 	}
 	for _, want := range []string{
-		"chown root:_probe-agent " + e.root + "/etc/probe-agent",
-		"chown _probe-agent:_probe-agent " + e.root + "/etc/probe-agent/config.json",
-		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent/probe-agent.log",
-		"chown _probe-agent:_probe-agent " + e.root + "/Library/Logs/probe-agent/probe-agent.err",
+		"chown root:_heron-agent " + e.root + "/etc/heron-agent",
+		"chown _heron-agent:_heron-agent " + e.root + "/etc/heron-agent/config.json",
+		"chown _heron-agent:_heron-agent " + e.root + "/Library/Logs/heron-agent/heron-agent.log",
+		"chown _heron-agent:_heron-agent " + e.root + "/Library/Logs/heron-agent/heron-agent.err",
 	} {
 		if i := index(c, want); i < 0 || i > out {
 			t.Errorf("rerun: %q must run before bootout, calls %q", want, c)
 		}
 	}
-	e.mode("etc/probe-agent", 0o750)
-	e.mode("etc/probe-agent/config.json", 0o600)
-	e.mode("Library/Logs/probe-agent", 0o755)
-	e.mode("Library/Logs/probe-agent/probe-agent.log", 0o640)
-	e.mode("Library/Logs/probe-agent/probe-agent.err", 0o640)
+	e.mode("etc/heron-agent", 0o750)
+	e.mode("etc/heron-agent/config.json", 0o600)
+	e.mode("Library/Logs/heron-agent", 0o755)
+	e.mode("Library/Logs/heron-agent/heron-agent.log", 0o640)
+	e.mode("Library/Logs/heron-agent/heron-agent.err", 0o640)
 }
 
 // launchd 以服务 uid 派生的辅助进程（cfprefsd、trustd……）不是本服务：按 uid 加可执行路径认进程，
@@ -527,7 +527,7 @@ func TestHelperProcessDoesNotCountAsStarted(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	e.vars = []string{"STUB_HELPER=1", "STUB_START_FAILS=1"}
-	if out, code := e.install(); code != 1 || !strings.Contains(out, "probe-agent did not start") {
+	if out, code := e.install(); code != 1 || !strings.Contains(out, "heron-agent did not start") {
 		t.Fatalf("only a helper process running must not count as started: exit %d:\n%s", code, out)
 	}
 }
@@ -540,20 +540,20 @@ func TestPlistAgreesWithScript(t *testing.T) {
 	if out, code := e.install(); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	p := e.file("Library/LaunchDaemons/xyz.probe.agent.plist")
+	p := e.file("Library/LaunchDaemons/xyz.heron.agent.plist")
 	for _, want := range []string{
-		"<key>Label</key>\n\t<string>xyz.probe.agent</string>",
-		"<string>/usr/local/bin/probe-agent</string>",
-		"<string>/etc/probe-agent/config.json</string>",
+		"<key>Label</key>\n\t<string>xyz.heron.agent</string>",
+		"<string>/usr/local/bin/heron-agent</string>",
+		"<string>/etc/heron-agent/config.json</string>",
 		"<key>UserName</key>\n\t<string>" + svcUser + "</string>",
 		"<key>GroupName</key>\n\t<string>" + svcUser + "</string>",
-		"<string>/Library/Logs/probe-agent/probe-agent.err</string>",
+		"<string>/Library/Logs/heron-agent/heron-agent.err</string>",
 	} {
 		if !strings.Contains(p, want) {
 			t.Errorf("plist lacks %q", want)
 		}
 	}
-	for _, rel := range []string{"usr/local/bin/probe-agent", "etc/probe-agent/config.json", "Library/Logs/probe-agent"} {
+	for _, rel := range []string{"usr/local/bin/heron-agent", "etc/heron-agent/config.json", "Library/Logs/heron-agent"} {
 		if !e.exists(rel) {
 			t.Errorf("script did not create %s, which the plist refers to", rel)
 		}
@@ -573,13 +573,13 @@ func TestRerunUpgradesWithoutRegistering(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	c := e.calls()
-	if index(c, "probe-agent register") >= 0 || index(c, "dscl . -create") >= 0 {
+	if index(c, "heron-agent register") >= 0 || index(c, "dscl . -create") >= 0 {
 		t.Fatalf("rerun must neither register nor recreate the account: %q", c)
 	}
-	if out := index(c, "launchctl bootout system/xyz.probe.agent"); out < 0 || out > index(c, "launchctl bootstrap") {
+	if out := index(c, "launchctl bootout system/xyz.heron.agent"); out < 0 || out > index(c, "launchctl bootstrap") {
 		t.Fatalf("a loaded job must be booted out before the new one is bootstrapped: %q", c)
 	}
-	if !strings.Contains(e.file("usr/local/bin/probe-agent"), "# v2 arm64") {
+	if !strings.Contains(e.file("usr/local/bin/heron-agent"), "# v2 arm64") {
 		t.Fatal("binary was not replaced")
 	}
 }
@@ -595,7 +595,7 @@ func TestArchitectureFromHardwareNotShell(t *testing.T) {
 		e := newEnv(t)
 		e.vars = []string{"STUB_ARM64=" + tc.arm64, "STUB_UNAME_M=" + tc.uname}
 		out, code := e.install()
-		if code != 0 || !strings.Contains(out, "probe-agent_darwin_"+tc.pkg+".tar.gz)") {
+		if code != 0 || !strings.Contains(out, "heron-agent_darwin_"+tc.pkg+".tar.gz)") {
 			t.Fatalf("arm64=%q uname=%q: exit %d, want the %s package:\n%s", tc.arm64, tc.uname, code, tc.pkg, out)
 		}
 	}
@@ -627,7 +627,7 @@ func TestChecksumMismatchLeavesRunningServiceAlone(t *testing.T) {
 		t.Fatalf("first install exit %d:\n%s", code, out)
 	}
 	sums := filepath.Join(e.dist, "SHA256SUMS")
-	os.WriteFile(sums, []byte(strings.Repeat("0", 64)+"  probe-agent_darwin_arm64.tar.gz\n"), 0o644)
+	os.WriteFile(sums, []byte(strings.Repeat("0", 64)+"  heron-agent_darwin_arm64.tar.gz\n"), 0o644)
 	e.resetCalls()
 	out, code := e.install()
 	if code == 0 || !strings.Contains(out, "FAILED") {
@@ -636,8 +636,8 @@ func TestChecksumMismatchLeavesRunningServiceAlone(t *testing.T) {
 	if index(e.calls(), "launchctl bootout") >= 0 {
 		t.Fatalf("a bad download must not stop the running service: %q", e.calls())
 	}
-	os.WriteFile(sums, []byte(strings.Repeat("0", 64)+"  probe-agent_darwin_amd64.tar.gz\n"), 0o644)
-	if out, code := e.install(); code == 0 || !strings.Contains(out, "SHA256SUMS has no entry for probe-agent_darwin_arm64.tar.gz") {
+	os.WriteFile(sums, []byte(strings.Repeat("0", 64)+"  heron-agent_darwin_amd64.tar.gz\n"), 0o644)
+	if out, code := e.install(); code == 0 || !strings.Contains(out, "SHA256SUMS has no entry for heron-agent_darwin_arm64.tar.gz") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }
@@ -648,10 +648,10 @@ func TestAccountCreationIsVerified(t *testing.T) {
 	e := newEnv(t)
 	e.vars = []string{"STUB_DSCL_DROP_USER=1"}
 	out, code := e.install()
-	if code != 1 || !strings.Contains(out, "failed to create system user _probe-agent") {
+	if code != 1 || !strings.Contains(out, "failed to create system user _heron-agent") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if index(e.calls(), "probe-agent register") >= 0 || e.exists("usr/local/bin/probe-agent") {
+	if index(e.calls(), "heron-agent register") >= 0 || e.exists("usr/local/bin/heron-agent") {
 		t.Fatal("nothing may be downloaded or registered after the account check fails")
 	}
 }
@@ -665,10 +665,10 @@ func TestLingeringProcessBlocksReplacement(t *testing.T) {
 	e.release("arm64", "v2")
 	e.vars = []string{"STUB_BOOTOUT_LEAVES_PROCESS=1"}
 	out, code := e.install()
-	if code != 1 || !strings.Contains(out, "probe-agent is still running: processes with uid 499 (_probe-agent): 4242") {
+	if code != 1 || !strings.Contains(out, "heron-agent is still running: processes with uid 499 (_heron-agent): 4242") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if !strings.Contains(e.file("usr/local/bin/probe-agent"), "# v1 arm64") {
+	if !strings.Contains(e.file("usr/local/bin/heron-agent"), "# v1 arm64") {
 		t.Fatal("binary must not be replaced while the old process runs")
 	}
 }
@@ -676,13 +676,13 @@ func TestLingeringProcessBlocksReplacement(t *testing.T) {
 func TestStartIsConfirmedBySamePID(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ knob, want string }{
-		{"STUB_START_FAILS=1", "probe-agent did not start"},
-		{"STUB_RESPAWN=1", "probe-agent did not stay running (pid 4243)"},
+		{"STUB_START_FAILS=1", "heron-agent did not start"},
+		{"STUB_RESPAWN=1", "heron-agent did not stay running (pid 4243)"},
 	} {
 		e := newEnv(t)
 		e.vars = []string{tc.knob}
 		out, code := e.install()
-		if code != 1 || !strings.Contains(out, tc.want) || !strings.Contains(out, "/Library/Logs/probe-agent/probe-agent.err") {
+		if code != 1 || !strings.Contains(out, tc.want) || !strings.Contains(out, "/Library/Logs/heron-agent/heron-agent.err") {
 			t.Fatalf("%s: exit %d, want %q and the log path:\n%s", tc.knob, code, tc.want, out)
 		}
 	}
@@ -698,18 +698,18 @@ func TestUninstallAndPurge(t *testing.T) {
 		t.Fatalf("--purge alone must be a usage error, exit %d:\n%s", code, out)
 	}
 	out, code := e.run("--uninstall")
-	if code != 0 || e.exists("usr/local/bin/probe-agent") || e.exists("Library/LaunchDaemons/xyz.probe.agent.plist") {
+	if code != 0 || e.exists("usr/local/bin/heron-agent") || e.exists("Library/LaunchDaemons/xyz.heron.agent.plist") {
 		t.Fatalf("uninstall exit %d:\n%s", code, out)
 	}
-	if !e.exists("etc/probe-agent/config.json") || !e.exists("../state/users/_probe-agent") {
+	if !e.exists("etc/heron-agent/config.json") || !e.exists("../state/users/_heron-agent") {
 		t.Fatal("plain uninstall keeps config and account")
 	}
 	e.vars = []string{"STUB_DSCL_KEEP=1"}
-	if out, code := e.run("--uninstall", "--purge"); code != 1 || !strings.Contains(out, "failed to delete user or group _probe-agent") {
+	if out, code := e.run("--uninstall", "--purge"); code != 1 || !strings.Contains(out, "failed to delete user or group _heron-agent") {
 		t.Fatalf("undeleted account must fail purge, exit %d:\n%s", code, out)
 	}
 	e.vars = nil
-	if out, code := e.run("--uninstall", "--purge"); code != 0 || e.exists("etc/probe-agent") || e.exists("Library/Logs/probe-agent") || e.exists("../state/users/_probe-agent") || e.exists("../state/groups/_probe-agent") {
+	if out, code := e.run("--uninstall", "--purge"); code != 0 || e.exists("etc/heron-agent") || e.exists("Library/Logs/heron-agent") || e.exists("../state/users/_heron-agent") || e.exists("../state/groups/_heron-agent") {
 		t.Fatalf("purge exit %d:\n%s", code, out)
 	}
 }
@@ -738,12 +738,12 @@ func TestPurgeDecidesDeletionFromTheLocalRecord(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(e.state, "remote-users"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	e.write("remote-users/_probe-agent", "480 480\n")
+	e.write("remote-users/_heron-agent", "480 480\n")
 	out, code := e.run("--uninstall", "--purge")
-	if code != 1 || !strings.Contains(out, "failed to delete user or group _probe-agent") {
+	if code != 1 || !strings.Contains(out, "failed to delete user or group _heron-agent") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if index(e.calls(), "dscl . -delete /Users/_probe-agent") >= 0 {
+	if index(e.calls(), "dscl . -delete /Users/_heron-agent") >= 0 {
 		t.Fatalf("no local record, no -delete: %q", e.calls())
 	}
 }
@@ -762,12 +762,12 @@ func TestAccountFailuresNameTheirCause(t *testing.T) {
 		fmt.Fprintf(&b, "_taken%d %d\n", i, i)
 	}
 	f.write("sys-Users", b.String())
-	if out, code := f.install(); code != 1 || !strings.Contains(out, "no free id in 300-499 for _probe-agent") {
+	if out, code := f.install(); code != 1 || !strings.Contains(out, "no free id in 300-499 for _heron-agent") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	g := newEnv(t)
-	g.write("groups/_probe-agent", "\n")
-	if out, code := g.install(); code != 1 || !strings.Contains(out, "group _probe-agent has no PrimaryGroupID") {
+	g.write("groups/_heron-agent", "\n")
+	if out, code := g.install(); code != 1 || !strings.Contains(out, "group _heron-agent has no PrimaryGroupID") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }
@@ -782,20 +782,20 @@ func TestLogPathsThatAreNotPlainAreRefusedBeforeStopping(t *testing.T) {
 		dirTaken        bool
 		plant           func(path, root string)
 	}{
-		{"directory symlink", "Library/Logs/probe-agent", "exists but is not a directory", false, func(p, root string) {
+		{"directory symlink", "Library/Logs/heron-agent", "exists but is not a directory", false, func(p, root string) {
 			os.RemoveAll(p)
 			os.Symlink(filepath.Join(root, "etc"), p)
 		}},
-		{"file symlink", "Library/Logs/probe-agent/probe-agent.err", "exists but is not a regular file with a single link", true, func(p, root string) {
+		{"file symlink", "Library/Logs/heron-agent/heron-agent.err", "exists but is not a regular file with a single link", true, func(p, root string) {
 			os.Remove(p)
-			os.Symlink(filepath.Join(root, "etc/probe-agent/config.json"), p)
+			os.Symlink(filepath.Join(root, "etc/heron-agent/config.json"), p)
 		}},
-		{"file is a directory", "Library/Logs/probe-agent/probe-agent.log", "exists but is not a regular file with a single link", true, func(p, root string) {
+		{"file is a directory", "Library/Logs/heron-agent/heron-agent.log", "exists but is not a regular file with a single link", true, func(p, root string) {
 			os.Remove(p)
 			os.Mkdir(p, 0o755)
 		}},
 		// 硬链接：[ -L ] 为假、[ -f ] 为真，只有链接数看得出它另有名字。
-		{"file hard link", "Library/Logs/probe-agent/probe-agent.log", "exists but is not a regular file with a single link", true, func(p, root string) {
+		{"file hard link", "Library/Logs/heron-agent/heron-agent.log", "exists but is not a regular file with a single link", true, func(p, root string) {
 			os.Remove(p)
 			os.Link(filepath.Join(root, "outside"), p)
 		}},
@@ -826,9 +826,9 @@ func TestLogPathsThatAreNotPlainAreRefusedBeforeStopping(t *testing.T) {
 			}
 			wantChowns := []string(nil)
 			if tc.dirTaken {
-				wantChowns = []string{"chown root:wheel " + e.root + "/Library/Logs/probe-agent"}
+				wantChowns = []string{"chown root:wheel " + e.root + "/Library/Logs/heron-agent"}
 			}
-			if index(c, "launchctl bootout") >= 0 || !slices.Equal(chowns, wantChowns) || !strings.Contains(e.file("usr/local/bin/probe-agent"), "# v1 arm64") {
+			if index(c, "launchctl bootout") >= 0 || !slices.Equal(chowns, wantChowns) || !strings.Contains(e.file("usr/local/bin/heron-agent"), "# v1 arm64") {
 				t.Fatalf("the running service and the log files must be left alone: calls %q", c)
 			}
 			e.mode("outside", 0o644)
@@ -837,7 +837,7 @@ func TestLogPathsThatAreNotPlainAreRefusedBeforeStopping(t *testing.T) {
 }
 
 // 日志目录此前对服务用户可写（手工建的，或由把目录交给服务用户的版本装的）时，检查之后、目录交给 root 之前
-// 服务用户还能换掉其中的条目。目录必须先交给 root 再检查：替身在目录 chown 的那一刻把 probe-agent.log 换成
+// 服务用户还能换掉其中的条目。目录必须先交给 root 再检查：替身在目录 chown 的那一刻把 heron-agent.log 换成
 // 指向目录外文件的硬链接，检查要看到它并拒绝，目录外文件的权限不被改动。
 func TestLogFileSwappedBeforeTheDirectoryIsTakenIsRefused(t *testing.T) {
 	t.Parallel()
@@ -853,7 +853,7 @@ func TestLogFileSwappedBeforeTheDirectoryIsTakenIsRefused(t *testing.T) {
 	e.resetCalls()
 	out, code := e.install()
 	e.mode("outside", 0o644)
-	if code != 1 || !strings.Contains(out, "probe-agent.log exists but is not a regular file with a single link") {
+	if code != 1 || !strings.Contains(out, "heron-agent.log exists but is not a regular file with a single link") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	if index(e.calls(), "launchctl bootout") >= 0 {
@@ -890,7 +890,7 @@ func TestLogACLsAreRemovedOnDarwin(t *testing.T) {
 	if out, code := e.install(); code != 0 {
 		t.Fatalf("first install exit %d:\n%s", code, out)
 	}
-	paths := []string{"Library/Logs/probe-agent", "Library/Logs/probe-agent/probe-agent.log"}
+	paths := []string{"Library/Logs/heron-agent", "Library/Logs/heron-agent/heron-agent.log"}
 	for _, rel := range paths {
 		if out, err := exec.Command("/bin/chmod", "+a", "everyone allow add_file,delete_child,write", filepath.Join(e.root, rel)).CombinedOutput(); err != nil {
 			t.Fatalf("chmod +a %s: %v\n%s", rel, err, out)
@@ -930,13 +930,13 @@ func TestFailuresBeforeStoppingLeaveTheServiceRunning(t *testing.T) {
 		want string
 	}{
 		{"log file chown", func(root string) []string {
-			return []string{"STUB_CHOWN_FAILS=" + root + "/Library/Logs/probe-agent/probe-agent.err"}
-		}, nil, "probe-agent.err: Operation not permitted"},
+			return []string{"STUB_CHOWN_FAILS=" + root + "/Library/Logs/heron-agent/heron-agent.err"}
+		}, nil, "heron-agent.err: Operation not permitted"},
 		{"config chown", func(root string) []string {
-			return []string{"STUB_CHOWN_FAILS=" + root + "/etc/probe-agent/config.json"}
+			return []string{"STUB_CHOWN_FAILS=" + root + "/etc/heron-agent/config.json"}
 		}, nil, "config.json: Operation not permitted"},
 		{"re-register", func(string) []string { return []string{"STUB_REGISTER_FAILS=1"} }, func(root string) {
-			os.Remove(filepath.Join(root, "etc/probe-agent/config.json"))
+			os.Remove(filepath.Join(root, "etc/heron-agent/config.json"))
 		}, "register: hub unreachable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -955,7 +955,7 @@ func TestFailuresBeforeStoppingLeaveTheServiceRunning(t *testing.T) {
 			if code == 0 || !strings.Contains(out, tc.want) {
 				t.Fatalf("exit %d:\n%s", code, out)
 			}
-			if index(e.calls(), "launchctl bootout") >= 0 || !strings.Contains(e.file("usr/local/bin/probe-agent"), "# v1 arm64") {
+			if index(e.calls(), "launchctl bootout") >= 0 || !strings.Contains(e.file("usr/local/bin/heron-agent"), "# v1 arm64") {
 				t.Fatalf("the running service must be left alone: calls %q", e.calls())
 			}
 		})

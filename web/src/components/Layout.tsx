@@ -1,9 +1,10 @@
 import { useMutation } from "@connectrpc/connect-query";
 import { useEffect } from "react";
 import { NavLink, Outlet, useLocation } from "react-router";
-import { AdminService } from "../gen/probe/v1/admin_pb";
+import { AdminService } from "../gen/heron/v1/admin_pb";
 import { errorText } from "../api/auth";
 import { useLeaveSession } from "../api/useLeaveSession";
+import { HeronMark } from "./HeronMark";
 
 export function Layout() {
   const leaveSession = useLeaveSession();
@@ -14,7 +15,7 @@ export function Layout() {
   return (
     <div className="layout">
       <nav className="nav panel-nav" aria-label="主导航">
-        <span className="brand">probe</span>
+        <span className="brand"><HeronMark />Heron</span>
         <NavLink to="/" end>总览</NavLink>
         <NavLink to="/nodes">节点</NavLink>
         <NavLink to="/probes">探测任务</NavLink>

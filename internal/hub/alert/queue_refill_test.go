@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/outbound"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/testwait"
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 func TestQueueRefillsOverflowWithinProcess(t *testing.T) {

@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/probelimit"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -30,7 +30,7 @@ type Scheduler struct {
 }
 
 type runningTask struct {
-	task   *probev1.ProbeTask
+	task   *heronv1.ProbeTask
 	cancel context.CancelFunc
 }
 
@@ -58,12 +58,12 @@ func (s *Scheduler) Version() uint64 {
 // Apply 整份替换任务集；未变的任务不重启计时。字段规则由 CheckTask 保证，数量由本入口限制，
 // hub 保存时用同一份 probelimit 校验字段，store 在事务内守住每节点数量上限；同版本正常部署不会下发被拒清单。
 // 应用时为每个被拒任务留一条 error 并 Warn 原因；若按间隔持续产出，超限清单会绕过每节点上限对结果量的约束。
-func (s *Scheduler) Apply(tasks *probev1.ProbeTasks) {
+func (s *Scheduler) Apply(tasks *heronv1.ProbeTasks) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.version = tasks.GetVersion()
-	want := map[uint64]*probev1.ProbeTask{}
-	sorted := slices.SortedFunc(slices.Values(tasks.GetTasks()), func(a, b *probev1.ProbeTask) int { return cmp.Compare(a.GetId(), b.GetId()) })
+	want := map[uint64]*heronv1.ProbeTask{}
+	sorted := slices.SortedFunc(slices.Values(tasks.GetTasks()), func(a, b *heronv1.ProbeTask) int { return cmp.Compare(a.GetId(), b.GetId()) })
 	for i, t := range sorted {
 		if i >= probelimit.MaxTasksPerNode {
 			s.reject(t, fmt.Sprintf("more than %d tasks assigned; task dropped", probelimit.MaxTasksPerNode))
@@ -74,7 +74,7 @@ func (s *Scheduler) Apply(tasks *probev1.ProbeTasks) {
 			continue
 		}
 		// 调度器持有独立快照，调用方复用消息不能绕过 Apply 改变正在执行的任务。
-		want[t.GetId()] = proto.Clone(t).(*probev1.ProbeTask)
+		want[t.GetId()] = proto.Clone(t).(*heronv1.ProbeTask)
 	}
 	for id, r := range s.running {
 		if t, ok := want[id]; !ok || !proto.Equal(t, r.task) {
@@ -93,7 +93,7 @@ func (s *Scheduler) Apply(tasks *probev1.ProbeTasks) {
 	}
 }
 
-func (s *Scheduler) reject(t *probev1.ProbeTask, why string) {
+func (s *Scheduler) reject(t *heronv1.ProbeTask, why string) {
 	s.queue.Push(Result{TaskID: t.GetId(), Outcome: Outcome{Err: why}, At: s.clk.Mono()})
 	s.log.Warn("probe task rejected", "task", t.GetId(), "reason", why)
 }
@@ -101,7 +101,7 @@ func (s *Scheduler) reject(t *probev1.ProbeTask, why string) {
 // 首次偏移避免齐发；后续周期从触发时刻计算，不把探测耗时累加到周期。
 // 超时预算不超过间隔由 probelimit 的范围与 MinIntervalS*1000 ≥ MaxTimeoutMs 的编译期断言保证。
 // 单任务循环串行调用引擎，停止后不发布半途结果。
-func (s *Scheduler) run(ctx context.Context, t *probev1.ProbeTask) {
+func (s *Scheduler) run(ctx context.Context, t *heronv1.ProbeTask) {
 	defer s.wg.Done()
 	interval := time.Duration(t.GetIntervalS()) * time.Second
 	if err := s.Sleep(ctx, time.Duration(s.Rand()*float64(interval))); err != nil {

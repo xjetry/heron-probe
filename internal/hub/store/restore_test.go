@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/clock"
 )
 
 // 快照、指标层与目标库都可能见过已清理的投递行。恢复后新批次必须越过三者的高水位，不能只越过现存行。

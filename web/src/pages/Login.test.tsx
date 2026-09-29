@@ -19,6 +19,12 @@ function renderLogin(login: (req: { password: string }) => Promise<Record<string
 }
 
 describe("Login", () => {
+  it("登录页显示 Heron 品牌与主机监控定位", () => {
+    renderLogin(vi.fn(async () => ({})));
+    expect(screen.getByRole("heading", { name: "Heron" })).toBeInTheDocument();
+    expect(screen.getByText("轻量自托管主机监控")).toBeInTheDocument();
+  });
+
   it("Passkey 无密码登录依次完成挑战、浏览器证明与会话签发", async () => {
     const order: string[] = [];
     const beginPasskeyLogin = vi.fn(async () => { order.push("begin"); return { challengeId: "challenge", optionsJson: "options" }; });

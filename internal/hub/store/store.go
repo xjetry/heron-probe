@@ -19,7 +19,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/clock"
 )
 
 var (
@@ -247,7 +247,7 @@ func schemaAdmission(ctx context.Context, db schemaReader, policy SchemaPolicy) 
 		// 把负数当旧库交给迁移循环会查 migrations[v+1]（v=-1 时找不到 migrations[0]），
 		// 报出与升级无关的内部错误；当空库建表则会把 schemaStatements 叠加到未知内容上。
 		// 因而负版本既不能迁移，也不能按空库放行。
-		return 0, v, fmt.Errorf("database schema version %d is invalid; not a probe database", v)
+		return 0, v, fmt.Errorf("database schema version %d is invalid; not a Heron database", v)
 	case v == 0:
 		// PRAGMA user_version 未显式设置时读出的也是 0，任何 SQLite 文件都满足这一条；
 		// 只有 sqlite_schema 里确实不存在任何对象才是 §6.6 定义的"空库"。有对象却没有版本号
@@ -258,11 +258,11 @@ func schemaAdmission(ctx context.Context, db schemaReader, policy SchemaPolicy) 
 			return 0, v, err
 		}
 		if objects > 0 {
-			return 0, v, errors.New("database has tables but no schema version; not a probe database")
+			return 0, v, errors.New("database has tables but no schema version; not a Heron database")
 		}
 		return schemaCreate, v, nil
 	case policy == RequireCurrentSchema:
-		return 0, v, fmt.Errorf("database schema version %d is older than this binary (%d); start the new probe-hub serve once to upgrade it (back up the database first)", v, schemaVersion)
+		return 0, v, fmt.Errorf("database schema version %d is older than this binary (%d); start the new heron-hub serve once to upgrade it (back up the database first)", v, schemaVersion)
 	}
 	return schemaMigrate, v, nil
 }

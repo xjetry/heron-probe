@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/testwait"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 type logWriterFunc func([]byte) (int, error)

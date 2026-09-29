@@ -11,14 +11,14 @@ import (
 	"os"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 func runRestore(args []string) error { return runRestoreWith(args, os.Stdout) }
 
 func runRestoreWith(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
-	db := fs.String("db", "probe.db", "SQLite database path; stop hub before restoring")
+	db := fs.String("db", "heron.db", "SQLite database path; stop hub before restoring")
 	config := fs.String("config", "", "configuration snapshot (required)")
 	metrics := fs.String("metrics", "", "metrics snapshot (omit to keep existing metrics)")
 	themes := fs.String("themes", "", "directory of original <sha256>.zip packages; legacy snapshots use <id>.zip (omit to disable all restored themes)")

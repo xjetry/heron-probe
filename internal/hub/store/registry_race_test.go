@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/probe"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/probe"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 func registryRaceStore(t *testing.T) (*probe.Registry, *store.Store, int64) {
@@ -98,7 +98,7 @@ func TestRegistryForgetCannotBeRevivedByEarlierSave(t *testing.T) {
 	}
 	saved := make(chan result, 1)
 	go func() {
-		d, _, err := r.Save(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "localhost", IntervalS: 5, TimeoutMs: 1000}, store.NodeSelector{AllNodes: false, NodeIDs: []int64{id}})
+		d, _, err := r.Save(t.Context(), &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "localhost", IntervalS: 5, TimeoutMs: 1000}, store.NodeSelector{AllNodes: false, NodeIDs: []int64{id}})
 		saved <- result{d, err}
 	}()
 	waitRegistryWrite(t, pending)
@@ -135,7 +135,7 @@ func TestRegistryForgetCannotBeRevivedByEarlierSave(t *testing.T) {
 
 func TestRegistryDeleteSerializesFollowingSave(t *testing.T) {
 	r, st, id := registryRaceStore(t)
-	task := &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "localhost", IntervalS: 5, TimeoutMs: 1000}
+	task := &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "localhost", IntervalS: 5, TimeoutMs: 1000}
 	d, _, err := r.Save(t.Context(), task, store.NodeSelector{AllNodes: false, NodeIDs: []int64{id}})
 	if err != nil {
 		t.Fatal(err)

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/testwait"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 func writeFile(t *testing.T, path, content string) {

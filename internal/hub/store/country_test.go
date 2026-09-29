@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
 )
 
 // v13 的完整 DDL：v12 加上节点的来源地址。

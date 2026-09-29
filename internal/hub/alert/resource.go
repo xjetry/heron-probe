@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // NextResource 的触发与恢复各需完整的连续窗口；滞回区间保持 firing，缺失读数不能证明健康。

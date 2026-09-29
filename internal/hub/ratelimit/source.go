@@ -8,8 +8,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/auth"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
 )
 
 type sourceCtxKey struct{}

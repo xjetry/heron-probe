@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/outbound"
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // joinOnRead 让 q 每次读到发往 c 的批次之后、开始尝试之前，给它加入一个新节点的转换，至多 len(nodes) 次：模拟补货

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// install.sh 的替身。本地账户记录在 $PROBE_INSTALL_ROOT/etc/passwd 与 etc/group 里；
+// install.sh 的替身。本地账户记录在 $HERON_INSTALL_ROOT/etc/passwd 与 etc/group 里；
 // state/remote-passwd 里的账户由 NSS 的非本地源解析得到：id 查得到，本地文件里没有。
 // userdel、groupdel 只改本地文件，找不到记录时照 shadow 4.13 实测的报错与退出码（6）失败。
 // systemctl 记下参数；start 在假 /proc 里放一个以服务用户运行的进程，stop 把它拿走，供脚本的起停确认读取。
@@ -17,23 +17,23 @@ var linuxStubs = map[string]string{
 S=$STUB_STATE
 if [ "$#" = 1 ] && [ "$1" = -u ]; then echo "${STUB_UID:-0}"; exit 0; fi
 flag=""; [ "$#" = 2 ] && { flag=$1; shift; }
-line=$(grep "^$1:" "$PROBE_INSTALL_ROOT/etc/passwd") || line=$(grep "^$1:" "$S/remote-passwd" 2>/dev/null) || {
+line=$(grep "^$1:" "$HERON_INSTALL_ROOT/etc/passwd") || line=$(grep "^$1:" "$S/remote-passwd" 2>/dev/null) || {
   echo "id: '$1': no such user" >&2; exit 1; }
 uid=$(echo "$line" | cut -d: -f3); gid=$(echo "$line" | cut -d: -f4)
 case "$flag" in
   "") echo "uid=$uid($1) gid=$gid";;
   -u) echo "$uid";;
   -g) echo "$gid";;
-  -gn) awk -F: -v g="$gid" '$3 == g { print $1; found = 1; exit } END { exit !found }' "$PROBE_INSTALL_ROOT/etc/group";;
+  -gn) awk -F: -v g="$gid" '$3 == g { print $1; found = 1; exit } END { exit !found }' "$HERON_INSTALL_ROOT/etc/group";;
 esac
 `,
 	"systemctl": `#!/bin/sh
 cat > /dev/null
 echo "systemctl $*" >> "$STUB_STATE/calls"
-P=$PROBE_INSTALL_ROOT/proc
+P=$HERON_INSTALL_ROOT/proc
 case "$1" in
   start)
-    uid=$(grep '^probe-agent:' "$PROBE_INSTALL_ROOT/etc/passwd" | cut -d: -f3)
+    uid=$(grep '^heron-agent:' "$HERON_INSTALL_ROOT/etc/passwd" | cut -d: -f3)
     mkdir -p "$P/4242"; printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$P/4242/status";;
   stop) rm -rf "$P/4242";;
 esac
@@ -52,14 +52,14 @@ fi
 	"userdel": `#!/bin/sh
 cat > /dev/null
 echo "userdel $*" >> "$STUB_STATE/calls"
-f=$PROBE_INSTALL_ROOT/etc/passwd
+f=$HERON_INSTALL_ROOT/etc/passwd
 grep -q "^$1:" "$f" || { echo "userdel: user '$1' does not exist" >&2; exit 6; }
 grep -v "^$1:" "$f" > "$f.new"; mv "$f.new" "$f"
 `,
 	"groupdel": `#!/bin/sh
 cat > /dev/null
 echo "groupdel $*" >> "$STUB_STATE/calls"
-f=$PROBE_INSTALL_ROOT/etc/group
+f=$HERON_INSTALL_ROOT/etc/group
 grep -q "^$1:" "$f" || { echo "groupdel: group '$1' does not exist" >&2; exit 6; }
 grep -v "^$1:" "$f" > "$f.new"; mv "$f.new" "$f"
 `,
@@ -92,10 +92,10 @@ func newLinuxEnv(t *testing.T) *env {
 	t.Helper()
 	e := newLinuxHost(t)
 	for rel, body := range map[string]string{
-		"etc/systemd/system/probe-agent.service": "[Service]\n",
-		"etc/probe-agent/config.json":            "{}\n",
-		"var/log/probe-agent/.keep":              "",
-		"usr/local/bin/probe-agent":              "#!/bin/sh\n",
+		"etc/systemd/system/heron-agent.service": "[Service]\n",
+		"etc/heron-agent/config.json":            "{}\n",
+		"var/log/heron-agent/.keep":              "",
+		"usr/local/bin/heron-agent":              "#!/bin/sh\n",
 	} {
 		e.put(rel, body)
 	}
@@ -122,18 +122,18 @@ func (e *env) appendTo(rel, line string) {
 func TestLinuxPurgeDeletesTheLocalAccount(t *testing.T) {
 	t.Parallel()
 	e := newLinuxEnv(t)
-	e.appendTo("etc/passwd", "probe-agent:x:480:480::/nonexistent:/usr/sbin/nologin\n")
-	e.appendTo("etc/group", "probe-agent:x:480:\n")
+	e.appendTo("etc/passwd", "heron-agent:x:480:480::/nonexistent:/usr/sbin/nologin\n")
+	e.appendTo("etc/group", "heron-agent:x:480:\n")
 	out, code := e.run("--uninstall", "--purge")
-	if code != 0 || !strings.Contains(out, "probe-agent uninstalled") {
+	if code != 0 || !strings.Contains(out, "heron-agent uninstalled") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	for _, rel := range []string{"usr/local/bin/probe-agent", "etc/systemd/system/probe-agent.service", "etc/probe-agent", "var/log/probe-agent"} {
+	for _, rel := range []string{"usr/local/bin/heron-agent", "etc/systemd/system/heron-agent.service", "etc/heron-agent", "var/log/heron-agent"} {
 		if e.exists(rel) {
 			t.Errorf("%s left behind", rel)
 		}
 	}
-	if strings.Contains(e.file("etc/passwd"), "probe-agent:") || strings.Contains(e.file("etc/group"), "probe-agent:") {
+	if strings.Contains(e.file("etc/passwd"), "heron-agent:") || strings.Contains(e.file("etc/group"), "heron-agent:") {
 		t.Fatalf("account left in the local files:\n%s%s", e.file("etc/passwd"), e.file("etc/group"))
 	}
 }
@@ -143,9 +143,9 @@ func TestLinuxPurgeDeletesTheLocalAccount(t *testing.T) {
 func TestLinuxPurgeDecidesDeletionFromTheLocalRecord(t *testing.T) {
 	t.Parallel()
 	e := newLinuxEnv(t)
-	e.write("remote-passwd", "probe-agent:x:480:480::/nonexistent:/usr/sbin/nologin\n")
+	e.write("remote-passwd", "heron-agent:x:480:480::/nonexistent:/usr/sbin/nologin\n")
 	out, code := e.run("--uninstall", "--purge")
-	if code != 1 || !strings.Contains(out, "failed to delete user or group probe-agent") {
+	if code != 1 || !strings.Contains(out, "failed to delete user or group heron-agent") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	if index(e.calls(), "userdel") >= 0 {
@@ -153,21 +153,21 @@ func TestLinuxPurgeDecidesDeletionFromTheLocalRecord(t *testing.T) {
 	}
 }
 
-// linuxRelease 按 make release 的形状打 Linux 包：probe-agent 与仓库里的 systemd 单元、OpenRC 脚本原件。
+// linuxRelease 按 make release 的形状打 Linux 包：heron-agent 与仓库里的 systemd 单元、OpenRC 脚本原件。
 func (e *env) linuxRelease(arch, version string) {
 	e.t.Helper()
-	unit, err := os.ReadFile("systemd/probe-agent.service")
+	unit, err := os.ReadFile("systemd/heron-agent.service")
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	openrc, err := os.ReadFile("openrc/probe-agent")
+	openrc, err := os.ReadFile("openrc/heron-agent")
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	e.pack("probe-agent_linux_"+arch+".tar.gz", []packFile{
-		{"probe-agent", fakeAgent + "# " + version + " " + arch + "\n", 0o755},
-		{"probe-agent.service", string(unit), 0o644},
-		{"probe-agent.openrc", string(openrc), 0o755},
+	e.pack("heron-agent_linux_"+arch+".tar.gz", []packFile{
+		{"heron-agent", fakeAgent + "# " + version + " " + arch + "\n", 0o755},
+		{"heron-agent.service", string(unit), 0o644},
+		{"heron-agent.openrc", string(openrc), 0o755},
 	})
 }
 
@@ -175,11 +175,11 @@ func (e *env) linuxRelease(arch, version string) {
 func newLinuxInstalled(t *testing.T) *env {
 	t.Helper()
 	e := newLinuxHost(t)
-	e.appendTo("etc/passwd", "probe-agent:x:480:480::/nonexistent:/usr/sbin/nologin\n")
-	e.appendTo("etc/group", "probe-agent:x:480:\n")
+	e.appendTo("etc/passwd", "heron-agent:x:480:480::/nonexistent:/usr/sbin/nologin\n")
+	e.appendTo("etc/group", "heron-agent:x:480:\n")
 	e.linuxRelease("amd64", "v1")
 	out, code := e.linuxInstall()
-	if code != 0 || !strings.Contains(out, "probe-agent installed and started (systemd, amd64, probe-agent_linux_amd64.tar.gz)") {
+	if code != 0 || !strings.Contains(out, "heron-agent installed and started (systemd, amd64, heron-agent_linux_amd64.tar.gz)") {
 		t.Fatalf("first install exit %d:\n%s", code, out)
 	}
 	return e
@@ -199,21 +199,21 @@ func TestLinuxRerunDoesTheFallibleStepsBeforeStopping(t *testing.T) {
 		t.Fatalf("rerun exit %d:\n%s", code, out)
 	}
 	c := e.calls()
-	stop := index(c, "systemctl stop probe-agent")
+	stop := index(c, "systemctl stop heron-agent")
 	for _, want := range []string{
-		"chown root:probe-agent " + e.root + "/etc/probe-agent",
-		"chown probe-agent:probe-agent " + e.root + "/etc/probe-agent/config.json",
+		"chown root:heron-agent " + e.root + "/etc/heron-agent",
+		"chown heron-agent:heron-agent " + e.root + "/etc/heron-agent/config.json",
 	} {
 		if i := index(c, want); i < 0 || i > stop {
 			t.Errorf("%q must run before the service is stopped, calls %q", want, c)
 		}
 	}
 	for _, call := range c[stop+1:] {
-		if strings.HasPrefix(call, "chown ") || strings.HasPrefix(call, "probe-agent ") {
+		if strings.HasPrefix(call, "chown ") || strings.HasPrefix(call, "heron-agent ") {
 			t.Errorf("%q runs after the service is stopped", call)
 		}
 	}
-	if !strings.Contains(e.file("usr/local/bin/probe-agent"), "# v2 amd64") {
+	if !strings.Contains(e.file("usr/local/bin/heron-agent"), "# v2 amd64") {
 		t.Fatal("the rerun did not install v2")
 	}
 }
@@ -228,10 +228,10 @@ func TestLinuxFailuresBeforeStoppingLeaveTheServiceRunning(t *testing.T) {
 		want string
 	}{
 		{"re-register", func(string) []string { return []string{"STUB_REGISTER_FAILS=1"} }, func(root string) {
-			os.Remove(filepath.Join(root, "etc/probe-agent/config.json"))
+			os.Remove(filepath.Join(root, "etc/heron-agent/config.json"))
 		}, "register: hub unreachable"},
 		{"config chown", func(root string) []string {
-			return []string{"STUB_CHOWN_FAILS=" + root + "/etc/probe-agent/config.json"}
+			return []string{"STUB_CHOWN_FAILS=" + root + "/etc/heron-agent/config.json"}
 		}, nil, "config.json: Operation not permitted"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -247,7 +247,7 @@ func TestLinuxFailuresBeforeStoppingLeaveTheServiceRunning(t *testing.T) {
 			if code == 0 || !strings.Contains(out, tc.want) {
 				t.Fatalf("exit %d:\n%s", code, out)
 			}
-			if index(e.calls(), "systemctl stop") >= 0 || !strings.Contains(e.file("usr/local/bin/probe-agent"), "# v1 amd64") || !e.exists("proc/4242/status") {
+			if index(e.calls(), "systemctl stop") >= 0 || !strings.Contains(e.file("usr/local/bin/heron-agent"), "# v1 amd64") || !e.exists("proc/4242/status") {
 				t.Fatalf("the running service must be left alone: calls %q", e.calls())
 			}
 		})

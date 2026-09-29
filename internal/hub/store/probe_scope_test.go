@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/probelimit"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 )
 
 // v9 的完整 DDL：v8 加上计费与到期的七次 ADD COLUMN。

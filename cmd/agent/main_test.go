@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/testlog"
+	"github.com/xjetry/heron-probe/internal/testlog"
 )
 
 // scripts/e2e.sh 从 agent 的启动行按整秒读出 request_timeout 与 initial_interval，推出告警恢复的等待上限。

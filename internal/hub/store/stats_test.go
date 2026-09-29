@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/clock"
 )
 
-// rowCounts 是测试里按表名取行数的写法；来源与 GetStorageStats、probe-hub stats 相同。
+// rowCounts 是测试里按表名取行数的写法；来源与 GetStorageStats、heron-hub stats 相同。
 func rowCounts(t testing.TB, s *Store) map[string]int64 {
 	t.Helper()
 	stats, err := s.StorageStats(t.Context())

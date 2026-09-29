@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { renderWithAdmin } from "../test/harness";
-import { AlertKind, ResourceMetric, type SaveAlertRuleRequest } from "../gen/probe/v1/admin_pb";
+import { AlertKind, ResourceMetric, type SaveAlertRuleRequest } from "../gen/heron/v1/admin_pb";
 import { AlertRules } from "./AlertRules";
 
 it("资源规则提交资源指标与滞回阈值，不携带探测专用字段", async () => {

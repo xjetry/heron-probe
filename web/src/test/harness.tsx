@@ -4,7 +4,7 @@ import { TransportProvider } from "@connectrpc/connect-query";
 import { QueryClient, QueryClientProvider, type QueryClientConfig } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider, type RouteObject } from "react-router";
-import { AdminService } from "../gen/probe/v1/admin_pb";
+import { AdminService } from "../gen/heron/v1/admin_pb";
 
 export type AdminImpl = Partial<ServiceImpl<typeof AdminService>>;
 

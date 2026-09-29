@@ -59,7 +59,7 @@ func (s *Store) SnapshotConfigWithThemes(ctx context.Context, path, packageDir s
 // BackupScratch 给出备份快照暂存目录的位置与名字前缀。位置与源库同目录，快照容量随数据库所在磁盘规划，
 // 不占系统临时盘；前缀带上库文件名，同一目录下的几个库各有各的前缀，启动清理据此只认本库的残留。
 func (s *Store) BackupScratch() (dir, prefix string) {
-	return filepath.Dir(s.path), "probe-backup-" + filepath.Base(s.path) + "-"
+	return filepath.Dir(s.path), "heron-backup-" + filepath.Base(s.path) + "-"
 }
 
 func (s *Store) snapshot(ctx context.Context, path, layer string, tables []string, packageSink func(string, string, int64, []byte) error) (result error) {

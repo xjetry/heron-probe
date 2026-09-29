@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/auth"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 func securityError(err error) error {
@@ -21,28 +21,28 @@ func securityError(err error) error {
 	}
 	return internalError("认证操作失败")
 }
-func securityResponse(r auth.SecurityResult) *probev1.SecurityActionResponse {
-	return &probev1.SecurityActionResponse{ChallengeId: r.ChallengeID, OptionsJson: r.OptionsJSON, TotpSecret: r.TOTPSecret, TotpUri: r.TOTPURI, RecoveryCodes: r.RecoveryCodes, ProofToken: r.ProofToken}
+func securityResponse(r auth.SecurityResult) *heronv1.SecurityActionResponse {
+	return &heronv1.SecurityActionResponse{ChallengeId: r.ChallengeID, OptionsJson: r.OptionsJSON, TotpSecret: r.TOTPSecret, TotpUri: r.TOTPURI, RecoveryCodes: r.RecoveryCodes, ProofToken: r.ProofToken}
 }
-func (s *Service) GetSecurity(ctx context.Context, _ *connect.Request[probev1.GetSecurityRequest]) (*connect.Response[probev1.GetSecurityResponse], error) {
+func (s *Service) GetSecurity(ctx context.Context, _ *connect.Request[heronv1.GetSecurityRequest]) (*connect.Response[heronv1.GetSecurityResponse], error) {
 	info, err := s.auth.SecurityInfo(ctx)
 	if err != nil {
 		return nil, securityError(err)
 	}
-	out := &probev1.GetSecurityResponse{TotpEnabled: info.TOTPEnabled, PasskeyAvailable: info.PasskeyAvailable, RecoveryCodesRemaining: uint32(info.RecoveryRemaining)}
+	out := &heronv1.GetSecurityResponse{TotpEnabled: info.TOTPEnabled, PasskeyAvailable: info.PasskeyAvailable, RecoveryCodesRemaining: uint32(info.RecoveryRemaining)}
 	for _, p := range info.Passkeys {
-		out.Passkeys = append(out.Passkeys, &probev1.SecurityCredential{Id: base64.RawURLEncoding.EncodeToString(p.Credential.ID), Name: p.Name})
+		out.Passkeys = append(out.Passkeys, &heronv1.SecurityCredential{Id: base64.RawURLEncoding.EncodeToString(p.Credential.ID), Name: p.Name})
 	}
 	return connect.NewResponse(out), nil
 }
-func (s *Service) BeginPasskeyLogin(ctx context.Context, _ *connect.Request[probev1.BeginPasskeyLoginRequest]) (*connect.Response[probev1.BeginPasskeyLoginResponse], error) {
+func (s *Service) BeginPasskeyLogin(ctx context.Context, _ *connect.Request[heronv1.BeginPasskeyLoginRequest]) (*connect.Response[heronv1.BeginPasskeyLoginResponse], error) {
 	r, err := s.auth.BeginPasskeyLogin(ctx, ctx.Value(peerKey{}).(peerInfo).from)
 	if err != nil {
 		return nil, securityError(err)
 	}
-	return connect.NewResponse(&probev1.BeginPasskeyLoginResponse{ChallengeId: r.ChallengeID, OptionsJson: r.OptionsJSON}), nil
+	return connect.NewResponse(&heronv1.BeginPasskeyLoginResponse{ChallengeId: r.ChallengeID, OptionsJson: r.OptionsJSON}), nil
 }
-func (s *Service) FinishPasskeyLogin(ctx context.Context, req *connect.Request[probev1.FinishPasskeyLoginRequest]) (*connect.Response[probev1.FinishPasskeyLoginResponse], error) {
+func (s *Service) FinishPasskeyLogin(ctx context.Context, req *connect.Request[heronv1.FinishPasskeyLoginRequest]) (*connect.Response[heronv1.FinishPasskeyLoginResponse], error) {
 	if len(req.Msg.CredentialJson) > 65536 || len(req.Msg.ChallengeId) > 128 {
 		return nil, invalid("Passkey 响应过大")
 	}
@@ -51,25 +51,25 @@ func (s *Service) FinishPasskeyLogin(ctx context.Context, req *connect.Request[p
 	if err != nil {
 		return nil, securityError(err)
 	}
-	resp := connect.NewResponse(&probev1.FinishPasskeyLoginResponse{})
+	resp := connect.NewResponse(&heronv1.FinishPasskeyLoginResponse{})
 	resp.Header().Add("Set-Cookie", sessionCookie(token, peer.scheme == "https", int(auth.SessionAbsolute/time.Second)).String())
 	return resp, nil
 }
-func (s *Service) SecurityAction(ctx context.Context, req *connect.Request[probev1.SecurityActionRequest]) (*connect.Response[probev1.SecurityActionResponse], error) {
+func (s *Service) SecurityAction(ctx context.Context, req *connect.Request[heronv1.SecurityActionRequest]) (*connect.Response[heronv1.SecurityActionResponse], error) {
 	in := req.Msg
 	if len(in.Password) > 4096 || len(in.Otp) > 16 || len(in.RecoveryCode) > 128 || len(in.CredentialJson) > 65536 || len(in.Name) > 128 || len(in.CredentialId) > 2048 || len(in.ChallengeId) > 128 || len(in.ProofToken) > 128 {
 		return nil, invalid("认证字段过大")
 	}
-	actions := map[probev1.SecurityActionKind]auth.SecurityActionKind{
-		probev1.SecurityActionKind_SECURITY_ACTION_KIND_TOTP_BEGIN:          auth.SecurityTOTPBegin,
-		probev1.SecurityActionKind_SECURITY_ACTION_KIND_TOTP_ENABLE:         auth.SecurityTOTPEnable,
-		probev1.SecurityActionKind_SECURITY_ACTION_KIND_TOTP_DISABLE:        auth.SecurityTOTPDisable,
-		probev1.SecurityActionKind_SECURITY_ACTION_KIND_PASSKEY_BEGIN:       auth.SecurityPasskeyBegin,
-		probev1.SecurityActionKind_SECURITY_ACTION_KIND_PASSKEY_REGISTER:    auth.SecurityPasskeyRegister,
-		probev1.SecurityActionKind_SECURITY_ACTION_KIND_PASSKEY_DELETE:      auth.SecurityPasskeyDelete,
-		probev1.SecurityActionKind_SECURITY_ACTION_KIND_RECOVERY_REGENERATE: auth.SecurityRecoveryRegenerate,
-		probev1.SecurityActionKind_SECURITY_ACTION_KIND_REAUTH_BEGIN:        auth.SecurityReauthBegin,
-		probev1.SecurityActionKind_SECURITY_ACTION_KIND_REAUTH_FINISH:       auth.SecurityReauthFinish,
+	actions := map[heronv1.SecurityActionKind]auth.SecurityActionKind{
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_TOTP_BEGIN:          auth.SecurityTOTPBegin,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_TOTP_ENABLE:         auth.SecurityTOTPEnable,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_TOTP_DISABLE:        auth.SecurityTOTPDisable,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_PASSKEY_BEGIN:       auth.SecurityPasskeyBegin,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_PASSKEY_REGISTER:    auth.SecurityPasskeyRegister,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_PASSKEY_DELETE:      auth.SecurityPasskeyDelete,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_RECOVERY_REGENERATE: auth.SecurityRecoveryRegenerate,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_REAUTH_BEGIN:        auth.SecurityReauthBegin,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_REAUTH_FINISH:       auth.SecurityReauthFinish,
 	}
 	action, ok := actions[in.Action]
 	if !ok {

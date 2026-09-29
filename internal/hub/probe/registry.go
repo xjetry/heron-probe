@@ -20,9 +20,9 @@ import (
 	"sort"
 	"sync"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/probelimit"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -30,7 +30,7 @@ var ErrInvalid = errors.New("invalid probe task")
 
 // Detail 的 NodeIDs 是任务当前覆盖的节点，升序；AllNodes 为真时它是展开结果，随建删节点变化。
 type Detail struct {
-	Task         *probev1.ProbeTask
+	Task         *heronv1.ProbeTask
 	AllNodes     bool
 	NodeIDs      []int64
 	SelectorTags []string
@@ -43,7 +43,7 @@ type Registry struct {
 	writeMu sync.Mutex // 锁序 auth.mutMu → writeMu → mu：auth 持 mutMu 调建节点入口
 	mu      sync.RWMutex
 	version uint64
-	tasks   map[uint64]*probev1.ProbeTask
+	tasks   map[uint64]*heronv1.ProbeTask
 	// allNodes 是 all_nodes 任务的集合，只供 List 回显开关，不参与覆盖的推导。byNode 与 nodesOf 总是 store 按
 	// probeCoverage 读出的覆盖，读侧（TasksFor、Assigned、TargetFor、List）不区分选择器模式。
 	allNodes     map[uint64]struct{}
@@ -59,7 +59,7 @@ func New(st *store.Store, log *slog.Logger) *Registry {
 }
 
 func (r *Registry) reset() {
-	r.tasks, r.allNodes, r.byNode, r.nodesOf = map[uint64]*probev1.ProbeTask{}, map[uint64]struct{}{}, map[int64]map[uint64]struct{}{}, map[uint64][]int64{}
+	r.tasks, r.allNodes, r.byNode, r.nodesOf = map[uint64]*heronv1.ProbeTask{}, map[uint64]struct{}{}, map[int64]map[uint64]struct{}{}, map[uint64][]int64{}
 	r.selectorTags = map[uint64][]string{}
 }
 
@@ -85,7 +85,7 @@ func (r *Registry) Load(ctx context.Context) error {
 // rec.NodeIDs 是 store 读出的覆盖（all_nodes 任务已展开），直接成为索引。
 func (r *Registry) put(rec store.ProbeTaskRecord) {
 	id := rec.Task.Id
-	r.tasks[id] = proto.Clone(rec.Task).(*probev1.ProbeTask)
+	r.tasks[id] = proto.Clone(rec.Task).(*heronv1.ProbeTask)
 	if rec.AllNodes {
 		r.allNodes[id] = struct{}{}
 	}
@@ -123,12 +123,12 @@ func (r *Registry) Version() uint64 {
 }
 
 // TasksFor 返回按 id 升序的任务与版本；空清单也必须下发，agent 才能停止已撤销的任务。
-func (r *Registry) TasksFor(nodeID int64) *probev1.ProbeTasks {
+func (r *Registry) TasksFor(nodeID int64) *heronv1.ProbeTasks {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	out := &probev1.ProbeTasks{Version: r.version}
+	out := &heronv1.ProbeTasks{Version: r.version}
 	for id := range r.byNode[nodeID] {
-		out.Tasks = append(out.Tasks, proto.Clone(r.tasks[id]).(*probev1.ProbeTask))
+		out.Tasks = append(out.Tasks, proto.Clone(r.tasks[id]).(*heronv1.ProbeTask))
 	}
 	sort.Slice(out.Tasks, func(i, j int) bool { return out.Tasks[i].Id < out.Tasks[j].Id })
 	return out
@@ -148,7 +148,7 @@ func (r *Registry) List() (uint64, []Detail) {
 	var out []Detail
 	for id, task := range r.tasks {
 		_, all := r.allNodes[id]
-		out = append(out, Detail{Task: proto.Clone(task).(*probev1.ProbeTask), AllNodes: all, NodeIDs: slices.Clone(r.nodesOf[id]), SelectorTags: slices.Clone(r.selectorTags[id])})
+		out = append(out, Detail{Task: proto.Clone(task).(*heronv1.ProbeTask), AllNodes: all, NodeIDs: slices.Clone(r.nodesOf[id]), SelectorTags: slices.Clone(r.selectorTags[id])})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Task.Id < out[j].Task.Id })
 	return r.version, out
@@ -157,12 +157,12 @@ func (r *Registry) List() (uint64, []Detail) {
 // Target 返回任务当前的种类与目标，是管理端标注历史序列的口径。任务不在清单里时 ok 为 false。
 // 历史行只带 task_id，查不到即已删除，这靠两个前提：ingest 的 foldResults 只收 Assigned 为真的结果，
 // 所以历史里的每个 task_id 都曾是已发布的任务；任务表的 AUTOINCREMENT 保证编号不复用，所以不会标成别的任务。
-func (r *Registry) Target(id uint64) (kind probev1.ProbeKind, target string, ok bool) {
+func (r *Registry) Target(id uint64) (kind heronv1.ProbeKind, target string, ok bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	t, ok := r.tasks[id]
 	if !ok {
-		return probev1.ProbeKind_PROBE_KIND_UNSPECIFIED, "", false
+		return heronv1.ProbeKind_PROBE_KIND_UNSPECIFIED, "", false
 	}
 	return t.Kind, t.Target, true
 }
@@ -171,12 +171,12 @@ func (r *Registry) Target(id uint64) (kind probev1.ProbeKind, target string, ok 
 // 节点公开即公开它正在探测的目标；历史里出现、但现在不分配给该节点的任务，当前目标可能从未被该节点探测过
 // （撤下后改成了内网地址、只分配给私有节点），不在公开范围内。分配与目标在同一个读锁下读出：分开两次加锁，
 // 中间的 Save 可能让"已分配"与"新目标"拼在一起。
-func (r *Registry) TargetFor(nodeID int64, id uint64) (kind probev1.ProbeKind, target string, ok bool) {
+func (r *Registry) TargetFor(nodeID int64, id uint64) (kind heronv1.ProbeKind, target string, ok bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	t, known := r.tasks[id]
 	if _, assigned := r.byNode[nodeID][id]; !known || !assigned {
-		return probev1.ProbeKind_PROBE_KIND_UNSPECIFIED, "", false
+		return heronv1.ProbeKind_PROBE_KIND_UNSPECIFIED, "", false
 	}
 	return t.Kind, t.Target, true
 }
@@ -189,7 +189,7 @@ func dedupSorted(ids []int64) []int64 {
 
 // Save 的内存发布只发生在事务成功后，拒绝的保存不能改变任务、分配或版本。
 // 全部节点、标签交集和显式分配互斥，与告警规则使用同一校验。显式空集合法且不覆盖任何节点，不能静默放宽。
-func (r *Registry) Save(ctx context.Context, t *probev1.ProbeTask, selector store.NodeSelector) (Detail, uint64, error) {
+func (r *Registry) Save(ctx context.Context, t *heronv1.ProbeTask, selector store.NodeSelector) (Detail, uint64, error) {
 	if err := probelimit.CheckTask(t); err != nil {
 		return Detail{}, 0, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
@@ -208,7 +208,7 @@ func (r *Registry) Save(ctx context.Context, t *probev1.ProbeTask, selector stor
 	r.remove(rec.Task.Id)
 	r.put(rec)
 	r.version = version
-	return Detail{Task: proto.Clone(rec.Task).(*probev1.ProbeTask), AllNodes: rec.AllNodes, NodeIDs: slices.Clone(rec.NodeIDs), SelectorTags: slices.Clone(rec.SelectorTags)}, version, nil
+	return Detail{Task: proto.Clone(rec.Task).(*heronv1.ProbeTask), AllNodes: rec.AllNodes, NodeIDs: slices.Clone(rec.NodeIDs), SelectorTags: slices.Clone(rec.SelectorTags)}, version, nil
 }
 
 // UpdateNode 与任务保存共用 writeMu，标签变更提交后按事务回读的覆盖发布，不能由较旧的任务快照覆盖。

@@ -1,5 +1,5 @@
 import { create } from "@bufbuild/protobuf";
-import { QueryMetricsResponseSchema } from "../gen/probe/v1/query_pb";
+import { QueryMetricsResponseSchema } from "../gen/heron/v1/query_pb";
 import { describe, expect, it } from "vitest";
 import { toAligned, unitOf } from "./series";
 

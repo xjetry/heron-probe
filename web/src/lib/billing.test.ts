@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BillingCycle, BillingCycleSchema } from "../gen/probe/v1/types_pb";
+import { BillingCycle, BillingCycleSchema } from "../gen/heron/v1/types_pb";
 import { BILLING_CYCLES, cycleLabel, expired, expiryText, priceText, sortByExpiry, type BillingView } from "./billing";
 
 const none: BillingView = { price: "", currency: "", billingCycle: BillingCycle.UNSPECIFIED, expiresOn: "" };

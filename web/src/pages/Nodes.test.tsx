@@ -5,9 +5,9 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Nodes } from "./Nodes";
-import { AdminService, CountrySource, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema, type ListNodesRequest } from "../gen/probe/v1/admin_pb";
+import { AdminService, CountrySource, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema, type ListNodesRequest } from "../gen/heron/v1/admin_pb";
 import { sameTag } from "../lib/tags";
-import { BillingCycle } from "../gen/probe/v1/types_pb";
+import { BillingCycle } from "../gen/heron/v1/types_pb";
 
 const two = [
   { id: 1n, name: "a", public: false, note: "", sortOrder: 0, createdAt: 0n, trafficResetDay: 1, offlineGraceS: 90 },
@@ -617,7 +617,7 @@ describe("Nodes", () => {
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     const grace = screen.getByLabelText("离线宽限期（秒） a（#1）");
     expect(grace).toHaveValue(90);
-    expect(grace).toHaveAccessibleDescription("0 表示取 hub 的 PROBE_OFFLINE_AFTER；非 0 不能小于它。");
+    expect(grace).toHaveAccessibleDescription("0 表示取 hub 的 HERON_OFFLINE_AFTER；非 0 不能小于它。");
     fireEvent.change(grace, { target: { value: "120" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     try {
@@ -659,12 +659,12 @@ describe("Nodes", () => {
 
   it("服务端宽限期下限错误显示原文", async () => {
     renderNodes({ listNodes: async () => ({ nodes: two }),
-      updateNode: async () => { throw new ConnectError("offline_grace_s: must be 0 or at least 30 seconds (PROBE_OFFLINE_AFTER); got 20", Code.InvalidArgument); } });
+      updateNode: async () => { throw new ConnectError("offline_grace_s: must be 0 or at least 30 seconds (HERON_OFFLINE_AFTER); got 20", Code.InvalidArgument); } });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("离线宽限期（秒） a（#1）"), { target: { value: "20" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("offline_grace_s: must be 0 or at least 30 seconds (PROBE_OFFLINE_AFTER); got 20");
+    expect(await screen.findByRole("alert")).toHaveTextContent("offline_grace_s: must be 0 or at least 30 seconds (HERON_OFFLINE_AFTER); got 20");
   });
 
   it("轮换后显示并复制新 token", async () => {

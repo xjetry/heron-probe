@@ -3,7 +3,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { createConnectQueryKey } from "@connectrpc/connect-query";
-import { AdminService, ListThemesResponseSchema } from "../gen/probe/v1/admin_pb";
+import { AdminService, ListThemesResponseSchema } from "../gen/heron/v1/admin_pb";
 import { retryQuery } from "../retry";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Themes } from "./Themes";

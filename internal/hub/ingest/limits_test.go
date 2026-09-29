@@ -7,18 +7,18 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/probelimit"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-func maxErrorResult() *probev1.ProbeResult {
-	return &probev1.ProbeResult{TaskId: math.MaxUint64, AgeMs: math.MaxUint32, Outcome: &probev1.ProbeResult_Error{Error: &probev1.ProbeError{Message: strings.Repeat("x", probelimit.MaxErrorMessageLen)}}}
+func maxErrorResult() *heronv1.ProbeResult {
+	return &heronv1.ProbeResult{TaskId: math.MaxUint64, AgeMs: math.MaxUint32, Outcome: &heronv1.ProbeResult_Error{Error: &heronv1.ProbeError{Message: strings.Repeat("x", probelimit.MaxErrorMessageLen)}}}
 }
 
 func TestReportHostStringLimits(t *testing.T) {
-	facts := (&probev1.Facts{}).ProtoReflect().Descriptor().Fields()
+	facts := (&heronv1.Facts{}).ProtoReflect().Descriptor().Fields()
 	fields := []string{"boot_id"}
 	for i := 0; i < facts.Len(); i++ {
 		if field := facts.Get(i); field.Kind() == protoreflect.StringKind {
@@ -31,11 +31,11 @@ func TestReportHostStringLimits(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d", field, size), func(t *testing.T) {
 				h := newHub(t)
 				id, tok := h.node(t)
-				req := report(tok, &probev1.Metrics{})
+				req := report(tok, &heronv1.Metrics{})
 				if field == "boot_id" {
 					req.Msg.Metrics.BootId = value
 				} else {
-					req.Msg.Facts = &probev1.Facts{}
+					req.Msg.Facts = &heronv1.Facts{}
 					fd := facts.ByName(protoreflect.Name(strings.TrimPrefix(field, "facts.")))
 					req.Msg.Facts.ProtoReflect().Set(fd, protoreflect.ValueOfString(value))
 				}
@@ -61,16 +61,16 @@ func TestReportHostStringLimits(t *testing.T) {
 func TestMaxProbeResultWire(t *testing.T) {
 	r := maxErrorResult()
 	size := proto.Size(r)
-	framed := proto.Size(&probev1.ReportRequest{ProbeResults: []*probev1.ProbeResult{r}})
+	framed := proto.Size(&heronv1.ReportRequest{ProbeResults: []*heronv1.ProbeResult{r}})
 	t.Logf("result=%d framed=%d budget=%d", size, framed, maxResultWire)
 	if size > maxResultWire || framed > maxResultWire {
 		t.Fatalf("wire size %d/%d exceeds %d", size, framed, maxResultWire)
 	}
 }
 
-func maxHostReport(t *testing.T) *probev1.ReportRequest {
+func maxHostReport(t *testing.T) *heronv1.ReportRequest {
 	t.Helper()
-	r := &probev1.ReportRequest{Metrics: &probev1.Metrics{}, Facts: &probev1.Facts{}, TasksVersion: math.MaxUint64, FactsHash: math.MaxUint64}
+	r := &heronv1.ReportRequest{Metrics: &heronv1.Metrics{}, Facts: &heronv1.Facts{}, TasksVersion: math.MaxUint64, FactsHash: math.MaxUint64}
 	for _, m := range []proto.Message{r.Metrics, r.Facts} {
 		msg := m.ProtoReflect()
 		fields := msg.Descriptor().Fields()

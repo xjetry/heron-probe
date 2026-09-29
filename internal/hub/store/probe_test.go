@@ -9,22 +9,22 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/probelimit"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 	"google.golang.org/protobuf/proto"
 )
 
 func probeRow(nodeID int64, ts int64, task uint64, rtts []uint32, lost, errs uint32) metric.ProbeRow {
 	b := &metric.ProbeBucket{}
 	for _, us := range rtts {
-		b.Add(&probev1.ProbeResult{TaskId: task, Outcome: &probev1.ProbeResult_RttUs{RttUs: us}})
+		b.Add(&heronv1.ProbeResult{TaskId: task, Outcome: &heronv1.ProbeResult_RttUs{RttUs: us}})
 	}
 	for range lost {
-		b.Add(&probev1.ProbeResult{TaskId: task, Outcome: &probev1.ProbeResult_Timeout{Timeout: &probev1.Timeout{}}})
+		b.Add(&heronv1.ProbeResult{TaskId: task, Outcome: &heronv1.ProbeResult_Timeout{Timeout: &heronv1.Timeout{}}})
 	}
 	for range errs {
-		b.Add(&probev1.ProbeResult{TaskId: task, Outcome: &probev1.ProbeResult_Error{Error: &probev1.ProbeError{Message: "x"}}})
+		b.Add(&heronv1.ProbeResult{TaskId: task, Outcome: &heronv1.ProbeResult_Error{Error: &heronv1.ProbeError{Message: "x"}}})
 	}
 	return metric.ProbeRow{NodeID: nodeID, TS: ts, TaskID: task, Bucket: b}
 }
@@ -185,8 +185,8 @@ func TestQueryProbesRebucketsPerTask(t *testing.T) {
 	}
 }
 
-func taskForTest() *probev1.ProbeTask {
-	return &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}
+func taskForTest() *heronv1.ProbeTask {
+	return &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}
 }
 
 func TestSaveProbeTaskAssignsAndBumpsVersion(t *testing.T) {
@@ -290,7 +290,7 @@ func TestSaveProbeTaskEnforcesPerNodeLimit(t *testing.T) {
 		t.Fatalf("limit rollback: version=%d tasks=%d err=%v", version, len(tasks), err)
 	}
 
-	changed := proto.Clone(tasks[0].Task).(*probev1.ProbeTask)
+	changed := proto.Clone(tasks[0].Task).(*heronv1.ProbeTask)
 	changed.Target = "example.com"
 	saved, version, err := s.SaveProbeTask(ctx, changed, NodeSelector{AllNodes: false, NodeIDs: []int64{id}})
 	if err != nil || version != base+65 || !proto.Equal(saved.Task, changed) {
@@ -308,7 +308,7 @@ func TestDuplicateProbeAssignmentRollsBackReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed := proto.Clone(saved.Task).(*probev1.ProbeTask)
+	changed := proto.Clone(saved.Task).(*heronv1.ProbeTask)
 	changed.Target = "changed"
 	if _, _, err := s.SaveProbeTask(ctx, changed, NodeSelector{AllNodes: false, NodeIDs: []int64{id, id}}); err == nil || !strings.Contains(err.Error(), "UNIQUE constraint failed") {
 		t.Fatalf("duplicate assignment error=%v", err)
@@ -463,7 +463,7 @@ func formatProbeRows(rows []metric.ProbeRow) string {
 }
 
 func TestProbeBucketIgnoresMissingOutcome(t *testing.T) {
-	for _, input := range []*probev1.ProbeResult{nil, {TaskId: 7}} {
+	for _, input := range []*heronv1.ProbeResult{nil, {TaskId: 7}} {
 		b := probeRow(1, 0, 7, []uint32{100}, 1, 1).Bucket
 		want := *b
 		b.Add(input)

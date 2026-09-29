@@ -1,4 +1,4 @@
-import { AlertKind, ChannelKind, DeliveryFailure, ProbeMetric, ResourceMetric, type AlertDelivery, type AlertRule, type AlertStateEntry, type NotifyChannel, type ProbeTaskDetail, type Settings } from "../gen/probe/v1/admin_pb";
+import { AlertKind, ChannelKind, DeliveryFailure, ProbeMetric, ResourceMetric, type AlertDelivery, type AlertRule, type AlertStateEntry, type NotifyChannel, type ProbeTaskDetail, type Settings } from "../gen/heron/v1/admin_pb";
 import { formatUnit } from "./format";
 import { disambiguate, kindLabel } from "./probes";
 
@@ -144,5 +144,5 @@ export function deliveryText(d: AlertDelivery, channel: string): string {
   return `${channel}：失败（${d.attempts} 次）${failureText(d)}`;
 }
 
-// 缺失表示取 hub 的 PROBE_OFFLINE_AFTER（proto Node.offline_grace_s）；清除后 hub 存 NULL，不会回显 0。
+// 缺失表示取 hub 的 HERON_OFFLINE_AFTER（proto Node.offline_grace_s）；清除后 hub 存 NULL，不会回显 0。
 export const graceText = (s: number | undefined): string => (s === undefined ? "默认" : `${s} 秒`);

@@ -5,7 +5,7 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
 import { RegisterWindow } from "./RegisterWindow";
-import { AdminService, GetSnapshotResponseSchema, ListNodesResponseSchema } from "../gen/probe/v1/admin_pb";
+import { AdminService, GetSnapshotResponseSchema, ListNodesResponseSchema } from "../gen/heron/v1/admin_pb";
 
 afterEach(() => vi.useRealTimers());
 
@@ -147,7 +147,7 @@ describe("RegisterWindow", () => {
     expect(pres[0].textContent).toContain("curl -fsSL");
     expect(pres[1].textContent).toContain("wget -qO-");
     for (const p of pres) {
-      expect(p.textContent).toContain("https://github.com/xjetry/probe/releases/download/v1.2.3/install.sh");
+      expect(p.textContent).toContain("https://github.com/xjetry/heron-probe/releases/download/v1.2.3/install.sh");
       expect(p.textContent).toContain("--version v1.2.3");
       expect(p.textContent).toContain("--key k1");
     }
@@ -158,7 +158,7 @@ describe("RegisterWindow", () => {
     renderOpen("v1.0");
     fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
     for (const p of await screen.findAllByText(/install\.sh \| sh -s --/)) {
-      expect(p.textContent).toContain("https://github.com/xjetry/probe/releases/latest/download/install.sh");
+      expect(p.textContent).toContain("https://github.com/xjetry/heron-probe/releases/latest/download/install.sh");
       expect(p.textContent).not.toContain("--version");
       expect(p.textContent).not.toContain("/download/v1.0/");
     }
@@ -169,7 +169,7 @@ describe("RegisterWindow", () => {
     renderOpen("dev");
     fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
     for (const p of await screen.findAllByText(/install\.sh \| sh -s --/)) {
-      expect(p.textContent).toContain("https://github.com/xjetry/probe/releases/latest/download/install.sh");
+      expect(p.textContent).toContain("https://github.com/xjetry/heron-probe/releases/latest/download/install.sh");
       expect(p.textContent).not.toContain("--version");
       expect(p.textContent).not.toContain("/download/dev/");
     }
@@ -182,7 +182,7 @@ describe("RegisterWindow", () => {
     const pres = await screen.findAllByText(/install\.sh \| sh -s --/);
     expect(pres).toHaveLength(2);
     for (const p of pres) {
-      expect(p.textContent).toContain("https://github.com/xjetry/probe/releases/latest/download/install.sh");
+      expect(p.textContent).toContain("https://github.com/xjetry/heron-probe/releases/latest/download/install.sh");
       expect(p.textContent).not.toContain("--version");
     }
     expect(screen.getByText(/hub 不是正式版本（未知）.*将安装最新 release/)).toBeInTheDocument();

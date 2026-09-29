@@ -25,7 +25,7 @@ beforeAll(async () => {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     fetches.push({ url, init });
-    if (url.includes("/probe.v1.PublicService/GetSite")) return json({ title: "机房状态", theme: "dark", accentColor: "#123abc" });
+    if (url.includes("/heron.v1.PublicService/GetSite")) return json({ title: "机房状态", theme: "dark", accentColor: "#123abc" });
     return json({ now: "1000", nodes: [{ id: "3", name: "web-1", online: true }] });
   }));
   root = document.createElement("div");
@@ -75,7 +75,7 @@ test.each([
 test("公开请求是不带凭据的 GET", () => {
   expect(fetches.length).toBeGreaterThanOrEqual(2);
   for (const { url, init } of fetches) {
-    expect(url).toMatch(/^\/probe\.v1\.PublicService\/(GetSite|GetSnapshot)\?connect=v1&encoding=json&message=/);
+    expect(url).toMatch(/^\/heron\.v1\.PublicService\/(GetSite|GetSnapshot)\?connect=v1&encoding=json&message=/);
     expect(init?.method).toBe("GET");
     expect(init?.credentials).toBe("omit");
   }

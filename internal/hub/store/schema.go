@@ -3,7 +3,7 @@ package store
 import (
 	"strings"
 
-	"github.com/xjetry/probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
 )
 
 // 每张表一个常量：全新建库与增量迁移复用同一段 DDL，不存在第二份字段清单。

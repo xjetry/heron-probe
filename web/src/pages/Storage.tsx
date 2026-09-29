@@ -1,6 +1,6 @@
 import { useQuery } from "@connectrpc/connect-query";
 import { errorBanner, queryGate } from "../api/queryGate";
-import { AdminService, type SeriesTableHealth } from "../gen/probe/v1/admin_pb";
+import { AdminService, type SeriesTableHealth } from "../gen/heron/v1/admin_pb";
 import { bytes, duration } from "../lib/format";
 
 const at = (unix: bigint) => new Date(Number(unix) * 1000).toLocaleString();

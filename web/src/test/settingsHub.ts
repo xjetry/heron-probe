@@ -1,6 +1,6 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
-import type { BackupSettings, BackupSettingsSchema, Settings, SettingsSchema, UpdateSettingsRequest } from "../gen/probe/v1/admin_pb";
+import type { BackupSettings, BackupSettingsSchema, Settings, SettingsSchema, UpdateSettingsRequest } from "../gen/heron/v1/admin_pb";
 import { ascending } from "../lib/ids";
 import type { AdminImpl } from "./harness";
 

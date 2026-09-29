@@ -1,4 +1,4 @@
-module github.com/xjetry/probe
+module github.com/xjetry/heron-probe
 
 go 1.27.1
 

@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/testwait"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 // 登录通知从 serve 的装配一路送到接收方：startAlertHub 的那次登录写下 login_success，投递队列须在运行期间发出它。

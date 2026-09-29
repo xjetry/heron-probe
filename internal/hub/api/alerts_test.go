@@ -9,37 +9,37 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/alert"
-	"github.com/xjetry/probe/internal/hub/outbound"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/alert"
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 	"google.golang.org/protobuf/proto"
 )
 
-func offlineRule() *probev1.AlertRule {
-	return &probev1.AlertRule{Name: "离线", Kind: probev1.AlertKind_ALERT_KIND_OFFLINE, Enabled: true, AllNodes: true}
+func offlineRule() *heronv1.AlertRule {
+	return &heronv1.AlertRule{Name: "离线", Kind: heronv1.AlertKind_ALERT_KIND_OFFLINE, Enabled: true, AllNodes: true}
 }
 
-func saveRule(t *testing.T, h *harness, r *probev1.AlertRule) *probev1.AlertRule {
+func saveRule(t *testing.T, h *harness, r *heronv1.AlertRule) *heronv1.AlertRule {
 	t.Helper()
-	resp, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&probev1.SaveAlertRuleRequest{Rule: r}))
+	resp, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&heronv1.SaveAlertRuleRequest{Rule: r}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return resp.Msg.Rule
 }
 
-func saveChannel(t *testing.T, h *harness, c *probev1.NotifyChannel) *probev1.NotifyChannel {
+func saveChannel(t *testing.T, h *harness, c *heronv1.NotifyChannel) *heronv1.NotifyChannel {
 	t.Helper()
-	resp, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{Channel: c}))
+	resp, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&heronv1.SaveNotifyChannelRequest{Channel: c}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return resp.Msg.Channel
 }
 
-func webhook(url string) *probev1.NotifyChannel {
-	return &probev1.NotifyChannel{Name: "通知", Kind: probev1.ChannelKind_CHANNEL_KIND_WEBHOOK, Webhook: &probev1.WebhookConfig{Url: url}}
+func webhook(url string) *heronv1.NotifyChannel {
+	return &heronv1.NotifyChannel{Name: "通知", Kind: heronv1.ChannelKind_CHANNEL_KIND_WEBHOOK, Webhook: &heronv1.WebhookConfig{Url: url}}
 }
 
 func TestAlertRuleCRUD(t *testing.T) {
@@ -55,7 +55,7 @@ func TestAlertRuleCRUD(t *testing.T) {
 	if !proto.Equal(created, want) {
 		t.Fatalf("created=%v want=%v", created, want)
 	}
-	list, err := h.admin.ListAlertRules(t.Context(), connect.NewRequest(&probev1.ListAlertRulesRequest{}))
+	list, err := h.admin.ListAlertRules(t.Context(), connect.NewRequest(&heronv1.ListAlertRulesRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestAlertRuleCRUD(t *testing.T) {
 	if err := h.alerts.SweepOffline(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	list, err = h.admin.ListAlertRules(t.Context(), connect.NewRequest(&probev1.ListAlertRulesRequest{}))
+	list, err = h.admin.ListAlertRules(t.Context(), connect.NewRequest(&heronv1.ListAlertRulesRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,15 +85,15 @@ func TestAlertRuleCRUD(t *testing.T) {
 		t.Fatalf("updated list=%v", list.Msg)
 	}
 	for i, id := range []int64{n1, n2} {
-		state := &probev1.AlertStateEntry{RuleId: created.Id, NodeId: id, State: "firing", SinceAt: h.clk.Now().Unix()}
+		state := &heronv1.AlertStateEntry{RuleId: created.Id, NodeId: id, State: "firing", SinceAt: h.clk.Now().Unix()}
 		if !proto.Equal(list.Msg.States[i], state) {
 			t.Fatalf("state=%v want=%v", list.Msg.States[i], state)
 		}
 	}
-	if _, err := h.admin.DeleteAlertRule(t.Context(), connect.NewRequest(&probev1.DeleteAlertRuleRequest{Id: created.Id})); err != nil {
+	if _, err := h.admin.DeleteAlertRule(t.Context(), connect.NewRequest(&heronv1.DeleteAlertRuleRequest{Id: created.Id})); err != nil {
 		t.Fatal(err)
 	}
-	list, err = h.admin.ListAlertRules(t.Context(), connect.NewRequest(&probev1.ListAlertRulesRequest{}))
+	list, err = h.admin.ListAlertRules(t.Context(), connect.NewRequest(&heronv1.ListAlertRulesRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestNotifyChannelRejectsUnknownKind(t *testing.T) {
 	h.login(t)
 	c := webhook("http://127.0.0.1")
 	c.Kind = 7
-	_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{Channel: c}))
+	_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&heronv1.SaveNotifyChannelRequest{Channel: c}))
 	if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), `channel.kind must be`) || !strings.Contains(err.Error(), `got "7"`) {
 		t.Fatalf("unknown kind error=%v", err)
 	}
@@ -120,32 +120,32 @@ func TestSaveAlertRuleValidationTexts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := &probev1.AlertRule{Name: "探测", Kind: probev1.AlertKind_ALERT_KIND_PROBE, AllNodes: true, TaskId: task.Task.Id, Metric: probev1.ProbeMetric_PROBE_METRIC_LOSS_PCT, Threshold: 100, ForMinutes: 1}
+	base := &heronv1.AlertRule{Name: "探测", Kind: heronv1.AlertKind_ALERT_KIND_PROBE, AllNodes: true, TaskId: task.Task.Id, Metric: heronv1.ProbeMetric_PROBE_METRIC_LOSS_PCT, Threshold: 100, ForMinutes: 1}
 	for _, tc := range []struct {
 		name   string
-		change func(*probev1.AlertRule)
+		change func(*heronv1.AlertRule)
 		code   connect.Code
 		text   string
 	}{
-		{"name", func(r *probev1.AlertRule) { r.Name = "" }, connect.CodeInvalidArgument, "rule.name must contain"},
-		{"kind", func(r *probev1.AlertRule) { r.Kind = 0 }, connect.CodeInvalidArgument, "rule.kind must be"},
-		{"unknown_kind", func(r *probev1.AlertRule) { r.Kind = 99 }, connect.CodeInvalidArgument, `got "99"`},
-		{"task_id", func(r *probev1.AlertRule) { r.TaskId = 0 }, connect.CodeInvalidArgument, "rule.task_id must not be 0"},
-		{"metric", func(r *probev1.AlertRule) { r.Metric = 0 }, connect.CodeInvalidArgument, "rule.metric must be"},
-		{"unknown_metric", func(r *probev1.AlertRule) { r.Metric = 99 }, connect.CodeInvalidArgument, `got "99"`},
-		{"threshold", func(r *probev1.AlertRule) { r.Threshold = 101 }, connect.CodeInvalidArgument, "rule.threshold must be between 0 and 100"},
-		{"minutes0", func(r *probev1.AlertRule) { r.ForMinutes = 0 }, connect.CodeInvalidArgument, "rule.for_minutes must be between 1 and 60"},
-		{"minutes61", func(r *probev1.AlertRule) { r.ForMinutes = 61 }, connect.CodeInvalidArgument, "rule.for_minutes must be between 1 and 60"},
-		{"empty_scope", func(r *probev1.AlertRule) { r.AllNodes = false }, connect.CodeInvalidArgument, "rule.node_ids must not be empty"},
-		{"node", func(r *probev1.AlertRule) { r.AllNodes = false; r.NodeIds = []int64{9} }, connect.CodeNotFound, "rule.node_ids: node 9 does not exist"},
-		{"channel", func(r *probev1.AlertRule) { r.ChannelIds = []int64{9} }, connect.CodeNotFound, "rule.channel_ids: notify channel 9 does not exist"},
-		{"task", func(r *probev1.AlertRule) { r.TaskId = 9 }, connect.CodeNotFound, "rule.task_id: probe task 9 does not exist"},
-		{"id", func(r *probev1.AlertRule) { r.Id = 9 }, connect.CodeNotFound, "rule.id: alert rule 9 does not exist"},
+		{"name", func(r *heronv1.AlertRule) { r.Name = "" }, connect.CodeInvalidArgument, "rule.name must contain"},
+		{"kind", func(r *heronv1.AlertRule) { r.Kind = 0 }, connect.CodeInvalidArgument, "rule.kind must be"},
+		{"unknown_kind", func(r *heronv1.AlertRule) { r.Kind = 99 }, connect.CodeInvalidArgument, `got "99"`},
+		{"task_id", func(r *heronv1.AlertRule) { r.TaskId = 0 }, connect.CodeInvalidArgument, "rule.task_id must not be 0"},
+		{"metric", func(r *heronv1.AlertRule) { r.Metric = 0 }, connect.CodeInvalidArgument, "rule.metric must be"},
+		{"unknown_metric", func(r *heronv1.AlertRule) { r.Metric = 99 }, connect.CodeInvalidArgument, `got "99"`},
+		{"threshold", func(r *heronv1.AlertRule) { r.Threshold = 101 }, connect.CodeInvalidArgument, "rule.threshold must be between 0 and 100"},
+		{"minutes0", func(r *heronv1.AlertRule) { r.ForMinutes = 0 }, connect.CodeInvalidArgument, "rule.for_minutes must be between 1 and 60"},
+		{"minutes61", func(r *heronv1.AlertRule) { r.ForMinutes = 61 }, connect.CodeInvalidArgument, "rule.for_minutes must be between 1 and 60"},
+		{"empty_scope", func(r *heronv1.AlertRule) { r.AllNodes = false }, connect.CodeInvalidArgument, "rule.node_ids must not be empty"},
+		{"node", func(r *heronv1.AlertRule) { r.AllNodes = false; r.NodeIds = []int64{9} }, connect.CodeNotFound, "rule.node_ids: node 9 does not exist"},
+		{"channel", func(r *heronv1.AlertRule) { r.ChannelIds = []int64{9} }, connect.CodeNotFound, "rule.channel_ids: notify channel 9 does not exist"},
+		{"task", func(r *heronv1.AlertRule) { r.TaskId = 9 }, connect.CodeNotFound, "rule.task_id: probe task 9 does not exist"},
+		{"id", func(r *heronv1.AlertRule) { r.Id = 9 }, connect.CodeNotFound, "rule.id: alert rule 9 does not exist"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := proto.Clone(base).(*probev1.AlertRule)
+			r := proto.Clone(base).(*heronv1.AlertRule)
 			tc.change(r)
-			_, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&probev1.SaveAlertRuleRequest{Rule: r}))
+			_, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&heronv1.SaveAlertRuleRequest{Rule: r}))
 			if codeOf(err) != tc.code || !strings.Contains(err.Error(), tc.text) {
 				t.Fatalf("err=%v want=%s %s", err, tc.code, tc.text)
 			}
@@ -160,8 +160,8 @@ func TestProbeAlertRuleRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, metric := range []probev1.ProbeMetric{probev1.ProbeMetric_PROBE_METRIC_LOSS_PCT, probev1.ProbeMetric_PROBE_METRIC_RTT_MS} {
-		want := &probev1.AlertRule{Name: "延迟或丢包", Kind: probev1.AlertKind_ALERT_KIND_PROBE, AllNodes: true, Enabled: true, TaskId: task.Task.Id, Metric: metric, Threshold: 12.5, ForMinutes: 3}
+	for _, metric := range []heronv1.ProbeMetric{heronv1.ProbeMetric_PROBE_METRIC_LOSS_PCT, heronv1.ProbeMetric_PROBE_METRIC_RTT_MS} {
+		want := &heronv1.AlertRule{Name: "延迟或丢包", Kind: heronv1.AlertKind_ALERT_KIND_PROBE, AllNodes: true, Enabled: true, TaskId: task.Task.Id, Metric: metric, Threshold: 12.5, ForMinutes: 3}
 		got := saveRule(t, h, want)
 		want.Id = got.Id
 		want.CreatedAt = h.clk.Now().Unix()
@@ -181,37 +181,37 @@ func TestAlertErrorsNameRequestFields(t *testing.T) {
 		text string
 	}{
 		{"missing_rule", func() error {
-			_, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&probev1.SaveAlertRuleRequest{}))
+			_, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&heronv1.SaveAlertRuleRequest{}))
 			return err
 		}, connect.CodeInvalidArgument, "rule.kind"},
 		{"missing_channel", func() error {
-			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{}))
+			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&heronv1.SaveNotifyChannelRequest{}))
 			return err
 		}, connect.CodeInvalidArgument, "channel.kind"},
 		{"channel_kind", func() error {
-			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{Channel: &probev1.NotifyChannel{Name: "n"}}))
+			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&heronv1.SaveNotifyChannelRequest{Channel: &heronv1.NotifyChannel{Name: "n"}}))
 			return err
 		}, connect.CodeInvalidArgument, "channel.kind"},
 		{"channel_config", func() error {
-			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{Channel: webhook("ftp://host")}))
+			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&heronv1.SaveNotifyChannelRequest{Channel: webhook("ftp://host")}))
 			return err
 		}, connect.CodeInvalidArgument, "channel.webhook.url"},
 		{"channel_id", func() error {
 			c := webhook("http://host")
 			c.Id = 9
-			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{Channel: c}))
+			_, err := h.admin.SaveNotifyChannel(t.Context(), connect.NewRequest(&heronv1.SaveNotifyChannelRequest{Channel: c}))
 			return err
 		}, connect.CodeNotFound, "channel.id: notify channel 9 does not exist"},
 		{"delete_rule", func() error {
-			_, err := h.admin.DeleteAlertRule(t.Context(), connect.NewRequest(&probev1.DeleteAlertRuleRequest{Id: 9}))
+			_, err := h.admin.DeleteAlertRule(t.Context(), connect.NewRequest(&heronv1.DeleteAlertRuleRequest{Id: 9}))
 			return err
 		}, connect.CodeNotFound, "id: alert rule 9 does not exist"},
 		{"delete_channel", func() error {
-			_, err := h.admin.DeleteNotifyChannel(t.Context(), connect.NewRequest(&probev1.DeleteNotifyChannelRequest{Id: 9}))
+			_, err := h.admin.DeleteNotifyChannel(t.Context(), connect.NewRequest(&heronv1.DeleteNotifyChannelRequest{Id: 9}))
 			return err
 		}, connect.CodeNotFound, "id: notify channel 9 does not exist"},
 		{"test_channel", func() error {
-			_, err := h.admin.TestNotifyChannel(t.Context(), connect.NewRequest(&probev1.TestNotifyChannelRequest{Id: 9}))
+			_, err := h.admin.TestNotifyChannel(t.Context(), connect.NewRequest(&heronv1.TestNotifyChannelRequest{Id: 9}))
 			return err
 		}, connect.CodeNotFound, "id: notify channel 9 does not exist"},
 	} {
@@ -243,7 +243,7 @@ func TestWebhookConfigRoundTrip(t *testing.T) {
 	if got.Id == 0 || !proto.Equal(got, want) {
 		t.Fatalf("channel=%v want=%v", got, want)
 	}
-	list, err := h.admin.ListNotifyChannels(t.Context(), connect.NewRequest(&probev1.ListNotifyChannelsRequest{}))
+	list, err := h.admin.ListNotifyChannels(t.Context(), connect.NewRequest(&heronv1.ListNotifyChannelsRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,12 +259,12 @@ func TestNotifyChannelCRUDHidesToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { paths <- r.URL.Path; w.WriteHeader(200) }))
 	defer srv.Close()
 	h.svc.notifier = alert.NewQueue(h.store, h.alerts.Channels, outbound.NewClient(alert.NotifyTimeout), srv.URL, h.clk, nil, h.svc.log)
-	c := saveChannel(t, h, &probev1.NotifyChannel{Name: "tg", Kind: probev1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &probev1.TelegramConfig{BotToken: "secret", ChatId: "chat"}})
-	want := &probev1.NotifyChannel{Id: 1, Name: "tg", Kind: probev1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &probev1.TelegramConfig{HasBotToken: true, ChatId: "chat"}, CreatedAt: h.clk.Now().Unix(), RatePerMinute: proto.Uint32(20)}
+	c := saveChannel(t, h, &heronv1.NotifyChannel{Name: "tg", Kind: heronv1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &heronv1.TelegramConfig{BotToken: "secret", ChatId: "chat"}})
+	want := &heronv1.NotifyChannel{Id: 1, Name: "tg", Kind: heronv1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &heronv1.TelegramConfig{HasBotToken: true, ChatId: "chat"}, CreatedAt: h.clk.Now().Unix(), RatePerMinute: proto.Uint32(20)}
 	if !proto.Equal(c, want) {
 		t.Fatalf("saved=%v want=%v", c, want)
 	}
-	list, err := h.admin.ListNotifyChannels(t.Context(), connect.NewRequest(&probev1.ListNotifyChannelsRequest{}))
+	list, err := h.admin.ListNotifyChannels(t.Context(), connect.NewRequest(&heronv1.ListNotifyChannelsRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,16 +279,16 @@ func TestNotifyChannelCRUDHidesToken(t *testing.T) {
 	if !proto.Equal(c, want) {
 		t.Fatalf("updated=%v want=%v", c, want)
 	}
-	if _, err := h.admin.TestNotifyChannel(t.Context(), connect.NewRequest(&probev1.TestNotifyChannelRequest{Id: c.Id})); err != nil {
+	if _, err := h.admin.TestNotifyChannel(t.Context(), connect.NewRequest(&heronv1.TestNotifyChannelRequest{Id: c.Id})); err != nil {
 		t.Fatal(err)
 	}
 	if path := <-paths; path != "/botsecret/sendMessage" {
 		t.Fatalf("path=%q", path)
 	}
-	if _, err := h.admin.DeleteNotifyChannel(t.Context(), connect.NewRequest(&probev1.DeleteNotifyChannelRequest{Id: c.Id})); err != nil {
+	if _, err := h.admin.DeleteNotifyChannel(t.Context(), connect.NewRequest(&heronv1.DeleteNotifyChannelRequest{Id: c.Id})); err != nil {
 		t.Fatal(err)
 	}
-	list, err = h.admin.ListNotifyChannels(t.Context(), connect.NewRequest(&probev1.ListNotifyChannelsRequest{}))
+	list, err = h.admin.ListNotifyChannels(t.Context(), connect.NewRequest(&heronv1.ListNotifyChannelsRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func TestNotifyChannelCRUDHidesToken(t *testing.T) {
 func TestNotifyChannelRatePerMinute(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	tg := &probev1.NotifyChannel{Name: "tg", Kind: probev1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &probev1.TelegramConfig{BotToken: "secret", ChatId: "chat"}}
+	tg := &heronv1.NotifyChannel{Name: "tg", Kind: heronv1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &heronv1.TelegramConfig{BotToken: "secret", ChatId: "chat"}}
 	saved := saveChannel(t, h, tg)
 	if saved.RatePerMinute == nil || saved.GetRatePerMinute() != 20 {
 		t.Fatalf("telegram default rate=%d (present %v), want 20", saved.GetRatePerMinute(), saved.RatePerMinute != nil)
@@ -316,7 +316,7 @@ func TestNotifyChannelRatePerMinute(t *testing.T) {
 		if saved.GetRatePerMinute() != rate {
 			t.Fatalf("explicit rate %d saved as %d", rate, saved.GetRatePerMinute())
 		}
-		list, err := h.admin.ListNotifyChannels(t.Context(), connect.NewRequest(&probev1.ListNotifyChannelsRequest{}))
+		list, err := h.admin.ListNotifyChannels(t.Context(), connect.NewRequest(&heronv1.ListNotifyChannelsRequest{}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -337,12 +337,12 @@ func TestDeleteNotifyChannelInUse(t *testing.T) {
 	r := offlineRule()
 	r.ChannelIds = []int64{c.Id}
 	saveRule(t, h, r)
-	_, err := h.admin.DeleteNotifyChannel(t.Context(), connect.NewRequest(&probev1.DeleteNotifyChannelRequest{Id: c.Id}))
+	_, err := h.admin.DeleteNotifyChannel(t.Context(), connect.NewRequest(&heronv1.DeleteNotifyChannelRequest{Id: c.Id}))
 	want := fmt.Sprintf("failed_precondition: id: notify channel %d is referenced by alert rules: 离线 (id 1)", c.Id)
 	if codeOf(err) != connect.CodeFailedPrecondition || err.Error() != want {
 		t.Fatalf("err=%v want=%q", err, want)
 	}
-	list, err := h.admin.ListNotifyChannels(t.Context(), connect.NewRequest(&probev1.ListNotifyChannelsRequest{}))
+	list, err := h.admin.ListNotifyChannels(t.Context(), connect.NewRequest(&heronv1.ListNotifyChannelsRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,13 +358,13 @@ func TestDeleteProbeTaskInUse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saveRule(t, h, &probev1.AlertRule{Name: "丢包", Kind: probev1.AlertKind_ALERT_KIND_PROBE, AllNodes: true, TaskId: task.Task.Id, Metric: probev1.ProbeMetric_PROBE_METRIC_LOSS_PCT, Threshold: 100, ForMinutes: 1})
-	_, err = h.admin.DeleteProbeTask(t.Context(), connect.NewRequest(&probev1.DeleteProbeTaskRequest{Id: task.Task.Id}))
+	saveRule(t, h, &heronv1.AlertRule{Name: "丢包", Kind: heronv1.AlertKind_ALERT_KIND_PROBE, AllNodes: true, TaskId: task.Task.Id, Metric: heronv1.ProbeMetric_PROBE_METRIC_LOSS_PCT, Threshold: 100, ForMinutes: 1})
+	_, err = h.admin.DeleteProbeTask(t.Context(), connect.NewRequest(&heronv1.DeleteProbeTaskRequest{Id: task.Task.Id}))
 	want := fmt.Sprintf("failed_precondition: id: probe task %d is referenced by alert rules: 丢包 (id 1)", task.Task.Id)
 	if codeOf(err) != connect.CodeFailedPrecondition || err.Error() != want {
 		t.Fatalf("err=%v want=%q", err, want)
 	}
-	list, err := h.admin.ListProbeTasks(t.Context(), connect.NewRequest(&probev1.ListProbeTasksRequest{}))
+	list, err := h.admin.ListProbeTasks(t.Context(), connect.NewRequest(&heronv1.ListProbeTasksRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +384,7 @@ func TestTestNotifyChannel(t *testing.T) {
 			if c.Webhook.Method != "POST" {
 				t.Fatalf("method=%q", c.Webhook.Method)
 			}
-			_, err := h.admin.TestNotifyChannel(t.Context(), connect.NewRequest(&probev1.TestNotifyChannelRequest{Id: c.Id}))
+			_, err := h.admin.TestNotifyChannel(t.Context(), connect.NewRequest(&heronv1.TestNotifyChannelRequest{Id: c.Id}))
 			if status == 200 {
 				if err != nil {
 					t.Fatal(err)
@@ -428,20 +428,20 @@ func TestListAlertEventsPaging(t *testing.T) {
 	if err := h.store.UpdateBatch(t.Context(), events[499].Deliveries[0].BatchID, store.DeliveryResult{Done: true, Failure: store.FailureHTTPStatus, HTTPStatus: 400, Error: "bad request body"}); err != nil {
 		t.Fatal(err)
 	}
-	query := func(node, before int64, limit uint32) *probev1.ListAlertEventsResponse {
+	query := func(node, before int64, limit uint32) *heronv1.ListAlertEventsResponse {
 		t.Helper()
-		resp, err := h.admin.ListAlertEvents(t.Context(), connect.NewRequest(&probev1.ListAlertEventsRequest{NodeId: node, BeforeId: before, Limit: limit}))
+		resp, err := h.admin.ListAlertEvents(t.Context(), connect.NewRequest(&heronv1.ListAlertEventsRequest{NodeId: node, BeforeId: before, Limit: limit}))
 		if err != nil {
 			t.Fatal(err)
 		}
 		return resp.Msg
 	}
 	page := query(0, 0, 2)
-	want := &probev1.AlertEvent{Id: last.ID, RuleId: r.Id, NodeId: n, Transition: "firing", At: h.clk.Now().Unix(), Summary: "500", Value: 500, Deliveries: []*probev1.AlertDelivery{{Id: last.Deliveries[0].ID, ChannelId: c.Id, Attempts: 1, Ok: true, Done: true, DeliveredAt: proto.Int64(h.clk.Now().Unix())}}}
+	want := &heronv1.AlertEvent{Id: last.ID, RuleId: r.Id, NodeId: n, Transition: "firing", At: h.clk.Now().Unix(), Summary: "500", Value: 500, Deliveries: []*heronv1.AlertDelivery{{Id: last.Deliveries[0].ID, ChannelId: c.Id, Attempts: 1, Ok: true, Done: true, DeliveredAt: proto.Int64(h.clk.Now().Unix())}}}
 	if len(page.Events) != 2 || !proto.Equal(page.Events[0], want) || page.Events[1].Id != events[499].ID || page.Events[1].Deliveries[0].DeliveredAt != nil {
 		t.Fatalf("page=%v want first=%v", page, want)
 	}
-	failed := &probev1.AlertDelivery{Id: events[499].Deliveries[0].ID, ChannelId: c.Id, Attempts: 1, Done: true, Failure: probev1.DeliveryFailure_DELIVERY_FAILURE_HTTP_STATUS, HttpStatus: proto.Uint32(400)}
+	failed := &heronv1.AlertDelivery{Id: events[499].Deliveries[0].ID, ChannelId: c.Id, Attempts: 1, Done: true, Failure: heronv1.DeliveryFailure_DELIVERY_FAILURE_HTTP_STATUS, HttpStatus: proto.Uint32(400)}
 	if !proto.Equal(page.Events[1].Deliveries[0], failed) {
 		t.Fatalf("failed delivery=%v want=%v", page.Events[1].Deliveries[0], failed)
 	}
@@ -464,9 +464,9 @@ func TestUpdateNodeOfflineGraceFloor(t *testing.T) {
 	h.login(t)
 	id, _ := h.createNode(t, "n")
 	for _, grace := range []uint32{29, 30, 0} {
-		resp, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(&probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(grace)}))
+		resp, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(&heronv1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(grace)}))
 		if grace == 29 {
-			if codeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: offline_grace_s: must be 0 or at least 30 seconds (PROBE_OFFLINE_AFTER); got 29" {
+			if codeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: offline_grace_s: must be 0 or at least 30 seconds (HERON_OFFLINE_AFTER); got 29" {
 				t.Fatalf("err=%v", err)
 			}
 			continue
@@ -474,11 +474,11 @@ func TestUpdateNodeOfflineGraceFloor(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		list, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&probev1.ListNodesRequest{}))
+		list, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&heronv1.ListNodesRequest{}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, node := range []*probev1.Node{resp.Msg.Node, list.Msg.Nodes[0]} {
+		for _, node := range []*heronv1.Node{resp.Msg.Node, list.Msg.Nodes[0]} {
 			if node.GetOfflineGraceS() != grace || (node.OfflineGraceS == nil) != (grace == 0) {
 				t.Fatalf("grace=%d node=%v", grace, node)
 			}
@@ -497,17 +497,17 @@ func TestDeleteNodeClearsAlertScopeAndStates(t *testing.T) {
 	if err := h.alerts.SweepOffline(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	before, err := h.admin.ListAlertRules(t.Context(), connect.NewRequest(&probev1.ListAlertRulesRequest{}))
+	before, err := h.admin.ListAlertRules(t.Context(), connect.NewRequest(&heronv1.ListAlertRulesRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(before.Msg.States) != 1 {
 		t.Fatalf("before=%v", before.Msg)
 	}
-	if _, err := h.admin.DeleteNode(t.Context(), connect.NewRequest(&probev1.DeleteNodeRequest{Id: id})); err != nil {
+	if _, err := h.admin.DeleteNode(t.Context(), connect.NewRequest(&heronv1.DeleteNodeRequest{Id: id})); err != nil {
 		t.Fatal(err)
 	}
-	after, err := h.admin.ListAlertRules(t.Context(), connect.NewRequest(&probev1.ListAlertRulesRequest{}))
+	after, err := h.admin.ListAlertRules(t.Context(), connect.NewRequest(&heronv1.ListAlertRulesRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -522,10 +522,10 @@ func TestDeleteNodeClearsAlertScopeAndStates(t *testing.T) {
 // 枚举的全集核对：UNSPECIFIED 之外的每个值都有映射且往返一致，表里没有多出的项；反过来，映射出的每个存储种类都要被
 // alert.CheckRule 接受，免得表配上了、校验却不认这个种类。
 func TestAlertKindsMapEveryValue(t *testing.T) {
-	values := probev1.AlertKind(0).Descriptor().Values()
+	values := heronv1.AlertKind(0).Descriptor().Values()
 	for i := 0; i < values.Len(); i++ {
-		v := probev1.AlertKind(values.Get(i).Number())
-		if v == probev1.AlertKind_ALERT_KIND_UNSPECIFIED {
+		v := heronv1.AlertKind(values.Get(i).Number())
+		if v == heronv1.AlertKind_ALERT_KIND_UNSPECIFIED {
 			continue
 		}
 		k, ok := alertKinds[v]

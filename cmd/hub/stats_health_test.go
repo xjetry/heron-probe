@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/auth"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -37,7 +37,7 @@ func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
 	}
 	ts := clk.Now().Add(-time.Hour).Unix()
 	b := metric.NewBucket()
-	b.Add(&probev1.Metrics{CpuPct: proto.Float64(5)})
+	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(5)})
 	batch := metric.Batch{
 		Rows:   []metric.Row{{NodeID: node, TS: ts, Bucket: b}},
 		Probes: []metric.ProbeRow{{NodeID: node, TS: ts, TaskID: 1, Bucket: &metric.ProbeBucket{Sent: 1}}},
@@ -75,7 +75,7 @@ func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
 	t.Cleanup(func() { st.Close() })
 	srv := httptest.NewServer(newTestMuxOn(t, st, clk, "http://"+testThemeHost))
 	t.Cleanup(srv.Close)
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/probe.v1.AdminService/GetStorageStats", strings.NewReader("{}"))
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/heron.v1.AdminService/GetStorageStats", strings.NewReader("{}"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
 	if err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("GetStorageStats with an API token: %d %s %v", resp.StatusCode, body, err)
 	}
-	var msg probev1.GetStorageStatsResponse
+	var msg heronv1.GetStorageStatsResponse
 	if err := protojson.Unmarshal(body, &msg); err != nil {
 		t.Fatal(err)
 	}

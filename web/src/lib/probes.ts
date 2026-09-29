@@ -1,6 +1,6 @@
 import type { AlignedData } from "uplot";
-import type { ProbeSample, ProbeSeries, QueryProbesResponse } from "../gen/probe/v1/query_pb";
-import { ProbeKind } from "../gen/probe/v1/types_pb";
+import type { ProbeSample, ProbeSeries, QueryProbesResponse } from "../gen/heron/v1/query_pb";
+import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { gridOf } from "./series";
 
 export type ProbeValue = (s: ProbeSample) => number | null;

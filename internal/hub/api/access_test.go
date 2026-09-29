@@ -9,7 +9,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 )
 
 // readMethods 是对 API token 开放的全部方法。把一个方法改成 ACCESS_READ 是在扩大
@@ -21,7 +21,7 @@ var readMethods = []string{
 }
 
 func adminService() protoreflect.ServiceDescriptor {
-	return probev1.File_probe_v1_admin_proto.Services().ByName("AdminService")
+	return heronv1.File_heron_v1_admin_proto.Services().ByName("AdminService")
 }
 
 func TestAdminAccessTableMatchesDeclaredPolicy(t *testing.T) {
@@ -36,14 +36,14 @@ func TestAdminAccessTableMatchesDeclaredPolicy(t *testing.T) {
 	}
 	for i := 0; i < svc.Methods().Len(); i++ {
 		name := string(svc.Methods().Get(i).Name())
-		want := probev1.Access_ACCESS_SESSION
+		want := heronv1.Access_ACCESS_SESSION
 		switch {
 		case name == "Login" || name == "BeginPasskeyLogin" || name == "FinishPasskeyLogin":
-			want = probev1.Access_ACCESS_LOGIN
+			want = heronv1.Access_ACCESS_LOGIN
 		case read[name]:
-			want = probev1.Access_ACCESS_READ
+			want = heronv1.Access_ACCESS_READ
 		}
-		if got := table["/probe.v1.AdminService/"+name]; got != want {
+		if got := table["/heron.v1.AdminService/"+name]; got != want {
 			t.Errorf("%s: access %v, want %v", name, got, want)
 		}
 		delete(read, name)
@@ -91,11 +91,11 @@ func expectPanic(t *testing.T, want string, fn func()) {
 func TestAccessTableRefusesUndeclaredOrUnknownAccess(t *testing.T) {
 	expectPanic(t, "synthetic.S.Bare", func() { accessTable(syntheticService(t, nil)) })
 	unknown := &descriptorpb.MethodOptions{}
-	proto.SetExtension(unknown, probev1.E_Access, probev1.Access(99))
+	proto.SetExtension(unknown, heronv1.E_Access, heronv1.Access(99))
 	expectPanic(t, "synthetic.S.Bare", func() { accessTable(syntheticService(t, unknown)) })
 	declared := &descriptorpb.MethodOptions{}
-	proto.SetExtension(declared, probev1.E_Access, probev1.Access_ACCESS_READ)
-	if got := accessTable(syntheticService(t, declared))["/synthetic.S/Bare"]; got != probev1.Access_ACCESS_READ {
+	proto.SetExtension(declared, heronv1.E_Access, heronv1.Access_ACCESS_READ)
+	if got := accessTable(syntheticService(t, declared))["/synthetic.S/Bare"]; got != heronv1.Access_ACCESS_READ {
 		t.Fatalf("declared method: %v", got)
 	}
 }

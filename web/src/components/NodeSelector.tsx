@@ -1,6 +1,6 @@
 import { useQuery } from "@connectrpc/connect-query";
 import { useState } from "react";
-import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
+import { AdminService, type Node } from "../gen/heron/v1/admin_pb";
 import { Picks } from "./Picks";
 
 export type NodeSelection = { allNodes: boolean; nodeIds: Set<bigint>; selectorTags: string[]; dynamic: boolean };

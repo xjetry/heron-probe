@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/theme"
-	. "github.com/xjetry/probe/internal/hub/theme/themetest"
+	"github.com/xjetry/heron-probe/internal/hub/theme"
+	. "github.com/xjetry/heron-probe/internal/hub/theme/themetest"
 )
 
 func TestParseAcceptsAMinimalPackageWithDirectoriesAndPreview(t *testing.T) {

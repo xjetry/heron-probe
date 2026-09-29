@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/xjetry/probe/internal/probelimit"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 )
 
 // coverageSQL 是任务与规则共同的作用域谓词。标签选择器必须至少有一项；空关系不能借由全称条件放宽成全部节点。

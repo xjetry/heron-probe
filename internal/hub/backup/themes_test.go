@@ -16,8 +16,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/s3"
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/s3"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 func immutableThemeKey(content string) string {

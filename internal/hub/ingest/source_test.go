@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 )
 
 // reportFrom 以给定的请求头上报一次，返回 live 条目里记下的来源地址。headers 保序，
@@ -15,7 +15,7 @@ import (
 // 要钉住的场景，所以用 Header().Add 逐行加。
 func (h *hub) reportFrom(t *testing.T, id int64, tok string, headers [][2]string) string {
 	t.Helper()
-	req := report(tok, &probev1.Metrics{})
+	req := report(tok, &heronv1.Metrics{})
 	for _, kv := range headers {
 		req.Header().Add(kv[0], kv[1])
 	}

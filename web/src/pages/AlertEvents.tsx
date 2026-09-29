@@ -3,7 +3,7 @@ import { skipToken, type InfiniteData } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
-import { AdminService, type AlertDelivery, type ListAlertEventsResponse } from "../gen/probe/v1/admin_pb";
+import { AdminService, type AlertDelivery, type ListAlertEventsResponse } from "../gen/heron/v1/admin_pb";
 import { alarming, deliveryText, hasErrorText, transitionLabel } from "../lib/alerts";
 import { withId } from "../lib/ids";
 

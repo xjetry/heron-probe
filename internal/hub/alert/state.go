@@ -3,7 +3,7 @@ package alert
 import (
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // 离线告警的抖动抑制（§9.2）：一对规则与节点从 firing 恢复后，flapWindow 之内再次开始的离线要满

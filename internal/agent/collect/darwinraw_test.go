@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/clock"
 )
 
 // fakeDarwin 按头文件布局构造字节；键是 sysctl 名，ifdata 以 "net.link.generic.ifdata/<idx>" 为键。

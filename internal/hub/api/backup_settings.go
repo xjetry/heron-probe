@@ -4,9 +4,9 @@ import (
 	"strings"
 	"unicode"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/s3"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/s3"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -22,7 +22,7 @@ const (
 
 // cleanBackup 校验协议层的约束并构造存储更新；nil 表示请求里没有 backup，存储不动任何备份键。
 // 四个数值的范围与渠道是否存在由 store.SaveSettings 在写事务里裁决（范围表只在 store 一处）。
-func cleanBackup(in *probev1.BackupSettings) (*store.BackupSettingsUpdate, error) {
+func cleanBackup(in *heronv1.BackupSettings) (*store.BackupSettingsUpdate, error) {
 	if in == nil {
 		return nil, nil
 	}
@@ -72,10 +72,10 @@ func cleanBackup(in *probev1.BackupSettings) (*store.BackupSettingsUpdate, error
 }
 
 // 读侧允许列表：secret 不在其中，只回显由它推出的 has_secret。GetSettings 与 UpdateSettings 的回显共用此处。
-func backupProto(b store.BackupSettings) *probev1.BackupSettings {
-	return &probev1.BackupSettings{
+func backupProto(b store.BackupSettings) *heronv1.BackupSettings {
+	return &heronv1.BackupSettings{
 		Endpoint: b.Target.Endpoint, Bucket: b.Target.Bucket, Region: b.Target.Region, AccessKey: b.Target.AccessKey, Prefix: b.Prefix,
 		ConfigIntervalS: proto.Uint32(b.ConfigIntervalS), MetricsIntervalS: proto.Uint32(b.MetricsIntervalS), ConfigKeep: proto.Uint32(b.ConfigKeep), MetricsKeep: proto.Uint32(b.MetricsKeep),
-		Notify: &probev1.BackupNotify{ChannelIds: b.Channels}, HasSecret: b.Target.Secret != "",
+		Notify: &heronv1.BackupNotify{ChannelIds: b.Channels}, HasSecret: b.Target.Secret != "",
 	}
 }

@@ -6,8 +6,8 @@ import { errorBanner, queryGateAll } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { NodeSelector, type NodeSelection } from "../components/NodeSelector";
-import { AdminService, type Node } from "../gen/probe/v1/admin_pb";
-import { ProbeKind, type ProbeTask } from "../gen/probe/v1/types_pb";
+import { AdminService, type Node } from "../gen/heron/v1/admin_pb";
+import { ProbeKind, type ProbeTask } from "../gen/heron/v1/types_pb";
 import { ascending, withId } from "../lib/ids";
 import { PROBE_KINDS, kindLabel } from "../lib/probes";
 

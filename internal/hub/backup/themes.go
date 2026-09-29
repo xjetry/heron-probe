@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // 这里只上传快照冻结的原包清单，不按当前主题集合清理远端：已删除或替换的包仍可能被历史快照引用。

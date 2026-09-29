@@ -1,4 +1,4 @@
 # 构建上下文只放行 make docker 预先构建的 hub 二进制，Dockerfile 只 COPY 它们。
 # 其余一概排除：node_modules、参考项目、.git 与本地库文件不该进入镜像构建。
 *
-!build/image/linux/*/probe-hub
+!build/image/linux/*/heron-hub

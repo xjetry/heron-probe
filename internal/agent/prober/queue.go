@@ -7,8 +7,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/probelimit"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 )
 
 // QueueCap 按硬限制任务的产出上界预留：Take 只丢严格超龄结果，MaxResultAge=120s 的闭区间
@@ -106,11 +106,11 @@ func (q *Queue) Dropped() uint64 {
 	return q.dropped
 }
 
-func ToProto(rs []Result, now time.Duration) []*probev1.ProbeResult {
-	out := make([]*probev1.ProbeResult, 0, len(rs))
+func ToProto(rs []Result, now time.Duration) []*heronv1.ProbeResult {
+	out := make([]*heronv1.ProbeResult, 0, len(rs))
 	for _, r := range rs {
 		// 取 now 与取队列不是原子操作；较晚入队的结果不能转成溢出的无符号 age。
-		p := &probev1.ProbeResult{TaskId: r.TaskID, AgeMs: uint32(min(max((now-r.At)/time.Millisecond, 0), math.MaxUint32))}
+		p := &heronv1.ProbeResult{TaskId: r.TaskID, AgeMs: uint32(min(max((now-r.At)/time.Millisecond, 0), math.MaxUint32))}
 		switch {
 		case r.Outcome.Err != "":
 			// 协议字符串必须是合法 UTF-8；只在出队编码处统一限制字节数，不切断多字节字符。
@@ -122,11 +122,11 @@ func ToProto(rs []Result, now time.Duration) []*probev1.ProbeResult {
 				}
 				message = message[:end]
 			}
-			p.Outcome = &probev1.ProbeResult_Error{Error: &probev1.ProbeError{Message: message}}
+			p.Outcome = &heronv1.ProbeResult_Error{Error: &heronv1.ProbeError{Message: message}}
 		case r.Outcome.Timeout:
-			p.Outcome = &probev1.ProbeResult_Timeout{Timeout: &probev1.Timeout{}}
+			p.Outcome = &heronv1.ProbeResult_Timeout{Timeout: &heronv1.Timeout{}}
 		default:
-			p.Outcome = &probev1.ProbeResult_RttUs{RttUs: r.Outcome.RttUs}
+			p.Outcome = &heronv1.ProbeResult_RttUs{RttUs: r.Outcome.RttUs}
 		}
 		out = append(out, p)
 	}

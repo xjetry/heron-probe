@@ -16,10 +16,10 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/geo"
-	"github.com/xjetry/probe/internal/hub/sanitize"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/geo"
+	"github.com/xjetry/heron-probe/internal/hub/sanitize"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // 外观的上限（§10）。面板的 web/src/lib/appearance.ts 用同值做提交前提示，由 appearanceLimits.test.ts 对照本文件。
@@ -55,9 +55,9 @@ var (
 //
 // 一组都没给出的请求什么都不会改，返回 InvalidArgument 点名各组，而不是回一个看似成功的空操作。任一项不合约束即返回
 // 错误，调用方什么都不写。
-func cleanSettings(in *probev1.Settings) (store.SettingsUpdate, error) {
+func cleanSettings(in *heronv1.Settings) (store.SettingsUpdate, error) {
 	if in == nil {
-		in = &probev1.Settings{}
+		in = &heronv1.Settings{}
 	}
 	out := store.SettingsUpdate{PublicEnabled: in.PublicEnabled}
 	if appearanceGiven(in) {
@@ -122,7 +122,7 @@ func cleanChannelIDs(list store.NotifyList, ids []int64) (*[]int64, error) {
 
 // appearanceGiven 是外观这一组"给出"的判定：appearanceFields 任一非空。它只读这份清单，外观的取值由 cleanAppearance
 // 逐项转抄：清单新增一项而 cleanAppearance 没有转抄时，枚举用例单给那一项的样例值、核对回显，在那里失败。
-func appearanceGiven(in *probev1.Settings) bool {
+func appearanceGiven(in *heronv1.Settings) bool {
 	m := in.ProtoReflect()
 	fields := m.Descriptor().Fields()
 	for _, name := range appearanceFields {
@@ -135,7 +135,7 @@ func appearanceGiven(in *probev1.Settings) bool {
 
 // cleanAppearance 校验并清洗给出的外观，返回可以原样存储与下发的值。
 // 标题会显示在页面与标签页上，与节点名（cleanName）同用 sanitize.Text 清洗；logo 与 CSS 是数据与代码，改写任何字节都可能改变含义，只校验不清洗。
-func cleanAppearance(in *probev1.Settings) (store.SiteAppearance, error) {
+func cleanAppearance(in *heronv1.Settings) (store.SiteAppearance, error) {
 	if n := len(in.GetTitle()); n > maxTitleBytes {
 		return store.SiteAppearance{}, invalid("settings.title must be at most %d bytes before cleaning; got %d", maxTitleBytes, n)
 	}
@@ -241,7 +241,7 @@ var geoSamples = [2]netip.Addr{netip.MustParseAddr("192.0.2.1"), netip.MustParse
 // 位置或与主机名拼在一起（{ip}.example）时 IPv6 样例的冒号让解析失败；[{ip}] 时 IPv4 样例不是合法的 IP 字面量；放在
 // IPv6 字面量的区域标识里（[fe80::1%25{ip}]）时两族都能解析、host 不同。这几种都报"不得在主机或端口"。裸写在端口
 // 位置时两族都解析失败，与别的非法 URL 分不开，报通用的那条，它同样写明这条约束。
-func cleanGeo(in *probev1.Settings) (store.GeoUpdate, error) {
+func cleanGeo(in *heronv1.Settings) (store.GeoUpdate, error) {
 	out := store.GeoUpdate{Enabled: in.GeoEnabled}
 	if in.GeoUrl == nil {
 		return out, nil
@@ -281,26 +281,26 @@ func cleanGeo(in *probev1.Settings) (store.GeoUpdate, error) {
 // settingsProto 是 GetSettings 与 UpdateSettings 共用的回显。login_notify 总带，渠道列表为空即关闭：省掉它，"已关闭"
 // 与"hub 不认识这个字段"在响应里就分不出来；把读到的整份设置原样写回时，回显的空 message 是显式关闭，与当前状态
 // 一致，读改写不改变它。
-func (s *Service) settingsProto(st store.Settings) *probev1.Settings {
-	backend, path := probev1.GeoBackend_GEO_BACKEND_HTTP, s.cfg.Geo.MMDBPath()
+func (s *Service) settingsProto(st store.Settings) *heronv1.Settings {
+	backend, path := heronv1.GeoBackend_GEO_BACKEND_HTTP, s.cfg.Geo.MMDBPath()
 	if path != "" {
-		backend = probev1.GeoBackend_GEO_BACKEND_MMDB
+		backend = heronv1.GeoBackend_GEO_BACKEND_MMDB
 	}
-	return &probev1.Settings{Title: st.Site.Title, Theme: st.Site.Theme, AccentColor: st.Site.AccentColor, Logo: st.Site.Logo, CustomCss: st.Site.CustomCSS,
+	return &heronv1.Settings{Title: st.Site.Title, Theme: st.Site.Theme, AccentColor: st.Site.AccentColor, Logo: st.Site.Logo, CustomCss: st.Site.CustomCSS,
 		PublicEnabled: proto.Bool(st.Site.PublicEnabled), GeoEnabled: proto.Bool(st.Geo.Enabled), GeoUrl: proto.String(st.Geo.URL),
-		GeoBackend: backend, GeoMmdbPath: path, Backup: backupProto(st.Backup), LoginNotify: &probev1.LoginNotify{ChannelIds: st.LoginChannelIDs}}
+		GeoBackend: backend, GeoMmdbPath: path, Backup: backupProto(st.Backup), LoginNotify: &heronv1.LoginNotify{ChannelIds: st.LoginChannelIDs}}
 }
 
-func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[probev1.GetSettingsRequest]) (*connect.Response[probev1.GetSettingsResponse], error) {
+func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[heronv1.GetSettingsRequest]) (*connect.Response[heronv1.GetSettingsResponse], error) {
 	st, err := s.store.Settings(ctx)
 	if err != nil {
 		s.log.Error("reading settings failed", "err", err)
 		return nil, internalError("reading settings failed")
 	}
-	return connect.NewResponse(&probev1.GetSettingsResponse{Settings: s.settingsProto(st)}), nil
+	return connect.NewResponse(&heronv1.GetSettingsResponse{Settings: s.settingsProto(st)}), nil
 }
 
-func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probev1.UpdateSettingsRequest]) (*connect.Response[probev1.UpdateSettingsResponse], error) {
+func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[heronv1.UpdateSettingsRequest]) (*connect.Response[heronv1.UpdateSettingsResponse], error) {
 	in, err := cleanSettings(req.Msg.GetSettings())
 	if err != nil {
 		return nil, err
@@ -319,24 +319,24 @@ func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[probe
 		s.log.Error("saving settings failed", "err", err)
 		return nil, internalError("saving settings failed")
 	}
-	return connect.NewResponse(&probev1.UpdateSettingsResponse{Settings: s.settingsProto(saved)}), nil
+	return connect.NewResponse(&heronv1.UpdateSettingsResponse{Settings: s.settingsProto(saved)}), nil
 }
 
-func (s *Service) GetStorageStats(ctx context.Context, _ *connect.Request[probev1.GetStorageStatsRequest]) (*connect.Response[probev1.GetStorageStatsResponse], error) {
+func (s *Service) GetStorageStats(ctx context.Context, _ *connect.Request[heronv1.GetStorageStatsRequest]) (*connect.Response[heronv1.GetStorageStatsResponse], error) {
 	stats, err := s.store.StorageStats(ctx)
 	if err != nil {
 		s.log.Error("reading storage stats failed", "err", err)
 		return nil, internalError("reading storage stats failed")
 	}
-	out := &probev1.GetStorageStatsResponse{DbBytes: uint64(stats.DBBytes), LastPruneAt: stats.LastPrune, LastRollupAt: stats.LastRollup}
+	out := &heronv1.GetStorageStatsResponse{DbBytes: uint64(stats.DBBytes), LastPruneAt: stats.LastPrune, LastRollupAt: stats.LastRollup}
 	for _, t := range stats.Tables {
-		out.Tables = append(out.Tables, &probev1.TableRows{Name: t.Name, Rows: uint64(t.Rows)})
+		out.Tables = append(out.Tables, &heronv1.TableRows{Name: t.Name, Rows: uint64(t.Rows)})
 	}
 	// 标红只在 store.SeriesHealth.Staleness 一处判定，这里原样带上它的结论与判定用的原始数值。
 	now := s.clk.Now()
 	for _, h := range stats.Series {
 		stale := h.Staleness(now, s.cfg.Retention)
-		out.Series = append(out.Series, &probev1.SeriesTableHealth{
+		out.Series = append(out.Series, &heronv1.SeriesTableHealth{
 			Table: h.Table, BucketS: uint32(h.Level.Bucket), RetentionS: uint64(s.cfg.Retention.ForLevel(h.Level.Name) / time.Second),
 			OldestTs: h.Oldest, WatermarkTs: h.Watermark, OldestStale: stale.Oldest, WatermarkStale: stale.Watermark,
 		})

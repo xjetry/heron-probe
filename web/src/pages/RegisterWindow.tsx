@@ -5,15 +5,15 @@ import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { Secret } from "../components/Secret";
-import { AdminService } from "../gen/probe/v1/admin_pb";
+import { AdminService } from "../gen/heron/v1/admin_pb";
 import { isRelease } from "../lib/version";
 
 // hub 为正式版本（带 v 前缀的合法 semver，与节点落后判定同一个解析）时取同版本 release 的脚本并用
 // --version 钉住 agent 版本；否则只能取最新 release。URL 与 --version 由同一个判断决定，不会一个钉版本一个不钉。
 const scriptUrl = (hubVersion: string) =>
   isRelease(hubVersion)
-    ? `https://github.com/xjetry/probe/releases/download/${hubVersion}/install.sh`
-    : "https://github.com/xjetry/probe/releases/latest/download/install.sh";
+    ? `https://github.com/xjetry/heron-probe/releases/download/${hubVersion}/install.sh`
+    : "https://github.com/xjetry/heron-probe/releases/latest/download/install.sh";
 
 const TTLS = [
   { label: "10 分钟", seconds: 600 },

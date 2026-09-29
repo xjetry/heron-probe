@@ -18,9 +18,9 @@ async function bundle(mode) {
 }
 
 // 管理服务的生成代码：protoc-gen-es 只生成 _pb.ts（服务描述符也在里面），connect-es 的 _connect.ts 若以后出现也算。
-const isAdminGen = (id) => /\/gen\/probe\/v1\/admin_(pb|connect)\.ts$/.test(id);
+const isAdminGen = (id) => /\/gen\/heron\/v1\/admin_(pb|connect)\.ts$/.test(id);
 // 第二道核对看产物的字节：admin.proto 的文件描述符（fileDesc 的 base64 实参）开头一段只会出现在带着它的包里。
-const descriptorPrefix = (file) => readFileSync(resolve(web, "src/gen/probe/v1", file), "utf8").match(/fileDesc\("([A-Za-z0-9+/]{40})/)[1];
+const descriptorPrefix = (file) => readFileSync(resolve(web, "src/gen/heron/v1", file), "utf8").match(/fileDesc\("([A-Za-z0-9+/]{40})/)[1];
 
 let pub, panel;
 beforeAll(async () => {
@@ -29,7 +29,7 @@ beforeAll(async () => {
 
 it("公开包的模块图不含管理服务的生成代码", () => {
   // 冒烟：确实打进了公开服务的生成代码与共用组件，空图不能冒充通过。
-  for (const f of ["gen/probe/v1/public_pb.ts", "gen/probe/v1/query_pb.ts", "components/History.tsx", "components/Chart.tsx", "lib/billing.ts"]) {
+  for (const f of ["gen/heron/v1/public_pb.ts", "gen/heron/v1/query_pb.ts", "components/History.tsx", "components/Chart.tsx", "lib/billing.ts"]) {
     expect(pub.ids.some((id) => id.endsWith(`/src/${f}`)), f).toBe(true);
   }
   expect(pub.ids.filter(isAdminGen).map((id) => relative(web, id))).toEqual([]);

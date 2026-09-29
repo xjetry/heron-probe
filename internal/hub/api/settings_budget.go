@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
@@ -226,7 +226,7 @@ type settingsBudgetField struct {
 // 预算、覆盖检查和请求样本共用 descriptor 遍历。未建模形状必须在包初始化计算预算时失败。
 // 名字取 protojson 接受的原名与 JSON 名中编码较长者；样本也使用这一拼写。
 func walkSettings(fn func(settingsBudgetField)) {
-	root := (&probev1.Settings{}).ProtoReflect().Descriptor()
+	root := (&heronv1.Settings{}).ProtoReflect().Descriptor()
 	var walk func(protoreflect.MessageDescriptor, string)
 	walk = func(md protoreflect.MessageDescriptor, parent string) {
 		for i := 0; i < md.Fields().Len(); i++ {

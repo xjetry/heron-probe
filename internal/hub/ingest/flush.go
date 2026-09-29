@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/probelimit"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 )
 
 // FlushPeriod 与分钟桶的闭合周期一致；nextFlushAt 把调度目标放在闭合后半秒，

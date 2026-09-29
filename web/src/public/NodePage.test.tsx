@@ -2,9 +2,9 @@ import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, cleanup, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { PublicService } from "../gen/probe/v1/public_pb";
-import { QueryProbesResponseSchema } from "../gen/probe/v1/query_pb";
-import { BillingCycle, ProbeKind } from "../gen/probe/v1/types_pb";
+import { PublicService } from "../gen/heron/v1/public_pb";
+import { QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
+import { BillingCycle, ProbeKind } from "../gen/heron/v1/types_pb";
 import { renderWithService } from "../test/harness";
 import { NodePage } from "./NodePage";
 

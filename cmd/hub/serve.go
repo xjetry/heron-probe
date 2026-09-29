@@ -18,19 +18,19 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/alert"
-	"github.com/xjetry/probe/internal/hub/api"
-	"github.com/xjetry/probe/internal/hub/auth"
-	"github.com/xjetry/probe/internal/hub/backup"
-	"github.com/xjetry/probe/internal/hub/geo"
-	"github.com/xjetry/probe/internal/hub/ingest"
-	"github.com/xjetry/probe/internal/hub/live"
-	"github.com/xjetry/probe/internal/hub/outbound"
-	"github.com/xjetry/probe/internal/hub/probe"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/hub/traffic"
-	"github.com/xjetry/probe/internal/hub/web"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/alert"
+	"github.com/xjetry/heron-probe/internal/hub/api"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
+	"github.com/xjetry/heron-probe/internal/hub/backup"
+	"github.com/xjetry/heron-probe/internal/hub/geo"
+	"github.com/xjetry/heron-probe/internal/hub/ingest"
+	"github.com/xjetry/heron-probe/internal/hub/live"
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/hub/probe"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/traffic"
+	"github.com/xjetry/heron-probe/internal/hub/web"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 )
@@ -119,7 +119,7 @@ func canonicalHost(h string) string {
 }
 
 // newThemeMux 是主题 origin 的挂载点：只挂 PublicService 与主题静态文件，"主题脚本只能调 PublicService"由挂载承载而非
-// 约定（§3.2、§10.1）。RPC 路径优先于静态文件：probe.v1 包里其余每个服务的路径前缀都挂 404，服务列表从描述符枚举——
+// 约定（§3.2、§10.1）。RPC 路径优先于静态文件：heron.v1 包里其余每个服务的路径前缀都挂 404，服务列表从描述符枚举——
 // 不挂的话这些路径会落到根路径、由主题回落 index.html 答 200，以后加的服务也照此自动 404。/admin 与 /admin/ 同样 404：
 // 面板不在这个 origin 上，主题也不能在这个路径下伪装出一个面板。
 func newThemeMux(public mount, page http.Handler) *http.ServeMux {
@@ -136,17 +136,17 @@ func newThemeMux(public mount, page http.Handler) *http.ServeMux {
 	return mux
 }
 
-// probeServices 是 probe.v1 包里的全部服务，取自注册表。
+// probeServices 是 heron.v1 包里的全部服务，取自注册表。
 func probeServices() []protoreflect.ServiceDescriptor {
 	var out []protoreflect.ServiceDescriptor
-	protoregistry.GlobalFiles.RangeFilesByPackage("probe.v1", func(file protoreflect.FileDescriptor) bool {
+	protoregistry.GlobalFiles.RangeFilesByPackage("heron.v1", func(file protoreflect.FileDescriptor) bool {
 		for i := 0; i < file.Services().Len(); i++ {
 			out = append(out, file.Services().Get(i))
 		}
 		return true
 	})
 	if len(out) == 0 {
-		panic("no probe.v1 services registered")
+		panic("no heron.v1 services registered")
 	}
 	return out
 }
@@ -186,7 +186,7 @@ func newServeLogger(w io.Writer) *slog.Logger { return slog.New(slog.NewTextHand
 // runServeWith 由调用方拥有停止信号；后台循环与请求排空完成后才能关闭它们共用的库。
 func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *slog.Logger) (result error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	db := fs.String("db", "probe.db", "SQLite database path")
+	db := fs.String("db", "heron.db", "SQLite database path")
 	geoMMDB := fs.String("geo-mmdb", "", fmt.Sprintf("local MaxMind country database (at most %d MiB); overrides the HTTP lookup service and makes no network requests; read fully into memory and structurally verified at startup (the file carries no checksum, so a value replaced by another valid value is not detected, only structural damage such as invalid UTF-8 is) and not read again while running, so a replaced file takes effect on restart; geo.enabled still controls lookup", geo.MaxMMDBBytes>>20))
 	tz := fs.String("timezone", "", "IANA time zone for traffic period boundaries and node expiry days (default: the host's zone, resolved from TZ or /etc/localtime; UTC if neither resolves); already-persisted period starts are interpreted in the new zone; usage of the current period may be reset at the next read, report or flush")
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
@@ -220,7 +220,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		log.Warn("host time zone could not be resolved; using UTC; set --timezone explicitly")
 	}
 
-	ttl, err := parseTTL(os.Getenv("PROBE_OFFLINE_AFTER"))
+	ttl, err := parseTTL(os.Getenv("HERON_OFFLINE_AFTER"))
 	if err != nil {
 		return err
 	}

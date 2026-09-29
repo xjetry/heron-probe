@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/clock"
 )
 
 func TestBySourceLimitsBeforeNextAndPassesTheSource(t *testing.T) {
@@ -25,7 +25,7 @@ func TestBySourceLimitsBeforeNextAndPassesTheSource(t *testing.T) {
 	})
 	h := BySource(New[netip.Addr](2, time.Second), []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, clk, next)
 	call := func(peer, xff string) (int, string) {
-		req := httptest.NewRequest(http.MethodPost, "/probe.v1.S/M", strings.NewReader("{}"))
+		req := httptest.NewRequest(http.MethodPost, "/heron.v1.S/M", strings.NewReader("{}"))
 		req.Header.Set("Content-Type", "application/json")
 		req.RemoteAddr = peer
 		if xff != "" {
@@ -65,7 +65,7 @@ func TestBySourceReadsEveryForwardedForLine(t *testing.T) {
 	})
 	h := BySource(New[netip.Addr](2, time.Second), []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, clk, next)
 	for i := range 3 {
-		req := httptest.NewRequest(http.MethodPost, "/probe.v1.S/M", strings.NewReader("{}"))
+		req := httptest.NewRequest(http.MethodPost, "/heron.v1.S/M", strings.NewReader("{}"))
 		req.Header.Set("Content-Type", "application/json")
 		req.RemoteAddr = "192.0.2.1:5000"
 		req.Header.Add("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", i+1))
@@ -107,7 +107,7 @@ func TestBySourceKeysIPv4ByAddressAndIPv6ByPrefix64(t *testing.T) {
 		{"192.0.2.2:5000", http.StatusOK, ""},
 		{"192.0.2.1:5001", http.StatusTooManyRequests, "rate limit exceeded for 192.0.2.1:"},
 	} {
-		req := httptest.NewRequest(http.MethodPost, "/probe.v1.S/M", strings.NewReader("{}"))
+		req := httptest.NewRequest(http.MethodPost, "/heron.v1.S/M", strings.NewReader("{}"))
 		req.Header.Set("Content-Type", "application/json")
 		req.RemoteAddr = c.peer
 		rec := httptest.NewRecorder()

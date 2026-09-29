@@ -20,23 +20,23 @@ RUN apk add --no-cache --upgrade ca-certificates-bundle \
  && mkdir -p /rootfs/etc/ssl/certs /rootfs/data \
  && mkdir -m 1777 /rootfs/tmp \
  && cp /etc/ssl/certs/ca-certificates.crt /rootfs/etc/ssl/certs/ \
- && printf 'probe-hub:x:65532:65532:probe-hub:/nonexistent:/sbin/nologin\n' > /rootfs/etc/passwd \
- && printf 'probe-hub:x:65532:\n' > /rootfs/etc/group \
+ && printf 'heron-hub:x:65532:65532:heron-hub:/nonexistent:/sbin/nologin\n' > /rootfs/etc/passwd \
+ && printf 'heron-hub:x:65532:\n' > /rootfs/etc/group \
  && chown 65532:65532 /rootfs/data
 
 FROM scratch
 ARG TARGETARCH
-LABEL org.opencontainers.image.source="https://github.com/xjetry/probe"
+LABEL org.opencontainers.image.source="https://github.com/xjetry/heron-probe"
 # COPY --from 保留源阶段的属主（/data 为 65532），来自构建上下文的文件归 root。
 COPY --from=rootfs /rootfs/ /
-# 放在容器的默认 PATH 里：docker exec <容器> probe-hub passwd … 按名字就能执行（§14）。
+# 放在容器的默认 PATH 里：docker exec <容器> heron-hub passwd … 按名字就能执行（§14）。
 # 权限位由这里的 --chmod 指定，不随构建机的 umask：COPY 否则沿用构建上下文里文件的权限位，而 go build
 # 产出的文件是 0777 去掉构建者的 umask（umask 002 的机器上是 0775）。
-COPY --chmod=0755 build/image/linux/${TARGETARCH}/probe-hub /usr/local/bin/probe-hub
+COPY --chmod=0755 build/image/linux/${TARGETARCH}/heron-hub /usr/local/bin/heron-hub
 # 数字形式，与 /data 的属主、/etc/passwd 里的账户是同一个 uid，不经名字解析。
 USER 65532:65532
 VOLUME /data
 EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/probe-hub"]
+ENTRYPOINT ["/usr/local/bin/heron-hub"]
 # 容器里监听非 loopback 是预期的，hub 的启动告警照旧；反代与 --trusted-proxies 由部署者配（§14）。
-CMD ["serve", "--db", "/data/probe.db", "--listen", "0.0.0.0:8080"]
+CMD ["serve", "--db", "/data/heron.db", "--listen", "0.0.0.0:8080"]

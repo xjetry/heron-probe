@@ -1,6 +1,6 @@
 import { create } from "@bufbuild/protobuf";
-import { QueryProbesResponseSchema } from "../gen/probe/v1/query_pb";
-import { ProbeKind } from "../gen/probe/v1/types_pb";
+import { QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
+import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, screen, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";

@@ -7,8 +7,8 @@ import (
 	"runtime"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -65,8 +65,8 @@ func checkUsage(u usage, err error) (usage, error) {
 
 // Metrics 生成一次上报。任何一个来源读不到只让对应读数缺失，其余照常；
 // 返回的 error 汇总了这些失败，供调用方记日志，不阻止上报。
-func (c *Collector) Metrics() (*probev1.Metrics, error) {
-	m := &probev1.Metrics{}
+func (c *Collector) Metrics() (*heronv1.Metrics, error) {
+	m := &heronv1.Metrics{}
 	var errs []error
 	fail := func(what string, err error) { errs = append(errs, fmt.Errorf("%s: %w", what, err)) }
 	h := c.Host
@@ -162,9 +162,9 @@ func (c *Collector) netTotals() (netCounters, error) {
 
 // Facts 收集静态信息；读不到的字段留空，由 hub 侧展示为未知。
 // arch 取本二进制的 GOARCH：与发布资产名、安装脚本的架构名同一套词汇，两个平台一致。
-func (c *Collector) Facts() *probev1.Facts {
+func (c *Collector) Facts() *heronv1.Facts {
 	hf := c.Host.facts()
-	f := &probev1.Facts{
+	f := &heronv1.Facts{
 		Hostname: hf.hostname, Os: hf.os, Kernel: hf.kernel, Arch: runtime.GOARCH,
 		Virtualization: hf.virtualization, CpuModel: hf.cpuModel, CpuCores: hf.cpuCores,
 		AgentVersion: c.Version, IcmpAvailable: c.IcmpAvailable,

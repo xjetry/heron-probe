@@ -12,7 +12,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/xjetry/probe/internal/hub/theme"
+	"github.com/xjetry/heron-probe/internal/hub/theme"
 )
 
 type ThemeRestoreSummary struct {

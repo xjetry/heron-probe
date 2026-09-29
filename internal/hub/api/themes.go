@@ -7,9 +7,9 @@ import (
 
 	"connectrpc.com/connect"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/hub/theme"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/theme"
 )
 
 // requireThemeOrigin 是五个主题方法的第一道判定。没有独立的主题 origin 时整体关闭，而不是"能传但不生效"：与面板
@@ -22,18 +22,18 @@ func (s *Service) requireThemeOrigin() error {
 	return connect.NewError(connect.CodeFailedPrecondition, errors.New(
 		"themes are disabled because this hub has no theme origin: a theme's scripts on the panel's origin could call the admin API "+
 			"with a signed-in administrator's session, so themes are served only from a separate hostname; point a second hostname "+
-			"(for example status.example.com) at the hub and start probe-hub serve with --theme-origin https://<that hostname>"))
+			"(for example status.example.com) at the hub and start heron-hub serve with --theme-origin https://<that hostname>"))
 }
 
-func themeProto(t store.Theme) *probev1.Theme {
-	return &probev1.Theme{Id: t.ID, Name: t.Name, Version: t.Version, UploadedAt: t.UploadedAt.Unix(), Enabled: t.Enabled, HasPreview: t.Preview != ""}
+func themeProto(t store.Theme) *heronv1.Theme {
+	return &heronv1.Theme{Id: t.ID, Name: t.Name, Version: t.Version, UploadedAt: t.UploadedAt.Unix(), Enabled: t.Enabled, HasPreview: t.Preview != ""}
 }
 
 func themeNotFound(field, id string) error {
 	return connect.NewError(connect.CodeNotFound, fmt.Errorf("%s: theme %q is not installed", field, id))
 }
 
-func (s *Service) UploadTheme(ctx context.Context, req *connect.Request[probev1.UploadThemeRequest]) (*connect.Response[probev1.UploadThemeResponse], error) {
+func (s *Service) UploadTheme(ctx context.Context, req *connect.Request[heronv1.UploadThemeRequest]) (*connect.Response[heronv1.UploadThemeResponse], error) {
 	if err := s.requireThemeOrigin(); err != nil {
 		return nil, err
 	}
@@ -76,10 +76,10 @@ func (s *Service) UploadTheme(ctx context.Context, req *connect.Request[probev1.
 		return nil, internalError("storing theme failed")
 	}
 	s.log.Info("theme uploaded", "theme", id, "version", got.Version, "files", len(files))
-	return connect.NewResponse(&probev1.UploadThemeResponse{Theme: themeProto(got)}), nil
+	return connect.NewResponse(&heronv1.UploadThemeResponse{Theme: themeProto(got)}), nil
 }
 
-func (s *Service) ListThemes(ctx context.Context, _ *connect.Request[probev1.ListThemesRequest]) (*connect.Response[probev1.ListThemesResponse], error) {
+func (s *Service) ListThemes(ctx context.Context, _ *connect.Request[heronv1.ListThemesRequest]) (*connect.Response[heronv1.ListThemesResponse], error) {
 	if err := s.requireThemeOrigin(); err != nil {
 		return nil, err
 	}
@@ -88,14 +88,14 @@ func (s *Service) ListThemes(ctx context.Context, _ *connect.Request[probev1.Lis
 		s.log.Error("listing themes failed", "err", err)
 		return nil, internalError("listing themes failed")
 	}
-	out := &probev1.ListThemesResponse{Themes: make([]*probev1.Theme, 0, len(list)), ThemeOrigin: s.cfg.ThemeOrigin, PublicDir: s.cfg.PublicDir}
+	out := &heronv1.ListThemesResponse{Themes: make([]*heronv1.Theme, 0, len(list)), ThemeOrigin: s.cfg.ThemeOrigin, PublicDir: s.cfg.PublicDir}
 	for _, t := range list {
 		out.Themes = append(out.Themes, themeProto(t))
 	}
 	return connect.NewResponse(out), nil
 }
 
-func (s *Service) EnableTheme(ctx context.Context, req *connect.Request[probev1.EnableThemeRequest]) (*connect.Response[probev1.EnableThemeResponse], error) {
+func (s *Service) EnableTheme(ctx context.Context, req *connect.Request[heronv1.EnableThemeRequest]) (*connect.Response[heronv1.EnableThemeResponse], error) {
 	if err := s.requireThemeOrigin(); err != nil {
 		return nil, err
 	}
@@ -112,10 +112,10 @@ func (s *Service) EnableTheme(ctx context.Context, req *connect.Request[probev1.
 		return nil, internalError("enabling theme failed")
 	}
 	s.log.Info("theme enabled", "theme", id)
-	return connect.NewResponse(&probev1.EnableThemeResponse{}), nil
+	return connect.NewResponse(&heronv1.EnableThemeResponse{}), nil
 }
 
-func (s *Service) DeleteTheme(ctx context.Context, req *connect.Request[probev1.DeleteThemeRequest]) (*connect.Response[probev1.DeleteThemeResponse], error) {
+func (s *Service) DeleteTheme(ctx context.Context, req *connect.Request[heronv1.DeleteThemeRequest]) (*connect.Response[heronv1.DeleteThemeResponse], error) {
 	if err := s.requireThemeOrigin(); err != nil {
 		return nil, err
 	}
@@ -129,10 +129,10 @@ func (s *Service) DeleteTheme(ctx context.Context, req *connect.Request[probev1.
 		return nil, internalError("deleting theme failed")
 	}
 	s.log.Info("theme deleted", "theme", id)
-	return connect.NewResponse(&probev1.DeleteThemeResponse{}), nil
+	return connect.NewResponse(&heronv1.DeleteThemeResponse{}), nil
 }
 
-func (s *Service) GetThemePreview(ctx context.Context, req *connect.Request[probev1.GetThemePreviewRequest]) (*connect.Response[probev1.GetThemePreviewResponse], error) {
+func (s *Service) GetThemePreview(ctx context.Context, req *connect.Request[heronv1.GetThemePreviewRequest]) (*connect.Response[heronv1.GetThemePreviewResponse], error) {
 	if err := s.requireThemeOrigin(); err != nil {
 		return nil, err
 	}
@@ -148,5 +148,5 @@ func (s *Service) GetThemePreview(ctx context.Context, req *connect.Request[prob
 	if t.Preview == "" {
 		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("id: theme %q has no preview in its theme.json", id))
 	}
-	return connect.NewResponse(&probev1.GetThemePreviewResponse{Content: content, ContentType: theme.PreviewContentType(t.Preview)}), nil
+	return connect.NewResponse(&heronv1.GetThemePreviewResponse{Content: content, ContentType: theme.PreviewContentType(t.Preview)}), nil
 }

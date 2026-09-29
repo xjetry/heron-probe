@@ -5,7 +5,7 @@ package collect
 import (
 	"os"
 
-	"github.com/xjetry/probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/clock"
 )
 
 func NewPlatform(version string, clk clock.Clock, netInclude, netExclude []string) (*Collector, error) {

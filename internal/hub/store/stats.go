@@ -12,7 +12,7 @@ type TableRows struct {
 	Rows int64
 }
 
-// StorageStats 是库的规模与健康读数，GetStorageStats 与 probe-hub stats 都从它取：DBBytes 为
+// StorageStats 是库的规模与健康读数，GetStorageStats 与 heron-hub stats 都从它取：DBBytes 为
 // page_count × page_size，即数据库的逻辑大小，等于 WAL 检查点之后主文件的大小（检查点之前主文件可能远小于它）；
 // 不含 -wal 与 -shm 文件。Tables 按表名升序。Series 按 metric_1m、5m、1h、probe_1m、5m、1h 的固定顺序。
 // LastPrune、LastRollup 是 maintenance_state 里的完成时刻（Unix 秒），nil 即从未整轮成功过。

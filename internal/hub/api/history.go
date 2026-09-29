@@ -7,10 +7,10 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/live"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/hub/store"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/live"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 const (
@@ -29,7 +29,7 @@ type history struct {
 
 // taskLabel 给出任务的种类与目标；ok 为 false 时两项留空，客户端退回编号。管理端传 probe.Registry.Target
 // （任务当前的配置），公开端传 probe.Registry.TargetFor（只标当前分配给被查节点的任务）。
-type taskLabel func(taskID uint64) (kind probev1.ProbeKind, target string, ok bool)
+type taskLabel func(taskID uint64) (kind heronv1.ProbeKind, target string, ok bool)
 
 // checkWindow 为两族查询、两个服务维持同一套窗口与点数约束；只看请求本身，不查库。
 func checkWindow(from, to int64, requested uint32) (int, error) {
@@ -53,22 +53,22 @@ func checkWindow(from, to int64, requested uint32) (int, error) {
 	return maxPoints, nil
 }
 
-func (h history) metrics(ctx context.Context, m *probev1.QueryMetricsRequest, maxPoints int) (*probev1.QueryMetricsResponse, error) {
+func (h history) metrics(ctx context.Context, m *heronv1.QueryMetricsRequest, maxPoints int) (*heronv1.QueryMetricsResponse, error) {
 	lv, step := store.ChooseLevel(m.GetFrom(), m.GetTo(), maxPoints)
 	rows, err := h.store.QueryMetrics(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), lv, step)
 	if err != nil {
 		h.log.Error("metric query failed", "err", err)
 		return nil, internalError("metric query failed")
 	}
-	resp := &probev1.QueryMetricsResponse{Level: lv.Name, StepS: uint32(step)}
-	series := make([]*probev1.MetricSeries, len(metric.Columns))
+	resp := &heronv1.QueryMetricsResponse{Level: lv.Name, StepS: uint32(step)}
+	series := make([]*heronv1.MetricSeries, len(metric.Columns))
 	for i, c := range metric.Columns {
-		series[i] = &probev1.MetricSeries{Name: c.Name, Unit: c.Unit, Samples: make([]*probev1.MetricSample, 0, len(rows))}
+		series[i] = &heronv1.MetricSeries{Name: c.Name, Unit: c.Unit, Samples: make([]*heronv1.MetricSample, 0, len(rows))}
 	}
 	for _, r := range rows {
 		resp.Ts = append(resp.Ts, r.TS)
 		for i, c := range metric.Columns {
-			sample := &probev1.MetricSample{N: r.Bucket.N[i]}
+			sample := &heronv1.MetricSample{N: r.Bucket.N[i]}
 			switch {
 			case c.Kind == metric.Sum:
 				// 可加量下发和，不下发均值：一分钟内的字节数除以入账次数没有意义。
@@ -90,25 +90,25 @@ func (h history) metrics(ctx context.Context, m *probev1.QueryMetricsRequest, ma
 	return resp, nil
 }
 
-func (h history) probeSeries(ctx context.Context, m *probev1.QueryProbesRequest, maxPoints int, label taskLabel) (*probev1.QueryProbesResponse, error) {
+func (h history) probeSeries(ctx context.Context, m *heronv1.QueryProbesRequest, maxPoints int, label taskLabel) (*heronv1.QueryProbesResponse, error) {
 	lv, step := store.ChooseLevel(m.GetFrom(), m.GetTo(), maxPoints)
 	rows, err := h.store.QueryProbes(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), lv, step)
 	if err != nil {
 		h.log.Error("probe query failed", "err", err)
 		return nil, internalError("probe query failed")
 	}
-	resp := &probev1.QueryProbesResponse{Level: lv.Name, StepS: uint32(step)}
-	var cur *probev1.ProbeSeries
+	resp := &heronv1.QueryProbesResponse{Level: lv.Name, StepS: uint32(step)}
+	var cur *heronv1.ProbeSeries
 	for _, r := range rows { // store 已按 TaskID、TS 排序
 		if r.Bucket.Sent == 0 {
 			continue
 		}
 		if cur == nil || cur.TaskId != r.TaskID {
-			cur = &probev1.ProbeSeries{TaskId: r.TaskID}
+			cur = &heronv1.ProbeSeries{TaskId: r.TaskID}
 			cur.Kind, cur.Target, _ = label(r.TaskID)
 			resp.Series = append(resp.Series, cur)
 		}
-		sample := &probev1.ProbeSample{Ts: r.TS, Sent: r.Bucket.Sent, Lost: r.Bucket.Lost, Errors: r.Bucket.Errors}
+		sample := &heronv1.ProbeSample{Ts: r.TS, Sent: r.Bucket.Sent, Lost: r.Bucket.Lost, Errors: r.Bucket.Errors}
 		if mean, ok := r.Bucket.RttMean(); ok {
 			sample.RttMeanUs, sample.RttMinUs, sample.RttMaxUs = proto.Uint32(mean), proto.Uint32(r.Bucket.RttMinUs), proto.Uint32(r.Bucket.RttMaxUs)
 		}
@@ -119,7 +119,7 @@ func (h history) probeSeries(ctx context.Context, m *probev1.QueryProbesRequest,
 
 // liveState 是两端快照共用的在线判定：在线只来自 live；库里的 last_seen_at 只在 live 没有该节点
 // （hub 重启后尚未再上报）时用来展示"上次见到"，不参与在线判定。
-func liveState(l *live.Live, n store.Node) (online bool, lastSeen *int64, m *probev1.Metrics) {
+func liveState(l *live.Live, n store.Node) (online bool, lastSeen *int64, m *heronv1.Metrics) {
 	if e, ok := l.Get(n.ID); ok {
 		return e.Online, proto.Int64(e.LastSeenWall.Unix()), e.Metrics
 	}

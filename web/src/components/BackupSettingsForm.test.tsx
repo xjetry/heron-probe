@@ -2,7 +2,7 @@ import { isFieldSet, toJson } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { expect, it } from "vitest";
-import { SettingsSchema } from "../gen/probe/v1/admin_pb";
+import { SettingsSchema } from "../gen/heron/v1/admin_pb";
 import { Appearance } from "../pages/Appearance";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { statefulHub } from "../test/settingsHub";

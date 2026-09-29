@@ -12,16 +12,16 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/alert"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/alert"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
-func startAlertHub(t *testing.T, clk clock.Clock, seed func(*store.Store), flags ...string) (probev1connect.AdminServiceClient, serveEvents, func()) {
+func startAlertHub(t *testing.T, clk clock.Clock, seed func(*store.Store), flags ...string) (heronv1connect.AdminServiceClient, serveEvents, func()) {
 	t.Helper()
 	db := filepath.Join(t.TempDir(), "hub.db")
 	password := "alert delivery sufficiently long password"
@@ -43,8 +43,8 @@ func startAlertHub(t *testing.T, clk clock.Clock, seed func(*store.Store), flags
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := probev1connect.NewAdminServiceClient(&http.Client{Jar: jar, Timeout: testwait.Bound}, url)
-	if _, err := client.Login(t.Context(), connect.NewRequest(&probev1.LoginRequest{Password: password})); err != nil {
+	client := heronv1connect.NewAdminServiceClient(&http.Client{Jar: jar, Timeout: testwait.Bound}, url)
+	if _, err := client.Login(t.Context(), connect.NewRequest(&heronv1.LoginRequest{Password: password})); err != nil {
 		t.Fatal(err)
 	}
 	return client, events, stop
@@ -66,7 +66,7 @@ func alertReceiver(t *testing.T) (string, <-chan string) {
 }
 
 // awaitDelivered 等待指定 transition 的事件送达；列表还可能包含不投递的系统审计。
-func awaitDelivered(t *testing.T, client probev1connect.AdminServiceClient, bodies <-chan string, transition string, timeout time.Duration) {
+func awaitDelivered(t *testing.T, client heronv1connect.AdminServiceClient, bodies <-chan string, transition string, timeout time.Duration) {
 	t.Helper()
 	started := time.Now()
 	deadline := time.NewTimer(timeout)
@@ -74,7 +74,7 @@ func awaitDelivered(t *testing.T, client probev1connect.AdminServiceClient, bodi
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		events, err := client.ListAlertEvents(t.Context(), connect.NewRequest(&probev1.ListAlertEventsRequest{}))
+		events, err := client.ListAlertEvents(t.Context(), connect.NewRequest(&heronv1.ListAlertEventsRequest{}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -107,18 +107,18 @@ func TestServeDeliversOfflineAlerts(t *testing.T) {
 	url, bodies := alertReceiver(t)
 	// 巡检 ticker 使用真实时间；真实 Mono 同步推进，才能从未上报走到 TTL。
 	client, _, _ := startAlertHub(t, clock.Real(), nil)
-	if _, err := client.CreateNode(t.Context(), connect.NewRequest(&probev1.CreateNodeRequest{Name: "unseen"})); err != nil {
+	if _, err := client.CreateNode(t.Context(), connect.NewRequest(&heronv1.CreateNodeRequest{Name: "unseen"})); err != nil {
 		t.Fatal(err)
 	}
-	c, err := client.SaveNotifyChannel(t.Context(), connect.NewRequest(&probev1.SaveNotifyChannelRequest{Channel: &probev1.NotifyChannel{Name: "hook", Kind: probev1.ChannelKind_CHANNEL_KIND_WEBHOOK, Webhook: &probev1.WebhookConfig{Url: url}}}))
+	c, err := client.SaveNotifyChannel(t.Context(), connect.NewRequest(&heronv1.SaveNotifyChannelRequest{Channel: &heronv1.NotifyChannel{Name: "hook", Kind: heronv1.ChannelKind_CHANNEL_KIND_WEBHOOK, Webhook: &heronv1.WebhookConfig{Url: url}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.SaveAlertRule(t.Context(), connect.NewRequest(&probev1.SaveAlertRuleRequest{Rule: &probev1.AlertRule{Name: "offline", Kind: probev1.AlertKind_ALERT_KIND_OFFLINE, Enabled: true, AllNodes: true, ChannelIds: []int64{c.Msg.Channel.Id}}}))
+	_, err = client.SaveAlertRule(t.Context(), connect.NewRequest(&heronv1.SaveAlertRuleRequest{Rule: &heronv1.AlertRule{Name: "offline", Kind: heronv1.AlertKind_ALERT_KIND_OFFLINE, Enabled: true, AllNodes: true, ChannelIds: []int64{c.Msg.Channel.Id}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 节点要先过 PROBE_OFFLINE_AFTER（minTTL），再赶上 OfflineSweepEvery 的巡检才会投递。
+	// 节点要先过 HERON_OFFLINE_AFTER（minTTL），再赶上 OfflineSweepEvery 的巡检才会投递。
 	// 上界只覆盖这两段之后的挂死，不把“多久内必须送达”当成被测性质。
 	awaitDelivered(t, client, bodies, "firing", minTTL+alert.OfflineSweepEvery+testwait.Bound)
 }
@@ -158,7 +158,7 @@ func TestServeEvaluatesProbeAlerts(t *testing.T) {
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 59, 999000000, time.UTC))
 	client, _, _ := startAlertHub(t, clk, func(st *store.Store) {
 		id, channel := seedAlertChannel(t, st, url)
-		task, _, err := st.SaveProbeTask(t.Context(), &probev1.ProbeTask{Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}, store.NodeSelector{NodeIDs: []int64{id}})
+		task, _, err := st.SaveProbeTask(t.Context(), &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}, store.NodeSelector{NodeIDs: []int64{id}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -217,7 +217,7 @@ func TestServePrunesAlertEvents(t *testing.T) {
 					if string(event["msg"]) != `"pruned expired alert events"` {
 						continue
 					}
-					got, err := client.ListAlertEvents(t.Context(), connect.NewRequest(&probev1.ListAlertEventsRequest{NodeId: nodeID}))
+					got, err := client.ListAlertEvents(t.Context(), connect.NewRequest(&heronv1.ListAlertEventsRequest{NodeId: nodeID}))
 					if err != nil || len(got.Msg.Events) != 1 || got.Msg.Events[0].Id != retainedID || len(got.Msg.Events[0].Deliveries) != 1 {
 						t.Fatalf("retained events=%v err=%v", got, err)
 					}
@@ -289,16 +289,16 @@ func TestServeReportsDaysLeftInTheHubZone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admin := probev1connect.NewAdminServiceClient(&http.Client{Jar: jar, Timeout: testwait.Bound}, url)
-	if _, err := admin.Login(t.Context(), connect.NewRequest(&probev1.LoginRequest{Password: password})); err != nil {
+	admin := heronv1connect.NewAdminServiceClient(&http.Client{Jar: jar, Timeout: testwait.Bound}, url)
+	if _, err := admin.Login(t.Context(), connect.NewRequest(&heronv1.LoginRequest{Password: password})); err != nil {
 		t.Fatal(err)
 	}
-	nodes, err := admin.ListNodes(t.Context(), connect.NewRequest(&probev1.ListNodesRequest{}))
+	nodes, err := admin.ListNodes(t.Context(), connect.NewRequest(&heronv1.ListNodesRequest{}))
 	if err != nil || len(nodes.Msg.GetNodes()) != 1 || nodes.Msg.GetNodes()[0].GetBilling().GetDaysLeft() != 5 {
 		t.Fatalf("admin ListNodes = %v %v, want days_left 5", nodes, err)
 	}
-	public := probev1connect.NewPublicServiceClient(&http.Client{Timeout: testwait.Bound}, url)
-	snap, err := public.GetSnapshot(t.Context(), connect.NewRequest(&probev1.PublicServiceGetSnapshotRequest{}))
+	public := heronv1connect.NewPublicServiceClient(&http.Client{Timeout: testwait.Bound}, url)
+	snap, err := public.GetSnapshot(t.Context(), connect.NewRequest(&heronv1.PublicServiceGetSnapshotRequest{}))
 	if err != nil || len(snap.Msg.GetNodes()) != 1 || snap.Msg.GetNodes()[0].GetBilling().GetDaysLeft() != 5 {
 		t.Fatalf("public GetSnapshot = %v %v, want days_left 5", snap, err)
 	}

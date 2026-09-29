@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/probelimit"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/probelimit"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 type sleepCall struct {
@@ -49,8 +49,8 @@ func receive[T any](t *testing.T, ch <-chan T) T {
 	}
 }
 
-func task(id uint64) *probev1.ProbeTask {
-	return &probev1.ProbeTask{Id: id, Kind: probev1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}
+func task(id uint64) *heronv1.ProbeTask {
+	return &heronv1.ProbeTask{Id: id, Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}
 }
 
 func logger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -65,13 +65,13 @@ func TestApplyStartsNewStopsGoneKeepsUnchanged(t *testing.T) {
 	clk := clock.NewFake(time.Unix(0, 0))
 	calls := make(chan sleepCall, 32)
 	probes := make(chan probeCall, 32)
-	s := NewScheduler(engineFunc(func(ctx context.Context, task *probev1.ProbeTask) Outcome {
+	s := NewScheduler(engineFunc(func(ctx context.Context, task *heronv1.ProbeTask) Outcome {
 		probes <- probeCall{ctx, task.Id, task.Target}
 		return Outcome{RttUs: 1}
 	}), NewQueue(QueueCap), clk, logger())
 	s.Sleep, s.Rand = controlledSleep(calls), func() float64 { return .25 }
 	defer s.Stop()
-	s.Apply(&probev1.ProbeTasks{Version: 1, Tasks: []*probev1.ProbeTask{task(1), task(2), task(4)}})
+	s.Apply(&heronv1.ProbeTasks{Version: 1, Tasks: []*heronv1.ProbeTask{task(1), task(2), task(4)}})
 	var initial []sleepCall
 	for range 3 {
 		c := receive(t, calls)
@@ -95,7 +95,7 @@ func TestApplyStartsNewStopsGoneKeepsUnchanged(t *testing.T) {
 	}
 	changed := task(2)
 	changed.Target = "localhost"
-	s.Apply(&probev1.ProbeTasks{Version: 2, Tasks: []*probev1.ProbeTask{task(1), changed, task(3)}})
+	s.Apply(&heronv1.ProbeTasks{Version: 2, Tasks: []*heronv1.ProbeTask{task(1), changed, task(3)}})
 	if s.Version() != 2 {
 		t.Fatalf("version=%d", s.Version())
 	}
@@ -136,7 +136,7 @@ func TestApplyStartsNewStopsGoneKeepsUnchanged(t *testing.T) {
 	for range 2 {
 		receive(t, calls)
 	}
-	s.Apply(&probev1.ProbeTasks{Version: 3})
+	s.Apply(&heronv1.ProbeTasks{Version: 3})
 	s.mu.Lock()
 	n := len(s.running)
 	s.mu.Unlock()
@@ -150,18 +150,18 @@ func TestApplyRejectsInvalidAndOverLimitWithErrorResults(t *testing.T) {
 	q := NewQueue(QueueCap)
 	calls := make(chan sleepCall, 128)
 	probes := make(chan uint64, 128)
-	s := NewScheduler(engineFunc(func(_ context.Context, task *probev1.ProbeTask) Outcome {
+	s := NewScheduler(engineFunc(func(_ context.Context, task *heronv1.ProbeTask) Outcome {
 		probes <- task.Id
 		return Outcome{RttUs: 1}
 	}), q, clk, logger())
 	s.Sleep, s.Rand = controlledSleep(calls), func() float64 { return 0 }
 	defer s.Stop()
-	var tasks []*probev1.ProbeTask
+	var tasks []*heronv1.ProbeTask
 	for id := uint64(65); id > 0; id-- {
 		tasks = append(tasks, task(id))
 	}
 	tasks[64].IntervalS = 1
-	s.Apply(&probev1.ProbeTasks{Version: 7, Tasks: tasks})
+	s.Apply(&heronv1.ProbeTasks{Version: 7, Tasks: tasks})
 	rs := q.Take(clk.Mono(), probelimit.MaxResultAge, probelimit.MaxResultsPerReport)
 	if len(rs) != 2 || rs[0].TaskID != 1 || !strings.Contains(rs[0].Outcome.Err, "interval_s must be between 5 and 3600") ||
 		rs[1].TaskID != 65 || !strings.Contains(rs[1].Outcome.Err, "more than 64 tasks assigned") ||
@@ -195,13 +195,13 @@ func TestRunKeepsPeriodDespiteProbeDuration(t *testing.T) {
 	clk := clock.NewFake(time.Unix(0, 0))
 	q := NewQueue(QueueCap)
 	calls := make(chan sleepCall, 4)
-	s := NewScheduler(engineFunc(func(context.Context, *probev1.ProbeTask) Outcome {
+	s := NewScheduler(engineFunc(func(context.Context, *heronv1.ProbeTask) Outcome {
 		clk.Advance(2 * time.Second)
 		return Outcome{RttUs: 2000000}
 	}), q, clk, logger())
 	s.Sleep, s.Rand = controlledSleep(calls), func() float64 { return 0 }
 	defer s.Stop()
-	s.Apply(&probev1.ProbeTasks{Tasks: []*probev1.ProbeTask{task(1)}})
+	s.Apply(&heronv1.ProbeTasks{Tasks: []*heronv1.ProbeTask{task(1)}})
 	c := receive(t, calls)
 	close(c.release)
 	for i := range 3 {
@@ -225,13 +225,13 @@ func TestStopDoesNotEnqueueInFlightResult(t *testing.T) {
 	q := NewQueue(QueueCap)
 	entered := make(chan struct{})
 	calls := make(chan sleepCall, 2)
-	s := NewScheduler(engineFunc(func(ctx context.Context, _ *probev1.ProbeTask) Outcome {
+	s := NewScheduler(engineFunc(func(ctx context.Context, _ *heronv1.ProbeTask) Outcome {
 		close(entered)
 		<-ctx.Done()
 		return Outcome{RttUs: 1}
 	}), q, clk, logger())
 	s.Sleep, s.Rand = controlledSleep(calls), func() float64 { return 0 }
-	s.Apply(&probev1.ProbeTasks{Tasks: []*probev1.ProbeTask{task(1)}})
+	s.Apply(&heronv1.ProbeTasks{Tasks: []*heronv1.ProbeTask{task(1)}})
 	c := receive(t, calls)
 	close(c.release)
 	receive(t, entered)
@@ -244,14 +244,14 @@ func TestStopDoesNotEnqueueInFlightResult(t *testing.T) {
 func TestApplyOwnsTaskSnapshot(t *testing.T) {
 	calls := make(chan sleepCall, 2)
 	probes := make(chan string, 1)
-	s := NewScheduler(engineFunc(func(_ context.Context, t *probev1.ProbeTask) Outcome {
+	s := NewScheduler(engineFunc(func(_ context.Context, t *heronv1.ProbeTask) Outcome {
 		probes <- t.Target
 		return Outcome{}
 	}), NewQueue(3), clock.Real(), logger())
 	s.Sleep, s.Rand = controlledSleep(calls), func() float64 { return 0 }
 	defer s.Stop()
 	input := task(1)
-	s.Apply(&probev1.ProbeTasks{Tasks: []*probev1.ProbeTask{input}})
+	s.Apply(&heronv1.ProbeTasks{Tasks: []*heronv1.ProbeTask{input}})
 	first := receive(t, calls)
 	input.Target = "changed.invalid"
 	close(first.release)

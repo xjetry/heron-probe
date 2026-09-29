@@ -14,10 +14,10 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/testwait"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 // serve 启动国家查询器，交给它的是通知渠道那个不跟随重定向的出站客户端：开启查询并指向一个返回 302 的假服务，
@@ -52,31 +52,31 @@ func TestServeRunsCountryLookupWithTheNoRedirectClient(t *testing.T) {
 	// 第一次启动：开启查询、建节点、让节点经可信代理以 8.8.8.8 上报。来源地址随分钟行刷出落盘，这里靠退出时的
 	// 那次刷出写入；查询器先于刷出停止，所以这次启动不会查。
 	url, _, stop := startTestHub(t, db, clk, "--trusted-proxies", "127.0.0.1/32")
-	admin := probev1connect.NewAdminServiceClient(http.DefaultClient, url)
+	admin := heronv1connect.NewAdminServiceClient(http.DefaultClient, url)
 	ctx := context.Background()
-	logged, err := admin.Login(ctx, connect.NewRequest(&probev1.LoginRequest{Password: password}))
+	logged, err := admin.Login(ctx, connect.NewRequest(&heronv1.LoginRequest{Password: password}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	cookies := (&http.Response{Header: logged.Header()}).Cookies()
 	cookie := cookies[0].Name + "=" + cookies[0].Value
-	update := connect.NewRequest(&probev1.UpdateSettingsRequest{Settings: &probev1.Settings{
+	update := connect.NewRequest(&heronv1.UpdateSettingsRequest{Settings: &heronv1.Settings{
 		Theme: "auto", GeoEnabled: proto.Bool(true), GeoUrl: proto.String(svc.URL + "/{ip}/country"),
 	}})
 	update.Header().Set("Cookie", cookie)
 	if _, err := admin.UpdateSettings(ctx, update); err != nil {
 		t.Fatal(err)
 	}
-	create := connect.NewRequest(&probev1.CreateNodeRequest{Name: "n"})
+	create := connect.NewRequest(&heronv1.CreateNodeRequest{Name: "n"})
 	create.Header().Set("Cookie", cookie)
 	node, err := admin.CreateNode(ctx, create)
 	if err != nil {
 		t.Fatal(err)
 	}
-	report := connect.NewRequest(&probev1.ReportRequest{Metrics: &probev1.Metrics{CpuPct: proto.Float64(1)}})
+	report := connect.NewRequest(&heronv1.ReportRequest{Metrics: &heronv1.Metrics{CpuPct: proto.Float64(1)}})
 	report.Header().Set("Authorization", "Bearer "+node.Msg.Token)
 	report.Header().Set("X-Forwarded-For", "8.8.8.8")
-	if _, err := probev1connect.NewAgentServiceClient(http.DefaultClient, url).Report(ctx, report); err != nil {
+	if _, err := heronv1connect.NewAgentServiceClient(http.DefaultClient, url).Report(ctx, report); err != nil {
 		t.Fatal(err)
 	}
 	stop()

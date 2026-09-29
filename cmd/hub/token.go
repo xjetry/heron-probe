@@ -9,7 +9,7 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/xjetry/probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 func runToken(args []string) error { return runTokenWith(args, os.Stdout, os.Stderr) }
@@ -18,11 +18,11 @@ func runToken(args []string) error { return runTokenWith(args, os.Stdout, os.Std
 // 吊销在下一个请求即生效——这是面板不可用或管理员密码已泄漏时的应急路径。
 func runTokenWith(args []string, out, errOut io.Writer) error {
 	if len(args) < 1 {
-		return errors.New("usage: probe-hub token list|revoke [flags]")
+		return errors.New("usage: heron-hub token list|revoke [flags]")
 	}
 	fs := flag.NewFlagSet("token "+args[0], flag.ContinueOnError)
 	fs.SetOutput(errOut)
-	db := fs.String("db", "probe.db", "SQLite database path")
+	db := fs.String("db", "heron.db", "SQLite database path")
 	id := fs.Int64("id", 0, "API token id (revoke)")
 	all := fs.Bool("all", false, "revoke every API token (revoke)")
 	if err := fs.Parse(args[1:]); err != nil {

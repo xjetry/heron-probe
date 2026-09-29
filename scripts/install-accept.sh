@@ -85,10 +85,10 @@ create_machine() {
 # 两个版本各打一包再复制走：第二次 make release 会清空 dist/，重跑必须能证出版本从 A 变成 B。
 make release VERSION="$VERSION_A" > "$work/release-a.log" 2>&1 || { echo "FAIL: make release A"; tail -20 "$work/release-a.log"; exit 1; }
 mkdir -p "$work/dist/a"
-cp dist/probe-*.tar.gz dist/SHA256SUMS dist/install.sh dist/install-hub.sh "$work/dist/a/"
+cp dist/heron-*.tar.gz dist/SHA256SUMS dist/install.sh dist/install-hub.sh "$work/dist/a/"
 make release VERSION="$VERSION_B" > "$work/release-b.log" 2>&1 || { echo "FAIL: make release B"; tail -20 "$work/release-b.log"; exit 1; }
 mkdir -p "$work/dist/b"
-cp dist/probe-*.tar.gz dist/SHA256SUMS dist/install.sh dist/install-hub.sh "$work/dist/b/"
+cp dist/heron-*.tar.gz dist/SHA256SUMS dist/install.sh dist/install-hub.sh "$work/dist/b/"
 if [ "$RUN_AGENT" = 1 ]; then
   make binaries > "$work/binaries.log" 2>&1 || { echo "FAIL: make binaries"; tail -20 "$work/binaries.log"; exit 1; }
 fi
@@ -118,14 +118,14 @@ run_hub_cell() {
   if ! orb -m "$name" -u root sh -s -- "http://$HOST:$DIST_PORT" "$VERSION_A" "$VERSION_B" <<'HUB_ACCEPT' > "$work/hub-$name.log" 2>&1
 set -eu
 base=$1; version_a=$2; version_b=$3
-trap 'rc=$?; if [ "$rc" != 0 ]; then systemctl status probe-hub --no-pager || true; journalctl -u probe-hub -n 40 --no-pager || true; cat /etc/systemd/system/probe-hub.service || true; fi' EXIT
+trap 'rc=$?; if [ "$rc" != 0 ]; then systemctl status heron-hub --no-pager || true; journalctl -u heron-hub -n 40 --no-pager || true; cat /etc/systemd/system/heron-hub.service || true; fi' EXIT
 fail() { echo "FAIL: $*"; exit 1; }
 fetch() {
   if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$2" "$1" </dev/null
   else wget -q -O "$2" "$1" </dev/null; fi
 }
 health() {
-  code=$(curl -sS -o /root/site.json -w '%{http_code}' "http://127.0.0.1:$1/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D")
+  code=$(curl -sS -o /root/site.json -w '%{http_code}' "http://127.0.0.1:$1/heron.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D")
   [ "$code" = 200 ] || fail "anonymous GetSite returned $code"
 }
 # 安装器写出的单元交给真实的 systemd 解析：引号、$$、%% 都出自安装器。verify 有任何输出也算失败，不只看
@@ -133,118 +133,118 @@ health() {
 # 退出码仍是 0，服务照样启动；干净的单元不输出任何东西。
 verify_unit() {
   rc=0
-  systemd-analyze verify /etc/systemd/system/probe-hub.service > /root/verify.log 2>&1 </dev/null || rc=$?
+  systemd-analyze verify /etc/systemd/system/heron-hub.service > /root/verify.log 2>&1 </dev/null || rc=$?
   if [ "$rc" != 0 ] || [ -s /root/verify.log ]; then cat /root/verify.log; fail "systemd-analyze verify after $1 (exit $rc)"; fi
   echo "systemd-analyze verify after $1: exit 0, no output"
 }
-# 目录 root:probe-hub 0770；库文件与存在时的 WAL、SHM 属服务用户 0600。
+# 目录 root:heron-hub 0770；库文件与存在时的 WAL、SHM 属服务用户 0600。
 assert_data_layout() {
-  [ "$(stat -c '%U:%G %a' /var/lib/probe)" = 'root:probe-hub 770' ] &&
-    [ "$(stat -c '%U:%G %a' /var/lib/probe/probe.db)" = 'probe-hub:probe-hub 600' ] || fail "hub data ownership or permissions $1"
-  for f in /var/lib/probe/probe.db-wal /var/lib/probe/probe.db-shm; do
-    [ ! -e "$f" ] || [ "$(stat -c '%U:%G %a' "$f")" = 'probe-hub:probe-hub 600' ] || fail "hub data ownership or permissions $1: $f"
+  [ "$(stat -c '%U:%G %a' /var/lib/heron)" = 'root:heron-hub 770' ] &&
+    [ "$(stat -c '%U:%G %a' /var/lib/heron/heron.db)" = 'heron-hub:heron-hub 600' ] || fail "hub data ownership or permissions $1"
+  for f in /var/lib/heron/heron.db-wal /var/lib/heron/heron.db-shm; do
+    [ ! -e "$f" ] || [ "$(stat -c '%U:%G %a' "$f")" = 'heron-hub:heron-hub 600' ] || fail "hub data ownership or permissions $1: $f"
   done
-  stat -c '%n %U:%G %a' /var/lib/probe /var/lib/probe/probe.db*
+  stat -c '%n %U:%G %a' /var/lib/heron /var/lib/heron/heron.db*
 }
-# 按 comm 找 probe-hub 进程，写进 pids。卸载之后用户已删，不能再按有效 uid 扫。
+# 按 comm 找 heron-hub 进程，写进 pids。卸载之后用户已删，不能再按有效 uid 扫。
 hub_pids() {
   pids=""
   for s in /proc/[0-9]*/comm; do
     c=$(tr -d '\n' < "$s" 2>/dev/null || true)
-    if [ "$c" = probe-hub ]; then p=${s#/proc/}; pids="$pids ${p%/comm}"; fi
+    if [ "$c" = heron-hub ]; then p=${s#/proc/}; pids="$pids ${p%/comm}"; fi
   done
 }
-# purge 之后数据、二进制、单元、enable 链接、用户、组与 probe-hub 进程都不在。
+# purge 之后数据、二进制、单元、enable 链接、用户、组与 heron-hub 进程都不在。
 assert_purged() {
-  if [ -e /var/lib/probe ] || [ -e /usr/local/bin/probe-hub ] || [ -e /etc/systemd/system/probe-hub.service ] ||
-    [ -L /etc/systemd/system/multi-user.target.wants/probe-hub.service ] || id probe-hub || grep -q '^probe-hub:' /etc/group; then
+  if [ -e /var/lib/heron ] || [ -e /usr/local/bin/heron-hub ] || [ -e /etc/systemd/system/heron-hub.service ] ||
+    [ -L /etc/systemd/system/multi-user.target.wants/heron-hub.service ] || id heron-hub || grep -q '^heron-hub:' /etc/group; then
     fail "hub purge left data, binary, unit, enable link, user or group ($1)"
   fi
   hub_pids
-  [ -z "$pids" ] || fail "hub purge left probe-hub processes ($1):$pids"
+  [ -z "$pids" ] || fail "hub purge left heron-hub processes ($1):$pids"
 }
 systemctl --version | head -n 1
 fetch "$base/a/install-hub.sh" /root/install-hub.sh
-mkdir '/srv/probe site $literal%'
-printf '<!doctype html><title>probe acceptance</title>\n' > '/srv/probe site $literal%/index.html'
+mkdir '/srv/heron site $literal%'
+printf '<!doctype html><title>Heron acceptance</title>\n' > '/srv/heron site $literal%/index.html'
 if [ -f /etc/ssl/certs/ca-certificates.crt ]; then echo 'CA bundle present before install'; else echo 'no CA bundle before install'; fi
-cat /root/install-hub.sh | sh -s -- --base-url "$base/a" --listen 127.0.0.1:18120 --timezone Asia/Taipei --trusted-proxies 127.0.0.1/32 --public-dir '/srv/probe site $literal%'
+cat /root/install-hub.sh | sh -s -- --base-url "$base/a" --listen 127.0.0.1:18120 --timezone Asia/Taipei --trusted-proxies 127.0.0.1/32 --public-dir '/srv/heron site $literal%'
 # 下载地址是 http，hub 自己的 Telegram 出站仍要 CA 证书包。
 [ -f /etc/ssl/certs/ca-certificates.crt ] || fail 'no CA bundle after installing over http'
 health 18120
-printf '%s\n' 'accept hub password 2026' | probe-hub passwd --db /var/lib/probe/probe.db
-[ "$(probe-hub version)" = "$version_a" ] || fail 'installed version is not A'
-pid=$(systemctl show probe-hub -p MainPID --value)
+printf '%s\n' 'accept hub password 2026' | heron-hub passwd --db /var/lib/heron/heron.db
+[ "$(heron-hub version)" = "$version_a" ] || fail 'installed version is not A'
+pid=$(systemctl show heron-hub -p MainPID --value)
 uid=$(awk '/^Uid:/ {print $3}' "/proc/$pid/status")
 cap=$(awk '/^CapEff:/ {print $2}' "/proc/$pid/status")
-[ "$uid" = "$(id -u probe-hub)" ] && [ "$uid" != 0 ] && [ "$((0x$cap))" = 0 ] || fail 'hub identity or capabilities'
+[ "$uid" = "$(id -u heron-hub)" ] && [ "$uid" != 0 ] && [ "$((0x$cap))" = 0 ] || fail 'hub identity or capabilities'
 assert_data_layout 'after install'
 verify_unit 'install'
 # 安装器判断单元是否 enabled 只看这条链接，首装后它必须在，否则升级时安装器会把仍会开机拉起的单元说成没 enable。
-[ -L /etc/systemd/system/multi-user.target.wants/probe-hub.service ] || fail 'no multi-user.target.wants link after install'
+[ -L /etc/systemd/system/multi-user.target.wants/heron-hub.service ] || fail 'no multi-user.target.wants link after install'
 # purge 之后按同一扫描为空才算没有残留：先确认它看得见正在运行的 hub。
 hub_pids
 case " $pids " in *" $pid "*) ;; *) fail "comm scan did not find the running hub (pid $pid):$pids";; esac
 
 # 新端口被其它进程占用时，旧服务的同一个 pid 必须仍活着，不能先停服再发现绑定失败。
-systemd-run --unit=pia-port-conflict /usr/local/bin/probe-hub serve --db /root/port-conflict.db --listen 127.0.0.1:8080 --timezone UTC </dev/null
+systemd-run --unit=pia-port-conflict /usr/local/bin/heron-hub serve --db /root/port-conflict.db --listen 127.0.0.1:8080 --timezone UTC </dev/null
 sleep 1
-curl -fsS -o /dev/null 'http://127.0.0.1:8080/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D'
+curl -fsS -o /dev/null 'http://127.0.0.1:8080/heron.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D'
 rc=0
 sh /root/install-hub.sh --base-url "$base/b" --listen 127.0.0.1:8080 </dev/null > /root/conflict.log 2>&1 || rc=$?
 cat /root/conflict.log
-[ "$rc" != 0 ] && [ "$(systemctl show probe-hub -p MainPID --value)" = "$pid" ] && kill -0 "$pid" || fail 'port conflict did not fail before stopping old hub'
+[ "$rc" != 0 ] && [ "$(systemctl show heron-hub -p MainPID --value)" = "$pid" ] && kill -0 "$pid" || fail 'port conflict did not fail before stopping old hub'
 grep -q 'port 8080 is already in use' /root/conflict.log || fail 'port conflict did not report listener'
 systemctl stop pia-port-conflict
 
 # 单元里的参数是持久事实；重跑升级不能恢复成默认值，显式参数才覆盖。
 fetch "$base/b/install-hub.sh" /root/install-hub.sh
 sh /root/install-hub.sh --base-url "$base/b" </dev/null
-[ "$(probe-hub version)" = "$version_b" ] || fail 'upgraded version is not B'
+[ "$(heron-hub version)" = "$version_b" ] || fail 'upgraded version is not B'
 health 18120
-pid=$(systemctl show probe-hub -p MainPID --value)
+pid=$(systemctl show heron-hub -p MainPID --value)
 tr '\000' '\n' < "/proc/$pid/cmdline" > /root/args
 awk '
   /^--timezone=/ { zone=substr($0,12) }
   /^--trusted-proxies=/ { proxies=substr($0,19) }
   /^--public-dir=/ { dir=substr($0,14) }
-  END { exit !(zone == "Asia/Taipei" && proxies == "127.0.0.1/32" && dir == "/srv/probe site $literal%") }
+  END { exit !(zone == "Asia/Taipei" && proxies == "127.0.0.1/32" && dir == "/srv/heron site $literal%") }
 ' /root/args || fail 'upgrade lost installed arguments'
 sh /root/install-hub.sh --base-url "$base/b" --timezone UTC </dev/null
-pid=$(systemctl show probe-hub -p MainPID --value)
+pid=$(systemctl show heron-hub -p MainPID --value)
 tr '\000' '\n' < "/proc/$pid/cmdline" > /root/args
 # 覆盖按名替换：cmdline 里恰好一个 timezone 参数且值为 UTC。旧值留在前面、靠 flag 解析后者覆盖前者时，
 # 运行结果一样，这条断言看得出来。
 grep -E -e '^--?timezone(=|$)' /root/args > /root/timezone-args || [ "$?" = 1 ]
 [ "$(cat /root/timezone-args)" = '--timezone=UTC' ] || { cat /root/args; fail 'explicit timezone must replace the installed value exactly once'; }
-journalctl _SYSTEMD_UNIT=probe-hub.service "_PID=$pid" --no-pager -o cat > /root/startup.log
+journalctl _SYSTEMD_UNIT=heron-hub.service "_PID=$pid" --no-pager -o cat > /root/startup.log
 grep -q 'timezone=UTC' /root/startup.log || fail 'running hub did not apply explicit timezone'
 health 18120
 verify_unit 'override upgrade'
 
 # 设 ExecStart 的 drop-in 会盖掉主单元里的参数。刚写到磁盘、还没 daemon-reload 时运行中的 hub 看不到它，
 # 安装器自己启动前的 daemon-reload 却会让它生效：安装器要先 reload 再查，在停服前拒绝，旧服务的同一个 pid 仍在。
-mkdir /etc/systemd/system/probe-hub.service.d
-printf '[Service]\nExecStart =\nExecStart = /usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --listen 127.0.0.1:18120 --timezone Europe/Berlin\n' > /etc/systemd/system/probe-hub.service.d/pia-exec.conf
+mkdir /etc/systemd/system/heron-hub.service.d
+printf '[Service]\nExecStart =\nExecStart = /usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db --listen 127.0.0.1:18120 --timezone Europe/Berlin\n' > /etc/systemd/system/heron-hub.service.d/pia-exec.conf
 # 前提：此刻 DropInPaths 里还没有它，不先 reload 就查不到。
-systemctl show probe-hub -p DropInPaths --value > /root/dropins-unreloaded
+systemctl show heron-hub -p DropInPaths --value > /root/dropins-unreloaded
 cat /root/dropins-unreloaded
 ! grep -q pia-exec.conf /root/dropins-unreloaded || fail 'an unreloaded drop-in is already in DropInPaths'
 rc=0
 sh /root/install-hub.sh --base-url "$base/b" </dev/null > /root/dropin.log 2>&1 || rc=$?
 cat /root/dropin.log
-[ "$rc" != 0 ] && grep -q 'pia-exec.conf sets ExecStart' /root/dropin.log && [ "$(systemctl show probe-hub -p MainPID --value)" = "$pid" ] ||
+[ "$rc" != 0 ] && grep -q 'pia-exec.conf sets ExecStart' /root/dropin.log && [ "$(systemctl show heron-hub -p MainPID --value)" = "$pid" ] ||
   fail 'unreloaded ExecStart drop-in was not refused before stopping the hub'
 # 拦下的是 systemd 真会采用的覆盖（键名两侧带空白也照样采用）：安装器 reload 之后它已生效。
-systemctl show probe-hub -p ExecStart --value | grep -q 'Europe/Berlin' || fail 'systemd did not apply the ExecStart drop-in'
-rm /etc/systemd/system/probe-hub.service.d/pia-exec.conf
-rmdir /etc/systemd/system/probe-hub.service.d
+systemctl show heron-hub -p ExecStart --value | grep -q 'Europe/Berlin' || fail 'systemd did not apply the ExecStart drop-in'
+rm /etc/systemd/system/heron-hub.service.d/pia-exec.conf
+rmdir /etc/systemd/system/heron-hub.service.d
 systemctl daemon-reload
 
 # root 手工操作可能把库文件留成 root:root 0644；停服后改坏，重跑要把它交还服务用户 0600，hub 照常起来。
-systemctl stop probe-hub
-chown root:root /var/lib/probe/probe.db
-chmod 0644 /var/lib/probe/probe.db
+systemctl stop heron-hub
+chown root:root /var/lib/heron/heron.db
+chmod 0644 /var/lib/heron/heron.db
 sh /root/install-hub.sh --base-url "$base/b" </dev/null
 assert_data_layout 'after ownership repair'
 health 18120
@@ -254,48 +254,48 @@ health 18120
 mkdir /root/fault-bin
 cat > /root/fault-bin/systemctl <<'START_FAULT'
 #!/bin/sh
-if [ "$1" = start ] && [ "$2" = probe-hub ]; then
-  sed -i 's@/var/lib/probe/probe.db@/var/lib/probe/missing/probe.db@g' /etc/systemd/system/probe-hub.service
+if [ "$1" = start ] && [ "$2" = heron-hub ]; then
+  sed -i 's@/var/lib/heron/heron.db@/var/lib/heron/missing/heron.db@g' /etc/systemd/system/heron-hub.service
   /usr/bin/systemctl daemon-reload
 fi
 exec /usr/bin/systemctl "$@"
 START_FAULT
 chmod +x /root/fault-bin/systemctl
-cp /etc/systemd/system/probe-hub.service /root/good-unit
+cp /etc/systemd/system/heron-hub.service /root/good-unit
 rc=0
 PATH="/root/fault-bin:$PATH" sh /root/install-hub.sh --base-url "$base/b" </dev/null > /root/start-fault.log 2>&1 || rc=$?
 cat /root/start-fault.log
-[ "$rc" != 0 ] && grep -q 'probe-hub did not' /root/start-fault.log || fail 'installer reported success for a hub with a missing database directory'
-cp /root/good-unit /etc/systemd/system/probe-hub.service
+[ "$rc" != 0 ] && grep -q 'heron-hub did not' /root/start-fault.log || fail 'installer reported success for a hub with a missing database directory'
+cp /root/good-unit /etc/systemd/system/heron-hub.service
 systemctl daemon-reload
-systemctl restart probe-hub
+systemctl restart heron-hub
 sleep 3
 health 18120
 
 # 不带确认的非交互卸载不得触碰服务；普通卸载保留数据和账户，purge 才删除。
 rc=0
 sh /root/install-hub.sh --uninstall </dev/null > /root/no-confirm.log 2>&1 || rc=$?
-[ "$rc" != 0 ] && systemctl is-active --quiet probe-hub || fail 'unattended uninstall did not require --yes'
+[ "$rc" != 0 ] && systemctl is-active --quiet heron-hub || fail 'unattended uninstall did not require --yes'
 sh /root/install-hub.sh --uninstall --yes </dev/null
-[ -f /var/lib/probe/probe.db ] && id probe-hub && [ ! -e /usr/local/bin/probe-hub ] || fail 'uninstall did not preserve data and account'
+[ -f /var/lib/heron/heron.db ] && id heron-hub && [ ! -e /usr/local/bin/heron-hub ] || fail 'uninstall did not preserve data and account'
 sh /root/install-hub.sh --uninstall --purge --yes </dev/null
 assert_purged 'after purge'
 
 # 首装前手工放置 drop-in。单元文件还不存在时，DropInPaths 查不到其中的 drop-in；安装器要在写好主单元
 # 之后、enable 与 start 之前拦住设了 ExecStart 的 drop-in。
-mkdir /etc/systemd/system/probe-hub.service.d
-printf '[Service]\nExecStart=\nExecStart=/usr/local/bin/probe-hub serve --db /var/lib/probe/probe.db --listen 127.0.0.1:18120\n' > /etc/systemd/system/probe-hub.service.d/pia-exec.conf
+mkdir /etc/systemd/system/heron-hub.service.d
+printf '[Service]\nExecStart=\nExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db --listen 127.0.0.1:18120\n' > /etc/systemd/system/heron-hub.service.d/pia-exec.conf
 # 前提：单元不存在时，reload 之后 DropInPaths 里也没有它。
 systemctl daemon-reload
-systemctl show probe-hub -p DropInPaths --value > /root/dropins-absent
+systemctl show heron-hub -p DropInPaths --value > /root/dropins-absent
 cat /root/dropins-absent
 ! grep -q pia-exec.conf /root/dropins-absent || fail 'DropInPaths lists drop-ins of a unit that does not exist'
 rc=0
 sh /root/install-hub.sh --base-url "$base/b" </dev/null > /root/first-dropin.log 2>&1 || rc=$?
 cat /root/first-dropin.log
-[ "$rc" != 0 ] && grep -q 'pia-exec.conf sets ExecStart' /root/first-dropin.log && ! systemctl is-enabled --quiet probe-hub && ! systemctl is-active --quiet probe-hub ||
+[ "$rc" != 0 ] && grep -q 'pia-exec.conf sets ExecStart' /root/first-dropin.log && ! systemctl is-enabled --quiet heron-hub && ! systemctl is-active --quiet heron-hub ||
   fail 'first install with an ExecStart drop-in was not refused before enabling and starting'
-rm -r /etc/systemd/system/probe-hub.service.d
+rm -r /etc/systemd/system/heron-hub.service.d
 sh /root/install-hub.sh --uninstall --purge --yes </dev/null
 assert_purged 'after the refused first install'
 echo 'HUB ACCEPT OK'
@@ -341,30 +341,30 @@ else
 fi
 ttl_min=$((cells * 20))
 [ "$ttl_min" -lt 90 ] && ttl_min=90
-bin/probe-hub window open --db "$work/accept.db" --ttl "${ttl_min}m" --max "$max_nodes" > "$work/window.txt" 2>&1
+bin/heron-hub window open --db "$work/accept.db" --ttl "${ttl_min}m" --max "$max_nodes" > "$work/window.txt" 2>&1
 key=$(sed -n 's/^key: //p' "$work/window.txt")
 [ -n "$key" ] || { echo "FAIL: no window key"; exit 1; }
 
 # 用 hub 默认 30s TTL（上报间隔 10s）。3 分钟 TTL 会把间隔抬到 1 分钟：
 # 35 秒的 root 对照凑不齐两次 CPU 采样，90 秒也等不到任务下发后再上报的探测结果。
-bin/probe-hub serve --db "$work/accept.db" --listen "127.0.0.1:$HUB_PORT" --timezone UTC > "$work/hub.log" 2>&1 &
+bin/heron-hub serve --db "$work/accept.db" --listen "127.0.0.1:$HUB_PORT" --timezone UTC > "$work/hub.log" 2>&1 &
 hub=$!
 attempt=0
 # 就绪判据是匿名的 GetSite 返回 200，不取决于根路径服务什么（公开页是否构建、是否换了 --public-dir）。
 while [ "$attempt" -lt 50 ]; do
-  [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$HUB_PORT/probe.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D")" = 200 ] && break
+  [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$HUB_PORT/heron.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D")" = 200 ] && break
   attempt=$((attempt + 1)); sleep 0.2
 done
 # 200 也可能是别人占着 18085。本进程没打出 listening 就不是这次的 hub。
 grep -q 'hub listening' "$work/hub.log" || { echo "FAIL: hub did not bind $HUB_PORT"; cat "$work/hub.log"; exit 1; }
-printf '%s\n' "$admin_pw" | bin/probe-hub passwd --db "$work/accept.db" > "$work/passwd.log" 2>&1
+printf '%s\n' "$admin_pw" | bin/heron-hub passwd --db "$work/accept.db" > "$work/passwd.log" 2>&1
 
 : > "$work/jar"
 base="http://127.0.0.1:$HUB_PORT"
 rpc() {
   name=$1; body=$2
   curl -sS -o "$work/$name.json" -w '%{http_code}' -H 'Content-Type: application/json' \
-    -b "$work/jar" -c "$work/jar" --data "$body" "$base/probe.v1.AdminService/$name"
+    -b "$work/jar" -c "$work/jar" --data "$body" "$base/heron.v1.AdminService/$name"
 }
 [ "$(rpc Login "$(jq -nc --arg password "$admin_pw" '{password: $password}')")" = 200 ] || { echo "FAIL: login"; exit 1; }
 
@@ -377,11 +377,11 @@ node_field() { # node_field <node-name> <jq-expr> — 轮询直到 expr 为真�
 }
 list_nodes() { [ "$(rpc ListNodes '{}')" = 200 ]; }
 
-# 与 install.sh 的 confirm_service_stopped 同一判据：有效 uid 等于 probe-agent 的进程就是本服务的进程。
+# 与 install.sh 的 confirm_service_stopped 同一判据：有效 uid 等于 heron-agent 的进程就是本服务的进程。
 # 前提由 create_account（专供 agent 的 nologin 账户）与服务定义（systemd User=、OpenRC command_user）保证；
 # 服务定义若改以其他身份运行，两边要一起改。
-# 不按名字。Alpine 3.21 / BusyBox 1.37.0 / OpenRC 0.55.1 实测：pidof probe-agent 还会列出 pidof 自己
-# （comm=pidof，cmdline 含参数 probe-agent，有效 uid 0，exe 是 /bin/busybox）。同机 supervise-daemon
+# 不按名字。Alpine 3.21 / BusyBox 1.37.0 / OpenRC 0.55.1 实测：pidof heron-agent 还会列出 pidof 自己
+# （comm=pidof，cmdline 含参数 heron-agent，有效 uid 0，exe 是 /bin/busybox）。同机 supervise-daemon
 # 的 /proc/comm 是 supervise-daemo（15 字节截断）、有效 uid 0，不在那份 pidof 输出里。
 # 按有效 uid 扫描时 root 对照进程不在结果里。
 # 有效 uid（Uid 行第三列，与扫描用的同一列）不为 0，CapEff 含 bit 13（CAP_NET_RAW = 0x2000）。
@@ -392,7 +392,7 @@ list_nodes() { [ "$(rpc ListNodes '{}')" = 200 ]; }
 assert_service_identity() {
   cell=$1
   orb -m "$cell" -u root sh -c '
-    svc_uid=$(id -u probe-agent) || { echo "no probe-agent user"; exit 1; }
+    svc_uid=$(id -u heron-agent) || { echo "no heron-agent user"; exit 1; }
     pids=""
     for s in /proc/[0-9]*/status; do
       if euid=$(awk "\$1 == \"Uid:\" { print \$3; exit }" "$s" 2>/dev/null); then
@@ -402,7 +402,7 @@ assert_service_identity() {
       fi
     done
     set -- $pids
-    [ "$#" -eq 1 ] || { echo "want exactly one process with euid $svc_uid (probe-agent), got $#:$pids"; exit 1; }
+    [ "$#" -eq 1 ] || { echo "want exactly one process with euid $svc_uid (heron-agent), got $#:$pids"; exit 1; }
     pid=$1
     uid=$(awk "/^Uid:/ {print \$3; exit}" "/proc/$pid/status")
     cap=$(awk "/^CapEff:/ {print \$2; exit}" "/proc/$pid/status")
@@ -417,11 +417,11 @@ assert_service_identity() {
   cat "$work/ident-$cell.log"
 }
 
-# 配置目录必须是 root:probe-agent 0750：服务用户能读配置，但不能增删目录项，
-# root 对配置文件的后续操作才不会被链接劫持。配置文件属主必须是 probe-agent、0600：
+# 配置目录必须是 root:heron-agent 0750：服务用户能读配置，但不能增删目录项，
+# root 对配置文件的后续操作才不会被链接劫持。配置文件属主必须是 heron-agent、0600：
 # register 以 root 写入，不改属主服务就读不到。这两条由 install.sh 在 register 之后保证。
 # OpenRC 日志目录必须保持 root:root 0755：服务用户能增删目录项时，root 按路径做的改属主可以被换成别的文件。
-# 两个日志文件属主 probe-agent、0640，由 start_pre 的 checkpath 每次启动建立，不靠安装时建一次。
+# 两个日志文件属主 heron-agent、0640，由 start_pre 的 checkpath 每次启动建立，不靠安装时建一次。
 assert_layout() {
   cell=$1
   logs=$2
@@ -441,12 +441,12 @@ assert_layout() {
       echo "$path $full"
       [ "$got" = "$user $mode" ] || { echo "want $path owner $user mode $mode"; fail=1; }
     }
-    want /etc/probe-agent "root:probe-agent 750"
-    want_owner /etc/probe-agent/config.json probe-agent 600
+    want /etc/heron-agent "root:heron-agent 750"
+    want_owner /etc/heron-agent/config.json heron-agent 600
     if [ "'"$logs"'" = 1 ]; then
-      want /var/log/probe-agent "root:root 755"
-      want_owner /var/log/probe-agent/probe-agent.log probe-agent 640
-      want_owner /var/log/probe-agent/probe-agent.err probe-agent 640
+      want /var/log/heron-agent "root:root 755"
+      want_owner /var/log/heron-agent/heron-agent.log heron-agent 640
+      want_owner /var/log/heron-agent/heron-agent.err heron-agent 640
     fi
     exit "$fail"
   ' > "$work/$tag-$cell.log" 2>&1 || { echo "FAIL($cell): ownership"; cat "$work/$tag-$cell.log"; exit 1; }
@@ -498,9 +498,9 @@ run_cell() {
 
   # 加固不得让采集缩水：字段集合、内存总量与 bootId 与 root 对照一致；根分区是不是同一个由
   # assert_service_identity 按设备号判定。网卡只以合计计数器上报，逐网卡集合经接口观测不到，不作断言（§12）。
-  orb -m "$name" -u root /usr/local/bin/probe-agent register --hub "http://$HOST:$HUB_PORT" --key "$key" \
+  orb -m "$name" -u root /usr/local/bin/heron-agent register --hub "http://$HOST:$HUB_PORT" --key "$key" \
     --config /root/root-agent.json --name "$name-root" > "$work/regroot-$name.log" 2>&1 || { echo "FAIL($name): root register"; exit 1; }
-  orb -m "$name" -u root timeout 35 /usr/local/bin/probe-agent run --config /root/root-agent.json > "$work/runroot-$name.log" 2>&1 &
+  orb -m "$name" -u root timeout 35 /usr/local/bin/heron-agent run --config /root/root-agent.json > "$work/runroot-$name.log" 2>&1 &
   rootrun=$!
   node_field "$name-root" '.online == true and .metrics.cpuPct != null' || { echo "FAIL($name): root node did not come online"; exit 1; }
   jq -e --arg a "$name" --arg b "$name-root" '
@@ -519,8 +519,8 @@ run_cell() {
   orb -m "$name" -u root sh -c "$fetch_b" \
     > "$work/fetchb-$name.log" 2>&1 || { echo "FAIL($name): fetch rerun install.sh"; exit 1; }
   # 手工 register 以 root 重写配置，文件属主回到 root；人工编辑留下 0644。重跑必须都改回来，节点仍在线。
-  orb -m "$name" -u root chown root:root /etc/probe-agent/config.json
-  orb -m "$name" -u root chmod 0644 /etc/probe-agent/config.json
+  orb -m "$name" -u root chown root:root /etc/heron-agent/config.json
+  orb -m "$name" -u root chmod 0644 /etc/heron-agent/config.json
   orb -m "$name" -u root sh /root/install.sh --hub "http://$HOST:$HUB_PORT" --key "$key" --base-url "http://$HOST:$DIST_PORT/b" \
     > "$work/rerun-$name.log" 2>&1 || { echo "FAIL($name): rerun"; tail -20 "$work/rerun-$name.log"; exit 1; }
   grep -q 'keeping the current registration' "$work/rerun-$name.log" || { echo "FAIL($name): rerun did not keep registration"; exit 1; }
@@ -543,14 +543,14 @@ run_cell() {
     debian|ubuntu|rocky)
       # 判据与 hub 格的 verify_unit 相同：未知键名 verify 只告警、照样以 0 退出，有任何输出也算失败。
       rc=0
-      orb -m "$name" -u root systemd-analyze verify /etc/systemd/system/probe-agent.service > "$work/verify-$name.log" 2>&1 </dev/null || rc=$?
+      orb -m "$name" -u root systemd-analyze verify /etc/systemd/system/heron-agent.service > "$work/verify-$name.log" 2>&1 </dev/null || rc=$?
       if [ "$rc" != 0 ] || [ -s "$work/verify-$name.log" ]; then
         echo "FAIL($name): systemd-analyze verify (exit $rc)"; cat "$work/verify-$name.log"; exit 1
       fi;;
     alpine)
       # 删日志目录后重启仍须健康：start_pre 每次启动都建，不靠安装时建一次。
-      orb -m "$name" -u root rm -rf /var/log/probe-agent
-      orb -m "$name" -u root rc-service probe-agent restart > "$work/logrestart-$name.log" 2>&1 \
+      orb -m "$name" -u root rm -rf /var/log/heron-agent
+      orb -m "$name" -u root rc-service heron-agent restart > "$work/logrestart-$name.log" 2>&1 \
         || { echo "FAIL($name): restart after log dir removed"; cat "$work/logrestart-$name.log"; exit 1; }
       node_field "$name" '.online == true and .metrics.cpuPct != null' || { echo "FAIL($name): not healthy after log restart"; exit 1; }
       assert_layout "$name" 1 layout-restart
@@ -568,7 +568,7 @@ run_cell() {
       # Alpine 3.21 / OpenRC 0.55.1 实测 orb start 返回后约 15 秒监督进程才出现。
       i=0
       until orb -m "$name" -u root sh -c '
-        uid=$(id -u probe-agent) || exit 1
+        uid=$(id -u heron-agent) || exit 1
         for s in /proc/[0-9]*/status; do
           euid=$(awk "\$1 == \"Uid:\" { print \$3; exit }" "$s" 2>/dev/null) || continue
           [ "$euid" = "$uid" ] && exit 0
@@ -584,26 +584,26 @@ run_cell() {
   orb -m "$name" -u root sh /root/install.sh --uninstall --purge > "$work/uninstall-$name.log" 2>&1 || { echo "FAIL($name): uninstall"; tail -20 "$work/uninstall-$name.log"; exit 1; }
   case "$distro" in
     debian|ubuntu|rocky)
-      orb -m "$name" -u root sh -c 'test ! -f /etc/systemd/system/probe-agent.service && ! systemctl is-enabled probe-agent >/dev/null 2>&1' \
+      orb -m "$name" -u root sh -c 'test ! -f /etc/systemd/system/heron-agent.service && ! systemctl is-enabled heron-agent >/dev/null 2>&1' \
         || { echo "FAIL($name): systemd service still present after uninstall"; exit 1; };;
     alpine)
-      orb -m "$name" -u root sh -c 'test ! -f /etc/init.d/probe-agent && ! rc-update show default 2>/dev/null | grep -q probe-agent' \
+      orb -m "$name" -u root sh -c 'test ! -f /etc/init.d/heron-agent && ! rc-update show default 2>/dev/null | grep -q heron-agent' \
         || { echo "FAIL($name): openrc service still present after uninstall"; exit 1; };;
   esac
-  # BusyBox 1.37.0（Alpine 3.21，同机 OpenRC 0.55.1）的 pidof 会把参数 probe-agent 匹配到 pidof 自己。
-  # 卸载后用户已删除，不能再按有效 uid 扫；comm 精确等于 probe-agent 才是残留的 agent 进程。
+  # BusyBox 1.37.0（Alpine 3.21，同机 OpenRC 0.55.1）的 pidof 会把参数 heron-agent 匹配到 pidof 自己。
+  # 卸载后用户已删除，不能再按有效 uid 扫；comm 精确等于 heron-agent 才是残留的 agent 进程。
   orb -m "$name" -u root sh -c '
     left=""
     for s in /proc/[0-9]*/comm; do
       c=$(tr -d "\n" < "$s" 2>/dev/null || true)
-      if [ "$c" = probe-agent ]; then
+      if [ "$c" = heron-agent ]; then
         p=${s#/proc/}
         left="$left ${p%/comm}"
       fi
     done
-    if [ -n "$left" ]; then echo "leftover probe-agent:$left"; exit 1; fi
-    if [ -e /var/log/probe-agent ]; then echo "leftover log dir"; exit 1; fi
-    test ! -e /usr/local/bin/probe-agent && ! id probe-agent >/dev/null 2>&1 && ! grep -q "^probe-agent:" /etc/group && test ! -e /etc/probe-agent
+    if [ -n "$left" ]; then echo "leftover heron-agent:$left"; exit 1; fi
+    if [ -e /var/log/heron-agent ]; then echo "leftover log dir"; exit 1; fi
+    test ! -e /usr/local/bin/heron-agent && ! id heron-agent >/dev/null 2>&1 && ! grep -q "^heron-agent:" /etc/group && test ! -e /etc/heron-agent
   ' || { echo "FAIL($name): purge left process, binary, user, group, config, or log dir"; exit 1; }
 
   orb delete -f "$name" > /dev/null 2>&1

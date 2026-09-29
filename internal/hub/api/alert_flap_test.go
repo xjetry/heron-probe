@@ -7,7 +7,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 )
 
 // ListAlertRules 的状态带 flapping：从未恢复过的普通 pending（离线未满节点宽限）为 false；恢复后 10 分钟内再次离线、
@@ -16,9 +16,9 @@ func TestListAlertRulesMarksFlappingPending(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
-	h.update(t, &probev1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(60)})
-	if _, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&probev1.SaveAlertRuleRequest{Rule: &probev1.AlertRule{
-		Name: "离线", Kind: probev1.AlertKind_ALERT_KIND_OFFLINE, Enabled: true, NodeIds: []int64{id}}})); err != nil {
+	h.update(t, &heronv1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(60)})
+	if _, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&heronv1.SaveAlertRuleRequest{Rule: &heronv1.AlertRule{
+		Name: "离线", Kind: heronv1.AlertKind_ALERT_KIND_OFFLINE, Enabled: true, NodeIds: []int64{id}}})); err != nil {
 		t.Fatal(err)
 	}
 	sweep := func() {
@@ -29,7 +29,7 @@ func TestListAlertRulesMarksFlappingPending(t *testing.T) {
 	}
 	state := func(label, want string, flapping bool) {
 		t.Helper()
-		resp, err := h.admin.ListAlertRules(t.Context(), connect.NewRequest(&probev1.ListAlertRulesRequest{}))
+		resp, err := h.admin.ListAlertRules(t.Context(), connect.NewRequest(&heronv1.ListAlertRulesRequest{}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -38,17 +38,17 @@ func TestListAlertRulesMarksFlappingPending(t *testing.T) {
 			t.Fatalf("%s: states = %v, want %s flapping=%v", label, states, want, flapping)
 		}
 	}
-	h.live.Observe(id, "", &probev1.Metrics{})
+	h.live.Observe(id, "", &heronv1.Metrics{})
 	h.clk.Advance(31 * time.Second)
 	sweep()
 	state("offline within the node grace", "pending", false)
 	h.clk.Advance(30 * time.Second)
 	sweep()
 	state("offline past the node grace", "firing", false)
-	h.live.Observe(id, "", &probev1.Metrics{})
+	h.live.Observe(id, "", &heronv1.Metrics{})
 	sweep()
 	h.clk.Advance(10 * time.Minute)
-	h.live.Observe(id, "", &probev1.Metrics{})
+	h.live.Observe(id, "", &heronv1.Metrics{})
 	sweep()
 	h.clk.Advance(61 * time.Second)
 	sweep()

@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 )
 
-func (s *Store) factsTx(nodeID int64, hash uint64, f *probev1.Facts) func(*sql.Tx) error {
+func (s *Store) factsTx(nodeID int64, hash uint64, f *heronv1.Facts) func(*sql.Tx) error {
 	return func(tx *sql.Tx) error {
 		exists, err := nodeExistsTx(tx, nodeID)
 		if err != nil {
@@ -27,12 +27,12 @@ func (s *Store) factsTx(nodeID int64, hash uint64, f *probev1.Facts) func(*sql.T
 	}
 }
 
-func (s *Store) UpsertFacts(ctx context.Context, nodeID int64, hash uint64, f *probev1.Facts) error {
+func (s *Store) UpsertFacts(ctx context.Context, nodeID int64, hash uint64, f *heronv1.Facts) error {
 	return s.write(ctx, s.factsTx(nodeID, hash, f))
 }
 
 // UpsertFactsAsync 供上报路径使用：投递即返回，上报不等待数据库。
-func (s *Store) UpsertFactsAsync(nodeID int64, hash uint64, f *probev1.Facts, done func(error)) {
+func (s *Store) UpsertFactsAsync(nodeID int64, hash uint64, f *heronv1.Facts, done func(error)) {
 	s.writeAsync(s.factsTx(nodeID, hash, f), done)
 }
 

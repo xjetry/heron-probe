@@ -1,6 +1,6 @@
 import { create } from "@bufbuild/protobuf";
 import { afterEach, expect, it } from "vitest";
-import { PublicSiteSchema } from "../gen/probe/v1/public_pb";
+import { PublicSiteSchema } from "../gen/heron/v1/public_pb";
 import { applySite, DEFAULT_TITLE } from "./site";
 
 afterEach(() => {

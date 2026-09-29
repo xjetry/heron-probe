@@ -19,10 +19,10 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/hub/theme"
-	. "github.com/xjetry/probe/internal/hub/theme/themetest"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/theme"
+	. "github.com/xjetry/heron-probe/internal/hub/theme/themetest"
 )
 
 // newThemeHarness 是配了 --theme-origin 的 hub；newHarness 与 serve 的默认一样没有配。
@@ -46,11 +46,11 @@ func TestThemeWithoutContentCannotEnable(t *testing.T) {
 	if _, err := db.Exec("DELETE FROM theme_file; DELETE FROM theme_package"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = h.admin.EnableTheme(t.Context(), connect.NewRequest(&probev1.EnableThemeRequest{Id: "a"}))
+	_, err = h.admin.EnableTheme(t.Context(), connect.NewRequest(&heronv1.EnableThemeRequest{Id: "a"}))
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "重新上传") {
 		t.Fatalf("empty theme enable error=%v", err)
 	}
-	status, err := h.admin.GetBackupStatus(t.Context(), connect.NewRequest(&probev1.GetBackupStatusRequest{}))
+	status, err := h.admin.GetBackupStatus(t.Context(), connect.NewRequest(&heronv1.GetBackupStatusRequest{}))
 	if err != nil || !slices.Equal(status.Msg.ThemesWithoutPackage, []string{"a"}) {
 		t.Fatalf("missing packages not exposed: %v %v", status, err)
 	}
@@ -69,27 +69,27 @@ func TestLegacyThemeWithoutPackageCanEnable(t *testing.T) {
 	if _, err := db.Exec("DELETE FROM theme_package"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.admin.EnableTheme(t.Context(), connect.NewRequest(&probev1.EnableThemeRequest{Id: "legacy"})); err != nil {
+	if _, err := h.admin.EnableTheme(t.Context(), connect.NewRequest(&heronv1.EnableThemeRequest{Id: "legacy"})); err != nil {
 		t.Fatalf("legacy theme with files but no package cannot be enabled: %v", err)
 	}
-	status, err := h.admin.GetBackupStatus(t.Context(), connect.NewRequest(&probev1.GetBackupStatusRequest{}))
+	status, err := h.admin.GetBackupStatus(t.Context(), connect.NewRequest(&heronv1.GetBackupStatusRequest{}))
 	if err != nil || !slices.Equal(status.Msg.ThemesWithoutPackage, []string{"legacy"}) {
 		t.Fatalf("enabled legacy theme missing from backup status: %v %v", status, err)
 	}
 }
 
-func (h *harness) upload(t *testing.T, pkg []byte, expect string) (*probev1.Theme, error) {
+func (h *harness) upload(t *testing.T, pkg []byte, expect string) (*heronv1.Theme, error) {
 	t.Helper()
-	resp, err := h.admin.UploadTheme(t.Context(), connect.NewRequest(&probev1.UploadThemeRequest{Package: pkg, ExpectId: expect}))
+	resp, err := h.admin.UploadTheme(t.Context(), connect.NewRequest(&heronv1.UploadThemeRequest{Package: pkg, ExpectId: expect}))
 	if err != nil {
 		return nil, err
 	}
 	return resp.Msg.GetTheme(), nil
 }
 
-func (h *harness) themes(t *testing.T) []*probev1.Theme {
+func (h *harness) themes(t *testing.T) []*heronv1.Theme {
 	t.Helper()
-	resp, err := h.admin.ListThemes(t.Context(), connect.NewRequest(&probev1.ListThemesRequest{}))
+	resp, err := h.admin.ListThemes(t.Context(), connect.NewRequest(&heronv1.ListThemesRequest{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestThemeRoundTrip(t *testing.T) {
 		Manifest(t, "night", "Night", "1.2.0", "preview.webp"),
 		File("index.html", "<!doctype html>night"),
 		Entry{Name: "assets/", Mode: fs.ModeDir | 0o755},
-		File("assets/app.js", "fetch('/probe.v1.PublicService/GetSnapshot')"),
+		File("assets/app.js", "fetch('/heron.v1.PublicService/GetSnapshot')"),
 		File("assets/empty.css", ""),
 		Entry{Name: "preview.webp", Content: []byte("RIFF\x00\x00\x00\x00WEBPVP8 ")},
 	)
@@ -140,7 +140,7 @@ func TestThemeRoundTrip(t *testing.T) {
 	if err != nil || !bytes.Equal(original, pkg) {
 		t.Fatalf("UploadTheme did not preserve original zip: %v", err)
 	}
-	want := &probev1.Theme{Id: "night", Name: "Night", Version: "1.2.0", UploadedAt: h.clk.Now().Unix(), HasPreview: true}
+	want := &heronv1.Theme{Id: "night", Name: "Night", Version: "1.2.0", UploadedAt: h.clk.Now().Unix(), HasPreview: true}
 	if !proto.Equal(got, want) {
 		t.Fatalf("UploadTheme = %v, want %v", got, want)
 	}
@@ -150,20 +150,20 @@ func TestThemeRoundTrip(t *testing.T) {
 	if rows := h.themeRows(t); rows != [2]int64{1, 5} {
 		t.Fatalf("theme, theme_file rows = %v, want [1 5] (directories are not stored)", rows)
 	}
-	if _, err := h.admin.EnableTheme(ctx, connect.NewRequest(&probev1.EnableThemeRequest{Id: "night"})); err != nil {
+	if _, err := h.admin.EnableTheme(ctx, connect.NewRequest(&heronv1.EnableThemeRequest{Id: "night"})); err != nil {
 		t.Fatal(err)
 	}
 	if got := h.enabledThemes(t); !slices.Equal(got, []string{"night"}) {
 		t.Fatalf("enabled = %v, want [night]", got)
 	}
-	preview, err := h.admin.GetThemePreview(ctx, connect.NewRequest(&probev1.GetThemePreviewRequest{Id: "night"}))
+	preview, err := h.admin.GetThemePreview(ctx, connect.NewRequest(&heronv1.GetThemePreviewRequest{Id: "night"}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if preview.Msg.GetContentType() != "image/webp" || !bytes.HasPrefix(preview.Msg.GetContent(), []byte("RIFF")) {
 		t.Fatalf("GetThemePreview = %q %q", preview.Msg.GetContentType(), preview.Msg.GetContent())
 	}
-	if _, err := h.admin.DeleteTheme(ctx, connect.NewRequest(&probev1.DeleteThemeRequest{Id: "night"})); err != nil {
+	if _, err := h.admin.DeleteTheme(ctx, connect.NewRequest(&heronv1.DeleteThemeRequest{Id: "night"})); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow("SELECT content FROM theme_package WHERE theme_id = 'night'").Scan(&original); !errors.Is(err, sql.ErrNoRows) {
@@ -180,15 +180,15 @@ func TestThemeRoundTrip(t *testing.T) {
 		call func() error
 	}{
 		{"preview", func() error {
-			_, err := h.admin.GetThemePreview(ctx, connect.NewRequest(&probev1.GetThemePreviewRequest{Id: "night"}))
+			_, err := h.admin.GetThemePreview(ctx, connect.NewRequest(&heronv1.GetThemePreviewRequest{Id: "night"}))
 			return err
 		}},
 		{"enable", func() error {
-			_, err := h.admin.EnableTheme(ctx, connect.NewRequest(&probev1.EnableThemeRequest{Id: "night"}))
+			_, err := h.admin.EnableTheme(ctx, connect.NewRequest(&heronv1.EnableThemeRequest{Id: "night"}))
 			return err
 		}},
 		{"delete", func() error {
-			_, err := h.admin.DeleteTheme(ctx, connect.NewRequest(&probev1.DeleteThemeRequest{Id: "night"}))
+			_, err := h.admin.DeleteTheme(ctx, connect.NewRequest(&heronv1.DeleteThemeRequest{Id: "night"}))
 			return err
 		}},
 	} {
@@ -199,7 +199,7 @@ func TestThemeRoundTrip(t *testing.T) {
 	if _, err := h.upload(t, Minimal(t, "plain"), ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.admin.GetThemePreview(ctx, connect.NewRequest(&probev1.GetThemePreviewRequest{Id: "plain"})); codeOf(err) != connect.CodeNotFound || !strings.Contains(err.Error(), "no preview") {
+	if _, err := h.admin.GetThemePreview(ctx, connect.NewRequest(&heronv1.GetThemePreviewRequest{Id: "plain"})); codeOf(err) != connect.CodeNotFound || !strings.Contains(err.Error(), "no preview") {
 		t.Fatalf("preview of a theme without one: %v, want NotFound saying it has no preview", err)
 	}
 }
@@ -299,7 +299,7 @@ func TestUploadThemeExpectIDAndReplacement(t *testing.T) {
 	if _, err := h.upload(t, Minimal(t, "a", File("old.js", "old"), File("more.js", "old")), ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.admin.EnableTheme(ctx, connect.NewRequest(&probev1.EnableThemeRequest{Id: "a"})); err != nil {
+	if _, err := h.admin.EnableTheme(ctx, connect.NewRequest(&heronv1.EnableThemeRequest{Id: "a"})); err != nil {
 		t.Fatal(err)
 	}
 	before := h.themeRows(t)
@@ -318,7 +318,7 @@ func TestUploadThemeExpectIDAndReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &probev1.Theme{Id: "a", Name: "A v2", Version: "2.0.0", UploadedAt: h.clk.Now().Unix(), Enabled: true, HasPreview: true}
+	want := &heronv1.Theme{Id: "a", Name: "A v2", Version: "2.0.0", UploadedAt: h.clk.Now().Unix(), Enabled: true, HasPreview: true}
 	if !proto.Equal(got, want) {
 		t.Fatalf("replacement = %v, want %v", got, want)
 	}
@@ -366,7 +366,7 @@ func TestUploadThemeAdmitsOneAtATime(t *testing.T) {
 	probe := func() error {
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
-		_, err := h.admin.UploadTheme(ctx, connect.NewRequest(&probev1.UploadThemeRequest{Package: []byte("not a zip")}))
+		_, err := h.admin.UploadTheme(ctx, connect.NewRequest(&heronv1.UploadThemeRequest{Package: []byte("not a zip")}))
 		return err
 	}
 	if err := probe(); codeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "another theme upload is in progress") {
@@ -419,7 +419,7 @@ func TestEnableThemeIsExclusive(t *testing.T) {
 		}
 	}
 	enable := func(id string) error {
-		_, err := h.admin.EnableTheme(ctx, connect.NewRequest(&probev1.EnableThemeRequest{Id: id}))
+		_, err := h.admin.EnableTheme(ctx, connect.NewRequest(&heronv1.EnableThemeRequest{Id: id}))
 		return err
 	}
 	if err := enable("a"); err != nil {

@@ -2,7 +2,7 @@ import { createClient } from "@connectrpc/connect";
 import { useQuery, useTransport } from "@connectrpc/connect-query";
 import { useState } from "react";
 import { Link } from "react-router";
-import { AdminService, SecurityActionKind } from "../gen/probe/v1/admin_pb";
+import { AdminService, SecurityActionKind } from "../gen/heron/v1/admin_pb";
 import { errorText } from "../api/auth";
 import { passkeyCredential } from "../lib/passkey";
 
@@ -54,7 +54,7 @@ export function Security() {
   });
   if (changed) return <section className="card"><h1>认证方式已更新</h1><p>全部旧会话已撤销。请先保存恢复码，再重新登录。</p>{codes.length > 0 && <><p>恢复码只显示一次，每个只能使用一次。请离线保管，不要放在同一台认证设备上。</p><pre>{codes.join("\n")}</pre><button onClick={() => {
     const url = URL.createObjectURL(new Blob([codes.join("\n") + "\n"], { type: "text/plain" }));
-    const link = document.createElement("a"); link.href = url; link.download = "probe-recovery-codes.txt"; link.click(); URL.revokeObjectURL(url);
+    const link = document.createElement("a"); link.href = url; link.download = "heron-recovery-codes.txt"; link.click(); URL.revokeObjectURL(url);
   }}>下载恢复码</button></>}<Link to="/login">重新登录</Link></section>;
   return <section><h1>账户安全</h1><p>Passkey 可无密码登录；启用 TOTP 后，密码登录必须同时提供动态验证码或一次性恢复码。任何认证器变更都会撤销全部会话。</p>
     {(error || security.error) && <p role="alert" className="error">{error || errorText(security.error)}</p>}

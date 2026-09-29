@@ -17,17 +17,17 @@ import (
 
 	"connectrpc.com/connect"
 
-	probev1 "github.com/xjetry/probe/gen/probe/v1"
-	"github.com/xjetry/probe/gen/probe/v1/probev1connect"
-	"github.com/xjetry/probe/internal/clock"
-	"github.com/xjetry/probe/internal/hub/auth"
-	"github.com/xjetry/probe/internal/hub/live"
-	"github.com/xjetry/probe/internal/hub/metric"
-	"github.com/xjetry/probe/internal/hub/ratelimit"
-	"github.com/xjetry/probe/internal/hub/sanitize"
-	"github.com/xjetry/probe/internal/hub/store"
-	"github.com/xjetry/probe/internal/hub/traffic"
-	"github.com/xjetry/probe/internal/probelimit"
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
+	"github.com/xjetry/heron-probe/internal/hub/live"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/ratelimit"
+	"github.com/xjetry/heron-probe/internal/hub/sanitize"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/traffic"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 )
 
 // Report 的 protobuf 请求由 Metrics 数值标量、boot_id、Facts、有界版本号/摘要和探测结果组成。
@@ -70,12 +70,12 @@ type Config struct {
 
 type storeWriter interface {
 	WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, error)
-	UpsertFactsAsync(nodeID int64, hash uint64, f *probev1.Facts, done func(error))
+	UpsertFactsAsync(nodeID int64, hash uint64, f *heronv1.Facts, done func(error))
 }
 
 type TaskSource interface {
 	Version() uint64
-	TasksFor(nodeID int64) *probev1.ProbeTasks
+	TasksFor(nodeID int64) *heronv1.ProbeTasks
 	Assigned(nodeID int64, taskID uint64) bool
 	Forget(nodeID int64)
 }
@@ -146,12 +146,12 @@ const _ = uint(probelimit.MaxResultsPerReport*probelimit.MinIntervalS*reportsPer
 // agent，上报按节点限速（Report 方法体里的 s.limit）。路径判定与 connect 分派用同一个 r.URL.Path 全等比较，
 // 所以到达 Register 方法体的请求都先经过了限流。
 func (s *Service) Handler() (string, http.Handler) {
-	path, h := probev1connect.NewAgentServiceHandler(s,
+	path, h := heronv1connect.NewAgentServiceHandler(s,
 		connect.WithInterceptors(s.authInterceptor()),
 		connect.WithReadMaxBytes(maxBody))
 	register := ratelimit.BySource(s.registerLimit, s.cfg.TrustedProxies, s.clk, h)
 	return path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == probev1connect.AgentServiceRegisterProcedure {
+		if r.URL.Path == heronv1connect.AgentServiceRegisterProcedure {
 			register.ServeHTTP(w, r)
 			return
 		}
@@ -185,10 +185,10 @@ func (i authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	s := i.service
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
 		switch req.Spec().Procedure {
-		case probev1connect.AgentServiceRegisterProcedure:
+		case heronv1connect.AgentServiceRegisterProcedure:
 			// 凭据是请求体里的窗口 key，由 Register 裁决。
 			return next(ctx, req)
-		case probev1connect.AgentServiceReportProcedure:
+		case heronv1connect.AgentServiceReportProcedure:
 			s.stateMu.RLock()
 			defer s.stateMu.RUnlock()
 			tok, ok := strings.CutPrefix(req.Header().Get("Authorization"), "Bearer ")
@@ -206,7 +206,7 @@ func (i authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	}
 }
 
-func (s *Service) Register(ctx context.Context, req *connect.Request[probev1.RegisterRequest]) (*connect.Response[probev1.RegisterResponse], error) {
+func (s *Service) Register(ctx context.Context, req *connect.Request[heronv1.RegisterRequest]) (*connect.Response[heronv1.RegisterResponse], error) {
 	// 窗口裁决的失败计数与限速按同一个来源键（IPv4 按地址、IPv6 按 /64）：由 Handler 里的 ratelimit.BySource 算出并放进 ctx。
 	// 取不到只可能是挂载绕过了 Handler，属于装配错误。
 	from, ok := ratelimit.SourceOf(ctx)
@@ -222,7 +222,7 @@ func (s *Service) Register(ctx context.Context, req *connect.Request[probev1.Reg
 		return nil, unauthenticated()
 	}
 	// 继承的 all_nodes 任务超限只在窗口与 key 都通过之后才会发生（store.RegisterNode 先判窗口与 key，再 insertNode），
-	// 调用方已持有效 key，说明原文可以给它：修复要由管理员减少 all_nodes 任务，probe-agent register 把原文打到 stderr。
+	// 调用方已持有效 key，说明原文可以给它：修复要由管理员减少 all_nodes 任务，heron-agent register 把原文打到 stderr。
 	if errors.Is(err, store.ErrNodeLimit) {
 		return nil, connect.NewError(connect.CodeResourceExhausted, err)
 	}
@@ -231,10 +231,10 @@ func (s *Service) Register(ctx context.Context, req *connect.Request[probev1.Reg
 		return nil, connect.NewError(connect.CodeInternal, errors.New("registration failed"))
 	}
 	s.log.Info("node registered", "node", id, "name", name, "source", auth.DescribeSource(from))
-	return connect.NewResponse(&probev1.RegisterResponse{NodeId: id, Token: tok}), nil
+	return connect.NewResponse(&heronv1.RegisterResponse{NodeId: id, Token: tok}), nil
 }
 
-func (s *Service) Report(ctx context.Context, req *connect.Request[probev1.ReportRequest]) (*connect.Response[probev1.ReportResponse], error) {
+func (s *Service) Report(ctx context.Context, req *connect.Request[heronv1.ReportRequest]) (*connect.Response[heronv1.ReportResponse], error) {
 	id := ctx.Value(nodeKey{}).(int64)
 	if !s.limit.Allow(id, s.clk.Mono()) {
 		return nil, connect.NewError(connect.CodeResourceExhausted, errors.New("reporting faster than twice the assigned interval"))
@@ -264,7 +264,7 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[probev1.Repor
 	}
 	s.foldResults(id, req.Msg.GetProbeResults())
 	want := s.reconcileFacts(id, ctx.Value(nodeTokenKey{}).(string), req.Msg.GetFactsHash(), req.Msg.GetFacts())
-	resp := &probev1.ReportResponse{
+	resp := &heronv1.ReportResponse{
 		ReportIntervalMs: uint32(s.Interval() / time.Millisecond),
 		WantFacts:        want,
 	}
@@ -278,7 +278,7 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[probev1.Repor
 // foldResults 按归属与迟到预算逐条准入。task_id 未分配给本节点的结果不得写进本节点的历史：
 // token 被挪用时它是伪造的，分配撤销后仍在途时它属于已不承担的任务。
 // 超龄结果可能落在已冻结的分钟里；测量时刻由收到时刻减 age_ms 得到。
-func (s *Service) foldResults(id int64, rs []*probev1.ProbeResult) {
+func (s *Service) foldResults(id int64, rs []*heronv1.ProbeResult) {
 	if len(rs) == 0 {
 		return
 	}
@@ -302,7 +302,7 @@ func (s *Service) foldResults(id int64, rs []*probev1.ProbeResult) {
 }
 
 // reconcileFacts 是电平触发的对账：agent 每次带摘要，hub 只在不一致时索要。
-func (s *Service) reconcileFacts(id int64, token string, hash uint64, f *probev1.Facts) bool {
+func (s *Service) reconcileFacts(id int64, token string, hash uint64, f *heronv1.Facts) bool {
 	if f != nil {
 		sanitizeFacts(f)
 		s.writer.UpsertFactsAsync(id, hash, f, func(err error) {
