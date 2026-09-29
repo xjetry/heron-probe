@@ -530,6 +530,10 @@ case "$api_token" in probe_at_*) ;; *) echo "FAIL: API token lacks the probe_at_
 [ "$(rpc GetSnapshot '{}')" = 401 ] || { echo "FAIL: session survived logout"; exit 1; }
 # token 与会话是两条独立口径：登出不影响 token。
 [ "$(bearer GetSnapshot '{}')" = 200 ] || { echo "FAIL: API token stopped working after logout"; cat "$work/bearer-GetSnapshot.json"; exit 1; }
+# 任务版本跨重启存活：停机前一刻取版本，重启后在任何修改之前核对。UpdateNode 会推进版本（标签可能改变节点清单，
+# bumpProbeVersion 的不变式只要求清单变时必变），所以不能拿更早记下的值去比。
+[ "$(bearer ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks before restart"; cat "$work/bearer-ListProbeTasks.json"; exit 1; }
+restart_task_version=$(jq -r '.version' "$work/bearer-ListProbeTasks.json")
 
 kill "$hub"; wait "$hub"
 hub=""
@@ -572,6 +576,9 @@ done
 # token 跨重启存活，只读、不能写；卡片取自 hub 实际下发的那份，其中的例子逐个在真实数据上跑。
 [ "$(bearer ListNodes '{}')" = 200 ] || { echo "FAIL: API token lost across restart"; cat "$work/bearer-ListNodes.json"; exit 1; }
 jq -e '(.nodes | length) == 2' "$work/bearer-ListNodes.json" > /dev/null || { echo "FAIL: ListNodes via token"; cat "$work/bearer-ListNodes.json"; exit 1; }
+[ "$(bearer ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks after restart"; exit 1; }
+jq -e --arg version "$restart_task_version" --arg icmp "$icmp_task" --arg tcp "$tcp_task" '.version == $version and (.tasks | length) == 2 and all(.tasks[]; (.nodeIds | length) == 2) and ([.tasks[].task.id] | sort) == ([$icmp, $tcp] | sort)' "$work/bearer-ListProbeTasks.json" > /dev/null || { echo "FAIL: tasks lost across restart"; cat "$work/bearer-ListProbeTasks.json"; exit 1; }
+echo "probe task version across restart: $restart_task_version"
 [ "$(bearer CreateNode '{"name":"via-token"}')" = 403 ] || { echo "FAIL: API token was allowed to write"; cat "$work/bearer-CreateNode.json"; exit 1; }
 jq -e '.code == "permission_denied"' "$work/bearer-CreateNode.json" > /dev/null || { echo "FAIL: write via token not permission_denied"; exit 1; }
 [ "$(bearer GetApiReference '{}')" = 200 ] || { echo "FAIL: GetApiReference via token"; exit 1; }
@@ -607,12 +614,9 @@ jq -e '.node.billing | .daysLeft >= 59 and .daysLeft <= 60' "$work/UpdateNode.js
 wait_alert "$node1" recovered "$wait_expiry_s"
 jq -e --arg n "$node1" --arg exp "$later" '[.events[] | select(.nodeId == $n and .transition == "recovered")][0].summary == "节点 e2e-amd64 到期日已更新为 " + $exp + "（规则 e2e expiry）"' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: expiry recovered summary"; cat "$work/ListAlertEvents.json"; exit 1; }
 jq -e '[.events[] | select(.ruleId != null)] | length == 4 and all(.[]; any(.deliveries[]; (.ok // false) == true))' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: alert events after renewal"; cat "$work/ListAlertEvents.json"; exit 1; }
-[ "$(rpc ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks after restart"; exit 1; }
-jq -e --arg version "$task_version" --arg icmp "$icmp_task" --arg tcp "$tcp_task" '.version == $version and (.tasks | length) == 2 and all(.tasks[]; (.nodeIds | length) == 2) and ([.tasks[].task.id] | sort) == ([$icmp, $tcp] | sort)' "$work/ListProbeTasks.json" > /dev/null || { echo "FAIL: tasks lost across restart"; cat "$work/ListProbeTasks.json"; exit 1; }
-echo "probe task version after restart: $(jq -r '.version' "$work/ListProbeTasks.json")"
 [ "$(rpc DeleteProbeTask "$(jq -nc --arg id "$tcp_task" '{id: $id}')")" = 200 ] || { echo "FAIL: DeleteProbeTask"; exit 1; }
 [ "$(rpc ListProbeTasks '{}')" = 200 ] || { echo "FAIL: ListProbeTasks after deletion"; exit 1; }
-jq -e --arg version "$task_version" --arg icmp "$icmp_task" '(.version | tonumber) > ($version | tonumber) and (.tasks | length) == 1 and .tasks[0].task.id == $icmp' "$work/ListProbeTasks.json" > /dev/null || { echo "FAIL: task deletion not reflected"; cat "$work/ListProbeTasks.json"; exit 1; }
+jq -e --arg version "$restart_task_version" --arg icmp "$icmp_task" '(.version | tonumber) > ($version | tonumber) and (.tasks | length) == 1 and .tasks[0].task.id == $icmp' "$work/ListProbeTasks.json" > /dev/null || { echo "FAIL: task deletion not reflected"; cat "$work/ListProbeTasks.json"; exit 1; }
 [ "$(rpc QueryProbes "$probe_body")" = 200 ] || { echo "FAIL: QueryProbes after deletion"; exit 1; }
 echo "probe task version after deletion: $(jq -r '.version' "$work/ListProbeTasks.json")"
 # 删除清单中的任务不删除历史，重启前采集的两个任务仍须可查询。
@@ -630,6 +634,11 @@ jq -e --arg id "$node1" --arg tx "$tx_before" --argjson before "$traffic_before"
 jq -e 'any(.series[] | select(.name == "tx_bytes") | .samples[]; .n > 0 and .sum != null and .mean == null)' "$work/QueryMetrics.json" > /dev/null || { echo "FAIL: tx_bytes minute sums missing"; cat "$work/QueryMetrics.json"; exit 1; }
 [ "$(rpc GetStorageStats '{}')" = 200 ] || { echo "FAIL: GetStorageStats"; cat "$work/GetStorageStats.json"; exit 1; }
 jq -e '(.dbBytes | tonumber) > 0 and (.tables | length) > 0' "$work/GetStorageStats.json" > /dev/null || { echo "FAIL: GetStorageStats shape"; cat "$work/GetStorageStats.json"; exit 1; }
+# 停机前最后一次读事件：规则事件仍是 4 条；总数（含登录、认证变更等系统事件）留给下面与库里的行数对照。
+# Logout 不写事件，所以这之后到停机，alert_event 不再增长。
+[ "$(rpc ListAlertEvents '{"limit": 500}')" = 200 ] || { echo "FAIL: ListAlertEvents before shutdown"; exit 1; }
+jq -e '(.events | length) < 500 and ([.events[] | select(.ruleId != null)] | length == 4)' "$work/ListAlertEvents.json" > /dev/null || { echo "FAIL: rule events before shutdown"; cat "$work/ListAlertEvents.json"; exit 1; }
+events_total=$(jq '.events | length' "$work/ListAlertEvents.json")
 [ "$(rpc Logout '{}')" = 200 ] || { echo "FAIL: logout after restart"; exit 1; }
 kill "$hub"; wait "$hub"
 hub=""
@@ -659,7 +668,7 @@ sed -n '/^db_bytes: /d; s/^\([a-z0-9_]*\): [0-9][0-9]*$/\1/p' "$work/stats.txt" 
 [ "$(get theme)" = 0 ] && [ "$(get theme_file)" = 0 ] || { echo "FAIL: the deleted theme left rows"; exit 1; }
 [ "$(get alert_rule)" = 2 ] || { echo "FAIL: alert rule count"; exit 1; }
 [ "$(get alert_rule_node)" = 2 ] || { echo "FAIL: alert scope count"; exit 1; }
-[ "$(get alert_event)" = 4 ] || { echo "FAIL: alert event count"; exit 1; }
+[ "$(get alert_event)" = "$events_total" ] || { echo "FAIL: alert event count (storage $(get alert_event), API $events_total)"; exit 1; }
 [ "$(get alert_delivery)" = 4 ] || { echo "FAIL: alert delivery count"; exit 1; }
 [ "$(get notify_channel)" = 1 ] || { echo "FAIL: channel count"; exit 1; }
 [ "$(get probe_task)" = 1 ] || { echo "FAIL: task count"; exit 1; }
