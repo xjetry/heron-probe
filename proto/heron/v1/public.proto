@@ -52,6 +52,10 @@ message PublicSite {
   string logo = 4;
   // 放在公开页内置样式之后的 CSS；不含 "</"。
   string custom_css = 5;
+  // 应答这次请求的 origin 上管理面板的入口路径（/admin/），供公开页放登录入口；该 origin 上没有面板时为空串。
+  // 主题 origin（--theme-origin）不挂面板，那里恒为空串，主题因此拿不到面板在哪。值随请求的主机名而不同，
+  // 浏览器与中间缓存按含主机名的完整 URL 复用 GET 响应，两个 origin 的缓存互不串用。
+  string admin_path = 6;
 }
 
 message PublicServiceGetSnapshotRequest {}

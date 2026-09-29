@@ -227,7 +227,7 @@ func TestPublicSiteServesSavedSettings(t *testing.T) {
 // 必须同时改这份清单——与 access_test 的 readMethods 同一口径。共用的 Traffic 与历史查询类型同样在列：
 // 给它们加字段也会出现在公开页。
 var publicFields = map[protoreflect.FullName][]protoreflect.Name{
-	"heron.v1.PublicSite":     {"title", "theme", "accent_color", "logo", "custom_css"},
+	"heron.v1.PublicSite":     {"title", "theme", "accent_color", "logo", "custom_css", "admin_path"},
 	"heron.v1.PublicSnapshot": {"now", "report_interval_ms", "nodes", "tags"},
 	"heron.v1.PublicNode":     {"id", "name", "online", "last_seen_at", "sort_order", "facts", "metrics", "traffic", "billing", "country", "tags"},
 	"heron.v1.PublicFacts":    {"os", "arch", "virtualization", "cpu_model", "cpu_cores"},

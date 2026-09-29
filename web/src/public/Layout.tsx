@@ -22,6 +22,8 @@ export function PublicLayout() {
           {site.data?.logo ? <img src={site.data.logo} alt="" className="logo" /> : <HeronMark />}
           {site.data?.title || DEFAULT_TITLE}
         </Link>
+        {/* 面板是另一个前端入口，用普通链接整页跳转；只在 hub 说本 origin 挂着面板时出现（主题 origin 上没有面板）。 */}
+        {site.data?.adminPath && <a href={site.data.adminPath} className="admin">登录</a>}
       </header>
       <main className="main">
         {errorBanner(site.error)}

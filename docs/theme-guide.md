@@ -45,7 +45,7 @@ RPC 路径优先于主题文件：包里即使有 `admin/index.html` 或 `heron.
 
 | 方法 | 请求 | 返回 | `cache_max_age_s` |
 |---|---|---|---|
-| `GetSite` | `{}` | `PublicSite`：标题、明暗（`auto`/`light`/`dark`）、主色、logo（`data:` URL）、自定义 CSS | 300 |
+| `GetSite` | `{}` | `PublicSite`：标题、明暗（`auto`/`light`/`dark`）、主色、logo（`data:` URL）、自定义 CSS；`adminPath` 在主题 origin 上恒为空串（这里没有面板） | 300 |
 | `GetSnapshot` | `{}` | `PublicSnapshot`：`now`、`reportIntervalMs`、全部公开节点的实时状态 | 1 |
 | `QueryMetrics` | `{"nodeId": "3", "from": "…", "to": "…", "maxPoints": 720}` | 指标历史 | 60 |
 | `QueryProbes` | 同上 | 探测历史 | 60 |

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -197,6 +198,50 @@ func TestHandlerRoutesByHost(t *testing.T) {
 					if strings.HasPrefix(k, "Access-Control-Allow-") {
 						t.Errorf("--theme-origin %s, Host %q %s %s: CORS header %s: %v", setup.flag, c.host, ck.method, ck.path, k, r.header[k])
 					}
+				}
+			}
+		}
+	}
+}
+
+// GetSite 的 admin_path 与"这个 origin 上有没有面板"两面对照：主 origin（有无主题 origin 两种装配）回 web.Prefix，且同一
+// Host 上 GET 这个路径得到面板；主题 origin 回空串，那里 web.Prefix 是 404。POST 与 GET 两种调法都核对：公开页用 GET。
+func TestGetSiteAdminPathMatchesThePanelMount(t *testing.T) {
+	const getSite = "/heron.v1.PublicService/GetSite"
+	adminPath := func(t *testing.T, srv *httptest.Server, host, method string) string {
+		t.Helper()
+		path, body := getSite, "{}"
+		if method == http.MethodGet {
+			path, body = getSite+"?connect=v1&encoding=json&message=%7B%7D", ""
+		}
+		r := hostDo(t, srv, method, host, path, body, nil)
+		var site struct {
+			AdminPath *string `json:"adminPath"`
+		}
+		if r.status != http.StatusOK || json.Unmarshal([]byte(r.body), &site) != nil {
+			t.Fatalf("Host %q %s GetSite: %d %.80q", host, method, r.status, r.body)
+		}
+		if site.AdminPath == nil {
+			return ""
+		}
+		return *site.AdminPath
+	}
+	for _, flag := range []string{"", "http://" + testThemeHost} {
+		srv, _ := newThemeTestServer(t, flag)
+		hosts := map[string]bool{strings.TrimPrefix(srv.URL, "http://"): true, "panel.test": true}
+		if flag != "" {
+			hosts[testThemeHost] = false
+		}
+		for host, hasPanel := range hosts {
+			for _, method := range []string{http.MethodPost, http.MethodGet} {
+				got := adminPath(t, srv, host, method)
+				panel := hostDo(t, srv, http.MethodGet, host, web.Prefix, "", nil)
+				servesPanel := panel.status != http.StatusNotFound
+				if hasPanel && (got != web.Prefix || !servesPanel) {
+					t.Errorf("--theme-origin %q, Host %q %s: admin_path %q, GET %s %d; want %q and the panel", flag, host, method, got, web.Prefix, panel.status, web.Prefix)
+				}
+				if !hasPanel && (got != "" || servesPanel) {
+					t.Errorf("--theme-origin %q, Host %q %s: admin_path %q, GET %s %d; want empty and 404", flag, host, method, got, web.Prefix, panel.status)
 				}
 			}
 		}

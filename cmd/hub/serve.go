@@ -81,7 +81,8 @@ func newHandler(r routes) http.Handler {
 	if r.publicEnabled == nil {
 		panic("routes.publicEnabled is required: a missing public switch must not mean the public pages are always open")
 	}
-	main := newMux(r.agent, r.admin, r.public, mountOf(web.Prefix, web.Handler()), mountOf("/", web.PublicGate(r.page, r.publicEnabled)))
+	// 面板挂在 web.Prefix 上的只有主 origin，公开服务在这里带上同一个路径，公开页据它放登录入口；主题 origin 不带。
+	main := newMux(r.agent, r.admin, mountOf(r.public.path, api.WithAdminPath(r.public.h, web.Prefix)), mountOf(web.Prefix, web.Handler()), mountOf("/", web.PublicGate(r.page, r.publicEnabled)))
 	if r.themeOrigin == "" {
 		return main
 	}

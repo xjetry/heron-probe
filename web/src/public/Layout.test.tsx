@@ -16,6 +16,7 @@ it("站点设置取不到时标签页标题与页头一致", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("rate limit exceeded");
   expect(screen.getByRole("link", { name: DEFAULT_TITLE })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: DEFAULT_TITLE }).querySelector("img")).toHaveAttribute("src", heron);
+  expect(screen.queryByRole("link", { name: "登录" })).not.toBeInTheDocument();
   await waitFor(() => expect(document.title).toBe(DEFAULT_TITLE));
 });
 
@@ -26,4 +27,18 @@ it("自定义站点标题与 logo 不被 Heron 默认品牌覆盖", async () => 
   expect(brand.querySelectorAll("img")).toHaveLength(1);
   expect(brand.querySelector("img")).toHaveAttribute("src", "https://example.com/custom.svg");
   await waitFor(() => expect(document.title).toBe("我的机房"));
+});
+
+// 登录入口跟着 hub 下发的 admin_path 走：有值即链到它（整页跳转到面板入口），空串（主题 origin）与取不到站点设置时都不出现。
+it("hub 下发面板路径时页头有登录入口", async () => {
+  renderWithService(PublicService, { getSite: async () => ({ adminPath: "/admin/" }) },
+    [{ path: "/", Component: PublicLayout }], "/");
+  expect(await screen.findByRole("link", { name: "登录" })).toHaveAttribute("href", "/admin/");
+});
+
+it("面板路径为空时页头没有登录入口", async () => {
+  renderWithService(PublicService, { getSite: async () => ({ title: "我的机房", adminPath: "" }) },
+    [{ path: "/", Component: PublicLayout }], "/");
+  await screen.findByRole("link", { name: "我的机房" });
+  expect(screen.queryByRole("link", { name: "登录" })).not.toBeInTheDocument();
 });
