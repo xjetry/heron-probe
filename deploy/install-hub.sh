@@ -15,7 +15,14 @@ WANTS=$ROOT/etc/systemd/system/multi-user.target.wants/probe-hub.service
 PROC=$ROOT/proc
 SVC_USER=probe-hub
 REPO=https://github.com/xjetry/probe
-VERSION=""; BASE_URL=""; UNINSTALL=0; PURGE=0; YES=0; OVERRIDES=""
+# 本脚本所属的版本与该版全部 tar 包的 SHA-256（每行 "<64 位十六进制>  <文件名>"），由 make release 经
+# deploy/releasestamp 写进下面两行标记之间；源码里为空，这时拒绝安装（卸载不下载，照常可用）。下载的包只按这份
+# 清单校验：--base-url 能换掉下载目录里的每个文件，同目录的 SHA256SUMS 也在其中，拿它作依据挡不住篡改。
+RELEASE_VERSION=""
+RELEASE_SHA256=""
+# >>> release stamp >>>
+# <<< release stamp <<<
+BASE_URL=""; UNINSTALL=0; PURGE=0; YES=0; OVERRIDES=""
 # 安装器写进单元的 serve 参数，与 cmd/hub/serve.go 定义的 flag 一一对应，由 deploy/installhub_test.go 核对。
 # 命令行覆盖与已装单元的解析共用这一张表；--db 固定为 /var/lib/probe/probe.db，不接受覆盖。
 SERVE_FLAGS='listen timezone trusted-proxies public-dir theme-origin admin-origin geo-mmdb retention-1m retention-5m retention-1h retention-alert-events'
@@ -23,7 +30,7 @@ nl='
 '
 cr=$(printf '\r')
 usage() {
-  echo 'usage: install-hub.sh [--version VERSION] [--base-url URL] [--listen ADDR] [--timezone ZONE] [--trusted-proxies CIDRS] [--public-dir DIR] [--theme-origin ORIGIN] [--admin-origin ORIGIN] [--geo-mmdb FILE] [--retention-1m DURATION] [--retention-5m DURATION] [--retention-1h DURATION] [--retention-alert-events DURATION] [--yes]' >&2
+  echo 'usage: install-hub.sh [--base-url URL] [--listen ADDR] [--timezone ZONE] [--trusted-proxies CIDRS] [--public-dir DIR] [--theme-origin ORIGIN] [--admin-origin ORIGIN] [--geo-mmdb FILE] [--retention-1m DURATION] [--retention-5m DURATION] [--retention-1h DURATION] [--retention-alert-events DURATION] [--yes]' >&2
   echo '       install-hub.sh --uninstall [--purge] [--yes]' >&2
   exit 2
 }
@@ -41,10 +48,14 @@ quote_arg() {
 }
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --version|--base-url)
+    --base-url)
       [ "$#" -ge 2 ] || usage
-      case "$1" in --version) VERSION=$2;; --base-url) BASE_URL=$2;; esac
+      BASE_URL=$2
       shift 2;;
+    # 脚本只装自己所属的版本：版本由取哪个 URL 的脚本决定，没有第二个来源可以和内嵌清单不一致。
+    --version|--version=*)
+      echo "install-hub.sh has no --version: it installs only the release it belongs to; for another version run $REPO/releases/download/<tag>/install-hub.sh" >&2
+      exit 2;;
     --uninstall) UNINSTALL=1; shift;;
     --purge) PURGE=1; shift;;
     --yes) YES=1; shift;;
@@ -201,17 +212,19 @@ case "$(uname -m)" in
   x86_64) ARCH=amd64;; aarch64) ARCH=arm64;;
   *) fail "unsupported architecture: $(uname -m)";;
 esac
-create_account
+# 内嵌清单在任何网络操作与账户改动之前查：源码脚本、或清单里没有本机的包，都不该先建用户、装 CA 再失败。
 PKG=probe-hub_linux_$ARCH.tar.gz
+[ -n "$RELEASE_VERSION" ] ||
+  fail "this install-hub.sh has no embedded release checksums (it is the source copy); use the install-hub.sh attached to a release: $REPO/releases"
+WANT_SHA256=$(printf '%s\n' "$RELEASE_SHA256" | awk -v p="$PKG" '$2 == p { print $1; n++ } END { exit n != 1 }') ||
+  fail "release $RELEASE_VERSION has no embedded checksum for $PKG"
+create_account
 if command -v curl >/dev/null 2>&1; then FETCH=curl
 elif command -v wget >/dev/null 2>&1; then FETCH=wget
 else fail "neither curl nor wget is available to download $PKG"; fi
 command -v sha256sum >/dev/null 2>&1 || fail 'sha256sum is required to verify downloads'
-if [ -n "$BASE_URL" ] && [ -n "$VERSION" ]; then echo '--base-url is the download directory (--version ignored)'; fi
-if [ -z "$BASE_URL" ]; then
-  if [ -n "$VERSION" ]; then BASE_URL=$REPO/releases/download/$VERSION
-  else BASE_URL=$REPO/releases/latest/download; fi
-fi
+# --base-url 只改变从哪里取字节，接受哪些字节仍由内嵌清单决定。
+[ -n "$BASE_URL" ] || BASE_URL=$REPO/releases/download/$RELEASE_VERSION
 is_https() { case "$1" in https://*) return 0;; esac; return 1; }
 ca_bundle_present() {
   for f in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem; do
@@ -253,10 +266,11 @@ dl() {
   else wget -q -O "$2" "$1" </dev/null; fi
 }
 dl "$BASE_URL/$PKG" "$work/$PKG"
-dl "$BASE_URL/SHA256SUMS" "$work/SHA256SUMS"
-(cd "$work" && awk -v p="$PKG" '$2 == p' SHA256SUMS > verify.txt)
-[ -s "$work/verify.txt" ] || fail "SHA256SUMS has no entry for $PKG"
-(cd "$work" && sha256sum -c verify.txt)
+# sha256sum 的输出以摘要开头、空白之后是文件名（GNU 与 busybox 相同）；它失败时摘要为空，同样按不符拒绝。
+GOT_SHA256=$(sha256sum "$work/$PKG" </dev/null) || GOT_SHA256=""
+GOT_SHA256=${GOT_SHA256%% *}
+[ "$GOT_SHA256" = "$WANT_SHA256" ] ||
+  fail "checksum mismatch for $PKG from $BASE_URL: got ${GOT_SHA256:-nothing}, release $RELEASE_VERSION embeds $WANT_SHA256"
 tar -xzf "$work/$PKG" -C "$work"
 for f in probe-hub probe-hub.service; do
   [ -f "$work/$f" ] && [ ! -L "$work/$f" ] || fail "package is missing regular file $f"

@@ -6,10 +6,11 @@ import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { Secret } from "../components/Secret";
 import { AdminService } from "../gen/probe/v1/admin_pb";
+import { needsInsecureHTTP } from "../lib/transport";
 import { isRelease } from "../lib/version";
 
-// hub 为正式版本（带 v 前缀的合法 semver，与节点落后判定同一个解析）时取同版本 release 的脚本并用
-// --version 钉住 agent 版本；否则只能取最新 release。URL 与 --version 由同一个判断决定，不会一个钉版本一个不钉。
+// 安装脚本只装自己所属的版本（spec §5.7），版本由取哪个 URL 的脚本决定：hub 为正式版本（带 v 前缀的合法
+// semver，与节点落后判定同一个解析）时取同版本 release 的脚本，装上的 agent 与 hub 同版本；否则只能取最新 release。
 const scriptUrl = (hubVersion: string) =>
   isRelease(hubVersion)
     ? `https://github.com/xjetry/probe/releases/download/${hubVersion}/install.sh`
@@ -66,7 +67,7 @@ export function RegisterWindow() {
           <Secret label="注册 key" value={key} />
           <p>在被监控的机器上以 root 执行（agent 若经其他地址访问 hub，把命令里的地址换掉）：</p>
           {snap.ready ? (
-            <InstallCommands hubVersion={snap.data.hubVersion} args={`--hub ${window.location.origin} --key ${key}`} banner={snap.banner} />
+            <InstallCommands hubVersion={snap.data.hubVersion} origin={window.location.origin} registerKey={key} banner={snap.banner} />
           ) : (
             snap.loading ?? errorBanner(...snap.errors)
           )}
@@ -87,15 +88,19 @@ export function RegisterWindow() {
   );
 }
 
-function InstallCommands({ hubVersion, args, banner }: { hubVersion: string; args: string; banner: ReactNode }) {
+// origin 是 agent 访问 hub 的地址，也是判定要不要 --insecure-http 的依据：命令里的 --hub 与这个判定取同一个值。
+export function InstallCommands({ hubVersion, origin, registerKey, banner }: { hubVersion: string; origin: string; registerKey: string; banner?: ReactNode }) {
   const url = scriptUrl(hubVersion);
-  const full = isRelease(hubVersion) ? `${args} --version ${hubVersion}` : args;
+  const insecure = needsInsecureHTTP(origin);
+  const args = `--hub ${origin} --key ${registerKey}${insecure ? " --insecure-http" : ""}`;
   return (
     <>
       {banner}
-      <pre className="secret">{`curl -fsSL ${url} | sh -s -- ${full}`}</pre>
-      <pre className="secret">{`wget -qO- ${url} | sh -s -- ${full}`}</pre>
-      {!isRelease(hubVersion) && <p className="muted">hub 不是正式版本（{hubVersion || "未知"}），命令不带 --version，将安装最新 release。</p>}
+      <pre className="secret">{`curl -fsSL ${url} | sh -s -- ${args}`}</pre>
+      <pre className="secret">{`wget -qO- ${url} | sh -s -- ${args}`}</pre>
+      {!isRelease(hubVersion) && <p className="muted">hub 不是正式版本（{hubVersion || "未知"}），脚本取自最新 release，将安装最新 release。</p>}
+      {insecure && <p className="muted">hub 地址是 http 且不是 loopback IP，命令带 --insecure-http：节点 token 与指标将明文传输。</p>}
+      <p className="muted">安装命令的可信来源是 README 与 GitHub Release：这里的命令由 hub 提供，hub 失守时不可信。</p>
     </>
   );
 }

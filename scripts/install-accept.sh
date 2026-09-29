@@ -461,6 +461,8 @@ run_cell() {
 
   # 首次安装用面板命令的管道形态。无 curl 时用 wget（运行时再探一次，不把探测结果写死）；
   # 重跑下载版本 B 的 install.sh 用同一次探测的结果。
+  # hub 地址是宿主机上的 http（$HOST 不是 loopback IP 字面量），agent 只在配置放行明文 http 时接受它（spec §5.7），
+  # 安装与 register 都带 --insecure-http，与面板对这种 origin 给出的命令相同。
   if orb -m "$name" -u root command -v curl >/dev/null 2>&1; then
     fetch="curl -fsSL http://$HOST:$DIST_PORT/a/install.sh"
     fetch_b="curl -fsSL -o /root/install.sh http://$HOST:$DIST_PORT/b/install.sh"
@@ -468,7 +470,7 @@ run_cell() {
     fetch="wget -qO- http://$HOST:$DIST_PORT/a/install.sh"
     fetch_b="wget -q -O /root/install.sh http://$HOST:$DIST_PORT/b/install.sh"
   fi
-  orb -m "$name" -u root sh -c "$fetch | sh -s -- --hub http://$HOST:$HUB_PORT --key $key --base-url http://$HOST:$DIST_PORT/a" \
+  orb -m "$name" -u root sh -c "$fetch | sh -s -- --hub http://$HOST:$HUB_PORT --key $key --insecure-http --base-url http://$HOST:$DIST_PORT/a" \
     > "$work/install-$name.log" 2>&1 || { echo "FAIL($name): install"; tail -20 "$work/install-$name.log"; exit 1; }
 
   node_field "$name" '.online == true and .metrics.cpuPct != null' || { echo "FAIL($name): node did not come online"; exit 1; }
@@ -481,6 +483,21 @@ run_cell() {
   list_nodes || { echo "FAIL($name): ListNodes"; exit 1; }
   jq -e --arg n "$name" --arg v "$VERSION_A" '.nodes[] | select(.name == $n) | .facts.icmpAvailable == true and .facts.agentVersion == $v' "$work/ListNodes.json" > /dev/null \
     || { echo "FAIL($name): icmpAvailable or agentVersion A"; jq -r --arg n "$name" '.nodes[] | select(.name == $n) | .facts' "$work/ListNodes.json"; exit 1; }
+
+  # 下面的 ICMP 任务探测本机回环，而回环在 agent 的默认拒绝集里（spec §8.4）。按宿主机放行的正规方式打开：
+  # root 执行 configure，再重启服务让 agent 重新读配置（它只在启动时读）。configure 以 root 重写配置之后，
+  # 配置仍须属服务用户、0600，否则重启后的服务读不到它；assert_layout 在真机上钉住这一点。
+  orb -m "$name" -u root /usr/local/bin/probe-agent configure --config /etc/probe-agent/config.json --probe-allow 127.0.0.0/8 \
+    > "$work/configure-$name.log" 2>&1 </dev/null || { echo "FAIL($name): configure --probe-allow"; cat "$work/configure-$name.log"; exit 1; }
+  case "$distro" in
+    alpine) orb -m "$name" -u root rc-service probe-agent restart > "$work/restart-$name.log" 2>&1 </dev/null;;
+    *) orb -m "$name" -u root systemctl restart probe-agent > "$work/restart-$name.log" 2>&1 </dev/null;;
+  esac || { echo "FAIL($name): restart after configure"; cat "$work/restart-$name.log"; exit 1; }
+  node_field "$name" '.online == true and .metrics.cpuPct != null' || { echo "FAIL($name): not online after configure"; exit 1; }
+  case "$distro" in
+    alpine) assert_layout "$name" 1 layout-configure;;
+    *) assert_layout "$name" 0 layout-configure;;
+  esac
 
   # ICMP 任务下发并等到有结果：能力由 init 授予，非 root 服务必须有可用 ICMP。
   node_id=$(jq -r --arg n "$name" '.nodes[] | select(.name == $n) | .id' "$work/ListNodes.json")
@@ -498,7 +515,7 @@ run_cell() {
 
   # 加固不得让采集缩水：字段集合、内存总量与 bootId 与 root 对照一致；根分区是不是同一个由
   # assert_service_identity 按设备号判定。网卡只以合计计数器上报，逐网卡集合经接口观测不到，不作断言（§12）。
-  orb -m "$name" -u root /usr/local/bin/probe-agent register --hub "http://$HOST:$HUB_PORT" --key "$key" \
+  orb -m "$name" -u root /usr/local/bin/probe-agent register --hub "http://$HOST:$HUB_PORT" --key "$key" --insecure-http \
     --config /root/root-agent.json --name "$name-root" > "$work/regroot-$name.log" 2>&1 || { echo "FAIL($name): root register"; exit 1; }
   orb -m "$name" -u root timeout 35 /usr/local/bin/probe-agent run --config /root/root-agent.json > "$work/runroot-$name.log" 2>&1 &
   rootrun=$!
@@ -519,9 +536,10 @@ run_cell() {
   orb -m "$name" -u root sh -c "$fetch_b" \
     > "$work/fetchb-$name.log" 2>&1 || { echo "FAIL($name): fetch rerun install.sh"; exit 1; }
   # 手工 register 以 root 重写配置，文件属主回到 root；人工编辑留下 0644。重跑必须都改回来，节点仍在线。
+  # 重跑带 --insecure-http 走沿用配置时的 configure 分支（已有 http 部署的升级路径），它在改属主之前执行。
   orb -m "$name" -u root chown root:root /etc/probe-agent/config.json
   orb -m "$name" -u root chmod 0644 /etc/probe-agent/config.json
-  orb -m "$name" -u root sh /root/install.sh --hub "http://$HOST:$HUB_PORT" --key "$key" --base-url "http://$HOST:$DIST_PORT/b" \
+  orb -m "$name" -u root sh /root/install.sh --hub "http://$HOST:$HUB_PORT" --key "$key" --insecure-http --base-url "http://$HOST:$DIST_PORT/b" \
     > "$work/rerun-$name.log" 2>&1 || { echo "FAIL($name): rerun"; tail -20 "$work/rerun-$name.log"; exit 1; }
   grep -q 'keeping the current registration' "$work/rerun-$name.log" || { echo "FAIL($name): rerun did not keep registration"; exit 1; }
   list_nodes || { echo "FAIL($name): ListNodes after rerun"; exit 1; }
