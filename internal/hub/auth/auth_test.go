@@ -265,6 +265,44 @@ func TestRegisterIssuesWorkingToken(t *testing.T) {
 	}
 }
 
+func TestRegisterAdoptsPrecreatedNodeToken(t *testing.T) {
+	a, st, _ := setup(t)
+	ctx := context.Background()
+	from := netip.MustParseAddr("203.0.113.9")
+	id, plain, err := a.CreateNode(ctx, "precreated")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 窗口开着时节点 token 也走认领，不会另建一个节点、也不消耗名额。
+	if _, _, err := a.OpenWindow(ctx, time.Hour, 3); err != nil {
+		t.Fatal(err)
+	}
+	got, fresh, err := a.Register(ctx, plain, "ignored-hostname", from)
+	if err != nil {
+		t.Fatalf("register with a node token: %v", err)
+	}
+	if got != id {
+		t.Fatalf("register id = %d, want %d", got, id)
+	}
+	if _, ok := a.Authenticate(plain); ok {
+		t.Fatal("the install token must stop authenticating after adoption")
+	}
+	if n, ok := a.Authenticate(fresh); !ok || n != id {
+		t.Fatal("the returned token must authenticate the adopted node")
+	}
+	// 名称沿用面板里设的，agent 自报的 name 不生效。
+	node, err := st.GetNode(ctx, id)
+	if err != nil || node.Name != "precreated" {
+		t.Fatalf("node after adoption: %+v %v", node, err)
+	}
+	if nodes, err := st.ListNodes(ctx); err != nil || len(nodes) != 1 {
+		t.Fatalf("nodes = %v %v, want only the precreated one", nodes, err)
+	}
+	if w, ok, err := st.RegisterWindow(ctx); err != nil || !ok || w.Remaining != 3 {
+		t.Fatalf("adoption must not consume a window slot: %+v %v %v", w, ok, err)
+	}
+}
+
 func TestDeleteNodeRevokesToken(t *testing.T) {
 	a, _, _ := setup(t)
 	ctx := context.Background()

@@ -235,7 +235,7 @@ docker start heron
 
 ## 安装 agent
 
-先在面板的「注册窗口」开一个窗口拿到 key（或在 hub 主机上 `heron-hub window open`）。重跑安装命令即升级：已有配置时沿用现有注册，不会在 hub 上多出节点。
+先在面板的「注册窗口」开一个窗口拿到 key（或在 hub 主机上 `heron-hub window open`）；也可以在「节点」页直接添加节点，用创建时返回的 token 当 `--key`：hub 会认领该节点并在安装时轮换它的 token，面板上复制的 token 只作一次安装凭据，之后 agent 持有的是轮换后的新 token。重跑安装命令即升级：已有配置时沿用现有注册，不会在 hub 上多出节点。
 
 安装命令以本 README 与 GitHub Release 为准，不以 hub 面板为准：面板由 hub 提供，hub 失守时面板上的命令可以被整条换掉，这一点产品内防不住。面板的命令只是为了方便，复制前核对脚本地址是 `https://github.com/xjetry/heron-probe/releases/…`。
 

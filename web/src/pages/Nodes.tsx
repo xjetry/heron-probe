@@ -1,6 +1,6 @@
 import { createConnectQueryKey, createQueryOptions, useMutation, useQuery, useTransport } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
-import { type DragEvent, type FormEvent, type ReactNode, useState } from "react";
+import { type DragEvent, type FormEvent, type ReactNode, useRef, useState } from "react";
 import { Link } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { errorText } from "../api/auth";
@@ -12,8 +12,8 @@ import { Icon } from "../components/Icon";
 import { Modal } from "../components/Modal";
 import { NodeAddresses } from "../components/NodeAddresses";
 import { NodeCountry } from "../components/NodeCountry";
+import { NodeInstallModal } from "../components/NodeInstallModal";
 import { NodeOrderControl } from "../components/NodeOrderControl";
-import { Secret } from "../components/Secret";
 import { AdminService, type Node, type NodeStatus, type Tag } from "../gen/heron/v1/admin_pb";
 import { expired, expiryText, priceText } from "../lib/billing";
 import { bytes } from "../lib/format";
@@ -39,8 +39,10 @@ export function Nodes() {
     qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) }, options),
     qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listTags, cardinality: "finite" }) }, options),
   ]);
-  // 创建与轮换的响应是唯一明文来源，不能丢弃迟到响应；删除同一节点时同步清掉它的凭据卡片。
-  const [secret, setSecret] = useState<{ id: bigint; label: string; value: string } | null>(null);
+  // 创建与轮换的响应是唯一明文来源，不能丢弃迟到响应；删除同一节点时同步清掉它的凭据弹窗。
+  // opener 记下触发元素，弹窗关闭后焦点回到它；节点多了也不会把凭据顶出视口。
+  const [secret, setSecret] = useState<{ id: bigint; label: string; value: string; opener: HTMLElement } | null>(null);
+  const lastOpener = useRef<HTMLElement | null>(null);
   const [creating, setCreating] = useState<HTMLElement | null>(null);
   const [name, setName] = useState("");
   const [search, setSearch] = useState("");
@@ -51,7 +53,7 @@ export function Nodes() {
     ...mutationOptions,
     onSuccess: (result) => {
       const node = result.node;
-      if (node) setSecret({ id: node.id, label: `节点 ${withId(node.name, node.id)} 的 token`, value: result.token });
+      if (node) setSecret({ id: node.id, label: `节点 ${withId(node.name, node.id)} 的 token`, value: result.token, opener: lastOpener.current ?? document.body });
       setName(""); setCreating(null);
       void refresh();
     },
@@ -74,7 +76,7 @@ export function Nodes() {
       if (request.id == null) return refresh();
       const id = request.id;
       const name = nodes.data?.nodes.find((node) => node.id === id)?.name ?? String(id);
-      setSecret({ id, label: `节点 ${withId(name, id)} 的新 token`, value: result.token });
+      setSecret({ id, label: `节点 ${withId(name, id)} 的新 token`, value: result.token, opener: lastOpener.current ?? document.body });
       return refresh();
     },
   });
@@ -120,11 +122,11 @@ export function Nodes() {
   return <section>
     <header className="page-heading">
       <div><div className="eyebrow">Infrastructure</div><h1>节点</h1><p>管理节点资产、网络连接与到期信息。</p></div>
-      <button type="button" className="primary-button" disabled={editing} onClick={(event) => { create.reset(); setCreating(event.currentTarget); }}><Icon name="plus" />添加节点</button>
+      <button type="button" className="primary-button" disabled={editing} onClick={(event) => { lastOpener.current = event.currentTarget; create.reset(); setCreating(event.currentTarget); }}><Icon name="plus" />添加节点</button>
     </header>
     {!editor && errorBanner(nodes.error)}
     {snapshot.error != null && <p role="alert" className="error">{hubVersion === undefined ? "无法取得 hub 版本，落后标记不可用" : `刷新 hub 版本失败，落后标记按上次取得的 ${hubVersion || "空版本"} 判断`}；在线状态与流量可能不是最新值：{errorText(snapshot.error)}</p>}
-    {secret && <Secret label={secret.label} value={secret.value} />}
+    {secret && <NodeInstallModal secretLabel={secret.label} token={secret.value} hubVersion={hubVersion} banner={errorBanner(snapshot.error)} opener={secret.opener} onClose={() => setSecret(null)} />}
     <div className="node-filters">
       <label className="node-search">搜索节点<input type="search" placeholder="名称、IP、地区、备注或主机名" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
       <TagFilter tags={tags.data?.tags} error={tags.error} selected={tagFilter} onChange={setTagFilter} />
@@ -164,7 +166,7 @@ export function Nodes() {
                 event.dataTransfer.setData("text/plain", String(node.id));
                 setDrag({ id: node.id, members }); setDrop(null);
               }} />}
-            onEdit={(mode, opener) => openEditor(node, mode, opener)} onDelete={() => remove.mutate({ id: node.id })} onRotate={() => rotate.mutate({ id: node.id })} />)}</tbody>
+            onEdit={(mode, opener) => openEditor(node, mode, opener)} onDelete={() => remove.mutate({ id: node.id })} onRotate={(opener) => { lastOpener.current = opener; rotate.mutate({ id: node.id }); }} />)}</tbody>
         </table>
       </div>
     </> : gate.loading}
@@ -183,7 +185,7 @@ export function Nodes() {
 function NodeRow({ node, status, hubVersion, editing, deleting, rotating, orderControl, orderClass, onDragOver, onDrop, onEdit, onDelete, onRotate }: {
   node: Node; status?: NodeStatus; hubVersion?: string; editing: boolean; deleting: boolean; rotating: boolean;
   orderControl: ReactNode; orderClass?: string; onDragOver: (event: DragEvent<HTMLTableRowElement>) => void; onDrop: (event: DragEvent<HTMLTableRowElement>) => void;
-  onEdit: (mode: "general" | "billing", opener: HTMLElement) => void; onDelete: () => void; onRotate: () => void;
+  onEdit: (mode: "general" | "billing", opener: HTMLElement) => void; onDelete: () => void; onRotate: (opener: HTMLElement) => void;
 }) {
   const label = withId(node.name, node.id);
   return <tr className={orderClass} onDragOver={onDragOver} onDrop={onDrop}>
@@ -202,7 +204,7 @@ function NodeRow({ node, status, hubVersion, editing, deleting, rotating, orderC
     <td data-column="actions" data-label="操作"><div className="node-actions">
       <button type="button" className="icon-button" title="编辑节点" aria-label={`编辑 ${label}`} disabled={editing} onClick={(event) => onEdit("general", event.currentTarget)}><Icon name="edit" /></button>
       <button type="button" className="icon-button" title="计费设置" aria-label={`计费 ${label}`} disabled={editing} onClick={(event) => onEdit("billing", event.currentTarget)}><Icon name="calendar" /></button>
-      <button type="button" className="link" aria-label={`换 token ${label}`} disabled={rotating || editing} onClick={onRotate}>换 token</button>
+      <button type="button" className="link" aria-label={`换 token ${label}`} disabled={rotating || editing} onClick={(event) => onRotate(event.currentTarget)}>换 token</button>
       {!editing && <ConfirmDelete label={`删除 ${label}`} confirm={`确认删除 ${label}`} pending={deleting} onDelete={onDelete} />}
     </div></td>
   </tr>;

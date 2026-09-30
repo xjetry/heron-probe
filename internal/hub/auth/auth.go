@@ -169,7 +169,7 @@ func (a *Auth) Window(ctx context.Context) (store.Window, bool, error) {
 	return a.store.RegisterWindow(ctx)
 }
 
-// Register 用窗口 key 换取一个新节点的 token。
+// Register 用窗口 key 换取一个新节点的 token，也接受在面板里预创建的节点 token。
 //
 // 窗口关闭与 key 错误对外都是 ErrDenied；失败计数只在窗口开启且 key 错误时累加：
 // 窗口关闭时没有可猜的秘密，计数只会误伤与他人共用出口地址的运维者。
@@ -186,6 +186,22 @@ func (a *Auth) Register(ctx context.Context, key, name string, from netip.Addr) 
 	a.mu.Unlock()
 	if locked {
 		return 0, "", ErrDenied
+	}
+	// 预创建的节点：面板「添加节点」返回的节点 token 可以直接当安装 key 用。认出是哪个节点后轮换它的
+	// token（旧明文随即失效，面板上复制的命令只作一次安装凭据），agent 把新 token 写进本地配置。
+	// 认领不新建节点、不改名称：节点与名称是管理员在面板里定的，agent 自报的 name 不参与。
+	// 放在窗口判定之前：有窗口开着时节点 token 也走认领而不是再建一个新节点。
+	if id, ok := a.Authenticate(key); ok {
+		plain, h := NewToken()
+		if err := a.store.SetTokenHash(ctx, id, h[:]); err != nil {
+			return 0, "", err
+		}
+		a.mu.Lock()
+		a.dropLocked(id)
+		a.byHash[h] = id
+		a.mu.Unlock()
+		a.register.clear(from)
+		return id, plain, nil
 	}
 	keyHash := HashToken(key)
 	plain, tokHash := NewToken()

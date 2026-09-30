@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const installSh = readFileSync(resolve(root, "deploy/install.sh"), "utf8");
-const panel = readFileSync(resolve(root, "web/src/pages/RegisterWindow.tsx"), "utf8");
+const panel = readFileSync(resolve(root, "web/src/components/InstallCommands.tsx"), "utf8");
 
 describe("面板安装命令与 install.sh", () => {
   it("命令里的每个 --xxx 都是 install.sh 接受的选项", () => {

@@ -832,6 +832,17 @@ describe("Nodes", () => {
     }
   });
 
+  it("换 token 的弹窗里给出用新 token 的安装命令", async () => {
+    const rotateNodeToken = vi.fn(async () => ({ token: "new-token" }));
+    renderNodes({ listNodes: async () => ({ nodes: two }), rotateNodeToken });
+    await screen.findByRole("link", { name: "a（#1）" });
+    fireEvent.click(screen.getByRole("button", { name: "换 token a（#1）" }));
+    expect(await screen.findByLabelText("节点 a（#1） 的新 token")).toHaveTextContent("new-token");
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("curl 安装命令")).toHaveTextContent("--key new-token");
+    expect(within(dialog).getByLabelText("wget 安装命令")).toHaveTextContent("--key new-token");
+  });
+
   describe("标签", () => {
     const tagged = [
       { id: 1n, name: "alpha", public: false, note: "", sortOrder: 0, createdAt: 0n, trafficResetDay: 1, tags: ["db"] },

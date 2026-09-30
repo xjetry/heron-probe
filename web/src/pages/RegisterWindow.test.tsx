@@ -4,7 +4,8 @@ import { createConnectQueryKey } from "@connectrpc/connect-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
-import { InstallCommands, RegisterWindow } from "./RegisterWindow";
+import { InstallCommands } from "../components/InstallCommands";
+import { RegisterWindow } from "./RegisterWindow";
 import { AdminService, GetSnapshotResponseSchema, ListNodesResponseSchema } from "../gen/heron/v1/admin_pb";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); window.getSelection()?.removeAllRanges(); });

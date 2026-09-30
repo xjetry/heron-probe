@@ -504,6 +504,32 @@ func TestRotateTokenInvalidatesTheOldOne(t *testing.T) {
 	}
 }
 
+func TestRegisterAdoptsPrecreatedNodeToken(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := context.Background()
+	id, token := h.createNode(t, "precreated")
+	// 不要求注册窗口：节点 token 自己就是安装凭据。
+	resp, err := h.agent.Register(ctx, connect.NewRequest(&heronv1.RegisterRequest{Key: token, Name: "hostname"}))
+	if err != nil {
+		t.Fatalf("register with a node token: %v", err)
+	}
+	fresh := resp.Msg.GetToken()
+	if resp.Msg.GetNodeId() != id || fresh == "" || fresh == token {
+		t.Fatalf("register response = %v, want node %d with a fresh token", resp.Msg, id)
+	}
+	if err := h.report(t, fresh, &heronv1.Metrics{}); err != nil {
+		t.Fatalf("the returned token must report: %v", err)
+	}
+	if err := h.report(t, token, &heronv1.Metrics{}); codeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("the install token must be dead after adoption: %v", err)
+	}
+	// 认领不新建节点，名称仍是面板里设的那个。
+	if nodes, err := h.store.ListNodes(ctx); err != nil || len(nodes) != 1 || nodes[0].Name != "precreated" {
+		t.Fatalf("nodes = %v %v, want only the precreated one", nodes, err)
+	}
+}
+
 func TestUpdateAndReorderNodes(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
