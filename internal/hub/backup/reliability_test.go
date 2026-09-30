@@ -160,19 +160,29 @@ func TestMetricsInFlightDoesNotBlockConfig(t *testing.T) {
 		t.Fatal("metrics upload did not start")
 	}
 	for n := 0; n < 7; n++ {
-		if n > 0 {
-			clk.Advance(5 * time.Minute)
-		}
 		select {
 		case <-b.configs:
 		case <-time.After(3 * time.Second):
 			t.Fatalf("config layer blocked by metrics upload at period %d", n)
 		}
-		// 等完成记账后再推进假钟，否则把本轮完成误当成下个周期起点。
+		// Status 可先从数据库读到成功时间；runMu[0] 由 tickLayerWithWake 持有到调度记账结束。
+		// 推进假钟必须等该锁释放，不能把持久化成功当成本轮已完成，否则 lastAttempt 会读到下一周期。
 		deadline := time.Now().Add(3 * time.Second)
-		for !status(t, m).Config.LastSuccess.Equal(clk.Now()) && time.Now().Before(deadline) {
+		for !m.runMu[0].TryLock() {
+			if time.Now().After(deadline) {
+				t.Fatalf("config layer did not finish at period %d", n)
+			}
 			time.Sleep(time.Millisecond)
 		}
+		func() {
+			defer m.runMu[0].Unlock()
+			if !status(t, m).Config.LastSuccess.Equal(clk.Now()) {
+				t.Fatalf("config success was not recorded at period %d", n)
+			}
+			if n < 6 {
+				clk.Advance(5 * time.Minute)
+			}
+		}()
 	}
 }
 
