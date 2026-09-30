@@ -1,4 +1,15 @@
 {
   "repository": "xjetry/heron-probe",
-  "tag": null
+  "tag": "v0.3.5",
+  "releaseKind": "stable",
+  "assets": [
+    {
+      "arch": "amd64",
+      "sha256": "90cdd2185aeef30a939d13b19f0ef518654236717fe22b723bb021e18d0f8a7b"
+    },
+    {
+      "arch": "arm64",
+      "sha256": "d528af56fc84e4973139b8bdc3a8dee5968a328f6c31dd7d65e6f69a17a68198"
+    }
+  ]
 }
