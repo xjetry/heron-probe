@@ -443,12 +443,14 @@ type NewNodeTasks struct {
 }
 
 // CreateNode 返回新节点的 id 与它在建节点事务提交时的探测清单（见 insertNode）。
+// 管理端新建即公开：面板的「添加节点」不再单独询问公开范围，节点创建后默认进公开页，
+// 需要隐藏时在编辑里关闭。RegisterNode（注册窗口）不经过这里，保持不公开。
 func (s *Store) CreateNode(ctx context.Context, name string, tokenHash []byte) (int64, NewNodeTasks, error) {
 	var id int64
 	var tasks NewNodeTasks
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		var err error
-		id, tasks, err = insertNode(tx, name, tokenHash, s.clk.Now().Unix())
+		id, tasks, err = insertNode(tx, name, tokenHash, s.clk.Now().Unix(), true)
 		if err != nil {
 			return err
 		}
@@ -458,16 +460,17 @@ func (s *Store) CreateNode(ctx context.Context, name string, tokenHash []byte) (
 }
 
 // insertNode 是两个创建入口（CreateNode 与 RegisterNode）共用的建节点步骤，在调用方的写事务里完成：
-//   - 分配末尾序号，重排后的相对顺序不被新节点打断；
+//   - 分配末尾序号，重排后的相对顺序不被新节点打断；public 由调用方给出（管理端 CreateNode 为 true，
+//     RegisterNode 为 false），显式写入而不依赖列默认值；
 //   - 按 probeCoverage 读出新节点覆盖的任务 id：读在本事务写入节点行之后，事务从那次写入起持有库的写锁直到提交，
 //     别的写入插不进来，所以返回的清单就是提交时库里新节点的覆盖；
 //   - 检查每节点任务上限：新节点继承全部 all_nodes 任务，SaveProbeTask 的上限检查只覆盖保存那一刻已有的节点，
 //     没有节点时保存的 all_nodes 任务可以超过上限，所以建节点这一侧必须再查；超限返回 InheritedLimitError，
 //     事务回滚，节点不建；
 //   - 推进任务版本：新节点的清单从空变为全部 all_nodes 任务，按 bumpProbeVersion 的不变式必须推进。
-func insertNode(tx *sql.Tx, name string, tokenHash []byte, createdAt int64) (int64, NewNodeTasks, error) {
-	res, err := tx.Exec(`INSERT INTO node (name, token_hash, created_at, sort_order)
-		SELECT ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1 FROM node`, name, tokenHash, createdAt)
+func insertNode(tx *sql.Tx, name string, tokenHash []byte, createdAt int64, public bool) (int64, NewNodeTasks, error) {
+	res, err := tx.Exec(`INSERT INTO node (name, token_hash, created_at, sort_order, public)
+		SELECT ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1, ? FROM node`, name, tokenHash, createdAt, public)
 	if err != nil {
 		return 0, NewNodeTasks{}, err
 	}

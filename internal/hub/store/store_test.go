@@ -682,8 +682,9 @@ func TestPublicNodeQueriesSeeOnlyPublicNodes(t *testing.T) {
 		}
 		ids = append(ids, id)
 	}
-	for _, i := range []int{0, 2} {
-		if _, err := s.UpdateNode(ctx, ids[i], NodeEdit{Name: []string{"a", "b", "c"}[i], Public: true, TrafficResetDay: 1}); err != nil {
+	// 管理端建节点默认公开，这里显式把中间节点设为不公开，检验公开查询只返回 public=1 的节点。
+	for i, public := range []bool{true, false, true} {
+		if _, err := s.UpdateNode(ctx, ids[i], NodeEdit{Name: []string{"a", "b", "c"}[i], Public: public, TrafficResetDay: 1}); err != nil {
 			t.Fatal(err)
 		}
 	}

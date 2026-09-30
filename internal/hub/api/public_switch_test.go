@@ -85,6 +85,7 @@ func TestPublicSwitchAllMethodsAndNodePreservation(t *testing.T) {
 	id, _ := h.createNode(t, "public")
 	h.setPublic(t, id, "public", true)
 	private, _ := h.createNode(t, "private")
+	h.setPublic(t, private, "private", false)
 	methods := heronv1.File_heron_v1_public_proto.Services().ByName("PublicService").Methods()
 	if methods.Len() == 0 {
 		t.Fatal("PublicService has no methods")

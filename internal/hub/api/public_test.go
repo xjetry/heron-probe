@@ -82,6 +82,7 @@ func TestPublicHistoryTreatsPrivateAndMissingNodesAlike(t *testing.T) {
 	pub, _ := h.createNode(t, "pub")
 	priv, _ := h.createNode(t, "priv")
 	h.setPublic(t, pub, "pub", true)
+	h.setPublic(t, priv, "priv", false)
 	window := func(id int64) string { return fmt.Sprintf(`{"nodeId":"%d","from":"0","to":"3600"}`, id) }
 	for _, method := range []string{"QueryMetrics", "QueryProbes"} {
 		if got := pubGet(t, h, method, jsonQuery(window(pub)), nil); got.status != http.StatusOK {
@@ -130,6 +131,7 @@ func TestPublicHistorySharesWindowValidation(t *testing.T) {
 	pub, _ := h.createNode(t, "pub")
 	priv, _ := h.createNode(t, "priv")
 	h.setPublic(t, pub, "pub", true)
+	h.setPublic(t, priv, "priv", false)
 	client := h.publicClient()
 	for _, tc := range []struct {
 		name           string
@@ -165,6 +167,7 @@ func TestPublicSnapshotListsOnlyPublicNodesWithPublicFields(t *testing.T) {
 	b, _ := h.createNode(t, "b")
 	c, _ := h.createNode(t, "c")
 	h.setPublic(t, a, "a", true)
+	h.setPublic(t, b, "b", false)
 	h.setPublic(t, c, "c", true)
 	if _, err := h.admin.ReorderNodes(ctx, connect.NewRequest(&heronv1.ReorderNodesRequest{Ids: []int64{c, b, a}})); err != nil {
 		t.Fatal(err)
