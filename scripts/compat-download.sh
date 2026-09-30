@@ -4,9 +4,8 @@
 set -eu
 [ "$#" = 1 ] || { echo "usage: $0 NEW_OUTPUT_DIRECTORY" >&2; exit 1; }
 pin="$(cd "$(dirname "$0")" && pwd)/compat-agent.json"
-# tag 为 null 是"尚无 Heron 发布基线"：更名为 Heron 时 RPC 命名空间从 probe.v1 换成 heron.v1 且不兼容旧路径，
-# 更名前的发布不能当基线。没有基线就失败而不是跳过；CI 在首个 Heron 发布钉进这里之前不调用 compat-e2e。
-if jq -e '.tag == null' "$pin" > /dev/null 2>&1; then
+# 缺少发布基线必须失败，不能把未运行的兼容验收当作通过。
+if [ -f "$pin" ] && jq -e '.tag == null' "$pin" > /dev/null; then
   echo "FAIL: no published Heron release is pinned as the compatibility baseline yet (scripts/compat-agent.json has tag null)" >&2
   exit 1
 fi

@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file heron/v1/types.proto.
  */
 export const file_heron_v1_types: GenFile = /*@__PURE__*/
-  fileDesc("ChRoZXJvbi92MS90eXBlcy5wcm90bxIIaGVyb24udjEitAUKB01ldHJpY3MSDwoHYm9vdF9pZBgBIAEoCRIUCgdjcHVfcGN0GAIgASgBSACIAQESEgoFbG9hZDEYAyABKAFIAYgBARISCgVsb2FkNRgEIAEoAUgCiAEBEhMKBmxvYWQxNRgFIAEoAUgDiAEBEhYKCW1lbV90b3RhbBgGIAEoBEgEiAEBEhUKCG1lbV91c2VkGAcgASgESAWIAQESFwoKc3dhcF90b3RhbBgIIAEoBEgGiAEBEhYKCXN3YXBfdXNlZBgJIAEoBEgHiAEBEhcKCmRpc2tfdG90YWwYCiABKARICIgBARIWCglkaXNrX3VzZWQYCyABKARICYgBARIZCgxuZXRfcnhfdG90YWwYDCABKARICogBARIZCgxuZXRfdHhfdG90YWwYDSABKARIC4gBARIXCgpuZXRfcnhfYnBzGA4gASgESAyIAQESFwoKbmV0X3R4X2JwcxgPIAEoBEgNiAEBEhYKCXRjcF9jb25ucxgQIAEoDUgOiAEBEhYKCXVkcF9jb25ucxgRIAEoDUgPiAEBEhIKBXByb2NzGBIgASgNSBCIAQESFQoIdXB0aW1lX3MYEyABKARIEYgBAUIKCghfY3B1X3BjdEIICgZfbG9hZDFCCAoGX2xvYWQ1QgkKB19sb2FkMTVCDAoKX21lbV90b3RhbEILCglfbWVtX3VzZWRCDQoLX3N3YXBfdG90YWxCDAoKX3N3YXBfdXNlZEINCgtfZGlza190b3RhbEIMCgpfZGlza191c2VkQg8KDV9uZXRfcnhfdG90YWxCDwoNX25ldF90eF90b3RhbEINCgtfbmV0X3J4X2Jwc0INCgtfbmV0X3R4X2Jwc0IMCgpfdGNwX2Nvbm5zQgwKCl91ZHBfY29ubnNCCAoGX3Byb2NzQgsKCV91cHRpbWVfcyLYAQoFRmFjdHMSEAoIaG9zdG5hbWUYASABKAkSCgoCb3MYAiABKAkSDgoGa2VybmVsGAMgASgJEgwKBGFyY2gYBCABKAkSFgoOdmlydHVhbGl6YXRpb24YBSABKAkSEQoJY3B1X21vZGVsGAYgASgJEhEKCWNwdV9jb3JlcxgHIAEoDRIVCg1hZ2VudF92ZXJzaW9uGAggASgJEhYKDmljbXBfYXZhaWxhYmxlGAkgASgIEiYKB25ldHdvcmsYCiABKAsyFS5oZXJvbi52MS5OZXR3b3JrSW5mbyJhCgtOZXR3b3JrSW5mbxIoCgRpcHY0GAEgASgLMhouaGVyb24udjEuQWRkcmVzc0RldGVjdGlvbhIoCgRpcHY2GAIgASgLMhouaGVyb24udjEuQWRkcmVzc0RldGVjdGlvbiJnChBBZGRyZXNzRGV0ZWN0aW9uEi4KBXN0YXRlGAEgASgOMh8uaGVyb24udjEuQWRkcmVzc0RldGVjdGlvblN0YXRlEg8KB2FkZHJlc3MYAiABKAkSEgoKY2hlY2tlZF9hdBgDIAEoAyKYAQoLUHJvYmVSZXN1bHQSDwoHdGFza19pZBgBIAEoBBIOCgZhZ2VfbXMYAiABKA0SEAoGcnR0X3VzGAMgASgNSAASJAoHdGltZW91dBgEIAEoCzIRLmhlcm9uLnYxLlRpbWVvdXRIABIlCgVlcnJvchgFIAEoCzIULmhlcm9uLnYxLlByb2JlRXJyb3JIAEIJCgdvdXRjb21lIgkKB1RpbWVvdXQiHQoKUHJvYmVFcnJvchIPCgdtZXNzYWdlGAEgASgJInIKCVByb2JlVGFzaxIKCgJpZBgBIAEoBBIhCgRraW5kGAIgASgOMhMuaGVyb24udjEuUHJvYmVLaW5kEg4KBnRhcmdldBgDIAEoCRISCgppbnRlcnZhbF9zGAQgASgNEhIKCnRpbWVvdXRfbXMYBSABKA0iQQoKUHJvYmVUYXNrcxIPCgd2ZXJzaW9uGAEgASgEEiIKBXRhc2tzGAIgAygLMhMuaGVyb24udjEuUHJvYmVUYXNrIpMBCgdUcmFmZmljEhAKCHRvdGFsX3J4GAEgASgEEhAKCHRvdGFsX3R4GAIgASgEEhEKCXBlcmlvZF9yeBgDIAEoBBIRCglwZXJpb2RfdHgYBCABKAQSFAoMcGVyaW9kX3N0YXJ0GAUgASgDEhUKDW5leHRfcmVzZXRfYXQYBiABKAMSEQoJcmVzZXRfZGF5GAcgASgNIqcBCgdCaWxsaW5nEg0KBXByaWNlGAEgASgJEhAKCGN1cnJlbmN5GAIgASgJEi0KDWJpbGxpbmdfY3ljbGUYAyABKA4yFi5oZXJvbi52MS5CaWxsaW5nQ3ljbGUSEgoKZXhwaXJlc19vbhgEIAEoCRISCgphdXRvX3JlbmV3GAUgASgIEhYKCWRheXNfbGVmdBgGIAEoBUgAiAEBQgwKCl9kYXlzX2xlZnQqtAEKFUFkZHJlc3NEZXRlY3Rpb25TdGF0ZRInCiNBRERSRVNTX0RFVEVDVElPTl9TVEFURV9VTlNQRUNJRklFRBAAEiUKIUFERFJFU1NfREVURUNUSU9OX1NUQVRFX0FWQUlMQUJMRRABEicKI0FERFJFU1NfREVURUNUSU9OX1NUQVRFX1VOU1VQUE9SVEVEEAISIgoeQUREUkVTU19ERVRFQ1RJT05fU1RBVEVfRkFJTEVEEAMqUAoJUHJvYmVLaW5kEhoKFlBST0JFX0tJTkRfVU5TUEVDSUZJRUQQABITCg9QUk9CRV9LSU5EX0lDTVAQARISCg5QUk9CRV9LSU5EX1RDUBACKvYBCgxCaWxsaW5nQ3ljbGUSHQoZQklMTElOR19DWUNMRV9VTlNQRUNJRklFRBAAEhkKFUJJTExJTkdfQ1lDTEVfTU9OVEhMWRABEhsKF0JJTExJTkdfQ1lDTEVfUVVBUlRFUkxZEAISHAoYQklMTElOR19DWUNMRV9TRU1JQU5OVUFMEAMSGAoUQklMTElOR19DWUNMRV9ZRUFSTFkQBBIaChZCSUxMSU5HX0NZQ0xFX0JJRU5OSUFMEAUSGwoXQklMTElOR19DWUNMRV9UUklFTk5JQUwQBhIeChpCSUxMSU5HX0NZQ0xFX1FVSU5RVUVOTklBTBAHQjRaMmdpdGh1Yi5jb20veGpldHJ5L2hlcm9uLXByb2JlL2dlbi9oZXJvbi92MTtoZXJvbnYxYgZwcm90bzM");
+  fileDesc("ChRoZXJvbi92MS90eXBlcy5wcm90bxIIaGVyb24udjEizwUKB01ldHJpY3MSDwoHYm9vdF9pZBgBIAEoCRIUCgdjcHVfcGN0GAIgASgBSACIAQESEgoFbG9hZDEYAyABKAFIAYgBARISCgVsb2FkNRgEIAEoAUgCiAEBEhMKBmxvYWQxNRgFIAEoAUgDiAEBEhYKCW1lbV90b3RhbBgGIAEoBEgEiAEBEhUKCG1lbV91c2VkGAcgASgESAWIAQESFwoKc3dhcF90b3RhbBgIIAEoBEgGiAEBEhYKCXN3YXBfdXNlZBgJIAEoBEgHiAEBEhcKCmRpc2tfdG90YWwYCiABKARICIgBARIWCglkaXNrX3VzZWQYCyABKARICYgBARIZCgxuZXRfcnhfdG90YWwYDCABKARICogBARIZCgxuZXRfdHhfdG90YWwYDSABKARIC4gBARIXCgpuZXRfcnhfYnBzGA4gASgESAyIAQESFwoKbmV0X3R4X2JwcxgPIAEoBEgNiAEBEhYKCXRjcF9jb25ucxgQIAEoDUgOiAEBEhYKCXVkcF9jb25ucxgRIAEoDUgPiAEBEhIKBXByb2NzGBIgASgNSBCIAQESFQoIdXB0aW1lX3MYEyABKARIEYgBARIZChFuZXRfY291bnRlcl9lcG9jaBgUIAEoCUIKCghfY3B1X3BjdEIICgZfbG9hZDFCCAoGX2xvYWQ1QgkKB19sb2FkMTVCDAoKX21lbV90b3RhbEILCglfbWVtX3VzZWRCDQoLX3N3YXBfdG90YWxCDAoKX3N3YXBfdXNlZEINCgtfZGlza190b3RhbEIMCgpfZGlza191c2VkQg8KDV9uZXRfcnhfdG90YWxCDwoNX25ldF90eF90b3RhbEINCgtfbmV0X3J4X2Jwc0INCgtfbmV0X3R4X2Jwc0IMCgpfdGNwX2Nvbm5zQgwKCl91ZHBfY29ubnNCCAoGX3Byb2NzQgsKCV91cHRpbWVfcyKJAgoFRmFjdHMSEAoIaG9zdG5hbWUYASABKAkSCgoCb3MYAiABKAkSDgoGa2VybmVsGAMgASgJEgwKBGFyY2gYBCABKAkSFgoOdmlydHVhbGl6YXRpb24YBSABKAkSEQoJY3B1X21vZGVsGAYgASgJEhEKCWNwdV9jb3JlcxgHIAEoDRIVCg1hZ2VudF92ZXJzaW9uGAggASgJEhYKDmljbXBfYXZhaWxhYmxlGAkgASgIEiYKB25ldHdvcmsYCiABKAsyFS5oZXJvbi52MS5OZXR3b3JrSW5mbxIvCgtkaWFnbm9zdGljcxgLIAEoCzIaLmhlcm9uLnYxLkFnZW50RGlhZ25vc3RpY3MiyAEKEEFnZW50RGlhZ25vc3RpY3MSEwoLbmV0X2luY2x1ZGUYASADKAkSEwoLbmV0X2V4Y2x1ZGUYAiADKAkSFgoObmV0X2ludGVyZmFjZXMYAyADKAkSHAoUbmV0X2ludGVyZmFjZXNfdG90YWwYBCABKA0SOAoRZmFpbGVkX2NvbGxlY3RvcnMYBSADKA4yHS5oZXJvbi52MS5Db2xsZWN0aW9uQ29tcG9uZW50EhoKEnJlcG9ydF9pbnRlcnZhbF9tcxgGIAEoDSJhCgtOZXR3b3JrSW5mbxIoCgRpcHY0GAEgASgLMhouaGVyb24udjEuQWRkcmVzc0RldGVjdGlvbhIoCgRpcHY2GAIgASgLMhouaGVyb24udjEuQWRkcmVzc0RldGVjdGlvbiJnChBBZGRyZXNzRGV0ZWN0aW9uEi4KBXN0YXRlGAEgASgOMh8uaGVyb24udjEuQWRkcmVzc0RldGVjdGlvblN0YXRlEg8KB2FkZHJlc3MYAiABKAkSEgoKY2hlY2tlZF9hdBgDIAEoAyKYAQoLUHJvYmVSZXN1bHQSDwoHdGFza19pZBgBIAEoBBIOCgZhZ2VfbXMYAiABKA0SEAoGcnR0X3VzGAMgASgNSAASJAoHdGltZW91dBgEIAEoCzIRLmhlcm9uLnYxLlRpbWVvdXRIABIlCgVlcnJvchgFIAEoCzIULmhlcm9uLnYxLlByb2JlRXJyb3JIAEIJCgdvdXRjb21lIgkKB1RpbWVvdXQiHQoKUHJvYmVFcnJvchIPCgdtZXNzYWdlGAEgASgJInIKCVByb2JlVGFzaxIKCgJpZBgBIAEoBBIhCgRraW5kGAIgASgOMhMuaGVyb24udjEuUHJvYmVLaW5kEg4KBnRhcmdldBgDIAEoCRISCgppbnRlcnZhbF9zGAQgASgNEhIKCnRpbWVvdXRfbXMYBSABKA0iQQoKUHJvYmVUYXNrcxIPCgd2ZXJzaW9uGAEgASgEEiIKBXRhc2tzGAIgAygLMhMuaGVyb24udjEuUHJvYmVUYXNrIpMBCgdUcmFmZmljEhAKCHRvdGFsX3J4GAEgASgEEhAKCHRvdGFsX3R4GAIgASgEEhEKCXBlcmlvZF9yeBgDIAEoBBIRCglwZXJpb2RfdHgYBCABKAQSFAoMcGVyaW9kX3N0YXJ0GAUgASgDEhUKDW5leHRfcmVzZXRfYXQYBiABKAMSEQoJcmVzZXRfZGF5GAcgASgNIqcBCgdCaWxsaW5nEg0KBXByaWNlGAEgASgJEhAKCGN1cnJlbmN5GAIgASgJEi0KDWJpbGxpbmdfY3ljbGUYAyABKA4yFi5oZXJvbi52MS5CaWxsaW5nQ3ljbGUSEgoKZXhwaXJlc19vbhgEIAEoCRISCgphdXRvX3JlbmV3GAUgASgIEhYKCWRheXNfbGVmdBgGIAEoBUgAiAEBQgwKCl9kYXlzX2xlZnQq+AIKE0NvbGxlY3Rpb25Db21wb25lbnQSJAogQ09MTEVDVElPTl9DT01QT05FTlRfVU5TUEVDSUZJRUQQABIgChxDT0xMRUNUSU9OX0NPTVBPTkVOVF9CT09UX0lEEAESHAoYQ09MTEVDVElPTl9DT01QT05FTlRfQ1BVEAISHwobQ09MTEVDVElPTl9DT01QT05FTlRfTUVNT1JZEAMSHQoZQ09MTEVDVElPTl9DT01QT05FTlRfU1dBUBAEEh0KGUNPTExFQ1RJT05fQ09NUE9ORU5UX0RJU0sQBRIdChlDT0xMRUNUSU9OX0NPTVBPTkVOVF9MT0FEEAYSHgoaQ09MTEVDVElPTl9DT01QT05FTlRfUFJPQ1MQBxIfChtDT0xMRUNUSU9OX0NPTVBPTkVOVF9VUFRJTUUQCBIeChpDT0xMRUNUSU9OX0NPTVBPTkVOVF9DT05OUxAJEhwKGENPTExFQ1RJT05fQ09NUE9ORU5UX05FVBAKKrQBChVBZGRyZXNzRGV0ZWN0aW9uU3RhdGUSJwojQUREUkVTU19ERVRFQ1RJT05fU1RBVEVfVU5TUEVDSUZJRUQQABIlCiFBRERSRVNTX0RFVEVDVElPTl9TVEFURV9BVkFJTEFCTEUQARInCiNBRERSRVNTX0RFVEVDVElPTl9TVEFURV9VTlNVUFBPUlRFRBACEiIKHkFERFJFU1NfREVURUNUSU9OX1NUQVRFX0ZBSUxFRBADKlAKCVByb2JlS2luZBIaChZQUk9CRV9LSU5EX1VOU1BFQ0lGSUVEEAASEwoPUFJPQkVfS0lORF9JQ01QEAESEgoOUFJPQkVfS0lORF9UQ1AQAir2AQoMQmlsbGluZ0N5Y2xlEh0KGUJJTExJTkdfQ1lDTEVfVU5TUEVDSUZJRUQQABIZChVCSUxMSU5HX0NZQ0xFX01PTlRITFkQARIbChdCSUxMSU5HX0NZQ0xFX1FVQVJURVJMWRACEhwKGEJJTExJTkdfQ1lDTEVfU0VNSUFOTlVBTBADEhgKFEJJTExJTkdfQ1lDTEVfWUVBUkxZEAQSGgoWQklMTElOR19DWUNMRV9CSUVOTklBTBAFEhsKF0JJTExJTkdfQ1lDTEVfVFJJRU5OSUFMEAYSHgoaQklMTElOR19DWUNMRV9RVUlOUVVFTk5JQUwQB0I0WjJnaXRodWIuY29tL3hqZXRyeS9oZXJvbi1wcm9iZS9nZW4vaGVyb24vdjE7aGVyb252MWIGcHJvdG8z");
 
 /**
  * 一次上报里的主机读数。每个读数都是 optional：缺失表示"无读数"，
@@ -120,6 +120,14 @@ export type Metrics = Message<"heron.v1.Metrics"> & {
    * @generated from field: optional uint64 uptime_s = 19;
    */
   uptimeS?: bigint | undefined;
+
+  /**
+   * 实际计入网络合计的网卡名称集合的 SHA-256，小写十六进制；与计数同次采样。
+   * 集合改变时仅重建差分基线，不把旧网卡计数当新增流量。空串表示旧 agent 未提供此能力。
+   *
+   * @generated from field: string net_counter_epoch = 20;
+   */
+  netCounterEpoch: string;
 };
 
 /**
@@ -188,6 +196,14 @@ export type Facts = Message<"heron.v1.Facts"> & {
    * @generated from field: heron.v1.NetworkInfo network = 10;
    */
   network?: NetworkInfo | undefined;
+
+  /**
+   * 最近一次采集的白名单诊断，仅管理端可读；缺失表示 agent 尚未提供，不等于健康。
+   * 不含原始错误、凭据、Hub URL 或完整命令行。沿 Facts 摘要对账，只在内容变化时落库。
+   *
+   * @generated from field: heron.v1.AgentDiagnostics diagnostics = 11;
+   */
+  diagnostics?: AgentDiagnostics | undefined;
 };
 
 /**
@@ -196,6 +212,60 @@ export type Facts = Message<"heron.v1.Facts"> & {
  */
 export const FactsSchema: GenMessage<Facts> = /*@__PURE__*/
   messageDesc(file_heron_v1_types, 1);
+
+/**
+ * @generated from message heron.v1.AgentDiagnostics
+ */
+export type AgentDiagnostics = Message<"heron.v1.AgentDiagnostics"> & {
+  /**
+   * 生效的包含/排除规则，包含非空时排除必须为空；排除已展开平台缺省值。
+   * 每组至多 64 个 glob，每个至多 128 字节。
+   *
+   * @generated from field: repeated string net_include = 1;
+   */
+  netInclude: string[];
+
+  /**
+   * @generated from field: repeated string net_exclude = 2;
+   */
+  netExclude: string[];
+
+  /**
+   * 最近成功采样实际计入的网卡，按名称排序，最多前 128 个，每个至多 64 字节。
+   * 本次网络采集失败时为空，不回显上一次的集合冒充当前采集结果。
+   *
+   * @generated from field: repeated string net_interfaces = 3;
+   */
+  netInterfaces: string[];
+
+  /**
+   * 实际计入的总数；大于 net_interfaces 长度表示展示列表被截断，计数和集合摘要仍覆盖全集。
+   *
+   * @generated from field: uint32 net_interfaces_total = 4;
+   */
+  netInterfacesTotal: number;
+
+  /**
+   * 固定失败类别，不承载由文件内容或网络对端产生的原始错误文本；空列表表示本次采集无错误。
+   *
+   * @generated from field: repeated heron.v1.CollectionComponent failed_collectors = 5;
+   */
+  failedCollectors: CollectionComponent[];
+
+  /**
+   * Agent 当前生效的上报间隔（毫秒），不含请求耗时和失败退避；0 表示尚未知。
+   *
+   * @generated from field: uint32 report_interval_ms = 6;
+   */
+  reportIntervalMs: number;
+};
+
+/**
+ * Describes the message heron.v1.AgentDiagnostics.
+ * Use `create(AgentDiagnosticsSchema)` to create a new message.
+ */
+export const AgentDiagnosticsSchema: GenMessage<AgentDiagnostics> = /*@__PURE__*/
+  messageDesc(file_heron_v1_types, 2);
 
 /**
  * @generated from message heron.v1.NetworkInfo
@@ -217,7 +287,7 @@ export type NetworkInfo = Message<"heron.v1.NetworkInfo"> & {
  * Use `create(NetworkInfoSchema)` to create a new message.
  */
 export const NetworkInfoSchema: GenMessage<NetworkInfo> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 2);
+  messageDesc(file_heron_v1_types, 3);
 
 /**
  * @generated from message heron.v1.AddressDetection
@@ -248,7 +318,7 @@ export type AddressDetection = Message<"heron.v1.AddressDetection"> & {
  * Use `create(AddressDetectionSchema)` to create a new message.
  */
 export const AddressDetectionSchema: GenMessage<AddressDetection> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 3);
+  messageDesc(file_heron_v1_types, 4);
 
 /**
  * @generated from message heron.v1.ProbeResult
@@ -299,7 +369,7 @@ export type ProbeResult = Message<"heron.v1.ProbeResult"> & {
  * Use `create(ProbeResultSchema)` to create a new message.
  */
 export const ProbeResultSchema: GenMessage<ProbeResult> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 4);
+  messageDesc(file_heron_v1_types, 5);
 
 /**
  * @generated from message heron.v1.Timeout
@@ -312,7 +382,7 @@ export type Timeout = Message<"heron.v1.Timeout"> & {
  * Use `create(TimeoutSchema)` to create a new message.
  */
 export const TimeoutSchema: GenMessage<Timeout> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 5);
+  messageDesc(file_heron_v1_types, 6);
 
 /**
  * @generated from message heron.v1.ProbeError
@@ -329,7 +399,7 @@ export type ProbeError = Message<"heron.v1.ProbeError"> & {
  * Use `create(ProbeErrorSchema)` to create a new message.
  */
 export const ProbeErrorSchema: GenMessage<ProbeError> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 6);
+  messageDesc(file_heron_v1_types, 7);
 
 /**
  * @generated from message heron.v1.ProbeTask
@@ -366,7 +436,7 @@ export type ProbeTask = Message<"heron.v1.ProbeTask"> & {
  * Use `create(ProbeTaskSchema)` to create a new message.
  */
 export const ProbeTaskSchema: GenMessage<ProbeTask> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 7);
+  messageDesc(file_heron_v1_types, 8);
 
 /**
  * @generated from message heron.v1.ProbeTasks
@@ -388,7 +458,7 @@ export type ProbeTasks = Message<"heron.v1.ProbeTasks"> & {
  * Use `create(ProbeTasksSchema)` to create a new message.
  */
 export const ProbeTasksSchema: GenMessage<ProbeTasks> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 8);
+  messageDesc(file_heron_v1_types, 9);
 
 /**
  * @generated from message heron.v1.Traffic
@@ -443,7 +513,7 @@ export type Traffic = Message<"heron.v1.Traffic"> & {
  * Use `create(TrafficSchema)` to create a new message.
  */
 export const TrafficSchema: GenMessage<Traffic> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 9);
+  messageDesc(file_heron_v1_types, 10);
 
 /**
  * 节点的计费与到期（§9.4）。价格与币种是提醒用的展示值：hub 不汇总、不换算，也不拿它们做任何计算；到期日与周期
@@ -500,7 +570,73 @@ export type Billing = Message<"heron.v1.Billing"> & {
  * Use `create(BillingSchema)` to create a new message.
  */
 export const BillingSchema: GenMessage<Billing> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 10);
+  messageDesc(file_heron_v1_types, 11);
+
+/**
+ * @generated from enum heron.v1.CollectionComponent
+ */
+export enum CollectionComponent {
+  /**
+   * @generated from enum value: COLLECTION_COMPONENT_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: COLLECTION_COMPONENT_BOOT_ID = 1;
+   */
+  BOOT_ID = 1,
+
+  /**
+   * @generated from enum value: COLLECTION_COMPONENT_CPU = 2;
+   */
+  CPU = 2,
+
+  /**
+   * @generated from enum value: COLLECTION_COMPONENT_MEMORY = 3;
+   */
+  MEMORY = 3,
+
+  /**
+   * @generated from enum value: COLLECTION_COMPONENT_SWAP = 4;
+   */
+  SWAP = 4,
+
+  /**
+   * @generated from enum value: COLLECTION_COMPONENT_DISK = 5;
+   */
+  DISK = 5,
+
+  /**
+   * @generated from enum value: COLLECTION_COMPONENT_LOAD = 6;
+   */
+  LOAD = 6,
+
+  /**
+   * @generated from enum value: COLLECTION_COMPONENT_PROCS = 7;
+   */
+  PROCS = 7,
+
+  /**
+   * @generated from enum value: COLLECTION_COMPONENT_UPTIME = 8;
+   */
+  UPTIME = 8,
+
+  /**
+   * @generated from enum value: COLLECTION_COMPONENT_CONNS = 9;
+   */
+  CONNS = 9,
+
+  /**
+   * @generated from enum value: COLLECTION_COMPONENT_NET = 10;
+   */
+  NET = 10,
+}
+
+/**
+ * Describes the enum heron.v1.CollectionComponent.
+ */
+export const CollectionComponentSchema: GenEnum<CollectionComponent> = /*@__PURE__*/
+  enumDesc(file_heron_v1_types, 0);
 
 /**
  * @generated from enum heron.v1.AddressDetectionState
@@ -531,7 +667,7 @@ export enum AddressDetectionState {
  * Describes the enum heron.v1.AddressDetectionState.
  */
 export const AddressDetectionStateSchema: GenEnum<AddressDetectionState> = /*@__PURE__*/
-  enumDesc(file_heron_v1_types, 0);
+  enumDesc(file_heron_v1_types, 1);
 
 /**
  * @generated from enum heron.v1.ProbeKind
@@ -557,7 +693,7 @@ export enum ProbeKind {
  * Describes the enum heron.v1.ProbeKind.
  */
 export const ProbeKindSchema: GenEnum<ProbeKind> = /*@__PURE__*/
-  enumDesc(file_heron_v1_types, 1);
+  enumDesc(file_heron_v1_types, 2);
 
 /**
  * 节点的计费周期（§9.4）。管理与公开两端共用，所以与 Billing 一起定义在这里：public.proto 不能 import admin.proto。
@@ -625,5 +761,5 @@ export enum BillingCycle {
  * Describes the enum heron.v1.BillingCycle.
  */
 export const BillingCycleSchema: GenEnum<BillingCycle> = /*@__PURE__*/
-  enumDesc(file_heron_v1_types, 2);
+  enumDesc(file_heron_v1_types, 3);
 

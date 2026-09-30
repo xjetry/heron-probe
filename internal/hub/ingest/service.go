@@ -33,7 +33,8 @@ import (
 )
 
 // Report 的 protobuf 请求由 Metrics 数值标量、boot_id、Facts、有界版本号/摘要和探测结果组成。
-// 数值由 proto 类型定界；validateMetrics/validateFacts 将主机字符串各限在 maxHostString 字节。
+// 数值由 proto 类型定界；validateMetrics/validateFacts 将主机字符串各限在 maxHostString 字节，
+// 诊断的规则、接口与失败类别由 agentwire.ValidateDiagnostics 限定条数和长度。
 // validateResults 限条数与错误长度；合法 agent 由 Runner 限批、ToProto 截断错误来遵守这些约束。
 // connect 在拦截器前整条读取，超出 maxBody 返回 ResourceExhausted；Runner 会回队，
 // 因而合法 agent 的编码上界必须从常量推出，不能因读上限不足而永久重发同一超限批次。

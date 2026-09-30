@@ -47,6 +47,13 @@ var migrations = map[int]func(*sql.Tx) error{
 		"ALTER TABLE register_window RENAME TO register_window_old", ddlRegisterWindowV25,
 		"INSERT INTO register_window SELECT 0, key_hash, expires_at, remaining FROM register_window_old",
 		"DROP TABLE register_window_old", "ALTER TABLE node_update ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0")),
+	26: execAll(migrationV26Config),
+}
+
+// 旧版未报告诊断和统计作用域；空值保留未知，不伪造健康或已确认的基线。
+var migrationV26Config = []string{
+	`ALTER TABLE node_facts ADD COLUMN diagnostics TEXT NOT NULL DEFAULT 'null'`,
+	`ALTER TABLE traffic ADD COLUMN net_counter_epoch TEXT NOT NULL DEFAULT ''`,
 }
 
 const ddlRegisterWindowV25 = `CREATE TABLE register_window (owner_id INTEGER PRIMARY KEY,key_hash BLOB NOT NULL UNIQUE,expires_at INTEGER NOT NULL,remaining INTEGER NOT NULL)`

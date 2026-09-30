@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"strings"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/internal/agentwire"
@@ -12,6 +13,9 @@ import (
 func (s *Store) factsTx(nodeID int64, hash uint64, f *heronv1.Facts) func(*sql.Tx) error {
 	return func(tx *sql.Tx) error {
 		if err := agentwire.ValidateNetwork(f.GetNetwork()); err != nil {
+			return err
+		}
+		if err := agentwire.ValidateDiagnostics(f.GetDiagnostics()); err != nil {
 			return err
 		}
 		exists, err := nodeExistsTx(tx, nodeID)
@@ -25,13 +29,20 @@ func (s *Store) factsTx(nodeID int64, hash uint64, f *heronv1.Facts) func(*sql.T
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(`INSERT INTO node_facts (node_id, facts_hash, hostname, os, kernel, arch, virtualization, cpu_model, cpu_cores, agent_version, icmp_available, updated_at, network)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		diagnostics := []byte("null")
+		if f.GetDiagnostics() != nil {
+			diagnostics, err = protojson.Marshal(f.GetDiagnostics())
+			if err != nil {
+				return err
+			}
+		}
+		_, err = tx.Exec(`INSERT INTO node_facts (node_id, facts_hash, hostname, os, kernel, arch, virtualization, cpu_model, cpu_cores, agent_version, icmp_available, updated_at, network, diagnostics)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (node_id) DO UPDATE SET facts_hash = excluded.facts_hash, hostname = excluded.hostname, os = excluded.os,
 			kernel = excluded.kernel, arch = excluded.arch, virtualization = excluded.virtualization, cpu_model = excluded.cpu_model,
-			cpu_cores = excluded.cpu_cores, agent_version = excluded.agent_version, icmp_available = excluded.icmp_available, updated_at = excluded.updated_at, network = excluded.network`,
+			cpu_cores = excluded.cpu_cores, agent_version = excluded.agent_version, icmp_available = excluded.icmp_available, updated_at = excluded.updated_at, network = excluded.network, diagnostics = excluded.diagnostics`,
 			nodeID, int64(hash), f.GetHostname(), f.GetOs(), f.GetKernel(), f.GetArch(), f.GetVirtualization(),
-			f.GetCpuModel(), f.GetCpuCores(), f.GetAgentVersion(), f.GetIcmpAvailable(), s.clk.Now().Unix(), string(network))
+			f.GetCpuModel(), f.GetCpuCores(), f.GetAgentVersion(), f.GetIcmpAvailable(), s.clk.Now().Unix(), string(network), string(diagnostics))
 		return err
 	}
 }
@@ -49,6 +60,21 @@ func decodeNetwork(text string) (*heronv1.NetworkInfo, error) {
 		return nil, nil
 	}
 	return network, nil
+}
+
+// null 表示旧版尚未提供诊断，与已报告但字段皆为空的对象不同；读库和恢复共用严格解码。
+func decodeDiagnostics(text string) (*heronv1.AgentDiagnostics, error) {
+	if strings.Trim(text, " \t\r\n") == "null" {
+		return nil, nil
+	}
+	diagnostics := &heronv1.AgentDiagnostics{}
+	if err := protojson.Unmarshal([]byte(text), diagnostics); err != nil {
+		return nil, err
+	}
+	if err := agentwire.ValidateDiagnostics(diagnostics); err != nil {
+		return nil, err
+	}
+	return diagnostics, nil
 }
 
 func (s *Store) UpsertFacts(ctx context.Context, nodeID int64, hash uint64, f *heronv1.Facts) error {

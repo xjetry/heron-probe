@@ -11,7 +11,7 @@ chmod +x "$work/package/heron-agent"
 COPYFILE_DISABLE=1 tar --no-xattrs -czf "$work/fixture.tar.gz" -C "$work/package" heron-agent
 digest=$(sha256sum "$work/fixture.tar.gz")
 digest=${digest%% *}
-# 基线样本在这里构造完整，不从仓库里的 compat-agent.json 派生：那份文件可以处在"尚无基线"的状态。
+# 每种基线状态都由独立样本构造，仓库固定的发布版本不能决定哪些校验会执行。
 jq -n --arg digest "$digest" '{repository: "xjetry/heron-probe", tag: "v9.8.7-rc.1", releaseKind: "prerelease", assets: [{arch: "amd64", sha256: $digest}, {arch: "arm64", sha256: $digest}]}' > "$work/pin.json"
 cat > "$work/bin/curl" <<'SH'
 #!/bin/sh
@@ -56,12 +56,11 @@ rm -rf "$work/output"
 rm "$work/curl-calls" "$work/scripts/compat-agent.json"
 rejects "missing pin" "invalid or absent published-agent compatibility baseline"
 [ ! -e "$work/curl-calls" ] || { echo "FAIL: missing pin attempted a download" >&2; exit 1; }
-# 仓库里当前的基线状态：尚无 Heron 发布时 tag 为 null，下载必须明确失败，不能变成兼容通过或跳过。
-cp "$root/scripts/compat-agent.json" "$work/scripts/compat-agent.json"
-if jq -e '.tag == null' "$work/scripts/compat-agent.json" > /dev/null; then
-  rejects "no Heron baseline" "no published Heron release is pinned"
-  [ ! -e "$work/curl-calls" ] || { echo "FAIL: the absent baseline attempted a download" >&2; exit 1; }
-fi
+# 即使仓库已有正式基线，显式清空 tag 也必须在下载前失败。
+jq '.tag = null' "$work/pin.json" > "$work/scripts/compat-agent.json"
+jq -e '.tag == null' "$work/scripts/compat-agent.json" > /dev/null || { echo "FAIL: absent baseline fault was not injected" >&2; exit 1; }
+rejects "no Heron baseline" "no published Heron release is pinned"
+[ ! -e "$work/curl-calls" ] || { echo "FAIL: the absent baseline attempted a download" >&2; exit 1; }
 jq '.assets = [.assets[0]]' "$work/pin.json" > "$work/scripts/compat-agent.json"
 rejects "missing architecture" "invalid or absent published-agent compatibility baseline"
 [ ! -e "$work/curl-calls" ] || { echo "FAIL: incomplete pin attempted a download" >&2; exit 1; }

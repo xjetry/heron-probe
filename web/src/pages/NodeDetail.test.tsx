@@ -1,6 +1,6 @@
 import { create } from "@bufbuild/protobuf";
 import { QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
-import { ProbeKind } from "../gen/heron/v1/types_pb";
+import { CollectionComponent, ProbeKind } from "../gen/heron/v1/types_pb";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, screen, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -424,4 +424,40 @@ it("来源地址为空时主机名一格只有主机名", async () => {
   renderWithAdmin({ ...defaultImpl, listNodes }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   const dt = await screen.findByText("主机名");
   expect(dt.nextElementSibling).toHaveTextContent(/^db-01\.internal$/);
+});
+
+it("旧 Agent 的节点详情明确显示未提供诊断", async () => {
+  renderWithAdmin(defaultImpl, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  expect(await screen.findByText("Agent 未提供诊断信息，请更新 Agent 后等待上报。")).toBeInTheDocument();
+  expect(screen.queryByText("最近采集未报告失败")).not.toBeInTheDocument();
+});
+
+it("诊断每 10 秒更新，刷新失败保留最近诊断并显示错误", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  let fail = false;
+  let degraded = false;
+  const updatedAt = 1_790_000_000n;
+  const nodes = vi.fn<NonNullable<AdminImpl["listNodes"]>>(async () => {
+    if (fail) throw new ConnectError("diagnostics refresh failed", Code.Unavailable);
+    const response = await listNodes();
+    return { nodes: [{ ...response.nodes[0], factsUpdatedAt: updatedAt, facts: { ...response.nodes[0].facts,
+      diagnostics: { netInclude: ["eth*"], netInterfaces: degraded ? [] : ["eth0"], netInterfacesTotal: degraded ? 0 : 1,
+        reportIntervalMs: degraded ? 2000 : 1000, failedCollectors: degraded ? [CollectionComponent.NET] : [] },
+    } }] };
+  });
+  renderWithAdmin({ ...defaultImpl, listNodes: nodes }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  await screen.findByRole("heading", { name: "db-01" });
+  await screen.findByText("↓ 1.0 GiB ↑ 512 MiB");
+  expect(screen.getByText("生效上报间隔").nextElementSibling).toHaveTextContent("1000 ms");
+  expect(screen.getByText("诊断信息更新时间").nextElementSibling?.querySelector("time")).toHaveAttribute("dateTime", new Date(Number(updatedAt) * 1000).toISOString());
+  degraded = true;
+  await act(async () => { await vi.advanceTimersByTimeAsync(10_000 + 100); });
+  expect(screen.getByText("生效上报间隔").nextElementSibling).toHaveTextContent("2000 ms");
+  expect(screen.getByText("本次网络采集失败，接口清单不可用")).toBeInTheDocument();
+  expect(screen.queryByText("eth0")).not.toBeInTheDocument();
+  fail = true;
+  await act(async () => { await vi.advanceTimersByTimeAsync(10_000 + 100); });
+  expect(await screen.findByRole("alert")).toHaveTextContent("diagnostics refresh failed");
+  expect(screen.getByText("生效上报间隔").nextElementSibling).toHaveTextContent("2000 ms");
+  expect(screen.getByText("本次网络采集失败，接口清单不可用")).toBeInTheDocument();
 });

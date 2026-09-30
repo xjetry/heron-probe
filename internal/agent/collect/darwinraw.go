@@ -160,8 +160,8 @@ func (d *darwinHost) conns() (uint32, uint32, error) {
 // 索引空间有空洞（实测 ifcount 为 35 时 23、34、35 号不存在），缺号返回 ENOENT，跳过。读完 ifcount 之后
 // 被删除的网卡读出 ENOENT 时同样按不存在略过；删网卡要 root，它实际报哪个错误码本机未复现，
 // 若是别的错误码，按下一句整个读数缺失——缺失而不是错。
-// 其余错误让整个读数缺失：少一块网卡的合计会先变小、恢复时再把那块网卡的全部历史计数当增量加回去；
-// 缺失的读数则让 hub 保持基线不动（spec §7）。
+// 其余错误让整个读数缺失，不能把计数未知的网卡伪装成不存在；Collector.Metrics 据此报告网络采集失败，
+// 不发布不完整的合计或集合标识，hub 的 Account 对缺读数保持基线不动。
 func (d *darwinHost) ifaces() ([]ifaceCounters, error) {
 	n, err := d.src.sysctlUint32("net.link.generic.system.ifcount")
 	if err != nil {

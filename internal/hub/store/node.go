@@ -113,7 +113,7 @@ func (n Node) DisplayCountry() (string, CountrySource) {
 
 const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.created_at, n.last_seen_at, n.traffic_reset_day, n.offline_grace_s,
 	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source, n.country, n.country_ip, n.country_pin,
-	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at, f.network
+	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at, f.network, f.diagnostics
 	FROM node n LEFT JOIN node_facts f ON f.node_id = n.id`
 
 // nodeOrder 是节点列表唯一的排序：面板与公开页看到同一个顺序。
@@ -126,12 +126,12 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 		var created int64
 		var seen, grace sql.NullInt64
 		var hostname, os, kernel, arch, virt, cpuModel, agentVersion sql.NullString
-		var network sql.NullString
+		var network, diagnostics sql.NullString
 		var cores, icmp, factsUpdated sql.NullInt64
 		b := &n.Billing
 		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &created, &seen, &n.TrafficResetDay, &grace,
 			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource, &n.Country, &n.CountryIP, &n.CountryPin,
-			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated, &network); err != nil {
+			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated, &network, &diagnostics); err != nil {
 			return nil, err
 		}
 		n.CreatedAt = time.Unix(created, 0).UTC()
@@ -151,6 +151,10 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 				return nil, fmt.Errorf("node %d network: %w", n.ID, err)
 			}
 			n.Facts.Network = info
+			n.Facts.Diagnostics, err = decodeDiagnostics(diagnostics.String)
+			if err != nil {
+				return nil, fmt.Errorf("node %d diagnostics: %w", n.ID, err)
+			}
 		}
 		out = append(out, n)
 	}

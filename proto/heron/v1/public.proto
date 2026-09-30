@@ -112,11 +112,11 @@ message PublicBilling {
   optional int32 days_left = 6;
 }
 
-// Facts 的公开部分，字段号与 Facts 相同。主机名、内核版本、agent 版本、ICMP 可用性与双栈出口不公开，
+// Facts 的公开部分，字段号与 Facts 相同。主机名、内核版本、agent 版本、ICMP 可用性、双栈出口与诊断不公开，
 // 它们的号与名保留：要公开必须先删掉 reserved，而不是随手加一个字段。
 message PublicFacts {
-  reserved 1, 3, 8, 9, 10;
-  reserved "hostname", "kernel", "agent_version", "icmp_available", "network";
+  reserved 1, 3, 8, 9, 10, 11;
+  reserved "hostname", "kernel", "agent_version", "icmp_available", "network", "diagnostics";
   string os = 2;
   string arch = 4;
   string virtualization = 5;
@@ -124,11 +124,11 @@ message PublicFacts {
   uint32 cpu_cores = 7;
 }
 
-// 与 Metrics 同字段号、同语义，只是没有 boot_id（流量差分用的内部标识）。每个读数都是 optional：
+// 与 Metrics 同字段号、同语义，但不公开启动标识与网卡集合标识。每个读数都是 optional：
 // 缺失表示无读数，与读数为 0 是两个不同的事实。
 message PublicMetrics {
-  reserved 1;
-  reserved "boot_id";
+  reserved 1, 20;
+  reserved "boot_id", "net_counter_epoch";
   optional double cpu_pct = 2;
   optional double load1 = 3;
   optional double load5 = 4;

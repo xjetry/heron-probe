@@ -48,9 +48,11 @@ jobs:
           platforms: arm64
           cache-image: false
       # 发布前用真实 hub 验证当前 agent。
-      # 已发布 agent 的兼容验收（make compat-e2e）暂不在这里跑：更名为 Heron 后还没有 Heron 发布可作基线
-      # （scripts/compat-agent.json 的 tag 为 null），首个 Heron 发布钉进基线后再接回。
       - run: make e2e
+        env:
+          E2E_LISTEN_HOST: 0.0.0.0
+      # 发布前必须验证固定摘要的旧 agent，不能以当前源码构建替代兼容基线。
+      - run: make compat-e2e
         env:
           E2E_LISTEN_HOST: 0.0.0.0
       # registry 由 Makefile 的 DOCKER_IMAGE 推出，登录与推送不会指向两个不同的 registry。

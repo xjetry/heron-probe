@@ -81,6 +81,23 @@ func maxHostReport(t *testing.T) *heronv1.ReportRequest {
 			var value protoreflect.Value
 			switch fd.Kind() {
 			case protoreflect.MessageKind:
+				if fd.FullName() == "heron.v1.Facts.diagnostics" {
+					d := &heronv1.AgentDiagnostics{NetInterfacesTotal: math.MaxUint32, ReportIntervalMs: agentwire.ReportIntervalMs(agentwire.MaxTTL)}
+					for range agentwire.MaxNetPatterns {
+						d.NetInclude = append(d.NetInclude, strings.Repeat("x", agentwire.MaxNetPatternBytes))
+					}
+					for n := range agentwire.MaxDiagnosticInterfaces {
+						d.NetInterfaces = append(d.NetInterfaces, fmt.Sprintf("%03d%s", n, strings.Repeat("x", agentwire.MaxInterfaceNameBytes-3)))
+					}
+					for part := heronv1.CollectionComponent_COLLECTION_COMPONENT_BOOT_ID; part < heronv1.CollectionComponent_COLLECTION_COMPONENT_NET; part++ {
+						d.FailedCollectors = append(d.FailedCollectors, part)
+					}
+					if err := agentwire.ValidateDiagnostics(d); err != nil {
+						t.Fatal(err)
+					}
+					value = protoreflect.ValueOfMessage(d.ProtoReflect())
+					break
+				}
 				if fd.FullName() != "heron.v1.Facts.network" {
 					t.Fatalf("unbounded host message %s", fd.FullName())
 				}
@@ -90,6 +107,9 @@ func maxHostReport(t *testing.T) *heronv1.ReportRequest {
 				}).ProtoReflect())
 			case protoreflect.StringKind:
 				value = protoreflect.ValueOfString(strings.Repeat("x", maxHostString))
+				if fd.FullName() == "heron.v1.Metrics.net_counter_epoch" {
+					value = protoreflect.ValueOfString(strings.Repeat("a", 64))
+				}
 			case protoreflect.Uint32Kind:
 				value = protoreflect.ValueOfUint32(math.MaxUint32)
 			case protoreflect.Uint64Kind:

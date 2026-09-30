@@ -55,6 +55,9 @@ func sleepReal(ctx context.Context, d time.Duration) error {
 // 失败退避、成功即回到下发间隔；实时指标不缓存，因为过期的实时数据没有意义。
 // 探测结果在迟到预算内重试，InvalidArgument 例外：本批丢弃而不回队。
 func (r *Runner) Run(ctx context.Context) error {
+	if err := r.Collector.Validate(); err != nil {
+		return err
+	}
 	if r.Prober == nil {
 		return errors.New("Runner.Prober: required")
 	}
@@ -90,6 +93,9 @@ func (r *Runner) Run(ctx context.Context) error {
 		req.Header().Set("Authorization", "Bearer "+r.Token)
 		// Facts 只读几个小文件；每轮重算才能让 hub 从摘要变化发现运行期间的变更。
 		f := r.Collector.Facts()
+		if f.Diagnostics != nil {
+			f.Diagnostics.ReportIntervalMs = uint32(interval / time.Millisecond)
+		}
 		if r.Network != nil {
 			f.Network = r.Network.Snapshot()
 		}
