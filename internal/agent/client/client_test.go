@@ -200,7 +200,7 @@ func runFor(t *testing.T, r *Runner, hub *fakeHub, reports int) {
 }
 
 func TestFirstReportCarriesFactsThenOnlyOnRequest(t *testing.T) {
-	hub := &fakeHub{interval: 5000}
+	hub := &fakeHub{interval: 10000}
 	r, _ := newRunner(t, hub)
 	hub.wantNext = false
 	runFor(t, r, hub, 2)

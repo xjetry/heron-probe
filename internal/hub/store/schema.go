@@ -61,7 +61,8 @@ const ddlNodeFacts = `CREATE TABLE node_facts (
   agent_version TEXT NOT NULL,
   icmp_available INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  network TEXT NOT NULL DEFAULT '{}'
+  network TEXT NOT NULL DEFAULT '{}',
+  diagnostics TEXT NOT NULL DEFAULT 'null'
 )`
 
 const ddlRegisterWindow = `CREATE TABLE register_window (
@@ -103,8 +104,8 @@ const ddlAdminSession = `CREATE TABLE admin_session (
   expires_at INTEGER NOT NULL
 )`
 
-// traffic 是 §7 累加器的持久化形态：基线（boot_id、last_*）与累计值同一行、同一事务落盘，
-// agent 未换启动周期且计数器未倒退时，崩溃后首次上报相对已落盘基线的差分会补回丢失的内存增量。
+// traffic 是累加器的持久化形态：基线（boot_id、net_counter_epoch、last_*）与累计值同一行、同一事务落盘，
+// agent 未换启动周期、统计作用域且计数器未倒退时，崩溃后首次上报相对已落盘基线的差分会补回丢失的内存增量。
 const ddlTraffic = `CREATE TABLE traffic (
   node_id INTEGER PRIMARY KEY,
   boot_id TEXT NOT NULL,
@@ -116,7 +117,8 @@ const ddlTraffic = `CREATE TABLE traffic (
   period_tx INTEGER NOT NULL,
   -- 当前周期起点，Unix 秒；重置日零点按 hub 时区换算。
   period_start INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  net_counter_epoch TEXT NOT NULL DEFAULT ''
 )`
 
 // metricTables 按级别从细到粗，供建库、节点从属清单与上卷使用（rollup.go 的 metricFamily.tables，

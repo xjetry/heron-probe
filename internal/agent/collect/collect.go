@@ -1,13 +1,19 @@
 package collect
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
 	"runtime"
+	"slices"
+	"strings"
 	"time"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/agentwire"
 	"github.com/xjetry/heron-probe/internal/clock"
 	"google.golang.org/protobuf/proto"
 )
@@ -24,20 +30,34 @@ type Collector struct {
 	// IcmpAvailable 默认为 false；须在 Runner.Run 前赋值，运行期间只读。
 	IcmpAvailable bool
 
-	prevCPU  *cpuTimes
-	prevNet  *netCounters
-	prevNetT time.Duration
+	prevCPU      *cpuTimes
+	prevNet      *netCounters
+	prevNetT     time.Duration
+	prevNetEpoch string
+	diagnostics  *heronv1.AgentDiagnostics
+}
+
+func (c *Collector) netFilters() (include, exclude []string) {
+	if len(c.NetInclude) > 0 {
+		return c.NetInclude, nil
+	}
+	if c.NetExclude != nil {
+		return nil, c.NetExclude
+	}
+	return nil, c.Host.defaultNetExclude()
+}
+
+// Validate 在上报循环启动前约束参数；错误配置不进入不断上报、不断被拒绝的循环。
+func (c *Collector) Validate() error {
+	return agentwire.ValidateNetFilters(c.NetInclude, c.NetExclude)
 }
 
 func (c *Collector) includeIface(name string) bool {
-	if len(c.NetInclude) > 0 {
-		return matchAny(c.NetInclude, name)
+	include, exclude := c.netFilters()
+	if len(include) > 0 {
+		return matchAny(include, name)
 	}
-	ex := c.NetExclude
-	if ex == nil {
-		ex = c.Host.defaultNetExclude()
-	}
-	return !matchAny(ex, name)
+	return !matchAny(exclude, name)
 }
 
 func matchAny(patterns []string, name string) bool {
@@ -67,14 +87,20 @@ func checkUsage(u usage, err error) (usage, error) {
 // 返回的 error 汇总了这些失败，供调用方记日志，不阻止上报。
 func (c *Collector) Metrics() (*heronv1.Metrics, error) {
 	m := &heronv1.Metrics{}
+	include, exclude := c.netFilters()
+	c.diagnostics = &heronv1.AgentDiagnostics{NetInclude: slices.Clone(include), NetExclude: slices.Clone(exclude)}
 	var errs []error
-	fail := func(what string, err error) { errs = append(errs, fmt.Errorf("%s: %w", what, err)) }
+	fail := func(part heronv1.CollectionComponent, err error) {
+		what := strings.ToLower(strings.TrimPrefix(part.String(), "COLLECTION_COMPONENT_"))
+		errs = append(errs, fmt.Errorf("%s: %w", what, err))
+		c.diagnostics.FailedCollectors = append(c.diagnostics.FailedCollectors, part)
+	}
 	h := c.Host
 
 	if id, err := h.bootID(); err == nil {
 		m.BootId = id
 	} else {
-		fail("boot_id", err)
+		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_BOOT_ID, err)
 	}
 
 	if cur, err := h.cpuTimes(); err == nil {
@@ -85,79 +111,91 @@ func (c *Collector) Metrics() (*heronv1.Metrics, error) {
 		}
 		c.prevCPU = &cur
 	} else {
-		fail("cpu", err)
+		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_CPU, err)
 	}
 
 	if u, err := checkUsage(h.memory()); err == nil {
 		m.MemTotal, m.MemUsed = proto.Uint64(u.total), proto.Uint64(u.used)
 	} else {
-		fail("memory", err)
+		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_MEMORY, err)
 	}
 	if u, err := checkUsage(h.swap()); err == nil {
 		m.SwapTotal, m.SwapUsed = proto.Uint64(u.total), proto.Uint64(u.used)
 	} else {
-		fail("swap", err)
+		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_SWAP, err)
 	}
 	if u, err := checkUsage(h.disk()); err == nil {
 		m.DiskTotal, m.DiskUsed = proto.Uint64(u.total), proto.Uint64(u.used)
 	} else {
-		fail("disk", err)
+		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_DISK, err)
 	}
 
 	if l, err := h.load(); err == nil {
 		m.Load1, m.Load5, m.Load15 = proto.Float64(l.l1), proto.Float64(l.l5), proto.Float64(l.l15)
 	} else {
-		fail("load", err)
+		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_LOAD, err)
 	}
 	if n, err := h.procs(); err == nil {
 		m.Procs = proto.Uint32(n)
 	} else {
-		fail("procs", err)
+		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_PROCS, err)
 	}
 	if up, err := h.uptime(); err == nil {
 		m.UptimeS = proto.Uint64(up)
 	} else {
-		fail("uptime", err)
+		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_UPTIME, err)
 	}
 	if tcp, udp, err := h.conns(); err == nil {
 		m.TcpConns, m.UdpConns = proto.Uint32(tcp), proto.Uint32(udp)
 	} else {
-		fail("conns", err)
+		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_CONNS, err)
 	}
 
-	if sum, err := c.netTotals(); err == nil {
+	if sum, names, err := c.netTotals(); err == nil {
+		encoded, _ := json.Marshal(names)
+		digest := sha256.Sum256(encoded)
+		m.NetCounterEpoch = hex.EncodeToString(digest[:])
+		c.diagnostics.NetInterfacesTotal = uint32(len(names))
+		c.diagnostics.NetInterfaces = names[:min(len(names), agentwire.MaxDiagnosticInterfaces)]
 		m.NetRxTotal, m.NetTxTotal = proto.Uint64(sum.rx), proto.Uint64(sum.tx)
 		now := c.Clock.Mono()
-		if c.prevNet != nil && now > c.prevNetT && sum.rx >= c.prevNet.rx && sum.tx >= c.prevNet.tx {
+		// 同一个网卡集合的累计计数才可相减；新网卡已有的计数不是这段采样区间的流量。
+		if c.prevNet != nil && c.prevNetEpoch == m.NetCounterEpoch && now > c.prevNetT && sum.rx >= c.prevNet.rx && sum.tx >= c.prevNet.tx {
 			secs := float64(now-c.prevNetT) / float64(time.Second)
 			m.NetRxBps = proto.Uint64(uint64(float64(sum.rx-c.prevNet.rx) / secs))
 			m.NetTxBps = proto.Uint64(uint64(float64(sum.tx-c.prevNet.tx) / secs))
 		}
 		c.prevNet, c.prevNetT = &sum, now
+		c.prevNetEpoch = m.NetCounterEpoch
 	} else {
-		fail("net", err)
+		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_NET, err)
 	}
 
 	return m, errors.Join(errs...)
 }
 
-func (c *Collector) netTotals() (netCounters, error) {
+func (c *Collector) netTotals() (netCounters, []string, error) {
 	ifs, err := c.Host.ifaces()
 	if err != nil {
-		return netCounters{}, err
+		return netCounters{}, nil, err
 	}
 	var sum netCounters
-	counted := false
+	var names []string
 	for _, i := range ifs {
 		if !c.includeIface(i.name) {
 			continue
 		}
-		sum.rx, sum.tx, counted = sum.rx+i.rx, sum.tx+i.tx, true
+		if err := agentwire.ValidateInterfaceName(i.name); err != nil {
+			return netCounters{}, nil, err
+		}
+		sum.rx, sum.tx = sum.rx+i.rx, sum.tx+i.tx
+		names = append(names, i.name)
 	}
-	if !counted {
-		return netCounters{}, errors.New("no included interface")
+	if len(names) == 0 {
+		return netCounters{}, nil, errors.New("no included interface")
 	}
-	return sum, nil
+	slices.Sort(names)
+	return sum, names, nil
 }
 
 // Facts 收集静态信息；读不到的字段留空，由 hub 侧展示为未知。
@@ -171,6 +209,9 @@ func (c *Collector) Facts() *heronv1.Facts {
 	}
 	if f.CpuCores == 0 {
 		f.CpuCores = uint32(runtime.NumCPU())
+	}
+	if c.diagnostics != nil {
+		f.Diagnostics = proto.Clone(c.diagnostics).(*heronv1.AgentDiagnostics)
 	}
 	return f
 }

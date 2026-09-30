@@ -14,6 +14,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/xjetry/heron-probe/internal/agentwire"
 )
 
 type RestoreResult struct {
@@ -393,6 +395,10 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			if layer == "config" {
 				statements = migrationV25Config
 			}
+		case 26:
+			if layer == "config" {
+				statements = migrationV26Config
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}
@@ -511,7 +517,10 @@ func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []st
 		return 0, fmt.Errorf("%s snapshot unsupported format_version=%d", layer, format)
 	}
 	if layer == "config" {
-		if err := validateSnapshotNetworks(ctx, tx); err != nil {
+		if err := validateSnapshotFacts(ctx, tx); err != nil {
+			return 0, err
+		}
+		if err := validateSnapshotCounterEpochs(ctx, tx); err != nil {
 			return 0, err
 		}
 		var unmatched int
@@ -535,20 +544,42 @@ func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []st
 	return at.Int64, nil
 }
 
-func validateSnapshotNetworks(ctx context.Context, tx *sql.Tx) error {
-	rows, err := tx.QueryContext(ctx, "SELECT node_id,network FROM config.node_facts")
+func validateSnapshotFacts(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, "SELECT node_id,network,diagnostics FROM config.node_facts")
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id int64
-		var text string
-		if err := rows.Scan(&id, &text); err != nil {
+		var network, diagnostics string
+		if err := rows.Scan(&id, &network, &diagnostics); err != nil {
 			return err
 		}
-		if _, err := decodeNetwork(text); err != nil {
+		if _, err := decodeNetwork(network); err != nil {
 			return fmt.Errorf("config node %d network: %w", id, err)
+		}
+		if _, err := decodeDiagnostics(diagnostics); err != nil {
+			return fmt.Errorf("config node %d diagnostics: %w", id, err)
+		}
+	}
+	return rows.Err()
+}
+
+func validateSnapshotCounterEpochs(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, "SELECT node_id,net_counter_epoch FROM config.traffic")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var epoch string
+		if err := rows.Scan(&id, &epoch); err != nil {
+			return err
+		}
+		if err := agentwire.ValidateCounterEpoch(epoch); err != nil {
+			return fmt.Errorf("config node %d net_counter_epoch: %w", id, err)
 		}
 	}
 	return rows.Err()

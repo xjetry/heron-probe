@@ -326,7 +326,15 @@ sudo systemctl restart heron-agent   # OpenRC：rc-service heron-agent restart�
 
 `make test`、`make lint`、`make build` 分别运行后端测试、静态检查和跨平台编译；前端在 `web/` 执行 `pnpm test` 与 `pnpm run build`。
 
-`make e2e compat-e2e` 使用真实 hub，在 Debian、Alpine 的 amd64、arm64 容器中分别运行当前源码 agent 和固定已发布 agent。兼容基线在 `scripts/compat-agent.json` 固定 tag、发布渠道和两架构 SHA256，不使用浮动 latest；更新基线时必须核对发布资产和摘要，再运行完整兼容矩阵。更名为 Heron 后 RPC 命名空间换成了 `heron.v1`，更名前的发布不能作基线，目前还没有 Heron 发布：`scripts/compat-agent.json` 的 `tag` 为 `null`，`make compat-e2e` 会明确失败，CI 与发布流程暂不调用它；首个 Heron 发布之后把它的 tag 与两架构摘要钉进去，再接回 CI。Linux runner 需设置 `E2E_LISTEN_HOST=0.0.0.0` 供 bridge 容器连接，开发机默认只监听回环。
+`make e2e compat-e2e` 使用真实 hub，在 Debian、Alpine 的 amd64、arm64 容器中分别运行当前源码 agent 和固定已发布 agent。兼容基线在 `scripts/compat-agent.json` 固定 tag、发布渠道和两架构 SHA256，不使用浮动 latest；当前固定正式版 `v0.3.5`，CI 与发布流程都执行兼容矩阵。更新基线时必须核对发布资产和摘要，再运行完整兼容矩阵。更名前的 `probe.v1` 发布不能作 `heron.v1` 的兼容基线；缺少基线时明确失败，不跳过检查。Linux runner 需设置 `E2E_LISTEN_HOST=0.0.0.0` 供 bridge 容器连接，开发机默认只监听回环。
+
+管理端节点详情的「Agent 运行诊断」显示最近保存的生效网卡规则、实际计入网卡、采集失败类别与上报间隔。它是只读的最近上报信息，不保证离线节点当前健康；旧 Agent 未提供时显示未知。诊断不含凭据、Hub URL、完整命令行或原始错误，也不进入公开页和主题数据。网卡清单最多显示前 128 个，超过时保留真实总数，计数仍覆盖全部匹配网卡。
+
+Agent 的 `run --net-include` / `--net-exclude` 为逗号分隔的 glob，每组最多 64 项、每项最多 128 字节；包含规则非空时只按包含规则统计，否则使用指定排除规则或平台默认规则。实际计入的网卡集合变化时，首个样本仅重建速率与流量差分基线，不把新网卡已有计数当新流量。该标识随累计基线原子保存；旧 Agent 仍能上报，但无法识别集合变化。首次升级到支持该标识的 Agent 会重建一次基线。
+
+重建基线会舍弃跨集合的整个采样区间，频繁增删网卡时会持续少计，并非无损计费口径；这类主机可用包含规则只统计稳定的上行接口。
+
+上述持久化使用 schema 26。升级前保留一致性数据库备份；升级后不能只换回旧 Hub 二进制降级，必须同时恢复升级前数据库。
 
 ## 许可
 

@@ -8,17 +8,18 @@ import { AdminService, type GetTrafficResponse } from "../gen/heron/v1/admin_pb"
 import { bytes } from "../lib/format";
 import { errorText } from "../api/auth";
 import { NodeAddresses } from "../components/NodeAddresses";
+import { AgentDiagnostics } from "../components/AgentDiagnostics";
 
 const ADMIN_HISTORY: HistoryMethods = { queryMetrics: AdminService.method.queryMetrics, queryProbes: AdminService.method.queryProbes };
 
-// 周期量随每次上报更新；流量卡以 10 秒节奏展示内存视图的变化，不依赖落盘刷出。
+// 周期量与诊断随上报更新；详情以 10 秒节奏读取，流量卡不依赖落盘刷出。
 export const TRAFFIC_MS = 10_000;
 
 export function NodeDetail() {
   const { id } = useParams();
   const validId = /^\d+$/.test(id ?? "");
   const nodeId = validId ? BigInt(id!) : 0n;
-  const nodes = useQuery(AdminService.method.listNodes, {}, { enabled: validId });
+  const nodes = useQuery(AdminService.method.listNodes, {}, { enabled: validId, refetchInterval: TRAFFIC_MS });
   const history = useHistory(ADMIN_HISTORY, nodeId, validId);
   // 流量与图表面向不同查询，各自降级；校正操作在卡片内保留自己的错误槽位。
   const traffic = useQuery(AdminService.method.getTraffic, {}, { enabled: validId, refetchInterval: TRAFFIC_MS });
@@ -54,6 +55,7 @@ export function NodeDetail() {
           <dt>ICMP 探测</dt><dd>{node.facts.icmpAvailable ? "可用" : "不可用"}</dd>
         </dl>
       ) : gate.loading}
+      {node && <AgentDiagnostics diagnostics={node.facts?.diagnostics} updatedAt={node.factsUpdatedAt} />}
     </section>
   );
 }

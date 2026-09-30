@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,10 +31,12 @@ func TestTrafficRoundTripUpsertsBaselineAndTotalsTogether(t *testing.T) {
 	st, id := openTraffic(t)
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	rec := TrafficRecord{NodeID: id, BootID: "b1", LastRx: 100, LastTx: 200, TotalRx: 1000, TotalTx: 2000, PeriodRx: 10, PeriodTx: 20, PeriodStart: start}
+	rec.NetCounterEpoch = strings.Repeat("a", 64)
 	if skipped, err := st.WriteTraffic(t.Context(), []TrafficRecord{rec}); err != nil || skipped != 0 {
 		t.Fatalf("write: %v skipped=%d", err, skipped)
 	}
 	rec.LastRx, rec.TotalRx, rec.PeriodRx = 150, 1050, 60
+	rec.NetCounterEpoch = strings.Repeat("b", 64)
 	if _, err := st.WriteTraffic(t.Context(), []TrafficRecord{rec}); err != nil {
 		t.Fatal(err)
 	}
@@ -47,6 +50,78 @@ func TestTrafficRoundTripUpsertsBaselineAndTotalsTogether(t *testing.T) {
 	got[0].PeriodStart, rec.PeriodStart = time.Time{}, time.Time{}
 	if got[0] != rec {
 		t.Fatalf("got %+v, want %+v", got[0], rec)
+	}
+	config := filepath.Join(t.TempDir(), "config.db")
+	if err := st.SnapshotConfig(t.Context(), config); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "restored.db")
+	if _, err := Restore(t.Context(), target, config, "", "", time.Now(), slog.Default()); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := Open(target, clock.Real(), slog.Default(), RequireCurrentSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	got, err = restored.LoadTraffic(t.Context())
+	if err != nil || len(got) != 1 || got[0].NetCounterEpoch != rec.NetCounterEpoch || got[0].BootID != rec.BootID || got[0].TotalRx != rec.TotalRx {
+		t.Fatalf("restored traffic=%+v err=%v want=%+v", got, err, rec)
+	}
+}
+
+func TestTrafficCounterEpochValidationAndAtomicWrite(t *testing.T) {
+	st, id := openTraffic(t)
+	rec := TrafficRecord{NodeID: id, BootID: "boot", NetCounterEpoch: strings.Repeat("a", 64), TotalRx: 100, PeriodStart: time.Unix(0, 0).UTC()}
+	if _, err := st.WriteTraffic(t.Context(), []TrafficRecord{rec}); err != nil {
+		t.Fatal(err)
+	}
+	for _, epoch := range []string{"short", strings.Repeat("A", 64), strings.Repeat("g", 64)} {
+		valid, invalid := rec, rec
+		valid.TotalRx = 200
+		invalid.NetCounterEpoch = epoch
+		if _, err := st.WriteTraffic(t.Context(), []TrafficRecord{valid, invalid}); err == nil || !strings.Contains(err.Error(), "epoch") {
+			t.Fatalf("invalid epoch accepted: %v", err)
+		}
+		got, err := st.LoadTraffic(t.Context())
+		if err != nil || len(got) != 1 || got[0] != rec {
+			t.Fatalf("failed batch changed baseline or totals: %+v %v", got, err)
+		}
+	}
+}
+
+func TestTrafficReadAndRestoreRejectInvalidEpoch(t *testing.T) {
+	st, id := openTraffic(t)
+	rec := TrafficRecord{NodeID: id, BootID: "boot", NetCounterEpoch: strings.Repeat("a", 64), TotalRx: 100, PeriodStart: time.Unix(0, 0).UTC()}
+	if _, err := st.WriteTraffic(t.Context(), []TrafficRecord{rec}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.write(t.Context(), func(tx *sql.Tx) error {
+		_, err := tx.Exec("UPDATE traffic SET net_counter_epoch='invalid'")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var epoch string
+	if err := st.r.QueryRow("SELECT net_counter_epoch FROM traffic WHERE node_id=?", id).Scan(&epoch); err != nil || epoch != "invalid" {
+		t.Fatalf("invalid fixture did not land: %q %v", epoch, err)
+	}
+	if _, err := st.LoadTraffic(t.Context()); err == nil || !strings.Contains(err.Error(), "net_counter_epoch") {
+		t.Fatalf("invalid epoch read: %v", err)
+	}
+	config := filepath.Join(t.TempDir(), "config.db")
+	if err := st.SnapshotConfig(t.Context(), config); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.WriteTraffic(t.Context(), []TrafficRecord{rec}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Restore(t.Context(), st.path, config, "", "", time.Now(), slog.Default()); err == nil || !strings.Contains(err.Error(), "net_counter_epoch") {
+		t.Fatalf("invalid epoch restored: %v", err)
+	}
+	got, err := st.LoadTraffic(t.Context())
+	if err != nil || len(got) != 1 || got[0] != rec {
+		t.Fatalf("rejected restore changed baseline or totals: %+v %v", got, err)
 	}
 }
 

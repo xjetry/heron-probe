@@ -134,10 +134,10 @@ func restoreSnapshots(t *testing.T) (config, metrics string) {
 		INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at) VALUES (7,1,'localhost',60,1000,0);
 		DELETE FROM probe_task;`)
 	for _, id := range []int{2, 3} {
-		restoreExec(t, db, fmt.Sprintf(`INSERT INTO node_facts VALUES (%[1]d,0,'','','','','','',0,'',0,0,'{}');
+		restoreExec(t, db, fmt.Sprintf(`INSERT INTO node_facts (node_id,facts_hash,hostname,os,kernel,arch,virtualization,cpu_model,cpu_cores,agent_version,icmp_available,updated_at) VALUES (%[1]d,0,'','','','','','',0,'',0,0);
 			INSERT INTO api_token_node VALUES (1,%[1]d);
 			INSERT INTO node_tag (node_id,tag_id) VALUES (%[1]d,1);
-			INSERT INTO traffic VALUES (%[1]d,'',0,0,0,0,0,0,0,0);
+			INSERT INTO traffic (node_id,boot_id,last_rx,last_tx,total_rx,total_tx,period_rx,period_tx,period_start,updated_at) VALUES (%[1]d,'',0,0,0,0,0,0,0,0);
 			INSERT INTO probe_task_node VALUES (1,%[1]d);
 			INSERT INTO alert_rule_node VALUES (1,%[1]d);
 			INSERT INTO alert_state (rule_id,node_id,state,since_at) VALUES (1,%[1]d,'firing',0);`, id))
@@ -277,6 +277,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			removeV26Config(t, cfg)
 			removeV25Config(t, cfg)
 			restoreExec(t, cfg, "ALTER TABLE node_facts DROP COLUMN network")
 			removeV22ThemeConfig(t, cfg)
@@ -314,6 +315,11 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func removeV26Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "ALTER TABLE node_facts DROP COLUMN diagnostics; ALTER TABLE traffic DROP COLUMN net_counter_epoch")
 }
 
 // 配置快照只包含持久授权与回执，不包含注册窗口和更新队列。

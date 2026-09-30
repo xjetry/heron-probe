@@ -474,7 +474,7 @@ func (x *PublicBilling) GetDaysLeft() int32 {
 	return 0
 }
 
-// Facts 的公开部分，字段号与 Facts 相同。主机名、内核版本、agent 版本、ICMP 可用性与双栈出口不公开，
+// Facts 的公开部分，字段号与 Facts 相同。主机名、内核版本、agent 版本、ICMP 可用性、双栈出口与诊断不公开，
 // 它们的号与名保留：要公开必须先删掉 reserved，而不是随手加一个字段。
 type PublicFacts struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -552,7 +552,7 @@ func (x *PublicFacts) GetCpuCores() uint32 {
 	return 0
 }
 
-// 与 Metrics 同字段号、同语义，只是没有 boot_id（流量差分用的内部标识）。每个读数都是 optional：
+// 与 Metrics 同字段号、同语义，但不公开启动标识与网卡集合标识。每个读数都是 optional：
 // 缺失表示无读数，与读数为 0 是两个不同的事实。
 type PublicMetrics struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
@@ -784,7 +784,7 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\tdays_left\x18\x06 \x01(\x05H\x00R\bdaysLeft\x88\x01\x01B\f\n" +
 	"\n" +
 	"_days_leftJ\x04\b\x05\x10\x06R\n" +
-	"auto_renew\"\xeb\x01\n" +
+	"auto_renew\"\xfe\x01\n" +
 	"\vPublicFacts\x12\x0e\n" +
 	"\x02os\x18\x02 \x01(\tR\x02os\x12\x12\n" +
 	"\x04arch\x18\x04 \x01(\tR\x04arch\x12&\n" +
@@ -792,7 +792,7 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\tcpu_model\x18\x06 \x01(\tR\bcpuModel\x12\x1b\n" +
 	"\tcpu_cores\x18\a \x01(\rR\bcpuCoresJ\x04\b\x01\x10\x02J\x04\b\x03\x10\x04J\x04\b\b\x10\tJ\x04\b\t\x10\n" +
 	"J\x04\b\n" +
-	"\x10\vR\bhostnameR\x06kernelR\ragent_versionR\x0eicmp_availableR\anetwork\"\xe3\x06\n" +
+	"\x10\vJ\x04\b\v\x10\fR\bhostnameR\x06kernelR\ragent_versionR\x0eicmp_availableR\anetworkR\vdiagnostics\"\xfc\x06\n" +
 	"\rPublicMetrics\x12\x1c\n" +
 	"\acpu_pct\x18\x02 \x01(\x01H\x00R\x06cpuPct\x88\x01\x01\x12\x19\n" +
 	"\x05load1\x18\x03 \x01(\x01H\x01R\x05load1\x88\x01\x01\x12\x19\n" +
@@ -843,7 +843,7 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\n" +
 	"_udp_connsB\b\n" +
 	"\x06_procsB\v\n" +
-	"\t_uptime_sJ\x04\b\x01\x10\x02R\aboot_id2\xde\x02\n" +
+	"\t_uptime_sJ\x04\b\x01\x10\x02J\x04\b\x14\x10\x15R\aboot_idR\x11net_counter_epoch2\xde\x02\n" +
 	"\rPublicService\x12C\n" +
 	"\aGetSite\x12\x18.heron.v1.GetSiteRequest\x1a\x14.heron.v1.PublicSite\"\b\x90\xb5\x18\xac\x02\x90\x02\x01\x12[\n" +
 	"\vGetSnapshot\x12).heron.v1.PublicServiceGetSnapshotRequest\x1a\x18.heron.v1.PublicSnapshot\"\a\x90\xb5\x18\x01\x90\x02\x01\x12V\n" +

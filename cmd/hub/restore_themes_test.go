@@ -71,6 +71,7 @@ func TestRestoreThemesSnapshotDigest(t *testing.T) {
 func themeRestoreFixture(t *testing.T) (string, string) {
 	t.Helper()
 	config, _ := restoreSnapshots(t)
+	removeV26Config(t, restoreDB(t, config))
 	removeV25Config(t, restoreDB(t, config))
 	restoreExec(t, restoreDB(t, config), "ALTER TABLE node_facts DROP COLUMN network")
 	removeV22ThemeConfig(t, restoreDB(t, config))

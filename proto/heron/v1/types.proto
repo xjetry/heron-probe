@@ -30,6 +30,9 @@ message Metrics {
   optional uint32 udp_conns = 17;
   optional uint32 procs = 18;
   optional uint64 uptime_s = 19;
+  // 实际计入网络合计的网卡名称集合的 SHA-256，小写十六进制；与计数同次采样。
+  // 集合改变时仅重建差分基线，不把旧网卡计数当新增流量。空串表示旧 agent 未提供此能力。
+  string net_counter_epoch = 20;
 }
 
 // 主机静态信息。进程启动后的首次上报携带；此后仅在 hub 要求时携带。
@@ -46,6 +49,39 @@ message Facts {
   bool icmp_available = 9;
   // agent 自报的双栈出口，仅用于管理展示；hub 不据此鉴权或查询国家。
   NetworkInfo network = 10;
+  // 最近一次采集的白名单诊断，仅管理端可读；缺失表示 agent 尚未提供，不等于健康。
+  // 不含原始错误、凭据、Hub URL 或完整命令行。沿 Facts 摘要对账，只在内容变化时落库。
+  AgentDiagnostics diagnostics = 11;
+}
+
+message AgentDiagnostics {
+  // 生效的包含/排除规则，包含非空时排除必须为空；排除已展开平台缺省值。
+  // 每组至多 64 个 glob，每个至多 128 字节。
+  repeated string net_include = 1;
+  repeated string net_exclude = 2;
+  // 最近成功采样实际计入的网卡，按名称排序，最多前 128 个，每个至多 64 字节。
+  // 本次网络采集失败时为空，不回显上一次的集合冒充当前采集结果。
+  repeated string net_interfaces = 3;
+  // 实际计入的总数；大于 net_interfaces 长度表示展示列表被截断，计数和集合摘要仍覆盖全集。
+  uint32 net_interfaces_total = 4;
+  // 固定失败类别，不承载由文件内容或网络对端产生的原始错误文本；空列表表示本次采集无错误。
+  repeated CollectionComponent failed_collectors = 5;
+  // Agent 当前生效的上报间隔（毫秒），不含请求耗时和失败退避；0 表示尚未知。
+  uint32 report_interval_ms = 6;
+}
+
+enum CollectionComponent {
+  COLLECTION_COMPONENT_UNSPECIFIED = 0;
+  COLLECTION_COMPONENT_BOOT_ID = 1;
+  COLLECTION_COMPONENT_CPU = 2;
+  COLLECTION_COMPONENT_MEMORY = 3;
+  COLLECTION_COMPONENT_SWAP = 4;
+  COLLECTION_COMPONENT_DISK = 5;
+  COLLECTION_COMPONENT_LOAD = 6;
+  COLLECTION_COMPONENT_PROCS = 7;
+  COLLECTION_COMPONENT_UPTIME = 8;
+  COLLECTION_COMPONENT_CONNS = 9;
+  COLLECTION_COMPONENT_NET = 10;
 }
 
 message NetworkInfo {

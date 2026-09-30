@@ -20,6 +20,9 @@ func validateMetrics(m *heronv1.Metrics) error {
 	if err := validateHostString("boot_id", m.BootId); err != nil {
 		return err
 	}
+	if err := agentwire.ValidateCounterEpoch(m.NetCounterEpoch); err != nil {
+		return err
+	}
 	floats := []struct {
 		name string
 		v    *float64
@@ -104,7 +107,10 @@ func validateFacts(f *heronv1.Facts) error {
 			}
 		}
 	}
-	return agentwire.ValidateNetwork(f.GetNetwork())
+	if err := agentwire.ValidateNetwork(f.GetNetwork()); err != nil {
+		return err
+	}
+	return agentwire.ValidateDiagnostics(f.GetDiagnostics())
 }
 
 func sanitizeFacts(f *heronv1.Facts) {

@@ -13,7 +13,7 @@ import (
 )
 
 // FlushPeriod 是脏条目落盘的周期；退出时另刷一次。正常刷出下崩溃最多丢一个周期的内存增量；
-// 只要 agent 未换启动周期且计数器未倒退，重启后首次上报相对已落盘基线的差分会把这段补回。
+// 只要 agent 未换启动周期、网卡集合且计数器未倒退，重启后首次上报相对已落盘基线的差分会把这段补回。
 // 刷出持续失败时丢的不止一个周期；Flush 保留脏状态，Run 记录日志并重试。
 const FlushPeriod = 10 * time.Second
 
@@ -36,6 +36,7 @@ var _ Storage = (*store.Store)(nil)
 // INTEGER 同宽；计数器在入账时截到 MaxInt64，管理接口拒绝越界的校正用量。
 type State struct {
 	BootID                           string
+	NetCounterEpoch                  string
 	LastRx, LastTx, TotalRx, TotalTx int64
 	PeriodRx, PeriodTx               int64
 	PeriodStart                      time.Time
@@ -81,7 +82,7 @@ func New(st Storage, clk clock.Clock, tz *time.Location, log *slog.Logger) *Book
 
 func (b *Book) Zone() *time.Location { return b.tz }
 
-// Load 从库恢复条目与重置日。只要 agent 未换启动周期且计数器未倒退，恢复的基线
+// Load 从库恢复条目与重置日。只要 agent 未换启动周期、网卡集合且计数器未倒退，恢复的基线
 // 就让重启后的首次上报通过差分补回最后一次成功刷出之后丢失的内存增量。
 func (b *Book) Load(ctx context.Context) error {
 	recs, err := b.st.LoadTraffic(ctx)
@@ -97,7 +98,7 @@ func (b *Book) Load(ctx context.Context) error {
 	b.entries = map[int64]*entry{}
 	// 库值是 int64，类型已限定上界；手工改库可能留下负累计值，恢复时统一收敛到非负范围。
 	for _, r := range recs {
-		b.entries[r.NodeID] = &entry{State: State{BootID: r.BootID, LastRx: r.LastRx, LastTx: r.LastTx, TotalRx: max(r.TotalRx, 0), TotalTx: max(r.TotalTx, 0),
+		b.entries[r.NodeID] = &entry{State: State{BootID: r.BootID, NetCounterEpoch: r.NetCounterEpoch, LastRx: r.LastRx, LastTx: r.LastTx, TotalRx: max(r.TotalRx, 0), TotalTx: max(r.TotalTx, 0),
 			PeriodRx: max(r.PeriodRx, 0), PeriodTx: max(r.PeriodTx, 0), PeriodStart: r.PeriodStart}}
 	}
 	b.resetDay = days
@@ -172,10 +173,11 @@ func (b *Book) Account(nodeID int64, m *heronv1.Metrics) (Delta, bool) {
 	} else {
 		b.roll(nodeID, e, now)
 	}
-	if !e.HasBaseline() || e.BootID != m.GetBootId() || rx < e.LastRx || tx < e.LastTx {
-		// 没有基线、换了启动周期或计数器倒退：只重置基线。最多丢开机到首次上报之间的流量，
-		// 换来 token 被挪到另一台机器时不会把那台机器开机以来的全部流量记入。
+	if !e.HasBaseline() || e.BootID != m.GetBootId() || e.NetCounterEpoch != m.GetNetCounterEpoch() || rx < e.LastRx || tx < e.LastTx {
+		// 启动周期、网卡集合或计数方向不一致时，聚合计数无法确定相对旧基线的有效增量；只重建基线，
+		// 舍弃整个跨基线区间，避免把另一台机器或新增网卡已有的计数记为本区间流量。
 		e.BootID, e.LastRx, e.LastTx, e.dirty = m.GetBootId(), rx, tx, true
+		e.NetCounterEpoch = m.GetNetCounterEpoch()
 		return Delta{}, false
 	}
 	d := Delta{Rx: rx - e.LastRx, Tx: tx - e.LastTx}
@@ -220,7 +222,7 @@ func (b *Book) SetResetDay(nodeID int64, day int) {
 }
 
 func record(nodeID int64, s State) store.TrafficRecord {
-	return store.TrafficRecord{NodeID: nodeID, BootID: s.BootID, LastRx: s.LastRx, LastTx: s.LastTx, TotalRx: s.TotalRx, TotalTx: s.TotalTx,
+	return store.TrafficRecord{NodeID: nodeID, BootID: s.BootID, NetCounterEpoch: s.NetCounterEpoch, LastRx: s.LastRx, LastTx: s.LastTx, TotalRx: s.TotalRx, TotalTx: s.TotalTx,
 		PeriodRx: s.PeriodRx, PeriodTx: s.PeriodTx, PeriodStart: s.PeriodStart}
 }
 

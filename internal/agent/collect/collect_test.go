@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -269,7 +270,7 @@ func TestConnsAreCorrectOrMissing(t *testing.T) {
 }
 
 // /sys/class/net 里没有 statistics 目录的条目（bonding_masters 这类文件）不是网卡，跳过；
-// 真网卡的计数读不出时整个网络读数缺失：少一块的合计会让 hub 只换基线，恢复时把那块的历史计数当增量（spec §7）。
+// ifaces 不返回仅含可读网卡的不完整快照；Collector.Metrics 将计数读取失败保留为缺读数，而非网卡集合变化。
 func TestInterfaceReadErrorDropsTheWholeReadingOnLinux(t *testing.T) {
 	fsys := fstest.MapFS{
 		"sys/class/net/bonding_masters":          {Data: []byte("\n")},
@@ -383,22 +384,23 @@ func TestGoldenMetricsFromRealProcSnapshot(t *testing.T) {
 		t.Fatalf("unexpected read failures: %v", err)
 	}
 	want := &heronv1.Metrics{
-		BootId:     "319b05cd-78d2-479e-b8ef-4c2478582043",     // proc/sys/kernel/random/boot_id
-		MemTotal:   proto.Uint64(16424476 * 1024),              // meminfo MemTotal
-		MemUsed:    proto.Uint64((16424476 - 14608052) * 1024), // MemTotal − MemAvailable
-		SwapTotal:  proto.Uint64(17473044 * 1024),
-		SwapUsed:   proto.Uint64(0), // SwapTotal − SwapFree
-		DiskTotal:  proto.Uint64(1000),
-		DiskUsed:   proto.Uint64(400),
-		Load1:      proto.Float64(0.27),
-		Load5:      proto.Float64(0.50),
-		Load15:     proto.Float64(0.46),
-		Procs:      proto.Uint32(1), // 进程目录只有 proc/1
-		UptimeS:    proto.Uint64(202088),
-		TcpConns:   proto.Uint32(0),
-		UdpConns:   proto.Uint32(0),
-		NetRxTotal: proto.Uint64(110), // 只有 eth0，lo 被默认排除
-		NetTxTotal: proto.Uint64(42),
+		BootId:          "319b05cd-78d2-479e-b8ef-4c2478582043",     // proc/sys/kernel/random/boot_id
+		MemTotal:        proto.Uint64(16424476 * 1024),              // meminfo MemTotal
+		MemUsed:         proto.Uint64((16424476 - 14608052) * 1024), // MemTotal − MemAvailable
+		SwapTotal:       proto.Uint64(17473044 * 1024),
+		SwapUsed:        proto.Uint64(0), // SwapTotal − SwapFree
+		DiskTotal:       proto.Uint64(1000),
+		DiskUsed:        proto.Uint64(400),
+		Load1:           proto.Float64(0.27),
+		Load5:           proto.Float64(0.50),
+		Load15:          proto.Float64(0.46),
+		Procs:           proto.Uint32(1), // 进程目录只有 proc/1
+		UptimeS:         proto.Uint64(202088),
+		TcpConns:        proto.Uint32(0),
+		UdpConns:        proto.Uint32(0),
+		NetRxTotal:      proto.Uint64(110), // 只有 eth0，lo 被默认排除
+		NetTxTotal:      proto.Uint64(42),
+		NetCounterEpoch: "fd943bfeaf4f69406c92467340e6009c5a065c5453af9acebbd8c9af3a66eeb8", // SHA-256(["eth0"])
 	}
 	if d := protoDiff(m, want); d != nil {
 		t.Fatalf("metrics differ from the snapshot:\n%s", strings.Join(d, "\n"))
@@ -451,25 +453,26 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 		t.Fatalf("second sample: %v", err)
 	}
 	want := &heronv1.Metrics{
-		BootId:     "0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f",
-		CpuPct:     proto.Float64(100 * (1 - 60.0/200)),
-		MemTotal:   proto.Uint64(8000 * 1024),
-		MemUsed:    proto.Uint64((8000 - 3000) * 1024),
-		SwapTotal:  proto.Uint64(4000 * 1024),
-		SwapUsed:   proto.Uint64((4000 - 1500) * 1024),
-		DiskTotal:  proto.Uint64(9000),
-		DiskUsed:   proto.Uint64(1234),
-		Load1:      proto.Float64(1.25),
-		Load5:      proto.Float64(2.5),
-		Load15:     proto.Float64(3.75),
-		Procs:      proto.Uint32(3),
-		UptimeS:    proto.Uint64(4321),
-		TcpConns:   proto.Uint32(11 + 17),
-		UdpConns:   proto.Uint32(13 + 19),
-		NetRxTotal: proto.Uint64(5000),
-		NetTxTotal: proto.Uint64(4000),
-		NetRxBps:   proto.Uint64((5000 - 1000) / 2),
-		NetTxBps:   proto.Uint64((4000 - 3000) / 2),
+		BootId:          "0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f",
+		CpuPct:          proto.Float64(100 * (1 - 60.0/200)),
+		MemTotal:        proto.Uint64(8000 * 1024),
+		MemUsed:         proto.Uint64((8000 - 3000) * 1024),
+		SwapTotal:       proto.Uint64(4000 * 1024),
+		SwapUsed:        proto.Uint64((4000 - 1500) * 1024),
+		DiskTotal:       proto.Uint64(9000),
+		DiskUsed:        proto.Uint64(1234),
+		Load1:           proto.Float64(1.25),
+		Load5:           proto.Float64(2.5),
+		Load15:          proto.Float64(3.75),
+		Procs:           proto.Uint32(3),
+		UptimeS:         proto.Uint64(4321),
+		TcpConns:        proto.Uint32(11 + 17),
+		UdpConns:        proto.Uint32(13 + 19),
+		NetRxTotal:      proto.Uint64(5000),
+		NetTxTotal:      proto.Uint64(4000),
+		NetRxBps:        proto.Uint64((5000 - 1000) / 2),
+		NetTxBps:        proto.Uint64((4000 - 3000) / 2),
+		NetCounterEpoch: "fd943bfeaf4f69406c92467340e6009c5a065c5453af9acebbd8c9af3a66eeb8",
 	}
 	if d := protoDiff(m, want); d != nil {
 		t.Fatalf("metrics differ:\n%s", strings.Join(d, "\n"))
@@ -477,6 +480,7 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 	wantFacts := &heronv1.Facts{
 		Hostname: "synth", Os: "Synth Linux 1", Kernel: "6.1.0-synth", Arch: runtime.GOARCH, Virtualization: "lxc",
 		CpuModel: "Synth CPU", CpuCores: 3, AgentVersion: "v9", IcmpAvailable: true,
+		Diagnostics: &heronv1.AgentDiagnostics{NetExclude: slices.Clone(linuxNetExclude), NetInterfaces: []string{"eth0"}, NetInterfacesTotal: 1},
 	}
 	if d := protoDiff(c.Facts(), wantFacts); d != nil {
 		t.Fatalf("facts differ:\n%s", strings.Join(d, "\n"))
