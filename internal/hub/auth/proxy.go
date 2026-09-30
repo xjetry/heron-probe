@@ -1,10 +1,69 @@
 package auth
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 	"net/netip"
 	"strings"
 )
+
+// TrustedRequestScheme 拒绝转发协议的重复、冲突及多跳值；来源校验和 cookie 必须采信同一可信协议。
+func TrustedRequestScheme(r *http.Request, trusted []netip.Prefix) (string, error) {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if !inAny(peerIP(r.RemoteAddr), trusted) {
+		return scheme, nil
+	}
+	var forwarded string
+	xfp := r.Header.Values("X-Forwarded-Proto")
+	if len(xfp) > 1 {
+		return "", errors.New("ambiguous forwarded protocol")
+	}
+	if len(xfp) == 1 {
+		forwarded = strings.ToLower(strings.TrimSpace(xfp[0]))
+		if forwarded != "http" && forwarded != "https" {
+			return "", errors.New("invalid forwarded protocol")
+		}
+	}
+	fwd := r.Header.Values("Forwarded")
+	if len(fwd) > 1 || (len(fwd) == 1 && strings.Contains(fwd[0], ",")) {
+		return "", errors.New("ambiguous forwarded protocol")
+	}
+	if len(fwd) == 1 {
+		proto := ""
+		for _, part := range strings.Split(fwd[0], ";") {
+			key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+			if !ok || !strings.EqualFold(key, "proto") {
+				continue
+			}
+			if proto != "" {
+				return "", errors.New("ambiguous forwarded protocol")
+			}
+			value = strings.TrimSpace(value)
+			if strings.HasPrefix(value, "\"") {
+				if len(value) < 2 || !strings.HasSuffix(value, "\"") {
+					return "", errors.New("invalid forwarded protocol")
+				}
+				value = value[1 : len(value)-1]
+			}
+			proto = strings.ToLower(value)
+			if proto != "http" && proto != "https" {
+				return "", errors.New("invalid forwarded protocol")
+			}
+		}
+		if proto == "" || (forwarded != "" && proto != forwarded) {
+			return "", errors.New("conflicting forwarded protocol")
+		}
+		forwarded = proto
+	}
+	if forwarded != "" {
+		scheme = forwarded
+	}
+	return scheme, nil
+}
 
 // ClientIP 决定一个请求的来源地址。
 //
@@ -112,25 +171,4 @@ func ParsePrefixes(list string) ([]netip.Prefix, error) {
 		out = append(out, netip.PrefixFrom(ip, ip.BitLen()))
 	}
 	return out, nil
-}
-
-// RequestScheme 决定请求在客户端一侧是 https 还是 http。hub 只听明文，所以只有
-// 可信代理转发的 X-Forwarded-Proto 能说明这一点；对端不可信时按 http 处理。
-// 后果：hub 若实际在 TLS 反代之后而运维没有配置 --trusted-proxies，会话 cookie
-// 就不带 Secure——配置可信代理是这条链成立的前提，不从请求头猜。
-//
-// xfProto 与 ClientIP 一样是全部字段行，取拼接后的第一个值，即最外层那一跳写的协议。这个头不带逐跳地址，
-// 没法像 X-Forwarded-For 那样跳过可信代理；代理若追加而不覆盖、客户端又自带该头，第一个值就是客户端写的。
-// 这里有意不处理：它只决定签发或清除请求者自己的 cookie 时带不带 Secure（service.go 的 sessionCookie），
-// 客户端只能改到自己，影响不到别的来源。
-func RequestScheme(peerAddr string, xfProto []string, trusted []netip.Prefix) string {
-	peer := peerIP(peerAddr)
-	if !peer.IsValid() || !inAny(peer, trusted) {
-		return "http"
-	}
-	first, _, _ := strings.Cut(strings.Join(xfProto, ","), ",")
-	if strings.EqualFold(strings.TrimSpace(first), "https") {
-		return "https"
-	}
-	return "http"
 }

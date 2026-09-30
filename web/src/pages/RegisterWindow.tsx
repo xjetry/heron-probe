@@ -5,6 +5,7 @@ import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { Secret } from "../components/Secret";
+import { CopyableText } from "../components/CopyableText";
 import { AdminService } from "../gen/heron/v1/admin_pb";
 import { needsInsecureHTTP } from "../lib/transport";
 import { isRelease } from "../lib/version";
@@ -96,8 +97,8 @@ export function InstallCommands({ hubVersion, origin, registerKey, banner }: { h
   return (
     <>
       {banner}
-      <pre className="secret">{`curl -fsSL ${url} | sh -s -- ${args}`}</pre>
-      <pre className="secret">{`wget -qO- ${url} | sh -s -- ${args}`}</pre>
+      <div className="install-command"><strong>curl</strong><CopyableText label="curl 安装命令" copyLabel="复制 curl 命令" value={`curl -fsSL ${url} | sh -s -- ${args}`} /></div>
+      <div className="install-command"><strong>wget</strong><CopyableText label="wget 安装命令" copyLabel="复制 wget 命令" value={`wget -qO- ${url} | sh -s -- ${args}`} /></div>
       {!isRelease(hubVersion) && <p className="muted">hub 不是正式版本（{hubVersion || "未知"}），脚本取自最新 release，将安装最新 release。</p>}
       {insecure && <p className="muted">hub 地址是 http 且不是 loopback IP，命令带 --insecure-http：节点 token 与指标将明文传输。</p>}
       <p className="muted">安装命令的可信来源是 README 与 GitHub Release：这里的命令由 hub 提供，hub 失守时不可信。</p>

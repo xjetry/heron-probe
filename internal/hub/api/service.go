@@ -31,6 +31,8 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/theme"
 	"github.com/xjetry/heron-probe/internal/hub/traffic"
+	"github.com/xjetry/heron-probe/internal/hub/updates"
+	"github.com/xjetry/heron-probe/internal/update"
 )
 
 const (
@@ -61,6 +63,7 @@ const (
 )
 
 type Config struct {
+	Updates *updates.Manager
 	Backups *backup.Manager
 	// TTL 必须为正；零值会放宽宽限期下限，New 将其视为装配错误并 panic。
 	TTL time.Duration
@@ -75,11 +78,7 @@ type Config struct {
 	// Retention 是 serve 交给维护循环的同一份保留期，存储健康按它判定最老桶是否超期。零值会把最老桶早于
 	// 一个桶长加一个维护间隔之前的表都标成超期，New 用 Retention.Validate 把它当作装配错误拒绝。
 	Retention store.Retention
-	// ThemeOrigin 是 serve 的 --theme-origin（规范形态，经 ListThemes 回显给面板）。空串时主题的五个方法一律
-	// FailedPrecondition（requireThemeOrigin）：零值是关闭，与"未配置独立 origin 即不开启上传与托管"同一方向。
-	ThemeOrigin string
-	// PublicDir 为真表示 serve 给了 --public-dir，面板所在 origin 的公开页由目录接管；经 ListThemes 回显，面板据此
-	// 标明启用主题不影响那一页。
+	// PublicDir 为真时可信目录接管公开页，禁止启用托管主题。
 	PublicDir bool
 	// Geo 是 serve 选定并交给国家查询器的同一个后端对象，New 要求非 nil。面板回显的后端与本地库路径取自它
 	// （Settings.geo_backend、geo_mmdb_path），不另由启动参数推导，回显因此不会与查询器实际用的后端分叉；仅回显，
@@ -117,7 +116,12 @@ type Service struct {
 	// uploading 是容量 1 的信号量，UploadTheme 从校验到入库一直持有它：同一时刻至多一个请求在展开与入库，被引用着的
 	// 展开内容至多一份（≤ theme.MaxTotalBytes），Parse 的解压也至多一路。占用时直接拒绝而不排队：到了方法体的请求
 	// 已各自持有解码后的包，排队只会把它们攒在内存里。请求体的解码在方法体之前，不归它管，由 maxThemeBody 按请求设界。
-	uploading chan struct{}
+	uploading    chan struct{}
+	github       *theme.GitHubClient
+	previewMu    sync.Mutex
+	previews     map[string]themePreviewGrant
+	updateLocal  localUpdateClient
+	updateSource releaseSource
 }
 
 func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, book *traffic.Book, probes *probe.Registry, alerts *alert.Engine, notifier *alert.Queue, clk clock.Clock, log *slog.Logger) *Service {
@@ -141,6 +145,8 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 		history:   history{store: st, log: log},
 		access:    accessTable(heronv1.File_heron_v1_admin_proto.Services().ByName("AdminService")),
 		uploading: make(chan struct{}, 1),
+		github:    theme.NewGitHubClient(), previews: make(map[string]themePreviewGrant),
+		updateLocal: update.NewClient("hub"), updateSource: update.NewOfficialSource(),
 	}
 }
 
@@ -154,17 +160,30 @@ func (s *Service) Handler() (string, http.Handler) {
 	access := connect.WithInterceptors(s.accessInterceptor())
 	path, rest := heronv1connect.NewAdminServiceHandler(s, access, connect.WithReadMaxBytes(maxSettingsBody))
 	_, upload := heronv1connect.NewAdminServiceHandler(s, access, connect.WithReadMaxBytes(maxThemeBody))
-	return path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return path, auth.WebAuthnContext(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 不透明沙箱和跨源浏览器请求在解码与鉴权之前拒绝，不能依赖 CORS 阻止副作用。
+		if !auth.SameOriginRequest(r, s.cfg.TrustedProxies) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"code":"permission_denied","message":"管理请求来源不匹配；使用 HTTPS 反代时请保留 Host、转发协议并配置 --trusted-proxies"}`))
+			return
+		}
+		scheme, err := auth.TrustedRequestScheme(r, s.cfg.TrustedProxies)
+		if err != nil {
+			scheme = "http"
+		}
+		r = r.WithContext(context.WithValue(r.Context(), schemeKey{}, scheme))
 		if r.URL.Path == heronv1connect.AdminServiceUploadThemeProcedure {
 			upload.ServeHTTP(w, r)
 			return
 		}
 		rest.ServeHTTP(w, r)
-	})
+	}), s.cfg.TrustedProxies)
 }
 
 type sessionKey struct{}
 type peerKey struct{}
+type schemeKey struct{}
 
 // peerInfo 由拦截器统一计算；转发头只有来自可信代理时才参与来源地址与协议判定。
 type peerInfo struct {
@@ -226,32 +245,37 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 		if !ok {
 			return nil, unauthenticated("unauthenticated")
 		}
+		scheme, _ := ctx.Value(schemeKey{}).(string)
 		peer := peerInfo{
 			from:   auth.ClientIP(req.Peer().Addr, req.Header().Values("X-Forwarded-For"), s.cfg.TrustedProxies),
-			scheme: auth.RequestScheme(req.Peer().Addr, req.Header().Values("X-Forwarded-Proto"), s.cfg.TrustedProxies),
+			scheme: scheme,
 		}
 		ctx = context.WithValue(ctx, peerKey{}, peer)
-		// 先鉴别身份再裁决权限：无效 token 调任何方法都是 401，有效 token 调非 READ 方法是 403。
+		// 先鉴别身份再裁决权限：无效 token 调任何方法都是 401；有效 token 只读 READ，
+		// 写入只能经 CHANGE 再检查具体权限，不能借已有写权限直接调用会话方法。
 		// Login 带 Bearer 也落在 403，但文案不能写成"去开一个面板会话"：token 代替不了密码。
 		if tok, isBearer, err := bearerCredential(req.Header()); isBearer {
 			if err != nil {
 				return nil, unauthenticated(err.Error() + "; send exactly one Authorization: Bearer <API token>")
 			}
-			ok, err := s.auth.AuthenticateAPIToken(ctx, tok)
+			principal, err := s.auth.AuthenticateAPIToken(ctx, tok)
 			if err != nil {
 				s.log.Error("API token lookup failed", "err", err)
 				return nil, internalError("API token lookup failed")
 			}
-			if !ok {
+			if principal == nil {
 				return nil, unauthenticated("API token unknown or revoked")
 			}
-			if level != heronv1.Access_ACCESS_READ {
+			if level != heronv1.Access_ACCESS_READ && !(level == heronv1.Access_ACCESS_CHANGE && len(principal.Permissions) > 0) {
 				if level == heronv1.Access_ACCESS_LOGIN {
 					return nil, permissionDenied("%s: API tokens cannot log in; send the admin password without an Authorization: Bearer header", req.Spec().Procedure)
 				}
-				return nil, permissionDenied("%s: API tokens are read-only; this method requires a panel session", req.Spec().Procedure)
+				return nil, permissionDenied("%s: use ExecuteChange with a preauthorized write permission; other write methods require a panel session", req.Spec().Procedure)
 			}
-			return next(ctx, req)
+			if !principal.AllNodes && !scopedReadAllowed(req.Spec().Procedure) && level != heronv1.Access_ACCESS_CHANGE {
+				return nil, permissionDenied("this method requires a site-wide API token")
+			}
+			return next(store.WithPrincipal(ctx, *principal), req)
 		}
 		if level == heronv1.Access_ACCESS_LOGIN {
 			// 凭据是请求体里的密码，由 Login 裁决；按来源的锁定也在那里。

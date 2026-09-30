@@ -29,7 +29,7 @@ func (s *Service) GetSecurity(ctx context.Context, _ *connect.Request[heronv1.Ge
 	if err != nil {
 		return nil, securityError(err)
 	}
-	out := &heronv1.GetSecurityResponse{TotpEnabled: info.TOTPEnabled, PasskeyAvailable: info.PasskeyAvailable, RecoveryCodesRemaining: uint32(info.RecoveryRemaining)}
+	out := &heronv1.GetSecurityResponse{TotpEnabled: info.TOTPEnabled, PasskeyAvailable: info.PasskeyAvailable, RecoveryCodesRemaining: uint32(info.RecoveryRemaining), Origin: info.Origin, CurrentOrigin: info.CurrentOrigin, UnavailableReason: info.UnavailableReason}
 	for _, p := range info.Passkeys {
 		out.Passkeys = append(out.Passkeys, &heronv1.SecurityCredential{Id: base64.RawURLEncoding.EncodeToString(p.Credential.ID), Name: p.Name})
 	}
@@ -61,15 +61,16 @@ func (s *Service) SecurityAction(ctx context.Context, req *connect.Request[heron
 		return nil, invalid("认证字段过大")
 	}
 	actions := map[heronv1.SecurityActionKind]auth.SecurityActionKind{
-		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_TOTP_BEGIN:          auth.SecurityTOTPBegin,
-		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_TOTP_ENABLE:         auth.SecurityTOTPEnable,
-		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_TOTP_DISABLE:        auth.SecurityTOTPDisable,
-		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_PASSKEY_BEGIN:       auth.SecurityPasskeyBegin,
-		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_PASSKEY_REGISTER:    auth.SecurityPasskeyRegister,
-		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_PASSKEY_DELETE:      auth.SecurityPasskeyDelete,
-		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_RECOVERY_REGENERATE: auth.SecurityRecoveryRegenerate,
-		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_REAUTH_BEGIN:        auth.SecurityReauthBegin,
-		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_REAUTH_FINISH:       auth.SecurityReauthFinish,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_TOTP_BEGIN:           auth.SecurityTOTPBegin,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_TOTP_ENABLE:          auth.SecurityTOTPEnable,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_TOTP_DISABLE:         auth.SecurityTOTPDisable,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_PASSKEY_BEGIN:        auth.SecurityPasskeyBegin,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_PASSKEY_REBIND_BEGIN: auth.SecurityPasskeyRebindBegin,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_PASSKEY_REGISTER:     auth.SecurityPasskeyRegister,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_PASSKEY_DELETE:       auth.SecurityPasskeyDelete,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_RECOVERY_REGENERATE:  auth.SecurityRecoveryRegenerate,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_REAUTH_BEGIN:         auth.SecurityReauthBegin,
+		heronv1.SecurityActionKind_SECURITY_ACTION_KIND_REAUTH_FINISH:        auth.SecurityReauthFinish,
 	}
 	action, ok := actions[in.Action]
 	if !ok {

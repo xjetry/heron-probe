@@ -15,6 +15,10 @@ import (
 
 func apiTokenProto(t store.APIToken) *heronv1.ApiToken {
 	out := &heronv1.ApiToken{Id: t.ID, Name: t.Name, CreatedAt: t.CreatedAt.Unix()}
+	out.Grant = &heronv1.TokenGrant{AllNodes: t.AllNodes, NodeIds: t.NodeIDs}
+	for _, p := range t.Permissions {
+		out.Grant.Permissions = append(out.Grant.Permissions, enumFor(tokenPermissions, p))
+	}
 	if !t.LastUsedAt.IsZero() {
 		out.LastUsedAt = proto.Int64(t.LastUsedAt.Unix())
 	}
@@ -39,7 +43,24 @@ func (s *Service) CreateApiToken(ctx context.Context, req *connect.Request[heron
 	if err != nil {
 		return nil, err
 	}
-	tok, plain, err := s.auth.CreateAPIToken(ctx, name)
+	var grant *store.TokenGrant
+	if g := req.Msg.Grant; g != nil {
+		grant = &store.TokenGrant{AllNodes: g.AllNodes, NodeIDs: g.NodeIds}
+		for _, p := range g.Permissions {
+			v, ok := tokenPermissions[p]
+			if !ok {
+				return nil, invalid("grant.permissions: unknown permission")
+			}
+			grant.Permissions = append(grant.Permissions, v)
+		}
+		if g.AllNodes && len(g.NodeIds) != 0 {
+			return nil, invalid("grant: all_nodes and node_ids are mutually exclusive")
+		}
+	}
+	tok, plain, err := s.auth.CreateAPIToken(ctx, name, grant)
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrPermission) {
+		return nil, invalid("grant: invalid scope or node does not exist")
+	}
 	if errors.Is(err, store.ErrAPITokenLimit) {
 		return nil, connect.NewError(connect.CodeResourceExhausted,
 			fmt.Errorf("at most %d API tokens may exist; delete an unused one first", auth.MaxAPITokens))
@@ -49,6 +70,15 @@ func (s *Service) CreateApiToken(ctx context.Context, req *connect.Request[heron
 		return nil, internalError("creating API token failed")
 	}
 	return connect.NewResponse(&heronv1.CreateApiTokenResponse{ApiToken: apiTokenProto(tok), Token: plain}), nil
+}
+
+var tokenPermissions = map[heronv1.TokenPermission]store.Permission{
+	heronv1.TokenPermission_TOKEN_PERMISSION_CONFIGURE: store.PermissionConfigure,
+	heronv1.TokenPermission_TOKEN_PERMISSION_CREATE:    store.PermissionCreate,
+	heronv1.TokenPermission_TOKEN_PERMISSION_REGISTER:  store.PermissionRegister,
+	heronv1.TokenPermission_TOKEN_PERMISSION_ROTATE:    store.PermissionRotate,
+	heronv1.TokenPermission_TOKEN_PERMISSION_DELETE:    store.PermissionDelete,
+	heronv1.TokenPermission_TOKEN_PERMISSION_UPDATE:    store.PermissionUpdate,
 }
 
 func (s *Service) DeleteApiToken(ctx context.Context, req *connect.Request[heronv1.DeleteApiTokenRequest]) (*connect.Response[heronv1.DeleteApiTokenResponse], error) {

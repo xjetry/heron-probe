@@ -102,7 +102,7 @@ func (s *Store) ListNodesByTags(ctx context.Context, names []string) ([]Node, er
 	// 空条件匹配一切：没选任何标签表示不过滤，返回全部节点。这与"空即拒绝"的方向相反，所以显式分支，不让它
 	// 从下面的 SQL 里掉出来——IN () 在 SQLite 里合法且不匹配任何行，空选择会静默变成空列表。
 	if len(names) == 0 {
-		return s.queryNodes(ctx, "")
+		return s.queryVisibleNodes(ctx, "")
 	}
 	seen := map[string]bool{}
 	var folds []any
@@ -113,12 +113,16 @@ func (s *Store) ListNodesByTags(ctx context.Context, names []string) ([]Node, er
 			folds = append(folds, fold)
 		}
 	}
-	return s.queryNodes(ctx, tagFilterWhere(len(folds)), append(folds, len(folds))...)
+	return s.queryVisibleNodes(ctx, tagFilterWhere(len(folds)), append(folds, len(folds))...)
 }
 
 // ListTags 列出全部标签与各自的节点数，按 name_fold 排序；没挂在任何节点上的标签节点数为 0。
 func (s *Store) ListTags(ctx context.Context) ([]Tag, error) {
-	rows, err := s.r.QueryContext(ctx, listTagsQuery)
+	query := listTagsQuery
+	if p, ok := Principal(ctx); ok && !p.AllNodes {
+		query = "SELECT t.name, COUNT(nt.node_id) FROM tag t JOIN node_tag nt ON nt.tag_id=t.id WHERE " + nodeScopeSQL(ctx, "nt.node_id") + " GROUP BY t.id ORDER BY t.name_fold"
+	}
+	rows, err := s.r.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -132,6 +136,15 @@ func (s *Store) ListTags(ctx context.Context) ([]Tag, error) {
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) TagID(ctx context.Context, name string) (int64, error) {
+	var id int64
+	err := s.r.QueryRowContext(ctx, "SELECT id FROM tag WHERE name_fold=?", TagFold(name)).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = ErrNotFound
+	}
+	return id, err
 }
 
 // DeleteTag 删除按 TagFold 与 name 相同的标签并解除它的全部关联，节点本身不动。没有这个标签时返回 ErrNotFound。

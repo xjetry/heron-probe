@@ -72,6 +72,7 @@ func TestMaxProbeResultWire(t *testing.T) {
 func maxHostReport(t *testing.T) *heronv1.ReportRequest {
 	t.Helper()
 	r := &heronv1.ReportRequest{Metrics: &heronv1.Metrics{}, Facts: &heronv1.Facts{}, TasksVersion: math.MaxUint64, FactsHash: math.MaxUint64}
+	r.Update = &heronv1.UpdateStatus{Supported: true, Reason: strings.Repeat("x", 2048), Version: strings.Repeat("x", 64), Task: &heronv1.UpdateTask{Id: strings.Repeat("x", 64), Version: "v4294967295.4294967295.4294967295", ExpiresAt: math.MaxInt64, State: "downloading", Error: strings.Repeat("x", 2048), UpdatedAt: math.MaxInt64}}
 	for _, m := range []proto.Message{r.Metrics, r.Facts} {
 		msg := m.ProtoReflect()
 		fields := msg.Descriptor().Fields()
@@ -79,6 +80,14 @@ func maxHostReport(t *testing.T) *heronv1.ReportRequest {
 			fd := fields.Get(i)
 			var value protoreflect.Value
 			switch fd.Kind() {
+			case protoreflect.MessageKind:
+				if fd.FullName() != "heron.v1.Facts.network" {
+					t.Fatalf("unbounded host message %s", fd.FullName())
+				}
+				value = protoreflect.ValueOfMessage((&heronv1.NetworkInfo{
+					Ipv4: &heronv1.AddressDetection{State: heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_AVAILABLE, Address: "223.255.255.255", CheckedAt: agentwire.MaxDetectionTime},
+					Ipv6: &heronv1.AddressDetection{State: heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_AVAILABLE, Address: "2606:ffff:ffff:ffff:ffff:ffff:ffff:ffff", CheckedAt: agentwire.MaxDetectionTime},
+				}).ProtoReflect())
 			case protoreflect.StringKind:
 				value = protoreflect.ValueOfString(strings.Repeat("x", maxHostString))
 			case protoreflect.Uint32Kind:
@@ -141,7 +150,7 @@ func TestReportResultLimits(t *testing.T) {
 // 逼新增字段的人先给出上界，而不是让它默默落在 agent 的读取上限之外。
 func maxReportResponse(t *testing.T) *heronv1.ReportResponse {
 	t.Helper()
-	strLen := map[protoreflect.FullName]int{"heron.v1.ProbeTask.target": probelimit.MaxTargetLen}
+	strLen := map[protoreflect.FullName]int{"heron.v1.ProbeTask.target": probelimit.MaxTargetLen, "heron.v1.UpdateTask.id": 64, "heron.v1.UpdateTask.version": 34, "heron.v1.UpdateTask.state": 11, "heron.v1.UpdateTask.error": 2048}
 	count := map[protoreflect.FullName]int{"heron.v1.ProbeTasks.tasks": probelimit.MaxTasksPerNode}
 	var fill func(msg protoreflect.Message)
 	scalar := func(msg protoreflect.Message, fd protoreflect.FieldDescriptor) protoreflect.Value {
@@ -156,6 +165,8 @@ func maxReportResponse(t *testing.T) *heronv1.ReportResponse {
 			return protoreflect.ValueOfUint32(math.MaxUint32)
 		case protoreflect.Uint64Kind:
 			return protoreflect.ValueOfUint64(math.MaxUint64)
+		case protoreflect.Int64Kind:
+			return protoreflect.ValueOfInt64(math.MaxInt64)
 		case protoreflect.BoolKind:
 			return protoreflect.ValueOfBool(true)
 		case protoreflect.EnumKind:

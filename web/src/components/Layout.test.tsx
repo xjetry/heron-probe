@@ -1,5 +1,5 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
 import { Layout } from "./Layout";
@@ -9,6 +9,28 @@ import heron from "../assets/heron.svg";
 vi.mock("./Chart", () => ({ Chart: () => null }));
 
 const routes = [{ path: "/", Component: Layout }, { path: "/login", element: <h1>login</h1> }];
+
+it("后台配色保存在本机并在离开布局时恢复原页面配色", async () => {
+  document.documentElement.dataset.theme = "light";
+  const { router } = renderWithAdmin({}, routes, "/");
+  try {
+    fireEvent.change(screen.getByRole("combobox", { name: "后台配色" }), { target: { value: "dark" } });
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("heron-admin-scheme")).toBe("dark");
+    await act(() => router.navigate("/login"));
+    expect(document.documentElement.dataset.theme).toBe("light");
+  } finally { localStorage.removeItem("heron-admin-scheme"); delete document.documentElement.dataset.theme; }
+});
+
+it("移动导航用单一模态抽屉，导航后关闭且更新当前位置", async () => {
+  renderWithAdmin({}, [{ path: "/", Component: Layout, children: [{ path: "nodes", element: <h1>node page</h1> }] }], "/");
+  fireEvent.click(screen.getByRole("button", { name: "打开导航" }));
+  const drawer = screen.getByRole("dialog", { name: "导航" });
+  fireEvent.click(within(drawer).getByRole("link", { name: "节点" }));
+  expect(await screen.findByRole("heading", { name: "node page" })).toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("button", { name: "打开导航" })).toHaveAttribute("aria-expanded", "false");
+});
 
 it("管理导航显示 Heron 字标与装饰性鹭鸟图标", () => {
   renderWithAdmin({}, routes, "/");

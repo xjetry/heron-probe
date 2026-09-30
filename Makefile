@@ -27,7 +27,7 @@ check_version = if [ -z "$$VERSION" ]; then echo "VERSION is required, e.g. VERS
 	if [ "$$(printf '%s/' "$$VERSION" | LC_ALL=C tr -d 'A-Za-z0-9_.-')" != / ] || [ -z "$${VERSION\#\#[.-]*}" ] || [ $${\#VERSION} -gt 128 ]; then \
 	  echo "VERSION '$$VERSION' cannot be an image tag: only [A-Za-z0-9_.-], not starting with . or -, at most 128 characters, no + build metadata" >&2; exit 1; fi
 
-.PHONY: gen lint test build hub-binary binaries ci e2e e2e-matrix compat-e2e fixtures web-install web-test web release script-test docker docker-smoke release-channel docker-registry docker-push docker-readback docker-promote
+.PHONY: gen lint test build hub-binary binaries ci e2e e2e-matrix compat-e2e fixtures web-install web-test web-e2e web release script-test docker docker-smoke release-channel docker-registry docker-push docker-readback docker-promote
 
 web-install:
 	pnpm --dir web install --frozen-lockfile
@@ -42,6 +42,7 @@ lint:
 	@unformatted="$$(gofmt -l $$(git ls-files '*.go'))"; if [ -n "$$unformatted" ]; then printf 'gofmt: %s\n' $$unformatted >&2; exit 1; fi
 	shellcheck -s sh deploy/install.sh deploy/install-hub.sh deploy/install-macos.sh deploy/openrc/heron-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/docker-readback-test.sh scripts/release-rules-test.sh scripts/image-platform-ref.sh scripts/docker-builder.sh
 	shellcheck -s sh scripts/compat-download.sh scripts/compat-e2e.sh scripts/compat-download-test.sh
+	shellcheck -s sh scripts/update-credentials-accept.sh
 	go vet ./...
 	GOOS=linux go vet ./...
 	GOOS=darwin go vet ./...
@@ -63,6 +64,10 @@ script-test:
 
 web-test: web-install
 	pnpm --dir web exec vitest run
+
+# 真实浏览器验证正式 hub 的同域主题与 Passkey；运行前执行 pnpm --dir web exec playwright install。
+web-e2e: hub-binary
+	pnpm --dir web exec playwright test
 
 # 两个入口的产物落在 internal/hub/web/dist（面板）与 dist-public（公开页）供 go:embed；不入库，缺产物时 hub 也能编译并给出说明页。
 web: web-install
@@ -111,7 +116,7 @@ e2e-matrix: binaries
 compat-e2e: hub-binary
 	scripts/compat-e2e.sh $(E2E_TIER1)
 
-# 发布产物矩阵：agent 五个 Linux 架构与两个 darwin 架构，hub 两个 Linux 架构。架构集合只在这三个变量维护，
+# 发布产物矩阵：agent 与更新器五个 Linux 架构，agent 两个 darwin 架构，hub 两个 Linux 架构。架构集合只在这三个变量维护，
 # 静态门禁与打包清单都由它们展开，不存在第二份文件清单。
 AGENT_LINUX_ARCHES := amd64 arm64 armv7 386 riscv64
 AGENT_DARWIN_ARCHES := amd64 arm64
@@ -146,6 +151,7 @@ release:
 	@set -e; for arch in $(AGENT_LINUX_ARCHES); do \
 	  case $$arch in armv7) gflags="GOARCH=arm GOARM=7" ;; *) gflags="GOARCH=$$arch" ;; esac; \
 	  env GOOS=linux CGO_ENABLED=0 $$gflags go build $(RELEASE_GOFLAGS) -o "dist/build/heron-agent-linux-$$arch" ./cmd/agent; \
+	  env GOOS=linux CGO_ENABLED=0 $$gflags go build $(RELEASE_GOFLAGS) -o "dist/build/heron-updater-linux-$$arch" ./cmd/updater; \
 	done; \
 	for arch in $(AGENT_DARWIN_ARCHES); do \
 	  env GOOS=darwin GOARCH=$$arch CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$(VERSION)" -o "dist/build/heron-agent-darwin-$$arch" ./cmd/agent; \
@@ -153,13 +159,16 @@ release:
 	for arch in $(HUB_LINUX_ARCHES); do \
 	  $(call hub_build,$$arch,dist/build/heron-hub-linux-$$arch); \
 	done
-	go run ./scripts/checkstatic $(addprefix dist/build/heron-agent-linux-,$(AGENT_LINUX_ARCHES)) $(addprefix dist/build/heron-hub-linux-,$(HUB_LINUX_ARCHES))
+	go run ./scripts/checkstatic $(addprefix dist/build/heron-agent-linux-,$(AGENT_LINUX_ARCHES)) $(addprefix dist/build/heron-updater-linux-,$(AGENT_LINUX_ARCHES)) $(addprefix dist/build/heron-hub-linux-,$(HUB_LINUX_ARCHES))
 	@set -e; for arch in $(AGENT_LINUX_ARCHES); do \
 	  pkg="dist/pkg-$$arch"; mkdir -p "$$pkg"; \
 	  cp "dist/build/heron-agent-linux-$$arch" "$$pkg/heron-agent"; \
 	  cp deploy/systemd/heron-agent.service "$$pkg/heron-agent.service"; \
 	  cp deploy/openrc/heron-agent "$$pkg/heron-agent.openrc"; \
 	  COPYFILE_DISABLE=1 tar --no-xattrs -C "$$pkg" -czf "dist/heron-agent_linux_$$arch.tar.gz" heron-agent heron-agent.service heron-agent.openrc; \
+	  cp "dist/build/heron-updater-linux-$$arch" "$$pkg/heron-updater"; \
+	  cp deploy/systemd/heron-updater-agent.service deploy/systemd/heron-updater-hub.service "$$pkg/"; \
+	  COPYFILE_DISABLE=1 tar --no-xattrs -C "$$pkg" -czf "dist/heron-updater_linux_$$arch.tar.gz" heron-updater heron-updater-agent.service heron-updater-hub.service; \
 	  rm -rf "$$pkg"; \
 	done; \
 	for arch in $(AGENT_DARWIN_ARCHES); do \

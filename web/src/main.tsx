@@ -8,6 +8,7 @@ import { isUnauthenticated } from "./api/auth";
 import { router } from "./App";
 import { retryQuery } from "./retry";
 import "./styles.css";
+import "./admin.css";
 
 // 任何查询或变更得到 Unauthenticated 都跳登录页：由数据层统一识别，页面不各自判断。
 // 查询只对可能自行恢复的错误重试（retry.ts 的白名单）；Unauthenticated 不在其中，重试不会让会话复活。变更不重试。

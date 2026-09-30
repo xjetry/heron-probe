@@ -13,6 +13,10 @@ import (
 // systemctl 记下参数；start 在假 /proc 里放一个以服务用户运行的进程，stop 把它拿走，供脚本的起停确认读取。
 // curl 是三个脚本共用的 fileCurl。服务的真实起停由 scripts/install-accept.sh 在容器里验证。
 var linuxStubs = map[string]string{
+	"flock": `#!/bin/sh
+cat > /dev/null
+[ -z "${STUB_INSTALLER_BUSY-}" ]
+`,
 	"id": `#!/bin/sh
 S=$STUB_STATE
 if [ "$#" = 1 ] && [ "$1" = -u ]; then echo "${STUB_UID:-0}"; exit 0; fi
@@ -30,6 +34,10 @@ esac
 	"systemctl": `#!/bin/sh
 cat > /dev/null
 echo "systemctl $*" >> "$STUB_STATE/calls"
+case "$*" in
+  "show heron-updater-agent -p ActiveState --value") echo "${STUB_UPDATER_STATE:-active}"; exit 0;;
+  *heron-updater-agent*) exit 0;;
+esac
 P=$HERON_INSTALL_ROOT/proc
 case "$1" in
   start)
@@ -77,11 +85,12 @@ func newLinuxHost(t *testing.T) *env {
 	for rel, body := range map[string]string{
 		"run/systemd/system/.keep": "",
 		// 真实主机上这两个目录总在（FHS 与 systemd 自带），install.sh 不建它们。
-		"usr/local/bin/.keep":      "",
-		"etc/systemd/system/.keep": "",
-		"proc/self/status":         "Uid:\t1000\t1000\t1000\t1000\n",
-		"etc/passwd":               "root:x:0:0:root:/root:/bin/sh\n",
-		"etc/group":                "root:x:0:\n",
+		"usr/local/bin/.keep":               "",
+		"etc/systemd/system/.keep":          "",
+		"etc/ssl/certs/ca-certificates.crt": "",
+		"proc/self/status":                  "Uid:\t1000\t1000\t1000\t1000\n",
+		"etc/passwd":                        "root:x:0:0:root:/root:/bin/sh\n",
+		"etc/group":                         "root:x:0:\n",
 	} {
 		e.put(rel, body)
 	}
@@ -164,6 +173,7 @@ func (e *env) linuxRelease(arch, version string) {
 // linuxPackage 按 make release 的形状把 arch 的 Linux 包打进 dir：heron-agent 与仓库里的 systemd 单元、OpenRC 脚本原件。
 func (e *env) linuxPackage(dir, arch, version string) {
 	e.t.Helper()
+	e.updaterPackage(dir, arch, version)
 	unit, err := os.ReadFile("systemd/heron-agent.service")
 	if err != nil {
 		e.t.Fatal(err)
@@ -255,7 +265,7 @@ func TestLinuxFailuresBeforeStoppingLeaveTheServiceRunning(t *testing.T) {
 			if code == 0 || !strings.Contains(out, tc.want) {
 				t.Fatalf("exit %d:\n%s", code, out)
 			}
-			if index(e.calls(), "systemctl stop") >= 0 || !strings.Contains(e.file("usr/local/bin/heron-agent"), "# v1 amd64") || !e.exists("proc/4242/status") {
+			if index(e.calls(), "systemctl stop heron-agent") >= 0 || !strings.Contains(e.file("usr/local/bin/heron-agent"), "# v1 amd64") || !e.exists("proc/4242/status") {
 				t.Fatalf("the running service must be left alone: calls %q", e.calls())
 			}
 		})

@@ -37,8 +37,8 @@ func TestRestoreThemesSnapshotDigest(t *testing.T) {
 				content = Minimal(t, "a", File("changed.txt", "new"))
 				wantErr = "SHA256"
 			case "future-format":
-				restoreExec(t, db, "UPDATE snapshot_meta SET format_version=3")
-				wantErr = "format_version=3"
+				restoreExec(t, db, "UPDATE snapshot_meta SET format_version=4")
+				wantErr = "format_version=4"
 			}
 			if defect != "missing" {
 				if err := os.WriteFile(filepath.Join(dir, name), content, 0600); err != nil {
@@ -71,13 +71,16 @@ func TestRestoreThemesSnapshotDigest(t *testing.T) {
 func themeRestoreFixture(t *testing.T) (string, string) {
 	t.Helper()
 	config, _ := restoreSnapshots(t)
+	removeV25Config(t, restoreDB(t, config))
+	restoreExec(t, restoreDB(t, config), "ALTER TABLE node_facts DROP COLUMN network")
+	removeV22ThemeConfig(t, restoreDB(t, config))
 	// 这些用例钉住无摘要清单的历史格式；新格式的摘要准入由独立用例覆盖。
-	restoreExec(t, restoreDB(t, config), "ALTER TABLE snapshot_meta DROP COLUMN format_version; DROP TABLE snapshot_theme")
+	restoreExec(t, restoreDB(t, config), "ALTER TABLE snapshot_meta DROP COLUMN format_version; DROP TABLE snapshot_theme; UPDATE snapshot_meta SET schema_version=21")
 	restoreExec(t, restoreDB(t, config), "INSERT INTO theme VALUES ('a','A','1','',100,1),('b','B','1','',100,0)")
 	path := restoreTarget(t)
 	db := restoreDB(t, path)
-	restoreExec(t, db, `INSERT INTO theme_file VALUES ('a','stale.js',x'00'),('gone','index.html',x'01');
-		INSERT INTO theme_package VALUES ('a',x'00',1,1),('gone',x'01',2,1)`)
+	restoreExec(t, db, `INSERT INTO theme_file VALUES ('a','stale','stale.js',x'00'),('gone','gone','index.html',x'01');
+		INSERT INTO theme_package VALUES ('a','stale',x'00',1,1),('gone','gone',x'01',2,1)`)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -122,10 +125,11 @@ func TestRestoreThemesOmittedClearsAndDisables(t *testing.T) {
 		t.Fatal(err)
 	}
 	db := restoreDB(t, path)
-	restoreWant(t, db, "SELECT group_concat(id || ':' || enabled) FROM (SELECT * FROM theme ORDER BY id)", "a:0,b:0")
+	restoreWant(t, db, "SELECT group_concat(id) FROM (SELECT id FROM theme ORDER BY id)", "a,b")
+	restoreWant(t, db, "SELECT current_id || ':' || current_digest FROM theme_selection", ":")
 	restoreWant(t, db, "SELECT count(*) FROM theme_file", "0")
 	restoreWant(t, db, "SELECT count(*) FROM theme_package", "0")
-	restoreWant(t, db, "SELECT count(*) FROM theme WHERE preview <> ''", "0")
+	restoreWant(t, db, "SELECT count(*) FROM theme_version WHERE preview <> ''", "0")
 	checkThemeRestoreSummary(t, path, out.Bytes(), themeRestoreSummary{Missing: []string{"a", "b"}})
 }
 
@@ -144,7 +148,8 @@ func TestRestoreThemesCommand(t *testing.T) {
 		t.Fatalf("restore themes command: %v", err)
 	}
 	db := restoreDB(t, path)
-	restoreWant(t, db, "SELECT group_concat(id || ':' || enabled) FROM (SELECT * FROM theme ORDER BY id)", "a:1,b:0")
+	restoreWant(t, db, "SELECT group_concat(id) FROM (SELECT id FROM theme ORDER BY id)", "a,b")
+	restoreWant(t, db, "SELECT current_id || ':' || current_digest FROM theme_selection", ":")
 	restoreWant(t, db, "SELECT group_concat(path) FROM (SELECT path FROM theme_file ORDER BY path)", "assets/new.js,index.html,theme.json")
 	restoreWant(t, db, "SELECT count(*) FROM theme_package", "1")
 	var raw []byte
@@ -157,6 +162,15 @@ func TestRestoreThemesCommand(t *testing.T) {
 		t.Fatalf("restored original package differs or is marked uploaded: revision=%d uploaded=%t", revision, uploaded)
 	}
 	checkThemeRestoreSummary(t, path, out, themeRestoreSummary{Restored: []string{"a"}, Missing: []string{"b"}, Ignored: []string{"extra.zip"}})
+	st, _, err := openOffline(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.EnableTheme(t.Context(), "a", fmt.Sprintf("%x", sha256.Sum256(pkg))); err != nil {
+		t.Fatal("restored compatible theme cannot be explicitly enabled", err)
+	}
+	restoreWant(t, db, "SELECT current_id FROM theme_selection", "a")
 }
 
 func TestRestoreThemesInvalidLeavesTargetUntouched(t *testing.T) {
@@ -182,7 +196,7 @@ func TestRestoreThemesInvalidLeavesTargetUntouched(t *testing.T) {
 				name, content, wantErr := "b.zip", []byte("invalid zip"), "theme package"
 				switch defect {
 				case "invalid-filename":
-					name, content, wantErr = "A (1).zip", Minimal(t, "a"), "invalid theme id"
+					name, content, wantErr = "A (1).zip", Minimal(t, "a"), "does not match"
 				case "missing-directory":
 					dir = filepath.Join(dir, "missing")
 					wantErr = "themes directory"
@@ -257,7 +271,8 @@ func TestRestoreThemesMissingEnabledWithDirectory(t *testing.T) {
 	if err := runRestoreWith([]string{"--db", path, "--config", config, "--themes", dir, "--yes"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	restoreWant(t, restoreDB(t, path), "SELECT group_concat(id || ':' || enabled) FROM (SELECT * FROM theme ORDER BY id)", "a:0,b:0")
+	restoreWant(t, restoreDB(t, path), "SELECT group_concat(id) FROM (SELECT id FROM theme ORDER BY id)", "a,b")
+	restoreWant(t, restoreDB(t, path), "SELECT current_id || ':' || current_digest FROM theme_selection", ":")
 	checkThemeRestoreSummary(t, path, out.Bytes(), themeRestoreSummary{Restored: []string{"b"}, Missing: []string{"a"}})
 }
 
@@ -277,7 +292,7 @@ func TestRestoreThemesManifestMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	db := restoreDB(t, path)
-	restoreWant(t, db, "SELECT name || ':' || version || ':' || preview || ':' || uploaded_at || ':' || enabled FROM theme WHERE id='a'", pkg.Manifest.Name+":"+pkg.Manifest.Version+"::100:1")
+	restoreWant(t, db, "SELECT name || ':' || version || ':' || preview || ':' || uploaded_at || ':' || sdk FROM theme_version WHERE theme_id='a'", pkg.Manifest.Name+":"+pkg.Manifest.Version+"::100:1")
 }
 
 func TestRestoreThemesSourceAdmissionFirst(t *testing.T) {

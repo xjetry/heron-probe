@@ -16,8 +16,20 @@ func detailProto(d probe.Detail) *heronv1.ProbeTaskDetail {
 	return &heronv1.ProbeTaskDetail{Task: d.Task, AllNodes: d.AllNodes, NodeIds: d.NodeIDs, SelectorTags: d.SelectorTags}
 }
 
-func (s *Service) ListProbeTasks(_ context.Context, _ *connect.Request[heronv1.ListProbeTasksRequest]) (*connect.Response[heronv1.ListProbeTasksResponse], error) {
+func (s *Service) visibleProbeTasks(ctx context.Context) (uint64, []probe.Detail) {
 	version, details := s.probes.List()
+	visible := make([]probe.Detail, 0, len(details))
+	for _, d := range details {
+		if p, ok := store.Principal(ctx); ok && !p.AllowsSelector(d.AllNodes, d.SelectorTags, d.NodeIDs) {
+			continue
+		}
+		visible = append(visible, d)
+	}
+	return version, visible
+}
+
+func (s *Service) ListProbeTasks(ctx context.Context, _ *connect.Request[heronv1.ListProbeTasksRequest]) (*connect.Response[heronv1.ListProbeTasksResponse], error) {
+	version, details := s.visibleProbeTasks(ctx)
 	resp := &heronv1.ListProbeTasksResponse{Version: version}
 	for _, d := range details {
 		resp.Tasks = append(resp.Tasks, detailProto(d))
@@ -66,7 +78,18 @@ func (s *Service) QueryProbes(ctx context.Context, req *connect.Request[heronv1.
 	if err := s.requireNode(ctx, m.GetNodeId()); err != nil {
 		return nil, err
 	}
-	resp, err := s.history.probeSeries(ctx, m, maxPoints, s.probes.Target, s.probes.OrderedIDs())
+	_, details := s.visibleProbeTasks(ctx)
+	tasks := make(map[uint64]*heronv1.ProbeTask, len(details))
+	order := make([]uint64, 0, len(details))
+	for _, d := range details {
+		tasks[d.Task.Id] = d.Task
+		order = append(order, d.Task.Id)
+	}
+	// 历史样本仍可读，但图例只引用当前可见的配置，任务迁出范围后不能泄露其新目标。
+	resp, err := s.history.probeSeries(ctx, m, maxPoints, func(id uint64) (heronv1.ProbeKind, string, bool) {
+		t, ok := tasks[id]
+		return t.GetKind(), t.GetTarget(), ok
+	}, order)
 	if err != nil {
 		return nil, err
 	}

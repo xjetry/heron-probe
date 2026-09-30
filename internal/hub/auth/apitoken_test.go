@@ -27,7 +27,7 @@ func TestNewAPITokenFormat(t *testing.T) {
 func TestAuthenticateAPIToken(t *testing.T) {
 	a, st, _ := setup(t)
 	ctx := t.Context()
-	tok, plain, err := a.CreateAPIToken(ctx, "ci")
+	tok, plain, err := a.CreateAPIToken(ctx, "ci", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,14 +41,14 @@ func TestAuthenticateAPIToken(t *testing.T) {
 		{"no prefix", strings.TrimPrefix(plain, APITokenPrefix), false},
 		{"empty", "", false},
 	} {
-		if ok, err := a.AuthenticateAPIToken(ctx, c.plain); err != nil || ok != c.want {
+		if ok, err := a.AuthenticateAPIToken(ctx, c.plain); err != nil || (ok != nil) != c.want {
 			t.Errorf("%s: ok=%v err=%v, want %v", c.name, ok, err, c.want)
 		}
 	}
 	if _, err := st.DeleteAPIToken(ctx, tok.ID); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := a.AuthenticateAPIToken(ctx, plain); err != nil || ok {
+	if ok, err := a.AuthenticateAPIToken(ctx, plain); err != nil || ok != nil {
 		t.Fatalf("revoked token accepted: %v %v", ok, err)
 	}
 }
@@ -56,11 +56,11 @@ func TestAuthenticateAPIToken(t *testing.T) {
 func TestCreateAPITokenEnforcesLimit(t *testing.T) {
 	a, _, _ := setup(t)
 	for i := 0; i < MaxAPITokens; i++ {
-		if _, _, err := a.CreateAPIToken(t.Context(), "n"); err != nil {
+		if _, _, err := a.CreateAPIToken(t.Context(), "n", nil); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, _, err := a.CreateAPIToken(t.Context(), "n"); !errors.Is(err, store.ErrAPITokenLimit) {
+	if _, _, err := a.CreateAPIToken(t.Context(), "n", nil); !errors.Is(err, store.ErrAPITokenLimit) {
 		t.Fatalf("token %d: %v, want ErrAPITokenLimit", MaxAPITokens+1, err)
 	}
 }
@@ -69,7 +69,7 @@ func TestCreateAPITokenEnforcesLimit(t *testing.T) {
 func TestAPITokenUseIsRecordedAtMostOncePerMinute(t *testing.T) {
 	a, st, clk := setup(t)
 	ctx := t.Context()
-	_, plain, _ := a.CreateAPIToken(ctx, "ci")
+	_, plain, _ := a.CreateAPIToken(ctx, "ci", nil)
 	lastUsed := func() time.Time {
 		t.Helper()
 		got, _, err := st.APITokenByHash(ctx, HashToken(plain))

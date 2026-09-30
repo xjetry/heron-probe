@@ -18,6 +18,7 @@ var readMethods = []string{
 	"ListNodes", "GetRegisterWindow", "GetSnapshot", "QueryMetrics", "GetTraffic",
 	"ListProbeTasks", "QueryProbes", "ListAlertRules", "ListAlertEvents",
 	"GetSettings", "GetBackupStatus", "GetStorageStats", "GetApiReference", "ListTags",
+	"GetUpdates", "ListOperations", "ListNotifyChannelRefs",
 }
 
 func adminService() protoreflect.ServiceDescriptor {
@@ -38,6 +39,8 @@ func TestAdminAccessTableMatchesDeclaredPolicy(t *testing.T) {
 		name := string(svc.Methods().Get(i).Name())
 		want := heronv1.Access_ACCESS_SESSION
 		switch {
+		case name == "ExecuteChange":
+			want = heronv1.Access_ACCESS_CHANGE
 		case name == "Login" || name == "BeginPasskeyLogin" || name == "FinishPasskeyLogin":
 			want = heronv1.Access_ACCESS_LOGIN
 		case read[name]:

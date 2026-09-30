@@ -5,10 +5,15 @@ import (
 	"database/sql"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/agentwire"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 func (s *Store) factsTx(nodeID int64, hash uint64, f *heronv1.Facts) func(*sql.Tx) error {
 	return func(tx *sql.Tx) error {
+		if err := agentwire.ValidateNetwork(f.GetNetwork()); err != nil {
+			return err
+		}
 		exists, err := nodeExistsTx(tx, nodeID)
 		if err != nil {
 			return err
@@ -16,15 +21,34 @@ func (s *Store) factsTx(nodeID int64, hash uint64, f *heronv1.Facts) func(*sql.T
 		if !exists {
 			return ErrNotFound
 		}
-		_, err = tx.Exec(`INSERT INTO node_facts (node_id, facts_hash, hostname, os, kernel, arch, virtualization, cpu_model, cpu_cores, agent_version, icmp_available, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		network, err := protojson.Marshal(f.GetNetwork())
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(`INSERT INTO node_facts (node_id, facts_hash, hostname, os, kernel, arch, virtualization, cpu_model, cpu_cores, agent_version, icmp_available, updated_at, network)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (node_id) DO UPDATE SET facts_hash = excluded.facts_hash, hostname = excluded.hostname, os = excluded.os,
 			kernel = excluded.kernel, arch = excluded.arch, virtualization = excluded.virtualization, cpu_model = excluded.cpu_model,
-			cpu_cores = excluded.cpu_cores, agent_version = excluded.agent_version, icmp_available = excluded.icmp_available, updated_at = excluded.updated_at`,
+			cpu_cores = excluded.cpu_cores, agent_version = excluded.agent_version, icmp_available = excluded.icmp_available, updated_at = excluded.updated_at, network = excluded.network`,
 			nodeID, int64(hash), f.GetHostname(), f.GetOs(), f.GetKernel(), f.GetArch(), f.GetVirtualization(),
-			f.GetCpuModel(), f.GetCpuCores(), f.GetAgentVersion(), f.GetIcmpAvailable(), s.clk.Now().Unix())
+			f.GetCpuModel(), f.GetCpuCores(), f.GetAgentVersion(), f.GetIcmpAvailable(), s.clk.Now().Unix(), string(network))
 		return err
 	}
+}
+
+// 解码和结构校验共用同一入口，读库与快照恢复不能绕过上报的状态、地址族和时间约束。
+func decodeNetwork(text string) (*heronv1.NetworkInfo, error) {
+	network := &heronv1.NetworkInfo{}
+	if err := protojson.Unmarshal([]byte(text), network); err != nil {
+		return nil, err
+	}
+	if err := agentwire.ValidateNetwork(network); err != nil {
+		return nil, err
+	}
+	if network.Ipv4 == nil && network.Ipv6 == nil {
+		return nil, nil
+	}
+	return network, nil
 }
 
 func (s *Store) UpsertFacts(ctx context.Context, nodeID int64, hash uint64, f *heronv1.Facts) error {

@@ -33,11 +33,11 @@ describe("100 节点管理交互", () => {
     await screen.findByRole("link", { name: label(99) });
     expect(shown()).toEqual(nodes.map((node) => node.name));
     expect(screen.getAllByText(nodes[0].note)).toHaveLength(100);
+    fireEvent.change(screen.getByRole("combobox", { name: `移动 ${label(0)}` }), { target: { value: "down" } });
+    fireEvent.change(screen.getByRole("combobox", { name: `移动 ${label(0)}` }), { target: { value: "down" } });
     fireEvent.click(screen.getByRole("button", { name: `编辑 ${label(50)}` }));
     const draft = screen.getByRole("textbox", { name: `备注 ${label(50)}` });
     fireEvent.change(draft, { target: { value: "尚未保存的规模验收备注" } });
-    fireEvent.click(screen.getByRole("button", { name: `下移 ${label(0)}` }));
-    fireEvent.click(screen.getByRole("button", { name: `下移 ${label(0)}` }));
     expect(shown().slice(0, 3)).toEqual([nodes[1].name, nodes[2].name, nodes[0].name]);
     await waitFor(() => expect(reorderNodes).toHaveBeenCalledTimes(1));
     await act(async () => {
@@ -65,11 +65,11 @@ describe("100 节点管理交互", () => {
       listTags: async () => ({ tags: [] }), getSnapshot: async () => ({ nodes: [] }), reorderNodes,
     }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: label(99) });
-    fireEvent.click(screen.getByRole("button", { name: `下移 ${label(0)}` }));
+    fireEvent.change(screen.getByRole("combobox", { name: `移动 ${label(0)}` }), { target: { value: "down" } });
     const recover = await screen.findByRole("button", { name: "重新读取排序" });
     await waitFor(() => expect(recover).toBeEnabled());
     expect(screen.getAllByRole("alert").some((alert) => alert.textContent?.includes("无法确认服务端排序"))).toBe(true);
-    for (const button of screen.getAllByRole("button", { name: /^(上移|下移)/ })) expect(button).toBeDisabled();
+    for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) expect(button).toBeDisabled();
     unavailable = false;
     fireEvent.click(recover);
     await waitFor(() => expect(screen.queryByRole("button", { name: "重新读取排序" })).toBeNull());

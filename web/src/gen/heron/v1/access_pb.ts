@@ -11,7 +11,7 @@ import { file_google_protobuf_descriptor } from "@bufbuild/protobuf/wkt";
  * Describes the file heron/v1/access.proto.
  */
 export const file_heron_v1_access: GenFile = /*@__PURE__*/
-  fileDesc("ChVoZXJvbi92MS9hY2Nlc3MucHJvdG8SCGhlcm9uLnYxKlcKBkFjY2VzcxIWChJBQ0NFU1NfVU5TUEVDSUZJRUQQABIQCgxBQ0NFU1NfTE9HSU4QARIPCgtBQ0NFU1NfUkVBRBACEhIKDkFDQ0VTU19TRVNTSU9OEAM6SgoGYWNjZXNzEh4uZ29vZ2xlLnByb3RvYnVmLk1ldGhvZE9wdGlvbnMY0YYDIAEoDjIQLmhlcm9uLnYxLkFjY2Vzc1IGYWNjZXNzQjRaMmdpdGh1Yi5jb20veGpldHJ5L2hlcm9uLXByb2JlL2dlbi9oZXJvbi92MTtoZXJvbnYxYgZwcm90bzM", [file_google_protobuf_descriptor]);
+  fileDesc("ChVoZXJvbi92MS9hY2Nlc3MucHJvdG8SCGhlcm9uLnYxKmoKBkFjY2VzcxIWChJBQ0NFU1NfVU5TUEVDSUZJRUQQABIQCgxBQ0NFU1NfTE9HSU4QARIPCgtBQ0NFU1NfUkVBRBACEhIKDkFDQ0VTU19TRVNTSU9OEAMSEQoNQUNDRVNTX0NIQU5HRRAEOkoKBmFjY2VzcxIeLmdvb2dsZS5wcm90b2J1Zi5NZXRob2RPcHRpb25zGNGGAyABKA4yEC5oZXJvbi52MS5BY2Nlc3NSBmFjY2Vzc0I0WjJnaXRodWIuY29tL3hqZXRyeS9oZXJvbi1wcm9iZS9nZW4vaGVyb24vdjE7aGVyb252MWIGcHJvdG8z", [file_google_protobuf_descriptor]);
 
 /**
  * Access 声明 AdminService 的方法接受哪种凭据，由挂载时绑定的拦截器在构造时读出并裁决。
@@ -50,6 +50,13 @@ export enum Access {
    * @generated from enum value: ACCESS_SESSION = 3;
    */
   SESSION = 3,
+
+  /**
+   * 类型化变更入口：会话或具有相应预授权的 API token，资源范围在写事务内再次裁决。
+   *
+   * @generated from enum value: ACCESS_CHANGE = 4;
+   */
+  CHANGE = 4,
 }
 
 /**

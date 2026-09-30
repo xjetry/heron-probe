@@ -11,6 +11,48 @@ const defer = <T,>() => {
 const initial = [1n, 2n, 3n];
 
 describe("useOrder", () => {
+  it.each([
+    [3n, 1n, "before", [3n, 1n, 2n]],
+    [1n, 3n, "before", [2n, 1n, 3n]],
+    [3n, 1n, "after", [1n, 3n, 2n]],
+  ] as const)("节点 %s 插入 %s 的 %s，保留其余相对顺序", async (value, target, edge, expected) => {
+    const save = vi.fn(async () => {});
+    const reload = vi.fn(async () => expected);
+    const { result } = renderHook(() => useOrder({ items: initial, id: (n) => n, enabled: true, save, reload }));
+    await act(async () => result.current.move(value, { target, edge }));
+    expect(save).toHaveBeenCalledExactlyOnceWith(expected);
+    expect(result.current.items).toEqual(expected);
+  });
+  it("拖放插入与置顶置底共用串行保存，保持完整排列而非交换两行", async () => {
+    const first = defer<void>();
+    const save = vi.fn().mockImplementationOnce(() => first.promise).mockResolvedValue(undefined);
+    const reload = vi.fn(async () => [3n, 2n, 1n]);
+    const { result } = renderHook(() => useOrder({ items: initial, id: (n) => n, enabled: true, save, reload }));
+    act(() => result.current.move(1n, { target: 3n, edge: "after" }));
+    expect(result.current.items).toEqual([2n, 3n, 1n]);
+    act(() => result.current.move(3n, "first"));
+    expect(result.current.items).toEqual([3n, 2n, 1n]);
+    expect(save).toHaveBeenCalledExactlyOnceWith([2n, 3n, 1n]);
+    await act(async () => first.resolve());
+    expect(save.mock.calls).toEqual([[[2n, 3n, 1n]], [[3n, 2n, 1n]]]);
+    expect(result.current.pending).toBe(false);
+  });
+
+  it("置底保持其余节点相对顺序，无效或原地落点不发请求", async () => {
+    const save = vi.fn(async () => {});
+    const reload = vi.fn(async () => [2n, 3n, 1n]);
+    const { result } = renderHook(() => useOrder({ items: initial, id: (n) => n, enabled: true, save, reload }));
+    act(() => {
+      result.current.move(1n, "first");
+      result.current.move(1n, { target: 1n, edge: "after" });
+      result.current.move(1n, { target: 99n, edge: "before" });
+    });
+    expect(save).not.toHaveBeenCalled();
+    expect(result.current.confirmed).toBe(false);
+    await act(async () => result.current.move(1n, "last"));
+    expect(save).toHaveBeenCalledExactlyOnceWith([2n, 3n, 1n]);
+    expect(result.current.confirmed).toBe(true);
+  });
   it("连续移动从乐观顺序推导，串行写入且旧回读不能覆盖最终确认前的顺序", async () => {
     const first = defer<void>();
     const second = defer<void>();

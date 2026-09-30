@@ -21,6 +21,58 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type AddressDetectionState int32
+
+const (
+	AddressDetectionState_ADDRESS_DETECTION_STATE_UNSPECIFIED AddressDetectionState = 0
+	AddressDetectionState_ADDRESS_DETECTION_STATE_AVAILABLE   AddressDetectionState = 1
+	AddressDetectionState_ADDRESS_DETECTION_STATE_UNSUPPORTED AddressDetectionState = 2
+	AddressDetectionState_ADDRESS_DETECTION_STATE_FAILED      AddressDetectionState = 3
+)
+
+// Enum value maps for AddressDetectionState.
+var (
+	AddressDetectionState_name = map[int32]string{
+		0: "ADDRESS_DETECTION_STATE_UNSPECIFIED",
+		1: "ADDRESS_DETECTION_STATE_AVAILABLE",
+		2: "ADDRESS_DETECTION_STATE_UNSUPPORTED",
+		3: "ADDRESS_DETECTION_STATE_FAILED",
+	}
+	AddressDetectionState_value = map[string]int32{
+		"ADDRESS_DETECTION_STATE_UNSPECIFIED": 0,
+		"ADDRESS_DETECTION_STATE_AVAILABLE":   1,
+		"ADDRESS_DETECTION_STATE_UNSUPPORTED": 2,
+		"ADDRESS_DETECTION_STATE_FAILED":      3,
+	}
+)
+
+func (x AddressDetectionState) Enum() *AddressDetectionState {
+	p := new(AddressDetectionState)
+	*p = x
+	return p
+}
+
+func (x AddressDetectionState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AddressDetectionState) Descriptor() protoreflect.EnumDescriptor {
+	return file_heron_v1_types_proto_enumTypes[0].Descriptor()
+}
+
+func (AddressDetectionState) Type() protoreflect.EnumType {
+	return &file_heron_v1_types_proto_enumTypes[0]
+}
+
+func (x AddressDetectionState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AddressDetectionState.Descriptor instead.
+func (AddressDetectionState) EnumDescriptor() ([]byte, []int) {
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{0}
+}
+
 type ProbeKind int32
 
 const (
@@ -54,11 +106,11 @@ func (x ProbeKind) String() string {
 }
 
 func (ProbeKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_heron_v1_types_proto_enumTypes[0].Descriptor()
+	return file_heron_v1_types_proto_enumTypes[1].Descriptor()
 }
 
 func (ProbeKind) Type() protoreflect.EnumType {
-	return &file_heron_v1_types_proto_enumTypes[0]
+	return &file_heron_v1_types_proto_enumTypes[1]
 }
 
 func (x ProbeKind) Number() protoreflect.EnumNumber {
@@ -67,7 +119,7 @@ func (x ProbeKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ProbeKind.Descriptor instead.
 func (ProbeKind) EnumDescriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{0}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{1}
 }
 
 // 节点的计费周期（§9.4）。管理与公开两端共用，所以与 Billing 一起定义在这里：public.proto 不能 import admin.proto。
@@ -127,11 +179,11 @@ func (x BillingCycle) String() string {
 }
 
 func (BillingCycle) Descriptor() protoreflect.EnumDescriptor {
-	return file_heron_v1_types_proto_enumTypes[1].Descriptor()
+	return file_heron_v1_types_proto_enumTypes[2].Descriptor()
 }
 
 func (BillingCycle) Type() protoreflect.EnumType {
-	return &file_heron_v1_types_proto_enumTypes[1]
+	return &file_heron_v1_types_proto_enumTypes[2]
 }
 
 func (x BillingCycle) Number() protoreflect.EnumNumber {
@@ -140,7 +192,7 @@ func (x BillingCycle) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use BillingCycle.Descriptor instead.
 func (BillingCycle) EnumDescriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{1}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{2}
 }
 
 // 一次上报里的主机读数。每个读数都是 optional：缺失表示"无读数"，
@@ -350,6 +402,8 @@ type Facts struct {
 	AgentVersion   string                 `protobuf:"bytes,8,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
 	// 两种 ICMP socket 是否至少一种可用。
 	IcmpAvailable bool `protobuf:"varint,9,opt,name=icmp_available,json=icmpAvailable,proto3" json:"icmp_available,omitempty"`
+	// agent 自报的双栈出口，仅用于管理展示；hub 不据此鉴权或查询国家。
+	Network       *NetworkInfo `protobuf:"bytes,10,opt,name=network,proto3" json:"network,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -447,6 +501,127 @@ func (x *Facts) GetIcmpAvailable() bool {
 	return false
 }
 
+func (x *Facts) GetNetwork() *NetworkInfo {
+	if x != nil {
+		return x.Network
+	}
+	return nil
+}
+
+type NetworkInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ipv4          *AddressDetection      `protobuf:"bytes,1,opt,name=ipv4,proto3" json:"ipv4,omitempty"`
+	Ipv6          *AddressDetection      `protobuf:"bytes,2,opt,name=ipv6,proto3" json:"ipv6,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NetworkInfo) Reset() {
+	*x = NetworkInfo{}
+	mi := &file_heron_v1_types_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NetworkInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NetworkInfo) ProtoMessage() {}
+
+func (x *NetworkInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_types_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NetworkInfo.ProtoReflect.Descriptor instead.
+func (*NetworkInfo) Descriptor() ([]byte, []int) {
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *NetworkInfo) GetIpv4() *AddressDetection {
+	if x != nil {
+		return x.Ipv4
+	}
+	return nil
+}
+
+func (x *NetworkInfo) GetIpv6() *AddressDetection {
+	if x != nil {
+		return x.Ipv6
+	}
+	return nil
+}
+
+type AddressDetection struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	State AddressDetectionState  `protobuf:"varint,1,opt,name=state,proto3,enum=heron.v1.AddressDetectionState" json:"state,omitempty"`
+	// 仅 AVAILABLE 有地址，且必须与所在字段的地址族相符。
+	Address string `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+	// 探测完成时间，Unix 秒；未探测为 0，已探测范围为 1..253402300799（9999 年末）。
+	CheckedAt     int64 `protobuf:"varint,3,opt,name=checked_at,json=checkedAt,proto3" json:"checked_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AddressDetection) Reset() {
+	*x = AddressDetection{}
+	mi := &file_heron_v1_types_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AddressDetection) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AddressDetection) ProtoMessage() {}
+
+func (x *AddressDetection) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_types_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AddressDetection.ProtoReflect.Descriptor instead.
+func (*AddressDetection) Descriptor() ([]byte, []int) {
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *AddressDetection) GetState() AddressDetectionState {
+	if x != nil {
+		return x.State
+	}
+	return AddressDetectionState_ADDRESS_DETECTION_STATE_UNSPECIFIED
+}
+
+func (x *AddressDetection) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
+}
+
+func (x *AddressDetection) GetCheckedAt() int64 {
+	if x != nil {
+		return x.CheckedAt
+	}
+	return 0
+}
+
 type ProbeResult struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	TaskId uint64                 `protobuf:"varint,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
@@ -464,7 +639,7 @@ type ProbeResult struct {
 
 func (x *ProbeResult) Reset() {
 	*x = ProbeResult{}
-	mi := &file_heron_v1_types_proto_msgTypes[2]
+	mi := &file_heron_v1_types_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -476,7 +651,7 @@ func (x *ProbeResult) String() string {
 func (*ProbeResult) ProtoMessage() {}
 
 func (x *ProbeResult) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[2]
+	mi := &file_heron_v1_types_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -489,7 +664,7 @@ func (x *ProbeResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeResult.ProtoReflect.Descriptor instead.
 func (*ProbeResult) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{2}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ProbeResult) GetTaskId() uint64 {
@@ -572,7 +747,7 @@ type Timeout struct {
 
 func (x *Timeout) Reset() {
 	*x = Timeout{}
-	mi := &file_heron_v1_types_proto_msgTypes[3]
+	mi := &file_heron_v1_types_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -584,7 +759,7 @@ func (x *Timeout) String() string {
 func (*Timeout) ProtoMessage() {}
 
 func (x *Timeout) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[3]
+	mi := &file_heron_v1_types_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -597,7 +772,7 @@ func (x *Timeout) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Timeout.ProtoReflect.Descriptor instead.
 func (*Timeout) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{3}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{5}
 }
 
 type ProbeError struct {
@@ -609,7 +784,7 @@ type ProbeError struct {
 
 func (x *ProbeError) Reset() {
 	*x = ProbeError{}
-	mi := &file_heron_v1_types_proto_msgTypes[4]
+	mi := &file_heron_v1_types_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -621,7 +796,7 @@ func (x *ProbeError) String() string {
 func (*ProbeError) ProtoMessage() {}
 
 func (x *ProbeError) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[4]
+	mi := &file_heron_v1_types_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -634,7 +809,7 @@ func (x *ProbeError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeError.ProtoReflect.Descriptor instead.
 func (*ProbeError) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{4}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ProbeError) GetMessage() string {
@@ -657,7 +832,7 @@ type ProbeTask struct {
 
 func (x *ProbeTask) Reset() {
 	*x = ProbeTask{}
-	mi := &file_heron_v1_types_proto_msgTypes[5]
+	mi := &file_heron_v1_types_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -669,7 +844,7 @@ func (x *ProbeTask) String() string {
 func (*ProbeTask) ProtoMessage() {}
 
 func (x *ProbeTask) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[5]
+	mi := &file_heron_v1_types_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -682,7 +857,7 @@ func (x *ProbeTask) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeTask.ProtoReflect.Descriptor instead.
 func (*ProbeTask) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{5}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ProbeTask) GetId() uint64 {
@@ -730,7 +905,7 @@ type ProbeTasks struct {
 
 func (x *ProbeTasks) Reset() {
 	*x = ProbeTasks{}
-	mi := &file_heron_v1_types_proto_msgTypes[6]
+	mi := &file_heron_v1_types_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -742,7 +917,7 @@ func (x *ProbeTasks) String() string {
 func (*ProbeTasks) ProtoMessage() {}
 
 func (x *ProbeTasks) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[6]
+	mi := &file_heron_v1_types_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -755,7 +930,7 @@ func (x *ProbeTasks) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeTasks.ProtoReflect.Descriptor instead.
 func (*ProbeTasks) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{6}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ProbeTasks) GetVersion() uint64 {
@@ -791,7 +966,7 @@ type Traffic struct {
 
 func (x *Traffic) Reset() {
 	*x = Traffic{}
-	mi := &file_heron_v1_types_proto_msgTypes[7]
+	mi := &file_heron_v1_types_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -803,7 +978,7 @@ func (x *Traffic) String() string {
 func (*Traffic) ProtoMessage() {}
 
 func (x *Traffic) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[7]
+	mi := &file_heron_v1_types_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -816,7 +991,7 @@ func (x *Traffic) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Traffic.ProtoReflect.Descriptor instead.
 func (*Traffic) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{7}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Traffic) GetTotalRx() uint64 {
@@ -891,7 +1066,7 @@ type Billing struct {
 
 func (x *Billing) Reset() {
 	*x = Billing{}
-	mi := &file_heron_v1_types_proto_msgTypes[8]
+	mi := &file_heron_v1_types_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -903,7 +1078,7 @@ func (x *Billing) String() string {
 func (*Billing) ProtoMessage() {}
 
 func (x *Billing) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[8]
+	mi := &file_heron_v1_types_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -916,7 +1091,7 @@ func (x *Billing) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Billing.ProtoReflect.Descriptor instead.
 func (*Billing) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{8}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Billing) GetPrice() string {
@@ -1017,7 +1192,7 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"_udp_connsB\b\n" +
 	"\x06_procsB\v\n" +
-	"\t_uptime_s\"\x8d\x02\n" +
+	"\t_uptime_s\"\xbe\x02\n" +
 	"\x05Facts\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x0e\n" +
 	"\x02os\x18\x02 \x01(\tR\x02os\x12\x16\n" +
@@ -1027,7 +1202,17 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\tcpu_model\x18\x06 \x01(\tR\bcpuModel\x12\x1b\n" +
 	"\tcpu_cores\x18\a \x01(\rR\bcpuCores\x12#\n" +
 	"\ragent_version\x18\b \x01(\tR\fagentVersion\x12%\n" +
-	"\x0eicmp_available\x18\t \x01(\bR\ricmpAvailable\"\xbe\x01\n" +
+	"\x0eicmp_available\x18\t \x01(\bR\ricmpAvailable\x12/\n" +
+	"\anetwork\x18\n" +
+	" \x01(\v2\x15.heron.v1.NetworkInfoR\anetwork\"m\n" +
+	"\vNetworkInfo\x12.\n" +
+	"\x04ipv4\x18\x01 \x01(\v2\x1a.heron.v1.AddressDetectionR\x04ipv4\x12.\n" +
+	"\x04ipv6\x18\x02 \x01(\v2\x1a.heron.v1.AddressDetectionR\x04ipv6\"\x82\x01\n" +
+	"\x10AddressDetection\x125\n" +
+	"\x05state\x18\x01 \x01(\x0e2\x1f.heron.v1.AddressDetectionStateR\x05state\x12\x18\n" +
+	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x1d\n" +
+	"\n" +
+	"checked_at\x18\x03 \x01(\x03R\tcheckedAt\"\xbe\x01\n" +
 	"\vProbeResult\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\x04R\x06taskId\x12\x15\n" +
 	"\x06age_ms\x18\x02 \x01(\rR\x05ageMs\x12\x17\n" +
@@ -1069,7 +1254,12 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"auto_renew\x18\x05 \x01(\bR\tautoRenew\x12 \n" +
 	"\tdays_left\x18\x06 \x01(\x05H\x00R\bdaysLeft\x88\x01\x01B\f\n" +
 	"\n" +
-	"_days_left*P\n" +
+	"_days_left*\xb4\x01\n" +
+	"\x15AddressDetectionState\x12'\n" +
+	"#ADDRESS_DETECTION_STATE_UNSPECIFIED\x10\x00\x12%\n" +
+	"!ADDRESS_DETECTION_STATE_AVAILABLE\x10\x01\x12'\n" +
+	"#ADDRESS_DETECTION_STATE_UNSUPPORTED\x10\x02\x12\"\n" +
+	"\x1eADDRESS_DETECTION_STATE_FAILED\x10\x03*P\n" +
 	"\tProbeKind\x12\x1a\n" +
 	"\x16PROBE_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fPROBE_KIND_ICMP\x10\x01\x12\x12\n" +
@@ -1096,32 +1286,39 @@ func file_heron_v1_types_proto_rawDescGZIP() []byte {
 	return file_heron_v1_types_proto_rawDescData
 }
 
-var file_heron_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_heron_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_heron_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_heron_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_heron_v1_types_proto_goTypes = []any{
-	(ProbeKind)(0),      // 0: heron.v1.ProbeKind
-	(BillingCycle)(0),   // 1: heron.v1.BillingCycle
-	(*Metrics)(nil),     // 2: heron.v1.Metrics
-	(*Facts)(nil),       // 3: heron.v1.Facts
-	(*ProbeResult)(nil), // 4: heron.v1.ProbeResult
-	(*Timeout)(nil),     // 5: heron.v1.Timeout
-	(*ProbeError)(nil),  // 6: heron.v1.ProbeError
-	(*ProbeTask)(nil),   // 7: heron.v1.ProbeTask
-	(*ProbeTasks)(nil),  // 8: heron.v1.ProbeTasks
-	(*Traffic)(nil),     // 9: heron.v1.Traffic
-	(*Billing)(nil),     // 10: heron.v1.Billing
+	(AddressDetectionState)(0), // 0: heron.v1.AddressDetectionState
+	(ProbeKind)(0),             // 1: heron.v1.ProbeKind
+	(BillingCycle)(0),          // 2: heron.v1.BillingCycle
+	(*Metrics)(nil),            // 3: heron.v1.Metrics
+	(*Facts)(nil),              // 4: heron.v1.Facts
+	(*NetworkInfo)(nil),        // 5: heron.v1.NetworkInfo
+	(*AddressDetection)(nil),   // 6: heron.v1.AddressDetection
+	(*ProbeResult)(nil),        // 7: heron.v1.ProbeResult
+	(*Timeout)(nil),            // 8: heron.v1.Timeout
+	(*ProbeError)(nil),         // 9: heron.v1.ProbeError
+	(*ProbeTask)(nil),          // 10: heron.v1.ProbeTask
+	(*ProbeTasks)(nil),         // 11: heron.v1.ProbeTasks
+	(*Traffic)(nil),            // 12: heron.v1.Traffic
+	(*Billing)(nil),            // 13: heron.v1.Billing
 }
 var file_heron_v1_types_proto_depIdxs = []int32{
-	5, // 0: heron.v1.ProbeResult.timeout:type_name -> heron.v1.Timeout
-	6, // 1: heron.v1.ProbeResult.error:type_name -> heron.v1.ProbeError
-	0, // 2: heron.v1.ProbeTask.kind:type_name -> heron.v1.ProbeKind
-	7, // 3: heron.v1.ProbeTasks.tasks:type_name -> heron.v1.ProbeTask
-	1, // 4: heron.v1.Billing.billing_cycle:type_name -> heron.v1.BillingCycle
-	5, // [5:5] is the sub-list for method output_type
-	5, // [5:5] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	5,  // 0: heron.v1.Facts.network:type_name -> heron.v1.NetworkInfo
+	6,  // 1: heron.v1.NetworkInfo.ipv4:type_name -> heron.v1.AddressDetection
+	6,  // 2: heron.v1.NetworkInfo.ipv6:type_name -> heron.v1.AddressDetection
+	0,  // 3: heron.v1.AddressDetection.state:type_name -> heron.v1.AddressDetectionState
+	8,  // 4: heron.v1.ProbeResult.timeout:type_name -> heron.v1.Timeout
+	9,  // 5: heron.v1.ProbeResult.error:type_name -> heron.v1.ProbeError
+	1,  // 6: heron.v1.ProbeTask.kind:type_name -> heron.v1.ProbeKind
+	10, // 7: heron.v1.ProbeTasks.tasks:type_name -> heron.v1.ProbeTask
+	2,  // 8: heron.v1.Billing.billing_cycle:type_name -> heron.v1.BillingCycle
+	9,  // [9:9] is the sub-list for method output_type
+	9,  // [9:9] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_heron_v1_types_proto_init() }
@@ -1130,19 +1327,19 @@ func file_heron_v1_types_proto_init() {
 		return
 	}
 	file_heron_v1_types_proto_msgTypes[0].OneofWrappers = []any{}
-	file_heron_v1_types_proto_msgTypes[2].OneofWrappers = []any{
+	file_heron_v1_types_proto_msgTypes[4].OneofWrappers = []any{
 		(*ProbeResult_RttUs)(nil),
 		(*ProbeResult_Timeout)(nil),
 		(*ProbeResult_Error)(nil),
 	}
-	file_heron_v1_types_proto_msgTypes[8].OneofWrappers = []any{}
+	file_heron_v1_types_proto_msgTypes[10].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_heron_v1_types_proto_rawDesc), len(file_heron_v1_types_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   9,
+			NumEnums:      3,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

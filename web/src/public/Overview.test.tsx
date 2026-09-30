@@ -116,7 +116,7 @@ const without = (snap: typeof tagged, tag: string) => ({
 });
 
 const shown = () => screen.queryAllByRole("article").map((a) => a.getAttribute("aria-label"));
-const chip = (name: string) => screen.getByRole("button", { name });
+const chip = (name: string) => within(screen.getByRole("group", { name: "按标签筛选" })).getByRole("button", { name });
 
 function renderTagged(getSnapshot: () => Promise<typeof tagged> = async () => tagged) {
   renderWithService(PublicService, { getSnapshot }, [{ path: "/", Component: PublicOverview }], "/");
@@ -133,7 +133,7 @@ it("标签栏：默认显示全部，按钮照快照的 tags 列出", async () =
 it("没有任何节点带标签时不画标签栏", async () => {
   renderWithService(PublicService, { getSnapshot: async () => snapshot }, [{ path: "/", Component: PublicOverview }], "/");
   await screen.findByText("1 / 2 在线");
-  expect(screen.queryByRole("button", { name: "全部" })).toBeNull();
+  expect(screen.queryByRole("group", { name: "按标签筛选" })).toBeNull();
 });
 
 it("单击只选这一个；再点同一个回到全部；点「全部」清空", async () => {

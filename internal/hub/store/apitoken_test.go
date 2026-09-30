@@ -14,7 +14,7 @@ func TestAPITokenLifecycle(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
 	h := sha256.Sum256([]byte("heron_at_x"))
-	tok, err := s.CreateAPIToken(ctx, "ci", h, clk.Now(), 100)
+	tok, err := s.CreateAPIToken(ctx, "ci", h, clk.Now(), 100, nil)
 	if err != nil || tok.ID == 0 || tok.Name != "ci" || !tok.CreatedAt.Equal(clk.Now().Truncate(time.Second)) || !tok.LastUsedAt.IsZero() {
 		t.Fatalf("create: %+v %v", tok, err)
 	}
@@ -40,11 +40,11 @@ func TestAPITokenLifecycle(t *testing.T) {
 func TestAPITokenIDsAreNotReused(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
-	first, _ := s.CreateAPIToken(ctx, "a", sha256.Sum256([]byte("a")), clk.Now(), 100)
+	first, _ := s.CreateAPIToken(ctx, "a", sha256.Sum256([]byte("a")), clk.Now(), 100, nil)
 	if _, err := s.DeleteAPIToken(ctx, first.ID); err != nil {
 		t.Fatal(err)
 	}
-	second, err := s.CreateAPIToken(ctx, "b", sha256.Sum256([]byte("b")), clk.Now(), 100)
+	second, err := s.CreateAPIToken(ctx, "b", sha256.Sum256([]byte("b")), clk.Now(), 100, nil)
 	if err != nil || second.ID <= first.ID {
 		t.Fatalf("id reused or went backwards: first %d second %d err %v", first.ID, second.ID, err)
 	}
@@ -60,7 +60,7 @@ func TestAPITokenLimitIsDecidedInsideTheWriteTransaction(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := s.CreateAPIToken(ctx, "n", sha256.Sum256([]byte(fmt.Sprint(i))), clk.Now(), limit)
+			_, err := s.CreateAPIToken(ctx, "n", sha256.Sum256([]byte(fmt.Sprint(i))), clk.Now(), limit, nil)
 			switch {
 			case err == nil:
 				created.Add(1)
@@ -81,7 +81,7 @@ func TestTouchRecordsUseAndNeverResurrects(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
 	h := sha256.Sum256([]byte("t"))
-	tok, _ := s.CreateAPIToken(ctx, "t", h, clk.Now(), 100)
+	tok, _ := s.CreateAPIToken(ctx, "t", h, clk.Now(), 100, nil)
 	clk.Advance(time.Minute)
 	done := make(chan error, 1)
 	s.TouchAPITokenAsync(tok.ID, clk.Now(), func(err error) { done <- err })
@@ -108,7 +108,7 @@ func TestDeleteAllAPITokens(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
 	for i := 0; i < 3; i++ {
-		s.CreateAPIToken(ctx, "x", sha256.Sum256([]byte(fmt.Sprint(i))), clk.Now(), 100)
+		s.CreateAPIToken(ctx, "x", sha256.Sum256([]byte(fmt.Sprint(i))), clk.Now(), 100, nil)
 	}
 	if n, err := s.DeleteAllAPITokens(ctx); err != nil || n != 3 {
 		t.Fatalf("deleted %d err %v", n, err)

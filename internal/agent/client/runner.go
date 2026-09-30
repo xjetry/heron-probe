@@ -32,6 +32,12 @@ type Runner struct {
 	Results *prober.Queue
 	// Interval 是收到第一个响应之前使用的间隔；之后用 hub 下发的，经 agentwire.ClampReportInterval 限定。
 	Interval time.Duration
+	// Network 只读后台检测结果；为空时不做出口探测，保持采集循环无额外网络依赖。
+	Network interface{ Snapshot() *heronv1.NetworkInfo }
+	Updates interface {
+		Snapshot() *heronv1.UpdateStatus
+		Reported(*heronv1.UpdateTask)
+	}
 }
 
 func sleepReal(ctx context.Context, d time.Duration) error {
@@ -73,6 +79,9 @@ func (r *Runner) Run(ctx context.Context) error {
 			r.Log.Warn("partial collection", "err", err)
 		}
 		req := connect.NewRequest(&heronv1.ReportRequest{Metrics: m})
+		if r.Updates != nil {
+			req.Msg.Update = r.Updates.Snapshot()
+		}
 		// 超龄过滤与 age_ms 必须取同一时刻，否则刚通过过滤的结果可能以大于 MaxResultAge 的年龄发出并被 hub 丢弃。
 		now := r.Clock.Mono()
 		taken := r.Results.Take(now, probelimit.MaxResultAge, probelimit.MaxResultsPerReport)
@@ -81,6 +90,9 @@ func (r *Runner) Run(ctx context.Context) error {
 		req.Header().Set("Authorization", "Bearer "+r.Token)
 		// Facts 只读几个小文件；每轮重算才能让 hub 从摘要变化发现运行期间的变更。
 		f := r.Collector.Facts()
+		if r.Network != nil {
+			f.Network = r.Network.Snapshot()
+		}
 		hash := FactsHash(f)
 		if sendFacts {
 			req.Msg.Facts = f
@@ -104,6 +116,9 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 		if err == nil && resp.Msg.Tasks != nil {
 			r.Prober.Apply(resp.Msg.Tasks)
+		}
+		if err == nil && r.Updates != nil {
+			r.Updates.Reported(resp.Msg.Update)
 		}
 		if total := r.Results.Dropped(); total > dropped {
 			r.Log.Warn("probe results dropped", "dropped", total-dropped)

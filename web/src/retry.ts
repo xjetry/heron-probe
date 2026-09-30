@@ -1,14 +1,14 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 
 // 查询失败后只对可能自行恢复的错误重试，面板与公开页两个入口共用。写成白名单：以后新出现的码默认不重试，重试不会把
-// 确定性的失败变成成功，只会让页面晚几秒才显示同一个结果（主题页未配 --theme-origin 时的说明要等完两次退避才出现）。
+// 确定性的失败变成成功，只会让页面晚几秒才显示同一个结果。
 //
 // connect-es 2.2.0 的传输层映射：fetch 本身失败（网络断开、连接被拒）得到 Unknown；没有 Connect 错误正文的 HTTP 502、
 // 503、504 与 429（反代或网关的瞬时错误页）得到 Unavailable，HTTP 500 得到 Unknown。Unavailable、DeadlineExceeded、Aborted
 // 本身就是"稍后再试"的语义。connect-go 对没有码的错误同样回 Unknown，与网络失败共用一个码、分不开，一并重试。
 export const retryableCodes: ReadonlySet<Code> = new Set([Code.Unavailable, Code.DeadlineExceeded, Code.Aborted, Code.Unknown]);
 
-// 不重试的码：配置态（FailedPrecondition，例如未配 --theme-origin）、调用方的错与权限（InvalidArgument、NotFound、
+// 不重试的码：配置态（FailedPrecondition，例如 public-dir 与启用主题冲突）、调用方的错与权限（InvalidArgument、NotFound、
 // AlreadyExists、PermissionDenied、Unauthenticated——会话不会因重试复活）、服务端的确定性失败（Internal、Unimplemented、
 // DataLoss、OutOfRange）、取消（Canceled：页面自己放弃了这次请求），以及 ResourceExhausted。AdminService 用它报主题、
 // token、节点等的数量上限，重试腾不出名额。PublicService 用它报按来源计的限流：桶容量 60、每秒补 10 个

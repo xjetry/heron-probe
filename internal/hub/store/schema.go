@@ -60,12 +60,13 @@ const ddlNodeFacts = `CREATE TABLE node_facts (
   cpu_cores INTEGER NOT NULL,
   agent_version TEXT NOT NULL,
   icmp_available INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  network TEXT NOT NULL DEFAULT '{}'
 )`
 
 const ddlRegisterWindow = `CREATE TABLE register_window (
-  id INTEGER PRIMARY KEY CHECK (id = 1),
-  key_hash BLOB NOT NULL,
+  owner_id INTEGER PRIMARY KEY,
+  key_hash BLOB NOT NULL UNIQUE,
   expires_at INTEGER NOT NULL,
   remaining INTEGER NOT NULL
 )`
@@ -126,7 +127,7 @@ var metricTables = []string{"metric_1m", "metric_5m", "metric_1h"}
 // DeleteNode 与 Restore 共用节点从属清单，显式删除不依赖外键开启或级联行为。
 // alert_event 是审计历史，删节点时也保留；系统事件的 node_id=0，不属于节点从属状态。
 var nodeDependentTables = append(append([]string{
-	"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "node_tag",
+	"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "node_tag", "node_update", "api_token_node",
 }, metricTables...), probeTables...)
 
 // schemaStatements 是当前版本的完整 DDL：空库直接建到当前版本，不重放历史。
@@ -140,9 +141,12 @@ func schemaStatements() []string {
 		out = append(out, probeDDL(t))
 	}
 	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState, ddlTag, ddlNodeTag, ddlNodeTagByTag,
-		ddlTheme, ddlThemeEnabled, ddlThemeFile, ddlRestoreRecord, ddlThemePackage,
-		ddlAdminSecurity, seedAdminSecurity, ddlProbeTaskTag, ddlProbeTaskTagIndex, ddlAlertRuleTag, ddlAlertRuleTagIndex)
+		ddlTheme, ddlThemeVersion, ddlThemeSelection, seedThemeSelection, ddlThemeFile, ddlRestoreRecord, ddlThemePackage,
+		ddlAdminSecurity, seedAdminSecurity, ddlProbeTaskTag, ddlProbeTaskTagIndex, ddlAlertRuleTag, ddlAlertRuleTagIndex, ddlNodeUpdate,
+		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime)
 }
+
+const ddlNodeUpdate = `CREATE TABLE node_update (node_id INTEGER PRIMARY KEY, data TEXT NOT NULL, owner_id INTEGER NOT NULL DEFAULT 0)`
 
 const ddlAdminSecurity = `CREATE TABLE admin_security (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -411,8 +415,32 @@ const ddlAPIToken = `CREATE TABLE api_token (
   token_hash BLOB NOT NULL UNIQUE,
   created_at INTEGER NOT NULL,
   -- NULL 表示从未使用。只供展示：距已落库值满一分钟才刷新。
-  last_used_at INTEGER
+  last_used_at INTEGER,
+  permissions TEXT NOT NULL DEFAULT '[]',
+  all_nodes INTEGER NOT NULL DEFAULT 1 CHECK (all_nodes IN (0, 1))
 )`
+
+const ddlAPITokenNode = `CREATE TABLE api_token_node (
+  token_id INTEGER NOT NULL,
+  node_id INTEGER NOT NULL,
+  PRIMARY KEY (token_id, node_id)
+) WITHOUT ROWID`
+
+const ddlOperation = `CREATE TABLE operation (
+  owner_key TEXT NOT NULL,
+  owner_id INTEGER NOT NULL,
+  request_id TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  action TEXT NOT NULL,
+  resource_id INTEGER NOT NULL,
+  before_json TEXT NOT NULL,
+  after_json TEXT NOT NULL,
+  committed_at INTEGER NOT NULL,
+  PRIMARY KEY (owner_key, request_id)
+) WITHOUT ROWID`
+
+const ddlOperationByOwner = `CREATE INDEX operation_by_owner ON operation(owner_id,committed_at DESC,request_id)`
+const ddlOperationDetailsByTime = `CREATE INDEX operation_details_by_time ON operation(committed_at) WHERE before_json!='' OR after_json!=''`
 
 // setting 是全站设置的键值表（公开页外观等）。值可达 128 KiB（logo 的 data: URL），不用 WITHOUT ROWID：
 // 那种表把整行放进主键 B 树，SQLite 文档建议其行不超过页大小的约 1/20。
@@ -454,38 +482,57 @@ const ddlNodeTag = `CREATE TABLE node_tag (
 
 const ddlNodeTagByTag = `CREATE INDEX node_tag_by_tag ON node_tag (tag_id)`
 
-// theme 是已安装的公开页主题（§10.1），每个 id 只存当前包：重传同一 id 整体替换，不留版本。id 由主题清单给出
-// （theme.Parse 保证形如 [a-z0-9-]{1,32} 且不是 builtin），是面板与 expect_id 引用它的方式。preview 是包内预览图的
-// 路径，空串表示清单没有给出；它指向的文件由 theme.Parse 保证在包里，与其余文件同一事务写入 theme_file。
-// enabled 至多一行为 1，由 theme_enabled 这个部分唯一索引承载：任何写者——包括绕开 EnableTheme 直接改表的——
-// 写出第二行 1 都会失败，而不是留下"启用了哪个"无法裁决的状态。CHECK 把取值限定为 0 与 1，否则 2 这样的值会绕过
-// 只看 enabled = 1 的索引。
+// 主题身份与产物分离；全站选择独立保存，安装不隐式替换在线内容。
 const ddlTheme = `CREATE TABLE theme (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY
+)`
+
+// digest 为空仅表示无法重构原始 zip 的归档占位，不是可以执行的包。
+const ddlThemeVersion = `CREATE TABLE theme_version (
+  theme_id TEXT NOT NULL,
+  digest TEXT NOT NULL,
   name TEXT NOT NULL,
   version TEXT NOT NULL,
   preview TEXT NOT NULL,
   uploaded_at INTEGER NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1))
+  sdk INTEGER NOT NULL,
+  published INTEGER NOT NULL DEFAULT 0 CHECK (published IN (0, 1)),
+  repository TEXT NOT NULL DEFAULT '',
+  release TEXT NOT NULL DEFAULT '',
+  asset TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (theme_id, digest)
 )`
 
-const ddlThemeEnabled = `CREATE UNIQUE INDEX theme_enabled ON theme (enabled) WHERE enabled = 1`
+const ddlThemeSelection = `CREATE TABLE theme_selection (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  current_id TEXT NOT NULL DEFAULT '',
+  current_digest TEXT NOT NULL DEFAULT '',
+  previous_id TEXT NOT NULL DEFAULT '',
+  previous_digest TEXT NOT NULL DEFAULT '',
+  CHECK ((current_id = '') = (current_digest = '')),
+  CHECK ((previous_id = '') = (previous_digest = ''))
+)`
+
+const seedThemeSelection = `INSERT INTO theme_selection (id) VALUES (1)`
 
 // 原始 zip 只按变更备份，不进入任一快照层。revision 是随机写入标识而非递增版本，
 // 上传完成以它匹配所读的包；删除重装不依赖已删除行的计数。
 const ddlThemePackage = `CREATE TABLE theme_package (
-  theme_id TEXT PRIMARY KEY,
+  theme_id TEXT NOT NULL,
+  digest TEXT NOT NULL,
   content BLOB NOT NULL,
   revision INTEGER NOT NULL CHECK (revision > 0),
-  uploaded INTEGER NOT NULL DEFAULT 0 CHECK (uploaded IN (0, 1))
+  uploaded INTEGER NOT NULL DEFAULT 0 CHECK (uploaded IN (0, 1)),
+  PRIMARY KEY (theme_id, digest)
 )`
 
 // theme_file 是主题包里的普通文件，path 是包内规范路径（theme.Parse 的 File.Path），也是托管时的键。不用
-// WITHOUT ROWID：单个文件可达 16 MiB，远超 SQLite 对无 rowid 表建议的行大小。不声明外键：删主题（DeleteTheme）与
-// 替换（PutTheme）在同一个写事务里显式删掉旧行，与其余从属表同一做法。
+// WITHOUT ROWID：单个文件可达 16 MiB，远超 SQLite 对无 rowid 表建议的行大小。删除版本在事务里显式删除
+// 所有从属行，不依赖连接是否启用外键。
 const ddlThemeFile = `CREATE TABLE theme_file (
   theme_id TEXT NOT NULL,
+  digest TEXT NOT NULL,
   path TEXT NOT NULL,
   content BLOB NOT NULL,
-  PRIMARY KEY (theme_id, path)
+  PRIMARY KEY (theme_id, digest, path)
 )`

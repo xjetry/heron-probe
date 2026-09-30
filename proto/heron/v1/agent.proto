@@ -5,6 +5,7 @@ package heron.v1;
 option go_package = "github.com/xjetry/heron-probe/gen/heron/v1;heronv1";
 
 import "heron/v1/types.proto";
+import "heron/v1/update.proto";
 
 // agent → hub 的唯一服务。两个方法都是 unary：hub 向 agent 的下行只有低频
 // 配置，在每次上报的响应里按版本对账即可，不需要应用层连接状态。
@@ -36,6 +37,8 @@ message ReportRequest {
   fixed64 facts_hash = 4;
   // 进程启动后的首次上报携带；此后仅在 hub 要求时携带。
   Facts facts = 5;
+  // 来自本机更新器的能力与结果；缺席表示旧 agent，不支持远程更新。
+  UpdateStatus update = 6;
 }
 
 // ReportResponse 与 RegisterResponse 是 hub 对 agent 的全部下行，也就是 hub 失守时能对 agent 施加的全部影响
@@ -47,4 +50,6 @@ message ReportResponse {
   ProbeTasks tasks = 2;
   // hub 持有的 facts_hash 与请求不一致。
   bool want_facts = 3;
+  // 幂等更新任务。agent 交给本机受限更新器，不能自行执行下载地址或命令。
+  UpdateTask update = 4;
 }

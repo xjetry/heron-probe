@@ -171,8 +171,22 @@ func TestPublicSnapshotListsOnlyPublicNodesWithPublicFields(t *testing.T) {
 	}
 	facts := &heronv1.Facts{Hostname: "secret-host", Os: "Debian 12", Kernel: "6.1.0-secret", Arch: "amd64", Virtualization: "kvm",
 		CpuModel: "EPYC", CpuCores: 4, AgentVersion: "v9.9.9-secret", IcmpAvailable: true}
+	facts.Network = &heronv1.NetworkInfo{Ipv4: &heronv1.AddressDetection{State: heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_AVAILABLE, Address: "8.8.4.4", CheckedAt: 123}}
 	if err := h.store.UpsertFacts(ctx, a, 1, facts); err != nil {
 		t.Fatal(err)
+	}
+	adminNodes, err := h.admin.ListNodes(ctx, connect.NewRequest(&heronv1.ListNodesRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var adminNetwork *heronv1.NetworkInfo
+	for _, node := range adminNodes.Msg.Nodes {
+		if node.Id == a {
+			adminNetwork = node.GetFacts().GetNetwork()
+		}
+	}
+	if !proto.Equal(adminNetwork, facts.Network) {
+		t.Fatalf("admin network missing: %v", adminNetwork)
 	}
 	if err := h.report(t, tokA, &heronv1.Metrics{BootId: "boot-secret", CpuPct: proto.Float64(12.5), MemUsed: proto.Uint64(0), MemTotal: proto.Uint64(1 << 30)}); err != nil {
 		t.Fatal(err)
@@ -200,7 +214,7 @@ func TestPublicSnapshotListsOnlyPublicNodesWithPublicFields(t *testing.T) {
 	}
 	// 正文层面再核一次：不公开的字段与私有节点的名字都不在 JSON 里。
 	raw := pubGet(t, h, "GetSnapshot", jsonQuery("{}"), nil)
-	for _, leak := range []string{"secret", "hostname", "kernel", "agentVersion", "icmpAvailable", "bootId", `"b"`} {
+	for _, leak := range []string{"secret", "hostname", "kernel", "agentVersion", "icmpAvailable", "bootId", `"b"`, "network", "8.8.4.4", "checkedAt"} {
 		if bytes.Contains(raw.body, []byte(leak)) {
 			t.Errorf("snapshot JSON contains %s: %s", leak, raw.body)
 		}
@@ -227,7 +241,7 @@ func TestPublicSiteServesSavedSettings(t *testing.T) {
 // 必须同时改这份清单——与 access_test 的 readMethods 同一口径。共用的 Traffic 与历史查询类型同样在列：
 // 给它们加字段也会出现在公开页。
 var publicFields = map[protoreflect.FullName][]protoreflect.Name{
-	"heron.v1.PublicSite":     {"title", "theme", "accent_color", "logo", "custom_css"},
+	"heron.v1.PublicSite":     {"title", "theme", "accent_color", "logo", "custom_css", "admin_path"},
 	"heron.v1.PublicSnapshot": {"now", "report_interval_ms", "nodes", "tags"},
 	"heron.v1.PublicNode":     {"id", "name", "online", "last_seen_at", "sort_order", "facts", "metrics", "traffic", "billing", "country", "tags"},
 	"heron.v1.PublicFacts":    {"os", "arch", "virtualization", "cpu_model", "cpu_cores"},

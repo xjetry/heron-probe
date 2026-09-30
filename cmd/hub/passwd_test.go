@@ -49,7 +49,7 @@ func TestPasswdListsTokensWithoutPromptingOnAPipe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := a.CreateAPIToken(context.Background(), "ci"); err != nil {
+	if _, _, err := a.CreateAPIToken(context.Background(), "ci", nil); err != nil {
 		t.Fatal(err)
 	}
 	st.Close()

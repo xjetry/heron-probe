@@ -21,15 +21,18 @@ func TestEveryCheckConstraintRefusesItsViolation(t *testing.T) {
 	migrated := migrateFrom(t, 1, seedMinuteRow)
 	fresh, _ := open(t)
 	checkViolations := []struct{ table, check, write string }{
+		{"api_token", "all_nodes IN (0, 1)", "INSERT INTO api_token (name,token_hash,created_at,all_nodes) VALUES ('x',x'00',0,2)"},
 		// 单行表：第二行插不进去。
 		{"admin", "id = 1", "INSERT INTO admin (id, password_hash, updated_at) VALUES (2, 'x', 0)"},
 		{"admin_security", "id = 1", "INSERT INTO admin_security (id) VALUES (2)"},
-		{"register_window", "id = 1", "INSERT INTO register_window (id, key_hash, expires_at, remaining) VALUES (2, x'00', 0, 0)"},
 		{"probe_meta", "id = 1", "INSERT INTO probe_meta (id, version) VALUES (2, 0)"},
 		// 0 与 1 以外的启用值会绕过只看 enabled = 1 的 theme_enabled 索引。
-		{"theme", "enabled IN (0, 1)", "INSERT INTO theme (id, name, version, preview, uploaded_at, enabled) VALUES ('x', 'X', '1', '', 0, 2)"},
-		{"theme_package", "revision > 0", "INSERT INTO theme_package (theme_id, content, revision) VALUES ('x', x'00', 0)"},
-		{"theme_package", "uploaded IN (0, 1)", "INSERT INTO theme_package (theme_id, content, revision, uploaded) VALUES ('y', x'00', 1, 2)"},
+		{"theme_version", "published IN (0, 1)", "INSERT INTO theme_version (theme_id,digest,name,version,preview,uploaded_at,sdk,published) VALUES ('x','d','X','1','',0,1,2)"},
+		{"theme_selection", "id = 1", "INSERT INTO theme_selection(id) VALUES(2)"},
+		{"theme_selection", "(current_id = '') = (current_digest = '')", "UPDATE theme_selection SET current_id='a'"},
+		{"theme_selection", "(previous_id = '') = (previous_digest = '')", "UPDATE theme_selection SET previous_id='a'"},
+		{"theme_package", "revision > 0", "INSERT INTO theme_package (theme_id,digest,content,revision) VALUES ('x','d',x'00',0)"},
+		{"theme_package", "uploaded IN (0, 1)", "INSERT INTO theme_package (theme_id,digest,content,revision,uploaded) VALUES ('y','d',x'00',1,2)"},
 		// 0 是"不限"，负数没有含义。
 		{"notify_channel", "rate_per_minute >= 0", "INSERT INTO notify_channel (name, kind, config, created_at, rate_per_minute) VALUES ('x', 'telegram', '{}', 0, -1)"},
 		// 批次号是批次第一行的 id，0 不指向任何行。NULL 满足 CHECK，由 NOT NULL 拒绝（TestDeliveryInsertWithoutBatchFails）。

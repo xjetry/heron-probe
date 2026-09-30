@@ -14,8 +14,9 @@
 - 公开状态页（匿名可访问）
 - 流量统计：总量与按重置日滚动的周期用量
 - 节点费用与到期：价格、币种、周期、到期日与自动续期的展示值，以及到期提醒（§9.4）
-- 公开页主题：经 `AdminService` 上传、启用、删除主题包；主题是只调 `PublicService` 的静态前端工程，由 hub 在独立 origin 下托管，并随功能提供开发指南
+- 公开页主题：在管理后台上传或从公开 GitHub Release 安装构建产物，预览、按不可变版本启用和回滚；同域名公开页通过可信容器中的不透明来源沙箱运行主题，并提供主题 SDK 与开发指南。
 - 节点的国家 / 地区徽章：由运维显式开启的查询服务按节点来源地址得出，或由管理员手动指定；默认不出网
+- 管理员显式触发官方正式 Release 在线更新：Linux systemd 的 hub 与 agent 使用独立本机更新器，不开放任意代码或命令下发。
 
 已确认要做、但尚未在本文成形的功能点记在仓库根的 `FEATURES.md`；其中某条进入里程碑时，设计并入本文并从那里删除。
 
@@ -24,9 +25,9 @@
 | 排除项 | 原因 |
 |---|---|
 | 远程终端、命令执行、文件管理 | 会让 hub 成为对全部节点的远程代码执行入口；hub 失守即全部节点失守 |
-| agent 自动更新、hub 托管 agent 二进制 | 本质是"hub 可向全部节点推送代码"，与上一条同类 |
+| 无人值守自动更新、hub 托管或指定 agent 二进制 | 仅支持管理员触发且由本机独立校验的官方正式 Release 更新，不接受 hub 提供的程序、下载源或命令 |
 | 插件系统 | 第三方代码在 hub 进程内执行，与远程执行同类。主题的代码跑在访客浏览器里，不是同一件事 |
-| 主题市场：hub 出网拉取远程目录并自动安装 | 让 hub 携带信任去访问代码分发点。主题包由管理员上传，不由 hub 去取。国家查询（`FEATURES.md`）也是 hub 出网，但取回的是两个字母的数据、默认关闭、由运维显式开启，不是同一件事 |
+| 自动主题市场与任意 URL 安装 | 不维护远程市场目录，不自动发现或更新主题。管理员可显式选择公开 GitHub Release 的已构建 ZIP 资产，hub 按限定目标、重定向和地址策略下载并校验后本地托管，不执行源码构建 |
 | OAuth、多用户 | 单管理员足够；支持 TOTP 与无密码 Passkey |
 | 多数据库方言、外接时序库 | 目标规模内单文件 SQLite 足够 |
 | 流量用量告警 | 未列入需求；内存和磁盘持续紧张告警已纳入 |
@@ -85,7 +86,7 @@ deploy/               install.sh、systemd 单元、OpenRC 服务脚本（§14�
 | `heron.v1.AgentService` | agent | 节点 bearer token（`Register` 用注册窗口 key） |
 | `heron.v1.AdminService` | 管理面板；agent 与脚本 | 会话 cookie；标为只读的方法另接受 API token（§5.6） |
 | `heron.v1.PublicService` | 公开页、第三方主题 | 无，按来源键限流（§5.3） |
-| 主题 origin（§10.1） | 访客浏览器 | 只挂 `PublicService` 与主题静态文件；`AdminService`、`AgentService` 不在此 origin 上 |
+| 主题沙箱（§10.1） | 访客浏览器 | 与面板共用 URL 域名，iframe 不授予同源权限；仅通过 SDK 消息通道读取固定的公开接口 |
 
 鉴权由"服务挂载时绑定的拦截器"承载，不在方法内逐个检查：新增方法无法漏掉鉴权，因为不存在未绑定拦截器的挂载点。
 
@@ -97,7 +98,7 @@ deploy/               install.sh、systemd 单元、OpenRC 服务脚本（§14�
 
 - `AgentService`：`Register`、`Report`。
 - GET 准入由装配期的显式检查承载：`heron.v1` 的每个方法接受 GET 当且仅当声明了正的 `cache_max_age_s`，遍历包内全部服务，任一方向不符 hub 起不来。
-- `AdminService`：`Login`、`Logout`、`ListSessions`、`RevokeSession`；节点 `ListNodes`、`CreateNode`、`UpdateNode`、`DeleteNode`、`RotateNodeToken`、`ReorderNodes`；注册窗口 `OpenRegisterWindow`、`CloseRegisterWindow`、`GetRegisterWindow`；数据 `GetSnapshot`、`QueryMetrics`、`QueryProbes`、`GetTraffic`、`AdjustTraffic`；探测 `ListProbeTasks`、`SaveProbeTask`、`DeleteProbeTask`；告警 `ListAlertRules`、`SaveAlertRule`、`DeleteAlertRule`、`ListAlertEvents`、`GetAlertDeliveryError`、`ListNotifyChannels`、`SaveNotifyChannel`、`DeleteNotifyChannel`、`TestNotifyChannel`；设置 `GetSettings`、`UpdateSettings`、`GetStorageStats`；标签 `ListTags`（`ACCESS_READ`）、`DeleteTag`；主题 `UploadTheme`、`ListThemes`、`EnableTheme`、`DeleteTheme`、`GetThemePreview`（§10.1，全部仅会话）；API token `ListApiTokens`、`CreateApiToken`、`DeleteApiToken`；自描述 `GetApiReference`。
+- `AdminService`：`Login`、`Logout`、`ListSessions`、`RevokeSession`；节点 `ListNodes`、`CreateNode`、`UpdateNode`、`DeleteNode`、`RotateNodeToken`、`ReorderNodes`；注册窗口 `OpenRegisterWindow`、`CloseRegisterWindow`、`GetRegisterWindow`；数据 `GetSnapshot`、`QueryMetrics`、`QueryProbes`、`GetTraffic`、`AdjustTraffic`；探测 `ListProbeTasks`、`SaveProbeTask`、`DeleteProbeTask`；告警 `ListAlertRules`、`SaveAlertRule`、`DeleteAlertRule`、`ListAlertEvents`、`GetAlertDeliveryError`、`ListNotifyChannels`、`SaveNotifyChannel`、`DeleteNotifyChannel`、`TestNotifyChannel`；设置 `GetSettings`、`UpdateSettings`、`GetStorageStats`；标签 `ListTags`（`ACCESS_READ`）、`DeleteTag`；主题 `UploadTheme`、`ListThemes`、`EnableTheme`、`DeleteTheme`、`DeleteThemeVersion`、`GetThemePreview`、`GetThemePackage`、`PreviewTheme`、`ListThemeReleases`、`InstallThemeRelease`（§10.1，全部仅会话）；API token `ListApiTokens`、`CreateApiToken`、`DeleteApiToken`；自描述 `GetApiReference`。
 - `PublicService`：`GetSite`、`GetSnapshot`、`QueryMetrics`、`QueryProbes`。后两者只对 `public = true` 的节点应答，对其余节点与不存在的节点返回同一个 `NotFound`。
 
 无副作用标注（`idempotency_level = NO_SIDE_EFFECTS`，决定方法是否接受 GET）按服务的信任模型决定，不按读写决定：`PublicService` 的四个方法全部标注，因而可用 GET 调用并带 `Cache-Control`——它无鉴权（§3.2），不存在会被浏览器环境性携带的凭据，§5.3 的 CSRF 论证在这里不成立，而公开页恰是需要被缓存的那一面。缓存上界分别定：实时快照不超过一个上报间隔（更短无意义，更长会展示过期的在线状态），历史查询可更长，站点配置最长。`AdminService` 与 `AgentService` 一律不标：前者是 §5.3 的 CSRF 防线之一，后者的上报本就有副作用。
@@ -106,7 +107,7 @@ deploy/               install.sh、systemd 单元、OpenRC 服务脚本（§14�
 
 ### 4.1 为什么是 unary 而不是长连接
 
-hub → agent 的下行只有探测任务列表与上报间隔，都是低频变更的配置，可以在每次上报的响应里按版本对账。由此 agent 与 hub 之间不需要应用层连接状态，下列问题不存在：连接替换时迟到的拆除误删新会话、半开连接探测、出站队列满导致推送丢失、握手与首报之间的在线语义、hub 重启后的重连风暴（每个 agent 本来就是每周期一个请求，恢复后的负载就是稳态负载）。
+hub → agent 的下行包含探测任务列表、上报间隔、facts 请求及受限更新授权，可以在每次上报响应里按版本或任务 ID 对账。更新授权先持久化再下发，同一 ID 的重复交付由本机更新器幂等处理。由此 agent 与 hub 之间不需要应用层连接状态，下列问题不存在：连接替换时迟到的拆除误删新会话、半开连接探测、出站队列满导致推送丢失、握手与首报之间的在线语义、hub 重启后的重连风暴（每个 agent 本来就是每周期一个请求，恢复后的负载就是稳态负载）。
 
 unary 是普通 HTTP POST，HTTP/1.1 即可，过反代与 CDN 无需特殊配置。不使用 bidi streaming：它要求 HTTP/2 端到端，反代到 hub 这一跳需要显式配置。
 
@@ -128,12 +129,14 @@ message ReportRequest {
   uint64  tasks_version = 3;   // agent 当前持有的探测任务版本
   fixed64 facts_hash = 4;      // agent 静态信息的摘要
   Facts   facts = 5;           // 进程启动后的首次上报携带；此后仅在 hub 要求时携带
+  UpdateStatus update = 6;     // 本机更新能力、当前版本和最新任务状态
 }
 
 message ReportResponse {
   uint32     report_interval_ms = 1;
   ProbeTasks tasks = 2;        // 仅当 tasks_version 与 hub 不一致时携带
   bool       want_facts = 3;   // hub 持有的 facts_hash 与请求不一致
+  UpdateTask update = 4;       // 已持久化的受限官方更新授权
 }
 
 message Metrics {
@@ -245,7 +248,7 @@ agent 与 hub 不同时升级。hub 必须接受旧 agent 的上报（缺失的 
 - 登录失败按来源键锁定。来源键由 `auth.SourceKey` 统一归一化（IPv4 按单个地址，IPv4 映射地址先还原；IPv6 按 /64——一台主机通常拥有整个 /64，逐地址计等于不计），登录锁定、注册窗口失败计数与两处限流（§5.2、§10）共用同一个键。
 - 跨站请求伪造由以下几条各自独立的事实约束，不指定其中哪一条是"主要防线"：会话 cookie 为 `SameSite=Strict`；hub 不下发任何 CORS 允许头；`AdminService` 不把任何方法标为无副作用（因而不接受 GET）；Connect 处理器对 `application/json` 与 `application/proto` 之外的 `Content-Type` 拒绝服务，而浏览器的跨站"简单请求"发不出这两种类型。最后一条是对 connect-go 行为的断言，列入 §13 并由 §12 的测试钉住。
 
-管理员第二因素状态位于配置层 `admin_security`：TOTP 密钥与已消费时间步、恢复码摘要、WebAuthn 凭据和版本号。密码登录启用 TOTP 后必须同时验证 OTP 或一次性恢复码；Passkey 独立支持无密码登录，要求可发现凭据与用户验证。`--admin-origin` 固定可信 HTTPS 来源，不使用请求的 Host 自报值；主题必须使用不同主机名。认证消费、凭据版本 CAS 和会话签发同事务，修改认证方式同事务撤销旧会话。设置挑战及重新认证证明绑定会话、版本和有效期且只能消费一次。普通失败、成功、锁定及认证变更都写审计；普通失败不投递。设备丢失时本机 `security-reset --yes` 清除因素并撤销会话，不清密码和 API token。
+管理员第二因素状态位于配置层 `admin_security`：TOTP 密钥与已消费时间步、恢复码摘要、WebAuthn 凭据、持久化 RP ID/Origin 绑定和版本号。密码登录启用 TOTP 后必须同时验证 OTP 或一次性恢复码；Passkey 独立支持无密码登录，要求可发现凭据与用户验证。首次注册使用当前可信 HTTPS 访问来源生成挑战，成功消费挑战和保存凭据时原子提交域名绑定；后续请求不能根据 Host 改写 RP 配置。浏览器检测安全上下文和 WebAuthn，服务端仅采信直连 TLS 或可信代理的 HTTPS 信息。换域名需要密码及现有第二因素重新认证并显式改绑，同时撤销旧 Passkey 与会话。旧 `--admin-origin` 仅用于已有凭据且未持久绑定时的一次性可信配置导入；缺原配置保留凭据但禁用其使用，不猜测 RP ID。持久绑定存在后数据库是唯一来源，旧参数不覆盖绑定。认证消费、凭据版本 CAS 和会话签发同事务，修改认证方式同事务撤销旧会话。挑战及重新认证证明绑定会话、版本、用途、来源和有效期且只能消费一次。普通失败、成功、锁定及认证变更都写审计；普通失败不投递。设备丢失时本机 `security-reset --yes` 清除因素与绑定并撤销会话，不清密码和 API token。
 
 ### 5.4 TLS 与可信代理
 
@@ -254,8 +257,8 @@ hub 只监听明文 HTTP，TLS 由反代（Caddy / nginx / CDN）终止，hub �
 - `--listen` 默认 `127.0.0.1:8080`。监听非 loopback 地址时启动日志告警：此时任何人都能绕过反代直连并自带转发头。
 - `--timezone` 是 IANA 时区名，默认取 hub 进程的本地时区；只用于 §7 流量周期的重置日判定、§9.4 到期日的天边界、面板文案与通知文案里的时刻（§5.3 登录通知的摘要按它写 RFC 3339 时间），不参与任何时长计算。本地时区的名字按 `TZ`、再按 `/etc/localtime` 符号链接的目标路径里 `zoneinfo/` 之后的部分解析（在所测的 Alpine 3.21、Debian 12、Ubuntu 24.04、Rocky Linux 9 上按各自的标准方式设置时区后都是符号链接，Alpine 指向 `/etc/zoneinfo/`）；不读 `/etc/timezone`——RHEL 系没有它，Debian 与 Ubuntu 用 `timedatectl` 改时区后它仍是旧值。`/etc/localtime` 是复制出来的普通文件时（常见于 Dockerfile）取不到名字，退回 UTC 并告警。
 - `--trusted-proxies` 显式给出 CIDR 列表。只有 TCP 对端地址落在列表内的请求，其 `X-Forwarded-For` / `X-Forwarded-Proto` 才被采信。`X-Forwarded-For` 可能有多行（HAProxy 的 `option forwardfor` 把真实地址另起一行追加），读取时把全部字段行按出现顺序合并后再取值，只读第一行会让键取自客户端伪造的那一行。`X-Forwarded-Proto` 同样按全部字段行合并后取第一个值，即最外层那一跳写的协议；它不带逐跳地址，没法像 `X-Forwarded-For` 那样从右向左跳过可信代理，代理追加而不覆盖时客户端自带的值排在最前。这一点有意不处理：它只决定签发或清除请求者自己的会话 cookie（Login、Logout、撤销当前会话）时带不带 `Secure`，客户端只能改到自己，影响不到别的来源。空列表 = 不信任任何转发头、一律用 TCP 对端地址，是收紧方向。hub 不从请求头推断自己是否在反代之后。
-- hub 主动出网的目标只有两类，都由配置显式给出、默认没有：通知渠道（§9.3）、国家查询（§4.9）与分层备份（§6.7）；代码内不得另有出站目标。
-- `--theme-origin` 给出主题托管的 origin（§10.1）；未给出时主题功能整体关闭。
+- hub 按配置主动访问通知渠道（§9.3）、国家查询（§4.9）与分层备份（§6.7）；管理员操作还可触发 GitHub 主题查询/安装，以及固定官方仓库的正式版本查询。实际程序下载由独立本机更新器完成，访问目标受官方源策略限制。
+- 主题不需要独立主机名或启动参数。旧 `--theme-origin` 已移除，升级前必须从启动配置中删除；后台直接选择同域名公开页的主题版本。
 - hub 不生成自己的对外地址：面板里安装命令的 hub 地址取浏览器当前的 origin（§10），所以没有 `--site-url`，也不存在从 `Host` 头推断对外地址的问题。
 
 ### 5.5 为什么不做 mTLS
@@ -281,11 +284,12 @@ mTLS 相对 bearer token 的增量是"凭据不过线"与"在 HTTP 层之前拒�
 
 ### 5.7 hub 失守时 agent 宿主机的边界
 
-威胁模型：攻击者完全控制 hub（进程、数据库、面板页面），或处在 agent 与 hub 之间的明文链路上。要守住的性质：攻击者不能在 agent 宿主机上执行代码、不能读写宿主机文件、不能让 agent 耗尽宿主机资源（内存与日志）、不能让 agent 探测宿主机本机（回环与本机接口上的地址）与链路本地地址。攻击者仍能做的：伪造展示、停掉监控，以及按 §8.4 的速率上限探测本地策略允许的地址（私网默认允许）。下面各条分别承载其中一部分，互不替代，不指定哪一条是主要防线：
+威胁模型：攻击者完全控制 hub（进程、数据库、面板页面），或处在 agent 与 hub 之间的明文链路上。要守住的性质：攻击者不能在 agent 宿主机上执行任意代码、不能任意读写宿主机文件、不能让 agent 耗尽宿主机资源（内存与日志）、不能让 agent 探测宿主机本机（回环与本机接口上的地址）与链路本地地址。攻击者仍能做的：伪造展示、停掉监控、请求安装比当前版本新的官方正式 Release，以及按 §8.4 的速率上限探测本地策略允许的地址（私网默认允许）。官方发行权限属于更新信任根。下面各条分别承载其中一部分，互不替代，不指定哪一条是主要防线：
 
-- 下行面：agent 从 hub 收到的只有 `RegisterResponse` 与 `ReportResponse` 的三个字段；agent 不监听端口、不执行外部命令、不自我升级、运行期不写配置。新增下行字段时必须在本节写明它交给了 hub 什么能力。
+- 下行面：agent 从 hub 收到的只有 `RegisterResponse` 与 `ReportResponse`；后者包含上报间隔、探测任务、facts 请求和受限更新任务。agent 不监听入站端口、不执行外部命令、运行期不写配置。更新任务只将版本号、任务 ID 与到期时间提交给对应服务用户可访问的本机 Unix socket；独立 root 更新器验证固定官方源、正式版本递增、摘要、归档及固定 systemd 目标后替换主程序，不接受 URL、仓库、路径、摘要或命令。新增下行字段必须在本节写明授予 hub 的能力。
+- 在线更新事务：管理员会话可创建和取消任务，只读 API token 只能读取。每节点最新任务与能力持久化，后台先将 dispatched 写入数据库，Report 才下发；Report 本身不等待数据库或本机 socket。排队任务最多 24 小时，仅 queued 可取消。更新器独立保存任务 ID 防重放记录、备份和事务阶段，崩溃后按持久化阶段恢复。Hub 候选绑定监听但在确认前不开始 Serve，避免回滚覆盖已接受业务数据；Agent 需新进程成功上报才确认。就绪还需匹配 systemd MainPID、Unix 对端 PID 和实际 exe 摘要。更新器本身及服务定义只能由 root 安装器升级，安装器通过 root-only 维护握手与更新事务互斥。节点任务不进入分层快照，恢复时清空，避免重放旧升级命令。
 - 上报间隔：agent 把 `report_interval_ms` 限定在 hub 能合法配置的范围内，即 TTL 取 `MinTTL` 与 `MaxTTL` 时的间隔（间隔 = TTL / `ReportsPerTTL`）。越界（含 0）取最近的边界并告警，值变化时告警一次。TTL 边界、`ReportsPerTTL` 与间隔的换算只在 `internal/agentwire` 定义一次，hub 的 TTL 准入、hub 的间隔下发、agent 的限定与 agent 的退避上限（§4.7）都读它。没有这一条，hub 下发 1 ms 就能让 agent 不停地采集与上报。
-- 响应体：agent 在 HTTP 层限读响应正文 `agentwire.MaxResponseBytes`（64 KiB），成功与错误响应都经过这一层；超出即报错，不截断（截断的正文可能恰好解码成一条更短的合法消息），按普通失败退避。agent 不接受压缩：connect 不声明 gzip，HTTP Transport 也不自行声明与解压，hub 不顾声明回 gzip 时按不认识的编码报错；读到的字节因此就是解码前的全部大小，响应本来不超过上限，压缩没有收益。connect-go（v1.21.0 实测）的 `ReadMaxBytes` 只管成功响应的消息：256 MiB 的错误正文让客户端分配了 1282 MiB，47 KiB 的 gzip 错误正文分配了 128 MiB，所以限读不能交给它。hub 侧有测试钉住满载 `ReportResponse` 的编码不超过上限（当前 18199 字节）。响应头另设 32 KiB 上限（Go 默认 10 MiB）。
+- 响应体：agent 在 HTTP 层限读响应正文 `agentwire.MaxResponseBytes`（64 KiB），成功与错误响应都经过这一层；超出即报错，不截断（截断的正文可能恰好解码成一条更短的合法消息），按普通失败退避。agent 不接受压缩：connect 不声明 gzip，HTTP Transport 也不自行声明与解压，hub 不顾声明回 gzip 时按不认识的编码报错；读到的字节因此就是解码前的全部大小，响应本来不超过上限，压缩没有收益。connect-go（v1.21.0 实测）的 `ReadMaxBytes` 只管成功响应的消息：256 MiB 的错误正文让客户端分配了 1282 MiB，47 KiB 的 gzip 错误正文分配了 128 MiB，所以限读不能交给它。hub 侧有测试钉住满载 `ReportResponse` 的编码不超过上限（含受限更新任务）。响应头另设 32 KiB 上限（Go 默认 10 MiB）。
 - 重定向：agent 的 HTTP 客户端不跟随任何重定向，`Register` 与 `Report` 都没有需要重定向的场景。Go 的 http.Client 跟随同主机重定向时会保留 `Authorization`，而协议不参与判断，https 到同主机 http 的重定向会把节点 token 明文发出。
 - 传输：hub 地址必须是 https。http 只在两种情形下接受：主机是 loopback IP 字面量（`127.0.0.0/8`、`::1`；`localhost` 这类名字要经解析，不在豁免内），或配置里有 `insecure_http: true`（由 `register --insecure-http` 或 `configure --insecure-http=true` 写入）。`register` 在发请求之前、`run` 在加载配置时调用同一个校验函数。不满足时 `run` 拒绝启动，报错里给出两种放行方式。已有的非 loopback http 部署升级后会停在这一步，安装脚本的启动确认随之失败并指向日志；这是有意的，明文链路上的中间人与 hub 失守等价，不能静默延续。
 - 探测目标：agent 解析出地址之后、发包之前，按宿主机本地策略检查实际要连的地址（§8.4）。策略只来自本地配置，hub 改不了。
@@ -379,7 +383,7 @@ CREATE TABLE probe_1m (
 
 ### 6.6 其余表
 
-`node`（名称、排序、是否公开、备注、离线宽限期、流量重置日、token_hash，§9.4 的计费五列：价格、币种、周期、到期日、自动续期，以及 §4.9 的 `last_source`、`country`、`country_ip`、`country_pin`）、`node_facts`（facts_hash 与各静态字段）、`traffic`、`probe_task`、`probe_task_node`、`probe_meta`（任务版本号）、`alert_rule`（到期规则另有 `days_before`，其余种类为 NULL）、`alert_rule_node`（显式作用域；`alert_rule.all_nodes` 为真时不存行且覆盖全部节点，为假时无行表示不覆盖任何节点——删除作用域里最后一个节点不会放宽到全部）、`alert_rule_channel`、`alert_state`（到期规则另带进入 `firing` 时的到期日 `fired_expires_on`，恢复文案据它判断日期是否改过，§9.2）、`alert_event`、`alert_delivery`（每事件每渠道一行投递记录，`batch_id` 非空、同批各行共享尝试计数与结果，`not_before` 为下一次尝试的最早时刻；失败类别、HTTP 状态码与错误原文分列存放，同一次发送覆盖的多行共享 `batch_id`，见 §9.3）、`notify_channel`、`setting`、`admin`、`admin_session`、`api_token`（名称、token_hash、创建时间、最后使用时间）、`register_window`、`rollup_state`、`maintenance_state`（prune 与上卷的完成时刻，§6.5）、`tag`（名称）与 `node_tag`（节点与标签多对多，§10 的标签一条）、`theme`（id、name、version、清单里的 preview 路径——`GetThemePreview` 据它取图而不重新解析包、uploaded_at、enabled；"至多一个启用"由 `enabled = 1` 上的部分唯一索引承载）与 `theme_file`（§10.1）、`theme_package`（上传时的原包字节、本次写入的随机标识 revision 与是否已上传 uploaded：主题同步按 (theme_id, revision) 置已上传，覆盖或删除重装后标识必变，同步期间被覆盖的包不会被误标；不进任何快照层）、`restore_record`（§6.7）。
+`node`（名称、排序、是否公开、备注、离线宽限期、流量重置日、token_hash，§9.4 的计费五列：价格、币种、周期、到期日、自动续期，以及 §4.9 的 `last_source`、`country`、`country_ip`、`country_pin`）、`node_facts`（facts_hash 与各静态字段）、`traffic`、`probe_task`、`probe_task_node`、`probe_meta`（任务版本号）、`alert_rule`（到期规则另有 `days_before`，其余种类为 NULL）、`alert_rule_node`（显式作用域；`alert_rule.all_nodes` 为真时不存行且覆盖全部节点，为假时无行表示不覆盖任何节点——删除作用域里最后一个节点不会放宽到全部）、`alert_rule_channel`、`alert_state`（到期规则另带进入 `firing` 时的到期日 `fired_expires_on`，恢复文案据它判断日期是否改过，§9.2）、`alert_event`、`alert_delivery`（每事件每渠道一行投递记录，`batch_id` 非空、同批各行共享尝试计数与结果，`not_before` 为下一次尝试的最早时刻；失败类别、HTTP 状态码与错误原文分列存放，同一次发送覆盖的多行共享 `batch_id`，见 §9.3）、`notify_channel`、`setting`、`admin`、`admin_session`、`api_token`（名称、token_hash、创建时间、最后使用时间）、`register_window`、`rollup_state`、`maintenance_state`（prune 与上卷的完成时刻，§6.5）、`tag`（名称）与 `node_tag`（节点与标签多对多，§10 的标签一条）、`theme`（主题身份）、`theme_version`（以 ID+SHA256 标识的不可变版本元数据、SDK、来源和公开发布状态）、`theme_selection`（全站当前与回滚引用）、`theme_file`（按 ID+摘要+路径存储展开文件）与 `theme_package`（原始 ZIP、本次落库随机 revision、uploaded 标记；上传确认同时匹配 ID、digest、revision；文件和原包不进快照层）、`restore_record`（§6.7）。
 
 schema 版本记在 `PRAGMA user_version`，迁移为按版本号顺序执行的函数；空库直接建到当前版本，不重放历史。打开库时的 schema 策略由调用方显式给出：只有 `serve` 迁移旧库，每迁一步记一行日志（from、to），空库建成时也记一行；离线子命令（`passwd`、`token`、`stats`、`node`、`window`）打开比自己旧的库时拒绝并提示先用新版本 `serve` 升级（升级前备份）——否则运维用新二进制看一眼 `stats` 就把库单向迁走，旧 hub 下次重启起不来；两种策略下建空库都允许（没有旧数据可丢）——空库指没有任何对象的文件；有表却没有版本号、或版本号为负的文件不是本项目的库，拒绝打开而不是当作空库建表或当作旧库去迁（否则 `stats --db` 指错文件会往别人的库里建出全部表）；比二进制新的库都拒绝。
 
@@ -387,7 +391,7 @@ schema 版本记在 `PRAGMA user_version`，迁移为按版本号顺序执行的
 
 hub 自行把数据推送到 S3 兼容对象存储（R2 为首选 endpoint），分两层、两个周期：配置与凭据分钟级（默认 5 分钟），指标与探测历史按天。运维配置一次，此后无需人工动作；恢复不自动化，是显式的运维操作。整套数据只在一个 SQLite 文件里，宿主盘损坏即丢掉全部历史与全部节点凭据，而手动导出的可靠性取决于人是否记得做。分层而不整库周期快照：500 节点的指标三级表约 2 GB，配置与凭据合计几百 KB，整库快照只能退到按天，全库 RPO 被最不值钱的那部分拖到 24 小时；分层后最痛的部分拿到分钟级 RPO。
 
-分层判据两条各管一件事：进哪一层看"丢了能不能自愈"（指标丢了节点继续上报、过去是空洞，可按天；配置、凭据、累计流量、告警历史、标签、主题清单都不自愈，分钟级）；描述与被描述必须同层（`rollup_state` 与 `maintenance_state` 描述指标内容，跟指标层走：水位若比它描述的数据新，晚到的数据会按 §6.4 被丢弃）。配置层：`node`、`node_facts`、`traffic`、`probe_task`、`probe_task_node`、`probe_task_tag`、`probe_meta`、`alert_rule`、`alert_rule_node`、`alert_rule_tag`、`alert_rule_channel`、`alert_state`、`alert_event`、`alert_delivery`、`notify_channel`、`setting`、`admin`、`admin_security`、`api_token`、`tag`、`node_tag`、`theme`、`restore_record`；指标层：`metric_*`、`probe_*`、`rollup_state`、`maintenance_state`；主题产物（`theme_file` 与原包 `theme_package`）体量比配置层大三个数量级，不进快照层，按变更时备份：库里保存上传时的原包（`theme_package`，带本次写入的随机标识与是否已上传），每次上传或删除主题后唤醒配置层立即执行一轮完整备份。配置快照的同一读事务生成 `snapshot_theme(theme_id, sha256)` 引用清单，并将该视图中的原包逐个写入私有暂存目录；先按摘要上传缺失原包，再发布配置快照，任何原包上传失败都不发布该配置快照。摘要为空明确表示取快照时没有原包。主题对象不可变，替换或删除当前主题不会删除历史原包；当前不自动回收主题对象，避免删掉历史快照仍引用的内容。配置层每个周期也执行同样流程兜底；唤醒的完整一轮会多占用配置层的一份保留名额（换取最新的配置快照与主题对象一致），调试主题期间反复上传会缩短配置层可回溯的时间窗；升级前安装、没有原包的主题不算故障，同步跳过它并在备份状态里列出、提示重新上传；不备份 `admin_session`（重新登录即可，恢复它等于复活可能已登出的会话）与 `register_window`（限时限量，恢复旧窗口会复活已消耗的名额）。
+分层判据两条各管一件事：进哪一层看"丢了能不能自愈"（指标丢了节点继续上报、过去是空洞，可按天；配置、凭据、累计流量、告警历史、标签、主题清单都不自愈，分钟级）；描述与被描述必须同层（`rollup_state` 与 `maintenance_state` 描述指标内容，跟指标层走：水位若比它描述的数据新，晚到的数据会按 §6.4 被丢弃）。配置层：`node`、`node_facts`、`traffic`、`probe_task`、`probe_task_node`、`probe_task_tag`、`probe_meta`、`alert_rule`、`alert_rule_node`、`alert_rule_tag`、`alert_rule_channel`、`alert_state`、`alert_event`、`alert_delivery`、`notify_channel`、`setting`、`admin`、`admin_security`、`api_token`、`tag`、`node_tag`、`theme`、`theme_version`、`theme_selection`、`restore_record`；指标层：`metric_*`、`probe_*`、`rollup_state`、`maintenance_state`；主题产物（`theme_file` 与原包 `theme_package`）体量比配置层大三个数量级，不进快照层，按变更时备份：库里保存上传时的原包（`theme_package`，带本次写入的随机标识与是否已上传），每次上传或删除主题后唤醒配置层立即执行一轮完整备份。配置快照的同一读事务生成 `snapshot_theme(theme_id, digest, sha256)` 引用清单，并将该视图中的原包逐个写入私有暂存目录；先按摘要上传缺失原包，再发布配置快照，任何原包上传失败都不发布该配置快照。sha256 为空明确表示该版本取快照时没有原包；digest 保留已知版本身份。清单覆盖全部保留版本，不仅是当前主题，当前与回滚引用同快照保存。主题对象不可变，替换或删除当前主题不会删除历史原包；当前不自动回收主题对象，避免删掉历史快照仍引用的内容。配置层每个周期也执行同样流程兜底；唤醒的完整一轮会多占用配置层的一份保留名额（换取最新的配置快照与主题对象一致），调试主题期间反复上传会缩短配置层可回溯的时间窗；升级前安装、没有原包的主题不算故障，同步跳过它并在备份状态里列出、提示重新上传；不备份 `admin_session`（重新登录即可，恢复它等于复活可能已登出的会话）与 `register_window`（限时限量，恢复旧窗口会复活已消耗的名额）。
 
 每层快照都是单事务内的一致读：`ATTACH` 一个临时库，在一个读事务里逐表 `CREATE TABLE … AS SELECT`（每层都另带一份 `sqlite_sequence` 与 `snapshot_meta` 作簿记，`snapshot_meta.format_version=2` 独立于数据库 schema 版本——序列是 `node.id` 不复用那条不变式的载体，漏搬即失效，恢复时按表名取各来源的最大值），产物是可校验的 SQLite 文件，上传后删除临时文件；跨表分多次读会得到互相矛盾的配置。对象键 `<前缀>/config/<UTC 时刻>.db`、`<前缀>/metrics/<UTC 时刻>.db`、`<前缀>/theme/sha256/<SHA256>.zip`。保留按份数、hub 自删：配置层默认 48 份、指标层 14 份（可配），每次上传成功后列出该层对象、删除超出份数的最旧者；bucket 不得公开可读（内含口令哈希、token 哈希与全部拓扑，足以离线爆破弱口令）。不加密：保密由私有 bucket 与 TLS 承载。配置：endpoint、bucket、区域、access key、secret（只写不读，与渠道凭据同一做法）、前缀、两层周期、两层份数，存于 `setting`，经面板设置；未配置即整体关闭。周期与份数的取值范围：配置层周期 60–86400 秒、指标层周期 3600–604800 秒、两层份数各 1–1000；`UpdateSettings` 里这四个字段是 `optional`，缺席即不变（与 §10 总闸同一口径），给出的值出范围（含显式的 0）返回 `InvalidArgument` 并点名字段与范围——0 不表示"取默认"，份数为 0 会在上传成功后把这一层全删光，周期为 0 会空转，两者都不是任何人想要的配置；库里没有这个键时取默认值，回到默认就显式写默认值。上限只是防止把一层实际关掉而面板上看不出来：周期超过一天的配置层已经不是分钟级 RPO，要关就清掉 endpoint。S3 客户端只实现 SigV4 的 PutObject、ListObjectsV2、DeleteObject、GetObject，纯 Go；出站复用 §9.3 的出站边界——同一个不跟随重定向的传输、不含 URL 的错误文本与状态码判定——而不是它的总时限：期限经 ctx 逐次给出，配置层的上传按对象大小推导，指标层的上传按它自己的周期推导（周期减去保留预算，一次上传必须在下一次快照之前结束），列举与删除共用一个固定期限，客户端本身只限建连与首字节（同一个客户端既传几百 KB 的配置层也传 GB 级的指标层，固定总时限取长了配置层卡住要等满才失败、取短了大对象必然超时）；§9.3 的 64 KiB 应答上限不适用于下载与列举，两处各有自己的上限。这是架构里第一个 hub 主动出站且携带长期凭据的路径，与 §5.4 的出站目标清单同列：由运维显式配置、默认关闭、目标来自配置。
 
@@ -506,10 +510,11 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 ## 10. 前端与公开页
 
 - `web/` 内两个 Vite 入口：`/admin/*` 管理面板，`/` 公开页，各自打包。测试扫描公开入口的 import、构建产物按描述符前缀核对，禁止公开页引用 `AdminService` 的生成客户端；这是卫生措施，安全边界在 §3.2 的服务端挂载。
+- 公开页的登录入口：主站 `PublicSite.admin_path` 是 `/admin/`，内置公开页据此显示管理入口。主题 SDK 的可信容器在返回 `GetSite` 数据前移除该字段；主题可读取公开外观，但不获得管理接口或管理员凭据。
 - 实时数据用轮询（默认 2 秒）。`PublicService.GetSnapshot` 一次返回全部公开节点的实时状态，hub 对序列化结果缓存 1 秒：匿名访客数量不影响 hub 的序列化开销。
 - `--public-dir <dir>` 用指定静态目录替代内置公开页，未命中文件时回落到该目录的 `index.html`。`/admin` 与 RPC 路径的路由优先级更高，替换目录无法遮蔽它们。文件访问经 `os.Root`，不可越出目录、不跟随指向目录外的符号链接。目录与面板同源：里面的脚本能读面板、也能带着来访管理员的会话调管理接口，所以只放与 hub 二进制同等可信的内容（flag 帮助写明）。
 - 外观设置（明暗、主色、logo、标题、自定义 CSS）存于 `setting`，经 `PublicService.GetSite` 下发并以 CSS 变量应用。只接受 CSS，不接受 JS 或 HTML；需要改结构的人使用 `--public-dir`。
-- 公开页总闸：`Settings.public_enabled`（`optional bool`，键 `site.public_enabled`，从未保存过时为开）。`UpdateSettings` 对外观字段是整体替换、缺席即内置值，对这一项（以及 §4.9 的国家查询开关与服务地址、§5.3 的登录通知渠道、§6.7 的备份通知渠道）缺席表示不变：把公开页关掉是一次对外可见的中断，不知道这个字段的老客户端与脚本改个标题不得顺手把它关掉，所以缺席不能等于 false。由此 `UpdateSettings` 的请求按组判定，各组彼此独立：外观五项是一组，任一项非空即视为给出，整体替换并按整体校验（theme 必填，其余为空即清空）——proto3 的 string 没有 presence，分不开"没给"与"给了空串"，按任一项非空判定能让只带 title 不带 theme 的请求得到点名 theme 的错误，而不是被静默丢弃；总闸、国家查询两项、登录通知渠道、备份通知渠道各自是一个 presence 组，给出即改、缺席即不变；一次请求至少给出一组，否则 InvalidArgument 点名各组——只改总闸或只改国家查询的脚本不必重发外观，这正是 presence 语义存在的理由。关闭时 `PublicService` 全部方法返回 `NotFound`——包括 `GetSite`，否则站点标题与 logo 仍会泄漏；`/` 与公开页的前端路由（按公开页静态服务同一条回落规则：`assets/` 之外的路径）都返回"公开页已关闭"的说明页——分享出去的节点页链接要能看出是站点关了而不是链接失效；`assets/` 下 404；说明页带内置页同一套安全头。内置公开页与 `--public-dir` 一样受总闸约束，`/admin` 与 RPC 路径不受影响；主题 origin 上 RPC 之外的整个静态面（主题文件与回落的内置页）同样受约束，关闸时不读库、不服务任何主题文件——主题文件与 `--public-dir` 同属替换公开页结构的一档，关闸的人期望整个公开面消失，主题自己的报错页不是"公开页已关闭"。总闸与节点的 `public` 是与的关系：关闭时逐节点设置原样保留，重新打开即恢复；只想把 hub 当内部工具的人不必逐个取消节点公开。拦截器读设置的内存副本，不查库；关闭后 1 秒内快照缓存仍可能命中，与节点改私有的语义相同；限流仍生效，关闭后的匿名请求照样计入令牌桶。
+- 公开页总闸：`Settings.public_enabled`（`optional bool`，键 `site.public_enabled`，从未保存过时为开）。`UpdateSettings` 对外观字段是整体替换、缺席即内置值，对这一项（以及 §4.9 的国家查询开关与服务地址、§5.3 的登录通知渠道、§6.7 的备份通知渠道）缺席表示不变：把公开页关掉是一次对外可见的中断，不知道这个字段的老客户端与脚本改个标题不得顺手把它关掉，所以缺席不能等于 false。由此 `UpdateSettings` 的请求按组判定，各组彼此独立：外观五项是一组，任一项非空即视为给出，整体替换并按整体校验（theme 必填，其余为空即清空）——proto3 的 string 没有 presence，分不开"没给"与"给了空串"，按任一项非空判定能让只带 title 不带 theme 的请求得到点名 theme 的错误，而不是被静默丢弃；总闸、国家查询两项、登录通知渠道、备份通知渠道各自是一个 presence 组，给出即改、缺席即不变；一次请求至少给出一组，否则 InvalidArgument 点名各组——只改总闸或只改国家查询的脚本不必重发外观，这正是 presence 语义存在的理由。关闭时 `PublicService` 全部方法返回 `NotFound`——包括 `GetSite`，否则站点标题与 logo 仍会泄漏；`/` 与公开页的前端路由（按公开页静态服务同一条回落规则：`assets/` 之外的路径）都返回"公开页已关闭"的说明页——分享出去的节点页链接要能看出是站点关了而不是链接失效；`assets/` 下 404；说明页带内置页同一套安全头。内置公开页与 `--public-dir` 一样受总闸约束，`/admin` 与 RPC 路径不受影响；主题沙箱中 RPC 之外的整个静态面（主题文件与回落的内置页）同样受约束，关闸时不读库、不服务任何主题文件——主题文件与 `--public-dir` 同属替换公开页结构的一档，关闸的人期望整个公开面消失，主题自己的报错页不是"公开页已关闭"。总闸与节点的 `public` 是与的关系：关闭时逐节点设置原样保留，重新打开即恢复；只想把 hub 当内部工具的人不必逐个取消节点公开。拦截器读设置的内存副本，不查库；关闭后 1 秒内快照缓存仍可能命中，与节点改私有的语义相同；限流仍生效，关闭后的匿名请求照样计入令牌桶。
 - 节点标签：一个节点可挂多个运维自定义的标签（`tag`、`node_tag` 两张表，节点与标签多对多；`Node.tags` 随 `ListNodes` 回显，`UpdateNode` 整体替换标签集合），面板的节点列表可按标签过滤。多选过滤取交集：只保留同时拥有所选全部标签的节点（`GROUP BY node_id HAVING COUNT(DISTINCT tag_id) = 所选标签数`）；空选择不过滤、返回全部——空条件匹配一切，与"空即拒绝"方向相反，这一分支显式写出；过滤条件按折叠去重后超过 16 个（超过每节点上限的交集必然为空，同时也是 SQL `IN (…)` 参数个数的上界）或含不合法的名字，返回 `InvalidArgument` 而不是空结果——空结果会把写错的条件伪装成"没有这样的节点"。`ListTags` 列出全部标签与各自的节点数（`ACCESS_READ`），`DeleteTag` 按名字（折叠后）定位：协议里标签的身份就是名字，`Node.tags`、`UpdateNode` 与过滤条件都只用名字，不再暴露一套 id。删除标签只解除关联，不影响节点。命名：去掉首尾空白后 1–64 个字符、不含控制字符、允许空格与大小写混写；同一名字按 Unicode 简单折叠大小写不敏感去重（`db` 与 `DB` 是同一个标签，沿用先建的写法），每节点至多 16 个。标签随公开节点公开：`PublicNode.tags` 是该节点的全部标签名（先建的写法，按折叠排序），快照只含 `public = 1` 的节点，私有节点的标签因此不出现；没有单独的“标签是否公开”开关，标签常写用途与归属（`db`、`客户A`），挂在公开节点上即对外可见，这是运维的显式取舍。公开页按标签过滤纯前端、不动协议与存储：标签栏照 `PublicSnapshot.tags` 渲染：它是快照里各公开节点标签的并集，由 hub 按折叠键（`name_fold`）排序、与 `ListTags` 同序，页面不自己汇总与排序——折叠规则只在 hub 一处实现，页面复刻它的顺序只能近似（按小写比较会把 `_x` 排到 `Ab` 前面，折叠键里 `A` < `_` < `a`）；选择集为空不过滤、显示全部（空条件匹配一切，这一分支显式写出）；单击标签变为只选这一个（当前恰好只选它时清空、回到全部），Shift+单击在其余标签状态不变的前提下翻转它；多选取交集，与面板一致；实际生效的选择集是所选与当前快照里仍存在的标签的交集，标签在轮询后消失不会留下看不见的过滤条件；有过滤时不带标签的节点不显示；顶部在线计数按过滤后的节点算。公开页另有两个独立的纯前端开关，默认都关（关着时既不过滤也不重排，即显示全部、面板的手动顺序），与标签过滤叠加，先过滤后排序：“仅离线”只留 `online` 为假的节点；“按到期时间排序”从早到晚，已过期的最前，没有到期日或到期日无法解析（`days_left` 缺失）的最后，到期相同的保持面板顺序——排序键取 hub 下发的 `days_left` 而不是到期日字符串：同一份快照里各节点的 `days_left` 出自同一个 today，按它排就是按到期日排，且浏览器不自己按本地日期重算。过滤把节点滤空时说明“没有符合筛选条件的节点”。探测与告警支持动态标签交集，保存为独立关联表，与全部节点和显式节点互斥。节点标签改变时，在同一事务校验配额并取得新的任务和规则作用域，成功后发布内存快照；被选择器引用的标签禁止删除。面板还可按标签一次性批量选择显式节点，此后不随标签变化。标签把"机器叫什么"与"机器属于哪几类"拆开：只有名称子串搜索时，分类信息只能编进名称，一台机器只能属于一个维度、改归属要改名。
 - 面板的节点页与总览页有搜索框：按名称、备注与主机名做子串过滤，大小写不敏感（Unicode 简单折叠），纯前端、不动协议与存储；空输入不过滤、显示全部（空条件匹配一切，这一分支显式写出，不让它从循环里自然掉出来）；搜索中禁用拖动排序——结果是子集，拖动无法表达全序。备注与主机名本来就在 `ListNodes` 里回显给会话与 API token，不构成新的暴露。标签落地后过滤器与搜索框并排取交集。
 - 管理面板的 API token 页：列表显示名称、创建时间、最后使用时间；创建后明文只显示一次；删除需确认；可下载入口卡片（§5.6）。
@@ -526,24 +531,19 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 - 静态服务：内置公开页与面板用同一套 CSP；`--public-dir` 只加 `X-Content-Type-Options: nosniff` 与 `frame-ancestors 'none'`，不限制脚本与外部资源——目录由运维放置，严格 CSP 会让第三方主题的字体与图片失效。面板、内置公开页与 `--public-dir` 共用一个只服务普通文件的核心：目录、FIFO、设备一律当作不存在，路径任一段以 `.` 开头的名字也当作不存在（`.git/config`、`.env` 是运维放目录时最常见的泄漏；`.well-known/` 因此也不服务，ACME http-01 之类由反代完成），因此任何来源都不列目录、也不会在特殊文件上阻塞（打开带 `O_NONBLOCK`）；`assets/` 下未命中返回 404（`/admin/assets` 因此是 404 而不是重定向），其余回落 `index.html`；自定义目录一律 `no-cache`，每个请求重新 `os.OpenRoot`，目录被原子替换后下一个请求就读到新内容；启动时核对其 `index.html` 是普通文件，否则 `serve` 在打开数据库之前报错。`/` 就是公开页，不再重定向到 `/admin/`。未构建前端时 `/` 与面板一样返回"前端未构建"的说明。
 - `GetStorageStats`（只读口径）返回库大小与各表行数，与 `heron-hub stats` 同一来源：表名取自 `sqlite_master` 而不是手写清单（手写清单曾漏掉三张表）；库大小是逻辑大小 `page_count × page_size`——WAL 下主文件大小滞后于内容，逻辑大小等于检查点之后的主文件大小。CLI 先一行 `db_bytes: N`，再逐表 `name: rows` 按表名升序。行数是聚合值，API token 可读：看到 `api_token`、`admin_session` 的行数不构成列出 token（§5.6 禁的是枚举与吊销其他 token）。
 
-第三方主题 = 调 `PublicService` 的静态站点，框架自选；Connect unary 即 HTTP POST + JSON，直接 `fetch` 可用。
+第三方主题是通过主题 SDK 读取公开数据的静态站点，框架自选；沙箱内不直接 `fetch PublicService`，SDK 由可信容器桥接固定的公开操作。
 
-### 10.1 公开页主题的上传与托管
+### 10.1 公开页主题的安装与同域托管
 
-经 `AdminService` 上传、列出、启用、删除主题包（`UploadTheme`、`ListThemes`、`EnableTheme`、`DeleteTheme`、`GetThemePreview`，均仅会话）。主题是一个只调 `PublicService` 的静态前端工程，产物由 hub 存进库（`theme`：标识、名称、版本、上传时刻、是否启用；`theme_file`：路径与内容）并在独立 origin 下托管。公开页原先只有两档可换——`setting` 里的外观项只收 CSS，`--public-dir` 能改结构但要求换页面的人能 ssh 到 hub；上传把"改公开页"从一次主机操作降为一次面板操作。文件处理是需要长期维护的攻击面，所以下面每一面各配一条显式守卫，而不是靠"没人上传恶意主题"维持；插件系统与主题市场继续排除，三者的分界是第三方代码跑在哪、包由谁递过来。
-
-- 未配置独立 origin（`--theme-origin https://status.example.com`）时，上传与托管整体不开启：同源的主题 JS 可直接 fetch `AdminService`，浏览器自动附带会话 cookie，§5.3 那四条 CSRF 事实挡的是跨站请求，对同源脚本一条都不成立；"能传但不生效"会让人以为差一步启用，而实际差的是一个域名。hub 按请求的 `Host` 判定：等于主题 origin 的主机名走主题托管，其余走面板与内置公开页；反代把两个主机名都指向 hub。
-- 会话 cookie 不设 `Domain`，只对精确主机生效：主题若放在同一注册域名的子域下，`SameSite=Strict` 判定为同站，它不构成隔离。隔离由下面几条各自承载，逐条可验：主题 origin 不挂 `AdminService`（同源请求 404，由挂载承载）；跨源的 JSON 请求要预检，hub 对任何 origin 都不下发 CORS 允许头——这是安全约束而不是"用不着跨源"的便利说明，用例必须覆盖 OPTIONS 预检；简单请求被 connect 以 415 拒绝，`AdminService` 不接受 GET；会话 cookie 是 host-only。兄弟主机能写父域同名 cookie 这一面另有约束：浏览器会把它排在管理员的 host-only 会话之前，所以会话读取对同名 cookie 的多个值逐个校验、任一有效即通过（有效的那个进 ctx，`Logout` 吊销的是它），多出来的无效值不能让有效值失效，同一行 Cookie 头里别的 cookie 的语法（带引号的 JSON、非 ASCII 值）与个数也不影响会话读取——会话值只按名字逐对切出、按 token 形状预筛后在内存里与读出的会话表按候选顺序匹配，不按候选查库（一条带上万个变量的 IN 查询约 110 ms、是同尺寸普通头的约 30 倍，匿名请求不经登录门就能反复触发；读表一次的成本只随会话行数——30 天内的成功登录次数——变化，候选侧只剩 SHA-256、与头部字节线性），不用 net/http 的整行解析器（它遇到不合语法的邻居会整行报错、超过 3000 个 cookie 时整体放弃）；也不设候选数上限——上限会让攻击者用更多 cookie 把有效值挤出去，同一把锁换个形状；否则任何能写父域 cookie 的兄弟主机都能把管理员锁在面板外。
-- 主题 origin 上只挂载 `PublicService` 与主题静态文件，不挂载 `AdminService` 与 `AgentService`："只能调 `PublicService`"由挂载承载而非约定（§3.2 的表加一行）。限流与公开页同一套。
-- 启用中主题的文件由所有请求共享一份不可变的内存快照：快照在一条语句里整包读出（一个读事务即一个快照，不会拼出两个包），只在 `UploadTheme`、`EnableTheme`、`DeleteTheme` 三个写者提交后失效并原子替换；每个请求的分配量与文件大小无关；内存里同时存在的包数等于 handler 持有的当前一代加"仍被在途请求引用的旧代数"（每次替换产生新一代，旧一代在引用它的慢请求结束后回收），慢连接只能钉住它开始时的那一代，不能按连接数放大——上界是代数乘以一份包（展开 ≤ 64 MiB）而不是并发数乘以文件大小，与 `--public-dir` 从磁盘流式写出同一档。文件带按内容哈希算的强 ETag，同一秒内的两次替换也能区分。
-- 主题 origin 上 RPC 路径优先于静态文件；`/admin` 在主题 origin 上不存在（404）。主题静态文件的头与 `--public-dir` 同：`nosniff`、`frame-ancestors 'none'`，不限制脚本与外部资源；`assets/` 未命中 404，其余回落 `index.html`。
-- 包是 zip，单个 Connect unary 请求带 `bytes`（面向 agent 设计那条"每个方法都能纯 HTTP+JSON POST 调通"，代价是 base64），不分块；包 ≤ 8 MiB，`AdminService` 的解码预算随之调整。解压总量在读取任何条目内容之前由中央目录的未压缩大小判出上界：展开后总量 ≤ 64 MiB、条目 ≤ 2000、单文件 ≤ 16 MiB，压缩比藏在上传体积上限后面，展开总量必须独立设界；实际展开时逐条累加再核对一次，超出即拒绝整包；各条目的压缩字节合计不得超过包长：条目可以互相重叠、指向同一段压缩数据，合计超过包长即存在重叠，重叠让解压的 CPU 随条目数放大而不受上传体积上限约束，展开总量上限也挡不住它（每个条目各自都在上限内）。
-- 条目类型只接受普通文件与目录；符号链接、硬链接、设备节点拒绝整包——路径检查看的是条目名，看不见链接指向；类型按 Unix 类型位判定、不看创建者字段（创建者不是 Unix 时类型位仍可能被填上，只看创建者会放过它们）；跳过而非拒绝会让"装上了"与"装对了"不可分辨。条目路径规范化后必须落在包内，`..` 与绝对路径拒绝整包：产物入库后路径是库里的键，`../` 仍能构造出对其他主题键的遮蔽。
-- 清单 `theme.json`：`id`（`[a-z0-9-]{1,32}`，`builtin` 保留）、`name`、`version`、可选 `preview`（包内 png/jpg/webp 路径，经 `GetThemePreview` 读出）。主题不得自报内置：`builtin` 是内置公开页的标识，包里出现即拒绝。`UploadTheme` 带可选 `expect_id`：更新已装主题时包里的 `id` 必须与之一致，否则"更新"会装出第二个主题或覆盖无关的那个而接口报告成功。主题数 ≤ 20。校验比"能解开"严：包根必须有 `index.html`（没有它启用后公开页全是错误页，与 `--public-dir` 启动时核对 index.html 同一口径）；以 `.` 开头的路径段拒绝整包而不是存下永远不会被服务的文件——macOS Finder 压出的 `__MACOSX/._*` 因此被拒，错误信息点名并提示移除；清单的未知字段拒绝（主题不声明配置项，写了也不会生效）；`name`、`version` 至多 64 个字符、不含控制字符；`expect_id` 指向的主题已被删除时返回 `NotFound` 而不是静默装成新主题；预览图按内容嗅探且须与扩展名一致；压缩方式只收 store 与 deflate；条目类型按白名单（普通文件、目录），链接、设备、重解析点整包拒绝；中央目录的上界（条目 ≤ 2000、单文件 ≤ 16 MiB、合计 ≤ 64 MiB）在读任何内容之前判完，展开时逐条核对实际字节数等于声明、CRC 一致。上传是同一个 HTTP 请求体，受 `http.Server` 的 30 秒 `ReadTimeout` 约束：8 MiB 的包要求约 3 Mbit/s 的上行，慢链路上传失败按超时报，不为它单独放宽全局超时；一次上传的峰值内存是 connect 读请求体的缓冲（至多主题包一类的预算）加解码后的包加至多 64 MiB 展开内容，只有会话能调；上传容量为 1，占用即 `ResourceExhausted`——与 §5.3 的密码校验门同一形状，理由也相同：排队只是把内存攒着。
-- 整包在单事务内写入，提交前对任何读者不可见；同一 `id` 重传即整体替换（不做版本与回滚，每个标识只存当前包）。启用至多一个；启用中的主题被删除即回落内置公开页——公开页是匿名入口，不得因一次管理操作变成 404。没有启用主题时主题 origin 服务内置公开页。
-- `--public-dir` 一旦给出就完全接管主 origin 的公开页；主题 origin 不受它影响，面板在两者同时存在时显式标明主 origin 被目录接管。hub 只接收产物，不执行构建：在 hub 上跑第三方构建脚本就是被排除的插件系统换了触发时机。
-- 主题不声明配置项：外观（标题、logo、明暗、主色、自定义 CSS）由 `GetSite` 下发，主题自己决定用不用。
-- 主题产物的备份按变更时上传（§6.7）。开发指南 `docs/theme-guide.md` 与功能同批落地：`PublicService` 契约（方法、限流、`cache_max_age_s`）、包布局、清单字段、上限与被拒绝的条目类型。
+- 公开页在 `/`，后台仍在 `/admin/`。第三方主题不直接注入主页面：项目维护的可信容器通过 `sandbox="allow-scripts"` iframe 加载包内 HTML，不授予 `allow-same-origin`。包内 HTML、脚本、错误和缓存验证响应都带沙箱 CSP；直接打开资源不能恢复管理同源权限。主题不能读取父文档、cookie、管理存储，不能注册 Service Worker 或使用 WebAuthn。
+- 数据通道只允许 `GetSite`、`GetSnapshot`、`QueryMetrics`、`QueryProbes`，父容器以不带凭据的请求读取公开接口；不提供任意 URL 代理。父容器核对 iframe 窗口与不透明来源，用 MessageChannel 绑定本次加载，限制消息大小、并发和频率，换页时关闭旧通道。主题 SDK 位于 `/_heron/theme-sdk.js`，导出 `getSite`、`getSnapshot`、`queryMetrics`、`queryProbes`、`navigate`、`onRoute`；路由只允许公开根页和节点页。预览复用同一隔离机制，以绑定管理员会话的短期能力访问未发布包。
+- 安装入口为本地 ZIP 上传，或显式选择公开 GitHub 仓库/Release 的已发布 ZIP 资产。下载器只连接白名单 HTTPS 主机，逐跳验证重定向和解析地址，拒绝回环、私网、链路本地等目标，并限制时长和压缩体积。来源保存仓库、Release 和资产名称。GitHub 只用于安装，访问主题不依赖 GitHub；不接受源码压缩包、不执行构建、不自动跟随上游更新。
+- 包根必须有 `index.html` 与 `theme.json`。清单包含 `id`、`name`、`version`、`sdk` 和可选 `preview`。`id` 匹配 `[a-z0-9-]{1,32}` 且不为 `builtin`，名称与版本最多 64 字符、不含控制字符；新安装要求 SDK 1。预览图只接受内容与扩展名匹配的 PNG/JPEG/WebP。未知字段、隐藏路径段、绝对路径、`..`、重复路径及链接、设备文件拒绝整包。只接受普通文件、目录和 store/deflate 压缩。
+- 原包上限 8 MiB、条目 2000、单文件展开 16 MiB、总展开 64 MiB；读取前校验中央目录声明，读取后核对实际大小和 CRC。条目压缩字节合计不得超过包长，避免同一压缩片段被重复展开放大成本。上传仍受 30 秒 HTTP 读请求超时和单个安装容量约束；失败不留下部分版本。
+- `theme(id)` 表示身份，`theme_version(theme_id,digest)` 表示不可变产物，摘要是原始 ZIP 的 SHA256；展示版本号不参与唯一性。最多 20 个主题，每主题 3 个版本，计数与插入在同一事务显式守卫。安装不激活、不覆盖旧版本，相同摘要重复安装返回原记录；缺包占位在补回原包时清理，不永久占用名额。`expect_id` 必须指向已安装主题且与包内 ID 一致。
+- 全站 `theme_selection` 单行保存 current/previous 引用。启用时将原 current 记为 previous，重复启用不覆盖 previous；可回滚或切回内置页。单版本删除保护 current/previous，整主题卸载清除该主题的引用并可回落内置页。启用过的版本记 published，已打开页面的资源仍绑定原摘要；显式删除后不再服务。包与文件按 ID+摘要键读取，同一文档不混用版本。
+- `--public-dir` 是运维自定义目录，给出时接管公开页并阻止后台启用第三方主题。旧 `--theme-origin` 删除，不再按 Host 分流。旧 SDK 包可解析归档、备份和恢复，但预览、启用、文件执行入口共同拒绝；原启用旧包回落内置页，不因迁移而取得新权限。
+- 公开页总闸覆盖容器、全部主题资源与公开接口，不影响管理入口。包资源使用相对地址，Vite 的 `base` 为 `./`；主题通过 SDK 路由，不直接控制顶层历史。主题管理全部仅管理员会话。原包备份、恢复与启用引用见 §6.7，开发示例与迁移说明见 `docs/theme-guide.md`。
 
 ## 11. 错误处理
 
@@ -607,7 +607,7 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 - hub 安装脚本 `install-hub.sh`（`deploy/`，以 root 运行）：在 Linux 主机上一条命令装好 hub 的 systemd 服务，重跑即升级，`--uninstall` 与 `--purge` 的删除范围与 agent 脚本同语义，但两者都要确认（无终端时须 `--yes`）：agent 卸了重装即回，hub 的普通卸载停掉的是全部节点的展示与告警，purge 删的是唯一一份数据与全部节点凭据；不用 Docker 的自托管者由此有一条能直接跑的路径。与 agent 脚本同一套约束（POSIX sh、按实际存在的工具分支、curl 或 wget、按内嵌哈希校验且没有 `--version`（§5.7）、静态系统用户 `heron-hub`、先建用户再下载、停服务后确认进程退出、启动后确认进程活着），不另立口径。单元 `deploy/systemd/heron-hub.service` 用静态 `User=` 并逐项加固，不需要 `CAP_NET_RAW`；`--listen` 默认 `127.0.0.1:8080` 不变，脚本不替用户决定对外监听。数据目录固定 `/var/lib/heron`，root 属主、服务用户组可写（0770），库文件属服务用户 0600：SQLite 要在目录里建删 `-wal`/`-shm`，服务用户必须能增删目录项，agent 配置目录那套只读的 0750 不适用；目录留 root 属主是为了升级时能锁住它——脚本在停服务并确认该 uid 没有进程之后先把目录收成 0750，此时只有 root 能增删目录项，再核对库文件不是链接、只有一个硬链接才改属主，改完放回 0770；服务用户拥有目录的话这一步没有可靠的锁。管理员密码在脚本末尾提示用 `heron-hub passwd --db /var/lib/heron/heron.db` 设置，脚本自己不生成、不打印密码。无终端时不交互、取默认值，需要确认的动作要求 `--yes`。升级时 `--listen`、`--timezone`、`--trusted-proxies` 等参数沿用已装单元里的值，除非命令行显式给出——重跑即升级不能把用户改过的参数重置回默认。停旧服务之前先查端口冲突，按 pid 排除 hub 自己。只做 systemd；不做菜单，只做参数式（菜单是交互层不是功能）。release 产物加这两个文件，`scripts/install-accept.sh` 加 hub 一格并在真机验收，README 加一节。
 - macOS agent：采集在 `CGO_ENABLED=0` 下实现（§13 第 1 项的实验定案）：`x/sys/unix` 的 sysctl 取启动标识（`kern.bootsessionuuid`）、内存总量、负载、swap、连接数（`net.inet.tcp.pcbcount`/`net.inet.udp.pcbcount`）、网卡计数器（`net.link.generic.ifdata`）与 facts；`statfs` 取磁盘；`clock_gettime(CLOCK_MONOTONIC)` 取运行时长；purego 调 libSystem 取逐 CPU tick、VM 统计、页大小与进程数。采集分层为平台取原始读数的 `Host` 与平台无关的差分、过滤与 `used ≤ total` 检查；darwin 的字节布局解析不带 build tag、Linux 上可测，只有系统调用层带 darwin 约束并引用 purego，其依赖不链入 Linux 二进制。darwin 二进制按平台约定动态链接 libSystem，静态门禁只查 Linux 产物。产物 `heron-agent_darwin_<arch>.tar.gz`（二进制、launchd plist）。安装脚本 `install-macos.sh` 以 root 运行：检测架构 → 用 `dscl` 建 `_heron-agent` 用户与组（uid/gid 从 499 向下取空闲号：Apple 逐版从 300 向上追加系统账户，升级会替换低号段的第三方账户）→ 下载并用 `shasum -a 256` 按内嵌哈希校验（§5.7，参数与 Linux 脚本同口径：没有 `--version`，有 `--insecure-http`）→ 停止已装的 LaunchDaemon 并确认进程退出 → 替换二进制 → 没有配置时 `heron-agent register` → 配置属主同 Linux（`/etc/heron-agent`，目录 root 属主、组 `_heron-agent`、0750，文件 0600）→ 写 `/Library/LaunchDaemons/xyz.heron.agent.plist`（`UserName` 为该用户、`KeepAlive`、`ThrottleInterval` 5 秒——两次拉起的最小间隔，进程跑满 5 秒后退出会立即拉起，`KeepAlive` 为真时 0 退出也拉起，与 Linux 的重启间隔同量级、日志在 `/Library/Logs/heron-agent/`：目录属 root:wheel 0755，服务用户不能在其中放条目，launchd 无论以什么身份打开日志都不会被链接引到别处；两个日志文件每次安装预建并交给服务用户 0640；安装脚本先把目录交给 root、`chmod -N` 去掉 ACL（服务用户曾为属主时可能加过允许项，数字 chmod 与 chown 都不去掉它），再检查文件是不存在或链接数为 1 的普通文件；预建、属主、权限这些依赖外部条件的操作全部在停服务之前完成，停服务之后只剩换二进制、写 plist、bootstrap。文件被删后若 launchd 以服务用户身份打开会反复 EX_CONFIG，重跑安装恢复；launchd 以什么身份打开由真机清单判别，不在代码里假设）→ `launchctl enable` 后 `bootstrap system`（enable 清掉可能残留的禁用覆盖）→ 确认进程活着（`ps -axo uid=,pid=,comm=` 按有效 uid 与可执行路径，macOS 没有 /proc；只按 uid 不够：launchd 会以该 uid 派生 cfprefsd、trustd 之类的辅助进程，停止确认与启动确认都要把它们排除）。是否发 `bootout` 看作业是否已载入 system 域（`launchctl print`），不看 plist 文件在不在：launchd 按已载入的作业管进程。架构按 `hw.optional.arm64` 判定再看 `uname -m`（Rosetta 终端里 `uname -m` 报 x86_64）。不装 CA：macOS 自带 curl 与系统信任库。重跑即升级，`--uninstall`、`--purge` 语义同 Linux。没有 macOS 虚拟机可用：脚本逻辑用桩测试，真机验收由人在 Mac 上执行，脚本随附检查清单。面板的安装命令只给 Linux 的两条，macOS 的写在 README。CI 含 macOS runner 跑 agent 的测试。
 - hub Docker 镜像：`ghcr.io/xjetry/heron-hub:<version>`，预发布不打 `latest`；`FROM scratch`，只含静态二进制（`/usr/local/bin/heron-hub`，让 `docker exec … heron-hub` 按名字可执行：`/` 不在容器默认 PATH 里）、CA 证书（通知出站 HTTPS 要用）、非 root 用户、属于该用户的空 `/data` 与 1777 的 `/tmp`（SQLite 的排序溢出、临时表与建索引要写临时文件，没有 `/tmp` 时报 `disk I/O error`，小查询不触发）；时区数据已嵌入二进制。根文件系统由 `scripts/checkimage` 逐条目核对，多出或缺少任一条即失败。数据卷 `/data`，默认参数 `serve --db /data/heron.db --listen 0.0.0.0:8080`；容器里监听非 loopback 是预期的，启动告警照旧，反代与 `--trusted-proxies` 由部署者配。管理员密码经 `docker exec -i … heron-hub passwd --db /data/heron.db` 设置；不带 `-i` 时容器内 stdin 立即 EOF，`passwd` 单独报没有输入。镜像的构建与推送都在 Makefile（构建器是按 digest 固定的 BuildKit，本地与发布同一版本），release 流水线不另用 build-push 类 action；镜像先于 GitHub Release 推送并回读：先只推版本 tag，回读时逐平台拉回、冒烟并把导出的根文件系统交给 `scripts/checkimage` 核对（核对的是 registry 上实际存在的内容，不是构建时的中间产物），正式版本再把 `latest` 指向已回读的 digest 并回读 `latest`——`latest` 只会指向回读通过的镜像；回读里"取不到"与"读取失败"分开判定，读取失败不放行；同组 release 运行串行；任何一步失败重跑 job 即可；带构建元数据（`+`）的 tag 不能成为 Docker tag，这类 tag 的发布整体失败、什么都不发布；新建的 ghcr 包首次发布须手工设为公开。`make docker` 在本地构建、核对并冒烟（起容器、`/admin/` 返回 200 的面板页而不是"未构建"说明、`passwd` 可执行）。
-- 升级 = 重跑安装脚本（见上）。hub 版本经 `GetSnapshotResponse.hub_version` 下发：面板据此生成与 hub 同版本的安装命令（§10），并显示各节点 agent 版本、标出落后于 hub 的节点：按 semver 2.0 优先级比较（预发布低于对应的正式版，构建元数据不参与），任一方不是带 `v` 前缀的合法 semver 时不标。
+- Linux systemd 部署安装新版安装器后可在后台更新 Hub、批量下发节点 Agent 更新；只支持版本递增的官方正式版，本机更新器与服务定义仍由 root 重跑安装器更新。Docker、OpenRC、macOS 沿用原安装方式。hub 版本经 `GetSnapshotResponse.hub_version` 下发：面板据此生成与 hub 同版本的安装命令（§10），并显示各节点 agent 版本、标出落后于 hub 的节点：按 semver 2.0 优先级比较（预发布低于对应的正式版，构建元数据不参与），任一方不是带 `v` 前缀的合法 semver 时不标。
 
 ## 15. 里程碑
 
@@ -630,6 +630,6 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 
 沿用自 monitor（`src/agent_ws.rs`、`src/db.rs`）：在线与最新数据同一事实；hub 侧用 `boot_id` + 内核计数器做流量差分且"无读数 ≠ 0"；历史行是整桶聚合而非边界瞬时采样；时长用单调钟；限时限量且失败计数独立的注册窗口；主键顺序按查询路径排；非法上报不改动已有状态。
 
-有意不同于 monitor：token 存 hash 而非明文；单仓库共享协议类型而非两仓库靠运行时契约检查；不从请求头推断部署形态；主题托管在与面板不同的 origin 且产物入库，而非同源落盘；不托管 agent 二进制（计费字段与 GeoIP 外呼一度也在此列：计费字段自 §9.4 起作为提醒用的展示值纳入；国家查询记在 `FEATURES.md`，与 monitor 的差别是默认关闭、服务地址来自配置、地址只取 hub 看到的来源）。
+有意不同于 monitor：token 存 hash 而非明文；单仓库共享协议类型而非两仓库靠运行时契约检查；转发信息只从显式可信代理采用；主题产物按摘要入库，并在同域名入口的不透明来源沙箱中运行，不获得面板同源权限；不托管 agent 二进制（计费字段与 GeoIP 外呼一度也在此列：计费字段自 §9.4 起作为提醒用的展示值纳入；国家查询记在 `FEATURES.md`，与 monitor 的差别是默认关闭、服务地址来自配置、地址只取 hub 看到的来源）。
 
 规避自 komari：token 经 URL 传递且有三个读取位置；WebSocket 与 HTTP 两套在线状态并存；远程执行 / 终端 / 文件管理；内嵌 JS 引擎的插件系统；三方言自研时序层。

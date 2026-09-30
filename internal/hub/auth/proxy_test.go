@@ -1,10 +1,55 @@
 package auth
 
 import (
+	"crypto/tls"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"testing"
 )
+
+func TestTrustedRequestSchemeRejectsAmbiguousProxyHeaders(t *testing.T) {
+	trusted := []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+	for _, tc := range []struct {
+		name, want string
+		xfp, fwd   []string
+		bad        bool
+	}{
+		{name: "no headers", want: "http"},
+		{name: "single protocol", xfp: []string{"https"}, want: "https"},
+		{name: "Forwarded", fwd: []string{`for=198.51.100.1;proto="https";host=untrusted.example`}, want: "https"},
+		{name: "agreeing headers", xfp: []string{"https"}, fwd: []string{"proto=https"}, want: "https"},
+		{name: "duplicate header", xfp: []string{"https", "https"}, bad: true},
+		{name: "multiple hops", xfp: []string{"https,http"}, bad: true},
+		{name: "conflicting", xfp: []string{"https"}, fwd: []string{"proto=http"}, bad: true},
+		{name: "repeated Forwarded", fwd: []string{"proto=https", "proto=https"}, bad: true},
+		{name: "repeated parameter", fwd: []string{"proto=https;proto=https"}, bad: true},
+		{name: "Forwarded chain", fwd: []string{"proto=https,proto=https"}, bad: true},
+		{name: "missing proto", fwd: []string{"host=admin.example"}, bad: true},
+		{name: "unclosed quote", fwd: []string{`proto="https`}, bad: true},
+		{name: "unsupported protocol", xfp: []string{"wss"}, bad: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "http://admin.example", nil)
+			r.RemoteAddr = "192.0.2.1:1234"
+			r.Header["X-Forwarded-Proto"] = tc.xfp
+			r.Header["Forwarded"] = tc.fwd
+			got, err := TrustedRequestScheme(r, trusted)
+			if (err != nil) != tc.bad || (!tc.bad && got != tc.want) {
+				t.Fatalf("scheme = %q, err = %v; want %q, bad = %v", got, err, tc.want, tc.bad)
+			}
+			r.RemoteAddr = "198.51.100.1:1234"
+			if got, err := TrustedRequestScheme(r, trusted); got != "http" || err != nil {
+				t.Fatal("untrusted proxy affected cleartext scheme")
+			}
+			r.TLS = &tls.ConnectionState{}
+			if got, err := TrustedRequestScheme(r, trusted); got != "https" || err != nil {
+				t.Fatal("untrusted proxy affected direct TLS scheme")
+			}
+		})
+	}
+}
 
 func TestClientIPIgnoresForwardedHeaderFromUntrustedPeer(t *testing.T) {
 	got := ClientIP("198.51.100.7:4321", []string{"203.0.113.9"}, nil)
@@ -51,26 +96,29 @@ func TestParsePrefixesRejectsGarbage(t *testing.T) {
 	}
 }
 
-func TestRequestScheme(t *testing.T) {
+func TestTrustedRequestScheme(t *testing.T) {
 	trusted, _ := ParsePrefixes("10.0.0.0/8")
 	cases := []struct {
 		peer string
 		xfp  []string
 		want string
+		bad  bool
 	}{
-		{"10.1.2.3:4444", []string{"https"}, "https"},
-		{"10.1.2.3:4444", []string{"HTTPS, http"}, "https"},
-		{"10.1.2.3:4444", []string{"http"}, "http"},
-		{"10.1.2.3:4444", nil, "http"},
-		// 多行按顺序拼接后取第一个值：第一行在前。
-		{"10.1.2.3:4444", []string{"https", "http"}, "https"},
-		{"203.0.113.9:4444", []string{"https"}, "http"}, // 不可信对端的转发头不采信
-		{"garbage", []string{"https"}, "http"},
+		{"10.1.2.3:4444", []string{"https"}, "https", false},
+		{"10.1.2.3:4444", []string{"HTTPS, http"}, "", true},
+		{"10.1.2.3:4444", []string{"http"}, "http", false},
+		{"10.1.2.3:4444", nil, "http", false},
+		{"10.1.2.3:4444", []string{"https", "http"}, "", true},
+		{"203.0.113.9:4444", []string{"https"}, "http", false},
+		{"garbage", []string{"https"}, "http", false},
 	}
 	for _, c := range cases {
 		t.Run(c.peer+"/"+strings.Join(c.xfp, "|"), func(t *testing.T) {
-			if got := RequestScheme(c.peer, c.xfp, trusted); got != c.want {
-				t.Fatalf("RequestScheme(%q, %q) = %q, want %q", c.peer, c.xfp, got, c.want)
+			r := httptest.NewRequest(http.MethodPost, "http://admin.example", nil)
+			r.RemoteAddr = c.peer
+			r.Header["X-Forwarded-Proto"] = c.xfp
+			if got, err := TrustedRequestScheme(r, trusted); got != c.want || (err != nil) != c.bad {
+				t.Fatalf("TrustedRequestScheme(%q, %q) = (%q, %v), want (%q, bad=%v)", c.peer, c.xfp, got, err, c.want, c.bad)
 			}
 		})
 	}

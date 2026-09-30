@@ -1,8 +1,8 @@
 // Package theme 校验公开页主题包（§10.1）：一个 zip，展开后是只调 PublicService 的静态前端产物。
 //
-// 包由面板上传、存进库、在主题 origin 下托管。文件处理是需要长期维护的攻击面，所以每一面各配一条显式守卫，而不是靠
+// 包由面板安装、存进库、在同域沙箱中托管。文件处理是需要长期维护的攻击面，所以每一面各配一条显式守卫，而不是靠
 // "没人上传恶意主题"维持；任一守卫不满足即拒绝整包，不跳过个别条目——跳过会让"装上了"与"装对了"不可分辨。
-// 本包只做纯校验，不碰库与网络：Parse 通过即得到可以整包入库的文件集合。
+// Parse 只做纯校验；GitHubClient 单独限制公开发行版的下载目标。入库与执行准入由调用方负责。
 package theme
 
 import (
@@ -23,6 +23,8 @@ import (
 )
 
 const (
+	// SDKVersion 是主题与可信容器之间的公开数据协议版本；零值表示仅可归档的旧包。
+	SDKVersion = 1
 	// MaxPackageBytes 是上传的 zip 本身的上限。包经单个 Connect unary 请求以 bytes 送达，UploadTheme 的解码预算
 	// 由它推出（api 的 maxThemeBody）。
 	MaxPackageBytes = 8 << 20
@@ -31,12 +33,12 @@ const (
 	MaxEntries    = 2000
 	MaxTotalBytes = 64 << 20
 	MaxFileBytes  = 16 << 20
-	// MaxThemes 是库里主题数的上限；同一 id 重传是替换，不计入。
+	// MaxThemes 是库里主题身份数的上限；同一 id 的多个产物共用一个名额，版本数由存储层另行限制。
 	MaxThemes = 20
 
 	// ManifestPath 是清单在包根的路径。
 	ManifestPath = "theme.json"
-	// IndexPath 是主题 origin 回落的入口；缺了它，启用后公开页是一张错误页。
+	// IndexPath 是沙箱文档入口；缺了它，启用后公开页是一张错误页。
 	IndexPath = "index.html"
 	// BuiltinID 是内置公开页的标识，主题不得自报。
 	BuiltinID = "builtin"
@@ -67,10 +69,19 @@ func reject(field, format string, args ...any) error {
 
 // Manifest 是包根 theme.json 的内容。Preview 为空表示没有预览图。
 type Manifest struct {
+	SDK     int    `json:"sdk,omitempty"`
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Version string `json:"version"`
 	Preview string `json:"preview,omitempty"`
+}
+
+// CheckExecutable 是所有执行入口共用的准入，不把旧包能解析、能恢复误当成可以运行。
+func CheckExecutable(sdk int) error {
+	if sdk != SDKVersion {
+		return reject("theme.json sdk", "主题需要适配 SDK %d（当前 %d）；旧包仅可归档", SDKVersion, sdk)
+	}
+	return nil
 }
 
 // File 是包里的一个普通文件；Path 是规范形态的包内路径，也是它入库后的键。
@@ -183,7 +194,7 @@ func Parse(pkg []byte) (*Package, error) {
 func entryField(p string) string { return fmt.Sprintf("entry %q", p) }
 
 // checkPath 把条目名规范化成包内路径并判定是否是目录条目（名字以 / 结尾）。只接受已经是规范形态的名字：入库后
-// 路径就是 theme_file 的键，也是主题 origin 上的 URL 路径；非规范的名字（..、绝对路径、空段）在规范化时会落到包外
+// 路径就是 theme_file 的包内键，也是摘要目录下的相对 URL；非规范的名字（..、绝对路径、空段）在规范化时会落到包外
 // 或另一个键上——`../` 在键空间里仍能构造出对其他主题键的遮蔽。反斜杠拒绝：Windows 工具把它当分隔符，
 // 同一个名字在不同读者那里是不同的路径。以 . 开头的段与静态服务同一口径（web.hidden）：它们永远不会被服务，
 // 包里带着它们多半是 .git、.env 这类误打进来的东西，拒绝比静默存一份永远读不到的内容更早暴露问题。

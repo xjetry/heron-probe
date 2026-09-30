@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file heron/v1/types.proto.
  */
 export const file_heron_v1_types: GenFile = /*@__PURE__*/
-  fileDesc("ChRoZXJvbi92MS90eXBlcy5wcm90bxIIaGVyb24udjEitAUKB01ldHJpY3MSDwoHYm9vdF9pZBgBIAEoCRIUCgdjcHVfcGN0GAIgASgBSACIAQESEgoFbG9hZDEYAyABKAFIAYgBARISCgVsb2FkNRgEIAEoAUgCiAEBEhMKBmxvYWQxNRgFIAEoAUgDiAEBEhYKCW1lbV90b3RhbBgGIAEoBEgEiAEBEhUKCG1lbV91c2VkGAcgASgESAWIAQESFwoKc3dhcF90b3RhbBgIIAEoBEgGiAEBEhYKCXN3YXBfdXNlZBgJIAEoBEgHiAEBEhcKCmRpc2tfdG90YWwYCiABKARICIgBARIWCglkaXNrX3VzZWQYCyABKARICYgBARIZCgxuZXRfcnhfdG90YWwYDCABKARICogBARIZCgxuZXRfdHhfdG90YWwYDSABKARIC4gBARIXCgpuZXRfcnhfYnBzGA4gASgESAyIAQESFwoKbmV0X3R4X2JwcxgPIAEoBEgNiAEBEhYKCXRjcF9jb25ucxgQIAEoDUgOiAEBEhYKCXVkcF9jb25ucxgRIAEoDUgPiAEBEhIKBXByb2NzGBIgASgNSBCIAQESFQoIdXB0aW1lX3MYEyABKARIEYgBAUIKCghfY3B1X3BjdEIICgZfbG9hZDFCCAoGX2xvYWQ1QgkKB19sb2FkMTVCDAoKX21lbV90b3RhbEILCglfbWVtX3VzZWRCDQoLX3N3YXBfdG90YWxCDAoKX3N3YXBfdXNlZEINCgtfZGlza190b3RhbEIMCgpfZGlza191c2VkQg8KDV9uZXRfcnhfdG90YWxCDwoNX25ldF90eF90b3RhbEINCgtfbmV0X3J4X2Jwc0INCgtfbmV0X3R4X2Jwc0IMCgpfdGNwX2Nvbm5zQgwKCl91ZHBfY29ubnNCCAoGX3Byb2NzQgsKCV91cHRpbWVfcyKwAQoFRmFjdHMSEAoIaG9zdG5hbWUYASABKAkSCgoCb3MYAiABKAkSDgoGa2VybmVsGAMgASgJEgwKBGFyY2gYBCABKAkSFgoOdmlydHVhbGl6YXRpb24YBSABKAkSEQoJY3B1X21vZGVsGAYgASgJEhEKCWNwdV9jb3JlcxgHIAEoDRIVCg1hZ2VudF92ZXJzaW9uGAggASgJEhYKDmljbXBfYXZhaWxhYmxlGAkgASgIIpgBCgtQcm9iZVJlc3VsdBIPCgd0YXNrX2lkGAEgASgEEg4KBmFnZV9tcxgCIAEoDRIQCgZydHRfdXMYAyABKA1IABIkCgd0aW1lb3V0GAQgASgLMhEuaGVyb24udjEuVGltZW91dEgAEiUKBWVycm9yGAUgASgLMhQuaGVyb24udjEuUHJvYmVFcnJvckgAQgkKB291dGNvbWUiCQoHVGltZW91dCIdCgpQcm9iZUVycm9yEg8KB21lc3NhZ2UYASABKAkicgoJUHJvYmVUYXNrEgoKAmlkGAEgASgEEiEKBGtpbmQYAiABKA4yEy5oZXJvbi52MS5Qcm9iZUtpbmQSDgoGdGFyZ2V0GAMgASgJEhIKCmludGVydmFsX3MYBCABKA0SEgoKdGltZW91dF9tcxgFIAEoDSJBCgpQcm9iZVRhc2tzEg8KB3ZlcnNpb24YASABKAQSIgoFdGFza3MYAiADKAsyEy5oZXJvbi52MS5Qcm9iZVRhc2sikwEKB1RyYWZmaWMSEAoIdG90YWxfcngYASABKAQSEAoIdG90YWxfdHgYAiABKAQSEQoJcGVyaW9kX3J4GAMgASgEEhEKCXBlcmlvZF90eBgEIAEoBBIUCgxwZXJpb2Rfc3RhcnQYBSABKAMSFQoNbmV4dF9yZXNldF9hdBgGIAEoAxIRCglyZXNldF9kYXkYByABKA0ipwEKB0JpbGxpbmcSDQoFcHJpY2UYASABKAkSEAoIY3VycmVuY3kYAiABKAkSLQoNYmlsbGluZ19jeWNsZRgDIAEoDjIWLmhlcm9uLnYxLkJpbGxpbmdDeWNsZRISCgpleHBpcmVzX29uGAQgASgJEhIKCmF1dG9fcmVuZXcYBSABKAgSFgoJZGF5c19sZWZ0GAYgASgFSACIAQFCDAoKX2RheXNfbGVmdCpQCglQcm9iZUtpbmQSGgoWUFJPQkVfS0lORF9VTlNQRUNJRklFRBAAEhMKD1BST0JFX0tJTkRfSUNNUBABEhIKDlBST0JFX0tJTkRfVENQEAIq9gEKDEJpbGxpbmdDeWNsZRIdChlCSUxMSU5HX0NZQ0xFX1VOU1BFQ0lGSUVEEAASGQoVQklMTElOR19DWUNMRV9NT05USExZEAESGwoXQklMTElOR19DWUNMRV9RVUFSVEVSTFkQAhIcChhCSUxMSU5HX0NZQ0xFX1NFTUlBTk5VQUwQAxIYChRCSUxMSU5HX0NZQ0xFX1lFQVJMWRAEEhoKFkJJTExJTkdfQ1lDTEVfQklFTk5JQUwQBRIbChdCSUxMSU5HX0NZQ0xFX1RSSUVOTklBTBAGEh4KGkJJTExJTkdfQ1lDTEVfUVVJTlFVRU5OSUFMEAdCNFoyZ2l0aHViLmNvbS94amV0cnkvaGVyb24tcHJvYmUvZ2VuL2hlcm9uL3YxO2hlcm9udjFiBnByb3RvMw");
+  fileDesc("ChRoZXJvbi92MS90eXBlcy5wcm90bxIIaGVyb24udjEitAUKB01ldHJpY3MSDwoHYm9vdF9pZBgBIAEoCRIUCgdjcHVfcGN0GAIgASgBSACIAQESEgoFbG9hZDEYAyABKAFIAYgBARISCgVsb2FkNRgEIAEoAUgCiAEBEhMKBmxvYWQxNRgFIAEoAUgDiAEBEhYKCW1lbV90b3RhbBgGIAEoBEgEiAEBEhUKCG1lbV91c2VkGAcgASgESAWIAQESFwoKc3dhcF90b3RhbBgIIAEoBEgGiAEBEhYKCXN3YXBfdXNlZBgJIAEoBEgHiAEBEhcKCmRpc2tfdG90YWwYCiABKARICIgBARIWCglkaXNrX3VzZWQYCyABKARICYgBARIZCgxuZXRfcnhfdG90YWwYDCABKARICogBARIZCgxuZXRfdHhfdG90YWwYDSABKARIC4gBARIXCgpuZXRfcnhfYnBzGA4gASgESAyIAQESFwoKbmV0X3R4X2JwcxgPIAEoBEgNiAEBEhYKCXRjcF9jb25ucxgQIAEoDUgOiAEBEhYKCXVkcF9jb25ucxgRIAEoDUgPiAEBEhIKBXByb2NzGBIgASgNSBCIAQESFQoIdXB0aW1lX3MYEyABKARIEYgBAUIKCghfY3B1X3BjdEIICgZfbG9hZDFCCAoGX2xvYWQ1QgkKB19sb2FkMTVCDAoKX21lbV90b3RhbEILCglfbWVtX3VzZWRCDQoLX3N3YXBfdG90YWxCDAoKX3N3YXBfdXNlZEINCgtfZGlza190b3RhbEIMCgpfZGlza191c2VkQg8KDV9uZXRfcnhfdG90YWxCDwoNX25ldF90eF90b3RhbEINCgtfbmV0X3J4X2Jwc0INCgtfbmV0X3R4X2Jwc0IMCgpfdGNwX2Nvbm5zQgwKCl91ZHBfY29ubnNCCAoGX3Byb2NzQgsKCV91cHRpbWVfcyLYAQoFRmFjdHMSEAoIaG9zdG5hbWUYASABKAkSCgoCb3MYAiABKAkSDgoGa2VybmVsGAMgASgJEgwKBGFyY2gYBCABKAkSFgoOdmlydHVhbGl6YXRpb24YBSABKAkSEQoJY3B1X21vZGVsGAYgASgJEhEKCWNwdV9jb3JlcxgHIAEoDRIVCg1hZ2VudF92ZXJzaW9uGAggASgJEhYKDmljbXBfYXZhaWxhYmxlGAkgASgIEiYKB25ldHdvcmsYCiABKAsyFS5oZXJvbi52MS5OZXR3b3JrSW5mbyJhCgtOZXR3b3JrSW5mbxIoCgRpcHY0GAEgASgLMhouaGVyb24udjEuQWRkcmVzc0RldGVjdGlvbhIoCgRpcHY2GAIgASgLMhouaGVyb24udjEuQWRkcmVzc0RldGVjdGlvbiJnChBBZGRyZXNzRGV0ZWN0aW9uEi4KBXN0YXRlGAEgASgOMh8uaGVyb24udjEuQWRkcmVzc0RldGVjdGlvblN0YXRlEg8KB2FkZHJlc3MYAiABKAkSEgoKY2hlY2tlZF9hdBgDIAEoAyKYAQoLUHJvYmVSZXN1bHQSDwoHdGFza19pZBgBIAEoBBIOCgZhZ2VfbXMYAiABKA0SEAoGcnR0X3VzGAMgASgNSAASJAoHdGltZW91dBgEIAEoCzIRLmhlcm9uLnYxLlRpbWVvdXRIABIlCgVlcnJvchgFIAEoCzIULmhlcm9uLnYxLlByb2JlRXJyb3JIAEIJCgdvdXRjb21lIgkKB1RpbWVvdXQiHQoKUHJvYmVFcnJvchIPCgdtZXNzYWdlGAEgASgJInIKCVByb2JlVGFzaxIKCgJpZBgBIAEoBBIhCgRraW5kGAIgASgOMhMuaGVyb24udjEuUHJvYmVLaW5kEg4KBnRhcmdldBgDIAEoCRISCgppbnRlcnZhbF9zGAQgASgNEhIKCnRpbWVvdXRfbXMYBSABKA0iQQoKUHJvYmVUYXNrcxIPCgd2ZXJzaW9uGAEgASgEEiIKBXRhc2tzGAIgAygLMhMuaGVyb24udjEuUHJvYmVUYXNrIpMBCgdUcmFmZmljEhAKCHRvdGFsX3J4GAEgASgEEhAKCHRvdGFsX3R4GAIgASgEEhEKCXBlcmlvZF9yeBgDIAEoBBIRCglwZXJpb2RfdHgYBCABKAQSFAoMcGVyaW9kX3N0YXJ0GAUgASgDEhUKDW5leHRfcmVzZXRfYXQYBiABKAMSEQoJcmVzZXRfZGF5GAcgASgNIqcBCgdCaWxsaW5nEg0KBXByaWNlGAEgASgJEhAKCGN1cnJlbmN5GAIgASgJEi0KDWJpbGxpbmdfY3ljbGUYAyABKA4yFi5oZXJvbi52MS5CaWxsaW5nQ3ljbGUSEgoKZXhwaXJlc19vbhgEIAEoCRISCgphdXRvX3JlbmV3GAUgASgIEhYKCWRheXNfbGVmdBgGIAEoBUgAiAEBQgwKCl9kYXlzX2xlZnQqtAEKFUFkZHJlc3NEZXRlY3Rpb25TdGF0ZRInCiNBRERSRVNTX0RFVEVDVElPTl9TVEFURV9VTlNQRUNJRklFRBAAEiUKIUFERFJFU1NfREVURUNUSU9OX1NUQVRFX0FWQUlMQUJMRRABEicKI0FERFJFU1NfREVURUNUSU9OX1NUQVRFX1VOU1VQUE9SVEVEEAISIgoeQUREUkVTU19ERVRFQ1RJT05fU1RBVEVfRkFJTEVEEAMqUAoJUHJvYmVLaW5kEhoKFlBST0JFX0tJTkRfVU5TUEVDSUZJRUQQABITCg9QUk9CRV9LSU5EX0lDTVAQARISCg5QUk9CRV9LSU5EX1RDUBACKvYBCgxCaWxsaW5nQ3ljbGUSHQoZQklMTElOR19DWUNMRV9VTlNQRUNJRklFRBAAEhkKFUJJTExJTkdfQ1lDTEVfTU9OVEhMWRABEhsKF0JJTExJTkdfQ1lDTEVfUVVBUlRFUkxZEAISHAoYQklMTElOR19DWUNMRV9TRU1JQU5OVUFMEAMSGAoUQklMTElOR19DWUNMRV9ZRUFSTFkQBBIaChZCSUxMSU5HX0NZQ0xFX0JJRU5OSUFMEAUSGwoXQklMTElOR19DWUNMRV9UUklFTk5JQUwQBhIeChpCSUxMSU5HX0NZQ0xFX1FVSU5RVUVOTklBTBAHQjRaMmdpdGh1Yi5jb20veGpldHJ5L2hlcm9uLXByb2JlL2dlbi9oZXJvbi92MTtoZXJvbnYxYgZwcm90bzM");
 
 /**
  * 一次上报里的主机读数。每个读数都是 optional：缺失表示"无读数"，
@@ -181,6 +181,13 @@ export type Facts = Message<"heron.v1.Facts"> & {
    * @generated from field: bool icmp_available = 9;
    */
   icmpAvailable: boolean;
+
+  /**
+   * agent 自报的双栈出口，仅用于管理展示；hub 不据此鉴权或查询国家。
+   *
+   * @generated from field: heron.v1.NetworkInfo network = 10;
+   */
+  network?: NetworkInfo | undefined;
 };
 
 /**
@@ -189,6 +196,59 @@ export type Facts = Message<"heron.v1.Facts"> & {
  */
 export const FactsSchema: GenMessage<Facts> = /*@__PURE__*/
   messageDesc(file_heron_v1_types, 1);
+
+/**
+ * @generated from message heron.v1.NetworkInfo
+ */
+export type NetworkInfo = Message<"heron.v1.NetworkInfo"> & {
+  /**
+   * @generated from field: heron.v1.AddressDetection ipv4 = 1;
+   */
+  ipv4?: AddressDetection | undefined;
+
+  /**
+   * @generated from field: heron.v1.AddressDetection ipv6 = 2;
+   */
+  ipv6?: AddressDetection | undefined;
+};
+
+/**
+ * Describes the message heron.v1.NetworkInfo.
+ * Use `create(NetworkInfoSchema)` to create a new message.
+ */
+export const NetworkInfoSchema: GenMessage<NetworkInfo> = /*@__PURE__*/
+  messageDesc(file_heron_v1_types, 2);
+
+/**
+ * @generated from message heron.v1.AddressDetection
+ */
+export type AddressDetection = Message<"heron.v1.AddressDetection"> & {
+  /**
+   * @generated from field: heron.v1.AddressDetectionState state = 1;
+   */
+  state: AddressDetectionState;
+
+  /**
+   * 仅 AVAILABLE 有地址，且必须与所在字段的地址族相符。
+   *
+   * @generated from field: string address = 2;
+   */
+  address: string;
+
+  /**
+   * 探测完成时间，Unix 秒；未探测为 0，已探测范围为 1..253402300799（9999 年末）。
+   *
+   * @generated from field: int64 checked_at = 3;
+   */
+  checkedAt: bigint;
+};
+
+/**
+ * Describes the message heron.v1.AddressDetection.
+ * Use `create(AddressDetectionSchema)` to create a new message.
+ */
+export const AddressDetectionSchema: GenMessage<AddressDetection> = /*@__PURE__*/
+  messageDesc(file_heron_v1_types, 3);
 
 /**
  * @generated from message heron.v1.ProbeResult
@@ -239,7 +299,7 @@ export type ProbeResult = Message<"heron.v1.ProbeResult"> & {
  * Use `create(ProbeResultSchema)` to create a new message.
  */
 export const ProbeResultSchema: GenMessage<ProbeResult> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 2);
+  messageDesc(file_heron_v1_types, 4);
 
 /**
  * @generated from message heron.v1.Timeout
@@ -252,7 +312,7 @@ export type Timeout = Message<"heron.v1.Timeout"> & {
  * Use `create(TimeoutSchema)` to create a new message.
  */
 export const TimeoutSchema: GenMessage<Timeout> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 3);
+  messageDesc(file_heron_v1_types, 5);
 
 /**
  * @generated from message heron.v1.ProbeError
@@ -269,7 +329,7 @@ export type ProbeError = Message<"heron.v1.ProbeError"> & {
  * Use `create(ProbeErrorSchema)` to create a new message.
  */
 export const ProbeErrorSchema: GenMessage<ProbeError> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 4);
+  messageDesc(file_heron_v1_types, 6);
 
 /**
  * @generated from message heron.v1.ProbeTask
@@ -306,7 +366,7 @@ export type ProbeTask = Message<"heron.v1.ProbeTask"> & {
  * Use `create(ProbeTaskSchema)` to create a new message.
  */
 export const ProbeTaskSchema: GenMessage<ProbeTask> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 5);
+  messageDesc(file_heron_v1_types, 7);
 
 /**
  * @generated from message heron.v1.ProbeTasks
@@ -328,7 +388,7 @@ export type ProbeTasks = Message<"heron.v1.ProbeTasks"> & {
  * Use `create(ProbeTasksSchema)` to create a new message.
  */
 export const ProbeTasksSchema: GenMessage<ProbeTasks> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 6);
+  messageDesc(file_heron_v1_types, 8);
 
 /**
  * @generated from message heron.v1.Traffic
@@ -383,7 +443,7 @@ export type Traffic = Message<"heron.v1.Traffic"> & {
  * Use `create(TrafficSchema)` to create a new message.
  */
 export const TrafficSchema: GenMessage<Traffic> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 7);
+  messageDesc(file_heron_v1_types, 9);
 
 /**
  * 节点的计费与到期（§9.4）。价格与币种是提醒用的展示值：hub 不汇总、不换算，也不拿它们做任何计算；到期日与周期
@@ -440,7 +500,38 @@ export type Billing = Message<"heron.v1.Billing"> & {
  * Use `create(BillingSchema)` to create a new message.
  */
 export const BillingSchema: GenMessage<Billing> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 8);
+  messageDesc(file_heron_v1_types, 10);
+
+/**
+ * @generated from enum heron.v1.AddressDetectionState
+ */
+export enum AddressDetectionState {
+  /**
+   * @generated from enum value: ADDRESS_DETECTION_STATE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: ADDRESS_DETECTION_STATE_AVAILABLE = 1;
+   */
+  AVAILABLE = 1,
+
+  /**
+   * @generated from enum value: ADDRESS_DETECTION_STATE_UNSUPPORTED = 2;
+   */
+  UNSUPPORTED = 2,
+
+  /**
+   * @generated from enum value: ADDRESS_DETECTION_STATE_FAILED = 3;
+   */
+  FAILED = 3,
+}
+
+/**
+ * Describes the enum heron.v1.AddressDetectionState.
+ */
+export const AddressDetectionStateSchema: GenEnum<AddressDetectionState> = /*@__PURE__*/
+  enumDesc(file_heron_v1_types, 0);
 
 /**
  * @generated from enum heron.v1.ProbeKind
@@ -466,7 +557,7 @@ export enum ProbeKind {
  * Describes the enum heron.v1.ProbeKind.
  */
 export const ProbeKindSchema: GenEnum<ProbeKind> = /*@__PURE__*/
-  enumDesc(file_heron_v1_types, 0);
+  enumDesc(file_heron_v1_types, 1);
 
 /**
  * 节点的计费周期（§9.4）。管理与公开两端共用，所以与 Billing 一起定义在这里：public.proto 不能 import admin.proto。
@@ -534,5 +625,5 @@ export enum BillingCycle {
  * Describes the enum heron.v1.BillingCycle.
  */
 export const BillingCycleSchema: GenEnum<BillingCycle> = /*@__PURE__*/
-  enumDesc(file_heron_v1_types, 1);
+  enumDesc(file_heron_v1_types, 2);
 

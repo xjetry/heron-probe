@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,8 +19,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 )
 
-// newThemeTestServer 起一个按 serve 装配的 hub，themeOriginFlag 是 --theme-origin 的原文。
-func newThemeTestServer(t *testing.T, themeOriginFlag string) (*httptest.Server, *store.Store) {
+func newThemeTestServer(t *testing.T) (*httptest.Server, *store.Store) {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clk, slog.Default(), store.MigrateSchema)
@@ -27,24 +27,36 @@ func newThemeTestServer(t *testing.T, themeOriginFlag string) (*httptest.Server,
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	srv := httptest.NewServer(newTestMuxOn(t, st, clk, themeOriginFlag))
+	srv := httptest.NewServer(newTestMuxOn(t, st, clk))
 	t.Cleanup(srv.Close)
 	return srv, st
 }
 
-// installTheme 直接经存储装一个主题并启用：分流与托管的用例不经 UploadTheme（它的校验由 api 与 theme 的测试钉住）。
-func installTheme(t *testing.T, st *store.Store, id string, files map[string]string) {
+// 挂载点用例直接安装已解析文件，包解析与 SDK 准入由 theme 和 api 的测试独立覆盖。
+func putMuxTheme(t *testing.T, st *store.Store, id string, files map[string]string) store.Theme {
 	t.Helper()
 	var list []store.ThemeFile
 	for p, c := range files {
 		list = append(list, store.ThemeFile{Path: p, Content: []byte(c)})
 	}
-	if _, err := st.PutTheme(t.Context(), store.Theme{ID: id, Name: id, Version: "1", UploadedAt: time.Unix(100, 0)}, list, []byte("original zip"), false, 20); err != nil {
+	content, err := json.Marshal(files)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.EnableTheme(t.Context(), id); err != nil {
+	installed, err := st.PutTheme(t.Context(), store.Theme{ID: id, Name: id, Version: "1", SDK: 1, UploadedAt: time.Unix(100, 0)}, list, content, false, 20)
+	if err != nil {
 		t.Fatal(err)
 	}
+	return installed
+}
+
+func installTheme(t *testing.T, st *store.Store, id string, files map[string]string) store.Theme {
+	t.Helper()
+	installed := putMuxTheme(t, st, id, files)
+	if err := st.EnableTheme(t.Context(), id, installed.Digest); err != nil {
+		t.Fatal(err)
+	}
+	return installed
 }
 
 type hostResponse struct {
@@ -53,7 +65,6 @@ type hostResponse struct {
 	body   string
 }
 
-// hostDo 以给定的 Host 头发请求，不跟随重定向。每个请求都带一个别处的 Origin，header 里的头在此之上覆盖或追加。
 func hostDo(t *testing.T, srv *httptest.Server, method, host, path, body string, header http.Header) hostResponse {
 	t.Helper()
 	req, err := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
@@ -64,7 +75,6 @@ func hostDo(t *testing.T, srv *httptest.Server, method, host, path, body string,
 	if method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	req.Header.Set("Origin", "https://elsewhere.example")
 	for k, v := range header {
 		req.Header[k] = v
 	}
@@ -81,132 +91,87 @@ func hostDo(t *testing.T, srv *httptest.Server, method, host, path, body string,
 	return hostResponse{resp.StatusCode, resp.Header, string(b)}
 }
 
-// builtinPublic 是内置公开页对 path 的应答，直接调 web.PublicHandler 得到；构建过与没构建过都能逐字节比较。
 func builtinPublic(path string) hostResponse {
 	rec := httptest.NewRecorder()
 	web.PublicHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 	return hostResponse{rec.Code, rec.Header(), rec.Body.String()}
 }
 
-// 按 Host 分流：Host 与 --theme-origin 的主机名规范之后相等（去端口、不分大小写、去一个尾点、IP 字面量按 netip、
-// 非 ASCII 的 --theme-origin 按浏览器发的 punycode）走主题 origin，其余（包括以它为后缀或前缀的主机名）走主 origin。
-// 两边各自一张 404/200 表，对主机名、IPv6 字面量、国际化域名三种 --theme-origin 各跑一遍。
-//
-// 表里每一行的应答都不带任何 Access-Control-Allow-* 头，包括两边对 AdminService 过程、PublicService 过程与静态路径的
-// OPTIONS 预检（带 Origin 与 Access-Control-Request-Method/-Headers）。承重的是预检：浏览器的跨源 JSON 请求先发预检，
-// 预检的应答不许可这个 origin，实际请求就不发出；一旦许可（允许源加 Allow-Credentials），兄弟子域上的主题脚本就能带着
-// 管理员的 cookie 把写请求发到面板，副作用在服务端已经发生，读不读得到响应无关紧要。
-func TestHandlerRoutesByHost(t *testing.T) {
-	const listNodes, report, getSite = "/heron.v1.AdminService/ListNodes", "/heron.v1.AgentService/Report", "/heron.v1.PublicService/GetSite"
-	type check struct {
-		method, path string
-		ok           func(hostResponse) bool
-		want         string
+func themeFilePath(t store.Theme, rel string) string {
+	return "/_heron/themes/" + t.ID + "/" + t.Digest + "/" + rel
+}
+
+func assertThemeShell(t *testing.T, got hostResponse, installed store.Theme) {
+	t.Helper()
+	if got.status != http.StatusOK || !strings.Contains(got.body, themeFilePath(installed, "index.html")) || !strings.Contains(got.body, "sandbox=\"allow-scripts\"") || strings.Contains(got.body, "allow-same-origin") || strings.Contains(got.body, "theme index") {
+		t.Fatalf("expected isolated shell for %s: status=%d body=%.200q", installed.Digest, got.status, got.body)
 	}
-	status := func(code int) func(hostResponse) bool { return func(r hostResponse) bool { return r.status == code } }
-	body := func(want string) func(hostResponse) bool {
-		return func(r hostResponse) bool { return r.status == http.StatusOK && r.body == want }
+	if got.header.Get("Cache-Control") != "no-store" {
+		t.Fatal("theme shell was cacheable across selection changes")
 	}
-	// RPC 路径优先于主题文件：包里的 heron.v1.PublicService/GetSite 遮蔽不了公开服务。
-	connectJSON := func(r hostResponse) bool {
-		return r.status == http.StatusOK && r.header.Get("Content-Type") == "application/json" && r.body != "shadow rpc"
-	}
-	builtin := func(r hostResponse) bool {
-		want := builtinPublic("/")
-		return r.status == want.status && r.body == want.body && r.header.Get("Content-Security-Policy") == want.header.Get("Content-Security-Policy")
-	}
-	// 面板构建过是 200、没构建是 503，两者都带面板的 CSP；主题里的 admin/index.html 不得出现在任何一边。
-	panel := func(r hostResponse) bool {
-		return (r.status == http.StatusOK || r.status == http.StatusServiceUnavailable) && strings.Contains(r.header.Get("Content-Security-Policy"), "default-src 'self'") && r.body != "shadow panel"
-	}
-	// 预检行不约束状态码：承重的是循环里对每一行都做的"没有 Access-Control-Allow-* 头"。
-	preflight := func(hostResponse) bool { return true }
-	preflightHeader := http.Header{
-		"Origin":                         {"http://" + testThemeHost},
-		"Access-Control-Request-Method":  {"POST"},
-		"Access-Control-Request-Headers": {"content-type, connect-protocol-version"},
-	}
-	themeChecks := []check{
-		{"GET", "/", body("theme index"), "the theme's index.html"},
-		{"GET", "/nodes/3", body("theme index"), "the theme's index.html"},
-		{"GET", "/assets/app.js", body("console.log(1)"), "the theme's file"},
-		{"GET", "/admin", status(404), "404"},
-		{"GET", "/admin/", status(404), "404"},
-		{"GET", "/admin/index.html", status(404), "404"},
-		{"POST", listNodes, status(404), "404"},
-		{"POST", report, status(404), "404"},
-		{"POST", getSite, connectJSON, "the public service"},
-		{"GET", getSite + "?connect=v1&encoding=json&message=%7B%7D", connectJSON, "the public service"},
-		{"OPTIONS", listNodes, preflight, "a preflight answer"},
-		{"OPTIONS", getSite, preflight, "a preflight answer"},
-		{"OPTIONS", "/", preflight, "a preflight answer"},
-		{"OPTIONS", "/assets/app.js", preflight, "a preflight answer"},
-	}
-	mainChecks := []check{
-		{"GET", "/", builtin, "the built-in public page"},
-		{"GET", "/admin/", panel, "the panel"},
-		{"POST", listNodes, status(401), "401 from the admin service"},
-		{"POST", getSite, connectJSON, "the public service"},
-		{"OPTIONS", listNodes, preflight, "a preflight answer"},
-		{"OPTIONS", getSite, preflight, "a preflight answer"},
-		{"OPTIONS", "/", preflight, "a preflight answer"},
-		{"OPTIONS", "/admin/", preflight, "a preflight answer"},
-	}
-	for _, setup := range []struct {
-		flag        string
-		theme, main []string // 应分到主题 origin 与主 origin 的 Host 头；主 origin 另加 hub 自己的地址。
-	}{
-		{"http://" + testThemeHost,
-			[]string{"theme.test", "theme.test:8080", "THEME.Test:80", "theme.test.", "Theme.Test.:8443"},
-			[]string{"panel.test", "theme.test.evil", "xtheme.test", "theme.test.."}},
-		{"http://[0:0::1]",
-			[]string{"[::1]", "[::1]:8080", "[0:0::1]", "[0000:0000::0001]:80"},
-			[]string{"[::2]", "[::1:0]", "[2001:db8::1]:8080"}},
-		{"https://状态.test",
-			[]string{"xn--t7t692b.test", "XN--T7T692B.test:443", "xn--t7t692b.test."},
-			[]string{"t7t692b.test", "xn--t7t692b.test.evil"}},
-	} {
-		srv, st := newThemeTestServer(t, setup.flag)
-		installTheme(t, st, "t", map[string]string{"index.html": "theme index", "assets/app.js": "console.log(1)", "admin/index.html": "shadow panel", "heron.v1.PublicService/GetSite": "shadow rpc"})
-		type route struct {
-			host   string
-			checks []check
+}
+
+// 任意 Host 的同一根入口都显示所选主题；管理页面与 RPC 保持明确挂载，不由包内路径覆盖。
+func TestSameDomainThemeKeepsPanelAndRPCMounts(t *testing.T) {
+	srv, st := newThemeTestServer(t)
+	installed := installTheme(t, st, "t", map[string]string{"index.html": "theme index", "assets/app.js": "theme script", "admin/index.html": "shadow panel", "heron.v1.PublicService/GetSite": "shadow rpc"})
+	for _, host := range []string{"panel.test", "status.test:8443", strings.TrimPrefix(srv.URL, "http://")} {
+		for _, path := range []string{"/", "/nodes/3"} {
+			assertThemeShell(t, hostDo(t, srv, http.MethodGet, host, path, "", nil), installed)
 		}
-		var routes []route
-		for _, h := range setup.theme {
-			routes = append(routes, route{h, themeChecks})
+		panel := hostDo(t, srv, http.MethodGet, host, "/admin/", "", nil)
+		if (panel.status != http.StatusOK && panel.status != http.StatusServiceUnavailable) || !strings.Contains(panel.header.Get("Content-Security-Policy"), "default-src 'self'") || strings.Contains(panel.body, "shadow panel") {
+			t.Fatalf("panel mount shadowed: %+v", panel)
 		}
-		for _, h := range append(setup.main, strings.TrimPrefix(srv.URL, "http://")) {
-			routes = append(routes, route{h, mainChecks})
-		}
-		for _, c := range routes {
-			for _, ck := range c.checks {
-				reqBody := ""
-				if ck.method == http.MethodPost {
-					reqBody = "{}"
-				}
-				var header http.Header
-				if ck.method == http.MethodOptions {
-					header = preflightHeader
-				}
-				r := hostDo(t, srv, ck.method, c.host, ck.path, reqBody, header)
-				if !ck.ok(r) {
-					t.Errorf("--theme-origin %s, Host %q %s %s: %d %q %.60q, want %s", setup.flag, c.host, ck.method, ck.path, r.status, r.header.Get("Content-Type"), r.body, ck.want)
-				}
-				for k := range r.header {
-					if strings.HasPrefix(k, "Access-Control-Allow-") {
-						t.Errorf("--theme-origin %s, Host %q %s %s: CORS header %s: %v", setup.flag, c.host, ck.method, ck.path, k, r.header[k])
-					}
-				}
+		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			path, body := "/heron.v1.PublicService/GetSite", "{}"
+			if method == http.MethodGet {
+				path += "?connect=v1&encoding=json&message=%7B%7D"
+				body = ""
 			}
+			got := hostDo(t, srv, method, host, path, body, nil)
+			var site map[string]any
+			if got.status != http.StatusOK || json.Unmarshal([]byte(got.body), &site) != nil || site["adminPath"] != web.Prefix {
+				t.Fatalf("public RPC/admin path: %+v", got)
+			}
+		}
+		if got := hostDo(t, srv, http.MethodPost, host, "/heron.v1.AdminService/ListNodes", "{}", nil); got.status != http.StatusUnauthorized {
+			t.Fatalf("admin auth bypass: %+v", got)
 		}
 	}
 }
 
-// 主题 origin 上 AdminService、AgentService（以及 heron.v1 里 PublicService 之外的任何服务）的每个过程都是 404：
-// 过程从注册表枚举，不手写。PublicService 的过程由 connect 应答（JSON），而不是落到主题的 index.html。
-func TestThemeOriginHidesEveryNonPublicProcedure(t *testing.T) {
-	srv, st := newThemeTestServer(t, "http://"+testThemeHost)
+// 主题资源即使直接导航也带 CSP sandbox；只有不可变公开资源开放匿名 CORS。
+func TestSameDomainThemeFilesRemainSandboxed(t *testing.T) {
+	srv, st := newThemeTestServer(t)
+	installed := installTheme(t, st, "t", map[string]string{"index.html": "theme index", "assets/app.js": "theme script", "preview.svg": "<svg/>"})
+	for rel, body := range map[string]string{"index.html": "theme index", "assets/app.js": "theme script", "preview.svg": "<svg/>"} {
+		path := themeFilePath(installed, rel)
+		got := hostDo(t, srv, http.MethodGet, "panel.test", path, "", http.Header{"Origin": {"null"}})
+		if got.status != http.StatusOK || got.body != body {
+			t.Fatalf("resource %s: %+v", path, got)
+		}
+		csp := got.header.Get("Content-Security-Policy")
+		if !strings.Contains(csp, "sandbox allow-scripts;") || strings.Contains(csp, "allow-same-origin") || !strings.Contains(csp, "connect-src 'none'") || !strings.Contains(csp, "worker-src 'none'") || got.header.Get("X-Content-Type-Options") != "nosniff" {
+			t.Fatalf("resource isolation lost: %v", got.header)
+		}
+		if got.header.Get("Access-Control-Allow-Origin") != "*" || got.header.Get("Access-Control-Allow-Credentials") != "" {
+			t.Fatalf("resource CORS must be anonymous: %v", got.header)
+		}
+		etag := got.header.Get("ETag")
+		if etag == "" {
+			t.Fatal("immutable resource lacks ETag")
+		}
+		cached := hostDo(t, srv, http.MethodGet, "panel.test", path, "", http.Header{"If-None-Match": {etag}})
+		if cached.status != http.StatusNotModified || !strings.Contains(cached.header.Get("Content-Security-Policy"), "sandbox allow-scripts;") {
+			t.Fatal("conditional response lost sandbox policy")
+		}
+	}
+}
+
+// 注册表枚举全部管理过程；Origin:null 和跨域来源都在请求体与身份处理前拒绝，不靠浏览器读响应失败兜底。
+func TestSandboxOriginCannotReachAnyAdminProcedure(t *testing.T) {
+	srv, st := newThemeTestServer(t)
 	installTheme(t, st, "t", map[string]string{"index.html": "theme index"})
 	count, public := 0, 0
 	protoregistry.GlobalFiles.RangeFilesByPackage("heron.v1", func(file protoreflect.FileDescriptor) bool {
@@ -215,234 +180,161 @@ func TestThemeOriginHidesEveryNonPublicProcedure(t *testing.T) {
 			for j := 0; j < svc.Methods().Len(); j++ {
 				path := "/" + string(svc.FullName()) + "/" + string(svc.Methods().Get(j).Name())
 				count++
-				r := hostDo(t, srv, http.MethodPost, testThemeHost, path, "{}", nil)
-				if publicProcedures[path] {
-					public++
-					if r.status == http.StatusNotFound || r.header.Get("Content-Type") != "application/json" {
-						t.Errorf("%s on the theme origin: %d %q, want the public service to answer", path, r.status, r.header.Get("Content-Type"))
+				for _, origin := range []string{"null", "https://foreign.example"} {
+					got := hostDo(t, srv, http.MethodPost, "panel.test", path, "{}", http.Header{"Origin": {origin}})
+					if publicProcedures[path] {
+						if origin == "null" {
+							public++
+						}
+						if got.status == http.StatusUnauthorized || got.status == http.StatusNotFound || got.header.Get("Content-Type") != "application/json" {
+							t.Fatalf("public RPC not mounted: %s %+v", path, got)
+						}
+					} else {
+						want := http.StatusUnauthorized
+						if svc.FullName() == "heron.v1.AdminService" {
+							want = http.StatusForbidden
+						}
+						if got.status != want {
+							t.Fatalf("%s origin %s: status %d want %d", path, origin, got.status, want)
+						}
+						if got.header.Get("Access-Control-Allow-Origin") != "" || got.header.Get("Access-Control-Allow-Credentials") != "" {
+							t.Fatal("management CORS was broadened")
+						}
 					}
-					continue
-				}
-				if r.status != http.StatusNotFound || r.body == "theme index" {
-					t.Errorf("%s on the theme origin: %d %.60q, want 404", path, r.status, r.body)
 				}
 			}
 		}
 		return true
 	})
-	if count == 0 || public != len(publicProcedures) || count == public {
-		t.Fatalf("enumerated %d procedures, %d public; want every heron.v1 procedure including all %d public ones", count, public, len(publicProcedures))
+	if count <= public || public != len(publicProcedures) {
+		t.Fatalf("incomplete procedure inventory: all=%d public=%d", count, public)
 	}
 }
 
-// 没有启用中的主题时主题 origin 服务内置公开页：从未装过、装了未启用、停用、启用中的被删掉，四种情形都与内置页逐字节相同。
-func TestThemeOriginFallsBackToBuiltinPublicPage(t *testing.T) {
-	srv, st := newThemeTestServer(t, "http://"+testThemeHost)
-	assertBuiltin := func(when string) {
+func TestThemeSelectionFallbackAndImmutableVersions(t *testing.T) {
+	srv, st := newThemeTestServer(t)
+	get := func(path string) hostResponse { return hostDo(t, srv, http.MethodGet, "panel.test", path, "", nil) }
+	assertBuiltin := func() {
 		t.Helper()
-		for _, p := range []string{"/", "/nodes/3"} {
-			got, want := hostDo(t, srv, http.MethodGet, testThemeHost, p, "", nil), builtinPublic(p)
+		for _, path := range []string{"/", "/nodes/3"} {
+			got, want := get(path), builtinPublic(path)
 			if got.status != want.status || got.body != want.body || got.header.Get("Content-Security-Policy") != want.header.Get("Content-Security-Policy") {
-				t.Errorf("%s: GET %s on the theme origin: %d %.60q, want the built-in public page %d %.60q", when, p, got.status, got.body, want.status, want.body)
+				t.Fatalf("builtin fallback %s: %+v", path, got)
 			}
 		}
 	}
-	assertTheme := func(when string) {
+	enable := func(v store.Theme) {
 		t.Helper()
-		if got := hostDo(t, srv, http.MethodGet, testThemeHost, "/", "", nil); got.status != http.StatusOK || got.body != "theme index" {
-			t.Fatalf("%s: GET / on the theme origin: %d %.60q, want the theme", when, got.status, got.body)
+		if err := st.EnableTheme(t.Context(), v.ID, v.Digest); err != nil {
+			t.Fatal(err)
 		}
 	}
-	assertBuiltin("no theme installed")
-	if _, err := st.PutTheme(t.Context(), store.Theme{ID: "t", Name: "t", Version: "1", UploadedAt: time.Unix(100, 0)}, []store.ThemeFile{{Path: "index.html", Content: []byte("theme index")}}, []byte("original zip"), false, 20); err != nil {
+	assertBuiltin()
+	first := putMuxTheme(t, st, "t", map[string]string{"index.html": "theme first", "app.js": "first script"})
+	assertBuiltin()
+	if got := get(themeFilePath(first, "index.html")); got.status != http.StatusNotFound {
+		t.Fatal("unpublished package was publicly executable")
+	}
+	enable(first)
+	assertThemeShell(t, get("/"), first)
+	second := putMuxTheme(t, st, "t", map[string]string{"index.html": "theme second", "app.js": "second script"})
+	assertThemeShell(t, get("/"), first)
+	enable(second)
+	assertThemeShell(t, get("/"), second)
+	for _, v := range []struct {
+		theme   store.Theme
+		content string
+	}{{first, "first script"}, {second, "second script"}} {
+		if got := get(themeFilePath(v.theme, "app.js")); got.status != http.StatusOK || got.body != v.content {
+			t.Fatalf("versioned asset mixed: %+v", got)
+		}
+	}
+	enable(first)
+	assertThemeShell(t, get("/"), first)
+	if err := st.EnableTheme(t.Context(), "", ""); err != nil {
 		t.Fatal(err)
 	}
-	assertBuiltin("theme installed but not enabled")
-	if err := st.EnableTheme(t.Context(), "t"); err != nil {
-		t.Fatal(err)
-	}
-	assertTheme("theme enabled")
-	if err := st.EnableTheme(t.Context(), ""); err != nil {
-		t.Fatal(err)
-	}
-	assertBuiltin("theme disabled")
-	if err := st.EnableTheme(t.Context(), "t"); err != nil {
-		t.Fatal(err)
-	}
-	assertTheme("theme re-enabled")
+	assertBuiltin()
+	enable(second)
 	if err := st.DeleteTheme(t.Context(), "t"); err != nil {
 		t.Fatal(err)
 	}
-	assertBuiltin("enabled theme deleted")
-}
-
-// 启用中主题的内容只经 PutTheme、EnableTheme、DeleteTheme 改变：每个写者提交之后，主题 origin 的下一个请求就看到新内容。
-// 同一秒内的两次整包替换内容不同、ETag 就不同：带上一次 ETag 的条件请求拿到新内容，而不是 304 让浏览器留着旧包。
-func TestThemeOriginServesEveryWriterCommitOnTheNextRequest(t *testing.T) {
-	srv, st := newThemeTestServer(t, "http://"+testThemeHost)
-	get := func(ifNoneMatch string) hostResponse {
-		t.Helper()
-		h := http.Header{}
-		if ifNoneMatch != "" {
-			h.Set("If-None-Match", ifNoneMatch)
-		}
-		return hostDo(t, srv, http.MethodGet, testThemeHost, "/", "", h)
-	}
-	// 上传时刻固定为同一秒：ETag 必须由内容区分，不能靠时间。
-	put := func(id, index string) {
-		t.Helper()
-		if _, err := st.PutTheme(t.Context(), store.Theme{ID: id, Name: id, Version: "1", UploadedAt: time.Unix(100, 0)},
-			[]store.ThemeFile{{Path: "index.html", Content: []byte(index)}}, []byte("original zip"), false, 20); err != nil {
-			t.Fatal(err)
-		}
-	}
-	enable := func(id string) {
-		t.Helper()
-		if err := st.EnableTheme(t.Context(), id); err != nil {
-			t.Fatal(err)
-		}
-	}
-	theme := func(when, ifNoneMatch, want string) string {
-		t.Helper()
-		r := get(ifNoneMatch)
-		etag := r.header.Get("ETag")
-		if r.status != http.StatusOK || r.body != want || etag == "" || etag == ifNoneMatch {
-			t.Fatalf("%s: GET / on the theme origin with If-None-Match %q: %d %.60q ETag %q, want 200 %q with a new ETag", when, ifNoneMatch, r.status, r.body, etag, want)
-		}
-		return etag
-	}
-	builtin := func(when string) {
-		t.Helper()
-		got, want := get(""), builtinPublic("/")
-		if got.status != want.status || got.body != want.body {
-			t.Fatalf("%s: GET / on the theme origin: %d %.60q, want the built-in public page", when, got.status, got.body)
-		}
-	}
-	builtin("nothing installed")
-	put("a", "a v1")
-	builtin("installed, not enabled")
-	enable("a")
-	e1 := theme("EnableTheme a", "", "a v1")
-	if r := get(e1); r.status != http.StatusNotModified {
-		t.Fatalf("unchanged theme with its ETag: %d, want 304", r.status)
-	}
-	put("a", "a v2")
-	e2 := theme("PutTheme replacing the enabled theme", e1, "a v2")
-	put("a", "a v3")
-	e3 := theme("second PutTheme within the same second", e2, "a v3")
-	put("b", "b v1")
-	if r := get(e3); r.status != http.StatusNotModified {
-		t.Fatalf("installing another theme changed the enabled one: %d %.60q, want 304", r.status, r.body)
-	}
-	enable("b")
-	theme("EnableTheme b", e3, "b v1")
-	enable("")
-	builtin("EnableTheme none")
-	enable("b")
-	theme("EnableTheme b again", "", "b v1")
-	if err := st.DeleteTheme(t.Context(), "b"); err != nil {
-		t.Fatal(err)
-	}
-	builtin("DeleteTheme of the enabled theme")
-}
-
-// 总闸约束主题 origin 上 RPC 之外的整个静态面（§10）：关闸后页面路径（包括主题包里的文件路径）是"公开页已关闭"的说明页，
-// 带内置页的安全头，assets/ 下 404，主题文件的内容一处都不出现；PublicService 全部 NotFound；/admin 仍是 404。重新打开即
-// 恢复，启用中的主题不变。
-func TestThemeOriginObeysThePublicSwitch(t *testing.T) {
-	srv, st := newThemeTestServer(t, "http://"+testThemeHost)
-	installTheme(t, st, "t", map[string]string{"index.html": "theme index", "theme.js": "theme script", "assets/x.js": "theme asset"})
-	setPublic := func(on bool) {
-		t.Helper()
-		if _, err := st.SaveSettings(t.Context(), store.SettingsUpdate{PublicEnabled: &on}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	get := func(path string) hostResponse { return hostDo(t, srv, http.MethodGet, testThemeHost, path, "", nil) }
-	getSite := func() hostResponse {
-		return hostDo(t, srv, http.MethodPost, testThemeHost, "/heron.v1.PublicService/GetSite", "{}", nil)
-	}
-	builtinCSP := builtinPublic("/").header.Get("Content-Security-Policy")
-
-	setPublic(false)
-	for _, p := range []string{"/", "/nodes/3", "/theme.js", "/index.html"} {
-		r := get(p)
-		if r.status != http.StatusOK || !strings.Contains(r.body, "公开页已关闭") || strings.Contains(r.body, "theme") {
-			t.Errorf("closed: GET %s on the theme origin: %d %.80q, want the closed page", p, r.status, r.body)
-		}
-		if r.header.Get("Content-Security-Policy") != builtinCSP || r.header.Get("Cache-Control") != "no-store" {
-			t.Errorf("closed: GET %s on the theme origin: CSP %q, Cache-Control %q; want the built-in CSP and no-store", p, r.header.Get("Content-Security-Policy"), r.header.Get("Cache-Control"))
-		}
-	}
-	for _, p := range []string{"/assets/x.js", "/assets/missing.js"} {
-		if r := get(p); r.status != http.StatusNotFound || strings.Contains(r.body, "theme") {
-			t.Errorf("closed: GET %s on the theme origin: %d %.80q, want 404", p, r.status, r.body)
-		}
-	}
-	if r := getSite(); r.status != http.StatusNotFound || !strings.Contains(r.body, `"not_found"`) {
-		t.Errorf("closed: PublicService/GetSite on the theme origin: %d %.80q, want NotFound", r.status, r.body)
-	}
-	if r := get("/admin/"); r.status != http.StatusNotFound {
-		t.Errorf("closed: GET /admin/ on the theme origin: %d, want 404", r.status)
-	}
-
-	setPublic(true)
-	if r := get("/nodes/3"); r.status != http.StatusOK || r.body != "theme index" {
-		t.Errorf("reopened: GET /nodes/3 on the theme origin: %d %.80q, want the theme's index.html", r.status, r.body)
-	}
-	if r := get("/assets/x.js"); r.status != http.StatusOK || r.body != "theme asset" {
-		t.Errorf("reopened: GET /assets/x.js on the theme origin: %d %.80q, want the theme's file", r.status, r.body)
-	}
-	if r := getSite(); r.status != http.StatusOK {
-		t.Errorf("reopened: PublicService/GetSite on the theme origin: %d %.80q, want 200", r.status, r.body)
-	}
-	if list, err := st.ListThemes(t.Context()); err != nil || len(list) != 1 || !list[0].Enabled {
-		t.Errorf("themes after closing and reopening: %+v %v, want theme t still enabled", list, err)
+	assertBuiltin()
+	if got := get(themeFilePath(first, "index.html")); got.status != http.StatusNotFound {
+		t.Fatal("removed package remained reachable through resource cache")
 	}
 }
 
-// 关闸时两个 origin 的根路径处理器一次都不被调用：主题 origin 的托管因此不读库（ThemeHandler 只在被调用时比代数、重读），
-// 也交不出主题文件。newHandler 是 serve 与测试共用的装配处，这里直接给它计数的处理器。publicEnabled 缺席时装配即拒绝，
-// 不能退化成"总开"。
-func TestNewHandlerKeepsBothStaticSurfacesBehindThePublicSwitch(t *testing.T) {
-	var open atomic.Bool
-	var pageCalls, themePageCalls atomic.Int64
-	counting := func(n *atomic.Int64) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			n.Add(1)
-			io.WriteString(w, "static surface")
-		})
-	}
-	r := routes{
-		agent:  mountOf("/heron.v1.AgentService/", http.NotFoundHandler()),
-		admin:  mountOf("/heron.v1.AdminService/", http.NotFoundHandler()),
-		public: mountOf("/heron.v1.PublicService/", http.NotFoundHandler()),
-		page:   counting(&pageCalls), themeOrigin: "http://" + testThemeHost, themePage: counting(&themePageCalls),
-		publicEnabled: open.Load,
-	}
-	h := newHandler(r)
-	serveAll := func() {
-		for _, host := range []string{testThemeHost, "panel.test"} {
-			for _, p := range []string{"/", "/nodes/3", "/theme.js", "/assets/x.js"} {
-				req := httptest.NewRequest(http.MethodGet, p, nil)
-				req.Host = host
-				h.ServeHTTP(httptest.NewRecorder(), req)
+func TestSameDomainThemeObeysPublicSwitch(t *testing.T) {
+	srv, st := newThemeTestServer(t)
+	installed := installTheme(t, st, "t", map[string]string{"index.html": "theme index", "app.js": "theme script"})
+	get := func(path string) hostResponse { return hostDo(t, srv, http.MethodGet, "panel.test", path, "", nil) }
+	for _, enabled := range []bool{false, true} {
+		if _, err := st.SaveSettings(t.Context(), store.SettingsUpdate{PublicEnabled: &enabled}); err != nil {
+			t.Fatal(err)
+		}
+		panel := get("/admin/")
+		if panel.status != http.StatusOK && panel.status != http.StatusServiceUnavailable {
+			t.Fatal("public switch disabled admin recovery")
+		}
+		if !enabled {
+			for _, path := range []string{"/", "/nodes/3", themeFilePath(installed, "index.html"), themeFilePath(installed, "app.js"), "/_heron/theme-shell.js", "/_heron/theme-sdk.js"} {
+				got := get(path)
+				if got.status != http.StatusOK || !strings.Contains(got.body, "公开页已关闭") || strings.Contains(got.body, "theme index") || got.header.Get("Cache-Control") != "no-store" {
+					t.Fatalf("closed path %s exposed theme: %+v", path, got)
+				}
+			}
+			for path := range publicProcedures {
+				got := hostDo(t, srv, http.MethodPost, "panel.test", path, "{}", nil)
+				if got.status != http.StatusNotFound {
+					t.Fatalf("closed public RPC %s: %+v", path, got)
+				}
+			}
+			if got := get("/assets/x.js"); got.status != http.StatusNotFound {
+				t.Fatal("closed assets directory exposed content")
+			}
+		} else {
+			assertThemeShell(t, get("/nodes/3"), installed)
+			if got := get(themeFilePath(installed, "app.js")); got.status != http.StatusOK || got.body != "theme script" {
+				t.Fatal("reopened theme resource unavailable")
 			}
 		}
 	}
+	if current, _, err := st.ThemeSelection(t.Context()); err != nil || current.Digest != installed.Digest {
+		t.Fatal("public switch altered selected version")
+	}
+}
+
+func TestNewHandlerKeepsStaticSurfaceBehindPublicSwitch(t *testing.T) {
+	var open atomic.Bool
+	var calls atomic.Int64
+	r := routes{
+		agent:         mountOf("/heron.v1.AgentService/", http.NotFoundHandler()),
+		admin:         mountOf("/heron.v1.AdminService/", http.NotFoundHandler()),
+		public:        mountOf("/heron.v1.PublicService/", http.NotFoundHandler()),
+		page:          http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls.Add(1); io.WriteString(w, "static surface") }),
+		publicEnabled: open.Load,
+	}
+	h := newHandler(r)
+	paths := []string{"/", "/nodes/3", "/assets/x.js", "/_heron/themes/t/digest/index.html", "/_heron/preview/token/files/index.html"}
+	serveAll := func() {
+		for _, path := range paths {
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
+		}
+	}
 	serveAll()
-	if pageCalls.Load() != 0 || themePageCalls.Load() != 0 {
-		t.Fatalf("closed: the main origin's page was called %d times and the theme origin's %d times, want neither", pageCalls.Load(), themePageCalls.Load())
+	if calls.Load() != 0 {
+		t.Fatal("closed public switch called static handler")
 	}
 	open.Store(true)
 	serveAll()
-	if pageCalls.Load() != 4 || themePageCalls.Load() != 4 {
-		t.Fatalf("open: the main origin's page was called %d times and the theme origin's %d times, want 4 each", pageCalls.Load(), themePageCalls.Load())
+	if calls.Load() != int64(len(paths)) {
+		t.Fatalf("open static handler calls=%d want=%d", calls.Load(), len(paths))
 	}
 	r.publicEnabled = nil
 	defer func() {
 		if recover() == nil {
-			t.Fatal("newHandler accepted routes without a public switch")
+			t.Fatal("newHandler accepted a missing public switch")
 		}
 	}()
 	newHandler(r)

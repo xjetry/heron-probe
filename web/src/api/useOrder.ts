@@ -11,7 +11,8 @@ type Options<T> = {
   reload: () => Promise<readonly T[]>;
 };
 type Session = { ids: bigint[]; invalidated: boolean; accepting: boolean };
-type View<T> = { ids: bigint[] | null; source: readonly T[]; pending: boolean; blocked: boolean; error: unknown };
+export type OrderMove = -1 | 1 | "first" | "last" | { target: bigint; edge: "before" | "after" };
+type View<T> = { ids: bigint[] | null; source: readonly T[]; pending: boolean; blocked: boolean; confirmed: boolean; error: unknown };
 
 const same = (a: readonly bigint[], b: readonly bigint[]) => a.length === b.length && a.every((id, i) => id === b[i]);
 const sameMembers = (a: readonly bigint[], b: readonly bigint[]) => {
@@ -23,7 +24,7 @@ const sameMembers = (a: readonly bigint[], b: readonly bigint[]) => {
 // 一次会话只允许一个写请求在途；点击改变期望排列，成功写入后才发送尚未保存的最新排列。
 // 回读确认前，查询更新只能替换行内容，不能替换期望顺序；写入或回读失败均停止后续写入。
 export function useOrder<T>({ items, id, enabled, save, reload }: Options<T>) {
-  const [view, setView] = useState<View<T>>({ ids: null, source: items, pending: false, blocked: false, error: null });
+  const [view, setView] = useState<View<T>>({ ids: null, source: items, pending: false, blocked: false, confirmed: false, error: null });
   const session = useRef<Session | null>(null);
   const mounted = useRef(false);
   const latest = useRef({ items, id, enabled, save, reload });
@@ -49,7 +50,7 @@ export function useOrder<T>({ items, id, enabled, save, reload }: Options<T>) {
       const rows = await latest.current.reload();
       if (!active(s)) return;
       session.current = null;
-      setView({ ids: rows.map(latest.current.id), source: latest.current.items, pending: false, blocked: false, error });
+      setView({ ids: rows.map(latest.current.id), source: latest.current.items, pending: false, blocked: false, confirmed: false, error });
     } catch (readError) {
       if (!active(s)) return;
       session.current = null;
@@ -70,7 +71,7 @@ export function useOrder<T>({ items, id, enabled, save, reload }: Options<T>) {
         if (!sameMembers(s.ids, rows.map(latest.current.id))) throw new Error("列表成员已变化，未发送的排序已取消，请按最新列表重新排序。");
         if (!same(sent, s.ids)) continue;
         session.current = null;
-        setView({ ids: rows.map(latest.current.id), source: latest.current.items, pending: false, blocked: false, error: null });
+        setView({ ids: rows.map(latest.current.id), source: latest.current.items, pending: false, blocked: false, confirmed: true, error: null });
         return;
       }
     } catch (error) {
@@ -81,18 +82,28 @@ export function useOrder<T>({ items, id, enabled, save, reload }: Options<T>) {
       }
     }
   };
-  const move = (value: bigint, direction: -1 | 1) => {
+  const move = (value: bigint, destination: OrderMove) => {
     if (!enabled || view.blocked || session.current?.invalidated || session.current?.accepting === false) return;
     const current = session.current;
     const ids = [...(current?.ids ?? ordered.map(id))];
     const index = ids.indexOf(value);
-    const destination = index + direction;
-    if (index < 0 || destination < 0 || destination >= ids.length) return;
-    [ids[index], ids[destination]] = [ids[destination], ids[index]];
+    if (index < 0) return;
+    let to: number;
+    if (typeof destination === "number") to = index + destination;
+    else if (destination === "first") to = 0;
+    else if (destination === "last") to = ids.length - 1;
+    else {
+      const target = ids.indexOf(destination.target);
+      if (target < 0 || destination.target === value) return;
+      to = target + (destination.edge === "after" ? 1 : 0) - (index < target ? 1 : 0);
+    }
+    if (to < 0 || to >= ids.length || to === index) return;
+    ids.splice(index, 1);
+    ids.splice(to, 0, value);
     const s = current ?? { ids, invalidated: false, accepting: true };
     s.ids = ids;
     session.current = s;
-    setView({ ids, source: items, pending: true, blocked: false, error: null });
+    setView({ ids, source: items, pending: true, blocked: false, confirmed: false, error: null });
     if (!current) void run(s);
   };
   const recover = () => {
@@ -102,5 +113,5 @@ export function useOrder<T>({ items, id, enabled, save, reload }: Options<T>) {
     setView((current) => ({ ...current, pending: true }));
     void read(s, view.error);
   };
-  return { items: ordered, move, pending: view.pending, blocked: view.blocked, error: view.error, recover };
+  return { items: ordered, move, pending: view.pending, blocked: view.blocked, confirmed: view.confirmed, error: view.error, recover };
 }

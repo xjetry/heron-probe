@@ -38,7 +38,7 @@ func File(name, content string) Entry { return Entry{Name: name, Content: []byte
 // Manifest 生成 theme.json 条目；preview 为空时不写该字段。
 func Manifest(t testing.TB, id, name, version, preview string) Entry {
 	t.Helper()
-	m := map[string]string{"id": id, "name": name, "version": version}
+	m := map[string]any{"id": id, "name": name, "version": version, "sdk": theme.SDKVersion}
 	if preview != "" {
 		m["preview"] = preview
 	}

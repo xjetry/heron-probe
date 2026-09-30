@@ -68,7 +68,10 @@ type PublicSite struct {
 	// data:image/…;base64,… 或空串。
 	Logo string `protobuf:"bytes,4,opt,name=logo,proto3" json:"logo,omitempty"`
 	// 放在公开页内置样式之后的 CSS；不含 "</"。
-	CustomCss     string `protobuf:"bytes,5,opt,name=custom_css,json=customCss,proto3" json:"custom_css,omitempty"`
+	CustomCss string `protobuf:"bytes,5,opt,name=custom_css,json=customCss,proto3" json:"custom_css,omitempty"`
+	// 应答这次请求的 origin 上管理面板的入口路径（/admin/），供公开页放登录入口；该 origin 上没有面板时为空串。
+	// 主题 SDK 桥接不转交此字段，主题不能通过桥接调用管理服务。
+	AdminPath     string `protobuf:"bytes,6,opt,name=admin_path,json=adminPath,proto3" json:"admin_path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -134,6 +137,13 @@ func (x *PublicSite) GetLogo() string {
 func (x *PublicSite) GetCustomCss() string {
 	if x != nil {
 		return x.CustomCss
+	}
+	return ""
+}
+
+func (x *PublicSite) GetAdminPath() string {
+	if x != nil {
+		return x.AdminPath
 	}
 	return ""
 }
@@ -464,7 +474,7 @@ func (x *PublicBilling) GetDaysLeft() int32 {
 	return 0
 }
 
-// Facts 的公开部分，字段号与 Facts 相同。主机名、内核版本、agent 版本与 ICMP 可用性不公开，
+// Facts 的公开部分，字段号与 Facts 相同。主机名、内核版本、agent 版本、ICMP 可用性与双栈出口不公开，
 // 它们的号与名保留：要公开必须先删掉 reserved，而不是随手加一个字段。
 type PublicFacts struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -731,7 +741,7 @@ var File_heron_v1_public_proto protoreflect.FileDescriptor
 const file_heron_v1_public_proto_rawDesc = "" +
 	"\n" +
 	"\x15heron/v1/public.proto\x12\bheron.v1\x1a\x14heron/v1/cache.proto\x1a\x14heron/v1/query.proto\x1a\x14heron/v1/types.proto\"\x10\n" +
-	"\x0eGetSiteRequest\"\x8e\x01\n" +
+	"\x0eGetSiteRequest\"\xad\x01\n" +
 	"\n" +
 	"PublicSite\x12\x14\n" +
 	"\x05title\x18\x01 \x01(\tR\x05title\x12\x14\n" +
@@ -739,7 +749,9 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\faccent_color\x18\x03 \x01(\tR\vaccentColor\x12\x12\n" +
 	"\x04logo\x18\x04 \x01(\tR\x04logo\x12\x1d\n" +
 	"\n" +
-	"custom_css\x18\x05 \x01(\tR\tcustomCss\"!\n" +
+	"custom_css\x18\x05 \x01(\tR\tcustomCss\x12\x1d\n" +
+	"\n" +
+	"admin_path\x18\x06 \x01(\tR\tadminPath\"!\n" +
 	"\x1fPublicServiceGetSnapshotRequest\"\x90\x01\n" +
 	"\x0ePublicSnapshot\x12\x10\n" +
 	"\x03now\x18\x01 \x01(\x03R\x03now\x12,\n" +
@@ -772,14 +784,15 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\tdays_left\x18\x06 \x01(\x05H\x00R\bdaysLeft\x88\x01\x01B\f\n" +
 	"\n" +
 	"_days_leftJ\x04\b\x05\x10\x06R\n" +
-	"auto_renew\"\xdc\x01\n" +
+	"auto_renew\"\xeb\x01\n" +
 	"\vPublicFacts\x12\x0e\n" +
 	"\x02os\x18\x02 \x01(\tR\x02os\x12\x12\n" +
 	"\x04arch\x18\x04 \x01(\tR\x04arch\x12&\n" +
 	"\x0evirtualization\x18\x05 \x01(\tR\x0evirtualization\x12\x1b\n" +
 	"\tcpu_model\x18\x06 \x01(\tR\bcpuModel\x12\x1b\n" +
 	"\tcpu_cores\x18\a \x01(\rR\bcpuCoresJ\x04\b\x01\x10\x02J\x04\b\x03\x10\x04J\x04\b\b\x10\tJ\x04\b\t\x10\n" +
-	"R\bhostnameR\x06kernelR\ragent_versionR\x0eicmp_available\"\xe3\x06\n" +
+	"J\x04\b\n" +
+	"\x10\vR\bhostnameR\x06kernelR\ragent_versionR\x0eicmp_availableR\anetwork\"\xe3\x06\n" +
 	"\rPublicMetrics\x12\x1c\n" +
 	"\acpu_pct\x18\x02 \x01(\x01H\x00R\x06cpuPct\x88\x01\x01\x12\x19\n" +
 	"\x05load1\x18\x03 \x01(\x01H\x01R\x05load1\x88\x01\x01\x12\x19\n" +

@@ -105,7 +105,7 @@ func TestWriteDir(t *testing.T) {
 	if err := WriteDir("v1", dist, script); err == nil || !strings.Contains(err.Error(), "no *.tar.gz") {
 		t.Fatalf("empty dir: %v", err)
 	}
-	for name, body := range map[string]string{"heron-hub_linux_amd64.tar.gz": "h", "SHA256SUMS": "ignored", "notes.txt": "ignored"} {
+	for name, body := range map[string]string{"heron-hub_linux_amd64.tar.gz": "h", "heron-updater_linux_amd64.tar.gz": "u", "SHA256SUMS": "ignored", "notes.txt": "ignored"} {
 		os.WriteFile(filepath.Join(dist, name), []byte(body), 0o644)
 	}
 	if err := WriteDir("v1", dist, script); err != nil {
@@ -115,7 +115,7 @@ func TestWriteDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, _ := Script([]byte(src), "v1", []Asset{asset("heron-hub_linux_amd64.tar.gz", "h")})
+	want, _ := Script([]byte(src), "v1", []Asset{asset("heron-hub_linux_amd64.tar.gz", "h"), asset("heron-updater_linux_amd64.tar.gz", "u")})
 	if !bytes.Equal(out, want) {
 		t.Fatalf("got:\n%s\nwant:\n%s", out, want)
 	}

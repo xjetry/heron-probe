@@ -45,7 +45,7 @@ func (e *Engine) EvaluateResources(ctx context.Context, minuteTS int64) error {
 	defer e.writeMu.Unlock()
 	cy := newCycle()
 	defer e.flush(cy)
-	nodes, err := e.st.ListNodes(ctx)
+	nodes, err := e.st.ListMonitoringNodes(ctx)
 	if err != nil {
 		return err
 	}

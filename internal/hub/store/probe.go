@@ -234,7 +234,7 @@ func (s *Store) ReorderProbeTasks(ctx context.Context, ids []uint64) error {
 func (s *Store) DeleteProbeTask(ctx context.Context, id uint64) (uint64, error) {
 	var version int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		if err := checkAlertReferences(tx, "SELECT id, name FROM alert_rule WHERE task_id = ? ORDER BY id", ObjectProbeTask, int64(id)); err != nil {
+		if err := checkAlertReferences(ctx, tx, "SELECT id, name FROM alert_rule WHERE task_id = ? ORDER BY id", ObjectProbeTask, int64(id)); err != nil {
 			return err
 		}
 		res, err := tx.Exec("DELETE FROM probe_task WHERE id = ?", int64(id))

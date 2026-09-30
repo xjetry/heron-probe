@@ -7,6 +7,7 @@ import { HistoryCharts, RangePicker, useHistory, type HistoryMethods } from "../
 import { AdminService, type GetTrafficResponse } from "../gen/heron/v1/admin_pb";
 import { bytes } from "../lib/format";
 import { errorText } from "../api/auth";
+import { NodeAddresses } from "../components/NodeAddresses";
 
 const ADMIN_HISTORY: HistoryMethods = { queryMetrics: AdminService.method.queryMetrics, queryProbes: AdminService.method.queryProbes };
 
@@ -43,6 +44,7 @@ export function NodeDetail() {
         <dl className="card facts">
           {/* 来源地址是 hub 在上报上看到的对端，不是 agent 自报；只在管理端显示，公开页没有这个字段。 */}
           <dt>主机名</dt><dd>{node.facts.hostname}{node.lastSource && <span className="muted">（来源 {node.lastSource}）</span>}</dd>
+          <dt>双栈出口</dt><dd><NodeAddresses network={node.facts.network} detailed /></dd>
           <dt>系统</dt><dd>{node.facts.os}</dd>
           <dt>内核</dt><dd>{node.facts.kernel}</dd>
           <dt>架构</dt><dd>{node.facts.arch}</dd>

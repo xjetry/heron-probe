@@ -70,7 +70,7 @@ type harnessOption func(*harnessDeps)
 type harnessDeps struct {
 	authLog      *slog.Logger
 	telegramBase string
-	// config 在装配前改 api.Config 里与 serve 的 flag 对应的项（例如 --theme-origin）。
+	// config 在装配前改 api.Config 里与 serve 的 flag 对应的项。
 	config func(*Config)
 }
 
@@ -79,7 +79,7 @@ func withAuthLog(l *slog.Logger) harnessOption {
 	return func(d *harnessDeps) { d.authLog = l }
 }
 
-// withConfig 让用例在装配前改 api.Config 里与 serve 的 flag 对应的项（例如 --theme-origin）。
+// withConfig 让用例在装配前改 api.Config 里与 serve 的 flag 对应的项。
 func withConfig(edit func(*Config)) harnessOption {
 	return func(d *harnessDeps) { d.config = edit }
 }

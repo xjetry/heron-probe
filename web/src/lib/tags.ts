@@ -23,14 +23,6 @@ export function withoutTag(tags: readonly string[], name: string): string[] {
   return tags.filter((t) => !sameTag(t, name));
 }
 
-// 公开页标签栏的点击语义。selected 为空表示不过滤；普通单击把选择收成"只选这一个"，当前恰好只选它时再点一次清空
-// （回到全部）；shift 单击只翻转被点的一个，其余标签的状态不动。比较全部经 sameTag，与 hub 的折叠口径一致。
-export function nextSelection(selected: readonly string[], tag: string, shift: boolean): string[] {
-  const on = selected.some((s) => sameTag(s, tag));
-  if (shift) return on ? withoutTag(selected, tag) : withTag(selected, tag);
-  return on && selected.length === 1 ? [] : [tag];
-}
-
 // 多选取交集：节点必须带有所选的每一个标签。空选择不过滤——空条件匹配一切，这一分支显式写出而不靠 every 对空数组恒真。
 export function matchesTags(nodeTags: readonly string[], selected: readonly string[]): boolean {
   if (selected.length === 0) return true;

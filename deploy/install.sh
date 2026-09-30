@@ -17,6 +17,10 @@ LOG_DIR=$ROOT/var/log/heron-agent
 SVC_USER=heron-agent
 SYSTEMD_UNIT=$ROOT/etc/systemd/system/heron-agent.service
 SYSTEMD_WANTS=$ROOT/etc/systemd/system/multi-user.target.wants/heron-agent.service
+UPDATER_BIN=$ROOT/usr/local/bin/heron-updater-agent
+UPDATER_UNIT=$ROOT/etc/systemd/system/heron-updater-agent.service
+UPDATER_STATE=$ROOT/var/lib/heron-update-agent
+UPDATER_RESTORE=0
 OPENRC_SCRIPT=$ROOT/etc/init.d/heron-agent
 OPENRC_LINK=$ROOT/etc/runlevels/default/heron-agent
 PROC=$ROOT/proc
@@ -62,6 +66,19 @@ done
 if [ -d "$ROOT/run/systemd/system" ]; then INIT=systemd
 elif [ -x "$ROOT/sbin/openrc-run" ]; then INIT=openrc
 else echo "unsupported init: expected systemd (/run/systemd/system) or OpenRC (/sbin/openrc-run)" >&2; exit 1; fi
+
+# /run 由 root 管理且不可被服务用户写入；锁文件不删除，避免并发安装器锁住不同 inode。
+# 此锁只串行人工安装器，在线事务仍由 prepare_updater 的维护握手排除。
+if [ "$INIT" = systemd ]; then
+  command -v flock >/dev/null 2>&1 || { echo 'flock is required for systemd installation' >&2; exit 1; }
+  INSTALL_LOCK=$ROOT/run/heron-install-agent.lock
+  if [ -L "$INSTALL_LOCK" ] || { [ -e "$INSTALL_LOCK" ] && [ ! -f "$INSTALL_LOCK" ]; }; then
+    echo 'installer lock is not a regular file' >&2; exit 1
+  fi
+  (umask 077; touch "$INSTALL_LOCK")
+  exec 9>>"$INSTALL_LOCK"
+  flock -n 9 </dev/null || { echo 'another heron-agent installer is running' >&2; exit 1; }
+fi
 
 service_installed() {
   case "$INIT" in
@@ -173,6 +190,30 @@ stop_service() {
   confirm_service_stopped
 }
 
+# 维护握手由更新器在事务锁内完成；成功之后拒绝新任务，才允许安装器停掉它并替换文件。
+prepare_updater() {
+  [ "$INIT" = systemd ] || return 0
+  if [ -e "$UPDATER_UNIT" ] || [ -e "$UPDATER_BIN" ]; then
+    updater_active=$(systemctl show heron-updater-agent -p ActiveState --value </dev/null) || return 1
+    case "$updater_active" in
+      active|activating|reloading)
+        "$UPDATER_BIN" --role agent --maintenance </dev/null || return 1
+        UPDATER_RESTORE=1
+        systemctl stop heron-updater-agent </dev/null || return 1;;
+      inactive|failed) ;;
+      *) echo "cannot determine updater service state; refusing installation" >&2; return 1;;
+    esac
+  fi
+  if [ "$UPDATER_RESTORE" = 0 ] && { [ -e "$UPDATER_STATE/state.json" ] || [ -e "$UPDATER_STATE/pending" ]; }; then
+    echo "updater recovery state exists; start heron-updater-agent before retrying" >&2; return 1
+  fi
+}
+restore_updater() {
+  if [ "$UPDATER_RESTORE" = 1 ]; then systemctl restart heron-updater-agent </dev/null || echo 'failed to restore heron-updater-agent; start it manually' >&2; fi
+}
+trap restore_updater EXIT
+trap 'exit 1' INT TERM HUP
+
 # 用户与同名组都删并回查：各发行版删除工具对组的处理不一致，不能信退出码，也不能半成功还报成功。
 # 要不要发删除命令看本地 /etc/passwd、/etc/group 的记录，与 userdel、groupdel 操作的对象同一口径：
 # id 走 NSS，解析结果可能来自 LDAP、sssd 之类的非本地源，那时 userdel 以"用户不存在"失败（shadow 4.13
@@ -197,6 +238,7 @@ delete_account() {
 }
 
 if [ "$UNINSTALL" = 1 ]; then
+  prepare_updater
   stop_service
   case "$INIT" in
     systemd)
@@ -209,9 +251,15 @@ if [ "$UNINSTALL" = 1 ]; then
         rm -f "$SYSTEMD_WANTS"
       fi
       rm -f "$SYSTEMD_UNIT"
+      if [ -f "$UPDATER_UNIT" ]; then systemctl disable heron-updater-agent </dev/null; fi
+      rm -f "$UPDATER_UNIT" "$UPDATER_BIN" "$ROOT/etc/systemd/system/multi-user.target.wants/heron-updater-agent.service"
+      # 维护握手已排除在途事务；卸载更新器同时移除其历史和回滚备份，业务配置仍由 --purge 决定。
+      rm -rf "$UPDATER_STATE" "$ROOT/run/heron-update-agent"
+      UPDATER_RESTORE=0
       # 只清除本服务的本地定制；不用 DropInPaths 展开共享配置，也不跟随目录符号链接。
       if [ "$PURGE" = 1 ]; then
         rm -rf "$SYSTEMD_UNIT.d" "$ROOT/run/systemd/system/heron-agent.service.d"
+        rm -rf "$UPDATER_UNIT.d" "$ROOT/run/systemd/system/heron-updater-agent.service.d"
       fi
       systemctl daemon-reload </dev/null;;
     openrc)
@@ -247,6 +295,12 @@ PKG="heron-agent_linux_$ARCH.tar.gz"
 WANT_SHA256=$(printf '%s\n' "$RELEASE_SHA256" | awk -v p="$PKG" '$2 == p { print $1; n++ } END { exit n != 1 }') || {
   echo "release $RELEASE_VERSION has no embedded checksum for $PKG" >&2; exit 1
 }
+if [ "$INIT" = systemd ]; then
+  UPDATER_PKG=heron-updater_linux_$ARCH.tar.gz
+  UPDATER_SHA256=$(printf '%s\n' "$RELEASE_SHA256" | awk -v p="$UPDATER_PKG" '$2 == p { print $1; n++ } END { exit n != 1 }') || {
+    echo "release $RELEASE_VERSION has no embedded checksum for $UPDATER_PKG" >&2; exit 1
+  }
+fi
 
 # 首次安装必须有注册凭据；升级沿用现有配置，不需要也不接受重新注册。
 if [ ! -f "$CFG" ] && { [ -z "$HUB" ] || [ -z "$KEY" ]; }; then
@@ -317,8 +371,8 @@ ca_bundle_present() {
   return 1
 }
 is_https() { case "$1" in https://*) return 0;; esac; return 1; }
-# 下载地址与 hub 地址分别判断：默认下载地址就是 https；hub 用 https 时 register 与上报也要 CA。
-if is_https "$BASE_URL" || is_https "$HUB"; then
+# systemd 更新器始终通过官方 HTTPS 下载，不能因当前 hub 与安装镜像为 HTTP 就省略 CA。
+if [ "$INIT" = systemd ] || is_https "$BASE_URL" || is_https "$HUB"; then
   if ! ca_bundle_present; then
     if command -v apt-get >/dev/null 2>&1; then
       apt-get update </dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates </dev/null
@@ -337,9 +391,10 @@ fi
 
 work=$(mktemp -d)
 BIN_TMP="$BIN.tmp.$$"
+UPDATER_TMP="$UPDATER_BIN.tmp.$$"
 # EXIT trap 覆盖正常结束、exit 与 set -e 触发的退出。dash 与 busybox ash 被信号终止时不执行 EXIT trap，
 # 所以把 INT、TERM、HUP 转成 exit 1，Ctrl-C 或 SSH 断开时也会清掉工作目录与写了一半的临时二进制。
-trap 'rm -rf "$work"; rm -f "$BIN_TMP"' EXIT
+trap 'rm -rf "$work"; rm -f "$BIN_TMP" "$UPDATER_TMP"; restore_updater' EXIT
 trap 'exit 1' INT TERM HUP
 
 dl() {
@@ -367,6 +422,20 @@ for f in heron-agent heron-agent.service heron-agent.openrc; do
   [ -f "$work/$f" ] || { echo "package is missing $f" >&2; exit 1; }
 done
 install -m 0755 "$work/heron-agent" "$BIN_TMP"
+if [ "$INIT" = systemd ]; then
+  dl "$BASE_URL/$UPDATER_PKG" "$work/$UPDATER_PKG"
+  got=$(sha256sum "$work/$UPDATER_PKG" </dev/null) || got=""
+  [ "${got%% *}" = "$UPDATER_SHA256" ] || { echo "checksum mismatch for $UPDATER_PKG" >&2; exit 1; }
+  mkdir "$work/updater"
+  tar -xzf "$work/$UPDATER_PKG" -C "$work/updater"
+  for f in heron-updater heron-updater-agent.service heron-updater-hub.service; do
+    if ! { [ -f "$work/updater/$f" ] && [ ! -L "$work/updater/$f" ]; }; then
+      echo "package is missing regular file $f" >&2; exit 1
+    fi
+  done
+  install -m 0755 "$work/updater/heron-updater" "$UPDATER_TMP"
+fi
+prepare_updater
 
 if [ ! -f "$CFG" ]; then
   # 注册只在没有配置时发生；配置落盘后重跑不再注册，所以注册之后的步骤失败时，重跑不会多耗窗口名额。
@@ -407,10 +476,15 @@ mv -f "$BIN_TMP" "$BIN"
 # 所以用 start，不依赖 restart 对已停服务等价于 start。
 case "$INIT" in
   systemd)
+    mv -f "$UPDATER_TMP" "$UPDATER_BIN"
+    install -m 0644 "$work/updater/heron-updater-agent.service" "$UPDATER_UNIT"
     install -m 0644 "$work/heron-agent.service" "$SYSTEMD_UNIT"
     systemctl daemon-reload </dev/null
     systemctl enable heron-agent </dev/null
-    systemctl start heron-agent </dev/null;;
+    systemctl start heron-agent </dev/null
+    systemctl enable heron-updater-agent </dev/null
+    systemctl start heron-updater-agent </dev/null
+    UPDATER_RESTORE=0;;
   openrc)
     install -m 0755 "$work/heron-agent.openrc" "$OPENRC_SCRIPT"
     # 重跑时它已在 default runlevel 里；只在不在时才加，不依赖 rc-update 对重复 add 的退出码。

@@ -26,7 +26,7 @@ func TestThemePackageStoredAndReplaced(t *testing.T) {
 	s, _ := open(t)
 	putTheme(t, s, "a", "index.html")
 	p := storedPackage(t, s, "a")
-	if p.Content != "original zip" || p.Revision <= 0 || p.Uploaded {
+	if p.Content != "original zip a" || p.Revision <= 0 || p.Uploaded {
 		t.Fatalf("initial package=%+v, want original bytes, positive write ID and pending upload", p)
 	}
 	if err := s.write(t.Context(), func(tx *sql.Tx) error {
@@ -37,8 +37,8 @@ func TestThemePackageStoredAndReplaced(t *testing.T) {
 	}
 	putTheme(t, s, "a", "index.html")
 	next := storedPackage(t, s, "a")
-	if next.Content != p.Content || next.Revision == p.Revision || next.Uploaded {
-		t.Fatalf("replacement package=%+v previous=%+v, want fresh write ID and pending upload", next, p)
+	if next.Content != p.Content || next.Revision != p.Revision || !next.Uploaded {
+		t.Fatalf("repeated package=%+v previous=%+v, want original write ID and uploaded state", next, p)
 	}
 }
 
@@ -46,7 +46,7 @@ func TestThemePackageTransactions(t *testing.T) {
 	for _, operation := range []string{"put", "delete"} {
 		t.Run(operation, func(t *testing.T) {
 			s, _ := open(t)
-			putTheme(t, s, "a", "index.html")
+			installed := putTheme(t, s, "a", "index.html")
 			before := storedPackage(t, s, "a")
 			<-s.ThemeChanges()
 			themes, err := s.ListThemes(t.Context())
@@ -65,9 +65,9 @@ func TestThemePackageTransactions(t *testing.T) {
 				t.Fatal(err)
 			}
 			if operation == "put" {
-				_, err = s.PutTheme(t.Context(), Theme{ID: "a", Name: "changed"}, []ThemeFile{{Path: "new", Content: []byte("new")}}, []byte("original zip"), true, 20)
+				_, err = s.PutTheme(t.Context(), Theme{ID: "a", Name: "changed", SDK: 1}, []ThemeFile{{Path: "new", Content: []byte("new")}}, []byte("new zip"), true, 20)
 			} else {
-				err = s.DeleteTheme(t.Context(), "a")
+				err = s.DeleteThemeVersion(t.Context(), "a", installed.Digest)
 			}
 			if err == nil || !strings.Contains(err.Error(), "file rejected") {
 				t.Fatalf("transaction error=%v", err)
@@ -90,8 +90,8 @@ func TestThemePackageTransactions(t *testing.T) {
 
 func TestThemePackageDelete(t *testing.T) {
 	s, _ := open(t)
-	putTheme(t, s, "a", "index.html")
-	if err := s.DeleteTheme(t.Context(), "a"); err != nil {
+	installed := putTheme(t, s, "a", "index.html")
+	if err := s.DeleteThemeVersion(t.Context(), "a", installed.Digest); err != nil {
 		t.Fatal(err)
 	}
 	var count int

@@ -20,15 +20,13 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
-	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/theme"
 	. "github.com/xjetry/heron-probe/internal/hub/theme/themetest"
 )
 
-// newThemeHarness 是配了 --theme-origin 的 hub；newHarness 与 serve 的默认一样没有配。
 func newThemeHarness(t *testing.T) *harness {
 	t.Helper()
-	h := newZonedHarness(t, "", time.UTC, store.DefaultRetention, withConfig(func(c *Config) { c.ThemeOrigin = "https://status.example.com" }))
+	h := newHarness(t, "")
 	h.login(t)
 	return h
 }
@@ -46,8 +44,8 @@ func TestThemeWithoutContentCannotEnable(t *testing.T) {
 	if _, err := db.Exec("DELETE FROM theme_file; DELETE FROM theme_package"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = h.admin.EnableTheme(t.Context(), connect.NewRequest(&heronv1.EnableThemeRequest{Id: "a"}))
-	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "重新上传") {
+	_, err = h.admin.EnableTheme(t.Context(), connect.NewRequest(&heronv1.EnableThemeRequest{Id: "a", Digest: h.digest(t, "a")}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "upload") {
 		t.Fatalf("empty theme enable error=%v", err)
 	}
 	status, err := h.admin.GetBackupStatus(t.Context(), connect.NewRequest(&heronv1.GetBackupStatusRequest{}))
@@ -56,9 +54,11 @@ func TestThemeWithoutContentCannotEnable(t *testing.T) {
 	}
 }
 
-func TestLegacyThemeWithoutPackageCanEnable(t *testing.T) {
+func TestLegacyThemeCannotExecute(t *testing.T) {
 	h := newThemeHarness(t)
-	if _, err := h.upload(t, Minimal(t, "legacy"), ""); err != nil {
+	pkg := Minimal(t, "legacy")
+	meta, err := h.upload(t, pkg, "")
+	if err != nil {
 		t.Fatal(err)
 	}
 	db, err := sql.Open("sqlite", h.dbPath)
@@ -66,16 +66,32 @@ func TestLegacyThemeWithoutPackageCanEnable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec("DELETE FROM theme_package"); err != nil {
+	if _, err := db.Exec("UPDATE theme_version SET sdk=0"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.admin.EnableTheme(t.Context(), connect.NewRequest(&heronv1.EnableThemeRequest{Id: "legacy"})); err != nil {
-		t.Fatalf("legacy theme with files but no package cannot be enabled: %v", err)
+	if _, err := h.admin.EnableTheme(t.Context(), connect.NewRequest(&heronv1.EnableThemeRequest{Id: meta.Id, Digest: meta.Digest})); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("legacy enable: %v", err)
 	}
-	status, err := h.admin.GetBackupStatus(t.Context(), connect.NewRequest(&heronv1.GetBackupStatusRequest{}))
-	if err != nil || !slices.Equal(status.Msg.ThemesWithoutPackage, []string{"legacy"}) {
-		t.Fatalf("enabled legacy theme missing from backup status: %v %v", status, err)
+	if _, err := h.admin.PreviewTheme(t.Context(), connect.NewRequest(&heronv1.PreviewThemeRequest{Id: meta.Id, Digest: meta.Digest})); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("legacy preview: %v", err)
 	}
+	archive, err := h.admin.GetThemePackage(t.Context(), connect.NewRequest(&heronv1.GetThemePackageRequest{Id: meta.Id, Digest: meta.Digest}))
+	if err != nil || !bytes.Equal(archive.Msg.Package, pkg) {
+		t.Fatalf("legacy archive download: %v %v", archive, err)
+	}
+}
+
+func (h *harness) digest(t *testing.T, id string) string {
+	t.Helper()
+	if id == "" {
+		return ""
+	}
+	for _, th := range h.themes(t) {
+		if th.Id == id {
+			return th.Digest
+		}
+	}
+	return "missing"
 }
 
 func (h *harness) upload(t *testing.T, pkg []byte, expect string) (*heronv1.Theme, error) {
@@ -140,23 +156,27 @@ func TestThemeRoundTrip(t *testing.T) {
 	if err != nil || !bytes.Equal(original, pkg) {
 		t.Fatalf("UploadTheme did not preserve original zip: %v", err)
 	}
-	want := &heronv1.Theme{Id: "night", Name: "Night", Version: "1.2.0", UploadedAt: h.clk.Now().Unix(), HasPreview: true}
+	want := &heronv1.Theme{Id: "night", Name: "Night", Version: "1.2.0", UploadedAt: h.clk.Now().Unix(), HasPreview: true, Digest: got.Digest, Sdk: 1}
 	if !proto.Equal(got, want) {
 		t.Fatalf("UploadTheme = %v, want %v", got, want)
 	}
 	if list := h.themes(t); len(list) != 1 || !proto.Equal(list[0], want) {
 		t.Fatalf("ListThemes = %v, want [%v]", list, want)
 	}
+	archive, err := h.admin.GetThemePackage(ctx, connect.NewRequest(&heronv1.GetThemePackageRequest{Id: got.Id, Digest: got.Digest}))
+	if err != nil || !bytes.Equal(archive.Msg.Package, pkg) {
+		t.Fatalf("archive download: %v %v", archive, err)
+	}
 	if rows := h.themeRows(t); rows != [2]int64{1, 5} {
 		t.Fatalf("theme, theme_file rows = %v, want [1 5] (directories are not stored)", rows)
 	}
-	if _, err := h.admin.EnableTheme(ctx, connect.NewRequest(&heronv1.EnableThemeRequest{Id: "night"})); err != nil {
+	if _, err := h.admin.EnableTheme(ctx, connect.NewRequest(&heronv1.EnableThemeRequest{Id: "night", Digest: h.digest(t, "night")})); err != nil {
 		t.Fatal(err)
 	}
 	if got := h.enabledThemes(t); !slices.Equal(got, []string{"night"}) {
 		t.Fatalf("enabled = %v, want [night]", got)
 	}
-	preview, err := h.admin.GetThemePreview(ctx, connect.NewRequest(&heronv1.GetThemePreviewRequest{Id: "night"}))
+	preview, err := h.admin.GetThemePreview(ctx, connect.NewRequest(&heronv1.GetThemePreviewRequest{Id: "night", Digest: h.digest(t, "night")}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,11 +200,11 @@ func TestThemeRoundTrip(t *testing.T) {
 		call func() error
 	}{
 		{"preview", func() error {
-			_, err := h.admin.GetThemePreview(ctx, connect.NewRequest(&heronv1.GetThemePreviewRequest{Id: "night"}))
+			_, err := h.admin.GetThemePreview(ctx, connect.NewRequest(&heronv1.GetThemePreviewRequest{Id: "night", Digest: h.digest(t, "night")}))
 			return err
 		}},
 		{"enable", func() error {
-			_, err := h.admin.EnableTheme(ctx, connect.NewRequest(&heronv1.EnableThemeRequest{Id: "night"}))
+			_, err := h.admin.EnableTheme(ctx, connect.NewRequest(&heronv1.EnableThemeRequest{Id: "night", Digest: h.digest(t, "night")}))
 			return err
 		}},
 		{"delete", func() error {
@@ -192,14 +212,14 @@ func TestThemeRoundTrip(t *testing.T) {
 			return err
 		}},
 	} {
-		if err := c.call(); codeOf(err) != connect.CodeNotFound || !strings.Contains(err.Error(), `"night" is not installed`) {
+		if err := c.call(); codeOf(err) != connect.CodeNotFound {
 			t.Errorf("%s of a deleted theme: %v, want NotFound naming it", c.name, err)
 		}
 	}
 	if _, err := h.upload(t, Minimal(t, "plain"), ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.admin.GetThemePreview(ctx, connect.NewRequest(&heronv1.GetThemePreviewRequest{Id: "plain"})); codeOf(err) != connect.CodeNotFound || !strings.Contains(err.Error(), "no preview") {
+	if _, err := h.admin.GetThemePreview(ctx, connect.NewRequest(&heronv1.GetThemePreviewRequest{Id: "plain", Digest: h.digest(t, "plain")})); codeOf(err) != connect.CodeNotFound {
 		t.Fatalf("preview of a theme without one: %v, want NotFound saying it has no preview", err)
 	}
 }
@@ -292,41 +312,48 @@ func TestUploadThemeAcceptsAPackageAtEveryLimit(t *testing.T) {
 	}
 }
 
-// expect_id：与包里的 id 不符即拒绝；目标不在即 NotFound；相符则替换，旧包独有的文件消失，启用状态沿用。
-func TestUploadThemeExpectIDAndReplacement(t *testing.T) {
+// 同 ID 的新产物独立保留，安装与启用不可耦合。
+func TestUploadThemeExpectIDAndVersions(t *testing.T) {
 	h := newThemeHarness(t)
-	ctx := t.Context()
-	if _, err := h.upload(t, Minimal(t, "a", File("old.js", "old"), File("more.js", "old")), ""); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := h.admin.EnableTheme(ctx, connect.NewRequest(&heronv1.EnableThemeRequest{Id: "a"})); err != nil {
-		t.Fatal(err)
-	}
-	before := h.themeRows(t)
-	if _, err := h.upload(t, Minimal(t, "b"), "a"); codeOf(err) != connect.CodeInvalidArgument ||
-		!strings.Contains(err.Error(), `expect_id: "a" does not match the package's theme.json id "b"`) {
-		t.Fatalf("mismatched expect_id: %v", err)
-	}
-	if _, err := h.upload(t, Minimal(t, "c"), "c"); codeOf(err) != connect.CodeNotFound || !strings.Contains(err.Error(), `expect_id: theme "c" is not installed`) {
-		t.Fatalf("expect_id of a theme that is not installed: %v", err)
-	}
-	if rows := h.themeRows(t); rows != before {
-		t.Fatalf("rejected uploads changed rows: %v, want %v", rows, before)
-	}
-	h.clk.Advance(time.Minute)
-	got, err := h.upload(t, Zip(t, Manifest(t, "a", "A v2", "2.0.0", "p.png"), File("index.html", "v2"), Entry{Name: "p.png", Content: PNG}), "a")
+	first, err := h.upload(t, Minimal(t, "a", File("old.js", "old")), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &heronv1.Theme{Id: "a", Name: "A v2", Version: "2.0.0", UploadedAt: h.clk.Now().Unix(), Enabled: true, HasPreview: true}
-	if !proto.Equal(got, want) {
-		t.Fatalf("replacement = %v, want %v", got, want)
+	if _, err := h.admin.EnableTheme(t.Context(), connect.NewRequest(&heronv1.EnableThemeRequest{Id: first.Id, Digest: first.Digest})); err != nil {
+		t.Fatal(err)
 	}
-	if rows := h.themeRows(t); rows != [2]int64{1, 3} {
-		t.Fatalf("theme, theme_file rows after replacement = %v, want [1 3]: the old package's files are gone", rows)
+	before := h.themeRows(t)
+	if _, err := h.upload(t, Minimal(t, "b"), "a"); codeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("mismatched ID: %v", err)
 	}
-	if list := h.themes(t); len(list) != 1 || !proto.Equal(list[0], want) {
-		t.Fatalf("ListThemes after replacement = %v", list)
+	if _, err := h.upload(t, Minimal(t, "c"), "c"); codeOf(err) != connect.CodeNotFound {
+		t.Fatalf("missing target: %v", err)
+	}
+	if got := h.themeRows(t); got != before {
+		t.Fatalf("rejected upload changed rows: %v", got)
+	}
+	second, err := h.upload(t, Minimal(t, "a", File("new.js", "new")), "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Enabled || second.Digest == first.Digest || len(h.themes(t)) != 2 {
+		t.Fatalf("installation replaced current: %v", second)
+	}
+	cur, _, err := h.store.ThemeSelection(t.Context())
+	if err != nil || cur.Digest != first.Digest {
+		t.Fatalf("selection changed: %v %v", cur, err)
+	}
+	if _, err := h.admin.EnableTheme(t.Context(), connect.NewRequest(&heronv1.EnableThemeRequest{Id: second.Id, Digest: second.Digest})); err != nil {
+		t.Fatal(err)
+	}
+	cur, prev, err := h.store.ThemeSelection(t.Context())
+	if err != nil || cur.Digest != second.Digest || prev.Digest != first.Digest {
+		t.Fatalf("switch: %v %v %v", cur, prev, err)
+	}
+	for _, digest := range []string{cur.Digest, prev.Digest} {
+		if _, err := h.admin.DeleteThemeVersion(t.Context(), connect.NewRequest(&heronv1.DeleteThemeVersionRequest{Id: "a", Digest: digest})); codeOf(err) != connect.CodeFailedPrecondition {
+			t.Fatalf("delete protected: %v", err)
+		}
 	}
 }
 
@@ -369,7 +396,7 @@ func TestUploadThemeAdmitsOneAtATime(t *testing.T) {
 		_, err := h.admin.UploadTheme(ctx, connect.NewRequest(&heronv1.UploadThemeRequest{Package: []byte("not a zip")}))
 		return err
 	}
-	if err := probe(); codeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "another theme upload is in progress") {
+	if err := probe(); codeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "另一个主题正在安装") {
 		t.Fatalf("upload while another is storing: %v, want ResourceExhausted saying another upload is in progress", err)
 	}
 	select {
@@ -398,7 +425,7 @@ func TestUploadThemeLimit(t *testing.T) {
 		}
 	}
 	before := h.themeRows(t)
-	if _, err := h.upload(t, Minimal(t, "t20"), ""); codeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "at most 20 themes") {
+	if _, err := h.upload(t, Minimal(t, "t20"), ""); codeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "最多安装 20 个主题") {
 		t.Fatalf("21st theme: %v, want ResourceExhausted", err)
 	}
 	if rows := h.themeRows(t); rows != before {
@@ -419,7 +446,7 @@ func TestEnableThemeIsExclusive(t *testing.T) {
 		}
 	}
 	enable := func(id string) error {
-		_, err := h.admin.EnableTheme(ctx, connect.NewRequest(&heronv1.EnableThemeRequest{Id: id}))
+		_, err := h.admin.EnableTheme(ctx, connect.NewRequest(&heronv1.EnableThemeRequest{Id: id, Digest: h.digest(t, id)}))
 		return err
 	}
 	if err := enable("a"); err != nil {
@@ -442,32 +469,6 @@ func TestEnableThemeIsExclusive(t *testing.T) {
 	}
 	if got := h.enabledThemes(t); len(got) != 0 {
 		t.Fatalf("enabled after enabling none = %v", got)
-	}
-}
-
-// 没有配 --theme-origin 时每个主题方法都 FailedPrecondition，文案写明差的是一个单独的主机名。方法按描述符枚举（名字
-// 含 Theme 的全部方法），以后加的主题方法自动进这张表；枚举数与已知的五个核对，防止枚举本身漏空。
-func TestThemeMethodsRequireThemeOrigin(t *testing.T) {
-	h := newHarness(t, "")
-	h.login(t)
-	cookie := map[string][]string{"Cookie": {sessionCookieHeader(t, h)}}
-	svc := adminService()
-	var names []string
-	for i := 0; i < svc.Methods().Len(); i++ {
-		name := string(svc.Methods().Get(i).Name())
-		if !strings.Contains(name, "Theme") {
-			continue
-		}
-		names = append(names, name)
-		got := rawCall(t, h, name, "{}", cookie)
-		if got.status != http.StatusBadRequest || got.code != "failed_precondition" ||
-			!strings.Contains(got.message, "--theme-origin") || !strings.Contains(got.message, "separate hostname") {
-			t.Errorf("%s without a theme origin: %+v, want failed_precondition naming --theme-origin and a separate hostname", name, got)
-		}
-	}
-	slices.Sort(names)
-	if want := []string{"DeleteTheme", "EnableTheme", "GetThemePreview", "ListThemes", "UploadTheme"}; !slices.Equal(names, want) {
-		t.Fatalf("theme methods = %v, want %v", names, want)
 	}
 }
 

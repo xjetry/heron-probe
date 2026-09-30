@@ -12,6 +12,10 @@ BIN=$ROOT/usr/local/bin/heron-hub
 DATA=$ROOT/var/lib/heron
 UNIT=$ROOT/etc/systemd/system/heron-hub.service
 WANTS=$ROOT/etc/systemd/system/multi-user.target.wants/heron-hub.service
+UPDATER_BIN=$ROOT/usr/local/bin/heron-updater-hub
+UPDATER_UNIT=$ROOT/etc/systemd/system/heron-updater-hub.service
+UPDATER_STATE=$ROOT/var/lib/heron-update-hub
+UPDATER_RESTORE=0
 PROC=$ROOT/proc
 SVC_USER=heron-hub
 REPO=https://github.com/xjetry/heron-probe
@@ -25,12 +29,13 @@ RELEASE_SHA256=""
 BASE_URL=""; UNINSTALL=0; PURGE=0; YES=0; OVERRIDES=""
 # 安装器写进单元的 serve 参数，与 cmd/hub/serve.go 定义的 flag 一一对应，由 deploy/installhub_test.go 核对。
 # 命令行覆盖与已装单元的解析共用这一张表；--db 固定为 /var/lib/heron/heron.db，不接受覆盖。
-SERVE_FLAGS='listen timezone trusted-proxies public-dir theme-origin admin-origin geo-mmdb retention-1m retention-5m retention-1h retention-alert-events'
+SERVE_FLAGS='listen timezone trusted-proxies public-dir admin-origin geo-mmdb retention-1m retention-5m retention-1h retention-alert-events'
 nl='
 '
 cr=$(printf '\r')
 usage() {
-  echo 'usage: install-hub.sh [--base-url URL] [--listen ADDR] [--timezone ZONE] [--trusted-proxies CIDRS] [--public-dir DIR] [--theme-origin ORIGIN] [--admin-origin ORIGIN] [--geo-mmdb FILE] [--retention-1m DURATION] [--retention-5m DURATION] [--retention-1h DURATION] [--retention-alert-events DURATION] [--yes]' >&2
+  echo 'usage: install-hub.sh [--base-url URL] [--listen ADDR] [--timezone ZONE] [--trusted-proxies CIDRS] [--public-dir DIR] [--admin-origin ORIGIN] [--geo-mmdb FILE] [--retention-1m DURATION] [--retention-5m DURATION] [--retention-1h DURATION] [--retention-alert-events DURATION] [--yes]' >&2
+  echo '       --admin-origin is only for migrating existing Passkeys; new registrations bind the current HTTPS hostname' >&2
   echo '       install-hub.sh --uninstall [--purge] [--yes]' >&2
   exit 2
 }
@@ -56,6 +61,9 @@ while [ "$#" -gt 0 ]; do
     --version|--version=*)
       echo "install-hub.sh has no --version: it installs only the release it belongs to; for another version run $REPO/releases/download/<tag>/install-hub.sh" >&2
       exit 2;;
+    --theme-origin|--theme-origin=*)
+      echo 'themes now use the panel hostname; remove --theme-origin and manage themes in /admin/' >&2
+      exit 2;;
     --uninstall) UNINSTALL=1; shift;;
     --purge) PURGE=1; shift;;
     --yes) YES=1; shift;;
@@ -73,6 +81,17 @@ done
 [ "$PURGE" = 0 ] || [ "$UNINSTALL" = 1 ] || usage
 [ "$(id -u)" = 0 ] || fail 'install-hub.sh must run as root'
 [ -d "$ROOT/run/systemd/system" ] || fail 'unsupported init: expected systemd (/run/systemd/system)'
+
+# /run 由 root 管理且不可被服务用户写入；锁文件不删除，避免并发安装器锁住不同 inode。
+# 此锁只串行人工安装器，在线事务仍由 prepare_updater 的维护握手排除。
+command -v flock >/dev/null 2>&1 || fail 'flock is required for systemd installation'
+INSTALL_LOCK=$ROOT/run/heron-install-hub.lock
+if [ -L "$INSTALL_LOCK" ] || { [ -e "$INSTALL_LOCK" ] && [ ! -f "$INSTALL_LOCK" ]; }; then
+  fail 'installer lock is not a regular file'
+fi
+(umask 077; touch "$INSTALL_LOCK")
+exec 9>>"$INSTALL_LOCK"
+flock -n 9 </dev/null || fail 'another heron-hub installer is running'
 
 confirm_removal() {
   [ "$YES" = 0 ] || return 0
@@ -193,15 +212,44 @@ db_files_ok() {
 # 仍 enabled 的单元说成没 enable。用 -L 不用 -e：主单元被删、链接悬空时也算，卸载要清掉它。管理员另用
 # add-wants 等挂到别的 target 下的链接不在这个判定里。
 unit_enabled() { [ -L "$WANTS" ]; }
+# 维护握手由更新器在事务锁内完成；成功之后拒绝新任务，才允许安装器停掉它并替换文件。
+prepare_updater() {
+  if [ -e "$UPDATER_UNIT" ] || [ -e "$UPDATER_BIN" ]; then
+    updater_active=$(systemctl show heron-updater-hub -p ActiveState --value </dev/null) || return 1
+    case "$updater_active" in
+      active|activating|reloading)
+        "$UPDATER_BIN" --role hub --maintenance </dev/null || return 1
+        UPDATER_RESTORE=1
+        systemctl stop heron-updater-hub </dev/null || return 1;;
+      inactive|failed) ;;
+      *) fail 'cannot determine updater service state; refusing installation';;
+    esac
+  fi
+  if [ "$UPDATER_RESTORE" = 0 ] && { [ -e "$UPDATER_STATE/state.json" ] || [ -e "$UPDATER_STATE/pending" ]; }; then
+    fail 'updater recovery state exists; start heron-updater-hub before retrying'
+  fi
+}
+restore_updater() {
+  if [ "$UPDATER_RESTORE" = 1 ]; then systemctl restart heron-updater-hub </dev/null || echo 'failed to restore heron-updater-hub; start it manually' >&2; fi
+}
+trap restore_updater EXIT
+trap 'exit 1' INT TERM HUP
 if [ "$UNINSTALL" = 1 ]; then
   confirm_removal
+  prepare_updater
   stop_service
   if [ -f "$UNIT" ]; then systemctl disable heron-hub </dev/null; fi
   if unit_enabled; then rm -f "$WANTS"; fi
   rm -f "$UNIT" "$BIN"
+  if [ -f "$UPDATER_UNIT" ]; then systemctl disable heron-updater-hub </dev/null; fi
+  rm -f "$UPDATER_UNIT" "$UPDATER_BIN" "$ROOT/etc/systemd/system/multi-user.target.wants/heron-updater-hub.service"
+  # 维护握手已排除在途事务；卸载更新器同时移除其历史和回滚备份，业务数据仍由 --purge 决定。
+  rm -rf "$UPDATER_STATE" "$ROOT/run/heron-update-hub"
+  UPDATER_RESTORE=0
   # 只清除本服务的本地定制；不用 DropInPaths 展开共享配置，也不跟随目录符号链接。
   if [ "$PURGE" = 1 ]; then
     rm -rf "$UNIT.d" "$ROOT/run/systemd/system/heron-hub.service.d"
+    rm -rf "$UPDATER_UNIT.d" "$ROOT/run/systemd/system/heron-updater-hub.service.d"
   fi
   systemctl daemon-reload </dev/null
   if [ "$PURGE" = 1 ]; then rm -rf "$DATA"; delete_account; fi
@@ -218,6 +266,9 @@ PKG=heron-hub_linux_$ARCH.tar.gz
   fail "this install-hub.sh has no embedded release checksums (it is the source copy); use the install-hub.sh attached to a release: $REPO/releases"
 WANT_SHA256=$(printf '%s\n' "$RELEASE_SHA256" | awk -v p="$PKG" '$2 == p { print $1; n++ } END { exit n != 1 }') ||
   fail "release $RELEASE_VERSION has no embedded checksum for $PKG"
+UPDATER_PKG=heron-updater_linux_$ARCH.tar.gz
+UPDATER_SHA256=$(printf '%s\n' "$RELEASE_SHA256" | awk -v p="$UPDATER_PKG" '$2 == p { print $1; n++ } END { exit n != 1 }') ||
+  fail "release $RELEASE_VERSION has no embedded checksum for $UPDATER_PKG"
 create_account
 if command -v curl >/dev/null 2>&1; then FETCH=curl
 elif command -v wget >/dev/null 2>&1; then FETCH=wget
@@ -249,12 +300,14 @@ fi
 
 work=$(mktemp -d)
 BIN_TMP=$BIN.tmp.$$
+UPDATER_TMP=$UPDATER_BIN.tmp.$$
 # 停服务之后、start 返回之前的任何失败都让 hub 停着，各步的报错只说自己的原因：失败退出时在报错之后补一句
 # 现状与该做什么，免得人以为旧服务还在跑。EXIT_HINT 随步骤更新，空串表示不必补。
 EXIT_HINT=""
 on_exit() {
   rc=$?
-  rm -rf "$work"; rm -f "$BIN_TMP"
+  rm -rf "$work"; rm -f "$BIN_TMP" "$UPDATER_TMP"
+  restore_updater
   if [ "$rc" != 0 ] && [ -n "$EXIT_HINT" ]; then echo "$EXIT_HINT" >&2; fi
 }
 trap on_exit EXIT
@@ -276,6 +329,17 @@ for f in heron-hub heron-hub.service; do
   if ! { [ -f "$work/$f" ] && [ ! -L "$work/$f" ]; }; then fail "package is missing regular file $f"; fi
 done
 install -m 0755 "$work/heron-hub" "$BIN_TMP"
+dl "$BASE_URL/$UPDATER_PKG" "$work/$UPDATER_PKG"
+got=$(sha256sum "$work/$UPDATER_PKG" </dev/null) || got=""
+[ "${got%% *}" = "$UPDATER_SHA256" ] || fail "checksum mismatch for $UPDATER_PKG"
+mkdir "$work/updater"
+tar -xzf "$work/$UPDATER_PKG" -C "$work/updater"
+for f in heron-updater heron-updater-agent.service heron-updater-hub.service; do
+  if ! { [ -f "$work/updater/$f" ] && [ ! -L "$work/updater/$f" ]; }; then
+    fail "package is missing regular file $f"
+  fi
+done
+install -m 0755 "$work/updater/heron-updater" "$UPDATER_TMP"
 
 # 单元里 [Service] 段的 ExecStart 值，每个一行。主单元与 drop-in 用这同一个谓词，逐项照 systemd 的解析
 # （Debian 12 上 systemd 252 以 systemctl show -p ExecStart 与 systemd-analyze verify 实测）：
@@ -405,6 +469,7 @@ awk -v flags="db $SERVE_FLAGS" '
     name = $0; sub(/^--?/, "", name)
     eq = index(name, "=")
     if (eq) { value = substr(name, eq + 1); name = substr(name, 1, eq - 1) }
+    if (name == "theme-origin") die("remove --theme-origin from the installed unit before upgrading; themes now use the panel hostname; old service was not stopped")
     if (!(name in known)) die("unsupported serve flag in ExecStart: " $0)
     if (eq) set(name, value); else pending = name
     next
@@ -470,6 +535,7 @@ check_port() {
 # 改属主的依据是下面停服加锁之后的复检。
 if ! data_dir_ok || ! db_files_ok; then fail 'refusing to hand the database to heron-hub; old service was not stopped'; fi
 check_port
+prepare_updater
 stop_service
 EXIT_HINT='heron-hub is stopped; rerun the installer or start it manually'
 mv -f "$BIN_TMP" "$BIN"
@@ -494,6 +560,8 @@ for file in "$DATA/heron.db" "$DATA/heron.db-wal" "$DATA/heron.db-shm"; do
 done
 chmod 0770 "$DATA"
 install -m 0644 "$work/unit" "$UNIT"
+mv -f "$UPDATER_TMP" "$UPDATER_BIN"
+install -m 0644 "$work/updater/heron-updater-hub.service" "$UPDATER_UNIT"
 # 主单元写好之后再查一遍 drop-in（理由见 list_dropins 上方）。这里失败时不能叫人手动启动：设了 ExecStart 的
 # drop-in 会让单元按它的参数起来，systemctl 失败时 drop-in 则还没被查过。单元仍 enabled 时（升级时上次安装建的
 # 链接还在），下次开机也会这样起来。该做什么按失败点分开说，现状由 unit_state 按 unit_enabled 说。
@@ -515,6 +583,9 @@ fi
 systemctl enable heron-hub </dev/null
 systemctl start heron-hub </dev/null
 EXIT_HINT=""
+systemctl enable heron-updater-hub </dev/null
+systemctl start heron-updater-hub </dev/null
+UPDATER_RESTORE=0
 confirm_service_started
 echo "heron-hub installed and started (systemd, $ARCH, $PKG)"
 echo 'Set the administrator password: heron-hub passwd --db /var/lib/heron/heron.db'

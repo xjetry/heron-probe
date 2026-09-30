@@ -21,6 +21,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/agent/agentlog"
 	"github.com/xjetry/heron-probe/internal/agent/client"
 	"github.com/xjetry/heron-probe/internal/agent/collect"
+	"github.com/xjetry/heron-probe/internal/agent/netinfo"
 	"github.com/xjetry/heron-probe/internal/agent/prober"
 	"github.com/xjetry/heron-probe/internal/clock"
 )
@@ -171,6 +172,12 @@ func runRun(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	network := netinfo.New()
+	go network.Run(ctx)
+	r.Network = network
+	updater := client.NewUpdateCoordinator(version, log)
+	go updater.Run(ctx)
+	r.Updates = updater
 	logStarting(log, cfg.Hub)
 	if err := r.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err

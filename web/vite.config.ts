@@ -43,6 +43,7 @@ export default defineConfig(({ mode }) => {
     define: { __BUILT_IN_ACCENT__: JSON.stringify(builtInLightAccent()) },
     build: { outDir, emptyOutDir: true },
     test: {
+      include: ["src/**/*.test.{ts,tsx}"],
       environment: "jsdom",
       setupFiles: ["./src/test/setup.ts"],
       globals: false,

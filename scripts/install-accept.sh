@@ -157,11 +157,26 @@ hub_pids() {
 # purge 之后数据、二进制、单元、enable 链接、用户、组与 heron-hub 进程都不在。
 assert_purged() {
   if [ -e /var/lib/heron ] || [ -e /usr/local/bin/heron-hub ] || [ -e /etc/systemd/system/heron-hub.service ] ||
+    [ -e /usr/local/bin/heron-updater-hub ] || [ -e /var/lib/heron-update-hub ] || [ -e /run/heron-update-hub ] ||
+    [ -e /etc/systemd/system/heron-updater-hub.service ] || [ -L /etc/systemd/system/multi-user.target.wants/heron-updater-hub.service ] ||
     [ -L /etc/systemd/system/multi-user.target.wants/heron-hub.service ] || id heron-hub || grep -q '^heron-hub:' /etc/group; then
     fail "hub purge left data, binary, unit, enable link, user or group ($1)"
   fi
   hub_pids
   [ -z "$pids" ] || fail "hub purge left heron-hub processes ($1):$pids"
+}
+assert_updater() {
+  expected=$1
+  n=0
+  until [ -S /run/heron-update-hub/updater.sock ]; do
+    n=$((n + 1)); [ "$n" -le 15 ] || fail 'hub updater socket did not appear'; sleep 1
+  done
+  p=$(systemctl show heron-updater-hub -p MainPID --value)
+  [ "$p" -gt 0 ] && [ "$(awk '/^Uid:/ {print $3}' "/proc/$p/status")" = 0 ] || fail 'hub updater is not running as root'
+  [ "$(readlink "/proc/$p/exe")" = /usr/local/bin/heron-updater-hub ] || fail 'unexpected hub updater executable'
+  [ "$(/usr/local/bin/heron-updater-hub version)" = "$expected" ] || fail 'hub updater version mismatch'
+  [ "$(stat -c '%U:%G %a' /run/heron-update-hub/updater.sock)" = 'root:heron-hub 660' ] || fail 'hub updater socket permissions'
+  [ "$(stat -c '%U:%G %a' /var/lib/heron-update-hub)" = 'root:root 755' ] || fail 'hub updater state directory permissions'
 }
 systemctl --version | head -n 1
 fetch "$base/a/install-hub.sh" /root/install-hub.sh
@@ -172,9 +187,18 @@ cat /root/install-hub.sh | sh -s -- --base-url "$base/a" --listen 127.0.0.1:1812
 # 下载地址是 http，hub 自己的 Telegram 出站仍要 CA 证书包。
 [ -f /etc/ssl/certs/ca-certificates.crt ] || fail 'no CA bundle after installing over http'
 health 18120
+assert_updater "$version_a"
 printf '%s\n' 'accept hub password 2026' | heron-hub passwd --db /var/lib/heron/heron.db
 [ "$(heron-hub version)" = "$version_a" ] || fail 'installed version is not A'
 pid=$(systemctl show heron-hub -p MainPID --value)
+(
+  exec 8>>/run/heron-install-hub.lock
+  flock -n 8
+  rc=0
+  sh /root/install-hub.sh --base-url "$base/a" </dev/null > /root/installer-lock.log 2>&1 || rc=$?
+  [ "$rc" != 0 ] && grep -q 'another heron-hub installer is running' /root/installer-lock.log || fail 'concurrent installer was not refused'
+  [ "$(systemctl show heron-hub -p MainPID --value)" = "$pid" ] || fail 'concurrent installer stopped the running hub'
+)
 uid=$(awk '/^Uid:/ {print $3}' "/proc/$pid/status")
 cap=$(awk '/^CapEff:/ {print $2}' "/proc/$pid/status")
 [ "$uid" = "$(id -u heron-hub)" ] && [ "$uid" != 0 ] && [ "$((0x$cap))" = 0 ] || fail 'hub identity or capabilities'
@@ -204,6 +228,7 @@ systemctl stop pia-port-conflict
 # 单元里的参数是持久事实；重跑升级不能恢复成默认值，显式参数才覆盖。
 sh /root/install-hub.sh --base-url "$base/b" </dev/null
 [ "$(heron-hub version)" = "$version_b" ] || fail 'upgraded version is not B'
+assert_updater "$version_b"
 health 18120
 pid=$(systemctl show heron-hub -p MainPID --value)
 tr '\000' '\n' < "/proc/$pid/cmdline" > /root/args
@@ -420,6 +445,27 @@ assert_service_identity() {
   cat "$work/ident-$cell.log"
 }
 
+assert_agent_updater() {
+  cell=$1; expected=$2
+  orb -m "$cell" -u root sh -s -- "$expected" <<'UPDATER'
+set -eu
+if [ ! -d /run/systemd/system ]; then
+  [ ! -e /usr/local/bin/heron-updater-agent ] && [ ! -e /etc/systemd/system/heron-updater-agent.service ]
+  exit
+fi
+n=0
+until [ -S /run/heron-update-agent/updater.sock ]; do
+  n=$((n + 1)); [ "$n" -le 15 ] || { echo 'agent updater socket did not appear'; exit 1; }; sleep 1
+done
+p=$(systemctl show heron-updater-agent -p MainPID --value)
+[ "$p" -gt 0 ] && [ "$(awk '/^Uid:/ {print $3}' "/proc/$p/status")" = 0 ]
+[ "$(readlink "/proc/$p/exe")" = /usr/local/bin/heron-updater-agent ]
+[ "$(/usr/local/bin/heron-updater-agent version)" = "$1" ]
+[ "$(stat -c '%U:%G %a' /run/heron-update-agent/updater.sock)" = 'root:heron-agent 660' ]
+[ "$(stat -c '%U:%G %a' /var/lib/heron-update-agent)" = 'root:root 755' ]
+UPDATER
+}
+
 # systemd 的声明不代表进程已受限：按 MainPID 的实际 cgroup 回读内核值，安装与升级都检查。
 # 期望只来自已安装单元；声明缺失也必须失败，不能把未设置的 max 当成合法上限。
 assert_memory_limit() {
@@ -513,6 +559,7 @@ run_cell() {
 
   node_field "$name" '.online == true and .metrics.cpuPct != null' || { echo "FAIL($name): node did not come online"; exit 1; }
   assert_service_identity "$name"
+  assert_agent_updater "$name" "$VERSION_A"
   case "$distro" in
     debian|ubuntu|rocky) assert_memory_limit "$name" install;;
   esac
@@ -597,6 +644,7 @@ run_cell() {
     *) assert_layout "$name" 0 layout-rereg;;
   esac
   node_field "$name" '.online == true and .metrics.cpuPct != null' || { echo "FAIL($name): not online after ownership repair"; exit 1; }
+  assert_agent_updater "$name" "$VERSION_B"
   case "$distro" in
     debian|ubuntu|rocky) assert_memory_limit "$name" upgrade;;
   esac
@@ -665,7 +713,10 @@ run_cell() {
     done
     if [ -n "$left" ]; then echo "leftover heron-agent:$left"; exit 1; fi
     if [ -e /var/log/heron-agent ]; then echo "leftover log dir"; exit 1; fi
-    test ! -e /usr/local/bin/heron-agent && ! id heron-agent >/dev/null 2>&1 && ! grep -q "^heron-agent:" /etc/group && test ! -e /etc/heron-agent
+    test ! -e /usr/local/bin/heron-updater-agent && test ! -e /etc/systemd/system/heron-updater-agent.service &&
+      test ! -e /var/lib/heron-update-agent && test ! -e /run/heron-update-agent &&
+      test ! -L /etc/systemd/system/multi-user.target.wants/heron-updater-agent.service &&
+      test ! -e /usr/local/bin/heron-agent && ! id heron-agent >/dev/null 2>&1 && ! grep -q "^heron-agent:" /etc/group && test ! -e /etc/heron-agent
   ' || { echo "FAIL($name): purge left process, binary, user, group, config, or log dir"; exit 1; }
 
   orb delete -f "$name" > /dev/null 2>&1

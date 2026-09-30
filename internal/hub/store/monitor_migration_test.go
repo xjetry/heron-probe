@@ -78,14 +78,9 @@ func TestRestoreV20AndV21PreservesOrderAndPeakSemantics(t *testing.T) {
 			if err := db.Close(); err != nil {
 				t.Fatal(err)
 			}
-			source := &Store{path: path, clk: clock.Real()}
 			config, metrics := filepath.Join(t.TempDir(), "config.db"), filepath.Join(t.TempDir(), "metrics.db")
-			if err := source.SnapshotConfig(t.Context(), config); err != nil {
-				t.Fatal(err)
-			}
-			if err := source.SnapshotMetrics(t.Context(), metrics); err != nil {
-				t.Fatal(err)
-			}
+			legacySnapshot(t, path, config, "config", version, true)
+			legacySnapshot(t, path, metrics, "metrics", version, true)
 			target := filepath.Join(t.TempDir(), "restored.db")
 			if _, err := Restore(t.Context(), target, config, metrics, "", time.Now(), slog.Default()); err != nil {
 				t.Fatal(err)

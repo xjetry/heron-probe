@@ -69,10 +69,8 @@ key=$(sed -n 's/^key: //p' "$work/window.txt")
 [ -n "$key" ] || { echo "no key"; exit 1; }
 echo "registration window: $(sed -n 's/^expires: //p' "$work/window.txt")"
 
-# 主题 origin 的主机名：hub 按请求的 Host（去掉端口）分流，脚本以 -H "Host: theme.test" 访问同一个监听地址，不需要 DNS。
-theme_host=theme.test
 hub_log_from=0
-HERON_OFFLINE_AFTER=12s bin/heron-hub serve --db "$db" --listen "$listen_host:$port" --timezone UTC --theme-origin "http://$theme_host" > "$work/hub.log" 2>&1 &
+HERON_OFFLINE_AFTER=12s bin/heron-hub serve --db "$db" --listen "$listen_host:$port" --timezone UTC > "$work/hub.log" 2>&1 &
 hub=$!
 
 # wait_hub：等本次启动的 hub 就绪。三者同时成立才算：
@@ -139,11 +137,11 @@ hdr() {
   awk -v want="$2" 'BEGIN { want = tolower(want) } { sub(/\r$/, "") } tolower(substr($0, 1, length(want) + 2)) == want ": " { print substr($0, length(want) + 3) }' "$work/pub-$1.headers"
 }
 
-# themereq 名字 路径 [额外 curl 参数]：以主题 origin 的 Host 请求同一个监听地址，打印状态码；正文落 $work/theme-<名字>.body，
+# themereq 名字 路径 [额外 curl 参数]：请求同域主题路径，正文落 $work/theme-<名字>.body，
 # 响应头落 $work/theme-<名字>.headers。
 themereq() {
   name=$1; path=$2; shift 2
-  curl -sS -o "$work/theme-$name.body" -D "$work/theme-$name.headers" -w '%{http_code}' -H "Host: $theme_host" "$@" "$base$path"
+  curl -sS -o "$work/theme-$name.body" -D "$work/theme-$name.headers" -w '%{http_code}' "$@" "$base$path"
 }
 
 # themehdr 名字 头名：同 hdr，读 $work/theme-<名字>.headers。
@@ -197,7 +195,7 @@ curl -sS -D "$work/admin.headers" -o /dev/null "$base/admin/" && grep -qi '^cont
 [ "$(rpc GetSnapshot '{}')" = 401 ] || { echo "FAIL: anonymous GetSnapshot was not 401"; exit 1; }
 # 公开服务匿名可达；从未保存过外观时明暗为 auto，其余为空（JSON 里省略）。
 [ "$(pubget site-default GetSite '{}')" = 200 ] || { echo "FAIL: anonymous GetSite"; cat "$work/pub-site-default.json"; exit 1; }
-jq -e '. == {theme: "auto"}' "$work/pub-site-default.json" > /dev/null || { echo "FAIL: default site settings"; cat "$work/pub-site-default.json"; exit 1; }
+jq -e '. == {theme: "auto", adminPath: "/admin/"}' "$work/pub-site-default.json" > /dev/null || { echo "FAIL: default site settings"; cat "$work/pub-site-default.json"; exit 1; }
 [ "$(hdr site-default Cache-Control)" = "max-age=300" ] || { echo "FAIL: GetSite Cache-Control"; cat "$work/pub-site-default.headers"; exit 1; }
 login_body=$(jq -nc --arg password "$admin_pw" '{password: $password}')
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login"; cat "$work/Login.json"; exit 1; }
@@ -206,7 +204,7 @@ settings_body='{"settings": {"title": "e2e 状态", "theme": "dark", "accentColo
 [ "$(rpc UpdateSettings "$settings_body")" = 200 ] || { echo "FAIL: UpdateSettings"; cat "$work/UpdateSettings.json"; exit 1; }
 jq -e '.settings.accentColor == "#ff5500"' "$work/UpdateSettings.json" > /dev/null || { echo "FAIL: UpdateSettings echo"; cat "$work/UpdateSettings.json"; exit 1; }
 [ "$(pubget site GetSite '{}')" = 200 ] || { echo "FAIL: GetSite after update"; exit 1; }
-jq -e '. == {title: "e2e 状态", theme: "dark", accentColor: "#ff5500", customCss: ".card { border-width: 2px; }"}' "$work/pub-site.json" > /dev/null || { echo "FAIL: GetSite does not serve the saved settings"; cat "$work/pub-site.json"; exit 1; }
+jq -e '. == {title: "e2e 状态", theme: "dark", accentColor: "#ff5500", customCss: ".card { border-width: 2px; }", adminPath: "/admin/"}' "$work/pub-site.json" > /dev/null || { echo "FAIL: GetSite does not serve the saved settings"; cat "$work/pub-site.json"; exit 1; }
 [ "$(rpc UpdateSettings '{"settings": {"theme": "auto", "customCss": "a</style>"}}')" = 400 ] || { echo "FAIL: CSS containing </ was accepted"; cat "$work/UpdateSettings.json"; exit 1; }
 grep -q 'settings.custom_css must not contain' "$work/UpdateSettings.json" || { echo "FAIL: error must name the field"; cat "$work/UpdateSettings.json"; exit 1; }
 [ "$(pubget site-after-reject GetSite '{}')" = 200 ] && cmp -s "$work/pub-site.json" "$work/pub-site-after-reject.json" || { echo "FAIL: a rejected update changed the site"; cat "$work/pub-site-after-reject.json"; exit 1; }
@@ -220,13 +218,11 @@ run_card_examples "empty hub" ""
 [ "$(curl -sS -o /dev/null -w '%{http_code}' -b "$work/jar" -H 'Content-Type: text/plain' --data '{}' "$base/heron.v1.AdminService/CreateNode")" = 415 ] || { echo "FAIL: text/plain POST was not 415"; exit 1; }
 [ "$(curl -sS -o /dev/null -w '%{http_code}' -b "$work/jar" "$base/heron.v1.AdminService/CreateNode?connect=v1&encoding=json&message=%7B%7D")" = 405 ] || { echo "FAIL: GET was not 405"; exit 1; }
 
-# 主题：上传一个最小主题（包由脚本生成）并启用。主题 origin 上只有 PublicService 与主题文件：/admin/ 与 AdminService
-# 路径 404——带着有效的会话 cookie 也是 404，挂载里就没有它们；主 origin 的 / 仍是内置公开页。删除启用中的主题后
-# 主题 origin 回落内置公开页，与主 origin 的 / 逐字节相同。
+# 同域主题经可信容器承载，包文件必须带文档沙箱，管理 API 拒绝不透明来源。
 mkdir -p "$work/theme/assets"
-printf '%s\n' '<!doctype html><title>e2e theme</title><script src="/assets/app.js"></script>' > "$work/theme/index.html"
+printf '%s\n' '<!doctype html><title>e2e theme</title><script src="./assets/app.js"></script>' > "$work/theme/index.html"
 printf '%s\n' 'console.log("e2e theme")' > "$work/theme/assets/app.js"
-printf '%s\n' '{"id": "e2e-theme", "name": "e2e theme", "version": "1"}' > "$work/theme/theme.json"
+printf '%s\n' '{"id": "e2e-theme", "name": "e2e theme", "version": "1", "sdk": 1}' > "$work/theme/theme.json"
 python3 - "$work/theme" "$work/theme.zip" << 'PY'
 import os, sys, zipfile
 src, out = sys.argv[1:]
@@ -237,21 +233,22 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
             z.write(path, os.path.relpath(path, src))
 PY
 [ "$(rpc UploadTheme "$(jq -nc --arg pkg "$(base64 < "$work/theme.zip" | tr -d '\n')" '{package: $pkg}')")" = 200 ] || { echo "FAIL: UploadTheme"; cat "$work/UploadTheme.json"; exit 1; }
-[ "$(rpc EnableTheme '{"id": "e2e-theme"}')" = 200 ] || { echo "FAIL: EnableTheme"; cat "$work/EnableTheme.json"; exit 1; }
+digest=$(jq -r '.theme.digest' "$work/UploadTheme.json")
+[ "$(rpc EnableTheme "$(jq -nc --arg digest "$digest" '{id: "e2e-theme", digest: $digest}')")" = 200 ] || { echo "FAIL: EnableTheme"; cat "$work/EnableTheme.json"; exit 1; }
 [ "$(rpc ListThemes '{}')" = 200 ] || { echo "FAIL: ListThemes"; exit 1; }
-jq -e --arg origin "http://$theme_host" '.themeOrigin == $origin and (.themes | length) == 1 and .themes[0].id == "e2e-theme" and .themes[0].enabled == true' "$work/ListThemes.json" > /dev/null || { echo "FAIL: ListThemes content"; cat "$work/ListThemes.json"; exit 1; }
-[ "$(themereq index /)" = 200 ] && grep -q '<title>e2e theme</title>' "$work/theme-index.body" || { echo "FAIL: the theme origin did not serve the theme's index.html"; cat "$work/theme-index.body"; exit 1; }
-[ "$(themehdr index X-Content-Type-Options)" = nosniff ] && [ "$(themehdr index Content-Security-Policy)" = "frame-ancestors 'none'" ] && [ "$(themehdr index Cache-Control)" = no-cache ] || { echo "FAIL: theme headers"; cat "$work/theme-index.headers"; exit 1; }
-[ "$(themereq deep /nodes/1)" = 200 ] && cmp -s "$work/theme-index.body" "$work/theme-deep.body" || { echo "FAIL: a theme route did not fall back to index.html"; exit 1; }
-[ "$(themereq asset /assets/app.js)" = 200 ] && grep -q 'e2e theme' "$work/theme-asset.body" || { echo "FAIL: theme asset"; exit 1; }
-[ "$(themereq missing /assets/missing.js)" = 404 ] || { echo "FAIL: a missing theme asset must be 404"; exit 1; }
-[ "$(themereq admin /admin/)" = 404 ] || { echo "FAIL: /admin/ on the theme origin was not 404"; cat "$work/theme-admin.body"; exit 1; }
-[ "$(themereq admin-rpc /heron.v1.AdminService/ListNodes -b "$work/jar" -H 'Content-Type: application/json' --data '{}')" = 404 ] || { echo "FAIL: AdminService on the theme origin was not 404"; cat "$work/theme-admin-rpc.body"; exit 1; }
-[ "$(themereq site '/heron.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D')" = 200 ] && cmp -s "$work/pub-site.json" "$work/theme-site.body" || { echo "FAIL: PublicService.GetSite on the theme origin"; cat "$work/theme-site.body"; exit 1; }
-[ "$(curl -sS -o "$work/pub-index-with-theme.html" -w '%{http_code}' "$base/")" = 200 ] && cmp -s "$work/pub-index.html" "$work/pub-index-with-theme.html" || { echo "FAIL: an enabled theme changed / on the main origin"; exit 1; }
-[ "$(rpc DeleteTheme '{"id": "e2e-theme"}')" = 200 ] || { echo "FAIL: DeleteTheme"; cat "$work/DeleteTheme.json"; exit 1; }
-[ "$(themereq after-delete /)" = 200 ] && cmp -s "$work/pub-index.html" "$work/theme-after-delete.body" || { echo "FAIL: after deleting the enabled theme the theme origin is not the built-in public page"; cat "$work/theme-after-delete.body"; exit 1; }
-echo "theme origin ok"
+jq -e '(.themes | length) == 1 and .themes[0].enabled == true' "$work/ListThemes.json" > /dev/null || { echo "FAIL: ListThemes content"; exit 1; }
+theme_path="/_heron/themes/e2e-theme/$digest"
+[ "$(themereq index /)" = 200 ] && grep -q 'sandbox="allow-scripts"' "$work/theme-index.body" || { echo "FAIL: trusted theme shell"; exit 1; }
+[ "$(themereq deep /nodes/1)" = 200 ] && cmp -s "$work/theme-index.body" "$work/theme-deep.body" || { echo "FAIL: theme deep link"; exit 1; }
+[ "$(themereq document "$theme_path/index.html")" = 200 ] && grep -q '<title>e2e theme</title>' "$work/theme-document.body" || { echo "FAIL: theme document"; exit 1; }
+case "$(themehdr document Content-Security-Policy)" in *"sandbox allow-scripts;"*) ;; *) echo "FAIL: document sandbox"; exit 1 ;; esac
+[ "$(themereq asset "$theme_path/assets/app.js")" = 200 ] && grep -q 'e2e theme' "$work/theme-asset.body" || { echo "FAIL: theme asset"; exit 1; }
+[ "$(themereq missing "$theme_path/assets/missing.js")" = 404 ] || { echo "FAIL: missing theme asset"; exit 1; }
+[ "$(themereq admin /admin/)" = 200 ] || { echo "FAIL: same-domain panel"; exit 1; }
+[ "$(themereq admin-rpc /heron.v1.AdminService/ListNodes -b "$work/jar" -H 'Origin: null' -H 'Content-Type: application/json' --data '{}')" = 403 ] || { echo "FAIL: opaque origin reached admin API"; exit 1; }
+[ "$(rpc DeleteTheme '{"id": "e2e-theme"}')" = 200 ] || { echo "FAIL: DeleteTheme"; exit 1; }
+[ "$(themereq after-delete /)" = 200 ] && cmp -s "$work/pub-index.html" "$work/theme-after-delete.body" || { echo "FAIL: builtin fallback"; exit 1; }
+echo "sandbox theme ok"
 
 register_agent() {
   arch=$1
@@ -581,7 +578,7 @@ ln -s ../outside.txt "$work/site/leak.txt"
 
 # 重启：流量状态、重置日与被 Drain 出的分钟行都必须还在。
 hub_log_from=$(wc -l < "$work/hub.log")
-HERON_OFFLINE_AFTER=12s bin/heron-hub serve --db "$db" --listen "$listen_host:$port" --timezone UTC --public-dir "$work/site" --theme-origin "http://$theme_host" >> "$work/hub.log" 2>&1 &
+HERON_OFFLINE_AFTER=12s bin/heron-hub serve --db "$db" --listen "$listen_host:$port" --timezone UTC --public-dir "$work/site" >> "$work/hub.log" 2>&1 &
 hub=$!
 wait_hub
 # 在登录、续期等写请求之前回读；比较整个有序任务清单，不只比较任务 ID 的集合。
@@ -605,8 +602,6 @@ for path in /leak.txt /%2e%2e/outside.txt; do
   if grep -q 'outside secret' "$work/pub-dir-escape"; then echo "FAIL: $path read a file outside --public-dir"; exit 1; fi
   grep -q 'e2e custom public page' "$work/pub-dir-escape" || { echo "FAIL: $path did not fall back to index.html"; cat "$work/pub-dir-escape"; exit 1; }
 done
-# --public-dir 只接管主 origin：主题 origin 上没有主题时仍是内置公开页。
-[ "$(themereq after-dir /)" = 200 ] && cmp -s "$work/pub-index.html" "$work/theme-after-dir.body" || { echo "FAIL: --public-dir took over the theme origin"; cat "$work/theme-after-dir.body"; exit 1; }
 [ "$(curl -sS -o "$work/admin-after-dir.html" -w '%{http_code}' "$base/admin/")" = 200 ] && grep -q 'src="/admin/assets/' "$work/admin-after-dir.html" || { echo "FAIL: --public-dir shadowed the panel"; exit 1; }
 # 替换目录对不是文件的路径一律回落 index.html（也是 200），只看状态码分不出 RPC 是否被遮蔽：比对正文。
 # 与重启前保存的那份逐字节相同，也就钉住了外观跨重启保留（同一个二进制的 protojson 输出稳定，上面"a rejected update changed the site"那一处同样依赖这一点）。

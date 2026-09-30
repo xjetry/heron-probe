@@ -93,8 +93,8 @@ func TestAPITokenReachesExactlyTheReadMethods(t *testing.T) {
 			continue
 		}
 		if got.status != http.StatusForbidden || got.code != "permission_denied" ||
-			!strings.Contains(got.message, name) || !strings.Contains(got.message, "read-only") {
-			t.Errorf("%s: %+v, want 403 permission_denied naming the method and read-only", name, got)
+			!strings.Contains(got.message, name) || !strings.Contains(got.message, "ExecuteChange") {
+			t.Errorf("%s: %+v, want 403 permission_denied naming the method and the preauthorized write entry", name, got)
 		}
 	}
 }

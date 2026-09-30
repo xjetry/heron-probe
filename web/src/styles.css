@@ -14,7 +14,7 @@ body { margin: 0; }
 a { color: var(--accent); text-decoration: none; }
 .layout { min-height: 100vh; display: flex; flex-direction: column; }
 .nav { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; padding: 0.6rem 1rem; border-bottom: 1px solid var(--line); background: var(--card); }
-.panel-nav > a, .panel-nav > button { white-space: nowrap; }
+.panel-nav a, .panel-nav > button { white-space: nowrap; }
 .brand { display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 600; }
 .heron-mark { display: block; flex: none; }
 .nav .brand { margin-right: 1rem; }
@@ -55,11 +55,11 @@ table.nodes th, table.nodes td { text-align: left; padding: 0.5rem 0.75rem; bord
 /* 管理表的自由文本不能决定整张表的宽度；移动端保留每项数据与标签，按节点收拢为卡片。 */
 table.node-management { table-layout: fixed; }
 table.node-management th, table.node-management td { white-space: normal; overflow-wrap: anywhere; vertical-align: top; padding: .5rem; }
-table.node-management th:nth-child(1) { width: 3.5rem; }
-table.node-management th:nth-child(3) { width: 3rem; }
-table.node-management th:nth-child(6) { width: 14%; }
-table.node-management th:nth-child(7), table.node-management th:nth-child(10) { width: 5.5rem; }
-table.node-management th:nth-child(11) { width: 5rem; }
+table.node-management th[data-column="order"] { width: 3.5rem; }
+table.node-management th[data-column="public"] { width: 3rem; }
+table.node-management th[data-column="note"] { width: 14%; }
+table.node-management th[data-column="reset"], table.node-management th[data-column="created"] { width: 5.5rem; }
+table.node-management th[data-column="actions"] { width: 5rem; }
 .node-management td[data-column="order"] button { min-width: 1.2rem; min-height: 2rem; }
 .node-management td[data-column="actions"] button { min-height: 2rem; }
 .node-management input:not([type="checkbox"]), .node-management select, .node-management textarea { width: 100%; min-width: 0; }
@@ -88,6 +88,8 @@ tr.offline td { color: var(--muted); }
 .chart { width: 100%; }
 .picks { display: flex; flex-wrap: wrap; gap: .5rem 1rem; border: 1px solid var(--line); padding: .5rem .75rem; }
 .edit-form { white-space: normal; }
+.edit-form label { min-width: 0; max-width: 100%; }
+.edit-form input, .edit-form select, .edit-form textarea { min-width: 0; max-width: 100%; }
 fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .picks label, label.inline { display: inline-flex; align-items: center; gap: .3rem; }
 .edit-form textarea { width: 100%; min-height: 6rem; font-family: ui-monospace, monospace; }

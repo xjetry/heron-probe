@@ -29,6 +29,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/traffic"
 	"github.com/xjetry/heron-probe/internal/probelimit"
+	"github.com/xjetry/heron-probe/internal/update"
 )
 
 // Report 的 protobuf 请求由 Metrics 数值标量、boot_id、Facts、有界版本号/摘要和探测结果组成。
@@ -60,6 +61,10 @@ const (
 type Config struct {
 	TTL            time.Duration
 	TrustedProxies []netip.Prefix
+	Updates        interface {
+		Observe(int64, *heronv1.UpdateStatus) *heronv1.UpdateTask
+		Forget(int64)
+	}
 }
 
 type storeWriter interface {
@@ -239,6 +244,9 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[heronv1.Repor
 	if err := validateFacts(req.Msg.GetFacts()); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	if err := update.ValidateStatus(req.Msg.GetUpdate()); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
 	// 来源地址只取 hub 在这次请求上看到的对端，经 auth.ClientIP 按 --trusted-proxies 解析，与限流、登录锁定同一口径：
 	//   - 不读 CF-Connecting-IP 之类的旁路头：任何客户端都能自己带上它们，读了就等于采信请求方自述；
 	//   - 不采信 agent 自报的地址：那是 agent 的自述，与"hub 看到什么"是两个事实，混在一列里无法区分。
@@ -257,6 +265,9 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[heronv1.Repor
 	resp := &heronv1.ReportResponse{
 		ReportIntervalMs: agentwire.ReportIntervalMs(s.cfg.TTL),
 		WantFacts:        want,
+	}
+	if s.cfg.Updates != nil {
+		resp.Update = s.cfg.Updates.Observe(id, req.Msg.Update)
 	}
 	// 电平触发：agent 报它持有的版本，hub 只在不一致时下发整份清单；空清单让 agent 停掉已消失的任务。
 	if req.Msg.GetTasksVersion() != s.tasks.Version() {
@@ -323,6 +334,9 @@ func (s *Service) Forget(nodeID int64) {
 	// 持 mu 等待可能形成等待环，持 stateMu 或 mu 会挡住其他节点的 Report，
 	// 持 pendingMu 会挡住全体节点的分钟刷出，因此必须在所有 ingest 锁之外调用。
 	s.tasks.Forget(nodeID)
+	if s.cfg.Updates != nil {
+		s.cfg.Updates.Forget(nodeID)
+	}
 	s.pendingMu.Lock()
 	defer s.pendingMu.Unlock()
 	s.stateMu.Lock()

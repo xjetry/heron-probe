@@ -6,6 +6,7 @@ import (
 	"math"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/agentwire"
 	"github.com/xjetry/heron-probe/internal/hub/sanitize"
 	"github.com/xjetry/heron-probe/internal/probelimit"
 )
@@ -103,7 +104,7 @@ func validateFacts(f *heronv1.Facts) error {
 			}
 		}
 	}
-	return nil
+	return agentwire.ValidateNetwork(f.GetNetwork())
 }
 
 func sanitizeFacts(f *heronv1.Facts) {

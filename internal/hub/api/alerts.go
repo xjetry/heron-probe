@@ -47,12 +47,24 @@ func ruleProto(r store.AlertRule) *heronv1.AlertRule {
 	return &heronv1.AlertRule{Id: r.ID, Name: r.Name, Kind: enumFor(alertKinds, r.Kind), Enabled: r.Enabled, AllNodes: r.AllNodes, NodeIds: r.NodeIDs, ChannelIds: r.ChannelIDs, TaskId: r.TaskID, Metric: enumFor(probeMetrics, r.Metric), Threshold: r.Threshold, ForMinutes: uint32(r.ForMinutes), DaysBefore: uint32(r.DaysBefore), CreatedAt: r.CreatedAt.Unix(), ResourceMetric: enumFor(resourceMetrics, r.ResourceMetric), RecoveryThreshold: r.RecoveryThreshold, SelectorTags: r.SelectorTags}
 }
 
-func (s *Service) ListAlertRules(_ context.Context, _ *connect.Request[heronv1.ListAlertRulesRequest]) (*connect.Response[heronv1.ListAlertRulesResponse], error) {
+func (s *Service) ListAlertRules(ctx context.Context, _ *connect.Request[heronv1.ListAlertRulesRequest]) (*connect.Response[heronv1.ListAlertRulesResponse], error) {
+	rules, err := s.store.ListVisibleAlertRules(ctx)
+	if err != nil {
+		return nil, internalError("list alert rules")
+	}
 	out := &heronv1.ListAlertRulesResponse{}
-	for _, r := range s.alerts.Rules() {
+	visible := map[int64]bool{}
+	for _, r := range rules {
+		visible[r.ID] = true
 		out.Rules = append(out.Rules, ruleProto(r))
 	}
 	for _, state := range s.alerts.States() {
+		if !visible[state.RuleID] {
+			continue
+		}
+		if p, ok := store.Principal(ctx); ok && !p.AllowsNode(state.NodeID) {
+			continue
+		}
 		out.States = append(out.States, &heronv1.AlertStateEntry{RuleId: state.RuleID, NodeId: state.NodeID, State: string(state.State), SinceAt: state.SinceAt.Unix(), Flapping: state.Flapping})
 	}
 	return connect.NewResponse(out), nil

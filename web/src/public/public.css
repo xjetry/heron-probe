@@ -1,13 +1,16 @@
 /* 公开页在共用调色板（../styles.css）之上的布局：站点标题与节点卡片。站点设置的自定义 CSS 排在这之后。 */
 .nav .brand { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--fg); font-weight: 600; }
 .nav .brand .logo { height: 24px; width: auto; }
+.nav .admin { margin-left: auto; color: var(--muted); }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 1rem; }
 .node-card h2 { display: flex; align-items: center; margin: 0 0 0.25rem; font-size: 1rem; }
 .node-card.offline { opacity: 0.7; }
 .node-card .facts { display: grid; grid-template-columns: auto 1fr; gap: 0.35rem 0.75rem; align-items: center; margin: 0.5rem 0; }
 .node-card .facts dd { margin: 0; }
 .view-bar { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; margin: 0 0 1rem; }
-.tag-bar, .view-options { display: flex; flex-wrap: wrap; gap: .4rem; }
+.filter-bar, .view-options { display: flex; flex-wrap: wrap; gap: .4rem; }
+.filter-bar { flex-basis: 100%; }
+@media (pointer: coarse) { .filter-bar .chip { min-height: 44px; min-width: 44px; } }
 /* Shift+单击会在按钮文字上触发浏览器的范围选中，选中高亮与点击语义无关，关掉。 */
 .chip { user-select: none; padding: 0 .6rem; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--fg); font-size: 12px; cursor: pointer; }
 .chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--bg); }

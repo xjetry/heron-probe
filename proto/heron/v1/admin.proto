@@ -7,11 +7,40 @@ option go_package = "github.com/xjetry/heron-probe/gen/heron/v1;heronv1";
 import "heron/v1/types.proto";
 import "heron/v1/access.proto";
 import "heron/v1/query.proto";
+import "heron/v1/update.proto";
+import "google/protobuf/any.proto";
+import "google/protobuf/field_mask.proto";
 
 // 管理面板与 agent → hub。每个方法以 heron.v1.access 声明准入口径（见 access.proto），
 // 由挂载时绑定的拦截器裁决。全部方法都是 unary，且没有一个标为无副作用：本服务不接受 GET，
 // 这是抵御跨站请求伪造的几条各自独立的事实之一。
 service AdminService {
+  // 预览和执行共用业务校验。执行需 request_id；修改已有资源必须提供预览的 expected_version。
+  // 同一主体和 request_id 只提交一次；重试返回回执，result 为空，不重放一次性秘密。
+  rpc ExecuteChange(ExecuteChangeRequest) returns (ExecuteChangeResponse) {
+    option (heron.v1.access) = ACCESS_CHANGE;
+  }
+  // API token 只能查询自己的回执；会话可指定 owner_id。回执不含凭据。
+  rpc ListOperations(ListOperationsRequest) returns (ListOperationsResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 仅返回渠道 id、名称和类型，不含地址、模板和密钥。
+  rpc ListNotifyChannelRefs(ListNotifyChannelRefsRequest) returns (ListNotifyChannelRefsResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 读取 hub 与节点的更新能力和最新任务。检查官方版本需显式 check_latest。
+  rpc GetUpdates(GetUpdatesRequest) returns (GetUpdatesResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 创建单目标更新。node_id=0 为 hub；只允许比当前版本新的官方正式版。
+  // 节点离线时排队，24 小时过期；同一目标不能同时有多个活动任务。
+  rpc StartUpdate(StartUpdateRequest) returns (StartUpdateResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 仅可取消尚未下发的 queued 节点任务；已下发或 hub 任务不能取消。
+  rpc CancelUpdate(CancelUpdateRequest) returns (CancelUpdateResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
   // 用管理员密码换取会话 cookie（Set-Cookie 在响应头里）。
   rpc Login(LoginRequest) returns (LoginResponse) {
     option (heron.v1.access) = ACCESS_LOGIN;
@@ -187,10 +216,8 @@ service AdminService {
   rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
   }
-  // 公开页主题（第三方静态前端，只调 PublicService）在独立 origin 下托管。hub 没有配 --theme-origin 时下面五个方法
-  // 一律 FailedPrecondition：与面板同源的主题脚本能带着管理员的会话调本服务，差的是一个单独的域名。
-
-  // 上传一个主题包（zip，至多 8 MiB）并整包安装；包根的 theme.json 的 id 已安装即整体替换（启用状态沿用）。
+  // 主题在同域的受限沙箱运行，安装与启用分离。
+  // 上传一个主题包（zip，至多 8 MiB）并安装不可变版本，不改变当前公开页。
   // 包的约束（条目数、展开大小、条目类型与路径、清单字段）见 UploadThemeRequest；任一不满足即 InvalidArgument，
   // 错误写明条目或字段与原因，什么都不写入。主题数已满（20）且 id 是新的时 ResourceExhausted。
   rpc UploadTheme(UploadThemeRequest) returns (UploadThemeResponse) {
@@ -200,17 +227,37 @@ service AdminService {
   rpc ListThemes(ListThemesRequest) returns (ListThemesResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
   }
-  // 让一个主题成为主题 origin 上的公开页，其余主题随之停用；id 为空即不启用任何主题（主题 origin 服务内置公开页）。
+  // 启用指定摘要的主题版本；id 为空即切回内置公开页。
   // 没有这个主题时 NotFound，启用状态不变。
   rpc EnableTheme(EnableThemeRequest) returns (EnableThemeResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
   }
-  // 删除主题及其全部文件；删的是启用中的主题时，主题 origin 回落到内置公开页。没有这个主题时 NotFound。
+  // 删除主题及其全部文件；删的是启用中的主题时回落到内置公开页。没有这个主题时 NotFound。
   rpc DeleteTheme(DeleteThemeRequest) returns (DeleteThemeResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
   }
   // 主题清单 preview 指向的预览图。主题不存在或清单没有给 preview 时 NotFound。
   rpc GetThemePreview(GetThemePreviewRequest) returns (GetThemePreviewResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 删除未使用版本，不允许删除当前或上一回滚版本。
+  rpc DeleteThemeVersion(DeleteThemeVersionRequest) returns (DeleteThemeVersionResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 读取公开 GitHub 仓库的 Release 列表，不安装任何内容。
+  rpc ListThemeReleases(ListThemeReleasesRequest) returns (ListThemeReleasesResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 安装明确选定的 Release ZIP 资产；不执行源码构建，不自动启用。
+  rpc InstallThemeRelease(InstallThemeReleaseRequest) returns (InstallThemeReleaseResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 为当前会话创建短期交互预览；不会公开或启用该版本。
+  rpc PreviewTheme(PreviewThemeRequest) returns (PreviewThemeResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 下载保留的原始 ZIP；旧 SDK 归档也可下载，但不因此取得执行权限。
+  rpc GetThemePackage(GetThemePackageRequest) returns (GetThemePackageResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
   }
   // 库的逻辑大小、每张表的行数与存储健康读数，与 heron-hub stats 同一来源。
@@ -235,6 +282,17 @@ service AdminService {
   }
 }
 
+message GetUpdatesRequest { bool check_latest = 1; }
+message GetUpdatesResponse {
+  repeated UpdateTarget targets = 1;
+  string latest_version = 2;
+  string check_error = 3;
+}
+message StartUpdateRequest { int64 node_id = 1; string version = 2; }
+message StartUpdateResponse { UpdateTask task = 1; }
+message CancelUpdateRequest { int64 node_id = 1; string id = 2; }
+message CancelUpdateResponse {}
+
 message LoginRequest {
   string password = 1;
   string otp = 2;
@@ -258,9 +316,16 @@ message SecurityCredential {
 }
 message GetSecurityResponse {
   bool totp_enabled = 1;
+  // 服务端允许在当前来源使用 Passkey；客户端仍须检查 HTTPS 安全上下文及 WebAuthn 支持。
   bool passkey_available = 2;
   repeated SecurityCredential passkeys = 3;
   uint32 recovery_codes_remaining = 4;
+  // 已持久绑定的规范 Origin，首次注册成功后保存；空表示未绑定或旧凭据尚未迁移，不授权任意域名。
+  string origin = 5;
+  // 从 Host、可信协议及 Origin 检查得到的当前候选来源；无法确定时为空。不会自行覆盖已存绑定。
+  string current_origin = 6;
+  // 不可用原因标识，空表示服务端未发现不可用条件；非空时客户端应禁用普通 Passkey 操作并展示原因。
+  string unavailable_reason = 7;
 }
 enum SecurityActionKind {
   SECURITY_ACTION_KIND_UNSPECIFIED = 0;
@@ -273,6 +338,8 @@ enum SecurityActionKind {
   SECURITY_ACTION_KIND_REAUTH_BEGIN = 7;
   SECURITY_ACTION_KIND_REAUTH_FINISH = 8;
   SECURITY_ACTION_KIND_RECOVERY_REGENERATE = 9;
+  // 用密码及已启用的第二因素开始换域注册，不接受 proof_token。完成 PASSKEY_REGISTER 才替换绑定及旧凭据。
+  SECURITY_ACTION_KIND_PASSKEY_REBIND_BEGIN = 10;
 }
 message SecurityActionRequest {
   SecurityActionKind action = 1;
@@ -859,12 +926,24 @@ message Theme {
   string id = 1;
   string name = 2;
   string version = 3;
-  // 最近一次上传（安装或替换）的 Unix 秒。
+  // 此不可变产物首次安装的 Unix 秒；重复安装相同摘要不更新。
   int64 uploaded_at = 4;
   // 至多一个主题为真。
   bool enabled = 5;
-  // 清单给了 preview：GetThemePreview 可取。
+  // 清单给了 preview；仅支持的 SDK 版本可通过 GetThemePreview 取图。
   bool has_preview = 6;
+  // 原始 ZIP 的 SHA-256 小写十六进制，是版本身份而非作者可信证明；历史记录缺原包时为空。
+  string digest = 7;
+  // 清单的 SDK 协议版本；0 表示旧包未声明，仅归档，不可执行。
+  uint32 sdk = 8;
+  // 当前回滚引用指向此版本；与 enabled 一样受单版本删除保护。
+  bool previous = 9;
+  // 曾被启用的版本，其保留文件可匿名读取；false 的待启用版本只可经短期预览能力访问。
+  bool published = 10;
+  // 安装来源的 owner/repo、Release tag 与资产名；本地上传为空，不从这些字段自动下载或更新。
+  string repository = 11;
+  string release = 12;
+  string asset = 13;
 }
 
 message UploadThemeRequest {
@@ -873,7 +952,7 @@ message UploadThemeRequest {
   // 以 / 分隔，不得含 ..、空段、反斜杠或以 . 开头的段（点文件不会被服务，__MACOSX/ 下的 ._* 也在其列）；同一路径
   // 不得出现两次；压缩方式只接受 store 与 deflate。包根必须有 index.html 与 theme.json。theme.json 是一个 JSON 对象，
   // 只有这些字段：id（[a-z0-9-]{1,32}，不得是 builtin）、name 与 version（去掉首尾空白后非空，至多 64 个字符，
-  // 不含控制字符）、可选的 preview（包内 .png、.jpg、.jpeg 或 .webp 文件的路径，内容必须真是该类型的图片）。
+  // 不含控制字符）、sdk（必需，当前只接受 1）、可选的 preview（包内 .png、.jpg、.jpeg 或 .webp 文件的路径，内容必须真是该类型的图片）。
   bytes package = 1;
   // 非空表示这是对已安装主题的更新：theme.json 的 id 必须等于它（InvalidArgument），且该主题必须已安装（NotFound）。
   // 更新时带上它，包装错了主题或目标已被删掉时不会静默装出另一个主题。
@@ -885,32 +964,77 @@ message UploadThemeResponse {
 
 message ListThemesRequest {}
 message ListThemesResponse {
+  // 每个保留产物一项，同一个主题 id 可以出现多次。
   repeated Theme themes = 1;
-  // hub 的 --theme-origin，规范形态 scheme://host[:port]：启用中的主题在这个 origin 的根路径上托管，没有启用中的主题时
-  // 那里是内置公开页。
-  string theme_origin = 2;
-  // hub 给了 --public-dir：面板所在 origin 的公开页由那个目录接管，与主题无关；启用主题只改变 theme_origin 上的页面。
+  reserved 2;
+  reserved "theme_origin";
+  // 可信目录覆盖公开页时不能启用托管主题。
   bool public_dir = 3;
 }
 
 message EnableThemeRequest {
-  // 空串表示不启用任何主题。
+  // 非空时必须与 digest 一起指定精确产物；两者都为空表示切回内置页。
   string id = 1;
+  // 原始 ZIP 的 SHA-256，不按 version 标签或最新安装版本推断。
+  string digest = 2;
 }
 message EnableThemeResponse {}
 
 message DeleteThemeRequest {
+  // 删除这个主题的全部版本；若为当前主题则回落内置页，同时清除指向它的回滚引用。
   string id = 1;
 }
 message DeleteThemeResponse {}
 
 message GetThemePreviewRequest {
   string id = 1;
+  string digest = 2;
 }
 message GetThemePreviewResponse {
   bytes content = 1;
   // image/png、image/jpeg 或 image/webp。
   string content_type = 2;
+}
+
+message DeleteThemeVersionRequest {
+  string id = 1;
+  // 精确产物摘要，不能为空；当前或上一版本禁止单独删除。
+  string digest = 2;
+}
+message DeleteThemeVersionResponse {}
+message ListThemeReleasesRequest {
+  // 公开仓库的 owner/repo、仓库 URL 或 Release URL；指定 Release 时只查询该 tag。
+  string repository = 1;
+}
+message ThemeReleaseAsset { int64 id = 1; string name = 2; int64 size = 3; }
+message ThemeRelease { string name = 1; string tag = 2; bool prerelease = 3; repeated ThemeReleaseAsset assets = 4; }
+message ListThemeReleasesResponse { repeated ThemeRelease releases = 1; }
+message InstallThemeReleaseRequest {
+  string repository = 1;
+  // 必须显式选择 Release 与 ZIP 资产；hub 重新验证资产归属，不接受任意下载 URL。
+  string tag = 2;
+  int64 asset_id = 3;
+  // 与 UploadThemeRequest.expect_id 相同；为空时不要求目标主题已存在。
+  string expect_id = 4;
+}
+message InstallThemeReleaseResponse { Theme theme = 1; }
+message PreviewThemeRequest {
+  string id = 1;
+  // 精确产物摘要；预览不发布或启用该版本，仅支持 SDK 1 且公开页开启时可用。
+  string digest = 2;
+}
+message PreviewThemeResponse {
+  // 同源相对 URL，携带短期能力，最长 5 分钟。主题变更、所属会话失效或同会话新建预览会撤销它；公开页关闭时不可用。
+  string url = 1;
+}
+message GetThemePackageRequest {
+  string id = 1;
+  // 精确产物摘要；允许下载旧 SDK 的归档包，不授予运行权限。
+  string digest = 2;
+}
+message GetThemePackageResponse {
+  // 安装时的原始 ZIP 字节；不会重新打包主题文件。
+  bytes package = 1;
 }
 
 message GetStorageStatsRequest {}
@@ -1026,6 +1150,7 @@ message ApiToken {
   int64 created_at = 3;
   // 最近一次用于成功鉴权的墙钟 Unix 秒，精度一分钟；从未使用则缺失。
   optional int64 last_used_at = 4;
+  TokenGrant grant = 5;
 }
 
 message ListApiTokensRequest {}
@@ -1037,6 +1162,8 @@ message ListApiTokensResponse {
 message CreateApiTokenRequest {
   // 1–64 字符（去掉控制字符与首尾空白之后），不要求唯一。
   string name = 1;
+  // 缺失保持全站只读。显式 grant 的 all_nodes=false 且 node_ids 为空表示没有现有节点权限。
+  TokenGrant grant = 2;
 }
 message CreateApiTokenResponse {
   ApiToken api_token = 1;
@@ -1062,3 +1189,75 @@ message ProtoFile {
   string path = 1;
   string content = 2;
 }
+
+enum TokenPermission {
+  TOKEN_PERMISSION_UNSPECIFIED = 0;
+  TOKEN_PERMISSION_CONFIGURE = 1;
+  TOKEN_PERMISSION_CREATE = 2;
+  TOKEN_PERMISSION_REGISTER = 3;
+  TOKEN_PERMISSION_ROTATE = 4;
+  TOKEN_PERMISSION_DELETE = 5;
+  TOKEN_PERMISSION_UPDATE = 6;
+}
+message TokenGrant {
+  repeated TokenPermission permissions = 1;
+  bool all_nodes = 2;
+  repeated int64 node_ids = 3;
+}
+
+message ExecuteChangeRequest {
+  // 1–128 位 ASCII 字母、数字、横线或下划线，执行时必填，永不复用。
+  string request_id = 1;
+  bool preview = 2;
+  string expected_version = 3;
+  // UpdateNode、修改已有探测和告警时必填；路径相对对应操作消息，不允许改 id。
+  google.protobuf.FieldMask update_mask = 4;
+  oneof change {
+    CreateNodeRequest create_node = 10;
+    UpdateNodeRequest update_node = 11;
+    DeleteNodeRequest delete_node = 12;
+    RotateNodeTokenRequest rotate_node_token = 13;
+    OpenRegisterWindowRequest open_register_window = 14;
+    CloseRegisterWindowRequest close_register_window = 15;
+    SaveProbeTaskRequest save_probe_task = 16;
+    DeleteProbeTaskRequest delete_probe_task = 17;
+    SaveAlertRuleRequest save_alert_rule = 18;
+    DeleteAlertRuleRequest delete_alert_rule = 19;
+    StartUpdateRequest start_update = 20;
+    CancelUpdateRequest cancel_update = 21;
+    DeleteTagRequest delete_tag = 22;
+  }
+}
+message Operation {
+  int64 owner_id = 1;
+  string request_id = 2;
+  string action = 3;
+  int64 resource_id = 4;
+  // 白名单配置快照，不含节点 token、注册 key、通知密钥。
+  string before_json = 5;
+  string after_json = 6;
+  // 预览为 0；非 0 表示业务事务和回执一并提交，不表示异步节点更新已安装成功。
+  int64 committed_at = 7;
+  // 已提交回执的稳定标识，恢复后数字 owner_id 和 request_id 相同的不同凭据历史仍可区分；预览为空。
+  string id = 8;
+}
+message ExecuteChangeResponse {
+  Operation operation = 1;
+  string expected_version = 2;
+  bool replayed = 3;
+  // 首次执行的原业务响应；可能含一次性秘密。预览和重试不返回。
+  google.protobuf.Any result = 4;
+}
+message ListOperationsRequest {
+  int64 owner_id = 1;
+  string request_id = 2;
+  uint32 limit = 3;
+}
+message ListOperationsResponse { repeated Operation operations = 1; }
+message ListNotifyChannelRefsRequest {}
+message NotifyChannelRef {
+  int64 id = 1;
+  string name = 2;
+  ChannelKind kind = 3;
+}
+message ListNotifyChannelRefsResponse { repeated NotifyChannelRef channels = 1; }

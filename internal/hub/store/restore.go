@@ -105,6 +105,13 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 	if _, err = tx.ExecContext(ctx, "DELETE FROM main.admin_session"); err != nil {
 		return result, err
 	}
+	// 更新授权不随配置快照恢复；目标库残留的排队任务也必须撤下。
+	if _, err = tx.ExecContext(ctx, "DELETE FROM main.node_update"); err != nil {
+		return result, err
+	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM main.register_window"); err != nil {
+		return result, err
+	}
 	for _, src := range sources {
 		for _, table := range src.tables {
 			columns, e := restoreColumnList(ctx, tx, table)
@@ -112,7 +119,7 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 				return result, e
 			}
 			insert := "INSERT INTO "
-			if table == "restore_record" {
+			if table == "restore_record" || table == "operation" {
 				// 审计事件以创建时的 id 标识，回退配置不能删除目标已有的历史，重复快照也不重复记账。
 				insert = "INSERT OR IGNORE INTO "
 			} else {
@@ -353,6 +360,39 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			} else {
 				statements = migrationV21Metrics
 			}
+		case 22:
+			if layer == "config" {
+				if err := migrateThemeSnapshot(tx); err != nil {
+					return fmt.Errorf("migrate config themes: %w", err)
+				}
+			} else {
+				var columns int
+				if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('snapshot_meta') WHERE name='format_version'").Scan(&columns); err != nil {
+					return err
+				}
+				if columns == 1 {
+					var format int
+					if err := tx.QueryRowContext(ctx, "SELECT format_version FROM snapshot_meta").Scan(&format); err != nil {
+						return err
+					}
+					if format != 2 {
+						return fmt.Errorf("metrics snapshot unsupported format_version=%d", format)
+					}
+					statements = []string{"UPDATE snapshot_meta SET format_version=3"}
+				} else {
+					statements = []string{"ALTER TABLE snapshot_meta ADD COLUMN format_version INTEGER NOT NULL DEFAULT 3"}
+				}
+			}
+		case 23:
+			if layer == "config" {
+				statements = migrationV23
+			}
+		case 24:
+			// node_update 不属于任一备份层。
+		case 25:
+			if layer == "config" {
+				statements = migrationV25Config
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}
@@ -460,22 +500,30 @@ func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []st
 	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('snapshot_meta', ?) WHERE name='format_version'", layer).Scan(&formatColumn); err != nil {
 		return 0, err
 	}
-	if formatColumn == 1 {
-		var format int
-		if err := tx.QueryRowContext(ctx, "SELECT format_version FROM "+layer+".snapshot_meta").Scan(&format); err != nil {
+	if formatColumn != 1 {
+		return 0, fmt.Errorf("%s snapshot missing format_version", layer)
+	}
+	var format int
+	if err := tx.QueryRowContext(ctx, "SELECT format_version FROM "+layer+".snapshot_meta").Scan(&format); err != nil {
+		return 0, err
+	}
+	if format != 3 {
+		return 0, fmt.Errorf("%s snapshot unsupported format_version=%d", layer, format)
+	}
+	if layer == "config" {
+		if err := validateSnapshotNetworks(ctx, tx); err != nil {
 			return 0, err
 		}
-		if format != 2 {
-			return 0, fmt.Errorf("%s snapshot unsupported format_version=%d", layer, format)
+		var unmatched int
+		if err := tx.QueryRowContext(ctx, `SELECT
+				(SELECT count(*) FROM config.theme_version v WHERE NOT EXISTS(SELECT 1 FROM config.snapshot_theme s WHERE s.theme_id=v.theme_id AND s.digest=v.digest)) +
+				(SELECT count(*) FROM config.snapshot_theme s WHERE NOT EXISTS(SELECT 1 FROM config.theme_version v WHERE s.theme_id=v.theme_id AND s.digest=v.digest)) +
+				(SELECT count(*) FROM config.theme t WHERE NOT EXISTS(SELECT 1 FROM config.theme_version v WHERE v.theme_id=t.id)) +
+				(SELECT count(*) FROM config.theme_version v WHERE NOT EXISTS(SELECT 1 FROM config.theme t WHERE v.theme_id=t.id))`).Scan(&unmatched); err != nil {
+			return 0, err
 		}
-		if layer == "config" {
-			var unmatched int
-			if err := tx.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM config.theme WHERE id NOT IN (SELECT theme_id FROM config.snapshot_theme)) + (SELECT count(*) FROM config.snapshot_theme WHERE theme_id NOT IN (SELECT id FROM config.theme))").Scan(&unmatched); err != nil {
-				return 0, err
-			}
-			if unmatched != 0 {
-				return 0, errors.New("snapshot theme references do not match configuration")
-			}
+		if unmatched != 0 {
+			return 0, errors.New("snapshot theme references do not match configuration")
 		}
 	}
 	if err := tx.QueryRowContext(ctx, "PRAGMA "+layer+".page_size").Scan(&size); err != nil {
@@ -485,6 +533,25 @@ func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []st
 		return 0, fmt.Errorf("%s snapshot page_size=%d; expected page_size=%d", layer, size, pageSize)
 	}
 	return at.Int64, nil
+}
+
+func validateSnapshotNetworks(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, "SELECT node_id,network FROM config.node_facts")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var text string
+		if err := rows.Scan(&id, &text); err != nil {
+			return err
+		}
+		if _, err := decodeNetwork(text); err != nil {
+			return fmt.Errorf("config node %d network: %w", id, err)
+		}
+	}
+	return rows.Err()
 }
 
 func restoreSequences(ctx context.Context, tx *sql.Tx, sources []string) error {
