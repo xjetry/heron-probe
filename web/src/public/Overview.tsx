@@ -1,16 +1,13 @@
 import { useQuery } from "@connectrpc/connect-query";
 import { useState } from "react";
-import { Link } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
-import { Bar, Missing, ratio } from "../components/Bar";
-import { CountryBadge } from "../components/CountryBadge";
-import { PublicService, type PublicNode } from "../gen/heron/v1/public_pb";
-import { expired, expiryText, priceText, sortByExpiry } from "../lib/billing";
-import { ago, bytes, duration, percent } from "../lib/format";
+import { PublicService } from "../gen/heron/v1/public_pb";
+import { sortByExpiry } from "../lib/billing";
 import { POLL_MS } from "../lib/poll";
 import { matchesTags, sameTag } from "../lib/tags";
 import { FilterBar } from "./FilterBar";
 import { ViewOptions } from "./ViewOptions";
+import { NodeCard } from "./NodeCard";
 
 export function PublicOverview() {
   const snap = useQuery(PublicService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
@@ -36,7 +33,7 @@ export function PublicOverview() {
   const nodes = byExpiry ? sortByExpiry(filtered) : filtered;
   const online = nodes.filter((n) => n.online).length;
   return (
-    <section>
+    <section className="public-overview">
       <header className="row">
         <h1>节点</h1>
         <span className="muted">{online} / {nodes.length} 在线</span>
@@ -55,40 +52,5 @@ export function PublicOverview() {
         {nodes.map((n) => <NodeCard key={String(n.id)} node={n} now={now} />)}
       </div>
     </section>
-  );
-}
-
-// 卡片内容按 §10：名称、国家 / 地区徽章、在线、系统与架构、CPU、内存、磁盘、网速、运行时长、本周期流量，以及填了才显示的费用与到期。
-function NodeCard({ node, now }: { node: PublicNode; now: number }) {
-  const m = node.metrics;
-  const f = node.facts;
-  const price = priceText(node.billing);
-  const expiry = expiryText(node.billing);
-  return (
-    <article className={`card node-card ${node.online ? "online" : "offline"}`} aria-label={node.name}>
-      <h2>
-        <span className={`dot ${node.online ? "ok" : "bad"}`} role="img" aria-label={node.online ? "在线" : "离线"} />
-        <Link to={`/nodes/${node.id}`}>{node.name}</Link>
-        {node.country && <>{" "}<CountryBadge code={node.country} /></>}
-      </h2>
-      <p className="muted">{f ? [f.os, f.arch].filter(Boolean).join(" · ") : "系统未知"}</p>
-      <dl className="facts">
-        <dt>CPU</dt>
-        <dd>{m?.cpuPct !== undefined ? <Bar value={m.cpuPct} label={percent(m.cpuPct)} /> : <Missing />}</dd>
-        <dt>内存</dt>
-        <dd>{m?.memUsed !== undefined && m.memTotal ? <Bar value={ratio(m.memUsed, m.memTotal)} label={`${bytes(m.memUsed)} / ${bytes(m.memTotal)}`} /> : <Missing />}</dd>
-        <dt>磁盘</dt>
-        <dd>{m?.diskUsed !== undefined && m.diskTotal ? <Bar value={ratio(m.diskUsed, m.diskTotal)} label={`${bytes(m.diskUsed)} / ${bytes(m.diskTotal)}`} /> : <Missing />}</dd>
-        <dt>网速</dt>
-        <dd>{m?.netRxBps !== undefined && m.netTxBps !== undefined ? `↓ ${bytes(m.netRxBps)}/s ↑ ${bytes(m.netTxBps)}/s` : <Missing />}</dd>
-        <dt>运行</dt>
-        <dd>{m?.uptimeS !== undefined ? duration(m.uptimeS) : <Missing />}</dd>
-        <dt>本周期</dt>
-        <dd>{node.traffic ? `↓ ${bytes(node.traffic.periodRx)} ↑ ${bytes(node.traffic.periodTx)}` : <Missing />}</dd>
-        {price && <><dt>费用</dt><dd>{price}</dd></>}
-        {expiry && <><dt>到期</dt><dd className={expired(node.billing) ? "error" : undefined}>{expiry}</dd></>}
-      </dl>
-      <p className="muted">{node.lastSeenAt !== undefined ? `最近上报 ${ago(node.lastSeenAt, now)}` : "从未上报"}</p>
-    </article>
   );
 }
