@@ -43,6 +43,21 @@ var migrations = map[int]func(*sql.Tx) error{
 	22: migrateThemeVersions,
 	23: execAll(migrationV23),
 	24: execAll([]string{ddlNodeUpdateV24}),
+	25: execAll(append(append([]string{}, migrationV25Config...),
+		"ALTER TABLE register_window RENAME TO register_window_old", ddlRegisterWindowV25,
+		"INSERT INTO register_window SELECT 0, key_hash, expires_at, remaining FROM register_window_old",
+		"DROP TABLE register_window_old", "ALTER TABLE node_update ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0")),
+}
+
+const ddlRegisterWindowV25 = `CREATE TABLE register_window (owner_id INTEGER PRIMARY KEY,key_hash BLOB NOT NULL UNIQUE,expires_at INTEGER NOT NULL,remaining INTEGER NOT NULL)`
+
+var migrationV25Config = []string{
+	"ALTER TABLE api_token ADD COLUMN permissions TEXT NOT NULL DEFAULT '[]'",
+	"ALTER TABLE api_token ADD COLUMN all_nodes INTEGER NOT NULL DEFAULT 1 CHECK (all_nodes IN (0, 1))",
+	`CREATE TABLE api_token_node (token_id INTEGER NOT NULL,node_id INTEGER NOT NULL,PRIMARY KEY(token_id,node_id)) WITHOUT ROWID`,
+	`CREATE TABLE operation (owner_key TEXT NOT NULL,owner_id INTEGER NOT NULL,request_id TEXT NOT NULL,request_hash TEXT NOT NULL,action TEXT NOT NULL,resource_id INTEGER NOT NULL,before_json TEXT NOT NULL,after_json TEXT NOT NULL,committed_at INTEGER NOT NULL,PRIMARY KEY(owner_key,request_id)) WITHOUT ROWID`,
+	`CREATE INDEX operation_by_owner ON operation(owner_id,committed_at DESC,request_id)`,
+	`CREATE INDEX operation_details_by_time ON operation(committed_at) WHERE before_json!='' OR after_json!=''`,
 }
 
 const ddlNodeUpdateV24 = `CREATE TABLE node_update (node_id INTEGER PRIMARY KEY, data TEXT NOT NULL)`

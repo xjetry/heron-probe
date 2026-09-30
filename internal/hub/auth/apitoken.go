@@ -24,9 +24,9 @@ func NewAPIToken() (string, [32]byte) {
 }
 
 // CreateAPIToken 的 name 由调用方清洗与校验；这里只负责生成、限额与落库。
-func (a *Auth) CreateAPIToken(ctx context.Context, name string) (store.APIToken, string, error) {
+func (a *Auth) CreateAPIToken(ctx context.Context, name string, grant *store.TokenGrant) (store.APIToken, string, error) {
 	plain, hash := NewAPIToken()
-	tok, err := a.store.CreateAPIToken(ctx, name, hash, a.clk.Now(), MaxAPITokens)
+	tok, err := a.store.CreateAPIToken(ctx, name, hash, a.clk.Now(), MaxAPITokens, grant)
 	if err != nil {
 		return store.APIToken{}, "", err
 	}
@@ -35,13 +35,13 @@ func (a *Auth) CreateAPIToken(ctx context.Context, name string) (store.APIToken,
 
 // AuthenticateAPIToken 每次都查库、不缓存：吊销在下一个请求即生效，包括 heron-hub 在另一进程里的删除。
 // 最近使用时刻与会话同一口径——从未使用或距已落库值满 touchEvery 才异步刷新，刷新只 UPDATE。
-func (a *Auth) AuthenticateAPIToken(ctx context.Context, plain string) (bool, error) {
+func (a *Auth) AuthenticateAPIToken(ctx context.Context, plain string) (*store.APIToken, error) {
 	if !strings.HasPrefix(plain, APITokenPrefix) {
-		return false, nil
+		return nil, nil
 	}
 	tok, ok, err := a.store.APITokenByHash(ctx, HashToken(plain))
 	if err != nil || !ok {
-		return false, err
+		return nil, err
 	}
 	now := a.clk.Now()
 	if tok.LastUsedAt.IsZero() || now.Sub(tok.LastUsedAt) >= touchEvery {
@@ -51,5 +51,5 @@ func (a *Auth) AuthenticateAPIToken(ctx context.Context, plain string) (bool, er
 			}
 		})
 	}
-	return true, nil
+	return &tok, nil
 }

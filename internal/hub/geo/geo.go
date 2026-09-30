@@ -99,7 +99,7 @@ func (r *Resolver) Sweep(ctx context.Context) error {
 	if err != nil || !settings.Enabled {
 		return err
 	}
-	nodes, err := r.store.ListNodes(ctx)
+	nodes, err := r.store.ListMonitoringNodes(ctx)
 	if err != nil {
 		return err
 	}

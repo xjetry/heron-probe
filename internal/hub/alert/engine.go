@@ -541,7 +541,7 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 	defer e.writeMu.Unlock()
 	cy := newCycle()
 	defer e.flush(cy)
-	nodes, err := e.st.ListNodes(ctx)
+	nodes, err := e.st.ListMonitoringNodes(ctx)
 	if err != nil {
 		return err
 	}
@@ -602,7 +602,7 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 	defer e.writeMu.Unlock()
 	cy := newCycle()
 	defer e.flush(cy)
-	nodes, err := e.st.ListNodes(ctx)
+	nodes, err := e.st.ListMonitoringNodes(ctx)
 	if err != nil {
 		return err
 	}

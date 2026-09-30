@@ -109,6 +109,9 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 	if _, err = tx.ExecContext(ctx, "DELETE FROM main.node_update"); err != nil {
 		return result, err
 	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM main.register_window"); err != nil {
+		return result, err
+	}
 	for _, src := range sources {
 		for _, table := range src.tables {
 			columns, e := restoreColumnList(ctx, tx, table)
@@ -116,7 +119,7 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 				return result, e
 			}
 			insert := "INSERT INTO "
-			if table == "restore_record" {
+			if table == "restore_record" || table == "operation" {
 				// 审计事件以创建时的 id 标识，回退配置不能删除目标已有的历史，重复快照也不重复记账。
 				insert = "INSERT OR IGNORE INTO "
 			} else {
@@ -386,6 +389,10 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			}
 		case 24:
 			// node_update 不属于任一备份层。
+		case 25:
+			if layer == "config" {
+				statements = migrationV25Config
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}

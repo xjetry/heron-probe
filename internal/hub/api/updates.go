@@ -7,6 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/updates"
 	"github.com/xjetry/heron-probe/internal/update"
 )
@@ -20,8 +21,11 @@ type releaseSource interface {
 }
 
 func (s *Service) GetUpdates(ctx context.Context, req *connect.Request[heronv1.GetUpdatesRequest]) (*connect.Response[heronv1.GetUpdatesResponse], error) {
-	local := s.updateLocal.Status(ctx)
-	out := &heronv1.GetUpdatesResponse{Targets: []*heronv1.UpdateTarget{{NodeId: 0, Status: update.StatusProto(local, s.cfg.HubVersion)}}}
+	out := &heronv1.GetUpdatesResponse{}
+	if p, ok := store.Principal(ctx); !ok || p.AllNodes {
+		local := s.updateLocal.Status(ctx)
+		out.Targets = append(out.Targets, &heronv1.UpdateTarget{NodeId: 0, Status: update.StatusProto(local, s.cfg.HubVersion)})
+	}
 	nodes, err := s.store.ListNodes(ctx)
 	if err != nil {
 		return nil, internalError("list update targets")

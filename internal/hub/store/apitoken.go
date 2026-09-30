@@ -3,11 +3,15 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
 type APIToken struct {
+	TokenGrant
+	Identity   string
 	ID         int64
 	Name       string
 	CreatedAt  time.Time
@@ -18,9 +22,16 @@ var ErrAPITokenLimit = errors.New("API token limit reached")
 
 // CreateAPIToken 在同一写事务里计数并插入：写协程串行执行事务，并发创建不会都看到
 // limit−1 而一起越过上限。
-func (s *Store) CreateAPIToken(ctx context.Context, name string, hash [32]byte, now time.Time, limit int) (APIToken, error) {
+func (s *Store) CreateAPIToken(ctx context.Context, name string, hash [32]byte, now time.Time, limit int, grant *TokenGrant) (APIToken, error) {
 	var out APIToken
+	g := TokenGrant{AllNodes: true}
+	if grant != nil {
+		g = *grant
+	}
 	err := s.write(ctx, func(tx *sql.Tx) error {
+		if err := g.validate(tx); err != nil {
+			return err
+		}
 		var n int
 		if err := tx.QueryRow("SELECT COUNT(*) FROM api_token").Scan(&n); err != nil {
 			return err
@@ -28,7 +39,11 @@ func (s *Store) CreateAPIToken(ctx context.Context, name string, hash [32]byte, 
 		if n >= limit {
 			return ErrAPITokenLimit
 		}
-		res, err := tx.Exec("INSERT INTO api_token (name, token_hash, created_at) VALUES (?, ?, ?)", name, hash[:], now.Unix())
+		permissions, err := json.Marshal(g.Permissions)
+		if err != nil {
+			return err
+		}
+		res, err := tx.Exec("INSERT INTO api_token (name, token_hash, created_at, permissions, all_nodes) VALUES (?, ?, ?, ?, ?)", name, hash[:], now.Unix(), string(permissions), g.AllNodes)
 		if err != nil {
 			return err
 		}
@@ -36,7 +51,12 @@ func (s *Store) CreateAPIToken(ctx context.Context, name string, hash [32]byte, 
 		if err != nil {
 			return err
 		}
-		out = APIToken{ID: id, Name: name, CreatedAt: time.Unix(now.Unix(), 0).UTC()}
+		for _, node := range g.NodeIDs {
+			if err := grantNode(tx, id, node); err != nil {
+				return err
+			}
+		}
+		out = APIToken{TokenGrant: g, Identity: fmt.Sprintf("%X", hash), ID: id, Name: name, CreatedAt: time.Unix(now.Unix(), 0).UTC()}
 		return nil
 	})
 	return out, err
@@ -46,7 +66,14 @@ func scanAPIToken(scan func(...any) error) (APIToken, error) {
 	var t APIToken
 	var created int64
 	var used sql.NullInt64
-	if err := scan(&t.ID, &t.Name, &created, &used); err != nil {
+	var permissions, nodes string
+	if err := scan(&t.ID, &t.Name, &created, &used, &permissions, &t.AllNodes, &nodes, &t.Identity); err != nil {
+		return APIToken{}, err
+	}
+	if err := json.Unmarshal([]byte(permissions), &t.Permissions); err != nil {
+		return APIToken{}, err
+	}
+	if err := json.Unmarshal([]byte(nodes), &t.NodeIDs); err != nil {
 		return APIToken{}, err
 	}
 	t.CreatedAt = time.Unix(created, 0).UTC()
@@ -56,8 +83,11 @@ func scanAPIToken(scan func(...any) error) (APIToken, error) {
 	return t, nil
 }
 
+const selectAPIToken = `SELECT id, name, created_at, last_used_at, permissions, all_nodes,
+ (SELECT json_group_array(node_id) FROM (SELECT node_id FROM api_token_node WHERE token_id = api_token.id ORDER BY node_id)), hex(token_hash) FROM api_token`
+
 func (s *Store) ListAPITokens(ctx context.Context) ([]APIToken, error) {
-	rows, err := s.r.QueryContext(ctx, "SELECT id, name, created_at, last_used_at FROM api_token ORDER BY id")
+	rows, err := s.r.QueryContext(ctx, selectAPIToken+" ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +105,7 @@ func (s *Store) ListAPITokens(ctx context.Context) ([]APIToken, error) {
 
 // APITokenByHash 每次鉴权都直接读库，不经缓存：删行即吊销，且对另一进程的删除同样立即生效。
 func (s *Store) APITokenByHash(ctx context.Context, hash [32]byte) (APIToken, bool, error) {
-	row := s.r.QueryRowContext(ctx, "SELECT id, name, created_at, last_used_at FROM api_token WHERE token_hash = ?", hash[:])
+	row := s.r.QueryRowContext(ctx, selectAPIToken+" WHERE token_hash = ?", hash[:])
 	t, err := scanAPIToken(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return APIToken{}, false, nil
@@ -89,6 +119,11 @@ func (s *Store) APITokenByHash(ctx context.Context, hash [32]byte) (APIToken, bo
 func (s *Store) DeleteAPIToken(ctx context.Context, id int64) (bool, error) {
 	var found bool
 	err := s.write(ctx, func(tx *sql.Tx) error {
+		for _, q := range []string{"DELETE FROM api_token_node WHERE token_id = ?", "DELETE FROM register_window WHERE owner_id = ?"} {
+			if _, err := tx.Exec(q, id); err != nil {
+				return err
+			}
+		}
 		res, err := tx.Exec("DELETE FROM api_token WHERE id = ?", id)
 		if err != nil {
 			return err
@@ -103,6 +138,11 @@ func (s *Store) DeleteAPIToken(ctx context.Context, id int64) (bool, error) {
 func (s *Store) DeleteAllAPITokens(ctx context.Context) (int64, error) {
 	var n int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
+		for _, q := range []string{"DELETE FROM api_token_node", "DELETE FROM register_window WHERE owner_id != 0"} {
+			if _, err := tx.Exec(q); err != nil {
+				return err
+			}
+		}
 		res, err := tx.Exec("DELETE FROM api_token")
 		if err != nil {
 			return err

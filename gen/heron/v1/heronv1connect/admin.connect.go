@@ -33,6 +33,15 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
+	// AdminServiceExecuteChangeProcedure is the fully-qualified name of the AdminService's
+	// ExecuteChange RPC.
+	AdminServiceExecuteChangeProcedure = "/heron.v1.AdminService/ExecuteChange"
+	// AdminServiceListOperationsProcedure is the fully-qualified name of the AdminService's
+	// ListOperations RPC.
+	AdminServiceListOperationsProcedure = "/heron.v1.AdminService/ListOperations"
+	// AdminServiceListNotifyChannelRefsProcedure is the fully-qualified name of the AdminService's
+	// ListNotifyChannelRefs RPC.
+	AdminServiceListNotifyChannelRefsProcedure = "/heron.v1.AdminService/ListNotifyChannelRefs"
 	// AdminServiceGetUpdatesProcedure is the fully-qualified name of the AdminService's GetUpdates RPC.
 	AdminServiceGetUpdatesProcedure = "/heron.v1.AdminService/GetUpdates"
 	// AdminServiceStartUpdateProcedure is the fully-qualified name of the AdminService's StartUpdate
@@ -200,6 +209,13 @@ const (
 
 // AdminServiceClient is a client for the heron.v1.AdminService service.
 type AdminServiceClient interface {
+	// 预览和执行共用业务校验。执行需 request_id；修改已有资源必须提供预览的 expected_version。
+	// 同一主体和 request_id 只提交一次；重试返回回执，result 为空，不重放一次性秘密。
+	ExecuteChange(context.Context, *connect.Request[v1.ExecuteChangeRequest]) (*connect.Response[v1.ExecuteChangeResponse], error)
+	// API token 只能查询自己的回执；会话可指定 owner_id。回执不含凭据。
+	ListOperations(context.Context, *connect.Request[v1.ListOperationsRequest]) (*connect.Response[v1.ListOperationsResponse], error)
+	// 仅返回渠道 id、名称和类型，不含地址、模板和密钥。
+	ListNotifyChannelRefs(context.Context, *connect.Request[v1.ListNotifyChannelRefsRequest]) (*connect.Response[v1.ListNotifyChannelRefsResponse], error)
 	// 读取 hub 与节点的更新能力和最新任务。检查官方版本需显式 check_latest。
 	GetUpdates(context.Context, *connect.Request[v1.GetUpdatesRequest]) (*connect.Response[v1.GetUpdatesResponse], error)
 	// 创建单目标更新。node_id=0 为 hub；只允许比当前版本新的官方正式版。
@@ -344,6 +360,24 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 	baseURL = strings.TrimRight(baseURL, "/")
 	adminServiceMethods := v1.File_heron_v1_admin_proto.Services().ByName("AdminService").Methods()
 	return &adminServiceClient{
+		executeChange: connect.NewClient[v1.ExecuteChangeRequest, v1.ExecuteChangeResponse](
+			httpClient,
+			baseURL+AdminServiceExecuteChangeProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ExecuteChange")),
+			connect.WithClientOptions(opts...),
+		),
+		listOperations: connect.NewClient[v1.ListOperationsRequest, v1.ListOperationsResponse](
+			httpClient,
+			baseURL+AdminServiceListOperationsProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListOperations")),
+			connect.WithClientOptions(opts...),
+		),
+		listNotifyChannelRefs: connect.NewClient[v1.ListNotifyChannelRefsRequest, v1.ListNotifyChannelRefsResponse](
+			httpClient,
+			baseURL+AdminServiceListNotifyChannelRefsProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListNotifyChannelRefs")),
+			connect.WithClientOptions(opts...),
+		),
 		getUpdates: connect.NewClient[v1.GetUpdatesRequest, v1.GetUpdatesResponse](
 			httpClient,
 			baseURL+AdminServiceGetUpdatesProcedure,
@@ -697,6 +731,9 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 
 // adminServiceClient implements AdminServiceClient.
 type adminServiceClient struct {
+	executeChange         *connect.Client[v1.ExecuteChangeRequest, v1.ExecuteChangeResponse]
+	listOperations        *connect.Client[v1.ListOperationsRequest, v1.ListOperationsResponse]
+	listNotifyChannelRefs *connect.Client[v1.ListNotifyChannelRefsRequest, v1.ListNotifyChannelRefsResponse]
 	getUpdates            *connect.Client[v1.GetUpdatesRequest, v1.GetUpdatesResponse]
 	startUpdate           *connect.Client[v1.StartUpdateRequest, v1.StartUpdateResponse]
 	cancelUpdate          *connect.Client[v1.CancelUpdateRequest, v1.CancelUpdateResponse]
@@ -755,6 +792,21 @@ type adminServiceClient struct {
 	createApiToken        *connect.Client[v1.CreateApiTokenRequest, v1.CreateApiTokenResponse]
 	deleteApiToken        *connect.Client[v1.DeleteApiTokenRequest, v1.DeleteApiTokenResponse]
 	getApiReference       *connect.Client[v1.GetApiReferenceRequest, v1.GetApiReferenceResponse]
+}
+
+// ExecuteChange calls heron.v1.AdminService.ExecuteChange.
+func (c *adminServiceClient) ExecuteChange(ctx context.Context, req *connect.Request[v1.ExecuteChangeRequest]) (*connect.Response[v1.ExecuteChangeResponse], error) {
+	return c.executeChange.CallUnary(ctx, req)
+}
+
+// ListOperations calls heron.v1.AdminService.ListOperations.
+func (c *adminServiceClient) ListOperations(ctx context.Context, req *connect.Request[v1.ListOperationsRequest]) (*connect.Response[v1.ListOperationsResponse], error) {
+	return c.listOperations.CallUnary(ctx, req)
+}
+
+// ListNotifyChannelRefs calls heron.v1.AdminService.ListNotifyChannelRefs.
+func (c *adminServiceClient) ListNotifyChannelRefs(ctx context.Context, req *connect.Request[v1.ListNotifyChannelRefsRequest]) (*connect.Response[v1.ListNotifyChannelRefsResponse], error) {
+	return c.listNotifyChannelRefs.CallUnary(ctx, req)
 }
 
 // GetUpdates calls heron.v1.AdminService.GetUpdates.
@@ -1049,6 +1101,13 @@ func (c *adminServiceClient) GetApiReference(ctx context.Context, req *connect.R
 
 // AdminServiceHandler is an implementation of the heron.v1.AdminService service.
 type AdminServiceHandler interface {
+	// 预览和执行共用业务校验。执行需 request_id；修改已有资源必须提供预览的 expected_version。
+	// 同一主体和 request_id 只提交一次；重试返回回执，result 为空，不重放一次性秘密。
+	ExecuteChange(context.Context, *connect.Request[v1.ExecuteChangeRequest]) (*connect.Response[v1.ExecuteChangeResponse], error)
+	// API token 只能查询自己的回执；会话可指定 owner_id。回执不含凭据。
+	ListOperations(context.Context, *connect.Request[v1.ListOperationsRequest]) (*connect.Response[v1.ListOperationsResponse], error)
+	// 仅返回渠道 id、名称和类型，不含地址、模板和密钥。
+	ListNotifyChannelRefs(context.Context, *connect.Request[v1.ListNotifyChannelRefsRequest]) (*connect.Response[v1.ListNotifyChannelRefsResponse], error)
 	// 读取 hub 与节点的更新能力和最新任务。检查官方版本需显式 check_latest。
 	GetUpdates(context.Context, *connect.Request[v1.GetUpdatesRequest]) (*connect.Response[v1.GetUpdatesResponse], error)
 	// 创建单目标更新。node_id=0 为 hub；只允许比当前版本新的官方正式版。
@@ -1189,6 +1248,24 @@ type AdminServiceHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	adminServiceMethods := v1.File_heron_v1_admin_proto.Services().ByName("AdminService").Methods()
+	adminServiceExecuteChangeHandler := connect.NewUnaryHandler(
+		AdminServiceExecuteChangeProcedure,
+		svc.ExecuteChange,
+		connect.WithSchema(adminServiceMethods.ByName("ExecuteChange")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceListOperationsHandler := connect.NewUnaryHandler(
+		AdminServiceListOperationsProcedure,
+		svc.ListOperations,
+		connect.WithSchema(adminServiceMethods.ByName("ListOperations")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceListNotifyChannelRefsHandler := connect.NewUnaryHandler(
+		AdminServiceListNotifyChannelRefsProcedure,
+		svc.ListNotifyChannelRefs,
+		connect.WithSchema(adminServiceMethods.ByName("ListNotifyChannelRefs")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceGetUpdatesHandler := connect.NewUnaryHandler(
 		AdminServiceGetUpdatesProcedure,
 		svc.GetUpdates,
@@ -1539,6 +1616,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 	)
 	return "/heron.v1.AdminService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case AdminServiceExecuteChangeProcedure:
+			adminServiceExecuteChangeHandler.ServeHTTP(w, r)
+		case AdminServiceListOperationsProcedure:
+			adminServiceListOperationsHandler.ServeHTTP(w, r)
+		case AdminServiceListNotifyChannelRefsProcedure:
+			adminServiceListNotifyChannelRefsHandler.ServeHTTP(w, r)
 		case AdminServiceGetUpdatesProcedure:
 			adminServiceGetUpdatesHandler.ServeHTTP(w, r)
 		case AdminServiceStartUpdateProcedure:
@@ -1663,6 +1746,18 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 
 // UnimplementedAdminServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedAdminServiceHandler struct{}
+
+func (UnimplementedAdminServiceHandler) ExecuteChange(context.Context, *connect.Request[v1.ExecuteChangeRequest]) (*connect.Response[v1.ExecuteChangeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.ExecuteChange is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListOperations(context.Context, *connect.Request[v1.ListOperationsRequest]) (*connect.Response[v1.ListOperationsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.ListOperations is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListNotifyChannelRefs(context.Context, *connect.Request[v1.ListNotifyChannelRefsRequest]) (*connect.Response[v1.ListNotifyChannelRefsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.ListNotifyChannelRefs is not implemented"))
+}
 
 func (UnimplementedAdminServiceHandler) GetUpdates(context.Context, *connect.Request[v1.GetUpdatesRequest]) (*connect.Response[v1.GetUpdatesResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.GetUpdates is not implemented"))

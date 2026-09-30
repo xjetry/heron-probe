@@ -329,7 +329,7 @@ func legacySnapshot(t *testing.T, source, target, layer string, version int, for
 	defer tx.Rollback()
 	tables := slices.Clone(metricsSnapshotTables)
 	if layer == "config" {
-		tables = slices.DeleteFunc(slices.Clone(configSnapshotTables), func(table string) bool { return table == "theme_version" || table == "theme_selection" })
+		tables = []string{"node", "node_facts", "traffic", "probe_task", "probe_task_node", "probe_meta", "alert_rule", "alert_rule_node", "alert_rule_channel", "alert_state", "alert_event", "alert_delivery", "notify_channel", "setting", "admin", "admin_security", "api_token", "tag", "node_tag", "theme", "restore_record", "probe_task_tag", "alert_rule_tag"}
 	}
 	for _, table := range tables {
 		if _, err := tx.Exec("CREATE TABLE snap." + table + " AS SELECT * FROM main." + table); err != nil {

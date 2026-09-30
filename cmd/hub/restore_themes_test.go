@@ -71,6 +71,7 @@ func TestRestoreThemesSnapshotDigest(t *testing.T) {
 func themeRestoreFixture(t *testing.T) (string, string) {
 	t.Helper()
 	config, _ := restoreSnapshots(t)
+	removeV25Config(t, restoreDB(t, config))
 	restoreExec(t, restoreDB(t, config), "ALTER TABLE node_facts DROP COLUMN network")
 	removeV22ThemeConfig(t, restoreDB(t, config))
 	// 这些用例钉住无摘要清单的历史格式；新格式的摘要准入由独立用例覆盖。

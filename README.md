@@ -2,7 +2,13 @@
 
 # Heron
 
-轻量自托管主机监控。agent 采集主机指标并上报，hub 存储、展示并对外提供查询。关注状态，不接管系统。设计见 [架构设计](docs/superpowers/specs/2026-09-17-probe-architecture-design.md)。
+轻量自托管主机监控。agent 采集主机指标并上报，hub 存储、展示并提供预授权自动化管理。关注状态，不接管系统。设计见 [架构设计](docs/superpowers/specs/2026-09-17-probe-architecture-design.md)。
+
+## Agentic 自动化
+
+在「API token」页按操作预授权监控配置与节点生命周期，并选择全站或指定节点。AI 和脚本经 HTTP+JSON 自主执行，支持真实事务预览、字段级修改、并发版本检查、安全重试及操作审计。旧 token 保持全站只读。注册入口按凭据隔离，自己创建或注册的节点自动纳入范围，普通标签不能扩权。
+
+不开放远程命令、云主机操作、Hub 升级、管理员或 API 凭据管理、通知密钥修改。调用约定和示例见 [API 入口卡片](proto/SKILL.md)；也可从面板下载与 Hub 同版本的卡片。
 
 名称、图形与命名边界见 [品牌约定](docs/brand.md)。Heron 使用独立的命令、服务路径与 `heron.v1` API，不兼容旧 probe 部署，安装器不自动迁移旧数据。
 

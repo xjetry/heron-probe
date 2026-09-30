@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"time"
@@ -12,19 +11,19 @@ type Window struct {
 	Remaining int
 }
 
-// SetRegisterWindow 替换当前窗口：同一时刻只有一个窗口，新开即作废旧 key。
+// SetRegisterWindow 只替换当前主体的窗口；owner_id=0 是面板会话共享的窗口。
 func (s *Store) SetRegisterWindow(ctx context.Context, keyHash []byte, expiresAt time.Time, maxNodes int) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		_, err := tx.Exec(`INSERT INTO register_window (id, key_hash, expires_at, remaining) VALUES (1, ?, ?, ?)
-			ON CONFLICT (id) DO UPDATE SET key_hash = excluded.key_hash, expires_at = excluded.expires_at, remaining = excluded.remaining`,
-			keyHash, expiresAt.Unix(), maxNodes)
+		_, err := tx.Exec(`INSERT INTO register_window (owner_id, key_hash, expires_at, remaining) VALUES (?, ?, ?, ?)
+			ON CONFLICT (owner_id) DO UPDATE SET key_hash = excluded.key_hash, expires_at = excluded.expires_at, remaining = excluded.remaining`,
+			OwnerID(ctx), keyHash, expiresAt.Unix(), maxNodes)
 		return err
 	})
 }
 
 func (s *Store) ClearRegisterWindow(ctx context.Context) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		_, err := tx.Exec("DELETE FROM register_window")
+		_, err := tx.Exec("DELETE FROM register_window WHERE owner_id = ?", OwnerID(ctx))
 		return err
 	})
 }
@@ -34,7 +33,7 @@ func (s *Store) ClearRegisterWindow(ctx context.Context) error {
 func (s *Store) RegisterWindow(ctx context.Context) (Window, bool, error) {
 	var w Window
 	var exp int64
-	err := s.r.QueryRowContext(ctx, "SELECT expires_at, remaining FROM register_window WHERE id = 1").Scan(&exp, &w.Remaining)
+	err := s.r.QueryRowContext(ctx, "SELECT expires_at, remaining FROM register_window WHERE owner_id = ?", OwnerID(ctx)).Scan(&exp, &w.Remaining)
 	if err == sql.ErrNoRows {
 		return Window{}, false, nil
 	}
@@ -56,11 +55,18 @@ func (s *Store) RegisterNode(ctx context.Context, keyHash []byte, name string, t
 	var id int64
 	var tasks NewNodeTasks
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		var stored []byte
+		var owner int64
 		var exp int64
 		var remaining int
-		err := tx.QueryRow("SELECT key_hash, expires_at, remaining FROM register_window WHERE id = 1").Scan(&stored, &exp, &remaining)
+		err := tx.QueryRow("SELECT owner_id, expires_at, remaining FROM register_window WHERE key_hash = ?", keyHash).Scan(&owner, &exp, &remaining)
 		if err == sql.ErrNoRows {
+			var active bool
+			if err := tx.QueryRow("SELECT EXISTS (SELECT 1 FROM register_window WHERE expires_at > ? AND remaining > 0)", s.clk.Now().Unix()).Scan(&active); err != nil {
+				return err
+			}
+			if active {
+				return ErrBadKey
+			}
 			return ErrNoWindow
 		}
 		if err != nil {
@@ -69,13 +75,25 @@ func (s *Store) RegisterNode(ctx context.Context, keyHash []byte, name string, t
 		if s.clk.Now().Unix() >= exp || remaining <= 0 {
 			return ErrNoWindow
 		}
-		if !bytes.Equal(stored, keyHash) {
-			return ErrBadKey
+		if owner != 0 {
+			t, err := scanAPIToken(tx.QueryRow(selectAPIToken+" WHERE id = ?", owner).Scan)
+			if err == sql.ErrNoRows {
+				return ErrNoWindow
+			}
+			if err != nil {
+				return err
+			}
+			if !t.Allows(PermissionRegister) {
+				return ErrNoWindow
+			}
 		}
 		if id, tasks, err = insertNode(tx, name, tokenHash, s.clk.Now().Unix()); err != nil {
 			return err
 		}
-		_, err = tx.Exec("UPDATE register_window SET remaining = remaining - 1 WHERE id = 1")
+		if err := grantNode(tx, owner, id); err != nil {
+			return err
+		}
+		_, err = tx.Exec("UPDATE register_window SET remaining = remaining - 1 WHERE owner_id = ?", owner)
 		return err
 	})
 	return id, tasks, err

@@ -35,12 +35,17 @@ type InUseError struct {
 	Kind  ObjectKind
 	ID    int64
 	Rules []RuleReference
+	// 隐藏引用仍阻止删除，但不能把范围外规则的名称与编号带进错误响应。
+	HiddenRules bool
 }
 
 func (e InUseError) Error() string {
 	names := make([]string, len(e.Rules))
 	for i, r := range e.Rules {
 		names[i] = fmt.Sprintf("%s (id %d)", r.Name, r.ID)
+	}
+	if e.HiddenRules {
+		names = append(names, "additional rules outside the authorized scope")
 	}
 	return fmt.Sprintf("%s %d is referenced by alert rules: %s", e.Kind, e.ID, strings.Join(names, ", "))
 }

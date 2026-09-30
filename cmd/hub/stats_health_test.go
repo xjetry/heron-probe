@@ -50,7 +50,7 @@ func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
 		t.Fatal(err)
 	}
 	plain, hash := auth.NewAPIToken()
-	if _, err := st.CreateAPIToken(ctx, "reader", hash, clk.Now(), 100); err != nil {
+	if _, err := st.CreateAPIToken(ctx, "reader", hash, clk.Now(), 100, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Close(); err != nil {

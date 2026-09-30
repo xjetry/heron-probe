@@ -125,6 +125,7 @@ func restoreSnapshots(t *testing.T) (config, metrics string) {
 	t.Cleanup(func() { s.Close() })
 	db := restoreDB(t, path)
 	restoreExec(t, db, `INSERT INTO node (id,name,token_hash,created_at) VALUES (1,'one',x'01',0),(2,'two',x'02',0);
+		INSERT INTO api_token (id,name,token_hash,created_at,all_nodes) VALUES (1,'scoped',x'01',0,0);
 		INSERT INTO tag (id,name,name_fold) VALUES (1,'shared','shared');
 		INSERT INTO alert_rule (id,name,kind,created_at) VALUES (1,'rule','offline',0);
 		INSERT INTO alert_event (rule_id,node_id,transition,at,summary,value) VALUES (0,0,'firing',0,'system',0),(1,99,'firing',0,'deleted',0);
@@ -134,6 +135,7 @@ func restoreSnapshots(t *testing.T) (config, metrics string) {
 		DELETE FROM probe_task;`)
 	for _, id := range []int{2, 3} {
 		restoreExec(t, db, fmt.Sprintf(`INSERT INTO node_facts VALUES (%[1]d,0,'','','','','','',0,'',0,0,'{}');
+			INSERT INTO api_token_node VALUES (1,%[1]d);
 			INSERT INTO node_tag (node_id,tag_id) VALUES (%[1]d,1);
 			INSERT INTO traffic VALUES (%[1]d,'',0,0,0,0,0,0,0,0);
 			INSERT INTO probe_task_node VALUES (1,%[1]d);
@@ -275,6 +277,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			removeV25Config(t, cfg)
 			restoreExec(t, cfg, "ALTER TABLE node_facts DROP COLUMN network")
 			removeV22ThemeConfig(t, cfg)
 			removeV21Columns(t, cfg, met)
@@ -311,6 +314,14 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// 配置快照只包含持久授权与回执，不包含注册窗口和更新队列。
+func removeV25Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, `ALTER TABLE api_token DROP COLUMN permissions;
+		ALTER TABLE api_token DROP COLUMN all_nodes;
+		DROP TABLE api_token_node; DROP TABLE operation`)
 }
 
 // 历史快照必须真实还原主题表结构；只改版本号会跳过或重复当前版本的迁移。

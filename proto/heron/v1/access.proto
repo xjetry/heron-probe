@@ -21,6 +21,8 @@ enum Access {
   // ListNotifyChannels：webhook 请求体模板里可能放着密钥；GetAlertDeliveryError：
   // 接收方可能在错误响应里回显收到的请求体）。
   ACCESS_SESSION = 3;
+  // 类型化变更入口：会话或具有相应预授权的 API token，资源范围在写事务内再次裁决。
+  ACCESS_CHANGE = 4;
 }
 
 extend google.protobuf.MethodOptions {

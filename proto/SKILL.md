@@ -1,6 +1,6 @@
 ---
 name: heron-hub
-description: 查询自托管探针 hub 的节点、实时状态、历史指标、流量、探测、费用与到期，以及告警事件。用户问起服务器在不在线、负载、流量、延迟、费用、何时到期或告警时使用。
+description: 查询自托管探针 hub 的节点、指标、流量、探测、费用与告警，并在预授权范围内修改监控配置、创建和注册节点、轮换凭据、删除节点或更新官方 agent。用户要求诊断或管理服务器监控时使用。
 ---
 
 # Heron hub
@@ -10,10 +10,31 @@ hub 的管理接口是 Connect unary：每个方法都是 `POST $HERON_HUB/heron
 ## 进门
 
 - `HERON_HUB`：hub 的对外地址，如 `https://heron.example.com`，不带末尾斜杠。
-- `HERON_TOKEN`：在面板"API token"页创建的只读 token，形如 `heron_at_` 加 64 位十六进制。它只能调只读方法；写方法返回 `permission_denied`，需要在面板上操作。
-- `ListSessions` 与 `RevokeSession` 也仅限会话 cookie，API token 不可用：只读 token 不能枚举或撤销其它凭据。
-- `GetUpdates` 可用只读 token 查询 hub 与节点的在线更新能力和任务；`checkLatest: true` 显式查询官方最新正式版。`StartUpdate` 与 `CancelUpdate` 只接受管理员会话，不能使用 API token 授权安装。
+- `HERON_TOKEN`：在面板"API token"页创建的 token，形如 `heron_at_` 加 64 位十六进制。默认全站只读；管理员可预授权配置、创建、注册、轮换、删除、官方节点更新，并选择全站或指定节点。写入经 `ExecuteChange`，不能直接调用仅限会话的方法。
 - 每个请求带两个头：`Authorization: Bearer $HERON_TOKEN` 与 `Content-Type: application/json`。
+- `ListSessions` 与 `RevokeSession` 也仅限会话 cookie，API token 不可用；即使获得写权限，也不能枚举、创建或撤销 API 凭据及会话。
+- `GetUpdates` 查询范围内节点的在线更新能力和任务；全站 token 还可读 Hub 状态。`checkLatest: true` 显式查询官方最新正式版。具备更新权限时，经 `ExecuteChange.startUpdate` / `cancelUpdate` 操作正数 nodeId 的官方更新。Hub 更新仍仅限会话。
+
+## 预授权写入
+
+1. 用 `ListNodes`、`ListProbeTasks`、`ListAlertRules` 读取授权范围；用 `ListNotifyChannelRefs` 取得渠道 id、名称、类型，不读地址、模板或密钥。指定节点凭据不能调用全站设置、备份与存储统计。
+2. 调 `ExecuteChange`，给出一种 change 和 `preview: true`。修改已有配置需 `updateMask`，节点路径如 `note,tags`，探测路径如 `task.target`，告警路径如 `rule.enabled`。JSON FieldMask 是逗号分隔的 lowerCamelCase 字符串，例如 `"updateMask":"note,trafficResetDay"`，不是 paths 对象。
+3. 查看 `operation.beforeJson` / `afterJson`。执行相同变更，设 `preview: false`，附上预览返回的 `expectedVersion` 和唯一 `requestId`。版本过时返回 `aborted`，重新读取和预览，不盲目覆盖。
+4. 响应丢失时原样重试同一 requestId；同键不同请求返回 `already_exists`。已提交则 `replayed: true`，不会重复执行。`ListOperations` 按 requestId 查询回执，`operation.id` 是跨重试和恢复稳定的回执标识；已提交节点更新不等于已安装，实际状态用 `GetUpdates` 查询。
+
+首次执行的 `result` 是 protobuf Any，HTTP JSON 带 `@type` 和原业务响应字段。创建节点、轮换凭据、打开注册窗口的秘密仅在首次响应出现，不落审计，不在重试中重放。丢失秘密后查询回执，再用新 requestId 显式轮换节点凭据或重开自己的注册窗口；不要重复创建节点。
+
+指定节点授权同时约束读写；普通标签不扩权。显式包含未授权节点、全站和动态标签规则不能由指定节点凭据编辑。创建和经自己注册窗口接入的节点自动纳入范围，不增加操作权限。注册窗口互不覆盖；吊销凭据会关闭其窗口，并阻止尚未下发的更新。已下发更新不能据此撤回。
+
+详细差异在后续写入时清理超过 90 天的记录，幂等回执永久保留。配置备份保存授权与回执，恢复时合并回执历史，并清除所有注册窗口和节点更新任务。回执描述原事务，不保证当前配置仍未变化。
+
+例如只修改节点备注：
+
+```json
+{"preview":true,"updateMask":"note","updateNode":{"id":"42","note":"维护窗口：周六"}}
+```
+
+执行时保留同样的 `updateMask` 与 `updateNode`，加上 `requestId`、`expectedVersion`，去掉 `preview` 或设为 false。不开放远程命令、云主机管理、Hub 升级、管理员管理或通知密钥修改。
 
 ## 取 schema
 
@@ -24,7 +45,7 @@ curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/
   --data '{}' "$HERON_HUB/heron.v1.AdminService/GetApiReference" | jq '[.files[].path]'
 ```
 
-看某个文件：把上面的 jq 换成 `jq -r '.files[] | select(.path == "heron/v1/admin.proto") | .content'`。每个 rpc 上的 `option (heron.v1.access)` 标明它是否对 token 开放（`ACCESS_READ` 才开放）。
+看某个文件：把上面的 jq 换成 `jq -r '.files[] | select(.path == "heron/v1/admin.proto") | .content'`。每个 rpc 上的 `option (heron.v1.access)` 标明准入策略：`ACCESS_READ` 允许读取（仍受节点范围限制），`ACCESS_CHANGE` 经预授权写入；`ACCESS_SESSION` 不接受 API token。
 
 ## 约定
 

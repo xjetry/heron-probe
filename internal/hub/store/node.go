@@ -157,6 +157,18 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) queryVisibleNodes(ctx context.Context, where string, args ...any) ([]Node, error) {
+	if _, ok := Principal(ctx); ok {
+		if where == "" {
+			where = " WHERE "
+		} else {
+			where += " AND "
+		}
+		where += nodeScopeSQL(ctx, "n.id")
+	}
+	return s.queryNodes(ctx, where, args...)
+}
+
 // queryNodes 是 store.Node 值的唯一来源（selectNodes 与 scanNodes 只在这里用）：where 是作用于 node n 的条件（空串即
 // 全部）。节点行与它们的标签在同一个只读事务里读出，两者来自同一个快照：两次独立查询之间插进一次 UpdateNode，节点行与
 // 标签就会是不同时刻的样子（TestNodeRowAndTagsComeFromOneSnapshot）。
@@ -189,6 +201,12 @@ func (s *Store) queryNodes(ctx context.Context, where string, args ...any) ([]No
 }
 
 func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
+	return s.queryVisibleNodes(ctx, "")
+}
+
+// ListMonitoringNodes 供全局监控评估使用，不按触发请求的凭据裁剪节点；告警规则与状态
+// 属于整个引擎，若仅枚举调用者可见的节点，状态裁剪会把范围外节点误当成已删除。
+func (s *Store) ListMonitoringNodes(ctx context.Context) ([]Node, error) {
 	return s.queryNodes(ctx, "")
 }
 
@@ -210,7 +228,7 @@ func (s *Store) NodeIsPublic(ctx context.Context, id int64) (bool, error) {
 }
 
 func (s *Store) GetNode(ctx context.Context, id int64) (Node, error) {
-	nodes, err := s.queryNodes(ctx, " WHERE n.id = ?", id)
+	nodes, err := s.queryVisibleNodes(ctx, " WHERE n.id = ?", id)
 	if err != nil {
 		return Node{}, err
 	}
@@ -222,7 +240,7 @@ func (s *Store) GetNode(ctx context.Context, id int64) (Node, error) {
 
 func (s *Store) NodeExists(ctx context.Context, id int64) (bool, error) {
 	var one int
-	err := s.r.QueryRowContext(ctx, "SELECT 1 FROM node WHERE id = ?", id).Scan(&one)
+	err := s.r.QueryRowContext(ctx, "SELECT 1 FROM node WHERE id = ? AND "+nodeScopeSQL(ctx, "node.id"), id).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -427,7 +445,10 @@ func (s *Store) CreateNode(ctx context.Context, name string, tokenHash []byte) (
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		var err error
 		id, tasks, err = insertNode(tx, name, tokenHash, s.clk.Now().Unix())
-		return err
+		if err != nil {
+			return err
+		}
+		return grantNode(tx, OwnerID(ctx), id)
 	})
 	return id, tasks, err
 }

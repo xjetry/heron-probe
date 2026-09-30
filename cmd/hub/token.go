@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/xjetry/heron-probe/internal/hub/store"
@@ -72,13 +73,25 @@ func runTokenWith(args []string, out, errOut io.Writer) error {
 
 func printAPITokens(w io.Writer, list []store.APIToken) error {
 	tw := tabwriter.NewWriter(w, 0, 8, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tNAME\tCREATED\tLAST USED")
+	fmt.Fprintln(tw, "ID\tNAME\tPERMISSIONS\tSCOPE\tCREATED\tLAST USED")
 	for _, t := range list {
 		used := "never"
 		if !t.LastUsedAt.IsZero() {
 			used = t.LastUsedAt.Format("2006-01-02 15:04Z")
 		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", t.ID, t.Name, t.CreatedAt.Format("2006-01-02 15:04Z"), used)
+		permissions := make([]string, 0, len(t.Permissions))
+		for _, p := range t.Permissions {
+			permissions = append(permissions, string(p))
+		}
+		access := strings.Join(permissions, ",")
+		if access == "" {
+			access = "read-only"
+		}
+		scope := fmt.Sprint(t.NodeIDs)
+		if t.AllNodes {
+			scope = "all nodes"
+		}
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", t.ID, t.Name, access, scope, t.CreatedAt.Format("2006-01-02 15:04Z"), used)
 	}
 	return tw.Flush()
 }

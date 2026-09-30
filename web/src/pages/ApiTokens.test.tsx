@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { ListApiTokensResponseSchema } from "../gen/heron/v1/admin_pb";
+import { ListApiTokensResponseSchema, TokenPermission, type TokenGrant } from "../gen/heron/v1/admin_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { ApiTokens } from "./ApiTokens";
 
@@ -13,9 +13,52 @@ const tokens = create(ListApiTokensResponseSchema, { tokens: [
 const routes = [{ path: "/tokens", Component: ApiTokens }];
 const render = (impl: AdminImpl) => renderWithAdmin({ listApiTokens: async () => tokens, ...impl }, routes, "/tokens");
 
+it("预授权只提交勾选的操作和指定节点", async () => {
+  let grant: TokenGrant | undefined;
+  render({
+    listNodes: async () => ({ nodes: [{ id: 11n, name: "边缘节点" }] }),
+    createApiToken: async (req) => { grant = req.grant; return { apiToken: { id: 3n, name: req.name }, token: "heron_at_new" }; },
+  });
+  const form = await screen.findByRole("form", { name: "新建 API token" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "writer" } });
+  fireEvent.click(within(form).getByLabelText("监控配置"));
+  fireEvent.click(within(form).getByLabelText("创建节点"));
+  fireEvent.change(within(form).getByLabelText("节点范围"), { target: { value: "selected" } });
+  fireEvent.click(await within(form).findByLabelText("边缘节点（#11）"));
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  await waitFor(() => expect(grant).toBeDefined());
+  expect(grant?.allNodes).toBe(false);
+  expect(grant?.nodeIds).toEqual([11n]);
+  expect(grant?.permissions).toEqual([TokenPermission.CONFIGURE, TokenPermission.CREATE]);
+});
+
+it("默认凭据仍为全站只读", async () => {
+  let grant: TokenGrant | undefined;
+  render({ createApiToken: async (req) => { grant = req.grant; return { apiToken: { id: 3n, name: req.name }, token: "heron_at_read" }; } });
+  const form = await screen.findByRole("form", { name: "新建 API token" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "reader" } });
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  await waitFor(() => expect(grant).toBeDefined());
+  expect(grant?.allNodes).toBe(true);
+  expect(grant?.permissions).toEqual([]);
+  expect(grant?.nodeIds).toEqual([]);
+});
+
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+it("恢复后同请求 ID 的不同身份回执保持独立", async () => {
+  const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  render({ listOperations: async () => ({ operations: [
+    { id: "receipt-source", ownerId: 1n, requestId: "same-key", action: "create_node", resourceId: 1n, committedAt: 1n, afterJson: "source" },
+    { id: "receipt-target", ownerId: 1n, requestId: "same-key", action: "create_node", resourceId: 1n, committedAt: 1n, afterJson: "target" },
+  ] }) });
+  fireEvent.click(await screen.findByRole("button", { name: "查看 ci 操作记录" }));
+  expect(await screen.findByText("source")).toBeInTheDocument();
+  expect(screen.getByText("target")).toBeInTheDocument();
+  expect(errors.mock.calls.filter((call) => String(call[0]).includes("same key"))).toEqual([]);
 });
 
 it("列表区分用过与从未使用", async () => {

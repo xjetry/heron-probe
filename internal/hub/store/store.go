@@ -175,6 +175,11 @@ func (s *Store) inTx(fn func(*sql.Tx) error) error {
 // runWriter 给出最终结果。中途放弃等待会让调用方在事务照常提交时误以为失败，
 // 据此不更新内存映射就会造成映射与库分叉。取消只阻止尚未开始的事务。
 func (s *Store) write(ctx context.Context, fn func(*sql.Tx) error) error {
+	change, _ := ctx.Value(changeKey{}).(*Change)
+	activeChange := change != nil && !change.completed
+	if activeChange {
+		fn = s.changeWrite(ctx, change, fn)
+	}
 	s.closeMu.RLock()
 	if s.closed {
 		s.closeMu.RUnlock()
@@ -190,7 +195,14 @@ func (s *Store) write(ctx context.Context, fn func(*sql.Tx) error) error {
 		return ctx.Err()
 	}
 	s.closeMu.RUnlock()
-	return <-req.res
+	err := <-req.res
+	if activeChange && err == nil {
+		change.completed = true
+	}
+	if activeChange && err != nil && !errors.Is(err, ErrReplay) {
+		change.CommittedAt = 0
+	}
+	return err
 }
 
 // writeAsync 投递后立即返回；done 在写协程里被调用。队列满时丢弃并报告，
@@ -217,7 +229,7 @@ func (s *Store) writeAsync(fn func(*sql.Tx) error, done func(error)) {
 	}
 }
 
-const schemaVersion = 24
+const schemaVersion = 25
 
 type schemaAction int
 

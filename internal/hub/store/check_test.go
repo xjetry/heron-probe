@@ -21,10 +21,10 @@ func TestEveryCheckConstraintRefusesItsViolation(t *testing.T) {
 	migrated := migrateFrom(t, 1, seedMinuteRow)
 	fresh, _ := open(t)
 	checkViolations := []struct{ table, check, write string }{
+		{"api_token", "all_nodes IN (0, 1)", "INSERT INTO api_token (name,token_hash,created_at,all_nodes) VALUES ('x',x'00',0,2)"},
 		// 单行表：第二行插不进去。
 		{"admin", "id = 1", "INSERT INTO admin (id, password_hash, updated_at) VALUES (2, 'x', 0)"},
 		{"admin_security", "id = 1", "INSERT INTO admin_security (id) VALUES (2)"},
-		{"register_window", "id = 1", "INSERT INTO register_window (id, key_hash, expires_at, remaining) VALUES (2, x'00', 0, 0)"},
 		{"probe_meta", "id = 1", "INSERT INTO probe_meta (id, version) VALUES (2, 0)"},
 		// 0 与 1 以外的启用值会绕过只看 enabled = 1 的 theme_enabled 索引。
 		{"theme_version", "published IN (0, 1)", "INSERT INTO theme_version (theme_id,digest,name,version,preview,uploaded_at,sdk,published) VALUES ('x','d','X','1','',0,1,2)"},

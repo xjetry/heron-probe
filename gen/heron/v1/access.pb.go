@@ -39,6 +39,8 @@ const (
 	// ListNotifyChannels：webhook 请求体模板里可能放着密钥；GetAlertDeliveryError：
 	// 接收方可能在错误响应里回显收到的请求体）。
 	Access_ACCESS_SESSION Access = 3
+	// 类型化变更入口：会话或具有相应预授权的 API token，资源范围在写事务内再次裁决。
+	Access_ACCESS_CHANGE Access = 4
 )
 
 // Enum value maps for Access.
@@ -48,12 +50,14 @@ var (
 		1: "ACCESS_LOGIN",
 		2: "ACCESS_READ",
 		3: "ACCESS_SESSION",
+		4: "ACCESS_CHANGE",
 	}
 	Access_value = map[string]int32{
 		"ACCESS_UNSPECIFIED": 0,
 		"ACCESS_LOGIN":       1,
 		"ACCESS_READ":        2,
 		"ACCESS_SESSION":     3,
+		"ACCESS_CHANGE":      4,
 	}
 )
 
@@ -107,12 +111,13 @@ var File_heron_v1_access_proto protoreflect.FileDescriptor
 
 const file_heron_v1_access_proto_rawDesc = "" +
 	"\n" +
-	"\x15heron/v1/access.proto\x12\bheron.v1\x1a google/protobuf/descriptor.proto*W\n" +
+	"\x15heron/v1/access.proto\x12\bheron.v1\x1a google/protobuf/descriptor.proto*j\n" +
 	"\x06Access\x12\x16\n" +
 	"\x12ACCESS_UNSPECIFIED\x10\x00\x12\x10\n" +
 	"\fACCESS_LOGIN\x10\x01\x12\x0f\n" +
 	"\vACCESS_READ\x10\x02\x12\x12\n" +
-	"\x0eACCESS_SESSION\x10\x03:J\n" +
+	"\x0eACCESS_SESSION\x10\x03\x12\x11\n" +
+	"\rACCESS_CHANGE\x10\x04:J\n" +
 	"\x06access\x12\x1e.google.protobuf.MethodOptions\x18ц\x03 \x01(\x0e2\x10.heron.v1.AccessR\x06accessB4Z2github.com/xjetry/heron-probe/gen/heron/v1;heronv1b\x06proto3"
 
 var (

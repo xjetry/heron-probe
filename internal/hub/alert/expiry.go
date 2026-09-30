@@ -136,7 +136,7 @@ func (e *Engine) sweepExpiry(ctx context.Context) error {
 	cy := newCycle()
 	defer e.flush(cy)
 	today := Today(e.clk.Now(), e.cfg.Location)
-	nodes, err := e.st.ListNodes(ctx)
+	nodes, err := e.st.ListMonitoringNodes(ctx)
 	if err != nil {
 		return err
 	}

@@ -251,27 +251,31 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 			scheme: scheme,
 		}
 		ctx = context.WithValue(ctx, peerKey{}, peer)
-		// 先鉴别身份再裁决权限：无效 token 调任何方法都是 401，有效 token 调非 READ 方法是 403。
+		// 先鉴别身份再裁决权限：无效 token 调任何方法都是 401；有效 token 只读 READ，
+		// 写入只能经 CHANGE 再检查具体权限，不能借已有写权限直接调用会话方法。
 		// Login 带 Bearer 也落在 403，但文案不能写成"去开一个面板会话"：token 代替不了密码。
 		if tok, isBearer, err := bearerCredential(req.Header()); isBearer {
 			if err != nil {
 				return nil, unauthenticated(err.Error() + "; send exactly one Authorization: Bearer <API token>")
 			}
-			ok, err := s.auth.AuthenticateAPIToken(ctx, tok)
+			principal, err := s.auth.AuthenticateAPIToken(ctx, tok)
 			if err != nil {
 				s.log.Error("API token lookup failed", "err", err)
 				return nil, internalError("API token lookup failed")
 			}
-			if !ok {
+			if principal == nil {
 				return nil, unauthenticated("API token unknown or revoked")
 			}
-			if level != heronv1.Access_ACCESS_READ {
+			if level != heronv1.Access_ACCESS_READ && !(level == heronv1.Access_ACCESS_CHANGE && len(principal.Permissions) > 0) {
 				if level == heronv1.Access_ACCESS_LOGIN {
 					return nil, permissionDenied("%s: API tokens cannot log in; send the admin password without an Authorization: Bearer header", req.Spec().Procedure)
 				}
-				return nil, permissionDenied("%s: API tokens are read-only; this method requires a panel session", req.Spec().Procedure)
+				return nil, permissionDenied("%s: use ExecuteChange with a preauthorized write permission; other write methods require a panel session", req.Spec().Procedure)
 			}
-			return next(ctx, req)
+			if !principal.AllNodes && !scopedReadAllowed(req.Spec().Procedure) && level != heronv1.Access_ACCESS_CHANGE {
+				return nil, permissionDenied("this method requires a site-wide API token")
+			}
+			return next(store.WithPrincipal(ctx, *principal), req)
 		}
 		if level == heronv1.Access_ACCESS_LOGIN {
 			// 凭据是请求体里的密码，由 Login 裁决；按来源的锁定也在那里。

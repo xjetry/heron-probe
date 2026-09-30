@@ -20,7 +20,7 @@ func seedTokens(t *testing.T, db string, names ...string) []store.APIToken {
 	defer st.Close()
 	var out []store.APIToken
 	for _, n := range names {
-		tok, _, err := a.CreateAPIToken(context.Background(), n)
+		tok, _, err := a.CreateAPIToken(context.Background(), n, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -216,8 +216,17 @@ type DeliveryTarget struct {
 	Batch     int64
 }
 
-// 主表与关联在同一读事务中读取，不能把并发保存前后的两份作用域拼在一起。
 func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
+	return s.listAlertRules(ctx, false)
+}
+
+// ListVisibleAlertRules 与写入、引用错误共用 authorizeRule；规则自身和引用任务都必须在授权范围内。
+func (s *Store) ListVisibleAlertRules(ctx context.Context) ([]AlertRule, error) {
+	return s.listAlertRules(ctx, true)
+}
+
+// 主表、关联与可见性在同一读事务中裁决，不能把并发保存前后的两份作用域拼在一起。
+func (s *Store) listAlertRules(ctx context.Context, visibleOnly bool) ([]AlertRule, error) {
 	tx, err := s.r.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
@@ -226,6 +235,18 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	out, err := listAlertRulesTx(ctx, tx)
 	if err != nil {
 		return nil, err
+	}
+	if p, ok := Principal(ctx); ok && visibleOnly {
+		visible := out[:0]
+		for _, r := range out {
+			if err := authorizeRule(tx, p.TokenGrant, "alert", r.ID); errors.Is(err, ErrPermission) {
+				continue
+			} else if err != nil {
+				return nil, err
+			}
+			visible = append(visible, r)
+		}
+		out = visible
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -561,32 +582,41 @@ func (s *Store) SaveNotifyChannel(ctx context.Context, c NotifyChannel) (NotifyC
 }
 
 // 检查与删除共用写事务；SaveAlertRule 也经单写协程，检查之后不会新添引用。
-func checkAlertReferences(tx *sql.Tx, query string, kind ObjectKind, id int64) error {
+func checkAlertReferences(ctx context.Context, tx *sql.Tx, query string, kind ObjectKind, id int64) error {
 	rows, err := tx.Query(query, id)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	var refs []RuleReference
+	used := InUseError{Kind: kind, ID: id}
+	p, bearer := Principal(ctx)
 	for rows.Next() {
 		var ref RuleReference
 		if err := rows.Scan(&ref.ID, &ref.Name); err != nil {
 			return err
 		}
-		refs = append(refs, ref)
+		if bearer {
+			if err := authorizeRule(tx, p.TokenGrant, "alert", ref.ID); errors.Is(err, ErrPermission) {
+				used.HiddenRules = true
+				continue
+			} else if err != nil {
+				return err
+			}
+		}
+		used.Rules = append(used.Rules, ref)
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if len(refs) > 0 {
-		return InUseError{Kind: kind, ID: id, Rules: refs}
+	if len(used.Rules) > 0 || used.HiddenRules {
+		return used
 	}
 	return nil
 }
 
 func (s *Store) DeleteNotifyChannel(ctx context.Context, id int64) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if err := checkAlertReferences(tx, `SELECT r.id, r.name FROM alert_rule r JOIN alert_rule_channel c ON c.rule_id = r.id WHERE c.channel_id = ? ORDER BY r.id`, ObjectNotifyChannel, id); err != nil {
+		if err := checkAlertReferences(ctx, tx, `SELECT r.id, r.name FROM alert_rule r JOIN alert_rule_channel c ON c.rule_id = r.id WHERE c.channel_id = ? ORDER BY r.id`, ObjectNotifyChannel, id); err != nil {
 			return err
 		}
 		if err := deleteAlertEntity(tx, "notify_channel", ObjectNotifyChannel, id); err != nil {
@@ -1111,6 +1141,15 @@ func (s *Store) readAlertEvents(ctx context.Context, predicate string, args ...a
 
 func (s *Store) ListAlertEvents(ctx context.Context, nodeID int64, beforeID int64, limit int) ([]AlertEvent, error) {
 	where, args := alertEventWindow(nodeID, beforeID, limit)
+	if p, ok := Principal(ctx); ok && !p.AllNodes {
+		prefix, order, _ := strings.Cut(where, " ORDER BY")
+		if prefix == "" {
+			prefix = "WHERE "
+		} else {
+			prefix += " AND "
+		}
+		where = prefix + nodeScopeSQL(ctx, "alert_event.node_id") + " ORDER BY" + order
+	}
 	return s.readAlertEvents(ctx, where, args...)
 }
 

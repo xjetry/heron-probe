@@ -8,11 +8,26 @@ import "heron/v1/types.proto";
 import "heron/v1/access.proto";
 import "heron/v1/query.proto";
 import "heron/v1/update.proto";
+import "google/protobuf/any.proto";
+import "google/protobuf/field_mask.proto";
 
 // 管理面板与 agent → hub。每个方法以 heron.v1.access 声明准入口径（见 access.proto），
 // 由挂载时绑定的拦截器裁决。全部方法都是 unary，且没有一个标为无副作用：本服务不接受 GET，
 // 这是抵御跨站请求伪造的几条各自独立的事实之一。
 service AdminService {
+  // 预览和执行共用业务校验。执行需 request_id；修改已有资源必须提供预览的 expected_version。
+  // 同一主体和 request_id 只提交一次；重试返回回执，result 为空，不重放一次性秘密。
+  rpc ExecuteChange(ExecuteChangeRequest) returns (ExecuteChangeResponse) {
+    option (heron.v1.access) = ACCESS_CHANGE;
+  }
+  // API token 只能查询自己的回执；会话可指定 owner_id。回执不含凭据。
+  rpc ListOperations(ListOperationsRequest) returns (ListOperationsResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 仅返回渠道 id、名称和类型，不含地址、模板和密钥。
+  rpc ListNotifyChannelRefs(ListNotifyChannelRefsRequest) returns (ListNotifyChannelRefsResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
   // 读取 hub 与节点的更新能力和最新任务。检查官方版本需显式 check_latest。
   rpc GetUpdates(GetUpdatesRequest) returns (GetUpdatesResponse) {
     option (heron.v1.access) = ACCESS_READ;
@@ -1135,6 +1150,7 @@ message ApiToken {
   int64 created_at = 3;
   // 最近一次用于成功鉴权的墙钟 Unix 秒，精度一分钟；从未使用则缺失。
   optional int64 last_used_at = 4;
+  TokenGrant grant = 5;
 }
 
 message ListApiTokensRequest {}
@@ -1146,6 +1162,8 @@ message ListApiTokensResponse {
 message CreateApiTokenRequest {
   // 1–64 字符（去掉控制字符与首尾空白之后），不要求唯一。
   string name = 1;
+  // 缺失保持全站只读。显式 grant 的 all_nodes=false 且 node_ids 为空表示没有现有节点权限。
+  TokenGrant grant = 2;
 }
 message CreateApiTokenResponse {
   ApiToken api_token = 1;
@@ -1171,3 +1189,75 @@ message ProtoFile {
   string path = 1;
   string content = 2;
 }
+
+enum TokenPermission {
+  TOKEN_PERMISSION_UNSPECIFIED = 0;
+  TOKEN_PERMISSION_CONFIGURE = 1;
+  TOKEN_PERMISSION_CREATE = 2;
+  TOKEN_PERMISSION_REGISTER = 3;
+  TOKEN_PERMISSION_ROTATE = 4;
+  TOKEN_PERMISSION_DELETE = 5;
+  TOKEN_PERMISSION_UPDATE = 6;
+}
+message TokenGrant {
+  repeated TokenPermission permissions = 1;
+  bool all_nodes = 2;
+  repeated int64 node_ids = 3;
+}
+
+message ExecuteChangeRequest {
+  // 1–128 位 ASCII 字母、数字、横线或下划线，执行时必填，永不复用。
+  string request_id = 1;
+  bool preview = 2;
+  string expected_version = 3;
+  // UpdateNode、修改已有探测和告警时必填；路径相对对应操作消息，不允许改 id。
+  google.protobuf.FieldMask update_mask = 4;
+  oneof change {
+    CreateNodeRequest create_node = 10;
+    UpdateNodeRequest update_node = 11;
+    DeleteNodeRequest delete_node = 12;
+    RotateNodeTokenRequest rotate_node_token = 13;
+    OpenRegisterWindowRequest open_register_window = 14;
+    CloseRegisterWindowRequest close_register_window = 15;
+    SaveProbeTaskRequest save_probe_task = 16;
+    DeleteProbeTaskRequest delete_probe_task = 17;
+    SaveAlertRuleRequest save_alert_rule = 18;
+    DeleteAlertRuleRequest delete_alert_rule = 19;
+    StartUpdateRequest start_update = 20;
+    CancelUpdateRequest cancel_update = 21;
+    DeleteTagRequest delete_tag = 22;
+  }
+}
+message Operation {
+  int64 owner_id = 1;
+  string request_id = 2;
+  string action = 3;
+  int64 resource_id = 4;
+  // 白名单配置快照，不含节点 token、注册 key、通知密钥。
+  string before_json = 5;
+  string after_json = 6;
+  // 预览为 0；非 0 表示业务事务和回执一并提交，不表示异步节点更新已安装成功。
+  int64 committed_at = 7;
+  // 已提交回执的稳定标识，恢复后数字 owner_id 和 request_id 相同的不同凭据历史仍可区分；预览为空。
+  string id = 8;
+}
+message ExecuteChangeResponse {
+  Operation operation = 1;
+  string expected_version = 2;
+  bool replayed = 3;
+  // 首次执行的原业务响应；可能含一次性秘密。预览和重试不返回。
+  google.protobuf.Any result = 4;
+}
+message ListOperationsRequest {
+  int64 owner_id = 1;
+  string request_id = 2;
+  uint32 limit = 3;
+}
+message ListOperationsResponse { repeated Operation operations = 1; }
+message ListNotifyChannelRefsRequest {}
+message NotifyChannelRef {
+  int64 id = 1;
+  string name = 2;
+  ChannelKind kind = 3;
+}
+message ListNotifyChannelRefsResponse { repeated NotifyChannelRef channels = 1; }

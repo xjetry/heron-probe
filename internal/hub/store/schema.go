@@ -65,8 +65,8 @@ const ddlNodeFacts = `CREATE TABLE node_facts (
 )`
 
 const ddlRegisterWindow = `CREATE TABLE register_window (
-  id INTEGER PRIMARY KEY CHECK (id = 1),
-  key_hash BLOB NOT NULL,
+  owner_id INTEGER PRIMARY KEY,
+  key_hash BLOB NOT NULL UNIQUE,
   expires_at INTEGER NOT NULL,
   remaining INTEGER NOT NULL
 )`
@@ -127,7 +127,7 @@ var metricTables = []string{"metric_1m", "metric_5m", "metric_1h"}
 // DeleteNode 与 Restore 共用节点从属清单，显式删除不依赖外键开启或级联行为。
 // alert_event 是审计历史，删节点时也保留；系统事件的 node_id=0，不属于节点从属状态。
 var nodeDependentTables = append(append([]string{
-	"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "node_tag", "node_update",
+	"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "node_tag", "node_update", "api_token_node",
 }, metricTables...), probeTables...)
 
 // schemaStatements 是当前版本的完整 DDL：空库直接建到当前版本，不重放历史。
@@ -142,10 +142,11 @@ func schemaStatements() []string {
 	}
 	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState, ddlTag, ddlNodeTag, ddlNodeTagByTag,
 		ddlTheme, ddlThemeVersion, ddlThemeSelection, seedThemeSelection, ddlThemeFile, ddlRestoreRecord, ddlThemePackage,
-		ddlAdminSecurity, seedAdminSecurity, ddlProbeTaskTag, ddlProbeTaskTagIndex, ddlAlertRuleTag, ddlAlertRuleTagIndex, ddlNodeUpdate)
+		ddlAdminSecurity, seedAdminSecurity, ddlProbeTaskTag, ddlProbeTaskTagIndex, ddlAlertRuleTag, ddlAlertRuleTagIndex, ddlNodeUpdate,
+		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime)
 }
 
-const ddlNodeUpdate = `CREATE TABLE node_update (node_id INTEGER PRIMARY KEY, data TEXT NOT NULL)`
+const ddlNodeUpdate = `CREATE TABLE node_update (node_id INTEGER PRIMARY KEY, data TEXT NOT NULL, owner_id INTEGER NOT NULL DEFAULT 0)`
 
 const ddlAdminSecurity = `CREATE TABLE admin_security (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -414,8 +415,32 @@ const ddlAPIToken = `CREATE TABLE api_token (
   token_hash BLOB NOT NULL UNIQUE,
   created_at INTEGER NOT NULL,
   -- NULL 表示从未使用。只供展示：距已落库值满一分钟才刷新。
-  last_used_at INTEGER
+  last_used_at INTEGER,
+  permissions TEXT NOT NULL DEFAULT '[]',
+  all_nodes INTEGER NOT NULL DEFAULT 1 CHECK (all_nodes IN (0, 1))
 )`
+
+const ddlAPITokenNode = `CREATE TABLE api_token_node (
+  token_id INTEGER NOT NULL,
+  node_id INTEGER NOT NULL,
+  PRIMARY KEY (token_id, node_id)
+) WITHOUT ROWID`
+
+const ddlOperation = `CREATE TABLE operation (
+  owner_key TEXT NOT NULL,
+  owner_id INTEGER NOT NULL,
+  request_id TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  action TEXT NOT NULL,
+  resource_id INTEGER NOT NULL,
+  before_json TEXT NOT NULL,
+  after_json TEXT NOT NULL,
+  committed_at INTEGER NOT NULL,
+  PRIMARY KEY (owner_key, request_id)
+) WITHOUT ROWID`
+
+const ddlOperationByOwner = `CREATE INDEX operation_by_owner ON operation(owner_id,committed_at DESC,request_id)`
+const ddlOperationDetailsByTime = `CREATE INDEX operation_details_by_time ON operation(committed_at) WHERE before_json!='' OR after_json!=''`
 
 // setting 是全站设置的键值表（公开页外观等）。值可达 128 KiB（logo 的 data: URL），不用 WITHOUT ROWID：
 // 那种表把整行放进主键 B 树，SQLite 文档建议其行不超过页大小的约 1/20。

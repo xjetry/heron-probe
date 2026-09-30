@@ -16,7 +16,7 @@ import (
 var configSnapshotTables = []string{
 	"node", "node_facts", "traffic", "probe_task", "probe_task_node", "probe_meta",
 	"alert_rule", "alert_rule_node", "alert_rule_channel", "alert_state", "alert_event", "alert_delivery",
-	"notify_channel", "setting", "admin", "admin_security", "api_token", "tag", "node_tag", "theme", "theme_version", "theme_selection", "restore_record", "probe_task_tag", "alert_rule_tag",
+	"notify_channel", "setting", "admin", "admin_security", "api_token", "api_token_node", "operation", "tag", "node_tag", "theme", "theme_version", "theme_selection", "restore_record", "probe_task_tag", "alert_rule_tag",
 }
 
 var metricsSnapshotTables = []string{
