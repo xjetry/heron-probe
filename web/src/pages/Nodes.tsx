@@ -100,7 +100,8 @@ export function Nodes() {
   const onCreate = (event: FormEvent) => { event.preventDefault(); if (name.trim() && !create.isPending) create.mutate({ name }); };
   const gate = queryGate(nodes);
   const list = filterNodes(order.items, search);
-  const editing = editor !== null || creating !== null;
+  // 创建和编辑由弹窗占用交互；换发响应前尚无弹窗，也要锁住同一批入口，避免并发响应覆盖唯一明文与返回焦点。
+  const editing = editor !== null || creating !== null || rotate.isPending;
   const sortable = !narrowed && !order.blocked && !editing && list.length > 1;
   const members = list.map((node) => String(node.id)).sort().join(",");
   const dragging = sortable && drag?.members === members ? drag.id : null;

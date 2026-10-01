@@ -24,6 +24,10 @@ hub 的管理接口是 Connect unary：每个方法都是 `POST $HERON_HUB/heron
 
 首次执行的 `result` 是 protobuf Any，HTTP JSON 带 `@type` 和原业务响应字段。创建节点、轮换凭据、打开注册窗口的秘密仅在首次响应出现，不落审计，不在重试中重放。丢失秘密后查询回执，再用新 requestId 显式轮换节点凭据或重开自己的注册窗口；不要重复创建节点。
 
+`ExecuteChange.createNode` 与 `rotateNodeToken` 的 `result.token` 是带 `heron_install_` 前缀的一次性安装凭据，不是运行 token，也不是管理接口的 `HERON_TOKEN`。在目标主机用 `heron-agent register --hub URL --key KEY --config PATH` 注册；它向 `POST /heron.v1.AgentService/Register` 发送 `{"key":"安装凭据"}`，用返回的运行 `token` 写入配置。直接调用 Register 时由请求体 key 授权，不需要管理 bearer。认领保留节点 ID、名称和公开范围，不消费窗口名额；安装凭据不能 Report，运行 token 只能作为 Report 的 bearer，不能再次 Register。
+
+换发会撤销旧凭据。已安装主机用同版本安装脚本的 `--re-register --hub URL --key KEY` 显式替换注册，保留本地探测策略；普通升级不消费 key。注册成功且配置已写入、但后续安装失败时，去掉 `--re-register` 按普通升级重跑；Register 响应丢失或配置未能写入时，重新换发安装凭据，不重建节点，也不重复使用已消费的凭据。
+
 指定节点授权同时约束读写；普通标签不扩权。显式包含未授权节点、全站和动态标签规则不能由指定节点凭据编辑。创建和经自己注册窗口接入的节点自动纳入范围，不增加操作权限。注册窗口互不覆盖；吊销凭据会关闭其窗口，并阻止尚未下发的更新。已下发更新不能据此撤回。
 
 详细差异在后续写入时清理超过 90 天的记录，幂等回执永久保留。配置备份保存授权与回执，恢复时合并回执历史，并清除所有注册窗口和节点更新任务。回执描述原事务，不保证当前配置仍未变化。

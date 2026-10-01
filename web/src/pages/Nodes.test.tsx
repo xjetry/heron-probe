@@ -440,6 +440,31 @@ describe("Nodes", () => {
     try { await waitFor(() => expect(button).toBeDisabled()); }
     finally { await act(async () => { release(); }); }
   });
+  it("换发未完成时不能启动另一个弹窗，展示后焦点回到原入口", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const createNode = vi.fn(async () => ({ node: two[1], token: "other" }));
+    renderNodes({ listNodes: async () => ({ nodes: two }), createNode, rotateNodeToken: async () => { await gate; return { token: "new-token" }; } });
+    const rotate = await screen.findByRole("button", { name: "换 token a（#1）" });
+    rotate.focus();
+    fireEvent.click(rotate);
+    try {
+      await waitFor(() => expect(rotate).toBeDisabled());
+      for (const name of ["添加节点", "编辑 b（#2）", "计费 b（#2）", "换 token b（#2）"]) {
+        const button = screen.getByRole("button", { name });
+        expect(button).toBeDisabled();
+        fireEvent.click(button);
+      }
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(createNode).not.toHaveBeenCalled();
+    } finally { await act(async () => { release(); }); }
+    expect(await screen.findByLabelText("节点 a（#1） 的新 token")).toHaveTextContent("new-token");
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "完成" }));
+    await waitFor(() => expect(rotate).toHaveFocus());
+    expect(screen.getByRole("button", { name: "添加节点" })).toBeEnabled();
+  });
+
   it.each(["list", "create"])("%s 失败时展示错误正文", async (source) => {
     const fail = async () => { throw new ConnectError("request failed", Code.Unavailable); };
     renderNodes({ listNodes: source === "list" ? fail : async () => ({ nodes: two }), createNode: fail });
