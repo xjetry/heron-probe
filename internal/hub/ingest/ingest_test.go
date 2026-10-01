@@ -85,6 +85,10 @@ func (h *hub) node(t *testing.T) (int64, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, tok, err = h.auth.Register(t.Context(), tok, "n", netip.MustParseAddr("127.0.0.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	return id, tok
 }
 

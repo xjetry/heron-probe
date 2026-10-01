@@ -182,6 +182,7 @@ describe("RegisterWindow", () => {
       expect(p.textContent).toContain("https://github.com/xjetry/heron-probe/releases/download/v1.2.3/install.sh");
       expect(p.textContent).not.toContain("--version");
       expect(p.textContent).toContain("--key k1");
+      expect(p.textContent).not.toContain("--re-register");
     }
     expect(screen.getByText(/以 root 执行/)).toBeInTheDocument();
     expect(screen.queryByText(/将安装最新 release/)).toBeNull();

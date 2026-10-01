@@ -29,6 +29,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -98,6 +99,14 @@ func (a *Auth) Load(ctx context.Context) error {
 
 // Authenticate 只查内存映射，不读库：这是上报路径上唯一的鉴权动作。
 func (a *Auth) Authenticate(token string) (int64, bool) {
+	if !isTokenShaped(token) {
+		return 0, false
+	}
+	return a.lookupToken(token)
+}
+
+// lookupToken 不裁决用途，只查完整凭据哈希；调用方必须先限定其允许的凭据形状。
+func (a *Auth) lookupToken(token string) (int64, bool) {
 	h := HashToken(token)
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -108,7 +117,7 @@ func (a *Auth) Authenticate(token string) (int64, bool) {
 func (a *Auth) CreateNode(ctx context.Context, name string) (int64, string, error) {
 	a.mutMu.Lock()
 	defer a.mutMu.Unlock()
-	plain, h := NewToken()
+	plain, h := newInstallToken()
 	id, err := a.nodes.CreateNode(ctx, name, h[:])
 	if err != nil {
 		return 0, "", err
@@ -123,7 +132,7 @@ func (a *Auth) CreateNode(ctx context.Context, name string) (int64, string, erro
 func (a *Auth) RotateToken(ctx context.Context, id int64) (string, error) {
 	a.mutMu.Lock()
 	defer a.mutMu.Unlock()
-	plain, h := NewToken()
+	plain, h := newInstallToken()
 	if err := a.store.SetTokenHash(ctx, id, h[:]); err != nil {
 		return "", err
 	}
@@ -169,7 +178,7 @@ func (a *Auth) Window(ctx context.Context) (store.Window, bool, error) {
 	return a.store.RegisterWindow(ctx)
 }
 
-// Register 用窗口 key 换取一个新节点的 token，也接受在面板里预创建的节点 token。
+// Register 用窗口 key 创建节点，或用管理员签发的安装凭据认领既有节点；两者都返回运行 token。
 //
 // 窗口关闭与 key 错误对外都是 ErrDenied；失败计数只在窗口开启且 key 错误时累加：
 // 窗口关闭时没有可猜的秘密，计数只会误伤与他人共用出口地址的运维者。
@@ -187,11 +196,16 @@ func (a *Auth) Register(ctx context.Context, key, name string, from netip.Addr) 
 	if locked {
 		return 0, "", ErrDenied
 	}
-	// 预创建的节点：面板「添加节点」返回的节点 token 可以直接当安装 key 用。认出是哪个节点后轮换它的
-	// token（旧明文随即失效，面板上复制的命令只作一次安装凭据），agent 把新 token 写进本地配置。
-	// 认领不新建节点、不改名称：节点与名称是管理员在面板里定的，agent 自报的 name 不参与。
-	// 放在窗口判定之前：有窗口开着时节点 token 也走认领而不是再建一个新节点。
-	if id, ok := a.Authenticate(key); ok {
+	// 只有独立用途的安装凭据能认领；完整前缀参与哈希，不能拿运行 token 自报安装用途。
+	// mutMu 串行化认领和管理员换发，成功后旧凭据从库与映射移除，同一凭据只能消费一次。
+	if random, installation := strings.CutPrefix(key, installTokenPrefix); installation {
+		if !isTokenShaped(random) {
+			return 0, "", ErrDenied
+		}
+		id, ok := a.lookupToken(key)
+		if !ok {
+			return 0, "", ErrDenied
+		}
 		plain, h := NewToken()
 		if err := a.store.SetTokenHash(ctx, id, h[:]); err != nil {
 			return 0, "", err
@@ -199,8 +213,8 @@ func (a *Auth) Register(ctx context.Context, key, name string, from netip.Addr) 
 		a.mu.Lock()
 		a.dropLocked(id)
 		a.byHash[h] = id
-		a.mu.Unlock()
 		a.register.clear(from)
+		a.mu.Unlock()
 		return id, plain, nil
 	}
 	keyHash := HashToken(key)

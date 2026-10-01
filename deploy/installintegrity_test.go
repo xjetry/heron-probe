@@ -223,6 +223,87 @@ func TestDefaultDownloadDirIsTheEmbeddedVersion(t *testing.T) {
 // 不给时两条命令行都不带它。
 var agentInstallers = installers[:2]
 
+func TestAgentReRegistration(t *testing.T) {
+	t.Parallel()
+	for _, in := range agentInstallers {
+		for _, existing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/existing=%t", in.script, existing), func(t *testing.T) {
+				t.Parallel()
+				var e *env
+				const config = `{"hub":"old","token":"old-token","probe_interval":"17s"}`
+				if existing {
+					e = in.installed(t)
+					e.put("etc/heron-agent/config.json", config)
+				} else {
+					e = in.fresh(t)
+				}
+				out, code := e.run("--base-url", "file://"+e.dist, "--re-register", "--hub", "http://new-hub.test", "--key", "new-key", "--name", "new-name", "--insecure-http")
+				if code != 0 || !strings.Contains(out, "heron-agent installed and started") {
+					t.Fatalf("exit %d:\n%s", code, out)
+				}
+				want := "heron-agent register --hub http://new-hub.test --key new-key --config " + e.root + "/etc/heron-agent/config.json --name new-name --insecure-http"
+				if !slices.Contains(e.calls(), want) {
+					t.Fatalf("want registration %q, calls %q", want, e.calls())
+				}
+				if existing {
+					b, err := os.ReadFile(filepath.Join(e.state, "registration-input"))
+					if err != nil || string(b) != config {
+						t.Fatalf("register must receive the unchanged existing config: %q, %v", b, err)
+					}
+					if index(e.calls(), "heron-agent register") > index(e.calls(), in.stop) {
+						t.Fatalf("registration must precede stopping the old service: %q", e.calls())
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestAgentUpgradeDoesNotReRegister(t *testing.T) {
+	t.Parallel()
+	for _, in := range agentInstallers {
+		t.Run(in.script, func(t *testing.T) {
+			t.Parallel()
+			e := in.installed(t)
+			config := e.file("etc/heron-agent/config.json")
+			out, code := e.run("--base-url", "file://"+e.dist, "--hub", "http://new-hub.test", "--key", "new-key")
+			if code != 0 || !strings.Contains(out, "--key ignored") {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
+			if index(e.calls(), "heron-agent register") >= 0 || e.file("etc/heron-agent/config.json") != config {
+				t.Fatalf("an ordinary upgrade must preserve registration and not consume the key: %q", e.calls())
+			}
+		})
+	}
+}
+
+func TestAgentReRegistrationRequiresCredentialsBeforeChanges(t *testing.T) {
+	t.Parallel()
+	for _, in := range agentInstallers {
+		for _, args := range [][]string{
+			{"--re-register"},
+			{"--re-register", "--hub", "http://hub.test"},
+			{"--re-register", "--key", "k"},
+			{"--re-register", "--hub", "", "--key", "k"},
+			{"--re-register", "--hub", "http://hub.test", "--key", ""},
+		} {
+			t.Run(in.script+"/"+strings.Join(args, "_"), func(t *testing.T) {
+				t.Parallel()
+				e := in.installed(t)
+				config := e.file("etc/heron-agent/config.json")
+				out, code := e.run(append(args, "--base-url", "file://"+e.dist)...)
+				if code != 2 || !strings.Contains(out, "--hub and --key are required for --re-register") {
+					t.Fatalf("exit %d:\n%s", code, out)
+				}
+				if strings.Join(e.calls(), "") != "" || e.file("etc/heron-agent/config.json") != config {
+					t.Fatalf("invalid credentials must be refused before external operations or config changes: %q", e.calls())
+				}
+				in.assertStillV1(t, e, out)
+			})
+		}
+	}
+}
+
 func TestInsecureHTTPReachesRegisterOnFirstInstall(t *testing.T) {
 	t.Parallel()
 	for _, in := range agentInstallers {

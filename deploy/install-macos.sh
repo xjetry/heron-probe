@@ -31,17 +31,18 @@ RELEASE_SHA256=""
 # <<< release stamp <<<
 
 usage() {
-  echo "usage: install-macos.sh --hub URL --key KEY [--name N] [--insecure-http] [--base-url URL]" >&2
+  echo "usage: install-macos.sh --hub URL --key KEY [--re-register] [--name N] [--insecure-http] [--base-url URL]" >&2
   echo "       install-macos.sh --uninstall [--purge]" >&2
   exit 2
 }
 
-HUB=""; KEY=""; NAME=""; INSECURE_HTTP=0; BASE_URL=""; UNINSTALL=0; PURGE=0
+HUB=""; KEY=""; NAME=""; INSECURE_HTTP=0; BASE_URL=""; UNINSTALL=0; PURGE=0; RE_REGISTER=0
 need_value() { [ "$#" -ge 2 ] || usage; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --hub) need_value "$@"; HUB=$2; shift 2;;
     --key) need_value "$@"; KEY=$2; shift 2;;
+    --re-register) RE_REGISTER=1; shift;;
     --name) need_value "$@"; NAME=$2; shift 2;;
     --insecure-http) INSECURE_HTTP=1; shift;;
     --base-url) need_value "$@"; BASE_URL=$2; shift 2;;
@@ -55,6 +56,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ "$PURGE" = 0 ] || [ "$UNINSTALL" = 1 ] || usage
+# 显式重新注册必须提供完整凭据；在锁文件、下载与系统变更之前拒绝缺省或空值。
+if [ "$RE_REGISTER" = 1 ] && { [ -z "$HUB" ] || [ -z "$KEY" ]; }; then
+  echo "--hub and --key are required for --re-register" >&2
+  exit 2
+fi
 
 [ "$(id -u)" = 0 ] || { echo "install-macos.sh must run as root" >&2; exit 1; }
 
@@ -193,7 +199,7 @@ WANT_SHA256=$(printf '%s\n' "$RELEASE_SHA256" | awk -v p="$PKG" '$2 == p { print
   echo "release $RELEASE_VERSION has no embedded checksum for $PKG" >&2; exit 1
 }
 
-# 首次安装必须有注册凭据；升级沿用现有配置，不需要也不接受重新注册。
+# 首次安装必须有注册凭据；普通升级沿用现有配置，重新注册必须显式给 --re-register。
 if [ ! -f "$CFG" ] && { [ -z "$HUB" ] || [ -z "$KEY" ]; }; then
   echo "--hub and --key are required for the first install" >&2
   exit 2
@@ -339,8 +345,8 @@ for f in "$LOG_DIR/heron-agent.log" "$LOG_DIR/heron-agent.err"; do
   chmod -N "$f"
 done
 
-if [ ! -f "$CFG" ]; then
-  # 注册只在没有配置时发生；配置落盘后重跑不再注册，所以注册之后的步骤失败时，重跑不会多耗窗口名额。
+if [ ! -f "$CFG" ] || [ "$RE_REGISTER" = 1 ]; then
+  # 普通重跑不注册；显式重新注册把原配置交给 register 读取，保留已有探测策略，不先删除配置。
   # 用还没换上的新二进制注册：注册可能失败（hub 不可达、key 失效），必须在停服务之前。
   set -- register --hub "$HUB" --key "$KEY" --config "$CFG"
   if [ -n "$NAME" ]; then set -- "$@" --name "$NAME"; fi

@@ -21,7 +21,7 @@ export const file_heron_v1_agent: GenFile = /*@__PURE__*/
  */
 export type RegisterRequest = Message<"heron.v1.RegisterRequest"> & {
   /**
-   * 注册窗口的一次性 key，或在面板预创建的节点 token（认领该节点并轮换其 token）。
+   * 注册窗口 key，或带 heron_install_ 前缀的一次性安装凭据。运行 token（包括旧版无前缀 token）不能用于注册。
    *
    * @generated from field: string key = 1;
    */
@@ -165,7 +165,7 @@ export const ReportResponseSchema: GenMessage<ReportResponse> = /*@__PURE__*/
  */
 export const AgentService: GenService<{
   /**
-   * 用注册窗口的一次性 key 换取节点 token，或用在面板预创建的节点 token 认领该节点（轮换其 token 后返回）。
+   * 用注册窗口 key 创建节点，或用管理员签发的一次性安装凭据认领既有节点；返回只用于 Report 的运行 token。
    * 新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
    * 返回 ResourceExhausted 并说明，节点不建、窗口名额不消耗。
    *

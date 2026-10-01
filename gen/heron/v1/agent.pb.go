@@ -23,7 +23,7 @@ const (
 
 type RegisterRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// 注册窗口的一次性 key，或在面板预创建的节点 token（认领该节点并轮换其 token）。
+	// 注册窗口 key，或带 heron_install_ 前缀的一次性安装凭据。运行 token（包括旧版无前缀 token）不能用于注册。
 	Key           string `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
 	Name          string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields

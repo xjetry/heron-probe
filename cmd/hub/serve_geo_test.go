@@ -74,9 +74,14 @@ func TestServeRunsCountryLookupWithTheNoRedirectClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	report := connect.NewRequest(&heronv1.ReportRequest{Metrics: &heronv1.Metrics{CpuPct: proto.Float64(1)}})
-	report.Header().Set("Authorization", "Bearer "+node.Msg.Token)
+	agent := heronv1connect.NewAgentServiceClient(http.DefaultClient, url)
+	registered, err := agent.Register(ctx, connect.NewRequest(&heronv1.RegisterRequest{Key: node.Msg.Token}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.Header().Set("Authorization", "Bearer "+registered.Msg.Token)
 	report.Header().Set("X-Forwarded-For", "8.8.8.8")
-	if _, err := heronv1connect.NewAgentServiceClient(http.DefaultClient, url).Report(ctx, report); err != nil {
+	if _, err := agent.Report(ctx, report); err != nil {
 		t.Fatal(err)
 	}
 	stop()

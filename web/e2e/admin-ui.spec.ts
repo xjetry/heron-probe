@@ -46,7 +46,10 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
       const id = result.node.id;
       ids.push(id);
       await rpc(page, 'UpdateNode', { id, name: `${name}-${browserName}`, note: '生产节点 / 核心业务', public: true, trafficResetDay: 1, offlineGraceS: 0, countryPin: ['JP', 'US', 'DE'][index], tags: ['production', index === 0 ? 'edge' : 'compute'], billing: { price: String(12 + index * 8), currency: 'USD', billingCycle: 'BILLING_CYCLE_MONTHLY', expiresOn: '2027-10-01' } });
-      await page.evaluate(async ({ token, index }) => {
+      await page.evaluate(async ({ key, index }) => {
+        const registered = await fetch('/heron.v1.AgentService/Register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
+        if (!registered.ok) throw new Error(await registered.text());
+        const { token } = await registered.json();
         const checkedAt = String(Math.floor(Date.now() / 1000));
         const response = await fetch('/heron.v1.AgentService/Report', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({
           factsHash: '1', metrics: { bootId: 'browser-test', cpuPct: 12 + index * 15, memUsed: '536870912', memTotal: '2147483648', diskUsed: '2147483648', diskTotal: '21474836480', load1: 0.3, load5: 0.2, load15: 0.1, netRxBps: '524288', netTxBps: '131072' },
@@ -56,7 +59,7 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
           } },
         }) });
         if (!response.ok) throw new Error(await response.text());
-      }, { token: result.token, index });
+      }, { key: result.token, index });
     }
     await page.goto('/admin/nodes');
     await page.getByLabel('后台配色').selectOption('dark');

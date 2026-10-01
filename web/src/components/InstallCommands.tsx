@@ -11,11 +11,11 @@ const scriptUrl = (hubVersion: string) =>
     : "https://github.com/xjetry/heron-probe/releases/latest/download/install.sh";
 
 // origin 是 agent 访问 hub 的地址，也是判定要不要 --insecure-http 的依据：命令里的 --hub 与这个判定取同一个值。
-// registerKey 是注册窗口的一次性 key，或面板预创建的节点 token：两者都能被 `heron-agent register` 接受。
-export function InstallCommands({ hubVersion, origin, registerKey, banner }: { hubVersion: string; origin: string; registerKey: string; banner?: ReactNode }) {
+// registerKey 是注册窗口的 key 或指定节点的安装凭据；注册后由 agent 保存另行签发的运行 token。
+export function InstallCommands({ hubVersion, origin, registerKey, reRegister = false, banner }: { hubVersion: string; origin: string; registerKey: string; reRegister?: boolean; banner?: ReactNode }) {
   const url = scriptUrl(hubVersion);
   const insecure = needsInsecureHTTP(origin);
-  const args = `--hub ${origin} --key ${registerKey}${insecure ? " --insecure-http" : ""}`;
+  const args = `--hub ${origin} --key ${registerKey}${insecure ? " --insecure-http" : ""}${reRegister ? " --re-register" : ""}`;
   return (
     <>
       {banner}

@@ -73,7 +73,7 @@ func BenchmarkAuthenticateDuringBusyLoginFlood(b *testing.B) {
 			b.Run(fmt.Sprintf("entries=%d/flood=%d", entries, flood), func(b *testing.B) {
 				a := busyLoginAuth(b, entries)
 				ctx := context.Background()
-				_, tok, err := a.CreateNode(ctx, "reporting")
+				_, tok, err := runningNode(b, a, "reporting")
 				if err != nil {
 					b.Fatal(err)
 				}

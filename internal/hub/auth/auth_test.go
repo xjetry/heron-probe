@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/netip"
 	"path/filepath"
@@ -84,14 +85,30 @@ func TestIsTokenShapedMatchesNewToken(t *testing.T) {
 	}
 }
 
-func TestCreateNodeMakesTokenAuthenticate(t *testing.T) {
+func runningNode(t testing.TB, a *Auth, name string) (int64, string, error) {
+	t.Helper()
+	id, installation, err := a.CreateNode(t.Context(), name)
+	if err != nil {
+		return id, "", err
+	}
+	return a.Register(t.Context(), installation, name, netip.MustParseAddr("127.0.0.1"))
+}
+
+func TestCreateNodeIssuesInstallationCredential(t *testing.T) {
 	a, _, _ := setup(t)
 	id, plain, err := a.CreateNode(context.Background(), "a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := a.Authenticate(plain); !ok || got != id {
-		t.Fatalf("authenticate = %d,%v want %d,true", got, ok, id)
+	if _, ok := a.Authenticate(plain); ok {
+		t.Fatal("安装凭据不能用于上报")
+	}
+	got, runtime, err := a.Register(t.Context(), plain, "ignored", netip.MustParseAddr("127.0.0.1"))
+	if err != nil || got != id {
+		t.Fatalf("认领失败：id=%d err=%v", got, err)
+	}
+	if got, ok := a.Authenticate(runtime); !ok || got != id {
+		t.Fatalf("运行 token 鉴权 = %d,%v", got, ok)
 	}
 	if _, ok := a.Authenticate("nope"); ok {
 		t.Fatal("unknown token authenticated")
@@ -101,7 +118,7 @@ func TestCreateNodeMakesTokenAuthenticate(t *testing.T) {
 func TestRotateRemovesOldTokenImmediately(t *testing.T) {
 	a, _, _ := setup(t)
 	ctx := context.Background()
-	id, old, _ := a.CreateNode(ctx, "a")
+	id, old, _ := runningNode(t, a, "a")
 	fresh, err := a.RotateToken(ctx, id)
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +126,11 @@ func TestRotateRemovesOldTokenImmediately(t *testing.T) {
 	if _, ok := a.Authenticate(old); ok {
 		t.Fatal("old token still authenticates after rotation")
 	}
-	if got, ok := a.Authenticate(fresh); !ok || got != id {
+	_, runtime, err := a.Register(ctx, fresh, "a", netip.MustParseAddr("127.0.0.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := a.Authenticate(runtime); !ok || got != id {
 		t.Fatal("new token does not authenticate")
 	}
 }
@@ -117,7 +138,7 @@ func TestRotateRemovesOldTokenImmediately(t *testing.T) {
 func TestFailedStoreWriteLeavesMapUntouched(t *testing.T) {
 	a, _, _ := setup(t)
 	ctx := context.Background()
-	_, plain, _ := a.CreateNode(ctx, "a")
+	_, plain, _ := runningNode(t, a, "a")
 	if _, err := a.RotateToken(ctx, 9999); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("err = %v", err)
 	}
@@ -135,7 +156,7 @@ func TestFailedStoreWriteLeavesMapUntouched(t *testing.T) {
 func TestLoadRebuildsMapFromStore(t *testing.T) {
 	a, st, clk := setup(t)
 	ctx := context.Background()
-	id, plain, _ := a.CreateNode(ctx, "a")
+	id, plain, _ := runningNode(t, a, "a")
 	b := New(st, probe.New(st, slog.Default()), nil, clk, time.UTC, slog.Default())
 	if _, ok := b.Authenticate(plain); ok {
 		t.Fatal("fresh Auth must not know tokens before Load")
@@ -303,10 +324,96 @@ func TestRegisterAdoptsPrecreatedNodeToken(t *testing.T) {
 	}
 }
 
+func TestRuntimeCredentialsCannotEnroll(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprint("legacy=", legacy), func(t *testing.T) {
+			a, st, _ := setup(t)
+			ctx := t.Context()
+			from := netip.MustParseAddr("203.0.113.9")
+			var id int64
+			var token string
+			if legacy {
+				var hash [32]byte
+				token, hash = NewToken()
+				var err error
+				id, _, err = st.CreateNode(ctx, "legacy", hash[:])
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				key, _, err := a.OpenWindow(ctx, time.Hour, 1)
+				if err != nil {
+					t.Fatal(err)
+				}
+				id, token, err = a.Register(ctx, key, "window", from)
+				if err != nil {
+					t.Fatal(err)
+				}
+				n, err := st.GetNode(ctx, id)
+				if err != nil || n.Public {
+					t.Fatalf("窗口注册必须默认私有：%+v %v", n, err)
+				}
+			}
+			if err := a.Load(ctx); err != nil {
+				t.Fatal(err)
+			}
+			for _, candidate := range []string{token, installTokenPrefix + token} {
+				if _, _, err := a.Register(ctx, candidate, "ignored", from); !errors.Is(err, ErrDenied) {
+					t.Errorf("运行凭据不能认领或自报安装用途：%v", err)
+				}
+			}
+			if got, ok := a.Authenticate(token); !ok || got != id {
+				t.Error("运行凭据须继续上报")
+			}
+		})
+	}
+}
+
+func TestInstallationCredentialConsumedOnceConcurrently(t *testing.T) {
+	a, _, _ := setup(t)
+	id, key, err := a.CreateNode(t.Context(), "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		id    int64
+		token string
+		err   error
+	}
+	results := make(chan result, 2)
+	start := make(chan struct{})
+	for range 2 {
+		go func() {
+			<-start
+			got, token, err := a.Register(t.Context(), key, "ignored", netip.MustParseAddr("203.0.113.9"))
+			results <- result{got, token, err}
+		}()
+	}
+	close(start)
+	accepted := 0
+	for range 2 {
+		r := <-results
+		if r.err == nil {
+			accepted++
+			if got, ok := a.Authenticate(r.token); !ok || got != id || r.id != id {
+				t.Error("唯一成功的认领必须产生有效运行凭据")
+			}
+		} else if !errors.Is(r.err, ErrDenied) {
+			t.Fatal(r.err)
+		}
+	}
+	if accepted != 1 {
+		t.Fatalf("并发认领成功数=%d，期望 1", accepted)
+	}
+}
+
 func TestDeleteNodeRevokesToken(t *testing.T) {
 	a, _, _ := setup(t)
 	ctx := context.Background()
-	id, plain, _ := a.CreateNode(ctx, "a")
+	id, plain, err := runningNode(t, a, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := a.DeleteNode(ctx, id); err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +450,7 @@ func TestAuthenticateDoesNotWaitForRegisterTransaction(t *testing.T) {
 	t.Cleanup(func() { st.Close() })
 	a := New(st, probe.New(st, slog.Default()), nil, clk, time.UTC, slog.Default())
 	ctx := context.Background()
-	id, tok, err := a.CreateNode(ctx, "existing")
+	id, tok, err := runningNode(t, a, "existing")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +549,7 @@ func TestCancelledCreateNodeKeepsMapConsistentWithStore(t *testing.T) {
 	if len(hashes) != 1 || entries != 1 {
 		t.Errorf("store hashes=%d auth hashes=%d, want 1 each", len(hashes), entries)
 	}
-	if id, ok := a.Authenticate(got.token); !ok || id != got.id {
-		t.Errorf("authenticate = %d,%v want %d,true", id, ok, got.id)
+	if id, _, err := a.Register(t.Context(), got.token, "ignored", netip.MustParseAddr("127.0.0.1")); err != nil || id != got.id {
+		t.Errorf("认领 = %d,%v want %d,nil", id, err, got.id)
 	}
 }

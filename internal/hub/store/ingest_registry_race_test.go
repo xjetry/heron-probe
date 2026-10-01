@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"path/filepath"
 	"testing"
 	"time"
@@ -65,6 +66,10 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 		t.Fatal(err)
 	}
 	keep, token, err := a.CreateNode(ctx, "keep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, token, err = a.Register(ctx, token, "keep", netip.MustParseAddr("127.0.0.1"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -93,6 +93,9 @@ func run(ctx context.Context, base string, count int, password string) error {
 		return errors.New("hub 已有节点，请换用新的独立数据库")
 	}
 	tokens := make([]string, 0, count)
+	// 注册入口每来源每秒补一个名额；夹具可建数百节点，按补充速率认领，不绕过真实鉴权入口。
+	enrollment := time.NewTicker(time.Second)
+	defer enrollment.Stop()
 	for i := 0; i < count; i++ {
 		name := fmt.Sprintf("scale-%03d-生产节点-长名称-%s", i+1, strings.Repeat("x", 30))
 		var created struct {
@@ -115,7 +118,21 @@ func run(ctx context.Context, base string, count int, password string) error {
 		}, nil); err != nil {
 			return err
 		}
-		tokens = append(tokens, created.Token)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-enrollment.C:
+		}
+		var registered struct {
+			Token string `json:"token"`
+		}
+		if err := client.call(ctx, "AgentService", "Register", "", map[string]any{"key": created.Token, "name": name}, &registered); err != nil {
+			return err
+		}
+		if registered.Token == "" {
+			return errors.New("Register 未返回运行 token")
+		}
+		tokens = append(tokens, registered.Token)
 	}
 	var confirmed struct {
 		Nodes []json.RawMessage `json:"nodes"`

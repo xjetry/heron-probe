@@ -235,7 +235,9 @@ docker start heron
 
 ## 安装 agent
 
-先在面板的「注册窗口」开一个窗口拿到 key（或在 hub 主机上 `heron-hub window open`）；也可以在「节点」页直接添加节点，用创建时返回的 token 当 `--key`：hub 会认领该节点并在安装时轮换它的 token，面板上复制的 token 只作一次安装凭据，之后 agent 持有的是轮换后的新 token。重跑安装命令即升级：已有配置时沿用现有注册，不会在 hub 上多出节点。
+先在面板的「注册窗口」开一个窗口拿到 key（或在 hub 主机上 `heron-hub window open`）；也可以在「节点」页直接添加节点，用创建时返回的 `heron_install_` 安装凭据当 `--key`。hub 认领该节点后使安装凭据失效，返回只用于上报的运行 token；安装凭据不能上报，运行 token 不能再次注册。CLI `node create`、`node rotate-token` 与管理 API 的 `token` 字段也返回安装凭据，不能直接填入 agent 配置。旧版运行 token 继续上报，旧版尚未使用的无前缀安装 token 须在面板重新换发；库中的完整凭据哈希格式不变，无需数据库迁移。
+
+普通重跑安装命令即升级：已有配置时沿用现有注册，不消费 `--key`。在面板「换 token」后，必须使用弹窗中带 **`--re-register`** 的命令（Linux、macOS 安装脚本均支持），并给出 `--hub`、`--key`：它显式重新注册并重启服务，沿用本地探测策略，不删除配置。换发会立即撤销旧凭据，直到原机完成重新注册才能恢复上报；不要把凭据替换当作普通升级。
 
 安装命令以本 README 与 GitHub Release 为准，不以 hub 面板为准：面板由 hub 提供，hub 失守时面板上的命令可以被整条换掉，这一点产品内防不住。面板的命令只是为了方便，复制前核对脚本地址是 `https://github.com/xjetry/heron-probe/releases/…`。
 

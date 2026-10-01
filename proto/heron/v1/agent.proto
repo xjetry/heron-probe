@@ -10,7 +10,7 @@ import "heron/v1/update.proto";
 // agent → hub 的唯一服务。两个方法都是 unary：hub 向 agent 的下行只有低频
 // 配置，在每次上报的响应里按版本对账即可，不需要应用层连接状态。
 service AgentService {
-  // 用注册窗口的一次性 key 换取节点 token，或用在面板预创建的节点 token 认领该节点（轮换其 token 后返回）。
+  // 用注册窗口 key 创建节点，或用管理员签发的一次性安装凭据认领既有节点；返回只用于 Report 的运行 token。
   // 新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
   // 返回 ResourceExhausted 并说明，节点不建、窗口名额不消耗。
   rpc Register(RegisterRequest) returns (RegisterResponse);
@@ -19,7 +19,7 @@ service AgentService {
 }
 
 message RegisterRequest {
-  // 注册窗口的一次性 key，或在面板预创建的节点 token（认领该节点并轮换其 token）。
+  // 注册窗口 key，或带 heron_install_ 前缀的一次性安装凭据。运行 token（包括旧版无前缀 token）不能用于注册。
   string key = 1;
   string name = 2;
 }

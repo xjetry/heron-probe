@@ -80,7 +80,7 @@ func runNode(args []string) error {
 			return err
 		}
 		fmt.Printf("id: %d\ntoken: %s\n", nid, tok)
-		fmt.Fprintln(os.Stderr, "the token is shown once; the hub stores only its hash")
+		fmt.Fprintln(os.Stderr, "one-time installation credential: use as heron-agent register --key, not as a reporting token")
 		fmt.Fprintln(os.Stderr, restartNotice)
 	case "list":
 		nodes, err := st.ListNodes(ctx)
@@ -114,6 +114,7 @@ func runNode(args []string) error {
 			return err
 		}
 		fmt.Printf("token: %s\n", tok)
+		fmt.Fprintln(os.Stderr, "old credential revoked; use the installation script with --re-register --hub URL --key TOKEN on the agent host")
 		fmt.Fprintln(os.Stderr, restartNotice)
 	default:
 		return fmt.Errorf("unknown node command %q", args[0])

@@ -2129,7 +2129,7 @@ func (x *CreateNodeRequest) GetName() string {
 type CreateNodeResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Node  *Node                  `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`
-	// 节点 token 明文，只在此处返回一次；hub 只存其哈希。
+	// 一次性安装凭据（heron_install_ 前缀），只在此处返回；完整前缀参与哈希。只能用于 Register，不能用于 Report。
 	Token         string `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2466,8 +2466,9 @@ func (x *RotateNodeTokenRequest) GetId() int64 {
 }
 
 type RotateNodeTokenResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Token         string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 一次性安装凭据（heron_install_ 前缀），只能用于 Register；旧凭据已撤销。
+	Token         string `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

@@ -778,7 +778,7 @@ export type CreateNodeResponse = Message<"heron.v1.CreateNodeResponse"> & {
   node?: Node | undefined;
 
   /**
-   * 节点 token 明文，只在此处返回一次；hub 只存其哈希。
+   * 一次性安装凭据（heron_install_ 前缀），只在此处返回；完整前缀参与哈希。只能用于 Register，不能用于 Report。
    *
    * @generated from field: string token = 2;
    */
@@ -934,6 +934,8 @@ export const RotateNodeTokenRequestSchema: GenMessage<RotateNodeTokenRequest> = 
  */
 export type RotateNodeTokenResponse = Message<"heron.v1.RotateNodeTokenResponse"> & {
   /**
+   * 一次性安装凭据（heron_install_ 前缀），只能用于 Register；旧凭据已撤销。
+   *
    * @generated from field: string token = 1;
    */
   token: string;
@@ -4641,7 +4643,8 @@ export const AdminService: GenService<{
     output: typeof ListNodesResponseSchema;
   },
   /**
-   * 建节点并返回其 token；明文只在此处返回一次。新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
+   * 建节点（默认公开）并返回一次性安装凭据；明文只在此处返回一次，须经 AgentService.Register 换成运行 token，不能直接上报。
+   * 新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
    * 返回 ResourceExhausted 并说明，节点不建。
    *
    * @generated from rpc heron.v1.AdminService.CreateNode
@@ -4673,7 +4676,8 @@ export const AdminService: GenService<{
     output: typeof DeleteNodeResponseSchema;
   },
   /**
-   * 换发 token：旧 token 立即失效，新明文只在此处返回一次。
+   * 撤销旧凭据并换发一次性安装凭据；须经 AgentService.Register 换成运行 token，不能直接上报。
+   * 已安装主机用安装脚本的 --re-register 显式替换注册，普通升级不消费此凭据。
    *
    * @generated from rpc heron.v1.AdminService.RotateNodeToken
    */

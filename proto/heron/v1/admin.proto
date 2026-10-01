@@ -81,7 +81,8 @@ service AdminService {
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse) {
     option (heron.v1.access) = ACCESS_READ;
   }
-  // 建节点并返回其 token；明文只在此处返回一次。新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
+  // 建节点（默认公开）并返回一次性安装凭据；明文只在此处返回一次，须经 AgentService.Register 换成运行 token，不能直接上报。
+  // 新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
   // 返回 ResourceExhausted 并说明，节点不建。
   rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
@@ -95,7 +96,8 @@ service AdminService {
   rpc DeleteNode(DeleteNodeRequest) returns (DeleteNodeResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
   }
-  // 换发 token：旧 token 立即失效，新明文只在此处返回一次。
+  // 撤销旧凭据并换发一次性安装凭据；须经 AgentService.Register 换成运行 token，不能直接上报。
+  // 已安装主机用安装脚本的 --re-register 显式替换注册，普通升级不消费此凭据。
   rpc RotateNodeToken(RotateNodeTokenRequest) returns (RotateNodeTokenResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
   }
@@ -455,7 +457,7 @@ message CreateNodeRequest {
 }
 message CreateNodeResponse {
   Node node = 1;
-  // 节点 token 明文，只在此处返回一次；hub 只存其哈希。
+  // 一次性安装凭据（heron_install_ 前缀），只在此处返回；完整前缀参与哈希。只能用于 Register，不能用于 Report。
   string token = 2;
 }
 
@@ -493,6 +495,7 @@ message RotateNodeTokenRequest {
   int64 id = 1;
 }
 message RotateNodeTokenResponse {
+  // 一次性安装凭据（heron_install_ 前缀），只能用于 Register；旧凭据已撤销。
   string token = 1;
 }
 

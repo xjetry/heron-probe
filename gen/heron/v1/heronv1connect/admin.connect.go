@@ -244,7 +244,8 @@ type AdminServiceClient interface {
 	RevokeSession(context.Context, *connect.Request[v1.RevokeSessionRequest]) (*connect.Response[v1.RevokeSessionResponse], error)
 	// 列出节点；可按标签过滤（ListNodesRequest.tags）。
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
-	// 建节点并返回其 token；明文只在此处返回一次。新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
+	// 建节点（默认公开）并返回一次性安装凭据；明文只在此处返回一次，须经 AgentService.Register 换成运行 token，不能直接上报。
+	// 新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
 	// 返回 ResourceExhausted 并说明，节点不建。
 	CreateNode(context.Context, *connect.Request[v1.CreateNodeRequest]) (*connect.Response[v1.CreateNodeResponse], error)
 	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签）。计费字段有变化时，
@@ -252,7 +253,8 @@ type AdminServiceClient interface {
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
 	// 删除节点及其全部历史；进程内的实时状态同步清理。
 	DeleteNode(context.Context, *connect.Request[v1.DeleteNodeRequest]) (*connect.Response[v1.DeleteNodeResponse], error)
-	// 换发 token：旧 token 立即失效，新明文只在此处返回一次。
+	// 撤销旧凭据并换发一次性安装凭据；须经 AgentService.Register 换成运行 token，不能直接上报。
+	// 已安装主机用安装脚本的 --re-register 显式替换注册，普通升级不消费此凭据。
 	RotateNodeToken(context.Context, *connect.Request[v1.RotateNodeTokenRequest]) (*connect.Response[v1.RotateNodeTokenResponse], error)
 	// 给出全部节点 id 的新顺序；必须恰好包含每个节点一次。
 	ReorderNodes(context.Context, *connect.Request[v1.ReorderNodesRequest]) (*connect.Response[v1.ReorderNodesResponse], error)
@@ -1136,7 +1138,8 @@ type AdminServiceHandler interface {
 	RevokeSession(context.Context, *connect.Request[v1.RevokeSessionRequest]) (*connect.Response[v1.RevokeSessionResponse], error)
 	// 列出节点；可按标签过滤（ListNodesRequest.tags）。
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
-	// 建节点并返回其 token；明文只在此处返回一次。新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
+	// 建节点（默认公开）并返回一次性安装凭据；明文只在此处返回一次，须经 AgentService.Register 换成运行 token，不能直接上报。
+	// 新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
 	// 返回 ResourceExhausted 并说明，节点不建。
 	CreateNode(context.Context, *connect.Request[v1.CreateNodeRequest]) (*connect.Response[v1.CreateNodeResponse], error)
 	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签）。计费字段有变化时，
@@ -1144,7 +1147,8 @@ type AdminServiceHandler interface {
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
 	// 删除节点及其全部历史；进程内的实时状态同步清理。
 	DeleteNode(context.Context, *connect.Request[v1.DeleteNodeRequest]) (*connect.Response[v1.DeleteNodeResponse], error)
-	// 换发 token：旧 token 立即失效，新明文只在此处返回一次。
+	// 撤销旧凭据并换发一次性安装凭据；须经 AgentService.Register 换成运行 token，不能直接上报。
+	// 已安装主机用安装脚本的 --re-register 显式替换注册，普通升级不消费此凭据。
 	RotateNodeToken(context.Context, *connect.Request[v1.RotateNodeTokenRequest]) (*connect.Response[v1.RotateNodeTokenResponse], error)
 	// 给出全部节点 id 的新顺序；必须恰好包含每个节点一次。
 	ReorderNodes(context.Context, *connect.Request[v1.ReorderNodesRequest]) (*connect.Response[v1.ReorderNodesResponse], error)

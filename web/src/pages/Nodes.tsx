@@ -41,7 +41,7 @@ export function Nodes() {
   ]);
   // 创建与轮换的响应是唯一明文来源，不能丢弃迟到响应；删除同一节点时同步清掉它的凭据弹窗。
   // opener 记下触发元素，弹窗关闭后焦点回到它；节点多了也不会把凭据顶出视口。
-  const [secret, setSecret] = useState<{ id: bigint; label: string; value: string; opener: HTMLElement } | null>(null);
+  const [secret, setSecret] = useState<{ id: bigint; label: string; value: string; reRegister: boolean; opener: HTMLElement } | null>(null);
   const lastOpener = useRef<HTMLElement | null>(null);
   const [creating, setCreating] = useState<HTMLElement | null>(null);
   const [name, setName] = useState("");
@@ -53,7 +53,7 @@ export function Nodes() {
     ...mutationOptions,
     onSuccess: (result) => {
       const node = result.node;
-      if (node) setSecret({ id: node.id, label: `节点 ${withId(node.name, node.id)} 的 token`, value: result.token, opener: lastOpener.current ?? document.body });
+      if (node) setSecret({ id: node.id, label: `节点 ${withId(node.name, node.id)} 的 token`, value: result.token, reRegister: false, opener: lastOpener.current ?? document.body });
       setName(""); setCreating(null);
       void refresh();
     },
@@ -76,7 +76,7 @@ export function Nodes() {
       if (request.id == null) return refresh();
       const id = request.id;
       const name = nodes.data?.nodes.find((node) => node.id === id)?.name ?? String(id);
-      setSecret({ id, label: `节点 ${withId(name, id)} 的新 token`, value: result.token, opener: lastOpener.current ?? document.body });
+      setSecret({ id, label: `节点 ${withId(name, id)} 的新 token`, value: result.token, reRegister: true, opener: lastOpener.current ?? document.body });
       return refresh();
     },
   });
@@ -126,7 +126,7 @@ export function Nodes() {
     </header>
     {!editor && errorBanner(nodes.error)}
     {snapshot.error != null && <p role="alert" className="error">{hubVersion === undefined ? "无法取得 hub 版本，落后标记不可用" : `刷新 hub 版本失败，落后标记按上次取得的 ${hubVersion || "空版本"} 判断`}；在线状态与流量可能不是最新值：{errorText(snapshot.error)}</p>}
-    {secret && <NodeInstallModal secretLabel={secret.label} token={secret.value} hubVersion={hubVersion} banner={errorBanner(snapshot.error)} opener={secret.opener} onClose={() => setSecret(null)} />}
+    {secret && <NodeInstallModal secretLabel={secret.label} token={secret.value} hubVersion={hubVersion} error={snapshot.error} reRegister={secret.reRegister} opener={secret.opener} onClose={() => setSecret(null)} />}
     <div className="node-filters">
       <label className="node-search">搜索节点<input type="search" placeholder="名称、IP、地区、备注或主机名" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
       <TagFilter tags={tags.data?.tags} error={tags.error} selected={tagFilter} onChange={setTagFilter} />
@@ -174,7 +174,7 @@ export function Nodes() {
     {editor && <NodeEditor key={String(editor.node.id)} node={editor.node} mode={editor.mode} opener={editor.opener} knownTags={tags.data?.tags ?? []}
       saving={update.isPending} error={update.error} listError={nodes.error} onClose={() => setEditor(null)}
       onSave={(patch) => update.mutate({ id: editor.node.id, ...patch }, { onSuccess: () => setEditor(null) })} />}
-    {creating && <Modal title="添加节点" description="创建后将显示一次性 token，用于安装 agent。" busy={create.isPending} opener={creating} onClose={() => setCreating(null)}>
+    {creating && <Modal title="添加节点" description="创建后将显示安装凭据 token，仅用于注册 agent，不能上报指标。" busy={create.isPending} opener={creating} onClose={() => setCreating(null)}>
       <form onSubmit={onCreate}><div className="modal-body">{errorBanner(create.error)}<label>新节点名称<input data-autofocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如 tokyo-01" disabled={create.isPending} /></label></div>
         <footer className="modal-footer"><button type="button" disabled={create.isPending} onClick={() => setCreating(null)}>取消</button><button type="submit" className="primary-button" disabled={create.isPending || name.trim() === ""}>创建</button></footer>
       </form>

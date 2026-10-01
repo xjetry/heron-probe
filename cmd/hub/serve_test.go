@@ -184,8 +184,12 @@ func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	report := connect.NewRequest(&heronv1.ReportRequest{Metrics: &heronv1.Metrics{CpuPct: proto.Float64(42)}})
-	report.Header().Set("Authorization", "Bearer "+node.Msg.Token)
 	agent := agentclient.NewServiceClient(url, 5*time.Second)
+	registered, err := agent.Register(ctx, connect.NewRequest(&heronv1.RegisterRequest{Key: node.Msg.Token}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.Header().Set("Authorization", "Bearer "+registered.Msg.Token)
 	if _, err := agent.Report(ctx, report); err != nil {
 		t.Fatal(err)
 	}
@@ -477,12 +481,16 @@ func TestServeFlushesTrafficOnShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	agent := agentclient.NewServiceClient(url, 5*time.Second)
+	registered, err := agent.Register(ctx, connect.NewRequest(&heronv1.RegisterRequest{Key: node.Msg.Token}))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, m := range []*heronv1.Metrics{
 		{BootId: "b", NetRxTotal: proto.Uint64(1000), NetTxTotal: proto.Uint64(5000)},
 		{BootId: "b", NetRxTotal: proto.Uint64(1200), NetTxTotal: proto.Uint64(5001)},
 	} {
 		report := connect.NewRequest(&heronv1.ReportRequest{Metrics: m})
-		report.Header().Set("Authorization", "Bearer "+node.Msg.Token)
+		report.Header().Set("Authorization", "Bearer "+registered.Msg.Token)
 		if _, err := agent.Report(ctx, report); err != nil {
 			t.Fatal(err)
 		}

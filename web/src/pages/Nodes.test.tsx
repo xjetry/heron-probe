@@ -461,6 +461,11 @@ describe("Nodes", () => {
     fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
     expect(await screen.findByLabelText("节点 c（#3） 的 token")).toHaveTextContent("deadbeef");
+    for (const tool of ["curl", "wget"]) {
+      const command = within(screen.getByRole("dialog")).getByLabelText(`${tool} 安装命令`);
+      expect(command).toHaveTextContent("--key deadbeef");
+      expect(command).not.toHaveTextContent("--re-register");
+    }
     expect(createNode).toHaveBeenCalledWith(expect.objectContaining({ name: "c" }), expect.anything());
     await act(() => router.navigate("/away"));
     await act(() => router.navigate("/nodes"));
@@ -841,6 +846,37 @@ describe("Nodes", () => {
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByLabelText("curl 安装命令")).toHaveTextContent("--key new-token");
     expect(within(dialog).getByLabelText("wget 安装命令")).toHaveTextContent("--key new-token");
+    for (const tool of ["curl", "wget"]) expect(within(dialog).getByLabelText(`${tool} 安装命令`)).toHaveTextContent("--re-register");
+    expect(within(dialog).getByText(/替换本机原有的节点身份/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/普通升级保留现有配置/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/本地探测策略不会删除/)).toBeInTheDocument();
+  });
+
+  it("首次版本读取失败时凭据弹窗显示错误，恢复后才给出命令", async () => {
+    let fail = true;
+    const { queryClient } = renderNodes({
+      listNodes: async () => ({ nodes: two }),
+      rotateNodeToken: async () => ({ token: "new-token" }),
+      getSnapshot: async () => {
+        if (fail) throw new ConnectError("snapshot unavailable", Code.Unavailable);
+        return { now: 1n, reportIntervalMs: 4000, nodes: [], hubVersion: "v1.2.3" };
+      },
+    });
+    await screen.findByRole("alert");
+    fireEvent.click(await screen.findByRole("button", { name: "换 token a（#1）" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByRole("alert")).toHaveTextContent("snapshot unavailable");
+    expect(dialog.queryByText(/正在读取 hub 版本/)).toBeNull();
+    expect(dialog.queryByLabelText("curl 安装命令")).toBeNull();
+    expect(dialog.queryByLabelText("wget 安装命令")).toBeNull();
+    fail = false;
+    const snapshotKey = createConnectQueryKey({ schema: AdminService.method.getSnapshot, cardinality: "finite" });
+    await act(async () => { await queryClient.refetchQueries({ queryKey: snapshotKey }); });
+    for (const tool of ["curl", "wget"]) {
+      expect(await dialog.findByLabelText(`${tool} 安装命令`)).toHaveTextContent("/releases/download/v1.2.3/install.sh");
+      expect(dialog.getByLabelText(`${tool} 安装命令`)).toHaveTextContent("--re-register");
+    }
+    expect(dialog.queryByRole("alert")).toBeNull();
   });
 
   describe("标签", () => {

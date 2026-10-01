@@ -41,7 +41,7 @@ const (
 
 // AgentServiceClient is a client for the heron.v1.AgentService service.
 type AgentServiceClient interface {
-	// 用注册窗口的一次性 key 换取节点 token，或用在面板预创建的节点 token 认领该节点（轮换其 token 后返回）。
+	// 用注册窗口 key 创建节点，或用管理员签发的一次性安装凭据认领既有节点；返回只用于 Report 的运行 token。
 	// 新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
 	// 返回 ResourceExhausted 并说明，节点不建、窗口名额不消耗。
 	Register(context.Context, *connect.Request[v1.RegisterRequest]) (*connect.Response[v1.RegisterResponse], error)
@@ -93,7 +93,7 @@ func (c *agentServiceClient) Report(ctx context.Context, req *connect.Request[v1
 
 // AgentServiceHandler is an implementation of the heron.v1.AgentService service.
 type AgentServiceHandler interface {
-	// 用注册窗口的一次性 key 换取节点 token，或用在面板预创建的节点 token 认领该节点（轮换其 token 后返回）。
+	// 用注册窗口 key 创建节点，或用管理员签发的一次性安装凭据认领既有节点；返回只用于 Report 的运行 token。
 	// 新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
 	// 返回 ResourceExhausted 并说明，节点不建、窗口名额不消耗。
 	Register(context.Context, *connect.Request[v1.RegisterRequest]) (*connect.Response[v1.RegisterResponse], error)

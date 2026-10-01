@@ -403,7 +403,7 @@ func TestAgenticPreviewKeepsCredentialsAndConcurrentRetry(t *testing.T) {
 			if err := r.response.Msg.Result.UnmarshalTo(rotated); err != nil {
 				t.Fatal(err)
 			}
-			if id, ok := h.auth.Authenticate(rotated.Token); !ok || id != node {
+			if id, ok := h.auth.Authenticate(h.claimNode(t, rotated.Token)); !ok || id != node {
 				t.Fatal("committed credential was not published")
 			}
 		}

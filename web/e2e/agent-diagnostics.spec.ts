@@ -16,8 +16,11 @@ test("采集诊断从真实上报进入管理详情且不进入公开页", async
   expect((await rpc(page, "AdminService", "Login", { password: "local-browser-test-password" })).status).toBe(200);
   const created = await rpc(page, "AdminService", "CreateNode", { name: `agent-health-${browserName}` });
   expect(created.status).toBe(200);
-  const { node, token } = created.body;
+  const { node } = created.body;
   try {
+    const registered = await rpc(page, "AgentService", "Register", { key: created.body.token });
+    expect(registered.status).toBe(200);
+    const { token } = registered.body;
     const updated = await rpc(page, "AdminService", "UpdateNode", { id: node.id, name: node.name, public: true, trafficResetDay: 1, offlineGraceS: 0 });
     expect(updated.status, JSON.stringify(updated.body)).toBe(200);
     await page.goto(`/admin/nodes/${node.id}`);

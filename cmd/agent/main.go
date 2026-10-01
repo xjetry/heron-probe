@@ -83,7 +83,7 @@ func errorLine(err error) string {
 func runRegister(args []string) error {
 	fs := flag.NewFlagSet("register", flag.ContinueOnError)
 	hub := fs.String("hub", "", "hub base URL, e.g. https://heron.example.com")
-	key := fs.String("key", "", "registration key from `heron-hub window open`")
+	key := fs.String("key", "", "registration window key or one-time node installation credential")
 	name := fs.String("name", "", "node name (default: hostname)")
 	cfgPath := fs.String("config", defaultConfig, "where to write the agent config")
 	insecure := fs.Bool("insecure-http", false, "accept a plain http hub address (the node token and metrics travel unencrypted)")

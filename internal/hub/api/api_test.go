@@ -158,7 +158,12 @@ func (h *harness) createNode(t *testing.T, name string) (int64, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return resp.Msg.GetNode().GetId(), resp.Msg.GetToken()
+	// 通常用例需要已安装节点；安装凭据本身的边界由直接调用 CreateNode 的用例验证。
+	id, token, err := h.auth.Register(t.Context(), resp.Msg.Token, name, netip.MustParseAddr("127.0.0.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id, token
 }
 
 func (h *harness) report(t *testing.T, tok string, m *heronv1.Metrics) error {
@@ -496,7 +501,7 @@ func TestRotateTokenInvalidatesTheOldOne(t *testing.T) {
 	if err := h.report(t, old, &heronv1.Metrics{}); codeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("old token still accepted: %v", err)
 	}
-	if err := h.report(t, resp.Msg.GetToken(), &heronv1.Metrics{}); err != nil {
+	if err := h.report(t, h.claimNode(t, resp.Msg.GetToken()), &heronv1.Metrics{}); err != nil {
 		t.Fatalf("new token rejected: %v", err)
 	}
 	if _, err := h.admin.RotateNodeToken(ctx, connect.NewRequest(&heronv1.RotateNodeTokenRequest{Id: 999})); codeOf(err) != connect.CodeNotFound {
@@ -508,8 +513,12 @@ func TestRegisterAdoptsPrecreatedNodeToken(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
-	id, token := h.createNode(t, "precreated")
-	// 不要求注册窗口：节点 token 自己就是安装凭据。
+	created, err := h.admin.CreateNode(ctx, connect.NewRequest(&heronv1.CreateNodeRequest{Name: "precreated"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, token := created.Msg.Node.Id, created.Msg.Token
+	// 不要求注册窗口：管理员签发的安装凭据只认领既有节点。
 	resp, err := h.agent.Register(ctx, connect.NewRequest(&heronv1.RegisterRequest{Key: token, Name: "hostname"}))
 	if err != nil {
 		t.Fatalf("register with a node token: %v", err)
