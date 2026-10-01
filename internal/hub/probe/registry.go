@@ -253,24 +253,41 @@ func (r *Registry) Save(ctx context.Context, t *heronv1.ProbeTask, selector stor
 
 // UpdateNode 与任务保存共用 writeMu，标签变更提交后按事务回读的覆盖发布，不能由较旧的任务快照覆盖。
 func (r *Registry) UpdateNode(ctx context.Context, id int64, edit store.NodeEdit) (store.NodeUpdateResult, error) {
+	return r.updateNodeScopes(func() (store.NodeUpdateResult, error) { return r.store.UpdateNodeTasks(ctx, id, edit) })
+}
+
+func (r *Registry) BatchUpdateNodeTags(ctx context.Context, ids []int64, add, remove []string) (store.NodeUpdateResult, error) {
+	return r.updateNodeScopes(func() (store.NodeUpdateResult, error) { return r.store.BatchUpdateNodeTags(ctx, ids, add, remove) })
+}
+
+func (r *Registry) updateNodeScopes(mutate func() (store.NodeUpdateResult, error)) (store.NodeUpdateResult, error) {
 	r.writeMu.Lock()
 	defer r.writeMu.Unlock()
-	result, err := r.store.UpdateNodeTasks(ctx, id, edit)
+	result, err := mutate()
 	if err != nil {
 		return store.NodeUpdateResult{}, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for task := range r.byNode[id] {
-		r.nodesOf[task] = slices.DeleteFunc(r.nodesOf[task], func(node int64) bool { return node == id })
+	changedTasks := map[uint64][]int64{}
+	for id, tasks := range result.Tasks {
+		for task := range r.byNode[id] {
+			if _, ok := changedTasks[task]; !ok {
+				changedTasks[task] = nil
+			}
+		}
+		delete(r.byNode, id)
+		for _, task := range tasks {
+			changedTasks[task] = append(changedTasks[task], id)
+			r.assign(id, task)
+		}
 	}
-	delete(r.byNode, id)
-	for _, task := range result.Tasks.TaskIDs {
-		r.nodesOf[task] = append(r.nodesOf[task], id)
+	for task, nodes := range changedTasks {
+		r.nodesOf[task] = slices.DeleteFunc(r.nodesOf[task], func(node int64) bool { _, changed := result.Tasks[node]; return changed })
+		r.nodesOf[task] = append(r.nodesOf[task], nodes...)
 		slices.Sort(r.nodesOf[task])
-		r.assign(id, task)
 	}
-	r.version = result.Tasks.Version
+	r.version = result.Version
 	return result, nil
 }
 

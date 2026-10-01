@@ -92,6 +92,11 @@ service AdminService {
   rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
   }
+  // 原子修改指定节点的标签关联，不覆盖其它标签或节点字段；成功时同步刷新探测与告警的动态覆盖。
+  // 任一节点不存在返回 NotFound；标签超限返回 InvalidArgument，探测任务超限返回 ResourceExhausted，整批回滚。
+  rpc BatchUpdateNodeTags(BatchUpdateNodeTagsRequest) returns (BatchUpdateNodeTagsResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
   // 删除节点及其全部历史；进程内的实时状态同步清理。
   rpc DeleteNode(DeleteNodeRequest) returns (DeleteNodeResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
@@ -485,6 +490,18 @@ message UpdateNodeRequest {
 message UpdateNodeResponse {
   Node node = 1;
 }
+
+message BatchUpdateNodeTagsRequest {
+  // 非空、全部为正数；重复 id 只处理一次。空列表拒绝，绝不表示全部节点。
+  repeated int64 node_ids = 1;
+  // 向每个节点添加这些标签，已有则保留。名字规则与 UpdateNodeRequest.tags 相同。
+  repeated string add_tags = 2;
+  // 从每个节点移除这些标签，不删除标签本身；不存在的关联不产生变化。
+  // 与 add_tags 按 Unicode 简单折叠比较后不能重叠；未提及的标签保持原样。
+  // 两组均可为空；移除列表不受每节点 16 个上限限制，最终每个节点仍须至多 16 个标签。
+  repeated string remove_tags = 3;
+}
+message BatchUpdateNodeTagsResponse {}
 
 message DeleteNodeRequest {
   int64 id = 1;

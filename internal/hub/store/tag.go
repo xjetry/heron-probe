@@ -9,6 +9,10 @@ import (
 	"unicode"
 )
 
+const MaxTagsPerNode = 16
+
+var ErrTagLimit = errors.New("tag limit per node exceeded")
+
 // TagFold 是标签名的比较键，tag.name_fold 列的唯一来源：每个字符取它在 Unicode 简单大小写折叠等价类（unicode.SimpleFold
 // 的轨道）里码点最小的成员。两个名字键相同，当且仅当 strings.EqualFold 认为它们相等——同是简单折叠，所以 db 与 DB、
 // σ 与 ς 相同，ß 与 ss 不同（那是完全折叠）。面板搜索框用的 JavaScript iu 正则也是简单折叠，两边口径一致。
@@ -62,15 +66,62 @@ func setNodeTags(tx *sql.Tx, node int64, names []string) error {
 		return err
 	}
 	for _, name := range names {
-		fold := TagFold(name)
-		if _, err := tx.Exec("INSERT INTO tag (name, name_fold) VALUES (?, ?) ON CONFLICT (name_fold) DO NOTHING", name, fold); err != nil {
-			return err
-		}
-		if _, err := tx.Exec("INSERT INTO node_tag (node_id, tag_id) SELECT ?, id FROM tag WHERE name_fold = ?", node, fold); err != nil {
+		if err := addNodeTag(tx, node, name); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func addNodeTag(tx *sql.Tx, node int64, name string) error {
+	fold := TagFold(name)
+	if _, err := tx.Exec("INSERT INTO tag (name, name_fold) VALUES (?, ?) ON CONFLICT (name_fold) DO NOTHING", name, fold); err != nil {
+		return err
+	}
+	_, err := tx.Exec("INSERT INTO node_tag (node_id, tag_id) SELECT ?, id FROM tag WHERE name_fold = ? ON CONFLICT DO NOTHING", node, fold)
+	return err
+}
+
+// BatchUpdateNodeTags 只改变请求点名的关联；关联增删与最终数量检查共用写事务，不用客户端的旧集合覆盖其它标签。
+func (s *Store) BatchUpdateNodeTags(ctx context.Context, ids []int64, add, remove []string) (result NodeUpdateResult, err error) {
+	err = s.write(ctx, func(tx *sql.Tx) error {
+		// 空集合不代表全部节点；存储入口也显式拒绝没有目标的修改。
+		if len(ids) == 0 {
+			return errors.New("node_ids must not be empty")
+		}
+		for _, id := range ids {
+			exists, err := nodeExistsTx(tx, id)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				return NotFoundError{Kind: ObjectNode, ID: id}
+			}
+			for _, name := range remove {
+				if _, err := tx.Exec("DELETE FROM node_tag WHERE node_id = ? AND tag_id IN (SELECT id FROM tag WHERE name_fold = ?)", id, TagFold(name)); err != nil {
+					return err
+				}
+			}
+			for _, name := range add {
+				if err := addNodeTag(tx, id, name); err != nil {
+					return err
+				}
+			}
+			var count int
+			if err := tx.QueryRow("SELECT COUNT(*) FROM node_tag WHERE node_id = ?", id).Scan(&count); err != nil {
+				return err
+			}
+			if count > MaxTagsPerNode {
+				return fmt.Errorf("%w: node %d would have %d tags (maximum %d)", ErrTagLimit, id, count, MaxTagsPerNode)
+			}
+		}
+		result, err = s.nodeScopesAfterUpdate(ctx, tx, ids)
+		return err
+	})
+	if err != nil {
+		return NodeUpdateResult{}, err
+	}
+	return result, nil
 }
 
 // nodeTags 在 queryNodes 的只读事务里按 nodeTagsQuery 读标签，按节点分组。

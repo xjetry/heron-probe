@@ -78,6 +78,9 @@ const (
 	AdminServiceCreateNodeProcedure = "/heron.v1.AdminService/CreateNode"
 	// AdminServiceUpdateNodeProcedure is the fully-qualified name of the AdminService's UpdateNode RPC.
 	AdminServiceUpdateNodeProcedure = "/heron.v1.AdminService/UpdateNode"
+	// AdminServiceBatchUpdateNodeTagsProcedure is the fully-qualified name of the AdminService's
+	// BatchUpdateNodeTags RPC.
+	AdminServiceBatchUpdateNodeTagsProcedure = "/heron.v1.AdminService/BatchUpdateNodeTags"
 	// AdminServiceDeleteNodeProcedure is the fully-qualified name of the AdminService's DeleteNode RPC.
 	AdminServiceDeleteNodeProcedure = "/heron.v1.AdminService/DeleteNode"
 	// AdminServiceRotateNodeTokenProcedure is the fully-qualified name of the AdminService's
@@ -251,6 +254,9 @@ type AdminServiceClient interface {
 	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签）。计费字段有变化时，
 	// 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
+	// 原子修改指定节点的标签关联，不覆盖其它标签或节点字段；成功时同步刷新探测与告警的动态覆盖。
+	// 任一节点不存在返回 NotFound；标签超限返回 InvalidArgument，探测任务超限返回 ResourceExhausted，整批回滚。
+	BatchUpdateNodeTags(context.Context, *connect.Request[v1.BatchUpdateNodeTagsRequest]) (*connect.Response[v1.BatchUpdateNodeTagsResponse], error)
 	// 删除节点及其全部历史；进程内的实时状态同步清理。
 	DeleteNode(context.Context, *connect.Request[v1.DeleteNodeRequest]) (*connect.Response[v1.DeleteNodeResponse], error)
 	// 撤销旧凭据并换发一次性安装凭据；须经 AgentService.Register 换成运行 token，不能直接上报。
@@ -462,6 +468,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			httpClient,
 			baseURL+AdminServiceUpdateNodeProcedure,
 			connect.WithSchema(adminServiceMethods.ByName("UpdateNode")),
+			connect.WithClientOptions(opts...),
+		),
+		batchUpdateNodeTags: connect.NewClient[v1.BatchUpdateNodeTagsRequest, v1.BatchUpdateNodeTagsResponse](
+			httpClient,
+			baseURL+AdminServiceBatchUpdateNodeTagsProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("BatchUpdateNodeTags")),
 			connect.WithClientOptions(opts...),
 		),
 		deleteNode: connect.NewClient[v1.DeleteNodeRequest, v1.DeleteNodeResponse](
@@ -750,6 +762,7 @@ type adminServiceClient struct {
 	listNodes             *connect.Client[v1.ListNodesRequest, v1.ListNodesResponse]
 	createNode            *connect.Client[v1.CreateNodeRequest, v1.CreateNodeResponse]
 	updateNode            *connect.Client[v1.UpdateNodeRequest, v1.UpdateNodeResponse]
+	batchUpdateNodeTags   *connect.Client[v1.BatchUpdateNodeTagsRequest, v1.BatchUpdateNodeTagsResponse]
 	deleteNode            *connect.Client[v1.DeleteNodeRequest, v1.DeleteNodeResponse]
 	rotateNodeToken       *connect.Client[v1.RotateNodeTokenRequest, v1.RotateNodeTokenResponse]
 	reorderNodes          *connect.Client[v1.ReorderNodesRequest, v1.ReorderNodesResponse]
@@ -879,6 +892,11 @@ func (c *adminServiceClient) CreateNode(ctx context.Context, req *connect.Reques
 // UpdateNode calls heron.v1.AdminService.UpdateNode.
 func (c *adminServiceClient) UpdateNode(ctx context.Context, req *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error) {
 	return c.updateNode.CallUnary(ctx, req)
+}
+
+// BatchUpdateNodeTags calls heron.v1.AdminService.BatchUpdateNodeTags.
+func (c *adminServiceClient) BatchUpdateNodeTags(ctx context.Context, req *connect.Request[v1.BatchUpdateNodeTagsRequest]) (*connect.Response[v1.BatchUpdateNodeTagsResponse], error) {
+	return c.batchUpdateNodeTags.CallUnary(ctx, req)
 }
 
 // DeleteNode calls heron.v1.AdminService.DeleteNode.
@@ -1145,6 +1163,9 @@ type AdminServiceHandler interface {
 	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签）。计费字段有变化时，
 	// 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
+	// 原子修改指定节点的标签关联，不覆盖其它标签或节点字段；成功时同步刷新探测与告警的动态覆盖。
+	// 任一节点不存在返回 NotFound；标签超限返回 InvalidArgument，探测任务超限返回 ResourceExhausted，整批回滚。
+	BatchUpdateNodeTags(context.Context, *connect.Request[v1.BatchUpdateNodeTagsRequest]) (*connect.Response[v1.BatchUpdateNodeTagsResponse], error)
 	// 删除节点及其全部历史；进程内的实时状态同步清理。
 	DeleteNode(context.Context, *connect.Request[v1.DeleteNodeRequest]) (*connect.Response[v1.DeleteNodeResponse], error)
 	// 撤销旧凭据并换发一次性安装凭据；须经 AgentService.Register 换成运行 token，不能直接上报。
@@ -1352,6 +1373,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		AdminServiceUpdateNodeProcedure,
 		svc.UpdateNode,
 		connect.WithSchema(adminServiceMethods.ByName("UpdateNode")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceBatchUpdateNodeTagsHandler := connect.NewUnaryHandler(
+		AdminServiceBatchUpdateNodeTagsProcedure,
+		svc.BatchUpdateNodeTags,
+		connect.WithSchema(adminServiceMethods.ByName("BatchUpdateNodeTags")),
 		connect.WithHandlerOptions(opts...),
 	)
 	adminServiceDeleteNodeHandler := connect.NewUnaryHandler(
@@ -1654,6 +1681,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceCreateNodeHandler.ServeHTTP(w, r)
 		case AdminServiceUpdateNodeProcedure:
 			adminServiceUpdateNodeHandler.ServeHTTP(w, r)
+		case AdminServiceBatchUpdateNodeTagsProcedure:
+			adminServiceBatchUpdateNodeTagsHandler.ServeHTTP(w, r)
 		case AdminServiceDeleteNodeProcedure:
 			adminServiceDeleteNodeHandler.ServeHTTP(w, r)
 		case AdminServiceRotateNodeTokenProcedure:
@@ -1817,6 +1846,10 @@ func (UnimplementedAdminServiceHandler) CreateNode(context.Context, *connect.Req
 
 func (UnimplementedAdminServiceHandler) UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.UpdateNode is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) BatchUpdateNodeTags(context.Context, *connect.Request[v1.BatchUpdateNodeTagsRequest]) (*connect.Response[v1.BatchUpdateNodeTagsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.BatchUpdateNodeTags is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) DeleteNode(context.Context, *connect.Request[v1.DeleteNodeRequest]) (*connect.Response[v1.DeleteNodeResponse], error) {
