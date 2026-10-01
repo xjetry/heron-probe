@@ -262,7 +262,8 @@ func (s *Store) UpdateNode(ctx context.Context, id int64, e NodeEdit) (billingCh
 
 type NodeUpdateResult struct {
 	BillingChanged bool
-	Tasks          NewNodeTasks
+	Tasks          map[int64][]uint64
+	Version        uint64
 	Rules          []AlertRule
 }
 
@@ -287,32 +288,42 @@ func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (resu
 		if err := setNodeTags(tx, id, e.Tags); err != nil {
 			return err
 		}
-		if err := checkProbeCoverageLimit(tx); err != nil {
-			return err
-		}
-		if err := pruneAlertScopes(tx); err != nil {
-			return err
-		}
-		ids, err := scanIDs(tx.Query("SELECT task_id FROM ("+probeCoverage+") WHERE node_id = ? ORDER BY task_id", id))
-		if err != nil {
-			return err
-		}
-		for _, taskID := range ids {
-			result.Tasks.TaskIDs = append(result.Tasks.TaskIDs, uint64(taskID))
-		}
-		version, err := bumpProbeVersion(tx, s.clk.Now().Unix())
-		if err != nil {
-			return err
-		}
-		result.Tasks.Version = uint64(version)
+		result, err = s.nodeScopesAfterUpdate(ctx, tx, []int64{id})
 		result.BillingChanged = old != b
-		result.Rules, err = listAlertRulesTx(ctx, tx)
 		return err
 	})
 	if err != nil {
 		return NodeUpdateResult{}, err
 	}
 	return result, nil
+}
+
+// 单节点编辑与批量标签修改都从提交事务取得完整覆盖；空任务集合也保留节点键，注册表据此撤回旧分配。
+func (s *Store) nodeScopesAfterUpdate(ctx context.Context, tx *sql.Tx, ids []int64) (result NodeUpdateResult, err error) {
+	if err = checkProbeCoverageLimit(tx); err != nil {
+		return result, err
+	}
+	if err = pruneAlertScopes(tx); err != nil {
+		return result, err
+	}
+	result.Tasks = make(map[int64][]uint64, len(ids))
+	for _, id := range ids {
+		tasks, err := scanIDs(tx.Query("SELECT task_id FROM ("+probeCoverage+") WHERE node_id = ? ORDER BY task_id", id))
+		if err != nil {
+			return result, err
+		}
+		result.Tasks[id] = make([]uint64, len(tasks))
+		for i, task := range tasks {
+			result.Tasks[id][i] = uint64(task)
+		}
+	}
+	version, err := bumpProbeVersion(tx, s.clk.Now().Unix())
+	if err != nil {
+		return result, err
+	}
+	result.Version = uint64(version)
+	result.Rules, err = listAlertRulesTx(ctx, tx)
+	return result, err
 }
 
 // RenewExpiry 把自动续期推后的到期日写回，前提是该行此刻仍是推后所依据的那组取值（开着自动续期、周期与

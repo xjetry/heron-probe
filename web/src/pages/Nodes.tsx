@@ -10,6 +10,7 @@ import { type OrderMove, useOrder } from "../api/useOrder";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Icon } from "../components/Icon";
 import { Modal } from "../components/Modal";
+import { MixedCheckbox } from "../components/MixedCheckbox";
 import { NodeAddresses } from "../components/NodeAddresses";
 import { NodeCountry } from "../components/NodeCountry";
 import { NodeInstallModal } from "../components/NodeInstallModal";
@@ -23,6 +24,7 @@ import { POLL_MS } from "../lib/poll";
 import { sameTag, withoutTag, withTag } from "../lib/tags";
 import { lagsHub } from "../lib/version";
 import { NodeEditor } from "./NodeEditor";
+import { BatchNodeTagsEditor } from "./BatchNodeTagsEditor";
 
 export function Nodes() {
   const qc = useQueryClient();
@@ -49,6 +51,8 @@ export function Nodes() {
   const [drag, setDrag] = useState<{ id: bigint; members: string } | null>(null);
   const [drop, setDrop] = useState<{ target: bigint; edge: "before" | "after" } | null>(null);
   const [editor, setEditor] = useState<{ node: Node; mode: "general" | "billing"; opener: HTMLElement } | null>(null);
+  const [selected, setSelected] = useState<bigint[]>([]);
+  const [batchEditor, setBatchEditor] = useState<{ nodes: Node[]; tags: Tag[]; opener: HTMLElement } | null>(null);
   const create = useMutation(AdminService.method.createNode, {
     ...mutationOptions,
     onSuccess: (result) => {
@@ -62,6 +66,15 @@ export function Nodes() {
   const update = useMutation(AdminService.method.updateNode, {
     ...mutationOptions,
     onSuccess: async () => {
+      try { await refresh({ throwOnError: true }); }
+      catch (error) { throw new Error(`已保存，但回读失败：${errorText(error)}`); }
+    },
+  });
+  const batchUpdate = useMutation(AdminService.method.batchUpdateNodeTags, {
+    onSuccess: async () => {
+      // 服务端已应用增删意图，旧快照不能继续作为草稿基线；回读失败在列表提示，不重开这份草稿。
+      setBatchEditor(null);
+      setSelected([]);
       try { await refresh({ throwOnError: true }); }
       catch (error) { throw new Error(`已保存，但回读失败：${errorText(error)}`); }
     },
@@ -100,8 +113,10 @@ export function Nodes() {
   const onCreate = (event: FormEvent) => { event.preventDefault(); if (name.trim() && !create.isPending) create.mutate({ name }); };
   const gate = queryGate(nodes);
   const list = filterNodes(order.items, search);
+  const selectedIds = new Set(selected);
+  const selectedNodes = list.filter((node) => selectedIds.has(node.id));
   // 创建和编辑由弹窗占用交互；换发响应前尚无弹窗，也要锁住同一批入口，避免并发响应覆盖唯一明文与返回焦点。
-  const editing = editor !== null || creating !== null || rotate.isPending;
+  const editing = editor !== null || batchEditor !== null || batchUpdate.isPending || creating !== null || rotate.isPending;
   const sortable = !narrowed && !order.blocked && !editing && list.length > 1;
   const members = list.map((node) => String(node.id)).sort().join(",");
   const dragging = sortable && drag?.members === members ? drag.id : null;
@@ -129,10 +144,12 @@ export function Nodes() {
     {snapshot.error != null && <p role="alert" className="error">{hubVersion === undefined ? "无法取得 hub 版本，落后标记不可用" : `刷新 hub 版本失败，落后标记按上次取得的 ${hubVersion || "空版本"} 判断`}；在线状态与流量可能不是最新值：{errorText(snapshot.error)}</p>}
     {secret && <NodeInstallModal secretLabel={secret.label} token={secret.value} hubVersion={hubVersion} error={snapshot.error} reRegister={secret.reRegister} opener={secret.opener} onClose={() => setSecret(null)} />}
     <div className="node-filters">
-      <label className="node-search">搜索节点<input type="search" placeholder="名称、IP、地区、备注或主机名" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-      <TagFilter tags={tags.data?.tags} error={tags.error} selected={tagFilter} onChange={setTagFilter} />
+      <label className="node-search">搜索节点<input type="search" placeholder="名称、IP、地区、备注或主机名" value={search} onChange={(event) => { setSearch(event.target.value); setSelected([]); }} /></label>
+      <TagFilter tags={tags.data?.tags} error={tags.error} selected={tagFilter} onChange={(value) => { setTagFilter(value); setSelected([]); }} />
     </div>
     {!editing && errorBanner(error)}
+    {!batchEditor && errorBanner(batchUpdate.error)}
+    {!batchEditor && batchUpdate.isPending && <p role="status" className="muted">标签已保存，正在重新读取…</p>}
     {order.error != null && <p role="alert" className="error">排序未完成：{errorText(order.error)}</p>}
     {order.pending && <p role="status" className="muted">正在保存并确认排序…</p>}
     {order.confirmed && <p className="order-saved" aria-live="polite">顺序已保存</p>}
@@ -141,12 +158,19 @@ export function Nodes() {
     {!filtered && nodes.stale && <p className="node-subtext">列表还不是当前条件下的结果，暂时无法排序。</p>}
     {gate.ready ? <>
       <div className="section-heading"><h2>节点清单 <span className="muted">{list.length}</span></h2><span className="live-caption">双栈出口由 agent 独立探测</span></div>
+      <div className="node-batch-toolbar">
+        <label><MixedCheckbox label="选择当前结果全部节点" checked={selectedNodes.length === 0 ? false : selectedNodes.length === list.length ? true : "mixed"} disabled={editing || nodes.stale || list.length === 0} onChange={() => setSelected(selectedNodes.length === list.length ? [] : list.map((node) => node.id))} />选择当前结果</label>
+        <span className="muted">已选择 {selectedNodes.length} 个节点</span>
+        <button type="button" disabled={editing || nodes.stale || nodes.error != null || remove.isPending || selectedNodes.length === 0 || tags.data === undefined || tags.error != null} onClick={(event) => { batchUpdate.reset(); setBatchEditor({ nodes: selectedNodes, tags: tags.data?.tags ?? [], opener: event.currentTarget }); }}>批量编辑标签</button>
+        {selectedNodes.length > 0 && <button type="button" className="link" disabled={editing} onClick={() => setSelected([])}>清除选择</button>}
+      </div>
       <p className="node-subtext order-help" id="node-order-help">拖动手柄调整顺序，松开后自动保存。也可使用移动菜单，或聚焦手柄后按方向键、Home / End。</p>
       {list.length === 0 && <p className="node-empty" role="status">{narrowed ? "没有匹配的节点。" : "还没有节点，添加节点后安装 agent 即可开始监控。"}</p>}
       <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
         <table className="nodes node-management"><thead><tr><th data-column="order"><span className="sr-only">排序</span></th><th data-column="name">节点</th><th data-column="addresses">IP 地址</th><th data-column="status">状态</th><th>本周期流量</th><th>计费</th><th>到期</th><th data-column="actions">操作</th></tr></thead>
           <tbody>{list.map((node, index) => <NodeRow key={String(node.id)} node={node} status={statusById.get(node.id)} hubVersion={hubVersion}
             editing={editing} deleting={remove.isPending} rotating={rotate.isPending}
+            selection={<MixedCheckbox label={`选择 ${withId(node.name, node.id)}`} checked={selectedIds.has(node.id)} disabled={editing || nodes.stale} onChange={() => setSelected((current) => current.includes(node.id) ? current.filter((id) => id !== node.id) : [...current, node.id])} />}
             orderClass={dragging === node.id ? "is-dragging" : dragging !== null && drop?.target === node.id ? `drop-${drop.edge}` : undefined}
             onDragOver={(event) => {
               if (dragging === null || dragging === node.id) return;
@@ -172,6 +196,8 @@ export function Nodes() {
       </div>
     </> : gate.loading}
     <TagManager tags={tags.data?.tags} pending={removeTag.isPending} onDelete={(name) => removeTag.mutate({ name })} />
+    {batchEditor && <BatchNodeTagsEditor nodes={batchEditor.nodes} knownTags={batchEditor.tags} opener={batchEditor.opener} saving={batchUpdate.isPending} error={batchUpdate.error} onClose={() => setBatchEditor(null)}
+      onSave={(changes) => batchUpdate.mutate(changes)} />}
     {editor && <NodeEditor key={String(editor.node.id)} node={editor.node} mode={editor.mode} opener={editor.opener} knownTags={tags.data?.tags ?? []}
       saving={update.isPending} error={update.error} listError={nodes.error} onClose={() => setEditor(null)}
       onSave={(patch) => update.mutate({ id: editor.node.id, ...patch }, { onSuccess: () => setEditor(null) })} />}
@@ -183,15 +209,16 @@ export function Nodes() {
   </section>;
 }
 
-function NodeRow({ node, status, hubVersion, editing, deleting, rotating, orderControl, orderClass, onDragOver, onDrop, onEdit, onDelete, onRotate }: {
+function NodeRow({ node, status, hubVersion, editing, deleting, rotating, selection, orderControl, orderClass, onDragOver, onDrop, onEdit, onDelete, onRotate }: {
   node: Node; status?: NodeStatus; hubVersion?: string; editing: boolean; deleting: boolean; rotating: boolean;
+  selection: ReactNode;
   orderControl: ReactNode; orderClass?: string; onDragOver: (event: DragEvent<HTMLTableRowElement>) => void; onDrop: (event: DragEvent<HTMLTableRowElement>) => void;
   onEdit: (mode: "general" | "billing", opener: HTMLElement) => void; onDelete: () => void; onRotate: (opener: HTMLElement) => void;
 }) {
   const label = withId(node.name, node.id);
   return <tr className={orderClass} onDragOver={onDragOver} onDrop={onDrop}>
     <td data-column="order" data-label="排序">{orderControl}</td>
-    <td data-column="name" data-label="节点"><div className="node-name-line"><Link to={`/nodes/${node.id}`} aria-label={label}>{node.name}</Link><NodeCountry node={node} /></div>
+    <td data-column="name" data-label="节点"><div className="node-name-line">{selection}<Link to={`/nodes/${node.id}`} aria-label={label}>{node.name}</Link><NodeCountry node={node} /></div>
       <div aria-label={`标签 ${label}`}>{node.tags.map((tag) => <span key={tag} className="tag">{tag}</span>)}</div>
       {node.note && <p className="node-subtext node-note" title={node.note}>{node.note}</p>}
       <span className="node-subtext">{node.public ? "公开" : "仅管理端"}</span>
