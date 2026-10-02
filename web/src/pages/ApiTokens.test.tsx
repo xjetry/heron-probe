@@ -47,6 +47,7 @@ it("默认凭据仍为全站只读", async () => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 it("恢复后同请求 ID 的不同身份回执保持独立", async () => {
@@ -162,4 +163,48 @@ it("下载的入口卡片就是 hub 下发的 guide", async () => {
 it("列表挂起时显示加载中", async () => {
   render({ listApiTokens: () => new Promise(() => {}) });
   expect(await screen.findByText("加载中…")).toBeInTheDocument();
+});
+
+it("复制的油猴脚本填好本站地址、不带 token", async () => {
+  const writeText = vi.fn(async (_text: string) => {});
+  vi.stubGlobal("navigator", { clipboard: { writeText } });
+  render({});
+  fireEvent.click(await screen.findByRole("button", { name: "复制油猴脚本" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+  const source = writeText.mock.calls[0][0] as string;
+  expect(source).toContain("==UserScript==");
+  expect(source).toContain(`const BUILTIN_HUB = "${window.location.origin}";`);
+  expect(source).toContain('const BUILTIN_TOKEN = "";');
+  expect(source).not.toContain("__HERON_HUB__");
+  expect(source).not.toContain("__HERON_TOKEN__");
+});
+
+it("创建带「创建节点」权限的 token 后可复制预填脚本", async () => {
+  const writeText = vi.fn(async (_text: string) => {});
+  vi.stubGlobal("navigator", { clipboard: { writeText } });
+  render({ createApiToken: async (req) => ({ apiToken: { id: 3n, name: req.name }, token: "heron_at_secret" }) });
+  const form = await screen.findByRole("form", { name: "新建 API token" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "tamper" } });
+  fireEvent.click(within(form).getByLabelText("创建节点"));
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  fireEvent.click(await screen.findByRole("button", { name: "复制油猴脚本（已填入此 token）" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+  expect(writeText.mock.calls[0][0]).toContain('const BUILTIN_TOKEN = "heron_at_secret";');
+});
+
+it("没有「创建节点」权限时不给出预填按钮", async () => {
+  render({ createApiToken: async (req) => ({ apiToken: { id: 3n, name: req.name }, token: "heron_at_read" }) });
+  const form = await screen.findByRole("form", { name: "新建 API token" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "reader" } });
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  expect(await screen.findByLabelText("API token reader（#3）")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "复制油猴脚本（已填入此 token）" })).toBeNull();
+});
+
+it("剪贴板被拒时退回手动复制弹窗", async () => {
+  vi.stubGlobal("navigator", { clipboard: { writeText: async () => { throw new Error("denied"); } } });
+  render({});
+  fireEvent.click(await screen.findByRole("button", { name: "复制油猴脚本" }));
+  const box = await screen.findByRole("textbox", { name: "油猴脚本源码" });
+  expect((box as HTMLTextAreaElement).value).toContain("==UserScript==");
 });

@@ -6,6 +6,7 @@ import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Secret } from "../components/Secret";
+import { UserscriptButton } from "../components/UserscriptButton";
 import { Picks } from "../components/Picks";
 import { AdminService, TokenPermission } from "../gen/heron/v1/admin_pb";
 import { withId } from "../lib/ids";
@@ -57,15 +58,17 @@ export function ApiTokens() {
   const [auditOwner, setAuditOwner] = useState<bigint | null>(null);
   const nodes = useQuery(AdminService.method.listNodes, {}, { enabled: !allNodes });
   // id 记下明文属于哪一行：吊销的若正是这一行，卡片必须一起消失。
-  const [secret, setSecret] = useState<{ id: bigint; label: string; value: string } | null>(null);
+  const [secret, setSecret] = useState<{ id: bigint; label: string; value: string; canCreate: boolean } | null>(null);
   const { error, mutationOptions } = useLatestError();
   const list = useQuery(AdminService.method.listApiTokens, {});
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listApiTokens, cardinality: "finite" }) });
   const create = useMutation(AdminService.method.createApiToken, {
     ...mutationOptions,
-    onSuccess: (r) => {
+    onSuccess: (r, req) => {
       const tok = r.apiToken;
-      if (tok) setSecret({ id: tok.id, label: `API token ${withId(tok.name, tok.id)}`, value: r.token });
+      // 油猴脚本只认「创建节点」这一项预授权；没勾时新 token 填进脚本也只会在运行时被拒，那时不给出预填按钮。
+      if (tok) setSecret({ id: tok.id, label: `API token ${withId(tok.name, tok.id)}`, value: r.token,
+        canCreate: (req.grant?.permissions ?? []).includes(TokenPermission.CREATE) });
       setName("");
       setPermissions([]);
       setAllNodes(true);
@@ -98,8 +101,10 @@ export function ApiTokens() {
         保存为 agent 的 skills 目录下的 heron-hub/SKILL.md（Claude Code 为 ~/.claude/skills/heron-hub/SKILL.md），并设置 <code>HERON_HUB={window.location.origin}</code> 与 <code>HERON_TOKEN</code>。
       </p>
       <p>
-        <button type="button" onClick={() => reference.mutate({})} disabled={reference.isPending}>下载入口卡片</button>
+        <button type="button" onClick={() => reference.mutate({})} disabled={reference.isPending}>下载入口卡片</button>{" "}
+        <UserscriptButton />
       </p>
+      <p className="muted">油猴脚本给运维自己用：粘贴进 Tampermonkey 等脚本管理器后，任意站点右下角出现悬浮按钮，在 IDC 页面看着价格与到期一键建节点，建好后直接给出安装命令。脚本经 <code>ExecuteChange</code> 写，token 需勾选「创建节点」。</p>
       <form className="card edit-form" aria-label="新建 API token" onSubmit={submit}>
         <div className="row">
           <label>名称<input required maxLength={64} value={name} onChange={(e) => setName(e.target.value)} /></label>
@@ -118,7 +123,10 @@ export function ApiTokens() {
         </>}
         <p className="muted">写入支持预览、版本检查和安全重试。不能更新 Hub、执行远程命令、管理 API 凭据或修改通知渠道密钥。</p>
       </form>
-      {secret && <Secret label={secret.label} value={secret.value} />}
+      {secret && <>
+        <Secret label={secret.label} value={secret.value} />
+        {secret.canCreate && <p><UserscriptButton token={secret.value} label="复制油猴脚本（已填入此 token）" /></p>}
+      </>}
       {error != null && <p role="alert" className="error">{errorText(error)}</p>}
       <div className="table-scroll" role="region" aria-label="API token 管理" tabIndex={0}>
         <table className="nodes">
