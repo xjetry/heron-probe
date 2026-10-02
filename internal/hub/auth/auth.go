@@ -46,8 +46,9 @@ const (
 )
 
 // NodeCreator 是建节点的落库入口，实现是 probe.Registry。两个方法返回新节点的 id；建节点失败时节点不存在。
+// CreateNode 的 billing 由 api 按 §9.4 校验过，这里不判取值，原样落库。
 type NodeCreator interface {
-	CreateNode(ctx context.Context, name string, tokenHash []byte) (int64, error)
+	CreateNode(ctx context.Context, name string, billing store.Billing, tokenHash []byte) (int64, error)
 	RegisterNode(ctx context.Context, keyHash []byte, name string, tokenHash []byte) (int64, error)
 }
 
@@ -114,11 +115,11 @@ func (a *Auth) lookupToken(token string) (int64, bool) {
 	return id, ok
 }
 
-func (a *Auth) CreateNode(ctx context.Context, name string) (int64, string, error) {
+func (a *Auth) CreateNode(ctx context.Context, name string, billing store.Billing) (int64, string, error) {
 	a.mutMu.Lock()
 	defer a.mutMu.Unlock()
 	plain, h := newInstallToken()
-	id, err := a.nodes.CreateNode(ctx, name, h[:])
+	id, err := a.nodes.CreateNode(ctx, name, billing, h[:])
 	if err != nil {
 		return 0, "", err
 	}

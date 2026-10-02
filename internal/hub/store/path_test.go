@@ -27,7 +27,7 @@ func TestDatabasePathsAreNotURIComponents(t *testing.T) {
 				if len(nodes) != 0 {
 					t.Fatalf("independent path %q reused another database: %v", path, nodes)
 				}
-				if _, _, err := s.CreateNode(t.Context(), suffix, hash(1)); err != nil {
+				if _, _, err := s.CreateNode(t.Context(), suffix, Billing{}, hash(1)); err != nil {
 					t.Fatal(err)
 				}
 				if err := s.Close(); err != nil {

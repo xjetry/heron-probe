@@ -33,7 +33,7 @@ func TestMinuteBatchUsesFamilyWatermarkKeys(t *testing.T) {
 	for _, f := range families {
 		t.Run(f.name, func(t *testing.T) {
 			s, _ := open(t)
-			id, _, err := s.CreateNode(t.Context(), "n", hash(1))
+			id, _, err := s.CreateNode(t.Context(), "n", Billing{}, hash(1))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -70,7 +70,7 @@ func TestMinuteBatchUsesFamilyWatermarkKeys(t *testing.T) {
 func TestProbeRowsMergeAdditivelyAndKeepNullRtt(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	// 先写一个只有丢包的桶：rtt_min/max 必须是 NULL 而不是 0。
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Probes: []metric.ProbeRow{probeRow(id, 600, 7, nil, 2, 0)}}); err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestProbeWriterRejectsRowsBeforeProbeWatermarkOnly(t *testing.T) {
 		t.Run(frozen, func(t *testing.T) {
 			s, _ := open(t)
 			ctx := t.Context()
-			id, _, _ := s.CreateNode(ctx, "n", hash(1))
+			id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 			if err := s.setRollupWatermark(t.Context(), frozen, 1200); err != nil {
 				t.Fatal(err)
 			}
@@ -151,7 +151,7 @@ func TestProbeWriterRejectsRowsBeforeProbeWatermarkOnly(t *testing.T) {
 
 func TestQueryProbesRebucketsPerTask(t *testing.T) {
 	s, _ := open(t)
-	id, _, _ := s.CreateNode(t.Context(), "n", hash(1))
+	id, _, _ := s.CreateNode(t.Context(), "n", Billing{}, hash(1))
 	var input []metric.ProbeRow
 	for ts := int64(600); ts < 1200; ts += 60 {
 		for _, task := range []uint64{9, 3} {
@@ -192,8 +192,8 @@ func taskForTest() *heronv1.ProbeTask {
 func TestSaveProbeTaskAssignsAndBumpsVersion(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	a, _, _ := s.CreateNode(ctx, "a", hash(1))
-	b, created, _ := s.CreateNode(ctx, "b", hash(2))
+	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
+	b, created, _ := s.CreateNode(ctx, "b", Billing{}, hash(2))
 	base := created.Version
 	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{b, a}})
 	if err != nil || saved.Task.Id != 1 || !reflect.DeepEqual(saved.NodeIDs, []int64{a, b}) || version != base+1 {
@@ -275,7 +275,7 @@ func assertTasks(t *testing.T, s *Store, wantVersion uint64, want []ProbeTaskRec
 func TestSaveProbeTaskEnforcesPerNodeLimit(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, created, _ := s.CreateNode(ctx, "n", hash(1))
+	id, created, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	base := created.Version
 	for range probelimit.MaxTasksPerNode {
 		if _, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{id}}); err != nil {
@@ -303,7 +303,7 @@ func TestSaveProbeTaskEnforcesPerNodeLimit(t *testing.T) {
 func TestDuplicateProbeAssignmentRollsBackReplacement(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{id}})
 	if err != nil {
 		t.Fatal(err)
@@ -319,8 +319,8 @@ func TestDuplicateProbeAssignmentRollsBackReplacement(t *testing.T) {
 func TestDeleteNodeRemovesProbeRowsAndAssignments(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	a, _, _ := s.CreateNode(ctx, "a", hash(1))
-	b, _, _ := s.CreateNode(ctx, "b", hash(2))
+	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
+	b, _, _ := s.CreateNode(ctx, "b", Billing{}, hash(2))
 	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{a, b}})
 	if err != nil {
 		t.Fatal(err)
@@ -371,7 +371,7 @@ func seedProbeLevels(t *testing.T, s *Store, ids []int64) {
 func TestDeleteProbeTaskKeepsHistoryAndNeverReusesID(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	saved, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{id}})
 	if err != nil {
 		t.Fatal(err)
@@ -395,7 +395,7 @@ func TestDeleteProbeTaskKeepsHistoryAndNeverReusesID(t *testing.T) {
 func TestMinuteBatchRollsBackBothFamilies(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	if err := s.write(ctx, func(tx *sql.Tx) error {
 		_, err := tx.Exec("CREATE TRIGGER reject_probe BEFORE INSERT ON probe_1m BEGIN SELECT RAISE(ABORT, 'probe rejected'); END")
 		return err

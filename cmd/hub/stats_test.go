@@ -186,7 +186,7 @@ func TestStatsPrintsSizeAndEveryTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := st.CreateNode(context.Background(), "n", make([]byte, 32)); err != nil {
+	if _, _, err := st.CreateNode(context.Background(), "n", store.Billing{}, make([]byte, 32)); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Close(); err != nil {

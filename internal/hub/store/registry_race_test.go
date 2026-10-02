@@ -29,7 +29,7 @@ func registryRaceStore(t *testing.T) (*probe.Registry, *store.Store, int64) {
 			t.Error(err)
 		}
 	})
-	id, _, err := st.CreateNode(t.Context(), "node", []byte("token"))
+	id, _, err := st.CreateNode(t.Context(), "node", store.Billing{}, []byte("token"))
 	if err != nil {
 		t.Fatal(err)
 	}

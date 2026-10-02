@@ -332,6 +332,85 @@ func expiryRuleProto() *heronv1.AlertRule {
 	return &heronv1.AlertRule{Name: "到期", Kind: heronv1.AlertKind_ALERT_KIND_EXPIRY, Enabled: true, AllNodes: true, DaysBefore: 7}
 }
 
+// 建节点可带计费：与 UpdateNode 同一个校验、同一种落库；响应节点带回显与 hub 算好的 days_left。
+func TestCreateNodeWithBilling(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	create := func(req *heronv1.CreateNodeRequest) *heronv1.Node {
+		t.Helper()
+		resp, err := h.admin.CreateNode(t.Context(), connect.NewRequest(req))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp.Msg.GetNode()
+	}
+	full := &heronv1.Billing{Price: "12.50", Currency: "USD", BillingCycle: heronv1.BillingCycle_BILLING_CYCLE_MONTHLY, ExpiresOn: "2026-01-10"}
+	n := create(&heronv1.CreateNodeRequest{Name: "billed", Billing: full})
+	if got := n.GetBilling(); got.GetPrice() != "12.50" || got.GetCurrency() != "USD" || got.GetBillingCycle() != heronv1.BillingCycle_BILLING_CYCLE_MONTHLY ||
+		got.GetExpiresOn() != "2026-01-10" || got.GetAutoRenew() || got.GetDaysLeft() != 9 {
+		t.Fatalf("created billing = %v", got)
+	}
+	if n := create(&heronv1.CreateNodeRequest{Name: "plain"}); n.Billing != nil {
+		t.Fatalf("node without billing = %v", n.Billing)
+	}
+	list, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&heronv1.ListNodesRequest{}))
+	if err != nil || list.Msg.GetNodes()[0].GetBilling().GetDaysLeft() != 9 || list.Msg.GetNodes()[1].Billing != nil {
+		t.Fatalf("ListNodes = %v %v", list, err)
+	}
+}
+
+// 建节点的计费与 UpdateNode 同一处裁决：不合格的取值报同样的错误，节点不建。
+func TestCreateNodeRejectsMalformedBilling(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	for _, c := range []struct {
+		b    *heronv1.Billing
+		want string
+	}{
+		{&heronv1.Billing{Price: "12.345", Currency: "USD"}, `billing.price: must match ^\d{1,9}(\.\d{1,2})?$, e.g. 12.50; got "12.345"`},
+		{&heronv1.Billing{Price: "12"}, "billing.currency: required when billing.price is set"},
+		{&heronv1.Billing{ExpiresOn: "2026-02-29"}, `billing.expires_on: must be an existing date in YYYY-MM-DD form; got "2026-02-29"`},
+		{&heronv1.Billing{AutoRenew: true, ExpiresOn: "2026-10-01"}, "billing.auto_renew: requires billing.billing_cycle and billing.expires_on to be set"},
+	} {
+		_, err := h.admin.CreateNode(t.Context(), connect.NewRequest(&heronv1.CreateNodeRequest{Name: "n", Billing: c.b}))
+		if codeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: "+c.want {
+			t.Errorf("%v: err = %v, want %s", c.b, err, c.want)
+		}
+	}
+	list, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&heronv1.ListNodesRequest{}))
+	if err != nil || len(list.Msg.GetNodes()) != 0 {
+		t.Fatalf("rejected creates left nodes: %v %v", list, err)
+	}
+}
+
+// 带着计费建节点立刻扫描一次到期：提醒窗口内的新节点不等到零点才触发；开着自动续期且已过期的新节点在响应里就是
+// 推后之后的日期，与 UpdateNode 改计费后的行为一致。
+func TestCreateNodeSweepsExpiry(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	saveRule(t, h, expiryRuleProto())
+	resp, err := h.admin.CreateNode(t.Context(), connect.NewRequest(&heronv1.CreateNodeRequest{Name: "expiring",
+		Billing: &heronv1.Billing{ExpiresOn: "2026-01-04"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := h.admin.ListAlertEvents(t.Context(), connect.NewRequest(&heronv1.ListAlertEventsRequest{NodeId: resp.Msg.GetNode().GetId()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev := events.Msg.GetEvents(); len(ev) != 1 || ev[0].GetTransition() != "firing" || ev[0].GetSummary() != "节点 expiring 将于 2026-01-04 到期（剩 3 天，规则 到期）" {
+		t.Fatalf("events after creating a node inside the window: %v", ev)
+	}
+	renewed, err := h.admin.CreateNode(t.Context(), connect.NewRequest(&heronv1.CreateNodeRequest{Name: "renewing",
+		Billing: &heronv1.Billing{BillingCycle: heronv1.BillingCycle_BILLING_CYCLE_MONTHLY, ExpiresOn: "2025-12-15", AutoRenew: true}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := renewed.Msg.GetNode().GetBilling(); got.GetExpiresOn() != "2026-01-15" || got.GetDaysLeft() != 14 {
+		t.Fatalf("auto-renewing node created with a past date = %v", got)
+	}
+}
+
 // 到期规则经协议保存并回显提前天数；提前天数越界或带着探测字段时，错误以请求路径写明字段与约束。
 func TestSaveAlertRuleExpiryKind(t *testing.T) {
 	h := newHarness(t, "")

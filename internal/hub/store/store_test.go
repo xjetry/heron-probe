@@ -98,7 +98,7 @@ func TestReopenKeepsData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, _, err := s.CreateNode(context.Background(), "a", hash(1))
+	id, _, err := s.CreateNode(context.Background(), "a", Billing{}, hash(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,11 +117,11 @@ func TestReopenKeepsData(t *testing.T) {
 func TestDeletedNodeIDIsNotReused(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
-	a, _, _ := s.CreateNode(ctx, "a", hash(1))
+	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
 	if err := s.DeleteNode(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	b, _, _ := s.CreateNode(ctx, "b", hash(2))
+	b, _, _ := s.CreateNode(ctx, "b", Billing{}, hash(2))
 	if b == a {
 		t.Fatalf("id %d was reused after delete", a)
 	}
@@ -130,7 +130,7 @@ func TestDeletedNodeIDIsNotReused(t *testing.T) {
 func TestTokenHashesAndRotate(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
-	id, _, _ := s.CreateNode(ctx, "a", hash(1))
+	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
 	if err := s.SetTokenHash(ctx, id, hash(9)); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestExpiredWindowIsClosed(t *testing.T) {
 func TestFacts(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
-	id, _, _ := s.CreateNode(ctx, "a", hash(1))
+	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
 	f := &heronv1.Facts{Hostname: "h", Os: "o", CpuCores: 4}
 	if err := s.UpsertFacts(ctx, id, 77, f); err != nil {
 		t.Fatal(err)
@@ -214,7 +214,7 @@ func bucket(cpu float64) *metric.Bucket {
 func TestHalfBucketsMergeAdditively(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
-	id, _, _ := s.CreateNode(ctx, "a", hash(1))
+	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 600, Bucket: bucket(10)}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestHalfBucketsMergeAdditively(t *testing.T) {
 func TestMissingMetricReadsBackAsNoData(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
-	id, _, _ := s.CreateNode(ctx, "a", hash(1))
+	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
 	_, _ = s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 600, Bucket: bucket(10)}}})
 	rows, _ := s.ReadMinuteRows(ctx, id, 0, 1000)
 	for i, c := range metric.Columns {
@@ -252,7 +252,7 @@ func TestMissingMetricReadsBackAsNoData(t *testing.T) {
 func TestWriterRejectsRowsBeforeRollupWatermark(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
-	id, _, _ := s.CreateNode(ctx, "a", hash(1))
+	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
 	if err := s.setRollupWatermark(ctx, "5m", 900); err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestStoreDoesNotExposeWatermarkMutation(t *testing.T) {
 func TestWriteMinuteBatchUpdatesLastSeen(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
-	id, _, _ := s.CreateNode(ctx, "a", hash(1))
+	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
 	seen := time.Unix(1234, 0).UTC()
 	_, _ = s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 1200, Bucket: bucket(1), LastSeen: seen}}})
 	nodes, _ := s.ListNodes(ctx)
@@ -293,7 +293,7 @@ func TestWriteMinuteBatchUpdatesLastSeen(t *testing.T) {
 func TestDeleteNodeRemovesDependentRows(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
-	id, _, _ := s.CreateNode(ctx, "a", hash(1))
+	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
 	_ = s.UpsertFacts(ctx, id, 1, &heronv1.Facts{})
 	_, _ = s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 600, Bucket: bucket(1)}}})
 	if err := s.DeleteNode(ctx, id); err != nil {
@@ -317,8 +317,8 @@ var keptOnNodeDelete = []string{"alert_event"}
 func TestDeleteNodeCoversEveryTableWithNodeID(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	gone, _, _ := s.CreateNode(ctx, "gone", hash(1))
-	kept, _, _ := s.CreateNode(ctx, "kept", hash(2))
+	gone, _, _ := s.CreateNode(ctx, "gone", Billing{}, hash(1))
+	kept, _, _ := s.CreateNode(ctx, "kept", Billing{}, hash(2))
 	tables := tablesWithNodeID(t, s)
 	t.Logf("tables with node_id: %v", tables)
 	for _, name := range keptOnNodeDelete {
@@ -428,7 +428,7 @@ func nodeRows(t *testing.T, s *Store, table string, node int64) int64 {
 
 func TestDeleteNodeRemovesTraffic(t *testing.T) {
 	s, _ := open(t)
-	id, _, err := s.CreateNode(t.Context(), "traffic", hash(1))
+	id, _, err := s.CreateNode(t.Context(), "traffic", Billing{}, hash(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +454,7 @@ func TestDeleteNodeRemovesTraffic(t *testing.T) {
 func TestAsyncCallbackObservesCommittedWrite(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
-	id, _, _ := s.CreateNode(ctx, "a", hash(1))
+	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
 	if err := s.UpsertFacts(ctx, id, 77, &heronv1.Facts{}); err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +481,7 @@ func TestCancelBeforeStartSkipsTransaction(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	res := make(chan error, 1)
-	go func() { _, _, err := s.CreateNode(ctx, "queued", hash(1)); res <- err }()
+	go func() { _, _, err := s.CreateNode(ctx, "queued", Billing{}, hash(1)); res <- err }()
 	// 第一个事务占住写协程，队列非空只能来自 CreateNode；确认入队后取消，
 	// 才能检出写协程遗漏取消预检，而不是只覆盖入队前的取消分支。
 	deadline := time.Now().Add(testwait.Bound)
@@ -544,8 +544,8 @@ func TestCancelDuringTransactionStillReportsCommit(t *testing.T) {
 func TestListNodesCarriesFactsAndOrder(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
-	a, _, _ := s.CreateNode(ctx, "a", hash(1))
-	b, _, _ := s.CreateNode(ctx, "b", hash(2))
+	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
+	b, _, _ := s.CreateNode(ctx, "b", Billing{}, hash(2))
 	if err := s.UpsertFacts(ctx, b, 7, &heronv1.Facts{Hostname: "hb", CpuCores: 4, IcmpAvailable: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -573,8 +573,8 @@ func TestListNodesCarriesFactsAndOrder(t *testing.T) {
 func TestReorderNodesRejectsAnythingButAFullPermutation(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
-	a, _, _ := s.CreateNode(ctx, "a", hash(1))
-	b, _, _ := s.CreateNode(ctx, "b", hash(2))
+	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
+	b, _, _ := s.CreateNode(ctx, "b", Billing{}, hash(2))
 	for _, ids := range [][]int64{{a}, {a, b, 999}, {a, a}, {b, 999}} {
 		if err := s.ReorderNodes(ctx, ids); !errors.Is(err, ErrBadOrder) {
 			t.Fatalf("ReorderNodes(%v) = %v, want ErrBadOrder", ids, err)
@@ -589,7 +589,7 @@ func TestReorderNodesRejectsAnythingButAFullPermutation(t *testing.T) {
 func TestUpdateNodeReplacesEditableFields(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
-	id, _, _ := s.CreateNode(ctx, "old", hash(1))
+	id, _, _ := s.CreateNode(ctx, "old", Billing{}, hash(1))
 	if _, err := s.UpdateNode(ctx, id, NodeEdit{Name: "new", Public: true, Note: "note", TrafficResetDay: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -608,8 +608,8 @@ func TestUpdateNodeReplacesEditableFields(t *testing.T) {
 func TestDeleteNodeClearsEveryLevel(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
-	keep, _, _ := s.CreateNode(ctx, "keep", hash(2))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
+	keep, _, _ := s.CreateNode(ctx, "keep", Billing{}, hash(2))
 	seedProbeLevels(t, s, []int64{id, keep})
 	for _, tbl := range metricTables {
 		for _, node := range []int64{id, keep} {
@@ -636,7 +636,7 @@ func TestDeleteNodeClearsEveryLevel(t *testing.T) {
 func TestUpdateNodePersistsResetDayAndCreateUsesTheDefault(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	if n, _ := s.GetNode(ctx, id); n.TrafficResetDay != 1 {
 		t.Fatalf("default reset day = %d, want 1", n.TrafficResetDay)
 	}
@@ -676,7 +676,7 @@ func TestPublicNodeQueriesSeeOnlyPublicNodes(t *testing.T) {
 	ctx := t.Context()
 	var ids []int64
 	for i, name := range []string{"a", "b", "c"} {
-		id, _, err := s.CreateNode(ctx, name, hash(byte(i)))
+		id, _, err := s.CreateNode(ctx, name, Billing{}, hash(byte(i)))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -87,7 +87,7 @@ func (s *Store) RegisterNode(ctx context.Context, keyHash []byte, name string, t
 				return ErrNoWindow
 			}
 		}
-		if id, tasks, err = insertNode(tx, name, tokenHash, s.clk.Now().Unix(), false); err != nil {
+		if id, tasks, err = insertNode(tx, name, Billing{}, tokenHash, s.clk.Now().Unix(), false); err != nil {
 			return err
 		}
 		if err := grantNode(tx, owner, id); err != nil {

@@ -98,7 +98,7 @@ func TestServeMMDBTakesPriorityAndEchoesBackend(t *testing.T) {
 		if _, err := st.SaveSettings(t.Context(), store.SettingsUpdate{Geo: store.GeoUpdate{Enabled: proto.Bool(true), URL: proto.String(srv.URL + "/{ip}")}}); err != nil {
 			t.Fatal(err)
 		}
-		id, _, err := st.CreateNode(t.Context(), "public", []byte("node"))
+		id, _, err := st.CreateNode(t.Context(), "public", store.Billing{}, []byte("node"))
 		if err != nil {
 			t.Fatal(err)
 		}

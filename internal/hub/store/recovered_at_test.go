@@ -41,7 +41,7 @@ func TestMigrationFromV11AddsRecoveredAtAsNull(t *testing.T) {
 func TestAlertStateWritesRecoveredAt(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	r := saveRule(t, s, AlertRule{Name: "offline", Kind: KindOffline, AllNodes: true, Enabled: true})
 	at := time.Unix(1_800_000_000, 0).UTC()
 	read := func() StateRow {

@@ -64,7 +64,7 @@ func TestListNodesByTagsIsAnIntersection(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
 	for i, tags := range [][]string{{"a"}, {"a", "b"}, {"b"}} {
-		id, _, err := s.CreateNode(ctx, strings.Join(tags, "+"), hash(byte(i+1)))
+		id, _, err := s.CreateNode(ctx, strings.Join(tags, "+"), Billing{}, hash(byte(i+1)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,8 +99,8 @@ func TestListNodesByTagsIsAnIntersection(t *testing.T) {
 func TestTagsFoldCaseAndKeepTheFirstSpelling(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	first, _, _ := s.CreateNode(ctx, "first", hash(1))
-	second, _, _ := s.CreateNode(ctx, "second", hash(2))
+	first, _, _ := s.CreateNode(ctx, "first", Billing{}, hash(1))
+	second, _, _ := s.CreateNode(ctx, "second", Billing{}, hash(2))
 	setTags(t, s, first, "db", "Web", "api")
 	setTags(t, s, second, "DB", "web")
 	for _, c := range []struct {
@@ -128,7 +128,7 @@ func TestTagsFoldCaseAndKeepTheFirstSpelling(t *testing.T) {
 func TestUpdateNodeReplacesTheTagSet(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	setTags(t, s, id, "a", "b")
 	setTags(t, s, id, "b", "c")
 	if n, _ := s.GetNode(ctx, id); !slices.Equal(n.Tags, []string{"b", "c"}) {
@@ -151,7 +151,7 @@ func TestUpdateNodeReplacesTheTagSet(t *testing.T) {
 func TestDeleteTagOnlyDetachesIt(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	setTags(t, s, id, "db", "web")
 	if err := s.DeleteTag(ctx, "DB"); err != nil {
 		t.Fatal(err)
@@ -176,8 +176,8 @@ func TestDeleteTagOnlyDetachesIt(t *testing.T) {
 func TestDeleteNodeRemovesItsTagRows(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	gone, _, _ := s.CreateNode(ctx, "gone", hash(1))
-	kept, _, _ := s.CreateNode(ctx, "kept", hash(2))
+	gone, _, _ := s.CreateNode(ctx, "gone", Billing{}, hash(1))
+	kept, _, _ := s.CreateNode(ctx, "kept", Billing{}, hash(2))
 	setTags(t, s, gone, "a", "b")
 	setTags(t, s, kept, "a")
 	if err := s.DeleteNode(ctx, gone); err != nil {
@@ -210,7 +210,7 @@ func TestNodeTagQueryPlans(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
 	for i := range 30 {
-		id, _, err := s.CreateNode(ctx, fmt.Sprint("n", i), hash(byte(i+1)))
+		id, _, err := s.CreateNode(ctx, fmt.Sprint("n", i), Billing{}, hash(byte(i+1)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -269,7 +269,7 @@ func queryPlan(t *testing.T, s *Store, query string, args ...any) []string {
 func TestNodeRowAndTagsComeFromOneSnapshot(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _, err := s.CreateNode(ctx, "n0", hash(1))
+	id, _, err := s.CreateNode(ctx, "n0", Billing{}, hash(1))
 	if err != nil {
 		t.Fatal(err)
 	}

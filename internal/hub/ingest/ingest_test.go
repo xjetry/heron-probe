@@ -81,7 +81,7 @@ func newHubWith(t *testing.T, path string, cfg Config) *hub {
 
 func (h *hub) node(t *testing.T) (int64, string) {
 	t.Helper()
-	id, tok, err := h.auth.CreateNode(context.Background(), "n")
+	id, tok, err := h.auth.CreateNode(context.Background(), "n", store.Billing{})
 	if err != nil {
 		t.Fatal(err)
 	}

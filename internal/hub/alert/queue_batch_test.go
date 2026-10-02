@@ -69,7 +69,7 @@ func telegramChannel(t *testing.T, f *fixture, rate int) store.NotifyChannel {
 func (f *fixture) nodes(t *testing.T, n int) []int64 {
 	t.Helper()
 	for i := len(f.ids); i < n; i++ {
-		id, _, err := f.st.CreateNode(t.Context(), fmt.Sprintf("node%d", i+1), []byte(fmt.Sprintf("hash%d", i)))
+		id, _, err := f.st.CreateNode(t.Context(), fmt.Sprintf("node%d", i+1), store.Billing{}, []byte(fmt.Sprintf("hash%d", i)))
 		must(t, err)
 		f.ids = append(f.ids, id)
 	}

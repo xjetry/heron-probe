@@ -87,7 +87,7 @@ func TestIsTokenShapedMatchesNewToken(t *testing.T) {
 
 func runningNode(t testing.TB, a *Auth, name string) (int64, string, error) {
 	t.Helper()
-	id, installation, err := a.CreateNode(t.Context(), name)
+	id, installation, err := a.CreateNode(t.Context(), name, store.Billing{})
 	if err != nil {
 		return id, "", err
 	}
@@ -96,7 +96,7 @@ func runningNode(t testing.TB, a *Auth, name string) (int64, string, error) {
 
 func TestCreateNodeIssuesInstallationCredential(t *testing.T) {
 	a, _, _ := setup(t)
-	id, plain, err := a.CreateNode(context.Background(), "a")
+	id, plain, err := a.CreateNode(context.Background(), "a", store.Billing{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestRegisterAdoptsPrecreatedNodeToken(t *testing.T) {
 	a, st, _ := setup(t)
 	ctx := context.Background()
 	from := netip.MustParseAddr("203.0.113.9")
-	id, plain, err := a.CreateNode(ctx, "precreated")
+	id, plain, err := a.CreateNode(ctx, "precreated", store.Billing{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func TestRuntimeCredentialsCannotEnroll(t *testing.T) {
 				var hash [32]byte
 				token, hash = NewToken()
 				var err error
-				id, _, err = st.CreateNode(ctx, "legacy", hash[:])
+				id, _, err = st.CreateNode(ctx, "legacy", store.Billing{}, hash[:])
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -371,7 +371,7 @@ func TestRuntimeCredentialsCannotEnroll(t *testing.T) {
 
 func TestInstallationCredentialConsumedOnceConcurrently(t *testing.T) {
 	a, _, _ := setup(t)
-	id, key, err := a.CreateNode(t.Context(), "n")
+	id, key, err := a.CreateNode(t.Context(), "n", store.Billing{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +459,7 @@ func TestAuthenticateDoesNotWaitForRegisterTransaction(t *testing.T) {
 	}
 	clk.block.Store(true)
 	gateDone := make(chan error, 1)
-	go func() { _, _, err := st.CreateNode(ctx, "gate", make([]byte, 32)); gateDone <- err }()
+	go func() { _, _, err := st.CreateNode(ctx, "gate", store.Billing{}, make([]byte, 32)); gateDone <- err }()
 	<-clk.entered
 	var release sync.Once
 	defer release.Do(func() { close(clk.release) })
@@ -526,7 +526,7 @@ func TestCancelledCreateNodeKeepsMapConsistentWithStore(t *testing.T) {
 	res := make(chan result, 1)
 	clk.block.Store(true)
 	go func() {
-		id, token, err := a.CreateNode(ctx, "cancelled")
+		id, token, err := a.CreateNode(ctx, "cancelled", store.Billing{})
 		res <- result{id, token, err}
 	}()
 	<-clk.entered

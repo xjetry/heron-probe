@@ -36,7 +36,7 @@ func TestUpdateMigrationAndDeletedNode(t *testing.T) {
 
 func TestRestoreDoesNotReplayUpdates(t *testing.T) {
 	s, _ := open(t)
-	id, _, err := s.CreateNode(t.Context(), "test", []byte("token"))
+	id, _, err := s.CreateNode(t.Context(), "test", Billing{}, []byte("token"))
 	if err != nil {
 		t.Fatal(err)
 	}

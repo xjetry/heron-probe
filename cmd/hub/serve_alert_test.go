@@ -125,7 +125,7 @@ func TestServeDeliversOfflineAlerts(t *testing.T) {
 
 func seedAlertChannel(t *testing.T, st *store.Store, url string) (int64, int64) {
 	t.Helper()
-	id, _, err := st.CreateNode(t.Context(), "n", []byte("token hash"))
+	id, _, err := st.CreateNode(t.Context(), "n", store.Billing{}, []byte("token hash"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestServePrunesAlertEvents(t *testing.T) {
 func TestServeRenewsExpiryAtStartupInTheHubZone(t *testing.T) {
 	clk := clock.NewFake(time.Date(2026, 9, 24, 16, 30, 0, 0, time.UTC))
 	_, events, _ := startAlertHub(t, clk, func(st *store.Store) {
-		id, _, err := st.CreateNode(t.Context(), "renewing", make([]byte, 32))
+		id, _, err := st.CreateNode(t.Context(), "renewing", store.Billing{}, make([]byte, 32))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -274,7 +274,7 @@ func TestServeReportsDaysLeftInTheHubZone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, _, err := st.CreateNode(t.Context(), "zoned", make([]byte, 32))
+	id, _, err := st.CreateNode(t.Context(), "zoned", store.Billing{}, make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -35,7 +35,7 @@ func registryStore(t *testing.T) (*Registry, *store.Store, []int64) {
 	}
 	var ids []int64
 	for _, name := range []string{"one", "two"} {
-		id, err := r.CreateNode(t.Context(), name, []byte(name))
+		id, err := r.CreateNode(t.Context(), name, store.Billing{}, []byte(name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -263,7 +263,7 @@ func TestRegistryExpandsAllNodesTasksOntoCreatedNodes(t *testing.T) {
 		t.Fatalf("save all_nodes: %+v err=%v", all, err)
 	}
 	one := save(t, r, "one.example", ids[:1])
-	three, err := r.CreateNode(t.Context(), "three", []byte("three"))
+	three, err := r.CreateNode(t.Context(), "three", store.Billing{}, []byte("three"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestRegistryExpandsAllNodesTasksOntoCreatedNodes(t *testing.T) {
 func TestRegistryExplicitEmptyScopeReachesNoNode(t *testing.T) {
 	r, _, ids := registryStore(t)
 	empty := save(t, r, "none.example", nil)
-	three, err := r.CreateNode(t.Context(), "three", []byte("three"))
+	three, err := r.CreateNode(t.Context(), "three", store.Billing{}, []byte("three"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestRegistryExplicitEmptyScopeReachesNoNode(t *testing.T) {
 func TestRegistryCreatedNodeCoverageFollowsStore(t *testing.T) {
 	for name, create := range map[string]func(t *testing.T, r *Registry, st *store.Store) (int64, error){
 		"create": func(t *testing.T, r *Registry, _ *store.Store) (int64, error) {
-			return r.CreateNode(t.Context(), "new", []byte("new"))
+			return r.CreateNode(t.Context(), "new", store.Billing{}, []byte("new"))
 		},
 		"register": func(t *testing.T, r *Registry, st *store.Store) (int64, error) {
 			if err := st.SetRegisterWindow(t.Context(), []byte("key"), time.Unix(3600, 0), 1); err != nil {

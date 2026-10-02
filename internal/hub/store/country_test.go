@@ -37,7 +37,7 @@ func TestMigrationFromV13AddsEmptyCountry(t *testing.T) {
 func TestSetLookupCountryIsConditionalOnTheAddress(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	row := metric.Row{NodeID: id, TS: 600, Bucket: metric.NewBucket(), LastSeen: clk.Now(), Source: "1.1.1.1"}
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{row}}); err != nil {
 		t.Fatal(err)
@@ -64,8 +64,8 @@ func TestSetLookupCountryIsConditionalOnTheAddress(t *testing.T) {
 func TestSetLookupCountryRejectsEmptyAddressAndNonCountry(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
-	silent, _, _ := s.CreateNode(ctx, "never reported", hash(1))
-	reported, _, _ := s.CreateNode(ctx, "reported", hash(2))
+	silent, _, _ := s.CreateNode(ctx, "never reported", Billing{}, hash(1))
+	reported, _, _ := s.CreateNode(ctx, "reported", Billing{}, hash(2))
 	row := metric.Row{NodeID: reported, TS: 600, Bucket: metric.NewBucket(), LastSeen: clk.Now(), Source: "8.8.8.8"}
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{row}}); err != nil {
 		t.Fatal(err)

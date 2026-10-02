@@ -18,7 +18,7 @@ var schemaV23 = append(slices.Clone(schemaV22), `ALTER TABLE node_facts ADD COLU
 
 func TestNetworkWritesRejectInvalidTime(t *testing.T) {
 	s, _ := open(t)
-	id, _, err := s.CreateNode(t.Context(), "bounded", hash(1))
+	id, _, err := s.CreateNode(t.Context(), "bounded", Billing{}, hash(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestNetworkSnapshotsRejectInvalidData(t *testing.T) {
 	for _, network := range []string{`{"ipv4":{"state":2,"checkedAt":"9223372036854775807"}}`, `{"ipv6":{"state":1,"address":"8.8.8.8","checkedAt":"100"}}`, `{invalid`} {
 		t.Run(network, func(t *testing.T) {
 			s, _ := open(t)
-			id, _, err := s.CreateNode(t.Context(), "bounded", hash(1))
+			id, _, err := s.CreateNode(t.Context(), "bounded", Billing{}, hash(1))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -68,7 +68,7 @@ func TestNetworkSnapshotsRejectInvalidData(t *testing.T) {
 
 func TestNetworkFactsRoundTripAndRestore(t *testing.T) {
 	s, _ := open(t)
-	id, _, err := s.CreateNode(t.Context(), "network", hash(1))
+	id, _, err := s.CreateNode(t.Context(), "network", Billing{}, hash(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestNetworkMigrationFromV22PreservesUnknown(t *testing.T) {
 
 func TestNetworkOldSnapshotRestoresWithoutInventingAddresses(t *testing.T) {
 	s, _ := open(t)
-	id, _, err := s.CreateNode(t.Context(), "old", hash(1))
+	id, _, err := s.CreateNode(t.Context(), "old", Billing{}, hash(1))
 	if err != nil {
 		t.Fatal(err)
 	}

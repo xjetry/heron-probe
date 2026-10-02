@@ -73,14 +73,14 @@ func TestMigrationFromV9MatchesFreshSchemaAndKeepsTaskScope(t *testing.T) {
 func TestAllNodesTaskCoversEveryNodeWithoutAssignmentRows(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	a, _, _ := s.CreateNode(ctx, "a", hash(1))
-	b, _, _ := s.CreateNode(ctx, "b", hash(2))
+	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
+	b, _, _ := s.CreateNode(ctx, "b", Billing{}, hash(2))
 	saved, version, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: true, NodeIDs: nil})
 	if err != nil || !saved.AllNodes || !reflect.DeepEqual(saved.NodeIDs, []int64{a, b}) {
 		t.Fatalf("save all_nodes: %+v err=%v", saved, err)
 	}
 	assertTasks(t, s, version, []ProbeTaskRecord{{Task: saved.Task, AllNodes: true, NodeIDs: []int64{a, b}}})
-	c, created, err := s.CreateNode(ctx, "c", hash(3))
+	c, created, err := s.CreateNode(ctx, "c", Billing{}, hash(3))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestAllNodesTaskCoversEveryNodeWithoutAssignmentRows(t *testing.T) {
 func TestExplicitEmptyScopeCoversNoNode(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	a, _, _ := s.CreateNode(ctx, "a", hash(1))
+	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
 	all, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: true, NodeIDs: nil})
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func TestExplicitEmptyScopeCoversNoNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, created, _ := s.CreateNode(ctx, "b", hash(2))
+	b, created, _ := s.CreateNode(ctx, "b", Billing{}, hash(2))
 	assertTasks(t, s, created.Version, []ProbeTaskRecord{{Task: narrowed.Task}, {Task: empty.Task}})
 	for _, task := range []uint64{narrowed.Task.Id, empty.Task.Id} {
 		if ids, err := s.ProbeTaskNodeIDs(ctx, task); err != nil || ids != nil {
@@ -137,7 +137,7 @@ func TestCreatingNodesBumpsProbeVersionDeletingDoesNot(t *testing.T) {
 		return v
 	}
 	before := stored()
-	a, createdNode, err := s.CreateNode(ctx, "a", hash(1))
+	a, createdNode, err := s.CreateNode(ctx, "a", Billing{}, hash(1))
 	created := createdNode.Version
 	if err != nil || created <= before || created != stored() {
 		t.Fatalf("CreateNode version=%d stored=%d before=%d err=%v", created, stored(), before, err)
@@ -163,7 +163,7 @@ func TestCreatingNodesBumpsProbeVersionDeletingDoesNot(t *testing.T) {
 func TestCreatingNodeReturnsItsCoverage(t *testing.T) {
 	for name, create := range map[string]func(t *testing.T, s *Store) (int64, NewNodeTasks, error){
 		"create": func(t *testing.T, s *Store) (int64, NewNodeTasks, error) {
-			return s.CreateNode(t.Context(), "new", hash(9))
+			return s.CreateNode(t.Context(), "new", Billing{}, hash(9))
 		},
 		"register": func(t *testing.T, s *Store) (int64, NewNodeTasks, error) {
 			return s.RegisterNode(t.Context(), hash(8), "new", hash(9))
@@ -175,7 +175,7 @@ func TestCreatingNodeReturnsItsCoverage(t *testing.T) {
 			if err := s.SetRegisterWindow(ctx, hash(8), clk.Now().Add(time.Hour), 1); err != nil {
 				t.Fatal(err)
 			}
-			a, _, _ := s.CreateNode(ctx, "a", hash(1))
+			a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
 			first, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: true, NodeIDs: nil})
 			if err != nil {
 				t.Fatal(err)
@@ -232,8 +232,8 @@ func saveAllNodesTasks(t *testing.T, s *Store, n int) []ProbeTaskRecord {
 func TestSavingAllNodesTaskCountsTowardEveryNodesLimit(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	a, _, _ := s.CreateNode(ctx, "a", hash(1))
-	b, _, _ := s.CreateNode(ctx, "b", hash(2))
+	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
+	b, _, _ := s.CreateNode(ctx, "b", Billing{}, hash(2))
 	saveAllNodesTasks(t, s, probelimit.MaxTasksPerNode-1)
 	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{b}}); err != nil {
 		t.Fatal(err)
@@ -271,7 +271,7 @@ func TestCreatingNodeRejectsInheritingMoreThanTheLimit(t *testing.T) {
 	}
 	want := "a new node would inherit 65 all-nodes probe tasks (maximum 64 per node); assign some of them to explicit nodes or delete them first"
 	for name, create := range map[string]func() error{
-		"create":   func() error { _, _, err := s.CreateNode(ctx, "n", hash(1)); return err },
+		"create":   func() error { _, _, err := s.CreateNode(ctx, "n", Billing{}, hash(1)); return err },
 		"register": func() error { _, _, err := s.RegisterNode(ctx, hash(9), "n", hash(1)); return err },
 	} {
 		if err := create(); !errors.Is(err, ErrNodeLimit) || err.Error() != want {
@@ -289,7 +289,7 @@ func TestCreatingNodeRejectsInheritingMoreThanTheLimit(t *testing.T) {
 	if _, err := s.DeleteProbeTask(ctx, tasks[0].Task.Id); err != nil {
 		t.Fatal(err)
 	}
-	id, _, err := s.CreateNode(ctx, "n", hash(1))
+	id, _, err := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	if err != nil {
 		t.Fatalf("node inheriting exactly 64 tasks rejected: %v", err)
 	}

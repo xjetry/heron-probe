@@ -59,7 +59,7 @@ func TestDynamicSelectorUpdatesAllReadersAndRejectsReferencedTags(t *testing.T) 
 		t.Fatal(err)
 	}
 	check(nil)
-	newID, err := r.CreateNode(t.Context(), "new", []byte("new"))
+	newID, err := r.CreateNode(t.Context(), "new", store.Billing{}, []byte("new"))
 	if err != nil {
 		t.Fatal(err)
 	}

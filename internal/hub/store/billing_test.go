@@ -51,11 +51,32 @@ func TestMigrationFromV8MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 	}
 }
 
+// 计费随建节点一次写入：CreateNode 落库的五项与 UpdateNode 写进去的读法一致；空值创建没有计费。
+func TestCreateNodeStoresBilling(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	full := Billing{Price: "12.50", Currency: "USD", Cycle: CycleMonthly, ExpiresOn: "2026-10-01", AutoRenew: true}
+	id, _, err := s.CreateNode(ctx, "billed", full, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, _, err := s.CreateNode(ctx, "plain", Billing{}, hash(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.GetNode(ctx, id); err != nil || n.Billing != full {
+		t.Fatalf("billed node read back %+v %v, want %+v", n.Billing, err, full)
+	}
+	if n, err := s.GetNode(ctx, plain); err != nil || n.Billing != (Billing{}) {
+		t.Fatalf("plain node read back %+v %v, want zero", n.Billing, err)
+	}
+}
+
 // 计费五项随 UpdateNode 整体替换：零值即清除。billingChanged 只看这五项与库内原值是否不同，别的字段变不算。
 func TestUpdateNodeReplacesBillingAndReportsChange(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	edit := NodeEdit{Name: "n", TrafficResetDay: 1}
 	update := func(e NodeEdit) bool {
 		t.Helper()
@@ -125,7 +146,7 @@ func TestUpdateNodeReplacesBillingAndReportsChange(t *testing.T) {
 func TestRenewExpiryWritesOnlyOverTheValuesItWasComputedFrom(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	set := func(b Billing) {
 		t.Helper()
 		if _, err := s.UpdateNode(ctx, id, NodeEdit{Name: "n", TrafficResetDay: 1, Billing: b}); err != nil {

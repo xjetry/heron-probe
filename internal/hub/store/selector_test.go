@@ -7,7 +7,7 @@ import (
 
 func TestNodeUpdateScopeReadFailureRollsBackAllWrites(t *testing.T) {
 	s, _ := open(t)
-	id, _, err := s.CreateNode(t.Context(), "original", hash(1))
+	id, _, err := s.CreateNode(t.Context(), "original", Billing{}, hash(1))
 	if err != nil {
 		t.Fatal(err)
 	}

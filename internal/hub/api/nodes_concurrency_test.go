@@ -7,11 +7,12 @@ import (
 
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 func TestConcurrentUpdatesKeepResetDayConsistent(t *testing.T) {
 	h := newHarness(t, "")
-	id, _, err := h.auth.CreateNode(t.Context(), "n")
+	id, _, err := h.auth.CreateNode(t.Context(), "n", store.Billing{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +48,7 @@ func TestConcurrentUpdatesKeepResetDayConsistent(t *testing.T) {
 func TestConcurrentUpdateCannotReviveDeletedResetDay(t *testing.T) {
 	h := newHarness(t, "")
 	for round := range 2000 {
-		id, _, err := h.auth.CreateNode(t.Context(), "n")
+		id, _, err := h.auth.CreateNode(t.Context(), "n", store.Billing{})
 		if err != nil {
 			t.Fatal(err)
 		}

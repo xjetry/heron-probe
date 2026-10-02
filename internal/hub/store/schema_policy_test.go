@@ -145,7 +145,7 @@ func TestSchemaPolicyCreatesAndReopensWithoutMigration(t *testing.T) {
 			if got := userVersion(t, st.r); got != schemaVersion {
 				t.Errorf("created user_version = %d, want %d", got, schemaVersion)
 			}
-			if _, _, err := st.CreateNode(t.Context(), "new", hash(1)); err != nil {
+			if _, _, err := st.CreateNode(t.Context(), "new", Billing{}, hash(1)); err != nil {
 				t.Errorf("created schema is not usable: %v", err)
 			}
 			st.Close()

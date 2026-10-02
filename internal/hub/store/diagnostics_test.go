@@ -21,7 +21,7 @@ var schemaV26 = append(slices.Clone(schemaV25),
 
 func TestDiagnosticsFactsRoundTrip(t *testing.T) {
 	s, _ := open(t)
-	id, _, err := s.CreateNode(t.Context(), "diagnostics", hash(1))
+	id, _, err := s.CreateNode(t.Context(), "diagnostics", Billing{}, hash(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestDiagnosticsFactsRoundTrip(t *testing.T) {
 
 func TestDiagnosticsWritesRejectInvalidData(t *testing.T) {
 	s, _ := open(t)
-	id, _, err := s.CreateNode(t.Context(), "diagnostics", hash(1))
+	id, _, err := s.CreateNode(t.Context(), "diagnostics", Billing{}, hash(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestDiagnosticsReadAndRestoreRejectInvalidData(t *testing.T) {
 	for _, text := range []string{`{"failedCollectors":[99]}`, `{"netInterfaces":["eth0"]}`, `{"secret":"not allowed"}`, `{invalid`, "\u00a0null"} {
 		t.Run(text, func(t *testing.T) {
 			s, _ := open(t)
-			id, _, err := s.CreateNode(t.Context(), "diagnostics", hash(1))
+			id, _, err := s.CreateNode(t.Context(), "diagnostics", Billing{}, hash(1))
 			if err != nil {
 				t.Fatal(err)
 			}

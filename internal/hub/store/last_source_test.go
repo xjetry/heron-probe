@@ -35,7 +35,7 @@ func TestMigrationFromV12AddsEmptyLastSource(t *testing.T) {
 func TestMinuteBatchWritesLastSource(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	write := func(ts int64, source string) {
 		t.Helper()
 		row := metric.Row{NodeID: id, TS: ts, Bucket: metric.NewBucket(), LastSeen: clk.Now(), Source: source}

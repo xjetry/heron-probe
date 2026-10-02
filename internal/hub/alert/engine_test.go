@@ -43,7 +43,7 @@ func newFixture(t *testing.T) *fixture {
 	must(t, err)
 	t.Cleanup(func() { must(t, f.st.Close()) })
 	for i := 0; i < 2; i++ {
-		id, _, err := f.st.CreateNode(t.Context(), fmt.Sprintf("node%d", i+1), []byte(fmt.Sprintf("hash%d", i)))
+		id, _, err := f.st.CreateNode(t.Context(), fmt.Sprintf("node%d", i+1), store.Billing{}, []byte(fmt.Sprintf("hash%d", i)))
 		must(t, err)
 		f.ids = append(f.ids, id)
 	}
@@ -326,7 +326,7 @@ func TestEvaluateProbesFollowsTaskCoverage(t *testing.T) {
 	must(t, err)
 	all := p.Task.Id
 	none := f.task(t, nil)
-	late, _, err := f.st.CreateNode(t.Context(), "late", []byte("late"))
+	late, _, err := f.st.CreateNode(t.Context(), "late", store.Billing{}, []byte("late"))
 	must(t, err)
 	nodes := append(slices.Clone(f.ids), late)
 	ts := f.clk.Now().Unix() - 60
@@ -459,7 +459,7 @@ func TestRunLoopsStopOnCancellation(t *testing.T) {
 func TestAllNodesIncludesNewNodes(t *testing.T) {
 	f := newFixture(t)
 	r := f.rule(t, offline())
-	id, _, err := f.st.CreateNode(t.Context(), "new", []byte("new-hash"))
+	id, _, err := f.st.CreateNode(t.Context(), "new", store.Billing{}, []byte("new-hash"))
 	must(t, err)
 	f.clk.Advance(time.Minute)
 	f.sweep(t)

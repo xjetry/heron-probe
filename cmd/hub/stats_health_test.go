@@ -31,7 +31,7 @@ func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := t.Context()
-	node, _, err := st.CreateNode(ctx, "n", make([]byte, 32))
+	node, _, err := st.CreateNode(ctx, "n", store.Billing{}, make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}

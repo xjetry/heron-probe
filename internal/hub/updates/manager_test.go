@@ -22,7 +22,7 @@ func fixture(t *testing.T) (*Manager, int64, *clock.Fake) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	id, _, err := st.CreateNode(t.Context(), "test", []byte("token"))
+	id, _, err := st.CreateNode(t.Context(), "test", store.Billing{}, []byte("token"))
 	if err != nil {
 		t.Fatal(err)
 	}

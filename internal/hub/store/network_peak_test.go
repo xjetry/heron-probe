@@ -17,7 +17,7 @@ func TestNetworkPeaksSurviveEveryRollupAndQueryBucket(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
 	base := clk.Now().Truncate(time.Hour).Unix()
-	id, _, err := s.CreateNode(ctx, "peaks", hash(1))
+	id, _, err := s.CreateNode(ctx, "peaks", Billing{}, hash(1))
 	if err != nil {
 		t.Fatal(err)
 	}

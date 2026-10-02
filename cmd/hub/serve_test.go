@@ -299,7 +299,7 @@ func TestServeRunsMaintenanceWithConfiguredRetention(t *testing.T) {
 	defer st.Close()
 	ctx := context.Background()
 	_, hash := auth.NewToken()
-	id, _, err := st.CreateNode(ctx, "n", hash[:])
+	id, _, err := st.CreateNode(ctx, "n", store.Billing{}, hash[:])
 	if err != nil {
 		t.Fatal(err)
 	}

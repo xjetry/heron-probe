@@ -61,11 +61,11 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 	if err := errors.Join(a.Load(ctx), book.Load(ctx), reg.Load(ctx), svc.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}
-	deleted, _, err := a.CreateNode(ctx, "delete")
+	deleted, _, err := a.CreateNode(ctx, "delete", store.Billing{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	keep, token, err := a.CreateNode(ctx, "keep")
+	keep, token, err := a.CreateNode(ctx, "keep", store.Billing{})
 	if err != nil {
 		t.Fatal(err)
 	}

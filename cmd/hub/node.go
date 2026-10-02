@@ -75,7 +75,7 @@ func runNode(args []string) error {
 		if *name == "" {
 			return errors.New("--name is required")
 		}
-		nid, tok, err := a.CreateNode(ctx, *name)
+		nid, tok, err := a.CreateNode(ctx, *name, store.Billing{})
 		if err != nil {
 			return err
 		}

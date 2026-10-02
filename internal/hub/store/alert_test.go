@@ -16,7 +16,7 @@ func alertFixture(t *testing.T) (*Store, []int64, []NotifyChannel, uint64) {
 	var ids []int64
 	var channels []NotifyChannel
 	for i := range 2 {
-		id, _, err := s.CreateNode(t.Context(), fmt.Sprint(i), hash(byte(i+1)))
+		id, _, err := s.CreateNode(t.Context(), fmt.Sprint(i), Billing{}, hash(byte(i+1)))
 		if err != nil {
 			t.Fatal(err)
 		}

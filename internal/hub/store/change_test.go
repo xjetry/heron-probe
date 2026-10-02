@@ -93,7 +93,7 @@ func TestAgenticDeferredCommitFailure(t *testing.T) {
 		return c
 	}
 	c := newChange()
-	if _, _, err := s.CreateNode(WithChange(t.Context(), c), "pending", hash(1)); err == nil || !strings.Contains(err.Error(), "FOREIGN KEY") {
+	if _, _, err := s.CreateNode(WithChange(t.Context(), c), "pending", Billing{}, hash(1)); err == nil || !strings.Contains(err.Error(), "FOREIGN KEY") {
 		t.Fatalf("deferred commit constraint did not fail: %v", err)
 	}
 	if c.ID == "" || c.CommittedAt != 0 || c.completed {
@@ -109,18 +109,18 @@ func TestAgenticDeferredCommitFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	c = newChange()
-	if _, _, err := s.CreateNode(WithChange(t.Context(), c), "pending", hash(1)); err != nil || c.CommittedAt == 0 {
+	if _, _, err := s.CreateNode(WithChange(t.Context(), c), "pending", Billing{}, hash(1)); err != nil || c.CommittedAt == 0 {
 		t.Fatalf("retry after commit failure did not recover: %+v %v", c, err)
 	}
 	retry := newChange()
-	if _, _, err := s.CreateNode(WithChange(t.Context(), retry), "pending", hash(1)); !errors.Is(err, ErrReplay) || retry.ID != c.ID {
+	if _, _, err := s.CreateNode(WithChange(t.Context(), retry), "pending", Billing{}, hash(1)); !errors.Is(err, ErrReplay) || retry.ID != c.ID {
 		t.Fatalf("recovered commit did not replay: %+v %v", retry, err)
 	}
 }
 
 func TestChangeRechecksRevocationInsideTransaction(t *testing.T) {
 	s, clk := open(t)
-	node, _, err := s.CreateNode(t.Context(), "node", hash(1))
+	node, _, err := s.CreateNode(t.Context(), "node", Billing{}, hash(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestAgenticReceiptsSurviveRestartRestoreAndRetention(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := s.CreateNode(WithChange(ctx, c), id, hash(b)); err != nil {
+		if _, _, err := s.CreateNode(WithChange(ctx, c), id, Billing{}, hash(b)); err != nil {
 			t.Fatal(err)
 		}
 		return c
@@ -235,7 +235,7 @@ func TestAgenticReceiptsSurviveRestartRestoreAndRetention(t *testing.T) {
 		t.Fatalf("restore resurrected expired audit details: %+v %v", old, err)
 	}
 	retry := &Change{Operation: Operation{RequestID: "first", RequestHash: "first", Action: "create_node"}, Kind: "node", Permission: PermissionCreate, ExpectedVersion: first.ExpectedVersion}
-	if _, _, err := reopened.CreateNode(WithChange(ctx, retry), "duplicate", hash(3)); !errors.Is(err, ErrReplay) {
+	if _, _, err := reopened.CreateNode(WithChange(ctx, retry), "duplicate", Billing{}, hash(3)); !errors.Is(err, ErrReplay) {
 		t.Fatalf("durable retry was executed: %v", err)
 	}
 	nodes, err := reopened.ListNodes(ctx)
@@ -246,7 +246,7 @@ func TestAgenticReceiptsSurviveRestartRestoreAndRetention(t *testing.T) {
 
 func TestAgenticReplayAfterScopeRemoval(t *testing.T) {
 	s, clk := open(t)
-	node, _, err := s.CreateNode(t.Context(), "node", hash(1))
+	node, _, err := s.CreateNode(t.Context(), "node", Billing{}, hash(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestAgenticRestoreSeparatesReusedTokenIDs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := s.CreateNode(WithChange(ctx, c), name, hash(hashByte)); err != nil {
+		if _, _, err := s.CreateNode(WithChange(ctx, c), name, Billing{}, hash(hashByte)); err != nil {
 			t.Fatal(err)
 		}
 		return p

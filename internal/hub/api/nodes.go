@@ -46,7 +46,8 @@ var (
 	currencyPattern = regexp.MustCompile(`^[A-Z]{3}$`)
 )
 
-// billingOf 是计费字段唯一的校验，与 traffic_reset_day、offline_grace_s 同在 UpdateNode 入口裁决（§9.4）。m 为 nil
+// billingOf 是计费字段唯一的校验，CreateNode 与 UpdateNode 两个入口共用（§9.4）；UpdateNode 里它与
+// traffic_reset_day、offline_grace_s 同在入口裁决。m 为 nil
 // （请求没带 billing）时各项取零值，即五项全清。days_left 由 hub 计算，请求里的值不读。到期日与到期扫描、days_left
 // 共用 alert.ParseDate，写进去的日期读侧一定读得懂。自动续期要求周期与到期日都非空：推后需要这两项。扫描对缺周期
 // 另有守卫（alert.cycleMonths），不依赖这里。
@@ -161,13 +162,24 @@ func (s *Service) CreateNode(ctx context.Context, req *connect.Request[heronv1.C
 	if err != nil {
 		return nil, err
 	}
-	id, tok, err := s.auth.CreateNode(ctx, name)
+	billing, err := billingOf(req.Msg.GetBilling())
+	if err != nil {
+		return nil, err
+	}
+	id, tok, err := s.auth.CreateNode(ctx, name, billing)
 	if errors.Is(err, store.ErrNodeLimit) {
 		return nil, connect.NewError(connect.CodeResourceExhausted, err)
 	}
 	if err != nil {
 		s.log.Error("creating node failed", "err", err)
 		return nil, internalError("creating node failed")
+	}
+	// 带着计费建节点与 UpdateNode 改计费同理由立刻扫描一次（§9.2）：新建即过期或在提醒窗口内的节点不等到零点才触发。
+	// 节点已提交，扫描失败只记日志，日界扫描会补上。新节点此前没有状态，也不存在被裁剪的作用域，不经 UpdateScope。
+	if billing != (store.Billing{}) {
+		if err := s.alerts.SweepExpiry(context.WithoutCancel(ctx)); err != nil {
+			s.log.Error("expiry sweep after node create failed", "node", id, "err", err)
+		}
 	}
 	n, err := s.store.GetNode(ctx, id)
 	if err != nil {

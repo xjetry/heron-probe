@@ -517,7 +517,7 @@ export const TrafficSchema: GenMessage<Traffic> = /*@__PURE__*/
 
 /**
  * 节点的计费与到期（§9.4）。价格与币种是提醒用的展示值：hub 不汇总、不换算，也不拿它们做任何计算；到期日与周期
- * 驱动 days_left、自动续期与到期规则。Node 与 UpdateNodeRequest 都以它承载；公开端的 PublicBilling 由它按字段名投影生成，两者对不齐时 hub 构造公开服务就 panic。
+ * 驱动 days_left、自动续期与到期规则。Node、CreateNodeRequest 与 UpdateNodeRequest 都以它承载；公开端的 PublicBilling 由它按字段名投影生成，两者对不齐时 hub 构造公开服务就 panic。
  *
  * @generated from message heron.v1.Billing
  */

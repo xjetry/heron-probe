@@ -51,7 +51,7 @@ func TestRollupIsExactAndIdempotent(t *testing.T) {
 	s, clk := open(t)
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix() // 整点
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: minuteRows(id, base, base+15*60)}); err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestRollupStopsAtLag(t *testing.T) {
 	s, clk := open(t)
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: minuteRows(id, base, base+15*60)}); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestHourRollupOnlyUsesFrozenFiveMinuteRows(t *testing.T) {
 	s, clk := open(t)
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	// 两个整小时的分钟行；now 让 5m 水位停在第二小时中间。
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: minuteRows(id, base, base+120*60)}); err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func TestRollupRollsBackRowsWhenWatermarkUpdateFails(t *testing.T) {
 	s, clk := open(t)
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: minuteRows(id, base, base+15*60)}); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestQueryMetricsRebucketsAndKeepsNoData(t *testing.T) {
 	s, clk := open(t)
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: minuteRows(id, base, base+10*60)}); err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 	s, clk := open(t)
 	ctx := context.Background()
 	now := clk.Now().Truncate(time.Hour)
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	orphan := int64(999) // 不在 node 表里的孤儿行也要被清
 	var rows []metric.Row
 	for d := int64(0); d < 10; d++ {
@@ -416,7 +416,7 @@ func TestQueryMetricsHonorsAlignedPointLimitWithoutDroppingSamples(t *testing.T)
 	s, clk := open(t)
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
-	id, _, err := s.CreateNode(ctx, "n", hash(1))
+	id, _, err := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +466,7 @@ func TestSumColumnsRoundTripAndRollUp(t *testing.T) {
 	s, clk := open(t)
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	var rows []metric.Row
 	for i := int64(0); i < 5; i++ {
 		b := metric.NewBucket()
@@ -504,7 +504,7 @@ func TestSumColumnsRoundTripAndRollUp(t *testing.T) {
 func TestProbeRollupIsExactIdempotentAndIndependentOfMetrics(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	base := clk.Now().Truncate(time.Hour).Unix()
 	batch := metric.Batch{Rows: minuteRows(id, base, base+900)}
 	for i := int64(0); i < 15; i++ {
@@ -575,7 +575,7 @@ func TestProbeRollupIsExactIdempotentAndIndependentOfMetrics(t *testing.T) {
 func TestQueriesReadSelectedFamilyLevel(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	id, _, _ := s.CreateNode(ctx, "n", hash(1))
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	// 各级故意写不同的值，避免读错表后又经二次聚合得到相同结果而掩盖路由错误。
 	if err := s.write(ctx, func(tx *sql.Tx) error {
 		for i := range levels {

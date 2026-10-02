@@ -773,7 +773,7 @@ func TestNodeMutationsDoNotWaitForLogin(t *testing.T) {
 				if err := a.SetPassword(ctx, goodPassword); err != nil {
 					t.Fatal(err)
 				}
-				id, _, err := a.CreateNode(ctx, "existing")
+				id, _, err := a.CreateNode(ctx, "existing", store.Billing{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -789,7 +789,7 @@ func TestNodeMutationsDoNotWaitForLogin(t *testing.T) {
 					case "Register":
 						_, _, err = a.Register(ctx, key, "registered", netip.MustParseAddr("10.0.0.2"))
 					case "CreateNode":
-						_, _, err = a.CreateNode(ctx, "new")
+						_, _, err = a.CreateNode(ctx, "new", store.Billing{})
 					case "RotateToken":
 						_, err = a.RotateToken(ctx, id)
 					case "DeleteNode":

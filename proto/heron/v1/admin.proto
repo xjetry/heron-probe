@@ -459,6 +459,8 @@ message ListNodesResponse {
 message CreateNodeRequest {
   // 去首尾空白后 1–64 个字符，控制字符被剔除。
   string name = 1;
+  // 计费与到期，选填：缺失等于不填。取值约束与 UpdateNodeRequest.billing 相同，同一处校验；days_left 由 hub 计算，这里的值忽略。
+  Billing billing = 2;
 }
 message CreateNodeResponse {
   Node node = 1;

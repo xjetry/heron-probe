@@ -293,8 +293,8 @@ func (r *Registry) updateNodeScopes(mutate func() (store.NodeUpdateResult, error
 
 // CreateNode 与 RegisterNode 是两个建节点入口，实现 auth.NodeCreator。store 在建节点事务里读出新节点的覆盖、
 // 检查上限并推进版本；这里在 writeMu 下发布，不与 Save、Delete、Load 反序。
-func (r *Registry) CreateNode(ctx context.Context, name string, tokenHash []byte) (int64, error) {
-	return r.addNode(func() (int64, store.NewNodeTasks, error) { return r.store.CreateNode(ctx, name, tokenHash) })
+func (r *Registry) CreateNode(ctx context.Context, name string, billing store.Billing, tokenHash []byte) (int64, error) {
+	return r.addNode(func() (int64, store.NewNodeTasks, error) { return r.store.CreateNode(ctx, name, billing, tokenHash) })
 }
 
 func (r *Registry) RegisterNode(ctx context.Context, keyHash []byte, name string, tokenHash []byte) (int64, error) {

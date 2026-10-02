@@ -57,8 +57,8 @@ func (r *snapshotRows) Close() error {
 func TestLoadProbeTasksReadsOneSnapshot(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	a, _, _ := s.CreateNode(ctx, "a", hash(1))
-	b, _, _ := s.CreateNode(ctx, "b", hash(2))
+	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
+	b, _, _ := s.CreateNode(ctx, "b", Billing{}, hash(2))
 	saved, savedVersion, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: false, NodeIDs: []int64{a}})
 	if err != nil {
 		t.Fatal(err)

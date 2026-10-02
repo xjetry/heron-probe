@@ -187,7 +187,7 @@ func (f *fixture) report(name, addr string) int64 {
 	id, ok := f.nodes[name]
 	if !ok {
 		var err error
-		id, _, err = f.st.CreateNode(f.t.Context(), name, []byte(name))
+		id, _, err = f.st.CreateNode(f.t.Context(), name, store.Billing{}, []byte(name))
 		if err != nil {
 			f.t.Fatal(err)
 		}
