@@ -16,6 +16,7 @@ import { NodeCountry } from "../components/NodeCountry";
 import { NodeInstallModal } from "../components/NodeInstallModal";
 import { NodeOrderControl } from "../components/NodeOrderControl";
 import { AdminService, type Node, type NodeStatus, type Tag } from "../gen/heron/v1/admin_pb";
+import { BillingEditor, billingDraftSet, emptyBillingDraft } from "../components/BillingEditor";
 import { expired, expiryText, priceText } from "../lib/billing";
 import { bytes } from "../lib/format";
 import { withId } from "../lib/ids";
@@ -47,6 +48,7 @@ export function Nodes() {
   const lastOpener = useRef<HTMLElement | null>(null);
   const [creating, setCreating] = useState<HTMLElement | null>(null);
   const [name, setName] = useState("");
+  const [billing, setBilling] = useState(emptyBillingDraft);
   const [search, setSearch] = useState("");
   const [drag, setDrag] = useState<{ id: bigint; members: string } | null>(null);
   const [drop, setDrop] = useState<{ target: bigint; edge: "before" | "after" } | null>(null);
@@ -58,7 +60,7 @@ export function Nodes() {
     onSuccess: (result) => {
       const node = result.node;
       if (node) setSecret({ id: node.id, label: `节点 ${withId(node.name, node.id)} 的 token`, value: result.token, reRegister: false, opener: lastOpener.current ?? document.body });
-      setName(""); setCreating(null);
+      setName(""); setBilling(emptyBillingDraft()); setCreating(null);
       void refresh();
     },
   });
@@ -110,7 +112,7 @@ export function Nodes() {
     ...mutationOptions,
     onSuccess: (_result, request) => { setTagFilter((current) => withoutTag(current, request.name ?? "")); return refresh(); },
   });
-  const onCreate = (event: FormEvent) => { event.preventDefault(); if (name.trim() && !create.isPending) create.mutate({ name }); };
+  const onCreate = (event: FormEvent) => { event.preventDefault(); if (name.trim() && !create.isPending) create.mutate(billingDraftSet(billing) ? { name, billing } : { name }); };
   const gate = queryGate(nodes);
   const list = filterNodes(order.items, search);
   const selectedIds = new Set(selected);
@@ -201,8 +203,9 @@ export function Nodes() {
     {editor && <NodeEditor key={String(editor.node.id)} node={editor.node} mode={editor.mode} opener={editor.opener} knownTags={tags.data?.tags ?? []}
       saving={update.isPending} error={update.error} listError={nodes.error} onClose={() => setEditor(null)}
       onSave={(patch) => update.mutate({ id: editor.node.id, ...patch }, { onSuccess: () => setEditor(null) })} />}
-    {creating && <Modal title="添加节点" description="创建后将显示安装凭据 token，仅用于注册 agent，不能上报指标。" busy={create.isPending} opener={creating} onClose={() => setCreating(null)}>
-      <form onSubmit={onCreate}><div className="modal-body">{errorBanner(create.error)}<label>新节点名称<input data-autofocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如 tokyo-01" disabled={create.isPending} /></label></div>
+    {creating && <Modal title="添加节点" description="创建后将显示安装凭据 token，仅用于注册 agent，不能上报指标。计费可留空，稍后在节点的计费设置中补。" busy={create.isPending} opener={creating} onClose={() => setCreating(null)}>
+      <form onSubmit={onCreate}><div className="modal-body">{errorBanner(create.error)}<label>新节点名称<input data-autofocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如 tokyo-01" disabled={create.isPending} /></label>
+        <section className="form-section" aria-label="计费（选填）"><BillingEditor label="新节点" draft={billing} onChange={(patch) => setBilling({ ...billing, ...patch })} /></section></div>
         <footer className="modal-footer"><button type="button" disabled={create.isPending} onClick={() => setCreating(null)}>取消</button><button type="submit" className="primary-button" disabled={create.isPending || name.trim() === ""}>创建</button></footer>
       </form>
     </Modal>}

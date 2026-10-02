@@ -2,15 +2,12 @@ import { type FormEvent, useState } from "react";
 import type { Node, Tag } from "../gen/heron/v1/admin_pb";
 import { BillingCycle } from "../gen/heron/v1/types_pb";
 import { errorBanner } from "../api/queryGate";
-import { BILLING_CYCLES } from "../lib/billing";
 import { withId } from "../lib/ids";
 import { withTag, withoutTag } from "../lib/tags";
 import { Modal } from "../components/Modal";
-import { DateInput } from "../components/DateInput";
+import { BillingEditor } from "../components/BillingEditor";
 import { NodeAddresses } from "../components/NodeAddresses";
 import { lookupText, NodeCountry } from "../components/NodeCountry";
-
-const BILLING_CURRENCIES = ["CNY", "USD", "HKD", "CAD", "EUR", "GBP"];
 
 // UpdateNode 整体替换全部可编辑字段；独立计费入口也必须保留未编辑字段，不能用缺席表达“不变”。
 const draftOf = (node: Node) => ({
@@ -67,7 +64,7 @@ export function NodeEditor({ node, mode, knownTags, saving, error, listError, on
               </div>
               <p className="muted"><NodeCountry node={node} /> · 创建于 {new Date(Number(node.createdAt) * 1000).toLocaleDateString()}</p>
             </section>
-          </> : <section className="form-section"><BillingEditor label={label} draft={draft.billing} onChange={(patch) => setDraft({ ...draft, billing: { ...draft.billing, ...patch } })} /></section>}
+          </> : <section className="form-section"><BillingEditor label={label} draft={draft.billing} autoFocus onChange={(patch) => setDraft({ ...draft, billing: { ...draft.billing, ...patch } })} /></section>}
         </fieldset>
       </div>
       <footer className="modal-footer"><button type="button" onClick={onClose} disabled={saving}>取消</button><button type="submit" className="primary-button" disabled={saving || !valid} aria-busy={saving}>保存</button></footer>
@@ -89,19 +86,3 @@ function TagsEditor({ id, label, isPublic, tags, known, pending, onPending, onCh
   </div>;
 }
 
-function BillingEditor({ label, draft, onChange }: { label: string; draft: Draft["billing"]; onChange: (patch: Partial<Draft["billing"]>) => void }) {
-  return <div className="billing-edit">
-    <label>价格<input data-autofocus aria-label={`价格 ${label}`} inputMode="decimal" placeholder="12.50" value={draft.price} onChange={(e) => onChange({ price: e.target.value })} /></label>
-    <label>币种<select aria-label={`币种 ${label}`} value={draft.currency} onChange={(e) => onChange({ currency: e.target.value })}>
-      <option value="">未设置</option>
-      {draft.currency && !BILLING_CURRENCIES.includes(draft.currency) && <option value={draft.currency} disabled>{draft.currency}（当前值）</option>}
-      {BILLING_CURRENCIES.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
-    </select></label>
-    <label>付款周期<select aria-label={`周期 ${label}`} value={draft.billingCycle} onChange={(e) => onChange({ billingCycle: Number(e.target.value) as BillingCycle })}>
-      <option value={BillingCycle.UNSPECIFIED}>无周期</option>{BILLING_CYCLES.map(({ value, label: cycle }) => <option key={value} value={value}>每{cycle}</option>)}
-    </select></label>
-    <DateInput label={`到期日 ${label}`} value={draft.expiresOn} onChange={(expiresOn) => onChange({ expiresOn })} />
-    <label className="switch-field"><span>自动续期<small>到期后自动按付款周期推后日期</small></span><input type="checkbox" aria-label={`自动续期 ${label}`} checked={draft.autoRenew} onChange={(e) => onChange({ autoRenew: e.target.checked })} /></label>
-    <p className="muted">只用于展示与到期提醒。开着自动续期时，到期日过了 hub 按周期推后；需要周期与到期日。</p>
-  </div>;
-}
