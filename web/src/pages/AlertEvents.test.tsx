@@ -92,6 +92,20 @@ it("投递文案与渠道回退", async () => {
   expect(screen.getByText("未配置渠道")).toBeInTheDocument();
 });
 
+// 两个"没有投递行"的分支各有原因：silenced 是维护静默抑制（§9.5），deliveries 为空且未静默才是没配渠道。
+it("已静默的事件显示已静默而不是未配置渠道", async () => {
+  render({ listAlertEvents: async () => ({ events: [
+    create(AlertEventSchema, { id: 1n, nodeId: 1n, ruleId: 7n, transition: "firing", at: 1_700_000_000n, summary: "被静默", silenced: true }),
+    create(AlertEventSchema, { id: 2n, nodeId: 1n, ruleId: 7n, transition: "recovered", at: 1_700_000_000n, summary: "无投递" }),
+  ] }) });
+  const silenced = within((await screen.findByText("被静默")).closest("tr")!);
+  expect(silenced.getByText("已静默（维护窗口内，未投递）")).toBeInTheDocument();
+  expect(silenced.queryByText("未配置渠道")).toBeNull();
+  const plain = within(screen.getByText("无投递").closest("tr")!);
+  expect(plain.getByText("未配置渠道")).toBeInTheDocument();
+  expect(plain.queryByText(/已静默/)).toBeNull();
+});
+
 const failed = (id: bigint, failure: DeliveryFailure, extra: { channelId?: bigint; done?: boolean; ok?: boolean; httpStatus?: number } = {}) =>
   ({ id, channelId: 5n, ok: false, done: true, attempts: 1, failure, ...extra });
 const withDeliveries = (deliveries: ReturnType<typeof failed>[]) =>
