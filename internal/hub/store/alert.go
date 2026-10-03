@@ -10,16 +10,18 @@ import (
 	"strings"
 	"time"
 
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/internal/hub/outbound"
 )
 
 type AlertKind string
 
 const (
-	KindOffline  AlertKind = "offline"
-	KindProbe    AlertKind = "probe"
-	KindExpiry   AlertKind = "expiry"
-	KindResource AlertKind = "resource"
+	KindOffline    AlertKind = "offline"
+	KindProbe      AlertKind = "probe"
+	KindExpiry     AlertKind = "expiry"
+	KindResource   AlertKind = "resource"
+	KindCertExpiry AlertKind = "cert_expiry"
 )
 
 type ProbeMetric string
@@ -352,18 +354,18 @@ type KindFieldError struct {
 
 func (e KindFieldError) Error() string { return e.Field + " " + e.Constraint }
 
-// CheckKindFields 裁决种类与专用字段的组合：任务与探测指标只属于探测，资源指标与恢复阈值只属于资源；
-// 阈值和持续分钟由探测与资源共用，days_before 只属于到期，其余种类必须是零值。SaveAlertRule 对非法组合报错而不改写，
+// CheckKindFields 裁决种类与专用字段的组合：任务只属于探测与证书到期，探测指标只属于探测，资源指标与恢复阈值只属于资源；
+// 阈值和持续分钟由探测与资源共用，days_before 只属于到期与证书到期，其余种类必须是零值。SaveAlertRule 对非法组合报错而不改写，
 // alert.CheckRule 在保存与载入时调它，协议层经 CheckRule 得到同样的字段与约束（§9.1）。阈值用 != 0 判：NaN 与任何数
 // 都不等，也被拒绝。种类本身是否合法不在这里判断。
 func CheckKindFields(r AlertRule) error {
-	if r.Kind != KindProbe {
-		switch {
-		case r.TaskID != 0:
-			return KindFieldError{"task_id", "must be 0 unless kind is probe"}
-		case r.Metric != "":
-			return KindFieldError{"metric", "must be unspecified unless kind is probe"}
+	if r.Kind != KindProbe && r.Kind != KindCertExpiry {
+		if r.TaskID != 0 {
+			return KindFieldError{"task_id", "must be 0 unless kind is probe or cert_expiry"}
 		}
+	}
+	if r.Kind != KindProbe && r.Metric != "" {
+		return KindFieldError{"metric", "must be unspecified unless kind is probe"}
 	}
 	if r.Kind != KindProbe && r.Kind != KindResource {
 		if r.Threshold != 0 {
@@ -381,8 +383,8 @@ func CheckKindFields(r AlertRule) error {
 			return KindFieldError{"recovery_threshold", "must be 0 unless kind is resource"}
 		}
 	}
-	if r.Kind != KindExpiry && r.DaysBefore != 0 {
-		return KindFieldError{"days_before", "must be 0 unless kind is expiry"}
+	if r.Kind != KindExpiry && r.Kind != KindCertExpiry && r.DaysBefore != 0 {
+		return KindFieldError{"days_before", "must be 0 unless kind is expiry or cert_expiry"}
 	}
 	return nil
 }
@@ -426,6 +428,12 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 		}
 		if r.Kind == KindExpiry {
 			daysBefore = r.DaysBefore
+		}
+		if r.Kind == KindCertExpiry {
+			if err := requireHTTPSProbeTask(tx, int64(r.TaskID)); err != nil {
+				return err
+			}
+			task, daysBefore = int64(r.TaskID), r.DaysBefore
 		}
 		if r.Kind == KindResource {
 			resourceMetric, recovery, threshold, minutes = r.ResourceMetric, r.RecoveryThreshold, r.Threshold, r.ForMinutes
@@ -517,6 +525,25 @@ func requireAlertReference(tx *sql.Tx, table string, kind ObjectKind, id int64) 
 		return NotFoundError{Kind: kind, ID: id}
 	}
 	return err
+}
+
+// requireHTTPSProbeTask 裁决证书到期规则的任务：必须存在，且是 target 为 https:// 的 HTTP 任务——
+// 只有它能带回证书观测；别的任务上这条规则永远没有读数。引用检查与保存同在单写事务，
+// 把任务改成非 https:// 或删除它都要先摘掉规则（删除任务的引用检查在 DeleteProbeTask）。
+func requireHTTPSProbeTask(tx *sql.Tx, id int64) error {
+	var kind int64
+	var target string
+	err := tx.QueryRow("SELECT kind, target FROM probe_task WHERE id = ?", id).Scan(&kind, &target)
+	if errors.Is(err, sql.ErrNoRows) {
+		return NotFoundError{Kind: ObjectProbeTask, ID: id}
+	}
+	if err != nil {
+		return err
+	}
+	if heronv1.ProbeKind(kind) != heronv1.ProbeKind_PROBE_KIND_HTTP || !strings.HasPrefix(target, "https://") {
+		return KindFieldError{"task_id", "must reference an https:// HTTP probe task for cert_expiry rules"}
+	}
+	return nil
 }
 
 func (s *Store) DeleteAlertRule(ctx context.Context, id int64) error {

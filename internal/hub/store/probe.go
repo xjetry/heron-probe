@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"math"
+	"strings"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/internal/hub/metric"
@@ -162,6 +163,14 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *heronv1.ProbeTask, selecto
 			}
 			saved.Id = uint64(id)
 		} else {
+			// 证书到期规则要求任务保持 https:// 的 HTTP 任务（requireHTTPSProbeTask）；改成别的形状会让规则
+			// 永远等不到新观测。与删除同一形状地拒绝，而不是改出一个违反规则约束的库。
+			// kind 的字面值即 KindCertExpiry：checkAlertReferences 只带一个参数，种类字面写进查询。
+			if heronv1.ProbeKind(saved.Kind) != heronv1.ProbeKind_PROBE_KIND_HTTP || !strings.HasPrefix(saved.Target, "https://") {
+				if err := checkAlertReferences(ctx, tx, "SELECT id, name FROM alert_rule WHERE task_id = ? AND kind = 'cert_expiry' ORDER BY id", ObjectProbeTask, int64(saved.Id)); err != nil {
+					return err
+				}
+			}
 			res, err := tx.Exec("UPDATE probe_task SET kind = ?, target = ?, interval_s = ?, timeout_ms = ?, all_nodes = ?, dns_server = ? WHERE id = ?",
 				int64(saved.Kind), saved.Target, int64(saved.IntervalS), int64(saved.TimeoutMs), allNodes, saved.DnsServer, int64(saved.Id))
 			if err != nil {
@@ -230,7 +239,8 @@ func (s *Store) ReorderProbeTasks(ctx context.Context, ids []uint64) error {
 	return s.reorder(ctx, "probe_task", signed)
 }
 
-// DeleteProbeTask 删任务与分配并加版本；历史行不删（§8.3），到期由 prune 清理。
+// DeleteProbeTask 删任务、分配、标签关联与该任务的证书观测并加版本；历史行不删（§8.3），到期由 prune 清理。
+// 被证书到期规则引用的任务由 checkAlertReferences 拦下，删不掉，probe_cert 行不会因删任务而成为孤儿。
 func (s *Store) DeleteProbeTask(ctx context.Context, id uint64) (uint64, error) {
 	var version int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
@@ -248,6 +258,9 @@ func (s *Store) DeleteProbeTask(ctx context.Context, id uint64) (uint64, error) 
 			return err
 		}
 		if _, err := tx.Exec("DELETE FROM probe_task_tag WHERE task_id = ?", int64(id)); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM probe_cert WHERE task_id = ?", int64(id)); err != nil {
 			return err
 		}
 		v, err := bumpProbeVersion(tx, s.clk.Now().Unix())
