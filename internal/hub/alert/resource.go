@@ -52,6 +52,8 @@ func resourceIndex(m store.ResourceMetric) int {
 
 func resourceLabel(m store.ResourceMetric) string {
 	switch m {
+	case store.MetricMemoryUsedPct:
+		return "内存"
 	case store.MetricDiskUsedPct:
 		return "磁盘"
 	case store.MetricCpuPct:
@@ -63,7 +65,8 @@ func resourceLabel(m store.ResourceMetric) string {
 	case store.MetricNetTxBps:
 		return "上行速率"
 	default:
-		return "内存"
+		// 未知值由 CheckRule 挡在保存与载入之外；到不了这里，露出原值而不是误标成某个已知指标。
+		return string(m)
 	}
 }
 
