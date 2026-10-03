@@ -26,14 +26,23 @@ func validateMetrics(m *heronv1.Metrics) error {
 	floats := []struct {
 		name string
 		v    *float64
-	}{{"cpu_pct", m.CpuPct}, {"load1", m.Load1}, {"load5", m.Load5}, {"load15", m.Load15}}
+	}{
+		{"cpu_pct", m.CpuPct}, {"cpu_steal_pct", m.CpuStealPct}, {"cpu_iowait_pct", m.CpuIowaitPct},
+		{"load1", m.Load1}, {"load5", m.Load5}, {"load15", m.Load15},
+	}
 	for _, f := range floats {
 		if f.v != nil && (math.IsNaN(*f.v) || math.IsInf(*f.v, 0) || *f.v < 0) {
 			return fmt.Errorf("%s: must be a finite non-negative number", f.name)
 		}
 	}
-	if m.CpuPct != nil && *m.CpuPct > 100 {
-		return errors.New("cpu_pct: must not exceed 100")
+	// 三个占比各自独立，都以 100 为上界；disk_*_bps 是无符号整数，负数与非有限数由类型本身排除。
+	for _, p := range []struct {
+		name string
+		v    *float64
+	}{{"cpu_pct", m.CpuPct}, {"cpu_steal_pct", m.CpuStealPct}, {"cpu_iowait_pct", m.CpuIowaitPct}} {
+		if p.v != nil && *p.v > 100 {
+			return fmt.Errorf("%s: must not exceed 100", p.name)
+		}
 	}
 	set := 0
 	for _, v := range []*float64{m.Load1, m.Load5, m.Load15} {

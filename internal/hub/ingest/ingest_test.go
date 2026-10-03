@@ -179,12 +179,18 @@ func TestInvalidMetricsRejectedWholeWithoutSideEffect(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
 	cases := map[string]*heronv1.Metrics{
-		"nan":          {CpuPct: proto.Float64(math.NaN())},
-		"inf":          {Load1: proto.Float64(math.Inf(1)), Load5: proto.Float64(0), Load15: proto.Float64(0)},
-		"negative":     {CpuPct: proto.Float64(-1)},
-		"pct over 100": {CpuPct: proto.Float64(100.5)},
-		"partial load": {Load1: proto.Float64(1)},
-		"nil metrics":  nil,
+		"nan":             {CpuPct: proto.Float64(math.NaN())},
+		"inf":             {Load1: proto.Float64(math.Inf(1)), Load5: proto.Float64(0), Load15: proto.Float64(0)},
+		"negative":        {CpuPct: proto.Float64(-1)},
+		"pct over 100":    {CpuPct: proto.Float64(100.5)},
+		"steal nan":       {CpuStealPct: proto.Float64(math.NaN())},
+		"steal negative":  {CpuStealPct: proto.Float64(-1)},
+		"steal over 100":  {CpuStealPct: proto.Float64(101)},
+		"iowait inf":      {CpuIowaitPct: proto.Float64(math.Inf(1))},
+		"iowait negative": {CpuIowaitPct: proto.Float64(-0.5)},
+		"iowait over 100": {CpuIowaitPct: proto.Float64(100.5)},
+		"partial load":    {Load1: proto.Float64(1)},
+		"nil metrics":     nil,
 	}
 	for name, m := range cases {
 		h.clk.Advance(h.svc.Interval())
@@ -195,6 +201,22 @@ func TestInvalidMetricsRejectedWholeWithoutSideEffect(t *testing.T) {
 	}
 	if _, ok := h.live.Get(id); ok {
 		t.Fatal("a rejected report must leave live untouched")
+	}
+}
+
+// 磁盘速率是无符号整数：负值与非有限数在协议类型上就构造不出来，准入不额外限幅，上界即 uint64 自身。
+// 发最大值证明不误拒，且读数原样进 live。
+func TestDiskRatesBoundedByTypeNotByValidation(t *testing.T) {
+	h := newHub(t)
+	id, tok := h.node(t)
+	if _, err := h.client.Report(context.Background(), report(tok, &heronv1.Metrics{
+		DiskReadBps: proto.Uint64(math.MaxUint64), DiskWriteBps: proto.Uint64(7 << 40),
+	})); err != nil {
+		t.Fatalf("uint64 disk rates must pass validation: %v", err)
+	}
+	e, ok := h.live.Get(id)
+	if !ok || e.Metrics.GetDiskReadBps() != math.MaxUint64 || e.Metrics.GetDiskWriteBps() != 7<<40 {
+		t.Fatalf("live metrics = %+v ok=%v", e.Metrics, ok)
 	}
 }
 
