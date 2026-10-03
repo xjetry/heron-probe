@@ -71,6 +71,7 @@ func TestRestoreThemesSnapshotDigest(t *testing.T) {
 func themeRestoreFixture(t *testing.T) (string, string) {
 	t.Helper()
 	config, _ := restoreSnapshots(t)
+	removeV29Config(t, restoreDB(t, config))
 	removeV26Config(t, restoreDB(t, config))
 	removeV27Config(t, restoreDB(t, config))
 	removeV25Config(t, restoreDB(t, config))

@@ -50,7 +50,11 @@ var migrations = map[int]func(*sql.Tx) error{
 	26: execAll(migrationV26Config),
 	27: execAll(migrationV27Config),
 	28: execAll(migrationV28Metrics),
+	29: execAll(migrationV29Config),
 }
+
+// v29：DNS 探测任务要查询的解析器。旧行取空串：升级前没有 DNS 任务，空串与"非 DNS 任务不携带该字段"同值。
+var migrationV29Config = []string{`ALTER TABLE probe_task ADD COLUMN dns_server TEXT NOT NULL DEFAULT ''`}
 
 // 新列的 n=0 表示旧行没有该指标的历史采样，不把缺失伪装成已测的零流量或零占用。
 var migrationV28Metrics = func() []string {

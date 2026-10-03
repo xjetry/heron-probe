@@ -279,6 +279,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			removeV29Config(t, cfg)
 			removeV26Config(t, cfg)
 			removeV27Config(t, cfg)
 			removeV25Config(t, cfg)
@@ -324,6 +325,30 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 func removeV26Config(t *testing.T, config *sql.DB) {
 	t.Helper()
 	restoreExec(t, config, "ALTER TABLE node_facts DROP COLUMN diagnostics; ALTER TABLE traffic DROP COLUMN net_counter_epoch")
+}
+
+// 同上：29 号给 probe_task 加了 dns_server，回填旧版本号前必须撤回。
+func removeV29Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "ALTER TABLE probe_task DROP COLUMN dns_server")
+}
+
+// 28 版配置快照没有 dns_server 列；恢复把它升到当前版本，快照里既有的任务行新列取空串，
+// 与"非 DNS 任务不携带解析器"的既有值一致。快照表由 CREATE TABLE AS 生成、不带约束与默认值，
+// 夹具的行要显式写全各列，不能靠列默认值补齐。
+func TestRestoreV28ConfigSnapshotAddsDNSServerColumn(t *testing.T) {
+	config, metrics := restoreSnapshots(t)
+	cfg := restoreDB(t, config)
+	restoreExec(t, cfg, "INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order) VALUES (8,1,'legacy.example',60,1000,0,0,0)")
+	removeV29Config(t, cfg)
+	restoreExec(t, cfg, "UPDATE snapshot_meta SET schema_version=28")
+	path := restoreTarget(t)
+	if err := runRestoreWith([]string{"--db", path, "--config", config, "--metrics", metrics, "--yes"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	db := restoreDB(t, path)
+	restoreWant(t, db, "SELECT count(*) FROM pragma_table_info('probe_task') WHERE name='dns_server'", "1")
+	restoreWant(t, db, "SELECT dns_server FROM probe_task WHERE target='legacy.example'", "")
 }
 
 // 降级夹具必须同时撤回真实列与版本号，不能让当前列伪装成旧 schema：快照用当前版本建立再回填

@@ -409,6 +409,11 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			if layer == "metrics" {
 				statements = migrationV28Metrics
 			}
+		case 29:
+			// dns_server 在配置层的任务表上，指标层无变化。
+			if layer == "config" {
+				statements = migrationV29Config
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}

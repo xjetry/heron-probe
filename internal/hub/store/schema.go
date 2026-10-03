@@ -312,7 +312,9 @@ const ddlProbeTask = `CREATE TABLE probe_task (
   -- 之后新建的节点也在内；为假时分配行就是全部覆盖，空集不覆盖任何节点，DeleteNode 删掉最后一个分配行
   -- 也不会放宽到全部。覆盖的读法只有 probeCoverage 一处。列序与迁移 10 的 ADD COLUMN 结果一致。
   all_nodes INTEGER NOT NULL DEFAULT 0,
-  sort_order INTEGER NOT NULL DEFAULT 0
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  -- DNS 任务要查询的解析器（ip:port）；其他种类恒为空串。列序与迁移 29 的 ADD COLUMN 结果一致。
+  dns_server TEXT NOT NULL DEFAULT ''
 )`
 
 const ddlProbeTaskNode = `CREATE TABLE probe_task_node (
