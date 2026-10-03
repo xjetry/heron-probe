@@ -39,6 +39,12 @@ type cgroupCPU struct {
 // cpu/cpu.cfs_quota_us；两者都不在按无 cgroup 处理。v1 的用量与限额散落在 cpuacct 与 cpu 两个
 // 控制器里，读不出与 v2 统一的口径，退回 /proc/stat，由 Collector 在状态切换时记一行日志。
 //
+// 只读挂载根 /sys/fs/cgroup 上的文件，这是整个方案成立的前提：容器（cgroup namespace）里
+// 挂载根就是容器自身的 cgroup，正是被监控的执行环境；裸机上挂载根是宿主的 root cgroup，而
+// 内核只在非 root cgroup 上提供 cpu.max，于是自然落到全机口径——agent 自己所在 systemd
+// service 的 CPUQuota 不会被当成本环境限额（它限制的是 agent 进程而不是主机，当成限额会把
+// agent 自身的用量报成主机 cpu_pct）。祖先 cgroup 的限额在 namespace 里不可见，不处理。
+//
 // 判定"cpuset 是否小于宿主核数"用的宿主核数取自 /proc/cpuinfo：Facts 的 cpu_cores 与
 // /proc/stat 差分的基数都是它，三处共用同一个"全部"，口径才不会各说各话。
 func (p *ProcFS) cgroupCPU() (cgroupCPU, error) {
