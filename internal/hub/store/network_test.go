@@ -144,7 +144,7 @@ func TestNetworkOldSnapshotRestoresWithoutInventingAddresses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, q := range []string{"ALTER TABLE node_facts DROP COLUMN diagnostics", "ALTER TABLE traffic DROP COLUMN net_counter_epoch", "ALTER TABLE node_facts DROP COLUMN network", "ALTER TABLE api_token DROP COLUMN permissions", "ALTER TABLE api_token DROP COLUMN all_nodes", "DROP TABLE api_token_node", "DROP TABLE operation", "UPDATE snapshot_meta SET schema_version=22"} {
+	for _, q := range []string{"ALTER TABLE node_facts DROP COLUMN diagnostics", "ALTER TABLE traffic DROP COLUMN net_counter_epoch", "ALTER TABLE node_facts DROP COLUMN network", "ALTER TABLE api_token DROP COLUMN permissions", "ALTER TABLE api_token DROP COLUMN all_nodes", "DROP TABLE api_token_node", "DROP TABLE operation", "ALTER TABLE node DROP COLUMN maintenance", "ALTER TABLE alert_event DROP COLUMN silenced", "ALTER TABLE alert_state DROP COLUMN fired_silenced", "DROP TABLE silence", "DROP TABLE silence_node", "DROP TABLE silence_tag", "UPDATE snapshot_meta SET schema_version=22"} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)
 		}

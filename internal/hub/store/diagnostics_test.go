@@ -165,7 +165,11 @@ func TestObservabilityMigrationAndOldSnapshotsPreserveUnknown(t *testing.T) {
 			t.Fatal(err)
 		}
 		if path == config {
-			for _, q := range []string{"ALTER TABLE node_facts DROP COLUMN diagnostics", "ALTER TABLE traffic DROP COLUMN net_counter_epoch"} {
+			for _, q := range []string{
+				"ALTER TABLE node_facts DROP COLUMN diagnostics", "ALTER TABLE traffic DROP COLUMN net_counter_epoch",
+				"ALTER TABLE node DROP COLUMN maintenance", "ALTER TABLE alert_event DROP COLUMN silenced", "ALTER TABLE alert_state DROP COLUMN fired_silenced",
+				"DROP TABLE silence", "DROP TABLE silence_node", "DROP TABLE silence_tag",
+			} {
 				if _, err := db.Exec(q); err != nil {
 					t.Fatal(err)
 				}

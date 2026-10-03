@@ -45,7 +45,9 @@ const ddlNode = `CREATE TABLE node (
   -- 管理员手动指定的国家，只由 UpdateNode 写；查得两列的写者（WriteMinuteBatch、SetLookupCountry）不碰它，
   -- UpdateNode 也不碰查得两列。没有哪个写者同时写两边，手动值不会被查询覆盖，清空手动值即回落到查得值，冲突不需要
   -- 裁决（显示值见 Node.DisplayCountry）。
-  country_pin TEXT NOT NULL DEFAULT ''
+  country_pin TEXT NOT NULL DEFAULT '',
+  -- 维护状态：为真时该节点按维护静默语义暂停告警投递，读侧据此展示"维护中"。列序与迁移 27 的 ADD COLUMN 结果一致。
+  maintenance INTEGER NOT NULL DEFAULT 0
 )`
 
 const ddlNodeFacts = `CREATE TABLE node_facts (
@@ -129,7 +131,7 @@ var metricTables = []string{"metric_1m", "metric_5m", "metric_1h"}
 // DeleteNode 与 Restore 共用节点从属清单，显式删除不依赖外键开启或级联行为。
 // alert_event 是审计历史，删节点时也保留；系统事件的 node_id=0，不属于节点从属状态。
 var nodeDependentTables = append(append([]string{
-	"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "node_tag", "node_update", "api_token_node",
+	"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "silence_node", "node_tag", "node_update", "api_token_node",
 }, metricTables...), probeTables...)
 
 // schemaStatements 是当前版本的完整 DDL：空库直接建到当前版本，不重放历史。
@@ -145,6 +147,7 @@ func schemaStatements() []string {
 	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState, ddlTag, ddlNodeTag, ddlNodeTagByTag,
 		ddlTheme, ddlThemeVersion, ddlThemeSelection, seedThemeSelection, ddlThemeFile, ddlRestoreRecord, ddlThemePackage,
 		ddlAdminSecurity, seedAdminSecurity, ddlProbeTaskTag, ddlProbeTaskTagIndex, ddlAlertRuleTag, ddlAlertRuleTagIndex, ddlNodeUpdate,
+		ddlSilence, ddlSilenceNode, ddlSilenceNodeByNode, ddlSilenceTag, ddlSilenceTagByTag,
 		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime)
 }
 
@@ -168,6 +171,38 @@ const ddlAlertRuleTag = `CREATE TABLE alert_rule_tag (
   PRIMARY KEY (rule_id, tag_id)
 ) WITHOUT ROWID`
 const ddlAlertRuleTagIndex = `CREATE INDEX alert_rule_tag_by_tag ON alert_rule_tag (tag_id)`
+
+// silence 是维护静默窗口（§9.5）：all_nodes 为真时不写 silence_node 行、覆盖全部节点，落 silence_node 时就是全部覆盖；
+// silence_node 与 silence_tag 与 alert_rule_node / alert_rule_tag 同形，作用域三选一由写侧裁决，存储只承载关联。
+const ddlSilence = `CREATE TABLE silence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  -- 0/1：关闭的静默保留关联但不抑制任何投递。
+  enabled INTEGER NOT NULL DEFAULT 1,
+  -- 与 alert_rule.all_nodes 同一语义：为真时覆盖全部节点，之后新建的节点也在内。
+  all_nodes INTEGER NOT NULL DEFAULT 0,
+  -- daily 用 start_hhmm/end_hhmm（HH:MM，按 hub 时区），once 用 from_at/until_at（Unix 秒）；取值约束由写侧裁决。
+  kind TEXT NOT NULL,
+  start_hhmm TEXT NOT NULL DEFAULT '',
+  end_hhmm TEXT NOT NULL DEFAULT '',
+  from_at INTEGER NOT NULL DEFAULT 0,
+  until_at INTEGER NOT NULL DEFAULT 0,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+)`
+
+const ddlSilenceNode = `CREATE TABLE silence_node (
+  silence_id INTEGER NOT NULL,
+  node_id INTEGER NOT NULL,
+  PRIMARY KEY (silence_id, node_id)
+)`
+const ddlSilenceNodeByNode = `CREATE INDEX silence_node_by_node ON silence_node(node_id)`
+const ddlSilenceTag = `CREATE TABLE silence_tag (
+  silence_id INTEGER NOT NULL,
+  tag_id INTEGER NOT NULL,
+  PRIMARY KEY (silence_id, tag_id)
+) WITHOUT ROWID`
+const ddlSilenceTagByTag = `CREATE INDEX silence_tag_by_tag ON silence_tag (tag_id)`
 
 // 恢复记录随配置备份并按 id 与目标取并集；随机标识由 Restore 在创建时生成，避免秒级时刻相同的事件合并。
 const ddlRestoreRecord = `CREATE TABLE restore_record (
@@ -358,6 +393,9 @@ const ddlAlertState = `CREATE TABLE alert_state (
   -- 沿用当前值——恢复之后的再次离线先写成 pending，那一次写若清掉它，窗口恰在要用时丢失。
   -- 列序与迁移 12 的 ADD COLUMN 结果一致，同 fired_expires_on 写在 PRIMARY KEY 约束之前。
   recovered_at INTEGER,
+  -- 该 firing 进入时是否被静默覆盖；静默只抑制投递，恢复投递据此判断配对的 firing 是否真的投递过。恒为 0/1。
+  -- 列序与迁移 27 的 ADD COLUMN 结果一致，同样写在 PRIMARY KEY 约束之前。
+  fired_silenced INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (rule_id, node_id)
 )`
 const ddlAlertEvent = `CREATE TABLE alert_event (
@@ -367,7 +405,9 @@ const ddlAlertEvent = `CREATE TABLE alert_event (
   transition TEXT NOT NULL,
   at INTEGER NOT NULL,
   summary TEXT NOT NULL,
-  value REAL NOT NULL
+  value REAL NOT NULL,
+  -- 该事件生成时是否处于静默覆盖内；静默只抑制投递、不改状态机，事件仍完整保留。列序与迁移 27 的 ADD COLUMN 结果一致。
+  silenced INTEGER NOT NULL DEFAULT 0
 )`
 const ddlAlertEventByNode = `CREATE INDEX alert_event_by_node ON alert_event(node_id, id)`
 const ddlAlertEventByAt = `CREATE INDEX alert_event_by_at ON alert_event(at)`

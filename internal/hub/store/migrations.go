@@ -48,6 +48,39 @@ var migrations = map[int]func(*sql.Tx) error{
 		"INSERT INTO register_window SELECT 0, key_hash, expires_at, remaining FROM register_window_old",
 		"DROP TABLE register_window_old", "ALTER TABLE node_update ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0")),
 	26: execAll(migrationV26Config),
+	27: execAll(migrationV27Config),
+}
+
+// v27：维护静默的存储结构。新增列都带 NOT NULL 默认值，使旧行取「未维护、未静默」——不得把历史误标成维护中或已静默。
+var migrationV27Config = []string{
+	`ALTER TABLE node ADD COLUMN maintenance INTEGER NOT NULL DEFAULT 0`,
+	`CREATE TABLE silence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  all_nodes INTEGER NOT NULL DEFAULT 0,
+  kind TEXT NOT NULL,
+  start_hhmm TEXT NOT NULL DEFAULT '',
+  end_hhmm TEXT NOT NULL DEFAULT '',
+  from_at INTEGER NOT NULL DEFAULT 0,
+  until_at INTEGER NOT NULL DEFAULT 0,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+)`,
+	`CREATE TABLE silence_node (
+  silence_id INTEGER NOT NULL,
+  node_id INTEGER NOT NULL,
+  PRIMARY KEY (silence_id, node_id)
+)`,
+	`CREATE INDEX silence_node_by_node ON silence_node(node_id)`,
+	`CREATE TABLE silence_tag (
+  silence_id INTEGER NOT NULL,
+  tag_id INTEGER NOT NULL,
+  PRIMARY KEY (silence_id, tag_id)
+) WITHOUT ROWID`,
+	`CREATE INDEX silence_tag_by_tag ON silence_tag (tag_id)`,
+	`ALTER TABLE alert_event ADD COLUMN silenced INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE alert_state ADD COLUMN fired_silenced INTEGER NOT NULL DEFAULT 0`,
 }
 
 // 旧版未报告诊断和统计作用域；空值保留未知，不伪造健康或已确认的基线。
