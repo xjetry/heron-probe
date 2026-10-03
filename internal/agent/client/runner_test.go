@@ -5,14 +5,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/agent/collect"
 	"github.com/xjetry/heron-probe/internal/agent/prober"
 	"github.com/xjetry/heron-probe/internal/clock"
 	"github.com/xjetry/heron-probe/internal/probelimit"
@@ -141,6 +145,87 @@ func TestRunnerEmptySchedulerReportsNoResultsOrVersion(t *testing.T) {
 	got := reports[0]
 	if got.TasksVersion != 0 || len(got.ProbeResults) != 0 || got.GetFacts().GetIcmpAvailable() {
 		t.Fatalf("unexpected probe state for empty scheduler: %v", got)
+	}
+}
+
+// 休眠信号触发时：此前入队的探测结果整体作废（age_ms 按单调钟折算，不含休眠时长），
+// 全部速率基线重置，本轮采样成为新基线的首样本；下一周期两钟同步流逝则一切照常。
+func TestRunnerDiscardsResultsAndRatesAcrossSuspend(t *testing.T) {
+	hub := &fakeHub{interval: 10000}
+	r, _ := newRunner(t, hub)
+	var logs bytes.Buffer
+	r.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	clk := clock.NewFake(time.Unix(0, 0))
+	fsys := fstest.MapFS{
+		"proc/stat":                              {Data: []byte("cpu  100 0 50 800 20 0 10 0 0 0\n")},
+		"sys/class/net/eth0/statistics/rx_bytes": {Data: []byte("1000\n")},
+		"sys/class/net/eth0/statistics/tx_bytes": {Data: []byte("2000\n")},
+		"proc/diskstats":                         {Data: []byte("   8       0 sda 1000 20 4000 500 800 10 2000 300 0 200 400\n")},
+		"sys/block/sda":                          {Mode: fs.ModeDir},
+	}
+	step := 0
+	bump := func() {
+		step++
+		fsys["proc/stat"] = &fstest.MapFile{Data: []byte(fmt.Sprintf("cpu  %d 0 50 %d 20 0 10 0 0 0\n", 100+50*step, 800+50*step))}
+		fsys["sys/class/net/eth0/statistics/rx_bytes"] = &fstest.MapFile{Data: []byte(fmt.Sprintf("%d\n", 1000+2000*step))}
+		fsys["sys/class/net/eth0/statistics/tx_bytes"] = &fstest.MapFile{Data: []byte(fmt.Sprintf("%d\n", 2000+2000*step))}
+		fsys["proc/diskstats"] = &fstest.MapFile{Data: []byte(fmt.Sprintf("   8       0 sda 1010 20 %d 500 805 10 %d 300 0 200 400\n", 4000+1000*step, 2000+1000*step))}
+		clk.Advance(10 * time.Second)
+	}
+	r.Collector = &collect.Collector{Host: &collect.ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clk, Version: "t"}
+	r.Results.Push(prober.Result{TaskID: 1, Outcome: prober.Outcome{RttUs: 7}, At: r.Clock.Mono()})
+	round := 0
+	r.Sleep = func(context.Context, time.Duration) error {
+		round++
+		switch round {
+		case 1:
+			bump()
+			// 休眠 25s：墙钟多走而单调钟不走，休眠前入队的结果无法与正常结果区分。
+			r.Results.Push(prober.Result{TaskID: 2, Outcome: prober.Outcome{RttUs: 8}, At: r.Clock.Mono()})
+			r.Clock.(*clock.Fake).SetWall(r.Clock.Now().Add(25 * time.Second))
+		case 2:
+			bump()
+			r.Clock.(*clock.Fake).Advance(10 * time.Second)
+			r.Results.Push(prober.Result{TaskID: 3, Outcome: prober.Outcome{RttUs: 9}, At: r.Clock.Mono()})
+		case 3:
+			return context.Canceled
+		}
+		return nil
+	}
+	if err := r.Run(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	reports := hub.received()
+	if len(reports) != 3 {
+		t.Fatalf("reports = %d, want 3", len(reports))
+	}
+	if len(reports[0].ProbeResults) != 1 || reports[0].ProbeResults[0].TaskId != 1 {
+		t.Fatalf("first results = %v, want task 1", reports[0].ProbeResults)
+	}
+	if got := reports[1].ProbeResults; len(got) != 0 {
+		t.Fatalf("pre-suspend results must be discarded, got %v", got)
+	}
+	m := reports[1].Metrics
+	if m.CpuPct != nil || m.NetRxBps != nil || m.NetTxBps != nil || m.DiskReadBps != nil || m.DiskWriteBps != nil {
+		t.Fatalf("trigger round must be a first sample without rates: %+v", m)
+	}
+	if m.NetRxTotal == nil {
+		t.Fatal("counters unaffected by the reset must still be reported")
+	}
+	m = reports[2].Metrics
+	if m.GetCpuPct() != 50 || m.GetNetRxBps() != 200 || m.GetDiskReadBps() != 51200 {
+		t.Fatalf("rates must resume one round after the trigger: %+v", m)
+	}
+	if len(reports[2].ProbeResults) != 1 || reports[2].ProbeResults[0].TaskId != 3 {
+		t.Fatalf("post-wake results = %v, want task 3", reports[2].ProbeResults)
+	}
+	if r.Results.Dropped() != 1 {
+		t.Fatalf("dropped = %d, want the discarded pre-suspend result counted", r.Results.Dropped())
+	}
+	for _, want := range []string{"clock jump", "wall_delta=25s", "mono_delta=0s"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("log missing %q:\n%s", want, logs.String())
+		}
 	}
 }
 

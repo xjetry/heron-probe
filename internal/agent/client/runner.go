@@ -76,7 +76,16 @@ func (r *Runner) Run(ctx context.Context) error {
 	var dropped uint64
 	var clamped bool
 	var clampedMs uint32
+	var drift clock.Drift
 	for {
+		// 休眠信号先于 Metrics 判定：触发时本轮采样就是新基线的首样本，
+		// 跨越休眠的积压结果在取队列上报之前整体作废（§4.5）。
+		wall, mono := r.Clock.Now(), r.Clock.Mono()
+		if wallDelta, monoDelta, jumped := drift.Observe(wall, mono); jumped {
+			r.Results.Clear()
+			r.Collector.ResetRates()
+			r.Log.Warn("clock jump: discarded queued probe results and reset rate baselines", "wall_delta", wallDelta, "mono_delta", monoDelta)
+		}
 		m, err := r.Collector.Metrics()
 		if err != nil {
 			r.Log.Warn("partial collection", "err", err)
@@ -85,8 +94,9 @@ func (r *Runner) Run(ctx context.Context) error {
 		if r.Updates != nil {
 			req.Msg.Update = r.Updates.Snapshot()
 		}
-		// 超龄过滤与 age_ms 必须取同一时刻，否则刚通过过滤的结果可能以大于 MaxResultAge 的年龄发出并被 hub 丢弃。
-		now := r.Clock.Mono()
+		// 超龄过滤与 age_ms 必须取同一时刻，否则刚通过过滤的结果可能以大于 MaxResultAge 的年龄发出并被 hub 丢弃；
+		// 循环开头已读出的 mono 就是这个时刻，重复读取会让两次取值落在不同瞬间。
+		now := mono
 		taken := r.Results.Take(now, probelimit.MaxResultAge, probelimit.MaxResultsPerReport)
 		req.Msg.ProbeResults = prober.ToProto(taken, now)
 		req.Msg.TasksVersion = r.Prober.Version()
