@@ -142,7 +142,7 @@ message ReportResponse {
 
 message Metrics {
   string boot_id = 1;
-  optional double cpu_pct = 2;
+  optional double cpu_pct = 2;   // 相对本执行环境可用算力的占比：cgroup 有限额时取 cgroup 口径，否则取 /proc/stat 主机口径
   optional double load1 = 3;  optional double load5 = 4;  optional double load15 = 5;
   optional uint64 mem_total = 6;   optional uint64 mem_used = 7;
   optional uint64 swap_total = 8;  optional uint64 swap_used = 9;
@@ -158,7 +158,7 @@ message Metrics {
 
 message Facts {
   string hostname = 1; string os = 2; string kernel = 3; string arch = 4;
-  string virtualization = 5; string cpu_model = 6; uint32 cpu_cores = 7;
+  string virtualization = 5; string cpu_model = 6; uint32 cpu_cores = 7;  // cpu_cores 是 agent 所在执行环境的有效核数
   string agent_version = 8;
   bool icmp_available = 9;     // 两种 ICMP socket 是否至少一种可用，见 §8.2
 }
@@ -178,7 +178,11 @@ message ProbeResult {
 
 `disk_read_bps` / `disk_write_bps` 是 agent 两次本地采样之间整盘设备读 / 写字节速率合计（bytes/s）。数据源 `/proc/diskstats`，其扇区字段内核一律按 512 字节计（与设备报告的逻辑扇区无关，不另查扇区大小）；只计整盘设备：`/sys/block/<name>` 存在（分区没有这一项）、且名字不以 `loop`、`ram`、`zram` 开头，`dm-*` 与 `md*` 也排除——映射 / 聚合设备的 I/O 与组成它的底层盘重复，计了会把同一次读算两遍。差分规则与 `net_rx_bps` / `net_tx_bps` 相同：首样本、任一设备计数回退、设备集合变化时本次不设置（`optional` 缺失）而不是报 0；darwin 上两项不设置。
 
-`cpu_steal_pct` / `cpu_iowait_pct` 与 `cpu_pct` 取自同一次 `/proc/stat` 两次采样差分：`steal_pct = Δsteal / Δtotal × 100`、`iowait_pct = Δiowait / Δtotal × 100`。`cpu_pct` 的口径不变，忙时不含 iowait（`idle` 计为 idle + iowait）。三者互相独立，都不是对方的子集，可以同时显示。`Δtotal = 0` 或任一计数回退时三项一起不设置，不单独保留某一项；darwin 没有 steal 概念、iowait 也不可得，两项不设置。
+`cpu_steal_pct` / `cpu_iowait_pct` 与 `cpu_pct` 取自同一次 `/proc/stat` 两次采样差分：`steal_pct = Δsteal / Δtotal × 100`、`iowait_pct = Δiowait / Δtotal × 100`。`cpu_pct` 的口径不变，忙时不含 iowait（`idle` 计为 idle + iowait）。三者互相独立，都不是对方的子集，可以同时显示。`Δtotal = 0` 或任一计数回退时三项一起不设置，不单独保留某一项；darwin 没有 steal 概念、iowait 也不可得，两项不设置；cgroup 有限额时两项同样不设置（见下段）。
+
+容器 / LXC 里 `/proc/stat` 与 `/proc/cpuinfo` 是宿主全机的口径：一个被限到 2 核的容器跑满，按全机计数算出的 `cpu_pct` 只是宿主几十核的零头，`cpu_cores` 报的是宿主核数。cgroup v2 下存在限额（`cpu.max` 的 quota 非 `max`，或 `cpuset.cpus.effective` 小于宿主核数）时，`cpu_pct = Δusage_usec / (有效核数 × Δt_usec) × 100`：`usage_usec` 来自 `cpu.stat`，是本 cgroup 的累计 CPU 用量；有效核数是 cpuset 核数与 quota/period 的较小者；Δt 是 agent 单调钟两次采样之差（§4.5）。首样本、`usage_usec` 回退、Δt ≤ 0 时不设置；`cpu.max` 允许 burst 时用量可超过可用算力，算出 >100 钳到 100。此时 `cpu_steal_pct` / `cpu_iowait_pct` 不设置：两者是全机计数的一部分，不归属于本执行环境的算力。cgroup v1 的用量与限额散落在 cpuacct 与 cpu 两个控制器里，读不出统一口径，退回 `/proc/stat` 路径，并只在形态切换（进入 v1、或从 v1 变为 v2）时记一行日志，不按采样周期记。
+
+`cpu_cores` 是 agent 所在执行环境的有效核数：cgroup 有限额时取 cpuset 与 quota 较小者的上取整（1.5 核的限额报 2），无限额时仍是主机核数。旧 agent 一律报物理核数，这种版本漂移按 §4.6 接受：该值只做展示与按核负载归一的分母，不参与 hub 侧其他计算；有效核数让按核负载在容器里同样准确。
 
 ### 4.3 对账
 

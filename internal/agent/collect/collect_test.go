@@ -208,6 +208,9 @@ func (h *ifacesOnly) diskCounters() ([]diskCounters, error) {
 }
 func (h *ifacesOnly) defaultNetExclude() []string { return []string{"lo", "docker*"} }
 func (h *ifacesOnly) facts() hostFacts            { return hostFacts{} }
+func (h *ifacesOnly) cgroupCPU() (cgroupCPU, error) {
+	return cgroupCPU{}, nil
+}
 
 // 被排除的网卡不进合计，未给 --net-exclude 时用 Host 的默认列表，给了就整个替换默认列表。
 func TestExcludedInterfacesAreNotSummed(t *testing.T) {

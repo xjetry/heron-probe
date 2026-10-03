@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"math"
 	"path"
 	"runtime"
 	"slices"
@@ -22,6 +24,9 @@ import (
 type Collector struct {
 	Host  Host
 	Clock clock.Clock
+	// Log 记采集口径的状态切换（cgroup v1 ↔ v2）；nil 时不记。切换不是采集失败，
+	// 失败走 Metrics 返回的 error 与 diagnostics。
+	Log *slog.Logger
 	// NetInclude 非空时只统计匹配的网卡；否则统计除 NetExclude 外的全部。
 	NetInclude []string
 	// NetExclude 为 nil 时用 Host.defaultNetExclude。
@@ -30,13 +35,18 @@ type Collector struct {
 	// IcmpAvailable 默认为 false；须在 Runner.Run 前赋值，运行期间只读。
 	IcmpAvailable bool
 
+	// 两次采样的差分基线。这组 prev* 字段都在休眠重置范围内：跨越休眠的区间会把停机时段
+	// 混进分母，休眠信号到达时全部作废，下一个周期只重建基线、不出速率与占比读数。
 	prevCPU       *cpuTimes
+	prevCgroup    *uint64
+	prevCgroupT   time.Duration
 	prevNet       *netCounters
 	prevNetT      time.Duration
 	prevNetEpoch  string
 	prevDisk      *diskCounters
 	prevDiskT     time.Duration
 	prevDiskEpoch string
+	cgroupKind    cgroupKind
 	diagnostics   *heronv1.AgentDiagnostics
 }
 
@@ -106,21 +116,45 @@ func (c *Collector) Metrics() (*heronv1.Metrics, error) {
 		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_BOOT_ID, err)
 	}
 
-	if cur, err := h.cpuTimes(); err == nil {
-		if c.prevCPU != nil {
-			if busy, steal, iowait, ok := cpuRatios(*c.prevCPU, cur); ok {
-				m.CpuPct = proto.Float64(busy)
-				if cur.hasSteal {
-					m.CpuStealPct = proto.Float64(steal)
-				}
-				if cur.hasIowait {
-					m.CpuIowaitPct = proto.Float64(iowait)
-				}
+	cg, cgErr := h.cgroupCPU()
+	c.noteCgroupKind(cg.kind)
+	switch {
+	case cgErr != nil:
+		// 识别不出 cgroup 口径时按 /proc/stat 报出的会是宿主全机占比，对受限容器是伪装成
+		// 真值的错值；与"读不到即缺失"同一约定，整个 CPU 读数缺失。
+		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_CPU, cgErr)
+	case cg.limited:
+		// 限额存在时 /proc/stat 是宿主全机口径：cpu_pct 只由 cgroup 用量差分得出，
+		// steal/iowait 是全机计数的一部分、不归属于本环境的算力，不设置。
+		// 离开限额后 /proc/stat 基线从下一个周期重建，不把限额期间算进它的差分。
+		c.prevCPU = nil
+		now := c.Clock.Mono()
+		if c.prevCgroup != nil {
+			if pct, ok := cgroupCPUPercent(*c.prevCgroup, cg.usageUsec, cg.cores, now-c.prevCgroupT); ok {
+				// cpu.max 允许 burst 时用量可超过 cores × Δt（内核先记账后扣），算出 >100；
+				// ingest 拒绝一切 >100 的百分比，钳到 100。
+				m.CpuPct = proto.Float64(min(pct, 100))
 			}
 		}
-		c.prevCPU = &cur
-	} else {
-		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_CPU, err)
+		c.prevCgroup, c.prevCgroupT = &cg.usageUsec, now
+	default:
+		c.prevCgroup = nil
+		if cur, err := h.cpuTimes(); err == nil {
+			if c.prevCPU != nil {
+				if busy, steal, iowait, ok := cpuRatios(*c.prevCPU, cur); ok {
+					m.CpuPct = proto.Float64(busy)
+					if cur.hasSteal {
+						m.CpuStealPct = proto.Float64(steal)
+					}
+					if cur.hasIowait {
+						m.CpuIowaitPct = proto.Float64(iowait)
+					}
+				}
+			}
+			c.prevCPU = &cur
+		} else {
+			fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_CPU, err)
+		}
 	}
 
 	if u, err := checkUsage(h.memory()); err == nil {
@@ -210,6 +244,26 @@ func (c *Collector) ResetRates() {
 	c.prevDisk, c.prevDiskT, c.prevDiskEpoch = nil, 0, ""
 }
 
+// noteCgroupKind 在 cgroup 形态切换时记一行日志：v1 第一次出现（限额读不出，口径退回
+// /proc/stat），以及从 v1 换到 v2。每个采样周期都识别一次形态，但只有切换才记——
+// 切换本身少见（容器重建、宿主机改挂载），按周期记会把日志刷满。
+func (c *Collector) noteCgroupKind(kind cgroupKind) {
+	prev := c.cgroupKind
+	if prev == kind {
+		return
+	}
+	c.cgroupKind = kind
+	if c.Log == nil {
+		return
+	}
+	switch {
+	case kind == cgroupKindV1:
+		c.Log.Warn("cgroup v1: container cpu limits are not readable, cpu_pct follows host-wide /proc/stat")
+	case prev == cgroupKindV1 && kind == cgroupKindV2:
+		c.Log.Info("cgroup v2: cpu_pct uses cgroup limits when present")
+	}
+}
+
 // diskTotals 把整盘设备的计数合计，并给出设备集合标识：集合变化时标识随之改变，Collector 据此只换基线。
 func (c *Collector) diskTotals() (diskCounters, string, error) {
 	devs, err := c.Host.diskCounters()
@@ -261,6 +315,11 @@ func (c *Collector) Facts() *heronv1.Facts {
 		Hostname: hf.hostname, Os: hf.os, Kernel: hf.kernel, Arch: runtime.GOARCH,
 		Virtualization: hf.virtualization, CpuModel: hf.cpuModel, CpuCores: hf.cpuCores,
 		AgentVersion: c.Version, IcmpAvailable: c.IcmpAvailable,
+	}
+	// 有限额时核数是本执行环境的有效核数，向上取整：核数是展示与按核负载归一的分母，
+	// 1.5 核的限额报 2，按物理核数归一会把容器里的按核负载摊薄。
+	if cg, err := c.Host.cgroupCPU(); err == nil && cg.limited && cg.cores > 0 {
+		f.CpuCores = uint32(math.Ceil(cg.cores))
 	}
 	if f.CpuCores == 0 {
 		f.CpuCores = uint32(runtime.NumCPU())
