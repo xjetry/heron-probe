@@ -212,6 +212,14 @@ const (
 	ResourceMetric_RESOURCE_METRIC_UNSPECIFIED     ResourceMetric = 0
 	ResourceMetric_RESOURCE_METRIC_MEMORY_USED_PCT ResourceMetric = 1
 	ResourceMetric_RESOURCE_METRIC_DISK_USED_PCT   ResourceMetric = 2
+	// cpu 列分钟均值（cpu_sum / cpu_n），阈值 (0, 100]。
+	ResourceMetric_RESOURCE_METRIC_CPU_PCT ResourceMetric = 3
+	// load1 列分钟均值除以 node_facts.cpu_cores，阈值 (0, 64]；节点无 facts 或核数为 0 时该分钟无读数。
+	ResourceMetric_RESOURCE_METRIC_LOAD1_PER_CORE ResourceMetric = 4
+	// net_rx_bps 列分钟均值，阈值 (0, 2^40]，单位 bytes/s。
+	ResourceMetric_RESOURCE_METRIC_NET_RX_BPS ResourceMetric = 5
+	// net_tx_bps 列分钟均值，阈值 (0, 2^40]，单位 bytes/s。
+	ResourceMetric_RESOURCE_METRIC_NET_TX_BPS ResourceMetric = 6
 )
 
 // Enum value maps for ResourceMetric.
@@ -220,11 +228,19 @@ var (
 		0: "RESOURCE_METRIC_UNSPECIFIED",
 		1: "RESOURCE_METRIC_MEMORY_USED_PCT",
 		2: "RESOURCE_METRIC_DISK_USED_PCT",
+		3: "RESOURCE_METRIC_CPU_PCT",
+		4: "RESOURCE_METRIC_LOAD1_PER_CORE",
+		5: "RESOURCE_METRIC_NET_RX_BPS",
+		6: "RESOURCE_METRIC_NET_TX_BPS",
 	}
 	ResourceMetric_value = map[string]int32{
 		"RESOURCE_METRIC_UNSPECIFIED":     0,
 		"RESOURCE_METRIC_MEMORY_USED_PCT": 1,
 		"RESOURCE_METRIC_DISK_USED_PCT":   2,
+		"RESOURCE_METRIC_CPU_PCT":         3,
+		"RESOURCE_METRIC_LOAD1_PER_CORE":  4,
+		"RESOURCE_METRIC_NET_RX_BPS":      5,
+		"RESOURCE_METRIC_NET_TX_BPS":      6,
 	}
 )
 
@@ -4209,7 +4225,7 @@ type AlertRule struct {
 	TaskId uint64 `protobuf:"varint,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	// 探测规则必须选择丢包百分比或往返毫秒数。
 	Metric ProbeMetric `protobuf:"varint,8,opt,name=metric,proto3,enum=heron.v1.ProbeMetric" json:"metric,omitempty"`
-	// 丢包百分比 0–100；往返毫秒数 > 0；资源百分比 > 0 且 <= 100。
+	// 丢包百分比 0–100；往返毫秒数 > 0；资源指标按 proto ResourceMetric 各值的范围（百分比 (0,100]、每核负载 (0,64]、字节速率 (0,2^40]）。
 	Threshold float64 `protobuf:"fixed64,9,opt,name=threshold,proto3" json:"threshold,omitempty"`
 	// 1–60：连续多少个已闭合分钟达到阈值才触发。
 	ForMinutes uint32 `protobuf:"varint,10,opt,name=for_minutes,json=forMinutes,proto3" json:"for_minutes,omitempty"`
@@ -4222,7 +4238,7 @@ type AlertRule struct {
 	// 保存启用的到期规则后立即评估一次，此后在 hub 启动、每个日界（零点不存在的日子取新一天的第一个时刻）与节点
 	// 计费字段变化时评估。
 	DaysBefore uint32 `protobuf:"varint,13,opt,name=days_before,json=daysBefore,proto3" json:"days_before,omitempty"`
-	// 仅资源规则：同一次上报的已用 / 总量百分比，按已闭合分钟平均。
+	// 仅资源规则：指标为内存、磁盘、CPU 百分比，按核负载，或网卡收发速率；数据源为 metric_1m 的分钟均值（按核负载另除以节点核数）。
 	ResourceMetric ResourceMetric `protobuf:"varint,14,opt,name=resource_metric,json=resourceMetric,proto3,enum=heron.v1.ResourceMetric" json:"resource_metric,omitempty"`
 	// 仅资源规则：连续 for_minutes 个完整分钟不高于此阈值才恢复，必须小于触发阈值；缺失读数不能恢复。
 	RecoveryThreshold float64 `protobuf:"fixed64,15,opt,name=recovery_threshold,json=recoveryThreshold,proto3" json:"recovery_threshold,omitempty"`
@@ -10456,11 +10472,15 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\x12ALERT_KIND_OFFLINE\x10\x01\x12\x14\n" +
 	"\x10ALERT_KIND_PROBE\x10\x02\x12\x15\n" +
 	"\x11ALERT_KIND_EXPIRY\x10\x03\x12\x17\n" +
-	"\x13ALERT_KIND_RESOURCE\x10\x04*y\n" +
+	"\x13ALERT_KIND_RESOURCE\x10\x04*\xfa\x01\n" +
 	"\x0eResourceMetric\x12\x1f\n" +
 	"\x1bRESOURCE_METRIC_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fRESOURCE_METRIC_MEMORY_USED_PCT\x10\x01\x12!\n" +
-	"\x1dRESOURCE_METRIC_DISK_USED_PCT\x10\x02*_\n" +
+	"\x1dRESOURCE_METRIC_DISK_USED_PCT\x10\x02\x12\x1b\n" +
+	"\x17RESOURCE_METRIC_CPU_PCT\x10\x03\x12\"\n" +
+	"\x1eRESOURCE_METRIC_LOAD1_PER_CORE\x10\x04\x12\x1e\n" +
+	"\x1aRESOURCE_METRIC_NET_RX_BPS\x10\x05\x12\x1e\n" +
+	"\x1aRESOURCE_METRIC_NET_TX_BPS\x10\x06*_\n" +
 	"\vProbeMetric\x12\x1c\n" +
 	"\x18PROBE_METRIC_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15PROBE_METRIC_LOSS_PCT\x10\x01\x12\x17\n" +
