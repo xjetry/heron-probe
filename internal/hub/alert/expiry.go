@@ -119,10 +119,11 @@ type nodeExpiry struct {
 	valid     bool
 }
 
-// SweepExpiry 在 writeMu 下做一次到期扫描（sweepExpiry）。评估时机共四处（§9.2）：hub 启动与每个日历日开始
-// （RunExpirySweep）、节点计费字段变化时调用它；保存启用的到期规则时，SaveRule 已持 writeMu，直接调 sweepExpiry。
-// 一次扫描先把开着自动续期且早于今天的到期日推后并落库，再按推后之后的日期评估全部启用的到期规则。两步在同一次
-// writeMu 下完成，续期带来的恢复与续期本身在同一次扫描里发生，不会先发一条"已过期"再发恢复。
+// SweepExpiry 在 writeMu 下做一次日历类扫描（sweepExpiry）。评估时机共四处（§9.2）：hub 启动与每个日历日开始
+// （RunExpirySweep）、节点计费字段变化时与 ingest 写入变化的证书观测时调用它；保存启用的日历类规则时，SaveRule
+// 已持 writeMu，直接调 sweepExpiry。一次扫描先把开着自动续期且早于今天的到期日推后并落库，再按推后之后的日期评估
+// 全部启用的到期规则、按 probe_cert 的最新观测评估全部启用的证书到期规则。续期与评估在同一次 writeMu 下完成，
+// 续期带来的恢复与续期本身在同一次扫描里发生，不会先发一条"已过期"再发恢复。
 func (e *Engine) SweepExpiry(ctx context.Context) error {
 	e.writeMu.Lock()
 	defer e.writeMu.Unlock()
@@ -214,6 +215,7 @@ func (e *Engine) sweepExpiry(ctx context.Context) error {
 			errs = append(errs, err)
 		}
 	}
+	errs = e.sweepCertExpiry(ctx, cy, nodes, today, errs)
 	return errors.Join(errs...)
 }
 

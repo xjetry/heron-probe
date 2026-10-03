@@ -237,9 +237,9 @@ func (e *Engine) SaveRule(ctx context.Context, r store.AlertRule) (store.AlertRu
 		return store.AlertRule{}, err
 	}
 	e.publishRule(saved)
-	// 除此之外，到期规则只在启动、日界与计费变化时评估：若不在这里评估一次，新建、启用或改了提前天数的规则要等到
-	// 下一个日界才有状态。规则已提交，扫描失败只记日志：保存本身成功了，下一次扫描会再评估。
-	if saved.Enabled && saved.Kind == store.KindExpiry {
+	// 除此之外，日历类规则只在启动、日界与相关变化（计费、证书观测更新）时评估：若不在这里评估一次，新建、启用或
+	// 改了提前天数的规则要等到下一个日界才有状态。规则已提交，扫描失败只记日志：保存本身成功了，下一次扫描会再评估。
+	if saved.Enabled && calendarRule(saved.Kind) {
 		if err := e.sweepExpiry(context.WithoutCancel(ctx)); err != nil {
 			e.log.Error("expiry sweep after saving rule failed", "rule_id", saved.ID, "err", err)
 		}
@@ -447,7 +447,7 @@ func (e *Engine) entry(k stateKey) stateEntry {
 // 维护静默（§9.5）只在事件生成这一处生效：maintenance 是节点当前的维护开关，抑制发生在 RecordTransition 的参数里——
 // firing 转换被静默时事件照常落库（silenced=1）但没有投递行，状态行记 fired_silenced；恢复转换是否投递只看配对的
 // firing 是否投递过（cur.firedSilenced），与恢复时刻是否静默无关，所以静默在 firing 中途结束不会补发通知。
-// maintenance 由调用方从节点读；到期规则传 false——到期提醒永远不被静默，系统事件不经 apply。
+// maintenance 由调用方从节点读；日历类规则（到期、证书到期）传 false——日历提醒永远不被静默，系统事件不经 apply。
 func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID int64, next store.AlertState, flapping bool, maintenance bool, firedExpiresOn string, tr *store.Transition, summary string, value float64) error {
 	k := stateKey{r.ID, nodeID}
 	cur := e.entry(k)
@@ -469,8 +469,8 @@ func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID
 		if *tr == store.TransitionRecovered {
 			// 恢复事件记配对 firing 的 silenced 值：firing 被静默过的，恢复也不投递。
 			silenced = cur.firedSilenced
-		} else if r.Kind != store.KindExpiry {
-			// 到期提醒永远不被静默（§9.5），其余种类的触发按此刻的维护开关与静默窗口抑制。
+		} else if !calendarRule(r.Kind) {
+			// 日历类提醒（到期、证书到期）永远不被静默（§9.5），其余种类的触发按此刻的维护开关与静默窗口抑制。
 			e.mu.RLock()
 			silenced = e.silencedNode(nodeID, maintenance, now)
 			e.mu.RUnlock()

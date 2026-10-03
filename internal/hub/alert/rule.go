@@ -83,6 +83,18 @@ func CheckRule(r store.AlertRule) error {
 			return invalid("days_before", "must be between 1 and 365")
 		}
 		return checkKindFields(r)
+	case store.KindCertExpiry:
+		// task_id 必须指向 https:// 的 HTTP 任务，由 store.SaveAlertRule 在事务内裁决（Load 的库也经同一入口写入）。
+		if r.DaysBefore < 1 || r.DaysBefore > 365 {
+			return invalid("days_before", "must be between 1 and 365")
+		}
+		if err := checkKindFields(r); err != nil {
+			return err
+		}
+		if r.TaskID == 0 {
+			return invalid("task_id", "must not be 0")
+		}
+		return nil
 	case store.KindProbe:
 		if err := checkKindFields(r); err != nil {
 			return err
@@ -135,7 +147,7 @@ func CheckRule(r store.AlertRule) error {
 		}
 		return nil
 	default:
-		return oneOf("kind", string(r.Kind), string(store.KindOffline), string(store.KindProbe), string(store.KindExpiry), string(store.KindResource))
+		return oneOf("kind", string(r.Kind), string(store.KindOffline), string(store.KindProbe), string(store.KindExpiry), string(store.KindResource), string(store.KindCertExpiry))
 	}
 }
 
