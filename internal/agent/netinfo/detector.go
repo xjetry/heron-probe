@@ -85,6 +85,14 @@ func (d *Detector) refresh(ctx context.Context) {
 		go func() { defer wg.Done(); results[i] = d.detect(ctx, i, addresses, err) }()
 	}
 	wg.Wait()
+	for _, result := range results {
+		// 一轮快照必须由两个地址族的完整结果构成：调用方取消上下文说明本轮被中止，
+		// detect 返回 nil。此时保留上一轮快照，否则 shutdown/reload 触发的取消会把
+		// 已知的能力结论覆盖成失败。
+		if result == nil {
+			return
+		}
+	}
 	d.mu.Lock()
 	d.current = &heronv1.NetworkInfo{Ipv4: results[0], Ipv6: results[1]}
 	d.mu.Unlock()
@@ -115,6 +123,11 @@ func (d *Detector) detect(ctx context.Context, family int, addresses []netip.Add
 	}
 	resp, err := d.clients[family].Do(req)
 	if err != nil {
+		// 取消是调用方中止本轮（shutdown/reload），不是被探测地址族的能力结论；
+		// 返回 nil，由 refresh 丢弃整轮而不覆盖上一轮快照。
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
 		var dnsError *net.DNSError
 		// DNS 服务器不可达不等于目标地址族不可用；只有实际连接返回的系统错误能证明不支持。
 		if !errors.As(err, &dnsError) && (errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EAFNOSUPPORT)) {

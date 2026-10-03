@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -158,6 +159,24 @@ func TestTransportPolicyAndCancellation(t *testing.T) {
 	}
 }
 
+// 一轮快照由两个地址族的完整结果构成：refresh 在两族都返回后才整体替换 current。
+// 因此两族状态都不再是 UNSPECIFIED，就代表这一轮已经写完（首次运行前两份都是 nil）。
+func waitForRound(t *testing.T, d *Detector) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		got := d.Snapshot()
+		if got.GetIpv4().GetState() != heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_UNSPECIFIED &&
+			got.GetIpv6().GetState() != heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_UNSPECIFIED {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("round did not complete: %v", got)
+		}
+		runtime.Gosched()
+	}
+}
+
 func TestRunProbesBothFamiliesImmediately(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -177,6 +196,9 @@ func TestRunProbesBothFamiliesImmediately(t *testing.T) {
 			t.Fatal("initial probe did not run")
 		}
 	}
+	// 拨号被调用只说明探测开始，分类发生在请求返回之后；必须先等两个地址族的结果都写入
+	// 快照再取消，否则取消可能截断本轮，留下尚未分类的错误。
+	waitForRound(t, d)
 	cancel()
 	<-done
 	if seen["tcp4"] != 1 || seen["tcp6"] != 1 {
@@ -184,6 +206,44 @@ func TestRunProbesBothFamiliesImmediately(t *testing.T) {
 	}
 	if got := d.Snapshot(); got.GetIpv4().GetState() != 2 || got.GetIpv6().GetState() != 2 {
 		t.Fatalf("snapshot=%v", got)
+	}
+}
+
+// 取消只中止本轮探测，不是检测结果：上一轮的完整快照必须原样保留，
+// 否则 shutdown/reload 触发的一次取消会把已知的能力结论覆盖成失败并上报。
+func TestCanceledRoundKeepsPreviousSnapshot(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	dialed := make(chan struct{}, 2)
+	d := newDetector(testAddresses, func(ctx context.Context, network, address string) (net.Conn, error) {
+		dialed <- struct{}{}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+	d.now = func() time.Time { return time.Unix(123, 0) }
+	d.mu.Lock()
+	d.current = &heronv1.NetworkInfo{
+		Ipv4: &heronv1.AddressDetection{State: heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_AVAILABLE, Address: "8.8.8.8", CheckedAt: 123},
+		Ipv6: &heronv1.AddressDetection{State: heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_UNSUPPORTED, CheckedAt: 123},
+	}
+	d.mu.Unlock()
+	done := make(chan struct{})
+	go func() { d.Run(ctx); close(done) }()
+	for range 2 {
+		select {
+		case <-dialed:
+		case <-time.After(time.Second):
+			t.Fatal("round did not start")
+		}
+	}
+	cancel()
+	<-done
+	got := d.Snapshot()
+	if got.GetIpv4().GetState() != heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_AVAILABLE ||
+		got.GetIpv4().GetAddress() != "8.8.8.8" ||
+		got.GetIpv6().GetState() != heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_UNSUPPORTED ||
+		got.GetIpv6().GetCheckedAt() != 123 {
+		t.Fatalf("canceled round replaced snapshot: %v", got)
 	}
 }
 
