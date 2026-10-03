@@ -159,6 +159,9 @@ const (
 	// 节点到期日距今不超过 days_before 天（含已过期）即触发，数据源是节点的到期日。
 	AlertKind_ALERT_KIND_EXPIRY   AlertKind = 3
 	AlertKind_ALERT_KIND_RESOURCE AlertKind = 4
+	// 任务（必须是 https:// 的 HTTP 任务）观测到的证书到期日距今不超过 days_before 天
+	// （含已过期）即触发，数据源是 probe_cert 里该节点该任务的最新观测。
+	AlertKind_ALERT_KIND_CERT_EXPIRY AlertKind = 5
 )
 
 // Enum value maps for AlertKind.
@@ -169,6 +172,7 @@ var (
 		2: "ALERT_KIND_PROBE",
 		3: "ALERT_KIND_EXPIRY",
 		4: "ALERT_KIND_RESOURCE",
+		5: "ALERT_KIND_CERT_EXPIRY",
 	}
 	AlertKind_value = map[string]int32{
 		"ALERT_KIND_UNSPECIFIED": 0,
@@ -176,6 +180,7 @@ var (
 		"ALERT_KIND_PROBE":       2,
 		"ALERT_KIND_EXPIRY":      3,
 		"ALERT_KIND_RESOURCE":    4,
+		"ALERT_KIND_CERT_EXPIRY": 5,
 	}
 )
 
@@ -10757,13 +10762,14 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\rCountrySource\x12\x1e\n" +
 	"\x1aCOUNTRY_SOURCE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15COUNTRY_SOURCE_MANUAL\x10\x01\x12\x19\n" +
-	"\x15COUNTRY_SOURCE_LOOKUP\x10\x02*\x85\x01\n" +
+	"\x15COUNTRY_SOURCE_LOOKUP\x10\x02*\xa1\x01\n" +
 	"\tAlertKind\x12\x1a\n" +
 	"\x16ALERT_KIND_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12ALERT_KIND_OFFLINE\x10\x01\x12\x14\n" +
 	"\x10ALERT_KIND_PROBE\x10\x02\x12\x15\n" +
 	"\x11ALERT_KIND_EXPIRY\x10\x03\x12\x17\n" +
-	"\x13ALERT_KIND_RESOURCE\x10\x04*\xfa\x01\n" +
+	"\x13ALERT_KIND_RESOURCE\x10\x04\x12\x1a\n" +
+	"\x16ALERT_KIND_CERT_EXPIRY\x10\x05*\xfa\x01\n" +
 	"\x0eResourceMetric\x12\x1f\n" +
 	"\x1bRESOURCE_METRIC_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fRESOURCE_METRIC_MEMORY_USED_PCT\x10\x01\x12!\n" +

@@ -688,6 +688,9 @@ enum AlertKind {
   // 节点到期日距今不超过 days_before 天（含已过期）即触发，数据源是节点的到期日。
   ALERT_KIND_EXPIRY = 3;
   ALERT_KIND_RESOURCE = 4;
+  // 任务（必须是 https:// 的 HTTP 任务）观测到的证书到期日距今不超过 days_before 天
+  // （含已过期）即触发，数据源是 probe_cert 里该节点该任务的最新观测。
+  ALERT_KIND_CERT_EXPIRY = 5;
 }
 enum ResourceMetric {
   RESOURCE_METRIC_UNSPECIFIED = 0;

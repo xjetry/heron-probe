@@ -129,6 +129,10 @@ message ProbeResult {
     // 无权限、解析失败等；不计入丢包。
     ProbeError error = 5;
   }
+  // HTTPS 探测（HTTP 任务且 target 为 https://）握手成功时顺带带回的服务端证书到期时刻
+  // （链首枚证书的 NotAfter，Unix 秒）；只在 rtt_us 成功结果上携带，每任务每小时至多一次。
+  // 不携带签发者与证书链。optional 区分"没带"与 0；hub 对未携带的结果不更新证书观测。
+  optional int64 cert_not_after_s = 6;
 }
 
 message Timeout {}

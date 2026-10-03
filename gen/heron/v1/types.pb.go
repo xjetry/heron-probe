@@ -866,7 +866,11 @@ type ProbeResult struct {
 	//	*ProbeResult_RttUs
 	//	*ProbeResult_Timeout
 	//	*ProbeResult_Error
-	Outcome       isProbeResult_Outcome `protobuf_oneof:"outcome"`
+	Outcome isProbeResult_Outcome `protobuf_oneof:"outcome"`
+	// HTTPS 探测（HTTP 任务且 target 为 https://）握手成功时顺带带回的服务端证书到期时刻
+	// （链首枚证书的 NotAfter，Unix 秒）；只在 rtt_us 成功结果上携带，每任务每小时至多一次。
+	// 不携带签发者与证书链。optional 区分"没带"与 0；hub 对未携带的结果不更新证书观测。
+	CertNotAfterS *int64 `protobuf:"varint,6,opt,name=cert_not_after_s,json=certNotAfterS,proto3,oneof" json:"cert_not_after_s,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -947,6 +951,13 @@ func (x *ProbeResult) GetError() *ProbeError {
 		}
 	}
 	return nil
+}
+
+func (x *ProbeResult) GetCertNotAfterS() int64 {
+	if x != nil && x.CertNotAfterS != nil {
+		return *x.CertNotAfterS
+	}
+	return 0
 }
 
 type isProbeResult_Outcome interface {
@@ -1477,14 +1488,16 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x05state\x18\x01 \x01(\x0e2\x1f.heron.v1.AddressDetectionStateR\x05state\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x1d\n" +
 	"\n" +
-	"checked_at\x18\x03 \x01(\x03R\tcheckedAt\"\xbe\x01\n" +
+	"checked_at\x18\x03 \x01(\x03R\tcheckedAt\"\x81\x02\n" +
 	"\vProbeResult\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\x04R\x06taskId\x12\x15\n" +
 	"\x06age_ms\x18\x02 \x01(\rR\x05ageMs\x12\x17\n" +
 	"\x06rtt_us\x18\x03 \x01(\rH\x00R\x05rttUs\x12-\n" +
 	"\atimeout\x18\x04 \x01(\v2\x11.heron.v1.TimeoutH\x00R\atimeout\x12,\n" +
-	"\x05error\x18\x05 \x01(\v2\x14.heron.v1.ProbeErrorH\x00R\x05errorB\t\n" +
-	"\aoutcome\"\t\n" +
+	"\x05error\x18\x05 \x01(\v2\x14.heron.v1.ProbeErrorH\x00R\x05error\x12,\n" +
+	"\x10cert_not_after_s\x18\x06 \x01(\x03H\x01R\rcertNotAfterS\x88\x01\x01B\t\n" +
+	"\aoutcomeB\x13\n" +
+	"\x11_cert_not_after_s\"\t\n" +
 	"\aTimeout\"&\n" +
 	"\n" +
 	"ProbeError\x12\x18\n" +
