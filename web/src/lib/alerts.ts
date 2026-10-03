@@ -61,7 +61,7 @@ export function resourceUnit(metric: ResourceMetric): ResourceUnit {
   return RESOURCE_METRICS.find((m) => m.value === metric)?.unit ?? "percent";
 }
 
-// 阈值输入范围与 hub 的 CheckRule 一致：百分比 (0,100]、每核负载 (0,64]、速率 (0,2^40] bytes/s（即 8796093022.208 Mbps）。
+// 阈值输入范围与 hub 的 CheckRule 一致：百分比 (0,100]、每核负载 (0,64]、速率 (0,2^40] bytes/s（按 MBPS_TO_BYTES_PER_S 换算成 Mbps）。
 export function resourceThresholdMax(metric: ResourceMetric): number {
   switch (resourceUnit(metric)) {
     case "per-core": return 64;
