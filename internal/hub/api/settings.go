@@ -32,6 +32,8 @@ const (
 	maxCSSBytes   = 64 << 10
 	// maxGeoURLBytes 限制国家查询的服务地址，同样是 settingsBudget 给这一项登记份额的前提。
 	maxGeoURLBytes = 2 << 10
+	// maxHeartbeatURLBytes 是 Settings.heartbeat.url（§9.6）的字节上限，也是 settingsBudget 给这一项登记份额的前提。
+	maxHeartbeatURLBytes = 2 << 10
 	// maxMMDBPathBytes 是 Settings.geo_mmdb_path 在 settingsBudget 里登记的字节上限。hub 只回显自己启动参数里的路径，
 	// 请求里的值被忽略，但客户端可能把 GetSettings 的回显整份送回，合法回送不能被拒；任何能打开的路径不超过
 	// Linux 的 PATH_MAX 4096（macOS 为 1024），所以回显的路径落在这个份额内。比它长的路径只会来自不回送回显的
@@ -80,8 +82,11 @@ func cleanSettings(in *heronv1.Settings) (store.SettingsUpdate, error) {
 			return store.SettingsUpdate{}, err
 		}
 	}
-	if out.Appearance == nil && out.PublicEnabled == nil && out.Geo.Enabled == nil && out.Geo.URL == nil && out.Backup == nil && out.LoginChannels == nil {
-		return store.SettingsUpdate{}, invalid("settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, the country lookup (geo_enabled, geo_url), backup, or login_notify")
+	if out.Heartbeat, err = cleanHeartbeat(in.GetHeartbeat()); err != nil {
+		return store.SettingsUpdate{}, err
+	}
+	if out.Appearance == nil && out.PublicEnabled == nil && out.Geo.Enabled == nil && out.Geo.URL == nil && out.Backup == nil && out.LoginChannels == nil && out.Heartbeat == nil {
+		return store.SettingsUpdate{}, invalid("settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, the country lookup (geo_enabled, geo_url), backup, login_notify, or heartbeat")
 	}
 	return out, nil
 }
@@ -286,9 +291,94 @@ func (s *Service) settingsProto(st store.Settings) *heronv1.Settings {
 	if path != "" {
 		backend = heronv1.GeoBackend_GEO_BACKEND_MMDB
 	}
-	return &heronv1.Settings{Title: st.Site.Title, Theme: st.Site.Theme, AccentColor: st.Site.AccentColor, Logo: st.Site.Logo, CustomCss: st.Site.CustomCSS,
+	out := &heronv1.Settings{Title: st.Site.Title, Theme: st.Site.Theme, AccentColor: st.Site.AccentColor, Logo: st.Site.Logo, CustomCss: st.Site.CustomCSS,
 		PublicEnabled: proto.Bool(st.Site.PublicEnabled), GeoEnabled: proto.Bool(st.Geo.Enabled), GeoUrl: proto.String(st.Geo.URL),
 		GeoBackend: backend, GeoMmdbPath: path, Backup: backupProto(st.Backup), LoginNotify: &heronv1.LoginNotify{ChannelIds: st.LoginChannelIDs}}
+	// heartbeat 只在库里已有这一组的键时回显：从未配置过就没有可回显的取值，也没有 has_url 可言；配置过（哪怕随后清空了
+	// url）就带上它，has_url=false 表示已停用，与"不认识这个字段"区分开——与 login_notify 总带它同一理由。
+	if st.Heartbeat.Set {
+		out.Heartbeat = heartbeatProto(st.Heartbeat)
+	}
+	return out
+}
+
+// heartbeatProto 是心跳这一组的读侧回显。url 恒不回显：ping 地址本身就是密钥。has_url 与 url_host 都按库里的 url 计算。
+func heartbeatProto(h store.HeartbeatSettings) *heronv1.Heartbeat {
+	out := &heronv1.Heartbeat{IntervalS: h.IntervalS, Method: heartbeatMethodProto(h.Method), HasUrl: h.URL != ""}
+	if h.URL != "" {
+		if u, err := url.Parse(h.URL); err == nil {
+			out.UrlHost = u.Host
+		}
+	}
+	return out
+}
+
+func heartbeatMethodProto(m store.HeartbeatMethod) heronv1.HeartbeatMethod {
+	switch m {
+	case store.HeartbeatGet:
+		return heronv1.HeartbeatMethod_HEARTBEAT_METHOD_GET
+	case store.HeartbeatHead:
+		return heronv1.HeartbeatMethod_HEARTBEAT_METHOD_HEAD
+	default:
+		return heronv1.HeartbeatMethod_HEARTBEAT_METHOD_POST
+	}
+}
+
+// cleanHeartbeat 校验给出的 heartbeat 并构造存储更新；nil 表示请求里没有这一组，存储不动任何 heartbeat.* 键。
+// 整组替换，所以三项都要有合法取值：url 为空是清空并停用；method 必须显式选择，UNSPECIFIED 不当作"取默认"。
+// interval_s 的范围由 store.SaveSettings 在写事务里裁决（范围表只在 store 一处）。
+func cleanHeartbeat(in *heronv1.Heartbeat) (*store.HeartbeatUpdate, error) {
+	if in == nil {
+		return nil, nil
+	}
+	raw := in.GetUrl()
+	if len(raw) > maxHeartbeatURLBytes {
+		return nil, invalid("settings.heartbeat.url must be at most %d bytes; got %d", maxHeartbeatURLBytes, len(raw))
+	}
+	if raw != "" {
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Opaque != "" {
+			return nil, invalid("settings.heartbeat.url must be empty (disables the heartbeat) or an absolute http:// or https:// URL with a host; got %q", raw)
+		}
+	}
+	var method store.HeartbeatMethod
+	switch in.GetMethod() {
+	case heronv1.HeartbeatMethod_HEARTBEAT_METHOD_GET:
+		method = store.HeartbeatGet
+	case heronv1.HeartbeatMethod_HEARTBEAT_METHOD_POST:
+		method = store.HeartbeatPost
+	case heronv1.HeartbeatMethod_HEARTBEAT_METHOD_HEAD:
+		method = store.HeartbeatHead
+	default:
+		return nil, invalid("settings.heartbeat.method must be GET, POST or HEAD; HEARTBEAT_METHOD_UNSPECIFIED is not allowed and is not taken as a default")
+	}
+	return &store.HeartbeatUpdate{URL: raw, IntervalS: in.GetIntervalS(), Method: method}, nil
+}
+
+// GetHeartbeatStatus 读心跳循环的进程内状态：是否已配置取自库里的 url，其余取自内存。两个时刻与 next_at 是墙钟
+// Unix 秒，从不曾跑过为 0。
+func (s *Service) GetHeartbeatStatus(ctx context.Context, _ *connect.Request[heronv1.GetHeartbeatStatusRequest]) (*connect.Response[heronv1.GetHeartbeatStatusResponse], error) {
+	st, err := s.store.HeartbeatSettings(ctx)
+	if err != nil {
+		s.log.Error("reading heartbeat settings failed", "err", err)
+		return nil, internalError("reading heartbeat settings failed")
+	}
+	h := s.heartbeat.Status()
+	return connect.NewResponse(&heronv1.GetHeartbeatStatusResponse{
+		Enabled:           st.URL != "",
+		LastSuccessAt:     unixOrZero(h.LastSuccessAt),
+		LastFailureAt:     unixOrZero(h.LastFailureAt),
+		FailureCategory:   h.FailureCategory,
+		FailureHttpStatus: int32(h.FailureHTTPStatus),
+		NextAt:            unixOrZero(h.NextAt),
+	}), nil
+}
+
+func unixOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
 }
 
 func (s *Service) GetSettings(ctx context.Context, _ *connect.Request[heronv1.GetSettingsRequest]) (*connect.Response[heronv1.GetSettingsResponse], error) {
@@ -310,11 +400,14 @@ func (s *Service) UpdateSettings(ctx context.Context, req *connect.Request[heron
 		var list store.ChannelListError
 		var missing store.NotFoundError
 		var outOfRange store.BackupRangeError
+		var hbOutOfRange store.HeartbeatRangeError
 		switch {
 		case errors.As(err, &list) && errors.As(list.Err, &missing) && missing.Kind == store.ObjectNotifyChannel:
 			return nil, invalid("%s: channel %d does not exist", notifyListFields[list.List], missing.ID)
 		case errors.As(err, &outOfRange):
 			return nil, invalid("%s", outOfRange)
+		case errors.As(err, &hbOutOfRange):
+			return nil, invalid("%s", hbOutOfRange)
 		}
 		s.log.Error("saving settings failed", "err", err)
 		return nil, internalError("saving settings failed")

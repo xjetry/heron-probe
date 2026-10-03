@@ -63,5 +63,5 @@ func TestNewRequiresTheGeoBackend(t *testing.T) {
 			t.Errorf("panic = %v, want api.Config.Geo must be set", r)
 		}
 	}()
-	New(Config{Backups: &backup.Manager{}, TTL: time.Second, Location: time.UTC, Retention: store.DefaultRetention}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	New(Config{Backups: &backup.Manager{}, Heartbeat: &stubHeartbeat{}, TTL: time.Second, Location: time.UTC, Retention: store.DefaultRetention}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 }

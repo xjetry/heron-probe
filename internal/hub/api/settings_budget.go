@@ -66,6 +66,11 @@ var settingsBudget = map[string]budgetEntry{
 	"backup.notify.channel_ids": {kind: budgetIDList, limit: maxNotifyChannels},
 	"backup.has_secret":         {kind: budgetLiteral},
 	"login_notify.channel_ids":  {kind: budgetIDList, limit: maxNotifyChannels},
+	"heartbeat.url":             {kind: budgetEscapedString, limit: maxHeartbeatURLBytes},
+	"heartbeat.interval_s":      {kind: budgetUint32},
+	"heartbeat.method":          {kind: budgetEnumName},
+	"heartbeat.has_url":         {kind: budgetLiteral},
+	"heartbeat.url_host":        {kind: budgetEscapedString, limit: maxHeartbeatURLBytes},
 }
 
 func jsonStringBytes(value string) int {

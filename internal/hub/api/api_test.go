@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/auth"
 	"github.com/xjetry/heron-probe/internal/hub/backup"
 	"github.com/xjetry/heron-probe/internal/hub/geo"
+	"github.com/xjetry/heron-probe/internal/hub/heartbeat"
 	"github.com/xjetry/heron-probe/internal/hub/ingest"
 	"github.com/xjetry/heron-probe/internal/hub/live"
 	"github.com/xjetry/heron-probe/internal/hub/metric"
@@ -57,6 +59,26 @@ type harness struct {
 	alerts *alert.Engine
 	svc    *Service
 	pub    *Public
+	// heartbeat 是 §9.6 心跳循环的替身：api 只读 Status，用例按需改它。
+	heartbeat *stubHeartbeat
+}
+
+// stubHeartbeat 实现 HeartbeatStatusProvider，不跑循环；用例用 set 摆出成功/失败/从未跑过的状态。
+type stubHeartbeat struct {
+	mu     sync.Mutex
+	status heartbeat.Status
+}
+
+func (s *stubHeartbeat) Status() heartbeat.Status {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.status
+}
+
+func (s *stubHeartbeat) set(st heartbeat.Status) {
+	s.mu.Lock()
+	s.status = st
+	s.mu.Unlock()
 }
 
 func newHarness(t *testing.T, trusted string, opts ...harnessOption) *harness {
@@ -126,7 +148,8 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	if err := errors.Join(a.Load(ctx), in.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{Backups: backup.New(st, notifier, clk, slog.Default()), TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: retention, Geo: geo.NewHTTP(client)}
+	hb := &stubHeartbeat{}
+	cfg := Config{Backups: backup.New(st, notifier, clk, slog.Default()), Heartbeat: hb, TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: retention, Geo: geo.NewHTTP(client)}
 	deps.config(&cfg)
 	svc := New(cfg, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
 	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, TrustedProxies: prefixes, Location: loc}, st, l, book, reg, clk, slog.Default())
@@ -139,7 +162,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	jar, _ := cookiejar.New(nil)
 	hc := &http.Client{Jar: jar}
 	return &harness{dbPath: dbPath, srv: srv, http: hc, admin: heronv1connect.NewAdminServiceClient(hc, srv.URL),
-		agent: heronv1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, book: book, reg: reg, alerts: alerts, svc: svc, pub: pub}
+		agent: heronv1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, book: book, reg: reg, alerts: alerts, svc: svc, pub: pub, heartbeat: hb}
 }
 
 func (h *harness) login(t *testing.T) {

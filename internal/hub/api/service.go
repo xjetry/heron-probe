@@ -26,6 +26,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/auth"
 	"github.com/xjetry/heron-probe/internal/hub/backup"
 	"github.com/xjetry/heron-probe/internal/hub/geo"
+	"github.com/xjetry/heron-probe/internal/hub/heartbeat"
 	"github.com/xjetry/heron-probe/internal/hub/live"
 	"github.com/xjetry/heron-probe/internal/hub/probe"
 	"github.com/xjetry/heron-probe/internal/hub/store"
@@ -65,6 +66,8 @@ const (
 type Config struct {
 	Updates *updates.Manager
 	Backups *backup.Manager
+	// Heartbeat 是 §9.6 的心跳循环，GetHeartbeatStatus 从它读进程内状态；New 将其视为装配错误并 panic 当它为 nil。
+	Heartbeat HeartbeatStatusProvider
 	// TTL 必须为正；零值会放宽宽限期下限，New 将其视为装配错误并 panic。
 	TTL time.Duration
 	// ReportInterval 是 agent 的正常上报间隔，客户端据此选择轮询节奏。
@@ -92,6 +95,11 @@ type NodeState interface {
 	Forget(nodeID int64)
 }
 
+// HeartbeatStatusProvider 是 §9.6 心跳循环持有的进程内状态。api 只读它：目标地址与开关都在设置里，状态不含凭据。
+type HeartbeatStatusProvider interface {
+	Status() heartbeat.Status
+}
+
 type Service struct {
 	// 内存里的重置日与库里的 traffic_reset_day 必须一致，Forget 之后不得再为该节点建内存状态；
 	// 节点的库写入与内存更新在同一临界区内完成，不同请求按此锁串行。
@@ -109,6 +117,8 @@ type Service struct {
 	clk      clock.Clock
 	log      *slog.Logger
 	history  history
+	// heartbeat 是 §9.6 心跳循环的进程内状态，GetHeartbeatStatus 读它；循环与设置都不在这里。
+	heartbeat HeartbeatStatusProvider
 
 	// access 是 AdminService 每个过程的准入口径，New 时从描述符读出，之后只读。
 	access map[string]heronv1.Access
@@ -134,6 +144,9 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 	if cfg.Backups == nil {
 		panic("api.Config.Backups must be set")
 	}
+	if cfg.Heartbeat == nil {
+		panic("api.Config.Heartbeat must be set")
+	}
 	if err := cfg.Retention.Validate(); err != nil {
 		panic("api.Config.Retention: " + err.Error())
 	}
@@ -143,6 +156,7 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 	return &Service{
 		cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, probes: probes, alerts: alerts, notifier: notifier, clk: clk, log: log,
 		history:   history{store: st, log: log},
+		heartbeat: cfg.Heartbeat,
 		access:    accessTable(heronv1.File_heron_v1_admin_proto.Services().ByName("AdminService")),
 		uploading: make(chan struct{}, 1),
 		github:    theme.NewGitHubClient(), previews: make(map[string]themePreviewGrant),

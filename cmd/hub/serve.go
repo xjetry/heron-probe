@@ -21,6 +21,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/auth"
 	"github.com/xjetry/heron-probe/internal/hub/backup"
 	"github.com/xjetry/heron-probe/internal/hub/geo"
+	"github.com/xjetry/heron-probe/internal/hub/heartbeat"
 	"github.com/xjetry/heron-probe/internal/hub/ingest"
 	"github.com/xjetry/heron-probe/internal/hub/live"
 	"github.com/xjetry/heron-probe/internal/hub/outbound"
@@ -157,9 +158,9 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	if !isLoopback(*listen) {
 		log.Warn("listening on a non-loopback address: direct access bypasses the proxy; forwarded headers are trusted only from configured peers", "listen", *listen)
 	}
-	// 通知渠道与国家查询的 HTTP 后端共用一个出站客户端（§4.9 复用 §9.3 的那一个），两者不跟随重定向、带总时限的行为
-	// 因此是同一份。时限取 alert.NotifyTimeout，推导在通知投递一侧（见其注释）；国家查询是不带正文的 GET、应答至多读
-	// geo 包的 maxResponseBytes，同属 outbound.NewClient 所说的请求与应答都有小上界的消费方。
+	// 通知渠道、国家查询与心跳外推共用一个出站客户端（§4.9、§9.6 复用 §9.3 的那一个），三者不跟随重定向、带总时限的
+	// 行为因此是同一份。时限取 alert.NotifyTimeout，推导在通知投递一侧（见其注释）；国家查询与心跳都是应答至多读一个小上界的
+	// 消费方，同属 outbound.NewClient 所说的请求与应答都有小上界的消费方。
 	client := outbound.NewClient(alert.NotifyTimeout)
 	// 国家查询的后端只在这里选一次，同一个对象交给查询器与 api：面板回显的后端就是查询器实际用的那个。
 	// 文件路径是部署配置，由启动参数指定，设置 API 没有可改它的字段。OpenMMDB 在这里把整个文件读进内存并做结构校验，运行期
@@ -211,7 +212,8 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		return err
 	}
 	backups := backup.New(st, notifier, clk, log)
-	admin := api.New(api.Config{Updates: updateManager, Backups: backups, TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version, Location: loc, Retention: retention, PublicDir: *publicDir != "", Geo: geoBackend}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
+	hb := heartbeat.New(heartbeatSource{st: st, live: l}, client, version, clk, log)
+	admin := api.New(api.Config{Updates: updateManager, Backups: backups, Heartbeat: hb, TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version, Location: loc, Retention: retention, PublicDir: *publicDir != "", Geo: geoBackend}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: trusted, Location: loc}, st, l, book, reg, clk, log)
 
 	themes := web.ThemeHandler(st, public, admin.ThemePreviewAccess, log)
@@ -248,6 +250,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	defer startLoop(notifier.Run)()
 	defer startLoop(geo.New(st, geoBackend, clk, log).Run)()
 	defer startLoop(backups.Run)()
+	defer startLoop(hb.Run)()
 
 	// 监听在 net.Listen 返回时已建立，连接先进内核队列。runServe 装配的文本 handler 在 Info 返回前
 	// 同步写完 stderr，所以先写启动行再开始 Serve，拿到任何响应的调用方都已能在日志里读到它。
@@ -293,6 +296,45 @@ func startLoop(run func(context.Context)) func() {
 		cancel()
 		<-done
 	}
+}
+
+// heartbeatSource 把心跳循环的两个读侧接到现有入口：设置读同一份快照，计数沿 §4.4 的在线判定与 §9 的状态表。
+// online 用 live 的判定（不在此重算宽限期），maintenance 与 firing 都经 store 的查询函数读，心跳包不写 SQL。
+type heartbeatSource struct {
+	st   *store.Store
+	live *live.Live
+}
+
+func (h heartbeatSource) HeartbeatSettings(ctx context.Context) (store.HeartbeatSettings, error) {
+	return h.st.HeartbeatSettings(ctx)
+}
+
+func (h heartbeatSource) HeartbeatCounts(ctx context.Context) (heartbeat.Counts, error) {
+	nodes, err := h.st.ListMonitoringNodes(ctx)
+	if err != nil {
+		return heartbeat.Counts{}, err
+	}
+	states, err := h.st.ListAlertStates(ctx)
+	if err != nil {
+		return heartbeat.Counts{}, err
+	}
+	counts := heartbeat.Counts{NodesTotal: len(nodes)}
+	for _, n := range nodes {
+		if h.live.Online(n.ID) {
+			counts.Online++
+		}
+		if n.Maintenance {
+			counts.Maintenance++
+		}
+	}
+	// offline 由同一份节点全集与在线判定推出，online + offline = nodes_total 恒成立。
+	counts.Offline = counts.NodesTotal - counts.Online
+	for _, s := range states {
+		if s.State == store.StateFiring {
+			counts.Firing++
+		}
+	}
+	return counts, nil
 }
 
 // drainingHandler 将请求准入与关闭裁决串行化，Wait 前封住 Add，

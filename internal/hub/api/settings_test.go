@@ -124,7 +124,7 @@ func TestTitleAndNodeNameCleanAlike(t *testing.T) {
 	}
 }
 
-const noGroup = "settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, the country lookup (geo_enabled, geo_url), backup, or login_notify"
+const noGroup = "settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, the country lookup (geo_enabled, geo_url), backup, login_notify, or heartbeat"
 
 // UpdateSettings 按组判定、各组彼此独立：外观五项任一非空即算给出并整体校验，所以只带 title 的请求报 theme 的错；
 // 只带国家查询两项之一、只带总闸或只带备份（部分项或全部项）的请求照常保存，其余各组原样保留；一组都没给出（含整个 settings 缺失）的请求被拒并
@@ -190,6 +190,15 @@ func TestUpdateSettingsEveryFieldIsClassified(t *testing.T) {
 			echo: func(s *heronv1.Settings) { s.Backup.ConfigKeep = proto.Uint32(24) },
 		},
 		"login_notify": {in: func(s *heronv1.Settings) { s.LoginNotify = &heronv1.LoginNotify{ChannelIds: []int64{channel}} }},
+		// heartbeat 是只写地址：回显里 url 恒为空，has_url 与 url_host 由库里的 url 推出，不是输入里给的。
+		"heartbeat": {
+			in: func(s *heronv1.Settings) {
+				s.Heartbeat = &heronv1.Heartbeat{Url: "https://hc.example/ping/abc", IntervalS: 120, Method: heronv1.HeartbeatMethod_HEARTBEAT_METHOD_POST}
+			},
+			echo: func(s *heronv1.Settings) {
+				s.Heartbeat = &heronv1.Heartbeat{IntervalS: 120, Method: heronv1.HeartbeatMethod_HEARTBEAT_METHOD_POST, HasUrl: true, UrlHost: "hc.example"}
+			},
+		},
 	}
 	for i := range fields.Len() {
 		fd := fields.Get(i)
@@ -345,6 +354,8 @@ var (
 	worstEndpoint     = worstEndpointPrefix + strings.Repeat("&", maxEndpointBytes-len(worstEndpointPrefix))
 	worstBackupPrefix = strings.Repeat("<", maxPrefixBytes)
 	worstBackupSecret = strings.Repeat("\x01", maxSecretBytes)
+	// 心跳地址在预算里按最坏转义登记，但那样的值（控制字符）url.Parse 拒绝；换成等长、合法且不含凭据片段的地址。
+	worstHeartbeatURL = "https://hc.example/ping/" + strings.Repeat("a", maxHeartbeatURLBytes-len("https://hc.example/ping/"))
 )
 
 // worstCaseSettings 复用字段生成器，把编码边界中不满足业务约束的值替换为可保存的满额设置。
@@ -359,6 +370,7 @@ func worstCaseSettings(t *testing.T, channelIDs []string) []byte {
 		"backup.prefix":            worstBackupPrefix,
 		"backup.config_interval_s": 86400, "backup.metrics_interval_s": 604800,
 		"backup.config_keep": 1000, "backup.metrics_keep": 1000,
+		"heartbeat.url": worstHeartbeatURL, "heartbeat.interval_s": 3600, "heartbeat.method": "HEARTBEAT_METHOD_POST",
 	} {
 		generators[path] = func() any { return value }
 	}
