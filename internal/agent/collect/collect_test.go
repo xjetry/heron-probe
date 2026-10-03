@@ -95,6 +95,46 @@ func TestNetRateNeedsTwoSamples(t *testing.T) {
 	}
 }
 
+func TestResetRatesRestoresFirstSampleSemantics(t *testing.T) {
+	fsys := fstest.MapFS{
+		"proc/stat":                              {Data: []byte("cpu  100 0 50 800 20 0 10 0 0 0\n")},
+		"sys/class/net/eth0/statistics/rx_bytes": {Data: []byte("1000\n")},
+		"sys/class/net/eth0/statistics/tx_bytes": {Data: []byte("2000\n")},
+		"proc/diskstats":                         {Data: []byte("   8       0 sda 1000 20 4000 500 800 10 2000 300 0 200 400\n")},
+		"sys/block/sda":                          {Mode: fs.ModeDir},
+	}
+	clk := clock.NewFake(time.Unix(0, 0))
+	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clk}
+	step := 0
+	bump := func() {
+		step++
+		fsys["proc/stat"] = &fstest.MapFile{Data: []byte(fmt.Sprintf("cpu  %d 0 50 %d 20 0 10 0 0 0\n", 100+50*step, 800+50*step))}
+		fsys["sys/class/net/eth0/statistics/rx_bytes"] = &fstest.MapFile{Data: []byte(fmt.Sprintf("%d\n", 1000+2000*step))}
+		fsys["sys/class/net/eth0/statistics/tx_bytes"] = &fstest.MapFile{Data: []byte(fmt.Sprintf("%d\n", 2000+2000*step))}
+		fsys["proc/diskstats"] = &fstest.MapFile{Data: []byte(fmt.Sprintf("   8       0 sda 1010 20 %d 500 805 10 %d 300 0 200 400\n", 4000+1000*step, 2000+1000*step))}
+		clk.Advance(2 * time.Second)
+	}
+	hasRates := func(m *heronv1.Metrics) bool {
+		return m.CpuPct != nil || m.NetRxBps != nil || m.NetTxBps != nil || m.DiskReadBps != nil || m.DiskWriteBps != nil
+	}
+	c.Metrics()
+	bump()
+	if m, _ := c.Metrics(); !hasRates(m) {
+		t.Fatalf("second sample must carry rates: %+v", m)
+	}
+	c.ResetRates()
+	// 重置后计数仍在增长，若基线残留，这次采样会给出跨重置边界的速率。
+	bump()
+	if m, _ := c.Metrics(); hasRates(m) {
+		t.Fatalf("sample after ResetRates must be a first sample: %+v", m)
+	}
+	bump()
+	m, _ := c.Metrics()
+	if m.GetCpuPct() != 50 || m.GetNetRxBps() != 1000 || m.GetDiskReadBps() != 256000 {
+		t.Fatalf("rates must resume one sample after reset: %+v", m)
+	}
+}
+
 func TestMissingFilesYieldMissingReadingsNotZero(t *testing.T) {
 	c := &Collector{Host: &ProcFS{FS: fstest.MapFS{}, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, os.ErrNotExist }}, Clock: clock.NewFake(time.Unix(0, 0))}
 	m, err := c.Metrics()

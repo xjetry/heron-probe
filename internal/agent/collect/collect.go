@@ -196,6 +196,20 @@ func (c *Collector) Metrics() (*heronv1.Metrics, error) {
 	return m, errors.Join(errs...)
 }
 
+// ResetRates 作废全部速率与差分基线，下一次 Metrics 回到首样本语义（无 cpu_pct、无网卡/磁盘速率）。
+// 跨越休眠的那一次差分，分子含休眠前后的计数变化、分母（单调钟增量）不含休眠时长，
+// 速率会偏大数十倍；"计数回退不置速率"的既有防线照不到这种情形，只能在休眠信号（§4.5）
+// 触发时把基线整体置空，让本轮采样成为新基线的首样本。
+// 属于重置范围的基线清单——新增差分基线必须加进来，否则跨休眠的那一次差分会漏过：
+//   - prevCPU（cpu_pct / steal / iowait 的两次采样差分）
+//   - prevNet、prevNetT、prevNetEpoch（网卡速率）
+//   - prevDisk、prevDiskT、prevDiskEpoch（磁盘速率）
+func (c *Collector) ResetRates() {
+	c.prevCPU = nil
+	c.prevNet, c.prevNetT, c.prevNetEpoch = nil, 0, ""
+	c.prevDisk, c.prevDiskT, c.prevDiskEpoch = nil, 0, ""
+}
+
 // diskTotals 把整盘设备的计数合计，并给出设备集合标识：集合变化时标识随之改变，Collector 据此只换基线。
 func (c *Collector) diskTotals() (diskCounters, string, error) {
 	devs, err := c.Host.diskCounters()
