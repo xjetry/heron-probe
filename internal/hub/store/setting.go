@@ -31,6 +31,7 @@ type Settings struct {
 	Geo             GeoSettings
 	Backup          BackupSettings
 	LoginChannelIDs []int64
+	Heartbeat       HeartbeatSettings
 }
 
 // SettingsUpdate 是 SaveSettings 的输入，按组给出、各组彼此独立：Appearance 非 nil 时整体替换五项外观；PublicEnabled
@@ -43,6 +44,7 @@ type SettingsUpdate struct {
 	Geo           GeoUpdate
 	Backup        *BackupSettingsUpdate
 	LoginChannels *[]int64
+	Heartbeat     *HeartbeatUpdate
 }
 
 // DefaultTheme 是从未保存过外观时的明暗：跟随访客系统。
@@ -133,9 +135,10 @@ type querier interface {
 func readSettings(ctx context.Context, q querier) (Settings, error) {
 	// 只有键缺失表示默认开放；非法的已保存值不能被解释成允许公开（parseFlag 报错）。
 	out := Settings{
-		Site:   SiteSettings{SiteAppearance: SiteAppearance{Theme: DefaultTheme}, PublicEnabled: true},
-		Geo:    GeoSettings{URL: DefaultGeoURL},
-		Backup: backupDefaults(),
+		Site:      SiteSettings{SiteAppearance: SiteAppearance{Theme: DefaultTheme}, PublicEnabled: true},
+		Geo:       GeoSettings{URL: DefaultGeoURL},
+		Backup:    backupDefaults(),
+		Heartbeat: heartbeatDefaults(),
 	}
 	strs := map[string]*string{geoURLKey: &out.Geo.URL}
 	for _, f := range out.Site.fields() {
@@ -155,7 +158,7 @@ func readSettings(ctx context.Context, q querier) (Settings, error) {
 		lists[l.List] = l.settings(&out)
 		listKeys = append(listKeys, l.List)
 	}
-	query := "SELECT key, value FROM setting WHERE key GLOB 'site.*' OR key GLOB 'geo.*' OR key GLOB 'backup.*' OR key IN (" +
+	query := "SELECT key, value FROM setting WHERE key GLOB 'site.*' OR key GLOB 'geo.*' OR key GLOB 'backup.*' OR key GLOB 'heartbeat.*' OR key IN (" +
 		strings.TrimSuffix(strings.Repeat("?, ", len(listKeys)), ", ") + ")"
 	rows, err := q.QueryContext(ctx, query, listKeys...)
 	if err != nil {
@@ -177,6 +180,20 @@ func readSettings(ctx context.Context, q querier) (Settings, error) {
 			if err := f.parseStored(v); err != nil {
 				return Settings{}, err
 			}
+		} else if k == heartbeatURLKey {
+			out.Heartbeat.URL, out.Heartbeat.Set = v, true
+		} else if k == heartbeatIntervalKey {
+			n, err := parseStoredHeartbeatInterval(v)
+			if err != nil {
+				return Settings{}, err
+			}
+			out.Heartbeat.IntervalS, out.Heartbeat.Set = n, true
+		} else if k == heartbeatMethodKey {
+			m, err := parseStoredHeartbeatMethod(v)
+			if err != nil {
+				return Settings{}, err
+			}
+			out.Heartbeat.Method, out.Heartbeat.Set = m, true
 		} else if p := lists[NotifyList(k)]; p != nil {
 			if *p, err = parseStoredChannels(NotifyList(k), v); err != nil {
 				return Settings{}, err
@@ -259,6 +276,11 @@ func (s *Store) SaveSettings(ctx context.Context, in SettingsUpdate) (Settings, 
 		}
 		if in.LoginChannels != nil {
 			if err := saveChannelIDs(tx, LoginNotifyList, *in.LoginChannels); err != nil {
+				return err
+			}
+		}
+		if in.Heartbeat != nil {
+			if err := saveHeartbeat(tx, in.Heartbeat); err != nil {
 				return err
 			}
 		}
