@@ -82,6 +82,8 @@ docker run -d --name heron --restart unless-stopped --stop-timeout 30 \
 
 `--stop-timeout 30` 给关停留出余量：`docker stop` 先发 SIGTERM，hub 排空在途请求（至多 10 秒）、停下后台循环、关库后退出；宽限期一过 Docker 就发 SIGKILL。默认宽限期也是 10 秒，与排空上限相等，排空用满时最后一批写可能被截断。
 
+镜像自带 `HEALTHCHECK`：容器内每隔 30 秒用 `heron-hub health` 请求 `http://127.0.0.1:8080/healthz`，探针只在库打开、内存索引加载并挂载全部服务之后才可能拿到应答（超时 5 秒、重试 3 次、起始宽限 5 秒），所以 `healthy` 表示 hub 已能接受请求，而不只是进程还在；探针不跟随重定向。`docker ps` 的 STATUS 列、编排器的健康判定与反代的上游摘除都读它。
+
 默认参数是 `serve --db /data/heron.db --listen 0.0.0.0:8080`。镜像名之后写的任何参数都会替换这一整组默认参数，要加参数时连同默认的一起写全：
 
 ```sh

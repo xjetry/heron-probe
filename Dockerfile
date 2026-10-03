@@ -37,6 +37,11 @@ COPY --chmod=0755 build/image/linux/${TARGETARCH}/heron-hub /usr/local/bin/heron
 USER 65532:65532
 VOLUME /data
 EXPOSE 8080
+# HEALTHCHECK 调镜像内的 heron-hub health（scratch 里没有 curl，也没有 shell，所以用不经过 shell 的 exec 形式）。
+# 探针默认 URL 就是容器默认的监听地址，与 CMD 的 --listen 一致。间隔 30s：反代与编排器要能在半分钟内看到
+# 不健康实例；超时 5s 大于探针自身的 3s 总时限，留给进程调度；重试 3 次避免一次抖动就判死；起始宽限 5s 覆盖
+# 打开库与加载索引，宽限内不计入重试。探针不跟随重定向，也不进公开限流桶（它不是 PublicService 挂载点）。
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 CMD ["/usr/local/bin/heron-hub", "health", "--url", "http://127.0.0.1:8080"]
 ENTRYPOINT ["/usr/local/bin/heron-hub"]
 # 容器里监听非 loopback 是预期的，hub 的启动告警照旧；反代与 --trusted-proxies 由部署者配（§14）。
 CMD ["serve", "--db", "/data/heron.db", "--listen", "0.0.0.0:8080"]
