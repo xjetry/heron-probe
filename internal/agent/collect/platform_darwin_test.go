@@ -118,55 +118,103 @@ func vmStat(t *testing.T) (page uint64, pages map[string]uint64) {
 	return page, pages
 }
 
-// vm_stat 走另一条代码路径打印同一组页计数。四个计数逐项对照：合计的容差会吞掉某一项整个读错
-// （compressor 与 purgeable 各自都小于总量的 5%）。每项的前后各读一次本实现，vm_stat 的值须落在
-// 两次读数围成的区间外扩该项 5% 加 64 页之内：gauge 在几毫秒里的变化远小于此（本机实测两次读取之间
-// 四项相差 0–3800 页），而某项读成 0 或读错偏移会差出该项自身的量级。
+// 内存读数的口径对照。不能与 vm_stat 做数值对照，原因（macOS 26.3.1 / kernel 25.3.0 / M4 Max 实测）：
+// host_statistics64(HOST_VM_INFO64) 给第三方调用者返回内核按 flavor 全局缓存的快照，约每秒刷新一次——
+// 同一时刻，长期进程内相邻两次调用与单次调用的新进程拿到完全相同的 38 字冻结值（实测冻结窗口
+// 0.75–0.97s），而 Apple 平台二进制（vm_stat、/usr/bin/python3 经 ctypes 调同一函数）每次调用都拿到
+// 新值；请求 38、40、62 字拿到的值完全相同，与请求长度无关。负载下 wired/purgeable/internal 每秒变动
+// 数万页（实测释放 6 GiB 时 internal 一秒差 20.8 万页），本实现的读数（至多约 1s 前的快照）与 vm_stat
+// 的新值必然超出按"同一时刻"设定的容差；前后两次读数完全相同正是快照冻结的表现，不是读错。
+// 上报的 mem_used 只能来自 host_statistics64：wire/purgeable/compressor/internal 没有第三方可用的其他
+// 接口（sysctl 只有 free/speculative/external），秒级滞后对按间隔上报的 gauge 可接受。
+// 这里守住的是读数口径：页大小与内存总量是静态量，与 vm_stat、hw.memsize 对照；队列分类合计
+// （free+active+inactive+wired+compressor+throttled）与总页数的差是 REV3 的 tag storage 页（实测约
+// 0.7%），偏移读错会把零填充等 lifetime 计数（十亿级）混进页计数让合计爆掉；free 含 speculative 的
+// 语义（头文件注明）与 free/speculative/external 三个 sysctl 对照——sysctl 每次读都是新值而本实现的
+// 快照可滞后约 1s，所以在读数前后各采一段 sysctl 窗口，本实现的值须落在窗口范围内外扩 5%，
+// 范围随负载下的真实漂移自适应，而不是与一个瞬时值比。
 func TestDarwinMemoryMatchesVMStat(t *testing.T) {
 	h := realHost(t)
 	s := h.src.(*darwinSyscalls)
-	read := func() vmCounts {
+	type sample struct{ free, spec, external uint64 }
+	sysctlSample := func() sample {
 		t.Helper()
-		raw, err := s.vmStatistics64()
-		if err != nil {
-			t.Fatal(err)
+		f := strings.Fields(run(t, "sysctl", "-n", "vm.page_free_count", "vm.page_speculative_count", "vm.vm_page_external_count"))
+		if len(f) != 3 {
+			t.Fatalf("sysctl printed %v", f)
 		}
-		c, err := parseVMStatistics64(raw)
-		if err != nil {
-			t.Fatal(err)
+		var s sample
+		var err error
+		if s.free, err = strconv.ParseUint(f[0], 10, 64); err != nil {
+			t.Fatalf("vm.page_free_count %q: %v", f[0], err)
 		}
-		return c
+		if s.spec, err = strconv.ParseUint(f[1], 10, 64); err != nil {
+			t.Fatalf("vm.page_speculative_count %q: %v", f[1], err)
+		}
+		if s.external, err = strconv.ParseUint(f[2], 10, 64); err != nil {
+			t.Fatalf("vm.vm_page_external_count %q: %v", f[2], err)
+		}
+		return s
 	}
-	before := read()
-	cliPage, pages := vmStat(t)
-	after := read()
+	// 快照冻结窗口实测不超过 1s，前窗取 1.6s 覆盖快照时刻。
+	var win []sample
+	for t0 := time.Now(); time.Since(t0) < 1600*time.Millisecond; time.Sleep(100 * time.Millisecond) {
+		win = append(win, sysctlSample())
+	}
+	raw, err := s.vmStatistics64()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := parseVMStatistics64(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for t0 := time.Now(); time.Since(t0) < 300*time.Millisecond; time.Sleep(100 * time.Millisecond) {
+		win = append(win, sysctlSample())
+	}
+	cliPage, _ := vmStat(t)
 	page, err := s.pageSize()
 	if err != nil || page != cliPage {
 		t.Fatalf("page size %d, %v; vm_stat says %d", page, err, cliPage)
-	}
-	for _, f := range []struct {
-		line string
-		b, a uint64
-	}{
-		{"Pages wired down", before.wire, after.wire},
-		{"Pages purgeable", before.purgeable, after.purgeable},
-		{"Pages occupied by compressor", before.compressor, after.compressor},
-		{"Anonymous pages", before.internal, after.internal},
-	} {
-		cli, ok := pages[f.line]
-		if !ok {
-			t.Fatalf("vm_stat has no %q line", f.line)
-		}
-		lo, hi := min(f.b, f.a), max(f.b, f.a)
-		slack := cli/20 + 64
-		if cli+slack < lo || cli > hi+slack {
-			t.Errorf("%s: vm_stat %d pages, implementation read %d then %d (slack %d)", f.line, cli, f.b, f.a, slack)
-		}
 	}
 	mem, err := h.memory()
 	if err != nil || mem.total != cliUint(t, "sysctl", "-n", "hw.memsize") {
 		t.Fatalf("memory %+v, %v; total must equal hw.memsize", mem, err)
 	}
+	total := mem.total / page
+	// 队列分类合计：free+active+inactive+wired+compressor+throttled 与总页数的差是 tag storage 页，
+	// 必须非负且远小于总量（实测约 0.7%，上限取 1/25）；任一页计数读成 lifetime 计数都会让合计溢出总量。
+	queues := c.free + c.active + c.inactive + c.wire + c.compressor + c.throttle
+	if residual := int64(total) - int64(queues); residual < 0 || residual > int64(total/25) {
+		t.Errorf("queue pages free %d + active %d + inactive %d + wired %d + compressor %d + throttled %d = %d, total %d: residual %d out of [0, %d]",
+			c.free, c.active, c.inactive, c.wire, c.compressor, c.throttle, queues, total, residual, total/25)
+	}
+	// sysctl 对照：窗口涵盖快照时刻，值须落在窗口范围内外扩 5%+64（与本实现读错字段的量级相比可忽略，
+	// 与快照滞后导致的漂移同形自适应）。
+	windowRange := func(pick func(sample) uint64) (uint64, uint64) {
+		lo, hi := pick(win[0]), pick(win[0])
+		for _, w := range win[1:] {
+			lo, hi = min(lo, pick(w)), max(hi, pick(w))
+		}
+		return lo, hi
+	}
+	checkWindow := func(name string, got, lo, hi uint64) {
+		t.Helper()
+		if slack := got/20 + 64; got+slack < lo || got > hi+slack {
+			t.Errorf("%s %d pages, sysctl window [%d, %d] (slack %d)", name, got, lo, hi, slack)
+		}
+	}
+	// free_count 含 speculative（头文件注明），sysctl 把两者分列。
+	if c.free < c.speculative {
+		t.Errorf("free %d below speculative %d: header says speculative is counted in free_count", c.free, c.speculative)
+	} else {
+		lo, hi := windowRange(func(w sample) uint64 { return w.free })
+		checkWindow("free − speculative =", c.free-c.speculative, lo, hi)
+	}
+	lo, hi := windowRange(func(w sample) uint64 { return w.spec })
+	checkWindow("speculative", c.speculative, lo, hi)
+	lo, hi = windowRange(func(w sample) uint64 { return w.external })
+	checkWindow("external", c.external, lo, hi)
 }
 
 // netstat -ib 的 <Link#n> 行给出每块网卡的完整 64 位字节数。先比网卡集合：实现漏读一块网卡，

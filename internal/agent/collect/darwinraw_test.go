@@ -118,16 +118,23 @@ func swapBytes(total, avail, used uint64) []byte {
 	return b
 }
 
-// vmBytes 只填 parseVMStatistics64 读的四个字段，其余字段写入不同的哨兵值：偏移错一位就读到哨兵。
-func vmBytes(wire, purgeable, compressor, internal uint32) []byte {
+// vmBytes 只填 parseVMStatistics64 读的字段，各字段值互不相同，其余字段写入按偏移编号的哨兵值：
+// 偏移错一位就读到哨兵。
+func vmBytes(c vmCounts) []byte {
 	b := make([]byte, 152)
 	for off := 0; off+4 <= len(b); off += 4 {
 		le.PutUint32(b[off:], 0x5A5A0000|uint32(off))
 	}
-	le.PutUint32(b[12:], wire)
-	le.PutUint32(b[88:], purgeable)
-	le.PutUint32(b[128:], compressor)
-	le.PutUint32(b[140:], internal)
+	le.PutUint32(b[0:], uint32(c.free))
+	le.PutUint32(b[4:], uint32(c.active))
+	le.PutUint32(b[8:], uint32(c.inactive))
+	le.PutUint32(b[12:], uint32(c.wire))
+	le.PutUint32(b[88:], uint32(c.purgeable))
+	le.PutUint32(b[92:], uint32(c.speculative))
+	le.PutUint32(b[128:], uint32(c.compressor))
+	le.PutUint32(b[132:], uint32(c.throttle))
+	le.PutUint32(b[136:], uint32(c.external))
+	le.PutUint32(b[140:], uint32(c.internal))
 	return b
 }
 
@@ -172,7 +179,7 @@ func newFakeDarwin() *fakeDarwin {
 			{100, 50, 800, 0, 100, 50, 800, 0},
 			{130, 65, 850, 5, 130, 65, 850, 5},
 		},
-		vm:   vmBytes(400, 30, 70, 5000),
+		vm:   vmBytes(vmCounts{wire: 400, purgeable: 30, compressor: 70, internal: 5000}),
 		page: 16384,
 		pids: 1566,
 		disk: usage{total: 994662584320, used: 781134274560},
@@ -285,11 +292,10 @@ func TestTickAccumulatorAcrossWrapAndCPUCountChange(t *testing.T) {
 
 // 直接对照头文件偏移，不经 Collector：偏移错一位就读到 vmBytes 的哨兵，失败信息里带 0x5A5A…。
 func TestVMStatisticsReadsHeaderOffsets(t *testing.T) {
-	got, err := parseVMStatistics64(vmBytes(400, 30, 70, 5000))
-	want := vmCounts{wire: 400, purgeable: 30, compressor: 70, internal: 5000}
+	want := vmCounts{free: 9000, active: 800, inactive: 700, wire: 400, purgeable: 30, speculative: 600, compressor: 70, throttle: 4, external: 500, internal: 5000}
+	got, err := parseVMStatistics64(vmBytes(want))
 	if err != nil || got != want {
-		t.Fatalf("pages wire %#x purgeable %#x compressor %#x internal %#x, %v; want %#x %#x %#x %#x (0x5a5a.... means a sentinel word was read)",
-			got.wire, got.purgeable, got.compressor, got.internal, err, want.wire, want.purgeable, want.compressor, want.internal)
+		t.Fatalf("pages %+v, %v; want %+v (0x5a5a.... means a sentinel word was read)", got, err, want)
 	}
 }
 
@@ -321,7 +327,7 @@ func TestVMUsedWrapIsCaughtBeforeCheckUsage(t *testing.T) {
 		t.Fatalf("fixture no longer demonstrates a wrap within total: %d", wrapped)
 	}
 	f := newFakeDarwin()
-	f.vm = vmBytes(uint32(wire), uint32(purgeable), 0, uint32(internal))
+	f.vm = vmBytes(vmCounts{wire: wire, purgeable: purgeable, internal: internal})
 	m, err := (&Collector{Host: &darwinHost{src: f}, Clock: clock.NewFake(time.Unix(0, 0))}).Metrics()
 	if m.MemUsed != nil || m.MemTotal != nil {
 		t.Fatalf("wrapped memory reading reported: used %d total %d", m.GetMemUsed(), m.GetMemTotal())

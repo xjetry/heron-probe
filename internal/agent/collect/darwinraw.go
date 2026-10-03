@@ -258,20 +258,33 @@ func parseSwapUsage(b []byte) (usage, error) {
 	return usage{total: binary.LittleEndian.Uint64(b[0:]), used: binary.LittleEndian.Uint64(b[16:])}, nil
 }
 
-// vmCounts 是 vm_statistics64 里已用内存公式要的四个页计数。
-type vmCounts struct{ wire, purgeable, compressor, internal uint64 }
+// vmCounts 是 vm_statistics64 的页计数：wire、purgeable、compressor、internal 是已用内存公式要的四个；
+// 其余六个已用内存公式不用，解析出来给真机一致性测试对照（sysctl 的 free/speculative/external 与
+// 队列分类的合计），布局漂移时它们比四个公式字段先显形。
+type vmCounts struct {
+	wire, purgeable, compressor, internal                   uint64
+	free, active, inactive, speculative, external, throttle uint64
+}
 
-// parseVMStatistics64 取 wire_count(12)、purgeable_count(88)、compressor_page_count(128)、internal_page_count(140)。
+// parseVMStatistics64 取 free_count(0)、active_count(4)、inactive_count(8)、wire_count(12)、
+// purgeable_count(88)、speculative_count(92)、compressor_page_count(128)、throttled_count(132)、
+// external_page_count(136)、internal_page_count(140)。
 func parseVMStatistics64(b []byte) (vmCounts, error) {
 	if len(b) < vmStatsMinLen {
 		return vmCounts{}, fmt.Errorf("vm_statistics64: %d bytes, want at least %d", len(b), vmStatsMinLen)
 	}
 	le := binary.LittleEndian
 	return vmCounts{
-		wire:       uint64(le.Uint32(b[12:])),
-		purgeable:  uint64(le.Uint32(b[88:])),
-		compressor: uint64(le.Uint32(b[128:])),
-		internal:   uint64(le.Uint32(b[140:])),
+		free:        uint64(le.Uint32(b[0:])),
+		active:      uint64(le.Uint32(b[4:])),
+		inactive:    uint64(le.Uint32(b[8:])),
+		wire:        uint64(le.Uint32(b[12:])),
+		purgeable:   uint64(le.Uint32(b[88:])),
+		speculative: uint64(le.Uint32(b[92:])),
+		compressor:  uint64(le.Uint32(b[128:])),
+		throttle:    uint64(le.Uint32(b[132:])),
+		external:    uint64(le.Uint32(b[136:])),
+		internal:    uint64(le.Uint32(b[140:])),
 	}, nil
 }
 

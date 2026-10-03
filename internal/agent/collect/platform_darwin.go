@@ -171,6 +171,10 @@ func (s *darwinSyscalls) processorTicks() ([]uint32, error) {
 	return out, nil
 }
 
+// vmStatistics64 返回的是内核按 flavor 缓存的快照而不是调用时刻的值：macOS 26（kernel 25.3）上
+// 第三方调用者拿到的快照约每秒刷新一次（相邻两次调用常拿到完全相同的冻结值，实测冻结窗口 0.75–0.97s，
+// 与请求字数无关），Apple 平台二进制每次调用都拿到新值。按间隔上报的 gauge 可以容忍这一秒级的滞后；
+// 需要"调用时刻的值"的场合（如与 vm_stat 逐项数值对照）不能用它。
 func (s *darwinSyscalls) vmStatistics64() ([]byte, error) {
 	if err := s.need("mach_host_self", "host_statistics64"); err != nil {
 		return nil, err
