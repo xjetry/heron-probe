@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/alert"
 	"github.com/xjetry/heron-probe/internal/hub/outbound"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 )
@@ -101,7 +102,7 @@ func (r *receiver) at(i int) received {
 }
 
 func newHeartbeat(source Source, clk clock.Clock, logs *logBuffer) *Heartbeat {
-	return New(source, outbound.NewClient(Timeout), "v9", clk, slog.New(slog.NewTextHandler(logs, nil)))
+	return New(source, outbound.NewClient(alert.NotifyTimeout), "v9", clk, slog.New(slog.NewTextHandler(logs, nil)))
 }
 
 // 三种方法各自的线上形状：GET/HEAD 无正文；POST 是固定的 JSON 字段集合与数值，带 application/json。
@@ -328,11 +329,68 @@ func TestRunRereadsSettingsEveryRound(t *testing.T) {
 	src.set(store.HeartbeatSettings{URL: "", IntervalS: 120, Method: store.HeartbeatGet})
 	proceed <- d1
 	d2 := <-wake
-	if d2 != 120*time.Second {
-		t.Fatalf("wait while disabled = %v, want 120s", d2)
+	if d2 != 60*time.Second {
+		t.Fatalf("wait while disabled = %v, want 60s (poll settings, not the outbound interval)", d2)
 	}
 	if rc.count() != 2 {
 		t.Fatalf("requests after clearing url = %d, want 2 (no request while disabled)", rc.count())
+	}
+	cancel()
+	<-done
+}
+
+// 停用态等的不是外呼间隔，而是设置的轮询节奏：间隔可以设到 3600，按它睡会让刚填上的地址最坏一小时才生效。
+// 把 round 改回"停用也按 interval 等"后，本用例第一处断言拿到 3600s 而不是 60s，next_at 也不再置零。
+func TestRunDisabledPollsSettingsAtFixedCadence(t *testing.T) {
+	rc := &receiver{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { rc.add(r); w.WriteHeader(http.StatusOK) }))
+	defer srv.Close()
+
+	clk := clock.NewFake(time.Unix(2000, 0))
+	src := &fakeSource{settings: store.HeartbeatSettings{URL: "", IntervalS: 3600, Method: store.HeartbeatGet}}
+	h := newHeartbeat(src, clk, &logBuffer{})
+	wake := make(chan time.Duration, 1)
+	proceed := make(chan time.Duration, 1)
+	h.wait = func(ctx context.Context, d time.Duration) bool {
+		select {
+		case wake <- d:
+		case <-ctx.Done():
+			return false
+		}
+		select {
+		case next := <-proceed:
+			clk.Advance(next)
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); h.Run(ctx) }()
+
+	d0 := <-wake // 停用：不发请求，等 60s 后重读设置。
+	if rc.count() != 0 {
+		t.Fatalf("requests while disabled = %d, want 0", rc.count())
+	}
+	if d0 != 60*time.Second {
+		t.Fatalf("wait while disabled = %v, want 60s (not the 3600s outbound interval)", d0)
+	}
+	if next := h.Status().NextAt; !next.IsZero() {
+		t.Fatalf("next_at while disabled = %v, want zero", next)
+	}
+
+	src.set(store.HeartbeatSettings{URL: srv.URL + "/ping", IntervalS: 3600, Method: store.HeartbeatGet})
+	proceed <- d0
+	d1 := <-wake
+	if rc.count() != 1 {
+		t.Fatalf("requests after enabling within one poll = %d, want 1", rc.count())
+	}
+	if d1 != 3600*time.Second {
+		t.Fatalf("wait after enabling = %v, want 3600s (outbound interval)", d1)
+	}
+	if next := h.Status().NextAt; next.IsZero() {
+		t.Fatal("next_at after enabling should be set")
 	}
 	cancel()
 	<-done

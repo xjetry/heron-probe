@@ -2649,7 +2649,7 @@ export type Heartbeat = Message<"heron.v1.Heartbeat"> & {
   hasUrl: boolean;
 
   /**
-   * 只在响应里有意义：库中 url 经 url.Parse 得到的主机（scheme://host），不含路径与查询串；url 为空时为 ""。
+   * 只在响应里有意义：库中 url 经 url.Parse 得到的主机（仅主机，含端口；不含 scheme、路径与查询串）；url 为空时为 ""。
    *
    * @generated from field: string url_host = 5;
    */

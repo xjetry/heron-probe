@@ -6038,7 +6038,7 @@ type Heartbeat struct {
 	Method HeartbeatMethod `protobuf:"varint,3,opt,name=method,proto3,enum=heron.v1.HeartbeatMethod" json:"method,omitempty"`
 	// 只在响应里有意义：按库中 url 非空计算。
 	HasUrl bool `protobuf:"varint,4,opt,name=has_url,json=hasUrl,proto3" json:"has_url,omitempty"`
-	// 只在响应里有意义：库中 url 经 url.Parse 得到的主机（scheme://host），不含路径与查询串；url 为空时为 ""。
+	// 只在响应里有意义：库中 url 经 url.Parse 得到的主机（仅主机，含端口；不含 scheme、路径与查询串）；url 为空时为 ""。
 	UrlHost       string `protobuf:"bytes,5,opt,name=url_host,json=urlHost,proto3" json:"url_host,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

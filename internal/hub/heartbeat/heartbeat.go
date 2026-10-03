@@ -1,6 +1,9 @@
 // Package heartbeat 实现 hub 自身的心跳外推（§9.6）：按设置周期向一个外部监控服务发一次请求，hub 死了外部服务收不到
 // 心跳就告警。默认关闭，目标只来自设置；出站复用 §9.3 的边界（outbound 客户端，不跟随重定向、去掉 URL 的错误文本）。
 //
+// 一次外呼的总时限（建连、写请求、读完应答体）由注入的 outbound 客户端承载，包内不另立时限常量：生产装配传的是与通知、
+// 国家查询共用的那一个，时限取 alert.NotifyTimeout，推导在通知投递一侧。
+//
 // 循环每轮重读设置，所以改间隔下一轮生效、清空 url 立即停发，都不需要重启。状态只在内存里：重启后"从未跑过"。
 package heartbeat
 
@@ -20,10 +23,6 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/outbound"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 )
-
-// Timeout 是一次心跳外呼的总时限，覆盖建连、写请求与读完应答体。构造客户端时用它（outbound.NewClient(Timeout)），
-// 使所有外呼共用同一个上界。
-const Timeout = 10 * time.Second
 
 // maxResponseBytes 是应答体的读取上限：心跳只关心状态码，接收方回多大的内容都不该被 hub 整读进内存。
 const maxResponseBytes = 64 << 10
@@ -127,10 +126,16 @@ func (h *Heartbeat) round(ctx context.Context) time.Duration {
 		h.log.Error("reading heartbeat settings failed", "err", err)
 		return store.DefaultHeartbeatIntervalS * time.Second
 	}
-	interval := time.Duration(st.IntervalS) * time.Second
-	if st.URL != "" {
-		h.send(ctx, st)
+	if st.URL == "" {
+		// 停用：没有外呼，next_at 无意义置零；等待改用设置的轮询节奏而不是外呼间隔——间隔可到 3600，按它睡会让刚填上的
+		// 地址最坏一小时才生效，用户会当成功能坏了。
+		h.mu.Lock()
+		h.status.NextAt = time.Time{}
+		h.mu.Unlock()
+		return store.DefaultHeartbeatIntervalS * time.Second
 	}
+	h.send(ctx, st)
+	interval := time.Duration(st.IntervalS) * time.Second
 	h.mu.Lock()
 	h.status.NextAt = h.clk.Now().Add(interval)
 	h.mu.Unlock()
