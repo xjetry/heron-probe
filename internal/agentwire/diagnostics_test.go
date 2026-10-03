@@ -16,6 +16,9 @@ func TestDiagnosticsBoundedWhitelist(t *testing.T) {
 	if err := ValidateDiagnostics(nil); err != nil {
 		t.Fatal(err)
 	}
+	if err := ValidateDiagnostics(&heronv1.AgentDiagnostics{FailedCollectors: []heronv1.CollectionComponent{heronv1.CollectionComponent_COLLECTION_COMPONENT_DISK_IO}}); err != nil {
+		t.Fatalf("disk I/O component must be accepted: %v", err)
+	}
 	for _, tc := range []struct {
 		name   string
 		change func(*heronv1.AgentDiagnostics)

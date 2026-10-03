@@ -90,7 +90,7 @@ func ValidateDiagnostics(d *heronv1.AgentDiagnostics) error {
 	}
 	seen := map[heronv1.CollectionComponent]bool{}
 	for _, part := range d.FailedCollectors {
-		if part <= heronv1.CollectionComponent_COLLECTION_COMPONENT_UNSPECIFIED || part > heronv1.CollectionComponent_COLLECTION_COMPONENT_NET || seen[part] {
+		if part <= heronv1.CollectionComponent_COLLECTION_COMPONENT_UNSPECIFIED || part > heronv1.CollectionComponent_COLLECTION_COMPONENT_DISK_IO || seen[part] {
 			return fmt.Errorf("diagnostics.failed_collectors: must contain distinct known components")
 		}
 		seen[part] = true

@@ -72,6 +72,35 @@ func TestCollectionDiagnosticsReflectEffectiveSampling(t *testing.T) {
 	}
 }
 
+// 磁盘 I/O 计数器读不到是独立失败类别：它不是 statfs 的磁盘用量失败，面板不能把它显示成"磁盘"。
+func TestDiskCounterFailureHasItsOwnCollectorCategory(t *testing.T) {
+	c := fixture(t)
+	c.Host = &diskIOFail{ProcFS: c.Host.(*ProcFS)}
+	m, err := c.Metrics()
+	if m == nil || err == nil {
+		t.Fatalf("disk counter failure must be reported: m=%v err=%v", m, err)
+	}
+	d := c.Facts().GetDiagnostics()
+	if !slices.Contains(d.GetFailedCollectors(), heronv1.CollectionComponent_COLLECTION_COMPONENT_DISK_IO) {
+		t.Fatalf("disk I/O counter failure not identified: %v", d)
+	}
+	if slices.Contains(d.GetFailedCollectors(), heronv1.CollectionComponent_COLLECTION_COMPONENT_DISK) {
+		t.Fatalf("disk usage category reused for an I/O counter failure: %v", d)
+	}
+	if err := agentwire.ValidateDiagnostics(d); err != nil {
+		t.Fatalf("new component must pass the shared whitelist: %v", err)
+	}
+	if m.GetDiskTotal() != 1000 || m.GetDiskUsed() != 400 {
+		t.Fatalf("disk usage must be unaffected: %+v", m)
+	}
+}
+
+type diskIOFail struct{ *ProcFS }
+
+func (h *diskIOFail) diskCounters() ([]diskCounters, error) {
+	return nil, errors.New("no whole-disk device")
+}
+
 func TestDiagnosticsTruncationDoesNotTruncateCounterScope(t *testing.T) {
 	h := &ifacesOnly{}
 	for i := range agentwire.MaxDiagnosticInterfaces + 1 {

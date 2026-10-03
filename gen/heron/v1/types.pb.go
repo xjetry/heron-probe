@@ -35,6 +35,9 @@ const (
 	CollectionComponent_COLLECTION_COMPONENT_UPTIME      CollectionComponent = 8
 	CollectionComponent_COLLECTION_COMPONENT_CONNS       CollectionComponent = 9
 	CollectionComponent_COLLECTION_COMPONENT_NET         CollectionComponent = 10
+	// 磁盘 I/O 计数器（/proc/diskstats）与磁盘用量（statfs）是两种来源，失败各自成类，
+	// 面板才不会把"没有可计的整盘设备"显示成磁盘用量采集失败。
+	CollectionComponent_COLLECTION_COMPONENT_DISK_IO CollectionComponent = 11
 )
 
 // Enum value maps for CollectionComponent.
@@ -51,6 +54,7 @@ var (
 		8:  "COLLECTION_COMPONENT_UPTIME",
 		9:  "COLLECTION_COMPONENT_CONNS",
 		10: "COLLECTION_COMPONENT_NET",
+		11: "COLLECTION_COMPONENT_DISK_IO",
 	}
 	CollectionComponent_value = map[string]int32{
 		"COLLECTION_COMPONENT_UNSPECIFIED": 0,
@@ -64,6 +68,7 @@ var (
 		"COLLECTION_COMPONENT_UPTIME":      8,
 		"COLLECTION_COMPONENT_CONNS":       9,
 		"COLLECTION_COMPONENT_NET":         10,
+		"COLLECTION_COMPONENT_DISK_IO":     11,
 	}
 )
 
@@ -1493,7 +1498,7 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"auto_renew\x18\x05 \x01(\bR\tautoRenew\x12 \n" +
 	"\tdays_left\x18\x06 \x01(\x05H\x00R\bdaysLeft\x88\x01\x01B\f\n" +
 	"\n" +
-	"_days_left*\xf8\x02\n" +
+	"_days_left*\x9a\x03\n" +
 	"\x13CollectionComponent\x12$\n" +
 	" COLLECTION_COMPONENT_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cCOLLECTION_COMPONENT_BOOT_ID\x10\x01\x12\x1c\n" +
@@ -1506,7 +1511,8 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x1bCOLLECTION_COMPONENT_UPTIME\x10\b\x12\x1e\n" +
 	"\x1aCOLLECTION_COMPONENT_CONNS\x10\t\x12\x1c\n" +
 	"\x18COLLECTION_COMPONENT_NET\x10\n" +
-	"*\xb4\x01\n" +
+	"\x12 \n" +
+	"\x1cCOLLECTION_COMPONENT_DISK_IO\x10\v*\xb4\x01\n" +
 	"\x15AddressDetectionState\x12'\n" +
 	"#ADDRESS_DETECTION_STATE_UNSPECIFIED\x10\x00\x12%\n" +
 	"!ADDRESS_DETECTION_STATE_AVAILABLE\x10\x01\x12'\n" +

@@ -12,6 +12,7 @@ const COLLECTORS: Record<CollectionComponent, string> = {
   [CollectionComponent.UPTIME]: "运行时间",
   [CollectionComponent.CONNS]: "连接数",
   [CollectionComponent.NET]: "网络",
+  [CollectionComponent.DISK_IO]: "磁盘 I/O",
 };
 
 export function AgentDiagnostics({ diagnostics, updatedAt }: { diagnostics?: Diagnostics; updatedAt?: bigint }) {

@@ -63,6 +63,14 @@ it("所有固定采集类别有可读名称", () => {
     CollectionComponent.BOOT_ID, CollectionComponent.CPU, CollectionComponent.MEMORY,
     CollectionComponent.SWAP, CollectionComponent.DISK, CollectionComponent.LOAD,
     CollectionComponent.PROCS, CollectionComponent.UPTIME, CollectionComponent.CONNS, CollectionComponent.NET,
+    CollectionComponent.DISK_IO,
   ] })} />);
-  expect(value("采集失败项")).toHaveTextContent(/^启动标识、CPU、内存、交换空间、磁盘、负载、进程数、运行时间、连接数、网络$/);
+  expect(value("采集失败项")).toHaveTextContent(/^启动标识、CPU、内存、交换空间、磁盘、负载、进程数、运行时间、连接数、网络、磁盘 I\/O$/);
+});
+
+it("磁盘 I/O 计数器失败与磁盘用量失败分开显示", () => {
+  render(<AgentDiagnostics diagnostics={create(AgentDiagnosticsSchema, { failedCollectors: [
+    CollectionComponent.DISK, CollectionComponent.DISK_IO,
+  ] })} />);
+  expect(value("采集失败项")).toHaveTextContent(/^磁盘、磁盘 I\/O$/);
 });

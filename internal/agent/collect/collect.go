@@ -190,7 +190,7 @@ func (c *Collector) Metrics() (*heronv1.Metrics, error) {
 		}
 		c.prevDisk, c.prevDiskT, c.prevDiskEpoch = &sum, now, epoch
 	} else if !errors.Is(err, errNoDiskCounters) {
-		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_DISK, err)
+		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_DISK_IO, err)
 	}
 
 	return m, errors.Join(errs...)

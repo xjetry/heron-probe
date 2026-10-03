@@ -90,6 +90,9 @@ enum CollectionComponent {
   COLLECTION_COMPONENT_UPTIME = 8;
   COLLECTION_COMPONENT_CONNS = 9;
   COLLECTION_COMPONENT_NET = 10;
+  // 磁盘 I/O 计数器（/proc/diskstats）与磁盘用量（statfs）是两种来源，失败各自成类，
+  // 面板才不会把"没有可计的整盘设备"显示成磁盘用量采集失败。
+  COLLECTION_COMPONENT_DISK_IO = 11;
 }
 
 message NetworkInfo {
