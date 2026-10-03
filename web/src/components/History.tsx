@@ -40,6 +40,16 @@ const PANELS: { title: string; selections: SeriesSelection[]; unit?: string }[] 
     { name: "net_rx_bps", value: "max", label: "下行峰值" },
     { name: "net_tx_bps", value: "max", label: "上行峰值" },
   ] },
+  // 磁盘速率与网络同为 bytes/s，轴按该轴的最大刻度统一选倍率（axisValues）；缺桶与 n=0 都是空洞。
+  { title: "磁盘速率", unit: "bytes/s", selections: [
+    { name: "disk_read_bps", value: "mean", label: "读均值" },
+    { name: "disk_write_bps", value: "mean", label: "写均值" },
+  ] },
+  // steal 与 iowait 是 cpu_pct 之外的独立占比，各自一条线；固定 0–100 的百分比轴。
+  { title: "CPU steal / iowait", unit: "percent", selections: [
+    { name: "cpu_steal_pct", value: "mean", label: "steal 均值" },
+    { name: "cpu_iowait_pct", value: "mean", label: "iowait 均值" },
+  ] },
 ];
 
 // 探测图两张：丢包率与 RTT 均值，每个任务一条线。单位不随数据来——探测样本没有 unit 字段，

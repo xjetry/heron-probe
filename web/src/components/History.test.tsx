@@ -29,6 +29,10 @@ const queryMetrics = async (req: QueryMetricsRequest) => {
       { name: "tx_bytes", unit: "bytes", samples: [{ n: 3, sum: 180 }, { n: 1, sum: 0 }, { n: 1, sum: 60 }, { n: 0, sum: 999 }] },
       { name: "net_rx_bps", unit: "bytes/s", samples: [{ n: 3, mean: 4, max: 11 }, { n: 1, mean: 0, max: 0 }, { n: 1, mean: 6 }, { n: 0, mean: 7, max: 99 }] },
       { name: "net_tx_bps", unit: "bytes/s", samples: [{ n: 3, mean: 9, max: 17 }, { n: 1, mean: 0, max: 0 }, { n: 1, mean: 6 }, { n: 0, mean: 7, max: 99 }] },
+      { name: "disk_read_bps", unit: "bytes/s", samples: [{ n: 3, mean: 512, max: 2048 }, { n: 1, mean: 0, max: 0 }, { n: 1, mean: 1536 }, { n: 0, mean: 99, max: 999 }] },
+      { name: "disk_write_bps", unit: "bytes/s", samples: [{ n: 3, mean: 256, max: 1024 }, { n: 1, mean: 0, max: 0 }, { n: 1, mean: 768 }, { n: 0, mean: 99, max: 999 }] },
+      { name: "cpu_steal_pct", unit: "percent", samples: [{ n: 3, mean: 1.5, max: 4 }, { n: 1, mean: 0, max: 0 }, { n: 1, mean: 2.5 }, { n: 0, mean: 9, max: 9 }] },
+      { name: "cpu_iowait_pct", unit: "percent", samples: [{ n: 3, mean: 3.5, max: 8 }, { n: 1, mean: 0, max: 0 }, { n: 1, mean: 4.5 }, { n: 0, mean: 9, max: 9 }] },
     ],
   });
 };
@@ -63,6 +67,12 @@ it.each([
       [2, 0, 1, null, null], [3, 0, 1, null, null],
       networkPeaks ? [11, 0, null, null, null] : [null, null, null, null, null],
       networkPeaks ? [17, 0, null, null, null] : [null, null, null, null, null],
+    ] },
+    { title: "磁盘速率", labels: "读均值,写均值", unit: "bytes/s", points: [
+      [512, 0, 1536, null, null], [256, 0, 768, null, null],
+    ] },
+    { title: "CPU steal / iowait", labels: "steal 均值,iowait 均值", unit: "percent", points: [
+      [1.5, 0, 2.5, null, null], [3.5, 0, 4.5, null, null],
     ] },
   ];
   const panels = expectedPanels.map((expected) => {
