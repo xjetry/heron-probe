@@ -260,7 +260,9 @@ func (c *Collector) noteCgroupKind(kind cgroupKind) {
 	}
 	switch {
 	case kind == cgroupKindV1:
-		c.Log.Warn("cgroup v1: container cpu limits are not readable, cpu_pct follows host-wide /proc/stat")
+		// v1 的 cpu.cfs_quota_us 在宿主 root 的 cpu 控制器上也存在（与 v2 的 cpu.max 不同，
+		// 它没有"只在非 root"的属性），裸机 v1 宿主同样走到这里：这不是故障，也不预设容器。
+		c.Log.Info("cgroup v1: cpu limits are not readable, cpu_pct follows host-wide /proc/stat")
 	case prev == cgroupKindV1 && kind == cgroupKindV2:
 		c.Log.Info("cgroup v2: cpu_pct uses cgroup limits when present")
 	}

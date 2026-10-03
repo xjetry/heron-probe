@@ -638,7 +638,7 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 5. 含 connect 与 protobuf runtime 的 agent 二进制体积与常驻内存。
 6. 500 节点规模下的库文件大小。
 7. connect-go 处理器对 `application/json`、`application/proto` 之外的 `Content-Type`，以及对未标为无副作用的方法的 GET 请求的实际响应（§5.3 的前提）。
-8. 容器 / LXC 与 OrbStack 机器里 cgroup CPU 限额文件的位置与形状。——已于 2026-10-04 在本机实验确认（kernel 7.0.14-orbstack，Docker 容器与 OrbStack 机器均为 cgroup v2 unified：`/proc/1/cgroup` 是 `0::/…`、`/sys/fs/cgroup` 是 cgroup2fs；本机没有 v1 环境，v1 只有夹具覆盖）：限额落在 `cpu.max`（`--cpus=2` → `200000 100000`）与 `cpuset.cpus.effective`（`--cpuset-cpus=0-1` → `0-1`），两者同给各写各的文件，有效核数取较小者；`nproc` 反映 cpuset 不反映 quota；`/proc/stat` 与 `/proc/cpuinfo` 是宿主全机同一份计数（同一时刻 OrbStack 机器与容器里读数一致）；`cpu.stat` 的 `usage_usec` 是本 cgroup 的累计用量，两次采样差分除以（有效核数 × 区间）算得出占比——限 2 核跑满一核 3 秒，`/proc/stat` 口径约 7%，cgroup 口径 50%。
+8. 容器 / LXC 与 OrbStack 机器里 cgroup CPU 限额文件的位置与形状。——已于 2026-10-04 在本机实验确认（kernel 7.0.14-orbstack，Docker 容器与 OrbStack 机器均为 cgroup v2 unified：`/proc/1/cgroup` 是 `0::/…`、`/sys/fs/cgroup` 是 cgroup2fs；本机没有 v1 环境，v1 只有夹具覆盖）：限额落在 `cpu.max`（`--cpus=2` → `200000 100000`）与 `cpuset.cpus.effective`（`--cpuset-cpus=0-1` → `0-1`），两者同给各写各的文件，有效核数取较小者；`nproc` 反映 cpuset 不反映 quota；`/proc/stat` 与 `/proc/cpuinfo` 是宿主全机同一份计数（同一时刻 OrbStack 机器与容器里读数一致）；`cpu.stat` 的 `usage_usec` 是本 cgroup 的累计用量，两次采样差分除以（有效核数 × 区间）算得出占比——限 2 核跑满一核 3 秒，`/proc/stat` 口径约 7%，cgroup 口径 50%。v1 侧未实验（本机没有 v1 环境），按内核源码（`cpu_legacy_files`）判断：`cpu/cpu.cfs_quota_us` 不像 v2 的 `cpu.max` 有"只在非 root cgroup 上提供"的属性，v1 宿主 root 的 cpu 控制器上同样存在（值 -1），所以裸机 v1 宿主也会落入 v1 回退路径、启动时记一行日志。
 
 ## 14. 构建、发布、安装
 

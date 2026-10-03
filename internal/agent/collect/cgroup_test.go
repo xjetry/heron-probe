@@ -155,7 +155,7 @@ func TestCgroupV1FallsBackToProcStatAndLogsOnce(t *testing.T) {
 		t.Fatalf("v1 must fall back to /proc/stat: cpu_pct = %v, want 50", m.CpuPct)
 	}
 	lines := strings.Count(strings.TrimRight(logBuf.String(), "\n"), "\n") + 1
-	if lines != 1 || !strings.Contains(logBuf.String(), "cgroup v1") {
+	if lines != 1 || !strings.Contains(logBuf.String(), "cgroup v1: cpu limits are not readable") {
 		t.Fatalf("v1 must be logged exactly once across two periods, got %d lines: %q", lines, logBuf.String())
 	}
 
