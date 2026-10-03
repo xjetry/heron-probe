@@ -169,6 +169,36 @@ func TestCgroupV1FallsBackToProcStatAndLogsOnce(t *testing.T) {
 	}
 }
 
+// 休眠重置对 cgroup 限额路径同样回到首样本语义：限额路径每周期都清空 prevCPU，
+// prevCgroup 只能靠 ResetRates 清空；不重置时，恢复后的第一次采样拿休眠前的
+// usage_usec 做差分，漏出跨重置边界的读数。与 /proc/stat 路径的重置覆盖互为补充：
+// 去掉 prevCgroup 的重置这条红，去掉 prevCPU 的重置那条（无限额夹具）红。
+func TestResetRatesClearsCgroupUsageBaseline(t *testing.T) {
+	fsys := limitedFS()
+	clk := clock.NewFake(time.Unix(0, 0))
+	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: noDisk}, Clock: clk}
+	usage := uint64(1000000)
+	bump := func() {
+		usage += 2000000 // 有效核数 2 × 2s 区间的一半：cpu_pct 恒为 50
+		fsys["sys/fs/cgroup/cpu.stat"] = &fstest.MapFile{Data: []byte(fmt.Sprintf("usage_usec %d\n", usage))}
+		clk.Advance(2 * time.Second)
+	}
+	c.Metrics()
+	bump()
+	if m, _ := c.Metrics(); m.GetCpuPct() != 50 {
+		t.Fatalf("second sample must carry cpu_pct 50, got %+v", m)
+	}
+	c.ResetRates()
+	bump()
+	if m, _ := c.Metrics(); m.CpuPct != nil {
+		t.Fatalf("cgroup usage baseline must be reset: cpu_pct = %v across the reset boundary", m.GetCpuPct())
+	}
+	bump()
+	if m, _ := c.Metrics(); m.GetCpuPct() != 50 {
+		t.Fatalf("cpu_pct must resume one sample after reset, got %+v", m)
+	}
+}
+
 // 无 cgroup 的环境（连 v1 的标记文件都没有）：走 /proc/stat，不记日志。
 func TestNoCgroupKeepsProcStatPath(t *testing.T) {
 	fsys := fstest.MapFS{
