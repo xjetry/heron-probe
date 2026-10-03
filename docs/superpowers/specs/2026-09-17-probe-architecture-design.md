@@ -41,7 +41,7 @@
 | 项 | 选择 | 理由 |
 |---|---|---|
 | 语言 | hub 与 agent 都用 Go，单 module | 协议类型编译期共享；`CGO_ENABLED=0` 即可交叉编译到冷门架构 |
-| agent 平台 | Linux、macOS | Linux 侧直读 `/proc` 与 `/sys`，采集层零第三方依赖；darwin 侧以 build tag 隔离，其依赖不链入 Linux 二进制 |
+| agent 平台 | Linux、macOS | Linux 侧直读 `/proc` 与 `/sys`（磁盘 I/O 速率来自 `/proc/diskstats`，整盘判定用 `/sys/block`），采集层零第三方依赖；darwin 侧以 build tag 隔离，其依赖不链入 Linux 二进制 |
 | 通信 | ConnectRPC，agent 侧仅 unary | 见 §4.1 |
 | 契约 | protobuf，`proto/` 为单一事实源 | 同时生成 Go 与 TS；字段号使改名安全；`optional` 区分"无读数"与"读数为 0" |
 | 存储 | 单文件 SQLite，纯 Go 驱动 `modernc.org/sqlite`，WAL | 保持无 CGO、单二进制单文件部署 |
@@ -151,6 +151,9 @@ message Metrics {
   optional uint64 net_rx_bps = 14;   optional uint64 net_tx_bps = 15;   // agent 本地采样速率，用于实时与历史峰值
   optional uint32 tcp_conns = 16;  optional uint32 udp_conns = 17;
   optional uint32 procs = 18;      optional uint64 uptime_s = 19;
+  string net_counter_epoch = 20;   // 计入网络合计的网卡集合摘要，与计数同次采样
+  optional uint64 disk_read_bps = 21;  optional uint64 disk_write_bps = 22;  // 整盘设备采样速率，与 net_*_bps 同一差分规则
+  optional double cpu_steal_pct = 23;  optional double cpu_iowait_pct = 24;  // 与 cpu_pct 同一次 /proc/stat 差分
 }
 
 message Facts {
@@ -172,6 +175,10 @@ message ProbeResult {
 ```
 
 `boot_id` 放在 `Metrics` 而不是 `Facts`：流量差分必须在同一条消息里同时拿到计数器与它所属的启动周期。若 `boot_id` 随 `Facts` 走，重启后的首次上报只带新计数器，当新计数器已超过旧基线时（长时间断连且流量大），hub 会把它当成同一启动周期内的增量而错误入账。
+
+`disk_read_bps` / `disk_write_bps` 是 agent 两次本地采样之间整盘设备读 / 写字节速率合计（bytes/s）。数据源 `/proc/diskstats`，其扇区字段内核一律按 512 字节计（与设备报告的逻辑扇区无关，不另查扇区大小）；只计整盘设备：`/sys/block/<name>` 存在（分区没有这一项）、且名字不以 `loop`、`ram`、`zram` 开头，`dm-*` 与 `md*` 也排除——映射 / 聚合设备的 I/O 与组成它的底层盘重复，计了会把同一次读算两遍。差分规则与 `net_rx_bps` / `net_tx_bps` 相同：首样本、任一设备计数回退、设备集合变化时本次不设置（`optional` 缺失）而不是报 0；darwin 上两项不设置。
+
+`cpu_steal_pct` / `cpu_iowait_pct` 与 `cpu_pct` 取自同一次 `/proc/stat` 两次采样差分：`steal_pct = Δsteal / Δtotal × 100`、`iowait_pct = Δiowait / Δtotal × 100`。`cpu_pct` 的口径不变，忙时不含 iowait（`idle` 计为 idle + iowait）。三者互相独立，都不是对方的子集，可以同时显示。`Δtotal = 0` 或任一计数回退时三项一起不设置，不单独保留某一项；darwin 没有 steal 概念、iowait 也不可得，两项不设置。
 
 ### 4.3 对账
 
@@ -343,6 +350,7 @@ CREATE TABLE metric_1m (
 - 最大值一路保留到 1h 级，短时尖峰不会被抹平。
 - 流量列是字节增量的**和**（描述表里的 `Sum` 种类）而不是均值：`rx_bytes_n` 记录该分钟有多少次上报入了账——计数器缺失、以及按 §7 只进总量不进桶的增量都不计数，因此 `rx_bytes_n = 0` 与其他列一样是空洞而不是 0。查询对 `Sum` 列下发 `sum`（`MetricSample.sum`）而不下发均值与最大值，速率 = `sum / 桶长`；上卷仍是求和。
 - `net_rx_bps` / `net_tx_bps` 单独使用 `MeanMax` 聚合，记录 agent 本地采样速率（bytes/s）的 sum、n、max；上卷保留最大采样值，不从请求到达间隔推算。网络图均值仍采用上述流量口径，峰值取速率 max。schema 21 给三个指标层追加列，旧行 n=0，不伪造旧历史峰值；配置层和指标层快照恢复同步迁移。
+- `disk_read_bps` / `disk_write_bps` / `cpu_steal_pct` / `cpu_iowait_pct` 同为 `MeanMax`：磁盘速率记整盘设备的采样速率（bytes/s），两个 CPU 占比记 `/proc/stat` 差分占比（%）。schema 28 给三个指标层各追加这四个指标的 sum、n、max（共 12 列，`NOT NULL DEFAULT 0`），旧行 n=0 即空洞，不把缺失伪装成已测的零速率或零占用；配置层无变化，指标层快照恢复同步迁移。
 
 主键顺序即唯一查询路径（某节点 + 时间窗），`WITHOUT ROWID` 使主键索引就是表本身。
 
