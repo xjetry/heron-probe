@@ -39,10 +39,11 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 			if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
 				t.Fatal(err)
 			}
-			if freshVersion != 26 {
-				t.Fatalf("fixture user_version = %d, want 26; rebuild the v8 fixture for the new version", freshVersion)
+			if freshVersion != 27 {
+				t.Fatalf("fixture user_version = %d, want 27; rebuild the v8 fixture for the new version", freshVersion)
 			}
 			removeV26Config(t, raw)
+			removeV27Config(t, raw)
 			removeV25Config(t, raw)
 			restoreExec(t, raw, `DROP TABLE register_window;
 				CREATE TABLE register_window (id INTEGER PRIMARY KEY CHECK(id=1),key_hash BLOB NOT NULL,expires_at INTEGER NOT NULL,remaining INTEGER NOT NULL)`)

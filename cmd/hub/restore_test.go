@@ -132,7 +132,8 @@ func restoreSnapshots(t *testing.T) (config, metrics string) {
 		INSERT INTO setting VALUES ('site.title','snapshot');
 		INSERT INTO sqlite_sequence VALUES ('retired_table',17);
 		INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at) VALUES (7,1,'localhost',60,1000,0);
-		DELETE FROM probe_task;`)
+		DELETE FROM probe_task;
+		INSERT INTO silence (id,name,kind,created_at) VALUES (1,'quiet','once',0);`)
 	for _, id := range []int{2, 3} {
 		restoreExec(t, db, fmt.Sprintf(`INSERT INTO node_facts (node_id,facts_hash,hostname,os,kernel,arch,virtualization,cpu_model,cpu_cores,agent_version,icmp_available,updated_at) VALUES (%[1]d,0,'','','','','','',0,'',0,0);
 			INSERT INTO api_token_node VALUES (1,%[1]d);
@@ -140,6 +141,7 @@ func restoreSnapshots(t *testing.T) (config, metrics string) {
 			INSERT INTO traffic (node_id,boot_id,last_rx,last_tx,total_rx,total_tx,period_rx,period_tx,period_start,updated_at) VALUES (%[1]d,'',0,0,0,0,0,0,0,0);
 			INSERT INTO probe_task_node VALUES (1,%[1]d);
 			INSERT INTO alert_rule_node VALUES (1,%[1]d);
+			INSERT INTO silence_node VALUES (1,%[1]d);
 			INSERT INTO alert_state (rule_id,node_id,state,since_at) VALUES (1,%[1]d,'firing',0);`, id))
 	}
 	config, metrics = filepath.Join(dir, "config.db"), filepath.Join(dir, "metrics.db")
@@ -278,6 +280,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
 			removeV26Config(t, cfg)
+			removeV27Config(t, cfg)
 			removeV25Config(t, cfg)
 			restoreExec(t, cfg, "ALTER TABLE node_facts DROP COLUMN network")
 			removeV22ThemeConfig(t, cfg)
@@ -320,6 +323,16 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 func removeV26Config(t *testing.T, config *sql.DB) {
 	t.Helper()
 	restoreExec(t, config, "ALTER TABLE node_facts DROP COLUMN diagnostics; ALTER TABLE traffic DROP COLUMN net_counter_epoch")
+}
+
+// 降级夹具必须同时撤回真实列与版本号，不能让当前列伪装成旧 schema：快照用当前版本建立再回填
+// 一个更早的版本号，若不先撤列，恢复时的迁移会撞上 duplicate column。
+func removeV27Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, `ALTER TABLE node DROP COLUMN maintenance;
+		ALTER TABLE alert_event DROP COLUMN silenced;
+		ALTER TABLE alert_state DROP COLUMN fired_silenced;
+		DROP TABLE silence_node; DROP TABLE silence_tag; DROP TABLE silence`)
 }
 
 // 配置快照只包含持久授权与回执，不包含注册窗口和更新队列。
