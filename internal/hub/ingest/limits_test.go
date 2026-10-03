@@ -170,7 +170,7 @@ func TestReportResultLimits(t *testing.T) {
 // 逼新增字段的人先给出上界，而不是让它默默落在 agent 的读取上限之外。
 func maxReportResponse(t *testing.T) *heronv1.ReportResponse {
 	t.Helper()
-	strLen := map[protoreflect.FullName]int{"heron.v1.ProbeTask.target": probelimit.MaxTargetLen, "heron.v1.UpdateTask.id": 64, "heron.v1.UpdateTask.version": 34, "heron.v1.UpdateTask.state": 11, "heron.v1.UpdateTask.error": 2048}
+	strLen := map[protoreflect.FullName]int{"heron.v1.ProbeTask.target": probelimit.MaxHTTPTargetLen, "heron.v1.ProbeTask.dns_server": probelimit.MaxDNSServerLen, "heron.v1.UpdateTask.id": 64, "heron.v1.UpdateTask.version": 34, "heron.v1.UpdateTask.state": 11, "heron.v1.UpdateTask.error": 2048}
 	count := map[protoreflect.FullName]int{"heron.v1.ProbeTasks.tasks": probelimit.MaxTasksPerNode}
 	var fill func(msg protoreflect.Message)
 	scalar := func(msg protoreflect.Message, fd protoreflect.FieldDescriptor) protoreflect.Value {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +23,17 @@ const (
 	MinTimeoutMs    = 100
 	MaxTimeoutMs    = 5000
 	MaxTasksPerNode = 64
-	MaxTargetLen    = 253
+	// MaxTargetLen 是 ICMP/TCP/DNS 的 target 上限（主机名与 host:port）；HTTP 的 target 是绝对 URL，
+	// 走 MaxHTTPTargetLen。上限按种类分，CheckTask 是 hub 与 agent 两侧共同的裁决点。
+	MaxTargetLen = 253
+	// MaxHTTPTargetLen 取 512 而不是更大：hub 下发的任何合法清单都必须装进 agent 的响应体上限
+	// agentwire.MaxResponseBytes（64 KiB，§5.9）——每节点至多 MaxTasksPerNode 个任务、每个 target
+	// 至多这么长，加上其余字段的满载值必须小于它，由 internal/hub/ingest 的满载不变式测试机械地
+	// 守着；该测试按登记表给出放宽任一上限时还剩多少余量。
+	MaxHTTPTargetLen = 512
+	// MaxDNSServerLen 是 dns_server 的上限：最长规范形式是 39 字节 IPv6 + 方括号 2 + 冒号 1 + 端口 5 位。
+	// 上报响应的上界登记表引用这个常量，两处写同一个数迟早漂移。
+	MaxDNSServerLen = 47
 	// 一次上报须排空 MaxTasksPerNode/MinIntervalS 条每秒的满速产出，上报间隔为 TTL/3。
 	// 条数和文本共同约束体积；超出 hub 读上限会被 ResourceExhausted 拒绝并回队，形成永久失败。
 	MaxResultsPerReport = 1024
@@ -45,15 +56,18 @@ func CheckTask(t *heronv1.ProbeTask) error {
 	if t.GetTimeoutMs() < MinTimeoutMs || t.GetTimeoutMs() > MaxTimeoutMs {
 		return fmt.Errorf("timeout_ms must be between %d and %d; got %d", MinTimeoutMs, MaxTimeoutMs, t.GetTimeoutMs())
 	}
-	if len(t.GetTarget()) > MaxTargetLen {
-		return fmt.Errorf("target must be at most %d bytes; got %d", MaxTargetLen, len(t.GetTarget()))
-	}
 	switch t.GetKind() {
 	case heronv1.ProbeKind_PROBE_KIND_ICMP:
+		if err := checkTargetLen(t.GetTarget(), MaxTargetLen); err != nil {
+			return err
+		}
 		if !validHost(t.GetTarget()) {
 			return fmt.Errorf("target for an ICMP task must be an IP address or a host name; got %q", t.GetTarget())
 		}
 	case heronv1.ProbeKind_PROBE_KIND_TCP:
+		if err := checkTargetLen(t.GetTarget(), MaxTargetLen); err != nil {
+			return err
+		}
 		host, port, err := net.SplitHostPort(t.GetTarget())
 		if err != nil {
 			return fmt.Errorf("target for a TCP task must be host:port; got %q", t.GetTarget())
@@ -68,8 +82,91 @@ func CheckTask(t *heronv1.ProbeTask) error {
 		if canonical := net.JoinHostPort(host, strconv.Itoa(p)); canonical != t.GetTarget() {
 			return fmt.Errorf("target for a TCP task must use canonical host:port form; got %q; want %q", t.GetTarget(), canonical)
 		}
+	case heronv1.ProbeKind_PROBE_KIND_HTTP:
+		if err := checkTargetLen(t.GetTarget(), MaxHTTPTargetLen); err != nil {
+			return err
+		}
+		if err := checkHTTPURL(t.GetTarget()); err != nil {
+			return err
+		}
+	case heronv1.ProbeKind_PROBE_KIND_DNS:
+		if err := checkTargetLen(t.GetTarget(), MaxTargetLen); err != nil {
+			return err
+		}
+		if !validHost(t.GetTarget()) {
+			return fmt.Errorf("target for a DNS task must be a DNS name; got %q", t.GetTarget())
+		}
+		// IP 字面量没有解析可言：任务配成 DNS 名才是探测解析路径，探测 IP 字面量量的是本机组包。
+		if _, err := netip.ParseAddr(t.GetTarget()); err == nil {
+			return fmt.Errorf("target for a DNS task must be a DNS name, not an IP address; got %q", t.GetTarget())
+		}
+		return checkDNSServer(t.GetDnsServer())
 	default:
-		return fmt.Errorf("kind must be PROBE_KIND_ICMP or PROBE_KIND_TCP; got %s", t.GetKind())
+		return fmt.Errorf("kind must be PROBE_KIND_ICMP, PROBE_KIND_TCP, PROBE_KIND_HTTP or PROBE_KIND_DNS; got %s", t.GetKind())
+	}
+	// dns_server 只对 DNS 任务有意义：其他种类携带即拒绝，静默忽略会让调用方以为它生效了。
+	if t.GetDnsServer() != "" {
+		return fmt.Errorf("dns_server only applies to a DNS task; got %q", t.GetDnsServer())
+	}
+	return nil
+}
+
+func checkTargetLen(target string, maxLen int) error {
+	if len(target) > maxLen {
+		return fmt.Errorf("target must be at most %d bytes; got %d", maxLen, len(target))
+	}
+	return nil
+}
+
+// HTTP 的 target 是绝对 http(s) URL：有主机、不含用户信息、不含片段；端口若给出在 1–65535。
+// 不跟随重定向由执行侧保证，这里只管形状。
+func checkHTTPURL(target string) error {
+	u, err := url.Parse(target)
+	if err != nil || u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("target for an HTTP task must be an absolute http or https URL; got %q", target)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("target for an HTTP task must have a host; got %q", target)
+	}
+	if u.User != nil {
+		return fmt.Errorf("target for an HTTP task must not contain user info; got %q", target)
+	}
+	if u.Fragment != "" {
+		return fmt.Errorf("target for an HTTP task must not contain a fragment; got %q", target)
+	}
+	if port := u.Port(); port != "" {
+		p, err := strconv.Atoi(port)
+		if err != nil || p < 1 || p > 65535 {
+			return fmt.Errorf("target port must be between 1 and 65535; got %q", port)
+		}
+	}
+	return nil
+}
+
+// dns_server 是解析器的 ip:port 规范形式，只允许 IP 字面量（协议注释给了原因）；非规范写法
+// 看不出作者要的值（前导零、未压缩的 IPv6），按配置错误拒绝并给出规范形式。
+func checkDNSServer(s string) error {
+	if len(s) > MaxDNSServerLen {
+		return fmt.Errorf("dns_server must be at most %d bytes; got %d", MaxDNSServerLen, len(s))
+	}
+	host, port, err := net.SplitHostPort(s)
+	if err != nil {
+		return fmt.Errorf("dns_server must be ip:port; got %q", s)
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return fmt.Errorf("dns_server must use an IP literal, not a name; got %q", host)
+	}
+	// zone 是单机接口标识，不能随任务下发到多个节点。
+	if addr.Zone() != "" {
+		return fmt.Errorf("dns_server must not have a zone; got %q", host)
+	}
+	p, err := strconv.Atoi(port)
+	if err != nil || p < 1 || p > 65535 {
+		return fmt.Errorf("dns_server port must be between 1 and 65535; got %q", port)
+	}
+	if canonical := net.JoinHostPort(addr.String(), strconv.Itoa(p)); canonical != s {
+		return fmt.Errorf("dns_server must use canonical ip:port form; got %q; want %q", s, canonical)
 	}
 	return nil
 }
