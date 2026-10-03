@@ -81,6 +81,14 @@ func TestResourceNewMetricWindows(t *testing.T) {
 				_, err := f.st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: f.ids[0], TS: base + offset*60, Bucket: b}}})
 				must(t, err)
 			}
+			// 该分钟有行但目标列没有样本（N=0）：与完全没有行的分钟一样是缺读数，不能令 firing 恢复。
+			writeOther := func(offset int64) {
+				b := metric.NewBucket()
+				i := metric.Index("mem_used")
+				b.Sum[i], b.N[i] = 1024, 1
+				_, err := f.st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: f.ids[0], TS: base + offset*60, Bucket: b}}})
+				must(t, err)
+			}
 			eval := func(offset int64, want store.AlertState) {
 				must(t, f.e.EvaluateResources(t.Context(), base+offset*60))
 				wantState(t, f.e, r.ID, f.ids[0], want)
@@ -91,11 +99,13 @@ func TestResourceNewMetricWindows(t *testing.T) {
 			eval(1, store.StateFiring)
 			write(2, tc.mid)
 			eval(2, store.StateFiring)
+			writeOther(3)
 			eval(3, store.StateFiring)
-			write(4, tc.low)
 			eval(4, store.StateFiring)
-			write(5, tc.recovery)
-			eval(5, store.StateOK)
+			write(5, tc.low)
+			eval(5, store.StateFiring)
+			write(6, tc.recovery)
+			eval(6, store.StateOK)
 			events := f.events(t)
 			if len(events) != 2 || events[0].Transition != store.TransitionRecovered || events[1].Transition != store.TransitionFiring {
 				t.Fatalf("events=%+v", events)
