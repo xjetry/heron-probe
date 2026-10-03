@@ -3,10 +3,10 @@ import { createConnectQueryKey } from "@connectrpc/connect-query";
 import { useIsMutating, useQueryClient } from "@tanstack/react-query";
 import { AdminService, GetSettingsResponseSchema, type Settings } from "../gen/heron/v1/admin_pb";
 
-// SAVE_SETTINGS 是全部 UpdateSettings 表单共用的 mutationKey，做保存互斥。消费者：外观页的外观表单与国家 / 地区查询表单
-// （pages/Appearance.tsx）、备份表单（components/BackupSettingsForm.tsx）、通知页的登录通知表单（pages/Channels.tsx）。
-// 四者的 useMutation 都带这个键，并用 useSettingsSaving 在任一个在途时禁用自己的编辑与提交。新增的设置表单同样要带上
-// 它，否则互斥对它不成立。
+// SAVE_SETTINGS 是全部 UpdateSettings 表单共用的 mutationKey，做保存互斥。消费者：外观页的外观表单、国家 / 地区查询表单
+// 与心跳表单（pages/Appearance.tsx、pages/HeartbeatSettings.tsx）、备份表单（components/BackupSettingsForm.tsx）、通知页的
+// 登录通知表单（pages/Channels.tsx）。五者的 useMutation 都带这个键，并用 useSettingsSaving 在任一个在途时禁用自己的编辑
+// 与提交。新增的设置表单同样要带上它，否则互斥对它不成立。
 //
 // 为什么互斥：每个表单保存成功后都把 hub 的回显整份写进 getSettings 的缓存（useAdoptSavedSettings）。回显是那次提交
 // 之后的库，只有它是最后一次提交时，写进缓存的才是库的现状。两个保存同时在途时，runWriter 按先后提交，两个响应却各走

@@ -6,6 +6,7 @@ import { SAVE_SETTINGS, useAdoptSavedSettings, useSettingsSaving } from "../api/
 import { BackupSettingsForm } from "../components/BackupSettingsForm";
 import { BackupStatus } from "../components/BackupStatus";
 import { AdminService, GeoBackend, type Settings } from "../gen/heron/v1/admin_pb";
+import { HeartbeatSettingsForm, HeartbeatStatus } from "./HeartbeatSettings";
 import { LOGO_TYPES, MAX_TITLE_CHARS, THEMES, sizeProblems, type Theme } from "../lib/appearance";
 import { ANSWERS_PER_NODE } from "../lib/country";
 import { BUILT_IN_ACCENT } from "../lib/palette";
@@ -24,8 +25,8 @@ const toDraft = (s: Settings | undefined): Draft => ({
 // 这一组总算给出）。总闸是另一组，缺席表示不变，草稿只在用户动过开关后才带它：草稿是开始编辑（或上次保存）时的快照，
 // 之后总闸可能被别处改过（另一个面板、脚本），把快照里的总闸随标题一起提交，会把别人刚关掉的公开页重新打开。开关没动
 // 过时显示查询缓存里 hub 的当前值，重新拉取即跟上。国家查询的两项、备份设置与登录通知不在这个表单里、不提交：hub 对
-// 它们缺席即不改（见 GeoLookup、BackupSettingsForm、Channels 页的登录通知表单）。外观、国家查询、备份与登录通知四个
-// 设置表单的保存互斥（SAVE_SETTINGS，见 api/saveSettings.ts），saving 覆盖任一个在途。
+// 它们缺席即不改（见 GeoLookup、BackupSettingsForm、HeartbeatSettingsForm、Channels 页的登录通知表单）。外观、国家查询、
+// 备份、心跳外推与登录通知五个设置表单的保存互斥（SAVE_SETTINGS，见 api/saveSettings.ts），saving 覆盖任一个在途。
 //
 // 保存成功时 onSuccess 用 hub 的回显替换草稿；它不判断"是不是最新一次"，靠的是"有未结请求"与"草稿还能被改"互斥。
 // 草稿的改动来自两处：用户改字段（同步），与读 logo 文件的回调（异步，读完才改）。互斥由两处承载：
@@ -144,6 +145,8 @@ export function Appearance() {
       <GeoLookup current={gate.data.settings} />
       <BackupSettingsForm current={gate.data.settings?.backup} />
       <BackupStatus />
+      <HeartbeatSettingsForm current={gate.data.settings?.heartbeat} />
+      <HeartbeatStatus />
     </section>
   );
 }
