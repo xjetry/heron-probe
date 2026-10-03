@@ -95,6 +95,9 @@ type StateRow struct {
 	// 它不是当前状态的属性，而是一段历史：状态再变（恢复后再次离线写成 pending）时由写入方沿用，只有下一次恢复
 	// 才改写它。抖动抑制按它判断这次离线是否落在恢复后的窗口里；状态行被删除（规则不再适用）时一起消失。
 	RecoveredAt time.Time
+	// FiredSilenced 表示当前 firing 进入时处于维护静默覆盖内、没有投递（§9.5）：恢复是否投递只看它，
+	// 与恢复时刻是否静默无关。随触发转换写入（见 RecordTransition），恢复转换把它写回 0。
+	FiredSilenced bool
 }
 
 type Transition string
@@ -147,7 +150,10 @@ type AlertEvent struct {
 	At             time.Time
 	Summary        string
 	Value          float64
-	Deliveries     []Delivery
+	// Silenced 表示事件生成时处于维护静默覆盖内：事件照常落库但不产生任何投递行（§9.5）。
+	// 恢复事件记配对 firing 的值，与恢复时刻是否静默无关。
+	Silenced   bool
+	Deliveries []Delivery
 }
 
 type Delivery struct {
@@ -633,7 +639,7 @@ func (s *Store) DeleteNotifyChannel(ctx context.Context, id int64) error {
 }
 
 func (s *Store) ListAlertStates(ctx context.Context) ([]StateRow, error) {
-	rows, err := s.r.QueryContext(ctx, "SELECT rule_id, node_id, state, since_at, fired_expires_on, recovered_at FROM alert_state ORDER BY rule_id, node_id")
+	rows, err := s.r.QueryContext(ctx, "SELECT rule_id, node_id, state, since_at, fired_expires_on, recovered_at, fired_silenced FROM alert_state ORDER BY rule_id, node_id")
 	if err != nil {
 		return nil, err
 	}
@@ -643,7 +649,7 @@ func (s *Store) ListAlertStates(ctx context.Context) ([]StateRow, error) {
 		var r StateRow
 		var since int64
 		var recovered sql.NullInt64
-		if err := rows.Scan(&r.RuleID, &r.NodeID, &r.State, &since, &r.FiredExpiresOn, &recovered); err != nil {
+		if err := rows.Scan(&r.RuleID, &r.NodeID, &r.State, &since, &r.FiredExpiresOn, &recovered, &r.FiredSilenced); err != nil {
 			return nil, err
 		}
 		r.SinceAt = time.Unix(since, 0).UTC()
@@ -656,8 +662,8 @@ func (s *Store) ListAlertStates(ctx context.Context) ([]StateRow, error) {
 }
 
 // 两个状态写入口共用事务内准入，单写协程保证删除之后排队的写不能重建孤儿状态。整行替换：每次写都给出
-// fired_expires_on 与 recovered_at，上一个状态记的到期日不会留到下一个状态；recovered_at 要沿用时由调用方显式带上。
-func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since time.Time, firedExpiresOn string, recoveredAt time.Time) error {
+// fired_expires_on、recovered_at 与 fired_silenced，上一个状态记的值不会留到下一个状态；要沿用时由调用方显式带上。
+func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since time.Time, firedExpiresOn string, recoveredAt time.Time, firedSilenced bool) error {
 	if err := requireAlertReference(tx, "alert_rule", ObjectAlertRule, ruleID); err != nil {
 		return err
 	}
@@ -672,15 +678,15 @@ func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since tim
 	if !recoveredAt.IsZero() {
 		recovered = recoveredAt.Unix()
 	}
-	_, err = tx.Exec("INSERT OR REPLACE INTO alert_state (rule_id, node_id, state, since_at, fired_expires_on, recovered_at) VALUES (?, ?, ?, ?, ?, ?)",
-		ruleID, nodeID, state, since.Unix(), firedExpiresOn, recovered)
+	_, err = tx.Exec("INSERT OR REPLACE INTO alert_state (rule_id, node_id, state, since_at, fired_expires_on, recovered_at, fired_silenced) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		ruleID, nodeID, state, since.Unix(), firedExpiresOn, recovered, firedSilenced)
 	return err
 }
 
 // SetAlertState 写不带事件的状态变化。alert 的状态机只经触发转换进入 firing（那一步走 RecordTransition），所以这里
-// 写的状态没有触发时的到期日。recoveredAt 含义见 StateRow.RecoveredAt，零值写 NULL。
+// 写的状态没有触发时的到期日，也不在 firing 内：fired_silenced 恒写 0。recoveredAt 含义见 StateRow.RecoveredAt，零值写 NULL。
 func (s *Store) SetAlertState(ctx context.Context, ruleID, nodeID int64, state AlertState, since, recoveredAt time.Time) error {
-	return s.write(ctx, func(tx *sql.Tx) error { return setAlertState(tx, ruleID, nodeID, state, since, "", recoveredAt) })
+	return s.write(ctx, func(tx *sql.Tx) error { return setAlertState(tx, ruleID, nodeID, state, since, "", recoveredAt, false) })
 }
 
 // 候选集撤销不是恢复观测，删除状态不产生事件；重复清理同一对规则与节点仍然成功。
@@ -692,7 +698,8 @@ func (s *Store) DeleteAlertState(ctx context.Context, ruleID, nodeID int64) erro
 }
 
 // 状态、事件与续投队列同事务提交，崩溃不能留下已转换但没有通知记录的状态。firedExpiresOn 与 recoveredAt 随状态写入，
-// 含义见 StateRow.FiredExpiresOn 与 StateRow.RecoveredAt。
+// 含义见 StateRow.FiredExpiresOn 与 StateRow.RecoveredAt。fired_silenced 由转换方向推出：进入 firing 记这次触发是否被
+// 静默（ev.Silenced），恢复转换写回 0——配对的 firing 已随这次恢复闭环，下一轮的恢复判定从新的触发重新计。
 func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, state AlertState, firedExpiresOn string, recoveredAt time.Time, ev AlertEvent, targets []DeliveryTarget) (AlertEvent, error) {
 	if _, system := SystemEventKind(ev.Transition); system {
 		return AlertEvent{}, fmt.Errorf("rule %d, node %d: transition %q belongs to a system event, not to a rule and node", ruleID, nodeID, ev.Transition)
@@ -700,7 +707,7 @@ func (s *Store) RecordTransition(ctx context.Context, ruleID, nodeID int64, stat
 	ev.ID, ev.RuleID, ev.NodeID, ev.Deliveries = 0, ruleID, nodeID, nil
 	ev.At = time.Unix(ev.At.Unix(), 0).UTC()
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		if err := setAlertState(tx, ruleID, nodeID, state, ev.At, firedExpiresOn, recoveredAt); err != nil {
+		if err := setAlertState(tx, ruleID, nodeID, state, ev.At, firedExpiresOn, recoveredAt, state == StateFiring && ev.Silenced); err != nil {
 			return err
 		}
 		return recordAlertEvent(tx, &ev, targets)
@@ -769,7 +776,7 @@ func systemTargets(channels []int64) []DeliveryTarget {
 // 尚未收齐的批次）。新加入的行不会被记进那次发送，是因为 BeginBatchAttempt 只在批次当前的行集合与调用方拼消息时
 // 读到的相同时才开始尝试，否则拒绝、由调用方重读。
 func recordAlertEvent(tx *sql.Tx, ev *AlertEvent, targets []DeliveryTarget) error {
-	if err := tx.QueryRow("INSERT INTO alert_event (rule_id, node_id, transition, at, summary, value) VALUES (?, ?, ?, ?, ?, ?) RETURNING id", ev.RuleID, ev.NodeID, ev.Transition, ev.At.Unix(), ev.Summary, ev.Value).Scan(&ev.ID); err != nil {
+	if err := tx.QueryRow("INSERT INTO alert_event (rule_id, node_id, transition, at, summary, value, silenced) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id", ev.RuleID, ev.NodeID, ev.Transition, ev.At.Unix(), ev.Summary, ev.Value, ev.Silenced).Scan(&ev.ID); err != nil {
 		return err
 	}
 	for _, target := range targets {
@@ -1073,7 +1080,7 @@ func (s *Store) GetDeliveryBatch(ctx context.Context, batch int64) (DeliveryBatc
 	for _, d := range out.Deliveries {
 		var ev AlertEvent
 		var at int64
-		err := tx.QueryRowContext(ctx, selectAlertEvents+"WHERE id = ?", d.EventID).Scan(&ev.ID, &ev.RuleID, &ev.NodeID, &ev.Transition, &at, &ev.Summary, &ev.Value)
+		err := tx.QueryRowContext(ctx, selectAlertEvents+"WHERE id = ?", d.EventID).Scan(&ev.ID, &ev.RuleID, &ev.NodeID, &ev.Transition, &at, &ev.Summary, &ev.Value, &ev.Silenced)
 		if errors.Is(err, sql.ErrNoRows) {
 			// 事件与投递由 PruneAlertEvents 在同一事务删除，同一快照里有行就有事件。
 			return out, fmt.Errorf("alert delivery %d refers to missing alert event %d", d.ID, d.EventID)
@@ -1107,7 +1114,7 @@ func (s *Store) readAlertEvents(ctx context.Context, predicate string, args ...a
 	for rows.Next() {
 		var ev AlertEvent
 		var at int64
-		if err := rows.Scan(&ev.ID, &ev.RuleID, &ev.NodeID, &ev.Transition, &at, &ev.Summary, &ev.Value); err != nil {
+		if err := rows.Scan(&ev.ID, &ev.RuleID, &ev.NodeID, &ev.Transition, &at, &ev.Summary, &ev.Value, &ev.Silenced); err != nil {
 			return nil, err
 		}
 		ev.At = time.Unix(at, 0).UTC()
@@ -1153,7 +1160,7 @@ func (s *Store) ListAlertEvents(ctx context.Context, nodeID int64, beforeID int6
 	return s.readAlertEvents(ctx, where, args...)
 }
 
-const selectAlertEvents = "SELECT id, rule_id, node_id, transition, at, summary, value FROM alert_event "
+const selectAlertEvents = "SELECT id, rule_id, node_id, transition, at, summary, value, silenced FROM alert_event "
 
 // 只拼接实际过滤条件，node_id 的等值条件才能走 alert_event_by_node 的前缀。
 func alertEventWindow(nodeID, beforeID int64, limit int) (string, []any) {
@@ -1178,6 +1185,12 @@ const countExpiredPendingDeliveries = "SELECT COUNT(*) FROM alert_delivery WHERE
 const deleteExpiredDeliveries = "DELETE FROM alert_delivery WHERE event_id IN (SELECT id FROM alert_event WHERE at < ?)"
 const deleteExpiredAlertEvents = "DELETE FROM alert_event WHERE at < ?"
 
+// 一次性静默到期后保留供审计，随告警事件的保留期一起清理（§9.5）：until_at 早于同一截止点即删，关联行同事务删除。
+// 每日重复的静默没有到期，不在清理之列。
+const deleteExpiredSilenceNodes = "DELETE FROM silence_node WHERE silence_id IN (SELECT id FROM silence WHERE kind = ? AND until_at < ?)"
+const deleteExpiredSilenceTags = "DELETE FROM silence_tag WHERE silence_id IN (SELECT id FROM silence WHERE kind = ? AND until_at < ?)"
+const deleteExpiredSilences = "DELETE FROM silence WHERE kind = ? AND until_at < ?"
+
 // 事件与投递共享事件时间的保留期；同一写事务内先删投递，不能留下孤行。
 // 未完成投递也随过期事件删除，提交后再告警计数，避免把回滚误报成投递丢失。
 func (s *Store) PruneAlertEvents(ctx context.Context, before time.Time) (int64, error) {
@@ -1192,6 +1205,11 @@ func (s *Store) PruneAlertEvents(ctx context.Context, before time.Time) (int64, 
 		result, err := tx.Exec(deleteExpiredAlertEvents, before.Unix())
 		if err != nil {
 			return err
+		}
+		for _, query := range []string{deleteExpiredSilenceNodes, deleteExpiredSilenceTags, deleteExpiredSilences} {
+			if _, err := tx.Exec(query, SilenceOnce, before.Unix()); err != nil {
+				return err
+			}
 		}
 		deleted, err = result.RowsAffected()
 		return err

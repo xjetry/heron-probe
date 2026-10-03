@@ -52,6 +52,7 @@ type NodeEdit struct {
 	OfflineGraceS   int // 0 写 NULL，读侧取 TTL
 	Billing         Billing
 	CountryPin      string // 手动指定的国家，空串表示不指定（回落到查得值）
+	Maintenance     bool   // 维护状态（§9.5）
 	// Tags 整体替换节点的标签集合，空即清空。调用方已按 §10 校验每个名字、按 TagFold 去重并限定个数；
 	// 重复的名字会撞 node_tag 的主键而让整次更新失败。
 	Tags []string
@@ -76,6 +77,8 @@ type Node struct {
 	Country    string
 	CountryIP  string
 	CountryPin string
+	// Maintenance 为真时该节点按维护静默语义（§9.5）暂停告警投递；在线判定不变。
+	Maintenance bool
 	// Tags 是节点的标签名（先建的写法），按 TagFold 排序；没有标签时为 nil。
 	Tags []string
 }
@@ -112,7 +115,7 @@ func (n Node) DisplayCountry() (string, CountrySource) {
 }
 
 const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.created_at, n.last_seen_at, n.traffic_reset_day, n.offline_grace_s,
-	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source, n.country, n.country_ip, n.country_pin,
+	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source, n.country, n.country_ip, n.country_pin, n.maintenance,
 	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at, f.network, f.diagnostics
 	FROM node n LEFT JOIN node_facts f ON f.node_id = n.id`
 
@@ -130,7 +133,7 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 		var cores, icmp, factsUpdated sql.NullInt64
 		b := &n.Billing
 		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &created, &seen, &n.TrafficResetDay, &grace,
-			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource, &n.Country, &n.CountryIP, &n.CountryPin,
+			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource, &n.Country, &n.CountryIP, &n.CountryPin, &n.Maintenance,
 			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated, &network, &diagnostics); err != nil {
 			return nil, err
 		}
@@ -265,6 +268,8 @@ type NodeUpdateResult struct {
 	Tasks          map[int64][]uint64
 	Version        uint64
 	Rules          []AlertRule
+	// Silences 是同一事务里重算后的全部静默（selector_tags 覆盖随标签变化展开），调用方据它发布内存快照。
+	Silences []Silence
 }
 
 // UpdateNodeTasks 在标签替换的同一事务内裁决任务上限、推进版本并读取新覆盖；注册表只发布这份已提交结果。
@@ -281,8 +286,8 @@ func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (resu
 		}
 		b := e.Billing
 		if _, err := tx.Exec(`UPDATE node SET name = ?, public = ?, note = ?, traffic_reset_day = ?, offline_grace_s = NULLIF(?, 0),
-			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, auto_renew = ?, country_pin = ? WHERE id = ?`,
-			e.Name, e.Public, e.Note, e.TrafficResetDay, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, e.CountryPin, id); err != nil {
+			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, auto_renew = ?, country_pin = ?, maintenance = ? WHERE id = ?`,
+			e.Name, e.Public, e.Note, e.TrafficResetDay, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, e.CountryPin, e.Maintenance, id); err != nil {
 			return err
 		}
 		if err := setNodeTags(tx, id, e.Tags); err != nil {
@@ -323,6 +328,11 @@ func (s *Store) nodeScopesAfterUpdate(ctx context.Context, tx *sql.Tx, ids []int
 	}
 	result.Version = uint64(version)
 	result.Rules, err = listAlertRulesTx(ctx, tx)
+	if err != nil {
+		return result, err
+	}
+	// 静默的 selector_tags 覆盖与探测、告警作用域在同一事务里重算：标签变化对三种作用域同时生效。
+	result.Silences, err = listSilencesTx(ctx, tx)
 	return result, err
 }
 

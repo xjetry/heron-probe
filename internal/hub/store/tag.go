@@ -210,7 +210,8 @@ func (s *Store) DeleteTag(ctx context.Context, name string) error {
 			return err
 		}
 		rows, err := tx.Query(`SELECT 'probe task', p.id, p.target FROM probe_task_tag st JOIN probe_task p ON p.id = st.task_id WHERE st.tag_id = ?
-UNION ALL SELECT 'alert rule', r.id, r.name FROM alert_rule_tag st JOIN alert_rule r ON r.id = st.rule_id WHERE st.tag_id = ?`, id, id)
+UNION ALL SELECT 'alert rule', r.id, r.name FROM alert_rule_tag st JOIN alert_rule r ON r.id = st.rule_id WHERE st.tag_id = ?
+UNION ALL SELECT 'silence', s.id, s.name FROM silence_tag st JOIN silence s ON s.id = st.silence_id WHERE st.tag_id = ?`, id, id, id)
 		if err != nil {
 			return err
 		}

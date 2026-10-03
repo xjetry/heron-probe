@@ -24,6 +24,7 @@ const (
 	ObjectNotifyChannel ObjectKind = "notify channel"
 	ObjectAlertEvent    ObjectKind = "alert event"
 	ObjectAlertDelivery ObjectKind = "alert delivery"
+	ObjectSilence       ObjectKind = "silence"
 )
 
 type RuleReference struct {
