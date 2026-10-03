@@ -44,6 +44,26 @@ func TestQueueOrdersByCompletionTime(t *testing.T) {
 	}
 }
 
+func TestQueueClearDiscardsEverythingAndCounts(t *testing.T) {
+	q := NewQueue(3)
+	for i := uint64(1); i <= 3; i++ {
+		q.Push(Result{TaskID: i, At: time.Duration(i) * time.Second})
+	}
+	q.Clear()
+	if got := q.Take(3*time.Second, 120*time.Second, 1024); len(got) != 0 || q.Dropped() != 3 {
+		t.Fatalf("after Clear results=%v dropped=%d, want empty/3", got, q.Dropped())
+	}
+	q.Push(Result{TaskID: 9, At: 4 * time.Second})
+	if got := q.Take(4*time.Second, 120*time.Second, 1024); !reflect.DeepEqual(got, []Result{{TaskID: 9, At: 4 * time.Second}}) || q.Dropped() != 3 {
+		t.Fatalf("post-Clear push results=%v dropped=%d", got, q.Dropped())
+	}
+	q.Push(Result{TaskID: 10, At: 5 * time.Second})
+	q.Clear()
+	if got := q.Take(5*time.Second, 120*time.Second, 1024); len(got) != 0 || q.Dropped() != 4 {
+		t.Fatalf("second Clear results=%v dropped=%d, want empty/4", got, q.Dropped())
+	}
+}
+
 func TestRequeueMergesDelayedPushByCompletionTime(t *testing.T) {
 	for _, capacity := range []int{3, 2} {
 		q := NewQueue(capacity)

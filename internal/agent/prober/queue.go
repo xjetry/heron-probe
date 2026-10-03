@@ -90,6 +90,17 @@ func (q *Queue) Take(now, maxAge time.Duration, limit int) []Result {
 	return out
 }
 
+// Clear 作废全部已入队结果并计入 dropped：休眠信号（§4.5）触发时，跨越休眠的结果
+// 在队列里没有字段可区分（age_ms 由单调钟折算，单调钟不含休眠时间），只能整体丢弃；
+// 丢弃口径与 trim / Take 的超龄丢弃共用同一个计数。
+func (q *Queue) Clear() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.dropped += uint64(len(q.items))
+	clear(q.items)
+	q.items = q.items[:0]
+}
+
 // Requeue 合回失败批次；期间可能有较早完成却延迟入队的结果，不能直接把整批前置。
 func (q *Queue) Requeue(rs []Result) {
 	q.mu.Lock()
