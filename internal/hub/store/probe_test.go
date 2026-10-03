@@ -189,6 +189,38 @@ func taskForTest() *heronv1.ProbeTask {
 	return &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 100}
 }
 
+// dns_server 随任务落库并原样读回；更新整体替换该列，其他任务行互不影响。
+func TestProbeTaskDNSServerRoundTripsThroughStore(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	task := &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_DNS, Target: "example.com", IntervalS: 5, TimeoutMs: 1000, DnsServer: "[2001:4860:4860::8888]:53"}
+	saved, _, err := s.SaveProbeTask(ctx, task, NodeSelector{AllNodes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.SaveProbeTask(ctx, taskForTest(), NodeSelector{AllNodes: true}); err != nil {
+		t.Fatal(err)
+	}
+	_, records, err := s.LoadProbeTasks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[0].Task.GetDnsServer() != "[2001:4860:4860::8888]:53" || records[1].Task.GetDnsServer() != "" {
+		t.Fatalf("loaded dns_server = %q, %q", records[0].Task.GetDnsServer(), records[1].Task.GetDnsServer())
+	}
+	saved.Task.DnsServer = "1.1.1.1:53"
+	if _, _, err := s.SaveProbeTask(ctx, saved.Task, NodeSelector{AllNodes: true}); err != nil {
+		t.Fatal(err)
+	}
+	_, records, err = s.LoadProbeTasks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records[0].Task.GetDnsServer() != "1.1.1.1:53" {
+		t.Fatalf("updated dns_server = %q", records[0].Task.GetDnsServer())
+	}
+}
+
 func TestSaveProbeTaskAssignsAndBumpsVersion(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()

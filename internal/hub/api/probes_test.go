@@ -66,6 +66,28 @@ func TestProbeTaskLifecycleThroughAdminAPI(t *testing.T) {
 	}
 }
 
+// dns_server 经管理 API 落库并原样回读；非 DNS 任务携带它被 CheckTask 拒绝。
+func TestProbeTaskDNSServerThroughAdminAPI(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	ctx := t.Context()
+	task := &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_DNS, Target: "example.com", IntervalS: 30, TimeoutMs: 2000, DnsServer: "[2001:4860:4860::8888]:53"}
+	created, err := h.admin.SaveProbeTask(ctx, connect.NewRequest(&heronv1.SaveProbeTaskRequest{Task: task, AllNodes: true}))
+	if err != nil || created.Msg.Task.Task.GetDnsServer() != "[2001:4860:4860::8888]:53" {
+		t.Fatalf("%+v %v", created, err)
+	}
+	list, err := h.admin.ListProbeTasks(ctx, connect.NewRequest(&heronv1.ListProbeTasksRequest{}))
+	if err != nil || len(list.Msg.Tasks) != 1 || !proto.Equal(list.Msg.Tasks[0], created.Msg.Task) {
+		t.Fatalf("%+v %v", list.Msg, err)
+	}
+	stray := validProbeTask()
+	stray.DnsServer = "1.1.1.1:53"
+	_, err = h.admin.SaveProbeTask(ctx, connect.NewRequest(&heronv1.SaveProbeTaskRequest{Task: stray, AllNodes: true}))
+	if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "dns_server only applies to a DNS task") {
+		t.Fatalf("%v", err)
+	}
+}
+
 // query 分支覆盖窗口校验中的节点查找失败，不覆盖 QueryProbes 自身的历史存储查询。
 func TestProbeWritesAndWindowLookupFailuresStayInternal(t *testing.T) {
 	h := newHarness(t, "")

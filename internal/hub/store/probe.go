@@ -85,7 +85,7 @@ func (s *Store) LoadProbeTasks(ctx context.Context) (uint64, []ProbeTaskRecord, 
 	if err := tx.QueryRowContext(ctx, "SELECT version FROM probe_meta WHERE id = 1").Scan(&version); err != nil {
 		return 0, nil, err
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT id, kind, target, interval_s, timeout_ms, all_nodes, sort_order FROM probe_task ORDER BY sort_order, id")
+	rows, err := tx.QueryContext(ctx, "SELECT id, kind, target, interval_s, timeout_ms, all_nodes, sort_order, dns_server FROM probe_task ORDER BY sort_order, id")
 	if err != nil {
 		return 0, nil, err
 	}
@@ -96,7 +96,7 @@ func (s *Store) LoadProbeTasks(ctx context.Context) (uint64, []ProbeTaskRecord, 
 		t := &heronv1.ProbeTask{}
 		var id, kind, interval, timeout, order int64
 		var all bool
-		if err := rows.Scan(&id, &kind, &t.Target, &interval, &timeout, &all, &order); err != nil {
+		if err := rows.Scan(&id, &kind, &t.Target, &interval, &timeout, &all, &order, &t.DnsServer); err != nil {
 			return 0, nil, err
 		}
 		t.Id, t.Kind, t.IntervalS, t.TimeoutMs = uint64(id), heronv1.ProbeKind(kind), uint32(interval), uint32(timeout)
@@ -146,13 +146,13 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *heronv1.ProbeTask, selecto
 		return ProbeTaskRecord{}, 0, err
 	}
 	allNodes, nodeIDs, tags := selector.AllNodes, selector.NodeIDs, selector.Tags
-	saved := &heronv1.ProbeTask{Id: t.GetId(), Kind: t.GetKind(), Target: t.GetTarget(), IntervalS: t.GetIntervalS(), TimeoutMs: t.GetTimeoutMs()}
+	saved := &heronv1.ProbeTask{Id: t.GetId(), Kind: t.GetKind(), Target: t.GetTarget(), IntervalS: t.GetIntervalS(), TimeoutMs: t.GetTimeoutMs(), DnsServer: t.GetDnsServer()}
 	rec := ProbeTaskRecord{Task: saved, AllNodes: allNodes}
 	var version int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
 		if saved.Id == 0 {
-			res, err := tx.Exec("INSERT INTO probe_task (kind, target, interval_s, timeout_ms, created_at, all_nodes, sort_order) SELECT ?, ?, ?, ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1 FROM probe_task",
-				int64(saved.Kind), saved.Target, int64(saved.IntervalS), int64(saved.TimeoutMs), s.clk.Now().Unix(), allNodes)
+			res, err := tx.Exec("INSERT INTO probe_task (kind, target, interval_s, timeout_ms, created_at, all_nodes, sort_order, dns_server) SELECT ?, ?, ?, ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1, ? FROM probe_task",
+				int64(saved.Kind), saved.Target, int64(saved.IntervalS), int64(saved.TimeoutMs), s.clk.Now().Unix(), allNodes, saved.DnsServer)
 			if err != nil {
 				return err
 			}
@@ -162,8 +162,8 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *heronv1.ProbeTask, selecto
 			}
 			saved.Id = uint64(id)
 		} else {
-			res, err := tx.Exec("UPDATE probe_task SET kind = ?, target = ?, interval_s = ?, timeout_ms = ?, all_nodes = ? WHERE id = ?",
-				int64(saved.Kind), saved.Target, int64(saved.IntervalS), int64(saved.TimeoutMs), allNodes, int64(saved.Id))
+			res, err := tx.Exec("UPDATE probe_task SET kind = ?, target = ?, interval_s = ?, timeout_ms = ?, all_nodes = ?, dns_server = ? WHERE id = ?",
+				int64(saved.Kind), saved.Target, int64(saved.IntervalS), int64(saved.TimeoutMs), allNodes, saved.DnsServer, int64(saved.Id))
 			if err != nil {
 				return err
 			}
