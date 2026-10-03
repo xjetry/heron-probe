@@ -8,7 +8,7 @@ import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Picks } from "../components/Picks";
 import { NodeSelector, type NodeSelection } from "../components/NodeSelector";
 import { AdminService, AlertKind, ProbeMetric, ResourceMetric, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/heron/v1/admin_pb";
-import { ALERT_KINDS, PROBE_METRICS, RESOURCE_METRICS, labelOf, ruleCondition, statesOf, taskLabels, type RuleStates } from "../lib/alerts";
+import { ALERT_KINDS, MBPS_TO_BYTES_PER_S, PROBE_METRICS, RESOURCE_METRICS, labelOf, resourceThresholdMax, resourceUnit, ruleCondition, statesOf, taskLabels, type RuleStates } from "../lib/alerts";
 import { liveIds, withId } from "../lib/ids";
 
 type Draft = NodeSelection & {
@@ -26,16 +26,24 @@ const emptyDraft = (): Draft => ({
 });
 const draftOf = (r: AlertRule): Draft => {
   const probe = r.kind === AlertKind.PROBE;
+  // 速率指标的协议值是 bytes/s，草稿按 Mbps 展示（RESOURCE_METRICS 的 unit 决定换算方向）。
+  const scale = r.kind === AlertKind.RESOURCE && resourceUnit(r.resourceMetric) === "mbps" ? MBPS_TO_BYTES_PER_S : 1;
   return {
     name: r.name, kind: r.kind, enabled: r.enabled, allNodes: r.allNodes, nodeIds: new Set(r.nodeIds), channelIds: new Set(r.channelIds),
     taskId: probe ? String(r.taskId) : "", metric: probe ? r.metric : ProbeMetric.LOSS_PCT,
-    threshold: probe || r.kind === AlertKind.RESOURCE ? String(r.threshold) : "", forMinutes: probe || r.kind === AlertKind.RESOURCE ? String(r.forMinutes) : "3",
+    threshold: probe ? String(r.threshold) : r.kind === AlertKind.RESOURCE ? String(r.threshold / scale) : "", forMinutes: probe || r.kind === AlertKind.RESOURCE ? String(r.forMinutes) : "3",
     daysBefore: r.kind === AlertKind.EXPIRY ? String(r.daysBefore) : "7",
     selectorTags: r.selectorTags, dynamic: r.selectorTags.length > 0,
     resourceMetric: r.kind === AlertKind.RESOURCE ? r.resourceMetric : ResourceMetric.MEMORY_USED_PCT,
-    recoveryThreshold: r.kind === AlertKind.RESOURCE ? String(r.recoveryThreshold) : "80",
+    recoveryThreshold: r.kind === AlertKind.RESOURCE ? String(r.recoveryThreshold / scale) : "80",
   };
 };
+
+// 资源阈值在表单里按指标单位输入，协议值统一为 bytes/s 或原值：Mbps 在这里换算回 bytes/s。
+function resourceRule(d: Draft) {
+  const scale = resourceUnit(d.resourceMetric) === "mbps" ? MBPS_TO_BYTES_PER_S : 1;
+  return { resourceMetric: d.resourceMetric, threshold: Number(d.threshold) * scale, recoveryThreshold: Number(d.recoveryThreshold) * scale, forMinutes: Number(d.forMinutes) };
+}
 
 // 当前列表不再包含的节点与渠道自然掉出，避免已删除对象让 hub 拒绝整次保存；
 // 显式作用域因此变空时由 hub 拒绝（spec §6.6：空集不等于全部节点），不会悄悄放宽成全部。
@@ -44,7 +52,7 @@ function toRule(id: bigint, d: Draft, nodes: Node[], channels: NotifyChannel[]) 
   const own = d.kind === AlertKind.PROBE
     ? { taskId: BigInt(d.taskId), metric: d.metric, threshold: Number(d.threshold), forMinutes: Number(d.forMinutes) }
     : d.kind === AlertKind.EXPIRY ? { daysBefore: Number(d.daysBefore) }
-      : d.kind === AlertKind.RESOURCE ? { resourceMetric: d.resourceMetric, threshold: Number(d.threshold), recoveryThreshold: Number(d.recoveryThreshold), forMinutes: Number(d.forMinutes) } : {};
+      : d.kind === AlertKind.RESOURCE ? resourceRule(d) : {};
   return {
     id, name: d.name.trim(), kind: d.kind, enabled: d.enabled, allNodes: d.allNodes,
     nodeIds: d.allNodes || d.dynamic ? [] : liveIds(d.nodeIds, nodes), selectorTags: !d.allNodes && d.dynamic ? d.selectorTags : [], channelIds: liveIds(d.channelIds, channels), ...own,
@@ -143,17 +151,7 @@ function RuleForm({ title, nodes, channels, tasks, initial, pending, onSubmit, o
           <p className="muted">节点到期日距今不超过提前天数即触发（已过期的也算）；到期日改到这个范围之外、清除到期日，或调小提前天数使它落到范围之外，即恢复。续期后的到期日仍在范围内时不恢复。到期日在节点页设置。保存后立即评估，此后在 hub 启动时、hub 时区的每个日界（零点不存在的日子取新一天的第一个时刻）与修改节点计费时评估。</p>
         </>
       ) : draft.kind === AlertKind.RESOURCE ? (
-        <>
-          <div className="row">
-            <label>资源指标<select value={draft.resourceMetric} onChange={(e) => set({ resourceMetric: Number(e.target.value) as ResourceMetric })}>
-              {RESOURCE_METRICS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
-            </select></label>
-            <label>触发阈值（%）<input type="number" required step="any" min={0} max={100} value={draft.threshold} onChange={(e) => set({ threshold: e.target.value })} /></label>
-            <label>恢复阈值（%）<input type="number" required step="any" min={0} max={100} value={draft.recoveryThreshold} onChange={(e) => set({ recoveryThreshold: e.target.value })} /></label>
-            <label>连续分钟<input type="number" required min={1} max={60} value={draft.forMinutes} onChange={(e) => set({ forMinutes: e.target.value })} /></label>
-          </div>
-          <p className="muted">恢复阈值必须低于触发阈值。按同次采样的使用量与总量计算百分比，再取每分钟均值；触发与恢复均需完整连续窗口，缺失读数不会恢复。</p>
-        </>
+        <ResourceFields draft={draft} set={set} />
       ) : probe ? (
         <div className="row">
           <label>探测任务
@@ -184,6 +182,28 @@ function RuleForm({ title, nodes, channels, tasks, initial, pending, onSubmit, o
         {onCancel && <button type="button" className="link" onClick={onCancel}>取消</button>}
       </div>
     </form>
+  );
+}
+
+// 阈值输入的单位与范围随指标切换（RESOURCE_METRICS 的 unit），提示文案与 hub CheckRule 的取值范围一致；
+// 速率按 Mbps 输入，提交时换算成 bytes/s（resourceRule）。
+function ResourceFields({ draft, set }: { draft: Draft; set: (patch: Partial<Draft>) => void }) {
+  const unit = resourceUnit(draft.resourceMetric);
+  const unitLabel = unit === "mbps" ? "Mbps" : unit === "per-core" ? "每核" : "%";
+  const max = resourceThresholdMax(draft.resourceMetric);
+  const source = unit === "mbps" ? "网卡速率的每分钟均值" : unit === "per-core" ? "load1 每分钟均值 ÷ 节点核数；节点尚未上报核数时该分钟按缺失读数处理" : "同次采样的使用量与总量之比（CPU 为采样占比）的每分钟均值";
+  return (
+    <>
+      <div className="row">
+        <label>资源指标<select value={draft.resourceMetric} onChange={(e) => set({ resourceMetric: Number(e.target.value) as ResourceMetric })}>
+          {RESOURCE_METRICS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
+        </select></label>
+        <label>触发阈值（{unitLabel}）<input type="number" required step="any" min={0} max={max} value={draft.threshold} onChange={(e) => set({ threshold: e.target.value })} /></label>
+        <label>恢复阈值（{unitLabel}）<input type="number" required step="any" min={0} max={max} value={draft.recoveryThreshold} onChange={(e) => set({ recoveryThreshold: e.target.value })} /></label>
+        <label>连续分钟<input type="number" required min={1} max={60} value={draft.forMinutes} onChange={(e) => set({ forMinutes: e.target.value })} /></label>
+      </div>
+      <p className="muted">触发阈值大于 0 且不超过 {max} {unitLabel}，恢复阈值必须低于触发阈值。数据源：{source}；触发与恢复均需完整连续窗口，缺失读数不会恢复。</p>
+    </>
   );
 }
 

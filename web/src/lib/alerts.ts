@@ -43,10 +43,40 @@ export const ALERT_KINDS: readonly Entry<AlertKind>[] = [
   { value: AlertKind.EXPIRY, label: "到期" },
   { value: AlertKind.RESOURCE, label: "资源" },
 ];
-export const RESOURCE_METRICS: readonly Entry<ResourceMetric>[] = [
-  { value: ResourceMetric.MEMORY_USED_PCT, label: "内存使用率" },
-  { value: ResourceMetric.DISK_USED_PCT, label: "磁盘使用率" },
+// 资源指标的单位决定面板阈值输入的展示与换算：百分比与每核负载原值输入；速率以 Mbps 输入，
+// 协议值仍是 bytes/s（proto ResourceMetric 注释），1 Mbps = 125000 bytes/s。
+export type ResourceUnit = "percent" | "per-core" | "mbps";
+export const MBPS_TO_BYTES_PER_S = 125000;
+export const RESOURCE_METRICS: readonly (Entry<ResourceMetric> & { unit: ResourceUnit })[] = [
+  { value: ResourceMetric.MEMORY_USED_PCT, label: "内存使用率", unit: "percent" },
+  { value: ResourceMetric.DISK_USED_PCT, label: "磁盘使用率", unit: "percent" },
+  { value: ResourceMetric.CPU_PCT, label: "CPU 使用率", unit: "percent" },
+  { value: ResourceMetric.LOAD1_PER_CORE, label: "每核负载", unit: "per-core" },
+  { value: ResourceMetric.NET_RX_BPS, label: "下行速率", unit: "mbps" },
+  { value: ResourceMetric.NET_TX_BPS, label: "上行速率", unit: "mbps" },
 ];
+
+// 面板不认识的枚举值按百分比处理：旧面板遇到新指标时至少不把数字换算错方向。
+export function resourceUnit(metric: ResourceMetric): ResourceUnit {
+  return RESOURCE_METRICS.find((m) => m.value === metric)?.unit ?? "percent";
+}
+
+// 阈值输入范围与 hub 的 CheckRule 一致：百分比 (0,100]、每核负载 (0,64]、速率 (0,2^40] bytes/s（即 8796093022.208 Mbps）。
+export function resourceThresholdMax(metric: ResourceMetric): number {
+  switch (resourceUnit(metric)) {
+    case "per-core": return 64;
+    case "mbps": return (2 ** 40) / MBPS_TO_BYTES_PER_S;
+    default: return 100;
+  }
+}
+
+function resourceThresholdText(metric: ResourceMetric, v: number): string {
+  switch (resourceUnit(metric)) {
+    case "per-core": return String(v);
+    case "mbps": return `${v / MBPS_TO_BYTES_PER_S} Mbps`;
+    default: return `${v}%`;
+  }
+}
 // unit 与 formatUnit 的单位名一致：丢包阈值是百分数，RTT 阈值是毫秒（proto AlertRule.threshold）。
 export const PROBE_METRICS: readonly (Entry<ProbeMetric> & { unit: string })[] = [
   { value: ProbeMetric.LOSS_PCT, label: "丢包率", unit: "percent" },
@@ -69,7 +99,7 @@ export function taskLabels(ids: bigint[], tasks: readonly ProbeTaskDetail[] | un
 export function ruleCondition(rule: AlertRule, tasks: ProbeTaskDetail[] | undefined): string {
   if (rule.kind === AlertKind.OFFLINE) return "超过宽限期未上报";
   if (rule.kind === AlertKind.EXPIRY) return `到期日距今不超过 ${rule.daysBefore} 天（含已过期）`;
-  if (rule.kind === AlertKind.RESOURCE) return `${labelOf(RESOURCE_METRICS, rule.resourceMetric)} ≥ ${rule.threshold}%，恢复 ≤ ${rule.recoveryThreshold}%，各连续 ${rule.forMinutes} 分钟`;
+  if (rule.kind === AlertKind.RESOURCE) return `${labelOf(RESOURCE_METRICS, rule.resourceMetric)} ≥ ${resourceThresholdText(rule.resourceMetric, rule.threshold)}，恢复 ≤ ${resourceThresholdText(rule.resourceMetric, rule.recoveryThreshold)}，各连续 ${rule.forMinutes} 分钟`;
   const metric = PROBE_METRICS.find((m) => m.value === rule.metric);
   const threshold = metric ? formatUnit(rule.threshold, metric.unit) : String(rule.threshold);
   return `${taskLabel(rule.taskId, tasks)} ${labelOf(PROBE_METRICS, rule.metric)} ≥ ${threshold}，连续 ${rule.forMinutes} 分钟`;
