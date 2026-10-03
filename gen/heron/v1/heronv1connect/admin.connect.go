@@ -170,6 +170,9 @@ const (
 	// AdminServiceGetBackupStatusProcedure is the fully-qualified name of the AdminService's
 	// GetBackupStatus RPC.
 	AdminServiceGetBackupStatusProcedure = "/heron.v1.AdminService/GetBackupStatus"
+	// AdminServiceGetHeartbeatStatusProcedure is the fully-qualified name of the AdminService's
+	// GetHeartbeatStatus RPC.
+	AdminServiceGetHeartbeatStatusProcedure = "/heron.v1.AdminService/GetHeartbeatStatus"
 	// AdminServiceUpdateSettingsProcedure is the fully-qualified name of the AdminService's
 	// UpdateSettings RPC.
 	AdminServiceUpdateSettingsProcedure = "/heron.v1.AdminService/UpdateSettings"
@@ -331,6 +334,9 @@ type AdminServiceClient interface {
 	GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error)
 	// 两层备份的成功时刻与当前进程观察到的故障；不返回目标凭据或远端错误原文。
 	GetBackupStatus(context.Context, *connect.Request[v1.GetBackupStatusRequest]) (*connect.Response[v1.GetBackupStatusResponse], error)
+	// hub 心跳外推（§9.6）的当前状态：是否已配置、上次成功与上次失败的时刻与类别、下次外呼时刻。
+	// 状态只在进程内存里，重启后"从未跑过"的两者都为 0；目标地址是只写设置，不在这里也不在 GetSettings 回显。
+	GetHeartbeatStatus(context.Context, *connect.Request[v1.GetHeartbeatStatusRequest]) (*connect.Response[v1.GetHeartbeatStatusResponse], error)
 	// 按组更新设置（分组与判定见 Settings）：给出的外观整体替换，给出的总闸、国家查询项、backup 与 login_notify 写入，
 	// 缺席的组不变；回显 hub 实际保存的设置。一组都没给出、或任一项不合约束即 InvalidArgument，错误写明字段、约束与
 	// 期望取值，什么都不写入。
@@ -676,6 +682,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("GetBackupStatus")),
 			connect.WithClientOptions(opts...),
 		),
+		getHeartbeatStatus: connect.NewClient[v1.GetHeartbeatStatusRequest, v1.GetHeartbeatStatusResponse](
+			httpClient,
+			baseURL+AdminServiceGetHeartbeatStatusProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("GetHeartbeatStatus")),
+			connect.WithClientOptions(opts...),
+		),
 		updateSettings: connect.NewClient[v1.UpdateSettingsRequest, v1.UpdateSettingsResponse](
 			httpClient,
 			baseURL+AdminServiceUpdateSettingsProcedure,
@@ -826,6 +838,7 @@ type adminServiceClient struct {
 	testNotifyChannel     *connect.Client[v1.TestNotifyChannelRequest, v1.TestNotifyChannelResponse]
 	getSettings           *connect.Client[v1.GetSettingsRequest, v1.GetSettingsResponse]
 	getBackupStatus       *connect.Client[v1.GetBackupStatusRequest, v1.GetBackupStatusResponse]
+	getHeartbeatStatus    *connect.Client[v1.GetHeartbeatStatusRequest, v1.GetHeartbeatStatusResponse]
 	updateSettings        *connect.Client[v1.UpdateSettingsRequest, v1.UpdateSettingsResponse]
 	uploadTheme           *connect.Client[v1.UploadThemeRequest, v1.UploadThemeResponse]
 	listThemes            *connect.Client[v1.ListThemesRequest, v1.ListThemesResponse]
@@ -1089,6 +1102,11 @@ func (c *adminServiceClient) GetBackupStatus(ctx context.Context, req *connect.R
 	return c.getBackupStatus.CallUnary(ctx, req)
 }
 
+// GetHeartbeatStatus calls heron.v1.AdminService.GetHeartbeatStatus.
+func (c *adminServiceClient) GetHeartbeatStatus(ctx context.Context, req *connect.Request[v1.GetHeartbeatStatusRequest]) (*connect.Response[v1.GetHeartbeatStatusResponse], error) {
+	return c.getHeartbeatStatus.CallUnary(ctx, req)
+}
+
 // UpdateSettings calls heron.v1.AdminService.UpdateSettings.
 func (c *adminServiceClient) UpdateSettings(ctx context.Context, req *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error) {
 	return c.updateSettings.CallUnary(ctx, req)
@@ -1281,6 +1299,9 @@ type AdminServiceHandler interface {
 	GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error)
 	// 两层备份的成功时刻与当前进程观察到的故障；不返回目标凭据或远端错误原文。
 	GetBackupStatus(context.Context, *connect.Request[v1.GetBackupStatusRequest]) (*connect.Response[v1.GetBackupStatusResponse], error)
+	// hub 心跳外推（§9.6）的当前状态：是否已配置、上次成功与上次失败的时刻与类别、下次外呼时刻。
+	// 状态只在进程内存里，重启后"从未跑过"的两者都为 0；目标地址是只写设置，不在这里也不在 GetSettings 回显。
+	GetHeartbeatStatus(context.Context, *connect.Request[v1.GetHeartbeatStatusRequest]) (*connect.Response[v1.GetHeartbeatStatusResponse], error)
 	// 按组更新设置（分组与判定见 Settings）：给出的外观整体替换，给出的总闸、国家查询项、backup 与 login_notify 写入，
 	// 缺席的组不变；回显 hub 实际保存的设置。一组都没给出、或任一项不合约束即 InvalidArgument，错误写明字段、约束与
 	// 期望取值，什么都不写入。
@@ -1622,6 +1643,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("GetBackupStatus")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceGetHeartbeatStatusHandler := connect.NewUnaryHandler(
+		AdminServiceGetHeartbeatStatusProcedure,
+		svc.GetHeartbeatStatus,
+		connect.WithSchema(adminServiceMethods.ByName("GetHeartbeatStatus")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceUpdateSettingsHandler := connect.NewUnaryHandler(
 		AdminServiceUpdateSettingsProcedure,
 		svc.UpdateSettings,
@@ -1818,6 +1845,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceGetSettingsHandler.ServeHTTP(w, r)
 		case AdminServiceGetBackupStatusProcedure:
 			adminServiceGetBackupStatusHandler.ServeHTTP(w, r)
+		case AdminServiceGetHeartbeatStatusProcedure:
+			adminServiceGetHeartbeatStatusHandler.ServeHTTP(w, r)
 		case AdminServiceUpdateSettingsProcedure:
 			adminServiceUpdateSettingsHandler.ServeHTTP(w, r)
 		case AdminServiceUploadThemeProcedure:
@@ -2053,6 +2082,10 @@ func (UnimplementedAdminServiceHandler) GetSettings(context.Context, *connect.Re
 
 func (UnimplementedAdminServiceHandler) GetBackupStatus(context.Context, *connect.Request[v1.GetBackupStatusRequest]) (*connect.Response[v1.GetBackupStatusResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.GetBackupStatus is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) GetHeartbeatStatus(context.Context, *connect.Request[v1.GetHeartbeatStatusRequest]) (*connect.Response[v1.GetHeartbeatStatusResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.GetHeartbeatStatus is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error) {

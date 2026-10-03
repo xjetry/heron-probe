@@ -228,6 +228,11 @@ service AdminService {
   rpc GetBackupStatus(GetBackupStatusRequest) returns (GetBackupStatusResponse) {
     option (heron.v1.access) = ACCESS_READ;
   }
+  // hub 心跳外推（§9.6）的当前状态：是否已配置、上次成功与上次失败的时刻与类别、下次外呼时刻。
+  // 状态只在进程内存里，重启后"从未跑过"的两者都为 0；目标地址是只写设置，不在这里也不在 GetSettings 回显。
+  rpc GetHeartbeatStatus(GetHeartbeatStatusRequest) returns (GetHeartbeatStatusResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
   // 按组更新设置（分组与判定见 Settings）：给出的外观整体替换，给出的总闸、国家查询项、backup 与 login_notify 写入，
   // 缺席的组不变；回显 hub 实际保存的设置。一组都没给出、或任一项不合约束即 InvalidArgument，错误写明字段、约束与
   // 期望取值，什么都不写入。
@@ -930,6 +935,49 @@ message Settings {
   // 登录通知的渠道（§5.3，键 notify.login_channels）。请求里缺席即不变，显式给出空集合即关闭；响应里总带它，
   // channel_ids 为空表示关闭，把读到的整份设置原样写回不改变它。不会下发到公开页。
   optional LoginNotify login_notify = 12;
+  // hub 心跳外推（§9.6）。presence 组语义与总闸、login_notify 相同：缺席即不变，给出即整体替换这一组。
+  // 目标地址是只写设置（ping 地址本身就是密钥），不会下发到公开页，也不经 GetSettings 回显原文。
+  optional Heartbeat heartbeat = 13;
+}
+
+// hub 心跳外推的目标与节奏（§9.6）。默认关闭：url 为空即停用。
+message Heartbeat {
+  // 写入时为完整地址：绝对 http(s) URL，主机非空，不超过 2048 字节。空串表示清空并停用这一组。
+  // 读侧恒为空（只写不读）：ping 地址本身就是密钥，与通知渠道的 WebhookConfig.url 同一做法。
+  string url = 1;
+  // 60–3600 秒。越界返回 InvalidArgument 并点名字段与范围；0 不是"取默认"（§6.7 的同一句话：0 会空转）。
+  // 库里没有这个键时默认 60。
+  uint32 interval_s = 2;
+  // 保存时必须选择 GET、POST 或 HEAD；UNSPECIFIED 拒绝，不取默认。库里没有这个键时默认 POST。
+  HeartbeatMethod method = 3;
+  // 只在响应里有意义：按库中 url 非空计算。
+  bool has_url = 4;
+  // 只在响应里有意义：库中 url 经 url.Parse 得到的主机（scheme://host），不含路径与查询串；url 为空时为 ""。
+  string url_host = 5;
+}
+
+enum HeartbeatMethod {
+  HEARTBEAT_METHOD_UNSPECIFIED = 0;
+  HEARTBEAT_METHOD_GET = 1;
+  HEARTBEAT_METHOD_POST = 2;
+  HEARTBEAT_METHOD_HEAD = 3;
+}
+
+message GetHeartbeatStatusRequest {}
+// 响应消息名按仓库的 buf lint 约定（RPC 的响应是 <方法名>Response）；字段就是 §9.6 的进程内状态，平铺不加包装层。
+message GetHeartbeatStatusResponse {
+  // 库中 url 非空；为假时其余字段无意义。
+  bool enabled = 1;
+  // 上次成功的墙钟 Unix 秒；从未成功时为 0。
+  int64 last_success_at = 2;
+  // 上次失败的墙钟 Unix 秒；从未失败时为 0。成功不清除它：两者分别是最近一次成功与最近一次失败。
+  int64 last_failure_at = 3;
+  // 上次失败的类别，复用 §9.3 的词汇：transport / http_status / request；从未失败时为空。
+  string failure_category = 4;
+  // 上次失败收到的 HTTP 状态码；类别不是 http_status 时为 0。
+  int32 failure_http_status = 5;
+  // 下次外呼的墙钟 Unix 秒，只供展示；从未跑过时为 0。
+  int64 next_at = 6;
 }
 
 // 备份目标、两层周期与份数、失败通知渠道。endpoint、bucket、access_key、secret 任一为空即整体关闭；
