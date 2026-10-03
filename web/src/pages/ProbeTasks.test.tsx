@@ -86,15 +86,54 @@ it("任务列表挂起时不渲染新建表单", async () => {
   }).toEqual({ loading: true, forms: 0 });
 });
 
-it("两种类型在选项与任务列表使用一致标签", async () => {
+it("四种类型在选项与任务列表使用一致标签", async () => {
   renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => ({ tasks: [
-    ...tasks.tasks, { task: { id: 4n, kind: ProbeKind.ICMP, target: "host" } },
+    ...tasks.tasks,
+    { task: { id: 4n, kind: ProbeKind.ICMP, target: "host" } },
+    { task: { id: 5n, kind: ProbeKind.HTTP, target: "https://example.com/" } },
+    { task: { id: 6n, kind: ProbeKind.DNS, target: "example.com", dnsServer: "1.1.1.1:53" } },
   ] }) }, routes, "/probes");
   await screen.findByText("1.1.1.1:443");
-  for (const label of ["ICMP", "TCP"]) {
+  for (const label of ["ICMP", "TCP", "HTTP", "DNS"]) {
     expect(screen.getByRole("option", { name: label })).toBeInTheDocument();
     expect(screen.getByRole("cell", { name: label })).toBeInTheDocument();
   }
+});
+
+it("目标约束与解析器输入随类型切换，dns_server 只对 DNS 任务提交", async () => {
+  const saved: SaveProbeTaskRequest[] = [];
+  renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks,
+    saveProbeTask: async (req) => { saved.push(req); return {}; },
+  }, routes, "/probes");
+  const form = await screen.findByRole("form", { name: "新建探测任务" });
+  // ICMP 默认：253，无解析器输入。
+  expect(within(form).getByLabelText("目标")).toHaveAttribute("maxlength", "253");
+  expect(within(form).queryByLabelText("解析器")).toBeNull();
+  // HTTP：512，无解析器输入。
+  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ProbeKind.HTTP) } });
+  expect(within(form).getByLabelText("目标")).toHaveAttribute("maxlength", "512");
+  expect(within(form).queryByLabelText("解析器")).toBeNull();
+  // TCP：host:port 提示，无解析器输入。
+  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ProbeKind.TCP) } });
+  expect(within(form).getByLabelText("目标")).toHaveAttribute("placeholder", "host:port");
+  expect(within(form).queryByLabelText("解析器")).toBeNull();
+  // DNS：253 且出现解析器输入；提交带上 dns_server（首尾空白裁掉）。
+  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ProbeKind.DNS) } });
+  expect(within(form).getByLabelText("目标")).toHaveAttribute("maxlength", "253");
+  fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "example.com" } });
+  fireEvent.change(within(form).getByLabelText("解析器"), { target: { value: " [2001:4860:4860::8888]:53 " } });
+  fireEvent.submit(form);
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].task).toMatchObject({ kind: ProbeKind.DNS, target: "example.com", dnsServer: "[2001:4860:4860::8888]:53" });
+  // 非 DNS 任务不携带 dns_server（草稿残留也不提交）。
+  const next = screen.getByRole("form", { name: "新建探测任务" });
+  fireEvent.change(within(next).getByLabelText("类型"), { target: { value: String(ProbeKind.DNS) } });
+  fireEvent.change(within(next).getByLabelText("解析器"), { target: { value: "1.1.1.1:53" } });
+  fireEvent.change(within(next).getByLabelText("类型"), { target: { value: String(ProbeKind.HTTP) } });
+  fireEvent.change(within(next).getByLabelText("目标"), { target: { value: "https://example.com/" } });
+  fireEvent.submit(next);
+  await waitFor(() => expect(saved).toHaveLength(2));
+  expect(saved[1].task?.dnsServer).toBe("");
 });
 
 it("创建成功后复位全部字段，下一次提交不沿用旧值", async () => {

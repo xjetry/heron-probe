@@ -10,17 +10,17 @@ import { NodeSelector, type NodeSelection } from "../components/NodeSelector";
 import { AdminService, type Node, type ProbeTaskDetail } from "../gen/heron/v1/admin_pb";
 import { ProbeKind, type ProbeTask } from "../gen/heron/v1/types_pb";
 import { ascending, withId } from "../lib/ids";
-import { PROBE_KINDS, kindLabel } from "../lib/probes";
+import { PROBE_KINDS, kindLabel, targetRule } from "../lib/probes";
 
-type Draft = NodeSelection & { kind: ProbeKind; target: string; intervalS: string; timeoutMs: string };
+type Draft = NodeSelection & { kind: ProbeKind; target: string; dnsServer: string; intervalS: string; timeoutMs: string };
 type TaskEntry = { task: ProbeTask; allNodes: boolean; nodeIds: bigint[]; selectorTags: string[] };
 
-const emptyDraft = (): Draft => ({ kind: ProbeKind.ICMP, target: "", intervalS: "60", timeoutMs: "1000", allNodes: false, nodeIds: new Set(), selectorTags: [], dynamic: false });
+const emptyDraft = (): Draft => ({ kind: ProbeKind.ICMP, target: "", dnsServer: "", intervalS: "60", timeoutMs: "1000", allNodes: false, nodeIds: new Set(), selectorTags: [], dynamic: false });
 const taskEntries = (tasks: readonly ProbeTaskDetail[]): TaskEntry[] => tasks.flatMap((d) => d.task ? [{ task: d.task, allNodes: d.allNodes, nodeIds: d.nodeIds, selectorTags: d.selectorTags }] : []);
 // all_nodes 任务的 nodeIds 是 hub 展开的当前全部节点；编辑时取消"全部节点"即以它们作为显式分配的起点，
 // 覆盖不会因为取消勾选而一下子清空。
 const draftOf = ({ task, allNodes, nodeIds, selectorTags }: TaskEntry): Draft => ({
-  kind: task.kind, target: task.target, intervalS: String(task.intervalS),
+  kind: task.kind, target: task.target, dnsServer: task.dnsServer, intervalS: String(task.intervalS),
   timeoutMs: String(task.timeoutMs), allNodes, nodeIds: new Set(nodeIds), selectorTags, dynamic: selectorTags.length > 0,
 });
 
@@ -58,7 +58,7 @@ export function ProbeTasks() {
   // 当前节点列表不再包含的分配自然掉出，避免已删除节点让 hub 以 NotFound 拒绝整次保存。显式分配因此变空时照常
   // 提交：空集不覆盖任何节点（spec §8.1，与告警规则的 all_nodes 同一语义），不会被读成全部节点。
   const submit = (m: typeof create, id: bigint, d: Draft, onSuccess?: () => void) =>
-    m.mutate({ task: { id, kind: d.kind, target: d.target.trim(), intervalS: Number(d.intervalS), timeoutMs: Number(d.timeoutMs) },
+    m.mutate({ task: { id, kind: d.kind, target: d.target.trim(), dnsServer: d.kind === ProbeKind.DNS ? d.dnsServer.trim() : "", intervalS: Number(d.intervalS), timeoutMs: Number(d.timeoutMs) },
       allNodes: d.allNodes, nodeIds: d.allNodes || d.dynamic ? [] : ascending([...d.nodeIds].filter((id) => availableNodeIds.has(id))),
       selectorTags: !d.allNodes && d.dynamic ? d.selectorTags : [] }, { onSuccess });
   const tasks = taskEntries(order.items);
@@ -108,8 +108,12 @@ function TaskForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
             {PROBE_KINDS.map(({ kind, label }) => <option key={kind} value={kind}>{label}</option>)}
           </select>
         </label>
-        <label>目标<input required maxLength={253} placeholder={draft.kind === ProbeKind.TCP ? "host:port" : "IP 或主机名"} value={draft.target}
+        <label>目标<input required maxLength={targetRule(draft.kind).maxLength} placeholder={targetRule(draft.kind).placeholder} value={draft.target}
           onChange={(e) => setDraft({ ...draft, target: e.target.value })} /></label>
+        {draft.kind === ProbeKind.DNS && (
+          <label>解析器<input required maxLength={47} placeholder="ip:port，如 1.1.1.1:53" value={draft.dnsServer}
+            onChange={(e) => setDraft({ ...draft, dnsServer: e.target.value })} /></label>
+        )}
         <label>间隔 (s)<input type="number" required min={5} max={3600} value={draft.intervalS} onChange={(e) => setDraft({ ...draft, intervalS: e.target.value })} /></label>
         <label>超时 (ms)<input type="number" required min={100} max={5000} value={draft.timeoutMs} onChange={(e) => setDraft({ ...draft, timeoutMs: e.target.value })} /></label>
       </div>

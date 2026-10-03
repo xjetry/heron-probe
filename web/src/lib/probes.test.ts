@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
 import { ProbeSeriesSchema, QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
 import { ProbeKind } from "../gen/heron/v1/types_pb";
-import { PROBE_KINDS, kindLabel, lossPercent, rttMeanMs, seriesLabels, taskIdsOf, toProbeAligned } from "./probes";
+import { PROBE_KINDS, kindLabel, lossPercent, rttMeanMs, seriesLabels, targetRule, taskIdsOf, toProbeAligned } from "./probes";
 
 it.each([
   {
@@ -15,11 +15,23 @@ it.each([
 });
 
 it("类型表与图例使用同一组标签", () => {
-  expect(PROBE_KINDS).toEqual([{ kind: ProbeKind.ICMP, label: "ICMP" }, { kind: ProbeKind.TCP, label: "TCP" }]);
+  expect(PROBE_KINDS).toEqual([
+    { kind: ProbeKind.ICMP, label: "ICMP" },
+    { kind: ProbeKind.TCP, label: "TCP" },
+    { kind: ProbeKind.HTTP, label: "HTTP" },
+    { kind: ProbeKind.DNS, label: "DNS" },
+  ]);
   for (const { kind, label } of PROBE_KINDS) {
     expect(kindLabel(kind)).toBe(label);
     expect(seriesLabels([create(ProbeSeriesSchema, { taskId: 1n, kind, target: "host" })])).toEqual([`${label} host`]);
   }
+});
+
+it("目标约束按种类：与 probelimit 的上限同源", () => {
+  expect(targetRule(ProbeKind.ICMP)).toEqual({ placeholder: "IP 或主机名", maxLength: 253 });
+  expect(targetRule(ProbeKind.TCP)).toEqual({ placeholder: "host:port", maxLength: 253 });
+  expect(targetRule(ProbeKind.HTTP)).toEqual({ placeholder: "https://example.com/path", maxLength: 512 });
+  expect(targetRule(ProbeKind.DNS)).toEqual({ placeholder: "要解析的 DNS 名", maxLength: 253 });
 });
 
 const resp = create(QueryProbesResponseSchema, {

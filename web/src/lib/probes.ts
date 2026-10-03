@@ -5,12 +5,28 @@ import { gridOf } from "./series";
 
 export type ProbeValue = (s: ProbeSample) => number | null;
 
-// hub 的 Registry.Save 经 probelimit.CheckTask 只放行 ICMP 与 TCP，类型标签与选项依赖该准入。
+// hub 的 Registry.Save 经 probelimit.CheckTask 准入，类型标签与选项依赖该准入。
 export const PROBE_KINDS: readonly { kind: ProbeKind; label: string }[] = [
   { kind: ProbeKind.ICMP, label: "ICMP" },
   { kind: ProbeKind.TCP, label: "TCP" },
+  { kind: ProbeKind.HTTP, label: "HTTP" },
+  { kind: ProbeKind.DNS, label: "DNS" },
 ];
 export const kindLabel = (kind: ProbeKind): string => PROBE_KINDS.find((entry) => entry.kind === kind)!.label;
+
+// 按种类的目标约束与 probelimit.CheckTask 同源：页面只用原生表单属性做提示，最终裁决在 hub。
+export const targetRule = (kind: ProbeKind): { placeholder: string; maxLength: number } => {
+  switch (kind) {
+    case ProbeKind.TCP:
+      return { placeholder: "host:port", maxLength: 253 };
+    case ProbeKind.HTTP:
+      return { placeholder: "https://example.com/path", maxLength: 512 };
+    case ProbeKind.DNS:
+      return { placeholder: "要解析的 DNS 名", maxLength: 253 };
+    default:
+      return { placeholder: "IP 或主机名", maxLength: 253 };
+  }
+};
 
 // 丢包率只看超时：error 是本地无法发起（无 socket、解析失败），不是链路事实。
 // hub 只返回 sent > 0 的点；这里仍显式守住除零，让不变式不依赖上游。
@@ -38,7 +54,7 @@ export function taskIdsOf(resp: QueryProbesResponse): bigint[] {
 
 // 序列自带任务的种类与目标（hub 查询时从任务清单读出）。kind 为 UNSPECIFIED 表示 hub 未标注，退回编号；
 // 未标注的原因见 ProbeSeries 的注释：管理端是任务已删除，公开端另含已从该节点撤下的任务，所以不能当成"已删除"显示。
-// hub 的任务准入只放行 ICMP 与 TCP（probelimit.CheckTask），所以其余种类只会是 UNSPECIFIED。
+// hub 的任务准入只放行 PROBE_KINDS 里的种类（probelimit.CheckTask），所以其余取值只会是 UNSPECIFIED。
 export function seriesLabel(s: ProbeSeries): string {
   return s.kind === ProbeKind.UNSPECIFIED ? `任务 #${s.taskId}` : `${kindLabel(s.kind)} ${s.target}`;
 }
