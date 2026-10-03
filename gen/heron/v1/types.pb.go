@@ -157,6 +157,8 @@ const (
 	ProbeKind_PROBE_KIND_UNSPECIFIED ProbeKind = 0
 	ProbeKind_PROBE_KIND_ICMP        ProbeKind = 1
 	ProbeKind_PROBE_KIND_TCP         ProbeKind = 2
+	ProbeKind_PROBE_KIND_HTTP        ProbeKind = 3
+	ProbeKind_PROBE_KIND_DNS         ProbeKind = 4
 )
 
 // Enum value maps for ProbeKind.
@@ -165,11 +167,15 @@ var (
 		0: "PROBE_KIND_UNSPECIFIED",
 		1: "PROBE_KIND_ICMP",
 		2: "PROBE_KIND_TCP",
+		3: "PROBE_KIND_HTTP",
+		4: "PROBE_KIND_DNS",
 	}
 	ProbeKind_value = map[string]int32{
 		"PROBE_KIND_UNSPECIFIED": 0,
 		"PROBE_KIND_ICMP":        1,
 		"PROBE_KIND_TCP":         2,
+		"PROBE_KIND_HTTP":        3,
+		"PROBE_KIND_DNS":         4,
 	}
 )
 
@@ -1045,12 +1051,17 @@ func (x *ProbeError) GetMessage() string {
 }
 
 type ProbeTask struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Kind          ProbeKind              `protobuf:"varint,2,opt,name=kind,proto3,enum=heron.v1.ProbeKind" json:"kind,omitempty"`
-	Target        string                 `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
-	IntervalS     uint32                 `protobuf:"varint,4,opt,name=interval_s,json=intervalS,proto3" json:"interval_s,omitempty"`
-	TimeoutMs     uint32                 `protobuf:"varint,5,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Kind  ProbeKind              `protobuf:"varint,2,opt,name=kind,proto3,enum=heron.v1.ProbeKind" json:"kind,omitempty"`
+	// 按种类：ICMP 是 IP 或主机名，TCP 是 host:port，HTTP 是绝对 URL，DNS 是要解析的 DNS 名。
+	Target    string `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
+	IntervalS uint32 `protobuf:"varint,4,opt,name=interval_s,json=intervalS,proto3" json:"interval_s,omitempty"`
+	TimeoutMs uint32 `protobuf:"varint,5,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	// DNS 任务要查询的解析器，ip:port 规范形式（IPv6 带方括号），只允许 IP 字面量：解析器自身
+	// 若是名字就要先用别的解析器解析它，地址策略也就查不到实际要发包的地址。只对 DNS 任务有意义；
+	// 其他种类携带即 InvalidArgument——静默忽略会让调用方以为它生效了。
+	DnsServer     string `protobuf:"bytes,6,opt,name=dns_server,json=dnsServer,proto3" json:"dns_server,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1118,6 +1129,13 @@ func (x *ProbeTask) GetTimeoutMs() uint32 {
 		return x.TimeoutMs
 	}
 	return 0
+}
+
+func (x *ProbeTask) GetDnsServer() string {
+	if x != nil {
+		return x.DnsServer
+	}
+	return ""
 }
 
 type ProbeTasks struct {
@@ -1467,7 +1485,7 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\aTimeout\"&\n" +
 	"\n" +
 	"ProbeError\x12\x18\n" +
-	"\amessage\x18\x01 \x01(\tR\amessage\"\x9a\x01\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage\"\xb9\x01\n" +
 	"\tProbeTask\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12'\n" +
 	"\x04kind\x18\x02 \x01(\x0e2\x13.heron.v1.ProbeKindR\x04kind\x12\x16\n" +
@@ -1475,7 +1493,9 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"interval_s\x18\x04 \x01(\rR\tintervalS\x12\x1d\n" +
 	"\n" +
-	"timeout_ms\x18\x05 \x01(\rR\ttimeoutMs\"Q\n" +
+	"timeout_ms\x18\x05 \x01(\rR\ttimeoutMs\x12\x1d\n" +
+	"\n" +
+	"dns_server\x18\x06 \x01(\tR\tdnsServer\"Q\n" +
 	"\n" +
 	"ProbeTasks\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12)\n" +
@@ -1517,11 +1537,13 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"#ADDRESS_DETECTION_STATE_UNSPECIFIED\x10\x00\x12%\n" +
 	"!ADDRESS_DETECTION_STATE_AVAILABLE\x10\x01\x12'\n" +
 	"#ADDRESS_DETECTION_STATE_UNSUPPORTED\x10\x02\x12\"\n" +
-	"\x1eADDRESS_DETECTION_STATE_FAILED\x10\x03*P\n" +
+	"\x1eADDRESS_DETECTION_STATE_FAILED\x10\x03*y\n" +
 	"\tProbeKind\x12\x1a\n" +
 	"\x16PROBE_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fPROBE_KIND_ICMP\x10\x01\x12\x12\n" +
-	"\x0ePROBE_KIND_TCP\x10\x02*\xf6\x01\n" +
+	"\x0ePROBE_KIND_TCP\x10\x02\x12\x13\n" +
+	"\x0fPROBE_KIND_HTTP\x10\x03\x12\x12\n" +
+	"\x0ePROBE_KIND_DNS\x10\x04*\xf6\x01\n" +
 	"\fBillingCycle\x12\x1d\n" +
 	"\x19BILLING_CYCLE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15BILLING_CYCLE_MONTHLY\x10\x01\x12\x1b\n" +

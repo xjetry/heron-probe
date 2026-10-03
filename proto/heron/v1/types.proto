@@ -138,14 +138,21 @@ enum ProbeKind {
   PROBE_KIND_UNSPECIFIED = 0;
   PROBE_KIND_ICMP = 1;
   PROBE_KIND_TCP = 2;
+  PROBE_KIND_HTTP = 3;
+  PROBE_KIND_DNS = 4;
 }
 
 message ProbeTask {
   uint64 id = 1;
   ProbeKind kind = 2;
+  // 按种类：ICMP 是 IP 或主机名，TCP 是 host:port，HTTP 是绝对 URL，DNS 是要解析的 DNS 名。
   string target = 3;
   uint32 interval_s = 4;
   uint32 timeout_ms = 5;
+  // DNS 任务要查询的解析器，ip:port 规范形式（IPv6 带方括号），只允许 IP 字面量：解析器自身
+  // 若是名字就要先用别的解析器解析它，地址策略也就查不到实际要发包的地址。只对 DNS 任务有意义；
+  // 其他种类携带即 InvalidArgument——静默忽略会让调用方以为它生效了。
+  string dns_server = 6;
 }
 
 message ProbeTasks {
