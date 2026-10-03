@@ -162,7 +162,7 @@ func runRun(args []string) error {
 	sched := prober.NewScheduler(prober.Multi{
 		ICMP: ic,
 		TCP:  prober.TCP{Clock: clk, Targets: targets},
-		HTTP: prober.HTTP{Clock: clk, Targets: targets, Version: version},
+		HTTP: &prober.HTTP{Clock: clk, Targets: targets, Version: version},
 		DNS:  prober.DNS{Clock: clk, Targets: targets},
 	}, queue, clk, log)
 	defer sched.Stop()

@@ -18,56 +18,26 @@ import (
 // 每次探测都带是无意义的重复字节；一小时内能看到更换后的新到期日已经足够。测试引用它。
 const CertReportInterval = time.Hour
 
-// certReportLog 按任务 id 记上一次携带证书到期时刻的单调钟时刻。它只影响是否重复携带，
-// 不影响任何测量值，因此不属于速率基线，不参与休眠检测的 ResetRates/Clear。
-type certReportLog struct {
-	mu   sync.Mutex
-	last map[uint64]time.Duration
-}
-
-func newCertReportLog() *certReportLog {
-	return &certReportLog{last: map[uint64]time.Duration{}}
-}
-
-// report 判定本次成功探测是否携带证书到期时刻；判定携带时把 now 记为该任务的上次携带时刻。
-func (l *certReportLog) report(id uint64, now time.Duration) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if last, ok := l.last[id]; ok && now-last < CertReportInterval {
-		return false
-	}
-	l.last[id] = now
-	return true
-}
-
-// prune 清掉已不在任务集里的任务的记录：任务消失再出现时按首次探测处理。
-func (l *certReportLog) prune(alive map[uint64]struct{}) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	for id := range l.last {
-		if _, ok := alive[id]; !ok {
-			delete(l.last, id)
-		}
-	}
-}
-
 // HTTP 测量一次 GET 从拨号到收到响应头的耗时；解析与整个请求（连接、TLS、等响应头）共用预算。
 // URL 非法、解析失败与本地策略拒绝是 error；状态 ≥400 与 TLS 握手失败（含证书错误）计入丢包，
 // 连接失败经 classify 区分。不跟随重定向（3xx 本身就是答案）、不复用连接、不读正文：
 // 探的是"这个 URL 能不能给出 <400 的响应头"，不是内容。
+//
+// Probe 是指针接收者：证书携带的频率上限记录内嵌在 HTTP 里（certMu/certLast），任何构造方式
+// （零值 &HTTP{...} 即可用，map 在锁内按需建立）上限都成立，不需要装配侧为字面量构造打补丁。
 type HTTP struct {
 	Clock   clock.Clock
 	Targets Targets
 	Version string // User-Agent 用 heron-agent/<Version>，与 heron-agent version 命令同源。
 	// TLSClientConfig 只在测试里注入（如限死 TLS 版本构造对端 alert 的握手失败）；生产为 nil，用默认配置。
 	TLSClientConfig *tls.Config
-	// certReports 是每任务"上次携带证书到期时刻"的频率上限记录（CertReportInterval）。
-	// Probe 是值接收者，各副本经这个指针共享同一份记录；NewScheduler 在调度开始前为字面量
-	// 构造的 HTTP 补上它。nil 时 Probe 每次都携带：上限只为减少重复字节，缺失时宁可多带。
-	certReports *certReportLog
+	// certLast 是每任务"上次携带证书到期时刻"的单调钟时刻（CertReportInterval）。它只影响是否
+	// 重复携带，不影响任何测量值，因此不属于速率基线，不参与休眠检测的 ResetRates/Clear。
+	certMu   sync.Mutex
+	certLast map[uint64]time.Duration
 }
 
-func (p HTTP) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
+func (p *HTTP) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 	timeout := time.Duration(t.GetTimeoutMs()) * time.Millisecond
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -130,18 +100,29 @@ func (p HTTP) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 	return out
 }
 
-// reportCert 判定本次成功探测是否携带证书到期时刻；未初始化的字面量（不经 NewScheduler）
-// 没有共享记录，每次都携带——频率上限只为减少重复字节，缺失时宁可多带也不少带。
-func (p HTTP) reportCert(id uint64, now time.Duration) bool {
-	if p.certReports == nil {
-		return true
+// reportCert 判定本次成功探测是否携带证书到期时刻；判定携带时把 now 记为该任务的上次携带时刻。
+// 频率上限由 CertReportInterval 承载：一小时内能看到更换后的新到期日已经足够，每次都带是重复字节。
+func (p *HTTP) reportCert(id uint64, now time.Duration) bool {
+	p.certMu.Lock()
+	defer p.certMu.Unlock()
+	if p.certLast == nil {
+		p.certLast = map[uint64]time.Duration{}
 	}
-	return p.certReports.report(id, now)
+	if last, ok := p.certLast[id]; ok && now-last < CertReportInterval {
+		return false
+	}
+	p.certLast[id] = now
+	return true
 }
 
-// pruneTasks 清掉已不在任务集里的任务的携带记录，由 Scheduler.Apply 在任务集更新后调用。
-func (p HTTP) pruneTasks(alive map[uint64]struct{}) {
-	if p.certReports != nil {
-		p.certReports.prune(alive)
+// pruneTasks 清掉已不在任务集里的任务的携带记录，由 Scheduler.Apply 在任务集更新后调用：
+// 任务消失再出现时按首次探测处理。
+func (p *HTTP) pruneTasks(alive map[uint64]struct{}) {
+	p.certMu.Lock()
+	defer p.certMu.Unlock()
+	for id := range p.certLast {
+		if _, ok := alive[id]; !ok {
+			delete(p.certLast, id)
+		}
 	}
 }

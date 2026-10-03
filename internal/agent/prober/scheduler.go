@@ -35,16 +35,6 @@ type runningTask struct {
 }
 
 func NewScheduler(engine Engine, queue *Queue, clk clock.Clock, log *slog.Logger) *Scheduler {
-	// HTTP 的证书携带记录由引擎值内部的共享指针承载（Probe 是值接收者，副本靠指针共享同一记录）；
-	// main 以字面量构造 Multi 时指针为 nil，调度开始前在这里补上并把补好的副本存回 engine，
-	// 之后全部 Probe 都经这份副本共享记录。
-	if m, ok := engine.(Multi); ok {
-		if h, ok := m.HTTP.(HTTP); ok && h.certReports == nil {
-			h.certReports = newCertReportLog()
-			m.HTTP = h
-			engine = m
-		}
-	}
 	return &Scheduler{engine: engine, queue: queue, clk: clk, log: log, Rand: rand.Float64, Sleep: sleep, running: map[uint64]*runningTask{}}
 }
 

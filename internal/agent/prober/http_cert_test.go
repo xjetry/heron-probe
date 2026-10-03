@@ -2,7 +2,6 @@ package prober
 
 import (
 	"crypto/tls"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -23,13 +22,12 @@ func certTestServer(t *testing.T, status *atomic.Int64) (*httptest.Server, int64
 }
 
 // 自签证书需要跳过链验证才能握手成功；PeerCertificates 与是否验证无关，始终填充。
-func certProber(clk clock.Clock, t *testing.T) HTTP {
-	return HTTP{
+func certProber(clk clock.Clock, t *testing.T) *HTTP {
+	return &HTTP{
 		Clock:           clk,
 		Targets:         loopbackTargets(t, nil),
 		Version:         "v",
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		certReports:     newCertReportLog(),
 	}
 }
 
@@ -113,19 +111,6 @@ func TestHTTPCertReportPrunedWithTaskSet(t *testing.T) {
 	p.pruneTasks(map[uint64]struct{}{})
 	if out := p.Probe(t.Context(), task); out.CertNotAfter != wantNotAfter {
 		t.Fatalf("probe after prune dropping task CertNotAfter = %d, want %d", out.CertNotAfter, wantNotAfter)
-	}
-}
-
-// NewScheduler 为字面量构造的 Multi.HTTP 补上证书携带记录；之后引擎副本共享同一记录。
-func TestNewSchedulerInitializesHTTPCertLog(t *testing.T) {
-	s := NewScheduler(Multi{HTTP: HTTP{Clock: clock.Real(), Targets: Targets{}}}, NewQueue(1), clock.NewFake(time.Unix(1000, 0)), slog.Default())
-	m, ok := s.engine.(Multi)
-	if !ok {
-		t.Fatalf("engine = %T, want Multi", s.engine)
-	}
-	h, ok := m.HTTP.(HTTP)
-	if !ok || h.certReports == nil {
-		t.Fatalf("Multi.HTTP = %+v, want HTTP with certReports initialized", m.HTTP)
 	}
 }
 
