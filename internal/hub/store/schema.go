@@ -131,7 +131,7 @@ var metricTables = []string{"metric_1m", "metric_5m", "metric_1h"}
 // DeleteNode 与 Restore 共用节点从属清单，显式删除不依赖外键开启或级联行为。
 // alert_event 是审计历史，删节点时也保留；系统事件的 node_id=0，不属于节点从属状态。
 var nodeDependentTables = append(append([]string{
-	"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "silence_node", "node_tag", "node_update", "api_token_node",
+	"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "silence_node", "node_tag", "node_update", "api_token_node", "probe_cert",
 }, metricTables...), probeTables...)
 
 // schemaStatements 是当前版本的完整 DDL：空库直接建到当前版本，不重放历史。
@@ -148,7 +148,7 @@ func schemaStatements() []string {
 		ddlTheme, ddlThemeVersion, ddlThemeSelection, seedThemeSelection, ddlThemeFile, ddlRestoreRecord, ddlThemePackage,
 		ddlAdminSecurity, seedAdminSecurity, ddlProbeTaskTag, ddlProbeTaskTagIndex, ddlAlertRuleTag, ddlAlertRuleTagIndex, ddlNodeUpdate,
 		ddlSilence, ddlSilenceNode, ddlSilenceNodeByNode, ddlSilenceTag, ddlSilenceTagByTag,
-		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime)
+		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime, ddlProbeCert)
 }
 
 const ddlNodeUpdate = `CREATE TABLE node_update (node_id INTEGER PRIMARY KEY, data TEXT NOT NULL, owner_id INTEGER NOT NULL DEFAULT 0)`
@@ -337,6 +337,19 @@ const ddlProbeMeta = `CREATE TABLE probe_meta (
 const seedProbeMeta = `INSERT INTO probe_meta (id, version) VALUES (1, 0)`
 
 const seedProbeRollupState = `INSERT INTO rollup_state (level, upto_ts) VALUES ('probe_5m', 0), ('probe_1h', 0)`
+
+// probe_cert 是 (节点, 任务) 的最新一份 HTTPS 证书到期观测（§8.3），与探测表族分开：它不是时间序列，写侧是
+// ingest 校验通过后的覆盖写，读侧是证书到期告警评估。没有行即"无读数"——不是任何证书状态，评估对无行的
+// (节点, 任务) 不评估也不恢复。行随任务删除（DeleteProbeTask）与节点删除（DeleteNode）消失。
+const ddlProbeCert = `CREATE TABLE probe_cert (
+  node_id INTEGER NOT NULL,
+  task_id INTEGER NOT NULL,
+  -- 服务端证书链首枚证书的到期时刻（Unix 秒）。
+  not_after INTEGER NOT NULL,
+  -- hub 收到这次观测的墙钟（Unix 秒），供展示"观测于何时"。
+  observed_at INTEGER NOT NULL,
+  PRIMARY KEY (node_id, task_id)
+) WITHOUT ROWID`
 
 // all_nodes 显式区分全部节点与有限作用域：为真时 SaveAlertRule 不写节点联结行；
 // 为假时空联结集合不覆盖任何节点，DeleteNode 删除最后一个联结也不会放宽规则。

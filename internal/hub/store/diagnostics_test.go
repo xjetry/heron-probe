@@ -166,6 +166,7 @@ func TestObservabilityMigrationAndOldSnapshotsPreserveUnknown(t *testing.T) {
 		}
 		if path == config {
 			for _, q := range []string{
+				"DROP TABLE probe_cert",
 				"ALTER TABLE probe_task DROP COLUMN dns_server",
 				"ALTER TABLE node_facts DROP COLUMN diagnostics", "ALTER TABLE traffic DROP COLUMN net_counter_epoch",
 				"ALTER TABLE node DROP COLUMN maintenance", "ALTER TABLE alert_event DROP COLUMN silenced", "ALTER TABLE alert_state DROP COLUMN fired_silenced",

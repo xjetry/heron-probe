@@ -51,7 +51,20 @@ var migrations = map[int]func(*sql.Tx) error{
 	27: execAll(migrationV27Config),
 	28: execAll(migrationV28Metrics),
 	29: execAll(migrationV29Config),
+	30: execAll(migrationV30Config),
 }
+
+// v30：HTTPS 证书到期观测（§8.3）的"最新值"表。旧库升级后没有行：升级前没有证书观测，空表就是"无读数"，
+// 证书到期评估对没有行的 (节点, 任务) 不评估，与从未上报过证书同态。
+var migrationV30Config = []string{ddlProbeCertV30}
+
+const ddlProbeCertV30 = `CREATE TABLE probe_cert (
+  node_id INTEGER NOT NULL,
+  task_id INTEGER NOT NULL,
+  not_after INTEGER NOT NULL,
+  observed_at INTEGER NOT NULL,
+  PRIMARY KEY (node_id, task_id)
+) WITHOUT ROWID`
 
 // v29：DNS 探测任务要查询的解析器。旧行取空串：升级前没有 DNS 任务，空串与"非 DNS 任务不携带该字段"同值。
 var migrationV29Config = []string{`ALTER TABLE probe_task ADD COLUMN dns_server TEXT NOT NULL DEFAULT ''`}

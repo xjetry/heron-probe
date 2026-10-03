@@ -14,7 +14,7 @@ import (
 // 新表的归属由分类完备性测试约束，不能在快照时静默跳过不存在的表。
 // node_update 是本次运行的安装授权，不进备份；Restore 同时清除目标库的残留授权。
 var configSnapshotTables = []string{
-	"node", "node_facts", "traffic", "probe_task", "probe_task_node", "probe_meta",
+	"node", "node_facts", "traffic", "probe_task", "probe_task_node", "probe_meta", "probe_cert",
 	"alert_rule", "alert_rule_node", "alert_rule_channel", "alert_state", "alert_event", "alert_delivery",
 	"notify_channel", "setting", "admin", "admin_security", "api_token", "api_token_node", "operation", "tag", "node_tag", "theme", "theme_version", "theme_selection", "restore_record", "probe_task_tag", "alert_rule_tag", "silence", "silence_node", "silence_tag",
 }

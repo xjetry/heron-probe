@@ -414,6 +414,11 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			if layer == "config" {
 				statements = migrationV29Config
 			}
+		case 30:
+			// probe_cert 只在配置层建表，指标层无变化。
+			if layer == "config" {
+				statements = migrationV30Config
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}

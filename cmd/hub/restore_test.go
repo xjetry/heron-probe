@@ -140,6 +140,7 @@ func restoreSnapshots(t *testing.T) (config, metrics string) {
 			INSERT INTO node_tag (node_id,tag_id) VALUES (%[1]d,1);
 			INSERT INTO traffic (node_id,boot_id,last_rx,last_tx,total_rx,total_tx,period_rx,period_tx,period_start,updated_at) VALUES (%[1]d,'',0,0,0,0,0,0,0,0);
 			INSERT INTO probe_task_node VALUES (1,%[1]d);
+			INSERT INTO probe_cert (node_id,task_id,not_after,observed_at) VALUES (%[1]d,7,0,0);
 			INSERT INTO alert_rule_node VALUES (1,%[1]d);
 			INSERT INTO silence_node VALUES (1,%[1]d);
 			INSERT INTO alert_state (rule_id,node_id,state,since_at) VALUES (1,%[1]d,'firing',0);`, id))
@@ -279,6 +280,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			removeV30Config(t, cfg)
 			removeV29Config(t, cfg)
 			removeV26Config(t, cfg)
 			removeV27Config(t, cfg)
@@ -327,6 +329,12 @@ func removeV26Config(t *testing.T, config *sql.DB) {
 	restoreExec(t, config, "ALTER TABLE node_facts DROP COLUMN diagnostics; ALTER TABLE traffic DROP COLUMN net_counter_epoch")
 }
 
+// 同上：30 号建了 probe_cert 表，回填旧版本号前必须撤回。
+func removeV30Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "DROP TABLE probe_cert")
+}
+
 // 同上：29 号给 probe_task 加了 dns_server，回填旧版本号前必须撤回。
 func removeV29Config(t *testing.T, config *sql.DB) {
 	t.Helper()
@@ -340,6 +348,7 @@ func TestRestoreV28ConfigSnapshotAddsDNSServerColumn(t *testing.T) {
 	config, metrics := restoreSnapshots(t)
 	cfg := restoreDB(t, config)
 	restoreExec(t, cfg, "INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order) VALUES (8,1,'legacy.example',60,1000,0,0,0)")
+	removeV30Config(t, cfg)
 	removeV29Config(t, cfg)
 	restoreExec(t, cfg, "UPDATE snapshot_meta SET schema_version=28")
 	path := restoreTarget(t)
