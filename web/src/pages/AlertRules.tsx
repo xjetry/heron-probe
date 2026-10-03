@@ -8,6 +8,7 @@ import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Picks } from "../components/Picks";
 import { NodeSelector, type NodeSelection } from "../components/NodeSelector";
 import { AdminService, AlertKind, ProbeMetric, ResourceMetric, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/heron/v1/admin_pb";
+import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { ALERT_KINDS, MBPS_TO_BYTES_PER_S, PROBE_METRICS, RESOURCE_METRICS, labelOf, resourceThresholdMax, resourceUnit, ruleCondition, statesOf, taskLabels, type RuleStates } from "../lib/alerts";
 import { liveIds, withId } from "../lib/ids";
 
@@ -26,13 +27,15 @@ const emptyDraft = (): Draft => ({
 });
 const draftOf = (r: AlertRule): Draft => {
   const probe = r.kind === AlertKind.PROBE;
+  // 证书到期与探测一样引用任务，与到期一样带提前天数。
+  const withTask = probe || r.kind === AlertKind.CERT_EXPIRY;
   // 速率指标的协议值是 bytes/s，草稿按 Mbps 展示（RESOURCE_METRICS 的 unit 决定换算方向）。
   const scale = r.kind === AlertKind.RESOURCE && resourceUnit(r.resourceMetric) === "mbps" ? MBPS_TO_BYTES_PER_S : 1;
   return {
     name: r.name, kind: r.kind, enabled: r.enabled, allNodes: r.allNodes, nodeIds: new Set(r.nodeIds), channelIds: new Set(r.channelIds),
-    taskId: probe ? String(r.taskId) : "", metric: probe ? r.metric : ProbeMetric.LOSS_PCT,
+    taskId: withTask ? String(r.taskId) : "", metric: probe ? r.metric : ProbeMetric.LOSS_PCT,
     threshold: probe ? String(r.threshold) : r.kind === AlertKind.RESOURCE ? String(r.threshold / scale) : "", forMinutes: probe || r.kind === AlertKind.RESOURCE ? String(r.forMinutes) : "3",
-    daysBefore: r.kind === AlertKind.EXPIRY ? String(r.daysBefore) : "7",
+    daysBefore: r.kind === AlertKind.EXPIRY || r.kind === AlertKind.CERT_EXPIRY ? String(r.daysBefore) : "7",
     selectorTags: r.selectorTags, dynamic: r.selectorTags.length > 0,
     resourceMetric: r.kind === AlertKind.RESOURCE ? r.resourceMetric : ResourceMetric.MEMORY_USED_PCT,
     recoveryThreshold: r.kind === AlertKind.RESOURCE ? String(r.recoveryThreshold / scale) : "80",
@@ -52,7 +55,8 @@ function toRule(id: bigint, d: Draft, nodes: Node[], channels: NotifyChannel[]) 
   const own = d.kind === AlertKind.PROBE
     ? { taskId: BigInt(d.taskId), metric: d.metric, threshold: Number(d.threshold), forMinutes: Number(d.forMinutes) }
     : d.kind === AlertKind.EXPIRY ? { daysBefore: Number(d.daysBefore) }
-      : d.kind === AlertKind.RESOURCE ? resourceRule(d) : {};
+      : d.kind === AlertKind.CERT_EXPIRY ? { taskId: BigInt(d.taskId), daysBefore: Number(d.daysBefore) }
+        : d.kind === AlertKind.RESOURCE ? resourceRule(d) : {};
   return {
     id, name: d.name.trim(), kind: d.kind, enabled: d.enabled, allNodes: d.allNodes,
     nodeIds: d.allNodes || d.dynamic ? [] : liveIds(d.nodeIds, nodes), selectorTags: !d.allNodes && d.dynamic ? d.selectorTags : [], channelIds: liveIds(d.channelIds, channels), ...own,
@@ -113,8 +117,10 @@ export function AlertRules() {
 type Lists = { nodes: Node[]; channels: NotifyChannel[]; tasks: ProbeTaskDetail[] };
 
 // 同类型同目标没有唯一约束。只在这份下拉里碰撞的标签追加编号，否则两个任务无法区分，选错会盯住另一个任务。
-function taskOptions(tasks: ProbeTaskDetail[]) {
-  const listed = tasks.flatMap((d) => (d.task ? [d.task] : []));
+// httpsOnly 只列 https:// 的 HTTP 任务：证书到期规则只能挂在它们上面（hub 的 requireHTTPSProbeTask 同样裁决）。
+function taskOptions(tasks: ProbeTaskDetail[], httpsOnly = false) {
+  const listed = tasks.flatMap((d) => (d.task ? [d.task] : []))
+    .filter((t) => !httpsOnly || (t.kind === ProbeKind.HTTP && t.target.startsWith("https://")));
   const labels = taskLabels(listed.map((t) => t.id), tasks);
   return listed.map((t, i) => <option key={String(t.id)} value={String(t.id)}>{labels[i]}</option>);
 }
@@ -150,6 +156,19 @@ function RuleForm({ title, nodes, channels, tasks, initial, pending, onSubmit, o
           </div>
           <p className="muted">节点到期日距今不超过提前天数即触发（已过期的也算）；到期日改到这个范围之外、清除到期日，或调小提前天数使它落到范围之外，即恢复。续期后的到期日仍在范围内时不恢复。到期日在节点页设置。保存后立即评估，此后在 hub 启动时、hub 时区的每个日界（零点不存在的日子取新一天的第一个时刻）与修改节点计费时评估。</p>
         </>
+      ) : draft.kind === AlertKind.CERT_EXPIRY ? (
+        <>
+          <div className="row">
+            <label>探测任务
+              <select required value={draft.taskId} onChange={(e) => set({ taskId: e.target.value })}>
+                <option value="">选择任务</option>
+                {taskOptions(tasks, true)}
+              </select>
+            </label>
+            <label>提前天数<input type="number" required min={1} max={365} step={1} value={draft.daysBefore} onChange={(e) => set({ daysBefore: e.target.value })} /></label>
+          </div>
+          <p className="muted">任务的证书到期日距今不超过提前天数即触发（已过期的也算）；证书更换使到期日落到范围之外，或调小提前天数使它落到范围之外，即恢复。证书到期日由 HTTPS 探测握手成功时顺带带回（每任务每小时至多一次）。保存后立即评估，此后在 hub 启动时、hub 时区的每个日界与证书观测变化时评估。</p>
+        </>
       ) : draft.kind === AlertKind.RESOURCE ? (
         <ResourceFields draft={draft} set={set} />
       ) : probe ? (
@@ -174,6 +193,7 @@ function RuleForm({ title, nodes, channels, tasks, initial, pending, onSubmit, o
       )}
       <NodeSelector nodes={nodes} value={draft} onChange={set} legend="作用域节点" />
       {probe && <p className="muted">探测规则只在既属于作用域、又分配了该任务的节点上评估。</p>}
+      {draft.kind === AlertKind.CERT_EXPIRY && <p className="muted">证书到期规则只在既属于作用域、又分配了该任务的节点上评估；没有证书观测的节点不评估。</p>}
       {channels.length > 0
         ? <Picks legend="通知渠道" items={channels} selected={draft.channelIds} onChange={(channelIds) => set({ channelIds })} />
         : <p className="muted">还没有通知渠道；规则只记录事件，不发送通知。</p>}

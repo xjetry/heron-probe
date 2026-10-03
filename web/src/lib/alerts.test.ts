@@ -68,6 +68,10 @@ describe("ruleCondition", () => {
   it("到期规则写出提前天数", () => {
     expect(ruleCondition(create(AlertRuleSchema, { kind: AlertKind.EXPIRY, daysBefore: 14 }), tasks)).toBe("到期日距今不超过 14 天（含已过期）");
   });
+  it("证书到期规则写出任务与提前天数", () => {
+    const r = create(AlertRuleSchema, { kind: AlertKind.CERT_EXPIRY, taskId: 3n, daysBefore: 14 });
+    expect(ruleCondition(r, tasks)).toBe("TCP 1.1.1.1:443 的证书到期日距今不超过 14 天（含已过期）");
+  });
   it("RTT 规则带 ms，已删除任务用编号", () => {
     const r = create(AlertRuleSchema, { kind: AlertKind.PROBE, taskId: 9n, metric: ProbeMetric.RTT_MS, threshold: 150, forMinutes: 5 });
     expect(ruleCondition(r, tasks)).toBe("任务 #9 RTT 均值 ≥ 150 ms，连续 5 分钟");

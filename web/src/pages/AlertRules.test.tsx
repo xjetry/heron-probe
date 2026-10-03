@@ -500,6 +500,52 @@ it("探测规则改成到期时只带提前天数", async () => {
     taskId: 0n, metric: ProbeMetric.UNSPECIFIED, threshold: 0, forMinutes: 0, daysBefore: 7 });
 });
 
+const httpsTasks = create(ListProbeTasksResponseSchema, { tasks: [
+  { task: { id: 3n, kind: ProbeKind.TCP, target: "1.1.1.1:443" }, nodeIds: [1n] },
+  { task: { id: 4n, kind: ProbeKind.HTTP, target: "http://example.com/" }, nodeIds: [1n] },
+  { task: { id: 5n, kind: ProbeKind.HTTP, target: "https://example.com/" }, nodeIds: [1n] },
+] });
+const certRules = create(ListAlertRulesResponseSchema, {
+  rules: [{ id: 13n, name: "证书", kind: AlertKind.CERT_EXPIRY, enabled: true, allNodes: true, taskId: 5n, daysBefore: 14 }],
+  states: [{ ruleId: 13n, nodeId: 1n, state: "firing" }],
+});
+
+it("新建证书到期规则只列 HTTPS 任务，发任务与提前天数", async () => {
+  const saved: SaveAlertRuleRequest[] = [];
+  render({ listProbeTasks: async () => httpsTasks, saveAlertRule: async (req) => { saved.push(req); return {}; } });
+  const form = await screen.findByRole("form", { name: "新建告警规则" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "证书提醒" } });
+  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(AlertKind.CERT_EXPIRY) } });
+  const select = within(form).getByLabelText("探测任务");
+  expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["选择任务", "HTTP https://example.com/"]);
+  expect(within(form).getByLabelText("提前天数")).toHaveValue(7);
+  expect(within(form).queryByLabelText("指标")).toBeNull();
+  fireEvent.change(select, { target: { value: "5" } });
+  fireEvent.change(within(form).getByLabelText("提前天数"), { target: { value: "30" } });
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  const r = saved[0].rule!;
+  expect({ kind: r.kind, taskId: r.taskId, daysBefore: r.daysBefore, metric: r.metric, threshold: r.threshold, forMinutes: r.forMinutes }).toEqual(
+    { kind: AlertKind.CERT_EXPIRY, taskId: 5n, daysBefore: 30, metric: ProbeMetric.UNSPECIFIED, threshold: 0, forMinutes: 0 });
+});
+
+it("列表写出证书到期的条件与状态，编辑带回任务与提前天数", async () => {
+  const saved: SaveAlertRuleRequest[] = [];
+  render({ listProbeTasks: async () => httpsTasks, listAlertRules: async () => certRules,
+    saveAlertRule: async (req) => { saved.push(req); return {}; } });
+  const row = within((await screen.findByRole("cell", { name: "HTTP https://example.com/ 的证书到期日距今不超过 14 天（含已过期）" })).closest("tr")!);
+  expect(row.getByRole("cell", { name: "证书到期" })).toBeInTheDocument();
+  expect(row.getByRole("cell", { name: "触发：东京" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "编辑 证书（#13）" }));
+  const form = screen.getByRole("form", { name: "编辑 证书（#13）" });
+  expect(within(form).getByLabelText("探测任务")).toHaveValue("5");
+  expect(within(form).getByLabelText("提前天数")).toHaveValue(14);
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "证书提醒" } });
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].rule).toEqual({ ...certRules.rules[0], name: "证书提醒" });
+});
+
 it("待定节点按 hub 的 flapping 标出抖动中，其余待定不标", async () => {
   render({ listAlertRules: async () => create(ListAlertRulesResponseSchema, {
     rules: [{ id: 7n, name: "离线", kind: AlertKind.OFFLINE, enabled: true, allNodes: true }],
