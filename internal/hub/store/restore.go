@@ -404,6 +404,11 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			if layer == "config" {
 				statements = migrationV27Config
 			}
+		case 28:
+			// 新指标只在指标层加列，配置层无变化。
+			if layer == "metrics" {
+				statements = migrationV28Metrics
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}

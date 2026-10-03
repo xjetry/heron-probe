@@ -49,7 +49,27 @@ var migrations = map[int]func(*sql.Tx) error{
 		"DROP TABLE register_window_old", "ALTER TABLE node_update ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0")),
 	26: execAll(migrationV26Config),
 	27: execAll(migrationV27Config),
+	28: execAll(migrationV28Metrics),
 }
+
+// 新列的 n=0 表示旧行没有该指标的历史采样，不把缺失伪装成已测的零流量或零占用。
+var migrationV28Metrics = func() []string {
+	columns := []struct{ name, typ string }{
+		{"disk_read_bps", "INTEGER"},
+		{"disk_write_bps", "INTEGER"},
+		{"cpu_steal_pct", "REAL"},
+		{"cpu_iowait_pct", "REAL"},
+	}
+	var out []string
+	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+		for _, c := range columns {
+			out = append(out, "ALTER TABLE "+table+" ADD COLUMN "+c.name+"_sum "+c.typ+" NOT NULL DEFAULT 0",
+				"ALTER TABLE "+table+" ADD COLUMN "+c.name+"_n INTEGER NOT NULL DEFAULT 0",
+				"ALTER TABLE "+table+" ADD COLUMN "+c.name+"_max "+c.typ+" NOT NULL DEFAULT 0")
+		}
+	}
+	return out
+}()
 
 // v27：维护静默的存储结构。新增列都带 NOT NULL 默认值，使旧行取「未维护、未静默」——不得把历史误标成维护中或已静默。
 var migrationV27Config = []string{

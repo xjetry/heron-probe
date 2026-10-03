@@ -298,8 +298,16 @@ type Metrics struct {
 	// 实际计入网络合计的网卡名称集合的 SHA-256，小写十六进制；与计数同次采样。
 	// 集合改变时仅重建差分基线，不把旧网卡计数当新增流量。空串表示旧 agent 未提供此能力。
 	NetCounterEpoch string `protobuf:"bytes,20,opt,name=net_counter_epoch,json=netCounterEpoch,proto3" json:"net_counter_epoch,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// agent 本地两次采样间整盘设备读/写字节速率合计，bytes/s；与 net_rx_bps / net_tx_bps 同一差分规则：
+	// 首样本、设备集合变化或任一设备计数回退时缺失，不伪造零值。
+	DiskReadBps  *uint64 `protobuf:"varint,21,opt,name=disk_read_bps,json=diskReadBps,proto3,oneof" json:"disk_read_bps,omitempty"`
+	DiskWriteBps *uint64 `protobuf:"varint,22,opt,name=disk_write_bps,json=diskWriteBps,proto3,oneof" json:"disk_write_bps,omitempty"`
+	// steal 与 iowait 占全部 CPU tick 的百分比，与 cpu_pct 取自同一次 /proc/stat 两次采样差分；
+	// 不是 cpu_pct 的子集，三者可同时有值。任意计数回退或 Δtotal = 0 时三项一起缺失。
+	CpuStealPct   *float64 `protobuf:"fixed64,23,opt,name=cpu_steal_pct,json=cpuStealPct,proto3,oneof" json:"cpu_steal_pct,omitempty"`
+	CpuIowaitPct  *float64 `protobuf:"fixed64,24,opt,name=cpu_iowait_pct,json=cpuIowaitPct,proto3,oneof" json:"cpu_iowait_pct,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Metrics) Reset() {
@@ -470,6 +478,34 @@ func (x *Metrics) GetNetCounterEpoch() string {
 		return x.NetCounterEpoch
 	}
 	return ""
+}
+
+func (x *Metrics) GetDiskReadBps() uint64 {
+	if x != nil && x.DiskReadBps != nil {
+		return *x.DiskReadBps
+	}
+	return 0
+}
+
+func (x *Metrics) GetDiskWriteBps() uint64 {
+	if x != nil && x.DiskWriteBps != nil {
+		return *x.DiskWriteBps
+	}
+	return 0
+}
+
+func (x *Metrics) GetCpuStealPct() float64 {
+	if x != nil && x.CpuStealPct != nil {
+		return *x.CpuStealPct
+	}
+	return 0
+}
+
+func (x *Metrics) GetCpuIowaitPct() float64 {
+	if x != nil && x.CpuIowaitPct != nil {
+		return *x.CpuIowaitPct
+	}
+	return 0
 }
 
 // 主机静态信息。进程启动后的首次上报携带；此后仅在 hub 要求时携带。
@@ -1324,7 +1360,7 @@ var File_heron_v1_types_proto protoreflect.FileDescriptor
 
 const file_heron_v1_types_proto_rawDesc = "" +
 	"\n" +
-	"\x14heron/v1/types.proto\x12\bheron.v1\"\x93\a\n" +
+	"\x14heron/v1/types.proto\x12\bheron.v1\"\x85\t\n" +
 	"\aMetrics\x12\x17\n" +
 	"\aboot_id\x18\x01 \x01(\tR\x06bootId\x12\x1c\n" +
 	"\acpu_pct\x18\x02 \x01(\x01H\x00R\x06cpuPct\x88\x01\x01\x12\x19\n" +
@@ -1353,7 +1389,11 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\tudp_conns\x18\x11 \x01(\rH\x0fR\budpConns\x88\x01\x01\x12\x19\n" +
 	"\x05procs\x18\x12 \x01(\rH\x10R\x05procs\x88\x01\x01\x12\x1e\n" +
 	"\buptime_s\x18\x13 \x01(\x04H\x11R\auptimeS\x88\x01\x01\x12*\n" +
-	"\x11net_counter_epoch\x18\x14 \x01(\tR\x0fnetCounterEpochB\n" +
+	"\x11net_counter_epoch\x18\x14 \x01(\tR\x0fnetCounterEpoch\x12'\n" +
+	"\rdisk_read_bps\x18\x15 \x01(\x04H\x12R\vdiskReadBps\x88\x01\x01\x12)\n" +
+	"\x0edisk_write_bps\x18\x16 \x01(\x04H\x13R\fdiskWriteBps\x88\x01\x01\x12'\n" +
+	"\rcpu_steal_pct\x18\x17 \x01(\x01H\x14R\vcpuStealPct\x88\x01\x01\x12)\n" +
+	"\x0ecpu_iowait_pct\x18\x18 \x01(\x01H\x15R\fcpuIowaitPct\x88\x01\x01B\n" +
 	"\n" +
 	"\b_cpu_pctB\b\n" +
 	"\x06_load1B\b\n" +
@@ -1377,7 +1417,11 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"_udp_connsB\b\n" +
 	"\x06_procsB\v\n" +
-	"\t_uptime_s\"\xfc\x02\n" +
+	"\t_uptime_sB\x10\n" +
+	"\x0e_disk_read_bpsB\x11\n" +
+	"\x0f_disk_write_bpsB\x10\n" +
+	"\x0e_cpu_steal_pctB\x11\n" +
+	"\x0f_cpu_iowait_pct\"\xfc\x02\n" +
 	"\x05Facts\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x0e\n" +
 	"\x02os\x18\x02 \x01(\tR\x02os\x12\x16\n" +

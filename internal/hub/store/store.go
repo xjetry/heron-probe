@@ -229,7 +229,7 @@ func (s *Store) writeAsync(fn func(*sql.Tx) error, done func(error)) {
 	}
 }
 
-const schemaVersion = 27
+const schemaVersion = 28
 
 type schemaAction int
 

@@ -67,6 +67,8 @@ func TestColumnsCoverSpecifiedMetrics(t *testing.T) {
 		"udp": {Mean, Int}, "procs": {Mean, Int}, "rx_bytes": {Sum, Int}, "tx_bytes": {Sum, Int},
 		"memory_used_pct": {Mean, Float}, "disk_used_pct": {Mean, Float},
 		"net_rx_bps": {MeanMax, Int}, "net_tx_bps": {MeanMax, Int},
+		"disk_read_bps": {MeanMax, Int}, "disk_write_bps": {MeanMax, Int},
+		"cpu_steal_pct": {MeanMax, Float}, "cpu_iowait_pct": {MeanMax, Float},
 	}
 	if len(Columns) != len(want) {
 		t.Fatalf("%d columns, want %d", len(Columns), len(want))

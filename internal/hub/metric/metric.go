@@ -71,6 +71,12 @@ var Columns = []Column{
 	// 字节增量仍单独由入账方累计，采样速率的均值不能替代总字节数除以桶长。
 	{"net_rx_bps", MeanMax, Int, "bytes/s", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetNetRxBps()), m.NetRxBps != nil }},
 	{"net_tx_bps", MeanMax, Int, "bytes/s", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetNetTxBps()), m.NetTxBps != nil }},
+	// 磁盘整盘设备的采样速率，与网络速率同一差分与峰值口径：首样本、设备集合变化或计数回退时缺失。
+	{"disk_read_bps", MeanMax, Int, "bytes/s", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetDiskReadBps()), m.DiskReadBps != nil }},
+	{"disk_write_bps", MeanMax, Int, "bytes/s", func(m *heronv1.Metrics) (float64, bool) { return f64(m.GetDiskWriteBps()), m.DiskWriteBps != nil }},
+	// steal 与 iowait 是 cpu_pct 之外的独立占比，各自成一系列，均可与 cpu_pct 同时显示。
+	{"cpu_steal_pct", MeanMax, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return m.GetCpuStealPct(), m.CpuStealPct != nil }},
+	{"cpu_iowait_pct", MeanMax, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return m.GetCpuIowaitPct(), m.CpuIowaitPct != nil }},
 }
 
 // 同一次采样的分子、分母必须都存在且容量非零；先算比例再聚合，不能把不同采样的均值相除。

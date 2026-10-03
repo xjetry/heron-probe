@@ -33,6 +33,14 @@ message Metrics {
   // 实际计入网络合计的网卡名称集合的 SHA-256，小写十六进制；与计数同次采样。
   // 集合改变时仅重建差分基线，不把旧网卡计数当新增流量。空串表示旧 agent 未提供此能力。
   string net_counter_epoch = 20;
+  // agent 本地两次采样间整盘设备读/写字节速率合计，bytes/s；与 net_rx_bps / net_tx_bps 同一差分规则：
+  // 首样本、设备集合变化或任一设备计数回退时缺失，不伪造零值。
+  optional uint64 disk_read_bps = 21;
+  optional uint64 disk_write_bps = 22;
+  // steal 与 iowait 占全部 CPU tick 的百分比，与 cpu_pct 取自同一次 /proc/stat 两次采样差分；
+  // 不是 cpu_pct 的子集，三者可同时有值。任意计数回退或 Δtotal = 0 时三项一起缺失。
+  optional double cpu_steal_pct = 23;
+  optional double cpu_iowait_pct = 24;
 }
 
 // 主机静态信息。进程启动后的首次上报携带；此后仅在 hub 要求时携带。

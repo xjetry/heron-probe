@@ -149,4 +149,10 @@ message PublicMetrics {
   optional uint32 udp_conns = 17;
   optional uint32 procs = 18;
   optional uint64 uptime_s = 19;
+  // 整盘设备读/写速率，字节/秒。
+  optional uint64 disk_read_bps = 21;
+  optional uint64 disk_write_bps = 22;
+  // steal 与 iowait 占比，百分比。
+  optional double cpu_steal_pct = 23;
+  optional double cpu_iowait_pct = 24;
 }

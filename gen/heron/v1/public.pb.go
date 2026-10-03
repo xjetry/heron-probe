@@ -570,12 +570,18 @@ type PublicMetrics struct {
 	NetRxTotal *uint64 `protobuf:"varint,12,opt,name=net_rx_total,json=netRxTotal,proto3,oneof" json:"net_rx_total,omitempty"`
 	NetTxTotal *uint64 `protobuf:"varint,13,opt,name=net_tx_total,json=netTxTotal,proto3,oneof" json:"net_tx_total,omitempty"`
 	// agent 自测的瞬时速率，字节/秒。
-	NetRxBps      *uint64 `protobuf:"varint,14,opt,name=net_rx_bps,json=netRxBps,proto3,oneof" json:"net_rx_bps,omitempty"`
-	NetTxBps      *uint64 `protobuf:"varint,15,opt,name=net_tx_bps,json=netTxBps,proto3,oneof" json:"net_tx_bps,omitempty"`
-	TcpConns      *uint32 `protobuf:"varint,16,opt,name=tcp_conns,json=tcpConns,proto3,oneof" json:"tcp_conns,omitempty"`
-	UdpConns      *uint32 `protobuf:"varint,17,opt,name=udp_conns,json=udpConns,proto3,oneof" json:"udp_conns,omitempty"`
-	Procs         *uint32 `protobuf:"varint,18,opt,name=procs,proto3,oneof" json:"procs,omitempty"`
-	UptimeS       *uint64 `protobuf:"varint,19,opt,name=uptime_s,json=uptimeS,proto3,oneof" json:"uptime_s,omitempty"`
+	NetRxBps *uint64 `protobuf:"varint,14,opt,name=net_rx_bps,json=netRxBps,proto3,oneof" json:"net_rx_bps,omitempty"`
+	NetTxBps *uint64 `protobuf:"varint,15,opt,name=net_tx_bps,json=netTxBps,proto3,oneof" json:"net_tx_bps,omitempty"`
+	TcpConns *uint32 `protobuf:"varint,16,opt,name=tcp_conns,json=tcpConns,proto3,oneof" json:"tcp_conns,omitempty"`
+	UdpConns *uint32 `protobuf:"varint,17,opt,name=udp_conns,json=udpConns,proto3,oneof" json:"udp_conns,omitempty"`
+	Procs    *uint32 `protobuf:"varint,18,opt,name=procs,proto3,oneof" json:"procs,omitempty"`
+	UptimeS  *uint64 `protobuf:"varint,19,opt,name=uptime_s,json=uptimeS,proto3,oneof" json:"uptime_s,omitempty"`
+	// 整盘设备读/写速率，字节/秒。
+	DiskReadBps  *uint64 `protobuf:"varint,21,opt,name=disk_read_bps,json=diskReadBps,proto3,oneof" json:"disk_read_bps,omitempty"`
+	DiskWriteBps *uint64 `protobuf:"varint,22,opt,name=disk_write_bps,json=diskWriteBps,proto3,oneof" json:"disk_write_bps,omitempty"`
+	// steal 与 iowait 占比，百分比。
+	CpuStealPct   *float64 `protobuf:"fixed64,23,opt,name=cpu_steal_pct,json=cpuStealPct,proto3,oneof" json:"cpu_steal_pct,omitempty"`
+	CpuIowaitPct  *float64 `protobuf:"fixed64,24,opt,name=cpu_iowait_pct,json=cpuIowaitPct,proto3,oneof" json:"cpu_iowait_pct,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -736,6 +742,34 @@ func (x *PublicMetrics) GetUptimeS() uint64 {
 	return 0
 }
 
+func (x *PublicMetrics) GetDiskReadBps() uint64 {
+	if x != nil && x.DiskReadBps != nil {
+		return *x.DiskReadBps
+	}
+	return 0
+}
+
+func (x *PublicMetrics) GetDiskWriteBps() uint64 {
+	if x != nil && x.DiskWriteBps != nil {
+		return *x.DiskWriteBps
+	}
+	return 0
+}
+
+func (x *PublicMetrics) GetCpuStealPct() float64 {
+	if x != nil && x.CpuStealPct != nil {
+		return *x.CpuStealPct
+	}
+	return 0
+}
+
+func (x *PublicMetrics) GetCpuIowaitPct() float64 {
+	if x != nil && x.CpuIowaitPct != nil {
+		return *x.CpuIowaitPct
+	}
+	return 0
+}
+
 var File_heron_v1_public_proto protoreflect.FileDescriptor
 
 const file_heron_v1_public_proto_rawDesc = "" +
@@ -792,7 +826,7 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\tcpu_model\x18\x06 \x01(\tR\bcpuModel\x12\x1b\n" +
 	"\tcpu_cores\x18\a \x01(\rR\bcpuCoresJ\x04\b\x01\x10\x02J\x04\b\x03\x10\x04J\x04\b\b\x10\tJ\x04\b\t\x10\n" +
 	"J\x04\b\n" +
-	"\x10\vJ\x04\b\v\x10\fR\bhostnameR\x06kernelR\ragent_versionR\x0eicmp_availableR\anetworkR\vdiagnostics\"\xfc\x06\n" +
+	"\x10\vJ\x04\b\v\x10\fR\bhostnameR\x06kernelR\ragent_versionR\x0eicmp_availableR\anetworkR\vdiagnostics\"\xee\b\n" +
 	"\rPublicMetrics\x12\x1c\n" +
 	"\acpu_pct\x18\x02 \x01(\x01H\x00R\x06cpuPct\x88\x01\x01\x12\x19\n" +
 	"\x05load1\x18\x03 \x01(\x01H\x01R\x05load1\x88\x01\x01\x12\x19\n" +
@@ -819,7 +853,11 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\ttcp_conns\x18\x10 \x01(\rH\x0eR\btcpConns\x88\x01\x01\x12 \n" +
 	"\tudp_conns\x18\x11 \x01(\rH\x0fR\budpConns\x88\x01\x01\x12\x19\n" +
 	"\x05procs\x18\x12 \x01(\rH\x10R\x05procs\x88\x01\x01\x12\x1e\n" +
-	"\buptime_s\x18\x13 \x01(\x04H\x11R\auptimeS\x88\x01\x01B\n" +
+	"\buptime_s\x18\x13 \x01(\x04H\x11R\auptimeS\x88\x01\x01\x12'\n" +
+	"\rdisk_read_bps\x18\x15 \x01(\x04H\x12R\vdiskReadBps\x88\x01\x01\x12)\n" +
+	"\x0edisk_write_bps\x18\x16 \x01(\x04H\x13R\fdiskWriteBps\x88\x01\x01\x12'\n" +
+	"\rcpu_steal_pct\x18\x17 \x01(\x01H\x14R\vcpuStealPct\x88\x01\x01\x12)\n" +
+	"\x0ecpu_iowait_pct\x18\x18 \x01(\x01H\x15R\fcpuIowaitPct\x88\x01\x01B\n" +
 	"\n" +
 	"\b_cpu_pctB\b\n" +
 	"\x06_load1B\b\n" +
@@ -843,7 +881,11 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\n" +
 	"_udp_connsB\b\n" +
 	"\x06_procsB\v\n" +
-	"\t_uptime_sJ\x04\b\x01\x10\x02J\x04\b\x14\x10\x15R\aboot_idR\x11net_counter_epoch2\xde\x02\n" +
+	"\t_uptime_sB\x10\n" +
+	"\x0e_disk_read_bpsB\x11\n" +
+	"\x0f_disk_write_bpsB\x10\n" +
+	"\x0e_cpu_steal_pctB\x11\n" +
+	"\x0f_cpu_iowait_pctJ\x04\b\x01\x10\x02J\x04\b\x14\x10\x15R\aboot_idR\x11net_counter_epoch2\xde\x02\n" +
 	"\rPublicService\x12C\n" +
 	"\aGetSite\x12\x18.heron.v1.GetSiteRequest\x1a\x14.heron.v1.PublicSite\"\b\x90\xb5\x18\xac\x02\x90\x02\x01\x12[\n" +
 	"\vGetSnapshot\x12).heron.v1.PublicServiceGetSnapshotRequest\x1a\x18.heron.v1.PublicSnapshot\"\a\x90\xb5\x18\x01\x90\x02\x01\x12V\n" +

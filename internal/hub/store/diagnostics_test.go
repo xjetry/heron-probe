@@ -174,6 +174,17 @@ func TestObservabilityMigrationAndOldSnapshotsPreserveUnknown(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+		} else {
+			// v25 的指标表还没有这四个指标的列；快照要真像 v25，迁移 28 才不会撞上重复列。
+			for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+				for _, column := range []string{"disk_read_bps", "disk_write_bps", "cpu_steal_pct", "cpu_iowait_pct"} {
+					for _, suffix := range []string{"_sum", "_n", "_max"} {
+						if _, err := db.Exec("ALTER TABLE " + table + " DROP COLUMN " + column + suffix); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+			}
 		}
 		if _, err := db.Exec("UPDATE snapshot_meta SET schema_version=25"); err != nil {
 			t.Fatal(err)
