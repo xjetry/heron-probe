@@ -21,13 +21,20 @@ func classify(err error) Outcome {
 		}
 	}
 	// TLS 握手失败（含证书错误：过期、名字不符、自签）是"这个端点此刻给不出一次有效握手"，计入丢包（§8）。
-	// 列表覆盖带类型的握手失败路径；对端只回 alert 的握手失败没有可判的类型，落在默认的 error。
+	// 对端只回 alert 的握手失败（协议版本不兼容、无共同密码套件、SNI 不被接受）没有可判的类型：
+	// crypto/tls 的 alert 类型未导出，Go 把它包成 *net.OpError{Op: "remote error"}，Op 是唯一稳定的
+	// 判据；同属"服务在、握手给不出"的可达性事实，与证书错误同归丢包。OpError 的其他 Op（dial、
+	// read 等本机与链路失败）不匹配这条，仍落各自的归类。
 	var unknownAuthority x509.UnknownAuthorityError
 	var hostnameMismatch x509.HostnameError
 	var certInvalid x509.CertificateInvalidError
 	var certVerify *tls.CertificateVerificationError
 	var notTLS tls.RecordHeaderError
 	if errors.As(err, &unknownAuthority) || errors.As(err, &hostnameMismatch) || errors.As(err, &certInvalid) || errors.As(err, &certVerify) || errors.As(err, &notTLS) {
+		return Outcome{Timeout: true}
+	}
+	var op *net.OpError
+	if errors.As(err, &op) && op.Op == "remote error" {
 		return Outcome{Timeout: true}
 	}
 	return Outcome{Err: err.Error()}

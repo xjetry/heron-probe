@@ -1,6 +1,7 @@
 package prober
 
 import (
+	"crypto/tls"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -71,6 +72,17 @@ func TestHTTPOutcomes(t *testing.T) {
 	defer tlsSrv.Close()
 	if out := p.Probe(t.Context(), httpTask(tlsSrv.URL)); !out.Timeout || out.Err != "" {
 		t.Fatalf("untrusted_tls=%+v", out)
+	}
+
+	// 对端只回 alert 的握手失败同样是丢包：服务端只要 TLS 1.3，探测器最多给 1.2，
+	// 握手死于版本不兼容——服务在、给不出一次有效握手，与证书错误同一类可达性事实。
+	tls13 := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	tls13.TLS = &tls.Config{MinVersion: tls.VersionTLS13}
+	tls13.StartTLS()
+	defer tls13.Close()
+	p12 := HTTP{Clock: clock.Real(), Targets: loopbackTargets(t, nil), Version: "test-version", TLSClientConfig: &tls.Config{MaxVersion: tls.VersionTLS12}}
+	if out := p12.Probe(t.Context(), httpTask(tls13.URL)); !out.Timeout || out.Err != "" {
+		t.Fatalf("remote_alert=%+v", out)
 	}
 
 	ln, err := net.Listen("tcp4", "127.0.0.1:0")

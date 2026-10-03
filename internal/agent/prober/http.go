@@ -2,6 +2,7 @@ package prober
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -20,6 +21,8 @@ type HTTP struct {
 	Clock   clock.Clock
 	Targets Targets
 	Version string // User-Agent 用 heron-agent/<Version>，与 heron-agent version 命令同源。
+	// TLSClientConfig 只在测试里注入（如限死 TLS 版本构造对端 alert 的握手失败）；生产为 nil，用默认配置。
+	TLSClientConfig *tls.Config
 }
 
 func (p HTTP) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
@@ -46,6 +49,7 @@ func (p HTTP) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 	// 只连解析出的那个地址：DialContext 忽略传入地址，SNI 与 Host 仍是 URL 里的名字。
 	transport := &http.Transport{
 		DisableKeepAlives: true,
+		TLSClientConfig:   p.TLSClientConfig,
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
 		},
