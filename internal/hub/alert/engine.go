@@ -102,7 +102,8 @@ type Engine struct {
 	rules    map[int64]store.AlertRule
 	channels map[int64]store.NotifyChannel
 	// silences 是维护静默的内存快照（§9.5）：Load 整表读入，SaveSilence/DeleteSilence/UpdateScope 在持久化成功后
-	// 发布；apply 只读它做投递抑制，抑制不改写库里的任何状态。
+	// 发布；apply 只读它做投递抑制，抑制不改写库里的任何状态。快照允许落后于库（prune 删掉的到期一次性静默
+	// 会留到下一次发布，但它们 SilenceActive 恒为 false，见 publishSilences 的不变式注释）。
 	silences map[int64]store.Silence
 	states   map[stateKey]stateEntry
 	// started 与 startedWall 是本次 Load 的时刻，分别按单调钟与墙钟记：前者是本次启动后没有上报的节点量已离线时长的起点，

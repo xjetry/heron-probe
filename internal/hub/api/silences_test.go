@@ -156,6 +156,25 @@ func TestUpdateNodeMaintenanceRoundTrip(t *testing.T) {
 	}
 }
 
+// ListSilences 读库：维护任务删掉到期的一次性静默后（不经引擎），列表不再显示它，而不是等 hub 重启。
+func TestListSilencesReadsTheStoreAfterPruning(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	id, _ := h.createNode(t, "a")
+	s := saveSilence(t, h, &heronv1.Silence{Name: "过期窗口", Enabled: true, Kind: heronv1.SilenceKind_SILENCE_KIND_ONCE, NodeIds: []int64{id}, FromAt: h.clk.Now().Add(-200 * 24 * time.Hour).Unix(), UntilAt: h.clk.Now().Add(-100 * 24 * time.Hour).Unix()})
+	keep := saveSilence(t, h, &heronv1.Silence{Name: "夜间维护", Enabled: true, Kind: heronv1.SilenceKind_SILENCE_KIND_DAILY, StartHhmm: "22:00", EndHhmm: "06:00", AllNodes: true})
+	if got := listSilences(t, h); len(got) != 2 {
+		t.Fatalf("before pruning: %v", got)
+	}
+	if _, err := h.store.PruneAlertEvents(t.Context(), h.clk.Now().Add(-90*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	got := listSilences(t, h)
+	if len(got) != 1 || got[0].Silence.Id != keep.Id {
+		t.Fatalf("after pruning the expired once silence %d is still listed: %v", s.Id, got)
+	}
+}
+
 func TestSaveSilenceValidation(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"sort"
 	"time"
 	"unicode/utf8"
 
@@ -75,6 +74,11 @@ func cloneSilence(s store.Silence) store.Silence {
 
 // 快照整表替换：与 publishRule 的逐条合并不同，静默之间没有需要沿用的部分状态（状态在 alert_state 上），
 // 整表替换与库的一致性最容易论证。调用方须已持久化成功。
+//
+// 快照允许落后于库：维护任务（store.PruneAlertEvents）不经引擎删掉到期的一次性静默，被删的条目留在快照里
+// 直到下一次 publish 或 Load——它们 until_at 已过、SilenceActive 恒为 false，对抑制没有任何作用，展示侧
+// （ListSilences）读库，不看这里。这条惰性成立的前提是 prune 只动 until_at 已过的 ONCE 行；前提变了
+// （比如将来 prune 也清 DAILY 或未到期行）快照就必须同步失效。
 func (e *Engine) publishSilences(silences []store.Silence) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -82,18 +86,6 @@ func (e *Engine) publishSilences(silences []store.Silence) {
 	for _, s := range silences {
 		e.silences[s.ID] = cloneSilence(s)
 	}
-}
-
-// Silences 返回当前内存快照（按 id 排序），供 ListSilences 展示此刻覆盖；库是唯一事实来源。
-func (e *Engine) Silences() []store.Silence {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	out := make([]store.Silence, 0, len(e.silences))
-	for _, s := range e.silences {
-		out = append(out, cloneSilence(s))
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out
 }
 
 // SaveSilence 校验后持久化并发布快照。保存请求必须明确指定非空作用域（与 SaveRule 同一约束）；

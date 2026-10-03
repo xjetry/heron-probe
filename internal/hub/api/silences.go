@@ -18,10 +18,16 @@ func silenceProto(s store.Silence) *heronv1.Silence {
 	return &heronv1.Silence{Id: s.ID, Name: s.Name, Enabled: s.Enabled, AllNodes: s.AllNodes, NodeIds: s.NodeIDs, SelectorTags: s.SelectorTags, Kind: enumFor(silenceKinds, s.Kind), StartHhmm: s.StartHHMM, EndHhmm: s.EndHHMM, FromAt: s.FromAt, UntilAt: s.UntilAt, Reason: s.Reason, CreatedAt: s.CreatedAt.Unix()}
 }
 
-func (s *Service) ListSilences(_ context.Context, _ *connect.Request[heronv1.ListSilencesRequest]) (*connect.Response[heronv1.ListSilencesResponse], error) {
+// ListSilences 读库而不是引擎的内存快照：库是唯一事实来源。维护任务（PruneAlertEvents）不经引擎删掉
+// 到期的一次性静默，内存快照在那之后会短暂留着它们——读库让列表、编辑与删除始终对得上。
+func (s *Service) ListSilences(ctx context.Context, _ *connect.Request[heronv1.ListSilencesRequest]) (*connect.Response[heronv1.ListSilencesResponse], error) {
+	silences, err := s.store.ListSilences(ctx)
+	if err != nil {
+		return nil, internalError("list silences")
+	}
 	now := s.clk.Now()
 	out := &heronv1.ListSilencesResponse{}
-	for _, si := range s.alerts.Silences() {
+	for _, si := range silences {
 		active := si.Enabled && alert.SilenceActive(si, now, s.cfg.Location)
 		out.Silences = append(out.Silences, &heronv1.SilenceEntry{Silence: silenceProto(si), Active: active})
 	}
