@@ -137,6 +137,15 @@ const (
 	// AdminServiceDeleteAlertRuleProcedure is the fully-qualified name of the AdminService's
 	// DeleteAlertRule RPC.
 	AdminServiceDeleteAlertRuleProcedure = "/heron.v1.AdminService/DeleteAlertRule"
+	// AdminServiceListSilencesProcedure is the fully-qualified name of the AdminService's ListSilences
+	// RPC.
+	AdminServiceListSilencesProcedure = "/heron.v1.AdminService/ListSilences"
+	// AdminServiceSaveSilenceProcedure is the fully-qualified name of the AdminService's SaveSilence
+	// RPC.
+	AdminServiceSaveSilenceProcedure = "/heron.v1.AdminService/SaveSilence"
+	// AdminServiceDeleteSilenceProcedure is the fully-qualified name of the AdminService's
+	// DeleteSilence RPC.
+	AdminServiceDeleteSilenceProcedure = "/heron.v1.AdminService/DeleteSilence"
 	// AdminServiceListAlertEventsProcedure is the fully-qualified name of the AdminService's
 	// ListAlertEvents RPC.
 	AdminServiceListAlertEventsProcedure = "/heron.v1.AdminService/ListAlertEvents"
@@ -251,7 +260,7 @@ type AdminServiceClient interface {
 	// 新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
 	// 返回 ResourceExhausted 并说明，节点不建。
 	CreateNode(context.Context, *connect.Request[v1.CreateNodeRequest]) (*connect.Response[v1.CreateNodeResponse], error)
-	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签）。计费字段有变化时，
+	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签、维护状态）。计费字段有变化时，
 	// 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
 	// 原子修改指定节点的标签关联，不覆盖其它标签或节点字段；成功时同步刷新探测与告警的动态覆盖。
@@ -296,6 +305,11 @@ type AdminServiceClient interface {
 	SaveAlertRule(context.Context, *connect.Request[v1.SaveAlertRuleRequest]) (*connect.Response[v1.SaveAlertRuleResponse], error)
 	// 删除规则与状态；事件与投递记录随规则删除保留；保留期见维护任务。
 	DeleteAlertRule(context.Context, *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error)
+	// 列出全部静默（含保留期内已过期的一次性静默），每条带此刻是否在窗口内与展开后的节点覆盖。
+	ListSilences(context.Context, *connect.Request[v1.ListSilencesRequest]) (*connect.Response[v1.ListSilencesResponse], error)
+	// id 为 0 时创建，否则整体替换静默与作用域。
+	SaveSilence(context.Context, *connect.Request[v1.SaveSilenceRequest]) (*connect.Response[v1.SaveSilenceResponse], error)
+	DeleteSilence(context.Context, *connect.Request[v1.DeleteSilenceRequest]) (*connect.Response[v1.DeleteSilenceResponse], error)
 	// 按事件 id 倒序分页，包含每个事件的投递状态；投递失败只给类别与状态码，原文见 GetAlertDeliveryError。
 	ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error)
 	// 一次投递最近一次失败的原文：HTTP 失败时是响应体的前 200 个字符，其余是出站错误文本。hub 不把 URL
@@ -596,6 +610,24 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("DeleteAlertRule")),
 			connect.WithClientOptions(opts...),
 		),
+		listSilences: connect.NewClient[v1.ListSilencesRequest, v1.ListSilencesResponse](
+			httpClient,
+			baseURL+AdminServiceListSilencesProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListSilences")),
+			connect.WithClientOptions(opts...),
+		),
+		saveSilence: connect.NewClient[v1.SaveSilenceRequest, v1.SaveSilenceResponse](
+			httpClient,
+			baseURL+AdminServiceSaveSilenceProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("SaveSilence")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteSilence: connect.NewClient[v1.DeleteSilenceRequest, v1.DeleteSilenceResponse](
+			httpClient,
+			baseURL+AdminServiceDeleteSilenceProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("DeleteSilence")),
+			connect.WithClientOptions(opts...),
+		),
 		listAlertEvents: connect.NewClient[v1.ListAlertEventsRequest, v1.ListAlertEventsResponse](
 			httpClient,
 			baseURL+AdminServiceListAlertEventsProcedure,
@@ -783,6 +815,9 @@ type adminServiceClient struct {
 	listAlertRules        *connect.Client[v1.ListAlertRulesRequest, v1.ListAlertRulesResponse]
 	saveAlertRule         *connect.Client[v1.SaveAlertRuleRequest, v1.SaveAlertRuleResponse]
 	deleteAlertRule       *connect.Client[v1.DeleteAlertRuleRequest, v1.DeleteAlertRuleResponse]
+	listSilences          *connect.Client[v1.ListSilencesRequest, v1.ListSilencesResponse]
+	saveSilence           *connect.Client[v1.SaveSilenceRequest, v1.SaveSilenceResponse]
+	deleteSilence         *connect.Client[v1.DeleteSilenceRequest, v1.DeleteSilenceResponse]
 	listAlertEvents       *connect.Client[v1.ListAlertEventsRequest, v1.ListAlertEventsResponse]
 	getAlertDeliveryError *connect.Client[v1.GetAlertDeliveryErrorRequest, v1.GetAlertDeliveryErrorResponse]
 	listNotifyChannels    *connect.Client[v1.ListNotifyChannelsRequest, v1.ListNotifyChannelsResponse]
@@ -999,6 +1034,21 @@ func (c *adminServiceClient) DeleteAlertRule(ctx context.Context, req *connect.R
 	return c.deleteAlertRule.CallUnary(ctx, req)
 }
 
+// ListSilences calls heron.v1.AdminService.ListSilences.
+func (c *adminServiceClient) ListSilences(ctx context.Context, req *connect.Request[v1.ListSilencesRequest]) (*connect.Response[v1.ListSilencesResponse], error) {
+	return c.listSilences.CallUnary(ctx, req)
+}
+
+// SaveSilence calls heron.v1.AdminService.SaveSilence.
+func (c *adminServiceClient) SaveSilence(ctx context.Context, req *connect.Request[v1.SaveSilenceRequest]) (*connect.Response[v1.SaveSilenceResponse], error) {
+	return c.saveSilence.CallUnary(ctx, req)
+}
+
+// DeleteSilence calls heron.v1.AdminService.DeleteSilence.
+func (c *adminServiceClient) DeleteSilence(ctx context.Context, req *connect.Request[v1.DeleteSilenceRequest]) (*connect.Response[v1.DeleteSilenceResponse], error) {
+	return c.deleteSilence.CallUnary(ctx, req)
+}
+
 // ListAlertEvents calls heron.v1.AdminService.ListAlertEvents.
 func (c *adminServiceClient) ListAlertEvents(ctx context.Context, req *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error) {
 	return c.listAlertEvents.CallUnary(ctx, req)
@@ -1160,7 +1210,7 @@ type AdminServiceHandler interface {
 	// 新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
 	// 返回 ResourceExhausted 并说明，节点不建。
 	CreateNode(context.Context, *connect.Request[v1.CreateNodeRequest]) (*connect.Response[v1.CreateNodeResponse], error)
-	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签）。计费字段有变化时，
+	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签、维护状态）。计费字段有变化时，
 	// 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
 	// 原子修改指定节点的标签关联，不覆盖其它标签或节点字段；成功时同步刷新探测与告警的动态覆盖。
@@ -1205,6 +1255,11 @@ type AdminServiceHandler interface {
 	SaveAlertRule(context.Context, *connect.Request[v1.SaveAlertRuleRequest]) (*connect.Response[v1.SaveAlertRuleResponse], error)
 	// 删除规则与状态；事件与投递记录随规则删除保留；保留期见维护任务。
 	DeleteAlertRule(context.Context, *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error)
+	// 列出全部静默（含保留期内已过期的一次性静默），每条带此刻是否在窗口内与展开后的节点覆盖。
+	ListSilences(context.Context, *connect.Request[v1.ListSilencesRequest]) (*connect.Response[v1.ListSilencesResponse], error)
+	// id 为 0 时创建，否则整体替换静默与作用域。
+	SaveSilence(context.Context, *connect.Request[v1.SaveSilenceRequest]) (*connect.Response[v1.SaveSilenceResponse], error)
+	DeleteSilence(context.Context, *connect.Request[v1.DeleteSilenceRequest]) (*connect.Response[v1.DeleteSilenceResponse], error)
 	// 按事件 id 倒序分页，包含每个事件的投递状态；投递失败只给类别与状态码，原文见 GetAlertDeliveryError。
 	ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error)
 	// 一次投递最近一次失败的原文：HTTP 失败时是响应体的前 200 个字符，其余是出站错误文本。hub 不把 URL
@@ -1501,6 +1556,24 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("DeleteAlertRule")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceListSilencesHandler := connect.NewUnaryHandler(
+		AdminServiceListSilencesProcedure,
+		svc.ListSilences,
+		connect.WithSchema(adminServiceMethods.ByName("ListSilences")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceSaveSilenceHandler := connect.NewUnaryHandler(
+		AdminServiceSaveSilenceProcedure,
+		svc.SaveSilence,
+		connect.WithSchema(adminServiceMethods.ByName("SaveSilence")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceDeleteSilenceHandler := connect.NewUnaryHandler(
+		AdminServiceDeleteSilenceProcedure,
+		svc.DeleteSilence,
+		connect.WithSchema(adminServiceMethods.ByName("DeleteSilence")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceListAlertEventsHandler := connect.NewUnaryHandler(
 		AdminServiceListAlertEventsProcedure,
 		svc.ListAlertEvents,
@@ -1723,6 +1796,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceSaveAlertRuleHandler.ServeHTTP(w, r)
 		case AdminServiceDeleteAlertRuleProcedure:
 			adminServiceDeleteAlertRuleHandler.ServeHTTP(w, r)
+		case AdminServiceListSilencesProcedure:
+			adminServiceListSilencesHandler.ServeHTTP(w, r)
+		case AdminServiceSaveSilenceProcedure:
+			adminServiceSaveSilenceHandler.ServeHTTP(w, r)
+		case AdminServiceDeleteSilenceProcedure:
+			adminServiceDeleteSilenceHandler.ServeHTTP(w, r)
 		case AdminServiceListAlertEventsProcedure:
 			adminServiceListAlertEventsHandler.ServeHTTP(w, r)
 		case AdminServiceGetAlertDeliveryErrorProcedure:
@@ -1930,6 +2009,18 @@ func (UnimplementedAdminServiceHandler) SaveAlertRule(context.Context, *connect.
 
 func (UnimplementedAdminServiceHandler) DeleteAlertRule(context.Context, *connect.Request[v1.DeleteAlertRuleRequest]) (*connect.Response[v1.DeleteAlertRuleResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.DeleteAlertRule is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListSilences(context.Context, *connect.Request[v1.ListSilencesRequest]) (*connect.Response[v1.ListSilencesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.ListSilences is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) SaveSilence(context.Context, *connect.Request[v1.SaveSilenceRequest]) (*connect.Response[v1.SaveSilenceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.SaveSilence is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) DeleteSilence(context.Context, *connect.Request[v1.DeleteSilenceRequest]) (*connect.Response[v1.DeleteSilenceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.DeleteSilence is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) ListAlertEvents(context.Context, *connect.Request[v1.ListAlertEventsRequest]) (*connect.Response[v1.ListAlertEventsResponse], error) {

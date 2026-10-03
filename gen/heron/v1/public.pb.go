@@ -280,7 +280,9 @@ type PublicNode struct {
 	Country string `protobuf:"bytes,10,opt,name=country,proto3" json:"country,omitempty"`
 	// 节点标签，与 Node.tags 同一口径（先建的写法、按折叠排序）。只有公开节点进快照，私有节点的标签不出现；标签常写用途与
 	// 归属（db、客户A），挂在公开节点上即对外可见，没有单独的公开开关。
-	Tags          []string `protobuf:"bytes,11,rep,name=tags,proto3" json:"tags,omitempty"`
+	Tags []string `protobuf:"bytes,11,rep,name=tags,proto3" json:"tags,omitempty"`
+	// 维护状态（§9.5），与 Node.maintenance 相同：公开页据此显示"维护中"徽章。
+	Maintenance   bool `protobuf:"varint,12,opt,name=maintenance,proto3" json:"maintenance,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -390,6 +392,13 @@ func (x *PublicNode) GetTags() []string {
 		return x.Tags
 	}
 	return nil
+}
+
+func (x *PublicNode) GetMaintenance() bool {
+	if x != nil {
+		return x.Maintenance
+	}
+	return false
 }
 
 // Billing 的公开部分，字段号与 Billing 相同，由投影按字段名生成（与 PublicFacts 同一机制）。自动续期是运维开关，
@@ -791,7 +800,7 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\x03now\x18\x01 \x01(\x03R\x03now\x12,\n" +
 	"\x12report_interval_ms\x18\x02 \x01(\rR\x10reportIntervalMs\x12*\n" +
 	"\x05nodes\x18\x03 \x03(\v2\x14.heron.v1.PublicNodeR\x05nodes\x12\x12\n" +
-	"\x04tags\x18\x04 \x03(\tR\x04tags\"\x8d\x03\n" +
+	"\x04tags\x18\x04 \x03(\tR\x04tags\"\xaf\x03\n" +
 	"\n" +
 	"PublicNode\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
@@ -807,7 +816,8 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\abilling\x18\t \x01(\v2\x17.heron.v1.PublicBillingR\abilling\x12\x18\n" +
 	"\acountry\x18\n" +
 	" \x01(\tR\acountry\x12\x12\n" +
-	"\x04tags\x18\v \x03(\tR\x04tagsB\x0f\n" +
+	"\x04tags\x18\v \x03(\tR\x04tags\x12 \n" +
+	"\vmaintenance\x18\f \x01(\bR\vmaintenanceB\x0f\n" +
 	"\r_last_seen_at\"\xdf\x01\n" +
 	"\rPublicBilling\x12\x14\n" +
 	"\x05price\x18\x01 \x01(\tR\x05price\x12\x1a\n" +

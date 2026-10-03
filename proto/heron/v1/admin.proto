@@ -87,7 +87,7 @@ service AdminService {
   rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
   }
-  // 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签）。计费字段有变化时，
+  // 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签、维护状态）。计费字段有变化时，
   // 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
   rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
@@ -178,6 +178,17 @@ service AdminService {
   }
   // 删除规则与状态；事件与投递记录随规则删除保留；保留期见维护任务。
   rpc DeleteAlertRule(DeleteAlertRuleRequest) returns (DeleteAlertRuleResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  // 列出全部静默（含保留期内已过期的一次性静默），每条带此刻是否在窗口内与展开后的节点覆盖。
+  rpc ListSilences(ListSilencesRequest) returns (ListSilencesResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // id 为 0 时创建，否则整体替换静默与作用域。
+  rpc SaveSilence(SaveSilenceRequest) returns (SaveSilenceResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
+  rpc DeleteSilence(DeleteSilenceRequest) returns (DeleteSilenceResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
   }
   // 按事件 id 倒序分页，包含每个事件的投递状态；投递失败只给类别与状态码，原文见 GetAlertDeliveryError。
@@ -434,6 +445,9 @@ message Node {
   // 查得的国家（对 country_ip 这个地址的答案），与 country_ip 同空同非空。手动指定时 country 是手动值，查得值仍在
   // 这里，清空 country_pin 即回落到它。
   string country_lookup = 19;
+  // 维护状态（§9.5）：为真时该节点的告警事件照常生成但不投递（silenced），在线状态照实显示，另加"维护中"徽章。
+  // 随 UpdateNode 整体替换；CreateNode 不接受（新节点恒为 false）。
+  bool maintenance = 20;
 }
 
 // 国家显示值的来源。
@@ -488,6 +502,8 @@ message UpdateNodeRequest {
   // 大小写混写；大小写不敏感（Unicode 简单折叠），折叠后重复的只留第一个；已存在的标签沿用它先建的写法，不存在的
   // 随之新建。去重后至多 16 个。
   repeated string tags = 9;
+  // 维护状态，整体替换：缺失即 false（§9.5）。
+  bool maintenance = 10;
 }
 message UpdateNodeResponse {
   Node node = 1;
@@ -738,6 +754,54 @@ message SaveAlertRuleRequest { AlertRule rule = 1; }
 message SaveAlertRuleResponse { AlertRule rule = 1; }
 message DeleteAlertRuleRequest { int64 id = 1; }
 message DeleteAlertRuleResponse {}
+
+enum SilenceKind {
+  SILENCE_KIND_UNSPECIFIED = 0;
+  // 每日重复：start_hhmm–end_hhmm（HH:MM，hub 的 --timezone），允许跨午夜（如 22:00–06:00）。
+  SILENCE_KIND_DAILY = 1;
+  // 一次性：from_at–until_at（Unix 秒）。到期后保留供审计，随告警事件的保留期清理。
+  SILENCE_KIND_ONCE = 2;
+}
+// 维护静默（§9.5）：覆盖内的节点在窗口内产生的告警事件照常生成但不投递。作用域与 AlertRule 同一形状：
+// all_nodes / 显式 node_ids / selector_tags 三选一，语义逐字相同。
+message Silence {
+  // 0 表示创建。
+  int64 id = 1;
+  // 1–64 个字符。
+  string name = 2;
+  // 关闭的静默保留配置但不抑制任何投递。
+  bool enabled = 3;
+  // 为真表示全部节点（含以后新建的），不得同时提交 node_ids 或 selector_tags。
+  bool all_nodes = 4;
+  // 显式作用域，升序去重；ListSilences 里 selector_tags 非空时是当前标签交集的展开结果。
+  repeated int64 node_ids = 5;
+  // 动态标签交集，与 all_nodes 和显式 node_ids 互斥；标签必须已存在，被引用的标签不能删除。
+  repeated string selector_tags = 6;
+  SilenceKind kind = 7;
+  // DAILY 必填：HH:MM，按 hub 的 --timezone 判定，start 与 end 不得相同；ONCE 必须为空。
+  string start_hhmm = 8;
+  string end_hhmm = 9;
+  // ONCE 必填：Unix 秒，from_at < until_at，含 from_at、不含 until_at；DAILY 必须为 0。
+  int64 from_at = 10;
+  int64 until_at = 11;
+  // 至多 256 个字符。
+  string reason = 12;
+  // 创建墙钟，Unix 秒；保存请求中的值忽略。
+  int64 created_at = 13;
+}
+message ListSilencesRequest {}
+message ListSilencesResponse {
+  repeated SilenceEntry silences = 1;
+}
+message SilenceEntry {
+  Silence silence = 1;
+  // 此刻该静默是否生效（enabled 且当前时刻在窗口内）；节点是否被抑制还要看它的 maintenance 与覆盖。
+  bool active = 2;
+}
+message SaveSilenceRequest { Silence silence = 1; }
+message SaveSilenceResponse { Silence silence = 1; }
+message DeleteSilenceRequest { int64 id = 1; }
+message DeleteSilenceResponse {}
 
 enum ChannelKind {
   CHANNEL_KIND_UNSPECIFIED = 0;
@@ -1124,6 +1188,8 @@ message AlertEvent {
   // 到期为剩余天数（负数是已过期天数），因清除到期日而恢复时为 0。
   double value = 7;
   repeated AlertDelivery deliveries = 8;
+  // 生成时是否处于维护静默覆盖内（§9.5）：为真时不产生任何投递（deliveries 为空）。恢复事件记配对 firing 的值。
+  bool silenced = 9;
 }
 message AlertDelivery {
   // 错误原文不在只读口径里：接收方可能在错误响应里回显含密钥的请求体。原文经 GetAlertDeliveryError 读出。

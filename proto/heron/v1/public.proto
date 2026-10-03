@@ -94,6 +94,8 @@ message PublicNode {
   // 节点标签，与 Node.tags 同一口径（先建的写法、按折叠排序）。只有公开节点进快照，私有节点的标签不出现；标签常写用途与
   // 归属（db、客户A），挂在公开节点上即对外可见，没有单独的公开开关。
   repeated string tags = 11;
+  // 维护状态（§9.5），与 Node.maintenance 相同：公开页据此显示"维护中"徽章。
+  bool maintenance = 12;
 }
 
 // Billing 的公开部分，字段号与 Billing 相同，由投影按字段名生成（与 PublicFacts 同一机制）。自动续期是运维开关，

@@ -304,6 +304,57 @@ func (ProbeMetric) EnumDescriptor() ([]byte, []int) {
 	return file_heron_v1_admin_proto_rawDescGZIP(), []int{4}
 }
 
+type SilenceKind int32
+
+const (
+	SilenceKind_SILENCE_KIND_UNSPECIFIED SilenceKind = 0
+	// 每日重复：start_hhmm–end_hhmm（HH:MM，hub 的 --timezone），允许跨午夜（如 22:00–06:00）。
+	SilenceKind_SILENCE_KIND_DAILY SilenceKind = 1
+	// 一次性：from_at–until_at（Unix 秒）。到期后保留供审计，随告警事件的保留期清理。
+	SilenceKind_SILENCE_KIND_ONCE SilenceKind = 2
+)
+
+// Enum value maps for SilenceKind.
+var (
+	SilenceKind_name = map[int32]string{
+		0: "SILENCE_KIND_UNSPECIFIED",
+		1: "SILENCE_KIND_DAILY",
+		2: "SILENCE_KIND_ONCE",
+	}
+	SilenceKind_value = map[string]int32{
+		"SILENCE_KIND_UNSPECIFIED": 0,
+		"SILENCE_KIND_DAILY":       1,
+		"SILENCE_KIND_ONCE":        2,
+	}
+)
+
+func (x SilenceKind) Enum() *SilenceKind {
+	p := new(SilenceKind)
+	*p = x
+	return p
+}
+
+func (x SilenceKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SilenceKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_heron_v1_admin_proto_enumTypes[5].Descriptor()
+}
+
+func (SilenceKind) Type() protoreflect.EnumType {
+	return &file_heron_v1_admin_proto_enumTypes[5]
+}
+
+func (x SilenceKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SilenceKind.Descriptor instead.
+func (SilenceKind) EnumDescriptor() ([]byte, []int) {
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{5}
+}
+
 type ChannelKind int32
 
 const (
@@ -337,11 +388,11 @@ func (x ChannelKind) String() string {
 }
 
 func (ChannelKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_heron_v1_admin_proto_enumTypes[5].Descriptor()
+	return file_heron_v1_admin_proto_enumTypes[6].Descriptor()
 }
 
 func (ChannelKind) Type() protoreflect.EnumType {
-	return &file_heron_v1_admin_proto_enumTypes[5]
+	return &file_heron_v1_admin_proto_enumTypes[6]
 }
 
 func (x ChannelKind) Number() protoreflect.EnumNumber {
@@ -350,7 +401,7 @@ func (x ChannelKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ChannelKind.Descriptor instead.
 func (ChannelKind) EnumDescriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{5}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{6}
 }
 
 type GeoBackend int32
@@ -386,11 +437,11 @@ func (x GeoBackend) String() string {
 }
 
 func (GeoBackend) Descriptor() protoreflect.EnumDescriptor {
-	return file_heron_v1_admin_proto_enumTypes[6].Descriptor()
+	return file_heron_v1_admin_proto_enumTypes[7].Descriptor()
 }
 
 func (GeoBackend) Type() protoreflect.EnumType {
-	return &file_heron_v1_admin_proto_enumTypes[6]
+	return &file_heron_v1_admin_proto_enumTypes[7]
 }
 
 func (x GeoBackend) Number() protoreflect.EnumNumber {
@@ -399,7 +450,7 @@ func (x GeoBackend) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use GeoBackend.Descriptor instead.
 func (GeoBackend) EnumDescriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{6}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{7}
 }
 
 // 投递失败的类别，在产生失败的地方确定，不从错误文本反推。
@@ -459,11 +510,11 @@ func (x DeliveryFailure) String() string {
 }
 
 func (DeliveryFailure) Descriptor() protoreflect.EnumDescriptor {
-	return file_heron_v1_admin_proto_enumTypes[7].Descriptor()
+	return file_heron_v1_admin_proto_enumTypes[8].Descriptor()
 }
 
 func (DeliveryFailure) Type() protoreflect.EnumType {
-	return &file_heron_v1_admin_proto_enumTypes[7]
+	return &file_heron_v1_admin_proto_enumTypes[8]
 }
 
 func (x DeliveryFailure) Number() protoreflect.EnumNumber {
@@ -472,7 +523,7 @@ func (x DeliveryFailure) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DeliveryFailure.Descriptor instead.
 func (DeliveryFailure) EnumDescriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{7}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{8}
 }
 
 type TokenPermission int32
@@ -520,11 +571,11 @@ func (x TokenPermission) String() string {
 }
 
 func (TokenPermission) Descriptor() protoreflect.EnumDescriptor {
-	return file_heron_v1_admin_proto_enumTypes[8].Descriptor()
+	return file_heron_v1_admin_proto_enumTypes[9].Descriptor()
 }
 
 func (TokenPermission) Type() protoreflect.EnumType {
-	return &file_heron_v1_admin_proto_enumTypes[8]
+	return &file_heron_v1_admin_proto_enumTypes[9]
 }
 
 func (x TokenPermission) Number() protoreflect.EnumNumber {
@@ -533,7 +584,7 @@ func (x TokenPermission) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TokenPermission.Descriptor instead.
 func (TokenPermission) EnumDescriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{8}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{9}
 }
 
 type GetUpdatesRequest struct {
@@ -1823,6 +1874,9 @@ type Node struct {
 	// 查得的国家（对 country_ip 这个地址的答案），与 country_ip 同空同非空。手动指定时 country 是手动值，查得值仍在
 	// 这里，清空 country_pin 即回落到它。
 	CountryLookup string `protobuf:"bytes,19,opt,name=country_lookup,json=countryLookup,proto3" json:"country_lookup,omitempty"`
+	// 维护状态（§9.5）：为真时该节点的告警事件照常生成但不投递（silenced），在线状态照实显示，另加"维护中"徽章。
+	// 随 UpdateNode 整体替换；CreateNode 不接受（新节点恒为 false）。
+	Maintenance   bool `protobuf:"varint,20,opt,name=maintenance,proto3" json:"maintenance,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1988,6 +2042,13 @@ func (x *Node) GetCountryLookup() string {
 		return x.CountryLookup
 	}
 	return ""
+}
+
+func (x *Node) GetMaintenance() bool {
+	if x != nil {
+		return x.Maintenance
+	}
+	return false
 }
 
 type ListNodesRequest struct {
@@ -2208,7 +2269,9 @@ type UpdateNodeRequest struct {
 	// "不改"的取法，要保留就原样带回 Node.tags）。每个名字去掉首尾空白后 1–64 个字符、不含控制字符，允许空格与
 	// 大小写混写；大小写不敏感（Unicode 简单折叠），折叠后重复的只留第一个；已存在的标签沿用它先建的写法，不存在的
 	// 随之新建。去重后至多 16 个。
-	Tags          []string `protobuf:"bytes,9,rep,name=tags,proto3" json:"tags,omitempty"`
+	Tags []string `protobuf:"bytes,9,rep,name=tags,proto3" json:"tags,omitempty"`
+	// 维护状态，整体替换：缺失即 false（§9.5）。
+	Maintenance   bool `protobuf:"varint,10,opt,name=maintenance,proto3" json:"maintenance,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2304,6 +2367,13 @@ func (x *UpdateNodeRequest) GetTags() []string {
 		return x.Tags
 	}
 	return nil
+}
+
+func (x *UpdateNodeRequest) GetMaintenance() bool {
+	if x != nil {
+		return x.Maintenance
+	}
+	return false
 }
 
 type UpdateNodeResponse struct {
@@ -4643,6 +4713,459 @@ func (*DeleteAlertRuleResponse) Descriptor() ([]byte, []int) {
 	return file_heron_v1_admin_proto_rawDescGZIP(), []int{74}
 }
 
+// 维护静默（§9.5）：覆盖内的节点在窗口内产生的告警事件照常生成但不投递。作用域与 AlertRule 同一形状：
+// all_nodes / 显式 node_ids / selector_tags 三选一，语义逐字相同。
+type Silence struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 0 表示创建。
+	Id int64 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	// 1–64 个字符。
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// 关闭的静默保留配置但不抑制任何投递。
+	Enabled bool `protobuf:"varint,3,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	// 为真表示全部节点（含以后新建的），不得同时提交 node_ids 或 selector_tags。
+	AllNodes bool `protobuf:"varint,4,opt,name=all_nodes,json=allNodes,proto3" json:"all_nodes,omitempty"`
+	// 显式作用域，升序去重；ListSilences 里 selector_tags 非空时是当前标签交集的展开结果。
+	NodeIds []int64 `protobuf:"varint,5,rep,packed,name=node_ids,json=nodeIds,proto3" json:"node_ids,omitempty"`
+	// 动态标签交集，与 all_nodes 和显式 node_ids 互斥；标签必须已存在，被引用的标签不能删除。
+	SelectorTags []string    `protobuf:"bytes,6,rep,name=selector_tags,json=selectorTags,proto3" json:"selector_tags,omitempty"`
+	Kind         SilenceKind `protobuf:"varint,7,opt,name=kind,proto3,enum=heron.v1.SilenceKind" json:"kind,omitempty"`
+	// DAILY 必填：HH:MM，按 hub 的 --timezone 判定，start 与 end 不得相同；ONCE 必须为空。
+	StartHhmm string `protobuf:"bytes,8,opt,name=start_hhmm,json=startHhmm,proto3" json:"start_hhmm,omitempty"`
+	EndHhmm   string `protobuf:"bytes,9,opt,name=end_hhmm,json=endHhmm,proto3" json:"end_hhmm,omitempty"`
+	// ONCE 必填：Unix 秒，from_at < until_at，含 from_at、不含 until_at；DAILY 必须为 0。
+	FromAt  int64 `protobuf:"varint,10,opt,name=from_at,json=fromAt,proto3" json:"from_at,omitempty"`
+	UntilAt int64 `protobuf:"varint,11,opt,name=until_at,json=untilAt,proto3" json:"until_at,omitempty"`
+	// 至多 256 个字符。
+	Reason string `protobuf:"bytes,12,opt,name=reason,proto3" json:"reason,omitempty"`
+	// 创建墙钟，Unix 秒；保存请求中的值忽略。
+	CreatedAt     int64 `protobuf:"varint,13,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Silence) Reset() {
+	*x = Silence{}
+	mi := &file_heron_v1_admin_proto_msgTypes[75]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Silence) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Silence) ProtoMessage() {}
+
+func (x *Silence) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_admin_proto_msgTypes[75]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Silence.ProtoReflect.Descriptor instead.
+func (*Silence) Descriptor() ([]byte, []int) {
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{75}
+}
+
+func (x *Silence) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *Silence) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Silence) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *Silence) GetAllNodes() bool {
+	if x != nil {
+		return x.AllNodes
+	}
+	return false
+}
+
+func (x *Silence) GetNodeIds() []int64 {
+	if x != nil {
+		return x.NodeIds
+	}
+	return nil
+}
+
+func (x *Silence) GetSelectorTags() []string {
+	if x != nil {
+		return x.SelectorTags
+	}
+	return nil
+}
+
+func (x *Silence) GetKind() SilenceKind {
+	if x != nil {
+		return x.Kind
+	}
+	return SilenceKind_SILENCE_KIND_UNSPECIFIED
+}
+
+func (x *Silence) GetStartHhmm() string {
+	if x != nil {
+		return x.StartHhmm
+	}
+	return ""
+}
+
+func (x *Silence) GetEndHhmm() string {
+	if x != nil {
+		return x.EndHhmm
+	}
+	return ""
+}
+
+func (x *Silence) GetFromAt() int64 {
+	if x != nil {
+		return x.FromAt
+	}
+	return 0
+}
+
+func (x *Silence) GetUntilAt() int64 {
+	if x != nil {
+		return x.UntilAt
+	}
+	return 0
+}
+
+func (x *Silence) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *Silence) GetCreatedAt() int64 {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return 0
+}
+
+type ListSilencesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListSilencesRequest) Reset() {
+	*x = ListSilencesRequest{}
+	mi := &file_heron_v1_admin_proto_msgTypes[76]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListSilencesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListSilencesRequest) ProtoMessage() {}
+
+func (x *ListSilencesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_admin_proto_msgTypes[76]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListSilencesRequest.ProtoReflect.Descriptor instead.
+func (*ListSilencesRequest) Descriptor() ([]byte, []int) {
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{76}
+}
+
+type ListSilencesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Silences      []*SilenceEntry        `protobuf:"bytes,1,rep,name=silences,proto3" json:"silences,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListSilencesResponse) Reset() {
+	*x = ListSilencesResponse{}
+	mi := &file_heron_v1_admin_proto_msgTypes[77]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListSilencesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListSilencesResponse) ProtoMessage() {}
+
+func (x *ListSilencesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_admin_proto_msgTypes[77]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListSilencesResponse.ProtoReflect.Descriptor instead.
+func (*ListSilencesResponse) Descriptor() ([]byte, []int) {
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{77}
+}
+
+func (x *ListSilencesResponse) GetSilences() []*SilenceEntry {
+	if x != nil {
+		return x.Silences
+	}
+	return nil
+}
+
+type SilenceEntry struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Silence *Silence               `protobuf:"bytes,1,opt,name=silence,proto3" json:"silence,omitempty"`
+	// 此刻该静默是否生效（enabled 且当前时刻在窗口内）；节点是否被抑制还要看它的 maintenance 与覆盖。
+	Active        bool `protobuf:"varint,2,opt,name=active,proto3" json:"active,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SilenceEntry) Reset() {
+	*x = SilenceEntry{}
+	mi := &file_heron_v1_admin_proto_msgTypes[78]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SilenceEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SilenceEntry) ProtoMessage() {}
+
+func (x *SilenceEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_admin_proto_msgTypes[78]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SilenceEntry.ProtoReflect.Descriptor instead.
+func (*SilenceEntry) Descriptor() ([]byte, []int) {
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{78}
+}
+
+func (x *SilenceEntry) GetSilence() *Silence {
+	if x != nil {
+		return x.Silence
+	}
+	return nil
+}
+
+func (x *SilenceEntry) GetActive() bool {
+	if x != nil {
+		return x.Active
+	}
+	return false
+}
+
+type SaveSilenceRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Silence       *Silence               `protobuf:"bytes,1,opt,name=silence,proto3" json:"silence,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SaveSilenceRequest) Reset() {
+	*x = SaveSilenceRequest{}
+	mi := &file_heron_v1_admin_proto_msgTypes[79]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SaveSilenceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SaveSilenceRequest) ProtoMessage() {}
+
+func (x *SaveSilenceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_admin_proto_msgTypes[79]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SaveSilenceRequest.ProtoReflect.Descriptor instead.
+func (*SaveSilenceRequest) Descriptor() ([]byte, []int) {
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{79}
+}
+
+func (x *SaveSilenceRequest) GetSilence() *Silence {
+	if x != nil {
+		return x.Silence
+	}
+	return nil
+}
+
+type SaveSilenceResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Silence       *Silence               `protobuf:"bytes,1,opt,name=silence,proto3" json:"silence,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SaveSilenceResponse) Reset() {
+	*x = SaveSilenceResponse{}
+	mi := &file_heron_v1_admin_proto_msgTypes[80]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SaveSilenceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SaveSilenceResponse) ProtoMessage() {}
+
+func (x *SaveSilenceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_admin_proto_msgTypes[80]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SaveSilenceResponse.ProtoReflect.Descriptor instead.
+func (*SaveSilenceResponse) Descriptor() ([]byte, []int) {
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{80}
+}
+
+func (x *SaveSilenceResponse) GetSilence() *Silence {
+	if x != nil {
+		return x.Silence
+	}
+	return nil
+}
+
+type DeleteSilenceRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteSilenceRequest) Reset() {
+	*x = DeleteSilenceRequest{}
+	mi := &file_heron_v1_admin_proto_msgTypes[81]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteSilenceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteSilenceRequest) ProtoMessage() {}
+
+func (x *DeleteSilenceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_admin_proto_msgTypes[81]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteSilenceRequest.ProtoReflect.Descriptor instead.
+func (*DeleteSilenceRequest) Descriptor() ([]byte, []int) {
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{81}
+}
+
+func (x *DeleteSilenceRequest) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+type DeleteSilenceResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteSilenceResponse) Reset() {
+	*x = DeleteSilenceResponse{}
+	mi := &file_heron_v1_admin_proto_msgTypes[82]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteSilenceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteSilenceResponse) ProtoMessage() {}
+
+func (x *DeleteSilenceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_admin_proto_msgTypes[82]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteSilenceResponse.ProtoReflect.Descriptor instead.
+func (*DeleteSilenceResponse) Descriptor() ([]byte, []int) {
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{82}
+}
+
 type NotifyChannel struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 0 表示创建。
@@ -4668,7 +5191,7 @@ type NotifyChannel struct {
 
 func (x *NotifyChannel) Reset() {
 	*x = NotifyChannel{}
-	mi := &file_heron_v1_admin_proto_msgTypes[75]
+	mi := &file_heron_v1_admin_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4680,7 +5203,7 @@ func (x *NotifyChannel) String() string {
 func (*NotifyChannel) ProtoMessage() {}
 
 func (x *NotifyChannel) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[75]
+	mi := &file_heron_v1_admin_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4693,7 +5216,7 @@ func (x *NotifyChannel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotifyChannel.ProtoReflect.Descriptor instead.
 func (*NotifyChannel) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{75}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *NotifyChannel) GetId() int64 {
@@ -4759,7 +5282,7 @@ type TelegramConfig struct {
 
 func (x *TelegramConfig) Reset() {
 	*x = TelegramConfig{}
-	mi := &file_heron_v1_admin_proto_msgTypes[76]
+	mi := &file_heron_v1_admin_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4771,7 +5294,7 @@ func (x *TelegramConfig) String() string {
 func (*TelegramConfig) ProtoMessage() {}
 
 func (x *TelegramConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[76]
+	mi := &file_heron_v1_admin_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4784,7 +5307,7 @@ func (x *TelegramConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TelegramConfig.ProtoReflect.Descriptor instead.
 func (*TelegramConfig) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{76}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{84}
 }
 
 func (x *TelegramConfig) GetBotToken() string {
@@ -4834,7 +5357,7 @@ type WebhookConfig struct {
 
 func (x *WebhookConfig) Reset() {
 	*x = WebhookConfig{}
-	mi := &file_heron_v1_admin_proto_msgTypes[77]
+	mi := &file_heron_v1_admin_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4846,7 +5369,7 @@ func (x *WebhookConfig) String() string {
 func (*WebhookConfig) ProtoMessage() {}
 
 func (x *WebhookConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[77]
+	mi := &file_heron_v1_admin_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4859,7 +5382,7 @@ func (x *WebhookConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WebhookConfig.ProtoReflect.Descriptor instead.
 func (*WebhookConfig) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{77}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{85}
 }
 
 func (x *WebhookConfig) GetUrl() string {
@@ -4926,7 +5449,7 @@ type ListNotifyChannelsRequest struct {
 
 func (x *ListNotifyChannelsRequest) Reset() {
 	*x = ListNotifyChannelsRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[78]
+	mi := &file_heron_v1_admin_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4938,7 +5461,7 @@ func (x *ListNotifyChannelsRequest) String() string {
 func (*ListNotifyChannelsRequest) ProtoMessage() {}
 
 func (x *ListNotifyChannelsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[78]
+	mi := &file_heron_v1_admin_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4951,7 +5474,7 @@ func (x *ListNotifyChannelsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNotifyChannelsRequest.ProtoReflect.Descriptor instead.
 func (*ListNotifyChannelsRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{78}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{86}
 }
 
 type ListNotifyChannelsResponse struct {
@@ -4963,7 +5486,7 @@ type ListNotifyChannelsResponse struct {
 
 func (x *ListNotifyChannelsResponse) Reset() {
 	*x = ListNotifyChannelsResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[79]
+	mi := &file_heron_v1_admin_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4975,7 +5498,7 @@ func (x *ListNotifyChannelsResponse) String() string {
 func (*ListNotifyChannelsResponse) ProtoMessage() {}
 
 func (x *ListNotifyChannelsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[79]
+	mi := &file_heron_v1_admin_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4988,7 +5511,7 @@ func (x *ListNotifyChannelsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNotifyChannelsResponse.ProtoReflect.Descriptor instead.
 func (*ListNotifyChannelsResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{79}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{87}
 }
 
 func (x *ListNotifyChannelsResponse) GetChannels() []*NotifyChannel {
@@ -5007,7 +5530,7 @@ type SaveNotifyChannelRequest struct {
 
 func (x *SaveNotifyChannelRequest) Reset() {
 	*x = SaveNotifyChannelRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[80]
+	mi := &file_heron_v1_admin_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5019,7 +5542,7 @@ func (x *SaveNotifyChannelRequest) String() string {
 func (*SaveNotifyChannelRequest) ProtoMessage() {}
 
 func (x *SaveNotifyChannelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[80]
+	mi := &file_heron_v1_admin_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5032,7 +5555,7 @@ func (x *SaveNotifyChannelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SaveNotifyChannelRequest.ProtoReflect.Descriptor instead.
 func (*SaveNotifyChannelRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{80}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{88}
 }
 
 func (x *SaveNotifyChannelRequest) GetChannel() *NotifyChannel {
@@ -5051,7 +5574,7 @@ type SaveNotifyChannelResponse struct {
 
 func (x *SaveNotifyChannelResponse) Reset() {
 	*x = SaveNotifyChannelResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[81]
+	mi := &file_heron_v1_admin_proto_msgTypes[89]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5063,7 +5586,7 @@ func (x *SaveNotifyChannelResponse) String() string {
 func (*SaveNotifyChannelResponse) ProtoMessage() {}
 
 func (x *SaveNotifyChannelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[81]
+	mi := &file_heron_v1_admin_proto_msgTypes[89]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5076,7 +5599,7 @@ func (x *SaveNotifyChannelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SaveNotifyChannelResponse.ProtoReflect.Descriptor instead.
 func (*SaveNotifyChannelResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{81}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{89}
 }
 
 func (x *SaveNotifyChannelResponse) GetChannel() *NotifyChannel {
@@ -5095,7 +5618,7 @@ type DeleteNotifyChannelRequest struct {
 
 func (x *DeleteNotifyChannelRequest) Reset() {
 	*x = DeleteNotifyChannelRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[82]
+	mi := &file_heron_v1_admin_proto_msgTypes[90]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5107,7 +5630,7 @@ func (x *DeleteNotifyChannelRequest) String() string {
 func (*DeleteNotifyChannelRequest) ProtoMessage() {}
 
 func (x *DeleteNotifyChannelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[82]
+	mi := &file_heron_v1_admin_proto_msgTypes[90]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5120,7 +5643,7 @@ func (x *DeleteNotifyChannelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteNotifyChannelRequest.ProtoReflect.Descriptor instead.
 func (*DeleteNotifyChannelRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{82}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{90}
 }
 
 func (x *DeleteNotifyChannelRequest) GetId() int64 {
@@ -5138,7 +5661,7 @@ type DeleteNotifyChannelResponse struct {
 
 func (x *DeleteNotifyChannelResponse) Reset() {
 	*x = DeleteNotifyChannelResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[83]
+	mi := &file_heron_v1_admin_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5150,7 +5673,7 @@ func (x *DeleteNotifyChannelResponse) String() string {
 func (*DeleteNotifyChannelResponse) ProtoMessage() {}
 
 func (x *DeleteNotifyChannelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[83]
+	mi := &file_heron_v1_admin_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5163,7 +5686,7 @@ func (x *DeleteNotifyChannelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteNotifyChannelResponse.ProtoReflect.Descriptor instead.
 func (*DeleteNotifyChannelResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{83}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{91}
 }
 
 type TestNotifyChannelRequest struct {
@@ -5175,7 +5698,7 @@ type TestNotifyChannelRequest struct {
 
 func (x *TestNotifyChannelRequest) Reset() {
 	*x = TestNotifyChannelRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[84]
+	mi := &file_heron_v1_admin_proto_msgTypes[92]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5187,7 +5710,7 @@ func (x *TestNotifyChannelRequest) String() string {
 func (*TestNotifyChannelRequest) ProtoMessage() {}
 
 func (x *TestNotifyChannelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[84]
+	mi := &file_heron_v1_admin_proto_msgTypes[92]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5200,7 +5723,7 @@ func (x *TestNotifyChannelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestNotifyChannelRequest.ProtoReflect.Descriptor instead.
 func (*TestNotifyChannelRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{84}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{92}
 }
 
 func (x *TestNotifyChannelRequest) GetId() int64 {
@@ -5218,7 +5741,7 @@ type TestNotifyChannelResponse struct {
 
 func (x *TestNotifyChannelResponse) Reset() {
 	*x = TestNotifyChannelResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[85]
+	mi := &file_heron_v1_admin_proto_msgTypes[93]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5230,7 +5753,7 @@ func (x *TestNotifyChannelResponse) String() string {
 func (*TestNotifyChannelResponse) ProtoMessage() {}
 
 func (x *TestNotifyChannelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[85]
+	mi := &file_heron_v1_admin_proto_msgTypes[93]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5243,7 +5766,7 @@ func (x *TestNotifyChannelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestNotifyChannelResponse.ProtoReflect.Descriptor instead.
 func (*TestNotifyChannelResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{85}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{93}
 }
 
 // 公开页设置、国家查询（§4.9）与备份（§6.7）。UpdateSettings 按组判定、各组彼此独立。外观五项（1–5）是一组：proto3
@@ -5303,7 +5826,7 @@ type Settings struct {
 
 func (x *Settings) Reset() {
 	*x = Settings{}
-	mi := &file_heron_v1_admin_proto_msgTypes[86]
+	mi := &file_heron_v1_admin_proto_msgTypes[94]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5315,7 +5838,7 @@ func (x *Settings) String() string {
 func (*Settings) ProtoMessage() {}
 
 func (x *Settings) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[86]
+	mi := &file_heron_v1_admin_proto_msgTypes[94]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5328,7 +5851,7 @@ func (x *Settings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Settings.ProtoReflect.Descriptor instead.
 func (*Settings) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{86}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{94}
 }
 
 func (x *Settings) GetTitle() string {
@@ -5456,7 +5979,7 @@ type BackupSettings struct {
 
 func (x *BackupSettings) Reset() {
 	*x = BackupSettings{}
-	mi := &file_heron_v1_admin_proto_msgTypes[87]
+	mi := &file_heron_v1_admin_proto_msgTypes[95]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5468,7 +5991,7 @@ func (x *BackupSettings) String() string {
 func (*BackupSettings) ProtoMessage() {}
 
 func (x *BackupSettings) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[87]
+	mi := &file_heron_v1_admin_proto_msgTypes[95]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5481,7 +6004,7 @@ func (x *BackupSettings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupSettings.ProtoReflect.Descriptor instead.
 func (*BackupSettings) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{87}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{95}
 }
 
 func (x *BackupSettings) GetEndpoint() string {
@@ -5579,7 +6102,7 @@ type BackupNotify struct {
 
 func (x *BackupNotify) Reset() {
 	*x = BackupNotify{}
-	mi := &file_heron_v1_admin_proto_msgTypes[88]
+	mi := &file_heron_v1_admin_proto_msgTypes[96]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5591,7 +6114,7 @@ func (x *BackupNotify) String() string {
 func (*BackupNotify) ProtoMessage() {}
 
 func (x *BackupNotify) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[88]
+	mi := &file_heron_v1_admin_proto_msgTypes[96]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5604,7 +6127,7 @@ func (x *BackupNotify) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupNotify.ProtoReflect.Descriptor instead.
 func (*BackupNotify) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{88}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{96}
 }
 
 func (x *BackupNotify) GetChannelIds() []int64 {
@@ -5625,7 +6148,7 @@ type LoginNotify struct {
 
 func (x *LoginNotify) Reset() {
 	*x = LoginNotify{}
-	mi := &file_heron_v1_admin_proto_msgTypes[89]
+	mi := &file_heron_v1_admin_proto_msgTypes[97]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5637,7 +6160,7 @@ func (x *LoginNotify) String() string {
 func (*LoginNotify) ProtoMessage() {}
 
 func (x *LoginNotify) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[89]
+	mi := &file_heron_v1_admin_proto_msgTypes[97]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5650,7 +6173,7 @@ func (x *LoginNotify) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LoginNotify.ProtoReflect.Descriptor instead.
 func (*LoginNotify) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{89}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{97}
 }
 
 func (x *LoginNotify) GetChannelIds() []int64 {
@@ -5668,7 +6191,7 @@ type GetSettingsRequest struct {
 
 func (x *GetSettingsRequest) Reset() {
 	*x = GetSettingsRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[90]
+	mi := &file_heron_v1_admin_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5680,7 +6203,7 @@ func (x *GetSettingsRequest) String() string {
 func (*GetSettingsRequest) ProtoMessage() {}
 
 func (x *GetSettingsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[90]
+	mi := &file_heron_v1_admin_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5693,7 +6216,7 @@ func (x *GetSettingsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSettingsRequest.ProtoReflect.Descriptor instead.
 func (*GetSettingsRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{90}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{98}
 }
 
 type GetSettingsResponse struct {
@@ -5705,7 +6228,7 @@ type GetSettingsResponse struct {
 
 func (x *GetSettingsResponse) Reset() {
 	*x = GetSettingsResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[91]
+	mi := &file_heron_v1_admin_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5717,7 +6240,7 @@ func (x *GetSettingsResponse) String() string {
 func (*GetSettingsResponse) ProtoMessage() {}
 
 func (x *GetSettingsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[91]
+	mi := &file_heron_v1_admin_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5730,7 +6253,7 @@ func (x *GetSettingsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSettingsResponse.ProtoReflect.Descriptor instead.
 func (*GetSettingsResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{91}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{99}
 }
 
 func (x *GetSettingsResponse) GetSettings() *Settings {
@@ -5748,7 +6271,7 @@ type GetBackupStatusRequest struct {
 
 func (x *GetBackupStatusRequest) Reset() {
 	*x = GetBackupStatusRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[92]
+	mi := &file_heron_v1_admin_proto_msgTypes[100]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5760,7 +6283,7 @@ func (x *GetBackupStatusRequest) String() string {
 func (*GetBackupStatusRequest) ProtoMessage() {}
 
 func (x *GetBackupStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[92]
+	mi := &file_heron_v1_admin_proto_msgTypes[100]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5773,7 +6296,7 @@ func (x *GetBackupStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBackupStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetBackupStatusRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{92}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{100}
 }
 
 type GetBackupStatusResponse struct {
@@ -5792,7 +6315,7 @@ type GetBackupStatusResponse struct {
 
 func (x *GetBackupStatusResponse) Reset() {
 	*x = GetBackupStatusResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[93]
+	mi := &file_heron_v1_admin_proto_msgTypes[101]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5804,7 +6327,7 @@ func (x *GetBackupStatusResponse) String() string {
 func (*GetBackupStatusResponse) ProtoMessage() {}
 
 func (x *GetBackupStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[93]
+	mi := &file_heron_v1_admin_proto_msgTypes[101]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5817,7 +6340,7 @@ func (x *GetBackupStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBackupStatusResponse.ProtoReflect.Descriptor instead.
 func (*GetBackupStatusResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{93}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{101}
 }
 
 func (x *GetBackupStatusResponse) GetEnabled() bool {
@@ -5861,7 +6384,7 @@ type BackupLayerStatus struct {
 
 func (x *BackupLayerStatus) Reset() {
 	*x = BackupLayerStatus{}
-	mi := &file_heron_v1_admin_proto_msgTypes[94]
+	mi := &file_heron_v1_admin_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5873,7 +6396,7 @@ func (x *BackupLayerStatus) String() string {
 func (*BackupLayerStatus) ProtoMessage() {}
 
 func (x *BackupLayerStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[94]
+	mi := &file_heron_v1_admin_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5886,7 +6409,7 @@ func (x *BackupLayerStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupLayerStatus.ProtoReflect.Descriptor instead.
 func (*BackupLayerStatus) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{94}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{102}
 }
 
 func (x *BackupLayerStatus) GetLastSuccessAt() int64 {
@@ -5925,7 +6448,7 @@ type BackupFailure struct {
 
 func (x *BackupFailure) Reset() {
 	*x = BackupFailure{}
-	mi := &file_heron_v1_admin_proto_msgTypes[95]
+	mi := &file_heron_v1_admin_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5937,7 +6460,7 @@ func (x *BackupFailure) String() string {
 func (*BackupFailure) ProtoMessage() {}
 
 func (x *BackupFailure) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[95]
+	mi := &file_heron_v1_admin_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5950,7 +6473,7 @@ func (x *BackupFailure) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupFailure.ProtoReflect.Descriptor instead.
 func (*BackupFailure) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{95}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{103}
 }
 
 func (x *BackupFailure) GetCategory() string {
@@ -5983,7 +6506,7 @@ type UpdateSettingsRequest struct {
 
 func (x *UpdateSettingsRequest) Reset() {
 	*x = UpdateSettingsRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[96]
+	mi := &file_heron_v1_admin_proto_msgTypes[104]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5995,7 +6518,7 @@ func (x *UpdateSettingsRequest) String() string {
 func (*UpdateSettingsRequest) ProtoMessage() {}
 
 func (x *UpdateSettingsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[96]
+	mi := &file_heron_v1_admin_proto_msgTypes[104]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6008,7 +6531,7 @@ func (x *UpdateSettingsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateSettingsRequest.ProtoReflect.Descriptor instead.
 func (*UpdateSettingsRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{96}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{104}
 }
 
 func (x *UpdateSettingsRequest) GetSettings() *Settings {
@@ -6028,7 +6551,7 @@ type UpdateSettingsResponse struct {
 
 func (x *UpdateSettingsResponse) Reset() {
 	*x = UpdateSettingsResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[97]
+	mi := &file_heron_v1_admin_proto_msgTypes[105]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6040,7 +6563,7 @@ func (x *UpdateSettingsResponse) String() string {
 func (*UpdateSettingsResponse) ProtoMessage() {}
 
 func (x *UpdateSettingsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[97]
+	mi := &file_heron_v1_admin_proto_msgTypes[105]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6053,7 +6576,7 @@ func (x *UpdateSettingsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateSettingsResponse.ProtoReflect.Descriptor instead.
 func (*UpdateSettingsResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{97}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{105}
 }
 
 func (x *UpdateSettingsResponse) GetSettings() *Settings {
@@ -6093,7 +6616,7 @@ type Theme struct {
 
 func (x *Theme) Reset() {
 	*x = Theme{}
-	mi := &file_heron_v1_admin_proto_msgTypes[98]
+	mi := &file_heron_v1_admin_proto_msgTypes[106]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6105,7 +6628,7 @@ func (x *Theme) String() string {
 func (*Theme) ProtoMessage() {}
 
 func (x *Theme) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[98]
+	mi := &file_heron_v1_admin_proto_msgTypes[106]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6118,7 +6641,7 @@ func (x *Theme) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Theme.ProtoReflect.Descriptor instead.
 func (*Theme) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{98}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{106}
 }
 
 func (x *Theme) GetId() string {
@@ -6230,7 +6753,7 @@ type UploadThemeRequest struct {
 
 func (x *UploadThemeRequest) Reset() {
 	*x = UploadThemeRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[99]
+	mi := &file_heron_v1_admin_proto_msgTypes[107]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6242,7 +6765,7 @@ func (x *UploadThemeRequest) String() string {
 func (*UploadThemeRequest) ProtoMessage() {}
 
 func (x *UploadThemeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[99]
+	mi := &file_heron_v1_admin_proto_msgTypes[107]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6255,7 +6778,7 @@ func (x *UploadThemeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UploadThemeRequest.ProtoReflect.Descriptor instead.
 func (*UploadThemeRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{99}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{107}
 }
 
 func (x *UploadThemeRequest) GetPackage() []byte {
@@ -6281,7 +6804,7 @@ type UploadThemeResponse struct {
 
 func (x *UploadThemeResponse) Reset() {
 	*x = UploadThemeResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[100]
+	mi := &file_heron_v1_admin_proto_msgTypes[108]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6293,7 +6816,7 @@ func (x *UploadThemeResponse) String() string {
 func (*UploadThemeResponse) ProtoMessage() {}
 
 func (x *UploadThemeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[100]
+	mi := &file_heron_v1_admin_proto_msgTypes[108]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6306,7 +6829,7 @@ func (x *UploadThemeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UploadThemeResponse.ProtoReflect.Descriptor instead.
 func (*UploadThemeResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{100}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{108}
 }
 
 func (x *UploadThemeResponse) GetTheme() *Theme {
@@ -6324,7 +6847,7 @@ type ListThemesRequest struct {
 
 func (x *ListThemesRequest) Reset() {
 	*x = ListThemesRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[101]
+	mi := &file_heron_v1_admin_proto_msgTypes[109]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6336,7 +6859,7 @@ func (x *ListThemesRequest) String() string {
 func (*ListThemesRequest) ProtoMessage() {}
 
 func (x *ListThemesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[101]
+	mi := &file_heron_v1_admin_proto_msgTypes[109]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6349,7 +6872,7 @@ func (x *ListThemesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListThemesRequest.ProtoReflect.Descriptor instead.
 func (*ListThemesRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{101}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{109}
 }
 
 type ListThemesResponse struct {
@@ -6364,7 +6887,7 @@ type ListThemesResponse struct {
 
 func (x *ListThemesResponse) Reset() {
 	*x = ListThemesResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[102]
+	mi := &file_heron_v1_admin_proto_msgTypes[110]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6376,7 +6899,7 @@ func (x *ListThemesResponse) String() string {
 func (*ListThemesResponse) ProtoMessage() {}
 
 func (x *ListThemesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[102]
+	mi := &file_heron_v1_admin_proto_msgTypes[110]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6389,7 +6912,7 @@ func (x *ListThemesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListThemesResponse.ProtoReflect.Descriptor instead.
 func (*ListThemesResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{102}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{110}
 }
 
 func (x *ListThemesResponse) GetThemes() []*Theme {
@@ -6418,7 +6941,7 @@ type EnableThemeRequest struct {
 
 func (x *EnableThemeRequest) Reset() {
 	*x = EnableThemeRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[103]
+	mi := &file_heron_v1_admin_proto_msgTypes[111]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6430,7 +6953,7 @@ func (x *EnableThemeRequest) String() string {
 func (*EnableThemeRequest) ProtoMessage() {}
 
 func (x *EnableThemeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[103]
+	mi := &file_heron_v1_admin_proto_msgTypes[111]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6443,7 +6966,7 @@ func (x *EnableThemeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnableThemeRequest.ProtoReflect.Descriptor instead.
 func (*EnableThemeRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{103}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{111}
 }
 
 func (x *EnableThemeRequest) GetId() string {
@@ -6468,7 +6991,7 @@ type EnableThemeResponse struct {
 
 func (x *EnableThemeResponse) Reset() {
 	*x = EnableThemeResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[104]
+	mi := &file_heron_v1_admin_proto_msgTypes[112]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6480,7 +7003,7 @@ func (x *EnableThemeResponse) String() string {
 func (*EnableThemeResponse) ProtoMessage() {}
 
 func (x *EnableThemeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[104]
+	mi := &file_heron_v1_admin_proto_msgTypes[112]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6493,7 +7016,7 @@ func (x *EnableThemeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnableThemeResponse.ProtoReflect.Descriptor instead.
 func (*EnableThemeResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{104}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{112}
 }
 
 type DeleteThemeRequest struct {
@@ -6506,7 +7029,7 @@ type DeleteThemeRequest struct {
 
 func (x *DeleteThemeRequest) Reset() {
 	*x = DeleteThemeRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[105]
+	mi := &file_heron_v1_admin_proto_msgTypes[113]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6518,7 +7041,7 @@ func (x *DeleteThemeRequest) String() string {
 func (*DeleteThemeRequest) ProtoMessage() {}
 
 func (x *DeleteThemeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[105]
+	mi := &file_heron_v1_admin_proto_msgTypes[113]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6531,7 +7054,7 @@ func (x *DeleteThemeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteThemeRequest.ProtoReflect.Descriptor instead.
 func (*DeleteThemeRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{105}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{113}
 }
 
 func (x *DeleteThemeRequest) GetId() string {
@@ -6549,7 +7072,7 @@ type DeleteThemeResponse struct {
 
 func (x *DeleteThemeResponse) Reset() {
 	*x = DeleteThemeResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[106]
+	mi := &file_heron_v1_admin_proto_msgTypes[114]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6561,7 +7084,7 @@ func (x *DeleteThemeResponse) String() string {
 func (*DeleteThemeResponse) ProtoMessage() {}
 
 func (x *DeleteThemeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[106]
+	mi := &file_heron_v1_admin_proto_msgTypes[114]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6574,7 +7097,7 @@ func (x *DeleteThemeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteThemeResponse.ProtoReflect.Descriptor instead.
 func (*DeleteThemeResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{106}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{114}
 }
 
 type GetThemePreviewRequest struct {
@@ -6587,7 +7110,7 @@ type GetThemePreviewRequest struct {
 
 func (x *GetThemePreviewRequest) Reset() {
 	*x = GetThemePreviewRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[107]
+	mi := &file_heron_v1_admin_proto_msgTypes[115]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6599,7 +7122,7 @@ func (x *GetThemePreviewRequest) String() string {
 func (*GetThemePreviewRequest) ProtoMessage() {}
 
 func (x *GetThemePreviewRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[107]
+	mi := &file_heron_v1_admin_proto_msgTypes[115]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6612,7 +7135,7 @@ func (x *GetThemePreviewRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetThemePreviewRequest.ProtoReflect.Descriptor instead.
 func (*GetThemePreviewRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{107}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{115}
 }
 
 func (x *GetThemePreviewRequest) GetId() string {
@@ -6640,7 +7163,7 @@ type GetThemePreviewResponse struct {
 
 func (x *GetThemePreviewResponse) Reset() {
 	*x = GetThemePreviewResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[108]
+	mi := &file_heron_v1_admin_proto_msgTypes[116]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6652,7 +7175,7 @@ func (x *GetThemePreviewResponse) String() string {
 func (*GetThemePreviewResponse) ProtoMessage() {}
 
 func (x *GetThemePreviewResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[108]
+	mi := &file_heron_v1_admin_proto_msgTypes[116]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6665,7 +7188,7 @@ func (x *GetThemePreviewResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetThemePreviewResponse.ProtoReflect.Descriptor instead.
 func (*GetThemePreviewResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{108}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{116}
 }
 
 func (x *GetThemePreviewResponse) GetContent() []byte {
@@ -6693,7 +7216,7 @@ type DeleteThemeVersionRequest struct {
 
 func (x *DeleteThemeVersionRequest) Reset() {
 	*x = DeleteThemeVersionRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[109]
+	mi := &file_heron_v1_admin_proto_msgTypes[117]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6705,7 +7228,7 @@ func (x *DeleteThemeVersionRequest) String() string {
 func (*DeleteThemeVersionRequest) ProtoMessage() {}
 
 func (x *DeleteThemeVersionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[109]
+	mi := &file_heron_v1_admin_proto_msgTypes[117]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6718,7 +7241,7 @@ func (x *DeleteThemeVersionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteThemeVersionRequest.ProtoReflect.Descriptor instead.
 func (*DeleteThemeVersionRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{109}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{117}
 }
 
 func (x *DeleteThemeVersionRequest) GetId() string {
@@ -6743,7 +7266,7 @@ type DeleteThemeVersionResponse struct {
 
 func (x *DeleteThemeVersionResponse) Reset() {
 	*x = DeleteThemeVersionResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[110]
+	mi := &file_heron_v1_admin_proto_msgTypes[118]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6755,7 +7278,7 @@ func (x *DeleteThemeVersionResponse) String() string {
 func (*DeleteThemeVersionResponse) ProtoMessage() {}
 
 func (x *DeleteThemeVersionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[110]
+	mi := &file_heron_v1_admin_proto_msgTypes[118]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6768,7 +7291,7 @@ func (x *DeleteThemeVersionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteThemeVersionResponse.ProtoReflect.Descriptor instead.
 func (*DeleteThemeVersionResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{110}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{118}
 }
 
 type ListThemeReleasesRequest struct {
@@ -6781,7 +7304,7 @@ type ListThemeReleasesRequest struct {
 
 func (x *ListThemeReleasesRequest) Reset() {
 	*x = ListThemeReleasesRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[111]
+	mi := &file_heron_v1_admin_proto_msgTypes[119]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6793,7 +7316,7 @@ func (x *ListThemeReleasesRequest) String() string {
 func (*ListThemeReleasesRequest) ProtoMessage() {}
 
 func (x *ListThemeReleasesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[111]
+	mi := &file_heron_v1_admin_proto_msgTypes[119]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6806,7 +7329,7 @@ func (x *ListThemeReleasesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListThemeReleasesRequest.ProtoReflect.Descriptor instead.
 func (*ListThemeReleasesRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{111}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{119}
 }
 
 func (x *ListThemeReleasesRequest) GetRepository() string {
@@ -6827,7 +7350,7 @@ type ThemeReleaseAsset struct {
 
 func (x *ThemeReleaseAsset) Reset() {
 	*x = ThemeReleaseAsset{}
-	mi := &file_heron_v1_admin_proto_msgTypes[112]
+	mi := &file_heron_v1_admin_proto_msgTypes[120]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6839,7 +7362,7 @@ func (x *ThemeReleaseAsset) String() string {
 func (*ThemeReleaseAsset) ProtoMessage() {}
 
 func (x *ThemeReleaseAsset) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[112]
+	mi := &file_heron_v1_admin_proto_msgTypes[120]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6852,7 +7375,7 @@ func (x *ThemeReleaseAsset) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ThemeReleaseAsset.ProtoReflect.Descriptor instead.
 func (*ThemeReleaseAsset) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{112}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{120}
 }
 
 func (x *ThemeReleaseAsset) GetId() int64 {
@@ -6888,7 +7411,7 @@ type ThemeRelease struct {
 
 func (x *ThemeRelease) Reset() {
 	*x = ThemeRelease{}
-	mi := &file_heron_v1_admin_proto_msgTypes[113]
+	mi := &file_heron_v1_admin_proto_msgTypes[121]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6900,7 +7423,7 @@ func (x *ThemeRelease) String() string {
 func (*ThemeRelease) ProtoMessage() {}
 
 func (x *ThemeRelease) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[113]
+	mi := &file_heron_v1_admin_proto_msgTypes[121]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6913,7 +7436,7 @@ func (x *ThemeRelease) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ThemeRelease.ProtoReflect.Descriptor instead.
 func (*ThemeRelease) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{113}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{121}
 }
 
 func (x *ThemeRelease) GetName() string {
@@ -6953,7 +7476,7 @@ type ListThemeReleasesResponse struct {
 
 func (x *ListThemeReleasesResponse) Reset() {
 	*x = ListThemeReleasesResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[114]
+	mi := &file_heron_v1_admin_proto_msgTypes[122]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6965,7 +7488,7 @@ func (x *ListThemeReleasesResponse) String() string {
 func (*ListThemeReleasesResponse) ProtoMessage() {}
 
 func (x *ListThemeReleasesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[114]
+	mi := &file_heron_v1_admin_proto_msgTypes[122]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6978,7 +7501,7 @@ func (x *ListThemeReleasesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListThemeReleasesResponse.ProtoReflect.Descriptor instead.
 func (*ListThemeReleasesResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{114}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{122}
 }
 
 func (x *ListThemeReleasesResponse) GetReleases() []*ThemeRelease {
@@ -7002,7 +7525,7 @@ type InstallThemeReleaseRequest struct {
 
 func (x *InstallThemeReleaseRequest) Reset() {
 	*x = InstallThemeReleaseRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[115]
+	mi := &file_heron_v1_admin_proto_msgTypes[123]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7014,7 +7537,7 @@ func (x *InstallThemeReleaseRequest) String() string {
 func (*InstallThemeReleaseRequest) ProtoMessage() {}
 
 func (x *InstallThemeReleaseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[115]
+	mi := &file_heron_v1_admin_proto_msgTypes[123]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7027,7 +7550,7 @@ func (x *InstallThemeReleaseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InstallThemeReleaseRequest.ProtoReflect.Descriptor instead.
 func (*InstallThemeReleaseRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{115}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{123}
 }
 
 func (x *InstallThemeReleaseRequest) GetRepository() string {
@@ -7067,7 +7590,7 @@ type InstallThemeReleaseResponse struct {
 
 func (x *InstallThemeReleaseResponse) Reset() {
 	*x = InstallThemeReleaseResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[116]
+	mi := &file_heron_v1_admin_proto_msgTypes[124]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7079,7 +7602,7 @@ func (x *InstallThemeReleaseResponse) String() string {
 func (*InstallThemeReleaseResponse) ProtoMessage() {}
 
 func (x *InstallThemeReleaseResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[116]
+	mi := &file_heron_v1_admin_proto_msgTypes[124]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7092,7 +7615,7 @@ func (x *InstallThemeReleaseResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InstallThemeReleaseResponse.ProtoReflect.Descriptor instead.
 func (*InstallThemeReleaseResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{116}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{124}
 }
 
 func (x *InstallThemeReleaseResponse) GetTheme() *Theme {
@@ -7113,7 +7636,7 @@ type PreviewThemeRequest struct {
 
 func (x *PreviewThemeRequest) Reset() {
 	*x = PreviewThemeRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[117]
+	mi := &file_heron_v1_admin_proto_msgTypes[125]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7125,7 +7648,7 @@ func (x *PreviewThemeRequest) String() string {
 func (*PreviewThemeRequest) ProtoMessage() {}
 
 func (x *PreviewThemeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[117]
+	mi := &file_heron_v1_admin_proto_msgTypes[125]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7138,7 +7661,7 @@ func (x *PreviewThemeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreviewThemeRequest.ProtoReflect.Descriptor instead.
 func (*PreviewThemeRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{117}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{125}
 }
 
 func (x *PreviewThemeRequest) GetId() string {
@@ -7165,7 +7688,7 @@ type PreviewThemeResponse struct {
 
 func (x *PreviewThemeResponse) Reset() {
 	*x = PreviewThemeResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[118]
+	mi := &file_heron_v1_admin_proto_msgTypes[126]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7177,7 +7700,7 @@ func (x *PreviewThemeResponse) String() string {
 func (*PreviewThemeResponse) ProtoMessage() {}
 
 func (x *PreviewThemeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[118]
+	mi := &file_heron_v1_admin_proto_msgTypes[126]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7190,7 +7713,7 @@ func (x *PreviewThemeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreviewThemeResponse.ProtoReflect.Descriptor instead.
 func (*PreviewThemeResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{118}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{126}
 }
 
 func (x *PreviewThemeResponse) GetUrl() string {
@@ -7211,7 +7734,7 @@ type GetThemePackageRequest struct {
 
 func (x *GetThemePackageRequest) Reset() {
 	*x = GetThemePackageRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[119]
+	mi := &file_heron_v1_admin_proto_msgTypes[127]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7223,7 +7746,7 @@ func (x *GetThemePackageRequest) String() string {
 func (*GetThemePackageRequest) ProtoMessage() {}
 
 func (x *GetThemePackageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[119]
+	mi := &file_heron_v1_admin_proto_msgTypes[127]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7236,7 +7759,7 @@ func (x *GetThemePackageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetThemePackageRequest.ProtoReflect.Descriptor instead.
 func (*GetThemePackageRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{119}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{127}
 }
 
 func (x *GetThemePackageRequest) GetId() string {
@@ -7263,7 +7786,7 @@ type GetThemePackageResponse struct {
 
 func (x *GetThemePackageResponse) Reset() {
 	*x = GetThemePackageResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[120]
+	mi := &file_heron_v1_admin_proto_msgTypes[128]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7275,7 +7798,7 @@ func (x *GetThemePackageResponse) String() string {
 func (*GetThemePackageResponse) ProtoMessage() {}
 
 func (x *GetThemePackageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[120]
+	mi := &file_heron_v1_admin_proto_msgTypes[128]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7288,7 +7811,7 @@ func (x *GetThemePackageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetThemePackageResponse.ProtoReflect.Descriptor instead.
 func (*GetThemePackageResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{120}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{128}
 }
 
 func (x *GetThemePackageResponse) GetPackage() []byte {
@@ -7306,7 +7829,7 @@ type GetStorageStatsRequest struct {
 
 func (x *GetStorageStatsRequest) Reset() {
 	*x = GetStorageStatsRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[121]
+	mi := &file_heron_v1_admin_proto_msgTypes[129]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7318,7 +7841,7 @@ func (x *GetStorageStatsRequest) String() string {
 func (*GetStorageStatsRequest) ProtoMessage() {}
 
 func (x *GetStorageStatsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[121]
+	mi := &file_heron_v1_admin_proto_msgTypes[129]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7331,7 +7854,7 @@ func (x *GetStorageStatsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStorageStatsRequest.ProtoReflect.Descriptor instead.
 func (*GetStorageStatsRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{121}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{129}
 }
 
 type GetStorageStatsResponse struct {
@@ -7353,7 +7876,7 @@ type GetStorageStatsResponse struct {
 
 func (x *GetStorageStatsResponse) Reset() {
 	*x = GetStorageStatsResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[122]
+	mi := &file_heron_v1_admin_proto_msgTypes[130]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7365,7 +7888,7 @@ func (x *GetStorageStatsResponse) String() string {
 func (*GetStorageStatsResponse) ProtoMessage() {}
 
 func (x *GetStorageStatsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[122]
+	mi := &file_heron_v1_admin_proto_msgTypes[130]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7378,7 +7901,7 @@ func (x *GetStorageStatsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStorageStatsResponse.ProtoReflect.Descriptor instead.
 func (*GetStorageStatsResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{122}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{130}
 }
 
 func (x *GetStorageStatsResponse) GetDbBytes() uint64 {
@@ -7441,7 +7964,7 @@ type SeriesTableHealth struct {
 
 func (x *SeriesTableHealth) Reset() {
 	*x = SeriesTableHealth{}
-	mi := &file_heron_v1_admin_proto_msgTypes[123]
+	mi := &file_heron_v1_admin_proto_msgTypes[131]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7453,7 +7976,7 @@ func (x *SeriesTableHealth) String() string {
 func (*SeriesTableHealth) ProtoMessage() {}
 
 func (x *SeriesTableHealth) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[123]
+	mi := &file_heron_v1_admin_proto_msgTypes[131]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7466,7 +7989,7 @@ func (x *SeriesTableHealth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SeriesTableHealth.ProtoReflect.Descriptor instead.
 func (*SeriesTableHealth) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{123}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{131}
 }
 
 func (x *SeriesTableHealth) GetTable() string {
@@ -7528,7 +8051,7 @@ type TableRows struct {
 
 func (x *TableRows) Reset() {
 	*x = TableRows{}
-	mi := &file_heron_v1_admin_proto_msgTypes[124]
+	mi := &file_heron_v1_admin_proto_msgTypes[132]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7540,7 +8063,7 @@ func (x *TableRows) String() string {
 func (*TableRows) ProtoMessage() {}
 
 func (x *TableRows) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[124]
+	mi := &file_heron_v1_admin_proto_msgTypes[132]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7553,7 +8076,7 @@ func (x *TableRows) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TableRows.ProtoReflect.Descriptor instead.
 func (*TableRows) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{124}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{132}
 }
 
 func (x *TableRows) GetName() string {
@@ -7585,7 +8108,7 @@ type ListAlertEventsRequest struct {
 
 func (x *ListAlertEventsRequest) Reset() {
 	*x = ListAlertEventsRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[125]
+	mi := &file_heron_v1_admin_proto_msgTypes[133]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7597,7 +8120,7 @@ func (x *ListAlertEventsRequest) String() string {
 func (*ListAlertEventsRequest) ProtoMessage() {}
 
 func (x *ListAlertEventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[125]
+	mi := &file_heron_v1_admin_proto_msgTypes[133]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7610,7 +8133,7 @@ func (x *ListAlertEventsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAlertEventsRequest.ProtoReflect.Descriptor instead.
 func (*ListAlertEventsRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{125}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{133}
 }
 
 func (x *ListAlertEventsRequest) GetNodeId() int64 {
@@ -7643,7 +8166,7 @@ type ListAlertEventsResponse struct {
 
 func (x *ListAlertEventsResponse) Reset() {
 	*x = ListAlertEventsResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[126]
+	mi := &file_heron_v1_admin_proto_msgTypes[134]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7655,7 +8178,7 @@ func (x *ListAlertEventsResponse) String() string {
 func (*ListAlertEventsResponse) ProtoMessage() {}
 
 func (x *ListAlertEventsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[126]
+	mi := &file_heron_v1_admin_proto_msgTypes[134]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7668,7 +8191,7 @@ func (x *ListAlertEventsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAlertEventsResponse.ProtoReflect.Descriptor instead.
 func (*ListAlertEventsResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{126}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{134}
 }
 
 func (x *ListAlertEventsResponse) GetEvents() []*AlertEvent {
@@ -7687,7 +8210,7 @@ type GetAlertDeliveryErrorRequest struct {
 
 func (x *GetAlertDeliveryErrorRequest) Reset() {
 	*x = GetAlertDeliveryErrorRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[127]
+	mi := &file_heron_v1_admin_proto_msgTypes[135]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7699,7 +8222,7 @@ func (x *GetAlertDeliveryErrorRequest) String() string {
 func (*GetAlertDeliveryErrorRequest) ProtoMessage() {}
 
 func (x *GetAlertDeliveryErrorRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[127]
+	mi := &file_heron_v1_admin_proto_msgTypes[135]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7712,7 +8235,7 @@ func (x *GetAlertDeliveryErrorRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAlertDeliveryErrorRequest.ProtoReflect.Descriptor instead.
 func (*GetAlertDeliveryErrorRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{127}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{135}
 }
 
 func (x *GetAlertDeliveryErrorRequest) GetDeliveryId() int64 {
@@ -7731,7 +8254,7 @@ type GetAlertDeliveryErrorResponse struct {
 
 func (x *GetAlertDeliveryErrorResponse) Reset() {
 	*x = GetAlertDeliveryErrorResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[128]
+	mi := &file_heron_v1_admin_proto_msgTypes[136]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7743,7 +8266,7 @@ func (x *GetAlertDeliveryErrorResponse) String() string {
 func (*GetAlertDeliveryErrorResponse) ProtoMessage() {}
 
 func (x *GetAlertDeliveryErrorResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[128]
+	mi := &file_heron_v1_admin_proto_msgTypes[136]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7756,7 +8279,7 @@ func (x *GetAlertDeliveryErrorResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAlertDeliveryErrorResponse.ProtoReflect.Descriptor instead.
 func (*GetAlertDeliveryErrorResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{128}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{136}
 }
 
 func (x *GetAlertDeliveryErrorResponse) GetError() string {
@@ -7780,15 +8303,17 @@ type AlertEvent struct {
 	Summary string `protobuf:"bytes,6,opt,name=summary,proto3" json:"summary,omitempty"`
 	// 触发或恢复时的观测值：离线为未上报秒数；探测同规则 threshold 的单位（丢包百分比 loss_pct 或往返毫秒 rtt_ms）；
 	// 到期为剩余天数（负数是已过期天数），因清除到期日而恢复时为 0。
-	Value         float64          `protobuf:"fixed64,7,opt,name=value,proto3" json:"value,omitempty"`
-	Deliveries    []*AlertDelivery `protobuf:"bytes,8,rep,name=deliveries,proto3" json:"deliveries,omitempty"`
+	Value      float64          `protobuf:"fixed64,7,opt,name=value,proto3" json:"value,omitempty"`
+	Deliveries []*AlertDelivery `protobuf:"bytes,8,rep,name=deliveries,proto3" json:"deliveries,omitempty"`
+	// 生成时是否处于维护静默覆盖内（§9.5）：为真时不产生任何投递（deliveries 为空）。恢复事件记配对 firing 的值。
+	Silenced      bool `protobuf:"varint,9,opt,name=silenced,proto3" json:"silenced,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AlertEvent) Reset() {
 	*x = AlertEvent{}
-	mi := &file_heron_v1_admin_proto_msgTypes[129]
+	mi := &file_heron_v1_admin_proto_msgTypes[137]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7800,7 +8325,7 @@ func (x *AlertEvent) String() string {
 func (*AlertEvent) ProtoMessage() {}
 
 func (x *AlertEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[129]
+	mi := &file_heron_v1_admin_proto_msgTypes[137]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7813,7 +8338,7 @@ func (x *AlertEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlertEvent.ProtoReflect.Descriptor instead.
 func (*AlertEvent) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{129}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{137}
 }
 
 func (x *AlertEvent) GetId() int64 {
@@ -7872,6 +8397,13 @@ func (x *AlertEvent) GetDeliveries() []*AlertDelivery {
 	return nil
 }
 
+func (x *AlertEvent) GetSilenced() bool {
+	if x != nil {
+		return x.Silenced
+	}
+	return false
+}
+
 type AlertDelivery struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	ChannelId int64                  `protobuf:"varint,1,opt,name=channel_id,json=channelId,proto3" json:"channel_id,omitempty"`
@@ -7895,7 +8427,7 @@ type AlertDelivery struct {
 
 func (x *AlertDelivery) Reset() {
 	*x = AlertDelivery{}
-	mi := &file_heron_v1_admin_proto_msgTypes[130]
+	mi := &file_heron_v1_admin_proto_msgTypes[138]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7907,7 +8439,7 @@ func (x *AlertDelivery) String() string {
 func (*AlertDelivery) ProtoMessage() {}
 
 func (x *AlertDelivery) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[130]
+	mi := &file_heron_v1_admin_proto_msgTypes[138]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7920,7 +8452,7 @@ func (x *AlertDelivery) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AlertDelivery.ProtoReflect.Descriptor instead.
 func (*AlertDelivery) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{130}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{138}
 }
 
 func (x *AlertDelivery) GetChannelId() int64 {
@@ -7994,7 +8526,7 @@ type ApiToken struct {
 
 func (x *ApiToken) Reset() {
 	*x = ApiToken{}
-	mi := &file_heron_v1_admin_proto_msgTypes[131]
+	mi := &file_heron_v1_admin_proto_msgTypes[139]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8006,7 +8538,7 @@ func (x *ApiToken) String() string {
 func (*ApiToken) ProtoMessage() {}
 
 func (x *ApiToken) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[131]
+	mi := &file_heron_v1_admin_proto_msgTypes[139]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8019,7 +8551,7 @@ func (x *ApiToken) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApiToken.ProtoReflect.Descriptor instead.
 func (*ApiToken) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{131}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{139}
 }
 
 func (x *ApiToken) GetId() int64 {
@@ -8065,7 +8597,7 @@ type ListApiTokensRequest struct {
 
 func (x *ListApiTokensRequest) Reset() {
 	*x = ListApiTokensRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[132]
+	mi := &file_heron_v1_admin_proto_msgTypes[140]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8077,7 +8609,7 @@ func (x *ListApiTokensRequest) String() string {
 func (*ListApiTokensRequest) ProtoMessage() {}
 
 func (x *ListApiTokensRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[132]
+	mi := &file_heron_v1_admin_proto_msgTypes[140]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8090,7 +8622,7 @@ func (x *ListApiTokensRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListApiTokensRequest.ProtoReflect.Descriptor instead.
 func (*ListApiTokensRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{132}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{140}
 }
 
 type ListApiTokensResponse struct {
@@ -8103,7 +8635,7 @@ type ListApiTokensResponse struct {
 
 func (x *ListApiTokensResponse) Reset() {
 	*x = ListApiTokensResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[133]
+	mi := &file_heron_v1_admin_proto_msgTypes[141]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8115,7 +8647,7 @@ func (x *ListApiTokensResponse) String() string {
 func (*ListApiTokensResponse) ProtoMessage() {}
 
 func (x *ListApiTokensResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[133]
+	mi := &file_heron_v1_admin_proto_msgTypes[141]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8128,7 +8660,7 @@ func (x *ListApiTokensResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListApiTokensResponse.ProtoReflect.Descriptor instead.
 func (*ListApiTokensResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{133}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{141}
 }
 
 func (x *ListApiTokensResponse) GetTokens() []*ApiToken {
@@ -8150,7 +8682,7 @@ type CreateApiTokenRequest struct {
 
 func (x *CreateApiTokenRequest) Reset() {
 	*x = CreateApiTokenRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[134]
+	mi := &file_heron_v1_admin_proto_msgTypes[142]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8162,7 +8694,7 @@ func (x *CreateApiTokenRequest) String() string {
 func (*CreateApiTokenRequest) ProtoMessage() {}
 
 func (x *CreateApiTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[134]
+	mi := &file_heron_v1_admin_proto_msgTypes[142]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8175,7 +8707,7 @@ func (x *CreateApiTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateApiTokenRequest.ProtoReflect.Descriptor instead.
 func (*CreateApiTokenRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{134}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{142}
 }
 
 func (x *CreateApiTokenRequest) GetName() string {
@@ -8203,7 +8735,7 @@ type CreateApiTokenResponse struct {
 
 func (x *CreateApiTokenResponse) Reset() {
 	*x = CreateApiTokenResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[135]
+	mi := &file_heron_v1_admin_proto_msgTypes[143]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8215,7 +8747,7 @@ func (x *CreateApiTokenResponse) String() string {
 func (*CreateApiTokenResponse) ProtoMessage() {}
 
 func (x *CreateApiTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[135]
+	mi := &file_heron_v1_admin_proto_msgTypes[143]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8228,7 +8760,7 @@ func (x *CreateApiTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateApiTokenResponse.ProtoReflect.Descriptor instead.
 func (*CreateApiTokenResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{135}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{143}
 }
 
 func (x *CreateApiTokenResponse) GetApiToken() *ApiToken {
@@ -8254,7 +8786,7 @@ type DeleteApiTokenRequest struct {
 
 func (x *DeleteApiTokenRequest) Reset() {
 	*x = DeleteApiTokenRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[136]
+	mi := &file_heron_v1_admin_proto_msgTypes[144]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8266,7 +8798,7 @@ func (x *DeleteApiTokenRequest) String() string {
 func (*DeleteApiTokenRequest) ProtoMessage() {}
 
 func (x *DeleteApiTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[136]
+	mi := &file_heron_v1_admin_proto_msgTypes[144]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8279,7 +8811,7 @@ func (x *DeleteApiTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteApiTokenRequest.ProtoReflect.Descriptor instead.
 func (*DeleteApiTokenRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{136}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{144}
 }
 
 func (x *DeleteApiTokenRequest) GetId() int64 {
@@ -8297,7 +8829,7 @@ type DeleteApiTokenResponse struct {
 
 func (x *DeleteApiTokenResponse) Reset() {
 	*x = DeleteApiTokenResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[137]
+	mi := &file_heron_v1_admin_proto_msgTypes[145]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8309,7 +8841,7 @@ func (x *DeleteApiTokenResponse) String() string {
 func (*DeleteApiTokenResponse) ProtoMessage() {}
 
 func (x *DeleteApiTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[137]
+	mi := &file_heron_v1_admin_proto_msgTypes[145]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8322,7 +8854,7 @@ func (x *DeleteApiTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteApiTokenResponse.ProtoReflect.Descriptor instead.
 func (*DeleteApiTokenResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{137}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{145}
 }
 
 type GetApiReferenceRequest struct {
@@ -8333,7 +8865,7 @@ type GetApiReferenceRequest struct {
 
 func (x *GetApiReferenceRequest) Reset() {
 	*x = GetApiReferenceRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[138]
+	mi := &file_heron_v1_admin_proto_msgTypes[146]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8345,7 +8877,7 @@ func (x *GetApiReferenceRequest) String() string {
 func (*GetApiReferenceRequest) ProtoMessage() {}
 
 func (x *GetApiReferenceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[138]
+	mi := &file_heron_v1_admin_proto_msgTypes[146]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8358,7 +8890,7 @@ func (x *GetApiReferenceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetApiReferenceRequest.ProtoReflect.Descriptor instead.
 func (*GetApiReferenceRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{138}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{146}
 }
 
 type GetApiReferenceResponse struct {
@@ -8373,7 +8905,7 @@ type GetApiReferenceResponse struct {
 
 func (x *GetApiReferenceResponse) Reset() {
 	*x = GetApiReferenceResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[139]
+	mi := &file_heron_v1_admin_proto_msgTypes[147]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8385,7 +8917,7 @@ func (x *GetApiReferenceResponse) String() string {
 func (*GetApiReferenceResponse) ProtoMessage() {}
 
 func (x *GetApiReferenceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[139]
+	mi := &file_heron_v1_admin_proto_msgTypes[147]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8398,7 +8930,7 @@ func (x *GetApiReferenceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetApiReferenceResponse.ProtoReflect.Descriptor instead.
 func (*GetApiReferenceResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{139}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{147}
 }
 
 func (x *GetApiReferenceResponse) GetGuide() string {
@@ -8426,7 +8958,7 @@ type ProtoFile struct {
 
 func (x *ProtoFile) Reset() {
 	*x = ProtoFile{}
-	mi := &file_heron_v1_admin_proto_msgTypes[140]
+	mi := &file_heron_v1_admin_proto_msgTypes[148]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8438,7 +8970,7 @@ func (x *ProtoFile) String() string {
 func (*ProtoFile) ProtoMessage() {}
 
 func (x *ProtoFile) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[140]
+	mi := &file_heron_v1_admin_proto_msgTypes[148]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8451,7 +8983,7 @@ func (x *ProtoFile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProtoFile.ProtoReflect.Descriptor instead.
 func (*ProtoFile) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{140}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{148}
 }
 
 func (x *ProtoFile) GetPath() string {
@@ -8479,7 +9011,7 @@ type TokenGrant struct {
 
 func (x *TokenGrant) Reset() {
 	*x = TokenGrant{}
-	mi := &file_heron_v1_admin_proto_msgTypes[141]
+	mi := &file_heron_v1_admin_proto_msgTypes[149]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8491,7 +9023,7 @@ func (x *TokenGrant) String() string {
 func (*TokenGrant) ProtoMessage() {}
 
 func (x *TokenGrant) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[141]
+	mi := &file_heron_v1_admin_proto_msgTypes[149]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8504,7 +9036,7 @@ func (x *TokenGrant) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenGrant.ProtoReflect.Descriptor instead.
 func (*TokenGrant) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{141}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{149}
 }
 
 func (x *TokenGrant) GetPermissions() []TokenPermission {
@@ -8558,7 +9090,7 @@ type ExecuteChangeRequest struct {
 
 func (x *ExecuteChangeRequest) Reset() {
 	*x = ExecuteChangeRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[142]
+	mi := &file_heron_v1_admin_proto_msgTypes[150]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8570,7 +9102,7 @@ func (x *ExecuteChangeRequest) String() string {
 func (*ExecuteChangeRequest) ProtoMessage() {}
 
 func (x *ExecuteChangeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[142]
+	mi := &file_heron_v1_admin_proto_msgTypes[150]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8583,7 +9115,7 @@ func (x *ExecuteChangeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteChangeRequest.ProtoReflect.Descriptor instead.
 func (*ExecuteChangeRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{142}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{150}
 }
 
 func (x *ExecuteChangeRequest) GetRequestId() string {
@@ -8839,7 +9371,7 @@ type Operation struct {
 
 func (x *Operation) Reset() {
 	*x = Operation{}
-	mi := &file_heron_v1_admin_proto_msgTypes[143]
+	mi := &file_heron_v1_admin_proto_msgTypes[151]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8851,7 +9383,7 @@ func (x *Operation) String() string {
 func (*Operation) ProtoMessage() {}
 
 func (x *Operation) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[143]
+	mi := &file_heron_v1_admin_proto_msgTypes[151]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8864,7 +9396,7 @@ func (x *Operation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Operation.ProtoReflect.Descriptor instead.
 func (*Operation) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{143}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{151}
 }
 
 func (x *Operation) GetOwnerId() int64 {
@@ -8936,7 +9468,7 @@ type ExecuteChangeResponse struct {
 
 func (x *ExecuteChangeResponse) Reset() {
 	*x = ExecuteChangeResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[144]
+	mi := &file_heron_v1_admin_proto_msgTypes[152]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8948,7 +9480,7 @@ func (x *ExecuteChangeResponse) String() string {
 func (*ExecuteChangeResponse) ProtoMessage() {}
 
 func (x *ExecuteChangeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[144]
+	mi := &file_heron_v1_admin_proto_msgTypes[152]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8961,7 +9493,7 @@ func (x *ExecuteChangeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteChangeResponse.ProtoReflect.Descriptor instead.
 func (*ExecuteChangeResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{144}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{152}
 }
 
 func (x *ExecuteChangeResponse) GetOperation() *Operation {
@@ -9003,7 +9535,7 @@ type ListOperationsRequest struct {
 
 func (x *ListOperationsRequest) Reset() {
 	*x = ListOperationsRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[145]
+	mi := &file_heron_v1_admin_proto_msgTypes[153]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9015,7 +9547,7 @@ func (x *ListOperationsRequest) String() string {
 func (*ListOperationsRequest) ProtoMessage() {}
 
 func (x *ListOperationsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[145]
+	mi := &file_heron_v1_admin_proto_msgTypes[153]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9028,7 +9560,7 @@ func (x *ListOperationsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListOperationsRequest.ProtoReflect.Descriptor instead.
 func (*ListOperationsRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{145}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{153}
 }
 
 func (x *ListOperationsRequest) GetOwnerId() int64 {
@@ -9061,7 +9593,7 @@ type ListOperationsResponse struct {
 
 func (x *ListOperationsResponse) Reset() {
 	*x = ListOperationsResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[146]
+	mi := &file_heron_v1_admin_proto_msgTypes[154]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9073,7 +9605,7 @@ func (x *ListOperationsResponse) String() string {
 func (*ListOperationsResponse) ProtoMessage() {}
 
 func (x *ListOperationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[146]
+	mi := &file_heron_v1_admin_proto_msgTypes[154]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9086,7 +9618,7 @@ func (x *ListOperationsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListOperationsResponse.ProtoReflect.Descriptor instead.
 func (*ListOperationsResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{146}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{154}
 }
 
 func (x *ListOperationsResponse) GetOperations() []*Operation {
@@ -9104,7 +9636,7 @@ type ListNotifyChannelRefsRequest struct {
 
 func (x *ListNotifyChannelRefsRequest) Reset() {
 	*x = ListNotifyChannelRefsRequest{}
-	mi := &file_heron_v1_admin_proto_msgTypes[147]
+	mi := &file_heron_v1_admin_proto_msgTypes[155]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9116,7 +9648,7 @@ func (x *ListNotifyChannelRefsRequest) String() string {
 func (*ListNotifyChannelRefsRequest) ProtoMessage() {}
 
 func (x *ListNotifyChannelRefsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[147]
+	mi := &file_heron_v1_admin_proto_msgTypes[155]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9129,7 +9661,7 @@ func (x *ListNotifyChannelRefsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNotifyChannelRefsRequest.ProtoReflect.Descriptor instead.
 func (*ListNotifyChannelRefsRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{147}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{155}
 }
 
 type NotifyChannelRef struct {
@@ -9143,7 +9675,7 @@ type NotifyChannelRef struct {
 
 func (x *NotifyChannelRef) Reset() {
 	*x = NotifyChannelRef{}
-	mi := &file_heron_v1_admin_proto_msgTypes[148]
+	mi := &file_heron_v1_admin_proto_msgTypes[156]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9155,7 +9687,7 @@ func (x *NotifyChannelRef) String() string {
 func (*NotifyChannelRef) ProtoMessage() {}
 
 func (x *NotifyChannelRef) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[148]
+	mi := &file_heron_v1_admin_proto_msgTypes[156]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9168,7 +9700,7 @@ func (x *NotifyChannelRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotifyChannelRef.ProtoReflect.Descriptor instead.
 func (*NotifyChannelRef) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{148}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{156}
 }
 
 func (x *NotifyChannelRef) GetId() int64 {
@@ -9201,7 +9733,7 @@ type ListNotifyChannelRefsResponse struct {
 
 func (x *ListNotifyChannelRefsResponse) Reset() {
 	*x = ListNotifyChannelRefsResponse{}
-	mi := &file_heron_v1_admin_proto_msgTypes[149]
+	mi := &file_heron_v1_admin_proto_msgTypes[157]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9213,7 +9745,7 @@ func (x *ListNotifyChannelRefsResponse) String() string {
 func (*ListNotifyChannelRefsResponse) ProtoMessage() {}
 
 func (x *ListNotifyChannelRefsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_admin_proto_msgTypes[149]
+	mi := &file_heron_v1_admin_proto_msgTypes[157]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9226,7 +9758,7 @@ func (x *ListNotifyChannelRefsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNotifyChannelRefsResponse.ProtoReflect.Descriptor instead.
 func (*ListNotifyChannelRefsResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_admin_proto_rawDescGZIP(), []int{149}
+	return file_heron_v1_admin_proto_rawDescGZIP(), []int{157}
 }
 
 func (x *ListNotifyChannelRefsResponse) GetChannels() []*NotifyChannelRef {
@@ -9316,7 +9848,7 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\bsessions\x18\x01 \x03(\v2\x11.heron.v1.SessionR\bsessions\"&\n" +
 	"\x14RevokeSessionRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"\x17\n" +
-	"\x15RevokeSessionResponse\"\xc7\x05\n" +
+	"\x15RevokeSessionResponse\"\xe9\x05\n" +
 	"\x04Node\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
@@ -9343,7 +9875,8 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\vcountry_pin\x18\x11 \x01(\tR\n" +
 	"countryPin\x12\x12\n" +
 	"\x04tags\x18\x12 \x03(\tR\x04tags\x12%\n" +
-	"\x0ecountry_lookup\x18\x13 \x01(\tR\rcountryLookupB\x0f\n" +
+	"\x0ecountry_lookup\x18\x13 \x01(\tR\rcountryLookup\x12 \n" +
+	"\vmaintenance\x18\x14 \x01(\bR\vmaintenanceB\x0f\n" +
 	"\r_last_seen_atB\x13\n" +
 	"\x11_facts_updated_atB\x12\n" +
 	"\x10_offline_grace_s\"&\n" +
@@ -9356,7 +9889,7 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\abilling\x18\x02 \x01(\v2\x11.heron.v1.BillingR\abilling\"N\n" +
 	"\x12CreateNodeResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.heron.v1.NodeR\x04node\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"\xb2\x02\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\xd4\x02\n" +
 	"\x11UpdateNodeRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
@@ -9367,7 +9900,9 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\abilling\x18\a \x01(\v2\x11.heron.v1.BillingR\abilling\x12\x1f\n" +
 	"\vcountry_pin\x18\b \x01(\tR\n" +
 	"countryPin\x12\x12\n" +
-	"\x04tags\x18\t \x03(\tR\x04tagsB\x12\n" +
+	"\x04tags\x18\t \x03(\tR\x04tags\x12 \n" +
+	"\vmaintenance\x18\n" +
+	" \x01(\bR\vmaintenanceB\x12\n" +
 	"\x10_offline_grace_s\"8\n" +
 	"\x12UpdateNodeResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.heron.v1.NodeR\x04node\"s\n" +
@@ -9507,7 +10042,37 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\x04rule\x18\x01 \x01(\v2\x13.heron.v1.AlertRuleR\x04rule\"(\n" +
 	"\x16DeleteAlertRuleRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\"\x19\n" +
-	"\x17DeleteAlertRuleResponse\"\xa7\x02\n" +
+	"\x17DeleteAlertRuleResponse\"\xf4\x02\n" +
+	"\aSilence\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
+	"\aenabled\x18\x03 \x01(\bR\aenabled\x12\x1b\n" +
+	"\tall_nodes\x18\x04 \x01(\bR\ballNodes\x12\x19\n" +
+	"\bnode_ids\x18\x05 \x03(\x03R\anodeIds\x12#\n" +
+	"\rselector_tags\x18\x06 \x03(\tR\fselectorTags\x12)\n" +
+	"\x04kind\x18\a \x01(\x0e2\x15.heron.v1.SilenceKindR\x04kind\x12\x1d\n" +
+	"\n" +
+	"start_hhmm\x18\b \x01(\tR\tstartHhmm\x12\x19\n" +
+	"\bend_hhmm\x18\t \x01(\tR\aendHhmm\x12\x17\n" +
+	"\afrom_at\x18\n" +
+	" \x01(\x03R\x06fromAt\x12\x19\n" +
+	"\buntil_at\x18\v \x01(\x03R\auntilAt\x12\x16\n" +
+	"\x06reason\x18\f \x01(\tR\x06reason\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\r \x01(\x03R\tcreatedAt\"\x15\n" +
+	"\x13ListSilencesRequest\"J\n" +
+	"\x14ListSilencesResponse\x122\n" +
+	"\bsilences\x18\x01 \x03(\v2\x16.heron.v1.SilenceEntryR\bsilences\"S\n" +
+	"\fSilenceEntry\x12+\n" +
+	"\asilence\x18\x01 \x01(\v2\x11.heron.v1.SilenceR\asilence\x12\x16\n" +
+	"\x06active\x18\x02 \x01(\bR\x06active\"A\n" +
+	"\x12SaveSilenceRequest\x12+\n" +
+	"\asilence\x18\x01 \x01(\v2\x11.heron.v1.SilenceR\asilence\"B\n" +
+	"\x13SaveSilenceResponse\x12+\n" +
+	"\asilence\x18\x01 \x01(\v2\x11.heron.v1.SilenceR\asilence\"&\n" +
+	"\x14DeleteSilenceRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\"\x17\n" +
+	"\x15DeleteSilenceResponse\"\xa7\x02\n" +
 	"\rNotifyChannel\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12)\n" +
@@ -9736,7 +10301,7 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\vdelivery_id\x18\x01 \x01(\x03R\n" +
 	"deliveryId\"5\n" +
 	"\x1dGetAlertDeliveryErrorResponse\x12\x14\n" +
-	"\x05error\x18\x01 \x01(\tR\x05error\"\xe7\x01\n" +
+	"\x05error\x18\x01 \x01(\tR\x05error\"\x83\x02\n" +
 	"\n" +
 	"AlertEvent\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
@@ -9750,7 +10315,8 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\x05value\x18\a \x01(\x01R\x05value\x127\n" +
 	"\n" +
 	"deliveries\x18\b \x03(\v2\x17.heron.v1.AlertDeliveryR\n" +
-	"deliveries\"\xb4\x02\n" +
+	"deliveries\x12\x1a\n" +
+	"\bsilenced\x18\t \x01(\bR\bsilenced\"\xb4\x02\n" +
 	"\rAlertDelivery\x12\x1d\n" +
 	"\n" +
 	"channel_id\x18\x01 \x01(\x03R\tchannelId\x12\x1a\n" +
@@ -9888,7 +10454,11 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\vProbeMetric\x12\x1c\n" +
 	"\x18PROBE_METRIC_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15PROBE_METRIC_LOSS_PCT\x10\x01\x12\x17\n" +
-	"\x13PROBE_METRIC_RTT_MS\x10\x02*`\n" +
+	"\x13PROBE_METRIC_RTT_MS\x10\x02*Z\n" +
+	"\vSilenceKind\x12\x1c\n" +
+	"\x18SILENCE_KIND_UNSPECIFIED\x10\x00\x12\x16\n" +
+	"\x12SILENCE_KIND_DAILY\x10\x01\x12\x15\n" +
+	"\x11SILENCE_KIND_ONCE\x10\x02*`\n" +
 	"\vChannelKind\x12\x1c\n" +
 	"\x18CHANNEL_KIND_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15CHANNEL_KIND_TELEGRAM\x10\x01\x12\x18\n" +
@@ -9914,7 +10484,7 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\x19TOKEN_PERMISSION_REGISTER\x10\x03\x12\x1b\n" +
 	"\x17TOKEN_PERMISSION_ROTATE\x10\x04\x12\x1b\n" +
 	"\x17TOKEN_PERMISSION_DELETE\x10\x05\x12\x1b\n" +
-	"\x17TOKEN_PERMISSION_UPDATE\x10\x062\xdc+\n" +
+	"\x17TOKEN_PERMISSION_UPDATE\x10\x062\xdb-\n" +
 	"\fAdminService\x12V\n" +
 	"\rExecuteChange\x12\x1e.heron.v1.ExecuteChangeRequest\x1a\x1f.heron.v1.ExecuteChangeResponse\"\x04\x88\xb5\x18\x04\x12Y\n" +
 	"\x0eListOperations\x12\x1f.heron.v1.ListOperationsRequest\x1a .heron.v1.ListOperationsResponse\"\x04\x88\xb5\x18\x02\x12n\n" +
@@ -9958,7 +10528,10 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\vQueryProbes\x12\x1c.heron.v1.QueryProbesRequest\x1a\x1d.heron.v1.QueryProbesResponse\"\x04\x88\xb5\x18\x02\x12Y\n" +
 	"\x0eListAlertRules\x12\x1f.heron.v1.ListAlertRulesRequest\x1a .heron.v1.ListAlertRulesResponse\"\x04\x88\xb5\x18\x02\x12V\n" +
 	"\rSaveAlertRule\x12\x1e.heron.v1.SaveAlertRuleRequest\x1a\x1f.heron.v1.SaveAlertRuleResponse\"\x04\x88\xb5\x18\x03\x12\\\n" +
-	"\x0fDeleteAlertRule\x12 .heron.v1.DeleteAlertRuleRequest\x1a!.heron.v1.DeleteAlertRuleResponse\"\x04\x88\xb5\x18\x03\x12\\\n" +
+	"\x0fDeleteAlertRule\x12 .heron.v1.DeleteAlertRuleRequest\x1a!.heron.v1.DeleteAlertRuleResponse\"\x04\x88\xb5\x18\x03\x12S\n" +
+	"\fListSilences\x12\x1d.heron.v1.ListSilencesRequest\x1a\x1e.heron.v1.ListSilencesResponse\"\x04\x88\xb5\x18\x02\x12P\n" +
+	"\vSaveSilence\x12\x1c.heron.v1.SaveSilenceRequest\x1a\x1d.heron.v1.SaveSilenceResponse\"\x04\x88\xb5\x18\x03\x12V\n" +
+	"\rDeleteSilence\x12\x1e.heron.v1.DeleteSilenceRequest\x1a\x1f.heron.v1.DeleteSilenceResponse\"\x04\x88\xb5\x18\x03\x12\\\n" +
 	"\x0fListAlertEvents\x12 .heron.v1.ListAlertEventsRequest\x1a!.heron.v1.ListAlertEventsResponse\"\x04\x88\xb5\x18\x02\x12n\n" +
 	"\x15GetAlertDeliveryError\x12&.heron.v1.GetAlertDeliveryErrorRequest\x1a'.heron.v1.GetAlertDeliveryErrorResponse\"\x04\x88\xb5\x18\x03\x12e\n" +
 	"\x12ListNotifyChannels\x12#.heron.v1.ListNotifyChannelsRequest\x1a$.heron.v1.ListNotifyChannelsResponse\"\x04\x88\xb5\x18\x03\x12b\n" +
@@ -9997,396 +10570,416 @@ func file_heron_v1_admin_proto_rawDescGZIP() []byte {
 	return file_heron_v1_admin_proto_rawDescData
 }
 
-var file_heron_v1_admin_proto_enumTypes = make([]protoimpl.EnumInfo, 9)
-var file_heron_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 151)
+var file_heron_v1_admin_proto_enumTypes = make([]protoimpl.EnumInfo, 10)
+var file_heron_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 159)
 var file_heron_v1_admin_proto_goTypes = []any{
 	(SecurityActionKind)(0),               // 0: heron.v1.SecurityActionKind
 	(CountrySource)(0),                    // 1: heron.v1.CountrySource
 	(AlertKind)(0),                        // 2: heron.v1.AlertKind
 	(ResourceMetric)(0),                   // 3: heron.v1.ResourceMetric
 	(ProbeMetric)(0),                      // 4: heron.v1.ProbeMetric
-	(ChannelKind)(0),                      // 5: heron.v1.ChannelKind
-	(GeoBackend)(0),                       // 6: heron.v1.GeoBackend
-	(DeliveryFailure)(0),                  // 7: heron.v1.DeliveryFailure
-	(TokenPermission)(0),                  // 8: heron.v1.TokenPermission
-	(*GetUpdatesRequest)(nil),             // 9: heron.v1.GetUpdatesRequest
-	(*GetUpdatesResponse)(nil),            // 10: heron.v1.GetUpdatesResponse
-	(*StartUpdateRequest)(nil),            // 11: heron.v1.StartUpdateRequest
-	(*StartUpdateResponse)(nil),           // 12: heron.v1.StartUpdateResponse
-	(*CancelUpdateRequest)(nil),           // 13: heron.v1.CancelUpdateRequest
-	(*CancelUpdateResponse)(nil),          // 14: heron.v1.CancelUpdateResponse
-	(*LoginRequest)(nil),                  // 15: heron.v1.LoginRequest
-	(*LoginResponse)(nil),                 // 16: heron.v1.LoginResponse
-	(*BeginPasskeyLoginRequest)(nil),      // 17: heron.v1.BeginPasskeyLoginRequest
-	(*BeginPasskeyLoginResponse)(nil),     // 18: heron.v1.BeginPasskeyLoginResponse
-	(*FinishPasskeyLoginRequest)(nil),     // 19: heron.v1.FinishPasskeyLoginRequest
-	(*FinishPasskeyLoginResponse)(nil),    // 20: heron.v1.FinishPasskeyLoginResponse
-	(*GetSecurityRequest)(nil),            // 21: heron.v1.GetSecurityRequest
-	(*SecurityCredential)(nil),            // 22: heron.v1.SecurityCredential
-	(*GetSecurityResponse)(nil),           // 23: heron.v1.GetSecurityResponse
-	(*SecurityActionRequest)(nil),         // 24: heron.v1.SecurityActionRequest
-	(*SecurityActionResponse)(nil),        // 25: heron.v1.SecurityActionResponse
-	(*LogoutRequest)(nil),                 // 26: heron.v1.LogoutRequest
-	(*LogoutResponse)(nil),                // 27: heron.v1.LogoutResponse
-	(*Session)(nil),                       // 28: heron.v1.Session
-	(*ListSessionsRequest)(nil),           // 29: heron.v1.ListSessionsRequest
-	(*ListSessionsResponse)(nil),          // 30: heron.v1.ListSessionsResponse
-	(*RevokeSessionRequest)(nil),          // 31: heron.v1.RevokeSessionRequest
-	(*RevokeSessionResponse)(nil),         // 32: heron.v1.RevokeSessionResponse
-	(*Node)(nil),                          // 33: heron.v1.Node
-	(*ListNodesRequest)(nil),              // 34: heron.v1.ListNodesRequest
-	(*ListNodesResponse)(nil),             // 35: heron.v1.ListNodesResponse
-	(*CreateNodeRequest)(nil),             // 36: heron.v1.CreateNodeRequest
-	(*CreateNodeResponse)(nil),            // 37: heron.v1.CreateNodeResponse
-	(*UpdateNodeRequest)(nil),             // 38: heron.v1.UpdateNodeRequest
-	(*UpdateNodeResponse)(nil),            // 39: heron.v1.UpdateNodeResponse
-	(*BatchUpdateNodeTagsRequest)(nil),    // 40: heron.v1.BatchUpdateNodeTagsRequest
-	(*BatchUpdateNodeTagsResponse)(nil),   // 41: heron.v1.BatchUpdateNodeTagsResponse
-	(*DeleteNodeRequest)(nil),             // 42: heron.v1.DeleteNodeRequest
-	(*DeleteNodeResponse)(nil),            // 43: heron.v1.DeleteNodeResponse
-	(*RotateNodeTokenRequest)(nil),        // 44: heron.v1.RotateNodeTokenRequest
-	(*RotateNodeTokenResponse)(nil),       // 45: heron.v1.RotateNodeTokenResponse
-	(*ReorderNodesRequest)(nil),           // 46: heron.v1.ReorderNodesRequest
-	(*ReorderNodesResponse)(nil),          // 47: heron.v1.ReorderNodesResponse
-	(*Tag)(nil),                           // 48: heron.v1.Tag
-	(*ListTagsRequest)(nil),               // 49: heron.v1.ListTagsRequest
-	(*ListTagsResponse)(nil),              // 50: heron.v1.ListTagsResponse
-	(*DeleteTagRequest)(nil),              // 51: heron.v1.DeleteTagRequest
-	(*DeleteTagResponse)(nil),             // 52: heron.v1.DeleteTagResponse
-	(*OpenRegisterWindowRequest)(nil),     // 53: heron.v1.OpenRegisterWindowRequest
-	(*OpenRegisterWindowResponse)(nil),    // 54: heron.v1.OpenRegisterWindowResponse
-	(*CloseRegisterWindowRequest)(nil),    // 55: heron.v1.CloseRegisterWindowRequest
-	(*CloseRegisterWindowResponse)(nil),   // 56: heron.v1.CloseRegisterWindowResponse
-	(*GetRegisterWindowRequest)(nil),      // 57: heron.v1.GetRegisterWindowRequest
-	(*GetRegisterWindowResponse)(nil),     // 58: heron.v1.GetRegisterWindowResponse
-	(*GetSnapshotRequest)(nil),            // 59: heron.v1.GetSnapshotRequest
-	(*GetSnapshotResponse)(nil),           // 60: heron.v1.GetSnapshotResponse
-	(*NodeStatus)(nil),                    // 61: heron.v1.NodeStatus
-	(*GetTrafficRequest)(nil),             // 62: heron.v1.GetTrafficRequest
-	(*GetTrafficResponse)(nil),            // 63: heron.v1.GetTrafficResponse
-	(*NodeTraffic)(nil),                   // 64: heron.v1.NodeTraffic
-	(*AdjustTrafficRequest)(nil),          // 65: heron.v1.AdjustTrafficRequest
-	(*AdjustTrafficResponse)(nil),         // 66: heron.v1.AdjustTrafficResponse
-	(*ProbeTaskDetail)(nil),               // 67: heron.v1.ProbeTaskDetail
-	(*ListProbeTasksRequest)(nil),         // 68: heron.v1.ListProbeTasksRequest
-	(*ListProbeTasksResponse)(nil),        // 69: heron.v1.ListProbeTasksResponse
-	(*SaveProbeTaskRequest)(nil),          // 70: heron.v1.SaveProbeTaskRequest
-	(*SaveProbeTaskResponse)(nil),         // 71: heron.v1.SaveProbeTaskResponse
-	(*DeleteProbeTaskRequest)(nil),        // 72: heron.v1.DeleteProbeTaskRequest
-	(*DeleteProbeTaskResponse)(nil),       // 73: heron.v1.DeleteProbeTaskResponse
-	(*ReorderProbeTasksRequest)(nil),      // 74: heron.v1.ReorderProbeTasksRequest
-	(*ReorderProbeTasksResponse)(nil),     // 75: heron.v1.ReorderProbeTasksResponse
-	(*AlertRule)(nil),                     // 76: heron.v1.AlertRule
-	(*ListAlertRulesRequest)(nil),         // 77: heron.v1.ListAlertRulesRequest
-	(*ListAlertRulesResponse)(nil),        // 78: heron.v1.ListAlertRulesResponse
-	(*AlertStateEntry)(nil),               // 79: heron.v1.AlertStateEntry
-	(*SaveAlertRuleRequest)(nil),          // 80: heron.v1.SaveAlertRuleRequest
-	(*SaveAlertRuleResponse)(nil),         // 81: heron.v1.SaveAlertRuleResponse
-	(*DeleteAlertRuleRequest)(nil),        // 82: heron.v1.DeleteAlertRuleRequest
-	(*DeleteAlertRuleResponse)(nil),       // 83: heron.v1.DeleteAlertRuleResponse
-	(*NotifyChannel)(nil),                 // 84: heron.v1.NotifyChannel
-	(*TelegramConfig)(nil),                // 85: heron.v1.TelegramConfig
-	(*WebhookConfig)(nil),                 // 86: heron.v1.WebhookConfig
-	(*ListNotifyChannelsRequest)(nil),     // 87: heron.v1.ListNotifyChannelsRequest
-	(*ListNotifyChannelsResponse)(nil),    // 88: heron.v1.ListNotifyChannelsResponse
-	(*SaveNotifyChannelRequest)(nil),      // 89: heron.v1.SaveNotifyChannelRequest
-	(*SaveNotifyChannelResponse)(nil),     // 90: heron.v1.SaveNotifyChannelResponse
-	(*DeleteNotifyChannelRequest)(nil),    // 91: heron.v1.DeleteNotifyChannelRequest
-	(*DeleteNotifyChannelResponse)(nil),   // 92: heron.v1.DeleteNotifyChannelResponse
-	(*TestNotifyChannelRequest)(nil),      // 93: heron.v1.TestNotifyChannelRequest
-	(*TestNotifyChannelResponse)(nil),     // 94: heron.v1.TestNotifyChannelResponse
-	(*Settings)(nil),                      // 95: heron.v1.Settings
-	(*BackupSettings)(nil),                // 96: heron.v1.BackupSettings
-	(*BackupNotify)(nil),                  // 97: heron.v1.BackupNotify
-	(*LoginNotify)(nil),                   // 98: heron.v1.LoginNotify
-	(*GetSettingsRequest)(nil),            // 99: heron.v1.GetSettingsRequest
-	(*GetSettingsResponse)(nil),           // 100: heron.v1.GetSettingsResponse
-	(*GetBackupStatusRequest)(nil),        // 101: heron.v1.GetBackupStatusRequest
-	(*GetBackupStatusResponse)(nil),       // 102: heron.v1.GetBackupStatusResponse
-	(*BackupLayerStatus)(nil),             // 103: heron.v1.BackupLayerStatus
-	(*BackupFailure)(nil),                 // 104: heron.v1.BackupFailure
-	(*UpdateSettingsRequest)(nil),         // 105: heron.v1.UpdateSettingsRequest
-	(*UpdateSettingsResponse)(nil),        // 106: heron.v1.UpdateSettingsResponse
-	(*Theme)(nil),                         // 107: heron.v1.Theme
-	(*UploadThemeRequest)(nil),            // 108: heron.v1.UploadThemeRequest
-	(*UploadThemeResponse)(nil),           // 109: heron.v1.UploadThemeResponse
-	(*ListThemesRequest)(nil),             // 110: heron.v1.ListThemesRequest
-	(*ListThemesResponse)(nil),            // 111: heron.v1.ListThemesResponse
-	(*EnableThemeRequest)(nil),            // 112: heron.v1.EnableThemeRequest
-	(*EnableThemeResponse)(nil),           // 113: heron.v1.EnableThemeResponse
-	(*DeleteThemeRequest)(nil),            // 114: heron.v1.DeleteThemeRequest
-	(*DeleteThemeResponse)(nil),           // 115: heron.v1.DeleteThemeResponse
-	(*GetThemePreviewRequest)(nil),        // 116: heron.v1.GetThemePreviewRequest
-	(*GetThemePreviewResponse)(nil),       // 117: heron.v1.GetThemePreviewResponse
-	(*DeleteThemeVersionRequest)(nil),     // 118: heron.v1.DeleteThemeVersionRequest
-	(*DeleteThemeVersionResponse)(nil),    // 119: heron.v1.DeleteThemeVersionResponse
-	(*ListThemeReleasesRequest)(nil),      // 120: heron.v1.ListThemeReleasesRequest
-	(*ThemeReleaseAsset)(nil),             // 121: heron.v1.ThemeReleaseAsset
-	(*ThemeRelease)(nil),                  // 122: heron.v1.ThemeRelease
-	(*ListThemeReleasesResponse)(nil),     // 123: heron.v1.ListThemeReleasesResponse
-	(*InstallThemeReleaseRequest)(nil),    // 124: heron.v1.InstallThemeReleaseRequest
-	(*InstallThemeReleaseResponse)(nil),   // 125: heron.v1.InstallThemeReleaseResponse
-	(*PreviewThemeRequest)(nil),           // 126: heron.v1.PreviewThemeRequest
-	(*PreviewThemeResponse)(nil),          // 127: heron.v1.PreviewThemeResponse
-	(*GetThemePackageRequest)(nil),        // 128: heron.v1.GetThemePackageRequest
-	(*GetThemePackageResponse)(nil),       // 129: heron.v1.GetThemePackageResponse
-	(*GetStorageStatsRequest)(nil),        // 130: heron.v1.GetStorageStatsRequest
-	(*GetStorageStatsResponse)(nil),       // 131: heron.v1.GetStorageStatsResponse
-	(*SeriesTableHealth)(nil),             // 132: heron.v1.SeriesTableHealth
-	(*TableRows)(nil),                     // 133: heron.v1.TableRows
-	(*ListAlertEventsRequest)(nil),        // 134: heron.v1.ListAlertEventsRequest
-	(*ListAlertEventsResponse)(nil),       // 135: heron.v1.ListAlertEventsResponse
-	(*GetAlertDeliveryErrorRequest)(nil),  // 136: heron.v1.GetAlertDeliveryErrorRequest
-	(*GetAlertDeliveryErrorResponse)(nil), // 137: heron.v1.GetAlertDeliveryErrorResponse
-	(*AlertEvent)(nil),                    // 138: heron.v1.AlertEvent
-	(*AlertDelivery)(nil),                 // 139: heron.v1.AlertDelivery
-	(*ApiToken)(nil),                      // 140: heron.v1.ApiToken
-	(*ListApiTokensRequest)(nil),          // 141: heron.v1.ListApiTokensRequest
-	(*ListApiTokensResponse)(nil),         // 142: heron.v1.ListApiTokensResponse
-	(*CreateApiTokenRequest)(nil),         // 143: heron.v1.CreateApiTokenRequest
-	(*CreateApiTokenResponse)(nil),        // 144: heron.v1.CreateApiTokenResponse
-	(*DeleteApiTokenRequest)(nil),         // 145: heron.v1.DeleteApiTokenRequest
-	(*DeleteApiTokenResponse)(nil),        // 146: heron.v1.DeleteApiTokenResponse
-	(*GetApiReferenceRequest)(nil),        // 147: heron.v1.GetApiReferenceRequest
-	(*GetApiReferenceResponse)(nil),       // 148: heron.v1.GetApiReferenceResponse
-	(*ProtoFile)(nil),                     // 149: heron.v1.ProtoFile
-	(*TokenGrant)(nil),                    // 150: heron.v1.TokenGrant
-	(*ExecuteChangeRequest)(nil),          // 151: heron.v1.ExecuteChangeRequest
-	(*Operation)(nil),                     // 152: heron.v1.Operation
-	(*ExecuteChangeResponse)(nil),         // 153: heron.v1.ExecuteChangeResponse
-	(*ListOperationsRequest)(nil),         // 154: heron.v1.ListOperationsRequest
-	(*ListOperationsResponse)(nil),        // 155: heron.v1.ListOperationsResponse
-	(*ListNotifyChannelRefsRequest)(nil),  // 156: heron.v1.ListNotifyChannelRefsRequest
-	(*NotifyChannelRef)(nil),              // 157: heron.v1.NotifyChannelRef
-	(*ListNotifyChannelRefsResponse)(nil), // 158: heron.v1.ListNotifyChannelRefsResponse
-	nil,                                   // 159: heron.v1.WebhookConfig.HeadersEntry
-	(*UpdateTarget)(nil),                  // 160: heron.v1.UpdateTarget
-	(*UpdateTask)(nil),                    // 161: heron.v1.UpdateTask
-	(*Facts)(nil),                         // 162: heron.v1.Facts
-	(*Billing)(nil),                       // 163: heron.v1.Billing
-	(*Metrics)(nil),                       // 164: heron.v1.Metrics
-	(*Traffic)(nil),                       // 165: heron.v1.Traffic
-	(*ProbeTask)(nil),                     // 166: heron.v1.ProbeTask
-	(*fieldmaskpb.FieldMask)(nil),         // 167: google.protobuf.FieldMask
-	(*anypb.Any)(nil),                     // 168: google.protobuf.Any
-	(*QueryMetricsRequest)(nil),           // 169: heron.v1.QueryMetricsRequest
-	(*QueryProbesRequest)(nil),            // 170: heron.v1.QueryProbesRequest
-	(*QueryMetricsResponse)(nil),          // 171: heron.v1.QueryMetricsResponse
-	(*QueryProbesResponse)(nil),           // 172: heron.v1.QueryProbesResponse
+	(SilenceKind)(0),                      // 5: heron.v1.SilenceKind
+	(ChannelKind)(0),                      // 6: heron.v1.ChannelKind
+	(GeoBackend)(0),                       // 7: heron.v1.GeoBackend
+	(DeliveryFailure)(0),                  // 8: heron.v1.DeliveryFailure
+	(TokenPermission)(0),                  // 9: heron.v1.TokenPermission
+	(*GetUpdatesRequest)(nil),             // 10: heron.v1.GetUpdatesRequest
+	(*GetUpdatesResponse)(nil),            // 11: heron.v1.GetUpdatesResponse
+	(*StartUpdateRequest)(nil),            // 12: heron.v1.StartUpdateRequest
+	(*StartUpdateResponse)(nil),           // 13: heron.v1.StartUpdateResponse
+	(*CancelUpdateRequest)(nil),           // 14: heron.v1.CancelUpdateRequest
+	(*CancelUpdateResponse)(nil),          // 15: heron.v1.CancelUpdateResponse
+	(*LoginRequest)(nil),                  // 16: heron.v1.LoginRequest
+	(*LoginResponse)(nil),                 // 17: heron.v1.LoginResponse
+	(*BeginPasskeyLoginRequest)(nil),      // 18: heron.v1.BeginPasskeyLoginRequest
+	(*BeginPasskeyLoginResponse)(nil),     // 19: heron.v1.BeginPasskeyLoginResponse
+	(*FinishPasskeyLoginRequest)(nil),     // 20: heron.v1.FinishPasskeyLoginRequest
+	(*FinishPasskeyLoginResponse)(nil),    // 21: heron.v1.FinishPasskeyLoginResponse
+	(*GetSecurityRequest)(nil),            // 22: heron.v1.GetSecurityRequest
+	(*SecurityCredential)(nil),            // 23: heron.v1.SecurityCredential
+	(*GetSecurityResponse)(nil),           // 24: heron.v1.GetSecurityResponse
+	(*SecurityActionRequest)(nil),         // 25: heron.v1.SecurityActionRequest
+	(*SecurityActionResponse)(nil),        // 26: heron.v1.SecurityActionResponse
+	(*LogoutRequest)(nil),                 // 27: heron.v1.LogoutRequest
+	(*LogoutResponse)(nil),                // 28: heron.v1.LogoutResponse
+	(*Session)(nil),                       // 29: heron.v1.Session
+	(*ListSessionsRequest)(nil),           // 30: heron.v1.ListSessionsRequest
+	(*ListSessionsResponse)(nil),          // 31: heron.v1.ListSessionsResponse
+	(*RevokeSessionRequest)(nil),          // 32: heron.v1.RevokeSessionRequest
+	(*RevokeSessionResponse)(nil),         // 33: heron.v1.RevokeSessionResponse
+	(*Node)(nil),                          // 34: heron.v1.Node
+	(*ListNodesRequest)(nil),              // 35: heron.v1.ListNodesRequest
+	(*ListNodesResponse)(nil),             // 36: heron.v1.ListNodesResponse
+	(*CreateNodeRequest)(nil),             // 37: heron.v1.CreateNodeRequest
+	(*CreateNodeResponse)(nil),            // 38: heron.v1.CreateNodeResponse
+	(*UpdateNodeRequest)(nil),             // 39: heron.v1.UpdateNodeRequest
+	(*UpdateNodeResponse)(nil),            // 40: heron.v1.UpdateNodeResponse
+	(*BatchUpdateNodeTagsRequest)(nil),    // 41: heron.v1.BatchUpdateNodeTagsRequest
+	(*BatchUpdateNodeTagsResponse)(nil),   // 42: heron.v1.BatchUpdateNodeTagsResponse
+	(*DeleteNodeRequest)(nil),             // 43: heron.v1.DeleteNodeRequest
+	(*DeleteNodeResponse)(nil),            // 44: heron.v1.DeleteNodeResponse
+	(*RotateNodeTokenRequest)(nil),        // 45: heron.v1.RotateNodeTokenRequest
+	(*RotateNodeTokenResponse)(nil),       // 46: heron.v1.RotateNodeTokenResponse
+	(*ReorderNodesRequest)(nil),           // 47: heron.v1.ReorderNodesRequest
+	(*ReorderNodesResponse)(nil),          // 48: heron.v1.ReorderNodesResponse
+	(*Tag)(nil),                           // 49: heron.v1.Tag
+	(*ListTagsRequest)(nil),               // 50: heron.v1.ListTagsRequest
+	(*ListTagsResponse)(nil),              // 51: heron.v1.ListTagsResponse
+	(*DeleteTagRequest)(nil),              // 52: heron.v1.DeleteTagRequest
+	(*DeleteTagResponse)(nil),             // 53: heron.v1.DeleteTagResponse
+	(*OpenRegisterWindowRequest)(nil),     // 54: heron.v1.OpenRegisterWindowRequest
+	(*OpenRegisterWindowResponse)(nil),    // 55: heron.v1.OpenRegisterWindowResponse
+	(*CloseRegisterWindowRequest)(nil),    // 56: heron.v1.CloseRegisterWindowRequest
+	(*CloseRegisterWindowResponse)(nil),   // 57: heron.v1.CloseRegisterWindowResponse
+	(*GetRegisterWindowRequest)(nil),      // 58: heron.v1.GetRegisterWindowRequest
+	(*GetRegisterWindowResponse)(nil),     // 59: heron.v1.GetRegisterWindowResponse
+	(*GetSnapshotRequest)(nil),            // 60: heron.v1.GetSnapshotRequest
+	(*GetSnapshotResponse)(nil),           // 61: heron.v1.GetSnapshotResponse
+	(*NodeStatus)(nil),                    // 62: heron.v1.NodeStatus
+	(*GetTrafficRequest)(nil),             // 63: heron.v1.GetTrafficRequest
+	(*GetTrafficResponse)(nil),            // 64: heron.v1.GetTrafficResponse
+	(*NodeTraffic)(nil),                   // 65: heron.v1.NodeTraffic
+	(*AdjustTrafficRequest)(nil),          // 66: heron.v1.AdjustTrafficRequest
+	(*AdjustTrafficResponse)(nil),         // 67: heron.v1.AdjustTrafficResponse
+	(*ProbeTaskDetail)(nil),               // 68: heron.v1.ProbeTaskDetail
+	(*ListProbeTasksRequest)(nil),         // 69: heron.v1.ListProbeTasksRequest
+	(*ListProbeTasksResponse)(nil),        // 70: heron.v1.ListProbeTasksResponse
+	(*SaveProbeTaskRequest)(nil),          // 71: heron.v1.SaveProbeTaskRequest
+	(*SaveProbeTaskResponse)(nil),         // 72: heron.v1.SaveProbeTaskResponse
+	(*DeleteProbeTaskRequest)(nil),        // 73: heron.v1.DeleteProbeTaskRequest
+	(*DeleteProbeTaskResponse)(nil),       // 74: heron.v1.DeleteProbeTaskResponse
+	(*ReorderProbeTasksRequest)(nil),      // 75: heron.v1.ReorderProbeTasksRequest
+	(*ReorderProbeTasksResponse)(nil),     // 76: heron.v1.ReorderProbeTasksResponse
+	(*AlertRule)(nil),                     // 77: heron.v1.AlertRule
+	(*ListAlertRulesRequest)(nil),         // 78: heron.v1.ListAlertRulesRequest
+	(*ListAlertRulesResponse)(nil),        // 79: heron.v1.ListAlertRulesResponse
+	(*AlertStateEntry)(nil),               // 80: heron.v1.AlertStateEntry
+	(*SaveAlertRuleRequest)(nil),          // 81: heron.v1.SaveAlertRuleRequest
+	(*SaveAlertRuleResponse)(nil),         // 82: heron.v1.SaveAlertRuleResponse
+	(*DeleteAlertRuleRequest)(nil),        // 83: heron.v1.DeleteAlertRuleRequest
+	(*DeleteAlertRuleResponse)(nil),       // 84: heron.v1.DeleteAlertRuleResponse
+	(*Silence)(nil),                       // 85: heron.v1.Silence
+	(*ListSilencesRequest)(nil),           // 86: heron.v1.ListSilencesRequest
+	(*ListSilencesResponse)(nil),          // 87: heron.v1.ListSilencesResponse
+	(*SilenceEntry)(nil),                  // 88: heron.v1.SilenceEntry
+	(*SaveSilenceRequest)(nil),            // 89: heron.v1.SaveSilenceRequest
+	(*SaveSilenceResponse)(nil),           // 90: heron.v1.SaveSilenceResponse
+	(*DeleteSilenceRequest)(nil),          // 91: heron.v1.DeleteSilenceRequest
+	(*DeleteSilenceResponse)(nil),         // 92: heron.v1.DeleteSilenceResponse
+	(*NotifyChannel)(nil),                 // 93: heron.v1.NotifyChannel
+	(*TelegramConfig)(nil),                // 94: heron.v1.TelegramConfig
+	(*WebhookConfig)(nil),                 // 95: heron.v1.WebhookConfig
+	(*ListNotifyChannelsRequest)(nil),     // 96: heron.v1.ListNotifyChannelsRequest
+	(*ListNotifyChannelsResponse)(nil),    // 97: heron.v1.ListNotifyChannelsResponse
+	(*SaveNotifyChannelRequest)(nil),      // 98: heron.v1.SaveNotifyChannelRequest
+	(*SaveNotifyChannelResponse)(nil),     // 99: heron.v1.SaveNotifyChannelResponse
+	(*DeleteNotifyChannelRequest)(nil),    // 100: heron.v1.DeleteNotifyChannelRequest
+	(*DeleteNotifyChannelResponse)(nil),   // 101: heron.v1.DeleteNotifyChannelResponse
+	(*TestNotifyChannelRequest)(nil),      // 102: heron.v1.TestNotifyChannelRequest
+	(*TestNotifyChannelResponse)(nil),     // 103: heron.v1.TestNotifyChannelResponse
+	(*Settings)(nil),                      // 104: heron.v1.Settings
+	(*BackupSettings)(nil),                // 105: heron.v1.BackupSettings
+	(*BackupNotify)(nil),                  // 106: heron.v1.BackupNotify
+	(*LoginNotify)(nil),                   // 107: heron.v1.LoginNotify
+	(*GetSettingsRequest)(nil),            // 108: heron.v1.GetSettingsRequest
+	(*GetSettingsResponse)(nil),           // 109: heron.v1.GetSettingsResponse
+	(*GetBackupStatusRequest)(nil),        // 110: heron.v1.GetBackupStatusRequest
+	(*GetBackupStatusResponse)(nil),       // 111: heron.v1.GetBackupStatusResponse
+	(*BackupLayerStatus)(nil),             // 112: heron.v1.BackupLayerStatus
+	(*BackupFailure)(nil),                 // 113: heron.v1.BackupFailure
+	(*UpdateSettingsRequest)(nil),         // 114: heron.v1.UpdateSettingsRequest
+	(*UpdateSettingsResponse)(nil),        // 115: heron.v1.UpdateSettingsResponse
+	(*Theme)(nil),                         // 116: heron.v1.Theme
+	(*UploadThemeRequest)(nil),            // 117: heron.v1.UploadThemeRequest
+	(*UploadThemeResponse)(nil),           // 118: heron.v1.UploadThemeResponse
+	(*ListThemesRequest)(nil),             // 119: heron.v1.ListThemesRequest
+	(*ListThemesResponse)(nil),            // 120: heron.v1.ListThemesResponse
+	(*EnableThemeRequest)(nil),            // 121: heron.v1.EnableThemeRequest
+	(*EnableThemeResponse)(nil),           // 122: heron.v1.EnableThemeResponse
+	(*DeleteThemeRequest)(nil),            // 123: heron.v1.DeleteThemeRequest
+	(*DeleteThemeResponse)(nil),           // 124: heron.v1.DeleteThemeResponse
+	(*GetThemePreviewRequest)(nil),        // 125: heron.v1.GetThemePreviewRequest
+	(*GetThemePreviewResponse)(nil),       // 126: heron.v1.GetThemePreviewResponse
+	(*DeleteThemeVersionRequest)(nil),     // 127: heron.v1.DeleteThemeVersionRequest
+	(*DeleteThemeVersionResponse)(nil),    // 128: heron.v1.DeleteThemeVersionResponse
+	(*ListThemeReleasesRequest)(nil),      // 129: heron.v1.ListThemeReleasesRequest
+	(*ThemeReleaseAsset)(nil),             // 130: heron.v1.ThemeReleaseAsset
+	(*ThemeRelease)(nil),                  // 131: heron.v1.ThemeRelease
+	(*ListThemeReleasesResponse)(nil),     // 132: heron.v1.ListThemeReleasesResponse
+	(*InstallThemeReleaseRequest)(nil),    // 133: heron.v1.InstallThemeReleaseRequest
+	(*InstallThemeReleaseResponse)(nil),   // 134: heron.v1.InstallThemeReleaseResponse
+	(*PreviewThemeRequest)(nil),           // 135: heron.v1.PreviewThemeRequest
+	(*PreviewThemeResponse)(nil),          // 136: heron.v1.PreviewThemeResponse
+	(*GetThemePackageRequest)(nil),        // 137: heron.v1.GetThemePackageRequest
+	(*GetThemePackageResponse)(nil),       // 138: heron.v1.GetThemePackageResponse
+	(*GetStorageStatsRequest)(nil),        // 139: heron.v1.GetStorageStatsRequest
+	(*GetStorageStatsResponse)(nil),       // 140: heron.v1.GetStorageStatsResponse
+	(*SeriesTableHealth)(nil),             // 141: heron.v1.SeriesTableHealth
+	(*TableRows)(nil),                     // 142: heron.v1.TableRows
+	(*ListAlertEventsRequest)(nil),        // 143: heron.v1.ListAlertEventsRequest
+	(*ListAlertEventsResponse)(nil),       // 144: heron.v1.ListAlertEventsResponse
+	(*GetAlertDeliveryErrorRequest)(nil),  // 145: heron.v1.GetAlertDeliveryErrorRequest
+	(*GetAlertDeliveryErrorResponse)(nil), // 146: heron.v1.GetAlertDeliveryErrorResponse
+	(*AlertEvent)(nil),                    // 147: heron.v1.AlertEvent
+	(*AlertDelivery)(nil),                 // 148: heron.v1.AlertDelivery
+	(*ApiToken)(nil),                      // 149: heron.v1.ApiToken
+	(*ListApiTokensRequest)(nil),          // 150: heron.v1.ListApiTokensRequest
+	(*ListApiTokensResponse)(nil),         // 151: heron.v1.ListApiTokensResponse
+	(*CreateApiTokenRequest)(nil),         // 152: heron.v1.CreateApiTokenRequest
+	(*CreateApiTokenResponse)(nil),        // 153: heron.v1.CreateApiTokenResponse
+	(*DeleteApiTokenRequest)(nil),         // 154: heron.v1.DeleteApiTokenRequest
+	(*DeleteApiTokenResponse)(nil),        // 155: heron.v1.DeleteApiTokenResponse
+	(*GetApiReferenceRequest)(nil),        // 156: heron.v1.GetApiReferenceRequest
+	(*GetApiReferenceResponse)(nil),       // 157: heron.v1.GetApiReferenceResponse
+	(*ProtoFile)(nil),                     // 158: heron.v1.ProtoFile
+	(*TokenGrant)(nil),                    // 159: heron.v1.TokenGrant
+	(*ExecuteChangeRequest)(nil),          // 160: heron.v1.ExecuteChangeRequest
+	(*Operation)(nil),                     // 161: heron.v1.Operation
+	(*ExecuteChangeResponse)(nil),         // 162: heron.v1.ExecuteChangeResponse
+	(*ListOperationsRequest)(nil),         // 163: heron.v1.ListOperationsRequest
+	(*ListOperationsResponse)(nil),        // 164: heron.v1.ListOperationsResponse
+	(*ListNotifyChannelRefsRequest)(nil),  // 165: heron.v1.ListNotifyChannelRefsRequest
+	(*NotifyChannelRef)(nil),              // 166: heron.v1.NotifyChannelRef
+	(*ListNotifyChannelRefsResponse)(nil), // 167: heron.v1.ListNotifyChannelRefsResponse
+	nil,                                   // 168: heron.v1.WebhookConfig.HeadersEntry
+	(*UpdateTarget)(nil),                  // 169: heron.v1.UpdateTarget
+	(*UpdateTask)(nil),                    // 170: heron.v1.UpdateTask
+	(*Facts)(nil),                         // 171: heron.v1.Facts
+	(*Billing)(nil),                       // 172: heron.v1.Billing
+	(*Metrics)(nil),                       // 173: heron.v1.Metrics
+	(*Traffic)(nil),                       // 174: heron.v1.Traffic
+	(*ProbeTask)(nil),                     // 175: heron.v1.ProbeTask
+	(*fieldmaskpb.FieldMask)(nil),         // 176: google.protobuf.FieldMask
+	(*anypb.Any)(nil),                     // 177: google.protobuf.Any
+	(*QueryMetricsRequest)(nil),           // 178: heron.v1.QueryMetricsRequest
+	(*QueryProbesRequest)(nil),            // 179: heron.v1.QueryProbesRequest
+	(*QueryMetricsResponse)(nil),          // 180: heron.v1.QueryMetricsResponse
+	(*QueryProbesResponse)(nil),           // 181: heron.v1.QueryProbesResponse
 }
 var file_heron_v1_admin_proto_depIdxs = []int32{
-	160, // 0: heron.v1.GetUpdatesResponse.targets:type_name -> heron.v1.UpdateTarget
-	161, // 1: heron.v1.StartUpdateResponse.task:type_name -> heron.v1.UpdateTask
-	22,  // 2: heron.v1.GetSecurityResponse.passkeys:type_name -> heron.v1.SecurityCredential
+	169, // 0: heron.v1.GetUpdatesResponse.targets:type_name -> heron.v1.UpdateTarget
+	170, // 1: heron.v1.StartUpdateResponse.task:type_name -> heron.v1.UpdateTask
+	23,  // 2: heron.v1.GetSecurityResponse.passkeys:type_name -> heron.v1.SecurityCredential
 	0,   // 3: heron.v1.SecurityActionRequest.action:type_name -> heron.v1.SecurityActionKind
-	28,  // 4: heron.v1.ListSessionsResponse.sessions:type_name -> heron.v1.Session
-	162, // 5: heron.v1.Node.facts:type_name -> heron.v1.Facts
-	163, // 6: heron.v1.Node.billing:type_name -> heron.v1.Billing
+	29,  // 4: heron.v1.ListSessionsResponse.sessions:type_name -> heron.v1.Session
+	171, // 5: heron.v1.Node.facts:type_name -> heron.v1.Facts
+	172, // 6: heron.v1.Node.billing:type_name -> heron.v1.Billing
 	1,   // 7: heron.v1.Node.country_source:type_name -> heron.v1.CountrySource
-	33,  // 8: heron.v1.ListNodesResponse.nodes:type_name -> heron.v1.Node
-	163, // 9: heron.v1.CreateNodeRequest.billing:type_name -> heron.v1.Billing
-	33,  // 10: heron.v1.CreateNodeResponse.node:type_name -> heron.v1.Node
-	163, // 11: heron.v1.UpdateNodeRequest.billing:type_name -> heron.v1.Billing
-	33,  // 12: heron.v1.UpdateNodeResponse.node:type_name -> heron.v1.Node
-	48,  // 13: heron.v1.ListTagsResponse.tags:type_name -> heron.v1.Tag
-	61,  // 14: heron.v1.GetSnapshotResponse.nodes:type_name -> heron.v1.NodeStatus
-	164, // 15: heron.v1.NodeStatus.metrics:type_name -> heron.v1.Metrics
-	165, // 16: heron.v1.NodeStatus.traffic:type_name -> heron.v1.Traffic
-	64,  // 17: heron.v1.GetTrafficResponse.nodes:type_name -> heron.v1.NodeTraffic
-	165, // 18: heron.v1.NodeTraffic.traffic:type_name -> heron.v1.Traffic
-	165, // 19: heron.v1.AdjustTrafficResponse.traffic:type_name -> heron.v1.Traffic
-	166, // 20: heron.v1.ProbeTaskDetail.task:type_name -> heron.v1.ProbeTask
-	67,  // 21: heron.v1.ListProbeTasksResponse.tasks:type_name -> heron.v1.ProbeTaskDetail
-	166, // 22: heron.v1.SaveProbeTaskRequest.task:type_name -> heron.v1.ProbeTask
-	67,  // 23: heron.v1.SaveProbeTaskResponse.task:type_name -> heron.v1.ProbeTaskDetail
+	34,  // 8: heron.v1.ListNodesResponse.nodes:type_name -> heron.v1.Node
+	172, // 9: heron.v1.CreateNodeRequest.billing:type_name -> heron.v1.Billing
+	34,  // 10: heron.v1.CreateNodeResponse.node:type_name -> heron.v1.Node
+	172, // 11: heron.v1.UpdateNodeRequest.billing:type_name -> heron.v1.Billing
+	34,  // 12: heron.v1.UpdateNodeResponse.node:type_name -> heron.v1.Node
+	49,  // 13: heron.v1.ListTagsResponse.tags:type_name -> heron.v1.Tag
+	62,  // 14: heron.v1.GetSnapshotResponse.nodes:type_name -> heron.v1.NodeStatus
+	173, // 15: heron.v1.NodeStatus.metrics:type_name -> heron.v1.Metrics
+	174, // 16: heron.v1.NodeStatus.traffic:type_name -> heron.v1.Traffic
+	65,  // 17: heron.v1.GetTrafficResponse.nodes:type_name -> heron.v1.NodeTraffic
+	174, // 18: heron.v1.NodeTraffic.traffic:type_name -> heron.v1.Traffic
+	174, // 19: heron.v1.AdjustTrafficResponse.traffic:type_name -> heron.v1.Traffic
+	175, // 20: heron.v1.ProbeTaskDetail.task:type_name -> heron.v1.ProbeTask
+	68,  // 21: heron.v1.ListProbeTasksResponse.tasks:type_name -> heron.v1.ProbeTaskDetail
+	175, // 22: heron.v1.SaveProbeTaskRequest.task:type_name -> heron.v1.ProbeTask
+	68,  // 23: heron.v1.SaveProbeTaskResponse.task:type_name -> heron.v1.ProbeTaskDetail
 	2,   // 24: heron.v1.AlertRule.kind:type_name -> heron.v1.AlertKind
 	4,   // 25: heron.v1.AlertRule.metric:type_name -> heron.v1.ProbeMetric
 	3,   // 26: heron.v1.AlertRule.resource_metric:type_name -> heron.v1.ResourceMetric
-	76,  // 27: heron.v1.ListAlertRulesResponse.rules:type_name -> heron.v1.AlertRule
-	79,  // 28: heron.v1.ListAlertRulesResponse.states:type_name -> heron.v1.AlertStateEntry
-	76,  // 29: heron.v1.SaveAlertRuleRequest.rule:type_name -> heron.v1.AlertRule
-	76,  // 30: heron.v1.SaveAlertRuleResponse.rule:type_name -> heron.v1.AlertRule
-	5,   // 31: heron.v1.NotifyChannel.kind:type_name -> heron.v1.ChannelKind
-	85,  // 32: heron.v1.NotifyChannel.telegram:type_name -> heron.v1.TelegramConfig
-	86,  // 33: heron.v1.NotifyChannel.webhook:type_name -> heron.v1.WebhookConfig
-	159, // 34: heron.v1.WebhookConfig.headers:type_name -> heron.v1.WebhookConfig.HeadersEntry
-	84,  // 35: heron.v1.ListNotifyChannelsResponse.channels:type_name -> heron.v1.NotifyChannel
-	84,  // 36: heron.v1.SaveNotifyChannelRequest.channel:type_name -> heron.v1.NotifyChannel
-	84,  // 37: heron.v1.SaveNotifyChannelResponse.channel:type_name -> heron.v1.NotifyChannel
-	6,   // 38: heron.v1.Settings.geo_backend:type_name -> heron.v1.GeoBackend
-	96,  // 39: heron.v1.Settings.backup:type_name -> heron.v1.BackupSettings
-	98,  // 40: heron.v1.Settings.login_notify:type_name -> heron.v1.LoginNotify
-	97,  // 41: heron.v1.BackupSettings.notify:type_name -> heron.v1.BackupNotify
-	95,  // 42: heron.v1.GetSettingsResponse.settings:type_name -> heron.v1.Settings
-	103, // 43: heron.v1.GetBackupStatusResponse.config:type_name -> heron.v1.BackupLayerStatus
-	103, // 44: heron.v1.GetBackupStatusResponse.metrics:type_name -> heron.v1.BackupLayerStatus
-	104, // 45: heron.v1.BackupLayerStatus.failure:type_name -> heron.v1.BackupFailure
-	95,  // 46: heron.v1.UpdateSettingsRequest.settings:type_name -> heron.v1.Settings
-	95,  // 47: heron.v1.UpdateSettingsResponse.settings:type_name -> heron.v1.Settings
-	107, // 48: heron.v1.UploadThemeResponse.theme:type_name -> heron.v1.Theme
-	107, // 49: heron.v1.ListThemesResponse.themes:type_name -> heron.v1.Theme
-	121, // 50: heron.v1.ThemeRelease.assets:type_name -> heron.v1.ThemeReleaseAsset
-	122, // 51: heron.v1.ListThemeReleasesResponse.releases:type_name -> heron.v1.ThemeRelease
-	107, // 52: heron.v1.InstallThemeReleaseResponse.theme:type_name -> heron.v1.Theme
-	133, // 53: heron.v1.GetStorageStatsResponse.tables:type_name -> heron.v1.TableRows
-	132, // 54: heron.v1.GetStorageStatsResponse.series:type_name -> heron.v1.SeriesTableHealth
-	138, // 55: heron.v1.ListAlertEventsResponse.events:type_name -> heron.v1.AlertEvent
-	139, // 56: heron.v1.AlertEvent.deliveries:type_name -> heron.v1.AlertDelivery
-	7,   // 57: heron.v1.AlertDelivery.failure:type_name -> heron.v1.DeliveryFailure
-	150, // 58: heron.v1.ApiToken.grant:type_name -> heron.v1.TokenGrant
-	140, // 59: heron.v1.ListApiTokensResponse.tokens:type_name -> heron.v1.ApiToken
-	150, // 60: heron.v1.CreateApiTokenRequest.grant:type_name -> heron.v1.TokenGrant
-	140, // 61: heron.v1.CreateApiTokenResponse.api_token:type_name -> heron.v1.ApiToken
-	149, // 62: heron.v1.GetApiReferenceResponse.files:type_name -> heron.v1.ProtoFile
-	8,   // 63: heron.v1.TokenGrant.permissions:type_name -> heron.v1.TokenPermission
-	167, // 64: heron.v1.ExecuteChangeRequest.update_mask:type_name -> google.protobuf.FieldMask
-	36,  // 65: heron.v1.ExecuteChangeRequest.create_node:type_name -> heron.v1.CreateNodeRequest
-	38,  // 66: heron.v1.ExecuteChangeRequest.update_node:type_name -> heron.v1.UpdateNodeRequest
-	42,  // 67: heron.v1.ExecuteChangeRequest.delete_node:type_name -> heron.v1.DeleteNodeRequest
-	44,  // 68: heron.v1.ExecuteChangeRequest.rotate_node_token:type_name -> heron.v1.RotateNodeTokenRequest
-	53,  // 69: heron.v1.ExecuteChangeRequest.open_register_window:type_name -> heron.v1.OpenRegisterWindowRequest
-	55,  // 70: heron.v1.ExecuteChangeRequest.close_register_window:type_name -> heron.v1.CloseRegisterWindowRequest
-	70,  // 71: heron.v1.ExecuteChangeRequest.save_probe_task:type_name -> heron.v1.SaveProbeTaskRequest
-	72,  // 72: heron.v1.ExecuteChangeRequest.delete_probe_task:type_name -> heron.v1.DeleteProbeTaskRequest
-	80,  // 73: heron.v1.ExecuteChangeRequest.save_alert_rule:type_name -> heron.v1.SaveAlertRuleRequest
-	82,  // 74: heron.v1.ExecuteChangeRequest.delete_alert_rule:type_name -> heron.v1.DeleteAlertRuleRequest
-	11,  // 75: heron.v1.ExecuteChangeRequest.start_update:type_name -> heron.v1.StartUpdateRequest
-	13,  // 76: heron.v1.ExecuteChangeRequest.cancel_update:type_name -> heron.v1.CancelUpdateRequest
-	51,  // 77: heron.v1.ExecuteChangeRequest.delete_tag:type_name -> heron.v1.DeleteTagRequest
-	152, // 78: heron.v1.ExecuteChangeResponse.operation:type_name -> heron.v1.Operation
-	168, // 79: heron.v1.ExecuteChangeResponse.result:type_name -> google.protobuf.Any
-	152, // 80: heron.v1.ListOperationsResponse.operations:type_name -> heron.v1.Operation
-	5,   // 81: heron.v1.NotifyChannelRef.kind:type_name -> heron.v1.ChannelKind
-	157, // 82: heron.v1.ListNotifyChannelRefsResponse.channels:type_name -> heron.v1.NotifyChannelRef
-	151, // 83: heron.v1.AdminService.ExecuteChange:input_type -> heron.v1.ExecuteChangeRequest
-	154, // 84: heron.v1.AdminService.ListOperations:input_type -> heron.v1.ListOperationsRequest
-	156, // 85: heron.v1.AdminService.ListNotifyChannelRefs:input_type -> heron.v1.ListNotifyChannelRefsRequest
-	9,   // 86: heron.v1.AdminService.GetUpdates:input_type -> heron.v1.GetUpdatesRequest
-	11,  // 87: heron.v1.AdminService.StartUpdate:input_type -> heron.v1.StartUpdateRequest
-	13,  // 88: heron.v1.AdminService.CancelUpdate:input_type -> heron.v1.CancelUpdateRequest
-	15,  // 89: heron.v1.AdminService.Login:input_type -> heron.v1.LoginRequest
-	17,  // 90: heron.v1.AdminService.BeginPasskeyLogin:input_type -> heron.v1.BeginPasskeyLoginRequest
-	19,  // 91: heron.v1.AdminService.FinishPasskeyLogin:input_type -> heron.v1.FinishPasskeyLoginRequest
-	21,  // 92: heron.v1.AdminService.GetSecurity:input_type -> heron.v1.GetSecurityRequest
-	24,  // 93: heron.v1.AdminService.SecurityAction:input_type -> heron.v1.SecurityActionRequest
-	26,  // 94: heron.v1.AdminService.Logout:input_type -> heron.v1.LogoutRequest
-	29,  // 95: heron.v1.AdminService.ListSessions:input_type -> heron.v1.ListSessionsRequest
-	31,  // 96: heron.v1.AdminService.RevokeSession:input_type -> heron.v1.RevokeSessionRequest
-	34,  // 97: heron.v1.AdminService.ListNodes:input_type -> heron.v1.ListNodesRequest
-	36,  // 98: heron.v1.AdminService.CreateNode:input_type -> heron.v1.CreateNodeRequest
-	38,  // 99: heron.v1.AdminService.UpdateNode:input_type -> heron.v1.UpdateNodeRequest
-	40,  // 100: heron.v1.AdminService.BatchUpdateNodeTags:input_type -> heron.v1.BatchUpdateNodeTagsRequest
-	42,  // 101: heron.v1.AdminService.DeleteNode:input_type -> heron.v1.DeleteNodeRequest
-	44,  // 102: heron.v1.AdminService.RotateNodeToken:input_type -> heron.v1.RotateNodeTokenRequest
-	46,  // 103: heron.v1.AdminService.ReorderNodes:input_type -> heron.v1.ReorderNodesRequest
-	49,  // 104: heron.v1.AdminService.ListTags:input_type -> heron.v1.ListTagsRequest
-	51,  // 105: heron.v1.AdminService.DeleteTag:input_type -> heron.v1.DeleteTagRequest
-	53,  // 106: heron.v1.AdminService.OpenRegisterWindow:input_type -> heron.v1.OpenRegisterWindowRequest
-	55,  // 107: heron.v1.AdminService.CloseRegisterWindow:input_type -> heron.v1.CloseRegisterWindowRequest
-	57,  // 108: heron.v1.AdminService.GetRegisterWindow:input_type -> heron.v1.GetRegisterWindowRequest
-	59,  // 109: heron.v1.AdminService.GetSnapshot:input_type -> heron.v1.GetSnapshotRequest
-	169, // 110: heron.v1.AdminService.QueryMetrics:input_type -> heron.v1.QueryMetricsRequest
-	62,  // 111: heron.v1.AdminService.GetTraffic:input_type -> heron.v1.GetTrafficRequest
-	65,  // 112: heron.v1.AdminService.AdjustTraffic:input_type -> heron.v1.AdjustTrafficRequest
-	68,  // 113: heron.v1.AdminService.ListProbeTasks:input_type -> heron.v1.ListProbeTasksRequest
-	70,  // 114: heron.v1.AdminService.SaveProbeTask:input_type -> heron.v1.SaveProbeTaskRequest
-	72,  // 115: heron.v1.AdminService.DeleteProbeTask:input_type -> heron.v1.DeleteProbeTaskRequest
-	74,  // 116: heron.v1.AdminService.ReorderProbeTasks:input_type -> heron.v1.ReorderProbeTasksRequest
-	170, // 117: heron.v1.AdminService.QueryProbes:input_type -> heron.v1.QueryProbesRequest
-	77,  // 118: heron.v1.AdminService.ListAlertRules:input_type -> heron.v1.ListAlertRulesRequest
-	80,  // 119: heron.v1.AdminService.SaveAlertRule:input_type -> heron.v1.SaveAlertRuleRequest
-	82,  // 120: heron.v1.AdminService.DeleteAlertRule:input_type -> heron.v1.DeleteAlertRuleRequest
-	134, // 121: heron.v1.AdminService.ListAlertEvents:input_type -> heron.v1.ListAlertEventsRequest
-	136, // 122: heron.v1.AdminService.GetAlertDeliveryError:input_type -> heron.v1.GetAlertDeliveryErrorRequest
-	87,  // 123: heron.v1.AdminService.ListNotifyChannels:input_type -> heron.v1.ListNotifyChannelsRequest
-	89,  // 124: heron.v1.AdminService.SaveNotifyChannel:input_type -> heron.v1.SaveNotifyChannelRequest
-	91,  // 125: heron.v1.AdminService.DeleteNotifyChannel:input_type -> heron.v1.DeleteNotifyChannelRequest
-	93,  // 126: heron.v1.AdminService.TestNotifyChannel:input_type -> heron.v1.TestNotifyChannelRequest
-	99,  // 127: heron.v1.AdminService.GetSettings:input_type -> heron.v1.GetSettingsRequest
-	101, // 128: heron.v1.AdminService.GetBackupStatus:input_type -> heron.v1.GetBackupStatusRequest
-	105, // 129: heron.v1.AdminService.UpdateSettings:input_type -> heron.v1.UpdateSettingsRequest
-	108, // 130: heron.v1.AdminService.UploadTheme:input_type -> heron.v1.UploadThemeRequest
-	110, // 131: heron.v1.AdminService.ListThemes:input_type -> heron.v1.ListThemesRequest
-	112, // 132: heron.v1.AdminService.EnableTheme:input_type -> heron.v1.EnableThemeRequest
-	114, // 133: heron.v1.AdminService.DeleteTheme:input_type -> heron.v1.DeleteThemeRequest
-	116, // 134: heron.v1.AdminService.GetThemePreview:input_type -> heron.v1.GetThemePreviewRequest
-	118, // 135: heron.v1.AdminService.DeleteThemeVersion:input_type -> heron.v1.DeleteThemeVersionRequest
-	120, // 136: heron.v1.AdminService.ListThemeReleases:input_type -> heron.v1.ListThemeReleasesRequest
-	124, // 137: heron.v1.AdminService.InstallThemeRelease:input_type -> heron.v1.InstallThemeReleaseRequest
-	126, // 138: heron.v1.AdminService.PreviewTheme:input_type -> heron.v1.PreviewThemeRequest
-	128, // 139: heron.v1.AdminService.GetThemePackage:input_type -> heron.v1.GetThemePackageRequest
-	130, // 140: heron.v1.AdminService.GetStorageStats:input_type -> heron.v1.GetStorageStatsRequest
-	141, // 141: heron.v1.AdminService.ListApiTokens:input_type -> heron.v1.ListApiTokensRequest
-	143, // 142: heron.v1.AdminService.CreateApiToken:input_type -> heron.v1.CreateApiTokenRequest
-	145, // 143: heron.v1.AdminService.DeleteApiToken:input_type -> heron.v1.DeleteApiTokenRequest
-	147, // 144: heron.v1.AdminService.GetApiReference:input_type -> heron.v1.GetApiReferenceRequest
-	153, // 145: heron.v1.AdminService.ExecuteChange:output_type -> heron.v1.ExecuteChangeResponse
-	155, // 146: heron.v1.AdminService.ListOperations:output_type -> heron.v1.ListOperationsResponse
-	158, // 147: heron.v1.AdminService.ListNotifyChannelRefs:output_type -> heron.v1.ListNotifyChannelRefsResponse
-	10,  // 148: heron.v1.AdminService.GetUpdates:output_type -> heron.v1.GetUpdatesResponse
-	12,  // 149: heron.v1.AdminService.StartUpdate:output_type -> heron.v1.StartUpdateResponse
-	14,  // 150: heron.v1.AdminService.CancelUpdate:output_type -> heron.v1.CancelUpdateResponse
-	16,  // 151: heron.v1.AdminService.Login:output_type -> heron.v1.LoginResponse
-	18,  // 152: heron.v1.AdminService.BeginPasskeyLogin:output_type -> heron.v1.BeginPasskeyLoginResponse
-	20,  // 153: heron.v1.AdminService.FinishPasskeyLogin:output_type -> heron.v1.FinishPasskeyLoginResponse
-	23,  // 154: heron.v1.AdminService.GetSecurity:output_type -> heron.v1.GetSecurityResponse
-	25,  // 155: heron.v1.AdminService.SecurityAction:output_type -> heron.v1.SecurityActionResponse
-	27,  // 156: heron.v1.AdminService.Logout:output_type -> heron.v1.LogoutResponse
-	30,  // 157: heron.v1.AdminService.ListSessions:output_type -> heron.v1.ListSessionsResponse
-	32,  // 158: heron.v1.AdminService.RevokeSession:output_type -> heron.v1.RevokeSessionResponse
-	35,  // 159: heron.v1.AdminService.ListNodes:output_type -> heron.v1.ListNodesResponse
-	37,  // 160: heron.v1.AdminService.CreateNode:output_type -> heron.v1.CreateNodeResponse
-	39,  // 161: heron.v1.AdminService.UpdateNode:output_type -> heron.v1.UpdateNodeResponse
-	41,  // 162: heron.v1.AdminService.BatchUpdateNodeTags:output_type -> heron.v1.BatchUpdateNodeTagsResponse
-	43,  // 163: heron.v1.AdminService.DeleteNode:output_type -> heron.v1.DeleteNodeResponse
-	45,  // 164: heron.v1.AdminService.RotateNodeToken:output_type -> heron.v1.RotateNodeTokenResponse
-	47,  // 165: heron.v1.AdminService.ReorderNodes:output_type -> heron.v1.ReorderNodesResponse
-	50,  // 166: heron.v1.AdminService.ListTags:output_type -> heron.v1.ListTagsResponse
-	52,  // 167: heron.v1.AdminService.DeleteTag:output_type -> heron.v1.DeleteTagResponse
-	54,  // 168: heron.v1.AdminService.OpenRegisterWindow:output_type -> heron.v1.OpenRegisterWindowResponse
-	56,  // 169: heron.v1.AdminService.CloseRegisterWindow:output_type -> heron.v1.CloseRegisterWindowResponse
-	58,  // 170: heron.v1.AdminService.GetRegisterWindow:output_type -> heron.v1.GetRegisterWindowResponse
-	60,  // 171: heron.v1.AdminService.GetSnapshot:output_type -> heron.v1.GetSnapshotResponse
-	171, // 172: heron.v1.AdminService.QueryMetrics:output_type -> heron.v1.QueryMetricsResponse
-	63,  // 173: heron.v1.AdminService.GetTraffic:output_type -> heron.v1.GetTrafficResponse
-	66,  // 174: heron.v1.AdminService.AdjustTraffic:output_type -> heron.v1.AdjustTrafficResponse
-	69,  // 175: heron.v1.AdminService.ListProbeTasks:output_type -> heron.v1.ListProbeTasksResponse
-	71,  // 176: heron.v1.AdminService.SaveProbeTask:output_type -> heron.v1.SaveProbeTaskResponse
-	73,  // 177: heron.v1.AdminService.DeleteProbeTask:output_type -> heron.v1.DeleteProbeTaskResponse
-	75,  // 178: heron.v1.AdminService.ReorderProbeTasks:output_type -> heron.v1.ReorderProbeTasksResponse
-	172, // 179: heron.v1.AdminService.QueryProbes:output_type -> heron.v1.QueryProbesResponse
-	78,  // 180: heron.v1.AdminService.ListAlertRules:output_type -> heron.v1.ListAlertRulesResponse
-	81,  // 181: heron.v1.AdminService.SaveAlertRule:output_type -> heron.v1.SaveAlertRuleResponse
-	83,  // 182: heron.v1.AdminService.DeleteAlertRule:output_type -> heron.v1.DeleteAlertRuleResponse
-	135, // 183: heron.v1.AdminService.ListAlertEvents:output_type -> heron.v1.ListAlertEventsResponse
-	137, // 184: heron.v1.AdminService.GetAlertDeliveryError:output_type -> heron.v1.GetAlertDeliveryErrorResponse
-	88,  // 185: heron.v1.AdminService.ListNotifyChannels:output_type -> heron.v1.ListNotifyChannelsResponse
-	90,  // 186: heron.v1.AdminService.SaveNotifyChannel:output_type -> heron.v1.SaveNotifyChannelResponse
-	92,  // 187: heron.v1.AdminService.DeleteNotifyChannel:output_type -> heron.v1.DeleteNotifyChannelResponse
-	94,  // 188: heron.v1.AdminService.TestNotifyChannel:output_type -> heron.v1.TestNotifyChannelResponse
-	100, // 189: heron.v1.AdminService.GetSettings:output_type -> heron.v1.GetSettingsResponse
-	102, // 190: heron.v1.AdminService.GetBackupStatus:output_type -> heron.v1.GetBackupStatusResponse
-	106, // 191: heron.v1.AdminService.UpdateSettings:output_type -> heron.v1.UpdateSettingsResponse
-	109, // 192: heron.v1.AdminService.UploadTheme:output_type -> heron.v1.UploadThemeResponse
-	111, // 193: heron.v1.AdminService.ListThemes:output_type -> heron.v1.ListThemesResponse
-	113, // 194: heron.v1.AdminService.EnableTheme:output_type -> heron.v1.EnableThemeResponse
-	115, // 195: heron.v1.AdminService.DeleteTheme:output_type -> heron.v1.DeleteThemeResponse
-	117, // 196: heron.v1.AdminService.GetThemePreview:output_type -> heron.v1.GetThemePreviewResponse
-	119, // 197: heron.v1.AdminService.DeleteThemeVersion:output_type -> heron.v1.DeleteThemeVersionResponse
-	123, // 198: heron.v1.AdminService.ListThemeReleases:output_type -> heron.v1.ListThemeReleasesResponse
-	125, // 199: heron.v1.AdminService.InstallThemeRelease:output_type -> heron.v1.InstallThemeReleaseResponse
-	127, // 200: heron.v1.AdminService.PreviewTheme:output_type -> heron.v1.PreviewThemeResponse
-	129, // 201: heron.v1.AdminService.GetThemePackage:output_type -> heron.v1.GetThemePackageResponse
-	131, // 202: heron.v1.AdminService.GetStorageStats:output_type -> heron.v1.GetStorageStatsResponse
-	142, // 203: heron.v1.AdminService.ListApiTokens:output_type -> heron.v1.ListApiTokensResponse
-	144, // 204: heron.v1.AdminService.CreateApiToken:output_type -> heron.v1.CreateApiTokenResponse
-	146, // 205: heron.v1.AdminService.DeleteApiToken:output_type -> heron.v1.DeleteApiTokenResponse
-	148, // 206: heron.v1.AdminService.GetApiReference:output_type -> heron.v1.GetApiReferenceResponse
-	145, // [145:207] is the sub-list for method output_type
-	83,  // [83:145] is the sub-list for method input_type
-	83,  // [83:83] is the sub-list for extension type_name
-	83,  // [83:83] is the sub-list for extension extendee
-	0,   // [0:83] is the sub-list for field type_name
+	77,  // 27: heron.v1.ListAlertRulesResponse.rules:type_name -> heron.v1.AlertRule
+	80,  // 28: heron.v1.ListAlertRulesResponse.states:type_name -> heron.v1.AlertStateEntry
+	77,  // 29: heron.v1.SaveAlertRuleRequest.rule:type_name -> heron.v1.AlertRule
+	77,  // 30: heron.v1.SaveAlertRuleResponse.rule:type_name -> heron.v1.AlertRule
+	5,   // 31: heron.v1.Silence.kind:type_name -> heron.v1.SilenceKind
+	88,  // 32: heron.v1.ListSilencesResponse.silences:type_name -> heron.v1.SilenceEntry
+	85,  // 33: heron.v1.SilenceEntry.silence:type_name -> heron.v1.Silence
+	85,  // 34: heron.v1.SaveSilenceRequest.silence:type_name -> heron.v1.Silence
+	85,  // 35: heron.v1.SaveSilenceResponse.silence:type_name -> heron.v1.Silence
+	6,   // 36: heron.v1.NotifyChannel.kind:type_name -> heron.v1.ChannelKind
+	94,  // 37: heron.v1.NotifyChannel.telegram:type_name -> heron.v1.TelegramConfig
+	95,  // 38: heron.v1.NotifyChannel.webhook:type_name -> heron.v1.WebhookConfig
+	168, // 39: heron.v1.WebhookConfig.headers:type_name -> heron.v1.WebhookConfig.HeadersEntry
+	93,  // 40: heron.v1.ListNotifyChannelsResponse.channels:type_name -> heron.v1.NotifyChannel
+	93,  // 41: heron.v1.SaveNotifyChannelRequest.channel:type_name -> heron.v1.NotifyChannel
+	93,  // 42: heron.v1.SaveNotifyChannelResponse.channel:type_name -> heron.v1.NotifyChannel
+	7,   // 43: heron.v1.Settings.geo_backend:type_name -> heron.v1.GeoBackend
+	105, // 44: heron.v1.Settings.backup:type_name -> heron.v1.BackupSettings
+	107, // 45: heron.v1.Settings.login_notify:type_name -> heron.v1.LoginNotify
+	106, // 46: heron.v1.BackupSettings.notify:type_name -> heron.v1.BackupNotify
+	104, // 47: heron.v1.GetSettingsResponse.settings:type_name -> heron.v1.Settings
+	112, // 48: heron.v1.GetBackupStatusResponse.config:type_name -> heron.v1.BackupLayerStatus
+	112, // 49: heron.v1.GetBackupStatusResponse.metrics:type_name -> heron.v1.BackupLayerStatus
+	113, // 50: heron.v1.BackupLayerStatus.failure:type_name -> heron.v1.BackupFailure
+	104, // 51: heron.v1.UpdateSettingsRequest.settings:type_name -> heron.v1.Settings
+	104, // 52: heron.v1.UpdateSettingsResponse.settings:type_name -> heron.v1.Settings
+	116, // 53: heron.v1.UploadThemeResponse.theme:type_name -> heron.v1.Theme
+	116, // 54: heron.v1.ListThemesResponse.themes:type_name -> heron.v1.Theme
+	130, // 55: heron.v1.ThemeRelease.assets:type_name -> heron.v1.ThemeReleaseAsset
+	131, // 56: heron.v1.ListThemeReleasesResponse.releases:type_name -> heron.v1.ThemeRelease
+	116, // 57: heron.v1.InstallThemeReleaseResponse.theme:type_name -> heron.v1.Theme
+	142, // 58: heron.v1.GetStorageStatsResponse.tables:type_name -> heron.v1.TableRows
+	141, // 59: heron.v1.GetStorageStatsResponse.series:type_name -> heron.v1.SeriesTableHealth
+	147, // 60: heron.v1.ListAlertEventsResponse.events:type_name -> heron.v1.AlertEvent
+	148, // 61: heron.v1.AlertEvent.deliveries:type_name -> heron.v1.AlertDelivery
+	8,   // 62: heron.v1.AlertDelivery.failure:type_name -> heron.v1.DeliveryFailure
+	159, // 63: heron.v1.ApiToken.grant:type_name -> heron.v1.TokenGrant
+	149, // 64: heron.v1.ListApiTokensResponse.tokens:type_name -> heron.v1.ApiToken
+	159, // 65: heron.v1.CreateApiTokenRequest.grant:type_name -> heron.v1.TokenGrant
+	149, // 66: heron.v1.CreateApiTokenResponse.api_token:type_name -> heron.v1.ApiToken
+	158, // 67: heron.v1.GetApiReferenceResponse.files:type_name -> heron.v1.ProtoFile
+	9,   // 68: heron.v1.TokenGrant.permissions:type_name -> heron.v1.TokenPermission
+	176, // 69: heron.v1.ExecuteChangeRequest.update_mask:type_name -> google.protobuf.FieldMask
+	37,  // 70: heron.v1.ExecuteChangeRequest.create_node:type_name -> heron.v1.CreateNodeRequest
+	39,  // 71: heron.v1.ExecuteChangeRequest.update_node:type_name -> heron.v1.UpdateNodeRequest
+	43,  // 72: heron.v1.ExecuteChangeRequest.delete_node:type_name -> heron.v1.DeleteNodeRequest
+	45,  // 73: heron.v1.ExecuteChangeRequest.rotate_node_token:type_name -> heron.v1.RotateNodeTokenRequest
+	54,  // 74: heron.v1.ExecuteChangeRequest.open_register_window:type_name -> heron.v1.OpenRegisterWindowRequest
+	56,  // 75: heron.v1.ExecuteChangeRequest.close_register_window:type_name -> heron.v1.CloseRegisterWindowRequest
+	71,  // 76: heron.v1.ExecuteChangeRequest.save_probe_task:type_name -> heron.v1.SaveProbeTaskRequest
+	73,  // 77: heron.v1.ExecuteChangeRequest.delete_probe_task:type_name -> heron.v1.DeleteProbeTaskRequest
+	81,  // 78: heron.v1.ExecuteChangeRequest.save_alert_rule:type_name -> heron.v1.SaveAlertRuleRequest
+	83,  // 79: heron.v1.ExecuteChangeRequest.delete_alert_rule:type_name -> heron.v1.DeleteAlertRuleRequest
+	12,  // 80: heron.v1.ExecuteChangeRequest.start_update:type_name -> heron.v1.StartUpdateRequest
+	14,  // 81: heron.v1.ExecuteChangeRequest.cancel_update:type_name -> heron.v1.CancelUpdateRequest
+	52,  // 82: heron.v1.ExecuteChangeRequest.delete_tag:type_name -> heron.v1.DeleteTagRequest
+	161, // 83: heron.v1.ExecuteChangeResponse.operation:type_name -> heron.v1.Operation
+	177, // 84: heron.v1.ExecuteChangeResponse.result:type_name -> google.protobuf.Any
+	161, // 85: heron.v1.ListOperationsResponse.operations:type_name -> heron.v1.Operation
+	6,   // 86: heron.v1.NotifyChannelRef.kind:type_name -> heron.v1.ChannelKind
+	166, // 87: heron.v1.ListNotifyChannelRefsResponse.channels:type_name -> heron.v1.NotifyChannelRef
+	160, // 88: heron.v1.AdminService.ExecuteChange:input_type -> heron.v1.ExecuteChangeRequest
+	163, // 89: heron.v1.AdminService.ListOperations:input_type -> heron.v1.ListOperationsRequest
+	165, // 90: heron.v1.AdminService.ListNotifyChannelRefs:input_type -> heron.v1.ListNotifyChannelRefsRequest
+	10,  // 91: heron.v1.AdminService.GetUpdates:input_type -> heron.v1.GetUpdatesRequest
+	12,  // 92: heron.v1.AdminService.StartUpdate:input_type -> heron.v1.StartUpdateRequest
+	14,  // 93: heron.v1.AdminService.CancelUpdate:input_type -> heron.v1.CancelUpdateRequest
+	16,  // 94: heron.v1.AdminService.Login:input_type -> heron.v1.LoginRequest
+	18,  // 95: heron.v1.AdminService.BeginPasskeyLogin:input_type -> heron.v1.BeginPasskeyLoginRequest
+	20,  // 96: heron.v1.AdminService.FinishPasskeyLogin:input_type -> heron.v1.FinishPasskeyLoginRequest
+	22,  // 97: heron.v1.AdminService.GetSecurity:input_type -> heron.v1.GetSecurityRequest
+	25,  // 98: heron.v1.AdminService.SecurityAction:input_type -> heron.v1.SecurityActionRequest
+	27,  // 99: heron.v1.AdminService.Logout:input_type -> heron.v1.LogoutRequest
+	30,  // 100: heron.v1.AdminService.ListSessions:input_type -> heron.v1.ListSessionsRequest
+	32,  // 101: heron.v1.AdminService.RevokeSession:input_type -> heron.v1.RevokeSessionRequest
+	35,  // 102: heron.v1.AdminService.ListNodes:input_type -> heron.v1.ListNodesRequest
+	37,  // 103: heron.v1.AdminService.CreateNode:input_type -> heron.v1.CreateNodeRequest
+	39,  // 104: heron.v1.AdminService.UpdateNode:input_type -> heron.v1.UpdateNodeRequest
+	41,  // 105: heron.v1.AdminService.BatchUpdateNodeTags:input_type -> heron.v1.BatchUpdateNodeTagsRequest
+	43,  // 106: heron.v1.AdminService.DeleteNode:input_type -> heron.v1.DeleteNodeRequest
+	45,  // 107: heron.v1.AdminService.RotateNodeToken:input_type -> heron.v1.RotateNodeTokenRequest
+	47,  // 108: heron.v1.AdminService.ReorderNodes:input_type -> heron.v1.ReorderNodesRequest
+	50,  // 109: heron.v1.AdminService.ListTags:input_type -> heron.v1.ListTagsRequest
+	52,  // 110: heron.v1.AdminService.DeleteTag:input_type -> heron.v1.DeleteTagRequest
+	54,  // 111: heron.v1.AdminService.OpenRegisterWindow:input_type -> heron.v1.OpenRegisterWindowRequest
+	56,  // 112: heron.v1.AdminService.CloseRegisterWindow:input_type -> heron.v1.CloseRegisterWindowRequest
+	58,  // 113: heron.v1.AdminService.GetRegisterWindow:input_type -> heron.v1.GetRegisterWindowRequest
+	60,  // 114: heron.v1.AdminService.GetSnapshot:input_type -> heron.v1.GetSnapshotRequest
+	178, // 115: heron.v1.AdminService.QueryMetrics:input_type -> heron.v1.QueryMetricsRequest
+	63,  // 116: heron.v1.AdminService.GetTraffic:input_type -> heron.v1.GetTrafficRequest
+	66,  // 117: heron.v1.AdminService.AdjustTraffic:input_type -> heron.v1.AdjustTrafficRequest
+	69,  // 118: heron.v1.AdminService.ListProbeTasks:input_type -> heron.v1.ListProbeTasksRequest
+	71,  // 119: heron.v1.AdminService.SaveProbeTask:input_type -> heron.v1.SaveProbeTaskRequest
+	73,  // 120: heron.v1.AdminService.DeleteProbeTask:input_type -> heron.v1.DeleteProbeTaskRequest
+	75,  // 121: heron.v1.AdminService.ReorderProbeTasks:input_type -> heron.v1.ReorderProbeTasksRequest
+	179, // 122: heron.v1.AdminService.QueryProbes:input_type -> heron.v1.QueryProbesRequest
+	78,  // 123: heron.v1.AdminService.ListAlertRules:input_type -> heron.v1.ListAlertRulesRequest
+	81,  // 124: heron.v1.AdminService.SaveAlertRule:input_type -> heron.v1.SaveAlertRuleRequest
+	83,  // 125: heron.v1.AdminService.DeleteAlertRule:input_type -> heron.v1.DeleteAlertRuleRequest
+	86,  // 126: heron.v1.AdminService.ListSilences:input_type -> heron.v1.ListSilencesRequest
+	89,  // 127: heron.v1.AdminService.SaveSilence:input_type -> heron.v1.SaveSilenceRequest
+	91,  // 128: heron.v1.AdminService.DeleteSilence:input_type -> heron.v1.DeleteSilenceRequest
+	143, // 129: heron.v1.AdminService.ListAlertEvents:input_type -> heron.v1.ListAlertEventsRequest
+	145, // 130: heron.v1.AdminService.GetAlertDeliveryError:input_type -> heron.v1.GetAlertDeliveryErrorRequest
+	96,  // 131: heron.v1.AdminService.ListNotifyChannels:input_type -> heron.v1.ListNotifyChannelsRequest
+	98,  // 132: heron.v1.AdminService.SaveNotifyChannel:input_type -> heron.v1.SaveNotifyChannelRequest
+	100, // 133: heron.v1.AdminService.DeleteNotifyChannel:input_type -> heron.v1.DeleteNotifyChannelRequest
+	102, // 134: heron.v1.AdminService.TestNotifyChannel:input_type -> heron.v1.TestNotifyChannelRequest
+	108, // 135: heron.v1.AdminService.GetSettings:input_type -> heron.v1.GetSettingsRequest
+	110, // 136: heron.v1.AdminService.GetBackupStatus:input_type -> heron.v1.GetBackupStatusRequest
+	114, // 137: heron.v1.AdminService.UpdateSettings:input_type -> heron.v1.UpdateSettingsRequest
+	117, // 138: heron.v1.AdminService.UploadTheme:input_type -> heron.v1.UploadThemeRequest
+	119, // 139: heron.v1.AdminService.ListThemes:input_type -> heron.v1.ListThemesRequest
+	121, // 140: heron.v1.AdminService.EnableTheme:input_type -> heron.v1.EnableThemeRequest
+	123, // 141: heron.v1.AdminService.DeleteTheme:input_type -> heron.v1.DeleteThemeRequest
+	125, // 142: heron.v1.AdminService.GetThemePreview:input_type -> heron.v1.GetThemePreviewRequest
+	127, // 143: heron.v1.AdminService.DeleteThemeVersion:input_type -> heron.v1.DeleteThemeVersionRequest
+	129, // 144: heron.v1.AdminService.ListThemeReleases:input_type -> heron.v1.ListThemeReleasesRequest
+	133, // 145: heron.v1.AdminService.InstallThemeRelease:input_type -> heron.v1.InstallThemeReleaseRequest
+	135, // 146: heron.v1.AdminService.PreviewTheme:input_type -> heron.v1.PreviewThemeRequest
+	137, // 147: heron.v1.AdminService.GetThemePackage:input_type -> heron.v1.GetThemePackageRequest
+	139, // 148: heron.v1.AdminService.GetStorageStats:input_type -> heron.v1.GetStorageStatsRequest
+	150, // 149: heron.v1.AdminService.ListApiTokens:input_type -> heron.v1.ListApiTokensRequest
+	152, // 150: heron.v1.AdminService.CreateApiToken:input_type -> heron.v1.CreateApiTokenRequest
+	154, // 151: heron.v1.AdminService.DeleteApiToken:input_type -> heron.v1.DeleteApiTokenRequest
+	156, // 152: heron.v1.AdminService.GetApiReference:input_type -> heron.v1.GetApiReferenceRequest
+	162, // 153: heron.v1.AdminService.ExecuteChange:output_type -> heron.v1.ExecuteChangeResponse
+	164, // 154: heron.v1.AdminService.ListOperations:output_type -> heron.v1.ListOperationsResponse
+	167, // 155: heron.v1.AdminService.ListNotifyChannelRefs:output_type -> heron.v1.ListNotifyChannelRefsResponse
+	11,  // 156: heron.v1.AdminService.GetUpdates:output_type -> heron.v1.GetUpdatesResponse
+	13,  // 157: heron.v1.AdminService.StartUpdate:output_type -> heron.v1.StartUpdateResponse
+	15,  // 158: heron.v1.AdminService.CancelUpdate:output_type -> heron.v1.CancelUpdateResponse
+	17,  // 159: heron.v1.AdminService.Login:output_type -> heron.v1.LoginResponse
+	19,  // 160: heron.v1.AdminService.BeginPasskeyLogin:output_type -> heron.v1.BeginPasskeyLoginResponse
+	21,  // 161: heron.v1.AdminService.FinishPasskeyLogin:output_type -> heron.v1.FinishPasskeyLoginResponse
+	24,  // 162: heron.v1.AdminService.GetSecurity:output_type -> heron.v1.GetSecurityResponse
+	26,  // 163: heron.v1.AdminService.SecurityAction:output_type -> heron.v1.SecurityActionResponse
+	28,  // 164: heron.v1.AdminService.Logout:output_type -> heron.v1.LogoutResponse
+	31,  // 165: heron.v1.AdminService.ListSessions:output_type -> heron.v1.ListSessionsResponse
+	33,  // 166: heron.v1.AdminService.RevokeSession:output_type -> heron.v1.RevokeSessionResponse
+	36,  // 167: heron.v1.AdminService.ListNodes:output_type -> heron.v1.ListNodesResponse
+	38,  // 168: heron.v1.AdminService.CreateNode:output_type -> heron.v1.CreateNodeResponse
+	40,  // 169: heron.v1.AdminService.UpdateNode:output_type -> heron.v1.UpdateNodeResponse
+	42,  // 170: heron.v1.AdminService.BatchUpdateNodeTags:output_type -> heron.v1.BatchUpdateNodeTagsResponse
+	44,  // 171: heron.v1.AdminService.DeleteNode:output_type -> heron.v1.DeleteNodeResponse
+	46,  // 172: heron.v1.AdminService.RotateNodeToken:output_type -> heron.v1.RotateNodeTokenResponse
+	48,  // 173: heron.v1.AdminService.ReorderNodes:output_type -> heron.v1.ReorderNodesResponse
+	51,  // 174: heron.v1.AdminService.ListTags:output_type -> heron.v1.ListTagsResponse
+	53,  // 175: heron.v1.AdminService.DeleteTag:output_type -> heron.v1.DeleteTagResponse
+	55,  // 176: heron.v1.AdminService.OpenRegisterWindow:output_type -> heron.v1.OpenRegisterWindowResponse
+	57,  // 177: heron.v1.AdminService.CloseRegisterWindow:output_type -> heron.v1.CloseRegisterWindowResponse
+	59,  // 178: heron.v1.AdminService.GetRegisterWindow:output_type -> heron.v1.GetRegisterWindowResponse
+	61,  // 179: heron.v1.AdminService.GetSnapshot:output_type -> heron.v1.GetSnapshotResponse
+	180, // 180: heron.v1.AdminService.QueryMetrics:output_type -> heron.v1.QueryMetricsResponse
+	64,  // 181: heron.v1.AdminService.GetTraffic:output_type -> heron.v1.GetTrafficResponse
+	67,  // 182: heron.v1.AdminService.AdjustTraffic:output_type -> heron.v1.AdjustTrafficResponse
+	70,  // 183: heron.v1.AdminService.ListProbeTasks:output_type -> heron.v1.ListProbeTasksResponse
+	72,  // 184: heron.v1.AdminService.SaveProbeTask:output_type -> heron.v1.SaveProbeTaskResponse
+	74,  // 185: heron.v1.AdminService.DeleteProbeTask:output_type -> heron.v1.DeleteProbeTaskResponse
+	76,  // 186: heron.v1.AdminService.ReorderProbeTasks:output_type -> heron.v1.ReorderProbeTasksResponse
+	181, // 187: heron.v1.AdminService.QueryProbes:output_type -> heron.v1.QueryProbesResponse
+	79,  // 188: heron.v1.AdminService.ListAlertRules:output_type -> heron.v1.ListAlertRulesResponse
+	82,  // 189: heron.v1.AdminService.SaveAlertRule:output_type -> heron.v1.SaveAlertRuleResponse
+	84,  // 190: heron.v1.AdminService.DeleteAlertRule:output_type -> heron.v1.DeleteAlertRuleResponse
+	87,  // 191: heron.v1.AdminService.ListSilences:output_type -> heron.v1.ListSilencesResponse
+	90,  // 192: heron.v1.AdminService.SaveSilence:output_type -> heron.v1.SaveSilenceResponse
+	92,  // 193: heron.v1.AdminService.DeleteSilence:output_type -> heron.v1.DeleteSilenceResponse
+	144, // 194: heron.v1.AdminService.ListAlertEvents:output_type -> heron.v1.ListAlertEventsResponse
+	146, // 195: heron.v1.AdminService.GetAlertDeliveryError:output_type -> heron.v1.GetAlertDeliveryErrorResponse
+	97,  // 196: heron.v1.AdminService.ListNotifyChannels:output_type -> heron.v1.ListNotifyChannelsResponse
+	99,  // 197: heron.v1.AdminService.SaveNotifyChannel:output_type -> heron.v1.SaveNotifyChannelResponse
+	101, // 198: heron.v1.AdminService.DeleteNotifyChannel:output_type -> heron.v1.DeleteNotifyChannelResponse
+	103, // 199: heron.v1.AdminService.TestNotifyChannel:output_type -> heron.v1.TestNotifyChannelResponse
+	109, // 200: heron.v1.AdminService.GetSettings:output_type -> heron.v1.GetSettingsResponse
+	111, // 201: heron.v1.AdminService.GetBackupStatus:output_type -> heron.v1.GetBackupStatusResponse
+	115, // 202: heron.v1.AdminService.UpdateSettings:output_type -> heron.v1.UpdateSettingsResponse
+	118, // 203: heron.v1.AdminService.UploadTheme:output_type -> heron.v1.UploadThemeResponse
+	120, // 204: heron.v1.AdminService.ListThemes:output_type -> heron.v1.ListThemesResponse
+	122, // 205: heron.v1.AdminService.EnableTheme:output_type -> heron.v1.EnableThemeResponse
+	124, // 206: heron.v1.AdminService.DeleteTheme:output_type -> heron.v1.DeleteThemeResponse
+	126, // 207: heron.v1.AdminService.GetThemePreview:output_type -> heron.v1.GetThemePreviewResponse
+	128, // 208: heron.v1.AdminService.DeleteThemeVersion:output_type -> heron.v1.DeleteThemeVersionResponse
+	132, // 209: heron.v1.AdminService.ListThemeReleases:output_type -> heron.v1.ListThemeReleasesResponse
+	134, // 210: heron.v1.AdminService.InstallThemeRelease:output_type -> heron.v1.InstallThemeReleaseResponse
+	136, // 211: heron.v1.AdminService.PreviewTheme:output_type -> heron.v1.PreviewThemeResponse
+	138, // 212: heron.v1.AdminService.GetThemePackage:output_type -> heron.v1.GetThemePackageResponse
+	140, // 213: heron.v1.AdminService.GetStorageStats:output_type -> heron.v1.GetStorageStatsResponse
+	151, // 214: heron.v1.AdminService.ListApiTokens:output_type -> heron.v1.ListApiTokensResponse
+	153, // 215: heron.v1.AdminService.CreateApiToken:output_type -> heron.v1.CreateApiTokenResponse
+	155, // 216: heron.v1.AdminService.DeleteApiToken:output_type -> heron.v1.DeleteApiTokenResponse
+	157, // 217: heron.v1.AdminService.GetApiReference:output_type -> heron.v1.GetApiReferenceResponse
+	153, // [153:218] is the sub-list for method output_type
+	88,  // [88:153] is the sub-list for method input_type
+	88,  // [88:88] is the sub-list for extension type_name
+	88,  // [88:88] is the sub-list for extension extendee
+	0,   // [0:88] is the sub-list for field type_name
 }
 
 func init() { file_heron_v1_admin_proto_init() }
@@ -10401,15 +10994,15 @@ func file_heron_v1_admin_proto_init() {
 	file_heron_v1_admin_proto_msgTypes[24].OneofWrappers = []any{}
 	file_heron_v1_admin_proto_msgTypes[29].OneofWrappers = []any{}
 	file_heron_v1_admin_proto_msgTypes[52].OneofWrappers = []any{}
-	file_heron_v1_admin_proto_msgTypes[75].OneofWrappers = []any{}
-	file_heron_v1_admin_proto_msgTypes[86].OneofWrappers = []any{}
-	file_heron_v1_admin_proto_msgTypes[87].OneofWrappers = []any{}
+	file_heron_v1_admin_proto_msgTypes[83].OneofWrappers = []any{}
 	file_heron_v1_admin_proto_msgTypes[94].OneofWrappers = []any{}
-	file_heron_v1_admin_proto_msgTypes[122].OneofWrappers = []any{}
-	file_heron_v1_admin_proto_msgTypes[123].OneofWrappers = []any{}
+	file_heron_v1_admin_proto_msgTypes[95].OneofWrappers = []any{}
+	file_heron_v1_admin_proto_msgTypes[102].OneofWrappers = []any{}
 	file_heron_v1_admin_proto_msgTypes[130].OneofWrappers = []any{}
 	file_heron_v1_admin_proto_msgTypes[131].OneofWrappers = []any{}
-	file_heron_v1_admin_proto_msgTypes[142].OneofWrappers = []any{
+	file_heron_v1_admin_proto_msgTypes[138].OneofWrappers = []any{}
+	file_heron_v1_admin_proto_msgTypes[139].OneofWrappers = []any{}
+	file_heron_v1_admin_proto_msgTypes[150].OneofWrappers = []any{
 		(*ExecuteChangeRequest_CreateNode)(nil),
 		(*ExecuteChangeRequest_UpdateNode)(nil),
 		(*ExecuteChangeRequest_DeleteNode)(nil),
@@ -10429,8 +11022,8 @@ func file_heron_v1_admin_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_heron_v1_admin_proto_rawDesc), len(file_heron_v1_admin_proto_rawDesc)),
-			NumEnums:      9,
-			NumMessages:   151,
+			NumEnums:      10,
+			NumMessages:   159,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
