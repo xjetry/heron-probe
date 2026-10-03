@@ -51,6 +51,14 @@ func sleepReal(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// 休眠信号的阈值必须小于结果的迟到预算：跨越休眠 S 的结果真龄比单调钟年龄大 S，
+// S ≥ MaxResultAge 时它们必然超龄应弃；阈值更小保证这类休眠必然被判出、在下一轮
+// 循环开头（先于取队列上报）整体作废，不会先被当作合法结果上报。Runner 同时引用
+// clock.Drift 与 probelimit.MaxResultAge，断言放这里读者才看得见前提由谁保证；
+// 一轮长度上限内两钟正常偏差的推导见 clock.MaxClockJump 的注释（间隔上限
+// agentwire.MaxTTL/agentwire.ReportsPerTTL，退避封顶 agentwire.ReportsPerTTL 倍）。
+const _ = uint(probelimit.MaxResultAge - clock.MaxClockJump - 1)
+
 // Run 每次携带 facts 摘要与任务版本供 hub 对账，间隔以响应为准。
 // 失败退避、成功即回到下发间隔；实时指标不缓存，因为过期的实时数据没有意义。
 // 探测结果在迟到预算内重试，InvalidArgument 例外：本批丢弃而不回队。
