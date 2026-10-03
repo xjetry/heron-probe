@@ -236,10 +236,12 @@ func (c *Collector) Metrics() (*heronv1.Metrics, error) {
 // 触发时把基线整体置空，让本轮采样成为新基线的首样本。
 // 属于重置范围的基线清单——新增差分基线必须加进来，否则跨休眠的那一次差分会漏过：
 //   - prevCPU（cpu_pct / steal / iowait 的两次采样差分）
+//   - prevCgroup、prevCgroupT（cgroup 限额下 cpu_pct 的 usage_usec 差分）
 //   - prevNet、prevNetT、prevNetEpoch（网卡速率）
 //   - prevDisk、prevDiskT、prevDiskEpoch（磁盘速率）
 func (c *Collector) ResetRates() {
 	c.prevCPU = nil
+	c.prevCgroup, c.prevCgroupT = nil, 0
 	c.prevNet, c.prevNetT, c.prevNetEpoch = nil, 0, ""
 	c.prevDisk, c.prevDiskT, c.prevDiskEpoch = nil, 0, ""
 }

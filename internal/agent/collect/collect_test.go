@@ -102,6 +102,10 @@ func TestResetRatesRestoresFirstSampleSemantics(t *testing.T) {
 		"sys/class/net/eth0/statistics/tx_bytes": {Data: []byte("2000\n")},
 		"proc/diskstats":                         {Data: []byte("   8       0 sda 1000 20 4000 500 800 10 2000 300 0 200 400\n")},
 		"sys/block/sda":                          {Mode: fs.ModeDir},
+		// cgroup 限额 2 核：cpu_pct 走 usage_usec 差分。每步 Δusage 恰好是 2 核 × 2s，
+		// 读数 50，与 /proc/stat 差分给出的值相同，末段断言在 cgroup 口径下保持原值。
+		"sys/fs/cgroup/cpu.max":  {Data: []byte("200000 100000\n")},
+		"sys/fs/cgroup/cpu.stat": {Data: []byte("usage_usec 1000000\n")},
 	}
 	clk := clock.NewFake(time.Unix(0, 0))
 	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clk}
@@ -112,6 +116,7 @@ func TestResetRatesRestoresFirstSampleSemantics(t *testing.T) {
 		fsys["sys/class/net/eth0/statistics/rx_bytes"] = &fstest.MapFile{Data: []byte(fmt.Sprintf("%d\n", 1000+2000*step))}
 		fsys["sys/class/net/eth0/statistics/tx_bytes"] = &fstest.MapFile{Data: []byte(fmt.Sprintf("%d\n", 2000+2000*step))}
 		fsys["proc/diskstats"] = &fstest.MapFile{Data: []byte(fmt.Sprintf("   8       0 sda 1010 20 %d 500 805 10 %d 300 0 200 400\n", 4000+1000*step, 2000+1000*step))}
+		fsys["sys/fs/cgroup/cpu.stat"] = &fstest.MapFile{Data: []byte(fmt.Sprintf("usage_usec %d\n", 1000000+2000000*step))}
 		clk.Advance(2 * time.Second)
 	}
 	hasRates := func(m *heronv1.Metrics) bool {
@@ -125,11 +130,17 @@ func TestResetRatesRestoresFirstSampleSemantics(t *testing.T) {
 	c.ResetRates()
 	// 重置后计数仍在增长，若基线残留，这次采样会给出跨重置边界的速率。
 	bump()
-	if m, _ := c.Metrics(); hasRates(m) {
+	m, _ := c.Metrics()
+	if m.CpuPct != nil {
+		// cgroup 限额下 cpu_pct 由 usage_usec 差分得出：prevCgroup 不重置，这里就漏出
+		// 跨重置边界的读数 50。
+		t.Fatalf("cgroup usage baseline must be reset too: cpu_pct = %v across the reset boundary", m.GetCpuPct())
+	}
+	if hasRates(m) {
 		t.Fatalf("sample after ResetRates must be a first sample: %+v", m)
 	}
 	bump()
-	m, _ := c.Metrics()
+	m, _ = c.Metrics()
 	if m.GetCpuPct() != 50 || m.GetNetRxBps() != 1000 || m.GetDiskReadBps() != 256000 {
 		t.Fatalf("rates must resume one sample after reset: %+v", m)
 	}
