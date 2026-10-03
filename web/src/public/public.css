@@ -33,6 +33,7 @@
 .node-status .dot { margin: 0; width: 6px; height: 6px; }
 .node-status.is-online { color: light-dark(#187249, #77d9a6); background: light-dark(#edf9f2, #1a2c24); border-color: light-dark(#d4ebde, #2c4438); }
 .node-status.is-offline { color: light-dark(#ae3030, #ffa4a4); background: light-dark(#fff2f2, #302124); }
+.node-status.is-maintenance { color: light-dark(#8a6d1a, #e3c86a); background: light-dark(#fdf6e0, #2c2718); border-color: light-dark(#ecdcb0, #443d24); }
 .node-card-meta { gap: .6rem; margin-top: .5rem; color: var(--muted); font-size: .85rem; justify-content: space-between; }
 .node-card-meta > :first-child { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .node-card-meta > :last-child { flex: none; }

@@ -8,6 +8,7 @@ import { RegisterWindow } from "./pages/RegisterWindow";
 import { ProbeTasks } from "./pages/ProbeTasks";
 import { AlertRules } from "./pages/AlertRules";
 import { AlertEvents } from "./pages/AlertEvents";
+import { Silences } from "./pages/Silences";
 import { Channels } from "./pages/Channels";
 import { ApiTokens } from "./pages/ApiTokens";
 import { Appearance } from "./pages/Appearance";
@@ -32,6 +33,7 @@ export const router = createBrowserRouter(
         { path: "probes", Component: ProbeTasks },
         { path: "alerts", Component: AlertRules },
         { path: "events", Component: AlertEvents },
+        { path: "silences", Component: Silences },
         { path: "channels", Component: Channels },
         { path: "tokens", Component: ApiTokens },
         { path: "appearance", Component: Appearance },

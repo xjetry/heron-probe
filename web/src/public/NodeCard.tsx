@@ -23,6 +23,7 @@ export function NodeCard({ node, now }: { node: PublicNode; now: number }) {
           <span className={`dot ${node.online ? "ok" : "bad"}`} role="img" aria-label={node.online ? "在线" : "离线"} />
           <span aria-hidden="true">{node.online ? "在线" : "离线"}</span>
         </span>
+        {node.maintenance && <span className="node-status is-maintenance">维护中</span>}
       </header>
       <div className="node-card-meta">
         <span title={system}>{system}</span>

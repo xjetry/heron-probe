@@ -71,9 +71,11 @@ function EventList({ data, nodeName, channelName, hasNextPage, fetchingNext, onM
                 <td className={alarming(ev.transition) ? "error" : undefined}>{transitionLabel(ev.transition)}</td>
                 <td>{ev.summary}</td>
                 <td>
-                  {ev.deliveries.length === 0
-                    ? <span className="muted">未配置渠道</span>
-                    : ev.deliveries.map((d) => <DeliveryItem key={String(d.id)} d={d} channel={channelName(d.channelId)} />)}
+                  {ev.silenced
+                    ? <span className="muted">已静默（维护窗口内，未投递）</span>
+                    : ev.deliveries.length === 0
+                      ? <span className="muted">未配置渠道</span>
+                      : ev.deliveries.map((d) => <DeliveryItem key={String(d.id)} d={d} channel={channelName(d.channelId)} />)}
                 </td>
               </tr>
             ))}

@@ -225,6 +225,7 @@ function NodeRow({ node, status, hubVersion, editing, deleting, rotating, select
       <div aria-label={`标签 ${label}`}>{node.tags.map((tag) => <span key={tag} className="tag">{tag}</span>)}</div>
       {node.note && <p className="node-subtext node-note" title={node.note}>{node.note}</p>}
       <span className="node-subtext">{node.public ? "公开" : "仅管理端"}</span>
+      {node.maintenance && <span className="node-subtext warn">维护中</span>}
       {hubVersion !== undefined && lagsHub(node.facts?.agentVersion, hubVersion) && <span className="node-subtext warn">落后于 hub</span>}
     </td>
     <td data-column="addresses" data-label="IP 地址"><NodeAddresses network={node.facts?.network} /></td>
