@@ -35,6 +35,8 @@ func main() {
 		err = runWindow(os.Args[2:])
 	case "stats":
 		err = runStats(os.Args[2:])
+	case "health":
+		err = runHealth(os.Args[2:])
 	case "restore":
 		err = runRestore(os.Args[2:])
 	case "version":
@@ -60,6 +62,7 @@ commands:
   node create|list|delete|rotate-token
   window open|close|show    manage the registration window
   stats                     database size (page_count × page_size) and row counts per table
+  health                    GET <url>/healthz (default http://127.0.0.1:8080); exit 0 on 2xx
   restore                   restore snapshots offline (stop hub first; requires --yes)
   version`)
 }

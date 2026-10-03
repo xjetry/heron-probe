@@ -64,6 +64,8 @@ func newHandler(r routes) http.Handler {
 		panic("routes.publicEnabled is required")
 	}
 	return newMux(r.agent, r.admin,
+		// /healthz 在打开库、加载索引、挂载全部服务之后放进同一个 mux，因此与 srv.Serve 同生命周期。
+		mountOf("/healthz", http.HandlerFunc(healthzHandler)),
 		mountOf(r.public.path, api.WithAdminPath(r.public.h, web.Prefix)),
 		mountOf(web.Prefix, web.Handler()),
 		mountOf("/", web.PublicGate(r.page, r.publicEnabled)))
