@@ -199,7 +199,15 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		log.Warn("--admin-origin is only for legacy Passkey migration; persisted bindings take precedence, remove this flag after migration")
 	}
 	updateManager := updates.New(st, clk, log)
-	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted, Updates: updateManager}, l, st, a, book, reg, clk, log)
+	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted, Updates: updateManager,
+		// 证书观测的 not_after 变化即评估一次证书到期规则，续期不必等到日界（§9.2）；
+		// ingest 已从写协程另起协程调用，这里直接取 writeMu 扫描。评估失败只记日志：
+		// 观测已落库，下一次日界或变化会再评估。
+		CertObserved: func() {
+			if err := alerts.SweepExpiry(context.Background()); err != nil {
+				log.Error("cert expiry sweep after a changed observation failed", "err", err)
+			}
+		}}, l, st, a, book, reg, clk, log)
 	if err != nil {
 		return err
 	}

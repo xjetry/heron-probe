@@ -67,6 +67,12 @@ func TestMaxProbeResultWire(t *testing.T) {
 	if size > maxResultWire || framed > maxResultWire {
 		t.Fatalf("wire size %d/%d exceeds %d", size, framed, maxResultWire)
 	}
+	// cert_not_after_s 只与 rtt_us 同现：field 6 的 varint 至多 11 字节，rtt+cert 的形状远小于 error 结果，
+	// 上界仍由 maxErrorResult 钉住；把这个形状显式编码一次，防止未来的字段调整悄悄越过它。
+	cert := &heronv1.ProbeResult{TaskId: math.MaxUint64, AgeMs: math.MaxUint32, Outcome: &heronv1.ProbeResult_RttUs{RttUs: probelimit.MaxTimeoutMs * 1000}, CertNotAfterS: proto.Int64(math.MaxInt64)}
+	if size := proto.Size(cert); size > maxResultWire {
+		t.Fatalf("rtt+cert wire size %d exceeds %d", size, maxResultWire)
+	}
 }
 
 func maxHostReport(t *testing.T) *heronv1.ReportRequest {

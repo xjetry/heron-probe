@@ -66,6 +66,10 @@ type Config struct {
 		Observe(int64, *heronv1.UpdateStatus) *heronv1.UpdateTask
 		Forget(int64)
 	}
+	// CertObserved 在一份证书观测改变了 probe_cert 的 not_after（含首次写入）后被调用；
+	// 装配方用它触发一次证书到期评估，续期不必等到日界才恢复（§9.2）。回调从写协程另起的
+	// 协程里调用，允许它写库；同值重复上报不触发。可为 nil（不评估）。
+	CertObserved func()
 }
 
 type storeWriter interface {
@@ -77,6 +81,9 @@ type TaskSource interface {
 	Version() uint64
 	TasksFor(nodeID int64) *heronv1.ProbeTasks
 	Assigned(nodeID int64, taskID uint64) bool
+	// Target 给出任务当前的种类与目标；validateResults 据此裁决 cert_not_after_s 只允许
+	// 出现在 https:// 的 HTTP 任务上。任务不在清单里时 ok 为 false。
+	Target(id uint64) (kind heronv1.ProbeKind, target string, ok bool)
 	Forget(nodeID int64)
 }
 
@@ -239,7 +246,7 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[heronv1.Repor
 	if err := validateMetrics(m); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	if err := validateResults(req.Msg.GetProbeResults()); err != nil {
+	if err := s.validateResults(req.Msg.GetProbeResults()); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	if err := validateFacts(req.Msg.GetFacts()); err != nil {
@@ -297,6 +304,20 @@ func (s *Service) foldResults(id int64, rs []*heronv1.ProbeResult) {
 			continue
 		}
 		s.live.AddProbe(id, now.Add(-age), r.GetTaskId(), r)
+		if r.CertNotAfterS != nil {
+			// 证书观测是"最新值"不是时间序列：覆盖写 probe_cert，与分钟桶的折叠路径分开（§8.3）。
+			// not_after 变化时经 CertObserved 触发一次证书到期评估；done 在写协程里执行，
+			// 评估会写库，必须另起协程——写协程等自己就是死锁。
+			s.store.UpsertProbeCertAsync(id, r.GetTaskId(), r.GetCertNotAfterS(), now.Unix(), func(changed bool, err error) {
+				if err != nil {
+					s.log.Error("probe cert write failed", "node", id, "task", r.GetTaskId(), "err", err)
+					return
+				}
+				if changed && s.cfg.CertObserved != nil {
+					go s.cfg.CertObserved()
+				}
+			})
+		}
 	}
 	if foreign > 0 || late > 0 {
 		s.log.Warn("probe results dropped", "node", id, "unassigned", foreign, "too_old", late)
