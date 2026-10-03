@@ -285,6 +285,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			restoreExec(t, cfg, "ALTER TABLE node_facts DROP COLUMN network")
 			removeV22ThemeConfig(t, cfg)
 			removeV21Columns(t, cfg, met)
+			removeV28Metrics(t, met)
 			restoreExec(t, cfg, `DROP TABLE admin_security; DROP TABLE probe_task_tag; DROP TABLE alert_rule_tag;
 				ALTER TABLE alert_rule DROP COLUMN resource_metric; ALTER TABLE alert_rule DROP COLUMN recovery_threshold;
 				DROP TABLE snapshot_theme; ALTER TABLE snapshot_meta DROP COLUMN format_version`)
@@ -333,6 +334,21 @@ func removeV27Config(t *testing.T, config *sql.DB) {
 		ALTER TABLE alert_event DROP COLUMN silenced;
 		ALTER TABLE alert_state DROP COLUMN fired_silenced;
 		DROP TABLE silence_node; DROP TABLE silence_tag; DROP TABLE silence`)
+}
+
+// 指标快照同理：28 号给三个指标层各加了四项的 sum/n/max，回填旧版本号前必须逐列撤回。
+func removeV28Metrics(t *testing.T, metrics *sql.DB) {
+	t.Helper()
+	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+		for _, column := range []string{
+			"disk_read_bps_sum", "disk_read_bps_n", "disk_read_bps_max",
+			"disk_write_bps_sum", "disk_write_bps_n", "disk_write_bps_max",
+			"cpu_steal_pct_sum", "cpu_steal_pct_n", "cpu_steal_pct_max",
+			"cpu_iowait_pct_sum", "cpu_iowait_pct_n", "cpu_iowait_pct_max",
+		} {
+			restoreExec(t, metrics, "ALTER TABLE "+table+" DROP COLUMN "+column)
+		}
+	}
 }
 
 // 配置快照只包含持久授权与回执，不包含注册窗口和更新队列。

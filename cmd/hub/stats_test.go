@@ -39,8 +39,8 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 			if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
 				t.Fatal(err)
 			}
-			if freshVersion != 27 {
-				t.Fatalf("fixture user_version = %d, want 27; rebuild the v8 fixture for the new version", freshVersion)
+			if freshVersion != 28 {
+				t.Fatalf("fixture user_version = %d, want 28; rebuild the v8 fixture for the new version", freshVersion)
 			}
 			removeV26Config(t, raw)
 			removeV27Config(t, raw)
@@ -48,6 +48,7 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 			restoreExec(t, raw, `DROP TABLE register_window;
 				CREATE TABLE register_window (id INTEGER PRIMARY KEY CHECK(id=1),key_hash BLOB NOT NULL,expires_at INTEGER NOT NULL,remaining INTEGER NOT NULL)`)
 			removeV21Columns(t, raw, raw)
+			removeV28Metrics(t, raw)
 			// 后续 schema 增加列、索引及维护状态、标签、主题、恢复记录、认证配置与选择器关联表，并重建 alert_delivery：多出
 			// batch_id 与 not_before 两列，alert_delivery_pending 从 (done, id) 改成 (done, batch_id, channel_id)，其余列的
 			// 名称、类型、默认值与先后不变。逐项撤回得到可实际迁移的 v8 库，避免仅伪造版本号。
