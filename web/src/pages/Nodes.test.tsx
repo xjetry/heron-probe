@@ -1154,3 +1154,18 @@ it("编辑公开节点时提示标签对访客可见，取消公开即不再提�
   fireEvent.click(box);
   expect(screen.queryByText(hint)).toBeNull();
 });
+
+it("维护中的节点在名称旁标注，编辑里的维护开关随整体替换提交", async () => {
+  const updateNode = vi.fn(async () => ({}));
+  renderNodes({ listNodes: async () => ({ nodes: [{ ...two[0], maintenance: true }, two[1]] }), updateNode });
+  await screen.findByRole("link", { name: "b（#2）" });
+  expect(screen.getByText("维护中")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "a（#1）" })).not.toHaveTextContent("维护中");
+  expect(screen.getByRole("link", { name: "b（#2）" }).closest("tr")).not.toHaveTextContent("维护中");
+  fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
+  const box = screen.getByLabelText("维护 b（#2）") as HTMLInputElement;
+  expect(box.checked).toBe(false);
+  fireEvent.click(box);
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 2n, maintenance: true }), expect.anything()));
+});

@@ -40,3 +40,14 @@ it("离线保留最后读数并明确标记，从未上报不伪造零值、无�
   expect(pending.queryAllByRole("meter")).toHaveLength(0);
   expect(pending.queryByText(/0 B|0%|∞|运行 0/)).toBeNull();
 });
+
+it("维护中的节点在状态旁标注，在线状态照实显示", async () => {
+  renderWithService(PublicService, { getSnapshot: async () => ({ now: 1000n, nodes: [
+    { id: 1n, name: "维护节点", online: false, lastSeenAt: 900n, maintenance: true },
+    { id: 2n, name: "正常节点", online: true, lastSeenAt: 998n },
+  ] }) }, [{ path: "/", Component: PublicOverview }], "/");
+  const card = within(await screen.findByRole("article", { name: "维护节点" }));
+  expect(card.getByText("维护中")).toBeInTheDocument();
+  expect(card.getByText("离线")).toBeInTheDocument();
+  expect(within(screen.getByRole("article", { name: "正常节点" })).queryByText("维护中")).toBeNull();
+});

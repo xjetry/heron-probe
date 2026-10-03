@@ -511,3 +511,15 @@ it("待定节点按 hub 的 flapping 标出抖动中，其余待定不标", asyn
   const state = await screen.findByRole("cell", { name: /待定：/ });
   expect(state).toHaveTextContent("待定：东京（抖动中）、法兰克福");
 });
+
+it("静默中的 firing 状态标注已静默，恢复配对不由面板推断", async () => {
+  render({ listAlertRules: async () => create(ListAlertRulesResponseSchema, {
+    rules: rules.rules,
+    states: [
+      { ruleId: 7n, nodeId: 1n, state: "firing", silenced: true },
+      { ruleId: 7n, nodeId: 2n, state: "firing" },
+    ],
+  }) });
+  const row = within((await screen.findByRole("button", { name: "编辑 离线（#7）" })).closest("tr")!);
+  expect(row.getByText(/触发：东京（已静默）、法兰克福/)).toBeInTheDocument();
+});
