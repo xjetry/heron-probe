@@ -187,6 +187,9 @@ func (d *darwinHost) ifaces() ([]ifaceCounters, error) {
 
 func (d *darwinHost) defaultNetExclude() []string { return darwinNetExclude }
 
+// diskCounters：darwin 没有与 /proc/diskstats 对应的整盘累计读写口径，磁盘速率两项不设置。
+func (d *darwinHost) diskCounters() ([]diskCounters, error) { return nil, errNoDiskCounters }
+
 func (d *darwinHost) facts() hostFacts {
 	var f hostFacts
 	f.hostname, _ = d.src.sysctlString("kern.hostname")

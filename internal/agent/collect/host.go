@@ -34,6 +34,10 @@ type Host interface {
 	// ifaces 返回全部网卡，不做过滤：哪些网卡计入流量只由 Collector.includeIface 决定，
 	// 实现里漏掉或写错过滤不会把被排除的网卡带进合计。
 	ifaces() ([]ifaceCounters, error)
+	// diskCounters 返回整盘设备的累计读/写字节，分区与 loop/ram/zram、dm/md 设备不计。
+	// 两次采样的差分、设备集合变化与"读不到即缺失"由 Collector 统一处理；平台不提供该读数
+	// （darwin）时返回 errNoDiskCounters，Collector 据此只让两项缺失，不记失败。
+	diskCounters() ([]diskCounters, error)
 	// defaultNetExclude 是未给 --net-exclude 时不计入流量的网卡；网卡命名随平台而异。
 	defaultNetExclude() []string
 	facts() hostFacts
@@ -44,6 +48,12 @@ type usage struct{ total, used uint64 }
 type ifaceCounters struct {
 	name   string
 	rx, tx uint64
+}
+
+// diskCounters 是一块整盘设备的累计读/写字节；Collector 只用两次读数之差。
+type diskCounters struct {
+	name        string
+	read, write uint64
 }
 
 type hostFacts struct {

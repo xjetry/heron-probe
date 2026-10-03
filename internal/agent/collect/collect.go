@@ -30,11 +30,14 @@ type Collector struct {
 	// IcmpAvailable 默认为 false；须在 Runner.Run 前赋值，运行期间只读。
 	IcmpAvailable bool
 
-	prevCPU      *cpuTimes
-	prevNet      *netCounters
-	prevNetT     time.Duration
-	prevNetEpoch string
-	diagnostics  *heronv1.AgentDiagnostics
+	prevCPU       *cpuTimes
+	prevNet       *netCounters
+	prevNetT      time.Duration
+	prevNetEpoch  string
+	prevDisk      *diskCounters
+	prevDiskT     time.Duration
+	prevDiskEpoch string
+	diagnostics   *heronv1.AgentDiagnostics
 }
 
 func (c *Collector) netFilters() (include, exclude []string) {
@@ -105,8 +108,14 @@ func (c *Collector) Metrics() (*heronv1.Metrics, error) {
 
 	if cur, err := h.cpuTimes(); err == nil {
 		if c.prevCPU != nil {
-			if pct, ok := cpuPercent(*c.prevCPU, cur); ok {
-				m.CpuPct = proto.Float64(pct)
+			if busy, steal, iowait, ok := cpuRatios(*c.prevCPU, cur); ok {
+				m.CpuPct = proto.Float64(busy)
+				if cur.hasSteal {
+					m.CpuStealPct = proto.Float64(steal)
+				}
+				if cur.hasIowait {
+					m.CpuIowaitPct = proto.Float64(iowait)
+				}
 			}
 		}
 		c.prevCPU = &cur
@@ -171,7 +180,39 @@ func (c *Collector) Metrics() (*heronv1.Metrics, error) {
 		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_NET, err)
 	}
 
+	if sum, epoch, err := c.diskTotals(); err == nil {
+		now := c.Clock.Mono()
+		// 整盘设备集合不变、计数不回退，两次采样才可相减；首样本与集合变化都只换基线，不伪造速率。
+		if c.prevDisk != nil && c.prevDiskEpoch == epoch && now > c.prevDiskT && sum.read >= c.prevDisk.read && sum.write >= c.prevDisk.write {
+			secs := float64(now-c.prevDiskT) / float64(time.Second)
+			m.DiskReadBps = proto.Uint64(uint64(float64(sum.read-c.prevDisk.read) / secs))
+			m.DiskWriteBps = proto.Uint64(uint64(float64(sum.write-c.prevDisk.write) / secs))
+		}
+		c.prevDisk, c.prevDiskT, c.prevDiskEpoch = &sum, now, epoch
+	} else if !errors.Is(err, errNoDiskCounters) {
+		fail(heronv1.CollectionComponent_COLLECTION_COMPONENT_DISK, err)
+	}
+
 	return m, errors.Join(errs...)
+}
+
+// diskTotals 把整盘设备的计数合计，并给出设备集合标识：集合变化时标识随之改变，Collector 据此只换基线。
+func (c *Collector) diskTotals() (diskCounters, string, error) {
+	devs, err := c.Host.diskCounters()
+	if err != nil {
+		return diskCounters{}, "", err
+	}
+	var sum diskCounters
+	var names []string
+	for _, d := range devs {
+		sum.read, sum.write = sum.read+d.read, sum.write+d.write
+		names = append(names, d.name)
+	}
+	if len(names) == 0 {
+		return diskCounters{}, "", errors.New("no whole-disk device")
+	}
+	slices.Sort(names)
+	return sum, strings.Join(names, "\x00"), nil
 }
 
 func (c *Collector) netTotals() (netCounters, []string, error) {

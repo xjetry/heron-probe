@@ -163,8 +163,11 @@ func (h *ifacesOnly) procs() (uint32, error)           { return 0, errNoReading 
 func (h *ifacesOnly) uptime() (uint64, error)          { return 0, errNoReading }
 func (h *ifacesOnly) conns() (uint32, uint32, error)   { return 0, 0, errNoReading }
 func (h *ifacesOnly) ifaces() ([]ifaceCounters, error) { return h.list, nil }
-func (h *ifacesOnly) defaultNetExclude() []string      { return []string{"lo", "docker*"} }
-func (h *ifacesOnly) facts() hostFacts                 { return hostFacts{} }
+func (h *ifacesOnly) diskCounters() ([]diskCounters, error) {
+	return nil, errNoDiskCounters
+}
+func (h *ifacesOnly) defaultNetExclude() []string { return []string{"lo", "docker*"} }
+func (h *ifacesOnly) facts() hostFacts            { return hostFacts{} }
 
 // 被排除的网卡不进合计，未给 --net-exclude 时用 Host 的默认列表，给了就整个替换默认列表。
 func TestExcludedInterfacesAreNotSummed(t *testing.T) {
@@ -437,6 +440,8 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 		"sys/class/net/eth0/statistics/tx_bytes": {Data: []byte("3000\n")},
 		"sys/class/net/lo/statistics/rx_bytes":   {Data: []byte("700\n")},
 		"sys/class/net/lo/statistics/tx_bytes":   {Data: []byte("800\n")},
+		"proc/diskstats":                         {Data: []byte("   8       0 sda 1000 20 4000 500 800 10 2000 300 0 200 400\n")},
+		"sys/block/sda":                          {Mode: fs.ModeDir},
 	}
 	clk := clock.NewFake(time.Unix(0, 0))
 	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 9000, 1234, nil }}, Clock: clk, Version: "v9", IcmpAvailable: true}
@@ -447,6 +452,8 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 	fsys["proc/stat"] = &fstest.MapFile{Data: []byte("cpu  180 30 90 850 40 10 10 5 0 0\n")}
 	fsys["sys/class/net/eth0/statistics/rx_bytes"] = &fstest.MapFile{Data: []byte("5000\n")}
 	fsys["sys/class/net/eth0/statistics/tx_bytes"] = &fstest.MapFile{Data: []byte("4000\n")}
+	// 读 +1000 扇区、写 +1000 扇区 = 各 512000 字节，2 秒 → 各 256000 B/s。
+	fsys["proc/diskstats"] = &fstest.MapFile{Data: []byte("   8       0 sda 1010 20 5000 500 805 10 3000 300 0 200 400\n")}
 	clk.Advance(2 * time.Second)
 	m, err := c.Metrics()
 	if err != nil {
@@ -455,6 +462,8 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 	want := &heronv1.Metrics{
 		BootId:          "0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f",
 		CpuPct:          proto.Float64(100 * (1 - 60.0/200)),
+		CpuStealPct:     proto.Float64(100 * 2.0 / 200),
+		CpuIowaitPct:    proto.Float64(100 * 10.0 / 200),
 		MemTotal:        proto.Uint64(8000 * 1024),
 		MemUsed:         proto.Uint64((8000 - 3000) * 1024),
 		SwapTotal:       proto.Uint64(4000 * 1024),
@@ -473,6 +482,8 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 		NetRxBps:        proto.Uint64((5000 - 1000) / 2),
 		NetTxBps:        proto.Uint64((4000 - 3000) / 2),
 		NetCounterEpoch: "fd943bfeaf4f69406c92467340e6009c5a065c5453af9acebbd8c9af3a66eeb8",
+		DiskReadBps:     proto.Uint64((5000 - 4000) * 512 / 2),
+		DiskWriteBps:    proto.Uint64((3000 - 2000) * 512 / 2),
 	}
 	if d := protoDiff(m, want); d != nil {
 		t.Fatalf("metrics differ:\n%s", strings.Join(d, "\n"))

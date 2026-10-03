@@ -10,7 +10,12 @@ import (
 	"strings"
 )
 
-type cpuTimes struct{ idle, total uint64 }
+type cpuTimes struct {
+	idle, total, steal, iowait uint64
+	// hasSteal、hasIowait 表示来源是否给出该累计计数：darwin 两者都不可得，老内核可能没有 steal。
+	// 缺失时对应指标不设置，而不是报 0。
+	hasSteal, hasIowait bool
+}
 
 // parseStat 取 /proc/stat 首行的聚合 CPU 时间。
 //
@@ -31,7 +36,7 @@ func parseStat(r io.Reader) (cpuTimes, error) {
 		if len(counters) > 8 {
 			counters = counters[:8]
 		}
-		var c cpuTimes
+		c := cpuTimes{hasIowait: true, hasSteal: len(counters) > 7}
 		for i, s := range counters {
 			v, err := strconv.ParseUint(s, 10, 64)
 			if err != nil {
@@ -41,27 +46,42 @@ func parseStat(r io.Reader) (cpuTimes, error) {
 			if i == 3 || i == 4 {
 				c.idle += v
 			}
+			if i == 4 {
+				c.iowait = v
+			}
+			if i == 7 {
+				c.steal = v
+			}
 		}
 		return c, nil
 	}
 	return cpuTimes{}, errors.New("/proc/stat: no cpu line")
 }
 
-// cpuPercent 由两次采样的差算出忙碌比例；没有流逝的 tick 就没有读数。
-func cpuPercent(prev, cur cpuTimes) (float64, bool) {
-	if cur.total <= prev.total || cur.idle < prev.idle {
-		return 0, false
+// cpuRatios 由两次 /proc/stat 采样算出忙碌、steal、iowait 三个占比，共用同一个分母与有效性判定：
+// Δtotal = 0 或任一被采用的计数回退，就整次放弃，三项一起缺失，不单独保留某一项。
+// idle 含 iowait，所以 cpu_pct 把 iowait 计为不忙（忙时不含 iowait）；steal 与 iowait 是另两个
+// 独立占比，都不是 cpu_pct 的子集，三者可以同时有值。
+func cpuRatios(prev, cur cpuTimes) (busy, steal, iowait float64, ok bool) {
+	if cur.total <= prev.total || cur.idle < prev.idle || cur.steal < prev.steal || cur.iowait < prev.iowait {
+		return 0, 0, 0, false
 	}
 	dt := float64(cur.total - prev.total)
-	di := float64(cur.idle - prev.idle)
-	pct := 100 * (1 - di/dt)
-	if pct < 0 {
-		pct = 0
+	busy = 100 * (1 - float64(cur.idle-prev.idle)/dt)
+	busy = min(max(busy, 0), 100)
+	if cur.hasSteal {
+		steal = 100 * float64(cur.steal-prev.steal) / dt
 	}
-	if pct > 100 {
-		pct = 100
+	if cur.hasIowait {
+		iowait = 100 * float64(cur.iowait-prev.iowait) / dt
 	}
-	return pct, true
+	return busy, steal, iowait, true
+}
+
+// cpuPercent 是 cpu_pct 的取值入口，判据与 cpuRatios 相同。
+func cpuPercent(prev, cur cpuTimes) (float64, bool) {
+	busy, _, _, ok := cpuRatios(prev, cur)
+	return busy, ok
 }
 
 type memInfo struct{ total, available, swapTotal, swapFree uint64 }

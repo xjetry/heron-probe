@@ -187,6 +187,20 @@ func (p *ProcFS) ifaces() ([]ifaceCounters, error) {
 	return out, nil
 }
 
+// diskCounters 读 /proc/diskstats，用 /sys/block/<name> 是否存在判定整盘设备：
+// 分区只有 /sys/block/<disk>/<part>，没有 /sys/block/<part>。名字前缀的排除见 isWholeDiskName。
+func (p *ProcFS) diskCounters() ([]diskCounters, error) {
+	f, err := p.FS.Open("proc/diskstats")
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return parseDiskstats(f, func(name string) bool {
+		_, err := fs.Stat(p.FS, "sys/block/"+name)
+		return err == nil
+	})
+}
+
 func (p *ProcFS) defaultNetExclude() []string { return linuxNetExclude }
 
 func (p *ProcFS) facts() hostFacts {
