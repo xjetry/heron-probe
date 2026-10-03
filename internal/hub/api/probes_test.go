@@ -66,7 +66,7 @@ func TestProbeTaskLifecycleThroughAdminAPI(t *testing.T) {
 	}
 }
 
-// dns_server 经管理 API 落库并原样回读；非 DNS 任务携带它被 CheckTask 拒绝。
+// dns_server 经管理 API 落库并原样回读，agent 取到的清单同样携带；非 DNS 任务携带它被 CheckTask 拒绝。
 func TestProbeTaskDNSServerThroughAdminAPI(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
@@ -79,6 +79,10 @@ func TestProbeTaskDNSServerThroughAdminAPI(t *testing.T) {
 	list, err := h.admin.ListProbeTasks(ctx, connect.NewRequest(&heronv1.ListProbeTasksRequest{}))
 	if err != nil || len(list.Msg.Tasks) != 1 || !proto.Equal(list.Msg.Tasks[0], created.Msg.Task) {
 		t.Fatalf("%+v %v", list.Msg, err)
+	}
+	node, _ := h.createNode(t, "agent-view")
+	if got := h.reg.TasksFor(node); len(got.Tasks) != 1 || got.Tasks[0].GetDnsServer() != "[2001:4860:4860::8888]:53" {
+		t.Fatalf("agent ProbeTasks=%+v", got)
 	}
 	stray := validProbeTask()
 	stray.DnsServer = "1.1.1.1:53"
