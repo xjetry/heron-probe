@@ -260,7 +260,7 @@ func (p *Public) GetSnapshot(ctx context.Context, _ *connect.Request[heronv1.Pub
 	out := &heronv1.PublicSnapshot{Now: now.Unix(), ReportIntervalMs: uint32(p.cfg.ReportInterval / time.Millisecond)}
 	for _, n := range nodes {
 		online, seen, m := liveState(p.live, n)
-		pn := &heronv1.PublicNode{Id: n.ID, Name: n.Name, Online: online, LastSeenAt: seen, SortOrder: n.SortOrder, Traffic: trafficProto(p.traffic.View(n.ID))}
+		pn := &heronv1.PublicNode{Id: n.ID, Name: n.Name, Online: online, LastSeenAt: seen, SortOrder: n.SortOrder, Traffic: trafficProto(p.traffic.View(n.ID)), Maintenance: n.Maintenance}
 		// 国家只放行显示值：查得于哪个地址与来源不公开，公开页表达"在哪个区域"，不定位机器（§4.9）。
 		pn.Country, _ = n.DisplayCountry()
 		// 标签随公开节点公开：n 来自 ListPublicNodes，只含 public = 1 的节点，私有节点的标签不会走到这里。
