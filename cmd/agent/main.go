@@ -148,6 +148,7 @@ func runRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	col.Log = log
 	log.Info("probe target policy", "policy", policy.String())
 	ic := prober.NewICMP(clk, log)
 	ic.Targets = targets
