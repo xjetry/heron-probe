@@ -71,6 +71,9 @@ type stateEntry struct {
 	firedExpiresOn string
 	// recoveredAt 与库里的 alert_state.recovered_at 同值（含义见 store.StateRow.RecoveredAt），Load 读入，apply 写库成功后发布。
 	recoveredAt time.Time
+	// firedSilenced 与库里的 alert_state.fired_silenced 同值（含义见 store.StateRow.FiredSilenced）：恢复是否投递只看它，
+	// 与恢复时刻的静默状态无关，所以必须在内存里与状态同行记到 Load 之后的下一轮评估。
+	firedSilenced bool
 	// flapping 是离线巡检最近一次对这对规则与节点的判定：pending 且只因抖动抑制而未进入 firing（FlapDeferred）。
 	// 它是由当前观测派生的展示量，不落库：重启后第一轮巡检即重新算出。apply 把它与 state 在同一个 mu 临界区里写入。
 	flapping bool
@@ -94,6 +97,9 @@ type Engine struct {
 	mu       sync.RWMutex
 	rules    map[int64]store.AlertRule
 	channels map[int64]store.NotifyChannel
+	// silences 是维护静默的内存快照（§9.5）：Load 整表读入，SaveSilence/DeleteSilence/UpdateScope 在持久化成功后
+	// 发布；apply 只读它做投递抑制，抑制不改写库里的任何状态。
+	silences map[int64]store.Silence
 	states   map[stateKey]stateEntry
 	// started 与 startedWall 是本次 Load 的时刻，分别按单调钟与墙钟记：前者是本次启动后没有上报的节点量已离线时长的起点，
 	// 后者只在库里也没有最后上报时充当离线开始（见 offlineStart）。
@@ -107,7 +113,7 @@ func New(cfg Config, st *store.Store, l *live.Live, clk clock.Clock, log *slog.L
 	if cfg.Location == nil {
 		panic("alert.Config.Location must be set")
 	}
-	return &Engine{cfg: cfg, st: st, live: l, clk: clk, log: log, rules: map[int64]store.AlertRule{}, channels: map[int64]store.NotifyChannel{}, states: map[stateKey]stateEntry{}}
+	return &Engine{cfg: cfg, st: st, live: l, clk: clk, log: log, rules: map[int64]store.AlertRule{}, channels: map[int64]store.NotifyChannel{}, silences: map[int64]store.Silence{}, states: map[stateKey]stateEntry{}}
 }
 func (e *Engine) SetSender(s Sender) { e.mu.Lock(); defer e.mu.Unlock(); e.sender = s }
 
@@ -126,6 +132,10 @@ func (e *Engine) Load(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	silences, err := e.st.ListSilences(ctx)
+	if err != nil {
+		return err
+	}
 	validRules := map[int64]store.AlertRule{}
 	for _, r := range rules {
 		if err := CheckRule(r); err != nil {
@@ -139,13 +149,17 @@ func (e *Engine) Load(ctx context.Context) error {
 	e.started, e.startedWall = e.clk.Mono(), e.clk.Now()
 	e.rules = validRules
 	e.channels = map[int64]store.NotifyChannel{}
+	e.silences = map[int64]store.Silence{}
+	for _, si := range silences {
+		e.silences[si.ID] = cloneSilence(si)
+	}
 	e.states = map[stateKey]stateEntry{}
 	for _, c := range channels {
 		e.channels[c.ID] = c
 	}
 	for _, s := range states {
 		if _, ok := validRules[s.RuleID]; ok {
-			e.states[stateKey{s.RuleID, s.NodeID}] = stateEntry{state: s.State, sinceAt: s.SinceAt, firedExpiresOn: s.FiredExpiresOn, recoveredAt: s.RecoveredAt}
+			e.states[stateKey{s.RuleID, s.NodeID}] = stateEntry{state: s.State, sinceAt: s.SinceAt, firedExpiresOn: s.FiredExpiresOn, recoveredAt: s.RecoveredAt, firedSilenced: s.FiredSilenced}
 		}
 	}
 	return nil
@@ -181,7 +195,7 @@ func (e *Engine) States() []StateView {
 	defer e.mu.RUnlock()
 	var out []StateView
 	for k, s := range e.states {
-		out = append(out, StateView{store.StateRow{RuleID: k.rule, NodeID: k.node, State: s.state, SinceAt: s.sinceAt, FiredExpiresOn: s.firedExpiresOn, RecoveredAt: s.recoveredAt}, s.flapping})
+		out = append(out, StateView{store.StateRow{RuleID: k.rule, NodeID: k.node, State: s.state, SinceAt: s.sinceAt, FiredExpiresOn: s.firedExpiresOn, RecoveredAt: s.recoveredAt, FiredSilenced: s.firedSilenced}, s.flapping})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].RuleID != out[j].RuleID {
@@ -260,6 +274,9 @@ func (e *Engine) UpdateScope(mutate func() (store.NodeUpdateResult, error)) (boo
 		}
 		e.publishRule(rule)
 	}
+	// 标签变化对静默的 selector_tags 覆盖与规则覆盖在同一事务里重算（store.nodeScopesAfterUpdate），
+	// 快照随这次更新整表替换，抑制判定不会用过期的覆盖。
+	e.publishSilences(result.Silences)
 	return result.BillingChanged, nil
 }
 func (e *Engine) DeleteRule(ctx context.Context, id int64) error {
@@ -400,6 +417,10 @@ func (e *Engine) Forget(nodeID int64) {
 		r.NodeIDs = slices.DeleteFunc(r.NodeIDs, func(id int64) bool { return id == nodeID })
 		e.rules[id] = r
 	}
+	for id, s := range e.silences {
+		s.NodeIDs = slices.DeleteFunc(s.NodeIDs, func(id int64) bool { return id == nodeID })
+		e.silences[id] = s
+	}
 }
 func (e *Engine) current(k stateKey) store.AlertState { return e.entry(k).state }
 
@@ -418,7 +439,11 @@ func (e *Engine) entry(k stateKey) stateEntry {
 // 状态记的始终是它进入 firing 那一刻的到期日。
 // flapping 是同一轮观测算出的抖动标记：离线巡检传 FlapDeferred，其余种类传 false。它与状态在同一个 mu 临界区里写进
 // states，状态不变、不写库时也更新；States 在 mu 下取快照，所以 ListAlertRules 读到的状态与标记来自同一轮观测。
-func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID int64, next store.AlertState, flapping bool, firedExpiresOn string, tr *store.Transition, summary string, value float64) error {
+// 维护静默（§9.5）只在事件生成这一处生效：maintenance 是节点当前的维护开关，抑制发生在 RecordTransition 的参数里——
+// firing 转换被静默时事件照常落库（silenced=1）但没有投递行，状态行记 fired_silenced；恢复转换是否投递只看配对的
+// firing 是否投递过（cur.firedSilenced），与恢复时刻是否静默无关，所以静默在 firing 中途结束不会补发通知。
+// maintenance 由调用方从节点读；到期规则传 false——到期提醒永远不被静默，系统事件不经 apply。
+func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID int64, next store.AlertState, flapping bool, maintenance bool, firedExpiresOn string, tr *store.Transition, summary string, value float64) error {
 	k := stateKey{r.ID, nodeID}
 	cur := e.entry(k)
 	if cur.state == next {
@@ -434,6 +459,17 @@ func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID
 	}
 	now := e.clk.Now()
 	since := time.Unix(now.Unix(), 0).UTC()
+	silenced := false
+	if tr != nil {
+		if *tr == store.TransitionRecovered {
+			// 恢复事件记配对 firing 的 silenced 值：firing 被静默过的，恢复也不投递。
+			silenced = cur.firedSilenced
+		} else {
+			e.mu.RLock()
+			silenced = e.silencedNode(nodeID, maintenance, now)
+			e.mu.RUnlock()
+		}
+	}
 	// 状态行整行写入，上次恢复时刻必须显式带上：离线规则的恢复转换记下当下，其余写入沿用当前值（恢复之后的再次离线
 	// 先写成 pending，那一次若不带上，窗口恰在要用时丢失）；其余种类不做抖动抑制，恒为零值。
 	var recoveredAt time.Time
@@ -455,7 +491,7 @@ func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID
 				targets[i].Batch = cy.batches[batchKey{id, r.ID, *tr}]
 			}
 		}
-		ev, err = e.st.RecordTransition(ctx, r.ID, nodeID, next, firedExpiresOn, recoveredAt, store.AlertEvent{Transition: *tr, At: now, Summary: summary, Value: value}, targets)
+		ev, err = e.st.RecordTransition(ctx, r.ID, nodeID, next, firedExpiresOn, recoveredAt, store.AlertEvent{Transition: *tr, At: now, Summary: summary, Value: value, Silenced: silenced}, targets)
 	} else {
 		// SetAlertState 不写触发日期，内存与库记同一个值。
 		firedExpiresOn = ""
@@ -465,7 +501,8 @@ func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID
 		return err
 	}
 	e.mu.Lock()
-	e.states[k] = stateEntry{state: next, sinceAt: since, firedExpiresOn: firedExpiresOn, recoveredAt: recoveredAt, flapping: flapping}
+	// 与库同事务写下的 fired_silenced 保持一致：只有 firing 携带触发时的静默标记，其余状态恒为假（见 RecordTransition）。
+	e.states[k] = stateEntry{state: next, sinceAt: since, firedExpiresOn: firedExpiresOn, recoveredAt: recoveredAt, firedSilenced: next == store.StateFiring && silenced, flapping: flapping}
 	e.mu.Unlock()
 	if tr != nil {
 		// 记下实际所在的批次而不是请求的：请求加入的批次已开始尝试时，store 新开了一批，后续同键的行加入新批。
@@ -583,7 +620,7 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 			if tr != nil && *tr == store.TransitionRecovered {
 				summary = fmt.Sprintf("节点 %s 已恢复上报（规则 %s）", node.Name, r.Name)
 			}
-			if err := e.apply(ctx, cy, r, node.ID, next, FlapDeferred(cur.state, o), "", tr, summary, unseen.Seconds()); err != nil {
+			if err := e.apply(ctx, cy, r, node.ID, next, FlapDeferred(cur.state, o), node.Maintenance, "", tr, summary, unseen.Seconds()); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -654,7 +691,7 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 			next, tr := NextProbe(e.current(stateKey{r.ID, node.ID}), samples, r.ForMinutes)
 			value := samples[len(samples)-1].Value
 			summary := fmt.Sprintf("节点 %s 规则 %s：%s %.1f", node.Name, r.Name, r.Metric, value)
-			if err := e.apply(ctx, cy, r, node.ID, next, false, "", tr, summary, value); err != nil {
+			if err := e.apply(ctx, cy, r, node.ID, next, false, node.Maintenance, "", tr, summary, value); err != nil {
 				errs = append(errs, err)
 			}
 		}

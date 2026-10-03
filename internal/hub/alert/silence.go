@@ -1,0 +1,137 @@
+package alert
+
+import (
+	"context"
+	"errors"
+	"slices"
+	"sort"
+	"time"
+	"unicode/utf8"
+
+	"github.com/xjetry/heron-probe/internal/hub/store"
+)
+
+// SilenceActive 判定一条静默在 now 是否处于窗口内，是唯一的窗口口径：写侧保存与运行时抑制（engine.apply）
+// 都经它。它不含 enabled 判定——enabled 由调用方在快照上先查。DAILY 按 loc（hub 的 --timezone）的墙钟计
+// 午夜起的分钟数，start 含、end 不含，允许跨午夜（22:00–06:00）；ONCE 按 Unix 秒闭开区间。
+func SilenceActive(s store.Silence, now time.Time, loc *time.Location) bool {
+	switch s.Kind {
+	case store.SilenceOnce:
+		t := now.Unix()
+		return t >= s.FromAt && t < s.UntilAt
+	case store.SilenceDaily:
+		start, err := store.ParseHHMM(s.StartHHMM)
+		if err != nil {
+			return false
+		}
+		end, err := store.ParseHHMM(s.EndHHMM)
+		if err != nil {
+			return false
+		}
+		wall := now.In(loc)
+		m := wall.Hour()*60 + wall.Minute()
+		if start < end {
+			return m >= start && m < end
+		}
+		return m >= start || m < end
+	}
+	return false
+}
+
+// CheckSilence 校验一条静默的展示字段；种类与专用字段的组合由 store.CheckSilenceFields 裁决，
+// 与 CheckRule 对 CheckKindFields 的分工相同。
+func CheckSilence(s store.Silence) error {
+	if err := checkName(s.Name); err != nil {
+		return err
+	}
+	if utf8.RuneCountInString(s.Reason) > 256 {
+		return invalid("reason", "must be at most 256 characters")
+	}
+	return nil
+}
+
+// silencedNode 判定节点此刻是否处于维护静默覆盖内（§9.5）：节点自身的维护开关，或任一启用的、
+// 覆盖该节点的静默处于窗口内。作用域语义与告警规则逐字相同。调用方须持 mu。
+func (e *Engine) silencedNode(nodeID int64, maintenance bool, now time.Time) bool {
+	if maintenance {
+		return true
+	}
+	for _, s := range e.silences {
+		if !s.Enabled {
+			continue
+		}
+		if store.ScopeContains(s.AllNodes, s.NodeIDs, nodeID) && SilenceActive(s, now, e.cfg.Location) {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneSilence(s store.Silence) store.Silence {
+	s.NodeIDs = slices.Clone(s.NodeIDs)
+	s.SelectorTags = slices.Clone(s.SelectorTags)
+	return s
+}
+
+// 快照整表替换：与 publishRule 的逐条合并不同，静默之间没有需要沿用的部分状态（状态在 alert_state 上），
+// 整表替换与库的一致性最容易论证。调用方须已持久化成功。
+func (e *Engine) publishSilences(silences []store.Silence) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.silences = map[int64]store.Silence{}
+	for _, s := range silences {
+		e.silences[s.ID] = cloneSilence(s)
+	}
+}
+
+// Silences 返回当前内存快照（按 id 排序），供 ListSilences 展示此刻覆盖；库是唯一事实来源。
+func (e *Engine) Silences() []store.Silence {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	out := make([]store.Silence, 0, len(e.silences))
+	for _, s := range e.silences {
+		out = append(out, cloneSilence(s))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// SaveSilence 校验后持久化并发布快照。保存请求必须明确指定非空作用域（与 SaveRule 同一约束）；
+// 持久化失败不改变缓存。
+func (e *Engine) SaveSilence(ctx context.Context, s store.Silence) (store.Silence, error) {
+	if err := (store.NodeSelector{AllNodes: s.AllNodes, NodeIDs: s.NodeIDs, Tags: s.SelectorTags}).Check(); err != nil {
+		var field store.KindFieldError
+		if errors.As(err, &field) {
+			return store.Silence{}, FieldError{Path: field.Field, Constraint: field.Constraint}
+		}
+		return store.Silence{}, err
+	}
+	if !s.AllNodes && len(s.NodeIDs) == 0 && len(s.SelectorTags) == 0 {
+		return store.Silence{}, invalid("node_ids", "must not be empty unless all_nodes or selector_tags is set")
+	}
+	if err := CheckSilence(s); err != nil {
+		return store.Silence{}, err
+	}
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
+	saved, err := e.st.SaveSilence(ctx, s)
+	if err != nil {
+		return store.Silence{}, err
+	}
+	e.mu.Lock()
+	e.silences[saved.ID] = cloneSilence(saved)
+	e.mu.Unlock()
+	return saved, nil
+}
+
+func (e *Engine) DeleteSilence(ctx context.Context, id int64) error {
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
+	if err := e.st.DeleteSilence(ctx, id); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.silences, id)
+	return nil
+}

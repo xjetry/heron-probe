@@ -83,7 +83,7 @@ func (e *Engine) EvaluateResources(ctx context.Context, minuteTS int64) error {
 			if transition != nil && *transition == store.TransitionRecovered {
 				summary = fmt.Sprintf("节点 %s %s持续 %d 分钟不高于 %.1f%%，已恢复（规则 %s）", node.Name, label, rule.ForMinutes, rule.RecoveryThreshold, rule.Name)
 			}
-			if err := e.apply(ctx, cy, rule, node.ID, next, false, "", transition, summary, value); err != nil {
+			if err := e.apply(ctx, cy, rule, node.ID, next, false, node.Maintenance, "", transition, summary, value); err != nil {
 				errs = append(errs, err)
 			}
 		}
