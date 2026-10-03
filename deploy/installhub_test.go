@@ -48,6 +48,14 @@ case "$*" in
   "start heron-hub")
     [ -z "${STUB_START_FAILS-}" ] || { echo "Job for heron-hub.service failed." >&2; exit 1; }
     [ -z "${STUB_START_NO_PROCESS-}" ] || exit 0
+    # 包里带这个标记的 heron-hub 模拟"起不来的新二进制"：它在退出前打开过库（schema 迁移），
+    # 这里把三个库文件改写成另一份内容，供回滚用例断言旧库被换回来。
+    if grep -q 'heron-test-broken' "$HERON_INSTALL_ROOT/usr/local/bin/heron-hub" 2>/dev/null; then
+      for f in heron.db heron.db-wal heron.db-shm; do
+        printf 'migrated\n' > "$HERON_INSTALL_ROOT/var/lib/heron/$f"
+      done
+      exit 0
+    fi
     uid=$(grep '^heron-hub:' "$HERON_INSTALL_ROOT/etc/passwd" | cut -d: -f3)
     mkdir -p "$P/4242"
     printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$P/4242/status"

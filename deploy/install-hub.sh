@@ -167,19 +167,52 @@ stop_service() {
   done
 }
 confirm_service_started() {
-  svc_uid=$(id -u "$SVC_USER") || fail 'no service user heron-hub; see journalctl -u heron-hub'
+  # 失败只 return 1，不 fail 退出：调用方要据此回滚旧二进制与旧库，exit 会跳过回滚。
+  svc_uid=$(id -u "$SVC_USER") || { echo 'no service user heron-hub; see journalctl -u heron-hub' >&2; return 1; }
   polls=0; pid=""
   while :; do
     scan_uid_pids "$svc_uid"
     if [ -n "$svc_pids" ]; then pid=${svc_pids# }; pid=${pid%% *}; break; fi
-    [ "$polls" -lt 10 ] || fail 'heron-hub did not start; see journalctl -u heron-hub'
+    if [ "$polls" -ge 10 ]; then echo 'heron-hub did not start; see journalctl -u heron-hub' >&2; return 1; fi
     sleep 1
     polls=$((polls + 1))
   done
   sleep 3
   scan_uid_pids "$svc_uid"
   case " $svc_pids " in *" $pid "*) return 0;; esac
-  fail "heron-hub did not stay running (pid $pid); see journalctl -u heron-hub"
+  echo "heron-hub did not stay running (pid $pid); see journalctl -u heron-hub" >&2
+  return 1
+}
+# 新 hub 起不来时把旧二进制与三个库文件换回来并按 systemd 重启旧版本。库文件必须一起回滚：候选 hub 在启动
+# 确认之前就会以 MigrateSchema 打开库（cmd/hub/serve.go 的 store.Open），§6.6 规定比二进制新的库拒绝被旧程序
+# 打开，只换二进制会把 hub 停在"旧程序打不开新库"。.bak 不存在表示这次是首次安装（没有旧二进制），保持
+# hub 已停、脚本非零退出的既有行为。回滚路径里读 stdin 的命令都显式 </dev/null：脚本经 curl | sh 从 stdin 来。
+rollback_hub() {
+  [ -e "$BIN_BAK" ] || return 0
+  systemctl stop heron-hub </dev/null || true
+  mv -f "$BIN_BAK" "$BIN"
+  for file in "$DATA/heron.db" "$DATA/heron.db-wal" "$DATA/heron.db-shm"; do
+    if [ -e "$file.bak" ]; then
+      mv -f "$file.bak" "$file"
+      chown "$SVC_USER:$SVC_USER" "$file"
+      chmod 0600 "$file"
+    else
+      # 备份时不存在、新 hub 启动后新出现的 -wal/-shm 属于新版本，回滚时删掉，别让新 schema 的页留在旧库旁。
+      rm -f "$file"
+    fi
+  done
+  echo "the new heron-hub did not start; restored the previous binary and database" >&2
+  if systemctl start heron-hub </dev/null; then
+    # start 返回 0 即已交给 systemd（Restart=always），与正常路径成功后的口径一致：不再补"hub 已停"。
+    EXIT_HINT=""
+    if confirm_service_started; then
+      echo "the previous heron-hub is running again" >&2
+    else
+      echo "the previous heron-hub did not stay running; see journalctl -u heron-hub" >&2
+    fi
+  else
+    echo "failed to start the previous heron-hub; see journalctl -u heron-hub" >&2
+  fi
 }
 # 数据目录与三个库文件的形态核对，停服前的预检与停服后的复检共用。停服后，目录本身的复检在收紧目录之前，
 # 库文件的复检在目录收成 0750 之后（锁内）。
@@ -300,13 +333,17 @@ fi
 
 work=$(mktemp -d)
 BIN_TMP=$BIN.tmp.$$
+BIN_BAK=$BIN.bak
 UPDATER_TMP=$UPDATER_BIN.tmp.$$
-# 停服务之后、start 返回之前的任何失败都让 hub 停着，各步的报错只说自己的原因：失败退出时在报错之后补一句
-# 现状与该做什么，免得人以为旧服务还在跑。EXIT_HINT 随步骤更新，空串表示不必补。
+# 停服务之后、启动确认之前或确认本身失败时，rollback_hub 会把旧二进制与旧库换回来；其余失败让 hub 停着，
+# 各步的报错只说自己的原因，失败退出时在报错之后补一句现状与该做什么，免得人以为旧服务还在跑。
+# EXIT_HINT 随步骤更新，空串表示不必补（启动确认成功后由 rollback 或正常路径清空）。
+# 二进制与库的 .bak 也在这里清：回滚用 mv 把它们换回去，正常路径在启动确认之后才删，trap 只兜中途失败。
 EXIT_HINT=""
 on_exit() {
   rc=$?
-  rm -rf "$work"; rm -f "$BIN_TMP" "$UPDATER_TMP"
+  rm -rf "$work"; rm -f "$BIN_TMP" "$UPDATER_TMP" "$BIN_BAK" \
+    "$DATA/heron.db.bak" "$DATA/heron.db-wal.bak" "$DATA/heron.db-shm.bak"
   restore_updater
   if [ "$rc" != 0 ] && [ -n "$EXIT_HINT" ]; then echo "$EXIT_HINT" >&2; fi
 }
@@ -538,6 +575,8 @@ check_port
 prepare_updater
 stop_service
 EXIT_HINT='heron-hub is stopped; rerun the installer or start it manually'
+# 旧二进制先留成同目录 .bak，新二进制起不来时 rollback_hub 换回来（回滚要连带库，理由见该函数）。
+[ ! -e "$BIN" ] || mv -f "$BIN" "$BIN_BAK"
 mv -f "$BIN_TMP" "$BIN"
 
 # SQLite 要创建和删除 WAL/SHM，目录必须可写，不能照搬只读配置目录的 0750。
@@ -557,6 +596,9 @@ for file in "$DATA/heron.db" "$DATA/heron.db-wal" "$DATA/heron.db-shm"; do
   [ -e "$file" ] || continue
   chown "$SVC_USER:$SVC_USER" "$file"
   chmod 0600 "$file"
+  # 目录此刻是 root 属主的 0750、服务用户无进程，库不会再被写入，这份副本没有竞态；候选 hub 启动时会以
+  # MigrateSchema 迁移 schema，起不来或确认失败都要靠它把旧库换回来（.bak 与库文件同目录，换回来是同目录 rename）。
+  cp "$file" "$file.bak"
 done
 chmod 0770 "$DATA"
 install -m 0644 "$work/unit" "$UNIT"
@@ -581,11 +623,18 @@ if ! dropins_ok; then
   fail "$(unit_state)"
 fi
 systemctl enable heron-hub </dev/null
-systemctl start heron-hub </dev/null
+if ! systemctl start heron-hub </dev/null; then
+  rollback_hub
+  exit 1
+fi
+if ! confirm_service_started; then
+  rollback_hub
+  exit 1
+fi
 EXIT_HINT=""
+rm -f "$BIN_BAK" "$DATA/heron.db.bak" "$DATA/heron.db-wal.bak" "$DATA/heron.db-shm.bak"
 systemctl enable heron-updater-hub </dev/null
 systemctl start heron-updater-hub </dev/null
 UPDATER_RESTORE=0
-confirm_service_started
 echo "heron-hub installed and started (systemd, $ARCH, $PKG)"
 echo 'Set the administrator password: heron-hub passwd --db /var/lib/heron/heron.db'

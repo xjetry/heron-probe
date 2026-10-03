@@ -41,6 +41,9 @@ esac
 P=$HERON_INSTALL_ROOT/proc
 case "$1" in
   start)
+    # 包里带这个标记的 heron-agent 模拟"起不来的新二进制"：start 返回 0 但进程不在，
+    # 供回滚用例走 confirm_service_started 的失败分支。
+    if grep -q 'heron-test-broken' "$HERON_INSTALL_ROOT/usr/local/bin/heron-agent" 2>/dev/null; then exit 0; fi
     uid=$(grep '^heron-agent:' "$HERON_INSTALL_ROOT/etc/passwd" | cut -d: -f3)
     mkdir -p "$P/4242"; printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" > "$P/4242/status";;
   stop) rm -rf "$P/4242";;

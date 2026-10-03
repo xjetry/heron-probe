@@ -184,6 +184,30 @@ confirm_service_started() {
   return 1
 }
 
+# 新二进制没能留在运行状态时把旧二进制换回来并按原 init 重启旧版本；停止与启动的确认口径与安装路径相同，
+# 保证"回滚完成"和"安装成功"是同一把尺子。备份不存在表示首次安装：没有可回滚的版本，保持调用方的退出码。
+# 回滚路径里读 stdin 的命令都显式 </dev/null：脚本本身经 curl | sh 从 stdin 来，吞掉 stdin 会让余下脚本消失。
+rollback_agent() {
+  [ ! -e "$BIN_BAK" ] || {
+    case "$INIT" in
+      systemd) systemctl stop heron-agent </dev/null || true;;
+      openrc) rc-service heron-agent stop </dev/null || true;;
+    esac
+    mv -f "$BIN_BAK" "$BIN"
+    echo "the new heron-agent did not start; restored the previous binary" >&2
+    case "$INIT" in
+      systemd) systemctl start heron-agent </dev/null || true;;
+      openrc) rc-service heron-agent start </dev/null || true;;
+    esac
+    if confirm_service_started; then
+      echo "the previous heron-agent is running again" >&2
+    else
+      echo "failed to restart the previous heron-agent" >&2
+      start_log_hint
+    fi
+  }
+}
+
 # 是否发 stop 以服务定义是否安装为准，stop 命令失败即失败；确认一步不依赖它，总是执行：
 # 定义不在而进程仍在时，不替人收拾，由确认失败退出。
 stop_service() {
@@ -397,10 +421,12 @@ fi
 
 work=$(mktemp -d)
 BIN_TMP="$BIN.tmp.$$"
+BIN_BAK="$BIN.bak"
 UPDATER_TMP="$UPDATER_BIN.tmp.$$"
 # EXIT trap 覆盖正常结束、exit 与 set -e 触发的退出。dash 与 busybox ash 被信号终止时不执行 EXIT trap，
 # 所以把 INT、TERM、HUP 转成 exit 1，Ctrl-C 或 SSH 断开时也会清掉工作目录与写了一半的临时二进制。
-trap 'rm -rf "$work"; rm -f "$BIN_TMP" "$UPDATER_TMP"; restore_updater' EXIT
+# .bak 也在这里清：回滚用 mv 把它换回 BIN，成功安装则在确认之后才删，trap 只兜住中途失败留下的那一份。
+trap 'rm -rf "$work"; rm -f "$BIN_TMP" "$UPDATER_TMP" "$BIN_BAK"; restore_updater' EXIT
 trap 'exit 1' INT TERM HUP
 
 dl() {
@@ -474,7 +500,9 @@ chmod 0600 "$CFG"
 
 stop_service
 # 同目录 rename 原子替换目录项：exec $BIN 看到的始终是完整的旧文件或完整的新文件；
-# 写了一半的临时文件由上面的 trap 删除。
+# 写了一半的临时文件由上面的 trap 删除。旧二进制先留成同目录 .bak，新二进制起不来时由 rollback_agent
+# 换回来；首次安装没有 $BIN，没有 .bak，rollback_agent 直接返回。
+[ ! -e "$BIN" ] || mv -f "$BIN" "$BIN_BAK"
 mv -f "$BIN_TMP" "$BIN"
 
 # 服务定义每次覆盖，单元的改动随升级下发。
@@ -487,7 +515,7 @@ case "$INIT" in
     install -m 0644 "$work/heron-agent.service" "$SYSTEMD_UNIT"
     systemctl daemon-reload </dev/null
     systemctl enable heron-agent </dev/null
-    systemctl start heron-agent </dev/null
+    systemctl start heron-agent </dev/null || { rollback_agent; exit 1; }
     systemctl enable heron-updater-agent </dev/null
     systemctl start heron-updater-agent </dev/null
     UPDATER_RESTORE=0;;
@@ -495,7 +523,11 @@ case "$INIT" in
     install -m 0755 "$work/heron-agent.openrc" "$OPENRC_SCRIPT"
     # 重跑时它已在 default runlevel 里；只在不在时才加，不依赖 rc-update 对重复 add 的退出码。
     [ -L "$OPENRC_LINK" ] || rc-update add heron-agent default </dev/null
-    rc-service heron-agent start </dev/null;;
+    rc-service heron-agent start </dev/null || { rollback_agent; exit 1; };;
 esac
-confirm_service_started
+if ! confirm_service_started; then
+  rollback_agent
+  exit 1
+fi
+rm -f "$BIN_BAK"
 echo "heron-agent installed and started ($INIT, $ARCH, $PKG)"
