@@ -144,6 +144,22 @@ done
 grep -q 'id="root"' "$work/admin.html" || fail "/admin/ is not the panel index" "$work/admin.html"
 echo "admin ok: $base/admin/"
 
+# 镜像自带的 HEALTHCHECK 由 Dockerfile 的 exec 形式 heron-hub health 驱动：容器在库打开、索引加载并挂载
+# 全部服务之前不报 healthy（探针只在 Serve 之后才被应答）。起始宽限 5s 加一次间隔 30s，45s 上限足够；
+# 超时把最后一次完整 health 状态落文件再失败——探针的 stderr 在 docker inspect 的 Log 里。
+polls=0
+while :; do
+  health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$hub")
+  [ "$health" = healthy ] && break
+  if [ "$polls" -ge "$((45 * 2))" ]; then
+    docker inspect -f '{{json .State.Health}}' "$hub" > "$work/health.json" 2>&1 || true
+    fail "container did not become healthy after 45s of polling (status '$health')" "$work/health.json"
+  fi
+  sleep 0.5
+  polls=$((polls + 1))
+done
+echo "healthcheck ok: healthy"
+
 # 根路径是公开页（spec §10）：它的产物 dist-public 与面板一样随 make web 进二进制，漏掉时 / 是"公开页没有构建进
 # 二进制"的 503 说明页。公开页的 index 以 / 为 base，脚本路径是 /assets/…；面板的是 /admin/assets/…，据此分辨两者。
 status=$(curl -sS --max-time 2 -o "$work/root.html" -w '%{http_code}' "$base/" 2> "$work/root.curl") ||

@@ -95,6 +95,18 @@ wait_hub() {
   exit 1
 }
 wait_hub
+# hub 就绪后先钉住探活入口：/healthz 是给 HEALTHCHECK 与运维脚本用的最小应答，正文恰为 ok\n；
+# heron-hub health 是镜像内探针，按退出码判活，两者对同一个 hub 必须一致。
+[ "$(curl -sS -o "$work/healthz.body" -w '%{http_code}' "$base/healthz")" = 200 ] ||
+  { echo "FAIL: /healthz did not return 200"; cat "$work/healthz.body"; exit 1; }
+printf 'ok\n' > "$work/healthz.want"
+cmp -s "$work/healthz.body" "$work/healthz.want" ||
+  { echo "FAIL: /healthz body is not exactly the two bytes ok and newline"; cat "$work/healthz.body"; exit 1; }
+bin/heron-hub health --url "$base" > "$work/health-cli.out" 2> "$work/health-cli.err" ||
+  { echo "FAIL: heron-hub health --url $base exited non-zero"; cat "$work/health-cli.out" "$work/health-cli.err"; exit 1; }
+[ "$(cat "$work/health-cli.out")" = ok ] ||
+  { echo "FAIL: heron-hub health did not print ok"; cat "$work/health-cli.out"; exit 1; }
+echo "hub health endpoint and command ok"
 # 告警等待上限由 hub 与 agent 实际生效的参数推出（见 wait_alert 的调用处），参数读自两者的启动行，
 # 脚本里不另抄一份。只认整秒写法：读不出来就停下，不能退回一个与实际参数无关的固定上限。
 # startup_seconds 日志文件 启动行消息 字段名。internal/testlog.WholeSeconds 与这里同形（msg 过滤、字段前后
