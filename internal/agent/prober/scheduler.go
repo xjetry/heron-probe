@@ -35,6 +35,16 @@ type runningTask struct {
 }
 
 func NewScheduler(engine Engine, queue *Queue, clk clock.Clock, log *slog.Logger) *Scheduler {
+	// HTTP 的证书携带记录由引擎值内部的共享指针承载（Probe 是值接收者，副本靠指针共享同一记录）；
+	// main 以字面量构造 Multi 时指针为 nil，调度开始前在这里补上并把补好的副本存回 engine，
+	// 之后全部 Probe 都经这份副本共享记录。
+	if m, ok := engine.(Multi); ok {
+		if h, ok := m.HTTP.(HTTP); ok && h.certReports == nil {
+			h.certReports = newCertReportLog()
+			m.HTTP = h
+			engine = m
+		}
+	}
 	return &Scheduler{engine: engine, queue: queue, clk: clk, log: log, Rand: rand.Float64, Sleep: sleep, running: map[uint64]*runningTask{}}
 }
 
@@ -104,6 +114,15 @@ func (s *Scheduler) Apply(tasks *heronv1.ProbeTasks) {
 		s.running[id] = &runningTask{task: t, cancel: cancel}
 		s.wg.Add(1)
 		go s.run(ctx, t)
+	}
+	// 任务集更新后通知引擎清掉为已消失任务保留的状态（如 HTTP 的证书携带记录）：
+	// 被拒任务不在 want 里，其记录一并清掉；任务消失再出现时按首次探测处理。
+	if p, ok := s.engine.(taskPruner); ok {
+		alive := make(map[uint64]struct{}, len(want))
+		for id := range want {
+			alive[id] = struct{}{}
+		}
+		p.pruneTasks(alive)
 	}
 }
 

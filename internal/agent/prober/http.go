@@ -7,11 +7,49 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/internal/clock"
 )
+
+// CertReportInterval 是同一任务两次携带证书到期时刻的最小间隔：证书到期日按天变化，
+// 每次探测都带是无意义的重复字节；一小时内能看到更换后的新到期日已经足够。测试引用它。
+const CertReportInterval = time.Hour
+
+// certReportLog 按任务 id 记上一次携带证书到期时刻的单调钟时刻。它只影响是否重复携带，
+// 不影响任何测量值，因此不属于速率基线，不参与休眠检测的 ResetRates/Clear。
+type certReportLog struct {
+	mu   sync.Mutex
+	last map[uint64]time.Duration
+}
+
+func newCertReportLog() *certReportLog {
+	return &certReportLog{last: map[uint64]time.Duration{}}
+}
+
+// report 判定本次成功探测是否携带证书到期时刻；判定携带时把 now 记为该任务的上次携带时刻。
+func (l *certReportLog) report(id uint64, now time.Duration) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if last, ok := l.last[id]; ok && now-last < CertReportInterval {
+		return false
+	}
+	l.last[id] = now
+	return true
+}
+
+// prune 清掉已不在任务集里的任务的记录：任务消失再出现时按首次探测处理。
+func (l *certReportLog) prune(alive map[uint64]struct{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for id := range l.last {
+		if _, ok := alive[id]; !ok {
+			delete(l.last, id)
+		}
+	}
+}
 
 // HTTP 测量一次 GET 从拨号到收到响应头的耗时；解析与整个请求（连接、TLS、等响应头）共用预算。
 // URL 非法、解析失败与本地策略拒绝是 error；状态 ≥400 与 TLS 握手失败（含证书错误）计入丢包，
@@ -23,6 +61,10 @@ type HTTP struct {
 	Version string // User-Agent 用 heron-agent/<Version>，与 heron-agent version 命令同源。
 	// TLSClientConfig 只在测试里注入（如限死 TLS 版本构造对端 alert 的握手失败）；生产为 nil，用默认配置。
 	TLSClientConfig *tls.Config
+	// certReports 是每任务"上次携带证书到期时刻"的频率上限记录（CertReportInterval）。
+	// Probe 是值接收者，各副本经这个指针共享同一份记录；NewScheduler 在调度开始前为字面量
+	// 构造的 HTTP 补上它。nil 时 Probe 每次都携带：上限只为减少重复字节，缺失时宁可多带。
+	certReports *certReportLog
 }
 
 func (p HTTP) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
@@ -68,7 +110,8 @@ func (p HTTP) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 	if err != nil {
 		return classify(err)
 	}
-	elapsed := p.Clock.Mono() - start
+	now := p.Clock.Mono()
+	elapsed := now - start
 	// 拿到响应头即完成测量，不读正文。
 	resp.Body.Close()
 	// CheckTask 把任务超时限制在 hub 接受的 RTT 上限内；测得耗时超过任务预算时只回报超时。
@@ -78,5 +121,27 @@ func (p HTTP) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 	if resp.StatusCode >= 400 {
 		return Outcome{Timeout: true}
 	}
-	return Outcome{RttUs: uint32(elapsed / time.Microsecond)}
+	out := Outcome{RttUs: uint32(elapsed / time.Microsecond)}
+	// HTTPS 握手成功（能走到这里即已完成握手）时顺带带回链首枚证书的到期时刻，
+	// 每任务至多每小时一次（reportCert 承载频率上限）；状态 ≥400 已在上面折返，不携带。
+	if u.Scheme == "https" && resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 && p.reportCert(t.GetId(), now) {
+		out.CertNotAfter = resp.TLS.PeerCertificates[0].NotAfter.Unix()
+	}
+	return out
+}
+
+// reportCert 判定本次成功探测是否携带证书到期时刻；未初始化的字面量（不经 NewScheduler）
+// 没有共享记录，每次都携带——频率上限只为减少重复字节，缺失时宁可多带也不少带。
+func (p HTTP) reportCert(id uint64, now time.Duration) bool {
+	if p.certReports == nil {
+		return true
+	}
+	return p.certReports.report(id, now)
+}
+
+// pruneTasks 清掉已不在任务集里的任务的携带记录，由 Scheduler.Apply 在任务集更新后调用。
+func (p HTTP) pruneTasks(alive map[uint64]struct{}) {
+	if p.certReports != nil {
+		p.certReports.prune(alive)
+	}
 }

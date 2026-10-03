@@ -9,6 +9,7 @@ import (
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/internal/probelimit"
+	"google.golang.org/protobuf/proto"
 )
 
 // QueueCap 按硬限制任务的产出上界预留：Take 只丢严格超龄结果，MaxResultAge=120s 的闭区间
@@ -138,6 +139,10 @@ func ToProto(rs []Result, now time.Duration) []*heronv1.ProbeResult {
 			p.Outcome = &heronv1.ProbeResult_Timeout{Timeout: &heronv1.Timeout{}}
 		default:
 			p.Outcome = &heronv1.ProbeResult_RttUs{RttUs: r.Outcome.RttUs}
+			// 证书到期时刻只在 rtt_us 成功结果上透传；0 表示未携带，不下发。
+			if r.Outcome.CertNotAfter != 0 {
+				p.CertNotAfterS = proto.Int64(r.Outcome.CertNotAfter)
+			}
 		}
 		out = append(out, p)
 	}
