@@ -22,7 +22,7 @@ type Engine interface {
 }
 
 // Multi 按任务种类分派；未知种类是 hub 与 agent 版本偏斜的信号，按 error 回报而不是静默跳过。
-type Multi struct{ ICMP, TCP Engine }
+type Multi struct{ ICMP, TCP, HTTP, DNS Engine }
 
 func (m Multi) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 	switch t.GetKind() {
@@ -30,6 +30,10 @@ func (m Multi) Probe(ctx context.Context, t *heronv1.ProbeTask) Outcome {
 		return m.ICMP.Probe(ctx, t)
 	case heronv1.ProbeKind_PROBE_KIND_TCP:
 		return m.TCP.Probe(ctx, t)
+	case heronv1.ProbeKind_PROBE_KIND_HTTP:
+		return m.HTTP.Probe(ctx, t)
+	case heronv1.ProbeKind_PROBE_KIND_DNS:
+		return m.DNS.Probe(ctx, t)
 	}
 	return Outcome{Err: fmt.Sprintf("unsupported probe kind %s", t.GetKind())}
 }

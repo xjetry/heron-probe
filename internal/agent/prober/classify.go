@@ -2,6 +2,8 @@ package prober
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"net"
 	"syscall"
@@ -17,6 +19,16 @@ func classify(err error) Outcome {
 		if errors.Is(err, remote) {
 			return Outcome{Timeout: true}
 		}
+	}
+	// TLS 握手失败（含证书错误：过期、名字不符、自签）是"这个端点此刻给不出一次有效握手"，计入丢包（§8）。
+	// 列表覆盖带类型的握手失败路径；对端只回 alert 的握手失败没有可判的类型，落在默认的 error。
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostnameMismatch x509.HostnameError
+	var certInvalid x509.CertificateInvalidError
+	var certVerify *tls.CertificateVerificationError
+	var notTLS tls.RecordHeaderError
+	if errors.As(err, &unknownAuthority) || errors.As(err, &hostnameMismatch) || errors.As(err, &certInvalid) || errors.As(err, &certVerify) || errors.As(err, &notTLS) {
+		return Outcome{Timeout: true}
 	}
 	return Outcome{Err: err.Error()}
 }

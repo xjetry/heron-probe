@@ -158,7 +158,12 @@ func runRun(args []string) error {
 		log.Warn("icmp probing unavailable; icmp tasks will report errors", "reasons", ic.InitErrors())
 	}
 	queue := prober.NewQueue(prober.QueueCap)
-	sched := prober.NewScheduler(prober.Multi{ICMP: ic, TCP: prober.TCP{Clock: clk, Targets: targets}}, queue, clk, log)
+	sched := prober.NewScheduler(prober.Multi{
+		ICMP: ic,
+		TCP:  prober.TCP{Clock: clk, Targets: targets},
+		HTTP: prober.HTTP{Clock: clk, Targets: targets, Version: version},
+		DNS:  prober.DNS{Clock: clk, Targets: targets},
+	}, queue, clk, log)
 	defer sched.Stop()
 	r := &client.Runner{
 		Collector: col,
