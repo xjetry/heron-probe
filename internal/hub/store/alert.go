@@ -779,6 +779,11 @@ func recordAlertEvent(tx *sql.Tx, ev *AlertEvent, targets []DeliveryTarget) erro
 	if err := tx.QueryRow("INSERT INTO alert_event (rule_id, node_id, transition, at, summary, value, silenced) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id", ev.RuleID, ev.NodeID, ev.Transition, ev.At.Unix(), ev.Summary, ev.Value, ev.Silenced).Scan(&ev.ID); err != nil {
 		return err
 	}
+	// 维护静默的不变式（§9.5）：被静默的事件没有投递行，保留期内它因此在界面上呈现"已静默、未投递"，
+	// 队列也不会因它发出任何通知。
+	if ev.Silenced {
+		return nil
+	}
 	for _, target := range targets {
 		if err := requireAlertReference(tx, "notify_channel", ObjectNotifyChannel, target.ChannelID); err != nil {
 			return err

@@ -53,6 +53,10 @@ func (e *Engine) flush(cy *cycle) {
 		return
 	}
 	for _, ev := range cy.events {
+		// 被维护静默抑制的事件没有投递行（recordAlertEvent 已保证），入队只是空转，在这里就跳过。
+		if ev.Silenced {
+			continue
+		}
 		sender.Enqueue(ev)
 	}
 }
@@ -464,7 +468,8 @@ func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID
 		if *tr == store.TransitionRecovered {
 			// 恢复事件记配对 firing 的 silenced 值：firing 被静默过的，恢复也不投递。
 			silenced = cur.firedSilenced
-		} else {
+		} else if r.Kind != store.KindExpiry {
+			// 到期提醒永远不被静默（§9.5），其余种类的触发按此刻的维护开关与静默窗口抑制。
 			e.mu.RLock()
 			silenced = e.silencedNode(nodeID, maintenance, now)
 			e.mu.RUnlock()
