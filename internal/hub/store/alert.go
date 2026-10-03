@@ -31,9 +31,15 @@ const (
 
 type ResourceMetric string
 
+// 常量值即 metric 列名时取值可直接按名查列；cpu_pct 与 load1_per_core 是语义名，
+// 到列名（cpu、load1）的映射在 alert 包的取值处。
 const (
 	MetricMemoryUsedPct ResourceMetric = "memory_used_pct"
 	MetricDiskUsedPct   ResourceMetric = "disk_used_pct"
+	MetricCpuPct        ResourceMetric = "cpu_pct"
+	MetricLoad1PerCore  ResourceMetric = "load1_per_core"
+	MetricNetRxBps      ResourceMetric = "net_rx_bps"
+	MetricNetTxBps      ResourceMetric = "net_tx_bps"
 )
 
 type AlertRule struct {

@@ -107,3 +107,14 @@ func (s *Store) FactsHashes(ctx context.Context) (map[int64]uint64, error) {
 func (s *Store) QueryFacts(ctx context.Context, nodeID int64, hostname, os *string) error {
 	return s.r.QueryRowContext(ctx, "SELECT hostname, os FROM node_facts WHERE node_id = ?", nodeID).Scan(hostname, os)
 }
+
+// CpuCores 返回节点上报的 CPU 核数；没有 facts 行与 cpu_cores = 0 同义，都返回 0，
+// 调用方（按核负载告警）据此把该节点视为无读数，不需要区分两种缺失。
+func (s *Store) CpuCores(ctx context.Context, nodeID int64) (int64, error) {
+	var cores int64
+	err := s.r.QueryRowContext(ctx, "SELECT cpu_cores FROM node_facts WHERE node_id = ?", nodeID).Scan(&cores)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return cores, err
+}

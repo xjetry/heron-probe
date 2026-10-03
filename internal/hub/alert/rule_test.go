@@ -75,6 +75,44 @@ func TestCheckRule(t *testing.T) {
 	}
 }
 
+func TestCheckRuleResourceThresholdRange(t *testing.T) {
+	base := store.AlertRule{Name: "资源", Kind: store.KindResource, Enabled: true, AllNodes: true, ResourceMetric: store.MetricMemoryUsedPct, Threshold: 90, RecoveryThreshold: 80, ForMinutes: 3}
+	bounds := []struct {
+		metric  store.ResourceMetric
+		max     float64
+		maxText string
+	}{
+		{store.MetricMemoryUsedPct, 100, "100"},
+		{store.MetricDiskUsedPct, 100, "100"},
+		{store.MetricCpuPct, 100, "100"},
+		{store.MetricLoad1PerCore, 64, "64"},
+		{store.MetricNetRxBps, 1 << 40, "1099511627776"},
+		{store.MetricNetTxBps, 1 << 40, "1099511627776"},
+	}
+	for _, b := range bounds {
+		// 边界值合法，越界与零各拒绝一次；错误文案点名字段与该指标的取值范围。
+		for _, threshold := range []float64{0, b.max + 1} {
+			r := base
+			r.ResourceMetric, r.Threshold, r.RecoveryThreshold = b.metric, threshold, 0
+			err := CheckRule(r)
+			want := "threshold must be greater than 0 and at most " + b.maxText
+			if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), want) {
+				t.Fatalf("%s threshold=%v: error=%v want %q", b.metric, threshold, err, want)
+			}
+		}
+		r := base
+		r.ResourceMetric, r.Threshold, r.RecoveryThreshold = b.metric, b.max, 0
+		if err := CheckRule(r); err != nil {
+			t.Errorf("%s boundary %v: %v", b.metric, b.max, err)
+		}
+	}
+	r := base
+	r.ResourceMetric = "load1"
+	if err := CheckRule(r); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "resource_metric") {
+		t.Fatalf("unknown resource metric error=%v", err)
+	}
+}
+
 func TestCheckChannel(t *testing.T) {
 	cases := []struct {
 		name   string

@@ -23,6 +23,10 @@ var alertKinds = map[heronv1.AlertKind]store.AlertKind{
 var resourceMetrics = map[heronv1.ResourceMetric]store.ResourceMetric{
 	heronv1.ResourceMetric_RESOURCE_METRIC_MEMORY_USED_PCT: store.MetricMemoryUsedPct,
 	heronv1.ResourceMetric_RESOURCE_METRIC_DISK_USED_PCT:   store.MetricDiskUsedPct,
+	heronv1.ResourceMetric_RESOURCE_METRIC_CPU_PCT:         store.MetricCpuPct,
+	heronv1.ResourceMetric_RESOURCE_METRIC_LOAD1_PER_CORE:  store.MetricLoad1PerCore,
+	heronv1.ResourceMetric_RESOURCE_METRIC_NET_RX_BPS:      store.MetricNetRxBps,
+	heronv1.ResourceMetric_RESOURCE_METRIC_NET_TX_BPS:      store.MetricNetTxBps,
 }
 var probeMetrics = map[heronv1.ProbeMetric]store.ProbeMetric{
 	heronv1.ProbeMetric_PROBE_METRIC_LOSS_PCT: store.MetricLossPct,

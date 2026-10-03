@@ -50,6 +50,21 @@ func checkName(name string) error {
 	return nil
 }
 
+// 资源指标的阈值上限按指标裁决（§9.1）：百分比 100、每核负载 64、字节速率 2^40。
+// 上限文案随表给出，2^40 的浮点打印（科学记数）读不出量级。
+var resourceThresholdMax = []struct {
+	metric  store.ResourceMetric
+	max     float64
+	maxText string
+}{
+	{store.MetricMemoryUsedPct, 100, "100"},
+	{store.MetricDiskUsedPct, 100, "100"},
+	{store.MetricCpuPct, 100, "100"},
+	{store.MetricLoad1PerCore, 64, "64"},
+	{store.MetricNetRxBps, 1 << 40, "1099511627776"},
+	{store.MetricNetTxBps, 1 << 40, "1099511627776"},
+}
+
 // CheckRule 只校验持久化结构；DeleteNode 可把显式作用域删空，空集仍是不覆盖节点的合法规则。
 // Load 若丢弃这种规则，列表会不可见，而存储的渠道引用仍阻止删除，库与内存就会不一致。
 //
@@ -98,11 +113,19 @@ func CheckRule(r store.AlertRule) error {
 		if err := checkKindFields(r); err != nil {
 			return err
 		}
-		if r.ResourceMetric != store.MetricMemoryUsedPct && r.ResourceMetric != store.MetricDiskUsedPct {
-			return oneOf("resource_metric", string(r.ResourceMetric), string(store.MetricMemoryUsedPct), string(store.MetricDiskUsedPct))
+		max, maxText := -1.0, ""
+		allowed := make([]string, 0, len(resourceThresholdMax))
+		for _, entry := range resourceThresholdMax {
+			allowed = append(allowed, string(entry.metric))
+			if r.ResourceMetric == entry.metric {
+				max, maxText = entry.max, entry.maxText
+			}
 		}
-		if math.IsNaN(r.Threshold) || math.IsInf(r.Threshold, 0) || r.Threshold <= 0 || r.Threshold > 100 {
-			return invalid("threshold", "must be greater than 0 and at most 100")
+		if max < 0 {
+			return oneOf("resource_metric", string(r.ResourceMetric), allowed...)
+		}
+		if math.IsNaN(r.Threshold) || math.IsInf(r.Threshold, 0) || r.Threshold <= 0 || r.Threshold > max {
+			return invalid("threshold", "must be greater than 0 and at most %s", maxText)
 		}
 		if math.IsNaN(r.RecoveryThreshold) || math.IsInf(r.RecoveryThreshold, 0) || r.RecoveryThreshold < 0 || r.RecoveryThreshold >= r.Threshold {
 			return invalid("recovery_threshold", "must be nonnegative and less than threshold")

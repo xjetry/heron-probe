@@ -171,6 +171,47 @@ func TestProbeAlertRuleRoundTrip(t *testing.T) {
 	}
 }
 
+// 四个新资源指标经真实 Connect 处理器保存与回显；越界阈值按指标的范围拒绝，错误文案点名字段与上限。
+func TestSaveAlertRuleResourceMetrics(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	for _, tc := range []struct {
+		metric    heronv1.ResourceMetric
+		threshold float64
+		recovery  float64
+	}{
+		{heronv1.ResourceMetric_RESOURCE_METRIC_CPU_PCT, 95, 90},
+		{heronv1.ResourceMetric_RESOURCE_METRIC_LOAD1_PER_CORE, 8, 4},
+		{heronv1.ResourceMetric_RESOURCE_METRIC_NET_RX_BPS, 1.25e8, 1e8},
+		{heronv1.ResourceMetric_RESOURCE_METRIC_NET_TX_BPS, 1.25e8, 1e8},
+	} {
+		r := &heronv1.AlertRule{Name: "资源", Kind: heronv1.AlertKind_ALERT_KIND_RESOURCE, Enabled: true, AllNodes: true, ResourceMetric: tc.metric, Threshold: tc.threshold, RecoveryThreshold: tc.recovery, ForMinutes: 3}
+		got := saveRule(t, h, r)
+		if got.ResourceMetric != tc.metric || got.Threshold != tc.threshold || got.RecoveryThreshold != tc.recovery {
+			t.Fatalf("%v: got=%v", tc.metric, got)
+		}
+	}
+	for _, tc := range []struct {
+		name      string
+		metric    heronv1.ResourceMetric
+		threshold float64
+		text      string
+	}{
+		{"cpu_high", heronv1.ResourceMetric_RESOURCE_METRIC_CPU_PCT, 101, "rule.threshold must be greater than 0 and at most 100"},
+		{"per_core_high", heronv1.ResourceMetric_RESOURCE_METRIC_LOAD1_PER_CORE, 65, "rule.threshold must be greater than 0 and at most 64"},
+		{"rx_high", heronv1.ResourceMetric_RESOURCE_METRIC_NET_RX_BPS, 1<<40 + 1, "rule.threshold must be greater than 0 and at most 1099511627776"},
+		{"tx_zero", heronv1.ResourceMetric_RESOURCE_METRIC_NET_TX_BPS, 0, "rule.threshold must be greater than 0 and at most 1099511627776"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &heronv1.AlertRule{Name: "资源", Kind: heronv1.AlertKind_ALERT_KIND_RESOURCE, Enabled: true, AllNodes: true, ResourceMetric: tc.metric, Threshold: tc.threshold, RecoveryThreshold: 0, ForMinutes: 3}
+			_, err := h.admin.SaveAlertRule(t.Context(), connect.NewRequest(&heronv1.SaveAlertRuleRequest{Rule: r}))
+			if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), tc.text) {
+				t.Fatalf("err=%v want=%s", err, tc.text)
+			}
+		})
+	}
+}
+
 func TestAlertErrorsNameRequestFields(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
