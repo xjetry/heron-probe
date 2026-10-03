@@ -65,7 +65,7 @@ func (s *Service) ListAlertRules(ctx context.Context, _ *connect.Request[heronv1
 		if p, ok := store.Principal(ctx); ok && !p.AllowsNode(state.NodeID) {
 			continue
 		}
-		out.States = append(out.States, &heronv1.AlertStateEntry{RuleId: state.RuleID, NodeId: state.NodeID, State: string(state.State), SinceAt: state.SinceAt.Unix(), Flapping: state.Flapping})
+		out.States = append(out.States, &heronv1.AlertStateEntry{RuleId: state.RuleID, NodeId: state.NodeID, State: string(state.State), SinceAt: state.SinceAt.Unix(), Flapping: state.Flapping, Silenced: state.FiredSilenced})
 	}
 	return connect.NewResponse(out), nil
 }

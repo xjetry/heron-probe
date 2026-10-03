@@ -749,6 +749,8 @@ message AlertStateEntry {
   // 恢复后一小时内再次开始的离线（离线开始即最后一次上报），要满 max(节点宽限, 30 分钟) 才触发；恢复通知照发。
   // 由 hub 的离线巡检算出，不落库，hub 重启后第一轮巡检之前为 false。
   bool flapping = 5;
+  // 仅 firing：这次触发进入 firing 时处于维护静默覆盖内、没有投递（§9.5），恢复也将不投递；其余状态恒为 false。
+  bool silenced = 6;
 }
 message SaveAlertRuleRequest { AlertRule rule = 1; }
 message SaveAlertRuleResponse { AlertRule rule = 1; }
