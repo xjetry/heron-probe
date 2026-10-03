@@ -200,6 +200,10 @@ export type Facts = Message<"heron.v1.Facts"> & {
   cpuModel: string;
 
   /**
+   * agent 所在执行环境的有效核数：cgroup 有限额时取 cpuset 与 quota 较小者的上取整
+   * （1.5 核报 2），否则是主机核数。旧 agent 一律报物理核数；该值只做展示与按核负载
+   * 归一的分母，口径漂移可接受。
+   *
    * @generated from field: uint32 cpu_cores = 7;
    */
   cpuCores: number;

@@ -123,6 +123,7 @@ message PublicFacts {
   string arch = 4;
   string virtualization = 5;
   string cpu_model = 6;
+  // 与 Facts.cpu_cores 同号同义：agent 所在执行环境的有效核数。
   uint32 cpu_cores = 7;
 }
 

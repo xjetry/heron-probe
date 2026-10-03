@@ -528,8 +528,11 @@ type Facts struct {
 	Arch           string                 `protobuf:"bytes,4,opt,name=arch,proto3" json:"arch,omitempty"`
 	Virtualization string                 `protobuf:"bytes,5,opt,name=virtualization,proto3" json:"virtualization,omitempty"`
 	CpuModel       string                 `protobuf:"bytes,6,opt,name=cpu_model,json=cpuModel,proto3" json:"cpu_model,omitempty"`
-	CpuCores       uint32                 `protobuf:"varint,7,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"`
-	AgentVersion   string                 `protobuf:"bytes,8,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
+	// agent 所在执行环境的有效核数：cgroup 有限额时取 cpuset 与 quota 较小者的上取整
+	// （1.5 核报 2），否则是主机核数。旧 agent 一律报物理核数；该值只做展示与按核负载
+	// 归一的分母，口径漂移可接受。
+	CpuCores     uint32 `protobuf:"varint,7,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"`
+	AgentVersion string `protobuf:"bytes,8,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
 	// 两种 ICMP socket 是否至少一种可用。
 	IcmpAvailable bool `protobuf:"varint,9,opt,name=icmp_available,json=icmpAvailable,proto3" json:"icmp_available,omitempty"`
 	// agent 自报的双栈出口，仅用于管理展示；hub 不据此鉴权或查询国家。

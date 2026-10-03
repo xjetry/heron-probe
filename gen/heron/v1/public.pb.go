@@ -491,9 +491,10 @@ type PublicFacts struct {
 	Arch           string                 `protobuf:"bytes,4,opt,name=arch,proto3" json:"arch,omitempty"`
 	Virtualization string                 `protobuf:"bytes,5,opt,name=virtualization,proto3" json:"virtualization,omitempty"`
 	CpuModel       string                 `protobuf:"bytes,6,opt,name=cpu_model,json=cpuModel,proto3" json:"cpu_model,omitempty"`
-	CpuCores       uint32                 `protobuf:"varint,7,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// 与 Facts.cpu_cores 同号同义：agent 所在执行环境的有效核数。
+	CpuCores      uint32 `protobuf:"varint,7,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PublicFacts) Reset() {

@@ -309,6 +309,8 @@ export type PublicFacts = Message<"heron.v1.PublicFacts"> & {
   cpuModel: string;
 
   /**
+   * 与 Facts.cpu_cores 同号同义：agent 所在执行环境的有效核数。
+   *
    * @generated from field: uint32 cpu_cores = 7;
    */
   cpuCores: number;
