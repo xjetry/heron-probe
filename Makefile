@@ -75,6 +75,8 @@ web: web-install
 
 # build 验证全部已有的包在本机、Linux 与 darwin 的 amd64、arm64 上都能编译。darwin 的采集文件带 build tag，
 # Linux 上的 CI 里 lint 的 GOOS=darwin go vet 只为本机架构编译它们；另一个架构只有这里编译得到，而 purego 按架构分文件实现。
+# agent 与更新器还要按 release 的 AGENT_LINUX_ARCHES 逐架构编译：其中 armv7、386 是 32 位，int/uint 只有 32 位，
+# 常量转换与溢出只在这些架构上暴露；只编 64 位的 ci 会放过它们，等到 make release 才失败。
 # 二进制产物由 binaries 生成，只有 e2e 需要它。
 build:
 	go build ./...
@@ -82,6 +84,11 @@ build:
 	GOOS=linux GOARCH=arm64 go build ./...
 	GOOS=darwin GOARCH=amd64 go build ./...
 	GOOS=darwin GOARCH=arm64 go build ./...
+	@set -e; for arch in $(AGENT_LINUX_ARCHES); do \
+	  $(agent_goarch); \
+	  echo "GOOS=linux $$gflags go build ./cmd/agent ./cmd/updater"; \
+	  env GOOS=linux CGO_ENABLED=0 $$gflags go build ./cmd/agent ./cmd/updater; \
+	done
 
 hub-binary: web
 	go build -o bin/heron-hub ./cmd/hub
@@ -119,6 +126,9 @@ compat-e2e: hub-binary
 # 发布产物矩阵：agent 与更新器五个 Linux 架构，agent 两个 darwin 架构，hub 两个 Linux 架构。架构集合只在这三个变量维护，
 # 静态门禁与打包清单都由它们展开，不存在第二份文件清单。
 AGENT_LINUX_ARCHES := amd64 arm64 armv7 386 riscv64
+# agent_goarch 把 shell 变量 $$arch（AGENT_LINUX_ARCHES 的一项）映射成 go 的环境变量，结果放进 $$gflags。
+# 架构名与 GOARCH 不同名的只有 armv7；release 打包与 build 的编译检查共用这一处映射。
+agent_goarch = case $$arch in armv7) gflags="GOARCH=arm GOARM=7" ;; *) gflags="GOARCH=$$arch" ;; esac
 AGENT_DARWIN_ARCHES := amd64 arm64
 HUB_LINUX_ARCHES := amd64 arm64
 
@@ -149,7 +159,7 @@ release:
 	rm -rf dist/build dist/*.tar.gz dist/SHA256SUMS dist/install.sh dist/install-hub.sh dist/install-macos.sh
 	mkdir -p dist/build
 	@set -e; for arch in $(AGENT_LINUX_ARCHES); do \
-	  case $$arch in armv7) gflags="GOARCH=arm GOARM=7" ;; *) gflags="GOARCH=$$arch" ;; esac; \
+	  $(agent_goarch); \
 	  env GOOS=linux CGO_ENABLED=0 $$gflags go build $(RELEASE_GOFLAGS) -o "dist/build/heron-agent-linux-$$arch" ./cmd/agent; \
 	  env GOOS=linux CGO_ENABLED=0 $$gflags go build $(RELEASE_GOFLAGS) -o "dist/build/heron-updater-linux-$$arch" ./cmd/updater; \
 	done; \

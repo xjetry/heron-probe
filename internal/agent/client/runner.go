@@ -57,7 +57,8 @@ func sleepReal(ctx context.Context, d time.Duration) error {
 // clock.Drift 与 probelimit.MaxResultAge，断言放这里读者才看得见前提由谁保证；
 // 一轮长度上限内两钟正常偏差的推导见 clock.MaxClockJump 的注释（间隔上限
 // agentwire.MaxTTL/agentwire.ReportsPerTTL，退避封顶 agentwire.ReportsPerTTL 倍）。
-const _ = uint(probelimit.MaxResultAge - clock.MaxClockJump - 1)
+// 差值以纳秒计（约 1e11），转 uint64 而不是 uint：32 位架构（armv7、386）的 uint 放不下，会把成立的不等式也判成溢出。
+const _ = uint64(probelimit.MaxResultAge - clock.MaxClockJump - 1)
 
 // Run 每次携带 facts 摘要与任务版本供 hub 对账，间隔以响应为准。
 // 失败退避、成功即回到下发间隔；实时指标不缓存，因为过期的实时数据没有意义。
