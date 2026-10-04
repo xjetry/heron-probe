@@ -69,7 +69,11 @@ func (o *themeObjects) PutObject(ctx context.Context, key string, r io.ReadSeeke
 	if !strings.Contains(key, "/theme/") {
 		return o.base.PutObject(ctx, key, r)
 	}
-	if err := o.base.call("upload", key); err != nil {
+	// base 的字段归 base.mu 管（见 fakeObjects）；锁序固定为 o.mu → base.mu，base 的方法不取 o.mu。
+	o.base.mu.Lock()
+	err := o.base.call("upload", key)
+	o.base.mu.Unlock()
+	if err != nil {
 		return err
 	}
 	b, err := io.ReadAll(r)
@@ -82,7 +86,9 @@ func (o *themeObjects) PutObject(ctx context.Context, key string, r io.ReadSeeke
 	if o.onUpload != nil {
 		o.onUpload()
 	}
+	o.base.mu.Lock()
 	o.base.objects[key] = b
+	o.base.mu.Unlock()
 	if o.changed != nil {
 		o.changed <- "put " + key
 	}

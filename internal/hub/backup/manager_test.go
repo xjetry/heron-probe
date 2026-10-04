@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,7 +20,11 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
+// fakeObjects 是内存里的对象存储。Manager.Run 让配置层与指标层各在自己的 goroutine 里上传、列举、删除，
+// 两层可同时调用同一个实例，所以每个方法都在 mu 下读写字段。测试直接读字段只能发生在 Run 已退出、
+// 或 tickLayer 同步返回之后——此时没有别的调用者，读不经 mu 也不与写并发。
 type fakeObjects struct {
+	mu                   sync.Mutex
 	databasePath         string
 	objects              map[string][]byte
 	calls                []string
@@ -27,6 +32,7 @@ type fakeObjects struct {
 	paths                []string
 }
 
+// call 记录调用并按 failStage/failLayer 注入失败；调用方必须持有 f.mu。
 func (f *fakeObjects) call(stage, key string) error {
 	f.calls = append(f.calls, stage+" "+key)
 	if stage == f.failStage && strings.Contains(key, "/"+f.failLayer+"/") {
@@ -35,6 +41,8 @@ func (f *fakeObjects) call(stage, key string) error {
 	return nil
 }
 func (f *fakeObjects) PutObject(_ context.Context, key string, r io.ReadSeeker) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if file, ok := r.(*os.File); ok {
 		f.paths = append(f.paths, file.Name())
 	}
@@ -52,6 +60,8 @@ func (f *fakeObjects) PutObject(_ context.Context, key string, r io.ReadSeeker) 
 	return nil
 }
 func (f *fakeObjects) ListObjectsV2(_ context.Context, prefix string, _ int) ([]s3.Object, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if err := f.call("list", prefix); err != nil {
 		return nil, err
 	}
@@ -69,6 +79,8 @@ func (f *fakeObjects) ListObjectsV2(_ context.Context, prefix string, _ int) ([]
 	return out, nil
 }
 func (f *fakeObjects) DeleteObject(_ context.Context, key string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if err := f.call("delete", key); err != nil {
 		return err
 	}
@@ -76,9 +88,17 @@ func (f *fakeObjects) DeleteObject(_ context.Context, key string) error {
 	return nil
 }
 
-type eventSink struct{ events []store.AlertEvent }
+// eventSink 收集告警事件。两层的失败通知可能同时到达，Enqueue 在 mu 下追加；测试读 events 的时机同 fakeObjects。
+type eventSink struct {
+	mu     sync.Mutex
+	events []store.AlertEvent
+}
 
-func (s *eventSink) Enqueue(ev store.AlertEvent) { s.events = append(s.events, ev) }
+func (s *eventSink) Enqueue(ev store.AlertEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, ev)
+}
 
 func setup(t *testing.T) (*Manager, *clock.Fake, *fakeObjects, *eventSink) {
 	t.Helper()
