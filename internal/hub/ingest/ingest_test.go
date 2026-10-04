@@ -231,7 +231,7 @@ func TestFactsAreStoredAndReconciledByHash(t *testing.T) {
 	if err != nil || resp.Msg.WantFacts {
 		t.Fatalf("resp = %+v err = %v", resp, err)
 	}
-	waitFor(t, func() bool { m, _ := h.store.FactsHashes(ctx); return m[id] == 41 })
+	waitFactsPublished(t, h, id, 41)
 
 	h.clk.Advance(10 * time.Second)
 	req = report(tok, &heronv1.Metrics{})
@@ -451,6 +451,15 @@ func waitFor(t *testing.T, cond func() bool) {
 	testwait.Until(t, 5*time.Millisecond, cond, "condition not met in time")
 }
 
+// waitFactsPublished 等 facts 摘要既已落库、又已发布到 Service 的内存摘要。reconcileFacts 只看内存摘要，
+// 而写协程先提交事务、之后才在 done 回调里发布它（store 的写循环：fn 提交后再调 done），库里先可见；
+// 只等库就断言"同摘要不再索要 facts"，会落进提交与回调之间的窗口。
+func waitFactsPublished(t *testing.T, h *hub, id int64, hash uint64) {
+	t.Helper()
+	waitFor(t, func() bool { m, _ := h.store.FactsHashes(context.Background()); return m[id] == hash })
+	waitFor(t, func() bool { h.svc.mu.Lock(); defer h.svc.mu.Unlock(); return h.svc.factsHash[id] == hash })
+}
+
 // 摘要只在写库成功后记下：写失败时下一次上报必须再次索要 facts，直到落库成功。
 func TestFactsHashNotRecordedWhenWriteFails(t *testing.T) {
 	h := newHub(t)
@@ -482,7 +491,7 @@ func TestFactsHashNotRecordedWhenWriteFails(t *testing.T) {
 	if _, err := h.client.Report(ctx, req); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { m, _ := h.store.FactsHashes(ctx); return m[id] == 41 })
+	waitFactsPublished(t, h, id, 41)
 	h.clk.Advance(h.svc.Interval())
 	req = report(tok, &heronv1.Metrics{})
 	req.Msg.FactsHash = 41
