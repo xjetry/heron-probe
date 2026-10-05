@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xjetry/heron-probe/internal/releasesig"
 	"golang.org/x/sys/unix"
 )
 
@@ -354,10 +356,12 @@ func copySafe(src, dst string, uid int, mode os.FileMode) error {
 type peerKey struct{}
 
 func Serve(ctx context.Context, role string) error {
-	return serve(ctx, role, NewOfficialSource())
+	return serve(ctx, role, NewOfficialSource(), releasesig.Trusted())
 }
 
-func serve(ctx context.Context, role string, source source) error {
+// serve 的来源与公钥由调用方给出：正式入口只传固定官方源与 releasesig 的常量公钥，
+// 隔离验收的测试程序传受控来源与测试公钥（accept_linux_test.go）。
+func serve(ctx context.Context, role string, official source, keys []ed25519.PublicKey) error {
 	if role != "hub" && role != "agent" {
 		return errors.New("role must be hub or agent")
 	}
@@ -408,7 +412,7 @@ func serve(ctx context.Context, role string, source source) error {
 	if arch == "arm" {
 		arch = "armv7"
 	}
-	e, err := newEngine(ctx, filepath.Join(m.dir, "state.json"), role, arch, source, m)
+	e, err := newEngine(ctx, filepath.Join(m.dir, "state.json"), role, arch, sourceChoice{name: "github", src: official}, keys, m)
 	if err != nil {
 		return err
 	}
@@ -510,12 +514,4 @@ func serve(ctx context.Context, role string, source source) error {
 		return nil
 	}
 	return err
-}
-
-func trailingJSON(d *json.Decoder) error {
-	var extra any
-	if err := d.Decode(&extra); err != io.EOF {
-		return errors.New("expected a single JSON object")
-	}
-	return nil
 }

@@ -45,7 +45,9 @@ type Status struct {
 	Supported bool   `json:"supported"`
 	Reason    string `json:"reason,omitempty"`
 	Version   string `json:"version"`
-	Job       *Job   `json:"job,omitempty"`
+	// Source 是本机取产物的来源：github 或 hub；旧更新器为空串。
+	Source string `json:"source,omitempty"`
+	Job    *Job   `json:"job,omitempty"`
 }
 
 var idPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{16,64}$`)
@@ -168,4 +170,12 @@ func (c *Client) Gate(ctx context.Context, version string) error {
 		return errors.New("running version does not match pending update")
 	}
 	return c.Ready(ctx, version)
+}
+
+func trailingJSON(d *json.Decoder) error {
+	var extra any
+	if err := d.Decode(&extra); err != io.EOF {
+		return errors.New("expected a single JSON object")
+	}
+	return nil
 }

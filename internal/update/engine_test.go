@@ -5,9 +5,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/xjetry/heron-probe/internal/releasesig/sigtest"
 )
 
 type fakeMachine struct {
@@ -46,15 +50,21 @@ func (m *fakeMachine) Gate(v bool) error {
 	return m.action("open")
 }
 
-type fakeSource struct{ err error }
+type fakeSource struct {
+	err error
+	a   Artifacts
+}
 
-func (s fakeSource) Download(context.Context, string, string, string) ([]byte, error) {
-	return []byte("binary"), s.err
+func (s fakeSource) Fetch(context.Context, Request, string, string) (Artifacts, error) { return s.a, s.err }
+
+// goodSource 给出 request() 版本的 hub amd64 合法签名产物。
+func goodSource() fakeSource {
+	return fakeSource{a: signedArtifacts("hub", "amd64", "v0.3.0", sigtest.Archive("hub", []byte("binary")))}
 }
 
 func testEngine(t *testing.T, m *fakeMachine, s fakeSource) *Engine {
 	t.Helper()
-	e, err := newEngine(context.Background(), filepath.Join(t.TempDir(), "state.json"), "hub", "amd64", s, m)
+	e, err := newEngine(context.Background(), filepath.Join(t.TempDir(), "state.json"), "hub", "amd64", sourceChoice{name: "github", src: s}, testKeys(), m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +104,7 @@ func TestEngineFailureRecovery(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &fakeMachine{version: "v0.2.0", fail: tc.fail}
-			s := fakeSource{}
+			s := goodSource()
 			if tc.download {
 				s.err = errors.New("download failed")
 			}
@@ -126,7 +136,7 @@ func TestEngineFailureRecovery(t *testing.T) {
 
 func TestEngineCommitRequiresActualProcess(t *testing.T) {
 	m := &fakeMachine{version: "v0.2.0"}
-	e := testEngine(t, m, fakeSource{})
+	e := testEngine(t, m, goodSource())
 	e.reason = "service was previously stopped"
 	e.readyTimeout = time.Second
 	r := request()
@@ -175,7 +185,7 @@ func TestEngineInterruptedRecovery(t *testing.T) {
 			if err := e.save(Job{Request: request(), State: state}); err != nil {
 				t.Fatal(err)
 			}
-			r, err := newEngine(context.Background(), e.path, "hub", "amd64", fakeSource{}, m)
+			r, err := newEngine(context.Background(), e.path, "hub", "amd64", sourceChoice{name: "github", src: fakeSource{}}, testKeys(), m)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -195,7 +205,7 @@ func TestEngineInterruptedRecovery(t *testing.T) {
 
 func TestFailedRollbackCannotConfirmCandidate(t *testing.T) {
 	m := &fakeMachine{version: "v0.2.0", fail: "restore"}
-	e := testEngine(t, m, fakeSource{})
+	e := testEngine(t, m, goodSource())
 	if _, err := e.submit(request()); err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +217,7 @@ func TestFailedRollbackCannotConfirmCandidate(t *testing.T) {
 		t.Fatal("rollback intent was not durable")
 	}
 	m.fail = ""
-	restarted, err := newEngine(context.Background(), e.path, "hub", "amd64", fakeSource{}, m)
+	restarted, err := newEngine(context.Background(), e.path, "hub", "amd64", sourceChoice{name: "github", src: fakeSource{}}, testKeys(), m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +271,7 @@ func TestConsumedTaskCannotReplayAfterAnotherFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitEngine(t, e)
-	reloaded, err := newEngine(context.Background(), e.path, "hub", "amd64", fakeSource{}, m)
+	reloaded, err := newEngine(context.Background(), e.path, "hub", "amd64", sourceChoice{name: "github", src: fakeSource{}}, testKeys(), m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +291,7 @@ func TestRecoveryStartFailureDoesNotRestoreTwice(t *testing.T) {
 		t.Fatal("expected restart failure")
 	}
 	m.fail = ""
-	if _, err := newEngine(context.Background(), e.path, "hub", "amd64", fakeSource{}, m); err != nil {
+	if _, err := newEngine(context.Background(), e.path, "hub", "amd64", sourceChoice{name: "github", src: fakeSource{}}, testKeys(), m); err != nil {
 		t.Fatal(err)
 	}
 	count := 0
@@ -299,7 +309,7 @@ func TestIncompleteRecoveryRejectsNewWork(t *testing.T) {
 	for _, fail := range []string{"start", "open"} {
 		t.Run(fail, func(t *testing.T) {
 			m := &fakeMachine{version: "v0.2.0", fail: fail}
-			e := testEngine(t, m, fakeSource{})
+			e := testEngine(t, m, goodSource())
 			if _, err := e.submit(request()); err != nil {
 				t.Fatal(err)
 			}
@@ -318,5 +328,30 @@ func TestIncompleteRecoveryRejectsNewWork(t *testing.T) {
 				t.Error("new task replaced incomplete recovery")
 			}
 		})
+	}
+}
+
+func TestEngineRejectsArtifactsSignedForAnotherVersion(t *testing.T) {
+	m := &fakeMachine{version: "v0.2.0"}
+	s := fakeSource{a: signedArtifacts("hub", "amd64", "v0.2.9", sigtest.Archive("hub", []byte("binary")))}
+	e := testEngine(t, m, s)
+	if _, err := e.submit(request()); err != nil {
+		t.Fatal(err)
+	}
+	j := waitEngine(t, e)
+	if j.State != "failed" || !strings.Contains(j.Error, "does not verify") {
+		t.Fatalf("job = %+v", j)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if slices.Contains(m.calls, "stage") || slices.Contains(m.calls, "stop") {
+		t.Fatalf("rejected artifacts reached the machine: %v", m.calls)
+	}
+}
+
+func TestEngineReportsSource(t *testing.T) {
+	e := testEngine(t, &fakeMachine{version: "v0.2.0"}, goodSource())
+	if s := e.status(); s.Source != "github" || !s.Supported {
+		t.Fatalf("status = %+v", s)
 	}
 }

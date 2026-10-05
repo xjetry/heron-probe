@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xjetry/heron-probe/internal/releasesig"
+	"github.com/xjetry/heron-probe/internal/releasesig/sigtest"
 	"golang.org/x/sys/unix"
 )
 
@@ -85,14 +87,19 @@ func TestSystemCredentialChild(t *testing.T) {
 	fmt.Println("HERON_CREDENTIAL_CHILD_VERIFIED")
 }
 
-// 受控产物只链接进测试程序，发行更新器没有读取测试目录或环境变量的路径。
+// 受控产物只链接进测试程序，发行更新器没有读取测试目录或环境变量的路径。夹具目录里仍是裸二进制，
+// 这里现场打成归档并用测试私钥签名；serve 收到的是测试公钥，正式入口 Serve 只传 releasesig 的常量公钥。
 type acceptanceSource struct{}
 
-func (acceptanceSource) Download(_ context.Context, role, _, version string) ([]byte, error) {
-	if !ValidVersion(version) || (role != "hub" && role != "agent") {
-		return nil, errors.New("invalid fixture")
+func (acceptanceSource) Fetch(_ context.Context, task Request, role, arch string) (Artifacts, error) {
+	if !ValidVersion(task.Version) || (role != "hub" && role != "agent") {
+		return Artifacts{}, errors.New("invalid fixture")
 	}
-	return os.ReadFile(filepath.Join("/var/lib/heron-update-fixtures", version, role))
+	b, err := os.ReadFile(filepath.Join("/var/lib/heron-update-fixtures", task.Version, role))
+	if err != nil {
+		return Artifacts{}, err
+	}
+	return signedArtifacts(role, arch, task.Version, sigtest.Archive(role, b)), nil
 }
 
 func TestSystemDaemon(t *testing.T) {
@@ -102,7 +109,7 @@ func TestSystemDaemon(t *testing.T) {
 	if _, err := os.Stat("/var/lib/heron-update-accept"); err != nil {
 		t.Fatal("missing disposable machine marker")
 	}
-	if err := serve(context.Background(), os.Getenv("HERON_UPDATE_ROLE"), acceptanceSource{}); err != nil {
+	if err := serve(context.Background(), os.Getenv("HERON_UPDATE_ROLE"), acceptanceSource{}, testKeys()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -155,11 +162,15 @@ func TestOfficialNetworkAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("official latest: %s", latest)
+	// 要求最新正式版已带签名：未签名或受信公钥列表为空时这里必须失败，而不是静默跳过验签。
 	for _, role := range []string{"hub", "agent"} {
-		b, err := s.Download(ctx, role, "arm64", "v0.2.0")
+		a, err := s.Fetch(ctx, Request{Version: latest}, role, "arm64")
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Logf("official v0.2.0 %s arm64: %d bytes, sha256=%x", role, len(b), sha256.Sum256(b))
+		if _, err := Accept(releasesig.Trusted(), role, "arm64", latest, a); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("official %s %s arm64 accepted: archive %d bytes", role, latest, len(a.Archive))
 	}
 }

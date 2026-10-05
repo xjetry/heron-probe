@@ -6,7 +6,6 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"github.com/xjetry/heron-probe/internal/githubtransport"
+	"github.com/xjetry/heron-probe/internal/releasesig"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -58,31 +58,38 @@ func makeArchive(t *testing.T, headers []*tar.Header, bodies []string) []byte {
 }
 
 func validArchive(t *testing.T, role string) []byte {
-	return makeArchive(t, []*tar.Header{{Name: "heron-" + role, Mode: 0755, Size: 6, Typeflag: tar.TypeReg}, {Name: "heron-" + role + ".service", Mode: 0644, Size: 4, Typeflag: tar.TypeReg}}, []string{"binary", "unit"})
+	return makeArchive(t, []*tar.Header{{Name: "heron-" + role, Mode: 0o755, Size: 6, Typeflag: tar.TypeReg}, {Name: "heron-" + role + ".service", Mode: 0o644, Size: 4, Typeflag: tar.TypeReg}}, []string{"binary", "unit"})
 }
 
-func releaseRoutes(t *testing.T, role, arch string, archive []byte) map[string][]byte {
+// releaseRoutes 只登记三条下载地址，内容用测试私钥现场签名；任何 releases API 请求都未登记，
+// testSource 会让用例失败，钉住取回不再查询草稿、预发布与资产清单。
+func releaseRoutes(t *testing.T, role, arch, version string, archive []byte) (map[string][]byte, Artifacts) {
 	t.Helper()
 	asset, err := archiveName(role, arch)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sums := []byte(fmt.Sprintf("%x  %s\n", sha256.Sum256(archive), asset))
-	metadata := []byte(fmt.Sprintf(`{"tag_name":"v0.3.0","assets":[{"name":%q,"size":%d},{"name":"SHA256SUMS","size":%d}]}`, asset, len(archive), len(sums)))
-	return map[string][]byte{officialAPI + "/latest": metadata, officialAPI + "/tags/v0.3.0": metadata, officialDownloads + "v0.3.0/SHA256SUMS": sums, officialDownloads + "v0.3.0/" + asset: archive}
+	a := signedArtifacts(role, arch, version, archive)
+	return map[string][]byte{
+		officialDownloads + version + "/SHA256SUMS":     a.Sums,
+		officialDownloads + version + "/SHA256SUMS.sig": a.Signature,
+		officialDownloads + version + "/" + asset:       a.Archive,
+	}, a
 }
 
-func TestOfficialDownload(t *testing.T) {
+func TestOfficialFetchUsesOnlyDownloadURLs(t *testing.T) {
 	for _, pair := range [][2]string{{"hub", "amd64"}, {"hub", "arm64"}, {"agent", "amd64"}, {"agent", "arm64"}, {"agent", "armv7"}, {"agent", "386"}, {"agent", "riscv64"}} {
 		t.Run(strings.Join(pair[:], "/"), func(t *testing.T) {
-			s := testSource(t, releaseRoutes(t, pair[0], pair[1], validArchive(t, pair[0])))
-			version, err := s.Latest(context.Background())
-			if err != nil || version != "v0.3.0" {
-				t.Fatalf("Latest = %q, %v", version, err)
+			routes, want := releaseRoutes(t, pair[0], pair[1], "v0.3.0", validArchive(t, pair[0]))
+			a, err := testSource(t, routes).Fetch(context.Background(), Request{Version: "v0.3.0"}, pair[0], pair[1])
+			if err != nil {
+				t.Fatal(err)
 			}
-			body, err := s.Download(context.Background(), pair[0], pair[1], version)
-			if err != nil || string(body) != "binary" {
-				t.Fatalf("Download = %q, %v", body, err)
+			if string(a.Sums) != string(want.Sums) || string(a.Signature) != string(want.Signature) || string(a.Archive) != string(want.Archive) {
+				t.Fatal("fetched bytes differ from the registered downloads")
+			}
+			if bin, err := Accept(testKeys(), pair[0], pair[1], "v0.3.0", a); err != nil || string(bin) != "binary" {
+				t.Fatalf("Accept = %q, %v", bin, err)
 			}
 		})
 	}
@@ -91,42 +98,13 @@ func TestOfficialDownload(t *testing.T) {
 func TestOfficialRejectsInputBeforeNetwork(t *testing.T) {
 	s := testSource(t, nil)
 	for _, args := range [][3]string{{"hub", "386", "v0.3.0"}, {"agent", "mips", "v0.3.0"}, {"updater", "amd64", "v0.3.0"}, {"hub", "amd64", "../../other"}, {"hub", "amd64", "v0.3.0-rc1"}, {"hub", "amd64", "v00.3.0"}} {
-		if _, err := s.Download(context.Background(), args[0], args[1], args[2]); err == nil {
+		if _, err := s.Fetch(context.Background(), Request{Version: args[2]}, args[0], args[1]); err == nil {
 			t.Errorf("accepted %v", args)
 		}
 	}
 }
 
 func TestOfficialRejectsReleaseMetadata(t *testing.T) {
-	for name, mutate := range map[string]func(map[string]any){
-		"draft":             func(m map[string]any) { m["draft"] = true },
-		"prerelease":        func(m map[string]any) { m["prerelease"] = true },
-		"invalid version":   func(m map[string]any) { m["tag_name"] = "v0.3.0-rc1" },
-		"tag mismatch":      func(m map[string]any) { m["tag_name"] = "v0.4.0" },
-		"missing assets":    func(m map[string]any) { m["assets"] = []any{} },
-		"duplicate asset":   func(m map[string]any) { a := m["assets"].([]any); m["assets"] = append(a, a[0]) },
-		"oversized archive": func(m map[string]any) { m["assets"].([]any)[0].(map[string]any)["size"] = maxArchive + 1 },
-		"oversized sums":    func(m map[string]any) { m["assets"].([]any)[1].(map[string]any)["size"] = maxSums + 1 },
-		"zero size":         func(m map[string]any) { m["assets"].([]any)[0].(map[string]any)["size"] = 0 },
-	} {
-		t.Run(name, func(t *testing.T) {
-			routes := releaseRoutes(t, "hub", "amd64", validArchive(t, "hub"))
-			var m map[string]any
-			if err := json.Unmarshal(routes[officialAPI+"/tags/v0.3.0"], &m); err != nil {
-				t.Fatal(err)
-			}
-			mutate(m)
-			body, err := json.Marshal(m)
-			if err != nil {
-				t.Fatal(err)
-			}
-			routes[officialAPI+"/tags/v0.3.0"] = body
-			_, err = testSource(t, routes).Download(context.Background(), "hub", "amd64", "v0.3.0")
-			if err == nil {
-				t.Fatal("accepted invalid metadata")
-			}
-		})
-	}
 	for _, body := range []string{`{`, `{"tag_name":"v0.3.0","draft":true}`, `{"tag_name":"v0.3.0","prerelease":true}`, `{"tag_name":"v0.3.0-rc1"}`} {
 		if _, err := testSource(t, map[string][]byte{officialAPI + "/latest": []byte(body)}).Latest(context.Background()); err == nil {
 			t.Errorf("accepted latest %s", body)
@@ -154,14 +132,24 @@ func TestOfficialChecksum(t *testing.T) {
 			t.Fatalf("checksum = %x, %v", got, err)
 		}
 	}
-	routes := releaseRoutes(t, "hub", "amd64", validArchive(t, "hub"))
-	routes[officialDownloads+"v0.3.0/SHA256SUMS"] = []byte(valid)
-	if _, err := testSource(t, routes).Download(context.Background(), "hub", "amd64", "v0.3.0"); err == nil || !strings.Contains(err.Error(), "SHA-256 mismatch") {
+	// 摘要核对在验签之后：已签清单里的目标条目与实际归档不符时，整份产物被拒。
+	a := signedArtifacts("hub", "amd64", "v0.3.0", makeArchive(t, []*tar.Header{{Name: "heron-hub", Mode: 0o755, Size: 7, Typeflag: tar.TypeReg}}, []string{"archive"}))
+	a.Archive = makeArchive(t, []*tar.Header{{Name: "heron-hub", Mode: 0o755, Size: 9, Typeflag: tar.TypeReg}}, []string{"different"})
+	if _, err := Accept(testKeys(), "hub", "amd64", "v0.3.0", a); err == nil || !strings.Contains(err.Error(), "SHA-256 mismatch") {
 		t.Fatalf("mismatch error = %v", err)
 	}
 }
 
 func TestOfficialArchiveStructure(t *testing.T) {
+	// 结构错误必须连同合法签名一起被拒：签名只证明字节未变，不证明结构安全。
+	reject := func(t *testing.T, name string, archive []byte) {
+		t.Helper()
+		t.Run(name, func(t *testing.T) {
+			if _, err := Accept(testKeys(), "hub", "amd64", "v0.3.0", signedArtifacts("hub", "amd64", "v0.3.0", archive)); err == nil {
+				t.Fatal("accepted unsafe archive")
+			}
+		})
+	}
 	for name, h := range map[string]*tar.Header{
 		"parent path": {Name: "../heron-hub", Typeflag: tar.TypeReg}, "absolute": {Name: "/heron-hub", Typeflag: tar.TypeReg},
 		"symlink": {Name: "heron-hub", Typeflag: tar.TypeSymlink, Linkname: "target"}, "hardlink": {Name: "heron-hub", Typeflag: tar.TypeLink, Linkname: "target"},
@@ -169,29 +157,14 @@ func TestOfficialArchiveStructure(t *testing.T) {
 		"unknown": {Name: "README", Typeflag: tar.TypeReg}, "empty": {Name: "heron-hub", Typeflag: tar.TypeReg},
 		"pax": {Name: "heron-hub", Typeflag: tar.TypeReg, PAXRecords: map[string]string{"comment": "unexpected"}},
 	} {
-		t.Run(name, func(t *testing.T) {
-			archive := makeArchive(t, []*tar.Header{h}, []string{""})
-			if _, err := extractBinary(archive, "hub"); err == nil {
-				t.Fatal("accepted unsafe archive")
-			}
-		})
+		reject(t, name, makeArchive(t, []*tar.Header{h}, []string{""}))
 	}
-	t.Run("duplicate", func(t *testing.T) {
-		h := &tar.Header{Name: "heron-hub", Size: 1, Typeflag: tar.TypeReg}
-		archive := makeArchive(t, []*tar.Header{h, h}, []string{"a", "b"})
-		if _, err := extractBinary(archive, "hub"); err == nil {
-			t.Fatal("accepted duplicate binary")
-		}
-	})
-	t.Run("missing", func(t *testing.T) {
-		archive := makeArchive(t, []*tar.Header{{Name: "heron-hub.service", Size: 1, Typeflag: tar.TypeReg}}, []string{"a"})
-		if _, err := extractBinary(archive, "hub"); err == nil {
-			t.Fatal("accepted missing binary")
-		}
-	})
+	binary := &tar.Header{Name: "heron-hub", Size: 1, Typeflag: tar.TypeReg}
+	reject(t, "duplicate", makeArchive(t, []*tar.Header{binary, binary}, []string{"a", "b"}))
+	reject(t, "missing", makeArchive(t, []*tar.Header{{Name: "heron-hub.service", Size: 1, Typeflag: tar.TypeReg}}, []string{"a"}))
 	t.Run("agent openrc", func(t *testing.T) {
 		archive := makeArchive(t, []*tar.Header{{Name: "heron-agent", Size: 1, Typeflag: tar.TypeReg}, {Name: "heron-agent.openrc", Size: 1, Typeflag: tar.TypeReg}}, []string{"a", "b"})
-		if body, err := extractBinary(archive, "agent"); err != nil || string(body) != "a" {
+		if body, err := Accept(testKeys(), "agent", "amd64", "v0.3.0", signedArtifacts("agent", "amd64", "v0.3.0", archive)); err != nil || string(body) != "a" {
 			t.Fatalf("agent archive = %q, %v", body, err)
 		}
 	})
@@ -199,18 +172,14 @@ func TestOfficialArchiveStructure(t *testing.T) {
 	corrupt := bytes.Clone(archive)
 	corrupt[len(corrupt)-8] ^= 0xff
 	for name, body := range map[string][]byte{"truncated": archive[:len(archive)-1], "gzip checksum": corrupt, "trailing": append(bytes.Clone(archive), 'x'), "multistream": append(bytes.Clone(archive), archive...), "not gzip": []byte("binary")} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := extractBinary(body, "hub"); err == nil {
-				t.Fatal("accepted damaged archive")
-			}
-		})
+		reject(t, name, body)
 	}
 }
 
 func TestOfficialArchiveSizeLimits(t *testing.T) {
 	for _, h := range []*tar.Header{
 		{Name: "heron-hub", Typeflag: tar.TypeReg, Size: maxBinary + 1},
-		{Name: "heron-hub.service", Typeflag: tar.TypeReg, Size: maxSums + 1},
+		{Name: "heron-hub.service", Typeflag: tar.TypeReg, Size: maxServiceFile + 1},
 	} {
 		t.Run(h.Name, func(t *testing.T) {
 			var buffer bytes.Buffer
@@ -223,13 +192,13 @@ func TestOfficialArchiveSizeLimits(t *testing.T) {
 			if err := gz.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := extractBinary(buffer.Bytes(), "hub"); err == nil || !strings.Contains(err.Error(), "entry size") {
+			if _, err := Accept(testKeys(), "hub", "amd64", "v0.3.0", signedArtifacts("hub", "amd64", "v0.3.0", buffer.Bytes())); err == nil || !strings.Contains(err.Error(), "entry size") {
 				t.Fatalf("oversized header error = %v", err)
 			}
 		})
 	}
 	archive := makeArchive(t, []*tar.Header{{Name: "heron-hub", Typeflag: tar.TypeReg, Size: 1, PAXRecords: map[string]string{"comment": "unexpected"}}}, []string{"a"})
-	if _, err := extractBinary(archive, "hub"); err == nil || !strings.Contains(err.Error(), "non-regular") {
+	if _, err := Accept(testKeys(), "hub", "amd64", "v0.3.0", signedArtifacts("hub", "amd64", "v0.3.0", archive)); err == nil || !strings.Contains(err.Error(), "non-regular") {
 		t.Fatalf("PAX error = %v", err)
 	}
 }
@@ -243,8 +212,8 @@ func TestOfficialHTTPBoundaries(t *testing.T) {
 		err    error
 		want   string
 	}{
-		{"status", 404, 0, "", nil, "HTTP 404"}, {"declared size", 200, maxMetadata + 1, "", nil, "size limit"},
-		{"actual size", 200, -1, strings.Repeat("x", maxMetadata+1), nil, "size limit"}, {"network", 0, 0, "", context.DeadlineExceeded, "deadline"},
+		{"status", 404, 0, "", nil, "HTTP 404"}, {"declared size", 200, releasesig.MaxSums + 1, "", nil, "size limit"},
+		{"actual size", 200, -1, strings.Repeat("x", releasesig.MaxSums+1), nil, "size limit"}, {"network", 0, 0, "", context.DeadlineExceeded, "deadline"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &OfficialSource{http: githubtransport.WithTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -253,7 +222,7 @@ func TestOfficialHTTPBoundaries(t *testing.T) {
 				}
 				return &http.Response{StatusCode: tc.status, ContentLength: tc.length, Body: io.NopCloser(strings.NewReader(tc.body)), Header: make(http.Header), Request: r}, nil
 			}), time.Second)}
-			if _, err := s.Latest(context.Background()); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if _, err := s.Fetch(context.Background(), Request{Version: "v0.3.0"}, "hub", "amd64"); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error = %v, want %s", err, tc.want)
 			}
 		})
@@ -265,7 +234,7 @@ func TestOfficialHTTPBoundaries(t *testing.T) {
 				calls++
 				return &http.Response{StatusCode: 302, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{"Location": []string{destination}}, Request: r}, nil
 			}), time.Second)}
-			if _, err := s.Latest(context.Background()); err == nil || calls != 1 {
+			if _, err := s.Fetch(context.Background(), Request{Version: "v0.3.0"}, "hub", "amd64"); err == nil || calls != 1 {
 				t.Fatalf("redirect err=%v, calls=%d", err, calls)
 			}
 		})

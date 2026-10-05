@@ -5,9 +5,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,18 +15,21 @@ import (
 	"time"
 
 	"github.com/xjetry/heron-probe/internal/githubtransport"
+	"github.com/xjetry/heron-probe/internal/releasesig"
 )
 
 const (
 	officialAPI       = "https://api.github.com/repos/xjetry/heron-probe/releases"
 	officialDownloads = "https://github.com/xjetry/heron-probe/releases/download/"
 	maxMetadata       = 4 << 20
-	maxSums           = 1 << 20
-	maxArchive        = 128 << 20
-	maxBinary         = 256 << 20
+	// maxServiceFile 是归档里单个服务文件的大小上限，与清单文件的 releasesig.MaxSums 数值相同但语义不同。
+	maxServiceFile = 1 << 20
+	maxArchive     = 128 << 20
+	maxBinary      = 256 << 20
 )
 
-// OfficialSource 只接受官方仓库的正式发行版，不接收外部下载地址或摘要。
+// OfficialSource 只从固定官方仓库的下载目录取回产物字节，不做任何接受判定（见 Accept），
+// 不接收外部下载地址或摘要。
 type OfficialSource struct{ http *http.Client }
 
 func NewOfficialSource() *OfficialSource {
@@ -67,58 +70,29 @@ func (s *OfficialSource) Latest(ctx context.Context) (string, error) {
 	return release.Tag, nil
 }
 
-// Download 验证版本归属、官方 SHA256SUMS 与归档结构，只返回目标程序字节。
-// SHA256SUMS 和资产都由官方 HTTPS 发行页取得，不等价于独立的数字签名。
-func (s *OfficialSource) Download(ctx context.Context, role, arch, version string) ([]byte, error) {
+// Fetch 从固定官方下载目录取回某版本的清单、签名与归档，不做任何接受判定（见 Accept）。
+// 地址只由固定仓库、版本与本地产物矩阵拼出，不调 releases API：草稿 release 没有公开下载地址，
+// 预发布 tag 过不了 ValidVersion，资产是否存在由下载结果本身回答。task 只用到版本。
+func (s *OfficialSource) Fetch(ctx context.Context, task Request, role, arch string) (Artifacts, error) {
 	asset, err := archiveName(role, arch)
 	if err != nil {
-		return nil, err
+		return Artifacts{}, err
 	}
-	if !ValidVersion(version) {
-		return nil, fmt.Errorf("invalid stable version")
+	if !ValidVersion(task.Version) {
+		return Artifacts{}, errors.New("invalid stable version")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-	release, err := s.release(ctx, "/tags/"+version)
-	if err != nil {
-		return nil, err
+	base := officialDownloads + task.Version + "/"
+	var a Artifacts
+	if a.Sums, err = s.get(ctx, base+"SHA256SUMS", "application/octet-stream", releasesig.MaxSums); err != nil {
+		return Artifacts{}, err
 	}
-	if release.Tag != version {
-		return nil, fmt.Errorf("official release tag differs from requested version")
+	if a.Signature, err = s.get(ctx, base+"SHA256SUMS.sig", "application/octet-stream", releasesig.MaxFile); err != nil {
+		return Artifacts{}, err
 	}
-	for name, limit := range map[string]int64{asset: maxArchive, "SHA256SUMS": maxSums} {
-		count := 0
-		for _, a := range release.Assets {
-			if a.Name != name {
-				continue
-			}
-			count++
-			if a.Size <= 0 || a.Size > limit {
-				return nil, fmt.Errorf("official asset %s has invalid size", name)
-			}
-		}
-		if count != 1 {
-			return nil, fmt.Errorf("official asset %s is absent or duplicated", name)
-		}
+	if a.Archive, err = s.get(ctx, base+asset, "application/octet-stream", maxArchive); err != nil {
+		return Artifacts{}, err
 	}
-	// 路径仅由固定仓库、验证后的版本及本地产物矩阵构造，不使用 API 返回的下载 URL。
-	base := officialDownloads + version + "/"
-	sums, err := s.get(ctx, base+"SHA256SUMS", "application/octet-stream", maxSums)
-	if err != nil {
-		return nil, err
-	}
-	want, err := checksum(sums, asset)
-	if err != nil {
-		return nil, err
-	}
-	archive, err := s.get(ctx, base+asset, "application/octet-stream", maxArchive)
-	if err != nil {
-		return nil, err
-	}
-	if sha256.Sum256(archive) != want {
-		return nil, fmt.Errorf("official asset SHA-256 mismatch")
-	}
-	return extractBinary(archive, role)
+	return a, nil
 }
 
 func archiveName(role, arch string) (string, error) {
@@ -202,7 +176,7 @@ func extractBinary(archive []byte, role string) ([]byte, error) {
 	defer gz.Close()
 	gz.Multistream(false)
 	// 二进制及两个已知服务文件之外只允许 tar 零填充；全流限额也覆盖扩展头与尾部。
-	limited := &io.LimitedReader{R: gz, N: maxBinary + 3*maxSums + 1}
+	limited := &io.LimitedReader{R: gz, N: maxBinary + 3*maxServiceFile + 1}
 	tr := tar.NewReader(limited)
 	binaryName := "heron-" + role
 	seen := make(map[string]bool)
@@ -220,7 +194,7 @@ func extractBinary(archive []byte, role string) ([]byte, error) {
 			return nil, fmt.Errorf("unexpected, duplicate or non-regular official archive entry %q", h.Name)
 		}
 		seen[h.Name] = true
-		limit := int64(maxSums)
+		limit := int64(maxServiceFile)
 		if h.Name == binaryName {
 			limit = maxBinary
 		}

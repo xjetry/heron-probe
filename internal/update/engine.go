@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,8 +12,21 @@ import (
 	"time"
 )
 
+// downloadTimeout 是一次取回的总时限，GitHub 与 hub 两种来源相同。
+const downloadTimeout = 5 * time.Minute
+
 type source interface {
-	Download(context.Context, string, string, string) ([]byte, error)
+	Fetch(context.Context, Request, string, string) (Artifacts, error)
+}
+
+// sourceChoice 是更新器启动时按本机安装参数选定的取产物来源（spec §4.10）。
+type sourceChoice struct {
+	// name 是 "github" 或 "hub"，随状态上报（Status.Source）。
+	name string
+	src  source
+	// err 非空表示来源配置读不出：更新器照常运行、回答状态，但不支持更新，原因写进状态。
+	// 不让进程退出——崩溃循环在面板上只表现为"没有上报更新能力"，看不出原因。
+	err string
 }
 
 // machine 只由本机安装参数构造，请求不能选择路径、命令或服务单元。
@@ -34,7 +48,8 @@ type Engine struct {
 	history          []Request
 	restart          bool
 	path, role, arch string
-	source           source
+	choice           sourceChoice
+	keys             []ed25519.PublicKey
 	machine          machine
 	version          string
 	reason           string
@@ -52,8 +67,8 @@ type journal struct {
 	Restart bool      `json:"restart"`
 }
 
-func newEngine(ctx context.Context, path, role, arch string, s source, m machine) (*Engine, error) {
-	e := &Engine{ctx: ctx, path: path, role: role, arch: arch, source: s, machine: m, readyTimeout: 90 * time.Second}
+func newEngine(ctx context.Context, path, role, arch string, choice sourceChoice, keys []ed25519.PublicKey, m machine) (*Engine, error) {
+	e := &Engine{ctx: ctx, path: path, role: role, arch: arch, choice: choice, keys: keys, machine: m, readyTimeout: 90 * time.Second}
 	data, err := os.ReadFile(path)
 	if err == nil {
 		var stored journal
@@ -107,9 +122,12 @@ func (e *Engine) status() Status {
 			e.reason = ""
 		}
 	}
-	s := Status{Protocol: Protocol, Supported: e.reason == "" && ValidVersion(e.version), Version: e.version, Reason: e.reason}
+	s := Status{Protocol: Protocol, Supported: e.reason == "" && ValidVersion(e.version), Version: e.version, Reason: e.reason, Source: e.choice.name}
 	if e.recoveryError != "" {
 		s.Supported, s.Reason = false, e.recoveryError
+	}
+	if e.choice.err != "" && e.recoveryError == "" {
+		s.Supported, s.Reason = false, e.choice.err
 	}
 	if !s.Supported && s.Reason == "" {
 		s.Reason = "installed version is not an official version"
@@ -154,6 +172,9 @@ func (e *Engine) submit(r Request) (Job, error) {
 	}
 	if e.recoveryError != "" {
 		return Job{}, errors.New(e.recoveryError)
+	}
+	if e.choice.err != "" {
+		return Job{}, errors.New(e.choice.err)
 	}
 	if e.job != nil && e.job.ID == r.ID {
 		if e.job.Request != r {
@@ -249,9 +270,13 @@ func (e *Engine) execute() error {
 		return err
 	}
 	j := e.status().Job
-	downloadCtx, cancelDownload := context.WithTimeout(e.ctx, 5*time.Minute)
-	data, err := e.source.Download(downloadCtx, e.role, e.arch, j.Version)
+	downloadCtx, cancelDownload := context.WithTimeout(e.ctx, downloadTimeout)
+	a, err := e.choice.src.Fetch(downloadCtx, j.Request, e.role, e.arch)
 	cancelDownload()
+	if err != nil {
+		return err
+	}
+	data, err := Accept(e.keys, e.role, e.arch, j.Version, a)
 	if err != nil {
 		return err
 	}
