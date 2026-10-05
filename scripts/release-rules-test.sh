@@ -1,6 +1,7 @@
 #!/bin/sh
-# 版本号守卫与预发布判定的回归检查（make ci 调用）：Makefile 的 make 层守卫、check_version、
-# RELEASE_CHANNEL 与推送命令里 latest 的取舍。只跑 make 的检查与 -n 展开，不构建、不碰 docker。
+# 版本号守卫与发布规则的回归检查（make ci 调用）：Makefile 的 make 层守卫、check_version、发布目标的
+# 组成与打包输入登记（spec §14.1）、RELEASE_CHANNEL 与推送命令里 latest 的取舍。只跑 make 的检查与 -n 展开，
+# 不构建、不碰 docker；两个发布目标的资产集合由 scripts/release-assets-test.sh 用替身执行核对。
 set -eu
 make_path=$(command -v "${MAKE:-make}") || { echo "FAIL: make not found" >&2; exit 1; }
 # 用例自己给出 VERSION；从外层 make 继承的 MAKEFLAGS（含命令行变量）与环境变量会顶替用例的取值。
@@ -14,8 +15,9 @@ failures=0
 # 跑的是真目标，守卫一旦失效，配方会接着构建乃至推送；在这个 PATH 下其余命令要么找不到，要么只在
 # 绊线文件里留下记录，什么都不会真的发生。
 mkdir "$work/bin"
-# echo 在 sh 里是内建，command -v 给不出路径，按系统目录找可执行文件。
-for tool in tr grep sed echo; do
+# echo 与 printf 在 sh 里是内建，但 make 对不含 shell 元字符的配方行（如片段里的 @printf）不经 shell 直接
+# exec，command -v 给不出路径，按系统目录找可执行文件。printf 只写标准输出，与 tr、grep、sed 同为只读文本工具。
+for tool in tr grep sed echo printf; do
   for dir in /bin /usr/bin; do
     if [ -x "$dir/$tool" ]; then
       ln -s "$dir/$tool" "$work/bin/$tool"
@@ -42,8 +44,9 @@ bad() {
   failures=$((failures + 1))
 }
 
-# 每个消费 VERSION 的目标都必须以 check_version 开头：配方其余部分直接展开 $(VERSION)。
-targets='release docker docker-smoke docker-push docker-readback docker-promote release-channel'
+# 每个消费 VERSION 的目标都必须以 check_version 开头：配方其余部分直接展开 $(VERSION)。release 换成了
+# release-full / release-hub-only / release-kind（spec §14.1），rejects 的各条经 $targets 对三者照旧成立。
+targets='release-full release-hub-only release-kind docker docker-smoke docker-push docker-readback docker-promote release-channel'
 for t in $targets; do
   MAKE -n "$t" VERSION=v1.0.0 > "$work/out" 2>&1 || { bad "make -n $t exited non-zero"; continue; }
   # shellcheck disable=SC2016 # 比对的是 make -n 打印的配方原文，$VERSION 按字面出现
@@ -94,6 +97,75 @@ if [ -s "$work/tripwire" ]; then
   cp "$work/tripwire" "$work/out"
   bad "recipes ran past the version check"
 fi
+
+# AGENT_VERSION 的 make 层守卫（§14.1）：与 VERSION 同理，命令行值里的 $ 在解析 Makefile 时就被拒绝，
+# $(shell …) 一次也没有执行。
+for t in release-full release-hub-only release-kind; do
+  # shellcheck disable=SC2016 # 交给 make 的字面值，由 make 层守卫拒绝
+  MAKE "$t" VERSION=v1.0.0 'AGENT_VERSION=v1$(shell touch '"$work"'/expanded-agent)' > "$work/out" 2>&1 && bad "make $t accepted a \$ in AGENT_VERSION"
+  grep -qF "contains '\$'" "$work/out" || bad "make $t did not reject a \$ in AGENT_VERSION at parse time"
+  [ ! -e "$work/expanded-agent" ] || bad "a \$(shell …) in AGENT_VERSION was executed"
+done
+
+# 发布目标的组成（§14.1）。-n 只核对不经 shell 循环的行：循环体里的 $$arch 在 -n 下原样打印，按具体架构的
+# 文件名去找必然找不到。完整 release 不碰 agentinputs/boundagent；只发 hub 的门禁先于任何构建（第一条 pnpm）。
+MAKE -n release-hub-only VERSION=v1.2.4 AGENT_VERSION=v1.2.3 > "$work/hub-only-n" 2>&1 || bad "make -n release-hub-only failed"
+MAKE -n release-full VERSION=v1.2.3 AGENT_VERSION=v1.2.3 > "$work/full-n" 2>&1 || bad "make -n release-full failed"
+# shellcheck disable=SC2016 # 比对的是 make -n 打印的配方原文，$AGENT_VERSION 按字面出现
+grep -qF 'go run ./scripts/agentinputs -base "$AGENT_VERSION"' "$work/hub-only-n" || bad "release-hub-only does not gate on scripts/agentinputs"
+grep -qF 'go run ./scripts/boundagent fetch' "$work/hub-only-n" || bad "release-hub-only does not fetch the bound agent's installers"
+gate_line=$(awk '/agentinputs/ { print NR; exit }' "$work/hub-only-n")
+first_pnpm=$(awk '/pnpm/ { print NR; exit }' "$work/hub-only-n")
+case $gate_line in '' | *[!0-9]*) bad "no agentinputs line in release-hub-only's -n output" ;; esac
+case $first_pnpm in '' | *[!0-9]*) bad "no pnpm line in release-hub-only's -n output" ;; esac
+[ "$gate_line" -lt "$first_pnpm" ] || bad "release-hub-only runs its gate after the web build"
+if grep -q 'agentinputs\|boundagent' "$work/full-n"; then
+  cp "$work/full-n" "$work/out"
+  bad "release-full runs a hub-only step"
+fi
+MAKE -n release-kind VERSION=v1.2.3 > "$work/out" 2>&1 || bad "make -n release-kind failed"
+# shellcheck disable=SC2016 # 比对的是 make -n 打印的配方原文，$VERSION 按字面出现
+grep -qF 'go run ./scripts/releasekind -version "$VERSION" -agent "$AGENT_VERSION"' "$work/out" || bad "release-kind does not print the releasekind call"
+# 以上 -n 命令里会被执行的只有 $(MAKE) web 一行的递归 make，它也只打印：到这里绊线文件仍为空。
+if [ -s "$work/tripwire" ]; then
+  cp "$work/tripwire" "$work/out"
+  bad "a -n run executed a tripwire command"
+fi
+
+# 打包输入登记完整：deploy/agent.mk 里出现的每个 deploy/ 路径都登记在 AGENT_BUNDLE_FILES。只发 hub 的门禁
+# （scripts/agentinputs）把这个片段本身当作 agent 组的输入，写死在配方里的路径它看不见。
+MAKE -s agent-bundle-inputs > "$work/bundle" 2>&1 || { cp "$work/bundle" "$work/out"; bad "make agent-bundle-inputs failed"; }
+# shellcheck disable=SC2013 # 路径不含空白，逐个比对
+for p in $(grep -o 'deploy/[A-Za-z0-9_./-][A-Za-z0-9_./-]*' deploy/agent.mk | sort -u); do
+  grep -qxF "$p" "$work/bundle" || bad "deploy/agent.mk references unregistered $p"
+done
+
+# 两个发布目标只碰登记过的文件：-n 输出里出现的每个 deploy/ 路径（make 已把变量展开成字面路径）都属于
+# agent 组的登记清单，或 hub 组的 deploy/systemd/heron-hub.service 与 deploy/install-hub.sh。
+for out in "$work/full-n" "$work/hub-only-n"; do
+  # shellcheck disable=SC2013 # 路径不含空白，逐个比对
+  for p in $(grep -o 'deploy/[A-Za-z0-9_./-][A-Za-z0-9_./-]*' "$out" | sort -u); do
+    case $p in
+      deploy/systemd/heron-hub.service | deploy/install-hub.sh) continue ;;
+    esac
+    grep -qxF "$p" "$work/bundle" || bad "release recipes reference unregistered $p"
+  done
+done
+
+# 主 Makefile 不 export 影响构建的变量：export 会传进每一条配方的环境，绕开配方的 PATH 约束；片段的
+# CGO_ENABLED=0 只属于它自己，其余构建参数都经显式 env 或 gflags 进入命令。主 Makefile 唯一的 export 是
+# AGENT_VERSION（§14.1，配方的运行时输入，不是构建参数）。
+exports=$(grep -E '^[[:space:]]*export([[:space:]]|$)|\.EXPORT_ALL_VARIABLES' Makefile || true)
+if [ "$(printf '%s\n' "$exports" | grep -c .)" != 1 ] || [ "$(printf '%s\n' "$exports" | sed -n 1p)" != 'export AGENT_VERSION' ]; then
+  printf '%s\n' "$exports" > "$work/out"
+  bad "main Makefile exports more than AGENT_VERSION"
+fi
+
+# 默认目标不变：不带目标的 make 一直做的是执行第一个普通目标（基点 Makefile 的是 web-install），片段的
+# include 位置不能改变它。
+default_out=$(MAKE -n 2>&1) || bad "make -n without a target failed"
+webinstall_out=$(MAKE -n web-install 2>&1) || bad "make -n web-install failed"
+[ "$default_out" = "$webinstall_out" ] || bad "the default make target changed (agent.mk must include after the first regular target)"
 
 # accepts VALUE CHANNEL：经 check_version 放行，release-channel 打印判定。
 accepts() {

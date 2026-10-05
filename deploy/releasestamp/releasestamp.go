@@ -2,7 +2,7 @@
 // 自己的这份清单校验下载的 tar 包，--base-url 指向的目录里的 SHA256SUMS 不是校验依据：换掉下载目录的人
 // 能同时换掉其中的每个文件，包括 SHA256SUMS。
 //
-// 写入只有这一份实现：make release 经 scripts/stampinstall 调用 WriteDir，deploy 的脚本测试直接调用它，
+// 写入只有这一份实现：发布目标（release-full / release-hub-only）经 scripts/stampinstall 调用 WriteDir，deploy 的脚本测试直接调用它，
 // 测试跑的就是发布流程产出的那种脚本。
 //
 // 写进去的值会成为 shell 源码，能改写脚本本身。所以版本号与文件名在写入之前按字符集逐个核对，摘要由这里
@@ -30,7 +30,7 @@ const (
 )
 
 // 版本号与 Makefile 的 check_version 同一口径（镜像 tag 的字符集：只含 [A-Za-z0-9_.-]、首字符不是 . 或 -、
-// 至多 128 个字符）。make release 已经先拦过一次；这里再核对，是因为写入的安全不能依赖调用方做过检查。
+// 至多 128 个字符）。发布目标已经先拦过一次；这里再核对，是因为写入的安全不能依赖调用方做过检查。
 var versionRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
 
 // release 资产名的字符集：Makefile 打出的 tar 包名（heron-agent_linux_amd64.tar.gz 之类）都在其中。

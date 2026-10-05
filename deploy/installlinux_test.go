@@ -173,7 +173,7 @@ func (e *env) linuxRelease(arch, version string) {
 	e.publish(version)
 }
 
-// linuxPackage 按 make release 的形状把 arch 的 Linux 包打进 dir：heron-agent 与仓库里的 systemd 单元、OpenRC 脚本原件。
+// linuxPackage 按发布配方的形状把 arch 的 Linux 包打进 dir：heron-agent 与仓库里的 systemd 单元、OpenRC 脚本原件。
 func (e *env) linuxPackage(dir, arch, version string) {
 	e.t.Helper()
 	e.updaterPackage(dir, arch, version)

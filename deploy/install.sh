@@ -29,7 +29,7 @@ OPENRC_LINK=$ROOT/etc/runlevels/default/heron-agent
 PROC=$ROOT/proc
 REPO=https://github.com/xjetry/heron-probe
 
-# 本脚本所属的版本与该版全部 tar 包的 SHA-256（每行 "<64 位十六进制>  <文件名>"），由 make release 经
+# 本脚本所属的版本与该版全部 tar 包的 SHA-256（每行 "<64 位十六进制>  <文件名>"），由发布目标（release-full / release-hub-only）经
 # deploy/releasestamp 写进下面两行标记之间；源码里为空，这时拒绝安装（卸载不下载，照常可用）。下载的包只按这份
 # 清单校验：--base-url 能换掉下载目录里的每个文件，同目录的 SHA256SUMS 也在其中，拿它作依据挡不住篡改。
 RELEASE_VERSION=""

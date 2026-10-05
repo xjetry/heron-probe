@@ -1,6 +1,6 @@
 // Package deploy 的测试以普通用户运行安装脚本：脚本读写的系统路径经 HERON_INSTALL_ROOT 挂到临时目录，
-// 系统管理命令由 PATH 上的替身接管。下载的脚本是 make release 那种写入了本版清单的脚本：dist 里的包由各平台的
-// 发布函数打出，再由 deploy/releasestamp（make release 用的同一个写入实现）写进脚本，用例执行的是写入后的副本。
+// 系统管理命令由 PATH 上的替身接管。下载的脚本是发布目标产出的那种写入了本版清单的脚本：dist 里的包由各平台的
+// 发布函数打出，再由 deploy/releasestamp（发布目标用的同一个写入实现）写进脚本，用例执行的是写入后的副本。
 // 本文件测 install-macos.sh：dscl、launchctl、ps、id、sysctl、uname、chown、sleep、curl 是替身，find、chmod 经替身
 // 记下参数后转调真的，shasum、tar 用真的；真实 launchd、目录服务与 root 属主只在真机上验证
 // （spec §14：没有 macOS 虚拟机可用）。install.sh 的替身在 installlinux_test.go。
@@ -261,7 +261,7 @@ func (e *env) release(arch, version string) {
 	e.publish(version)
 }
 
-// darwinPackage 按 make release 的形状把 arch 的包打进 dir：包内是 heron-agent 与仓库里的 plist 原件。
+// darwinPackage 按发布配方的形状把 arch 的包打进 dir：包内是 heron-agent 与仓库里的 plist 原件。
 func (e *env) darwinPackage(dir, arch, version string) {
 	e.t.Helper()
 	plist, err := os.ReadFile("launchd/xyz.heron.agent.plist")
@@ -300,7 +300,7 @@ func (e *env) pack(dir, pkg string, files []packFile) {
 	f.Close()
 }
 
-// publish 照 make release 的顺序发布 dist 里现有的包：用 make release 的同一个写入实现把版本号与清单写进源码脚本、
+// publish 照发布目标的顺序发布 dist 里现有的包：用发布目标的同一个写入实现把版本号与清单写进源码脚本、
 // 输出到 dist，再写 SHA256SUMS；此后 run 执行写入后的脚本。
 func (e *env) publish(version string) {
 	e.t.Helper()

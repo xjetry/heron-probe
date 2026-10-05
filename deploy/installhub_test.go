@@ -144,7 +144,7 @@ func (e *env) hubRelease(version string) {
 	e.publish(version)
 }
 
-// hubPackage 按 make release 的形状把 hub 包打进 dir：heron-hub 与仓库里的 systemd 单元原件。
+// hubPackage 按发布配方的形状把 hub 包打进 dir：heron-hub 与仓库里的 systemd 单元原件。
 func (e *env) hubPackage(dir, version string) {
 	e.t.Helper()
 	e.updaterPackage(dir, "amd64", version)

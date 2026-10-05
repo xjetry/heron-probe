@@ -1,4 +1,4 @@
-// stampinstall 是 make release 调用发布写入的入口：把 -dir 下全部 tar 包的 SHA-256 与 -version 写进每个源码
+// stampinstall 是发布目标（release-full / release-hub-only）调用发布写入的入口：把 -dir 下全部 tar 包的 SHA-256 与 -version 写进每个源码
 // 安装脚本，输出到 -dir。写入的实现在 deploy/releasestamp，deploy 的脚本测试调用的是同一个函数。
 package main
 
