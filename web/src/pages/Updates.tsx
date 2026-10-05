@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "@connectrpc/connect-query";
 import { useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGateAll } from "../api/queryGate";
+import { MixedCheckbox } from "../components/MixedCheckbox";
 import { Modal } from "../components/Modal";
 import { AdminService } from "../gen/heron/v1/admin_pb";
 import type { UpdateStatus } from "../gen/heron/v1/update_pb";
@@ -42,7 +43,11 @@ export function Updates() {
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const targets = new Map(updates.data!.targets.map((target) => [target.nodeId, target.status]));
   const hub = targets.get(0n);
-  const chosen = [...selected].filter((id) => eligible(targets.get(id), latest));
+  // 行勾选框、全选与提交只认 eligible 这一个判定：updatable 是此刻可更新的节点（按节点列表顺序），chosen 是它与已选的
+  // 交集。轮询让节点失去资格时，selected 里的旧 id 不再计入 chosen，计数、全选状态与点击"更新选中节点"时取的目标一起收缩；
+  // 确认框打开后目标固定，期间失去资格的节点由 hub 的 updates.Manager.Start 按同样的条件（支持、版本更旧、无进行中任务）拒绝。
+  const updatable = nodes.data!.nodes.filter((node) => eligible(targets.get(node.id), latest)).map((node) => node.id);
+  const chosen = updatable.filter((id) => selected.has(id));
   const nameOf = (id: bigint) => id === 0n ? "Hub" : nodes.data!.nodes.find((node) => node.id === id)?.name ?? `节点 #${id}`;
   const execute = async () => {
     if (!confirmation || busy) return;
@@ -80,7 +85,8 @@ export function Updates() {
       <button type="button" disabled={chosen.length === 0 || busy} onClick={(event) => setConfirmation({ ids: chosen, version: latest, opener: event.currentTarget })}>更新选中节点（{chosen.length}）</button>
     </div>
     <div className="table-scroll" role="region" aria-label="节点更新" tabIndex={0}><table className="nodes">
-      <thead><tr><th>选择</th><th>节点</th><th>当前版本</th><th>更新状态</th><th>操作</th></tr></thead>
+      <thead><tr><th><label><MixedCheckbox label="选择全部可更新节点" checked={chosen.length === 0 ? false : chosen.length === updatable.length ? true : "mixed"}
+        disabled={updatable.length === 0 || busy} onChange={() => setSelected(new Set(chosen.length === updatable.length ? [] : updatable))} />全选</label></th><th>节点</th><th>当前版本</th><th>更新状态</th><th>操作</th></tr></thead>
       <tbody>{nodes.data!.nodes.map((node) => {
         const status = targets.get(node.id);
         return <tr key={String(node.id)}><td><input type="checkbox" aria-label={`选择 ${node.name}（#${node.id}）`} checked={selected.has(node.id)} disabled={!eligible(status, latest) || busy} onChange={(event) => setSelected((old) => {

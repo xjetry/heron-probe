@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { createConnectQueryKey } from "@connectrpc/connect-query";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import type { MessageInitShape } from "@bufbuild/protobuf";
+import { AdminService, type GetUpdatesResponse, GetUpdatesResponseSchema } from "../gen/heron/v1/admin_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Updates } from "./Updates";
 
@@ -67,4 +70,59 @@ it("仅排队任务可取消，回滚原因可见", async () => {
   await waitFor(() => expect(cancelled).toEqual([{ nodeId: 1n, id: "queued-task" }]));
   expect(screen.getByText("已回滚")).toBeInTheDocument();
   expect(screen.getByText("new process timeout")).toBeInTheDocument();
+});
+
+type TargetsInit = NonNullable<Exclude<MessageInitShape<typeof GetUpdatesResponseSchema>, GetUpdatesResponse>["targets"]>;
+const selectAll = () => screen.getByRole("checkbox", { name: "选择全部可更新节点" });
+const row = (name: string) => screen.getByRole("checkbox", { name: `选择 ${name}` });
+
+it("全选只选行上可勾的节点：检查版本前禁用，部分选中为半选，全选后再点清空", async () => {
+  render();
+  await screen.findByRole("button", { name: "更新 Hub" });
+  expect(selectAll()).toBeDisabled();
+  await check();
+  expect(selectAll()).toBeEnabled();
+  expect(selectAll()).not.toBeChecked();
+  fireEvent.click(row("东京（#1）"));
+  expect(selectAll()).toHaveAttribute("aria-checked", "mixed");
+  expect((selectAll() as HTMLInputElement).indeterminate).toBe(true);
+  fireEvent.click(selectAll());
+  expect(selectAll()).toBeChecked();
+  expect(row("东京（#1）")).toBeChecked();
+  expect(row("西雅图（#3）")).toBeChecked();
+  // 香港不支持在线更新，行上不可勾，全选也不能选中它。
+  expect(row("香港（#2）")).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "更新选中节点（2）" })).toBeEnabled();
+  fireEvent.click(selectAll());
+  expect(selectAll()).not.toBeChecked();
+  expect(row("东京（#1）")).not.toBeChecked();
+  expect(row("西雅图（#3）")).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "更新选中节点（0）" })).toBeDisabled();
+});
+
+it("全选后提交按节点列表顺序逐个下发", async () => {
+  const ids: bigint[] = [];
+  render({ startUpdate: async (req) => { ids.push(req.nodeId); return {}; } });
+  await check();
+  fireEvent.click(selectAll());
+  fireEvent.click(screen.getByRole("button", { name: "更新选中节点（2）" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "确认更新" }));
+  await screen.findByText(/西雅图：更新任务已提交/);
+  expect(ids).toEqual([1n, 3n]);
+});
+
+it("轮询使已选节点失去更新资格时，计数与全选状态一起收缩", async () => {
+  let current: TargetsInit = targets;
+  const { queryClient } = render({ getUpdates: async (req) => ({ targets: current, latestVersion: req.checkLatest ? "v0.3.0" : "" }) });
+  await check();
+  fireEvent.click(selectAll());
+  expect(screen.getByRole("button", { name: "更新选中节点（2）" })).toBeEnabled();
+  // 西雅图在别处已开始更新：有进行中的任务即不再可选。
+  current = targets.map((t) => t.nodeId === 3n ? { ...t, status: { ...t.status, task: { id: "running", version: "v0.3.0", state: "dispatched" } } } : t);
+  await act(async () => { await queryClient.refetchQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getUpdates, cardinality: "finite" }) }); });
+  await waitFor(() => expect(row("西雅图（#3）")).toBeDisabled());
+  expect(screen.getByRole("button", { name: "更新选中节点（1）" })).toBeEnabled();
+  // 仍可更新的只剩东京且已选中，全选框是勾选而不是半选。
+  expect(selectAll()).toBeChecked();
+  expect(selectAll()).toHaveAttribute("aria-checked", "true");
 });
