@@ -89,6 +89,8 @@ const (
 	// AdminServiceReorderNodesProcedure is the fully-qualified name of the AdminService's ReorderNodes
 	// RPC.
 	AdminServiceReorderNodesProcedure = "/heron.v1.AdminService/ReorderNodes"
+	// AdminServiceMoveNodesProcedure is the fully-qualified name of the AdminService's MoveNodes RPC.
+	AdminServiceMoveNodesProcedure = "/heron.v1.AdminService/MoveNodes"
 	// AdminServiceListTagsProcedure is the fully-qualified name of the AdminService's ListTags RPC.
 	AdminServiceListTagsProcedure = "/heron.v1.AdminService/ListTags"
 	// AdminServiceDeleteTagProcedure is the fully-qualified name of the AdminService's DeleteTag RPC.
@@ -276,6 +278,14 @@ type AdminServiceClient interface {
 	RotateNodeToken(context.Context, *connect.Request[v1.RotateNodeTokenRequest]) (*connect.Response[v1.RotateNodeTokenResponse], error)
 	// 给出全部节点 id 的新顺序；必须恰好包含每个节点一次。
 	ReorderNodes(context.Context, *connect.Request[v1.ReorderNodesRequest]) (*connect.Response[v1.ReorderNodesResponse], error)
+	// 把一组节点按它们现有的先后整体移到全序第 position 位起的连续位置，其余节点相对顺序不变。全序按
+	// (sort_order, id) 升序，与列表、总览、公开页同一顺序；Node.position 是节点在这条全序里的名次（从 1 起，
+	// 不随标签过滤、搜索或调用方可见的节点范围变化），position 与它同一编号。ids 里的节点按现有先后占据
+	// 第 position..position+k-1 位（k 为去重后的节点数），原第 position 位起的其余节点依次后移；被选节点
+	// 原本就排在目标位置之前的同样适用。ids 至少一个（空列表返回 InvalidArgument）；重复 id 去重；请求里
+	// id 的先后不影响结果；任一 id 不存在返回 NotFound 并给出该 id，整批不改。position 合法区间
+	// 1..N-k+1（N 为节点总数），越界返回 InvalidArgument 并写明区间，不截断——截断会让写错的位置静默落到首尾。
+	MoveNodes(context.Context, *connect.Request[v1.MoveNodesRequest]) (*connect.Response[v1.MoveNodesResponse], error)
 	// 全部标签与各自挂在几个节点上，按名字大小写不敏感排序；没挂在任何节点上的标签也在内（节点数 0）。
 	ListTags(context.Context, *connect.Request[v1.ListTagsRequest]) (*connect.Response[v1.ListTagsResponse], error)
 	// 删除标签：被探测或告警动态选择器引用时拒绝；否则解除节点关联并删除。名字大小写不敏感；不存在时 NotFound。
@@ -512,6 +522,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			httpClient,
 			baseURL+AdminServiceReorderNodesProcedure,
 			connect.WithSchema(adminServiceMethods.ByName("ReorderNodes")),
+			connect.WithClientOptions(opts...),
+		),
+		moveNodes: connect.NewClient[v1.MoveNodesRequest, v1.MoveNodesResponse](
+			httpClient,
+			baseURL+AdminServiceMoveNodesProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("MoveNodes")),
 			connect.WithClientOptions(opts...),
 		),
 		listTags: connect.NewClient[v1.ListTagsRequest, v1.ListTagsResponse](
@@ -810,6 +826,7 @@ type adminServiceClient struct {
 	deleteNode            *connect.Client[v1.DeleteNodeRequest, v1.DeleteNodeResponse]
 	rotateNodeToken       *connect.Client[v1.RotateNodeTokenRequest, v1.RotateNodeTokenResponse]
 	reorderNodes          *connect.Client[v1.ReorderNodesRequest, v1.ReorderNodesResponse]
+	moveNodes             *connect.Client[v1.MoveNodesRequest, v1.MoveNodesResponse]
 	listTags              *connect.Client[v1.ListTagsRequest, v1.ListTagsResponse]
 	deleteTag             *connect.Client[v1.DeleteTagRequest, v1.DeleteTagResponse]
 	openRegisterWindow    *connect.Client[v1.OpenRegisterWindowRequest, v1.OpenRegisterWindowResponse]
@@ -960,6 +977,11 @@ func (c *adminServiceClient) RotateNodeToken(ctx context.Context, req *connect.R
 // ReorderNodes calls heron.v1.AdminService.ReorderNodes.
 func (c *adminServiceClient) ReorderNodes(ctx context.Context, req *connect.Request[v1.ReorderNodesRequest]) (*connect.Response[v1.ReorderNodesResponse], error) {
 	return c.reorderNodes.CallUnary(ctx, req)
+}
+
+// MoveNodes calls heron.v1.AdminService.MoveNodes.
+func (c *adminServiceClient) MoveNodes(ctx context.Context, req *connect.Request[v1.MoveNodesRequest]) (*connect.Response[v1.MoveNodesResponse], error) {
+	return c.moveNodes.CallUnary(ctx, req)
 }
 
 // ListTags calls heron.v1.AdminService.ListTags.
@@ -1241,6 +1263,14 @@ type AdminServiceHandler interface {
 	RotateNodeToken(context.Context, *connect.Request[v1.RotateNodeTokenRequest]) (*connect.Response[v1.RotateNodeTokenResponse], error)
 	// 给出全部节点 id 的新顺序；必须恰好包含每个节点一次。
 	ReorderNodes(context.Context, *connect.Request[v1.ReorderNodesRequest]) (*connect.Response[v1.ReorderNodesResponse], error)
+	// 把一组节点按它们现有的先后整体移到全序第 position 位起的连续位置，其余节点相对顺序不变。全序按
+	// (sort_order, id) 升序，与列表、总览、公开页同一顺序；Node.position 是节点在这条全序里的名次（从 1 起，
+	// 不随标签过滤、搜索或调用方可见的节点范围变化），position 与它同一编号。ids 里的节点按现有先后占据
+	// 第 position..position+k-1 位（k 为去重后的节点数），原第 position 位起的其余节点依次后移；被选节点
+	// 原本就排在目标位置之前的同样适用。ids 至少一个（空列表返回 InvalidArgument）；重复 id 去重；请求里
+	// id 的先后不影响结果；任一 id 不存在返回 NotFound 并给出该 id，整批不改。position 合法区间
+	// 1..N-k+1（N 为节点总数），越界返回 InvalidArgument 并写明区间，不截断——截断会让写错的位置静默落到首尾。
+	MoveNodes(context.Context, *connect.Request[v1.MoveNodesRequest]) (*connect.Response[v1.MoveNodesResponse], error)
 	// 全部标签与各自挂在几个节点上，按名字大小写不敏感排序；没挂在任何节点上的标签也在内（节点数 0）。
 	ListTags(context.Context, *connect.Request[v1.ListTagsRequest]) (*connect.Response[v1.ListTagsResponse], error)
 	// 删除标签：被探测或告警动态选择器引用时拒绝；否则解除节点关联并删除。名字大小写不敏感；不存在时 NotFound。
@@ -1473,6 +1503,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		AdminServiceReorderNodesProcedure,
 		svc.ReorderNodes,
 		connect.WithSchema(adminServiceMethods.ByName("ReorderNodes")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceMoveNodesHandler := connect.NewUnaryHandler(
+		AdminServiceMoveNodesProcedure,
+		svc.MoveNodes,
+		connect.WithSchema(adminServiceMethods.ByName("MoveNodes")),
 		connect.WithHandlerOptions(opts...),
 	)
 	adminServiceListTagsHandler := connect.NewUnaryHandler(
@@ -1789,6 +1825,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceRotateNodeTokenHandler.ServeHTTP(w, r)
 		case AdminServiceReorderNodesProcedure:
 			adminServiceReorderNodesHandler.ServeHTTP(w, r)
+		case AdminServiceMoveNodesProcedure:
+			adminServiceMoveNodesHandler.ServeHTTP(w, r)
 		case AdminServiceListTagsProcedure:
 			adminServiceListTagsHandler.ServeHTTP(w, r)
 		case AdminServiceDeleteTagProcedure:
@@ -1970,6 +2008,10 @@ func (UnimplementedAdminServiceHandler) RotateNodeToken(context.Context, *connec
 
 func (UnimplementedAdminServiceHandler) ReorderNodes(context.Context, *connect.Request[v1.ReorderNodesRequest]) (*connect.Response[v1.ReorderNodesResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.ReorderNodes is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) MoveNodes(context.Context, *connect.Request[v1.MoveNodesRequest]) (*connect.Response[v1.MoveNodesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.MoveNodes is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) ListTags(context.Context, *connect.Request[v1.ListTagsRequest]) (*connect.Response[v1.ListTagsResponse], error) {

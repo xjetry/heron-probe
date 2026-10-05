@@ -13,6 +13,9 @@ import (
 
 var ErrBadOrder = errors.New("ids must list every item exactly once")
 
+// ErrEmptyMove 是 MoveNodes 收到空 id 列表：至少要移动一个节点。
+var ErrEmptyMove = errors.New("ids must list at least one node")
+
 // BillingCycle 按 TEXT 落库，空串表示没有周期。与协议枚举的对应在 api 的 billingCycles 表，周期的月数在
 // alert 的 cycleMonths；两处的测试都按 BillingCycles 核对一一对应。
 type BillingCycle string
@@ -59,11 +62,14 @@ type NodeEdit struct {
 }
 
 type Node struct {
-	ID              int64
-	Name            string
-	Public          bool
-	Note            string
-	SortOrder       int32
+	ID        int64
+	Name      string
+	Public    bool
+	Note      string
+	SortOrder int32
+	// Position 是节点在全部节点里按 (sort_order, id) 升序的名次，从 1 起，在 queryNodes 里随读算出：
+	// where 条件（标签交集、无标签、公开、监控范围）只筛行，不改名次。
+	Position        uint32
 	CreatedAt       time.Time
 	LastSeenAt      time.Time // 零值表示从未上报
 	LastSource      string    // 最近一次上报的来源地址；空串表示 hub 没有记录到来源，含义见 node.last_source
@@ -114,10 +120,16 @@ func (n Node) DisplayCountry() (string, CountrySource) {
 	return "", CountryNone
 }
 
-const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.created_at, n.last_seen_at, n.traffic_reset_day, n.offline_grace_s,
+// selectNodes 是节点行唯一的读取语句：node 先在内层 SELECT 上按 (sort_order, id) 算全序名次，再 LEFT JOIN
+// node_facts。窗口函数在内层计算，先于外层 where 过滤——名次属于全部节点，where（标签交集、无标签、公开、
+// 监控范围）只筛行，不重排名次。
+const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.position, n.created_at, n.last_seen_at, n.traffic_reset_day, n.offline_grace_s,
 	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source, n.country, n.country_ip, n.country_pin, n.maintenance,
 	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at, f.network, f.diagnostics
-	FROM node n LEFT JOIN node_facts f ON f.node_id = n.id`
+	FROM (SELECT id, name, public, note, sort_order, created_at, last_seen_at, traffic_reset_day, offline_grace_s,
+		price, currency, billing_cycle, expires_on, auto_renew, last_source, country, country_ip, country_pin, maintenance,
+		ROW_NUMBER() OVER (ORDER BY sort_order, id) AS position FROM node) n
+	LEFT JOIN node_facts f ON f.node_id = n.id`
 
 // nodeOrder 是节点列表唯一的排序：面板与公开页看到同一个顺序。
 const nodeOrder = " ORDER BY n.sort_order, n.id"
@@ -132,7 +144,7 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 		var network, diagnostics sql.NullString
 		var cores, icmp, factsUpdated sql.NullInt64
 		b := &n.Billing
-		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &created, &seen, &n.TrafficResetDay, &grace,
+		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &n.Position, &created, &seen, &n.TrafficResetDay, &grace,
 			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource, &n.Country, &n.CountryIP, &n.CountryPin, &n.Maintenance,
 			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated, &network, &diagnostics); err != nil {
 			return nil, err
@@ -427,12 +439,67 @@ func (s *Store) reorder(ctx context.Context, table string, ids []int64) error {
 			}
 			seen[id] = true
 		}
-		for i, id := range ids {
-			if _, err := tx.Exec("UPDATE "+table+" SET sort_order = ? WHERE id = ?", i, id); err != nil {
-				return err
+		return writeOrder(tx, table, ids)
+	})
+}
+
+// writeOrder 把 ids 给出的全序写为 sort_order = 0..N-1；ids 必须恰是同一事务里读到的全部行，由调用方
+// （ReorderNodes 的排列校验、MoveNodes 的全序重算）保证。两处改顺序共用这一段，不各写一份。
+func writeOrder(tx *sql.Tx, table string, ids []int64) error {
+	for i, id := range ids {
+		if _, err := tx.Exec("UPDATE "+table+" SET sort_order = ? WHERE id = ?", i, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// MoveNodes 把 ids 选出的节点（去重后 k 个）按它们在当前全序里的先后整体移到第 position 位起的连续位置，
+// 其余节点相对顺序不变，全部节点的 sort_order 在同一写事务里重写为 0..N-1。校验全部通过才写入：任一 id
+// 不存在返回带该 id 的 NotFound，position 越界返回 MoveRangeError，两种拒绝都整批不改。请求里 id 的先后与
+// 重复不影响结果：被选节点的先后取自库内全序，与请求顺序无关。position 按事务里读到的全序计算，并发的
+// 增删与重排不会被一份过期的完整排列覆盖。
+func (s *Store) MoveNodes(ctx context.Context, ids []int64, position uint32) error {
+	if len(ids) == 0 {
+		return ErrEmptyMove
+	}
+	return s.write(ctx, func(tx *sql.Tx) error {
+		ordered, err := scanIDs(tx.Query("SELECT id FROM node ORDER BY sort_order, id"))
+		if err != nil {
+			return err
+		}
+		selected := make(map[int64]bool, len(ids))
+		for _, id := range ids {
+			selected[id] = true // 重复 id 在集合里只算一个
+		}
+		existing := make(map[int64]bool, len(ordered))
+		for _, id := range ordered {
+			existing[id] = true
+		}
+		for id := range selected {
+			if !existing[id] {
+				return NotFoundError{Kind: ObjectNode, ID: id}
 			}
 		}
-		return nil
+		k := len(selected)
+		if position < 1 || int(position) > len(ordered)-k+1 {
+			return MoveRangeError{Total: len(ordered), Moving: k, Position: position}
+		}
+		moving := make([]int64, 0, k)
+		rest := make([]int64, 0, len(ordered)-k)
+		for _, id := range ordered {
+			if selected[id] {
+				moving = append(moving, id)
+			} else {
+				rest = append(rest, id)
+			}
+		}
+		at := int(position) - 1
+		whole := make([]int64, 0, len(ordered))
+		whole = append(whole, rest[:at]...)
+		whole = append(whole, moving...)
+		whole = append(whole, rest[at:]...)
+		return writeOrder(tx, "node", whole)
 	})
 }
 

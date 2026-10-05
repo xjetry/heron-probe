@@ -110,6 +110,16 @@ service AdminService {
   rpc ReorderNodes(ReorderNodesRequest) returns (ReorderNodesResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
   }
+  // 把一组节点按它们现有的先后整体移到全序第 position 位起的连续位置，其余节点相对顺序不变。全序按
+  // (sort_order, id) 升序，与列表、总览、公开页同一顺序；Node.position 是节点在这条全序里的名次（从 1 起，
+  // 不随标签过滤、搜索或调用方可见的节点范围变化），position 与它同一编号。ids 里的节点按现有先后占据
+  // 第 position..position+k-1 位（k 为去重后的节点数），原第 position 位起的其余节点依次后移；被选节点
+  // 原本就排在目标位置之前的同样适用。ids 至少一个（空列表返回 InvalidArgument）；重复 id 去重；请求里
+  // id 的先后不影响结果；任一 id 不存在返回 NotFound 并给出该 id，整批不改。position 合法区间
+  // 1..N-k+1（N 为节点总数），越界返回 InvalidArgument 并写明区间，不截断——截断会让写错的位置静默落到首尾。
+  rpc MoveNodes(MoveNodesRequest) returns (MoveNodesResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
   // 全部标签与各自挂在几个节点上，按名字大小写不敏感排序；没挂在任何节点上的标签也在内（节点数 0）。
   rpc ListTags(ListTagsRequest) returns (ListTagsResponse) {
     option (heron.v1.access) = ACCESS_READ;
@@ -453,6 +463,10 @@ message Node {
   // 维护状态（§9.5）：为真时该节点的告警事件照常生成但不投递（silenced），在线状态照实显示，另加"维护中"徽章。
   // 随 UpdateNode 整体替换；CreateNode 不接受（新节点恒为 false）。
   bool maintenance = 20;
+  // 节点在全部节点里按全序 (sort_order, id) 升序的名次，从 1 起，随读按当前全序计算：标签过滤（tags、
+  // untagged）、搜索与调用方可见的节点范围只筛行，不改变名次。面板序号列显示它；MoveNodesRequest.position
+  // 与它同一编号。
+  uint32 position = 21;
 }
 
 // 国家显示值的来源。
@@ -549,6 +563,16 @@ message ReorderNodesRequest {
   repeated int64 ids = 1;
 }
 message ReorderNodesResponse {}
+
+message MoveNodesRequest {
+  // 要移动的节点 id：至少一个（空列表返回 InvalidArgument），重复 id 去重，请求里的先后不影响结果
+  // （被选节点按它们现有的先后排列）。任一 id 不存在返回 NotFound 并给出该 id，整批不改。
+  repeated int64 ids = 1;
+  // 目标位置：全序名次（Node.position 同一编号），被选节点按现有先后占据第 position..position+k-1 位。
+  // 合法区间 1..N-k+1（N 为节点总数，k 为去重后的节点数），越界返回 InvalidArgument 并写明区间，不截断。
+  uint32 position = 2;
+}
+message MoveNodesResponse {}
 
 message Tag {
   // 标签第一次出现时的写法。

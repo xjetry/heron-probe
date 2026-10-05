@@ -67,6 +67,19 @@ func (e NotFoundError) Is(target error) bool {
 	return target == ErrNotFound
 }
 
+// MoveRangeError 是 MoveNodes 的 position 越界：N（节点总数）、k（去重后要移动的节点数）与合法区间由写
+// 事务里读到的全序推出，调用方据此写自解释的错误消息；越界不截断到区间端点——截断会让写错的位置静默
+// 落到首尾。
+type MoveRangeError struct {
+	Total    int // N：同一事务里读到的节点总数
+	Moving   int // k：去重后要移动的节点数
+	Position uint32
+}
+
+func (e MoveRangeError) Error() string {
+	return fmt.Sprintf("position must be between 1 and %d (N=%d nodes, k=%d moving); got %d", e.Total-e.Moving+1, e.Total, e.Moving, e.Position)
+}
+
 // NodeLimitError 是保存任务之后某个现有节点的任务数（显式分配加全部 all_nodes 任务）超过上限。
 type NodeLimitError struct {
 	NodeID int64

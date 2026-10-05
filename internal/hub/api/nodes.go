@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -105,7 +106,7 @@ var countrySources = map[store.CountrySource]heronv1.CountrySource{
 
 // nodeProto 的 today 是 hub 时区的今天（alert.Today）。
 func nodeProto(n store.Node, today time.Time) *heronv1.Node {
-	out := &heronv1.Node{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, SortOrder: n.SortOrder, CreatedAt: n.CreatedAt.Unix(), Facts: n.Facts, TrafficResetDay: uint32(n.TrafficResetDay),
+	out := &heronv1.Node{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, SortOrder: n.SortOrder, Position: n.Position, CreatedAt: n.CreatedAt.Unix(), Facts: n.Facts, TrafficResetDay: uint32(n.TrafficResetDay),
 		Billing: billingProto(n.Billing, today), LastSource: n.LastSource, CountryIp: n.CountryIP, CountryPin: n.CountryPin, CountryLookup: n.Country, Tags: n.Tags, Maintenance: n.Maintenance}
 	country, source := n.DisplayCountry()
 	out.Country, out.CountrySource = country, countrySources[source]
@@ -316,6 +317,29 @@ func (s *Service) ReorderNodes(ctx context.Context, req *connect.Request[heronv1
 		return nil, internalError("reordering nodes failed")
 	}
 	return connect.NewResponse(&heronv1.ReorderNodesResponse{}), nil
+}
+
+// MoveNodes 的错误消息自带合法区间的推导（N、k 由 store 在写事务里读到），不截断到区间端点。
+func (s *Service) MoveNodes(ctx context.Context, req *connect.Request[heronv1.MoveNodesRequest]) (*connect.Response[heronv1.MoveNodesResponse], error) {
+	err := s.store.MoveNodes(ctx, req.Msg.GetIds(), req.Msg.GetPosition())
+	switch {
+	case errors.Is(err, store.ErrEmptyMove):
+		return nil, invalid("ids: must list at least one node")
+	case errors.Is(err, store.ErrNotFound):
+		var missing store.NotFoundError
+		errors.As(err, &missing)
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("ids: node %d does not exist; nothing was moved", missing.ID))
+	}
+	var outOfRange store.MoveRangeError
+	if errors.As(err, &outOfRange) {
+		return nil, invalid("position: must be between 1 and %d (N = %d nodes, k = %d selected); got %d",
+			outOfRange.Total-outOfRange.Moving+1, outOfRange.Total, outOfRange.Moving, outOfRange.Position)
+	}
+	if err != nil {
+		s.log.Error("moving nodes failed", "err", err)
+		return nil, internalError("moving nodes failed")
+	}
+	return connect.NewResponse(&heronv1.MoveNodesResponse{}), nil
 }
 
 func (s *Service) OpenRegisterWindow(ctx context.Context, req *connect.Request[heronv1.OpenRegisterWindowRequest]) (*connect.Response[heronv1.OpenRegisterWindowResponse], error) {

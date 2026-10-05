@@ -297,8 +297,9 @@ func TestNodeTagQueryPlans(t *testing.T) {
 		want  []string
 	}{
 		{"ListNodesByTags", selectNodes + filter + nodeOrder, filterArgs, []string{byTag, "USE TEMP B-TREE FOR GROUP BY"}},
-		// 无标签过滤：外层扫节点，相关性来自 NOT EXISTS 的关联存在性判断，走主键。
-		{"ListUntaggedNodes", selectNodes + untaggedWhere + nodeOrder, nil, []string{"CORRELATED SCALAR SUBQUERY 1", byNode}},
+		// 无标签过滤：外层扫节点，相关性来自 NOT EXISTS 的关联存在性判断，走主键。节点行经全序名次的
+		// 内层子查询（selectNodes）给出，NOT EXISTS 的子查询编号随之从 1 变为 2。
+		{"ListUntaggedNodes", selectNodes + untaggedWhere + nodeOrder, nil, []string{"CORRELATED SCALAR SUBQUERY 2", byNode}},
 		// 无标签节点的标签集：结果为空，但这条语句每次调用都会跑。只钉 NOT EXISTS 子查询出现与 node_tag 主键访问，
 		// 不钉 node 表自动索引的选择（那是无关的偶然）。
 		{"tags of the untagged nodes", nodeTagsQuery(untaggedWhere), nil, []string{"CORRELATED SCALAR SUBQUERY 1", byNode}},
