@@ -1283,6 +1283,18 @@ describe("移动到指定位置", () => {
     expect(positionOf("c（#3）")).toBe("3");
   });
 
+  it("过滤时弹窗的区间仍按节点总数计算，不用可见行数", async () => {
+    const moveNodes = vi.fn(async () => ({}));
+    renderNodes({ listNodes: listHub, listTags: tagList, moveNodes });
+    await screen.findByRole("link", { name: "d（#4）" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "按标签过滤 db" }));
+    await waitFor(() => expect(screen.queryByRole("link", { name: "b（#2）" })).toBeNull());
+    // 可见只剩 a、c 两行；N = 4、k = 1，上限仍是 4。
+    fireEvent.change(screen.getByRole("combobox", { name: "移动 c（#3）" }), { target: { value: "move" } });
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("目标位置（1–4）")).toHaveAttribute("max", "4");
+  });
+
   it("多选两个节点经弹窗提交 ids 与 position，成功后清空选择并刷新列表", async () => {
     const listNodes = vi.fn(listHub.getMockImplementation()!);
     const moveNodes = vi.fn(async () => ({}));
