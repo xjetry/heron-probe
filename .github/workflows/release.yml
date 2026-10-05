@@ -2,19 +2,21 @@ name: release
 on:
   push:
     tags: ["v*"]
-# contents: write 建 GitHub Release；packages: write 推镜像（镜像名见 Makefile 的 DOCKER_IMAGE）。
-permissions:
-  contents: write
-  packages: write
+# 权限按 job 最小化：build 推镜像要 packages: write，publish 建 Release 要 contents: write，其余只读。
+# 顶层为空集，新 job 不显式声明就没有任何权限。
+permissions: {}
 # latest 是共享指针：回读与移动 latest 都假设推送到回读之间没有别的写者，同组的运行串行。同组里已在排队的
 # 运行会被后来者替换并取消，被取消的 tag 需要手工重跑。
 concurrency:
   group: release
   cancel-in-progress: false
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
     steps:
       # 不把 token 留在工作区的 .git/config：它带 packages: write，而 make ci、make release 会运行 pnpm 依赖、
       # Go 模块与 buf 等第三方代码。之后需要 token 的步骤各自经输入拿到（login-action 的 password、gh 的
@@ -65,12 +67,73 @@ jobs:
           registry: ${{ steps.registry.outputs.host }}
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      # 镜像先于 GitHub Release 发布，gh release create 是最后一步：之前任何一步失败都能原样重跑本 job
-      # （同一 tag 重推即覆盖）；反过来，Release 已建而镜像失败时，重跑会停在 release 已存在。
-      # 推送只推版本 tag；latest 只在回读通过后按回读过的 digest 移动（make docker-promote）。
+      # 镜像在 build 里推送并回读，Release 在 publish 里最后创建；任一 job 失败都可以在 Actions 页面重跑
+      # 失败的那个 job（同一 tag 重推镜像即覆盖）。推送只推版本 tag；latest 只在回读通过后按回读过的
+      # digest 移动（make docker-promote）。
       - run: make docker-push VERSION="$GITHUB_REF_NAME"
       - run: make docker-readback VERSION="$GITHUB_REF_NAME"
       - run: make docker-promote VERSION="$GITHUB_REF_NAME"
+      # dist 交给签名 job；签名 job 不重新构建，它签的就是这里通过 e2e 与镜像回读的那一份产物。
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+  # 私钥只进这个 job：它不运行 make ci / make release 里的第三方代码，只编译标准库与 internal/releasesig
+  # （scripts/releasesign 的依赖检查守着），也不恢复构建 job 写过的 Go 缓存——被污染的依赖可能在缓存里留下
+  # 编译产物。私钥只经 env 交给签名那一步。
+  sign:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+      - name: sign
+        env:
+          HERON_RELEASE_SIGNING_KEY: ${{ secrets.HERON_RELEASE_SIGNING_KEY }}
+        run: go run ./scripts/releasesign sign -version "$GITHUB_REF_NAME" -dir dist
+      - run: go run ./scripts/releasesign verify -version "$GITHUB_REF_NAME" -dir dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signature
+          path: dist/SHA256SUMS.sig
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    needs: sign
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signature
+          path: dist
       # prerelease 与镜像是否移动 latest 读同一个判定（make release-channel）。
       - run: |
           channel=$(make -s release-channel VERSION="$GITHUB_REF_NAME")
@@ -80,5 +143,11 @@ jobs:
             *) echo "make release-channel printed '$channel'" >&2; exit 1 ;;
           esac
           gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "$GITHUB_REF_NAME" ${extra:+"$extra"}
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # 回读：验的是 Release 页面上实际可下载的字节，不是本 job 手里的文件。
+      - run: |
+          gh release download "$GITHUB_REF_NAME" -p SHA256SUMS -p SHA256SUMS.sig -D readback
+          go run ./scripts/releasesign verify -version "$GITHUB_REF_NAME" -dir readback
         env:
           GH_TOKEN: ${{ github.token }}
