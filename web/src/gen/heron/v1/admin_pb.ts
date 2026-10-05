@@ -726,7 +726,7 @@ export type ListNodesRequest = Message<"heron.v1.ListNodesRequest"> & {
   /**
    * 只返回同时挂着这里全部标签的节点（交集：多选是逐步收窄，再选一个结果只会变少）。名字按 UpdateNodeRequest.tags
    * 的规则校验，大小写不敏感，折叠后重复的算一个；有不存在的标签时结果为空。空列表不过滤：untagged 为假时返回
-   * 全部节点，untagged 为真时返回全部无标签节点（见下）。与 untagged 同时给出会被拒绝，见 untagged。
+   * 全部节点，untagged 为真时返回全部无标签节点（见下）。非空时与 untagged 同时为真会被拒绝（空列表不构成组合）。
    * 至多 16 个不同的标签：每个节点至多挂 16 个，更多的交集不可能匹配任何节点，按参数错误拒绝。
    *
    * @generated from field: repeated string tags = 1;
