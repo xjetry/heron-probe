@@ -70,7 +70,7 @@ func main() {
 import (
 	v1 "example.com/fix/gen/v1"
 	"example.com/fix/gen/v1/v1connect"
-	"example.com/fix/hubdep"
+	"example.com/hubdep"
 )
 
 func main() {
