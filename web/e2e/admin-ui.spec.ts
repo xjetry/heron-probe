@@ -207,13 +207,84 @@ test('节点拖拽、键盘和移动端菜单保存同一完整顺序', async ({
     await page.screenshot({ path: testInfo.outputPath('node-order-desktop.png'), fullPage: true });
     await page.getByRole('searchbox', { name: '搜索节点' }).fill(`order-0-${browserName}`);
     await expect(handle).toBeDisabled();
-    await expect(page.getByRole('combobox', { name: `移动 ${label(0)}`, exact: true })).toBeDisabled();
+    // 过滤时拖动与上下移仍禁用，但按全序名次的「移动到…」可用，菜单保持打开。
+    const filteredMenu = page.getByRole('combobox', { name: `移动 ${label(0)}`, exact: true });
+    await expect(filteredMenu).toBeEnabled();
+    await expect(page.getByText('搜索或按标签过滤时不能用拖动或上下移（它们保存完整排列）；可用「移动到…」按全序名次移动，或清空过滤后再调整。')).toBeVisible();
     await page.getByRole('searchbox', { name: '搜索节点' }).fill('');
     await page.setViewportSize({ width: 375, height: 812 });
     await page.getByRole('combobox', { name: `移动 ${label(0)}`, exact: true }).selectOption('last');
     await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
     await page.screenshot({ path: testInfo.outputPath('node-order-mobile.png'), fullPage: true });
+  } finally {
+    for (const id of ids) await rpc(page, 'DeleteNode', { id });
+  }
+});
+
+test('节点按全序名次整体移动到指定位置', async ({ page, browserName }, testInfo) => {
+  await page.goto('/admin/login');
+  await rpc(page, 'Login', { password: 'local-browser-test-password' });
+  const ids: string[] = [];
+  const label = (index: number) => `move-${index}-${browserName}（#${ids[index]}）`;
+  // ListNodes 返回的是 hub 的完整列表：本用例只断言自己那批节点的相对顺序，名次则对完整列表验证（1 起且与行序一致）。
+  const hubList = async () => (await rpc(page, 'ListNodes')).nodes as { id: string; position: number }[];
+  const mineInOrder = async () => (await hubList()).filter((node) => ids.includes(node.id)).map((node) => node.id);
+  const positionsMatchList = async () => {
+    const all = await hubList();
+    return all.every((node, index) => node.position === index + 1);
+  };
+  try {
+    for (let i = 0; i < 5; i++) ids.push((await rpc(page, 'CreateNode', { name: `move-${i}-${browserName}` })).node.id);
+    await page.goto('/admin/nodes');
+    await page.setViewportSize({ width: 1440, height: 960 });
+    const total = (await hubList()).length;
+    const handle = (index: number) => page.getByRole('button', { name: `调整顺序 ${label(index)}`, exact: true });
+    // 多选 move-1、move-3（全序第 2、4 位）整体移到第 3 位：其余相对顺序不变。
+    await page.getByRole('checkbox', { name: `选择 ${label(1)}`, exact: true }).check();
+    await page.getByRole('checkbox', { name: `选择 ${label(3)}`, exact: true }).check();
+    await expect(page.getByText('已选择 2 个节点')).toBeVisible();
+    await page.getByRole('button', { name: '移动到…', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toHaveAccessibleName('移动节点');
+    await expect(dialog.getByText(`共 ${total} 个节点，将移动其中的 2 个；其余节点相对顺序不变。`)).toBeVisible();
+    const input = dialog.getByLabel(`目标位置（1–${total - 1}）`, { exact: true });
+    await expect(input).toHaveAttribute('max', String(total - 1));
+    await expect(dialog.getByText('将 2 个节点移到第 1–2 位')).toBeVisible();
+    await input.fill('3');
+    await expect(dialog.getByText('将 2 个节点移到第 3–4 位')).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath('node-move-modal.png'), fullPage: true });
+    await dialog.getByRole('button', { name: '移动', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByText('已选择 0 个节点')).toBeVisible();
+    await expect.poll(mineInOrder).toEqual([ids[0], ids[2], ids[1], ids[3], ids[4]]);
+    expect(await positionsMatchList()).toBe(true);
+    // 序号列跟着新的全序名次走。
+    await expect(handle(0)).toHaveText('1');
+    await expect(handle(2)).toHaveText('2');
+    await expect(handle(1)).toHaveText('3');
+    await expect(handle(3)).toHaveText('4');
+    // 过滤到单个节点：拖动禁用，但行菜单可按全序名次移动这一个节点。
+    await page.getByRole('searchbox', { name: '搜索节点' }).fill(`move-4-${browserName}`);
+    await expect(page.getByRole('link', { name: label(4), exact: true })).toBeVisible();
+    const positionOfLast = (await hubList()).find((node) => node.id === ids[4])!.position;
+    await expect(handle(4)).toHaveText(String(positionOfLast));
+    await expect(handle(4)).toBeDisabled();
+    await page.getByRole('combobox', { name: `移动 ${label(4)}`, exact: true }).selectOption('move');
+    const single = page.getByRole('dialog');
+    await expect(single).toHaveAccessibleName('移动节点');
+    const singleInput = single.getByLabel(`目标位置（1–${total}）`, { exact: true });
+    await expect(single.getByText('将移到第 1 位')).toBeVisible();
+    await singleInput.fill('1');
+    await expect(single.getByText('将移到第 1 位')).toBeVisible();
+    await single.getByRole('button', { name: '移动', exact: true }).click();
+    await expect(single).toHaveCount(0);
+    await page.getByRole('searchbox', { name: '搜索节点' }).fill('');
+    await expect.poll(mineInOrder).toEqual([ids[4], ids[0], ids[2], ids[1], ids[3]]);
+    expect(await positionsMatchList()).toBe(true);
+    await expect(handle(4)).toHaveText('1');
+    await expect(handle(3)).toHaveText('5');
+    await page.screenshot({ path: testInfo.outputPath('node-move-desktop.png'), fullPage: true });
   } finally {
     for (const id of ids) await rpc(page, 'DeleteNode', { id });
   }

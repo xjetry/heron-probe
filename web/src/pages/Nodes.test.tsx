@@ -1358,7 +1358,7 @@ describe("移动到指定位置", () => {
   it("拖动排序保存未确认时「移动到…」入口禁用", async () => {
     const moveNodes = vi.fn(async () => ({}));
     // 保存不结束：排序会话停在未确认（order.pending）。
-    const reorderNodes = vi.fn(() => new Promise(() => {}));
+    const reorderNodes = vi.fn((): Promise<{}> => new Promise(() => {}));
     renderNodes({ listNodes: listHub, listTags: tagList, moveNodes, reorderNodes });
     await screen.findByRole("link", { name: "d（#4）" });
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 c（#3）" }));
