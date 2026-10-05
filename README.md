@@ -247,13 +247,15 @@ docker start heron
 
 两个 agent 脚本与 hub 脚本共同的规则：
 
-- 脚本只装自己所属的版本，没有 `--version`。`releases/latest/download/<脚本>` 装最新正式版；要装或升级到指定版本就取该版本的脚本，`https://github.com/xjetry/heron-probe/releases/download/vX.Y.Z/<脚本>`。
+- `install-hub.sh` 只装自己所属的 hub 版本，没有 `--version`；`install.sh` 与 `install-macos.sh` 装的是该 release 的 hub 绑定的 agent 版本（只发 hub 的 release 原样带着绑定版本的这两个脚本），`releases/latest/download/install.sh` 因而装最新 hub 绑定的 agent。要装或升级到指定的 hub 版本就取 `https://github.com/xjetry/heron-probe/releases/download/vX.Y.Z/install-hub.sh`；要装指定的 agent 版本，取那个 agent 版本自己的 release 里的脚本。
 - 脚本里内嵌本版全部 tar 包的 SHA-256，只按它校验下载的包。`--base-url URL` 只改从哪个目录下载（镜像、本地构建），接受哪些字节不变：指向的目录里即使放了与篡改包相符的 `SHA256SUMS` 也装不上。仓库里的源码脚本没有内嵌哈希，只能卸载，安装请用 release 里的脚本。
 - `--insecure-http`（只在两个 agent 脚本上，hub 脚本没有 hub 地址）：hub 地址是 `http://` 且主机不是 loopback IP（`127.0.0.0/8`、`[::1]`；`localhost` 不算）时必须给出，agent 否则拒绝注册与启动。它把"接受明文 http"写进 agent 的本地配置，意味着节点 token 与指标明文传输，链路上的中间人与 hub 失守等价；能用 https 就用 https。首次安装或显式重新注册时交给 `heron-agent register`，普通升级时交给 `heron-agent configure`：已有的 http 部署升级时在命令里加上它，一次重跑即可恢复。面板在这种地址上给出的命令会自动带上它。
 
+hub 与 agent 的版本：每个 hub 版本绑定一个 agent 版本（一套 tag，两种 release）；agent 版本号是它最后一次变动时的 release 版本，会跳号，只改 hub 的版本不要求节点升级。面板按绑定版本标“agent 低于 vX”，在线更新节点也只到绑定版本。
+
 ### Linux
 
-面板注册窗口页给出的命令形如下面这条（hub 为正式版本时脚本地址是 hub 同版本的 `releases/download/vX.Y.Z/install.sh`，装上的 agent 与 hub 同版本）：
+面板注册窗口页给出的命令形如下面这条（hub 为正式版本时脚本地址是 hub 同版本的 `releases/download/vX.Y.Z/install.sh`，装上的是该 hub 版本绑定的 agent）：
 
 ```sh
 curl -fsSL https://github.com/xjetry/heron-probe/releases/latest/download/install.sh | sh -s -- --hub https://heron.example.com --key <key>
