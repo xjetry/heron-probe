@@ -157,7 +157,11 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		}
 	}
 	if !isLoopback(*listen) {
-		log.Warn("listening on a non-loopback address: direct access bypasses the proxy; forwarded headers are trusted only from configured peers", "listen", *listen)
+		// 判定只看监听地址，不探测容器或网络模式，也不承诺"发布到回环就一定没有旁路"：容器桥接网络里是否对外，
+		// 取决于发布端口绑定的宿主地址（如 -p 127.0.0.1:8080:8080 再经反代）；host 网络或裸机上取决于本监听地址与防火墙。
+		log.Warn("listening on a non-loopback address: direct access bypasses the proxy, and forwarded headers are trusted only from configured peers; "+
+			"exposure depends on deployment - in a container bridge network it follows the host address the published port binds to "+
+			"(e.g. -p 127.0.0.1:8080:8080 behind a reverse proxy), with host networking or on bare metal it follows this listen address and the firewall", "listen", *listen)
 	}
 	// 通知渠道、国家查询与心跳外推共用一个出站客户端（§4.9、§9.6 复用 §9.3 的那一个），三者不跟随重定向、带总时限的
 	// 行为因此是同一份。时限取 alert.NotifyTimeout，推导在通知投递一侧（见其注释）；国家查询与心跳都是应答至多读一个小上界的
