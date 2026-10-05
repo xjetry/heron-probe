@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Heron 快速添加节点
 // @namespace    https://github.com/xjetry/heron-probe
-// @version      1.1.0
+// @version      1.2.0
 // @description  任意站点右下角的悬浮按钮：把正在浏览的机器（名称、到期日、费用）一键添加为 Heron 监控节点，创建后直接给出安装凭据与安装命令。适配 Tampermonkey / Violentmonkey。
 // @match        *://*/*
 // @noframes
@@ -121,6 +121,9 @@
 
   const SEMVER = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
   let hubVersion = "";
+  // hub 绑定的 agent 版本（GetSnapshot 下发，spec §14.1）：同版本 release 里的 install.sh 装的是它，不是 hub 自己的版本——
+  // 只发 hub 的 release 原样带着绑定版本的安装脚本。
+  let boundAgentVersion = "";
 
   function isLoopback(hostname) {
     if (hostname === "[::1]") return true;
@@ -265,6 +268,7 @@
     try {
       const snap = await rpc("GetSnapshot", {});
       hubVersion = typeof snap.hubVersion === "string" ? snap.hubVersion : "";
+      boundAgentVersion = typeof snap.boundAgentVersion === "string" ? snap.boundAgentVersion : "";
       setStatus(hubVersion ? `已连接 · hub ${hubVersion}` : "已连接");
     } catch (err) {
       setStatus(err instanceof ApiError ? err.message : String(err), "error");
@@ -465,7 +469,7 @@
 
       const c = document.createElement("p");
       c.className = "note";
-      c.textContent = SEMVER.test(hubVersion) ? "在新节点上运行（与 hub 同版本）：" : "在新节点上运行（hub 不是正式版本，将安装最新 release）：";
+      c.textContent = SEMVER.test(hubVersion) ? `在新节点上运行（脚本取自 hub ${hubVersion} 的 release，安装 hub 绑定的 agent ${boundAgentVersion || "（未知）"}）：` : "在新节点上运行（hub 不是正式版本，将安装最新 release）：";
       panel.appendChild(c);
       const commandBox = document.createElement("div");
       panel.appendChild(commandBox);

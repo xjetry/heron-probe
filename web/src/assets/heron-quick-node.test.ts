@@ -5,20 +5,26 @@ import { sshProxyArgs } from "../lib/installProxy";
 // 在 jsdom 里真实运行油猴脚本：GM 接口与 hub 应答用桩，走一遍"添加节点 → 结果面板"，在结果面板上操作。
 type Request = { url: string; data: string; onload: (res: { status: number; responseText: string }) => void };
 
-function hub(request: Request) {
-  const method = request.url.split("/").pop();
-  const body = JSON.parse(request.data);
-  const reply = method === "GetSnapshot" ? { hubVersion: "v1.2.3" }
-    : body.preview ? { expectedVersion: "7" }
-    : { result: { token: "node-tok", node: { id: "5", name: "vps" } } };
-  setTimeout(() => request.onload({ status: 200, responseText: JSON.stringify(reply) }), 0);
+// snapshot 是 GetSnapshot 的应答；缺省是完整 release 的 hub（绑定的 agent 版本与 hub 同号）。
+type Snapshot = { hubVersion: string; boundAgentVersion: string };
+const fullRelease: Snapshot = { hubVersion: "v1.2.3", boundAgentVersion: "v1.2.3" };
+
+function hub(snapshot: Snapshot) {
+  return (request: Request) => {
+    const method = request.url.split("/").pop();
+    const body = JSON.parse(request.data);
+    const reply = method === "GetSnapshot" ? snapshot
+      : body.preview ? { expectedVersion: "7" }
+      : { result: { token: "node-tok", node: { id: "5", name: "vps" } } };
+    setTimeout(() => request.onload({ status: 200, responseText: JSON.stringify(reply) }), 0);
+  };
 }
 
-async function addNode(store: Map<string, string>) {
+async function addNode(store: Map<string, string>, snapshot: Snapshot = fullRelease) {
   vi.stubGlobal("GM_getValue", (key: string, fallback: string) => store.get(key) ?? fallback);
   vi.stubGlobal("GM_setValue", (key: string, value: string) => { store.set(key, value); });
   vi.stubGlobal("GM_registerMenuCommand", () => {});
-  vi.stubGlobal("GM_xmlhttpRequest", hub);
+  vi.stubGlobal("GM_xmlhttpRequest", hub(snapshot));
   document.title = "vps";
   new Function(buildUserscript("https://hub.example:28080", "api-token"))();
   const root = (document.documentElement.lastElementChild as HTMLElement).shadowRoot!;
@@ -82,5 +88,17 @@ describe("油猴脚本 国内主机", () => {
     field(root, "国内主机")!.click();
     expect(field(root, "本机代理端口")!.value).toBe("7890");
     expect(field(root, "SSH 反代参数")!.value).toBe(sshProxyArgs(7890));
+  });
+});
+
+describe("油猴脚本 安装说明", () => {
+  // 只发 hub 的 release：hub v1.2.6 绑定 agent v1.2.4。脚本仍取 hub 版本的 release（它原样带着 v1.2.4 的安装脚本），
+  // 说明必须写明装上的是绑定的 agent，不能说"与 hub 同版本"。
+  it("正式 hub 的命令取 hub 版本的脚本，说明写明装的是 hub 绑定的 agent 版本", async () => {
+    const root = await addNode(new Map(), { hubVersion: "v1.2.6", boundAgentVersion: "v1.2.4" });
+    expect(field(root, "安装命令")!.value).toBe("curl -fsSL https://github.com/xjetry/heron-probe/releases/download/v1.2.6/install.sh | sh -s -- --hub https://hub.example:28080 --key node-tok");
+    const note = [...root.querySelectorAll(".panel p.note")].map((p) => p.textContent);
+    expect(note).toContain("在新节点上运行（脚本取自 hub v1.2.6 的 release，安装 hub 绑定的 agent v1.2.4）：");
+    expect(root.textContent).not.toContain("与 hub 同版本");
   });
 });
