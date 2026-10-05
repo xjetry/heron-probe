@@ -234,3 +234,28 @@ func TestCoverageStartBatchOrderAndRollbackData(t *testing.T) {
 		}
 	}
 }
+
+func TestCoverageEmptyAndPrunedShortWindowsRemainUnknown(t *testing.T) {
+	s, clk := open(t)
+	id, _, _ := s.CreateNode(t.Context(), "n", Billing{}, hash(1))
+	_, c, err := s.QueryMetricsCoverage(t.Context(), id, 600, 1200, levels[0], 60)
+	if err != nil || c.CoverageStart != nil || c.EligibleMinutes != 0 {
+		t.Fatal("never reported", c, err)
+	}
+	if _, err := s.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 600, CoverageStart: 600, Observed: true, Bucket: metric.NewBucket()}}}); err != nil {
+		t.Fatal(err)
+	}
+	clk.SetWall(time.Unix(10*86400, 0))
+	if err := s.Rollup(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Prune(t.Context(), DefaultRetention); err != nil {
+		t.Fatal(err)
+	}
+	for _, window := range [][2]int64{{600, 720}, {1200, 1320}} {
+		rows, c, err := s.QueryMetricsCoverage(t.Context(), id, window[0], window[1], levels[0], 60)
+		if err != nil || len(rows) != 0 || c.CoverageStart == nil || c.EligibleMinutes != 2 || c.ObservedMinutes != 0 || c.ObservedReportedMinutes != 0 {
+			t.Fatalf("missing rows must remain unknown: %+v rows=%v err=%v", c, rows, err)
+		}
+	}
+}
