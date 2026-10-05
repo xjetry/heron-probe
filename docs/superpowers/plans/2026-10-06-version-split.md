@@ -4,18 +4,21 @@
 
 **Goal:** hub 与 agent 的版本号分开推进：每个 hub 版本绑定一个 agent 版本（仓库根 `AGENT_VERSION`），只改 hub 的 release 不带 agent 产物、不要求节点升级。
 
-**Architecture:** 一套 `vX.Y.Z` tag，两种 release：`AGENT_VERSION` 等于 tag 为完整 release，低于 tag 且是正式版为只发 hub（判定只在 `scripts/releasekind` 一处）。只发 hub 时：门禁 `scripts/agentinputs` 核对 agent 组构建输入自绑定版本以来未变；`scripts/boundagent` 取绑定版本已验签的 `SHA256SUMS`，把它的两个 agent 安装脚本原样放进本次 release；端到端另用绑定版本已发布的 agent 包跑。hub 侧绑定只由 `updates.Manager` 持有：节点在线更新只接受绑定版本，`GetSnapshot`/`GetUpdates` 下发 `bound_agent_version`，面板按它标落后、选目标。
+**Architecture:** 一套 `vX.Y.Z` tag，两种 release：`AGENT_VERSION` 等于 tag 为完整 release，低于 tag 且是正式版为只发 hub（判定只在 `scripts/releasekind` 一处，调用方先取判定再调用 `release-full` 或 `release-hub-only`）。只发 hub 时：门禁 `scripts/agentinputs` 核对 agent 组构建输入自绑定版本以来未变；`scripts/boundagent` 取绑定版本已验签的 `SHA256SUMS`，把它的两个 agent 安装脚本原样放进本次 release；端到端另用绑定版本已发布的 agent 包跑。hub 侧绑定只由 `updates.Manager` 持有：节点在线更新只接受绑定版本，`GetSnapshot`/`GetUpdates` 下发 `bound_agent_version`，面板按它标落后、选目标。
 
 **Tech Stack:** Go 1.27（`go/parser`、`go/ast`、`crypto/ed25519` 经 `internal/releasesig`）、GNU make（本机 3.81 与 CI 4.x 都要能跑）、POSIX sh、React + Vitest、GitHub Actions。
 
-**Spec:** `docs/superpowers/specs/2026-09-17-probe-architecture-design.md` 的 §14.1（主体，提交 aee08fa），以及 §4.6、§10（安装命令一条）、§14（「发布」一条与最后一条）。动手前完整读 §14.1。
+**Spec:** `docs/superpowers/specs/2026-09-17-probe-architecture-design.md` 的 §14.1（主体，提交 aee08fa，按计划审阅意见修订于 f679646），以及 §4.6、§5.7（安装链路一条）、§10（安装命令一条）、§14（「发布」一条与最后一条）。动手前完整读 §14.1。
 
 ## Global Constraints
 
 - 执行规则：每个 worker 先读运行目录下的 `exec-rules.md`（不打补丁、注释与提交信息禁止过程信息、缺陷注入、判成败的命令不接管道、只在自己的 worktree 工作、日志写 `<task-dir>/logs/`）。
-- 基点：Task 1、3、4 从提交 `7933dea` 开分支（它在 main `bb46a81`——已含 hub 中转与生产公钥——之上加了 spec 与地基提交）。地基提交已经做了这些，各任务不要重做：仓库根 `AGENT_VERSION`（内容 `v0.5.3` 一行）；Makefile 的 `AGENT_VERSION := $(strip $(shell read -r v < AGENT_VERSION; printf '%s' "$$v"))`、按原文拒绝 `$` 的 make 层守卫与 `export AGENT_VERSION`；`RELEASE_LDFLAGS`、`RELEASE_GOFLAGS`、`HUB_GOFLAGS`（hub 另注入 `-X main.agentVersion=$$AGENT_VERSION`）；`hub_build` 用 `HUB_GOFLAGS`；`hub-binary` 注入同一变量；`cmd/hub/main.go` 的 `var agentVersion string`。
+- 基点：Task 1、3、4 从 task.md 给出的提交开分支（`feat/r62c7a21-vsplit` 上计划定稿的提交：main `bb46a81`——已含 hub 中转与生产公钥——之上的 spec、地基提交 `7933dea` 与本计划）。地基提交已经做了这些，各任务不要重做：仓库根 `AGENT_VERSION`（内容 `v0.5.3` 一行）；Makefile 的 `AGENT_VERSION := $(strip $(shell read -r v < AGENT_VERSION; printf '%s' "$$v"))`、按原文拒绝 `$` 的 make 层守卫与 `export AGENT_VERSION`；`RELEASE_LDFLAGS`、`RELEASE_GOFLAGS`、`HUB_GOFLAGS`（hub 另注入 `-X main.agentVersion=$$AGENT_VERSION`）；`hub_build` 用 `HUB_GOFLAGS`；`hub-binary` 注入同一变量；`cmd/hub/main.go` 的 `var agentVersion string`。
 - 配方里一律经环境变量 `$$AGENT_VERSION` 引用绑定版本，不写 `$(AGENT_VERSION)`：make 展开后的值会被拼进 shell 源码，命令行给出的值里的引号或分号会改写命令（`export AGENT_VERSION` 让配方环境里有它）。`$(VERSION)` 维持现状（它有 `check_version` 的逐字节检查）。
-- 发布判定（spec §14.1）：tag vX、`AGENT_VERSION` vY；vY = vX（逐字相同）为 `full`；vY 是正式版且按 semver 优先级低于 vX 为 `hub-only`；其余都是错误。判定只实现在 `scripts/releasekind`，Makefile 与 release 流水线都调用它。
+- 发布判定（spec §14.1）：tag vX、`AGENT_VERSION` vY；vY = vX（逐字相同）为 `full`；vY 是正式版且按 semver 优先级低于 vX 为 `hub-only`；其余都是错误。判定只实现在 `scripts/releasekind`。发布入口是两个目标 `release-full`、`release-hub-only`，调用方（release 流水线、本地验收）先取 `make -s release-kind` 的判定再调用对应目标，两个目标开头各自再判定一次；不设在 make 里再分派的 `release` 目标——make 对含 `$(MAKE)` 的配方行在 `-n` 下也整行执行，判定会在 dry-run 里真的跑（发布规则测试的受限 PATH 把 `go` 设成绊线）。
+- 含 `$(MAKE)` 的配方行只写递归 make 本身，不与其他命令拼在同一行：`-n` 下这一整行会被执行。
+- `go run` 把被调程序的非 0 退出码一律变成 1（stderr 另打 `exit status N`）。工具的 `run` 返回值（0/1/2）在单元测试里断言；shell 里经 `go run` 只能区分 0 与非 0，区分"有变化"与"出错"靠输出文本。
+- 主 Makefile 不 export 影响 Go 构建的变量：`export CGO_ENABLED=0` 随 agent 组移进 `deploy/agent.mk`（export 是全局的，hub 与其余目标照样生效）；地基提交的 `export AGENT_VERSION` 只进 hub 的 ldflags，是唯一例外。
 - 产物分组（spec §14.1）：hub 组 = `heron-hub_linux_{amd64,arm64}.tar.gz`、`heron-updater_linux_{amd64,arm64}.tar.gz`、`install-hub.sh`；agent 组 = `heron-agent_linux_{amd64,arm64,armv7,386,riscv64}.tar.gz`、`heron-updater_linux_{同五个}.tar.gz`、`heron-agent_darwin_{amd64,arm64}.tar.gz`、`install.sh`、`install-macos.sh`。完整 release 的 `dist/` 文件集合与改动前逐一相同。
 - 官方下载目录：`https://github.com/xjetry/heron-probe/releases/download/<tag>/`。被签消息与验签只经 `internal/releasesig.Verify(keys, version, sums, sig)`；受信公钥只来自 `releasesig.Trusted()`，测试经参数注入 `internal/releasesig/sigtest` 的测试密钥，命令行不提供换公钥或换下载地址的开关。
 - 生产公钥已在 `internal/releasesig/keys.go`（提交 24f8fb8），但还没有任何带签名的 release：v0.5.3 及更早没有签名，可绑定的版本要等拆分后第一个完整 release 发布之后才存在。在那之前任何真实的只发 hub 构建都在取 `SHA256SUMS.sig` 或验签处失败，这是预期；本计划的只发 hub 路径全部用 `sigtest` 测试密钥与本地 HTTP 服务验证。
@@ -29,16 +32,16 @@
 2. agent 实际依赖的生成文件（`types.pb.go`，经 `agent.proto` 的 import 才进闭包）或只在 darwin 编译的 agent 文件变了：门禁必须拦下——Task 4 的 `TestImportedProtoChangeIsAnAgentInput`、`TestDarwinOnlyFileChangeIsAnAgentInput`。
 3. 用户的典型场景：hub v0.5.6 绑定 agent v0.5.4，节点跑 v0.5.4——节点页不标落后、更新页不可选；节点跑 v0.5.3 才标落后、才可更新且目标是 v0.5.4——Task 2 的 `marks nodes against the bound agent version, not the hub version` 与 `targets the bound agent version without checking latest`。
 4. 只发 hub 的 release 发布后，`releases/latest/download/install.sh` 装的是绑定版本：复制来的两个脚本与 vY 的逐字节相同、受 vY 的签名覆盖——Task 3 的 `TestFetchWritesVerifiedInstallers`、Task 5 的 `TestReadbackRejectsDifferentInstaller`。
-5. 本地验收构建 `make release VERSION=v0.0.0-check` 忘了给 `AGENT_VERSION`：明确报错并说出该怎么给，而不是静默产出只发 hub 或绑错版本的包——Task 3 的 `TestKindRejectsLocalBuildWithoutAgentVersion`。
+5. 本地验收构建 `make release-full VERSION=v0.0.0-check` 忘了给 `AGENT_VERSION`：明确报错并说出该怎么给，`dist/` 不被动过——Task 3 的 `TestKindRejectsLocalBuildWithoutAgentVersion` 与 Step 9 的对照。
 
 ## 任务依赖与并行
 
 | 任务 | 依赖 | 基点 | 说明 |
 |---|---|---|---|
-| Task 1 hub 侧绑定 | — | `7933dea` | 第一个提交只含 proto 与生成物，Task 2 从它开分支 |
+| Task 1 hub 侧绑定 | — | 计划定稿提交 | 第一个提交只含 proto 与生成物，Task 2 从它开分支 |
 | Task 2 面板 | Task 1 的 proto 提交 | 该提交 | |
-| Task 3 发布配方、判定与绑定版本的安装脚本 | — | `7933dea` | 只发 hub 的配方调用 Task 4 的工具，集成前该路径只用 `make -n` 验 |
-| Task 4 agent 输入门禁 | — | `7933dea` | 读 Task 3 定义的两个 make 目标（接口见 Task 4） |
+| Task 3 发布配方、判定与绑定版本的安装脚本 | — | 计划定稿提交 | 只发 hub 的配方调用 Task 4 的工具，集成前该路径用替身执行验证 |
+| Task 4 agent 输入门禁 | — | 计划定稿提交 | 读 Task 3 定义的两个 make 目标（接口见 Task 4） |
 | Task 5 流水线、绑定版本端到端与回读 | Task 3、Task 4 | 两者的集成分支 | |
 | Task 6 集成与验收（控制端） | 全部 | — | 不派 worker |
 
@@ -288,7 +291,10 @@ describe("isStableRelease 与 hub 的 ValidVersion 同一口径", () => {
   it.each(["v0.5.4", "v1.0.0", "v10.20.30"])("%s 是正式版", (v) => {
     expect(isStableRelease(v)).toBe(true);
   });
-  it.each(["", "dev", "v0.5.4-rc.1", "v0.5.4+b.1", "0.5.4", "v1.0", "v01.0.0"])("%s 不是正式版", (v) => {
+  it.each(["v4294967295.0.0", "v0.4294967295.0"])("%s 在 uint32 上界内", (v) => {
+    expect(isStableRelease(v)).toBe(true);
+  });
+  it.each(["", "dev", "v0.5.4-rc.1", "v0.5.4+b.1", "0.5.4", "v1.0", "v01.0.0", "v4294967296.0.0", "v0.0.99999999999"])("%s 不是正式版", (v) => {
     expect(isStableRelease(v)).toBe(false);
   });
 });
@@ -307,11 +313,12 @@ export function olderThan(current: string | undefined, target: string): boolean 
   return a !== null && t !== null && compare(a, t) < 0;
 }
 
-// 正式版：vMAJOR.MINOR.PATCH，无预发布、无构建元数据——与 hub 的 update.ValidVersion 同一口径。节点在线更新
-// 只接受正式版，绑定版本不是正式版时面板不提供节点更新。
+// 正式版：vMAJOR.MINOR.PATCH，无预发布、无构建元数据，每段不超过 uint32——与 hub 的 update.ValidVersion 同一
+// 口径（它按 uint32 解析每段）。节点在线更新只接受正式版，绑定版本不是正式版时面板不提供节点更新。
+const UINT32_MAX = "4294967295";
 export function isStableRelease(v: string): boolean {
   const p = parse(v);
-  return p !== null && p.pre.length === 0 && !v.includes("+");
+  return p !== null && p.pre.length === 0 && !v.includes("+") && p.core.every((n) => compareNumeric(n, UINT32_MAX) <= 0);
 }
 ```
 
@@ -410,14 +417,15 @@ git add web/src/components/InstallCommands.tsx web/src/components/NodeInstallMod
 git commit -m "feat(web): 安装命令写明装的是 hub 绑定的 agent 版本"
 ```
 
-缺陷注入（记入 `## Fault injection`）：(a) 节点页仍按 `hubVersion` 比较 → `marks nodes against the bound agent version` 红；(b) 更新页节点目标仍用 `latest` → `targets the bound agent version without checking latest` 红；(c) `isStableRelease` 放过预发布 → version 用例与更新页 `v0.5.4-rc.1` 一项红。
+缺陷注入（记入 `## Fault injection`）：(a) 节点页仍按 `hubVersion` 比较 → `marks nodes against the bound agent version` 红；(b) 更新页节点目标仍用 `latest` → `targets the bound agent version without checking latest` 红；(c) `isStableRelease` 放过预发布 → version 用例与更新页 `v0.5.4-rc.1` 一项红；(d) 去掉 uint32 上界 → `v4294967296.0.0` 一项红。
 
 ---
 ### Task 3: 发布配方按种类分两路，判定只在 releasekind，只发 hub 时取绑定版本的安装脚本
 
 **Files:**
 - Create: `deploy/agent.mk`
-- Modify: `Makefile`（`include`、移走 agent 组变量、`release` 拆成 `release` / `release-full` / `release-hub-only`、新增 `release-kind`、`lint` 核对 `AGENT_VERSION` 格式）
+- Modify: `Makefile`（`include`、移走 agent 组变量与 `export CGO_ENABLED=0`、`release` 换成 `release-full` / `release-hub-only` 两个目标、新增 `release-kind`、`lint` 核对 `AGENT_VERSION` 文件、`script-test` 加替身执行测试）
+- Create: `scripts/release-assets-test.sh`
 - Modify: `internal/update/version.go`、`internal/update/version_test.go`（`ReleaseTag`）
 - Create: `scripts/releasekind/main.go`、`scripts/releasekind/main_test.go`
 - Create: `scripts/boundagent/main.go`、`scripts/boundagent/fetch.go`、`scripts/boundagent/fetch_test.go`
@@ -428,8 +436,9 @@ git commit -m "feat(web): 安装命令写明装的是 hub 绑定的 agent 版本
 - Consumes: 地基提交的 `AGENT_VERSION` 变量（已导出到配方环境）、`HUB_GOFLAGS`、`hub_build`。
 - Produces:
   - `func ReleaseTag(tag string) (core string, prerelease bool, ok bool)`（`internal/update`）
-  - `go run ./scripts/releasekind -version vX -agent vY` → stdout 一行 `full` 或 `hub-only`，退出 0；不合规则退出 1、stderr 说明；参数错误退出 2。`-agent vY -check` 只核对格式。
+  - `go run ./scripts/releasekind -version vX -agent vY` → stdout 一行 `full` 或 `hub-only`；`run` 返回 0，不合规则返回 1（stderr 说明），参数错误返回 2（经 `go run` 时 shell 看到的都是 1）。`-check-file PATH` 只按原始字节核对 `AGENT_VERSION` 文件。
   - `make -s release-kind VERSION=vX` → 同上一行输出（`AGENT_VERSION` 默认取仓库文件）。
+  - `make release-full VERSION=vX [AGENT_VERSION=vX]`、`make release-hub-only VERSION=vX`：两种 release 的产物进 `dist/`；没有 `release` 目标。
   - `make -s agent-bundle-inputs` → agent 组打包输入的文件路径（相对仓库根），一行一个，含 `deploy/agent.mk` 自己。
   - `make -s agent-go-targets` → agent 组 Go 构建的（包、平台），一行一个，字段以空白分隔：`<包路径> <GOOS> <GOARCH> [<GOARM>]`，如 `./cmd/agent linux arm 7`、`./cmd/agent darwin arm64`。Task 4 只按这个格式读。
   - `go run ./scripts/boundagent fetch -version vY -dir DIR -linux-arches "<空格分隔>" -darwin-arches "<空格分隔>"`；包内函数 `fetchRelease`、`parseSums`、`agentBundle`（签名见 Step 6），Task 5 复用。
@@ -548,14 +557,40 @@ func TestKindRejectsLocalBuildWithoutAgentVersion(t *testing.T) {
 	}
 }
 
-func TestRunCheckValidatesAgentFormatOnly(t *testing.T) {
+// AGENT_VERSION 文件按原始字节核对：Makefile 读它时只取第一行并去掉空白，只核对读出来的值会放过多余的行。
+func TestRunCheckFileValidatesRawBytes(t *testing.T) {
+	for _, c := range []struct {
+		content string
+		code    int
+	}{
+		{"v0.5.3\n", 0},
+		{"v0.5.4-rc.1\n", 0},
+		{"v0.5.3", 1},
+		{"v0.5.3\nextra\n", 1},
+		{"v0.5.3\n\n", 1},
+		{" v0.5.3\n", 1},
+		{"v0.5.3 \n", 1},
+		{"v0.5.3\r\n", 1},
+		{"\n", 1},
+		{"v0.5\n", 1},
+	} {
+		path := filepath.Join(t.TempDir(), "AGENT_VERSION")
+		if err := os.WriteFile(path, []byte(c.content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var out, errb bytes.Buffer
+		if code := run([]string{"-check-file", path}, &out, &errb); code != c.code {
+			t.Errorf("check-file %q: code %d (err %q), want %d", c.content, code, errb.String(), c.code)
+		}
+	}
 	var out, errb bytes.Buffer
-	if code := run([]string{"-agent", "v0.5.3", "-check"}, &out, &errb); code != 0 || out.Len() != 0 {
-		t.Fatalf("check v0.5.3: code %d out %q err %q", code, out.String(), errb.String())
+	if code := run([]string{"-check-file", filepath.Join(t.TempDir(), "missing")}, &out, &errb); code != 1 {
+		t.Errorf("missing file: code %d, want 1", code)
 	}
-	if code := run([]string{"-agent", "v0.5", "-check"}, &out, &errb); code != 1 {
-		t.Fatalf("check v0.5: code %d, want 1", code)
-	}
+}
+
+func TestRunPrintsKindAndRejectsBadFlags(t *testing.T) {
+	var out, errb bytes.Buffer
 	if code := run([]string{"-version", "v1.2.4", "-agent", "v1.2.3"}, &out, &errb); code != 0 || out.String() != "hub-only\n" {
 		t.Fatalf("kind run: code %d out %q", code, out.String())
 	}
@@ -572,11 +607,11 @@ Run: `go test -count=1 ./scripts/releasekind/` → 红（未定义）。
 `scripts/releasekind/main.go`：
 
 ```go
-// Command releasekind 按 spec §14.1 的唯一规则判定一次 release 的种类；Makefile 的 release、release-kind 与
-// release 流水线都调用它，规则不在别处另写。
+// Command releasekind 按 spec §14.1 的唯一规则判定一次 release 的种类；Makefile 的 release-kind、两个发布目标的
+// 开头与 release 流水线都调用它，规则不在别处另写。
 //
 //	releasekind -version vX -agent vY   打印 full 或 hub-only；不合规则退出 1 并说明
-//	releasekind -agent vY -check        只核对 AGENT_VERSION 的格式（make lint 调用）
+//	releasekind -check-file PATH        按原始字节核对 AGENT_VERSION 文件（make lint 调用）
 package main
 
 import (
@@ -595,14 +630,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	version := fs.String("version", "", "release tag (VERSION)")
 	agent := fs.String("agent", "", "bound agent version (AGENT_VERSION)")
-	check := fs.Bool("check", false, "only validate -agent")
+	checkFile := fs.String("check-file", "", "validate the AGENT_VERSION file byte for byte")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		fmt.Fprintln(stderr, "usage: releasekind -version vX -agent vY | releasekind -agent vY -check")
+		fmt.Fprintln(stderr, "usage: releasekind -version vX -agent vY | releasekind -check-file PATH")
 		return 2
 	}
-	if *check {
-		if _, _, ok := update.ReleaseTag(*agent); !ok {
-			fmt.Fprintf(stderr, "releasekind: AGENT_VERSION %q is not a release tag vMAJOR.MINOR.PATCH[-PRERELEASE]\n", *agent)
+	if *checkFile != "" {
+		if err := checkAgentFile(*checkFile); err != nil {
+			fmt.Fprintln(stderr, "releasekind:", err)
 			return 1
 		}
 		return 0
@@ -614,6 +649,23 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, k)
 	return 0
+}
+
+// checkAgentFile：文件恰好是一个 release tag 加一个换行。Makefile 读它时只取第一行并去掉首尾空白（地基提交的
+// read/strip），多余的行、空白与 CR 在那里被悄悄丢掉，所以这里按原始字节核对，不核对读出来的值。
+func checkAgentFile(path string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	tag, ok := strings.CutSuffix(string(b), "\n")
+	if !ok || strings.ContainsAny(tag, " \t\r\n") {
+		return fmt.Errorf("%s must be exactly one release tag followed by a newline, got %q", path, b)
+	}
+	if _, _, ok := update.ReleaseTag(tag); !ok {
+		return fmt.Errorf("%s: %q is not a release tag vMAJOR.MINOR.PATCH[-PRERELEASE]", path, tag)
+	}
+	return nil
 }
 
 // kind：vY 与 vX 逐字相同为完整 release；vY 是正式版且按 semver 优先级低于 vX 为只发 hub（vX 是预发布时
@@ -652,6 +704,10 @@ Run: `go test -count=1 ./scripts/releasekind/ ./internal/update/` → `0`。
 # 文件本身与 AGENT_BUNDLE_FILES 当作 agent 组的打包输入，把 agent-go-targets 列出的（包、平台）展开成 Go 源码
 # 输入。配方只经这里的变量引用 deploy/ 下的文件：写死在配方里的路径门禁看不见，scripts/release-rules-test.sh
 # 核对这个文件里出现的每个 deploy/ 路径都登记在 AGENT_BUNDLE_FILES 里。
+
+# 全部 Go 产物以 CGO_ENABLED=0 构建（spec §14）。export 是全局的，hub 与其余目标照样生效；它决定 agent 组的产物，
+# 属于门禁的输入，所以放在这里——主 Makefile 不 export 影响构建的变量，发布规则测试核对这一点。
+export CGO_ENABLED=0
 
 # 发布产物矩阵：agent 与更新器五个 Linux 架构，agent 两个 darwin 架构（hub 的两个在 Makefile 的 HUB_LINUX_ARCHES）。
 # 架构集合只在这几个变量维护，静态门禁、打包清单与门禁的平台清单都由它们展开，不存在第二份清单。
@@ -729,24 +785,23 @@ agent-go-targets:
 	echo "./scripts/stampinstall linux amd64"
 ```
 
+Makefile 第 1 行的 `export CGO_ENABLED=0` 删掉（已移进片段）。
+
 旧配方里 agent 包与更新器包共用一个 `dist/pkg-$$arch` 目录、在同一轮循环里打包；拆成两个片段后各用各的临时目录，tar 包的成员名与内容不变（Step 9 用清单逐一核对）。
 
 - [ ] **Step 6: Makefile 的发布入口**
 
-Makefile 在地基提交的 `export AGENT_VERSION` 之后加 `include deploy/agent.mk`。`build` 目标里的 `$(agent_goarch)` / `$$gflags` 用法不变。把原 `release` 目标整个替换为：
+`include deploy/agent.mk` 放在原来架构表所在的位置（`compat-e2e` 目标之后、`HUB_LINUX_ARCHES` 之前）：放在第一个普通目标之前，片段里的 `agent-bundle-inputs` 就成了不带目标的 make 的默认目标。`build` 目标里的 `$(agent_goarch)` / `$$gflags` 用法不变。
+
+把原 `release` 目标整个替换为两个发布目标（没有 `release`）：
 
 ```make
-# 发布入口（spec §14.1）：本地验收与 release 流水线都只调用 release。种类只由 scripts/releasekind 判定；两个
-# 分支目标开头各自再判定一次，单独调用分支目标也绕不过规则。
-release:
-	@$(check_version)
-	@kind=$$(go run ./scripts/releasekind -version "$$VERSION" -agent "$$AGENT_VERSION") || exit 1; \
-	echo "release kind: $$kind"; \
-	$(MAKE) "release-$$kind"
-
+# 发布目标（spec §14.1）：完整 release 与只发 hub 各一个，调用方先取 make -s release-kind 的判定再调用对应的目标。
+# 两个目标开头各自再判定一次，不符即失败，单独调用也绕不过规则。不设在 make 里再分派的 release：make 对含
+# $(MAKE) 的配方行在 -n 下也整行执行，判定会在 dry-run 里真的运行。同理 $(MAKE) web 单独占一行。
 assert_release_kind = kind=$$(go run ./scripts/releasekind -version "$$VERSION" -agent "$$AGENT_VERSION") || exit 1; \
 	[ "$$kind" = $(1) ] || { echo "release-$(1) does not match this release's kind: $$kind" >&2; exit 1; }
-release_prepare = $(MAKE) web && rm -rf dist/build dist/*.tar.gz dist/SHA256SUMS dist/install.sh dist/install-hub.sh dist/install-macos.sh && mkdir -p dist/build
+release_clean = rm -rf dist/build dist/*.tar.gz dist/SHA256SUMS dist/install.sh dist/install-hub.sh dist/install-macos.sh && mkdir -p dist/build
 hub_binaries = for arch in $(HUB_LINUX_ARCHES); do $(call hub_build,$$arch,dist/build/heron-hub-linux-$$arch); done
 HUB_STATIC = $(addprefix dist/build/heron-hub-linux-,$(HUB_LINUX_ARCHES))
 hub_pack = for arch in $(HUB_LINUX_ARCHES); do \
@@ -760,7 +815,8 @@ hub_pack = for arch in $(HUB_LINUX_ARCHES); do \
 release-full:
 	@$(check_version)
 	@$(call assert_release_kind,full)
-	$(release_prepare)
+	$(MAKE) web
+	$(release_clean)
 	@set -e; $(agent_build); $(call updater_build,$(AGENT_LINUX_ARCHES)); $(hub_binaries)
 	go run ./scripts/checkstatic $(AGENT_STATIC) $(call updater_static,$(AGENT_LINUX_ARCHES)) $(HUB_STATIC)
 	@set -e; $(agent_pack); $(call updater_pack,$(AGENT_LINUX_ARCHES)); $(hub_pack)
@@ -775,7 +831,8 @@ release-hub-only:
 	@$(check_version)
 	@$(call assert_release_kind,hub-only)
 	go run ./scripts/agentinputs -base "$$AGENT_VERSION"
-	$(release_prepare)
+	$(MAKE) web
+	$(release_clean)
 	@set -e; $(call updater_build,$(HUB_LINUX_ARCHES)); $(hub_binaries)
 	go run ./scripts/checkstatic $(call updater_static,$(HUB_LINUX_ARCHES)) $(HUB_STATIC)
 	@set -e; $(call updater_pack,$(HUB_LINUX_ARCHES)); $(hub_pack)
@@ -786,21 +843,24 @@ release-hub-only:
 	cd dist && sha256sum *.tar.gz install.sh install-hub.sh install-macos.sh > SHA256SUMS
 ```
 
-原 `release` 配方上方那几段注释（COPYFILE_DISABLE、--no-xattrs、静态门禁只收 Linux 产物、darwin 的 CGO、stampinstall 排在打包之后、SHA256SUMS 最后生成）保留，移到对应的新位置（打包相关的随片段进 `deploy/agent.mk` 或留在 `release-full` 上方），内容不变。`release-kind` 目标放在 `release-channel` 旁边（spec §14.1：同处、同一套桩测试），两者都是"打印一个判定"：
+原 `release` 配方上方那几段注释（COPYFILE_DISABLE、--no-xattrs、静态门禁只收 Linux 产物、darwin 的 CGO、stampinstall 排在打包之后、SHA256SUMS 最后生成）保留，移到对应的新位置（打包相关的随片段进 `deploy/agent.mk` 或留在 `release-full` 上方），内容不变；其中说"本地验收与线上发布走同一目标"的一句改为"本地验收与线上发布调用同一组目标"。
+
+`release-kind` 目标放在 `release-channel` 旁边（spec §14.1：同处，接线由同一套桩测试核对），两者都是"打印一个判定"：
 
 ```make
-# 发布种类（spec §14.1）：full 或 hub-only，判定只在 scripts/releasekind。release 与 release 流水线都读它。
+# 发布种类（spec §14.1）：full 或 hub-only，判定只在 scripts/releasekind。调用方据此调用 release-full 或
+# release-hub-only，两个目标开头也读它。
 release-kind:
 	@$(check_version)
 	@go run ./scripts/releasekind -version "$$VERSION" -agent "$$AGENT_VERSION"
 ```
 
-`.PHONY` 加上 `release-full release-hub-only release-kind`。
+`.PHONY` 去掉 `release`，加上 `release-full release-hub-only release-kind`。`git grep -n 'make release\b\|\$$(MAKE) release\b'` 列出仓库里其余调用 `release` 目标的地方（`release.yml` 由 Task 5 改；本任务改 Step 11 的两个验收脚本与 README），逐个处理并在 result.md 列出。
 
-`lint` 目标末尾加一行，让 `make ci` 拦下格式不对的 `AGENT_VERSION` 文件：
+`lint` 目标末尾加一行，让 `make ci` 拦下格式不对的 `AGENT_VERSION` 文件（核对仓库文件本身，命令行给出的 `AGENT_VERSION` 盖不住文件里的错误）：
 
 ```make
-	go run ./scripts/releasekind -agent "$$AGENT_VERSION" -check
+	go run ./scripts/releasekind -check-file AGENT_VERSION
 ```
 
 - [ ] **Step 7: `boundagent fetch` 的失败用例**
@@ -899,38 +959,59 @@ cd <task-dir>/base-tree && pnpm --dir web install --frozen-lockfile > <task-dir>
 cd <task-dir>/base-tree/dist && ls > <task-dir>/logs/base-files.txt && for f in *.tar.gz; do echo "== $f"; tar -tzf "$f"; done > <task-dir>/logs/base-members.txt
 ```
 
-再在自己的工作树：
+（基点上还是旧的 `release` 目标。）再在自己的工作树：
 
 ```bash
-cd <worktree> && make release VERSION=v0.0.0-split AGENT_VERSION=v0.0.0-split > <task-dir>/logs/full-release.log 2>&1; echo $?
+cd <worktree> && make release-full VERSION=v0.0.0-split AGENT_VERSION=v0.0.0-split > <task-dir>/logs/full-release.log 2>&1; echo $?
 cd <worktree>/dist && ls > <task-dir>/logs/files.txt && for f in *.tar.gz; do echo "== $f"; tar -tzf "$f"; done > <task-dir>/logs/members.txt
 diff <task-dir>/logs/base-files.txt <task-dir>/logs/files.txt; echo $?
 diff <task-dir>/logs/base-members.txt <task-dir>/logs/members.txt; echo $?
 ```
 
-两个 `diff` 都输出 `0`。`full-release.log` 里有 `release kind: full`。最后 `git -C <worktree> worktree remove --force <task-dir>/base-tree`。
+两个 `diff` 都输出 `0`。最后 `git -C <worktree> worktree remove --force <task-dir>/base-tree`。
 
-再确认本地构建忘给 `AGENT_VERSION` 时失败并给出提示：`cd <worktree> && make release VERSION=v0.0.0-split > <task-dir>/logs/no-agent.log 2>&1; echo $?` → 非 0，日志含 `AGENT_VERSION=$VERSION`，且 `dist/` 没有被清空重建（门禁在 `release` 第一行之后、`$(MAKE) "release-$$kind"` 之前就失败）。
+再确认本地构建忘给 `AGENT_VERSION` 时失败并给出提示、`dist/` 不被动过：
 
-- [ ] **Step 10: 发布规则测试**
+```bash
+cd <worktree> && touch dist/.untouched && make release-full VERSION=v0.0.0-split > <task-dir>/logs/no-agent.log 2>&1; echo $?
+test -e dist/.untouched; echo $?
+```
 
-`scripts/release-rules-test.sh` 加三组（沿用文件里的 `bad`、`MAKE` 与受限 PATH）：
+第一条非 0、日志含 `AGENT_VERSION=$VERSION`；第二条 `0`（判定在 `$(MAKE) web` 与清理之前就失败）。再 `rm dist/.untouched`。
 
-1. `AGENT_VERSION` 的 make 层守卫：`MAKE -s release-kind VERSION=v1.0.0 'AGENT_VERSION=v1$(shell touch '"$work"'/expanded-agent)'` 退出非 0、输出含 `contains '$'`，且 `$work/expanded-agent` 不存在。
-2. 两个分支目标的 `-n` 展开（受限 PATH 下 `go` 是绊线，`-n` 只打印不执行；`$(MAKE) web` 一行在 `-n` 下会递归执行 `make -n web`，只打印 pnpm 命令）：
-   - `MAKE -n release-full VERSION=v1.2.3 AGENT_VERSION=v1.2.3` 的输出含 `heron-agent_linux_riscv64.tar.gz`、`heron-agent_darwin_arm64.tar.gz`、`heron-updater_linux_armv7.tar.gz`、`install.sh`，不含 `agentinputs`、`boundagent`。
-   - `MAKE -n release-hub-only VERSION=v1.2.4 AGENT_VERSION=v1.2.3` 的输出含 `scripts/agentinputs -base "$AGENT_VERSION"`、`scripts/boundagent fetch`、`heron-updater_linux_amd64.tar.gz`、`heron-hub_linux_arm64.tar.gz`，不含 `heron-agent_linux_`、`heron-agent_darwin_`、`heron-updater_linux_armv7`、`-o "dist/build/heron-agent-`。
-   - `MAKE -n release-kind VERSION=v1.2.3` 的输出含 `go run ./scripts/releasekind -version "$VERSION" -agent "$AGENT_VERSION"`（`-n` 也打印 `@` 开头的行）：判定的接线与 `release-channel` 同在这套桩测试里。
-   - 这些命令跑完绊线文件为空（`-n` 没有执行任何 go）。
-3. `deploy/agent.mk` 里出现的每个 `deploy/` 路径都在 `MAKE -s agent-bundle-inputs` 的输出里：`grep -o 'deploy/[A-Za-z0-9_./-]*' deploy/agent.mk | sort -u`，逐个在清单里找。
+- [ ] **Step 10: 发布规则测试与替身执行测试**
 
-Run: `cd <worktree> && MAKE=make scripts/release-rules-test.sh > <task-dir>/logs/rules.log 2>&1; echo $?` → `0`。
+`scripts/release-rules-test.sh`（沿用文件里的 `bad`、`MAKE` 与受限 PATH）：
+
+1. `targets` 列表里的 `release` 换成 `release-full release-hub-only release-kind`：三者都以 `check_version` 开头，`rejects` 的各条照旧对它们成立。
+2. `AGENT_VERSION` 的 make 层守卫：对 `release-full`、`release-hub-only`、`release-kind`，`MAKE "$t" VERSION=v1.0.0 'AGENT_VERSION=v1$(shell touch '"$work"'/expanded-agent)'` 退出非 0、输出含 `contains '$'`，且 `$work/expanded-agent` 不存在。
+3. `-n` 只核对不经 shell 循环的那些行（循环体里的 `$$arch` 在 `-n` 下原样打印，按具体架构的文件名去找必然找不到——资产集合由第 7 条的替身执行核对）：
+   - `MAKE -n release-hub-only VERSION=v1.2.4 AGENT_VERSION=v1.2.3` 的输出含 `go run ./scripts/agentinputs -base "$AGENT_VERSION"` 与 `go run ./scripts/boundagent fetch`，且 `agentinputs` 那一行在第一条 `pnpm` 之前（门禁先于任何构建）。
+   - `MAKE -n release-full VERSION=v1.2.3 AGENT_VERSION=v1.2.3` 的输出不含 `agentinputs`、`boundagent`。
+   - `MAKE -n release-kind VERSION=v1.2.3` 的输出含 `go run ./scripts/releasekind -version "$VERSION" -agent "$AGENT_VERSION"`（`-n` 也打印 `@` 开头的行）。
+   - 这些命令跑完绊线文件为空：`-n` 下执行的只有 `$(MAKE) web` 那一行的递归 make，它也只打印。
+4. 打包输入登记完整：`grep -o 'deploy/[A-Za-z0-9_./-]*' deploy/agent.mk | sort -u` 的每一项都在 `MAKE -s agent-bundle-inputs` 的输出里。
+5. 两个发布目标只碰登记过的文件：上面两条 `-n` 输出里出现的每个 `deploy/` 路径（`grep -o`，make 已把变量展开成字面路径）都属于 `MAKE -s agent-bundle-inputs` 的输出或 hub 组的 `deploy/systemd/heron-hub.service`、`deploy/install-hub.sh`。
+6. 主 Makefile 不 export 影响构建的变量：`grep -nE '^[[:space:]]*export([[:space:]]|$)|\.EXPORT_ALL_VARIABLES' Makefile` 的结果恰为 `export AGENT_VERSION` 一行。
+7. 默认目标不变：不带目标的 `MAKE -n` 与 `MAKE -n <默认目标>` 输出相同。默认目标取基点 Makefile 的第一个普通目标（在计划定稿提交上查明后写进测试，注释写明：不带目标的 make 一直做这件事，片段的 include 位置不能改变它）。
+
+新建 `scripts/release-assets-test.sh`（`make script-test` 调用，`make lint` 的 shellcheck 列表加上它），用替身真正执行两个发布目标，核对产出的资产集合——这是两种 release 的产物分组（spec §14.1）唯一被执行验证的地方：
+
+- 在 `mktemp -d` 的私有目录里放一份最小副本：`Makefile`、`AGENT_VERSION`、`deploy/` 整个目录（配方只把 `./cmd/...` 交给 `go`，替身不需要源码）。在这个副本里运行 `make`。
+- PATH 前置一个替身目录：
+  - `go` 替身：`go build … -o OUT …` → 往 `OUT` 写一行文字；`go run ./scripts/releasekind …` → 打印环境变量 `STUB_KIND`；`go run ./scripts/stampinstall -version V -dir D S…` → 把每个 `S` 复制到 `D/` 下同名文件；`go run ./scripts/boundagent fetch -version V -dir D …` → 写 `D/install.sh`、`D/install-macos.sh`，内容 `bound V`；`go run ./scripts/agentinputs …`、`go run ./scripts/checkstatic …` → 退出 0；其余调用退出 1。每次调用把参数追加到调用日志。
+  - `pnpm`、`shellcheck` 替身：退出 0。
+  - `tar`、`cp`、`mkdir`、`rm`、`sha256sum` 用真的。
+- 用例：
+  1. `STUB_KIND=full make release-full VERSION=v1.2.3 AGENT_VERSION=v1.2.3` → `dist/` 恰为：`heron-agent_linux_{amd64,arm64,armv7,386,riscv64}.tar.gz`、`heron-updater_linux_{同五个}.tar.gz`、`heron-agent_darwin_{amd64,arm64}.tar.gz`、`heron-hub_linux_{amd64,arm64}.tar.gz`、`install.sh`、`install-hub.sh`、`install-macos.sh`、`SHA256SUMS`；`SHA256SUMS` 恰好列出其余全部文件；每个 tar 包的成员与旧配方一致（agent：`heron-agent heron-agent.service heron-agent.openrc`；updater：`heron-updater heron-updater-agent.service heron-updater-hub.service`；darwin：`heron-agent xyz.heron.agent.plist`；hub：`heron-hub heron-hub.service`）；调用日志里没有 `agentinputs`、`boundagent`。
+  2. `STUB_KIND=hub-only make release-hub-only VERSION=v1.2.4 AGENT_VERSION=v1.2.3` → `dist/` 恰为：`heron-hub_linux_{amd64,arm64}.tar.gz`、`heron-updater_linux_{amd64,arm64}.tar.gz`、`install-hub.sh`、`install.sh`、`install-macos.sh`、`SHA256SUMS`；`install.sh` 的内容是 `bound v1.2.3`（来自取绑定版本这一步，不是本次写入）；调用日志里 `agentinputs` 在第一次 `go build` 之前。
+  3. `STUB_KIND=hub-only make release-full VERSION=v1.2.3 AGENT_VERSION=v1.2.3` → 失败，调用日志里没有 `go build`，`dist/` 里事先放的标记文件还在。
 
 - [ ] **Step 11: 本地验收脚本与 README**
 
-- `scripts/install-accept.sh` 第 86、89 行：`make release VERSION="$VERSION_A"` → `make release VERSION="$VERSION_A" AGENT_VERSION="$VERSION_A"`，B 同理；上方注释加一句：验收的是本次构建的 agent，给出与 VERSION 相同的 AGENT_VERSION 产出完整的一套（spec §14.1）。
+- `scripts/install-accept.sh` 第 86、89 行：`make release VERSION="$VERSION_A"` → `make release-full VERSION="$VERSION_A" AGENT_VERSION="$VERSION_A"`，B 同理；上方注释加一句：验收的是本次构建的 agent，给出与 VERSION 相同的 AGENT_VERSION 产出完整的一套（spec §14.1）。
 - `scripts/macos-accept.sh` 第 48 行同理。
-- `README.md` 第 281 行附近：`make release VERSION=v0.0.0-check` → `make release VERSION=v0.0.0-check AGENT_VERSION=v0.0.0-check`，并说明原因（同上）。
+- `README.md` 第 281 行附近：`make release VERSION=v0.0.0-check` → `make release-full VERSION=v0.0.0-check AGENT_VERSION=v0.0.0-check`，并说明原因（同上）。
 - `git grep -n 'make release VERSION'` 列出其余出现处：`docs/validation*.md` 是历史验收记录，不改；其余逐个裁决并在 result.md 里列出。
 
 - [ ] **Step 12: 全量与提交**
@@ -942,13 +1023,13 @@ git add internal/update/version.go internal/update/version_test.go scripts/relea
 git commit -m "feat(release): 完整 release 与只发 hub 的判定只在 releasekind 一处"
 git add scripts/boundagent/
 git commit -m "feat(release): 只发 hub 时取绑定版本已验签的 agent 安装脚本"
-git add deploy/agent.mk Makefile scripts/release-rules-test.sh
-git commit -m "build(release): 发布按种类分两路，agent 组的配方与打包输入集中在 deploy/agent.mk"
+git add deploy/agent.mk Makefile scripts/release-rules-test.sh scripts/release-assets-test.sh
+git commit -m "build(release): 发布按种类分两个目标，agent 组的配方与打包输入集中在 deploy/agent.mk"
 git add scripts/install-accept.sh scripts/macos-accept.sh README.md
 git commit -m "build(release): 本地验收构建显式给出与 VERSION 相同的 AGENT_VERSION"
 ```
 
-缺陷注入（记入 `## Fault injection`）：(a) `kind` 里把 `agent == version` 判断去掉 → `TestKind` 的两条 `full` 红；(b) 允许预发布的绑定版本（去掉 `agentPre` 分支）→ 对应用例红；(c) `fetchInstallers` 不核对 agent 组完整性 → `TestFetchRejectsIncompleteAgentBundle` 红；(d) `release-hub-only` 配方里直接写 `cp deploy/systemd/heron-agent.service …`（未登记的路径进片段）→ 发布规则测试第 3 组红（这条注入改 `deploy/agent.mk`，确认红后恢复）。
+缺陷注入（记入 `## Fault injection`）：(a) `kind` 里把 `agent == version` 判断去掉 → `TestKind` 的两条 `full` 红；(b) 允许预发布的绑定版本（去掉 `agentPre` 分支）→ 对应用例红；(c) `fetchInstallers` 不核对 agent 组完整性 → `TestFetchRejectsIncompleteAgentBundle` 红；(d) `deploy/agent.mk` 的 `agent_pack` 里加一句 `cp deploy/systemd/heron-hub.service "$$pkg/"`（未登记的路径）→ 发布规则测试第 4 组红；(e) `release-hub-only` 配方里加一句 `cp deploy/extra.conf dist/`（新建一个未登记的文件）→ 第 5 组红；(f) 主 Makefile 加 `export GOFLAGS=-tags=x` → 第 6 组红；(g) `AGENT_LINUX_ARCHES` 去掉 `riscv64` → 替身执行用例 1 红；(h) `release-hub-only` 加上 `$(agent_pack)` → 替身执行用例 2 红；(i) `checkAgentFile` 改成只核对 `strings.TrimSpace` 后的值 → `TestRunCheckFileValidatesRawBytes` 的多行与空白几项红。
 
 ---
 ### Task 4: agent 输入门禁 `scripts/agentinputs`
@@ -963,14 +1044,14 @@ git commit -m "build(release): 本地验收构建显式给出与 VERSION 相同�
 - Consumes（Task 3 定义，本任务只按格式读，测试里用合成仓库自带的 Makefile 提供）：
   - `make -s -C <树> agent-bundle-inputs`：一行一个相对树根的文件路径。
   - `make -s -C <树> agent-go-targets`：一行一个 `<包路径> <GOOS> <GOARCH> [<GOARM>]`。
-- Produces：`go run ./scripts/agentinputs -base <git 引用>`，在仓库内任意目录运行。输入未变退出 0，stdout 一行 `agent inputs unchanged since <base> (<n> files, <m> modules)`；有变化退出 1，stdout 列出变化，最后一行提示把 `AGENT_VERSION` 改成本次 release 的版本；出错退出 2，stderr 说明。`release-hub-only` 配方调用它。
+- Produces：`go run ./scripts/agentinputs -base <git 引用>`，在仓库内任意目录运行。`run` 的返回值：输入未变 0，stdout 一行 `agent inputs unchanged since <base> (<n> files, <m> modules)`；有变化 1，stdout 列出变化，最后一行提示把 `AGENT_VERSION` 改成本次 release 的版本；出错 2，stderr 说明。经 `go run` 调用时 shell 看到的非 0 一律是 1（stderr 另有 `exit status 2`），"有变化"与"出错"靠输出区分。`release-hub-only` 配方调用它。
 - 包内（测试用）：`func run(args []string, dir string, stdout, stderr io.Writer) int`。
 
 **输入的定义**（spec §14.1，逐条实现，注释里写明理由）：
 
 1. 打包输入：`agent-bundle-inputs` 列出的文件。
-2. Go 源码：对 `agent-go-targets` 的每一行，在树根以 `GOOS`、`GOARCH`、`GOARM`（有才设）、`CGO_ENABLED=0`、`GOWORK=off` 运行 `go list -deps -json=ImportPath,Name,Dir,Standard,Module,GoFiles,CgoFiles,SFiles,SysoFiles,EmbedFiles <包>`。`Module.Main` 为真的包（本模块）取 `GoFiles`、`CgoFiles`、`SFiles`、`SysoFiles`、`EmbedFiles`，换算成相对树根的路径；全部行取并集（只在 darwin 编译的文件因此也在内）。`Standard` 的包跳过——标准库由 Go 版本承载（第 4 条）。
-3. 第三方模块：同一批 `go list` 结果里 `Module.Main` 为假的包所属模块，记为 `path@version`，有替换时加 `=>replPath@replVersion`；取并集。
+2. Go 源码：对 `agent-go-targets` 的每一行，在树根以 `GOOS`、`GOARCH`、`GOARM`（有才设）、`CGO_ENABLED=0`、`GOWORK=off` 运行 `go list -deps -json=ImportPath,Name,Dir,Standard,Module,GoFiles,CgoFiles,CFiles,CXXFiles,MFiles,HFiles,FFiles,SFiles,SwigFiles,SwigCXXFiles,SysoFiles,EmbedFiles <包>`。`Module.Main` 为真的包（本模块）取上面列出的全部文件类别（汇编 `#include` 的头文件在 `HFiles` 里，不开 cgo 也参与构建），换算成相对树根的路径；全部行取并集（只在 darwin 或只在 arm 编译的文件因此也在内）。`Standard` 的包跳过——标准库由 Go 版本承载（第 4 条）。
+3. 第三方模块：同一批 `go list` 结果里 `Module.Main` 为假的包所属模块，记为 `path@version`，有替换时加 `=>replPath@replVersion`；取并集。替换目标是本地目录（`Replace.Version` 为空）的模块没有不可变的版本，路径相同不等于内容相同：它的包按第 2 条同样取文件、计入文件输入；目录必须在仓库内（相对树根的路径不以 `..` 开头），否则出错退出（无法在基点上取到它的内容）。
 4. `go.mod` 里的 `go` 与 `toolchain` 两条指令行（逐行读，去掉首尾空白；没有 `toolchain` 行就只有 `go`）。CI 用 `go-version-file: go.mod` 取工具链，`go` 指令即编译器版本。
 5. 生成的 proto 文件按 proto 文件算，不按 Go 包算：
    - 生成文件的判定看文件本身：开头含 `// Code generated by protoc-gen-go. DO NOT EDIT.` 或 `// Code generated by protoc-gen-connect-go. DO NOT EDIT.`，且有一行 `// source: <x.proto>`（protoc-gen-go）或 `// Source: <x.proto>`（connect-go）。只读文件开头 4 KiB。
@@ -1029,6 +1110,9 @@ gen/v1/v1connect/agent.connect.go   头 "// Code generated by protoc-gen-connect
 gen/v1/v1connect/admin.connect.go   Source heron/v1/admin.proto；func NewAdminServiceClient() *v1.AdminRequest { return nil }
 internal/agentlib/lib.go         package agentlib; import "example.com/dep"; func Run() int { return dep.X() }
 internal/agentlib/lib_darwin.go  //go:build darwin / package agentlib; func darwinOnly() int { return 0 }
+internal/agentlib/asm_amd64.s    #include "defs.h"（go list 不编译，只要文件存在并按文件名约束参与 amd64）
+internal/agentlib/defs.h         #define AGENTLIB 1
+cmd/updater/main_arm.go          //go:build arm / package main; func armOnly() int { return 0 }
 cmd/agent/main.go     package main; import ( v1 "example.com/fix/gen/v1"; "example.com/fix/gen/v1/v1connect"; "example.com/fix/internal/agentlib" ); func main() { _ = v1.ReportRequest{}; _ = v1connect.NewAgentServiceClient(); _ = agentlib.Run() }
 cmd/updater/main.go   package main; import "example.com/fix/internal/agentlib"; func main() { _ = agentlib.Run() }
 cmd/hub/main.go       package main; import ( v1 "example.com/fix/gen/v1"; "example.com/fix/gen/v1/v1connect"; "example.com/hubdep" ); func main() { _ = v1.AdminRequest{}; _ = v1connect.NewAdminServiceClient(); _ = hubdep.Y() }
@@ -1056,13 +1140,17 @@ Makefile
 | `TestImportedProtoChangeIsAnAgentInput` | 改 `gen/v1/types.pb.go`（只经 `agent.proto` 的 import 进闭包） | 1 | `gen/v1/types.pb.go` |
 | `TestAgentGeneratedChangeIsAnAgentInput` | 改 `gen/v1/agent.pb.go` | 1 | `gen/v1/agent.pb.go` |
 | `TestDarwinOnlyFileChangeIsAnAgentInput` | 改 `internal/agentlib/lib_darwin.go` | 1 | `internal/agentlib/lib_darwin.go` |
-| `TestUpdaterOnlyPlatformIsCovered` | 改 `cmd/updater/main.go` | 1 | `cmd/updater/main.go` |
+| `TestUpdaterRootIsCovered` | 改 `cmd/updater/main.go` | 1 | `cmd/updater/main.go` |
+| `TestUpdaterArmOnlyFileIsCovered` | 改 `cmd/updater/main_arm.go`（只有 `./cmd/updater linux arm 7` 这一行会展开它） | 1 | `cmd/updater/main_arm.go` |
+| `TestAssemblyHeaderChangeIsAnAgentInput` | 改 `internal/agentlib/defs.h` | 1 | `internal/agentlib/defs.h` |
+| `TestLocalReplacementSourceChangeIsAnAgentInput` | 改 `dep/dep.go`（`replace` 不变） | 1 | `dep/dep.go` |
 | `TestBundleFileChangeIsAnAgentInput` | 改 `deploy/agent.service` | 1 | `deploy/agent.service` |
 | `TestFragmentChangeIsAnAgentInput` | 改 `deploy/agent.mk` | 1 | `deploy/agent.mk` |
 | `TestUntrackedAgentFileIsAnAgentInput` | 新建未跟踪的 `internal/agentlib/extra.go`（`package agentlib`） | 1 | `internal/agentlib/extra.go` |
 | `TestDeletedAgentFileIsAnAgentInput` | 删除 `internal/agentlib/lib_darwin.go` | 1 | `internal/agentlib/lib_darwin.go` |
 | `TestAgentDependencyChangeIsAnAgentInput` | `go.mod` 里 `replace example.com/dep => ./dep2` | 1 | `example.com/dep` |
-| `TestHubDependencyChangeIsNotAnAgentInput` | `hubdep/hubdep.go` 改返回值（只被 hub 用；同一替换目录，模块串不变） | 0 | |
+| `TestHubDependencyChangeIsNotAnAgentInput` | `hubdep/hubdep.go` 改返回值（只被 hub 用） | 0 | |
+| `TestLocalReplacementOutsideRepositoryIsAnError` | `mutate` 让基点的 `go.mod` 把 `example.com/dep` 替换到仓库外的目录（`t.TempDir()` 另建，绝对路径） | 2 | `outside the repository` |
 | `TestGoDirectiveChangeIsAnAgentInput` | `go.mod` 的 `go 1.22` → `go 1.22.1` | 1 | `go 1.22.1` |
 | `TestReferencedGeneratedFileOutsideAgentProtoIsAnInput` | `newFixture` 的 `mutate` 让 `cmd/agent/main.go` 另引用 `v1.PublicThing{}`；提交后改 `gen/v1/public.pb.go` | 1 | `gen/v1/public.pb.go` |
 | `TestBasePredatingBundleDefinitionIsAnError` | `mutate` 让基点的 Makefile 没有这两个目标；提交后在工作树补上目标 | 2 | `predates the agent bundle definition` |
@@ -1125,7 +1213,7 @@ Run: `go test -count=1 ./scripts/agentinputs/ > <task-dir>/logs/green.log 2>&1; 
 
 本任务的基点还没有 `deploy/agent.mk`（Task 3 才加），所以真实仓库上只能验"出错路径"：
 
-Run: `cd <worktree> && go run ./scripts/agentinputs -base v0.5.3 > <task-dir>/logs/real.log 2>&1; echo $?` → `2`，日志含 `working tree has no agent bundle definition`（工作树一侧先展开）。集成后由 Task 6 在真实仓库上跑正向用例。
+Run: `cd <worktree> && go run ./scripts/agentinputs -base v0.5.3 > <task-dir>/logs/real.log 2>&1; echo $?` → `1`（`go run` 把程序的退出码 2 变成 1），日志含 `working tree has no agent bundle definition`（工作树一侧先展开）与 `exit status 2`。集成后由 Task 6 在真实仓库上跑正向用例。
 
 - [ ] **Step 6: 全量与提交**
 
@@ -1136,7 +1224,7 @@ git add scripts/agentinputs/
 git commit -m "feat(release): 只发 hub 的门禁核对 agent 组构建输入自绑定版本以来未变"
 ```
 
-缺陷注入（记入 `## Fault injection`）：(a) 生成文件一律计入（不做 proto 粒度）→ `TestAdminOnlyGeneratedChangeIsNotAnAgentInput` 红；(b) proto 闭包不递归 import → `TestImportedProtoChangeIsAnAgentInput` 红；(c) 只展开第一个目标平台 → `TestDarwinOnlyFileChangeIsAnAgentInput` 与 `TestUpdaterOnlyPlatformIsCovered` 红；(d) 文件比较改用 `git diff --quiet <base> -- <路径>` → `TestUntrackedAgentFileIsAnAgentInput` 红；(e) 不比较模块 → `TestAgentDependencyChangeIsAnAgentInput` 红；(f) 根只取 `agent.proto` 而不按引用的标识符取 → `TestReferencedGeneratedFileOutsideAgentProtoIsAnInput` 红。
+缺陷注入（记入 `## Fault injection`）：(a) 生成文件一律计入（不做 proto 粒度）→ `TestAdminOnlyGeneratedChangeIsNotAnAgentInput` 红；(b) proto 闭包不递归 import → `TestImportedProtoChangeIsAnAgentInput` 红；(c) 只展开第一个目标行（`./cmd/agent linux amd64`）→ `TestDarwinOnlyFileChangeIsAnAgentInput`、`TestUpdaterRootIsCovered`、`TestUpdaterArmOnlyFileIsCovered` 红；(d) 每个包只展开 linux/amd64 而保留全部根 → `TestUpdaterArmOnlyFileIsCovered` 与 `TestDarwinOnlyFileChangeIsAnAgentInput` 红、`TestUpdaterRootIsCovered` 仍绿（区分"漏根"与"漏平台"）；(e) 文件比较改用 `git diff --quiet <base> -- <路径>` → `TestUntrackedAgentFileIsAnAgentInput` 红；(f) 不比较模块 → `TestAgentDependencyChangeIsAnAgentInput` 红；(g) 根只取 `agent.proto` 而不按引用的标识符取 → `TestReferencedGeneratedFileOutsideAgentProtoIsAnInput` 红；(h) 不取 `HFiles` → `TestAssemblyHeaderChangeIsAnAgentInput` 红；(i) 本地替换的模块只记模块串、不取文件 → `TestLocalReplacementSourceChangeIsAnAgentInput` 红。
 
 ---
 ### Task 5: release 流水线接上两种 release、绑定版本的端到端与发布回读
@@ -1208,14 +1296,18 @@ agent-version:
 `build` job：
 
 1. `actions/checkout` 加 `fetch-depth: 0`，并在注释里写原因：只发 hub 的门禁要在本地检出绑定版本的 tag（`git worktree add`），浅克隆没有它。
-2. `make release VERSION="$GITHUB_REF_NAME"` 之后加一步，把种类写进 step 输出；赋值与写输出分开，判定失败时这一步失败，而不是写出空值：
+2. 原来的 `- run: make release VERSION="$GITHUB_REF_NAME"` 一步换成两步：先取判定写进 step 输出（赋值与写输出分开，判定失败时这一步失败，而不是写出空值），再按判定调用发布目标（经环境变量传入，不把表达式拼进脚本）：
 
 ```yaml
-      # 种类只由 scripts/releasekind 判定（spec §14.1）；make release 已按它分路，后续步骤读同一个判定。
+      # 种类只由 scripts/releasekind 判定（spec §14.1）：先取判定，再调用对应的发布目标；后续步骤读同一个输出。
       - id: kind
         run: |
           kind=$(make -s release-kind VERSION="$GITHUB_REF_NAME")
           echo "kind=$kind" >> "$GITHUB_OUTPUT"
+      # 与本地验收同一组发布目标；版本注入、版本号守卫、只发 hub 的门禁与静态门禁都在目标里。
+      - run: make "release-$KIND" VERSION="$GITHUB_REF_NAME"
+        env:
+          KIND: ${{ steps.kind.outputs.kind }}
 ```
 
 3. `make compat-e2e` 之后加：
@@ -1251,7 +1343,7 @@ agent-version:
 - [ ] **Step 6: README 的发版说明**
 
 在 README 发布一节（第 72 行附近讲镜像与 tag 的段落之后）加"发版时的 AGENT_VERSION"：
-- `AGENT_VERSION` 在两次发版之间写最近一次已发布的 agent 版本。发版前跑 `go run ./scripts/agentinputs -base "$(make -s agent-version)"`：有变化（退出 1）就在发版提交里把 `AGENT_VERSION` 改成这次的版本号，这是完整 release；没有变化（退出 0）就保持不变，这是只发 hub 的 release。
+- `AGENT_VERSION` 在两次发版之间写最近一次已发布的 agent 版本。发版前跑 `go run ./scripts/agentinputs -base "$(make -s agent-version)"`：输出 `agent inputs unchanged since …`（退出 0）就保持不变，这是只发 hub 的 release；输出 `agent inputs changed since …` 就在发版提交里把 `AGENT_VERSION` 改成这次的版本号，这是完整 release；其它输出是出错，先解决（经 `go run` 时"有变化"与"出错"的退出码都是 1，按输出区分）。
 - 拆分后的第一个 release 必须是完整 release：此前的版本没有发行签名，门禁对它们报 `predates`。
 - 只发 hub 的 release 说明里写明：先升级 hub，再更新节点；旧 hub 的面板会把最新版当作节点目标，节点任务会在下载阶段失败（旧 agent 不受影响）。
 
@@ -1296,11 +1388,11 @@ git commit -m "ci(release): 流水线按 release 种类跑绑定版本的端到�
 | `deploy/agent.mk` 末尾加一行注释 | 1 |
 | `go.mod` 的 `go` 指令改一个补丁号 | 1 |
 
-另跑 `go run ./scripts/agentinputs -base v0.5.3` → 2，含 `predates`。
+另跑 `go run ./scripts/agentinputs -base v0.5.3` → shell 退出 1，输出含 `predates` 与 `exit status 2`。表里的 0/1 是 `go run` 下 shell 看到的退出码，1 时另核对输出是 `agent inputs changed since HEAD` 而不是出错。
 
 - [ ] **Step 3: 门禁**
 
-`make ci`、`go test -race -count=1 ./internal/hub/updates/ ./internal/hub/api/ ./internal/hub/ingest/ ./internal/update/ ./scripts/...`、`make e2e`（含绑定版本断言）、`make compat-e2e`、`make release VERSION=v0.0.0-<run> AGENT_VERSION=v0.0.0-<run>`（完整 release，与 Task 3 Step 9 的清单对照）、`make release VERSION=v0.0.0-<run>`（失败并提示 `AGENT_VERSION=$VERSION`）。每条 `cmd > log 2>&1; echo $?`。
+`make ci`、`go test -race -count=1 ./internal/hub/updates/ ./internal/hub/api/ ./internal/hub/ingest/ ./internal/update/ ./scripts/...`、`make e2e`（含绑定版本断言）、`make compat-e2e`、`make release-full VERSION=v0.0.0-<run> AGENT_VERSION=v0.0.0-<run>`（完整 release，与 Task 3 Step 9 的清单对照）、`make release-full VERSION=v0.0.0-<run>`（失败并提示 `AGENT_VERSION=$VERSION`）。每条 `cmd > log 2>&1; echo $?`。
 
 - [ ] **Step 4: 面板的真实浏览器验收**
 
