@@ -10,19 +10,19 @@ import { AdminService, GetSnapshotResponseSchema, ListNodesResponseSchema } from
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); window.getSelection()?.removeAllRanges(); });
 
-const snapshotOf = (hubVersion: string) => async () => ({ now: 1n, reportIntervalMs: 4000, nodes: [], hubVersion });
-const renderOpen = (hubVersion: string) =>
+const snapshotOf = (hubVersion: string, boundAgentVersion = "") => async () => ({ now: 1n, reportIntervalMs: 4000, nodes: [], hubVersion, boundAgentVersion });
+const renderOpen = (hubVersion: string, boundAgentVersion = "") =>
   renderWithAdmin({
     getRegisterWindow: async () => ({ open: true, expiresAt: 4_000_000_000n, remaining: 3 }),
     openRegisterWindow: async () => ({ key: "k1", expiresAt: 4_000_000_000n, maxNodes: 3 }),
-    getSnapshot: snapshotOf(hubVersion),
+    getSnapshot: snapshotOf(hubVersion, boundAgentVersion),
   }, [{ path: "/register", Component: RegisterWindow }], "/register");
 
 describe("RegisterWindow", () => {
   it.each(["curl", "wget"])("一键复制完整的 %s 安装命令并独立反馈", async (tool) => {
     const writeText = vi.fn(async () => {});
     vi.stubGlobal("navigator", { clipboard: { writeText } });
-    render(<InstallCommands hubVersion="v1.2.3" origin="http://hub.example:8080" registerKey="copy-test-key" />);
+    render(<InstallCommands hubVersion="v1.2.3" boundAgentVersion="v1.2.3" origin="http://hub.example:8080" registerKey="copy-test-key" />);
     fireEvent.click(screen.getByRole("button", { name: `复制 ${tool} 命令` }));
     const prefix = tool === "curl" ? "curl -fsSL" : "wget -qO-";
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${prefix} https://github.com/xjetry/heron-probe/releases/download/v1.2.3/install.sh | sh -s -- --hub http://hub.example:8080 --key copy-test-key --insecure-http`));
@@ -32,7 +32,7 @@ describe("RegisterWindow", () => {
 
   it.each(["missing", "rejected"])("剪贴板 %s 时提示并选中完整命令", async (failure) => {
     vi.stubGlobal("navigator", failure === "missing" ? {} : { clipboard: { writeText: async () => { throw new Error("denied"); } } });
-    render(<InstallCommands hubVersion="v1.2.3" origin="https://hub.example" registerKey="copy-test-key" />);
+    render(<InstallCommands hubVersion="v1.2.3" boundAgentVersion="v1.2.3" origin="https://hub.example" registerKey="copy-test-key" />);
     fireEvent.click(screen.getByRole("button", { name: "复制 wget 命令" }));
     expect(await screen.findByText("复制失败，请手动选择")).toBeInTheDocument();
     expect(window.getSelection()?.toString()).toBe("wget -qO- https://github.com/xjetry/heron-probe/releases/download/v1.2.3/install.sh | sh -s -- --hub https://hub.example --key copy-test-key");
@@ -42,9 +42,9 @@ describe("RegisterWindow", () => {
     let finish!: () => void;
     const pending = new Promise<void>((resolve, reject) => { finish = () => result === "copied" ? resolve() : reject(new Error("denied")); });
     vi.stubGlobal("navigator", { clipboard: { writeText: () => pending } });
-    const { rerender } = render(<InstallCommands hubVersion="v1.2.3" origin="https://hub.example" registerKey="old-key" />);
+    const { rerender } = render(<InstallCommands hubVersion="v1.2.3" boundAgentVersion="v1.2.3" origin="https://hub.example" registerKey="old-key" />);
     fireEvent.click(screen.getByRole("button", { name: "复制 curl 命令" }));
-    rerender(<InstallCommands hubVersion="v1.2.4" origin="https://hub.example" registerKey="new-key" />);
+    rerender(<InstallCommands hubVersion="v1.2.4" boundAgentVersion="v1.2.4" origin="https://hub.example" registerKey="new-key" />);
     await act(async () => finish());
     expect(screen.getByRole("button", { name: "复制 curl 命令" })).toHaveTextContent(/^复制$/);
     expect(screen.queryByText("复制失败，请手动选择")).not.toBeInTheDocument();
@@ -206,7 +206,7 @@ describe("RegisterWindow", () => {
     ["http://[::1]:8080", false],
     ["http://10.0.0.1", true],
   ])("origin %s：带 --insecure-http 为 %s", (origin, insecure) => {
-    render(<InstallCommands hubVersion="v1.2.3" origin={origin} registerKey="k1" />);
+    render(<InstallCommands hubVersion="v1.2.3" boundAgentVersion="v1.2.3" origin={origin} registerKey="k1" />);
     const pres = screen.getAllByText(/install\.sh \| sh -s --/);
     expect(pres).toHaveLength(2);
     for (const p of pres) {
@@ -215,6 +215,15 @@ describe("RegisterWindow", () => {
     }
     expect(screen.queryByText(/token 与指标将明文传输/) !== null).toBe(insecure);
     expect(screen.getByText(/安装命令的可信来源是 README 与 GitHub Release/)).toBeInTheDocument();
+  });
+
+  it("hub v0.5.6 绑定 agent v0.5.4 时命令取 v0.5.6 的脚本并写明装的是 v0.5.4", async () => {
+    renderOpen("v0.5.6", "v0.5.4");
+    fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
+    for (const p of await screen.findAllByText(/install\.sh \| sh -s --/)) {
+      expect(p.textContent).toContain("https://github.com/xjetry/heron-probe/releases/download/v0.5.6/install.sh");
+    }
+    expect(screen.getByText(/安装 hub 绑定的 agent v0\.5\.4/)).toBeInTheDocument();
   });
 
   it("v1.0 不是合法 semver，走 latest、不带 --version", async () => {

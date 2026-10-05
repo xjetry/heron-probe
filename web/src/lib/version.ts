@@ -40,15 +40,23 @@ function compare(a: Version, b: Version): number {
   return a.pre.length - b.pre.length;
 }
 
-// 带 v 前缀的合法 semver。与 lagsHub 用同一个 parse：v1.0 这种少一段的不算。
+// 带 v 前缀的合法 semver。与 olderThan 用同一个 parse：v1.0 这种少一段的不算。
 export function isRelease(v: string): boolean {
   return parse(v) !== null;
 }
 
-// agent 版本按 semver 2.0 优先级低于 hub 才算落后；agent 更高或相同不标。任一方解析不了（dev、空、
-// 格式不对）就没有可比的次序，不标。
-export function lagsHub(agent: string | undefined, hub: string): boolean {
-  const a = agent ? parse(agent) : null;
-  const h = parse(hub);
-  return a !== null && h !== null && compare(a, h) < 0;
+// 当前版本按 semver 2.0 优先级低于目标版本才算落后；更高或相同不标。任一方解析不了（dev、空、格式不对）
+// 就没有可比的次序，不标。节点与 hub 绑定的 agent 版本比（spec §14.1），hub 与官方最新版比，都用它。
+export function olderThan(current: string | undefined, target: string): boolean {
+  const a = current ? parse(current) : null;
+  const t = parse(target);
+  return a !== null && t !== null && compare(a, t) < 0;
+}
+
+// 正式版：vMAJOR.MINOR.PATCH，无预发布、无构建元数据，每段不超过 uint32——与 hub 的 update.ValidVersion 同一
+// 口径（它按 uint32 解析每段）。节点在线更新只接受正式版，绑定版本不是正式版时面板不提供节点更新。
+const UINT32_MAX = "4294967295";
+export function isStableRelease(v: string): boolean {
+  const p = parse(v);
+  return p !== null && p.pre.length === 0 && !v.includes("+") && p.core.every((n) => compareNumeric(n, UINT32_MAX) <= 0);
 }

@@ -3,9 +3,10 @@ import { InstallCommands } from "./InstallCommands";
 import { Modal } from "./Modal";
 import { Secret } from "./Secret";
 
-// 安装凭据明文只由创建或换发响应提供，hub 只存哈希；关闭弹窗后不能恢复，需要时重新换发。
-export function NodeInstallModal({ secretLabel, token, hubVersion, error, reRegister = false, opener, onClose }: {
-  secretLabel: string; token: string; hubVersion?: string; error?: unknown; reRegister?: boolean; opener: HTMLElement; onClose: () => void;
+// 安装凭据明文只由创建或换发响应提供，hub 只存哈希；关闭弹窗后不能恢复，需要时重新换发。hubVersion 与
+// boundAgentVersion 同属快照响应：hubVersion 未到时命令区不渲染，绑定版本也一样。
+export function NodeInstallModal({ secretLabel, token, hubVersion, boundAgentVersion, error, reRegister = false, opener, onClose }: {
+  secretLabel: string; token: string; hubVersion?: string; boundAgentVersion?: string; error?: unknown; reRegister?: boolean; opener: HTMLElement; onClose: () => void;
 }) {
   return <Modal title="节点凭据" description="这是仅用于注册的安装凭据，不能上报指标。关闭后无法再看到明文 token，hub 只存哈希。" opener={opener} onClose={onClose}>
     <div className="modal-body">
@@ -16,7 +17,7 @@ export function NodeInstallModal({ secretLabel, token, hubVersion, error, reRegi
       {errorBanner(error)}
       {hubVersion === undefined
         ? error == null && <p className="muted">正在读取 hub 版本，读到后即可复制安装命令…</p>
-        : <InstallCommands hubVersion={hubVersion} origin={window.location.origin} registerKey={token} reRegister={reRegister} />}
+        : <InstallCommands hubVersion={hubVersion} boundAgentVersion={boundAgentVersion ?? ""} origin={window.location.origin} registerKey={token} reRegister={reRegister} />}
     </div>
     <footer className="modal-footer"><button type="button" className="primary-button" onClick={onClose}>完成</button></footer>
   </Modal>;

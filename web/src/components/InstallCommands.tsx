@@ -4,8 +4,10 @@ import { needsInsecureHTTP } from "../lib/transport";
 import { isRelease } from "../lib/version";
 import { loadProxyPort, parseProxyPort, saveProxyPort, sshProxyArgs } from "../lib/installProxy";
 
-// 安装脚本只装自己所属的版本（spec §5.7），版本由取哪个 URL 的脚本决定：hub 为正式版本（带 v 前缀的合法
-// semver，与节点落后判定同一个解析）时取同版本 release 的脚本，装上的 agent 与 hub 同版本；否则只能取最新 release。
+// 安装脚本只装自己所属的版本（spec §5.7），版本由取哪个 URL 的脚本决定；每个 release 里的 agent 脚本装的就是这个
+// hub 版本绑定的 agent（spec §14.1）——只发 hub 的 release 把绑定版本的脚本原样带进来，完整 release 本来就是同一版本。
+// hub 为正式版本（带 v 前缀的合法 semver，与节点落后判定同一个解析）时取同版本 release 的脚本；否则只能取最新
+// release 的脚本，装最新 hub 绑定的 agent。
 const scriptUrl = (hubVersion: string) =>
   isRelease(hubVersion)
     ? `https://github.com/xjetry/heron-probe/releases/download/${hubVersion}/install.sh`
@@ -13,10 +15,12 @@ const scriptUrl = (hubVersion: string) =>
 
 // origin 是 agent 访问 hub 的地址，也是判定要不要 --insecure-http 的依据：命令里的 --hub 与这个判定取同一个值。
 // registerKey 是注册窗口的 key 或指定节点的安装凭据；注册后由 agent 保存另行签发的运行 token。
+// boundAgentVersion 是 hub 绑定的 agent 版本（spec §14.1）：命令装上的是它，不是 hub 自己的版本；正式 hub 的绑定
+// 版本由发版判定保证存在，空或未知只是兜底显示。
 // "国内主机"只改变这里生成的命令（SSH 反代参数与 --update-source hub），hub 不记录：节点实际从哪取更新由
 // 更新器上报，再存一份会出现两个可能不一致的来源。每次打开默认关闭：能直连 GitHub 的主机不需要 SSH 反代，
 // 经 hub 中转也只是多占 hub 的出口带宽。
-export function InstallCommands({ hubVersion, origin, registerKey, reRegister = false, banner }: { hubVersion: string; origin: string; registerKey: string; reRegister?: boolean; banner?: ReactNode }) {
+export function InstallCommands({ hubVersion, boundAgentVersion, origin, registerKey, reRegister = false, banner }: { hubVersion: string; boundAgentVersion: string; origin: string; registerKey: string; reRegister?: boolean; banner?: ReactNode }) {
   const [domestic, setDomestic] = useState(false);
   const [portText, setPortText] = useState(loadProxyPort);
   const port = parseProxyPort(portText);
@@ -45,7 +49,9 @@ export function InstallCommands({ hubVersion, origin, registerKey, reRegister = 
       <div className="install-command"><strong>curl</strong><CopyableText label="curl 安装命令" copyLabel="复制 curl 命令" value={`curl -fsSL ${url} | sh -s -- ${args}`} /></div>
       <div className="install-command"><strong>wget</strong><CopyableText label="wget 安装命令" copyLabel="复制 wget 命令" value={`wget -qO- ${url} | sh -s -- ${args}`} /></div>
       {domestic && <p className="muted">命令带 --update-source hub：在线更新经 hub 中转取官方签名产物，不直连 GitHub。OpenRC 主机（如 Alpine）不支持在线更新，安装脚本会拒绝这个参数，请删掉它再执行。</p>}
-      {!isRelease(hubVersion) && <p className="muted">hub 不是正式版本（{hubVersion || "未知"}），脚本取自最新 release，将安装最新 release。</p>}
+      {isRelease(hubVersion)
+        ? <p className="muted">脚本取自 hub {hubVersion} 的 release，安装 hub 绑定的 agent {boundAgentVersion || "（未知）"}。</p>
+        : <p className="muted">hub 不是正式版本（{hubVersion || "未知"}），脚本取自最新 release，将安装最新 release。</p>}
       {insecure && <p className="muted">hub 地址是 http 且不是 loopback IP，命令带 --insecure-http：节点 token 与指标将明文传输。</p>}
       <p className="muted">安装命令的可信来源是 README 与 GitHub Release：这里的命令由 hub 提供，hub 失守时不可信。</p>
     </>

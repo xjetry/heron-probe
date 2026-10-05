@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { lagsHub } from "./version";
+import { isStableRelease, olderThan } from "./version";
 
-describe("lagsHub 按 semver 2.0 优先级比较", () => {
+describe("olderThan 按 semver 2.0 优先级比较", () => {
   it.each([
     ["v1.9.0", "v1.10.0"],
     ["v0.9.9", "v1.0.0"],
@@ -24,14 +24,14 @@ describe("lagsHub 按 semver 2.0 优先级比较", () => {
     // 构建元数据能解析且不参与比较。
     ["v1.2.3+build.5", "v1.2.4"],
     ["v1.1.0-rc.1+b9", "v1.1.0+b1"],
-  ])("%s 落后于 %s", (agent, hub) => {
-    expect(lagsHub(agent, hub)).toBe(true);
+  ])("%s 落后于 %s", (current, target) => {
+    expect(olderThan(current, target)).toBe(true);
   });
 
   it.each([
     ["v1.1.0", "v1.1.0"],
     ["v1.2.0", "v1.1.0"],
-    // hub 为预发布、agent 为对应的正式版：agent 更高。
+    // 目标为预发布、当前为对应的正式版：当前更高。
     ["v1.1.0", "v1.1.0-rc.1"],
     ["v1.1.0-beta", "v1.1.0-alpha"],
     ["v1.1.0-alpha.10", "v1.1.0-alpha.2"],
@@ -39,8 +39,8 @@ describe("lagsHub 按 semver 2.0 优先级比较", () => {
     // 只差构建元数据视为同一版本。
     ["v1.1.0+b1", "v1.1.0+b2"],
     ["v1.1.0+b2", "v1.1.0+b1"],
-  ])("%s 不落后于 %s", (agent, hub) => {
-    expect(lagsHub(agent, hub)).toBe(false);
+  ])("%s 不落后于 %s", (current, target) => {
+    expect(olderThan(current, target)).toBe(false);
   });
 
   // 任一方不是合法的正式或预发布版本号就没有可比的次序，不标。
@@ -63,7 +63,19 @@ describe("lagsHub 按 semver 2.0 优先级比较", () => {
     ["v1.0.0+", "v1.1.0"],
     ["v1.0.0+a_b", "v1.1.0"],
     ["v1.0.0 ", "v1.1.0"],
-  ])("%s 对 %s 解析失败不标", (agent, hub) => {
-    expect(lagsHub(agent, hub)).toBe(false);
+  ])("%s 对 %s 解析失败不标", (current, target) => {
+    expect(olderThan(current, target)).toBe(false);
+  });
+});
+
+describe("isStableRelease 与 hub 的 ValidVersion 同一口径", () => {
+  it.each(["v0.5.4", "v1.0.0", "v10.20.30"])("%s 是正式版", (v) => {
+    expect(isStableRelease(v)).toBe(true);
+  });
+  it.each(["v4294967295.0.0", "v0.4294967295.0"])("%s 在 uint32 上界内", (v) => {
+    expect(isStableRelease(v)).toBe(true);
+  });
+  it.each(["", "dev", "v0.5.4-rc.1", "v0.5.4+b.1", "0.5.4", "v1.0", "v01.0.0", "v4294967296.0.0", "v0.0.99999999999"])("%s 不是正式版", (v) => {
+    expect(isStableRelease(v)).toBe(false);
   });
 });

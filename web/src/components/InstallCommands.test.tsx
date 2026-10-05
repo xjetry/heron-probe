@@ -10,7 +10,7 @@ const wget = () => screen.getByLabelText("wget 安装命令").textContent;
 const sshArgs = () => screen.queryByLabelText("SSH 反代参数")?.textContent;
 const domestic = () => screen.getByRole("checkbox", { name: /国内主机/ });
 const portInput = () => screen.getByRole("textbox", { name: "本机代理端口" });
-const renderCommands = () => render(<InstallCommands hubVersion="v1.2.3" origin="https://hub.example:28080" registerKey="k1" />);
+const renderCommands = () => render(<InstallCommands hubVersion="v1.2.3" boundAgentVersion="v1.2.3" origin="https://hub.example:28080" registerKey="k1" />);
 
 describe("InstallCommands 国内主机", () => {
   it("默认关闭：命令不带 --update-source，没有 SSH 反代参数", () => {

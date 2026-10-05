@@ -20,7 +20,7 @@ const withVersion = [
 const agentAt = (agentVersion: string) => [{ ...withVersion[0], facts: { ...withVersion[0].facts, agentVersion } }];
 // 按表头文字取列号：同一行里可能有多个"—"，断言要落在指定的列上。
 const column = (header: string) => screen.getAllByRole("columnheader").findIndex((th) => th.textContent === header);
-const snapshotOf = (hubVersion: string) => async () => ({ now: 1n, reportIntervalMs: 4000, nodes: [], hubVersion });
+const snapshotOf = (hubVersion: string, boundAgentVersion = "") => async () => ({ now: 1n, reportIntervalMs: 4000, nodes: [], hubVersion, boundAgentVersion });
 // 节点页总会取快照（落后标记用）与标签清单（过滤器与标签管理用）；默认给一个成功的快照与空清单，需要别的版本、标签或
 // 失败的用例覆盖 getSnapshot、listTags。
 const renderNodes = (impl: AdminImpl, routes: Parameters<typeof renderWithAdmin>[1] = [{ path: "/nodes", Component: Nodes }]) =>
@@ -120,49 +120,63 @@ describe("Nodes", () => {
     await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n] }), expect.anything()));
   });
 
-  it("marks nodes whose agent version lags the hub", async () => {
+  it("marks nodes against the bound agent version, not the hub version", async () => {
+    // hub v0.5.6 只改了 hub，绑定 agent v0.5.4：跑 v0.5.4 的节点不落后，跑 v0.5.3 的才落后。
+    const nodes = [{ ...agentAt("v0.5.4")[0], id: 1n, name: "current" }, { ...agentAt("v0.5.3")[0], id: 2n, name: "behind" }];
+    renderNodes({ listNodes: async () => ({ nodes }), getSnapshot: snapshotOf("v0.5.6", "v0.5.4") });
+    expect(await screen.findByText("agent 低于 v0.5.4")).toBeInTheDocument();
+    expect(screen.getAllByText("agent 低于 v0.5.4")).toHaveLength(1);
+  });
+
+  it.each(["", "dev"])("no lagging marker when the hub has no stable binding ('%s')", async (bound) => {
+    renderNodes({ listNodes: async () => ({ nodes: agentAt("v0.5.3") }), getSnapshot: snapshotOf("v0.5.6", bound) });
+    await screen.findByText(/节点清单/);
+    expect(screen.queryByText(/agent 低于/)).toBeNull();
+  });
+
+  it("marks a node whose agent version lags the bound version", async () => {
     renderNodes({
       listNodes: async () => ({ nodes: withVersion }),
-      getSnapshot: snapshotOf("v1.1.0"),
+      getSnapshot: snapshotOf("v1.1.0", "v1.1.0"),
     });
-    expect(await screen.findByText("落后于 hub")).toBeInTheDocument();
+    expect(await screen.findByText("agent 低于 v1.1.0")).toBeInTheDocument();
     // 标记在链接之外，不改变链接的可访问名。
-    expect(screen.getByRole("link", { name: "a（#1）" })).not.toHaveTextContent("落后于 hub");
+    expect(screen.getByRole("link", { name: "a（#1）" })).not.toHaveTextContent("agent 低于");
   });
 
-  it.each(["v1.1.0", "dev", ""])("no lagging marker when versions match or hub is '%s'", async (hubVersion) => {
+  it("does not mark a node already at the bound version", async () => {
     renderNodes({
       listNodes: async () => ({ nodes: agentAt("v1.1.0") }),
-      getSnapshot: snapshotOf(hubVersion),
+      getSnapshot: snapshotOf("v1.1.0", "v1.1.0"),
     });
     await screen.findByRole("link", { name: "a（#1）" });
-    expect(screen.queryByText("落后于 hub")).toBeNull();
+    expect(screen.queryByText(/agent 低于/)).toBeNull();
   });
 
-  it("does not mark a node newer than the hub", async () => {
+  it("does not mark a node newer than the bound version", async () => {
     renderNodes({
       listNodes: async () => ({ nodes: agentAt("v1.2.0") }),
-      getSnapshot: snapshotOf("v1.1.0"),
+      getSnapshot: snapshotOf("v1.1.0", "v1.1.0"),
     });
     await screen.findByRole("link", { name: "a（#1）" });
-    expect(screen.queryByText("落后于 hub")).toBeNull();
+    expect(screen.queryByText(/agent 低于/)).toBeNull();
   });
 
   it("does not mark a dev agent", async () => {
     renderNodes({
       listNodes: async () => ({ nodes: agentAt("dev") }),
-      getSnapshot: snapshotOf("v1.1.0"),
+      getSnapshot: snapshotOf("v1.1.0", "v1.1.0"),
     });
     await screen.findByRole("link", { name: "a（#1）" });
-    expect(screen.queryByText("落后于 hub")).toBeNull();
+    expect(screen.queryByText(/agent 低于/)).toBeNull();
   });
 
-  it.each([["v1.9.0", "v1.10.0"], ["v1.1.0-rc.1", "v1.1.1"], ["v0.9.9", "v1.0.0"], ["v1.1.0-rc.1", "v1.1.0"]])("按版本号比较：%s 落后于 %s", async (agent, hub) => {
+  it.each([["v1.9.0", "v1.10.0"], ["v1.1.0-rc.1", "v1.1.1"], ["v0.9.9", "v1.0.0"], ["v1.1.0-rc.1", "v1.1.0"]])("按版本号比较：%s 落后于 %s", async (agent, bound) => {
     renderNodes({
       listNodes: async () => ({ nodes: agentAt(agent) }),
-      getSnapshot: snapshotOf(hub),
+      getSnapshot: snapshotOf("v1.1.0", bound),
     });
-    expect(await screen.findByText("落后于 hub")).toBeInTheDocument();
+    expect(await screen.findByText(`agent 低于 ${bound}`)).toBeInTheDocument();
   });
 
   it("快照失败显示版本比较不可用的横幅，列表仍在且不标记", async () => {
@@ -173,7 +187,7 @@ describe("Nodes", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/落后标记不可用.*snapshot unavailable/);
     expect(screen.getByRole("link", { name: "a（#1）" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "添加节点" })).toBeInTheDocument();
-    expect(screen.queryByText("落后于 hub")).toBeNull();
+    expect(screen.queryByText(/agent 低于/)).toBeNull();
   });
 
   it("快照已取到后刷新失败，标记保留并说明按上次的版本判断", async () => {
@@ -182,15 +196,15 @@ describe("Nodes", () => {
       listNodes: async () => ({ nodes: withVersion }),
       getSnapshot: async () => {
         if (fail) throw new ConnectError("snapshot refresh failed", Code.Unavailable);
-        return { now: 1n, reportIntervalMs: 4000, nodes: [], hubVersion: "v1.1.0" };
+        return { now: 1n, reportIntervalMs: 4000, nodes: [], hubVersion: "v1.1.0", boundAgentVersion: "v1.1.0" };
       },
     });
-    expect(await screen.findByText("落后于 hub")).toBeInTheDocument();
+    expect(await screen.findByText("agent 低于 v1.1.0")).toBeInTheDocument();
     fail = true;
     const snapshotKey = createConnectQueryKey({ schema: AdminService.method.getSnapshot, cardinality: "finite" });
     await act(async () => { await queryClient.refetchQueries({ queryKey: snapshotKey }); });
-    expect(await screen.findByRole("alert")).toHaveTextContent(/按上次取得的 v1\.1\.0 判断.*snapshot refresh failed/);
-    expect(screen.getByText("落后于 hub")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(/按上次取得的绑定版本 v1\.1\.0 判断.*snapshot refresh failed/);
+    expect(screen.getByText("agent 低于 v1.1.0")).toBeInTheDocument();
   });
 
   it("节点刷新失败保留编辑行与草稿", async () => {

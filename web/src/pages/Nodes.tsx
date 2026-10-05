@@ -24,7 +24,7 @@ import { withId } from "../lib/ids";
 import { filterNodes } from "../lib/nodeSearch";
 import { POLL_MS } from "../lib/poll";
 import { sameTag, withoutTag, withTag } from "../lib/tags";
-import { lagsHub } from "../lib/version";
+import { olderThan } from "../lib/version";
 import { NodeEditor } from "./NodeEditor";
 import { BatchNodeTagsEditor } from "./BatchNodeTagsEditor";
 
@@ -51,6 +51,8 @@ export function Nodes() {
   const tags = useQuery(AdminService.method.listTags, {});
   const snapshot = useQuery(AdminService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
   const hubVersion = snapshot.data?.hubVersion;
+  // 落后标记只看 hub 绑定的 agent 版本（spec §14.1）：hub 自己升到 v0.5.6 不代表节点落后。
+  const boundAgentVersion = snapshot.data?.boundAgentVersion;
   const statusById = new Map(snapshot.data?.nodes.map((node) => [node.id, node]));
   const refresh = (options?: { throwOnError: boolean }) => Promise.all([
     qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) }, options),
@@ -180,8 +182,8 @@ export function Nodes() {
       <button type="button" className="primary-button" disabled={editing} onClick={(event) => { lastOpener.current = event.currentTarget; create.reset(); setCreating(event.currentTarget); }}><Icon name="plus" />添加节点</button>
     </header>
     {!editor && errorBanner(nodes.error)}
-    {snapshot.error != null && <p role="alert" className="error">{hubVersion === undefined ? "无法取得 hub 版本，落后标记不可用" : `刷新 hub 版本失败，落后标记按上次取得的 ${hubVersion || "空版本"} 判断`}；在线状态与流量可能不是最新值：{errorText(snapshot.error)}</p>}
-    {secret && <NodeInstallModal secretLabel={secret.label} token={secret.value} hubVersion={hubVersion} error={snapshot.error} reRegister={secret.reRegister} opener={secret.opener} onClose={() => setSecret(null)} />}
+    {snapshot.error != null && <p role="alert" className="error">{boundAgentVersion === undefined ? "无法取得 hub 绑定的 agent 版本，落后标记不可用" : `刷新失败，落后标记按上次取得的绑定版本 ${boundAgentVersion || "空"} 判断`}；在线状态与流量可能不是最新值：{errorText(snapshot.error)}</p>}
+    {secret && <NodeInstallModal secretLabel={secret.label} token={secret.value} hubVersion={hubVersion} boundAgentVersion={boundAgentVersion} error={snapshot.error} reRegister={secret.reRegister} opener={secret.opener} onClose={() => setSecret(null)} />}
     <div className="node-filters">
       <label className="node-search">搜索节点<input type="search" placeholder="名称、IP、地区、备注或主机名" value={search} onChange={(event) => { setSearch(event.target.value); setSelected([]); }} /></label>
       <TagFilter tags={tags.data?.tags} error={tags.error} filter={tagFilter} onChange={(value) => { setTagFilter(value); setSelected([]); }} />
@@ -210,7 +212,7 @@ export function Nodes() {
       {list.length === 0 && <p className="node-empty" role="status">{narrowed ? "没有匹配的节点。" : "还没有节点，添加节点后安装 agent 即可开始监控。"}</p>}
       <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
         <table className="nodes node-management"><thead><tr><th data-column="order"><span className="sr-only">排序</span></th><th data-column="name">节点</th><th data-column="addresses">IP 地址</th><th data-column="status">状态</th><th>本周期流量</th><th>计费</th><th>到期</th><th data-column="actions">操作</th></tr></thead>
-          <tbody>{list.map((node, index) => <NodeRow key={String(node.id)} node={node} status={statusById.get(node.id)} hubVersion={hubVersion}
+          <tbody>{list.map((node, index) => <NodeRow key={String(node.id)} node={node} status={statusById.get(node.id)} boundAgentVersion={boundAgentVersion}
             editing={editing} deleting={remove.isPending} rotating={rotate.isPending}
             selection={<MixedCheckbox label={`选择 ${withId(node.name, node.id)}`} checked={selectedIds.has(node.id)} disabled={editing || nodes.stale} onChange={() => setSelected((current) => current.includes(node.id) ? current.filter((id) => id !== node.id) : [...current, node.id])} />}
             orderClass={dragging === node.id ? "is-dragging" : dragging !== null && drop?.target === node.id ? `drop-${drop.edge}` : undefined}
@@ -257,8 +259,8 @@ export function Nodes() {
   </section>;
 }
 
-function NodeRow({ node, status, hubVersion, editing, deleting, rotating, selection, orderControl, orderClass, onDragOver, onDrop, onEdit, onDelete, onRotate }: {
-  node: Node; status?: NodeStatus; hubVersion?: string; editing: boolean; deleting: boolean; rotating: boolean;
+function NodeRow({ node, status, boundAgentVersion, editing, deleting, rotating, selection, orderControl, orderClass, onDragOver, onDrop, onEdit, onDelete, onRotate }: {
+  node: Node; status?: NodeStatus; boundAgentVersion?: string; editing: boolean; deleting: boolean; rotating: boolean;
   selection: ReactNode;
   orderControl: ReactNode; orderClass?: string; onDragOver: (event: DragEvent<HTMLTableRowElement>) => void; onDrop: (event: DragEvent<HTMLTableRowElement>) => void;
   onEdit: (mode: "general" | "billing", opener: HTMLElement) => void; onDelete: () => void; onRotate: (opener: HTMLElement) => void;
@@ -271,7 +273,7 @@ function NodeRow({ node, status, hubVersion, editing, deleting, rotating, select
       {node.note && <p className="node-subtext node-note" title={node.note}>{node.note}</p>}
       <span className="node-subtext">{node.public ? "公开" : "仅管理端"}</span>
       {node.maintenance && <span className="node-subtext warn">维护中</span>}
-      {hubVersion !== undefined && lagsHub(node.facts?.agentVersion, hubVersion) && <span className="node-subtext warn">落后于 hub</span>}
+      {boundAgentVersion !== undefined && olderThan(node.facts?.agentVersion, boundAgentVersion) && <span className="node-subtext warn" title={`低于 hub 绑定的 agent 版本 ${boundAgentVersion}，可在在线更新页更新`}>agent 低于 {boundAgentVersion}</span>}
     </td>
     <td data-column="addresses" data-label="IP 地址"><NodeAddresses network={node.facts?.network} /></td>
     <td data-column="status" data-label="状态"><span className={`status-pill ${status ? status.online ? "is-online" : "is-offline" : ""}`}>{status && <span className={`dot ${status.online ? "ok" : "bad"}`} />}{status ? status.online ? "在线" : "离线" : "状态未知"}</span></td>

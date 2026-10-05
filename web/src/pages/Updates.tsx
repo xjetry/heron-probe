@@ -6,7 +6,7 @@ import { MixedCheckbox } from "../components/MixedCheckbox";
 import { Modal } from "../components/Modal";
 import { AdminService } from "../gen/heron/v1/admin_pb";
 import type { UpdateStatus } from "../gen/heron/v1/update_pb";
-import { lagsHub } from "../lib/version";
+import { isStableRelease, olderThan } from "../lib/version";
 
 const labels: Record<string, string> = {
   queued: "等待节点上线", dispatched: "已下发", downloading: "下载并校验", stopping: "停止旧服务",
@@ -17,7 +17,7 @@ const activeStates = new Set(["queued", "dispatched", "downloading", "stopping",
 // 取产物的来源由节点安装时的 --update-source 决定（spec §4.10）；更新失败时先看它走的哪条路径。
 const sourceLabels: Record<string, string> = { github: "GitHub 直连", hub: "经 hub 中转" };
 function eligible(status: UpdateStatus | undefined, version: string) {
-  return !!status?.supported && !!version && lagsHub(status.version, version) && !activeStates.has(status.task?.state ?? "");
+  return !!status?.supported && !!version && olderThan(status.version, version) && !activeStates.has(status.task?.state ?? "");
 }
 function Progress({ status }: { status?: UpdateStatus }) {
   if (!status) return <span className="muted">尚未收到更新能力，请先升级安装器与 agent。</span>;
@@ -46,10 +46,13 @@ export function Updates() {
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const targets = new Map(updates.data!.targets.map((target) => [target.nodeId, target.status]));
   const hub = targets.get(0n);
+  // 节点更新到 hub 绑定的 agent 版本（spec §14.1），不跟随官方最新——只改 hub 的版本不要求节点升级；绑定不是
+  // 正式版（开发构建或预发布）时没有可下发的产物目标，不提供节点更新。hub 自身仍以官方最新正式版为目标，要先检查。
+  const nodeTarget = isStableRelease(updates.data!.boundAgentVersion) ? updates.data!.boundAgentVersion : "";
   // 行勾选框、全选与提交只认 eligible 这一个判定：updatable 是此刻可更新的节点（按节点列表顺序），chosen 是它与已选的
-  // 交集。轮询让节点失去资格时，selected 里的旧 id 不再计入 chosen，计数、全选状态与点击"更新选中节点"时取的目标一起收缩；
+  // 交集。轮询让节点失去资格时，selected 里的旧 id 不再计入 chosen，计数、全选状态与点击“更新选中节点”时取的目标一起收缩；
   // 确认框打开后目标固定，期间失去资格的节点由 hub 的 updates.Manager.Start 按同样的条件（支持、版本更旧、无进行中任务）拒绝。
-  const updatable = nodes.data!.nodes.filter((node) => eligible(targets.get(node.id), latest)).map((node) => node.id);
+  const updatable = nodes.data!.nodes.filter((node) => eligible(targets.get(node.id), nodeTarget)).map((node) => node.id);
   const chosen = updatable.filter((id) => selected.has(id));
   const nameOf = (id: bigint) => id === 0n ? "Hub" : nodes.data!.nodes.find((node) => node.id === id)?.name ?? `节点 #${id}`;
   const execute = async () => {
@@ -79,20 +82,20 @@ export function Updates() {
         <button type="button" disabled={!eligible(hub, latest) || busy} onClick={(event) => setConfirmation({ ids: [0n], version: latest, opener: event.currentTarget })}>更新 Hub</button>
       </div>
       <div className="card"><span className="muted">官方最新正式版</span><h2>{latest || "尚未检查"}</h2>
-        <p className="muted">只安装 xjetry/heron-probe 正式 Release 中带官方签名的产物，不执行远程命令；节点按安装时的选择直接从 GitHub 或经 hub 中转取得。</p>
+        <p className="muted">只安装 xjetry/heron-probe 正式 Release 中带官方签名的产物，不执行远程命令；节点按安装时的选择直接从 GitHub 或经 hub 中转取得。节点更新到 hub 绑定的 agent 版本；只改 hub 的版本不要求节点升级。</p>
         <p className="muted">首次启用需用新版安装器安装本机更新服务。Docker、OpenRC 与 macOS 请使用各自安装方式。</p>
       </div>
     </div>
     {results.length > 0 && <div className="card" role="status">{results.map((result, i) => <p key={i}>{result}</p>)}</div>}
-    <div className="page-heading"><div><h2>节点 Agent</h2><p>离线任务最多等待 24 小时；新版本成功上报后才算完成。</p></div>
-      <button type="button" disabled={chosen.length === 0 || busy} onClick={(event) => setConfirmation({ ids: chosen, version: latest, opener: event.currentTarget })}>更新选中节点（{chosen.length}）</button>
+    <div className="page-heading"><div><h2>节点 Agent</h2><p>{nodeTarget ? `目标版本 ${nodeTarget}（hub 绑定的 agent 版本）。` : "这个 hub 没有绑定正式的 agent 版本（开发构建或预发布），不能在线更新节点。"}离线任务最多等待 24 小时；新版本成功上报后才算完成。</p></div>
+      <button type="button" disabled={chosen.length === 0 || busy} onClick={(event) => setConfirmation({ ids: chosen, version: nodeTarget, opener: event.currentTarget })}>更新选中节点（{chosen.length}）</button>
     </div>
     <div className="table-scroll" role="region" aria-label="节点更新" tabIndex={0}><table className="nodes">
       <thead><tr><th><label><MixedCheckbox label="选择全部可更新节点" checked={chosen.length === 0 ? false : chosen.length === updatable.length ? true : "mixed"}
         disabled={updatable.length === 0 || busy} onChange={() => setSelected(new Set(chosen.length === updatable.length ? [] : updatable))} />全选</label></th><th>节点</th><th>当前版本</th><th>更新状态</th><th>操作</th></tr></thead>
       <tbody>{nodes.data!.nodes.map((node) => {
         const status = targets.get(node.id);
-        return <tr key={String(node.id)}><td><input type="checkbox" aria-label={`选择 ${node.name}（#${node.id}）`} checked={selected.has(node.id)} disabled={!eligible(status, latest) || busy} onChange={(event) => setSelected((old) => {
+        return <tr key={String(node.id)}><td><input type="checkbox" aria-label={`选择 ${node.name}（#${node.id}）`} checked={selected.has(node.id)} disabled={!eligible(status, nodeTarget) || busy} onChange={(event) => setSelected((old) => {
           const next = new Set(old); if (event.target.checked) next.add(node.id); else next.delete(node.id); return next;
         })} /></td><td>{node.name}<small className="muted"> #{String(node.id)}</small></td><td><code>{status?.version || "未知"}</code></td><td><Progress status={status} /></td><td>
           {status?.task?.state === "queued" && <button type="button" disabled={cancel.isPending || busy} onClick={() => cancel.mutate({ nodeId: node.id, id: status.task!.id })}>取消排队</button>}
