@@ -121,6 +121,8 @@ export function Nodes() {
     },
   });
   const filtered = search !== "" || tagFilter.kind === "untagged" || tagFilter.names.length > 0;
+  // narrowed（过滤或沿用旧结果）表示显示的不是当前条件下的完整列表：行首序号改用服务端全序名次，
+  // 拖动排序也只在未收窄时开放（它们保存完整排列）。
   const narrowed = filtered || nodes.stale;
   const order = useOrder({
     items: nodes.data?.nodes ?? [], id: (node) => node.id, enabled: !narrowed && nodes.data !== undefined,
@@ -224,7 +226,7 @@ export function Nodes() {
               endDrag();
             }}
             orderControl={<NodeOrderControl label={withId(node.name, node.id)} index={index} count={list.length}
-              position={filtered ? node.position : index + 1} reorderDisabled={!sortable} moveDisabled={moveLocked}
+              position={narrowed ? node.position : index + 1} reorderDisabled={!sortable} moveDisabled={moveLocked}
               onMove={(move) => moveNode(node.id, move)} onDragEnd={endDrag}
               onMoveTo={(opener) => { moveNodes.reset(); setMoveTarget({ nodes: [node], opener }); }}
               onDragStart={(event) => {

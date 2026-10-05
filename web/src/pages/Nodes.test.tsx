@@ -1283,6 +1283,50 @@ describe("移动到指定位置", () => {
     expect(positionOf("c（#3）")).toBe("3");
   });
 
+  it("显示的不是当前完整列表时序号用服务端名次，不按行下标", async () => {
+    // 完整列表 {tags: []} 一直读不到自己的数据：先选 db 看到 a、c，取消后沿用旧结果，
+    // 行还是 a、c，序号必须是全序名次 1、3 而不是下标 1、2。
+    const listNodes = vi.fn((req: ListNodesRequest) => {
+      if (req.tags.length === 0) return new Promise<{}>(() => {});
+      return Promise.resolve({ nodes: positioned.filter((n) => req.tags.every((t) => n.tags.some((x) => sameTag(x, t)))) });
+    });
+    renderNodes({ listNodes, listTags: tagList });
+    await screen.findByRole("checkbox", { name: "按标签过滤 db" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "按标签过滤 db" }));
+    await screen.findByRole("link", { name: "c（#3）" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "按标签过滤 db" }));
+    await screen.findByText("列表还不是当前条件下的结果，暂时无法排序。");
+    expect(screen.queryByRole("link", { name: "b（#2）" })).toBeNull();
+    expect(positionOf("a（#1）")).toBe("1");
+    expect(positionOf("c（#3）")).toBe("3");
+  });
+
+  it("未过滤且拖动保存未确认时，序号是期望排列的位次而不是服务端名次", async () => {
+    const reorderNodes = vi.fn((): Promise<{}> => new Promise(() => {}));
+    renderNodes({ listNodes: listHub, listTags: tagList, reorderNodes });
+    await screen.findByRole("link", { name: "d（#4）" });
+    fireEvent.change(screen.getByRole("combobox", { name: "移动 a（#1）" }), { target: { value: "down" } });
+    await waitFor(() => expect(screen.getByText("正在保存并确认排序…")).toBeInTheDocument());
+    // a 的服务端 position 仍是 1，序号按期望排列显示为 2。
+    expect(positionOf("a（#1）")).toBe("2");
+    expect(positionOf("b（#2）")).toBe("1");
+  });
+
+  it("MoveNodes 在途时拖动与菜单上下移都关闭", async () => {
+    const moveNodes = vi.fn((): Promise<{}> => new Promise(() => {}));
+    const reorderNodes = vi.fn(async () => ({}));
+    renderNodes({ listNodes: listHub, listTags: tagList, moveNodes, reorderNodes });
+    await screen.findByRole("link", { name: "d（#4）" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 c（#3）" }));
+    fireEvent.click(screen.getByRole("button", { name: "移动到…" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "移动" }));
+    // 提交后 MoveNodes 一直未返回：手柄禁用，菜单上下移不再触发 ReorderNodes。
+    await waitFor(() => expect(screen.getByRole("button", { name: "调整顺序 a（#1）" })).toBeDisabled());
+    fireEvent.change(screen.getByRole("combobox", { name: "移动 a（#1）" }), { target: { value: "down" } });
+    expect(reorderNodes).not.toHaveBeenCalled();
+    expect(moveNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [3n], position: 1 }), expect.anything());
+  });
+
   it("过滤时弹窗的区间仍按节点总数计算，不用可见行数", async () => {
     const moveNodes = vi.fn(async () => ({}));
     renderNodes({ listNodes: listHub, listTags: tagList, moveNodes });
