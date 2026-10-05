@@ -207,7 +207,7 @@ test('节点拖拽、键盘和移动端菜单保存同一完整顺序', async ({
     await page.screenshot({ path: testInfo.outputPath('node-order-desktop.png'), fullPage: true });
     await page.getByRole('searchbox', { name: '搜索节点' }).fill(`order-0-${browserName}`);
     await expect(handle).toBeDisabled();
-    // 过滤时拖动与上下移仍禁用，但按全序名次的「移动到…」可用，菜单保持打开。
+    // 过滤时拖动与上下移仍禁用，但按全序名次的「移动到…」可用，菜单保持可用（不被禁用）。
     const filteredMenu = page.getByRole('combobox', { name: `移动 ${label(0)}`, exact: true });
     await expect(filteredMenu).toBeEnabled();
     await expect(page.getByText('搜索或按标签过滤时不能用拖动或上下移（它们保存完整排列）；可用「移动到…」按全序名次移动，或清空过滤后再调整。')).toBeVisible();
@@ -239,8 +239,10 @@ test('节点按全序名次整体移动到指定位置', async ({ page, browserN
     await page.goto('/admin/nodes');
     await page.setViewportSize({ width: 1440, height: 960 });
     const total = (await hubList()).length;
+    // 本批 5 个节点刚连着创建，占全序中连续的名次：从 ids[0] 的名次推出整批的基准位次。
+    const base = (await hubList()).find((node) => node.id === ids[0])!.position;
     const handle = (index: number) => page.getByRole('button', { name: `调整顺序 ${label(index)}`, exact: true });
-    // 多选 move-1、move-3（全序第 2、4 位）整体移到第 3 位：其余相对顺序不变。
+    // 多选 move-1、move-3（本批第 2、4 位）整体移到本批第 3 位：其余相对顺序不变。
     await page.getByRole('checkbox', { name: `选择 ${label(1)}`, exact: true }).check();
     await page.getByRole('checkbox', { name: `选择 ${label(3)}`, exact: true }).check();
     await expect(page.getByText('已选择 2 个节点')).toBeVisible();
@@ -251,8 +253,8 @@ test('节点按全序名次整体移动到指定位置', async ({ page, browserN
     const input = dialog.getByLabel(`目标位置（1–${total - 1}）`, { exact: true });
     await expect(input).toHaveAttribute('max', String(total - 1));
     await expect(dialog.getByText('将 2 个节点移到第 1–2 位')).toBeVisible();
-    await input.fill('3');
-    await expect(dialog.getByText('将 2 个节点移到第 3–4 位')).toBeVisible();
+    await input.fill(String(base + 2));
+    await expect(dialog.getByText(`将 2 个节点移到第 ${base + 2}–${base + 3} 位`)).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('node-move-modal.png'), fullPage: true });
     await dialog.getByRole('button', { name: '移动', exact: true }).click();
     await expect(dialog).toHaveCount(0);
@@ -260,10 +262,10 @@ test('节点按全序名次整体移动到指定位置', async ({ page, browserN
     await expect.poll(mineInOrder).toEqual([ids[0], ids[2], ids[1], ids[3], ids[4]]);
     expect(await positionsMatchList()).toBe(true);
     // 序号列跟着新的全序名次走。
-    await expect(handle(0)).toHaveText('1');
-    await expect(handle(2)).toHaveText('2');
-    await expect(handle(1)).toHaveText('3');
-    await expect(handle(3)).toHaveText('4');
+    await expect(handle(0)).toHaveText(String(base));
+    await expect(handle(2)).toHaveText(String(base + 1));
+    await expect(handle(1)).toHaveText(String(base + 2));
+    await expect(handle(3)).toHaveText(String(base + 3));
     // 过滤到单个节点：拖动禁用，但行菜单可按全序名次移动这一个节点。
     await page.getByRole('searchbox', { name: '搜索节点' }).fill(`move-4-${browserName}`);
     await expect(page.getByRole('link', { name: label(4), exact: true })).toBeVisible();
@@ -274,16 +276,18 @@ test('节点按全序名次整体移动到指定位置', async ({ page, browserN
     const single = page.getByRole('dialog');
     await expect(single).toHaveAccessibleName('移动节点');
     const singleInput = single.getByLabel(`目标位置（1–${total}）`, { exact: true });
-    await expect(single.getByText('将移到第 1 位')).toBeVisible();
+    await expect(single.getByText('移到第 1 位')).toBeVisible();
+    await singleInput.fill('2');
+    await expect(single.getByText('移到第 2 位')).toBeVisible();
     await singleInput.fill('1');
-    await expect(single.getByText('将移到第 1 位')).toBeVisible();
+    await expect(single.getByText('移到第 1 位')).toBeVisible();
     await single.getByRole('button', { name: '移动', exact: true }).click();
     await expect(single).toHaveCount(0);
     await page.getByRole('searchbox', { name: '搜索节点' }).fill('');
     await expect.poll(mineInOrder).toEqual([ids[4], ids[0], ids[2], ids[1], ids[3]]);
     expect(await positionsMatchList()).toBe(true);
     await expect(handle(4)).toHaveText('1');
-    await expect(handle(3)).toHaveText('5');
+    await expect(handle(3)).toHaveText(String(base + 4));
     await page.screenshot({ path: testInfo.outputPath('node-move-desktop.png'), fullPage: true });
   } finally {
     for (const id of ids) await rpc(page, 'DeleteNode', { id });
