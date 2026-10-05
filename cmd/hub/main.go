@@ -14,6 +14,10 @@ import (
 
 var version = "dev"
 
+// agentVersion 是这个 hub 绑定的 agent 版本（§14.1），构建时经 ldflags 从仓库根的 AGENT_VERSION 注入。空串表示
+// 没有绑定（直接 go build 的构建）：节点在线更新一律拒绝、面板不标落后——空值在这里是收紧，不是放宽。
+var agentVersion string
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()

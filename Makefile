@@ -12,6 +12,18 @@ ifneq ($(findstring $$,$(value VERSION)),)
 $(error VERSION '$(value VERSION)' contains '$$', which make would expand as a variable or function reference; use a plain version such as v0.1.0)
 endif
 
+# hub 绑定的 agent 版本（§14.1）。默认取仓库根 AGENT_VERSION 文件，它是绑定的唯一事实源；命令行可另给，本地
+# 验收构建给出与 VERSION 相同的值以产出完整的一套。它经 ldflags 进入 hub 的构建命令，与 VERSION 同理在解析时
+# 按原文拒绝 $：命令行给出的值是递归展开变量，其中的 $(shell …) 会在每次引用处执行。用 := 读文件：环境里的
+# 同名变量不顶替仓库文件（makefile 里的赋值优先于环境），只有命令行显式给出才覆盖。导出到配方环境：配方一律经
+# 环境变量 $$AGENT_VERSION 引用它，不把 $(AGENT_VERSION) 展开拼进 shell 源码，值里的引号或分号因而改写不了命令。读文件只用 shell 内建（read、printf）：
+# 解析 Makefile 时就会执行这一行，而发布规则测试在只放了少数只读工具的 PATH 下运行 make（scripts/release-rules-test.sh）。
+AGENT_VERSION := $(strip $(shell read -r v < AGENT_VERSION; printf '%s' "$$v"))
+ifneq ($(findstring $$,$(value AGENT_VERSION)),)
+$(error AGENT_VERSION '$(value AGENT_VERSION)' contains '$$', which make would expand as a variable or function reference; use a plain version such as v0.1.0)
+endif
+export AGENT_VERSION
+
 # shell 层（check_version）：每个消费 VERSION 的目标第一行调用它，只此一份。镜像 tag 与版本号逐字相同
 # （heron-hub version 打印的就是 tag），Docker 的 tag 只允许 [A-Za-z0-9_.-]、首字符不为 . 与 -、至多 128 个
 # 字符；带构建元数据（+）的 tag 因而不能成为镜像 tag，§14 规定这类 tag 的发布整体失败，release 的 tar 包
@@ -90,8 +102,9 @@ build:
 	  env GOOS=linux CGO_ENABLED=0 $$gflags go build ./cmd/agent ./cmd/updater; \
 	done
 
+# 开发构建的 hub 同样绑定仓库文件里的 agent 版本，面板与节点在线更新按发布时的口径工作；版本仍是 dev。
 hub-binary: web
-	go build -o bin/heron-hub ./cmd/hub
+	go build -ldflags "-X main.agentVersion=$$AGENT_VERSION" -o bin/heron-hub ./cmd/hub
 
 binaries: hub-binary
 	GOOS=linux GOARCH=amd64 go build -o bin/heron-agent-linux-amd64 ./cmd/agent
@@ -132,12 +145,15 @@ agent_goarch = case $$arch in armv7) gflags="GOARCH=arm GOARM=7" ;; *) gflags="G
 AGENT_DARWIN_ARCHES := amd64 arm64
 HUB_LINUX_ARCHES := amd64 arm64
 
-# 发布产物的构建参数（§14）：版本经 ldflags 注入，-trimpath 去掉构建机路径。agent 与 hub、
-# tar 包与镜像里的 hub 都经它构建，任何一种产物都不会单独漂移。
-RELEASE_GOFLAGS = -trimpath -ldflags "-X main.version=$(VERSION)"
+# 发布产物的构建参数（§14）：版本经 ldflags 注入，-trimpath 去掉构建机路径。agent 与 hub、tar 包与镜像里的
+# hub 都由 RELEASE_LDFLAGS 注入版本，任何一种产物都不会单独漂移。hub 另注入绑定的 agent 版本（§14.1）；
+# agent 与更新器没有这个变量，不给它们。
+RELEASE_LDFLAGS = -X main.version=$(VERSION)
+RELEASE_GOFLAGS = -trimpath -ldflags "$(RELEASE_LDFLAGS)"
+HUB_GOFLAGS = -trimpath -ldflags "$(RELEASE_LDFLAGS) -X main.agentVersion=$$AGENT_VERSION"
 
 # 一个 Linux hub 二进制：$(1) 为 GOARCH，$(2) 为输出路径。release 打包与 docker 镜像都调用它。
-hub_build = env GOOS=linux GOARCH=$(1) CGO_ENABLED=0 go build $(RELEASE_GOFLAGS) -o "$(2)" ./cmd/hub
+hub_build = env GOOS=linux GOARCH=$(1) CGO_ENABLED=0 go build $(HUB_GOFLAGS) -o "$(2)" ./cmd/hub
 
 # 本地验收与线上发布走同一目标，产物与版本注入完全一致（release.yml 只调用它）。
 # 打包的 tar 前设 COPYFILE_DISABLE=1：macOS 的 bsdtar 否则会把扩展属性打成 ._* 条目，busybox 解包会带出多余文件。
