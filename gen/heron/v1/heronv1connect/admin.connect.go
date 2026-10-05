@@ -235,7 +235,8 @@ type AdminServiceClient interface {
 	ListNotifyChannelRefs(context.Context, *connect.Request[v1.ListNotifyChannelRefsRequest]) (*connect.Response[v1.ListNotifyChannelRefsResponse], error)
 	// 读取 hub 与节点的更新能力和最新任务。检查官方版本需显式 check_latest。
 	GetUpdates(context.Context, *connect.Request[v1.GetUpdatesRequest]) (*connect.Response[v1.GetUpdatesResponse], error)
-	// 创建单目标更新。node_id=0 为 hub；只允许比当前版本新的官方正式版。
+	// 创建单目标更新。node_id=0 为 hub，目标须是比 hub 当前版本新的官方正式版；节点的目标须等于
+	// GetUpdatesResponse.bound_agent_version 且比节点当前版本新（spec §14.1）。
 	// 节点离线时排队，24 小时过期；同一目标不能同时有多个活动任务。
 	StartUpdate(context.Context, *connect.Request[v1.StartUpdateRequest]) (*connect.Response[v1.StartUpdateResponse], error)
 	// 仅可取消尚未下发的 queued 节点任务；已下发或 hub 任务不能取消。
@@ -1220,7 +1221,8 @@ type AdminServiceHandler interface {
 	ListNotifyChannelRefs(context.Context, *connect.Request[v1.ListNotifyChannelRefsRequest]) (*connect.Response[v1.ListNotifyChannelRefsResponse], error)
 	// 读取 hub 与节点的更新能力和最新任务。检查官方版本需显式 check_latest。
 	GetUpdates(context.Context, *connect.Request[v1.GetUpdatesRequest]) (*connect.Response[v1.GetUpdatesResponse], error)
-	// 创建单目标更新。node_id=0 为 hub；只允许比当前版本新的官方正式版。
+	// 创建单目标更新。node_id=0 为 hub，目标须是比 hub 当前版本新的官方正式版；节点的目标须等于
+	// GetUpdatesResponse.bound_agent_version 且比节点当前版本新（spec §14.1）。
 	// 节点离线时排队，24 小时过期；同一目标不能同时有多个活动任务。
 	StartUpdate(context.Context, *connect.Request[v1.StartUpdateRequest]) (*connect.Response[v1.StartUpdateResponse], error)
 	// 仅可取消尚未下发的 queued 节点任务；已下发或 hub 任务不能取消。

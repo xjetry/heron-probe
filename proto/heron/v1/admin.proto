@@ -32,7 +32,8 @@ service AdminService {
   rpc GetUpdates(GetUpdatesRequest) returns (GetUpdatesResponse) {
     option (heron.v1.access) = ACCESS_READ;
   }
-  // 创建单目标更新。node_id=0 为 hub；只允许比当前版本新的官方正式版。
+  // 创建单目标更新。node_id=0 为 hub，目标须是比 hub 当前版本新的官方正式版；节点的目标须等于
+  // GetUpdatesResponse.bound_agent_version 且比节点当前版本新（spec §14.1）。
   // 节点离线时排队，24 小时过期；同一目标不能同时有多个活动任务。
   rpc StartUpdate(StartUpdateRequest) returns (StartUpdateResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
@@ -318,8 +319,12 @@ service AdminService {
 message GetUpdatesRequest { bool check_latest = 1; }
 message GetUpdatesResponse {
   repeated UpdateTarget targets = 1;
+  // 官方最新正式版，只在 check_latest 时查询：hub 自身更新的目标。
   string latest_version = 2;
   string check_error = 3;
+  // hub 绑定的 agent 版本（spec §14.1）：节点 StartUpdate 唯一接受的 version，不需要 check_latest。空串表示这个
+  // hub 没有绑定（没有注入的构建），节点在线更新不可用；是预发布时同样不可用（更新器只接受正式版）。
+  string bound_agent_version = 4;
 }
 message StartUpdateRequest { int64 node_id = 1; string version = 2; }
 message StartUpdateResponse { UpdateTask task = 1; }
@@ -622,9 +627,12 @@ message GetSnapshotResponse {
   // hub 下发给 agent 的上报间隔；实时状态不会比它更新得更快。
   uint32 report_interval_ms = 2;
   repeated NodeStatus nodes = 3;
-  // hub 构建版本（release 经 ldflags 注入，未注入为 dev）：面板据此生成与 hub
-  // 同版本的安装命令，并标出 agent 版本落后的节点。
+  // hub 构建版本（release 经 ldflags 注入，未注入为 dev）：面板据此生成该版本 release 的安装命令。
   string hub_version = 4;
+  // hub 绑定的 agent 版本（spec §14.1）：构建时取自仓库根 AGENT_VERSION，未注入为空串，表示没有绑定。节点在线更新
+  // 只能以它为目标，面板据此标出 agent 版本低于它的节点；该版本 release 的 install.sh 装的也是它。与
+  // GetUpdatesResponse.bound_agent_version 同值。
+  string bound_agent_version = 5;
 }
 
 message NodeStatus {

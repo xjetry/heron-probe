@@ -705,12 +705,16 @@ func (x *GetUpdatesRequest) GetCheckLatest() bool {
 }
 
 type GetUpdatesResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Targets       []*UpdateTarget        `protobuf:"bytes,1,rep,name=targets,proto3" json:"targets,omitempty"`
-	LatestVersion string                 `protobuf:"bytes,2,opt,name=latest_version,json=latestVersion,proto3" json:"latest_version,omitempty"`
-	CheckError    string                 `protobuf:"bytes,3,opt,name=check_error,json=checkError,proto3" json:"check_error,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Targets []*UpdateTarget        `protobuf:"bytes,1,rep,name=targets,proto3" json:"targets,omitempty"`
+	// 官方最新正式版，只在 check_latest 时查询：hub 自身更新的目标。
+	LatestVersion string `protobuf:"bytes,2,opt,name=latest_version,json=latestVersion,proto3" json:"latest_version,omitempty"`
+	CheckError    string `protobuf:"bytes,3,opt,name=check_error,json=checkError,proto3" json:"check_error,omitempty"`
+	// hub 绑定的 agent 版本（spec §14.1）：节点 StartUpdate 唯一接受的 version，不需要 check_latest。空串表示这个
+	// hub 没有绑定（没有注入的构建），节点在线更新不可用；是预发布时同样不可用（更新器只接受正式版）。
+	BoundAgentVersion string `protobuf:"bytes,4,opt,name=bound_agent_version,json=boundAgentVersion,proto3" json:"bound_agent_version,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *GetUpdatesResponse) Reset() {
@@ -760,6 +764,13 @@ func (x *GetUpdatesResponse) GetLatestVersion() string {
 func (x *GetUpdatesResponse) GetCheckError() string {
 	if x != nil {
 		return x.CheckError
+	}
+	return ""
+}
+
+func (x *GetUpdatesResponse) GetBoundAgentVersion() string {
+	if x != nil {
+		return x.BoundAgentVersion
 	}
 	return ""
 }
@@ -3502,11 +3513,14 @@ type GetSnapshotResponse struct {
 	// hub 下发给 agent 的上报间隔；实时状态不会比它更新得更快。
 	ReportIntervalMs uint32        `protobuf:"varint,2,opt,name=report_interval_ms,json=reportIntervalMs,proto3" json:"report_interval_ms,omitempty"`
 	Nodes            []*NodeStatus `protobuf:"bytes,3,rep,name=nodes,proto3" json:"nodes,omitempty"`
-	// hub 构建版本（release 经 ldflags 注入，未注入为 dev）：面板据此生成与 hub
-	// 同版本的安装命令，并标出 agent 版本落后的节点。
-	HubVersion    string `protobuf:"bytes,4,opt,name=hub_version,json=hubVersion,proto3" json:"hub_version,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// hub 构建版本（release 经 ldflags 注入，未注入为 dev）：面板据此生成该版本 release 的安装命令。
+	HubVersion string `protobuf:"bytes,4,opt,name=hub_version,json=hubVersion,proto3" json:"hub_version,omitempty"`
+	// hub 绑定的 agent 版本（spec §14.1）：构建时取自仓库根 AGENT_VERSION，未注入为空串，表示没有绑定。节点在线更新
+	// 只能以它为目标，面板据此标出 agent 版本低于它的节点；该版本 release 的 install.sh 装的也是它。与
+	// GetUpdatesResponse.bound_agent_version 同值。
+	BoundAgentVersion string `protobuf:"bytes,5,opt,name=bound_agent_version,json=boundAgentVersion,proto3" json:"bound_agent_version,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *GetSnapshotResponse) Reset() {
@@ -3563,6 +3577,13 @@ func (x *GetSnapshotResponse) GetNodes() []*NodeStatus {
 func (x *GetSnapshotResponse) GetHubVersion() string {
 	if x != nil {
 		return x.HubVersion
+	}
+	return ""
+}
+
+func (x *GetSnapshotResponse) GetBoundAgentVersion() string {
+	if x != nil {
+		return x.BoundAgentVersion
 	}
 	return ""
 }
@@ -10192,12 +10213,13 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\n" +
 	"\x14heron/v1/admin.proto\x12\bheron.v1\x1a\x14heron/v1/types.proto\x1a\x15heron/v1/access.proto\x1a\x14heron/v1/query.proto\x1a\x15heron/v1/update.proto\x1a\x19google/protobuf/any.proto\x1a google/protobuf/field_mask.proto\"6\n" +
 	"\x11GetUpdatesRequest\x12!\n" +
-	"\fcheck_latest\x18\x01 \x01(\bR\vcheckLatest\"\x8e\x01\n" +
+	"\fcheck_latest\x18\x01 \x01(\bR\vcheckLatest\"\xbe\x01\n" +
 	"\x12GetUpdatesResponse\x120\n" +
 	"\atargets\x18\x01 \x03(\v2\x16.heron.v1.UpdateTargetR\atargets\x12%\n" +
 	"\x0elatest_version\x18\x02 \x01(\tR\rlatestVersion\x12\x1f\n" +
 	"\vcheck_error\x18\x03 \x01(\tR\n" +
-	"checkError\"G\n" +
+	"checkError\x12.\n" +
+	"\x13bound_agent_version\x18\x04 \x01(\tR\x11boundAgentVersion\"G\n" +
 	"\x12StartUpdateRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\x03R\x06nodeId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\"?\n" +
@@ -10372,13 +10394,14 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\n" +
 	"expires_at\x18\x02 \x01(\x03R\texpiresAt\x12\x1c\n" +
 	"\tremaining\x18\x03 \x01(\rR\tremaining\"\x14\n" +
-	"\x12GetSnapshotRequest\"\xa2\x01\n" +
+	"\x12GetSnapshotRequest\"\xd2\x01\n" +
 	"\x13GetSnapshotResponse\x12\x10\n" +
 	"\x03now\x18\x01 \x01(\x03R\x03now\x12,\n" +
 	"\x12report_interval_ms\x18\x02 \x01(\rR\x10reportIntervalMs\x12*\n" +
 	"\x05nodes\x18\x03 \x03(\v2\x14.heron.v1.NodeStatusR\x05nodes\x12\x1f\n" +
 	"\vhub_version\x18\x04 \x01(\tR\n" +
-	"hubVersion\"\xda\x01\n" +
+	"hubVersion\x12.\n" +
+	"\x13bound_agent_version\x18\x05 \x01(\tR\x11boundAgentVersion\"\xda\x01\n" +
 	"\n" +
 	"NodeStatus\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
