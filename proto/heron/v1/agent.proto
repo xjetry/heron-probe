@@ -7,7 +7,7 @@ option go_package = "github.com/xjetry/heron-probe/gen/heron/v1;heronv1";
 import "heron/v1/types.proto";
 import "heron/v1/update.proto";
 
-// agent → hub 的唯一服务。两个方法都是 unary：hub 向 agent 的下行只有低频
+// agent → hub 的唯一服务。全部方法都是 unary：hub 向 agent 的下行只有低频
 // 配置，在每次上报的响应里按版本对账即可，不需要应用层连接状态。
 service AgentService {
   // 用注册窗口 key 创建节点，或用管理员签发的一次性安装凭据认领既有节点；返回只用于 Report 的运行 token。
@@ -16,6 +16,10 @@ service AgentService {
   rpc Register(RegisterRequest) returns (RegisterResponse);
   // 周期上报。鉴权用节点 token（Authorization: Bearer）。
   rpc Report(ReportRequest) returns (ReportResponse);
+  // 节点上 hub 来源的 root 更新器取产物（spec §4.10）。鉴权用节点 token（Authorization: Bearer）。
+  // 请求里没有版本：hub 取该节点当前更新任务的版本，泄漏的 token 只能取到该节点正在执行的那一个版本。
+  // 响应是官方原始字节；hub 已预先验签，但接受与否只由更新器验签决定。不标无副作用：只接受 POST。
+  rpc GetRelease(GetReleaseRequest) returns (GetReleaseResponse);
 }
 
 message RegisterRequest {
@@ -54,4 +58,20 @@ message ReportResponse {
   bool want_facts = 3;
   // 幂等更新任务。agent 交给本机受限更新器，不能自行执行下载地址或命令。
   UpdateTask update = 4;
+}
+
+message GetReleaseRequest {
+  // 节点当前更新任务的 ID。
+  string task_id = 1;
+  // agent 产物矩阵里的架构：amd64、arm64、armv7、386、riscv64。
+  string arch = 2;
+}
+
+message GetReleaseResponse {
+  // 官方 SHA256SUMS 原文。
+  bytes sums = 1;
+  // 官方 SHA256SUMS.sig 原文。
+  bytes signature = 2;
+  // 官方归档原文。
+  bytes archive = 3;
 }

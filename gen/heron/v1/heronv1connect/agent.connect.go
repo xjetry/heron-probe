@@ -37,6 +37,8 @@ const (
 	AgentServiceRegisterProcedure = "/heron.v1.AgentService/Register"
 	// AgentServiceReportProcedure is the fully-qualified name of the AgentService's Report RPC.
 	AgentServiceReportProcedure = "/heron.v1.AgentService/Report"
+	// AgentServiceGetReleaseProcedure is the fully-qualified name of the AgentService's GetRelease RPC.
+	AgentServiceGetReleaseProcedure = "/heron.v1.AgentService/GetRelease"
 )
 
 // AgentServiceClient is a client for the heron.v1.AgentService service.
@@ -47,6 +49,10 @@ type AgentServiceClient interface {
 	Register(context.Context, *connect.Request[v1.RegisterRequest]) (*connect.Response[v1.RegisterResponse], error)
 	// 周期上报。鉴权用节点 token（Authorization: Bearer）。
 	Report(context.Context, *connect.Request[v1.ReportRequest]) (*connect.Response[v1.ReportResponse], error)
+	// 节点上 hub 来源的 root 更新器取产物（spec §4.10）。鉴权用节点 token（Authorization: Bearer）。
+	// 请求里没有版本：hub 取该节点当前更新任务的版本，泄漏的 token 只能取到该节点正在执行的那一个版本。
+	// 响应是官方原始字节；hub 已预先验签，但接受与否只由更新器验签决定。不标无副作用：只接受 POST。
+	GetRelease(context.Context, *connect.Request[v1.GetReleaseRequest]) (*connect.Response[v1.GetReleaseResponse], error)
 }
 
 // NewAgentServiceClient constructs a client for the heron.v1.AgentService service. By default, it
@@ -72,13 +78,20 @@ func NewAgentServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(agentServiceMethods.ByName("Report")),
 			connect.WithClientOptions(opts...),
 		),
+		getRelease: connect.NewClient[v1.GetReleaseRequest, v1.GetReleaseResponse](
+			httpClient,
+			baseURL+AgentServiceGetReleaseProcedure,
+			connect.WithSchema(agentServiceMethods.ByName("GetRelease")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // agentServiceClient implements AgentServiceClient.
 type agentServiceClient struct {
-	register *connect.Client[v1.RegisterRequest, v1.RegisterResponse]
-	report   *connect.Client[v1.ReportRequest, v1.ReportResponse]
+	register   *connect.Client[v1.RegisterRequest, v1.RegisterResponse]
+	report     *connect.Client[v1.ReportRequest, v1.ReportResponse]
+	getRelease *connect.Client[v1.GetReleaseRequest, v1.GetReleaseResponse]
 }
 
 // Register calls heron.v1.AgentService.Register.
@@ -91,6 +104,11 @@ func (c *agentServiceClient) Report(ctx context.Context, req *connect.Request[v1
 	return c.report.CallUnary(ctx, req)
 }
 
+// GetRelease calls heron.v1.AgentService.GetRelease.
+func (c *agentServiceClient) GetRelease(ctx context.Context, req *connect.Request[v1.GetReleaseRequest]) (*connect.Response[v1.GetReleaseResponse], error) {
+	return c.getRelease.CallUnary(ctx, req)
+}
+
 // AgentServiceHandler is an implementation of the heron.v1.AgentService service.
 type AgentServiceHandler interface {
 	// 用注册窗口 key 创建节点，或用管理员签发的一次性安装凭据认领既有节点；返回只用于 Report 的运行 token。
@@ -99,6 +117,10 @@ type AgentServiceHandler interface {
 	Register(context.Context, *connect.Request[v1.RegisterRequest]) (*connect.Response[v1.RegisterResponse], error)
 	// 周期上报。鉴权用节点 token（Authorization: Bearer）。
 	Report(context.Context, *connect.Request[v1.ReportRequest]) (*connect.Response[v1.ReportResponse], error)
+	// 节点上 hub 来源的 root 更新器取产物（spec §4.10）。鉴权用节点 token（Authorization: Bearer）。
+	// 请求里没有版本：hub 取该节点当前更新任务的版本，泄漏的 token 只能取到该节点正在执行的那一个版本。
+	// 响应是官方原始字节；hub 已预先验签，但接受与否只由更新器验签决定。不标无副作用：只接受 POST。
+	GetRelease(context.Context, *connect.Request[v1.GetReleaseRequest]) (*connect.Response[v1.GetReleaseResponse], error)
 }
 
 // NewAgentServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -120,12 +142,20 @@ func NewAgentServiceHandler(svc AgentServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(agentServiceMethods.ByName("Report")),
 		connect.WithHandlerOptions(opts...),
 	)
+	agentServiceGetReleaseHandler := connect.NewUnaryHandler(
+		AgentServiceGetReleaseProcedure,
+		svc.GetRelease,
+		connect.WithSchema(agentServiceMethods.ByName("GetRelease")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/heron.v1.AgentService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AgentServiceRegisterProcedure:
 			agentServiceRegisterHandler.ServeHTTP(w, r)
 		case AgentServiceReportProcedure:
 			agentServiceReportHandler.ServeHTTP(w, r)
+		case AgentServiceGetReleaseProcedure:
+			agentServiceGetReleaseHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -141,4 +171,8 @@ func (UnimplementedAgentServiceHandler) Register(context.Context, *connect.Reque
 
 func (UnimplementedAgentServiceHandler) Report(context.Context, *connect.Request[v1.ReportRequest]) (*connect.Response[v1.ReportResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AgentService.Report is not implemented"))
+}
+
+func (UnimplementedAgentServiceHandler) GetRelease(context.Context, *connect.Request[v1.GetReleaseRequest]) (*connect.Response[v1.GetReleaseResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AgentService.GetRelease is not implemented"))
 }

@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file heron/v1/update.proto.
  */
 export const file_heron_v1_update: GenFile = /*@__PURE__*/
-  fileDesc("ChVoZXJvbi92MS91cGRhdGUucHJvdG8SCGhlcm9uLnYxIm8KClVwZGF0ZVRhc2sSCgoCaWQYASABKAkSDwoHdmVyc2lvbhgCIAEoCRISCgpleHBpcmVzX2F0GAMgASgDEg0KBXN0YXRlGAQgASgJEg0KBWVycm9yGAUgASgJEhIKCnVwZGF0ZWRfYXQYBiABKAMiZgoMVXBkYXRlU3RhdHVzEhEKCXN1cHBvcnRlZBgBIAEoCBIOCgZyZWFzb24YAiABKAkSDwoHdmVyc2lvbhgDIAEoCRIiCgR0YXNrGAQgASgLMhQuaGVyb24udjEuVXBkYXRlVGFzayJHCgxVcGRhdGVUYXJnZXQSDwoHbm9kZV9pZBgBIAEoAxImCgZzdGF0dXMYAiABKAsyFi5oZXJvbi52MS5VcGRhdGVTdGF0dXNCNFoyZ2l0aHViLmNvbS94amV0cnkvaGVyb24tcHJvYmUvZ2VuL2hlcm9uL3YxO2hlcm9udjFiBnByb3RvMw");
+  fileDesc("ChVoZXJvbi92MS91cGRhdGUucHJvdG8SCGhlcm9uLnYxIm8KClVwZGF0ZVRhc2sSCgoCaWQYASABKAkSDwoHdmVyc2lvbhgCIAEoCRISCgpleHBpcmVzX2F0GAMgASgDEg0KBXN0YXRlGAQgASgJEg0KBWVycm9yGAUgASgJEhIKCnVwZGF0ZWRfYXQYBiABKAMidgoMVXBkYXRlU3RhdHVzEhEKCXN1cHBvcnRlZBgBIAEoCBIOCgZyZWFzb24YAiABKAkSDwoHdmVyc2lvbhgDIAEoCRIiCgR0YXNrGAQgASgLMhQuaGVyb24udjEuVXBkYXRlVGFzaxIOCgZzb3VyY2UYBSABKAkiRwoMVXBkYXRlVGFyZ2V0Eg8KB25vZGVfaWQYASABKAMSJgoGc3RhdHVzGAIgASgLMhYuaGVyb24udjEuVXBkYXRlU3RhdHVzQjRaMmdpdGh1Yi5jb20veGpldHJ5L2hlcm9uLXByb2JlL2dlbi9oZXJvbi92MTtoZXJvbnYxYgZwcm90bzM");
 
 /**
  * 更新器只接受官方正式版本，不接受 URL、仓库、摘要或命令。
@@ -93,6 +93,13 @@ export type UpdateStatus = Message<"heron.v1.UpdateStatus"> & {
    * @generated from field: heron.v1.UpdateTask task = 4;
    */
   task?: UpdateTask | undefined;
+
+  /**
+   * 本机更新器取产物的来源：github 或 hub（spec §4.10）。不认识来源字段的旧更新器为空。
+   *
+   * @generated from field: string source = 5;
+   */
+  source: string;
 };
 
 /**

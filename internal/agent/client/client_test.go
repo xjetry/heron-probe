@@ -139,6 +139,11 @@ func (f *fakeHub) Report(_ context.Context, req *connect.Request[heronv1.ReportR
 	return connect.NewResponse(&heronv1.ReportResponse{ReportIntervalMs: f.interval, WantFacts: want, Tasks: f.tasks}), nil
 }
 
+// Runner 的上报路径不调 GetRelease；补上方法只是满足 AgentServiceHandler 接口，与 Register 同样拒绝。
+func (f *fakeHub) GetRelease(context.Context, *connect.Request[heronv1.GetReleaseRequest]) (*connect.Response[heronv1.GetReleaseResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, nil)
+}
+
 func (f *fakeHub) count() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.reports) }
 
 // Report 只追加记录，不修改已收到的请求；取消 runner 不保证服务端已处理完

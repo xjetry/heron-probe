@@ -117,8 +117,10 @@ type UpdateStatus struct {
 	// 不支持或不可用的原因，最多 2048 UTF-8 字节。
 	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
 	// 实际运行版本，最多 64 UTF-8 字节。
-	Version       string      `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`
-	Task          *UpdateTask `protobuf:"bytes,4,opt,name=task,proto3" json:"task,omitempty"`
+	Version string      `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`
+	Task    *UpdateTask `protobuf:"bytes,4,opt,name=task,proto3" json:"task,omitempty"`
+	// 本机更新器取产物的来源：github 或 hub（spec §4.10）。不认识来源字段的旧更新器为空。
+	Source        string `protobuf:"bytes,5,opt,name=source,proto3" json:"source,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -179,6 +181,13 @@ func (x *UpdateStatus) GetTask() *UpdateTask {
 		return x.Task
 	}
 	return nil
+}
+
+func (x *UpdateStatus) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
 }
 
 type UpdateTarget struct {
@@ -248,12 +257,13 @@ const file_heron_v1_update_proto_rawDesc = "" +
 	"\x05state\x18\x04 \x01(\tR\x05state\x12\x14\n" +
 	"\x05error\x18\x05 \x01(\tR\x05error\x12\x1d\n" +
 	"\n" +
-	"updated_at\x18\x06 \x01(\x03R\tupdatedAt\"\x88\x01\n" +
+	"updated_at\x18\x06 \x01(\x03R\tupdatedAt\"\xa0\x01\n" +
 	"\fUpdateStatus\x12\x1c\n" +
 	"\tsupported\x18\x01 \x01(\bR\tsupported\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x18\n" +
 	"\aversion\x18\x03 \x01(\tR\aversion\x12(\n" +
-	"\x04task\x18\x04 \x01(\v2\x14.heron.v1.UpdateTaskR\x04task\"W\n" +
+	"\x04task\x18\x04 \x01(\v2\x14.heron.v1.UpdateTaskR\x04task\x12\x16\n" +
+	"\x06source\x18\x05 \x01(\tR\x06source\"W\n" +
 	"\fUpdateTarget\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\x03R\x06nodeId\x12.\n" +
 	"\x06status\x18\x02 \x01(\v2\x16.heron.v1.UpdateStatusR\x06statusB4Z2github.com/xjetry/heron-probe/gen/heron/v1;heronv1b\x06proto3"

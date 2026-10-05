@@ -289,6 +289,123 @@ func (x *ReportResponse) GetUpdate() *UpdateTask {
 	return nil
 }
 
+type GetReleaseRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 节点当前更新任务的 ID。
+	TaskId string `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// agent 产物矩阵里的架构：amd64、arm64、armv7、386、riscv64。
+	Arch          string `protobuf:"bytes,2,opt,name=arch,proto3" json:"arch,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetReleaseRequest) Reset() {
+	*x = GetReleaseRequest{}
+	mi := &file_heron_v1_agent_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetReleaseRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetReleaseRequest) ProtoMessage() {}
+
+func (x *GetReleaseRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_agent_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetReleaseRequest.ProtoReflect.Descriptor instead.
+func (*GetReleaseRequest) Descriptor() ([]byte, []int) {
+	return file_heron_v1_agent_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *GetReleaseRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *GetReleaseRequest) GetArch() string {
+	if x != nil {
+		return x.Arch
+	}
+	return ""
+}
+
+type GetReleaseResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 官方 SHA256SUMS 原文。
+	Sums []byte `protobuf:"bytes,1,opt,name=sums,proto3" json:"sums,omitempty"`
+	// 官方 SHA256SUMS.sig 原文。
+	Signature []byte `protobuf:"bytes,2,opt,name=signature,proto3" json:"signature,omitempty"`
+	// 官方归档原文。
+	Archive       []byte `protobuf:"bytes,3,opt,name=archive,proto3" json:"archive,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetReleaseResponse) Reset() {
+	*x = GetReleaseResponse{}
+	mi := &file_heron_v1_agent_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetReleaseResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetReleaseResponse) ProtoMessage() {}
+
+func (x *GetReleaseResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_agent_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetReleaseResponse.ProtoReflect.Descriptor instead.
+func (*GetReleaseResponse) Descriptor() ([]byte, []int) {
+	return file_heron_v1_agent_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GetReleaseResponse) GetSums() []byte {
+	if x != nil {
+		return x.Sums
+	}
+	return nil
+}
+
+func (x *GetReleaseResponse) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
+func (x *GetReleaseResponse) GetArchive() []byte {
+	if x != nil {
+		return x.Archive
+	}
+	return nil
+}
+
 var File_heron_v1_agent_proto protoreflect.FileDescriptor
 
 const file_heron_v1_agent_proto_rawDesc = "" +
@@ -313,10 +430,19 @@ const file_heron_v1_agent_proto_rawDesc = "" +
 	"\x05tasks\x18\x02 \x01(\v2\x14.heron.v1.ProbeTasksR\x05tasks\x12\x1d\n" +
 	"\n" +
 	"want_facts\x18\x03 \x01(\bR\twantFacts\x12,\n" +
-	"\x06update\x18\x04 \x01(\v2\x14.heron.v1.UpdateTaskR\x06update2\x8e\x01\n" +
+	"\x06update\x18\x04 \x01(\v2\x14.heron.v1.UpdateTaskR\x06update\"@\n" +
+	"\x11GetReleaseRequest\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x12\n" +
+	"\x04arch\x18\x02 \x01(\tR\x04arch\"`\n" +
+	"\x12GetReleaseResponse\x12\x12\n" +
+	"\x04sums\x18\x01 \x01(\fR\x04sums\x12\x1c\n" +
+	"\tsignature\x18\x02 \x01(\fR\tsignature\x12\x18\n" +
+	"\aarchive\x18\x03 \x01(\fR\aarchive2\xd7\x01\n" +
 	"\fAgentService\x12A\n" +
 	"\bRegister\x12\x19.heron.v1.RegisterRequest\x1a\x1a.heron.v1.RegisterResponse\x12;\n" +
-	"\x06Report\x12\x17.heron.v1.ReportRequest\x1a\x18.heron.v1.ReportResponseB4Z2github.com/xjetry/heron-probe/gen/heron/v1;heronv1b\x06proto3"
+	"\x06Report\x12\x17.heron.v1.ReportRequest\x1a\x18.heron.v1.ReportResponse\x12G\n" +
+	"\n" +
+	"GetRelease\x12\x1b.heron.v1.GetReleaseRequest\x1a\x1c.heron.v1.GetReleaseResponseB4Z2github.com/xjetry/heron-probe/gen/heron/v1;heronv1b\x06proto3"
 
 var (
 	file_heron_v1_agent_proto_rawDescOnce sync.Once
@@ -330,35 +456,39 @@ func file_heron_v1_agent_proto_rawDescGZIP() []byte {
 	return file_heron_v1_agent_proto_rawDescData
 }
 
-var file_heron_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_heron_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_heron_v1_agent_proto_goTypes = []any{
-	(*RegisterRequest)(nil),  // 0: heron.v1.RegisterRequest
-	(*RegisterResponse)(nil), // 1: heron.v1.RegisterResponse
-	(*ReportRequest)(nil),    // 2: heron.v1.ReportRequest
-	(*ReportResponse)(nil),   // 3: heron.v1.ReportResponse
-	(*Metrics)(nil),          // 4: heron.v1.Metrics
-	(*ProbeResult)(nil),      // 5: heron.v1.ProbeResult
-	(*Facts)(nil),            // 6: heron.v1.Facts
-	(*UpdateStatus)(nil),     // 7: heron.v1.UpdateStatus
-	(*ProbeTasks)(nil),       // 8: heron.v1.ProbeTasks
-	(*UpdateTask)(nil),       // 9: heron.v1.UpdateTask
+	(*RegisterRequest)(nil),    // 0: heron.v1.RegisterRequest
+	(*RegisterResponse)(nil),   // 1: heron.v1.RegisterResponse
+	(*ReportRequest)(nil),      // 2: heron.v1.ReportRequest
+	(*ReportResponse)(nil),     // 3: heron.v1.ReportResponse
+	(*GetReleaseRequest)(nil),  // 4: heron.v1.GetReleaseRequest
+	(*GetReleaseResponse)(nil), // 5: heron.v1.GetReleaseResponse
+	(*Metrics)(nil),            // 6: heron.v1.Metrics
+	(*ProbeResult)(nil),        // 7: heron.v1.ProbeResult
+	(*Facts)(nil),              // 8: heron.v1.Facts
+	(*UpdateStatus)(nil),       // 9: heron.v1.UpdateStatus
+	(*ProbeTasks)(nil),         // 10: heron.v1.ProbeTasks
+	(*UpdateTask)(nil),         // 11: heron.v1.UpdateTask
 }
 var file_heron_v1_agent_proto_depIdxs = []int32{
-	4, // 0: heron.v1.ReportRequest.metrics:type_name -> heron.v1.Metrics
-	5, // 1: heron.v1.ReportRequest.probe_results:type_name -> heron.v1.ProbeResult
-	6, // 2: heron.v1.ReportRequest.facts:type_name -> heron.v1.Facts
-	7, // 3: heron.v1.ReportRequest.update:type_name -> heron.v1.UpdateStatus
-	8, // 4: heron.v1.ReportResponse.tasks:type_name -> heron.v1.ProbeTasks
-	9, // 5: heron.v1.ReportResponse.update:type_name -> heron.v1.UpdateTask
-	0, // 6: heron.v1.AgentService.Register:input_type -> heron.v1.RegisterRequest
-	2, // 7: heron.v1.AgentService.Report:input_type -> heron.v1.ReportRequest
-	1, // 8: heron.v1.AgentService.Register:output_type -> heron.v1.RegisterResponse
-	3, // 9: heron.v1.AgentService.Report:output_type -> heron.v1.ReportResponse
-	8, // [8:10] is the sub-list for method output_type
-	6, // [6:8] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	6,  // 0: heron.v1.ReportRequest.metrics:type_name -> heron.v1.Metrics
+	7,  // 1: heron.v1.ReportRequest.probe_results:type_name -> heron.v1.ProbeResult
+	8,  // 2: heron.v1.ReportRequest.facts:type_name -> heron.v1.Facts
+	9,  // 3: heron.v1.ReportRequest.update:type_name -> heron.v1.UpdateStatus
+	10, // 4: heron.v1.ReportResponse.tasks:type_name -> heron.v1.ProbeTasks
+	11, // 5: heron.v1.ReportResponse.update:type_name -> heron.v1.UpdateTask
+	0,  // 6: heron.v1.AgentService.Register:input_type -> heron.v1.RegisterRequest
+	2,  // 7: heron.v1.AgentService.Report:input_type -> heron.v1.ReportRequest
+	4,  // 8: heron.v1.AgentService.GetRelease:input_type -> heron.v1.GetReleaseRequest
+	1,  // 9: heron.v1.AgentService.Register:output_type -> heron.v1.RegisterResponse
+	3,  // 10: heron.v1.AgentService.Report:output_type -> heron.v1.ReportResponse
+	5,  // 11: heron.v1.AgentService.GetRelease:output_type -> heron.v1.GetReleaseResponse
+	9,  // [9:12] is the sub-list for method output_type
+	6,  // [6:9] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_heron_v1_agent_proto_init() }
@@ -374,7 +504,7 @@ func file_heron_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_heron_v1_agent_proto_rawDesc), len(file_heron_v1_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file heron/v1/agent.proto.
  */
 export const file_heron_v1_agent: GenFile = /*@__PURE__*/
-  fileDesc("ChRoZXJvbi92MS9hZ2VudC5wcm90bxIIaGVyb24udjEiLAoPUmVnaXN0ZXJSZXF1ZXN0EgsKA2tleRgBIAEoCRIMCgRuYW1lGAIgASgJIjIKEFJlZ2lzdGVyUmVzcG9uc2USDwoHbm9kZV9pZBgBIAEoAxINCgV0b2tlbhgCIAEoCSLUAQoNUmVwb3J0UmVxdWVzdBIiCgdtZXRyaWNzGAEgASgLMhEuaGVyb24udjEuTWV0cmljcxIsCg1wcm9iZV9yZXN1bHRzGAIgAygLMhUuaGVyb24udjEuUHJvYmVSZXN1bHQSFQoNdGFza3NfdmVyc2lvbhgDIAEoBBISCgpmYWN0c19oYXNoGAQgASgGEh4KBWZhY3RzGAUgASgLMg8uaGVyb24udjEuRmFjdHMSJgoGdXBkYXRlGAYgASgLMhYuaGVyb24udjEuVXBkYXRlU3RhdHVzIosBCg5SZXBvcnRSZXNwb25zZRIaChJyZXBvcnRfaW50ZXJ2YWxfbXMYASABKA0SIwoFdGFza3MYAiABKAsyFC5oZXJvbi52MS5Qcm9iZVRhc2tzEhIKCndhbnRfZmFjdHMYAyABKAgSJAoGdXBkYXRlGAQgASgLMhQuaGVyb24udjEuVXBkYXRlVGFzazKOAQoMQWdlbnRTZXJ2aWNlEkEKCFJlZ2lzdGVyEhkuaGVyb24udjEuUmVnaXN0ZXJSZXF1ZXN0GhouaGVyb24udjEuUmVnaXN0ZXJSZXNwb25zZRI7CgZSZXBvcnQSFy5oZXJvbi52MS5SZXBvcnRSZXF1ZXN0GhguaGVyb24udjEuUmVwb3J0UmVzcG9uc2VCNFoyZ2l0aHViLmNvbS94amV0cnkvaGVyb24tcHJvYmUvZ2VuL2hlcm9uL3YxO2hlcm9udjFiBnByb3RvMw", [file_heron_v1_types, file_heron_v1_update]);
+  fileDesc("ChRoZXJvbi92MS9hZ2VudC5wcm90bxIIaGVyb24udjEiLAoPUmVnaXN0ZXJSZXF1ZXN0EgsKA2tleRgBIAEoCRIMCgRuYW1lGAIgASgJIjIKEFJlZ2lzdGVyUmVzcG9uc2USDwoHbm9kZV9pZBgBIAEoAxINCgV0b2tlbhgCIAEoCSLUAQoNUmVwb3J0UmVxdWVzdBIiCgdtZXRyaWNzGAEgASgLMhEuaGVyb24udjEuTWV0cmljcxIsCg1wcm9iZV9yZXN1bHRzGAIgAygLMhUuaGVyb24udjEuUHJvYmVSZXN1bHQSFQoNdGFza3NfdmVyc2lvbhgDIAEoBBISCgpmYWN0c19oYXNoGAQgASgGEh4KBWZhY3RzGAUgASgLMg8uaGVyb24udjEuRmFjdHMSJgoGdXBkYXRlGAYgASgLMhYuaGVyb24udjEuVXBkYXRlU3RhdHVzIosBCg5SZXBvcnRSZXNwb25zZRIaChJyZXBvcnRfaW50ZXJ2YWxfbXMYASABKA0SIwoFdGFza3MYAiABKAsyFC5oZXJvbi52MS5Qcm9iZVRhc2tzEhIKCndhbnRfZmFjdHMYAyABKAgSJAoGdXBkYXRlGAQgASgLMhQuaGVyb24udjEuVXBkYXRlVGFzayIyChFHZXRSZWxlYXNlUmVxdWVzdBIPCgd0YXNrX2lkGAEgASgJEgwKBGFyY2gYAiABKAkiRgoSR2V0UmVsZWFzZVJlc3BvbnNlEgwKBHN1bXMYASABKAwSEQoJc2lnbmF0dXJlGAIgASgMEg8KB2FyY2hpdmUYAyABKAwy1wEKDEFnZW50U2VydmljZRJBCghSZWdpc3RlchIZLmhlcm9uLnYxLlJlZ2lzdGVyUmVxdWVzdBoaLmhlcm9uLnYxLlJlZ2lzdGVyUmVzcG9uc2USOwoGUmVwb3J0EhcuaGVyb24udjEuUmVwb3J0UmVxdWVzdBoYLmhlcm9uLnYxLlJlcG9ydFJlc3BvbnNlEkcKCkdldFJlbGVhc2USGy5oZXJvbi52MS5HZXRSZWxlYXNlUmVxdWVzdBocLmhlcm9uLnYxLkdldFJlbGVhc2VSZXNwb25zZUI0WjJnaXRodWIuY29tL3hqZXRyeS9oZXJvbi1wcm9iZS9nZW4vaGVyb24vdjE7aGVyb252MWIGcHJvdG8z", [file_heron_v1_types, file_heron_v1_update]);
 
 /**
  * @generated from message heron.v1.RegisterRequest
@@ -158,7 +158,66 @@ export const ReportResponseSchema: GenMessage<ReportResponse> = /*@__PURE__*/
   messageDesc(file_heron_v1_agent, 3);
 
 /**
- * agent → hub 的唯一服务。两个方法都是 unary：hub 向 agent 的下行只有低频
+ * @generated from message heron.v1.GetReleaseRequest
+ */
+export type GetReleaseRequest = Message<"heron.v1.GetReleaseRequest"> & {
+  /**
+   * 节点当前更新任务的 ID。
+   *
+   * @generated from field: string task_id = 1;
+   */
+  taskId: string;
+
+  /**
+   * agent 产物矩阵里的架构：amd64、arm64、armv7、386、riscv64。
+   *
+   * @generated from field: string arch = 2;
+   */
+  arch: string;
+};
+
+/**
+ * Describes the message heron.v1.GetReleaseRequest.
+ * Use `create(GetReleaseRequestSchema)` to create a new message.
+ */
+export const GetReleaseRequestSchema: GenMessage<GetReleaseRequest> = /*@__PURE__*/
+  messageDesc(file_heron_v1_agent, 4);
+
+/**
+ * @generated from message heron.v1.GetReleaseResponse
+ */
+export type GetReleaseResponse = Message<"heron.v1.GetReleaseResponse"> & {
+  /**
+   * 官方 SHA256SUMS 原文。
+   *
+   * @generated from field: bytes sums = 1;
+   */
+  sums: Uint8Array;
+
+  /**
+   * 官方 SHA256SUMS.sig 原文。
+   *
+   * @generated from field: bytes signature = 2;
+   */
+  signature: Uint8Array;
+
+  /**
+   * 官方归档原文。
+   *
+   * @generated from field: bytes archive = 3;
+   */
+  archive: Uint8Array;
+};
+
+/**
+ * Describes the message heron.v1.GetReleaseResponse.
+ * Use `create(GetReleaseResponseSchema)` to create a new message.
+ */
+export const GetReleaseResponseSchema: GenMessage<GetReleaseResponse> = /*@__PURE__*/
+  messageDesc(file_heron_v1_agent, 5);
+
+/**
+ * agent → hub 的唯一服务。全部方法都是 unary：hub 向 agent 的下行只有低频
  * 配置，在每次上报的响应里按版本对账即可，不需要应用层连接状态。
  *
  * @generated from service heron.v1.AgentService
@@ -185,6 +244,18 @@ export const AgentService: GenService<{
     methodKind: "unary";
     input: typeof ReportRequestSchema;
     output: typeof ReportResponseSchema;
+  },
+  /**
+   * 节点上 hub 来源的 root 更新器取产物（spec §4.10）。鉴权用节点 token（Authorization: Bearer）。
+   * 请求里没有版本：hub 取该节点当前更新任务的版本，泄漏的 token 只能取到该节点正在执行的那一个版本。
+   * 响应是官方原始字节；hub 已预先验签，但接受与否只由更新器验签决定。不标无副作用：只接受 POST。
+   *
+   * @generated from rpc heron.v1.AgentService.GetRelease
+   */
+  getRelease: {
+    methodKind: "unary";
+    input: typeof GetReleaseRequestSchema;
+    output: typeof GetReleaseResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_heron_v1_agent, 0);

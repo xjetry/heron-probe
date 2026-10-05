@@ -284,6 +284,13 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[heronv1.Repor
 	return connect.NewResponse(resp), nil
 }
 
+// GetRelease 的产物中转尚未装配，方法也没有在鉴权拦截器里登记：匿名与带 token 的调用
+// 都先被拦截器以 Unauthenticated 拒绝，到不了这里。本体先让 Service 满足
+// AgentServiceHandler 的接口，装配中转时与拦截器登记一并补上取回路径。
+func (s *Service) GetRelease(context.Context, *connect.Request[heronv1.GetReleaseRequest]) (*connect.Response[heronv1.GetReleaseResponse], error) {
+	return nil, connect.NewError(connect.CodeUnavailable, errors.New("release relay is not configured"))
+}
+
 // foldResults 按归属与迟到预算逐条准入。task_id 未分配给本节点的结果不得写进本节点的历史：
 // token 被挪用时它是伪造的，分配撤销后仍在途时它属于已不承担的任务。
 // 超龄结果可能落在已冻结的分钟里；测量时刻由收到时刻减 age_ms 得到。

@@ -26,6 +26,8 @@ message UpdateStatus {
   // 实际运行版本，最多 64 UTF-8 字节。
   string version = 3;
   UpdateTask task = 4;
+  // 本机更新器取产物的来源：github 或 hub（spec §4.10）。不认识来源字段的旧更新器为空。
+  string source = 5;
 }
 
 message UpdateTarget {
