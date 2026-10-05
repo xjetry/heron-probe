@@ -66,6 +66,8 @@ curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/
 
 历史响应的 `level` 是窗口选定的基础聚合级别，较新的区间可由更细数据按同一 `stepS` 聚合补齐。输出步长由 `stepS` 决定；末桶可以未完成，只含已刷出的分钟，不含 live 内存里尚未刷出的当前分钟。
 
+两个服务的 QueryMetrics 均返回与 ts 对齐的 coverage：minutes 为留存的已准入上报分钟数，observed 为 hub 观测分钟数，observedReported 为两者交集；三项独立可缺席（未知）。纯观测点的指标 n=0，不能画成零读数。coverageSummary 按请求窗口的完整已闭合分钟汇总，不随 maxPoints 改变：覆盖率为 observedReportedMinutes/observedMinutes，未知分钟为 eligibleMinutes−observedMinutes；分母为零时无可观测区间，coverageStart 缺席时尚无覆盖记录。覆盖起点是接收首报的分钟，迁移前节点为最早留存证据；不等于在线率或 SLA。公开节点的 observed 暴露 hub 在保留期内的观测分钟。
+
 `ListProbeTasks` 与 `QueryProbes` 返回展示顺序，已删除任务的历史排在最后，按编号升序。`ReorderProbeTasks` 只接受完整任务 ID 排列且仅允许会话调用，不改变 agent 的执行配置版本。付款周期枚举为月、季、半年、年、两年、三年、五年；五年对应 `BILLING_CYCLE_QUINQUENNIAL`。
 
 全部节点与最近一次上报时刻：

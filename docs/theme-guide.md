@@ -79,6 +79,8 @@ await onRoute(path => {
 
 历史响应的 `level` 是窗口选定的基础聚合级别，较新的区间可由更细数据按同一 `stepS` 聚合补齐；画点间隔以 `stepS` 为准。末桶可能未完成，只含已刷出的分钟，不含 live 内存里尚未刷出的当前分钟。
 
+QueryMetrics 的 coverage 与 ts 一一对应：minutes 是留存的上报分钟，observed 是 hub 观测分钟，observedReported 是交集，各自可缺席。纯观测点所有指标 n=0，按空值绘图。coverageSummary 是请求窗口汇总，不受 maxPoints 影响；未知分钟 = eligibleMinutes−observedMinutes，覆盖率 = observedReportedMinutes/observedMinutes，不是在线率。coverageStart 缺席表示尚无覆盖记录，有起点但 observedMinutes=0 表示无可观测区间。内置公开页不展示覆盖率，但公开节点的 observed 暴露 hub 在保留期内的观测分钟。
+
 ## 包布局与清单
 
 ZIP 包根必须有 `index.html` 和 `theme.json`，不能再套一层仓库或 `dist` 目录。其余资源例如 `assets/app.js`、`assets/app.css`、`preview.png` 使用包内相对路径。
