@@ -1,6 +1,7 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -92,6 +93,74 @@ func TestListNodesByTagsIsAnIntersection(t *testing.T) {
 		if got := nodeNames(nodes); !slices.Equal(got, c.want) {
 			t.Errorf("filter %q: nodes %q, want %q", c.filter, got, c.want)
 		}
+	}
+}
+
+// ListUntaggedNodes 返回没有任何标签的节点：判据是 node_tag 关联行而不是 tag 行，节点去掉最后一个标签后 tag 行仍在
+// 也算无标签；顺序与 ListNodes 相同；带主体范围时只含范围内的节点。
+func TestListUntaggedNodes(t *testing.T) {
+	s, clk := open(t)
+	ctx := t.Context()
+	var ids []int64
+	for i, tags := range [][]string{{"a"}, nil, {"a", "b"}, nil} {
+		id, _, err := s.CreateNode(ctx, fmt.Sprint("n", i), Billing{}, hash(byte(i+1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+		if tags != nil {
+			setTags(t, s, id, tags...)
+		}
+	}
+	nodes, err := s.ListUntaggedNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := nodeNames(nodes), []string{"n1", "n3"}; !slices.Equal(got, want) {
+		t.Fatalf("ListUntaggedNodes = %q, want %q", got, want)
+	}
+	// 顺序与 ListNodes 一致：并集里标签为空的节点按 nodeOrder 取出后应与无标签结果逐项相同。
+	all, err := s.ListNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []string
+	for _, n := range all {
+		if len(n.Tags) == 0 {
+			want = append(want, n.Name)
+		}
+	}
+	if got := nodeNames(nodes); !slices.Equal(got, want) {
+		t.Fatalf("ListUntaggedNodes = %q, want the untagged nodes of ListNodes in the same order %q", got, want)
+	}
+
+	// 去掉最后一个标签：关联行清空，tag 行仍在，节点出现在无标签结果里。
+	setTags(t, s, ids[0])
+	if tags, err := s.ListTags(ctx); err != nil || !slices.Contains(tags, Tag{Name: "a", Nodes: 1}) {
+		t.Fatalf("ListTags after clearing the last tag = %v %v, want the a row kept", tags, err)
+	}
+	var rows int
+	if err := s.r.QueryRow("SELECT COUNT(*) FROM node_tag WHERE node_id = ?", ids[0]).Scan(&rows); err != nil || rows != 0 {
+		t.Fatalf("node_tag rows of the cleared node = %d %v, want 0", rows, err)
+	}
+	if nodes, err = s.ListUntaggedNodes(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := nodeNames(nodes), []string{"n0", "n1", "n3"}; !slices.Equal(got, want) {
+		t.Fatalf("after clearing the last tag: ListUntaggedNodes = %q, want %q", got, want)
+	}
+
+	// 带主体范围：范围 {n0,n1,n2} 含两个无标签节点与一个已挂标签的节点，范围外的无标签节点 n3 不出现。
+	p, err := s.CreateAPIToken(t.Context(), "reader", sha256.Sum256([]byte("reader")), clk.Now(), 100, &TokenGrant{NodeIDs: ids[:3]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped, err := s.ListUntaggedNodes(WithPrincipal(t.Context(), p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := nodeNames(scoped), []string{"n0", "n1"}; !slices.Equal(got, want) {
+		t.Fatalf("scoped ListUntaggedNodes = %q, want the in-scope untagged nodes %q", got, want)
 	}
 }
 
@@ -227,6 +296,10 @@ func TestNodeTagQueryPlans(t *testing.T) {
 		want  []string
 	}{
 		{"ListNodesByTags", selectNodes + filter + nodeOrder, filterArgs, []string{byTag, "USE TEMP B-TREE FOR GROUP BY"}},
+		// 无标签过滤：外层扫节点，相关性来自 NOT EXISTS 的关联存在性判断，走主键。
+		{"ListUntaggedNodes", selectNodes + untaggedWhere + nodeOrder, nil, []string{"CORRELATED SCALAR SUBQUERY 1", byNode}},
+		// 无标签节点的标签集：子查询驱动，节点仍走主键；结果为空，但这条语句每次调用都会跑。
+		{"tags of the untagged nodes", nodeTagsQuery(untaggedWhere), nil, []string{byNode, "SCAN n USING COVERING INDEX sqlite_autoindex_node_1"}},
 		{"tags of the filtered nodes", nodeTagsQuery(filter), filterArgs, []string{byNode, byTag}},
 		{"tags of all nodes", nodeTagsQuery(""), nil, []string{byNode}},
 		{"ListTags", listTagsQuery, nil, []string{byTag + " LEFT-JOIN"}},

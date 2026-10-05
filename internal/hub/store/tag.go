@@ -59,6 +59,11 @@ func tagFilterWhere(n int) string {
 	GROUP BY nt.node_id HAVING COUNT(DISTINCT nt.tag_id) = ?)`
 }
 
+// untaggedWhere 是 ListUntaggedNodes 交给 queryVisibleNodes 的节点条件：节点在 node_tag 里没有任何关联行。
+// 判据是关联行而不是 tag 行：节点被去掉最后一个标签后 tag 行仍在（setNodeTags 的注释），此时节点没有标签；DeleteTag
+// 删标签时关联行也一并删除。NOT EXISTS 对每个节点只判一次关联存在性，不需要聚合去重。
+const untaggedWhere = ` WHERE NOT EXISTS (SELECT 1 FROM node_tag nt WHERE nt.node_id = n.id)`
+
 // setNodeTags 在 UpdateNode 的写事务里把节点的标签集合整体替换成 names：已存在的标签（按 name_fold）沿用先建的写法，
 // 不存在的新建。标签行不随最后一个关联消失：删标签只经 DeleteTag，ListTags 因此能列出没挂在任何节点上的标签。
 func setNodeTags(tx *sql.Tx, node int64, names []string) error {
@@ -165,6 +170,12 @@ func (s *Store) ListNodesByTags(ctx context.Context, names []string) ([]Node, er
 		}
 	}
 	return s.queryVisibleNodes(ctx, tagFilterWhere(len(folds)), append(folds, len(folds))...)
+}
+
+// ListUntaggedNodes 返回没有任何标签的节点，顺序与 ListNodes 相同（nodeOrder 是节点列表唯一的排序）。
+// 与 ListNodesByTags 各管一种条件：调用方要的是"没有标签"而不是某个标签集合的交集，两者不组合。
+func (s *Store) ListUntaggedNodes(ctx context.Context) ([]Node, error) {
+	return s.queryVisibleNodes(ctx, untaggedWhere)
 }
 
 // ListTags 列出全部标签与各自的节点数，按 name_fold 排序；没挂在任何节点上的标签节点数为 0。

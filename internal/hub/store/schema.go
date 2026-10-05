@@ -528,7 +528,8 @@ const ddlTag = `CREATE TABLE tag (
 //
 // 两个索引各自服务的语句如下，依据是 EXPLAIN QUERY PLAN（不跑 ANALYZE，与生产一致：store 从不跑 ANALYZE），
 // 由 TestNodeTagQueryPlans 对 tag.go 里的这些语句本身核对：
-//   - 主键 (node_id, tag_id)：按节点读标签（nodeTagsQuery），替换标签前按节点清空（setNodeTags 的 clearNodeTags）。
+//   - 主键 (node_id, tag_id)：按节点读标签（nodeTagsQuery），替换标签前按节点清空（setNodeTags 的 clearNodeTags），
+//     无标签过滤按节点判关联存在性（untaggedWhere 的 NOT EXISTS）。
 //   - node_tag_by_tag：按标签过滤（tagFilterWhere 的交集子查询走它，按节点分组另用临时 B 树），ListTags 的计数，
 //     DeleteTag 解除关联（detachTag）。
 const ddlNodeTag = `CREATE TABLE node_tag (
