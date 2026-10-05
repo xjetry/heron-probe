@@ -578,6 +578,9 @@ func TestQueriesReadSelectedFamilyLevel(t *testing.T) {
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	// 各级故意写不同的值，避免读错表后又经二次聚合得到相同结果而掩盖路由错误。
 	if err := s.write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.Exec("UPDATE rollup_state SET upto_ts = 3600"); err != nil {
+			return err
+		}
 		for i := range levels {
 			args := append([]any{id, int64(0)}, bucketArgs(bucket(float64(i+1)))...)
 			if _, err := tx.Exec(metricUpsert(metricFamily.tables[i]), args...); err != nil {

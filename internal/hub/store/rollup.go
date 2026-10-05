@@ -56,7 +56,7 @@ func aggregates() []string {
 }
 
 // family 描述一个时间序列表族：三级表、各级水位在 rollup_state 里的键、键列与值列的
-// SQL 片段。两族共用上卷与清理的控制流程，查询共用二次分桶 SQL；
+// SQL 片段。两族共用上卷、清理与按水位拼接查询的控制流程；
 // 表名、水位键和聚合列来自同一个描述，避免各操作把两族混用。
 type family struct {
 	name string
@@ -350,23 +350,57 @@ func (f *family) aggregateSQL(table string) string {
 		group, order = "1, 2", "2, 1"
 	}
 	return "SELECT " + sel + ", " + strings.Join(f.aggs(), ", ") + " FROM " + table +
-		" WHERE node_id = ? AND ts >= ? AND ts <= ? GROUP BY " + group + " ORDER BY " + order
+		" GROUP BY " + group + " ORDER BY " + order
 }
 
-// QueryMetrics 返回 [from, to) 内按 step 聚合的桶；from 向下、to 向上对齐到 step，
-// 结果的 TS 都是 step 的整数倍。只返回有行的桶：缺失的桶就是没有数据。
-func (s *Store) QueryMetrics(ctx context.Context, nodeID int64, from, to int64, lv Level, step int64) ([]metric.Row, error) {
+func (f *family) rangeSQL(i int) string {
+	columns := strings.Join(append(f.keys(), f.values()...), ", ")
+	return "SELECT " + columns + " FROM " + f.tables[i] + " WHERE node_id = ? AND ts >= ? AND ts <= ?"
+}
+
+// queryFamily 的水位与源行属于同一个读快照：rollupLevel 原子提交桶与水位，
+// Prune 随后可删除已消费的细级行，分开读会把旧水位与清理后的源行混用。
+// 各源区间互斥；水位不必对齐 step，所以合并源行后才用上卷表达式统一分桶。
+func queryFamily[T any](ctx context.Context, s *Store, f *family, nodeID, from, to int64, lv Level, step int64, scan func(*sql.Rows, int64) ([]T, error)) ([]T, error) {
 	i, err := checkStep(lv, step)
 	if err != nil {
 		return nil, err
 	}
 	from, to = alignWindow(from, to, step)
-	rows, err := s.r.QueryContext(ctx, metricFamily.aggregateSQL(metricFamily.tables[i]), step, nodeID, from, to)
+	tx, err := s.r.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var sources []string
+	args := []any{step}
+	for ; i >= 0; i-- {
+		query := f.rangeSQL(i)
+		args = append(args, nodeID, from, to)
+		if i > 0 {
+			var upto int64
+			if err := tx.QueryRowContext(ctx, "SELECT upto_ts FROM rollup_state WHERE level = ?", f.states[i]).Scan(&upto); err != nil {
+				return nil, err
+			}
+			query += " AND ts < ?"
+			args = append(args, upto)
+			from = max(from, upto)
+		}
+		sources = append(sources, query)
+	}
+	rows, err := tx.QueryContext(ctx, f.aggregateSQL("("+strings.Join(sources, " UNION ALL ")+")"), args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanBucketRows(rows, nodeID)
+	return scan(rows, nodeID)
+}
+
+// QueryMetrics 返回 [from, to) 内按 step 聚合的桶；from 向下、to 向上对齐到 step，
+// 结果的 TS 都是 step 的整数倍。只返回有行的桶：缺失的桶就是没有数据。
+// 最新桶只含已刷出的分钟行，不读取 live 中尚未刷出的当前分钟。
+func (s *Store) QueryMetrics(ctx context.Context, nodeID int64, from, to int64, lv Level, step int64) ([]metric.Row, error) {
+	return queryFamily(ctx, s, metricFamily, nodeID, from, to, lv, step, scanBucketRows)
 }
 
 // MaintenanceInterval 是维护循环的周期：每个周期边界后跑一轮上卷与清理。存储健康的超期阈值
@@ -448,15 +482,5 @@ func alignWindow(from, to, step int64) (int64, int64) {
 
 // QueryProbes 与 QueryMetrics 共用级别校验与窗口对齐；每任务的桶按 TaskID、TS 升序返回。
 func (s *Store) QueryProbes(ctx context.Context, nodeID int64, from, to int64, lv Level, step int64) ([]metric.ProbeRow, error) {
-	i, err := checkStep(lv, step)
-	if err != nil {
-		return nil, err
-	}
-	from, to = alignWindow(from, to, step)
-	rows, err := s.r.QueryContext(ctx, probeFamily.aggregateSQL(probeFamily.tables[i]), step, nodeID, from, to)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanProbeRows(rows, nodeID)
+	return queryFamily(ctx, s, probeFamily, nodeID, from, to, lv, step, scanProbeRows)
 }
