@@ -25,7 +25,9 @@ type HubSource struct {
 	readConfig func() ([]byte, error)
 }
 
-func NewHubSource(readConfig func() ([]byte, error)) *HubSource { return &HubSource{readConfig: readConfig} }
+func NewHubSource(readConfig func() ([]byte, error)) *HubSource {
+	return &HubSource{readConfig: readConfig}
+}
 
 func (s *HubSource) Fetch(ctx context.Context, task Request, role, arch string) (Artifacts, error) {
 	if role != "agent" {

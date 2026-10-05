@@ -197,7 +197,9 @@ func TestRelayLimitsAttemptsPerTask(t *testing.T) {
 
 func TestRelayDoesNotCacheFailures(t *testing.T) {
 	for name, h := range map[string]*harness{
-		"fetch":  newHarness(t, func(context.Context, string, string) (update.Artifacts, error) { return update.Artifacts{}, errors.New("github unreachable") }, nil),
+		"fetch": newHarness(t, func(context.Context, string, string) (update.Artifacts, error) {
+			return update.Artifacts{}, errors.New("github unreachable")
+		}, nil),
 		"verify": newHarness(t, nil, func(string, string, update.Artifacts) error { return errors.New("bad signature") }),
 	} {
 		h.tasks.set(1, taskA, "v1.0.0", "dispatched", now.Unix()+60)

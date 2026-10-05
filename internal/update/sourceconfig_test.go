@@ -30,11 +30,15 @@ func TestParseSourceConfig(t *testing.T) {
 
 type namedSource string
 
-func (namedSource) Fetch(context.Context, Request, string, string) (Artifacts, error) { return Artifacts{}, nil }
+func (namedSource) Fetch(context.Context, Request, string, string) (Artifacts, error) {
+	return Artifacts{}, nil
+}
 
 func TestChooseSource(t *testing.T) {
 	gh, hub := namedSource("github"), namedSource("hub")
-	read := func(b string, err error) func() ([]byte, error) { return func() ([]byte, error) { return []byte(b), err } }
+	read := func(b string, err error) func() ([]byte, error) {
+		return func() ([]byte, error) { return []byte(b), err }
+	}
 	if c := chooseSource("hub", func() ([]byte, error) { t.Fatal("hub role read the agent source config"); return nil, nil }, gh, hub); c.name != "github" || c.src != gh {
 		t.Errorf("hub role: %+v", c)
 	}

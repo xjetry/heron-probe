@@ -55,7 +55,9 @@ type fakeSource struct {
 	a   Artifacts
 }
 
-func (s fakeSource) Fetch(context.Context, Request, string, string) (Artifacts, error) { return s.a, s.err }
+func (s fakeSource) Fetch(context.Context, Request, string, string) (Artifacts, error) {
+	return s.a, s.err
+}
 
 // goodSource 给出 request() 版本的 hub amd64 合法签名产物。
 func goodSource() fakeSource {
