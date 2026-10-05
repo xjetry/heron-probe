@@ -8,12 +8,12 @@
 
 **Tech Stack:** Go 1.27（`go/parser`、`go/ast`、`crypto/ed25519` 经 `internal/releasesig`）、GNU make（本机 3.81 与 CI 4.x 都要能跑）、POSIX sh、React + Vitest、GitHub Actions。
 
-**Spec:** `docs/superpowers/specs/2026-09-17-probe-architecture-design.md` 的 §14.1（主体，提交 aee08fa，按计划审阅意见修订于 f679646），以及 §4.6、§5.7（安装链路一条）、§10（安装命令一条）、§14（「发布」一条与最后一条）。动手前完整读 §14.1。
+**Spec:** `docs/superpowers/specs/2026-09-17-probe-architecture-design.md` 的 §14.1（主体），以及 §4.6、§5.7（安装链路一条）、§10（安装命令一条）、§14（「发布」一条与最后一条）。动手前完整读 §14.1。
 
 ## Global Constraints
 
 - 执行规则：每个 worker 先读运行目录下的 `exec-rules.md`（不打补丁、注释与提交信息禁止过程信息、缺陷注入、判成败的命令不接管道、只在自己的 worktree 工作、日志写 `<task-dir>/logs/`）。
-- 基点：Task 1、3、4 从 task.md 给出的提交开分支（`feat/r62c7a21-vsplit` 上计划定稿的提交：main `bb46a81`——已含 hub 中转与生产公钥——之上的 spec、地基提交 `7933dea` 与本计划）。地基提交已经做了这些，各任务不要重做：仓库根 `AGENT_VERSION`（内容 `v0.5.3` 一行）；Makefile 的 `AGENT_VERSION := $(strip $(shell read -r v < AGENT_VERSION; printf '%s' "$$v"))`、按原文拒绝 `$` 的 make 层守卫与 `export AGENT_VERSION`；`RELEASE_LDFLAGS`、`RELEASE_GOFLAGS`、`HUB_GOFLAGS`（hub 另注入 `-X main.agentVersion=$$AGENT_VERSION`）；`hub_build` 用 `HUB_GOFLAGS`；`hub-binary` 注入同一变量；`cmd/hub/main.go` 的 `var agentVersion string`。
+- 基点：Task 1、3、4 从 task.md 给出的提交开分支（`feat/r62c7a21-vsplit` 上计划定稿的提交：main `bb46a81`——已含 hub 中转与生产公钥——之上的 spec、地基提交 `0cef0fd` 与本计划）。地基提交已经做了这些，各任务不要重做：仓库根 `AGENT_VERSION`（内容 `v0.5.3` 一行）；Makefile 的 `AGENT_VERSION := $(strip $(shell read -r v < AGENT_VERSION; printf '%s' "$$v"))`、按原文拒绝 `$` 的 make 层守卫与 `export AGENT_VERSION`；`RELEASE_LDFLAGS`、`RELEASE_GOFLAGS`、`HUB_GOFLAGS`（hub 另注入 `-X main.agentVersion=$$AGENT_VERSION`）；`hub_build` 用 `HUB_GOFLAGS`；`hub-binary` 注入同一变量；`cmd/hub/main.go` 的 `var agentVersion string`。
 - 配方里一律经环境变量 `$$AGENT_VERSION` 引用绑定版本，不写 `$(AGENT_VERSION)`：make 展开后的值会被拼进 shell 源码，命令行给出的值里的引号或分号会改写命令（`export AGENT_VERSION` 让配方环境里有它）。`$(VERSION)` 维持现状（它有 `check_version` 的逐字节检查）。
 - 发布判定（spec §14.1）：tag vX、`AGENT_VERSION` vY；vY = vX（逐字相同）为 `full`；vY 是正式版且按 semver 优先级低于 vX 为 `hub-only`；其余都是错误。判定只实现在 `scripts/releasekind`。发布入口是两个目标 `release-full`、`release-hub-only`，调用方（release 流水线、本地验收）先取 `make -s release-kind` 的判定再调用对应目标，两个目标开头各自再判定一次；不设在 make 里再分派的 `release` 目标——make 对含 `$(MAKE)` 的配方行在 `-n` 下也整行执行，判定会在 dry-run 里真的跑（发布规则测试的受限 PATH 把 `go` 设成绊线）。
 - 含 `$(MAKE)` 的配方行只写递归 make 本身，不与其他命令拼在同一行：`-n` 下这一整行会被执行。
@@ -955,7 +955,7 @@ Run: `go test -count=1 ./scripts/boundagent/` → `0`。
 先在基点上产出对照（另开一个临时 worktree，不动自己的工作树）：
 
 ```bash
-git -C <worktree> worktree add --detach <task-dir>/base-tree 7933dea
+git -C <worktree> worktree add --detach <task-dir>/base-tree 0cef0fd
 cd <task-dir>/base-tree && pnpm --dir web install --frozen-lockfile > <task-dir>/logs/base-pnpm.log 2>&1 && make release VERSION=v0.0.0-split > <task-dir>/logs/base-release.log 2>&1; echo $?
 cd <task-dir>/base-tree/dist && ls > <task-dir>/logs/base-files.txt && for f in *.tar.gz; do echo "== $f"; tar -tzf "$f"; done > <task-dir>/logs/base-members.txt
 ```
