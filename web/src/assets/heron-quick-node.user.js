@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Heron 快速添加节点
 // @namespace    https://github.com/xjetry/heron-probe
-// @version      1.0.0
+// @version      1.1.0
 // @description  任意站点右下角的悬浮按钮：把正在浏览的机器（名称、到期日、费用）一键添加为 Heron 监控节点，创建后直接给出安装凭据与安装命令。适配 Tampermonkey / Violentmonkey。
 // @match        *://*/*
 // @noframes
@@ -43,12 +43,13 @@
     },
   };
 
-  const cfg = { hub: "", token: "" };
+  const cfg = { hub: "", token: "", proxyPort: "7897" };
 
   async function loadConfig() {
-    const [hub, token] = await Promise.all([gm.get("hub_url"), gm.get("api_token")]);
+    const [hub, token, proxyPort] = await Promise.all([gm.get("hub_url"), gm.get("api_token"), gm.get("proxy_port")]);
     cfg.hub = unfold(hub).replace(/\/+$/, "") || unfold(BUILTIN_HUB).replace(/\/+$/, "");
     cfg.token = unfold(token) || unfold(BUILTIN_TOKEN);
+    if (parseProxyPort(String(proxyPort || "")) !== null) cfg.proxyPort = String(proxyPort);
   }
 
   async function askConfig() {
@@ -127,7 +128,7 @@
     return m !== null && m.slice(1).every((o) => Number(o) <= 255);
   }
 
-  function installCommand(token) {
+  function installCommand(token, domestic) {
     const script = SEMVER.test(hubVersion)
       ? `https://github.com/xjetry/heron-probe/releases/download/${hubVersion}/install.sh`
       : "https://github.com/xjetry/heron-probe/releases/latest/download/install.sh";
@@ -136,7 +137,21 @@
       const url = new URL(cfg.hub);
       if (url.protocol === "http:" && !isLoopback(url.hostname)) insecure = " --insecure-http";
     } catch { /* hub 地址不合法时先给命令，报错在请求时已经提示过 */ }
-    return `curl -fsSL ${script} | sh -s -- --hub ${cfg.hub} --key ${token}${insecure}`;
+    return `curl -fsSL ${script} | sh -s -- --hub ${cfg.hub} --key ${token}${insecure}${domestic ? " --update-source hub" : ""}`;
+  }
+
+  // 国内主机首次安装经 SSH 反代借用本机代理，拼法与面板 web/src/lib/installProxy.ts 相同（本脚本独立分发、
+  // 不能引用面板代码），由 heron-quick-node.test.ts 逐字对照。端口拼进可复制的 shell 命令，只认不带前导零的
+  // 十进制 1–65535，其余不出命令。
+  function parseProxyPort(text) {
+    if (!/^[1-9]\d{0,4}$/.test(text)) return null;
+    const port = Number(text);
+    return port <= 65535 ? port : null;
+  }
+
+  function sshProxyArgs(port) {
+    const at = `127.0.0.1:${port}`;
+    return `-t -R ${at}:${at} 'export http_proxy=http://${at}; export https_proxy=http://${at}; export all_proxy=socks5h://${at}; exec $SHELL -l'`;
   }
 
   // ---- 悬浮按钮与表单（shadow DOM，与页面样式隔离）----
@@ -424,14 +439,61 @@
       panel.appendChild(t);
       panel.appendChild(copyRow(token, "安装凭据"));
 
+      // 国内主机只改变下面生成的命令，每次默认关闭；复制行按当前状态整段重建，复制拿到的总是屏幕上的命令。
+      const check = document.createElement("label");
+      check.className = "check";
+      const domestic = document.createElement("input");
+      domestic.type = "checkbox";
+      domestic.setAttribute("aria-label", "国内主机");
+      check.append(domestic, document.createTextNode("国内主机（连不上 GitHub 与 CDN）"));
+      panel.appendChild(check);
+
+      const proxy = document.createElement("div");
+      const portLabel = document.createElement("label");
+      portLabel.textContent = "本机代理端口";
+      const port = document.createElement("input");
+      port.inputMode = "numeric";
+      port.value = cfg.proxyPort;
+      port.setAttribute("aria-label", "本机代理端口");
+      portLabel.appendChild(port);
+      const sshBox = document.createElement("div");
+      const howto = document.createElement("p");
+      howto.className = "note";
+      howto.textContent = "第一步：在开着代理的电脑上以 root 登录新节点，ssh root@主机地址 后面接上下面的参数（本机代理端口要同时接受 HTTP 与 SOCKS5，如 Clash 的混合端口；sudo 可能丢掉代理变量，请以 root 登录或用 sudo -E）。第二步：在登录后的 shell 里运行安装命令。命令带 --update-source hub，在线更新经 hub 中转；OpenRC 主机（如 Alpine）请删掉这个参数。";
+      proxy.append(howto, portLabel, sshBox);
+      panel.appendChild(proxy);
+
       const c = document.createElement("p");
       c.className = "note";
       c.textContent = SEMVER.test(hubVersion) ? "在新节点上运行（与 hub 同版本）：" : "在新节点上运行（hub 不是正式版本，将安装最新 release）：";
       panel.appendChild(c);
-      const pre = document.createElement("pre");
-      pre.textContent = installCommand(token);
-      panel.appendChild(pre);
-      panel.appendChild(copyRow(installCommand(token), "安装命令"));
+      const commandBox = document.createElement("div");
+      panel.appendChild(commandBox);
+
+      const render = () => {
+        proxy.hidden = !domestic.checked;
+        sshBox.replaceChildren();
+        const parsed = parseProxyPort(port.value);
+        if (parsed === null) {
+          const err = document.createElement("p");
+          err.className = "error proxy-error";
+          err.textContent = "本机代理端口须为 1–65535 的整数";
+          sshBox.appendChild(err);
+        } else if (domestic.checked) {
+          sshBox.appendChild(copyRow(sshProxyArgs(parsed), "SSH 反代参数"));
+        }
+        const command = installCommand(token, domestic.checked);
+        const pre = document.createElement("pre");
+        pre.textContent = command;
+        commandBox.replaceChildren(pre, copyRow(command, "安装命令"));
+      };
+      domestic.addEventListener("change", render);
+      port.addEventListener("input", () => {
+        const parsed = parseProxyPort(port.value);
+        if (parsed !== null) { cfg.proxyPort = String(parsed); void gm.set("proxy_port", cfg.proxyPort); }
+        render();
+      });
+      render();
     }
 
     const actions = document.createElement("div");

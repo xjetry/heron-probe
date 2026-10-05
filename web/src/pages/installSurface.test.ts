@@ -8,12 +8,24 @@ import { describe, expect, it } from "vitest";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const installSh = readFileSync(resolve(root, "deploy/install.sh"), "utf8");
 const panel = readFileSync(resolve(root, "web/src/components/InstallCommands.tsx"), "utf8");
+const userscript = readFileSync(resolve(root, "web/src/assets/heron-quick-node.user.js"), "utf8");
 
 describe("面板安装命令与 install.sh", () => {
   it("命令里的每个 --xxx 都是 install.sh 接受的选项", () => {
     const accepted = new Set([...installSh.matchAll(/^\s*(--[A-Za-z0-9-]+)\)/gm)].map((m) => m[1]));
     const used = [...new Set([...panel.matchAll(/--[A-Za-z0-9-]+/g)].map((m) => m[0]))];
     expect(used.length).toBeGreaterThan(0);
+    for (const flag of used) {
+      expect(accepted, `${flag} 不在 install.sh 的 case 标签里`).toContain(flag);
+    }
+  });
+
+  // 油猴脚本另拼一份安装命令（它是独立分发的脚本，不能引用面板代码），同样只能用 install.sh 接受的选项。
+  // 前后不贴连字符或字母数字，避开注释里的分隔线。
+  it("油猴脚本命令里的每个 --xxx 也都是 install.sh 接受的选项", () => {
+    const accepted = new Set([...installSh.matchAll(/^\s*(--[A-Za-z0-9-]+)\)/gm)].map((m) => m[1]));
+    const used = [...new Set([...userscript.matchAll(/(?<![\w-])--[a-z][a-z0-9-]*/g)].map((m) => m[0]))];
+    expect(used).toEqual(expect.arrayContaining(["--hub", "--key", "--insecure-http", "--update-source"]));
     for (const flag of used) {
       expect(accepted, `${flag} 不在 install.sh 的 case 标签里`).toContain(flag);
     }
