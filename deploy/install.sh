@@ -20,6 +20,9 @@ SYSTEMD_WANTS=$ROOT/etc/systemd/system/multi-user.target.wants/heron-agent.servi
 UPDATER_BIN=$ROOT/usr/local/bin/heron-updater-agent
 UPDATER_UNIT=$ROOT/etc/systemd/system/heron-updater-agent.service
 UPDATER_STATE=$ROOT/var/lib/heron-update-agent
+# 在线更新取产物的来源（spec §4.10）：root 的决定，不放进服务用户拥有的 agent 配置。
+UPDATER_CFG_DIR=$ROOT/etc/heron-update-agent
+UPDATER_CFG=$UPDATER_CFG_DIR/config.json
 UPDATER_RESTORE=0
 OPENRC_SCRIPT=$ROOT/etc/init.d/heron-agent
 OPENRC_LINK=$ROOT/etc/runlevels/default/heron-agent
@@ -35,12 +38,12 @@ RELEASE_SHA256=""
 # <<< release stamp <<<
 
 usage() {
-  echo "usage: install.sh --hub URL --key KEY [--re-register] [--name N] [--insecure-http] [--base-url URL]" >&2
+  echo "usage: install.sh --hub URL --key KEY [--re-register] [--name N] [--insecure-http] [--base-url URL] [--update-source github|hub]" >&2
   echo "       install.sh --uninstall [--purge]" >&2
   exit 2
 }
 
-HUB=""; KEY=""; NAME=""; INSECURE_HTTP=0; BASE_URL=""; UNINSTALL=0; PURGE=0; RE_REGISTER=0
+HUB=""; KEY=""; NAME=""; INSECURE_HTTP=0; BASE_URL=""; UNINSTALL=0; PURGE=0; RE_REGISTER=0; UPDATE_SOURCE=""
 need_value() { [ "$#" -ge 2 ] || usage; }
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -50,6 +53,7 @@ while [ $# -gt 0 ]; do
     --name) need_value "$@"; NAME=$2; shift 2;;
     --insecure-http) INSECURE_HTTP=1; shift;;
     --base-url) need_value "$@"; BASE_URL=$2; shift 2;;
+    --update-source) need_value "$@"; UPDATE_SOURCE=$2; shift 2;;
     # 脚本只装自己所属的版本：版本由取哪个 URL 的脚本决定，没有第二个来源可以和内嵌清单不一致。
     --version|--version=*)
       echo "install.sh has no --version: it installs only the release it belongs to; for another version run $REPO/releases/download/<tag>/install.sh" >&2
@@ -60,6 +64,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ "$PURGE" = 0 ] || [ "$UNINSTALL" = 1 ] || usage
+# 来源值与卸载互斥都在锁文件、下载与任何系统变更之前拒绝。
+case "$UPDATE_SOURCE" in
+  ""|github|hub) ;;
+  *) echo "--update-source must be github or hub" >&2; exit 2;;
+esac
+[ -z "$UPDATE_SOURCE" ] || [ "$UNINSTALL" = 0 ] || usage
 # 显式重新注册必须提供完整凭据；在锁文件、下载与系统变更之前拒绝缺省或空值。
 if [ "$RE_REGISTER" = 1 ] && { [ -z "$HUB" ] || [ -z "$KEY" ]; }; then
   echo "--hub and --key are required for --re-register" >&2
@@ -72,6 +82,12 @@ fi
 if [ -d "$ROOT/run/systemd/system" ]; then INIT=systemd
 elif [ -x "$ROOT/sbin/openrc-run" ]; then INIT=openrc
 else echo "unsupported init: expected systemd (/run/systemd/system) or OpenRC (/sbin/openrc-run)" >&2; exit 1; fi
+
+# 在线更新只支持 systemd；OpenRC 主机靠重跑安装器升级，来源参数在那里没有读者，静默接受会让人以为生效了。
+if [ -n "$UPDATE_SOURCE" ] && [ "$INIT" != systemd ]; then
+  echo "--update-source applies only to systemd online updates; $INIT hosts update by rerunning the installer" >&2
+  exit 2
+fi
 
 # /run 由 root 管理且不可被服务用户写入；锁文件不删除，避免并发安装器锁住不同 inode。
 # 此锁只串行人工安装器，在线事务仍由 prepare_updater 的维护握手排除。
@@ -241,6 +257,17 @@ prepare_updater() {
 restore_updater() {
   if [ "$UPDATER_RESTORE" = 1 ]; then systemctl restart heron-updater-agent </dev/null || echo 'failed to restore heron-updater-agent; start it manually' >&2; fi
 }
+
+# 不给 --update-source 时不动已有文件：例行重跑不能把 hub 来源的节点悄悄切回 github，那样它下一次在线更新必然失败。
+# 先写同目录临时文件再 mv，更新器启动时读不到半份文件；目录只有 root 能写，没有可被替换的目录项。
+write_update_source() {
+  [ -n "$UPDATE_SOURCE" ] || return 0
+  mkdir -p "$UPDATER_CFG_DIR"
+  chmod 0755 "$UPDATER_CFG_DIR"
+  printf '{"source":"%s"}\n' "$UPDATE_SOURCE" > "$UPDATER_CFG.tmp.$$"
+  chmod 0644 "$UPDATER_CFG.tmp.$$"
+  mv -f "$UPDATER_CFG.tmp.$$" "$UPDATER_CFG"
+}
 trap restore_updater EXIT
 trap 'exit 1' INT TERM HUP
 
@@ -302,7 +329,7 @@ if [ "$UNINSTALL" = 1 ]; then
   esac
   rm -f "$BIN"
   if [ "$PURGE" = 1 ]; then
-    rm -rf "$CFG_DIR" "$LOG_DIR"
+    rm -rf "$CFG_DIR" "$LOG_DIR" "$UPDATER_CFG_DIR"
     delete_account
   fi
   echo "heron-agent uninstalled"
@@ -510,6 +537,8 @@ mv -f "$BIN_TMP" "$BIN"
 # 所以用 start，不依赖 restart 对已停服务等价于 start。
 case "$INIT" in
   systemd)
+    # 更新器在本分支末尾 start 才启动，启动时读来源配置：先写配置再换二进制。
+    write_update_source
     mv -f "$UPDATER_TMP" "$UPDATER_BIN"
     install -m 0644 "$work/updater/heron-updater-agent.service" "$UPDATER_UNIT"
     install -m 0644 "$work/heron-agent.service" "$SYSTEMD_UNIT"
