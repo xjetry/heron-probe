@@ -52,7 +52,7 @@ func TestHubSourceFetch(t *testing.T) {
 	want := signedArtifacts("agent", "amd64", "v1.2.3", []byte("archive-bytes"))
 	h := &relayHub{resp: &heronv1.GetReleaseResponse{Sums: want.Sums, Signature: want.Signature, Archive: want.Archive}}
 	s := NewHubSource(configFor(serveRelay(t, h)))
-	got, err := s.Fetch(context.Background(), Request{ID: "aaaaaaaaaaaaaaaa", Version: "v1.2.3"}, "agent", "amd64")
+	got, err := s.Fetch(boundedCtx(t), Request{ID: "aaaaaaaaaaaaaaaa", Version: "v1.2.3"}, "agent", "amd64")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestHubSourceRefusesBeforeNetwork(t *testing.T) {
 		"read_error":        {"agent", func() ([]byte, error) { return nil, errors.New("managed file must be regular") }, "read agent config"},
 		"unknown_field":     {"agent", func() ([]byte, error) { return []byte(`{"hub":"` + url + `","token":"t","x":1}`), nil }, "unknown field"},
 	} {
-		_, err := NewHubSource(tc.read).Fetch(context.Background(), Request{ID: "aaaaaaaaaaaaaaaa", Version: "v1.2.3"}, tc.role, "amd64")
+		_, err := NewHubSource(tc.read).Fetch(boundedCtx(t), Request{ID: "aaaaaaaaaaaaaaaa", Version: "v1.2.3"}, tc.role, "amd64")
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err %v, want %q", name, err, tc.want)
 		}
@@ -89,8 +89,20 @@ func TestHubSourceRefusesBeforeNetwork(t *testing.T) {
 
 func TestHubSourceErrorDoesNotLeakToken(t *testing.T) {
 	h := &relayHub{err: connect.NewError(connect.CodeFailedPrecondition, errors.New("no matching update task"))}
-	_, err := NewHubSource(configFor(serveRelay(t, h))).Fetch(context.Background(), Request{ID: "aaaaaaaaaaaaaaaa", Version: "v1.2.3"}, "agent", "amd64")
+	_, err := NewHubSource(configFor(serveRelay(t, h))).Fetch(boundedCtx(t), Request{ID: "aaaaaaaaaaaaaaaa", Version: "v1.2.3"}, "agent", "amd64")
 	if err == nil || !strings.Contains(err.Error(), "no matching update task") || strings.Contains(err.Error(), "node-secret-token") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// hub 来源的连接同样不设总时限（hub 首次取回要先从 GitHub 取完才应答），期限只来自调用方的 ctx；
+// 没有期限的取回在读配置、连 hub 之前被拒。
+func TestHubSourceRequiresTimeLimit(t *testing.T) {
+	h := &relayHub{}
+	read := 0
+	cfg := configFor(serveRelay(t, h))
+	_, err := NewHubSource(func() ([]byte, error) { read++; return cfg() }).Fetch(context.Background(), Request{ID: "aaaaaaaaaaaaaaaa", Version: "v1.2.3"}, "agent", "amd64")
+	if !errors.Is(err, errUnbounded) || read != 0 || h.calls.Load() != 0 {
+		t.Fatalf("fetch without a time limit: err=%v reads=%d calls=%d", err, read, h.calls.Load())
 	}
 }

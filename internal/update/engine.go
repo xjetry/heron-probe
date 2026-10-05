@@ -12,11 +12,24 @@ import (
 	"time"
 )
 
-// downloadTimeout 是一次取回的总时限，GitHub 与 hub 两种来源相同。
+// downloadTimeout 是更新器一次取回的期限，经 ctx 交给来源（见 source），GitHub 与 hub 两种来源同一个值。
 const downloadTimeout = 5 * time.Minute
 
+// source 只取回产物字节。取回的期限只归调用方：ctx 必须带期限，来源的连接不另设总时限。连接上的总时限覆盖
+// 读完正文、按请求各自计时（GitHub 来源一次取回是三个顺序请求），只要比调用方的期限短，就取代期限成为归档实际
+// 能用的上限，大归档在慢链路上先撞它；期限只放在调用方一处，两种来源才确定是同一个上限。连接不设总时限后，
+// 已开始传输的正文卡住时只有期限能结束它，所以来源对没有期限的 ctx 返回 errUnbounded，不发请求。
 type source interface {
 	Fetch(context.Context, Request, string, string) (Artifacts, error)
+}
+
+var errUnbounded = errors.New("release fetch refused: context has no time limit")
+
+func requireTimeLimit(ctx context.Context) error {
+	if _, ok := ctx.Deadline(); !ok {
+		return errUnbounded
+	}
+	return nil
 }
 
 // sourceChoice 是更新器启动时按本机安装参数选定的取产物来源（spec §4.10）。

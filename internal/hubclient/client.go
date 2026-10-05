@@ -23,7 +23,9 @@ import (
 )
 
 // New 返回连 hub 的 AgentService 客户端。maxBody 是响应正文在 HTTP 层的读取上限，由调用方按自己要收的
-// 最大消息给出：agent 传 agentwire.MaxResponseBytes，hub 来源的更新器传它那档产物大小。
+// 最大消息给出：agent 传 agentwire.MaxResponseBytes，hub 来源的更新器传它那档产物大小。timeout 是含读完正文的
+// 总时限；0 表示不设，此时期限只来自调用方的 ctx，没有期限时卡住的应答会一直等下去——hub 来源的更新器传 0，
+// 由 update.HubSource 拒绝没有期限的 ctx。
 func New(hub string, timeout time.Duration, maxBody int64) heronv1connect.AgentServiceClient {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.DisableCompression = true

@@ -118,6 +118,13 @@ func relayHub(t *testing.T, official func(arch string) update.Artifacts, verify 
 	return h, tok, s.GetTask()
 }
 
+// fetchCtx 给取回调用一个期限：更新器的来源不设自己的总时限，没有期限的 ctx 会被拒绝。
+func fetchCtx(t *testing.T) context.Context {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	t.Cleanup(cancel)
+	return ctx
+}
+
 // hubSourceFor 以节点 token 构造更新器的 hub 来源；配置里的地址就是这套 hub 自己。
 func hubSourceFor(h *hub, tok string) *update.HubSource {
 	return update.NewHubSource(func() ([]byte, error) {
@@ -130,7 +137,7 @@ func hubSourceFor(h *hub, tok string) *update.HubSource {
 func TestRelayEndToEnd(t *testing.T) {
 	archive := sigtest.Archive("agent", []byte(relayBinary))
 	h, tok, task := relayHub(t, func(arch string) update.Artifacts { return signedAgent(arch, archive) }, acceptVerify, "")
-	a, err := hubSourceFor(h, tok).Fetch(context.Background(), update.Request{ID: task.Id, Version: task.Version}, "agent", "amd64")
+	a, err := hubSourceFor(h, tok).Fetch(fetchCtx(t), update.Request{ID: task.Id, Version: task.Version}, "agent", "amd64")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +157,7 @@ func tampered(arch string) update.Artifacts {
 // hub 预验签让坏产物在 hub 处就报错，不必每个节点各下一遍才失败；预验签失败经 releaseError 归为 Unavailable。
 func TestRelayHubPreverifyRejectsTamperedOfficial(t *testing.T) {
 	h, tok, task := relayHub(t, tampered, acceptVerify, "")
-	_, err := hubSourceFor(h, tok).Fetch(context.Background(), update.Request{ID: task.Id, Version: task.Version}, "agent", "amd64")
+	_, err := hubSourceFor(h, tok).Fetch(fetchCtx(t), update.Request{ID: task.Id, Version: task.Version}, "agent", "amd64")
 	if connect.CodeOf(err) != connect.CodeUnavailable {
 		t.Fatalf("err = %v, want Unavailable from the hub's preverify", err)
 	}
@@ -159,7 +166,7 @@ func TestRelayHubPreverifyRejectsTamperedOfficial(t *testing.T) {
 // 失守的 hub 跳过预验签、把篡改的归档原样转发：节点上的 Accept 仍拒绝。
 func TestUpdaterRejectsForgedHub(t *testing.T) {
 	h, tok, task := relayHub(t, tampered, func(string, string, update.Artifacts) error { return nil }, "")
-	a, err := hubSourceFor(h, tok).Fetch(context.Background(), update.Request{ID: task.Id, Version: task.Version}, "agent", "amd64")
+	a, err := hubSourceFor(h, tok).Fetch(fetchCtx(t), update.Request{ID: task.Id, Version: task.Version}, "agent", "amd64")
 	if err != nil {
 		t.Fatalf("the forged hub should serve its bytes: %v", err)
 	}

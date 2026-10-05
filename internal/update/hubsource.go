@@ -30,6 +30,9 @@ func NewHubSource(readConfig func() ([]byte, error)) *HubSource {
 }
 
 func (s *HubSource) Fetch(ctx context.Context, task Request, role, arch string) (Artifacts, error) {
+	if err := requireTimeLimit(ctx); err != nil {
+		return Artifacts{}, err
+	}
 	if role != "agent" {
 		return Artifacts{}, errors.New("hub source serves only agent updates")
 	}
@@ -46,7 +49,8 @@ func (s *HubSource) Fetch(ctx context.Context, task Request, role, arch string) 
 	}
 	req := connect.NewRequest(&heronv1.GetReleaseRequest{TaskId: task.ID, Arch: arch})
 	req.Header().Set("Authorization", "Bearer "+cfg.Token)
-	resp, err := hubclient.New(cfg.Hub, downloadTimeout, maxRelayResponse).GetRelease(ctx, req)
+	// 不设总时限也不限等响应头：缓存未命中时 hub 先从 GitHub 取完、验过才应答，期限只来自 ctx（见 source）。
+	resp, err := hubclient.New(cfg.Hub, 0, maxRelayResponse).GetRelease(ctx, req)
 	if err != nil {
 		return Artifacts{}, fmt.Errorf("fetch release from hub: %w", err)
 	}

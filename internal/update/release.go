@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/xjetry/heron-probe/internal/githubtransport"
 	"github.com/xjetry/heron-probe/internal/releasesig"
@@ -32,8 +31,10 @@ const (
 // 不接收外部下载地址或摘要。
 type OfficialSource struct{ http *http.Client }
 
+// NewOfficialSource 的客户端不设总时限，只有 githubtransport 的建连、握手与等响应头时限；期限由调用方的 ctx
+// 给出（更新器 downloadTimeout、hub 中转 fetchTimeout、后台查最新版本 15 秒），get 拒绝没有期限的 ctx（见 source）。
 func NewOfficialSource() *OfficialSource {
-	return &OfficialSource{http: githubtransport.NewClient(2 * time.Minute)}
+	return &OfficialSource{http: githubtransport.NewClient(0)}
 }
 
 type officialRelease struct {
@@ -114,6 +115,9 @@ func archiveName(role, arch string) (string, error) {
 }
 
 func (s *OfficialSource) get(ctx context.Context, endpoint, accept string, limit int64) ([]byte, error) {
+	if err := requireTimeLimit(ctx); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err

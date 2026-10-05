@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,6 +34,60 @@ func testSource(t *testing.T, routes map[string][]byte) *OfficialSource {
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body)), ContentLength: int64(len(body)), Header: make(http.Header), Request: r}, nil
 	}), time.Second)}
+}
+
+// boundedCtx 给取回调用一个期限：来源不设自己的总时限，没有期限的 ctx 会被拒绝（见 source）。
+func boundedCtx(t *testing.T) context.Context {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+// stallingBody 模拟连上之后不再给字节的正文：读取一直阻塞到请求的 ctx 结束。
+type stallingBody struct{ ctx context.Context }
+
+func (b stallingBody) Read([]byte) (int, error) {
+	<-b.ctx.Done()
+	return 0, b.ctx.Err()
+}
+
+func (stallingBody) Close() error { return nil }
+
+// 取回的期限只来自调用方的 ctx。客户端总时限覆盖读完正文，一次取回又是三个顺序请求，所以只要它比调用方给的
+// 期限短，归档就只能用到它；而没有期限的 ctx 必须在发出请求前被拒，否则卡住的正文让取回永不结束。
+func TestOfficialSourceTimeLimitComesFromCaller(t *testing.T) {
+	if got := NewOfficialSource().http.Timeout; got != 0 {
+		t.Fatalf("official client has its own total timeout %v; the caller's context must be the only limit", got)
+	}
+	calls := 0
+	counting := &OfficialSource{http: githubtransport.WithTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header), Request: r}, nil
+	}), 0)}
+	if _, err := counting.Fetch(context.Background(), Request{Version: "v0.3.0"}, "hub", "amd64"); !errors.Is(err, errUnbounded) || calls != 0 {
+		t.Fatalf("fetch without a time limit: err=%v calls=%d", err, calls)
+	}
+	if _, err := counting.Latest(context.Background()); !errors.Is(err, errUnbounded) || calls != 0 {
+		t.Fatalf("latest without a time limit: err=%v calls=%d", err, calls)
+	}
+	stalled := &OfficialSource{http: githubtransport.WithTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, ContentLength: -1, Body: stallingBody{r.Context()}, Header: make(http.Header), Request: r}, nil
+	}), 0)}
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := stalled.Fetch(ctx, Request{Version: "v0.3.0"}, "hub", "amd64")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("stalled fetch ended with %v, want the caller's deadline", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a stalled body outlived the caller's deadline")
+	}
 }
 
 func makeArchive(t *testing.T, headers []*tar.Header, bodies []string) []byte {
@@ -81,7 +136,7 @@ func TestOfficialFetchUsesOnlyDownloadURLs(t *testing.T) {
 	for _, pair := range [][2]string{{"hub", "amd64"}, {"hub", "arm64"}, {"agent", "amd64"}, {"agent", "arm64"}, {"agent", "armv7"}, {"agent", "386"}, {"agent", "riscv64"}} {
 		t.Run(strings.Join(pair[:], "/"), func(t *testing.T) {
 			routes, want := releaseRoutes(t, pair[0], pair[1], "v0.3.0", validArchive(t, pair[0]))
-			a, err := testSource(t, routes).Fetch(context.Background(), Request{Version: "v0.3.0"}, pair[0], pair[1])
+			a, err := testSource(t, routes).Fetch(boundedCtx(t), Request{Version: "v0.3.0"}, pair[0], pair[1])
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -98,7 +153,7 @@ func TestOfficialFetchUsesOnlyDownloadURLs(t *testing.T) {
 func TestOfficialRejectsInputBeforeNetwork(t *testing.T) {
 	s := testSource(t, nil)
 	for _, args := range [][3]string{{"hub", "386", "v0.3.0"}, {"agent", "mips", "v0.3.0"}, {"updater", "amd64", "v0.3.0"}, {"hub", "amd64", "../../other"}, {"hub", "amd64", "v0.3.0-rc1"}, {"hub", "amd64", "v00.3.0"}} {
-		if _, err := s.Fetch(context.Background(), Request{Version: args[2]}, args[0], args[1]); err == nil {
+		if _, err := s.Fetch(boundedCtx(t), Request{Version: args[2]}, args[0], args[1]); err == nil {
 			t.Errorf("accepted %v", args)
 		}
 	}
@@ -106,7 +161,7 @@ func TestOfficialRejectsInputBeforeNetwork(t *testing.T) {
 
 func TestOfficialRejectsReleaseMetadata(t *testing.T) {
 	for _, body := range []string{`{`, `{"tag_name":"v0.3.0","draft":true}`, `{"tag_name":"v0.3.0","prerelease":true}`, `{"tag_name":"v0.3.0-rc1"}`} {
-		if _, err := testSource(t, map[string][]byte{officialAPI + "/latest": []byte(body)}).Latest(context.Background()); err == nil {
+		if _, err := testSource(t, map[string][]byte{officialAPI + "/latest": []byte(body)}).Latest(boundedCtx(t)); err == nil {
 			t.Errorf("accepted latest %s", body)
 		}
 	}
@@ -222,7 +277,7 @@ func TestOfficialHTTPBoundaries(t *testing.T) {
 				}
 				return &http.Response{StatusCode: tc.status, ContentLength: tc.length, Body: io.NopCloser(strings.NewReader(tc.body)), Header: make(http.Header), Request: r}, nil
 			}), time.Second)}
-			if _, err := s.Fetch(context.Background(), Request{Version: "v0.3.0"}, "hub", "amd64"); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if _, err := s.Fetch(boundedCtx(t), Request{Version: "v0.3.0"}, "hub", "amd64"); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error = %v, want %s", err, tc.want)
 			}
 		})
@@ -234,7 +289,7 @@ func TestOfficialHTTPBoundaries(t *testing.T) {
 				calls++
 				return &http.Response{StatusCode: 302, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{"Location": []string{destination}}, Request: r}, nil
 			}), time.Second)}
-			if _, err := s.Fetch(context.Background(), Request{Version: "v0.3.0"}, "hub", "amd64"); err == nil || calls != 1 {
+			if _, err := s.Fetch(boundedCtx(t), Request{Version: "v0.3.0"}, "hub", "amd64"); err == nil || calls != 1 {
 				t.Fatalf("redirect err=%v, calls=%d", err, calls)
 			}
 		})

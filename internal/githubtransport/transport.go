@@ -10,7 +10,8 @@ import (
 	"time"
 )
 
-// NewClient 禁用环境代理，并将连接固定到验证过的公网地址。
+// NewClient 禁用环境代理，并将连接固定到验证过的公网地址。timeout 是含读完正文的总时限；0 表示不设，期限只来自
+// 请求的 ctx，建连、TLS 握手与等响应头仍各有时限，但已开始传输的正文卡住时只有 ctx 能结束它。
 func NewClient(timeout time.Duration) *http.Client {
 	dialer := githubDialer{
 		lookup: net.DefaultResolver.LookupNetIP,
