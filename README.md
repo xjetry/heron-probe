@@ -263,7 +263,7 @@ hub 与 agent 的版本：每个 hub 版本绑定一个 agent 版本（一套 ta
 curl -fsSL https://github.com/xjetry/heron-probe/releases/latest/download/install.sh | sh -s -- --hub https://heron.example.com --key <key>
 ```
 
-参数：`--hub`、`--key`（首次安装必需）、`--name`、`--insecure-http`、`--base-url`，含义见上。
+参数：`--hub`、`--key`（首次安装必需）、`--name`、`--insecure-http`、`--base-url`，含义见上；`--update-source github|hub` 选在线更新从哪里取产物，见「在线更新」。
 
 以 root 运行，支持 systemd 与 OpenRC。卸载：同一条命令把参数换成 `--uninstall`，加 `--purge` 一并删除配置、专用日志目录、`heron-agent` 用户与同名组。systemd 普通卸载保留手工 drop-in；`--purge` 还删除 `/etc/systemd/system/heron-agent.service.d/` 与 `/run/systemd/system/heron-agent.service.d/`。目录为符号链接时只删除链接，不删除目标内容；共享 drop-in、发行版提供的配置和系统 journal 不清理。
 
@@ -330,7 +330,11 @@ sudo systemctl restart heron-agent   # OpenRC：rc-service heron-agent restart�
 
 更新器只替换主程序，不更新自身、systemd 单元或启动参数。更新器和服务定义需要通过新版官方安装器升级。事务及回滚备份位于 `/var/lib/heron-update-{hub,agent}`，正常卸载会移除更新器及其已终结的事务历史/备份，业务数据仍按原有 `--purge` 规则处理。节点更新任务不进入分层快照，恢复快照不会重放旧升级命令。
 
-官方 HTTPS Release 与 `SHA256SUMS` 是更新信任源，摘要并不是独立数字签名；官方仓库发布权限被攻陷仍会影响更新安全。
+更新器只接受带官方发行签名的产物：release 流水线用 Ed25519 对版本号与 `SHA256SUMS` 原文一起签名，签名作为 `SHA256SUMS.sig` 随 release 发布；更新器用内嵌的公钥、按任务的版本号验签（拿别的版本的签名冒充验不过），再按已验签的 `SHA256SUMS` 核对归档摘要与结构。签名私钥只在 release 流水线里使用，信任根仍是官方仓库的发行权限，发行权限被攻陷仍会影响更新安全。更新器只认签名，不知道版本是否已从 GitHub 撤回：失守的 hub 仍能让经它中转的节点装上曾签名发布、后来撤回的更高版本。
+
+从哪里取产物与接受哪些字节互不相关。hub 主机总从 GitHub 取；节点默认也从 GitHub 取，出站受限、只能连到 hub 的节点在安装时给 `install.sh` 加 `--update-source hub`，改由 hub 中转：hub 从 GitHub 取回、验签后转发，节点上的更新器照样验签，失守的 hub 塞不进别的程序。这个参数只对 Linux systemd 有效（OpenRC 主机的安装器会拒绝它，macOS 脚本没有它），设置写在 root 属主的 `/etc/heron-update-agent/config.json`；重跑安装器不带这个参数时沿用原设置，给 `--update-source github` 才改回直连。面板「在线更新」页显示每个节点走的是「GitHub 直连」还是「经 hub 中转」；面板生成安装命令时勾选「国内主机」，命令会带上 `--update-source hub`，并给出安装时经本机代理出网用的 SSH 反代参数。
+
+签名校验与 hub 中转从 v0.6.0 的更新器开始生效：更新器不随在线更新替换，要在对应机器重跑 v0.6.0 或更新的官方安装器换上；经 hub 中转还要求 hub 已是 v0.6.0 或更新（中转接口随该版本加入）。在此之前，旧更新器照旧直接从 GitHub 取 `SHA256SUMS` 与归档，只核对摘要；只能连到 hub 的节点在旧更新器下无法在线更新，换上新更新器的那次安装仍要借安装时可用的出网手段（如上面的 SSH 反代）。
 
 ## 开发验收
 
