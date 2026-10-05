@@ -108,11 +108,22 @@ func TestTrustedKeysAreWellFormed(t *testing.T) {
 			t.Fatalf("trusted key %d has %d bytes", i, len(k))
 		}
 	}
+}
+
+// 受信列表是信任根：调用方拿到的副本无论替换元素还是改写某把公钥的字节，都不能改到包内的列表。
+// 正式列表可能为空，这里临时放进一把测试公钥，让断言总有对象。
+func TestTrustedReturnsDeepCopy(t *testing.T) {
+	pub, _ := key(9)
+	saved := trusted
+	t.Cleanup(func() { trusted = saved })
+	trusted = []ed25519.PublicKey{append(ed25519.PublicKey(nil), pub...)}
 	keys := Trusted()
-	if len(keys) > 0 {
-		keys[0] = nil
-		if Trusted()[0] == nil {
-			t.Fatal("Trusted must return a copy")
-		}
+	keys[0][0] ^= 0xff
+	if !Trusted()[0].Equal(pub) {
+		t.Fatal("rewriting a returned key's bytes changed the trusted list")
+	}
+	keys[0] = nil
+	if Trusted()[0] == nil {
+		t.Fatal("replacing a returned element changed the trusted list")
 	}
 }
