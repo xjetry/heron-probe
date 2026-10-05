@@ -127,3 +127,10 @@ func TestTrustedReturnsDeepCopy(t *testing.T) {
 		t.Fatal("replacing a returned element changed the trusted list")
 	}
 }
+
+// 正式构建必须带至少一把受信公钥：空列表下更新器拒绝一切产物，release 流水线的签名步骤也会失败。
+func TestTrustedKeysConfigured(t *testing.T) {
+	if len(Trusted()) == 0 {
+		t.Fatal("no trusted release key is configured")
+	}
+}
