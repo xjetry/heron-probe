@@ -82,11 +82,12 @@ create_machine() {
   return 1
 }
 
-# 两个版本各打一包再复制走：第二次 make release 会清空 dist/，重跑必须能证出版本从 A 变成 B。
-make release VERSION="$VERSION_A" > "$work/release-a.log" 2>&1 || { echo "FAIL: make release A"; tail -20 "$work/release-a.log"; exit 1; }
+# 两个版本各打一包再复制走：第二次发布目标会清空 dist/，重跑必须能证出版本从 A 变成 B。验收的是本次构建的
+# agent，给出与 VERSION 相同的 AGENT_VERSION，产出完整的一套（spec §14.1），不落入只发 hub 的分支。
+make release-full VERSION="$VERSION_A" AGENT_VERSION="$VERSION_A" > "$work/release-a.log" 2>&1 || { echo "FAIL: make release-full A"; tail -20 "$work/release-a.log"; exit 1; }
 mkdir -p "$work/dist/a"
 cp dist/heron-*.tar.gz dist/SHA256SUMS dist/install.sh dist/install-hub.sh "$work/dist/a/"
-make release VERSION="$VERSION_B" > "$work/release-b.log" 2>&1 || { echo "FAIL: make release B"; tail -20 "$work/release-b.log"; exit 1; }
+make release-full VERSION="$VERSION_B" AGENT_VERSION="$VERSION_B" > "$work/release-b.log" 2>&1 || { echo "FAIL: make release-full B"; tail -20 "$work/release-b.log"; exit 1; }
 mkdir -p "$work/dist/b"
 cp dist/heron-*.tar.gz dist/SHA256SUMS dist/install.sh dist/install-hub.sh "$work/dist/b/"
 if [ "$RUN_AGENT" = 1 ]; then

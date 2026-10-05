@@ -1,5 +1,5 @@
 #!/bin/sh
-# macOS agent 的本机验收：以普通用户在本机起 hub，用本次 make release 的 darwin 产物注册并运行 agent，
+# macOS agent 的本机验收：以普通用户在本机起 hub，用本次 make release-full 的 darwin 产物注册并运行 agent，
 # 经管理 API（curl + jq）断言各指标、facts、ICMP 与流量差分；再把包里的 plist 改成用户域作业交给 launchd，
 # 验证 KeepAlive 拉起、ThrottleInterval 与日志文件由 launchd 创建。
 # 不 sudo，不执行安装脚本：system 域、专用账户与 root 属主由 README 的真机清单验证。
@@ -45,7 +45,8 @@ fi
 
 if [ "$(sysctl -in hw.optional.arm64)" = 1 ]; then arch=arm64; else arch=amd64; fi
 
-make release VERSION="$VERSION" > "$work/release.log" 2>&1 || { echo "FAIL: make release"; tail -20 "$work/release.log"; exit 1; }
+# 验收的是本次构建的 agent，给出与 VERSION 相同的 AGENT_VERSION，产出完整的一套（spec §14.1）。
+make release-full VERSION="$VERSION" AGENT_VERSION="$VERSION" > "$work/release.log" 2>&1 || { echo "FAIL: make release-full"; tail -20 "$work/release.log"; exit 1; }
 for a in amd64 arm64; do
   mkdir -p "$work/pkg-$a"
   tar -xzf "dist/heron-agent_darwin_$a.tar.gz" -C "$work/pkg-$a"
@@ -56,7 +57,7 @@ bin="$work/pkg-$arch/heron-agent"
 # 上一行原生执行本机架构的产物。arm64 原生执行必须有签名：Go 的链接器为 darwin/arm64 写入 ad-hoc 签名，
 # 去掉签名的 arm64 二进制被内核杀掉（实测退出 137）。
 # amd64 产物没有签名（codesign 报 not signed at all），在 Rosetta 下照常运行（实测），这一段证明的只是
-# amd64 产物能在 Apple Silicon 上经 Rosetta 起来。两段都只覆盖本机 make release 的产物，覆盖不到
+# amd64 产物能在 Apple Silicon 上经 Rosetta 起来。两段都只覆盖本机 make release-full 的产物，覆盖不到
 # 发布流水线在 ubuntu 上构建的产物。
 # 跳过 Rosetta 这一段要显式给 ACCEPT_SKIP_ROSETTA=1，末行随之写明 amd64 未执行。
 amd64_note=""
