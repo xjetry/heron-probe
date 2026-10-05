@@ -15,6 +15,34 @@ func TestValidVersion(t *testing.T) {
 	}
 }
 
+func TestReleaseTag(t *testing.T) {
+	for _, c := range []struct {
+		tag, core string
+		pre, ok   bool
+	}{
+		{"v1.2.3", "v1.2.3", false, true},
+		{"v1.2.3-rc.1", "v1.2.3", true, true},
+		{"v1.2.3-0", "v1.2.3", true, true},
+		{"v1.2.3-alpha-1.x.7", "v1.2.3", true, true},
+		{"", "", false, false},
+		{"1.2.3", "", false, false},
+		{"v1.2", "", false, false},
+		{"v01.2.3", "", false, false},
+		{"v1.2.3-", "", false, false},
+		{"v1.2.3-rc..1", "", false, false},
+		{"v1.2.3-01", "", false, false},
+		{"v1.2.3-rc_1", "", false, false},
+		{"v1.2.3+b.1", "", false, false},
+		{"v1.2.3-rc.1+b.1", "", false, false},
+		{"dev", "", false, false},
+	} {
+		core, pre, ok := ReleaseTag(c.tag)
+		if core != c.core || pre != c.pre || ok != c.ok {
+			t.Errorf("ReleaseTag(%q) = %q, %v, %v; want %q, %v, %v", c.tag, core, pre, ok, c.core, c.pre, c.ok)
+		}
+	}
+}
+
 func TestNewer(t *testing.T) {
 	for _, tc := range []struct {
 		target, current string
