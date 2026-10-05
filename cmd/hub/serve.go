@@ -30,6 +30,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/traffic"
 	"github.com/xjetry/heron-probe/internal/hub/updates"
 	"github.com/xjetry/heron-probe/internal/hub/web"
+	"github.com/xjetry/heron-probe/internal/releasesig"
 	"github.com/xjetry/heron-probe/internal/update"
 )
 
@@ -199,7 +200,17 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		log.Warn("--admin-origin is only for legacy Passkey migration; persisted bindings take precedence, remove this flag after migration")
 	}
 	updateManager := updates.New(st, clk, log)
-	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted, Updates: updateManager,
+	official := update.NewOfficialSource()
+	relay := updates.NewRelay(updateManager,
+		func(ctx context.Context, version, arch string) (update.Artifacts, error) {
+			return official.Fetch(ctx, update.Request{Version: version}, "agent", arch)
+		},
+		// 与节点更新器同一个接受函数：hub 处的预验签只为尽早报错，判定标准不能与节点不同。
+		func(version, arch string, a update.Artifacts) error {
+			_, err := update.Accept(releasesig.Trusted(), "agent", arch, version, a)
+			return err
+		}, clk)
+	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted, Updates: updateManager, Releases: relay,
 		// 证书观测的 not_after 变化即评估一次证书到期规则，续期不必等到日界（§9.2）；
 		// ingest 已从写协程另起协程调用，这里直接取 writeMu 扫描。评估失败只记日志：
 		// 观测已落库，下一次日界或变化会再评估。
@@ -250,6 +261,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 
 	defer startLoop(svc.RunFlusher)()
 	defer startLoop(updateManager.Run)()
+	defer startLoop(relay.Run)()
 	defer startLoop(func(ctx context.Context) { st.RunMaintenance(ctx, retention) })()
 	defer startLoop(book.Run)()
 	stopSweep := startLoop(alerts.RunOfflineSweep)

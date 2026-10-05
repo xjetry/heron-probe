@@ -3,6 +3,7 @@ package updates
 import (
 	"io"
 	"log/slog"
+	"maps"
 	"path/filepath"
 	"testing"
 	"time"
@@ -254,5 +255,20 @@ func TestManualUpgradeReconcilesUnexecutedAuthorization(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestActiveTasksListsOnlyActiveStates(t *testing.T) {
+	m := New(nil, clock.NewFake(time.Unix(1000, 0)), slog.Default())
+	m.states = map[int64]*heronv1.UpdateStatus{
+		1: {Task: &heronv1.UpdateTask{Id: "aaaaaaaaaaaaaaaa", Version: "v1.0.0", State: "dispatched"}},
+		2: {Task: &heronv1.UpdateTask{Id: "bbbbbbbbbbbbbbbb", Version: "v1.0.0", State: "succeeded"}},
+		3: {Task: &heronv1.UpdateTask{Id: "cccccccccccccccc", Version: "v1.1.0", State: "downloading"}},
+		4: {},
+	}
+	got := m.ActiveTasks()
+	want := map[string]string{"aaaaaaaaaaaaaaaa": "v1.0.0", "cccccccccccccccc": "v1.1.0"}
+	if !maps.Equal(got, want) {
+		t.Fatalf("ActiveTasks = %v, want %v", got, want)
 	}
 }

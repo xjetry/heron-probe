@@ -28,6 +28,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/sanitize"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/traffic"
+	"github.com/xjetry/heron-probe/internal/hub/updates"
 	"github.com/xjetry/heron-probe/internal/probelimit"
 	"github.com/xjetry/heron-probe/internal/update"
 )
@@ -65,6 +66,11 @@ type Config struct {
 	Updates        interface {
 		Observe(int64, *heronv1.UpdateStatus) *heronv1.UpdateTask
 		Forget(int64)
+	}
+	// Releases 为 hub 来源的节点中转官方产物（spec §4.10）。nil 时 GetRelease 返回 Unavailable：
+	// 缺省是不提供中转，不是放宽。
+	Releases interface {
+		Get(ctx context.Context, node int64, taskID, arch string) (update.Artifacts, error)
 	}
 	// CertObserved 在一份证书观测改变了 probe_cert 的 not_after（含首次写入）后被调用；
 	// 装配方用它触发一次证书到期评估，续期不必等到日界才恢复（§9.2）。回调从写协程另起的
@@ -184,6 +190,16 @@ func (i authInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) c
 	return next
 }
 
+// bearer 从请求头取节点 token 并裁决。返回的 token 供需要重新核对身份的路径（facts 对账）复用。
+func (s *Service) bearer(req connect.AnyRequest) (id int64, tok string, ok bool) {
+	tok, ok = strings.CutPrefix(req.Header().Get("Authorization"), "Bearer ")
+	if !ok {
+		return 0, "", false
+	}
+	id, ok = s.auth.Authenticate(tok)
+	return id, tok, ok
+}
+
 func (i authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	s := i.service
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
@@ -194,15 +210,20 @@ func (i authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 		case heronv1connect.AgentServiceReportProcedure:
 			s.stateMu.RLock()
 			defer s.stateMu.RUnlock()
-			tok, ok := strings.CutPrefix(req.Header().Get("Authorization"), "Bearer ")
-			if !ok {
-				return nil, unauthenticated()
-			}
-			id, ok := s.auth.Authenticate(tok)
+			id, tok, ok := s.bearer(req)
 			if !ok {
 				return nil, unauthenticated()
 			}
 			ctx = context.WithValue(ctx, nodeTokenKey{}, tok)
+			return next(context.WithValue(ctx, nodeKey{}, id), req)
+		case heronv1connect.AgentServiceGetReleaseProcedure:
+			// 不取 stateMu：一次下载可能持续数分钟，持读锁会让 Forget 等待，而排队的写锁又会挡住此后全部
+			// Report 的读锁（sync.RWMutex 有写者排队时新读者阻塞）。GetRelease 不写 Report 维护的内存状态；
+			// 节点删除后它的任务随 Manager.Forget 消失，Relay 的任务检查即拒绝。
+			id, _, ok := s.bearer(req)
+			if !ok {
+				return nil, unauthenticated()
+			}
 			return next(context.WithValue(ctx, nodeKey{}, id), req)
 		}
 		return nil, unauthenticated()
@@ -284,11 +305,32 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[heronv1.Repor
 	return connect.NewResponse(resp), nil
 }
 
-// GetRelease 的产物中转尚未装配，方法也没有在鉴权拦截器里登记：匿名与带 token 的调用
-// 都先被拦截器以 Unauthenticated 拒绝，到不了这里。本体先让 Service 满足
-// AgentServiceHandler 的接口，装配中转时与拦截器登记一并补上取回路径。
-func (s *Service) GetRelease(context.Context, *connect.Request[heronv1.GetReleaseRequest]) (*connect.Response[heronv1.GetReleaseResponse], error) {
-	return nil, connect.NewError(connect.CodeUnavailable, errors.New("release relay is not configured"))
+func (s *Service) GetRelease(ctx context.Context, req *connect.Request[heronv1.GetReleaseRequest]) (*connect.Response[heronv1.GetReleaseResponse], error) {
+	if s.cfg.Releases == nil {
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("release relay is not configured"))
+	}
+	id := ctx.Value(nodeKey{}).(int64)
+	a, err := s.cfg.Releases.Get(ctx, id, req.Msg.GetTaskId(), req.Msg.GetArch())
+	if err != nil {
+		return nil, releaseError(err)
+	}
+	return connect.NewResponse(&heronv1.GetReleaseResponse{Sums: a.Sums, Signature: a.Signature, Archive: a.Archive}), nil
+}
+
+// releaseError 把中转的失败映射为 Connect 错误码。取回失败的原文回给更新器、进入任务的 error，
+// 管理员据此判断是 hub 连不上 GitHub 还是产物验签不过；原文里只有地址与原因，没有凭据。
+func releaseError(err error) error {
+	switch {
+	case errors.Is(err, updates.ErrArch):
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	case errors.Is(err, updates.ErrNoTask):
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	case errors.Is(err, updates.ErrBusy), errors.Is(err, updates.ErrAttempts), errors.Is(err, updates.ErrCacheFull):
+		return connect.NewError(connect.CodeResourceExhausted, err)
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return connect.NewError(connect.CodeCanceled, err)
+	}
+	return connect.NewError(connect.CodeUnavailable, fmt.Errorf("fetch official release: %w", err))
 }
 
 // foldResults 按归属与迟到预算逐条准入。task_id 未分配给本节点的结果不得写进本节点的历史：

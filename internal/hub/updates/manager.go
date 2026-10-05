@@ -52,6 +52,20 @@ func (m *Manager) Snapshot(id int64) *heronv1.UpdateStatus {
 	defer m.mu.Unlock()
 	return clone(m.states[id])
 }
+
+// ActiveTasks 返回仍在进行中的节点任务（ID → 版本）。中转缓存据此按引用释放：版本不再被任何进行中的任务
+// 引用即可丢弃；任务的取用计数也只在任务进行中才有意义。
+func (m *Manager) ActiveTasks() map[string]string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]string)
+	for _, s := range m.states {
+		if t := s.GetTask(); t != nil && update.ActiveState(t.State) {
+			out[t.Id] = t.Version
+		}
+	}
+	return out
+}
 func (m *Manager) signal() {
 	select {
 	case m.wake <- struct{}{}:
