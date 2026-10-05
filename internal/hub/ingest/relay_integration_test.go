@@ -42,7 +42,7 @@ func signedAgent(arch string, archive []byte) update.Artifacts {
 
 func testTrusted() []ed25519.PublicKey { pub, _ := sigtest.Key(); return []ed25519.PublicKey{pub} }
 
-// acceptVerify 是 hub 侧预验签：与节点更新器同一个 Accept，保证"hub 验过的节点必验得过"不是两套口径。
+// acceptVerify 是 hub 侧预验签：与节点更新器调用同一个 Accept，判定规则只有一套；两侧受信公钥相同时（本用例），hub 验过的产物节点也验得过。
 func acceptVerify(version, arch string, a update.Artifacts) error {
 	_, err := update.Accept(testTrusted(), "agent", arch, version, a)
 	return err
