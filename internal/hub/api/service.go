@@ -134,6 +134,15 @@ type Service struct {
 	updateSource releaseSource
 }
 
+// boundAgent 是下发给面板与 API 的 hub 绑定 agent 版本（spec §14.1），只读 updates.Manager：绑定只有它一个持有者。
+// 没有 Manager 的装配下没有节点在线更新，下发空串，与“没有绑定”同义。
+func (s *Service) boundAgent() string {
+	if s.cfg.Updates == nil {
+		return ""
+	}
+	return s.cfg.Updates.BoundAgent()
+}
+
 func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, book *traffic.Book, probes *probe.Registry, alerts *alert.Engine, notifier *alert.Queue, clk clock.Clock, log *slog.Logger) *Service {
 	if cfg.TTL <= 0 {
 		panic("api.Config.TTL must be positive")

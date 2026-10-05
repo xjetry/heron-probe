@@ -803,7 +803,7 @@ func TestAgenticNodeUpdatePreviewCommitReplay(t *testing.T) {
 			if err := h.store.SaveNodeUpdate(t.Context(), node, initial); err != nil {
 				t.Fatal(err)
 			}
-			manager := updates.New(h.store, h.clk, slog.Default())
+			manager := updates.New(h.store, h.clk, slog.Default(), "v0.2.0")
 			if err := manager.Load(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -842,7 +842,7 @@ func TestAgenticReceiptFailureRollsBackBeforePublication(t *testing.T) {
 			if err := h.store.SaveNodeUpdate(t.Context(), node, &heronv1.UpdateStatus{Supported: true, Version: "v0.1.0"}); err != nil {
 				t.Fatal(err)
 			}
-			manager := updates.New(h.store, h.clk, slog.Default())
+			manager := updates.New(h.store, h.clk, slog.Default(), "v0.2.0")
 			if err := manager.Load(t.Context()); err != nil {
 				t.Fatal(err)
 			}

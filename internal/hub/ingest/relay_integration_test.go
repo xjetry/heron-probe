@@ -62,7 +62,7 @@ func relayHub(t *testing.T, official func(arch string) update.Artifacts, verify 
 	a := auth.New(st, reg, nil, clk, time.UTC, slog.Default())
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, slog.Default())
-	manager := updates.New(st, clk, slog.Default())
+	manager := updates.New(st, clk, slog.Default(), relayVersion)
 	relay := updates.NewRelay(manager, func(_ context.Context, _ string, arch string) (update.Artifacts, error) {
 		return official(arch), nil
 	}, verify, clk)

@@ -16,7 +16,7 @@ func (s *Service) GetSnapshot(ctx context.Context, _ *connect.Request[heronv1.Ge
 		s.log.Error("listing nodes failed", "err", err)
 		return nil, internalError("listing nodes failed")
 	}
-	out := &heronv1.GetSnapshotResponse{Now: s.clk.Now().Unix(), ReportIntervalMs: uint32(s.cfg.ReportInterval / time.Millisecond), HubVersion: s.cfg.HubVersion}
+	out := &heronv1.GetSnapshotResponse{Now: s.clk.Now().Unix(), ReportIntervalMs: uint32(s.cfg.ReportInterval / time.Millisecond), HubVersion: s.cfg.HubVersion, BoundAgentVersion: s.boundAgent()}
 	for _, n := range nodes {
 		st := &heronv1.NodeStatus{Id: n.ID, Name: n.Name, Traffic: trafficProto(s.traffic.View(n.ID))}
 		st.Online, st.LastSeenAt, st.Metrics = liveState(s.live, n)

@@ -199,7 +199,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	if *adminOrigin != "" {
 		log.Warn("--admin-origin is only for legacy Passkey migration; persisted bindings take precedence, remove this flag after migration")
 	}
-	updateManager := updates.New(st, clk, log)
+	updateManager := updates.New(st, clk, log, agentVersion)
 	official := update.NewOfficialSource()
 	relay := updates.NewRelay(updateManager,
 		func(ctx context.Context, version, arch string) (update.Artifacts, error) {
@@ -278,7 +278,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	// 恢复在首个被接受的上报之后至多等一个 offline_sweep；delivery_retry_wait 只给出固定重试间隔的总和，不是投递
 	// 等待上界：Retry-After、排队、not_before 的整秒取整与存储退避还会增加等待（见 alert.DeliveryRetryWait）。
 	// scripts/e2e.sh 用不限节奏且总回 200 的 Webhook 接收器，从这一行读出其场景的等待预算。
-	log.Info("hub listening", append([]any{"listen", listener.Addr().String(), "ttl", ttl, "interval", svc.Interval(), "offline_sweep", alert.OfflineSweepEvery, "delivery_retry_wait", alert.DeliveryRetryWait(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "retention_alert_events", retention.AlertEvents, "timezone", loc.String(), "public_dir", *publicDir, "version", version}, geoLog...)...)
+	log.Info("hub listening", append([]any{"listen", listener.Addr().String(), "ttl", ttl, "interval", svc.Interval(), "offline_sweep", alert.OfflineSweepEvery, "delivery_retry_wait", alert.DeliveryRetryWait(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "retention_alert_events", retention.AlertEvents, "timezone", loc.String(), "public_dir", *publicDir, "version", version, "agent_version", agentVersion}, geoLog...)...)
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(listener) }()
 

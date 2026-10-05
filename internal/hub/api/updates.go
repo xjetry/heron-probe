@@ -21,7 +21,7 @@ type releaseSource interface {
 }
 
 func (s *Service) GetUpdates(ctx context.Context, req *connect.Request[heronv1.GetUpdatesRequest]) (*connect.Response[heronv1.GetUpdatesResponse], error) {
-	out := &heronv1.GetUpdatesResponse{}
+	out := &heronv1.GetUpdatesResponse{BoundAgentVersion: s.boundAgent()}
 	if p, ok := store.Principal(ctx); !ok || p.AllNodes {
 		local := s.updateLocal.Status(ctx)
 		out.Targets = append(out.Targets, &heronv1.UpdateTarget{NodeId: 0, Status: update.StatusProto(local, s.cfg.HubVersion)})
