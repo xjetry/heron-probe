@@ -96,13 +96,13 @@ func TestListNodesByTagsIsAnIntersection(t *testing.T) {
 	}
 }
 
-// ListUntaggedNodes 返回没有任何标签的节点：判据是 node_tag 关联行而不是 tag 行，节点去掉最后一个标签后 tag 行仍在
-// 也算无标签；顺序与 ListNodes 相同；带主体范围时只含范围内的节点。
+// ListUntaggedNodes 返回没有任何标签的节点：判据是 node_tag 关联行而不是 tag 行，标签行失去最后一个关联后仍在、节点
+// 已算无标签；顺序与 ListNodes 相同；带主体范围时只含范围内的节点。
 func TestListUntaggedNodes(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
 	var ids []int64
-	for i, tags := range [][]string{{"a"}, nil, {"a", "b"}, nil} {
+	for i, tags := range [][]string{{"solo"}, nil, {"a", "b"}, nil} {
 		id, _, err := s.CreateNode(ctx, fmt.Sprint("n", i), Billing{}, hash(byte(i+1)))
 		if err != nil {
 			t.Fatal(err)
@@ -134,10 +134,11 @@ func TestListUntaggedNodes(t *testing.T) {
 		t.Fatalf("ListUntaggedNodes = %q, want the untagged nodes of ListNodes in the same order %q", got, want)
 	}
 
-	// 去掉最后一个标签：关联行清空，tag 行仍在，节点出现在无标签结果里。
+	// 去掉最后一个标签：n0 的 solo 只属于它，清空后关联行为空，但 tag 行仍在（ListTags 列出 solo 且计数为 0），
+	// 节点回到无标签结果里。计数 0 才测到"标签行不随最后一个关联消失"，若 solo 也被别的节点挂着，计数就来自别人。
 	setTags(t, s, ids[0])
-	if tags, err := s.ListTags(ctx); err != nil || !slices.Contains(tags, Tag{Name: "a", Nodes: 1}) {
-		t.Errorf("ListTags after clearing the last tag = %v %v, want the a row kept", tags, err)
+	if tags, err := s.ListTags(ctx); err != nil || !slices.Contains(tags, Tag{Name: "solo", Nodes: 0}) {
+		t.Errorf("ListTags after clearing the last tag = %v %v, want the solo row kept with no nodes", tags, err)
 	}
 	var rows int
 	if err := s.r.QueryRow("SELECT COUNT(*) FROM node_tag WHERE node_id = ?", ids[0]).Scan(&rows); err != nil || rows != 0 {
@@ -298,8 +299,9 @@ func TestNodeTagQueryPlans(t *testing.T) {
 		{"ListNodesByTags", selectNodes + filter + nodeOrder, filterArgs, []string{byTag, "USE TEMP B-TREE FOR GROUP BY"}},
 		// 无标签过滤：外层扫节点，相关性来自 NOT EXISTS 的关联存在性判断，走主键。
 		{"ListUntaggedNodes", selectNodes + untaggedWhere + nodeOrder, nil, []string{"CORRELATED SCALAR SUBQUERY 1", byNode}},
-		// 无标签节点的标签集：子查询驱动，节点仍走主键；结果为空，但这条语句每次调用都会跑。
-		{"tags of the untagged nodes", nodeTagsQuery(untaggedWhere), nil, []string{byNode, "SCAN n USING COVERING INDEX sqlite_autoindex_node_1"}},
+		// 无标签节点的标签集：结果为空，但这条语句每次调用都会跑。只钉 NOT EXISTS 子查询出现与 node_tag 主键访问，
+		// 不钉 node 表自动索引的选择（那是无关的偶然）。
+		{"tags of the untagged nodes", nodeTagsQuery(untaggedWhere), nil, []string{"CORRELATED SCALAR SUBQUERY 1", byNode}},
 		{"tags of the filtered nodes", nodeTagsQuery(filter), filterArgs, []string{byNode, byTag}},
 		{"tags of all nodes", nodeTagsQuery(""), nil, []string{byNode}},
 		{"ListTags", listTagsQuery, nil, []string{byTag + " LEFT-JOIN"}},
