@@ -67,7 +67,7 @@ func (m *systemMachine) Current(ctx context.Context) (string, error) {
 		return "", err
 	}
 	parts := strings.Split(strings.TrimRight(string(args), "\x00"), "\x00")
-	key, want, verb := "config", "/etc/heron-agent/config.json", "run"
+	key, want, verb := "config", agentConfigPath, "run"
 	if m.role == "hub" {
 		key, want, verb = "db", "/var/lib/heron/heron.db", "serve"
 	}
@@ -320,6 +320,29 @@ func safeFile(path string, uid int) (*os.File, error) {
 	return f, nil
 }
 
+const (
+	// agent 配置属服务用户、由 root 更新器解析：限量读取，文件被换成巨大文件也不会让 root 进程耗尽内存。
+	maxAgentConfig  = 1 << 20
+	maxSourceConfig = 4 << 10
+)
+
+// readSafe 经 safeFile（目录与文件都不跟随链接、普通文件、单链接、属主为 uid、不可被组与其他用户写）打开后限量读取。
+func readSafe(path string, uid int, limit int64) ([]byte, error) {
+	f, err := safeFile(path, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > limit {
+		return nil, fmt.Errorf("%s exceeds %d bytes", path, limit)
+	}
+	return b, nil
+}
+
 func copySafe(src, dst string, uid int, mode os.FileMode) error {
 	f, err := safeFile(src, uid)
 	if err != nil {
@@ -412,7 +435,10 @@ func serve(ctx context.Context, role string, official source, keys []ed25519.Pub
 	if arch == "arm" {
 		arch = "armv7"
 	}
-	e, err := newEngine(ctx, filepath.Join(m.dir, "state.json"), role, arch, sourceChoice{name: "github", src: official}, keys, m)
+	// hub 来源的 agent 配置按服务用户属主检查读取；来源配置是 root 的决定，按 root 属主检查。
+	hub := NewHubSource(func() ([]byte, error) { return readSafe(agentConfigPath, uid, maxAgentConfig) })
+	choice := chooseSource(role, func() ([]byte, error) { return readSafe(sourceConfigPath, 0, maxSourceConfig) }, official, hub)
+	e, err := newEngine(ctx, filepath.Join(m.dir, "state.json"), role, arch, choice, keys, m)
 	if err != nil {
 		return err
 	}

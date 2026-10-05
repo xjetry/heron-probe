@@ -15,7 +15,7 @@ func TaskProto(j *Job) *heronv1.UpdateTask {
 }
 
 func StatusProto(s Status, version string) *heronv1.UpdateStatus {
-	return &heronv1.UpdateStatus{Supported: s.Supported, Reason: bounded(s.Reason, 2048), Version: bounded(version, 64), Task: TaskProto(s.Job)}
+	return &heronv1.UpdateStatus{Supported: s.Supported, Reason: bounded(s.Reason, 2048), Version: bounded(version, 64), Task: TaskProto(s.Job), Source: s.Source}
 }
 
 func bounded(s string, limit int) string {
@@ -39,6 +39,12 @@ func ValidateStatus(s *heronv1.UpdateStatus) error {
 	}
 	if len(s.Reason) > 2048 || len(s.Version) > 64 || !utf8.ValidString(s.Reason) || !utf8.ValidString(s.Version) {
 		return errors.New("update status exceeds string bounds")
+	}
+	// 空串放行：旧更新器不报这个字段。它不是放宽——来源只用于展示，不参与任何判定。
+	switch s.Source {
+	case "", "github", "hub":
+	default:
+		return errors.New("invalid update source")
 	}
 	if t := s.Task; t != nil {
 		if !idPattern.MatchString(t.Id) || !ValidVersion(t.Version) || len(t.Error) > 2048 || !utf8.ValidString(t.Error) || t.ExpiresAt <= 0 || t.UpdatedAt < 0 {

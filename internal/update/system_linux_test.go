@@ -1,6 +1,8 @@
 package update
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,6 +18,15 @@ func TestManagedArgumentUsesGoFlagSemantics(t *testing.T) {
 		if fixedArgument(args, "db", "/fixed") {
 			t.Fatalf("accepted %v", args)
 		}
+	}
+}
+
+// safeFile 打开不存在的目录或文件时返回 unix.ENOENT；chooseSource 依赖它满足 errors.Is(err, fs.ErrNotExist)
+// 才能把“来源配置没写”当作 github。这条用例只在 linux 构建里运行，钉住该前提。
+func TestReadSafeMissingIsNotExist(t *testing.T) {
+	_, err := readSafe(filepath.Join(t.TempDir(), "absent", "config.json"), os.Getuid(), 16)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("err = %v, want fs.ErrNotExist", err)
 	}
 }
 

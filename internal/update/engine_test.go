@@ -355,3 +355,19 @@ func TestEngineReportsSource(t *testing.T) {
 		t.Fatalf("status = %+v", s)
 	}
 }
+
+func TestEngineSourceConfigErrorDisablesUpdates(t *testing.T) {
+	m := &fakeMachine{version: "v0.2.0"}
+	e, err := newEngine(context.Background(), filepath.Join(t.TempDir(), "state.json"), "agent", "amd64",
+		sourceChoice{err: "update source config " + sourceConfigPath + " is unusable: bad"}, testKeys(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := e.status()
+	if s.Supported || !strings.Contains(s.Reason, sourceConfigPath) {
+		t.Fatalf("status = %+v", s)
+	}
+	if _, err := e.submit(request()); err == nil || !strings.Contains(err.Error(), sourceConfigPath) {
+		t.Fatalf("submit accepted with an unusable source config: %v", err)
+	}
+}
