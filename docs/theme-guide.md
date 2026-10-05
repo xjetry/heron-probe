@@ -77,6 +77,8 @@ await onRoute(path => {
 
 历史网络均值从 `rx_bytes` / `tx_bytes` 的 `sum / stepS` 计算，采样峰值取 `net_rx_bps` / `net_tx_bps` 的 `max`，单位 bytes/s。缺少系列、`n=0` 或缺少值时保留空洞，有效零值正常显示。探测系列沿用服务端顺序，不在主题内重新按 ID 排序。
 
+历史响应的 `level` 是窗口选定的基础聚合级别，较新的区间可由更细数据按同一 `stepS` 聚合补齐；画点间隔以 `stepS` 为准。末桶可能未完成，只含已刷出的分钟，不含 live 内存里尚未刷出的当前分钟。
+
 ## 包布局与清单
 
 ZIP 包根必须有 `index.html` 和 `theme.json`，不能再套一层仓库或 `dist` 目录。其余资源例如 `assets/app.js`、`assets/app.css`、`preview.png` 使用包内相对路径。

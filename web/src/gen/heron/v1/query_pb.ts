@@ -55,7 +55,7 @@ export const QueryMetricsRequestSchema: GenMessage<QueryMetricsRequest> = /*@__P
  */
 export type QueryMetricsResponse = Message<"heron.v1.QueryMetricsResponse"> & {
   /**
-   * 数据来自哪一级：1m、5m 或 1h。
+   * 窗口选定的基础聚合级别：1m、5m 或 1h；较新的区间可由更细数据按同一 step_s 聚合补齐。
    *
    * @generated from field: string level = 1;
    */
@@ -70,7 +70,8 @@ export type QueryMetricsResponse = Message<"heron.v1.QueryMetricsResponse"> & {
 
   /**
    * 各点起始，Unix 秒，已对齐到 step_s 的整数倍。只包含有行的点：
-   * 缺失的 ts 表示该段完全没有数据。
+   * 缺失的 ts 表示该段完全没有数据。末桶可以是由已刷出分钟构成的未完成桶，
+   * 不含 live 内存里尚未刷出的当前分钟。
    *
    * @generated from field: repeated int64 ts = 3;
    */
@@ -208,7 +209,7 @@ export const QueryProbesRequestSchema: GenMessage<QueryProbesRequest> = /*@__PUR
  */
 export type QueryProbesResponse = Message<"heron.v1.QueryProbesResponse"> & {
   /**
-   * 数据来自哪一级：1m、5m 或 1h。
+   * 窗口选定的基础聚合级别：1m、5m 或 1h；较新的区间可由更细数据按同一 step_s 聚合补齐。
    *
    * @generated from field: string level = 1;
    */
@@ -280,7 +281,8 @@ export const ProbeSeriesSchema: GenMessage<ProbeSeries> = /*@__PURE__*/
  */
 export type ProbeSample = Message<"heron.v1.ProbeSample"> & {
   /**
-   * 点起始，Unix 秒，已对齐到 step_s 的整数倍。
+   * 点起始，Unix 秒，已对齐到 step_s 的整数倍。末桶可以是由已刷出分钟构成的未完成桶，
+   * 不含 live 内存里尚未刷出的当前分钟。
    *
    * @generated from field: int64 ts = 1;
    */

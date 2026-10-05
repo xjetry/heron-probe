@@ -93,12 +93,13 @@ func (x *QueryMetricsRequest) GetMaxPoints() uint32 {
 
 type QueryMetricsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// 数据来自哪一级：1m、5m 或 1h。
+	// 窗口选定的基础聚合级别：1m、5m 或 1h；较新的区间可由更细数据按同一 step_s 聚合补齐。
 	Level string `protobuf:"bytes,1,opt,name=level,proto3" json:"level,omitempty"`
 	// 每个点覆盖的秒数；是所选级别桶长的整数倍。
 	StepS uint32 `protobuf:"varint,2,opt,name=step_s,json=stepS,proto3" json:"step_s,omitempty"`
 	// 各点起始，Unix 秒，已对齐到 step_s 的整数倍。只包含有行的点：
-	// 缺失的 ts 表示该段完全没有数据。
+	// 缺失的 ts 表示该段完全没有数据。末桶可以是由已刷出分钟构成的未完成桶，
+	// 不含 live 内存里尚未刷出的当前分钟。
 	Ts []int64 `protobuf:"varint,3,rep,packed,name=ts,proto3" json:"ts,omitempty"`
 	// 每个指标一条，与 metric 描述表同名同序。
 	Series        []*MetricSeries `protobuf:"bytes,4,rep,name=series,proto3" json:"series,omitempty"`
@@ -374,7 +375,7 @@ func (x *QueryProbesRequest) GetMaxPoints() uint32 {
 
 type QueryProbesResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// 数据来自哪一级：1m、5m 或 1h。
+	// 窗口选定的基础聚合级别：1m、5m 或 1h；较新的区间可由更细数据按同一 step_s 聚合补齐。
 	Level string `protobuf:"bytes,1,opt,name=level,proto3" json:"level,omitempty"`
 	// 每个点覆盖的秒数；是所选级别桶长的整数倍。
 	StepS uint32 `protobuf:"varint,2,opt,name=step_s,json=stepS,proto3" json:"step_s,omitempty"`
@@ -510,7 +511,8 @@ func (x *ProbeSeries) GetTarget() string {
 
 type ProbeSample struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// 点起始，Unix 秒，已对齐到 step_s 的整数倍。
+	// 点起始，Unix 秒，已对齐到 step_s 的整数倍。末桶可以是由已刷出分钟构成的未完成桶，
+	// 不含 live 内存里尚未刷出的当前分钟。
 	Ts   int64  `protobuf:"varint,1,opt,name=ts,proto3" json:"ts,omitempty"`
 	Sent uint32 `protobuf:"varint,2,opt,name=sent,proto3" json:"sent,omitempty"`
 	// 计入丢包的超时数；丢包率 = lost / sent，errors 不计入。

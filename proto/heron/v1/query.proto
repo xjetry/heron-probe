@@ -21,12 +21,13 @@ message QueryMetricsRequest {
 }
 
 message QueryMetricsResponse {
-  // 数据来自哪一级：1m、5m 或 1h。
+  // 窗口选定的基础聚合级别：1m、5m 或 1h；较新的区间可由更细数据按同一 step_s 聚合补齐。
   string level = 1;
   // 每个点覆盖的秒数；是所选级别桶长的整数倍。
   uint32 step_s = 2;
   // 各点起始，Unix 秒，已对齐到 step_s 的整数倍。只包含有行的点：
-  // 缺失的 ts 表示该段完全没有数据。
+  // 缺失的 ts 表示该段完全没有数据。末桶可以是由已刷出分钟构成的未完成桶，
+  // 不含 live 内存里尚未刷出的当前分钟。
   repeated int64 ts = 3;
   // 每个指标一条，与 metric 描述表同名同序。
   repeated MetricSeries series = 4;
@@ -65,7 +66,7 @@ message QueryProbesRequest {
 }
 
 message QueryProbesResponse {
-  // 数据来自哪一级：1m、5m 或 1h。
+  // 窗口选定的基础聚合级别：1m、5m 或 1h；较新的区间可由更细数据按同一 step_s 聚合补齐。
   string level = 1;
   // 每个点覆盖的秒数；是所选级别桶长的整数倍。
   uint32 step_s = 2;
@@ -86,7 +87,8 @@ message ProbeSeries {
 }
 
 message ProbeSample {
-  // 点起始，Unix 秒，已对齐到 step_s 的整数倍。
+  // 点起始，Unix 秒，已对齐到 step_s 的整数倍。末桶可以是由已刷出分钟构成的未完成桶，
+  // 不含 live 内存里尚未刷出的当前分钟。
   int64 ts = 1;
   uint32 sent = 2;
   // 计入丢包的超时数；丢包率 = lost / sent，errors 不计入。
