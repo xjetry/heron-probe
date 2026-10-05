@@ -20,3 +20,6 @@ reference-projects/
 
 # SDD 执行工作区：账本、任务简报、审阅包，都是会话级草稿
 /.superpowers/
+
+# 发行签名私钥的本地副本：正式签名用 Actions secret，这里只是本机保管，绝不入库
+/.release-signing/
