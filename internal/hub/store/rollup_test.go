@@ -237,7 +237,7 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 	if err := s.write(ctx, func(tx *sql.Tx) error {
 		for _, row := range rows {
 			args := append([]any{row.NodeID, row.TS}, bucketArgs(row.Bucket)...)
-			if _, err := tx.Exec(upsertMinute, args...); err != nil {
+			if _, err := tx.Exec(insertMetricFixture("metric_1m"), args...); err != nil {
 				return err
 			}
 			if _, err := tx.Exec(upsertProbeMinute, probeArgs(probeRow(row.NodeID, row.TS, 1, []uint32{10}, 0, 0))...); err != nil {
@@ -583,7 +583,7 @@ func TestQueriesReadSelectedFamilyLevel(t *testing.T) {
 		}
 		for i := range levels {
 			args := append([]any{id, int64(0)}, bucketArgs(bucket(float64(i+1)))...)
-			if _, err := tx.Exec(metricUpsert(metricFamily.tables[i]), args...); err != nil {
+			if _, err := tx.Exec(insertMetricFixture(metricFamily.tables[i]), args...); err != nil {
 				return err
 			}
 			query := strings.Replace(upsertProbeMinute, "INSERT INTO probe_1m", "INSERT INTO "+probeFamily.tables[i], 1)

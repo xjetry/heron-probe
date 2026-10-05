@@ -53,6 +53,10 @@ func (s *Store) WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, 
 				continue
 			}
 			args := append([]any{r.NodeID, r.TS}, bucketArgs(r.Bucket)...)
+			if err := writeCoverageStart(tx, r); err != nil {
+				return err
+			}
+			args = append(args, !r.ObservationOnly, r.Observed)
 			if _, err := tx.Exec(upsertMinute, args...); err != nil {
 				return err
 			}
@@ -111,6 +115,7 @@ func scanBucketRows(rows *sql.Rows, nodeID int64) ([]metric.Row, error) {
 	for rows.Next() {
 		b := metric.NewBucket()
 		var ts int64
+		var minutes, observed, both sql.NullInt64
 		dest := []any{&ts}
 		// 扫描目标与 metricColumnNames 同序；整数列先落到 int64 再转回 float64。
 		ints := make([]int64, 0, 3*len(metric.Columns))
@@ -130,6 +135,7 @@ func scanBucketRows(rows *sql.Rows, nodeID int64) ([]metric.Row, error) {
 				}
 			}
 		}
+		dest = append(dest, &minutes, &observed, &both)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
@@ -153,7 +159,9 @@ func scanBucketRows(rows *sql.Rows, nodeID int64) ([]metric.Row, error) {
 				}
 			}
 		}
-		out = append(out, metric.Row{NodeID: nodeID, TS: ts, Bucket: b})
+		out = append(out, metric.Row{NodeID: nodeID, TS: ts, Bucket: b, Coverage: metric.Coverage{
+			Minutes: coverageCount(minutes), Observed: coverageCount(observed), ObservedReported: coverageCount(both),
+		}})
 	}
 	return out, rows.Err()
 }

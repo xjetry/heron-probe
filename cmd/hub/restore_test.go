@@ -155,6 +155,7 @@ func restoreSnapshots(t *testing.T) (config, metrics string) {
 		INSERT INTO sqlite_sequence VALUES ('metrics_only',23);
 		UPDATE rollup_state SET upto_ts=600;
 		INSERT INTO maintenance_state VALUES ('prune',2000);`)
+	restoreExec(t, db, "INSERT INTO node_coverage(node_id,start_ts) VALUES(2,600),(3,600)")
 	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
 		restoreExec(t, db, "INSERT INTO "+table+" (node_id,ts) VALUES (2,600),(3,600)")
 	}
@@ -288,6 +289,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			restoreExec(t, cfg, "ALTER TABLE node_facts DROP COLUMN network")
 			removeV22ThemeConfig(t, cfg)
 			removeV21Columns(t, cfg, met)
+			removeV31Metrics(t, met)
 			removeV28Metrics(t, met)
 			restoreExec(t, cfg, `DROP TABLE admin_security; DROP TABLE probe_task_tag; DROP TABLE alert_rule_tag;
 				ALTER TABLE alert_rule DROP COLUMN resource_metric; ALTER TABLE alert_rule DROP COLUMN recovery_threshold;

@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -327,7 +326,7 @@ func legacySnapshot(t *testing.T, source, target, layer string, version int, for
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	tables := slices.Clone(metricsSnapshotTables)
+	tables := []string{"metric_1m", "metric_5m", "metric_1h", "probe_1m", "probe_5m", "probe_1h", "rollup_state", "maintenance_state"}
 	if layer == "config" {
 		tables = []string{"node", "node_facts", "traffic", "probe_task", "probe_task_node", "probe_meta", "alert_rule", "alert_rule_node", "alert_rule_channel", "alert_state", "alert_event", "alert_delivery", "notify_channel", "setting", "admin", "admin_security", "api_token", "tag", "node_tag", "theme", "restore_record", "probe_task_tag", "alert_rule_tag"}
 	}

@@ -614,7 +614,7 @@ func TestDeleteNodeClearsEveryLevel(t *testing.T) {
 	for _, tbl := range metricTables {
 		for _, node := range []int64{id, keep} {
 			args := append([]any{node, int64(600)}, bucketArgs(metric.NewBucket())...)
-			if _, err := s.w.ExecContext(ctx, metricUpsert(tbl), args...); err != nil {
+			if _, err := s.w.ExecContext(ctx, insertMetricFixture(tbl), args...); err != nil {
 				t.Fatal(err)
 			}
 		}

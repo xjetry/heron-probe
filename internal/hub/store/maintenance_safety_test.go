@@ -33,7 +33,7 @@ func TestMaintenanceAfterRollupErrorKeepsSeriesButPrunesEvents(t *testing.T) {
 	ts := clk.Now().Add(-400 * 24 * time.Hour).Truncate(time.Hour).Unix()
 	if err := s.write(ctx, func(tx *sql.Tx) error {
 		args := append([]any{id, ts}, bucketArgs(bucket(3))...)
-		if _, err := tx.Exec(metricUpsert("metric_1h"), args...); err != nil {
+		if _, err := tx.Exec(insertMetricFixture("metric_1h"), args...); err != nil {
 			return err
 		}
 		_, err := tx.Exec("CREATE TRIGGER block_rollup BEFORE UPDATE ON rollup_state BEGIN SELECT RAISE(ABORT, 'rollup blocked'); END")
@@ -155,7 +155,7 @@ func familyUpsert(f *family, table string, nodeID, ts int64) (string, []any) {
 		return strings.Replace(upsertProbeMinute, "INSERT INTO probe_1m", "INSERT INTO "+table, 1),
 			probeArgs(probeRow(nodeID, ts, 1, []uint32{300, 100}, 1, 1))
 	}
-	return metricUpsert(table), append([]any{nodeID, ts}, bucketArgs(bucket(3))...)
+	return insertMetricFixture(table), append([]any{nodeID, ts}, bucketArgs(bucket(3))...)
 }
 
 // 按原始列值比较分片与整段聚合，NULL 也参与比较，不受展示或扫描结构变化影响。

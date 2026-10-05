@@ -131,7 +131,7 @@ var metricTables = []string{"metric_1m", "metric_5m", "metric_1h"}
 // DeleteNode 与 Restore 共用节点从属清单，显式删除不依赖外键开启或级联行为。
 // alert_event 是审计历史，删节点时也保留；系统事件的 node_id=0，不属于节点从属状态。
 var nodeDependentTables = append(append([]string{
-	"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "silence_node", "node_tag", "node_update", "api_token_node", "probe_cert",
+	"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "silence_node", "node_tag", "node_update", "api_token_node", "probe_cert", "node_coverage",
 }, metricTables...), probeTables...)
 
 // schemaStatements 是当前版本的完整 DDL：空库直接建到当前版本，不重放历史。
@@ -148,8 +148,10 @@ func schemaStatements() []string {
 		ddlTheme, ddlThemeVersion, ddlThemeSelection, seedThemeSelection, ddlThemeFile, ddlRestoreRecord, ddlThemePackage,
 		ddlAdminSecurity, seedAdminSecurity, ddlProbeTaskTag, ddlProbeTaskTagIndex, ddlAlertRuleTag, ddlAlertRuleTagIndex, ddlNodeUpdate,
 		ddlSilence, ddlSilenceNode, ddlSilenceNodeByNode, ddlSilenceTag, ddlSilenceTagByTag,
-		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime, ddlProbeCert)
+		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime, ddlProbeCert, ddlNodeCoverage)
 }
+
+const ddlNodeCoverage = `CREATE TABLE node_coverage (node_id INTEGER PRIMARY KEY, start_ts INTEGER NOT NULL)`
 
 const ddlNodeUpdate = `CREATE TABLE node_update (node_id INTEGER PRIMARY KEY, data TEXT NOT NULL, owner_id INTEGER NOT NULL DEFAULT 0)`
 
@@ -227,6 +229,11 @@ func metricDDL(table string) string {
 			cols = append(cols, c.Name+"_max "+c.SQLType()+" NOT NULL DEFAULT 0")
 		}
 	}
+	if table == "metric_1m" {
+		cols = append(cols, "reported INTEGER NOT NULL DEFAULT 1", "observed INTEGER")
+	} else {
+		cols = append(cols, "minutes INTEGER", "observed INTEGER", "both INTEGER")
+	}
 	return "CREATE TABLE " + table + " (" + strings.Join(cols, ", ") + ", PRIMARY KEY (node_id, ts)) WITHOUT ROWID"
 }
 
@@ -255,6 +262,10 @@ func metricUpsert(table string) string {
 			sets = append(sets, c.Name+"_max = max("+c.Name+"_max, excluded."+c.Name+"_max)")
 		}
 	}
+	names = append(names, "reported", "observed")
+	for _, name := range []string{"reported", "observed"} {
+		sets = append(sets, name+" = "+coverageOr(name, "excluded."+name))
+	}
 	all := append([]string{"node_id", "ts"}, names...)
 	return "INSERT INTO " + table + " (" + strings.Join(all, ", ") + ") VALUES (" +
 		strings.TrimSuffix(strings.Repeat("?, ", len(all)), ", ") + ") ON CONFLICT (node_id, ts) DO UPDATE SET " +
@@ -262,7 +273,11 @@ func metricUpsert(table string) string {
 }
 
 func metricSelect(table string) string {
-	return "SELECT ts, " + strings.Join(metricColumnNames(), ", ") + " FROM " + table +
+	i := 1
+	if table == "metric_1m" {
+		i = 0
+	}
+	return "SELECT ts, " + strings.Join(append(metricColumnNames(), coverageSource(i)...), ", ") + " FROM " + table +
 		" WHERE node_id = ? AND ts >= ? AND ts < ? ORDER BY ts"
 }
 

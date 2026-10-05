@@ -175,4 +175,20 @@ type Row struct {
 	// Source 是该节点最近一次上报的来源地址（auth.SourceText），与 LastSeen 取自同一次上报、一起落盘；空串表示那次
 	// 上报取不到对端，不覆盖库里已有的值。
 	Source string
+	// ObservationOnly 区分补观测行与真实上报，不能由指标样本数推断：有效上报也可能全无读数。
+	ObservationOnly bool
+	Observed        bool
+	// CoverageStart 是接收首报的分钟；批构造后固定，重试不从行序或当前时钟重新推导。
+	CoverageStart int64
+	// Coverage 是读取历史桶得到的三个独立计数，nil 表示该列未知。
+	Coverage Coverage
+}
+
+type Coverage struct {
+	Minutes, Observed, ObservedReported *uint32
+}
+
+type CoverageSummary struct {
+	EligibleMinutes, ObservedMinutes, ObservedReportedMinutes uint64
+	CoverageStart                                             *int64
 }

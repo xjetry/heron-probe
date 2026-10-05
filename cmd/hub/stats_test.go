@@ -39,9 +39,10 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 			if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
 				t.Fatal(err)
 			}
-			if freshVersion != 30 {
-				t.Fatalf("fixture user_version = %d, want 30; rebuild the v8 fixture for the new version", freshVersion)
+			if freshVersion != 31 {
+				t.Fatalf("fixture user_version = %d, want 31; rebuild the v8 fixture for the new version", freshVersion)
 			}
+			removeV31Metrics(t, raw)
 			removeV30Config(t, raw)
 			removeV29Config(t, raw)
 			removeV26Config(t, raw)

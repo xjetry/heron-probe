@@ -70,7 +70,8 @@ type family struct {
 }
 
 var metricFamily = &family{name: "metric", tables: metricTables, states: []string{"", "5m", "1h"},
-	values: metricColumnNames, aggs: aggregates}
+	values: func() []string { return append(metricColumnNames(), "minutes", "observed", "both") },
+	aggs:   func() []string { return append(aggregates(), coverageAggregates()...) }}
 
 var probeFamily = &family{name: "probe", tables: probeTables, states: []string{"", "probe_5m", "probe_1h"},
 	extraKey: "task_id", values: probeValueColumns, aggs: probeAggregates}
@@ -98,9 +99,13 @@ func (f *family) groupBy(bucket string) string {
 
 func (f *family) rollupSQL(i int) string {
 	b := fmt.Sprint(levels[i].Bucket)
+	source := f.tables[i-1]
+	if f == metricFamily {
+		source = "(" + metricSourceSQL(source, i-1) + ")"
+	}
 	return "INSERT OR REPLACE INTO " + f.tables[i] + " (" + strings.Join(append(f.keys(), f.values()...), ", ") + ") " +
 		"SELECT " + f.groupBy(b) + ", " + strings.Join(f.aggs(), ", ") +
-		" FROM " + f.tables[i-1] + " WHERE node_id IN (SELECT id FROM node) AND ts >= ? AND ts < ? GROUP BY " + f.groupBy(b)
+		" FROM " + source + " WHERE node_id IN (SELECT id FROM node) AND ts >= ? AND ts < ? GROUP BY " + f.groupBy(b)
 }
 
 // Rollup 对每一粗级：取水位之后、滞后期已过的下级桶，整桶重算写入本级，并在
@@ -355,13 +360,16 @@ func (f *family) aggregateSQL(table string) string {
 
 func (f *family) rangeSQL(i int) string {
 	columns := strings.Join(append(f.keys(), f.values()...), ", ")
+	if f == metricFamily {
+		columns = "node_id, ts, " + strings.Join(append(metricColumnNames(), coverageSource(i)...), ", ") + fmt.Sprintf(", %d AS source_width", levels[i].Bucket)
+	}
 	return "SELECT " + columns + " FROM " + f.tables[i] + " WHERE node_id = ? AND ts >= ? AND ts <= ?"
 }
 
 // queryFamily 的水位与源行属于同一个读快照：rollupLevel 原子提交桶与水位，
 // Prune 随后可删除已消费的细级行，分开读会把旧水位与清理后的源行混用。
 // 各源区间互斥；水位不必对齐 step，所以合并源行后才用上卷表达式统一分桶。
-func queryFamily[T any](ctx context.Context, s *Store, f *family, nodeID, from, to int64, lv Level, step int64, scan func(*sql.Rows, int64) ([]T, error)) ([]T, error) {
+func queryFamily[T any](ctx context.Context, s *Store, f *family, nodeID, from, to int64, lv Level, step int64, scan func(*sql.Rows, int64) ([]T, error), summarize func(*sql.Tx, string, []any) error) ([]T, error) {
 	i, err := checkStep(lv, step)
 	if err != nil {
 		return nil, err
@@ -388,7 +396,13 @@ func queryFamily[T any](ctx context.Context, s *Store, f *family, nodeID, from, 
 		}
 		sources = append(sources, query)
 	}
-	rows, err := tx.QueryContext(ctx, f.aggregateSQL("("+strings.Join(sources, " UNION ALL ")+")"), args...)
+	union := strings.Join(sources, " UNION ALL ")
+	if summarize != nil {
+		if err := summarize(tx, union, args[1:]); err != nil {
+			return nil, err
+		}
+	}
+	rows, err := tx.QueryContext(ctx, f.aggregateSQL("("+union+")"), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -400,7 +414,7 @@ func queryFamily[T any](ctx context.Context, s *Store, f *family, nodeID, from, 
 // 结果的 TS 都是 step 的整数倍。只返回有行的桶：缺失的桶就是没有数据。
 // 最新桶只含已刷出的分钟行，不读取 live 中尚未刷出的当前分钟。
 func (s *Store) QueryMetrics(ctx context.Context, nodeID int64, from, to int64, lv Level, step int64) ([]metric.Row, error) {
-	return queryFamily(ctx, s, metricFamily, nodeID, from, to, lv, step, scanBucketRows)
+	return queryFamily(ctx, s, metricFamily, nodeID, from, to, lv, step, scanBucketRows, nil)
 }
 
 // MaintenanceInterval 是维护循环的周期：每个周期边界后跑一轮上卷与清理。存储健康的超期阈值
@@ -482,5 +496,5 @@ func alignWindow(from, to, step int64) (int64, int64) {
 
 // QueryProbes 与 QueryMetrics 共用级别校验与窗口对齐；每任务的桶按 TaskID、TS 升序返回。
 func (s *Store) QueryProbes(ctx context.Context, nodeID int64, from, to int64, lv Level, step int64) ([]metric.ProbeRow, error) {
-	return queryFamily(ctx, s, probeFamily, nodeID, from, to, lv, step, scanProbeRows)
+	return queryFamily(ctx, s, probeFamily, nodeID, from, to, lv, step, scanProbeRows, nil)
 }

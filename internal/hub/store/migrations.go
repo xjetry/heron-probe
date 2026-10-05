@@ -52,7 +52,27 @@ var migrations = map[int]func(*sql.Tx) error{
 	28: execAll(migrationV28Metrics),
 	29: execAll(migrationV29Config),
 	30: execAll(migrationV30Config),
+	31: execAll(append(append([]string{}, migrationV31Metrics...), coverageFallbackV31)),
 }
+
+var migrationV31Metrics = []string{
+	`ALTER TABLE metric_1m ADD COLUMN reported INTEGER NOT NULL DEFAULT 1`,
+	`ALTER TABLE metric_1m ADD COLUMN observed INTEGER`,
+	`ALTER TABLE metric_5m ADD COLUMN minutes INTEGER`,
+	`ALTER TABLE metric_5m ADD COLUMN observed INTEGER`,
+	`ALTER TABLE metric_5m ADD COLUMN both INTEGER`,
+	`ALTER TABLE metric_1h ADD COLUMN minutes INTEGER`,
+	`ALTER TABLE metric_1h ADD COLUMN observed INTEGER`,
+	`ALTER TABLE metric_1h ADD COLUMN both INTEGER`,
+	`CREATE TABLE node_coverage (node_id INTEGER PRIMARY KEY, start_ts INTEGER NOT NULL)`,
+	`INSERT INTO node_coverage SELECT node_id, min(ts) FROM (
+	 SELECT node_id, ts FROM metric_1m UNION ALL SELECT node_id, ts FROM metric_5m UNION ALL SELECT node_id, ts FROM metric_1h
+	) GROUP BY node_id`,
+}
+
+// 完整库有 node；指标快照没有配置层，只能从自身留存行回填起点。
+const coverageFallbackV31 = `INSERT INTO node_coverage SELECT id, last_seen_at - last_seen_at % 60 FROM node
+ WHERE last_seen_at IS NOT NULL AND id NOT IN (SELECT node_id FROM node_coverage)`
 
 // v30：HTTPS 证书到期观测（§8.3）的"最新值"表。旧库升级后没有行：升级前没有证书观测，空表就是"无读数"，
 // 证书到期评估对没有行的 (节点, 任务) 不评估，与从未上报过证书同态。

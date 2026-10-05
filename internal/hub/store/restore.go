@@ -419,6 +419,10 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			if layer == "config" {
 				statements = migrationV30Config
 			}
+		case 31:
+			if layer == "metrics" {
+				statements = migrationV31Metrics
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}

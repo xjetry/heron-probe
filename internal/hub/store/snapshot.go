@@ -21,7 +21,7 @@ var configSnapshotTables = []string{
 
 var metricsSnapshotTables = []string{
 	"metric_1m", "metric_5m", "metric_1h", "probe_1m", "probe_5m", "probe_1h",
-	"rollup_state", "maintenance_state",
+	"rollup_state", "maintenance_state", "node_coverage",
 }
 
 func (s *Store) SnapshotConfig(ctx context.Context, path string) error {

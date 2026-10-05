@@ -177,6 +177,15 @@ func TestObservabilityMigrationAndOldSnapshotsPreserveUnknown(t *testing.T) {
 				}
 			}
 		} else {
+			for _, q := range []string{
+				"DROP TABLE node_coverage", "ALTER TABLE metric_1m DROP COLUMN reported", "ALTER TABLE metric_1m DROP COLUMN observed",
+				"ALTER TABLE metric_5m DROP COLUMN minutes", "ALTER TABLE metric_5m DROP COLUMN observed", "ALTER TABLE metric_5m DROP COLUMN both",
+				"ALTER TABLE metric_1h DROP COLUMN minutes", "ALTER TABLE metric_1h DROP COLUMN observed", "ALTER TABLE metric_1h DROP COLUMN both",
+			} {
+				if _, err := db.Exec(q); err != nil {
+					t.Fatal(err)
+				}
+			}
 			// v25 的指标表还没有这四个指标的列；快照要真像 v25，迁移 28 才不会撞上重复列。
 			for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
 				for _, column := range []string{"disk_read_bps", "disk_write_bps", "cpu_steal_pct", "cpu_iowait_pct"} {
