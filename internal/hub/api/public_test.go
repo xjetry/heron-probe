@@ -246,7 +246,7 @@ func TestPublicSiteServesSavedSettings(t *testing.T) {
 var publicFields = map[protoreflect.FullName][]protoreflect.Name{
 	"heron.v1.PublicSite":     {"title", "theme", "accent_color", "logo", "custom_css", "admin_path"},
 	"heron.v1.PublicSnapshot": {"now", "report_interval_ms", "nodes", "tags"},
-	"heron.v1.PublicNode":     {"id", "name", "online", "last_seen_at", "sort_order", "facts", "metrics", "traffic", "billing", "country", "tags", "maintenance"},
+	"heron.v1.PublicNode":     {"id", "name", "online", "last_seen_at", "sort_order", "facts", "metrics", "traffic", "billing", "country", "tags", "maintenance", "public_remark"},
 	"heron.v1.PublicFacts":    {"os", "arch", "virtualization", "cpu_model", "cpu_cores"},
 	"heron.v1.PublicBilling":  {"price", "currency", "billing_cycle", "expires_on", "days_left"},
 	"heron.v1.PublicMetrics": {"cpu_pct", "cpu_steal_pct", "cpu_iowait_pct", "load1", "load5", "load15", "mem_total", "mem_used", "swap_total", "swap_used",

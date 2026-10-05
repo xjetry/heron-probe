@@ -18,7 +18,7 @@ hub 的管理接口是 Connect unary：每个方法都是 `POST $HERON_HUB/heron
 ## 预授权写入
 
 1. 用 `ListNodes`、`ListProbeTasks`、`ListAlertRules` 读取授权范围；用 `ListNotifyChannelRefs` 取得渠道 id、名称、类型，不读地址、模板或密钥。指定节点凭据不能调用全站设置、备份与存储统计。
-2. 调 `ExecuteChange`，给出一种 change 和 `preview: true`。修改已有配置需 `updateMask`，节点路径如 `note,tags`，探测路径如 `task.target`，告警路径如 `rule.enabled`。JSON FieldMask 是逗号分隔的 lowerCamelCase 字符串，例如 `"updateMask":"note,trafficResetDay"`，不是 paths 对象。
+2. 调 `ExecuteChange`，给出一种 change 和 `preview: true`。修改已有配置需 `updateMask`，节点路径如 `note,publicRemark,tags`，探测路径如 `task.target`，告警路径如 `rule.enabled`。JSON FieldMask 是逗号分隔的 lowerCamelCase 字符串，例如 `"updateMask":"note,trafficResetDay"`，不是 paths 对象。
 3. 查看 `operation.beforeJson` / `afterJson`。执行相同变更，设 `preview: false`，附上预览返回的 `expectedVersion` 和唯一 `requestId`。版本过时返回 `aborted`，重新读取和预览，不盲目覆盖。
 4. 响应丢失时原样重试同一 requestId；同键不同请求返回 `already_exists`。已提交则 `replayed: true`，不会重复执行。`ListOperations` 按 requestId 查询回执，`operation.id` 是跨重试和恢复稳定的回执标识；已提交节点更新不等于已安装，实际状态用 `GetUpdates` 查询。
 

@@ -472,6 +472,10 @@ message Node {
   // untagged）、搜索与调用方可见的节点范围只筛行，不改变名次。面板序号列显示它；MoveNodesRequest.position
   // 与它同一编号。
   uint32 position = 21;
+  // 公开备注：站长写给访客的一行说明（如线路类型），与私有备注 note 并列；公开节点的 PublicNode.public_remark
+  // 是同一个值，私有节点只有这里可见。随 UpdateNode 整体替换；CreateNode 不接受（与 note 同口径，新节点为空串）。
+  // 单行、至多 100 个 Unicode 码点、不含控制字符（含换行）。
+  string public_remark = 22;
 }
 
 // 国家显示值的来源。
@@ -504,6 +508,8 @@ message CreateNodeRequest {
   string name = 1;
   // 计费与到期，选填：缺失等于不填。取值约束与 UpdateNodeRequest.billing 相同，同一处校验；days_left 由 hub 计算，这里的值忽略。
   Billing billing = 2;
+  // 公开备注与私有备注都不在创建时接受（CreateNodeRequest 没有 note，也没有 public_remark）：
+  // 建节点后经 UpdateNode 补写，与 UpdateNode 的整体替换口径衔接。
 }
 message CreateNodeResponse {
   Node node = 1;
@@ -533,6 +539,9 @@ message UpdateNodeRequest {
   repeated string tags = 9;
   // 维护状态，整体替换：缺失即 false（§9.5）。
   bool maintenance = 10;
+  // 公开备注，整体替换：缺失即空串（清除）。单行、至多 100 个 Unicode 码点、不含控制字符（含换行）；
+  // 超长返回 InvalidArgument，不截断。
+  string public_remark = 11;
 }
 message UpdateNodeResponse {
   Node node = 1;

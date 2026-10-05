@@ -1964,7 +1964,11 @@ type Node struct {
 	// 节点在全部节点里按全序 (sort_order, id) 升序的名次，从 1 起，随读按当前全序计算：标签过滤（tags、
 	// untagged）、搜索与调用方可见的节点范围只筛行，不改变名次。面板序号列显示它；MoveNodesRequest.position
 	// 与它同一编号。
-	Position      uint32 `protobuf:"varint,21,opt,name=position,proto3" json:"position,omitempty"`
+	Position uint32 `protobuf:"varint,21,opt,name=position,proto3" json:"position,omitempty"`
+	// 公开备注：站长写给访客的一行说明（如线路类型），与私有备注 note 并列；公开节点的 PublicNode.public_remark
+	// 是同一个值，私有节点只有这里可见。随 UpdateNode 整体替换；CreateNode 不接受（与 note 同口径，新节点为空串）。
+	// 单行、至多 100 个 Unicode 码点、不含控制字符（含换行）。
+	PublicRemark  string `protobuf:"bytes,22,opt,name=public_remark,json=publicRemark,proto3" json:"public_remark,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2144,6 +2148,13 @@ func (x *Node) GetPosition() uint32 {
 		return x.Position
 	}
 	return 0
+}
+
+func (x *Node) GetPublicRemark() string {
+	if x != nil {
+		return x.PublicRemark
+	}
+	return ""
 }
 
 type ListNodesRequest struct {
@@ -2378,7 +2389,10 @@ type UpdateNodeRequest struct {
 	// 随之新建。去重后至多 16 个。
 	Tags []string `protobuf:"bytes,9,rep,name=tags,proto3" json:"tags,omitempty"`
 	// 维护状态，整体替换：缺失即 false（§9.5）。
-	Maintenance   bool `protobuf:"varint,10,opt,name=maintenance,proto3" json:"maintenance,omitempty"`
+	Maintenance bool `protobuf:"varint,10,opt,name=maintenance,proto3" json:"maintenance,omitempty"`
+	// 公开备注，整体替换：缺失即空串（清除）。单行、至多 100 个 Unicode 码点、不含控制字符（含换行）；
+	// 超长返回 InvalidArgument，不截断。
+	PublicRemark  string `protobuf:"bytes,11,opt,name=public_remark,json=publicRemark,proto3" json:"public_remark,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2481,6 +2495,13 @@ func (x *UpdateNodeRequest) GetMaintenance() bool {
 		return x.Maintenance
 	}
 	return false
+}
+
+func (x *UpdateNodeRequest) GetPublicRemark() string {
+	if x != nil {
+		return x.PublicRemark
+	}
+	return ""
 }
 
 type UpdateNodeResponse struct {
@@ -10288,7 +10309,7 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\bsessions\x18\x01 \x03(\v2\x11.heron.v1.SessionR\bsessions\"&\n" +
 	"\x14RevokeSessionRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"\x17\n" +
-	"\x15RevokeSessionResponse\"\x85\x06\n" +
+	"\x15RevokeSessionResponse\"\xaa\x06\n" +
 	"\x04Node\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
@@ -10317,7 +10338,8 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\x04tags\x18\x12 \x03(\tR\x04tags\x12%\n" +
 	"\x0ecountry_lookup\x18\x13 \x01(\tR\rcountryLookup\x12 \n" +
 	"\vmaintenance\x18\x14 \x01(\bR\vmaintenance\x12\x1a\n" +
-	"\bposition\x18\x15 \x01(\rR\bpositionB\x0f\n" +
+	"\bposition\x18\x15 \x01(\rR\bposition\x12#\n" +
+	"\rpublic_remark\x18\x16 \x01(\tR\fpublicRemarkB\x0f\n" +
 	"\r_last_seen_atB\x13\n" +
 	"\x11_facts_updated_atB\x12\n" +
 	"\x10_offline_grace_s\"B\n" +
@@ -10331,7 +10353,7 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\abilling\x18\x02 \x01(\v2\x11.heron.v1.BillingR\abilling\"N\n" +
 	"\x12CreateNodeResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.heron.v1.NodeR\x04node\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"\xd4\x02\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\xf9\x02\n" +
 	"\x11UpdateNodeRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
@@ -10344,7 +10366,8 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"countryPin\x12\x12\n" +
 	"\x04tags\x18\t \x03(\tR\x04tags\x12 \n" +
 	"\vmaintenance\x18\n" +
-	" \x01(\bR\vmaintenanceB\x12\n" +
+	" \x01(\bR\vmaintenance\x12#\n" +
+	"\rpublic_remark\x18\v \x01(\tR\fpublicRemarkB\x12\n" +
 	"\x10_offline_grace_s\"8\n" +
 	"\x12UpdateNodeResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.heron.v1.NodeR\x04node\"s\n" +

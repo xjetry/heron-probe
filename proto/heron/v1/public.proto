@@ -96,6 +96,9 @@ message PublicNode {
   repeated string tags = 11;
   // 维护状态（§9.5），与 Node.maintenance 相同：公开页据此显示"维护中"徽章。
   bool maintenance = 12;
+  // 公开备注，与 Node.public_remark 相同：站长写给访客的一行说明（如线路类型）。空串表示没有。公开快照只包含
+  // 公开节点，这个字段不携带额外的可见范围：私有节点的备注不经公开端下发。
+  string public_remark = 13;
 }
 
 // Billing 的公开部分，字段号与 Billing 相同，由投影按字段名生成（与 PublicFacts 同一机制）。自动续期是运维开关，

@@ -19,12 +19,14 @@ import (
 )
 
 const (
-	maxNameRunes   = 64
-	maxNoteRunes   = 1024
-	minWindowTTL   = 60 * time.Second
-	maxWindowTTL   = 7 * 24 * time.Hour
-	maxWindowNodes = 1000
-	minResetDay    = 1
+	maxNameRunes = 64
+	maxNoteRunes = 1024
+	// 公开备注是站长写给访客的一行说明，与私有备注 note 同在 UpdateNode 整体替换；见 cleanPublicRemark。
+	maxPublicRemarkRunes = 100
+	minWindowTTL         = 60 * time.Second
+	maxWindowTTL         = 7 * 24 * time.Hour
+	maxWindowNodes       = 1000
+	minResetDay          = 1
 	// 28 是每个月都有的最大日；更大的日子在短月里没有零点可对齐。
 	maxResetDay = 28
 )
@@ -106,7 +108,7 @@ var countrySources = map[store.CountrySource]heronv1.CountrySource{
 
 // nodeProto 的 today 是 hub 时区的今天（alert.Today）。
 func nodeProto(n store.Node, today time.Time) *heronv1.Node {
-	out := &heronv1.Node{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, SortOrder: n.SortOrder, Position: n.Position, CreatedAt: n.CreatedAt.Unix(), Facts: n.Facts, TrafficResetDay: uint32(n.TrafficResetDay),
+	out := &heronv1.Node{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, PublicRemark: n.PublicRemark, SortOrder: n.SortOrder, Position: n.Position, CreatedAt: n.CreatedAt.Unix(), Facts: n.Facts, TrafficResetDay: uint32(n.TrafficResetDay),
 		Billing: billingProto(n.Billing, today), LastSource: n.LastSource, CountryIp: n.CountryIP, CountryPin: n.CountryPin, CountryLookup: n.Country, Tags: n.Tags, Maintenance: n.Maintenance}
 	country, source := n.DisplayCountry()
 	out.Country, out.CountrySource = country, countrySources[source]
@@ -138,6 +140,20 @@ func cleanNote(raw string) (string, error) {
 		return "", invalid("note must be at most %d characters; got %d", maxNoteRunes, n)
 	}
 	return note, nil
+}
+
+// cleanPublicRemark 校验公开备注：单行、至多 maxPublicRemarkRunes 个码点、不含控制字符。与 note、标签名同在
+// 这一处准入（不在各入口各写一份）；控制字符按 sanitize.IsControl 判定，与标签名同一个口径（note 是剔除、这里
+// 是拒绝：访客看到的是原文，剔除会把站长写下的字悄悄换掉）。超长返回 InvalidArgument、不截断：截断会把超长输入
+// 伪装成合法值。空串合法，表示没有公开备注。
+func cleanPublicRemark(raw string) (string, error) {
+	if strings.ContainsFunc(raw, sanitize.IsControl) {
+		return "", invalid("public_remark must not contain control characters; got %q", raw)
+	}
+	if n := utf8.RuneCountInString(raw); n > maxPublicRemarkRunes {
+		return "", invalid("public_remark must be at most %d characters; got %d", maxPublicRemarkRunes, n)
+	}
+	return raw, nil
 }
 
 func (s *Service) ListNodes(ctx context.Context, req *connect.Request[heronv1.ListNodesRequest]) (*connect.Response[heronv1.ListNodesResponse], error) {
@@ -210,6 +226,10 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.U
 	if err != nil {
 		return nil, err
 	}
+	remark, err := cleanPublicRemark(req.Msg.GetPublicRemark())
+	if err != nil {
+		return nil, err
+	}
 	day := int(req.Msg.GetTrafficResetDay())
 	if day < minResetDay || day > maxResetDay {
 		return nil, invalid("traffic_reset_day must be between %d and %d; got %d", minResetDay, maxResetDay, day)
@@ -233,7 +253,7 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.U
 	if err != nil {
 		return nil, err
 	}
-	edit := store.NodeEdit{Name: name, Public: req.Msg.GetPublic(), Note: note, TrafficResetDay: day, OfflineGraceS: int(grace), Billing: billing, CountryPin: pin, Maintenance: req.Msg.GetMaintenance(), Tags: tags}
+	edit := store.NodeEdit{Name: name, Public: req.Msg.GetPublic(), Note: note, PublicRemark: remark, TrafficResetDay: day, OfflineGraceS: int(grace), Billing: billing, CountryPin: pin, Maintenance: req.Msg.GetMaintenance(), Tags: tags}
 	s.nodeMu.Lock()
 	billingChanged, err := s.alerts.UpdateScope(func() (store.NodeUpdateResult, error) {
 		return s.probes.UpdateNode(ctx, req.Msg.GetId(), edit)

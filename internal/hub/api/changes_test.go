@@ -935,6 +935,7 @@ func TestUpdateNodeChangeCoversEveryEditableField(t *testing.T) {
 		"name":              {func(r *heronv1.UpdateNodeRequest) { r.Name = "first" }, func(r *heronv1.UpdateNodeRequest) { r.Name = "second" }},
 		"public":            {func(r *heronv1.UpdateNodeRequest) { r.Public = true }, func(r *heronv1.UpdateNodeRequest) { r.Public = false }},
 		"note":              {func(r *heronv1.UpdateNodeRequest) { r.Note = "first note" }, func(r *heronv1.UpdateNodeRequest) { r.Note = "second note" }},
+		"public_remark":     {func(r *heronv1.UpdateNodeRequest) { r.PublicRemark = "first remark" }, func(r *heronv1.UpdateNodeRequest) { r.PublicRemark = "second remark" }},
 		"traffic_reset_day": {func(r *heronv1.UpdateNodeRequest) { r.TrafficResetDay = 12 }, func(r *heronv1.UpdateNodeRequest) { r.TrafficResetDay = 13 }},
 		"offline_grace_s":   {func(r *heronv1.UpdateNodeRequest) { r.OfflineGraceS = proto.Uint32(60) }, func(r *heronv1.UpdateNodeRequest) { r.OfflineGraceS = proto.Uint32(120) }},
 		"billing": {func(r *heronv1.UpdateNodeRequest) {
