@@ -137,17 +137,17 @@ func TestListUntaggedNodes(t *testing.T) {
 	// 去掉最后一个标签：关联行清空，tag 行仍在，节点出现在无标签结果里。
 	setTags(t, s, ids[0])
 	if tags, err := s.ListTags(ctx); err != nil || !slices.Contains(tags, Tag{Name: "a", Nodes: 1}) {
-		t.Fatalf("ListTags after clearing the last tag = %v %v, want the a row kept", tags, err)
+		t.Errorf("ListTags after clearing the last tag = %v %v, want the a row kept", tags, err)
 	}
 	var rows int
 	if err := s.r.QueryRow("SELECT COUNT(*) FROM node_tag WHERE node_id = ?", ids[0]).Scan(&rows); err != nil || rows != 0 {
-		t.Fatalf("node_tag rows of the cleared node = %d %v, want 0", rows, err)
+		t.Errorf("node_tag rows of the cleared node = %d %v, want 0", rows, err)
 	}
 	if nodes, err = s.ListUntaggedNodes(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := nodeNames(nodes), []string{"n0", "n1", "n3"}; !slices.Equal(got, want) {
-		t.Fatalf("after clearing the last tag: ListUntaggedNodes = %q, want %q", got, want)
+		t.Errorf("after clearing the last tag: ListUntaggedNodes = %q, want %q", got, want)
 	}
 
 	// 带主体范围：范围 {n0,n1,n2} 含两个无标签节点与一个已挂标签的节点，范围外的无标签节点 n3 不出现。
