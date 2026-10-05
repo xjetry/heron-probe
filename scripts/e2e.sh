@@ -310,7 +310,11 @@ until [ "$(rpc GetSnapshot '{}')" = 200 ] && jq -e '[.nodes[]? | select(.online 
   i=$((i + 1)); [ "$i" -lt 60 ] || { echo "FAIL: nodes did not come online"; cat "$work/GetSnapshot.json"; exit 1; }
   sleep 1
 done
-jq -e '.reportIntervalMs == 4000 and all(.nodes[]; .metrics.cpuPct != null)' "$work/GetSnapshot.json" > /dev/null || { echo "FAIL: snapshot shape"; cat "$work/GetSnapshot.json"; exit 1; }
+# hub 绑定的 agent 版本经 hub-binary 的 ldflags 注入（spec §14.1）。变量改名或注入断开时链接器静默忽略 -X，
+# hub 就没有绑定、节点在线更新全部被拒，编译与单元测试都照不出来，只有从真实二进制回读才看得见。
+# 脚本开头已 cd 到仓库根，AGENT_VERSION 即绑定的事实源。
+bound=$(sed -n 1p AGENT_VERSION)
+jq -e --arg bound "$bound" '.reportIntervalMs == 4000 and all(.nodes[]; .metrics.cpuPct != null) and .boundAgentVersion == $bound' "$work/GetSnapshot.json" > /dev/null || { echo "FAIL: snapshot shape or bound agent version (want $bound)"; cat "$work/GetSnapshot.json"; exit 1; }
 [ "$(rpc ListNodes '{}')" = 200 ] || { echo "FAIL: ListNodes"; exit 1; }
 jq -e '[.nodes[] | select(.facts.arch == "amd64" or .facts.arch == "arm64")] | length == 2' "$work/ListNodes.json" > /dev/null || { echo "FAIL: facts not reported"; cat "$work/ListNodes.json"; exit 1; }
 jq -e --arg os "$EXPECT_OS" '(.nodes | length) == 2 and all(.nodes[]; (.facts.os // "") | contains($os))' "$work/ListNodes.json" > /dev/null || { echo "FAIL: nodes did not report an OS containing \"$EXPECT_OS\""; cat "$work/ListNodes.json"; exit 1; }

@@ -13,7 +13,7 @@ hub 的管理接口是 Connect unary：每个方法都是 `POST $HERON_HUB/heron
 - `HERON_TOKEN`：在面板"API token"页创建的 token，形如 `heron_at_` 加 64 位十六进制。默认全站只读；管理员可预授权配置、创建、注册、轮换、删除、官方节点更新，并选择全站或指定节点。写入经 `ExecuteChange`，不能直接调用仅限会话的方法。
 - 每个请求带两个头：`Authorization: Bearer $HERON_TOKEN` 与 `Content-Type: application/json`。
 - `ListSessions` 与 `RevokeSession` 也仅限会话 cookie，API token 不可用；即使获得写权限，也不能枚举、创建或撤销 API 凭据及会话。
-- `GetUpdates` 查询范围内节点的在线更新能力和任务；全站 token 还可读 Hub 状态。`checkLatest: true` 显式查询官方最新正式版。具备更新权限时，经 `ExecuteChange.startUpdate` / `cancelUpdate` 操作正数 nodeId 的官方更新。Hub 更新仍仅限会话。
+- `GetUpdates` 查询范围内节点的在线更新能力和任务；全站 token 还可读 Hub 状态。`checkLatest: true` 显式查询官方最新正式版。`boundAgentVersion` 是 hub 绑定的 agent 版本，节点更新（`ExecuteChange.startUpdate`）的 `version` 只能是它，查询它不需要 `checkLatest`。具备更新权限时，经 `ExecuteChange.startUpdate` / `cancelUpdate` 操作正数 nodeId 的官方更新。Hub 更新仍仅限会话。
 
 ## 预授权写入
 
