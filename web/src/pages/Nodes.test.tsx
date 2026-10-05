@@ -939,13 +939,13 @@ describe("Nodes", () => {
       { id: 4n, name: "delta", public: false, note: "", sortOrder: 3, createdAt: 0n, trafficResetDay: 1, tags: [] },
     ];
     // 按 hub 的语义应答：untagged 为真只返回无标签节点且与非空 tags 互斥（同时给出按参数错误拒绝），否则返回
-    // 同时带有全部所选标签的节点，名字大小写不敏感，空选择返回全部。
-    const listByTags = () => vi.fn(async (req: ListNodesRequest) => {
+    // 同时带有全部所选标签的节点，名字大小写不敏感，空选择返回全部。数据集可替换，供需要额外标签的用例复用同一替身。
+    const listByTags = (data: typeof tagged = tagged) => vi.fn(async (req: ListNodesRequest) => {
       if (req.untagged) {
         if (req.tags.length > 0) throw new ConnectError("untagged 与非空 tags 互斥", Code.InvalidArgument);
-        return { nodes: tagged.filter((n) => n.tags.length === 0) };
+        return { nodes: data.filter((n) => n.tags.length === 0) };
       }
-      return { nodes: tagged.filter((n) => req.tags.every((t) => n.tags.some((x) => sameTag(x, t)))) };
+      return { nodes: data.filter((n) => req.tags.every((t) => n.tags.some((x) => sameTag(x, t)))) };
     });
     const tagList = async () => ({ tags: [{ name: "db", nodeCount: 2 }, { name: "web", nodeCount: 2 }] });
     const shown = () => screen.queryAllByRole("link").map((link) => link.textContent);
@@ -1206,14 +1206,7 @@ describe("Nodes", () => {
     // 用户可能真的建一个叫"无标签"的标签；它的可访问名与"只看没有标签的节点"必须分开，勾它走标签过滤而不是 untagged。
     it("名为'无标签'的标签与'无标签'选项可分别勾选，勾标签不触发 untagged", async () => {
       const named = { id: 9n, name: "named", public: false, note: "", sortOrder: 0, createdAt: 0n, trafficResetDay: 1, tags: ["无标签"] };
-      const data = [...tagged, named];
-      const listNodes = vi.fn(async (req: ListNodesRequest) => {
-        if (req.untagged) {
-          if (req.tags.length > 0) throw new ConnectError("untagged 与非空 tags 互斥", Code.InvalidArgument);
-          return { nodes: data.filter((n) => n.tags.length === 0) };
-        }
-        return { nodes: data.filter((n) => req.tags.every((t) => n.tags.some((x) => sameTag(x, t)))) };
-      });
+      const listNodes = listByTags([...tagged, named]);
       renderNodes({ listNodes, listTags: async () => ({ tags: [{ name: "无标签", nodeCount: 1 }] }) });
       await screen.findByRole("link", { name: "named（#9）" });
       expect(untaggedBox()).not.toBeChecked();
