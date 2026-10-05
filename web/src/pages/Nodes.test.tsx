@@ -106,7 +106,7 @@ describe("Nodes", () => {
     await screen.findByRole("link", { name: "b（#2）" });
     const input = screen.getByRole("searchbox", { name: "搜索节点" });
     fireEvent.change(input, { target: { value: "b" } });
-    expect(screen.getByText("搜索或按标签过滤时无法排序，请清空搜索与标签过滤后调整完整节点顺序。")).toBeInTheDocument();
+    expect(screen.getByText("搜索或按标签过滤时不能用拖动或上下移（它们保存完整排列）；可用「移动到…」按全序名次移动，或清空过滤后再调整。")).toBeInTheDocument();
     for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) {
       expect(button).toBeDisabled();
       fireEvent.click(button);
@@ -114,7 +114,7 @@ describe("Nodes", () => {
     await act(async () => {});
     expect(reorderNodes).not.toHaveBeenCalled();
     fireEvent.change(input, { target: { value: "" } });
-    expect(screen.queryByText("搜索或按标签过滤时无法排序，请清空搜索与标签过滤后调整完整节点顺序。")).toBeNull();
+    expect(screen.queryByText("搜索或按标签过滤时不能用拖动或上下移（它们保存完整排列）；可用「移动到…」按全序名次移动，或清空过滤后再调整。")).toBeNull();
     for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) expect(button).toBeEnabled();
     fireEvent.change(screen.getByRole("combobox", { name: "移动 a（#1）" }), { target: { value: "down" } });
     await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n] }), expect.anything()));
@@ -972,7 +972,7 @@ describe("Nodes", () => {
       fireEvent.click(filterBox("web"));
       await waitFor(() => expect(shown()).toEqual(["beta"]));
       expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: ["db", "web"] }), expect.anything());
-      expect(screen.getByText("搜索或按标签过滤时无法排序，请清空搜索与标签过滤后调整完整节点顺序。")).toBeInTheDocument();
+      expect(screen.getByText("搜索或按标签过滤时不能用拖动或上下移（它们保存完整排列）；可用「移动到…」按全序名次移动，或清空过滤后再调整。")).toBeInTheDocument();
       for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) {
         expect(button).toBeDisabled();
         fireEvent.click(button);
@@ -1155,7 +1155,7 @@ describe("Nodes", () => {
       fireEvent.click(untaggedBox());
       await waitFor(() => expect(shown()).toEqual(["delta"]));
       expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: [], untagged: true }), expect.anything());
-      expect(screen.getByText("搜索或按标签过滤时无法排序，请清空搜索与标签过滤后调整完整节点顺序。")).toBeInTheDocument();
+      expect(screen.getByText("搜索或按标签过滤时不能用拖动或上下移（它们保存完整排列）；可用「移动到…」按全序名次移动，或清空过滤后再调整。")).toBeInTheDocument();
       for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) {
         expect(button).toBeDisabled();
         fireEvent.click(button);
@@ -1254,4 +1254,144 @@ it("维护中的节点在名称旁标注，编辑里的维护开关随整体替�
   fireEvent.click(box);
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 2n, maintenance: true }), expect.anything()));
+});
+
+describe("移动到指定位置", () => {
+  // a、c 挂 db，b、d 挂 web；position 是全序名次（服务端随读算出，过滤不改变）。
+  const positioned = [
+    { id: 1n, name: "a", public: false, note: "", sortOrder: 0, createdAt: 0n, trafficResetDay: 1, tags: ["db"], position: 1 },
+    { id: 2n, name: "b", public: false, note: "", sortOrder: 1, createdAt: 0n, trafficResetDay: 1, tags: ["web"], position: 2 },
+    { id: 3n, name: "c", public: false, note: "", sortOrder: 2, createdAt: 0n, trafficResetDay: 1, tags: ["db"], position: 3 },
+    { id: 4n, name: "d", public: false, note: "", sortOrder: 3, createdAt: 0n, trafficResetDay: 1, tags: ["web"], position: 4 },
+  ];
+  const tagList = async () => ({ tags: [{ name: "db", nodeCount: 2 }, { name: "web", nodeCount: 2 }] });
+  const listHub = vi.fn(async (req: ListNodesRequest) => {
+    if (req.tags.length === 0) return { nodes: positioned };
+    return { nodes: positioned.filter((n) => req.tags.every((t) => n.tags.some((x) => sameTag(x, t)))) };
+  });
+  // 行首序号：手柄按钮里唯一的文字就是序号。
+  const positionOf = (label: string) => screen.getByRole("button", { name: `调整顺序 ${label}` }).textContent;
+
+  it("未过滤时序号是当前位次，过滤时序号是服务端全序名次", async () => {
+    renderNodes({ listNodes: listHub, listTags: tagList });
+    await screen.findByRole("link", { name: "a（#1）" });
+    expect(positionOf("a（#1）")).toBe("1");
+    expect(positionOf("d（#4）")).toBe("4");
+    fireEvent.click(screen.getByRole("checkbox", { name: "按标签过滤 db" }));
+    await waitFor(() => expect(screen.queryByRole("link", { name: "b（#2）" })).toBeNull());
+    expect(positionOf("a（#1）")).toBe("1");
+    expect(positionOf("c（#3）")).toBe("3");
+  });
+
+  it("多选两个节点经弹窗提交 ids 与 position，成功后清空选择并刷新列表", async () => {
+    const listNodes = vi.fn(listHub.getMockImplementation()!);
+    const moveNodes = vi.fn(async () => ({}));
+    renderNodes({ listNodes, listTags: tagList, moveNodes });
+    await screen.findByRole("link", { name: "d（#4）" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 b（#2）" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 d（#4）" }));
+    expect(screen.getByText("已选择 2 个节点")).toBeInTheDocument();
+    const calls = listNodes.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "移动到…" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("共 4 个节点，将移动其中的 2 个；其余节点相对顺序不变。")).toBeInTheDocument();
+    // N = 4、k = 2：max = N-k+1 = 3，预览随输入更新。
+    const input = within(dialog).getByLabelText("目标位置（1–3）");
+    expect(input).toHaveAttribute("max", "3");
+    expect(within(dialog).getByText("将 2 个节点移到第 1–2 位")).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "3" } });
+    expect(within(dialog).getByText("将 2 个节点移到第 3–4 位")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "移动" }));
+    await waitFor(() => expect(moveNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 4n], position: 3 }), expect.anything()));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText("已选择 0 个节点")).toBeInTheDocument();
+    await waitFor(() => expect(listNodes.mock.calls.length).toBeGreaterThan(calls));
+  });
+
+  it("行菜单「移动到…」作用于单个节点，预览与区间按 k=1 计算", async () => {
+    const moveNodes = vi.fn(async () => ({}));
+    renderNodes({ listNodes: listHub, listTags: tagList, moveNodes });
+    await screen.findByRole("link", { name: "d（#4）" });
+    fireEvent.change(screen.getByRole("combobox", { name: "移动 b（#2）" }), { target: { value: "move" } });
+    const dialog = screen.getByRole("dialog");
+    const input = within(dialog).getByLabelText("目标位置（1–4）");
+    expect(input).toHaveAttribute("max", "4");
+    expect(within(dialog).getByText("移到第 1 位")).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "4" } });
+    expect(within(dialog).getByText("移到第 4 位")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "移动" }));
+    await waitFor(() => expect(moveNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n], position: 4 }), expect.anything()));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("区间外的输入拦截在弹窗内，不给 hub 发请求", async () => {
+    const moveNodes = vi.fn(async () => ({}));
+    renderNodes({ listNodes: listHub, listTags: tagList, moveNodes });
+    await screen.findByRole("link", { name: "d（#4）" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 c（#3）" }));
+    fireEvent.click(screen.getByRole("button", { name: "移动到…" }));
+    const dialog = screen.getByRole("dialog");
+    const input = within(dialog).getByLabelText("目标位置（1–4）");
+    fireEvent.change(input, { target: { value: "5" } });
+    expect(within(dialog).getByText("目标位置必须是 1–4 之间的整数。")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "移动" })).toBeDisabled();
+    fireEvent.submit(within(dialog).getByLabelText("目标位置（1–4）").closest("form")!);
+    await act(async () => {});
+    expect(moveNodes).not.toHaveBeenCalled();
+  });
+
+  it("提交失败显示在弹窗内并保持打开，可取消", async () => {
+    const moveNodes = vi.fn(async () => { throw new ConnectError("position: must be between 1 and 4", Code.InvalidArgument); });
+    renderNodes({ listNodes: listHub, listTags: tagList, moveNodes });
+    await screen.findByRole("link", { name: "d（#4）" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 c（#3）" }));
+    fireEvent.click(screen.getByRole("button", { name: "移动到…" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "移动" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("position: must be between 1 and 4");
+    expect(screen.getByText("已选择 1 个节点")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText("已选择 1 个节点")).toBeInTheDocument();
+  });
+
+  it("拖动排序保存未确认时「移动到…」入口禁用", async () => {
+    const moveNodes = vi.fn(async () => ({}));
+    // 保存不结束：排序会话停在未确认（order.pending）。
+    const reorderNodes = vi.fn(() => new Promise(() => {}));
+    renderNodes({ listNodes: listHub, listTags: tagList, moveNodes, reorderNodes });
+    await screen.findByRole("link", { name: "d（#4）" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 c（#3）" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "移动 a（#1）" }), { target: { value: "down" } });
+    await waitFor(() => expect(screen.getByText("正在保存并确认排序…")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "移动到…" })).toBeDisabled();
+    // 排序会话本身允许继续累积调整，但「移动到…」在未确认前关闭。
+    expect(within(screen.getByRole("combobox", { name: "移动 a（#1）" })).getByRole("option", { name: "移动到…", hidden: true })).toBeDisabled();
+  });
+
+  it("全部节点总数读取失败时入口禁用并说明原因", async () => {
+    const moveNodes = vi.fn(async () => ({}));
+    // 初始成功、之后完整列表读取失败：主列表可用而 N 拿不到，入口应禁用并说明原因。
+    let broken = false;
+    const listNodes = vi.fn(async (req: ListNodesRequest) => {
+      if (req.tags.length === 0) {
+        if (broken) throw new ConnectError("无法读取节点总数", Code.Unavailable);
+        return { nodes: positioned };
+      }
+      return { nodes: positioned.filter((n) => req.tags.every((t) => n.tags.some((x) => sameTag(x, t)))) };
+    });
+    const { queryClient } = renderNodes({ listNodes, listTags: tagList, moveNodes });
+    await screen.findByRole("link", { name: "c（#3）" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "按标签过滤 db" }));
+    await waitFor(() => expect(screen.queryByRole("link", { name: "b（#2）" })).toBeNull());
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 c（#3）" }));
+    expect(screen.getByRole("button", { name: "移动到…" })).toBeEnabled();
+    broken = true;
+    const fullKey = createConnectQueryKey({ schema: AdminService.method.listNodes, input: { tags: [] }, cardinality: "finite" });
+    await act(async () => { await queryClient.refetchQueries({ queryKey: fullKey }); });
+    await waitFor(() => expect(screen.getByRole("button", { name: "移动到…" })).toBeDisabled());
+    expect(within(screen.getByRole("combobox", { name: "移动 a（#1）" })).getByRole("option", { name: "移动到…", hidden: true })).toBeDisabled();
+    expect(screen.getByText(/无法取得节点总数，「移动到…」不可用/)).toBeInTheDocument();
+    expect(moveNodes).not.toHaveBeenCalled();
+  });
 });

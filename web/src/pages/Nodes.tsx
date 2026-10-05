@@ -14,6 +14,7 @@ import { MixedCheckbox } from "../components/MixedCheckbox";
 import { NodeAddresses } from "../components/NodeAddresses";
 import { NodeCountry } from "../components/NodeCountry";
 import { NodeInstallModal } from "../components/NodeInstallModal";
+import { NodeMoveModal } from "../components/NodeMoveModal";
 import { NodeOrderControl } from "../components/NodeOrderControl";
 import { AdminService, type Node, type NodeStatus, type Tag } from "../gen/heron/v1/admin_pb";
 import { BillingEditor, billingDraftSet, emptyBillingDraft } from "../components/BillingEditor";
@@ -44,6 +45,9 @@ export function Nodes() {
     tagFilter.kind === "untagged" ? { tags: [], untagged: true } : { tags: tagFilter.names },
     { refetchInterval: 10_000 },
   ));
+  // 全部节点总数 N（未过滤）：移动目标位置的合法区间 1..N-k+1 按 N 计算。与 useOrder 的 reload / 未过滤的
+  // nodes 查询同一个键 listNodes({ tags: [] })——未过滤时复用同一条查询，过滤时是额外一条轮询。
+  const allNodes = useQuery(AdminService.method.listNodes, { tags: [] }, { refetchInterval: 10_000 });
   const tags = useQuery(AdminService.method.listTags, {});
   const snapshot = useQuery(AdminService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
   const hubVersion = snapshot.data?.hubVersion;
@@ -65,6 +69,8 @@ export function Nodes() {
   const [editor, setEditor] = useState<{ node: Node; mode: "general" | "billing"; opener: HTMLElement } | null>(null);
   const [selected, setSelected] = useState<bigint[]>([]);
   const [batchEditor, setBatchEditor] = useState<{ nodes: Node[]; tags: Tag[]; opener: HTMLElement } | null>(null);
+  // 「移动到…」的目标：批量多选或行菜单单个节点；opener 是触发元素，弹窗关闭后焦点回到它。
+  const [moveTarget, setMoveTarget] = useState<{ nodes: readonly Node[]; opener: HTMLElement } | null>(null);
   const create = useMutation(AdminService.method.createNode, {
     ...mutationOptions,
     onSuccess: (result) => {
@@ -106,6 +112,14 @@ export function Nodes() {
     },
   });
   const reorder = useMutation(AdminService.method.reorderNodes);
+  const moveNodes = useMutation(AdminService.method.moveNodes, {
+    onSuccess: () => {
+      setMoveTarget(null);
+      setSelected([]);
+      // 当前过滤结果与完整总数是两条 listNodes 查询，按方法的键一起失效；标签不受影响。
+      return qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) });
+    },
+  });
   const filtered = search !== "" || tagFilter.kind === "untagged" || tagFilter.names.length > 0;
   const narrowed = filtered || nodes.stale;
   const order = useOrder({
@@ -134,7 +148,13 @@ export function Nodes() {
   const selectedNodes = list.filter((node) => selectedIds.has(node.id));
   // 创建和编辑由弹窗占用交互；换发响应前尚无弹窗，也要锁住同一批入口，避免并发响应覆盖唯一明文与返回焦点。
   const editing = editor !== null || batchEditor !== null || batchUpdate.isPending || creating !== null || rotate.isPending;
-  const sortable = !narrowed && !order.blocked && !editing && list.length > 1;
+  // MoveNodes 在途时列表即将被重写，拖动 / 方向键的完整排列保存一并停下。
+  const sortable = !narrowed && !order.blocked && !editing && list.length > 1 && !moveNodes.isPending;
+  // 「移动到…」按全序名次走 MoveNodes，过滤时也可用；编辑弹窗、MoveNodes 在途、排序会话未确认或被阻塞时
+  // 关闭。N 来自未过滤的完整列表：未就绪或读取失败时入口关闭并说明原因，不给一个算不出区间的输入框。
+  const moveTotal = allNodes.data?.nodes.length;
+  const moveReady = moveTotal !== undefined && allNodes.error == null;
+  const moveLocked = editing || moveNodes.isPending || order.pending || order.blocked || !moveReady;
   const members = list.map((node) => String(node.id)).sort().join(",");
   const dragging = sortable && drag?.members === members ? drag.id : null;
   const moveNode = (id: bigint, move: OrderMove) => {
@@ -171,7 +191,7 @@ export function Nodes() {
     {order.pending && <p role="status" className="muted">正在保存并确认排序…</p>}
     {order.confirmed && <p className="order-saved" aria-live="polite">顺序已保存</p>}
     {order.blocked && <button type="button" onClick={order.recover} disabled={order.pending}>重新读取排序</button>}
-    {filtered && <p className="node-subtext">搜索或按标签过滤时无法排序，请清空搜索与标签过滤后调整完整节点顺序。</p>}
+    {filtered && <p className="node-subtext">搜索或按标签过滤时不能用拖动或上下移（它们保存完整排列）；可用「移动到…」按全序名次移动，或清空过滤后再调整。</p>}
     {!filtered && nodes.stale && <p className="node-subtext">列表还不是当前条件下的结果，暂时无法排序。</p>}
     {gate.ready ? <>
       <div className="section-heading"><h2>节点清单 <span className="muted">{list.length}</span></h2><span className="live-caption">双栈出口由 agent 独立探测</span></div>
@@ -179,6 +199,9 @@ export function Nodes() {
         <label><MixedCheckbox label="选择当前结果全部节点" checked={selectedNodes.length === 0 ? false : selectedNodes.length === list.length ? true : "mixed"} disabled={editing || nodes.stale || list.length === 0} onChange={() => setSelected(selectedNodes.length === list.length ? [] : list.map((node) => node.id))} />选择当前结果</label>
         <span className="muted">已选择 {selectedNodes.length} 个节点</span>
         <button type="button" disabled={editing || nodes.stale || nodes.error != null || remove.isPending || selectedNodes.length === 0 || tags.data === undefined || tags.error != null} onClick={(event) => { batchUpdate.reset(); setBatchEditor({ nodes: selectedNodes, tags: tags.data?.tags ?? [], opener: event.currentTarget }); }}>批量编辑标签</button>
+        <button type="button" disabled={moveLocked || selectedNodes.length === 0} onClick={(event) => { moveNodes.reset(); setMoveTarget({ nodes: selectedNodes, opener: event.currentTarget }); }}>移动到…</button>
+        {!moveReady && allNodes.error == null && <span className="muted">正在读取节点总数…</span>}
+        {allNodes.error != null && <span className="error">无法取得节点总数，「移动到…」不可用：{errorText(allNodes.error)}</span>}
         {selectedNodes.length > 0 && <button type="button" className="link" disabled={editing} onClick={() => setSelected([])}>清除选择</button>}
       </div>
       <p className="node-subtext order-help" id="node-order-help">拖动手柄调整顺序，松开后自动保存。也可使用移动菜单，或聚焦手柄后按方向键、Home / End。</p>
@@ -200,8 +223,10 @@ export function Nodes() {
               }
               endDrag();
             }}
-            orderControl={<NodeOrderControl label={withId(node.name, node.id)} index={index} count={list.length} disabled={!sortable}
+            orderControl={<NodeOrderControl label={withId(node.name, node.id)} index={index} count={list.length}
+              position={filtered ? node.position : index + 1} reorderDisabled={!sortable} moveDisabled={moveLocked}
               onMove={(move) => moveNode(node.id, move)} onDragEnd={endDrag}
+              onMoveTo={(opener) => { moveNodes.reset(); setMoveTarget({ nodes: [node], opener }); }}
               onDragStart={(event) => {
                 if (!sortable) { event.preventDefault(); return; }
                 event.dataTransfer.effectAllowed = "move";
@@ -215,6 +240,9 @@ export function Nodes() {
     <TagManager tags={tags.data?.tags} pending={removeTag.isPending} onDelete={(name) => removeTag.mutate({ name })} />
     {batchEditor && <BatchNodeTagsEditor nodes={batchEditor.nodes} knownTags={batchEditor.tags} opener={batchEditor.opener} saving={batchUpdate.isPending} error={batchUpdate.error} onClose={() => setBatchEditor(null)}
       onSave={(changes) => batchUpdate.mutate(changes)} />}
+    {moveTarget && <NodeMoveModal nodes={moveTarget.nodes} total={moveTotal ?? 0} pending={moveNodes.isPending} error={moveNodes.error} opener={moveTarget.opener}
+      onClose={() => { setMoveTarget(null); moveNodes.reset(); }}
+      onConfirm={(position) => moveNodes.mutate({ ids: moveTarget.nodes.map((node) => node.id), position })} />}
     {editor && <NodeEditor key={String(editor.node.id)} node={editor.node} mode={editor.mode} opener={editor.opener} knownTags={tags.data?.tags ?? []}
       saving={update.isPending} error={update.error} listError={nodes.error} onClose={() => setEditor(null)}
       onSave={(patch) => update.mutate({ id: editor.node.id, ...patch }, { onSuccess: () => setEditor(null) })} />}
