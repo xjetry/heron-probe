@@ -132,7 +132,7 @@ func agentBundle(linuxArches, darwinArches []string) []string {
 }
 
 // fetchInstallers 核对 vY 的清单含完整的 agent 组，取回两个安装脚本并按清单核对摘要，全部通过后才写进 dir
-// （先写临时文件再改名）；任何一步失败都不留下文件。
+// （先写临时文件再改名）：下载与核对的任何一步失败都不写 dir。
 func fetchInstallers(ctx context.Context, client *http.Client, base string, keys []ed25519.PublicKey, version, dir string, linuxArches, darwinArches []string) error {
 	rel, err := fetchRelease(ctx, client, base, keys, version)
 	if err != nil {
