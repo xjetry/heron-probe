@@ -117,6 +117,45 @@ func TestListNodesTagFilterValidation(t *testing.T) {
 	}
 }
 
+// untagged 只返回无标签节点，与 ListNodes 的节点顺序一致；与 tags 同时给出返回 InvalidArgument，错误信息同时点出
+// 两个字段；untagged 为假时 tags 仍按交集过滤、空 tags 仍返回全部。
+func TestListNodesUntagged(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	for _, tags := range [][]string{{"a"}, {"a", "b"}, {"b"}} {
+		name := strings.Join(tags, "+")
+		id, _ := h.createNode(t, name)
+		mustUpdateTags(t, h, id, name, tags...)
+	}
+	h.createNode(t, "free1")
+	h.createNode(t, "free2")
+	untagged := func(tags ...string) ([]string, error) {
+		resp, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&heronv1.ListNodesRequest{Tags: tags, Untagged: true}))
+		if err != nil {
+			return nil, err
+		}
+		names := []string{}
+		for _, n := range resp.Msg.GetNodes() {
+			names = append(names, n.GetName())
+		}
+		return names, nil
+	}
+
+	if got, err := untagged(); err != nil || !slices.Equal(got, []string{"free1", "free2"}) {
+		t.Fatalf("untagged: nodes %q %v, want the two tagless nodes", got, err)
+	}
+	_, err := untagged("a")
+	if codeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "tags") || !strings.Contains(err.Error(), "untagged") {
+		t.Fatalf("untagged with tags: %v, want InvalidArgument naming both fields", err)
+	}
+	if got, err := listByTags(t, h, "a"); err != nil || !slices.Equal(got, []string{"a", "a+b"}) {
+		t.Fatalf("tags still filter by intersection: %q %v", got, err)
+	}
+	if got, err := listByTags(t, h); err != nil || !slices.Equal(got, []string{"a", "a+b", "b", "free1", "free2"}) {
+		t.Fatalf("empty tags still list every node: %q %v", got, err)
+	}
+}
+
 // db 与 DB 是同一个标签，沿用先建的写法；同一请求里折叠后重复的只留第一个；回显按折叠后的名字排序。
 func TestTagsAreCaseInsensitiveAndKeepTheFirstSpelling(t *testing.T) {
 	h := newHarness(t, "")
