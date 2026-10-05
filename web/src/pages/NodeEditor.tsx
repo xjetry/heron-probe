@@ -11,7 +11,7 @@ import { lookupText, NodeCountry } from "../components/NodeCountry";
 
 // UpdateNode 整体替换全部可编辑字段；独立计费入口也必须保留未编辑字段，不能用缺席表达“不变”。
 const draftOf = (node: Node) => ({
-  name: node.name, public: node.public, note: node.note, trafficResetDay: node.trafficResetDay, countryPin: node.countryPin,
+  name: node.name, public: node.public, note: node.note, publicRemark: node.publicRemark, trafficResetDay: node.trafficResetDay, countryPin: node.countryPin,
   tags: [...node.tags], offlineGraceS: String(node.offlineGraceS ?? 0), maintenance: node.maintenance,
   billing: {
     price: node.billing?.price ?? "", currency: node.billing?.currency ?? "", billingCycle: node.billing?.billingCycle ?? BillingCycle.UNSPECIFIED,
@@ -44,6 +44,7 @@ export function NodeEditor({ node, mode, knownTags, saving, error, listError, on
               <div className="form-grid">
                 <label>节点名称<input data-autofocus aria-label={`名称 ${label}`} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label>
                 <label>备注<textarea aria-label={`备注 ${label}`} placeholder="商家、用途或其他内部备注" value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></label>
+                <label>公开备注<input aria-label={`公开备注 ${label}`} placeholder="对访客可见的一行说明，如线路类型" value={draft.publicRemark} onChange={(e) => setDraft({ ...draft, publicRemark: e.target.value })} /><span className="muted">随公开页展示；至多 100 字、单行，留空不显示。</span></label>
                 <label className="switch-field full-width"><span>公开显示<small>关闭后仅在管理后台可见</small></span><input type="checkbox" aria-label={`公开 ${label}`} checked={draft.public} onChange={(e) => setDraft({ ...draft, public: e.target.checked })} /></label>
                 <label className="switch-field full-width"><span>维护中<small>告警事件照常记录但不投递，在线状态照实显示；到期的提醒不受影响</small></span><input type="checkbox" aria-label={`维护 ${label}`} checked={draft.maintenance} onChange={(e) => setDraft({ ...draft, maintenance: e.target.checked })} /></label>
                 <div className="full-width"><label htmlFor={`tag-input-${node.id}`}>节点标签</label><TagsEditor id={node.id} label={label} isPublic={draft.public} tags={draft.tags} known={knownTags} pending={pendingTag} onPending={setPendingTag} onChange={(tags) => setDraft({ ...draft, tags })} /></div>

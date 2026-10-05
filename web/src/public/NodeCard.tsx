@@ -25,6 +25,7 @@ export function NodeCard({ node, now }: { node: PublicNode; now: number }) {
         </span>
         {node.maintenance && <span className="node-status is-maintenance">维护中</span>}
       </header>
+      {node.publicRemark && <p className="node-card-remark">{node.publicRemark}</p>}
       <div className="node-card-meta">
         <span title={system}>{system}</span>
         <span>{m?.uptimeS !== undefined ? `运行 ${duration(m.uptimeS)}` : "运行时长未知"}</span>

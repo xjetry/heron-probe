@@ -72,12 +72,12 @@ it("填了费用与到期的节点卡片多两行，已过期的到期标红，�
     nodes: [
       { id: 5n, name: "paid", online: true, sortOrder: 0, billing: { price: "12.50", currency: "USD", billingCycle: BillingCycle.MONTHLY, expiresOn: "2026-10-01", daysLeft: 4 } },
       { id: 6n, name: "lapsed", online: true, sortOrder: 1, billing: { expiresOn: "2026-09-24", daysLeft: -3 } },
-      { id: 7n, name: "plain", online: true, sortOrder: 2 },
+      { id: 7n, name: "plain", online: true, sortOrder: 2, publicRemark: "联通 4837" },
     ],
   };
   renderWithService(PublicService, { getSnapshot: async () => billed }, [{ path: "/", Component: PublicOverview }], "/");
   const paid = within(await screen.findByRole("article", { name: "paid" }));
-  expect(paid.getByText("费用").nextElementSibling).toHaveTextContent(/^USD 12\.50 \/ 月$/);
+  expect(paid.getByText("费用").nextElementSibling).toHaveTextContent(/^US\$12\.50 \/ 月$/);
   const due = paid.getByText("到期").nextElementSibling;
   expect(due).toHaveTextContent(/^2026-10-01（剩 4 天）$/);
   expect(due).not.toHaveClass("error");
@@ -86,6 +86,9 @@ it("填了费用与到期的节点卡片多两行，已过期的到期标红，�
   expect(lapsed.getByText("2026-09-24（已过期 3 天）")).toHaveClass("error");
   const plain = within(screen.getByRole("article", { name: "plain" }));
   expect([plain.queryByText("费用"), plain.queryByText("到期")]).toEqual([null, null]);
+  // 公开备注按纯文本渲染：没有链接，有备注的卡片才显示这一行。
+  expect(plain.getByText("联通 4837").tagName).toBe("P");
+  expect(paid.queryByText("联通 4837")).toBeNull();
 });
 
 it("卡片名称旁是国家 / 地区徽章：旗帜由国家码算出，照写国家码；没有国家的卡片不画徽章", async () => {

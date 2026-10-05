@@ -40,7 +40,7 @@ it("静态信息卡带费用与到期两行；主机信息缺失时卡片照样�
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(2031, 0, 1));
   const nodes = [
-    { id: 7n, name: "edge-1", online: true, facts: { os: "Alpine 3.21", arch: "arm64" }, billing: { price: "5", currency: "EUR", billingCycle: BillingCycle.YEARLY, expiresOn: "2026-09-20", daysLeft: -7 } },
+    { id: 7n, name: "edge-1", online: true, publicRemark: "联通 4837", facts: { os: "Alpine 3.21", arch: "arm64" }, billing: { price: "5", currency: "EUR", billingCycle: BillingCycle.YEARLY, expiresOn: "2026-09-20", daysLeft: -7 } },
     { id: 8n, name: "fresh", online: false, billing: { price: "3", currency: "USD" } },
     { id: 9n, name: "bare", online: false },
     { id: 10n, name: "due", online: false, billing: { expiresOn: "2026-09-20", daysLeft: -7 } },
@@ -53,12 +53,13 @@ it("静态信息卡带费用与到期两行；主机信息缺失时卡片照样�
     await screen.findByRole("heading", { level: 1 });
   };
   await show(7);
+  expect(screen.getByText("联通 4837")).toBeInTheDocument();
   expect(screen.getByText("Alpine 3.21")).toBeInTheDocument();
-  expect(screen.getByText("费用").nextElementSibling).toHaveTextContent(/^EUR 5 \/ 年$/);
+  expect(screen.getByText("费用").nextElementSibling).toHaveTextContent(/^€5 \/ 年$/);
   expect(screen.getByText("2026-09-20（已过期 7 天）")).toHaveClass("error");
   cleanup();
   await show(8);
-  expect(screen.getByText("费用").nextElementSibling).toHaveTextContent(/^USD 3$/);
+  expect(screen.getByText("费用").nextElementSibling).toHaveTextContent(/^US\$3$/);
   expect(screen.queryByText("到期")).toBeNull();
   expect(screen.queryByText("系统")).toBeNull();
   cleanup();

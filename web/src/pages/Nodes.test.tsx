@@ -639,17 +639,18 @@ describe("Nodes", () => {
   it("编辑回传全部字段，没碰的计费也按当前值回传", async () => {
     const updateNode = vi.fn(async () => ({ node: two[0] }));
     // UpdateNode 整体替换，billing 缺失等于五项全清：只改名称时提交体里的计费必须是节点当前的五项。
-    const billed = { ...two[0], billing: { price: "9", currency: "EUR", billingCycle: BillingCycle.QUARTERLY, expiresOn: "2026-12-01", daysLeft: 60, autoRenew: true } };
+    const billed = { ...two[0], publicRemark: "联通 4837", billing: { price: "9", currency: "EUR", billingCycle: BillingCycle.QUARTERLY, expiresOn: "2026-12-01", daysLeft: 60, autoRenew: true } };
     renderNodes({ listNodes: async () => ({ nodes: [billed, two[1]] }), updateNode });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
     fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "a2" } });
     fireEvent.click(screen.getByLabelText("公开 a（#1）"));
     fireEvent.change(screen.getByLabelText("备注 a（#1）"), { target: { value: "changed note" } });
+    fireEvent.change(screen.getByLabelText("公开备注 a（#1）"), { target: { value: "移动 CMI" } });
     fireEvent.change(screen.getByLabelText("重置日 a（#1）"), { target: { value: "15" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({
-      id: 1n, name: "a2", public: true, note: "changed note", trafficResetDay: 15,
+      id: 1n, name: "a2", public: true, note: "changed note", publicRemark: "移动 CMI", trafficResetDay: 15,
       billing: expect.objectContaining({ price: "9", currency: "EUR", billingCycle: BillingCycle.QUARTERLY, expiresOn: "2026-12-01", autoRenew: true }),
     }), expect.anything()));
   });
@@ -719,7 +720,7 @@ describe("Nodes", () => {
         { ...two[0], id: 3n, name: "c" },
       ] }) });
       const row = async (name: string) => within((await screen.findByRole("link", { name })).closest("tr")!);
-      expect((await row("a（#1）")).getByRole("cell", { name: "USD 12.50 / 月 自动续期" })).toBeInTheDocument();
+      expect((await row("a（#1）")).getByRole("cell", { name: "US$12.50 / 月 自动续期" })).toBeInTheDocument();
       expect((await row("a（#1）")).getByText("2026-10-01（剩 4 天）")).not.toHaveClass("error");
       expect((await row("b（#2）")).getByText("2026-09-24（已过期 3 天）")).toHaveClass("error");
       expect((await row("c（#3）")).getAllByRole("cell")[column("计费")]).toHaveTextContent("未设置");

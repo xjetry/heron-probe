@@ -31,6 +31,7 @@ export function NodePage() {
         <h1>{node.name}{node.country && <>{" "}<CountryBadge code={node.country} /></>}</h1>
         <RangePicker history={history} />
       </header>
+      {node.publicRemark && <p className="node-remark">{node.publicRemark}</p>}
       <HistoryCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。</p>} />
       {/* 静态信息卡：主机信息从未上报时缺失，费用与到期填了才显示（§10），三者都没有时不画这张卡。 */}
       {(node.facts || price || expiry) && (

@@ -37,6 +37,8 @@
 .node-card-meta { gap: .6rem; margin-top: .5rem; color: var(--muted); font-size: .85rem; justify-content: space-between; }
 .node-card-meta > :first-child { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .node-card-meta > :last-child { flex: none; }
+/* 公开备注：站长写给访客的一行说明，准入保证单行；这里只保证过长时折行不撑破卡片。 */
+.node-card-remark, .node-remark { margin: .5rem 0 0; color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
 .node-resources { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.4rem 1.5rem; margin: 1.7rem 0 1.4rem; }
 .node-resource { min-width: 0; }
 .node-resource-heading { justify-content: space-between; gap: .3rem; margin-bottom: .65rem; }
