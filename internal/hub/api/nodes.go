@@ -144,8 +144,8 @@ func (s *Service) ListNodes(ctx context.Context, req *connect.Request[heronv1.Li
 	if err != nil {
 		return nil, err
 	}
-	// tags 为空表示不过滤（匹配所有节点），untagged 为真表示只选没有标签的节点，两者同时给出的交集必然为空；
-	// 空结果会把写错的条件伪装成"没有这样的节点"，所以在读到结果之前按参数错误拒绝。
+	// 非空 tags 要求节点带有所选全部标签，untagged 要求节点没有任何标签，两者同时给出的交集必然为空；空结果会把
+	// 写错的条件伪装成"没有这样的节点"，所以在查询之前按参数错误拒绝。tags 为空时不构成组合，untagged 单独决定。
 	if req.Msg.GetUntagged() && len(tags) > 0 {
 		return nil, invalid("tags and untagged: must not be combined; untagged selects nodes with no tags, so tags must be empty")
 	}
