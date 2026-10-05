@@ -12,7 +12,8 @@ export function NodeOrderControl({ label, index, count, position, reorderDisable
   onDragStart: DragEventHandler<HTMLButtonElement>; onDragEnd: DragEventHandler<HTMLButtonElement>;
 }) {
   const locked = reorderDisabled || count < 2;
-  // 菜单只要有一项可用就保持可用；排序四项各自按 locked 禁用，越界与去重的真正检查在 useOrder.move。
+  // 菜单只要有一项可用就保持可用；排序四项各自按 locked 禁用。越界或原地不动的移动由 useOrder.move 丢弃，
+  // 这里的分派不另做判断。
   const menuLocked = locked && moveDisabled;
   return <div className="node-order-control">
     <button type="button" className="icon-button order-handle" aria-label={`调整顺序 ${label}`} aria-describedby="node-order-help"
