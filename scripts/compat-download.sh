@@ -1,9 +1,12 @@
 #!/bin/sh
-# 兼容基线是仓库内审查过的 tag 与摘要，而不是可变的 latest 或下载时取得的校验和。
-# 明确输出渠道，不把预发布版当作稳定版本的兼容凭据。
+# 兼容清单有两个来源：缺省是仓库内审查过的基线（scripts/compat-agent.json），只发 hub 的 release 用绑定
+# 版本的清单（环境变量 COMPAT_PIN，由 scripts/boundagent pin 从已验签的 SHA256SUMS 写出）；两者都不是可变的
+# latest 或下载时取得的校验和。明确输出渠道，不把预发布版当作稳定版本的兼容凭据。
 set -eu
 [ "$#" = 1 ] || { echo "usage: $0 NEW_OUTPUT_DIRECTORY" >&2; exit 1; }
-pin="$(cd "$(dirname "$0")" && pwd)/compat-agent.json"
+# 只发 hub 的 release 经 make bound-agent-e2e 给出绑定版本的清单：它的摘要取自用受信公钥验过签的
+# SHA256SUMS，信任根同样不是下载时临时取得的校验和。
+pin=${COMPAT_PIN:-"$(cd "$(dirname "$0")" && pwd)/compat-agent.json"}
 # 缺少发布基线必须失败，不能把未运行的兼容验收当作通过。
 if [ -f "$pin" ] && jq -e '.tag == null' "$pin" > /dev/null; then
   echo "FAIL: no published Heron release is pinned as the compatibility baseline yet (scripts/compat-agent.json has tag null)" >&2

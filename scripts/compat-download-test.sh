@@ -26,7 +26,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 case "$url" in
-  https://github.com/xjetry/heron-probe/releases/download/v9.8.7-rc.1/heron-agent_linux_amd64.tar.gz|https://github.com/xjetry/heron-probe/releases/download/v9.8.7-rc.1/heron-agent_linux_arm64.tar.gz) ;;
+  https://github.com/xjetry/heron-probe/releases/download/v9.8.7-rc.1/heron-agent_linux_amd64.tar.gz|https://github.com/xjetry/heron-probe/releases/download/v9.8.7-rc.1/heron-agent_linux_arm64.tar.gz|https://github.com/xjetry/heron-probe/releases/download/v9.9.0/heron-agent_linux_amd64.tar.gz|https://github.com/xjetry/heron-probe/releases/download/v9.9.0/heron-agent_linux_arm64.tar.gz) ;;
   *) echo "unexpected release URL: $url" >&2; exit 1 ;;
 esac
 cp "$FIXTURE_ROOT/fixture.tar.gz" "$out"
@@ -89,5 +89,20 @@ echo "rejected unavailable release: exit $rc"
 "$work/scripts/compat-download.sh" "$work/output" > "$work/result" 2>&1
 for arch in amd64 arm64; do
   [ "$("$work/output/heron-agent-linux-$arch")" = "published fixture" ] || { echo "FAIL: restored $arch baseline failed" >&2; exit 1; }
+done
+
+# COMPAT_PIN 指向另一份清单时按它的 tag 与摘要校验：只发 hub 的端到端（make bound-agent-e2e）用它传绑定
+# 版本的清单。缺省文件此时不存在，回退到缺省必须失败，替身 curl 只认清单里的 v9.9.0 地址。
+rm -rf "$work/output"
+rm "$work/scripts/compat-agent.json"
+jq -n --arg digest "$digest" '{repository: "xjetry/heron-probe", tag: "v9.9.0", releaseKind: "stable", assets: [{arch: "amd64", sha256: $digest}, {arch: "arm64", sha256: $digest}]}' > "$work/bound-pin.json"
+rm -f "$work/curl-calls"
+rc=0
+COMPAT_PIN="$work/bound-pin.json" "$work/scripts/compat-download.sh" "$work/output" > "$work/result" 2>&1 || rc=$?
+if [ "$rc" != 0 ]; then echo "FAIL: COMPAT_PIN baseline was not used" >&2; cat "$work/result" >&2; exit 1; fi
+grep -F "xjetry/heron-probe v9.9.0 (stable)" "$work/result" > /dev/null || { echo "FAIL: download did not follow the COMPAT_PIN tag" >&2; cat "$work/result" >&2; exit 1; }
+[ "$(awk 'END { print NR }' "$work/curl-calls")" = 2 ] || { echo "FAIL: COMPAT_PIN baseline did not download both release assets" >&2; exit 1; }
+for arch in amd64 arm64; do
+  [ "$("$work/output/heron-agent-linux-$arch")" = "published fixture" ] || { echo "FAIL: COMPAT_PIN baseline missing $arch agent" >&2; exit 1; }
 done
 echo "compatibility download checks OK"

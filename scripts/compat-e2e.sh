@@ -8,7 +8,9 @@ trap 'rm -rf "$work"' EXIT
 trap 'exit 1' INT TERM HUP
 "$root/scripts/compat-download.sh" "$work/agents"
 E2E_AGENT_BIN_DIR="$work/agents"
-E2E_AGENT_VERSION=$(jq -r .tag "$root/scripts/compat-agent.json")
+# 清单与 compat-download.sh 同一个来源：只发 hub 的端到端（make bound-agent-e2e）经 COMPAT_PIN 给出绑定
+# 版本的清单，缺省仍是仓库内的兼容基线。
+E2E_AGENT_VERSION=$(jq -r .tag "${COMPAT_PIN:-$root/scripts/compat-agent.json}")
 export E2E_AGENT_BIN_DIR E2E_AGENT_VERSION
 for pair in "$@"; do
   case "$pair" in

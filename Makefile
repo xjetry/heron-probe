@@ -37,7 +37,7 @@ check_version = if [ -z "$$VERSION" ]; then echo "VERSION is required, e.g. VERS
 	if [ "$$(printf '%s/' "$$VERSION" | LC_ALL=C tr -d 'A-Za-z0-9_.-')" != / ] || [ -z "$${VERSION\#\#[.-]*}" ] || [ $${\#VERSION} -gt 128 ]; then \
 	  echo "VERSION '$$VERSION' cannot be an image tag: only [A-Za-z0-9_.-], not starting with . or -, at most 128 characters, no + build metadata" >&2; exit 1; fi
 
-.PHONY: gen lint test build hub-binary binaries ci e2e e2e-matrix compat-e2e fixtures web-install web-test web-e2e web release-full release-hub-only release-kind script-test docker docker-smoke release-channel docker-registry docker-push docker-readback docker-promote
+.PHONY: gen lint test build hub-binary binaries ci e2e e2e-matrix compat-e2e bound-agent-e2e fixtures web-install web-test web-e2e web release-full release-hub-only release-kind agent-version script-test docker docker-smoke release-channel docker-registry docker-push docker-readback docker-promote
 
 web-install:
 	pnpm --dir web install --frozen-lockfile
@@ -135,6 +135,14 @@ e2e-matrix: binaries
 # 只构建当前 hub：旧 agent 只从固定发布包取得，不在工作区构建或覆盖。
 compat-e2e: hub-binary
 	scripts/compat-e2e.sh $(E2E_TIER1)
+
+# 只发 hub 的 release 实际发出去的组合是 hub 加绑定版本的 agent（spec §14.1）：用绑定版本已发布的 agent 包跑
+# 同一套端到端，不以当前源码构建替代。摘要取自用受信公钥验签的 SHA256SUMS，经 boundagent pin 写成与兼容基线
+# 同格式的清单，compat-e2e 经 COMPAT_PIN 接收；清单写在被忽略的 build/ 下，不进入仓库。
+bound-agent-e2e: hub-binary
+	@mkdir -p build/bound-agent
+	go run ./scripts/boundagent pin -version "$$AGENT_VERSION" -out build/bound-agent/pin.json -linux-arches "$(AGENT_LINUX_ARCHES)" -darwin-arches "$(AGENT_DARWIN_ARCHES)"
+	COMPAT_PIN=build/bound-agent/pin.json scripts/compat-e2e.sh $(E2E_TIER1)
 
 # agent 组的架构表、构建参数、打包配方与打包输入登记集中在 deploy/agent.mk：只发 hub 的门禁把这个
 # 片段本身当作 agent 组的输入（spec §14.1），主 Makefile 只保留 hub 自己的架构与构建参数。
@@ -275,6 +283,10 @@ release-channel:
 release-kind:
 	@$(check_version)
 	@go run ./scripts/releasekind -version "$$VERSION" -agent "$$AGENT_VERSION"
+
+# 发布流水线的回读读它（release.yml 里安装脚本回读取绑定版本），不在 workflow 里另读一遍仓库文件。
+agent-version:
+	@printf '%s\n' "$$AGENT_VERSION"
 
 docker-registry:
 	@echo $(DOCKER_REGISTRY)
