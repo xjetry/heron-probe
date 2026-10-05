@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -26,10 +27,20 @@ type Manager struct {
 	states   map[int64]*heronv1.UpdateStatus
 	observed map[int64]*heronv1.UpdateStatus
 	wake     chan struct{}
+	// boundAgent 是 hub 绑定的 agent 版本（spec §14.1），节点在线更新唯一可用的目标；New 之后不变。
+	// API 下发的 bound_agent_version 也读它（BoundAgent），绑定只有这一个持有者。
+	boundAgent string
 }
 
-func New(st *store.Store, clk clock.Clock, log *slog.Logger) *Manager {
-	return &Manager{st: st, clk: clk, log: log, states: make(map[int64]*heronv1.UpdateStatus), observed: make(map[int64]*heronv1.UpdateStatus), wake: make(chan struct{}, 1)}
+// New 装配 Manager。boundAgent 是 hub 绑定的 agent 版本（spec §14.1）：hub 的 release 不携带 agent 产物，
+// 节点只能更新到构建时从仓库根 AGENT_VERSION 注入的这个版本。
+func New(st *store.Store, clk clock.Clock, log *slog.Logger, boundAgent string) *Manager {
+	return &Manager{st: st, clk: clk, log: log, states: make(map[int64]*heronv1.UpdateStatus), observed: make(map[int64]*heronv1.UpdateStatus), wake: make(chan struct{}, 1), boundAgent: boundAgent}
+}
+
+// BoundAgent 返回 hub 绑定的 agent 版本，空串表示没有绑定。
+func (m *Manager) BoundAgent() string {
+	return m.boundAgent
 }
 func (m *Manager) Load(ctx context.Context) error {
 	states, err := m.st.NodeUpdates(ctx)
@@ -92,7 +103,18 @@ func NewRequest(version string, now time.Time) update.Request {
 	return update.Request{ID: hex.EncodeToString(b[:]), Version: version, ExpiresAt: now.Add(24 * time.Hour).Unix()}
 }
 
+// Start 校验目标后把节点排队进入更新。绑定检查先于一切：hub 只发与自己一起构建的 agent 版本（spec §14.1），
+// 没有稳定绑定的 hub 拒绝所有节点在线更新。
 func (m *Manager) Start(ctx context.Context, id int64, version string) (*heronv1.UpdateTask, error) {
+	// 节点只能更新到 hub 绑定的 agent 版本（spec §14.1）：只发 hub 的 release 不带 agent 产物，别的版本号在官方
+	// release 里不一定有 agent 包，也没有与这个 hub 一起跑过端到端。绑定为空（没有注入的构建）或不是正式版时，
+	// 节点在线更新一律不可用——更新器只接受正式版（update.ValidVersion），空值在这里是收紧。
+	if !update.ValidVersion(m.boundAgent) {
+		return nil, errors.New("this hub has no stable bound agent version; node online updates are unavailable")
+	}
+	if version != m.boundAgent {
+		return nil, fmt.Errorf("node updates must target this hub's bound agent version %s, got %s", m.boundAgent, version)
+	}
 	m.op.Lock()
 	defer m.op.Unlock()
 	s := m.Snapshot(id)

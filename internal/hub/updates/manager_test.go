@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"maps"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +15,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func fixture(t *testing.T) (*Manager, int64, *clock.Fake) {
+// fixtureBound 装配一个绑定指定 agent 版本的 Manager；用例里 Start 的目标是什么版本，绑定就给什么，
+// 让拒绝落在被测的原因上而不是先被绑定检查挡下。
+func fixtureBound(t *testing.T, bound string) (*Manager, int64, *clock.Fake) {
 	t.Helper()
 	clk := clock.NewFake(time.Now())
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -27,13 +30,18 @@ func fixture(t *testing.T) (*Manager, int64, *clock.Fake) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := New(st, clk, log)
+	m := New(st, clk, log, bound)
 	if err := m.Load(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	m.Observe(id, &heronv1.UpdateStatus{Supported: true, Version: "v0.2.0"})
 	m.flush(t.Context())
 	return m, id, clk
+}
+
+func fixture(t *testing.T) (*Manager, int64, *clock.Fake) {
+	t.Helper()
+	return fixtureBound(t, "v0.3.0")
 }
 
 func TestUpdateDispatchPersistsBeforeDeliveryAndCannotCancel(t *testing.T) {
@@ -57,7 +65,7 @@ func TestUpdateDispatchPersistsBeforeDeliveryAndCannotCancel(t *testing.T) {
 	if err := m.Cancel(t.Context(), id, task.Id); err == nil {
 		t.Fatal("cancelled a dispatched update")
 	}
-	m2 := New(m.st, m.clk, m.log)
+	m2 := New(m.st, m.clk, m.log, "v0.3.0")
 	if err := m2.Load(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -104,17 +112,23 @@ func TestUpdateResultRequiresMatchingTaskAndRunningVersion(t *testing.T) {
 }
 
 func TestUpdateQueueExpiryCancellationAndSupport(t *testing.T) {
-	m, id, clk := fixture(t)
-	for _, v := range []string{"v0.1.0", "v0.2.0", "v0.3.0-rc1"} {
+	// 不比当前版本新的目标被 Newer 拒绝：绑定给成它启动的那个版本，拒绝才落在原来的原因上。
+	for _, v := range []string{"v0.1.0", "v0.2.0"} {
+		m, id, _ := fixtureBound(t, v)
 		if _, err := m.Start(t.Context(), id, v); err == nil {
 			t.Fatalf("accepted target %s", v)
 		}
+	}
+	m, id, clk := fixture(t)
+	// 预发布永远过不了 ValidVersion，任何绑定下它都到不了 Newer 检查，被目标检查拒绝。
+	if _, err := m.Start(t.Context(), id, "v0.3.0-rc1"); err == nil {
+		t.Fatal("accepted target v0.3.0-rc1")
 	}
 	task, err := m.Start(t.Context(), id, "v0.3.0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Start(t.Context(), id, "v0.4.0"); err == nil {
+	if _, err := m.Start(t.Context(), id, "v0.3.0"); err == nil {
 		t.Fatal("replaced active task")
 	}
 	if err := m.Cancel(t.Context(), id, task.Id); err != nil {
@@ -140,6 +154,33 @@ func TestUpdateQueueExpiryCancellationAndSupport(t *testing.T) {
 	m.flush(t.Context())
 	if _, err := m.Start(t.Context(), id, "v0.3.0"); err == nil {
 		t.Fatal("accepted unsupported agent")
+	}
+}
+
+func TestStartRejectsWithoutStableBound(t *testing.T) {
+	for _, bound := range []string{"", "dev", "v0.3.0-rc.1"} {
+		m, id, _ := fixtureBound(t, bound)
+		_, err := m.Start(t.Context(), id, "v0.3.0")
+		if err == nil || !strings.Contains(err.Error(), "no stable bound agent version") {
+			t.Fatalf("bound %q accepted a node update: %v", bound, err)
+		}
+		if task := m.Snapshot(id).Task; task != nil {
+			t.Fatalf("bound %q wrote a task", bound)
+		}
+	}
+}
+
+func TestStartRejectsVersionOtherThanBound(t *testing.T) {
+	m, id, _ := fixture(t)
+	_, err := m.Start(t.Context(), id, "v0.4.0")
+	if err == nil || !strings.Contains(err.Error(), "bound agent version v0.3.0") {
+		t.Fatalf("accepted a target other than the bound: %v", err)
+	}
+	if task := m.Snapshot(id).Task; task != nil {
+		t.Fatal("rejected target wrote a task")
+	}
+	if _, err := m.Start(t.Context(), id, "v0.3.0"); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -251,15 +292,16 @@ func TestManualUpgradeReconcilesUnexecutedAuthorization(t *testing.T) {
 			if task := m.Snapshot(id).Task; task.State != "unconfirmed" || task.Error == "" {
 				t.Fatalf("manual install must not claim task success or block later updates: %v", task)
 			}
-			if _, err := m.Start(t.Context(), id, "v0.5.0"); err != nil {
-				t.Fatal(err)
+			// 目标只能是绑定版本（spec §14.1）：节点已手动装到目标之上时，这个 hub 没有再高的可下发目标。
+			if _, err := m.Start(t.Context(), id, "v0.5.0"); err == nil {
+				t.Fatal("accepted a target other than the bound agent version")
 			}
 		})
 	}
 }
 
 func TestActiveTasksListsOnlyActiveStates(t *testing.T) {
-	m := New(nil, clock.NewFake(time.Unix(1000, 0)), slog.Default())
+	m := New(nil, clock.NewFake(time.Unix(1000, 0)), slog.Default(), "")
 	m.states = map[int64]*heronv1.UpdateStatus{
 		1: {Task: &heronv1.UpdateTask{Id: "aaaaaaaaaaaaaaaa", Version: "v1.0.0", State: "dispatched"}},
 		2: {Task: &heronv1.UpdateTask{Id: "bbbbbbbbbbbbbbbb", Version: "v1.0.0", State: "succeeded"}},
