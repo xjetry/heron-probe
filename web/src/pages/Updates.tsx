@@ -14,6 +14,8 @@ const labels: Record<string, string> = {
   rolled_back: "已回滚", cancelled: "已取消", expired: "已过期", unconfirmed: "结果未确认",
 };
 const activeStates = new Set(["queued", "dispatched", "downloading", "stopping", "installing", "verifying", "rolling_back"]);
+// 取产物的来源由节点安装时的 --update-source 决定（spec §4.10）；更新失败时先看它走的哪条路径。
+const sourceLabels: Record<string, string> = { github: "GitHub 直连", hub: "经 hub 中转" };
 function eligible(status: UpdateStatus | undefined, version: string) {
   return !!status?.supported && !!version && lagsHub(status.version, version) && !activeStates.has(status.task?.state ?? "");
 }
@@ -21,6 +23,7 @@ function Progress({ status }: { status?: UpdateStatus }) {
   if (!status) return <span className="muted">尚未收到更新能力，请先升级安装器与 agent。</span>;
   return <div className="update-progress">
     {!status.supported && <span className="muted">不支持在线更新：{status.reason || "本机更新器不可用"}</span>}
+    {status.source && <span className="muted">{sourceLabels[status.source] ?? status.source}</span>}
     {status.task && <><strong>{labels[status.task.state] ?? status.task.state}</strong><span className="muted">目标 {status.task.version}</span>
       {status.task.state === "unconfirmed" && <span className="muted">等待超时或本机任务记录缺失，无法确认执行结果；后续上报仍会校正。重试由节点本机更新器检查是否可执行。</span>}
       {status.task.error && <span className="error">{status.task.error}</span>}</>}
@@ -76,7 +79,7 @@ export function Updates() {
         <button type="button" disabled={!eligible(hub, latest) || busy} onClick={(event) => setConfirmation({ ids: [0n], version: latest, opener: event.currentTarget })}>更新 Hub</button>
       </div>
       <div className="card"><span className="muted">官方最新正式版</span><h2>{latest || "尚未检查"}</h2>
-        <p className="muted">仅从 xjetry/heron-probe 的正式 Release 下载并校验产物，不执行远程命令。</p>
+        <p className="muted">只安装 xjetry/heron-probe 正式 Release 中带官方签名的产物，不执行远程命令；节点按安装时的选择直接从 GitHub 或经 hub 中转取得。</p>
         <p className="muted">首次启用需用新版安装器安装本机更新服务。Docker、OpenRC 与 macOS 请使用各自安装方式。</p>
       </div>
     </div>

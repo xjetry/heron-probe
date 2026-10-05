@@ -9,9 +9,9 @@ import { Updates } from "./Updates";
 
 const targets = [
   { nodeId: 0n, status: { supported: true, version: "v0.2.0" } },
-  { nodeId: 1n, status: { supported: true, version: "v0.2.0" } },
+  { nodeId: 1n, status: { supported: true, version: "v0.2.0", source: "hub" } },
   { nodeId: 2n, status: { supported: false, version: "v0.2.0", reason: "OpenRC is unsupported" } },
-  { nodeId: 3n, status: { supported: true, version: "v0.2.0" } },
+  { nodeId: 3n, status: { supported: true, version: "v0.2.0", source: "github" } },
 ];
 function render(impl: AdminImpl = {}) {
   return renderWithAdmin({
@@ -58,6 +58,15 @@ it("批量更新逐目标显示部分失败", async () => {
   await screen.findByText(/西雅图：.*节点已在更新/);
   expect(screen.getByText(/东京：更新任务已提交/)).toBeInTheDocument();
   expect(ids).toEqual([1n, 3n]);
+});
+
+it("显示每个节点取产物的来源", async () => {
+  render();
+  expect(await screen.findByText("经 hub 中转")).toBeInTheDocument();
+  expect(screen.getByText("GitHub 直连")).toBeInTheDocument();
+  // 精确匹配每个标签：页面说明文字也提到"经 hub 中转"，子串正则会把它多算一个。
+  expect(screen.getAllByText("经 hub 中转")).toHaveLength(1);
+  expect(screen.getAllByText("GitHub 直连")).toHaveLength(1);
 });
 
 it("仅排队任务可取消，回滚原因可见", async () => {
