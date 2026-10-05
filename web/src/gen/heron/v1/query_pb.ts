@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file heron/v1/query.proto.
  */
 export const file_heron_v1_query: GenFile = /*@__PURE__*/
-  fileDesc("ChRoZXJvbi92MS9xdWVyeS5wcm90bxIIaGVyb24udjEiVAoTUXVlcnlNZXRyaWNzUmVxdWVzdBIPCgdub2RlX2lkGAEgASgDEgwKBGZyb20YAiABKAMSCgoCdG8YAyABKAMSEgoKbWF4X3BvaW50cxgEIAEoDSJpChRRdWVyeU1ldHJpY3NSZXNwb25zZRINCgVsZXZlbBgBIAEoCRIOCgZzdGVwX3MYAiABKA0SCgoCdHMYAyADKAMSJgoGc2VyaWVzGAQgAygLMhYuaGVyb24udjEuTWV0cmljU2VyaWVzIlMKDE1ldHJpY1NlcmllcxIMCgRuYW1lGAEgASgJEgwKBHVuaXQYAiABKAkSJwoHc2FtcGxlcxgDIAMoCzIWLmhlcm9uLnYxLk1ldHJpY1NhbXBsZSJpCgxNZXRyaWNTYW1wbGUSCQoBbhgBIAEoDRIRCgRtZWFuGAIgASgBSACIAQESEAoDbWF4GAMgASgBSAGIAQESEAoDc3VtGAQgASgBSAKIAQFCBwoFX21lYW5CBgoEX21heEIGCgRfc3VtIlMKElF1ZXJ5UHJvYmVzUmVxdWVzdBIPCgdub2RlX2lkGAEgASgDEgwKBGZyb20YAiABKAMSCgoCdG8YAyABKAMSEgoKbWF4X3BvaW50cxgEIAEoDSJbChNRdWVyeVByb2Jlc1Jlc3BvbnNlEg0KBWxldmVsGAEgASgJEg4KBnN0ZXBfcxgCIAEoDRIlCgZzZXJpZXMYAyADKAsyFS5oZXJvbi52MS5Qcm9iZVNlcmllcyJ5CgtQcm9iZVNlcmllcxIPCgd0YXNrX2lkGAEgASgEEiYKB3NhbXBsZXMYAiADKAsyFS5oZXJvbi52MS5Qcm9iZVNhbXBsZRIhCgRraW5kGAMgASgOMhMuaGVyb24udjEuUHJvYmVLaW5kEg4KBnRhcmdldBgEIAEoCSK/AQoLUHJvYmVTYW1wbGUSCgoCdHMYASABKAMSDAoEc2VudBgCIAEoDRIMCgRsb3N0GAMgASgNEg4KBmVycm9ycxgEIAEoDRIYCgtydHRfbWVhbl91cxgFIAEoDUgAiAEBEhcKCnJ0dF9taW5fdXMYBiABKA1IAYgBARIXCgpydHRfbWF4X3VzGAcgASgNSAKIAQFCDgoMX3J0dF9tZWFuX3VzQg0KC19ydHRfbWluX3VzQg0KC19ydHRfbWF4X3VzQjRaMmdpdGh1Yi5jb20veGpldHJ5L2hlcm9uLXByb2JlL2dlbi9oZXJvbi92MTtoZXJvbnYxYgZwcm90bzM", [file_heron_v1_types]);
+  fileDesc("ChRoZXJvbi92MS9xdWVyeS5wcm90bxIIaGVyb24udjEiVAoTUXVlcnlNZXRyaWNzUmVxdWVzdBIPCgdub2RlX2lkGAEgASgDEgwKBGZyb20YAiABKAMSCgoCdG8YAyABKAMSEgoKbWF4X3BvaW50cxgEIAEoDSLjAQoUUXVlcnlNZXRyaWNzUmVzcG9uc2USDQoFbGV2ZWwYASABKAkSDgoGc3RlcF9zGAIgASgNEgoKAnRzGAMgAygDEiYKBnNlcmllcxgEIAMoCzIWLmhlcm9uLnYxLk1ldHJpY1NlcmllcxIpCghjb3ZlcmFnZRgFIAMoCzIXLmhlcm9uLnYxLlBvaW50Q292ZXJhZ2USOAoQY292ZXJhZ2Vfc3VtbWFyeRgGIAEoCzIZLmhlcm9uLnYxLkNvdmVyYWdlU3VtbWFyeUgAiAEBQhMKEV9jb3ZlcmFnZV9zdW1tYXJ5IosBCg1Qb2ludENvdmVyYWdlEhQKB21pbnV0ZXMYASABKA1IAIgBARIVCghvYnNlcnZlZBgCIAEoDUgBiAEBEh4KEW9ic2VydmVkX3JlcG9ydGVkGAMgASgNSAKIAQFCCgoIX21pbnV0ZXNCCwoJX29ic2VydmVkQhQKEl9vYnNlcnZlZF9yZXBvcnRlZCKYAQoPQ292ZXJhZ2VTdW1tYXJ5EhgKEGVsaWdpYmxlX21pbnV0ZXMYASABKAQSGAoQb2JzZXJ2ZWRfbWludXRlcxgCIAEoBBIhChlvYnNlcnZlZF9yZXBvcnRlZF9taW51dGVzGAMgASgEEhsKDmNvdmVyYWdlX3N0YXJ0GAQgASgDSACIAQFCEQoPX2NvdmVyYWdlX3N0YXJ0IlMKDE1ldHJpY1NlcmllcxIMCgRuYW1lGAEgASgJEgwKBHVuaXQYAiABKAkSJwoHc2FtcGxlcxgDIAMoCzIWLmhlcm9uLnYxLk1ldHJpY1NhbXBsZSJpCgxNZXRyaWNTYW1wbGUSCQoBbhgBIAEoDRIRCgRtZWFuGAIgASgBSACIAQESEAoDbWF4GAMgASgBSAGIAQESEAoDc3VtGAQgASgBSAKIAQFCBwoFX21lYW5CBgoEX21heEIGCgRfc3VtIlMKElF1ZXJ5UHJvYmVzUmVxdWVzdBIPCgdub2RlX2lkGAEgASgDEgwKBGZyb20YAiABKAMSCgoCdG8YAyABKAMSEgoKbWF4X3BvaW50cxgEIAEoDSJbChNRdWVyeVByb2Jlc1Jlc3BvbnNlEg0KBWxldmVsGAEgASgJEg4KBnN0ZXBfcxgCIAEoDRIlCgZzZXJpZXMYAyADKAsyFS5oZXJvbi52MS5Qcm9iZVNlcmllcyJ5CgtQcm9iZVNlcmllcxIPCgd0YXNrX2lkGAEgASgEEiYKB3NhbXBsZXMYAiADKAsyFS5oZXJvbi52MS5Qcm9iZVNhbXBsZRIhCgRraW5kGAMgASgOMhMuaGVyb24udjEuUHJvYmVLaW5kEg4KBnRhcmdldBgEIAEoCSK/AQoLUHJvYmVTYW1wbGUSCgoCdHMYASABKAMSDAoEc2VudBgCIAEoDRIMCgRsb3N0GAMgASgNEg4KBmVycm9ycxgEIAEoDRIYCgtydHRfbWVhbl91cxgFIAEoDUgAiAEBEhcKCnJ0dF9taW5fdXMYBiABKA1IAYgBARIXCgpydHRfbWF4X3VzGAcgASgNSAKIAQFCDgoMX3J0dF9tZWFuX3VzQg0KC19ydHRfbWluX3VzQg0KC19ydHRfbWF4X3VzQjRaMmdpdGh1Yi5jb20veGpldHJ5L2hlcm9uLXByb2JlL2dlbi9oZXJvbi92MTtoZXJvbnYxYgZwcm90bzM", [file_heron_v1_types]);
 
 /**
  * @generated from message heron.v1.QueryMetricsRequest
@@ -83,6 +83,21 @@ export type QueryMetricsResponse = Message<"heron.v1.QueryMetricsResponse"> & {
    * @generated from field: repeated heron.v1.MetricSeries series = 4;
    */
   series: MetricSeries[];
+
+  /**
+   * 与 ts 一一对应；三个计数独立可缺席，缺席表示无法从留存历史证明。
+   * 纯观测点的指标 n 均为 0，不代表测得的零值。
+   *
+   * @generated from field: repeated heron.v1.PointCoverage coverage = 5;
+   */
+  coverage: PointCoverage[];
+
+  /**
+   * 请求窗口的覆盖汇总，与 max_points 和输出步长无关；两个服务均返回。
+   *
+   * @generated from field: optional heron.v1.CoverageSummary coverage_summary = 6;
+   */
+  coverageSummary?: CoverageSummary | undefined;
 };
 
 /**
@@ -91,6 +106,82 @@ export type QueryMetricsResponse = Message<"heron.v1.QueryMetricsResponse"> & {
  */
 export const QueryMetricsResponseSchema: GenMessage<QueryMetricsResponse> = /*@__PURE__*/
   messageDesc(file_heron_v1_query, 1);
+
+/**
+ * @generated from message heron.v1.PointCoverage
+ */
+export type PointCoverage = Message<"heron.v1.PointCoverage"> & {
+  /**
+   * 留存在历史数据中的已准入上报分钟数，与任一指标的样本数无关。
+   *
+   * @generated from field: optional uint32 minutes = 1;
+   */
+  minutes?: number | undefined;
+
+  /**
+   * 被 hub 观测的分钟数：接收边界覆盖整分钟，2.5 秒采样，相邻单调间隔不超过
+   * 5 秒，墙钟与单调钟增量之差不超过 2 秒；不证明逐请求可服务，不是在线率。
+   *
+   * @generated from field: optional uint32 observed = 2;
+   */
+  observed?: number | undefined;
+
+  /**
+   * 既被观测、又有已准入上报的分钟数；已知时不大于 minutes 与 observed。
+   *
+   * @generated from field: optional uint32 observed_reported = 3;
+   */
+  observedReported?: number | undefined;
+};
+
+/**
+ * Describes the message heron.v1.PointCoverage.
+ * Use `create(PointCoverageSchema)` to create a new message.
+ */
+export const PointCoverageSchema: GenMessage<PointCoverage> = /*@__PURE__*/
+  messageDesc(file_heron_v1_query, 2);
+
+/**
+ * @generated from message heron.v1.CoverageSummary
+ */
+export type CoverageSummary = Message<"heron.v1.CoverageSummary"> & {
+  /**
+   * 完整落在请求窗口内、覆盖起点之后且在查询时已闭合的分钟数；与有没有数据无关。
+   *
+   * @generated from field: uint64 eligible_minutes = 1;
+   */
+  eligibleMinutes: bigint;
+
+  /**
+   * 只累加完整落在 eligible 集合内、该列已知的源桶；部分源桶与未知列不计。
+   * 未知分钟数 = eligible_minutes - observed_minutes，不计入覆盖率分母。
+   *
+   * @generated from field: uint64 observed_minutes = 2;
+   */
+  observedMinutes: bigint;
+
+  /**
+   * 覆盖率 = observed_reported_minutes / observed_minutes；分母为 0 时无可观测区间。
+   *
+   * @generated from field: uint64 observed_reported_minutes = 3;
+   */
+  observedReportedMinutes: bigint;
+
+  /**
+   * 覆盖起点，Unix 秒，分钟对齐：接收首次上报的分钟，迁移前节点为最早留存证据。
+   * 缺席表示尚无留存的覆盖记录，此时 eligible_minutes 为 0，不断言节点从未上报。
+   *
+   * @generated from field: optional int64 coverage_start = 4;
+   */
+  coverageStart?: bigint | undefined;
+};
+
+/**
+ * Describes the message heron.v1.CoverageSummary.
+ * Use `create(CoverageSummarySchema)` to create a new message.
+ */
+export const CoverageSummarySchema: GenMessage<CoverageSummary> = /*@__PURE__*/
+  messageDesc(file_heron_v1_query, 3);
 
 /**
  * @generated from message heron.v1.MetricSeries
@@ -124,7 +215,7 @@ export type MetricSeries = Message<"heron.v1.MetricSeries"> & {
  * Use `create(MetricSeriesSchema)` to create a new message.
  */
 export const MetricSeriesSchema: GenMessage<MetricSeries> = /*@__PURE__*/
-  messageDesc(file_heron_v1_query, 2);
+  messageDesc(file_heron_v1_query, 4);
 
 /**
  * @generated from message heron.v1.MetricSample
@@ -166,7 +257,7 @@ export type MetricSample = Message<"heron.v1.MetricSample"> & {
  * Use `create(MetricSampleSchema)` to create a new message.
  */
 export const MetricSampleSchema: GenMessage<MetricSample> = /*@__PURE__*/
-  messageDesc(file_heron_v1_query, 3);
+  messageDesc(file_heron_v1_query, 5);
 
 /**
  * @generated from message heron.v1.QueryProbesRequest
@@ -202,7 +293,7 @@ export type QueryProbesRequest = Message<"heron.v1.QueryProbesRequest"> & {
  * Use `create(QueryProbesRequestSchema)` to create a new message.
  */
 export const QueryProbesRequestSchema: GenMessage<QueryProbesRequest> = /*@__PURE__*/
-  messageDesc(file_heron_v1_query, 4);
+  messageDesc(file_heron_v1_query, 6);
 
 /**
  * @generated from message heron.v1.QueryProbesResponse
@@ -235,7 +326,7 @@ export type QueryProbesResponse = Message<"heron.v1.QueryProbesResponse"> & {
  * Use `create(QueryProbesResponseSchema)` to create a new message.
  */
 export const QueryProbesResponseSchema: GenMessage<QueryProbesResponse> = /*@__PURE__*/
-  messageDesc(file_heron_v1_query, 5);
+  messageDesc(file_heron_v1_query, 7);
 
 /**
  * @generated from message heron.v1.ProbeSeries
@@ -274,7 +365,7 @@ export type ProbeSeries = Message<"heron.v1.ProbeSeries"> & {
  * Use `create(ProbeSeriesSchema)` to create a new message.
  */
 export const ProbeSeriesSchema: GenMessage<ProbeSeries> = /*@__PURE__*/
-  messageDesc(file_heron_v1_query, 6);
+  messageDesc(file_heron_v1_query, 8);
 
 /**
  * @generated from message heron.v1.ProbeSample
@@ -332,5 +423,5 @@ export type ProbeSample = Message<"heron.v1.ProbeSample"> & {
  * Use `create(ProbeSampleSchema)` to create a new message.
  */
 export const ProbeSampleSchema: GenMessage<ProbeSample> = /*@__PURE__*/
-  messageDesc(file_heron_v1_query, 7);
+  messageDesc(file_heron_v1_query, 9);
 

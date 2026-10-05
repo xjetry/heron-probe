@@ -102,9 +102,14 @@ type QueryMetricsResponse struct {
 	// 不含 live 内存里尚未刷出的当前分钟。
 	Ts []int64 `protobuf:"varint,3,rep,packed,name=ts,proto3" json:"ts,omitempty"`
 	// 每个指标一条，与 metric 描述表同名同序。
-	Series        []*MetricSeries `protobuf:"bytes,4,rep,name=series,proto3" json:"series,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Series []*MetricSeries `protobuf:"bytes,4,rep,name=series,proto3" json:"series,omitempty"`
+	// 与 ts 一一对应；三个计数独立可缺席，缺席表示无法从留存历史证明。
+	// 纯观测点的指标 n 均为 0，不代表测得的零值。
+	Coverage []*PointCoverage `protobuf:"bytes,5,rep,name=coverage,proto3" json:"coverage,omitempty"`
+	// 请求窗口的覆盖汇总，与 max_points 和输出步长无关；两个服务均返回。
+	CoverageSummary *CoverageSummary `protobuf:"bytes,6,opt,name=coverage_summary,json=coverageSummary,proto3,oneof" json:"coverage_summary,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *QueryMetricsResponse) Reset() {
@@ -165,6 +170,158 @@ func (x *QueryMetricsResponse) GetSeries() []*MetricSeries {
 	return nil
 }
 
+func (x *QueryMetricsResponse) GetCoverage() []*PointCoverage {
+	if x != nil {
+		return x.Coverage
+	}
+	return nil
+}
+
+func (x *QueryMetricsResponse) GetCoverageSummary() *CoverageSummary {
+	if x != nil {
+		return x.CoverageSummary
+	}
+	return nil
+}
+
+type PointCoverage struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 留存在历史数据中的已准入上报分钟数，与任一指标的样本数无关。
+	Minutes *uint32 `protobuf:"varint,1,opt,name=minutes,proto3,oneof" json:"minutes,omitempty"`
+	// 被 hub 观测的分钟数：接收边界覆盖整分钟，2.5 秒采样，相邻单调间隔不超过
+	// 5 秒，墙钟与单调钟增量之差不超过 2 秒；不证明逐请求可服务，不是在线率。
+	Observed *uint32 `protobuf:"varint,2,opt,name=observed,proto3,oneof" json:"observed,omitempty"`
+	// 既被观测、又有已准入上报的分钟数；已知时不大于 minutes 与 observed。
+	ObservedReported *uint32 `protobuf:"varint,3,opt,name=observed_reported,json=observedReported,proto3,oneof" json:"observed_reported,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *PointCoverage) Reset() {
+	*x = PointCoverage{}
+	mi := &file_heron_v1_query_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PointCoverage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PointCoverage) ProtoMessage() {}
+
+func (x *PointCoverage) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_query_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PointCoverage.ProtoReflect.Descriptor instead.
+func (*PointCoverage) Descriptor() ([]byte, []int) {
+	return file_heron_v1_query_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *PointCoverage) GetMinutes() uint32 {
+	if x != nil && x.Minutes != nil {
+		return *x.Minutes
+	}
+	return 0
+}
+
+func (x *PointCoverage) GetObserved() uint32 {
+	if x != nil && x.Observed != nil {
+		return *x.Observed
+	}
+	return 0
+}
+
+func (x *PointCoverage) GetObservedReported() uint32 {
+	if x != nil && x.ObservedReported != nil {
+		return *x.ObservedReported
+	}
+	return 0
+}
+
+type CoverageSummary struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 完整落在请求窗口内、覆盖起点之后且在查询时已闭合的分钟数；与有没有数据无关。
+	EligibleMinutes uint64 `protobuf:"varint,1,opt,name=eligible_minutes,json=eligibleMinutes,proto3" json:"eligible_minutes,omitempty"`
+	// 只累加完整落在 eligible 集合内、该列已知的源桶；部分源桶与未知列不计。
+	// 未知分钟数 = eligible_minutes - observed_minutes，不计入覆盖率分母。
+	ObservedMinutes uint64 `protobuf:"varint,2,opt,name=observed_minutes,json=observedMinutes,proto3" json:"observed_minutes,omitempty"`
+	// 覆盖率 = observed_reported_minutes / observed_minutes；分母为 0 时无可观测区间。
+	ObservedReportedMinutes uint64 `protobuf:"varint,3,opt,name=observed_reported_minutes,json=observedReportedMinutes,proto3" json:"observed_reported_minutes,omitempty"`
+	// 覆盖起点，Unix 秒，分钟对齐：接收首次上报的分钟，迁移前节点为最早留存证据。
+	// 缺席表示尚无留存的覆盖记录，此时 eligible_minutes 为 0，不断言节点从未上报。
+	CoverageStart *int64 `protobuf:"varint,4,opt,name=coverage_start,json=coverageStart,proto3,oneof" json:"coverage_start,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CoverageSummary) Reset() {
+	*x = CoverageSummary{}
+	mi := &file_heron_v1_query_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CoverageSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CoverageSummary) ProtoMessage() {}
+
+func (x *CoverageSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_query_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CoverageSummary.ProtoReflect.Descriptor instead.
+func (*CoverageSummary) Descriptor() ([]byte, []int) {
+	return file_heron_v1_query_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *CoverageSummary) GetEligibleMinutes() uint64 {
+	if x != nil {
+		return x.EligibleMinutes
+	}
+	return 0
+}
+
+func (x *CoverageSummary) GetObservedMinutes() uint64 {
+	if x != nil {
+		return x.ObservedMinutes
+	}
+	return 0
+}
+
+func (x *CoverageSummary) GetObservedReportedMinutes() uint64 {
+	if x != nil {
+		return x.ObservedReportedMinutes
+	}
+	return 0
+}
+
+func (x *CoverageSummary) GetCoverageStart() int64 {
+	if x != nil && x.CoverageStart != nil {
+		return *x.CoverageStart
+	}
+	return 0
+}
+
 type MetricSeries struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs、rx_bytes、tx_bytes、
@@ -180,7 +337,7 @@ type MetricSeries struct {
 
 func (x *MetricSeries) Reset() {
 	*x = MetricSeries{}
-	mi := &file_heron_v1_query_proto_msgTypes[2]
+	mi := &file_heron_v1_query_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -192,7 +349,7 @@ func (x *MetricSeries) String() string {
 func (*MetricSeries) ProtoMessage() {}
 
 func (x *MetricSeries) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_query_proto_msgTypes[2]
+	mi := &file_heron_v1_query_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -205,7 +362,7 @@ func (x *MetricSeries) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetricSeries.ProtoReflect.Descriptor instead.
 func (*MetricSeries) Descriptor() ([]byte, []int) {
-	return file_heron_v1_query_proto_rawDescGZIP(), []int{2}
+	return file_heron_v1_query_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *MetricSeries) GetName() string {
@@ -247,7 +404,7 @@ type MetricSample struct {
 
 func (x *MetricSample) Reset() {
 	*x = MetricSample{}
-	mi := &file_heron_v1_query_proto_msgTypes[3]
+	mi := &file_heron_v1_query_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -259,7 +416,7 @@ func (x *MetricSample) String() string {
 func (*MetricSample) ProtoMessage() {}
 
 func (x *MetricSample) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_query_proto_msgTypes[3]
+	mi := &file_heron_v1_query_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -272,7 +429,7 @@ func (x *MetricSample) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetricSample.ProtoReflect.Descriptor instead.
 func (*MetricSample) Descriptor() ([]byte, []int) {
-	return file_heron_v1_query_proto_rawDescGZIP(), []int{3}
+	return file_heron_v1_query_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *MetricSample) GetN() uint32 {
@@ -317,7 +474,7 @@ type QueryProbesRequest struct {
 
 func (x *QueryProbesRequest) Reset() {
 	*x = QueryProbesRequest{}
-	mi := &file_heron_v1_query_proto_msgTypes[4]
+	mi := &file_heron_v1_query_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -329,7 +486,7 @@ func (x *QueryProbesRequest) String() string {
 func (*QueryProbesRequest) ProtoMessage() {}
 
 func (x *QueryProbesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_query_proto_msgTypes[4]
+	mi := &file_heron_v1_query_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -342,7 +499,7 @@ func (x *QueryProbesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryProbesRequest.ProtoReflect.Descriptor instead.
 func (*QueryProbesRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_query_proto_rawDescGZIP(), []int{4}
+	return file_heron_v1_query_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *QueryProbesRequest) GetNodeId() int64 {
@@ -387,7 +544,7 @@ type QueryProbesResponse struct {
 
 func (x *QueryProbesResponse) Reset() {
 	*x = QueryProbesResponse{}
-	mi := &file_heron_v1_query_proto_msgTypes[5]
+	mi := &file_heron_v1_query_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -399,7 +556,7 @@ func (x *QueryProbesResponse) String() string {
 func (*QueryProbesResponse) ProtoMessage() {}
 
 func (x *QueryProbesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_query_proto_msgTypes[5]
+	mi := &file_heron_v1_query_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -412,7 +569,7 @@ func (x *QueryProbesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryProbesResponse.ProtoReflect.Descriptor instead.
 func (*QueryProbesResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_query_proto_rawDescGZIP(), []int{5}
+	return file_heron_v1_query_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *QueryProbesResponse) GetLevel() string {
@@ -453,7 +610,7 @@ type ProbeSeries struct {
 
 func (x *ProbeSeries) Reset() {
 	*x = ProbeSeries{}
-	mi := &file_heron_v1_query_proto_msgTypes[6]
+	mi := &file_heron_v1_query_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -465,7 +622,7 @@ func (x *ProbeSeries) String() string {
 func (*ProbeSeries) ProtoMessage() {}
 
 func (x *ProbeSeries) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_query_proto_msgTypes[6]
+	mi := &file_heron_v1_query_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -478,7 +635,7 @@ func (x *ProbeSeries) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeSeries.ProtoReflect.Descriptor instead.
 func (*ProbeSeries) Descriptor() ([]byte, []int) {
-	return file_heron_v1_query_proto_rawDescGZIP(), []int{6}
+	return file_heron_v1_query_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ProbeSeries) GetTaskId() uint64 {
@@ -530,7 +687,7 @@ type ProbeSample struct {
 
 func (x *ProbeSample) Reset() {
 	*x = ProbeSample{}
-	mi := &file_heron_v1_query_proto_msgTypes[7]
+	mi := &file_heron_v1_query_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -542,7 +699,7 @@ func (x *ProbeSample) String() string {
 func (*ProbeSample) ProtoMessage() {}
 
 func (x *ProbeSample) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_query_proto_msgTypes[7]
+	mi := &file_heron_v1_query_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -555,7 +712,7 @@ func (x *ProbeSample) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeSample.ProtoReflect.Descriptor instead.
 func (*ProbeSample) Descriptor() ([]byte, []int) {
-	return file_heron_v1_query_proto_rawDescGZIP(), []int{7}
+	return file_heron_v1_query_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ProbeSample) GetTs() int64 {
@@ -617,12 +774,29 @@ const file_heron_v1_query_proto_rawDesc = "" +
 	"\x04from\x18\x02 \x01(\x03R\x04from\x12\x0e\n" +
 	"\x02to\x18\x03 \x01(\x03R\x02to\x12\x1d\n" +
 	"\n" +
-	"max_points\x18\x04 \x01(\rR\tmaxPoints\"\x83\x01\n" +
+	"max_points\x18\x04 \x01(\rR\tmaxPoints\"\x98\x02\n" +
 	"\x14QueryMetricsResponse\x12\x14\n" +
 	"\x05level\x18\x01 \x01(\tR\x05level\x12\x15\n" +
 	"\x06step_s\x18\x02 \x01(\rR\x05stepS\x12\x0e\n" +
 	"\x02ts\x18\x03 \x03(\x03R\x02ts\x12.\n" +
-	"\x06series\x18\x04 \x03(\v2\x16.heron.v1.MetricSeriesR\x06series\"h\n" +
+	"\x06series\x18\x04 \x03(\v2\x16.heron.v1.MetricSeriesR\x06series\x123\n" +
+	"\bcoverage\x18\x05 \x03(\v2\x17.heron.v1.PointCoverageR\bcoverage\x12I\n" +
+	"\x10coverage_summary\x18\x06 \x01(\v2\x19.heron.v1.CoverageSummaryH\x00R\x0fcoverageSummary\x88\x01\x01B\x13\n" +
+	"\x11_coverage_summary\"\xb0\x01\n" +
+	"\rPointCoverage\x12\x1d\n" +
+	"\aminutes\x18\x01 \x01(\rH\x00R\aminutes\x88\x01\x01\x12\x1f\n" +
+	"\bobserved\x18\x02 \x01(\rH\x01R\bobserved\x88\x01\x01\x120\n" +
+	"\x11observed_reported\x18\x03 \x01(\rH\x02R\x10observedReported\x88\x01\x01B\n" +
+	"\n" +
+	"\b_minutesB\v\n" +
+	"\t_observedB\x14\n" +
+	"\x12_observed_reported\"\xe2\x01\n" +
+	"\x0fCoverageSummary\x12)\n" +
+	"\x10eligible_minutes\x18\x01 \x01(\x04R\x0feligibleMinutes\x12)\n" +
+	"\x10observed_minutes\x18\x02 \x01(\x04R\x0fobservedMinutes\x12:\n" +
+	"\x19observed_reported_minutes\x18\x03 \x01(\x04R\x17observedReportedMinutes\x12*\n" +
+	"\x0ecoverage_start\x18\x04 \x01(\x03H\x00R\rcoverageStart\x88\x01\x01B\x11\n" +
+	"\x0f_coverage_start\"h\n" +
 	"\fMetricSeries\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04unit\x18\x02 \x01(\tR\x04unit\x120\n" +
@@ -676,29 +850,33 @@ func file_heron_v1_query_proto_rawDescGZIP() []byte {
 	return file_heron_v1_query_proto_rawDescData
 }
 
-var file_heron_v1_query_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_heron_v1_query_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_heron_v1_query_proto_goTypes = []any{
 	(*QueryMetricsRequest)(nil),  // 0: heron.v1.QueryMetricsRequest
 	(*QueryMetricsResponse)(nil), // 1: heron.v1.QueryMetricsResponse
-	(*MetricSeries)(nil),         // 2: heron.v1.MetricSeries
-	(*MetricSample)(nil),         // 3: heron.v1.MetricSample
-	(*QueryProbesRequest)(nil),   // 4: heron.v1.QueryProbesRequest
-	(*QueryProbesResponse)(nil),  // 5: heron.v1.QueryProbesResponse
-	(*ProbeSeries)(nil),          // 6: heron.v1.ProbeSeries
-	(*ProbeSample)(nil),          // 7: heron.v1.ProbeSample
-	(ProbeKind)(0),               // 8: heron.v1.ProbeKind
+	(*PointCoverage)(nil),        // 2: heron.v1.PointCoverage
+	(*CoverageSummary)(nil),      // 3: heron.v1.CoverageSummary
+	(*MetricSeries)(nil),         // 4: heron.v1.MetricSeries
+	(*MetricSample)(nil),         // 5: heron.v1.MetricSample
+	(*QueryProbesRequest)(nil),   // 6: heron.v1.QueryProbesRequest
+	(*QueryProbesResponse)(nil),  // 7: heron.v1.QueryProbesResponse
+	(*ProbeSeries)(nil),          // 8: heron.v1.ProbeSeries
+	(*ProbeSample)(nil),          // 9: heron.v1.ProbeSample
+	(ProbeKind)(0),               // 10: heron.v1.ProbeKind
 }
 var file_heron_v1_query_proto_depIdxs = []int32{
-	2, // 0: heron.v1.QueryMetricsResponse.series:type_name -> heron.v1.MetricSeries
-	3, // 1: heron.v1.MetricSeries.samples:type_name -> heron.v1.MetricSample
-	6, // 2: heron.v1.QueryProbesResponse.series:type_name -> heron.v1.ProbeSeries
-	7, // 3: heron.v1.ProbeSeries.samples:type_name -> heron.v1.ProbeSample
-	8, // 4: heron.v1.ProbeSeries.kind:type_name -> heron.v1.ProbeKind
-	5, // [5:5] is the sub-list for method output_type
-	5, // [5:5] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	4,  // 0: heron.v1.QueryMetricsResponse.series:type_name -> heron.v1.MetricSeries
+	2,  // 1: heron.v1.QueryMetricsResponse.coverage:type_name -> heron.v1.PointCoverage
+	3,  // 2: heron.v1.QueryMetricsResponse.coverage_summary:type_name -> heron.v1.CoverageSummary
+	5,  // 3: heron.v1.MetricSeries.samples:type_name -> heron.v1.MetricSample
+	8,  // 4: heron.v1.QueryProbesResponse.series:type_name -> heron.v1.ProbeSeries
+	9,  // 5: heron.v1.ProbeSeries.samples:type_name -> heron.v1.ProbeSample
+	10, // 6: heron.v1.ProbeSeries.kind:type_name -> heron.v1.ProbeKind
+	7,  // [7:7] is the sub-list for method output_type
+	7,  // [7:7] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_heron_v1_query_proto_init() }
@@ -707,15 +885,18 @@ func file_heron_v1_query_proto_init() {
 		return
 	}
 	file_heron_v1_types_proto_init()
+	file_heron_v1_query_proto_msgTypes[1].OneofWrappers = []any{}
+	file_heron_v1_query_proto_msgTypes[2].OneofWrappers = []any{}
 	file_heron_v1_query_proto_msgTypes[3].OneofWrappers = []any{}
-	file_heron_v1_query_proto_msgTypes[7].OneofWrappers = []any{}
+	file_heron_v1_query_proto_msgTypes[5].OneofWrappers = []any{}
+	file_heron_v1_query_proto_msgTypes[9].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_heron_v1_query_proto_rawDesc), len(file_heron_v1_query_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
