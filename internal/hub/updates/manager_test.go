@@ -120,7 +120,8 @@ func TestUpdateQueueExpiryCancellationAndSupport(t *testing.T) {
 		}
 	}
 	m, id, clk := fixture(t)
-	// 预发布永远过不了 ValidVersion，任何绑定下它都到不了 Newer 检查，被目标检查拒绝。
+	// 绑定必须是正式版（Start 先以 ValidVersion 校验绑定），预发布目标不可能等于它：被目标
+	// 检查拒绝，到不了 Newer。
 	if _, err := m.Start(t.Context(), id, "v0.3.0-rc1"); err == nil {
 		t.Fatal("accepted target v0.3.0-rc1")
 	}
@@ -292,9 +293,14 @@ func TestManualUpgradeReconcilesUnexecutedAuthorization(t *testing.T) {
 			if task := m.Snapshot(id).Task; task.State != "unconfirmed" || task.Error == "" {
 				t.Fatalf("manual install must not claim task success or block later updates: %v", task)
 			}
-			// 目标只能是绑定版本（spec §14.1）：节点已手动装到目标之上时，这个 hub 没有再高的可下发目标。
-			if _, err := m.Start(t.Context(), id, "v0.5.0"); err == nil {
-				t.Fatal("accepted a target other than the bound agent version")
+			// 未确认的任务不得挡住后续更新：hub 升级到绑定更高 agent 版本的 release 后（同一库上的
+			// 新进程、绑定 v0.5.0），节点必须还能再更新（spec §14.1：目标随 hub 的绑定走）。
+			upgraded := New(m.st, m.clk, m.log, "v0.5.0")
+			if err := upgraded.Load(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := upgraded.Start(t.Context(), id, "v0.5.0"); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
