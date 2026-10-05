@@ -3,6 +3,7 @@ import { useQuery } from "@connectrpc/connect-query";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useRetained } from "../api/useRetained";
 import type { QueryMetricsRequestSchema, QueryMetricsResponseSchema, QueryProbesRequestSchema, QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
+import { coverageView } from "../lib/coverage";
 import { lossPercent, rttMeanMs, seriesLabels, taskIdsOf, toProbeAligned, type ProbeValue } from "../lib/probes";
 import { toAligned, unitOf, type SeriesSelection } from "../lib/series";
 import { Chart } from "./Chart";
@@ -139,10 +140,23 @@ export function RangePicker({ history }: { history: HistoryState }) {
 }
 
 // noProbes 是窗口内没有探测结果时的说明：面板给出去任务页的链接，公开页只说明没有。
-export function HistoryCharts({ history, noProbes }: { history: HistoryState; noProbes: ReactNode }) {
-  const { charts, probeCharts, probes } = history;
+// showCoverage 默认不显示：本组件由管理端与公开页共用，覆盖率口径（hub 的观测与保留期、节点首报）
+// 只在管理端展示；默认方向取"不显示"，新调用方忘记传参时覆盖率不会被带到公开页。
+export function HistoryCharts({ history, noProbes, showCoverage = false }: { history: HistoryState; noProbes: ReactNode; showCoverage?: boolean }) {
+  const { charts, probeCharts, probes, metrics } = history;
+  const coverage = coverageView(metrics.data?.coverageSummary);
   return (
     <>
+      {/* 覆盖率取与图表同一次 QueryMetrics 响应的 coverageSummary，不另发请求；旧 hub 没有这个字段，
+          absent 时整项不显示（不显示 0%、也不显示"未知"）。 */}
+      {showCoverage && coverage.kind !== "absent" && (
+        <p className="muted">
+          {coverage.kind === "no-start" && "尚无覆盖记录"}
+          {coverage.kind === "no-observed" && "无可观测区间"}
+          {coverage.kind === "rate" && <>上报覆盖 {coverage.percent}%{coverage.unknown && <>，未知 {coverage.unknown}</>}</>}
+          。这是 hub 观测到的分钟里节点有上报的比例，不是在线率；hub 未运行、超出保留期等无法观测的时段计为未知。
+        </p>
+      )}
       {charts.length > 0 && <p className="muted">峰值为每个图表时间桶内已采集样本的最大值，不代表采样间隔内的瞬时最高值；缺少峰值时留空。</p>}
       <div className="grid">
         {charts.map((c) => (

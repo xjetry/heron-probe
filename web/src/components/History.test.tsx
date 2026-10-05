@@ -1,9 +1,9 @@
-import { create } from "@bufbuild/protobuf";
+import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { AlignedData } from "uplot";
 import { PublicService } from "../gen/heron/v1/public_pb";
-import { type QueryMetricsRequest, QueryMetricsResponseSchema } from "../gen/heron/v1/query_pb";
+import { CoverageSummarySchema, type QueryMetricsRequest, QueryMetricsResponseSchema } from "../gen/heron/v1/query_pb";
 import { NodeDetail } from "../pages/NodeDetail";
 import { NodePage } from "../public/NodePage";
 import { renderWithAdmin, renderWithService } from "../test/harness";
@@ -82,4 +82,65 @@ it.each([
   });
   expect(panels).toEqual(expectedPanels);
   expect(screen.getByText("峰值为每个图表时间桶内已采集样本的最大值，不代表采样间隔内的瞬时最高值；缺少峰值时留空。")).toBeInTheDocument();
+});
+
+// 覆盖率只随管理端显示：公开页复用同一组件但不传 showCoverage（默认不显示），即便响应里带着
+// coverageSummary 也不能渲染出来；管理端遇旧 hub 响应（没有该字段）同样不显示。
+const COVERAGE_TEXT = /上报覆盖|尚无覆盖记录|无可观测区间/;
+
+function renderHistory(surface: "管理" | "公开", summary?: MessageInitShape<typeof CoverageSummarySchema>) {
+  const queries = {
+    queryMetrics: async (req: QueryMetricsRequest) => {
+      const response = await queryMetrics(req);
+      if (summary) response.coverageSummary = create(CoverageSummarySchema, summary);
+      return response;
+    },
+    queryProbes: async () => ({ level: "1m", stepS: 60, series: [] }),
+  };
+  if (surface === "管理") {
+    renderWithAdmin({ ...queries, listNodes: async () => ({ nodes: [{ id: 7n, name: "node" }] }), getTraffic: async () => ({ nodes: [] }) },
+      [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  } else {
+    renderWithService(PublicService, { ...queries, getSnapshot: async () => ({ nodes: [{ id: 7n, name: "node" }] }) },
+      [{ path: "/nodes/:id", Component: NodePage }], "/nodes/7");
+  }
+}
+
+it.each([
+  {
+    name: "正常：百分比一位小数，未知时长按量级选单位",
+    summary: { coverageStart: 1_700_000_000n, eligibleMinutes: 200n, observedMinutes: 150n, observedReportedMinutes: 100n },
+    pattern: /上报覆盖 66\.7%，未知 50 分钟。这是 hub 观测到的分钟里节点有上报的比例，不是在线率/,
+  },
+  {
+    name: "无未知分钟时不显示未知时长",
+    summary: { coverageStart: 1_700_000_000n, eligibleMinutes: 150n, observedMinutes: 150n, observedReportedMinutes: 150n },
+    pattern: /上报覆盖 100\.0%。这是/,
+  },
+  {
+    name: "coverageStart 缺席：只说尚无覆盖记录，不断言从未上报",
+    summary: {},
+    pattern: /尚无覆盖记录。这是/,
+  },
+  {
+    name: "observedMinutes 为 0：无可观测区间，不出现 NaN/Infinity",
+    summary: { coverageStart: 1_700_000_000n, eligibleMinutes: 60n },
+    pattern: /无可观测区间。这是/,
+  },
+])("管理端显示上报覆盖率（$name）", async ({ summary, pattern }) => {
+  renderHistory("管理", summary);
+  expect(await screen.findByText(pattern)).toBeInTheDocument();
+  expect(screen.queryByText(/NaN|Infinity/)).not.toBeInTheDocument();
+});
+
+it("公开页不传 showCoverage（默认不显示）：响应带 coverageSummary 也不渲染", async () => {
+  renderHistory("公开", { coverageStart: 1_700_000_000n, eligibleMinutes: 200n, observedMinutes: 150n, observedReportedMinutes: 100n });
+  await screen.findByText(/级别 1m，每点 60s/);
+  expect(screen.queryByText(COVERAGE_TEXT)).not.toBeInTheDocument();
+});
+
+it("旧 hub 响应没有 coverageSummary：管理端也不显示覆盖率项", async () => {
+  renderHistory("管理");
+  await screen.findByText(/级别 1m，每点 60s/);
+  expect(screen.queryByText(COVERAGE_TEXT)).not.toBeInTheDocument();
 });

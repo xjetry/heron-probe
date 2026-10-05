@@ -40,7 +40,7 @@ export function NodeDetail() {
         <RangePicker history={history} />
       </header>
       <TrafficCard nodeId={nodeId} data={traffic.data} />
-      <HistoryCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>} />
+      <HistoryCharts history={history} showCoverage noProbes={<p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>} />
       {gate.ready ? node?.facts && (
         <dl className="card facts">
           {/* 来源地址是 hub 在上报上看到的对端，不是 agent 自报；只在管理端显示，公开页没有这个字段。 */}
