@@ -257,7 +257,7 @@ type AdminServiceClient interface {
 	// 第一次请求已在服务端删掉这一行，带同一 cookie 重试会得到 Unauthenticated 而非再次成功——
 	// 会话已不存在，结果仍安全。
 	RevokeSession(context.Context, *connect.Request[v1.RevokeSessionRequest]) (*connect.Response[v1.RevokeSessionResponse], error)
-	// 列出节点；可按标签过滤（ListNodesRequest.tags）。
+	// 列出节点；可按标签过滤（ListNodesRequest.tags），或只列无标签节点（ListNodesRequest.untagged）。
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
 	// 建节点（默认公开）并返回一次性安装凭据；明文只在此处返回一次，须经 AgentService.Register 换成运行 token，不能直接上报。
 	// 新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时
@@ -1222,7 +1222,7 @@ type AdminServiceHandler interface {
 	// 第一次请求已在服务端删掉这一行，带同一 cookie 重试会得到 Unauthenticated 而非再次成功——
 	// 会话已不存在，结果仍安全。
 	RevokeSession(context.Context, *connect.Request[v1.RevokeSessionRequest]) (*connect.Response[v1.RevokeSessionResponse], error)
-	// 列出节点；可按标签过滤（ListNodesRequest.tags）。
+	// 列出节点；可按标签过滤（ListNodesRequest.tags），或只列无标签节点（ListNodesRequest.untagged）。
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
 	// 建节点（默认公开）并返回一次性安装凭据；明文只在此处返回一次，须经 AgentService.Register 换成运行 token，不能直接上报。
 	// 新节点继承全部 all_nodes 探测任务，它们多于每节点上限（64）时

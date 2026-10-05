@@ -2127,9 +2127,14 @@ func (x *Node) GetMaintenance() bool {
 type ListNodesRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 只返回同时挂着这里全部标签的节点（交集：多选是逐步收窄，再选一个结果只会变少）。名字按 UpdateNodeRequest.tags
-	// 的规则校验，大小写不敏感，折叠后重复的算一个；有不存在的标签时结果为空。空列表不过滤、返回全部节点。
+	// 的规则校验，大小写不敏感，折叠后重复的算一个；有不存在的标签时结果为空。空列表不过滤：untagged 为假时返回
+	// 全部节点，untagged 为真时返回全部无标签节点（见下）。与 untagged 同时给出会被拒绝，见 untagged。
 	// 至多 16 个不同的标签：每个节点至多挂 16 个，更多的交集不可能匹配任何节点，按参数错误拒绝。
-	Tags          []string `protobuf:"bytes,1,rep,name=tags,proto3" json:"tags,omitempty"`
+	Tags []string `protobuf:"bytes,1,rep,name=tags,proto3" json:"tags,omitempty"`
+	// 为真时只返回没有任何标签的节点（仍限于调用方可见的节点范围）。为假时不按此过滤。
+	// 与非空 tags 互斥，同时给出返回 InvalidArgument：带有所选全部标签与没有标签的交集必然为空，空结果会把写错的
+	// 条件伪装成"没有这样的节点"——与超过 16 个标签按参数错误拒绝同一理由。
+	Untagged      bool `protobuf:"varint,2,opt,name=untagged,proto3" json:"untagged,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2169,6 +2174,13 @@ func (x *ListNodesRequest) GetTags() []string {
 		return x.Tags
 	}
 	return nil
+}
+
+func (x *ListNodesRequest) GetUntagged() bool {
+	if x != nil {
+		return x.Untagged
+	}
+	return false
 }
 
 type ListNodesResponse struct {
@@ -10182,9 +10194,10 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\vmaintenance\x18\x14 \x01(\bR\vmaintenanceB\x0f\n" +
 	"\r_last_seen_atB\x13\n" +
 	"\x11_facts_updated_atB\x12\n" +
-	"\x10_offline_grace_s\"&\n" +
+	"\x10_offline_grace_s\"B\n" +
 	"\x10ListNodesRequest\x12\x12\n" +
-	"\x04tags\x18\x01 \x03(\tR\x04tags\"9\n" +
+	"\x04tags\x18\x01 \x03(\tR\x04tags\x12\x1a\n" +
+	"\buntagged\x18\x02 \x01(\bR\buntagged\"9\n" +
 	"\x11ListNodesResponse\x12$\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x0e.heron.v1.NodeR\x05nodes\"T\n" +
 	"\x11CreateNodeRequest\x12\x12\n" +
