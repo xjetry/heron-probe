@@ -27,13 +27,23 @@ import { lagsHub } from "../lib/version";
 import { NodeEditor } from "./NodeEditor";
 import { BatchNodeTagsEditor } from "./BatchNodeTagsEditor";
 
+// 标签过滤二选一：按一组标签取交集，或只要无标签节点。空 names 表示不过滤。
+// 用判别式联合让"既选了标签又选了无标签"在类型上不可表示——hub 对两个条件同时给出返回 InvalidArgument
+// （ListNodesRequest.untagged 注释），页面不该存在能构造出该请求的路径。
+type TagFilterState = { kind: "tags"; names: string[] } | { kind: "untagged" };
+
 export function Nodes() {
   const qc = useQueryClient();
   const transport = useTransport();
   const { error, mutationOptions } = useLatestError();
-  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [tagFilter, setTagFilter] = useState<TagFilterState>({ kind: "tags", names: [] });
+  // 请求由状态推出，两条分支在类型上已经互斥（见 TagFilterState）：无标签只带 untagged，标签只带 tags。
   // 过滤切换失败时保留旧列表；弹窗草稿独立于列表，刷新与排序不会卸载正在编辑的节点。
-  const nodes = useRetained(useQuery(AdminService.method.listNodes, { tags: tagFilter }, { refetchInterval: 10_000 }));
+  const nodes = useRetained(useQuery(
+    AdminService.method.listNodes,
+    tagFilter.kind === "untagged" ? { tags: [], untagged: true } : { tags: tagFilter.names },
+    { refetchInterval: 10_000 },
+  ));
   const tags = useQuery(AdminService.method.listTags, {});
   const snapshot = useQuery(AdminService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
   const hubVersion = snapshot.data?.hubVersion;
@@ -96,7 +106,7 @@ export function Nodes() {
     },
   });
   const reorder = useMutation(AdminService.method.reorderNodes);
-  const filtered = search !== "" || tagFilter.length > 0;
+  const filtered = search !== "" || tagFilter.kind === "untagged" || tagFilter.names.length > 0;
   const narrowed = filtered || nodes.stale;
   const order = useOrder({
     items: nodes.data?.nodes ?? [], id: (node) => node.id, enabled: !narrowed && nodes.data !== undefined,
@@ -110,7 +120,12 @@ export function Nodes() {
   });
   const removeTag = useMutation(AdminService.method.deleteTag, {
     ...mutationOptions,
-    onSuccess: (_result, request) => { setTagFilter((current) => withoutTag(current, request.name ?? "")); return refresh(); },
+    // 删掉的标签必须从过滤里去掉，否则条件引用一个已不存在的标签，列表会永远为空
+    // （ListNodesRequest.tags 注释：有不存在的标签时结果为空）。无标签过滤下没有标签可选，状态不变。
+    onSuccess: (_result, request) => {
+      setTagFilter((current) => current.kind === "tags" ? { kind: "tags", names: withoutTag(current.names, request.name ?? "") } : current);
+      return refresh();
+    },
   });
   const onCreate = (event: FormEvent) => { event.preventDefault(); if (name.trim() && !create.isPending) create.mutate(billingDraftSet(billing) ? { name, billing } : { name }); };
   const gate = queryGate(nodes);
@@ -147,7 +162,7 @@ export function Nodes() {
     {secret && <NodeInstallModal secretLabel={secret.label} token={secret.value} hubVersion={hubVersion} error={snapshot.error} reRegister={secret.reRegister} opener={secret.opener} onClose={() => setSecret(null)} />}
     <div className="node-filters">
       <label className="node-search">搜索节点<input type="search" placeholder="名称、IP、地区、备注或主机名" value={search} onChange={(event) => { setSearch(event.target.value); setSelected([]); }} /></label>
-      <TagFilter tags={tags.data?.tags} error={tags.error} selected={tagFilter} onChange={(value) => { setTagFilter(value); setSelected([]); }} />
+      <TagFilter tags={tags.data?.tags} error={tags.error} filter={tagFilter} onChange={(value) => { setTagFilter(value); setSelected([]); }} />
     </div>
     {!editing && errorBanner(error)}
     {!batchEditor && errorBanner(batchUpdate.error)}
@@ -242,22 +257,29 @@ function NodeRow({ node, status, hubVersion, editing, deleting, rotating, select
   </tr>;
 }
 
-function TagFilter({ tags, error, selected, onChange }: {
-  tags: readonly Tag[] | undefined; error: unknown; selected: readonly string[]; onChange: (next: string[]) => void;
+function TagFilter({ tags, error, filter, onChange }: {
+  tags: readonly Tag[] | undefined; error: unknown; filter: TagFilterState; onChange: (next: TagFilterState) => void;
 }) {
   const listed = (tags ?? []).map((tag) => tag.name);
+  const selected = filter.kind === "tags" ? filter.names : [];
   // 已选却从清单消失的标签仍须可取消，否则用户会困在无法清空的过滤条件里。
   const names = [...listed, ...selected.filter((name) => !listed.some((tag) => sameTag(tag, name)))];
   const count = (name: string) => tags?.find((tag) => tag.name === name)?.nodeCount;
-  return <fieldset className="picks tag-filter"><legend>按标签过滤（同时带有所选全部标签）</legend>
+  const untagged = filter.kind === "untagged";
+  return <fieldset className="picks tag-filter"><legend>按标签过滤（多选为同时满足）</legend>
     {error != null && <span role="alert" className="error">无法取得标签清单：{errorText(error)}</span>}
+    {/* "无标签"不依赖 ListTags：清单加载中、为空或失败都照常可勾。它的可访问名称与标签项分开命名——
+        用户可能真的建一个叫"无标签"的标签，两者撞名就选不中标签了。 */}
+    <label><input type="checkbox" aria-label="只看没有标签的节点" checked={untagged} onChange={() => onChange(untagged ? { kind: "tags", names: [] } : { kind: "untagged" })} />无标签</label>
     {error == null && tags !== undefined && names.length === 0 && <span className="muted">还没有标签。</span>}
     {names.map((name) => {
       const checked = selected.some((tag) => sameTag(tag, name));
       const n = count(name);
-      return <label key={name}><input type="checkbox" aria-label={`按标签过滤 ${name}`} checked={checked} onChange={() => onChange(checked ? withoutTag(selected, name) : withTag(selected, name))} />{name}{n !== undefined && <span className="muted">（{n}）</span>}</label>;
+      // 无标签状态下 selected 为空：勾任一标签经 withTag 自然替换为只选这一个（互斥由状态形状保证，
+      // untagged 分支不携带标签名）；标签状态下则在已选里增删。
+      return <label key={name}><input type="checkbox" aria-label={`按标签过滤 ${name}`} checked={checked} onChange={() => onChange({ kind: "tags", names: checked ? withoutTag(selected, name) : withTag(selected, name) })} />{name}{n !== undefined && <span className="muted">（{n}）</span>}</label>;
     })}
-    {selected.length > 0 && <button type="button" className="link" onClick={() => onChange([])}>清除标签过滤</button>}
+    {(untagged || selected.length > 0) && <button type="button" className="link" onClick={() => onChange({ kind: "tags", names: [] })}>清除标签过滤</button>}
   </fieldset>;
 }
 
