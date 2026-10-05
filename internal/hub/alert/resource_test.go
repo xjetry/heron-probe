@@ -33,6 +33,8 @@ func TestResourceContinuousWindowsAndMissingReadings(t *testing.T) {
 			eval(2, store.StateFiring)
 			write(3, 80)
 			eval(3, store.StateFiring)
+			_, err := f.st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: f.ids[0], TS: base + 4*60, CoverageStart: base, Bucket: metric.NewBucket(), ObservationOnly: true, Observed: true}}})
+			must(t, err)
 			eval(4, store.StateFiring)
 			f.restart(t)
 			write(5, 75)

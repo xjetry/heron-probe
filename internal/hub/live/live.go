@@ -14,10 +14,12 @@ import (
 )
 
 type Live struct {
-	mu    sync.Mutex
-	clk   clock.Clock
-	ttl   time.Duration
-	nodes map[int64]*entry
+	mu          sync.Mutex
+	clk         clock.Clock
+	ttl         time.Duration
+	nodes       map[int64]*entry
+	coverage    map[int64]int64
+	observation observation
 }
 
 type entry struct {
@@ -47,7 +49,7 @@ type Entry struct {
 }
 
 func New(clk clock.Clock, ttl time.Duration) *Live {
-	return &Live{clk: clk, ttl: ttl, nodes: map[int64]*entry{}}
+	return &Live{clk: clk, ttl: ttl, nodes: map[int64]*entry{}, coverage: map[int64]int64{}}
 }
 
 func minuteOf(t time.Time) int64 {
@@ -59,10 +61,13 @@ func minuteOf(t time.Time) int64 {
 // "最近一次上报"的事实，v4 与 v6 交替上报时面板看到的就是最近那一次。返回样本所属分钟桶的起始、距该节点上一次上报的
 // 单调间隔，以及这是否是本进程里该节点的首次上报（first 为 true 时 gap 无意义）。调用方保证 m 不再被修改。
 func (l *Live) Observe(nodeID int64, source string, m *heronv1.Metrics) (ts int64, gap time.Duration, first bool) {
-	now, wall := l.clk.Mono(), l.clk.Now()
-	ts = minuteOf(wall)
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	now, wall := l.clk.Mono(), l.clk.Now()
+	ts = minuteOf(wall)
+	if _, ok := l.coverage[nodeID]; !ok {
+		l.coverage[nodeID] = ts
+	}
 	e := l.nodes[nodeID]
 	if e == nil {
 		e = &entry{buckets: map[int64]*metric.Bucket{}, probes: map[probeKey]*metric.ProbeBucket{}}
@@ -146,24 +151,42 @@ func (l *Live) Get(nodeID int64) (Entry, bool) {
 // Flush 取走所有已闭合的桶：起始早于当前分钟的。取走即从 live 删除——每个
 // 桶至多被交给写协程一次，写库的加法合并才不会重复计入。
 func (l *Live) Flush() metric.Batch {
-	return l.take(minuteOf(l.clk.Now()))
+	return l.take(false)
 }
 
 // Drain 取走全部桶，包括当前分钟仍开着的；退出时用。
 func (l *Live) Drain() metric.Batch {
-	return l.take(1<<62 - 1)
+	return l.take(true)
 }
 
-func (l *Live) take(before int64) metric.Batch {
+func (l *Live) take(all bool) metric.Batch {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	seal := l.readClock()
+	before := minuteOf(seal.wall)
+	observed := l.sealObservations(seal)
+	if all {
+		before = 1<<62 - 1
+	}
 	var batch metric.Batch
+	for id, start := range l.coverage {
+		for ts := range observed {
+			if ts < start {
+				continue
+			}
+			if e := l.nodes[id]; e != nil && e.buckets[ts] != nil {
+				continue
+			}
+			batch.Rows = append(batch.Rows, metric.Row{NodeID: id, TS: ts, Bucket: metric.NewBucket(), ObservationOnly: true, Observed: true, CoverageStart: start})
+		}
+	}
 	for id, e := range l.nodes {
 		for ts, b := range e.buckets {
 			if ts >= before {
 				continue
 			}
-			batch.Rows = append(batch.Rows, metric.Row{NodeID: id, TS: ts, Bucket: b, LastSeen: e.lastSeenWall, Source: e.source})
+			batch.Rows = append(batch.Rows, metric.Row{NodeID: id, TS: ts, Bucket: b, LastSeen: e.lastSeenWall, Source: e.source,
+				Observed: observed[ts] && l.coverage[id] <= ts, CoverageStart: l.coverage[id]})
 			delete(e.buckets, ts)
 		}
 		for k, b := range e.probes {
@@ -182,4 +205,5 @@ func (l *Live) Forget(nodeID int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.nodes, nodeID)
+	delete(l.coverage, nodeID)
 }

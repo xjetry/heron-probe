@@ -133,6 +133,11 @@ func New(cfg Config, l *live.Live, st *store.Store, a *auth.Auth, book *traffic.
 }
 
 func (s *Service) Load(ctx context.Context) error {
+	starts, err := s.store.CoverageStarts(ctx)
+	if err != nil {
+		return err
+	}
+	s.live.LoadCoverage(starts)
 	m, err := s.store.FactsHashes(ctx)
 	if err != nil {
 		return err
