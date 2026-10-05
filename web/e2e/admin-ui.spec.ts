@@ -122,7 +122,7 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
     await page.screenshot({ path: testInfo.outputPath('billing-desktop.png'), fullPage: true });
     await dialog.getByRole('button', { name: '保存', exact: true }).click();
     await expect(dialog).toHaveCount(0);
-    await expect(page.getByText('USD 29.50 / 月')).toBeVisible();
+    await expect(page.getByText('US$29.50 / 月')).toBeVisible();
     const updated = await rpc(page, 'ListNodes');
     expect(updated.nodes.find((node: { id: string }) => node.id === ids[0]).billing.expiresOn).toBe('2031-12-25');
     const renamedEdit = page.getByRole('button', { name: `编辑 tokyo-renamed（#${ids[0]}）` });

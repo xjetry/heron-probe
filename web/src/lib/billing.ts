@@ -28,12 +28,28 @@ export function cycleLabel(c: BillingCycle): string {
   return BILLING_CYCLES.find((e) => e.value === c)?.label ?? `未知（${c}）`;
 }
 
-// "USD 12.50 / 月"；没有价格但有周期时是"每月"；都没有时是空串。
+// 货币金额文本，管理与公开共用：符号按 zh-CN 的货币习惯（USD→US$、JPY→JP¥、CNY→¥，取自
+// Intl.NumberFormat(...).formatToParts），数额保留存储的小数位数（minimumFractionDigits =
+// maximumFractionDigits = 存储值的小数位）——不按币种默认精度四舍五入（JPY 12.5 显示 12.5 而不是 13），
+// 整数也不补 ".00"。未知三字母币种 CLDR 把代码本身当符号回退，个别引擎直接拒绝时落入 catch；
+// 非三字母大写或数额不是纯小数的遗留值过不了本地检查：两种都原样显示、不抛错。
+function moneyText(currency: string, price: string): string {
+  if (!/^\d+(\.\d+)?$/.test(price) || !/^[A-Z]{3}$/.test(currency)) return `${currency} ${price}`;
+  const decimals = price.includes(".") ? price.length - price.indexOf(".") - 1 : 0;
+  try {
+    return new Intl.NumberFormat("zh-CN", { style: "currency", currency, minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+      .formatToParts(Number(price)).map((part) => part.value).join("");
+  } catch {
+    return `${currency} ${price}`;
+  }
+}
+
+// "US$12.50 / 月"；没有价格但有周期时是“每月”；都没有时是空串。
 export function priceText(b: BillingView | undefined): string {
   if (!b) return "";
   const cycle = cycleLabel(b.billingCycle);
   if (b.price === "") return cycle && `每${cycle}`;
-  const amount = `${b.currency} ${b.price}`;
+  const amount = moneyText(b.currency, b.price);
   return cycle ? `${amount} / ${cycle}` : amount;
 }
 

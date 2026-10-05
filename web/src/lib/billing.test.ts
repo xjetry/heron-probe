@@ -28,15 +28,28 @@ describe("cycleLabel", () => {
 
 describe("priceText", () => {
   it.each([
-    [{ price: "12.50", currency: "USD", billingCycle: BillingCycle.MONTHLY }, "USD 12.50 / 月"],
-    [{ price: "99", currency: "EUR", billingCycle: BillingCycle.TRIENNIAL }, "EUR 99 / 三年"],
-    [{ price: "150", currency: "TWD", billingCycle: BillingCycle.QUINQUENNIAL }, "TWD 150 / 五年"],
-    [{ price: "30", currency: "CNY" }, "CNY 30"],
+    [{ price: "12.50", currency: "USD", billingCycle: BillingCycle.MONTHLY }, "US$12.50 / 月"],
+    [{ price: "99", currency: "EUR", billingCycle: BillingCycle.TRIENNIAL }, "€99 / 三年"],
+    [{ price: "150", currency: "TWD", billingCycle: BillingCycle.QUINQUENNIAL }, "NT$150 / 五年"],
+    [{ price: "30", currency: "CNY" }, "¥30"],
+    // 小数位按存储值：JPY 12.5 不四舍五入成 13，USD 整数不补 ".00"。
+    [{ price: "12.5", currency: "JPY" }, "JP¥12.5"],
+    [{ price: "5", currency: "USD" }, "US$5"],
+    // 三位小数的币种照存三位；zh-CN 里 KWD 的符号就是 "KWD"，与数额之间是不换行空格（U+00A0）。
+    [{ price: "12.500", currency: "KWD" }, "KWD\u00A012.500"],
+    // 未知三字母币种不抛错：CLDR 把代码本身当符号回退（与数额之间是不换行空格）；
+    // 个别引擎直接拒绝（RangeError）时落入 catch，原样显示。两种都保留存储的小数位。
+    [{ price: "10.00", currency: "XYZ" }, /^(XYZ[\u00A0 ]10\.00|XYZ 10\.00)$/],
+    [{ price: "10.00", currency: "usd" }, "usd 10.00"],
+    [{ price: "12.5.0", currency: "USD" }, "USD 12.5.0"],
+    [{ price: "1e3", currency: "USD" }, "USD 1e3"],
     [{ billingCycle: BillingCycle.YEARLY }, "每年"],
     [{ currency: "USD" }, ""],
     [{}, ""],
   ])("%o → %s", (b, want) => {
-    expect(priceText({ ...none, ...b })).toBe(want);
+    const got = priceText({ ...none, ...b });
+    if (want instanceof RegExp) expect(got).toMatch(want);
+    else expect(got).toBe(want);
   });
 });
 
