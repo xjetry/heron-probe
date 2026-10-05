@@ -184,7 +184,7 @@ case "$url" in
 esac
 `
 
-// fakeAgent 是包里的 heron-agent：register 写出配置并记下参数，与真 agent 的 SaveConfig 同为 0600；
+// fakeAgent 是包里的 heron-agent：register 写出配置并记下参数，与真 agent 的 agentconfig.Save 同为 0600；
 // 注册前已有配置时保存其原文，供用例确认安装器没有通过删除配置绕过重新注册。
 // configure 只记参数，STUB_CONFIGURE_FAILS 时像拒绝现有配置那样失败。
 const fakeAgent = `#!/bin/sh

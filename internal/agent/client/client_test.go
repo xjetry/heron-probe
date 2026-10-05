@@ -21,14 +21,16 @@ import (
 	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
 	"github.com/xjetry/heron-probe/internal/agent/collect"
 	"github.com/xjetry/heron-probe/internal/agent/prober"
+	"github.com/xjetry/heron-probe/internal/agentconfig"
 	"github.com/xjetry/heron-probe/internal/agentwire"
 	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hubclient"
 	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
 func TestConfigRoundTripAndPermissions(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "sub", "config.json")
-	if err := SaveConfig(p, Config{Hub: "https://h", Token: "t", Name: "n"}); err != nil {
+	if err := agentconfig.Save(p, agentconfig.Config{Hub: "https://h", Token: "t", Name: "n"}); err != nil {
 		t.Fatal(err)
 	}
 	st, _ := os.Stat(p)
@@ -50,7 +52,7 @@ func TestSaveConfigEnforcesModeOverStaleFiles(t *testing.T) {
 	if err := os.WriteFile(p, []byte("old"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := SaveConfig(p, Config{Hub: "https://h", Token: "t"}); err != nil {
+	if err := agentconfig.Save(p, agentconfig.Config{Hub: "https://h", Token: "t"}); err != nil {
 		t.Fatal(err)
 	}
 	st, err := os.Stat(p)
@@ -163,7 +165,7 @@ func newRunner(t *testing.T, hub *fakeHub) (*Runner, chan time.Duration) {
 	sleeps := make(chan time.Duration, 100)
 	r := &Runner{
 		Collector: &collect.Collector{Host: &collect.ProcFS{FS: fstest.MapFS{"proc/loadavg": {Data: []byte("0 0 0 1/2 3\n")}}, DiskUsage: func(string) (uint64, uint64, error) { return 1, 1, nil }}, Clock: clock.NewFake(time.Unix(0, 0)), Version: "t"},
-		Client:    NewServiceClient(srv.URL, 5*time.Second),
+		Client:    hubclient.New(srv.URL, 5*time.Second, agentwire.MaxResponseBytes),
 		Token:     "tok",
 		Clock:     clock.NewFake(time.Unix(0, 0)),
 		Sleep: func(ctx context.Context, d time.Duration) error {

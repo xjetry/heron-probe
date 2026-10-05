@@ -23,7 +23,10 @@ import (
 	"github.com/xjetry/heron-probe/internal/agent/collect"
 	"github.com/xjetry/heron-probe/internal/agent/netinfo"
 	"github.com/xjetry/heron-probe/internal/agent/prober"
+	"github.com/xjetry/heron-probe/internal/agentconfig"
+	"github.com/xjetry/heron-probe/internal/agentwire"
 	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hubclient"
 )
 
 var version = "dev"
@@ -98,26 +101,26 @@ func runRegister(args []string) error {
 	}
 	base := strings.TrimRight(*hub, "/")
 	// 校验在发请求之前：明文地址被拒时 key 不能已经出过线，窗口名额也不能已经消耗。
-	if err := client.CheckHub(base, *insecure); err != nil {
+	if err := agentconfig.CheckHub(base, *insecure); err != nil {
 		return err
 	}
 	// 重新注册换的是 hub 身份，本地探测策略属于宿主机，沿用已有配置里的；已有配置读不出来时报错，不静默丢掉它。
-	cfg := client.Config{Hub: base, Name: *name, InsecureHTTP: *insecure}
-	if old, err := client.ReadConfig(*cfgPath); err == nil {
+	cfg := agentconfig.Config{Hub: base, Name: *name, InsecureHTTP: *insecure}
+	if old, err := agentconfig.Read(*cfgPath); err == nil {
 		cfg.ProbeAllow, cfg.ProbeDeny = old.ProbeAllow, old.ProbeDeny
 	} else if !errors.Is(err, iofs.ErrNotExist) {
 		return fmt.Errorf("existing config: %w", err)
 	}
-	if _, err := cfg.Policy(); err != nil {
+	if _, err := client.Policy(cfg); err != nil {
 		return fmt.Errorf("existing config: %w", err)
 	}
-	c := client.NewServiceClient(base, requestTimeout)
+	c := hubclient.New(base, requestTimeout, agentwire.MaxResponseBytes)
 	resp, err := c.Register(context.Background(), connect.NewRequest(&heronv1.RegisterRequest{Key: *key, Name: *name}))
 	if err != nil {
 		return fmt.Errorf("register: %w", err)
 	}
 	cfg.Token = resp.Msg.Token
-	if err := client.SaveConfig(*cfgPath, cfg); err != nil {
+	if err := agentconfig.Save(*cfgPath, cfg); err != nil {
 		return err
 	}
 	fmt.Printf("registered as node %d; config written to %s\n", resp.Msg.NodeId, *cfgPath)
@@ -138,7 +141,7 @@ func runRun(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	policy, err := cfg.Policy()
+	policy, err := client.Policy(cfg)
 	if err != nil {
 		return err
 	}
@@ -168,7 +171,7 @@ func runRun(args []string) error {
 	defer sched.Stop()
 	r := &client.Runner{
 		Collector: col,
-		Client:    client.NewServiceClient(cfg.Hub, requestTimeout),
+		Client:    hubclient.New(cfg.Hub, requestTimeout, agentwire.MaxResponseBytes),
 		Token:     cfg.Token,
 		Clock:     clk,
 		Log:       log,
@@ -230,7 +233,7 @@ func runConfigure(args []string, out io.Writer) error {
 	if fs.NArg() > 0 {
 		return fmt.Errorf("configure: unexpected argument %q", fs.Arg(0))
 	}
-	cfg, err := client.ReadConfig(*cfgPath)
+	cfg, err := agentconfig.Read(*cfgPath)
 	if err != nil {
 		return err
 	}
@@ -244,13 +247,13 @@ func runConfigure(args []string, out io.Writer) error {
 			cfg.ProbeDeny = splitList(*deny)
 		}
 	})
-	if err := cfg.Validate(); err != nil {
+	if err := client.Validate(cfg); err != nil {
 		return err
 	}
-	if err := client.SaveConfig(*cfgPath, cfg); err != nil {
+	if err := agentconfig.Save(*cfgPath, cfg); err != nil {
 		return err
 	}
-	policy, _ := cfg.Policy()
+	policy, _ := client.Policy(cfg)
 	fmt.Fprintf(out, "insecure_http=%v %s\nrestart the heron-agent service to apply\n", cfg.InsecureHTTP, policy)
 	return nil
 }

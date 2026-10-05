@@ -13,7 +13,7 @@ const (
 	// ReportsPerTTL 是 TTL 内的上报机会数：容得下两次连续失败。agent 的退避上限按它从间隔推回 TTL（§4.7）。
 	ReportsPerTTL = 3
 	// MaxResponseBytes 是 agent 读取 AgentService 响应正文的上限，成功与错误响应都计（agent 不接受压缩，
-	// 读到的字节就是解码前的全部大小，见 client.NewServiceClient）。hub 侧由测试钉住满载 ReportResponse 的编码不超过它。
+	// 读到的字节就是解码前的全部大小，见 hubclient.New）。hub 侧由测试钉住满载 ReportResponse 的编码不超过它。
 	MaxResponseBytes = 64 << 10
 )
 

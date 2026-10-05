@@ -21,13 +21,14 @@ import (
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
-	agentclient "github.com/xjetry/heron-probe/internal/agent/client"
+	"github.com/xjetry/heron-probe/internal/agentwire"
 	"github.com/xjetry/heron-probe/internal/clock"
 	"github.com/xjetry/heron-probe/internal/hub/alert"
 	"github.com/xjetry/heron-probe/internal/hub/auth"
 	"github.com/xjetry/heron-probe/internal/hub/metric"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/web"
+	"github.com/xjetry/heron-probe/internal/hubclient"
 	"github.com/xjetry/heron-probe/internal/testlog"
 	"github.com/xjetry/heron-probe/internal/testwait"
 	"google.golang.org/protobuf/proto"
@@ -184,7 +185,7 @@ func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	report := connect.NewRequest(&heronv1.ReportRequest{Metrics: &heronv1.Metrics{CpuPct: proto.Float64(42)}})
-	agent := agentclient.NewServiceClient(url, 5*time.Second)
+	agent := hubclient.New(url, 5*time.Second, agentwire.MaxResponseBytes)
 	registered, err := agent.Register(ctx, connect.NewRequest(&heronv1.RegisterRequest{Key: node.Msg.Token}))
 	if err != nil {
 		t.Fatal(err)
@@ -480,7 +481,7 @@ func TestServeFlushesTrafficOnShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent := agentclient.NewServiceClient(url, 5*time.Second)
+	agent := hubclient.New(url, 5*time.Second, agentwire.MaxResponseBytes)
 	registered, err := agent.Register(ctx, connect.NewRequest(&heronv1.RegisterRequest{Key: node.Msg.Token}))
 	if err != nil {
 		t.Fatal(err)

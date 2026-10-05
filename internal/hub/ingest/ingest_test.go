@@ -19,7 +19,7 @@ import (
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
-	agentclient "github.com/xjetry/heron-probe/internal/agent/client"
+	"github.com/xjetry/heron-probe/internal/agentwire"
 	"github.com/xjetry/heron-probe/internal/clock"
 	"github.com/xjetry/heron-probe/internal/hub/auth"
 	"github.com/xjetry/heron-probe/internal/hub/live"
@@ -27,6 +27,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/probe"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/traffic"
+	"github.com/xjetry/heron-probe/internal/hubclient"
 	"github.com/xjetry/heron-probe/internal/testwait"
 	"google.golang.org/protobuf/proto"
 )
@@ -76,7 +77,7 @@ func newHubWith(t *testing.T, path string, cfg Config) *hub {
 	mux.Handle(svc.Handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return &hub{svc: svc, srv: srv, client: agentclient.NewServiceClient(srv.URL, 5*time.Second), clk: clk, store: st, auth: a, live: l, book: book, reg: reg}
+	return &hub{svc: svc, srv: srv, client: hubclient.New(srv.URL, 5*time.Second, agentwire.MaxResponseBytes), clk: clk, store: st, auth: a, live: l, book: book, reg: reg}
 }
 
 func (h *hub) node(t *testing.T) (int64, string) {

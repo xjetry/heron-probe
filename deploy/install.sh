@@ -487,10 +487,10 @@ else
   fi
 fi
 # 每次安装都做，不只在注册之后。只做一次会留下服务用户读不到或别人读得到的配置：
-# - 配置不存在时以 root 手工注册（SaveConfig 只对已存在的文件沿用属主，新建的文件属调用者）
+# - 配置不存在时以 root 手工注册（agentconfig.Save 只对已存在的文件沿用属主，新建的文件属调用者）
 # - 注册之后、改属主之前被信号打断，重跑走已有配置分支
 # - 账户被删后以新 uid 重建，配置仍属旧 uid
-# - 人工编辑后权限变了（0600 只由 SaveConfig 在注册时保证）
+# - 人工编辑后权限变了（0600 只由 agentconfig.Save 在注册时保证）
 # 目录属 root、0750：服务用户不能增删目录项，这里的 chown 不会被链接劫持。
 # 目录无需对服务用户可写：写配置只发生在以 root 执行的 register 与 configure 里，cmd/agent 的 run 只读配置、不写配置。
 chown root:"$SVC_USER" "$CFG_DIR"

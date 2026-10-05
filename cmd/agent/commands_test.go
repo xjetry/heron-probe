@@ -19,6 +19,7 @@ import (
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
 	"github.com/xjetry/heron-probe/internal/agent/client"
+	"github.com/xjetry/heron-probe/internal/agentconfig"
 )
 
 type registerHub struct {
@@ -78,8 +79,8 @@ func TestRegisterInsecureHTTPIsRecorded(t *testing.T) {
 func TestRegisterKeepsLocalProbePolicy(t *testing.T) {
 	_, url := startRegisterHub(t)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	old := client.Config{Hub: "https://old", Token: "stale", ProbeAllow: []string{"127.0.0.0/8"}, ProbeDeny: []string{"10.0.0.0/8"}}
-	if err := client.SaveConfig(cfgPath, old); err != nil {
+	old := agentconfig.Config{Hub: "https://old", Token: "stale", ProbeAllow: []string{"127.0.0.0/8"}, ProbeDeny: []string{"10.0.0.0/8"}}
+	if err := agentconfig.Save(cfgPath, old); err != nil {
 		t.Fatal(err)
 	}
 	if err := runRegister([]string{"--hub", url, "--key", "k", "--name", "n", "--config", cfgPath}); err != nil {
@@ -116,7 +117,7 @@ func configure(t *testing.T, cfgPath string, args ...string) (string, error) {
 // 升级后被 run 拒绝的明文配置由 configure 一条命令修正，之后 run 能加载；只改显式给出的项。
 func TestConfigureFixesPlainHTTPConfig(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	if err := client.SaveConfig(cfgPath, client.Config{Hub: "http://10.0.0.1:8080", Token: "t", Name: "n", ProbeDeny: []string{"10.9.0.0/16"}}); err != nil {
+	if err := agentconfig.Save(cfgPath, agentconfig.Config{Hub: "http://10.0.0.1:8080", Token: "t", Name: "n", ProbeDeny: []string{"10.9.0.0/16"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.LoadConfig(cfgPath); err == nil {
@@ -134,7 +135,7 @@ func TestConfigureFixesPlainHTTPConfig(t *testing.T) {
 
 func TestConfigureListsAndValidation(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	if err := client.SaveConfig(cfgPath, client.Config{Hub: "https://h", Token: "t", InsecureHTTP: true}); err != nil {
+	if err := agentconfig.Save(cfgPath, agentconfig.Config{Hub: "https://h", Token: "t", InsecureHTTP: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := configure(t, cfgPath, "--probe-allow", "127.0.0.0/8, ::1/128", "--probe-deny", "10.0.0.0/8"); err != nil {
@@ -170,7 +171,7 @@ func TestConfigureListsAndValidation(t *testing.T) {
 // 关掉明文放行时，整份配置按 run 的规则重新校验：不会写出一份 run 起不来的配置。
 func TestConfigureRejectsResultRunWouldRefuse(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	if err := client.SaveConfig(cfgPath, client.Config{Hub: "http://10.0.0.1:8080", Token: "t", InsecureHTTP: true}); err != nil {
+	if err := agentconfig.Save(cfgPath, agentconfig.Config{Hub: "http://10.0.0.1:8080", Token: "t", InsecureHTTP: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := configure(t, cfgPath, "--insecure-http=false"); err == nil || !strings.Contains(err.Error(), "uses plain http") {

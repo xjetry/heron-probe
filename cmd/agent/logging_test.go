@@ -21,7 +21,8 @@ import (
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/internal/agent/agentlog"
-	"github.com/xjetry/heron-probe/internal/agent/client"
+	"github.com/xjetry/heron-probe/internal/agentwire"
+	"github.com/xjetry/heron-probe/internal/hubclient"
 	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
@@ -68,7 +69,7 @@ func TestStandardLogGoesThroughTheBoundedExit(t *testing.T) {
 	defer srv.Close()
 
 	req := connect.NewRequest(&heronv1.ReportRequest{})
-	if _, err := client.NewServiceClient(srv.URL, 5*time.Second).Report(context.Background(), req); err != nil {
+	if _, err := hubclient.New(srv.URL, 5*time.Second, agentwire.MaxResponseBytes).Report(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
 	testwait.Until(t, 5*time.Millisecond, func() bool { return strings.Contains(out.String(), "HUB_CONTROLLED_") },
