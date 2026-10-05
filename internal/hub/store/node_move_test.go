@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"slices"
@@ -104,6 +105,39 @@ func TestMoveNodesDedupesAndIgnoresRequestOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 		wantOrder(t, moveNodesOrder(t, s), namedIDs(ids, "a", "c", "d", "b", "e")...)
+	}
+}
+
+// 故障注入：写事务在半途失败（触发器拒绝 sort_order 更新，等价磁盘满一类写入失败）时整批回滚，
+// 库内排序与名次保持失败前的状态。
+func TestMoveNodesWriteFailureLeavesOrderIntact(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	var ids []int64
+	for _, name := range []string{"a", "b", "c", "d"} {
+		id, _, err := s.CreateNode(ctx, name, Billing{}, hash(byte(len(ids)+1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	if err := s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec("CREATE TRIGGER reject_move BEFORE UPDATE ON node WHEN NEW.sort_order != OLD.sort_order BEGIN SELECT RAISE(ABORT, 'reject move'); END")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MoveNodes(ctx, ids[:2], 3); err == nil || !strings.Contains(err.Error(), "reject move") {
+		t.Fatalf("injected write failure not returned: %v", err)
+	}
+	nodes, err := s.ListNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, node := range nodes {
+		if node.ID != ids[i] || node.Position != uint32(i+1) {
+			t.Fatalf("failed move changed order or rank: index=%d node=%+v", i, node)
+		}
 	}
 }
 
