@@ -56,18 +56,21 @@ func checkWindow(from, to int64, requested uint32) (int, error) {
 
 func (h history) metrics(ctx context.Context, m *heronv1.QueryMetricsRequest, maxPoints int) (*heronv1.QueryMetricsResponse, error) {
 	lv, step := store.ChooseLevel(m.GetFrom(), m.GetTo(), maxPoints)
-	rows, err := h.store.QueryMetrics(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), lv, step)
+	rows, summary, err := h.store.QueryMetricsCoverage(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), lv, step)
 	if err != nil {
 		h.log.Error("metric query failed", "err", err)
 		return nil, internalError("metric query failed")
 	}
 	resp := &heronv1.QueryMetricsResponse{Level: lv.Name, StepS: uint32(step)}
+	resp.CoverageSummary = &heronv1.CoverageSummary{EligibleMinutes: summary.EligibleMinutes,
+		ObservedMinutes: summary.ObservedMinutes, ObservedReportedMinutes: summary.ObservedReportedMinutes, CoverageStart: summary.CoverageStart}
 	series := make([]*heronv1.MetricSeries, len(metric.Columns))
 	for i, c := range metric.Columns {
 		series[i] = &heronv1.MetricSeries{Name: c.Name, Unit: c.Unit, Samples: make([]*heronv1.MetricSample, 0, len(rows))}
 	}
 	for _, r := range rows {
 		resp.Ts = append(resp.Ts, r.TS)
+		resp.Coverage = append(resp.Coverage, &heronv1.PointCoverage{Minutes: r.Coverage.Minutes, Observed: r.Coverage.Observed, ObservedReported: r.Coverage.ObservedReported})
 		for i, c := range metric.Columns {
 			sample := &heronv1.MetricSample{N: r.Bucket.N[i]}
 			switch {

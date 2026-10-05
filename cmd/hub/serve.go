@@ -253,13 +253,14 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		_ = listener.Close()
 		return fmt.Errorf("update startup gate: %w", err)
 	}
-	drain := &drainingHandler{next: handler}
+	drain := &drainingHandler{next: handler, stopReceiving: func() { l.SetReceiving(false) }}
 	srv := &http.Server{
 		Addr: *listen, Handler: drain, ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second, // ReadMaxBytes 限量不限时。
 	}
 
 	defer startLoop(svc.RunFlusher)()
+	defer startLoop(l.RunObservation)()
 	defer startLoop(updateManager.Run)()
 	defer startLoop(relay.Run)()
 	defer startLoop(func(ctx context.Context) { st.RunMaintenance(ctx, retention) })()
@@ -280,7 +281,12 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	// scripts/e2e.sh 用不限节奏且总回 200 的 Webhook 接收器，从这一行读出其场景的等待预算。
 	log.Info("hub listening", append([]any{"listen", listener.Addr().String(), "ttl", ttl, "interval", svc.Interval(), "offline_sweep", alert.OfflineSweepEvery, "delivery_retry_wait", alert.DeliveryRetryWait(), "retention_1m", retention.M1, "retention_5m", retention.M5, "retention_1h", retention.H1, "retention_alert_events", retention.AlertEvents, "timezone", loc.String(), "public_dir", *publicDir, "version", version, "agent_version", agentVersion}, geoLog...)...)
 	errCh := make(chan error, 1)
-	go func() { errCh <- srv.Serve(listener) }()
+	go func() {
+		l.SetReceiving(true)
+		err := srv.Serve(listener)
+		l.SetReceiving(false)
+		errCh <- err
+	}()
 
 	select {
 	case <-stopCtx.Done():
@@ -360,10 +366,11 @@ func (h heartbeatSource) HeartbeatCounts(ctx context.Context) (heartbeat.Counts,
 // drainingHandler 将请求准入与关闭裁决串行化，Wait 前封住 Add，
 // 即使 http.Server 关闭连接后不再跟踪处理器，也不会提前刷出或关库。
 type drainingHandler struct {
-	next     http.Handler
-	mu       sync.Mutex
-	stopping bool
-	active   sync.WaitGroup
+	next          http.Handler
+	mu            sync.Mutex
+	stopping      bool
+	active        sync.WaitGroup
+	stopReceiving func()
 }
 
 func (d *drainingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -382,6 +389,9 @@ func (d *drainingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func shutdownHTTP(srv *http.Server, drain *drainingHandler, timeout time.Duration) error {
 	drain.mu.Lock()
 	drain.stopping = true
+	if drain.stopReceiving != nil {
+		drain.stopReceiving()
+	}
 	drain.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
