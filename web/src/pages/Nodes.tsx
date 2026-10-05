@@ -273,7 +273,7 @@ function NodeRow({ node, status, boundAgentVersion, editing, deleting, rotating,
       {node.note && <p className="node-subtext node-note" title={node.note}>{node.note}</p>}
       <span className="node-subtext">{node.public ? "公开" : "仅管理端"}</span>
       {node.maintenance && <span className="node-subtext warn">维护中</span>}
-      {boundAgentVersion !== undefined && olderThan(node.facts?.agentVersion, boundAgentVersion) && <span className="node-subtext warn" title={`低于 hub 绑定的 agent 版本 ${boundAgentVersion}，可在在线更新页更新`}>agent 低于 {boundAgentVersion}</span>}
+      {boundAgentVersion !== undefined && olderThan(node.facts?.agentVersion, boundAgentVersion) && <span className="node-subtext warn" title={`低于 hub 绑定的 agent 版本 ${boundAgentVersion}`}>agent 低于 {boundAgentVersion}</span>}
     </td>
     <td data-column="addresses" data-label="IP 地址"><NodeAddresses network={node.facts?.network} /></td>
     <td data-column="status" data-label="状态"><span className={`status-pill ${status ? status.online ? "is-online" : "is-offline" : ""}`}>{status && <span className={`dot ${status.online ? "ok" : "bad"}`} />}{status ? status.online ? "在线" : "离线" : "状态未知"}</span></td>

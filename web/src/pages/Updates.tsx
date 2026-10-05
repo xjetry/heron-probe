@@ -50,7 +50,7 @@ export function Updates() {
   // 正式版（开发构建或预发布）时没有可下发的产物目标，不提供节点更新。hub 自身仍以官方最新正式版为目标，要先检查。
   const nodeTarget = isStableRelease(updates.data!.boundAgentVersion) ? updates.data!.boundAgentVersion : "";
   // 行勾选框、全选与提交只认 eligible 这一个判定：updatable 是此刻可更新的节点（按节点列表顺序），chosen 是它与已选的
-  // 交集。轮询让节点失去资格时，selected 里的旧 id 不再计入 chosen，计数、全选状态与点击“更新选中节点”时取的目标一起收缩；
+  // 交集。轮询让节点失去资格时，selected 里的旧 id 不再计入 chosen，计数、全选状态与点击"更新选中节点"时取的目标一起收缩；
   // 确认框打开后目标固定，期间失去资格的节点由 hub 的 updates.Manager.Start 按同样的条件（支持、版本更旧、无进行中任务）拒绝。
   const updatable = nodes.data!.nodes.filter((node) => eligible(targets.get(node.id), nodeTarget)).map((node) => node.id);
   const chosen = updatable.filter((id) => selected.has(id));
