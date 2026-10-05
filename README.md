@@ -71,6 +71,8 @@ curl -fsSL https://github.com/xjetry/heron-probe/releases/latest/download/instal
 
 镜像 `ghcr.io/xjetry/heron-hub:<版本>`，含 linux/amd64 与 linux/arm64。正式版本在发布回读通过后同时成为 `latest`；预发布版本（tag 含 `-`，如 `v0.2.0-rc.1`）不动 `latest`。推 `v*` tag 触发发布，同组的发布运行串行：同时推多个 tag 时，排队中被后来者替换而取消的那个需要手工重跑。镜像基于 `scratch`，只有静态链接的 `heron-hub`、CA 证书与 uid 65532 的非 root 用户，没有 shell。
 
+发版时的 `AGENT_VERSION`（spec §14.1）写最近一次已发布的 agent 版本，两次发版之间不动。发版提交前跑 `go run ./scripts/agentinputs -base "$(make -s agent-version)"`：输出 `agent inputs unchanged since …`（退出 0）就保持不变，这是只发 hub 的 release；输出 `agent inputs changed since …` 就在发版提交里把 `AGENT_VERSION` 改成这次的版本号，这是完整 release；其它输出是出错，先解决（经 `go run` 时“有变化”与“出错”的退出码都是 1，按输出区分）。拆分后的第一个 release 必须是完整 release：更早的版本既早于 agent 组的定义（门禁对它们报 `predates`），也没有发行签名。只发 hub 的 release 的说明里写明：先升级 hub，再更新节点；旧 hub 的面板会把最新版当作节点目标，节点任务会在下载阶段失败（旧 agent 不受影响）。
+
 ```sh
 docker volume create heron-data
 docker run -d --name heron --restart unless-stopped --stop-timeout 30 \

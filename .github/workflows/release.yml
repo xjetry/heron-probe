@@ -24,6 +24,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          # 只发 hub 的门禁要在本地检出绑定版本的 tag（git worktree add），浅克隆没有它。
+          fetch-depth: 0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
@@ -39,8 +41,20 @@ jobs:
         with:
           setup_only: true
       - run: make ci
-      # 与本地验收同一构建入口；版本注入、版本号守卫与静态门禁都在 make release 里。
-      - run: make release VERSION="$GITHUB_REF_NAME"
+      # 发布种类只由 scripts/releasekind 判定（spec §14.1）：先取判定，再调用对应的发布目标；后续步骤读
+      # 同一个输出。
+      - id: kind
+        run: |
+          kind=$(make -s release-kind VERSION="$GITHUB_REF_NAME")
+          case "$kind" in
+            full|hub-only) ;;
+            *) echo "make release-kind printed '$kind'" >&2; exit 1 ;;
+          esac
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+      # 与本地验收同一组发布目标；版本注入、版本号守卫、只发 hub 的门禁与静态门禁都在目标里。
+      - run: make "release-$KIND" VERSION="$GITHUB_REF_NAME"
+        env:
+          KIND: ${{ steps.kind.outputs.kind }}
       # 回读要在 amd64 运行器上运行 arm64 镜像。构建本身不需要它：Dockerfile 唯一的 RUN 所在阶段固定在
       # --platform=$BUILDPLATFORM，最终阶段没有 RUN。binfmt 容器以特权运行，等同运行器上的 root，步骤顺序
       # 不提供隔离；它是否可信由 image 的 digest 固定与 action 的 SHA 固定承载。镜像不经 Actions 缓存。
@@ -55,6 +69,11 @@ jobs:
           E2E_LISTEN_HOST: 0.0.0.0
       # 发布前必须验证固定摘要的旧 agent，不能以当前源码构建替代兼容基线。
       - run: make compat-e2e
+        env:
+          E2E_LISTEN_HOST: 0.0.0.0
+      # 只发 hub 时实际发出去的组合是 hub 加绑定版本已发布的 agent，用那份 agent 再跑一遍端到端。
+      - if: steps.kind.outputs.kind == 'hub-only'
+        run: make bound-agent-e2e
         env:
           E2E_LISTEN_HOST: 0.0.0.0
       # registry 由 Makefile 的 DOCKER_IMAGE 推出，登录与推送不会指向两个不同的 registry。
@@ -149,5 +168,16 @@ jobs:
       - run: |
           gh release download "$GITHUB_REF_NAME" -p SHA256SUMS -p SHA256SUMS.sig -D readback
           go run ./scripts/releasesign verify -version "$GITHUB_REF_NAME" -dir readback
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # 只发 hub 的 release 原样带着绑定版本的两个 agent 安装脚本（spec §14.1）：从 Release 页面取回实际可
+      # 下载的字节，核对它们等于绑定版本已验签清单里的摘要。
+      - run: |
+          kind=$(make -s release-kind VERSION="$GITHUB_REF_NAME")
+          if [ "$kind" = hub-only ]; then
+            bound=$(make -s agent-version)
+            gh release download "$GITHUB_REF_NAME" -p install.sh -p install-macos.sh -D readback
+            go run ./scripts/boundagent readback -version "$GITHUB_REF_NAME" -bound "$bound" -dir readback
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
