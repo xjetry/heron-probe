@@ -271,7 +271,7 @@ agent 与 hub 不同时升级。hub 必须接受旧 agent 的上报（缺失的 
 - 安装凭据明文只在管理端创建与换发时返回，运行 token 明文由 Register 返回。换发或认领成功返回前，库与内存映射中的旧哈希均已替换。
 - 按 `node_id` 键控的其余内存状态（live 的桶、限速桶）随节点删除一起清理：进程内删除（`AdminService.DeleteNode`）在映射更新的同一步清理；`heron-hub node delete` 在另一进程改表，这些状态在 hub 重启重建映射时随之消失。
 - 每节点令牌桶限速：上报速率超过下发间隔所对应速率的 2 倍即返回 `ResourceExhausted`。
-- `AgentService` 请求体上限 64 KiB。
+- `AgentService` 请求体上限 256 KiB（`maxBody`），由探测结果排空推导（§4.4），编译期断言钉住。
 
 同一 token 被两台机器同时使用（克隆虚拟机）会表现为 `boot_id` 交替出现，使流量基线反复重置。hub 在窗口内统计 `boot_id` 切换次数，超过阈值即在管理面板对该节点标记警告。
 
