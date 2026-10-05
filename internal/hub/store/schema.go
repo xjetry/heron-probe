@@ -47,7 +47,10 @@ const ddlNode = `CREATE TABLE node (
   -- 裁决（显示值见 Node.DisplayCountry）。
   country_pin TEXT NOT NULL DEFAULT '',
   -- 维护状态：为真时该节点按维护静默语义暂停告警投递，读侧据此展示"维护中"。列序与迁移 27 的 ADD COLUMN 结果一致。
-  maintenance INTEGER NOT NULL DEFAULT 0
+  maintenance INTEGER NOT NULL DEFAULT 0,
+  -- 公开备注：站长写给访客的一行说明（如线路类型），空串表示没有。准入在 api 的 cleanPublicRemark（单行、
+  -- 至多 100 个码点、不含控制字符），与私有备注 note 并列。列序与迁移 32 的 ADD COLUMN 结果一致。
+  public_remark TEXT NOT NULL DEFAULT ''
 )`
 
 const ddlNodeFacts = `CREATE TABLE node_facts (

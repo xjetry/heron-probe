@@ -281,6 +281,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			removeV32Config(t, cfg)
 			removeV30Config(t, cfg)
 			removeV29Config(t, cfg)
 			removeV26Config(t, cfg)
@@ -331,6 +332,12 @@ func removeV26Config(t *testing.T, config *sql.DB) {
 	restoreExec(t, config, "ALTER TABLE node_facts DROP COLUMN diagnostics; ALTER TABLE traffic DROP COLUMN net_counter_epoch")
 }
 
+// 同上：32 号给 node 加了 public_remark，回填旧版本号前必须撤回。
+func removeV32Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "ALTER TABLE node DROP COLUMN public_remark")
+}
+
 // 同上：30 号建了 probe_cert 表，回填旧版本号前必须撤回。
 func removeV30Config(t *testing.T, config *sql.DB) {
 	t.Helper()
@@ -350,6 +357,7 @@ func TestRestoreV28ConfigSnapshotAddsDNSServerColumn(t *testing.T) {
 	config, metrics := restoreSnapshots(t)
 	cfg := restoreDB(t, config)
 	restoreExec(t, cfg, "INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order) VALUES (8,1,'legacy.example',60,1000,0,0,0)")
+	removeV32Config(t, cfg)
 	removeV30Config(t, cfg)
 	removeV29Config(t, cfg)
 	restoreExec(t, cfg, "UPDATE snapshot_meta SET schema_version=28")

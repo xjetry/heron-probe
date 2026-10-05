@@ -53,7 +53,11 @@ var migrations = map[int]func(*sql.Tx) error{
 	29: execAll(migrationV29Config),
 	30: execAll(migrationV30Config),
 	31: execAll(append(append([]string{}, migrationV31Metrics...), coverageFallbackV31)),
+	32: execAll(migrationV32Config),
 }
+
+// v32：节点的公开备注。旧库升级后没有公开备注：空串与"未设置"同值，公开端对空串不下发有意义的字段。
+var migrationV32Config = []string{`ALTER TABLE node ADD COLUMN public_remark TEXT NOT NULL DEFAULT ''`}
 
 var migrationV31Metrics = []string{
 	`ALTER TABLE metric_1m ADD COLUMN reported INTEGER NOT NULL DEFAULT 1`,

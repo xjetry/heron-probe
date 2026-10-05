@@ -48,9 +48,11 @@ type Billing struct {
 
 // NodeEdit 是 UpdateNode 整体替换的可编辑字段；调用方已做校验与清洗。
 type NodeEdit struct {
-	Name            string
-	Public          bool
-	Note            string
+	Name   string
+	Public bool
+	Note   string
+	// PublicRemark 是站长写给访客的一行说明，与 Note 同随 UpdateNode 整体替换；空串即没有。
+	PublicRemark    string
 	TrafficResetDay int
 	OfflineGraceS   int // 0 写 NULL，读侧取 TTL
 	Billing         Billing
@@ -62,11 +64,13 @@ type NodeEdit struct {
 }
 
 type Node struct {
-	ID        int64
-	Name      string
-	Public    bool
-	Note      string
-	SortOrder int32
+	ID     int64
+	Name   string
+	Public bool
+	Note   string
+	// PublicRemark 是公开备注：站长写给访客的一行说明，公开节点随 PublicNode.public_remark 下发。
+	PublicRemark string
+	SortOrder    int32
 	// Position 是节点在全部节点里按 (sort_order, id) 升序的名次，从 1 起，在 queryNodes 里随读算出：
 	// where 条件（标签交集、无标签、公开、监控范围）只筛行，不改名次。
 	Position        uint32
@@ -124,10 +128,10 @@ func (n Node) DisplayCountry() (string, CountrySource) {
 // node_facts。窗口函数在内层计算，先于外层 where 过滤——名次属于全部节点，where（标签交集、无标签、公开、
 // 监控范围）只筛行，不重排名次。
 const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.position, n.created_at, n.last_seen_at, n.traffic_reset_day, n.offline_grace_s,
-	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source, n.country, n.country_ip, n.country_pin, n.maintenance,
+	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source, n.country, n.country_ip, n.country_pin, n.maintenance, n.public_remark,
 	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at, f.network, f.diagnostics
 	FROM (SELECT id, name, public, note, sort_order, created_at, last_seen_at, traffic_reset_day, offline_grace_s,
-		price, currency, billing_cycle, expires_on, auto_renew, last_source, country, country_ip, country_pin, maintenance,
+		price, currency, billing_cycle, expires_on, auto_renew, last_source, country, country_ip, country_pin, maintenance, public_remark,
 		ROW_NUMBER() OVER (ORDER BY sort_order, id) AS position FROM node) n
 	LEFT JOIN node_facts f ON f.node_id = n.id`
 
@@ -145,7 +149,7 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 		var cores, icmp, factsUpdated sql.NullInt64
 		b := &n.Billing
 		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &n.Position, &created, &seen, &n.TrafficResetDay, &grace,
-			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource, &n.Country, &n.CountryIP, &n.CountryPin, &n.Maintenance,
+			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource, &n.Country, &n.CountryIP, &n.CountryPin, &n.Maintenance, &n.PublicRemark,
 			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated, &network, &diagnostics); err != nil {
 			return nil, err
 		}
@@ -298,8 +302,8 @@ func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (resu
 		}
 		b := e.Billing
 		if _, err := tx.Exec(`UPDATE node SET name = ?, public = ?, note = ?, traffic_reset_day = ?, offline_grace_s = NULLIF(?, 0),
-			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, auto_renew = ?, country_pin = ?, maintenance = ? WHERE id = ?`,
-			e.Name, e.Public, e.Note, e.TrafficResetDay, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, e.CountryPin, e.Maintenance, id); err != nil {
+			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, auto_renew = ?, country_pin = ?, maintenance = ?, public_remark = ? WHERE id = ?`,
+			e.Name, e.Public, e.Note, e.TrafficResetDay, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, e.CountryPin, e.Maintenance, e.PublicRemark, id); err != nil {
 			return err
 		}
 		if err := setNodeTags(tx, id, e.Tags); err != nil {
