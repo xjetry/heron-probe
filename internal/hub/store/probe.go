@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"math"
-	"strings"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/internal/hub/metric"
@@ -281,7 +280,7 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *heronv1.ProbeTask, selecto
 		} else {
 			// 证书到期规则要求任务保持 https:// 的 HTTP 任务（requireHTTPSProbeTask）；改成别的形状会让规则
 			// 永远等不到新观测。与删除同一形状地拒绝，而不是改出一个违反规则约束的库。
-			if saved.Kind != heronv1.ProbeKind_PROBE_KIND_HTTP || !strings.HasPrefix(saved.Target, "https://") {
+			if !probelimit.IsHTTPSTarget(saved.Kind, saved.Target) {
 				if err := checkAlertReferences(ctx, tx, "SELECT id, name FROM alert_rule WHERE task_id = ? AND kind = '"+string(KindCertExpiry)+"' ORDER BY id", ObjectProbeTask, int64(saved.Id)); err != nil {
 					return err
 				}

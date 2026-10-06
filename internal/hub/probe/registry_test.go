@@ -361,3 +361,16 @@ func TestRegistryCreatedNodeCoverageFollowsStore(t *testing.T) {
 		})
 	}
 }
+
+// CertPolicy 与 CheckTask、agent 用同一个 https 判据：scheme 写成大写的目标同样是 https 任务。
+func TestRegistryCertPolicyFollowsTheParsedScheme(t *testing.T) {
+	r, _, ids := registryStore(t)
+	d, _, err := r.Save(t.Context(), &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_HTTP, Target: "HTTPS://example.com/", IntervalS: 60, TimeoutMs: 1000}, store.NodeSelector{NodeIDs: ids[:1]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	https, pinned, configID, ok := r.CertPolicy(d.Task.Id)
+	if !ok || !https || pinned || len(configID) != 16 {
+		t.Fatalf("CertPolicy = https=%v pinned=%v config_id=%x ok=%v, want an unpinned https task", https, pinned, configID, ok)
+	}
+}

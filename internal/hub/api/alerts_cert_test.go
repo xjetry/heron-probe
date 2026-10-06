@@ -75,3 +75,23 @@ func TestSaveAlertRuleCertExpiryKind(t *testing.T) {
 		t.Fatalf("rejected rules saved something: %v %v", rules, err)
 	}
 }
+
+// scheme 写成大写的 https 目标同样是 https 任务（hub 与 agent 都按解析出的 scheme 判断，probelimit.IsHTTPSTarget）：
+// 可以挂证书到期规则；被规则引用之后照常可以编辑，不会被当成"改成了非 https"拒绝。
+func TestCertExpiryRuleAcceptsUppercaseHTTPSScheme(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	task := probeTask("HTTPS://example.com/upper")
+	task.Kind = heronv1.ProbeKind_PROBE_KIND_HTTP
+	resp, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&heronv1.SaveProbeTaskRequest{Task: task, AllNodes: true}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := resp.Msg.GetTask().GetTask().GetId()
+	saveRule(t, h, &heronv1.AlertRule{Name: "证书到期", Kind: heronv1.AlertKind_ALERT_KIND_CERT_EXPIRY, Enabled: true, AllNodes: true, TaskId: id, DaysBefore: 7})
+	edited := probeTask("HTTPS://example.com/upper")
+	edited.Kind, edited.Id, edited.IntervalS = heronv1.ProbeKind_PROBE_KIND_HTTP, id, 120
+	if _, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&heronv1.SaveProbeTaskRequest{Task: edited, AllNodes: true})); err != nil {
+		t.Fatalf("editing an uppercase-scheme https task referenced by a cert rule: %v", err)
+	}
+}

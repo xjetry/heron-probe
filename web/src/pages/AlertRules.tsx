@@ -8,9 +8,9 @@ import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Picks } from "../components/Picks";
 import { NodeSelector, type NodeSelection } from "../components/NodeSelector";
 import { AdminService, AlertKind, ProbeMetric, ResourceMetric, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/heron/v1/admin_pb";
-import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { ALERT_KINDS, MBPS_TO_BYTES_PER_S, PROBE_METRICS, RESOURCE_METRICS, labelOf, resourceThresholdMax, resourceUnit, ruleCondition, statesOf, taskLabels, type RuleStates } from "../lib/alerts";
 import { liveIds, withId } from "../lib/ids";
+import { isHTTPSTarget } from "../lib/probes";
 
 type Draft = NodeSelection & {
   name: string; kind: AlertKind; enabled: boolean; allNodes: boolean; nodeIds: Set<bigint>; channelIds: Set<bigint>;
@@ -120,7 +120,7 @@ type Lists = { nodes: Node[]; channels: NotifyChannel[]; tasks: ProbeTaskDetail[
 // httpsOnly 只列 https:// 的 HTTP 任务：证书到期规则只能挂在它们上面（hub 的 requireHTTPSProbeTask 同样裁决）。
 function taskOptions(tasks: ProbeTaskDetail[], httpsOnly = false) {
   const listed = tasks.flatMap((d) => (d.task ? [d.task] : []))
-    .filter((t) => !httpsOnly || (t.kind === ProbeKind.HTTP && t.target.startsWith("https://")));
+    .filter((t) => !httpsOnly || isHTTPSTarget(t.kind, t.target));
   const labels = taskLabels(listed.map((t) => t.id), tasks);
   return listed.map((t, i) => <option key={String(t.id)} value={String(t.id)}>{labels[i]}</option>);
 }

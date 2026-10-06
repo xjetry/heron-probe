@@ -18,11 +18,11 @@ import (
 	"log/slog"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -172,7 +172,7 @@ func (r *Registry) CertPolicy(id uint64) (https, pinned bool, configID []byte, o
 	if !ok {
 		return false, false, nil, false
 	}
-	https = task.GetKind() == heronv1.ProbeKind_PROBE_KIND_HTTP && strings.HasPrefix(task.GetTarget(), "https://")
+	https = probelimit.IsHTTPSTarget(task.GetKind(), task.GetTarget())
 	pinned = len(task.GetCertSpkiSha256()) > 0
 	configID = append([]byte(nil), task.GetConfigId()...)
 	return https, pinned, configID, true

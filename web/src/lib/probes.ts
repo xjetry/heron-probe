@@ -28,6 +28,11 @@ export const targetRule = (kind: ProbeKind): { placeholder: string; maxLength: n
   }
 };
 
+// 与 hub 的 probelimit.IsHTTPSTarget 同一判据：HTTP 任务，scheme 不分大小写是 https（hub 用 url.Parse 解析，
+// scheme 转小写后比较）。钉指纹、证书观测与证书到期规则都只对这类任务成立；各处都调用这一个函数，
+// 不各写一份大小写敏感的前缀判断——那会让 "HTTPS://" 的任务在页面与 hub 上得到相反的结论。
+export const isHTTPSTarget = (kind: ProbeKind, target: string): boolean => kind === ProbeKind.HTTP && /^https:\/\//i.test(target.trim());
+
 // 丢包率只看超时：error 是本地无法发起（无 socket、解析失败），不是链路事实。
 // hub 只返回 sent > 0 的点；这里仍显式守住除零，让不变式不依赖上游。
 export const lossPercent: ProbeValue = (s) => (s.sent > 0 ? (s.lost / s.sent) * 100 : null);

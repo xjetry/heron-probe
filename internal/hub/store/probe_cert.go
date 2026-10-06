@@ -5,9 +5,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 )
 
 // probe_cert 是 (节点, 任务) 的最新一份证书到期观测（§8.3）：ingest 校验通过后的覆盖写，
@@ -29,7 +29,7 @@ func certWriteOK(tx *sql.Tx, nodeID int64, taskID uint64, configID []byte, allow
 	if err != nil {
 		return false, err
 	}
-	if heronv1.ProbeKind(kind) != heronv1.ProbeKind_PROBE_KIND_HTTP || !strings.HasPrefix(target, "https://") {
+	if !probelimit.IsHTTPSTarget(heronv1.ProbeKind(kind), target) {
 		return false, nil
 	}
 	switch {

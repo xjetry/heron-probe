@@ -12,6 +12,7 @@ import (
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/internal/hub/outbound"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 )
 
 type AlertKind string
@@ -540,7 +541,7 @@ func requireHTTPSProbeTask(tx *sql.Tx, id int64) error {
 	if err != nil {
 		return err
 	}
-	if heronv1.ProbeKind(kind) != heronv1.ProbeKind_PROBE_KIND_HTTP || !strings.HasPrefix(target, "https://") {
+	if !probelimit.IsHTTPSTarget(heronv1.ProbeKind(kind), target) {
 		return KindFieldError{"task_id", "must reference an https:// HTTP probe task for cert_expiry rules"}
 	}
 	return nil

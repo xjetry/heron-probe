@@ -153,3 +153,35 @@ func TestRestoreForgetsIdentitiesCreatedAfterTheSnapshot(t *testing.T) {
 		t.Fatalf("stale precondition after restore: %v", err)
 	}
 }
+
+// 证书观测与候选按解析出的 scheme 判断 https：目标写成 "HTTPS://" 的任务同样落库，与 agent 取证书的判据一致。
+func TestCertObservationsFollowTheParsedScheme(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	node, _, err := s.CreateNode(ctx, "n", Billing{}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := httpsProbe()
+	task.Target = "HTTPS://example.com/"
+	saved, _, err := s.SaveProbeTask(ctx, task, NodeSelector{NodeIDs: []int64{node}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, cfg := saved.Task.Id, saved.Task.ConfigId
+	if _, err := s.UpsertProbeCert(ctx, node, id, 100, 10, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.write(ctx, func(tx *sql.Tx) error {
+		return upsertPresentedTx(tx, node, id, cfg, bytes.Repeat([]byte{3}, 32), 200, 10, int32(heronv1.PresentedReason_PRESENTED_REASON_CA_VERIFY_FAILED))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	view, err := s.ListProbeCertificates(ctx, id)
+	if err != nil || len(view.Visible) != 1 {
+		t.Fatalf("view = %+v, err = %v", view, err)
+	}
+	if n := view.Visible[0]; n.Current == nil || n.Candidate == nil {
+		t.Fatalf("uppercase-scheme https task: current=%v candidate=%v, want both written", n.Current != nil, n.Candidate != nil)
+	}
+}

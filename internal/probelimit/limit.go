@@ -70,8 +70,7 @@ func CheckTask(t *heronv1.ProbeTask) error {
 		if t.GetKind() != heronv1.ProbeKind_PROBE_KIND_HTTP {
 			return fmt.Errorf("cert_spki_sha256 only applies to an HTTP task with an https target; got kind %s", t.GetKind())
 		}
-		u, err := url.Parse(t.GetTarget())
-		if err != nil || u.Scheme != "https" {
+		if !IsHTTPSTarget(t.GetKind(), t.GetTarget()) {
 			return fmt.Errorf("cert_spki_sha256 only applies to an HTTP task with an https target; got %q", t.GetTarget())
 		}
 	}
@@ -138,6 +137,18 @@ func checkTargetLen(target string, maxLen int) error {
 		return fmt.Errorf("target must be at most %d bytes; got %d", maxLen, len(target))
 	}
 	return nil
+}
+
+// IsHTTPSTarget 判断任务是不是 https 目标的 HTTP 任务；钉指纹、证书观测与证书到期规则都只对这类任务成立。
+// 判据是 url.Parse 解析出的 scheme（解析时已转成小写）等于 https，与 agent 发请求、取证书时依据的 scheme 相同
+// （agent/prober/http.go）。hub 的各个读者都调用这一个函数，不另用 target 的字符串前缀判断："HTTPS://" 这类
+// 目标通过准入、agent 按 https 执行，前缀判据却认定它不是 https，同一个任务在两侧得到相反的结论。
+func IsHTTPSTarget(kind heronv1.ProbeKind, target string) bool {
+	if kind != heronv1.ProbeKind_PROBE_KIND_HTTP {
+		return false
+	}
+	u, err := url.Parse(target)
+	return err == nil && u.Scheme == "https"
 }
 
 // HTTP 的 target 是绝对 http(s) URL：有主机、不含用户信息、不含片段；端口若给出在 1–65535。

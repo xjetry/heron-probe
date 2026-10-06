@@ -103,6 +103,27 @@ func TestCheckTask(t *testing.T) {
 
 // pin 与 config_id 的约束在按种类分支之前检查：DNS 分支提前 return，
 // 钉在 DNS 任务上的 pin 必须被拒而不是被分支放行。
+// IsHTTPSTarget 按解析出的 scheme 判断，不分大小写；种类不是 HTTP 时一律不是。
+func TestIsHTTPSTarget(t *testing.T) {
+	for _, tc := range []struct {
+		kind   heronv1.ProbeKind
+		target string
+		want   bool
+	}{
+		{heronv1.ProbeKind_PROBE_KIND_HTTP, "https://example.com/", true},
+		{heronv1.ProbeKind_PROBE_KIND_HTTP, "HTTPS://example.com/", true},
+		{heronv1.ProbeKind_PROBE_KIND_HTTP, "Https://example.com/", true},
+		{heronv1.ProbeKind_PROBE_KIND_HTTP, "http://example.com/", false},
+		{heronv1.ProbeKind_PROBE_KIND_HTTP, "://example.com/", false},
+		{heronv1.ProbeKind_PROBE_KIND_TCP, "https://example.com/", false},
+		{heronv1.ProbeKind_PROBE_KIND_DNS, "https://example.com/", false},
+	} {
+		if got := IsHTTPSTarget(tc.kind, tc.target); got != tc.want {
+			t.Errorf("IsHTTPSTarget(%s, %q) = %v, want %v", tc.kind, tc.target, got, tc.want)
+		}
+	}
+}
+
 func TestCheckTaskPinAndConfigID(t *testing.T) {
 	pin32 := make([]byte, CertSPKISHA256Len)
 	cid16 := make([]byte, ConfigIDLen)
@@ -115,6 +136,8 @@ func TestCheckTaskPinAndConfigID(t *testing.T) {
 		want          string
 	}{
 		{"pin_https", heronv1.ProbeKind_PROBE_KIND_HTTP, "https://example.com/", "", pin32, nil, ""},
+		// url.Parse 把 scheme 转成小写：大写的 https 同样可钉，与 IsHTTPSTarget 及 agent 取证书的判据一致。
+		{"pin_https_uppercase_scheme", heronv1.ProbeKind_PROBE_KIND_HTTP, "HTTPS://example.com/", "", pin32, nil, ""},
 		{"pin_http", heronv1.ProbeKind_PROBE_KIND_HTTP, "http://example.com/", "", pin32, nil, "only applies to an HTTP task with an https target"},
 		// scheme 为 https 时 pin 检查放行，主机缺失由按种类分支的 URL 检查兜住。
 		{"pin_https_no_host", heronv1.ProbeKind_PROBE_KIND_HTTP, "https:///path", "", pin32, nil, "have a host"},

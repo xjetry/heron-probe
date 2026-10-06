@@ -15,7 +15,7 @@ import { AdminService, CertPinChangeSchema, SaveProbeTaskRequestSchema, type Nod
 import { ProbeKind, ProbeTaskSchema, type ProbeTask } from "../gen/heron/v1/types_pb";
 import { formatPin, parsePin } from "../lib/certpin";
 import { ascending, withId } from "../lib/ids";
-import { PROBE_KINDS, kindLabel, targetRule } from "../lib/probes";
+import { PROBE_KINDS, isHTTPSTarget, kindLabel, targetRule } from "../lib/probes";
 
 type Draft = NodeSelection & { kind: ProbeKind; target: string; dnsServer: string; intervalS: string; timeoutMs: string; pin: string; clearPin: boolean; configId?: Uint8Array };
 type TaskEntry = { task: ProbeTask; allNodes: boolean; nodeIds: bigint[]; selectorTags: string[] };
@@ -113,7 +113,7 @@ function TaskForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
   const [draft, setDraft] = useState(initial);
   const [pinError, setPinError] = useState("");
   const showPin = draft.kind === ProbeKind.HTTP || draft.pin.trim() !== "" || draft.clearPin;
-  const pinFits = draft.kind === ProbeKind.HTTP && draft.target.trim().toLowerCase().startsWith("https://");
+  const pinFits = isHTTPSTarget(draft.kind, draft.target);
   const handle = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!e.currentTarget.checkValidity()) return;
@@ -197,7 +197,7 @@ function TaskRow({ entry, nodes, saving, deleting, onSave, onDelete, onMove }: {
       <td>{coverage || <span className="muted">未分配</span>}</td>
       <td>
         <Link to={`/probes/${t.id}/compare`}>对比</Link>{" "}
-        {t.kind === ProbeKind.HTTP && t.target.toLowerCase().startsWith("https://") && <><Link to={`/probes/${t.id}/certs`}>证书</Link>{" "}</>}
+        {isHTTPSTarget(t.kind, t.target) && <><Link to={`/probes/${t.id}/certs`}>证书</Link>{" "}</>}
         <button type="button" className="link" aria-label={`编辑 ${withId(t.target, t.id)}`} onClick={() => setEditing(true)}>编辑</button>{" "}
         <ConfirmDelete label={`删除 ${withId(t.target, t.id)}`} confirm={`确认删除 ${withId(t.target, t.id)}`} note="历史保留至到期清理" pending={deleting} onDelete={onDelete} />
       </td>

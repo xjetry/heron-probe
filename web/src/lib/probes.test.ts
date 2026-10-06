@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
 import { ProbeSeriesSchema, QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
 import { ProbeKind } from "../gen/heron/v1/types_pb";
-import { PROBE_KINDS, kindLabel, lossPercent, rttMeanMs, seriesLabels, targetRule, taskIdsOf, toProbeAligned } from "./probes";
+import { PROBE_KINDS, isHTTPSTarget, kindLabel, lossPercent, rttMeanMs, seriesLabels, targetRule, taskIdsOf, toProbeAligned } from "./probes";
 
 it.each([
   {
@@ -63,4 +63,15 @@ describe("toProbeAligned", () => {
   it("taskIdsOf 保持响应顺序", () => {
     expect(taskIdsOf(resp)).toEqual([3n, 7n]);
   });
+});
+
+// 与 hub 的 probelimit.IsHTTPSTarget 同一判据：scheme 不分大小写，种类必须是 HTTP。
+it.each([
+  { kind: ProbeKind.HTTP, target: "https://example.com/", want: true },
+  { kind: ProbeKind.HTTP, target: "HTTPS://example.com/", want: true },
+  { kind: ProbeKind.HTTP, target: " Https://example.com/", want: true },
+  { kind: ProbeKind.HTTP, target: "http://example.com/", want: false },
+  { kind: ProbeKind.TCP, target: "https://example.com/", want: false },
+])("isHTTPSTarget($kind, $target) = $want", ({ kind, target, want }) => {
+  expect(isHTTPSTarget(kind, target)).toBe(want);
 });
