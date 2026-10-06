@@ -428,6 +428,10 @@ func countReads(t *testing.T, s *Store) *readCounter {
 // fillProbeRows 生成 count 行 (node, ts, task) 的探测行：ts 从 3600 起按表级步进，task 在
 // 0..64 轮转模拟任务更替，每行有一个 rtt 样本。绕过写协程直接批量写入，仅测试夹具使用。
 func fillProbeRows(ctx context.Context, db *sql.DB, table string, node, task int64, count int64) error {
+	return fillProbeRowsStep(ctx, db, table, node, task, count, 3600, 0)
+}
+
+func fillProbeRowsStep(ctx context.Context, db *sql.DB, table string, node, task int64, count int64, step, base int64) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -439,8 +443,8 @@ func fillProbeRows(ctx context.Context, db *sql.DB, table string, node, task int
 		if _, err := tx.ExecContext(ctx,
 			"WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM seq WHERE i < ?) "+
 				"INSERT INTO "+table+" (node_id, ts, task_id, sent, lost, errors, rtt_sum_us, rtt_min_us, rtt_max_us) "+
-				"SELECT ?, (i+?)*3600, (?+(i % 65)), 1, 0, 0, 100, 100, 100 FROM seq",
-			end-start, node, start, task); err != nil {
+				"SELECT ?, ?+(i+?)*?, (?+(i % 65)), 1, 0, 0, 100, 100, 100 FROM seq",
+			end-start, node, base, start, step, task); err != nil {
 			return err
 		}
 	}
@@ -748,5 +752,69 @@ func TestAlertWindowStaysWithinQuota(t *testing.T) {
 	// 窗口覆盖 m=0..59 共 60 分钟（to = minuteTS+60 是开区间端点）。
 	if len(rows) != 65*60 {
 		t.Fatalf("rows = %d, want %d", len(rows), 65*60)
+	}
+}
+
+// 额度按对齐后的窗口计数：对齐把窗口向上取整到 step，恰好把一行挤过额度时必须被拒。
+// 若把计数换成原始窗口（读取仍是对齐窗口），这行会被漏数——用例在额度边界上钉住。
+func TestReadQuotaCountsAlignedWindow(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	id, _, err := s.CreateNode(ctx, "a", Billing{}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const rows = quotaRowsPerSeries*probelimit.MaxTasksPerNode + 1
+	// 行在 1h 层，水位盖过全部数据；原始窗口 [0, rows*3600-1] 恰含 rows-1 行，7d 步长的对齐把最后一行拉进来。
+	if err := fillProbeRows(t.Context(), s.w, "probe_1h", id, 1, rows); err != nil {
+		t.Fatal(err)
+	}
+	end := int64(rows) * 3600
+	setProbeWatermarks(t, s, end+3600, end+3600)
+	lv, _ := LevelByName("1h")
+	_, err = s.QueryProbes(ctx, id, 0, end-1, lv, 7*86400)
+	var quota ReadQuotaError
+	if !errors.As(err, &quota) {
+		t.Fatalf("aligned window must push the last row over quota: err = %v", err)
+	}
+}
+
+// 额度包含水位之后的细级尾巴：粗级行数远在额度内、细级尾巴超过额度时必须被拒。
+// 若计数漏掉细级（只数所选级别），这里会被放过——用例钉住"各级都要数"。
+func TestReadQuotaCountsFineTail(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	id, _, err := s.CreateNode(ctx, "a", Billing{}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const rows = quotaRowsPerSeries*probelimit.MaxTasksPerNode + 1
+	// 7d 窗口落在 5m 级；5m 水位回拨到窗口起点，5m 表为空，全部来源行在 1m 尾巴里。
+	base := int64(1767225600) // 2026-01-01T00:00:00Z，分钟对齐
+	if err := fillProbeRowsStep(t.Context(), s.w, "probe_1m", id, 1, rows, 60, base); err != nil {
+		t.Fatal(err)
+	}
+	from := base - 60
+	to := base + int64(rows)*60
+	setProbeWatermarks(t, s, from, from)
+	lv, _ := LevelByName("5m")
+	_, err = s.QueryProbes(ctx, id, from, to, lv, 3600)
+	var quota ReadQuotaError
+	if !errors.As(err, &quota) {
+		t.Fatalf("fine tail beyond quota must be rejected: err = %v", err)
+	}
+}
+
+func setProbeWatermarks(t *testing.T, s *Store, wm5m, wm1h int64) {
+	t.Helper()
+	if err := s.write(t.Context(), func(tx *sql.Tx) error {
+		_, err := tx.Exec("UPDATE rollup_state SET upto_ts = ? WHERE level = 'probe_5m'", wm5m)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec("UPDATE rollup_state SET upto_ts = ? WHERE level = 'probe_1h'", wm1h)
+		return err
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
