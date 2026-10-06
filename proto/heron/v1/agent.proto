@@ -45,6 +45,21 @@ message ReportRequest {
   Facts facts = 5;
   // 来自本机更新器的能力与结果；缺席表示旧 agent，不支持远程更新。
   UpdateStatus update = 6;
+  // 发出这次上报的 agent 二进制支持的能力；缺席即都不支持。至多 16 项，重复项与不认识的值都计入条数，超出则整批
+  // 拒收——条数上限约束的是编码体积，去重之后再数就挡不住重复项。hub 去重，忽略不认识的值。
+  // hub 按本次请求的能力过滤下发的任务，并据此决定是否采信结果（例如钉住证书指纹的任务）。
+  repeated AgentCapability capabilities = 7;
+  // agent 当前持有的任务清单的摘要：收到的 ProbeTasks.tasks（不含 version）按 task_id 升序，每个任务做确定性
+  // protobuf 编码，前缀 8 字节大端长度后依次拼接，对整串取 SHA-256，恰 32 字节；空清单是空串的 SHA-256。
+  // 空字节表示未提供（旧 agent，或尚未收到任何清单）。给出时 hub 按摘要而不是 tasks_version 决定是否重发清单：
+  // 备份恢复后计数可能与 agent 手里的旧值相等，摘要不会。代表收到并持有的清单，被 agent 判为非法的任务也在其中。
+  bytes tasks_digest = 8;
+}
+
+enum AgentCapability {
+  AGENT_CAPABILITY_UNSPECIFIED = 0;
+  // 支持按 ProbeTask.cert_spki_sha256 钉证书指纹，并回显 task_config_id、带回 presented。
+  AGENT_CAPABILITY_PROBE_CERT_PIN = 1;
 }
 
 // ReportResponse 与 RegisterResponse 是 hub 对 agent 的全部下行，也就是 hub 失守时能对 agent 施加的全部影响

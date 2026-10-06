@@ -131,8 +131,8 @@ message PublicBilling {
 // Facts 的公开部分，字段号与 Facts 相同。主机名、内核版本、agent 版本、ICMP 可用性、双栈出口与诊断不公开，
 // 它们的号与名保留：要公开必须先删掉 reserved，而不是随手加一个字段。
 message PublicFacts {
-  reserved 1, 3, 8, 9, 10, 11;
-  reserved "hostname", "kernel", "agent_version", "icmp_available", "network", "diagnostics";
+  reserved 1, 3, 8, 9, 10, 11, 12;
+  reserved "hostname", "kernel", "agent_version", "icmp_available", "network", "diagnostics", "execution";
   string os = 2;
   string arch = 4;
   string virtualization = 5;
@@ -172,4 +172,6 @@ message PublicMetrics {
   // steal 与 iowait 占比，百分比。
   optional double cpu_steal_pct = 23;
   optional double cpu_iowait_pct = 24;
+  // 按核负载，与 Metrics.load1_per_core 同号同义。容器节点上它的分母是主机核数，与公开的 load1 一起可推出主机核数。
+  optional double load1_per_core = 25;
 }

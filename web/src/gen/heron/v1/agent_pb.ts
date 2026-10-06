@@ -2,8 +2,8 @@
 // @generated from file heron/v1/agent.proto (package heron.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Facts, Metrics, ProbeResult, ProbeTasks } from "./types_pb";
 import { file_heron_v1_types } from "./types_pb";
 import type { UpdateStatus, UpdateTask } from "./update_pb";
@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file heron/v1/agent.proto.
  */
 export const file_heron_v1_agent: GenFile = /*@__PURE__*/
-  fileDesc("ChRoZXJvbi92MS9hZ2VudC5wcm90bxIIaGVyb24udjEiLAoPUmVnaXN0ZXJSZXF1ZXN0EgsKA2tleRgBIAEoCRIMCgRuYW1lGAIgASgJIjIKEFJlZ2lzdGVyUmVzcG9uc2USDwoHbm9kZV9pZBgBIAEoAxINCgV0b2tlbhgCIAEoCSLUAQoNUmVwb3J0UmVxdWVzdBIiCgdtZXRyaWNzGAEgASgLMhEuaGVyb24udjEuTWV0cmljcxIsCg1wcm9iZV9yZXN1bHRzGAIgAygLMhUuaGVyb24udjEuUHJvYmVSZXN1bHQSFQoNdGFza3NfdmVyc2lvbhgDIAEoBBISCgpmYWN0c19oYXNoGAQgASgGEh4KBWZhY3RzGAUgASgLMg8uaGVyb24udjEuRmFjdHMSJgoGdXBkYXRlGAYgASgLMhYuaGVyb24udjEuVXBkYXRlU3RhdHVzIosBCg5SZXBvcnRSZXNwb25zZRIaChJyZXBvcnRfaW50ZXJ2YWxfbXMYASABKA0SIwoFdGFza3MYAiABKAsyFC5oZXJvbi52MS5Qcm9iZVRhc2tzEhIKCndhbnRfZmFjdHMYAyABKAgSJAoGdXBkYXRlGAQgASgLMhQuaGVyb24udjEuVXBkYXRlVGFzayIyChFHZXRSZWxlYXNlUmVxdWVzdBIPCgd0YXNrX2lkGAEgASgJEgwKBGFyY2gYAiABKAkiRgoSR2V0UmVsZWFzZVJlc3BvbnNlEgwKBHN1bXMYASABKAwSEQoJc2lnbmF0dXJlGAIgASgMEg8KB2FyY2hpdmUYAyABKAwy1wEKDEFnZW50U2VydmljZRJBCghSZWdpc3RlchIZLmhlcm9uLnYxLlJlZ2lzdGVyUmVxdWVzdBoaLmhlcm9uLnYxLlJlZ2lzdGVyUmVzcG9uc2USOwoGUmVwb3J0EhcuaGVyb24udjEuUmVwb3J0UmVxdWVzdBoYLmhlcm9uLnYxLlJlcG9ydFJlc3BvbnNlEkcKCkdldFJlbGVhc2USGy5oZXJvbi52MS5HZXRSZWxlYXNlUmVxdWVzdBocLmhlcm9uLnYxLkdldFJlbGVhc2VSZXNwb25zZUI0WjJnaXRodWIuY29tL3hqZXRyeS9oZXJvbi1wcm9iZS9nZW4vaGVyb24vdjE7aGVyb252MWIGcHJvdG8z", [file_heron_v1_types, file_heron_v1_update]);
+  fileDesc("ChRoZXJvbi92MS9hZ2VudC5wcm90bxIIaGVyb24udjEiLAoPUmVnaXN0ZXJSZXF1ZXN0EgsKA2tleRgBIAEoCRIMCgRuYW1lGAIgASgJIjIKEFJlZ2lzdGVyUmVzcG9uc2USDwoHbm9kZV9pZBgBIAEoAxINCgV0b2tlbhgCIAEoCSKbAgoNUmVwb3J0UmVxdWVzdBIiCgdtZXRyaWNzGAEgASgLMhEuaGVyb24udjEuTWV0cmljcxIsCg1wcm9iZV9yZXN1bHRzGAIgAygLMhUuaGVyb24udjEuUHJvYmVSZXN1bHQSFQoNdGFza3NfdmVyc2lvbhgDIAEoBBISCgpmYWN0c19oYXNoGAQgASgGEh4KBWZhY3RzGAUgASgLMg8uaGVyb24udjEuRmFjdHMSJgoGdXBkYXRlGAYgASgLMhYuaGVyb24udjEuVXBkYXRlU3RhdHVzEi8KDGNhcGFiaWxpdGllcxgHIAMoDjIZLmhlcm9uLnYxLkFnZW50Q2FwYWJpbGl0eRIUCgx0YXNrc19kaWdlc3QYCCABKAwiiwEKDlJlcG9ydFJlc3BvbnNlEhoKEnJlcG9ydF9pbnRlcnZhbF9tcxgBIAEoDRIjCgV0YXNrcxgCIAEoCzIULmhlcm9uLnYxLlByb2JlVGFza3MSEgoKd2FudF9mYWN0cxgDIAEoCBIkCgZ1cGRhdGUYBCABKAsyFC5oZXJvbi52MS5VcGRhdGVUYXNrIjIKEUdldFJlbGVhc2VSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSDAoEYXJjaBgCIAEoCSJGChJHZXRSZWxlYXNlUmVzcG9uc2USDAoEc3VtcxgBIAEoDBIRCglzaWduYXR1cmUYAiABKAwSDwoHYXJjaGl2ZRgDIAEoDCpYCg9BZ2VudENhcGFiaWxpdHkSIAocQUdFTlRfQ0FQQUJJTElUWV9VTlNQRUNJRklFRBAAEiMKH0FHRU5UX0NBUEFCSUxJVFlfUFJPQkVfQ0VSVF9QSU4QATLXAQoMQWdlbnRTZXJ2aWNlEkEKCFJlZ2lzdGVyEhkuaGVyb24udjEuUmVnaXN0ZXJSZXF1ZXN0GhouaGVyb24udjEuUmVnaXN0ZXJSZXNwb25zZRI7CgZSZXBvcnQSFy5oZXJvbi52MS5SZXBvcnRSZXF1ZXN0GhguaGVyb24udjEuUmVwb3J0UmVzcG9uc2USRwoKR2V0UmVsZWFzZRIbLmhlcm9uLnYxLkdldFJlbGVhc2VSZXF1ZXN0GhwuaGVyb24udjEuR2V0UmVsZWFzZVJlc3BvbnNlQjRaMmdpdGh1Yi5jb20veGpldHJ5L2hlcm9uLXByb2JlL2dlbi9oZXJvbi92MTtoZXJvbnYxYgZwcm90bzM", [file_heron_v1_types, file_heron_v1_update]);
 
 /**
  * @generated from message heron.v1.RegisterRequest
@@ -105,6 +105,25 @@ export type ReportRequest = Message<"heron.v1.ReportRequest"> & {
    * @generated from field: heron.v1.UpdateStatus update = 6;
    */
   update?: UpdateStatus | undefined;
+
+  /**
+   * 发出这次上报的 agent 二进制支持的能力；缺席即都不支持。至多 16 项，重复项与不认识的值都计入条数，超出则整批
+   * 拒收——条数上限约束的是编码体积，去重之后再数就挡不住重复项。hub 去重，忽略不认识的值。
+   * hub 按本次请求的能力过滤下发的任务，并据此决定是否采信结果（例如钉住证书指纹的任务）。
+   *
+   * @generated from field: repeated heron.v1.AgentCapability capabilities = 7;
+   */
+  capabilities: AgentCapability[];
+
+  /**
+   * agent 当前持有的任务清单的摘要：收到的 ProbeTasks.tasks（不含 version）按 task_id 升序，每个任务做确定性
+   * protobuf 编码，前缀 8 字节大端长度后依次拼接，对整串取 SHA-256，恰 32 字节；空清单是空串的 SHA-256。
+   * 空字节表示未提供（旧 agent，或尚未收到任何清单）。给出时 hub 按摘要而不是 tasks_version 决定是否重发清单：
+   * 备份恢复后计数可能与 agent 手里的旧值相等，摘要不会。代表收到并持有的清单，被 agent 判为非法的任务也在其中。
+   *
+   * @generated from field: bytes tasks_digest = 8;
+   */
+  tasksDigest: Uint8Array;
 };
 
 /**
@@ -215,6 +234,29 @@ export type GetReleaseResponse = Message<"heron.v1.GetReleaseResponse"> & {
  */
 export const GetReleaseResponseSchema: GenMessage<GetReleaseResponse> = /*@__PURE__*/
   messageDesc(file_heron_v1_agent, 5);
+
+/**
+ * @generated from enum heron.v1.AgentCapability
+ */
+export enum AgentCapability {
+  /**
+   * @generated from enum value: AGENT_CAPABILITY_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * 支持按 ProbeTask.cert_spki_sha256 钉证书指纹，并回显 task_config_id、带回 presented。
+   *
+   * @generated from enum value: AGENT_CAPABILITY_PROBE_CERT_PIN = 1;
+   */
+  PROBE_CERT_PIN = 1,
+}
+
+/**
+ * Describes the enum heron.v1.AgentCapability.
+ */
+export const AgentCapabilitySchema: GenEnum<AgentCapability> = /*@__PURE__*/
+  enumDesc(file_heron_v1_agent, 0);
 
 /**
  * agent → hub 的唯一服务。全部方法都是 unary：hub 向 agent 的下行只有低频

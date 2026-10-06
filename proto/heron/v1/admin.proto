@@ -9,6 +9,7 @@ import "heron/v1/access.proto";
 import "heron/v1/query.proto";
 import "heron/v1/update.proto";
 import "google/protobuf/any.proto";
+import "google/protobuf/empty.proto";
 import "google/protobuf/field_mask.proto";
 
 // 管理面板与 agent → hub。每个方法以 heron.v1.access 声明准入口径（见 access.proto），
@@ -721,6 +722,21 @@ message SaveProbeTaskRequest {
   bool all_nodes = 3;
   // 动态标签交集，与 all_nodes 和非空 node_ids 互斥；标签必须已存在。
   repeated string selector_tags = 4;
+  // 证书指纹的显式动作；缺席即保持原值（新建任务即不钉）。task.cert_spki_sha256 与 task.config_id 是只输出字段，
+  // 输入时忽略：钉与不钉只由这里决定，整体保存不会顺带清掉 pin。
+  CertPinChange cert_pin = 5;
+  // 前置条件：给出时必须等于任务当前的 config_id，否则 FailedPrecondition。对既有任务做 cert_pin.set 时必填
+  // （信任针对的是调用方看过的那份配置）；新建任务不得给出。
+  bytes expected_config_id = 6;
+}
+
+// 钉证书指纹的动作。清除是放宽校验，只能经 clear 显式表达；set 的空 bytes 不等于清除，会被拒绝。
+message CertPinChange {
+  oneof action {
+    // 叶证书 SubjectPublicKeyInfo 的 SHA-256，恰 32 字节。
+    bytes set_spki_sha256 = 1;
+    google.protobuf.Empty clear = 2;
+  }
 }
 message SaveProbeTaskResponse {
   ProbeTaskDetail task = 1;

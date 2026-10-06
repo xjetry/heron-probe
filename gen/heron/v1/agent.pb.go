@@ -21,6 +21,53 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type AgentCapability int32
+
+const (
+	AgentCapability_AGENT_CAPABILITY_UNSPECIFIED AgentCapability = 0
+	// 支持按 ProbeTask.cert_spki_sha256 钉证书指纹，并回显 task_config_id、带回 presented。
+	AgentCapability_AGENT_CAPABILITY_PROBE_CERT_PIN AgentCapability = 1
+)
+
+// Enum value maps for AgentCapability.
+var (
+	AgentCapability_name = map[int32]string{
+		0: "AGENT_CAPABILITY_UNSPECIFIED",
+		1: "AGENT_CAPABILITY_PROBE_CERT_PIN",
+	}
+	AgentCapability_value = map[string]int32{
+		"AGENT_CAPABILITY_UNSPECIFIED":    0,
+		"AGENT_CAPABILITY_PROBE_CERT_PIN": 1,
+	}
+)
+
+func (x AgentCapability) Enum() *AgentCapability {
+	p := new(AgentCapability)
+	*p = x
+	return p
+}
+
+func (x AgentCapability) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AgentCapability) Descriptor() protoreflect.EnumDescriptor {
+	return file_heron_v1_agent_proto_enumTypes[0].Descriptor()
+}
+
+func (AgentCapability) Type() protoreflect.EnumType {
+	return &file_heron_v1_agent_proto_enumTypes[0]
+}
+
+func (x AgentCapability) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AgentCapability.Descriptor instead.
+func (AgentCapability) EnumDescriptor() ([]byte, []int) {
+	return file_heron_v1_agent_proto_rawDescGZIP(), []int{0}
+}
+
 type RegisterRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 注册窗口 key，或带 heron_install_ 前缀的一次性安装凭据。运行 token（包括旧版无前缀 token）不能用于注册。
@@ -138,7 +185,16 @@ type ReportRequest struct {
 	// 进程启动后的首次上报携带；此后仅在 hub 要求时携带。
 	Facts *Facts `protobuf:"bytes,5,opt,name=facts,proto3" json:"facts,omitempty"`
 	// 来自本机更新器的能力与结果；缺席表示旧 agent，不支持远程更新。
-	Update        *UpdateStatus `protobuf:"bytes,6,opt,name=update,proto3" json:"update,omitempty"`
+	Update *UpdateStatus `protobuf:"bytes,6,opt,name=update,proto3" json:"update,omitempty"`
+	// 发出这次上报的 agent 二进制支持的能力；缺席即都不支持。至多 16 项，重复项与不认识的值都计入条数，超出则整批
+	// 拒收——条数上限约束的是编码体积，去重之后再数就挡不住重复项。hub 去重，忽略不认识的值。
+	// hub 按本次请求的能力过滤下发的任务，并据此决定是否采信结果（例如钉住证书指纹的任务）。
+	Capabilities []AgentCapability `protobuf:"varint,7,rep,packed,name=capabilities,proto3,enum=heron.v1.AgentCapability" json:"capabilities,omitempty"`
+	// agent 当前持有的任务清单的摘要：收到的 ProbeTasks.tasks（不含 version）按 task_id 升序，每个任务做确定性
+	// protobuf 编码，前缀 8 字节大端长度后依次拼接，对整串取 SHA-256，恰 32 字节；空清单是空串的 SHA-256。
+	// 空字节表示未提供（旧 agent，或尚未收到任何清单）。给出时 hub 按摘要而不是 tasks_version 决定是否重发清单：
+	// 备份恢复后计数可能与 agent 手里的旧值相等，摘要不会。代表收到并持有的清单，被 agent 判为非法的任务也在其中。
+	TasksDigest   []byte `protobuf:"bytes,8,opt,name=tasks_digest,json=tasksDigest,proto3" json:"tasks_digest,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -211,6 +267,20 @@ func (x *ReportRequest) GetFacts() *Facts {
 func (x *ReportRequest) GetUpdate() *UpdateStatus {
 	if x != nil {
 		return x.Update
+	}
+	return nil
+}
+
+func (x *ReportRequest) GetCapabilities() []AgentCapability {
+	if x != nil {
+		return x.Capabilities
+	}
+	return nil
+}
+
+func (x *ReportRequest) GetTasksDigest() []byte {
+	if x != nil {
+		return x.TasksDigest
 	}
 	return nil
 }
@@ -416,7 +486,7 @@ const file_heron_v1_agent_proto_rawDesc = "" +
 	"\x04name\x18\x02 \x01(\tR\x04name\"A\n" +
 	"\x10RegisterResponse\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\x03R\x06nodeId\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"\x93\x02\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\xf5\x02\n" +
 	"\rReportRequest\x12+\n" +
 	"\ametrics\x18\x01 \x01(\v2\x11.heron.v1.MetricsR\ametrics\x12:\n" +
 	"\rprobe_results\x18\x02 \x03(\v2\x15.heron.v1.ProbeResultR\fprobeResults\x12#\n" +
@@ -424,7 +494,9 @@ const file_heron_v1_agent_proto_rawDesc = "" +
 	"\n" +
 	"facts_hash\x18\x04 \x01(\x06R\tfactsHash\x12%\n" +
 	"\x05facts\x18\x05 \x01(\v2\x0f.heron.v1.FactsR\x05facts\x12.\n" +
-	"\x06update\x18\x06 \x01(\v2\x16.heron.v1.UpdateStatusR\x06update\"\xb7\x01\n" +
+	"\x06update\x18\x06 \x01(\v2\x16.heron.v1.UpdateStatusR\x06update\x12=\n" +
+	"\fcapabilities\x18\a \x03(\x0e2\x19.heron.v1.AgentCapabilityR\fcapabilities\x12!\n" +
+	"\ftasks_digest\x18\b \x01(\fR\vtasksDigest\"\xb7\x01\n" +
 	"\x0eReportResponse\x12,\n" +
 	"\x12report_interval_ms\x18\x01 \x01(\rR\x10reportIntervalMs\x12*\n" +
 	"\x05tasks\x18\x02 \x01(\v2\x14.heron.v1.ProbeTasksR\x05tasks\x12\x1d\n" +
@@ -437,7 +509,10 @@ const file_heron_v1_agent_proto_rawDesc = "" +
 	"\x12GetReleaseResponse\x12\x12\n" +
 	"\x04sums\x18\x01 \x01(\fR\x04sums\x12\x1c\n" +
 	"\tsignature\x18\x02 \x01(\fR\tsignature\x12\x18\n" +
-	"\aarchive\x18\x03 \x01(\fR\aarchive2\xd7\x01\n" +
+	"\aarchive\x18\x03 \x01(\fR\aarchive*X\n" +
+	"\x0fAgentCapability\x12 \n" +
+	"\x1cAGENT_CAPABILITY_UNSPECIFIED\x10\x00\x12#\n" +
+	"\x1fAGENT_CAPABILITY_PROBE_CERT_PIN\x10\x012\xd7\x01\n" +
 	"\fAgentService\x12A\n" +
 	"\bRegister\x12\x19.heron.v1.RegisterRequest\x1a\x1a.heron.v1.RegisterResponse\x12;\n" +
 	"\x06Report\x12\x17.heron.v1.ReportRequest\x1a\x18.heron.v1.ReportResponse\x12G\n" +
@@ -456,39 +531,42 @@ func file_heron_v1_agent_proto_rawDescGZIP() []byte {
 	return file_heron_v1_agent_proto_rawDescData
 }
 
+var file_heron_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_heron_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_heron_v1_agent_proto_goTypes = []any{
-	(*RegisterRequest)(nil),    // 0: heron.v1.RegisterRequest
-	(*RegisterResponse)(nil),   // 1: heron.v1.RegisterResponse
-	(*ReportRequest)(nil),      // 2: heron.v1.ReportRequest
-	(*ReportResponse)(nil),     // 3: heron.v1.ReportResponse
-	(*GetReleaseRequest)(nil),  // 4: heron.v1.GetReleaseRequest
-	(*GetReleaseResponse)(nil), // 5: heron.v1.GetReleaseResponse
-	(*Metrics)(nil),            // 6: heron.v1.Metrics
-	(*ProbeResult)(nil),        // 7: heron.v1.ProbeResult
-	(*Facts)(nil),              // 8: heron.v1.Facts
-	(*UpdateStatus)(nil),       // 9: heron.v1.UpdateStatus
-	(*ProbeTasks)(nil),         // 10: heron.v1.ProbeTasks
-	(*UpdateTask)(nil),         // 11: heron.v1.UpdateTask
+	(AgentCapability)(0),       // 0: heron.v1.AgentCapability
+	(*RegisterRequest)(nil),    // 1: heron.v1.RegisterRequest
+	(*RegisterResponse)(nil),   // 2: heron.v1.RegisterResponse
+	(*ReportRequest)(nil),      // 3: heron.v1.ReportRequest
+	(*ReportResponse)(nil),     // 4: heron.v1.ReportResponse
+	(*GetReleaseRequest)(nil),  // 5: heron.v1.GetReleaseRequest
+	(*GetReleaseResponse)(nil), // 6: heron.v1.GetReleaseResponse
+	(*Metrics)(nil),            // 7: heron.v1.Metrics
+	(*ProbeResult)(nil),        // 8: heron.v1.ProbeResult
+	(*Facts)(nil),              // 9: heron.v1.Facts
+	(*UpdateStatus)(nil),       // 10: heron.v1.UpdateStatus
+	(*ProbeTasks)(nil),         // 11: heron.v1.ProbeTasks
+	(*UpdateTask)(nil),         // 12: heron.v1.UpdateTask
 }
 var file_heron_v1_agent_proto_depIdxs = []int32{
-	6,  // 0: heron.v1.ReportRequest.metrics:type_name -> heron.v1.Metrics
-	7,  // 1: heron.v1.ReportRequest.probe_results:type_name -> heron.v1.ProbeResult
-	8,  // 2: heron.v1.ReportRequest.facts:type_name -> heron.v1.Facts
-	9,  // 3: heron.v1.ReportRequest.update:type_name -> heron.v1.UpdateStatus
-	10, // 4: heron.v1.ReportResponse.tasks:type_name -> heron.v1.ProbeTasks
-	11, // 5: heron.v1.ReportResponse.update:type_name -> heron.v1.UpdateTask
-	0,  // 6: heron.v1.AgentService.Register:input_type -> heron.v1.RegisterRequest
-	2,  // 7: heron.v1.AgentService.Report:input_type -> heron.v1.ReportRequest
-	4,  // 8: heron.v1.AgentService.GetRelease:input_type -> heron.v1.GetReleaseRequest
-	1,  // 9: heron.v1.AgentService.Register:output_type -> heron.v1.RegisterResponse
-	3,  // 10: heron.v1.AgentService.Report:output_type -> heron.v1.ReportResponse
-	5,  // 11: heron.v1.AgentService.GetRelease:output_type -> heron.v1.GetReleaseResponse
-	9,  // [9:12] is the sub-list for method output_type
-	6,  // [6:9] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	7,  // 0: heron.v1.ReportRequest.metrics:type_name -> heron.v1.Metrics
+	8,  // 1: heron.v1.ReportRequest.probe_results:type_name -> heron.v1.ProbeResult
+	9,  // 2: heron.v1.ReportRequest.facts:type_name -> heron.v1.Facts
+	10, // 3: heron.v1.ReportRequest.update:type_name -> heron.v1.UpdateStatus
+	0,  // 4: heron.v1.ReportRequest.capabilities:type_name -> heron.v1.AgentCapability
+	11, // 5: heron.v1.ReportResponse.tasks:type_name -> heron.v1.ProbeTasks
+	12, // 6: heron.v1.ReportResponse.update:type_name -> heron.v1.UpdateTask
+	1,  // 7: heron.v1.AgentService.Register:input_type -> heron.v1.RegisterRequest
+	3,  // 8: heron.v1.AgentService.Report:input_type -> heron.v1.ReportRequest
+	5,  // 9: heron.v1.AgentService.GetRelease:input_type -> heron.v1.GetReleaseRequest
+	2,  // 10: heron.v1.AgentService.Register:output_type -> heron.v1.RegisterResponse
+	4,  // 11: heron.v1.AgentService.Report:output_type -> heron.v1.ReportResponse
+	6,  // 12: heron.v1.AgentService.GetRelease:output_type -> heron.v1.GetReleaseResponse
+	10, // [10:13] is the sub-list for method output_type
+	7,  // [7:10] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_heron_v1_agent_proto_init() }
@@ -503,13 +581,14 @@ func file_heron_v1_agent_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_heron_v1_agent_proto_rawDesc), len(file_heron_v1_agent_proto_rawDesc)),
-			NumEnums:      0,
+			NumEnums:      1,
 			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_heron_v1_agent_proto_goTypes,
 		DependencyIndexes: file_heron_v1_agent_proto_depIdxs,
+		EnumInfos:         file_heron_v1_agent_proto_enumTypes,
 		MessageInfos:      file_heron_v1_agent_proto_msgTypes,
 	}.Build()
 	File_heron_v1_agent_proto = out.File

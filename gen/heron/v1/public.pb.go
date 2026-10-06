@@ -600,8 +600,10 @@ type PublicMetrics struct {
 	DiskReadBps  *uint64 `protobuf:"varint,21,opt,name=disk_read_bps,json=diskReadBps,proto3,oneof" json:"disk_read_bps,omitempty"`
 	DiskWriteBps *uint64 `protobuf:"varint,22,opt,name=disk_write_bps,json=diskWriteBps,proto3,oneof" json:"disk_write_bps,omitempty"`
 	// steal 与 iowait 占比，百分比。
-	CpuStealPct   *float64 `protobuf:"fixed64,23,opt,name=cpu_steal_pct,json=cpuStealPct,proto3,oneof" json:"cpu_steal_pct,omitempty"`
-	CpuIowaitPct  *float64 `protobuf:"fixed64,24,opt,name=cpu_iowait_pct,json=cpuIowaitPct,proto3,oneof" json:"cpu_iowait_pct,omitempty"`
+	CpuStealPct  *float64 `protobuf:"fixed64,23,opt,name=cpu_steal_pct,json=cpuStealPct,proto3,oneof" json:"cpu_steal_pct,omitempty"`
+	CpuIowaitPct *float64 `protobuf:"fixed64,24,opt,name=cpu_iowait_pct,json=cpuIowaitPct,proto3,oneof" json:"cpu_iowait_pct,omitempty"`
+	// 按核负载，与 Metrics.load1_per_core 同号同义。容器节点上它的分母是主机核数，与公开的 load1 一起可推出主机核数。
+	Load1PerCore  *float64 `protobuf:"fixed64,25,opt,name=load1_per_core,json=load1PerCore,proto3,oneof" json:"load1_per_core,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -790,6 +792,13 @@ func (x *PublicMetrics) GetCpuIowaitPct() float64 {
 	return 0
 }
 
+func (x *PublicMetrics) GetLoad1PerCore() float64 {
+	if x != nil && x.Load1PerCore != nil {
+		return *x.Load1PerCore
+	}
+	return 0
+}
+
 var File_heron_v1_public_proto protoreflect.FileDescriptor
 
 const file_heron_v1_public_proto_rawDesc = "" +
@@ -840,7 +849,7 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\tdays_left\x18\x06 \x01(\x05H\x00R\bdaysLeft\x88\x01\x01B\f\n" +
 	"\n" +
 	"_days_leftJ\x04\b\x05\x10\x06R\n" +
-	"auto_renew\"\xfe\x01\n" +
+	"auto_renew\"\x8f\x02\n" +
 	"\vPublicFacts\x12\x0e\n" +
 	"\x02os\x18\x02 \x01(\tR\x02os\x12\x12\n" +
 	"\x04arch\x18\x04 \x01(\tR\x04arch\x12&\n" +
@@ -848,7 +857,7 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\tcpu_model\x18\x06 \x01(\tR\bcpuModel\x12\x1b\n" +
 	"\tcpu_cores\x18\a \x01(\rR\bcpuCoresJ\x04\b\x01\x10\x02J\x04\b\x03\x10\x04J\x04\b\b\x10\tJ\x04\b\t\x10\n" +
 	"J\x04\b\n" +
-	"\x10\vJ\x04\b\v\x10\fR\bhostnameR\x06kernelR\ragent_versionR\x0eicmp_availableR\anetworkR\vdiagnostics\"\xee\b\n" +
+	"\x10\vJ\x04\b\v\x10\fJ\x04\b\f\x10\rR\bhostnameR\x06kernelR\ragent_versionR\x0eicmp_availableR\anetworkR\vdiagnosticsR\texecution\"\xac\t\n" +
 	"\rPublicMetrics\x12\x1c\n" +
 	"\acpu_pct\x18\x02 \x01(\x01H\x00R\x06cpuPct\x88\x01\x01\x12\x19\n" +
 	"\x05load1\x18\x03 \x01(\x01H\x01R\x05load1\x88\x01\x01\x12\x19\n" +
@@ -879,7 +888,8 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\rdisk_read_bps\x18\x15 \x01(\x04H\x12R\vdiskReadBps\x88\x01\x01\x12)\n" +
 	"\x0edisk_write_bps\x18\x16 \x01(\x04H\x13R\fdiskWriteBps\x88\x01\x01\x12'\n" +
 	"\rcpu_steal_pct\x18\x17 \x01(\x01H\x14R\vcpuStealPct\x88\x01\x01\x12)\n" +
-	"\x0ecpu_iowait_pct\x18\x18 \x01(\x01H\x15R\fcpuIowaitPct\x88\x01\x01B\n" +
+	"\x0ecpu_iowait_pct\x18\x18 \x01(\x01H\x15R\fcpuIowaitPct\x88\x01\x01\x12)\n" +
+	"\x0eload1_per_core\x18\x19 \x01(\x01H\x16R\fload1PerCore\x88\x01\x01B\n" +
 	"\n" +
 	"\b_cpu_pctB\b\n" +
 	"\x06_load1B\b\n" +
@@ -907,7 +917,8 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\x0e_disk_read_bpsB\x11\n" +
 	"\x0f_disk_write_bpsB\x10\n" +
 	"\x0e_cpu_steal_pctB\x11\n" +
-	"\x0f_cpu_iowait_pctJ\x04\b\x01\x10\x02J\x04\b\x14\x10\x15R\aboot_idR\x11net_counter_epoch2\xca\x04\n" +
+	"\x0f_cpu_iowait_pctB\x11\n" +
+	"\x0f_load1_per_coreJ\x04\b\x01\x10\x02J\x04\b\x14\x10\x15R\aboot_idR\x11net_counter_epoch2\xca\x04\n" +
 	"\rPublicService\x12C\n" +
 	"\aGetSite\x12\x18.heron.v1.GetSiteRequest\x1a\x14.heron.v1.PublicSite\"\b\x90\xb5\x18\xac\x02\x90\x02\x01\x12[\n" +
 	"\vGetSnapshot\x12).heron.v1.PublicServiceGetSnapshotRequest\x1a\x18.heron.v1.PublicSnapshot\"\a\x90\xb5\x18\x01\x90\x02\x01\x12V\n" +

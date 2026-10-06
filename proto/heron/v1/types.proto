@@ -41,6 +41,10 @@ message Metrics {
   // 不是 cpu_pct 的子集，三者可同时有值。任意计数回退或 Δtotal = 0 时三项一起缺失。
   optional double cpu_steal_pct = 23;
   optional double cpu_iowait_pct = 24;
+  // 按核负载：load1 除以与它同一范围的核数，由 agent 在同一次识别里算出（分母见 Facts.execution.load_cores）。
+  // 负载范围无法确定、或该范围的核数无从得知时缺失（例如 LXC guest 里 /proc/loadavg 由 lxcfs 提供）；
+  // 出现时 load1 必然同时出现。缺失不是 0。
+  optional double load1_per_core = 25;
 }
 
 // 主机静态信息。进程启动后的首次上报携带；此后仅在 hub 要求时携带。
@@ -51,9 +55,10 @@ message Facts {
   string arch = 4;
   string virtualization = 5;
   string cpu_model = 6;
-  // agent 所在执行环境的有效核数：cgroup 有限额时取 cpuset 与 quota 较小者的上取整
-  // （1.5 核报 2），否则是主机核数。旧 agent 一律报物理核数；该值只做展示与按核负载
-  // 归一的分母，口径漂移可接受。
+  // agent 所在执行环境的有效核数（可见上限）的上取整：主机范围是主机的处理器数；容器或 guest 的 cgroup 范围
+  // 是 cpu.max 折算的配额核数与 cpuset 核数的较小者（1.5 核报 2），cgroup v1 等旧读法是 /proc/cpuinfo 的处理器数；
+  // 精确值见 execution.cpu_effective_cores。
+  // 有效核数无法确定时为 0。只做展示；按核负载用 Metrics.load1_per_core，不再用它作分母。
   uint32 cpu_cores = 7;
   string agent_version = 8;
   // 两种 ICMP socket 是否至少一种可用。
@@ -63,6 +68,83 @@ message Facts {
   // 最近一次采集的白名单诊断，仅管理端可读；缺失表示 agent 尚未提供，不等于健康。
   // 不含原始错误、凭据、Hub URL 或完整命令行。沿 Facts 摘要对账，只在内容变化时落库。
   AgentDiagnostics diagnostics = 11;
+  // 每个资源按哪个范围采样、可见上限是多少，与本条 Facts 同一次识别；仅管理端可读。缺失表示旧 agent 未提供。
+  // 这是 agent 自报的信息，容器里的进程能伪造它读取的文件；hub 不据此授予任何权限。
+  ExecutionScope execution = 12;
+}
+
+// 一次识别的结果。识别看两件事：cgroup 挂载根是不是非根 cgroup（有 cgroup.type 即容器或 guest 的命名空间根），
+// 以及被读取的每个 /proc 文件实际所在的文件系统（procfs、lxcfs 或其他）。来源无法确定的资源缺读数，
+// 不改用另一个范围的数。容量都是"可见上限"：命名空间里看不到的祖先 cgroup 配额与内存上限不计入。
+message ExecutionScope {
+  ScopeKind kind = 1;
+  ResourceScope cpu = 2;
+  ResourceScope memory = 3;
+  ResourceScope swap = 4;
+  ResourceScope load = 5;
+  // 本次识别的有效核数精确值；CPU 范围未知时缺失。
+  optional double cpu_effective_cores = 6;
+  // 本次识别的内存、swap 可见上限，字节。缺失表示该资源范围未知，或范围已知而总量读不出；出现即是已知值。
+  // swap 的 0 是已知值（主机没有 swap，或环境的 memory.swap.max 为 0），不能省略成缺失；内存上限出现时必为正。
+  optional uint64 memory_limit_bytes = 7;
+  optional uint64 swap_limit_bytes = 8;
+  // Metrics.load1_per_core 的分母：负载所在范围的核数；缺失即本次不上报按核负载。
+  optional uint32 load_cores = 9;
+  // 固定类别的说明，按枚举值升序、去重，至多 8 个；读者忽略不认识的值。kind 不是 IDENTIFY_FAILED 时，只要有资源
+  // 的范围是 UNKNOWN，就至少有一条说明给出原因（IDENTIFY_FAILED 本身就是原因）。
+  repeated ScopeNote notes = 10;
+}
+
+enum ScopeKind {
+  // 只表示旧 agent 未上报；新 agent 必须给出非零值。
+  SCOPE_KIND_UNSPECIFIED = 0;
+  // 挂载根是真正的根 cgroup，或非 Linux：读数是整台主机。
+  SCOPE_KIND_HOST = 1;
+  // 挂载根是非根 cgroup（容器或 guest 的命名空间根）：读数是这个 cgroup 的。
+  SCOPE_KIND_CGROUP_NAMESPACE = 2;
+  // cgroup v1、混合挂载或没有 cgroup2：沿用旧读法，范围未区分。
+  SCOPE_KIND_CGROUP_V1_LEGACY = 3;
+  // 挂载根的状态读不出（权限等错误）：依赖它的资源都缺读数。
+  SCOPE_KIND_IDENTIFY_FAILED = 4;
+}
+
+enum ResourceScope {
+  // 只表示旧 agent 未上报。
+  RESOURCE_SCOPE_UNSPECIFIED = 0;
+  // 整台主机。
+  RESOURCE_SCOPE_HOST = 1;
+  // agent 所在容器或 guest 的 cgroup。
+  RESOURCE_SCOPE_ENVIRONMENT = 2;
+  // 来源无法确定或读不到：该资源本次缺读数。
+  RESOURCE_SCOPE_UNKNOWN = 3;
+  // cgroup v1 等旧读法，范围未区分。
+  RESOURCE_SCOPE_LEGACY = 4;
+}
+
+enum ScopeNote {
+  SCOPE_NOTE_UNSPECIFIED = 0;
+  // 检测到容器标识（/.dockerenv、/run/.containerenv、container= 环境变量、/run/systemd/container），而挂载根是主机的
+  // 根 cgroup：读数是整台主机，不是这个容器的。
+  SCOPE_NOTE_CONTAINER_SIGNAL_ON_HOST_ROOT = 1;
+  // /proc/self/mountinfo 读不了或解析失败，/proc 文件的来源都无法确定。
+  SCOPE_NOTE_MOUNTINFO_UNREADABLE = 2;
+  // /proc/loadavg 由 lxcfs 或其他文件系统提供，负载的范围无法确定。
+  SCOPE_NOTE_LOADAVG_NOT_PROCFS = 3;
+  // /proc/cpuinfo 不是 procfs，主机核数无从得知（按核负载因此缺失）。
+  SCOPE_NOTE_CPUINFO_NOT_PROCFS = 4;
+  // 环境 cgroup 上 memory.current、memory.stat 或 memory.max 缺失或读不出：内存缺读数。memory 控制器未下放时
+  // swap 的文件也一起缺失，同时会有 SWAP_ACCOUNTING_MISSING。
+  SCOPE_NOTE_MEMORY_CONTROLLER_MISSING = 5;
+  // 环境 cgroup 上 memory.swap.current 或 memory.swap.max 缺失或读不出：swap 缺读数。
+  SCOPE_NOTE_SWAP_ACCOUNTING_MISSING = 6;
+  // 挂载根是真根而 /proc/stat 不是 procfs 或来源无法确定：CPU 缺读数。环境 cgroup 不读 /proc/stat，不记这一条。
+  SCOPE_NOTE_PROC_STAT_NOT_PROCFS = 7;
+  // /proc/meminfo 的来源不可用：真根要求 procfs，环境 cgroup 要求 procfs 或 lxcfs。真根上内存与 swap 因此缺读数；
+  // 环境里 memory.max、memory.swap.max 为数值时可见上限就是它们，为 max 时对应资源缺读数。
+  SCOPE_NOTE_MEMINFO_UNUSABLE = 8;
+  // 环境 cgroup 的 cpu.max 或 cpuset.cpus.effective 读不出、认不出，或 cpu.stat 不存在：CPU 缺读数。
+  // cpuset.cpus.effective 不存在（cpuset 控制器未下放）不算，那时有效核数取 /proc/cpuinfo。
+  SCOPE_NOTE_CPU_CONTROLLER_UNREADABLE = 9;
 }
 
 message AgentDiagnostics {
@@ -130,9 +212,34 @@ message ProbeResult {
     ProbeError error = 5;
   }
   // HTTPS 探测（HTTP 任务且 target 为 https://）握手成功时顺带带回的服务端证书到期时刻
-  // （链首枚证书的 NotAfter，Unix 秒）；只在 rtt_us 成功结果上携带，每任务每小时至多一次。
+  // （链首枚证书的 NotAfter，Unix 秒）；只在 rtt_us 成功结果上携带，每任务每个配置身份每小时至多一次。
   // 不携带签发者与证书链。optional 区分"没带"与 0；hub 对未携带的结果不更新证书观测。
   optional int64 cert_not_after_s = 6;
+  // 证书相关的丢包（默认校验失败、钉住后指纹不符、钉住且相符但不在有效期）带回的对方叶证书，供人工确认信任；
+  // 只随 timeout 结果，每任务每个配置身份每小时至多一次。从不自动生效。
+  PresentedCertificate presented = 7;
+  // 产生这条结果时任务的 ProbeTask.config_id，原样回显；空表示身份未知（任务来自不发身份的 hub，或旧 agent）。
+  // presented 只在它与任务当前身份相等时被采信；cert_not_after_s 在身份相等时采信，身份为空时只对未钉住的任务采信。
+  bytes task_config_id = 8;
+}
+
+message PresentedCertificate {
+  // 叶证书 SubjectPublicKeyInfo 的 SHA-256，恰 32 字节。
+  bytes spki_sha256 = 1;
+  // 叶证书 NotAfter，Unix 秒，正数。
+  int64 not_after_s = 2;
+  // agent 当时的判定。
+  PresentedReason reason = 3;
+}
+
+enum PresentedReason {
+  PRESENTED_REASON_UNSPECIFIED = 0;
+  // 任务未钉指纹，按系统根证书与主机名校验失败。
+  PRESENTED_REASON_CA_VERIFY_FAILED = 1;
+  // 任务钉了指纹，对方叶证书的指纹与之不符。
+  PRESENTED_REASON_PIN_MISMATCH = 2;
+  // 任务钉了指纹且相符，但当前时刻不在证书有效期内（未生效或已过期）。
+  PRESENTED_REASON_OUTSIDE_VALIDITY = 3;
 }
 
 message Timeout {}
@@ -160,6 +267,13 @@ message ProbeTask {
   // 若是名字就要先用别的解析器解析它，地址策略也就查不到实际要发包的地址。只对 DNS 任务有意义；
   // 其他种类携带即 InvalidArgument——静默忽略会让调用方以为它生效了。
   string dns_server = 6;
+  // 钉住的叶证书 SubjectPublicKeyInfo 的 SHA-256，恰 32 字节；空表示不钉，按系统根证书与主机名校验。
+  // 只允许 target 为 https:// 的 HTTP 任务。钉住后只比对公钥与有效期，不查证书链与主机名。
+  // 声明了 AGENT_CAPABILITY_PROBE_CERT_PIN 的 agent 才会收到钉住的任务。
+  bytes cert_spki_sha256 = 7;
+  // 任务配置身份，16 字节随机数：任务内容（本消息除 id 与 config_id 外的全部字段）变化时由 hub 重新生成，
+  // 内容不变的保存保留原值。只比较相等。agent 在结果里原样回显（ProbeResult.task_config_id）。
+  bytes config_id = 8;
 }
 
 message ProbeTasks {

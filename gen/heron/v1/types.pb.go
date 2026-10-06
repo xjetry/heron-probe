@@ -21,6 +21,209 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type ScopeKind int32
+
+const (
+	// 只表示旧 agent 未上报；新 agent 必须给出非零值。
+	ScopeKind_SCOPE_KIND_UNSPECIFIED ScopeKind = 0
+	// 挂载根是真正的根 cgroup，或非 Linux：读数是整台主机。
+	ScopeKind_SCOPE_KIND_HOST ScopeKind = 1
+	// 挂载根是非根 cgroup（容器或 guest 的命名空间根）：读数是这个 cgroup 的。
+	ScopeKind_SCOPE_KIND_CGROUP_NAMESPACE ScopeKind = 2
+	// cgroup v1、混合挂载或没有 cgroup2：沿用旧读法，范围未区分。
+	ScopeKind_SCOPE_KIND_CGROUP_V1_LEGACY ScopeKind = 3
+	// 挂载根的状态读不出（权限等错误）：依赖它的资源都缺读数。
+	ScopeKind_SCOPE_KIND_IDENTIFY_FAILED ScopeKind = 4
+)
+
+// Enum value maps for ScopeKind.
+var (
+	ScopeKind_name = map[int32]string{
+		0: "SCOPE_KIND_UNSPECIFIED",
+		1: "SCOPE_KIND_HOST",
+		2: "SCOPE_KIND_CGROUP_NAMESPACE",
+		3: "SCOPE_KIND_CGROUP_V1_LEGACY",
+		4: "SCOPE_KIND_IDENTIFY_FAILED",
+	}
+	ScopeKind_value = map[string]int32{
+		"SCOPE_KIND_UNSPECIFIED":      0,
+		"SCOPE_KIND_HOST":             1,
+		"SCOPE_KIND_CGROUP_NAMESPACE": 2,
+		"SCOPE_KIND_CGROUP_V1_LEGACY": 3,
+		"SCOPE_KIND_IDENTIFY_FAILED":  4,
+	}
+)
+
+func (x ScopeKind) Enum() *ScopeKind {
+	p := new(ScopeKind)
+	*p = x
+	return p
+}
+
+func (x ScopeKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ScopeKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_heron_v1_types_proto_enumTypes[0].Descriptor()
+}
+
+func (ScopeKind) Type() protoreflect.EnumType {
+	return &file_heron_v1_types_proto_enumTypes[0]
+}
+
+func (x ScopeKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ScopeKind.Descriptor instead.
+func (ScopeKind) EnumDescriptor() ([]byte, []int) {
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{0}
+}
+
+type ResourceScope int32
+
+const (
+	// 只表示旧 agent 未上报。
+	ResourceScope_RESOURCE_SCOPE_UNSPECIFIED ResourceScope = 0
+	// 整台主机。
+	ResourceScope_RESOURCE_SCOPE_HOST ResourceScope = 1
+	// agent 所在容器或 guest 的 cgroup。
+	ResourceScope_RESOURCE_SCOPE_ENVIRONMENT ResourceScope = 2
+	// 来源无法确定或读不到：该资源本次缺读数。
+	ResourceScope_RESOURCE_SCOPE_UNKNOWN ResourceScope = 3
+	// cgroup v1 等旧读法，范围未区分。
+	ResourceScope_RESOURCE_SCOPE_LEGACY ResourceScope = 4
+)
+
+// Enum value maps for ResourceScope.
+var (
+	ResourceScope_name = map[int32]string{
+		0: "RESOURCE_SCOPE_UNSPECIFIED",
+		1: "RESOURCE_SCOPE_HOST",
+		2: "RESOURCE_SCOPE_ENVIRONMENT",
+		3: "RESOURCE_SCOPE_UNKNOWN",
+		4: "RESOURCE_SCOPE_LEGACY",
+	}
+	ResourceScope_value = map[string]int32{
+		"RESOURCE_SCOPE_UNSPECIFIED": 0,
+		"RESOURCE_SCOPE_HOST":        1,
+		"RESOURCE_SCOPE_ENVIRONMENT": 2,
+		"RESOURCE_SCOPE_UNKNOWN":     3,
+		"RESOURCE_SCOPE_LEGACY":      4,
+	}
+)
+
+func (x ResourceScope) Enum() *ResourceScope {
+	p := new(ResourceScope)
+	*p = x
+	return p
+}
+
+func (x ResourceScope) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ResourceScope) Descriptor() protoreflect.EnumDescriptor {
+	return file_heron_v1_types_proto_enumTypes[1].Descriptor()
+}
+
+func (ResourceScope) Type() protoreflect.EnumType {
+	return &file_heron_v1_types_proto_enumTypes[1]
+}
+
+func (x ResourceScope) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ResourceScope.Descriptor instead.
+func (ResourceScope) EnumDescriptor() ([]byte, []int) {
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{1}
+}
+
+type ScopeNote int32
+
+const (
+	ScopeNote_SCOPE_NOTE_UNSPECIFIED ScopeNote = 0
+	// 检测到容器标识（/.dockerenv、/run/.containerenv、container= 环境变量、/run/systemd/container），而挂载根是主机的
+	// 根 cgroup：读数是整台主机，不是这个容器的。
+	ScopeNote_SCOPE_NOTE_CONTAINER_SIGNAL_ON_HOST_ROOT ScopeNote = 1
+	// /proc/self/mountinfo 读不了或解析失败，/proc 文件的来源都无法确定。
+	ScopeNote_SCOPE_NOTE_MOUNTINFO_UNREADABLE ScopeNote = 2
+	// /proc/loadavg 由 lxcfs 或其他文件系统提供，负载的范围无法确定。
+	ScopeNote_SCOPE_NOTE_LOADAVG_NOT_PROCFS ScopeNote = 3
+	// /proc/cpuinfo 不是 procfs，主机核数无从得知（按核负载因此缺失）。
+	ScopeNote_SCOPE_NOTE_CPUINFO_NOT_PROCFS ScopeNote = 4
+	// 环境 cgroup 上 memory.current、memory.stat 或 memory.max 缺失或读不出：内存缺读数。memory 控制器未下放时
+	// swap 的文件也一起缺失，同时会有 SWAP_ACCOUNTING_MISSING。
+	ScopeNote_SCOPE_NOTE_MEMORY_CONTROLLER_MISSING ScopeNote = 5
+	// 环境 cgroup 上 memory.swap.current 或 memory.swap.max 缺失或读不出：swap 缺读数。
+	ScopeNote_SCOPE_NOTE_SWAP_ACCOUNTING_MISSING ScopeNote = 6
+	// 挂载根是真根而 /proc/stat 不是 procfs 或来源无法确定：CPU 缺读数。环境 cgroup 不读 /proc/stat，不记这一条。
+	ScopeNote_SCOPE_NOTE_PROC_STAT_NOT_PROCFS ScopeNote = 7
+	// /proc/meminfo 的来源不可用：真根要求 procfs，环境 cgroup 要求 procfs 或 lxcfs。真根上内存与 swap 因此缺读数；
+	// 环境里 memory.max、memory.swap.max 为数值时可见上限就是它们，为 max 时对应资源缺读数。
+	ScopeNote_SCOPE_NOTE_MEMINFO_UNUSABLE ScopeNote = 8
+	// 环境 cgroup 的 cpu.max 或 cpuset.cpus.effective 读不出、认不出，或 cpu.stat 不存在：CPU 缺读数。
+	// cpuset.cpus.effective 不存在（cpuset 控制器未下放）不算，那时有效核数取 /proc/cpuinfo。
+	ScopeNote_SCOPE_NOTE_CPU_CONTROLLER_UNREADABLE ScopeNote = 9
+)
+
+// Enum value maps for ScopeNote.
+var (
+	ScopeNote_name = map[int32]string{
+		0: "SCOPE_NOTE_UNSPECIFIED",
+		1: "SCOPE_NOTE_CONTAINER_SIGNAL_ON_HOST_ROOT",
+		2: "SCOPE_NOTE_MOUNTINFO_UNREADABLE",
+		3: "SCOPE_NOTE_LOADAVG_NOT_PROCFS",
+		4: "SCOPE_NOTE_CPUINFO_NOT_PROCFS",
+		5: "SCOPE_NOTE_MEMORY_CONTROLLER_MISSING",
+		6: "SCOPE_NOTE_SWAP_ACCOUNTING_MISSING",
+		7: "SCOPE_NOTE_PROC_STAT_NOT_PROCFS",
+		8: "SCOPE_NOTE_MEMINFO_UNUSABLE",
+		9: "SCOPE_NOTE_CPU_CONTROLLER_UNREADABLE",
+	}
+	ScopeNote_value = map[string]int32{
+		"SCOPE_NOTE_UNSPECIFIED":                   0,
+		"SCOPE_NOTE_CONTAINER_SIGNAL_ON_HOST_ROOT": 1,
+		"SCOPE_NOTE_MOUNTINFO_UNREADABLE":          2,
+		"SCOPE_NOTE_LOADAVG_NOT_PROCFS":            3,
+		"SCOPE_NOTE_CPUINFO_NOT_PROCFS":            4,
+		"SCOPE_NOTE_MEMORY_CONTROLLER_MISSING":     5,
+		"SCOPE_NOTE_SWAP_ACCOUNTING_MISSING":       6,
+		"SCOPE_NOTE_PROC_STAT_NOT_PROCFS":          7,
+		"SCOPE_NOTE_MEMINFO_UNUSABLE":              8,
+		"SCOPE_NOTE_CPU_CONTROLLER_UNREADABLE":     9,
+	}
+)
+
+func (x ScopeNote) Enum() *ScopeNote {
+	p := new(ScopeNote)
+	*p = x
+	return p
+}
+
+func (x ScopeNote) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ScopeNote) Descriptor() protoreflect.EnumDescriptor {
+	return file_heron_v1_types_proto_enumTypes[2].Descriptor()
+}
+
+func (ScopeNote) Type() protoreflect.EnumType {
+	return &file_heron_v1_types_proto_enumTypes[2]
+}
+
+func (x ScopeNote) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ScopeNote.Descriptor instead.
+func (ScopeNote) EnumDescriptor() ([]byte, []int) {
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{2}
+}
+
 type CollectionComponent int32
 
 const (
@@ -83,11 +286,11 @@ func (x CollectionComponent) String() string {
 }
 
 func (CollectionComponent) Descriptor() protoreflect.EnumDescriptor {
-	return file_heron_v1_types_proto_enumTypes[0].Descriptor()
+	return file_heron_v1_types_proto_enumTypes[3].Descriptor()
 }
 
 func (CollectionComponent) Type() protoreflect.EnumType {
-	return &file_heron_v1_types_proto_enumTypes[0]
+	return &file_heron_v1_types_proto_enumTypes[3]
 }
 
 func (x CollectionComponent) Number() protoreflect.EnumNumber {
@@ -96,7 +299,7 @@ func (x CollectionComponent) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CollectionComponent.Descriptor instead.
 func (CollectionComponent) EnumDescriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{0}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{3}
 }
 
 type AddressDetectionState int32
@@ -135,11 +338,11 @@ func (x AddressDetectionState) String() string {
 }
 
 func (AddressDetectionState) Descriptor() protoreflect.EnumDescriptor {
-	return file_heron_v1_types_proto_enumTypes[1].Descriptor()
+	return file_heron_v1_types_proto_enumTypes[4].Descriptor()
 }
 
 func (AddressDetectionState) Type() protoreflect.EnumType {
-	return &file_heron_v1_types_proto_enumTypes[1]
+	return &file_heron_v1_types_proto_enumTypes[4]
 }
 
 func (x AddressDetectionState) Number() protoreflect.EnumNumber {
@@ -148,7 +351,62 @@ func (x AddressDetectionState) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AddressDetectionState.Descriptor instead.
 func (AddressDetectionState) EnumDescriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{1}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{4}
+}
+
+type PresentedReason int32
+
+const (
+	PresentedReason_PRESENTED_REASON_UNSPECIFIED PresentedReason = 0
+	// 任务未钉指纹，按系统根证书与主机名校验失败。
+	PresentedReason_PRESENTED_REASON_CA_VERIFY_FAILED PresentedReason = 1
+	// 任务钉了指纹，对方叶证书的指纹与之不符。
+	PresentedReason_PRESENTED_REASON_PIN_MISMATCH PresentedReason = 2
+	// 任务钉了指纹且相符，但当前时刻不在证书有效期内（未生效或已过期）。
+	PresentedReason_PRESENTED_REASON_OUTSIDE_VALIDITY PresentedReason = 3
+)
+
+// Enum value maps for PresentedReason.
+var (
+	PresentedReason_name = map[int32]string{
+		0: "PRESENTED_REASON_UNSPECIFIED",
+		1: "PRESENTED_REASON_CA_VERIFY_FAILED",
+		2: "PRESENTED_REASON_PIN_MISMATCH",
+		3: "PRESENTED_REASON_OUTSIDE_VALIDITY",
+	}
+	PresentedReason_value = map[string]int32{
+		"PRESENTED_REASON_UNSPECIFIED":      0,
+		"PRESENTED_REASON_CA_VERIFY_FAILED": 1,
+		"PRESENTED_REASON_PIN_MISMATCH":     2,
+		"PRESENTED_REASON_OUTSIDE_VALIDITY": 3,
+	}
+)
+
+func (x PresentedReason) Enum() *PresentedReason {
+	p := new(PresentedReason)
+	*p = x
+	return p
+}
+
+func (x PresentedReason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PresentedReason) Descriptor() protoreflect.EnumDescriptor {
+	return file_heron_v1_types_proto_enumTypes[5].Descriptor()
+}
+
+func (PresentedReason) Type() protoreflect.EnumType {
+	return &file_heron_v1_types_proto_enumTypes[5]
+}
+
+func (x PresentedReason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PresentedReason.Descriptor instead.
+func (PresentedReason) EnumDescriptor() ([]byte, []int) {
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{5}
 }
 
 type ProbeKind int32
@@ -190,11 +448,11 @@ func (x ProbeKind) String() string {
 }
 
 func (ProbeKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_heron_v1_types_proto_enumTypes[2].Descriptor()
+	return file_heron_v1_types_proto_enumTypes[6].Descriptor()
 }
 
 func (ProbeKind) Type() protoreflect.EnumType {
-	return &file_heron_v1_types_proto_enumTypes[2]
+	return &file_heron_v1_types_proto_enumTypes[6]
 }
 
 func (x ProbeKind) Number() protoreflect.EnumNumber {
@@ -203,7 +461,7 @@ func (x ProbeKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ProbeKind.Descriptor instead.
 func (ProbeKind) EnumDescriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{2}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{6}
 }
 
 // 节点的计费周期（§9.4）。管理与公开两端共用，所以与 Billing 一起定义在这里：public.proto 不能 import admin.proto。
@@ -263,11 +521,11 @@ func (x BillingCycle) String() string {
 }
 
 func (BillingCycle) Descriptor() protoreflect.EnumDescriptor {
-	return file_heron_v1_types_proto_enumTypes[3].Descriptor()
+	return file_heron_v1_types_proto_enumTypes[7].Descriptor()
 }
 
 func (BillingCycle) Type() protoreflect.EnumType {
-	return &file_heron_v1_types_proto_enumTypes[3]
+	return &file_heron_v1_types_proto_enumTypes[7]
 }
 
 func (x BillingCycle) Number() protoreflect.EnumNumber {
@@ -276,7 +534,7 @@ func (x BillingCycle) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use BillingCycle.Descriptor instead.
 func (BillingCycle) EnumDescriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{3}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{7}
 }
 
 // 一次上报里的主机读数。每个读数都是 optional：缺失表示"无读数"，
@@ -315,8 +573,12 @@ type Metrics struct {
 	DiskWriteBps *uint64 `protobuf:"varint,22,opt,name=disk_write_bps,json=diskWriteBps,proto3,oneof" json:"disk_write_bps,omitempty"`
 	// steal 与 iowait 占全部 CPU tick 的百分比，与 cpu_pct 取自同一次 /proc/stat 两次采样差分；
 	// 不是 cpu_pct 的子集，三者可同时有值。任意计数回退或 Δtotal = 0 时三项一起缺失。
-	CpuStealPct   *float64 `protobuf:"fixed64,23,opt,name=cpu_steal_pct,json=cpuStealPct,proto3,oneof" json:"cpu_steal_pct,omitempty"`
-	CpuIowaitPct  *float64 `protobuf:"fixed64,24,opt,name=cpu_iowait_pct,json=cpuIowaitPct,proto3,oneof" json:"cpu_iowait_pct,omitempty"`
+	CpuStealPct  *float64 `protobuf:"fixed64,23,opt,name=cpu_steal_pct,json=cpuStealPct,proto3,oneof" json:"cpu_steal_pct,omitempty"`
+	CpuIowaitPct *float64 `protobuf:"fixed64,24,opt,name=cpu_iowait_pct,json=cpuIowaitPct,proto3,oneof" json:"cpu_iowait_pct,omitempty"`
+	// 按核负载：load1 除以与它同一范围的核数，由 agent 在同一次识别里算出（分母见 Facts.execution.load_cores）。
+	// 负载范围无法确定、或该范围的核数无从得知时缺失（例如 LXC guest 里 /proc/loadavg 由 lxcfs 提供）；
+	// 出现时 load1 必然同时出现。缺失不是 0。
+	Load1PerCore  *float64 `protobuf:"fixed64,25,opt,name=load1_per_core,json=load1PerCore,proto3,oneof" json:"load1_per_core,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -519,6 +781,13 @@ func (x *Metrics) GetCpuIowaitPct() float64 {
 	return 0
 }
 
+func (x *Metrics) GetLoad1PerCore() float64 {
+	if x != nil && x.Load1PerCore != nil {
+		return *x.Load1PerCore
+	}
+	return 0
+}
+
 // 主机静态信息。进程启动后的首次上报携带；此后仅在 hub 要求时携带。
 type Facts struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -528,9 +797,10 @@ type Facts struct {
 	Arch           string                 `protobuf:"bytes,4,opt,name=arch,proto3" json:"arch,omitempty"`
 	Virtualization string                 `protobuf:"bytes,5,opt,name=virtualization,proto3" json:"virtualization,omitempty"`
 	CpuModel       string                 `protobuf:"bytes,6,opt,name=cpu_model,json=cpuModel,proto3" json:"cpu_model,omitempty"`
-	// agent 所在执行环境的有效核数：cgroup 有限额时取 cpuset 与 quota 较小者的上取整
-	// （1.5 核报 2），否则是主机核数。旧 agent 一律报物理核数；该值只做展示与按核负载
-	// 归一的分母，口径漂移可接受。
+	// agent 所在执行环境的有效核数（可见上限）的上取整：主机范围是主机的处理器数；容器或 guest 的 cgroup 范围
+	// 是 cpu.max 折算的配额核数与 cpuset 核数的较小者（1.5 核报 2），cgroup v1 等旧读法是 /proc/cpuinfo 的处理器数；
+	// 精确值见 execution.cpu_effective_cores。
+	// 有效核数无法确定时为 0。只做展示；按核负载用 Metrics.load1_per_core，不再用它作分母。
 	CpuCores     uint32 `protobuf:"varint,7,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"`
 	AgentVersion string `protobuf:"bytes,8,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
 	// 两种 ICMP socket 是否至少一种可用。
@@ -539,7 +809,10 @@ type Facts struct {
 	Network *NetworkInfo `protobuf:"bytes,10,opt,name=network,proto3" json:"network,omitempty"`
 	// 最近一次采集的白名单诊断，仅管理端可读；缺失表示 agent 尚未提供，不等于健康。
 	// 不含原始错误、凭据、Hub URL 或完整命令行。沿 Facts 摘要对账，只在内容变化时落库。
-	Diagnostics   *AgentDiagnostics `protobuf:"bytes,11,opt,name=diagnostics,proto3" json:"diagnostics,omitempty"`
+	Diagnostics *AgentDiagnostics `protobuf:"bytes,11,opt,name=diagnostics,proto3" json:"diagnostics,omitempty"`
+	// 每个资源按哪个范围采样、可见上限是多少，与本条 Facts 同一次识别；仅管理端可读。缺失表示旧 agent 未提供。
+	// 这是 agent 自报的信息，容器里的进程能伪造它读取的文件；hub 不据此授予任何权限。
+	Execution     *ExecutionScope `protobuf:"bytes,12,opt,name=execution,proto3" json:"execution,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -651,6 +924,138 @@ func (x *Facts) GetDiagnostics() *AgentDiagnostics {
 	return nil
 }
 
+func (x *Facts) GetExecution() *ExecutionScope {
+	if x != nil {
+		return x.Execution
+	}
+	return nil
+}
+
+// 一次识别的结果。识别看两件事：cgroup 挂载根是不是非根 cgroup（有 cgroup.type 即容器或 guest 的命名空间根），
+// 以及被读取的每个 /proc 文件实际所在的文件系统（procfs、lxcfs 或其他）。来源无法确定的资源缺读数，
+// 不改用另一个范围的数。容量都是"可见上限"：命名空间里看不到的祖先 cgroup 配额与内存上限不计入。
+type ExecutionScope struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Kind   ScopeKind              `protobuf:"varint,1,opt,name=kind,proto3,enum=heron.v1.ScopeKind" json:"kind,omitempty"`
+	Cpu    ResourceScope          `protobuf:"varint,2,opt,name=cpu,proto3,enum=heron.v1.ResourceScope" json:"cpu,omitempty"`
+	Memory ResourceScope          `protobuf:"varint,3,opt,name=memory,proto3,enum=heron.v1.ResourceScope" json:"memory,omitempty"`
+	Swap   ResourceScope          `protobuf:"varint,4,opt,name=swap,proto3,enum=heron.v1.ResourceScope" json:"swap,omitempty"`
+	Load   ResourceScope          `protobuf:"varint,5,opt,name=load,proto3,enum=heron.v1.ResourceScope" json:"load,omitempty"`
+	// 本次识别的有效核数精确值；CPU 范围未知时缺失。
+	CpuEffectiveCores *float64 `protobuf:"fixed64,6,opt,name=cpu_effective_cores,json=cpuEffectiveCores,proto3,oneof" json:"cpu_effective_cores,omitempty"`
+	// 本次识别的内存、swap 可见上限，字节。缺失表示该资源范围未知，或范围已知而总量读不出；出现即是已知值。
+	// swap 的 0 是已知值（主机没有 swap，或环境的 memory.swap.max 为 0），不能省略成缺失；内存上限出现时必为正。
+	MemoryLimitBytes *uint64 `protobuf:"varint,7,opt,name=memory_limit_bytes,json=memoryLimitBytes,proto3,oneof" json:"memory_limit_bytes,omitempty"`
+	SwapLimitBytes   *uint64 `protobuf:"varint,8,opt,name=swap_limit_bytes,json=swapLimitBytes,proto3,oneof" json:"swap_limit_bytes,omitempty"`
+	// Metrics.load1_per_core 的分母：负载所在范围的核数；缺失即本次不上报按核负载。
+	LoadCores *uint32 `protobuf:"varint,9,opt,name=load_cores,json=loadCores,proto3,oneof" json:"load_cores,omitempty"`
+	// 固定类别的说明，按枚举值升序、去重，至多 8 个；读者忽略不认识的值。kind 不是 IDENTIFY_FAILED 时，只要有资源
+	// 的范围是 UNKNOWN，就至少有一条说明给出原因（IDENTIFY_FAILED 本身就是原因）。
+	Notes         []ScopeNote `protobuf:"varint,10,rep,packed,name=notes,proto3,enum=heron.v1.ScopeNote" json:"notes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExecutionScope) Reset() {
+	*x = ExecutionScope{}
+	mi := &file_heron_v1_types_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExecutionScope) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExecutionScope) ProtoMessage() {}
+
+func (x *ExecutionScope) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_types_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExecutionScope.ProtoReflect.Descriptor instead.
+func (*ExecutionScope) Descriptor() ([]byte, []int) {
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ExecutionScope) GetKind() ScopeKind {
+	if x != nil {
+		return x.Kind
+	}
+	return ScopeKind_SCOPE_KIND_UNSPECIFIED
+}
+
+func (x *ExecutionScope) GetCpu() ResourceScope {
+	if x != nil {
+		return x.Cpu
+	}
+	return ResourceScope_RESOURCE_SCOPE_UNSPECIFIED
+}
+
+func (x *ExecutionScope) GetMemory() ResourceScope {
+	if x != nil {
+		return x.Memory
+	}
+	return ResourceScope_RESOURCE_SCOPE_UNSPECIFIED
+}
+
+func (x *ExecutionScope) GetSwap() ResourceScope {
+	if x != nil {
+		return x.Swap
+	}
+	return ResourceScope_RESOURCE_SCOPE_UNSPECIFIED
+}
+
+func (x *ExecutionScope) GetLoad() ResourceScope {
+	if x != nil {
+		return x.Load
+	}
+	return ResourceScope_RESOURCE_SCOPE_UNSPECIFIED
+}
+
+func (x *ExecutionScope) GetCpuEffectiveCores() float64 {
+	if x != nil && x.CpuEffectiveCores != nil {
+		return *x.CpuEffectiveCores
+	}
+	return 0
+}
+
+func (x *ExecutionScope) GetMemoryLimitBytes() uint64 {
+	if x != nil && x.MemoryLimitBytes != nil {
+		return *x.MemoryLimitBytes
+	}
+	return 0
+}
+
+func (x *ExecutionScope) GetSwapLimitBytes() uint64 {
+	if x != nil && x.SwapLimitBytes != nil {
+		return *x.SwapLimitBytes
+	}
+	return 0
+}
+
+func (x *ExecutionScope) GetLoadCores() uint32 {
+	if x != nil && x.LoadCores != nil {
+		return *x.LoadCores
+	}
+	return 0
+}
+
+func (x *ExecutionScope) GetNotes() []ScopeNote {
+	if x != nil {
+		return x.Notes
+	}
+	return nil
+}
+
 type AgentDiagnostics struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 生效的包含/排除规则，包含非空时排除必须为空；排除已展开平台缺省值。
@@ -672,7 +1077,7 @@ type AgentDiagnostics struct {
 
 func (x *AgentDiagnostics) Reset() {
 	*x = AgentDiagnostics{}
-	mi := &file_heron_v1_types_proto_msgTypes[2]
+	mi := &file_heron_v1_types_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -684,7 +1089,7 @@ func (x *AgentDiagnostics) String() string {
 func (*AgentDiagnostics) ProtoMessage() {}
 
 func (x *AgentDiagnostics) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[2]
+	mi := &file_heron_v1_types_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -697,7 +1102,7 @@ func (x *AgentDiagnostics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentDiagnostics.ProtoReflect.Descriptor instead.
 func (*AgentDiagnostics) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{2}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *AgentDiagnostics) GetNetInclude() []string {
@@ -752,7 +1157,7 @@ type NetworkInfo struct {
 
 func (x *NetworkInfo) Reset() {
 	*x = NetworkInfo{}
-	mi := &file_heron_v1_types_proto_msgTypes[3]
+	mi := &file_heron_v1_types_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -764,7 +1169,7 @@ func (x *NetworkInfo) String() string {
 func (*NetworkInfo) ProtoMessage() {}
 
 func (x *NetworkInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[3]
+	mi := &file_heron_v1_types_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -777,7 +1182,7 @@ func (x *NetworkInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NetworkInfo.ProtoReflect.Descriptor instead.
 func (*NetworkInfo) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{3}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *NetworkInfo) GetIpv4() *AddressDetection {
@@ -807,7 +1212,7 @@ type AddressDetection struct {
 
 func (x *AddressDetection) Reset() {
 	*x = AddressDetection{}
-	mi := &file_heron_v1_types_proto_msgTypes[4]
+	mi := &file_heron_v1_types_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -819,7 +1224,7 @@ func (x *AddressDetection) String() string {
 func (*AddressDetection) ProtoMessage() {}
 
 func (x *AddressDetection) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[4]
+	mi := &file_heron_v1_types_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -832,7 +1237,7 @@ func (x *AddressDetection) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddressDetection.ProtoReflect.Descriptor instead.
 func (*AddressDetection) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{4}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *AddressDetection) GetState() AddressDetectionState {
@@ -868,16 +1273,22 @@ type ProbeResult struct {
 	//	*ProbeResult_Error
 	Outcome isProbeResult_Outcome `protobuf_oneof:"outcome"`
 	// HTTPS 探测（HTTP 任务且 target 为 https://）握手成功时顺带带回的服务端证书到期时刻
-	// （链首枚证书的 NotAfter，Unix 秒）；只在 rtt_us 成功结果上携带，每任务每小时至多一次。
+	// （链首枚证书的 NotAfter，Unix 秒）；只在 rtt_us 成功结果上携带，每任务每个配置身份每小时至多一次。
 	// 不携带签发者与证书链。optional 区分"没带"与 0；hub 对未携带的结果不更新证书观测。
 	CertNotAfterS *int64 `protobuf:"varint,6,opt,name=cert_not_after_s,json=certNotAfterS,proto3,oneof" json:"cert_not_after_s,omitempty"`
+	// 证书相关的丢包（默认校验失败、钉住后指纹不符、钉住且相符但不在有效期）带回的对方叶证书，供人工确认信任；
+	// 只随 timeout 结果，每任务每个配置身份每小时至多一次。从不自动生效。
+	Presented *PresentedCertificate `protobuf:"bytes,7,opt,name=presented,proto3" json:"presented,omitempty"`
+	// 产生这条结果时任务的 ProbeTask.config_id，原样回显；空表示身份未知（任务来自不发身份的 hub，或旧 agent）。
+	// presented 只在它与任务当前身份相等时被采信；cert_not_after_s 在身份相等时采信，身份为空时只对未钉住的任务采信。
+	TaskConfigId  []byte `protobuf:"bytes,8,opt,name=task_config_id,json=taskConfigId,proto3" json:"task_config_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ProbeResult) Reset() {
 	*x = ProbeResult{}
-	mi := &file_heron_v1_types_proto_msgTypes[5]
+	mi := &file_heron_v1_types_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -889,7 +1300,7 @@ func (x *ProbeResult) String() string {
 func (*ProbeResult) ProtoMessage() {}
 
 func (x *ProbeResult) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[5]
+	mi := &file_heron_v1_types_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -902,7 +1313,7 @@ func (x *ProbeResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeResult.ProtoReflect.Descriptor instead.
 func (*ProbeResult) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{5}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ProbeResult) GetTaskId() uint64 {
@@ -960,6 +1371,20 @@ func (x *ProbeResult) GetCertNotAfterS() int64 {
 	return 0
 }
 
+func (x *ProbeResult) GetPresented() *PresentedCertificate {
+	if x != nil {
+		return x.Presented
+	}
+	return nil
+}
+
+func (x *ProbeResult) GetTaskConfigId() []byte {
+	if x != nil {
+		return x.TaskConfigId
+	}
+	return nil
+}
+
 type isProbeResult_Outcome interface {
 	isProbeResult_Outcome()
 }
@@ -984,6 +1409,69 @@ func (*ProbeResult_Timeout) isProbeResult_Outcome() {}
 
 func (*ProbeResult_Error) isProbeResult_Outcome() {}
 
+type PresentedCertificate struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 叶证书 SubjectPublicKeyInfo 的 SHA-256，恰 32 字节。
+	SpkiSha256 []byte `protobuf:"bytes,1,opt,name=spki_sha256,json=spkiSha256,proto3" json:"spki_sha256,omitempty"`
+	// 叶证书 NotAfter，Unix 秒，正数。
+	NotAfterS int64 `protobuf:"varint,2,opt,name=not_after_s,json=notAfterS,proto3" json:"not_after_s,omitempty"`
+	// agent 当时的判定。
+	Reason        PresentedReason `protobuf:"varint,3,opt,name=reason,proto3,enum=heron.v1.PresentedReason" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PresentedCertificate) Reset() {
+	*x = PresentedCertificate{}
+	mi := &file_heron_v1_types_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PresentedCertificate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PresentedCertificate) ProtoMessage() {}
+
+func (x *PresentedCertificate) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_types_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PresentedCertificate.ProtoReflect.Descriptor instead.
+func (*PresentedCertificate) Descriptor() ([]byte, []int) {
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *PresentedCertificate) GetSpkiSha256() []byte {
+	if x != nil {
+		return x.SpkiSha256
+	}
+	return nil
+}
+
+func (x *PresentedCertificate) GetNotAfterS() int64 {
+	if x != nil {
+		return x.NotAfterS
+	}
+	return 0
+}
+
+func (x *PresentedCertificate) GetReason() PresentedReason {
+	if x != nil {
+		return x.Reason
+	}
+	return PresentedReason_PRESENTED_REASON_UNSPECIFIED
+}
+
 type Timeout struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -992,7 +1480,7 @@ type Timeout struct {
 
 func (x *Timeout) Reset() {
 	*x = Timeout{}
-	mi := &file_heron_v1_types_proto_msgTypes[6]
+	mi := &file_heron_v1_types_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1004,7 +1492,7 @@ func (x *Timeout) String() string {
 func (*Timeout) ProtoMessage() {}
 
 func (x *Timeout) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[6]
+	mi := &file_heron_v1_types_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1017,7 +1505,7 @@ func (x *Timeout) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Timeout.ProtoReflect.Descriptor instead.
 func (*Timeout) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{6}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{8}
 }
 
 type ProbeError struct {
@@ -1029,7 +1517,7 @@ type ProbeError struct {
 
 func (x *ProbeError) Reset() {
 	*x = ProbeError{}
-	mi := &file_heron_v1_types_proto_msgTypes[7]
+	mi := &file_heron_v1_types_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1041,7 +1529,7 @@ func (x *ProbeError) String() string {
 func (*ProbeError) ProtoMessage() {}
 
 func (x *ProbeError) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[7]
+	mi := &file_heron_v1_types_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1054,7 +1542,7 @@ func (x *ProbeError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeError.ProtoReflect.Descriptor instead.
 func (*ProbeError) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{7}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ProbeError) GetMessage() string {
@@ -1075,14 +1563,21 @@ type ProbeTask struct {
 	// DNS 任务要查询的解析器，ip:port 规范形式（IPv6 带方括号），只允许 IP 字面量：解析器自身
 	// 若是名字就要先用别的解析器解析它，地址策略也就查不到实际要发包的地址。只对 DNS 任务有意义；
 	// 其他种类携带即 InvalidArgument——静默忽略会让调用方以为它生效了。
-	DnsServer     string `protobuf:"bytes,6,opt,name=dns_server,json=dnsServer,proto3" json:"dns_server,omitempty"`
+	DnsServer string `protobuf:"bytes,6,opt,name=dns_server,json=dnsServer,proto3" json:"dns_server,omitempty"`
+	// 钉住的叶证书 SubjectPublicKeyInfo 的 SHA-256，恰 32 字节；空表示不钉，按系统根证书与主机名校验。
+	// 只允许 target 为 https:// 的 HTTP 任务。钉住后只比对公钥与有效期，不查证书链与主机名。
+	// 声明了 AGENT_CAPABILITY_PROBE_CERT_PIN 的 agent 才会收到钉住的任务。
+	CertSpkiSha256 []byte `protobuf:"bytes,7,opt,name=cert_spki_sha256,json=certSpkiSha256,proto3" json:"cert_spki_sha256,omitempty"`
+	// 任务配置身份，16 字节随机数：任务内容（本消息除 id 与 config_id 外的全部字段）变化时由 hub 重新生成，
+	// 内容不变的保存保留原值。只比较相等。agent 在结果里原样回显（ProbeResult.task_config_id）。
+	ConfigId      []byte `protobuf:"bytes,8,opt,name=config_id,json=configId,proto3" json:"config_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ProbeTask) Reset() {
 	*x = ProbeTask{}
-	mi := &file_heron_v1_types_proto_msgTypes[8]
+	mi := &file_heron_v1_types_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1094,7 +1589,7 @@ func (x *ProbeTask) String() string {
 func (*ProbeTask) ProtoMessage() {}
 
 func (x *ProbeTask) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[8]
+	mi := &file_heron_v1_types_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1107,7 +1602,7 @@ func (x *ProbeTask) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeTask.ProtoReflect.Descriptor instead.
 func (*ProbeTask) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{8}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ProbeTask) GetId() uint64 {
@@ -1152,6 +1647,20 @@ func (x *ProbeTask) GetDnsServer() string {
 	return ""
 }
 
+func (x *ProbeTask) GetCertSpkiSha256() []byte {
+	if x != nil {
+		return x.CertSpkiSha256
+	}
+	return nil
+}
+
+func (x *ProbeTask) GetConfigId() []byte {
+	if x != nil {
+		return x.ConfigId
+	}
+	return nil
+}
+
 type ProbeTasks struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Version       uint64                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
@@ -1162,7 +1671,7 @@ type ProbeTasks struct {
 
 func (x *ProbeTasks) Reset() {
 	*x = ProbeTasks{}
-	mi := &file_heron_v1_types_proto_msgTypes[9]
+	mi := &file_heron_v1_types_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1174,7 +1683,7 @@ func (x *ProbeTasks) String() string {
 func (*ProbeTasks) ProtoMessage() {}
 
 func (x *ProbeTasks) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[9]
+	mi := &file_heron_v1_types_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1187,7 +1696,7 @@ func (x *ProbeTasks) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeTasks.ProtoReflect.Descriptor instead.
 func (*ProbeTasks) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{9}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ProbeTasks) GetVersion() uint64 {
@@ -1223,7 +1732,7 @@ type Traffic struct {
 
 func (x *Traffic) Reset() {
 	*x = Traffic{}
-	mi := &file_heron_v1_types_proto_msgTypes[10]
+	mi := &file_heron_v1_types_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1235,7 +1744,7 @@ func (x *Traffic) String() string {
 func (*Traffic) ProtoMessage() {}
 
 func (x *Traffic) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[10]
+	mi := &file_heron_v1_types_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1248,7 +1757,7 @@ func (x *Traffic) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Traffic.ProtoReflect.Descriptor instead.
 func (*Traffic) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{10}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *Traffic) GetTotalRx() uint64 {
@@ -1323,7 +1832,7 @@ type Billing struct {
 
 func (x *Billing) Reset() {
 	*x = Billing{}
-	mi := &file_heron_v1_types_proto_msgTypes[11]
+	mi := &file_heron_v1_types_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1335,7 +1844,7 @@ func (x *Billing) String() string {
 func (*Billing) ProtoMessage() {}
 
 func (x *Billing) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_types_proto_msgTypes[11]
+	mi := &file_heron_v1_types_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1348,7 +1857,7 @@ func (x *Billing) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Billing.ProtoReflect.Descriptor instead.
 func (*Billing) Descriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{11}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Billing) GetPrice() string {
@@ -1397,7 +1906,7 @@ var File_heron_v1_types_proto protoreflect.FileDescriptor
 
 const file_heron_v1_types_proto_rawDesc = "" +
 	"\n" +
-	"\x14heron/v1/types.proto\x12\bheron.v1\"\x85\t\n" +
+	"\x14heron/v1/types.proto\x12\bheron.v1\"\xc3\t\n" +
 	"\aMetrics\x12\x17\n" +
 	"\aboot_id\x18\x01 \x01(\tR\x06bootId\x12\x1c\n" +
 	"\acpu_pct\x18\x02 \x01(\x01H\x00R\x06cpuPct\x88\x01\x01\x12\x19\n" +
@@ -1430,7 +1939,8 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\rdisk_read_bps\x18\x15 \x01(\x04H\x12R\vdiskReadBps\x88\x01\x01\x12)\n" +
 	"\x0edisk_write_bps\x18\x16 \x01(\x04H\x13R\fdiskWriteBps\x88\x01\x01\x12'\n" +
 	"\rcpu_steal_pct\x18\x17 \x01(\x01H\x14R\vcpuStealPct\x88\x01\x01\x12)\n" +
-	"\x0ecpu_iowait_pct\x18\x18 \x01(\x01H\x15R\fcpuIowaitPct\x88\x01\x01B\n" +
+	"\x0ecpu_iowait_pct\x18\x18 \x01(\x01H\x15R\fcpuIowaitPct\x88\x01\x01\x12)\n" +
+	"\x0eload1_per_core\x18\x19 \x01(\x01H\x16R\fload1PerCore\x88\x01\x01B\n" +
 	"\n" +
 	"\b_cpu_pctB\b\n" +
 	"\x06_load1B\b\n" +
@@ -1458,7 +1968,8 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x0e_disk_read_bpsB\x11\n" +
 	"\x0f_disk_write_bpsB\x10\n" +
 	"\x0e_cpu_steal_pctB\x11\n" +
-	"\x0f_cpu_iowait_pct\"\xfc\x02\n" +
+	"\x0f_cpu_iowait_pctB\x11\n" +
+	"\x0f_load1_per_core\"\xb4\x03\n" +
 	"\x05Facts\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x0e\n" +
 	"\x02os\x18\x02 \x01(\tR\x02os\x12\x16\n" +
@@ -1471,7 +1982,25 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x0eicmp_available\x18\t \x01(\bR\ricmpAvailable\x12/\n" +
 	"\anetwork\x18\n" +
 	" \x01(\v2\x15.heron.v1.NetworkInfoR\anetwork\x12<\n" +
-	"\vdiagnostics\x18\v \x01(\v2\x1a.heron.v1.AgentDiagnosticsR\vdiagnostics\"\xa7\x02\n" +
+	"\vdiagnostics\x18\v \x01(\v2\x1a.heron.v1.AgentDiagnosticsR\vdiagnostics\x126\n" +
+	"\texecution\x18\f \x01(\v2\x18.heron.v1.ExecutionScopeR\texecution\"\xa8\x04\n" +
+	"\x0eExecutionScope\x12'\n" +
+	"\x04kind\x18\x01 \x01(\x0e2\x13.heron.v1.ScopeKindR\x04kind\x12)\n" +
+	"\x03cpu\x18\x02 \x01(\x0e2\x17.heron.v1.ResourceScopeR\x03cpu\x12/\n" +
+	"\x06memory\x18\x03 \x01(\x0e2\x17.heron.v1.ResourceScopeR\x06memory\x12+\n" +
+	"\x04swap\x18\x04 \x01(\x0e2\x17.heron.v1.ResourceScopeR\x04swap\x12+\n" +
+	"\x04load\x18\x05 \x01(\x0e2\x17.heron.v1.ResourceScopeR\x04load\x123\n" +
+	"\x13cpu_effective_cores\x18\x06 \x01(\x01H\x00R\x11cpuEffectiveCores\x88\x01\x01\x121\n" +
+	"\x12memory_limit_bytes\x18\a \x01(\x04H\x01R\x10memoryLimitBytes\x88\x01\x01\x12-\n" +
+	"\x10swap_limit_bytes\x18\b \x01(\x04H\x02R\x0eswapLimitBytes\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"load_cores\x18\t \x01(\rH\x03R\tloadCores\x88\x01\x01\x12)\n" +
+	"\x05notes\x18\n" +
+	" \x03(\x0e2\x13.heron.v1.ScopeNoteR\x05notesB\x16\n" +
+	"\x14_cpu_effective_coresB\x15\n" +
+	"\x13_memory_limit_bytesB\x13\n" +
+	"\x11_swap_limit_bytesB\r\n" +
+	"\v_load_cores\"\xa7\x02\n" +
 	"\x10AgentDiagnostics\x12\x1f\n" +
 	"\vnet_include\x18\x01 \x03(\tR\n" +
 	"netInclude\x12\x1f\n" +
@@ -1488,20 +2017,27 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x05state\x18\x01 \x01(\x0e2\x1f.heron.v1.AddressDetectionStateR\x05state\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x1d\n" +
 	"\n" +
-	"checked_at\x18\x03 \x01(\x03R\tcheckedAt\"\x81\x02\n" +
+	"checked_at\x18\x03 \x01(\x03R\tcheckedAt\"\xe5\x02\n" +
 	"\vProbeResult\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\x04R\x06taskId\x12\x15\n" +
 	"\x06age_ms\x18\x02 \x01(\rR\x05ageMs\x12\x17\n" +
 	"\x06rtt_us\x18\x03 \x01(\rH\x00R\x05rttUs\x12-\n" +
 	"\atimeout\x18\x04 \x01(\v2\x11.heron.v1.TimeoutH\x00R\atimeout\x12,\n" +
 	"\x05error\x18\x05 \x01(\v2\x14.heron.v1.ProbeErrorH\x00R\x05error\x12,\n" +
-	"\x10cert_not_after_s\x18\x06 \x01(\x03H\x01R\rcertNotAfterS\x88\x01\x01B\t\n" +
+	"\x10cert_not_after_s\x18\x06 \x01(\x03H\x01R\rcertNotAfterS\x88\x01\x01\x12<\n" +
+	"\tpresented\x18\a \x01(\v2\x1e.heron.v1.PresentedCertificateR\tpresented\x12$\n" +
+	"\x0etask_config_id\x18\b \x01(\fR\ftaskConfigIdB\t\n" +
 	"\aoutcomeB\x13\n" +
-	"\x11_cert_not_after_s\"\t\n" +
+	"\x11_cert_not_after_s\"\x8a\x01\n" +
+	"\x14PresentedCertificate\x12\x1f\n" +
+	"\vspki_sha256\x18\x01 \x01(\fR\n" +
+	"spkiSha256\x12\x1e\n" +
+	"\vnot_after_s\x18\x02 \x01(\x03R\tnotAfterS\x121\n" +
+	"\x06reason\x18\x03 \x01(\x0e2\x19.heron.v1.PresentedReasonR\x06reason\"\t\n" +
 	"\aTimeout\"&\n" +
 	"\n" +
 	"ProbeError\x12\x18\n" +
-	"\amessage\x18\x01 \x01(\tR\amessage\"\xb9\x01\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage\"\x80\x02\n" +
 	"\tProbeTask\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12'\n" +
 	"\x04kind\x18\x02 \x01(\x0e2\x13.heron.v1.ProbeKindR\x04kind\x12\x16\n" +
@@ -1511,7 +2047,9 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"timeout_ms\x18\x05 \x01(\rR\ttimeoutMs\x12\x1d\n" +
 	"\n" +
-	"dns_server\x18\x06 \x01(\tR\tdnsServer\"Q\n" +
+	"dns_server\x18\x06 \x01(\tR\tdnsServer\x12(\n" +
+	"\x10cert_spki_sha256\x18\a \x01(\fR\x0ecertSpkiSha256\x12\x1b\n" +
+	"\tconfig_id\x18\b \x01(\fR\bconfigId\"Q\n" +
 	"\n" +
 	"ProbeTasks\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12)\n" +
@@ -1534,7 +2072,30 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"auto_renew\x18\x05 \x01(\bR\tautoRenew\x12 \n" +
 	"\tdays_left\x18\x06 \x01(\x05H\x00R\bdaysLeft\x88\x01\x01B\f\n" +
 	"\n" +
-	"_days_left*\x9a\x03\n" +
+	"_days_left*\x9e\x01\n" +
+	"\tScopeKind\x12\x1a\n" +
+	"\x16SCOPE_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
+	"\x0fSCOPE_KIND_HOST\x10\x01\x12\x1f\n" +
+	"\x1bSCOPE_KIND_CGROUP_NAMESPACE\x10\x02\x12\x1f\n" +
+	"\x1bSCOPE_KIND_CGROUP_V1_LEGACY\x10\x03\x12\x1e\n" +
+	"\x1aSCOPE_KIND_IDENTIFY_FAILED\x10\x04*\x9f\x01\n" +
+	"\rResourceScope\x12\x1e\n" +
+	"\x1aRESOURCE_SCOPE_UNSPECIFIED\x10\x00\x12\x17\n" +
+	"\x13RESOURCE_SCOPE_HOST\x10\x01\x12\x1e\n" +
+	"\x1aRESOURCE_SCOPE_ENVIRONMENT\x10\x02\x12\x1a\n" +
+	"\x16RESOURCE_SCOPE_UNKNOWN\x10\x03\x12\x19\n" +
+	"\x15RESOURCE_SCOPE_LEGACY\x10\x04*\x82\x03\n" +
+	"\tScopeNote\x12\x1a\n" +
+	"\x16SCOPE_NOTE_UNSPECIFIED\x10\x00\x12,\n" +
+	"(SCOPE_NOTE_CONTAINER_SIGNAL_ON_HOST_ROOT\x10\x01\x12#\n" +
+	"\x1fSCOPE_NOTE_MOUNTINFO_UNREADABLE\x10\x02\x12!\n" +
+	"\x1dSCOPE_NOTE_LOADAVG_NOT_PROCFS\x10\x03\x12!\n" +
+	"\x1dSCOPE_NOTE_CPUINFO_NOT_PROCFS\x10\x04\x12(\n" +
+	"$SCOPE_NOTE_MEMORY_CONTROLLER_MISSING\x10\x05\x12&\n" +
+	"\"SCOPE_NOTE_SWAP_ACCOUNTING_MISSING\x10\x06\x12#\n" +
+	"\x1fSCOPE_NOTE_PROC_STAT_NOT_PROCFS\x10\a\x12\x1f\n" +
+	"\x1bSCOPE_NOTE_MEMINFO_UNUSABLE\x10\b\x12(\n" +
+	"$SCOPE_NOTE_CPU_CONTROLLER_UNREADABLE\x10\t*\x9a\x03\n" +
 	"\x13CollectionComponent\x12$\n" +
 	" COLLECTION_COMPONENT_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cCOLLECTION_COMPONENT_BOOT_ID\x10\x01\x12\x1c\n" +
@@ -1553,7 +2114,12 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"#ADDRESS_DETECTION_STATE_UNSPECIFIED\x10\x00\x12%\n" +
 	"!ADDRESS_DETECTION_STATE_AVAILABLE\x10\x01\x12'\n" +
 	"#ADDRESS_DETECTION_STATE_UNSUPPORTED\x10\x02\x12\"\n" +
-	"\x1eADDRESS_DETECTION_STATE_FAILED\x10\x03*y\n" +
+	"\x1eADDRESS_DETECTION_STATE_FAILED\x10\x03*\xa4\x01\n" +
+	"\x0fPresentedReason\x12 \n" +
+	"\x1cPRESENTED_REASON_UNSPECIFIED\x10\x00\x12%\n" +
+	"!PRESENTED_REASON_CA_VERIFY_FAILED\x10\x01\x12!\n" +
+	"\x1dPRESENTED_REASON_PIN_MISMATCH\x10\x02\x12%\n" +
+	"!PRESENTED_REASON_OUTSIDE_VALIDITY\x10\x03*y\n" +
 	"\tProbeKind\x12\x1a\n" +
 	"\x16PROBE_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fPROBE_KIND_ICMP\x10\x01\x12\x12\n" +
@@ -1582,43 +2148,58 @@ func file_heron_v1_types_proto_rawDescGZIP() []byte {
 	return file_heron_v1_types_proto_rawDescData
 }
 
-var file_heron_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_heron_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_heron_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
+var file_heron_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_heron_v1_types_proto_goTypes = []any{
-	(CollectionComponent)(0),   // 0: heron.v1.CollectionComponent
-	(AddressDetectionState)(0), // 1: heron.v1.AddressDetectionState
-	(ProbeKind)(0),             // 2: heron.v1.ProbeKind
-	(BillingCycle)(0),          // 3: heron.v1.BillingCycle
-	(*Metrics)(nil),            // 4: heron.v1.Metrics
-	(*Facts)(nil),              // 5: heron.v1.Facts
-	(*AgentDiagnostics)(nil),   // 6: heron.v1.AgentDiagnostics
-	(*NetworkInfo)(nil),        // 7: heron.v1.NetworkInfo
-	(*AddressDetection)(nil),   // 8: heron.v1.AddressDetection
-	(*ProbeResult)(nil),        // 9: heron.v1.ProbeResult
-	(*Timeout)(nil),            // 10: heron.v1.Timeout
-	(*ProbeError)(nil),         // 11: heron.v1.ProbeError
-	(*ProbeTask)(nil),          // 12: heron.v1.ProbeTask
-	(*ProbeTasks)(nil),         // 13: heron.v1.ProbeTasks
-	(*Traffic)(nil),            // 14: heron.v1.Traffic
-	(*Billing)(nil),            // 15: heron.v1.Billing
+	(ScopeKind)(0),               // 0: heron.v1.ScopeKind
+	(ResourceScope)(0),           // 1: heron.v1.ResourceScope
+	(ScopeNote)(0),               // 2: heron.v1.ScopeNote
+	(CollectionComponent)(0),     // 3: heron.v1.CollectionComponent
+	(AddressDetectionState)(0),   // 4: heron.v1.AddressDetectionState
+	(PresentedReason)(0),         // 5: heron.v1.PresentedReason
+	(ProbeKind)(0),               // 6: heron.v1.ProbeKind
+	(BillingCycle)(0),            // 7: heron.v1.BillingCycle
+	(*Metrics)(nil),              // 8: heron.v1.Metrics
+	(*Facts)(nil),                // 9: heron.v1.Facts
+	(*ExecutionScope)(nil),       // 10: heron.v1.ExecutionScope
+	(*AgentDiagnostics)(nil),     // 11: heron.v1.AgentDiagnostics
+	(*NetworkInfo)(nil),          // 12: heron.v1.NetworkInfo
+	(*AddressDetection)(nil),     // 13: heron.v1.AddressDetection
+	(*ProbeResult)(nil),          // 14: heron.v1.ProbeResult
+	(*PresentedCertificate)(nil), // 15: heron.v1.PresentedCertificate
+	(*Timeout)(nil),              // 16: heron.v1.Timeout
+	(*ProbeError)(nil),           // 17: heron.v1.ProbeError
+	(*ProbeTask)(nil),            // 18: heron.v1.ProbeTask
+	(*ProbeTasks)(nil),           // 19: heron.v1.ProbeTasks
+	(*Traffic)(nil),              // 20: heron.v1.Traffic
+	(*Billing)(nil),              // 21: heron.v1.Billing
 }
 var file_heron_v1_types_proto_depIdxs = []int32{
-	7,  // 0: heron.v1.Facts.network:type_name -> heron.v1.NetworkInfo
-	6,  // 1: heron.v1.Facts.diagnostics:type_name -> heron.v1.AgentDiagnostics
-	0,  // 2: heron.v1.AgentDiagnostics.failed_collectors:type_name -> heron.v1.CollectionComponent
-	8,  // 3: heron.v1.NetworkInfo.ipv4:type_name -> heron.v1.AddressDetection
-	8,  // 4: heron.v1.NetworkInfo.ipv6:type_name -> heron.v1.AddressDetection
-	1,  // 5: heron.v1.AddressDetection.state:type_name -> heron.v1.AddressDetectionState
-	10, // 6: heron.v1.ProbeResult.timeout:type_name -> heron.v1.Timeout
-	11, // 7: heron.v1.ProbeResult.error:type_name -> heron.v1.ProbeError
-	2,  // 8: heron.v1.ProbeTask.kind:type_name -> heron.v1.ProbeKind
-	12, // 9: heron.v1.ProbeTasks.tasks:type_name -> heron.v1.ProbeTask
-	3,  // 10: heron.v1.Billing.billing_cycle:type_name -> heron.v1.BillingCycle
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	12, // 0: heron.v1.Facts.network:type_name -> heron.v1.NetworkInfo
+	11, // 1: heron.v1.Facts.diagnostics:type_name -> heron.v1.AgentDiagnostics
+	10, // 2: heron.v1.Facts.execution:type_name -> heron.v1.ExecutionScope
+	0,  // 3: heron.v1.ExecutionScope.kind:type_name -> heron.v1.ScopeKind
+	1,  // 4: heron.v1.ExecutionScope.cpu:type_name -> heron.v1.ResourceScope
+	1,  // 5: heron.v1.ExecutionScope.memory:type_name -> heron.v1.ResourceScope
+	1,  // 6: heron.v1.ExecutionScope.swap:type_name -> heron.v1.ResourceScope
+	1,  // 7: heron.v1.ExecutionScope.load:type_name -> heron.v1.ResourceScope
+	2,  // 8: heron.v1.ExecutionScope.notes:type_name -> heron.v1.ScopeNote
+	3,  // 9: heron.v1.AgentDiagnostics.failed_collectors:type_name -> heron.v1.CollectionComponent
+	13, // 10: heron.v1.NetworkInfo.ipv4:type_name -> heron.v1.AddressDetection
+	13, // 11: heron.v1.NetworkInfo.ipv6:type_name -> heron.v1.AddressDetection
+	4,  // 12: heron.v1.AddressDetection.state:type_name -> heron.v1.AddressDetectionState
+	16, // 13: heron.v1.ProbeResult.timeout:type_name -> heron.v1.Timeout
+	17, // 14: heron.v1.ProbeResult.error:type_name -> heron.v1.ProbeError
+	15, // 15: heron.v1.ProbeResult.presented:type_name -> heron.v1.PresentedCertificate
+	5,  // 16: heron.v1.PresentedCertificate.reason:type_name -> heron.v1.PresentedReason
+	6,  // 17: heron.v1.ProbeTask.kind:type_name -> heron.v1.ProbeKind
+	18, // 18: heron.v1.ProbeTasks.tasks:type_name -> heron.v1.ProbeTask
+	7,  // 19: heron.v1.Billing.billing_cycle:type_name -> heron.v1.BillingCycle
+	20, // [20:20] is the sub-list for method output_type
+	20, // [20:20] is the sub-list for method input_type
+	20, // [20:20] is the sub-list for extension type_name
+	20, // [20:20] is the sub-list for extension extendee
+	0,  // [0:20] is the sub-list for field type_name
 }
 
 func init() { file_heron_v1_types_proto_init() }
@@ -1627,19 +2208,20 @@ func file_heron_v1_types_proto_init() {
 		return
 	}
 	file_heron_v1_types_proto_msgTypes[0].OneofWrappers = []any{}
-	file_heron_v1_types_proto_msgTypes[5].OneofWrappers = []any{
+	file_heron_v1_types_proto_msgTypes[2].OneofWrappers = []any{}
+	file_heron_v1_types_proto_msgTypes[6].OneofWrappers = []any{
 		(*ProbeResult_RttUs)(nil),
 		(*ProbeResult_Timeout)(nil),
 		(*ProbeResult_Error)(nil),
 	}
-	file_heron_v1_types_proto_msgTypes[11].OneofWrappers = []any{}
+	file_heron_v1_types_proto_msgTypes[13].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_heron_v1_types_proto_rawDesc), len(file_heron_v1_types_proto_rawDesc)),
-			NumEnums:      4,
-			NumMessages:   12,
+			NumEnums:      8,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

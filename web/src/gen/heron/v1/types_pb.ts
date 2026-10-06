@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file heron/v1/types.proto.
  */
 export const file_heron_v1_types: GenFile = /*@__PURE__*/
-  fileDesc("ChRoZXJvbi92MS90eXBlcy5wcm90bxIIaGVyb24udjEiiwcKB01ldHJpY3MSDwoHYm9vdF9pZBgBIAEoCRIUCgdjcHVfcGN0GAIgASgBSACIAQESEgoFbG9hZDEYAyABKAFIAYgBARISCgVsb2FkNRgEIAEoAUgCiAEBEhMKBmxvYWQxNRgFIAEoAUgDiAEBEhYKCW1lbV90b3RhbBgGIAEoBEgEiAEBEhUKCG1lbV91c2VkGAcgASgESAWIAQESFwoKc3dhcF90b3RhbBgIIAEoBEgGiAEBEhYKCXN3YXBfdXNlZBgJIAEoBEgHiAEBEhcKCmRpc2tfdG90YWwYCiABKARICIgBARIWCglkaXNrX3VzZWQYCyABKARICYgBARIZCgxuZXRfcnhfdG90YWwYDCABKARICogBARIZCgxuZXRfdHhfdG90YWwYDSABKARIC4gBARIXCgpuZXRfcnhfYnBzGA4gASgESAyIAQESFwoKbmV0X3R4X2JwcxgPIAEoBEgNiAEBEhYKCXRjcF9jb25ucxgQIAEoDUgOiAEBEhYKCXVkcF9jb25ucxgRIAEoDUgPiAEBEhIKBXByb2NzGBIgASgNSBCIAQESFQoIdXB0aW1lX3MYEyABKARIEYgBARIZChFuZXRfY291bnRlcl9lcG9jaBgUIAEoCRIaCg1kaXNrX3JlYWRfYnBzGBUgASgESBKIAQESGwoOZGlza193cml0ZV9icHMYFiABKARIE4gBARIaCg1jcHVfc3RlYWxfcGN0GBcgASgBSBSIAQESGwoOY3B1X2lvd2FpdF9wY3QYGCABKAFIFYgBAUIKCghfY3B1X3BjdEIICgZfbG9hZDFCCAoGX2xvYWQ1QgkKB19sb2FkMTVCDAoKX21lbV90b3RhbEILCglfbWVtX3VzZWRCDQoLX3N3YXBfdG90YWxCDAoKX3N3YXBfdXNlZEINCgtfZGlza190b3RhbEIMCgpfZGlza191c2VkQg8KDV9uZXRfcnhfdG90YWxCDwoNX25ldF90eF90b3RhbEINCgtfbmV0X3J4X2Jwc0INCgtfbmV0X3R4X2Jwc0IMCgpfdGNwX2Nvbm5zQgwKCl91ZHBfY29ubnNCCAoGX3Byb2NzQgsKCV91cHRpbWVfc0IQCg5fZGlza19yZWFkX2Jwc0IRCg9fZGlza193cml0ZV9icHNCEAoOX2NwdV9zdGVhbF9wY3RCEQoPX2NwdV9pb3dhaXRfcGN0IokCCgVGYWN0cxIQCghob3N0bmFtZRgBIAEoCRIKCgJvcxgCIAEoCRIOCgZrZXJuZWwYAyABKAkSDAoEYXJjaBgEIAEoCRIWCg52aXJ0dWFsaXphdGlvbhgFIAEoCRIRCgljcHVfbW9kZWwYBiABKAkSEQoJY3B1X2NvcmVzGAcgASgNEhUKDWFnZW50X3ZlcnNpb24YCCABKAkSFgoOaWNtcF9hdmFpbGFibGUYCSABKAgSJgoHbmV0d29yaxgKIAEoCzIVLmhlcm9uLnYxLk5ldHdvcmtJbmZvEi8KC2RpYWdub3N0aWNzGAsgASgLMhouaGVyb24udjEuQWdlbnREaWFnbm9zdGljcyLIAQoQQWdlbnREaWFnbm9zdGljcxITCgtuZXRfaW5jbHVkZRgBIAMoCRITCgtuZXRfZXhjbHVkZRgCIAMoCRIWCg5uZXRfaW50ZXJmYWNlcxgDIAMoCRIcChRuZXRfaW50ZXJmYWNlc190b3RhbBgEIAEoDRI4ChFmYWlsZWRfY29sbGVjdG9ycxgFIAMoDjIdLmhlcm9uLnYxLkNvbGxlY3Rpb25Db21wb25lbnQSGgoScmVwb3J0X2ludGVydmFsX21zGAYgASgNImEKC05ldHdvcmtJbmZvEigKBGlwdjQYASABKAsyGi5oZXJvbi52MS5BZGRyZXNzRGV0ZWN0aW9uEigKBGlwdjYYAiABKAsyGi5oZXJvbi52MS5BZGRyZXNzRGV0ZWN0aW9uImcKEEFkZHJlc3NEZXRlY3Rpb24SLgoFc3RhdGUYASABKA4yHy5oZXJvbi52MS5BZGRyZXNzRGV0ZWN0aW9uU3RhdGUSDwoHYWRkcmVzcxgCIAEoCRISCgpjaGVja2VkX2F0GAMgASgDIswBCgtQcm9iZVJlc3VsdBIPCgd0YXNrX2lkGAEgASgEEg4KBmFnZV9tcxgCIAEoDRIQCgZydHRfdXMYAyABKA1IABIkCgd0aW1lb3V0GAQgASgLMhEuaGVyb24udjEuVGltZW91dEgAEiUKBWVycm9yGAUgASgLMhQuaGVyb24udjEuUHJvYmVFcnJvckgAEh0KEGNlcnRfbm90X2FmdGVyX3MYBiABKANIAYgBAUIJCgdvdXRjb21lQhMKEV9jZXJ0X25vdF9hZnRlcl9zIgkKB1RpbWVvdXQiHQoKUHJvYmVFcnJvchIPCgdtZXNzYWdlGAEgASgJIoYBCglQcm9iZVRhc2sSCgoCaWQYASABKAQSIQoEa2luZBgCIAEoDjITLmhlcm9uLnYxLlByb2JlS2luZBIOCgZ0YXJnZXQYAyABKAkSEgoKaW50ZXJ2YWxfcxgEIAEoDRISCgp0aW1lb3V0X21zGAUgASgNEhIKCmRuc19zZXJ2ZXIYBiABKAkiQQoKUHJvYmVUYXNrcxIPCgd2ZXJzaW9uGAEgASgEEiIKBXRhc2tzGAIgAygLMhMuaGVyb24udjEuUHJvYmVUYXNrIpMBCgdUcmFmZmljEhAKCHRvdGFsX3J4GAEgASgEEhAKCHRvdGFsX3R4GAIgASgEEhEKCXBlcmlvZF9yeBgDIAEoBBIRCglwZXJpb2RfdHgYBCABKAQSFAoMcGVyaW9kX3N0YXJ0GAUgASgDEhUKDW5leHRfcmVzZXRfYXQYBiABKAMSEQoJcmVzZXRfZGF5GAcgASgNIqcBCgdCaWxsaW5nEg0KBXByaWNlGAEgASgJEhAKCGN1cnJlbmN5GAIgASgJEi0KDWJpbGxpbmdfY3ljbGUYAyABKA4yFi5oZXJvbi52MS5CaWxsaW5nQ3ljbGUSEgoKZXhwaXJlc19vbhgEIAEoCRISCgphdXRvX3JlbmV3GAUgASgIEhYKCWRheXNfbGVmdBgGIAEoBUgAiAEBQgwKCl9kYXlzX2xlZnQqmgMKE0NvbGxlY3Rpb25Db21wb25lbnQSJAogQ09MTEVDVElPTl9DT01QT05FTlRfVU5TUEVDSUZJRUQQABIgChxDT0xMRUNUSU9OX0NPTVBPTkVOVF9CT09UX0lEEAESHAoYQ09MTEVDVElPTl9DT01QT05FTlRfQ1BVEAISHwobQ09MTEVDVElPTl9DT01QT05FTlRfTUVNT1JZEAMSHQoZQ09MTEVDVElPTl9DT01QT05FTlRfU1dBUBAEEh0KGUNPTExFQ1RJT05fQ09NUE9ORU5UX0RJU0sQBRIdChlDT0xMRUNUSU9OX0NPTVBPTkVOVF9MT0FEEAYSHgoaQ09MTEVDVElPTl9DT01QT05FTlRfUFJPQ1MQBxIfChtDT0xMRUNUSU9OX0NPTVBPTkVOVF9VUFRJTUUQCBIeChpDT0xMRUNUSU9OX0NPTVBPTkVOVF9DT05OUxAJEhwKGENPTExFQ1RJT05fQ09NUE9ORU5UX05FVBAKEiAKHENPTExFQ1RJT05fQ09NUE9ORU5UX0RJU0tfSU8QCyq0AQoVQWRkcmVzc0RldGVjdGlvblN0YXRlEicKI0FERFJFU1NfREVURUNUSU9OX1NUQVRFX1VOU1BFQ0lGSUVEEAASJQohQUREUkVTU19ERVRFQ1RJT05fU1RBVEVfQVZBSUxBQkxFEAESJwojQUREUkVTU19ERVRFQ1RJT05fU1RBVEVfVU5TVVBQT1JURUQQAhIiCh5BRERSRVNTX0RFVEVDVElPTl9TVEFURV9GQUlMRUQQAyp5CglQcm9iZUtpbmQSGgoWUFJPQkVfS0lORF9VTlNQRUNJRklFRBAAEhMKD1BST0JFX0tJTkRfSUNNUBABEhIKDlBST0JFX0tJTkRfVENQEAISEwoPUFJPQkVfS0lORF9IVFRQEAMSEgoOUFJPQkVfS0lORF9ETlMQBCr2AQoMQmlsbGluZ0N5Y2xlEh0KGUJJTExJTkdfQ1lDTEVfVU5TUEVDSUZJRUQQABIZChVCSUxMSU5HX0NZQ0xFX01PTlRITFkQARIbChdCSUxMSU5HX0NZQ0xFX1FVQVJURVJMWRACEhwKGEJJTExJTkdfQ1lDTEVfU0VNSUFOTlVBTBADEhgKFEJJTExJTkdfQ1lDTEVfWUVBUkxZEAQSGgoWQklMTElOR19DWUNMRV9CSUVOTklBTBAFEhsKF0JJTExJTkdfQ1lDTEVfVFJJRU5OSUFMEAYSHgoaQklMTElOR19DWUNMRV9RVUlOUVVFTk5JQUwQB0I0WjJnaXRodWIuY29tL3hqZXRyeS9oZXJvbi1wcm9iZS9nZW4vaGVyb24vdjE7aGVyb252MWIGcHJvdG8z");
+  fileDesc("ChRoZXJvbi92MS90eXBlcy5wcm90bxIIaGVyb24udjEiuwcKB01ldHJpY3MSDwoHYm9vdF9pZBgBIAEoCRIUCgdjcHVfcGN0GAIgASgBSACIAQESEgoFbG9hZDEYAyABKAFIAYgBARISCgVsb2FkNRgEIAEoAUgCiAEBEhMKBmxvYWQxNRgFIAEoAUgDiAEBEhYKCW1lbV90b3RhbBgGIAEoBEgEiAEBEhUKCG1lbV91c2VkGAcgASgESAWIAQESFwoKc3dhcF90b3RhbBgIIAEoBEgGiAEBEhYKCXN3YXBfdXNlZBgJIAEoBEgHiAEBEhcKCmRpc2tfdG90YWwYCiABKARICIgBARIWCglkaXNrX3VzZWQYCyABKARICYgBARIZCgxuZXRfcnhfdG90YWwYDCABKARICogBARIZCgxuZXRfdHhfdG90YWwYDSABKARIC4gBARIXCgpuZXRfcnhfYnBzGA4gASgESAyIAQESFwoKbmV0X3R4X2JwcxgPIAEoBEgNiAEBEhYKCXRjcF9jb25ucxgQIAEoDUgOiAEBEhYKCXVkcF9jb25ucxgRIAEoDUgPiAEBEhIKBXByb2NzGBIgASgNSBCIAQESFQoIdXB0aW1lX3MYEyABKARIEYgBARIZChFuZXRfY291bnRlcl9lcG9jaBgUIAEoCRIaCg1kaXNrX3JlYWRfYnBzGBUgASgESBKIAQESGwoOZGlza193cml0ZV9icHMYFiABKARIE4gBARIaCg1jcHVfc3RlYWxfcGN0GBcgASgBSBSIAQESGwoOY3B1X2lvd2FpdF9wY3QYGCABKAFIFYgBARIbCg5sb2FkMV9wZXJfY29yZRgZIAEoAUgWiAEBQgoKCF9jcHVfcGN0QggKBl9sb2FkMUIICgZfbG9hZDVCCQoHX2xvYWQxNUIMCgpfbWVtX3RvdGFsQgsKCV9tZW1fdXNlZEINCgtfc3dhcF90b3RhbEIMCgpfc3dhcF91c2VkQg0KC19kaXNrX3RvdGFsQgwKCl9kaXNrX3VzZWRCDwoNX25ldF9yeF90b3RhbEIPCg1fbmV0X3R4X3RvdGFsQg0KC19uZXRfcnhfYnBzQg0KC19uZXRfdHhfYnBzQgwKCl90Y3BfY29ubnNCDAoKX3VkcF9jb25uc0IICgZfcHJvY3NCCwoJX3VwdGltZV9zQhAKDl9kaXNrX3JlYWRfYnBzQhEKD19kaXNrX3dyaXRlX2Jwc0IQCg5fY3B1X3N0ZWFsX3BjdEIRCg9fY3B1X2lvd2FpdF9wY3RCEQoPX2xvYWQxX3Blcl9jb3JlIrYCCgVGYWN0cxIQCghob3N0bmFtZRgBIAEoCRIKCgJvcxgCIAEoCRIOCgZrZXJuZWwYAyABKAkSDAoEYXJjaBgEIAEoCRIWCg52aXJ0dWFsaXphdGlvbhgFIAEoCRIRCgljcHVfbW9kZWwYBiABKAkSEQoJY3B1X2NvcmVzGAcgASgNEhUKDWFnZW50X3ZlcnNpb24YCCABKAkSFgoOaWNtcF9hdmFpbGFibGUYCSABKAgSJgoHbmV0d29yaxgKIAEoCzIVLmhlcm9uLnYxLk5ldHdvcmtJbmZvEi8KC2RpYWdub3N0aWNzGAsgASgLMhouaGVyb24udjEuQWdlbnREaWFnbm9zdGljcxIrCglleGVjdXRpb24YDCABKAsyGC5oZXJvbi52MS5FeGVjdXRpb25TY29wZSLCAwoORXhlY3V0aW9uU2NvcGUSIQoEa2luZBgBIAEoDjITLmhlcm9uLnYxLlNjb3BlS2luZBIkCgNjcHUYAiABKA4yFy5oZXJvbi52MS5SZXNvdXJjZVNjb3BlEicKBm1lbW9yeRgDIAEoDjIXLmhlcm9uLnYxLlJlc291cmNlU2NvcGUSJQoEc3dhcBgEIAEoDjIXLmhlcm9uLnYxLlJlc291cmNlU2NvcGUSJQoEbG9hZBgFIAEoDjIXLmhlcm9uLnYxLlJlc291cmNlU2NvcGUSIAoTY3B1X2VmZmVjdGl2ZV9jb3JlcxgGIAEoAUgAiAEBEh8KEm1lbW9yeV9saW1pdF9ieXRlcxgHIAEoBEgBiAEBEh0KEHN3YXBfbGltaXRfYnl0ZXMYCCABKARIAogBARIXCgpsb2FkX2NvcmVzGAkgASgNSAOIAQESIgoFbm90ZXMYCiADKA4yEy5oZXJvbi52MS5TY29wZU5vdGVCFgoUX2NwdV9lZmZlY3RpdmVfY29yZXNCFQoTX21lbW9yeV9saW1pdF9ieXRlc0ITChFfc3dhcF9saW1pdF9ieXRlc0INCgtfbG9hZF9jb3JlcyLIAQoQQWdlbnREaWFnbm9zdGljcxITCgtuZXRfaW5jbHVkZRgBIAMoCRITCgtuZXRfZXhjbHVkZRgCIAMoCRIWCg5uZXRfaW50ZXJmYWNlcxgDIAMoCRIcChRuZXRfaW50ZXJmYWNlc190b3RhbBgEIAEoDRI4ChFmYWlsZWRfY29sbGVjdG9ycxgFIAMoDjIdLmhlcm9uLnYxLkNvbGxlY3Rpb25Db21wb25lbnQSGgoScmVwb3J0X2ludGVydmFsX21zGAYgASgNImEKC05ldHdvcmtJbmZvEigKBGlwdjQYASABKAsyGi5oZXJvbi52MS5BZGRyZXNzRGV0ZWN0aW9uEigKBGlwdjYYAiABKAsyGi5oZXJvbi52MS5BZGRyZXNzRGV0ZWN0aW9uImcKEEFkZHJlc3NEZXRlY3Rpb24SLgoFc3RhdGUYASABKA4yHy5oZXJvbi52MS5BZGRyZXNzRGV0ZWN0aW9uU3RhdGUSDwoHYWRkcmVzcxgCIAEoCRISCgpjaGVja2VkX2F0GAMgASgDIpcCCgtQcm9iZVJlc3VsdBIPCgd0YXNrX2lkGAEgASgEEg4KBmFnZV9tcxgCIAEoDRIQCgZydHRfdXMYAyABKA1IABIkCgd0aW1lb3V0GAQgASgLMhEuaGVyb24udjEuVGltZW91dEgAEiUKBWVycm9yGAUgASgLMhQuaGVyb24udjEuUHJvYmVFcnJvckgAEh0KEGNlcnRfbm90X2FmdGVyX3MYBiABKANIAYgBARIxCglwcmVzZW50ZWQYByABKAsyHi5oZXJvbi52MS5QcmVzZW50ZWRDZXJ0aWZpY2F0ZRIWCg50YXNrX2NvbmZpZ19pZBgIIAEoDEIJCgdvdXRjb21lQhMKEV9jZXJ0X25vdF9hZnRlcl9zImsKFFByZXNlbnRlZENlcnRpZmljYXRlEhMKC3Nwa2lfc2hhMjU2GAEgASgMEhMKC25vdF9hZnRlcl9zGAIgASgDEikKBnJlYXNvbhgDIAEoDjIZLmhlcm9uLnYxLlByZXNlbnRlZFJlYXNvbiIJCgdUaW1lb3V0Ih0KClByb2JlRXJyb3ISDwoHbWVzc2FnZRgBIAEoCSKzAQoJUHJvYmVUYXNrEgoKAmlkGAEgASgEEiEKBGtpbmQYAiABKA4yEy5oZXJvbi52MS5Qcm9iZUtpbmQSDgoGdGFyZ2V0GAMgASgJEhIKCmludGVydmFsX3MYBCABKA0SEgoKdGltZW91dF9tcxgFIAEoDRISCgpkbnNfc2VydmVyGAYgASgJEhgKEGNlcnRfc3BraV9zaGEyNTYYByABKAwSEQoJY29uZmlnX2lkGAggASgMIkEKClByb2JlVGFza3MSDwoHdmVyc2lvbhgBIAEoBBIiCgV0YXNrcxgCIAMoCzITLmhlcm9uLnYxLlByb2JlVGFzayKTAQoHVHJhZmZpYxIQCgh0b3RhbF9yeBgBIAEoBBIQCgh0b3RhbF90eBgCIAEoBBIRCglwZXJpb2RfcngYAyABKAQSEQoJcGVyaW9kX3R4GAQgASgEEhQKDHBlcmlvZF9zdGFydBgFIAEoAxIVCg1uZXh0X3Jlc2V0X2F0GAYgASgDEhEKCXJlc2V0X2RheRgHIAEoDSKnAQoHQmlsbGluZxINCgVwcmljZRgBIAEoCRIQCghjdXJyZW5jeRgCIAEoCRItCg1iaWxsaW5nX2N5Y2xlGAMgASgOMhYuaGVyb24udjEuQmlsbGluZ0N5Y2xlEhIKCmV4cGlyZXNfb24YBCABKAkSEgoKYXV0b19yZW5ldxgFIAEoCBIWCglkYXlzX2xlZnQYBiABKAVIAIgBAUIMCgpfZGF5c19sZWZ0Kp4BCglTY29wZUtpbmQSGgoWU0NPUEVfS0lORF9VTlNQRUNJRklFRBAAEhMKD1NDT1BFX0tJTkRfSE9TVBABEh8KG1NDT1BFX0tJTkRfQ0dST1VQX05BTUVTUEFDRRACEh8KG1NDT1BFX0tJTkRfQ0dST1VQX1YxX0xFR0FDWRADEh4KGlNDT1BFX0tJTkRfSURFTlRJRllfRkFJTEVEEAQqnwEKDVJlc291cmNlU2NvcGUSHgoaUkVTT1VSQ0VfU0NPUEVfVU5TUEVDSUZJRUQQABIXChNSRVNPVVJDRV9TQ09QRV9IT1NUEAESHgoaUkVTT1VSQ0VfU0NPUEVfRU5WSVJPTk1FTlQQAhIaChZSRVNPVVJDRV9TQ09QRV9VTktOT1dOEAMSGQoVUkVTT1VSQ0VfU0NPUEVfTEVHQUNZEAQqggMKCVNjb3BlTm90ZRIaChZTQ09QRV9OT1RFX1VOU1BFQ0lGSUVEEAASLAooU0NPUEVfTk9URV9DT05UQUlORVJfU0lHTkFMX09OX0hPU1RfUk9PVBABEiMKH1NDT1BFX05PVEVfTU9VTlRJTkZPX1VOUkVBREFCTEUQAhIhCh1TQ09QRV9OT1RFX0xPQURBVkdfTk9UX1BST0NGUxADEiEKHVNDT1BFX05PVEVfQ1BVSU5GT19OT1RfUFJPQ0ZTEAQSKAokU0NPUEVfTk9URV9NRU1PUllfQ09OVFJPTExFUl9NSVNTSU5HEAUSJgoiU0NPUEVfTk9URV9TV0FQX0FDQ09VTlRJTkdfTUlTU0lORxAGEiMKH1NDT1BFX05PVEVfUFJPQ19TVEFUX05PVF9QUk9DRlMQBxIfChtTQ09QRV9OT1RFX01FTUlORk9fVU5VU0FCTEUQCBIoCiRTQ09QRV9OT1RFX0NQVV9DT05UUk9MTEVSX1VOUkVBREFCTEUQCSqaAwoTQ29sbGVjdGlvbkNvbXBvbmVudBIkCiBDT0xMRUNUSU9OX0NPTVBPTkVOVF9VTlNQRUNJRklFRBAAEiAKHENPTExFQ1RJT05fQ09NUE9ORU5UX0JPT1RfSUQQARIcChhDT0xMRUNUSU9OX0NPTVBPTkVOVF9DUFUQAhIfChtDT0xMRUNUSU9OX0NPTVBPTkVOVF9NRU1PUlkQAxIdChlDT0xMRUNUSU9OX0NPTVBPTkVOVF9TV0FQEAQSHQoZQ09MTEVDVElPTl9DT01QT05FTlRfRElTSxAFEh0KGUNPTExFQ1RJT05fQ09NUE9ORU5UX0xPQUQQBhIeChpDT0xMRUNUSU9OX0NPTVBPTkVOVF9QUk9DUxAHEh8KG0NPTExFQ1RJT05fQ09NUE9ORU5UX1VQVElNRRAIEh4KGkNPTExFQ1RJT05fQ09NUE9ORU5UX0NPTk5TEAkSHAoYQ09MTEVDVElPTl9DT01QT05FTlRfTkVUEAoSIAocQ09MTEVDVElPTl9DT01QT05FTlRfRElTS19JTxALKrQBChVBZGRyZXNzRGV0ZWN0aW9uU3RhdGUSJwojQUREUkVTU19ERVRFQ1RJT05fU1RBVEVfVU5TUEVDSUZJRUQQABIlCiFBRERSRVNTX0RFVEVDVElPTl9TVEFURV9BVkFJTEFCTEUQARInCiNBRERSRVNTX0RFVEVDVElPTl9TVEFURV9VTlNVUFBPUlRFRBACEiIKHkFERFJFU1NfREVURUNUSU9OX1NUQVRFX0ZBSUxFRBADKqQBCg9QcmVzZW50ZWRSZWFzb24SIAocUFJFU0VOVEVEX1JFQVNPTl9VTlNQRUNJRklFRBAAEiUKIVBSRVNFTlRFRF9SRUFTT05fQ0FfVkVSSUZZX0ZBSUxFRBABEiEKHVBSRVNFTlRFRF9SRUFTT05fUElOX01JU01BVENIEAISJQohUFJFU0VOVEVEX1JFQVNPTl9PVVRTSURFX1ZBTElESVRZEAMqeQoJUHJvYmVLaW5kEhoKFlBST0JFX0tJTkRfVU5TUEVDSUZJRUQQABITCg9QUk9CRV9LSU5EX0lDTVAQARISCg5QUk9CRV9LSU5EX1RDUBACEhMKD1BST0JFX0tJTkRfSFRUUBADEhIKDlBST0JFX0tJTkRfRE5TEAQq9gEKDEJpbGxpbmdDeWNsZRIdChlCSUxMSU5HX0NZQ0xFX1VOU1BFQ0lGSUVEEAASGQoVQklMTElOR19DWUNMRV9NT05USExZEAESGwoXQklMTElOR19DWUNMRV9RVUFSVEVSTFkQAhIcChhCSUxMSU5HX0NZQ0xFX1NFTUlBTk5VQUwQAxIYChRCSUxMSU5HX0NZQ0xFX1lFQVJMWRAEEhoKFkJJTExJTkdfQ1lDTEVfQklFTk5JQUwQBRIbChdCSUxMSU5HX0NZQ0xFX1RSSUVOTklBTBAGEh4KGkJJTExJTkdfQ1lDTEVfUVVJTlFVRU5OSUFMEAdCNFoyZ2l0aHViLmNvbS94amV0cnkvaGVyb24tcHJvYmUvZ2VuL2hlcm9uL3YxO2hlcm9udjFiBnByb3RvMw");
 
 /**
  * 一次上报里的主机读数。每个读数都是 optional：缺失表示"无读数"，
@@ -154,6 +154,15 @@ export type Metrics = Message<"heron.v1.Metrics"> & {
    * @generated from field: optional double cpu_iowait_pct = 24;
    */
   cpuIowaitPct?: number | undefined;
+
+  /**
+   * 按核负载：load1 除以与它同一范围的核数，由 agent 在同一次识别里算出（分母见 Facts.execution.load_cores）。
+   * 负载范围无法确定、或该范围的核数无从得知时缺失（例如 LXC guest 里 /proc/loadavg 由 lxcfs 提供）；
+   * 出现时 load1 必然同时出现。缺失不是 0。
+   *
+   * @generated from field: optional double load1_per_core = 25;
+   */
+  load1PerCore?: number | undefined;
 };
 
 /**
@@ -200,9 +209,10 @@ export type Facts = Message<"heron.v1.Facts"> & {
   cpuModel: string;
 
   /**
-   * agent 所在执行环境的有效核数：cgroup 有限额时取 cpuset 与 quota 较小者的上取整
-   * （1.5 核报 2），否则是主机核数。旧 agent 一律报物理核数；该值只做展示与按核负载
-   * 归一的分母，口径漂移可接受。
+   * agent 所在执行环境的有效核数（可见上限）的上取整：主机范围是主机的处理器数；容器或 guest 的 cgroup 范围
+   * 是 cpu.max 折算的配额核数与 cpuset 核数的较小者（1.5 核报 2），cgroup v1 等旧读法是 /proc/cpuinfo 的处理器数；
+   * 精确值见 execution.cpu_effective_cores。
+   * 有效核数无法确定时为 0。只做展示；按核负载用 Metrics.load1_per_core，不再用它作分母。
    *
    * @generated from field: uint32 cpu_cores = 7;
    */
@@ -234,6 +244,14 @@ export type Facts = Message<"heron.v1.Facts"> & {
    * @generated from field: heron.v1.AgentDiagnostics diagnostics = 11;
    */
   diagnostics?: AgentDiagnostics | undefined;
+
+  /**
+   * 每个资源按哪个范围采样、可见上限是多少，与本条 Facts 同一次识别；仅管理端可读。缺失表示旧 agent 未提供。
+   * 这是 agent 自报的信息，容器里的进程能伪造它读取的文件；hub 不据此授予任何权限。
+   *
+   * @generated from field: heron.v1.ExecutionScope execution = 12;
+   */
+  execution?: ExecutionScope | undefined;
 };
 
 /**
@@ -242,6 +260,82 @@ export type Facts = Message<"heron.v1.Facts"> & {
  */
 export const FactsSchema: GenMessage<Facts> = /*@__PURE__*/
   messageDesc(file_heron_v1_types, 1);
+
+/**
+ * 一次识别的结果。识别看两件事：cgroup 挂载根是不是非根 cgroup（有 cgroup.type 即容器或 guest 的命名空间根），
+ * 以及被读取的每个 /proc 文件实际所在的文件系统（procfs、lxcfs 或其他）。来源无法确定的资源缺读数，
+ * 不改用另一个范围的数。容量都是"可见上限"：命名空间里看不到的祖先 cgroup 配额与内存上限不计入。
+ *
+ * @generated from message heron.v1.ExecutionScope
+ */
+export type ExecutionScope = Message<"heron.v1.ExecutionScope"> & {
+  /**
+   * @generated from field: heron.v1.ScopeKind kind = 1;
+   */
+  kind: ScopeKind;
+
+  /**
+   * @generated from field: heron.v1.ResourceScope cpu = 2;
+   */
+  cpu: ResourceScope;
+
+  /**
+   * @generated from field: heron.v1.ResourceScope memory = 3;
+   */
+  memory: ResourceScope;
+
+  /**
+   * @generated from field: heron.v1.ResourceScope swap = 4;
+   */
+  swap: ResourceScope;
+
+  /**
+   * @generated from field: heron.v1.ResourceScope load = 5;
+   */
+  load: ResourceScope;
+
+  /**
+   * 本次识别的有效核数精确值；CPU 范围未知时缺失。
+   *
+   * @generated from field: optional double cpu_effective_cores = 6;
+   */
+  cpuEffectiveCores?: number | undefined;
+
+  /**
+   * 本次识别的内存、swap 可见上限，字节。缺失表示该资源范围未知，或范围已知而总量读不出；出现即是已知值。
+   * swap 的 0 是已知值（主机没有 swap，或环境的 memory.swap.max 为 0），不能省略成缺失；内存上限出现时必为正。
+   *
+   * @generated from field: optional uint64 memory_limit_bytes = 7;
+   */
+  memoryLimitBytes?: bigint | undefined;
+
+  /**
+   * @generated from field: optional uint64 swap_limit_bytes = 8;
+   */
+  swapLimitBytes?: bigint | undefined;
+
+  /**
+   * Metrics.load1_per_core 的分母：负载所在范围的核数；缺失即本次不上报按核负载。
+   *
+   * @generated from field: optional uint32 load_cores = 9;
+   */
+  loadCores?: number | undefined;
+
+  /**
+   * 固定类别的说明，按枚举值升序、去重，至多 8 个；读者忽略不认识的值。kind 不是 IDENTIFY_FAILED 时，只要有资源
+   * 的范围是 UNKNOWN，就至少有一条说明给出原因（IDENTIFY_FAILED 本身就是原因）。
+   *
+   * @generated from field: repeated heron.v1.ScopeNote notes = 10;
+   */
+  notes: ScopeNote[];
+};
+
+/**
+ * Describes the message heron.v1.ExecutionScope.
+ * Use `create(ExecutionScopeSchema)` to create a new message.
+ */
+export const ExecutionScopeSchema: GenMessage<ExecutionScope> = /*@__PURE__*/
+  messageDesc(file_heron_v1_types, 2);
 
 /**
  * @generated from message heron.v1.AgentDiagnostics
@@ -295,7 +389,7 @@ export type AgentDiagnostics = Message<"heron.v1.AgentDiagnostics"> & {
  * Use `create(AgentDiagnosticsSchema)` to create a new message.
  */
 export const AgentDiagnosticsSchema: GenMessage<AgentDiagnostics> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 2);
+  messageDesc(file_heron_v1_types, 3);
 
 /**
  * @generated from message heron.v1.NetworkInfo
@@ -317,7 +411,7 @@ export type NetworkInfo = Message<"heron.v1.NetworkInfo"> & {
  * Use `create(NetworkInfoSchema)` to create a new message.
  */
 export const NetworkInfoSchema: GenMessage<NetworkInfo> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 3);
+  messageDesc(file_heron_v1_types, 4);
 
 /**
  * @generated from message heron.v1.AddressDetection
@@ -348,7 +442,7 @@ export type AddressDetection = Message<"heron.v1.AddressDetection"> & {
  * Use `create(AddressDetectionSchema)` to create a new message.
  */
 export const AddressDetectionSchema: GenMessage<AddressDetection> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 4);
+  messageDesc(file_heron_v1_types, 5);
 
 /**
  * @generated from message heron.v1.ProbeResult
@@ -395,12 +489,28 @@ export type ProbeResult = Message<"heron.v1.ProbeResult"> & {
 
   /**
    * HTTPS 探测（HTTP 任务且 target 为 https://）握手成功时顺带带回的服务端证书到期时刻
-   * （链首枚证书的 NotAfter，Unix 秒）；只在 rtt_us 成功结果上携带，每任务每小时至多一次。
+   * （链首枚证书的 NotAfter，Unix 秒）；只在 rtt_us 成功结果上携带，每任务每个配置身份每小时至多一次。
    * 不携带签发者与证书链。optional 区分"没带"与 0；hub 对未携带的结果不更新证书观测。
    *
    * @generated from field: optional int64 cert_not_after_s = 6;
    */
   certNotAfterS?: bigint | undefined;
+
+  /**
+   * 证书相关的丢包（默认校验失败、钉住后指纹不符、钉住且相符但不在有效期）带回的对方叶证书，供人工确认信任；
+   * 只随 timeout 结果，每任务每个配置身份每小时至多一次。从不自动生效。
+   *
+   * @generated from field: heron.v1.PresentedCertificate presented = 7;
+   */
+  presented?: PresentedCertificate | undefined;
+
+  /**
+   * 产生这条结果时任务的 ProbeTask.config_id，原样回显；空表示身份未知（任务来自不发身份的 hub，或旧 agent）。
+   * presented 只在它与任务当前身份相等时被采信；cert_not_after_s 在身份相等时采信，身份为空时只对未钉住的任务采信。
+   *
+   * @generated from field: bytes task_config_id = 8;
+   */
+  taskConfigId: Uint8Array;
 };
 
 /**
@@ -408,7 +518,40 @@ export type ProbeResult = Message<"heron.v1.ProbeResult"> & {
  * Use `create(ProbeResultSchema)` to create a new message.
  */
 export const ProbeResultSchema: GenMessage<ProbeResult> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 5);
+  messageDesc(file_heron_v1_types, 6);
+
+/**
+ * @generated from message heron.v1.PresentedCertificate
+ */
+export type PresentedCertificate = Message<"heron.v1.PresentedCertificate"> & {
+  /**
+   * 叶证书 SubjectPublicKeyInfo 的 SHA-256，恰 32 字节。
+   *
+   * @generated from field: bytes spki_sha256 = 1;
+   */
+  spkiSha256: Uint8Array;
+
+  /**
+   * 叶证书 NotAfter，Unix 秒，正数。
+   *
+   * @generated from field: int64 not_after_s = 2;
+   */
+  notAfterS: bigint;
+
+  /**
+   * agent 当时的判定。
+   *
+   * @generated from field: heron.v1.PresentedReason reason = 3;
+   */
+  reason: PresentedReason;
+};
+
+/**
+ * Describes the message heron.v1.PresentedCertificate.
+ * Use `create(PresentedCertificateSchema)` to create a new message.
+ */
+export const PresentedCertificateSchema: GenMessage<PresentedCertificate> = /*@__PURE__*/
+  messageDesc(file_heron_v1_types, 7);
 
 /**
  * @generated from message heron.v1.Timeout
@@ -421,7 +564,7 @@ export type Timeout = Message<"heron.v1.Timeout"> & {
  * Use `create(TimeoutSchema)` to create a new message.
  */
 export const TimeoutSchema: GenMessage<Timeout> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 6);
+  messageDesc(file_heron_v1_types, 8);
 
 /**
  * @generated from message heron.v1.ProbeError
@@ -438,7 +581,7 @@ export type ProbeError = Message<"heron.v1.ProbeError"> & {
  * Use `create(ProbeErrorSchema)` to create a new message.
  */
 export const ProbeErrorSchema: GenMessage<ProbeError> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 7);
+  messageDesc(file_heron_v1_types, 9);
 
 /**
  * @generated from message heron.v1.ProbeTask
@@ -479,6 +622,23 @@ export type ProbeTask = Message<"heron.v1.ProbeTask"> & {
    * @generated from field: string dns_server = 6;
    */
   dnsServer: string;
+
+  /**
+   * 钉住的叶证书 SubjectPublicKeyInfo 的 SHA-256，恰 32 字节；空表示不钉，按系统根证书与主机名校验。
+   * 只允许 target 为 https:// 的 HTTP 任务。钉住后只比对公钥与有效期，不查证书链与主机名。
+   * 声明了 AGENT_CAPABILITY_PROBE_CERT_PIN 的 agent 才会收到钉住的任务。
+   *
+   * @generated from field: bytes cert_spki_sha256 = 7;
+   */
+  certSpkiSha256: Uint8Array;
+
+  /**
+   * 任务配置身份，16 字节随机数：任务内容（本消息除 id 与 config_id 外的全部字段）变化时由 hub 重新生成，
+   * 内容不变的保存保留原值。只比较相等。agent 在结果里原样回显（ProbeResult.task_config_id）。
+   *
+   * @generated from field: bytes config_id = 8;
+   */
+  configId: Uint8Array;
 };
 
 /**
@@ -486,7 +646,7 @@ export type ProbeTask = Message<"heron.v1.ProbeTask"> & {
  * Use `create(ProbeTaskSchema)` to create a new message.
  */
 export const ProbeTaskSchema: GenMessage<ProbeTask> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 8);
+  messageDesc(file_heron_v1_types, 10);
 
 /**
  * @generated from message heron.v1.ProbeTasks
@@ -508,7 +668,7 @@ export type ProbeTasks = Message<"heron.v1.ProbeTasks"> & {
  * Use `create(ProbeTasksSchema)` to create a new message.
  */
 export const ProbeTasksSchema: GenMessage<ProbeTasks> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 9);
+  messageDesc(file_heron_v1_types, 11);
 
 /**
  * @generated from message heron.v1.Traffic
@@ -563,7 +723,7 @@ export type Traffic = Message<"heron.v1.Traffic"> & {
  * Use `create(TrafficSchema)` to create a new message.
  */
 export const TrafficSchema: GenMessage<Traffic> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 10);
+  messageDesc(file_heron_v1_types, 12);
 
 /**
  * 节点的计费与到期（§9.4）。价格与币种是提醒用的展示值：hub 不汇总、不换算，也不拿它们做任何计算；到期日与周期
@@ -620,7 +780,182 @@ export type Billing = Message<"heron.v1.Billing"> & {
  * Use `create(BillingSchema)` to create a new message.
  */
 export const BillingSchema: GenMessage<Billing> = /*@__PURE__*/
-  messageDesc(file_heron_v1_types, 11);
+  messageDesc(file_heron_v1_types, 13);
+
+/**
+ * @generated from enum heron.v1.ScopeKind
+ */
+export enum ScopeKind {
+  /**
+   * 只表示旧 agent 未上报；新 agent 必须给出非零值。
+   *
+   * @generated from enum value: SCOPE_KIND_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * 挂载根是真正的根 cgroup，或非 Linux：读数是整台主机。
+   *
+   * @generated from enum value: SCOPE_KIND_HOST = 1;
+   */
+  HOST = 1,
+
+  /**
+   * 挂载根是非根 cgroup（容器或 guest 的命名空间根）：读数是这个 cgroup 的。
+   *
+   * @generated from enum value: SCOPE_KIND_CGROUP_NAMESPACE = 2;
+   */
+  CGROUP_NAMESPACE = 2,
+
+  /**
+   * cgroup v1、混合挂载或没有 cgroup2：沿用旧读法，范围未区分。
+   *
+   * @generated from enum value: SCOPE_KIND_CGROUP_V1_LEGACY = 3;
+   */
+  CGROUP_V1_LEGACY = 3,
+
+  /**
+   * 挂载根的状态读不出（权限等错误）：依赖它的资源都缺读数。
+   *
+   * @generated from enum value: SCOPE_KIND_IDENTIFY_FAILED = 4;
+   */
+  IDENTIFY_FAILED = 4,
+}
+
+/**
+ * Describes the enum heron.v1.ScopeKind.
+ */
+export const ScopeKindSchema: GenEnum<ScopeKind> = /*@__PURE__*/
+  enumDesc(file_heron_v1_types, 0);
+
+/**
+ * @generated from enum heron.v1.ResourceScope
+ */
+export enum ResourceScope {
+  /**
+   * 只表示旧 agent 未上报。
+   *
+   * @generated from enum value: RESOURCE_SCOPE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * 整台主机。
+   *
+   * @generated from enum value: RESOURCE_SCOPE_HOST = 1;
+   */
+  HOST = 1,
+
+  /**
+   * agent 所在容器或 guest 的 cgroup。
+   *
+   * @generated from enum value: RESOURCE_SCOPE_ENVIRONMENT = 2;
+   */
+  ENVIRONMENT = 2,
+
+  /**
+   * 来源无法确定或读不到：该资源本次缺读数。
+   *
+   * @generated from enum value: RESOURCE_SCOPE_UNKNOWN = 3;
+   */
+  UNKNOWN = 3,
+
+  /**
+   * cgroup v1 等旧读法，范围未区分。
+   *
+   * @generated from enum value: RESOURCE_SCOPE_LEGACY = 4;
+   */
+  LEGACY = 4,
+}
+
+/**
+ * Describes the enum heron.v1.ResourceScope.
+ */
+export const ResourceScopeSchema: GenEnum<ResourceScope> = /*@__PURE__*/
+  enumDesc(file_heron_v1_types, 1);
+
+/**
+ * @generated from enum heron.v1.ScopeNote
+ */
+export enum ScopeNote {
+  /**
+   * @generated from enum value: SCOPE_NOTE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * 检测到容器标识（/.dockerenv、/run/.containerenv、container= 环境变量、/run/systemd/container），而挂载根是主机的
+   * 根 cgroup：读数是整台主机，不是这个容器的。
+   *
+   * @generated from enum value: SCOPE_NOTE_CONTAINER_SIGNAL_ON_HOST_ROOT = 1;
+   */
+  CONTAINER_SIGNAL_ON_HOST_ROOT = 1,
+
+  /**
+   * /proc/self/mountinfo 读不了或解析失败，/proc 文件的来源都无法确定。
+   *
+   * @generated from enum value: SCOPE_NOTE_MOUNTINFO_UNREADABLE = 2;
+   */
+  MOUNTINFO_UNREADABLE = 2,
+
+  /**
+   * /proc/loadavg 由 lxcfs 或其他文件系统提供，负载的范围无法确定。
+   *
+   * @generated from enum value: SCOPE_NOTE_LOADAVG_NOT_PROCFS = 3;
+   */
+  LOADAVG_NOT_PROCFS = 3,
+
+  /**
+   * /proc/cpuinfo 不是 procfs，主机核数无从得知（按核负载因此缺失）。
+   *
+   * @generated from enum value: SCOPE_NOTE_CPUINFO_NOT_PROCFS = 4;
+   */
+  CPUINFO_NOT_PROCFS = 4,
+
+  /**
+   * 环境 cgroup 上 memory.current、memory.stat 或 memory.max 缺失或读不出：内存缺读数。memory 控制器未下放时
+   * swap 的文件也一起缺失，同时会有 SWAP_ACCOUNTING_MISSING。
+   *
+   * @generated from enum value: SCOPE_NOTE_MEMORY_CONTROLLER_MISSING = 5;
+   */
+  MEMORY_CONTROLLER_MISSING = 5,
+
+  /**
+   * 环境 cgroup 上 memory.swap.current 或 memory.swap.max 缺失或读不出：swap 缺读数。
+   *
+   * @generated from enum value: SCOPE_NOTE_SWAP_ACCOUNTING_MISSING = 6;
+   */
+  SWAP_ACCOUNTING_MISSING = 6,
+
+  /**
+   * 挂载根是真根而 /proc/stat 不是 procfs 或来源无法确定：CPU 缺读数。环境 cgroup 不读 /proc/stat，不记这一条。
+   *
+   * @generated from enum value: SCOPE_NOTE_PROC_STAT_NOT_PROCFS = 7;
+   */
+  PROC_STAT_NOT_PROCFS = 7,
+
+  /**
+   * /proc/meminfo 的来源不可用：真根要求 procfs，环境 cgroup 要求 procfs 或 lxcfs。真根上内存与 swap 因此缺读数；
+   * 环境里 memory.max、memory.swap.max 为数值时可见上限就是它们，为 max 时对应资源缺读数。
+   *
+   * @generated from enum value: SCOPE_NOTE_MEMINFO_UNUSABLE = 8;
+   */
+  MEMINFO_UNUSABLE = 8,
+
+  /**
+   * 环境 cgroup 的 cpu.max 或 cpuset.cpus.effective 读不出、认不出，或 cpu.stat 不存在：CPU 缺读数。
+   * cpuset.cpus.effective 不存在（cpuset 控制器未下放）不算，那时有效核数取 /proc/cpuinfo。
+   *
+   * @generated from enum value: SCOPE_NOTE_CPU_CONTROLLER_UNREADABLE = 9;
+   */
+  CPU_CONTROLLER_UNREADABLE = 9,
+}
+
+/**
+ * Describes the enum heron.v1.ScopeNote.
+ */
+export const ScopeNoteSchema: GenEnum<ScopeNote> = /*@__PURE__*/
+  enumDesc(file_heron_v1_types, 2);
 
 /**
  * @generated from enum heron.v1.CollectionComponent
@@ -694,7 +1029,7 @@ export enum CollectionComponent {
  * Describes the enum heron.v1.CollectionComponent.
  */
 export const CollectionComponentSchema: GenEnum<CollectionComponent> = /*@__PURE__*/
-  enumDesc(file_heron_v1_types, 0);
+  enumDesc(file_heron_v1_types, 3);
 
 /**
  * @generated from enum heron.v1.AddressDetectionState
@@ -725,7 +1060,44 @@ export enum AddressDetectionState {
  * Describes the enum heron.v1.AddressDetectionState.
  */
 export const AddressDetectionStateSchema: GenEnum<AddressDetectionState> = /*@__PURE__*/
-  enumDesc(file_heron_v1_types, 1);
+  enumDesc(file_heron_v1_types, 4);
+
+/**
+ * @generated from enum heron.v1.PresentedReason
+ */
+export enum PresentedReason {
+  /**
+   * @generated from enum value: PRESENTED_REASON_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * 任务未钉指纹，按系统根证书与主机名校验失败。
+   *
+   * @generated from enum value: PRESENTED_REASON_CA_VERIFY_FAILED = 1;
+   */
+  CA_VERIFY_FAILED = 1,
+
+  /**
+   * 任务钉了指纹，对方叶证书的指纹与之不符。
+   *
+   * @generated from enum value: PRESENTED_REASON_PIN_MISMATCH = 2;
+   */
+  PIN_MISMATCH = 2,
+
+  /**
+   * 任务钉了指纹且相符，但当前时刻不在证书有效期内（未生效或已过期）。
+   *
+   * @generated from enum value: PRESENTED_REASON_OUTSIDE_VALIDITY = 3;
+   */
+  OUTSIDE_VALIDITY = 3,
+}
+
+/**
+ * Describes the enum heron.v1.PresentedReason.
+ */
+export const PresentedReasonSchema: GenEnum<PresentedReason> = /*@__PURE__*/
+  enumDesc(file_heron_v1_types, 5);
 
 /**
  * @generated from enum heron.v1.ProbeKind
@@ -761,7 +1133,7 @@ export enum ProbeKind {
  * Describes the enum heron.v1.ProbeKind.
  */
 export const ProbeKindSchema: GenEnum<ProbeKind> = /*@__PURE__*/
-  enumDesc(file_heron_v1_types, 2);
+  enumDesc(file_heron_v1_types, 6);
 
 /**
  * 节点的计费周期（§9.4）。管理与公开两端共用，所以与 Billing 一起定义在这里：public.proto 不能 import admin.proto。
@@ -829,5 +1201,5 @@ export enum BillingCycle {
  * Describes the enum heron.v1.BillingCycle.
  */
 export const BillingCycleSchema: GenEnum<BillingCycle> = /*@__PURE__*/
-  enumDesc(file_heron_v1_types, 3);
+  enumDesc(file_heron_v1_types, 7);
 
