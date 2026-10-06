@@ -99,10 +99,10 @@ deploy/               install.sh、systemd 单元、OpenRC 服务脚本（§14�
 - `AgentService`：`Register`、`Report`、`GetRelease`（§4.10）。
 - GET 准入由装配期的显式检查承载：`heron.v1` 的每个方法接受 GET 当且仅当声明了正的 `cache_max_age_s`，遍历包内全部服务，任一方向不符 hub 起不来。
 - `AdminService`：`Login`、`Logout`、`ListSessions`、`RevokeSession`；节点 `ListNodes`、`CreateNode`、`UpdateNode`、`DeleteNode`、`RotateNodeToken`、`ReorderNodes`、`MoveNodes`（§10 节点顺序）；注册窗口 `OpenRegisterWindow`、`CloseRegisterWindow`、`GetRegisterWindow`；数据 `GetSnapshot`、`QueryMetrics`、`QueryProbes`、`GetTraffic`、`AdjustTraffic`；探测 `ListProbeTasks`、`SaveProbeTask`、`DeleteProbeTask`；告警 `ListAlertRules`、`SaveAlertRule`、`DeleteAlertRule`、`ListAlertEvents`、`GetAlertDeliveryError`、`ListNotifyChannels`、`SaveNotifyChannel`、`DeleteNotifyChannel`、`TestNotifyChannel`；维护静默 `ListSilences`（`ACCESS_READ`）、`SaveSilence`、`DeleteSilence`（仅会话，§9.5）；设置 `GetSettings`、`UpdateSettings`、`GetStorageStats`、`GetHeartbeatStatus`（§9.6，`ACCESS_READ`）；标签 `ListTags`（`ACCESS_READ`）、`DeleteTag`；主题 `UploadTheme`、`ListThemes`、`EnableTheme`、`DeleteTheme`、`DeleteThemeVersion`、`GetThemePreview`、`GetThemePackage`、`PreviewTheme`、`ListThemeReleases`、`InstallThemeRelease`（§10.1，全部仅会话）；API token `ListApiTokens`、`CreateApiToken`、`DeleteApiToken`；自描述 `GetApiReference`。
-- `PublicService`：`GetSite`、`GetSnapshot`、`QueryMetrics`、`QueryProbes`。后两者只对 `public = true` 的节点应答，对其余节点与不存在的节点返回同一个 `NotFound`。
+- `PublicService`：`GetSite`、`GetSnapshot`、`QueryMetrics`、`QueryProbes`、`ListProbeComparisonNodes`、`QueryProbeComparison`。后四者只对 `public = true` 的节点应答，对其余节点与不存在的节点返回同一个 `NotFound`（对比查询里不可见节点改列进 `unavailable_node_ids`，不给 404）；对比候选查询同样只看公开节点，候选为空与任务不存在回同一个 `NotFound`。公开节点谓词 `n.public = 1` 是 ListPublicNodes、NodeIsPublic 与对比候选三处共用的同一片段。读量额度（§6.5）在管理与公开两端同一口径：公开端超额同样返回 `FailedPrecondition`。
 - 节点标签批量写入：`AdminService.BatchUpdateNodeTags`（`ACCESS_SESSION`），只接受明确的非空节点集合及标签增删项，语义见 §10。
 
-无副作用标注（`idempotency_level = NO_SIDE_EFFECTS`，决定方法是否接受 GET）按服务的信任模型决定，不按读写决定：`PublicService` 的四个方法全部标注，因而可用 GET 调用并带 `Cache-Control`——它无鉴权（§3.2），不存在会被浏览器环境性携带的凭据，§5.3 的 CSRF 论证在这里不成立，而公开页恰是需要被缓存的那一面。缓存上界分别定：实时快照不超过一个上报间隔（更短无意义，更长会展示过期的在线状态），历史查询可更长，站点配置最长。`AdminService` 与 `AgentService` 一律不标：前者是 §5.3 的 CSRF 防线之一，后者的上报本就有副作用。
+无副作用标注（`idempotency_level = NO_SIDE_EFFECTS`，决定方法是否接受 GET）按服务的信任模型决定，不按读写决定：`PublicService` 的六个方法全部标注，因而可用 GET 调用并带 `Cache-Control`——它无鉴权（§3.2），不存在会被浏览器环境性携带的凭据，§5.3 的 CSRF 论证在这里不成立，而公开页恰是需要被缓存的那一面。缓存上界分别定：实时快照不超过一个上报间隔（更短无意义，更长会展示过期的在线状态），历史查询（含对比）可更长，站点配置最长。`AdminService` 与 `AgentService` 一律不标：前者是 §5.3 的 CSRF 防线之一，后者的上报本就有副作用。
 
 ## 4. agent 协议
 
@@ -406,7 +406,9 @@ CREATE TABLE probe_1m (
 ) WITHOUT ROWID;
 ```
 
-`probe_5m`、`probe_1h` 同构。`rtt_min_us`/`rtt_max_us` 可空：桶内没有任何 rtt 样本（全部丢包或错误）时为 NULL，`min()`/`max()` 聚合自动忽略；若落成 0，上卷会把"没有样本"当成 0 µs。主键里 `ts` 在 `task_id` 之前：唯一的查询是"某节点、某时间窗、全部任务"，`task_id` 在前会让 SQLite 只能定位到节点，然后扫描该节点的全部历史。
+`probe_5m`、`probe_1h` 同构。`rtt_min_us`/`rtt_max_us` 可空：桶内没有任何 rtt 样本（全部丢包或错误）时为 NULL，`min()`/`max()` 聚合自动忽略；若落成 0，上卷会把"没有样本"当成 0 µs。主键里 `ts` 在 `task_id` 之前：单节点查询（"某节点、某时间窗、全部任务"）由主键直接定位，`task_id` 在前会让 SQLite 只能定位到节点，然后扫描该节点的全部历史。
+
+迁移 33 给三张表各加 `(task_id, node_id, ts)` 索引（`<表>_by_task`）：跨节点对比查询按"某任务、一组节点、某时间窗"读取，等值键在前、`ts` 范围殿后；对比源查询用 `INDEXED BY` 钉住该索引——store 从不跑 `ANALYZE`，无统计时规划器可能选中主键按节点扫窗口内全部任务的行，读量与对比分块无关，额度计数也会与聚合走不同的计划。索引列序为 `(task_id, node_id, ts)`：`node_id` 在 `ts` 之前使 IN 清单里的每个节点都成为等值探测；`(task_id, ts, node_id)` 会让 `node_id` 落到范围之后、逐行过滤。纯索引构建不搬数据：验收机上 5627 万探测行约 51 秒（modernc 纯 Go 引擎，行速约 1.1M 行/秒；同一机器 C 版 SQLite 约 15 秒，SQLite 单写者也排除了并行建索引的收益），迁移在写路径上一次性占住写协程。
 
 ### 6.4 上卷
 
@@ -433,6 +435,10 @@ QueryMetrics 两服务均返回与 ts 对齐的 coverage 三计数，以及独�
 保留期默认 1m：7 天、5m：30 天、1h：365 天，可配。prune 按时间片分块删除，每块一个短事务，不长时间占住写协程。
 
 查询按窗口跨度选定基础聚合级别：≤ 6h 用 1m，≤ 7d 用 5m，更长用 1h；再按目标点数上限在查询时二次分桶。指标与探测共用按各自族水位拼接的查询层：5m 查询在 5m 水位之前读 5m、之后读 1m；1h 查询在 1h 水位之前读 1h、两级水位之间读 5m、5m 水位之后读 1m。源区间互斥且首尾相接，水位与各级行在同一个只读事务内读取，避免上卷推进与清理期间混用不同快照。水位可能落在最终 step 内部，所有源行须按同一 step、用上卷的聚合表达式统一重聚合，不能直接拼接两侧已聚合的点；每条序列的 ts 唯一，均值按样本数加权，点数预算不变。响应的 `level` 表示基础级别，`step_s` 决定输出步长；末桶可由已刷出的分钟组成、不含 live 内存里尚未刷出的当前分钟。管理与公开服务共享此口径，探测任务标注与节点可见性规则不变。
+
+历史查询按实际要读的源行数计读量额度，额度加在查询层本身、两端同一：聚合之前、同一读事务里按与聚合完全相同的条件对各级源行带上限计数（每级 `SELECT count(*) FROM (SELECT 1 … LIMIT 剩余额度+1)`，命中上限即已超额），累加超过 R 即返回 `FailedPrecondition`，错误带额度、参与查询的各级水位时刻与建议（缩窗口、加大 max_points、或等数据整理追上）；计数命中提前终止，未超额时各级计数恰为实际行数。R = 12000 × 序列上限：指标与覆盖率为 1（每节点每时刻一行），单节点探测查询为每节点任务上限 64，对比分块为 `max_nodes_per_query`。空库、纯未来窗口、水位跨界部不为拒：只按对齐后实际要读的行计，不从跨度或水位落后时长推算；已删任务的残留行也计在丙内——同节点反复换任务会拉开长窗口单节点查询的行数，超出即如实被拒。告警在 for_minutes 校验上限（60 分钟）下按满配 64 槽 + 残留满打满算也距额度很远。
+
+跨节点同目标对比：`ListProbeComparisonNodes` 在同一个只读事务里读出任务的候选节点（覆盖展开 ∩ 调用方节点可见性，按节点全序）与标注材料；候选为空与任务不存在回同一个 `NotFound`，不区分。`QueryProbeComparison` 按分块查询，一次至多 `max_nodes_per_query` 个节点（服务端唯一常量，初值 32，验收降半两档到 8，见下）：逐节点按与单节点查询相同的准入判定，不可见或不存在进 `unavailable_node_ids`（顺序同请求），可见节点各一条序列、与请求同序，窗口内没有样本的也给空序列；样本与单节点查询同一形状与稀疏规则，聚合复用同一条查询层（第二分组键从 `task_id` 换成 `node_id`），同一任务的对比结果与逐节点单查一致。服务端常量当前为 8：成本验收的饱和组（一个来源满速开环发最重分块，受保护读者 p99 不得超空载 2 倍）在 32、16、8 都不达标——公共读路径的并发重扫描在现代c下近乎串行，劣化由准入的总读工作量决定、与分块大小无关；门槛重设计（如按块内节点数扣令牌）交编排者裁决，在那之前停在 8，验收记录见任务报告。
 
 存储健康信号：`GetStorageStats` 与 `heron-hub stats` 在库大小与行数之外，给出每级指标与探测表的最老桶时刻（按表分别给，不合并——各级保留期不同，合并后无法与各自的保留期对比）、每级上卷水位（直接取 `rollup_state.upto_ts`，不另算，与上卷读的是同一个值）、上次 prune 与上次上卷的完成时刻（记在与 `rollup_state` 同类的簿记表里，只在成功时写：字段缺失即从未跑过，失败与从未跑过因此可区分）。全部是聚合值，API token 可读（`ACCESS_READ`）。prune 停了只表现为库慢慢变大，上卷停了只表现为长窗口的图变空，最老桶对保留期、水位对当前时刻是一眼能读出故障的两组对照：面板的存储页显示这些数，并在最老桶早于"保留期 + 一个该级周期 + 一个维护间隔"、或水位落后当前时刻超过三个该级周期时标红。多出的一个维护间隔是因为 prune 的截止点按桶长向下对齐、维护每分钟跑一轮：截止点跨过桶边界之后、下一轮 prune 删掉那一桶之前，健康的表也会比保留期早一个桶长多一点，不加这一段每个桶长都会误报一次。新库在第一轮上卷之前水位为 0，会标红约一分钟，不加特判。"上次 prune"只指时序表的 prune；告警事件的清理另有保留期、不依赖上卷，不混进同一行。不给可回收空间（`freelist_count × page_size`）：hub 没有 VACUUM 入口，这个数没有动作可对应。
 
