@@ -77,17 +77,41 @@ curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/
 跨节点同目标对比分两步，两个服务都有：先 `ListProbeComparisonNodes`（只带 `taskId`）拿候选节点与 `maxNodesPerQuery`——响应的 `kind`/`target` 是标注：会话与全站 token 按任务当前配置标注；范围不覆盖任务全部分配的指定节点 token 拿到节点清单但不给标注；候选为空与任务不存在回同一个 `not_found`。再从候选里选 1 到 `maxNodesPerQuery` 个节点调 `QueryProbeComparison`（`taskId`、`nodeIds`、`from`、`to`、`maxPoints`，不得重复）：可见节点各一条序列、顺序同请求，窗口内没有样本的也给空序列；请求里不可见或不存在的节点不在序列里，改列在 `unavailableNodeIds`（顺序同请求），不是错误。样本与单独 `QueryProbes` 同一口径（级别选择、步长、稀疏规则），同一任务同一窗口的对比结果与逐节点单查一致。历史查询按实际读取的源行数计额度，超额返回 `failed_precondition`：message 带额度、各级数据整理水位时刻与建议（缩窗口、加大 `maxPoints`、或等数据整理追上）；这不是错误重试能解决的，窗口减半或 `maxPoints` 放大后重试。
 
 ```sh example
-curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/json' \
-  --data '{"taskId": 3}' "$HERON_HUB/heron.v1.AdminService/ListProbeComparisonNodes" | jq '{kind, target, maxNodesPerQuery, nodeIds}'
+best=""
+for t in $(curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/json' \
+  --data '{}' "$HERON_HUB/heron.v1.AdminService/ListProbeTasks" | jq -r '(.tasks // []) | sort_by(.task.id) | .[].task.id'); do
+  if out=$(curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/json' \
+    --data "$(jq -nc --argjson t "$t" '{taskId: $t}')" \
+    "$HERON_HUB/heron.v1.AdminService/ListProbeComparisonNodes" 2>/dev/null); then
+    best=$(printf '%s' "$out" | jq '{kind, target, maxNodesPerQuery, nodeIds}')
+    break
+  fi
+done
+if [ -n "$best" ]; then printf '%s\n' "$best"; else echo '{}'; fi
 ```
 
-拿到节点清单后取两小时对比（公开页同一调用，把服务与方法换成 `PublicService`，不带 token；只能看到公开节点）：
+拿到候选后取两小时对比（公开页同一调用，把服务与方法换成 `PublicService`，不带 token；只能看到公开节点）：
 
 ```sh example
 now=$(date +%s)
-curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/json' \
-  --data "$(jq -nc --argjson now "$now" '{taskId: 3, nodeIds: ["1", "2", "5"], from: ($now - 7200), to: $now, maxPoints: 720}')" \
-  "$HERON_HUB/heron.v1.AdminService/QueryProbeComparison" | jq '{level, stepS, unavailableNodeIds, series: [(.series // [])[] | {nodeId, points: (.samples // []) | length}]}'
+task=""; nodes="[]"
+for t in $(curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/json' \
+  --data '{}' "$HERON_HUB/heron.v1.AdminService/ListProbeTasks" | jq -r '(.tasks // []) | sort_by(.task.id) | .[].task.id'); do
+  if c=$(curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/json' \
+    --data "$(jq -nc --argjson t "$t" '{taskId: $t}')" \
+    "$HERON_HUB/heron.v1.AdminService/ListProbeComparisonNodes" 2>/dev/null); then
+    task=$t
+    nodes=$(printf '%s' "$c" | jq -c '(.nodeIds // [])[:8]')
+    break
+  fi
+done
+if [ -n "$task" ]; then
+  curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/json' \
+    --data "$(jq -nc --argjson t "$task" --argjson nodes "$nodes" --argjson now "$now" '{taskId: $t, nodeIds: $nodes, from: ($now - 7200), to: $now, maxPoints: 720}')" \
+    "$HERON_HUB/heron.v1.AdminService/QueryProbeComparison" | jq '{level, stepS, unavailableNodeIds: (.unavailableNodeIds // []), series: [(.series // [])[] | {nodeId, points: (.samples // []) | length}]}'
+else
+  echo '{}'
+fi
 ```
 
 全部节点与最近一次上报时刻：
