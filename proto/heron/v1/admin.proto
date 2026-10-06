@@ -187,6 +187,11 @@ service AdminService {
   rpc QueryProbeComparison(QueryProbeComparisonRequest) returns (QueryProbeComparisonResponse) {
     option (heron.v1.access) = ACCESS_READ;
   }
+  // 一个探测任务在各节点上的证书观测：当前配置身份下的成功证书与信任候选，以及各节点钉指纹的能力状态。
+  // 受限 token 只看其范围内的节点，且任务须是它可标注的任务，否则与任务不存在同一 NotFound。
+  rpc ListProbeCertificates(ListProbeCertificatesRequest) returns (ListProbeCertificatesResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
 
   // 列出规则及其当前节点状态。
   rpc ListAlertRules(ListAlertRulesRequest) returns (ListAlertRulesResponse) {
@@ -711,6 +716,9 @@ message ListProbeTasksResponse {
 }
 message SaveProbeTaskRequest {
   // task.id 为 0 时创建，否则整体替换该任务的字段；all_nodes 为假时 node_ids 是保存后的完整分配列表，可以为空。
+  // 只做证书指纹动作时 task 只给 id（kind、target、interval_s、timeout_ms、dns_server 都留零值）并带 cert_pin：
+  // 保存沿用库里的任务字段与节点选择，这次请求的 node_ids、all_nodes、selector_tags 不生效。合法任务的这几项
+  // 不会全是零值，所以这个形状与整体替换不会混淆。
   // 约束：interval_s 5–3600，timeout_ms 100–5000，
   // ICMP 目标为 IP 或主机名；每节点至多 64 个任务（all_nodes 任务计入每个节点）；target 不超过 253 字节；
   // TCP 目标必须是规范的 host:port（不带方括号包裹的主机名、不带正号或前导零的端口），
@@ -741,6 +749,55 @@ message CertPinChange {
 message SaveProbeTaskResponse {
   ProbeTaskDetail task = 1;
   uint64 version = 2;
+}
+
+message ListProbeCertificatesRequest {
+  uint64 task_id = 1;
+}
+
+message ListProbeCertificatesResponse {
+  // 任务当前的配置身份；信任候选时作为 SaveProbeTaskRequest.expected_config_id 交回。
+  bytes config_id = 1;
+  // 任务当前钉住的叶证书 SPKI SHA-256；空表示不钉。
+  bytes cert_spki_sha256 = 2;
+  // 当前分配了该任务、且调用方可见的节点，按节点全序。
+  repeated NodeProbeCertificate nodes = 3;
+}
+
+message NodeProbeCertificate {
+  int64 node_id = 1;
+  PinCapability pin_capability = 2;
+  // 当前配置身份下最近一次成功握手的证书观测；缺失表示没有。
+  ProbeCertificateObservation current = 3;
+  // 旧 agent 写入、未绑定配置身份的成功证书观测，只在任务未钉住时出现；只供显示，不能作为信任依据。
+  ProbeCertificateObservation unbound = 4;
+  // 当前配置身份下的信任候选；缺失表示没有。从不自动生效。
+  ProbeCertificateCandidate candidate = 5;
+}
+
+enum PinCapability {
+  PIN_CAPABILITY_UNSPECIFIED = 0;
+  // 本次 hub 启动后，该节点最近一次上报声明了 AGENT_CAPABILITY_PROBE_CERT_PIN。
+  PIN_CAPABILITY_SUPPORTED = 1;
+  // 最近一次上报没有声明：钉住的任务不会下发给它。
+  PIN_CAPABILITY_UNSUPPORTED = 2;
+  // 本次 hub 启动后尚未收到该节点的上报。
+  PIN_CAPABILITY_UNKNOWN = 3;
+}
+
+message ProbeCertificateObservation {
+  // 叶证书 NotAfter，Unix 秒。
+  int64 not_after_s = 1;
+  // 观测时刻，Unix 秒；与 probe_cert 现有时刻列同义。
+  int64 observed_at = 2;
+}
+
+message ProbeCertificateCandidate {
+  // 叶证书 SubjectPublicKeyInfo 的 SHA-256，恰 32 字节。
+  bytes spki_sha256 = 1;
+  int64 not_after_s = 2;
+  PresentedReason reason = 3;
+  int64 observed_at = 4;
 }
 message DeleteProbeTaskRequest { uint64 id = 1; }
 message DeleteProbeTaskResponse { uint64 version = 1; }

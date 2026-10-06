@@ -183,6 +183,8 @@ func (s *Service) prepareChange(ctx context.Context, m *heronv1.ExecuteChangeReq
 		if c.ResourceID != 0 {
 			patch = func() error {
 				// 版本和补全值都读持久状态；缓存发布晚于提交，不能作为并发修改的基线。
+				originalPin := q.SaveProbeTask.GetCertPin()
+				originalExpected := append([]byte(nil), q.SaveProbeTask.GetExpectedConfigId()...)
 				_, list, err := s.store.LoadProbeTasks(ctx)
 				if err != nil {
 					return internalError("read probe task")
@@ -192,7 +194,21 @@ func (s *Service) prepareChange(ctx context.Context, m *heronv1.ExecuteChangeReq
 						if d.AllNodes || len(d.SelectorTags) != 0 {
 							d.NodeIDs = nil
 						}
-						return mergeChange(q.SaveProbeTask, &heronv1.SaveProbeTaskRequest{Task: proto.Clone(d.Task).(*heronv1.ProbeTask), AllNodes: d.AllNodes, NodeIds: d.NodeIDs, SelectorTags: d.SelectorTags}, m.GetUpdateMask().GetPaths(), "task.id", "task")
+						base := &heronv1.SaveProbeTaskRequest{Task: proto.Clone(d.Task).(*heronv1.ProbeTask), AllNodes: d.AllNodes, NodeIds: d.NodeIDs, SelectorTags: d.SelectorTags}
+						paths := m.GetUpdateMask().GetPaths()
+						if len(paths) == 0 {
+							if originalPin == nil {
+								return invalid("update_mask: at least one editable field or action required")
+							}
+							proto.Reset(q.SaveProbeTask)
+							proto.Merge(q.SaveProbeTask, base)
+						} else if err := mergeChange(q.SaveProbeTask, base, paths, probeMaskForbidden()...); err != nil {
+							return err
+						}
+						// 动作与前置条件不经掩码、不取自基线：合并会把它们换成基线上的空值。
+						q.SaveProbeTask.CertPin = originalPin
+						q.SaveProbeTask.ExpectedConfigId = originalExpected
+						return nil
 					}
 				}
 				return notFound(c.ResourceID)

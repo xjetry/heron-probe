@@ -106,6 +106,8 @@ func (s *Service) operationError(err error, root, operation string) error {
 		}
 	case errors.Is(err, probe.ErrInvalid):
 		return connect.NewError(connect.CodeInvalidArgument, err)
+	case errors.Is(err, store.ErrPrecondition):
+		return connect.NewError(connect.CodeFailedPrecondition, err)
 	case errors.Is(err, store.ErrNotFound):
 		var missing store.NotFoundError
 		errors.As(err, &missing)

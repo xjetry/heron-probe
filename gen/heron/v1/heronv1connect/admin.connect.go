@@ -136,6 +136,9 @@ const (
 	// AdminServiceQueryProbeComparisonProcedure is the fully-qualified name of the AdminService's
 	// QueryProbeComparison RPC.
 	AdminServiceQueryProbeComparisonProcedure = "/heron.v1.AdminService/QueryProbeComparison"
+	// AdminServiceListProbeCertificatesProcedure is the fully-qualified name of the AdminService's
+	// ListProbeCertificates RPC.
+	AdminServiceListProbeCertificatesProcedure = "/heron.v1.AdminService/ListProbeCertificates"
 	// AdminServiceListAlertRulesProcedure is the fully-qualified name of the AdminService's
 	// ListAlertRules RPC.
 	AdminServiceListAlertRulesProcedure = "/heron.v1.AdminService/ListAlertRules"
@@ -323,6 +326,9 @@ type AdminServiceClient interface {
 	ListProbeComparisonNodes(context.Context, *connect.Request[v1.ListProbeComparisonNodesRequest]) (*connect.Response[v1.ListProbeComparisonNodesResponse], error)
 	// 跨节点对比的第二步：一个任务在一组节点上的探测历史，节点按 ListProbeComparisonNodes 给出的上限分块。
 	QueryProbeComparison(context.Context, *connect.Request[v1.QueryProbeComparisonRequest]) (*connect.Response[v1.QueryProbeComparisonResponse], error)
+	// 一个探测任务在各节点上的证书观测：当前配置身份下的成功证书与信任候选，以及各节点钉指纹的能力状态。
+	// 受限 token 只看其范围内的节点，且任务须是它可标注的任务，否则与任务不存在同一 NotFound。
+	ListProbeCertificates(context.Context, *connect.Request[v1.ListProbeCertificatesRequest]) (*connect.Response[v1.ListProbeCertificatesResponse], error)
 	// 列出规则及其当前节点状态。
 	ListAlertRules(context.Context, *connect.Request[v1.ListAlertRulesRequest]) (*connect.Response[v1.ListAlertRulesResponse], error)
 	// id 为 0 时创建，否则整体替换规则与作用域、渠道列表。
@@ -637,6 +643,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("QueryProbeComparison")),
 			connect.WithClientOptions(opts...),
 		),
+		listProbeCertificates: connect.NewClient[v1.ListProbeCertificatesRequest, v1.ListProbeCertificatesResponse](
+			httpClient,
+			baseURL+AdminServiceListProbeCertificatesProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListProbeCertificates")),
+			connect.WithClientOptions(opts...),
+		),
 		listAlertRules: connect.NewClient[v1.ListAlertRulesRequest, v1.ListAlertRulesResponse](
 			httpClient,
 			baseURL+AdminServiceListAlertRulesProcedure,
@@ -866,6 +878,7 @@ type adminServiceClient struct {
 	queryProbes              *connect.Client[v1.QueryProbesRequest, v1.QueryProbesResponse]
 	listProbeComparisonNodes *connect.Client[v1.ListProbeComparisonNodesRequest, v1.ListProbeComparisonNodesResponse]
 	queryProbeComparison     *connect.Client[v1.QueryProbeComparisonRequest, v1.QueryProbeComparisonResponse]
+	listProbeCertificates    *connect.Client[v1.ListProbeCertificatesRequest, v1.ListProbeCertificatesResponse]
 	listAlertRules           *connect.Client[v1.ListAlertRulesRequest, v1.ListAlertRulesResponse]
 	saveAlertRule            *connect.Client[v1.SaveAlertRuleRequest, v1.SaveAlertRuleResponse]
 	deleteAlertRule          *connect.Client[v1.DeleteAlertRuleRequest, v1.DeleteAlertRuleResponse]
@@ -1087,6 +1100,11 @@ func (c *adminServiceClient) ListProbeComparisonNodes(ctx context.Context, req *
 // QueryProbeComparison calls heron.v1.AdminService.QueryProbeComparison.
 func (c *adminServiceClient) QueryProbeComparison(ctx context.Context, req *connect.Request[v1.QueryProbeComparisonRequest]) (*connect.Response[v1.QueryProbeComparisonResponse], error) {
 	return c.queryProbeComparison.CallUnary(ctx, req)
+}
+
+// ListProbeCertificates calls heron.v1.AdminService.ListProbeCertificates.
+func (c *adminServiceClient) ListProbeCertificates(ctx context.Context, req *connect.Request[v1.ListProbeCertificatesRequest]) (*connect.Response[v1.ListProbeCertificatesResponse], error) {
+	return c.listProbeCertificates.CallUnary(ctx, req)
 }
 
 // ListAlertRules calls heron.v1.AdminService.ListAlertRules.
@@ -1337,6 +1355,9 @@ type AdminServiceHandler interface {
 	ListProbeComparisonNodes(context.Context, *connect.Request[v1.ListProbeComparisonNodesRequest]) (*connect.Response[v1.ListProbeComparisonNodesResponse], error)
 	// 跨节点对比的第二步：一个任务在一组节点上的探测历史，节点按 ListProbeComparisonNodes 给出的上限分块。
 	QueryProbeComparison(context.Context, *connect.Request[v1.QueryProbeComparisonRequest]) (*connect.Response[v1.QueryProbeComparisonResponse], error)
+	// 一个探测任务在各节点上的证书观测：当前配置身份下的成功证书与信任候选，以及各节点钉指纹的能力状态。
+	// 受限 token 只看其范围内的节点，且任务须是它可标注的任务，否则与任务不存在同一 NotFound。
+	ListProbeCertificates(context.Context, *connect.Request[v1.ListProbeCertificatesRequest]) (*connect.Response[v1.ListProbeCertificatesResponse], error)
 	// 列出规则及其当前节点状态。
 	ListAlertRules(context.Context, *connect.Request[v1.ListAlertRulesRequest]) (*connect.Response[v1.ListAlertRulesResponse], error)
 	// id 为 0 时创建，否则整体替换规则与作用域、渠道列表。
@@ -1647,6 +1668,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("QueryProbeComparison")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceListProbeCertificatesHandler := connect.NewUnaryHandler(
+		AdminServiceListProbeCertificatesProcedure,
+		svc.ListProbeCertificates,
+		connect.WithSchema(adminServiceMethods.ByName("ListProbeCertificates")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceListAlertRulesHandler := connect.NewUnaryHandler(
 		AdminServiceListAlertRulesProcedure,
 		svc.ListAlertRules,
@@ -1911,6 +1938,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceListProbeComparisonNodesHandler.ServeHTTP(w, r)
 		case AdminServiceQueryProbeComparisonProcedure:
 			adminServiceQueryProbeComparisonHandler.ServeHTTP(w, r)
+		case AdminServiceListProbeCertificatesProcedure:
+			adminServiceListProbeCertificatesHandler.ServeHTTP(w, r)
 		case AdminServiceListAlertRulesProcedure:
 			adminServiceListAlertRulesHandler.ServeHTTP(w, r)
 		case AdminServiceSaveAlertRuleProcedure:
@@ -2132,6 +2161,10 @@ func (UnimplementedAdminServiceHandler) ListProbeComparisonNodes(context.Context
 
 func (UnimplementedAdminServiceHandler) QueryProbeComparison(context.Context, *connect.Request[v1.QueryProbeComparisonRequest]) (*connect.Response[v1.QueryProbeComparisonResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.QueryProbeComparison is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListProbeCertificates(context.Context, *connect.Request[v1.ListProbeCertificatesRequest]) (*connect.Response[v1.ListProbeCertificatesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.ListProbeCertificates is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) ListAlertRules(context.Context, *connect.Request[v1.ListAlertRulesRequest]) (*connect.Response[v1.ListAlertRulesResponse], error) {
