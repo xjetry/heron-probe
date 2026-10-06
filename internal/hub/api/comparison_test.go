@@ -132,6 +132,19 @@ func TestQueryProbeComparisonThroughAdminAPI(t *testing.T) {
 	if err != nil || len(resp.Msg.Series) != 2 || len(resp.Msg.UnavailableNodeIds) != 0 {
 		t.Fatalf("private node via session: %+v %v", resp.Msg, err)
 	}
+	// 分块不核对分配：可见但未分配该任务的节点照常出现在序列里、samples 为空（该节点
+	// 上这个任务的历史本就按同一授权可查，没有可泄露的新信息）。
+	resp, err = h.admin.QueryProbeComparison(ctx, connect.NewRequest(&heronv1.QueryProbeComparisonRequest{
+		TaskId: task, NodeIds: []int64{other, pub}, From: base, To: base + 60, MaxPoints: 10,
+	}))
+	if err != nil || len(resp.Msg.Series) != 2 || len(resp.Msg.UnavailableNodeIds) != 0 {
+		t.Fatalf("unassigned visible node: %+v %v", resp.Msg, err)
+	}
+	for _, series := range resp.Msg.Series {
+		if series.NodeId == other && len(series.Samples) != 0 {
+			t.Fatalf("unassigned node must have empty samples: %+v", series)
+		}
+	}
 	// 范围外节点进 unavailable_node_ids，顺序同请求。
 	scoped, _, _ := grantedClient(t, h, &heronv1.TokenGrant{NodeIds: []int64{pub}, Permissions: []heronv1.TokenPermission{heronv1.TokenPermission_TOKEN_PERMISSION_CONFIGURE}})
 	resp, err = scoped.QueryProbeComparison(ctx, connect.NewRequest(&heronv1.QueryProbeComparisonRequest{
