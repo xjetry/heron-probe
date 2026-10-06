@@ -302,6 +302,25 @@ func TestHTTPCAVerifyFailureReturnsCandidate(t *testing.T) {
 	}
 }
 
+// 服务端出示完整链（叶 + 未知 CA）时候选仍是叶证书：UnverifiedCertificates[0] 是叶，
+// 不是链尾。面板信任的是目标本身的公钥，带上 CA 的指纹会让管理员钉住签发者。
+func TestHTTPCAVerifyFailureCandidateIsLeafNotIssuer(t *testing.T) {
+	// 证书有效期相对真实时钟：失败必须纯粹源于未知 CA，而不是撞上有效期。
+	now := time.Now()
+	ca := newPinTestCA(t, now.Add(-time.Hour), now.Add(24*time.Hour))
+	leaf, chain := ca.leaf(t, 2, pinTestKey(t), now.Add(-time.Minute), now.Add(time.Hour))
+	var hits atomic.Int64
+	s := pinnedServer(t, chain, &hits)
+	p := pinnedProber(clock.Real(), t)
+	out := p.Probe(t.Context(), httpTask(s.URL))
+	if !out.Timeout || out.Presented == nil || out.Presented.Reason != heronv1.PresentedReason_PRESENTED_REASON_CA_VERIFY_FAILED {
+		t.Fatalf("unknown-CA chain = %+v, want timeout with CA_VERIFY_FAILED candidate", out)
+	}
+	if out.Presented.SPKI != spki(leaf) || out.Presented.NotAfterS != leaf.NotAfter.Unix() {
+		t.Fatalf("candidate = %+v, want leaf spki %x", out.Presented, spki(leaf))
+	}
+}
+
 // --- 限频与身份 ---
 
 // 候选限频按 (task_id, config_id)：同一身份一小时内只带一次；换了身份（任务内容变了）立即重新带回；
