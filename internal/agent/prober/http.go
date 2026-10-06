@@ -225,11 +225,16 @@ func (p *HTTP) reportPresented(id uint64, configID []byte, now time.Duration) bo
 	return reportOnce(p.certCand, certKey{id, string(configID)}, now)
 }
 
-// staleLocked 判定该任务的当前身份记录是否已是另一份：Apply 换身份后，被取消的旧探测晚返回时
-// 不得为旧身份重建已删除的限频键。没有身份记录（引擎未经 Scheduler 使用）时按当前处理。调用者持 certMu。
+// staleLocked 判定写者是否属于已被换下或从未登记的身份：登记簿存在时（pruneTasks 已被调用过，
+// 即引擎由调度器管理）未登记即过期——Apply 先登记身份再启动探测，登记簿查不到的探测一定来自
+// 已被换下或已删除的旧任务，不得为它携带观测或重建键。登记簿不存在（引擎脱离调度器使用，
+// 没有清单概念）时维持按当前处理。调用者持 certMu。
 func (p *HTTP) staleLocked(id uint64, configID []byte) bool {
+	if p.current == nil {
+		return false
+	}
 	cur, ok := p.current[id]
-	return ok && cur != string(configID)
+	return !ok || cur != string(configID)
 }
 
 // reportOnce 承载频率上限 CertReportInterval：一小时内能看到更换后的新证书已经足够，每次都带是重复字节。
@@ -242,42 +247,32 @@ func reportOnce(m map[certKey]time.Duration, key certKey, now time.Duration) boo
 	return true
 }
 
-// pruneTasks 让每个任务只保留当前身份的限频状态，由 Scheduler.Apply 在任务集更新后调用：
-// 换身份或任务消失时删除旧的（被拒任务不在 alive 里，其记录一并清掉）；任务消失再出现时按首次探测处理。
+// pruneTasks 让限频状态只剩清单内任务当前身份的记录，由 Scheduler.Apply 在任务集更新后、
+// 启动新探测之前调用。清理以两张携带表自己的键为准：任务不在清单里，或键的身份与当前登记的
+// 不同，都删——登记簿只服务探测侧的过期判定，清理不经过它，登记簿缺失也不漏清。
+// 被拒任务不在 alive 里，其记录一并清掉；任务消失再出现时按首次探测处理。
 func (p *HTTP) pruneTasks(alive map[uint64]string) {
 	p.certMu.Lock()
 	defer p.certMu.Unlock()
-	for id := range p.current {
-		if _, ok := alive[id]; !ok {
-			delete(p.current, id)
-			p.dropLocked(id, "", false)
-		}
+	if p.current == nil {
+		p.current = map[uint64]string{}
 	}
-	for id, cfg := range alive {
-		if cur, ok := p.current[id]; ok && cur == cfg {
-			continue
-		}
-		// 首次登记身份时保留与之一致的记录：引擎脱离调度器使用时写下的键没有身份记录
-		// 可查，可能正属于这份配置；只删与当前身份不同的。
-		p.dropLocked(id, cfg, true)
-		if p.current == nil {
-			p.current = map[uint64]string{}
-		}
-		p.current[id] = cfg
-	}
-}
-
-// dropLocked 删除一个任务在两个携带时钟上的记录；keepCurrent 为真时保留当前身份（keep）的记录。
-// 调用者持 certMu。
-func (p *HTTP) dropLocked(id uint64, keep string, keepCurrent bool) {
 	for key := range p.certOK {
-		if key.task == id && !(keepCurrent && key.cfg == keep) {
+		if cfg, ok := alive[key.task]; !ok || cfg != key.cfg {
 			delete(p.certOK, key)
 		}
 	}
 	for key := range p.certCand {
-		if key.task == id && !(keepCurrent && key.cfg == keep) {
+		if cfg, ok := alive[key.task]; !ok || cfg != key.cfg {
 			delete(p.certCand, key)
 		}
+	}
+	for id := range p.current {
+		if _, ok := alive[id]; !ok {
+			delete(p.current, id)
+		}
+	}
+	for id, cfg := range alive {
+		p.current[id] = cfg
 	}
 }

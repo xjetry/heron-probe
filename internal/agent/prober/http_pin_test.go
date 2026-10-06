@@ -443,3 +443,91 @@ func TestHTTPLateProbeKeepsNoOldKey(t *testing.T) {
 		t.Fatal("probe with current identity did not carry cert")
 	}
 }
+
+// 任务删除后晚返回的探测：登记簿里已没有它，既不携带观测也不留键；再来多少轮 prune 也不会泄漏。
+func TestHTTPLateProbeAfterTaskRemoval(t *testing.T) {
+	clk := clock.NewFake(time.Unix(2000, 0))
+	now := clk.Now()
+	ca := newPinTestCA(t, now.Add(-time.Hour), now.Add(24*time.Hour))
+	leaf, chain := ca.leaf(t, 2, pinTestKey(t), now.Add(-time.Minute), now.Add(time.Hour))
+	var hits atomic.Int64
+	s := pinnedServer(t, chain, &hits)
+	p := pinnedProber(clk, t)
+	pin := spki(leaf)
+	cfgA := bytes.Repeat([]byte{1}, 16)
+
+	p.pruneTasks(map[uint64]string{1: string(cfgA)})
+	if out := p.Probe(t.Context(), pinnedTask(1, s.URL, pin[:], cfgA)); out.CertNotAfter == 0 {
+		t.Fatal("registered probe did not carry cert")
+	}
+	// 任务从清单消失，登记簿与限频表都清空。
+	p.pruneTasks(map[uint64]string{})
+	// 被取消的旧探测此刻才返回：不携带、不写键。
+	if out := p.Probe(t.Context(), pinnedTask(1, s.URL, pin[:], cfgA)); out.CertNotAfter != 0 {
+		t.Fatalf("late probe after removal = %+v, want cert not carried", out)
+	}
+	// 再次 prune 之后状态仍为空：旧键没有借晚探测复活。
+	p.pruneTasks(map[uint64]string{})
+	p.certMu.Lock()
+	left := len(p.certOK) + len(p.certCand)
+	p.certMu.Unlock()
+	if left != 0 {
+		t.Fatalf("state after removal + late probe + prune = %d keys, want 0", left)
+	}
+}
+
+// 增删交替多轮：状态数量始终有界，不随轮数增长。
+func TestHTTPCertStateBoundedAcrossAddDeleteChurn(t *testing.T) {
+	clk := clock.NewFake(time.Unix(2000, 0))
+	now := clk.Now()
+	ca := newPinTestCA(t, now.Add(-time.Hour), now.Add(24*time.Hour))
+	leaf, chain := ca.leaf(t, 2, pinTestKey(t), now.Add(-time.Minute), now.Add(time.Hour))
+	var hits atomic.Int64
+	s := pinnedServer(t, chain, &hits)
+	p := pinnedProber(clk, t)
+	pin := spki(leaf)
+
+	for i := range 6 {
+		cfg := bytes.Repeat([]byte{byte(i)}, 16)
+		p.pruneTasks(map[uint64]string{1: string(cfg)})
+		if out := p.Probe(t.Context(), pinnedTask(1, s.URL, pin[:], cfg)); out.CertNotAfter == 0 {
+			t.Fatalf("round %d: registered probe did not carry cert", i)
+		}
+		p.pruneTasks(map[uint64]string{})
+		// 删除当轮的晚返回探测：不携带、不留键。
+		if out := p.Probe(t.Context(), pinnedTask(1, s.URL, pin[:], cfg)); out.CertNotAfter != 0 {
+			t.Fatalf("round %d: late probe after removal carried cert", i)
+		}
+	}
+	p.certMu.Lock()
+	okKeys, candKeys, current := len(p.certOK), len(p.certCand), len(p.current)
+	p.certMu.Unlock()
+	if okKeys != 0 || candKeys != 0 || current != 0 {
+		t.Fatalf("state after add/delete churn: certOK=%d certCand=%d current=%d, want all 0", okKeys, candKeys, current)
+	}
+}
+
+// 登记簿建立之前写下的键（引擎脱离调度器使用的阶段）也要按表键清掉：清单为空即全清。
+func TestHTTPPruneCleansKeysWithoutRegistration(t *testing.T) {
+	clk := clock.NewFake(time.Unix(2000, 0))
+	now := clk.Now()
+	ca := newPinTestCA(t, now.Add(-time.Hour), now.Add(24*time.Hour))
+	leaf, chain := ca.leaf(t, 2, pinTestKey(t), now.Add(-time.Minute), now.Add(time.Hour))
+	var hits atomic.Int64
+	s := pinnedServer(t, chain, &hits)
+	p := pinnedProber(clk, t)
+	pin := spki(leaf)
+	cfg := bytes.Repeat([]byte{1}, 16)
+
+	// 脱离调度器的使用：没有任何 pruneTasks，探测直接写限频键。
+	if out := p.Probe(t.Context(), pinnedTask(1, s.URL, pin[:], cfg)); out.CertNotAfter == 0 {
+		t.Fatal("standalone probe did not carry cert")
+	}
+	p.pruneTasks(map[uint64]string{})
+	p.certMu.Lock()
+	left := len(p.certOK) + len(p.certCand)
+	p.certMu.Unlock()
+	if left != 0 {
+		t.Fatalf("prune with empty set left %d keys, want 0 (clean by table keys, not only via registry)", left)
+	}
+}

@@ -5,7 +5,11 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"runtime"
+	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -388,5 +392,55 @@ func TestApplyRejectsPinConstraintViolations(t *testing.T) {
 	s.mu.Unlock()
 	if n != 0 {
 		t.Fatalf("running=%d want 0", n)
+	}
+}
+
+// orderEngine 记录 pruneTasks 与 Probe 的调用顺序；Probe 在登记完成前自旋等待，
+// 使"先起跑后登记"的顺序错误确定性地留下 probe 先于 prune 的记录，不靠时序运气。
+type orderEngine struct {
+	mu     sync.Mutex
+	events []string
+	pruned atomic.Bool
+	probed chan struct{}
+	once   sync.Once
+}
+
+func (e *orderEngine) Probe(_ context.Context, _ *heronv1.ProbeTask) Outcome {
+	e.mu.Lock()
+	e.events = append(e.events, "probe")
+	e.mu.Unlock()
+	e.once.Do(func() { close(e.probed) })
+	for !e.pruned.Load() {
+		runtime.Gosched()
+	}
+	return Outcome{RttUs: 1}
+}
+
+func (e *orderEngine) pruneTasks(map[uint64]string) {
+	e.mu.Lock()
+	e.events = append(e.events, "prune")
+	e.mu.Unlock()
+	e.pruned.Store(true)
+}
+
+// 新任务的 pruneTasks（登记身份）必须早于它的第一次 Probe：登记簿先对齐清单，探测才起跑，
+// 晚于登记簿的探测因此一定来自已被换下的旧任务。
+func TestApplyRegistersIdentityBeforeFirstProbe(t *testing.T) {
+	clk := clock.NewFake(time.Unix(0, 0))
+	eng := &orderEngine{probed: make(chan struct{})}
+	s := NewScheduler(eng, NewQueue(QueueCap), clk, logger())
+	s.Rand = func() float64 { return 0 }
+	defer s.Stop()
+	s.Apply(&heronv1.ProbeTasks{Version: 1, Tasks: []*heronv1.ProbeTask{task(1)}})
+	select {
+	case <-eng.probed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no probe ran within 5s")
+	}
+	eng.mu.Lock()
+	events := slices.Clone(eng.events)
+	eng.mu.Unlock()
+	if len(events) == 0 || events[0] != "prune" {
+		t.Fatalf("call order = %v, want prune before first probe", events)
 	}
 }

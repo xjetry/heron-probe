@@ -107,10 +107,17 @@ func TestHTTPCertReportPrunedWithTaskSet(t *testing.T) {
 	if out := p.Probe(t.Context(), task); out.CertNotAfter != 0 {
 		t.Fatalf("probe after prune keeping task = %+v, want without cert", out)
 	}
-	// 任务从清单消失：记录清掉，再出现按首次探测携带。
+	// 任务从清单消失：记录清掉；登记簿存在后，未登记的任务按过期处理——晚返回的旧探测
+	// 既不携带观测，也不留键（键真留下来，此后没有任何 prune 能再清到它）。
 	p.pruneTasks(map[uint64]string{})
-	if out := p.Probe(t.Context(), task); out.CertNotAfter != wantNotAfter {
-		t.Fatalf("probe after prune dropping task CertNotAfter = %d, want %d", out.CertNotAfter, wantNotAfter)
+	if out := p.Probe(t.Context(), task); out.CertNotAfter != 0 {
+		t.Fatalf("late probe after task removal = %+v, want without cert", out)
+	}
+	p.certMu.Lock()
+	left := len(p.certOK) + len(p.certCand)
+	p.certMu.Unlock()
+	if left != 0 {
+		t.Fatalf("state left after removal and late probe = %d keys, want 0", left)
 	}
 }
 

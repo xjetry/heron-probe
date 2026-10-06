@@ -115,6 +115,17 @@ func (s *Scheduler) Apply(tasks *heronv1.ProbeTasks) {
 			delete(s.running, id)
 		}
 	}
+	// 登记先于启动：引擎侧的登记簿（如 HTTP 的证书限频身份）在第一个探测 goroutine
+	// 起跑之前对齐当前清单，于是调度器管理下的每次探测都对应一份已登记的身份——
+	// 登记簿查不到的探测一定来自刚被取消的旧任务，引擎据此拒绝为它携带观测或重建键。
+	// 被拒任务不在 want 里，其记录一并清掉；换了身份的旧记录同样删除，任务消失再出现时按首次探测处理。
+	if p, ok := s.engine.(taskPruner); ok {
+		alive := make(map[uint64]string, len(want))
+		for id, t := range want {
+			alive[id] = string(t.GetConfigId())
+		}
+		p.pruneTasks(alive)
+	}
 	for id, t := range want {
 		if _, ok := s.running[id]; ok {
 			continue
@@ -123,15 +134,6 @@ func (s *Scheduler) Apply(tasks *heronv1.ProbeTasks) {
 		s.running[id] = &runningTask{task: t, cancel: cancel}
 		s.wg.Add(1)
 		go s.run(ctx, t)
-	}
-	// 任务集更新后通知引擎清掉不再需要的每任务状态（如 HTTP 的证书携带记录）：
-	// 被拒任务不在 want 里，其记录一并清掉；换了身份的旧记录同样删除，任务消失再出现时按首次探测处理。
-	if p, ok := s.engine.(taskPruner); ok {
-		alive := make(map[uint64]string, len(want))
-		for id, t := range want {
-			alive[id] = string(t.GetConfigId())
-		}
-		p.pruneTasks(alive)
 	}
 }
 
