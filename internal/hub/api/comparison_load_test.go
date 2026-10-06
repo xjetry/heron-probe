@@ -212,6 +212,15 @@ func TestProbeComparisonCostAcceptance(t *testing.T) {
 	// 采样并按饱和来源在飞数分类；基线是期内空闲同类，不是跨阶段基线。三组各跑一轮：
 	// 对比分块、单节点 QueryProbes 365d、单节点 QueryMetrics 365d。
 	chunkNodes := min(busy, store.MaxComparisonNodes)
+	// HERON_LOAD_ONLY 逗号分隔只跑指定的 ④ 相位（"4"/"4p"/"4m"），用于在安静窗口补测；
+	// 空则全跑。选择器只影响跑哪几相，每相的测量结构不变。
+	only := map[string]bool{}
+	for _, g := range strings.Split(os.Getenv("HERON_LOAD_ONLY"), ",") {
+		if g = strings.TrimSpace(g); g != "" {
+			only[g] = true
+		}
+	}
+	want := func(k string) bool { return len(only) == 0 || only[k] }
 	runPaired := func(name, srcIP string, heavy func(*sourcedClient) (*loadOutcome, error)) *pairedResult {
 		fds := startFDSampler(path)
 		res := runPairedSaturation(t, srv.URL, now, tasks, srcIP, name, heavy)
@@ -220,30 +229,45 @@ func TestProbeComparisonCostAcceptance(t *testing.T) {
 		report.note(name + " 连接采样：" + fds.stopAndReport())
 		return res
 	}
-	sat := runPaired(fmt.Sprintf("④ 饱和来源（开环 365d %d 节点分块）", chunkNodes), hammerSource,
-		func(c *sourcedClient) (*loadOutcome, error) {
-			r, err := c.QueryProbeComparison(ctxOf(t), connect.NewRequest(&heronv1.QueryProbeComparisonRequest{
-				TaskId: 1, NodeIds: firstN(chunkNodes), From: now.Unix() - 365*day, To: now.Unix(), MaxPoints: 720}))
-			return comparisonOutcome(r, chunkNodes), err
-		})
-	satP := runPaired("④-p 饱和来源（开环单节点 QueryProbes 365d）", hammerProbesSource,
-		func(c *sourcedClient) (*loadOutcome, error) {
-			r, err := c.QueryProbes(ctxOf(t), connect.NewRequest(&heronv1.QueryProbesRequest{
-				NodeId: 1, From: now.Unix() - 365*day, To: now.Unix(), MaxPoints: 720}))
-			return seriesOutcome(r, tasks), err
-		})
-	satM := runPaired("④-m 饱和来源（开环单节点 QueryMetrics 365d）", hammerMetricsSource,
-		func(c *sourcedClient) (*loadOutcome, error) {
-			r, err := c.QueryMetrics(ctxOf(t), connect.NewRequest(&heronv1.QueryMetricsRequest{
-				NodeId: 1, From: now.Unix() - 365*day, To: now.Unix(), MaxPoints: 720}))
-			return metricsOutcome(r), err
-		})
-	mSat, pSat := ratio(sat.mIdle, sat.mLoad), ratio(sat.pIdle, sat.pLoad)
-	mSatP, pSatP := ratio(satP.mIdle, satP.mLoad), ratio(satP.pIdle, satP.pLoad)
-	mSatM, pSatM := ratio(satM.mIdle, satM.mLoad), ratio(satM.pIdle, satM.pLoad)
-	report.note(fmt.Sprintf("④ 期内配对 p99 比值（门槛各 ≤2×）：分块 指标 %.2f× 探测 %.2f×；单节点探测 %.2f×/%.2f×；单节点指标 %.2f×/%.2f×；全过：%v",
+	var sat, satP, satM *pairedResult
+	if want("4") {
+		sat = runPaired(fmt.Sprintf("④ 饱和来源（开环 365d %d 节点分块）", chunkNodes), hammerSource,
+			func(c *sourcedClient) (*loadOutcome, error) {
+				r, err := c.QueryProbeComparison(ctxOf(t), connect.NewRequest(&heronv1.QueryProbeComparisonRequest{
+					TaskId: 1, NodeIds: firstN(chunkNodes), From: now.Unix() - 365*day, To: now.Unix(), MaxPoints: 720}))
+				return comparisonOutcome(r, chunkNodes), err
+			})
+	}
+	if want("4p") {
+		satP = runPaired("④-p 饱和来源（开环单节点 QueryProbes 365d）", hammerProbesSource,
+			func(c *sourcedClient) (*loadOutcome, error) {
+				r, err := c.QueryProbes(ctxOf(t), connect.NewRequest(&heronv1.QueryProbesRequest{
+					NodeId: 1, From: now.Unix() - 365*day, To: now.Unix(), MaxPoints: 720}))
+				return seriesOutcome(r, tasks), err
+			})
+	}
+	if want("4m") {
+		satM = runPaired("④-m 饱和来源（开环单节点 QueryMetrics 365d）", hammerMetricsSource,
+			func(c *sourcedClient) (*loadOutcome, error) {
+				r, err := c.QueryMetrics(ctxOf(t), connect.NewRequest(&heronv1.QueryMetricsRequest{
+					NodeId: 1, From: now.Unix() - 365*day, To: now.Unix(), MaxPoints: 720}))
+				return metricsOutcome(r), err
+			})
+	}
+	mSat, pSat, mSatP, pSatP, mSatM, pSatM := -1.0, -1.0, -1.0, -1.0, -1.0, -1.0
+	if sat != nil {
+		mSat, pSat = ratio(sat.mIdle, sat.mLoad), ratio(sat.pIdle, sat.pLoad)
+	}
+	if satP != nil {
+		mSatP, pSatP = ratio(satP.mIdle, satP.mLoad), ratio(satP.pIdle, satP.pLoad)
+	}
+	if satM != nil {
+		mSatM, pSatM = ratio(satM.mIdle, satM.mLoad), ratio(satM.pIdle, satM.pLoad)
+	}
+	pass := func(v float64) bool { return v < 0 || v <= 2 }
+	report.note(fmt.Sprintf("④ 期内配对 p99 比值（门槛各 ≤2×，-1 为未跑）：分块 指标 %.2f× 探测 %.2f×；单节点探测 %.2f×/%.2f×；单节点指标 %.2f×/%.2f×；全过：%v",
 		mSat, pSat, mSatP, pSatP, mSatM, pSatM,
-		mSat <= 2 && pSat <= 2 && mSatP <= 2 && pSatP <= 2 && mSatM <= 2 && pSatM <= 2))
+		pass(mSat) && pass(pSat) && pass(mSatP) && pass(pSatP) && pass(mSatM) && pass(pSatM)))
 
 	// ⑦ 闭环干扰曲线：恰好 k 个重请求常驻在飞 30 秒（重来源轮换，绕开单来源限流对
 	// 并发数的钳制），读者仍每秒一个 ① 形状。k=0 是曲线内的空载对照。
