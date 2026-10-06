@@ -185,3 +185,43 @@ func TestExecuteChangeStartUpdateRejectsNonBoundVersion(t *testing.T) {
 		t.Fatalf("rejected change queued a task: %v", task)
 	}
 }
+
+type localJobFake struct {
+	updateAPIFake
+	job *update.Job
+}
+
+func (f *localJobFake) Status(context.Context) update.Status {
+	return update.Status{Supported: true, Version: "v0.3.0", Job: f.job}
+}
+
+// hub 自身的更新状态与节点同一判定：hub 经安装脚本等途径已运行到目标版本后，本机更新器留下的失败记录不再显示；
+// 本机更新器仍在执行的任务（新进程已运行目标版本、处于验证阶段）与成功记录照常显示。
+func TestUpdateAPIHidesSupersededLocalHubTask(t *testing.T) {
+	job := func(state, version string) *update.Job {
+		return &update.Job{Request: update.Request{ID: "0123456789abcdef0123456789abcdef", Version: version}, State: state, Error: "download official release: i/o timeout"}
+	}
+	for _, c := range []struct {
+		name string
+		job  *update.Job
+		kept bool
+	}{
+		{"failed, running hub already at target", job("failed", "v0.3.0"), false},
+		{"failed, target still ahead", job("failed", "v0.4.0"), true},
+		{"verifying by the local updater", job("verifying", "v0.3.0"), true},
+		{"succeeded", job("succeeded", "v0.3.0"), true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, "", withConfig(func(cfg *Config) { cfg.HubVersion = "v0.3.0" }))
+			h.login(t)
+			h.svc.updateLocal = &localJobFake{job: c.job}
+			got, err := h.admin.GetUpdates(t.Context(), connect.NewRequest(&heronv1.GetUpdatesRequest{}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if task := got.Msg.Targets[0].Status.Task; (task != nil) != c.kept {
+				t.Fatalf("hub task kept=%v, want %v: %v", task != nil, c.kept, task)
+			}
+		})
+	}
+}

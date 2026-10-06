@@ -79,7 +79,7 @@ func TestUpdateResultRequiresMatchingTaskAndRunningVersion(t *testing.T) {
 		name, expected string
 		f              func(*heronv1.UpdateStatus)
 	}{
-		{"different_id", "unconfirmed", func(s *heronv1.UpdateStatus) { s.Task.Id = "fedcba9876543210" }},
+		{"different_id", "", func(s *heronv1.UpdateStatus) { s.Task.Id = "fedcba9876543210" }},
 		{"different_target", "dispatched", func(s *heronv1.UpdateStatus) { s.Task.Version = "v0.4.0" }},
 		{"old_process", "dispatched", func(s *heronv1.UpdateStatus) { s.Version = "v0.2.0" }},
 	} {
@@ -96,8 +96,12 @@ func TestUpdateResultRequiresMatchingTaskAndRunningVersion(t *testing.T) {
 			mutate.f(reported)
 			m.Observe(id, reported)
 			m.flush(t.Context())
-			if got := m.Snapshot(id).Task.State; got != mutate.expected {
-				t.Fatalf("unrelated success changed task: %s", got)
+			if got := m.Snapshot(id).Task.GetState(); got != mutate.expected {
+				t.Fatalf("unrelated success changed task: %q", got)
+			}
+			if mutate.expected == "" {
+				// 运行版本已达到目标而本机没有本任务的记录：任务被清除，既不冒称成功，之后也没有可确认的记录。
+				return
 			}
 			reported.Version = "v0.3.0"
 			reported.Task = proto.Clone(task).(*heronv1.UpdateTask)
@@ -290,8 +294,8 @@ func TestManualUpgradeReconcilesUnexecutedAuthorization(t *testing.T) {
 			m.flush(t.Context())
 			m.Observe(id, &heronv1.UpdateStatus{Supported: true, Version: version})
 			m.flush(t.Context())
-			if task := m.Snapshot(id).Task; task.State != "unconfirmed" || task.Error == "" {
-				t.Fatalf("manual install must not claim task success or block later updates: %v", task)
+			if task := m.Snapshot(id).Task; task != nil {
+				t.Fatalf("manual install must not claim task success or leave a stale task: %v", task)
 			}
 			// 未确认的任务不得挡住后续更新：hub 升级到绑定更高 agent 版本的 release 后（同一库上的
 			// 新进程、绑定 v0.5.0），节点必须还能再更新（spec §14.1：目标随 hub 的绑定走）。
@@ -318,5 +322,82 @@ func TestActiveTasksListsOnlyActiveStates(t *testing.T) {
 	want := map[string]string{"aaaaaaaaaaaaaaaa": "v1.0.0", "cccccccccccccccc": "v1.1.0"}
 	if !maps.Equal(got, want) {
 		t.Fatalf("ActiveTasks = %v, want %v", got, want)
+	}
+}
+
+// 终态任务失败后，节点经别的途径（重装、手动升级）运行到目标版本：失败记录不再描述节点的更新状态，
+// 必须清除；运行版本未到目标时失败记录保留。本机更新器仍保留这条失败记录时同样清除。
+func TestTerminalTaskClearedOnceRunningVersionMeetsTarget(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		state string
+		local bool
+	}{
+		{"failed, local record kept", "failed", true},
+		{"failed, local record gone", "failed", false},
+		{"rolled_back", "rolled_back", true},
+		{"cancelled", "cancelled", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, id, _ := fixture(t)
+			task, err := m.Start(t.Context(), id, "v0.3.0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			m.Observe(id, m.Snapshot(id))
+			m.flush(t.Context())
+			failed := proto.Clone(task).(*heronv1.UpdateTask)
+			failed.State, failed.Error = c.state, "download official release: dial tcp: i/o timeout"
+			m.Observe(id, &heronv1.UpdateStatus{Supported: true, Version: "v0.2.0", Task: failed})
+			m.flush(t.Context())
+			if got := m.Snapshot(id).Task.GetState(); got != c.state {
+				// cancelled 只能由 hub 自己产生；本机上报的 cancelled 不前进，直接在 hub 侧取消。
+				if c.state != "cancelled" {
+					t.Fatalf("terminal result not recorded: %q", got)
+				}
+				m.mu.Lock()
+				m.states[id].Task.State = "cancelled"
+				m.mu.Unlock()
+			}
+			m.Observe(id, &heronv1.UpdateStatus{Supported: true, Version: "v0.2.0", Task: failed})
+			m.flush(t.Context())
+			if m.Snapshot(id).Task == nil {
+				t.Fatal("terminal task cleared while running version is still below its target")
+			}
+			reinstalled := &heronv1.UpdateStatus{Supported: true, Version: "v0.3.0"}
+			if c.local {
+				reinstalled.Task = failed
+			}
+			m.Observe(id, reinstalled)
+			m.flush(t.Context())
+			if got := m.Snapshot(id).Task; got != nil {
+				t.Fatalf("stale %s task kept after the node reached its target: %v", c.state, got)
+			}
+			reloaded := New(m.st, m.clk, m.log, "v0.3.0")
+			if err := reloaded.Load(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if got := reloaded.Snapshot(id).Task; got != nil {
+				t.Fatalf("cleared task came back after reload: %v", got)
+			}
+		})
+	}
+}
+
+// 新进程已运行目标版本、本机更新器仍在验证这条任务：任务在执行中，不能因运行版本已达到目标而被清除。
+func TestTaskStillExecutedLocallySurvivesTargetVersion(t *testing.T) {
+	m, id, _ := fixture(t)
+	task, err := m.Start(t.Context(), id, "v0.3.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Observe(id, m.Snapshot(id))
+	m.flush(t.Context())
+	verifying := proto.Clone(task).(*heronv1.UpdateTask)
+	verifying.State = "verifying"
+	m.Observe(id, &heronv1.UpdateStatus{Supported: true, Version: "v0.3.0", Task: verifying})
+	m.flush(t.Context())
+	if got := m.Snapshot(id).Task.GetState(); got != "verifying" {
+		t.Fatalf("task executed by the local updater was cleared or changed: %q", got)
 	}
 }

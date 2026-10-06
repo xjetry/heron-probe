@@ -211,13 +211,14 @@ func (m *Manager) flush(ctx context.Context) {
 				}
 			}
 		}
+		if task := s.Task; seen && Superseded(task, s.Version, update.ActiveState(task.GetState()) && o.Task.GetId() == task.GetId()) {
+			// 本次上报的运行版本已达到任务目标，而这条任务不是成功记录、本机更新器也没在执行它：它不再描述节点的
+			// 更新状态。清除而不是改判——改成成功是冒称，留着失败会让已在目标版本的节点一直挂着旧错误，
+			// 留着进行中会永久占用更新入口。只在收到上报的这一轮判定，运行版本取自同一次上报。
+			s.Task = nil
+		}
 		if task := s.Task; task != nil {
-			if seen && update.ActiveState(task.State) && s.Supported && update.ValidVersion(s.Version) && !update.Newer(task.Version, s.Version) && (o.Task == nil || o.Task.Id != task.Id) {
-				// 本机版本已到达目标但没有本任务的记录，不能冒称任务成功，也不能永久占用更新入口。
-				task.State = "unconfirmed"
-				task.Error = "running version already meets the target, but no matching local task result exists"
-				task.UpdatedAt = m.clk.Now().Unix()
-			} else if update.ActiveState(task.State) && task.ExpiresAt <= m.clk.Now().Unix() {
+			if update.ActiveState(task.State) && task.ExpiresAt <= m.clk.Now().Unix() {
 				// 下发后失联不能推断执行结果；本机更新器仍负责互斥与恢复，后台只结束等待。
 				if task.State == "queued" {
 					task.State = "expired"
@@ -263,4 +264,19 @@ func advances(current, next string) bool {
 	}
 	stages := map[string]int{"dispatched": 1, "downloading": 2, "stopping": 3, "installing": 4, "verifying": 5, "rolling_back": 6}
 	return stages[next] != 0 && stages[next] >= stages[current]
+}
+
+// Superseded 判定一条任务记录是否已不再描述目标机器的更新状态（节点状态校正与 hub 自身状态的投影共用）：运行版本已达到（或超过）任务目标，
+// 而这条任务既不是成功记录、也不在本机更新器的执行中。失败、回滚、过期、取消、结果未确认的任务，
+// 以及本机更新器没有记录的进行中任务，都可能在节点经重装或手动升级到达目标后仍挂着旧错误；
+// 留着它们只会让面板对已在目标版本的机器显示失败。成功记录保留，它说明目标是怎样到达的；
+// executing 为真表示本机更新器正在执行这条任务（新进程已运行目标版本但仍在验证阶段），不能提前清除。
+// 它是 hub 侧对任务记录的展示与占用策略，不属于 agent 与 hub 之间的协议，所以放在只有 hub 构建的包里：
+// 放进 agent 共用的 internal/update 会改变 agent 的构建输入，使只改 hub 的修正被迫随 agent 一起发布（spec §14.1）。
+// 两边版本都必须是可比较的正式版：Newer 对非法版本恒返回 false，取反会把开发版或空版本误判为已达到目标。
+func Superseded(task *heronv1.UpdateTask, running string, executing bool) bool {
+	if task == nil || task.State == "succeeded" || executing {
+		return false
+	}
+	return update.ValidVersion(task.Version) && update.ValidVersion(running) && !update.Newer(task.Version, running)
 }

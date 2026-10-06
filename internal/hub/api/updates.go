@@ -23,8 +23,13 @@ type releaseSource interface {
 func (s *Service) GetUpdates(ctx context.Context, req *connect.Request[heronv1.GetUpdatesRequest]) (*connect.Response[heronv1.GetUpdatesResponse], error) {
 	out := &heronv1.GetUpdatesResponse{BoundAgentVersion: s.boundAgent()}
 	if p, ok := store.Principal(ctx); !ok || p.AllNodes {
-		local := s.updateLocal.Status(ctx)
-		out.Targets = append(out.Targets, &heronv1.UpdateTarget{NodeId: 0, Status: update.StatusProto(local, s.cfg.HubVersion)})
+		local := update.StatusProto(s.updateLocal.Status(ctx), s.cfg.HubVersion)
+		// hub 的任务记录属于本机更新器，hub 不改写它，只在投影时与节点用同一判定：运行版本已达到目标的
+		// 未完成记录不再显示。本机更新器就是执行者，记录处于进行中即视为仍在执行。
+		if updates.Superseded(local.Task, local.Version, update.ActiveState(local.Task.GetState())) {
+			local.Task = nil
+		}
+		out.Targets = append(out.Targets, &heronv1.UpdateTarget{NodeId: 0, Status: local})
 	}
 	nodes, err := s.store.ListNodes(ctx)
 	if err != nil {
