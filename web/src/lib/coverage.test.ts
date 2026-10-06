@@ -17,12 +17,17 @@ it("observedMinutes 为 0 → 无可观测区间，不做除零", () => {
 });
 
 it.each([
-  { eligible: 200n, observed: 150n, reported: 100n, percent: "66.7", unknown: "50 分钟" },
+  { eligible: 200n, observed: 150n, reported: 100n, percent: "66.6", unknown: "50 分钟" },
   { eligible: 150n, observed: 150n, reported: 150n, percent: "100.0", unknown: null },
   { eligible: 151n, observed: 151n, reported: 100n, percent: "66.2", unknown: null },
-  // 1/3 与 2/3：一位小数四舍五入。
+  // 一位小数向下截断：显示值不超过真实值。
   { eligible: 3n, observed: 3n, reported: 1n, percent: "33.3", unknown: null },
-  { eligible: 3n, observed: 3n, reported: 2n, percent: "66.7", unknown: null },
+  { eligible: 3n, observed: 3n, reported: 2n, percent: "66.6", unknown: null },
+  // 未满不显示满：99.96% 四舍五入会成 100.0。
+  { eligible: 10000n, observed: 10000n, reported: 9996n, percent: "99.9", unknown: null },
+  // 恰好落在 0.1% 边界：浮点 (57/100)×100 = 56.99…，按浮点截断会错成 56.9。
+  { eligible: 100n, observed: 100n, reported: 57n, percent: "57.0", unknown: null },
+  { eligible: 10000n, observed: 10000n, reported: 1n, percent: "0.0", unknown: null },
 ])("覆盖率 $reported/$observed → $percent，未知 $unknown", ({ eligible, observed, reported, percent, unknown }) => {
   const view = coverageView(create(CoverageSummarySchema, {
     coverageStart: 1_700_000_000n,

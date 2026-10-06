@@ -17,7 +17,10 @@ export function coverageView(summary: CoverageSummary | undefined): CoverageView
   if (!summary) return { kind: "absent" };
   if (summary.coverageStart === undefined) return { kind: "no-start" };
   if (summary.observedMinutes === 0n) return { kind: "no-observed" };
-  const percent = ((Number(summary.observedReportedMinutes) / Number(summary.observedMinutes)) * 100).toFixed(1);
+  // 显示值不超过真实值：按千分比整数向下截断到 0.1%。四舍五入会把 99.96% 显示成 100.0%，把漏报说成没有漏报。
+  // 用 bigint 整数除法是因为它按定义精确，截断结果不取决于浮点运算的次序（先乘 100 再截断会把恰好 57% 算成 56.9%）。
+  const permille = (summary.observedReportedMinutes * 1000n) / summary.observedMinutes;
+  const percent = `${permille / 10n}.${permille % 10n}`;
   const unknownMinutes = summary.eligibleMinutes - summary.observedMinutes;
   return { kind: "rate", percent, unknown: unknownMinutes > 0n ? spanText(unknownMinutes) : null };
 }

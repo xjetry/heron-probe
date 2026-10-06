@@ -108,9 +108,9 @@ function renderHistory(surface: "管理" | "公开", summary?: MessageInitShape<
 
 it.each([
   {
-    name: "正常：百分比一位小数，未知时长按量级选单位",
+    name: "正常：百分比向下截断到一位小数，未知时长按量级选单位",
     summary: { coverageStart: 1_700_000_000n, eligibleMinutes: 200n, observedMinutes: 150n, observedReportedMinutes: 100n },
-    pattern: /上报覆盖 66\.7%，未知 50 分钟。这是 hub 观测到的分钟里节点有上报的比例，不是在线率/,
+    pattern: /上报覆盖 66\.6%，未知 50 分钟。这是 hub 观测到的分钟里节点有上报的比例，不是在线率/,
   },
   {
     name: "无未知分钟时不显示未知时长",
