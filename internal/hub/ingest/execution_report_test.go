@@ -181,7 +181,7 @@ func TestRestoredOldFactsAreRequestedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := raw.Exec("ALTER TABLE node_facts DROP COLUMN execution; ALTER TABLE node_facts DROP COLUMN facts_rev; UPDATE snapshot_meta SET schema_version = 33"); err != nil {
+	if _, err := raw.Exec("DROP TABLE probe_cert_presented; ALTER TABLE probe_cert DROP COLUMN config_id; ALTER TABLE probe_task DROP COLUMN cert_spki_sha256; ALTER TABLE probe_task DROP COLUMN config_id; ALTER TABLE node_facts DROP COLUMN execution; ALTER TABLE node_facts DROP COLUMN facts_rev; UPDATE snapshot_meta SET schema_version = 33"); err != nil {
 		t.Fatal(err)
 	}
 	if err := raw.Close(); err != nil {

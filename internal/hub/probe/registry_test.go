@@ -94,7 +94,7 @@ func assertState(t *testing.T, r *Registry, version uint64, want []Detail, nodes
 				wt.Tasks = append(wt.Tasks, d.Task)
 			}
 		}
-		if tasks := r.TasksFor(node); !proto.Equal(tasks, wt) {
+		if tasks := r.TasksFor(node, true); !proto.Equal(tasks, wt) {
 			t.Errorf("TasksFor(%d)=%v want=%v", node, tasks, wt)
 		}
 	}
@@ -231,7 +231,7 @@ func TestRegistrySnapshotsDoNotAliasCache(t *testing.T) {
 				list[0].Task.Target = "corrupted"
 				list[0].NodeIDs[0] = 999
 			case "tasks":
-				r.TasksFor(ids[0]).Tasks[0].Target = "corrupted"
+				r.TasksFor(ids[0], true).Tasks[0].Target = "corrupted"
 			}
 			assertState(t, r, setupVersion+1, []Detail{want}, ids...)
 		})
@@ -352,7 +352,7 @@ func TestRegistryCreatedNodeCoverageFollowsStore(t *testing.T) {
 			if want := (&heronv1.ProbeTasks{Version: version, Tasks: []*heronv1.ProbeTask{widened.Task}}); !proto.Equal(stored, want) {
 				t.Fatalf("store coverage of the new node = %v, want %v", stored, want)
 			}
-			if got := r.TasksFor(node); !proto.Equal(got, stored) {
+			if got := r.TasksFor(node, true); !proto.Equal(got, stored) {
 				t.Errorf("TasksFor(new node)=%v, store has %v", got, stored)
 			}
 			if !r.Assigned(node, widened.Task.Id) || r.Assigned(node, narrowed.Task.Id) {

@@ -27,7 +27,7 @@ func TestProbeDisplayOrderAcrossAPIStorageAndAgent(t *testing.T) {
 		return r.Msg.Task.Task.Id
 	}
 	a, b, c := createTask(), createTask(), createTask()
-	before := h.reg.TasksFor(node)
+	before := h.reg.TasksFor(node, true)
 	check := func(want []uint64) {
 		t.Helper()
 		list, err := h.admin.ListProbeTasks(ctx, connect.NewRequest(&heronv1.ListProbeTasksRequest{}))
@@ -61,7 +61,7 @@ func TestProbeDisplayOrderAcrossAPIStorageAndAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	check([]uint64{c, a, b})
-	if !proto.Equal(before, h.reg.TasksFor(node)) {
+	if !proto.Equal(before, h.reg.TasksFor(node, true)) {
 		t.Fatal("display reorder changed agent tasks or version")
 	}
 	for _, bad := range [][]uint64{nil, {c, a}, {c, c, b}, {c, a, 999}, {c, a, 0}, {c, a, math.MaxUint64}} {
@@ -69,7 +69,7 @@ func TestProbeDisplayOrderAcrossAPIStorageAndAgent(t *testing.T) {
 			t.Fatalf("bad order %v: %v", bad, err)
 		}
 		check([]uint64{c, a, b})
-		if !proto.Equal(before, h.reg.TasksFor(node)) {
+		if !proto.Equal(before, h.reg.TasksFor(node, true)) {
 			t.Fatal("rejected reorder changed agent tasks or version")
 		}
 	}
@@ -77,7 +77,7 @@ func TestProbeDisplayOrderAcrossAPIStorageAndAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	check([]uint64{c, a, b})
-	if !proto.Equal(before, h.reg.TasksFor(node)) {
+	if !proto.Equal(before, h.reg.TasksFor(node, true)) {
 		t.Fatal("reload changed agent tasks or version")
 	}
 	edit := validProbeTask()

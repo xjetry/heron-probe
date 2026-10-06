@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -324,9 +325,18 @@ func TestSaveProbeTaskEnforcesPerNodeLimit(t *testing.T) {
 
 	changed := proto.Clone(tasks[0].Task).(*heronv1.ProbeTask)
 	changed.Target = "example.com"
+	before := append([]byte(nil), changed.GetConfigId()...)
 	saved, version, err := s.SaveProbeTask(ctx, changed, NodeSelector{AllNodes: false, NodeIDs: []int64{id}})
-	if err != nil || version != base+65 || !proto.Equal(saved.Task, changed) {
-		t.Fatalf("editing full node: task=%v version=%d err=%v, want task %v and a version increment", saved, version, err, changed)
+	if err != nil || version != base+65 {
+		t.Fatalf("editing full node: version=%d err=%v", version, err)
+	}
+	// 目标变了，配置身份必须换掉；输入里带的旧身份是只输出字段。
+	if bytes.Equal(saved.Task.GetConfigId(), before) || len(saved.Task.GetConfigId()) != 16 {
+		t.Fatalf("config id = %x, want a new 16-byte id", saved.Task.GetConfigId())
+	}
+	changed.ConfigId = append([]byte(nil), saved.Task.GetConfigId()...)
+	if !proto.Equal(saved.Task, changed) {
+		t.Fatalf("editing full node: task=%v, want %v", saved.Task, changed)
 	}
 	tasks[0].Task = changed
 	assertTasks(t, s, base+65, tasks)

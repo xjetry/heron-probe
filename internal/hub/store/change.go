@@ -238,7 +238,7 @@ func (c *Change) snapshot(tx *sql.Tx) (string, string, error) {
 			{"tags", `SELECT t.name FROM node_tag n JOIN tag t ON t.id=n.tag_id WHERE n.node_id=? ORDER BY t.name_fold`}}
 		secretQuery = "SELECT hex(token_hash) FROM node WHERE id=?"
 	case "probe":
-		queries = []snapshotQuery{{"probe", "SELECT id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,dns_server FROM probe_task WHERE id=?"}, {"nodes", "SELECT node_id FROM probe_task_node WHERE task_id=? ORDER BY node_id"}, {"tags", "SELECT tag_id FROM probe_task_tag WHERE task_id=? ORDER BY tag_id"}}
+		queries = []snapshotQuery{{"probe", "SELECT id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,dns_server,cert_spki_sha256,config_id FROM probe_task WHERE id=?"}, {"nodes", "SELECT node_id FROM probe_task_node WHERE task_id=? ORDER BY node_id"}, {"tags", "SELECT tag_id FROM probe_task_tag WHERE task_id=? ORDER BY tag_id"}}
 	case "alert":
 		queries = []snapshotQuery{{"alert", "SELECT id,name,kind,enabled,all_nodes,task_id,metric,threshold,for_minutes,created_at,days_before,resource_metric,recovery_threshold FROM alert_rule WHERE id=?"}, {"nodes", "SELECT node_id FROM alert_rule_node WHERE rule_id=? ORDER BY node_id"}, {"tags", "SELECT tag_id FROM alert_rule_tag WHERE rule_id=? ORDER BY tag_id"}, {"channels", "SELECT channel_id FROM alert_rule_channel WHERE rule_id=? ORDER BY channel_id"}}
 	case "window":

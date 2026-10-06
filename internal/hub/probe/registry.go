@@ -18,11 +18,11 @@ import (
 	"log/slog"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/internal/hub/store"
-	"github.com/xjetry/heron-probe/internal/probelimit"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -51,6 +51,9 @@ type Registry struct {
 	nodesOf      map[uint64][]int64
 	selectorTags map[uint64][]string
 	sortOrder    map[uint64]int64
+	// pinReported 是本次进程启动以来各节点最近一次上报是否声明钉指纹。不进 reset：
+	// 重载任务不能把"已经报过"抹成未知。节点删除走 Forget。
+	pinReported map[int64]bool
 }
 
 func New(st *store.Store, log *slog.Logger) *Registry {
@@ -127,15 +130,52 @@ func (r *Registry) Version() uint64 {
 }
 
 // TasksFor 返回按 id 升序的任务与版本；空清单也必须下发，agent 才能停止已撤销的任务。
-func (r *Registry) TasksFor(nodeID int64) *heronv1.ProbeTasks {
+// supportPin 为假时不含已钉指纹的任务：旧 agent 会接受公钥不符但 CA 合法的证书，钉住的任务不能发给它。
+func (r *Registry) TasksFor(nodeID int64, supportPin bool) *heronv1.ProbeTasks {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := &heronv1.ProbeTasks{Version: r.version}
 	for id := range r.byNode[nodeID] {
-		out.Tasks = append(out.Tasks, proto.Clone(r.tasks[id]).(*heronv1.ProbeTask))
+		task := proto.Clone(r.tasks[id]).(*heronv1.ProbeTask)
+		if !supportPin && len(task.GetCertSpkiSha256()) > 0 {
+			continue
+		}
+		out.Tasks = append(out.Tasks, task)
 	}
 	sort.Slice(out.Tasks, func(i, j int) bool { return out.Tasks[i].Id < out.Tasks[j].Id })
 	return out
+}
+
+// NotePinCapability 记下该节点本次进程内最近一次上报声明的钉指纹能力。
+func (r *Registry) NotePinCapability(nodeID int64, supported bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.pinReported == nil {
+		r.pinReported = map[int64]bool{}
+	}
+	r.pinReported[nodeID] = supported
+}
+
+// PinCapability 返回该节点是否声明支持，以及本次进程内是否已经上报过。未上报为 unknown。
+func (r *Registry) PinCapability(nodeID int64) (supported, known bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	supported, known = r.pinReported[nodeID]
+	return
+}
+
+// CertPolicy 是附带证书观测在当前配置下能不能采信的事实。任务不在清单里时 ok 为 false。
+func (r *Registry) CertPolicy(id uint64) (https, pinned bool, configID []byte, ok bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	task, ok := r.tasks[id]
+	if !ok {
+		return false, false, nil, false
+	}
+	https = task.GetKind() == heronv1.ProbeKind_PROBE_KIND_HTTP && strings.HasPrefix(task.GetTarget(), "https://")
+	pinned = len(task.GetCertSpkiSha256()) > 0
+	configID = append([]byte(nil), task.GetConfigId()...)
+	return https, pinned, configID, true
 }
 
 func (r *Registry) Assigned(nodeID int64, taskID uint64) bool {
@@ -229,17 +269,20 @@ func dedupSorted(ids []int64) []int64 {
 
 // Save 的内存发布只发生在事务成功后，拒绝的保存不能改变任务、分配或版本。
 // 全部节点、标签交集和显式分配互斥，与告警规则使用同一校验。显式空集合法且不覆盖任何节点，不能静默放宽。
-func (r *Registry) Save(ctx context.Context, t *heronv1.ProbeTask, selector store.NodeSelector) (Detail, uint64, error) {
-	if err := probelimit.CheckTask(t); err != nil {
-		return Detail{}, 0, fmt.Errorf("%w: %v", ErrInvalid, err)
-	}
+func (r *Registry) Save(ctx context.Context, t *heronv1.ProbeTask, selector store.NodeSelector, opts ...store.ProbeSaveOption) (Detail, uint64, error) {
+	// 有效任务（忽略输入里的 pin 与 config_id、套上指纹动作之后）由 store 用 CheckTask 裁决。
+	// 在这里先查输入会把只输出字段上的非法值当成错误，而那两个字段输入时必须忽略。
 	r.writeMu.Lock()
 	defer r.writeMu.Unlock()
 	if err := selector.Check(); err != nil {
 		return Detail{}, 0, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
 	selector.NodeIDs = dedupSorted(selector.NodeIDs)
-	rec, version, err := r.store.SaveProbeTask(ctx, t, selector)
+	rec, version, err := r.store.SaveProbeTask(ctx, t, selector, opts...)
+	var invalid store.InvalidTaskError
+	if errors.As(err, &invalid) {
+		return Detail{}, 0, fmt.Errorf("%w: %s", ErrInvalid, invalid.Error())
+	}
 	if err != nil {
 		return Detail{}, 0, err
 	}
@@ -359,4 +402,5 @@ func (r *Registry) Forget(nodeID int64) {
 		r.nodesOf[id] = slices.DeleteFunc(r.nodesOf[id], func(node int64) bool { return node == nodeID })
 	}
 	delete(r.byNode, nodeID)
+	delete(r.pinReported, nodeID)
 }

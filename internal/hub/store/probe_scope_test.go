@@ -60,8 +60,9 @@ func TestMigrationFromV9MatchesFreshSchemaAndKeepsTaskScope(t *testing.T) {
 		t.Fatalf("all_nodes after migration = %v, want [0 0]", flags)
 	}
 	version, recs, err := migrated.LoadProbeTasks(t.Context())
-	if err != nil || version != 42 || len(recs) != 2 {
-		t.Fatalf("tasks after migration: version=%d recs=%+v err=%v", version, recs, err)
+	// 迁移给已有任务生成配置身份并推进清单版本，否则 agent 会继续拿着没有身份的旧清单。
+	if err != nil || version <= 42 || len(recs) != 2 {
+		t.Fatalf("tasks after migration: version=%d recs=%+v err=%v, want version bumped above 42", version, recs, err)
 	}
 	if recs[0].AllNodes || !reflect.DeepEqual(recs[0].NodeIDs, []int64{7}) || recs[1].AllNodes || recs[1].NodeIDs != nil {
 		t.Fatalf("task scope after migration: %+v", recs)

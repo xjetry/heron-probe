@@ -140,7 +140,7 @@ var metricTables = []string{"metric_1m", "metric_5m", "metric_1h"}
 // DeleteNode 与 Restore 共用节点从属清单，显式删除不依赖外键开启或级联行为。
 // alert_event 是审计历史，删节点时也保留；系统事件的 node_id=0，不属于节点从属状态。
 var nodeDependentTables = append(append([]string{
-	"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "silence_node", "node_tag", "node_update", "api_token_node", "probe_cert", "node_coverage",
+	"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "silence_node", "node_tag", "node_update", "api_token_node", "probe_cert", "probe_cert_presented", "node_coverage",
 }, metricTables...), probeTables...)
 
 // schemaStatements 是当前版本的完整 DDL：空库直接建到当前版本，不重放历史。
@@ -163,7 +163,7 @@ func schemaStatements() []string {
 		ddlTheme, ddlThemeVersion, ddlThemeSelection, seedThemeSelection, ddlThemeFile, ddlRestoreRecord, ddlThemePackage,
 		ddlAdminSecurity, seedAdminSecurity, ddlProbeTaskTag, ddlProbeTaskTagIndex, ddlAlertRuleTag, ddlAlertRuleTagIndex, ddlNodeUpdate,
 		ddlSilence, ddlSilenceNode, ddlSilenceNodeByNode, ddlSilenceTag, ddlSilenceTagByTag,
-		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime, ddlProbeCert, ddlNodeCoverage)
+		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime, ddlProbeCert, ddlProbeCertPresented, ddlNodeCoverage)
 }
 
 const ddlNodeCoverage = `CREATE TABLE node_coverage (node_id INTEGER PRIMARY KEY, start_ts INTEGER NOT NULL)`
@@ -351,7 +351,12 @@ const ddlProbeTask = `CREATE TABLE probe_task (
   all_nodes INTEGER NOT NULL DEFAULT 0,
   sort_order INTEGER NOT NULL DEFAULT 0,
   -- DNS 任务要查询的解析器（ip:port）；其他种类恒为空串。列序与迁移 29 的 ADD COLUMN 结果一致。
-  dns_server TEXT NOT NULL DEFAULT ''
+  dns_server TEXT NOT NULL DEFAULT '',
+  -- 叶证书 SubjectPublicKeyInfo 的 SHA-256；NULL 表示不钉。空 blob 与 NULL 都是不钉，写侧只写 NULL。
+  cert_spki_sha256 BLOB,
+  -- 配置身份，16 字节随机数。任务内容（除 id 与本列外的列，含 pin）变化时重新生成；只比较相等。
+  -- 不用 probe_meta.version：那是清单计数，备份恢复后可以重新走到同一个值却对应另一份配置。
+  config_id BLOB NOT NULL
 )`
 
 const ddlProbeTaskNode = `CREATE TABLE probe_task_node (
@@ -384,6 +389,21 @@ const ddlProbeCert = `CREATE TABLE probe_cert (
   -- 服务端证书链首枚证书的到期时刻（Unix 秒）。
   not_after INTEGER NOT NULL,
   -- hub 收到这次观测的墙钟（Unix 秒），供展示"观测于何时"。
+  observed_at INTEGER NOT NULL,
+  -- 写入时任务的配置身份；NULL 表示旧 agent 写入、未绑定身份。到期告警只读 not_after，不看这一列。
+  config_id BLOB,
+  PRIMARY KEY (node_id, task_id)
+) WITHOUT ROWID`
+
+// probe_cert_presented 是（节点, 任务）当前配置身份下的信任候选：证书相关丢包带回的叶证书。从不自动生效，到期告警不读它。
+// 行随任务身份变化、任务删除与节点删除消失；旧身份的观测不能重建或覆盖。
+const ddlProbeCertPresented = `CREATE TABLE probe_cert_presented (
+  node_id INTEGER NOT NULL,
+  task_id INTEGER NOT NULL,
+  config_id BLOB NOT NULL,
+  spki_sha256 BLOB NOT NULL,
+  not_after INTEGER NOT NULL,
+  reason INTEGER NOT NULL,
   observed_at INTEGER NOT NULL,
   PRIMARY KEY (node_id, task_id)
 ) WITHOUT ROWID`

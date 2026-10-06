@@ -37,7 +37,7 @@ func TestDynamicSelectorUpdatesAllReadersAndRejectsReferencedTags(t *testing.T) 
 		for _, id := range ids {
 			covered := slices.Contains(want, id)
 			_, _, public := r.TargetFor(id, d.Task.Id)
-			if r.Assigned(id, d.Task.Id) != covered || public != covered || (len(r.TasksFor(id).Tasks) == 1) != covered {
+			if r.Assigned(id, d.Task.Id) != covered || public != covered || (len(r.TasksFor(id, true).Tasks) == 1) != covered {
 				t.Fatalf("node %d coverage readers disagree; want %v", id, covered)
 			}
 		}

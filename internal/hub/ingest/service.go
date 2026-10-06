@@ -5,6 +5,7 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -87,11 +88,10 @@ type storeWriter interface {
 
 type TaskSource interface {
 	Version() uint64
-	TasksFor(nodeID int64) *heronv1.ProbeTasks
+	TasksFor(nodeID int64, supportPin bool) *heronv1.ProbeTasks
+	NotePinCapability(nodeID int64, supported bool)
+	CertPolicy(id uint64) (https, pinned bool, configID []byte, ok bool)
 	Assigned(nodeID int64, taskID uint64) bool
-	// Target 给出任务当前的种类与目标；validateResults 据此裁决 cert_not_after_s 只允许
-	// 出现在 https:// 的 HTTP 任务上。任务不在清单里时 ok 为 false。
-	Target(id uint64) (kind heronv1.ProbeKind, target string, ok bool)
 	Forget(nodeID int64)
 }
 
@@ -115,6 +115,8 @@ type Service struct {
 	// factsHash 是 hub 已持久化的各节点 facts 摘要；只在写库成功后更新，
 	// 写失败则保持旧值，下一次上报会因不一致再次要求 facts。
 	factsHash map[int64]uint64
+	// taskDigest 每个节点只留当前一份：键是算出它的那份清单自带的版本与实际授予的能力，版本或能力一变就换掉旧的。
+	taskDigest map[int64]taskDigestCache
 
 	pendingMu sync.Mutex
 	pending   []metric.Batch
@@ -274,6 +276,12 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[heronv1.Repor
 	if err := validateMetrics(m); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	if err := validateCapabilities(req.Msg.GetCapabilities()); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	if err := validateTasksDigest(req.Msg.GetTasksDigest()); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
 	if err := s.validateResults(req.Msg.GetProbeResults()); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
@@ -296,7 +304,6 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[heronv1.Repor
 	if d, ok := s.traffic.Account(id, m); ok && !first && gap < s.cfg.TTL {
 		s.live.AddBytes(id, ts, d.Rx, d.Tx)
 	}
-	s.foldResults(id, req.Msg.GetProbeResults())
 	want := s.reconcileFacts(id, ctx.Value(nodeTokenKey{}).(string), req.Msg.GetFactsHash(), req.Msg.GetFacts())
 	resp := &heronv1.ReportResponse{
 		ReportIntervalMs: agentwire.ReportIntervalMs(s.cfg.TTL),
@@ -305,11 +312,65 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[heronv1.Repor
 	if s.cfg.Updates != nil {
 		resp.Update = s.cfg.Updates.Observe(id, req.Msg.Update)
 	}
-	// 电平触发：agent 报它持有的版本，hub 只在不一致时下发整份清单；空清单让 agent 停掉已消失的任务。
-	if req.Msg.GetTasksVersion() != s.tasks.Version() {
-		resp.Tasks = s.tasks.TasksFor(id)
+	supportPin := pinGranted(req.Msg.GetCapabilities())
+	s.tasks.NotePinCapability(id, supportPin)
+	s.foldResults(id, req.Msg.GetProbeResults(), supportPin)
+	// 新 agent 带清单摘要：与能力过滤后应下发的清单比对，不等就下发，与版本计数无关。
+	// 旧 agent 不带摘要，仍只比较计数。
+	if digest := req.Msg.GetTasksDigest(); len(digest) == agentwire.TasksDigestLen {
+		resp.Tasks = s.tasksIfDigestDiffers(id, supportPin, digest)
+	} else if req.Msg.GetTasksVersion() != s.tasks.Version() {
+		resp.Tasks = s.tasks.TasksFor(id, supportPin)
 	}
 	return connect.NewResponse(resp), nil
+}
+
+type taskDigestCache struct {
+	version uint64
+	pin     bool
+	sum     []byte
+}
+
+// tasksIfDigestDiffers 返回应下发给该节点的清单；agent 报的摘要与之相等时返回 nil。
+//
+// 每次上报都会走到这里，稳态是"摘要相等"：命中缓存只读一次版本、查一次 map，不取清单、不克隆任务、不重算摘要。
+// 缓存项的版本取自算出摘要的那份清单（TasksFor 在同一把读锁下给出版本与任务），而不是另一次调用读到的版本：
+// 两次读之间注册表可能已经重载，拿错的版本当键会把新清单的摘要记在旧版本名下。命中判断用当前版本，
+// 读到旧版本而注册表随后重载时，下一次上报读到新版本、不再命中，与只比计数时的时序相同。
+// 摘要算不出来时按下发处理并记日志，上报本身不失败。
+func (s *Service) tasksIfDigestDiffers(node int64, supportPin bool, digest []byte) *heronv1.ProbeTasks {
+	version := s.tasks.Version()
+	s.mu.Lock()
+	e, ok := s.taskDigest[node]
+	s.mu.Unlock()
+	if ok && e.version == version && e.pin == supportPin && bytes.Equal(e.sum, digest) {
+		return nil
+	}
+	tasks := s.tasks.TasksFor(node, supportPin)
+	sum, err := agentwire.TasksDigest(tasks.GetTasks())
+	if err != nil {
+		s.log.Error("tasks digest failed; sending the task list", "node", node, "err", err)
+		return tasks
+	}
+	s.mu.Lock()
+	if s.taskDigest == nil {
+		s.taskDigest = map[int64]taskDigestCache{}
+	}
+	s.taskDigest[node] = taskDigestCache{version: tasks.GetVersion(), pin: supportPin, sum: sum}
+	s.mu.Unlock()
+	if bytes.Equal(sum, digest) {
+		return nil
+	}
+	return tasks
+}
+
+func pinGranted(caps []heronv1.AgentCapability) bool {
+	for _, c := range caps {
+		if c == heronv1.AgentCapability_AGENT_CAPABILITY_PROBE_CERT_PIN {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) GetRelease(ctx context.Context, req *connect.Request[heronv1.GetReleaseRequest]) (*connect.Response[heronv1.GetReleaseResponse], error) {
@@ -343,12 +404,12 @@ func releaseError(err error) error {
 // foldResults 按归属与迟到预算逐条准入。task_id 未分配给本节点的结果不得写进本节点的历史：
 // token 被挪用时它是伪造的，分配撤销后仍在途时它属于已不承担的任务。
 // 超龄结果可能落在已冻结的分钟里；测量时刻由收到时刻减 age_ms 得到。
-func (s *Service) foldResults(id int64, rs []*heronv1.ProbeResult) {
+func (s *Service) foldResults(id int64, rs []*heronv1.ProbeResult, supportPin bool) {
 	if len(rs) == 0 {
 		return
 	}
 	now := s.clk.Now()
-	var foreign, late int
+	var foreign, late, unsupported int
 	for _, r := range rs {
 		if !s.tasks.Assigned(id, r.GetTaskId()) {
 			foreign++
@@ -359,14 +420,24 @@ func (s *Service) foldResults(id int64, rs []*heronv1.ProbeResult) {
 			late++
 			continue
 		}
+		https, pinned, configID, ok := s.tasks.CertPolicy(r.GetTaskId())
+		// 钉住的任务只有声明了能力的上报才采信。不声明就整条丢弃，与未分配同等，
+		// 否则降级后的旧 agent 仍会把 CA 合法但公钥不符的成功结果写进历史。
+		if ok && pinned && !supportPin {
+			unsupported++
+			continue
+		}
 		s.live.AddProbe(id, now.Add(-age), r.GetTaskId(), r)
-		if r.CertNotAfterS != nil {
+		taskID := r.GetTaskId()
+		observed := append([]byte(nil), r.GetTaskConfigId()...)
+		if r.CertNotAfterS != nil && ok && https && (bytes.Equal(observed, configID) || (len(observed) == 0 && !pinned)) {
+			notAfter := r.GetCertNotAfterS()
 			// 证书观测是"最新值"不是时间序列：覆盖写 probe_cert，与分钟桶的折叠路径分开（§8.3）。
 			// not_after 变化时经 CertObserved 触发一次证书到期评估；done 在写协程里执行，
 			// 评估会写库，必须另起协程——写协程等自己就是死锁。
-			s.store.UpsertProbeCertAsync(id, r.GetTaskId(), r.GetCertNotAfterS(), now.Unix(), func(changed bool, err error) {
+			s.store.UpsertProbeCertAsync(id, taskID, notAfter, now.Unix(), observed, func(changed bool, err error) {
 				if err != nil {
-					s.log.Error("probe cert write failed", "node", id, "task", r.GetTaskId(), "err", err)
+					s.log.Error("probe cert write failed", "node", id, "task", taskID, "err", err)
 					return
 				}
 				if changed && s.cfg.CertObserved != nil {
@@ -374,9 +445,19 @@ func (s *Service) foldResults(id int64, rs []*heronv1.ProbeResult) {
 				}
 			})
 		}
+		if p := r.GetPresented(); p != nil && ok && https && len(observed) > 0 && bytes.Equal(observed, configID) {
+			spki := append([]byte(nil), p.GetSpkiSha256()...)
+			reason := int32(p.GetReason())
+			notAfter := p.GetNotAfterS()
+			s.store.UpsertPresentedAsync(id, taskID, observed, spki, notAfter, now.Unix(), reason, func(err error) {
+				if err != nil {
+					s.log.Error("probe cert candidate write failed", "node", id, "task", taskID, "err", err)
+				}
+			})
+		}
 	}
-	if foreign > 0 || late > 0 {
-		s.log.Warn("probe results dropped", "node", id, "unassigned", foreign, "too_old", late)
+	if foreign > 0 || late > 0 || unsupported > 0 {
+		s.log.Warn("probe results dropped", "node", id, "unassigned", foreign, "too_old", late, "unsupported", unsupported)
 	}
 }
 
@@ -424,6 +505,7 @@ func (s *Service) Forget(nodeID int64) {
 	s.limit.Forget(nodeID)
 	s.mu.Lock()
 	delete(s.factsHash, nodeID)
+	delete(s.taskDigest, nodeID)
 	s.mu.Unlock()
 	var pending []metric.Batch
 	for _, batch := range s.pending {

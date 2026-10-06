@@ -27,16 +27,16 @@ func TestUpsertProbeCert(t *testing.T) {
 	}
 	task := certTask(t, ctx, s, "https://a.example", heronv1.ProbeKind_PROBE_KIND_HTTP)
 
-	changed, err := s.UpsertProbeCert(ctx, node, task, 1893456000, 1000)
+	changed, err := s.UpsertProbeCert(ctx, node, task, 1893456000, 1000, nil)
 	if err != nil || !changed {
 		t.Fatalf("first upsert changed=%v err=%v, want changed", changed, err)
 	}
 	// 同值覆盖不是变化：重复上报同一观测不触发重新评估。
-	changed, err = s.UpsertProbeCert(ctx, node, task, 1893456000, 2000)
+	changed, err = s.UpsertProbeCert(ctx, node, task, 1893456000, 2000, nil)
 	if err != nil || changed {
 		t.Fatalf("same-value upsert changed=%v err=%v, want unchanged", changed, err)
 	}
-	changed, err = s.UpsertProbeCert(ctx, node, task, 1895000000, 3000)
+	changed, err = s.UpsertProbeCert(ctx, node, task, 1895000000, 3000, nil)
 	if err != nil || !changed {
 		t.Fatalf("new-value upsert changed=%v err=%v, want changed", changed, err)
 	}
@@ -58,7 +58,7 @@ func TestDeleteProbeTaskRemovesProbeCert(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := certTask(t, ctx, s, "https://a.example", heronv1.ProbeKind_PROBE_KIND_HTTP)
-	if _, err := s.UpsertProbeCert(ctx, node, task, 1893456000, 1000); err != nil {
+	if _, err := s.UpsertProbeCert(ctx, node, task, 1893456000, 1000, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.DeleteProbeTask(ctx, task); err != nil {
@@ -79,7 +79,7 @@ func TestDeleteNodeRemovesProbeCert(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := certTask(t, ctx, s, "https://a.example", heronv1.ProbeKind_PROBE_KIND_HTTP)
-	if _, err := s.UpsertProbeCert(ctx, node, task, 1893456000, 1000); err != nil {
+	if _, err := s.UpsertProbeCert(ctx, node, task, 1893456000, 1000, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteNode(ctx, node); err != nil {

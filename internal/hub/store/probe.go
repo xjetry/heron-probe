@@ -1,13 +1,18 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"errors"
 	"math"
 	"strings"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/probelimit"
+	"google.golang.org/protobuf/proto"
 )
 
 func probeValueColumns() []string {
@@ -92,7 +97,7 @@ func (s *Store) LoadProbeTasks(ctx context.Context) (uint64, []ProbeTaskRecord, 
 	if err := tx.QueryRowContext(ctx, "SELECT version FROM probe_meta WHERE id = 1").Scan(&version); err != nil {
 		return 0, nil, err
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT id, kind, target, interval_s, timeout_ms, all_nodes, sort_order, dns_server FROM probe_task ORDER BY sort_order, id")
+	rows, err := tx.QueryContext(ctx, "SELECT id, kind, target, interval_s, timeout_ms, all_nodes, sort_order, dns_server, cert_spki_sha256, config_id FROM probe_task ORDER BY sort_order, id")
 	if err != nil {
 		return 0, nil, err
 	}
@@ -103,10 +108,12 @@ func (s *Store) LoadProbeTasks(ctx context.Context) (uint64, []ProbeTaskRecord, 
 		t := &heronv1.ProbeTask{}
 		var id, kind, interval, timeout, order int64
 		var all bool
-		if err := rows.Scan(&id, &kind, &t.Target, &interval, &timeout, &all, &order, &t.DnsServer); err != nil {
+		var pin, configID []byte
+		if err := rows.Scan(&id, &kind, &t.Target, &interval, &timeout, &all, &order, &t.DnsServer, &pin, &configID); err != nil {
 			return 0, nil, err
 		}
 		t.Id, t.Kind, t.IntervalS, t.TimeoutMs = uint64(id), heronv1.ProbeKind(kind), uint32(interval), uint32(timeout)
+		t.CertSpkiSha256, t.ConfigId = pin, configID
 		index[t.Id] = len(out)
 		out = append(out, ProbeTaskRecord{Task: t, AllNodes: all, SortOrder: order})
 	}
@@ -142,24 +149,127 @@ func (s *Store) LoadProbeTasks(ctx context.Context) (uint64, []ProbeTaskRecord, 
 	return uint64(version), out, nil
 }
 
+// 指纹动作。缺席（PinKeep）保持已存的 pin，新建任务即不钉。空字节不是清除。
+const (
+	pinKeep = iota
+	pinSet
+	pinClear
+)
+
+type probeSaveOpt struct {
+	action      int
+	pin         []byte
+	expected    []byte
+	expectedSet bool
+}
+
+// ProbeSaveOption 是 SaveProbeTask 的可选写入动作。零值是"不改 pin、不带前置条件"，
+// 已有调用点因此不必为了新参数改签名。
+type ProbeSaveOption func(*probeSaveOpt)
+
+// WithCertPin 把 pin 设为 spki。空切片不是清除，保存会拒绝。
+func WithCertPin(spki []byte) ProbeSaveOption {
+	return func(o *probeSaveOpt) {
+		o.action = pinSet
+		o.pin = append([]byte(nil), spki...)
+	}
+}
+
+// ClearCertPin 显式去掉 pin。与缺席动作不同：缺席保持原值。
+func ClearCertPin() ProbeSaveOption {
+	return func(o *probeSaveOpt) { o.action = pinClear; o.pin = nil }
+}
+
+// WithExpectedConfigID 在写事务里核对任务当前身份。空切片也算"给出了"，既有任务上它不等于当前身份。
+func WithExpectedConfigID(id []byte) ProbeSaveOption {
+	return func(o *probeSaveOpt) {
+		o.expectedSet = true
+		o.expected = append([]byte(nil), id...)
+	}
+}
+
 // SaveProbeTask 在一个事务里写任务、整份替换分配、检查每节点上限、更新版本，并回读保存后的覆盖。
 // 三种选择器模式互斥：全部节点、非空标签交集、显式节点；只有显式模式写 nodeIDs 分配行。
 //
 // 上限在这里而不是调用方检查，因为只有事务内的计数才与其他保存互斥。它按写入之后的覆盖计数，所以 all_nodes 任务
 // 计入每个现有节点，显式分配与标签选择器只计入命中节点。insertNode 与 UpdateNodeTasks 在建节点和修改标签时
 // 再按同一覆盖谓词检查，任务保存不能替代未来的覆盖变更检查。
-func (s *Store) SaveProbeTask(ctx context.Context, t *heronv1.ProbeTask, selector NodeSelector) (ProbeTaskRecord, uint64, error) {
+//
+// task.cert_spki_sha256 与 task.config_id 是只输出字段，这里忽略。pin 只由 ProbeSaveOption 决定。
+// 任务内容（ProbeTask 除 id 与 config_id 外的全部字段，含最终的 pin）不变时保留原 config_id；变了就重新生成，
+// 并在同一事务删除该任务的证书观测与候选。只做指纹动作、其余字段都是零值时，保留已存的任务字段与选择器。
+func (s *Store) SaveProbeTask(ctx context.Context, t *heronv1.ProbeTask, selector NodeSelector, opts ...ProbeSaveOption) (ProbeTaskRecord, uint64, error) {
+	var opt probeSaveOpt
+	for _, apply := range opts {
+		apply(&opt)
+	}
+	if opt.action == pinSet && len(opt.pin) == 0 {
+		return ProbeTaskRecord{}, 0, InvalidTaskError{Detail: "cert_pin.set_spki_sha256: must not be empty; clearing the pin requires clear"}
+	}
 	if err := selector.Check(); err != nil {
 		return ProbeTaskRecord{}, 0, err
 	}
-	allNodes, nodeIDs, tags := selector.AllNodes, selector.NodeIDs, selector.Tags
+	allNodes, nodeIDs, tags := selector.AllNodes, append([]int64(nil), selector.NodeIDs...), append([]string(nil), selector.Tags...)
 	saved := &heronv1.ProbeTask{Id: t.GetId(), Kind: t.GetKind(), Target: t.GetTarget(), IntervalS: t.GetIntervalS(), TimeoutMs: t.GetTimeoutMs(), DnsServer: t.GetDnsServer()}
 	rec := ProbeTaskRecord{Task: saved, AllNodes: allNodes}
 	var version int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
+		var stored *heronv1.ProbeTask
+		if saved.Id != 0 {
+			existing, err := loadProbeTaskTx(tx, saved.Id)
+			if err != nil {
+				return err
+			}
+			stored = existing.Task
+			// 只做动作：其余字段保持零值。这时请求里的选择器也不是一次编辑，沿用库里的模式，
+			// 不能把标签选择器展开后的节点当成显式分配写回去。
+			if opt.action != pinKeep && probeTaskBodyZero(t) {
+				saved.Kind, saved.Target, saved.IntervalS, saved.TimeoutMs, saved.DnsServer = stored.Kind, stored.Target, stored.IntervalS, stored.TimeoutMs, stored.DnsServer
+				allNodes, tags = existing.AllNodes, append([]string(nil), existing.SelectorTags...)
+				nodeIDs = nil
+				if !allNodes && len(tags) == 0 {
+					nodeIDs = append([]int64(nil), existing.NodeIDs...)
+				}
+				rec.AllNodes = allNodes
+			}
+		}
+		switch opt.action {
+		case pinSet:
+			saved.CertSpkiSha256 = append([]byte(nil), opt.pin...)
+		case pinClear:
+			saved.CertSpkiSha256 = nil
+		case pinKeep:
+			if stored != nil {
+				saved.CertSpkiSha256 = append([]byte(nil), stored.CertSpkiSha256...)
+			}
+		}
 		if saved.Id == 0 {
-			res, err := tx.Exec("INSERT INTO probe_task (kind, target, interval_s, timeout_ms, created_at, all_nodes, sort_order, dns_server) SELECT ?, ?, ?, ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1, ? FROM probe_task",
-				int64(saved.Kind), saved.Target, int64(saved.IntervalS), int64(saved.TimeoutMs), s.clk.Now().Unix(), allNodes, saved.DnsServer)
+			if opt.expectedSet {
+				return InvalidTaskError{Detail: "expected_config_id: must not be set when creating a task"}
+			}
+		} else {
+			if opt.action == pinSet && !opt.expectedSet {
+				return InvalidTaskError{Detail: "expected_config_id: required when setting cert_pin on an existing task"}
+			}
+			if opt.expectedSet && !bytes.Equal(opt.expected, stored.GetConfigId()) {
+				return PreconditionError{Detail: "expected_config_id: does not match the task's current config_id"}
+			}
+		}
+		var err error
+		if stored == nil || !proto.Equal(taskContent(saved), taskContent(stored)) {
+			saved.ConfigId, err = randomConfigID()
+			if err != nil {
+				return err
+			}
+		} else {
+			saved.ConfigId = append([]byte(nil), stored.ConfigId...)
+		}
+		if err := probelimit.CheckTask(saved); err != nil {
+			return InvalidTaskError{Detail: err.Error()}
+		}
+		if saved.Id == 0 {
+			res, err := tx.Exec("INSERT INTO probe_task (kind, target, interval_s, timeout_ms, created_at, all_nodes, sort_order, dns_server, cert_spki_sha256, config_id) SELECT ?, ?, ?, ?, ?, ?, COALESCE(MAX(sort_order), -1) + 1, ?, ?, ? FROM probe_task",
+				int64(saved.Kind), saved.Target, int64(saved.IntervalS), int64(saved.TimeoutMs), s.clk.Now().Unix(), allNodes, saved.DnsServer, pinArg(saved.CertSpkiSha256), saved.ConfigId)
 			if err != nil {
 				return err
 			}
@@ -171,18 +281,23 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *heronv1.ProbeTask, selecto
 		} else {
 			// 证书到期规则要求任务保持 https:// 的 HTTP 任务（requireHTTPSProbeTask）；改成别的形状会让规则
 			// 永远等不到新观测。与删除同一形状地拒绝，而不是改出一个违反规则约束的库。
-			if heronv1.ProbeKind(saved.Kind) != heronv1.ProbeKind_PROBE_KIND_HTTP || !strings.HasPrefix(saved.Target, "https://") {
+			if saved.Kind != heronv1.ProbeKind_PROBE_KIND_HTTP || !strings.HasPrefix(saved.Target, "https://") {
 				if err := checkAlertReferences(ctx, tx, "SELECT id, name FROM alert_rule WHERE task_id = ? AND kind = '"+string(KindCertExpiry)+"' ORDER BY id", ObjectProbeTask, int64(saved.Id)); err != nil {
 					return err
 				}
 			}
-			res, err := tx.Exec("UPDATE probe_task SET kind = ?, target = ?, interval_s = ?, timeout_ms = ?, all_nodes = ?, dns_server = ? WHERE id = ?",
-				int64(saved.Kind), saved.Target, int64(saved.IntervalS), int64(saved.TimeoutMs), allNodes, saved.DnsServer, int64(saved.Id))
+			res, err := tx.Exec("UPDATE probe_task SET kind = ?, target = ?, interval_s = ?, timeout_ms = ?, all_nodes = ?, dns_server = ?, cert_spki_sha256 = ?, config_id = ? WHERE id = ?",
+				int64(saved.Kind), saved.Target, int64(saved.IntervalS), int64(saved.TimeoutMs), allNodes, saved.DnsServer, pinArg(saved.CertSpkiSha256), saved.ConfigId, int64(saved.Id))
 			if err != nil {
 				return err
 			}
 			if n, _ := res.RowsAffected(); n == 0 {
 				return NotFoundError{Kind: ObjectProbeTask, ID: int64(saved.Id)}
+			}
+			if !bytes.Equal(saved.ConfigId, stored.GetConfigId()) {
+				if err := deleteTaskCertsTx(tx, saved.Id); err != nil {
+					return err
+				}
 			}
 			if _, err := tx.Exec("DELETE FROM probe_task_node WHERE task_id = ?", int64(saved.Id)); err != nil {
 				return err
@@ -208,7 +323,6 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *heronv1.ProbeTask, selecto
 		if err := checkProbeCoverageLimit(tx); err != nil {
 			return err
 		}
-		var err error
 		if rec.SelectorTags, err = selectorTags(tx, "probe_task", "task_id", int64(saved.Id)); err != nil {
 			return err
 		}
@@ -226,6 +340,64 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *heronv1.ProbeTask, selecto
 		return ProbeTaskRecord{}, 0, err
 	}
 	return rec, uint64(version), nil
+}
+
+func probeTaskBodyZero(t *heronv1.ProbeTask) bool {
+	return t.GetKind() == 0 && t.GetTarget() == "" && t.GetIntervalS() == 0 && t.GetTimeoutMs() == 0 && t.GetDnsServer() == ""
+}
+
+// taskContent 是配置身份比较的对象：id 与 config_id 不参与，其余字段（含 pin）都参与。
+func taskContent(t *heronv1.ProbeTask) *heronv1.ProbeTask {
+	c := proto.Clone(t).(*heronv1.ProbeTask)
+	c.Id = 0
+	c.ConfigId = nil
+	return c
+}
+
+func randomConfigID() ([]byte, error) {
+	b := make([]byte, probelimit.ConfigIDLen)
+	_, err := rand.Read(b)
+	return b, err
+}
+
+func pinArg(b []byte) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
+}
+
+func loadProbeTaskTx(tx *sql.Tx, id uint64) (ProbeTaskRecord, error) {
+	t := &heronv1.ProbeTask{Id: id}
+	var kind, interval, timeout, order int64
+	var all bool
+	var pin, configID []byte
+	err := tx.QueryRow(`SELECT kind, target, interval_s, timeout_ms, all_nodes, sort_order, dns_server, cert_spki_sha256, config_id FROM probe_task WHERE id = ?`, int64(id)).
+		Scan(&kind, &t.Target, &interval, &timeout, &all, &order, &t.DnsServer, &pin, &configID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ProbeTaskRecord{}, NotFoundError{Kind: ObjectProbeTask, ID: int64(id)}
+	}
+	if err != nil {
+		return ProbeTaskRecord{}, err
+	}
+	t.Kind, t.IntervalS, t.TimeoutMs = heronv1.ProbeKind(kind), uint32(interval), uint32(timeout)
+	t.CertSpkiSha256, t.ConfigId = pin, configID
+	rec := ProbeTaskRecord{Task: t, AllNodes: all, SortOrder: order}
+	if rec.SelectorTags, err = selectorTags(tx, "probe_task", "task_id", int64(id)); err != nil {
+		return ProbeTaskRecord{}, err
+	}
+	if rec.NodeIDs, err = coveredNodesTx(tx, id); err != nil {
+		return ProbeTaskRecord{}, err
+	}
+	return rec, nil
+}
+
+func deleteTaskCertsTx(tx *sql.Tx, id uint64) error {
+	if _, err := tx.Exec("DELETE FROM probe_cert WHERE task_id = ?", int64(id)); err != nil {
+		return err
+	}
+	_, err := tx.Exec("DELETE FROM probe_cert_presented WHERE task_id = ?", int64(id))
+	return err
 }
 
 func coveredNodesTx(tx *sql.Tx, taskID uint64) ([]int64, error) {
@@ -265,7 +437,7 @@ func (s *Store) DeleteProbeTask(ctx context.Context, id uint64) (uint64, error) 
 		if _, err := tx.Exec("DELETE FROM probe_task_tag WHERE task_id = ?", int64(id)); err != nil {
 			return err
 		}
-		if _, err := tx.Exec("DELETE FROM probe_cert WHERE task_id = ?", int64(id)); err != nil {
+		if err := deleteTaskCertsTx(tx, id); err != nil {
 			return err
 		}
 		v, err := bumpProbeVersion(tx, s.clk.Now().Unix())

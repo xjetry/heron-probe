@@ -81,7 +81,7 @@ func TestProbeTaskDNSServerThroughAdminAPI(t *testing.T) {
 		t.Fatalf("%+v %v", list.Msg, err)
 	}
 	node, _ := h.createNode(t, "agent-view")
-	if got := h.reg.TasksFor(node); len(got.Tasks) != 1 || got.Tasks[0].GetDnsServer() != "[2001:4860:4860::8888]:53" {
+	if got := h.reg.TasksFor(node, true); len(got.Tasks) != 1 || got.Tasks[0].GetDnsServer() != "[2001:4860:4860::8888]:53" {
 		t.Fatalf("agent ProbeTasks=%+v", got)
 	}
 	stray := validProbeTask()

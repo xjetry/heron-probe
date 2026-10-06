@@ -1,6 +1,7 @@
 package alert
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ func (f *fixture) cert(t *testing.T, node int64, task uint64, expiresOn string) 
 	t.Helper()
 	d := date(expiresOn)
 	notAfter := time.Date(d.Year(), d.Month(), d.Day(), 12, 0, 0, 0, f.loc)
-	_, err := f.st.UpsertProbeCert(t.Context(), node, task, notAfter.Unix(), f.clk.Now().Unix())
+	_, err := f.st.UpsertProbeCert(t.Context(), node, task, notAfter.Unix(), f.clk.Now().Unix(), nil)
 	must(t, err)
 }
 
@@ -121,14 +122,14 @@ func TestSweepCertExpiryTriggeredByAChangedObservation(t *testing.T) {
 	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
 	notAfter := date("2027-09-28")
 	notAfterUnix := time.Date(notAfter.Year(), notAfter.Month(), notAfter.Day(), 12, 0, 0, 0, f.loc).Unix()
-	changed, err := f.st.UpsertProbeCert(t.Context(), f.ids[0], task, notAfterUnix, f.clk.Now().Unix())
+	changed, err := f.st.UpsertProbeCert(t.Context(), f.ids[0], task, notAfterUnix, f.clk.Now().Unix(), nil)
 	must(t, err)
 	if !changed {
 		t.Fatal("a renewed cert must report changed so ingest triggers the sweep")
 	}
 	f.sweepExpiry(t) // serve.go 的 CertObserved 钩子在 changed 时做的事
 	wantState(t, f.e, r.ID, f.ids[0], store.StateOK)
-	again, err := f.st.UpsertProbeCert(t.Context(), f.ids[0], task, notAfterUnix, f.clk.Now().Unix())
+	again, err := f.st.UpsertProbeCert(t.Context(), f.ids[0], task, notAfterUnix, f.clk.Now().Unix(), nil)
 	must(t, err)
 	if again {
 		t.Fatal("rewriting the same not_after must not report changed")
@@ -165,5 +166,59 @@ func TestSaveRuleEvaluatesEnabledCertExpiryRules(t *testing.T) {
 	if len(events) != 2 || events[0].Transition != store.TransitionRecovered ||
 		events[0].Summary != fmt.Sprintf("节点 node1 的证书已不在提醒窗口内（规则 证书到期）") {
 		t.Fatalf("events = %+v", events)
+	}
+}
+
+// 新 agent 的成功证书带当前身份，旧 agent 的成功证书身份为空。列表把前者放在 current、后者放在 unbound；
+// 到期评估把两行都当读数。钉住之后两行都删掉，旧 agent 再写空身份不再落库，列表里也不再有 unbound。
+func TestOldAndNewAgentCertsAgreeOnTheListAndTheExpiryAlert(t *testing.T) {
+	f := newFixture(t)
+	saved, _, err := f.st.SaveProbeTask(t.Context(), &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_HTTP, Target: "https://example.com/", IntervalS: 30, TimeoutMs: 1000}, store.NodeSelector{AllNodes: true})
+	must(t, err)
+	task, cfg := saved.Task.GetId(), append([]byte(nil), saved.Task.GetConfigId()...)
+	notAfter := time.Date(2026, 9, 28, 12, 0, 0, 0, f.loc).Unix()
+	now := f.clk.Now().Unix()
+	_, err = f.st.UpsertProbeCert(t.Context(), f.ids[0], task, notAfter, now, cfg)
+	must(t, err)
+	_, err = f.st.UpsertProbeCert(t.Context(), f.ids[1], task, notAfter, now, nil)
+	must(t, err)
+
+	view, err := f.st.ListProbeCertificates(t.Context(), task)
+	must(t, err)
+	byNode := map[int64]store.ProbeCertNodeView{}
+	for _, n := range view.Visible {
+		byNode[n.NodeID] = n
+	}
+	if byNode[f.ids[0]].Current == nil || byNode[f.ids[0]].Unbound != nil {
+		t.Fatalf("new agent node current=%v unbound=%v, want only current", byNode[f.ids[0]].Current != nil, byNode[f.ids[0]].Unbound != nil)
+	}
+	if byNode[f.ids[1]].Unbound == nil || byNode[f.ids[1]].Current != nil {
+		t.Fatalf("old agent node current=%v unbound=%v, want only unbound", byNode[f.ids[1]].Current != nil, byNode[f.ids[1]].Unbound != nil)
+	}
+
+	r := f.rule(t, certRule(task))
+	f.sweepExpiry(t)
+	wantState(t, f.e, r.ID, f.ids[0], store.StateFiring)
+	wantState(t, f.e, r.ID, f.ids[1], store.StateFiring)
+
+	pin := bytes.Repeat([]byte{7}, 32)
+	_, _, err = f.st.SaveProbeTask(t.Context(), saved.Task, store.NodeSelector{AllNodes: true}, store.WithCertPin(pin), store.WithExpectedConfigID(cfg))
+	must(t, err)
+	left, err := f.st.ProbeCertsByTask(t.Context(), task)
+	must(t, err)
+	if len(left) != 0 {
+		t.Fatalf("certs after pin = %v, want both rows deleted", left)
+	}
+	changed, err := f.st.UpsertProbeCert(t.Context(), f.ids[1], task, notAfter, now, nil)
+	must(t, err)
+	if changed {
+		t.Fatal("empty identity was written onto a pinned task")
+	}
+	after, err := f.st.ListProbeCertificates(t.Context(), task)
+	must(t, err)
+	for _, n := range after.Visible {
+		if n.NodeID == f.ids[1] && n.Unbound != nil {
+			t.Fatal("old agent node still has an unbound row after the task was pinned")
+		}
 	}
 }

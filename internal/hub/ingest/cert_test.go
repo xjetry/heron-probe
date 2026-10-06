@@ -29,32 +29,28 @@ func certReport(tok string, r *heronv1.ProbeResult) *connect.Request[heronv1.Rep
 	return req
 }
 
-// cert_not_after_s 只允许由 https:// 的 HTTP 任务携带：ICMP、http:// 与清单外的任务携带时整批
-// InvalidArgument，点名结果索引与任务（agent-first：不静默丢弃）。
-func TestReportRejectsCertFromNonHTTPSTasks(t *testing.T) {
+// 任务不再是 https，或已经不在清单里，只丢掉附带的到期观测，整批上报仍然收下。
+// 否则在途结果会让 hub 反复拒绝、新清单下发不下去。
+func TestReportDropsCertObservationWhenTaskIsNotHTTPS(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
 	icmp := h.task(t, id)
 	plainHTTP := h.httpTask(t, id, "http://example.com/")
 	cert := proto.Int64(time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC).Unix())
-	for _, c := range []struct {
-		name string
-		task uint64
-		want string
-	}{
-		{"icmp", icmp, "cert_not_after_s: task"},
-		{"http", plainHTTP, "must be an https:// HTTP probe task"},
-		{"unknown", 999, "is not in the task list"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			h.clk.Advance(time.Minute) // 速率令牌按半间隔补充；每个用例推进一分钟，互不吃限
-			r := rtt(c.task, 0, 1200)
-			r.CertNotAfterS = cert
-			_, err := h.client.Report(t.Context(), certReport(tok, r))
-			if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "probe_results[0].cert_not_after_s") || !strings.Contains(err.Error(), c.want) {
-				t.Fatalf("err=%v, want InvalidArgument naming probe_results[0].cert_not_after_s and %q", err, c.want)
-			}
-		})
+	for _, task := range []uint64{icmp, plainHTTP, 999} {
+		h.clk.Advance(time.Minute)
+		r := rtt(task, 0, 1200)
+		r.CertNotAfterS = cert
+		if _, err := h.client.Report(t.Context(), certReport(tok, r)); err != nil {
+			t.Fatalf("task %d: report rejected: %v", task, err)
+		}
+		got, err := h.store.ProbeCertsByTask(context.Background(), task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("task %d wrote cert %v", task, got)
+		}
 	}
 }
 

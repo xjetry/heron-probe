@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strings"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/internal/agentwire"
@@ -67,10 +66,10 @@ func validateMetrics(m *heronv1.Metrics) error {
 // 向 Queue.Take 传 MaxResultsPerReport 限条，ToProto 沿 rune 边界截断到 MaxErrorMessageLen 字节。
 // 合法 agent 把超过任务超时的测量记为 timeout
 // 而不是 rtt，由 agent 的 prober 保证；任务超时不超过 MaxTimeoutMs，由 probelimit.CheckTask 保证。
-// cert_not_after_s 只允许由 https:// 的 HTTP 任务在成功（rtt_us）结果上携带（§8.3）：
-// 别的形状说明上报方不是合法 agent，整批 InvalidArgument 点名索引与原因，不静默丢弃。
-// 任务清单经 TaskSource.Target 判断 kind 与 scheme。
-// 任一守卫违反都整批 InvalidArgument；Runner 丢弃本批而不回队，否则确定性拒绝会反复发生。
+// cert_not_after_s 与 presented 的结构（正数、伴随的 outcome、指纹长度、reason、身份长度）与当前配置无关，
+// 不满足就整批 InvalidArgument。任务是否仍在、是否仍是 https、身份是否相符只决定丢弃附带观测，
+// 不在这里整批拒绝：任务被删或改掉之后，在途结果不能挡住下发新清单。
+// 任一结构守卫违反都整批 InvalidArgument；Runner 丢弃本批而不回队，否则确定性拒绝会反复发生。
 // 归属与超龄不是结构问题，由 Report 逐条丢弃而不是整条拒绝。
 func (s *Service) validateResults(rs []*heronv1.ProbeResult) error {
 	if len(rs) > probelimit.MaxResultsPerReport {
@@ -89,23 +88,47 @@ func (s *Service) validateResults(rs []*heronv1.ProbeResult) error {
 				return fmt.Errorf("probe_results[%d].rtt_us: must not exceed %d (the maximum probe timeout in microseconds); got %d", i, probelimit.MaxTimeoutMs*1000, o.RttUs)
 			}
 		}
-		c := r.CertNotAfterS
-		if c == nil {
-			continue
+		if c := r.CertNotAfterS; c != nil {
+			if _, ok := r.GetOutcome().(*heronv1.ProbeResult_RttUs); !ok {
+				return fmt.Errorf("probe_results[%d].cert_not_after_s: must only accompany a successful (rtt_us) result", i)
+			}
+			if *c <= 0 {
+				return fmt.Errorf("probe_results[%d].cert_not_after_s: must be positive; got %d", i, *c)
+			}
 		}
-		if _, ok := r.GetOutcome().(*heronv1.ProbeResult_RttUs); !ok {
-			return fmt.Errorf("probe_results[%d].cert_not_after_s: must only accompany a successful (rtt_us) result", i)
+		if p := r.GetPresented(); p != nil {
+			if _, ok := r.GetOutcome().(*heronv1.ProbeResult_Timeout); !ok {
+				return fmt.Errorf("probe_results[%d].presented: must only accompany a timeout result", i)
+			}
+			if len(p.GetSpkiSha256()) != probelimit.CertSPKISHA256Len {
+				return fmt.Errorf("probe_results[%d].presented.spki_sha256: must be exactly %d bytes; got %d", i, probelimit.CertSPKISHA256Len, len(p.GetSpkiSha256()))
+			}
+			if p.GetNotAfterS() <= 0 {
+				return fmt.Errorf("probe_results[%d].presented.not_after_s: must be positive; got %d", i, p.GetNotAfterS())
+			}
+			switch p.GetReason() {
+			case heronv1.PresentedReason_PRESENTED_REASON_CA_VERIFY_FAILED, heronv1.PresentedReason_PRESENTED_REASON_PIN_MISMATCH, heronv1.PresentedReason_PRESENTED_REASON_OUTSIDE_VALIDITY:
+			default:
+				return fmt.Errorf("probe_results[%d].presented.reason: must be a known reason; got %s", i, p.GetReason())
+			}
 		}
-		if *c <= 0 {
-			return fmt.Errorf("probe_results[%d].cert_not_after_s: must be positive; got %d", i, *c)
+		if n := len(r.GetTaskConfigId()); n != 0 && n != probelimit.ConfigIDLen {
+			return fmt.Errorf("probe_results[%d].task_config_id: must be empty or exactly %d bytes; got %d", i, probelimit.ConfigIDLen, n)
 		}
-		kind, target, ok := s.tasks.Target(r.GetTaskId())
-		if !ok {
-			return fmt.Errorf("probe_results[%d].cert_not_after_s: task %d is not in the task list", i, r.GetTaskId())
-		}
-		if kind != heronv1.ProbeKind_PROBE_KIND_HTTP || !strings.HasPrefix(target, "https://") {
-			return fmt.Errorf("probe_results[%d].cert_not_after_s: task %d must be an https:// HTTP probe task; got %s with target %q", i, r.GetTaskId(), kind, target)
-		}
+	}
+	return nil
+}
+
+func validateCapabilities(caps []heronv1.AgentCapability) error {
+	if len(caps) > agentwire.MaxCapabilities {
+		return fmt.Errorf("capabilities: must contain at most %d items; got %d", agentwire.MaxCapabilities, len(caps))
+	}
+	return nil
+}
+
+func validateTasksDigest(d []byte) error {
+	if len(d) != 0 && len(d) != agentwire.TasksDigestLen {
+		return fmt.Errorf("tasks_digest: must be empty or exactly %d bytes; got %d", agentwire.TasksDigestLen, len(d))
 	}
 	return nil
 }

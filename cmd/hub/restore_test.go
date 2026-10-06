@@ -131,7 +131,7 @@ func restoreSnapshots(t *testing.T) (config, metrics string) {
 		INSERT INTO alert_event (rule_id,node_id,transition,at,summary,value) VALUES (0,0,'firing',0,'system',0),(1,99,'firing',0,'deleted',0);
 		INSERT INTO setting VALUES ('site.title','snapshot');
 		INSERT INTO sqlite_sequence VALUES ('retired_table',17);
-		INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at) VALUES (7,1,'localhost',60,1000,0);
+		INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,config_id) VALUES (7,1,'localhost',60,1000,0,x'01010101010101010101010101010101');
 		DELETE FROM probe_task;
 		INSERT INTO silence (id,name,kind,created_at) VALUES (1,'quiet','once',0);`)
 	for _, id := range []int{2, 3} {
@@ -141,6 +141,7 @@ func restoreSnapshots(t *testing.T) (config, metrics string) {
 			INSERT INTO traffic (node_id,boot_id,last_rx,last_tx,total_rx,total_tx,period_rx,period_tx,period_start,updated_at) VALUES (%[1]d,'',0,0,0,0,0,0,0,0);
 			INSERT INTO probe_task_node VALUES (1,%[1]d);
 			INSERT INTO probe_cert (node_id,task_id,not_after,observed_at) VALUES (%[1]d,7,0,0);
+			INSERT INTO probe_cert_presented (node_id,task_id,config_id,spki_sha256,not_after,reason,observed_at) VALUES (%[1]d,7,x'01010101010101010101010101010101',x'0202020202020202020202020202020202020202020202020202020202020202',1,1,0);
 			INSERT INTO alert_rule_node VALUES (1,%[1]d);
 			INSERT INTO silence_node VALUES (1,%[1]d);
 			INSERT INTO alert_state (rule_id,node_id,state,since_at) VALUES (1,%[1]d,'firing',0);`, id))
@@ -281,6 +282,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			removeV35Config(t, cfg)
 			removeV34Config(t, cfg)
 			removeV34Metrics(t, met)
 			removeV32Config(t, cfg)
@@ -338,6 +340,14 @@ func removeV26Config(t *testing.T, config *sql.DB) {
 // 33 只在指标层的探测表上加了对比索引；拆库读用不到它，回退就是删除三个索引。
 // 34 给 node_facts 加了 execution 与 facts_rev，给三张指标表加了 load1_per_core 的 sum/n。
 // 回填更早的版本号之前必须撤掉，否则配置层的 ADD COLUMN 会撞上重复列。
+func removeV35Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "DROP TABLE probe_cert_presented")
+	restoreExec(t, config, "ALTER TABLE probe_cert DROP COLUMN config_id")
+	restoreExec(t, config, "ALTER TABLE probe_task DROP COLUMN cert_spki_sha256")
+	restoreExec(t, config, "ALTER TABLE probe_task DROP COLUMN config_id")
+}
+
 func removeV34Config(t *testing.T, config *sql.DB) {
 	t.Helper()
 	restoreExec(t, config, "ALTER TABLE node_facts DROP COLUMN execution; ALTER TABLE node_facts DROP COLUMN facts_rev")
@@ -382,7 +392,8 @@ func removeV29Config(t *testing.T, config *sql.DB) {
 func TestRestoreV28ConfigSnapshotAddsDNSServerColumn(t *testing.T) {
 	config, metrics := restoreSnapshots(t)
 	cfg := restoreDB(t, config)
-	restoreExec(t, cfg, "INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order) VALUES (8,1,'legacy.example',60,1000,0,0,0)")
+	restoreExec(t, cfg, "INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,config_id) VALUES (8,1,'legacy.example',60,1000,0,0,0,x'02020202020202020202020202020202')")
+	removeV35Config(t, cfg)
 	removeV34Config(t, cfg)
 	removeV32Config(t, cfg)
 	removeV30Config(t, cfg)

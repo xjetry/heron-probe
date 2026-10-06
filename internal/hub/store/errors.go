@@ -14,6 +14,22 @@ var ErrNodeLimit = errors.New("probe task limit per node exceeded")
 
 var ErrInUse = errors.New("in use")
 
+// ErrPrecondition 是写事务里的前置条件失败：调用方带来的 expected_config_id 与任务当前身份不一致。
+// 与 ErrNotFound 分开，调用方才能回答 FailedPrecondition 而不是把"配置已变"说成"不存在"。
+var ErrPrecondition = errors.New("precondition failed")
+
+// PreconditionError 携带哪一个前置条件没有满足。Detail 是给调用方的原文。
+type PreconditionError struct{ Detail string }
+
+func (e PreconditionError) Error() string        { return e.Detail }
+func (e PreconditionError) Is(target error) bool { return target == ErrPrecondition }
+
+// InvalidTaskError 是保存探测任务时请求本身不合法（指纹动作、前置条件的形状、CheckTask）。
+// Detail 点名字段与约束；调用方把它译成 InvalidArgument。
+type InvalidTaskError struct{ Detail string }
+
+func (e InvalidTaskError) Error() string { return e.Detail }
+
 type ObjectKind string
 
 // 对象标识跨包消费：api 据此选择字段名，投递据此识别已消失的行。

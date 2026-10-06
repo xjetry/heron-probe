@@ -1,9 +1,11 @@
 package store
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // migrations[v] 把 user_version = v−1 的库升到 v。空库不重放历史，直接建到当前版本；
@@ -57,6 +59,7 @@ var migrations = map[int]func(*sql.Tx) error{
 	32: execAll(migrationV32Config),
 	33: execAll(migrationV33Metrics),
 	34: migrateV34,
+	35: migrateV35,
 }
 
 // 覆盖列（metric_1m 的 reported/observed，上卷表的 minutes/observed/both）已经排在指标列之后。
@@ -74,6 +77,126 @@ func migrateV34Metrics(tx *sql.Tx) error {
 	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
 		if err := rebuildTable(tx, table, metricDDLV34); err != nil {
 			return fmt.Errorf("rebuilding %s: %w", table, err)
+		}
+	}
+	return nil
+}
+
+// ddlProbeTaskV35 冻结引入 pin 与配置身份时的 probe_task。必须与当时的 schema.go 逐字相同：
+// 迁移后的库与新建库按规范化后的建表语句比较，注释与空白之外的差异会被判成不同的库。
+const ddlProbeTaskV35 = `CREATE TABLE probe_task (
+  -- AUTOINCREMENT：历史行只带 task_id，删除任务后 id 若复用，旧历史会挂到新任务上。
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind INTEGER NOT NULL,
+  target TEXT NOT NULL,
+  interval_s INTEGER NOT NULL,
+  timeout_ms INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  -- 与 alert_rule.all_nodes 同一语义：为真时 SaveProbeTask 不写 probe_task_node 行，任务覆盖全部节点，
+  -- 之后新建的节点也在内；为假时分配行就是全部覆盖，空集不覆盖任何节点，DeleteNode 删掉最后一个分配行
+  -- 也不会放宽到全部。覆盖的读法只有 probeCoverage 一处。列序与迁移 10 的 ADD COLUMN 结果一致。
+  all_nodes INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  -- DNS 任务要查询的解析器（ip:port）；其他种类恒为空串。列序与迁移 29 的 ADD COLUMN 结果一致。
+  dns_server TEXT NOT NULL DEFAULT '',
+  -- 叶证书 SubjectPublicKeyInfo 的 SHA-256；NULL 表示不钉。空 blob 与 NULL 都是不钉，写侧只写 NULL。
+  cert_spki_sha256 BLOB,
+  -- 配置身份，16 字节随机数。任务内容（除 id 与本列外的列，含 pin）变化时重新生成；只比较相等。
+  -- 不用 probe_meta.version：那是清单计数，备份恢复后可以重新走到同一个值却对应另一份配置。
+  config_id BLOB NOT NULL
+)`
+
+const ddlProbeCertPresentedV35 = `CREATE TABLE probe_cert_presented (
+  node_id INTEGER NOT NULL,
+  task_id INTEGER NOT NULL,
+  config_id BLOB NOT NULL,
+  spki_sha256 BLOB NOT NULL,
+  not_after INTEGER NOT NULL,
+  reason INTEGER NOT NULL,
+  observed_at INTEGER NOT NULL,
+  PRIMARY KEY (node_id, task_id)
+) WITHOUT ROWID`
+
+// migrateV35 给已有任务各生成一个配置身份，并在确有任务时按 bumpProbeVersion 推进清单版本。
+// 身份必须在升级事务里生成：agent 下一次对账拿到的清单已经带身份，不能先下发一份身份为空的任务再补。
+// 有任务才推进版本。空清单的内容没有变，推进只会让"迁移不改清单计数"的空库断言失效，也没有 agent 需要重取。
+// config_id 是 NOT NULL 且没有默认值，ADD COLUMN 加不上；重建表才能与新建库的列定义一致。
+// AUTOINCREMENT 的 sqlite_sequence 记的是发过的最大 id，不是当前行的最大 id。重建若丢掉它，已删除任务的 id 会复用，旧探测历史会挂到新任务上。
+func migrateV35(tx *sql.Tx) error {
+	var seq sql.NullInt64
+	err := tx.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'probe_task'`).Scan(&seq)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if _, err := tx.Exec(strings.Replace(ddlProbeTaskV35, "CREATE TABLE probe_task (", "CREATE TABLE probe_task_new (", 1)); err != nil {
+		return err
+	}
+	rows, err := tx.Query(`SELECT id, kind, target, interval_s, timeout_ms, created_at, all_nodes, sort_order, dns_server FROM probe_task ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	stmt, err := tx.Prepare(`INSERT INTO probe_task_new (id, kind, target, interval_s, timeout_ms, created_at, all_nodes, sort_order, dns_server, cert_spki_sha256, config_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	n := 0
+	for rows.Next() {
+		var id, kind, interval, timeout, created, order int64
+		var all bool
+		var target, dns string
+		if err := rows.Scan(&id, &kind, &target, &interval, &timeout, &created, &all, &order, &dns); err != nil {
+			return err
+		}
+		buf := make([]byte, 16)
+		if _, err := rand.Read(buf); err != nil {
+			return err
+		}
+		if _, err := stmt.Exec(id, kind, target, interval, timeout, created, all, order, dns, buf); err != nil {
+			return err
+		}
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := stmt.Close(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DROP TABLE probe_task`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`ALTER TABLE probe_task_new RENAME TO probe_task`); err != nil {
+		return err
+	}
+	if seq.Valid {
+		// sqlite_sequence 没有主键，不能用 ON CONFLICT。改名后的行记的是现存 id 的最大值，
+		// 已删除任务的 id 只留在旧的 seq 里，必须取较大者，否则旧探测历史会挂到复用的新 id 上。
+		res, err := tx.Exec(`UPDATE sqlite_sequence SET seq = max(seq, ?) WHERE name = 'probe_task'`, seq.Int64)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			if _, err := tx.Exec(`INSERT INTO sqlite_sequence (name, seq) VALUES ('probe_task', ?)`, seq.Int64); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := tx.Exec(`ALTER TABLE probe_cert ADD COLUMN config_id BLOB`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ddlProbeCertPresentedV35); err != nil {
+		return err
+	}
+	if n > 0 {
+		// 墙钟而不是注入的时钟：迁移发生在 Open 里，那时还没有把 Store 的时钟交给这条路径。
+		// 与 bumpProbeVersion 同一条 SQL，已有计数大于当前秒时仍然 +1，不会停在 agent 已经见过的值。
+		if _, err := bumpProbeVersion(tx, time.Now().Unix()); err != nil {
+			return err
 		}
 	}
 	return nil

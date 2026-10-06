@@ -1003,7 +1003,7 @@ func TestReportReconcilesTaskVersion(t *testing.T) {
 	check(h.reg.Version(), nil)
 	task := h.task(t, id)
 	savedVersion := h.reg.Version()
-	check(0, &heronv1.ProbeTasks{Version: savedVersion, Tasks: []*heronv1.ProbeTask{{Id: task, Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}}})
+	check(0, h.reg.TasksFor(id, true))
 	check(savedVersion, nil)
 	if _, err := h.reg.Delete(t.Context(), task); err != nil {
 		t.Fatal(err)

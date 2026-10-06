@@ -145,6 +145,11 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 	if err = restoreSequences(ctx, tx, sequenceSources); err != nil {
 		return result, err
 	}
+	// 清单计数在备份恢复后可以重新走到 agent 已经持有的值，而那份清单的内容不同。
+	// 推进一次让仍按计数对账的 agent 重取；新 agent 另有内容摘要，不依赖这一次推进。
+	if _, err = bumpProbeVersion(tx, now.Unix()); err != nil {
+		return result, err
+	}
 	// node 来自配置快照，始终由它决定哪些节点存在，与两层时刻的先后无关。
 	// schema 没有级联外键，整表替换也不能表达跨层清理；逐表显式删除并记录数量。
 	// nodeDependentTables 同时约束 DeleteNode，审计历史的排除口径不在恢复侧另列。
@@ -441,6 +446,13 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			} else if layer == "metrics" {
 				if err := migrateV34Metrics(tx); err != nil {
 					return fmt.Errorf("migrate metrics snapshot to 34: %w", err)
+				}
+			}
+		case 35:
+			// 配置身份与候选表只在配置层。指标层无变化。
+			if layer == "config" {
+				if err := migrateV35(tx); err != nil {
+					return fmt.Errorf("migrate config snapshot to 35: %w", err)
 				}
 			}
 		default:
