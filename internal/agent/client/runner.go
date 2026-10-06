@@ -60,6 +60,11 @@ func sleepReal(ctx context.Context, d time.Duration) error {
 // 差值以纳秒计（约 1e11），转 uint64 而不是 uint：32 位架构（armv7、386）的 uint 放不下，会把成立的不等式也判成溢出。
 const _ = uint64(probelimit.MaxResultAge - clock.MaxClockJump - 1)
 
+// agentCapabilities 是这份二进制支持的协议能力，每次上报都带：hub 按本次请求的能力过滤下发的
+// 任务（钉住证书指纹的任务只发给声明 PROBE_CERT_PIN 的 agent）并据此决定是否采信结果。
+// 新增条目意味着二进制实现了对应语义，缺席即不支持——降级回旧版自然不再声明。
+var agentCapabilities = []heronv1.AgentCapability{heronv1.AgentCapability_AGENT_CAPABILITY_PROBE_CERT_PIN}
+
 // Run 每次携带 facts 摘要与任务版本供 hub 对账，间隔以响应为准。
 // 失败退避、成功即回到下发间隔；实时指标不缓存，因为过期的实时数据没有意义。
 // 探测结果在迟到预算内重试，InvalidArgument 例外：本批丢弃而不回队。
@@ -111,6 +116,9 @@ func (r *Runner) Run(ctx context.Context) error {
 		taken := r.Results.Take(now, probelimit.MaxResultAge, probelimit.MaxResultsPerReport)
 		req.Msg.ProbeResults = prober.ToProto(taken, now)
 		req.Msg.TasksVersion = r.Prober.Version()
+		// 摘要在尚未收到任何清单时为 nil（缺席），与空清单的空串 SHA-256 严格区分。
+		req.Msg.TasksDigest = r.Prober.TasksDigest()
+		req.Msg.Capabilities = agentCapabilities
 		req.Header().Set("Authorization", "Bearer "+r.Token)
 		// Facts 只读几个小文件；每轮重算才能让 hub 从摘要变化发现运行期间的变更。
 		f := r.Collector.Facts(snap)

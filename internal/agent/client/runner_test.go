@@ -18,6 +18,7 @@ import (
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/internal/agent/collect"
 	"github.com/xjetry/heron-probe/internal/agent/prober"
+	"github.com/xjetry/heron-probe/internal/agentwire"
 	"github.com/xjetry/heron-probe/internal/clock"
 	"github.com/xjetry/heron-probe/internal/probelimit"
 	"google.golang.org/protobuf/proto"
@@ -388,4 +389,27 @@ func (c *countMountinfo) Open(name string) (fs.File, error) {
 		c.opens++
 	}
 	return c.FS.Open(name)
+}
+
+// 每次上报声明本二进制支持的能力（钉住任务只下发给声明 PROBE_CERT_PIN 的 agent）；
+// tasks_digest 在尚未收到任何清单时缺席，收到后等于对持有清单（含被拒任务）的摘要。
+func TestRunnerReportsCapabilitiesAndTasksDigest(t *testing.T) {
+	valid := &heronv1.ProbeTask{Id: 1, Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 5, TimeoutMs: 1000}
+	rejected := &heronv1.ProbeTask{Id: 2, Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "127.0.0.1", IntervalS: 1, TimeoutMs: 1000}
+	hub := &fakeHub{interval: 10000, tasks: &heronv1.ProbeTasks{Version: 3, Tasks: []*heronv1.ProbeTask{valid, rejected}}}
+	r, _ := newRunner(t, hub)
+	runFor(t, r, hub, 2)
+	reports := hub.received()
+	for i, rep := range reports {
+		if got := rep.GetCapabilities(); !slices.Equal(got, []heronv1.AgentCapability{heronv1.AgentCapability_AGENT_CAPABILITY_PROBE_CERT_PIN}) {
+			t.Fatalf("report %d capabilities = %v, want [PROBE_CERT_PIN]", i, got)
+		}
+	}
+	if reports[0].TasksDigest != nil {
+		t.Fatalf("tasks_digest before any task list = %x, want absent", reports[0].TasksDigest)
+	}
+	want := agentwire.TasksDigest(hub.tasks.GetTasks())
+	if !bytes.Equal(reports[1].GetTasksDigest(), want) {
+		t.Fatalf("tasks_digest = %x, want %x (covers the rejected task)", reports[1].GetTasksDigest(), want)
+	}
 }
