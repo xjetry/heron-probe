@@ -1,7 +1,9 @@
 package prober
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"math"
 	"reflect"
 	"testing"
@@ -162,6 +164,41 @@ func TestMultiDispatchesByKind(t *testing.T) {
 	} {
 		if got := m.Probe(t.Context(), &heronv1.ProbeTask{Kind: tc.kind}); got != tc.want {
 			t.Errorf("kind=%v got=%v want=%v", tc.kind, got, tc.want)
+		}
+	}
+}
+
+// 每条结果原样回显产生它时的任务身份（空身份 = 字段缺席）；候选只随 timeout 结果编码。
+func TestToProtoEchoesConfigIDAndPresented(t *testing.T) {
+	cfg := bytes.Repeat([]byte{7}, 16)
+	candidate := &PresentedCert{SPKI: sha256.Sum256([]byte("leaf")), NotAfterS: 1893456000, Reason: heronv1.PresentedReason_PRESENTED_REASON_PIN_MISMATCH}
+	rs := ToProto([]Result{
+		{TaskID: 1, Outcome: Outcome{RttUs: 100}, ConfigID: cfg},
+		{TaskID: 2, Outcome: Outcome{Timeout: true}},
+		{TaskID: 3, Outcome: Outcome{Timeout: true, Presented: candidate}, ConfigID: cfg},
+		{TaskID: 4, Outcome: Outcome{Err: "boom"}, ConfigID: cfg},
+		{TaskID: 5, Outcome: Outcome{RttUs: 100, Presented: candidate}}, // 成功结果不带候选，即使引擎误填
+	}, time.Second)
+	if !bytes.Equal(rs[0].GetTaskConfigId(), cfg) {
+		t.Fatalf("rtt result TaskConfigId = %x, want %x", rs[0].GetTaskConfigId(), cfg)
+	}
+	if rs[1].TaskConfigId != nil {
+		t.Fatalf("empty identity encoded as %x, want absent", rs[1].TaskConfigId)
+	}
+	presented := rs[2].GetPresented()
+	if presented == nil || !bytes.Equal(presented.GetSpkiSha256(), candidate.SPKI[:]) ||
+		presented.GetNotAfterS() != candidate.NotAfterS || presented.GetReason() != candidate.Reason {
+		t.Fatalf("timeout result Presented = %v, want %v", presented, candidate)
+	}
+	if !bytes.Equal(rs[2].GetTaskConfigId(), cfg) {
+		t.Fatalf("timeout result TaskConfigId = %x, want %x", rs[2].GetTaskConfigId(), cfg)
+	}
+	if !bytes.Equal(rs[3].GetTaskConfigId(), cfg) {
+		t.Fatalf("error result TaskConfigId = %x, want %x", rs[3].GetTaskConfigId(), cfg)
+	}
+	for _, i := range []int{0, 1, 3, 4} {
+		if rs[i].Presented != nil {
+			t.Fatalf("result %d (%T) carries presented, want nil", i+1, rs[i].Outcome)
 		}
 	}
 }

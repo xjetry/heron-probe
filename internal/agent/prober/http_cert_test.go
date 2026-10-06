@@ -102,13 +102,13 @@ func TestHTTPCertReportPrunedWithTaskSet(t *testing.T) {
 	if out := p.Probe(t.Context(), task); out.CertNotAfter != wantNotAfter {
 		t.Fatalf("first probe CertNotAfter = %d, want %d", out.CertNotAfter, wantNotAfter)
 	}
-	// 任务仍在清单里：记录保留，一小时内不重复携带。
-	p.pruneTasks(map[uint64]struct{}{task.GetId(): {}})
+	// 任务仍在清单里且身份未变：记录保留，一小时内不重复携带。
+	p.pruneTasks(map[uint64]string{task.GetId(): ""})
 	if out := p.Probe(t.Context(), task); out.CertNotAfter != 0 {
 		t.Fatalf("probe after prune keeping task = %+v, want without cert", out)
 	}
 	// 任务从清单消失：记录清掉，再出现按首次探测携带。
-	p.pruneTasks(map[uint64]struct{}{})
+	p.pruneTasks(map[uint64]string{})
 	if out := p.Probe(t.Context(), task); out.CertNotAfter != wantNotAfter {
 		t.Fatalf("probe after prune dropping task CertNotAfter = %d, want %d", out.CertNotAfter, wantNotAfter)
 	}

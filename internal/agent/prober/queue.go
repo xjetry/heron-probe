@@ -26,6 +26,9 @@ type Result struct {
 	TaskID  uint64
 	Outcome Outcome
 	At      time.Duration
+	// ConfigID 是产生本结果时任务的配置身份（ProbeTask.config_id 原样，空 = 身份未知）。
+	// 队列里的结果保留自己的身份：任务之后改了内容也不改写已入队结果的身份。
+	ConfigID []byte
 }
 
 // Queue 满时丢最旧并计数，不等待上报腾出空间；mu 只保护有界内存操作。
@@ -122,7 +125,7 @@ func ToProto(rs []Result, now time.Duration) []*heronv1.ProbeResult {
 	out := make([]*heronv1.ProbeResult, 0, len(rs))
 	for _, r := range rs {
 		// 取 now 与取队列不是原子操作；较晚入队的结果不能转成溢出的无符号 age。
-		p := &heronv1.ProbeResult{TaskId: r.TaskID, AgeMs: uint32(min(max((now-r.At)/time.Millisecond, 0), math.MaxUint32))}
+		p := &heronv1.ProbeResult{TaskId: r.TaskID, AgeMs: uint32(min(max((now-r.At)/time.Millisecond, 0), math.MaxUint32)), TaskConfigId: r.ConfigID}
 		switch {
 		case r.Outcome.Err != "":
 			// 协议字符串必须是合法 UTF-8；只在出队编码处统一限制字节数，不切断多字节字符。
@@ -137,6 +140,10 @@ func ToProto(rs []Result, now time.Duration) []*heronv1.ProbeResult {
 			p.Outcome = &heronv1.ProbeResult_Error{Error: &heronv1.ProbeError{Message: message}}
 		case r.Outcome.Timeout:
 			p.Outcome = &heronv1.ProbeResult_Timeout{Timeout: &heronv1.Timeout{}}
+			// 候选只随 timeout 结果；整条消息的有无即候选的有无。
+			if pr := r.Outcome.Presented; pr != nil {
+				p.Presented = &heronv1.PresentedCertificate{SpkiSha256: pr.SPKI[:], NotAfterS: pr.NotAfterS, Reason: pr.Reason}
+			}
 		default:
 			p.Outcome = &heronv1.ProbeResult_RttUs{RttUs: r.Outcome.RttUs}
 			// 证书到期时刻只在 rtt_us 成功结果上透传；0 表示未携带，不下发。

@@ -29,8 +29,10 @@ func classify(err error) Outcome {
 	var hostnameMismatch x509.HostnameError
 	var certInvalid x509.CertificateInvalidError
 	var certVerify *tls.CertificateVerificationError
+	// pinError 同属这一类：钉住校验失败（指纹不符、不在有效期）也是握手给不出，计入丢包。
+	var pin *pinError
 	var notTLS tls.RecordHeaderError
-	if errors.As(err, &unknownAuthority) || errors.As(err, &hostnameMismatch) || errors.As(err, &certInvalid) || errors.As(err, &certVerify) || errors.As(err, &notTLS) {
+	if errors.As(err, &unknownAuthority) || errors.As(err, &hostnameMismatch) || errors.As(err, &certInvalid) || errors.As(err, &certVerify) || errors.As(err, &pin) || errors.As(err, &notTLS) {
 		return Outcome{Timeout: true}
 	}
 	var op *net.OpError

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/agentwire"
 	"github.com/xjetry/heron-probe/internal/clock"
 	"github.com/xjetry/heron-probe/internal/probelimit"
 	"github.com/xjetry/heron-probe/internal/testwait"
@@ -287,5 +288,105 @@ func TestApplyLogsOneSummaryForAnyNumberOfRejections(t *testing.T) {
 	s.Apply(&heronv1.ProbeTasks{Version: 1, Tasks: tasks})
 	if n := strings.Count(logs.String(), "\n"); n != 1 || !strings.Contains(logs.String(), "count=32750") {
 		t.Fatalf("%d log lines (%d bytes), want one summary with count=32750:\n%.500s", n, logs.Len(), logs.String())
+	}
+}
+
+// 清单摘要代表收到并持有的整份清单（含被拒任务），与版本计数无关；尚未收到任何清单时缺席。
+func TestSchedulerTasksDigest(t *testing.T) {
+	clk := clock.NewFake(time.Unix(0, 0))
+	s := NewScheduler(quietEngine{}, NewQueue(QueueCap), clk, logger())
+	defer s.Stop()
+	if d := s.TasksDigest(); d != nil {
+		t.Fatalf("digest before any task list = %x, want absent", d)
+	}
+	received := []*heronv1.ProbeTask{task(2), task(1)}
+	bad := task(3)
+	bad.IntervalS = 1 // 被 CheckTask 拒绝，但仍在持有的清单里。
+	received = append(received, bad)
+	s.Apply(&heronv1.ProbeTasks{Version: 7, Tasks: received})
+	want := agentwire.TasksDigest(received)
+	if d := s.TasksDigest(); !bytes.Equal(d, want) {
+		t.Fatalf("digest = %x, want %x (covers the rejected task)", d, want)
+	}
+	// 全局版本变了而清单不变：摘要相等。
+	s.Apply(&heronv1.ProbeTasks{Version: 8, Tasks: received})
+	if d := s.TasksDigest(); !bytes.Equal(d, want) {
+		t.Fatalf("digest after version-only bump = %x, want unchanged %x", d, want)
+	}
+	// 内容变化改变摘要。
+	changed := []*heronv1.ProbeTask{task(2), task(1), task(4)}
+	s.Apply(&heronv1.ProbeTasks{Version: 9, Tasks: changed})
+	if d := s.TasksDigest(); bytes.Equal(d, want) || !bytes.Equal(d, agentwire.TasksDigest(changed)) {
+		t.Fatalf("digest after content change = %x, want %x", d, agentwire.TasksDigest(changed))
+	}
+	// 空清单的摘要是空串的 SHA-256，与缺席不同。
+	s.Apply(&heronv1.ProbeTasks{Version: 10})
+	if d := s.TasksDigest(); len(d) != 32 {
+		t.Fatalf("digest of empty list = %x, want 32 bytes", d)
+	}
+}
+
+type quietEngine struct{}
+
+func (quietEngine) Probe(context.Context, *heronv1.ProbeTask) Outcome { return Outcome{RttUs: 1} }
+
+// 每条结果回显产生它时的任务身份：被拒任务的 error 结果与正常探测结果都带。
+func TestSchedulerEchoesConfigIDOnResults(t *testing.T) {
+	clk := clock.NewFake(time.Unix(0, 0))
+	q := NewQueue(QueueCap)
+	calls := make(chan sleepCall, 4)
+	s := NewScheduler(quietEngine{}, q, clk, logger())
+	s.Sleep, s.Rand = controlledSleep(calls), func() float64 { return 0 }
+	defer s.Stop()
+	cfg := bytes.Repeat([]byte{9}, 16)
+	ok := task(1)
+	ok.ConfigId = cfg
+	bad := task(2)
+	bad.IntervalS = 1
+	bad.ConfigId = cfg
+	s.Apply(&heronv1.ProbeTasks{Version: 1, Tasks: []*heronv1.ProbeTask{ok, bad}})
+	rs := q.Take(clk.Mono(), probelimit.MaxResultAge, probelimit.MaxResultsPerReport)
+	if len(rs) != 1 || rs[0].TaskID != 2 || !bytes.Equal(rs[0].ConfigID, cfg) {
+		t.Fatalf("rejection result = %+v, want task 2 error carrying its config_id", rs)
+	}
+	c := receive(t, calls)
+	close(c.release)
+	receive(t, calls) // 第一次探测完成、进入周期休眠后结果已入队。
+	rs = q.Take(clk.Mono(), probelimit.MaxResultAge, probelimit.MaxResultsPerReport)
+	if len(rs) != 1 || rs[0].TaskID != 1 || !bytes.Equal(rs[0].ConfigID, cfg) {
+		t.Fatalf("probe result = %+v, want task 1 result carrying its config_id", rs)
+	}
+}
+
+// 违反 pin / config_id 共用约束的任务在 agent 侧同样被拒（留 error 结果），不静默忽略 pin。
+func TestApplyRejectsPinConstraintViolations(t *testing.T) {
+	clk := clock.NewFake(time.Unix(0, 0))
+	q := NewQueue(QueueCap)
+	s := NewScheduler(quietEngine{}, q, clk, logger())
+	defer s.Stop()
+	pin := make([]byte, 32)
+	pinHTTP := task(1) // http:// 目标上钉指纹
+	pinHTTP.Kind, pinHTTP.Target = heronv1.ProbeKind_PROBE_KIND_HTTP, "http://example.com/"
+	pinHTTP.CertSpkiSha256 = pin
+	pinDNS := task(2) // DNS 分支提前 return，也不能放过 pin
+	pinDNS.Kind, pinDNS.Target, pinDNS.DnsServer = heronv1.ProbeKind_PROBE_KIND_DNS, "example.com", "1.1.1.1:53"
+	pinDNS.CertSpkiSha256 = pin
+	badID := task(3)
+	badID.ConfigId = make([]byte, 8)
+	s.Apply(&heronv1.ProbeTasks{Version: 1, Tasks: []*heronv1.ProbeTask{pinHTTP, pinDNS, badID}})
+	rs := q.Take(clk.Mono(), probelimit.MaxResultAge, probelimit.MaxResultsPerReport)
+	if len(rs) != 3 {
+		t.Fatalf("rejections=%v", rs)
+	}
+	for _, r := range rs {
+		if !strings.Contains(r.Outcome.Err, "cert_spki_sha256") && !strings.Contains(r.Outcome.Err, "config_id") {
+			t.Fatalf("rejection for task %d = %q, want pin/config_id constraint", r.TaskID, r.Outcome.Err)
+		}
+	}
+	s.mu.Lock()
+	n := len(s.running)
+	s.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("running=%d want 0", n)
 	}
 }
