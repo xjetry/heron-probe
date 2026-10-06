@@ -143,6 +143,13 @@ message ReportRequest {
   fixed64 facts_hash = 4;      // agent 静态信息的摘要
   Facts   facts = 5;           // 进程启动后的首次上报携带；此后仅在 hub 要求时携带
   UpdateStatus update = 6;     // 本机更新能力、当前版本和最新任务状态
+  repeated AgentCapability capabilities = 7;  // 本二进制支持的协议能力，每次上报都带；钉住证书指纹的任务只下发给声明 PROBE_CERT_PIN 的 agent
+  bytes    tasks_digest = 8;   // 持有任务清单的内容摘要（agentwire.TasksDigest，算法见 §4.3）；尚未收到任何清单时缺席，与空清单的空串 SHA-256 严格区分
+}
+
+enum AgentCapability {
+  AGENT_CAPABILITY_UNSPECIFIED = 0;
+  AGENT_CAPABILITY_PROBE_CERT_PIN = 1;  // 支持 cert_spki_sha256 钉住的 HTTPS 探测
 }
 
 message ReportResponse {
@@ -201,7 +208,24 @@ message ProbeResult {
     ProbeError error = 5;      // 无权限、解析失败等；不计入丢包；message 至多 128 字节，agent 按 rune 截断、hub 超长拒收
   }
   optional int64 cert_not_after_s = 6;  // HTTPS 探测握手成功时顺带带回的证书到期时刻（链首枚证书的 NotAfter，Unix 秒）；
-                                        // 只在 rtt_us 成功结果上携带，每任务每小时至多一次；optional 区分"没带"与 0
+                                        // 只在 rtt_us 成功结果上携带，按 (task_id, config_id) 每小时至多一次；optional 区分"没带"与 0
+  bytes task_config_id = 7;             // 产生本结果时任务的配置身份（ProbeTask.config_id 原样回显，空即缺席）；被拒任务留的 error 结果同样带
+  optional PresentedCertificate presented = 8;  // 证书相关丢包带回的对方叶证书候选；只随 timeout 结果，按 (task_id, config_id) 每小时至多一次
+}
+
+// 证书相关的丢包（默认校验失败、指纹不符、不在有效期）带回握手失败时对方出示的叶证书，
+// 作为面板上的信任候选；取自失败链上的 UnverifiedCertificates[0]，不另建连接。
+message PresentedCertificate {
+  bytes spki_sha256 = 1;      // 叶证书 SubjectPublicKeyInfo 的 SHA-256，恰 32 字节；比公钥而不是整份证书哈希，同钥续签不改变它
+  int64 not_after_s = 2;
+  PresentedReason reason = 3;
+}
+
+enum PresentedReason {
+  PRESENTED_REASON_UNSPECIFIED = 0;
+  PRESENTED_REASON_CA_VERIFY_FAILED = 1;  // 未钉住，默认校验失败
+  PRESENTED_REASON_PIN_MISMATCH = 2;      // 钉住了，出示的公钥指纹与钉住值不符
+  PRESENTED_REASON_OUTSIDE_VALIDITY = 3;  // 指纹相符，但证书未生效或已过期
 }
 ```
 
@@ -241,6 +265,8 @@ darwin 恒为主机：识别快照固定为 host 范围、核数取 `hw.logicalc
 探测任务、主机信息与上报间隔通过版本 / 摘要对账，hub 在响应里补齐差异。Facts 包含管理面白名单诊断：生效网卡包含/排除规则、实际计入名称与总数、固定采集失败类别、实际生效间隔。采集失败不上传原始错误文本；规则不含任意配置，凭据与命令行没有协议字段。诊断随内容变化推进 Facts 摘要，不加入每次采样时间；内容未变不会触发重复写库。旧 Agent 未提供时为 nil，存储为 JSON null，不等同于已提供但无失败。公开 Facts 显式保留该字段号和名称，不转交主题。管理详情按 10 秒轮询，显示最近保存时间并说明不是实时健康保证。
 
 网卡规则每组最多 64 项、每项 128 字节，由本机启动和 Hub 上报使用共享校验；包含非空时上报的排除为空。接口最多展示排序后的前 128 项（每项 64 字节），总数明确表示是否截断；集合摘要和累计计数仍使用全集。上报、落库、读库和快照恢复共用诊断校验。schema 26 为 node_facts 增加 diagnostics、为 traffic 增加 net_counter_epoch，旧库和配置快照迁移时分别默认为 null 和空标识。
+
+任务清单除版本计数外另以内容摘要对账：`ReportRequest.tasks_digest` 是 agent 收到并持有的整份清单（含被 `probelimit.CheckTask` 拒绝的任务）的 SHA-256——任务按 `task_id` 升序、各自确定性编码、前缀 8 字节大端长度后拼接取哈希，算法唯一实现于 `agentwire.TasksDigest`，agent 上报与 hub 决定是否重发清单调用同一函数。摘要不含版本计数：版本在 hub 备份恢复后可能与 agent 持有的内容错位，按内容摘要不会。空清单是空串的 SHA-256，与"尚未收到任何清单"（字段缺席）严格区分，两者是两个不同的对账状态。每条结果原样回显产生它时的任务配置身份（`ProbeResult.task_config_id`）：证书观测以 (task_id, config_id) 归属一份配置，身份不符的观测 hub 丢弃而探测结果本身保留。
 
 ### 4.4 在线判定
 
@@ -542,7 +568,7 @@ agent 默认汇总除回环与虚拟网卡外的全部网卡（Linux：`lo`、`d
 
 - ICMP：优先用非特权数据报 ICMP socket；不可用且进程持有 `CAP_NET_RAW` 时退到 raw socket；都不可用则每次回报 `error`，面板显示原因，而不是静默呈现为 100% 丢包。
 - TCP：连接建立耗时即 rtt，解析在计时之前完成。
-- HTTP：一次 GET，rtt 从拨号开始到收到响应头为止，解析与整个请求（连接、TLS、等响应头）共用 `timeout_ms` 预算。先经共用的解析入口把 URL 主机解析成一个地址，自定义 `DialContext` 只连那个地址（忽略传入地址，端口取 URL 的或默认 80/443），SNI 与 `Host` 仍是 URL 里的名字；不跟随重定向（3xx 本身就是答案）、不复用连接（每次探测新建 Transport）、不读正文（拿到响应头即关闭）；`User-Agent` 是 `heron-agent/<version>`。收到响应头且状态 < 400 是成功；状态 ≥400 与 TLS 握手失败（含证书错误：过期、名字不符、自签）计入丢包；URL 非法、解析失败、地址策略拒绝与 socket/fd 等本机原因是 `error`。target 为 `https://` 的任务握手成功（成功结果）时顺带在 `cert_not_after_s` 带回链首枚证书的到期时刻，每任务每小时至多携带一次——证书到期日按天变化，每次都带是无意义的重复字节，一小时内能看到更换后的新到期日已经足够；不上报签发者与证书链。
+- HTTP：一次 GET，rtt 从拨号开始到收到响应头为止，解析与整个请求（连接、TLS、等响应头）共用 `timeout_ms` 预算。先经共用的解析入口把 URL 主机解析成一个地址，自定义 `DialContext` 只连那个地址（忽略传入地址，端口取 URL 的或默认 80/443），SNI 与 `Host` 仍是 URL 里的名字；不跟随重定向（3xx 本身就是答案）、不复用连接（每次探测新建 Transport）、不读正文（拿到响应头即关闭）；`User-Agent` 是 `heron-agent/<version>`。收到响应头且状态 < 400 是成功；状态 ≥400 与 TLS 握手失败（含证书错误：过期、名字不符、自签）计入丢包；URL 非法、解析失败、地址策略拒绝与 socket/fd 等本机原因是 `error`。target 为 `https://` 的任务握手成功（成功结果）时顺带在 `cert_not_after_s` 带回链首枚证书的到期时刻，按 (task_id, config_id) 每小时至多携带一次——证书到期日按天变化，每次都带是无意义的重复字节，一小时内能看到更换后的新到期日已经足够；不上报签发者与证书链。携带 `cert_spki_sha256` 的 HTTPS 任务关掉默认的链与主机名校验（`InsecureSkipVerify`），改在 `VerifyConnection` 里只比对叶证书公钥指纹与有效期：钉住即把信任锚定在这份公钥上，同钥续签不受影响；指纹不符或不在有效期中止握手、归为丢包。证书相关的丢包（默认校验失败、指纹不符、不在有效期）在结果里带 `presented`：握手失败链上对方出示的叶证书指纹、到期时刻与失败类别，作为面板上的信任候选；agent 不替管理员做信任决定。成功证书与候选是两个独立时钟，各自按 (task_id, config_id) 每小时至多一次：任务内容一变即是另一份配置，限频从新身份的首次观测重新开始；Apply 换身份或任务消失时删除旧身份的限频状态，取消后才返回的旧探测写状态前核对身份仍是当前的，不重建已删的键。上报的 `capabilities` 声明 `PROBE_CERT_PIN`，钉住的任务只下发给声明它的 agent；旧 agent 收到钉住任务会按未知字段忽略，所以 hub 必须按能力过滤而不是假设所有 agent 都支持。
 - DNS：手组一条 A 查询发给 `dns_server` 指定的解析器，单个 UDP 包，不重试、不走 TCP——重试会把一次失败伪装成一次慢成功，探的是"这个解析器此刻能不能答出 A 记录"。只有对得上号（ID 匹配且是应答）、NOERROR 且带着至少一条 A 记录的应答才是成功；NXDOMAIN/SERVFAIL/REFUSED、无 A 记录、解不开的应答与张冠李戴的应答都计入丢包；`dns_server` 非法、地址策略拒绝（解析器地址同样过 §5.7 的本地策略）与 socket/fd 等本机原因是 `error`。rtt 从发出查询到收到应答。
 - 丢包与 `error` 的分界四种探测共用一句口径：这一次没有联通是可达性事实，计入丢包（超时、连接被拒或重置、网络或主机不可达、HTTP 状态 ≥400、TLS 握手失败、DNS 拒绝或答非所问）；本地无法发起才是 `error`（无 socket、URL 或 `dns_server` 非法、解析失败、地址策略拒绝、fd 耗尽、权限）。连接与发送失败的归类集中在 `classify` 一处，四种探测共用。
 - hub 不按 agent 版本过滤任务：旧 agent 在 `Scheduler.Apply` 里先用自己版本的 `probelimit.CheckTask` 校验清单（自 v0.1.0 起各版本都如此），不认识的种类在调度前被拒，按被拒任务留一条 error 结果（原因形如 `kind must be PROBE_KIND_ICMP or PROBE_KIND_TCP; got PROBE_KIND_HTTP`），面板显示为 `error`；版本偏斜由这条 error 暴露，而不是由 hub 侧的版本协商掩盖。`Multi` 的默认分支（`unsupported probe kind`）只在绕过 `Apply` 直接调用引擎时可达。
