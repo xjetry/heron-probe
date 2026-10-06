@@ -818,3 +818,33 @@ func setProbeWatermarks(t *testing.T, s *Store, wm5m, wm1h int64) {
 		t.Fatal(err)
 	}
 }
+
+// 额度权重按满配任务槽（64）而不是当前任务数：历史里有 65 个任务编号的行、当前只分配了
+// 10 个任务时，760k 行仍在 768k 额度内照常服务。若权重改按当前任务数计，这里会被误拒。
+func TestReadQuotaUsesFullTaskSlots(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	id, _, err := s.CreateNode(ctx, "a", Billing{}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k := 1; k <= 10; k++ {
+		if _, _, err := s.SaveProbeTask(ctx, &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: fmt.Sprintf("192.0.2.%d", k), IntervalS: 60, TimeoutMs: 1000}, NodeSelector{NodeIDs: []int64{id}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 760,000 行摊在 65 个任务编号上（10 个在配、55 个已撤/已删），≤ 64×12000。
+	if err := fillProbeRows(ctx, s.w, "probe_1h", id, 1, 760000); err != nil {
+		t.Fatal(err)
+	}
+	end := int64(768001) * 3600
+	setProbeWatermarks(t, s, end, end)
+	lv, _ := LevelByName("1h")
+	rows, err := s.QueryProbes(ctx, id, 0, end, lv, 7*86400)
+	if err != nil {
+		t.Fatalf("history of rotated task slots must stay within full-slot quota: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("rows expected")
+	}
+}

@@ -276,3 +276,17 @@ func TestReadQuotaThroughRealEntries(t *testing.T) {
 		t.Fatalf("short window after rejection: %+v %v", ok.Msg, err)
 	}
 }
+
+// 范围内只读 token 能读对比两个入口（scopedReadAllowed）；它们不携带 CONFIGURE，
+// 只有在 token 读方法表里才能通过。公开端不适用（无鉴权）。
+func TestScopedReadOnlyTokenReadsComparison(t *testing.T) {
+	h, task, pub, pub2, priv, _, base := comparisonHarness(t)
+	ctx := t.Context()
+	ro, _, _ := grantedClient(t, h, &heronv1.TokenGrant{NodeIds: []int64{pub, pub2, priv}})
+	if _, err := ro.ListProbeComparisonNodes(ctx, connect.NewRequest(&heronv1.ListProbeComparisonNodesRequest{TaskId: task})); err != nil {
+		t.Fatalf("scoped read-only token list err = %v", err)
+	}
+	if _, err := ro.QueryProbeComparison(ctx, connect.NewRequest(&heronv1.QueryProbeComparisonRequest{TaskId: task, NodeIds: []int64{pub2}, From: base - 60, To: base + 60, MaxPoints: 100})); err != nil {
+		t.Fatalf("scoped read-only token query err = %v", err)
+	}
+}
