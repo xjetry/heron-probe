@@ -21,7 +21,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// CLI 的健康行与 GetStorageStats 的响应出自同一份 store.StorageStats：同一个库上，行数与顺序和响应一一对应、
+// CLI 的 SQL 健康行与 GetStorageStats 的响应出自同一份 store.StorageStats：同一个库上，行数与顺序和响应一一对应、
 // 数值相等。响应经 API token 取得，也钉住只读口径可以调用它。
 func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "hub.db")
@@ -66,7 +66,8 @@ func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
 	if start < 0 {
 		t.Fatalf("no health lines in %q", out.String())
 	}
-	cli := lines[start:]
+	// 两入口之间关闭再打开库，WAL 文件可能变化；独立文件观测不参与 SQL 快照的逐行对照。
+	cli := slices.DeleteFunc(lines[start:], func(line string) bool { return strings.HasPrefix(line, "wal.") })
 
 	st, err = store.Open(db, clk, slog.Default(), store.MigrateSchema)
 	if err != nil {
