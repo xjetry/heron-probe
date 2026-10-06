@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // migrations[v] 把 user_version = v−1 的库升到 v。空库不重放历史，直接建到当前版本；
@@ -55,11 +56,83 @@ var migrations = map[int]func(*sql.Tx) error{
 	31: execAll(append(append([]string{}, migrationV31Metrics...), coverageFallbackV31)),
 	32: execAll(migrationV32Config),
 	33: execAll(migrationV33Metrics),
+	34: migrateV34,
+}
+
+// 覆盖列（metric_1m 的 reported/observed，上卷表的 minutes/observed/both）已经排在指标列之后。
+// ADD COLUMN 只能加在表尾，新列会落在覆盖列后面；新建库按描述表生成，指标列在覆盖列之前。
+// 列序进 schema 签名，两边不一致就会被判成不同的库。因此用冻结 DDL 重建三张表，只搬运两边都有的列，
+// 新列取 DDL 默认值（n=0 表示这一分钟没有采样）。
+func migrateV34(tx *sql.Tx) error {
+	if err := execAll(migrationV34Config)(tx); err != nil {
+		return err
+	}
+	return migrateV34Metrics(tx)
+}
+
+func migrateV34Metrics(tx *sql.Tx) error {
+	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+		if err := rebuildTable(tx, table, metricDDLV34); err != nil {
+			return fmt.Errorf("rebuilding %s: %w", table, err)
+		}
+	}
+	return nil
+}
+
+// metricDDLV34 冻结引入 load1_per_core 时的指标表 DDL。列集合与当时的描述表一致；以后再追加指标必须新开迁移，不能改这里。
+func metricDDLV34(table string) string {
+	type col struct {
+		name, sqlType string
+		max           bool
+	}
+	cols := []col{
+		{"cpu", "REAL", true},
+		{"mem_used", "INTEGER", true},
+		{"swap_used", "INTEGER", false},
+		{"disk_used", "INTEGER", false},
+		{"load1", "REAL", false},
+		{"tcp", "INTEGER", false},
+		{"udp", "INTEGER", false},
+		{"procs", "INTEGER", false},
+		{"rx_bytes", "INTEGER", false},
+		{"tx_bytes", "INTEGER", false},
+		{"memory_used_pct", "REAL", false},
+		{"disk_used_pct", "REAL", false},
+		{"net_rx_bps", "INTEGER", true},
+		{"net_tx_bps", "INTEGER", true},
+		{"disk_read_bps", "INTEGER", true},
+		{"disk_write_bps", "INTEGER", true},
+		{"cpu_steal_pct", "REAL", true},
+		{"cpu_iowait_pct", "REAL", true},
+		{"load1_per_core", "REAL", false},
+	}
+	parts := []string{"node_id INTEGER NOT NULL", "ts INTEGER NOT NULL"}
+	for _, c := range cols {
+		parts = append(parts, c.name+"_sum "+c.sqlType+" NOT NULL DEFAULT 0", c.name+"_n INTEGER NOT NULL DEFAULT 0")
+		if c.max {
+			parts = append(parts, c.name+"_max "+c.sqlType+" NOT NULL DEFAULT 0")
+		}
+	}
+	// rebuildTable 用 name_new 建临时表，表名不是 metric_1m 本身。覆盖列按去掉这个后缀后的表决定：
+	// 只有 1 分钟表有 reported，上卷表才有 minutes/both。
+	if strings.TrimSuffix(table, "_new") == "metric_1m" {
+		parts = append(parts, "reported INTEGER NOT NULL DEFAULT 1", "observed INTEGER")
+	} else {
+		parts = append(parts, "minutes INTEGER", "observed INTEGER", "both INTEGER")
+	}
+	return "CREATE TABLE " + table + " (" + strings.Join(parts, ", ") + ", PRIMARY KEY (node_id, ts)) WITHOUT ROWID"
+}
+
+// execution 缺省 'null'：旧行没有上报执行环境，空对象会被校验拒绝（kind 未指定）。
+// facts_rev 缺省 0：本列出现之前写入的摘要只覆盖更少的列，不能当作当前字段集合已经确认。
+var migrationV34Config = []string{
+	`ALTER TABLE node_facts ADD COLUMN execution TEXT NOT NULL DEFAULT 'null'`,
+	`ALTER TABLE node_facts ADD COLUMN facts_rev INTEGER NOT NULL DEFAULT 0`,
 }
 
 // v33：探测表加 (task_id, node_id, ts) 索引，承载跨节点对比的按任务读取；不改动任何数据，
 // 旧行为全部不变，只是多出一条读取路径。仅指标层：探测表属于指标层，配置层无变化。
-// 列序的理由见 schema.go 的 probeByTaskIndex：前导等值键之后 ts 才能作为范围约束进入同一个 SEARCH。
+// 列序的理由见 probeByTaskIndexV33：前导等值键之后 ts 才能作为范围约束进入同一个 SEARCH。
 var migrationV33Metrics = []string{
 	probeByTaskIndexV33("probe_1m"),
 	probeByTaskIndexV33("probe_5m"),

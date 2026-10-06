@@ -67,7 +67,13 @@ const ddlNodeFacts = `CREATE TABLE node_facts (
   icmp_available INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   network TEXT NOT NULL DEFAULT '{}',
-  diagnostics TEXT NOT NULL DEFAULT 'null'
+  diagnostics TEXT NOT NULL DEFAULT 'null',
+  -- 执行环境（ExecutionScope 的 protojson）。'null' 表示这一行没有上报：旧 agent 没有该字段，
+  -- 与已上报的对象不同。缺省不是空对象——空对象的 kind 是未指定，校验会拒绝。
+  execution TEXT NOT NULL DEFAULT 'null',
+  -- 写入时的持久化字段集合版本。0 是本列出现之前的行：当时的摘要只覆盖更少的列，
+  -- 不能当作当前字段集合已经确认。
+  facts_rev INTEGER NOT NULL DEFAULT 0
 )`
 
 const ddlRegisterWindow = `CREATE TABLE register_window (

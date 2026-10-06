@@ -168,6 +168,7 @@ func TestObservabilityMigrationAndOldSnapshotsPreserveUnknown(t *testing.T) {
 			for _, q := range []string{
 				"DROP TABLE probe_cert",
 				"ALTER TABLE probe_task DROP COLUMN dns_server",
+				"ALTER TABLE node_facts DROP COLUMN execution", "ALTER TABLE node_facts DROP COLUMN facts_rev",
 				"ALTER TABLE node_facts DROP COLUMN diagnostics", "ALTER TABLE traffic DROP COLUMN net_counter_epoch",
 				"ALTER TABLE node DROP COLUMN maintenance", "ALTER TABLE node DROP COLUMN public_remark", "ALTER TABLE alert_event DROP COLUMN silenced", "ALTER TABLE alert_state DROP COLUMN fired_silenced",
 				"DROP TABLE silence", "DROP TABLE silence_node", "DROP TABLE silence_tag",
@@ -178,6 +179,9 @@ func TestObservabilityMigrationAndOldSnapshotsPreserveUnknown(t *testing.T) {
 			}
 		} else {
 			for _, q := range []string{
+				"ALTER TABLE metric_1m DROP COLUMN load1_per_core_sum", "ALTER TABLE metric_1m DROP COLUMN load1_per_core_n",
+				"ALTER TABLE metric_5m DROP COLUMN load1_per_core_sum", "ALTER TABLE metric_5m DROP COLUMN load1_per_core_n",
+				"ALTER TABLE metric_1h DROP COLUMN load1_per_core_sum", "ALTER TABLE metric_1h DROP COLUMN load1_per_core_n",
 				"DROP TABLE node_coverage", "ALTER TABLE metric_1m DROP COLUMN reported", "ALTER TABLE metric_1m DROP COLUMN observed",
 				"ALTER TABLE metric_5m DROP COLUMN minutes", "ALTER TABLE metric_5m DROP COLUMN observed", "ALTER TABLE metric_5m DROP COLUMN both",
 				"ALTER TABLE metric_1h DROP COLUMN minutes", "ALTER TABLE metric_1h DROP COLUMN observed", "ALTER TABLE metric_1h DROP COLUMN both",

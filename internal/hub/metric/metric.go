@@ -77,6 +77,9 @@ var Columns = []Column{
 	// steal 与 iowait 是 cpu_pct 之外的独立占比，各自成一系列，均可与 cpu_pct 同时显示。
 	{"cpu_steal_pct", MeanMax, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return m.GetCpuStealPct(), m.CpuStealPct != nil }},
 	{"cpu_iowait_pct", MeanMax, Float, "percent", func(m *heronv1.Metrics) (float64, bool) { return m.GetCpuIowaitPct(), m.CpuIowaitPct != nil }},
+	// 按核负载由 agent 在同一次采样里用 load1 除以当时的分母得到。hub 只存这个值，不再用 Facts 的核数去除：
+	// 分母变化不会重新解释已经入库的分钟。旧上报没有该字段时不入账（n 保持 0），与测得的 0 区分。
+	{"load1_per_core", Mean, Float, "", func(m *heronv1.Metrics) (float64, bool) { return m.GetLoad1PerCore(), m.Load1PerCore != nil }},
 }
 
 // 同一次采样的分子、分母必须都存在且容量非零；先算比例再聚合，不能把不同采样的均值相除。

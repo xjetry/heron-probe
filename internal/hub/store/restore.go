@@ -433,6 +433,16 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			if layer == "metrics" {
 				statements = migrationV33Metrics
 			}
+		case 34:
+			// 配置层只有 node_facts 的新列。指标层的表是 CREATE TABLE AS 拷出来的，没有新建库的列序与约束；
+			// 按冻结 DDL 重建后，恢复按列名搬运，旧行的按核负载列取默认值（n=0，没有采样）。
+			if layer == "config" {
+				statements = migrationV34Config
+			} else if layer == "metrics" {
+				if err := migrateV34Metrics(tx); err != nil {
+					return fmt.Errorf("migrate metrics snapshot to 34: %w", err)
+				}
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}

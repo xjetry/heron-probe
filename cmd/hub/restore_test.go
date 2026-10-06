@@ -281,6 +281,8 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			removeV34Config(t, cfg)
+			removeV34Metrics(t, met)
 			removeV32Config(t, cfg)
 			removeV30Config(t, cfg)
 			removeV29Config(t, cfg)
@@ -334,6 +336,22 @@ func removeV26Config(t *testing.T, config *sql.DB) {
 
 // 同上：32 号给 node 加了 public_remark，回填旧版本号前必须撤回。
 // 33 只在指标层的探测表上加了对比索引；拆库读用不到它，回退就是删除三个索引。
+// 34 给 node_facts 加了 execution 与 facts_rev，给三张指标表加了 load1_per_core 的 sum/n。
+// 回填更早的版本号之前必须撤掉，否则配置层的 ADD COLUMN 会撞上重复列。
+func removeV34Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "ALTER TABLE node_facts DROP COLUMN execution; ALTER TABLE node_facts DROP COLUMN facts_rev")
+}
+
+func removeV34Metrics(t *testing.T, metrics *sql.DB) {
+	t.Helper()
+	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+		for _, column := range []string{"load1_per_core_sum", "load1_per_core_n"} {
+			restoreExec(t, metrics, "ALTER TABLE "+table+" DROP COLUMN "+column)
+		}
+	}
+}
+
 func removeV33Metrics(t *testing.T, metrics *sql.DB) {
 	t.Helper()
 	for _, table := range []string{"probe_1m", "probe_5m", "probe_1h"} {
@@ -365,6 +383,7 @@ func TestRestoreV28ConfigSnapshotAddsDNSServerColumn(t *testing.T) {
 	config, metrics := restoreSnapshots(t)
 	cfg := restoreDB(t, config)
 	restoreExec(t, cfg, "INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order) VALUES (8,1,'legacy.example',60,1000,0,0,0)")
+	removeV34Config(t, cfg)
 	removeV32Config(t, cfg)
 	removeV30Config(t, cfg)
 	removeV29Config(t, cfg)

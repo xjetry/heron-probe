@@ -67,6 +67,14 @@ func TestRestoreMigratesV32MetricsSnapshotAndKeepsProbeByTaskIndexes(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 快照从当前库拷出，已带按核负载列；回填 32 之前必须撤掉，否则重建仍会把新列的值当作旧历史。
+	for _, table := range []string{"metric_1m", "metric_5m", "metric_1h"} {
+		for _, column := range []string{"load1_per_core_sum", "load1_per_core_n"} {
+			if _, err := old.Exec("ALTER TABLE " + table + " DROP COLUMN " + column); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	if _, err := old.Exec("UPDATE snapshot_meta SET schema_version = 32"); err != nil {
 		t.Fatal(err)
 	}

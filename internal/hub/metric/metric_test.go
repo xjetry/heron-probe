@@ -69,6 +69,7 @@ func TestColumnsCoverSpecifiedMetrics(t *testing.T) {
 		"net_rx_bps": {MeanMax, Int}, "net_tx_bps": {MeanMax, Int},
 		"disk_read_bps": {MeanMax, Int}, "disk_write_bps": {MeanMax, Int},
 		"cpu_steal_pct": {MeanMax, Float}, "cpu_iowait_pct": {MeanMax, Float},
+		"load1_per_core": {Mean, Float},
 	}
 	if len(Columns) != len(want) {
 		t.Fatalf("%d columns, want %d", len(Columns), len(want))
@@ -90,8 +91,8 @@ func TestEveryColumnDeclaresItsUnit(t *testing.T) {
 		if !allowed[c.Unit] {
 			t.Fatalf("%s: unit %q is not one of percent/bytes/bytes/s/count/\"\"", c.Name, c.Unit)
 		}
-		if c.Unit == "" && c.Name != "load1" {
-			t.Fatalf("%s: only load has no unit", c.Name)
+		if c.Unit == "" && c.Name != "load1" && c.Name != "load1_per_core" {
+			t.Fatalf("%s: only load readings have no unit", c.Name)
 		}
 	}
 }
