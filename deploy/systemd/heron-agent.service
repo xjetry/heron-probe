@@ -2,6 +2,17 @@
 Description=Heron monitoring agent
 # 采集只读 /proc、/sys 与配置；加固项若遮蔽了采集路径不会以启动失败显形，
 # 由真机验收的"服务与 root 手动运行指标对照"承载（spec §12、§14）。
+# 执行环境识别只看本服务进程自己的挂载与文件：cgroup 挂载根上的 cgroup.type，与被消费
+# /proc 文件（stat/meminfo/loadavg/cpuinfo）的来源（spec §4.2）。两条不变式：其一，服务
+# 进程不得有独立的 cgroup namespace——挂载根会变成服务自身的 cgroup，识别会把它误当
+# 执行环境；其二，服务必须能看到 /sys/fs/cgroup 与上述四个 /proc 文件，被遮蔽时对应
+# 资源缺读数而不是启动失败。本单元现有的私有挂载命名空间（ProtectSystem=strict、
+# PrivateTmp、ProtectHome）只添加只读重挂与私有 /tmp，不换这两个挂载的文件系统实例：
+# 2026-10-06 在 Incus guest（Debian 12 / systemd 252）用本单元实跑识别探针验证过，服务
+# 内的识别与同配置 guest 中由 shell 运行的结果逐字段相同，服务级 MemoryMax=128M 不改变
+# 识别与读数（spec §13-12 ⑤）。
+# 调整本节隔离或文件系统项前，须在新机器上重跑同款对照（§12 的服务-手动验收），
+# 未实测过的隔离项不得加入。
 After=network-online.target
 Wants=network-online.target
 # 异常退出后不设次数上限。Debian 12 / systemd 252.39-1~deb12u2 实测：默认 Restart=on-failure
