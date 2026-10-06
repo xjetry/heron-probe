@@ -256,13 +256,15 @@ enum PresentedReason {
 
 差分基线键：CPU 基线键是（来源身份, 有效核数）——环境 cgroup 路径以挂载根 cgroup 目录的 `dev:inode` 标识（容器重建即变），真根 / legacy 以 `/proc/stat` 固定标识加当次核数。键变化即丢弃旧基线、本周期按首样本处理：不共享分母的差分没有意义。`ResetRates` 与差分规则（首样本、回退、Δt ≤ 0 不设置）不变。
 
-`cpu_cores`（Facts）只来自本周期识别的有效核数，取上取整（1.5 核报 2）；识别不出是 0，不再退回 `runtime.NumCPU()`——那会把识别失败伪装成一个像样的值。旧 agent 一律报物理核数，这种版本漂移按 §4.6 接受：该值只做展示与按核负载归一的分母，不参与 hub 侧其他计算。`load1_per_core = load1 ÷ execution.load_cores`，分母来自同一快照（真根或 v1：loadavg 与 cpuinfo 都为 procfs 时的主机核数；环境 cgroup：负载范围为主机、且 cpuinfo 为 procfs时），缺失即不设置。`Facts.execution` 由 agent 构造后先过 `agentwire.ValidateExecutionScope` 自检（枚举完备、kind 与四种范围的组合、容量的正性与范围配套、说明去重至多 8 个）：非法块即本方构造 bug，不发出（hub 侧另做同形校验）。
+`cpu_cores`（Facts）只来自本周期识别的有效核数，取上取整（1.5 核报 2）；识别不出是 0，不再退回 `runtime.NumCPU()`——那会把识别失败伪装成一个像样的值。旧 agent 一律报物理核数，这种版本漂移按 §4.6 接受：该值只做展示，不参与 hub 侧计算，也不再当作按核负载的分母。`load1_per_core = load1 ÷ execution.load_cores`，分母来自同一快照（真根或 v1：loadavg 与 cpuinfo 都为 procfs 时的主机核数；环境 cgroup：负载范围为主机、且 cpuinfo 为 procfs时），缺失即不设置；出现时 `load1` 必然同时出现。hub 原样保存这个商，不再用 Facts 的核数去除。`Facts.execution` 由 agent 构造后先过 `agentwire.ValidateExecutionScope` 自检（枚举完备、kind 与四种范围的组合、容量的正性与范围配套、说明去重至多 8 个）：非法块即本方构造 bug，不发出。hub 在上报准入与快照恢复读 `node_facts` 时调用同一个函数；`cpu_cores` 另有上界，与执行环境容量共用 `MaxScopeCores`（65536），超过整条拒绝。`execution` 缺失（旧 agent）存 JSON null，与已上报的对象不同，管理端显示「未上报」，不进公开投影。
 
 darwin 恒为主机：识别快照固定为 host 范围、核数取 `hw.logicalcpu`，不经过上述判据。
 
 ### 4.3 对账
 
 探测任务、主机信息与上报间隔通过版本 / 摘要对账，hub 在响应里补齐差异。Facts 包含管理面白名单诊断：生效网卡包含/排除规则、实际计入名称与总数、固定采集失败类别、实际生效间隔。采集失败不上传原始错误文本；规则不含任意配置，凭据与命令行没有协议字段。诊断随内容变化推进 Facts 摘要，不加入每次采样时间；内容未变不会触发重复写库。旧 Agent 未提供时为 nil，存储为 JSON null，不等同于已提供但无失败。公开 Facts 显式保留该字段号和名称，不转交主题。管理详情按 10 秒轮询，显示最近保存时间并说明不是实时健康保证。
+
+`node_facts.facts_rev` 记录写入时的持久化字段集合版本（常量 `factsPersistRev`）。启动加载摘要时只采用版本相等的行：升级前的行与旧快照恢复出来的行缺省是 0，摘要没有覆盖现在要存的字段（含 `execution`），即使 agent 不重启、Facts 内容也没变，下一次上报仍会重新索取并按当前版本落库。旧 agent 重新索取后仍是未上报，不是某种默认范围。以后持久化的字段集合变了，只把这个常量加一。
 
 网卡规则每组最多 64 项、每项 128 字节，由本机启动和 Hub 上报使用共享校验；包含非空时上报的排除为空。接口最多展示排序后的前 128 项（每项 64 字节），总数明确表示是否截断；集合摘要和累计计数仍使用全集。上报、落库、读库和快照恢复共用诊断校验。schema 26 为 node_facts 增加 diagnostics、为 traffic 增加 net_counter_epoch，旧库和配置快照迁移时分别默认为 null 和空标识。
 
@@ -454,6 +456,7 @@ CREATE TABLE metric_1m (
 - 流量列是字节增量的**和**（描述表里的 `Sum` 种类）而不是均值：`rx_bytes_n` 记录该分钟有多少次上报入了账——计数器缺失、以及按 §7 只进总量不进桶的增量都不计数，因此 `rx_bytes_n = 0` 与其他列一样是空洞而不是 0。查询对 `Sum` 列下发 `sum`（`MetricSample.sum`）而不下发均值与最大值，速率 = `sum / 桶长`；上卷仍是求和。
 - `net_rx_bps` / `net_tx_bps` 单独使用 `MeanMax` 聚合，记录 agent 本地采样速率（bytes/s）的 sum、n、max；上卷保留最大采样值，不从请求到达间隔推算。网络图均值仍采用上述流量口径，峰值取速率 max。schema 21 给三个指标层追加列，旧行 n=0，不伪造旧历史峰值；配置层和指标层快照恢复同步迁移。
 - `disk_read_bps` / `disk_write_bps` / `cpu_steal_pct` / `cpu_iowait_pct` 同为 `MeanMax`：磁盘速率记整盘设备的采样速率（bytes/s），两个 CPU 占比记 `/proc/stat` 差分占比（%）。schema 28 给三个指标层各追加这四个指标的 sum、n、max（共 12 列，`NOT NULL DEFAULT 0`），旧行 n=0 即空洞，不把缺失伪装成已测的零速率或零占用；配置层无变化，指标层快照恢复同步迁移。
+- `load1_per_core` 是 `Mean`：agent 在同一次采样里算好的按核负载，无单位。schema 34 把它追加在描述表末尾，三个指标层各有 sum 与 n。覆盖列已经排在指标列之后，所以迁移按冻结 DDL 重建表，而不是 `ADD COLUMN` 加到表尾。旧行 n=0，升级前的窗口这一列是空洞，不是 0。
 
 主键顺序即唯一查询路径（某节点 + 时间窗），`WITHOUT ROWID` 使主键索引就是表本身。
 
@@ -514,7 +517,7 @@ QueryMetrics 两服务均返回与 ts 对齐的 coverage 三计数，以及独�
 
 ### 6.6 其余表
 
-`node`（名称、排序、是否公开、备注、公开备注 `public_remark`（站长写给访客的一行说明，空串即没有；准入在 api 的共享准入层：单行、至多 100 个 Unicode 码点、拒绝控制字符，超长拒绝不截断；随 `UpdateNode` 整体替换，创建时不可设置）、离线宽限期、流量重置日、维护开关 `maintenance`（§9.5）、token_hash，§9.4 的计费五列：价格、币种、周期、到期日、自动续期，以及 §4.9 的 `last_source`、`country`、`country_ip`、`country_pin`）、`node_facts`（facts_hash 与各静态字段）、`traffic`、`probe_task`、`probe_task_node`、`probe_meta`（任务版本号）、`probe_cert`（(节点, 任务) 的最新一份证书到期观测，§8.3；随节点一起消失的表之一）、`alert_rule`（到期规则另有 `days_before`，其余种类为 NULL）、`alert_rule_node`（显式作用域；`alert_rule.all_nodes` 为真时不存行且覆盖全部节点，为假时无行表示不覆盖任何节点——删除作用域里最后一个节点不会放宽到全部）、`alert_rule_channel`、`alert_state`（到期规则另带进入 `firing` 时的到期日 `fired_expires_on`，恢复文案据它判断日期是否改过，§9.2；另带 `fired_silenced`，§9.5）、`alert_event`（带 `silenced`，§9.5）、`alert_delivery`（每事件每渠道一行投递记录，`batch_id` 非空、同批各行共享尝试计数与结果，`not_before` 为下一次尝试的最早时刻；失败类别、HTTP 状态码与错误原文分列存放，同一次发送覆盖的多行共享 `batch_id`，见 §9.3）、`notify_channel`、`silence`（§9.5 的维护静默：名称、启用、作用域形状与 `alert_rule` 相同、种类、窗口、原因、创建时刻）、`silence_node`（显式作用域，语义同 `alert_rule_node`）与 `silence_tag`（动态标签选择器，§10 标签一条）、`setting`、`admin`、`admin_session`、`api_token`（名称、token_hash、创建时间、最后使用时间）、`register_window`、`rollup_state`、`maintenance_state`（prune 与上卷的完成时刻，§6.5）、`tag`（名称）与 `node_tag`（节点与标签多对多，§10 的标签一条）、`theme`（主题身份）、`theme_version`（以 ID+SHA256 标识的不可变版本元数据、SDK、来源和公开发布状态）、`theme_selection`（全站当前与回滚引用）、`theme_file`（按 ID+摘要+路径存储展开文件）与 `theme_package`（原始 ZIP、本次落库随机 revision、uploaded 标记；上传确认同时匹配 ID、digest、revision；文件和原包不进快照层）、`restore_record`（§6.7）。
+`node`（名称、排序、是否公开、备注、公开备注 `public_remark`（站长写给访客的一行说明，空串即没有；准入在 api 的共享准入层：单行、至多 100 个 Unicode 码点、拒绝控制字符，超长拒绝不截断；随 `UpdateNode` 整体替换，创建时不可设置）、离线宽限期、流量重置日、维护开关 `maintenance`（§9.5）、token_hash，§9.4 的计费五列：价格、币种、周期、到期日、自动续期，以及 §4.9 的 `last_source`、`country`、`country_ip`、`country_pin`）、`node_facts`（facts_hash 与各静态字段，另有 `execution`（执行环境的 protojson，`'null'` 表示未上报）与 `facts_rev`（持久化字段集合版本，旧行是 0）；schema 34 同时给三张指标表加 `load1_per_core`）、`traffic`、`probe_task`、`probe_task_node`、`probe_meta`（任务版本号）、`probe_cert`（(节点, 任务) 的最新一份证书到期观测，§8.3；随节点一起消失的表之一）、`alert_rule`（到期规则另有 `days_before`，其余种类为 NULL）、`alert_rule_node`（显式作用域；`alert_rule.all_nodes` 为真时不存行且覆盖全部节点，为假时无行表示不覆盖任何节点——删除作用域里最后一个节点不会放宽到全部）、`alert_rule_channel`、`alert_state`（到期规则另带进入 `firing` 时的到期日 `fired_expires_on`，恢复文案据它判断日期是否改过，§9.2；另带 `fired_silenced`，§9.5）、`alert_event`（带 `silenced`，§9.5）、`alert_delivery`（每事件每渠道一行投递记录，`batch_id` 非空、同批各行共享尝试计数与结果，`not_before` 为下一次尝试的最早时刻；失败类别、HTTP 状态码与错误原文分列存放，同一次发送覆盖的多行共享 `batch_id`，见 §9.3）、`notify_channel`、`silence`（§9.5 的维护静默：名称、启用、作用域形状与 `alert_rule` 相同、种类、窗口、原因、创建时刻）、`silence_node`（显式作用域，语义同 `alert_rule_node`）与 `silence_tag`（动态标签选择器，§10 标签一条）、`setting`、`admin`、`admin_session`、`api_token`（名称、token_hash、创建时间、最后使用时间）、`register_window`、`rollup_state`、`maintenance_state`（prune 与上卷的完成时刻，§6.5）、`tag`（名称）与 `node_tag`（节点与标签多对多，§10 的标签一条）、`theme`（主题身份）、`theme_version`（以 ID+SHA256 标识的不可变版本元数据、SDK、来源和公开发布状态）、`theme_selection`（全站当前与回滚引用）、`theme_file`（按 ID+摘要+路径存储展开文件）与 `theme_package`（原始 ZIP、本次落库随机 revision、uploaded 标记；上传确认同时匹配 ID、digest、revision；文件和原包不进快照层）、`restore_record`（§6.7）。
 
 schema 版本记在 `PRAGMA user_version`，迁移为按版本号顺序执行的函数；空库直接建到当前版本，不重放历史。打开库时的 schema 策略由调用方显式给出：只有 `serve` 迁移旧库，每迁一步记一行日志（from、to），空库建成时也记一行；离线子命令（`passwd`、`token`、`stats`、`node`、`window`）打开比自己旧的库时拒绝并提示先用新版本 `serve` 升级（升级前备份）——否则运维用新二进制看一眼 `stats` 就把库单向迁走，旧 hub 下次重启起不来；两种策略下建空库都允许（没有旧数据可丢）——空库指没有任何对象的文件；有表却没有版本号、或版本号为负的文件不是本项目的库，拒绝打开而不是当作空库建表或当作旧库去迁（否则 `stats --db` 指错文件会往别人的库里建出全部表）；比二进制新的库都拒绝。
 
@@ -597,14 +600,14 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 
 - 离线：节点超过宽限期未上报。宽限期按节点可配，下限为 TTL（§4.4），由保存规则时的显式校验承载：宽限期短于 TTL 会在面板仍显示该节点在线时发出离线告警，两处读的是同一个 `last_seen`，口径必须同向。
 - 探测：某任务在某节点上的丢包率或平均 rtt 连续 N 分钟超过阈值。数据源为 `probe_1m`。
-- 资源：节点的资源指标连续 N 分钟达到触发阈值。数据源为 `metric_1m` 的分钟均值：内存使用率、磁盘使用率、CPU 占比（`cpu_sum / cpu_n`）、按核负载（`load1_sum / load1_n` ÷ `node_facts.cpu_cores`）、网卡收发速率（`net_rx_bps_sum / net_rx_bps_n`、`net_tx_bps_sum / net_tx_bps_n`）。触发阈值范围按指标：百分比 (0,100]，按核负载 (0,64]，速率 (0,2^40] bytes/s（面板以 Mbps 输入，保存前换算成 bytes/s）。按核负载按核归一而不用原始 load1：64 核与 2 核机器上同一个原始阈值含义完全不同，归一后一条规则可覆盖异构节点；`cpu_cores` 是 agent 所在执行环境的有效核数（§4.2，容器限额下取限额值），容器里的归一结果同样准确。
+- 资源：节点的资源指标连续 N 分钟达到触发阈值。数据源为 `metric_1m` 的分钟均值：内存使用率、磁盘使用率、CPU 占比（`cpu_sum / cpu_n`）、按核负载（`load1_per_core_sum / load1_per_core_n`）、网卡收发速率（`net_rx_bps_sum / net_rx_bps_n`、`net_tx_bps_sum / net_tx_bps_n`）。触发阈值范围按指标：百分比 (0,100]，按核负载 (0,64]，速率 (0,2^40] bytes/s（面板以 Mbps 输入，保存前换算成 bytes/s）。按核负载用 agent 采样时算好的商，不再用 `node_facts.cpu_cores` 去除：64 核与 2 核机器上同一个原始 load1 含义不同，归一发生在采样当时，分母后来变化不会改写已经入库的分钟。旧 agent 没有这一列时该分钟无读数。
 - 到期：节点的到期日距今不超过 `days_before` 天（1–365，含已过期的负数）。数据源为 `node` 的到期日（§9.4）；没有到期日的节点不参与。
 - 证书到期：某任务在某节点上观测到的服务端证书到期日距今不超过 `days_before` 天（1–365，含已过期）。数据源为 `probe_cert`（§8.3）的最新一份观测；没有观测行的（节点, 任务）即无读数，不参与评估、也不恢复（已有状态原样保留，行随任务或节点删除时按候选集撤销规则清除）。规则必须携带 `task_id`，且任务必须是 target 为 `https://` 的 HTTP 任务——只有它能带回证书观测；保存规则在事务内核验，把被引用的任务改成非 `https://` 或删除它同样被事务内守卫拒绝。评估与到期规则同一次扫描（§9.2 的五处时机），另在 ingest 写入的观测使 `not_after` 发生变化时立即评估一次——续期（证书更换）后不必等到日界才恢复。
 - 规则的探测专用字段里，任务只允许探测与证书到期规则携带，指标只允许探测规则携带，阈值与持续分钟只允许探测与资源规则携带；`days_before` 只允许到期与证书到期规则携带；资源专用字段（资源指标、恢复阈值）只允许资源规则携带。越界组合由 `CheckRule` 显式拒绝（`InvalidArgument`）；保存入口与 Load 路径共用它。此前离线规则带探测字段会被存储层静默清零，这条检查随到期规则一起补上——静默清零是放宽方向，调用方发了什么、存下的却是零值，无从察觉。
 
 ### 9.2 状态机
 
-资源规则使用 `metric_1m` 的分钟均值（各指标的列与范围见 §9.1）。比例在同一次原始采样中计算后再聚合，不以已用量均值除以另一时刻容量。按核负载在节点没有 `node_facts` 或核数为 0 时该分钟视为缺失读数——既不触发也不恢复，不退回原始 load1。恢复阈值在 [0,触发阈值)，连续 1–60 个完整分钟达到触发阈值才触发；连续相同长度窗口不高于恢复阈值才恢复。滞回区间和缺失读数均不能令 firing 恢复。分钟落库之后统一评估探测与资源规则。
+资源规则使用 `metric_1m` 的分钟均值（各指标的列与范围见 §9.1）。比例在同一次原始采样中计算后再聚合，不以已用量均值除以另一时刻容量。按核负载在该分钟没有 `load1_per_core` 采样（旧 agent，或采样时分母缺失）时视为缺失读数——既不触发也不恢复，不退回原始 load1，也不再查 Facts 的核数。恢复阈值在 [0,触发阈值)，连续 1–60 个完整分钟达到触发阈值才触发；连续相同长度窗口不高于恢复阈值才恢复。滞回区间和缺失读数均不能令 firing 恢复。分钟落库之后统一评估探测与资源规则。
 
 每（规则 × 节点）一个状态：`ok → pending → firing → ok`，进入 `firing` 发告警通知，回到 `ok` 发恢复通知。状态持久化在 `alert_state`，hub 重启不会重复触发，也不会忘记尚未恢复的告警。
 

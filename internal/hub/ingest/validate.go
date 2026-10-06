@@ -30,6 +30,7 @@ func validateMetrics(m *heronv1.Metrics) error {
 	}{
 		{"cpu_pct", m.CpuPct}, {"cpu_steal_pct", m.CpuStealPct}, {"cpu_iowait_pct", m.CpuIowaitPct},
 		{"load1", m.Load1}, {"load5", m.Load5}, {"load15", m.Load15},
+		{"load1_per_core", m.Load1PerCore},
 	}
 	for _, f := range floats {
 		if f.v != nil && (math.IsNaN(*f.v) || math.IsInf(*f.v, 0) || *f.v < 0) {
@@ -53,6 +54,11 @@ func validateMetrics(m *heronv1.Metrics) error {
 	}
 	if set != 0 && set != 3 {
 		return errors.New("load: load1, load5 and load15 must be given together")
+	}
+	// 按核负载由 agent 在同一次采样里算好。它出现时 load1 必须同时出现：没有分子的商没有意义，
+	// 也不能把缺失的 load1 补成 0 再去除。合法的 0 与字段缺失都保留。
+	if m.Load1PerCore != nil && m.Load1 == nil {
+		return errors.New("load1_per_core: requires load1")
 	}
 	return nil
 }
@@ -136,11 +142,17 @@ func validateFacts(f *heronv1.Facts) error {
 				return err
 			}
 		}
+		if err := agentwire.ValidateCPUCores(f.GetCpuCores()); err != nil {
+			return err
+		}
 	}
 	if err := agentwire.ValidateNetwork(f.GetNetwork()); err != nil {
 		return err
 	}
-	return agentwire.ValidateDiagnostics(f.GetDiagnostics())
+	if err := agentwire.ValidateDiagnostics(f.GetDiagnostics()); err != nil {
+		return err
+	}
+	return agentwire.ValidateExecutionScope(f.GetExecution())
 }
 
 func sanitizeFacts(f *heronv1.Facts) {

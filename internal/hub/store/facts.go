@@ -10,12 +10,23 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
+// factsPersistRev 是当前写入 node_facts 的 Facts 字段集合版本。只有 facts_rev 等于它的行，
+// 摘要才覆盖了这一版要持久化的字段；旧版写入的行（迁移缺省 0）摘要对不上，启动加载时不采用，
+// 从而重新索取。以后持久化的字段集合变了，只把这个常量加一。
+const factsPersistRev = 1
+
 func (s *Store) factsTx(nodeID int64, hash uint64, f *heronv1.Facts) func(*sql.Tx) error {
 	return func(tx *sql.Tx) error {
+		if err := agentwire.ValidateCPUCores(f.GetCpuCores()); err != nil {
+			return err
+		}
 		if err := agentwire.ValidateNetwork(f.GetNetwork()); err != nil {
 			return err
 		}
 		if err := agentwire.ValidateDiagnostics(f.GetDiagnostics()); err != nil {
+			return err
+		}
+		if err := agentwire.ValidateExecutionScope(f.GetExecution()); err != nil {
 			return err
 		}
 		exists, err := nodeExistsTx(tx, nodeID)
@@ -36,13 +47,22 @@ func (s *Store) factsTx(nodeID int64, hash uint64, f *heronv1.Facts) func(*sql.T
 				return err
 			}
 		}
-		_, err = tx.Exec(`INSERT INTO node_facts (node_id, facts_hash, hostname, os, kernel, arch, virtualization, cpu_model, cpu_cores, agent_version, icmp_available, updated_at, network, diagnostics)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		// 'null' 表示未上报。空对象的 kind 是未指定，读回来会被校验拒绝，不能拿它当缺省。
+		execution := []byte("null")
+		if f.GetExecution() != nil {
+			execution, err = protojson.Marshal(f.GetExecution())
+			if err != nil {
+				return err
+			}
+		}
+		_, err = tx.Exec(`INSERT INTO node_facts (node_id, facts_hash, hostname, os, kernel, arch, virtualization, cpu_model, cpu_cores, agent_version, icmp_available, updated_at, network, diagnostics, execution, facts_rev)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (node_id) DO UPDATE SET facts_hash = excluded.facts_hash, hostname = excluded.hostname, os = excluded.os,
 			kernel = excluded.kernel, arch = excluded.arch, virtualization = excluded.virtualization, cpu_model = excluded.cpu_model,
-			cpu_cores = excluded.cpu_cores, agent_version = excluded.agent_version, icmp_available = excluded.icmp_available, updated_at = excluded.updated_at, network = excluded.network, diagnostics = excluded.diagnostics`,
+			cpu_cores = excluded.cpu_cores, agent_version = excluded.agent_version, icmp_available = excluded.icmp_available, updated_at = excluded.updated_at, network = excluded.network, diagnostics = excluded.diagnostics,
+			execution = excluded.execution, facts_rev = excluded.facts_rev`,
 			nodeID, int64(hash), f.GetHostname(), f.GetOs(), f.GetKernel(), f.GetArch(), f.GetVirtualization(),
-			f.GetCpuModel(), f.GetCpuCores(), f.GetAgentVersion(), f.GetIcmpAvailable(), s.clk.Now().Unix(), string(network), string(diagnostics))
+			f.GetCpuModel(), f.GetCpuCores(), f.GetAgentVersion(), f.GetIcmpAvailable(), s.clk.Now().Unix(), string(network), string(diagnostics), string(execution), factsPersistRev)
 		return err
 	}
 }
@@ -77,6 +97,21 @@ func decodeDiagnostics(text string) (*heronv1.AgentDiagnostics, error) {
 	return diagnostics, nil
 }
 
+// 'null' 表示未上报，与已上报的对象不同。读库和恢复共用同一校验，不能绕过上报的范围约束。
+func decodeExecution(text string) (*heronv1.ExecutionScope, error) {
+	if strings.Trim(text, " \t\r\n") == "null" {
+		return nil, nil
+	}
+	execution := &heronv1.ExecutionScope{}
+	if err := protojson.Unmarshal([]byte(text), execution); err != nil {
+		return nil, err
+	}
+	if err := agentwire.ValidateExecutionScope(execution); err != nil {
+		return nil, err
+	}
+	return execution, nil
+}
+
 func (s *Store) UpsertFacts(ctx context.Context, nodeID int64, hash uint64, f *heronv1.Facts) error {
 	return s.write(ctx, s.factsTx(nodeID, hash, f))
 }
@@ -86,9 +121,11 @@ func (s *Store) UpsertFactsAsync(nodeID int64, hash uint64, f *heronv1.Facts, do
 	s.writeAsync(s.factsTx(nodeID, hash, f), done)
 }
 
-// FactsHashes 存的是 int64，读回按位转回 uint64；fixed64 的全部取值都能往返。
+// FactsHashes 只返回当前字段集合已经确认过的摘要。facts_rev 不等于 factsPersistRev 的行
+// （升级前写入、或旧快照恢复出来的）摘要没有覆盖现在持久化的字段，不能当成 hub 已持有。
+// 存的是 int64，读回按位转回 uint64；fixed64 的全部取值都能往返。
 func (s *Store) FactsHashes(ctx context.Context) (map[int64]uint64, error) {
-	rows, err := s.r.QueryContext(ctx, "SELECT node_id, facts_hash FROM node_facts")
+	rows, err := s.r.QueryContext(ctx, "SELECT node_id, facts_hash FROM node_facts WHERE facts_rev = ?", factsPersistRev)
 	if err != nil {
 		return nil, err
 	}
@@ -106,15 +143,4 @@ func (s *Store) FactsHashes(ctx context.Context) (map[int64]uint64, error) {
 
 func (s *Store) QueryFacts(ctx context.Context, nodeID int64, hostname, os *string) error {
 	return s.r.QueryRowContext(ctx, "SELECT hostname, os FROM node_facts WHERE node_id = ?", nodeID).Scan(hostname, os)
-}
-
-// CpuCores 返回节点上报的 CPU 核数；没有 facts 行与 cpu_cores = 0 同义，都返回 0，
-// 调用方（按核负载告警）据此把该节点视为无读数，不需要区分两种缺失。
-func (s *Store) CpuCores(ctx context.Context, nodeID int64) (int64, error) {
-	var cores int64
-	err := s.r.QueryRowContext(ctx, "SELECT cpu_cores FROM node_facts WHERE node_id = ?", nodeID).Scan(&cores)
-	if err == sql.ErrNoRows {
-		return 0, nil
-	}
-	return cores, err
 }

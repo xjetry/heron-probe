@@ -589,15 +589,15 @@ func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []st
 }
 
 func validateSnapshotFacts(ctx context.Context, tx *sql.Tx) error {
-	rows, err := tx.QueryContext(ctx, "SELECT node_id,network,diagnostics FROM config.node_facts")
+	rows, err := tx.QueryContext(ctx, "SELECT node_id,network,diagnostics,execution FROM config.node_facts")
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id int64
-		var network, diagnostics string
-		if err := rows.Scan(&id, &network, &diagnostics); err != nil {
+		var network, diagnostics, execution string
+		if err := rows.Scan(&id, &network, &diagnostics, &execution); err != nil {
 			return err
 		}
 		if _, err := decodeNetwork(network); err != nil {
@@ -605,6 +605,9 @@ func validateSnapshotFacts(ctx context.Context, tx *sql.Tx) error {
 		}
 		if _, err := decodeDiagnostics(diagnostics); err != nil {
 			return fmt.Errorf("config node %d diagnostics: %w", id, err)
+		}
+		if _, err := decodeExecution(execution); err != nil {
+			return fmt.Errorf("config node %d execution: %w", id, err)
 		}
 	}
 	return rows.Err()

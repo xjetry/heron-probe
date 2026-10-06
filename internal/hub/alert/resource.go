@@ -37,14 +37,12 @@ func NextResource(current store.AlertState, samples []MinuteSample, recovery flo
 	return store.StateOK, nil
 }
 
-// resourceIndex 把资源指标映射到取值列；常量值与列名相同的指标按名命中，
-// cpu_pct 与 load1_per_core 是语义名，分别取 cpu 与 load1 列。
+// resourceIndex 把资源指标映射到取值列；常量值与列名相同的指标按名命中。
+// cpu_pct 是语义名，列名是 cpu。load1_per_core 就是列名：值已是按核负载，这里不再换算。
 func resourceIndex(m store.ResourceMetric) int {
 	switch m {
 	case store.MetricCpuPct:
 		return metric.Index("cpu")
-	case store.MetricLoad1PerCore:
-		return metric.Index("load1")
 	default:
 		return metric.Index(string(m))
 	}
@@ -112,28 +110,12 @@ func (e *Engine) EvaluateResources(ctx context.Context, minuteTS int64) error {
 				errs = append(errs, err)
 				continue
 			}
-			// 按核负载的分母来自节点 facts；无 facts 或核数为 0 时这一分钟无读数，
-			// 不退回原始 load1——同一个原始阈值在 64 核与 2 核机器上含义完全不同（§9.2）。
-			cores := float64(0)
-			if rule.ResourceMetric == store.MetricLoad1PerCore {
-				c, err := e.st.CpuCores(ctx, node.ID)
-				if err != nil {
-					errs = append(errs, err)
-					continue
-				}
-				cores = float64(c)
-			}
+			// 按核负载读 load1_per_core 列的分钟均值。agent 没报这一列时 n=0，这一分钟无读数，
+			// 既不触发也不恢复，也不退回 load1。分母变化不会改写已经入库的分钟：当时的商就在这一列里。
 			samples := make([]MinuteSample, rule.ForMinutes)
 			index := resourceIndex(rule.ResourceMetric)
 			for _, row := range rows {
 				value, present := row.Bucket.Mean(index)
-				if rule.ResourceMetric == store.MetricLoad1PerCore {
-					if present && cores > 0 {
-						value /= cores
-					} else {
-						value, present = 0, false
-					}
-				}
 				samples[(row.TS-from)/60] = MinuteSample{Present: present, Value: value, Exceeds: value >= rule.Threshold}
 			}
 			next, transition := NextResource(e.current(stateKey{rule.ID, node.ID}), samples, rule.RecoveryThreshold)

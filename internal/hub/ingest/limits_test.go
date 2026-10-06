@@ -150,7 +150,12 @@ func maxHostReport(t *testing.T) *heronv1.ReportRequest {
 					value = protoreflect.ValueOfString(strings.Repeat("a", 64))
 				}
 			case protoreflect.Uint32Kind:
-				value = protoreflect.ValueOfUint32(math.MaxUint32)
+				// cpu_cores 的准入上界是 MaxScopeCores，比 uint32 最大值更紧；守卫量的是现在会接受的最大载荷。
+				n := uint32(math.MaxUint32)
+				if fd.FullName() == "heron.v1.Facts.cpu_cores" {
+					n = agentwire.MaxScopeCores
+				}
+				value = protoreflect.ValueOfUint32(n)
 			case protoreflect.Uint64Kind:
 				value = protoreflect.ValueOfUint64(math.MaxUint64)
 			case protoreflect.BoolKind:

@@ -49,7 +49,7 @@ func TestResourceContinuousWindowsAndMissingReadings(t *testing.T) {
 	}
 }
 
-// 四个新指标的窗口语义与既有百分比指标同形：写入值是列的原始读数（按核负载写原始 load1），
+// 四个新指标的窗口语义与既有百分比指标同形：写入值就是列的读数（按核负载写 agent 算好的商，不再由 hub 去除），
 // high 达到阈值、higher 更高、mid 落在滞回区间、low 低于恢复阈值；无写入的分钟验证缺读数不恢复。
 func TestResourceNewMetricWindows(t *testing.T) {
 	for _, tc := range []struct {
@@ -66,14 +66,10 @@ func TestResourceNewMetricWindows(t *testing.T) {
 		{"cpu_pct", store.MetricCpuPct, "cpu", 90, 80, 90, 95, 85, 75},
 		{"net_rx_bps", store.MetricNetRxBps, "net_rx_bps", 1.25e8, 1e8, 1.25e8, 1.3e8, 1.1e8, 9e7},
 		{"net_tx_bps", store.MetricNetTxBps, "net_tx_bps", 1.25e8, 1e8, 1.25e8, 1.3e8, 1.1e8, 9e7},
-		// 节点 4 核：按核负载 2 触发、1 恢复，写入原始 load1。
-		{"load1_per_core", store.MetricLoad1PerCore, "load1", 2, 1, 8, 10, 6, 3},
+		{"load1_per_core", store.MetricLoad1PerCore, "load1_per_core", 2, 1, 2, 2.5, 1.5, 0.5},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
-			if tc.metric == store.MetricLoad1PerCore {
-				must(t, f.st.UpsertFacts(t.Context(), f.ids[0], 1, &heronv1.Facts{CpuCores: 4}))
-			}
 			r := f.rule(t, store.AlertRule{Name: "资源", Kind: store.KindResource, Enabled: true, NodeIDs: f.ids[:1], ResourceMetric: tc.metric, Threshold: tc.threshold, RecoveryThreshold: tc.recovery, ForMinutes: 2})
 			base := f.clk.Now().Unix()
 			write := func(offset int64, value float64) {
@@ -116,16 +112,22 @@ func TestResourceNewMetricWindows(t *testing.T) {
 	}
 }
 
-// 按核负载的分母来自 node_facts：没有 facts 或核数为 0 时该分钟无读数，既不触发也不恢复，
-// 不退回原始 load1。
-func TestResourceLoad1PerCoreMissingCores(t *testing.T) {
+// 按核负载只看 load1_per_core 列。旧 agent 只报 load1 时该分钟无读数，既不触发也不恢复。
+// 列里的商是采样当时算好的：之后 Facts 的核数变了，已经入库的分钟仍按原值评估，不再除一次。
+func TestResourceLoad1PerCoreReadsTheColumn(t *testing.T) {
 	f := newFixture(t)
+	// 核数故意与列里的商不一致：3 是按 2 核算的，Facts 里是 4。读回 Facts 再除、或对列再除，都到不了阈值 2。
+	must(t, f.st.UpsertFacts(t.Context(), f.ids[0], 1, &heronv1.Facts{CpuCores: 4}))
 	r := f.rule(t, store.AlertRule{Name: "按核负载", Kind: store.KindResource, Enabled: true, NodeIDs: f.ids[:1], ResourceMetric: store.MetricLoad1PerCore, Threshold: 2, RecoveryThreshold: 1, ForMinutes: 2})
 	base := f.clk.Now().Unix()
-	write := func(offset int64, load1 float64) {
+	write := func(offset int64, perCore float64, withColumn bool) {
 		b := metric.NewBucket()
-		i := metric.Index("load1")
-		b.Sum[i], b.N[i] = load1, 1
+		load := metric.Index("load1")
+		b.Sum[load], b.N[load] = perCore*2, 1
+		if withColumn {
+			i := metric.Index("load1_per_core")
+			b.Sum[i], b.N[i] = perCore, 1
+		}
 		_, err := f.st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: f.ids[0], TS: base + offset*60, CoverageStart: base, Bucket: b}}})
 		must(t, err)
 	}
@@ -133,27 +135,25 @@ func TestResourceLoad1PerCoreMissingCores(t *testing.T) {
 		must(t, f.e.EvaluateResources(t.Context(), base+offset*60))
 		wantState(t, f.e, r.ID, f.ids[0], want)
 	}
-	// 从未离开 ok 的规则×节点没有状态记录：缺读数不评估时断言"无记录或 ok"。
 	evalOK := func(offset int64) {
 		must(t, f.e.EvaluateResources(t.Context(), base+offset*60))
 		if got := stateOf(f.e, r.ID, f.ids[0]); got != "" && got != store.StateOK {
 			t.Fatalf("node %d state=%q want ok or no record", f.ids[0], got)
 		}
 	}
-	write(0, 100)
-	write(1, 100)
+	write(0, 3, false)
+	write(1, 3, false)
 	evalOK(1)
-	must(t, f.st.UpsertFacts(t.Context(), f.ids[0], 1, &heronv1.Facts{CpuCores: 4}))
-	write(3, 100)
-	eval(3, store.StatePending)
-	write(4, 100)
+	write(2, 3, true)
+	eval(2, store.StatePending)
+	write(3, 3, true)
+	eval(3, store.StateFiring)
+	must(t, f.st.UpsertFacts(t.Context(), f.ids[0], 2, &heronv1.Facts{CpuCores: 100}))
+	write(4, 3, true)
 	eval(4, store.StateFiring)
-	must(t, f.st.UpsertFacts(t.Context(), f.ids[0], 2, &heronv1.Facts{CpuCores: 0}))
-	write(5, 0.1)
+	write(5, 3, false)
 	eval(5, store.StateFiring)
-	write(6, 0.1)
-	eval(6, store.StateFiring)
-	must(t, f.st.UpsertFacts(t.Context(), f.ids[0], 3, &heronv1.Facts{CpuCores: 4}))
-	write(7, 2)
+	write(6, 0.5, true)
+	write(7, 0.5, true)
 	eval(7, store.StateOK)
 }

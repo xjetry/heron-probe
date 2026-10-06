@@ -33,8 +33,8 @@ const (
 
 type ResourceMetric string
 
-// 常量值即 metric 列名时取值可直接按名查列；cpu_pct 与 load1_per_core 是语义名，
-// 到列名（cpu、load1）的映射在 alert 包的取值处。
+// 常量值即 metric 列名时取值可直接按名查列。cpu_pct 是语义名，到列名 cpu 的映射在 alert 包。
+// load1_per_core 就是列名：按核负载已经由 agent 算好，告警读这一列的分钟均值，不再除以 Facts 的核数。
 const (
 	MetricMemoryUsedPct ResourceMetric = "memory_used_pct"
 	MetricDiskUsedPct   ResourceMetric = "disk_used_pct"

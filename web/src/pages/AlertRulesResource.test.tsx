@@ -49,7 +49,7 @@ it("资源指标下拉含六项，速率以 Mbps 输入并换算成 bytes/s 提�
   expect(saved[0].rule).toMatchObject({ kind: AlertKind.RESOURCE, resourceMetric: ResourceMetric.NET_TX_BPS, threshold: 62_500_000, recoveryThreshold: 31_250_000, forMinutes: 3 });
 });
 
-it("每核负载阈值按原值提交并提示核数缺失口径", async () => {
+it("每核负载阈值按原值提交并提示旧 agent 缺读数", async () => {
   const saved: SaveAlertRuleRequest[] = [];
   renderWithAdmin({
     listNodes: async () => ({ nodes: [] }),
@@ -61,7 +61,7 @@ it("每核负载阈值按原值提交并提示核数缺失口径", async () => {
   fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(AlertKind.RESOURCE) } });
   fireEvent.change(within(form).getByLabelText("资源指标"), { target: { value: String(ResourceMetric.LOAD1_PER_CORE) } });
   expect(within(form).getByLabelText("触发阈值（每核）")).toHaveAttribute("max", "64");
-  expect(form).toHaveTextContent("节点尚未上报核数时该分钟按缺失读数处理");
+  expect(form).toHaveTextContent("旧 agent 不上报时该分钟按缺失读数处理");
   fireEvent.change(within(form).getByLabelText("触发阈值（每核）"), { target: { value: "8" } });
   fireEvent.change(within(form).getByLabelText("恢复阈值（每核）"), { target: { value: "4" } });
   fireEvent.submit(form);

@@ -22,9 +22,10 @@ it("公开节点的历史图表走 PublicService，与面板同一组时间范�
   renderWithService(PublicService, { getSnapshot: snapshot, queryMetrics, queryProbes }, [{ path: "/nodes/:id", Component: NodePage }], "/nodes/7");
   expect(await screen.findByRole("heading", { level: 1, name: "edge-1" })).toBeInTheDocument();
   expect(await screen.findAllByText("TCP example.com:443")).toHaveLength(2);
-  expect(screen.getAllByTestId("chart")).toHaveLength(11);
+  expect(screen.getAllByTestId("chart")).toHaveLength(12);
   for (const r of ["1h", "6h", "24h", "7d", "30d"]) expect(screen.getByRole("button", { name: r })).toBeInTheDocument();
   expect(screen.getByText("Alpine 3.21")).toBeInTheDocument();
+  expect(screen.queryByLabelText("执行环境")).not.toBeInTheDocument();
   expect((queryMetrics.mock.calls[0] as unknown[])[0]).toMatchObject({ nodeId: 7n, maxPoints: 1000 });
 });
 
@@ -81,13 +82,13 @@ it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅，�
   const queryProbes = vi.fn(async () => ({ level: "1m", stepS: 60, series: [] }));
   renderWithService(PublicService, { getSnapshot: snapshot, queryMetrics, queryProbes }, [{ path: "/nodes/:id", Component: NodePage }], "/nodes/7");
   await screen.findByRole("heading", { level: 1, name: "edge-1" });
-  expect(await screen.findAllByTestId("chart")).toHaveLength(9);
+  expect(await screen.findAllByTestId("chart")).toHaveLength(10);
   await screen.findByText(/级别 1m，每点 60s/);
   fail = true;
   // 窗口右端每分钟前进一次（History.tsx 的 REFRESH_MS），换键后的这次请求失败。
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000 + 100); });
   expect(await screen.findByRole("alert")).toHaveTextContent("history down");
-  expect(screen.getAllByTestId("chart")).toHaveLength(9);
+  expect(screen.getAllByTestId("chart")).toHaveLength(10);
   expect(screen.getByText(/级别 1m，每点 60s/)).toBeInTheDocument();
   // 沿用的还是 24h 这个 range 自己的数据，只是这次刷新没成功；range 没变，不该报"看错窗口"。
   expect(screen.queryByText(/图表还不是/)).toBeNull();
@@ -115,7 +116,7 @@ it("切到另一个节点、新节点历史未返回时不显示上一个节点�
   expect(screen.queryAllByTestId("chart")).toHaveLength(0);
   await act(async () => { releaseNode8(); });
   expect(await screen.findByText(/级别 5m，每点 300s/)).toBeInTheDocument();
-  expect(screen.getAllByTestId("chart")).toHaveLength(9);
+  expect(screen.getAllByTestId("chart")).toHaveLength(10);
 });
 
 it("节点页标题带国家 / 地区徽章", async () => {

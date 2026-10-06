@@ -14,6 +14,15 @@ const (
 	MaxScopeCores = 65536
 )
 
+// ValidateCPUCores 校验 Facts.cpu_cores 的上界。0 表示有效核数未知，仍然合法。
+// 上界与 ExecutionScope 的容量共用 MaxScopeCores，避免两处各写一个数以后漂开。
+func ValidateCPUCores(n uint32) error {
+	if n > MaxScopeCores {
+		return fmt.Errorf("facts.cpu_cores: must be at most %d", MaxScopeCores)
+	}
+	return nil
+}
+
 // ValidateExecutionScope 校验 Facts.execution：枚举不得为 UNSPECIFIED（那是"旧 agent 未
 // 上报"）；kind 决定各资源范围能取哪些值；容量字段（有效核数、内存/swap 上限、按核负载
 // 分母）只在对应资源范围可见时出现、且必须是正的有限值；说明去重、至多 8 个。

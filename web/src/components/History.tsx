@@ -62,6 +62,9 @@ const PANELS: { title: string; selections: SeriesSelection[]; unit?: string }[] 
   ] },
   { title: "磁盘", selections: [{ name: "disk_used", value: "mean", label: "已用均值" }] },
   { title: "负载（1 分钟）", selections: [{ name: "load1", value: "mean", label: "负载均值" }] },
+  // 按核负载约是 load1 除以核数，多核机器上比 load1 小一个数量级；一张图只有一根纵轴，放在一起会被压成贴底的
+  // 平线，所以单独成图。
+  { title: "按核负载（1 分钟）", selections: [{ name: "load1_per_core", value: "mean", label: "按核负载均值" }] },
   { title: "连接数", selections: [
     { name: "tcp", value: "mean", label: "TCP 均值" },
     { name: "udp", value: "mean", label: "UDP 均值" },

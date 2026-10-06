@@ -211,7 +211,7 @@ function ResourceFields({ draft, set }: { draft: Draft; set: (patch: Partial<Dra
   const unit = resourceUnit(draft.resourceMetric);
   const unitLabel = unit === "mbps" ? "Mbps" : unit === "per-core" ? "每核" : "%";
   const max = resourceThresholdMax(draft.resourceMetric);
-  const source = unit === "mbps" ? "网卡速率的每分钟均值" : unit === "per-core" ? "load1 每分钟均值 ÷ 节点核数；节点尚未上报核数时该分钟按缺失读数处理" : "同次采样的使用量与总量之比（CPU 为采样占比）的每分钟均值";
+  const source = unit === "mbps" ? "网卡速率的每分钟均值" : unit === "per-core" ? "按核负载的每分钟均值（采样时算好）；旧 agent 不上报时该分钟按缺失读数处理" : "同次采样的使用量与总量之比（CPU 为采样占比）的每分钟均值";
   return (
     <>
       <div className="row">

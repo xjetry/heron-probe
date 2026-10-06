@@ -148,3 +148,39 @@ func TestRestoreV33SnapshotsAddsExecutionColumns(t *testing.T) {
 		})
 	}
 }
+
+// 快照里的 execution 必须是能通过同一校验的 JSON。语法合法但 kind 未指定的对象要拒绝，不能只检查能解开。
+func TestRestoreRejectsIllegalExecution(t *testing.T) {
+	source, clk := open(t)
+	ctx := t.Context()
+	id, _, err := source.CreateNode(ctx, "n", Billing{}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := source.UpsertFacts(ctx, id, 1, &heronv1.Facts{Hostname: "kept", Execution: &heronv1.ExecutionScope{
+		Kind: heronv1.ScopeKind_SCOPE_KIND_HOST,
+		Cpu:  heronv1.ResourceScope_RESOURCE_SCOPE_HOST, Memory: heronv1.ResourceScope_RESOURCE_SCOPE_HOST,
+		Swap: heronv1.ResourceScope_RESOURCE_SCOPE_HOST, Load: heronv1.ResourceScope_RESOURCE_SCOPE_HOST,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(t.TempDir(), "config.db")
+	if err := source.SnapshotConfig(ctx, config); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const illegal = `{"kind":"SCOPE_KIND_UNSPECIFIED","cpu":"RESOURCE_SCOPE_HOST","memory":"RESOURCE_SCOPE_HOST","swap":"RESOURCE_SCOPE_HOST","load":"RESOURCE_SCOPE_HOST"}`
+	if _, err := raw.Exec("UPDATE node_facts SET execution = ? WHERE node_id = ?", illegal, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "restored.db")
+	if _, err := Restore(ctx, target, config, "", "", clk.Now(), slog.Default()); err == nil {
+		t.Fatal("illegal execution was restored")
+	}
+}

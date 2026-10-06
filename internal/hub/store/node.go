@@ -129,7 +129,7 @@ func (n Node) DisplayCountry() (string, CountrySource) {
 // 监控范围）只筛行，不重排名次。
 const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.position, n.created_at, n.last_seen_at, n.traffic_reset_day, n.offline_grace_s,
 	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source, n.country, n.country_ip, n.country_pin, n.maintenance, n.public_remark,
-	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at, f.network, f.diagnostics
+	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at, f.network, f.diagnostics, f.execution
 	FROM (SELECT id, name, public, note, sort_order, created_at, last_seen_at, traffic_reset_day, offline_grace_s,
 		price, currency, billing_cycle, expires_on, auto_renew, last_source, country, country_ip, country_pin, maintenance, public_remark,
 		ROW_NUMBER() OVER (ORDER BY sort_order, id) AS position FROM node) n
@@ -145,12 +145,12 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 		var created int64
 		var seen, grace sql.NullInt64
 		var hostname, os, kernel, arch, virt, cpuModel, agentVersion sql.NullString
-		var network, diagnostics sql.NullString
+		var network, diagnostics, execution sql.NullString
 		var cores, icmp, factsUpdated sql.NullInt64
 		b := &n.Billing
 		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &n.Position, &created, &seen, &n.TrafficResetDay, &grace,
 			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource, &n.Country, &n.CountryIP, &n.CountryPin, &n.Maintenance, &n.PublicRemark,
-			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated, &network, &diagnostics); err != nil {
+			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated, &network, &diagnostics, &execution); err != nil {
 			return nil, err
 		}
 		n.CreatedAt = time.Unix(created, 0).UTC()
@@ -173,6 +173,10 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 			n.Facts.Diagnostics, err = decodeDiagnostics(diagnostics.String)
 			if err != nil {
 				return nil, fmt.Errorf("node %d diagnostics: %w", n.ID, err)
+			}
+			n.Facts.Execution, err = decodeExecution(execution.String)
+			if err != nil {
+				return nil, fmt.Errorf("node %d execution: %w", n.ID, err)
 			}
 		}
 		out = append(out, n)

@@ -76,7 +76,7 @@ it("listNodes 从未成功但历史与流量已就绪时仍显示图表、流量
   renderWithAdmin({ ...defaultImpl, listNodes: async () => { throw new ConnectError("nodes down", Code.Unavailable); } },
     [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   expect(await screen.findByRole("alert")).toHaveTextContent("nodes down");
-  expect(await screen.findAllByTestId("chart")).toHaveLength(9);
+  expect(await screen.findAllByTestId("chart")).toHaveLength(10);
   expect(screen.getByRole("button", { name: "24h" })).toBeInTheDocument();
   expect(screen.getByText("↓ 1.0 GiB ↑ 512 MiB")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "节点 #7" })).toBeInTheDocument();
@@ -86,7 +86,7 @@ it("listNodes 挂起、历史就绪时图表与“加载中…”同时在", asy
   let release!: (v: Awaited<ReturnType<typeof listNodes>>) => void;
   const pending = new Promise<Awaited<ReturnType<typeof listNodes>>>((resolve) => { release = resolve; });
   renderWithAdmin({ ...defaultImpl, listNodes: () => pending }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
-  expect(await screen.findAllByTestId("chart")).toHaveLength(9);
+  expect(await screen.findAllByTestId("chart")).toHaveLength(10);
   expect(screen.getByText("加载中…")).toBeInTheDocument();
   expect(screen.queryByText("主机名")).toBeNull();
   await act(async () => { release(await listNodes()); });
@@ -100,13 +100,13 @@ it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅，�
     return { level: "1m", stepS: 60, ts: [], series: [] };
   });
   renderWithAdmin({ ...defaultImpl, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
-  expect(await screen.findAllByTestId("chart")).toHaveLength(9);
+  expect(await screen.findAllByTestId("chart")).toHaveLength(10);
   await screen.findByText(/级别 1m，每点 60s/);
   fail = true;
   // 窗口右端每分钟前进一次（History.tsx 的 REFRESH_MS），换键后的这次请求失败。
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000 + 100); });
   expect(await screen.findByRole("alert")).toHaveTextContent("history down");
-  expect(screen.getAllByTestId("chart")).toHaveLength(9);
+  expect(screen.getAllByTestId("chart")).toHaveLength(10);
   expect(screen.getByText(/级别 1m，每点 60s/)).toBeInTheDocument();
   // 沿用的还是 24h 这个 range 自己的数据，只是这次刷新没成功；range 没变，不该报"看错窗口"，
   // 失败已经由上面的横幅表达。
@@ -136,7 +136,7 @@ it("切到另一个节点、新节点历史未返回时不显示上一个节点�
   expect(screen.queryAllByTestId("chart")).toHaveLength(0);
   await act(async () => { releaseNode8(); });
   expect(await screen.findByText(/级别 5m，每点 300s/)).toBeInTheDocument();
-  expect(screen.getAllByTestId("chart")).toHaveLength(9);
+  expect(screen.getAllByTestId("chart")).toHaveLength(10);
 });
 
 it("头部链接到该节点的告警事件", async () => {
@@ -212,10 +212,10 @@ describe("NodeDetail", () => {
       getTraffic: async () => { throw new ConnectError("traffic unavailable", Code.Unavailable); } },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
     expect(await screen.findByRole("alert")).toHaveTextContent(/^traffic unavailable$/);
-    expect(screen.getAllByTestId("chart")).toHaveLength(9);
+    expect(screen.getAllByTestId("chart")).toHaveLength(10);
   });
 
-  it("切窗请求挂起期间保留九张图", async () => {
+  it("切窗请求挂起期间保留十张图", async () => {
     const response = { level: "1m", stepS: 60, ts: [], series: [] };
     let release!: () => void;
     let started!: () => void;
@@ -228,7 +228,7 @@ describe("NodeDetail", () => {
     renderWithAdmin({ ...defaultImpl, getTraffic, listNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
     await screen.findByText(/级别 1m/);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "7d" })); await pending; });
-    try { expect(screen.queryAllByTestId("chart").length).toBe(9); }
+    try { expect(screen.queryAllByTestId("chart").length).toBe(10); }
     finally { await act(async () => { release(); }); }
   });
 
@@ -284,16 +284,18 @@ describe("NodeDetail", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "db-01" })).toBeInTheDocument();
     expect(await screen.findByText(/级别 5m，每点 300s/)).toBeInTheDocument();
     const charts = screen.getAllByTestId("chart");
-    expect(charts).toHaveLength(9);
-    expect(charts[6]).toHaveAttribute("data-labels", "下行均值,上行均值,下行峰值,上行峰值");
-    expect(charts[6]).toHaveAttribute("data-unit", "bytes/s");
+    expect(charts).toHaveLength(10);
+    expect(charts[7]).toHaveAttribute("data-labels", "下行均值,上行均值,下行峰值,上行峰值");
+    expect(charts[7]).toHaveAttribute("data-unit", "bytes/s");
     expect(charts[0]).toHaveAttribute("data-unit", "percent");
     expect(charts[1]).toHaveAttribute("data-labels", "内存均值,内存峰值,交换均值");
     expect(charts[1]).toHaveAttribute("data-unit", "bytes");
-    expect(charts[7]).toHaveAttribute("data-labels", "读均值,写均值");
-    expect(charts[7]).toHaveAttribute("data-unit", "bytes/s");
-    expect(charts[8]).toHaveAttribute("data-labels", "steal 均值,iowait 均值");
-    expect(charts[8]).toHaveAttribute("data-unit", "percent");
+    expect(charts[3]).toHaveAttribute("data-labels", "负载均值");
+    expect(charts[4]).toHaveAttribute("data-labels", "按核负载均值");
+    expect(charts[8]).toHaveAttribute("data-labels", "读均值,写均值");
+    expect(charts[8]).toHaveAttribute("data-unit", "bytes/s");
+    expect(charts[9]).toHaveAttribute("data-labels", "steal 均值,iowait 均值");
+    expect(charts[9]).toHaveAttribute("data-unit", "percent");
     expect(screen.getByText("db-01.internal")).toBeInTheDocument();
     const req = queryMetrics.mock.calls[0][0] as { nodeId: bigint; from: bigint; to: bigint; maxPoints: number };
     expect(req.nodeId).toBe(7n);

@@ -33,6 +33,8 @@ const queryMetrics = async (req: QueryMetricsRequest) => {
       { name: "disk_write_bps", unit: "bytes/s", samples: [{ n: 3, mean: 256, max: 1024 }, { n: 1, mean: 0, max: 0 }, { n: 1, mean: 768 }, { n: 0, mean: 99, max: 999 }] },
       { name: "cpu_steal_pct", unit: "percent", samples: [{ n: 3, mean: 1.5, max: 4 }, { n: 1, mean: 0, max: 0 }, { n: 1, mean: 2.5 }, { n: 0, mean: 9, max: 9 }] },
       { name: "cpu_iowait_pct", unit: "percent", samples: [{ n: 3, mean: 3.5, max: 8 }, { n: 1, mean: 0, max: 0 }, { n: 1, mean: 4.5 }, { n: 0, mean: 9, max: 9 }] },
+      { name: "load1", unit: "", samples: [{ n: 3, mean: 6.4 }, { n: 1, mean: 0 }, { n: 1, mean: 8 }, { n: 0, mean: 99 }] },
+      { name: "load1_per_core", unit: "", samples: [{ n: 3, mean: 0.4 }, { n: 1, mean: 0 }, { n: 0, mean: 99 }, { n: 0, mean: 99 }] },
     ],
   });
 };
@@ -74,6 +76,8 @@ it.each([
     { title: "CPU steal / iowait", labels: "steal 均值,iowait 均值", unit: "percent", points: [
       [1.5, 0, 2.5, null, null], [3.5, 0, 4.5, null, null],
     ] },
+    { title: "负载（1 分钟）", labels: "负载均值", unit: "", points: [[6.4, 0, 8, null, null]] },
+    { title: "按核负载（1 分钟）", labels: "按核负载均值", unit: "", points: [[0.4, 0, null, null, null]] },
   ];
   const panels = expectedPanels.map((expected) => {
     const panel = screen.getByRole("heading", { name: expected.title }).parentElement!;

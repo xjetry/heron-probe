@@ -9,6 +9,7 @@ import { bytes } from "../lib/format";
 import { errorText } from "../api/auth";
 import { NodeAddresses } from "../components/NodeAddresses";
 import { AgentDiagnostics } from "../components/AgentDiagnostics";
+import { ExecutionScope } from "../components/ExecutionScope";
 
 const ADMIN_HISTORY: HistoryMethods = { queryMetrics: AdminService.method.queryMetrics, queryProbes: AdminService.method.queryProbes };
 
@@ -55,6 +56,7 @@ export function NodeDetail() {
           <dt>ICMP 探测</dt><dd>{node.facts.icmpAvailable ? "可用" : "不可用"}</dd>
         </dl>
       ) : gate.loading}
+      {node && <ExecutionScope execution={node.facts?.execution} updatedAt={node.factsUpdatedAt} />}
       {node && <AgentDiagnostics diagnostics={node.facts?.diagnostics} updatedAt={node.factsUpdatedAt} />}
     </section>
   );
