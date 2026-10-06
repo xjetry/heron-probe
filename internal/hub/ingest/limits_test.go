@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"strings"
@@ -14,8 +15,10 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
+// maxErrorResult 是编码最大的结果形状：错误文本取满，并带回显的配置身份（被拒任务留的 error 结果同样带）。
 func maxErrorResult() *heronv1.ProbeResult {
-	return &heronv1.ProbeResult{TaskId: math.MaxUint64, AgeMs: math.MaxUint32, Outcome: &heronv1.ProbeResult_Error{Error: &heronv1.ProbeError{Message: strings.Repeat("x", probelimit.MaxErrorMessageLen)}}}
+	return &heronv1.ProbeResult{TaskId: math.MaxUint64, AgeMs: math.MaxUint32, Outcome: &heronv1.ProbeResult_Error{Error: &heronv1.ProbeError{Message: strings.Repeat("x", probelimit.MaxErrorMessageLen)}},
+		TaskConfigId: bytes.Repeat([]byte{0xff}, probelimit.ConfigIDLen)}
 }
 
 func TestReportHostStringLimits(t *testing.T) {
@@ -69,15 +72,27 @@ func TestMaxProbeResultWire(t *testing.T) {
 	}
 	// cert_not_after_s 只与 rtt_us 同现：field 6 的 varint 至多 11 字节，rtt+cert 的形状远小于 error 结果，
 	// 上界仍由 maxErrorResult 钉住；把这个形状显式编码一次，防止未来的字段调整悄悄越过它。
-	cert := &heronv1.ProbeResult{TaskId: math.MaxUint64, AgeMs: math.MaxUint32, Outcome: &heronv1.ProbeResult_RttUs{RttUs: probelimit.MaxTimeoutMs * 1000}, CertNotAfterS: proto.Int64(math.MaxInt64)}
+	configID := bytes.Repeat([]byte{0xff}, probelimit.ConfigIDLen)
+	cert := &heronv1.ProbeResult{TaskId: math.MaxUint64, AgeMs: math.MaxUint32, Outcome: &heronv1.ProbeResult_RttUs{RttUs: probelimit.MaxTimeoutMs * 1000}, CertNotAfterS: proto.Int64(math.MaxInt64), TaskConfigId: configID}
 	if size := proto.Size(cert); size > maxResultWire {
 		t.Fatalf("rtt+cert wire size %d exceeds %d", size, maxResultWire)
+	}
+	// 证书相关的丢包带回对方证书：timeout 加满额的 presented 与配置身份，同样不能越过单结果上界。
+	presented := &heronv1.ProbeResult{TaskId: math.MaxUint64, AgeMs: math.MaxUint32, Outcome: &heronv1.ProbeResult_Timeout{Timeout: &heronv1.Timeout{}}, TaskConfigId: configID,
+		Presented: &heronv1.PresentedCertificate{SpkiSha256: bytes.Repeat([]byte{0xff}, probelimit.CertSPKISHA256Len), NotAfterS: math.MaxInt64, Reason: heronv1.PresentedReason(math.MinInt32)}}
+	if size := proto.Size(presented); size > maxResultWire {
+		t.Fatalf("timeout+presented wire size %d exceeds %d", size, maxResultWire)
 	}
 }
 
 func maxHostReport(t *testing.T) *heronv1.ReportRequest {
 	t.Helper()
-	r := &heronv1.ReportRequest{Metrics: &heronv1.Metrics{}, Facts: &heronv1.Facts{}, TasksVersion: math.MaxUint64, FactsHash: math.MaxUint64}
+	r := &heronv1.ReportRequest{Metrics: &heronv1.Metrics{}, Facts: &heronv1.Facts{}, TasksVersion: math.MaxUint64, FactsHash: math.MaxUint64,
+		TasksDigest: bytes.Repeat([]byte{0xff}, agentwire.TasksDigestLen)}
+	// 能力条数取满，每项取编码最长的枚举值（负数是 10 字节 varint）：hub 只按条数拒收，不认识的值照样占体积。
+	for range agentwire.MaxCapabilities {
+		r.Capabilities = append(r.Capabilities, heronv1.AgentCapability(math.MinInt32))
+	}
 	r.Update = &heronv1.UpdateStatus{Supported: true, Reason: strings.Repeat("x", 2048), Version: strings.Repeat("x", 64), Task: &heronv1.UpdateTask{Id: strings.Repeat("x", 64), Version: "v4294967295.4294967295.4294967295", ExpiresAt: math.MaxInt64, State: "downloading", Error: strings.Repeat("x", 2048), UpdatedAt: math.MaxInt64}}
 	for _, m := range []proto.Message{r.Metrics, r.Facts} {
 		msg := m.ProtoReflect()
@@ -102,6 +117,24 @@ func maxHostReport(t *testing.T) *heronv1.ReportRequest {
 						t.Fatal(err)
 					}
 					value = protoreflect.ValueOfMessage(d.ProtoReflect())
+					break
+				}
+				if fd.FullName() == "heron.v1.Facts.execution" {
+					// 合法的满值：容量取各自上界，说明取满条数且各不相同。
+					e := &heronv1.ExecutionScope{
+						Kind: heronv1.ScopeKind_SCOPE_KIND_CGROUP_NAMESPACE, Cpu: heronv1.ResourceScope_RESOURCE_SCOPE_ENVIRONMENT,
+						Memory: heronv1.ResourceScope_RESOURCE_SCOPE_ENVIRONMENT, Swap: heronv1.ResourceScope_RESOURCE_SCOPE_ENVIRONMENT,
+						Load: heronv1.ResourceScope_RESOURCE_SCOPE_HOST, CpuEffectiveCores: proto.Float64(agentwire.MaxScopeCores),
+						MemoryLimitBytes: proto.Uint64(math.MaxUint64), SwapLimitBytes: proto.Uint64(math.MaxUint64), LoadCores: proto.Uint32(agentwire.MaxScopeCores),
+					}
+					notes := heronv1.ScopeNote(0).Descriptor().Values()
+					for n := notes.Len() - agentwire.MaxScopeNotes; n < notes.Len(); n++ {
+						e.Notes = append(e.Notes, heronv1.ScopeNote(notes.Get(n).Number()))
+					}
+					if err := agentwire.ValidateExecutionScope(e); err != nil {
+						t.Fatal(err)
+					}
+					value = protoreflect.ValueOfMessage(e.ProtoReflect())
 					break
 				}
 				if fd.FullName() != "heron.v1.Facts.network" {
@@ -178,6 +211,7 @@ func maxReportResponse(t *testing.T) *heronv1.ReportResponse {
 	t.Helper()
 	strLen := map[protoreflect.FullName]int{"heron.v1.ProbeTask.target": probelimit.MaxHTTPTargetLen, "heron.v1.ProbeTask.dns_server": probelimit.MaxDNSServerLen, "heron.v1.UpdateTask.id": 64, "heron.v1.UpdateTask.version": 34, "heron.v1.UpdateTask.state": 11, "heron.v1.UpdateTask.error": 2048}
 	count := map[protoreflect.FullName]int{"heron.v1.ProbeTasks.tasks": probelimit.MaxTasksPerNode}
+	byteLen := map[protoreflect.FullName]int{"heron.v1.ProbeTask.cert_spki_sha256": probelimit.CertSPKISHA256Len, "heron.v1.ProbeTask.config_id": probelimit.ConfigIDLen}
 	var fill func(msg protoreflect.Message)
 	scalar := func(msg protoreflect.Message, fd protoreflect.FieldDescriptor) protoreflect.Value {
 		switch fd.Kind() {
@@ -187,6 +221,12 @@ func maxReportResponse(t *testing.T) *heronv1.ReportResponse {
 				t.Fatalf("string field %s has no known bound", fd.FullName())
 			}
 			return protoreflect.ValueOfString(strings.Repeat("x", n))
+		case protoreflect.BytesKind:
+			n, ok := byteLen[fd.FullName()]
+			if !ok {
+				t.Fatalf("bytes field %s has no known bound", fd.FullName())
+			}
+			return protoreflect.ValueOfBytes(bytes.Repeat([]byte{0xff}, n))
 		case protoreflect.Uint32Kind:
 			return protoreflect.ValueOfUint32(math.MaxUint32)
 		case protoreflect.Uint64Kind:

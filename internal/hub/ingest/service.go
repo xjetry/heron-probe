@@ -35,7 +35,8 @@ import (
 
 // Report 的 protobuf 请求由 Metrics 数值标量、boot_id、Facts、有界版本号/摘要和探测结果组成。
 // 数值由 proto 类型定界；validateMetrics/validateFacts 将主机字符串各限在 maxHostString 字节，
-// 诊断的规则、接口与失败类别由 agentwire.ValidateDiagnostics 限定条数和长度。
+// 诊断的规则、接口与失败类别由 agentwire.ValidateDiagnostics 限定条数和长度；执行环境的容量与说明条数由
+// agentwire.ValidateExecutionScope 定界，能力条数与清单摘要长度由 agentwire.MaxCapabilities、TasksDigestLen 定界。
 // validateResults 限条数与错误长度；合法 agent 由 Runner 限批、ToProto 截断错误来遵守这些约束。
 // connect 在拦截器前整条读取，超出 maxBody 返回 ResourceExhausted；Runner 会回队，
 // 因而合法 agent 的编码上界必须从常量推出，不能因读上限不足而永久重发同一超限批次。
@@ -43,8 +44,9 @@ import (
 const (
 	// Metrics/Facts 的字段类型及字符串校验共同定界；TestHostPayloadFitsMetricsBudget 覆盖满值编码。
 	metricsBudget = 32 << 10
-	// maxResultWire 含结果及外层 repeated 字段开销，上界由 TestMaxProbeResultWire 钉住。
-	maxResultWire = 160
+	// maxResultWire 含结果及外层 repeated 字段开销，上界由 TestMaxProbeResultWire 钉住：最大的形状是满额错误文本
+	// 加回显的配置身份（172 字节）。
+	maxResultWire = 176
 	maxBody       = 256 << 10
 )
 

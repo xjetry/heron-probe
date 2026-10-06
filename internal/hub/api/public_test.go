@@ -249,7 +249,7 @@ var publicFields = map[protoreflect.FullName][]protoreflect.Name{
 	"heron.v1.PublicNode":     {"id", "name", "online", "last_seen_at", "sort_order", "facts", "metrics", "traffic", "billing", "country", "tags", "maintenance", "public_remark"},
 	"heron.v1.PublicFacts":    {"os", "arch", "virtualization", "cpu_model", "cpu_cores"},
 	"heron.v1.PublicBilling":  {"price", "currency", "billing_cycle", "expires_on", "days_left"},
-	"heron.v1.PublicMetrics": {"cpu_pct", "cpu_steal_pct", "cpu_iowait_pct", "load1", "load5", "load15", "mem_total", "mem_used", "swap_total", "swap_used",
+	"heron.v1.PublicMetrics": {"cpu_pct", "cpu_steal_pct", "cpu_iowait_pct", "load1", "load5", "load15", "load1_per_core", "mem_total", "mem_used", "swap_total", "swap_used",
 		"disk_total", "disk_used", "net_rx_total", "net_tx_total", "net_rx_bps", "net_tx_bps", "disk_read_bps", "disk_write_bps", "tcp_conns", "udp_conns", "procs", "uptime_s"},
 	"heron.v1.Traffic":              {"total_rx", "total_tx", "period_rx", "period_tx", "period_start", "next_reset_at", "reset_day"},
 	"heron.v1.QueryMetricsResponse": {"level", "step_s", "ts", "series", "coverage", "coverage_summary"},

@@ -15,6 +15,9 @@ const (
 	// MaxResponseBytes 是 agent 读取 AgentService 响应正文的上限，成功与错误响应都计（agent 不接受压缩，
 	// 读到的字节就是解码前的全部大小，见 hubclient.New）。hub 侧由测试钉住满载 ReportResponse 的编码不超过它。
 	MaxResponseBytes = 64 << 10
+	// MaxCapabilities 是 ReportRequest.capabilities 的条数上限，重复项与不认识的值都计入：上界约束的是
+	// 编码体积，去重之后再数就挡不住重复项。hub 超出即整批拒收，上行预算按它的满值编码计算。
+	MaxCapabilities = 16
 )
 
 // ReportInterval 是上报间隔的唯一算法。hub 的下发与上报限速都从它推出。

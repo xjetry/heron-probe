@@ -11,6 +11,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// TasksDigestLen 是 ReportRequest.tasks_digest 给出时的字节数：TasksDigest 产出的 SHA-256。
+const TasksDigestLen = sha256.Size
+
 // TasksDigest 是任务清单对账摘要的唯一算法，agent 上报（ReportRequest.tasks_digest）与
 // hub 决定要不要重发清单调用同一函数，两侧不能各自持有一份。
 // 编码对象是清单本身而不含版本计数：版本在备份恢复后可能与 agent 持有的内容错位，
