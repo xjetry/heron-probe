@@ -1243,6 +1243,23 @@ message GetStorageStatsResponse {
   // 跑过；有值但很旧即此后一直失败或没有运行。
   optional int64 last_prune_at = 4;
   optional int64 last_rollup_at = 5;
+  // 本次请求对数据库旁 -wal 文件的一次文件系统观测；不含 -shm，与上面的 SQL 只读事务统计不是同一快照。
+  // 新 hub 总是返回此消息；缺失表示旧 hub 未提供该项，不表示无 WAL 文件或 0 字节。
+  WalFileObservation wal = 6;
+}
+// WAL 文件的实际长度，不是未检查点的数据量；不能据此推导告警或 checkpoint 是否成功。
+// result 恰有一个分支；未识别的分支或没有分支应显示未知，不得补零。
+message WalFileObservation {
+  // 本次 stat 完成时的 hub 墙钟，Unix 秒；并非文件修改时刻，也不是 SQL 快照时刻。
+  int64 observed_at = 1;
+  oneof result {
+    // stat 成功时的实际文件字节数；0 表示文件存在但长度为零。JSON 中 uint64 编码为十进制字符串。
+    uint64 bytes = 2;
+    // stat 返回文件不存在（ENOENT）时为 true，表示“无 WAL 文件”；不会同时返回 bytes。
+    bool absent = 3;
+    // stat 的其他错误（如权限或 IO）；大小未知，不得当成 0 或无文件。非空 UTF-8 文本，至多 512 字节。
+    string error = 4;
+  }
 }
 // 一张时序表的健康读数。两个 stale 是 hub 按当前配置算出的结论，调用方直接用，不必自己重算：
 // oldest_stale：最老桶早于"现在 − 保留期 − 一个桶长 − 一个维护间隔（60 秒）"（严格早于才算）；
