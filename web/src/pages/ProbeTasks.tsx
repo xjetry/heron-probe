@@ -1,3 +1,6 @@
+import { create as newMessage } from "@bufbuild/protobuf";
+import { EmptySchema } from "@bufbuild/protobuf/wkt";
+import { Code, ConnectError } from "@connectrpc/connect";
 import { createConnectQueryKey, createQueryOptions, useMutation, useQuery, useTransport } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
@@ -8,21 +11,23 @@ import { useLatestError } from "../api/useLatestError";
 import { useOrder } from "../api/useOrder";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { NodeSelector, type NodeSelection } from "../components/NodeSelector";
-import { AdminService, type Node, type ProbeTaskDetail } from "../gen/heron/v1/admin_pb";
-import { ProbeKind, type ProbeTask } from "../gen/heron/v1/types_pb";
+import { AdminService, CertPinChangeSchema, SaveProbeTaskRequestSchema, type Node, type ProbeTaskDetail } from "../gen/heron/v1/admin_pb";
+import { ProbeKind, ProbeTaskSchema, type ProbeTask } from "../gen/heron/v1/types_pb";
+import { formatPin, parsePin } from "../lib/certpin";
 import { ascending, withId } from "../lib/ids";
 import { PROBE_KINDS, kindLabel, targetRule } from "../lib/probes";
 
-type Draft = NodeSelection & { kind: ProbeKind; target: string; dnsServer: string; intervalS: string; timeoutMs: string };
+type Draft = NodeSelection & { kind: ProbeKind; target: string; dnsServer: string; intervalS: string; timeoutMs: string; pin: string; clearPin: boolean; configId?: Uint8Array };
 type TaskEntry = { task: ProbeTask; allNodes: boolean; nodeIds: bigint[]; selectorTags: string[] };
 
-const emptyDraft = (): Draft => ({ kind: ProbeKind.ICMP, target: "", dnsServer: "", intervalS: "60", timeoutMs: "1000", allNodes: false, nodeIds: new Set(), selectorTags: [], dynamic: false });
+const emptyDraft = (): Draft => ({ kind: ProbeKind.ICMP, target: "", dnsServer: "", intervalS: "60", timeoutMs: "1000", allNodes: false, nodeIds: new Set(), selectorTags: [], dynamic: false, pin: "", clearPin: false });
 const taskEntries = (tasks: readonly ProbeTaskDetail[]): TaskEntry[] => tasks.flatMap((d) => d.task ? [{ task: d.task, allNodes: d.allNodes, nodeIds: d.nodeIds, selectorTags: d.selectorTags }] : []);
 // all_nodes 任务的 nodeIds 是 hub 展开的当前全部节点；编辑时取消"全部节点"即以它们作为显式分配的起点，
 // 覆盖不会因为取消勾选而一下子清空。
 const draftOf = ({ task, allNodes, nodeIds, selectorTags }: TaskEntry): Draft => ({
   kind: task.kind, target: task.target, dnsServer: task.dnsServer, intervalS: String(task.intervalS),
   timeoutMs: String(task.timeoutMs), allNodes, nodeIds: new Set(nodeIds), selectorTags, dynamic: selectorTags.length > 0,
+  pin: formatPin(task.certSpkiSha256), clearPin: false, configId: task.configId,
 });
 
 export function ProbeTasks() {
@@ -58,10 +63,20 @@ export function ProbeTasks() {
   const availableNodeIds = new Set(nodeList.map((n) => n.id));
   // 当前节点列表不再包含的分配自然掉出，避免已删除节点让 hub 以 NotFound 拒绝整次保存。显式分配因此变空时照常
   // 提交：空集不覆盖任何节点（spec §8.1，与告警规则的 all_nodes 同一语义），不会被读成全部节点。
-  const submit = (m: typeof create, id: bigint, d: Draft, onSuccess?: () => void) =>
-    m.mutate({ task: { id, kind: d.kind, target: d.target.trim(), dnsServer: d.kind === ProbeKind.DNS ? d.dnsServer.trim() : "", intervalS: Number(d.intervalS), timeoutMs: Number(d.timeoutMs) },
-      allNodes: d.allNodes, nodeIds: d.allNodes || d.dynamic ? [] : ascending([...d.nodeIds].filter((id) => availableNodeIds.has(id))),
-      selectorTags: !d.allNodes && d.dynamic ? d.selectorTags : [] }, { onSuccess });
+  const submit = (m: typeof create, id: bigint, d: Draft, onSuccess?: () => void) => {
+    const pin = !d.clearPin && d.pin.trim() ? parsePin(d.pin) : undefined;
+    const req = newMessage(SaveProbeTaskRequestSchema, {
+      task: newMessage(ProbeTaskSchema, { id, kind: d.kind, target: d.target.trim(), dnsServer: d.kind === ProbeKind.DNS ? d.dnsServer.trim() : "", intervalS: Number(d.intervalS), timeoutMs: Number(d.timeoutMs) }),
+      allNodes: d.allNodes, nodeIds: d.allNodes || d.dynamic ? [] : ascending([...d.nodeIds].filter((nodeId) => availableNodeIds.has(nodeId))),
+      selectorTags: !d.allNodes && d.dynamic ? d.selectorTags : [],
+      // 编辑带上读到的配置身份，避免并发保存把别人的修改盖掉。新建没有身份可对。
+      expectedConfigId: id !== 0n && d.configId && d.configId.length > 0 ? d.configId : undefined,
+      certPin: d.clearPin
+        ? newMessage(CertPinChangeSchema, { action: { case: "clear", value: newMessage(EmptySchema) } })
+        : pin ? newMessage(CertPinChangeSchema, { action: { case: "setSpkiSha256", value: pin } }) : undefined,
+    });
+    m.mutate(req, { onSuccess });
+  };
   const tasks = taskEntries(order.items);
   return (
     <section>
@@ -69,7 +84,7 @@ export function ProbeTasks() {
       <h1>探测任务</h1>
       <TaskForm key={creation} title="新建探测任务" nodes={nodeList} initial={emptyDraft()} pending={create.isPending}
         onSubmit={(d) => submit(create, 0n, d, () => setCreation((key) => key + 1))} />
-      {error != null && <p role="alert" className="error">{errorText(error)}</p>}
+      {error != null && <p role="alert" className="error">{error instanceof ConnectError && error.code === Code.FailedPrecondition ? `配置已变化，请刷新后再试。${errorText(error)}` : errorText(error)}</p>}
       {order.error != null && <p role="alert" className="error">排序未完成：{errorText(order.error)}</p>}
       {order.pending && <p role="status" className="muted">正在保存并确认排序…</p>}
       {order.blocked && <button type="button" onClick={order.recover} disabled={order.pending}>重新读取排序</button>}
@@ -96,9 +111,21 @@ function TaskForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
 }) {
   // initial 只在挂载时读取；编辑期间的列表刷新不覆盖草稿，节点列表以 props 实时更新，提交时与当前列表求交。
   const [draft, setDraft] = useState(initial);
+  const [pinError, setPinError] = useState("");
+  const showPin = draft.kind === ProbeKind.HTTP || draft.pin.trim() !== "" || draft.clearPin;
+  const pinFits = draft.kind === ProbeKind.HTTP && draft.target.trim().toLowerCase().startsWith("https://");
   const handle = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!e.currentTarget.checkValidity()) return;
+    if (!draft.clearPin && draft.pin.trim()) {
+      try {
+        parsePin(draft.pin);
+      } catch (err) {
+        setPinError(err instanceof Error ? err.message : String(err));
+        return;
+      }
+    }
+    setPinError("");
     onSubmit(draft);
   };
   return (
@@ -117,7 +144,20 @@ function TaskForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
         )}
         <label>间隔 (s)<input type="number" required min={5} max={3600} value={draft.intervalS} onChange={(e) => setDraft({ ...draft, intervalS: e.target.value })} /></label>
         <label>超时 (ms)<input type="number" required min={100} max={5000} value={draft.timeoutMs} onChange={(e) => setDraft({ ...draft, timeoutMs: e.target.value })} /></label>
+        {showPin && (
+          <label>证书指纹
+            <input aria-label="证书指纹" placeholder="sha256// 加 base64，留空表示不改" value={draft.pin}
+              onChange={(e) => setDraft({ ...draft, pin: e.target.value, clearPin: false })} />
+          </label>
+        )}
       </div>
+      {showPin && (
+        <p className="muted">{draft.clearPin ? "保存时将清除指纹。" : draft.pin ? `当前显示 ${draft.pin}` : "未钉指纹。"}
+          {" "}<button type="button" className="link" onClick={() => setDraft({ ...draft, pin: "", clearPin: true })}>清除指纹</button>
+        </p>
+      )}
+      {showPin && !pinFits && <p className="muted">这个种类或地址不能钉指纹，改种类不会自动清除。请先清除指纹再保存。</p>}
+      {pinError && <p role="alert" className="error">{pinError}</p>}
       <NodeSelector nodes={nodes} value={draft} onChange={(patch) => setDraft({ ...draft, ...patch })} legend="分配到节点" />
       <div className="row">
         <button type="submit" disabled={pending}>{onCancel ? "保存" : "创建"}</button>
@@ -157,6 +197,7 @@ function TaskRow({ entry, nodes, saving, deleting, onSave, onDelete, onMove }: {
       <td>{coverage || <span className="muted">未分配</span>}</td>
       <td>
         <Link to={`/probes/${t.id}/compare`}>对比</Link>{" "}
+        {t.kind === ProbeKind.HTTP && t.target.toLowerCase().startsWith("https://") && <><Link to={`/probes/${t.id}/certs`}>证书</Link>{" "}</>}
         <button type="button" className="link" aria-label={`编辑 ${withId(t.target, t.id)}`} onClick={() => setEditing(true)}>编辑</button>{" "}
         <ConfirmDelete label={`删除 ${withId(t.target, t.id)}`} confirm={`确认删除 ${withId(t.target, t.id)}`} note="历史保留至到期清理" pending={deleting} onDelete={onDelete} />
       </td>

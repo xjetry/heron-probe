@@ -453,3 +453,70 @@ describe("全部节点作用域", () => {
     expect(saved[0]).toMatchObject({ task: { id: 5n }, allNodes: false, nodeIds: [2n] });
   });
 });
+
+it("编辑带上配置身份，清除指纹是单独的动作", async () => {
+  const config = Uint8Array.from({ length: 16 }, () => 4);
+  const saved: SaveProbeTaskRequest[] = [];
+  renderWithAdmin({
+    listNodes: async () => nodes,
+    listProbeTasks: async () => ({ tasks: [{ task: { id: 8n, kind: ProbeKind.HTTP, target: "https://example.com/", intervalS: 60, timeoutMs: 1000, certSpkiSha256: Uint8Array.from({ length: 32 }, () => 7), configId: config }, nodeIds: [1n] }] }),
+    saveProbeTask: async (req) => { saved.push(req); return {}; },
+  }, routes, "/probes");
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 https://example.com/（#8）" }));
+  const form = screen.getByRole("form", { name: "编辑 https://example.com/（#8）" });
+  expect((within(form).getByLabelText("证书指纹") as HTMLInputElement).value).toMatch(/^sha256\/\//);
+  fireEvent.click(within(form).getByRole("button", { name: "清除指纹" }));
+  fireEvent.submit(form);
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].expectedConfigId).toEqual(config);
+  expect(saved[0].certPin?.action.case).toBe("clear");
+  expect(saved[0].task?.certSpkiSha256 ?? new Uint8Array()).toHaveLength(0);
+});
+
+it("前置条件失败提示刷新且不自动再提交", async () => {
+  let calls = 0;
+  renderWithAdmin({
+    listNodes: async () => nodes,
+    listProbeTasks: async () => ({ tasks: [{ task: { id: 8n, kind: ProbeKind.HTTP, target: "https://example.com/", intervalS: 60, timeoutMs: 1000, configId: Uint8Array.from({ length: 16 }, () => 1) }, nodeIds: [1n] }] }),
+    saveProbeTask: async () => { calls += 1; throw new ConnectError("expected_config_id does not match", Code.FailedPrecondition); },
+  }, routes, "/probes");
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 https://example.com/（#8）" }));
+  fireEvent.submit(screen.getByRole("form", { name: "编辑 https://example.com/（#8）" }));
+  expect(await screen.findByText(/请刷新后再试/)).toBeInTheDocument();
+  expect(calls).toBe(1);
+});
+
+it("只有 https 的 HTTP 任务有证书链接", async () => {
+  renderWithAdmin({
+    listNodes: async () => nodes,
+    listProbeTasks: async () => ({ tasks: [
+      { task: { id: 3n, kind: ProbeKind.TCP, target: "1.1.1.1:443", intervalS: 30, timeoutMs: 1000 }, nodeIds: [1n] },
+      { task: { id: 8n, kind: ProbeKind.HTTP, target: "https://example.com/", intervalS: 60, timeoutMs: 1000 }, nodeIds: [1n] },
+      { task: { id: 9n, kind: ProbeKind.HTTP, target: "http://example.com/", intervalS: 60, timeoutMs: 1000 }, nodeIds: [1n] },
+    ] }),
+  }, routes, "/probes");
+  expect(await screen.findByRole("link", { name: "证书" })).toHaveAttribute("href", "/probes/8/certs");
+  expect(screen.getAllByRole("link", { name: "证书" })).toHaveLength(1);
+});
+
+it("改成不能钉的种类时仍显示指纹，且不会自动清除", async () => {
+  const pin = Uint8Array.from({ length: 32 }, () => 7);
+  const saved: SaveProbeTaskRequest[] = [];
+  renderWithAdmin({
+    listNodes: async () => nodes,
+    listProbeTasks: async () => ({ tasks: [{ task: { id: 8n, kind: ProbeKind.HTTP, target: "https://example.com/", intervalS: 60, timeoutMs: 1000, certSpkiSha256: pin }, nodeIds: [1n] }] }),
+    saveProbeTask: async (req) => { saved.push(req); return {}; },
+  }, routes, "/probes");
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 https://example.com/（#8）" }));
+  const form = screen.getByRole("form", { name: "编辑 https://example.com/（#8）" });
+  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ProbeKind.ICMP) } });
+  expect(within(form).getByLabelText("证书指纹")).toBeInTheDocument();
+  expect(within(form).getByRole("button", { name: "清除指纹" })).toBeInTheDocument();
+  expect(within(form).getByText(/不能钉指纹/)).toBeInTheDocument();
+  expect((within(form).getByLabelText("证书指纹") as HTMLInputElement).value).toMatch(/^sha256\/\//);
+  fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "192.0.2.1" } });
+  fireEvent.submit(form);
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].certPin?.action.case).toBe("setSpkiSha256");
+  expect(saved[0].task?.kind).toBe(ProbeKind.ICMP);
+});
