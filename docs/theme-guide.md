@@ -22,7 +22,7 @@ GitHub 是安装来源，不是运行时依赖。下载完成并校验后，原�
 
 主题页面由 hub 自己的容器加载到 `sandbox="allow-scripts"` iframe 中，不授予 `allow-same-origin`。地址栏仍是公开站点域名，但主题脚本的来源是不透明来源，不具有管理面板的同源权限。
 
-主题 HTML、JS、错误响应和缓存验证响应都带沙箱 CSP；直接打开包内 HTML 也不能恢复同源权限。主题不能读取父文档、会话 cookie 或管理存储，不能注册 Service Worker，也不能直接使用 WebAuthn。页面不开放任意网络代理：公开数据经 SDK 的消息通道请求，由可信容器只调用四个固定的只读公开方法，请求不带管理员凭据。
+主题 HTML、JS、错误响应和缓存验证响应都带沙箱 CSP；直接打开包内 HTML 也不能恢复同源权限。主题不能读取父文档、会话 cookie 或管理存储，不能注册 Service Worker，也不能直接使用 WebAuthn。页面不开放任意网络代理：公开数据经 SDK 的消息通道请求，由可信容器只调用六个固定的只读公开方法，请求不带管理员凭据。
 
 主题可以加载脚本、样式、字体和图片，但直接 `fetch`、XHR、WebSocket 受 CSP 限制。第三方脚本仍是主题作者供应链的一部分；沙箱隔离权限，不替作者担保页面内容。
 
@@ -68,7 +68,9 @@ await onRoute(path => {
 | `getSnapshot()` | 无 | `PublicSnapshot`：时间、建议上报间隔、公开节点实时状态 |
 | `queryMetrics(args)` | `{ nodeId, from, to, maxPoints }` | 节点指标历史 |
 | `queryProbes(args)` | `{ nodeId, from, to, maxPoints }` | 节点探测历史 |
-| `navigate(path, replace?)` | `/` 或 `/nodes/<正整数>`，可选替换历史记录 | 更新公开页地址并通知路由订阅者 |
+| `listProbeComparisonNodes(args)` | `{ taskId }` | 跨节点对比的候选与分块上限，见下文 |
+| `queryProbeComparison(args)` | `{ taskId, nodeIds, from, to, maxPoints }` | 一个任务在一组节点上的探测历史 |
+| `navigate(path, replace?)` | `/`、`/nodes/<正整数>` 或 `/probes/<正整数>`，可带尾部斜杠；可选替换历史记录 | 更新公开页地址并通知路由订阅者 |
 | `onRoute(listener)` | 接收路径的函数 | Promise，解析为取消订阅函数；订阅后立即收到当前路径 |
 
 数据字段定义见 `proto/heron/v1/public.proto`、`query.proto` 和 `types.proto`。JSON 使用 lowerCamelCase；`int64` 字段是字符串；普通字段缺席时使用 protobuf 默认值，`optional` 字段缺席表示没有读数。SDK 返回的是响应数据本身，不是 `Response` 对象，失败会拒绝 Promise。
@@ -78,6 +80,19 @@ await onRoute(path => {
 历史网络均值从 `rx_bytes` / `tx_bytes` 的 `sum / stepS` 计算，采样峰值取 `net_rx_bps` / `net_tx_bps` 的 `max`，单位 bytes/s。缺少系列、`n=0` 或缺少值时保留空洞，有效零值正常显示。探测系列沿用服务端顺序，不在主题内重新按 ID 排序。
 
 历史响应的 `level` 是窗口选定的基础聚合级别，较新的区间可由更细数据按同一 `stepS` 聚合补齐；画点间隔以 `stepS` 为准。末桶可能未完成，只含已刷出的分钟，不含 live 内存里尚未刷出的当前分钟。
+
+### 跨节点探测对比
+
+一次对比是两步，都经 SDK 走 POST。主题桥接不发 GET，所以公开方法上的 `cache_max_age_s = 60` 不会作用在这条路径上；浏览器的 GET 缓存只覆盖直接 GET 调用。
+
+1. `listProbeComparisonNodes({ taskId })` 取当前分配了该任务的公开节点。`nodeIds` 已按节点全序排好，顺序只决定显示。`maxNodesPerQuery` 是下一步一次能带的节点数，与 hub 校验用的是同一个值，恒为正。收到 `0`（proto3 数值缺席也是 0）是协议错误：不能当成不限，也不能改用主题自己写死的块大小。
+2. 按 `maxNodesPerQuery` 把 `nodeIds` 切成块，再调用 `queryProbeComparison({ taskId, nodeIds, from, to, maxPoints })`。同时在飞的块不要超过两块。某一块网络失败或服务端报错时显示错误，让用户重试，不要自动循环。窗口或任务变了就放弃尚未返回的块。
+
+`series` 与这一块请求的 `nodeIds` 同序；窗口内没有样本的节点也在，`samples` 为空。`unavailableNodeIds` 是不可见或不存在的节点，二者不加区分，不要为它们画线。分块不返回任务标注，种类与目标用 List 响应的 `kind`、`target`；List 之后目标、间隔、超时、DNS 或分配变了，下一次 List 才体现，没有“整次重来”。
+
+List 的错误码 `not_found`：任务不存在，或没有任何分配了该任务的公开节点。两种情况是同一条错误，不要设法区分。`failed_precondition`：这次要读的历史超过额度，`message` 里带有额度和建议（缩小窗口、增大 `maxPoints`，或等待数据整理）。空的 `samples` 表示窗口内没有结果，不是数值 0。丢包率看样本里的 `lost / sent`：全部超时是 100%，全部本地错误（`errors`，探测没有发出）是 0%，不要因为没有 RTT 就画成 100%。RTT 只在样本带了 `rttMeanUs` 时才有。
+
+`int64` 在 JSON 里是字符串，包括 `taskId` 和 `nodeIds`。
 
 QueryMetrics 的 coverage 与 ts 一一对应：minutes 是留存的上报分钟，observed 是 hub 观测分钟，observedReported 是交集，各自可缺席。纯观测点所有指标 n=0，按空值绘图。coverageSummary 是请求窗口汇总，不受 maxPoints 影响；未知分钟 = eligibleMinutes−observedMinutes，覆盖率 = observedReportedMinutes/observedMinutes，不是在线率。coverageStart 缺席表示尚无覆盖记录，有起点但 observedMinutes=0 表示无可观测区间。内置公开页不展示覆盖率，但公开节点的 observed 暴露 hub 在保留期内的观测分钟。
 
@@ -142,4 +157,4 @@ heron-hub serve --db dev.db --listen 127.0.0.1:18180
 heron-hub passwd --db dev.db
 ```
 
-访问 `http://127.0.0.1:18180/admin/`，创建公开节点并接入 agent。将产物上传后先预览，再启用并访问 `http://127.0.0.1:18180/`。SDK 依赖可信容器的消息通道，直接用框架开发服务器打开主题不具备这条通道；成品验证应通过 hub 预览，检查相对资源、`/nodes/1` 深链接、前进后退、切换版本和公开页关闭行为。
+访问 `http://127.0.0.1:18180/admin/`，创建公开节点并接入 agent。将产物上传后先预览，再启用并访问 `http://127.0.0.1:18180/`。SDK 依赖可信容器的消息通道，直接用框架开发服务器打开主题不具备这条通道；成品验证应通过 hub 预览，检查相对资源、`/nodes/1` 与 `/probes/1` 深链接、前进后退、切换版本和公开页关闭行为。

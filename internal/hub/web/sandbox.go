@@ -43,13 +43,13 @@ func ThemeRuntimeHandler() http.Handler {
 
 const themeShellJS = `(() => {
 const frame = document.querySelector('iframe');
-const methods = new Set(['GetSite','GetSnapshot','QueryMetrics','QueryProbes']);
+const methods = new Set(['GetSite','GetSnapshot','QueryMetrics','QueryProbes','ListProbeComparisonNodes','QueryProbeComparison']);
 const preview = frame.getAttribute('src').startsWith('/_heron/preview/');
 let currentPath = preview ? '/' : location.pathname;
 let port, generation = 0, pending = new Set(), count = 0, since = Date.now();
 function close() { generation++; port?.close(); for(const controller of pending) controller.abort(); pending.clear(); }
 function route(path, replace = false) {
-  if(typeof path !== 'string' || !/^\/(?:nodes\/[1-9][0-9]*)?\/?$/.test(path)) return;
+  if(typeof path !== 'string' || !/^\/(?:(?:nodes|probes)\/[1-9][0-9]*)?\/?$/.test(path)) return;
   if(!preview) history[replace ? 'replaceState' : 'pushState'](null, '', path);
   currentPath = path;
   port?.postMessage({type:'route', path});
@@ -111,6 +111,8 @@ export const getSite = () => call('GetSite');
 export const getSnapshot = () => call('GetSnapshot');
 export const queryMetrics = args => call('QueryMetrics',args);
 export const queryProbes = args => call('QueryProbes',args);
+export const listProbeComparisonNodes = args => call('ListProbeComparisonNodes',args);
+export const queryProbeComparison = args => call('QueryProbeComparison',args);
 export async function navigate(path, replace = false) { await ready; port.postMessage({type:'navigate',path,replace}); }
 export async function onRoute(listener) { await ready; listeners.add(listener); listener(path); return () => listeners.delete(listener); }
 `
