@@ -1,6 +1,7 @@
 package probelimit
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -98,4 +99,44 @@ func TestCheckTask(t *testing.T) {
 			t.Fatalf("nil task error=%v", err)
 		}
 	})
+}
+
+// pin 与 config_id 的约束在按种类分支之前检查：DNS 分支提前 return，
+// 钉在 DNS 任务上的 pin 必须被拒而不是被分支放行。
+func TestCheckTaskPinAndConfigID(t *testing.T) {
+	pin32 := make([]byte, CertSPKISHA256Len)
+	cid16 := make([]byte, ConfigIDLen)
+	for _, tc := range []struct {
+		name          string
+		kind          heronv1.ProbeKind
+		target        string
+		dnsServer     string
+		pin, configID []byte
+		want          string
+	}{
+		{"pin_https", heronv1.ProbeKind_PROBE_KIND_HTTP, "https://example.com/", "", pin32, nil, ""},
+		{"pin_http", heronv1.ProbeKind_PROBE_KIND_HTTP, "http://example.com/", "", pin32, nil, "only applies to an HTTP task with an https target"},
+		// scheme 为 https 时 pin 检查放行，主机缺失由按种类分支的 URL 检查兜住。
+		{"pin_https_no_host", heronv1.ProbeKind_PROBE_KIND_HTTP, "https:///path", "", pin32, nil, "have a host"},
+		{"pin_icmp", heronv1.ProbeKind_PROBE_KIND_ICMP, "127.0.0.1", "", pin32, nil, "only applies to an HTTP task"},
+		{"pin_tcp", heronv1.ProbeKind_PROBE_KIND_TCP, "example.com:443", "", pin32, nil, "only applies to an HTTP task"},
+		{"pin_dns", heronv1.ProbeKind_PROBE_KIND_DNS, "example.com", "1.1.1.1:53", pin32, nil, "only applies to an HTTP task"},
+		{"pin_short", heronv1.ProbeKind_PROBE_KIND_HTTP, "https://example.com/", "", pin32[:31], nil, "must be exactly 32 bytes"},
+		{"pin_long", heronv1.ProbeKind_PROBE_KIND_HTTP, "https://example.com/", "", append(slices.Clone(pin32), 0), nil, "must be exactly 32 bytes"},
+		{"config_id", heronv1.ProbeKind_PROBE_KIND_ICMP, "127.0.0.1", "", nil, cid16, ""},
+		{"config_id_short", heronv1.ProbeKind_PROBE_KIND_ICMP, "127.0.0.1", "", nil, cid16[:15], "must be exactly 16 bytes"},
+		{"config_id_long", heronv1.ProbeKind_PROBE_KIND_ICMP, "127.0.0.1", "", nil, append(slices.Clone(cid16), 0), "must be exactly 16 bytes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := &heronv1.ProbeTask{Kind: tc.kind, Target: tc.target, IntervalS: 5, TimeoutMs: 1000, DnsServer: tc.dnsServer, CertSpkiSha256: tc.pin, ConfigId: tc.configID}
+			err := CheckTask(task)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("valid task rejected: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error=%v; want substring %q", err, tc.want)
+			}
+		})
+	}
 }

@@ -38,6 +38,10 @@ const (
 	// 条数和文本共同约束体积；超出 hub 读上限会被 ResourceExhausted 拒绝并回队，形成永久失败。
 	MaxResultsPerReport = 1024
 	MaxErrorMessageLen  = 128 // 字节；协议字符串仍须为合法 UTF-8。
+	// CertSPKISHA256Len 是钉住指纹的字节数：叶证书 SubjectPublicKeyInfo 的 SHA-256。
+	CertSPKISHA256Len = 32
+	// ConfigIDLen 是任务配置身份的字节数：crypto/rand 生成的随机数，只比较相等。
+	ConfigIDLen = 16
 	// MaxResultAge 是结果的迟到预算（§6.4 第 3 条）：agent 取走时丢弃更老的，hub 拒收更老的，两侧同一个数。
 	MaxResultAge = 120 * time.Second
 )
@@ -55,6 +59,24 @@ func CheckTask(t *heronv1.ProbeTask) error {
 	}
 	if t.GetTimeoutMs() < MinTimeoutMs || t.GetTimeoutMs() > MaxTimeoutMs {
 		return fmt.Errorf("timeout_ms must be between %d and %d; got %d", MinTimeoutMs, MaxTimeoutMs, t.GetTimeoutMs())
+	}
+	// pin 与身份的检查放在按种类分支之前：DNS 分支提前 return，晚于分支的检查会被它跳过。
+	if pin := t.GetCertSpkiSha256(); len(pin) > 0 {
+		if len(pin) != CertSPKISHA256Len {
+			return fmt.Errorf("cert_spki_sha256 must be exactly %d bytes when set; got %d", CertSPKISHA256Len, len(pin))
+		}
+		// 钉指纹只对 https 目标有意义：http 没有证书可钉，其他种类同样没有；
+		// 静默忽略会让调用方以为钉住了而实际上按默认校验执行，方向是放宽，必须拒绝。
+		if t.GetKind() != heronv1.ProbeKind_PROBE_KIND_HTTP {
+			return fmt.Errorf("cert_spki_sha256 only applies to an HTTP task with an https target; got kind %s", t.GetKind())
+		}
+		u, err := url.Parse(t.GetTarget())
+		if err != nil || u.Scheme != "https" {
+			return fmt.Errorf("cert_spki_sha256 only applies to an HTTP task with an https target; got %q", t.GetTarget())
+		}
+	}
+	if cid := t.GetConfigId(); len(cid) > 0 && len(cid) != ConfigIDLen {
+		return fmt.Errorf("config_id must be exactly %d bytes when set; got %d", ConfigIDLen, len(cid))
 	}
 	switch t.GetKind() {
 	case heronv1.ProbeKind_PROBE_KIND_ICMP:
