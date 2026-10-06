@@ -59,7 +59,7 @@ func TestUpdateDispatchPersistsBeforeDeliveryAndCannotCancel(t *testing.T) {
 		t.Fatalf("delivery=%v", got)
 	}
 	rows, err := m.st.NodeUpdates(t.Context())
-	if err != nil || rows[id].Task.State != "dispatched" {
+	if err != nil || rows[id].Task.GetState() != "dispatched" {
 		t.Fatalf("dispatch not durable: %v %v", rows, err)
 	}
 	if err := m.Cancel(t.Context(), id, task.Id); err == nil {
@@ -108,7 +108,7 @@ func TestUpdateResultRequiresMatchingTaskAndRunningVersion(t *testing.T) {
 			reported.Task.State = "succeeded"
 			m.Observe(id, reported)
 			m.flush(t.Context())
-			if got := m.Snapshot(id).Task.State; got != "succeeded" {
+			if got := m.Snapshot(id).Task.GetState(); got != "succeeded" {
 				t.Fatalf("matching success rejected: %s", got)
 			}
 		})
@@ -141,7 +141,7 @@ func TestUpdateQueueExpiryCancellationAndSupport(t *testing.T) {
 	}
 	m.Observe(id, m.Snapshot(id))
 	m.flush(t.Context())
-	if m.Snapshot(id).Task.State != "cancelled" {
+	if m.Snapshot(id).Task.GetState() != "cancelled" {
 		t.Fatal("cancelled task restarted")
 	}
 	if _, err := m.Start(t.Context(), id, "v0.3.0"); err != nil {
@@ -152,7 +152,7 @@ func TestUpdateQueueExpiryCancellationAndSupport(t *testing.T) {
 		t.Fatal("expired task delivered")
 	}
 	m.flush(t.Context())
-	if m.Snapshot(id).Task.State != "expired" {
+	if m.Snapshot(id).Task.GetState() != "expired" {
 		t.Fatal("expired task remains queued")
 	}
 	m.Observe(id, nil)
@@ -243,7 +243,7 @@ func TestUpdateOldProgressCannotRegressAndDuplicatesDoNotChangeTime(t *testing.T
 	report.Task.State = "downloading"
 	m.Observe(id, report)
 	m.flush(t.Context())
-	if got := m.Snapshot(id).Task.State; got != "verifying" {
+	if got := m.Snapshot(id).Task.GetState(); got != "verifying" {
 		t.Fatalf("old progress regressed task: %s", got)
 	}
 }
@@ -264,19 +264,19 @@ func TestLostResultExpiresWithoutClaimingFailureAndAcceptsLateResult(t *testing.
 			clk.Advance(24 * time.Hour)
 			m.Observe(id, &heronv1.UpdateStatus{Supported: true, Version: "v0.2.0"})
 			m.flush(t.Context())
-			if got := m.Snapshot(id).Task.State; got != "unconfirmed" {
+			if got := m.Snapshot(id).Task.GetState(); got != "unconfirmed" {
 				t.Fatalf("lost outcome should be unconfirmed, got %s", got)
 			}
 			report.Task.State = "succeeded"
 			m.Observe(id, report)
 			m.flush(t.Context())
-			if m.Snapshot(id).Task.State != "unconfirmed" {
+			if m.Snapshot(id).Task.GetState() != "unconfirmed" {
 				t.Fatal("old process confirmed success")
 			}
 			report.Version = "v0.3.0"
 			m.Observe(id, report)
 			m.flush(t.Context())
-			if m.Snapshot(id).Task.State != "succeeded" {
+			if m.Snapshot(id).Task.GetState() != "succeeded" {
 				t.Fatal("matching late success was lost")
 			}
 		})
