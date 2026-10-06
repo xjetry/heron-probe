@@ -15,6 +15,10 @@ hub 的管理接口是 Connect unary：每个方法都是 `POST $HERON_HUB/heron
 - `ListSessions` 与 `RevokeSession` 也仅限会话 cookie，API token 不可用；即使获得写权限，也不能枚举、创建或撤销 API 凭据及会话。
 - `GetUpdates` 查询范围内节点的在线更新能力和任务；全站 token 还可读 Hub 状态。`checkLatest: true` 显式查询官方最新正式版。`boundAgentVersion` 是 hub 绑定的 agent 版本，节点更新（`ExecuteChange.startUpdate`）的 `version` 只能是它，查询它不需要 `checkLatest`。具备更新权限时，经 `ExecuteChange.startUpdate` / `cancelUpdate` 操作正数 nodeId 的官方更新。Hub 更新仍仅限会话。
 
+## 存储观测
+
+`GetStorageStats.wal` 是独立于 SQL 快照的一次 `-wal` 文件观测，不含 `-shm`，也不是未检查点的数据量。先检查消息存在性：缺 `wal` 是旧 hub 未提供；有消息时按 oneof 分支读取，`bytes`（JSON 十进制字符串）表示文件存在且可为 `"0"`，`absent: true` 表示无 WAL 文件，`error` 表示大小未知（错误文本最多 512 字节），不能把后两者补成零字节。`observedAt` 是 stat 完成时的 hub 墙钟 Unix 秒，与 SQL 统计不承诺同一时刻；跨请求比较必须保留各自时刻。没有或不识别的 result 分支也按未知处理，不据此推导 checkpoint 或告警结论。
+
 ## 预授权写入
 
 1. 用 `ListNodes`、`ListProbeTasks`、`ListAlertRules` 读取授权范围；用 `ListNotifyChannelRefs` 取得渠道 id、名称、类型，不读地址、模板或密钥。指定节点凭据不能调用全站设置、备份与存储统计。

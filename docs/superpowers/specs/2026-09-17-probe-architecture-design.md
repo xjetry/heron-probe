@@ -426,6 +426,8 @@ CREATE TABLE probe_1m (
 
 ### 6.5 保留与查询
 
+WAL 文件观测：`GetStorageStats.wal` 与 `heron-hub stats` 均取 `store.StorageStats` 的一次观测，路径是库旁的 `<Store.path>-wal`，生产使用 `os.Stat`，不读取 `-shm`。文件存在时返回实际字节数（允许零）；ENOENT 用显式 absent 标记“无 WAL 文件”；其他错误为未知并带至多 512 字节的有效 UTF-8 错误文本，不以零代替。API 子消息缺失表示旧 hub 没有该项，与三态分开。观测时刻为 stat 完成时的 hub 墙钟 Unix 秒；SQL 行数、逻辑大小与维护健康来自只读事务，事务结束后独立观测文件，二者不是同一快照。CLI 的 `wal.observed_at`、`wal.state`（present / absent / unknown）、仅存在时的 `wal.bytes`、仅失败时的 `wal.error` 展示同一结果，不再 stat。离线命令自己打开库，观测包含这次打开的影响：hub 未运行、库上次正常关闭时，看到的是这次打开建立的 0 字节 `-wal`，不是 absent。WAL 实际长度不是未检查点数据量；本项不定义 checkpoint 策略或告警阈值。
+
 QueryMetrics 两服务均返回与 ts 对齐的 coverage 三计数，以及独立的 coverage_summary。eligible 是完整落入请求窗口、起点不早于 coverage_start 且终点不晚于查询时当前分钟起点的整分钟集合；缺覆盖起点时为空。覆盖起点、水位、源桶与汇总在同一读事务读取；按水位拼接的源桶只在完整落入 eligible 时计入 observed/observed_reported，跨边界与 NULL 留在未知里，不按输出 step 重算。守恒为 observed_reported ≤ observed ≤ eligible，未知 = eligible − observed；保留期外缺行也属于未知，汇总不随 max_points 变化。
 
 保留期默认 1m：7 天、5m：30 天、1h：365 天，可配。prune 按时间片分块删除，每块一个短事务，不长时间占住写协程。

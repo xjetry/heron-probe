@@ -18,6 +18,7 @@ func runStats(args []string) error { return runStatsWith(args, os.Stdout) }
 // （表名.oldest、表名.watermark、prune.finished_at、rollup.finished_at），不会与"表名: 行数"混淆；缺失的值写 none。
 // 离线命令不知道运行中 hub 的保留期配置，所以只给原值，不给标红结论（标红见 GetStorageStats）。
 // wal.* 原样展示 store 的单次文件观测；present（含零字节）、absent、unknown 分开，不另读文件系统。
+// 本命令自己打开库：hub 未运行时观测到的是这次打开建立的 -wal（正常关闭过的库上为 0 字节）。
 func runStatsWith(args []string, out io.Writer) error {
 	return runStatsWithSource(args, out, func(path string) (storageStatsSource, error) {
 		st, _, err := openOffline(path, false)
