@@ -23,7 +23,7 @@ import (
 func fixture(t *testing.T) *Collector {
 	t.Helper()
 	return &Collector{
-		Host:    &ProcFS{FS: os.DirFS("testdata/docker-debian"), DiskUsage: func(string) (uint64, uint64, error) { return 1000, 400, nil }},
+		Host:    hostProc(os.DirFS("testdata/docker-debian"), func(string) (uint64, uint64, error) { return 1000, 400, nil }),
 		Clock:   clock.NewFake(time.Unix(0, 0)),
 		Version: "test",
 	}
@@ -31,7 +31,7 @@ func fixture(t *testing.T) *Collector {
 
 func TestMetricsFromRealProcSnapshot(t *testing.T) {
 	c := fixture(t)
-	m, err := c.Metrics()
+	m, err := c.Metrics(c.Identify())
 	if err != nil {
 		t.Fatalf("unexpected read failures: %v", err)
 	}
@@ -65,12 +65,12 @@ func TestCPUPercentAppearsOnSecondSample(t *testing.T) {
 	fsys := fstest.MapFS{
 		"proc/stat": {Data: []byte("cpu  100 0 50 800 20 0 10 0 0 0\n")},
 	}
-	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clock.NewFake(time.Unix(0, 0))}
-	if m, _ := c.Metrics(); m.CpuPct != nil {
+	c := &Collector{Host: hostProc(fsys, func(string) (uint64, uint64, error) { return 0, 0, nil }), Clock: clock.NewFake(time.Unix(0, 0))}
+	if m, _ := c.Metrics(c.Identify()); m.CpuPct != nil {
 		t.Fatal("first sample must not carry cpu_pct")
 	}
 	fsys["proc/stat"] = &fstest.MapFile{Data: []byte("cpu  150 0 50 850 20 0 10 0 0 0\n")} // +100 tick，其中 50 空闲
-	m, _ := c.Metrics()
+	m, _ := c.Metrics(c.Identify())
 	if m.CpuPct == nil || m.GetCpuPct() != 50 {
 		t.Fatalf("cpu_pct set %v = %v, want 50", m.CpuPct != nil, m.GetCpuPct())
 	}
@@ -82,14 +82,14 @@ func TestNetRateNeedsTwoSamples(t *testing.T) {
 		"sys/class/net/eth0/statistics/rx_bytes": {Data: []byte("1000\n")},
 		"sys/class/net/eth0/statistics/tx_bytes": {Data: []byte("2000\n")},
 	}
-	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clk}
-	m, _ := c.Metrics()
+	c := &Collector{Host: hostProc(fsys, func(string) (uint64, uint64, error) { return 0, 0, nil }), Clock: clk}
+	m, _ := c.Metrics(c.Identify())
 	if m.GetNetRxTotal() != 1000 || m.NetRxBps != nil {
 		t.Fatalf("first: %+v", m)
 	}
 	fsys["sys/class/net/eth0/statistics/rx_bytes"] = &fstest.MapFile{Data: []byte("3000\n")}
 	clk.Advance(2 * time.Second)
-	m, _ = c.Metrics()
+	m, _ = c.Metrics(c.Identify())
 	if m.GetNetRxBps() != 1000 {
 		t.Fatalf("rx_bps = %d, want (3000-1000)/2s = 1000", m.GetNetRxBps())
 	}
@@ -104,7 +104,7 @@ func TestResetRatesRestoresFirstSampleSemantics(t *testing.T) {
 		"sys/block/sda":                          {Mode: fs.ModeDir},
 	}
 	clk := clock.NewFake(time.Unix(0, 0))
-	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clk}
+	c := &Collector{Host: hostProc(fsys, func(string) (uint64, uint64, error) { return 0, 0, nil }), Clock: clk}
 	step := 0
 	bump := func() {
 		step++
@@ -117,27 +117,27 @@ func TestResetRatesRestoresFirstSampleSemantics(t *testing.T) {
 	hasRates := func(m *heronv1.Metrics) bool {
 		return m.CpuPct != nil || m.NetRxBps != nil || m.NetTxBps != nil || m.DiskReadBps != nil || m.DiskWriteBps != nil
 	}
-	c.Metrics()
+	c.Metrics(c.Identify())
 	bump()
-	if m, _ := c.Metrics(); !hasRates(m) {
+	if m, _ := c.Metrics(c.Identify()); !hasRates(m) {
 		t.Fatalf("second sample must carry rates: %+v", m)
 	}
 	c.ResetRates()
 	// 重置后计数仍在增长，若基线残留，这次采样会给出跨重置边界的速率。
 	bump()
-	if m, _ := c.Metrics(); hasRates(m) {
+	if m, _ := c.Metrics(c.Identify()); hasRates(m) {
 		t.Fatalf("sample after ResetRates must be a first sample: %+v", m)
 	}
 	bump()
-	m, _ := c.Metrics()
+	m, _ := c.Metrics(c.Identify())
 	if m.GetCpuPct() != 50 || m.GetNetRxBps() != 1000 || m.GetDiskReadBps() != 256000 {
 		t.Fatalf("rates must resume one sample after reset: %+v", m)
 	}
 }
 
 func TestMissingFilesYieldMissingReadingsNotZero(t *testing.T) {
-	c := &Collector{Host: &ProcFS{FS: fstest.MapFS{}, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, os.ErrNotExist }}, Clock: clock.NewFake(time.Unix(0, 0))}
-	m, err := c.Metrics()
+	c := &Collector{Host: hostProc(fstest.MapFS{}, func(string) (uint64, uint64, error) { return 0, 0, os.ErrNotExist }), Clock: clock.NewFake(time.Unix(0, 0))}
+	m, err := c.Metrics(c.Identify())
 	if err == nil {
 		t.Fatal("read failures must be reported for logging")
 	}
@@ -147,7 +147,7 @@ func TestMissingFilesYieldMissingReadingsNotZero(t *testing.T) {
 }
 
 func TestFactsFromRealProcSnapshot(t *testing.T) {
-	f := fixture(t).Facts()
+	f := fixture(t).Facts(fixture(t).Identify())
 	if f.GetHostname() == "" || f.GetKernel() == "" || f.GetOs() == "" || f.GetCpuCores() == 0 || f.GetArch() == "" {
 		t.Fatalf("%+v", f)
 	}
@@ -162,8 +162,8 @@ func TestUsageAboveTotalIsDroppedNotClamped(t *testing.T) {
 	fsys := fstest.MapFS{
 		"proc/meminfo": {Data: []byte("MemTotal: 1000 kB\nMemAvailable: 2000 kB\nSwapTotal: 10 kB\nSwapFree: 4 kB\n")},
 	}
-	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 100, 101, nil }}, Clock: clock.NewFake(time.Unix(0, 0))}
-	m, err := c.Metrics()
+	c := &Collector{Host: hostProc(fsys, func(string) (uint64, uint64, error) { return 100, 101, nil }), Clock: clock.NewFake(time.Unix(0, 0))}
+	m, err := c.Metrics(c.Identify())
 	if m.MemTotal != nil || m.MemUsed != nil || m.DiskTotal != nil || m.DiskUsed != nil {
 		t.Fatalf("used above total must leave both readings unset, got mem %d/%d disk %d/%d", m.GetMemUsed(), m.GetMemTotal(), m.GetDiskUsed(), m.GetDiskTotal())
 	}
@@ -175,7 +175,7 @@ func TestUsageAboveTotalIsDroppedNotClamped(t *testing.T) {
 	}
 
 	fsys["proc/meminfo"] = &fstest.MapFile{Data: []byte("MemTotal: 1000 kB\nMemAvailable: 400 kB\nSwapTotal: 10 kB\nSwapFree: 12 kB\n")}
-	m, err = c.Metrics()
+	m, err = c.Metrics(c.Identify())
 	if m.SwapTotal != nil || m.SwapUsed != nil {
 		t.Fatalf("swap used above total must leave both readings unset, got %d/%d", m.GetSwapUsed(), m.GetSwapTotal())
 	}
@@ -208,23 +208,21 @@ func (h *ifacesOnly) diskCounters() ([]diskCounters, error) {
 }
 func (h *ifacesOnly) defaultNetExclude() []string { return []string{"lo", "docker*"} }
 func (h *ifacesOnly) facts() hostFacts            { return hostFacts{} }
-func (h *ifacesOnly) cgroupCPU() (cgroupCPU, error) {
-	return cgroupCPU{}, nil
-}
+func (h *ifacesOnly) identify() *execSnapshot     { return identifyFailedSnapshot() }
 
 // 被排除的网卡不进合计，未给 --net-exclude 时用 Host 的默认列表，给了就整个替换默认列表。
 func TestExcludedInterfacesAreNotSummed(t *testing.T) {
 	h := &ifacesOnly{list: []ifaceCounters{{"eth0", 1000, 2000}, {"lo", 50000, 50000}, {"docker0", 70000, 70000}}}
 	c := &Collector{Host: h, Clock: clock.NewFake(time.Unix(0, 0))}
-	if m, _ := c.Metrics(); m.GetNetRxTotal() != 1000 || m.GetNetTxTotal() != 2000 {
+	if m, _ := c.Metrics(c.Identify()); m.GetNetRxTotal() != 1000 || m.GetNetTxTotal() != 2000 {
 		t.Fatalf("net = %d/%d, want eth0 only", m.GetNetRxTotal(), m.GetNetTxTotal())
 	}
 	c = &Collector{Host: h, Clock: c.Clock, NetExclude: []string{"eth*"}}
-	if m, _ := c.Metrics(); m.GetNetRxTotal() != 120000 {
+	if m, _ := c.Metrics(c.Identify()); m.GetNetRxTotal() != 120000 {
 		t.Fatalf("explicit exclude list replaces the default: rx = %d, want lo + docker0", m.GetNetRxTotal())
 	}
 	c = &Collector{Host: h, Clock: c.Clock, NetInclude: []string{"docker*"}}
-	if m, _ := c.Metrics(); m.GetNetRxTotal() != 70000 {
+	if m, _ := c.Metrics(c.Identify()); m.GetNetRxTotal() != 70000 {
 		t.Fatalf("include list is exclusive: rx = %d, want docker0 only", m.GetNetRxTotal())
 	}
 }
@@ -301,8 +299,8 @@ func TestConnsAreCorrectOrMissing(t *testing.T) {
 		"unrecognized sockstat": fstest.MapFS{"proc/net/sockstat": {Data: []byte("sockets: used 50\n")}, "proc/net/sockstat6": {Data: []byte(sockstat6)}},
 		"sockstat without UDP":  fstest.MapFS{"proc/net/sockstat": {Data: []byte("TCP: inuse 11\n")}, "proc/net/sockstat6": {Data: []byte(sockstat6)}},
 	} {
-		c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clock.NewFake(time.Unix(0, 0))}
-		m, err := c.Metrics()
+		c := &Collector{Host: hostProc(fsys, func(string) (uint64, uint64, error) { return 0, 0, nil }), Clock: clock.NewFake(time.Unix(0, 0))}
+		m, err := c.Metrics(c.Identify())
 		if m.TcpConns != nil || m.UdpConns != nil {
 			t.Errorf("%s: conns = %d/%d, want both missing rather than the IPv6 part alone", name, m.GetTcpConns(), m.GetUdpConns())
 		}
@@ -344,8 +342,8 @@ func TestInterfaceReadErrorDropsTheWholeReadingOnLinux(t *testing.T) {
 		t.Fatalf("on a real directory: ifaces = %v, %v; want eth0 and eth1", ifs, err)
 	}
 	// 网卡目录还在、计数读不出（EACCES 之类）：不是网卡消失，整个流量读数缺失。
-	c := &Collector{Host: &ProcFS{FS: failingFS{fsys, "sys/class/net/eth1/statistics/rx_bytes", fs.ErrPermission}, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clock.NewFake(time.Unix(0, 0))}
-	m, err := c.Metrics()
+	c := &Collector{Host: hostProc(failingFS{fsys, "sys/class/net/eth1/statistics/rx_bytes", fs.ErrPermission}, func(string) (uint64, uint64, error) { return 0, 0, nil }), Clock: clock.NewFake(time.Unix(0, 0))}
+	m, err := c.Metrics(c.Identify())
 	if m.NetRxTotal != nil || m.NetTxTotal != nil {
 		t.Fatalf("partial interface set must not be reported: rx %d tx %d", m.GetNetRxTotal(), m.GetNetTxTotal())
 	}
@@ -425,7 +423,8 @@ func protoDiff(got, want proto.Message) []string {
 
 // Linux 上报值逐字段钉住：期望值由快照文件算出，写成算式，读者能对着 testdata/docker-debian 核对。
 func TestGoldenMetricsFromRealProcSnapshot(t *testing.T) {
-	m, err := fixture(t).Metrics()
+	c := fixture(t)
+	m, err := c.Metrics(c.Identify())
 	if err != nil {
 		t.Fatalf("unexpected read failures: %v", err)
 	}
@@ -440,7 +439,8 @@ func TestGoldenMetricsFromRealProcSnapshot(t *testing.T) {
 		Load1:           proto.Float64(0.27),
 		Load5:           proto.Float64(0.50),
 		Load15:          proto.Float64(0.46),
-		Procs:           proto.Uint32(1), // 进程目录只有 proc/1
+		Load1PerCore:    proto.Float64(0.27 / 16), // loadavg 0.27 ÷ cpuinfo 16 处理器
+		Procs:           proto.Uint32(1),          // 进程目录只有 proc/1
 		UptimeS:         proto.Uint64(202088),
 		TcpConns:        proto.Uint32(0),
 		UdpConns:        proto.Uint32(0),
@@ -451,10 +451,18 @@ func TestGoldenMetricsFromRealProcSnapshot(t *testing.T) {
 	if d := protoDiff(m, want); d != nil {
 		t.Fatalf("metrics differ from the snapshot:\n%s", strings.Join(d, "\n"))
 	}
-	f := fixture(t).Facts()
+	f := fixture(t).Facts(fixture(t).Identify())
 	wantFacts := &heronv1.Facts{
 		Hostname: "fa6437c2745e", Os: "Debian GNU/Linux 12 (bookworm)", Kernel: "7.0.14-orbstack-00380-ga7e0a2dc9535",
 		Arch: runtime.GOARCH, CpuCores: 16, AgentVersion: "test",
+		// 快照没有 cgroup 文件：挂载根是真根，四个来源都是 procfs。
+		Execution: &heronv1.ExecutionScope{
+			Kind: heronv1.ScopeKind_SCOPE_KIND_HOST, Cpu: heronv1.ResourceScope_RESOURCE_SCOPE_HOST,
+			Memory: heronv1.ResourceScope_RESOURCE_SCOPE_HOST, Swap: heronv1.ResourceScope_RESOURCE_SCOPE_HOST,
+			Load:              heronv1.ResourceScope_RESOURCE_SCOPE_HOST,
+			CpuEffectiveCores: f16(16), LoadCores: u16(16),
+			MemoryLimitBytes: u64p(16424476 * 1024), SwapLimitBytes: u64p(17473044 * 1024),
+		},
 	}
 	if d := protoDiff(f, wantFacts); d != nil {
 		t.Fatalf("facts differ from the snapshot:\n%s", strings.Join(d, "\n"))
@@ -487,8 +495,8 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 		"sys/block/sda":                          {Mode: fs.ModeDir},
 	}
 	clk := clock.NewFake(time.Unix(0, 0))
-	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 9000, 1234, nil }}, Clock: clk, Version: "v9", IcmpAvailable: true}
-	if _, err := c.Metrics(); err != nil {
+	c := &Collector{Host: hostProc(fsys, func(string) (uint64, uint64, error) { return 9000, 1234, nil }), Clock: clk, Version: "v9", IcmpAvailable: true}
+	if _, err := c.Metrics(c.Identify()); err != nil {
 		t.Fatalf("first sample: %v", err)
 	}
 	// 各状态增量：user 80、nice 10、system 40、idle 50、iowait 10、irq 5、softirq 3、steal 2，合计 200，空闲 60。
@@ -498,7 +506,7 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 	// 读 +1000 扇区、写 +1000 扇区 = 各 512000 字节，2 秒 → 各 256000 B/s。
 	fsys["proc/diskstats"] = &fstest.MapFile{Data: []byte("   8       0 sda 1010 20 5000 500 805 10 3000 300 0 200 400\n")}
 	clk.Advance(2 * time.Second)
-	m, err := c.Metrics()
+	m, err := c.Metrics(c.Identify())
 	if err != nil {
 		t.Fatalf("second sample: %v", err)
 	}
@@ -516,6 +524,7 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 		Load1:           proto.Float64(1.25),
 		Load5:           proto.Float64(2.5),
 		Load15:          proto.Float64(3.75),
+		Load1PerCore:    proto.Float64(1.25 / 3), // load1 ÷ 负载范围核数（cpuinfo 3 处理器）
 		Procs:           proto.Uint32(3),
 		UptimeS:         proto.Uint64(4321),
 		TcpConns:        proto.Uint32(11 + 17),
@@ -535,8 +544,17 @@ func TestGoldenMetricsFromSyntheticSnapshot(t *testing.T) {
 		Hostname: "synth", Os: "Synth Linux 1", Kernel: "6.1.0-synth", Arch: runtime.GOARCH, Virtualization: "lxc",
 		CpuModel: "Synth CPU", CpuCores: 3, AgentVersion: "v9", IcmpAvailable: true,
 		Diagnostics: &heronv1.AgentDiagnostics{NetExclude: slices.Clone(linuxNetExclude), NetInterfaces: []string{"eth0"}, NetInterfacesTotal: 1},
+		// 真根 + 容器标识（PID 1 的 container=lxc）：读数仍是整机，记说明。
+		Execution: &heronv1.ExecutionScope{
+			Kind: heronv1.ScopeKind_SCOPE_KIND_HOST, Cpu: heronv1.ResourceScope_RESOURCE_SCOPE_HOST,
+			Memory: heronv1.ResourceScope_RESOURCE_SCOPE_HOST, Swap: heronv1.ResourceScope_RESOURCE_SCOPE_HOST,
+			Load:              heronv1.ResourceScope_RESOURCE_SCOPE_HOST,
+			CpuEffectiveCores: f16(3), LoadCores: u16(3),
+			MemoryLimitBytes: u64p(8000 * 1024), SwapLimitBytes: u64p(4000 * 1024),
+			Notes: []heronv1.ScopeNote{heronv1.ScopeNote_SCOPE_NOTE_CONTAINER_SIGNAL_ON_HOST_ROOT},
+		},
 	}
-	if d := protoDiff(c.Facts(), wantFacts); d != nil {
+	if d := protoDiff(c.Facts(c.Identify()), wantFacts); d != nil {
 		t.Fatalf("facts differ:\n%s", strings.Join(d, "\n"))
 	}
 }
@@ -549,8 +567,8 @@ func TestProcsMissingWhenOtherProcessesAreHidden(t *testing.T) {
 		"proc/4242/comm": {Data: []byte("heron-agent\n")},
 		"proc/4243/comm": {Data: []byte("heron-agent\n")},
 	}
-	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clock.NewFake(time.Unix(0, 0))}
-	m, err := c.Metrics()
+	c := &Collector{Host: hostProc(fsys, func(string) (uint64, uint64, error) { return 0, 0, nil }), Clock: clock.NewFake(time.Unix(0, 0))}
+	m, err := c.Metrics(c.Identify())
 	if m.Procs != nil {
 		t.Fatalf("procs = %d from a /proc that hides PID 1, want missing", m.GetProcs())
 	}

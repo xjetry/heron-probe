@@ -189,7 +189,7 @@ func newFakeDarwin() *fakeDarwin {
 
 func TestDarwinMetricsFromSyscallLayout(t *testing.T) {
 	c := &Collector{Host: &darwinHost{src: newFakeDarwin()}, Clock: clock.NewFake(time.Unix(0, 0))}
-	m, err := c.Metrics()
+	m, err := c.Metrics(c.Identify())
 	if err != nil {
 		t.Fatalf("unexpected read failures: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestDarwinMetricsFromSyscallLayout(t *testing.T) {
 	if m.GetNetRxTotal() != 1<<32+1025 || m.GetNetTxTotal() != 40_156_680_979 {
 		t.Fatalf("net = %d/%d, want en0's 64-bit counters only", m.GetNetRxTotal(), m.GetNetTxTotal())
 	}
-	m, _ = c.Metrics()
+	m, _ = c.Metrics(c.Identify())
 	// 两个 CPU 各 +100 tick，其中各 50 空闲。
 	if m.CpuPct == nil || m.GetCpuPct() != 50 {
 		t.Fatalf("second cpu_pct set %v = %v, want 50", m.CpuPct != nil, m.GetCpuPct())
@@ -241,7 +241,7 @@ func TestDarwinInterfaceReadErrorDropsTheWholeReading(t *testing.T) {
 	f := newFakeDarwin()
 	f.errs = map[string]error{"net.link.generic.ifdata/3": syscall.EPERM}
 	c := &Collector{Host: &darwinHost{src: f}, Clock: clock.NewFake(time.Unix(0, 0))}
-	m, err := c.Metrics()
+	m, err := c.Metrics(c.Identify())
 	if m.NetRxTotal != nil || m.NetTxTotal != nil {
 		t.Fatalf("partial interface set must not be reported: rx %d tx %d", m.GetNetRxTotal(), m.GetNetTxTotal())
 	}
@@ -328,7 +328,8 @@ func TestVMUsedWrapIsCaughtBeforeCheckUsage(t *testing.T) {
 	}
 	f := newFakeDarwin()
 	f.vm = vmBytes(vmCounts{wire: wire, purgeable: purgeable, internal: internal})
-	m, err := (&Collector{Host: &darwinHost{src: f}, Clock: clock.NewFake(time.Unix(0, 0))}).Metrics()
+	dc := &Collector{Host: &darwinHost{src: f}, Clock: clock.NewFake(time.Unix(0, 0))}
+	m, err := dc.Metrics(dc.Identify())
 	if m.MemUsed != nil || m.MemTotal != nil {
 		t.Fatalf("wrapped memory reading reported: used %d total %d", m.GetMemUsed(), m.GetMemTotal())
 	}
@@ -366,7 +367,8 @@ func TestDarwinLayoutsRejectWrongSizes(t *testing.T) {
 func TestDarwinFacts(t *testing.T) {
 	f := newFakeDarwin()
 	f.u32["kern.hv_vmm_present"] = 1
-	got := (&Collector{Host: &darwinHost{src: f}, Version: "v"}).Facts()
+	dc := &Collector{Host: &darwinHost{src: f}, Version: "v"}
+	got := dc.Facts(dc.Identify())
 	if got.GetOs() != "macOS 26.3.1" || got.GetKernel() != "25.3.0" || got.GetCpuModel() != "Apple M4 Max" ||
 		got.GetCpuCores() != 13 || got.GetHostname() != "mac.local" || got.GetVirtualization() != "vm" {
 		t.Fatalf("%+v", got)

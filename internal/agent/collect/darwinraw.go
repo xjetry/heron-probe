@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
+
+	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 )
 
 // darwinNetExclude 与 Linux 的默认列表同一原则：回环，以及流量同时计在物理网口上或不出本机的接口。
@@ -190,8 +192,27 @@ func (d *darwinHost) defaultNetExclude() []string { return darwinNetExclude }
 // diskCounters：darwin 没有与 /proc/diskstats 对应的整盘累计读写口径，磁盘速率两项不设置。
 func (d *darwinHost) diskCounters() ([]diskCounters, error) { return nil, errNoDiskCounters }
 
-// cgroupCPU：cgroup 是 Linux 的设施，darwin 恒为无 cgroup 形态。
-func (d *darwinHost) cgroupCPU() (cgroupCPU, error) { return cgroupCPU{}, nil }
+// identify：cgroup 与 /proc 来源判断是 Linux 的设施，darwin 恒为主机（spec §4.2），
+// 读数与按核负载的分母都来自本机 sysctl。
+func (d *darwinHost) identify() *execSnapshot {
+	var cores float64
+	if n, err := d.src.sysctlUint32("hw.logicalcpu"); err == nil {
+		cores = float64(n)
+	}
+	s := &execSnapshot{cpuBaseline: procStatBaseline("host", cores), cpuCores: cores}
+	e := &s.exec
+	e.Kind = heronv1.ScopeKind_SCOPE_KIND_HOST
+	e.Cpu = heronv1.ResourceScope_RESOURCE_SCOPE_HOST
+	e.Memory = heronv1.ResourceScope_RESOURCE_SCOPE_HOST
+	e.Swap = heronv1.ResourceScope_RESOURCE_SCOPE_HOST
+	e.Load = heronv1.ResourceScope_RESOURCE_SCOPE_HOST
+	if cores > 0 {
+		e.CpuEffectiveCores = &cores
+		n := uint32(cores)
+		e.LoadCores = &n
+	}
+	return s
+}
 
 func (d *darwinHost) facts() hostFacts {
 	var f hostFacts
@@ -201,7 +222,6 @@ func (d *darwinHost) facts() hostFacts {
 	}
 	f.kernel, _ = d.src.sysctlString("kern.osrelease")
 	f.cpuModel, _ = d.src.sysctlString("machdep.cpu.brand_string")
-	f.cpuCores, _ = d.src.sysctlUint32("hw.logicalcpu")
 	if v, err := d.src.sysctlUint32("kern.hv_vmm_present"); err == nil && v == 1 {
 		f.virtualization = "vm"
 	}

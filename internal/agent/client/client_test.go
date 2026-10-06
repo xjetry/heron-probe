@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -156,6 +157,21 @@ func (f *fakeHub) received() []*heronv1.ReportRequest {
 	return append([]*heronv1.ReportRequest(nil), f.reports...)
 }
 
+// hostProcFS 构造带识别注入的 ProcFS：挂载根是真根 cgroup2、被消费的 /proc 文件都在
+// procfs 设备上（mountinfo 缺省补一条），与 collect 包内同名夹具同一套约定。
+func hostProcFS(fsys fs.FS, diskUsage func(string) (uint64, uint64, error)) *collect.ProcFS {
+	if m, ok := fsys.(fstest.MapFS); ok {
+		if _, exists := m["proc/self/mountinfo"]; !exists {
+			m["proc/self/mountinfo"] = &fstest.MapFile{Data: []byte("42 41 0:22 / /proc rw - proc proc rw\n")}
+		}
+	}
+	return &collect.ProcFS{
+		FS: fsys, DiskUsage: diskUsage,
+		StatID: func(string) (string, uint64, error) { return "0:22", 1, nil },
+		FSKind: func(string) (uint64, error) { return 0x63677270, nil },
+	}
+}
+
 func newRunner(t *testing.T, hub *fakeHub) (*Runner, chan time.Duration) {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -164,7 +180,7 @@ func newRunner(t *testing.T, hub *fakeHub) (*Runner, chan time.Duration) {
 	t.Cleanup(srv.Close)
 	sleeps := make(chan time.Duration, 100)
 	r := &Runner{
-		Collector: &collect.Collector{Host: &collect.ProcFS{FS: fstest.MapFS{"proc/loadavg": {Data: []byte("0 0 0 1/2 3\n")}}, DiskUsage: func(string) (uint64, uint64, error) { return 1, 1, nil }}, Clock: clock.NewFake(time.Unix(0, 0)), Version: "t"},
+		Collector: &collect.Collector{Host: hostProcFS(fstest.MapFS{"proc/loadavg": {Data: []byte("0 0 0 1/2 3\n")}}, func(string) (uint64, uint64, error) { return 1, 1, nil }), Clock: clock.NewFake(time.Unix(0, 0)), Version: "t"},
 		Client:    hubclient.New(srv.URL, 5*time.Second, agentwire.MaxResponseBytes),
 		Token:     "tok",
 		Clock:     clock.NewFake(time.Unix(0, 0)),

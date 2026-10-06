@@ -172,7 +172,7 @@ func TestRunnerDiscardsResultsAndRatesAcrossSuspend(t *testing.T) {
 		fsys["proc/diskstats"] = &fstest.MapFile{Data: []byte(fmt.Sprintf("   8       0 sda 1010 20 %d 500 805 10 %d 300 0 200 400\n", 4000+1000*step, 2000+1000*step))}
 		clk.Advance(10 * time.Second)
 	}
-	r.Collector = &collect.Collector{Host: &collect.ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clk, Version: "t"}
+	r.Collector = &collect.Collector{Host: hostProcFS(fsys, func(string) (uint64, uint64, error) { return 0, 0, nil }), Clock: clk, Version: "t"}
 	r.Results.Push(prober.Result{TaskID: 1, Outcome: prober.Outcome{RttUs: 7}, At: r.Clock.Mono()})
 	round := 0
 	r.Sleep = func(context.Context, time.Duration) error {
@@ -342,4 +342,50 @@ func TestRunnerWarnsOnlyWhenQueueDropsIncrease(t *testing.T) {
 			}
 		})
 	}
+}
+
+// 每个上报周期识别一次：识别文件（以 mountinfo 为代表）每周期只读一遍，
+// Metrics 与 Facts 共用同一快照。
+func TestRunnerIdentifiesOncePerCycle(t *testing.T) {
+	hub := &fakeHub{interval: 10000}
+	r, _ := newRunner(t, hub)
+	clk := clock.NewFake(time.Unix(0, 0))
+	fsys := fstest.MapFS{
+		"proc/stat":    {Data: []byte("cpu  100 0 50 800 20 0 10 0 0 0\n")},
+		"proc/loadavg": {Data: []byte("0.5 0.5 0.5 1/2 3\n")},
+	}
+	fsys["proc/self/mountinfo"] = &fstest.MapFile{Data: []byte("42 41 0:22 / /proc rw - proc proc rw\n")}
+	counted := &countMountinfo{FS: fsys}
+	r.Collector = &collect.Collector{Host: hostProcFS(counted, func(string) (uint64, uint64, error) { return 0, 0, nil }), Clock: clk, Version: "t"}
+	round := 0
+	r.Sleep = func(context.Context, time.Duration) error {
+		round++
+		if round >= 2 {
+			return context.Canceled
+		}
+		return nil
+	}
+	if err := r.Run(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	// hostProcFS 已把 mountinfo 写进 fsys；两次上报周期共两次识别读取。
+	if counted.opens != 2 {
+		t.Fatalf("identify ran %d times in 2 cycles, want 2 (once per cycle, shared by Metrics and Facts)", counted.opens)
+	}
+	if hub.received()[0].GetFacts().GetExecution() == nil {
+		t.Fatal("Facts must carry the execution scope")
+	}
+}
+
+// countMountinfo 统计 mountinfo 被打开的次数：识别每做一次就读它一遍。
+type countMountinfo struct {
+	fs.FS
+	opens int
+}
+
+func (c *countMountinfo) Open(name string) (fs.File, error) {
+	if name == "proc/self/mountinfo" {
+		c.opens++
+	}
+	return c.FS.Open(name)
 }

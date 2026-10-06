@@ -15,6 +15,13 @@ type ProcFS struct {
 	FS fs.FS
 	// DiskUsage 取根分区的总量与已用量；statfs 是系统调用，由平台文件注入。
 	DiskUsage func(path string) (total, used uint64, err error)
+	// StatID 取路径的 st_dev（折成与 mountinfo 同构的 "major:minor" 键）与 st_ino；
+	// stat 是系统调用，由平台文件注入。识别用它把被消费的 /proc 文件对到挂载（判来源）、
+	// 给挂载根 cgroup 目录标身份。path 是"/"起头的绝对路径。
+	StatID func(path string) (dev string, ino uint64, err error)
+	// FSKind 取路径所在文件系统的 statfs 类型，判 /sys/fs/cgroup 是不是 cgroup2；
+	// 由平台文件注入。path 是"/"起头的绝对路径。
+	FSKind func(path string) (fstype uint64, err error)
 }
 
 func (p *ProcFS) bootID() (string, error) { return readTrim(p.FS, "proc/sys/kernel/random/boot_id") }
@@ -214,7 +221,7 @@ func (p *ProcFS) facts() hostFacts {
 	if r, err := p.FS.Open("proc/cpuinfo"); err == nil {
 		ci := parseCPUInfo(r)
 		r.Close()
-		f.cpuModel, f.cpuCores = ci.model, ci.cores
+		f.cpuModel = ci.model
 	}
 	f.virtualization = detectVirtualization(p.FS)
 	return f

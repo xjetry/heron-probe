@@ -95,7 +95,9 @@ func (r *Runner) Run(ctx context.Context) error {
 			r.Collector.ResetRates()
 			r.Log.Warn("clock jump: discarded queued probe results and reset rate baselines", "wall_delta", wallDelta, "mono_delta", monoDelta)
 		}
-		m, err := r.Collector.Metrics()
+		// 识别一次，交给 Metrics 与 Facts：同一周期的范围与容量一致（spec §4.2）。
+		snap := r.Collector.Identify()
+		m, err := r.Collector.Metrics(snap)
 		if err != nil {
 			r.Log.Warn("partial collection", "err", err)
 		}
@@ -111,7 +113,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		req.Msg.TasksVersion = r.Prober.Version()
 		req.Header().Set("Authorization", "Bearer "+r.Token)
 		// Facts 只读几个小文件；每轮重算才能让 hub 从摘要变化发现运行期间的变更。
-		f := r.Collector.Facts()
+		f := r.Collector.Facts(snap)
 		if f.Diagnostics != nil {
 			f.Diagnostics.ReportIntervalMs = uint32(interval / time.Millisecond)
 		}

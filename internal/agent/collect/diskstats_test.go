@@ -85,13 +85,13 @@ func TestDiskRateNeedsTwoSamples(t *testing.T) {
 	clk := clock.NewFake(time.Unix(0, 0))
 	fsys := diskMapFS("   8       0 sda 1000 20 40000 500 800 10 20000 300 0 200 400\n")
 	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clk}
-	if m, _ := c.Metrics(); m.DiskReadBps != nil || m.DiskWriteBps != nil {
+	if m, _ := c.Metrics(c.Identify()); m.DiskReadBps != nil || m.DiskWriteBps != nil {
 		t.Fatalf("first sample must not carry a rate: read=%v write=%v", m.DiskReadBps, m.DiskWriteBps)
 	}
 	// 读 +2000 扇区、写 +1000 扇区 = 1024000 / 512000 字节，2 秒 → 512000 / 256000 B/s。
 	fsys["proc/diskstats"] = &fstest.MapFile{Data: []byte("   8       0 sda 1010 20 42000 500 805 10 21000 300 0 200 400\n")}
 	clk.Advance(2 * time.Second)
-	m, _ := c.Metrics()
+	m, _ := c.Metrics(c.Identify())
 	if m.GetDiskReadBps() != 512000 || m.GetDiskWriteBps() != 256000 {
 		t.Fatalf("read/write bps = %d/%d, want 512000/256000", m.GetDiskReadBps(), m.GetDiskWriteBps())
 	}
@@ -102,11 +102,11 @@ func TestDiskRateDroppedOnCounterRegression(t *testing.T) {
 	clk := clock.NewFake(time.Unix(0, 0))
 	fsys := diskMapFS("   8       0 sda 1000 20 40000 500 800 10 20000 300 0 200 400\n")
 	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clk}
-	c.Metrics()
+	c.Metrics(c.Identify())
 	// 读计数回退（40000 → 39000），写还在增长：两项都不能设置。
 	fsys["proc/diskstats"] = &fstest.MapFile{Data: []byte("   8       0 sda 1010 20 39000 500 805 10 21000 300 0 200 400\n")}
 	clk.Advance(2 * time.Second)
-	m, _ := c.Metrics()
+	m, _ := c.Metrics(c.Identify())
 	if m.DiskReadBps != nil || m.DiskWriteBps != nil {
 		t.Fatalf("counter regression fabricated a rate: read=%v write=%v", m.DiskReadBps, m.DiskWriteBps)
 	}
@@ -117,13 +117,13 @@ func TestDiskRateDroppedOnDeviceSetChange(t *testing.T) {
 	clk := clock.NewFake(time.Unix(0, 0))
 	fsys := diskMapFS("   8       0 sda 1000 20 40000 500 800 10 20000 300 0 200 400\n")
 	c := &Collector{Host: &ProcFS{FS: fsys, DiskUsage: func(string) (uint64, uint64, error) { return 0, 0, nil }}, Clock: clk}
-	c.Metrics()
+	c.Metrics(c.Identify())
 	fsys["proc/diskstats"] = &fstest.MapFile{Data: []byte(
 		"   8       0 sda 1010 20 42000 500 805 10 21000 300 0 200 400\n" +
 			"   8      16 sdb 500 5 9000 100 400 4 8000 80 0 50 60\n")}
 	fsys["sys/block/sdb"] = &fstest.MapFile{Mode: fs.ModeDir}
 	clk.Advance(2 * time.Second)
-	m, _ := c.Metrics()
+	m, _ := c.Metrics(c.Identify())
 	if m.DiskReadBps != nil || m.DiskWriteBps != nil {
 		t.Fatalf("device set change fabricated a rate: read=%v write=%v", m.DiskReadBps, m.DiskWriteBps)
 	}

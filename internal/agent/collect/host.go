@@ -22,10 +22,11 @@ type Host interface {
 	// cpuTimes 返回累计 tick，Collector 只用两次读数之差，起点无意义。两次之间 total 不增或
 	// idle 变小（如 Linux 的 iowait 会回退）时，由 cpuPercent 放弃这一次读数，不由实现保证单调。
 	cpuTimes() (cpuTimes, error)
-	// cgroupCPU 读 cgroup 的 CPU 限额与用量，区分三种形态：无 cgroup（非 Linux 平台恒为
-	// 它）、v1（读不出统一口径，Collector 退回 cpuTimes）、v2。v2 且有限额时 cpu_pct 与
-	// Facts.cpu_cores 都取自它，cpuTimes 的宿主全机口径不再代表本执行环境。
-	cgroupCPU() (cgroupCPU, error)
+	// identify 做一次执行环境识别（spec §4.2）：挂载根是真根还是本环境的 cgroup、每个
+	// 被消费的 /proc 文件来自哪里、各资源的范围与读数口径。runner 每个上报周期只调一次，
+	// 快照交给 Metrics 与 Facts，识别文件不被它们二次读取。旧版 cgroupCPU 的每周期
+	// 限额探测由此并入识别。
+	identify() *execSnapshot
 	// memory、swap 的 used 若由多项先减后加得出，实现必须自己拒收任何一步减法的回绕：
 	// 回绕后再加回的值可能落在 total 以内，checkUsage 看不出。
 	memory() (usage, error)
@@ -62,5 +63,4 @@ type diskCounters struct {
 
 type hostFacts struct {
 	hostname, os, kernel, virtualization, cpuModel string
-	cpuCores                                       uint32
 }

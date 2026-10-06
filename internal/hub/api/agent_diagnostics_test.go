@@ -50,11 +50,12 @@ func TestAgentScopeAndDiagnosticsThroughHTTP(t *testing.T) {
 		case 4:
 			col.NetInclude = []string{"private-uplink-b"}
 		}
-		m, _ := col.Metrics()
+		snap := col.Identify()
+		m, _ := col.Metrics(snap)
 		if (i == 0 || i == 2 || i == 4) && (m.NetRxBps != nil || m.NetTxBps != nil) {
 			t.Fatalf("scope transition has a measured rate: %v", m)
 		}
-		latest = col.Facts()
+		latest = col.Facts(snap)
 		latest.Diagnostics.ReportIntervalMs = 10000
 		req := connect.NewRequest(&heronv1.ReportRequest{Metrics: m, Facts: latest, FactsHash: client.FactsHash(latest)})
 		req.Header().Set("Authorization", "Bearer "+token)
@@ -66,7 +67,11 @@ func TestAgentScopeAndDiagnosticsThroughHTTP(t *testing.T) {
 	}
 	testwait.Until(t, time.Millisecond, func() bool {
 		n, err := h.store.GetNode(t.Context(), id)
-		return err == nil && proto.Equal(n.Facts, latest)
+		// node_facts 还没有 execution 列：hub 只持久化它有列的 Facts 字段，往返比较除去 execution。
+		// execution 入库的提交把这里改回整份比较。
+		want := proto.Clone(latest).(*heronv1.Facts)
+		want.Execution = nil
+		return err == nil && proto.Equal(n.Facts, want)
 	}, "latest diagnostics were not persisted")
 	h.ingest.Flush(t.Context(), true)
 	if err := h.book.Flush(t.Context()); err != nil {

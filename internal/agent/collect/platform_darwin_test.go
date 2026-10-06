@@ -62,11 +62,11 @@ func TestDarwinEveryMetricPresent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Metrics(); err != nil {
+	if _, err := c.Metrics(c.Identify()); err != nil {
 		t.Fatalf("first sample: %v", err)
 	}
 	time.Sleep(1100 * time.Millisecond)
-	m, err := c.Metrics()
+	m, err := c.Metrics(c.Identify())
 	if err != nil {
 		t.Fatalf("second sample: %v", err)
 	}
@@ -395,20 +395,24 @@ func TestDarwinProcessorTicksAdvanceAtClockRate(t *testing.T) {
 }
 
 func TestDarwinFactsMatchCLI(t *testing.T) {
-	f := realHost(t).facts()
+	h := realHost(t)
+	f := h.facts()
 	if f.os != "macOS "+run(t, "sw_vers", "-productVersion") || f.kernel != run(t, "uname", "-r") ||
-		f.cpuModel != run(t, "sysctl", "-n", "machdep.cpu.brand_string") || f.hostname != run(t, "sysctl", "-n", "kern.hostname") ||
-		uint64(f.cpuCores) != cliUint(t, "sysctl", "-n", "hw.logicalcpu") {
+		f.cpuModel != run(t, "sysctl", "-n", "machdep.cpu.brand_string") || f.hostname != run(t, "sysctl", "-n", "kern.hostname") {
 		t.Fatalf("%+v", f)
+	}
+	// Facts.cpu_cores 来自识别快照：darwin 的有效核数是 hw.logicalcpu。
+	if cores := h.identify().exec.GetCpuEffectiveCores(); uint64(cores) != cliUint(t, "sysctl", "-n", "hw.logicalcpu") {
+		t.Fatalf("identify cores = %v, want hw.logicalcpu", cores)
 	}
 }
 
 // 两次采样之后的全部读数；第二次才有 cpu_pct。
 func twoSamples(t *testing.T, c *Collector) (*heronv1.Metrics, error) {
 	t.Helper()
-	c.Metrics()
+	c.Metrics(c.Identify())
 	time.Sleep(1100 * time.Millisecond)
-	return c.Metrics()
+	return c.Metrics(c.Identify())
 }
 
 // 缺一个 libSystem 函数只让依赖它的读数缺失：NewPlatform 与这里共用 newDarwinCollector，

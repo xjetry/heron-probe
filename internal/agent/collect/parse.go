@@ -222,6 +222,82 @@ func parseCPUInfo(r io.Reader) cpuInfo {
 	return c
 }
 
+// parseMountinfo 解析 /proc/self/mountinfo，只取识别要用的两列：文件系统所在设备
+// （"major:minor"）与 fstype。行格式：
+//
+//	mountID parentID major:minor root mountpoint options [可选字段…] - fstype source superoptions
+//
+// 任一行认不出整表作废（来源全部未知）：宁可缺读数，也不把某个文件猜成 procfs。
+func parseMountinfo(r io.Reader) ([]mountEntry, error) {
+	sc := bufio.NewScanner(r)
+	var out []mountEntry
+	for sc.Scan() {
+		line := sc.Text()
+		sep := strings.Index(line, " - ")
+		if sep < 0 {
+			return nil, fmt.Errorf("mountinfo: %q", line)
+		}
+		head, tail := strings.Fields(line[:sep]), strings.Fields(line[sep+3:])
+		if len(head) < 5 || len(tail) < 1 {
+			return nil, fmt.Errorf("mountinfo: %q", line)
+		}
+		out = append(out, mountEntry{dev: head[2], fstype: tail[0]})
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, errors.New("mountinfo: empty")
+	}
+	return out, nil
+}
+
+// memstatLines 是 memory.stat 里内存算式用到的三行（spec §4.2）。
+type memstatLines struct {
+	file            uint64 // 页缓存：可整体回收，不算占用
+	shmem           uint64 // tmpfs/shmem：file 的一部分但占了真实内存，算占用
+	slabReclaimable uint64 // 可回收 slab（dentry 等）：内存紧张时可让出
+}
+
+// parseMemstat 取 memory.stat 的 file、shmem、slab_reclaimable。file 与 shmem 必须出现：
+// 把缺行当 0 会让 used 偏高（file 少记多少，占用就多记多少），正是要防的错。slab_reclaimable
+// 缺行按 0：它在减法的安全方向（少扣 reclaimable 只会让 used 略高，不会把占用算成负）。
+// 认得出键却认不出值同样是错误。
+func parseMemstat(r io.Reader) (m memstatLines, err error) {
+	seen := map[string]bool{}
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		k, v, ok := strings.Cut(sc.Text(), " ")
+		if !ok {
+			continue
+		}
+		var dst *uint64
+		switch k {
+		case "file":
+			dst = &m.file
+		case "shmem":
+			dst = &m.shmem
+		case "slab_reclaimable":
+			dst = &m.slabReclaimable
+		default:
+			continue
+		}
+		n, perr := strconv.ParseUint(strings.TrimSpace(v), 10, 64)
+		if perr != nil {
+			return memstatLines{}, fmt.Errorf("memory.stat %s: %w", k, perr)
+		}
+		*dst = n
+		seen[k] = true
+	}
+	if serr := sc.Err(); serr != nil {
+		return memstatLines{}, serr
+	}
+	if !seen["file"] || !seen["shmem"] {
+		return memstatLines{}, fmt.Errorf("memory.stat: file/shmem line missing")
+	}
+	return m, nil
+}
+
 func parseOSRelease(r io.Reader) string {
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
