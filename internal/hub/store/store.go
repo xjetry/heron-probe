@@ -30,7 +30,8 @@ var (
 )
 
 type Store struct {
-	path string
+	path  string
+	files fileStatter
 	// siteWriteMu 让设置的提交与总闸发布对其它保存原子，维持的不变式写在 SaveSettings。
 	siteWriteMu   sync.Mutex
 	publicEnabled atomic.Bool
@@ -113,7 +114,7 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 		w.Close()
 		return nil, err
 	}
-	s := &Store{path: path, w: w, r: r, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{}), themeChanges: make(chan struct{}, 1)}
+	s := &Store{path: path, files: osFileStatter{}, w: w, r: r, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{}), themeChanges: make(chan struct{}, 1)}
 	// 打开时读一次设置，同时满足两件事：总闸的内存副本从库加载（不变式见 SaveSettings）；设置里有必须合法才能解释的
 	// 编码（两个开关只认 0 / 1，备份的数值有范围，渠道列表是 JSON 数组，见 readSettings），库里有非法值就拒绝打开。
 	settings, err := readSettings(context.Background(), r)

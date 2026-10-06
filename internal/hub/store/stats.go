@@ -4,7 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io/fs"
+	"os"
 	"strings"
+	"unicode/utf8"
 )
 
 type TableRows struct {
@@ -22,9 +25,56 @@ type StorageStats struct {
 	Series     []SeriesHealth
 	LastPrune  *int64
 	LastRollup *int64
+	WAL        WALObservation
 }
 
-// StorageStats 在一个只读事务里读出，行数、大小与健康读数属于同一快照。表名取自 sqlite_master 而不是手写清单：
+// WALObservation 是库旁 -wal 的一次 stat 结果，不含 -shm。Bytes 非 nil 表示存在（包括零字节），
+// Absent 表示无文件，Error 表示未知；三者只取一个。ObservedAt 为 stat 完成时的 hub 墙钟 Unix 秒。
+type WALObservation struct {
+	ObservedAt int64
+	Bytes      *int64
+	Absent     bool
+	Error      string
+}
+
+type fileStatter interface {
+	Stat(string) (fs.FileInfo, error)
+}
+
+type osFileStatter struct{}
+
+func (osFileStatter) Stat(path string) (fs.FileInfo, error) { return os.Stat(path) }
+
+func (s *Store) observeWAL() WALObservation {
+	info, err := s.files.Stat(s.path + "-wal")
+	out := WALObservation{ObservedAt: s.clk.Now().Unix()}
+	switch {
+	case err == nil:
+		size := info.Size()
+		out.Bytes = &size
+	case errors.Is(err, fs.ErrNotExist):
+		out.Absent = true
+	default:
+		// 文件名可含非法 UTF-8；proto string 必须有效，且错误不能使整个统计响应无界增长。
+		message := strings.ToValidUTF8(err.Error(), "\uFFFD")
+		const maxBytes = 512
+		if len(message) > maxBytes {
+			end := maxBytes
+			for !utf8.RuneStart(message[end]) {
+				end--
+			}
+			message = message[:end]
+		}
+		if message == "" {
+			message = "stat failed"
+		}
+		out.Error = message
+	}
+	return out
+}
+
+// StorageStats 的 SQL 读数在一个只读事务里读出，行数、逻辑大小与维护健康属于同一快照；
+// WAL 在事务结束后独立 stat，不承诺与 SQL 同一时刻。表名取自 sqlite_master 而不是手写清单：
 // 新增的表自动计入。名字以 sqlite_ 开头的是 SQLite 内部表（如 AUTOINCREMENT 的 sqlite_sequence），不计；
 // 前缀按字面比较，不用 LIKE（它的 _ 是通配符，且对 ASCII 不分大小写）。
 func (s *Store) StorageStats(ctx context.Context) (StorageStats, error) {
@@ -79,5 +129,9 @@ func (s *Store) StorageStats(ctx context.Context) (StorageStats, error) {
 	if at, ok := last[MaintenanceRollup]; ok {
 		out.LastRollup = &at
 	}
+	if err := tx.Commit(); err != nil {
+		return StorageStats{}, err
+	}
+	out.WAL = s.observeWAL()
 	return out, nil
 }
