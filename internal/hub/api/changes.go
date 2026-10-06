@@ -162,7 +162,7 @@ func (s *Service) prepareChange(ctx context.Context, m *heronv1.ExecuteChangeReq
 			if err != nil {
 				return notFound(c.ResourceID)
 			}
-			base := &heronv1.UpdateNodeRequest{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, TrafficResetDay: uint32(n.TrafficResetDay), OfflineGraceS: proto.Uint32(uint32(n.OfflineGraceS)), Billing: billingProto(n.Billing, s.today()), CountryPin: n.CountryPin, Tags: n.Tags}
+			base := &heronv1.UpdateNodeRequest{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, TrafficResetDay: uint32(n.TrafficResetDay), OfflineGraceS: proto.Uint32(uint32(n.OfflineGraceS)), Billing: billingProto(n.Billing, s.today()), CountryPin: n.CountryPin, Tags: n.Tags, Maintenance: n.Maintenance}
 			return mergeChange(q.UpdateNode, base, m.GetUpdateMask().GetPaths(), "id", "billing.days_left")
 		}
 	case *heronv1.ExecuteChangeRequest_DeleteNode:

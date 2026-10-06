@@ -18,7 +18,9 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/metric"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/updates"
+	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
@@ -916,6 +918,117 @@ func TestAgenticReceiptFailureRollsBackBeforePublication(t *testing.T) {
 			ops, err = client.ListOperations(t.Context(), connect.NewRequest(&heronv1.ListOperationsRequest{}))
 			if err != nil || len(ops.Msg.Operations) != 1 {
 				t.Fatalf("recovery did not leave exactly one receipt: %v %v", ops, err)
+			}
+		})
+	}
+}
+
+// 节点可编辑字段在 ExecuteChange 里有两张手写登记表：合并基底（prepareChange 从库里的节点构造的 UpdateNodeRequest）
+// 与变更快照的列白名单（store.Change.snapshot）。漏登一个字段有两种后果：只改别的字段时它被整体替换成零值；
+// 只改它自己时预期版本不变、审计前后相同。本用例按 UpdateNodeRequest 的描述符枚举每个字段，新增字段没有在这里
+// 给出取值就直接失败，迫使两张登记表与这里一起更新。
+func TestUpdateNodeChangeCoversEveryEditableField(t *testing.T) {
+	type pair struct {
+		first, second func(*heronv1.UpdateNodeRequest)
+	}
+	values := map[string]pair{
+		"name":              {func(r *heronv1.UpdateNodeRequest) { r.Name = "first" }, func(r *heronv1.UpdateNodeRequest) { r.Name = "second" }},
+		"public":            {func(r *heronv1.UpdateNodeRequest) { r.Public = true }, func(r *heronv1.UpdateNodeRequest) { r.Public = false }},
+		"note":              {func(r *heronv1.UpdateNodeRequest) { r.Note = "first note" }, func(r *heronv1.UpdateNodeRequest) { r.Note = "second note" }},
+		"traffic_reset_day": {func(r *heronv1.UpdateNodeRequest) { r.TrafficResetDay = 12 }, func(r *heronv1.UpdateNodeRequest) { r.TrafficResetDay = 13 }},
+		"offline_grace_s":   {func(r *heronv1.UpdateNodeRequest) { r.OfflineGraceS = proto.Uint32(60) }, func(r *heronv1.UpdateNodeRequest) { r.OfflineGraceS = proto.Uint32(120) }},
+		"billing": {func(r *heronv1.UpdateNodeRequest) {
+			r.Billing = &heronv1.Billing{Price: "10", Currency: "USD", ExpiresOn: "2030-01-01"}
+		}, func(r *heronv1.UpdateNodeRequest) {
+			r.Billing = &heronv1.Billing{Price: "20", Currency: "USD", ExpiresOn: "2031-01-01"}
+		}},
+		"country_pin": {func(r *heronv1.UpdateNodeRequest) { r.CountryPin = "JP" }, func(r *heronv1.UpdateNodeRequest) { r.CountryPin = "US" }},
+		"tags":        {func(r *heronv1.UpdateNodeRequest) { r.Tags = []string{"first"} }, func(r *heronv1.UpdateNodeRequest) { r.Tags = []string{"second"} }},
+		"maintenance": {func(r *heronv1.UpdateNodeRequest) { r.Maintenance = true }, func(r *heronv1.UpdateNodeRequest) { r.Maintenance = false }},
+	}
+	fields := (&heronv1.UpdateNodeRequest{}).ProtoReflect().Descriptor().Fields()
+	var names []string
+	for i := 0; i < fields.Len(); i++ {
+		name := string(fields.Get(i).Name())
+		if name == "id" {
+			continue
+		}
+		if _, ok := values[name]; !ok {
+			t.Fatalf("UpdateNodeRequest.%s has no values here: register it in prepareChange's merge base, store.Change.snapshot and this test", name)
+		}
+		names = append(names, name)
+	}
+	nodeFields := (&heronv1.Node{}).ProtoReflect().Descriptor().Fields()
+	read := func(n *heronv1.Node, name string) protoreflect.Value {
+		t.Helper()
+		f := nodeFields.ByName(protoreflect.Name(name))
+		if f == nil {
+			t.Fatalf("Node has no field %s to read the edited value back", name)
+		}
+		if name == "billing" {
+			b := proto.Clone(n.GetBilling()).(*heronv1.Billing)
+			b.DaysLeft = nil
+			return protoreflect.ValueOfMessage(b.ProtoReflect())
+		}
+		return n.ProtoReflect().Get(f)
+	}
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, "")
+			h.login(t)
+			id, _ := h.createNode(t, "seed")
+			initial := &heronv1.UpdateNodeRequest{Id: id}
+			for _, n := range names {
+				values[n].first(initial)
+			}
+			before := h.update(t, initial)
+			client, _, _ := grantedClient(t, h, &heronv1.TokenGrant{NodeIds: []int64{id}, Permissions: []heronv1.TokenPermission{heronv1.TokenPermission_TOKEN_PERMISSION_CONFIGURE}})
+			list := func() *heronv1.Node {
+				t.Helper()
+				r, err := h.admin.ListNodes(t.Context(), connect.NewRequest(&heronv1.ListNodesRequest{}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, n := range r.Msg.Nodes {
+					if n.Id == id {
+						return n
+					}
+				}
+				t.Fatal("node vanished")
+				return nil
+			}
+			// 只改另一个字段：本字段的值必须保持。
+			other := "note"
+			if name == "note" {
+				other = "name"
+			}
+			edit := &heronv1.UpdateNodeRequest{Id: id}
+			values[other].second(edit)
+			m := &heronv1.ExecuteChangeRequest{RequestId: "other-" + name, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{other}}, Change: &heronv1.ExecuteChangeRequest_UpdateNode{UpdateNode: edit}}
+			previewChange(t, client, m)
+			if _, err := client.ExecuteChange(t.Context(), connect.NewRequest(m)); err != nil {
+				t.Fatal(err)
+			}
+			if after := list(); !read(after, name).Equal(read(before, name)) {
+				t.Fatalf("changing %s replaced %s:\nbefore: %v\nafter:  %v", other, name, prototext.Format(before), prototext.Format(after))
+			}
+			// 只改本字段：预期版本必须变化，审计前后必须不同。
+			edit = &heronv1.UpdateNodeRequest{Id: id}
+			values[name].second(edit)
+			m = &heronv1.ExecuteChangeRequest{RequestId: "self-" + name, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{name}}, Change: &heronv1.ExecuteChangeRequest_UpdateNode{UpdateNode: edit}}
+			p := previewChange(t, client, m)
+			if p.Operation.BeforeJson == p.Operation.AfterJson {
+				t.Fatalf("changing only %s leaves no audit difference: %s", name, p.Operation.AfterJson)
+			}
+			if _, err := client.ExecuteChange(t.Context(), connect.NewRequest(m)); err != nil {
+				t.Fatal(err)
+			}
+			// 只为读出当前预期版本：再提交一次与现值相同的另一字段，不改变任何状态。
+			same := &heronv1.UpdateNodeRequest{Id: id}
+			values[other].second(same)
+			probe := &heronv1.ExecuteChangeRequest{RequestId: "probe-" + name, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{other}}, Change: &heronv1.ExecuteChangeRequest_UpdateNode{UpdateNode: same}}
+			if previewChange(t, client, probe).ExpectedVersion == m.ExpectedVersion {
+				t.Fatalf("changing only %s did not change the expected version", name)
 			}
 		})
 	}
