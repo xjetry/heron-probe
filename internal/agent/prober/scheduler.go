@@ -28,8 +28,10 @@ type Scheduler struct {
 	version uint64
 	// digest 是最近一次收到的清单的对账摘要（agentwire.TasksDigest），hasDigest 区分
 	// "尚未收到任何清单"与"收到空清单"：前者上报时不带摘要，后者带空串的 SHA-256。
+	// digestErr 记录上一次摘要计算失败，用于状态翻转时记日志而不是每次 Apply 都记。
 	hasDigest bool
 	digest    []byte
+	digestErr bool
 	running   map[uint64]*runningTask
 	wg        sync.WaitGroup
 }
@@ -80,8 +82,21 @@ func (s *Scheduler) Apply(tasks *heronv1.ProbeTasks) {
 	defer s.mu.Unlock()
 	s.version = tasks.GetVersion()
 	// 摘要代表收到并持有的整份清单：被 CheckTask 拒绝的任务也在其中，hub 发出的就是这份，二者才可比。
-	s.digest = agentwire.TasksDigest(tasks.GetTasks())
-	s.hasDigest = true
+	// 编码失败时摘要缺席（hub 退回按计数对账），失败是异常路径，只在状态翻转时记一行日志。
+	d, err := agentwire.TasksDigest(tasks.GetTasks())
+	if err != nil {
+		if !s.digestErr {
+			s.log.Warn("tasks digest unavailable; reports omit it", "err", err)
+		}
+		s.digestErr = true
+		s.digest, s.hasDigest = nil, false
+	} else {
+		if s.digestErr {
+			s.log.Info("tasks digest recovered")
+		}
+		s.digestErr = false
+		s.digest, s.hasDigest = d, true
+	}
 	want := map[uint64]*heronv1.ProbeTask{}
 	sorted := slices.SortedFunc(slices.Values(tasks.GetTasks()), func(a, b *heronv1.ProbeTask) int { return cmp.Compare(a.GetId(), b.GetId()) })
 	rejected := 0

@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -95,10 +96,23 @@ func spki(cert *x509.Certificate) [32]byte { return sha256.Sum256(cert.RawSubjec
 // pinnedServer 起一个出示给定证书链的 TLS 服务，返回服务器与请求计数。
 func pinnedServer(t *testing.T, cert tls.Certificate, hits *atomic.Int64) *httptest.Server {
 	t.Helper()
+	return pinnedServerWithConns(t, cert, hits, nil)
+}
+
+// conns 非 nil 时统计服务端看到的连接数（ConnState 的 StateNew 每接受一个连接计一次）。
+func pinnedServerWithConns(t *testing.T, cert tls.Certificate, hits, conns *atomic.Int64) *httptest.Server {
+	t.Helper()
 	s := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
+	if conns != nil {
+		s.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+			if state == http.StateNew {
+				conns.Add(1)
+			}
+		}
+	}
 	s.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
 	s.StartTLS()
 	t.Cleanup(s.Close)
@@ -167,6 +181,52 @@ func TestTLSDefaultVerifyFailureContract(t *testing.T) {
 	}
 	if len(verifyErr.UnverifiedCertificates) == 0 || !bytes.Equal(verifyErr.UnverifiedCertificates[0].Raw, s.Certificate().Raw) {
 		t.Fatal("UnverifiedCertificates[0] is not the presented leaf certificate")
+	}
+}
+
+// 钉住的安全性前提：即使服务端出示的正是钉住的那份证书，只要它没有对应的私钥，握手签名
+// 校验就过不去。InsecureSkipVerify 跳过的是链与主机名校验，握手完整性（CertificateVerify
+// 用叶证书公钥验签）不跳过，所以钉住公钥指纹等于钉住了私钥持有者。
+func TestTLSPinSecurityComesFromHandshakeSignature(t *testing.T) {
+	// TLS 1.3 由 CertificateVerify、TLS 1.2 的 ECDHE 套件由 ServerKeyExchange 的签名证明私钥持有；
+	// 两个版本都要钉住。对照组用同一条链配正确的私钥，证明失败只来自私钥不符，而不是别的握手差异。
+	for _, tc := range []struct {
+		name    string
+		version uint16
+	}{{"tls1.3", tls.VersionTLS13}, {"tls1.2", tls.VersionTLS12}} {
+		t.Run(tc.name, func(t *testing.T) {
+			clk := clock.NewFake(time.Unix(2000, 0))
+			now := clk.Now()
+			ca := newPinTestCA(t, now.Add(-time.Hour), now.Add(24*time.Hour))
+			leaf, chain := ca.leaf(t, 2, pinTestKey(t), now.Add(-time.Minute), now.Add(time.Hour))
+			pin := spki(leaf)
+			serve := func(cert tls.Certificate, hits *atomic.Int64) *httptest.Server {
+				srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { hits.Add(1) }))
+				srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tc.version, MaxVersion: tc.version}
+				srv.StartTLS()
+				t.Cleanup(srv.Close)
+				return srv
+			}
+
+			var legitHits atomic.Int64
+			legit := serve(chain, &legitHits)
+			// 假时钟不前进，成功结果的 RttUs 为 0；成败看 Err 与 Timeout。
+			if out := pinnedProber(clk, t).Probe(t.Context(), pinnedTask(1, legit.URL, pin[:], nil)); out.Err != "" || out.Timeout || legitHits.Load() != 1 {
+				t.Fatalf("control with the matching private key = %+v, hits %d; want success", out, legitHits.Load())
+			}
+
+			// 服务端持有钉住叶证书的完整链，但私钥换成另一把：冒充者能复制证书，复制不了私钥。
+			var imposterHits atomic.Int64
+			imposter := serve(tls.Certificate{Certificate: chain.Certificate, PrivateKey: pinTestKey(t)}, &imposterHits)
+			out := pinnedProber(clk, t).Probe(t.Context(), pinnedTask(1, imposter.URL, pin[:], nil))
+			if (out.Err == "" && !out.Timeout) || imposterHits.Load() != 0 {
+				t.Fatalf("probe against key-impersonating server = %+v, hits %d; want failure before any request", out, imposterHits.Load())
+			}
+			// 实测（Go 1.27.1）：两个版本都报 "tls: invalid signature by the server certificate: ECDSA verification failure"。
+			if !strings.Contains(out.Err, "invalid signature by the server certificate") {
+				t.Fatalf("outcome = %+v, want the handshake-signature failure surfaced", out)
+			}
+		})
 	}
 }
 
@@ -529,5 +589,53 @@ func TestHTTPPruneCleansKeysWithoutRegistration(t *testing.T) {
 	p.certMu.Unlock()
 	if left != 0 {
 		t.Fatalf("prune with empty set left %d keys, want 0 (clean by table keys, not only via registry)", left)
+	}
+}
+
+// 每次探测恰好建立一条连接：候选必须来自这次握手失败的错误链，而不是另建连接去取证书——
+// 再拨一次拿到的可能是另一台机器（LB 后面）出示的另一份证书。
+func TestHTTPProbeUsesExactlyOneConnection(t *testing.T) {
+	clk := clock.NewFake(time.Unix(2000, 0))
+	now := clk.Now()
+	ca := newPinTestCA(t, now.Add(-time.Hour), now.Add(24*time.Hour))
+	p := pinnedProber(clk, t)
+
+	// 钉住但指纹不符：失败路径带回候选。
+	_, chainA := ca.leaf(t, 2, pinTestKey(t), now.Add(-time.Minute), now.Add(time.Hour))
+	var hitsA, connsA atomic.Int64
+	sA := pinnedServerWithConns(t, chainA, &hitsA, &connsA)
+	other := pinTestKey(t)
+	otherLeaf, _ := ca.leaf(t, 3, other, now.Add(-time.Minute), now.Add(time.Hour))
+	otherPin := spki(otherLeaf)
+	out := p.Probe(t.Context(), pinnedTask(1, sA.URL, otherPin[:], nil))
+	if out.Presented == nil || out.Presented.Reason != heronv1.PresentedReason_PRESENTED_REASON_PIN_MISMATCH {
+		t.Fatalf("mismatch probe Presented = %+v, want PIN_MISMATCH candidate", out.Presented)
+	}
+	if n := connsA.Load(); n != 1 {
+		t.Fatalf("mismatch probe used %d connections, want exactly 1", n)
+	}
+
+	// 未钉住、默认校验失败：失败路径带回候选。
+	var hitsB, connsB atomic.Int64
+	_, chainB := ca.leaf(t, 4, pinTestKey(t), now.Add(-time.Minute), now.Add(time.Hour))
+	sB := pinnedServerWithConns(t, chainB, &hitsB, &connsB)
+	out = p.Probe(t.Context(), pinnedTask(2, sB.URL, nil, nil))
+	if out.Presented == nil || out.Presented.Reason != heronv1.PresentedReason_PRESENTED_REASON_CA_VERIFY_FAILED {
+		t.Fatalf("CA-failure probe Presented = %+v, want CA_VERIFY_FAILED candidate", out.Presented)
+	}
+	if n := connsB.Load(); n != 1 {
+		t.Fatalf("CA-failure probe used %d connections, want exactly 1", n)
+	}
+
+	// 成功路径同样一条连接。
+	var hitsC, connsC atomic.Int64
+	leafC, chainC := ca.leaf(t, 5, pinTestKey(t), now.Add(-time.Minute), now.Add(time.Hour))
+	sC := pinnedServerWithConns(t, chainC, &hitsC, &connsC)
+	pinC := spki(leafC)
+	if out := p.Probe(t.Context(), pinnedTask(3, sC.URL, pinC[:], nil)); out.Err != "" || out.Timeout {
+		t.Fatalf("success probe = %+v", out)
+	}
+	if n := connsC.Load(); n != 1 {
+		t.Fatalf("success probe used %d connections, want exactly 1", n)
 	}
 }

@@ -308,7 +308,10 @@ func TestSchedulerTasksDigest(t *testing.T) {
 	bad.IntervalS = 1 // 被 CheckTask 拒绝，但仍在持有的清单里。
 	received = append(received, bad)
 	s.Apply(&heronv1.ProbeTasks{Version: 7, Tasks: received})
-	want := agentwire.TasksDigest(received)
+	want, err := agentwire.TasksDigest(received)
+	if err != nil {
+		t.Fatalf("TasksDigest: %v", err)
+	}
 	if d := s.TasksDigest(); !bytes.Equal(d, want) {
 		t.Fatalf("digest = %x, want %x (covers the rejected task)", d, want)
 	}
@@ -320,8 +323,12 @@ func TestSchedulerTasksDigest(t *testing.T) {
 	// 内容变化改变摘要。
 	changed := []*heronv1.ProbeTask{task(2), task(1), task(4)}
 	s.Apply(&heronv1.ProbeTasks{Version: 9, Tasks: changed})
-	if d := s.TasksDigest(); bytes.Equal(d, want) || !bytes.Equal(d, agentwire.TasksDigest(changed)) {
-		t.Fatalf("digest after content change = %x, want %x", d, agentwire.TasksDigest(changed))
+	wantChanged, err := agentwire.TasksDigest(changed)
+	if err != nil {
+		t.Fatalf("TasksDigest: %v", err)
+	}
+	if d := s.TasksDigest(); bytes.Equal(d, want) || !bytes.Equal(d, wantChanged) {
+		t.Fatalf("digest after content change = %x, want %x", d, wantChanged)
 	}
 	// 空清单的摘要是空串的 SHA-256，与缺席不同。
 	s.Apply(&heronv1.ProbeTasks{Version: 10})
@@ -442,5 +449,34 @@ func TestApplyRegistersIdentityBeforeFirstProbe(t *testing.T) {
 	eng.mu.Unlock()
 	if len(events) == 0 || events[0] != "prune" {
 		t.Fatalf("call order = %v, want prune before first probe", events)
+	}
+}
+
+// 摘要编码失败（清单含无法确定性编码的任务）时：上报不带摘要（hub 退回按计数对账），
+// 恢复后重新带上；日志只在状态翻转时记，不随每次 Apply 重复。
+func TestSchedulerTasksDigestFailureOmitsDigest(t *testing.T) {
+	clk := clock.NewFake(time.Unix(0, 0))
+	s := NewScheduler(quietEngine{}, NewQueue(QueueCap), clk, logger())
+	defer s.Stop()
+	s.Apply(&heronv1.ProbeTasks{Version: 1, Tasks: []*heronv1.ProbeTask{task(1)}})
+	if s.TasksDigest() == nil {
+		t.Fatal("digest absent on a valid list")
+	}
+	// 无法编码的清单：proto3 string 含非法 UTF-8。正常路径到不了这里（解码那关先拒），
+	// 但失败时必须按"摘要缺席"处理而不是吞掉错误。
+	bad := task(2)
+	bad.Target = string([]byte{0xff, 0xfe})
+	s.Apply(&heronv1.ProbeTasks{Version: 2, Tasks: []*heronv1.ProbeTask{task(1), bad}})
+	if d := s.TasksDigest(); d != nil {
+		t.Fatalf("digest after encode failure = %x, want absent (hub falls back to counter reconciliation)", d)
+	}
+	// 失败状态下再失败不崩；恢复后摘要回来。
+	s.Apply(&heronv1.ProbeTasks{Version: 3, Tasks: []*heronv1.ProbeTask{bad}})
+	if d := s.TasksDigest(); d != nil {
+		t.Fatalf("digest still present while failing: %x", d)
+	}
+	s.Apply(&heronv1.ProbeTasks{Version: 4, Tasks: []*heronv1.ProbeTask{task(1)}})
+	if s.TasksDigest() == nil {
+		t.Fatal("digest did not recover on a valid list")
 	}
 }

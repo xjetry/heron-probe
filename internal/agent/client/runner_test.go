@@ -408,7 +408,10 @@ func TestRunnerReportsCapabilitiesAndTasksDigest(t *testing.T) {
 	if reports[0].TasksDigest != nil {
 		t.Fatalf("tasks_digest before any task list = %x, want absent", reports[0].TasksDigest)
 	}
-	want := agentwire.TasksDigest(hub.tasks.GetTasks())
+	want, err := agentwire.TasksDigest(hub.tasks.GetTasks())
+	if err != nil {
+		t.Fatalf("TasksDigest: %v", err)
+	}
 	if !bytes.Equal(reports[1].GetTasksDigest(), want) {
 		t.Fatalf("tasks_digest = %x, want %x (covers the rejected task)", reports[1].GetTasksDigest(), want)
 	}
