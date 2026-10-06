@@ -165,6 +165,45 @@ func TestProbeComparisonMatchesSingleNodeAcrossLevels(t *testing.T) {
 	if err := s.Rollup(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	// 维护积压：把 5m 水位回拨到窗口中段，粗级来源截在水位、细级尾巴接上，
+	// 对比与单节点读到的来源完全一致。
+	rolled := base + 150*60
+	s.write(t.Context(), func(tx *sql.Tx) error {
+		_, err := tx.Exec("UPDATE rollup_state SET upto_ts = ? WHERE level = 'probe_5m'", rolled)
+		return err
+	})
+	t.Run("5m watermark rolled back", func(t *testing.T) {
+		from, to := base-7*86400, base+300*60
+		rows, err := s.QueryProbeComparison(t.Context(), task, []int64{a, b}, from, to, levels[1], 3600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := comparisonSamples(rows)
+		for _, node := range []int64{a, b} {
+			single, err := s.QueryProbes(t.Context(), node, from, to, levels[1], 3600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := map[int64]*metric.ProbeBucket{}
+			for _, r := range single {
+				if r.TaskID == task {
+					want[r.TS] = r.Bucket
+				}
+			}
+			if len(got[node]) != len(want) {
+				t.Fatalf("node %d: comparison buckets=%d want=%d", node, len(got[node]), len(want))
+			}
+			for ts, b := range want {
+				if *got[node][ts] != *b {
+					t.Fatalf("node %d ts %d: comparison=%+v single=%+v", node, ts, got[node][ts], b)
+				}
+			}
+		}
+	})
+	s.write(t.Context(), func(tx *sql.Tx) error {
+		_, err := tx.Exec("UPDATE rollup_state SET upto_ts = ? WHERE level = 'probe_5m'", base+300*60)
+		return err
+	})
 	end := base + 300*60
 	for _, c := range []struct {
 		name           string
@@ -620,5 +659,94 @@ func TestMigratedComparisonLookupUsesByTaskIndex(t *testing.T) {
 		probeFamily.rangeSQL(0, queryShape{keyWhere: "task_id = ? AND node_id IN (?,?)", seriesLimit: MaxComparisonNodes, byTaskIndex: true}), 1, 7, 8, 0, 86400), "\n")
 	if !strings.Contains(plan, "INDEX probe_1m_by_task") {
 		t.Fatalf("migrated comparison lookup must use the by-task index: %s", plan)
+	}
+}
+
+// 只读库与写协程挂起只影响写入口：历史查询（含对比）只占读池，照常返回。api 层拿不到
+// store 的这两个私有句柄，但入口调用的正是这些读方法，故障只可能来自这两个私有侧。
+func TestComparisonReadsSurviveWriteFaults(t *testing.T) {
+	s, path := openAt(t)
+	ctx := t.Context()
+	id, _, err := s.CreateNode(ctx, "a", Billing{}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 1, 1, 0, 2, 0, 0, time.UTC).Unix()
+	b := &metric.ProbeBucket{Sent: 1, RttN: 1, RttSumUs: 100, RttMinUs: 100, RttMaxUs: 100}
+	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Probes: []metric.ProbeRow{{NodeID: id, TS: now - 60, TaskID: 7, Bucket: b}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 写协程挂起：一个不返回的写占住唯一的写协程；entered 关闭即证明它已停在 fn 里。
+	stuck := make(chan struct{})
+	entered := make(chan struct{})
+	go func() {
+		_ = s.write(ctx, func(*sql.Tx) error { close(entered); <-stuck; return nil })
+	}()
+	<-entered
+	minute, _ := LevelByName("1m")
+	mustRead := func(label string) {
+		t.Helper()
+		if _, err := s.QueryProbeComparison(ctx, 7, []int64{id}, now-120, now, minute, 60); err != nil {
+			t.Fatalf("%s: comparison err = %v", label, err)
+		}
+		if _, _, err := s.QueryMetricsCoverage(ctx, id, now-120, now, minute, 60); err != nil {
+			t.Fatalf("%s: metrics err = %v", label, err)
+		}
+	}
+	mustRead("writer stuck")
+	close(stuck)
+
+	// 只读库：写侧以 mode=ro 重开，任何写报只读；读侧不变。
+	s.w.Close()
+	ro, err := sql.Open("sqlite", dsn(path, "&mode=ro"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ro.Close() })
+	old := s.w
+	s.w = ro
+	if err := s.write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec("INSERT INTO tag (name) VALUES ('x')")
+		return err
+	}); err == nil {
+		t.Fatal("write to read-only database must fail")
+	}
+	mustRead("database read-only")
+	s.w = old
+}
+
+// 告警的历史读取（engine.EvaluateProbes：QueryProbes，窗口 = for_minutes 分钟、1m 级）
+// 在 for_minutes 的校验上限（alert.CheckRule：1..60）下远不到读量额度：每节点每分钟
+// 每任务一行，61 分钟 × 满配 64 个分配槽 + 已删任务的残留行也只有几千行，距
+// 64 × quotaRowsPerSeries 很远。这里的用例按上限满打满算地钉住这一点。
+func TestAlertWindowStaysWithinQuota(t *testing.T) {
+	s, clk := open(t)
+	ctx := t.Context()
+	id, _, err := s.CreateNode(ctx, "a", Billing{}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := clk.Now().Unix()
+	var probes []metric.ProbeRow
+	// 65 个任务编号（64 个满配槽 + 1 个已删除残留）在最近 61 分钟里每分钟各有一行。
+	for task := uint64(1); task <= 65; task++ {
+		for m := int64(0); m <= 60; m++ {
+			probes = append(probes, metric.ProbeRow{NodeID: id, TS: now - m*60, TaskID: task,
+				Bucket: &metric.ProbeBucket{Sent: 1, RttN: 1, RttSumUs: 100, RttMinUs: 100, RttMaxUs: 100}})
+		}
+	}
+	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Probes: probes}); err != nil {
+		t.Fatal(err)
+	}
+	minute, _ := LevelByName("1m")
+	// 与 engine.go 的调用同参：from = minuteTS-(for_minutes-1)*60，to = minuteTS+60，step 60。
+	rows, err := s.QueryProbes(ctx, id, now-59*60, now+60, minute, 60)
+	if err != nil {
+		t.Fatalf("alert-shaped window must stay within quota: %v", err)
+	}
+	// 窗口覆盖 m=0..59 共 60 分钟（to = minuteTS+60 是开区间端点）。
+	if len(rows) != 65*60 {
+		t.Fatalf("rows = %d, want %d", len(rows), 65*60)
 	}
 }
