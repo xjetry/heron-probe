@@ -74,7 +74,7 @@ curl -fsS -H "Authorization: Bearer $HERON_TOKEN" -H 'Content-Type: application/
 
 `ListProbeTasks` 与 `QueryProbes` 返回展示顺序，已删除任务的历史排在最后，按编号升序。`ReorderProbeTasks` 只接受完整任务 ID 排列且仅允许会话调用，不改变 agent 的执行配置版本。付款周期枚举为月、季、半年、年、两年、三年、五年；五年对应 `BILLING_CYCLE_QUINQUENNIAL`。
 
-跨节点同目标对比分两步，两个服务都有：先 `ListProbeComparisonNodes`（只带 `taskId`）拿候选节点与 `maxNodesPerQuery`——响应的 `kind`/`target` 是标注：会话与全站 token 按任务当前配置标注；范围不覆盖任务全部分配的指定节点 token 拿到节点清单但不给标注；候选为空与任务不存在回同一个 `not_found`。再从候选里选 1 到 `maxNodesPerQuery` 个节点调 `QueryProbeComparison`（`taskId`、`nodeIds`、`from`、`to`、`maxPoints`，不得重复）：可见节点各一条序列、顺序同请求，窗口内没有样本的也给空序列；请求里不可见或不存在的节点不在序列里，改列在 `unavailableNodeIds`（顺序同请求），不是错误。样本与单独 `QueryProbes` 同一口径（级别选择、步长、稀疏规则），同一任务同一窗口的对比结果与逐节点单查一致。历史查询按实际读取的源行数计额度，超额返回 `failed_precondition`：message 带额度、各级数据整理水位时刻与建议（缩窗口、加大 `maxPoints`、或等数据整理追上）；这不是错误重试能解决的，窗口减半或 `maxPoints` 放大后重试。
+跨节点同目标对比分两步，两个服务都有：先 `ListProbeComparisonNodes`（只带 `taskId`）拿候选节点与 `maxNodesPerQuery`——响应的 `kind`/`target` 是标注：会话与全站 token 按任务当前配置标注；范围不覆盖任务全部分配的指定节点 token 拿到节点清单但不给标注；候选为空与任务不存在回同一个 `not_found`。再从候选里选 1 到 `maxNodesPerQuery` 个节点调 `QueryProbeComparison`（`taskId`、`nodeIds`、`from`、`to`、`maxPoints`，不得重复）：可见节点各一条序列、顺序同请求，窗口内没有样本的也给空序列；请求里不可见或不存在的节点不在序列里，改列在 `unavailableNodeIds`（顺序同请求），不是错误。样本与单独 `QueryProbes` 同一口径（级别选择、步长、稀疏规则），同一任务同一窗口的对比结果与逐节点单查一致。历史查询按实际读取的源行数计额度，超额返回 `failed_precondition`：message 带额度、各级数据整理水位时刻与建议（缩窗口、加大 `maxPoints`、或等数据整理追上）；这不是错误重试能解决的，窗口减半或 `maxPoints` 放大后重试。同一来源在飞的历史查询至多 4 个（跨这三个查询入口合计），超出的最多等 5 秒，仍无空位返回 `resource_exhausted`（文案带 concurrent history queries，与限流不同）；顺序发请求不会触到，触到时降低并发即可。
 
 ```sh example
 best=""

@@ -721,8 +721,10 @@ func runEntrySaturation(t *testing.T, srvURL string, hammerClient *sourcedClient
 			})
 		}()
 	}
+	// 读者从第 1 秒起采样：t=0 有饱和来源的 60 连发，撞在同一时刻的样本度量的是
+	// 启动风暴而不是稳态饱和（30 个样本的 p99≈最大值，一个尖刺就毁掉整轮）。
 	for i := range hammerSec {
-		at := time.Now().Add(time.Duration(i) * time.Second)
+		at := time.Now().Add(time.Duration(i+1) * time.Second)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -748,7 +750,7 @@ func runEntrySaturation(t *testing.T, srvURL string, hammerClient *sourcedClient
 		}()
 	}
 	for i := range hammerSec {
-		at := time.Now().Add(time.Duration(i)*time.Second + 500*time.Millisecond)
+		at := time.Now().Add(time.Duration(i+1)*time.Second + 500*time.Millisecond)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

@@ -11,10 +11,14 @@ import (
 )
 
 // MaxComparisonNodes 是一次对比分块至多携带的节点数，也是对比查询的额度权重
-// （R = quotaRowsPerSeries × MaxComparisonNodes）。它是服务端唯一的常量：校验
-// QueryProbeComparison.node_ids 用它，ListProbeComparisonNodes.max_nodes_per_query
-// 把它下发给客户端切块；客户端不从注释或文档抄写块大小。恒为正，0 是协议错误。
-const MaxComparisonNodes = 8
+// （R = quotaRowsPerSeries × MaxComparisonNodes）。它是服务端唯一的常量：入口校验、
+// ListProbeComparisonNodes.max_nodes_per_query 下发与额度共用。
+//
+// 初值 32；成本验收的门槛是：分块每窗口 p99 不超过同窗口单节点查询，且饱和组里
+// 受保护读者（期内空闲同类基线）的 p99 不超 2 倍。32 节点的分块已可观察到比单节点
+// 查询重（IN 清单逐节点定位、按节点拆序列排序），16 以下分块数据量明显小于单节点
+// 查询（16 × 1 任务 vs 64 任务）；暂取 16，最终值以受控环境的验收实测为准。
+const MaxComparisonNodes = 16
 
 // comparisonKeyWhere 生成对比查询的等值键约束：task_id 等值 + 节点清单。占位符与
 // comparisonKeyArgs 同序，前导两列匹配 (task_id, node_id, ts) 索引，ts 范围由 queryFamily 追加。
