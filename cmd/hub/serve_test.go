@@ -312,9 +312,9 @@ func TestServeRunsMaintenanceWithConfiguredRetention(t *testing.T) {
 	recent := clk.Now().Add(-20 * time.Minute).Truncate(time.Minute).Unix()
 	b := metric.NewBucket()
 	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(1)})
-	rowsToWrite := []metric.Row{{NodeID: id, TS: recent, Bucket: b}}
+	rowsToWrite := []metric.Row{{NodeID: id, TS: recent, CoverageStart: recent, Bucket: b}}
 	for _, ts := range expired {
-		rowsToWrite = append(rowsToWrite, metric.Row{NodeID: id, TS: ts, Bucket: b})
+		rowsToWrite = append(rowsToWrite, metric.Row{NodeID: id, TS: ts, CoverageStart: recent, Bucket: b})
 	}
 	if _, err := st.WriteMinuteBatch(ctx, metric.Batch{Rows: rowsToWrite}); err != nil {
 		t.Fatal(err)

@@ -687,7 +687,7 @@ func TestQueryMetricsShapeAndValidation(t *testing.T) {
 	for i := int64(0); i < 10; i++ {
 		b := metric.NewBucket()
 		b.Add(&heronv1.Metrics{CpuPct: proto.Float64(float64(i)), MemUsed: proto.Uint64(100)})
-		rows = append(rows, metric.Row{NodeID: id, TS: base + i*60, Bucket: b})
+		rows = append(rows, metric.Row{NodeID: id, TS: base + i*60, CoverageStart: base, Bucket: b})
 	}
 	if _, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: rows}); err != nil {
 		t.Fatal(err)
@@ -762,7 +762,7 @@ func TestUnicodeValidationAndQueryRangeEdges(t *testing.T) {
 	b := metric.NewBucket()
 	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(7)})
 	ts := int64(math.MaxInt64 - math.MaxInt64%60)
-	if _, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: ts, Bucket: b}}}); err != nil {
+	if _, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: ts, CoverageStart: ts, Bucket: b}}}); err != nil {
 		t.Fatal(err)
 	}
 	out, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&heronv1.QueryMetricsRequest{NodeId: id, From: math.MaxInt64 - 60, To: math.MaxInt64}))
@@ -787,7 +787,7 @@ func TestDeletedNodeRejectsLateStorageWrites(t *testing.T) {
 	}
 	b := metric.NewBucket()
 	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(1)})
-	if n, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: h.clk.Now().Unix(), Bucket: b}}}); err != nil || n != 1 {
+	if n, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: h.clk.Now().Unix(), CoverageStart: h.clk.Now().Unix(), Bucket: b}}}); err != nil || n != 1 {
 		t.Errorf("late metric write: rejected=%d err=%v", n, err)
 	}
 	counts := rowCounts(t, h.store)
@@ -973,7 +973,7 @@ func TestQueryMetricsEmitsSumForAdditiveColumns(t *testing.T) {
 	filled.AddSum(metric.RxBytes, 500)
 	empty := metric.NewBucket()
 	empty.Add(&heronv1.Metrics{CpuPct: proto.Float64(1)})
-	if _, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: base, Bucket: filled}, {NodeID: id, TS: base + 60, Bucket: empty}}}); err != nil {
+	if _, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: base, CoverageStart: base, Bucket: filled}, {NodeID: id, TS: base + 60, CoverageStart: base, Bucket: empty}}}); err != nil {
 		t.Fatal(err)
 	}
 	resp, err := h.admin.QueryMetrics(ctx, connect.NewRequest(&heronv1.QueryMetricsRequest{NodeId: id, From: base, To: base + 120, MaxPoints: 2}))

@@ -215,12 +215,12 @@ func TestHalfBucketsMergeAdditively(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
-	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 600, Bucket: bucket(10)}}}); err != nil {
+	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 600, CoverageStart: 600, Bucket: bucket(10)}}}); err != nil {
 		t.Fatal(err)
 	}
 	b := bucket(30)
 	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(50)})
-	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 600, Bucket: b}}}); err != nil {
+	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 600, CoverageStart: 600, Bucket: b}}}); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := s.ReadMinuteRows(ctx, id, 0, 1000)
@@ -236,7 +236,7 @@ func TestMissingMetricReadsBackAsNoData(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
-	_, _ = s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 600, Bucket: bucket(10)}}})
+	_, _ = s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 600, CoverageStart: 600, Bucket: bucket(10)}}})
 	rows, _ := s.ReadMinuteRows(ctx, id, 0, 1000)
 	for i, c := range metric.Columns {
 		_, ok := rows[0].Bucket.Mean(i)
@@ -257,8 +257,8 @@ func TestWriterRejectsRowsBeforeRollupWatermark(t *testing.T) {
 		t.Fatal(err)
 	}
 	rejected, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{
-		{NodeID: id, TS: 600, Bucket: bucket(1)},
-		{NodeID: id, TS: 900, Bucket: bucket(2)},
+		{NodeID: id, TS: 600, CoverageStart: 600, Bucket: bucket(1)},
+		{NodeID: id, TS: 900, CoverageStart: 600, Bucket: bucket(2)},
 	}})
 	if err != nil || rejected != 1 {
 		t.Fatalf("rejected = %d err = %v, want 1 nil", rejected, err)
@@ -283,7 +283,7 @@ func TestWriteMinuteBatchUpdatesLastSeen(t *testing.T) {
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
 	seen := time.Unix(1234, 0).UTC()
-	_, _ = s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 1200, Bucket: bucket(1), LastSeen: seen}}})
+	_, _ = s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 1200, CoverageStart: 1200, Bucket: bucket(1), LastSeen: seen}}})
 	nodes, _ := s.ListNodes(ctx)
 	if !nodes[0].LastSeenAt.Equal(seen) {
 		t.Fatalf("last_seen_at = %v, want %v", nodes[0].LastSeenAt, seen)
@@ -295,7 +295,7 @@ func TestDeleteNodeRemovesDependentRows(t *testing.T) {
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
 	_ = s.UpsertFacts(ctx, id, 1, &heronv1.Facts{})
-	_, _ = s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 600, Bucket: bucket(1)}}})
+	_, _ = s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 600, CoverageStart: 600, Bucket: bucket(1)}}})
 	if err := s.DeleteNode(ctx, id); err != nil {
 		t.Fatal(err)
 	}

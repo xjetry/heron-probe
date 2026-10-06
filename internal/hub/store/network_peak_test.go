@@ -25,7 +25,7 @@ func TestNetworkPeaksSurviveEveryRollupAndQueryBucket(t *testing.T) {
 		b := metric.NewBucket()
 		b.Add(&heronv1.Metrics{NetRxBps: proto.Uint64(rate), NetTxBps: proto.Uint64(0)})
 		b.AddSum(metric.RxBytes, 60)
-		if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: base + int64(i)*60, Bucket: b}}}); err != nil {
+		if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: base + int64(i)*60, CoverageStart: base, Bucket: b}}}); err != nil {
 			t.Fatal(err)
 		}
 	}

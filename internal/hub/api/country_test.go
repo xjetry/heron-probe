@@ -60,7 +60,7 @@ func TestNodeCountryPinWinsAndClearingFallsBack(t *testing.T) {
 	h.login(t)
 	id, _ := h.createNode(t, "n")
 	h.setPublic(t, id, "n", true)
-	row := metric.Row{NodeID: id, TS: 600, Bucket: metric.NewBucket(), LastSeen: h.clk.Now(), Source: "8.8.8.8"}
+	row := metric.Row{NodeID: id, TS: 600, CoverageStart: 600, Bucket: metric.NewBucket(), LastSeen: h.clk.Now(), Source: "8.8.8.8"}
 	if _, err := h.store.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{row}}); err != nil {
 		t.Fatal(err)
 	}

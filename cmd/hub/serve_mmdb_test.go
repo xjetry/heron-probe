@@ -102,7 +102,7 @@ func TestServeMMDBTakesPriorityAndEchoesBackend(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: id, TS: clk.Now().Unix(), Bucket: metric.NewBucket(), LastSeen: clk.Now(), Source: "8.8.8.8"}}}); err != nil {
+		if _, err := st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: id, TS: clk.Now().Unix(), CoverageStart: clk.Now().Unix(), Bucket: metric.NewBucket(), LastSeen: clk.Now(), Source: "8.8.8.8"}}}); err != nil {
 			t.Fatal(err)
 		}
 	}, "--geo-mmdb", path)

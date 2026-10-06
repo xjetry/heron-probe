@@ -38,7 +38,7 @@ func TestMinuteBatchWritesLastSource(t *testing.T) {
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	write := func(ts int64, source string) {
 		t.Helper()
-		row := metric.Row{NodeID: id, TS: ts, Bucket: metric.NewBucket(), LastSeen: clk.Now(), Source: source}
+		row := metric.Row{NodeID: id, TS: ts, CoverageStart: 600, Bucket: metric.NewBucket(), LastSeen: clk.Now(), Source: source}
 		if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{row}}); err != nil {
 			t.Fatal(err)
 		}

@@ -19,7 +19,7 @@ func minuteRows(nodeID int64, from, to int64) []metric.Row {
 	for i, ts := 0, from; ts < to; i, ts = i+1, ts+60 {
 		b := metric.NewBucket()
 		b.Add(&heronv1.Metrics{CpuPct: proto.Float64(float64(i)), MemUsed: proto.Uint64(100)})
-		rows = append(rows, metric.Row{NodeID: nodeID, TS: ts, Bucket: b})
+		rows = append(rows, metric.Row{NodeID: nodeID, TS: ts, CoverageStart: from, Bucket: b})
 	}
 	return rows
 }
@@ -472,7 +472,7 @@ func TestSumColumnsRoundTripAndRollUp(t *testing.T) {
 		b := metric.NewBucket()
 		b.AddSum(metric.RxBytes, 100)
 		b.AddSum(metric.RxBytes, 50)
-		rows = append(rows, metric.Row{NodeID: id, TS: base + i*60, Bucket: b})
+		rows = append(rows, metric.Row{NodeID: id, TS: base + i*60, CoverageStart: base, Bucket: b})
 	}
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: rows}); err != nil {
 		t.Fatal(err)
@@ -480,7 +480,7 @@ func TestSumColumnsRoundTripAndRollUp(t *testing.T) {
 	// 同一分钟再写一次：加法合并，不覆盖。
 	again := metric.NewBucket()
 	again.AddSum(metric.RxBytes, 1)
-	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: base, Bucket: again}}}); err != nil {
+	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: base, CoverageStart: base, Bucket: again}}}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.ReadMinuteRows(ctx, id, base, base+300)

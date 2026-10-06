@@ -18,7 +18,7 @@ func TestResourceContinuousWindowsAndMissingReadings(t *testing.T) {
 				b := metric.NewBucket()
 				i := metric.Index(string(resource))
 				b.Sum[i], b.N[i] = value, 1
-				_, err := f.st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: f.ids[0], TS: base + offset*60, Bucket: b}}})
+				_, err := f.st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: f.ids[0], TS: base + offset*60, CoverageStart: base, Bucket: b}}})
 				must(t, err)
 			}
 			eval := func(offset int64, want store.AlertState) {
@@ -80,7 +80,7 @@ func TestResourceNewMetricWindows(t *testing.T) {
 				b := metric.NewBucket()
 				i := metric.Index(tc.column)
 				b.Sum[i], b.N[i] = value, 1
-				_, err := f.st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: f.ids[0], TS: base + offset*60, Bucket: b}}})
+				_, err := f.st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: f.ids[0], TS: base + offset*60, CoverageStart: base, Bucket: b}}})
 				must(t, err)
 			}
 			// 该分钟有行但目标列没有样本（N=0）：与完全没有行的分钟一样是缺读数，不能令 firing 恢复。
@@ -88,7 +88,7 @@ func TestResourceNewMetricWindows(t *testing.T) {
 				b := metric.NewBucket()
 				i := metric.Index("mem_used")
 				b.Sum[i], b.N[i] = 1024, 1
-				_, err := f.st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: f.ids[0], TS: base + offset*60, Bucket: b}}})
+				_, err := f.st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: f.ids[0], TS: base + offset*60, CoverageStart: base, Bucket: b}}})
 				must(t, err)
 			}
 			eval := func(offset int64, want store.AlertState) {
@@ -126,7 +126,7 @@ func TestResourceLoad1PerCoreMissingCores(t *testing.T) {
 		b := metric.NewBucket()
 		i := metric.Index("load1")
 		b.Sum[i], b.N[i] = load1, 1
-		_, err := f.st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: f.ids[0], TS: base + offset*60, Bucket: b}}})
+		_, err := f.st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: f.ids[0], TS: base + offset*60, CoverageStart: base, Bucket: b}}})
 		must(t, err)
 	}
 	eval := func(offset int64, want store.AlertState) {

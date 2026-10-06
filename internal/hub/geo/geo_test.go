@@ -194,7 +194,7 @@ func (f *fixture) report(name, addr string) int64 {
 		f.nodes[name] = id
 	}
 	f.ts += 60
-	row := metric.Row{NodeID: id, TS: f.ts, Bucket: metric.NewBucket(), LastSeen: f.clk.Now(), Source: addr}
+	row := metric.Row{NodeID: id, TS: f.ts, CoverageStart: f.ts, Bucket: metric.NewBucket(), LastSeen: f.clk.Now(), Source: addr}
 	if _, err := f.st.WriteMinuteBatch(f.t.Context(), metric.Batch{Rows: []metric.Row{row}}); err != nil {
 		f.t.Fatal(err)
 	}

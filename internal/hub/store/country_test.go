@@ -38,7 +38,7 @@ func TestSetLookupCountryIsConditionalOnTheAddress(t *testing.T) {
 	s, clk := open(t)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
-	row := metric.Row{NodeID: id, TS: 600, Bucket: metric.NewBucket(), LastSeen: clk.Now(), Source: "1.1.1.1"}
+	row := metric.Row{NodeID: id, TS: 600, CoverageStart: 600, Bucket: metric.NewBucket(), LastSeen: clk.Now(), Source: "1.1.1.1"}
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{row}}); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestSetLookupCountryRejectsEmptyAddressAndNonCountry(t *testing.T) {
 	ctx := t.Context()
 	silent, _, _ := s.CreateNode(ctx, "never reported", Billing{}, hash(1))
 	reported, _, _ := s.CreateNode(ctx, "reported", Billing{}, hash(2))
-	row := metric.Row{NodeID: reported, TS: 600, Bucket: metric.NewBucket(), LastSeen: clk.Now(), Source: "8.8.8.8"}
+	row := metric.Row{NodeID: reported, TS: 600, CoverageStart: 600, Bucket: metric.NewBucket(), LastSeen: clk.Now(), Source: "8.8.8.8"}
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{row}}); err != nil {
 		t.Fatal(err)
 	}

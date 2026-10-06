@@ -85,36 +85,54 @@ func (s *Store) QueryMetricsCoverage(ctx context.Context, nodeID, from, to int64
 			summary.EligibleMinutes = uint64((end - begin) / 60)
 			begin = end - int64(summary.EligibleMinutes)*60
 			params := append(append([]any{}, args...), begin, end)
+			// 两列各自求和仍守恒 observed_reported ≤ observed，前提是 reported = 0 的 1m 行必有 observed = 1（writeCoverageStart
+			// 对纯观测行强制，upsert 的三值或合并保持它）：于是 1m 行 both = 1 ⇒ observed = 1、both 已知 ⇒ observed 已知，
+			// 逐列 NULL 上卷把这两条带到 5m/1h 源行。每个源行对 both 之和的贡献因此不超过它对 observed 之和的贡献，
+			// SUM 跳过 NULL 时也成立。
 			return tx.QueryRowContext(ctx, "SELECT coalesce(sum(observed),0), coalesce(sum(both),0) FROM ("+sources+") WHERE ts >= ? AND source_width <= ? - ts", params...).Scan(&summary.ObservedMinutes, &summary.ObservedReportedMinutes)
 		})
 	return rows, summary, err
 }
 
+// coverageRowError 是一行的覆盖事实与指标层不变式矛盾时的拒绝原因。判定只取决于行本身和已提交的 node_coverage，
+// 同一行重试必得同一结果，所以 WriteMinuteBatch 按行拒绝它；若当作整批错误返回，ingest.Flush 会把这一批留在
+// 待重试队首、每轮先重试它，所有节点的分钟写入都被这一行挡住。
+type coverageRowError struct{ reason string }
+
+func (e coverageRowError) Error() string { return e.reason }
+
+// writeCoverageStart 先完成全部判定再写起点：被拒绝的行不留下任何覆盖状态。起点用 DO NOTHING 写入，
+// 已提交的起点不被后到的批改写。起点必须是正的分钟对齐时刻——0 会让 eligible 从 1970 年算起，
+// 且 DO NOTHING 使它永远无法被后来的正确起点纠正。
 func writeCoverageStart(tx *sql.Tx, r metric.Row) error {
-	if r.CoverageStart%60 != 0 {
-		return fmt.Errorf("coverage start %d is not minute aligned", r.CoverageStart)
-	}
-	if _, err := tx.Exec("INSERT INTO node_coverage(node_id,start_ts) VALUES (?,?) ON CONFLICT DO NOTHING", r.NodeID, r.CoverageStart); err != nil {
-		return err
-	}
-	var start int64
-	if err := tx.QueryRow("SELECT start_ts FROM node_coverage WHERE node_id=?", r.NodeID).Scan(&start); err != nil {
-		return err
-	}
-	if (r.Observed || r.ObservationOnly) && (start > r.TS || r.CoverageStart > r.TS) {
-		return fmt.Errorf("observation precedes coverage start for node %d", r.NodeID)
+	if r.CoverageStart <= 0 || r.CoverageStart%60 != 0 {
+		return coverageRowError{fmt.Sprintf("coverage start %d is not a positive minute-aligned time", r.CoverageStart)}
 	}
 	if r.ObservationOnly {
+		// 汇总的守恒 observed_reported ≤ observed 以"reported = 0 的行必有 observed = 1"为前提（见 QueryMetricsCoverage），
+		// 纯观测行是唯一写入 reported = 0 的来源，所以它必须带 observed。
 		if !r.Observed || !r.LastSeen.IsZero() || r.Source != "" {
-			return fmt.Errorf("observation-only row carries report state")
+			return coverageRowError{"observation-only row carries report state"}
 		}
 		for _, n := range r.Bucket.N {
 			if n != 0 {
-				return fmt.Errorf("observation-only row carries metric samples")
+				return coverageRowError{"observation-only row carries metric samples"}
 			}
 		}
 	}
-	return nil
+	start := r.CoverageStart
+	var stored int64
+	switch err := tx.QueryRow("SELECT start_ts FROM node_coverage WHERE node_id=?", r.NodeID).Scan(&stored); {
+	case err == nil:
+		start = stored
+	case !errors.Is(err, sql.ErrNoRows):
+		return err
+	}
+	if r.Observed && (start > r.TS || r.CoverageStart > r.TS) {
+		return coverageRowError{"observation precedes coverage start"}
+	}
+	_, err := tx.Exec("INSERT INTO node_coverage(node_id,start_ts) VALUES (?,?) ON CONFLICT DO NOTHING", r.NodeID, r.CoverageStart)
+	return err
 }
 
 func metricSourceSQL(table string, i int) string {

@@ -229,9 +229,50 @@ func TestCoverageStartBatchOrderAndRollbackData(t *testing.T) {
 		if err != nil || len(rows) != 1 || *rows[0].Coverage.Minutes != 1 {
 			t.Fatal(rows, err)
 		}
-		if _, err := s.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 480, CoverageStart: 540, Observed: true, Bucket: metric.NewBucket()}}}); err == nil {
-			t.Fatal("observation before coverage start admitted")
+		rejected, err := s.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: id, TS: 480, CoverageStart: 540, Observed: true, Bucket: metric.NewBucket()}}})
+		if err != nil || rejected != 1 {
+			t.Fatalf("observation before coverage start: rejected=%d err=%v", rejected, err)
 		}
+		rows, err = s.ReadMinuteRows(t.Context(), id, 480, 540)
+		if err != nil || len(rows) != 1 || rows[0].Coverage.Observed == nil || *rows[0].Coverage.Observed != 0 {
+			t.Fatal("observation before coverage start admitted", rows, err)
+		}
+	}
+}
+
+// 覆盖事实矛盾的行按行拒绝：同批其他节点的行照常写入，被拒的行既不留下指标行，也不留下覆盖起点。
+func TestCoverageInconsistentRowsRejectedPerRow(t *testing.T) {
+	sampled := metric.NewBucket()
+	sampled.AddSum(0, 1)
+	for name, bad := range map[string]metric.Row{
+		"zero start":                        {TS: 600, Bucket: metric.NewBucket()},
+		"unaligned start":                   {TS: 600, CoverageStart: 630, Bucket: metric.NewBucket()},
+		"observation precedes start":        {TS: 540, CoverageStart: 600, Observed: true, Bucket: metric.NewBucket()},
+		"observation-only without observed": {TS: 600, CoverageStart: 600, ObservationOnly: true, Bucket: metric.NewBucket()},
+		"observation-only with last seen":   {TS: 600, CoverageStart: 600, ObservationOnly: true, Observed: true, LastSeen: time.Unix(610, 0), Bucket: metric.NewBucket()},
+		"observation-only with source":      {TS: 600, CoverageStart: 600, ObservationOnly: true, Observed: true, Source: "198.51.100.7", Bucket: metric.NewBucket()},
+		"observation-only with samples":     {TS: 600, CoverageStart: 600, ObservationOnly: true, Observed: true, Bucket: sampled},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := open(t)
+			good, _, _ := s.CreateNode(t.Context(), "good", Billing{}, hash(1))
+			badID, _, _ := s.CreateNode(t.Context(), "bad", Billing{}, hash(2))
+			bad.NodeID = badID
+			rejected, err := s.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{bad, {NodeID: good, TS: 600, CoverageStart: 600, Observed: true, Bucket: metric.NewBucket()}}})
+			if err != nil || rejected != 1 {
+				t.Fatalf("rejected=%d err=%v", rejected, err)
+			}
+			if rows, err := s.ReadMinuteRows(t.Context(), good, 600, 660); err != nil || len(rows) != 1 {
+				t.Fatalf("valid row in the same batch: %v err=%v", rows, err)
+			}
+			if rows, err := s.ReadMinuteRows(t.Context(), badID, 0, 1200); err != nil || len(rows) != 0 {
+				t.Fatalf("rejected row written: %v err=%v", rows, err)
+			}
+			starts, err := s.CoverageStarts(t.Context())
+			if _, ok := starts[badID]; err != nil || ok || starts[good] != 600 {
+				t.Fatalf("coverage starts %v err=%v", starts, err)
+			}
+		})
 	}
 }
 

@@ -39,7 +39,7 @@ func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
 	b := metric.NewBucket()
 	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(5)})
 	batch := metric.Batch{
-		Rows:   []metric.Row{{NodeID: node, TS: ts, Bucket: b}},
+		Rows:   []metric.Row{{NodeID: node, TS: ts, CoverageStart: ts, Bucket: b}},
 		Probes: []metric.ProbeRow{{NodeID: node, TS: ts, TaskID: 1, Bucket: &metric.ProbeBucket{Sent: 1}}},
 	}
 	if _, err := st.WriteMinuteBatch(ctx, batch); err != nil {

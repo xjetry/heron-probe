@@ -289,7 +289,7 @@ func TestOfflineSummaryUsesPersistedLastSeen(t *testing.T) {
 			f := newFixture(t)
 			last := f.clk.Now().Add(-72 * time.Hour)
 			if reported {
-				_, err := f.st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: f.ids[0], TS: last.Unix(), LastSeen: last, Bucket: metric.NewBucket()}}})
+				_, err := f.st.WriteMinuteBatch(t.Context(), metric.Batch{Rows: []metric.Row{{NodeID: f.ids[0], TS: last.Unix(), CoverageStart: last.Unix(), LastSeen: last, Bucket: metric.NewBucket()}}})
 				must(t, err)
 			}
 			r := offline()

@@ -41,7 +41,7 @@ func TestGetStorageStatsReportsHealthWithStaleness(t *testing.T) {
 	b := metric.NewBucket()
 	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(5)})
 	batch := metric.Batch{
-		Rows:   []metric.Row{{NodeID: node, TS: edge - 60, Bucket: b}},
+		Rows:   []metric.Row{{NodeID: node, TS: edge - 60, CoverageStart: edge - 60, Bucket: b}},
 		Probes: []metric.ProbeRow{{NodeID: node, TS: edge, TaskID: 1, Bucket: &metric.ProbeBucket{Sent: 1}}},
 	}
 	if _, err := h.store.WriteMinuteBatch(t.Context(), batch); err != nil {

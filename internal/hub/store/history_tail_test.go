@@ -26,7 +26,7 @@ func historyMinutes(id, base int64, minutes int) metric.Batch {
 			b.AddSum(metric.RxBytes, float64(i+j+1))
 		}
 		ts := base + int64(i)*60
-		batch.Rows = append(batch.Rows, metric.Row{NodeID: id, TS: ts, Bucket: b})
+		batch.Rows = append(batch.Rows, metric.Row{NodeID: id, TS: ts, CoverageStart: base, Bucket: b})
 		var rtts []uint32
 		for j := 0; j < i%4; j++ {
 			rtts = append(rtts, uint32(i*100+j))

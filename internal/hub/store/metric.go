@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"github.com/xjetry/heron-probe/internal/hub/metric"
 )
@@ -16,6 +17,7 @@ var (
 // 在事务内检查（与 DeleteNode 串行），各族按自己的 5m 水位做冻结检查——两族各自上卷，
 // 一族的水位不能替另一族决定是否接受写入。被拒绝的行计数返回并记日志，其余行照常写入。
 // 比较的是已持久化的水位而不是时钟，墙钟回拨或重试旧桶都不能改写已冻结的历史。
+// 按行拒绝的判定都是确定性的（重试同一行必得同一结果）；只有 SQL 错误作为整批错误返回，留给调用方重试。
 func (s *Store) WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, error) {
 	rejected := 0
 	err := s.write(ctx, func(tx *sql.Tx) error {
@@ -54,7 +56,15 @@ func (s *Store) WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, 
 			}
 			args := append([]any{r.NodeID, r.TS}, bucketArgs(r.Bucket)...)
 			if err := writeCoverageStart(tx, r); err != nil {
-				return err
+				var bad coverageRowError
+				if !errors.As(err, &bad) {
+					return err
+				}
+				// 与"节点已删除""早于水位"不同，这不是正常运行会产生的状态：live 构造的行总满足这些判定，
+				// 出现即说明上游或库内状态有缺陷，所以记 Error 而不是 Warn。
+				rejected++
+				s.log.Error("minute row with inconsistent coverage fact dropped", "node", r.NodeID, "ts", r.TS, "reason", bad.reason)
+				continue
 			}
 			args = append(args, !r.ObservationOnly, r.Observed)
 			if _, err := tx.Exec(upsertMinute, args...); err != nil {
