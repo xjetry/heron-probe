@@ -14,7 +14,7 @@ import (
 // （R = quotaRowsPerSeries × MaxComparisonNodes）。它是服务端唯一的常量：校验
 // QueryProbeComparison.node_ids 用它，ListProbeComparisonNodes.max_nodes_per_query
 // 把它下发给客户端切块；客户端不从注释或文档抄写块大小。恒为正，0 是协议错误。
-const MaxComparisonNodes = 32
+const MaxComparisonNodes = 8
 
 // comparisonKeyWhere 生成对比查询的等值键约束：task_id 等值 + 节点清单。占位符与
 // comparisonKeyArgs 同序，前导两列匹配 (task_id, node_id, ts) 索引，ts 范围由 queryFamily 追加。
