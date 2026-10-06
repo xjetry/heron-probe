@@ -86,6 +86,17 @@ func TestPublicSwitchAllMethodsAndNodePreservation(t *testing.T) {
 	h.setPublic(t, id, "public", true)
 	private, _ := h.createNode(t, "private")
 	h.setPublic(t, private, "private", false)
+	// 对比入口需要任务与节点清单；其余方法共享 nodeId/from/to/maxPoints。
+	saved, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&heronv1.SaveProbeTaskRequest{Task: &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "192.0.2.1", IntervalS: 60, TimeoutMs: 1000}, AllNodes: true}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := saved.Msg.Task.Task.Id
+	window := fmt.Sprintf(`"from":"%d","to":"%d","maxPoints":100`, h.clk.Now().Unix()-3600, h.clk.Now().Unix())
+	bodies := map[string]string{
+		"ListProbeComparisonNodes": fmt.Sprintf(`{"taskId":"%d"}`, task),
+		"QueryProbeComparison":     fmt.Sprintf(`{"taskId":"%d","nodeIds":["%d"],%s}`, task, id, window),
+	}
 	methods := heronv1.File_heron_v1_public_proto.Services().ByName("PublicService").Methods()
 	if methods.Len() == 0 {
 		t.Fatal("PublicService has no methods")
@@ -96,8 +107,11 @@ func TestPublicSwitchAllMethodsAndNodePreservation(t *testing.T) {
 		saveSettings(t, h, in)
 		for i := 0; i < methods.Len(); i++ {
 			m := methods.Get(i)
-			// 所有现有请求共享这些查询字段；空消息忽略未知字段，新增方法也自动经过总闸断言。
-			body := fmt.Sprintf(`{"nodeId":"%d","from":"%d","to":"%d","maxPoints":100}`, id, h.clk.Now().Unix()-3600, h.clk.Now().Unix())
+			// 未经特判的方法共享这些查询字段；空消息忽略未知字段，新增方法也自动经过总闸断言。
+			body, ok := bodies[string(m.Name())]
+			if !ok {
+				body = fmt.Sprintf(`{"nodeId":"%d",%s}`, id, window)
+			}
 			got := pubPost(t, h, string(m.Name()), body, nil)
 			want := http.StatusNotFound
 			if enabled {

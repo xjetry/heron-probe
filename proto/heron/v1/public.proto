@@ -37,6 +37,17 @@ service PublicService {
     option idempotency_level = NO_SIDE_EFFECTS;
     option (heron.v1.cache_max_age_s) = 60;
   }
+  // 跨节点对比的第一步：当前分配了该任务的公开节点与任务标注。任务只分配给了非公开节点时返回 NotFound，
+  // 与任务不存在相同，不暴露它的存在。节点改为非公开后，GET 响应最多再被缓存使用 60 秒。
+  rpc ListProbeComparisonNodes(ListProbeComparisonNodesRequest) returns (ListProbeComparisonNodesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (heron.v1.cache_max_age_s) = 60;
+  }
+  // 跨节点对比的第二步：一个任务在一组公开节点上的探测历史；非公开或不存在的节点列入 unavailable_node_ids。
+  rpc QueryProbeComparison(QueryProbeComparisonRequest) returns (QueryProbeComparisonResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option (heron.v1.cache_max_age_s) = 60;
+  }
 }
 
 message GetSiteRequest {}

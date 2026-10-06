@@ -112,11 +112,15 @@ func TestRollupUsesPrimaryKeyRanges(t *testing.T) {
 				var sources []string
 				args := []any{lv.Bucket}
 				for j := i; j >= 0; j-- {
-					sources = append(sources, f.rangeSQL(j))
+					sources = append(sources, f.rangeSQL(j, queryShape{keyWhere: "node_id = ?", seriesLimit: 1}))
 					args = append(args, 1, 0, 86400)
 				}
+				groupKey := ""
+				if f.extraKey != "" {
+					groupKey = "task_id"
+				}
 				for j := i; j >= 0; j-- {
-					assertPrimaryKeyRange(t, s, f.tables[j], f.aggregateSQL("("+strings.Join(sources, " UNION ALL ")+")"), args...)
+					assertPrimaryKeyRange(t, s, f.tables[j], f.aggregateSQL("("+strings.Join(sources, " UNION ALL ")+")", groupKey), args...)
 				}
 			})
 		}

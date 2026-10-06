@@ -130,6 +130,12 @@ const (
 	// AdminServiceQueryProbesProcedure is the fully-qualified name of the AdminService's QueryProbes
 	// RPC.
 	AdminServiceQueryProbesProcedure = "/heron.v1.AdminService/QueryProbes"
+	// AdminServiceListProbeComparisonNodesProcedure is the fully-qualified name of the AdminService's
+	// ListProbeComparisonNodes RPC.
+	AdminServiceListProbeComparisonNodesProcedure = "/heron.v1.AdminService/ListProbeComparisonNodes"
+	// AdminServiceQueryProbeComparisonProcedure is the fully-qualified name of the AdminService's
+	// QueryProbeComparison RPC.
+	AdminServiceQueryProbeComparisonProcedure = "/heron.v1.AdminService/QueryProbeComparison"
 	// AdminServiceListAlertRulesProcedure is the fully-qualified name of the AdminService's
 	// ListAlertRules RPC.
 	AdminServiceListAlertRulesProcedure = "/heron.v1.AdminService/ListAlertRules"
@@ -313,6 +319,10 @@ type AdminServiceClient interface {
 	ReorderProbeTasks(context.Context, *connect.Request[v1.ReorderProbeTasksRequest]) (*connect.Response[v1.ReorderProbeTasksResponse], error)
 	// 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
 	QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error)
+	// 跨节点对比的第一步：当前分配了该任务、且调用方可见的节点与任务标注。节点范围与标注规则同 QueryProbes。
+	ListProbeComparisonNodes(context.Context, *connect.Request[v1.ListProbeComparisonNodesRequest]) (*connect.Response[v1.ListProbeComparisonNodesResponse], error)
+	// 跨节点对比的第二步：一个任务在一组节点上的探测历史，节点按 ListProbeComparisonNodes 给出的上限分块。
+	QueryProbeComparison(context.Context, *connect.Request[v1.QueryProbeComparisonRequest]) (*connect.Response[v1.QueryProbeComparisonResponse], error)
 	// 列出规则及其当前节点状态。
 	ListAlertRules(context.Context, *connect.Request[v1.ListAlertRulesRequest]) (*connect.Response[v1.ListAlertRulesResponse], error)
 	// id 为 0 时创建，否则整体替换规则与作用域、渠道列表。
@@ -615,6 +625,18 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("QueryProbes")),
 			connect.WithClientOptions(opts...),
 		),
+		listProbeComparisonNodes: connect.NewClient[v1.ListProbeComparisonNodesRequest, v1.ListProbeComparisonNodesResponse](
+			httpClient,
+			baseURL+AdminServiceListProbeComparisonNodesProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("ListProbeComparisonNodes")),
+			connect.WithClientOptions(opts...),
+		),
+		queryProbeComparison: connect.NewClient[v1.QueryProbeComparisonRequest, v1.QueryProbeComparisonResponse](
+			httpClient,
+			baseURL+AdminServiceQueryProbeComparisonProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("QueryProbeComparison")),
+			connect.WithClientOptions(opts...),
+		),
 		listAlertRules: connect.NewClient[v1.ListAlertRulesRequest, v1.ListAlertRulesResponse](
 			httpClient,
 			baseURL+AdminServiceListAlertRulesProcedure,
@@ -806,73 +828,75 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 
 // adminServiceClient implements AdminServiceClient.
 type adminServiceClient struct {
-	executeChange         *connect.Client[v1.ExecuteChangeRequest, v1.ExecuteChangeResponse]
-	listOperations        *connect.Client[v1.ListOperationsRequest, v1.ListOperationsResponse]
-	listNotifyChannelRefs *connect.Client[v1.ListNotifyChannelRefsRequest, v1.ListNotifyChannelRefsResponse]
-	getUpdates            *connect.Client[v1.GetUpdatesRequest, v1.GetUpdatesResponse]
-	startUpdate           *connect.Client[v1.StartUpdateRequest, v1.StartUpdateResponse]
-	cancelUpdate          *connect.Client[v1.CancelUpdateRequest, v1.CancelUpdateResponse]
-	login                 *connect.Client[v1.LoginRequest, v1.LoginResponse]
-	beginPasskeyLogin     *connect.Client[v1.BeginPasskeyLoginRequest, v1.BeginPasskeyLoginResponse]
-	finishPasskeyLogin    *connect.Client[v1.FinishPasskeyLoginRequest, v1.FinishPasskeyLoginResponse]
-	getSecurity           *connect.Client[v1.GetSecurityRequest, v1.GetSecurityResponse]
-	securityAction        *connect.Client[v1.SecurityActionRequest, v1.SecurityActionResponse]
-	logout                *connect.Client[v1.LogoutRequest, v1.LogoutResponse]
-	listSessions          *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
-	revokeSession         *connect.Client[v1.RevokeSessionRequest, v1.RevokeSessionResponse]
-	listNodes             *connect.Client[v1.ListNodesRequest, v1.ListNodesResponse]
-	createNode            *connect.Client[v1.CreateNodeRequest, v1.CreateNodeResponse]
-	updateNode            *connect.Client[v1.UpdateNodeRequest, v1.UpdateNodeResponse]
-	batchUpdateNodeTags   *connect.Client[v1.BatchUpdateNodeTagsRequest, v1.BatchUpdateNodeTagsResponse]
-	deleteNode            *connect.Client[v1.DeleteNodeRequest, v1.DeleteNodeResponse]
-	rotateNodeToken       *connect.Client[v1.RotateNodeTokenRequest, v1.RotateNodeTokenResponse]
-	reorderNodes          *connect.Client[v1.ReorderNodesRequest, v1.ReorderNodesResponse]
-	moveNodes             *connect.Client[v1.MoveNodesRequest, v1.MoveNodesResponse]
-	listTags              *connect.Client[v1.ListTagsRequest, v1.ListTagsResponse]
-	deleteTag             *connect.Client[v1.DeleteTagRequest, v1.DeleteTagResponse]
-	openRegisterWindow    *connect.Client[v1.OpenRegisterWindowRequest, v1.OpenRegisterWindowResponse]
-	closeRegisterWindow   *connect.Client[v1.CloseRegisterWindowRequest, v1.CloseRegisterWindowResponse]
-	getRegisterWindow     *connect.Client[v1.GetRegisterWindowRequest, v1.GetRegisterWindowResponse]
-	getSnapshot           *connect.Client[v1.GetSnapshotRequest, v1.GetSnapshotResponse]
-	queryMetrics          *connect.Client[v1.QueryMetricsRequest, v1.QueryMetricsResponse]
-	getTraffic            *connect.Client[v1.GetTrafficRequest, v1.GetTrafficResponse]
-	adjustTraffic         *connect.Client[v1.AdjustTrafficRequest, v1.AdjustTrafficResponse]
-	listProbeTasks        *connect.Client[v1.ListProbeTasksRequest, v1.ListProbeTasksResponse]
-	saveProbeTask         *connect.Client[v1.SaveProbeTaskRequest, v1.SaveProbeTaskResponse]
-	deleteProbeTask       *connect.Client[v1.DeleteProbeTaskRequest, v1.DeleteProbeTaskResponse]
-	reorderProbeTasks     *connect.Client[v1.ReorderProbeTasksRequest, v1.ReorderProbeTasksResponse]
-	queryProbes           *connect.Client[v1.QueryProbesRequest, v1.QueryProbesResponse]
-	listAlertRules        *connect.Client[v1.ListAlertRulesRequest, v1.ListAlertRulesResponse]
-	saveAlertRule         *connect.Client[v1.SaveAlertRuleRequest, v1.SaveAlertRuleResponse]
-	deleteAlertRule       *connect.Client[v1.DeleteAlertRuleRequest, v1.DeleteAlertRuleResponse]
-	listSilences          *connect.Client[v1.ListSilencesRequest, v1.ListSilencesResponse]
-	saveSilence           *connect.Client[v1.SaveSilenceRequest, v1.SaveSilenceResponse]
-	deleteSilence         *connect.Client[v1.DeleteSilenceRequest, v1.DeleteSilenceResponse]
-	listAlertEvents       *connect.Client[v1.ListAlertEventsRequest, v1.ListAlertEventsResponse]
-	getAlertDeliveryError *connect.Client[v1.GetAlertDeliveryErrorRequest, v1.GetAlertDeliveryErrorResponse]
-	listNotifyChannels    *connect.Client[v1.ListNotifyChannelsRequest, v1.ListNotifyChannelsResponse]
-	saveNotifyChannel     *connect.Client[v1.SaveNotifyChannelRequest, v1.SaveNotifyChannelResponse]
-	deleteNotifyChannel   *connect.Client[v1.DeleteNotifyChannelRequest, v1.DeleteNotifyChannelResponse]
-	testNotifyChannel     *connect.Client[v1.TestNotifyChannelRequest, v1.TestNotifyChannelResponse]
-	getSettings           *connect.Client[v1.GetSettingsRequest, v1.GetSettingsResponse]
-	getBackupStatus       *connect.Client[v1.GetBackupStatusRequest, v1.GetBackupStatusResponse]
-	getHeartbeatStatus    *connect.Client[v1.GetHeartbeatStatusRequest, v1.GetHeartbeatStatusResponse]
-	updateSettings        *connect.Client[v1.UpdateSettingsRequest, v1.UpdateSettingsResponse]
-	uploadTheme           *connect.Client[v1.UploadThemeRequest, v1.UploadThemeResponse]
-	listThemes            *connect.Client[v1.ListThemesRequest, v1.ListThemesResponse]
-	enableTheme           *connect.Client[v1.EnableThemeRequest, v1.EnableThemeResponse]
-	deleteTheme           *connect.Client[v1.DeleteThemeRequest, v1.DeleteThemeResponse]
-	getThemePreview       *connect.Client[v1.GetThemePreviewRequest, v1.GetThemePreviewResponse]
-	deleteThemeVersion    *connect.Client[v1.DeleteThemeVersionRequest, v1.DeleteThemeVersionResponse]
-	listThemeReleases     *connect.Client[v1.ListThemeReleasesRequest, v1.ListThemeReleasesResponse]
-	installThemeRelease   *connect.Client[v1.InstallThemeReleaseRequest, v1.InstallThemeReleaseResponse]
-	previewTheme          *connect.Client[v1.PreviewThemeRequest, v1.PreviewThemeResponse]
-	getThemePackage       *connect.Client[v1.GetThemePackageRequest, v1.GetThemePackageResponse]
-	getStorageStats       *connect.Client[v1.GetStorageStatsRequest, v1.GetStorageStatsResponse]
-	listApiTokens         *connect.Client[v1.ListApiTokensRequest, v1.ListApiTokensResponse]
-	createApiToken        *connect.Client[v1.CreateApiTokenRequest, v1.CreateApiTokenResponse]
-	deleteApiToken        *connect.Client[v1.DeleteApiTokenRequest, v1.DeleteApiTokenResponse]
-	getApiReference       *connect.Client[v1.GetApiReferenceRequest, v1.GetApiReferenceResponse]
+	executeChange            *connect.Client[v1.ExecuteChangeRequest, v1.ExecuteChangeResponse]
+	listOperations           *connect.Client[v1.ListOperationsRequest, v1.ListOperationsResponse]
+	listNotifyChannelRefs    *connect.Client[v1.ListNotifyChannelRefsRequest, v1.ListNotifyChannelRefsResponse]
+	getUpdates               *connect.Client[v1.GetUpdatesRequest, v1.GetUpdatesResponse]
+	startUpdate              *connect.Client[v1.StartUpdateRequest, v1.StartUpdateResponse]
+	cancelUpdate             *connect.Client[v1.CancelUpdateRequest, v1.CancelUpdateResponse]
+	login                    *connect.Client[v1.LoginRequest, v1.LoginResponse]
+	beginPasskeyLogin        *connect.Client[v1.BeginPasskeyLoginRequest, v1.BeginPasskeyLoginResponse]
+	finishPasskeyLogin       *connect.Client[v1.FinishPasskeyLoginRequest, v1.FinishPasskeyLoginResponse]
+	getSecurity              *connect.Client[v1.GetSecurityRequest, v1.GetSecurityResponse]
+	securityAction           *connect.Client[v1.SecurityActionRequest, v1.SecurityActionResponse]
+	logout                   *connect.Client[v1.LogoutRequest, v1.LogoutResponse]
+	listSessions             *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
+	revokeSession            *connect.Client[v1.RevokeSessionRequest, v1.RevokeSessionResponse]
+	listNodes                *connect.Client[v1.ListNodesRequest, v1.ListNodesResponse]
+	createNode               *connect.Client[v1.CreateNodeRequest, v1.CreateNodeResponse]
+	updateNode               *connect.Client[v1.UpdateNodeRequest, v1.UpdateNodeResponse]
+	batchUpdateNodeTags      *connect.Client[v1.BatchUpdateNodeTagsRequest, v1.BatchUpdateNodeTagsResponse]
+	deleteNode               *connect.Client[v1.DeleteNodeRequest, v1.DeleteNodeResponse]
+	rotateNodeToken          *connect.Client[v1.RotateNodeTokenRequest, v1.RotateNodeTokenResponse]
+	reorderNodes             *connect.Client[v1.ReorderNodesRequest, v1.ReorderNodesResponse]
+	moveNodes                *connect.Client[v1.MoveNodesRequest, v1.MoveNodesResponse]
+	listTags                 *connect.Client[v1.ListTagsRequest, v1.ListTagsResponse]
+	deleteTag                *connect.Client[v1.DeleteTagRequest, v1.DeleteTagResponse]
+	openRegisterWindow       *connect.Client[v1.OpenRegisterWindowRequest, v1.OpenRegisterWindowResponse]
+	closeRegisterWindow      *connect.Client[v1.CloseRegisterWindowRequest, v1.CloseRegisterWindowResponse]
+	getRegisterWindow        *connect.Client[v1.GetRegisterWindowRequest, v1.GetRegisterWindowResponse]
+	getSnapshot              *connect.Client[v1.GetSnapshotRequest, v1.GetSnapshotResponse]
+	queryMetrics             *connect.Client[v1.QueryMetricsRequest, v1.QueryMetricsResponse]
+	getTraffic               *connect.Client[v1.GetTrafficRequest, v1.GetTrafficResponse]
+	adjustTraffic            *connect.Client[v1.AdjustTrafficRequest, v1.AdjustTrafficResponse]
+	listProbeTasks           *connect.Client[v1.ListProbeTasksRequest, v1.ListProbeTasksResponse]
+	saveProbeTask            *connect.Client[v1.SaveProbeTaskRequest, v1.SaveProbeTaskResponse]
+	deleteProbeTask          *connect.Client[v1.DeleteProbeTaskRequest, v1.DeleteProbeTaskResponse]
+	reorderProbeTasks        *connect.Client[v1.ReorderProbeTasksRequest, v1.ReorderProbeTasksResponse]
+	queryProbes              *connect.Client[v1.QueryProbesRequest, v1.QueryProbesResponse]
+	listProbeComparisonNodes *connect.Client[v1.ListProbeComparisonNodesRequest, v1.ListProbeComparisonNodesResponse]
+	queryProbeComparison     *connect.Client[v1.QueryProbeComparisonRequest, v1.QueryProbeComparisonResponse]
+	listAlertRules           *connect.Client[v1.ListAlertRulesRequest, v1.ListAlertRulesResponse]
+	saveAlertRule            *connect.Client[v1.SaveAlertRuleRequest, v1.SaveAlertRuleResponse]
+	deleteAlertRule          *connect.Client[v1.DeleteAlertRuleRequest, v1.DeleteAlertRuleResponse]
+	listSilences             *connect.Client[v1.ListSilencesRequest, v1.ListSilencesResponse]
+	saveSilence              *connect.Client[v1.SaveSilenceRequest, v1.SaveSilenceResponse]
+	deleteSilence            *connect.Client[v1.DeleteSilenceRequest, v1.DeleteSilenceResponse]
+	listAlertEvents          *connect.Client[v1.ListAlertEventsRequest, v1.ListAlertEventsResponse]
+	getAlertDeliveryError    *connect.Client[v1.GetAlertDeliveryErrorRequest, v1.GetAlertDeliveryErrorResponse]
+	listNotifyChannels       *connect.Client[v1.ListNotifyChannelsRequest, v1.ListNotifyChannelsResponse]
+	saveNotifyChannel        *connect.Client[v1.SaveNotifyChannelRequest, v1.SaveNotifyChannelResponse]
+	deleteNotifyChannel      *connect.Client[v1.DeleteNotifyChannelRequest, v1.DeleteNotifyChannelResponse]
+	testNotifyChannel        *connect.Client[v1.TestNotifyChannelRequest, v1.TestNotifyChannelResponse]
+	getSettings              *connect.Client[v1.GetSettingsRequest, v1.GetSettingsResponse]
+	getBackupStatus          *connect.Client[v1.GetBackupStatusRequest, v1.GetBackupStatusResponse]
+	getHeartbeatStatus       *connect.Client[v1.GetHeartbeatStatusRequest, v1.GetHeartbeatStatusResponse]
+	updateSettings           *connect.Client[v1.UpdateSettingsRequest, v1.UpdateSettingsResponse]
+	uploadTheme              *connect.Client[v1.UploadThemeRequest, v1.UploadThemeResponse]
+	listThemes               *connect.Client[v1.ListThemesRequest, v1.ListThemesResponse]
+	enableTheme              *connect.Client[v1.EnableThemeRequest, v1.EnableThemeResponse]
+	deleteTheme              *connect.Client[v1.DeleteThemeRequest, v1.DeleteThemeResponse]
+	getThemePreview          *connect.Client[v1.GetThemePreviewRequest, v1.GetThemePreviewResponse]
+	deleteThemeVersion       *connect.Client[v1.DeleteThemeVersionRequest, v1.DeleteThemeVersionResponse]
+	listThemeReleases        *connect.Client[v1.ListThemeReleasesRequest, v1.ListThemeReleasesResponse]
+	installThemeRelease      *connect.Client[v1.InstallThemeReleaseRequest, v1.InstallThemeReleaseResponse]
+	previewTheme             *connect.Client[v1.PreviewThemeRequest, v1.PreviewThemeResponse]
+	getThemePackage          *connect.Client[v1.GetThemePackageRequest, v1.GetThemePackageResponse]
+	getStorageStats          *connect.Client[v1.GetStorageStatsRequest, v1.GetStorageStatsResponse]
+	listApiTokens            *connect.Client[v1.ListApiTokensRequest, v1.ListApiTokensResponse]
+	createApiToken           *connect.Client[v1.CreateApiTokenRequest, v1.CreateApiTokenResponse]
+	deleteApiToken           *connect.Client[v1.DeleteApiTokenRequest, v1.DeleteApiTokenResponse]
+	getApiReference          *connect.Client[v1.GetApiReferenceRequest, v1.GetApiReferenceResponse]
 }
 
 // ExecuteChange calls heron.v1.AdminService.ExecuteChange.
@@ -1053,6 +1077,16 @@ func (c *adminServiceClient) ReorderProbeTasks(ctx context.Context, req *connect
 // QueryProbes calls heron.v1.AdminService.QueryProbes.
 func (c *adminServiceClient) QueryProbes(ctx context.Context, req *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error) {
 	return c.queryProbes.CallUnary(ctx, req)
+}
+
+// ListProbeComparisonNodes calls heron.v1.AdminService.ListProbeComparisonNodes.
+func (c *adminServiceClient) ListProbeComparisonNodes(ctx context.Context, req *connect.Request[v1.ListProbeComparisonNodesRequest]) (*connect.Response[v1.ListProbeComparisonNodesResponse], error) {
+	return c.listProbeComparisonNodes.CallUnary(ctx, req)
+}
+
+// QueryProbeComparison calls heron.v1.AdminService.QueryProbeComparison.
+func (c *adminServiceClient) QueryProbeComparison(ctx context.Context, req *connect.Request[v1.QueryProbeComparisonRequest]) (*connect.Response[v1.QueryProbeComparisonResponse], error) {
+	return c.queryProbeComparison.CallUnary(ctx, req)
 }
 
 // ListAlertRules calls heron.v1.AdminService.ListAlertRules.
@@ -1299,6 +1333,10 @@ type AdminServiceHandler interface {
 	ReorderProbeTasks(context.Context, *connect.Request[v1.ReorderProbeTasksRequest]) (*connect.Response[v1.ReorderProbeTasksResponse], error)
 	// 某节点在窗口内全部任务的探测历史，选级与对齐规则同 QueryMetrics。
 	QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error)
+	// 跨节点对比的第一步：当前分配了该任务、且调用方可见的节点与任务标注。节点范围与标注规则同 QueryProbes。
+	ListProbeComparisonNodes(context.Context, *connect.Request[v1.ListProbeComparisonNodesRequest]) (*connect.Response[v1.ListProbeComparisonNodesResponse], error)
+	// 跨节点对比的第二步：一个任务在一组节点上的探测历史，节点按 ListProbeComparisonNodes 给出的上限分块。
+	QueryProbeComparison(context.Context, *connect.Request[v1.QueryProbeComparisonRequest]) (*connect.Response[v1.QueryProbeComparisonResponse], error)
 	// 列出规则及其当前节点状态。
 	ListAlertRules(context.Context, *connect.Request[v1.ListAlertRulesRequest]) (*connect.Response[v1.ListAlertRulesResponse], error)
 	// id 为 0 时创建，否则整体替换规则与作用域、渠道列表。
@@ -1597,6 +1635,18 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("QueryProbes")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceListProbeComparisonNodesHandler := connect.NewUnaryHandler(
+		AdminServiceListProbeComparisonNodesProcedure,
+		svc.ListProbeComparisonNodes,
+		connect.WithSchema(adminServiceMethods.ByName("ListProbeComparisonNodes")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceQueryProbeComparisonHandler := connect.NewUnaryHandler(
+		AdminServiceQueryProbeComparisonProcedure,
+		svc.QueryProbeComparison,
+		connect.WithSchema(adminServiceMethods.ByName("QueryProbeComparison")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceListAlertRulesHandler := connect.NewUnaryHandler(
 		AdminServiceListAlertRulesProcedure,
 		svc.ListAlertRules,
@@ -1857,6 +1907,10 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceReorderProbeTasksHandler.ServeHTTP(w, r)
 		case AdminServiceQueryProbesProcedure:
 			adminServiceQueryProbesHandler.ServeHTTP(w, r)
+		case AdminServiceListProbeComparisonNodesProcedure:
+			adminServiceListProbeComparisonNodesHandler.ServeHTTP(w, r)
+		case AdminServiceQueryProbeComparisonProcedure:
+			adminServiceQueryProbeComparisonHandler.ServeHTTP(w, r)
 		case AdminServiceListAlertRulesProcedure:
 			adminServiceListAlertRulesHandler.ServeHTTP(w, r)
 		case AdminServiceSaveAlertRuleProcedure:
@@ -2070,6 +2124,14 @@ func (UnimplementedAdminServiceHandler) ReorderProbeTasks(context.Context, *conn
 
 func (UnimplementedAdminServiceHandler) QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.QueryProbes is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) ListProbeComparisonNodes(context.Context, *connect.Request[v1.ListProbeComparisonNodesRequest]) (*connect.Response[v1.ListProbeComparisonNodesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.ListProbeComparisonNodes is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) QueryProbeComparison(context.Context, *connect.Request[v1.QueryProbeComparisonRequest]) (*connect.Response[v1.QueryProbeComparisonResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.QueryProbeComparison is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) ListAlertRules(context.Context, *connect.Request[v1.ListAlertRulesRequest]) (*connect.Response[v1.ListAlertRulesResponse], error) {

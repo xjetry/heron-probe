@@ -178,6 +178,14 @@ service AdminService {
   rpc QueryProbes(QueryProbesRequest) returns (QueryProbesResponse) {
     option (heron.v1.access) = ACCESS_READ;
   }
+  // 跨节点对比的第一步：当前分配了该任务、且调用方可见的节点与任务标注。节点范围与标注规则同 QueryProbes。
+  rpc ListProbeComparisonNodes(ListProbeComparisonNodesRequest) returns (ListProbeComparisonNodesResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
+  // 跨节点对比的第二步：一个任务在一组节点上的探测历史，节点按 ListProbeComparisonNodes 给出的上限分块。
+  rpc QueryProbeComparison(QueryProbeComparisonRequest) returns (QueryProbeComparisonResponse) {
+    option (heron.v1.access) = ACCESS_READ;
+  }
 
   // 列出规则及其当前节点状态。
   rpc ListAlertRules(ListAlertRulesRequest) returns (ListAlertRulesResponse) {

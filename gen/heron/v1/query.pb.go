@@ -764,6 +764,330 @@ func (x *ProbeSample) GetRttMaxUs() uint32 {
 	return 0
 }
 
+type ListProbeComparisonNodesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskId        uint64                 `protobuf:"varint,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListProbeComparisonNodesRequest) Reset() {
+	*x = ListProbeComparisonNodesRequest{}
+	mi := &file_heron_v1_query_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListProbeComparisonNodesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListProbeComparisonNodesRequest) ProtoMessage() {}
+
+func (x *ListProbeComparisonNodesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_query_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListProbeComparisonNodesRequest.ProtoReflect.Descriptor instead.
+func (*ListProbeComparisonNodesRequest) Descriptor() ([]byte, []int) {
+	return file_heron_v1_query_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ListProbeComparisonNodesRequest) GetTaskId() uint64 {
+	if x != nil {
+		return x.TaskId
+	}
+	return 0
+}
+
+// 一次跨节点对比的成员与标注，在同一个读快照里读出。之后取样本时不再核对分配：List 之后撤下分配的节点留在本次
+// 对比里，之后新分配的节点要等下一次 List；改任务目标、间隔、超时或 DNS 服务器也只在下一次 List 体现。
+// 样本本来就按 task_id 跨配置累积，与 QueryProbes 的历史一样。
+type ListProbeComparisonNodesResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 任务的种类与目标，标注规则同 QueryProbes 的 ProbeSeries.kind、target：调用方不可标注时 kind 为
+	// PROBE_KIND_UNSPECIFIED、target 为空串。PublicService 在任务分配给了至少一个公开节点时标注。
+	Kind   ProbeKind `protobuf:"varint,1,opt,name=kind,proto3,enum=heron.v1.ProbeKind" json:"kind,omitempty"`
+	Target string    `protobuf:"bytes,2,opt,name=target,proto3" json:"target,omitempty"`
+	// 当前分配了该任务、且调用方可见的节点，按节点全序（sort_order, id）升序；顺序只决定显示。
+	// 一个都没有时整个请求返回 NotFound，与任务不存在不加区分。
+	NodeIds []int64 `protobuf:"varint,3,rep,packed,name=node_ids,json=nodeIds,proto3" json:"node_ids,omitempty"`
+	// QueryProbeComparisonRequest.node_ids 一次最多可带的节点数，与 hub 校验用的是同一个值，恒为正。
+	// 客户端按它分块；收到 0 是协议错误，不能当作不限。
+	MaxNodesPerQuery uint32 `protobuf:"varint,4,opt,name=max_nodes_per_query,json=maxNodesPerQuery,proto3" json:"max_nodes_per_query,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ListProbeComparisonNodesResponse) Reset() {
+	*x = ListProbeComparisonNodesResponse{}
+	mi := &file_heron_v1_query_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListProbeComparisonNodesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListProbeComparisonNodesResponse) ProtoMessage() {}
+
+func (x *ListProbeComparisonNodesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_query_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListProbeComparisonNodesResponse.ProtoReflect.Descriptor instead.
+func (*ListProbeComparisonNodesResponse) Descriptor() ([]byte, []int) {
+	return file_heron_v1_query_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ListProbeComparisonNodesResponse) GetKind() ProbeKind {
+	if x != nil {
+		return x.Kind
+	}
+	return ProbeKind_PROBE_KIND_UNSPECIFIED
+}
+
+func (x *ListProbeComparisonNodesResponse) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
+}
+
+func (x *ListProbeComparisonNodesResponse) GetNodeIds() []int64 {
+	if x != nil {
+		return x.NodeIds
+	}
+	return nil
+}
+
+func (x *ListProbeComparisonNodesResponse) GetMaxNodesPerQuery() uint32 {
+	if x != nil {
+		return x.MaxNodesPerQuery
+	}
+	return 0
+}
+
+type QueryProbeComparisonRequest struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	TaskId uint64                 `protobuf:"varint,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// 1 到 max_nodes_per_query 个，不得重复。hub 不核对这些节点是否仍分配了该任务：每个节点按与 QueryProbes
+	// 相同的节点可见性单独授权，返回的是该节点历史里这个任务的部分，不比 QueryProbes 多给任何东西。
+	NodeIds []int64 `protobuf:"varint,2,rep,packed,name=node_ids,json=nodeIds,proto3" json:"node_ids,omitempty"`
+	// 窗口 [from, to)、max_points 与 QueryProbesRequest 相同，选级与步长也相同。
+	From          int64  `protobuf:"varint,3,opt,name=from,proto3" json:"from,omitempty"`
+	To            int64  `protobuf:"varint,4,opt,name=to,proto3" json:"to,omitempty"`
+	MaxPoints     uint32 `protobuf:"varint,5,opt,name=max_points,json=maxPoints,proto3" json:"max_points,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *QueryProbeComparisonRequest) Reset() {
+	*x = QueryProbeComparisonRequest{}
+	mi := &file_heron_v1_query_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QueryProbeComparisonRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QueryProbeComparisonRequest) ProtoMessage() {}
+
+func (x *QueryProbeComparisonRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_query_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QueryProbeComparisonRequest.ProtoReflect.Descriptor instead.
+func (*QueryProbeComparisonRequest) Descriptor() ([]byte, []int) {
+	return file_heron_v1_query_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *QueryProbeComparisonRequest) GetTaskId() uint64 {
+	if x != nil {
+		return x.TaskId
+	}
+	return 0
+}
+
+func (x *QueryProbeComparisonRequest) GetNodeIds() []int64 {
+	if x != nil {
+		return x.NodeIds
+	}
+	return nil
+}
+
+func (x *QueryProbeComparisonRequest) GetFrom() int64 {
+	if x != nil {
+		return x.From
+	}
+	return 0
+}
+
+func (x *QueryProbeComparisonRequest) GetTo() int64 {
+	if x != nil {
+		return x.To
+	}
+	return 0
+}
+
+func (x *QueryProbeComparisonRequest) GetMaxPoints() uint32 {
+	if x != nil {
+		return x.MaxPoints
+	}
+	return 0
+}
+
+type QueryProbeComparisonResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 同 QueryProbesResponse；本响应里所有节点共用。
+	Level string `protobuf:"bytes,1,opt,name=level,proto3" json:"level,omitempty"`
+	StepS uint32 `protobuf:"varint,2,opt,name=step_s,json=stepS,proto3" json:"step_s,omitempty"`
+	// 可见节点各一条，与请求的 node_ids 同序；窗口内没有结果的节点也在，samples 为空。
+	Series []*NodeProbeSamples `protobuf:"bytes,3,rep,name=series,proto3" json:"series,omitempty"`
+	// 不可见或不存在的节点，二者不加区分，与 QueryProbes 对二者同样返回 NotFound 一致；顺序同请求。
+	UnavailableNodeIds []int64 `protobuf:"varint,4,rep,packed,name=unavailable_node_ids,json=unavailableNodeIds,proto3" json:"unavailable_node_ids,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *QueryProbeComparisonResponse) Reset() {
+	*x = QueryProbeComparisonResponse{}
+	mi := &file_heron_v1_query_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QueryProbeComparisonResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QueryProbeComparisonResponse) ProtoMessage() {}
+
+func (x *QueryProbeComparisonResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_query_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QueryProbeComparisonResponse.ProtoReflect.Descriptor instead.
+func (*QueryProbeComparisonResponse) Descriptor() ([]byte, []int) {
+	return file_heron_v1_query_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *QueryProbeComparisonResponse) GetLevel() string {
+	if x != nil {
+		return x.Level
+	}
+	return ""
+}
+
+func (x *QueryProbeComparisonResponse) GetStepS() uint32 {
+	if x != nil {
+		return x.StepS
+	}
+	return 0
+}
+
+func (x *QueryProbeComparisonResponse) GetSeries() []*NodeProbeSamples {
+	if x != nil {
+		return x.Series
+	}
+	return nil
+}
+
+func (x *QueryProbeComparisonResponse) GetUnavailableNodeIds() []int64 {
+	if x != nil {
+		return x.UnavailableNodeIds
+	}
+	return nil
+}
+
+type NodeProbeSamples struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	NodeId int64                  `protobuf:"varint,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	// 与 ProbeSeries.samples 同一形状与稀疏规则。
+	Samples       []*ProbeSample `protobuf:"bytes,2,rep,name=samples,proto3" json:"samples,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NodeProbeSamples) Reset() {
+	*x = NodeProbeSamples{}
+	mi := &file_heron_v1_query_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeProbeSamples) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeProbeSamples) ProtoMessage() {}
+
+func (x *NodeProbeSamples) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_query_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeProbeSamples.ProtoReflect.Descriptor instead.
+func (*NodeProbeSamples) Descriptor() ([]byte, []int) {
+	return file_heron_v1_query_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *NodeProbeSamples) GetNodeId() int64 {
+	if x != nil {
+		return x.NodeId
+	}
+	return 0
+}
+
+func (x *NodeProbeSamples) GetSamples() []*ProbeSample {
+	if x != nil {
+		return x.Samples
+	}
+	return nil
+}
+
 var File_heron_v1_query_proto protoreflect.FileDescriptor
 
 const file_heron_v1_query_proto_rawDesc = "" +
@@ -836,7 +1160,29 @@ const file_heron_v1_query_proto_rawDesc = "" +
 	"rtt_max_us\x18\a \x01(\rH\x02R\brttMaxUs\x88\x01\x01B\x0e\n" +
 	"\f_rtt_mean_usB\r\n" +
 	"\v_rtt_min_usB\r\n" +
-	"\v_rtt_max_usB4Z2github.com/xjetry/heron-probe/gen/heron/v1;heronv1b\x06proto3"
+	"\v_rtt_max_us\":\n" +
+	"\x1fListProbeComparisonNodesRequest\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\x04R\x06taskId\"\xad\x01\n" +
+	" ListProbeComparisonNodesResponse\x12'\n" +
+	"\x04kind\x18\x01 \x01(\x0e2\x13.heron.v1.ProbeKindR\x04kind\x12\x16\n" +
+	"\x06target\x18\x02 \x01(\tR\x06target\x12\x19\n" +
+	"\bnode_ids\x18\x03 \x03(\x03R\anodeIds\x12-\n" +
+	"\x13max_nodes_per_query\x18\x04 \x01(\rR\x10maxNodesPerQuery\"\x94\x01\n" +
+	"\x1bQueryProbeComparisonRequest\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\x04R\x06taskId\x12\x19\n" +
+	"\bnode_ids\x18\x02 \x03(\x03R\anodeIds\x12\x12\n" +
+	"\x04from\x18\x03 \x01(\x03R\x04from\x12\x0e\n" +
+	"\x02to\x18\x04 \x01(\x03R\x02to\x12\x1d\n" +
+	"\n" +
+	"max_points\x18\x05 \x01(\rR\tmaxPoints\"\xb1\x01\n" +
+	"\x1cQueryProbeComparisonResponse\x12\x14\n" +
+	"\x05level\x18\x01 \x01(\tR\x05level\x12\x15\n" +
+	"\x06step_s\x18\x02 \x01(\rR\x05stepS\x122\n" +
+	"\x06series\x18\x03 \x03(\v2\x1a.heron.v1.NodeProbeSamplesR\x06series\x120\n" +
+	"\x14unavailable_node_ids\x18\x04 \x03(\x03R\x12unavailableNodeIds\"\\\n" +
+	"\x10NodeProbeSamples\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\x03R\x06nodeId\x12/\n" +
+	"\asamples\x18\x02 \x03(\v2\x15.heron.v1.ProbeSampleR\asamplesB4Z2github.com/xjetry/heron-probe/gen/heron/v1;heronv1b\x06proto3"
 
 var (
 	file_heron_v1_query_proto_rawDescOnce sync.Once
@@ -850,19 +1196,24 @@ func file_heron_v1_query_proto_rawDescGZIP() []byte {
 	return file_heron_v1_query_proto_rawDescData
 }
 
-var file_heron_v1_query_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_heron_v1_query_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_heron_v1_query_proto_goTypes = []any{
-	(*QueryMetricsRequest)(nil),  // 0: heron.v1.QueryMetricsRequest
-	(*QueryMetricsResponse)(nil), // 1: heron.v1.QueryMetricsResponse
-	(*PointCoverage)(nil),        // 2: heron.v1.PointCoverage
-	(*CoverageSummary)(nil),      // 3: heron.v1.CoverageSummary
-	(*MetricSeries)(nil),         // 4: heron.v1.MetricSeries
-	(*MetricSample)(nil),         // 5: heron.v1.MetricSample
-	(*QueryProbesRequest)(nil),   // 6: heron.v1.QueryProbesRequest
-	(*QueryProbesResponse)(nil),  // 7: heron.v1.QueryProbesResponse
-	(*ProbeSeries)(nil),          // 8: heron.v1.ProbeSeries
-	(*ProbeSample)(nil),          // 9: heron.v1.ProbeSample
-	(ProbeKind)(0),               // 10: heron.v1.ProbeKind
+	(*QueryMetricsRequest)(nil),              // 0: heron.v1.QueryMetricsRequest
+	(*QueryMetricsResponse)(nil),             // 1: heron.v1.QueryMetricsResponse
+	(*PointCoverage)(nil),                    // 2: heron.v1.PointCoverage
+	(*CoverageSummary)(nil),                  // 3: heron.v1.CoverageSummary
+	(*MetricSeries)(nil),                     // 4: heron.v1.MetricSeries
+	(*MetricSample)(nil),                     // 5: heron.v1.MetricSample
+	(*QueryProbesRequest)(nil),               // 6: heron.v1.QueryProbesRequest
+	(*QueryProbesResponse)(nil),              // 7: heron.v1.QueryProbesResponse
+	(*ProbeSeries)(nil),                      // 8: heron.v1.ProbeSeries
+	(*ProbeSample)(nil),                      // 9: heron.v1.ProbeSample
+	(*ListProbeComparisonNodesRequest)(nil),  // 10: heron.v1.ListProbeComparisonNodesRequest
+	(*ListProbeComparisonNodesResponse)(nil), // 11: heron.v1.ListProbeComparisonNodesResponse
+	(*QueryProbeComparisonRequest)(nil),      // 12: heron.v1.QueryProbeComparisonRequest
+	(*QueryProbeComparisonResponse)(nil),     // 13: heron.v1.QueryProbeComparisonResponse
+	(*NodeProbeSamples)(nil),                 // 14: heron.v1.NodeProbeSamples
+	(ProbeKind)(0),                           // 15: heron.v1.ProbeKind
 }
 var file_heron_v1_query_proto_depIdxs = []int32{
 	4,  // 0: heron.v1.QueryMetricsResponse.series:type_name -> heron.v1.MetricSeries
@@ -871,12 +1222,15 @@ var file_heron_v1_query_proto_depIdxs = []int32{
 	5,  // 3: heron.v1.MetricSeries.samples:type_name -> heron.v1.MetricSample
 	8,  // 4: heron.v1.QueryProbesResponse.series:type_name -> heron.v1.ProbeSeries
 	9,  // 5: heron.v1.ProbeSeries.samples:type_name -> heron.v1.ProbeSample
-	10, // 6: heron.v1.ProbeSeries.kind:type_name -> heron.v1.ProbeKind
-	7,  // [7:7] is the sub-list for method output_type
-	7,  // [7:7] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	15, // 6: heron.v1.ProbeSeries.kind:type_name -> heron.v1.ProbeKind
+	15, // 7: heron.v1.ListProbeComparisonNodesResponse.kind:type_name -> heron.v1.ProbeKind
+	14, // 8: heron.v1.QueryProbeComparisonResponse.series:type_name -> heron.v1.NodeProbeSamples
+	9,  // 9: heron.v1.NodeProbeSamples.samples:type_name -> heron.v1.ProbeSample
+	10, // [10:10] is the sub-list for method output_type
+	10, // [10:10] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_heron_v1_query_proto_init() }
@@ -896,7 +1250,7 @@ func file_heron_v1_query_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_heron_v1_query_proto_rawDesc), len(file_heron_v1_query_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

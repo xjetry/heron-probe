@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/probelimit"
 )
 
 // RollupLag 是上卷不越过的滞后：只上卷结束时刻不晚于 now − RollupLag 的桶。
@@ -347,29 +348,65 @@ func ChooseLevel(from, to int64, maxPoints int) (Level, int64) {
 }
 
 // aggregateSQL 是查询时的二次分桶：与上卷同一种运算，步长作为绑定参数。
-// 探测族多按 task_id 分组并先按任务再按时间排序，调用方据此切成每任务一条序列。
-func (f *family) aggregateSQL(table string) string {
+// groupKey 非空时按它拆序列并按 (groupKey, ts) 排序：单节点探测按 task_id（调用方据此切成
+// 每任务一条序列），跨节点对比按 node_id（每节点一条序列）。
+func (f *family) aggregateSQL(table, groupKey string) string {
 	sel, group, order := "ts - ts % ?", "1", "1"
-	if f.extraKey != "" {
-		sel += ", " + f.extraKey
+	if groupKey != "" {
+		sel += ", " + groupKey
 		group, order = "1, 2", "2, 1"
 	}
 	return "SELECT " + sel + ", " + strings.Join(f.aggs(), ", ") + " FROM " + table +
 		" GROUP BY " + group + " ORDER BY " + order
 }
 
-func (f *family) rangeSQL(i int) string {
+func (f *family) rangeSQL(i int, shape queryShape) string {
 	columns := strings.Join(append(f.keys(), f.values()...), ", ")
 	if f == metricFamily {
 		columns = "node_id, ts, " + strings.Join(append(metricColumnNames(), coverageSource(i)...), ", ") + fmt.Sprintf(", %d AS source_width", levels[i].Bucket)
 	}
-	return "SELECT " + columns + " FROM " + f.tables[i] + " WHERE node_id = ? AND ts >= ? AND ts <= ?"
+	return "SELECT " + columns + " FROM " + f.tables[i] + byTaskHint(f, i, shape) + " WHERE " + shape.keyWhere + " AND ts >= ? AND ts <= ?"
+}
+
+// byTaskHint 给对比形状的每条源查询钉 INDEXED BY <表>_by_task。store 从不跑 ANALYZE，无统计时
+// 规划器可能给（task_id 等值 + node_id IN + ts 范围）选中主键探测——按节点扫窗口内全部任务的行，
+// 读量与对比分块的任务无关，额度"计数 = 聚合工作量"的前提就破了。索引在 v33 起恒存在（迁移 33
+// 补建），钉死计划也让计数与聚合走同一条路。
+func byTaskHint(f *family, i int, shape queryShape) string {
+	if !shape.byTaskIndex {
+		return ""
+	}
+	return " INDEXED BY " + f.tables[i] + "_by_task"
+}
+
+// queryShape 描述一次查询的来源形状：等值键约束决定每条源查询经哪个主键或索引定位，
+// 分组键决定二次分桶在 ts 之外还按哪列拆序列。两个取值都由查询的语义决定，不由表结构决定：
+// 同一张探测表，单节点查询按 (node_id) 等值加 ts 范围走主键、按 task_id 拆序列；跨节点对比按
+// (task_id, node_id) 等值加 ts 范围走 (task_id, node_id, ts) 索引、按 node_id 拆序列。
+// seriesLimit 是本次请求的序列额度权重（见 quotaRowsPerSeries）：指标与覆盖率为 1（每节点每时刻
+// 一行）、单节点探测为每节点任务分配上限、对比为分块节点上限。
+type queryShape struct {
+	// keyWhere 的占位符与 keyArgs 同序，必须是某主键或索引的前导等值键——每条源查询因此是
+	// SEARCH 且扫描行 = 输出行，这是读量额度"计数 = 工作量"的前提，由查询计划的断言测试钉住。
+	keyWhere string
+	keyArgs  []any
+	// groupKey 为空表示只按 ts 分桶（指标族）；非空时聚合输出多一列并按 (groupKey, ts) 排序。
+	groupKey string
+	// seriesLimit 恒为正；额度 R = quotaRowsPerSeries × seriesLimit。
+	seriesLimit int64
+	// byTaskIndex 钉住每条源查询的读取计划（见 byTaskHint）：对比形状必须置位，其余形状留空。
+	byTaskIndex bool
 }
 
 // queryFamily 的水位与源行属于同一个读快照：rollupLevel 原子提交桶与水位，
 // Prune 随后可删除已消费的细级行，分开读会把旧水位与清理后的源行混用。
 // 各源区间互斥；水位不必对齐 step，所以合并源行后才用上卷表达式统一分桶。
-func queryFamily[T any](ctx context.Context, s *Store, f *family, nodeID, from, to int64, lv Level, step int64, scan func(*sql.Rows, int64) ([]T, error), summarize func(*sql.Tx, string, []any) error) ([]T, error) {
+//
+// 读量额度在聚合之前、同一事务里对各级源查询按同一条件计数：计数读到的行就是聚合要读的行。
+// 每级计数的 LIMIT 是剩余额度 + 1，命中即超额返回，不必数完全表；未超额时每级计数恰为该级
+// 实际行数。计数只约束实际要读的源行，不从窗口跨度或水位落后时长推算：未来时刻没有数据，
+// 空库与新库不会被拒，维护长期停滞或细级尾巴过长则按实际行数被拒（ReadQuotaError）。
+func queryFamily[T any](ctx context.Context, s *Store, f *family, shape queryShape, from, to int64, lv Level, step int64, scan func(*sql.Rows) ([]T, error), summarize func(*sql.Tx, string, []any) error) ([]T, error) {
 	i, err := checkStep(lv, step)
 	if err != nil {
 		return nil, err
@@ -382,19 +419,39 @@ func queryFamily[T any](ctx context.Context, s *Store, f *family, nodeID, from, 
 	defer tx.Rollback()
 	var sources []string
 	args := []any{step}
+	// watermarks 记录参与本次查询的各粗级水位，只在超额时随错误带出。
+	var watermarks []LevelWatermark
+	remaining := quotaRowsPerSeries * shape.seriesLimit
 	for ; i >= 0; i-- {
-		query := f.rangeSQL(i)
-		args = append(args, nodeID, from, to)
+		query := f.rangeSQL(i, shape)
+		levelArgs := append(append([]any{}, shape.keyArgs...), from, to)
+		args = append(args, levelArgs...)
 		if i > 0 {
 			var upto int64
 			if err := tx.QueryRowContext(ctx, "SELECT upto_ts FROM rollup_state WHERE level = ?", f.states[i]).Scan(&upto); err != nil {
 				return nil, err
 			}
 			query += " AND ts < ?"
+			levelArgs = append(levelArgs, upto)
 			args = append(args, upto)
+			watermarks = append(watermarks, LevelWatermark{Level: f.states[i], Upto: upto})
 			from = max(from, upto)
 		}
 		sources = append(sources, query)
+		// 额度计数与聚合同一条计划（含 INDEXED BY），计数读到的行就是聚合要读的行。
+		count := "SELECT count(*) FROM (SELECT 1 FROM " + f.tables[i] + byTaskHint(f, i, shape) + " WHERE " + shape.keyWhere + " AND ts >= ? AND ts <= ?"
+		if i > 0 {
+			count += " AND ts < ?"
+		}
+		countArgs := append(append([]any{}, levelArgs...), remaining+1)
+		var n int64
+		if err := tx.QueryRowContext(ctx, count+" LIMIT ?)", countArgs...).Scan(&n); err != nil {
+			return nil, err
+		}
+		remaining -= n
+		if remaining < 0 {
+			return nil, ReadQuotaError{Quota: quotaRowsPerSeries * shape.seriesLimit, Series: shape.seriesLimit, Watermarks: watermarks}
+		}
 	}
 	union := strings.Join(sources, " UNION ALL ")
 	if summarize != nil {
@@ -402,19 +459,27 @@ func queryFamily[T any](ctx context.Context, s *Store, f *family, nodeID, from, 
 			return nil, err
 		}
 	}
-	rows, err := tx.QueryContext(ctx, f.aggregateSQL("("+union+")"), args...)
+	rows, err := tx.QueryContext(ctx, f.aggregateSQL("("+union+")", shape.groupKey), args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scan(rows, nodeID)
+	return scan(rows)
 }
+
+// quotaRowsPerSeries（B）是读量额度的资源策略常量：一条序列在一次请求里至多计入这么多源行。
+// 400 天窗口在 1h 级每条序列至多 9600 个桶，余量覆盖窗口对齐扩大与维护及时执行时的细级尾巴
+// （5m、1h 水位分别落后约一个各自周期的量级）；这是对常量的说明，不是代码保证的最大落后。
+const quotaRowsPerSeries = 12000
 
 // QueryMetrics 返回 [from, to) 内按 step 聚合的桶；from 向下、to 向上对齐到 step，
 // 结果的 TS 都是 step 的整数倍。只返回有行的桶：缺失的桶就是没有数据。
 // 最新桶只含已刷出的分钟行，不读取 live 中尚未刷出的当前分钟。
+// 指标族每节点每时刻一行，额度权重为 1。
 func (s *Store) QueryMetrics(ctx context.Context, nodeID int64, from, to int64, lv Level, step int64) ([]metric.Row, error) {
-	return queryFamily(ctx, s, metricFamily, nodeID, from, to, lv, step, scanBucketRows, nil)
+	return queryFamily(ctx, s, metricFamily, queryShape{keyWhere: "node_id = ?", keyArgs: []any{nodeID}, seriesLimit: 1},
+		from, to, lv, step,
+		func(rows *sql.Rows) ([]metric.Row, error) { return scanBucketRows(rows, nodeID) }, nil)
 }
 
 // MaintenanceInterval 是维护循环的周期：每个周期边界后跑一轮上卷与清理。存储健康的超期阈值
@@ -495,6 +560,10 @@ func alignWindow(from, to, step int64) (int64, int64) {
 }
 
 // QueryProbes 与 QueryMetrics 共用级别校验与窗口对齐；每任务的桶按 TaskID、TS 升序返回。
+// 额度权重取每节点任务分配上限：这是对当前配置的计数，不是历史序列上限——删除任务的历史
+// 保留，任务更替频繁的节点在一个窗口里可以有远多于它的序列（ReadQuotaError 按实际行数裁决）。
 func (s *Store) QueryProbes(ctx context.Context, nodeID int64, from, to int64, lv Level, step int64) ([]metric.ProbeRow, error) {
-	return queryFamily(ctx, s, probeFamily, nodeID, from, to, lv, step, scanProbeRows, nil)
+	return queryFamily(ctx, s, probeFamily, queryShape{keyWhere: "node_id = ?", keyArgs: []any{nodeID}, groupKey: "task_id", seriesLimit: probelimit.MaxTasksPerNode},
+		from, to, lv, step,
+		func(rows *sql.Rows) ([]metric.ProbeRow, error) { return scanProbeRows(rows, nodeID) }, nil)
 }

@@ -6,7 +6,13 @@ option go_package = "github.com/xjetry/heron-probe/gen/heron/v1;heronv1";
 
 import "heron/v1/types.proto";
 
-// 历史查询的请求与响应。AdminService 与 PublicService 的 QueryMetrics、QueryProbes 共用这些类型。
+// 历史查询的请求与响应。AdminService 与 PublicService 的 QueryMetrics、QueryProbes、ListProbeComparisonNodes、
+// QueryProbeComparison 共用这些类型。
+//
+// 读量额度：窗口按 max_points 定下的步长对齐后，各级数据的实际来源行数在聚合前计数；一次请求要读的行超过额度时
+// 返回 FailedPrecondition，消息给出额度与各级数据整理到的时刻。额度只看窗口内实际有多少行，与窗口在不在未来、
+// 库是否为空无关；常见的触发原因是数据整理长期停滞；探测历史还可能因节点上的任务更替频繁、窗口又很长而超额。缩短窗口或增大
+// max_points 后再查。
 // 它们不放在 admin.proto：protoc-gen-es 把被 import 的文件一律生成为运行时依赖（admin_pb.ts 为 access 选项
 // import 的 access_pb 即是一例），public.proto 若为这些类型 import admin.proto，公开页的包就会带上 AdminService
 // 的描述符。所以 public.proto 不得 import admin.proto，本文件也不得 import 它。
@@ -128,4 +134,51 @@ message ProbeSample {
   optional uint32 rtt_min_us = 6;
   // 成功探测的最大 rtt，微秒；只有 sent − lost − errors > 0 时才有。
   optional uint32 rtt_max_us = 7;
+}
+
+message ListProbeComparisonNodesRequest {
+  uint64 task_id = 1;
+}
+
+// 一次跨节点对比的成员与标注，在同一个读快照里读出。之后取样本时不再核对分配：List 之后撤下分配的节点留在本次
+// 对比里，之后新分配的节点要等下一次 List；改任务目标、间隔、超时或 DNS 服务器也只在下一次 List 体现。
+// 样本本来就按 task_id 跨配置累积，与 QueryProbes 的历史一样。
+message ListProbeComparisonNodesResponse {
+  // 任务的种类与目标，标注规则同 QueryProbes 的 ProbeSeries.kind、target：调用方不可标注时 kind 为
+  // PROBE_KIND_UNSPECIFIED、target 为空串。PublicService 在任务分配给了至少一个公开节点时标注。
+  ProbeKind kind = 1;
+  string target = 2;
+  // 当前分配了该任务、且调用方可见的节点，按节点全序（sort_order, id）升序；顺序只决定显示。
+  // 一个都没有时整个请求返回 NotFound，与任务不存在不加区分。
+  repeated int64 node_ids = 3;
+  // QueryProbeComparisonRequest.node_ids 一次最多可带的节点数，与 hub 校验用的是同一个值，恒为正。
+  // 客户端按它分块；收到 0 是协议错误，不能当作不限。
+  uint32 max_nodes_per_query = 4;
+}
+
+message QueryProbeComparisonRequest {
+  uint64 task_id = 1;
+  // 1 到 max_nodes_per_query 个，不得重复。hub 不核对这些节点是否仍分配了该任务：每个节点按与 QueryProbes
+  // 相同的节点可见性单独授权，返回的是该节点历史里这个任务的部分，不比 QueryProbes 多给任何东西。
+  repeated int64 node_ids = 2;
+  // 窗口 [from, to)、max_points 与 QueryProbesRequest 相同，选级与步长也相同。
+  int64 from = 3;
+  int64 to = 4;
+  uint32 max_points = 5;
+}
+
+message QueryProbeComparisonResponse {
+  // 同 QueryProbesResponse；本响应里所有节点共用。
+  string level = 1;
+  uint32 step_s = 2;
+  // 可见节点各一条，与请求的 node_ids 同序；窗口内没有结果的节点也在，samples 为空。
+  repeated NodeProbeSamples series = 3;
+  // 不可见或不存在的节点，二者不加区分，与 QueryProbes 对二者同样返回 NotFound 一致；顺序同请求。
+  repeated int64 unavailable_node_ids = 4;
+}
+
+message NodeProbeSamples {
+  int64 node_id = 1;
+  // 与 ProbeSeries.samples 同一形状与稀疏规则。
+  repeated ProbeSample samples = 2;
 }

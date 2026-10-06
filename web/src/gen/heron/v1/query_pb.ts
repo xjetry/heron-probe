@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file heron/v1/query.proto.
  */
 export const file_heron_v1_query: GenFile = /*@__PURE__*/
-  fileDesc("ChRoZXJvbi92MS9xdWVyeS5wcm90bxIIaGVyb24udjEiVAoTUXVlcnlNZXRyaWNzUmVxdWVzdBIPCgdub2RlX2lkGAEgASgDEgwKBGZyb20YAiABKAMSCgoCdG8YAyABKAMSEgoKbWF4X3BvaW50cxgEIAEoDSLjAQoUUXVlcnlNZXRyaWNzUmVzcG9uc2USDQoFbGV2ZWwYASABKAkSDgoGc3RlcF9zGAIgASgNEgoKAnRzGAMgAygDEiYKBnNlcmllcxgEIAMoCzIWLmhlcm9uLnYxLk1ldHJpY1NlcmllcxIpCghjb3ZlcmFnZRgFIAMoCzIXLmhlcm9uLnYxLlBvaW50Q292ZXJhZ2USOAoQY292ZXJhZ2Vfc3VtbWFyeRgGIAEoCzIZLmhlcm9uLnYxLkNvdmVyYWdlU3VtbWFyeUgAiAEBQhMKEV9jb3ZlcmFnZV9zdW1tYXJ5IosBCg1Qb2ludENvdmVyYWdlEhQKB21pbnV0ZXMYASABKA1IAIgBARIVCghvYnNlcnZlZBgCIAEoDUgBiAEBEh4KEW9ic2VydmVkX3JlcG9ydGVkGAMgASgNSAKIAQFCCgoIX21pbnV0ZXNCCwoJX29ic2VydmVkQhQKEl9vYnNlcnZlZF9yZXBvcnRlZCKYAQoPQ292ZXJhZ2VTdW1tYXJ5EhgKEGVsaWdpYmxlX21pbnV0ZXMYASABKAQSGAoQb2JzZXJ2ZWRfbWludXRlcxgCIAEoBBIhChlvYnNlcnZlZF9yZXBvcnRlZF9taW51dGVzGAMgASgEEhsKDmNvdmVyYWdlX3N0YXJ0GAQgASgDSACIAQFCEQoPX2NvdmVyYWdlX3N0YXJ0IlMKDE1ldHJpY1NlcmllcxIMCgRuYW1lGAEgASgJEgwKBHVuaXQYAiABKAkSJwoHc2FtcGxlcxgDIAMoCzIWLmhlcm9uLnYxLk1ldHJpY1NhbXBsZSJpCgxNZXRyaWNTYW1wbGUSCQoBbhgBIAEoDRIRCgRtZWFuGAIgASgBSACIAQESEAoDbWF4GAMgASgBSAGIAQESEAoDc3VtGAQgASgBSAKIAQFCBwoFX21lYW5CBgoEX21heEIGCgRfc3VtIlMKElF1ZXJ5UHJvYmVzUmVxdWVzdBIPCgdub2RlX2lkGAEgASgDEgwKBGZyb20YAiABKAMSCgoCdG8YAyABKAMSEgoKbWF4X3BvaW50cxgEIAEoDSJbChNRdWVyeVByb2Jlc1Jlc3BvbnNlEg0KBWxldmVsGAEgASgJEg4KBnN0ZXBfcxgCIAEoDRIlCgZzZXJpZXMYAyADKAsyFS5oZXJvbi52MS5Qcm9iZVNlcmllcyJ5CgtQcm9iZVNlcmllcxIPCgd0YXNrX2lkGAEgASgEEiYKB3NhbXBsZXMYAiADKAsyFS5oZXJvbi52MS5Qcm9iZVNhbXBsZRIhCgRraW5kGAMgASgOMhMuaGVyb24udjEuUHJvYmVLaW5kEg4KBnRhcmdldBgEIAEoCSK/AQoLUHJvYmVTYW1wbGUSCgoCdHMYASABKAMSDAoEc2VudBgCIAEoDRIMCgRsb3N0GAMgASgNEg4KBmVycm9ycxgEIAEoDRIYCgtydHRfbWVhbl91cxgFIAEoDUgAiAEBEhcKCnJ0dF9taW5fdXMYBiABKA1IAYgBARIXCgpydHRfbWF4X3VzGAcgASgNSAKIAQFCDgoMX3J0dF9tZWFuX3VzQg0KC19ydHRfbWluX3VzQg0KC19ydHRfbWF4X3VzQjRaMmdpdGh1Yi5jb20veGpldHJ5L2hlcm9uLXByb2JlL2dlbi9oZXJvbi92MTtoZXJvbnYxYgZwcm90bzM", [file_heron_v1_types]);
+  fileDesc("ChRoZXJvbi92MS9xdWVyeS5wcm90bxIIaGVyb24udjEiVAoTUXVlcnlNZXRyaWNzUmVxdWVzdBIPCgdub2RlX2lkGAEgASgDEgwKBGZyb20YAiABKAMSCgoCdG8YAyABKAMSEgoKbWF4X3BvaW50cxgEIAEoDSLjAQoUUXVlcnlNZXRyaWNzUmVzcG9uc2USDQoFbGV2ZWwYASABKAkSDgoGc3RlcF9zGAIgASgNEgoKAnRzGAMgAygDEiYKBnNlcmllcxgEIAMoCzIWLmhlcm9uLnYxLk1ldHJpY1NlcmllcxIpCghjb3ZlcmFnZRgFIAMoCzIXLmhlcm9uLnYxLlBvaW50Q292ZXJhZ2USOAoQY292ZXJhZ2Vfc3VtbWFyeRgGIAEoCzIZLmhlcm9uLnYxLkNvdmVyYWdlU3VtbWFyeUgAiAEBQhMKEV9jb3ZlcmFnZV9zdW1tYXJ5IosBCg1Qb2ludENvdmVyYWdlEhQKB21pbnV0ZXMYASABKA1IAIgBARIVCghvYnNlcnZlZBgCIAEoDUgBiAEBEh4KEW9ic2VydmVkX3JlcG9ydGVkGAMgASgNSAKIAQFCCgoIX21pbnV0ZXNCCwoJX29ic2VydmVkQhQKEl9vYnNlcnZlZF9yZXBvcnRlZCKYAQoPQ292ZXJhZ2VTdW1tYXJ5EhgKEGVsaWdpYmxlX21pbnV0ZXMYASABKAQSGAoQb2JzZXJ2ZWRfbWludXRlcxgCIAEoBBIhChlvYnNlcnZlZF9yZXBvcnRlZF9taW51dGVzGAMgASgEEhsKDmNvdmVyYWdlX3N0YXJ0GAQgASgDSACIAQFCEQoPX2NvdmVyYWdlX3N0YXJ0IlMKDE1ldHJpY1NlcmllcxIMCgRuYW1lGAEgASgJEgwKBHVuaXQYAiABKAkSJwoHc2FtcGxlcxgDIAMoCzIWLmhlcm9uLnYxLk1ldHJpY1NhbXBsZSJpCgxNZXRyaWNTYW1wbGUSCQoBbhgBIAEoDRIRCgRtZWFuGAIgASgBSACIAQESEAoDbWF4GAMgASgBSAGIAQESEAoDc3VtGAQgASgBSAKIAQFCBwoFX21lYW5CBgoEX21heEIGCgRfc3VtIlMKElF1ZXJ5UHJvYmVzUmVxdWVzdBIPCgdub2RlX2lkGAEgASgDEgwKBGZyb20YAiABKAMSCgoCdG8YAyABKAMSEgoKbWF4X3BvaW50cxgEIAEoDSJbChNRdWVyeVByb2Jlc1Jlc3BvbnNlEg0KBWxldmVsGAEgASgJEg4KBnN0ZXBfcxgCIAEoDRIlCgZzZXJpZXMYAyADKAsyFS5oZXJvbi52MS5Qcm9iZVNlcmllcyJ5CgtQcm9iZVNlcmllcxIPCgd0YXNrX2lkGAEgASgEEiYKB3NhbXBsZXMYAiADKAsyFS5oZXJvbi52MS5Qcm9iZVNhbXBsZRIhCgRraW5kGAMgASgOMhMuaGVyb24udjEuUHJvYmVLaW5kEg4KBnRhcmdldBgEIAEoCSK/AQoLUHJvYmVTYW1wbGUSCgoCdHMYASABKAMSDAoEc2VudBgCIAEoDRIMCgRsb3N0GAMgASgNEg4KBmVycm9ycxgEIAEoDRIYCgtydHRfbWVhbl91cxgFIAEoDUgAiAEBEhcKCnJ0dF9taW5fdXMYBiABKA1IAYgBARIXCgpydHRfbWF4X3VzGAcgASgNSAKIAQFCDgoMX3J0dF9tZWFuX3VzQg0KC19ydHRfbWluX3VzQg0KC19ydHRfbWF4X3VzIjIKH0xpc3RQcm9iZUNvbXBhcmlzb25Ob2Rlc1JlcXVlc3QSDwoHdGFza19pZBgBIAEoBCKEAQogTGlzdFByb2JlQ29tcGFyaXNvbk5vZGVzUmVzcG9uc2USIQoEa2luZBgBIAEoDjITLmhlcm9uLnYxLlByb2JlS2luZBIOCgZ0YXJnZXQYAiABKAkSEAoIbm9kZV9pZHMYAyADKAMSGwoTbWF4X25vZGVzX3Blcl9xdWVyeRgEIAEoDSJuChtRdWVyeVByb2JlQ29tcGFyaXNvblJlcXVlc3QSDwoHdGFza19pZBgBIAEoBBIQCghub2RlX2lkcxgCIAMoAxIMCgRmcm9tGAMgASgDEgoKAnRvGAQgASgDEhIKCm1heF9wb2ludHMYBSABKA0ihwEKHFF1ZXJ5UHJvYmVDb21wYXJpc29uUmVzcG9uc2USDQoFbGV2ZWwYASABKAkSDgoGc3RlcF9zGAIgASgNEioKBnNlcmllcxgDIAMoCzIaLmhlcm9uLnYxLk5vZGVQcm9iZVNhbXBsZXMSHAoUdW5hdmFpbGFibGVfbm9kZV9pZHMYBCADKAMiSwoQTm9kZVByb2JlU2FtcGxlcxIPCgdub2RlX2lkGAEgASgDEiYKB3NhbXBsZXMYAiADKAsyFS5oZXJvbi52MS5Qcm9iZVNhbXBsZUI0WjJnaXRodWIuY29tL3hqZXRyeS9oZXJvbi1wcm9iZS9nZW4vaGVyb24vdjE7aGVyb252MWIGcHJvdG8z", [file_heron_v1_types]);
 
 /**
  * @generated from message heron.v1.QueryMetricsRequest
@@ -424,4 +424,170 @@ export type ProbeSample = Message<"heron.v1.ProbeSample"> & {
  */
 export const ProbeSampleSchema: GenMessage<ProbeSample> = /*@__PURE__*/
   messageDesc(file_heron_v1_query, 9);
+
+/**
+ * @generated from message heron.v1.ListProbeComparisonNodesRequest
+ */
+export type ListProbeComparisonNodesRequest = Message<"heron.v1.ListProbeComparisonNodesRequest"> & {
+  /**
+   * @generated from field: uint64 task_id = 1;
+   */
+  taskId: bigint;
+};
+
+/**
+ * Describes the message heron.v1.ListProbeComparisonNodesRequest.
+ * Use `create(ListProbeComparisonNodesRequestSchema)` to create a new message.
+ */
+export const ListProbeComparisonNodesRequestSchema: GenMessage<ListProbeComparisonNodesRequest> = /*@__PURE__*/
+  messageDesc(file_heron_v1_query, 10);
+
+/**
+ * 一次跨节点对比的成员与标注，在同一个读快照里读出。之后取样本时不再核对分配：List 之后撤下分配的节点留在本次
+ * 对比里，之后新分配的节点要等下一次 List；改任务目标、间隔、超时或 DNS 服务器也只在下一次 List 体现。
+ * 样本本来就按 task_id 跨配置累积，与 QueryProbes 的历史一样。
+ *
+ * @generated from message heron.v1.ListProbeComparisonNodesResponse
+ */
+export type ListProbeComparisonNodesResponse = Message<"heron.v1.ListProbeComparisonNodesResponse"> & {
+  /**
+   * 任务的种类与目标，标注规则同 QueryProbes 的 ProbeSeries.kind、target：调用方不可标注时 kind 为
+   * PROBE_KIND_UNSPECIFIED、target 为空串。PublicService 在任务分配给了至少一个公开节点时标注。
+   *
+   * @generated from field: heron.v1.ProbeKind kind = 1;
+   */
+  kind: ProbeKind;
+
+  /**
+   * @generated from field: string target = 2;
+   */
+  target: string;
+
+  /**
+   * 当前分配了该任务、且调用方可见的节点，按节点全序（sort_order, id）升序；顺序只决定显示。
+   * 一个都没有时整个请求返回 NotFound，与任务不存在不加区分。
+   *
+   * @generated from field: repeated int64 node_ids = 3;
+   */
+  nodeIds: bigint[];
+
+  /**
+   * QueryProbeComparisonRequest.node_ids 一次最多可带的节点数，与 hub 校验用的是同一个值，恒为正。
+   * 客户端按它分块；收到 0 是协议错误，不能当作不限。
+   *
+   * @generated from field: uint32 max_nodes_per_query = 4;
+   */
+  maxNodesPerQuery: number;
+};
+
+/**
+ * Describes the message heron.v1.ListProbeComparisonNodesResponse.
+ * Use `create(ListProbeComparisonNodesResponseSchema)` to create a new message.
+ */
+export const ListProbeComparisonNodesResponseSchema: GenMessage<ListProbeComparisonNodesResponse> = /*@__PURE__*/
+  messageDesc(file_heron_v1_query, 11);
+
+/**
+ * @generated from message heron.v1.QueryProbeComparisonRequest
+ */
+export type QueryProbeComparisonRequest = Message<"heron.v1.QueryProbeComparisonRequest"> & {
+  /**
+   * @generated from field: uint64 task_id = 1;
+   */
+  taskId: bigint;
+
+  /**
+   * 1 到 max_nodes_per_query 个，不得重复。hub 不核对这些节点是否仍分配了该任务：每个节点按与 QueryProbes
+   * 相同的节点可见性单独授权，返回的是该节点历史里这个任务的部分，不比 QueryProbes 多给任何东西。
+   *
+   * @generated from field: repeated int64 node_ids = 2;
+   */
+  nodeIds: bigint[];
+
+  /**
+   * 窗口 [from, to)、max_points 与 QueryProbesRequest 相同，选级与步长也相同。
+   *
+   * @generated from field: int64 from = 3;
+   */
+  from: bigint;
+
+  /**
+   * @generated from field: int64 to = 4;
+   */
+  to: bigint;
+
+  /**
+   * @generated from field: uint32 max_points = 5;
+   */
+  maxPoints: number;
+};
+
+/**
+ * Describes the message heron.v1.QueryProbeComparisonRequest.
+ * Use `create(QueryProbeComparisonRequestSchema)` to create a new message.
+ */
+export const QueryProbeComparisonRequestSchema: GenMessage<QueryProbeComparisonRequest> = /*@__PURE__*/
+  messageDesc(file_heron_v1_query, 12);
+
+/**
+ * @generated from message heron.v1.QueryProbeComparisonResponse
+ */
+export type QueryProbeComparisonResponse = Message<"heron.v1.QueryProbeComparisonResponse"> & {
+  /**
+   * 同 QueryProbesResponse；本响应里所有节点共用。
+   *
+   * @generated from field: string level = 1;
+   */
+  level: string;
+
+  /**
+   * @generated from field: uint32 step_s = 2;
+   */
+  stepS: number;
+
+  /**
+   * 可见节点各一条，与请求的 node_ids 同序；窗口内没有结果的节点也在，samples 为空。
+   *
+   * @generated from field: repeated heron.v1.NodeProbeSamples series = 3;
+   */
+  series: NodeProbeSamples[];
+
+  /**
+   * 不可见或不存在的节点，二者不加区分，与 QueryProbes 对二者同样返回 NotFound 一致；顺序同请求。
+   *
+   * @generated from field: repeated int64 unavailable_node_ids = 4;
+   */
+  unavailableNodeIds: bigint[];
+};
+
+/**
+ * Describes the message heron.v1.QueryProbeComparisonResponse.
+ * Use `create(QueryProbeComparisonResponseSchema)` to create a new message.
+ */
+export const QueryProbeComparisonResponseSchema: GenMessage<QueryProbeComparisonResponse> = /*@__PURE__*/
+  messageDesc(file_heron_v1_query, 13);
+
+/**
+ * @generated from message heron.v1.NodeProbeSamples
+ */
+export type NodeProbeSamples = Message<"heron.v1.NodeProbeSamples"> & {
+  /**
+   * @generated from field: int64 node_id = 1;
+   */
+  nodeId: bigint;
+
+  /**
+   * 与 ProbeSeries.samples 同一形状与稀疏规则。
+   *
+   * @generated from field: repeated heron.v1.ProbeSample samples = 2;
+   */
+  samples: ProbeSample[];
+};
+
+/**
+ * Describes the message heron.v1.NodeProbeSamples.
+ * Use `create(NodeProbeSamplesSchema)` to create a new message.
+ */
+export const NodeProbeSamplesSchema: GenMessage<NodeProbeSamples> = /*@__PURE__*/
+  messageDesc(file_heron_v1_query, 14);
 

@@ -333,6 +333,14 @@ func removeV26Config(t *testing.T, config *sql.DB) {
 }
 
 // 同上：32 号给 node 加了 public_remark，回填旧版本号前必须撤回。
+// 33 只在指标层的探测表上加了对比索引；拆库读用不到它，回退就是删除三个索引。
+func removeV33Metrics(t *testing.T, metrics *sql.DB) {
+	t.Helper()
+	for _, table := range []string{"probe_1m", "probe_5m", "probe_1h"} {
+		restoreExec(t, metrics, "DROP INDEX IF EXISTS "+table+"_by_task")
+	}
+}
+
 func removeV32Config(t *testing.T, config *sql.DB) {
 	t.Helper()
 	restoreExec(t, config, "ALTER TABLE node DROP COLUMN public_remark")

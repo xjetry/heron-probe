@@ -147,6 +147,12 @@ func schemaStatements() []string {
 	for _, t := range probeTables {
 		out = append(out, probeDDL(t))
 	}
+	// 探测表的 (task_id, node_id, ts) 索引承载跨节点对比：按任务取一组节点的窗口样本时，
+	// 前导 task_id 等值 + node_id 等值（IN 清单）+ ts 范围直接定位，读量与其他任务、其他节点的
+	// 行无关；主键 (node_id, ts, task_id) 只能按节点定位，按任务读会扫遍节点全部历史。
+	for _, t := range probeTables {
+		out = append(out, probeByTaskIndex(t))
+	}
 	return append(append(out, alertStatements()...), ddlAPIToken, ddlSetting, ddlMaintenanceState, ddlTag, ddlNodeTag, ddlNodeTagByTag,
 		ddlTheme, ddlThemeVersion, ddlThemeSelection, seedThemeSelection, ddlThemeFile, ddlRestoreRecord, ddlThemePackage,
 		ddlAdminSecurity, seedAdminSecurity, ddlProbeTaskTag, ddlProbeTaskTagIndex, ddlAlertRuleTag, ddlAlertRuleTagIndex, ddlNodeUpdate,
@@ -317,6 +323,13 @@ func probeDDL(table string) string {
 // probeTables 与 metricTables 同一口径：建库、DeleteNode 与上卷（rollup.go 的 probeFamily.tables，
 // 与 levels、states 同序同长）共用。
 var probeTables = []string{"probe_1m", "probe_5m", "probe_1h"}
+
+// probeByTaskIndex 是探测表按任务读取的索引，名字由表名派生（probe_1m_by_task …）。
+// 列序 (task_id, node_id, ts)：前导等值键之后 ts 才能作为范围约束进入同一个 SEARCH，
+// (task_id, ts, node_id) 会让 node_id 落到范围之后，对比查询退化为逐节点扫描后的逐行过滤。
+func probeByTaskIndex(table string) string {
+	return "CREATE INDEX " + table + "_by_task ON " + table + " (task_id, node_id, ts)"
+}
 
 const ddlProbeTask = `CREATE TABLE probe_task (
   -- AUTOINCREMENT：历史行只带 task_id，删除任务后 id 若复用，旧历史会挂到新任务上。

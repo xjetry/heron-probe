@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sort"
 	"time"
 
+	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
@@ -28,8 +30,10 @@ type history struct {
 	log   *slog.Logger
 }
 
-// taskLabel 给出任务的种类与目标；ok 为 false 时两项留空，客户端退回编号。管理端传 probe.Registry.Target
-// （任务当前的配置），公开端传 probe.Registry.TargetFor（只标当前分配给被查节点的任务）。
+// taskLabel 给出任务的种类与目标；ok 为 false 时两项留空，客户端退回编号。两端不同：管理端按
+// 调用方可见的任务当前配置标注（probes.go 的 QueryProbes 传入可见任务闭包，任务迁出 token 范围后
+// 不泄露其新目标），公开端用 probe.Registry.TargetFor（只标当前分配给被查节点的任务，历史里出现、
+// 现已撤下的任务留空）。对比的 ListProbeComparisonNodes 不经它：候选与标注在那里的同一个读事务里读出。
 type taskLabel func(taskID uint64) (kind heronv1.ProbeKind, target string, ok bool)
 
 // checkWindow 为两族查询、两个服务维持同一套窗口与点数约束；只看请求本身，不查库。
@@ -59,7 +63,7 @@ func (h history) metrics(ctx context.Context, m *heronv1.QueryMetricsRequest, ma
 	rows, summary, err := h.store.QueryMetricsCoverage(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), lv, step)
 	if err != nil {
 		h.log.Error("metric query failed", "err", err)
-		return nil, internalError("metric query failed")
+		return nil, h.queryError(err, "metric query failed")
 	}
 	resp := &heronv1.QueryMetricsResponse{Level: lv.Name, StepS: uint32(step)}
 	resp.CoverageSummary = &heronv1.CoverageSummary{EligibleMinutes: summary.EligibleMinutes,
@@ -99,7 +103,7 @@ func (h history) probeSeries(ctx context.Context, m *heronv1.QueryProbesRequest,
 	rows, err := h.store.QueryProbes(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), lv, step)
 	if err != nil {
 		h.log.Error("probe query failed", "err", err)
-		return nil, internalError("probe query failed")
+		return nil, h.queryError(err, "probe query failed")
 	}
 	resp := &heronv1.QueryProbesResponse{Level: lv.Name, StepS: uint32(step)}
 	var cur *heronv1.ProbeSeries
@@ -134,6 +138,47 @@ func (h history) probeSeries(ctx context.Context, m *heronv1.QueryProbesRequest,
 		}
 		return a < b
 	})
+	return resp, nil
+}
+
+// queryError 把存储层的历史查询错误映射到 Connect 码：读量超额由请求窗口与库内实际行数共同
+// 决定、可由调用方消除（缩小窗口、增大 max_points、等待数据整理），按原文返回 FailedPrecondition；
+// 其余按内部错误处理，不把细节带给调用方。两个服务的历史入口共用这一映射。
+func (h history) queryError(err error, operation string) error {
+	var quota store.ReadQuotaError
+	if errors.As(err, &quota) {
+		return connect.NewError(connect.CodeFailedPrecondition, quota)
+	}
+	h.log.Error(operation, "err", err)
+	return internalError(operation)
+}
+
+// comparison 组装对比分块的响应：nodeIDs 是已过逐节点授权的可见节点，与请求同序；窗口内没有
+// 样本的可见节点也出现（samples 为空），缺数与零值在协议层可区分。
+func (h history) comparison(ctx context.Context, taskID uint64, nodeIDs []int64, from, to int64, maxPoints int) (*heronv1.QueryProbeComparisonResponse, error) {
+	lv, step := store.ChooseLevel(from, to, maxPoints)
+	rows, err := h.store.QueryProbeComparison(ctx, taskID, nodeIDs, from, to, lv, step)
+	if err != nil {
+		return nil, h.queryError(err, "probe comparison query failed")
+	}
+	resp := &heronv1.QueryProbeComparisonResponse{Level: lv.Name, StepS: uint32(step)}
+	series := make([]*heronv1.NodeProbeSamples, len(nodeIDs))
+	index := make(map[int64]int, len(nodeIDs))
+	for i, id := range nodeIDs {
+		series[i] = &heronv1.NodeProbeSamples{NodeId: id}
+		index[id] = i
+	}
+	for _, r := range rows { // store 已按 (node_id, ts) 排序
+		if r.Bucket.Sent == 0 {
+			continue
+		}
+		sample := &heronv1.ProbeSample{Ts: r.TS, Sent: r.Bucket.Sent, Lost: r.Bucket.Lost, Errors: r.Bucket.Errors}
+		if mean, ok := r.Bucket.RttMean(); ok {
+			sample.RttMeanUs, sample.RttMinUs, sample.RttMaxUs = proto.Uint32(mean), proto.Uint32(r.Bucket.RttMinUs), proto.Uint32(r.Bucket.RttMaxUs)
+		}
+		series[index[r.NodeID]].Samples = append(series[index[r.NodeID]].Samples, sample)
+	}
+	resp.Series = series
 	return resp, nil
 }
 

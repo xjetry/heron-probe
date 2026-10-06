@@ -48,14 +48,20 @@ func scanProbeRows(rows *sql.Rows, nodeID int64) ([]metric.ProbeRow, error) {
 		if err := rows.Scan(&ts, &taskID, &sent, &lost, &errs, &sum, &mn, &mx); err != nil {
 			return nil, err
 		}
-		b := &metric.ProbeBucket{Sent: uint32(sent), Lost: uint32(lost), Errors: uint32(errs), RttSumUs: uint64(sum)}
-		if mn.Valid {
-			b.RttN = uint32(sent - lost - errs)
-			b.RttMinUs, b.RttMaxUs = uint32(mn.Int64), uint32(mx.Int64)
-		}
-		out = append(out, metric.ProbeRow{NodeID: nodeID, TS: ts, TaskID: uint64(taskID), Bucket: b})
+		out = append(out, metric.ProbeRow{NodeID: nodeID, TS: ts, TaskID: uint64(taskID), Bucket: probeBucket(sent, lost, errs, sum, mn, mx)})
 	}
 	return out, rows.Err()
+}
+
+// probeBucket 把六个存储值列折回内存桶。RttN 由 sent − lost − errors 推出，与 rtt_min_us
+// 是否为 NULL 必须一致：写侧 RttN 为 0 时才写 NULL。单节点与跨节点对比的扫描共用它。
+func probeBucket(sent, lost, errs, sum int64, mn, mx sql.NullInt64) *metric.ProbeBucket {
+	b := &metric.ProbeBucket{Sent: uint32(sent), Lost: uint32(lost), Errors: uint32(errs), RttSumUs: uint64(sum)}
+	if mn.Valid {
+		b.RttN = uint32(sent - lost - errs)
+		b.RttMinUs, b.RttMaxUs = uint32(mn.Int64), uint32(mx.Int64)
+	}
+	return b
 }
 
 // ProbeTaskRecord 的 NodeIDs 始终是读取时刻的覆盖集合：全部节点与标签交集先展开，显式分配直接读取关联。

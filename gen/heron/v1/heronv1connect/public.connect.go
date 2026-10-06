@@ -44,6 +44,12 @@ const (
 	// PublicServiceQueryProbesProcedure is the fully-qualified name of the PublicService's QueryProbes
 	// RPC.
 	PublicServiceQueryProbesProcedure = "/heron.v1.PublicService/QueryProbes"
+	// PublicServiceListProbeComparisonNodesProcedure is the fully-qualified name of the PublicService's
+	// ListProbeComparisonNodes RPC.
+	PublicServiceListProbeComparisonNodesProcedure = "/heron.v1.PublicService/ListProbeComparisonNodes"
+	// PublicServiceQueryProbeComparisonProcedure is the fully-qualified name of the PublicService's
+	// QueryProbeComparison RPC.
+	PublicServiceQueryProbeComparisonProcedure = "/heron.v1.PublicService/QueryProbeComparison"
 )
 
 // PublicServiceClient is a client for the heron.v1.PublicService service.
@@ -59,6 +65,11 @@ type PublicServiceClient interface {
 	// 公开节点一段时间的探测历史。当前分配给该节点的任务，序列带种类与目标：把节点标为公开即公开它正在探测的目标。
 	// 历史里有、但已从该节点撤下的任务不带这两项，客户端退回用 task_id 称呼。
 	QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error)
+	// 跨节点对比的第一步：当前分配了该任务的公开节点与任务标注。任务只分配给了非公开节点时返回 NotFound，
+	// 与任务不存在相同，不暴露它的存在。节点改为非公开后，GET 响应最多再被缓存使用 60 秒。
+	ListProbeComparisonNodes(context.Context, *connect.Request[v1.ListProbeComparisonNodesRequest]) (*connect.Response[v1.ListProbeComparisonNodesResponse], error)
+	// 跨节点对比的第二步：一个任务在一组公开节点上的探测历史；非公开或不存在的节点列入 unavailable_node_ids。
+	QueryProbeComparison(context.Context, *connect.Request[v1.QueryProbeComparisonRequest]) (*connect.Response[v1.QueryProbeComparisonResponse], error)
 }
 
 // NewPublicServiceClient constructs a client for the heron.v1.PublicService service. By default, it
@@ -100,15 +111,31 @@ func NewPublicServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithIdempotency(connect.IdempotencyNoSideEffects),
 			connect.WithClientOptions(opts...),
 		),
+		listProbeComparisonNodes: connect.NewClient[v1.ListProbeComparisonNodesRequest, v1.ListProbeComparisonNodesResponse](
+			httpClient,
+			baseURL+PublicServiceListProbeComparisonNodesProcedure,
+			connect.WithSchema(publicServiceMethods.ByName("ListProbeComparisonNodes")),
+			connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+			connect.WithClientOptions(opts...),
+		),
+		queryProbeComparison: connect.NewClient[v1.QueryProbeComparisonRequest, v1.QueryProbeComparisonResponse](
+			httpClient,
+			baseURL+PublicServiceQueryProbeComparisonProcedure,
+			connect.WithSchema(publicServiceMethods.ByName("QueryProbeComparison")),
+			connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // publicServiceClient implements PublicServiceClient.
 type publicServiceClient struct {
-	getSite      *connect.Client[v1.GetSiteRequest, v1.PublicSite]
-	getSnapshot  *connect.Client[v1.PublicServiceGetSnapshotRequest, v1.PublicSnapshot]
-	queryMetrics *connect.Client[v1.QueryMetricsRequest, v1.QueryMetricsResponse]
-	queryProbes  *connect.Client[v1.QueryProbesRequest, v1.QueryProbesResponse]
+	getSite                  *connect.Client[v1.GetSiteRequest, v1.PublicSite]
+	getSnapshot              *connect.Client[v1.PublicServiceGetSnapshotRequest, v1.PublicSnapshot]
+	queryMetrics             *connect.Client[v1.QueryMetricsRequest, v1.QueryMetricsResponse]
+	queryProbes              *connect.Client[v1.QueryProbesRequest, v1.QueryProbesResponse]
+	listProbeComparisonNodes *connect.Client[v1.ListProbeComparisonNodesRequest, v1.ListProbeComparisonNodesResponse]
+	queryProbeComparison     *connect.Client[v1.QueryProbeComparisonRequest, v1.QueryProbeComparisonResponse]
 }
 
 // GetSite calls heron.v1.PublicService.GetSite.
@@ -131,6 +158,16 @@ func (c *publicServiceClient) QueryProbes(ctx context.Context, req *connect.Requ
 	return c.queryProbes.CallUnary(ctx, req)
 }
 
+// ListProbeComparisonNodes calls heron.v1.PublicService.ListProbeComparisonNodes.
+func (c *publicServiceClient) ListProbeComparisonNodes(ctx context.Context, req *connect.Request[v1.ListProbeComparisonNodesRequest]) (*connect.Response[v1.ListProbeComparisonNodesResponse], error) {
+	return c.listProbeComparisonNodes.CallUnary(ctx, req)
+}
+
+// QueryProbeComparison calls heron.v1.PublicService.QueryProbeComparison.
+func (c *publicServiceClient) QueryProbeComparison(ctx context.Context, req *connect.Request[v1.QueryProbeComparisonRequest]) (*connect.Response[v1.QueryProbeComparisonResponse], error) {
+	return c.queryProbeComparison.CallUnary(ctx, req)
+}
+
 // PublicServiceHandler is an implementation of the heron.v1.PublicService service.
 type PublicServiceHandler interface {
 	// 站点外观：标题、明暗、主色、logo 与自定义 CSS。
@@ -144,6 +181,11 @@ type PublicServiceHandler interface {
 	// 公开节点一段时间的探测历史。当前分配给该节点的任务，序列带种类与目标：把节点标为公开即公开它正在探测的目标。
 	// 历史里有、但已从该节点撤下的任务不带这两项，客户端退回用 task_id 称呼。
 	QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error)
+	// 跨节点对比的第一步：当前分配了该任务的公开节点与任务标注。任务只分配给了非公开节点时返回 NotFound，
+	// 与任务不存在相同，不暴露它的存在。节点改为非公开后，GET 响应最多再被缓存使用 60 秒。
+	ListProbeComparisonNodes(context.Context, *connect.Request[v1.ListProbeComparisonNodesRequest]) (*connect.Response[v1.ListProbeComparisonNodesResponse], error)
+	// 跨节点对比的第二步：一个任务在一组公开节点上的探测历史；非公开或不存在的节点列入 unavailable_node_ids。
+	QueryProbeComparison(context.Context, *connect.Request[v1.QueryProbeComparisonRequest]) (*connect.Response[v1.QueryProbeComparisonResponse], error)
 }
 
 // NewPublicServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -181,6 +223,20 @@ func NewPublicServiceHandler(svc PublicServiceHandler, opts ...connect.HandlerOp
 		connect.WithIdempotency(connect.IdempotencyNoSideEffects),
 		connect.WithHandlerOptions(opts...),
 	)
+	publicServiceListProbeComparisonNodesHandler := connect.NewUnaryHandler(
+		PublicServiceListProbeComparisonNodesProcedure,
+		svc.ListProbeComparisonNodes,
+		connect.WithSchema(publicServiceMethods.ByName("ListProbeComparisonNodes")),
+		connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+		connect.WithHandlerOptions(opts...),
+	)
+	publicServiceQueryProbeComparisonHandler := connect.NewUnaryHandler(
+		PublicServiceQueryProbeComparisonProcedure,
+		svc.QueryProbeComparison,
+		connect.WithSchema(publicServiceMethods.ByName("QueryProbeComparison")),
+		connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/heron.v1.PublicService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case PublicServiceGetSiteProcedure:
@@ -191,6 +247,10 @@ func NewPublicServiceHandler(svc PublicServiceHandler, opts ...connect.HandlerOp
 			publicServiceQueryMetricsHandler.ServeHTTP(w, r)
 		case PublicServiceQueryProbesProcedure:
 			publicServiceQueryProbesHandler.ServeHTTP(w, r)
+		case PublicServiceListProbeComparisonNodesProcedure:
+			publicServiceListProbeComparisonNodesHandler.ServeHTTP(w, r)
+		case PublicServiceQueryProbeComparisonProcedure:
+			publicServiceQueryProbeComparisonHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -214,4 +274,12 @@ func (UnimplementedPublicServiceHandler) QueryMetrics(context.Context, *connect.
 
 func (UnimplementedPublicServiceHandler) QueryProbes(context.Context, *connect.Request[v1.QueryProbesRequest]) (*connect.Response[v1.QueryProbesResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.PublicService.QueryProbes is not implemented"))
+}
+
+func (UnimplementedPublicServiceHandler) ListProbeComparisonNodes(context.Context, *connect.Request[v1.ListProbeComparisonNodesRequest]) (*connect.Response[v1.ListProbeComparisonNodesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.PublicService.ListProbeComparisonNodes is not implemented"))
+}
+
+func (UnimplementedPublicServiceHandler) QueryProbeComparison(context.Context, *connect.Request[v1.QueryProbeComparisonRequest]) (*connect.Response[v1.QueryProbeComparisonResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.PublicService.QueryProbeComparison is not implemented"))
 }

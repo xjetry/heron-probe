@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ErrNodeLimit 是每节点任务上限的分类哨兵：保存侧的 NodeLimitError 与建节点侧的 InheritedLimitError 都经 Is 归入它，
@@ -108,4 +109,29 @@ func (e InheritedLimitError) Error() string {
 
 func (e InheritedLimitError) Is(target error) bool {
 	return target == ErrNodeLimit
+}
+
+// LevelWatermark 是一次查询读到的某个粗级水位：Level 是 rollup_state 的键名，Upto 是水位时刻（Unix 秒）。
+type LevelWatermark struct {
+	Level string
+	Upto  int64
+}
+
+// ReadQuotaError 是一次历史查询在对齐后的各级实际来源行数超过本次请求的额度（rollup.go 的
+// quotaRowsPerSeries × 序列额度权重）。额度只约束实际要读的源行数：错误带出额度与参与查询的
+// 各级水位所在时刻，供调用方缩短窗口或等待数据整理；不推断“维护落后”——水位只是事实，
+// 触发与否只取决于窗口内实际有多少行。
+type ReadQuotaError struct {
+	Quota      int64
+	Series     int64
+	Watermarks []LevelWatermark
+}
+
+func (e ReadQuotaError) Error() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "this history query would read more than %d source rows (budget: %d rows per series x %d series); narrow the window, raise max_points, or wait for data maintenance to catch up", e.Quota, quotaRowsPerSeries, e.Series)
+	for _, w := range e.Watermarks {
+		fmt.Fprintf(&b, "; %s data is consolidated up to %s", w.Level, time.Unix(w.Upto, 0).UTC().Format(time.RFC3339))
+	}
+	return b.String()
 }

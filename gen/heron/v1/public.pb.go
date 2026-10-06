@@ -907,12 +907,14 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\x0e_disk_read_bpsB\x11\n" +
 	"\x0f_disk_write_bpsB\x10\n" +
 	"\x0e_cpu_steal_pctB\x11\n" +
-	"\x0f_cpu_iowait_pctJ\x04\b\x01\x10\x02J\x04\b\x14\x10\x15R\aboot_idR\x11net_counter_epoch2\xde\x02\n" +
+	"\x0f_cpu_iowait_pctJ\x04\b\x01\x10\x02J\x04\b\x14\x10\x15R\aboot_idR\x11net_counter_epoch2\xca\x04\n" +
 	"\rPublicService\x12C\n" +
 	"\aGetSite\x12\x18.heron.v1.GetSiteRequest\x1a\x14.heron.v1.PublicSite\"\b\x90\xb5\x18\xac\x02\x90\x02\x01\x12[\n" +
 	"\vGetSnapshot\x12).heron.v1.PublicServiceGetSnapshotRequest\x1a\x18.heron.v1.PublicSnapshot\"\a\x90\xb5\x18\x01\x90\x02\x01\x12V\n" +
 	"\fQueryMetrics\x12\x1d.heron.v1.QueryMetricsRequest\x1a\x1e.heron.v1.QueryMetricsResponse\"\a\x90\xb5\x18<\x90\x02\x01\x12S\n" +
-	"\vQueryProbes\x12\x1c.heron.v1.QueryProbesRequest\x1a\x1d.heron.v1.QueryProbesResponse\"\a\x90\xb5\x18<\x90\x02\x01B4Z2github.com/xjetry/heron-probe/gen/heron/v1;heronv1b\x06proto3"
+	"\vQueryProbes\x12\x1c.heron.v1.QueryProbesRequest\x1a\x1d.heron.v1.QueryProbesResponse\"\a\x90\xb5\x18<\x90\x02\x01\x12z\n" +
+	"\x18ListProbeComparisonNodes\x12).heron.v1.ListProbeComparisonNodesRequest\x1a*.heron.v1.ListProbeComparisonNodesResponse\"\a\x90\xb5\x18<\x90\x02\x01\x12n\n" +
+	"\x14QueryProbeComparison\x12%.heron.v1.QueryProbeComparisonRequest\x1a&.heron.v1.QueryProbeComparisonResponse\"\a\x90\xb5\x18<\x90\x02\x01B4Z2github.com/xjetry/heron-probe/gen/heron/v1;heronv1b\x06proto3"
 
 var (
 	file_heron_v1_public_proto_rawDescOnce sync.Once
@@ -928,20 +930,24 @@ func file_heron_v1_public_proto_rawDescGZIP() []byte {
 
 var file_heron_v1_public_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_heron_v1_public_proto_goTypes = []any{
-	(*GetSiteRequest)(nil),                  // 0: heron.v1.GetSiteRequest
-	(*PublicSite)(nil),                      // 1: heron.v1.PublicSite
-	(*PublicServiceGetSnapshotRequest)(nil), // 2: heron.v1.PublicServiceGetSnapshotRequest
-	(*PublicSnapshot)(nil),                  // 3: heron.v1.PublicSnapshot
-	(*PublicNode)(nil),                      // 4: heron.v1.PublicNode
-	(*PublicBilling)(nil),                   // 5: heron.v1.PublicBilling
-	(*PublicFacts)(nil),                     // 6: heron.v1.PublicFacts
-	(*PublicMetrics)(nil),                   // 7: heron.v1.PublicMetrics
-	(*Traffic)(nil),                         // 8: heron.v1.Traffic
-	(BillingCycle)(0),                       // 9: heron.v1.BillingCycle
-	(*QueryMetricsRequest)(nil),             // 10: heron.v1.QueryMetricsRequest
-	(*QueryProbesRequest)(nil),              // 11: heron.v1.QueryProbesRequest
-	(*QueryMetricsResponse)(nil),            // 12: heron.v1.QueryMetricsResponse
-	(*QueryProbesResponse)(nil),             // 13: heron.v1.QueryProbesResponse
+	(*GetSiteRequest)(nil),                   // 0: heron.v1.GetSiteRequest
+	(*PublicSite)(nil),                       // 1: heron.v1.PublicSite
+	(*PublicServiceGetSnapshotRequest)(nil),  // 2: heron.v1.PublicServiceGetSnapshotRequest
+	(*PublicSnapshot)(nil),                   // 3: heron.v1.PublicSnapshot
+	(*PublicNode)(nil),                       // 4: heron.v1.PublicNode
+	(*PublicBilling)(nil),                    // 5: heron.v1.PublicBilling
+	(*PublicFacts)(nil),                      // 6: heron.v1.PublicFacts
+	(*PublicMetrics)(nil),                    // 7: heron.v1.PublicMetrics
+	(*Traffic)(nil),                          // 8: heron.v1.Traffic
+	(BillingCycle)(0),                        // 9: heron.v1.BillingCycle
+	(*QueryMetricsRequest)(nil),              // 10: heron.v1.QueryMetricsRequest
+	(*QueryProbesRequest)(nil),               // 11: heron.v1.QueryProbesRequest
+	(*ListProbeComparisonNodesRequest)(nil),  // 12: heron.v1.ListProbeComparisonNodesRequest
+	(*QueryProbeComparisonRequest)(nil),      // 13: heron.v1.QueryProbeComparisonRequest
+	(*QueryMetricsResponse)(nil),             // 14: heron.v1.QueryMetricsResponse
+	(*QueryProbesResponse)(nil),              // 15: heron.v1.QueryProbesResponse
+	(*ListProbeComparisonNodesResponse)(nil), // 16: heron.v1.ListProbeComparisonNodesResponse
+	(*QueryProbeComparisonResponse)(nil),     // 17: heron.v1.QueryProbeComparisonResponse
 }
 var file_heron_v1_public_proto_depIdxs = []int32{
 	4,  // 0: heron.v1.PublicSnapshot.nodes:type_name -> heron.v1.PublicNode
@@ -954,12 +960,16 @@ var file_heron_v1_public_proto_depIdxs = []int32{
 	2,  // 7: heron.v1.PublicService.GetSnapshot:input_type -> heron.v1.PublicServiceGetSnapshotRequest
 	10, // 8: heron.v1.PublicService.QueryMetrics:input_type -> heron.v1.QueryMetricsRequest
 	11, // 9: heron.v1.PublicService.QueryProbes:input_type -> heron.v1.QueryProbesRequest
-	1,  // 10: heron.v1.PublicService.GetSite:output_type -> heron.v1.PublicSite
-	3,  // 11: heron.v1.PublicService.GetSnapshot:output_type -> heron.v1.PublicSnapshot
-	12, // 12: heron.v1.PublicService.QueryMetrics:output_type -> heron.v1.QueryMetricsResponse
-	13, // 13: heron.v1.PublicService.QueryProbes:output_type -> heron.v1.QueryProbesResponse
-	10, // [10:14] is the sub-list for method output_type
-	6,  // [6:10] is the sub-list for method input_type
+	12, // 10: heron.v1.PublicService.ListProbeComparisonNodes:input_type -> heron.v1.ListProbeComparisonNodesRequest
+	13, // 11: heron.v1.PublicService.QueryProbeComparison:input_type -> heron.v1.QueryProbeComparisonRequest
+	1,  // 12: heron.v1.PublicService.GetSite:output_type -> heron.v1.PublicSite
+	3,  // 13: heron.v1.PublicService.GetSnapshot:output_type -> heron.v1.PublicSnapshot
+	14, // 14: heron.v1.PublicService.QueryMetrics:output_type -> heron.v1.QueryMetricsResponse
+	15, // 15: heron.v1.PublicService.QueryProbes:output_type -> heron.v1.QueryProbesResponse
+	16, // 16: heron.v1.PublicService.ListProbeComparisonNodes:output_type -> heron.v1.ListProbeComparisonNodesResponse
+	17, // 17: heron.v1.PublicService.QueryProbeComparison:output_type -> heron.v1.QueryProbeComparisonResponse
+	12, // [12:18] is the sub-list for method output_type
+	6,  // [6:12] is the sub-list for method input_type
 	6,  // [6:6] is the sub-list for extension type_name
 	6,  // [6:6] is the sub-list for extension extendee
 	0,  // [0:6] is the sub-list for field type_name

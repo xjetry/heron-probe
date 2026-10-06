@@ -260,6 +260,10 @@ var publicFields = map[protoreflect.FullName][]protoreflect.Name{
 	"heron.v1.QueryProbesResponse":  {"level", "step_s", "series"},
 	"heron.v1.ProbeSeries":          {"task_id", "samples", "kind", "target"},
 	"heron.v1.ProbeSample":          {"ts", "sent", "lost", "errors", "rtt_mean_us", "rtt_min_us", "rtt_max_us"},
+
+	"heron.v1.ListProbeComparisonNodesResponse": {"kind", "target", "node_ids", "max_nodes_per_query"},
+	"heron.v1.QueryProbeComparisonResponse":     {"level", "step_s", "series", "unavailable_node_ids"},
+	"heron.v1.NodeProbeSamples":                 {"node_id", "samples"},
 }
 
 func TestPublicResponsesExposeOnlyAllowlistedFields(t *testing.T) {
@@ -534,6 +538,7 @@ func TestCachePolicyRequiresGETAndMaxAgeTogether(t *testing.T) {
 	want := map[string]uint32{
 		"/heron.v1.PublicService/GetSite": 300, "/heron.v1.PublicService/GetSnapshot": 1,
 		"/heron.v1.PublicService/QueryMetrics": 60, "/heron.v1.PublicService/QueryProbes": 60,
+		"/heron.v1.PublicService/ListProbeComparisonNodes": 60, "/heron.v1.PublicService/QueryProbeComparison": 60,
 	}
 	if !maps.Equal(got, want) {
 		t.Fatalf("table = %v, want %v", got, want)

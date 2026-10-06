@@ -33,10 +33,12 @@ import (
 // publicProcedures 是匿名可达的全部过程：只有 PublicService（§12）。Register 与 Login 的凭据在请求体里，
 // 用 {} 调用时由方法体返回 Unauthenticated（没有注册窗口、没有管理员），与其他过程一样断言 401。
 var publicProcedures = map[string]bool{
-	"/heron.v1.PublicService/GetSite":      true,
-	"/heron.v1.PublicService/GetSnapshot":  true,
-	"/heron.v1.PublicService/QueryMetrics": true,
-	"/heron.v1.PublicService/QueryProbes":  true,
+	"/heron.v1.PublicService/GetSite":                  true,
+	"/heron.v1.PublicService/GetSnapshot":              true,
+	"/heron.v1.PublicService/QueryMetrics":             true,
+	"/heron.v1.PublicService/QueryProbes":              true,
+	"/heron.v1.PublicService/ListProbeComparisonNodes": true,
+	"/heron.v1.PublicService/QueryProbeComparison":     true,
 }
 
 func newTestMux(t *testing.T) http.Handler {

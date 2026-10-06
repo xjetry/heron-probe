@@ -428,6 +428,11 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			if layer == "config" {
 				statements = migrationV32Config
 			}
+		case 33:
+			// (task_id, node_id, ts) 索引只在指标层的探测表上，配置层无变化。
+			if layer == "metrics" {
+				statements = migrationV33Metrics
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}

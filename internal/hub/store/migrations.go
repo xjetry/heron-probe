@@ -54,6 +54,20 @@ var migrations = map[int]func(*sql.Tx) error{
 	30: execAll(migrationV30Config),
 	31: execAll(append(append([]string{}, migrationV31Metrics...), coverageFallbackV31)),
 	32: execAll(migrationV32Config),
+	33: execAll(migrationV33Metrics),
+}
+
+// v33：探测表加 (task_id, node_id, ts) 索引，承载跨节点对比的按任务读取；不改动任何数据，
+// 旧行为全部不变，只是多出一条读取路径。仅指标层：探测表属于指标层，配置层无变化。
+// 列序的理由见 schema.go 的 probeByTaskIndex：前导等值键之后 ts 才能作为范围约束进入同一个 SEARCH。
+var migrationV33Metrics = []string{
+	probeByTaskIndexV33("probe_1m"),
+	probeByTaskIndexV33("probe_5m"),
+	probeByTaskIndexV33("probe_1h"),
+}
+
+func probeByTaskIndexV33(table string) string {
+	return "CREATE INDEX " + table + "_by_task ON " + table + " (task_id, node_id, ts)"
 }
 
 // v32：节点的公开备注。旧库升级后没有公开备注：空串与"未设置"同值，公开端对空串不下发有意义的字段。
