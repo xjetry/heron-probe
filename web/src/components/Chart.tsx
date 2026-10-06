@@ -40,6 +40,7 @@ export function Chart({ data, labels, unit, height = 180 }: { data: AlignedData;
     const opts: Options = {
       width: host.clientWidth || 600,
       height,
+      // 不设置 legend.show：uPlot 默认显示图例，点击一项切换该条线。对比图一条线一个节点，靠的就是这个。
       scales: { x: { time: true }, y: unit === "percent" ? { range: [0, 100] } : {} },
       axes: [
         { ...axisStyle, values: (_u, splits, _axisIdx, _foundSpace, foundIncr) => formatChartTimes(splits, { incrSec: foundIncr }) },

@@ -52,6 +52,8 @@ it("数据原地更新；系统或 data-theme 改变明暗时，用最新数据�
   try {
     const colors = () => plots.at(-1)!.options.axes!.map((axis) => [axis.stroke, axis.grid?.stroke, axis.ticks?.stroke]);
     expect(colors()).toEqual([light, light]);
+    // 图例保持 uPlot 默认：显示，并且点击切换该条线。对比图靠这个隐藏单条节点。
+    expect(plots[0].options.legend?.show ?? true).toBe(true);
     const next: AlignedData = [[0], [2]];
     rerender(<Chart data={next} labels={["cpu"]} unit="count" />);
     expect(plots).toHaveLength(1);

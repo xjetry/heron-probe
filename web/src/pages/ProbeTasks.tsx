@@ -1,6 +1,7 @@
 import { createConnectQueryKey, createQueryOptions, useMutation, useQuery, useTransport } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
+import { Link } from "react-router";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGateAll } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
@@ -155,6 +156,7 @@ function TaskRow({ entry, nodes, saving, deleting, onSave, onDelete, onMove }: {
       <td>{t.timeoutMs}</td>
       <td>{coverage || <span className="muted">未分配</span>}</td>
       <td>
+        <Link to={`/probes/${t.id}/compare`}>对比</Link>{" "}
         <button type="button" className="link" aria-label={`编辑 ${withId(t.target, t.id)}`} onClick={() => setEditing(true)}>编辑</button>{" "}
         <ConfirmDelete label={`删除 ${withId(t.target, t.id)}`} confirm={`确认删除 ${withId(t.target, t.id)}`} note="历史保留至到期清理" pending={deleting} onDelete={onDelete} />
       </td>

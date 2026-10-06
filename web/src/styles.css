@@ -85,8 +85,17 @@ tr.offline td { color: var(--muted); }
 .bar { position: relative; min-width: 140px; height: 18px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
 .bar .fill { height: 100%; background: var(--accent); opacity: 0.35; }
 .bar span { position: absolute; inset: 0; padding: 0 0.4rem; font-size: 12px; line-height: 18px; }
-.chart { width: 100%; }
+.chart { width: 100%; min-width: 0; }
 .chart-gap { margin: 0 0 0.25rem; }
+/* uPlot 根节点默认 width:min-content，图例项又是 inline-block。窄屏上长节点名会把页面撑出视口；
+   压回卡片宽度并允许在任意位置断行，点击图例隐藏单条线的行为不变。 */
+.chart .uplot { width: 100%; max-width: 100%; }
+.chart .u-legend, .chart .u-inline, .chart .u-label { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.compare-links { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin: 0.5rem 0 1rem; max-width: 100%; }
+.compare-links a, .compare-nodes, .compare-nodes li { overflow-wrap: anywhere; max-width: 100%; }
+.compare-nodes { margin: 0.5rem 0 0; }
+.compare-nodes ul { margin: 0.25rem 0 0; padding-left: 1.2rem; }
+.compare-nodes summary { cursor: pointer; }
 .picks { display: flex; flex-wrap: wrap; gap: .5rem 1rem; border: 1px solid var(--line); padding: .5rem .75rem; }
 .edit-form { white-space: normal; }
 .edit-form label { min-width: 0; max-width: 100%; }

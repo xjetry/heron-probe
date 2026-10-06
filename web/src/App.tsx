@@ -6,6 +6,7 @@ import { NodeDetail } from "./pages/NodeDetail";
 import { Nodes } from "./pages/Nodes";
 import { RegisterWindow } from "./pages/RegisterWindow";
 import { ProbeTasks } from "./pages/ProbeTasks";
+import { ProbeCompare } from "./pages/ProbeCompare";
 import { AlertRules } from "./pages/AlertRules";
 import { AlertEvents } from "./pages/AlertEvents";
 import { Silences } from "./pages/Silences";
@@ -31,6 +32,7 @@ export const router = createBrowserRouter(
         { path: "nodes/:id", Component: NodeDetail },
         { path: "nodes", Component: Nodes },
         { path: "probes", Component: ProbeTasks },
+        { path: "probes/:id/compare", Component: ProbeCompare },
         { path: "alerts", Component: AlertRules },
         { path: "events", Component: AlertEvents },
         { path: "silences", Component: Silences },

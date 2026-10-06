@@ -8,13 +8,45 @@ import { lossPercent, rttMeanMs, seriesLabels, taskIdsOf, toProbeAligned, type P
 import { toAligned, unitOf, type SeriesSelection } from "../lib/series";
 import { Chart } from "./Chart";
 
-const RANGES = [
+// 对比图与历史图用同一组窗口、同一个 maxPoints：同一段时间才会落到同一级。
+export const HISTORY_MAX_POINTS = 1000;
+export const RANGES = [
   { label: "1h", seconds: 3600 },
   { label: "6h", seconds: 6 * 3600 },
   { label: "24h", seconds: 86400 },
   { label: "7d", seconds: 7 * 86400 },
   { label: "30d", seconds: 30 * 86400 },
-];
+] as const;
+export type HistoryRange = (typeof RANGES)[number];
+
+export function rangeStaleText(label: string): string {
+  return `图表还不是 ${label} 窗口的结果，取到之后会更新`;
+}
+
+// 窗口右端每分钟前进一次：历史行按分钟产生，更频繁的刷新看不到新东西。对比图走同一个钟。
+const REFRESH_MS = 60_000;
+
+export function useTimeWindow() {
+  const [range, setRange] = useState<HistoryRange>(RANGES[2]);
+  const [to, setTo] = useState(() => Math.floor(Date.now() / 1000) + 60);
+  useEffect(() => {
+    const t = setInterval(() => setTo(Math.floor(Date.now() / 1000) + 60), REFRESH_MS);
+    return () => clearInterval(t);
+  }, []);
+  return { range, setRange, from: to - range.seconds, to };
+}
+
+export function RangeButtons({ range, setRange }: { range: HistoryRange; setRange: (range: HistoryRange) => void }) {
+  return (
+    <nav aria-label="时间窗口">
+      {RANGES.map((r) => (
+        <button key={r.label} type="button" className={r.label === range.label ? "active" : "link"} onClick={() => setRange(r)} aria-pressed={r.label === range.label}>
+          {r.label}
+        </button>
+      ))}
+    </nav>
+  );
+}
 
 // 指标名与 hub 的描述表一致；网络均值由累计字节增量除以桶宽，峰值取 agent 已测得的速率，
 // 两者来源不同，不能以均值补峰值。可加量的数据单位是 bytes，图上速率统一指定为 bytes/s。
@@ -60,9 +92,6 @@ const PROBE_PANELS: { title: string; unit: string; value: ProbeValue }[] = [
   { title: "探测 · RTT 均值", unit: "ms", value: rttMeanMs },
 ];
 
-// 窗口右端每分钟前进一次：历史行本来就按分钟产生，更频繁的刷新看不到新东西。
-const REFRESH_MS = 60_000;
-
 // 两族历史查询在管理与公开两个服务上各有一份，请求与响应类型相同（query.proto）。图表按此共用，
 // 调用方只决定查哪个服务；本文件不引用任何服务的生成代码，公开页因此能用它。
 export type HistoryMethods = {
@@ -71,14 +100,8 @@ export type HistoryMethods = {
 };
 
 export function useHistory(methods: HistoryMethods, nodeId: bigint, enabled: boolean) {
-  const [range, setRange] = useState(RANGES[2]);
-  const [to, setTo] = useState(() => Math.floor(Date.now() / 1000) + 60);
-  useEffect(() => {
-    const t = setInterval(() => setTo(Math.floor(Date.now() / 1000) + 60), REFRESH_MS);
-    return () => clearInterval(t);
-  }, []);
-  const from = to - range.seconds;
-  const request = { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: 1000 };
+  const { range, setRange, from, to } = useTimeWindow();
+  const request = { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: HISTORY_MAX_POINTS };
   // 窗口右端每分钟前进一次、切换 range 都会换查询键；换键期间或失败时图表与“级别…”标签不能都消失，也不能
   // 沿用别的节点的数据。指标图与“级别…”标签由 metrics.data 派生，两张探测图由 probes.data 派生：data 回到
   // undefined 时它们都不再渲染。用 useRetained 沿用本节点上一份成功数据直到当前键取到自己的数据为止，失败
@@ -124,17 +147,11 @@ export function RangePicker({ history }: { history: HistoryState }) {
   const { range, setRange, metrics, rangeStale } = history;
   return (
     <>
-      <nav aria-label="时间窗口">
-        {RANGES.map((r) => (
-          <button key={r.label} type="button" className={r.label === range.label ? "active" : "link"} onClick={() => setRange(r)} aria-pressed={r.label === range.label}>
-            {r.label}
-          </button>
-        ))}
-      </nav>
+      <RangeButtons range={range} setRange={setRange} />
       {metrics.data && <span className="muted">级别 {metrics.data.level}，每点 {metrics.data.stepS}s</span>}
       {/* rangeStale 排除了“同一个 range 里晚了不到一分钟”的情况，只在真的换过 range 还没等到新 range
           自己的数据时才出现；不点出来，这里显示的级别与图表会被当成当前选中 range 的结果看。 */}
-      {rangeStale && <span className="muted">图表还不是 {range.label} 窗口的结果，取到之后会更新</span>}
+      {rangeStale && <span className="muted">{rangeStaleText(range.label)}</span>}
     </>
   );
 }
@@ -142,7 +159,7 @@ export function RangePicker({ history }: { history: HistoryState }) {
 // noProbes 是窗口内没有探测结果时的说明：面板给出去任务页的链接，公开页只说明没有。
 // showCoverage 默认不显示：本组件由管理端与公开页共用，覆盖率口径（hub 的观测与保留期、节点首报）
 // 只在管理端展示；默认方向取"不显示"，新调用方忘记传参时覆盖率不会被带到公开页。
-export function HistoryCharts({ history, noProbes, showCoverage = false }: { history: HistoryState; noProbes: ReactNode; showCoverage?: boolean }) {
+export function HistoryCharts({ history, noProbes, showCoverage = false, probeFooter = null }: { history: HistoryState; noProbes: ReactNode; showCoverage?: boolean; probeFooter?: ReactNode }) {
   const { charts, probeCharts, probes, metrics } = history;
   const coverage = coverageView(metrics.data?.coverageSummary);
   return (
@@ -168,14 +185,17 @@ export function HistoryCharts({ history, noProbes, showCoverage = false }: { his
       </div>
       {probes.data && probes.data.series.length === 0 && noProbes}
       {probes.data && probes.data.series.length > 0 && (
-        <div className="grid">
-          {probeCharts.map((c) => (
-            <div className="card" key={c.title}>
-              <h2>{c.title}</h2>
-              <Chart data={c.data} labels={c.labels} unit={c.unit} />
-            </div>
-          ))}
-        </div>
+        <>
+          <div className="grid">
+            {probeCharts.map((c) => (
+              <div className="card" key={c.title}>
+                <h2>{c.title}</h2>
+                <Chart data={c.data} labels={c.labels} unit={c.unit} />
+              </div>
+            ))}
+          </div>
+          {probeFooter}
+        </>
       )}
     </>
   );
