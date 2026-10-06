@@ -154,8 +154,8 @@ message ReportResponse {
 
 message Metrics {
   string boot_id = 1;
-  optional double cpu_pct = 2;   // 相对本执行环境可用算力的占比：cgroup 有限额时取 cgroup 口径，否则取 /proc/stat 主机口径
-  optional double load1 = 3;  optional double load5 = 4;  optional double load15 = 5;
+  optional double cpu_pct = 2;   // 忙时占比；范围见 Facts.execution：环境走 cpu.stat 差分（steal/iowait 不设置），真根/v1 走 /proc/stat
+  optional double load1 = 3;  optional double load5 = 4;  optional double load15 = 5;  // host 或 legacy（procfs）或 unknown：来源见 Facts.execution
   optional uint64 mem_total = 6;   optional uint64 mem_used = 7;
   optional uint64 swap_total = 8;  optional uint64 swap_used = 9;
   optional uint64 disk_total = 10; optional uint64 disk_used = 11;
@@ -166,6 +166,7 @@ message Metrics {
   string net_counter_epoch = 20;   // 计入网络合计的网卡集合摘要，与计数同次采样
   optional uint64 disk_read_bps = 21;  optional uint64 disk_write_bps = 22;  // 整盘设备采样速率，与 net_*_bps 同一差分规则
   optional double cpu_steal_pct = 23;  optional double cpu_iowait_pct = 24;  // 与 cpu_pct 同一次 /proc/stat 差分
+  optional double load1_per_core = 25; // load1 ÷ Facts.execution.load_cores；分母缺失即不设置
 }
 
 message Facts {
@@ -173,6 +174,22 @@ message Facts {
   string virtualization = 5; string cpu_model = 6; uint32 cpu_cores = 7;  // cpu_cores 是 agent 所在执行环境的有效核数
   string agent_version = 8;
   bool icmp_available = 9;     // 两种 ICMP socket 是否至少一种可用，见 §8.2
+  NetworkInfo network = 10;    // agent 自报的双栈出口，仅管理展示
+  AgentDiagnostics diagnostics = 11;  // 最近一次采集的白名单诊断，仅管理端可读
+  ExecutionScope execution = 12;  // 执行环境识别快照（下文）；darwin 恒为主机范围
+}
+
+message ExecutionScope {
+  ScopeKind kind = 1;            // SCOPE_KIND_HOST / _CGROUP_NAMESPACE（挂载根是环境 cgroup）/ _CGROUP_V1_LEGACY / _IDENTIFY_FAILED
+  ResourceScope cpu = 2;         // _ENVIRONMENT=本环境可见口径 / _HOST=主机口径 / _LEGACY=cgroup v1 沿用旧读法 / _UNKNOWN=本周期缺读数
+  ResourceScope memory = 3;      // 同上
+  ResourceScope swap = 4;        // 同上
+  ResourceScope load = 5;        // _HOST（/proc/loadavg 为 procfs 时）/ _LEGACY（cgroup v1）/ _UNKNOWN
+  optional double cpu_effective_cores = 6;  // 本次识别的有效核数精确值；CPU 范围未知时缺失
+  optional uint64 memory_limit_bytes = 7;   // 本次识别的内存可见上限；出现时必为正；对应资源未知或总量读不出时缺失
+  optional uint64 swap_limit_bytes = 8;     // 同上；已知的 0（宿主或容器禁 swap）照报，与读数 0/0 一致
+  optional uint32 load_cores = 9;           // Metrics.load1_per_core 的分母；缺失即本次不上报按核负载
+  repeated ScopeNote notes = 10;            // 固定类别的识别说明，按枚举值升序、去重、至多 8 个；任一资源 unknown 而 kind 不是 identify_failed 时必非空
 }
 
 message ProbeResult {
@@ -194,9 +211,30 @@ message ProbeResult {
 
 `cpu_steal_pct` / `cpu_iowait_pct` 与 `cpu_pct` 取自同一次 `/proc/stat` 两次采样差分：`steal_pct = Δsteal / Δtotal × 100`、`iowait_pct = Δiowait / Δtotal × 100`。`cpu_pct` 的口径不变，忙时不含 iowait（`idle` 计为 idle + iowait）。三者互相独立，都不是对方的子集，可以同时显示。`Δtotal = 0` 或任一计数回退时三项一起不设置，不单独保留某一项；darwin 没有 steal 概念、iowait 也不可得，两项不设置；cgroup 有限额时两项同样不设置（见下段）。
 
-容器 / LXC 里 `/proc/stat` 与 `/proc/cpuinfo` 是宿主全机的口径：一个被限到 2 核的容器跑满，按全机计数算出的 `cpu_pct` 只是宿主几十核的零头，`cpu_cores` 报的是宿主核数。限额与用量只读 cgroup 挂载根上的文件：容器（cgroup namespace）里挂载根就是容器自身的 cgroup，正是被监控的执行环境；裸机的 root cgroup 上内核不提供 `cpu.max`，自然落到全机口径，agent 自身 service 的 CPUQuota 不会被误当环境限额；祖先 cgroup 的限额在 namespace 里不可见，不处理。cgroup v2 下存在限额（`cpu.max` 的 quota 非 `max`，或 `cpuset.cpus.effective` 小于宿主核数）时，`cpu_pct = Δusage_usec / (有效核数 × Δt_usec) × 100`：`usage_usec` 来自 `cpu.stat`，是本 cgroup 的累计 CPU 用量；有效核数是 cpuset 核数与 quota/period 的较小者；Δt 是 agent 单调钟两次采样之差（§4.5）。首样本、`usage_usec` 回退、Δt ≤ 0 时不设置；`cpu.max` 允许 burst 时用量可超过可用算力，算出 >100 钳到 100。此时 `cpu_steal_pct` / `cpu_iowait_pct` 不设置：两者是全机计数的一部分，不归属于本执行环境的算力。cgroup v1 的用量与限额散落在 cpuacct 与 cpu 两个控制器里，读不出统一口径，退回 `/proc/stat` 路径，并只在形态切换（进入 v1、或从 v1 变为 v2）时记一行日志，不按采样周期记。
+执行环境识别（spec 本节，实现 `internal/agent/collect/execscope.go`）：agent 每个上报周期先做一次识别得到快照，`Metrics` 与 `Facts` 只读快照——识别文件（mountinfo、`cgroup.type`、`cpu.max`……）每周期只读一遍，同一周期两者的范围与容量一致。识别的输入只取进程自己能看到的挂载与文件，判据按层递进，任何一步的结论都不是猜的：
 
-`cpu_cores` 是 agent 所在执行环境的有效核数：cgroup 有限额时取 cpuset 与 quota 较小者的上取整（1.5 核的限额报 2），无限额时仍是主机核数。旧 agent 一律报物理核数，这种版本漂移按 §4.6 接受：该值只做展示与按核负载归一的分母，不参与 hub 侧其他计算；有效核数让按核负载在容器里同样准确。
+1. `/sys/fs/cgroup` 的 statfs 类型不是 cgroup2 → `cgroup_v1_legacy`：读法全部沿用旧口径（CPU 走 `/proc/stat` 差分、内存走 meminfo），四种资源都标 legacy；进入该形态或从它切走时各记一行日志，不按周期记。v1 与"没有 cgroup2"不区分（对读数没有影响）。
+2. 是 cgroup2，再 stat 挂载根上的 `cgroup.type`：文件存在 → 挂载根是一个环境 cgroup（容器 / LXC guest / OrbStack 机器自身的 cgroup namespace 根），`kind = cgroup_namespace`；`ENOENT` → 挂载根是真根（内核只在非根 cgroup 上提供 `cgroup.type`），`kind = host`；其他错误 → `identify_failed`，依赖识别的资源全部缺读数，说明里记失败类别。识别失败时报数缺位，不硬编一个口径。
+3. 被消费的四个 `/proc` 文件（`stat`、`meminfo`、`loadavg`、`cpuinfo`）逐个判来源：stat 该文件拿 `st_dev`，在 `/proc/self/mountinfo` 里按设备号找到所在挂载，fstype 是 `proc` → procfs、`fuse.lxcfs` → lxcfs、其余 → other；stat 或 mountinfo 读不了 → 来源 unknown。判据落在每个文件自己身上：lxcfs 是逐文件 bind，叠加挂载与父目录 overmount 下，同一 `/proc` 里不同文件可以来自不同文件系统（实验确认，见 §13-12）。来源 unknown 的文件按"读不出"处理，绝不退回 procfs 假定——宁可缺读数也不报错值。
+
+`kind` 的语义是信任边界：挂载根说真根、容器标识（`/.dockerenv`、`/run/.containerenv`、`/proc/1/environ` 的 `container=`、`/run/systemd/container`）却存在时，读数仍是整机，只记说明（`container_signal_on_host_root`），不从标识推断隔离状态。CI 托管 runner 是这个边界的实证：agent 自己跑在 `system.slice/xxx.service` 里（`/proc/self/cgroup` 指向它），但 cgroup 挂载共享自宿主、挂载根是真根——按 `/proc/self/cgroup` 定口径会把宿主整机错标成某个 slice 的环境，按挂载根则正确得到主机口径（实验确认，§13-13）。
+
+识别之后的读数口径（决策表；`有效核数 = min(cpu.max 折算的配额核数, cpuset 核数)`，cpu.max 缺失或 `max` 视为不限；cpuset 文件缺失时回退 `/proc/cpuinfo` 处理器数，仅当其来源是 procfs（主机核数）或 lxcfs（该环境的 cpuset 视图），否则 CPU 未知）：
+
+| 资源 | 真根 | 环境 cgroup | v1 / 无 cgroup2 |
+|---|---|---|---|
+| CPU | `/proc/stat` 为 procfs：忙时占比 + steal/iowait；否则未知 | `cpu.stat` 的 `usage_usec` 差分 ÷ (有效核数 × Δt)，>100 钳 100；steal、iowait 不设置；cpu.stat 或有效核数不可知 → 未知 | 沿用 `/proc/stat` 差分（含 steal/iowait） |
+| 内存 | meminfo 为 procfs：`MemTotal − MemAvailable`；否则未知 | used `= memory.current − (file − shmem) − slab_reclaimable`（memory.stat；防两次读竞争的回绕检查）；控制器文件缺失或读不出 → 未知并记说明 | 沿用 meminfo |
+| swap | 同上文件要求：`SwapTotal − SwapFree` | used `= memory.swap.current`；记账文件缺失 → 未知并记说明 | 沿用 meminfo |
+| 负载 | loadavg 为 procfs：范围主机；否则未知并记说明 | procfs → 范围主机；lxcfs / 其他 → 未知并记说明 | 沿用 loadavg |
+
+可见上限与环境内存 / swap 的 total：`min(controller 上限, meminfo 总量)`，meminfo 只在其来源是 procfs 或 lxcfs 时参与（lxcfs 的 MemTotal 是 guest 视图，与挂载根 memory.max 同为"本环境可见"这一层，实验确认 §13-10/12）；meminfo 来源不可用时内存 total 就是 `memory.max` 数值（swap 同理取 `memory.swap.max`），controller 上限为 `max` 且 meminfo 不可用 → 该资源未知。swap 的上限折算为 0 是已知的合法值（宿主没有 swap、或 Incus 把 `memory.swap.max` 写 0），照报 0 且读数为 0/0；内存上限出现时必为正。lxcfs 的 meminfo 按 guest 而不是读者所在的 cgroup 给值：guest 里 MemoryMax=128M 的服务单元内读 `/proc/meminfo`，MemTotal 仍是 guest 限额 512MiB（实验确认，§13-12）。
+
+差分基线键：CPU 基线键是（来源身份, 有效核数）——环境 cgroup 路径以挂载根 cgroup 目录的 `dev:inode` 标识（容器重建即变），真根 / legacy 以 `/proc/stat` 固定标识加当次核数。键变化即丢弃旧基线、本周期按首样本处理：不共享分母的差分没有意义。`ResetRates` 与差分规则（首样本、回退、Δt ≤ 0 不设置）不变。
+
+`cpu_cores`（Facts）只来自本周期识别的有效核数，取上取整（1.5 核报 2）；识别不出是 0，不再退回 `runtime.NumCPU()`——那会把识别失败伪装成一个像样的值。旧 agent 一律报物理核数，这种版本漂移按 §4.6 接受：该值只做展示与按核负载归一的分母，不参与 hub 侧其他计算。`load1_per_core = load1 ÷ execution.load_cores`，分母来自同一快照（真根或 v1：loadavg 与 cpuinfo 都为 procfs 时的主机核数；环境 cgroup：负载范围为主机、且 cpuinfo 为 procfs时），缺失即不设置。`Facts.execution` 由 agent 构造后先过 `agentwire.ValidateExecutionScope` 自检（枚举完备、kind 与四种范围的组合、容量的正性与范围配套、说明去重至多 8 个）：非法块即本方构造 bug，不发出（hub 侧另做同形校验）。
+
+darwin 恒为主机：识别快照固定为 host 范围、核数取 `hw.logicalcpu`，不经过上述判据。
 
 ### 4.3 对账
 
@@ -696,6 +734,8 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 9. SQLite WAL 在持续读者下的行为，以及 checkpoint 能否不阻塞写入地完成（modernc.org/sqlite v1.59.0，即 SQLite 3.53.4）。——已于 2026-10-06 在本机实验确认（Apple M4 Max、macOS 26.3.1；100 个节点、3 天历史的库，每秒一批分钟行写入，三种条件各 15.5 分钟）：只有写入时，自动 checkpoint 反复重置 `-wal`，文件停在 9,616,112 字节的平台；有 8 个不停顿循环的短查询读者，或一个循环持 60 秒只读事务的长读者时，`-wal` 以同一斜率线性增长、从不重置（该写入负载下约 87 MiB/分钟，15.5 分钟累积到约 1.31 GiB：两种条件分别为 1,411,606,792 与 1,411,623,272 字节）——自动 checkpoint 仍在回填，被挡住的是重置；手动 PASSIVE 同样只回填不重置；TRUNCATE 在短查询读者下成功（约 0.86 s），在长读者持着快照时等满 `busy_timeout`（5 s）后返回 busy；大规模 prune 之后 `-wal` 停在高水位，不会自行缩小；正常 Close 时驱动做 checkpoint 并删除 `-wal` 与 `-shm`。生产 hub 在 v0.6.1 启动后约 9 分钟与 19 分钟各采一次：`-wal` 两次都是 4,408,432 字节，主库从 8,425,472 字节涨到 8,482,816 字节。有节点在线时 hub 每分钟都写分钟行，十分钟的写入没有让 `-wal` 超出原有长度，新帧落在重置后从头复用的空间里：现有读负载下自动 checkpoint 能完成重置。`-wal` 的文件长度在库打开期间不缩小（重置后从头复用，hub 不设 `journal_size_limit`），单次读数只是曾经到过的长度。是否需要 checkpoint 策略由这一项决定：经 `GetStorageStats` 的 WAL 文件观测跨时刻比较，长度持续增长、不停在平台时再定；策略须经写连接、在事务之外执行，并给出读快照推进不了时阻塞的上界。
 10. LXC guest 里 lxcfs 接管的文件与它们的口径（Incus 6.0.4 + lxcfs 6.0.4，guest 为 Debian 12，内核 7.0.14-orbstack）。——已于 2026-10-06 在本机实验确认：lxcfs 默认接管 `/proc` 下 cpuinfo、diskstats、loadavg、meminfo、stat、swaps、uptime 七个文件与 `/sys/devices/system/cpu`（逐文件 bind，`fuse.lxcfs`），不接管 `/sys/fs/cgroup`，`boot_id` 每个容器独立；`/proc/stat` 是宿主的逐核计数按 guest 的 cpuset 过滤，不是 guest 自身的用量——guest 空闲、宿主跑一个单核忙循环时，绑在单核上的 guest 读到 47.7% 忙，而 guest 自身的 cgroup 用量只增加约 2 ms；`/proc/cpuinfo` 与 `/proc/stat` 的核数都是 cpuset 视图，"cpuset 少于 cpuinfo 核数"这条限额判据在 guest 里不再成立；Incus 的 `limits.cpu` 实现为 cpuset 绑核而不是 `cpu.max` 配额；`/proc/meminfo` 只在设了内存限额时按限额给出（MemTotal 等于限额），无限额时是宿主全机；`limits.memory` 同时把 `memory.swap.max` 设为 0；guest 里 `/proc/1/environ` 的 `container=lxc` 与 `/run/systemd/container` 都在，agent 报的 `virtualization` 是 lxc；cgroup `cpu.stat` 的用量只含 guest 自身。
 11. Docker 容器在 cgroup v2 下的限额组合与内存口径（Docker 29.4.0，cgroupns 默认 private，内核 7.0.14-orbstack）。——已于 2026-10-06 在本机实验确认：cgroupns private 时挂载根就是容器自身的 cgroup，CPU 与内存的限额、用量文件全部存在，root 与非 root 都可读；`--cpus` 只写 `cpu.max`，`--cpuset-cpus` 只改 `cpuset.cpus.effective`，`--memory` 写 `memory.max` 并把 `memory.swap.max` 设为同值，三者独立、可叠加；cpuset 不过滤 `/proc/stat` 与 `/proc/cpuinfo`；`--memory` 的限额对 `/proc/meminfo` 不可见，agent 报的是宿主全机内存；容器里没有 `container=` 环境变量，也没有 `/run/systemd/container`，现有的执行环境标识全为空；`--cgroupns=host` 时挂载根是宿主的 cgroup 根，容器的限额从挂载根不可达，根上的 `cpu.stat`、`memory.stat` 读出 0 字节；cgroup 的 `memory.current`、`memory.stat` 只含容器自身的用量，宿主 `MemAvailable` 则受全机其他活动影响，同一次 200 MiB 分配实验里反向涨过 153 MiB。
+12. 执行环境识别的判据（kernel 7.0.14-orbstack，Debian 12 容器与 OrbStack 机器，lxcfs 6.0.4 / Incus 6.0.4，2026-10-06 实验）。——已确认：① `cgroup.type` 只在非根 cgroup 上存在，真根（GitHub runner 与手工构造的共享挂载）上 stat 得 ENOENT，是挂载根层次的可靠判据；`cpu.stat` 在真根和控制器未下放的子 cgroup 上都存在，不能当环境判据。② 控制器未下放（特权容器建子 cgroup、不在 `cgroup.subtree_control` 打开 cpu 与 memory）时，子 cgroup 上 `cgroup.type` 与 `cpu.stat` 存在、`cpu.max` 与 `memory.current` 不存在——CPU 用量可读、配额按不限、内存按未知并记说明。③ `/proc` 文件来源按 `st_dev` 对 mountinfo 判：叠加挂载（新 proc 盖住 /proc）整体换设备号，单文件 bind（lxcfs 的做法）只换那一个文件，判据必须逐文件；来源不在 mountinfo 里或 fstype 不是 proc/fuse.lxcfs 一律按未知。④ 部分 lxcfs（只 bind cpuinfo）下 cpuinfo=fuse.lxcfs、stat/meminfo/loadavg=proc，识别结果与决策表一致。⑤ lxcfs 的 meminfo 按 guest 而不是读者所在的 cgroup 给值：Incus guest（Debian 12 / systemd 252，limits.cpu=4、limits.memory=512MiB）里按 deploy/systemd 的单元原样运行识别探针（drop-in 只换 ExecStart），服务进程位于 `system.slice/heron-agent.service`，该 cgroup 的 memory.max 为 128MiB，服务内读到的 MemTotal 仍是 512MiB；单元的 ProtectSystem=strict、PrivateTmp、ProtectHome 只给服务添加只读重挂与私有 /tmp，`/proc` 与 `/sys/fs/cgroup` 仍是原来的文件系统实例；服务内识别为 cgroup_namespace、有效核数 4、内存可见上限 512MiB、swap 上限 0，与同配置 guest 中由 shell 运行的结果逐字段相同。⑥ OrbStack 机器与 Docker 容器的 cgroup 文件对非 root 用户全部可读（0644），非 root 识别结果与 root 逐字段一致。⑦ 缺 cpuset 控制器（OrbStack `.lxc` 的直接子 cgroup、system.slice 的 scope 均如此）时 `cpuset.cpus.effective` 不存在，有效核数回退 `/proc/cpuinfo` 处理器数（procfs，主机核数）；四核满载 + agent taskset 单核下识别仍报主机核数，不取进程亲和性。⑧ `memory.swap.max` 可为 0（Incus `limits.memory` 顺带禁 swap），可见上限 0 是合法已知值。
+13. CI 托管 runner（GitHub Actions ubuntu-24.04，kernel 6.17.0-1022-azure，x86_64，2026-10-06 实验）。——已确认：`/sys/fs/cgroup` 是真正的根 cgroup（无 `cgroup.type`、无 `cpu.max` / `memory.current`，而 `cpu.stat` 存在），`/proc/self/cgroup` 是 `0::/system.slice/…service`——挂载根与自身 cgroup 分离，按挂载根识别得到主机口径是正确语义。systemd-run scope（MemoryMax=512M）内的四步负载与内存算式一致：注入匿名 200M / 页缓存 0 / tmpfs 100M / 可回收 slab 0（30 万空文件的 dentry，slab_reclaimable 高达 385M）对应 used 增量 +204 / −0.4 / +99.5 / +1.3 MiB，env 口径的增量与注入量一一对应；宿主侧 `MemTotal − MemAvailable` 的同期增量（−42 / +8 / +104 / +24 MiB）被 runner 的后台负载淹没，只作参考不作证据。对照组 `memory.current − file` 口径会把 tmpfs 漏掉（−0.2MiB）、把 dentry 记成 386MiB 占用。
 
 ## 14. 构建、发布、安装
 
