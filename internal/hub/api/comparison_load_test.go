@@ -85,7 +85,7 @@ func TestProbeComparisonCostAcceptance(t *testing.T) {
 	if os.Getenv("HERON_LOAD") == "" {
 		t.Skip("set HERON_LOAD=1 to run the §2.4 cost acceptance (heavy: minutes, multi-GB database)")
 	}
-	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	now := loadBenchNow
 	day := int64(86400)
 	dir := os.Getenv("HERON_LOAD_DB")
 	if dir == "" {
@@ -93,10 +93,17 @@ func TestProbeComparisonCostAcceptance(t *testing.T) {
 	}
 	path := filepath.Join(dir, "load.db")
 	clk := &loadClock{wall: now, start: time.Now()}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(path); err != nil {
 		genLoadDatabase(t, path, now.Unix())
 	} else {
 		t.Logf("reusing existing database %s", path)
+	}
+	if os.Getenv("HERON_LOAD_GEN_ONLY") != "" {
+		t.Logf("database generated; skipping load groups (HERON_LOAD_GEN_ONLY)")
+		return
 	}
 	tuner, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
 	if err != nil {
@@ -208,93 +215,113 @@ func TestProbeComparisonCostAcceptance(t *testing.T) {
 	}
 	report.note(fmt.Sprintf("② 每窗口 p99 ≤ ③ 同窗口 p99 且全部成功：%v", pass23))
 
-	// ④ 期内配对测量：同组内 4 个"开环 15 秒 / 闭环空闲 15 秒"循环，读者每 200ms
-	// 采样并按饱和来源在飞数分类；基线是期内空闲同类，不是跨阶段基线。三组各跑一轮：
-	// 对比分块、单节点 QueryProbes 365d、单节点 QueryMetrics 365d。
 	chunkNodes := min(busy, store.MaxComparisonNodes)
-	// HERON_LOAD_ONLY 逗号分隔只跑指定的 ④ 相位（"4"/"4p"/"4m"），用于在安静窗口补测；
-	// 空则全跑。选择器只影响跑哪几相，每相的测量结构不变。
-	only := map[string]bool{}
-	for _, g := range strings.Split(os.Getenv("HERON_LOAD_ONLY"), ",") {
-		if g = strings.TrimSpace(g); g != "" {
-			only[g] = true
+	// ④ 饱和：父进程只当 hub（store + HTTP 入口 + 计数器）；重锤与读者各自是子进程
+	// （go test 二进制按 -test.run 拉起），逐样本写文件，父进程按"样本发出时刻是否落在
+	// 某个重请求区间内"分压着/没压着两类。每组的判定见 pairedVerdict：任一类样本不足
+	// minPairedSamples 或环境不平稳时不判定。
+	outDir := os.Getenv("HERON_LOAD_OUT")
+	if outDir == "" {
+		outDir = t.TempDir()
+	}
+	// 子进程按路径直接创建样本文件，目录要先在。
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	report.note("样本与报告目录：" + outDir)
+	report.note("环境：" + envReportLine())
+	if v := os.Getenv("HERON_LOAD_GATE_LIMIT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			pub.testHistoryGate().limit = n
+			report.note(fmt.Sprintf("并发闸上限（环境变量）：%d", n))
 		}
 	}
-	want := func(k string) bool { return len(only) == 0 || only[k] }
-	runPaired := func(name, srcIP string, heavy func(*sourcedClient) (*loadOutcome, error)) *pairedResult {
+
+	hammers := []struct {
+		name, shape, srcIP string
+	}{
+		{fmt.Sprintf("④ 饱和来源（开环 365d %d 节点分块）", chunkNodes), "cmp365d", hammerSource},
+		{"④-p 饱和来源（开环单节点 QueryProbes 365d）", "probes365d", hammerProbesSource},
+		{"④-m 饱和来源（开环单节点 QueryMetrics 365d）", "metrics365d", hammerMetricsSource},
+	}
+	// 4 个开/闲周期共 200 秒：每个闲时段要扣掉开时段结束后排队请求的收尾（等空位至多 5 秒再加
+	// 一次重查询），120 秒时闲类每个读者只有 180 个上下，不够 minPairedSamples。
+	secs := 200
+	if smoke {
+		secs = 8
+	}
+	for _, hcfg := range hammers {
+		preMin, preMed := driftProbe()
+		preLoad := loadAvgLine()
 		fds := startFDSampler(path)
-		res := runPairedSaturation(t, srv.URL, now, tasks, srcIP, name, heavy)
-		report.group(res.hammer)
-		report.note(res.line())
-		report.note(name + " 连接采样：" + fds.stopAndReport())
-		return res
-	}
-	var sat, satP, satM *pairedResult
-	if want("4") {
-		sat = runPaired(fmt.Sprintf("④ 饱和来源（开环 365d %d 节点分块）", chunkNodes), hammerSource,
-			func(c *sourcedClient) (*loadOutcome, error) {
-				r, err := c.QueryProbeComparison(ctxOf(t), connect.NewRequest(&heronv1.QueryProbeComparisonRequest{
-					TaskId: 1, NodeIds: firstN(chunkNodes), From: now.Unix() - 365*day, To: now.Unix(), MaxPoints: 720}))
-				return comparisonOutcome(r, chunkNodes), err
-			})
-	}
-	if want("4p") {
-		satP = runPaired("④-p 饱和来源（开环单节点 QueryProbes 365d）", hammerProbesSource,
-			func(c *sourcedClient) (*loadOutcome, error) {
-				r, err := c.QueryProbes(ctxOf(t), connect.NewRequest(&heronv1.QueryProbesRequest{
-					NodeId: 1, From: now.Unix() - 365*day, To: now.Unix(), MaxPoints: 720}))
-				return seriesOutcome(r, tasks), err
-			})
-	}
-	if want("4m") {
-		satM = runPaired("④-m 饱和来源（开环单节点 QueryMetrics 365d）", hammerMetricsSource,
-			func(c *sourcedClient) (*loadOutcome, error) {
-				r, err := c.QueryMetrics(ctxOf(t), connect.NewRequest(&heronv1.QueryMetricsRequest{
-					NodeId: 1, From: now.Unix() - 365*day, To: now.Unix(), MaxPoints: 720}))
-				return metricsOutcome(r), err
-			})
-	}
-	mSat, pSat, mSatP, pSatP, mSatM, pSatM := -1.0, -1.0, -1.0, -1.0, -1.0, -1.0
-	if sat != nil {
-		mSat, pSat = ratio(sat.mIdle, sat.mLoad), ratio(sat.pIdle, sat.pLoad)
-	}
-	if satP != nil {
-		mSatP, pSatP = ratio(satP.mIdle, satP.mLoad), ratio(satP.pIdle, satP.pLoad)
-	}
-	if satM != nil {
-		mSatM, pSatM = ratio(satM.mIdle, satM.mLoad), ratio(satM.pIdle, satM.pLoad)
-	}
-	pass := func(v float64) bool { return v < 0 || v <= 2 }
-	report.note(fmt.Sprintf("④ 期内配对 p99 比值（门槛各 ≤2×，-1 为未跑）：分块 指标 %.2f× 探测 %.2f×；单节点探测 %.2f×/%.2f×；单节点指标 %.2f×/%.2f×；全过：%v",
-		mSat, pSat, mSatP, pSatP, mSatM, pSatM,
-		pass(mSat) && pass(pSat) && pass(mSatP) && pass(pSatP) && pass(mSatM) && pass(pSatM)))
-
-	// ⑦ 闭环干扰曲线：恰好 k 个重请求常驻在飞 30 秒（重来源轮换，绕开单来源限流对
-	// 并发数的钳制），读者仍每秒一个 ① 形状。k=0 是曲线内的空载对照。
-	for _, kind := range []struct {
-		label string
-		fire  func(c *sourcedClient) (*loadOutcome, error)
-		ks    []int
-	}{{"365d 分块", func(c *sourcedClient) (*loadOutcome, error) {
-		r, err := c.QueryProbeComparison(ctxOf(t), connect.NewRequest(&heronv1.QueryProbeComparisonRequest{
-			TaskId: 1, NodeIds: firstN(chunkNodes), From: now.Unix() - 365*day, To: now.Unix(), MaxPoints: 720}))
-		return comparisonOutcome(r, chunkNodes), err
-	}, []int{0, 1, 2, 4, 8}}, {"单节点 QueryProbes 365d", func(c *sourcedClient) (*loadOutcome, error) {
-		r, err := c.QueryProbes(ctxOf(t), connect.NewRequest(&heronv1.QueryProbesRequest{
-			NodeId: 1, From: now.Unix() - 365*day, To: now.Unix(), MaxPoints: 720}))
-		return seriesOutcome(r, tasks), err
-	}, []int{1, 2}}} {
-		for _, k := range kind.ks {
-			f := startFDSampler(path)
-			line := runClosedLoop(t, srv.URL, now, tasks, k, curveDur(), kind.label, kind.fire, g1m.p99(), g1p.p99())
-			report.note(line + "；连接采样：" + f.stopAndReport())
+		t0 := time.Now().Add(2 * time.Second)
+		var hammerS, readerS []loadSample
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			hammerS = childRun(t, "hammer", srv.URL, t0, secs, map[string]string{
+				envSource: hcfg.srcIP, envShape: hcfg.shape, envK: "0",
+				envTasks: strconv.Itoa(tasks), envNodes: strconv.Itoa(chunkNodes),
+			}, filepath.Join(outDir, "hammer-"+hcfg.shape+".jsonl"))
+		}()
+		go func() {
+			defer wg.Done()
+			readerS = childRun(t, "reader", srv.URL, t0, secs, map[string]string{
+				envSource: readerSource, envTasks: strconv.Itoa(tasks),
+			}, filepath.Join(outDir, "readers-"+hcfg.shape+".jsonl"))
+		}()
+		wg.Wait()
+		connLine := fds.stopAndReport()
+		postMin, postMed := driftProbe()
+		postLoad := loadAvgLine()
+		stable := "平稳"
+		if preMed > 0 && float64(postMed)/float64(preMed) > 1.15 {
+			stable = "环境不平稳"
 		}
+		reportPairedPhase(t, report, hcfg.name, hammerS, readerS, stable,
+			fmt.Sprintf("负载均值 前 %s 后 %s；漂移探针 min %v→%v median %v→%v；连接采样：%s",
+				preLoad, postLoad, preMin.Round(time.Millisecond), postMin.Round(time.Millisecond),
+				preMed.Round(time.Millisecond), postMed.Round(time.Millisecond), connLine))
 	}
 
-	// ⑧ 直连读路径的并发吞吐：k 个 worker 闭环打 365d 分块（与入口同一条读路径与参数，
-	// 预热连接），回答"读栈到底能并行多少"。
-	for _, line := range runDirectSweep(t, st, now, []int{1, 2, 4, 8, 16, 32}, directDur()) {
-		report.note(line)
+	// ⑦ 闭环干扰曲线：同样走子进程；k=0 档是曲线内的读者空载对照。
+	report.note("环境（曲线组前）：" + envReportLine() + " 负载 " + loadAvgLine())
+	for _, kind := range []struct {
+		label, shape string
+		ks           []int
+	}{{"365d 分块", "cmp365d", []int{0, 1, 2, 4, 8}}, {"单节点 QueryProbes 365d", "probes365d", []int{1, 2}}} {
+		for _, k := range kind.ks {
+			fds := startFDSampler(path)
+			t0 := time.Now().Add(2 * time.Second)
+			var hammerS, readerS []loadSample
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				readerS = childRun(t, "reader", srv.URL, t0, int(curveDur().Seconds()), map[string]string{
+					envSource: probeSource, envTasks: strconv.Itoa(tasks),
+				}, filepath.Join(outDir, fmt.Sprintf("readers-curve-%s-k%d.jsonl", kind.shape, k)))
+			}()
+			if k > 0 {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					hammerS = childRun(t, "hammer", srv.URL, t0, int(curveDur().Seconds()), map[string]string{
+						envSource: fmt.Sprintf("203.0.113.%d", k+10), envShape: kind.shape, envK: strconv.Itoa(k),
+						envTasks: strconv.Itoa(tasks), envNodes: strconv.Itoa(chunkNodes),
+					}, filepath.Join(outDir, fmt.Sprintf("hammer-curve-%s-k%d.jsonl", kind.shape, k)))
+				}()
+			} else {
+				// k=0：曲线内的读者空载对照，锤文件留空（对齐用）。
+				hammerFile := filepath.Join(outDir, fmt.Sprintf("hammer-curve-%s-k%d.jsonl", kind.shape, k))
+				if f, err := os.Create(hammerFile); err == nil {
+					f.Close()
+				}
+			}
+			wg.Wait()
+			report.note(reportCurveLevel(kind.label, k, hammerS, readerS, curveDur()) + "；连接采样：" + fds.stopAndReport())
+		}
 	}
 
 	// ⑤ 维护积压：回拨到额度内重复②③的 365d 形状，再回拨到超出额度，请求被拒。
@@ -670,379 +697,6 @@ func (r *loadReport) write(t *testing.T) {
 	for _, line := range r.notes {
 		t.Log(line)
 	}
-}
-
-// pairedResult 是一轮期内配对测量的结果：同一窗口内连续 4 个"开环 15 秒 / 闭环空闲 15 秒"
-// 循环，读者每 200ms 采样一次，按发出时饱和来源的在飞数（原子计数）分"压着/没压着"两类，
-// 报告各自的 p50/p99 与比值；门槛是各读者 ≤2×（期内空闲同类，不再用跨阶段的空载基线）。
-type pairedResult struct {
-	hammer                     *loadGroup
-	burst                      *loadGroup
-	mIdle, mLoad, pIdle, pLoad []time.Duration
-	cycles                     int
-	readerErrs, readerBad      int // 读者的错误与核对失败计数（两类都不计延迟样本）
-}
-
-// runPairedSaturation：两个读者全程每 200ms 一个 ① 形状请求；重请求只在开环半周期
-// 发出（每半周期开头突发 60，之后每 100ms 一个，按计划时刻不等返回）。读者的每个样本
-// 记录发出时刻与当时饱和来源的在飞数。
-func runPairedSaturation(t *testing.T, srvURL string, now time.Time, tasks int, srcIP string,
-	name string, heavy func(*sourcedClient) (*loadOutcome, error)) *pairedResult {
-	t.Helper()
-	cycles, half := 4, 15*time.Second
-	if smoke {
-		cycles, half = 2, 2*time.Second
-	}
-	hammer := newSourcedClient(srvURL, srcIP)
-	plain := newSourcedClient(srvURL, probeSource)
-	plainP := newSourcedClient(srvURL, readerProbesSource)
-
-	var inFlight atomic.Int64
-	var mu sync.Mutex
-	res := &pairedResult{hammer: &loadGroup{name: name}, burst: &loadGroup{name: name + "·限流验证"}, cycles: cycles}
-
-	record := func(g *loadGroup, begin time.Time, out *loadOutcome, err error) {
-		mu.Lock()
-		defer mu.Unlock()
-		g.issued++
-		g.latencies = append(g.latencies, time.Since(begin))
-		switch {
-		case err == nil:
-			g.success++
-			if out != nil {
-				g.seriesChecked++
-				if out.series == 0 || out.samples == 0 || (out.wantSeries != 0 && out.series != out.wantSeries) {
-					g.seriesFailed++
-				}
-			}
-		case connect.CodeOf(err) == connect.CodeResourceExhausted:
-			if strings.Contains(err.Error(), "concurrent history queries") {
-				g.gateRejected++
-			} else {
-				g.limited++
-			}
-		default:
-			g.other++
-			g.err = err.Error()
-		}
-	}
-
-	start := time.Now()
-	end := start.Add(time.Duration(cycles) * 2 * half)
-	var wg sync.WaitGroup
-
-	// 重请求：开环半周期的起点突发 60，其余每 100ms 一个。
-	fireHeavy := func(at time.Time) {
-		if !time.Now().Before(end) {
-			return
-		}
-		mu.Lock()
-		res.hammer.planned++
-		mu.Unlock()
-		time.Sleep(time.Until(at))
-		if !time.Now().Before(end) {
-			res.hammer.incomplete++
-			return
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			begin := time.Now()
-			inFlight.Add(1)
-			out, err := heavy(hammer)
-			inFlight.Add(-1)
-			record(res.hammer, begin, out, err)
-		}()
-	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for c := range cycles {
-			openStart := start.Add(time.Duration(c) * 2 * half)
-			for i := range 60 {
-				fireHeavy(openStart.Add(time.Duration(i) * 5 * time.Millisecond))
-			}
-			for i := 60; ; i++ {
-				at := openStart.Add(time.Duration(i) * 100 * time.Millisecond)
-				if !at.Before(openStart.Add(half)) {
-					break
-				}
-				fireHeavy(at)
-			}
-		}
-	}()
-
-	// 读者：全程每 200ms 一个；发出时记下在飞数，按 >0 / =0 分类。读者的错误与
-	// 响应核对单独计数——读者失败被拖到 0 掩盖不了。
-	fireReader := func(at time.Time, probes bool) {
-		time.Sleep(time.Until(at))
-		if !time.Now().Before(end) {
-			return
-		}
-		load := inFlight.Load() > 0
-		begin := time.Now()
-		var lat time.Duration
-		if probes {
-			r, err := plainP.QueryProbes(ctxOf(t), connect.NewRequest(&heronv1.QueryProbesRequest{NodeId: 1, From: now.Unix() - 6*3600, To: now.Unix(), MaxPoints: 720}))
-			lat = time.Since(begin)
-			mu.Lock()
-			if err != nil {
-				res.readerErrs++
-			} else if out := seriesOutcome(r, tasks); out.series != tasks || out.samples == 0 {
-				res.readerBad++
-			}
-		} else {
-			r, err := plain.QueryMetrics(ctxOf(t), connect.NewRequest(&heronv1.QueryMetricsRequest{NodeId: 1, From: now.Unix() - 6*3600, To: now.Unix(), MaxPoints: 720}))
-			lat = time.Since(begin)
-			mu.Lock()
-			if err != nil {
-				res.readerErrs++
-			} else if out := metricsOutcome(r); out.series == 0 {
-				res.readerBad++
-			}
-		}
-		if probes {
-			if load {
-				res.pLoad = append(res.pLoad, lat)
-			} else {
-				res.pIdle = append(res.pIdle, lat)
-			}
-		} else {
-			if load {
-				res.mLoad = append(res.mLoad, lat)
-			} else {
-				res.mIdle = append(res.mIdle, lat)
-			}
-		}
-		mu.Unlock()
-	}
-	for t0 := start.Add(200 * time.Millisecond); t0.Before(end); t0 = t0.Add(200 * time.Millisecond) {
-		wg.Add(2)
-		go func(at time.Time) { defer wg.Done(); fireReader(at, false) }(t0)
-		go func(at time.Time) { defer wg.Done(); fireReader(at.Add(100*time.Millisecond), true) }(t0)
-	}
-	wg.Wait()
-	res.hammer.incomplete = res.hammer.planned - res.hammer.issued
-	// 限流确实在拒：第三来源 80 连发，成功的 List 响应核对候选数。
-	burst := newSourcedClient(srvURL, burstSource)
-	res.burst.planned = 80
-	var bwg sync.WaitGroup
-	for range 80 {
-		bwg.Add(1)
-		go func() {
-			defer bwg.Done()
-			begin := time.Now()
-			r, err := burst.ListProbeComparisonNodes(ctxOf(t), connect.NewRequest(&heronv1.ListProbeComparisonNodesRequest{TaskId: 1}))
-			mu.Lock()
-			defer mu.Unlock()
-			res.burst.issued++
-			res.burst.latencies = append(res.burst.latencies, time.Since(begin))
-			if err == nil {
-				res.burst.success++
-				res.burst.seriesChecked++
-				if r.Msg.GetMaxNodesPerQuery() == 0 || len(r.Msg.GetNodeIds()) == 0 {
-					res.burst.seriesFailed++
-				}
-			} else if connect.CodeOf(err) == connect.CodeResourceExhausted {
-				res.burst.limited++
-			} else {
-				res.burst.other++
-				res.burst.err = err.Error()
-			}
-		}()
-	}
-	bwg.Wait()
-	return res
-}
-
-// line 打印配对结果：期内空闲同类与压着同类各自 p50/p99 与比值。
-func (r *pairedResult) line() string {
-	mr, pr := ratio(r.mIdle, r.mLoad), ratio(r.pIdle, r.pLoad)
-	return fmt.Sprintf("④：%s 周期 %d×（开 15s/闲 15s），饱和来源发起 %d（成功 %d、限流 %d、并发闸 %d、其他 %d、未完成 %d、%s）；读者错误 %d、核对失败 %d；"+
-		"指标读者 闲 %d 个 p99=%v / 压 %d 个 p99=%v（%.2f×）；探测读者 闲 %d 个 p99=%v / 压 %d 个 p99=%v（%.2f×）",
-		r.hammer.name, r.cycles, r.hammer.issued, r.hammer.success, r.hammer.limited, r.hammer.gateRejected, r.hammer.other, r.hammer.incomplete, r.hammer.verifiedLine(),
-		r.readerErrs, r.readerBad,
-		len(r.mIdle), quantile(r.mIdle, 0.99), len(r.mLoad), quantile(r.mLoad, 0.99), mr,
-		len(r.pIdle), quantile(r.pIdle, 0.99), len(r.pLoad), quantile(r.pLoad, 0.99), pr) +
-		fmt.Sprintf("；突发验证被限流 %d 个", r.burst.limited)
-}
-
-func ratio(idle, load []time.Duration) float64 {
-	if len(idle) == 0 || len(load) == 0 {
-		return 0
-	}
-	return float64(quantile(load, 0.99)) / float64(quantile(idle, 0.99))
-}
-
-// runClosedLoop 保持恰好 k 个重请求在飞 dur：worker 完成一个立刻发下一个。重来源
-// 每个请求轮换一个 IP（8 个来源的突发与补充合计远超 k 档位的需求），把"恰好 k 个
-// 在飞"与单来源限流解耦；读者每秒一个 ① 形状，走独立来源。
-func runClosedLoop(t *testing.T, srvURL string, now time.Time, tasks, k int, dur time.Duration, label string,
-	fire func(c *sourcedClient) (*loadOutcome, error), baseMetrics, baseProbes time.Duration) string {
-	t.Helper()
-	sources := make([]*sourcedClient, 8)
-	for i := range sources {
-		sources[i] = newSourcedClient(srvURL, fmt.Sprintf("203.0.113.%d", i+1))
-	}
-	var next atomic.Int64
-	pick := func() *sourcedClient { return sources[int(next.Add(1))%len(sources)] }
-	plain := newSourcedClient(srvURL, probeSource)
-
-	var mu sync.Mutex
-	var heavyLat []time.Duration
-	var r1Lat, r2Lat []time.Duration
-	var done, limited, gateRejected, other, checked, failed int
-	stop := time.Now().Add(dur)
-	var wg sync.WaitGroup
-	for range k {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for time.Now().Before(stop) {
-				begin := time.Now()
-				out, err := fire(pick())
-				d := time.Since(begin)
-				mu.Lock()
-				if err == nil {
-					done++
-					heavyLat = append(heavyLat, d)
-					if out != nil {
-						checked++
-						if out.series == 0 || out.samples == 0 || (out.wantSeries != 0 && out.series != out.wantSeries) {
-							failed++
-						}
-					}
-				} else if connect.CodeOf(err) == connect.CodeResourceExhausted {
-					if strings.Contains(err.Error(), "concurrent history queries") {
-						gateRejected++
-					} else {
-						limited++
-					}
-				} else {
-					other++
-				}
-				mu.Unlock()
-				if err != nil && connect.CodeOf(err) == connect.CodeResourceExhausted {
-					// 被拒的请求没在飞：退避后重试，保持 k 个“被准入”的在飞。
-					time.Sleep(100 * time.Millisecond)
-				}
-			}
-		}()
-	}
-	deadline := time.Now().Add(dur)
-	for i := 0; ; i++ {
-		at := time.Now().Add(time.Duration(i) * time.Second)
-		if !at.Before(deadline) {
-			break
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			time.Sleep(time.Until(at))
-			begin := time.Now()
-			plain.QueryMetrics(ctxOf(t), connect.NewRequest(&heronv1.QueryMetricsRequest{NodeId: 1, From: now.Unix() - 6*3600, To: now.Unix(), MaxPoints: 720}))
-			mu.Lock()
-			r1Lat = append(r1Lat, time.Since(begin))
-			mu.Unlock()
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			time.Sleep(time.Until(at.Add(500 * time.Millisecond)))
-			begin := time.Now()
-			plain.QueryProbes(ctxOf(t), connect.NewRequest(&heronv1.QueryProbesRequest{NodeId: 1, From: now.Unix() - 6*3600, To: now.Unix(), MaxPoints: 720}))
-			mu.Lock()
-			r2Lat = append(r2Lat, time.Since(begin))
-			mu.Unlock()
-		}()
-	}
-	wg.Wait()
-	_ = tasks
-	rm, rp := ratioOf(r1Lat, baseMetrics), ratioOf(r2Lat, baseProbes)
-	ver := "核对 " + strconv.Itoa(checked) + " 个"
-	if failed > 0 {
-		ver += "、失败 " + strconv.Itoa(failed) + " 个"
-	} else {
-		ver += "全过"
-	}
-	return fmt.Sprintf("⑦ 闭环 %s k=%d（%v）：重请求完成 %d（%.1f/s，p50=%v，限流 %d、并发闸 %d、其他 %d、%s）；"+
-		"读者指标 p50=%v p99=%v（%.2f×）、读者单节点 p50=%v p99=%v（%.2f×）",
-		label, k, dur.Round(time.Second), done, float64(done)/dur.Seconds(), quantile(heavyLat, 0.50), limited, gateRejected, other, ver,
-		quantile(r1Lat, 0.50), quantile(r1Lat, 0.99), rm, quantile(r2Lat, 0.50), quantile(r2Lat, 0.99), rp)
-}
-
-func ratioOf(ds []time.Duration, base time.Duration) float64 {
-	if base <= 0 || len(ds) == 0 {
-		return 0
-	}
-	return float64(quantile(ds, 0.99)) / float64(base)
-}
-
-// runDirectSweep 回答读栈的并行度：k 个 worker 闭环直调 store（与入口同一条读路径、
-// 同参数的 365d 分块），先各档预热连接，再数完成量。
-func runDirectSweep(t *testing.T, st *store.Store, now time.Time, ks []int, dur time.Duration) []string {
-	t.Helper()
-	lv, step := store.ChooseLevel(now.Unix()-365*day, now.Unix(), 720)
-	ids := firstN(store.MaxComparisonNodes)
-	var out []string
-	for _, k := range ks {
-		// 预热：k 个并发轻查询先把读池的连接撑起来。
-		var warm sync.WaitGroup
-		for range k {
-			warm.Add(1)
-			go func() {
-				defer warm.Done()
-				_, _ = st.QueryProbeComparison(ctxOf(t), 1, ids[:1], now.Unix()-3600, now.Unix(), lv, step)
-			}()
-		}
-		warm.Wait()
-		var mu sync.Mutex
-		var lat []time.Duration
-		var done, errs int
-		stop := time.Now().Add(dur)
-		var wg sync.WaitGroup
-		for range k {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for time.Now().Before(stop) {
-					begin := time.Now()
-					_, err := st.QueryProbeComparison(ctxOf(t), 1, ids, now.Unix()-365*day, now.Unix(), lv, step)
-					d := time.Since(begin)
-					mu.Lock()
-					if err == nil {
-						done++
-						lat = append(lat, d)
-					} else {
-						errs++
-					}
-					mu.Unlock()
-				}
-			}()
-		}
-		wg.Wait()
-		out = append(out, fmt.Sprintf("⑧ 直连读路径 k=%d（%v，365d %d 节点分块）：吞吐 %.1f/s，p50=%v，p99=%v，错误 %d",
-			k, dur.Round(time.Second), store.MaxComparisonNodes, float64(done)/dur.Seconds(), quantile(lat, 0.50), quantile(lat, 0.99), errs))
-	}
-	return out
-}
-
-// ctxOf 给负载台请求一个以测试为生命的上下文。
-func ctxOf(t *testing.T) context.Context { return t.Context() }
-
-// curveDur / directDur：闭环每档与直连每档的时长；smoke 缩到 1 秒。
-func curveDur() time.Duration {
-	if smoke {
-		return time.Second
-	}
-	return 30 * time.Second
-}
-
-func directDur() time.Duration {
-	if smoke {
-		return time.Second
-	}
-	return 10 * time.Second
 }
 
 // startFDSampler 周期性用 lsof 数进程打开的数据库文件句柄（db / -wal / -shm 后缀归类）。
