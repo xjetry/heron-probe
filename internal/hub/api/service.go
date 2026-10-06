@@ -164,7 +164,7 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 	}
 	return &Service{
 		cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, probes: probes, alerts: alerts, notifier: notifier, clk: clk, log: log,
-		history:   history{store: st, log: log},
+		history:   history{store: st, log: log, gate: newHistoryGate()},
 		heartbeat: cfg.Heartbeat,
 		access:    accessTable(heronv1.File_heron_v1_admin_proto.Services().ByName("AdminService")),
 		uploading: make(chan struct{}, 1),

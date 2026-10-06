@@ -49,26 +49,6 @@ func checkComparisonNodes(ids []int64) error {
 	return nil
 }
 
-// comparisonSplits 按与单节点 QueryProbes 完全相同的节点准入逐节点判定分块：可见进 visible
-// （保持请求顺序），不可见或不存在进 unavailable（不加区分，与单节点查询对二者同一 NotFound 一致）。
-// 分块不核对分配：某节点上某任务的历史，单节点 QueryProbes 已按同一授权返回（含撤下与已删除任务
-// 的行），分块不放宽任何可见范围，也就不需要分配或配置版本来授权。
-func (s *Service) comparisonSplits(ctx context.Context, ids []int64) (visible, unavailable []int64, err error) {
-	for _, id := range ids {
-		ok, err := s.store.NodeExists(ctx, id)
-		if err != nil {
-			s.log.Error("looking up node failed", "err", err)
-			return nil, nil, internalError("looking up node failed")
-		}
-		if ok {
-			visible = append(visible, id)
-		} else {
-			unavailable = append(unavailable, id)
-		}
-	}
-	return visible, unavailable, nil
-}
-
 // ListProbeComparisonNodes 是跨节点对比的第一步：任务标注与当前分配了该任务、调用方可见的节点
 // 在同一个读快照里读出。标注规则同 QueryProbes：会话与全站 token 按任务当前配置，非全站 token
 // 只在任务的整个作用域都可见时标注（与 ListProbeTasks 同一谓词）。
@@ -106,33 +86,11 @@ func (s *Service) QueryProbeComparison(ctx context.Context, req *connect.Request
 	if err := checkComparisonNodes(m.GetNodeIds()); err != nil {
 		return nil, err
 	}
-	visible, unavailable, err := s.comparisonSplits(ctx, m.GetNodeIds())
+	resp, err := s.history.comparison(ctx, m.GetTaskId(), m.GetNodeIds(), m.GetFrom(), m.GetTo(), maxPoints, s.store.NodeExists)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := s.history.comparison(ctx, m.GetTaskId(), visible, m.GetFrom(), m.GetTo(), maxPoints)
-	if err != nil {
-		return nil, err
-	}
-	resp.UnavailableNodeIds = unavailable
 	return connect.NewResponse(resp), nil
-}
-
-// 公开端的分块授权：只按节点是否公开，不可见与不存在同进 unavailable_node_ids。
-func (p *Public) comparisonSplits(ctx context.Context, ids []int64) (visible, unavailable []int64, err error) {
-	for _, id := range ids {
-		public, err := p.store.NodeIsPublic(ctx, id)
-		if err != nil {
-			p.log.Error("looking up node failed", "err", err)
-			return nil, nil, internalError("looking up node failed")
-		}
-		if public {
-			visible = append(visible, id)
-		} else {
-			unavailable = append(unavailable, id)
-		}
-	}
-	return visible, unavailable, nil
 }
 
 // ListProbeComparisonNodes 的公开端：候选只含公开节点。任务只分配给非公开节点时与任务不存在
@@ -170,14 +128,9 @@ func (p *Public) QueryProbeComparison(ctx context.Context, req *connect.Request[
 	if err := checkComparisonNodes(m.GetNodeIds()); err != nil {
 		return nil, err
 	}
-	visible, unavailable, err := p.comparisonSplits(ctx, m.GetNodeIds())
+	resp, err := p.history.comparison(ctx, m.GetTaskId(), m.GetNodeIds(), m.GetFrom(), m.GetTo(), maxPoints, p.store.NodeIsPublic)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := p.history.comparison(ctx, m.GetTaskId(), visible, m.GetFrom(), m.GetTo(), maxPoints)
-	if err != nil {
-		return nil, err
-	}
-	resp.UnavailableNodeIds = unavailable
 	return connect.NewResponse(resp), nil
 }

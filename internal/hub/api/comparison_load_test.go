@@ -560,10 +560,11 @@ func comparisonOutcome(r *connect.Response[heronv1.QueryProbeComparisonResponse]
 }
 
 type loadGroup struct {
-	name                          string
-	planned, issued, success      int
-	limited, other, quotaRejected int
-	latencies                     []time.Duration
+	name                     string
+	planned, issued, success int
+	limited, gateRejected    int
+	other, quotaRejected     int
+	latencies                []time.Duration
 	// 核对只统计拿到成功响应、且响应体可核对的请求；被限流/被拒/未完成的请求不算失败。
 	seriesChecked, seriesFailed int
 	incomplete                  int // 计划时刻已到、goroutine 没能在窗口内发出的数量
@@ -679,7 +680,11 @@ func runEntrySaturation(t *testing.T, srvURL string, hammerClient *sourcedClient
 					}
 				}
 			} else if connect.CodeOf(err) == connect.CodeResourceExhausted {
-				hg.limited++
+				if strings.Contains(err.Error(), "concurrent history queries") {
+					hg.gateRejected++
+				} else {
+					hg.limited++
+				}
 			} else {
 				hg.other++
 				hg.err = err.Error()
@@ -791,7 +796,11 @@ func runEntrySaturation(t *testing.T, srvURL string, hammerClient *sourcedClient
 					b.seriesFailed++
 				}
 			} else if connect.CodeOf(err) == connect.CodeResourceExhausted {
-				b.limited++
+				if strings.Contains(err.Error(), "concurrent history queries") {
+					b.gateRejected++
+				} else {
+					b.limited++
+				}
 			} else {
 				b.other++
 				b.err = err.Error()
@@ -819,9 +828,9 @@ func (s *saturationResult) ratios() (float64, float64) {
 func (s *saturationResult) verdict() string {
 	rm, rp := s.ratios()
 	ok := rm <= 2 && rp <= 2
-	return fmt.Sprintf("④：饱和来源 %s 发起 %d（成功 %d、限流 %d、其他 %d、未完成 %d、%s）；"+
+	return fmt.Sprintf("④：饱和来源 %s 发起 %d（成功 %d、限流 %d、并发闸 %d、其他 %d、未完成 %d、%s）；"+
 		"读者指标 p99=%v（基线 %v，%.2f×）、读者单节点 p99=%v（基线 %v，%.2f×），门槛各 ≤2×：%v；突发验证被限流 %d 个",
-		s.hammer.name, s.hammer.issued, s.hammer.success, s.hammer.limited, s.hammer.other, s.hammer.incomplete, s.hammer.verifiedLine(),
+		s.hammer.name, s.hammer.issued, s.hammer.success, s.hammer.limited, s.hammer.gateRejected, s.hammer.other, s.hammer.incomplete, s.hammer.verifiedLine(),
 		s.reader1.p99(), s.baseMetrics, rm, s.reader2.p99(), s.baseProbes, rp, ok, s.burst.limited)
 }
 
@@ -989,7 +998,7 @@ func runClosedLoop(t *testing.T, srvURL string, now time.Time, tasks, k int, dur
 	var mu sync.Mutex
 	var heavyLat []time.Duration
 	var r1Lat, r2Lat []time.Duration
-	var done, limited, other, checked, failed int
+	var done, limited, gateRejected, other, checked, failed int
 	stop := time.Now().Add(dur)
 	var wg sync.WaitGroup
 	for range k {
@@ -1011,7 +1020,11 @@ func runClosedLoop(t *testing.T, srvURL string, now time.Time, tasks, k int, dur
 						}
 					}
 				} else if connect.CodeOf(err) == connect.CodeResourceExhausted {
-					limited++
+					if strings.Contains(err.Error(), "concurrent history queries") {
+						gateRejected++
+					} else {
+						limited++
+					}
 				} else {
 					other++
 				}
@@ -1059,9 +1072,9 @@ func runClosedLoop(t *testing.T, srvURL string, now time.Time, tasks, k int, dur
 	} else {
 		ver += "全过"
 	}
-	return fmt.Sprintf("⑦ 闭环 %s k=%d（%v）：重请求完成 %d（%.1f/s，p50=%v，限流 %d、其他 %d、%s）；"+
+	return fmt.Sprintf("⑦ 闭环 %s k=%d（%v）：重请求完成 %d（%.1f/s，p50=%v，限流 %d、并发闸 %d、其他 %d、%s）；"+
 		"读者指标 p50=%v p99=%v（%.2f×）、读者单节点 p50=%v p99=%v（%.2f×）",
-		label, k, dur.Round(time.Second), done, float64(done)/dur.Seconds(), quantile(heavyLat, 0.50), limited, other, ver,
+		label, k, dur.Round(time.Second), done, float64(done)/dur.Seconds(), quantile(heavyLat, 0.50), limited, gateRejected, other, ver,
 		quantile(r1Lat, 0.50), quantile(r1Lat, 0.99), rm, quantile(r2Lat, 0.50), quantile(r2Lat, 0.99), rp)
 }
 

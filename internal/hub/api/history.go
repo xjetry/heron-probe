@@ -22,12 +22,17 @@ const (
 	maxQuerySpan     = 400 * 24 * time.Hour
 )
 
-// history 是两族历史查询的唯一实现，管理端与公开端共用。两端在两处不同，都由调用方决定：
-// 哪些节点可查（Service.requireNode / Public.requirePublic 先行裁决，这里不再看节点），
-// 以及探测序列怎样标注（taskLabel）。
+// history 是两族历史查询与跨节点对比的唯一实现，管理端与公开端共用。两端在两处不同，都由调用方
+// 传入：节点准入（管理端 requireNode / store.NodeExists，公开端 requirePublic / store.NodeIsPublic），
+// 以及探测序列怎样标注（taskLabel）。准入要读库，由这里在拿到本来源的在飞空位之后执行：入口与本层
+// 为一个历史请求做的库读（节点准入与查询本身）都发生在持位期间，入口在进入之前只做不碰库的请求
+// 校验（checkWindow、checkComparisonTask、checkComparisonNodes）。所有接口共用的鉴权（凭据查库）
+// 在拦截器里、早于入口，不在这条约束内。准入若在拿空位之前，同一来源的突发请求会在排队前各占一个
+// 读连接，按来源的在飞上限就封不住它的读并发。
 type history struct {
 	store *store.Store
 	log   *slog.Logger
+	gate  *historyGate
 }
 
 // taskLabel 给出任务的种类与目标；ok 为 false 时两项留空，客户端退回编号。两端不同：管理端按
@@ -58,7 +63,17 @@ func checkWindow(from, to int64, requested uint32) (int, error) {
 	return maxPoints, nil
 }
 
-func (h history) metrics(ctx context.Context, m *heronv1.QueryMetricsRequest, maxPoints int) (*heronv1.QueryMetricsResponse, error) {
+// metrics 在拿到本来源空位后先执行 admit（该端的节点准入，要读库，见 history），再读指标桶。
+func (h history) metrics(ctx context.Context, m *heronv1.QueryMetricsRequest, maxPoints int, admit func(context.Context) error) (*heronv1.QueryMetricsResponse, error) {
+	// 按来源限在飞：等待不占读连接；defer 覆盖错误与 panic 路径。
+	release, err := h.gate.acquire(ctx, historySource(ctx))
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if err := admit(ctx); err != nil {
+		return nil, err
+	}
 	lv, step := store.ChooseLevel(m.GetFrom(), m.GetTo(), maxPoints)
 	rows, summary, err := h.store.QueryMetricsCoverage(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), lv, step)
 	if err != nil {
@@ -98,7 +113,16 @@ func (h history) metrics(ctx context.Context, m *heronv1.QueryMetricsRequest, ma
 	return resp, nil
 }
 
-func (h history) probeSeries(ctx context.Context, m *heronv1.QueryProbesRequest, maxPoints int, label taskLabel, order []uint64) (*heronv1.QueryProbesResponse, error) {
+func (h history) probeSeries(ctx context.Context, m *heronv1.QueryProbesRequest, maxPoints int, label taskLabel, order []uint64, admit func(context.Context) error) (*heronv1.QueryProbesResponse, error) {
+	// 按来源限在飞：等待不占读连接；defer 覆盖错误与 panic 路径。admit 在持位后执行，同 metrics。
+	release, err := h.gate.acquire(ctx, historySource(ctx))
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if err := admit(ctx); err != nil {
+		return nil, err
+	}
 	lv, step := store.ChooseLevel(m.GetFrom(), m.GetTo(), maxPoints)
 	rows, err := h.store.QueryProbes(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), lv, step)
 	if err != nil {
@@ -153,18 +177,51 @@ func (h history) queryError(err error, operation string) error {
 	return internalError(operation)
 }
 
-// comparison 组装对比分块的响应：nodeIDs 是已过逐节点授权的可见节点，与请求同序；窗口内没有
-// 样本的可见节点也出现（samples 为空），缺数与零值在协议层可区分。
-func (h history) comparison(ctx context.Context, taskID uint64, nodeIDs []int64, from, to int64, maxPoints int) (*heronv1.QueryProbeComparisonResponse, error) {
+// comparisonSplits 按与单节点查询相同的节点准入逐节点判定分块：可见节点进 visible，不存在或不在
+// 视野的进 unavailable，不加区分（与单节点查询对二者同一个 NotFound 一致），两者都保持请求顺序。
+// nodeVisible 每个节点读一次库，只能在持有本来源空位时调用；唯一调用方是 history.comparison。
+// 分块不核对分配：某节点上某任务的历史，单节点 QueryProbes 已按同一授权返回（含撤下与已删除
+// 任务的行），分块不放宽任何可见范围，也就不需要分配或配置版本来授权。
+func comparisonSplits(ctx context.Context, log *slog.Logger, ids []int64, nodeVisible func(context.Context, int64) (bool, error)) (visible, unavailable []int64, err error) {
+	for _, id := range ids {
+		ok, err := nodeVisible(ctx, id)
+		if err != nil {
+			log.Error("looking up node failed", "err", err)
+			return nil, nil, internalError("looking up node failed")
+		}
+		if ok {
+			visible = append(visible, id)
+		} else {
+			unavailable = append(unavailable, id)
+		}
+	}
+	return visible, unavailable, nil
+}
+
+// comparison 组装对比分块的响应。nodeIDs 是请求里的节点清单（形状已由 checkComparisonNodes 校验），
+// nodeVisible 是该端的逐节点准入（管理端 store.NodeExists 按调用方作用域，公开端 store.NodeIsPublic），
+// 在拿到空位之后经 comparisonSplits 执行。窗口内没有样本的可见节点也出现（samples 为空），缺数与零值
+// 在协议层可区分。
+func (h history) comparison(ctx context.Context, taskID uint64, nodeIDs []int64, from, to int64, maxPoints int, nodeVisible func(context.Context, int64) (bool, error)) (*heronv1.QueryProbeComparisonResponse, error) {
+	// 按来源限在飞：等待不占读连接；defer 覆盖错误与 panic 路径。
+	release, err := h.gate.acquire(ctx, historySource(ctx))
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	visible, unavailable, err := comparisonSplits(ctx, h.log, nodeIDs, nodeVisible)
+	if err != nil {
+		return nil, err
+	}
 	lv, step := store.ChooseLevel(from, to, maxPoints)
-	rows, err := h.store.QueryProbeComparison(ctx, taskID, nodeIDs, from, to, lv, step)
+	rows, err := h.store.QueryProbeComparison(ctx, taskID, visible, from, to, lv, step)
 	if err != nil {
 		return nil, h.queryError(err, "probe comparison query failed")
 	}
-	resp := &heronv1.QueryProbeComparisonResponse{Level: lv.Name, StepS: uint32(step)}
-	series := make([]*heronv1.NodeProbeSamples, len(nodeIDs))
-	index := make(map[int64]int, len(nodeIDs))
-	for i, id := range nodeIDs {
+	resp := &heronv1.QueryProbeComparisonResponse{Level: lv.Name, StepS: uint32(step), UnavailableNodeIds: unavailable}
+	series := make([]*heronv1.NodeProbeSamples, len(visible))
+	index := make(map[int64]int, len(visible))
+	for i, id := range visible {
 		series[i] = &heronv1.NodeProbeSamples{NodeId: id}
 		index[id] = i
 	}

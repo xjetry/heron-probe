@@ -75,9 +75,6 @@ func (s *Service) QueryProbes(ctx context.Context, req *connect.Request[heronv1.
 	if err != nil {
 		return nil, err
 	}
-	if err := s.requireNode(ctx, m.GetNodeId()); err != nil {
-		return nil, err
-	}
 	_, details := s.visibleProbeTasks(ctx)
 	tasks := make(map[uint64]*heronv1.ProbeTask, len(details))
 	order := make([]uint64, 0, len(details))
@@ -89,7 +86,7 @@ func (s *Service) QueryProbes(ctx context.Context, req *connect.Request[heronv1.
 	resp, err := s.history.probeSeries(ctx, m, maxPoints, func(id uint64) (heronv1.ProbeKind, string, bool) {
 		t, ok := tasks[id]
 		return t.GetKind(), t.GetTarget(), ok
-	}, order)
+	}, order, func(ctx context.Context) error { return s.requireNode(ctx, m.GetNodeId()) })
 	if err != nil {
 		return nil, err
 	}

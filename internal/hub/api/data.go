@@ -31,10 +31,7 @@ func (s *Service) QueryMetrics(ctx context.Context, req *connect.Request[heronv1
 	if err != nil {
 		return nil, err
 	}
-	if err := s.requireNode(ctx, m.GetNodeId()); err != nil {
-		return nil, err
-	}
-	resp, err := s.history.metrics(ctx, m, maxPoints)
+	resp, err := s.history.metrics(ctx, m, maxPoints, func(ctx context.Context) error { return s.requireNode(ctx, m.GetNodeId()) })
 	if err != nil {
 		return nil, err
 	}

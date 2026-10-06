@@ -79,7 +79,7 @@ func NewPublic(cfg PublicConfig, st *store.Store, l *live.Live, book *traffic.Bo
 	}
 	return &Public{
 		cfg: cfg, store: st, live: l, traffic: book, probes: probes, clk: clk, log: log,
-		history: history{store: st, log: log},
+		history: history{store: st, log: log, gate: newHistoryGate()},
 		facts:   newProjection((&heronv1.PublicFacts{}).ProtoReflect().Type(), (&heronv1.Facts{}).ProtoReflect().Descriptor()),
 		metrics: newProjection((&heronv1.PublicMetrics{}).ProtoReflect().Type(), (&heronv1.Metrics{}).ProtoReflect().Descriptor()),
 		billing: newProjection((&heronv1.PublicBilling{}).ProtoReflect().Type(), (&heronv1.Billing{}).ProtoReflect().Descriptor()),
@@ -305,10 +305,7 @@ func (p *Public) QueryMetrics(ctx context.Context, req *connect.Request[heronv1.
 	if err != nil {
 		return nil, err
 	}
-	if err := p.requirePublic(ctx, m.GetNodeId()); err != nil {
-		return nil, err
-	}
-	resp, err := p.history.metrics(ctx, m, maxPoints)
+	resp, err := p.history.metrics(ctx, m, maxPoints, func(ctx context.Context) error { return p.requirePublic(ctx, m.GetNodeId()) })
 	if err != nil {
 		return nil, err
 	}
@@ -321,13 +318,10 @@ func (p *Public) QueryProbes(ctx context.Context, req *connect.Request[heronv1.Q
 	if err != nil {
 		return nil, err
 	}
-	if err := p.requirePublic(ctx, m.GetNodeId()); err != nil {
-		return nil, err
-	}
 	node := m.GetNodeId()
 	resp, err := p.history.probeSeries(ctx, m, maxPoints, func(id uint64) (heronv1.ProbeKind, string, bool) {
 		return p.probes.TargetFor(node, id)
-	}, p.probes.OrderedIDs())
+	}, p.probes.OrderedIDs(), func(ctx context.Context) error { return p.requirePublic(ctx, node) })
 	if err != nil {
 		return nil, err
 	}
