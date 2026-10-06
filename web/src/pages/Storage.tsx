@@ -2,6 +2,7 @@ import { useQuery } from "@connectrpc/connect-query";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService, type SeriesTableHealth } from "../gen/heron/v1/admin_pb";
 import { bytes, duration } from "../lib/format";
+import { walObservationView } from "../lib/wal";
 
 const at = (unix: bigint) => new Date(Number(unix) * 1000).toLocaleString();
 
@@ -20,6 +21,18 @@ function Watermark({ h }: { h: SeriesTableHealth }) {
 // 完成时刻只在整轮成功时记下：缺失即从未成功跑过。
 const finished = (unix: bigint | undefined) => (unix === undefined ? <span className="muted">从未成功</span> : at(unix));
 
+// 行是否出现、以及显示长度、无文件、大小未知还是未知，只由 walObservationView 决定。
+// 这里不把缺席或读失败补成 0，也不按长度给阈值：它不是未检查点的数据量。
+function WalObservation({ wal }: { wal: ReturnType<typeof walObservationView> }) {
+  if (wal.kind === "omitted") return null;
+  return (
+    <>
+      <p>WAL 文件：{wal.text}（观测于 {at(wal.observedAt)}）</p>
+      <p className="muted">这是 -wal 文件的实际长度，不是未检查点的数据量：WAL 重置后从文件开头复用，长度不缩小，单次读数不说明是否需要检查点。</p>
+    </>
+  );
+}
+
 export function Storage() {
   const stats = useQuery(AdminService.method.getStorageStats, {});
   const gate = queryGate(stats);
@@ -30,6 +43,10 @@ export function Storage() {
       {gate.banner}
       <h1>存储</h1>
       <p>数据库逻辑大小：{bytes(s.dbBytes)}</p>
+      <p className="muted">
+        逻辑大小是 SQL 快照里的页数乘页大小，不含 -wal 与 -shm 文件；与 WAL 文件观测不是同一时刻读出的。
+      </p>
+      <WalObservation wal={walObservationView(s.wal)} />
       <p>
         上次清理完成：{finished(s.lastPruneAt)}；上次上卷完成：{finished(s.lastRollupAt)}
       </p>
