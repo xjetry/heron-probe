@@ -190,3 +190,15 @@ it("hub update still targets the latest official version", async () => {
   expect(row("东京（#1）")).toBeEnabled();
   expect(screen.getByText(/目标版本 v0\.5\.4（hub 绑定的 agent 版本）/)).toBeInTheDocument();
 });
+
+it("已在目标版本、没有任务的机器显示已是目标版本，而不是可以在线更新", async () => {
+  render({ getUpdates: async (req) => ({ targets: boundTargets, latestVersion: req.checkLatest ? "v0.5.5" : "", boundAgentVersion: "v0.5.4" }) });
+  await screen.findByRole("button", { name: "更新 Hub" });
+  // 西雅图 v0.5.4 = 绑定版本；东京 v0.5.3 落后。
+  expect(within(screen.getByRole("row", { name: /西雅图/ })).getByText("已是目标版本")).toBeInTheDocument();
+  expect(within(screen.getByRole("row", { name: /东京/ })).getByText("可以在线更新")).toBeInTheDocument();
+  // hub 未检查官方最新版时目标未知，只陈述能力；检查后 hub 已是最新则同样显示已是目标版本。
+  expect(screen.queryAllByText("已是目标版本")).toHaveLength(1);
+  await check("v0.5.5");
+  expect(screen.getAllByText("已是目标版本")).toHaveLength(2);
+});

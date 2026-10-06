@@ -6,7 +6,7 @@ import { MixedCheckbox } from "../components/MixedCheckbox";
 import { Modal } from "../components/Modal";
 import { AdminService } from "../gen/heron/v1/admin_pb";
 import type { UpdateStatus } from "../gen/heron/v1/update_pb";
-import { isStableRelease, olderThan } from "../lib/version";
+import { isRelease, isStableRelease, olderThan } from "../lib/version";
 
 const labels: Record<string, string> = {
   queued: "等待节点上线", dispatched: "已下发", downloading: "下载并校验", stopping: "停止旧服务",
@@ -19,15 +19,17 @@ const sourceLabels: Record<string, string> = { github: "GitHub 直连", hub: "�
 function eligible(status: UpdateStatus | undefined, version: string) {
   return !!status?.supported && !!version && olderThan(status.version, version) && !activeStates.has(status.task?.state ?? "");
 }
-function Progress({ status }: { status?: UpdateStatus }) {
+// target 是这台机器的更新目标（节点为 hub 绑定的 agent 版本，hub 为检查到的官方最新版），未知时为空串。
+// 没有任务时：已达到目标显示"已是目标版本"，否则只陈述在线更新能力；目标未知时无从比较，也只陈述能力。
+function Progress({ status, target }: { status?: UpdateStatus; target: string }) {
   if (!status) return <span className="muted">尚未收到更新能力，请先升级安装器与 agent。</span>;
   return <div className="update-progress">
     {!status.supported && <span className="muted">不支持在线更新：{status.reason || "本机更新器不可用"}</span>}
     {status.source && <span className="muted">{sourceLabels[status.source] ?? status.source}</span>}
     {status.task && <><strong>{labels[status.task.state] ?? status.task.state}</strong><span className="muted">目标 {status.task.version}</span>
-      {status.task.state === "unconfirmed" && <span className="muted">等待超时或本机任务记录缺失，无法确认执行结果；后续上报仍会校正。重试由节点本机更新器检查是否可执行。</span>}
+      {status.task.state === "unconfirmed" && <span className="muted">下发后等待超时，无法确认执行结果；后续上报仍会校正。重试由节点本机更新器检查是否可执行。</span>}
       {status.task.error && <span className="error">{status.task.error}</span>}</>}
-    {status.supported && !status.task && <span className="muted">可以在线更新</span>}
+    {status.supported && !status.task && <span className="muted">{isRelease(target) && isRelease(status.version) && !olderThan(status.version, target) ? "已是目标版本" : "可以在线更新"}</span>}
   </div>;
 }
 
@@ -78,7 +80,7 @@ export function Updates() {
     {check.data?.checkError && <p role="alert" className="error">检查官方版本失败：{check.data.checkError}</p>}
     {cancel.error && <p role="alert" className="error">{errorText(cancel.error)}</p>}
     <div className="update-summary">
-      <div className="card"><span className="muted">Hub 当前版本</span><h2>{hub?.version || "未知"}</h2><Progress status={hub} />
+      <div className="card"><span className="muted">Hub 当前版本</span><h2>{hub?.version || "未知"}</h2><Progress status={hub} target={latest} />
         <button type="button" disabled={!eligible(hub, latest) || busy} onClick={(event) => setConfirmation({ ids: [0n], version: latest, opener: event.currentTarget })}>更新 Hub</button>
       </div>
       <div className="card"><span className="muted">官方最新正式版</span><h2>{latest || "尚未检查"}</h2>
@@ -97,7 +99,7 @@ export function Updates() {
         const status = targets.get(node.id);
         return <tr key={String(node.id)}><td><input type="checkbox" aria-label={`选择 ${node.name}（#${node.id}）`} checked={selected.has(node.id)} disabled={!eligible(status, nodeTarget) || busy} onChange={(event) => setSelected((old) => {
           const next = new Set(old); if (event.target.checked) next.add(node.id); else next.delete(node.id); return next;
-        })} /></td><td>{node.name}<small className="muted"> #{String(node.id)}</small></td><td><code>{status?.version || "未知"}</code></td><td><Progress status={status} /></td><td>
+        })} /></td><td>{node.name}<small className="muted"> #{String(node.id)}</small></td><td><code>{status?.version || "未知"}</code></td><td><Progress status={status} target={nodeTarget} /></td><td>
           {status?.task?.state === "queued" && <button type="button" disabled={cancel.isPending || busy} onClick={() => cancel.mutate({ nodeId: node.id, id: status.task!.id })}>取消排队</button>}
         </td></tr>;
       })}</tbody>
