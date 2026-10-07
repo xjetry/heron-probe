@@ -342,7 +342,10 @@ it("管理端任务行进入对比页，公开端只给已标注的任务入口"
     { path: "/probes", Component: ProbeTasks },
     { path: "/probes/:id/compare", element: <p>对比页</p> },
   ], "/probes");
-  fireEvent.click(await screen.findByRole("link", { name: "对比" }));
+  fireEvent.click(await screen.findByRole("button", { name: "更多操作 1.1.1.1（#3）" }));
+  const compare = screen.getByRole("menuitem", { name: "对比 1.1.1.1（#3）" });
+  expect(compare).toHaveAttribute("href", "/probes/3/compare");
+  fireEvent.click(compare);
   await waitFor(() => expect(router.state.location.pathname).toBe("/probes/3/compare"));
   expect(screen.getByText("对比页")).toBeInTheDocument();
 });
