@@ -4,31 +4,24 @@
 .admin-shell input:is([type="checkbox"], [type="radio"]) { accent-color: var(--accent); width: 16px; height: 16px; flex: none; }
 .admin-shell .skip-link { position: fixed; z-index: 50; top: -100px; left: 16px; padding: 12px 18px; background: var(--card); }
 .admin-shell .skip-link:focus { top: 12px; }
-.admin-sidebar { position: fixed; inset: 0 auto 0 0; width: 224px; display: flex; flex-direction: column; background: var(--card); border-right: 1px solid var(--line); z-index: 20; }
-.sidebar-brand { padding: 26px 26px 20px; }
-.sidebar-brand .brand { font-size: 24px; letter-spacing: -.8px; gap: 10px; }
+.admin-sidebar { position: fixed; inset: 0 auto 0 0; width: 232px; display: flex; flex-direction: column; background: var(--card); border-right: 1px solid var(--line); z-index: 20; }
+.sidebar-brand { padding: 12px 16px; height: 48px; display: flex; align-items: center; border-bottom: 1px solid var(--line); }
+.sidebar-brand .brand { font-size: 16px; letter-spacing: -.8px; gap: 10px; }
 .sidebar-brand .heron-mark { width: 31px; height: 36px; }
-.workspace-label { display: block; color: var(--muted); font-size: 11px; letter-spacing: 2px; margin: 7px 0 0 42px; }
 .admin-shell .panel-nav { padding: 0 14px 18px; overflow-y: auto; flex: 1; }
 .nav-group { margin: 14px 0; }
 .nav-group > p { font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: 1.5px; padding: 0 13px; margin: 0 0 7px; }
-.admin-shell .panel-nav a { display: flex; gap: 12px; align-items: center; color: var(--muted); padding: 9px 13px; min-height: 40px; border-radius: 7px; margin: 2px 0; text-decoration: none; font-size: 13px; }
+.admin-shell .panel-nav a { display: flex; gap: 12px; align-items: center; color: var(--muted); padding: 0 10px; min-height: 32px; border-radius: var(--radius-control); margin: 2px 0; text-decoration: none; font-size: 13px; }
 .admin-shell .panel-nav a:hover { background: var(--bg); color: var(--fg); }
 .admin-shell .panel-nav a.active { color: var(--fg); background: var(--card-hover); font-weight: 650; box-shadow: inset 3px 0 var(--accent); }
-.sidebar-footer { border-top: 1px solid var(--line); display: flex; align-items: center; gap: 11px; padding: 18px 24px; }
-.admin-avatar { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line); background: var(--card-hover); border-radius: 9px; font-size: 14px; font-weight: 600; }
-.sidebar-footer strong { font-size: 12px; font-weight: 600; }
-.sidebar-footer small { display: block; color: var(--muted); font-size: 10px; margin-top: 2px; }
-.admin-workspace { margin-left: 224px; min-width: 0; }
-.admin-topbar { height: 66px; border-bottom: 1px solid var(--line); padding: 0 30px; display: flex; align-items: center; gap: 14px; background: var(--card); }
-.admin-breadcrumb { display: flex; gap: 14px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.admin-workspace { margin-left: 232px; min-width: 0; }
+.admin-topbar { height: 48px; border-bottom: 1px solid var(--line); padding: 0 16px; display: flex; align-items: center; gap: 12px; background: var(--card); }
+.admin-breadcrumb { display: flex; gap: 14px; color: var(--muted); font-size: 12px; }
 .admin-breadcrumb strong { color: var(--fg); font-weight: 500; }
 .topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 17px; }
 .public-page-link { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
-.scheme-control { display: flex; align-items: center; gap: 4px; color: var(--muted); }
-.admin-shell .scheme-control select { background: transparent; border: 0; font-size: 12px; padding: 4px; min-height: 32px; }
 .admin-shell .mobile-menu { display: none; }
-.admin-main { padding: 32px; max-width: 1800px; margin: 0 auto; min-width: 0; outline: none; }
+.admin-main { padding: 16px 24px; max-width: 1680px; margin: 0 auto; min-width: 0; outline: none; }
 .admin-main > section { animation: admin-enter .25s ease-out; }
 .admin-shell p { overflow-wrap: anywhere; }
 .admin-shell .page-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-bottom: 26px; }
@@ -36,7 +29,6 @@
 .page-heading p { margin: 0; color: var(--muted); font-size: 12px; }
 .page-heading-actions { display: flex; gap: 10px; align-items: center; }
 .update-progress { display: grid; gap: 5px; max-width: 460px; overflow-wrap: anywhere; }
-.eyebrow { color: var(--muted); font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 7px; }
 .admin-shell .card, .admin-shell fieldset:not(.bare):not(.picks) { padding: 16px; margin: 0 0 16px; }
 .admin-shell fieldset:not(.bare):not(.picks) { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); }
 .admin-shell fieldset legend { color: var(--fg); font-size: 13px; font-weight: 600; padding: 0 8px; }
@@ -165,6 +157,11 @@ span.node-subtext { margin-right: 8px; }
   .admin-main { padding: 24px; }
   .admin-topbar { padding: 0 24px; }
   .sidebar-brand { padding-left: 22px; }
+  .admin-sidebar { width: 200px; }
+  .admin-workspace { margin-left: 200px; }
+  .stats-grid { gap: 12px; }
+  .admin-shell .metric-card { padding: 16px; }
+  .metric-card dd { font-size: 24px; }
 }
 @media (max-width: 900px) {
   .admin-sidebar { display: none; }
@@ -194,12 +191,10 @@ span.node-subtext { margin-right: 8px; }
   .node-actions { justify-content: flex-end; }
 }
 @media (max-width: 560px) {
-  .admin-topbar { height: 58px; padding: 0 12px; gap: 9px; }
-  .admin-main { padding: 22px 16px; }
+  .admin-topbar { padding: 0 12px; gap: 9px; }
+  .admin-main { padding: 16px; }
   .topbar-actions { gap: 7px; }
   .public-page-link span { display: none; }
-  .scheme-control > svg { display: none; }
-  .admin-shell .scheme-control select { font-size: 11px; max-width: 90px; }
   .admin-shell .page-heading { align-items: flex-start; margin-bottom: 22px; }
   .page-heading p { max-width: 210px; }
   .node-management tbody { grid-template-columns: minmax(0, 1fr); }
@@ -260,3 +255,11 @@ span.node-subtext { margin-right: 8px; }
 /* 账户安全摘要卡片。 */
 .cards-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
 @media (max-width: 900px) { .cards-3 { grid-template-columns: 1fr; } }
+.quick-search-trigger { display: inline-flex; align-items: center; gap: 8px; height: var(--control-h); padding: 0 10px; color: var(--muted); background: var(--bg); min-width: 220px; }
+.quick-search-trigger kbd { margin-left: auto; font: inherit; font-size: 11px; color: var(--faint); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+.admin-modal.quick-search { width: min(560px, calc(100vw - 32px)); }
+.quick-search input[type="search"] { width: 100%; }
+.quick-search ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.quick-search li a { display: block; padding: 0 10px; line-height: 36px; border-radius: var(--radius-control); color: var(--fg); }
+.quick-search li[aria-selected="true"] a { background: var(--card-hover); }
+@media (max-width: 900px) { .quick-search-trigger { min-width: 0; } .quick-search-trigger span, .quick-search-trigger kbd { display: none; } }

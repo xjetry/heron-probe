@@ -10,16 +10,32 @@ vi.mock("./Chart", () => ({ Chart: () => null }));
 
 const routes = [{ path: "/", Component: Layout }, { path: "/login", element: <h1>login</h1> }];
 
-it("后台配色保存在本机并在离开布局时恢复原页面配色", async () => {
+it("明暗切换保存在本机并在离开布局时恢复原页面配色", async () => {
   document.documentElement.dataset.theme = "light";
   const { router } = renderWithAdmin({}, routes, "/");
   try {
-    fireEvent.change(screen.getByRole("combobox", { name: "后台配色" }), { target: { value: "dark" } });
+    const toggle = screen.getByRole("button", { name: "明暗切换" });
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(localStorage.getItem("heron-admin-scheme")).toBe("dark");
     await act(() => router.navigate("/login"));
     expect(document.documentElement.dataset.theme).toBe("light");
   } finally { localStorage.removeItem("heron-admin-scheme"); delete document.documentElement.dataset.theme; }
+});
+
+it("顶栏提供面包屑、公开页链接、明暗切换与登出，侧栏没有页脚", () => {
+  renderWithAdmin({}, [{ path: "/", Component: Layout, children: [{ index: true, element: <h1>home</h1> }] }], "/");
+  const topbar = screen.getByRole("banner");
+  expect(within(topbar).getByRole("button", { name: "搜索节点" })).toBeInTheDocument();
+  expect(within(topbar).getByRole("navigation", { name: "位置" })).toHaveTextContent("工作台/总览");
+  expect(within(topbar).getByRole("link", { name: "公开页 ↗" })).toHaveAttribute("href", "/");
+  expect(within(topbar).getByRole("button", { name: "明暗切换" })).toBeInTheDocument();
+  expect(within(topbar).getByRole("button", { name: "登出" })).toBeInTheDocument();
+  expect(screen.queryByText("管理工作台")).toBeNull();
+  expect(screen.queryByText("基础设施监控")).toBeNull();
+  expect(screen.getByRole("navigation", { name: "主导航" })).toHaveClass("panel-nav");
+  expect(screen.queryByRole("combobox", { name: "后台配色" })).toBeNull();
 });
 
 it("移动导航用单一模态抽屉，导航后关闭且更新当前位置", async () => {
