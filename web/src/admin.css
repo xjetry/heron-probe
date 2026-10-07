@@ -30,6 +30,8 @@
 .admin-shell fieldset:not(.bare):not(.picks) { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); }
 .admin-shell fieldset legend { color: var(--fg); font-size: 13px; font-weight: 600; padding: 0 8px; }
 .admin-shell form label { min-width: 0; max-width: 100%; }
+/* 卡片式表单（外观、备份、心跳、主题、登录通知）：字段纵向排列，靠 label 的下边距隔开；抽屉里的表单由 .form-section 的 gap 负责。 */
+.admin-shell form.card label { margin-bottom: 12px; }
 .admin-shell form :is(input, select, textarea) { min-width: 0; max-width: 100%; }
 .admin-shell .row { flex-wrap: wrap; gap: 14px; }
 .admin-main > section > :is(form, fieldset) label:not(.inline):not(.row) { max-width: 620px; }
@@ -183,6 +185,7 @@ span.node-subtext { margin-right: 8px; }
 
 /* 总览首行「需要处理」（pages/Overview.tsx）：四张可点卡，数字大、标签小；手机 2×2（设计 §4.2、§4.7）。 */
 .attention { list-style: none; margin: 0 0 16px; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.attention li { display: grid; }
 .attention a { display: grid; gap: 2px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); color: var(--fg); }
 .attention a:hover { border-color: var(--line-strong); text-decoration: none; }
 .attention strong { font-size: 24px; line-height: 28px; font-weight: 600; }
@@ -254,6 +257,8 @@ span.node-subtext { margin-right: 8px; }
   .node-management .chip { height: 20px; }
   .node-management .node-addresses { gap: 2px; }
   .admin-shell .node-management .copyable-inline .copy-button { width: 20px; height: 20px; min-height: 20px; padding: 2px; }
+  .node-management .tag-chips { flex: none; overflow: visible; }
+  .node-secondary { mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
 }
 @media (max-width: 900px) {
   /* 手机卡片（设计 §4.7）：状态 + 名称 + ⋯ 一行，本周期 / 费用同排，到期另起一行；地址与排序藏起来。 */
