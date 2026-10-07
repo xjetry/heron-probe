@@ -118,7 +118,8 @@ tr.offline td { color: var(--muted); }
 .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
 .bar { position: relative; min-width: 140px; height: 18px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
 .bar .fill { height: 100%; background: var(--accent); opacity: 0.35; }
-.bar span { position: absolute; inset: 0; padding: 0 0.4rem; font-size: 12px; line-height: 18px; }
+/* 标签在条内垂直居中而不写死行高：条高由各处自定（详情面板更矮），行高跟着条高走，否则比 18px 矮的条会把文字裁掉。 */
+.bar span { position: absolute; inset: 0; padding: 0 0.4rem; font-size: 12px; line-height: 1; display: flex; align-items: center; white-space: nowrap; }
 /* 图表（components/Chart.tsx）：占位说明叠在图区中央；图例自绘，线段色样代替方块（设计 §5）。 */
 .chart { width: 100%; min-width: 0; }
 .chart-plot { position: relative; }

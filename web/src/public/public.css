@@ -95,7 +95,7 @@
 .detail-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; align-items: center; }
 .detail-row dt { color: var(--muted); }
 .detail-row dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-.detail-row .bar { min-width: 0; height: 14px; }
+.detail-row .bar { min-width: 0; height: 16px; }
 .detail-row .sparkline { margin-top: 4px; width: 100%; }
 .detail-more { display: inline-block; margin-top: 12px; }
 /* 手机版（设计 §3.4）：墙降级为单列列表，组头吸顶；详情面板不渲染（StatusWall 按同一断点判断）。 */
