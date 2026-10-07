@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { PublicService } from "../gen/heron/v1/public_pb";
 import { QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
 import { BillingCycle, ProbeKind } from "../gen/heron/v1/types_pb";
-import { renderWithService } from "../test/harness";
+import { rangeHeader, renderWithService } from "../test/harness";
 import { NodePage } from "./NodePage";
 
 vi.mock("../components/Chart", () => ({
@@ -89,7 +89,7 @@ it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅，�
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000 + 100); });
   expect(await screen.findByRole("alert")).toHaveTextContent("history down");
   expect(screen.getAllByTestId("chart")).toHaveLength(10);
-  expect(screen.getByText(/级别 1m，每点 60s/)).toBeInTheDocument();
+  expect(screen.getByText(/级别 1m，每点 60s/).parentElement).toBe(rangeHeader());
   // 沿用的还是 24h 这个 range 自己的数据，只是这次刷新没成功；range 没变，不该报"看错窗口"。
   expect(screen.queryByText(/图表还不是/)).toBeNull();
 });

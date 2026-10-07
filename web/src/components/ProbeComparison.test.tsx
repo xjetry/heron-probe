@@ -10,7 +10,7 @@ import { ListProbeComparisonNodesResponseSchema, QueryProbeComparisonResponseSch
 import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { ProbeTasks } from "../pages/ProbeTasks";
 import { NodePage } from "../public/NodePage";
-import { renderWithAdmin, renderWithService } from "../test/harness";
+import { rangeHeader, renderWithAdmin, renderWithService } from "../test/harness";
 
 vi.mock("./Chart", () => ({
   Chart: ({ labels, unit, data }: { labels: string[]; unit: string; data: AlignedData }) => (
@@ -251,12 +251,35 @@ it("刷新期间保留上一张完整的图，并标成更新中", async () => {
   }, names.slice(0, 1));
   expect(await screen.findByTestId("chart-percent")).toBeInTheDocument();
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-  expect(await screen.findByText("更新中")).toBeInTheDocument();
+  expect((await screen.findByText("更新中")).parentElement).toBe(rangeHeader());
+  expect(screen.getByText(/级别 1m，每点 60s/).parentElement).toBe(rangeHeader());
   expect(screen.getByTestId("chart-percent")).toBeInTheDocument();
   expect(screen.queryByText("加载中…")).toBeNull();
   await act(async () => { release(); });
   await waitFor(() => expect(screen.queryByText("更新中")).toBeNull());
   expect(screen.getByRole("heading", { name: "ICMP edge.example" })).toBeInTheDocument();
+});
+
+it("换窗口后新窗口的结果未到时，提示图表还不是该窗口的结果", async () => {
+  const { ts } = pinClock();
+  let queries = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  renderComparison({
+    listProbeComparisonNodes: async () => listed([1n], 1),
+    queryProbeComparison: async (req) => {
+      queries += 1;
+      if (queries > 1) await gate;
+      return chunkOf(req, ts);
+    },
+  }, names.slice(0, 1));
+  expect(await screen.findByTestId("chart-percent")).toBeInTheDocument();
+  expect(screen.queryByText(/图表还不是/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "7d" }));
+  expect((await screen.findByText(/图表还不是 7d 窗口的结果/)).parentElement).toBe(rangeHeader());
+  expect(screen.getByTestId("chart-percent")).toBeInTheDocument();
+  await act(async () => { release(); });
+  await waitFor(() => expect(screen.queryByText(/图表还不是/)).toBeNull());
 });
 
 it("无读数名单超过 8 个时折叠", async () => {

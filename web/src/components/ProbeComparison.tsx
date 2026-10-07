@@ -8,7 +8,7 @@ import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { assembleComparison, chunkNodeIds, type ComparisonChart, type ComparisonChunk } from "../lib/probeComparison";
 import { kindLabel } from "../lib/probes";
 import { Chart } from "./Chart";
-import { HISTORY_MAX_POINTS, RangeButtons, rangeStaleText, useTimeWindow } from "./History";
+import { HISTORY_MAX_POINTS, RangeButtons, RangeStatus, useTimeWindow } from "./History";
 
 // 同时在飞的分块数。这不是块的大小：块的大小只来自 List 的 max_nodes_per_query。
 const MAX_IN_FLIGHT_CHUNKS = 2;
@@ -220,10 +220,8 @@ export function ProbeComparison({ taskId, methods, nodes }: { taskId: bigint; me
       <header className="row detail-header">
         <h1>{taskHeading(taskId, shown)}</h1>
         <RangeButtons range={range} setRange={setRange} />
+        <RangeStatus shown={shown} stale={stale} rangeLabel={rangeLabel} updating={updating} />
       </header>
-      {shown && <span className="muted">级别 {shown.level}，每点 {shown.stepS}s</span>}
-      {stale && <span className="muted">{rangeStaleText(rangeLabel)}</span>}
-      {shown && updating && <span className="muted">更新中</span>}
       {error && (
         <p role="alert" className="error">
           {error} <button type="button" onClick={() => setAttempt((n) => n + 1)}>重试</button>

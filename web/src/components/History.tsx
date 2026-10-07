@@ -19,7 +19,7 @@ export const RANGES = [
 ] as const;
 export type HistoryRange = (typeof RANGES)[number];
 
-export function rangeStaleText(label: string): string {
+function rangeStaleText(label: string): string {
   return `图表还不是 ${label} 窗口的结果，取到之后会更新`;
 }
 
@@ -45,6 +45,21 @@ export function RangeButtons({ range, setRange }: { range: HistoryRange; setRang
         </button>
       ))}
     </nav>
+  );
+}
+
+// 时间窗口按钮的伴随文字：当前显示的级别、“非当前窗口”提示、刷新中。几段 span 之间没有分隔符，
+// 只靠 .row 头部的 gap 隔开，所以调用方要把 RangeStatus 与 RangeButtons 放进同一个 .row 头部、
+// 不另包元素；放到头部之外或包进别的元素里，几段文字会连成一句话。
+export function RangeStatus({ shown, stale, rangeLabel, updating = false }: {
+  shown?: { level: string; stepS: number } | null; stale: boolean; rangeLabel: string; updating?: boolean;
+}) {
+  return (
+    <>
+      {shown && <span className="muted">级别 {shown.level}，每点 {shown.stepS}s</span>}
+      {stale && <span className="muted">{rangeStaleText(rangeLabel)}</span>}
+      {shown && updating && <span className="muted">更新中</span>}
+    </>
   );
 }
 
@@ -151,10 +166,9 @@ export function RangePicker({ history }: { history: HistoryState }) {
   return (
     <>
       <RangeButtons range={range} setRange={setRange} />
-      {metrics.data && <span className="muted">级别 {metrics.data.level}，每点 {metrics.data.stepS}s</span>}
       {/* rangeStale 排除了“同一个 range 里晚了不到一分钟”的情况，只在真的换过 range 还没等到新 range
           自己的数据时才出现；不点出来，这里显示的级别与图表会被当成当前选中 range 的结果看。 */}
-      {rangeStale && <span className="muted">{rangeStaleText(range.label)}</span>}
+      <RangeStatus shown={metrics.data} stale={rangeStale} rangeLabel={range.label} />
     </>
   );
 }

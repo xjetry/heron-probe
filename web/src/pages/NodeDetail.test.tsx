@@ -4,7 +4,7 @@ import { CollectionComponent, ProbeKind } from "../gen/heron/v1/types_pb";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { act, screen, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderWithAdmin, type AdminImpl } from "../test/harness";
+import { rangeHeader, renderWithAdmin, type AdminImpl } from "../test/harness";
 import { NodeDetail } from "./NodeDetail";
 
 afterEach(() => vi.useRealTimers());
@@ -261,7 +261,8 @@ describe("NodeDetail", () => {
     pending = new Promise<void>((resolve) => { started = resolve; });
     fireEvent.click(screen.getByRole("button", { name: "7d" }));
     await pending;
-    expect(screen.getByText(/图表还不是 7d 窗口的结果/)).toBeInTheDocument();
+    expect(screen.getByText(/图表还不是 7d 窗口的结果/).parentElement).toBe(rangeHeader());
+    expect(screen.getByText(/级别 1m，每点 60s/).parentElement).toBe(rangeHeader());
     release();
     await waitFor(() => expect(screen.queryByText(/图表还不是/)).toBeNull());
   });
