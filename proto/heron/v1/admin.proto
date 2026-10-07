@@ -858,12 +858,12 @@ message AlertRule {
   repeated int64 node_ids = 5;
   // 已保存渠道的 id，升序去重；空表示只记事件不投递。
   repeated int64 channel_ids = 6;
-  // task_id 与 metric 仅用于探测规则；threshold、for_minutes 用于探测和资源规则，离线与到期规则必须为零值。
-  // 探测的 task_id 必须是已存在的非零任务 id。
+  // task_id 用于探测与证书到期规则，必须是已存在的非零任务 id；其它种类必须为 0。
+  // metric 只用于探测；threshold 用于探测、资源与流量；for_minutes 只用于探测和资源，其它种类必须为零值。
   uint64 task_id = 7;
   // 探测规则必须选择丢包百分比或往返毫秒数。
   ProbeMetric metric = 8;
-  // 丢包百分比 0–100；往返毫秒数 > 0；资源指标按 proto ResourceMetric 各值的范围（百分比 (0,100]、每核负载 (0,64]、字节速率 (0,2^40]）。
+  // 丢包百分比 0–100；往返毫秒数 > 0；流量为配额百分比 (0,100]；资源指标按 proto ResourceMetric 各值的范围（百分比 (0,100]、每核负载 (0,64]、字节速率 (0,2^40]）。
   double threshold = 9;
   // 1–60：连续多少个已闭合分钟达到阈值才触发。
   uint32 for_minutes = 10;

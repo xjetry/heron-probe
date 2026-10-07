@@ -2067,8 +2067,8 @@ export type AlertRule = Message<"heron.v1.AlertRule"> & {
   channelIds: bigint[];
 
   /**
-   * task_id 与 metric 仅用于探测规则；threshold、for_minutes 用于探测和资源规则，离线与到期规则必须为零值。
-   * 探测的 task_id 必须是已存在的非零任务 id。
+   * task_id 用于探测与证书到期规则，必须是已存在的非零任务 id；其它种类必须为 0。
+   * metric 只用于探测；threshold 用于探测、资源与流量；for_minutes 只用于探测和资源，其它种类必须为零值。
    *
    * @generated from field: uint64 task_id = 7;
    */
@@ -2082,7 +2082,7 @@ export type AlertRule = Message<"heron.v1.AlertRule"> & {
   metric: ProbeMetric;
 
   /**
-   * 丢包百分比 0–100；往返毫秒数 > 0；资源指标按 proto ResourceMetric 各值的范围（百分比 (0,100]、每核负载 (0,64]、字节速率 (0,2^40]）。
+   * 丢包百分比 0–100；往返毫秒数 > 0；流量为配额百分比 (0,100]；资源指标按 proto ResourceMetric 各值的范围（百分比 (0,100]、每核负载 (0,64]、字节速率 (0,2^40]）。
    *
    * @generated from field: double threshold = 9;
    */

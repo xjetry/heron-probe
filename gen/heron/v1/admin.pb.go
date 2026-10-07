@@ -4945,12 +4945,12 @@ type AlertRule struct {
 	NodeIds []int64 `protobuf:"varint,5,rep,packed,name=node_ids,json=nodeIds,proto3" json:"node_ids,omitempty"`
 	// 已保存渠道的 id，升序去重；空表示只记事件不投递。
 	ChannelIds []int64 `protobuf:"varint,6,rep,packed,name=channel_ids,json=channelIds,proto3" json:"channel_ids,omitempty"`
-	// task_id 与 metric 仅用于探测规则；threshold、for_minutes 用于探测和资源规则，离线与到期规则必须为零值。
-	// 探测的 task_id 必须是已存在的非零任务 id。
+	// task_id 用于探测与证书到期规则，必须是已存在的非零任务 id；其它种类必须为 0。
+	// metric 只用于探测；threshold 用于探测、资源与流量；for_minutes 只用于探测和资源，其它种类必须为零值。
 	TaskId uint64 `protobuf:"varint,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	// 探测规则必须选择丢包百分比或往返毫秒数。
 	Metric ProbeMetric `protobuf:"varint,8,opt,name=metric,proto3,enum=heron.v1.ProbeMetric" json:"metric,omitempty"`
-	// 丢包百分比 0–100；往返毫秒数 > 0；资源指标按 proto ResourceMetric 各值的范围（百分比 (0,100]、每核负载 (0,64]、字节速率 (0,2^40]）。
+	// 丢包百分比 0–100；往返毫秒数 > 0；流量为配额百分比 (0,100]；资源指标按 proto ResourceMetric 各值的范围（百分比 (0,100]、每核负载 (0,64]、字节速率 (0,2^40]）。
 	Threshold float64 `protobuf:"fixed64,9,opt,name=threshold,proto3" json:"threshold,omitempty"`
 	// 1–60：连续多少个已闭合分钟达到阈值才触发。
 	ForMinutes uint32 `protobuf:"varint,10,opt,name=for_minutes,json=forMinutes,proto3" json:"for_minutes,omitempty"`
