@@ -24,6 +24,7 @@ test("采集诊断从真实上报进入管理详情且不进入公开页", async
     const updated = await rpc(page, "AdminService", "UpdateNode", { id: node.id, name: node.name, public: true, trafficResetDay: 1, offlineGraceS: 0 });
     expect(updated.status, JSON.stringify(updated.body)).toBe(200);
     await page.goto(`/admin/nodes/${node.id}`);
+    await page.getByRole("tab", { name: "Agent 诊断", exact: true }).click();
     const card = page.getByRole("region", { name: "Agent 运行诊断" });
     await expect(card.getByText("Agent 未提供诊断信息，请更新 Agent 后等待上报。")).toBeVisible();
     const diagnostics = {
@@ -48,6 +49,8 @@ test("采集诊断从真实上报进入管理详情且不进入公开页", async
       factsHash: "102", facts: { diagnostics: { ...diagnostics, failedCollectors: [] } },
     }, token)).status).toBe(200);
     await expect(card.getByText("最近采集未报告失败", { exact: true })).toBeVisible({ timeout: 15000 });
+    await page.goto(`/admin/nodes/${node.id}?tab=diagnostics`);
+    await expect(card).toBeVisible();
     const snapshot = await rpc(page, "PublicService", "GetSnapshot", {});
     expect(snapshot.status).toBe(200);
     expect(snapshot.body.nodes.some((entry: { id: string }) => entry.id === node.id)).toBe(true);
