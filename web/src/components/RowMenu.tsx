@@ -1,4 +1,5 @@
-import { Fragment, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { Fragment, type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router";
 import { Icon } from "./Icon";
 
@@ -19,6 +20,7 @@ export function RowMenu({ label, items }: { label: string; items: readonly RowMe
   const root = useRef<HTMLSpanElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState({ left: 0, top: 0 });
   const close = (refocus: boolean) => {
     setOpen(false);
     setArmed(null);
@@ -28,11 +30,25 @@ export function RowMenu({ label, items }: { label: string; items: readonly RowMe
     if (!open) return;
     menu.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus();
     const away = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) close(false);
+      if (!root.current?.contains(event.target as Node) && !menu.current?.contains(event.target as Node)) close(false);
     };
     document.addEventListener("pointerdown", away);
     return () => document.removeEventListener("pointerdown", away);
   }, [open]);
+  // 表格自身会裁切溢出内容；菜单挂到 body，并在滚动或尺寸变化后保持与触发器对齐。
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const anchor = trigger.current?.getBoundingClientRect();
+      const popup = menu.current?.getBoundingClientRect();
+      if (!anchor || !popup) return;
+      setPosition({ left: Math.max(8, Math.min(anchor.right - popup.width, window.innerWidth - popup.width - 8)), top: Math.max(8, Math.min(anchor.bottom + 4, window.innerHeight - popup.height - 8)) });
+    };
+    place();
+    window.addEventListener("resize", place);
+    document.addEventListener("scroll", place, true);
+    return () => { window.removeEventListener("resize", place); document.removeEventListener("scroll", place, true); };
+  }, [open, armed]);
   const onKeyDown = (event: KeyboardEvent) => {
     const focusable = Array.from(menu.current?.querySelectorAll<HTMLElement>("[role=menuitem]") ?? []);
     const index = focusable.indexOf(document.activeElement as HTMLElement);
@@ -54,8 +70,8 @@ export function RowMenu({ label, items }: { label: string; items: readonly RowMe
     <span ref={root} className="row-menu">
       <button ref={trigger} type="button" className="icon-button row-menu-trigger" aria-label={`更多操作 ${label}`} aria-haspopup="menu" aria-expanded={open}
         onClick={() => (open ? close(false) : setOpen(true))}><Icon name="more" /></button>
-      {open && (
-        <div ref={menu} className="row-menu-popup" role="menu" aria-label={`${label} 的操作`} onKeyDown={onKeyDown}>
+      {open && createPortal(
+        <div ref={menu} className="row-menu-popup" role="menu" aria-label={`${label} 的操作`} style={position} onKeyDown={onKeyDown}>
           {items.map((item, index) => {
             const name = armed === index && item.confirm ? item.confirm : `${item.label} ${label}`;
             const text = armed === index && item.confirm ? item.confirm : item.label;
@@ -71,7 +87,7 @@ export function RowMenu({ label, items }: { label: string; items: readonly RowMe
             );
           })}
           {armed !== null && <button type="button" role="menuitem" aria-label="取消" onClick={() => setArmed(null)}>取消</button>}
-        </div>
+        </div>, document.body
       )}
     </span>
   );
