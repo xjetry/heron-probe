@@ -119,12 +119,20 @@ tr.offline td { color: var(--muted); }
 .bar { position: relative; min-width: 140px; height: 18px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
 .bar .fill { height: 100%; background: var(--accent); opacity: 0.35; }
 .bar span { position: absolute; inset: 0; padding: 0 0.4rem; font-size: 12px; line-height: 18px; }
+/* 图表（components/Chart.tsx）：占位说明叠在图区中央；图例自绘，线段色样代替方块（设计 §5）。 */
 .chart { width: 100%; min-width: 0; }
-.chart-gap { margin: 0 0 0.25rem; }
-/* uPlot 根节点默认 width:min-content，图例项又是 inline-block。窄屏上长节点名会把页面撑出视口；
-   压回卡片宽度并允许在任意位置断行，点击图例隐藏单条线的行为不变。 */
+.chart-plot { position: relative; }
+.chart-gap { position: absolute; z-index: 1; left: 0; right: 0; top: 40%; margin: 0; text-align: center; font-size: 12px; pointer-events: none; }
 .chart .uplot { width: 100%; max-width: 100%; }
-.chart .u-legend, .chart .u-inline, .chart .u-label { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.chart-legend { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 12px; }
+.chart-legend li { min-width: 0; }
+.chart-legend .legend-time { color: var(--muted); }
+.chart-legend button { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 0 2px; border: 0; background: none; color: var(--fg); max-width: 100%; }
+.chart-legend button[aria-pressed="false"] { color: var(--faint); text-decoration: line-through; }
+.legend-swatch { width: 14px; height: 0; border-top: 2px solid var(--series); flex: none; }
+.legend-swatch.soft { border-top-width: 1px; opacity: .6; }
+.chart-legend .num { color: var(--muted); }
+.chart-legend button[aria-pressed="true"] .num { color: var(--fg); }
 .compare-links { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin: 0.5rem 0 1rem; max-width: 100%; }
 .compare-links a, .compare-nodes, .compare-nodes li { overflow-wrap: anywhere; max-width: 100%; }
 .compare-nodes { margin: 0.5rem 0 0; }
