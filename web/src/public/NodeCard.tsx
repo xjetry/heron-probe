@@ -5,6 +5,7 @@ import { CountryBadge } from "../components/CountryBadge";
 import type { PublicNode } from "../gen/heron/v1/public_pb";
 import { expired, expiryText, priceText } from "../lib/billing";
 import { ago, bytes, duration, percent } from "../lib/format";
+import { trafficDetail, trafficText } from "../lib/traffic";
 
 export function NodeCard({ node, now }: { node: PublicNode; now: number }) {
   const m = node.metrics;
@@ -39,7 +40,7 @@ export function NodeCard({ node, now }: { node: PublicNode; now: number }) {
         <div className="node-resource node-traffic">
           <span className="node-resource-label">本周期流量</span>
           <strong>{node.traffic ? trafficText(node.traffic) : <Missing />}</strong>
-          <span className="node-resource-detail">下载 + 上传</span>
+          <span className="node-resource-detail">{node.traffic ? trafficDetail(node.traffic) : "下载 + 上传"}</span>
         </div>
       </div>
       <div className="node-network">
@@ -79,4 +80,3 @@ function Network({ direction, arrow, rate, total }: { direction: string; arrow: 
     <div className="network-total">本周期 {total !== undefined ? bytes(total) : <Missing />}</div>
   </div>;
 }
-import { trafficText } from "../lib/traffic";

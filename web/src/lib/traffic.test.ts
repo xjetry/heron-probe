@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { parseQuota, quotaInput, trafficText } from "./traffic";
+import { parseQuota, quotaInput, trafficDetail, trafficText } from "./traffic";
 import { create } from "@bufbuild/protobuf";
-import { TrafficSchema } from "../gen/heron/v1/types_pb";
+import { TrafficQuotaMode, TrafficSchema } from "../gen/heron/v1/types_pb";
 
 describe("quota conversion", () => {
   it("rounds decimal input once at whole bytes", () => {
@@ -20,5 +20,18 @@ describe("quota conversion", () => {
     t.quotaBytes = 0n;
     expect(trafficText(t)).toBe("200 B（未设配额）");
     expect(quotaInput(1n << 30n, "GiB")).toBe("1");
+  });
+  it("labels the numerator by the quota mode and falls back to sum without a quota", () => {
+    const t = create(TrafficSchema, { quotaBytes: 1000n, quotaMode: TrafficQuotaMode.RX });
+    expect(trafficDetail(t)).toBe("仅下载");
+    t.quotaMode = TrafficQuotaMode.TX;
+    expect(trafficDetail(t)).toBe("仅上传");
+    t.quotaMode = TrafficQuotaMode.MAX;
+    expect(trafficDetail(t)).toBe("下载与上传取大者");
+    t.quotaMode = TrafficQuotaMode.SUM;
+    expect(trafficDetail(t)).toBe("下载 + 上传");
+    t.quotaBytes = 0n;
+    t.quotaMode = TrafficQuotaMode.TX;
+    expect(trafficDetail(t)).toBe("下载 + 上传");
   });
 });

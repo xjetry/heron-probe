@@ -1,6 +1,7 @@
 import { screen, within } from "@testing-library/react";
 import { expect, it } from "vitest";
 import { PublicService } from "../gen/heron/v1/public_pb";
+import { TrafficQuotaMode } from "../gen/heron/v1/types_pb";
 import { renderWithService } from "../test/harness";
 import { PublicOverview } from "./Overview";
 
@@ -19,6 +20,7 @@ it("卡片区分运行时长与在线状态，展示核数、负载、虚拟化�
   expect(card.getByRole("meter", { name: "0.0%" })).toHaveAttribute("aria-valuenow", "0");
   expect(card.getByRole("meter", { name: "0 B / 1.0 GiB" })).toHaveAttribute("aria-valuenow", "0");
   expect(card.getByText("2.0 GiB / 4.0 GiB（50.0%）")).toBeInTheDocument();
+  expect(card.getByText("下载 + 上传")).toBeInTheDocument();
   expect(card.getByRole("group", { name: "下载" })).toHaveTextContent("0 B/s");
   expect(card.getByRole("group", { name: "下载" })).toHaveTextContent("本周期 1.0 GiB");
   expect(card.getByRole("group", { name: "上传" })).toHaveTextContent("1.0 KiB/s");
@@ -50,4 +52,17 @@ it("维护中的节点在状态旁标注，在线状态照实显示", async () =
   expect(card.getByText("维护中")).toBeInTheDocument();
   expect(card.getByText("离线")).toBeInTheDocument();
   expect(within(screen.getByRole("article", { name: "正常节点" })).queryByText("维护中")).toBeNull();
+});
+
+it("流量副标题跟随节点的配额口径，未设配额时沿用下载 + 上传", async () => {
+  renderWithService(PublicService, { getSnapshot: async () => ({ now: 1000n, nodes: [
+    { id: 1n, name: "只收", online: true, lastSeenAt: 998n, traffic: { periodRx: 300n, periodTx: 700n, quotaUsedBytes: 300n, quotaBytes: 1000n, quotaMode: TrafficQuotaMode.RX, quotaUsedPct: 30 } },
+    { id: 2n, name: "无配额", online: true, lastSeenAt: 998n, traffic: { periodRx: 300n, periodTx: 700n, quotaUsedBytes: 1000n, quotaMode: TrafficQuotaMode.TX } },
+  ] }) }, [{ path: "/", Component: PublicOverview }], "/");
+  const rx = within(await screen.findByRole("article", { name: "只收" }));
+  expect(rx.getByText("300 B / 1000 B（30.0%）")).toBeInTheDocument();
+  expect(rx.getByText("仅下载")).toBeInTheDocument();
+  const none = within(screen.getByRole("article", { name: "无配额" }));
+  expect(none.getByText("1000 B（未设配额）")).toBeInTheDocument();
+  expect(none.getByText("下载 + 上传")).toBeInTheDocument();
 });
