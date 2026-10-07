@@ -21,8 +21,8 @@ it("公开节点的历史图表走 PublicService，与面板同一组时间范�
   const queryProbes = vi.fn(async () => create(QueryProbesResponseSchema, { level: "1m", stepS: 60, series: [{ taskId: 3n, kind: ProbeKind.TCP, target: "example.com:443" }] }));
   renderWithService(PublicService, { getSnapshot: snapshot, queryMetrics, queryProbes }, [{ path: "/nodes/:id", Component: NodePage }], "/nodes/7");
   expect(await screen.findByRole("heading", { level: 1, name: "edge-1" })).toBeInTheDocument();
-  expect(await screen.findAllByText("TCP example.com:443")).toHaveLength(2);
-  expect(screen.getAllByTestId("chart")).toHaveLength(12);
+  expect(await screen.findAllByText("TCP example.com:443")).toHaveLength(1);
+  expect(screen.getAllByTestId("chart")).toHaveLength(11);
   for (const r of ["1h", "6h", "24h", "7d", "30d"]) expect(screen.getByRole("button", { name: r })).toBeInTheDocument();
   expect(screen.getByText("Alpine 3.21")).toBeInTheDocument();
   expect(screen.queryByLabelText("执行环境")).not.toBeInTheDocument();
@@ -83,13 +83,13 @@ it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅，�
   renderWithService(PublicService, { getSnapshot: snapshot, queryMetrics, queryProbes }, [{ path: "/nodes/:id", Component: NodePage }], "/nodes/7");
   await screen.findByRole("heading", { level: 1, name: "edge-1" });
   expect(await screen.findAllByTestId("chart")).toHaveLength(10);
-  await screen.findByText(/级别 1m，每点 60s/);
+  await screen.findByText(/级别 1m，每点 60 秒/);
   fail = true;
   // 窗口右端每分钟前进一次（History.tsx 的 REFRESH_MS），换键后的这次请求失败。
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000 + 100); });
   expect(await screen.findByRole("alert")).toHaveTextContent("history down");
   expect(screen.getAllByTestId("chart")).toHaveLength(10);
-  expect(screen.getByText(/级别 1m，每点 60s/).parentElement).toBe(rangeHeader());
+  expect(screen.getByText(/级别 1m，每点 60 秒/).closest("header")).toBe(rangeHeader());
   // 沿用的还是 24h 这个 range 自己的数据，只是这次刷新没成功；range 没变，不该报"看错窗口"。
   expect(screen.queryByText(/图表还不是/)).toBeNull();
 });
@@ -108,14 +108,14 @@ it("切到另一个节点、新节点历史未返回时不显示上一个节点�
   const queryProbes = async () => ({ level: "1m", stepS: 60, series: [] });
   const { router } = renderWithService(PublicService, { getSnapshot: twoNodes, queryMetrics, queryProbes }, [{ path: "/nodes/:id", Component: NodePage }], "/nodes/7");
   await screen.findByRole("heading", { level: 1, name: "edge-1" });
-  await screen.findByText(/级别 1m，每点 60s/);
+  await screen.findByText(/级别 1m，每点 60 秒/);
   await act(async () => { router.navigate("/nodes/8"); });
   expect(await screen.findByRole("heading", { level: 1, name: "edge-2" })).toBeInTheDocument();
   // 8 的历史还没回来：不能把 7 的"级别 1m"标签或图表当成 8 的显示，这段时间没有图表比显示错的更安全。
   expect(screen.queryByText(/级别 1m/)).toBeNull();
   expect(screen.queryAllByTestId("chart")).toHaveLength(0);
   await act(async () => { releaseNode8(); });
-  expect(await screen.findByText(/级别 5m，每点 300s/)).toBeInTheDocument();
+  expect(await screen.findByText(/级别 5m，每点 300 秒/)).toBeInTheDocument();
   expect(screen.getAllByTestId("chart")).toHaveLength(10);
 });
 

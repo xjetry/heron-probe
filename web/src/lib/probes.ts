@@ -38,6 +38,20 @@ export const isHTTPSTarget = (kind: ProbeKind, target: string): boolean => kind 
 export const lossPercent: ProbeValue = (s) => (s.sent > 0 ? (s.lost / s.sent) * 100 : null);
 // rtt 只在该点有成功探测时存在；没有就是空洞，不能画成 0。
 export const rttMeanMs: ProbeValue = (s) => (s.rttMeanUs === undefined ? null : s.rttMeanUs / 1000);
+export const rttMinMs: ProbeValue = (s) => (s.rttMinUs === undefined ? null : s.rttMinUs / 1000);
+export const rttMaxMs: ProbeValue = (s) => (s.rttMaxUs === undefined ? null : s.rttMaxUs / 1000);
+
+// 同一任务的取值共用时间网格，Chart 据此对齐均值与最小 / 最大之间的填充带。
+export function toProbeTaskAligned(resp: QueryProbesResponse, taskId: bigint, from: number, to: number, values: readonly ProbeValue[]): AlignedData {
+  const xs = gridOf(resp.stepS, from, to);
+  const at = new Map<number, ProbeSample>();
+  resp.series.find((s) => s.taskId === taskId)?.samples.forEach((s) => at.set(Number(s.ts), s));
+  const columns = values.map((value) => xs.map((t) => {
+    const s = at.get(t);
+    return s === undefined ? null : value(s);
+  }));
+  return [xs, ...columns] as AlignedData;
+}
 
 // 每个任务一列，网格规则与指标图相同，缺 ts 为 null；同一窗口的探测图与指标图因此可以对齐比较。
 export function toProbeAligned(resp: QueryProbesResponse, taskIds: bigint[], from: number, to: number, value: ProbeValue): AlignedData {

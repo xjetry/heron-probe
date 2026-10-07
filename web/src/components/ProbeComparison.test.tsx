@@ -252,7 +252,7 @@ it("刷新期间保留上一张完整的图，并标成更新中", async () => {
   expect(await screen.findByTestId("chart-percent")).toBeInTheDocument();
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
   expect((await screen.findByText("更新中")).parentElement).toBe(rangeHeader());
-  expect(screen.getByText(/级别 1m，每点 60s/).parentElement).toBe(rangeHeader());
+  expect(screen.getByText(/级别 1m，每点 60 秒/).closest("header")).toBe(rangeHeader());
   expect(screen.getByTestId("chart-percent")).toBeInTheDocument();
   expect(screen.queryByText("加载中…")).toBeNull();
   await act(async () => { release(); });
@@ -322,7 +322,7 @@ it("公开节点页的已标注任务链到 /probes/:id，未标注的不给入�
     { path: "/nodes/:id", Component: NodePage },
     { path: "/probes/:id", element: <p>公开对比</p> },
   ], "/nodes/7");
-  const link = await screen.findByRole("link", { name: "各节点对比：TCP example.com:443" });
+  const link = await screen.findByRole("link", { name: "TCP example.com:443" });
   expect(screen.queryByRole("link", { name: /任务 #4/ })).toBeNull();
   fireEvent.click(link);
   await waitFor(() => expect(router.state.location.pathname).toBe("/probes/3"));
