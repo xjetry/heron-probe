@@ -4078,3 +4078,44 @@ cd /Users/xjetry/work/vibe/probe && git add web/src/public/public.css docs/super
 - 规范覆盖：§2（Task 1–3、5）、§3.1（Task 11–16）、§3.2（Task 10、17）、§3.3（Task 18）、§3.4（Task 5 底部弹出、Task 15 手机列表、Task 17 现值格 2×3）、§3.5（Task 19）、§5（Task 7–10）、§6（Task 20 禁止字段断言；Task 11 四态）、§8 验收（Task 20–21）。§4 与抽屉 / ⋯ 菜单不在本计划。
 - 接口一致：`Bar({ value, label, thin })` 在 Task 3 定义、Task 15 / 16 使用；`Chart` 的 `soft/bands/legend/hidden/onHiddenChange/onFocus` 在 Task 9 定义、Task 10 / 18 使用；`RangeStatus note` 在 Task 10 定义、Task 18 使用；`PublicFilters/regionOptions/groupByRegion/summarize/tileLevel/sortCards` 在 Task 11 定义、Task 13–16 使用；`applySite(site, choice)` 在 Task 4 定义、Task 12 使用；`MetricCharts/ProbeTaskCharts` 在 Task 10 定义、Task 17 使用。
 - Review Focus 五条各有归属：online+maintenance（Task 2、13）、选中节点消失（Task 15）、localStorage 抛错（Task 4）、全部超时的行（Task 18）、零节点 / 只有未知（Task 11、13）。
+
+## 验收记录
+
+日期：2026-10-08。环境：本机 macOS 26.3.1，Playwright 1.63.0，真实 hub 二进制与本地 HTTPS 代理，单 worker 顺序运行 Chromium、Firefox、WebKit。公开页用例自行设置总闸；总览、节点历史使用固定响应，地区筛选使用真实创建的公开节点。未使用外部机器，也未运行负载实验。
+
+验收代码：公开页测试提交 `44b202b`，包含共享迷你线空态修复 `1f3c1ae` 与进度条文字布局修复 `4a31c84`。以下命令均在独立验收工作树执行，不使用测试缓存代替 Go 实测。
+
+| 命令 | 退出码 | 观察 |
+| --- | --- | --- |
+| `make hub-binary` | 0 | 两份前端产物构建成功，hub 编译成功；Playwright 随后实际启动 hub 与 HTTPS 代理 |
+| `make web-e2e` | 0 | 37 passed，2 skipped；两个跳过是既有非 Chromium Passkey 用例，公开页四个用例在三个浏览器均通过 |
+| `pnpm --dir web exec playwright test e2e/public-node.spec.ts e2e/public-overview.spec.ts e2e/region-filter.spec.ts` | 0 | 12 passed；地区与标签弹层用复选框自身发出 Escape，避免鼠标焦点差异影响截图 |
+| `pnpm --dir web typecheck` | 0 | 前端类型检查通过 |
+| `pnpm --dir web vitest run` | 0 | 91 个测试文件、1089 个测试通过，包含公开包 importScan |
+| `pnpm --dir web build` | 0 | 管理与公开两份产物构建成功，仍有大于 500 kB 的 chunk 提示 |
+| `go test -count=1 ./internal/hub/...` | 0 | hub 全部包通过 |
+| `pnpm --dir web exec tsc --ignoreConfig --noEmit --target ES2022 --module nodenext --moduleResolution nodenext --skipLibCheck e2e/public-overview.spec.ts e2e/public-node.spec.ts e2e/region-filter.spec.ts` | 0 | 对未纳入前端 tsconfig 的 e2e 文件另行类型检查 |
+
+### 截图观察
+
+逐张查看以下 24 张公开页截图；`<browser>` 分别为 `chromium`、`firefox`、`webkit`。路径均相对仓库，截图是本机浏览器渲染，不是物理手机拍摄。
+
+- `web/test-results/public-overview-公开总览：状态墙、详情、卡片、手机列表与数据边界-<browser>/wall-dark.png`：顶栏只有站点标题、实时说明、明暗切换与登录。实测顶栏 48px，1440px 视口下内容宽 1392px、详情宽约 459px，位于右侧三分之一。四态分组、维护中不算在线、离线最后上报可见；详情 CPU 与内存文字完整居中，空态「无读数」为正常灰色文本、不拉伸。
+- 同目录 `cards-dark.png`、`cards-light.png`：只有在线与维护中节点有卡片，卡片包含费用 `US$12 / 月`、到期日与琥珀色「剩 25 天」；离线及从未上报在展开的紧凑表格中。明暗切换生效，长名称被截断而不撑宽网格。
+- 同目录 `wall-mobile.png`：390px 视口下为地区分组单列列表，无详情面板，长名称与 CPU / 内存读数留在一行范围内；从节点行进入节点详情，页面无横向溢出。
+- `web/test-results/public-node-节点页：现值头、三列图表与横轴刻度随宽度变化-<browser>/node-desktop.png`、`node-mobile.png`：桌面实时头六个现值格、三列指标图，手机为两列三行现值格与单列图表；CPU 均值/峰值和 RTT 最小/最大带可见，缺读数图有明确占位。横轴文字不重叠，手机仅保留时分；CPU 画布桌面约 425px、手机约 336px，刻度占宽断言通过。
+- `web/test-results/region-filter-公开页地区多选与家宽标签交集，未知和手机布局-<browser>/regions-desktop.png`、`regions-mobile.png`：香港、日本和家宽取交集，只显示两个匹配节点；375px 下为单列，已选地区与标签胶囊可移除，不横向溢出。
+
+管理端另以真实登录、真实创建节点与探测任务，配合确定性的历史响应做 Chromium 冒烟：从总览进入节点详情，再从探测任务点击「对比」。总览指标卡和带文字进度条正常，节点历史图与口径说明弹层可见，对比页有 RTT 大图、统计表和丢包率说明；页面异常与 console error 均为 0。截图禁用入场动画后逐张确认总览、节点详情、对比页，未将淡入过渡帧当成最终画面。
+
+### 断言与清理
+
+- 将共享 Chart 的 `space: X_TICK_SPACE` 临时改为 `space: 30`，确认源码差异后重建 hub，再跑 `pnpm --dir web exec playwright test e2e/public-node.spec.ts --project=chromium`，退出 1，失败明确为手机 `mobileWidth / mobileTicks` 实际 56、期望至少 80。恢复源码、重建后二次同命令退出 0。
+- 对三份用例的 61 次断言执行逐项进行浏览器输出缺陷注入：隐藏/删减节点、改错文本与属性、错误 URL 和 HTTP 状态、强制横向溢出与密集刻度，并逐个插入 13 个禁止词。每项先验证正常输出，再确认注入落地、原断言因对应输出变红、恢复后通过；注入工具不进入仓库。实际源码间距注入另外覆盖共享 Chart 到页面的整条构建路径。
+- 测试样例按协议与现有 DOM 修正：uint64 字节取整、历史时间戳分钟对齐、默认详情取墙上分组首节点、复选框从关联标签取文字、节点名不包含状态文字、去除地区筛选后家宽总数为 4。手机可见刻度可能只有 2 个；规范约束的是间距，不要求至少 3 个。视口切换后等待 ResizeObserver 更新画布再测量。
+- 原清理脚本将 `--include` 放在 `--` 之后，在 macOS 上会报文件不存在，不能用其空结果判断无引用。调整参数顺序后检查 38 个顶层类，并用独立脚本扫描 126 个 TSX 文件交叉核对，未发现无引用类；`public.css` 不作无意义删除。
+
+### 遗留与边界
+
+- 状态墙是自适应方块，并非固定 128×56：1440px 下实测宽约 148px，只有状态文字时高 56px，含维护说明和两条资源读数时约 87px。保留该密度差异，不据少量节点样例声称已验证「153 个节点两屏」。
+- 本轮未发现仍阻断上述入口的功能缺陷。Vite 的大 chunk 提示保留；截图与断言覆盖列出的尺寸和固定数据，不代表所有站长自定义 CSS、任意节点数或物理移动设备的验收。
