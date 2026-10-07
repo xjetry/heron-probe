@@ -5,7 +5,7 @@ import { createRouterTransport } from "@connectrpc/connect";
 import { useState } from "react";
 import { expect, it, vi } from "vitest";
 import { AdminService } from "../gen/heron/v1/admin_pb";
-import { NodeAssignment, type NodeSelection } from "./NodeAssignment";
+import { assignmentValid, NodeAssignment, type NodeSelection } from "./NodeAssignment";
 
 const nodes = [
   { id: 1n, name: "a", tags: ["prod", "edge"] }, { id: 2n, name: "b", tags: ["prod"] }, { id: 3n, name: "c", tags: [] },
@@ -20,6 +20,15 @@ function Harness({ initial, onChange }: { initial: NodeSelection; onChange?: (v:
   </QueryClientProvider></TransportProvider>;
 }
 const empty = (): NodeSelection => ({ allNodes: false, nodeIds: new Set(), selectorTags: [], dynamic: false });
+
+it.each([
+  ["全部节点", { allNodes: true, dynamic: true }, true],
+  ["动态有标签", { dynamic: true, selectorTags: ["prod"] }, true],
+  ["动态无标签", { dynamic: true }, false],
+  ["指定节点", {}, true],
+])("分配校验：%s", (_name, patch, valid) => {
+  expect(assignmentValid({ ...empty(), ...patch })).toBe(valid);
+});
 
 it("三张单选卡：全部节点与动态标签隐藏节点列表，指定节点显示搜索、快选与已选计数", async () => {
   render(<Harness initial={{ ...empty(), allNodes: true }} />);

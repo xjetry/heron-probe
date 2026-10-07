@@ -52,3 +52,7 @@ export function NodeAssignment({ nodes, value, onChange, legend, noun = "分配"
     </fieldset>
   );
 }
+
+// 动态标签选择器没有标签就没有可匹配的节点：旧表单靠 select 的 required 挡住提交，这是同一道闸的显式形式；
+// 三处分配 / 作用域表单在 checkValidity 之后都要先过它，不把空集合交给 hub 去拒绝。
+export const assignmentValid = (value: NodeSelection): boolean => value.allNodes || !value.dynamic || value.selectorTags.length > 0;
