@@ -187,6 +187,44 @@ func TestTrafficQuotaSuccessfulResetEditSequence(t *testing.T) {
 	}
 }
 
+func TestTrafficQuotaCommitFailureSkipsImmediateEvaluation(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	id, _ := h.createNode(t, "quota")
+	quotaNode(t, h, id, 100, heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_SUM, 1)
+	if _, err := h.admin.AdjustTraffic(t.Context(), connect.NewRequest(&heronv1.AdjustTrafficRequest{NodeId: id, PeriodRx: 90})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.alerts.SaveRule(t.Context(), store.AlertRule{Name: "quota", Kind: store.KindTraffic, Enabled: true, AllNodes: true, Threshold: 80}); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", h.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TRIGGER reject_quota_commit BEFORE UPDATE ON traffic BEGIN SELECT RAISE(ABORT,'commit unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	// 周期仍有效，只有 Commit 失败门能阻止这次按新配额即时恢复。
+	quotaNode(t, h, id, 1000, heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_SUM, 1)
+	if events := quotaEvents(t, h); len(events) != 1 {
+		t.Fatalf("failed Commit evaluated valid old observation: %+v", events)
+	}
+	if _, err := h.book.Commit(t.Context(), id); err == nil {
+		t.Fatal("write failure injection did not take effect")
+	}
+	if _, err := db.Exec("DROP TRIGGER reject_quota_commit"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.alerts.SweepOffline(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if events := quotaEvents(t, h); len(events) != 2 || events[0].Transition != store.TransitionRecovered {
+		t.Fatalf("next sweep did not converge: %+v", events)
+	}
+}
+
 func quotaNode(t *testing.T, h *harness, id int64, quota uint64, mode heronv1.TrafficQuotaMode, day uint32) {
 	t.Helper()
 	h.update(t, &heronv1.UpdateNodeRequest{Id: id, Name: "quota", Public: true, TrafficResetDay: day, OfflineGraceS: proto.Uint32(0), TrafficQuotaBytes: quota, TrafficQuotaMode: mode})
