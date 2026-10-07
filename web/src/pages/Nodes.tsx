@@ -1,30 +1,35 @@
 import { createConnectQueryKey, createQueryOptions, useMutation, useQuery, useTransport } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
-import { type DragEvent, type FormEvent, type ReactNode, useRef, useState } from "react";
-import { Link } from "react-router";
+import { type DragEvent, type ReactNode, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
 import { useRetained } from "../api/useRetained";
 import { type OrderMove, useOrder } from "../api/useOrder";
 import { ConfirmDelete } from "../components/ConfirmDelete";
-import { Icon } from "../components/Icon";
-import { Modal } from "../components/Modal";
 import { MixedCheckbox } from "../components/MixedCheckbox";
 import { NodeAddresses } from "../components/NodeAddresses";
 import { NodeCountry } from "../components/NodeCountry";
-import { NodeInstallModal } from "../components/NodeInstallModal";
+import { NodeCreateDrawer } from "../components/NodeCreateDrawer";
+import { NodeCredentialsDrawer } from "../components/NodeCredentialsDrawer";
 import { NodeMoveModal } from "../components/NodeMoveModal";
 import { NodeOrderControl } from "../components/NodeOrderControl";
 import { AdminService, type Node, type NodeStatus, type Tag } from "../gen/heron/v1/admin_pb";
-import { BillingEditor, billingDraftSet, emptyBillingDraft } from "../components/BillingEditor";
-import { expired, expiryText, priceText } from "../lib/billing";
+import { expiryText, priceText } from "../lib/billing";
 import { bytes } from "../lib/format";
 import { withId } from "../lib/ids";
-import { filterNodes } from "../lib/nodeSearch";
 import { POLL_MS } from "../lib/poll";
-import { sameTag, withoutTag, withTag } from "../lib/tags";
+import { sameTag, withoutTag } from "../lib/tags";
 import { olderThan } from "../lib/version";
+import { Missing } from "../components/Bar";
+import { MultiSelect } from "../components/MultiSelect";
+import { PageHeader } from "../components/PageHeader";
+import { RowMenu } from "../components/RowMenu";
+import { StatusBadge } from "../components/StatusBadge";
+import { liveById, liveStatus } from "../lib/adminStatus";
+import { applyScope, isScoped, paramsWithScope, scopeFromParams, STATUS_OPTIONS, type ScopeFilters } from "../lib/nodeFilters";
+import { expiryLevel } from "../lib/status";
 import { NodeEditor } from "./NodeEditor";
 import { BatchNodeTagsEditor } from "./BatchNodeTagsEditor";
 
@@ -53,22 +58,20 @@ export function Nodes() {
   const hubVersion = snapshot.data?.hubVersion;
   // 落后标记只看 hub 绑定的 agent 版本（spec §14.1）：hub 自己升到 v0.5.6 不代表节点落后。
   const boundAgentVersion = snapshot.data?.boundAgentVersion;
-  const statusById = new Map(snapshot.data?.nodes.map((node) => [node.id, node]));
+  const live = liveById(snapshot.data?.nodes);
   const refresh = (options?: { throwOnError: boolean }) => Promise.all([
     qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) }, options),
     qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listTags, cardinality: "finite" }) }, options),
   ]);
   // 创建与轮换的响应是唯一明文来源，不能丢弃迟到响应；删除同一节点时同步清掉它的凭据弹窗。
   // opener 记下触发元素，弹窗关闭后焦点回到它；节点多了也不会把凭据顶出视口。
-  const [secret, setSecret] = useState<{ id: bigint; label: string; value: string; reRegister: boolean; opener: HTMLElement } | null>(null);
+  const [secret, setSecret] = useState<{ id: bigint; title: string; label: string; value: string; reRegister: boolean; opener: HTMLElement } | null>(null);
   const lastOpener = useRef<HTMLElement | null>(null);
   const [creating, setCreating] = useState<HTMLElement | null>(null);
-  const [name, setName] = useState("");
-  const [billing, setBilling] = useState(emptyBillingDraft);
   const [search, setSearch] = useState("");
   const [drag, setDrag] = useState<{ id: bigint; members: string } | null>(null);
   const [drop, setDrop] = useState<{ target: bigint; edge: "before" | "after" } | null>(null);
-  const [editor, setEditor] = useState<{ node: Node; mode: "general" | "billing"; opener: HTMLElement } | null>(null);
+  const [editor, setEditor] = useState<{ node: Node; opener: HTMLElement } | null>(null);
   const [selected, setSelected] = useState<bigint[]>([]);
   const [batchEditor, setBatchEditor] = useState<{ nodes: Node[]; tags: Tag[]; opener: HTMLElement } | null>(null);
   // 「移动到…」的目标：批量多选或行菜单单个节点；opener 是触发元素，弹窗关闭后焦点回到它。
@@ -77,8 +80,8 @@ export function Nodes() {
     ...mutationOptions,
     onSuccess: (result) => {
       const node = result.node;
-      if (node) setSecret({ id: node.id, label: `节点 ${withId(node.name, node.id)} 的 token`, value: result.token, reRegister: false, opener: lastOpener.current ?? document.body });
-      setName(""); setBilling(emptyBillingDraft()); setCreating(null);
+      setCreating(null);
+      if (node) setSecret({ title: "节点已创建", id: node.id, label: `节点 ${withId(node.name, node.id)} 的 token`, value: result.token, reRegister: false, opener: lastOpener.current ?? document.body });
       void refresh();
     },
   });
@@ -109,7 +112,7 @@ export function Nodes() {
       if (request.id == null) return refresh();
       const id = request.id;
       const name = nodes.data?.nodes.find((node) => node.id === id)?.name ?? String(id);
-      setSecret({ id, label: `节点 ${withId(name, id)} 的新 token`, value: result.token, reRegister: true, opener: lastOpener.current ?? document.body });
+      setSecret({ title: "节点凭据", id, label: `节点 ${withId(name, id)} 的新 token`, value: result.token, reRegister: true, opener: lastOpener.current ?? document.body });
       return refresh();
     },
   });
@@ -122,7 +125,12 @@ export function Nodes() {
       return qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) });
     },
   });
-  const filtered = search !== "" || tagFilter.kind === "untagged" || tagFilter.names.length > 0;
+  const [params, setParams] = useSearchParams();
+  const scope = scopeFromParams(params);
+  // 筛选由 URL 持有；切换时清空选择，避免批量操作修改已经不可见的节点。
+  const setScope = (next: ScopeFilters) => { setParams(paramsWithScope(params, next), { replace: true }); setSelected([]); };
+  const clearFilters = () => { setSearch(""); setTagFilter({ kind: "tags", names: [] }); setScope({ status: null, expiring: false, lagging: false }); };
+  const filtered = search !== "" || tagFilter.kind === "untagged" || tagFilter.names.length > 0 || isScoped(scope);
   // narrowed（过滤或沿用旧结果）表示显示的不是当前条件下的完整列表：行首序号改用服务端全序名次，
   // 拖动排序也只在未收窄时开放（它们保存完整排列）。
   const narrowed = filtered || nodes.stale;
@@ -145,9 +153,8 @@ export function Nodes() {
       return refresh();
     },
   });
-  const onCreate = (event: FormEvent) => { event.preventDefault(); if (name.trim() && !create.isPending) create.mutate(billingDraftSet(billing) ? { name, billing } : { name }); };
   const gate = queryGate(nodes);
-  const list = filterNodes(order.items, search);
+  const list = applyScope(order.items, live, boundAgentVersion, scope, search);
   const selectedIds = new Set(selected);
   const selectedNodes = list.filter((node) => selectedIds.has(node.id));
   // 创建和编辑由弹窗占用交互；换发响应前尚无弹窗，也要锁住同一批入口，避免并发响应覆盖唯一明文与返回焦点。
@@ -170,23 +177,34 @@ export function Nodes() {
     const bounds = event.currentTarget.getBoundingClientRect();
     return { target, edge: event.clientY < bounds.top + bounds.height / 2 ? "before" : "after" };
   };
-  const openEditor = (node: Node, mode: "general" | "billing", opener: HTMLElement) => {
+  const openEditor = (node: Node, opener: HTMLElement) => {
     if (editing) return;
     update.reset();
-    setEditor({ node, mode, opener });
+    setEditor({ node, opener });
   };
 
+  const tagOptions = [...(tags.data?.tags ?? []).map((tag) => ({ value: tag.name, label: tag.name, count: tag.nodeCount })),
+    // 已选却从清单消失的标签仍须可取消，否则用户会困在无法清空的过滤条件里。
+    ...(tagFilter.kind === "tags" ? tagFilter.names : []).filter((name) => !(tags.data?.tags ?? []).some((tag) => sameTag(tag.name, name))).map((name) => ({ value: name, label: name }))];
+  const untagged = tagFilter.kind === "untagged";
   return <section>
-    <header className="page-heading">
-      <div><div className="eyebrow">Infrastructure</div><h1>节点</h1><p>管理节点资产、网络连接与到期信息。</p></div>
-      <button type="button" className="primary-button" disabled={editing} onClick={(event) => { lastOpener.current = event.currentTarget; create.reset(); setCreating(event.currentTarget); }}><Icon name="plus" />添加节点</button>
-    </header>
+    <PageHeader title="节点" actions={<button type="button" className="primary-button" disabled={editing} onClick={(event) => { lastOpener.current = event.currentTarget; create.reset(); setCreating(event.currentTarget); }}>添加节点</button>} />
     {!editor && errorBanner(nodes.error)}
     {snapshot.error != null && <p role="alert" className="error">{boundAgentVersion === undefined ? "无法取得 hub 绑定的 agent 版本，落后标记不可用" : `刷新失败，落后标记按上次取得的绑定版本 ${boundAgentVersion || "空"} 判断`}；在线状态与流量可能不是最新值：{errorText(snapshot.error)}</p>}
-    {secret && <NodeInstallModal secretLabel={secret.label} token={secret.value} hubVersion={hubVersion} boundAgentVersion={boundAgentVersion} error={snapshot.error} reRegister={secret.reRegister} opener={secret.opener} onClose={() => setSecret(null)} />}
-    <div className="node-filters">
-      <label className="node-search">搜索节点<input type="search" placeholder="名称、IP、地区、备注或主机名" value={search} onChange={(event) => { setSearch(event.target.value); setSelected([]); }} /></label>
-      <TagFilter tags={tags.data?.tags} error={tags.error} filter={tagFilter} onChange={(value) => { setTagFilter(value); setSelected([]); }} />
+    {secret && <NodeCredentialsDrawer title={secret.title} secretLabel={secret.label} token={secret.value} hubVersion={hubVersion} boundAgentVersion={boundAgentVersion} error={snapshot.error} reRegister={secret.reRegister} opener={secret.opener} onClose={() => setSecret(null)} />}
+    <div className="filter-row" role="group" aria-label="筛选">
+      <input type="search" aria-label="搜索节点" placeholder="名称、IP、地区、备注或主机名" value={search} onChange={(event) => { setSearch(event.target.value); setSelected([]); }} />
+      <MultiSelect label="标签" searchable options={tagOptions} selected={tagFilter.kind === "tags" ? tagFilter.names : []} onChange={(names) => { setTagFilter({ kind: "tags", names }); setSelected([]); }} />
+      {/* "无标签"不依赖 ListTags：清单加载中、为空或失败都照常可勾。它的可访问名称与标签项分开命名——用户可能真的建一个叫"无标签"的标签。 */}
+      <label className="check"><input type="checkbox" aria-label="只看没有标签的节点" checked={untagged} onChange={() => { setTagFilter(untagged ? { kind: "tags", names: [] } : { kind: "untagged" }); setSelected([]); }} />无标签</label>
+      <select aria-label="状态" value={scope.status ?? ""} onChange={(event) => setScope({ ...scope, status: (event.target.value || null) as ScopeFilters["status"] })}>
+        <option value="">全部状态</option>{STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+      </select>
+      <label className="check"><input type="checkbox" aria-label="只看 30 天内到期" checked={scope.expiring} onChange={() => setScope({ ...scope, expiring: !scope.expiring })} />30 天内到期</label>
+      <label className="check"><input type="checkbox" aria-label="只看 agent 版本落后" checked={scope.lagging} onChange={() => setScope({ ...scope, lagging: !scope.lagging })} />agent 版本落后</label>
+      {filtered && <button type="button" className="link" onClick={clearFilters}>清除筛选</button>}
+      {tags.error != null && <span role="alert" className="error">无法取得标签清单：{errorText(tags.error)}</span>}
+      <span className="muted num">{list.length} / {order.items.length}</span>
     </div>
     {!editing && errorBanner(error)}
     {!batchEditor && errorBanner(batchUpdate.error)}
@@ -195,49 +213,44 @@ export function Nodes() {
     {order.pending && <p role="status" className="muted">正在保存并确认排序…</p>}
     {order.confirmed && <p className="order-saved" aria-live="polite">顺序已保存</p>}
     {order.blocked && <button type="button" onClick={order.recover} disabled={order.pending}>重新读取排序</button>}
-    {filtered && <p className="node-subtext">搜索或按标签过滤时不能用拖动或上下移（它们保存完整排列）；可用「移动到…」按全序名次移动，或清空过滤后再调整。</p>}
+    {filtered && <p className="node-subtext">筛选时不能用拖动或上下移（它们保存完整排列）；可用行菜单的「移动到…」按全序名次移动，或清除筛选后再调整。</p>}
     {!filtered && nodes.stale && <p className="node-subtext">列表还不是当前条件下的结果，暂时无法排序。</p>}
     {gate.ready ? <>
-      <div className="section-heading"><h2>节点清单 <span className="muted">{list.length}</span></h2><span className="live-caption">双栈出口由 agent 独立探测</span></div>
-      <div className="node-batch-toolbar">
-        <label><MixedCheckbox label="选择当前结果全部节点" checked={selectedNodes.length === 0 ? false : selectedNodes.length === list.length ? true : "mixed"} disabled={editing || nodes.stale || list.length === 0} onChange={() => setSelected(selectedNodes.length === list.length ? [] : list.map((node) => node.id))} />选择当前结果</label>
-        <span className="muted">已选择 {selectedNodes.length} 个节点</span>
-        <button type="button" disabled={editing || nodes.stale || nodes.error != null || remove.isPending || selectedNodes.length === 0 || tags.data === undefined || tags.error != null} onClick={(event) => { batchUpdate.reset(); setBatchEditor({ nodes: selectedNodes, tags: tags.data?.tags ?? [], opener: event.currentTarget }); }}>批量编辑标签</button>
-        <button type="button" disabled={moveLocked || selectedNodes.length === 0} onClick={(event) => { moveNodes.reset(); setMoveTarget({ nodes: selectedNodes, opener: event.currentTarget }); }}>移动到…</button>
+      {selectedNodes.length > 0 && <div className="batch-toolbar" role="toolbar" aria-label="批量操作">
+        <span>已选择 {selectedNodes.length} 个节点</span>
+        <button type="button" disabled={editing || nodes.stale || nodes.error != null || remove.isPending || tags.data === undefined || tags.error != null} onClick={(event) => { batchUpdate.reset(); setBatchEditor({ nodes: selectedNodes, tags: tags.data?.tags ?? [], opener: event.currentTarget }); }}>批量编辑标签</button>
+        <button type="button" disabled={moveLocked} onClick={(event) => { moveNodes.reset(); setMoveTarget({ nodes: selectedNodes, opener: event.currentTarget }); }}>移动到…</button>
         {!moveReady && allNodes.error == null && <span className="muted">正在读取节点总数…</span>}
         {allNodes.error != null && <span className="error">无法取得节点总数，「移动到…」不可用：{errorText(allNodes.error)}</span>}
-        {selectedNodes.length > 0 && <button type="button" className="link" disabled={editing} onClick={() => setSelected([])}>清除选择</button>}
-      </div>
+        <button type="button" className="link" disabled={editing} onClick={() => setSelected([])}>清除选择</button>
+      </div>}
       <p className="node-subtext order-help" id="node-order-help">拖动手柄调整顺序，松开后自动保存。也可使用移动菜单，或聚焦手柄后按方向键、Home / End。</p>
-      {list.length === 0 && <p className="node-empty" role="status">{narrowed ? "没有匹配的节点。" : "还没有节点，添加节点后安装 agent 即可开始监控。"}</p>}
+      {list.length === 0 && (scope.lagging && boundAgentVersion === undefined
+        ? <p className="node-empty" role="status">无法取得 hub 绑定的 agent 版本，「agent 版本落后」筛选暂时没有结果。</p>
+        : <p className="node-empty" role="status">{narrowed ? "没有匹配的节点。" : "还没有节点，添加节点后安装 agent 即可开始监控。"}</p>)}
       <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
-        <table className="nodes node-management"><thead><tr><th data-column="order"><span className="sr-only">排序</span></th><th data-column="name">节点</th><th data-column="addresses">IP 地址</th><th data-column="status">状态</th><th>本周期流量</th><th>计费</th><th>到期</th><th data-column="actions">操作</th></tr></thead>
-          <tbody>{list.map((node, index) => <NodeRow key={String(node.id)} node={node} status={statusById.get(node.id)} boundAgentVersion={boundAgentVersion}
-            editing={editing} deleting={remove.isPending} rotating={rotate.isPending}
-            selection={<MixedCheckbox label={`选择 ${withId(node.name, node.id)}`} checked={selectedIds.has(node.id)} disabled={editing || nodes.stale} onChange={() => setSelected((current) => current.includes(node.id) ? current.filter((id) => id !== node.id) : [...current, node.id])} />}
-            orderClass={dragging === node.id ? "is-dragging" : dragging !== null && drop?.target === node.id ? `drop-${drop.edge}` : undefined}
-            onDragOver={(event) => {
-              if (dragging === null || dragging === node.id) return;
-              event.preventDefault(); event.dataTransfer.dropEffect = "move";
-              setDrop(dropPosition(event, node.id));
-            }}
-            onDrop={(event) => {
-              if (dragging !== null && dragging !== node.id) {
-                event.preventDefault(); moveNode(dragging, dropPosition(event, node.id));
-              }
-              endDrag();
-            }}
-            orderControl={<NodeOrderControl label={withId(node.name, node.id)} index={index} count={list.length}
-              position={narrowed ? node.position : index + 1} reorderDisabled={!sortable} moveDisabled={moveLocked}
-              onMove={(move) => moveNode(node.id, move)} onDragEnd={endDrag}
-              onMoveTo={(opener) => { moveNodes.reset(); setMoveTarget({ nodes: [node], opener }); }}
-              onDragStart={(event) => {
-                if (!sortable) { event.preventDefault(); return; }
-                event.dataTransfer.effectAllowed = "move";
-                event.dataTransfer.setData("text/plain", String(node.id));
-                setDrag({ id: node.id, members }); setDrop(null);
-              }} />}
-            onEdit={(mode, opener) => openEditor(node, mode, opener)} onDelete={() => remove.mutate({ id: node.id })} onRotate={(opener) => { lastOpener.current = opener; rotate.mutate({ id: node.id }); }} />)}</tbody>
+        <table className="nodes node-management"><thead><tr>
+          <th data-column="select"><MixedCheckbox label="选择当前结果全部节点" checked={selectedNodes.length === 0 ? false : selectedNodes.length === list.length ? true : "mixed"} disabled={editing || nodes.stale || list.length === 0} onChange={() => setSelected(selectedNodes.length === list.length ? [] : list.map((node) => node.id))} /></th>
+          <th data-column="order"><span className="sr-only">排序</span></th><th data-column="name">节点</th><th data-column="addresses">IPv4 / IPv6</th><th data-column="status">状态</th><th>本周期</th><th>费用</th><th>到期</th><th data-column="actions"><span className="sr-only">操作</span></th>
+        </tr></thead>
+          <tbody>{list.map((node, index) => {
+            const label = withId(node.name, node.id);
+            return <NodeRow key={String(node.id)} node={node} live={live.get(node.id)} boundAgentVersion={boundAgentVersion}
+              selection={<MixedCheckbox label={`选择 ${label}`} checked={selectedIds.has(node.id)} disabled={editing || nodes.stale} onChange={() => setSelected((current) => current.includes(node.id) ? current.filter((id) => id !== node.id) : [...current, node.id])} />}
+              orderClass={dragging === node.id ? "is-dragging" : dragging !== null && drop?.target === node.id ? `drop-${drop.edge}` : undefined}
+              onDragOver={(event) => { if (dragging === null || dragging === node.id) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDrop(dropPosition(event, node.id)); }}
+              onDrop={(event) => { if (dragging !== null && dragging !== node.id) { event.preventDefault(); moveNode(dragging, dropPosition(event, node.id)); } endDrag(); }}
+              orderControl={<NodeOrderControl label={label} index={index} count={list.length} position={narrowed ? node.position : index + 1} reorderDisabled={!sortable}
+                onMove={(move) => moveNode(node.id, move)} onDragEnd={endDrag}
+                onDragStart={(event) => { if (!sortable) { event.preventDefault(); return; } event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", String(node.id)); setDrag({ id: node.id, members }); setDrop(null); }} />}
+              menu={<RowMenu label={label} items={[
+                { label: "编辑", disabled: editing, onSelect: (trigger) => openEditor(node, trigger) },
+                { label: "查看详情", to: `/nodes/${node.id}` },
+                { label: "移动到…", disabled: moveLocked, onSelect: (trigger) => { moveNodes.reset(); setMoveTarget({ nodes: [node], opener: trigger }); } },
+                { label: "换 token", disabled: rotate.isPending || editing, onSelect: (trigger) => { lastOpener.current = trigger; rotate.mutate({ id: node.id }); } },
+                { label: "删除", danger: true, confirm: `确认删除 ${label}`, disabled: remove.isPending || editing, onSelect: () => remove.mutate({ id: node.id }) },
+              ]}/>} />;
+          })}</tbody>
         </table>
       </div>
     </> : gate.loading}
@@ -247,72 +260,37 @@ export function Nodes() {
     {moveTarget && <NodeMoveModal nodes={moveTarget.nodes} total={moveTotal ?? 0} pending={moveNodes.isPending} error={moveNodes.error} opener={moveTarget.opener}
       onClose={() => { setMoveTarget(null); moveNodes.reset(); }}
       onConfirm={(position) => moveNodes.mutate({ ids: moveTarget.nodes.map((node) => node.id), position })} />}
-    {editor && <NodeEditor key={String(editor.node.id)} node={editor.node} mode={editor.mode} opener={editor.opener} knownTags={tags.data?.tags ?? []}
+    {editor && <NodeEditor key={String(editor.node.id)} node={editor.node} opener={editor.opener} knownTags={tags.data?.tags ?? []}
       saving={update.isPending} error={update.error} listError={nodes.error} onClose={() => setEditor(null)}
       onSave={(patch) => update.mutate({ id: editor.node.id, ...patch }, { onSuccess: () => setEditor(null) })} />}
-    {creating && <Modal title="添加节点" description="创建后将显示安装凭据 token，仅用于注册 agent，不能上报指标。计费可留空，稍后在节点的计费设置中补。" busy={create.isPending} opener={creating} onClose={() => setCreating(null)}>
-      <form onSubmit={onCreate}><div className="modal-body">{errorBanner(create.error)}<label>新节点名称<input data-autofocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如 tokyo-01" disabled={create.isPending} /></label>
-        <section className="form-section" aria-label="计费（选填）"><BillingEditor label="新节点" draft={billing} onChange={(patch) => setBilling({ ...billing, ...patch })} /></section></div>
-        <footer className="modal-footer"><button type="button" disabled={create.isPending} onClick={() => setCreating(null)}>取消</button><button type="submit" className="primary-button" disabled={create.isPending || name.trim() === ""}>创建</button></footer>
-      </form>
-    </Modal>}
+    {creating && <NodeCreateDrawer opener={creating} pending={create.isPending} error={create.error} onClose={() => setCreating(null)} onCreate={(request) => create.mutate(request)} />}
   </section>;
 }
 
-function NodeRow({ node, status, boundAgentVersion, editing, deleting, rotating, selection, orderControl, orderClass, onDragOver, onDrop, onEdit, onDelete, onRotate }: {
-  node: Node; status?: NodeStatus; boundAgentVersion?: string; editing: boolean; deleting: boolean; rotating: boolean;
-  selection: ReactNode;
-  orderControl: ReactNode; orderClass?: string; onDragOver: (event: DragEvent<HTMLTableRowElement>) => void; onDrop: (event: DragEvent<HTMLTableRowElement>) => void;
-  onEdit: (mode: "general" | "billing", opener: HTMLElement) => void; onDelete: () => void; onRotate: (opener: HTMLElement) => void;
+function NodeRow({ node, live, boundAgentVersion, selection, orderControl, orderClass, onDragOver, onDrop, menu }: {
+  node: Node; live: NodeStatus | undefined; boundAgentVersion?: string; selection: ReactNode; orderControl: ReactNode; menu: ReactNode;
+  orderClass?: string; onDragOver: (event: DragEvent<HTMLTableRowElement>) => void; onDrop: (event: DragEvent<HTMLTableRowElement>) => void;
 }) {
   const label = withId(node.name, node.id);
-  return <tr className={orderClass} onDragOver={onDragOver} onDrop={onDrop}>
+  const status = liveStatus(node, live);
+  const lagging = boundAgentVersion !== undefined && olderThan(node.facts?.agentVersion, boundAgentVersion);
+  return <tr className={orderClass} aria-label={node.name} data-status={status ?? "unknown"} onDragOver={onDragOver} onDrop={onDrop}>
+    <td data-column="select">{selection}</td>
     <td data-column="order" data-label="排序">{orderControl}</td>
-    <td data-column="name" data-label="节点"><div className="node-name-line">{selection}<Link to={`/nodes/${node.id}`} aria-label={label}>{node.name}</Link><NodeCountry node={node} /></div>
-      <div aria-label={`标签 ${label}`}>{node.tags.map((tag) => <span key={tag} className="tag">{tag}</span>)}</div>
-      {node.note && <p className="node-subtext node-note" title={node.note}>{node.note}</p>}
-      <span className="node-subtext">{node.public ? "公开" : "仅管理端"}</span>
-      {node.maintenance && <span className="node-subtext warn">维护中</span>}
-      {boundAgentVersion !== undefined && olderThan(node.facts?.agentVersion, boundAgentVersion) && <span className="node-subtext warn" title={`低于 hub 绑定的 agent 版本 ${boundAgentVersion}`}>agent 低于 {boundAgentVersion}</span>}
+    <td data-column="name" data-label="节点">
+      <div className="node-name-line"><Link to={`/nodes/${node.id}`} aria-label={label}>{node.name}</Link><NodeCountry node={node} />
+        {node.public && <span className="chip chip-public">公开</span>}
+        {lagging && <span className="badge-attention" title={`低于 hub 绑定的 agent 版本 ${boundAgentVersion}`}>agent 低于 {boundAgentVersion}</span>}</div>
+      {node.tags.length > 0 && <ul className="tag-chips" aria-label={`标签 ${label}`}>{node.tags.map((tag) => <li key={tag} className="chip">{tag}</li>)}</ul>}
+      {node.note && <p className="node-note muted" title={node.note}>{node.note}</p>}
     </td>
-    <td data-column="addresses" data-label="IP 地址"><NodeAddresses network={node.facts?.network} /></td>
-    <td data-column="status" data-label="状态"><span className={`status-pill ${status ? status.online ? "is-online" : "is-offline" : ""}`}>{status && <span className={`dot ${status.online ? "ok" : "bad"}`} />}{status ? status.online ? "在线" : "离线" : "状态未知"}</span></td>
-    <td data-column="traffic" data-label="本周期流量">{status?.traffic ? <div className="node-traffic"><span>↓ {bytes(status.traffic.periodRx)}</span><span className="muted">↑ {bytes(status.traffic.periodTx)}</span></div> : <span className="muted">暂无读数</span>}</td>
-    <td data-column="billing" data-label="计费"><span className="node-price">{priceText(node.billing) || "未设置"}</span>{node.billing?.autoRenew && <div className="node-subtext">自动续期</div>}</td>
-    <td data-column="expiry" data-label="到期"><span className={expired(node.billing) ? "error" : undefined}>{expiryText(node.billing) || "未设置"}</span></td>
-    <td data-column="actions" data-label="操作"><div className="node-actions">
-      <button type="button" className="icon-button" title="编辑节点" aria-label={`编辑 ${label}`} disabled={editing} onClick={(event) => onEdit("general", event.currentTarget)}><Icon name="edit" /></button>
-      <button type="button" className="icon-button" title="计费设置" aria-label={`计费 ${label}`} disabled={editing} onClick={(event) => onEdit("billing", event.currentTarget)}><Icon name="calendar" /></button>
-      <button type="button" className="link" aria-label={`换 token ${label}`} disabled={rotating || editing} onClick={(event) => onRotate(event.currentTarget)}>换 token</button>
-      {!editing && <ConfirmDelete label={`删除 ${label}`} confirm={`确认删除 ${label}`} pending={deleting} onDelete={onDelete} />}
-    </div></td>
+    <td data-column="addresses" data-label="IPv4 / IPv6"><NodeAddresses network={node.facts?.network} /></td>
+    <td data-column="status" data-label="状态">{status ? <StatusBadge status={status} /> : <span className="muted">状态未知</span>}</td>
+    <td data-column="traffic" data-label="本周期" className="num">{live?.traffic ? `↓ ${bytes(live.traffic.periodRx)} ↑ ${bytes(live.traffic.periodTx)}` : <Missing />}</td>
+    <td data-column="billing" data-label="费用"><span className="num">{priceText(node.billing) || "—"}</span>{node.billing?.autoRenew && <span className="muted"> · 自动续期</span>}</td>
+    <td data-column="expiry" data-label="到期" className="num"><span data-level={expiryLevel(node.billing?.daysLeft)}>{expiryText(node.billing) || "—"}</span></td>
+    <td data-column="actions">{menu}</td>
   </tr>;
-}
-
-function TagFilter({ tags, error, filter, onChange }: {
-  tags: readonly Tag[] | undefined; error: unknown; filter: TagFilterState; onChange: (next: TagFilterState) => void;
-}) {
-  const listed = (tags ?? []).map((tag) => tag.name);
-  const selected = filter.kind === "tags" ? filter.names : [];
-  // 已选却从清单消失的标签仍须可取消，否则用户会困在无法清空的过滤条件里。
-  const names = [...listed, ...selected.filter((name) => !listed.some((tag) => sameTag(tag, name)))];
-  const count = (name: string) => tags?.find((tag) => tag.name === name)?.nodeCount;
-  const untagged = filter.kind === "untagged";
-  return <fieldset className="picks tag-filter"><legend>按标签过滤（多选为同时满足）</legend>
-    {error != null && <span role="alert" className="error">无法取得标签清单：{errorText(error)}</span>}
-    {/* "无标签"不依赖 ListTags：清单加载中、为空或失败都照常可勾。它的可访问名称与标签项分开命名——
-        用户可能真的建一个叫"无标签"的标签，两者撞名就选不中标签了。 */}
-    <label><input type="checkbox" aria-label="只看没有标签的节点" checked={untagged} onChange={() => onChange(untagged ? { kind: "tags", names: [] } : { kind: "untagged" })} />无标签</label>
-    {error == null && tags !== undefined && names.length === 0 && <span className="muted">还没有标签。</span>}
-    {names.map((name) => {
-      const checked = selected.some((tag) => sameTag(tag, name));
-      const n = count(name);
-      // 无标签状态下 selected 为空：勾任一标签经 withTag 自然替换为只选这一个（互斥由状态形状保证，
-      // untagged 分支不携带标签名）；标签状态下则在已选里增删。
-      return <label key={name}><input type="checkbox" aria-label={`按标签过滤 ${name}`} checked={checked} onChange={() => onChange({ kind: "tags", names: checked ? withoutTag(selected, name) : withTag(selected, name) })} />{name}{n !== undefined && <span className="muted">（{n}）</span>}</label>;
-    })}
-    {(untagged || selected.length > 0) && <button type="button" className="link" onClick={() => onChange({ kind: "tags", names: [] })}>清除标签过滤</button>}
-  </fieldset>;
 }
 
 function TagManager({ tags, pending, onDelete }: { tags: readonly Tag[] | undefined; pending: boolean; onDelete: (name: string) => void }) {

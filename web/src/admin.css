@@ -64,14 +64,21 @@
 .admin-shell .facts dd { margin: 0; overflow-wrap: anywhere; }
 .admin-shell .tag-filter { border: 0; padding: 0; flex: 1; margin: 0; min-width: 180px; }
 .admin-shell .tag-filter legend { padding: 0; font-size: 11px; color: var(--muted); font-weight: 400; margin-bottom: 7px; }
+.stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 28px; }
+.admin-shell .metric-card { position: relative; margin: 0; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); overflow: hidden; }
+.metric-card dt { color: var(--muted); font-size: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.metric-card dt svg { color: var(--accent); opacity: .8; }
+.metric-card dd { margin: 12px 0 5px; font-size: 28px; font-weight: 600; letter-spacing: -.9px; font-variant-numeric: tabular-nums; }
+.metric-card small { color: var(--muted); font-size: 11px; }
+.section-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; justify-content: space-between; margin: 26px 0 12px; }
+.admin-shell .section-heading h2 { margin: 0; }
+.live-caption { font-size: 11px; color: var(--muted); }
+.admin-shell .node-search { margin: 0; max-width: 340px; font-size: 11px; }
+.admin-shell .node-search input { width: 100%; }
 .admin-shell table.node-management { min-width: 1080px; table-layout: fixed; }
-.admin-shell table.node-management th[data-column="order"] { width: 82px; padding: 12px 8px; }
 .admin-shell table.node-management th[data-column="name"] { width: 21%; }
 .admin-shell table.node-management th[data-column="addresses"] { width: 23%; }
 .admin-shell table.node-management th[data-column="status"] { width: 85px; }
-.admin-shell table.node-management th[data-column="actions"] { width: 112px; }
-.admin-shell table.node-management td { padding: 17px 12px; }
-.admin-shell table.node-management td[data-column="order"] { padding: 8px; }
 .node-order-control { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .admin-shell .node-order-control .order-handle { width: 52px; height: 30px; min-height: 30px; cursor: grab; }
 .admin-shell .node-order-control .order-handle:active { cursor: grabbing; }
@@ -84,29 +91,19 @@
 .node-management tr.drop-after > td { box-shadow: inset 0 -3px var(--accent); }
 .order-help { margin: 0 0 8px; max-width: 680px; }
 .order-saved { font-size: 12px; color: var(--ok); }
-.node-name-line { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 5px; }
 .node-name-line a { color: var(--fg); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .node-name-line .country-badge { font-size: 11px; }
 .node-subtext { font-size: 10px; color: var(--muted); margin: 5px 0; }
 span.node-subtext { margin-right: 8px; }
-.node-note { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .node-addresses { display: grid; gap: 6px; }
 .node-address { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
 .address-family { color: var(--muted); font-size: 9px; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; flex: none; }
 .node-address code { font-size: 11px; overflow-wrap: anywhere; }
 .address-state { color: var(--muted); font-size: 11px; }
 .address-state.failed { color: var(--warn); }
-.node-traffic { font-variant-numeric: tabular-nums; }
-.node-traffic span { display: block; }
-.node-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
-.node-actions > .link { font-size: 10px; }
-.node-actions .icon-button { width: 32px; }
-.node-price { font-weight: 550; font-variant-numeric: tabular-nums; }
 .tag-management { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 18px; }
 .tag-management summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 .tag-management .tag-list { display: flex; flex-wrap: wrap; gap: 10px 24px; font-size: 11px; }
-.node-batch-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
-.node-batch-toolbar label { display: inline-flex; align-items: center; gap: 8px; }
 .batch-tag-list { display: grid; gap: 8px; }
 .batch-tag-option { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
 .batch-tag-name { flex: 1; min-width: 80px; overflow-wrap: anywhere; }
@@ -122,10 +119,6 @@ span.node-subtext { margin-right: 8px; }
 .modal-body { padding: 16px 20px; }
 .modal-footer { position: sticky; bottom: 0; z-index: 1; padding: 16px 20px; background: var(--card); border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px; }
 .form-section + .form-section { margin-top: 25px; padding-top: 24px; border-top: 1px solid var(--line); }
-.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-.form-grid .full-width { grid-column: 1 / -1; }
-.admin-shell .form-grid :is(input:not([type="checkbox"]), textarea, select) { width: 100%; }
-.admin-shell .form-grid textarea { resize: vertical; min-height: 76px; }
 .form-section .muted { font-size: 11px; line-height: 1.7; font-weight: 400; margin: 7px 0 0; }
 .admin-shell .switch-field { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); }
 .switch-field small { display: block; font-size: 11px; font-weight: 400; color: var(--muted); margin-top: 3px; }
@@ -168,27 +161,11 @@ span.node-subtext { margin-right: 8px; }
   .admin-workspace { margin-left: 0; }
   .admin-shell .mobile-menu { display: inline-flex; }
   .admin-breadcrumb > span { display: none; }
-  .admin-shell .node-management.table-scroll { overflow: visible; }
-  .admin-shell table.node-management { min-width: 0; display: block; background: transparent; }
-  .admin-shell .table-scroll:has(.node-management) { border: 0; background: none; overflow: visible; }
-  .node-management tbody { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; border: 0; background: none; }
-  .node-management thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-  .admin-shell .node-management tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 8px; }
-  .admin-shell table.node-management td { min-width: 0; border: 0; padding: 9px; }
-  .node-management td::before { content: attr(data-label); display: block; margin-bottom: 5px; color: var(--muted); font-size: 10px; }
-  .node-management td[data-column="name"], .node-management td[data-column="addresses"] { grid-column: 1 / -1; }
-  .node-management td[data-column="name"] { grid-row: 1; }
-  .node-management td[data-column="name"]::before, .node-management td[data-column="actions"]::before, .node-management td[data-column="order"]::before { display: none; }
-  .admin-shell .node-management td[data-column="order"] { grid-row: 6; display: flex; align-items: center; padding: 9px; }
   .node-order-control { flex-direction: row; }
   .admin-shell .node-order-control .order-handle, .admin-shell select.order-menu { min-height: 44px; }
   .node-management tr.drop-before { box-shadow: 0 -3px var(--accent); }
   .node-management tr.drop-after { box-shadow: 0 3px var(--accent); }
   .node-management tr.drop-before > td, .node-management tr.drop-after > td { box-shadow: none; }
-  .node-management td[data-column="actions"] { grid-row: 6; grid-column: 2; }
-  .node-management td[data-column="billing"] { grid-column: auto; }
-  .node-management td[data-column="actions"] button { margin: 0; min-height: 32px; }
-  .node-actions { justify-content: flex-end; }
 }
 @media (max-width: 560px) {
   .admin-topbar { padding: 0 12px; gap: 9px; }
@@ -199,10 +176,13 @@ span.node-subtext { margin-right: 8px; }
   .page-heading p { max-width: 210px; }
   .node-management tbody { grid-template-columns: minmax(0, 1fr); }
   .admin-shell .tag-filter { flex-basis: 100%; }
+  .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .admin-shell .metric-card { padding: 15px; }
+  .metric-card dd { font-size: 24px; }
+  .admin-shell .node-search { width: 100%; max-width: none; }
   .admin-shell .card, .admin-shell fieldset:not(.bare):not(.picks) { padding: 16px; }
   .admin-modal { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
-  .form-grid, .admin-shell .billing-edit { grid-template-columns: minmax(0, 1fr); gap: 16px; }
-  .form-grid .full-width { grid-column: auto; }
+  .admin-shell .billing-edit { grid-template-columns: minmax(0, 1fr); gap: 16px; }
 }
 
 /* 抽屉：固定右侧 480px，整高；与 .admin-modal 同一个 dialog 原语，只差布局（设计 §2「抽屉固定右侧 480px」）。 */
@@ -271,3 +251,45 @@ span.node-subtext { margin-right: 8px; }
 .segmented input:checked + span { background: var(--fg); color: var(--bg); }
 .segmented input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
 .form-grid.two { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+/* 节点管理表（pages/Nodes.tsx）：行高 52px（设计 §4.3），名称格紧凑排列，操作列只有 ⋯。 */
+.admin-shell table.node-management td { height: 52px; padding: 6px 12px; vertical-align: middle; }
+.admin-shell table.node-management th[data-column="select"], .admin-shell table.node-management td[data-column="select"] { width: 36px; padding-right: 0; }
+.admin-shell table.node-management th[data-column="order"], .admin-shell table.node-management td[data-column="order"] { width: 88px; }
+.admin-shell table.node-management th[data-column="actions"], .admin-shell table.node-management td[data-column="actions"] { width: 44px; text-align: right; }
+.node-name-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chip-public { background: var(--card-raised); }
+.badge-attention { display: inline-block; padding: 0 6px; border-radius: 999px; font-size: 12px; line-height: 18px; white-space: nowrap; color: var(--status-attention); background: color-mix(in srgb, var(--status-attention) 14%, transparent); }
+.node-note { margin: 2px 0 0; font-size: 12px; max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-management .tag-chips { display: flex; flex-wrap: wrap; gap: 4px; list-style: none; margin: 2px 0 0; padding: 0; }
+.node-management .node-order-control { flex-direction: row; gap: 2px; }
+.admin-shell .node-management .order-handle { width: 28px; min-width: 28px; }
+.admin-shell .node-management select.order-menu { width: 44px; }
+.batch-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card-raised); }
+.filter-row .check { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+@media (max-width: 900px) {
+  /* 手机卡片（设计 §4.7）：状态 + 名称 + ⋯ 一行，本周期 / 费用同排，到期另起一行；地址与排序藏起来。 */
+  .admin-shell .table-scroll:has(.node-management) { border: 0; background: none; overflow: visible; }
+  .admin-shell table.node-management, .node-management tbody { display: block; min-width: 0; background: none; border: 0; }
+  .node-management td[data-column="status"]::before, .node-management td[data-column="select"]::before, .node-management td[data-column="name"]::before, .node-management td[data-column="actions"]::before { display: none; }
+  .node-management thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .node-management tr { display: grid; grid-template-columns: auto 1fr auto; gap: 6px 10px; align-items: center; margin-bottom: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); }
+  .admin-shell table.node-management td { height: auto; padding: 0; border: 0; }
+  .node-management td[data-column="status"] { grid-row: 1; grid-column: 1; }
+  .node-management td[data-column="name"] { grid-row: 1; grid-column: 2; }
+  .node-management td[data-column="actions"] { grid-row: 1; grid-column: 3; }
+  .node-management td[data-column="select"] { grid-row: 2; grid-column: 1; }
+  .node-management td[data-column="traffic"], .node-management td[data-column="billing"], .node-management td[data-column="expiry"] { grid-row: 2; font-size: 12px; }
+  .node-management td[data-column="traffic"] { grid-column: 2; }
+  .node-management td[data-column="billing"] { grid-column: 3; }
+  .node-management td[data-column="expiry"] { grid-row: 3; grid-column: 2 / -1; }
+  .node-management td[data-column="order"], .node-management td[data-column="addresses"] { display: none; }
+}
+
+/* 节点抽屉：每个分组沿纵向排布，长说明与输入保持在同一阅读顺序。 */
+.drawer .form-section { display: grid; gap: 12px; }
+.drawer .form-section + .form-section { margin-top: 20px; padding-top: 20px; }
+.drawer .form-section :is(input:not([type="checkbox"]):not([type="radio"]), textarea) { width: 100%; }
+.drawer .form-section textarea { min-height: 76px; resize: vertical; }
+.admin-shell .drawer .billing-edit { grid-template-columns: minmax(0, 1fr); }
+.node-management [data-column="expiry"] [data-level="attention"] { color: var(--status-attention); }
+.node-management [data-column="expiry"] [data-level="critical"] { color: var(--status-offline); }

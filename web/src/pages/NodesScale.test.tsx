@@ -5,6 +5,14 @@ import { AdminService } from "../gen/heron/v1/admin_pb";
 import { renderWithAdmin } from "../test/harness";
 import { Nodes } from "./Nodes";
 
+// 行菜单入口携带 id，同名节点仍能定位到各自的操作。
+const rowAction = (label: string, action: string) => {
+  const trigger = screen.getByRole("button", { name: `更多操作 ${label}` });
+  if (trigger.getAttribute("aria-expanded") !== "true") fireEvent.click(trigger);
+  return screen.getByRole("menuitem", { name: `${action} ${label}` });
+};
+const openRowAction = (label: string, action: string) => fireEvent.click(rowAction(label, action));
+
 const nodes = Array.from({ length: 100 }, (_, i) => ({
   id: BigInt(i + 1), name: `节点-${i + 1}-${"长名称".repeat(12)}`, note: `客户备注-${"不能把单元格撑出页面".repeat(20)}`,
   public: true, trafficResetDay: 1, tags: [`region-${i % 5}`, `服务-${"长标签".repeat(5)}`],
@@ -35,7 +43,7 @@ describe("100 节点管理交互", () => {
     expect(screen.getAllByText(nodes[0].note)).toHaveLength(100);
     fireEvent.change(screen.getByRole("combobox", { name: `移动 ${label(0)}` }), { target: { value: "down" } });
     fireEvent.change(screen.getByRole("combobox", { name: `移动 ${label(0)}` }), { target: { value: "down" } });
-    fireEvent.click(screen.getByRole("button", { name: `编辑 ${label(50)}` }));
+    openRowAction(label(50), "编辑");
     const draft = screen.getByRole("textbox", { name: `备注 ${label(50)}` });
     fireEvent.change(draft, { target: { value: "尚未保存的规模验收备注" } });
     expect(shown().slice(0, 3)).toEqual([nodes[1].name, nodes[2].name, nodes[0].name]);
