@@ -9,6 +9,24 @@ import { AdminService, CountrySource, GetSnapshotResponseSchema, GetRegisterWind
 import { sameTag } from "../lib/tags";
 import { AddressDetectionState, BillingCycle } from "../gen/heron/v1/types_pb";
 
+// 行菜单入口携带 id，同名节点仍能定位到各自的操作。
+const rowAction = (label: string, action: string) => {
+  const trigger = screen.getByRole("button", { name: `更多操作 ${label}` });
+  if (trigger.getAttribute("aria-expanded") !== "true") { fireEvent.pointerDown(trigger); fireEvent.click(trigger); }
+  return screen.getByRole("menuitem", { name: `${action} ${label}` });
+};
+const openRowAction = (label: string, action: string) => fireEvent.click(rowAction(label, action));
+
+const filterBox = (name: string) => {
+  const trigger = screen.getByRole("button", { name: /^标签/ });
+  if (trigger.getAttribute("aria-expanded") !== "true") fireEvent.click(trigger);
+  return screen.getByRole("checkbox", { name });
+};
+const findFilterBox = async (name: string) => {
+  const trigger = screen.getByRole("button", { name: /^标签/ });
+  if (trigger.getAttribute("aria-expanded") !== "true") fireEvent.click(trigger);
+  return screen.findByRole("checkbox", { name });
+};
 const two = [
   { id: 1n, name: "a", public: false, note: "", sortOrder: 0, createdAt: 0n, trafficResetDay: 1, offlineGraceS: 90 },
   { id: 2n, name: "b", public: true, note: "db", sortOrder: 1, createdAt: 0n, trafficResetDay: 1 },
@@ -39,7 +57,7 @@ describe("Nodes", () => {
     const b = within(screen.getByRole("link", { name: "b（#2）" }).closest("tr")!);
     expect(b.getByLabelText("IPv4")).toHaveTextContent("探测失败");
     expect(b.getByLabelText("IPv6")).toHaveTextContent("等待上报");
-    fireEvent.click(a.getByRole("button", { name: "编辑 a（#1）" }));
+    openRowAction("a（#1）", "编辑");
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByLabelText("IPv4").querySelector("time")).toHaveAttribute("datetime", "2026-09-29T10:50:00.000Z");
   });
@@ -47,16 +65,17 @@ describe("Nodes", () => {
   it("打开单一弹窗后不能切换节点，取消与 Escape 关闭时不提交", async () => {
     const updateNode = vi.fn(async () => ({}));
     renderNodes({ listNodes: async () => ({ nodes: two }), updateNode });
-    fireEvent.click(await screen.findByRole("button", { name: "编辑 a（#1）" }));
+    await screen.findByRole("link", { name: "a（#1）" });
+    openRowAction("a（#1）", "编辑");
     expect(screen.getAllByRole("dialog")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "编辑 b（#2）" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
+    expect(rowAction("b（#2）", "编辑")).toHaveAttribute("aria-disabled", "true");
+    openRowAction("b（#2）", "编辑");
     expect(screen.getByRole("dialog")).toHaveAccessibleName("编辑节点 · a（#1）");
     fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "discarded" } });
     fireEvent(screen.getByRole("dialog"), new Event("cancel", { bubbles: true, cancelable: true }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(updateNode).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    openRowAction("a（#1）", "编辑");
     expect(screen.getByLabelText("名称 a（#1）")).toHaveValue("a");
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -65,7 +84,8 @@ describe("Nodes", () => {
   it("独立计费保存保留基础信息、标签、国家与宽限期", async () => {
     const updateNode = vi.fn(async () => ({}));
     renderNodes({ listNodes: async () => ({ nodes: [{ ...two[0], note: "保留", countryPin: "JP", tags: ["prod"] }] }), updateNode });
-    fireEvent.click(await screen.findByRole("button", { name: "计费 a（#1）" }));
+    await screen.findByRole("link", { name: "a（#1）" });
+    openRowAction("a（#1）", "编辑");
     expect(screen.getByRole("dialog")).toHaveAccessibleName("计费设置 · a（#1）");
     expect(screen.queryByLabelText("名称 a（#1）")).toBeNull();
     fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "5" } });
@@ -78,11 +98,11 @@ describe("Nodes", () => {
   it("来源 IP 在编辑诊断中保留，未记录时明确提示", async () => {
     renderNodes({ listNodes: async () => ({ nodes: [{ ...two[0], lastSource: "203.0.113.7" }, two[1]] }) });
     await screen.findByRole("link", { name: "a（#1）" });
-    expect(screen.getByRole("columnheader", { name: "IP 地址" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    expect(screen.getByRole("columnheader", { name: "IPv4 / IPv6" })).toBeInTheDocument();
+    openRowAction("a（#1）", "编辑");
     expect(within(screen.getByRole("dialog")).getByText("203.0.113.7")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
-    fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
+    openRowAction("b（#2）", "编辑");
     expect(within(screen.getByRole("dialog")).getByText("尚未记录来源")).toBeInTheDocument();
   });
 
@@ -106,7 +126,7 @@ describe("Nodes", () => {
     await screen.findByRole("link", { name: "b（#2）" });
     const input = screen.getByRole("searchbox", { name: "搜索节点" });
     fireEvent.change(input, { target: { value: "b" } });
-    expect(screen.getByText("搜索或按标签过滤时不能用拖动或上下移（它们保存完整排列）；可用「移动到…」按全序名次移动，或清空过滤后再调整。")).toBeInTheDocument();
+    expect(screen.getByText("筛选时不能用拖动或上下移（它们保存完整排列）；可用行菜单的「移动到…」按全序名次移动，或清除筛选后再调整。")).toBeInTheDocument();
     for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) {
       expect(button).toBeDisabled();
       fireEvent.click(button);
@@ -114,7 +134,7 @@ describe("Nodes", () => {
     await act(async () => {});
     expect(reorderNodes).not.toHaveBeenCalled();
     fireEvent.change(input, { target: { value: "" } });
-    expect(screen.queryByText("搜索或按标签过滤时不能用拖动或上下移（它们保存完整排列）；可用「移动到…」按全序名次移动，或清空过滤后再调整。")).toBeNull();
+    expect(screen.queryByText("筛选时不能用拖动或上下移（它们保存完整排列）；可用行菜单的「移动到…」按全序名次移动，或清除筛选后再调整。")).toBeNull();
     for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) expect(button).toBeEnabled();
     fireEvent.change(screen.getByRole("combobox", { name: "移动 a（#1）" }), { target: { value: "down" } });
     await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n] }), expect.anything()));
@@ -130,7 +150,7 @@ describe("Nodes", () => {
 
   it.each(["", "dev"])("no lagging marker when the hub has no stable binding ('%s')", async (bound) => {
     renderNodes({ listNodes: async () => ({ nodes: agentAt("v0.5.3") }), getSnapshot: snapshotOf("v0.5.6", bound) });
-    await screen.findByText(/节点清单/);
+    await screen.findByRole("link", { name: "a（#1）" });
     expect(screen.queryByText(/agent 低于/)).toBeNull();
   });
 
@@ -214,7 +234,7 @@ describe("Nodes", () => {
       return { nodes: two };
     } });
     await screen.findByRole("link", { name: "a（#1）" });
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    openRowAction("a（#1）", "编辑");
     const input = screen.getByLabelText("名称 a（#1）");
     fireEvent.change(input, { target: { value: "尚未保存" } });
     fail = true;
@@ -231,7 +251,7 @@ describe("Nodes", () => {
     expect(await screen.findByText("加载中…")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "节点管理" })).toBeNull();
     expect(screen.getByRole("searchbox", { name: "搜索节点" })).toBeInTheDocument();
-    expect(await screen.findByRole("checkbox", { name: "按标签过滤 db" })).toBeInTheDocument();
+    expect(await findFilterBox("db")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "添加节点" })).toBeInTheDocument();
   });
 
@@ -244,27 +264,27 @@ describe("Nodes", () => {
     });
     renderNodes({ listNodes, deleteNode: async () => ({}) });
     await screen.findByRole("link", { name: "a（#1）" });
-    fireEvent.click(screen.getByRole("button", { name: "删除 a（#1）" }));
-    const button = screen.getByRole("button", { name: "确认删除 a（#1）" });
+    openRowAction("a（#1）", "删除");
+    const button = screen.getByRole("menuitem", { name: "确认删除 a（#1）" });
     vi.useFakeTimers();
     try {
       await act(async () => { fireEvent.click(button); await vi.advanceTimersByTimeAsync(100); });
       expect(listNodes).toHaveBeenCalledTimes(2);
-      expect(screen.getByRole("button", { name: "确认删除 a（#1）" })).toBeDisabled();
+      expect(rowAction("a（#1）", "删除")).toHaveAttribute("aria-disabled", "true");
     } finally { vi.useRealTimers(); await act(async () => { release(); }); }
-    await waitFor(() => expect(screen.queryByRole("button", { name: "确认删除 a（#1）" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "确认删除 a（#1）" })).toBeNull());
   });
 
   it("编辑往返撤销已武装的删除确认", async () => {
     renderNodes({ listNodes: async () => ({ nodes: two }) });
     await screen.findByRole("link", { name: "a（#1）" });
-    fireEvent.click(screen.getByRole("button", { name: "删除 a（#1）" }));
-    expect(screen.getByRole("button", { name: "确认删除 a（#1）" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    openRowAction("a（#1）", "删除");
+    expect(screen.getByRole("menuitem", { name: "确认删除 a（#1）" })).toBeInTheDocument();
+    openRowAction("a（#1）", "编辑");
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
-    expect(screen.queryByRole("button", { name: "确认删除 a（#1）" })).toBeNull();
-    expect(screen.getByRole("button", { name: "删除 a（#1）" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "删除 b（#2）" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "确认删除 a（#1）" })).toBeNull();
+    expect(rowAction("a（#1）", "删除")).toBeInTheDocument();
+    expect(rowAction("b（#2）", "删除")).toBeInTheDocument();
   });
 
   it.each(["rotate", "reorder"])("%s 挂起持续到节点列表刷新完成", async (operation) => {
@@ -278,10 +298,11 @@ describe("Nodes", () => {
       listNodes, rotateNodeToken: async () => ({ token: "new" }), reorderNodes: async () => ({}),
     });
     await screen.findByRole("link", { name: "a（#1）" });
+    if (operation === "rotate") rowAction("a（#1）", "换 token");
     vi.useFakeTimers();
     try {
       await act(async () => {
-        if (operation === "rotate") fireEvent.click(screen.getByRole("button", { name: "换 token a（#1）" }));
+        if (operation === "rotate") fireEvent.click(screen.getByRole("menuitem", { name: "换 token a（#1）" }));
         else fireEvent.change(screen.getByRole("combobox", { name: "移动 a（#1）" }), { target: { value: "down" } });
         await vi.advanceTimersByTimeAsync(100);
       });
@@ -302,12 +323,13 @@ describe("Nodes", () => {
     const listNodes = vi.fn(async () => { if (listNodes.mock.calls.length > 1) await listGate; return { nodes: current }; });
     const updateNode = vi.fn(async () => { await saveGate; current = [{ ...two[0], name: "changed" }, two[1]]; return {}; });
     renderNodes({ listNodes, updateNode });
-    fireEvent.click(await screen.findByRole("button", { name: "编辑 a（#1）" }));
+    await screen.findByRole("link", { name: "a（#1）" });
+    openRowAction("a（#1）", "编辑");
     fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "changed" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     try {
       await waitFor(() => expect(updateNode).toHaveBeenCalledTimes(1));
-      expect(screen.getByRole("button", { name: "编辑 b（#2）" })).toBeDisabled();
+      expect(rowAction("b（#2）", "编辑")).toHaveAttribute("aria-disabled", "true");
       expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
       fireEvent(screen.getByRole("dialog"), new Event("cancel", { bubbles: true, cancelable: true }));
       expect(screen.getByRole("dialog")).toBeInTheDocument();
@@ -319,7 +341,7 @@ describe("Nodes", () => {
     } finally { vi.useRealTimers(); await act(async () => { releaseSave(); releaseList(); }); }
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByRole("link", { name: "changed（#1）" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "编辑 b（#2）" })).toBeEnabled();
+    expect(rowAction("b（#2）", "编辑")).not.toHaveAttribute("aria-disabled", "true");
   });
 
   it.each(["编辑", "计费"])("%s保存成功但回读失败时保留草稿并说明已经保存", async (mode) => {
@@ -329,7 +351,8 @@ describe("Nodes", () => {
       if (failRead) throw new ConnectError("readback unavailable", Code.Unavailable);
       return { nodes: two };
     }, updateNode });
-    fireEvent.click(await screen.findByRole("button", { name: `${mode} a（#1）` }));
+    await screen.findByRole("link", { name: "a（#1）" });
+    openRowAction("a（#1）", "编辑");
     const field = screen.getByLabelText(`${mode === "编辑" ? "名称" : "价格"} a（#1）`);
     const value = mode === "编辑" ? "draft" : "12.50";
     fireEvent.change(field, { target: { value } });
@@ -353,12 +376,12 @@ describe("Nodes", () => {
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/^create rejected$/);
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    openRowAction("a（#1）", "编辑");
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(screen.queryByLabelText("名称 a（#1）")).toBeNull());
     expect(screen.queryByRole("alert")).toBeNull();
     rejectEdit = true;
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    openRowAction("a（#1）", "编辑");
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/^edit rejected$/);
   });
@@ -373,7 +396,7 @@ describe("Nodes", () => {
     });
     renderNodes({ listNodes: async () => ({ nodes: two }), updateNode });
     await screen.findByRole("link", { name: "a（#1）" });
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    openRowAction("a（#1）", "编辑");
     fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "changed" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     try {
@@ -390,7 +413,7 @@ describe("Nodes", () => {
   it.each(["", "29", "1.5", "15"])("重置日 %s 只有 1–28 的整数能保存", async (value) => {
     renderNodes({ listNodes: async () => ({ nodes: two }) });
     await screen.findByRole("link", { name: "a（#1）" });
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    openRowAction("a（#1）", "编辑");
     fireEvent.change(screen.getByLabelText("重置日 a（#1）"), { target: { value } });
     if (value === "15") expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
     else expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
@@ -399,13 +422,14 @@ describe("Nodes", () => {
   it("编辑重置日说明周期量清零的后果", async () => {
     renderNodes({ listNodes: async () => ({ nodes: two }) });
     await screen.findByRole("link", { name: "a（#1）" });
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    openRowAction("a（#1）", "编辑");
     expect(screen.getByText("若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。")).toBeInTheDocument();
   });
 
   it("编辑回显重置日", async () => {
     renderNodes({ listNodes: async () => ({ nodes: [{ ...two[0], trafficResetDay: 20 }] }) });
-    fireEvent.click(await screen.findByRole("button", { name: "编辑 a（#1）" }));
+    await screen.findByRole("link", { name: "a（#1）" });
+    openRowAction("a（#1）", "编辑");
     expect(screen.getByLabelText("重置日 a（#1）")).toHaveValue(20);
   });
 
@@ -428,13 +452,13 @@ describe("Nodes", () => {
     let list = two;
     const { queryClient } = renderNodes({ listNodes: async () => ({ nodes: list }) });
     await screen.findByRole("link", { name: "a（#1）" });
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    openRowAction("a（#1）", "编辑");
     fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "abandoned" } });
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     list = [{ ...two[0], name: "current", public: true, note: "current note" }, two[1]];
     await act(async () => { await queryClient.refetchQueries(); });
     await screen.findByRole("link", { name: "current（#1）" });
-    fireEvent.click(screen.getByRole("button", { name: "编辑 current（#1）" }));
+    openRowAction("current（#1）", "编辑");
     expect({
       name: (screen.getByLabelText("名称 current（#1）") as HTMLInputElement).value,
       public: (screen.getByLabelText("公开 current（#1）") as HTMLInputElement).checked,
@@ -448,10 +472,11 @@ describe("Nodes", () => {
     const pending = async () => { await gate; return { token: "new" }; };
     renderNodes({ listNodes: async () => ({ nodes: two }), deleteNode: async () => { await gate; return {}; }, rotateNodeToken: pending });
     await screen.findByRole("link", { name: "a（#1）" });
-    if (operation === "delete") fireEvent.click(screen.getByRole("button", { name: "删除 a（#1）" }));
-    const button = screen.getByRole("button", { name: operation === "delete" ? "确认删除 a（#1）" : "换 token a（#1）" });
+    if (operation === "delete") openRowAction("a（#1）", "删除");
+    const action = operation === "delete" ? "删除" : "换 token";
+    const button = operation === "delete" ? screen.getByRole("menuitem", { name: "确认删除 a（#1）" }) : rowAction("a（#1）", action);
     fireEvent.click(button);
-    try { await waitFor(() => expect(button).toBeDisabled()); }
+    try { await waitFor(() => expect(rowAction("a（#1）", action)).toHaveAttribute("aria-disabled", "true")); }
     finally { await act(async () => { release(); }); }
   });
   it("换发未完成时不能启动另一个弹窗，展示后焦点回到原入口", async () => {
@@ -459,16 +484,19 @@ describe("Nodes", () => {
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const createNode = vi.fn(async () => ({ node: two[1], token: "other" }));
     renderNodes({ listNodes: async () => ({ nodes: two }), createNode, rotateNodeToken: async () => { await gate; return { token: "new-token" }; } });
-    const rotate = await screen.findByRole("button", { name: "换 token a（#1）" });
+    const rotate = await screen.findByRole("button", { name: "更多操作 a（#1）" });
     rotate.focus();
-    fireEvent.click(rotate);
+    openRowAction("a（#1）", "换 token");
     try {
-      await waitFor(() => expect(rotate).toBeDisabled());
-      for (const name of ["添加节点", "编辑 b（#2）", "计费 b（#2）", "换 token b（#2）"]) {
-        const button = screen.getByRole("button", { name });
-        expect(button).toBeDisabled();
+      await waitFor(() => expect(rowAction("a（#1）", "换 token")).toHaveAttribute("aria-disabled", "true"));
+      expect(screen.getByRole("button", { name: "添加节点" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "添加节点" }));
+      for (const action of ["编辑", "换 token"]) {
+        const button = rowAction("b（#2）", action);
+        expect(button).toHaveAttribute("aria-disabled", "true");
         fireEvent.click(button);
       }
+      fireEvent.pointerDown(document.body);
       expect(screen.queryByRole("dialog")).toBeNull();
       expect(createNode).not.toHaveBeenCalled();
     } finally { await act(async () => { release(); }); }
@@ -551,11 +579,11 @@ describe("Nodes", () => {
     fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
     expect(await screen.findByLabelText("节点 c（#3） 的 token")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "删除 b（#2）" }));
-    fireEvent.click(screen.getByRole("button", { name: "确认删除 b（#2）" }));
+    openRowAction("b（#2）", "删除");
+    fireEvent.click(screen.getByRole("menuitem", { name: "确认删除 b（#2）" }));
     expect(await screen.findByLabelText("节点 c（#3） 的 token")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "删除 c（#3）" }));
-    fireEvent.click(screen.getByRole("button", { name: "确认删除 c（#3）" }));
+    openRowAction("c（#3）", "删除");
+    fireEvent.click(screen.getByRole("menuitem", { name: "确认删除 c（#3）" }));
     await waitFor(() => expect(screen.queryByLabelText("节点 c（#3） 的 token")).toBeNull());
   });
 
@@ -563,9 +591,9 @@ describe("Nodes", () => {
     const deleteNode = vi.fn(async () => ({}));
     renderNodes({ listNodes: async () => ({ nodes: two }), deleteNode });
     await screen.findByRole("link", { name: "a（#1）" });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "删除 a（#1）" })); });
+    openRowAction("a（#1）", "删除");
     expect(deleteNode).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "确认删除 a（#1）" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "确认删除 a（#1）" }));
     await waitFor(() => expect(deleteNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n }), expect.anything()));
   });
 
@@ -574,8 +602,8 @@ describe("Nodes", () => {
     const deleteNode = vi.fn(async () => ({}));
     renderNodes({ listNodes: async () => ({ nodes: sameName }), deleteNode });
     await screen.findAllByRole("link", { name: /^a（#/ });
-    fireEvent.click(screen.getByRole("button", { name: "删除 a（#11）" }));
-    fireEvent.click(screen.getByRole("button", { name: "确认删除 a（#11）" }));
+    openRowAction("a（#11）", "删除");
+    fireEvent.click(screen.getByRole("menuitem", { name: "确认删除 a（#11）" }));
     await waitFor(() => expect(deleteNode).toHaveBeenCalledWith(expect.objectContaining({ id: 11n }), expect.anything()));
   });
 
@@ -584,10 +612,9 @@ describe("Nodes", () => {
     const updateNode = vi.fn(async () => ({}));
     renderNodes({ listNodes: async () => ({ nodes: sameName }), updateNode });
     await screen.findAllByRole("link", { name: /^a（#/ });
-    const edits = screen.getAllByRole("button", { name: /^编辑 a/ });
-    fireEvent.click(edits[0]);
+    openRowAction("a（#1）", "编辑");
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
-    fireEvent.click(edits[1]);
+    openRowAction("a（#11）", "编辑");
     // 带 id 时只命中第二行；名称不含 id 时两行同名，getBy 必须报多个。
     const nameInput = screen.getByLabelText((label) => label === "名称 a（#11）" || label === "名称 a");
     fireEvent.change(nameInput, { target: { value: "renamed" } });
@@ -642,7 +669,7 @@ describe("Nodes", () => {
     const billed = { ...two[0], publicRemark: "联通 4837", billing: { price: "9", currency: "EUR", billingCycle: BillingCycle.QUARTERLY, expiresOn: "2026-12-01", daysLeft: 60, autoRenew: true } };
     renderNodes({ listNodes: async () => ({ nodes: [billed, two[1]] }), updateNode });
     await screen.findByRole("link", { name: "a（#1）" });
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    openRowAction("a（#1）", "编辑");
     fireEvent.change(screen.getByLabelText("名称 a（#1）"), { target: { value: "a2" } });
     fireEvent.click(screen.getByLabelText("公开 a（#1）"));
     fireEvent.change(screen.getByLabelText("备注 a（#1）"), { target: { value: "changed note" } });
@@ -679,7 +706,7 @@ describe("Nodes", () => {
       const updateNode = vi.fn(async () => ({}));
       renderNodes({ listNodes: async () => ({ nodes: located }), updateNode });
       await screen.findByRole("link", { name: "b（#2）" });
-      fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
+      openRowAction("b（#2）", "编辑");
       const pin = screen.getByLabelText("手动指定国家 / 地区 b（#2）");
       expect(pin).toHaveValue("JP");
       expect(pin).toHaveAccessibleDescription("两个字母（ISO 3166-1），优先于查得值；留空用查得值：查得 US（于 8.8.4.4）。");
@@ -688,7 +715,7 @@ describe("Nodes", () => {
       await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 2n, note: "moved", countryPin: "JP" }), expect.anything()));
 
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-      fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+      openRowAction("a（#1）", "编辑");
       expect(screen.getByLabelText("手动指定国家 / 地区 a（#1）")).toHaveValue("");
       fireEvent.change(screen.getByLabelText("手动指定国家 / 地区 a（#1）"), { target: { value: "de" } });
       expect(screen.getByLabelText("手动指定国家 / 地区 a（#1）")).toHaveValue("DE");
@@ -698,7 +725,8 @@ describe("Nodes", () => {
 
     it("尚无查得值时提示", async () => {
       renderNodes({ listNodes: async () => ({ nodes: located }) });
-      fireEvent.click(await screen.findByRole("button", { name: "编辑 c（#3）" }));
+      await screen.findByRole("link", { name: "c（#3）" });
+      openRowAction("c（#3）", "编辑");
       expect(screen.getByLabelText("手动指定国家 / 地区 c（#3）")).toHaveAccessibleDescription("两个字母（ISO 3166-1），优先于查得值；留空用查得值：尚无查得值。");
     });
   });
@@ -720,17 +748,17 @@ describe("Nodes", () => {
         { ...two[0], id: 3n, name: "c" },
       ] }) });
       const row = async (name: string) => within((await screen.findByRole("link", { name })).closest("tr")!);
-      expect((await row("a（#1）")).getByRole("cell", { name: "US$12.50 / 月 自动续期" })).toBeInTheDocument();
-      expect((await row("a（#1）")).getByText("2026-10-01（剩 4 天）")).not.toHaveClass("error");
-      expect((await row("b（#2）")).getByText("2026-09-24（已过期 3 天）")).toHaveClass("error");
-      expect((await row("c（#3）")).getAllByRole("cell")[column("计费")]).toHaveTextContent("未设置");
+      expect((await row("a（#1）")).getByRole("cell", { name: "US$12.50 / 月· 自动续期" })).toBeInTheDocument();
+      expect((await row("a（#1）")).getByText("2026-10-01（剩 4 天）")).toHaveAttribute("data-level", "attention");
+      expect((await row("b（#2）")).getByText("2026-09-24（已过期 3 天）")).toHaveAttribute("data-level", "critical");
+      expect((await row("c（#3）")).getAllByRole("cell")[column("费用")]).toHaveTextContent("—");
     });
 
     it.each(["CNY", "USD", "HKD", "CAD", "EUR", "GBP"])("币种平铺固定六种选项，选择 %s 后随计费整体提交", async (currency) => {
       const updateNode = vi.fn(async () => ({}));
       renderNodes({ listNodes: async () => ({ nodes: two }), updateNode });
       await screen.findByRole("link", { name: "a（#1）" });
-      fireEvent.click(screen.getByRole("button", { name: "计费 a（#1）" }));
+      openRowAction("a（#1）", "编辑");
       fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "12.50" } });
       const currencies = screen.getByRole("group", { name: "币种" });
       expect(within(currencies).getAllByRole("radio").map((radio) => (radio as HTMLInputElement).labels?.[0]?.textContent)).toEqual(["未设置", "CNY", "USD", "HKD", "CAD", "EUR", "GBP"]);
@@ -751,7 +779,8 @@ describe("Nodes", () => {
     it("可选范围外的当前币种只读回显，不自动改写，仍可改选支持币种", async () => {
       const updateNode = vi.fn(async () => ({}));
       renderNodes({ listNodes: async () => ({ nodes: [{ ...two[0], billing: { price: "9", currency: "TWD" } }] }), updateNode });
-      fireEvent.click(await screen.findByRole("button", { name: "计费 a（#1）" }));
+      await screen.findByRole("link", { name: "a（#1）" });
+    openRowAction("a（#1）", "编辑");
       const current = screen.getByRole("radio", { name: "TWD（当前值）" });
       expect(current).toBeChecked();
       expect(current).toBeDisabled();
@@ -759,7 +788,7 @@ describe("Nodes", () => {
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
       await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ billing: expect.objectContaining({ price: "10", currency: "TWD" }) }), expect.anything()));
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-      fireEvent.click(screen.getByRole("button", { name: "计费 a（#1）" }));
+      openRowAction("a（#1）", "编辑");
       fireEvent.click(screen.getByRole("radio", { name: "CNY" }));
       expect(screen.queryByRole("radio", { name: "TWD（当前值）" })).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -771,7 +800,7 @@ describe("Nodes", () => {
       const current = { ...two[0], billing: { price: "9", currency: "EUR", billingCycle: BillingCycle.QUARTERLY, expiresOn: "2026-12-01", daysLeft: 60, autoRenew: true } };
       renderNodes({ listNodes: async () => ({ nodes: [current] }), updateNode });
       await screen.findByRole("link", { name: "a（#1）" });
-      fireEvent.click(screen.getByRole("button", { name: "计费 a（#1）" }));
+      openRowAction("a（#1）", "编辑");
       expect({
         price: (screen.getByLabelText("价格 a（#1）") as HTMLInputElement).value,
         currency: (screen.getByRole("radio", { name: "EUR" }) as HTMLInputElement).checked,
@@ -795,7 +824,7 @@ describe("Nodes", () => {
       const updateNode = vi.fn(async () => { throw new ConnectError(message, Code.InvalidArgument); });
       renderNodes({ listNodes: async () => ({ nodes: two }), updateNode });
       await screen.findByRole("link", { name: "a（#1）" });
-      fireEvent.click(screen.getByRole("button", { name: "计费 a（#1）" }));
+      openRowAction("a（#1）", "编辑");
       fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "abc" } });
       fireEvent.click(screen.getByRole("radio", { name: "USD" }));
       fireEvent.click(screen.getByRole("radio", { name: "每月" }));
@@ -816,10 +845,11 @@ describe("Nodes", () => {
 
   it("宽限期编辑显示当前秒数与默认值", async () => {
     renderNodes({ listNodes: async () => ({ nodes: two }) });
-    fireEvent.click(await screen.findByRole("button", { name: "编辑 a（#1）" }));
+    await screen.findByRole("link", { name: "a（#1）" });
+    openRowAction("a（#1）", "编辑");
     expect(screen.getByLabelText("离线宽限期（秒） a（#1）")).toHaveValue(90);
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
-    fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
+    openRowAction("b（#2）", "编辑");
     expect(screen.getByLabelText("离线宽限期（秒） b（#2）")).toHaveValue(0);
   });
 
@@ -833,7 +863,7 @@ describe("Nodes", () => {
     });
     renderNodes({ listNodes, updateNode });
     await screen.findByRole("link", { name: "a（#1）" });
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    openRowAction("a（#1）", "编辑");
     const grace = screen.getByLabelText("离线宽限期（秒） a（#1）");
     expect(grace).toHaveValue(90);
     expect(grace).toHaveAccessibleDescription("0 表示取 hub 的 HERON_OFFLINE_AFTER；非 0 不能小于它。");
@@ -843,10 +873,10 @@ describe("Nodes", () => {
       await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, offlineGraceS: 120 }), expect.anything()));
       await waitFor(() => expect(listNodes).toHaveBeenCalledTimes(2));
       expect(screen.getByRole("dialog")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "编辑 b（#2）" })).toBeDisabled();
+      expect(rowAction("b（#2）", "编辑")).toHaveAttribute("aria-disabled", "true");
     } finally { await act(async () => { releaseList(); }); }
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
+    openRowAction("b（#2）", "编辑");
     fireEvent.change(screen.getByLabelText("名称 b（#2）"), { target: { value: "b2" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 2n, name: "b2", offlineGraceS: 0 }), expect.anything()));
@@ -859,19 +889,19 @@ describe("Nodes", () => {
       .mockResolvedValue({ nodes: [{ ...two[0], offlineGraceS: undefined }, two[1]] });
     renderNodes({ listNodes, updateNode });
     await screen.findByRole("link", { name: "a（#1）" });
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    openRowAction("a（#1）", "编辑");
     fireEvent.change(screen.getByLabelText("离线宽限期（秒） a（#1）"), { target: { value: "0" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, offlineGraceS: 0 }), expect.anything()));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    openRowAction("a（#1）", "编辑");
     expect(screen.getByLabelText("离线宽限期（秒） a（#1）")).toHaveValue(0);
   });
 
   it("非法宽限期禁用保存", async () => {
     renderNodes({ listNodes: async () => ({ nodes: two }) });
     await screen.findByRole("link", { name: "a（#1）" });
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    openRowAction("a（#1）", "编辑");
     fireEvent.change(screen.getByLabelText("离线宽限期（秒） a（#1）"), { target: { value: "-1" } });
     expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
   });
@@ -880,7 +910,7 @@ describe("Nodes", () => {
     renderNodes({ listNodes: async () => ({ nodes: two }),
       updateNode: async () => { throw new ConnectError("offline_grace_s: must be 0 or at least 30 seconds (HERON_OFFLINE_AFTER); got 20", Code.InvalidArgument); } });
     await screen.findByRole("link", { name: "a（#1）" });
-    fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+    openRowAction("a（#1）", "编辑");
     fireEvent.change(screen.getByLabelText("离线宽限期（秒） a（#1）"), { target: { value: "20" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("offline_grace_s: must be 0 or at least 30 seconds (HERON_OFFLINE_AFTER); got 20");
@@ -893,7 +923,7 @@ describe("Nodes", () => {
     try {
       renderNodes({ listNodes: async () => ({ nodes: two }), rotateNodeToken });
       await screen.findByRole("link", { name: "a（#1）" });
-      fireEvent.click(screen.getByRole("button", { name: "换 token a（#1）" }));
+      openRowAction("a（#1）", "换 token");
       await waitFor(() => expect(rotateNodeToken).toHaveBeenCalledWith(expect.objectContaining({ id: 1n }), expect.anything()));
       expect(await screen.findByLabelText("节点 a（#1） 的新 token")).toHaveTextContent("new-token");
       fireEvent.click(screen.getByRole("button", { name: "复制" }));
@@ -908,7 +938,7 @@ describe("Nodes", () => {
     const rotateNodeToken = vi.fn(async () => ({ token: "new-token" }));
     renderNodes({ listNodes: async () => ({ nodes: two }), rotateNodeToken });
     await screen.findByRole("link", { name: "a（#1）" });
-    fireEvent.click(screen.getByRole("button", { name: "换 token a（#1）" }));
+    openRowAction("a（#1）", "换 token");
     expect(await screen.findByLabelText("节点 a（#1） 的新 token")).toHaveTextContent("new-token");
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByLabelText("curl 安装命令")).toHaveTextContent("--key new-token");
@@ -930,7 +960,8 @@ describe("Nodes", () => {
       },
     });
     await screen.findByRole("alert");
-    fireEvent.click(await screen.findByRole("button", { name: "换 token a（#1）" }));
+    await screen.findByRole("link", { name: "a（#1）" });
+    openRowAction("a（#1）", "换 token");
     const dialog = within(await screen.findByRole("dialog"));
     expect(dialog.getByRole("alert")).toHaveTextContent("snapshot unavailable");
     expect(dialog.queryByText(/正在读取 hub 版本/)).toBeNull();
@@ -964,15 +995,15 @@ describe("Nodes", () => {
     });
     const tagList = async () => ({ tags: [{ name: "db", nodeCount: 2 }, { name: "web", nodeCount: 2 }] });
     const shown = () => screen.queryAllByRole("link").map((link) => link.textContent);
-    const filterBox = (name: string) => screen.getByRole("checkbox", { name: `按标签过滤 ${name}` });
+
     // "无标签"选项的可访问名称与标签项分开，才能与名为"无标签"的标签同时定位。
     const untaggedBox = () => screen.getByRole("checkbox", { name: "只看没有标签的节点" });
 
-    it("标签列显示节点的标签，没有标签是 —", async () => {
+    it("名称格显示节点标签，没有标签时不渲染列表", async () => {
       renderNodes({ listNodes: async () => ({ nodes: [tagged[1], two[0]] }), listTags: tagList });
       const row = async (name: string) => within((await screen.findByRole("link", { name })).closest("tr")!);
       expect((await row("beta（#2）")).getByLabelText("标签 beta（#2）")).toHaveTextContent(/^dbweb$/);
-      expect((await row("a（#1）")).getByLabelText("标签 a（#1）")).toBeEmptyDOMElement();
+      expect((await row("a（#1）")).queryByRole("list", { name: "标签 a（#1）" })).toBeNull();
     });
 
     it("多选过滤按所选全部标签请求 hub 并列出交集，过滤中禁用排序，清除后恢复全部", async () => {
@@ -987,14 +1018,14 @@ describe("Nodes", () => {
       fireEvent.click(filterBox("web"));
       await waitFor(() => expect(shown()).toEqual(["beta"]));
       expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: ["db", "web"] }), expect.anything());
-      expect(screen.getByText("搜索或按标签过滤时不能用拖动或上下移（它们保存完整排列）；可用「移动到…」按全序名次移动，或清空过滤后再调整。")).toBeInTheDocument();
+      expect(screen.getByText("筛选时不能用拖动或上下移（它们保存完整排列）；可用行菜单的「移动到…」按全序名次移动，或清除筛选后再调整。")).toBeInTheDocument();
       for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) {
         expect(button).toBeDisabled();
         fireEvent.click(button);
       }
       await act(async () => {});
       expect(reorderNodes).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: "清除标签过滤" }));
+      fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
       await waitFor(() => expect(shown()).toEqual(["alpha", "beta", "gamma", "delta"]));
       for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) expect(button).toBeEnabled();
       fireEvent.change(screen.getByRole("combobox", { name: "移动 alpha（#1）" }), { target: { value: "down" } });
@@ -1021,7 +1052,7 @@ describe("Nodes", () => {
       const updateNode = vi.fn(async () => ({}));
       renderNodes({ listNodes: async () => ({ nodes: [tagged[0]] }), listTags: tagList, updateNode });
       await screen.findByRole("link", { name: "alpha（#1）" });
-      fireEvent.click(screen.getByRole("button", { name: "编辑 alpha（#1）" }));
+      openRowAction("alpha（#1）", "编辑");
       const input = screen.getByRole("combobox", { name: "新标签 alpha（#1）" });
       fireEvent.change(input, { target: { value: " web " } });
       fireEvent.keyDown(input, { key: "Enter" });
@@ -1037,7 +1068,7 @@ describe("Nodes", () => {
       const updateNode = vi.fn(async () => ({}));
       renderNodes({ listNodes: async () => ({ nodes: [tagged[1]] }), listTags: tagList, updateNode });
       await screen.findByRole("link", { name: "beta（#2）" });
-      fireEvent.click(screen.getByRole("button", { name: "编辑 beta（#2）" }));
+      openRowAction("beta（#2）", "编辑");
       fireEvent.change(screen.getByLabelText("名称 beta（#2）"), { target: { value: "renamed" } });
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
       await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 2n, name: "renamed", tags: ["db", "web"] }), expect.anything()));
@@ -1056,7 +1087,7 @@ describe("Nodes", () => {
       expect(deleteTag).not.toHaveBeenCalled();
       fireEvent.click(manager.getByRole("button", { name: "确认删除标签 db" }));
       await waitFor(() => expect(deleteTag).toHaveBeenCalledWith(expect.objectContaining({ name: "db" }), expect.anything()));
-      await waitFor(() => expect(screen.queryByRole("checkbox", { name: "按标签过滤 db" })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole("checkbox", { name: "db" })).toBeNull());
       await waitFor(() => expect(shown()).toEqual(["alpha", "beta", "gamma", "delta"]));
       expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: [] }), expect.anything());
       expect(manager.queryByText("db")).toBeNull();
@@ -1069,7 +1100,7 @@ describe("Nodes", () => {
       await screen.findByRole("link", { name: "gamma（#3）" });
       fireEvent.click(filterBox("db"));
       await waitFor(() => expect(shown()).toEqual(["alpha", "beta"]));
-      fireEvent.click(screen.getByRole("button", { name: "编辑 alpha（#1）" }));
+      openRowAction("alpha（#1）", "编辑");
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
       await waitFor(() => expect(screen.queryByRole("region", { name: "标签" })).not.toHaveTextContent("db"));
       expect(filterBox("db")).toBeChecked();
@@ -1108,7 +1139,7 @@ describe("Nodes", () => {
       });
       renderNodes({ listNodes, listTags: tagList });
       await screen.findByRole("link", { name: "gamma（#3）" });
-      fireEvent.click(screen.getByRole("button", { name: "编辑 alpha（#1）" }));
+      openRowAction("alpha（#1）", "编辑");
       const input = screen.getByLabelText("名称 alpha（#1）");
       fireEvent.change(input, { target: { value: "尚未保存" } });
       fireEvent.click(filterBox("web"));
@@ -1142,7 +1173,7 @@ describe("Nodes", () => {
         return key.methodName === "ListNodes" && Object.keys(key.input ?? {}).length === 0;
       } });
       fail = true;
-      fireEvent.click(screen.getByRole("button", { name: "清除标签过滤" }));
+      fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
       expect(await screen.findByRole("alert")).toHaveTextContent("hub unavailable");
       expect(shown()).toEqual(["alpha", "beta"]);
       expect(screen.getByText("列表还不是当前条件下的结果，暂时无法排序。")).toBeInTheDocument();
@@ -1170,7 +1201,7 @@ describe("Nodes", () => {
       fireEvent.click(untaggedBox());
       await waitFor(() => expect(shown()).toEqual(["delta"]));
       expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: [], untagged: true }), expect.anything());
-      expect(screen.getByText("搜索或按标签过滤时不能用拖动或上下移（它们保存完整排列）；可用「移动到…」按全序名次移动，或清空过滤后再调整。")).toBeInTheDocument();
+      expect(screen.getByText("筛选时不能用拖动或上下移（它们保存完整排列）；可用行菜单的「移动到…」按全序名次移动，或清除筛选后再调整。")).toBeInTheDocument();
       for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) {
         expect(button).toBeDisabled();
         fireEvent.click(button);
@@ -1205,13 +1236,13 @@ describe("Nodes", () => {
       expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: ["web"], untagged: false }), expect.anything());
     });
 
-    it("无标签状态下'清除标签过滤'可见，清除后恢复全部并恢复排序", async () => {
+    it("无标签状态下'清除筛选'可见，清除后恢复全部并恢复排序", async () => {
       const listNodes = listByTags();
       renderNodes({ listNodes, listTags: tagList });
       await screen.findByRole("link", { name: "delta（#4）" });
       fireEvent.click(untaggedBox());
       await waitFor(() => expect(shown()).toEqual(["delta"]));
-      fireEvent.click(screen.getByRole("button", { name: "清除标签过滤" }));
+      fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
       await waitFor(() => expect(shown()).toEqual(["alpha", "beta", "gamma", "delta"]));
       expect(untaggedBox()).not.toBeChecked();
       expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: [], untagged: false }), expect.anything());
@@ -1237,7 +1268,7 @@ describe("Nodes", () => {
       fireEvent.click(screen.getByRole("checkbox", { name: "选择 delta（#4）" }));
       expect(screen.getByText("已选择 1 个节点")).toBeInTheDocument();
       fireEvent.click(untaggedBox());
-      await waitFor(() => expect(screen.getByText("已选择 0 个节点")).toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByRole("toolbar", { name: "批量操作" })).toBeNull());
     });
   });
 });
@@ -1245,7 +1276,7 @@ describe("Nodes", () => {
 it("编辑公开节点时提示标签对访客可见，取消公开即不再提示", async () => {
   renderNodes({ listNodes: async () => ({ nodes: two }) });
   await screen.findByRole("link", { name: "a（#1）" });
-  fireEvent.click(screen.getByRole("button", { name: "编辑 a（#1）" }));
+  openRowAction("a（#1）", "编辑");
   const box = screen.getByLabelText("公开 a（#1）") as HTMLInputElement;
   const hint = "公开节点的标签在公开页对访客可见。";
   expect(box.checked).toBe(false);
@@ -1256,14 +1287,14 @@ it("编辑公开节点时提示标签对访客可见，取消公开即不再提�
   expect(screen.queryByText(hint)).toBeNull();
 });
 
-it("维护中的节点在名称旁标注，编辑里的维护开关随整体替换提交", async () => {
+it("维护中的节点在状态列标注，编辑里的维护开关随整体替换提交", async () => {
   const updateNode = vi.fn(async () => ({}));
   renderNodes({ listNodes: async () => ({ nodes: [{ ...two[0], maintenance: true }, two[1]] }), updateNode });
   await screen.findByRole("link", { name: "b（#2）" });
-  expect(screen.getByText("维护中")).toBeInTheDocument();
+  expect(within(screen.getByRole("row", { name: "a" })).getByText("维护中")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "a（#1）" })).not.toHaveTextContent("维护中");
   expect(screen.getByRole("link", { name: "b（#2）" }).closest("tr")).not.toHaveTextContent("维护中");
-  fireEvent.click(screen.getByRole("button", { name: "编辑 b（#2）" }));
+  openRowAction("b（#2）", "编辑");
   const box = screen.getByLabelText("维护 b（#2）") as HTMLInputElement;
   expect(box.checked).toBe(false);
   fireEvent.click(box);
@@ -1292,7 +1323,7 @@ describe("移动到指定位置", () => {
     await screen.findByRole("link", { name: "a（#1）" });
     expect(positionOf("a（#1）")).toBe("1");
     expect(positionOf("d（#4）")).toBe("4");
-    fireEvent.click(screen.getByRole("checkbox", { name: "按标签过滤 db" }));
+    fireEvent.click(filterBox("db"));
     await waitFor(() => expect(screen.queryByRole("link", { name: "b（#2）" })).toBeNull());
     expect(positionOf("a（#1）")).toBe("1");
     expect(positionOf("c（#3）")).toBe("3");
@@ -1306,10 +1337,10 @@ describe("移动到指定位置", () => {
       return Promise.resolve({ nodes: positioned.filter((n) => req.tags.every((t) => n.tags.some((x) => sameTag(x, t)))) });
     });
     renderNodes({ listNodes, listTags: tagList });
-    await screen.findByRole("checkbox", { name: "按标签过滤 db" });
-    fireEvent.click(screen.getByRole("checkbox", { name: "按标签过滤 db" }));
+    await findFilterBox("db");
+    fireEvent.click(filterBox("db"));
     await screen.findByRole("link", { name: "c（#3）" });
-    fireEvent.click(screen.getByRole("checkbox", { name: "按标签过滤 db" }));
+    fireEvent.click(filterBox("db"));
     await screen.findByText("列表还不是当前条件下的结果，暂时无法排序。");
     expect(screen.queryByRole("link", { name: "b（#2）" })).toBeNull();
     expect(positionOf("a（#1）")).toBe("1");
@@ -1346,10 +1377,10 @@ describe("移动到指定位置", () => {
     const moveNodes = vi.fn(async () => ({}));
     renderNodes({ listNodes: listHub, listTags: tagList, moveNodes });
     await screen.findByRole("link", { name: "d（#4）" });
-    fireEvent.click(screen.getByRole("checkbox", { name: "按标签过滤 db" }));
+    fireEvent.click(filterBox("db"));
     await waitFor(() => expect(screen.queryByRole("link", { name: "b（#2）" })).toBeNull());
     // 可见只剩 a、c 两行；N = 4、k = 1，上限仍是 4。
-    fireEvent.change(screen.getByRole("combobox", { name: "移动 c（#3）" }), { target: { value: "move" } });
+    openRowAction("c（#3）", "移动到…");
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByLabelText("目标位置（1–4）")).toHaveAttribute("max", "4");
   });
@@ -1375,7 +1406,7 @@ describe("移动到指定位置", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "移动" }));
     await waitFor(() => expect(moveNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 4n], position: 3 }), expect.anything()));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getByText("已选择 0 个节点")).toBeInTheDocument();
+    expect(screen.queryByRole("toolbar", { name: "批量操作" })).toBeNull();
     await waitFor(() => expect(listNodes.mock.calls.length).toBeGreaterThan(calls));
   });
 
@@ -1383,7 +1414,7 @@ describe("移动到指定位置", () => {
     const moveNodes = vi.fn(async () => ({}));
     renderNodes({ listNodes: listHub, listTags: tagList, moveNodes });
     await screen.findByRole("link", { name: "d（#4）" });
-    fireEvent.change(screen.getByRole("combobox", { name: "移动 b（#2）" }), { target: { value: "move" } });
+    openRowAction("b（#2）", "移动到…");
     const dialog = screen.getByRole("dialog");
     const input = within(dialog).getByLabelText("目标位置（1–4）");
     expect(input).toHaveAttribute("max", "4");
@@ -1437,7 +1468,7 @@ describe("移动到指定位置", () => {
     await waitFor(() => expect(screen.getByText("正在保存并确认排序…")).toBeInTheDocument());
     expect(screen.getByRole("button", { name: "移动到…" })).toBeDisabled();
     // 排序会话本身允许继续累积调整，但「移动到…」在未确认前关闭。
-    expect(within(screen.getByRole("combobox", { name: "移动 a（#1）" })).getByRole("option", { name: "移动到…", hidden: true })).toBeDisabled();
+    expect(rowAction("a（#1）", "移动到…")).toHaveAttribute("aria-disabled", "true");
   });
 
   it("全部节点总数读取失败时入口禁用并说明原因", async () => {
@@ -1453,7 +1484,7 @@ describe("移动到指定位置", () => {
     });
     const { queryClient } = renderNodes({ listNodes, listTags: tagList, moveNodes });
     await screen.findByRole("link", { name: "c（#3）" });
-    fireEvent.click(screen.getByRole("checkbox", { name: "按标签过滤 db" }));
+    fireEvent.click(filterBox("db"));
     await waitFor(() => expect(screen.queryByRole("link", { name: "b（#2）" })).toBeNull());
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 c（#3）" }));
     expect(screen.getByRole("button", { name: "移动到…" })).toBeEnabled();
@@ -1461,7 +1492,7 @@ describe("移动到指定位置", () => {
     const fullKey = createConnectQueryKey({ schema: AdminService.method.listNodes, input: { tags: [] }, cardinality: "finite" });
     await act(async () => { await queryClient.refetchQueries({ queryKey: fullKey }); });
     await waitFor(() => expect(screen.getByRole("button", { name: "移动到…" })).toBeDisabled());
-    expect(within(screen.getByRole("combobox", { name: "移动 a（#1）" })).getByRole("option", { name: "移动到…", hidden: true })).toBeDisabled();
+    expect(rowAction("a（#1）", "移动到…")).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByText(/无法取得节点总数，「移动到…」不可用/)).toBeInTheDocument();
     expect(moveNodes).not.toHaveBeenCalled();
   });

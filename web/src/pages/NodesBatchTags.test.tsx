@@ -60,7 +60,7 @@ it("筛选切换清除选择，不会修改隐藏节点；失败保留草稿，�
   fireEvent.click(await screen.findByRole("checkbox", { name: "选择 n1（#1）" }));
   expect(screen.getByRole("checkbox", { name: "选择当前结果全部节点" })).toBePartiallyChecked();
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "n5" } });
-  expect(screen.getByRole("button", { name: "批量编辑标签" })).toBeDisabled();
+  expect(screen.queryByRole("toolbar", { name: "批量操作" })).toBeNull();
   const dialog = await openBatch();
   fireEvent.click(dialog.getByRole("checkbox", { name: "家宽" }));
   fireEvent.click(dialog.getByRole("button", { name: "保存" }));
