@@ -109,11 +109,11 @@ func TestDisplayCountry(t *testing.T) {
 	}
 }
 
-// 国家查询设置：从未保存过为关、默认服务地址；GeoUpdate 里缺席的项不改；只给外观的保存不碰它们。
+// 国家查询设置：从未保存过为开、默认服务地址；GeoUpdate 里缺席的项不改；只给外观的保存不碰它们；保存为关即关。
 func TestGeoSettingsDefaultsAndPartialUpdate(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()
-	if g, err := s.GeoSettings(ctx); err != nil || g != (GeoSettings{URL: "https://ipinfo.io/{ip}/country"}) {
+	if g, err := s.GeoSettings(ctx); err != nil || g != (GeoSettings{Enabled: true, URL: "https://ipinfo.io/{ip}/country"}) {
 		t.Fatalf("never saved: %+v %v", g, err)
 	}
 	on, url := true, "https://geo.example/{ip}"

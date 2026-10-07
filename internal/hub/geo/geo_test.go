@@ -152,8 +152,8 @@ func newFixture(t *testing.T) *fixture {
 		reply(w, r)
 	}))
 	t.Cleanup(f.svc.srv.Close)
-	// 服务地址一开始就指向假服务，开关保持从未保存过的关：任何出网（包括开关失效时的）都落在假服务上、被记下，
-	// 不会打到默认的真实服务。
+	// 服务地址一开始就指向假服务，开关保持从未保存过（即开）：任何出网都落在假服务上、被记下，不会打到默认的
+	// 真实服务。要测"关"的用例显式保存为关。
 	url := f.svc.srv.URL + "/{ip}/country"
 	if err := f.saveGeo(t.Context(), store.GeoUpdate{URL: &url}); err != nil {
 		t.Fatal(err)
@@ -362,9 +362,10 @@ func TestNodeDeletedWhileQueryingIsSkipped(t *testing.T) {
 	}
 }
 
-// 查询关闭（从未开启、开启后又关闭）时不出网，假服务一个请求都收不到。开启的那一轮先证明这个节点确实会被查。
+// 查询关闭（显式保存为关、开启后又关闭）时不出网，假服务一个请求都收不到。开启的那一轮先证明这个节点确实会被查。
 func TestDisabledLookupMakesNoRequests(t *testing.T) {
 	f := newFixture(t)
+	f.enable(false)
 	f.report("a", "8.8.8.8")
 	f.sweep()
 	f.wantRequests()
@@ -378,6 +379,15 @@ func TestDisabledLookupMakesNoRequests(t *testing.T) {
 	f.clk.Advance(2 * time.Hour)
 	f.sweep()
 	f.wantRequests("/8.8.8.8/country", "/1.1.1.1/country")
+}
+
+// 从未保存过开关时查询是开的：不经任何设置，公网地址的节点就被查到国家。与上一个用例的"保存为关即不查"成对。
+func TestNeverSavedSettingsLookUp(t *testing.T) {
+	f := newFixture(t)
+	n := f.report("a", "8.8.8.8")
+	f.sweep()
+	f.wantRequests("/8.8.8.8/country")
+	f.wantCountry(n, "US", "8.8.8.8")
 }
 
 // 非公网地址不发出查询。同一轮里的公网节点被查，证明这一轮确实跑了、零请求不是因为查询器根本没运行。

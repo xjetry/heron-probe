@@ -91,7 +91,7 @@ func TestUpdateSettingsCleansTitleAndAccentAndEchoes(t *testing.T) {
 	h.login(t)
 	// 总闸、国家查询两项、backup 与 login_notify 没有提交，回显的是从未保存过时的值（login_notify 关闭即空 message）；
 	// 后端回显夹具装配的 HTTP 后端。
-	want := &heronv1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef", PublicEnabled: proto.Bool(true), GeoEnabled: proto.Bool(false), GeoUrl: proto.String("https://ipinfo.io/{ip}/country"),
+	want := &heronv1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef", PublicEnabled: proto.Bool(true), GeoEnabled: proto.Bool(true), GeoUrl: proto.String("https://ipinfo.io/{ip}/country"),
 		GeoBackend: heronv1.GeoBackend_GEO_BACKEND_HTTP, LoginNotify: &heronv1.LoginNotify{}}
 	want.Backup = defaultBackup()
 	if got := saveSettings(t, h, &heronv1.Settings{Title: " ‮\x07运行状态 \t", Theme: "light", AccentColor: "#AbCdEf"}); !proto.Equal(got, want) {

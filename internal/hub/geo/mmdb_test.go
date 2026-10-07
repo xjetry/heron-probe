@@ -36,6 +36,7 @@ func withMMDB(t *testing.T, f *fixture) *countedBackend {
 func TestMMDBPublicOnceAndPrivateNever(t *testing.T) {
 	f := newFixture(t)
 	b := withMMDB(t, f)
+	f.enable(false)
 	v4 := f.report("v4", "8.8.8.8")
 	v6 := f.report("v6", "2606:4700::1111")
 	private := f.report("private", "10.0.0.1")

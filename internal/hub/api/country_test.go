@@ -127,15 +127,16 @@ func TestUpdateNodeValidatesCountryPin(t *testing.T) {
 	}
 }
 
-// 国家查询的两项：从未保存过为关与默认服务地址；提交了就保存并回显；只改外观的请求不带它们时不改。
+// 国家查询的两项：从未保存过为开与默认服务地址；提交了就保存并回显；只改外观的请求不带它们时不改。保存的开关取与
+// 默认相反的关、地址取非默认值，"不改"才与"回落到默认"分得开。
 func TestUpdateSettingsGeoFieldsAbsentMeansUnchanged(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
-	if got := currentSettings(t, h); got.GeoEnabled == nil || got.GetGeoEnabled() || got.GetGeoUrl() != "https://ipinfo.io/{ip}/country" {
+	if got := currentSettings(t, h); got.GeoEnabled == nil || !got.GetGeoEnabled() || got.GetGeoUrl() != "https://ipinfo.io/{ip}/country" {
 		t.Fatalf("never saved: %v", got)
 	}
 	in := withSettings(func(s *heronv1.Settings) {
-		s.GeoEnabled, s.GeoUrl = proto.Bool(true), proto.String("http://geo.example:8080/lookup?addr={ip}")
+		s.GeoEnabled, s.GeoUrl = proto.Bool(false), proto.String("http://geo.example:8080/lookup?addr={ip}")
 	})
 	want := proto.Clone(in).(*heronv1.Settings)
 	want.Backup = defaultBackup()
@@ -145,10 +146,10 @@ func TestUpdateSettingsGeoFieldsAbsentMeansUnchanged(t *testing.T) {
 		t.Fatalf("echo = %v, want %v", got, want)
 	}
 	got := saveSettings(t, h, withSettings(func(s *heronv1.Settings) { s.Title = "只改外观" }))
-	if !got.GetGeoEnabled() || got.GetGeoUrl() != "http://geo.example:8080/lookup?addr={ip}" || got.GetTitle() != "只改外观" {
+	if got.GetGeoEnabled() || got.GetGeoUrl() != "http://geo.example:8080/lookup?addr={ip}" || got.GetTitle() != "只改外观" {
 		t.Fatalf("appearance-only update: %v", got)
 	}
-	if got := currentSettings(t, h); !got.GetGeoEnabled() || got.GetGeoUrl() != "http://geo.example:8080/lookup?addr={ip}" {
+	if got := currentSettings(t, h); got.GetGeoEnabled() || got.GetGeoUrl() != "http://geo.example:8080/lookup?addr={ip}" {
 		t.Fatalf("stored after appearance-only update: %v", got)
 	}
 }

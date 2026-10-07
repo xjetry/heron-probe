@@ -80,7 +80,8 @@ type GeoSettings struct {
 	URL string
 }
 
-// DefaultGeoURL 是从未保存过服务地址时的值。只是默认的目标，不是默认出网：Enabled 默认关。
+// DefaultGeoURL 是从未保存过服务地址时的值。国家查询从未保存过开关时为开（readSettings），HTTP 后端在运维没有
+// 换过地址、也没有关掉查询时，就把节点的公网来源地址逐个发到这里。
 const DefaultGeoURL = "https://ipinfo.io/{ip}/country"
 
 // GeoUpdate 里 nil 表示不改。国家查询的开关决定 hub 是否把节点地址发给第三方，不认识这两项的客户端（改个标题的
@@ -133,10 +134,11 @@ type querier interface {
 // 四个数值须在 backupNumber 的范围内（parseStored），渠道列表须是 JSON 整数数组（parseStoredChannels）；不合即
 // 返回错误，不按默认值猜。
 func readSettings(ctx context.Context, q querier) (Settings, error) {
-	// 只有键缺失表示默认开放；非法的已保存值不能被解释成允许公开（parseFlag 报错）。
+	// 两个开关都是"键缺失即开"：公开页总闸与国家查询从未保存过时为开，保存过的开或关照旧生效。非法的已保存值
+	// 不能被解释成开（parseFlag 报错）：库里的坏值既不会让公开页对外开放，也不会让 hub 开始向 geo_url 发送地址。
 	out := Settings{
 		Site:      SiteSettings{SiteAppearance: SiteAppearance{Theme: DefaultTheme}, PublicEnabled: true},
-		Geo:       GeoSettings{URL: DefaultGeoURL},
+		Geo:       GeoSettings{URL: DefaultGeoURL, Enabled: true},
 		Backup:    backupDefaults(),
 		Heartbeat: heartbeatDefaults(),
 	}
