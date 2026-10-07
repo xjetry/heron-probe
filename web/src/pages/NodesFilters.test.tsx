@@ -93,8 +93,8 @@ it("行菜单打开且武装了删除时列表轮询刷新：菜单不关、武�
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 });
 
-it("行菜单「移动到…」作用于单个节点；总数读取失败时该项禁用", async () => {
-  render("/nodes", { listNodes: async (req: { tags?: string[] }) => { if (!req.tags || req.tags.length === 0) return { nodes }; return { nodes }; } });
+it("行菜单「移动到…」作用于单个节点，区间按全部节点计算", async () => {
+  render();
   await screen.findByRole("row", { name: /^on/ });
   fireEvent.click(screen.getByRole("button", { name: "更多操作 on（#1）" }));
   fireEvent.click(screen.getByRole("menuitem", { name: "移动到… on（#1）" }));

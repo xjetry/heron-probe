@@ -1,6 +1,6 @@
 import { createConnectQueryKey, createQueryOptions, useMutation, useQuery, useTransport } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
-import { type DragEvent, type FormEvent, type ReactNode, useRef, useState } from "react";
+import { type DragEvent, type ReactNode, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { errorText } from "../api/auth";
@@ -8,15 +8,14 @@ import { useLatestError } from "../api/useLatestError";
 import { useRetained } from "../api/useRetained";
 import { type OrderMove, useOrder } from "../api/useOrder";
 import { ConfirmDelete } from "../components/ConfirmDelete";
-import { Modal } from "../components/Modal";
 import { MixedCheckbox } from "../components/MixedCheckbox";
 import { NodeAddresses } from "../components/NodeAddresses";
 import { NodeCountry } from "../components/NodeCountry";
-import { NodeInstallModal } from "../components/NodeInstallModal";
+import { NodeCreateDrawer } from "../components/NodeCreateDrawer";
+import { NodeCredentialsDrawer } from "../components/NodeCredentialsDrawer";
 import { NodeMoveModal } from "../components/NodeMoveModal";
 import { NodeOrderControl } from "../components/NodeOrderControl";
 import { AdminService, type Node, type NodeStatus, type Tag } from "../gen/heron/v1/admin_pb";
-import { BillingEditor, billingDraftSet, emptyBillingDraft } from "../components/BillingEditor";
 import { expiryText, priceText } from "../lib/billing";
 import { bytes } from "../lib/format";
 import { withId } from "../lib/ids";
@@ -66,11 +65,9 @@ export function Nodes() {
   ]);
   // 创建与轮换的响应是唯一明文来源，不能丢弃迟到响应；删除同一节点时同步清掉它的凭据弹窗。
   // opener 记下触发元素，弹窗关闭后焦点回到它；节点多了也不会把凭据顶出视口。
-  const [secret, setSecret] = useState<{ id: bigint; label: string; value: string; reRegister: boolean; opener: HTMLElement } | null>(null);
+  const [secret, setSecret] = useState<{ id: bigint; title: string; label: string; value: string; reRegister: boolean; opener: HTMLElement } | null>(null);
   const lastOpener = useRef<HTMLElement | null>(null);
   const [creating, setCreating] = useState<HTMLElement | null>(null);
-  const [name, setName] = useState("");
-  const [billing, setBilling] = useState(emptyBillingDraft);
   const [search, setSearch] = useState("");
   const [drag, setDrag] = useState<{ id: bigint; members: string } | null>(null);
   const [drop, setDrop] = useState<{ target: bigint; edge: "before" | "after" } | null>(null);
@@ -83,8 +80,8 @@ export function Nodes() {
     ...mutationOptions,
     onSuccess: (result) => {
       const node = result.node;
-      if (node) setSecret({ id: node.id, label: `节点 ${withId(node.name, node.id)} 的 token`, value: result.token, reRegister: false, opener: lastOpener.current ?? document.body });
-      setName(""); setBilling(emptyBillingDraft()); setCreating(null);
+      setCreating(null);
+      if (node) setSecret({ title: "节点已创建", id: node.id, label: `节点 ${withId(node.name, node.id)} 的 token`, value: result.token, reRegister: false, opener: lastOpener.current ?? document.body });
       void refresh();
     },
   });
@@ -115,7 +112,7 @@ export function Nodes() {
       if (request.id == null) return refresh();
       const id = request.id;
       const name = nodes.data?.nodes.find((node) => node.id === id)?.name ?? String(id);
-      setSecret({ id, label: `节点 ${withId(name, id)} 的新 token`, value: result.token, reRegister: true, opener: lastOpener.current ?? document.body });
+      setSecret({ title: "节点凭据", id, label: `节点 ${withId(name, id)} 的新 token`, value: result.token, reRegister: true, opener: lastOpener.current ?? document.body });
       return refresh();
     },
   });
@@ -156,7 +153,6 @@ export function Nodes() {
       return refresh();
     },
   });
-  const onCreate = (event: FormEvent) => { event.preventDefault(); if (name.trim() && !create.isPending) create.mutate(billingDraftSet(billing) ? { name, billing } : { name }); };
   const gate = queryGate(nodes);
   const list = applyScope(order.items, live, boundAgentVersion, scope, search);
   const selectedIds = new Set(selected);
@@ -195,7 +191,7 @@ export function Nodes() {
     <PageHeader title="节点" actions={<button type="button" className="primary-button" disabled={editing} onClick={(event) => { lastOpener.current = event.currentTarget; create.reset(); setCreating(event.currentTarget); }}>添加节点</button>} />
     {!editor && errorBanner(nodes.error)}
     {snapshot.error != null && <p role="alert" className="error">{boundAgentVersion === undefined ? "无法取得 hub 绑定的 agent 版本，落后标记不可用" : `刷新失败，落后标记按上次取得的绑定版本 ${boundAgentVersion || "空"} 判断`}；在线状态与流量可能不是最新值：{errorText(snapshot.error)}</p>}
-    {secret && <NodeInstallModal secretLabel={secret.label} token={secret.value} hubVersion={hubVersion} boundAgentVersion={boundAgentVersion} error={snapshot.error} reRegister={secret.reRegister} opener={secret.opener} onClose={() => setSecret(null)} />}
+    {secret && <NodeCredentialsDrawer title={secret.title} secretLabel={secret.label} token={secret.value} hubVersion={hubVersion} boundAgentVersion={boundAgentVersion} error={snapshot.error} reRegister={secret.reRegister} opener={secret.opener} onClose={() => setSecret(null)} />}
     <div className="filter-row" role="group" aria-label="筛选">
       <input type="search" aria-label="搜索节点" placeholder="名称、IP、地区、备注或主机名" value={search} onChange={(event) => { setSearch(event.target.value); setSelected([]); }} />
       <MultiSelect label="标签" searchable options={tagOptions} selected={tagFilter.kind === "tags" ? tagFilter.names : []} onChange={(names) => { setTagFilter({ kind: "tags", names }); setSelected([]); }} />
@@ -264,15 +260,10 @@ export function Nodes() {
     {moveTarget && <NodeMoveModal nodes={moveTarget.nodes} total={moveTotal ?? 0} pending={moveNodes.isPending} error={moveNodes.error} opener={moveTarget.opener}
       onClose={() => { setMoveTarget(null); moveNodes.reset(); }}
       onConfirm={(position) => moveNodes.mutate({ ids: moveTarget.nodes.map((node) => node.id), position })} />}
-    {editor && <NodeEditor key={String(editor.node.id)} node={editor.node} mode="general" opener={editor.opener} knownTags={tags.data?.tags ?? []}
+    {editor && <NodeEditor key={String(editor.node.id)} node={editor.node} opener={editor.opener} knownTags={tags.data?.tags ?? []}
       saving={update.isPending} error={update.error} listError={nodes.error} onClose={() => setEditor(null)}
       onSave={(patch) => update.mutate({ id: editor.node.id, ...patch }, { onSuccess: () => setEditor(null) })} />}
-    {creating && <Modal title="添加节点" description="创建后将显示安装凭据 token，仅用于注册 agent，不能上报指标。计费可留空，稍后在节点的计费设置中补。" busy={create.isPending} opener={creating} onClose={() => setCreating(null)}>
-      <form onSubmit={onCreate}><div className="modal-body">{errorBanner(create.error)}<label>新节点名称<input data-autofocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如 tokyo-01" disabled={create.isPending} /></label>
-        <section className="form-section" aria-label="计费（选填）"><BillingEditor label="新节点" draft={billing} onChange={(patch) => setBilling({ ...billing, ...patch })} /></section></div>
-        <footer className="modal-footer"><button type="button" disabled={create.isPending} onClick={() => setCreating(null)}>取消</button><button type="submit" className="primary-button" disabled={create.isPending || name.trim() === ""}>创建</button></footer>
-      </form>
-    </Modal>}
+    {creating && <NodeCreateDrawer opener={creating} pending={create.isPending} error={create.error} onClose={() => setCreating(null)} onCreate={(request) => create.mutate(request)} />}
   </section>;
 }
 

@@ -18,6 +18,7 @@ it("五台中三台有标签时半选，保留未操作标签，只提交批量�
   const batchUpdateNodeTags = vi.fn(async () => ({}));
   renderNodes({ batchUpdateNodeTags });
   const dialog = await openBatch();
+  expect(screen.getByRole("dialog", { name: "批量编辑标签" })).toHaveClass("drawer");
   expect(dialog.getByRole("checkbox", { name: "家宽" })).toBePartiallyChecked();
   expect(dialog.getByText("3/5 个节点")).toBeInTheDocument();
   expect(dialog.getByRole("checkbox", { name: "DB" })).toBeChecked();

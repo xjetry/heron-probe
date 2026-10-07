@@ -81,13 +81,13 @@ describe("Nodes", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("独立计费保存保留基础信息、标签、国家与宽限期", async () => {
+  it("费用分组保存保留基础信息、标签、国家与宽限期", async () => {
     const updateNode = vi.fn(async () => ({}));
     renderNodes({ listNodes: async () => ({ nodes: [{ ...two[0], note: "保留", countryPin: "JP", tags: ["prod"] }] }), updateNode });
     await screen.findByRole("link", { name: "a（#1）" });
     openRowAction("a（#1）", "编辑");
-    expect(screen.getByRole("dialog")).toHaveAccessibleName("计费设置 · a（#1）");
-    expect(screen.queryByLabelText("名称 a（#1）")).toBeNull();
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("编辑节点 · a（#1）");
+    expect(screen.getByLabelText("名称 a（#1）")).toHaveValue("a");
     fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "5" } });
     fireEvent.click(screen.getByRole("radio", { name: "USD" }));
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -314,7 +314,7 @@ describe("Nodes", () => {
     if (operation === "reorder") await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
   });
 
-  it("保存挂起时禁止切换和关闭，刷新完成才关闭弹窗", async () => {
+  it("保存挂起时禁止切换和关闭，刷新完成才关闭抽屉", async () => {
     let releaseSave!: () => void;
     let releaseList!: () => void;
     const saveGate = new Promise<void>((r) => { releaseSave = r; });
@@ -331,6 +331,7 @@ describe("Nodes", () => {
       await waitFor(() => expect(updateNode).toHaveBeenCalledTimes(1));
       expect(rowAction("b（#2）", "编辑")).toHaveAttribute("aria-disabled", "true");
       expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "关闭抽屉" })).toBeDisabled();
       fireEvent(screen.getByRole("dialog"), new Event("cancel", { bubbles: true, cancelable: true }));
       expect(screen.getByRole("dialog")).toBeInTheDocument();
       vi.useFakeTimers();
@@ -344,7 +345,7 @@ describe("Nodes", () => {
     expect(rowAction("b（#2）", "编辑")).not.toHaveAttribute("aria-disabled", "true");
   });
 
-  it.each(["编辑", "计费"])("%s保存成功但回读失败时保留草稿并说明已经保存", async (mode) => {
+  it("编辑保存成功但回读失败时保留草稿并说明已经保存", async () => {
     let failRead = false;
     const updateNode = vi.fn(async () => { failRead = true; return {}; });
     renderNodes({ listNodes: async () => {
@@ -353,8 +354,8 @@ describe("Nodes", () => {
     }, updateNode });
     await screen.findByRole("link", { name: "a（#1）" });
     openRowAction("a（#1）", "编辑");
-    const field = screen.getByLabelText(`${mode === "编辑" ? "名称" : "价格"} a（#1）`);
-    const value = mode === "编辑" ? "draft" : "12.50";
+    const field = screen.getByLabelText("名称 a（#1）");
+    const value = "draft";
     fireEvent.change(field, { target: { value } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await screen.findByText(/已保存，但回读失败/);
@@ -501,6 +502,7 @@ describe("Nodes", () => {
       expect(createNode).not.toHaveBeenCalled();
     } finally { await act(async () => { release(); }); }
     expect(await screen.findByLabelText("节点 a（#1） 的新 token")).toHaveTextContent("new-token");
+    expect(screen.getByRole("dialog", { name: "节点凭据" })).toHaveClass("drawer");
     expect(screen.getAllByRole("dialog")).toHaveLength(1);
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "完成" }));
     await waitFor(() => expect(rotate).toHaveFocus());
@@ -528,6 +530,8 @@ describe("Nodes", () => {
     fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
     expect(await screen.findByLabelText("节点 c（#3） 的 token")).toHaveTextContent("deadbeef");
+    expect(screen.getByRole("dialog", { name: "节点已创建" })).toHaveClass("drawer");
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
     for (const tool of ["curl", "wget"]) {
       const command = within(screen.getByRole("dialog")).getByLabelText(`${tool} 安装命令`);
       expect(command).toHaveTextContent("--key deadbeef");
@@ -545,6 +549,7 @@ describe("Nodes", () => {
     renderNodes({ listNodes: async () => ({ nodes: two }), createNode });
     await screen.findByRole("link", { name: "a（#1）" });
     fireEvent.click(screen.getByRole("button", { name: "添加节点" }));
+    expect(screen.getByRole("dialog", { name: "添加节点" })).toHaveClass("drawer");
     fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "c" } });
     fireEvent.change(screen.getByLabelText("价格 新节点"), { target: { value: "12.50" } });
     fireEvent.click(screen.getByRole("radio", { name: "USD" }));
@@ -1496,4 +1501,15 @@ describe("移动到指定位置", () => {
     expect(screen.getByText(/无法取得节点总数，「移动到…」不可用/)).toBeInTheDocument();
     expect(moveNodes).not.toHaveBeenCalled();
   });
+});
+
+it("编辑抽屉四个分组按设计顺序，费用分组与原计费入口同一套字段", async () => {
+  renderNodes({ listNodes: async () => ({ nodes: two }), updateNode: async () => ({}) });
+  await screen.findByRole("link", { name: "a（#1）" });
+  openRowAction("a（#1）", "编辑");
+  const dialog = screen.getByRole("dialog");
+  expect(dialog).toHaveClass("drawer");
+  expect(within(dialog).getAllByRole("region").map((section) => section.getAttribute("aria-label") ?? within(section).getByRole("heading").textContent)).toEqual(["基本", "地区", "费用", "运行"]);
+  expect(within(within(dialog).getByRole("region", { name: "费用" })).getByLabelText("价格 a（#1）")).toBeInTheDocument();
+  expect(within(within(dialog).getByRole("region", { name: "运行" })).getByLabelText("维护 a（#1）")).toBeInTheDocument();
 });

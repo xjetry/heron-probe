@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { errorBanner } from "../api/queryGate";
 import { MixedCheckbox } from "../components/MixedCheckbox";
-import { Modal } from "../components/Modal";
+import { Drawer } from "../components/Modal";
 import type { Node, Tag } from "../gen/heron/v1/admin_pb";
 import { sameTag, withTag } from "../lib/tags";
 
@@ -25,7 +25,7 @@ export function BatchNodeTagsEditor({ nodes, knownTags, opener, saving, error, o
   nodes: readonly Node[]; knownTags: readonly Tag[]; opener: HTMLElement; saving: boolean; error: unknown;
   onClose: () => void; onSave: (changes: { nodeIds: bigint[]; addTags: string[]; removeTags: string[] }) => void;
 }) {
-  // 弹窗持有打开时的节点快照；轮询不重置草稿，保存仅提交显式增删，不回传旧标签全集。
+  // 抽屉持有打开时的节点快照；轮询不重置草稿，保存仅提交显式增删，不回传旧标签全集。
   const [tags, setTags] = useState(() => [...knownTags.map((tag) => tag.name), ...nodes.flatMap((node) => node.tags)]
     .reduce<string[]>((all, name) => withTag(all, name), [])
     .map((name) => ({ name, count: nodes.filter((node) => node.tags.some((tag) => sameTag(tag, name))).length })));
@@ -48,7 +48,7 @@ export function BatchNodeTagsEditor({ nodes, knownTags, opener, saving, error, o
     setInput("");
   };
   const changed = changes.size > 0;
-  return <Modal title="批量编辑标签" description={`已选择 ${nodes.length} 个节点。未修改的标签保持原样，移除只解除这些节点的关联。`} busy={saving} opener={opener} onClose={onClose}>
+  return <Drawer title="批量编辑标签" description={`已选择 ${nodes.length} 个节点。未修改的标签保持原样，移除只解除这些节点的关联。`} busy={saving} opener={opener} onClose={onClose}>
     <form onSubmit={(event) => {
       event.preventDefault();
       if (saving || !changed) return;
@@ -73,5 +73,5 @@ export function BatchNodeTagsEditor({ nodes, knownTags, opener, saving, error, o
       </div>
       <footer className="modal-footer"><button type="button" disabled={saving} onClick={onClose}>取消</button><button type="submit" className="primary-button" disabled={saving || !changed}>{saving ? "正在保存…" : "保存"}</button></footer>
     </form>
-  </Modal>;
+  </Drawer>;
 }

@@ -128,10 +128,6 @@ span.node-subtext { margin-right: 8px; }
 .modal-body { padding: 16px 20px; }
 .modal-footer { position: sticky; bottom: 0; z-index: 1; padding: 16px 20px; background: var(--card); border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px; }
 .form-section + .form-section { margin-top: 25px; padding-top: 24px; border-top: 1px solid var(--line); }
-.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-.form-grid .full-width { grid-column: 1 / -1; }
-.admin-shell .form-grid :is(input:not([type="checkbox"]), textarea, select) { width: 100%; }
-.admin-shell .form-grid textarea { resize: vertical; min-height: 76px; }
 .form-section .muted { font-size: 11px; line-height: 1.7; font-weight: 400; margin: 7px 0 0; }
 .admin-shell .switch-field { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); }
 .switch-field small { display: block; font-size: 11px; font-weight: 400; color: var(--muted); margin-top: 3px; }
@@ -193,8 +189,7 @@ span.node-subtext { margin-right: 8px; }
   .admin-shell .node-search { width: 100%; max-width: none; }
   .admin-shell .card, .admin-shell fieldset:not(.bare):not(.picks) { padding: 16px; }
   .admin-modal { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
-  .form-grid, .admin-shell .billing-edit { grid-template-columns: minmax(0, 1fr); gap: 16px; }
-  .form-grid .full-width { grid-column: auto; }
+  .admin-shell .billing-edit { grid-template-columns: minmax(0, 1fr); gap: 16px; }
 }
 
 /* 抽屉：固定右侧 480px，整高；与 .admin-modal 同一个 dialog 原语，只差布局（设计 §2「抽屉固定右侧 480px」）。 */
@@ -214,7 +209,7 @@ span.node-subtext { margin-right: 8px; }
 .row-menu-popup [role="menuitem"][aria-disabled="true"] { color: var(--faint); cursor: default; }
 .row-menu-note { display: block; padding: 2px 12px 6px; font-size: 12px; color: var(--muted); max-width: 32ch; }
 
-/* 节点管理表（pages/Nodes.tsx）：行高 52px（设计 §4.3），名称格两行以内，操作列只有 ⋯。 */
+/* 节点管理表（pages/Nodes.tsx）：行高 52px（设计 §4.3），名称格紧凑排列，操作列只有 ⋯。 */
 .admin-shell table.node-management td { height: 52px; padding: 6px 12px; vertical-align: middle; }
 .admin-shell table.node-management th[data-column="select"], .admin-shell table.node-management td[data-column="select"] { width: 36px; padding-right: 0; }
 .admin-shell table.node-management th[data-column="order"], .admin-shell table.node-management td[data-column="order"] { width: 88px; }
@@ -230,7 +225,7 @@ span.node-subtext { margin-right: 8px; }
 .batch-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card-raised); }
 .filter-row .check { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 @media (max-width: 900px) {
-  /* 手机卡片（设计 §4.7）：状态 + 名称 + ⋯ 一行，三个数字（本周期 / 费用 / 到期）一行；地址与排序藏起来。 */
+  /* 手机卡片（设计 §4.7）：状态 + 名称 + ⋯ 一行，本周期 / 费用同排，到期另起一行；地址与排序藏起来。 */
   .admin-shell .table-scroll:has(.node-management) { border: 0; background: none; overflow: visible; }
   .admin-shell table.node-management, .node-management tbody { display: block; min-width: 0; background: none; border: 0; }
   .node-management td[data-column="status"]::before, .node-management td[data-column="select"]::before, .node-management td[data-column="name"]::before, .node-management td[data-column="actions"]::before { display: none; }
@@ -247,3 +242,12 @@ span.node-subtext { margin-right: 8px; }
   .node-management td[data-column="expiry"] { grid-row: 3; grid-column: 2 / -1; }
   .node-management td[data-column="order"], .node-management td[data-column="addresses"] { display: none; }
 }
+
+/* 节点抽屉：每个分组沿纵向排布，长说明与输入保持在同一阅读顺序。 */
+.drawer .form-section { display: grid; gap: 12px; }
+.drawer .form-section + .form-section { margin-top: 20px; padding-top: 20px; }
+.drawer .form-section :is(input:not([type="checkbox"]):not([type="radio"]), textarea) { width: 100%; }
+.drawer .form-section textarea { min-height: 76px; resize: vertical; }
+.admin-shell .drawer .billing-edit { grid-template-columns: minmax(0, 1fr); }
+.node-management [data-column="expiry"] [data-level="attention"] { color: var(--status-attention); }
+.node-management [data-column="expiry"] [data-level="critical"] { color: var(--status-offline); }
