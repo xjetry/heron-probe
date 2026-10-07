@@ -3,6 +3,7 @@ import { focusManager, onlineManager, QueryClient } from "@tanstack/react-query"
 import { act, within } from "@testing-library/react";
 import * as ReactDOM from "react-dom/client";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
+import { checkFocusRefresh } from "../test/focus";
 
 // 入口用例验证传输与站点设置的应用；图表依赖的布局和 canvas 不由 jsdom 提供。
 vi.mock("../components/Chart", () => ({ Chart: () => null }));
@@ -55,6 +56,10 @@ test("入口在 / 挂载公开总览并应用站点设置", async () => {
   expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#123abc");
 });
 
+test("入口只让轮询查询在回前台时立即刷新", async () => {
+  await checkFocusRefresh(queryClient!);
+});
+
 // 生产 client 的重试谓词是 retry.ts 的白名单：节点不公开的 NotFound、限流的 ResourceExhausted 一次就交给页面，
 // 网络与反代的瞬时错误（Unavailable）再试两次。
 test.each([
@@ -100,8 +105,7 @@ test("网络恢复后不重取站点设置", async () => {
   expect(siteFetches()).toBe(loaded);
 });
 
-// 窗口重新聚焦同样不重取站点设置。QueryClient 关掉了聚焦重取，GetSite 自己的 staleTime: Infinity 也挡住它，
-// 两者各自都够（Layout.tsx 的注释）；这里钉的是结果。
+// GetSite 不轮询，生产 client 对它关闭聚焦重取；这里从真实入口钉住不发额外请求的结果。
 test("窗口重新聚焦后不重取站点设置", async () => {
   const siteFetches = () => fetches.filter(({ url }) => url.includes("/GetSite?")).length;
   expect(await within(root).findByRole("link", { name: "机房状态" })).toBeInTheDocument();
