@@ -18,11 +18,14 @@ export function Sparkline({ values, label, width = 120, height = 28 }: {
     segments.push(`${pen ? "L" : "M"}${x} ${y}`);
     pen = true;
   });
+  // 空态是文字不是图，不能放进下面那个 SVG：viewBox 按 preserveAspectRatio="none" 随容器拉伸，文字会跟着变形；
+  // SVG <text> 的默认 fill 是黑色，不随主题。普通文本占同样的高度，颜色与其它「无读数」占位一致。
+  if (segments.length === 0) {
+    return <span className="sparkline sparkline-empty" role="img" aria-label={`${label}：无读数`} style={{ height, lineHeight: `${height}px` }}>无读数</span>;
+  }
   return (
     <svg className="sparkline" role="img" aria-label={label} width={width} height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-      {segments.length > 0
-        ? <path d={segments.join(" ")} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-        : <text x="2" y={height - 8} fontSize="10">无读数</text>}
+      <path d={segments.join(" ")} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }

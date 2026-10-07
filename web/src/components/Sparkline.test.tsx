@@ -10,11 +10,13 @@ it.each([null, undefined, NaN, Infinity])("有限值连成折线，null 处断�
   expect(d).toBe("M0.0 11.0 L10.0 1.0 M30.0 6.0 L40.0 6.0");
 });
 
-it.each([[], [null, undefined], [NaN, Infinity]].map((values) => ({ values })))("没有有限值时没有路径，写「无读数」（$values）", ({ values }) => {
-  render(<Sparkline values={values} label="上行速率" />);
-  const svg = screen.getByRole("img", { name: "上行速率" });
-  expect(svg.querySelector("path")).toBeNull();
-  expect(svg).toHaveTextContent("无读数");
+// 空态是文字不是图：放在 preserveAspectRatio="none" 的 SVG 里会随容器拉宽，SVG <text> 的默认 fill 又是黑色、不随主题。
+it.each([[], [null, undefined], [NaN, Infinity]].map((values) => ({ values })))("没有有限值时不画 SVG，用普通文本写「无读数」并进可访问名称（$values）", ({ values }) => {
+  const { container } = render(<Sparkline values={values} label="上行速率" />);
+  const empty = screen.getByRole("img", { name: "上行速率：无读数" });
+  expect(empty.tagName).toBe("SPAN");
+  expect(empty).toHaveTextContent("无读数");
+  expect(container.querySelector("svg")).toBeNull();
 });
 
 it("恒为 0 画一条贴底的线，不当成无读数", () => {
