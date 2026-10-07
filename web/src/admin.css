@@ -35,9 +35,6 @@
 .admin-shell .page-heading h1 { margin: 0 0 7px; }
 .page-heading p { margin: 0; color: var(--muted); font-size: 12px; }
 .page-heading-actions { display: flex; gap: 10px; align-items: center; }
-.update-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 18px; margin-bottom: 28px; }
-.update-summary .card { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-.update-summary button { margin-top: 18px; }
 .update-progress { display: grid; gap: 5px; max-width: 460px; overflow-wrap: anywhere; }
 .eyebrow { color: var(--muted); font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 7px; }
 .admin-shell .card, .admin-shell fieldset:not(.bare):not(.picks) { padding: 16px; margin: 0 0 16px; }
@@ -253,3 +250,11 @@ span.node-subtext { margin-right: 8px; }
 .row-menu-popup [role="menuitem"].danger { color: var(--status-offline); }
 .row-menu-popup [role="menuitem"][aria-disabled="true"] { color: var(--faint); cursor: default; }
 .row-menu-note { display: block; padding: 2px 12px 6px; font-size: 12px; color: var(--muted); max-width: 32ch; }
+
+/* Hub 版本与更新状态。 */
+.hub-card { display: grid; grid-template-columns: 1fr auto; gap: 8px 24px; align-items: start; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); margin-bottom: 20px; }
+.hub-card dl { display: grid; grid-template-columns: repeat(3, auto); gap: 4px 24px; margin: 0; }
+.hub-card dt { font-size: 12px; color: var(--muted); }
+.hub-card dd { margin: 0; font-size: 18px; font-weight: 600; }
+.hub-card-description { grid-column: 1 / -1; }
+@media (max-width: 900px) { .hub-card, .hub-card dl { grid-template-columns: 1fr; } }
