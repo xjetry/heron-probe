@@ -15,3 +15,8 @@ if (typeof HTMLDialogElement !== "undefined") {
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
   HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
 }
+
+// jsdom 未提供媒体查询；默认宽屏浅色，窄屏用例自行替换。
+if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
+  window.matchMedia = (query: string) => ({ matches: query === "(min-width: 901px)", media: query, onchange: null, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false }) as MediaQueryList;
+}
