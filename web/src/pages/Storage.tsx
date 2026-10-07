@@ -1,4 +1,5 @@
 import { useQuery } from "@connectrpc/connect-query";
+import { PageHeader } from "../components/PageHeader";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService, type SeriesTableHealth } from "../gen/heron/v1/admin_pb";
 import { bytes, duration } from "../lib/format";
@@ -41,7 +42,7 @@ export function Storage() {
   return (
     <section>
       {gate.banner}
-      <h1>存储</h1>
+      <PageHeader title="存储" />
       <p>数据库逻辑大小：{bytes(s.dbBytes)}</p>
       <p className="muted">
         逻辑大小是 SQL 快照里的页数乘页大小，不含 -wal 与 -shm 文件；与 WAL 文件观测不是同一时刻读出的。

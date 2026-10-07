@@ -1,7 +1,7 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { create } from "@bufbuild/protobuf";
 import { createConnectQueryKey } from "@connectrpc/connect-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
 import { InstallCommands } from "../components/InstallCommands";
@@ -11,12 +11,23 @@ import { AdminService, GetSnapshotResponseSchema, ListNodesResponseSchema } from
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); window.getSelection()?.removeAllRanges(); });
 
 const snapshotOf = (hubVersion: string, boundAgentVersion = "") => async () => ({ now: 1n, reportIntervalMs: 4000, nodes: [], hubVersion, boundAgentVersion });
-const renderOpen = (hubVersion: string, boundAgentVersion = "") =>
-  renderWithAdmin({
-    getRegisterWindow: async () => ({ open: true, expiresAt: 4_000_000_000n, remaining: 3 }),
-    openRegisterWindow: async () => ({ key: "k1", expiresAt: 4_000_000_000n, maxNodes: 3 }),
+const renderOpen = (hubVersion: string, boundAgentVersion = "") => {
+  let opened = false;
+  return renderWithAdmin({
+    getRegisterWindow: async () => ({ open: opened, expiresAt: 4_000_000_000n, remaining: 3 }),
+    openRegisterWindow: async () => { opened = true; return { key: "k1", expiresAt: 4_000_000_000n, maxNodes: 3 }; },
     getSnapshot: snapshotOf(hubVersion, boundAgentVersion),
   }, [{ path: "/register", Component: RegisterWindow }], "/register");
+};
+
+async function openDrawer() {
+  fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
+  return screen.getByRole("dialog", { name: "开启新窗口" });
+}
+
+async function openWindow() {
+  fireEvent.click(within(await openDrawer()).getByRole("button", { name: "开启" }));
+}
 
 describe("RegisterWindow", () => {
   it.each(["curl", "wget"])("一键复制完整的 %s 安装命令并独立反馈", async (tool) => {
@@ -63,19 +74,20 @@ describe("RegisterWindow", () => {
     queryClient.setQueryData(snapshotKey, create(GetSnapshotResponseSchema));
     queryClient.setQueryData(nodesKey, create(ListNodesResponseSchema));
     await waitFor(() => expect(getRegisterWindow).toHaveBeenCalledTimes(1));
-    fireEvent.click(await screen.findByRole("button", { name: operation === "open" ? "开启新窗口" : "关闭窗口" }));
+    if (operation === "open") await openWindow();
+    else fireEvent.click(await screen.findByRole("button", { name: "关闭窗口" }));
     await waitFor(() => expect(getRegisterWindow).toHaveBeenCalledTimes(2));
     expect([snapshotKey, nodesKey].map((key) => queryClient.getQueryState(key)?.isInvalidated)).toEqual([false, false]);
   });
 
   it("清空名额保留空白而不是零值", async () => {
     renderWithAdmin({ getRegisterWindow: async () => ({ open: false }) }, [{ path: "/register", Component: RegisterWindow }], "/register");
-    const input = (await screen.findByLabelText("可注册节点数")) as HTMLInputElement;
+    const input = within(await openDrawer()).getByLabelText("可注册节点数") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "" } });
     expect({ value: input.value, nan: Number.isNaN(input.valueAsNumber) }).toEqual({ value: "", nan: true });
   });
 
-  it("状态挂起时显示加载中，不渲染开窗表单", async () => {
+  it("状态挂起时显示加载中，不渲染页头主按钮", async () => {
     renderWithAdmin({ getRegisterWindow: () => new Promise(() => {}) }, [{ path: "/register", Component: RegisterWindow }], "/register");
     expect(await screen.findByText("加载中…")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "开启新窗口" })).toBeNull();
@@ -92,8 +104,9 @@ describe("RegisterWindow", () => {
   it.each(["", "0", "-1"])("名额为 '%s' 时禁用开窗", async (value) => {
     renderWithAdmin({ getRegisterWindow: async () => ({ open: false }) }, [{ path: "/register", Component: RegisterWindow }], "/register");
     await screen.findByText("当前没有开启的窗口。");
-    fireEvent.change(screen.getByLabelText("可注册节点数"), { target: { value } });
-    expect(screen.getByRole("button", { name: "开启新窗口" })).toBeDisabled();
+    const drawer = within(await openDrawer());
+    fireEvent.change(drawer.getByLabelText("可注册节点数"), { target: { value } });
+    expect(drawer.getByRole("button", { name: "开启" })).toBeDisabled();
   });
 
   it("轮询发现窗口失效时撤下 key 与命令", async () => {
@@ -105,7 +118,7 @@ describe("RegisterWindow", () => {
       getSnapshot: snapshotOf("v1.2.3"),
     }, [{ path: "/register", Component: RegisterWindow }], "/register");
     await screen.findByText("当前没有开启的窗口。");
-    fireEvent.click(screen.getByRole("button", { name: "开启新窗口" }));
+    await openWindow();
     await screen.findByRole("button", { name: "关闭窗口" });
     await screen.findByLabelText("注册 key");
     expect(await screen.findAllByText(/install\.sh \| sh -s --/)).toHaveLength(2);
@@ -122,7 +135,7 @@ describe("RegisterWindow", () => {
       openRegisterWindow: fail,
       getSnapshot: snapshotOf("v1.2.3"),
     }, [{ path: "/register", Component: RegisterWindow }], "/register");
-    if (source === "open") fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
+    if (source === "open") await openWindow();
     expect(await screen.findByRole("alert")).toHaveTextContent(/^request failed$/);
   });
   it("开窗后展示 key 与安装命令", async () => {
@@ -133,8 +146,9 @@ describe("RegisterWindow", () => {
       [{ path: "/register", Component: RegisterWindow }, { path: "/away", element: <h1>away</h1> }], "/register",
     );
     await screen.findByText("当前没有开启的窗口。");
-    fireEvent.click(screen.getByRole("button", { name: "开启新窗口" }));
+    await openWindow();
     expect(await screen.findByLabelText("注册 key")).toHaveTextContent("cafe");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     for (const p of await screen.findAllByText(/install\.sh \| sh -s --/)) expect(p.textContent).toMatch(/--hub \S+ --key cafe/);
     expect(openRegisterWindow).toHaveBeenCalledWith(expect.objectContaining({ ttlS: 3600, maxNodes: 5 }), expect.anything());
     await act(() => router.navigate("/away"));
@@ -150,6 +164,8 @@ describe("RegisterWindow", () => {
       [{ path: "/register", Component: RegisterWindow }], "/register",
     );
     expect(await screen.findByText(/剩余 3 个名额/)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "窗口状态" })).toHaveClass("card");
+    expect(screen.getByRole("button", { name: "开启新窗口" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "关闭窗口" }));
     await waitFor(() => expect(closeRegisterWindow).toHaveBeenCalled());
   });
@@ -163,7 +179,7 @@ describe("RegisterWindow", () => {
       getSnapshot: snapshotOf("v1.2.3"),
     }, [{ path: "/register", Component: RegisterWindow }], "/register");
     await screen.findByText("当前没有开启的窗口。");
-    fireEvent.click(screen.getByRole("button", { name: "开启新窗口" }));
+    await openWindow();
     await screen.findByLabelText("注册 key");
     expect(await screen.findAllByText(/install\.sh \| sh -s --/)).toHaveLength(2);
     fireEvent.click(await screen.findByRole("button", { name: "关闭窗口" }));
@@ -173,7 +189,7 @@ describe("RegisterWindow", () => {
   });
   it("正式版本的 hub 取同版本 release 的脚本，命令不带 --version", async () => {
     renderOpen("v1.2.3");
-    fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
+    await openWindow();
     const pres = await screen.findAllByText(/install\.sh \| sh -s --/);
     expect(pres).toHaveLength(2);
     expect(pres[0].textContent).toContain("curl -fsSL");
@@ -193,7 +209,7 @@ describe("RegisterWindow", () => {
   it("面板的 origin 是非 loopback 的 http 时命令带 --insecure-http 并提示明文传输", async () => {
     expect(window.location.origin).toMatch(/^http:\/\/localhost(:\d+)?$/);
     renderOpen("v1.2.3");
-    fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
+    await openWindow();
     for (const p of await screen.findAllByText(/install\.sh \| sh -s --/)) {
       expect(p.textContent).toMatch(new RegExp(`--hub ${window.location.origin} --key k1 --insecure-http$`));
     }
@@ -219,7 +235,7 @@ describe("RegisterWindow", () => {
 
   it("hub v0.5.6 绑定 agent v0.5.4 时命令取 v0.5.6 的脚本并写明装的是 v0.5.4", async () => {
     renderOpen("v0.5.6", "v0.5.4");
-    fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
+    await openWindow();
     for (const p of await screen.findAllByText(/install\.sh \| sh -s --/)) {
       expect(p.textContent).toContain("https://github.com/xjetry/heron-probe/releases/download/v0.5.6/install.sh");
     }
@@ -228,7 +244,7 @@ describe("RegisterWindow", () => {
 
   it("v1.0 不是合法 semver，走 latest、不带 --version", async () => {
     renderOpen("v1.0");
-    fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
+    await openWindow();
     for (const p of await screen.findAllByText(/install\.sh \| sh -s --/)) {
       expect(p.textContent).toContain("https://github.com/xjetry/heron-probe/releases/latest/download/install.sh");
       expect(p.textContent).not.toContain("--version");
@@ -239,7 +255,7 @@ describe("RegisterWindow", () => {
 
   it("dev hub uses latest/download and shows the latest-release hint", async () => {
     renderOpen("dev");
-    fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
+    await openWindow();
     for (const p of await screen.findAllByText(/install\.sh \| sh -s --/)) {
       expect(p.textContent).toContain("https://github.com/xjetry/heron-probe/releases/latest/download/install.sh");
       expect(p.textContent).not.toContain("--version");
@@ -250,7 +266,7 @@ describe("RegisterWindow", () => {
 
   it("空的 hub_version 按非正式版本给出 latest 命令，不当作未就绪", async () => {
     renderOpen("");
-    fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
+    await openWindow();
     const pres = await screen.findAllByText(/install\.sh \| sh -s --/);
     expect(pres).toHaveLength(2);
     for (const p of pres) {
@@ -262,38 +278,41 @@ describe("RegisterWindow", () => {
   });
 
   it("does not render install commands while the snapshot is pending", async () => {
+    let opened = false;
     renderWithAdmin({
-      getRegisterWindow: async () => ({ open: true, expiresAt: 4_000_000_000n, remaining: 3 }),
-      openRegisterWindow: async () => ({ key: "k1", expiresAt: 4_000_000_000n, maxNodes: 3 }),
+      getRegisterWindow: async () => ({ open: opened, expiresAt: 4_000_000_000n, remaining: 3 }),
+      openRegisterWindow: async () => { opened = true; return { key: "k1", expiresAt: 4_000_000_000n, maxNodes: 3 }; },
       getSnapshot: () => new Promise(() => {}),
     }, [{ path: "/register", Component: RegisterWindow }], "/register");
-    fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
+    await openWindow();
     expect(await screen.findByText("加载中…")).toBeInTheDocument();
     expect(screen.queryByText(/install\.sh/)).toBeNull();
   });
 
   it("shows only the snapshot error when it fails before commands exist", async () => {
+    let opened = false;
     renderWithAdmin({
-      getRegisterWindow: async () => ({ open: true, expiresAt: 4_000_000_000n, remaining: 3 }),
-      openRegisterWindow: async () => ({ key: "k1", expiresAt: 4_000_000_000n, maxNodes: 3 }),
+      getRegisterWindow: async () => ({ open: opened, expiresAt: 4_000_000_000n, remaining: 3 }),
+      openRegisterWindow: async () => { opened = true; return { key: "k1", expiresAt: 4_000_000_000n, maxNodes: 3 }; },
       getSnapshot: async () => { throw new ConnectError("snapshot unavailable", Code.Unavailable); },
     }, [{ path: "/register", Component: RegisterWindow }], "/register");
-    fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
+    await openWindow();
     expect(await screen.findByRole("alert")).toHaveTextContent("snapshot unavailable");
     expect(screen.queryByText(/install\.sh/)).toBeNull();
   });
 
   it("快照就绪后刷新失败保留命令并显示错误横幅", async () => {
     let fail = false;
+    let opened = false;
     const { queryClient } = renderWithAdmin({
-      getRegisterWindow: async () => ({ open: true, expiresAt: 4_000_000_000n, remaining: 3 }),
-      openRegisterWindow: async () => ({ key: "k1", expiresAt: 4_000_000_000n, maxNodes: 3 }),
+      getRegisterWindow: async () => ({ open: opened, expiresAt: 4_000_000_000n, remaining: 3 }),
+      openRegisterWindow: async () => { opened = true; return { key: "k1", expiresAt: 4_000_000_000n, maxNodes: 3 }; },
       getSnapshot: async () => {
         if (fail) throw new ConnectError("snapshot refresh failed", Code.Unavailable);
         return { now: 1n, reportIntervalMs: 4000, nodes: [], hubVersion: "v1.2.3" };
       },
     }, [{ path: "/register", Component: RegisterWindow }], "/register");
-    fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
+    await openWindow();
     expect(await screen.findAllByText(/install\.sh \| sh -s --/)).toHaveLength(2);
     fail = true;
     const snapshotKey = createConnectQueryKey({ schema: AdminService.method.getSnapshot, cardinality: "finite" });
