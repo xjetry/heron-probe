@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Request } from "@playwright/test";
+import { READ_DEADLINE_MESSAGE } from "../src/api/deadline";
 
 async function rpc(page: Page, method: string, body: unknown = {}) {
   const response = await page.evaluate(async ({ method, body }) => {
@@ -85,7 +86,7 @@ for (const [path, service] of [["/admin/", "AdminService"], ["/", "PublicService
     await page.clock.runFor(1);
     // 最终错误的订阅通知由 TanStack 排入下一轮任务；不是额外的网络等待预算。
     await page.clock.runFor(1);
-    await expect(page.getByRole("alert")).toContainText("请求超过 30 秒等待预算");
+    await expect(page.getByRole("alert")).toContainText(READ_DEADLINE_MESSAGE);
     hanging = false;
     const recovered = page.waitForResponse((response) => response.url().includes(`/heron.v1.${service}/GetSnapshot`) && response.ok());
     await page.clock.runFor(2000);

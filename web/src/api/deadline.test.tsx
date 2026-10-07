@@ -9,6 +9,7 @@ import { transport as admin } from "./transport";
 import { transport as publicTransport } from "../public/transport";
 import { queryDefaults } from "../queryDefaults";
 import { errorBanner, queryGate } from "./queryGate";
+import { READ_DEADLINE_MS, READ_DEADLINE_MESSAGE } from "./deadline";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
@@ -34,6 +35,14 @@ const surfaces: { name: string; transport: Transport; method: DescMethodUnary }[
   { name: "管理", transport: admin, method: AdminService.method.getSnapshot },
   { name: "公开", transport: publicTransport, method: PublicService.method.getSnapshot },
 ];
+
+it("超时错误文案由实际等待预算推出", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+  const pending = admin.unary(AdminService.method.getSnapshot, undefined, undefined, undefined, {}).catch((err) => err);
+  await vi.advanceTimersByTimeAsync(READ_DEADLINE_MS);
+  expect(await pending).toMatchObject({ code: Code.DeadlineExceeded, rawMessage: `请求超过 ${READ_DEADLINE_MS / 1000} 秒等待预算` });
+});
 
 it("全部方法都有显式归类，只有 ACCESS_READ 与公开无副作用声明获得服务端截止头", async () => {
   expect(AdminService.methods.map((m) => m.name).sort()).toEqual([...reads, ...others].sort());
@@ -134,7 +143,7 @@ it.each(surfaces)("$name 轮询连续挂住 93 秒进入横幅，下一轮成功
   expect(client.getQueryState(["poll"])?.errorUpdatedAt).toBe(started + 93_000);
   expect(starts.slice(1)).toEqual([started, started + 31_000, started + 63_000]);
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-  expect(screen.getByRole("alert")).toHaveTextContent("请求超过 30 秒等待预算");
+  expect(screen.getByRole("alert")).toHaveTextContent(READ_DEADLINE_MESSAGE);
   expect(screen.getByText("已有快照")).toBeInTheDocument();
   hang = false;
   await act(async () => { await vi.advanceTimersByTimeAsync(2000); });

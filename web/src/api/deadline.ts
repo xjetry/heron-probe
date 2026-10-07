@@ -24,6 +24,7 @@ import { access, Access } from "../gen/heron/v1/access_pb";
 // 在 3 * 30s + 1s + 2s = 93s 后最终报错。前提是页面前台、在线、事件循环未冻结；
 // 后台轮询/重试暂停与离线暂停不受这条墙钟保证覆盖。直接调用的对比分块没有查询重试。
 export const READ_DEADLINE_MS = 30_000;
+export const READ_DEADLINE_MESSAGE = `请求超过 ${READ_DEADLINE_MS / 1000} 秒等待预算`;
 
 function isRead(method: DescMethod): boolean {
   return method.idempotency === MethodOptions_IdempotencyLevel.NO_SIDE_EFFECTS || getOption(method, access) === Access.READ;
@@ -33,7 +34,7 @@ function isRead(method: DescMethod): boolean {
 export const readDeadline: Interceptor = (next) => async (req) => {
   if (!isRead(req.method)) return next(req);
   const controller = new AbortController();
-  const timeout = new ConnectError("请求超过 30 秒等待预算", Code.DeadlineExceeded);
+  const timeout = new ConnectError(READ_DEADLINE_MESSAGE, Code.DeadlineExceeded);
   const existing = req.header.get("Connect-Timeout-Ms");
   req.header.set("Connect-Timeout-Ms", String(existing === null ? READ_DEADLINE_MS : Math.min(Number(existing), READ_DEADLINE_MS)));
   let cancel!: () => void;
