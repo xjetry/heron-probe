@@ -2342,3 +2342,50 @@ cd /Users/xjetry/work/vibe/probe && git add web/src/admin.css docs/superpowers/p
 - 类型一致性：`liveStatus(node, live)` 在 Task 6 定义、Task 7 / 9 / 12 同签名调用；`RowMenuItem.onSelect(trigger)` 在 Task 3 定义、Task 9 以 trigger 为 opener；`Drawer` 的 props 与 `Modal` 相同减 `variant`；`NodeEditor` 去掉 `mode` 后 Task 12 的调用与 Task 10 一致；`EventFeed({ events, nodeName, channelName })` 在 Task 11 定义、Task 12 调用；`attentionCards` 的 `to` 与 Task 8 `scopeFromParams` 认的键一致（`status / expiring / lagging`）。
 - 占位扫描：无 TBD / TODO；每个代码步骤都给了代码；「同 Task N」只出现在 helper 复制的说明里并要求复制而非引用。
 - 自带约束：`scopeChips` 一度列入 Task 8 后发现没有消费者，已删；`NowGrid` 不 import 生成代码的要求改为「不 import 任何生成代码（结构类型入参）」，`importScan.test.ts` 本身只钉 `admin_pb`，两者都满足。
+
+## 验收记录
+
+### 实现提交
+
+| 内容 | 提交 |
+|---|---|
+| 共享设计 token | `87e4fd6` |
+| 原生 dialog 与 Drawer | `4f194a5` |
+| 行菜单 | `4d47159` |
+| 管理外壳与页头 | `8250b58`、`48a351a` |
+| 快速搜索 | `337abfe` |
+| 管理状态与需要处理谓词 | `d096734` |
+| 总览 | `c6b9a1e` |
+| 节点 URL 筛选 | `8bf1f0c` |
+| 节点列表 | `2888786` |
+| 节点抽屉 | `c248445` |
+| 共用事件列表 | `6f06b97` |
+| 节点详情 | `1e81d55`、`ab7a234` |
+| 浏览器入口迁移 | `dbcaf30` |
+| 菜单点击焦点、滚动容器定位、表单收缩 | `0e73a43`、`80663bc`、`7a325fc` |
+| 抽屉宽度、两行布局、空态位置与截图等待 | `204760e`、`1fd3551` |
+| 行菜单浮层定位 | `60997fa` |
+
+### 验证结果
+
+验证环境：本机 macOS，Playwright 1.63.0，Chromium / Firefox / WebKit，真实临时 hub，HTTPS 18988 转发 hub 18987。以下命令均实际退出 0：`pnpm typecheck`、`pnpm build`、`pnpm vitest run`、`make web-e2e`。单测 101 文件 / 1171 用例；e2e 37 通过，2 个仅 Chromium 支持的虚拟 Passkey 用例按既有条件跳过。构建仍有既有大 chunk 提示，没有阻止构建。
+
+日志目录：`/Users/xjetry/work/vibe/probe/.herdr-runs/r9c4d2e1/tasks/r9c4d2e1-t13/logs/`；清理后记录为 `cleanup-typecheck.log`、`cleanup-build.log`、`cleanup-unit.log`，菜单浮层修复后为 `portal-typecheck.log`、`portal-unit.log`、`e2e-8.log`。最终提交后的独立复验记录使用 `final-typecheck.log`、`final-build.log`、`final-unit.log`、`final-e2e.log`；提交前的日志不冒充最终 HEAD 凭据。
+
+截图已目视：四张需要处理卡在桌面同一行，节点名称与标签/备注为两行；1440px 下有标签及备注的节点行高度断言不超过 53px。375px 下抽屉 x=0、宽=375，无横向滚动；武装菜单完整显示取消入口。
+
+- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/overview-desktop.png`
+- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/nodes-light-desktop.png`
+- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/nodes-row-menu-armed.png`
+- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/node-editor-mobile.png`
+- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/agent-diagnostics-采集诊断从真实上报进入管理详情且不进入公开页-chromium/diagnostics-desktop.png`
+
+### 清理与消费面
+
+删除 `page-heading*`、`edit-form` 管理覆盖、`stats-grid`、`metric-card*`、`section-heading*`、`live-caption`、`node-search` 管理覆盖；Channels 的登录通知表单只保留 `card`。扫描临时加入 `.zz-unused{}` 能命中，删除后正式扫描为空；`drop-before/drop-after` 来自 `drop-${drop.edge}`，`is-dragging` 有消费者，均保留。
+
+除原消费面清单外，`e2e/admin-ui.spec.ts` 的筛选提示、过滤时移动控件可用性、零选中批量条期望随结构迁移；桌面保留四项排序下拉，手机隐藏排序列，经行菜单「移动到…」至全序末位，两条路径断言相同排序结果。浅色列表截图先等节点链接重新可见，不以 URL 已变误判渲染已完成。
+
+原生 dialog 的 UA 最大宽度会限制 `width:100vw`，抽屉显式 `max-width:none`。桌面名称不折行，标签与备注放在第二行，原 DOM 文本及可访问名保留；标签 title 保留完整列表，手机允许换行。节点空态移到表格后，文字与 role 不变。
+
+新增断言包括 `admin-ui.spec.ts:97` 行高、`:175` 抽屉位置、`:176` 抽屉宽度，以及武装确认/Escape 保留节点、卡片 URL/数量、诊断深链。已分别注入行高 100px、偏移 10px、宽 300px、移除确认项/节点链接、残留菜单、错误 URL/多余行、隐藏卡片/诊断区域，均在目标断言报红后恢复。菜单点击聚焦单测也通过去掉 focus 验红。

@@ -8,6 +8,7 @@ import { errorText } from "../api/auth";
 import { createClient } from "@connectrpc/connect";
 import { passkeyCredential } from "../lib/passkey";
 import { HeronMark } from "../components/HeronMark";
+import { Icon } from "../components/Icon";
 
 export function Login() {
   const transport = useTransport();
@@ -38,7 +39,7 @@ export function Login() {
   };
   return (
     <main className="login">
-      <form onSubmit={onSubmit} className="card">
+      <form onSubmit={onSubmit} className="card login-card">
         <h1 className="brand"><HeronMark />Heron</h1>
         <p className="login-description">轻量自托管主机监控</p>
         <label>
@@ -53,10 +54,10 @@ export function Login() {
         </label>
         <label>动态验证码（已启用 TOTP 时必填）<input autoComplete="one-time-code" inputMode="numeric" value={otp} onChange={(e) => { setOTP(e.target.value); setRecoveryCode(""); }} /></label>
         <details><summary>使用一次性恢复码</summary><label>恢复码<input autoComplete="off" value={recoveryCode} onChange={(e) => { setRecoveryCode(e.target.value); setOTP(""); }} /></label></details>
-        <button type="submit" disabled={login.isPending || passkeyBusy || password === ""}>
+        <button className="primary-button" type="submit" disabled={login.isPending || passkeyBusy || password === ""}>
           登录
         </button>
-        <button type="button" disabled={login.isPending || passkeyBusy} onClick={() => void passkeyLogin()}>使用 Passkey 登录</button>
+        <button className="passkey-button" type="button" disabled={login.isPending || passkeyBusy} onClick={() => void passkeyLogin()}><Icon name="key" />使用 Passkey 登录</button>
         {passkeyError && <p role="alert" className="error">{passkeyError}</p>}
         {login.error && (
           <p role="alert" className="error">

@@ -1070,3 +1070,43 @@ cd /Users/xjetry/work/vibe/probe && git add web/src/admin.css web/src/styles.css
 - 类型一致性：`NodeSelection` 形状不变，`ProbeTasks / AlertRules / Silences` 的 `Draft` 继续 `NodeSelection & {...}`；`RowMenuItem.note` 在 Task 1 加入、Task 2 / 3 / 5 / 7 / 8 使用；`EventFeed` 的新 prop 在 Task 4 定义，节点详情（计划一）不传即旧行为；`submitLabel` 由各 Drawer 的调用方传，不用 `configId` 推断。
 - 与计划一的接缝：`openRowAction` helper 两边各自复制；`RowMenu` 的 DOM 契约（`更多操作 X`、`menuitem`、`取消`）不变，只加 `note`；计划一 Task 11 的 `EventFeed` 签名向后兼容。
 - 占位扫描：Task 5 / 7 / 8 / 9 的实现步骤写的是「按 Task 2 / 3 的同一模式」加各自的 Interfaces 清单——模式代码在 Task 2 / 3 完整给出，字段清单在各自 Interfaces 里逐项列出，不是「类似 Task N」的空引用。
+
+## 验收记录
+
+### 实现提交
+
+| 内容 | 提交 |
+|---|---|
+| 分配与作用域、菜单附注 | `91734bd` |
+| 探测任务抽屉 | `6acfea2` |
+| 告警规则 | `767dced` |
+| 事件筛选与观测值 | `19441c5` |
+| 静默与渠道 | `9b08d93` |
+| 在线更新 | `f8122f6` |
+| 安全摘要与会话 | `ae0bc11` |
+| API token 抽屉 | `336d782` |
+| 注册窗口与系统页头 | `c832ea0` |
+| 登录页 | `5c00e85` |
+| 浏览器入口迁移 | `dbcaf30` |
+| token 吊销回读同步 | `c363f92` |
+
+### 验证结果
+
+验证环境：本机 macOS，Playwright 1.63.0，Chromium / Firefox / WebKit，真实临时 hub，HTTPS 18988 转发 hub 18987。以下命令均实际退出 0：`pnpm typecheck`、`pnpm build`、`pnpm vitest run`、`make web-e2e`。单测 101 文件 / 1171 用例；e2e 37 通过，2 个仅 Chromium 支持的虚拟 Passkey 用例按既有条件跳过。构建仍有既有大 chunk 提示，没有阻止构建。
+
+日志目录：`/Users/xjetry/work/vibe/probe/.herdr-runs/r9c4d2e1/tasks/r9c4d2e1-t13/logs/`；清理后记录为 `cleanup-typecheck.log`、`cleanup-build.log`、`cleanup-unit.log`，菜单浮层修复后为 `portal-typecheck.log`、`portal-unit.log`、`e2e-8.log`。最终提交后的独立复验记录使用 `final-typecheck.log`、`final-build.log`、`final-unit.log`、`final-e2e.log`；提交前的日志不冒充最终 HEAD 凭据。
+
+截图已目视：探测与规则分配三卡手机单列，三种新建抽屉均贴右且手机占满宽，事件筛选行无溢出。
+
+- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/probes-drawer-mobile.png`
+- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/alerts-drawer-mobile.png`
+- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/channels-drawer-mobile.png`
+- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/events-mobile.png`
+
+### 清理与消费面
+
+删除 styles.css 的 `edit-form*`、`node-search`、`node-filters*`、`compare-links*`、`compare-nodes*`；删除无消费者的 `NodeSelector.tsx`。保留 `ConfirmDelete`，因为 Nodes 内标签管理和 Themes 仍引用它；`view-switch` 被公开页 FilterRow 使用，不是死样式。死样式扫描先以 `.zz-unused{}` 冒烟，正式输出为空。
+
+EventFeed 摘要的块级布局改由 `event-summary` CSS 表达；PageHeader.description 接受 ReactNode，API token 的 Authorization 说明恢复 code。公开包生成类型导入约束仍由全量测试覆盖。
+
+消费面清单之外：`e2e/agentic-write.spec.ts:72` 读取明文后关闭抽屉再操作列表；吊销后等待列表行消失再验证旧凭据被拒绝（明文早在关闭抽屉时消失，不能用其消失作为吊销完成信号）。`e2e/theme-sandbox.spec.ts:118` 的安全管理链接限定在 TOTP article 内，避免两张卡同名链接 strict mode 冲突；该文件其余断言未变。

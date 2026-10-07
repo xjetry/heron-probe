@@ -18,30 +18,12 @@
 .segments > [data-status="offline"] { background: var(--status-offline); }
 .summary-rates, .summary-period { color: var(--muted); white-space: nowrap; }
 
-/* 筛选行（FilterRow.tsx）。 */
-.filter-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 0 0 16px; }
-.filter-row input[type="search"] { width: min(100%, 260px); }
-.filter-row .toggle[aria-pressed="true"], .view-switch button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.view-switch { display: inline-flex; }
-.view-switch button:first-child { border-radius: var(--radius-control) 0 0 var(--radius-control); }
-.view-switch button:last-child { border-radius: 0 var(--radius-control) var(--radius-control) 0; margin-left: -1px; }
-.filter-row label.inline { gap: 6px; font-size: 13px; color: var(--muted); }
-/* 节点页（NodePage.tsx）：状态头 + 2×3 / 1×6 现值格（设计 §3.2、§3.4）。 */
-.node-head { display: grid; gap: 8px; margin-bottom: 16px; }
-.node-head-title { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-.node-head h1 { margin: 0; font-size: 22px; line-height: 28px; overflow-wrap: anywhere; }
-.now-grid { margin: 4px 0 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
-.now-cell { padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); min-width: 0; }
-.now-cell dt { font-size: 12px; color: var(--muted); }
-.now-cell dd { margin: 2px 0 0; font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
-.now-cell [data-level="attention"] { color: var(--status-attention); }
-.now-cell [data-level="critical"] { color: var(--status-offline); }
+/* 公开节点页（NodePage.tsx）：图表与系统信息卡。 */
 .node-page .grid { grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); }
 .node-page .facts { display: grid; grid-template-columns: minmax(80px, auto) minmax(0, 1fr); gap: 6px 16px; margin-top: 16px; font-size: 13px; }
 .node-page .facts dt { color: var(--muted); }
 .node-page .facts dd { margin: 0; overflow-wrap: anywhere; }
-@media (max-width: 900px) { .now-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 480px) { .now-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .node-page .grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 480px) { .node-page .grid { grid-template-columns: minmax(0, 1fr); } }
 
 /* 卡片视图（NodeCard.tsx）：宽屏五列，1px 边框分层，不用阴影与渐变（设计 §2、§3.1）。 */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, max(240px, (100% - 40px) / 5)), 1fr)); gap: 10px; }

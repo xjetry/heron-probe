@@ -4,6 +4,7 @@ import { errorText } from "../api/auth";
 import { errorBanner, queryGateAll } from "../api/queryGate";
 import { MixedCheckbox } from "../components/MixedCheckbox";
 import { Modal } from "../components/Modal";
+import { PageHeader } from "../components/PageHeader";
 import { AdminService } from "../gen/heron/v1/admin_pb";
 import type { UpdateStatus } from "../gen/heron/v1/update_pb";
 import { isRelease, isStableRelease, olderThan } from "../lib/version";
@@ -25,7 +26,6 @@ function Progress({ status, target }: { status?: UpdateStatus; target: string })
   if (!status) return <span className="muted">尚未收到更新能力，请先升级安装器与 agent。</span>;
   return <div className="update-progress">
     {!status.supported && <span className="muted">不支持在线更新：{status.reason || "本机更新器不可用"}</span>}
-    {status.source && <span className="muted">{sourceLabels[status.source] ?? status.source}</span>}
     {status.task && <><strong>{labels[status.task.state] ?? status.task.state}</strong><span className="muted">目标 {status.task.version}</span>
       {status.task.state === "unconfirmed" && <span className="muted">下发后等待超时，无法确认执行结果；后续上报仍会校正。重试由节点本机更新器检查是否可执行。</span>}
       {status.task.error && <span className="error">{status.task.error}</span>}</>}
@@ -81,38 +81,46 @@ export function Updates() {
     setSubmitting(null); setSelected(new Set()); void updates.refetch();
   };
   return <section>
-    <div className="page-heading"><div><h1>在线更新</h1><p>官方正式发行版 · Linux systemd</p></div>
+    <PageHeader title="在线更新" description="官方正式发行版 · Linux systemd" actions={
       <button type="button" disabled={check.isPending || busy} onClick={() => check.mutate({ checkLatest: true })}>{check.isPending ? "正在检查…" : "检查官方新版本"}</button>
-    </div>
+    } />
     {gate.banner}
     {updates.error && <p role="status">暂时无法连接 Hub，正在重试。更新结果尚未确认，请勿重复提交。</p>}
     {check.error && <p role="alert" className="error">{errorText(check.error)}</p>}
     {check.data?.checkError && <p role="alert" className="error">检查官方版本失败：{check.data.checkError}</p>}
     {cancel.error && <p role="alert" className="error">{errorText(cancel.error)}</p>}
-    <div className="update-summary">
-      <div className="card"><span className="muted">Hub 当前版本</span><h2>{hub?.version || "未知"}</h2><Progress status={hub} target={latest} />
-        <button type="button" disabled={!eligible(hub, latest) || busy} onClick={(event) => setConfirmation({ ids: [0n], version: latest, opener: event.currentTarget })}>更新 Hub</button>
-      </div>
-      <div className="card"><span className="muted">官方最新正式版</span><h2>{latest || "尚未检查"}</h2>
+    <section className="hub-card" aria-label="Hub">
+      <dl>
+        <div><dt>当前版本</dt><dd>{hub?.version || "未知"}</dd></div>
+        <div><dt>官方最新正式版</dt><dd>{latest || "尚未检查"}</dd></div>
+        <div><dt>绑定的 agent 版本</dt><dd>{updates.data!.boundAgentVersion || "—"}</dd></div>
+      </dl>
+      <button type="button" disabled={!eligible(hub, latest) || busy} onClick={(event) => setConfirmation({ ids: [0n], version: latest, opener: event.currentTarget })}>更新 Hub</button>
+      <Progress status={hub} target={latest} />
+      <div className="hub-card-description">
         <p className="muted">只安装 xjetry/heron-probe 正式 Release 中带官方签名的产物，不执行远程命令；节点按安装时的选择直接从 GitHub 或经 hub 中转取得。节点更新到 hub 绑定的 agent 版本；只改 hub 的版本不要求节点升级。</p>
         <p className="muted">首次启用需用新版安装器安装本机更新服务。Docker、OpenRC 与 macOS 请使用各自安装方式。</p>
       </div>
-    </div>
+    </section>
     {(submitting || results.length > 0) && <div className="card" role="status" tabIndex={-1} ref={statusRef}>
       {submitting && <p>正在提交更新任务：{submitting.done}/{submitting.total}</p>}
       {results.map((result, i) => <p key={i}>{result}</p>)}
     </div>}
-    <div className="page-heading"><div><h2>节点 Agent</h2><p>{nodeTarget ? `目标版本 ${nodeTarget}（hub 绑定的 agent 版本）。` : "这个 hub 没有绑定正式的 agent 版本（开发构建或预发布），不能在线更新节点。"}离线任务最多等待 24 小时；新版本成功上报后才算完成。</p></div>
+    <div className="page-header"><div><h2>节点 Agent</h2><p className="muted">{nodeTarget ? `目标版本 ${nodeTarget}（hub 绑定的 agent 版本）。` : "这个 hub 没有绑定正式的 agent 版本（开发构建或预发布），不能在线更新节点。"}离线任务最多等待 24 小时；新版本成功上报后才算完成。</p></div>
       <button type="button" disabled={chosen.length === 0 || busy} onClick={(event) => setConfirmation({ ids: chosen, version: nodeTarget, opener: event.currentTarget })}>更新选中节点（{chosen.length}）</button>
     </div>
     <div className="table-scroll" role="region" aria-label="节点更新" tabIndex={0}><table className="nodes">
       <thead><tr><th><label><MixedCheckbox label="选择全部可更新节点" checked={chosen.length === 0 ? false : chosen.length === updatable.length ? true : "mixed"}
-        disabled={updatable.length === 0 || busy} onChange={() => setSelected(new Set(chosen.length === updatable.length ? [] : updatable))} />全选</label></th><th>节点</th><th>当前版本</th><th>更新状态</th><th>操作</th></tr></thead>
+        disabled={updatable.length === 0 || busy} onChange={() => setSelected(new Set(chosen.length === updatable.length ? [] : updatable))} />全选</label></th><th>节点</th><th>当前版本</th><th>来源</th><th>更新状态</th><th><span className="sr-only">操作</span></th></tr></thead>
       <tbody>{nodes.data!.nodes.map((node) => {
         const status = targets.get(node.id);
-        return <tr key={String(node.id)}><td><input type="checkbox" aria-label={`选择 ${node.name}（#${node.id}）`} checked={selected.has(node.id)} disabled={!eligible(status, nodeTarget) || busy} onChange={(event) => setSelected((old) => {
+        return <tr key={String(node.id)}><td data-label="全选"><input type="checkbox" aria-label={`选择 ${node.name}（#${node.id}）`} checked={selected.has(node.id)} disabled={!eligible(status, nodeTarget) || busy} onChange={(event) => setSelected((old) => {
           const next = new Set(old); if (event.target.checked) next.add(node.id); else next.delete(node.id); return next;
-        })} /></td><td>{node.name}<small className="muted"> #{String(node.id)}</small></td><td><code>{status?.version || "未知"}</code></td><td><Progress status={status} target={nodeTarget} /></td><td>
+        })} /></td>
+        <td data-label="节点">{node.name}<small className="muted"> #{String(node.id)}</small></td>
+        <td data-label="当前版本"><code>{status?.version || "未知"}</code>{nodeTarget && olderThan(status?.version, nodeTarget) && <span className="badge-attention">低于 {nodeTarget}</span>}</td>
+        <td data-label="来源">{sourceLabels[status?.source ?? ""] ?? status?.source ?? "—"}</td>
+        <td data-label="更新状态"><Progress status={status} target={nodeTarget} /></td><td data-label="操作">
           {status?.task?.state === "queued" && <button type="button" disabled={cancel.isPending || busy} onClick={() => cancel.mutate({ nodeId: node.id, id: status.task!.id })}>取消排队</button>}
         </td></tr>;
       })}</tbody>

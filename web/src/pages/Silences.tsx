@@ -4,9 +4,11 @@ import { type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGateAll } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
-import { ConfirmDelete } from "../components/ConfirmDelete";
-import { NodeSelector, type NodeSelection } from "../components/NodeSelector";
-import { AdminService, SilenceKind, type Node, type Silence, type SilenceEntry } from "../gen/heron/v1/admin_pb";
+import { Drawer } from "../components/Modal";
+import { assignmentValid, NodeAssignment, type NodeSelection } from "../components/NodeAssignment";
+import { PageHeader } from "../components/PageHeader";
+import { RowMenu } from "../components/RowMenu";
+import { AdminService, SilenceKind, type Node, type Silence } from "../gen/heron/v1/admin_pb";
 import { liveIds, withId } from "../lib/ids";
 
 type Draft = NodeSelection & {
@@ -50,7 +52,7 @@ function toSilence(id: bigint, d: Draft, nodes: Node[]) {
 
 export function Silences() {
   const qc = useQueryClient();
-  const [creation, setCreation] = useState(0);
+  const [drawer, setDrawer] = useState<{ kind: "create"; opener: HTMLElement } | { kind: "edit"; silence: Silence; opener: HTMLElement } | null>(null);
   const { error, mutationOptions } = useLatestError();
   const nodes = useQuery(AdminService.method.listNodes, {});
   const silences = useQuery(AdminService.method.listSilences, {}, { refetchInterval: 10_000 });
@@ -58,6 +60,7 @@ export function Silences() {
   const create = useMutation(AdminService.method.saveSilence, { ...mutationOptions, onSuccess: refresh });
   const update = useMutation(AdminService.method.saveSilence, { ...mutationOptions, onSuccess: refresh });
   const remove = useMutation(AdminService.method.deleteSilence, { ...mutationOptions, onSuccess: refresh });
+  const busy = create.isPending || update.isPending;
   const gate = queryGateAll(nodes, silences);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const [nodesData, silencesData] = gate.data;
@@ -65,26 +68,37 @@ export function Silences() {
   const nodeName = (id: bigint) => nodeList.find((n) => n.id === id)?.name ?? `节点 #${id}`;
   return (
     <section>
+      <PageHeader title="维护静默" description="覆盖内的节点在窗口内产生的告警事件照常记录但不投递；恢复是否投递只看配对的触发是否投递过。到期提醒与系统事件不受静默影响。节点的维护开关在节点编辑里设置。"
+        actions={<button type="button" className="primary-button" disabled={busy} onClick={(event) => { create.reset(); setDrawer({ kind: "create", opener: event.currentTarget }); }}>新建维护静默</button>} />
       {gate.banner}
-      <h1>维护静默</h1>
-      <p className="muted">覆盖内的节点在窗口内产生的告警事件照常记录但不投递；恢复是否投递只看配对的触发是否投递过。到期提醒与系统事件不受静默影响。节点的维护开关在节点编辑里设置。</p>
-      <SilenceForm key={creation} title="新建维护静默" nodes={nodeList} initial={emptyDraft()} pending={create.isPending}
-        onSubmit={(d) => create.mutate({ silence: toSilence(0n, d, nodeList) }, { onSuccess: () => setCreation((k) => k + 1) })} />
-      {error != null && <p role="alert" className="error">{errorText(error)}</p>}
+      {drawer === null && error != null && <p role="alert" className="error">{errorText(error)}</p>}
       <div className="table-scroll" role="region" aria-label="维护静默管理" tabIndex={0}>
         <table className="nodes">
-          <thead><tr><th>名称</th><th>窗口</th><th>作用域</th><th>状态</th><th>操作</th></tr></thead>
+          <thead><tr><th>名称</th><th>窗口</th><th>作用域</th><th>状态</th><th><span className="sr-only">操作</span></th></tr></thead>
           <tbody>
-            {silencesData.silences.map((entry) => (
-              <SilenceRow key={String(entry.silence?.id)} entry={entry} nodes={nodeList} nodeName={nodeName}
-                saving={update.isPending} deleting={remove.isPending}
-                onSave={(d, onSuccess) => update.mutate({ silence: toSilence(entry.silence?.id ?? 0n, d, nodeList) }, { onSuccess })}
-                onDelete={() => remove.mutate({ id: entry.silence?.id ?? 0n })} />
-            ))}
+            {silencesData.silences.map((entry) => {
+              const s = entry.silence;
+              if (!s) return null;
+              const label = withId(s.name, s.id);
+              return <tr key={String(s.id)}>
+                <td data-label="名称">{s.name}{s.reason && <p className="node-subtext node-note" title={s.reason}>{s.reason}</p>}</td>
+                <td data-label="窗口">{windowText(s)}</td>
+                <td data-label="作用域">{s.allNodes ? "全部节点" : s.selectorTags.length ? `标签：${s.selectorTags.join(" ∩ ")}（当前 ${s.nodeIds.length}）` : s.nodeIds.length ? <span title={s.nodeIds.map(nodeName).join("、")}>{s.nodeIds.length} 个指定节点</span> : <span className="muted">无节点</span>}</td>
+                <td data-label="状态">{!s.enabled ? <span className="muted">已停用</span> : entry.active ? <span>生效中</span> : <span className="muted">窗口外</span>}</td>
+                <td data-column="actions"><RowMenu label={label} items={[
+                  { label: "编辑", disabled: busy, onSelect: (trigger) => { update.reset(); setDrawer({ kind: "edit", silence: s, opener: trigger }); } },
+                  { label: "删除", danger: true, confirm: `确认删除 ${label}`, note: "已产生的告警事件保留", disabled: busy || remove.isPending, onSelect: () => remove.mutate({ id: s.id }) },
+                ]} /></td>
+              </tr>;
+            })}
           </tbody>
         </table>
       </div>
       {silencesData.silences.length === 0 && <p className="muted">还没有维护静默。</p>}
+      {drawer?.kind === "create" && <SilenceDrawer title="新建维护静默" submitLabel="创建" nodes={nodeList} initial={emptyDraft()} pending={create.isPending} error={create.error} opener={drawer.opener} onClose={() => setDrawer(null)}
+        onSubmit={(d) => create.mutate({ silence: toSilence(0n, d, nodeList) }, { onSuccess: () => setDrawer(null) })} />}
+      {drawer?.kind === "edit" && <SilenceDrawer key={String(drawer.silence.id)} title={`编辑 ${withId(drawer.silence.name, drawer.silence.id)}`} submitLabel="保存" nodes={nodeList} initial={draftOf(drawer.silence)} pending={update.isPending} error={update.error} opener={drawer.opener} onClose={() => setDrawer(null)}
+        onSubmit={(d) => update.mutate({ silence: toSilence(drawer.silence.id, d, nodeList) }, { onSuccess: () => setDrawer(null) })} />}
     </section>
   );
 }
@@ -95,85 +109,55 @@ function windowText(s: Silence): string {
   return `${at(s.fromAt)} – ${at(s.untilAt)}`;
 }
 
-function scopeText(s: Silence, nodeName: (id: bigint) => string): string {
-  if (s.allNodes) return "全部节点";
-  if (s.selectorTags.length > 0) return `动态标签：${s.selectorTags.join(" ∩ ")}；当前 ${s.nodeIds.length} 个节点`;
-  return s.nodeIds.map(nodeName).join("、") || "无节点";
-}
-
-function SilenceForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
-  title: string; nodes: Node[]; initial: Draft; pending: boolean; onSubmit: (d: Draft) => void; onCancel?: () => void;
+function SilenceDrawer({ title, submitLabel, nodes, initial, pending, error, opener, onClose, onSubmit }: {
+  title: string; submitLabel: "创建" | "保存"; nodes: Node[]; initial: Draft; pending: boolean; error: unknown; opener: HTMLElement; onClose: () => void; onSubmit: (d: Draft) => void;
 }) {
   // initial 只在挂载时读取；列表的周期刷新不覆盖草稿。
   const [draft, setDraft] = useState(initial);
   const set = (patch: Partial<Draft>) => setDraft({ ...draft, ...patch });
   const handle = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!e.currentTarget.checkValidity()) return;
+    if (pending || !e.currentTarget.checkValidity()) return;
+    if (!assignmentValid(draft)) return;
     onSubmit(draft);
   };
   return (
-    <form className="card edit-form" aria-label={title} onSubmit={handle}>
-      <div className="row">
-        <label>名称<input required value={draft.name} onChange={(e) => set({ name: e.target.value })} /></label>
-        <label>类型
-          <select value={draft.kind} onChange={(e) => set({ kind: Number(e.target.value) as SilenceKind })}>
-            <option value={SilenceKind.DAILY}>每日重复</option>
-            <option value={SilenceKind.ONCE}>一次性</option>
-          </select>
-        </label>
-        <label className="inline"><input type="checkbox" checked={draft.enabled} onChange={(e) => set({ enabled: e.target.checked })} />启用</label>
-      </div>
-      {draft.kind === SilenceKind.DAILY ? (
-        <div className="row">
-          <label>开始（HH:MM）<input required type="time" value={draft.startHhmm} onChange={(e) => set({ startHhmm: e.target.value })} /></label>
-          <label>结束（HH:MM）<input required type="time" value={draft.endHhmm} onChange={(e) => set({ endHhmm: e.target.value })} /></label>
-          <p className="muted">按 hub 时区判定，允许跨午夜（如 22:00–06:00）；开始含、结束不含。</p>
+    <Drawer title={title} busy={pending} opener={opener} onClose={onClose}>
+      <form aria-label={title} onSubmit={handle}>
+        <div className="modal-body">
+          {errorBanner(error)}
+          <fieldset className="bare" disabled={pending}>
+            <div className="row">
+              <label>名称<input data-autofocus required value={draft.name} onChange={(e) => set({ name: e.target.value })} /></label>
+              <label>类型
+                <select value={draft.kind} onChange={(e) => set({ kind: Number(e.target.value) as SilenceKind })}>
+                  <option value={SilenceKind.DAILY}>每日重复</option>
+                  <option value={SilenceKind.ONCE}>一次性</option>
+                </select>
+              </label>
+              <label className="inline"><input type="checkbox" checked={draft.enabled} onChange={(e) => set({ enabled: e.target.checked })} />启用</label>
+            </div>
+            {draft.kind === SilenceKind.DAILY ? (
+              <div className="row">
+                <label>开始（HH:MM）<input required type="time" value={draft.startHhmm} onChange={(e) => set({ startHhmm: e.target.value })} /></label>
+                <label>结束（HH:MM）<input required type="time" value={draft.endHhmm} onChange={(e) => set({ endHhmm: e.target.value })} /></label>
+                <p className="muted">按 hub 时区判定，允许跨午夜（如 22:00–06:00）；开始含、结束不含。</p>
+              </div>
+            ) : (
+              <div className="row">
+                <label>开始<input required type="datetime-local" value={draft.fromAt} onChange={(e) => set({ fromAt: e.target.value })} /></label>
+                <label>结束<input required type="datetime-local" value={draft.untilAt} onChange={(e) => set({ untilAt: e.target.value })} /></label>
+                <p className="muted">含开始、不含结束。到期后保留供审计，随告警事件的保留期清理。</p>
+              </div>
+            )}
+            <NodeAssignment nodes={nodes} value={draft} onChange={set} legend="作用域节点" noun="作用域" />
+            <div className="row">
+              <label>原因（选填）<input value={draft.reason} maxLength={256} onChange={(e) => set({ reason: e.target.value })} /></label>
+            </div>
+          </fieldset>
         </div>
-      ) : (
-        <div className="row">
-          <label>开始<input required type="datetime-local" value={draft.fromAt} onChange={(e) => set({ fromAt: e.target.value })} /></label>
-          <label>结束<input required type="datetime-local" value={draft.untilAt} onChange={(e) => set({ untilAt: e.target.value })} /></label>
-          <p className="muted">含开始、不含结束。到期后保留供审计，随告警事件的保留期清理。</p>
-        </div>
-      )}
-      <NodeSelector nodes={nodes} value={draft} onChange={set} legend="作用域节点" />
-      <div className="row">
-        <label>原因（选填）<input value={draft.reason} maxLength={256} onChange={(e) => set({ reason: e.target.value })} /></label>
-      </div>
-      <div className="row">
-        <button type="submit" disabled={pending}>{onCancel ? "保存" : "创建"}</button>
-        {onCancel && <button type="button" className="link" onClick={onCancel}>取消</button>}
-      </div>
-    </form>
-  );
-}
-
-function SilenceRow({ entry, nodes, nodeName, saving, deleting, onSave, onDelete }: {
-  entry: SilenceEntry; nodes: Node[]; nodeName: (id: bigint) => string;
-  saving: boolean; deleting: boolean; onSave: (d: Draft, onSuccess: () => void) => void; onDelete: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const s = entry.silence;
-  if (!s) return null;
-  if (editing) {
-    return (
-      <tr><td colSpan={5}>
-        <SilenceForm title={`编辑 ${withId(s.name, s.id)}`} nodes={nodes} initial={draftOf(s)} pending={saving}
-          onSubmit={(d) => onSave(d, () => setEditing(false))} onCancel={() => setEditing(false)} />
-      </td></tr>
-    );
-  }
-  return (
-    <tr>
-      <td>{s.name}{s.reason && <p className="node-subtext node-note" title={s.reason}>{s.reason}</p>}</td>
-      <td>{windowText(s)}</td>
-      <td>{scopeText(s, nodeName)}</td>
-      <td>{!s.enabled ? <span className="muted">已停用</span> : entry.active ? <span>生效中</span> : <span className="muted">窗口外</span>}</td>
-      <td>
-        <button type="button" className="link" aria-label={`编辑 ${withId(s.name, s.id)}`} onClick={() => setEditing(true)}>编辑</button>{" "}
-        <ConfirmDelete label={`删除 ${withId(s.name, s.id)}`} confirm={`确认删除 ${withId(s.name, s.id)}`} note="已产生的告警事件保留" pending={deleting} onDelete={onDelete} />
-      </td>
-    </tr>
+        <footer className="modal-footer"><button type="button" disabled={pending} onClick={onClose}>取消</button><button type="submit" className="primary-button" disabled={pending}>{submitLabel}</button></footer>
+      </form>
+    </Drawer>
   );
 }

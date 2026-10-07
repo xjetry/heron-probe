@@ -57,7 +57,9 @@ a { color: var(--accent); text-decoration: none; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); padding: 1rem; }
 .theme-preview { display: block; max-width: 8rem; max-height: 5rem; }
 .login { min-height: 100vh; display: grid; place-items: center; padding: 1rem; }
-.login .card { width: min(320px, 100%); display: grid; gap: 0.75rem; }
+.login-card { width: min(360px, 100%); padding: 24px; display: grid; gap: 12px; }
+.login-card input, .login-card button { width: 100%; min-width: 0; }
+.login-card button { height: var(--control-h); display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .login .brand { margin: 0; font-size: 1.75rem; letter-spacing: -0.04em; }
 .login .heron-mark { width: 44px; height: 44px; }
 .login-description { margin: 0 0 0.5rem; color: var(--muted); }
@@ -72,15 +74,11 @@ button.danger { color: var(--bad); border-color: var(--bad); }
 .warn { color: var(--warn); }
 .muted { color: var(--muted); }
 .row { display: flex; align-items: baseline; gap: 1rem; }
-form.row, .edit-form .row { align-items: flex-end; flex-wrap: wrap; }
+form.row { align-items: flex-end; flex-wrap: wrap; }
 .detail-header { flex-wrap: wrap; }
 .detail-header h1 { max-width: 100%; overflow-wrap: anywhere; }
 .detail-header nav { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-.table-scroll { overflow-x: auto; }
-.node-search { width: min(100%, 28rem); margin: 1rem 0; }
-/* 搜索框与标签过滤器并排，窄屏时换行；两者取交集。 */
-.node-filters { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1rem; margin: 1rem 0; }
-.node-filters .node-search { margin: 0; }
+.table-scroll { overflow-x: auto; position: relative; }
 .tag { display: inline-flex; align-items: center; gap: .15rem; margin: 0 .25rem .15rem 0; padding: 0 .4rem; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; }
 .tags-edit { white-space: normal; min-width: 12rem; }
 .tag-list { list-style: none; padding: 0; display: grid; gap: .35rem; }
@@ -134,18 +132,9 @@ tr.offline td { color: var(--muted); }
 .legend-swatch.soft { border-top-width: 1px; opacity: .6; }
 .chart-legend .num { color: var(--muted); }
 .chart-legend button[aria-pressed="true"] .num { color: var(--fg); }
-.compare-links { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin: 0.5rem 0 1rem; max-width: 100%; }
-.compare-links a, .compare-nodes, .compare-nodes li { overflow-wrap: anywhere; max-width: 100%; }
-.compare-nodes { margin: 0.5rem 0 0; }
-.compare-nodes ul { margin: 0.25rem 0 0; padding-left: 1.2rem; }
-.compare-nodes summary { cursor: pointer; }
 .picks { display: flex; flex-wrap: wrap; gap: .5rem 1rem; border: 1px solid var(--line); padding: .5rem .75rem; }
-.edit-form { white-space: normal; }
-.edit-form label { min-width: 0; max-width: 100%; }
-.edit-form input, .edit-form select, .edit-form textarea { min-width: 0; max-width: 100%; }
 fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .picks label, label.inline { display: inline-flex; align-items: center; gap: .3rem; }
-.edit-form textarea { width: 100%; min-height: 6rem; font-family: ui-monospace, monospace; }
 .logo-preview { height: 32px; width: auto; }
 /* 计费编辑格：小输入两列排开，平铺选择、日期与说明占整行；表格单元格默认不换行，这里要换。 */
 .billing-edit { display: grid; grid-template-columns: repeat(2, minmax(6rem, 1fr)); gap: 0.25rem 0.5rem; white-space: normal; min-width: 16rem; }
@@ -215,3 +204,52 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .compare-table tr[data-focused] td { background: var(--card-hover); }
 .compare-table [data-level="attention"] { color: var(--status-attention); }
 @media (max-width: 640px) { .compare-table { display: block; overflow-x: auto; } }
+
+/* 列表页页头（components/PageHeader.tsx）：标题 + 主按钮，两端共用。 */
+.page-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 0 0 16px; }
+.page-header h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; }
+.page-header p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.page-header-actions { display: flex; align-items: center; gap: 8px; }
+.primary-button { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 500; }
+
+/* 筛选行（public/FilterRow.tsx 与管理端列表页共用）。 */
+.filter-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 0 0 16px; }
+.filter-row input[type="search"] { width: min(100%, 260px); }
+.filter-row .toggle[aria-pressed="true"], .view-switch button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.view-switch { display: inline-flex; }
+.view-switch button:first-child { border-radius: var(--radius-control) 0 0 var(--radius-control); }
+.view-switch button:last-child { border-radius: 0 var(--radius-control) var(--radius-control) 0; margin-left: -1px; }
+.filter-row label.inline { gap: 6px; font-size: 13px; color: var(--muted); }
+/* 分配 / 作用域（components/NodeAssignment.tsx）：三张卡片式单选一行，指定节点的勾选列表自身滚动。 */
+.assignment { border: 0; padding: 0; margin: 12px 0; min-width: 0; }
+.assignment-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 6px 0 10px; }
+.assignment-card { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); cursor: pointer; }
+.assignment-card:has(input:checked) { border-color: var(--fg); }
+.assignment-card input { margin: 3px 0 0; }
+.assignment-card span { font-weight: 600; }
+.assignment-card small { grid-column: 2; color: var(--muted); font-size: 12px; }
+.assignment-quick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.assignment-list { list-style: none; margin: 8px 0; padding: 0; max-height: 240px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-control); }
+.assignment-list li { padding: 0 10px; }
+.assignment-list label { display: flex; gap: 8px; align-items: center; height: var(--control-h); }
+@media (max-width: 900px) { .assignment-modes { grid-template-columns: 1fr; } }
+
+/* 节点页状态头与六个现值格：公开页与管理详情共用。 */
+.node-head { display: grid; gap: 8px; margin-bottom: 16px; }
+.node-head-title { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.node-head h1 { margin: 0; font-size: 22px; line-height: 28px; overflow-wrap: anywhere; }
+.now-grid { margin: 4px 0 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.now-cell { padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); min-width: 0; }
+.now-cell dt { font-size: 12px; color: var(--muted); }
+.now-cell dd { margin: 2px 0 0; font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
+.now-cell [data-level="attention"] { color: var(--status-attention); }
+.now-cell [data-level="critical"] { color: var(--status-offline); }
+@media (max-width: 900px) { .now-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .now-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* 页内 tab（节点详情；设计 §4.3）：下划线式，选中项用前景色 + 2px 底线；面板只渲染当前项。 */
+.tabs { display: flex; gap: 4px; margin: 16px 0 12px; border-bottom: 1px solid var(--line); }
+.tabs [role="tab"] { height: 36px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); }
+.tabs [role="tab"][aria-selected="true"] { color: var(--fg); border-bottom-color: var(--fg); }
+.node-head-meta { margin: 4px 0 12px; font-size: 13px; color: var(--muted); }
+.node-head-title .node-head-edit { margin-left: auto; }

@@ -2,7 +2,7 @@ import { create } from "@bufbuild/protobuf";
 import { QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
 import { CollectionComponent, ProbeKind } from "../gen/heron/v1/types_pb";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { act, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { rangeHeader, renderWithAdmin, type AdminImpl } from "../test/harness";
 import { NodeDetail } from "./NodeDetail";
@@ -31,6 +31,8 @@ const getTraffic = async () => ({ timezone: "UTC", now: 1_757_000_000n, nodes: [
 
 const defaultImpl = {
   listNodes, getTraffic,
+  getSnapshot: async () => ({ nodes: [] }),
+  listTags: async () => ({ tags: [] }),
   queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }),
   queryProbes: async () => create(QueryProbesResponseSchema, { level: "1m", stepS: 60 }),
 } satisfies AdminImpl;
@@ -40,7 +42,7 @@ it.each(["listNodes", "getTraffic"] as const)("详情 %s 刷新失败保留内�
   const { queryClient } = renderWithAdmin({ ...defaultImpl, [method]: async () => {
     if (fail) throw new ConnectError(`${method} refresh failed`, Code.Unavailable);
     return defaultImpl[method]();
-  } }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  } }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=traffic");
   const input = await screen.findByLabelText("本周期下行 (GiB)");
   await screen.findByRole("heading", { name: "db-01" });
   fireEvent.change(input, { target: { value: "2.5" } });
@@ -60,6 +62,7 @@ it("四个查询同文刷新失败只显示一条", async () => {
     return impl(...args);
   };
   const { queryClient } = renderWithAdmin({
+    ...defaultImpl,
     listNodes: failing(defaultImpl.listNodes),
     getTraffic: failing(defaultImpl.getTraffic),
     queryMetrics: failing(defaultImpl.queryMetrics),
@@ -78,15 +81,17 @@ it("listNodes 从未成功但历史与流量已就绪时仍显示图表、流量
   expect(await screen.findByRole("alert")).toHaveTextContent("nodes down");
   expect(await screen.findAllByTestId("chart")).toHaveLength(10);
   expect(screen.getByRole("button", { name: "24h" })).toBeInTheDocument();
-  expect(screen.getByText("↓ 1.0 GiB ↑ 512 MiB")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "流量校正" }));
+  expect(await screen.findByText("↓ 1.0 GiB ↑ 512 MiB")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "节点 #7" })).toBeInTheDocument();
 });
 
-it("listNodes 挂起、历史就绪时图表与“加载中…”同时在", async () => {
+it("listNodes 挂起不阻挡历史图表，诊断 tab 显示加载中", async () => {
   let release!: (v: Awaited<ReturnType<typeof listNodes>>) => void;
   const pending = new Promise<Awaited<ReturnType<typeof listNodes>>>((resolve) => { release = resolve; });
   renderWithAdmin({ ...defaultImpl, listNodes: () => pending }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   expect(await screen.findAllByTestId("chart")).toHaveLength(10);
+  fireEvent.click(screen.getByRole("tab", { name: "Agent 诊断" }));
   expect(screen.getByText("加载中…")).toBeInTheDocument();
   expect(screen.queryByText("主机名")).toBeNull();
   await act(async () => { release(await listNodes()); });
@@ -139,12 +144,44 @@ it("切到另一个节点、新节点历史未返回时不显示上一个节点�
   expect(screen.getAllByTestId("chart")).toHaveLength(10);
 });
 
-it("头部链接到该节点的告警事件", async () => {
-  renderWithAdmin(defaultImpl, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
-  expect((await screen.findByRole("link", { name: "告警事件" }))).toHaveAttribute("href", "/events?node=7");
+it("告警事件 tab 内嵌该节点的事件列表，离开概览前不请求事件与名称", async () => {
+  const listAlertEvents = vi.fn(async () => ({ events: [] }));
+  const listAlertRules = vi.fn(async () => ({ rules: [] }));
+  const listNotifyChannels = vi.fn(async () => ({ channels: [] }));
+  renderWithAdmin({ ...defaultImpl, listAlertEvents, listAlertRules, listNotifyChannels }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  await screen.findByRole("heading", { name: "db-01" });
+  expect(listAlertEvents).not.toHaveBeenCalled();
+  expect(listAlertRules).not.toHaveBeenCalled();
+  expect(listNotifyChannels).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("tab", { name: "告警事件" }));
+  expect(await screen.findByText("没有告警事件。")).toBeInTheDocument();
+  expect(listAlertEvents).toHaveBeenCalledWith(expect.objectContaining({ nodeId: 7n }), expect.anything());
+  expect(listAlertRules).toHaveBeenCalledTimes(1);
+  expect(listNotifyChannels).toHaveBeenCalledTimes(1);
 });
 
-it("同窗口同名任务在两张探测图中带编号区分", async () => {
+it("事件 tab 的规则格显示带编号的规则名称", async () => {
+  renderWithAdmin({ ...defaultImpl,
+    listAlertEvents: async () => ({ events: [{ id: 1n, nodeId: 7n, ruleId: 3n, transition: "firing" }] }),
+    listAlertRules: async () => ({ rules: [{ id: 3n, name: "CPU 过高" }] }),
+    listNotifyChannels: async () => ({ channels: [] }),
+  }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=events");
+  expect(await screen.findByRole("cell", { name: "CPU 过高（#3）" })).toBeInTheDocument();
+});
+
+it.each(["listAlertRules", "listNotifyChannels"] as const)("事件名称查询 %s 失败只在事件 tab 显示错误", async (method) => {
+  renderWithAdmin({ ...defaultImpl,
+    listAlertEvents: async () => ({ events: [] }),
+    listAlertRules: async () => ({ rules: [] }),
+    listNotifyChannels: async () => ({ channels: [] }),
+    [method]: async () => { throw new ConnectError("names unavailable", Code.Unavailable); },
+  }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=events");
+  expect(await screen.findByRole("alert")).toHaveTextContent("names unavailable");
+  fireEvent.click(screen.getByRole("tab", { name: "概览" }));
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("同窗口同名任务各有一张探测图，标题带编号区分并链接对比页", async () => {
   renderWithAdmin({
     ...defaultImpl,
     queryProbes: async () => create(QueryProbesResponseSchema, { stepS: 60, series: [
@@ -152,19 +189,121 @@ it("同窗口同名任务在两张探测图中带编号区分", async () => {
       { taskId: 3n, kind: ProbeKind.ICMP, target: "1.1.1.1" },
     ] }),
   }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
-  await screen.findAllByText("ICMP 1.1.1.1 #7");
-  const charts = screen.getAllByTestId("chart").filter((chart) => chart.dataset.labels?.includes("ICMP"));
-  expect(charts.map((chart) => chart.dataset.labels)).toEqual([
-    "ICMP 1.1.1.1 #7,ICMP 1.1.1.1 #3",
-    "ICMP 1.1.1.1 #7,ICMP 1.1.1.1 #3",
-  ]);
+  await screen.findByRole("heading", { name: "ICMP 1.1.1.1 #7" });
+  for (const id of [7, 3]) {
+    const heading = screen.getByRole("heading", { name: `ICMP 1.1.1.1 #${id}` });
+    expect(within(heading).getByRole("link")).toHaveAttribute("href", `/probes/${id}/compare`);
+    expect(within(heading.parentElement!).getAllByTestId("chart")).toHaveLength(1);
+  }
+  expect(screen.getAllByTestId("chart")).toHaveLength(12);
+});
+
+it("状态头显示状态与最近上报、五段元信息、落后徽章及六格，编辑入口打开抽屉", async () => {
+  renderWithAdmin({ ...defaultImpl,
+    getSnapshot: async () => ({ now: 1_000n, boundAgentVersion: "v0.8.0", nodes: [{ id: 7n, online: true, lastSeenAt: 990n, metrics: { cpuPct: 42 } }] }),
+    listNodes: async () => ({ nodes: [{ ...(await listNodes()).nodes[0], country: "JP", facts: { ...(await listNodes()).nodes[0].facts,
+      agentVersion: "v0.7.0", network: { ipv4: { state: 1, address: "8.8.8.8" } } } }] }),
+  }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  const head = within(await screen.findByRole("group", { name: "节点状态" }));
+  expect(await head.findByText("在线 · 最近上报 10 秒前")).toBeInTheDocument();
+  expect(head.getByText(/8\.8\.8\.8 · — · db-01\.internal · 6\.1 · v0\.7\.0/)).toHaveClass("node-head-meta", "num");
+  expect(head.getByTitle("国家 / 地区 JP")).toBeInTheDocument();
+  expect(head.getByText("agent 低于 v0.8.0")).toHaveClass("badge-attention");
+  expect(head.getAllByRole("group").map((g) => g.getAttribute("aria-label"))).toEqual(["CPU", "内存", "磁盘", "网络", "运行时长", "剩余天数"]);
+  expect(head.getByRole("group", { name: "CPU" })).toHaveTextContent("42%");
+  fireEvent.click(head.getByRole("button", { name: "编辑" }));
+  expect(await screen.findByRole("heading", { name: "编辑节点 · db-01（#7）" })).toBeInTheDocument();
+});
+
+it.each([
+  { maintenance: false, online: true, lastSeenAt: 990n, label: "在线 · 最近上报 10 秒前" },
+  { maintenance: false, online: false, lastSeenAt: 990n, label: "离线 · 最近上报 10 秒前" },
+  { maintenance: false, online: false, lastSeenAt: undefined, label: "从未上报" },
+  { maintenance: true, online: true, lastSeenAt: 990n, label: "维护中 · 最近上报 10 秒前" },
+])("状态头使用统一四态：$label；相同版本不显示落后", async ({ maintenance, online, lastSeenAt, label }) => {
+  renderWithAdmin({ ...defaultImpl,
+    getSnapshot: async () => ({ now: 1_000n, boundAgentVersion: "v0.8.0", nodes: [{ id: 7n, online, lastSeenAt }] }),
+    listNodes: async () => ({ nodes: [{ ...(await listNodes()).nodes[0], maintenance, facts: { ...(await listNodes()).nodes[0].facts, agentVersion: "v0.8.0" } }] }),
+  }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  const head = within(await screen.findByRole("group", { name: "节点状态" }));
+  expect(await head.findByText(label)).toHaveClass("status-badge");
+  expect(head.queryByText(/agent 低于/)).toBeNull();
+});
+
+it("tab 跟随 URL，非法值回概览；切换保留窗口且不重发历史查询", async () => {
+  const queryMetrics = vi.fn(defaultImpl.queryMetrics);
+  const { router, queryClient } = renderWithAdmin({ ...defaultImpl, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=bogus");
+  expect(await screen.findByRole("tab", { name: "概览" })).toHaveAttribute("aria-selected", "true");
+  await screen.findAllByTestId("chart");
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  fireEvent.click(screen.getByRole("button", { name: "6h" }));
+  await waitFor(() => expect(queryMetrics).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  fireEvent.click(screen.getByRole("tab", { name: "Agent 诊断" }));
+  expect(router.state.location.search).toBe("?tab=diagnostics");
+  expect(router.state.historyAction).toBe("REPLACE");
+  expect(screen.getByRole("region", { name: "Agent 运行诊断" })).toBeInTheDocument();
+  const tab = screen.getByRole("tab", { name: "Agent 诊断" });
+  const panel = screen.getByRole("tabpanel", { name: "Agent 诊断" });
+  expect(tab).toHaveAttribute("aria-controls", panel.id);
+  expect(panel).toHaveAttribute("aria-labelledby", tab.id);
+  fireEvent.click(screen.getByRole("tab", { name: "概览" }));
+  expect(router.state.location.search).toBe("");
+  expect(screen.getByRole("button", { name: "6h" })).toHaveAttribute("aria-pressed", "true");
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  expect(queryMetrics).toHaveBeenCalledTimes(2);
+});
+
+it("诊断深链直接选中 Agent 诊断", async () => {
+  renderWithAdmin(defaultImpl, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=diagnostics");
+  expect(await screen.findByRole("tab", { name: "Agent 诊断" })).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByRole("region", { name: "Agent 运行诊断" })).toBeInTheDocument();
+});
+
+it.each([false, true])("详情编辑保存等待回读，回读失败=%s 时保留草稿", async (fail) => {
+  let saving = false;
+  let release!: () => void;
+  let started!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const reading = new Promise<void>((resolve) => { started = resolve; });
+  const updateNode = vi.fn(async () => { saving = true; return {}; });
+  renderWithAdmin({ ...defaultImpl, updateNode,
+    listNodes: async () => {
+      if (saving) {
+        started();
+        await gate;
+        if (fail) throw new ConnectError("readback unavailable", Code.Unavailable);
+      }
+      return { nodes: [{ ...(await listNodes()).nodes[0], trafficResetDay: 1 }] };
+    },
+  }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  await screen.findByRole("heading", { name: "db-01" });
+  fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+  const input = screen.getByRole("textbox", { name: "名称 db-01（#7）" });
+  fireEvent.change(input, { target: { value: "renamed" } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "保存" })); await reading; });
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("button", { name: "关闭抽屉" })).toBeDisabled());
+  expect(screen.getByRole("textbox", { name: "名称 db-01（#7）" })).toBe(input);
+  expect(input).toHaveValue("renamed");
+  expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 7n, name: "renamed" }), expect.anything());
+  await act(async () => { release(); });
+  if (fail) {
+    await waitFor(() => expect(within(screen.getByRole("dialog")).getByText(/已保存，但回读失败：readback unavailable/)).toBeInTheDocument());
+    const drawer = within(screen.getByRole("dialog"));
+    expect(drawer.getByRole("textbox", { name: "名称 db-01（#7）" })).toBe(input);
+    expect(input).toHaveValue("renamed");
+    expect(drawer.getByRole("button", { name: "保存" })).toBeEnabled();
+  } else {
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  }
 });
 
 describe("NodeDetail", () => {
   it.each(["UTC", "Asia/Tokyo"])("流量周期按 hub 时区 %s 显示", async (timezone) => {
     renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }),
       getTraffic: async () => ({ ...await getTraffic(), timezone }) },
-      [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+      [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=traffic");
     const t = trafficOf(7n).traffic;
     const start = new Date(Number(t.periodStart) * 1000).toLocaleString(undefined, { timeZone: timezone });
     const next = new Date(Number(t.nextResetAt) * 1000).toLocaleString(undefined, { timeZone: timezone });
@@ -176,7 +315,7 @@ describe("NodeDetail", () => {
     const adjustTraffic = vi.fn(async () => ({ traffic: trafficOf(7n).traffic }));
     const traffic = vi.fn(getTraffic);
     renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }), getTraffic: traffic, adjustTraffic },
-      [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+      [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=traffic");
     expect(await screen.findByText("↓ 1.0 GiB ↑ 512 MiB")).toBeInTheDocument();
     expect(screen.getByText("↓ 10 GiB ↑ 5.0 GiB")).toBeInTheDocument();
     expect(screen.getByText(/每月 1 日/)).toBeInTheDocument();
@@ -189,7 +328,7 @@ describe("NodeDetail", () => {
 
   it("校正输入不是非负数时按钮禁用", async () => {
     renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }), getTraffic },
-      [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+      [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=traffic");
     await screen.findByText("↓ 1.0 GiB ↑ 512 MiB");
     fireEvent.change(screen.getByLabelText("本周期下行 (GiB)"), { target: { value: "-1" } });
     expect(screen.getByRole("button", { name: "校正本周期" })).toBeDisabled();
@@ -201,7 +340,7 @@ describe("NodeDetail", () => {
 
   it.each(["1e308", "17179869184"])("校正输入 %s 超出字节范围时按钮禁用", async (value) => {
     renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }), getTraffic },
-      [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+      [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=traffic");
     await screen.findByText("↓ 1.0 GiB ↑ 512 MiB");
     fireEvent.change(screen.getByLabelText("本周期下行 (GiB)"), { target: { value } });
     expect(screen.getByRole("button", { name: "校正本周期" })).toBeDisabled();
@@ -297,7 +436,7 @@ describe("NodeDetail", () => {
     expect(charts[8]).toHaveAttribute("data-unit", "bytes/s");
     expect(charts[9]).toHaveAttribute("data-labels", "steal 均值,iowait 均值");
     expect(charts[9]).toHaveAttribute("data-unit", "percent");
-    expect(screen.getByText("db-01.internal")).toBeInTheDocument();
+    expect(screen.getByText(/db-01\.internal/)).toBeInTheDocument();
     const req = queryMetrics.mock.calls[0][0] as { nodeId: bigint; from: bigint; to: bigint; maxPoints: number };
     expect(req.nodeId).toBe(7n);
     expect(Number(req.to - req.from)).toBe(86400);
@@ -337,7 +476,7 @@ describe("NodeDetail", () => {
   });
 });
 
-it("探测图每个任务一条线，已删除任务用编号，且与指标查询共用同一窗口", async () => {
+it("探测图每个任务一张图，已删除任务用编号，且与指标查询共用同一窗口", async () => {
   const windows: { name: string; from: bigint; to: bigint }[] = [];
   renderWithAdmin({ ...defaultImpl,
     listNodes,
@@ -350,10 +489,11 @@ it("探测图每个任务一条线，已删除任务用编号，且与指标查�
       ] });
     },
   }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
-  expect(await screen.findByRole("heading", { name: "探测 · 丢包率" })).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "探测 · RTT 均值" })).toBeInTheDocument();
-  expect(await screen.findAllByText("ICMP 1.1.1.1")).toHaveLength(2);
-  expect(screen.getAllByText("任务 #9")).toHaveLength(2);
+  const active = await screen.findByRole("heading", { name: "ICMP 1.1.1.1" });
+  expect(within(active).getByRole("link")).toHaveAttribute("href", "/probes/3/compare");
+  const gone = screen.getByRole("heading", { name: "任务 #9" });
+  expect(within(gone).queryByRole("link")).toBeNull();
+  expect(screen.getAllByTestId("chart")).toHaveLength(12);
   await waitFor(() => expect(windows.filter((w) => w.name === "probes")).toHaveLength(1));
   const m = windows.find((w) => w.name === "metrics")!;
   const p = windows.find((w) => w.name === "probes")!;
@@ -376,7 +516,7 @@ it("窗口内没有探测结果时给出去向", async () => {
 it("主机信息显示 ICMP 是否可用", async () => {
   renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: defaultImpl.queryMetrics,
     queryProbes: async () => create(QueryProbesResponseSchema, { stepS: 60 }) },
-    [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+    [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=diagnostics");
   const dt = await screen.findByText("ICMP 探测");
   expect(dt.nextElementSibling).toHaveTextContent("不可用");
 });
@@ -386,7 +526,7 @@ it("主机信息也显示 ICMP 可用", async () => {
     const response = await listNodes();
     response.nodes[0].facts.icmpAvailable = true;
     return response;
-  } }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  } }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=diagnostics");
   const dt = await screen.findByText("ICMP 探测");
   expect(dt.nextElementSibling).toHaveTextContent(/^可用$/);
 });
@@ -410,9 +550,11 @@ it("切窗请求挂起时保留探测图与图例", async () => {
   });
   renderWithAdmin({ ...defaultImpl, queryProbes }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   try {
-    expect(await screen.findAllByText("ICMP 1.1.1.1")).toHaveLength(2);
+    expect(await screen.findByRole("heading", { name: "ICMP 1.1.1.1" })).toBeInTheDocument();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "7d" })); await pending; });
-    expect(screen.getAllByText("ICMP 1.1.1.1")).toHaveLength(2);
+    expect(screen.getByRole("heading", { name: "ICMP 1.1.1.1" })).toBeInTheDocument();
+    expect(screen.getAllByTestId("chart")).toHaveLength(11);
+    expect(screen.getByText("RTT 均值")).toBeInTheDocument();
   } finally {
     await act(async () => { releaseProbes(); });
   }
@@ -422,19 +564,19 @@ it("主机名一格带上 hub 看到的来源地址；从未上报时不显示",
   renderWithAdmin({ ...defaultImpl, listNodes: async () => {
     const response = await listNodes();
     return { nodes: [{ ...response.nodes[0], lastSource: "2001:db8::7" }] };
-  } }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  } }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=diagnostics");
   const dt = await screen.findByText("主机名");
   expect(dt.nextElementSibling).toHaveTextContent(/^db-01\.internal（来源 2001:db8::7）$/);
 });
 
 it("来源地址为空时主机名一格只有主机名", async () => {
-  renderWithAdmin({ ...defaultImpl, listNodes }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  renderWithAdmin({ ...defaultImpl, listNodes }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=diagnostics");
   const dt = await screen.findByText("主机名");
   expect(dt.nextElementSibling).toHaveTextContent(/^db-01\.internal$/);
 });
 
 it("旧 Agent 的节点详情明确显示未提供诊断", async () => {
-  renderWithAdmin(defaultImpl, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  renderWithAdmin(defaultImpl, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=diagnostics");
   expect(await screen.findByText("Agent 未提供诊断信息，请更新 Agent 后等待上报。")).toBeInTheDocument();
   expect(screen.queryByText("最近采集未报告失败")).not.toBeInTheDocument();
 });
@@ -452,9 +594,9 @@ it("诊断每 10 秒更新，刷新失败保留最近诊断并显示错误", asy
         reportIntervalMs: degraded ? 2000 : 1000, failedCollectors: degraded ? [CollectionComponent.NET] : [] },
     } }] };
   });
-  renderWithAdmin({ ...defaultImpl, listNodes: nodes }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  renderWithAdmin({ ...defaultImpl, listNodes: nodes }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=diagnostics");
   await screen.findByRole("heading", { name: "db-01" });
-  await screen.findByText("↓ 1.0 GiB ↑ 512 MiB");
+  await screen.findByRole("region", { name: "Agent 运行诊断" });
   expect(screen.getByText("生效上报间隔").nextElementSibling).toHaveTextContent("1000 ms");
   expect(screen.getByText("诊断信息更新时间").nextElementSibling?.querySelector("time")).toHaveAttribute("dateTime", new Date(Number(updatedAt) * 1000).toISOString());
   degraded = true;
