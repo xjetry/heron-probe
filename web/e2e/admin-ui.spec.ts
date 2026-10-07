@@ -94,6 +94,7 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
       }
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1440);
+    expect((await page.getByRole('row', { name: `tokyo-edge-${browserName}`, exact: true }).boundingBox())?.height).toBeLessThanOrEqual(53);
     await page.screenshot({ path: testInfo.outputPath('nodes-dark-desktop.png'), fullPage: true });
     await openRowAction(page, `tokyo-edge-${browserName}（#${ids[0]}）`, '编辑');
     const dialog = page.getByRole('dialog');
@@ -162,6 +163,7 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
     await expect(page.getByRole('row')).toHaveCount(expiringCount + 1);
     await page.getByRole('button', { name: '清除筛选' }).click();
     await expect(page).toHaveURL(/\/admin\/nodes$/);
+    await page.getByRole('link', { name: `tokyo-renamed（#${ids[0]}）`, exact: true }).waitFor();
     await page.screenshot({ path: testInfo.outputPath('nodes-light-desktop.png'), fullPage: true });
     await page.setViewportSize({ width: 375, height: 812 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
@@ -169,6 +171,9 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
     await page.screenshot({ path: testInfo.outputPath('nodes-mobile.png'), fullPage: true });
     await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '编辑');
     expect(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    const drawerBox = await dialog.boundingBox();
+    expect(drawerBox?.x).toBe(0);
+    expect(drawerBox?.width).toBe(375);
     await page.screenshot({ path: testInfo.outputPath('node-editor-mobile.png'), fullPage: true });
     await page.keyboard.press('Escape');
     await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '编辑');
