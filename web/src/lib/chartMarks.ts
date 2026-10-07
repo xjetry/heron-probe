@@ -76,9 +76,10 @@ function dayKey(s: Stamp): string {
 // incrSec 给出是横轴。小于一天的刻度显示时:分；整组跨过本地日界时，首格和每个日界带月-日
 // （只标日界的话，日界之前的起始日在轴上无处可看）。间隔不小于一天时刻度落在本地午夜，只写月-日。
 // 跨年时首格和年份变化的那一格带年份，其余不重复。
+// compact 是手机横轴：间隔小于一天时只写时:分，避免窄屏日期文字挤在一起；日级刻度保持日期。
 export function formatChartTimes(
   timestampsSec: readonly (number | null | undefined)[],
-  opts: { incrSec?: number; timeZone?: string } = {},
+  opts: { incrSec?: number; timeZone?: string; compact?: boolean } = {},
 ): string[] {
   const stamps = stampsOf(timestampsSec, opts.timeZone);
   if (opts.incrSec == null) {
@@ -101,7 +102,7 @@ export function formatChartTimes(
     }
     const dayChanged = prev != null && dayKey(prev) !== dayKey(s);
     const yearChanged = prev != null && prev.year !== s.year;
-    const showDate = dayLevel || (prev == null ? spansDays : dayChanged);
+    const showDate = dayLevel || (!opts.compact && (prev == null ? spansDays : dayChanged));
     const showYear = spansYears && (prev == null || yearChanged);
     const date = showYear ? `${s.year}-${s.month}-${s.day}` : `${s.month}-${s.day}`;
     if (!showDate) return `${s.hour}:${s.minute}`;
