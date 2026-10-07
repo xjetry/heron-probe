@@ -8,6 +8,7 @@ import { FilterRow, type View } from "./FilterRow";
 import { filterPublicNodes, NO_FILTERS, regionOptions, sortCards, type CardSort, type ColorBy, type PublicFilters } from "./filters";
 import { StatusSummary } from "./StatusSummary";
 import { CardGrid } from "./NodeCard";
+import { StatusWall } from "./StatusWall";
 
 export function PublicOverview() {
   const snap = useQuery(PublicService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
@@ -15,6 +16,7 @@ export function PublicOverview() {
   const [view, setView] = useState<View>("wall");
   const [colorBy, setColorBy] = useState<ColorBy>("status");
   const [sort, setSort] = useState<CardSort>("default");
+  const [selectedId, setSelectedId] = useState<bigint | null>(null);
   const gate = queryGate(snap);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const all = gate.data.nodes;
@@ -39,11 +41,8 @@ export function PublicOverview() {
           <StatusSummary nodes={nodes} />
           <FilterRow filters={effective} onFilters={setFilters} regions={regions} tags={tags} view={view} onView={setView} colorBy={colorBy} onColorBy={setColorBy} sort={sort} onSort={setSort} />
           {nodes.length === 0 && <p className="muted">没有符合筛选条件的节点。</p>}
-          {nodes.length > 0 && (view === "cards" ? <CardGrid nodes={sortCards(nodes, sort)} now={now} /> : (
-            <ul>
-              {nodes.map((n) => <li key={String(n.id)}><article aria-label={n.name}>{n.name}</article></li>)}
-            </ul>
-          ))}
+          {nodes.length > 0 && view === "wall" && <StatusWall nodes={nodes} now={now} colorBy={colorBy} selectedId={selectedId} onSelect={setSelectedId} />}
+          {nodes.length > 0 && view === "cards" && <CardGrid nodes={sortCards(nodes, sort)} now={now} />}
         </>
       )}
     </section>

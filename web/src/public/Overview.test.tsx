@@ -19,7 +19,7 @@ const snapshot = create(PublicSnapshotSchema, {
 });
 afterEach(() => vi.useRealTimers());
 
-const shown = () => screen.queryAllByRole("article").map((a) => a.getAttribute("aria-label"));
+const shown = () => screen.queryAllByRole("link").filter((a) => a.closest(".tile")).map((a) => a.getAttribute("aria-label"));
 const open = (label: string) => fireEvent.click(within(screen.getByRole("group", { name: label })).getByRole("button", { name: new RegExp(`^${label}`) }));
 const check = (label: string, name: string) => fireEvent.click(within(screen.getByRole("group", { name: label })).getByRole("checkbox", { name }));
 function render(getSnapshot: () => Promise<typeof snapshot> = async () => snapshot) {
@@ -62,7 +62,7 @@ it("标签折叠比较：选 db 时 DB 的节点也命中", async () => {
   await screen.findByText("2 / 4 在线");
   open("标签");
   check("标签", "db");
-  expect(shown()).toEqual(["db-1", "lab-1"]);
+  expect(shown()).toEqual(["lab-1", "db-1"]);
 });
 
 it("被选中的标签或地区从快照消失后从选择集里移除，不留下看不见的过滤", async () => {
