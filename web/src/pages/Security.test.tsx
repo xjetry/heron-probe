@@ -18,6 +18,15 @@ afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 const securityRoutes = [{ path: "/security/credentials", Component: Security }, { path: "/login", element: <h1>login</h1> }];
 
+it("账户安全使用统一页头与三张认证卡片", async () => {
+  renderWithAdmin({ getSecurity: async () => ({}) }, securityRoutes, "/security/credentials");
+  await waitFor(() => expect(screen.getByRole("button", { name: "设置 TOTP" })).toBeEnabled());
+  expect.soft(screen.getByRole("heading", { name: "账户安全" }).closest("header")).toHaveClass("page-header");
+  for (const name of ["重新证明身份", "TOTP 与恢复码", "Passkey"]) {
+    expect.soft(screen.getByRole("group", { name })).toHaveClass("card");
+  }
+});
+
 describe("Security", () => {
   it("TOTP 启用后保留一次性恢复码，不再查询已撤销的会话", async () => {
     const getSecurity = vi.fn(async () => ({ totpEnabled: false, passkeyAvailable: true, passkeys: [], recoveryCodesRemaining: 0 }));

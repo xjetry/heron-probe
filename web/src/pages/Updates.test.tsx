@@ -27,7 +27,10 @@ function render(impl: AdminImpl = {}) {
     ...impl,
   }, [{ path: "/updates", Component: Updates }], "/updates");
 }
-async function check(version = "v0.3.0") { fireEvent.click(await screen.findByRole("button", { name: "检查官方新版本" })); await screen.findByRole("heading", { name: version }); }
+async function check(version = "v0.3.0") {
+  fireEvent.click(await screen.findByRole("button", { name: "检查官方新版本" }));
+  await waitFor(() => expect(within(screen.getByRole("region", { name: "Hub" })).getByText("官方最新正式版").nextElementSibling).toHaveTextContent(version));
+}
 
 it("不自动联网检查，按实际更新能力禁用目标", async () => {
   const checks: boolean[] = [];
@@ -51,7 +54,7 @@ it("Hub 要求确认，只发送固定目标和版本，提交不冒充成功", 
   await screen.findByText(/Hub：更新任务已提交/);
   expect(calls).toEqual([{ nodeId: 0n, version: "v0.3.0" }]);
   expect(screen.queryByText("更新成功")).toBeNull();
-  expect(screen.getByRole("heading", { name: "v0.3.0" })).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Hub" })).getByText("官方最新正式版").nextElementSibling).toHaveTextContent("v0.3.0");
 });
 
 it("批量更新逐目标显示部分失败", async () => {
@@ -96,11 +99,29 @@ it("确认后立即关闭确认框，提交进度与结果显示在页面上，�
 
 it("显示每个节点取产物的来源", async () => {
   render();
-  expect(await screen.findByText("经 hub 中转")).toBeInTheDocument();
-  expect(screen.getByText("GitHub 直连")).toBeInTheDocument();
+  const tokyo = await screen.findByRole("row", { name: /东京/ });
+  expect.soft(within(tokyo).getAllByRole("cell")[3]).toHaveTextContent("经 hub 中转");
+  expect.soft(within(screen.getByRole("row", { name: /西雅图/ })).getAllByRole("cell")[3]).toHaveTextContent("GitHub 直连");
   // 精确匹配每个标签：页面说明文字也提到"经 hub 中转"，子串正则会把它多算一个。
   expect(screen.getAllByText("经 hub 中转")).toHaveLength(1);
   expect(screen.getAllByText("GitHub 直连")).toHaveLength(1);
+});
+
+it("版本列对低于绑定版本的节点标落后徽章，已到目标时不标", async () => {
+  render({ getUpdates: async () => ({ latestVersion: "", boundAgentVersion: "v0.8.0", targets: [
+    { nodeId: 1n, status: { supported: true, version: "v0.7.0" } },
+    { nodeId: 2n, status: { supported: true, version: "v0.8.0" } },
+  ] }) });
+  const rows = await screen.findAllByRole("row");
+  expect.soft(within(rows[1]).queryByText("低于 v0.8.0")).toHaveClass("badge-attention");
+  expect.soft(within(rows[2]).queryByText(/^低于/)).not.toBeInTheDocument();
+  expect.soft(within(screen.getByRole("region", { name: "Hub" })).getByText("绑定的 agent 版本").nextElementSibling).toHaveTextContent("v0.8.0");
+});
+
+it.each(["", "v0.8.0-rc.1"])("绑定非正式版时不标落后徽章（%s）", async (boundAgentVersion) => {
+  render({ getUpdates: async () => ({ targets, boundAgentVersion }) });
+  await screen.findByRole("row", { name: /东京/ });
+  expect(screen.queryAllByText(/^低于/)).toHaveLength(0);
 });
 
 it("仅排队任务可取消，回滚原因可见", async () => {
