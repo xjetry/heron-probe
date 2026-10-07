@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/netip"
 	"net/textproto"
@@ -180,10 +181,16 @@ func (s *Service) today() time.Time { return alert.Today(s.clk.Now(), s.cfg.Loca
 // 路径是否等于 UploadTheme 的过程名分给它们。生成的处理器分派过程用的也是 r.URL.Path 的精确相等，所以大预算的
 // 处理器只会执行 UploadTheme，其余过程都经小预算的处理器。
 func (s *Service) Handler() (string, http.Handler) {
-	access := connect.WithInterceptors(s.accessInterceptor())
-	path, rest := heronv1connect.NewAdminServiceHandler(s, access, connect.WithReadMaxBytes(maxSettingsBody))
-	_, upload := heronv1connect.NewAdminServiceHandler(s, access, connect.WithReadMaxBytes(maxThemeBody))
+	// 管理响应把私有字段与 agent 自报字符串放在一起，压缩长度会泄漏二者的重合。
+	// 只抬高响应压缩门槛，不移除 gzip 支持，保证压缩请求仍可解码；所有解码预算共用此策略。
+	common := connect.WithHandlerOptions(
+		connect.WithInterceptors(s.accessInterceptor()),
+		connect.WithCompressMinBytes(math.MaxInt),
+	)
+	path, rest := heronv1connect.NewAdminServiceHandler(s, common, connect.WithReadMaxBytes(maxSettingsBody))
+	_, upload := heronv1connect.NewAdminServiceHandler(s, common, connect.WithReadMaxBytes(maxThemeBody))
 	return path, auth.WebAuthnContext(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store, no-transform")
 		// 不透明沙箱和跨源浏览器请求在解码与鉴权之前拒绝，不能依赖 CORS 阻止副作用。
 		if !auth.SameOriginRequest(r, s.cfg.TrustedProxies) {
 			w.Header().Set("Content-Type", "application/json")
