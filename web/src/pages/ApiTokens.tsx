@@ -4,11 +4,13 @@ import { type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
-import { ConfirmDelete } from "../components/ConfirmDelete";
+import { Drawer } from "../components/Modal";
+import { PageHeader } from "../components/PageHeader";
+import { RowMenu } from "../components/RowMenu";
 import { Secret } from "../components/Secret";
 import { UserscriptButton } from "../components/UserscriptButton";
 import { Picks } from "../components/Picks";
-import { AdminService, TokenPermission } from "../gen/heron/v1/admin_pb";
+import { AdminService, TokenPermission, type CreateApiTokenResponse } from "../gen/heron/v1/admin_pb";
 import { withId } from "../lib/ids";
 
 const permissionChoices = [
@@ -51,65 +53,101 @@ function download(filename: string, text: string) {
 
 export function ApiTokens() {
   const qc = useQueryClient();
-  const [name, setName] = useState("");
-  const [permissions, setPermissions] = useState<TokenPermission[]>([]);
-  const [allNodes, setAllNodes] = useState(true);
-  const [selected, setSelected] = useState<Set<bigint>>(new Set());
+  const [drawerOpener, setDrawerOpener] = useState<HTMLElement | null>(null);
   const [auditOwner, setAuditOwner] = useState<bigint | null>(null);
-  const nodes = useQuery(AdminService.method.listNodes, {}, { enabled: !allNodes });
-  // id 记下明文属于哪一行：吊销的若正是这一行，卡片必须一起消失。
-  const [secret, setSecret] = useState<{ id: bigint; label: string; value: string; canCreate: boolean } | null>(null);
   const { error, mutationOptions } = useLatestError();
   const list = useQuery(AdminService.method.listApiTokens, {});
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listApiTokens, cardinality: "finite" }) });
   const create = useMutation(AdminService.method.createApiToken, {
     ...mutationOptions,
-    onSuccess: (r, req) => {
-      const tok = r.apiToken;
-      // 油猴脚本只认「创建节点」这一项预授权；没勾时新 token 填进脚本也只会在运行时被拒，那时不给出预填按钮。
-      if (tok) setSecret({ id: tok.id, label: `API token ${withId(tok.name, tok.id)}`, value: r.token,
-        canCreate: (req.grant?.permissions ?? []).includes(TokenPermission.CREATE) });
-      setName("");
-      setPermissions([]);
-      setAllNodes(true);
-      setSelected(new Set());
-      return refresh();
-    },
+    onSuccess: refresh,
   });
   const remove = useMutation(AdminService.method.deleteApiToken, {
     ...mutationOptions,
-    onSuccess: (_r, req) => {
-      setSecret((cur) => (cur?.id === req.id ? null : cur));
-      return refresh();
-    },
+    onSuccess: refresh,
   });
   const reference = useMutation(AdminService.method.getApiReference, { ...mutationOptions, onSuccess: (r) => download("SKILL.md", r.guide) });
   const gate = queryGate(list);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
-  const submit = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!e.currentTarget.checkValidity()) return;
-    if (!allNodes && !nodes.data) return;
-    create.mutate({ name: name.trim(), grant: { permissions, allNodes, nodeIds: allNodes ? [] : (nodes.data?.nodes ?? []).filter((n) => selected.has(n.id)).map((n) => n.id) } });
-  };
   return (
     <section>
       {gate.banner}
-      <h1>API token</h1>
+      <PageHeader title="API token" description="供 agent 与脚本使用的预授权凭据：以 Authorization: Bearer <token> 调用 API。默认只读，勾选的操作可在授权节点范围内自主执行，无需逐次审批。" actions={<>
+        <button type="button" onClick={() => reference.mutate({})} disabled={reference.isPending}>下载入口卡片</button>
+        <button type="button" className="primary-button" onClick={(e) => { create.reset(); setDrawerOpener(e.currentTarget); }}>新建 API token</button>
+      </>} />
       <p className="muted">
-        供 agent 与脚本使用的预授权凭据：以 <code>Authorization: Bearer &lt;token&gt;</code> 调用 API。默认只读，勾选的操作可在授权节点范围内自主执行，无需逐次审批。
         保存为 agent 的 skills 目录下的 heron-hub/SKILL.md（Claude Code 为 ~/.claude/skills/heron-hub/SKILL.md），并设置 <code>HERON_HUB={window.location.origin}</code> 与 <code>HERON_TOKEN</code>。
       </p>
       <p>
-        <button type="button" onClick={() => reference.mutate({})} disabled={reference.isPending}>下载入口卡片</button>{" "}
         <UserscriptButton />
       </p>
       <p className="muted">油猴脚本给运维自己用：粘贴进 Tampermonkey 等脚本管理器后，任意站点右下角出现悬浮按钮，在 IDC 页面看着价格与到期一键建节点，建好后直接给出安装命令。脚本经 <code>ExecuteChange</code> 写，token 需勾选「创建节点」。</p>
-      <form className="card edit-form" aria-label="新建 API token" onSubmit={submit}>
-        <div className="row">
-          <label>名称<input required maxLength={64} value={name} onChange={(e) => setName(e.target.value)} /></label>
-          <button type="submit" disabled={create.isPending || (!allNodes && !nodes.data)}>创建</button>
-        </div>
+      {drawerOpener && <ApiTokenDrawer opener={drawerOpener} pending={create.isPending} error={create.error}
+        onClose={() => { setDrawerOpener(null); create.reset(); }} onCreate={(name, grant) => create.mutateAsync({ name, grant })} />}
+      {!drawerOpener && error != null && <p role="alert" className="error">{errorText(error)}</p>}
+      <div className="table-scroll" role="region" aria-label="API token 管理" tabIndex={0}>
+        <table className="nodes">
+          <thead><tr><th>名称</th><th>权限 / 范围</th><th>创建于</th><th>最后使用</th><th><span className="sr-only">操作</span></th></tr></thead>
+          <tbody>
+            {gate.data.tokens.map((t) => (
+              <tr key={String(t.id)}>
+                <td data-label="名称">{t.name}</td>
+                <td data-label="权限 / 范围">{t.grant?.permissions.length ? t.grant.permissions.map((p) => permissionChoices.find(([v]) => v === p)?.[1] ?? "未知权限").join("、") : "只读"}<br />
+                  {t.grant?.allNodes !== false ? "全站" : t.grant.nodeIds.length ? t.grant.nodeIds.map((id) => `#${id}`).join("、") : "无现有节点"}</td>
+                <td data-label="创建于" className="muted">{new Date(Number(t.createdAt) * 1000).toLocaleDateString()}</td>
+                <td data-label="最后使用" className="muted">{t.lastUsedAt == null ? "从未使用" : new Date(Number(t.lastUsedAt) * 1000).toLocaleString()}</td>
+                <td data-label="操作">
+                  <RowMenu label={withId(t.name, t.id)} items={[
+                    { label: "查看操作记录", onSelect: () => setAuditOwner(t.id) },
+                    { label: "吊销", danger: true, confirm: `确认吊销 ${withId(t.name, t.id)}`, note: "用它的请求立即失效",
+                      disabled: remove.isPending, onSelect: () => remove.mutate({ id: t.id }) },
+                  ]} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {gate.data.tokens.length === 0 && <p className="muted">还没有 API token。</p>}
+      {auditOwner !== null && <Operations ownerId={auditOwner} />}
+    </section>
+  );
+}
+
+function ApiTokenDrawer({ opener, pending, error, onClose, onCreate }: {
+  opener: HTMLElement; pending: boolean; error: unknown; onClose: () => void;
+  onCreate: (name: string, grant: { permissions: TokenPermission[]; allNodes: boolean; nodeIds: bigint[] }) => Promise<CreateApiTokenResponse>;
+}) {
+  const [name, setName] = useState("");
+  const [permissions, setPermissions] = useState<TokenPermission[]>([]);
+  const [allNodes, setAllNodes] = useState(true);
+  const [selected, setSelected] = useState<Set<bigint>>(new Set());
+  const nodes = useQuery(AdminService.method.listNodes, {}, { enabled: !allNodes });
+  // 明文和草稿只属于本次抽屉；卸载后重新打开不能恢复。
+  const [secret, setSecret] = useState<{ label: string; value: string; canCreate: boolean } | null>(null);
+  const submit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!e.currentTarget.checkValidity() || pending || (!allNodes && !nodes.data)) return;
+    try {
+      const r = await onCreate(name.trim(), { permissions, allNodes, nodeIds: allNodes ? [] : (nodes.data?.nodes ?? []).filter((n) => selected.has(n.id)).map((n) => n.id) });
+      if (r.apiToken) setSecret({ label: `API token ${withId(r.apiToken.name, r.apiToken.id)}`, value: r.token,
+        canCreate: permissions.includes(TokenPermission.CREATE) });
+    } catch {
+      // mutation 的错误由抽屉呈现，失败时保留草稿以便重试。
+    }
+  };
+  return <Drawer title="新建 API token" opener={opener} busy={pending} onClose={onClose}>
+    {secret ? <>
+      <div className="modal-body">
+        <Secret label={secret.label} value={secret.value} />
+        {secret.canCreate && <p><UserscriptButton token={secret.value} label="复制油猴脚本（已填入此 token）" /></p>}
+      </div>
+      <footer className="modal-footer"><button type="button" disabled={pending} onClick={onClose}>完成</button></footer>
+    </> : <form aria-label="新建 API token" onSubmit={(e) => void submit(e)}>
+      <div className="modal-body">
+        {error != null && <p role="alert" className="error">{errorText(error)}</p>}
+        <label>名称<input required maxLength={64} value={name} onChange={(e) => setName(e.target.value)} /></label>
         <fieldset className="picks"><legend>允许的写操作</legend>
           {permissionChoices.map(([value, label]) => <label key={value}><input type="checkbox" checked={permissions.includes(value)} onChange={(e) => setPermissions((current) => e.target.checked ? [...current, value] : current.filter((p) => p !== value))} />{label}</label>)}
         </fieldset>
@@ -122,35 +160,11 @@ export function ApiTokens() {
           <p className="muted">未选择节点表示不能访问现有节点。此凭据创建或注册的节点自动纳入范围；标签不改变授权。</p>
         </>}
         <p className="muted">写入支持预览、版本检查和安全重试。不能更新 Hub、执行远程命令、管理 API 凭据或修改通知渠道密钥。</p>
-      </form>
-      {secret && <>
-        <Secret label={secret.label} value={secret.value} />
-        {secret.canCreate && <p><UserscriptButton token={secret.value} label="复制油猴脚本（已填入此 token）" /></p>}
-      </>}
-      {error != null && <p role="alert" className="error">{errorText(error)}</p>}
-      <div className="table-scroll" role="region" aria-label="API token 管理" tabIndex={0}>
-        <table className="nodes">
-          <thead><tr><th>名称</th><th>权限 / 范围</th><th>创建于</th><th>最后使用</th><th>操作</th></tr></thead>
-          <tbody>
-            {gate.data.tokens.map((t) => (
-              <tr key={String(t.id)}>
-                <td>{t.name}</td>
-                <td>{t.grant?.permissions.length ? t.grant.permissions.map((p) => permissionChoices.find(([v]) => v === p)?.[1] ?? "未知权限").join("、") : "只读"}<br />
-                  {t.grant?.allNodes !== false ? "全站" : t.grant.nodeIds.length ? t.grant.nodeIds.map((id) => `#${id}`).join("、") : "无现有节点"}</td>
-                <td className="muted">{new Date(Number(t.createdAt) * 1000).toLocaleDateString()}</td>
-                <td className="muted">{t.lastUsedAt == null ? "从未使用" : new Date(Number(t.lastUsedAt) * 1000).toLocaleString()}</td>
-                <td>
-                  <button type="button" onClick={() => setAuditOwner(t.id)}>查看 {t.name} 操作记录</button>
-                  <ConfirmDelete label={`吊销 ${withId(t.name, t.id)}`} confirm={`确认吊销 ${withId(t.name, t.id)}`} verb="吊销"
-                    note="用它的请求立即失效" pending={remove.isPending} onDelete={() => remove.mutate({ id: t.id })} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </div>
-      {gate.data.tokens.length === 0 && <p className="muted">还没有 API token。</p>}
-      {auditOwner !== null && <Operations ownerId={auditOwner} />}
-    </section>
-  );
+      <footer className="modal-footer">
+        <button type="button" disabled={pending} onClick={onClose}>取消</button>
+        <button type="submit" className="primary-button" disabled={pending || (!allNodes && !nodes.data)}>创建</button>
+      </footer>
+    </form>}
+  </Drawer>;
 }
