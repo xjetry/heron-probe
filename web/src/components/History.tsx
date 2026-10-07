@@ -5,7 +5,7 @@ import { useRetained } from "../api/useRetained";
 import type { QueryMetricsRequestSchema, QueryMetricsResponseSchema, QueryProbesRequestSchema, QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
 import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { coverageView } from "../lib/coverage";
-import { lossPercent, rttMeanMs, rttMinMs, rttMaxMs, seriesLabels, taskIdsOf, toProbeAligned, toProbeTaskAligned, type ProbeValue } from "../lib/probes";
+import { rttMeanMs, rttMinMs, rttMaxMs, seriesLabels, toProbeTaskAligned } from "../lib/probes";
 import { toAligned, unitOf, type SeriesSelection } from "../lib/series";
 import { Chart } from "./Chart";
 import { InfoTip } from "./InfoTip";
@@ -105,13 +105,6 @@ const PANELS: { title: string; selections: SeriesSelection[]; unit?: string }[] 
   ] },
 ];
 
-// 探测图两张：丢包率与 RTT 均值，每个任务一条线。单位不随数据来——探测样本没有 unit 字段，
-// 两种量各自固定。
-const PROBE_PANELS: { title: string; unit: string; value: ProbeValue }[] = [
-  { title: "探测 · 丢包率", unit: "percent", value: lossPercent },
-  { title: "探测 · RTT 均值", unit: "ms", value: rttMeanMs },
-];
-
 // 两族历史查询在管理与公开两个服务上各有一份，请求与响应类型相同（query.proto）。图表按此共用，
 // 调用方只决定查哪个服务；本文件不引用任何服务的生成代码，公开页因此能用它。
 export type HistoryMethods = {
@@ -144,12 +137,6 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, enabled: boo
     })) : [];
   }, [metrics.data, from, to]);
   // 标签随序列下发（任务当前的种类与目标），与数据同一次响应到达，不另查任务列表。
-  const probeCharts = useMemo(() => {
-    if (!probes.data) return [];
-    const ids = taskIdsOf(probes.data);
-    const labels = seriesLabels(probes.data.series);
-    return PROBE_PANELS.map((p) => ({ ...p, labels, data: toProbeAligned(probes.data!, ids, from, to, p.value) }));
-  }, [probes.data, from, to]);
   const probeTaskCharts = useMemo(() => {
     const data = probes.data;
     if (!data) return [];
@@ -174,7 +161,7 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, enabled: boo
   const [probesRange, setProbesRange] = useState(range);
   if (!probes.stale && probes.data !== undefined && probesRange !== range) setProbesRange(range);
   const rangeStale = (metrics.stale && metricsRange !== range) || (probes.stale && probesRange !== range);
-  return { range, setRange, metrics, probes, charts, probeCharts, probeTaskCharts, rangeStale };
+  return { range, setRange, metrics, probes, charts, probeTaskCharts, rangeStale };
 }
 
 export type HistoryState = ReturnType<typeof useHistory>;
@@ -201,12 +188,12 @@ export function MetricCharts({ history, showCoverage = false }: { history: Histo
       {/* 覆盖率取与图表同一次 QueryMetrics 响应的 coverageSummary，不另发请求；旧 hub 没有这个字段，
           absent 时整项不显示（不显示 0%、也不显示"未知"）。 */}
       {showCoverage && coverage.kind !== "absent" && (
-        <p className="muted">
+        <p className="muted coverage-note"><InfoTip label="上报覆盖率">
           {coverage.kind === "no-start" && "尚无覆盖记录"}
           {coverage.kind === "no-observed" && "无可观测区间"}
           {coverage.kind === "rate" && <>上报覆盖 {coverage.percent}%{coverage.unknown && <>，未知 {coverage.unknown}</>}</>}
           。这是 hub 观测到的分钟里节点有上报的比例，不是在线率；hub 未运行、超出保留期等无法观测的时段计为未知。
-        </p>
+        </InfoTip></p>
       )}
       <div className="grid">
         {charts.map((c) => (
@@ -216,26 +203,6 @@ export function MetricCharts({ history, showCoverage = false }: { history: Histo
           </div>
         ))}
       </div>
-    </>
-  );
-}
-
-// 管理端沿用两张面板，每任务一条线；noProbes 是窗口内没有探测结果时的说明。
-export function ProbePanels({ history, noProbes, probeFooter = null }: { history: HistoryState; noProbes: ReactNode; probeFooter?: ReactNode }) {
-  const { probeCharts, probes } = history;
-  if (!probes.data) return null;
-  if (probes.data.series.length === 0) return <>{noProbes}</>;
-  return (
-    <>
-      <div className="grid">
-        {probeCharts.map((c) => (
-          <div className="card" key={c.title}>
-            <h2>{c.title}</h2>
-            <Chart data={c.data} labels={c.labels} unit={c.unit} />
-          </div>
-        ))}
-      </div>
-      {probeFooter}
     </>
   );
 }
@@ -254,14 +221,5 @@ export function ProbeTaskCharts({ history, noProbes, titleLink }: { history: His
         </div>
       ))}
     </div>
-  );
-}
-
-export function HistoryCharts({ history, noProbes, showCoverage = false, probeFooter = null }: { history: HistoryState; noProbes: ReactNode; showCoverage?: boolean; probeFooter?: ReactNode }) {
-  return (
-    <>
-      <MetricCharts history={history} showCoverage={showCoverage} />
-      <ProbePanels history={history} noProbes={noProbes} probeFooter={probeFooter} />
-    </>
   );
 }

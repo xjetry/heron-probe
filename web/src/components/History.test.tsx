@@ -57,7 +57,7 @@ it.each([
     queryProbes: async () => ({ level: "1m", stepS: 60, series: [] }),
   };
   if (surface === "管理") {
-    renderWithAdmin({ ...queries, listNodes: async () => ({ nodes: [{ id: 7n, name: "node" }] }), getTraffic: async () => ({ nodes: [] }) },
+    renderWithAdmin({ ...queries, getSnapshot: async () => ({ nodes: [] }), listTags: async () => ({ tags: [] }), listNodes: async () => ({ nodes: [{ id: 7n, name: "node" }] }), getTraffic: async () => ({ nodes: [] }) },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   } else {
     renderWithService(PublicService, { ...queries, getSnapshot: async () => ({ nodes: [{ id: 7n, name: "node" }] }) },
@@ -127,7 +127,7 @@ function renderHistory(surface: "管理" | "公开", summary?: MessageInitShape<
     queryProbes: async () => ({ level: "1m", stepS: 60, series: [] }),
   };
   if (surface === "管理") {
-    renderWithAdmin({ ...queries, listNodes: async () => ({ nodes: [{ id: 7n, name: "node" }] }), getTraffic: async () => ({ nodes: [] }) },
+    renderWithAdmin({ ...queries, getSnapshot: async () => ({ nodes: [] }), listTags: async () => ({ tags: [] }), listNodes: async () => ({ nodes: [{ id: 7n, name: "node" }] }), getTraffic: async () => ({ nodes: [] }) },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   } else {
     renderWithService(PublicService, { ...queries, getSnapshot: async () => ({ nodes: [{ id: 7n, name: "node" }] }) },
@@ -158,7 +158,8 @@ it.each([
   },
 ])("管理端显示上报覆盖率（$name）", async ({ summary, pattern }) => {
   renderHistory("管理", summary);
-  expect(await screen.findByText(pattern)).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "上报覆盖率" })).toBeInTheDocument();
+  expect(screen.getByText(pattern)).toHaveAttribute("role", "tooltip");
   expect(screen.queryByText(/NaN|Infinity/)).not.toBeInTheDocument();
 });
 

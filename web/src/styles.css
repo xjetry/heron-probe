@@ -246,3 +246,23 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .assignment-list li { padding: 0 10px; }
 .assignment-list label { display: flex; gap: 8px; align-items: center; height: var(--control-h); }
 @media (max-width: 900px) { .assignment-modes { grid-template-columns: 1fr; } }
+
+/* 节点页状态头与六个现值格：公开页与管理详情共用。 */
+.node-head { display: grid; gap: 8px; margin-bottom: 16px; }
+.node-head-title { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.node-head h1 { margin: 0; font-size: 22px; line-height: 28px; overflow-wrap: anywhere; }
+.now-grid { margin: 4px 0 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.now-cell { padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); min-width: 0; }
+.now-cell dt { font-size: 12px; color: var(--muted); }
+.now-cell dd { margin: 2px 0 0; font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
+.now-cell [data-level="attention"] { color: var(--status-attention); }
+.now-cell [data-level="critical"] { color: var(--status-offline); }
+@media (max-width: 900px) { .now-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .now-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* 页内 tab（节点详情；设计 §4.3）：下划线式，选中项用前景色 + 2px 底线；面板只渲染当前项。 */
+.tabs { display: flex; gap: 4px; margin: 16px 0 12px; border-bottom: 1px solid var(--line); }
+.tabs [role="tab"] { height: 36px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); }
+.tabs [role="tab"][aria-selected="true"] { color: var(--fg); border-bottom-color: var(--fg); }
+.node-head-meta { margin: 4px 0 12px; font-size: 13px; color: var(--muted); }
+.node-head-title .node-head-edit { margin-left: auto; }
