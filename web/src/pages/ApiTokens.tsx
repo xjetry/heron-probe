@@ -72,7 +72,7 @@ export function ApiTokens() {
   return (
     <section>
       {gate.banner}
-      <PageHeader title="API token" description="供 agent 与脚本使用的预授权凭据：以 Authorization: Bearer <token> 调用 API。默认只读，勾选的操作可在授权节点范围内自主执行，无需逐次审批。" actions={<>
+      <PageHeader title="API token" description={<>供 agent 与脚本使用的预授权凭据：以 <code>Authorization: Bearer &lt;token&gt;</code> 调用 API。默认只读，勾选的操作可在授权节点范围内自主执行，无需逐次审批。</>} actions={<>
         <button type="button" onClick={() => reference.mutate({})} disabled={reference.isPending}>下载入口卡片</button>
         <button type="button" className="primary-button" onClick={(e) => { create.reset(); setDrawerOpener(e.currentTarget); }}>新建 API token</button>
       </>} />

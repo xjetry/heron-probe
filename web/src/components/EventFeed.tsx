@@ -45,7 +45,7 @@ function EventList({ data, nodeName, channelName, ruleName, visible, hasNextPage
                 <td data-label="时间" className="num">{new Date(Number(ev.at) * 1000).toLocaleString()}</td>
                 <td data-label="节点">{ev.nodeId === 0n ? <span className="muted">—</span> : nodeName(ev.nodeId)}</td>
                 <td data-label="规则">{ev.ruleId === 0n ? <span className="muted">—</span> : ruleName(ev.ruleId)}</td>
-                <td data-label="变化" className={alarming(ev.transition) ? "error" : undefined}>{transitionLabel(ev.transition)}<small className="muted" style={{ display: "block" }}>{ev.summary}</small></td>
+                <td data-label="变化" className={alarming(ev.transition) ? "error" : undefined}>{transitionLabel(ev.transition)}<small className="muted event-summary">{ev.summary}</small></td>
                 <td data-label="观测值" className="num">{ev.value !== 0 || ev.transition === "firing" || ev.transition === "recovered" ? ev.value.toLocaleString() : <span className="muted">—</span>}</td>
                 <td data-label="投递">
                   {ev.silenced

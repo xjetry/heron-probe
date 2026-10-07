@@ -74,15 +74,11 @@ button.danger { color: var(--bad); border-color: var(--bad); }
 .warn { color: var(--warn); }
 .muted { color: var(--muted); }
 .row { display: flex; align-items: baseline; gap: 1rem; }
-form.row, .edit-form .row { align-items: flex-end; flex-wrap: wrap; }
+form.row { align-items: flex-end; flex-wrap: wrap; }
 .detail-header { flex-wrap: wrap; }
 .detail-header h1 { max-width: 100%; overflow-wrap: anywhere; }
 .detail-header nav { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .table-scroll { overflow-x: auto; position: relative; }
-.node-search { width: min(100%, 28rem); margin: 1rem 0; }
-/* 搜索框与标签过滤器并排，窄屏时换行；两者取交集。 */
-.node-filters { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1rem; margin: 1rem 0; }
-.node-filters .node-search { margin: 0; }
 .tag { display: inline-flex; align-items: center; gap: .15rem; margin: 0 .25rem .15rem 0; padding: 0 .4rem; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; }
 .tags-edit { white-space: normal; min-width: 12rem; }
 .tag-list { list-style: none; padding: 0; display: grid; gap: .35rem; }
@@ -136,18 +132,9 @@ tr.offline td { color: var(--muted); }
 .legend-swatch.soft { border-top-width: 1px; opacity: .6; }
 .chart-legend .num { color: var(--muted); }
 .chart-legend button[aria-pressed="true"] .num { color: var(--fg); }
-.compare-links { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin: 0.5rem 0 1rem; max-width: 100%; }
-.compare-links a, .compare-nodes, .compare-nodes li { overflow-wrap: anywhere; max-width: 100%; }
-.compare-nodes { margin: 0.5rem 0 0; }
-.compare-nodes ul { margin: 0.25rem 0 0; padding-left: 1.2rem; }
-.compare-nodes summary { cursor: pointer; }
 .picks { display: flex; flex-wrap: wrap; gap: .5rem 1rem; border: 1px solid var(--line); padding: .5rem .75rem; }
-.edit-form { white-space: normal; }
-.edit-form label { min-width: 0; max-width: 100%; }
-.edit-form input, .edit-form select, .edit-form textarea { min-width: 0; max-width: 100%; }
 fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .picks label, label.inline { display: inline-flex; align-items: center; gap: .3rem; }
-.edit-form textarea { width: 100%; min-height: 6rem; font-family: ui-monospace, monospace; }
 .logo-preview { height: 32px; width: auto; }
 /* 计费编辑格：小输入两列排开，平铺选择、日期与说明占整行；表格单元格默认不换行，这里要换。 */
 .billing-edit { display: grid; grid-template-columns: repeat(2, minmax(6rem, 1fr)); gap: 0.25rem 0.5rem; white-space: normal; min-width: 16rem; }
