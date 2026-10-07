@@ -10,6 +10,7 @@ const at = (unix: bigint) => new Date(Number(unix) * 1000).toLocaleString();
 
 const stats = create(GetStorageStatsResponseSchema, {
   dbBytes: 4096n,
+  sqlObservedAt: 1_767_220_000n,
   tables: [{ name: "metric_1m", rows: 3n }],
   lastRollupAt: 1_767_225_000n,
   series: [
@@ -24,6 +25,17 @@ const row = async (table: string) => {
   const region = await screen.findByRole("region", { name: "时序表健康" });
   return within(within(region).getByRole("cell", { name: table }).closest("tr")!);
 };
+
+it("显示 SQL 统计时刻与完成后的复用窗口", async () => {
+  renderWithAdmin({ getStorageStats: async () => stats }, routes, "/storage");
+  expect(await screen.findByText(/^统计于 /)).toHaveTextContent(`统计于 ${at(1_767_220_000n)}；同一份 SQL 统计在算出后 60 秒内复用。`);
+});
+
+it("旧 hub 未给 SQL 统计时刻时不伪造请求时刻", async () => {
+  renderWal();
+  await screen.findByText(/数据库逻辑大小/);
+  expect(screen.queryByText(/^统计于 /)).toBeNull();
+});
 
 it("按 hub 给的 stale 标红，不按数值重算", async () => {
   renderWithAdmin({ getStorageStats: async () => stats }, routes, "/storage");

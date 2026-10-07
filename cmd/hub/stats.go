@@ -47,6 +47,7 @@ func runStatsWithSource(args []string, out io.Writer, open func(string) (storage
 		return err
 	}
 	fmt.Fprintf(out, "db_bytes: %d\n", stats.DBBytes)
+	fmt.Fprintf(out, "sql_observed_at: %d\n", stats.SQLObservedAt)
 	for _, t := range stats.Tables {
 		fmt.Fprintf(out, "%s: %d\n", t.Name, t.Rows)
 	}

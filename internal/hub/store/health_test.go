@@ -59,7 +59,8 @@ func wantFinished(t *testing.T, s *Store, name string, want *int64) {
 	if (got == nil) != (want == nil) || (got != nil && *got != *want) {
 		t.Fatalf("%s finished_at = %v, want %v", name, deref(got), deref(want))
 	}
-	stats, err := s.StorageStats(t.Context())
+	// 此处核对刚结束的维护结果，不等待对外统计的复用窗口。
+	stats, err := s.computeStorageStats(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +158,7 @@ func showSeries(series []SeriesHealth) string {
 // 最老桶按表分别给：六张表各造不同的 ts（另各有一行更新的），读出的是每张表自己的最小值；水位是 rollup_state 的
 // 原值；空表与从未跑过的维护是缺失而不是 0。
 func TestStorageStatsReportsSeriesHealthPerTable(t *testing.T) {
-	s, _ := open(t)
+	s, clk := open(t)
 	stats, err := s.StorageStats(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -187,6 +188,8 @@ func TestStorageStatsReportsSeriesHealthPerTable(t *testing.T) {
 		"UPDATE rollup_state SET upto_ts = 333 WHERE level = 'probe_5m'", "UPDATE rollup_state SET upto_ts = 444 WHERE level = 'probe_1h'",
 		"INSERT INTO maintenance_state (name, finished_at) VALUES ('rollup', 555)")
 	execStmts(t, s, stmts...)
+	// 明确越过复用窗口再检查新数据；窗口的精确边界由缓存测试负责。
+	clk.Advance(61 * time.Second)
 	stats, err = s.StorageStats(t.Context())
 	if err != nil {
 		t.Fatal(err)

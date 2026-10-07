@@ -33,7 +33,7 @@ func (f *statsFixture) StorageStats(context.Context) (store.StorageStats, error)
 	if f.calls != 1 {
 		return store.StorageStats{}, fmt.Errorf("stats observed more than once")
 	}
-	return store.StorageStats{WAL: f.wal}, nil
+	return store.StorageStats{SQLObservedAt: 122, WAL: f.wal}, nil
 }
 
 func TestStatsWALUsesSingleObservation(t *testing.T) {
@@ -55,6 +55,9 @@ func TestStatsWALUsesSingleObservation(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, got, ok := strings.Cut(out.String(), "wal.observed_at: ")
+			if !strings.Contains(out.String(), "sql_observed_at: 122\n") {
+				t.Fatalf("SQL observation must come from the Store result: %q", out.String())
+			}
 			if fixture.calls != 1 || !ok || "wal.observed_at: "+got != tc.want {
 				t.Fatalf("WAL output = %q, want %q; calls=%d", got, tc.want, fixture.calls)
 			}

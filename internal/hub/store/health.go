@@ -69,20 +69,13 @@ func (h SeriesHealth) Staleness(now time.Time, r Retention) Staleness {
 	return out
 }
 
-// seriesHealth 在调用方的只读事务里按 families × levels 的顺序读出每张时序表的最老桶与水位：按表分别给、
+// seriesHealth 使用同一事务统计行数时已读出的最老桶，并按 families × levels 的顺序读取水位：按表分别给、
 // 不合并，因为各级保留期不同，合并后的最老值无法与任何一级的保留期对比。
-func seriesHealth(ctx context.Context, tx *sql.Tx) ([]SeriesHealth, error) {
+func seriesHealth(ctx context.Context, tx *sql.Tx, oldest map[string]*int64) ([]SeriesHealth, error) {
 	var out []SeriesHealth
 	for _, f := range families {
 		for i, lv := range levels {
-			h := SeriesHealth{Table: f.tables[i], Level: lv}
-			var oldest sql.NullInt64
-			if err := tx.QueryRowContext(ctx, "SELECT min(ts) FROM "+f.tables[i]).Scan(&oldest); err != nil {
-				return nil, err
-			}
-			if oldest.Valid {
-				h.Oldest = &oldest.Int64
-			}
+			h := SeriesHealth{Table: f.tables[i], Level: lv, Oldest: oldest[f.tables[i]]}
 			if f.states[i] != "" {
 				var upto int64
 				if err := tx.QueryRowContext(ctx, "SELECT upto_ts FROM rollup_state WHERE level = ?", f.states[i]).Scan(&upto); err != nil {

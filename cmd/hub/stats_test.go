@@ -212,7 +212,12 @@ func TestStatsPrintsSizeAndEveryTable(t *testing.T) {
 	if !ok || statErr != nil || size != strconv.FormatInt(info.Size(), 10) {
 		t.Fatalf("first line %q, file size %v (%v)", lines[0], info, statErr)
 	}
-	tables := lines[1:]
+	observed, hasObserved := strings.CutPrefix(lines[1], "sql_observed_at: ")
+	at, parseErr := strconv.ParseInt(observed, 10, 64)
+	if !hasObserved || parseErr != nil || at <= 0 {
+		t.Fatalf("SQL observation line = %q, want Unix seconds", lines[1])
+	}
+	tables := lines[2:]
 	// 表行之后是健康行，它们的键带点号。
 	if i := slices.IndexFunc(tables, func(l string) bool { k, _, _ := strings.Cut(l, ":"); return strings.Contains(k, ".") }); i >= 0 {
 		tables = tables[:i]
