@@ -18,14 +18,6 @@
 .segments > [data-status="offline"] { background: var(--status-offline); }
 .summary-rates, .summary-period { color: var(--muted); white-space: nowrap; }
 
-/* 筛选行（FilterRow.tsx）。 */
-.filter-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 0 0 16px; }
-.filter-row input[type="search"] { width: min(100%, 260px); }
-.filter-row .toggle[aria-pressed="true"], .view-switch button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.view-switch { display: inline-flex; }
-.view-switch button:first-child { border-radius: var(--radius-control) 0 0 var(--radius-control); }
-.view-switch button:last-child { border-radius: 0 var(--radius-control) var(--radius-control) 0; margin-left: -1px; }
-.filter-row label.inline { gap: 6px; font-size: 13px; color: var(--muted); }
 /* 节点页（NodePage.tsx）：状态头 + 2×3 / 1×6 现值格（设计 §3.2、§3.4）。 */
 .node-head { display: grid; gap: 8px; margin-bottom: 16px; }
 .node-head-title { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
