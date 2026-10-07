@@ -21,6 +21,7 @@ import { olderThan } from "../lib/version";
 import { NodeEditor } from "./NodeEditor";
 
 const ADMIN_HISTORY: HistoryMethods = { queryMetrics: AdminService.method.queryMetrics, queryProbes: AdminService.method.queryProbes };
+// 周期量与诊断随上报更新；详情以 10 秒节奏读取列表与流量，流量卡不依赖落盘刷出。
 export const TRAFFIC_MS = 10_000;
 export type DetailTab = "overview" | "traffic" | "diagnostics" | "events";
 const TABS: readonly { id: DetailTab; label: string }[] = [{ id: "overview", label: "概览" }, { id: "traffic", label: "流量校正" }, { id: "diagnostics", label: "Agent 诊断" }, { id: "events", label: "告警事件" }];
