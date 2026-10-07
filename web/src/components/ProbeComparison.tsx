@@ -97,8 +97,9 @@ export function ProbeComparison({ taskId, methods, nodes }: { taskId: bigint; me
   const [notFound, setNotFound] = useState(false);
   const [updating, setUpdating] = useState(true);
   const [attempt, setAttempt] = useState(0);
-  const [hidden, setHidden] = useState<ReadonlySet<number>>(() => new Set());
-  const [focused, setFocused] = useState<number | null>(null);
+  // 显隐与悬停按节点 id 记：线的位置随刷新变化（见 ComparisonChart.ids 的说明），索引只在交给 Chart 时换算。
+  const [hiddenIds, setHiddenIds] = useState<ReadonlySet<bigint>>(() => new Set());
+  const [focusedId, setFocusedId] = useState<bigint | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("label");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   // 换任务不能沿用上一张图：那是另一个任务的节点。换窗口则留着，直到新窗口自己的块到齐。
@@ -108,8 +109,8 @@ export function ProbeComparison({ taskId, methods, nodes }: { taskId: bigint; me
     setError(null);
     setNotFound(false);
     setUpdating(true);
-    setHidden(new Set());
-    setFocused(null);
+    setHiddenIds(new Set());
+    setFocusedId(null);
   }
   const shown = holdTask === taskId ? hold : null;
   const names = useMemo(() => new Map(nodes.map((node) => [node.id, node.name])), [nodes]);
@@ -197,7 +198,17 @@ export function ProbeComparison({ taskId, methods, nodes }: { taskId: bigint; me
   }, [attempt, from, methods.list, methods.query, rangeLabel, taskId, to, transport]);
 
   const stale = shown !== null && shown.rangeLabel !== rangeLabel;
-  const labelIndex = new Map(view?.rtt.labels.map((label, i) => [label, i]) ?? []);
+  const lineIds = view?.rtt.ids ?? [];
+  const lineOf = new Map(lineIds.map((id, i) => [id, i]));
+  const hiddenLines = new Set(lineIds.flatMap((id, i) => (hiddenIds.has(id) ? [i] : [])));
+  const toggleHidden = (id: bigint) => {
+    const next = new Set(hiddenIds);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setHiddenIds(next);
+  };
+  // Chart 只会在图例上改显隐（这里图例关着），仍按同一口径换算回 id；当前没有线的节点的偏好原样保留。
+  const onHiddenLines = (next: ReadonlySet<number>) =>
+    setHiddenIds(new Set([...[...hiddenIds].filter((id) => !lineOf.has(id)), ...lineIds.filter((_, i) => next.has(i))]));
   const sortButton = (key: SortKey, text: string) => (
     <th aria-sort={sortKey === key ? (sortDir === "asc" ? "ascending" : "descending") : "none"}>
       <button type="button" className="link" onClick={() => {
@@ -225,7 +236,7 @@ export function ProbeComparison({ taskId, methods, nodes }: { taskId: bigint; me
         <>
           <div className="card compare-chart">
             {view.rtt.labels.length > 0
-              ? <Chart data={view.rtt.data} labels={view.rtt.labels} unit="ms" height={280} legend={false} hidden={hidden} onHiddenChange={setHidden} onFocus={setFocused} />
+              ? <Chart data={view.rtt.data} labels={view.rtt.labels} unit="ms" height={280} legend={false} hidden={hiddenLines} onHiddenChange={onHiddenLines} onFocus={(i) => setFocusedId(i === null ? null : lineIds[i] ?? null)} />
               : <p className="muted">窗口内没有读数</p>}
           </div>
           <table className="compare-table">
@@ -236,15 +247,10 @@ export function ProbeComparison({ taskId, methods, nodes }: { taskId: bigint; me
             <tbody>
               {rows.map((row) => {
                 // assembleComparison 只给有 RTT 读数的节点分配线；其他行没有可切换的线。
-                const line = labelIndex.get(row.label);
+                const line = lineOf.get(row.id);
                 return (
-                  <tr key={String(row.id)} aria-label={row.label} data-focused={line !== undefined && focused === line ? "true" : undefined} className={row.unavailable ? "muted" : undefined}>
-                    <td><input type="checkbox" aria-label={`显示 ${row.label}`} disabled={line === undefined} checked={line !== undefined && !hidden.has(line)} onChange={() => {
-                      if (line === undefined) return;
-                      const next = new Set(hidden);
-                      if (next.has(line)) next.delete(line); else next.add(line);
-                      setHidden(next);
-                    }} /></td>
+                  <tr key={String(row.id)} aria-label={row.label} data-focused={line !== undefined && focusedId === row.id ? "true" : undefined} className={row.unavailable ? "muted" : undefined}>
+                    <td><input type="checkbox" aria-label={`显示 ${row.label}`} disabled={line === undefined} checked={line !== undefined && !hiddenIds.has(row.id)} onChange={() => { if (line !== undefined) toggleHidden(row.id); }} /></td>
                     <td>{row.label}</td>
                     <td className="num">{row.mean === null ? "–" : formatUnit(row.mean, "ms")}</td>
                     <td className="num">{row.min === null ? "–" : formatUnit(row.min, "ms")}</td>

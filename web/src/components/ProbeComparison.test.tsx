@@ -365,3 +365,42 @@ it("公开节点页的已标注任务链到 /probes/:id，未标注的不给入�
   await waitFor(() => expect(router.state.location.pathname).toBe("/probes/3"));
   expect(screen.getByText("公开对比")).toBeInTheDocument();
 });
+
+// 显隐偏好属于节点，不属于线的位置：RTT 图只给窗口内有读数的节点分配线（assembleComparison），每分钟刷新
+// 后线的集合会变。按索引保存会让"隐藏 a"在 a 暂时没有读数、b 顶到原索引时变成"隐藏 b"。
+it("刷新后线集合变化，隐藏的仍是同一个节点；节点没有读数期间偏好保留，读数回来后继续隐藏", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(1_700_000_000_000);
+  const to = Math.floor(1_700_000_000_000 / 1000) + 60;
+  const from = to - 86400;
+  // 取窗口内一小时后的桶：窗口右端每分钟前进，起点的桶会掉出网格，这个桶在三次查询里都在。
+  const ts = from - (from % 60) + 3600;
+  let calls = 0;
+  renderComparison({
+    listProbeComparisonNodes: async () => listed([1n, 2n], 8),
+    queryProbeComparison: async () => {
+      calls += 1;
+      const aHasRtt = calls !== 2;
+      return create(QueryProbeComparisonResponseSchema, { level: "1m", stepS: 60, series: [
+        { nodeId: 1n, samples: [aHasRtt ? { ts: BigInt(ts), sent: 4, lost: 0, errors: 0, rttMeanUs: 20_000 } : { ts: BigInt(ts), sent: 4, lost: 4, errors: 0 }] },
+        { nodeId: 2n, samples: [{ ts: BigInt(ts), sent: 4, lost: 0, errors: 0, rttMeanUs: 30_000 }] },
+      ] });
+    },
+  }, [{ id: 1n, name: "a" }, { id: 2n, name: "b" }]);
+  const table = within(await screen.findByRole("table"));
+  expect(screen.getByTestId("chart-ms")).toHaveAttribute("data-labels", "a|b");
+  fireEvent.click(table.getByRole("checkbox", { name: "显示 a" }));
+  expect(screen.getByTestId("chart-ms")).toHaveAttribute("data-hidden", "[0]");
+
+  await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+  await waitFor(() => expect(screen.getByTestId("chart-ms")).toHaveAttribute("data-labels", "b"));
+  expect(screen.getByTestId("chart-ms")).toHaveAttribute("data-hidden", "[]");
+  expect(table.getByRole("checkbox", { name: "显示 a" })).toBeDisabled();
+  expect(table.getByRole("checkbox", { name: "显示 b" })).toBeChecked();
+
+  await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+  await waitFor(() => expect(screen.getByTestId("chart-ms")).toHaveAttribute("data-labels", "a|b"));
+  expect(screen.getByTestId("chart-ms")).toHaveAttribute("data-hidden", "[0]");
+  expect(table.getByRole("checkbox", { name: "显示 a" })).not.toBeChecked();
+  expect(table.getByRole("checkbox", { name: "显示 b" })).toBeChecked();
+});

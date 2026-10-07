@@ -33,6 +33,9 @@ export type ComparisonChunk = {
 
 export type ComparisonChart = {
   // 只含该图至少有一个读数的节点。整列没有读数的序列不放进来：Chart 会把它们的名字拼进一条提示，节点多时不可读。
+  // ids 与 labels 同序同长。线的位置随每次窗口刷新变化（有读数的节点集合会变），调用方按 id 记偏好
+  // （显隐、悬停），只在交给 Chart 时换算成当前索引；按索引记偏好会在集合变化后指到另一个节点。
+  ids: bigint[];
   labels: string[];
   data: AlignedData;
   // 已经返回、且该图在窗口网格上没有任何读数的节点。还没返回的块里的节点不在这里——没取到不是“无结果”。
@@ -107,7 +110,7 @@ export function assembleComparison(
         missing.push(labelById.get(id)!);
       }
     }
-    return { labels: plotted.map((id) => labelById.get(id)!), data: [xs, ...cols] as AlignedData, missing };
+    return { ids: plotted, labels: plotted.map((id) => labelById.get(id)!), data: [xs, ...cols] as AlignedData, missing };
   };
   return {
     complete,
