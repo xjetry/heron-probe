@@ -293,3 +293,9 @@ span.node-subtext { margin-right: 8px; }
 .admin-shell .drawer .billing-edit { grid-template-columns: minmax(0, 1fr); }
 .node-management [data-column="expiry"] [data-level="attention"] { color: var(--status-attention); }
 .node-management [data-column="expiry"] [data-level="critical"] { color: var(--status-offline); }
+/* 告警规则的启用开关。 */
+.admin-shell input.switch { appearance: none; width: 32px; height: 18px; min-height: 0; padding: 0; border: 0; border-radius: 999px; background: var(--line-strong); position: relative; cursor: pointer; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--card); transition: left .12s; }
+.admin-shell input.switch:checked { background: var(--status-online); }
+.switch:checked::after { left: 16px; }
+.switch:disabled { opacity: .5; cursor: default; }

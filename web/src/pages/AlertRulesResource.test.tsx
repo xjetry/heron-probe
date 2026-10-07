@@ -12,16 +12,17 @@ it("资源规则提交资源指标与滞回阈值，不携带探测专用字段"
     listNotifyChannels: async () => ({}), listProbeTasks: async () => ({}), listAlertRules: async () => ({}),
     saveAlertRule: async (req) => { saved.push(req); return {}; },
   }, [{ path: "/alerts", Component: AlertRules }], "/alerts");
-  const form = await screen.findByRole("form", { name: "新建告警规则" });
+  fireEvent.click(await screen.findByRole("button", { name: "新建告警规则" }));
+  const form = screen.getByRole("form", { name: "新建告警规则" });
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "磁盘压力" } });
   fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(AlertKind.RESOURCE) } });
   fireEvent.change(within(form).getByLabelText("资源指标"), { target: { value: String(ResourceMetric.DISK_USED_PCT) } });
   fireEvent.change(within(form).getByLabelText("触发阈值（%）"), { target: { value: "92" } });
   fireEvent.change(within(form).getByLabelText("恢复阈值（%）"), { target: { value: "77" } });
   fireEvent.change(within(form).getByLabelText("连续分钟"), { target: { value: "4" } });
-  fireEvent.click(within(form).getByLabelText("全部节点（含以后新建的节点）"));
   fireEvent.click(within(form).getByLabelText("动态标签选择器"));
-  fireEvent.change(within(form).getByLabelText("动态匹配标签（交集）"), { target: { value: "db" } });
+  fireEvent.click(within(form).getByRole("button", { name: /匹配标签/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /db/ }));
   fireEvent.submit(form);
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0].rule).toMatchObject({ kind: AlertKind.RESOURCE, resourceMetric: ResourceMetric.DISK_USED_PCT, threshold: 92, recoveryThreshold: 77, forMinutes: 4, taskId: 0n, metric: 0, allNodes: false, nodeIds: [], selectorTags: ["db"] });
@@ -34,7 +35,8 @@ it("资源指标下拉含六项，速率以 Mbps 输入并换算成 bytes/s 提�
     listNotifyChannels: async () => ({}), listProbeTasks: async () => ({}), listAlertRules: async () => ({}),
     saveAlertRule: async (req) => { saved.push(req); return {}; },
   }, [{ path: "/alerts", Component: AlertRules }], "/alerts");
-  const form = await screen.findByRole("form", { name: "新建告警规则" });
+  fireEvent.click(await screen.findByRole("button", { name: "新建告警规则" }));
+  const form = screen.getByRole("form", { name: "新建告警规则" });
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "出口带宽" } });
   fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(AlertKind.RESOURCE) } });
   const select = within(form).getByLabelText("资源指标");
@@ -56,7 +58,8 @@ it("每核负载阈值按原值提交并提示旧 agent 缺读数", async () => 
     listNotifyChannels: async () => ({}), listProbeTasks: async () => ({}), listAlertRules: async () => ({}),
     saveAlertRule: async (req) => { saved.push(req); return {}; },
   }, [{ path: "/alerts", Component: AlertRules }], "/alerts");
-  const form = await screen.findByRole("form", { name: "新建告警规则" });
+  fireEvent.click(await screen.findByRole("button", { name: "新建告警规则" }));
+  const form = screen.getByRole("form", { name: "新建告警规则" });
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "负载" } });
   fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(AlertKind.RESOURCE) } });
   fireEvent.change(within(form).getByLabelText("资源指标"), { target: { value: String(ResourceMetric.LOAD1_PER_CORE) } });

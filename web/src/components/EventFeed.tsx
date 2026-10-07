@@ -2,8 +2,8 @@ import { useInfiniteQuery, useQuery } from "@connectrpc/connect-query";
 import { skipToken, type InfiniteData } from "@tanstack/react-query";
 import { useState } from "react";
 import { errorBanner, queryGate } from "../api/queryGate";
-import { AdminService, type AlertDelivery, type ListAlertEventsResponse } from "../gen/heron/v1/admin_pb";
-import { alarming, deliveryText, hasErrorText, transitionLabel } from "../lib/alerts";
+import { AdminService, type AlertDelivery, type AlertEvent, type ListAlertEventsResponse } from "../gen/heron/v1/admin_pb";
+import { alarming, deliveryText, hasErrorText, transitionLabel, TRANSITIONS } from "../lib/alerts";
 import { withId } from "../lib/ids";
 
 // 与 hub 的默认页长一致；不足一页即已到最早的事件。
@@ -17,33 +17,37 @@ export function useAlertEvents(nodeId: bigint | null) {
   });
 }
 
-export function EventFeed({ events, nodeName, channelName }: {
+export function EventFeed({ events, nodeName, channelName, ruleName = (id) => `规则 #${id}`, visible }: {
   events: ReturnType<typeof useAlertEvents>; nodeName: (id: bigint) => string; channelName: (id: bigint) => string;
+  ruleName?: (id: bigint) => string; visible?: (ev: AlertEvent) => boolean;
 }) {
   const region = queryGate(events);
   if (!region.ready) return <>{region.loading}</>;
-  return <EventList data={region.data} nodeName={nodeName} channelName={channelName}
+  return <EventList data={region.data} nodeName={nodeName} channelName={channelName} ruleName={ruleName} visible={visible}
     hasNextPage={events.hasNextPage} fetchingNext={events.isFetchingNextPage} onMore={() => void events.fetchNextPage()} />;
 }
 
-function EventList({ data, nodeName, channelName, hasNextPage, fetchingNext, onMore }: {
+function EventList({ data, nodeName, channelName, ruleName, visible, hasNextPage, fetchingNext, onMore }: {
   data: InfiniteData<ListAlertEventsResponse>; nodeName: (id: bigint) => string; channelName: (id: bigint) => string;
+  ruleName: (id: bigint) => string; visible?: (ev: AlertEvent) => boolean;
   hasNextPage: boolean; fetchingNext: boolean; onMore: () => void;
 }) {
   const rows = data.pages.flatMap((p) => p.events);
+  const shown = visible ? rows.filter(visible) : rows;
   return (
     <>
       <div className="table-scroll" role="region" aria-label="告警事件" tabIndex={0}>
         <table className="nodes">
-          <thead><tr><th>时间</th><th>节点</th><th>变化</th><th>摘要</th><th>通知</th></tr></thead>
+          <thead><tr><th>时间</th><th>节点</th><th>规则</th><th>变化</th><th>观测值</th><th>投递</th></tr></thead>
           <tbody>
-            {rows.map((ev) => (
+            {shown.map((ev) => (
               <tr key={String(ev.id)}>
-                <td>{new Date(Number(ev.at) * 1000).toLocaleString()}</td>
-                <td>{nodeName(ev.nodeId)}</td>
-                <td className={alarming(ev.transition) ? "error" : undefined}>{transitionLabel(ev.transition)}</td>
-                <td>{ev.summary}</td>
-                <td>
+                <td data-label="时间" className="num">{new Date(Number(ev.at) * 1000).toLocaleString()}</td>
+                <td data-label="节点">{ev.nodeId === 0n ? <span className="muted">—</span> : nodeName(ev.nodeId)}</td>
+                <td data-label="规则">{ev.ruleId === 0n ? <span className="muted">—</span> : ruleName(ev.ruleId)}</td>
+                <td data-label="变化" className={alarming(ev.transition) ? "error" : undefined}>{transitionLabel(ev.transition)}<small className="muted" style={{ display: "block" }}>{ev.summary}</small></td>
+                <td data-label="观测值" className="num">{ev.value !== 0 || ev.transition === "firing" || ev.transition === "recovered" ? ev.value.toLocaleString() : <span className="muted">—</span>}</td>
+                <td data-label="投递">
                   {ev.silenced
                     ? <span className="muted">已静默（维护窗口内，未投递）</span>
                     : ev.deliveries.length === 0
@@ -59,8 +63,54 @@ function EventList({ data, nodeName, channelName, hasNextPage, fetchingNext, onM
         <button type="button" disabled={fetchingNext} onClick={onMore}>加载更早的事件</button>
       )}
       {rows.length === 0 && <p className="muted">没有告警事件。</p>}
+      {rows.length > 0 && shown.length === 0 && <p className="muted" role="status">已加载的 {rows.length} 条里没有匹配的事件。</p>}
     </>
   );
+}
+
+export type EventFilters = { ruleId: bigint | null; transition: string | null; from: string; to: string };
+
+function validDate(value: string): boolean {
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value) || value.startsWith("0000")) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+export function filtersFromParams(params: URLSearchParams): EventFilters {
+  const rule = params.get("rule");
+  const transition = params.get("transition");
+  const from = params.get("from") ?? "";
+  const to = params.get("to") ?? "";
+  return {
+    ruleId: rule !== null && /^[1-9]\d*$/.test(rule) ? BigInt(rule) : null,
+    transition: transition !== null && Object.hasOwn(TRANSITIONS, transition) ? transition : null,
+    from: validDate(from) ? from : "",
+    to: validDate(to) ? to : "",
+  };
+}
+
+export function paramsWithFilters(params: URLSearchParams, filters: EventFilters): URLSearchParams {
+  const next = new URLSearchParams(params);
+  for (const [key, value] of [["rule", filters.ruleId === null ? "" : String(filters.ruleId)], ["transition", filters.transition ?? ""], ["from", filters.from], ["to", filters.to]] as const) {
+    if (value) next.set(key, value); else next.delete(key);
+  }
+  return next;
+}
+
+// 日期筛选按本地日包含首尾两天；用日历上的次日零点作上界，夏令时切换日不一定长 86400 秒。
+function dayStart(ymd: string, nextDay = false): number {
+  const date = new Date(`${ymd}T00:00:00`);
+  if (nextDay) date.setDate(date.getDate() + 1);
+  return date.getTime() / 1000;
+}
+
+export function matchesFilters(ev: AlertEvent, filters: EventFilters): boolean {
+  if (filters.ruleId !== null && ev.ruleId !== filters.ruleId) return false;
+  if (filters.transition !== null && ev.transition !== filters.transition) return false;
+  const at = Number(ev.at);
+  if (filters.from && at < dayStart(filters.from)) return false;
+  if (filters.to && at >= dayStart(filters.to, true)) return false;
+  return true;
 }
 
 // 原文可能含接收方回显的密钥，只读口径不带它；按需经仅会话的 GetAlertDeliveryError 取，展开前不发请求。
