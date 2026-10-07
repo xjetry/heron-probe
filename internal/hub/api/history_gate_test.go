@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"log/slog"
+	"runtime"
 	"slices"
 	"strconv"
 	"sync/atomic"
@@ -16,19 +17,33 @@ import (
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 )
 
-// gateForTest 把等待上限缩到毫秒级：常量保持单一出处，用例只改实例行为。
+// gateForTest 把等待上限缩到毫秒级，并把每来源上限固定为 4：通用语义在多空位下测，结果不随测试机
+// 的 CPU 数变化；上限按 CPU 数的取法由 TestHistoryInFlightPerSourceFollowsCPUs 单独核对。
 func gateForTest(wait time.Duration) *historyGate {
 	g := newHistoryGate()
 	g.wait = wait
+	g.limit = 4
 	return g
+}
+
+// 每来源上限是 GOMAXPROCS 的四分之一、至少 1（依据见 historyInFlightPerSource 的注释）。
+func TestHistoryInFlightPerSourceFollowsCPUs(t *testing.T) {
+	prev := runtime.GOMAXPROCS(0)
+	t.Cleanup(func() { runtime.GOMAXPROCS(prev) })
+	for _, c := range []struct{ procs, want int }{{1, 1}, {2, 1}, {3, 1}, {4, 1}, {7, 1}, {8, 2}, {16, 4}, {64, 16}} {
+		runtime.GOMAXPROCS(c.procs)
+		if got := newHistoryGate().limit; got != c.want {
+			t.Errorf("GOMAXPROCS=%d: limit = %d, want %d", c.procs, got, c.want)
+		}
+	}
 }
 
 // 上限：同一来源第 5 个在飞等不到空位，按 ResourceExhausted 拒绝，文案与限流区分。
 func TestHistoryGateLimitReached(t *testing.T) {
 	g := gateForTest(20 * time.Millisecond)
-	for range historyInFlightPerSource {
+	for range g.limit {
 		if _, err := g.acquire(context.Background(), "a"); err != nil {
-			t.Fatalf("前 %d 个应当立即拿到: %v", historyInFlightPerSource, err)
+			t.Fatalf("前 %d 个应当立即拿到: %v", g.limit, err)
 		}
 	}
 	begin := time.Now()
@@ -45,7 +60,7 @@ func TestHistoryGateLimitReached(t *testing.T) {
 // 等待后成功：腾出空位时等待者醒来拿到。
 func TestHistoryGateWaitThenSuccess(t *testing.T) {
 	g := gateForTest(2 * time.Second)
-	held := make([]func(), historyInFlightPerSource)
+	held := make([]func(), g.limit)
 	for i := range held {
 		held[i], _ = g.acquire(context.Background(), "a")
 	}
@@ -69,7 +84,7 @@ func TestHistoryGateWaitThenSuccess(t *testing.T) {
 // 来源之间互不阻塞：来源 A 占满不挡来源 B。
 func TestHistoryGateSourcesIndependent(t *testing.T) {
 	g := gateForTest(50 * time.Millisecond)
-	for range historyInFlightPerSource {
+	for range g.limit {
 		if _, err := g.acquire(context.Background(), "A"); err != nil {
 			t.Fatal(err)
 		}
@@ -93,7 +108,7 @@ func TestHistoryErrorPathReleasesSlot(t *testing.T) {
 	// 走一遍错误路径，任何一处漏释放都会让最后一个正常请求等不到空位。
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	for range historyInFlightPerSource {
+	for range g.limit {
 		if _, err := hh.metrics(cancelled, &heronv1.QueryMetricsRequest{NodeId: 1, From: 0, To: 3600}, 10, func(context.Context) error { return nil }); err == nil {
 			t.Fatal("取消的上下文应当失败")
 		}
@@ -119,7 +134,7 @@ func TestHistoryGateReleaseOnPanic(t *testing.T) {
 		defer release()
 		panic("boom")
 	}()
-	for range historyInFlightPerSource {
+	for range g.limit {
 		if _, err := g.acquire(context.Background(), "a"); err != nil {
 			t.Fatalf("panic 之后空位没有归还: %v", err)
 		}
@@ -141,7 +156,7 @@ func TestHistoryGateIdleReclaimed(t *testing.T) {
 	}
 	// 等待者存在时不能删：占满份额后，等待者真挂在唤醒路径上时来源行必须还在。
 	var held []func()
-	for range historyInFlightPerSource {
+	for range g.limit {
 		r, err := g.acquire(context.Background(), "a")
 		if err != nil {
 			t.Fatal(err)
@@ -201,7 +216,7 @@ func TestHistoryGateIdleReclaimed(t *testing.T) {
 // 不把自己多算一次。等待计数漏减时，来源永远回收不掉，状态随出现过争用的来源数增长。
 func TestHistoryGateWokenWaitersReclaimed(t *testing.T) {
 	g := gateForTest(2 * time.Second)
-	held := make([]func(), historyInFlightPerSource)
+	held := make([]func(), g.limit)
 	for i := range held {
 		var err error
 		if held[i], err = g.acquire(context.Background(), "a"); err != nil {
@@ -320,7 +335,7 @@ func TestHistoryEntriesGated(t *testing.T) {
 func assertGated(t *testing.T, g *historyGate, key string, call func() error) {
 	t.Helper()
 	var held []func()
-	for range historyInFlightPerSource {
+	for range g.limit {
 		r, err := g.acquire(t.Context(), key)
 		if err != nil {
 			t.Fatalf("占位失败: %v", err)
@@ -354,7 +369,7 @@ func TestHistorySourcesDoNotBlockEachOther(t *testing.T) {
 	}
 	ag := h.svc.testHistoryGate()
 	ag.wait = 10 * time.Millisecond
-	for range historyInFlightPerSource {
+	for range ag.limit {
 		if _, err := ag.acquire(context.Background(), historySource(store.WithPrincipal(context.Background(), store.APIToken{ID: ida}))); err != nil {
 			t.Fatal(err)
 		}
@@ -370,7 +385,7 @@ func TestHistorySourcesDoNotBlockEachOther(t *testing.T) {
 
 // 不变式：历史请求的节点准入要读库，必须发生在它持有本来源空位期间；只有不碰库的
 // 前置校验（窗口、编号范围、分块清单的形状）允许在拿空位之前。可观测事实：占满来源
-// 的 4 个空位后，第五个请求连节点准入都答不出 404——它等不到空位，超时后只能拿到
+// 的全部空位后，再来的请求连节点准入都答不出 404——它等不到空位，超时后只能拿到
 // ResourceExhausted；准入若在拿空位之前碰了库，请求会立刻以 404 返回（这个断言在
 // 注入"准入挪回拿空位之前"时变红）。对比入口对缺失节点不报 404，这条断言照不到它们的
 // 准入顺序，只核对闸与释放；准入顺序由 TestComparisonNodeChecksHappenInsideTheSlot 在
@@ -507,7 +522,7 @@ func wantErrFor(name string) connect.Code {
 func assertBehindGate(t *testing.T, g *historyGate, key string, call func() error, wantErr connect.Code) {
 	t.Helper()
 	var held []func()
-	for range historyInFlightPerSource {
+	for range g.limit {
 		r, err := g.acquire(t.Context(), key)
 		if err != nil {
 			t.Fatalf("占位失败: %v", err)

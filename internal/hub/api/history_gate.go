@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"time"
 
@@ -12,23 +13,32 @@ import (
 )
 
 // 历史查询按来源限并发：同一来源（公开端一个客户端来源、管理端一个调用方凭据）在飞的历史
-// 查询至多 historyInFlightPerSource 个，超出的最多等 historyAcquireWait 再执行，仍无空位返回
+// 查询至多 historyInFlightPerSource() 个，超出的最多等 historyAcquireWait 再执行，仍无空位返回
 // ResourceExhausted。限流只限准入速率，封不住无界在飞积压：重查询零点几秒一个、来源满速
 // 开环发送时，在飞数随"准入速率 × 单请求时长"无限增长，读连接数随之无界。结构上的保证是
-// 同一来源至多 historyInFlightPerSource 个历史请求同时在读库（节点准入也在持位后执行，见
-// history），每个来源占用的读连接随之有界；来源数本身不设上限。读者在这种压力下慢多少属行为
-// 验收，以同构核、无桌面负载的受控环境实测为准：异构核的笔记本在持续负载下降频、线程在性能核
-// 与能效核之间迁移，同一配置测得的比值相差一个数量级。
+// 同一来源至多这么多个历史请求同时在读库（节点准入也在持位后执行，见 history），每个来源
+// 占用的读连接随之有界；来源数本身不设上限。
 const (
-	// historyInFlightPerSource 的取值依据：闭环测量（365d 8 节点分块作重请求，k=1/2/4/8，
-	// darwin/arm64 Apple M4 Max，非受控机器，数字只作参考）里 k=4 吞吐最高（14.7/s，k=8 回落
-	// 到 10.5/s）；面板对比页同时在飞的分块至多 2 个（ProbeComparison 的 MAX_IN_FLIGHT_CHUNKS），
-	// 节点详情页两族查询各一个，正常浏览不会排队。
-	historyInFlightPerSource = 4
 	// historyAcquireWait：空位腾出的时间尺度按 365d 重查询的量级取；等待期间不占读连接、
 	// 不开读事务，只挂在通知通道上。
 	historyAcquireWait = 5 * time.Second
 )
+
+// historyInFlightPerSource 是每来源同时在飞的历史查询上限：hub 可用 CPU 数的四分之一，至少 1。
+// CPU 数取 GOMAXPROCS（Linux 上 Go 1.25 起默认按 cgroup 的 CPU 配额取值）。历史查询是 CPU 密集的
+// 扫描，一个来源占用的 CPU 比例决定其他读者被拖慢多少。受控环境（GitHub 托管 runner，AMD EPYC 7763，
+// 4 核，GOMAXPROCS=4）上用开环饱和来源测受保护读者的 p99（压着时比空闲时），门槛 2 倍：
+//   - 上限 4：两轮六组都不通过，2.4–7.4 倍；
+//   - 上限 2：三组都不通过，1.5–2.5 倍；
+//   - 上限 1：三组都通过，1.1–1.6 倍。
+//
+// 同机闭环（365d 16 节点分块）k=1 时读者约 1.3 倍，k=2 时指标读者已到 2.2 倍。取 CPU 的四分之一，
+// 4 核机器上就是测过并通过的 1。面板一页同时在飞的历史查询至多 2 个：对比页受 ProbeComparison 的
+// MAX_IN_FLIGHT_CHUNKS 限制，节点详情两族各一个。上限为 1 的小机器上，这两个请求依次执行，后一个
+// 至多等 historyAcquireWait。
+func historyInFlightPerSource() int {
+	return max(1, runtime.GOMAXPROCS(0)/4)
+}
 
 // historySource 给出这次历史查询按谁计数的来源键，口径与限流器一致：公开端是
 // ratelimit.BySource 放行时记下的客户端来源（auth.SourceKey 归一化：IPv4 按地址、
@@ -53,8 +63,8 @@ func historySource(ctx context.Context) string {
 type historyGate struct {
 	mu      sync.Mutex
 	sources map[string]*sourceInFlight
-	// wait 是等待空位的上限、limit 是每来源在飞上限，newHistoryGate 取常量
-	// historyAcquireWait / historyInFlightPerSource；测试可以改（受控环境比较不同档）。
+	// wait 是等待空位的上限、limit 是每来源在飞上限，newHistoryGate 取 historyAcquireWait 与
+	// historyInFlightPerSource()；测试可以改（受控环境比较不同档）。
 	wait  time.Duration
 	limit int
 }
@@ -69,7 +79,7 @@ type sourceInFlight struct {
 }
 
 func newHistoryGate() *historyGate {
-	return &historyGate{sources: make(map[string]*sourceInFlight), wait: historyAcquireWait, limit: historyInFlightPerSource}
+	return &historyGate{sources: make(map[string]*sourceInFlight), wait: historyAcquireWait, limit: historyInFlightPerSource()}
 }
 
 // acquire 占一个空位；返回的 release 幂等，调用方 defer 它即可覆盖错误与 panic 路径。
@@ -106,15 +116,15 @@ func (g *historyGate) acquire(ctx context.Context, source string) (release func(
 		if gaveUp {
 			g.dropIfIdle(source, e)
 			g.mu.Unlock()
-			return nil, historyBusy()
+			return nil, historyBusy(g.limit)
 		}
 	}
 }
 
-func historyBusy() error {
+func historyBusy(limit int) error {
 	return connect.NewError(connect.CodeResourceExhausted, fmt.Errorf(
 		"too many concurrent history queries from this source: at most %d may be in flight; retry shortly",
-		historyInFlightPerSource))
+		limit))
 }
 
 func (g *historyGate) releaseOf(source string, e *sourceInFlight) func() {
