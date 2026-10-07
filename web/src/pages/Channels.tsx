@@ -155,7 +155,7 @@ function LoginNotifications({ channels, deleting }: { channels: NotifyChannel[];
     update.reset();
   };
   return (
-    <form className="card edit-form" aria-label="登录通知" onSubmit={(e) => {
+    <form className="card" aria-label="登录通知" onSubmit={(e) => {
       e.preventDefault();
       if (!pending) update.mutate({ settings: { loginNotify: { channelIds: selected } } });
     }}>
