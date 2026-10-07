@@ -34,6 +34,8 @@
 .admin-shell fieldset:not(.bare):not(.picks) { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); }
 .admin-shell fieldset legend { color: var(--fg); font-size: 13px; font-weight: 600; padding: 0 8px; }
 .admin-shell .edit-form label { margin-bottom: 12px; }
+.admin-shell form label { min-width: 0; max-width: 100%; }
+.admin-shell form :is(input, select, textarea) { min-width: 0; max-width: 100%; }
 .admin-shell .row { flex-wrap: wrap; gap: 14px; }
 .admin-main > section > :is(form, fieldset) label:not(.inline):not(.row) { max-width: 620px; }
 .admin-main > section > fieldset label { margin-bottom: 14px; }
