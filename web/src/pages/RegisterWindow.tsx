@@ -5,6 +5,8 @@ import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { InstallCommands } from "../components/InstallCommands";
+import { Drawer } from "../components/Modal";
+import { PageHeader } from "../components/PageHeader";
 import { Secret } from "../components/Secret";
 import { AdminService } from "../gen/heron/v1/admin_pb";
 
@@ -21,8 +23,7 @@ export function RegisterWindow() {
   const status = useQuery(AdminService.method.getRegisterWindow, {}, { refetchInterval: 10_000 });
   // hub 版本在进程生命周期内不变，不轮询。
   const snapshot = useQuery(AdminService.method.getSnapshot, {});
-  const [ttl, setTtl] = useState(TTLS[1].seconds);
-  const [maxNodes, setMaxNodes] = useState(5);
+  const [drawerOpener, setDrawerOpener] = useState<HTMLElement | null>(null);
   const [key, setKey] = useState<string | null>(null);
   const clearKey = useCallback(() => setKey(null), []);
   useEffect(() => {
@@ -32,13 +33,12 @@ export function RegisterWindow() {
   const { error, mutationOptions } = useLatestError();
   const open = useMutation(AdminService.method.openRegisterWindow, {
     ...mutationOptions,
-    onSuccess: (r) => { setKey(r.key); void refresh(); },
+    onSuccess: async (r) => { setKey(r.key); await refresh(); setDrawerOpener(null); },
   });
   const close = useMutation(AdminService.method.closeRegisterWindow, {
     ...mutationOptions,
     onSuccess: () => { clearKey(); void refresh(); },
   });
-  const onOpen = (e: FormEvent) => { e.preventDefault(); open.mutate({ ttlS: ttl, maxNodes }); };
   const gate = queryGate(status);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   // 命令区域只依赖快照；外壳（key、开窗表单）不等它。未就绪时不拼命令：用空版本先渲染 latest 命令
@@ -46,14 +46,17 @@ export function RegisterWindow() {
   const snap = queryGate(snapshot);
   return (
     <section>
-      <h1>注册窗口</h1>
-      {gate.data.open ? (
-        <p>窗口开启中：剩余 {gate.data.remaining} 个名额，截止 {new Date(Number(gate.data.expiresAt) * 1000).toLocaleString()}。{" "}
-          <button type="button" className="danger" onClick={() => close.mutate({})} disabled={close.isPending}>关闭窗口</button>
-        </p>
-      ) : (
-        <p className="muted">当前没有开启的窗口。</p>
-      )}
+      <PageHeader title="注册窗口" actions={<button type="button" className="primary-button" disabled={gate.data.open || open.isPending || close.isPending}
+        onClick={(e) => { open.reset(); setDrawerOpener(e.currentTarget); }}>开启新窗口</button>} />
+      <section className="card" aria-label="窗口状态">
+        {gate.data.open ? (
+          <p>窗口开启中：剩余 {gate.data.remaining} 个名额，截止 {new Date(Number(gate.data.expiresAt) * 1000).toLocaleString()}。{" "}
+            <button type="button" className="danger" onClick={() => close.mutate({})} disabled={close.isPending}>关闭窗口</button>
+          </p>
+        ) : (
+          <p className="muted">当前没有开启的窗口。</p>
+        )}
+      </section>
       {key && (
         <>
           <Secret label="注册 key" value={key} />
@@ -65,17 +68,40 @@ export function RegisterWindow() {
           )}
         </>
       )}
-      <form onSubmit={onOpen} className="row">
+      {drawerOpener && <RegisterWindowDrawer opener={drawerOpener} pending={open.isPending} error={open.error}
+        onClose={() => setDrawerOpener(null)} onOpen={(ttlS, maxNodes) => open.mutate({ ttlS, maxNodes })} />}
+      {gate.banner}
+      {!drawerOpener && error != null && <p role="alert" className="error">{errorText(error)}</p>}
+    </section>
+  );
+}
+
+function RegisterWindowDrawer({ opener, pending, error, onClose, onOpen }: {
+  opener: HTMLElement; pending: boolean; error: unknown; onClose: () => void;
+  onOpen: (ttlS: number, maxNodes: number) => void;
+}) {
+  const [ttl, setTtl] = useState(TTLS[1].seconds);
+  const [maxNodes, setMaxNodes] = useState(5);
+  const submit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!e.currentTarget.checkValidity() || pending || !(maxNodes >= 1)) return;
+    onOpen(ttl, maxNodes);
+  };
+  return <Drawer title="开启新窗口" opener={opener} busy={pending} onClose={onClose}>
+    <form onSubmit={submit} aria-label="开启新窗口">
+      <div className="modal-body">
         <label>有效期
           <select value={ttl} onChange={(e) => setTtl(Number(e.target.value))}>
             {TTLS.map((t) => <option key={t.seconds} value={t.seconds}>{t.label}</option>)}
           </select>
         </label>
         <label>可注册节点数<input type="number" min={1} max={1000} value={Number.isNaN(maxNodes) ? "" : maxNodes} onChange={(e) => setMaxNodes(e.target.valueAsNumber)} /></label>
-        <button type="submit" disabled={open.isPending || !(maxNodes >= 1)}>开启新窗口</button>
-      </form>
-      {gate.banner}
-      {error != null && <p role="alert" className="error">{errorText(error)}</p>}
-    </section>
-  );
+        {error != null && <p role="alert" className="error">{errorText(error)}</p>}
+      </div>
+      <footer className="modal-footer">
+        <button type="button" disabled={pending} onClick={onClose}>取消</button>
+        <button type="submit" className="primary-button" disabled={pending || !(maxNodes >= 1)}>开启</button>
+      </footer>
+    </form>
+  </Drawer>;
 }

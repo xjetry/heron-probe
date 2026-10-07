@@ -30,6 +30,7 @@
 .page-heading-actions { display: flex; gap: 10px; align-items: center; }
 .update-progress { display: grid; gap: 5px; max-width: 460px; overflow-wrap: anywhere; }
 .admin-shell .card, .admin-shell fieldset:not(.bare):not(.picks) { padding: 16px; margin: 0 0 16px; }
+.admin-shell .card { border-radius: var(--radius-card); }
 .admin-shell fieldset:not(.bare):not(.picks) { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); }
 .admin-shell fieldset legend { color: var(--fg); font-size: 13px; font-weight: 600; padding: 0 8px; }
 .admin-shell .edit-form label { margin-bottom: 12px; }

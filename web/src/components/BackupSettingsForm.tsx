@@ -60,7 +60,7 @@ export function BackupSettingsForm({ current }: { current: BackupSettings | unde
     <>
       <h2>备份到 S3</h2>
       {gate.banner}
-      <form className="card edit-form" aria-label="备份到 S3" onSubmit={submit}>
+      <form className="card" aria-label="备份到 S3" onSubmit={submit}>
         <fieldset className="bare" disabled={saving}>
           <p className="muted">目标使用 path-style，兼容 R2。Bucket 必须为私有；建议使用 HTTPS。清空 Endpoint 并保存可整体关闭备份。缺少 Bucket、Access key 或 Secret 时也不会启动备份。</p>
           <label>Endpoint<input type="url" value={form.endpoint} maxLength={2048} placeholder="https://account.r2.cloudflarestorage.com" onChange={(e) => edit({ endpoint: e.target.value })} /></label>

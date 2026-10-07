@@ -5,6 +5,7 @@ import { errorBanner, queryGate } from "../api/queryGate";
 import { SAVE_SETTINGS, useAdoptSavedSettings, useSettingsSaving } from "../api/saveSettings";
 import { BackupSettingsForm } from "../components/BackupSettingsForm";
 import { BackupStatus } from "../components/BackupStatus";
+import { PageHeader } from "../components/PageHeader";
 import { AdminService, GeoBackend, type Settings } from "../gen/heron/v1/admin_pb";
 import { HeartbeatSettingsForm, HeartbeatStatus } from "./HeartbeatSettings";
 import { LOGO_TYPES, MAX_TITLE_CHARS, THEMES, sizeProblems, type Theme } from "../lib/appearance";
@@ -89,12 +90,12 @@ export function Appearance() {
   return (
     <section>
       {gate.banner}
-      <h1>外观</h1>
+      <PageHeader title="外观" />
       <p className="muted">
         公开页（站点根路径 /）的标题、明暗、主色、logo 与自定义 CSS。保存后，访客刷新公开页才看到新外观；浏览器还可能再用最多 5 分钟的缓存。
         要改页面结构，可在「主题」页安装主题；--public-dir 仅用于部署者信任的静态目录。「启用公开页」统一控制内置页、可信目录、主题及其预览。
       </p>
-      <form className="card edit-form" aria-label="公开页外观" onSubmit={submit}>
+      <form className="card" aria-label="公开页外观" onSubmit={submit}>
         <fieldset className="bare" disabled={saving}>
           <label className="row"><input type="checkbox" checked={publicEnabled} onChange={(e) => edit({ publicEnabled: e.target.checked })} />启用公开页</label>
           <p className="muted">关闭后公开页与公开接口整体不可访问，节点的公开标记保留，重新打开即可恢复。hub 内的快照缓存最多再命中 1 秒；经缓存代理时，GET 响应按各自的 max-age 过期（站点配置最长 5 分钟）。</p>
@@ -186,7 +187,7 @@ function GeoLookup({ current }: { current: Settings | undefined }) {
   return (
     <>
       <h2>国家 / 地区查询</h2>
-      <form className="card edit-form" aria-label="国家 / 地区查询" onSubmit={submit}>
+      <form className="card" aria-label="国家 / 地区查询" onSubmit={submit}>
         <p className="muted" style={{ overflowWrap: "anywhere" }}>
           {local ? `当前后端：本地文件 ${current.geoMmdbPath}，不出网；服务地址不生效。` : `当前后端：HTTP 服务 ${current?.geoUrl ?? ""}`}
         </p>
