@@ -78,7 +78,7 @@ form.row, .edit-form .row { align-items: flex-end; flex-wrap: wrap; }
 .detail-header { flex-wrap: wrap; }
 .detail-header h1 { max-width: 100%; overflow-wrap: anywhere; }
 .detail-header nav { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-.table-scroll { overflow-x: auto; }
+.table-scroll { overflow-x: auto; position: relative; }
 .node-search { width: min(100%, 28rem); margin: 1rem 0; }
 /* 搜索框与标签过滤器并排，窄屏时换行；两者取交集。 */
 .node-filters { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1rem; margin: 1rem 0; }
