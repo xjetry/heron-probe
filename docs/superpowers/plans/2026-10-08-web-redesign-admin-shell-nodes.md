@@ -45,7 +45,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `web/src/styles.css` | 追加 `.filter-row*`（从 public.css 搬来）、`.drawer*`、`.row-menu*`、`.page-header`、`.attention*`、`.chip-tag`、`.badge-attention`、`.now-grid*`（从 public.css 搬来）、`.tabs*` |
+| `web/src/styles.css` | 追加 `.filter-row*`（从 public.css 搬来）、`.page-header*`、`.primary-button`、`.now-grid*`（从 public.css 搬来）、`.tabs*`、`.node-head-meta` |
 | `web/src/components/NowGrid.tsx` | 节点页首屏六个现值格（从 `public/NodePage.tsx` 抽出，公开页与管理详情共用） |
 | `web/src/components/History.tsx` | `MetricCharts` 的覆盖率说明进 ⓘ；删掉不再有消费者的 `HistoryCharts` / `ProbePanels` |
 | `web/src/lib/scheme.ts` | 加 `ADMIN_SCHEME_KEY`（值仍是 `heron-admin-scheme`，老用户的选择不丢） |
@@ -2305,12 +2305,12 @@ cd /Users/xjetry/work/vibe/probe && git add web/e2e/admin-ui.spec.ts web/e2e/age
 
 ```bash
 cd /Users/xjetry/work/vibe/probe/web && pnpm typecheck > /tmp/b14-tsc.log 2>&1; echo $?
-cd /Users/xjetry/work/vibe/probe/web && pnpm lint > /tmp/b14-lint.log 2>&1; echo $?
+cd /Users/xjetry/work/vibe/probe/web && pnpm build > /tmp/b14-build.log 2>&1; echo $?
 cd /Users/xjetry/work/vibe/probe/web && pnpm vitest run > /tmp/b14-unit.log 2>&1; echo $?
 cd /Users/xjetry/work/vibe/probe && make web-e2e > /tmp/b14-e2e.log 2>&1; echo $?
 ```
 
-四个都要 0。失败不改测试绕过；修根因后重跑同一条命令。
+四个都要 0（`web/package.json` 没有 lint 脚本，类型与构建由 typecheck 与 build 把关）。失败不改测试绕过；修根因后重跑同一条命令。
 
 - [ ] **Step 2: admin.css 死样式**
 

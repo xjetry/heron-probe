@@ -1030,12 +1030,12 @@ cd /Users/xjetry/work/vibe/probe && git add web/e2e/agentic-write.spec.ts web/e2
 
 ```bash
 cd /Users/xjetry/work/vibe/probe/web && pnpm typecheck > /tmp/d12-tsc.log 2>&1; echo $?
-cd /Users/xjetry/work/vibe/probe/web && pnpm lint > /tmp/d12-lint.log 2>&1; echo $?
+cd /Users/xjetry/work/vibe/probe/web && pnpm build > /tmp/d12-build.log 2>&1; echo $?
 cd /Users/xjetry/work/vibe/probe/web && pnpm vitest run > /tmp/d12-unit.log 2>&1; echo $?
 cd /Users/xjetry/work/vibe/probe && make web-e2e > /tmp/d12-e2e.log 2>&1; echo $?
 ```
 
-四个都要 0。
+四个都要 0（`web/package.json` 没有 lint 脚本，类型与构建由 typecheck 与 build 把关）。
 
 - [ ] **Step 2: 死样式与死代码**
 
