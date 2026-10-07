@@ -1,5 +1,6 @@
 export type SchemeChoice = "auto" | "light" | "dark";
 export const PUBLIC_SCHEME_KEY = "heron-public-scheme";
+export const ADMIN_SCHEME_KEY = "heron-admin-scheme";
 const CHOICES: readonly SchemeChoice[] = ["auto", "light", "dark"];
 export const SCHEME_LABEL: Record<SchemeChoice, string> = { auto: "跟随系统", light: "浅色", dark: "深色" };
 
