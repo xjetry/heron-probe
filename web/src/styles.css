@@ -1,14 +1,47 @@
-/* 明暗只经 color-scheme 切换：light-dark() 按元素的 color-scheme 取值，默认跟随系统；公开页按站点设置在 html 上
-   写 data-theme，下面两条规则让它压过系统设置。不要再按系统明暗的媒体查询改写变量，那会绕过 data-theme。 */
+/* 明暗只经 color-scheme 切换：light-dark() 按元素的 color-scheme 取值，默认跟随系统；公开页在 html 上
+   写 data-theme，下面两条规则让它压过系统设置。不要再按系统明暗的媒体查询改写变量，那会绕过 data-theme。
+   取值来自 docs/design/stitch/DESIGN.md 的 frontmatter，核心配色由 styles.test.ts 对照。 */
 :root {
   color-scheme: light dark;
-  --bg: light-dark(#f6f7f9, #0f1115); --card: light-dark(#ffffff, #171a21); --fg: light-dark(#1f2328, #e5e7eb);
-  --muted: light-dark(#6b7280, #9ca3af); --line: light-dark(#e5e7eb, #2a2f3a);
-  --accent: light-dark(#2563eb, #60a5fa); --ok: #16a34a; --bad: #dc2626; --warn: #d97706;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 14px; color: var(--fg); background: var(--bg);
+  --bg: light-dark(#f6f7f9, #0b0d12);
+  --card: light-dark(#ffffff, #12151c);
+  --card-raised: light-dark(#f9fafb, #181c25);
+  --card-hover: light-dark(#f3f4f6, #1c212c);
+  --fg: light-dark(#111827, #e6e8ee);
+  --muted: light-dark(#4b5563, #9aa3b5);
+  --faint: light-dark(#9ca3af, #5f6878);
+  --line: light-dark(#e4e7ec, #232836);
+  --line-strong: light-dark(#d1d5db, #2f3646);
+  /* site.ts 可覆盖主色；状态含义由独立的状态色表达。 */
+  --accent: light-dark(#2563eb, #5b9bf8);
+  --on-accent: light-dark(#ffffff, #0b0d12);
+  /* 状态色固定、与主色无关：换主色不能连带改掉在线 / 离线。 */
+  --status-online: #10b981;
+  --status-attention: #f59e0b;
+  --status-offline: #f43f5e;
+  --status-never: #6b7280;
+  --status-maintenance: #a78bfa;
+  /* 管理面板仍消费这些变量名，共享定义统一指向状态色。 */
+  --ok: var(--status-online);
+  --bad: var(--status-offline);
+  --warn: var(--status-attention);
+  /* 不打包或远程加载字体，本机未安装时退到系统字体。 */
+  --font-ui: Inter, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius-control: 4px;
+  --radius-card: 6px;
+  --control-h: 32px;
+  --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.45);
+  font-family: var(--font-ui); font-size: 14px; line-height: 1.45; color: var(--fg); background: var(--bg);
 }
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
+/* 等宽只给数字、单位、时间、IP、版本号；中文与节点名一律不用。 */
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.icon-button { display: inline-flex; align-items: center; justify-content: center; width: var(--control-h); height: var(--control-h); padding: 0; flex: none; color: var(--muted); border: 1px solid transparent; background: transparent; border-radius: var(--radius-control); }
+.icon-button:hover { color: var(--fg); border-color: var(--line); }
+:is(button, input, select, textarea, a, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 * { box-sizing: border-box; }
 body { margin: 0; }
 a { color: var(--accent); text-decoration: none; }
@@ -21,7 +54,7 @@ a { color: var(--accent); text-decoration: none; }
 .nav a.active { font-weight: 600; text-decoration: underline; }
 .nav .link { margin-left: auto; }
 .main { padding: 1rem; max-width: 1200px; width: 100%; margin: 0 auto; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 1rem; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); padding: 1rem; }
 .theme-preview { display: block; max-width: 8rem; max-height: 5rem; }
 .login { min-height: 100vh; display: grid; place-items: center; padding: 1rem; }
 .login .card { width: min(320px, 100%); display: grid; gap: 0.75rem; }
@@ -29,7 +62,8 @@ a { color: var(--accent); text-decoration: none; }
 .login .heron-mark { width: 44px; height: 44px; }
 .login-description { margin: 0 0 0.5rem; color: var(--muted); }
 label { display: grid; gap: 0.25rem; }
-input, select, button, textarea { font: inherit; padding: 0.4rem 0.6rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); }
+input, select, button, textarea { font: inherit; min-height: var(--control-h); padding: 0 0.6rem; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--card); color: var(--fg); }
+textarea { min-height: 6rem; padding: 0.4rem 0.6rem; }
 button { cursor: pointer; }
 button[disabled] { opacity: 0.5; cursor: default; }
 button.link { border: none; background: none; color: var(--accent); padding: 0; }
