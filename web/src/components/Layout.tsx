@@ -8,6 +8,7 @@ import { HeronMark } from "./HeronMark";
 import { Icon, type IconName } from "./Icon";
 import { Modal } from "./Modal";
 import { ThemeToggle } from "./ThemeToggle";
+import { QuickSearch } from "./QuickSearch";
 import { ADMIN_SCHEME_KEY, readSchemeChoice, writeSchemeChoice } from "../lib/scheme";
 
 const navigation: { label: string; items: { to: string; label: string; icon: IconName }[] }[] = [
@@ -52,6 +53,7 @@ export function Layout() {
           <button type="button" className="icon-button mobile-menu" aria-label="打开导航" aria-expanded={menuOpener !== null} onClick={(event) => setMenuOpener(event.currentTarget)}><Icon name="menu" /></button>
           <nav className="admin-breadcrumb" aria-label="位置"><span>工作台</span><span aria-hidden="true">/</span><strong>{current}</strong></nav>
           <div className="topbar-actions">
+            <QuickSearch />
             <a href="/" target="_blank" rel="noreferrer" className="public-page-link" aria-label="公开页 ↗"><Icon name="external" /><span>公开页 ↗</span></a>
             <ThemeToggle choice={choice} onChange={(next) => { writeSchemeChoice(ADMIN_SCHEME_KEY, next); setChoice(next); }} />
             <button type="button" className="icon-button" title="登出" aria-label="登出" onClick={() => logout.mutate({})} disabled={logout.isPending}><Icon name="logout" /></button>

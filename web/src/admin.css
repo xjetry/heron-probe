@@ -240,3 +240,12 @@ span.node-subtext { margin-right: 8px; }
 .row-menu-popup [role="menuitem"].danger { color: var(--status-offline); }
 .row-menu-popup [role="menuitem"][aria-disabled="true"] { color: var(--faint); cursor: default; }
 .row-menu-note { display: block; padding: 2px 12px 6px; font-size: 12px; color: var(--muted); max-width: 32ch; }
+
+.quick-search-trigger { display: inline-flex; align-items: center; gap: 8px; height: var(--control-h); padding: 0 10px; color: var(--muted); background: var(--bg); min-width: 220px; }
+.quick-search-trigger kbd { margin-left: auto; font: inherit; font-size: 11px; color: var(--faint); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+.admin-modal.quick-search { width: min(560px, calc(100vw - 32px)); }
+.quick-search input[type="search"] { width: 100%; }
+.quick-search ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.quick-search li a { display: block; padding: 0 10px; line-height: 36px; border-radius: var(--radius-control); color: var(--fg); }
+.quick-search li[aria-selected="true"] a { background: var(--card-hover); }
+@media (max-width: 900px) { .quick-search-trigger { min-width: 0; } .quick-search-trigger span, .quick-search-trigger kbd { display: none; } }
