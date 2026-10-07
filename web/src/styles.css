@@ -215,3 +215,17 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .compare-table tr[data-focused] td { background: var(--card-hover); }
 .compare-table [data-level="attention"] { color: var(--status-attention); }
 @media (max-width: 640px) { .compare-table { display: block; overflow-x: auto; } }
+
+/* 分配 / 作用域（components/NodeAssignment.tsx）：三张卡片式单选一行，指定节点的勾选列表自身滚动。 */
+.assignment { border: 0; padding: 0; margin: 12px 0; min-width: 0; }
+.assignment-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 6px 0 10px; }
+.assignment-card { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); cursor: pointer; }
+.assignment-card:has(input:checked) { border-color: var(--fg); }
+.assignment-card input { margin: 3px 0 0; }
+.assignment-card span { font-weight: 600; }
+.assignment-card small { grid-column: 2; color: var(--muted); font-size: 12px; }
+.assignment-quick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.assignment-list { list-style: none; margin: 8px 0; padding: 0; max-height: 240px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-control); }
+.assignment-list li { padding: 0 10px; }
+.assignment-list label { display: flex; gap: 8px; align-items: center; height: var(--control-h); }
+@media (max-width: 900px) { .assignment-modes { grid-template-columns: 1fr; } }
