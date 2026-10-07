@@ -1,13 +1,34 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import { PublicService } from "../gen/heron/v1/public_pb";
 import { renderWithService } from "../test/harness";
 import { PublicLayout } from "./Layout";
 import { DEFAULT_TITLE } from "./site";
 import heron from "../assets/heron.svg";
+import { POLL_MS } from "../lib/poll";
+import { PUBLIC_SCHEME_KEY } from "../lib/scheme";
 
-afterEach(() => { document.title = ""; });
+afterEach(() => { document.title = ""; localStorage.clear(); delete document.documentElement.dataset.theme; });
+
+// 顶栏只有：logo、站点标题、「实时 · 每 N 秒」、明暗切换、「登录」（设计 §3.1）；没有导航、铃铛、刷新、页脚。
+it("顶栏只有标题链接、实时说明、明暗切换与登录；没有导航与页脚", async () => {
+  renderWithService(PublicService, { getSite: async () => ({ title: "机房", adminPath: "/admin/" }) }, [{ path: "/", Component: PublicLayout }], "/");
+  const header = (await screen.findByRole("link", { name: "机房" })).closest("header")!;
+  expect(within(header).getAllByRole("link").map((a) => a.textContent)).toEqual(["机房", "登录"]);
+  expect(within(header).getByText(`实时 · 每 ${POLL_MS / 1000} 秒`)).toBeInTheDocument();
+  expect(within(header).getByRole("button", { name: "明暗切换" })).toBeInTheDocument();
+  expect(screen.queryByRole("navigation")).toBeNull();
+  expect(screen.queryByRole("contentinfo")).toBeNull();
+});
+
+it("访客点明暗切换：立即写 data-theme 并记到 localStorage，压过站点设置", async () => {
+  renderWithService(PublicService, { getSite: async () => ({ theme: "dark" }) }, [{ path: "/", Component: PublicLayout }], "/");
+  await waitFor(() => expect(document.documentElement.dataset.theme).toBe("dark"));
+  fireEvent.click(screen.getByRole("button", { name: "明暗切换" }));   // auto → light
+  await waitFor(() => expect(document.documentElement.dataset.theme).toBe("light"));
+  expect(localStorage.getItem(PUBLIC_SCHEME_KEY)).toBe("light");
+});
 
 // 取不到站点设置（这里是被限流）时按全部为空处理：标签页标题与页头同为内置标题。
 it("站点设置取不到时标签页标题与页头一致", async () => {

@@ -1,15 +1,12 @@
-/* 公开页在共用调色板（../styles.css）之上的布局：站点标题与节点卡片。站点设置的自定义 CSS 排在这之后。 */
-.nav .brand { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--fg); font-weight: 600; }
-.nav .brand .logo { height: 24px; width: auto; }
-.nav .admin { margin-left: auto; color: var(--muted); }
-.public-layout {
-  --node-surface: light-dark(#fff, #171c23);
-  --node-track: light-dark(#edf0f3, #2a313a);
-  background: radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 65%), var(--bg);
-}
-.public-layout .main:has(> .public-overview) { max-width: 1680px; padding: 2rem clamp(1rem, 2.5vw, 2.5rem); }
-.public-overview > .row { margin-bottom: 1.25rem; align-items: center; }
-.public-overview h1 { margin: 0; font-size: 1.75rem; letter-spacing: -.04em; }
+/* 公开页在共用 token（../styles.css）之上的布局。站点设置的自定义 CSS 排在这之后。 */
+.public-layout { min-height: 100dvh; }
+.public-header { position: sticky; top: 0; z-index: 20; height: 48px; display: flex; align-items: center; gap: 16px; padding: 0 clamp(12px, 2vw, 24px); background: var(--card); border-bottom: 1px solid var(--line); }
+.public-header .brand { color: var(--fg); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.public-header .brand .logo, .public-header .heron-mark { height: 24px; width: auto; }
+.public-header .live { font-size: 12px; white-space: nowrap; }
+.public-header .theme-toggle { margin-left: auto; }
+.public-header .admin { color: var(--muted); font-size: 13px; }
+.public-layout .main { max-width: 1680px; padding: 16px clamp(12px, 2vw, 24px); }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 1rem; }
 .node-card {
   position: relative; isolation: isolate; min-width: 0; display: flex; flex-direction: column; padding: 1.4rem;
@@ -78,13 +75,6 @@
   .node-resources, .node-network { column-gap: 1.1rem; }
   .node-card-meta { flex-wrap: wrap; gap: .2rem .6rem; }
 }
-.view-bar { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; margin: 0 0 1rem; }
-.filter-bar, .view-options { display: flex; flex-wrap: wrap; gap: .4rem; }
-.filter-bar { flex-basis: 100%; }
-@media (pointer: coarse) { .filter-bar .chip { min-height: 44px; min-width: 44px; } }
-/* Shift+单击会在按钮文字上触发浏览器的范围选中，选中高亮与点击语义无关，关掉。 */
-.chip { user-select: none; padding: 0 .6rem; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--fg); font-size: 12px; cursor: pointer; }
-.chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--bg); }
 
 /* 汇总条（StatusSummary.tsx）。 */
 .summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 20px; margin: 4px 0 12px; font-size: 13px; }
@@ -96,3 +86,12 @@
 .segments > [data-status="never"] { background: var(--status-never); }
 .segments > [data-status="offline"] { background: var(--status-offline); }
 .summary-rates, .summary-period { color: var(--muted); white-space: nowrap; }
+
+/* 筛选行（FilterRow.tsx）。 */
+.filter-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 0 0 16px; }
+.filter-row input[type="search"] { width: min(100%, 260px); }
+.filter-row .toggle[aria-pressed="true"], .view-switch button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.view-switch { display: inline-flex; }
+.view-switch button:first-child { border-radius: var(--radius-control) 0 0 var(--radius-control); }
+.view-switch button:last-child { border-radius: 0 var(--radius-control) var(--radius-control) 0; margin-left: -1px; }
+.filter-row label.inline { gap: 6px; font-size: 13px; color: var(--muted); }
