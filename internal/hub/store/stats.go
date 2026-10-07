@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"slices"
@@ -210,6 +211,10 @@ func (s *Store) computeStorageStats(ctx context.Context) (StorageStats, error) {
 	oldest := map[string]*int64{}
 	for _, f := range families {
 		for _, table := range f.tables {
+			// nil 只表示空表的最老桶；必需表缺失是 schema 损坏，不能伪装成空表健康读数。
+			if !slices.Contains(names, table) {
+				return StorageStats{}, fmt.Errorf("storage stats: missing time-series table %s", table)
+			}
 			oldest[table] = nil
 		}
 	}

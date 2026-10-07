@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -318,6 +319,20 @@ func TestStorageStatsConnectionIsReadOnly(t *testing.T) {
 	}
 	if max := s.stats.db.Stats().MaxOpenConnections; max != 1 {
 		t.Fatalf("stats max connections = %d, want 1", max)
+	}
+}
+
+func TestStorageStatsMissingSeriesTableIsNotEmpty(t *testing.T) {
+	for _, f := range families {
+		for _, table := range f.tables {
+			t.Run(table, func(t *testing.T) {
+				s, _ := open(t)
+				execStmts(t, s, "DROP TABLE "+table)
+				if _, err := s.StorageStats(t.Context()); err == nil || !strings.Contains(err.Error(), table) {
+					t.Fatalf("missing %s must fail statistics, got %v", table, err)
+				}
+			})
+		}
 	}
 }
 
