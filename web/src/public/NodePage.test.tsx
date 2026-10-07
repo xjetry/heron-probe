@@ -80,12 +80,12 @@ it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅，�
     return { level: "1m", stepS: 60, ts: [], series: [] };
   });
   const queryProbes = vi.fn(async () => ({ level: "1m", stepS: 60, series: [] }));
-  renderWithService(PublicService, { getSnapshot: snapshot, queryMetrics, queryProbes }, [{ path: "/nodes/:id", Component: NodePage }], "/nodes/7");
+  renderWithService(PublicService, { getSnapshot: async () => ({ ...await snapshot(), now: 1_000n + (fail ? 60n : 0n) }), queryMetrics, queryProbes }, [{ path: "/nodes/:id", Component: NodePage }], "/nodes/7");
   await screen.findByRole("heading", { level: 1, name: "edge-1" });
   expect(await screen.findAllByTestId("chart")).toHaveLength(10);
   await screen.findByText(/级别 1m，每点 60s/);
   fail = true;
-  // 窗口右端每分钟前进一次（History.tsx 的 REFRESH_MS），换键后的这次请求失败。
+  // 下次快照轮询带来跨分钟的 hub now，换键后的历史请求失败。
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000 + 100); });
   expect(await screen.findByRole("alert")).toHaveTextContent("history down");
   expect(screen.getAllByTestId("chart")).toHaveLength(10);

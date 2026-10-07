@@ -1,6 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError, type HandlerContext } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { AlignedData } from "uplot";
 import { ProbeComparison, type ProbeComparisonMethods } from "./ProbeComparison";
@@ -35,15 +36,23 @@ const names = [
   { id: 5n, name: "ok" },
 ];
 
-function pinClock(ms = 1_700_000_000_000) {
-  vi.spyOn(Date, "now").mockReturnValue(ms);
-  const to = Math.floor(ms / 1000) + 60;
+const HUB_NOW = 1_700_000_000;
+let advanceHub: () => void;
+
+function TimedComparison({ nodes = names }: { nodes?: typeof names }) {
+  const [now, setNow] = useState(HUB_NOW);
+  advanceHub = () => setNow((previous) => previous + 60);
+  return <ProbeComparison taskId={9n} methods={methods} nodes={nodes} now={now} />;
+}
+
+function pinClock() {
+  const to = (Math.floor(HUB_NOW / 60) + 1) * 60;
   const from = to - 86400;
   return { from, to, ts: from - (from % 60) };
 }
 
 function renderComparison(impl: Parameters<typeof renderWithAdmin>[0], nodes = names, path = "/c") {
-  return renderWithAdmin(impl, [{ path, element: <ProbeComparison taskId={9n} methods={methods} nodes={nodes} /> }], path);
+  return renderWithAdmin(impl, [{ path, element: <TimedComparison nodes={nodes} /> }], path);
 }
 
 function listed(nodeIds: bigint[], maxNodesPerQuery: number) {
@@ -217,7 +226,7 @@ it("刷新与换窗口取消尚未完成的块，离开页面同样取消", asyn
     listProbeComparisonNodes: async () => listed([1n], 1),
     queryProbeComparison: hang,
   }, [
-    { path: "/c", element: <ProbeComparison taskId={9n} methods={methods} nodes={names.slice(0, 1)} /> },
+    { path: "/c", element: <TimedComparison nodes={names.slice(0, 1)} /> },
     { path: "/gone", element: <p>离开</p> },
   ], "/c");
   await waitFor(() => expect(signals).toHaveLength(1));
@@ -226,7 +235,7 @@ it("刷新与换窗口取消尚未完成的块，离开页面同样取消", asyn
   await waitFor(() => expect(first.aborted).toBe(true));
   await waitFor(() => expect(signals.length).toBeGreaterThanOrEqual(2));
   const second = signals.at(-1)!;
-  await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+  await act(async () => advanceHub());
   await waitFor(() => expect(second.aborted).toBe(true));
   await act(async () => { await router.navigate("/gone"); });
   expect(signals.at(-1)!.aborted).toBe(true);
@@ -236,7 +245,7 @@ it("刷新与换窗口取消尚未完成的块，离开页面同样取消", asyn
 it("刷新期间保留上一张完整的图，并标成更新中", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(1_700_000_000_000);
-  const to = Math.floor(1_700_000_000_000 / 1000) + 60;
+  const to = (Math.floor(HUB_NOW / 60) + 1) * 60;
   const ts = (to - 86400) - ((to - 86400) % 60);
   let queries = 0;
   let release!: () => void;
@@ -250,7 +259,7 @@ it("刷新期间保留上一张完整的图，并标成更新中", async () => {
     },
   }, names.slice(0, 1));
   expect(await screen.findByTestId("chart-percent")).toBeInTheDocument();
-  await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+  await act(async () => advanceHub());
   expect((await screen.findByText("更新中")).parentElement).toBe(rangeHeader());
   expect(screen.getByText(/级别 1m，每点 60s/).parentElement).toBe(rangeHeader());
   expect(screen.getByTestId("chart-percent")).toBeInTheDocument();

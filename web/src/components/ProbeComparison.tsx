@@ -112,9 +112,9 @@ function taskHeading(taskId: bigint, hold: Hold | null): string {
 // 管理端与公开页同一份。节点名由调用方给：管理端来自 ListNodes，公开端来自 GetSnapshot。
 // 一次查询是 (taskId, from, to, maxPoints)。List 的 max_nodes_per_query 决定块大小；全部块到齐才替换画面。
 // 刷新、换窗口、换任务或离开页面都会取消还没回来的块。刷新期间留着上一张完整的图，并标成更新中。
-export function ProbeComparison({ taskId, methods, nodes }: { taskId: bigint; methods: ProbeComparisonMethods; nodes: readonly { id: bigint; name: string }[] }) {
+export function ProbeComparison({ taskId, methods, nodes, now }: { taskId: bigint; methods: ProbeComparisonMethods; nodes: readonly { id: bigint; name: string }[]; now: number }) {
   const transport = useTransport();
-  const { range, setRange, from, to } = useTimeWindow();
+  const { range, setRange, from, to } = useTimeWindow(now);
   const rangeLabel = range.label;
   const [hold, setHold] = useState<Hold | null>(null);
   const [holdTask, setHoldTask] = useState(taskId);

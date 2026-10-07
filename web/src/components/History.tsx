@@ -1,6 +1,6 @@
 import type { DescMethodUnary } from "@bufbuild/protobuf";
 import { useQuery } from "@connectrpc/connect-query";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { useRetained } from "../api/useRetained";
 import type { QueryMetricsRequestSchema, QueryMetricsResponseSchema, QueryProbesRequestSchema, QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
 import { coverageView } from "../lib/coverage";
@@ -23,16 +23,11 @@ function rangeStaleText(label: string): string {
   return `图表还不是 ${label} 窗口的结果，取到之后会更新`;
 }
 
-// 窗口右端每分钟前进一次：历史行按分钟产生，更频繁的刷新看不到新东西。对比图走同一个钟。
-const REFRESH_MS = 60_000;
-
-export function useTimeWindow() {
+// now 由页面的 hub 轮询响应提供，浏览器墙钟不参与窗口计算。按 hub 分钟归一化右端，
+// 同一分钟不换查询键，公开 GET 的 URL 也不因访客时钟或进入页面的秒数而分裂。
+export function useTimeWindow(now: number) {
   const [range, setRange] = useState<HistoryRange>(RANGES[2]);
-  const [to, setTo] = useState(() => Math.floor(Date.now() / 1000) + 60);
-  useEffect(() => {
-    const t = setInterval(() => setTo(Math.floor(Date.now() / 1000) + 60), REFRESH_MS);
-    return () => clearInterval(t);
-  }, []);
+  const to = (Math.floor(now / 60) + 1) * 60;
   return { range, setRange, from: to - range.seconds, to };
 }
 
@@ -117,8 +112,8 @@ export type HistoryMethods = {
   queryProbes: DescMethodUnary<typeof QueryProbesRequestSchema, typeof QueryProbesResponseSchema>;
 };
 
-export function useHistory(methods: HistoryMethods, nodeId: bigint, enabled: boolean) {
-  const { range, setRange, from, to } = useTimeWindow();
+export function useHistory(methods: HistoryMethods, nodeId: bigint, now: number) {
+  const { range, setRange, from, to } = useTimeWindow(now);
   const request = { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: HISTORY_MAX_POINTS };
   // 窗口右端每分钟前进一次、切换 range 都会换查询键；换键期间或失败时图表与“级别…”标签不能都消失，也不能
   // 沿用别的节点的数据。指标图与“级别…”标签由 metrics.data 派生，两张探测图由 probes.data 派生：data 回到
@@ -126,8 +121,8 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, enabled: boo
   // 只由 error 表达；不用 keepPreviousData——它只在挂起期间补位，请求一失败 data 就回到 undefined。identity
   // 传 nodeId：切到另一个节点时丢掉上一个节点的沿用值，否则新节点还没有自己的数据时会把上一个节点的图表当成
   // 这个节点显示。
-  const metrics = useRetained(useQuery(methods.queryMetrics, request, { enabled }), nodeId);
-  const probes = useRetained(useQuery(methods.queryProbes, request, { enabled }), nodeId);
+  const metrics = useRetained(useQuery(methods.queryMetrics, request), nodeId);
+  const probes = useRetained(useQuery(methods.queryProbes, request), nodeId);
   // useRetained 的返回值是一个不带判别字段的普通对象（不像 useQuery 按 status 分支的联合类型），narrow
   // 一次 metrics.data 只窄化这一次属性访问，不会像窄化整个联合类型变量那样带进下面 map 的回调里；
   // 这里先取到本地变量，回调里用的是这个已经排除 undefined 的变量，不是再次访问 metrics.data。
