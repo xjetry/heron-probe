@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from "react";
 import type { Node, Tag } from "../gen/heron/v1/admin_pb";
-import { BillingCycle } from "../gen/heron/v1/types_pb";
+import { BillingCycle, TrafficQuotaMode } from "../gen/heron/v1/types_pb";
+import { parseQuota, quotaInput, QUOTA_UNITS, type QuotaUnit } from "../lib/traffic";
 import { errorBanner } from "../api/queryGate";
 import { withId } from "../lib/ids";
 import { withTag, withoutTag } from "../lib/tags";
@@ -13,6 +14,7 @@ import { lookupText, NodeCountry } from "../components/NodeCountry";
 const draftOf = (node: Node) => ({
   name: node.name, public: node.public, note: node.note, publicRemark: node.publicRemark, trafficResetDay: node.trafficResetDay, countryPin: node.countryPin,
   tags: [...node.tags], offlineGraceS: String(node.offlineGraceS ?? 0), maintenance: node.maintenance,
+  trafficQuotaBytes: node.trafficQuotaBytes, trafficQuotaMode: node.trafficQuotaMode || TrafficQuotaMode.SUM,
   billing: {
     price: node.billing?.price ?? "", currency: node.billing?.currency ?? "", billingCycle: node.billing?.billingCycle ?? BillingCycle.UNSPECIFIED,
     expiresOn: node.billing?.expiresOn ?? "", autoRenew: node.billing?.autoRenew ?? false,
@@ -27,11 +29,15 @@ export function NodeEditor({ node, mode, knownTags, saving, error, listError, on
 }) {
   const [draft, setDraft] = useState(() => draftOf(node));
   const [pendingTag, setPendingTag] = useState("");
+  const [quota, setQuota] = useState(() => quotaInput(node.trafficQuotaBytes, "GiB"));
+  const [unit, setUnit] = useState<QuotaUnit>("GiB");
+  const [quotaTouched, setQuotaTouched] = useState(false);
+  const quotaBytes = quotaTouched ? parseQuota(quota, unit) : node.trafficQuotaBytes;
   const label = withId(node.name, node.id);
-  const valid = draft.name.trim() !== "" && Number.isInteger(draft.trafficResetDay) && draft.trafficResetDay >= 1 && draft.trafficResetDay <= 28 && /^\d+$/.test(draft.offlineGraceS);
+  const valid = quotaBytes !== null && draft.name.trim() !== "" && Number.isInteger(draft.trafficResetDay) && draft.trafficResetDay >= 1 && draft.trafficResetDay <= 28 && /^\d+$/.test(draft.offlineGraceS);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!saving && valid) onSave({ ...draft, tags: withTag(draft.tags, pendingTag), offlineGraceS: Number(draft.offlineGraceS) });
+    if (!saving && valid && quotaBytes !== null) onSave({ ...draft, trafficQuotaBytes: quotaBytes, tags: withTag(draft.tags, pendingTag), offlineGraceS: Number(draft.offlineGraceS) });
   };
   return <Modal title={`${mode === "billing" ? "计费设置" : "编辑节点"} · ${label}`} description={mode === "billing" ? "管理价格、付款周期和到期提醒。" : "更新节点资料、公开范围与监控配置。"} busy={saving} onClose={onClose} opener={opener}>
     <form onSubmit={submit}>
@@ -53,6 +59,9 @@ export function NodeEditor({ node, mode, knownTags, saving, error, listError, on
             <section className="form-section">
               <h3>流量与在线判定</h3>
               <div className="form-grid">
+                <label>周期流量配额<input aria-label={`流量配额 ${label}`} inputMode="decimal" value={quota} onChange={(e) => { setQuota(e.target.value); setQuotaTouched(true); }} /><span className="muted">留空为未设配额；小数换算后四舍五入到整数字节，须在 1 至 2^62 字节（不含）之间。</span>{quotaBytes === null && <span role="alert">配额无效，换算后必须是有效的正整数字节数。</span>}</label>
+                <label>配额单位<select aria-label={`配额单位 ${label}`} value={unit} onChange={(e) => { setUnit(e.target.value as QuotaUnit); setQuotaTouched(true); }}>{Object.keys(QUOTA_UNITS).map((u) => <option key={u}>{u}</option>)}</select></label>
+                <label>流量口径<select aria-label={`流量口径 ${label}`} value={draft.trafficQuotaMode} onChange={(e) => setDraft({ ...draft, trafficQuotaMode: Number(e.target.value) })}><option value={TrafficQuotaMode.SUM}>收+发</option><option value={TrafficQuotaMode.RX}>只收</option><option value={TrafficQuotaMode.TX}>只发</option><option value={TrafficQuotaMode.MAX}>收发取大者</option></select></label>
                 <label>每月流量重置日<input type="number" min={1} max={28} aria-label={`重置日 ${label}`} value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><span className="muted">若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。</span></label>
                 <label>离线宽限期（秒）<input type="number" min={0} aria-label={`离线宽限期（秒） ${label}`} aria-describedby={`grace-hint-${node.id}`} value={draft.offlineGraceS} onChange={(e) => setDraft({ ...draft, offlineGraceS: e.target.value })} /><span className="muted" id={`grace-hint-${node.id}`}>0 表示取 hub 的 HERON_OFFLINE_AFTER；非 0 不能小于它。</span></label>
               </div>
@@ -87,4 +96,3 @@ function TagsEditor({ id, label, isPublic, tags, known, pending, onPending, onCh
     {isPublic && <p className="muted">公开节点的标签在公开页对访客可见。</p>}
   </div>;
 }
-

@@ -98,7 +98,7 @@ function TrafficCard({ nodeId, data }: { nodeId: bigint; data: GetTrafficRespons
     <div className="card">
       <h2>流量</h2>
       <dl className="facts">
-        <dt>本周期</dt><dd>↓ {bytes(t.periodRx)} ↑ {bytes(t.periodTx)}</dd>
+        <dt>本周期</dt><dd>{trafficText(t)}</dd>
         <dt>总量</dt><dd>↓ {bytes(t.totalRx)} ↑ {bytes(t.totalTx)}</dd>
         <dt>周期起点</dt><dd>{new Date(Number(t.periodStart) * 1000).toLocaleString(undefined, { timeZone })}</dd>
         <dt>下次重置</dt><dd>{new Date(Number(t.nextResetAt) * 1000).toLocaleString(undefined, { timeZone })}（每月 {t.resetDay} 日，{timeZone}）</dd>
@@ -112,3 +112,4 @@ function TrafficCard({ nodeId, data }: { nodeId: bigint; data: GetTrafficRespons
     </div>
   );
 }
+import { trafficText } from "../lib/traffic";

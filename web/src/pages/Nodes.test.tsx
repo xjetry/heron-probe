@@ -28,6 +28,11 @@ const renderNodes = (impl: AdminImpl, routes: Parameters<typeof renderWithAdmin>
 
 describe("Nodes", () => {
 
+  it("列表显示 hub 计费用量与配额，不重新求收发之和", async () => {
+    renderNodes({ listNodes: async () => ({ nodes: two }), getSnapshot: async () => ({ nodes: [{ id: 1n, name: "a", traffic: { periodRx: 800n, periodTx: 200n, quotaUsedBytes: 200n, quotaBytes: 1000n, quotaUsedPct: 20 } }] }) });
+    expect(await screen.findByText("200 B / 1000 B（20.0%）")).toBeInTheDocument();
+  });
+
   it("双栈结果区分地址、不支持、失败与未上报，并在详情显示探测时间", async () => {
     renderNodes({ listNodes: async () => ({ nodes: [
       { ...two[0], facts: { network: { ipv4: { state: AddressDetectionState.AVAILABLE, address: "8.8.8.8", checkedAt: 1790679000n }, ipv6: { state: AddressDetectionState.UNSUPPORTED, checkedAt: 1790679000n } } } },

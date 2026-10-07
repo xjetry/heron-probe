@@ -19,7 +19,6 @@ import { NodeOrderControl } from "../components/NodeOrderControl";
 import { AdminService, type Node, type NodeStatus, type Tag } from "../gen/heron/v1/admin_pb";
 import { BillingEditor, billingDraftSet, emptyBillingDraft } from "../components/BillingEditor";
 import { expired, expiryText, priceText } from "../lib/billing";
-import { bytes } from "../lib/format";
 import { withId } from "../lib/ids";
 import { filterNodes } from "../lib/nodeSearch";
 import { POLL_MS } from "../lib/poll";
@@ -277,7 +276,7 @@ function NodeRow({ node, status, boundAgentVersion, editing, deleting, rotating,
     </td>
     <td data-column="addresses" data-label="IP 地址"><NodeAddresses network={node.facts?.network} /></td>
     <td data-column="status" data-label="状态"><span className={`status-pill ${status ? status.online ? "is-online" : "is-offline" : ""}`}>{status && <span className={`dot ${status.online ? "ok" : "bad"}`} />}{status ? status.online ? "在线" : "离线" : "状态未知"}</span></td>
-    <td data-column="traffic" data-label="本周期流量">{status?.traffic ? <div className="node-traffic"><span>↓ {bytes(status.traffic.periodRx)}</span><span className="muted">↑ {bytes(status.traffic.periodTx)}</span></div> : <span className="muted">暂无读数</span>}</td>
+    <td data-column="traffic" data-label="本周期流量">{status?.traffic ? <div className="node-traffic">{trafficText(status.traffic)}</div> : <span className="muted">暂无读数</span>}</td>
     <td data-column="billing" data-label="计费"><span className="node-price">{priceText(node.billing) || "未设置"}</span>{node.billing?.autoRenew && <div className="node-subtext">自动续期</div>}</td>
     <td data-column="expiry" data-label="到期"><span className={expired(node.billing) ? "error" : undefined}>{expiryText(node.billing) || "未设置"}</span></td>
     <td data-column="actions" data-label="操作"><div className="node-actions">
@@ -321,3 +320,4 @@ function TagManager({ tags, pending, onDelete }: { tags: readonly Tag[] | undefi
     {tags.length === 0 ? <p className="node-subtext">还没有标签；在节点的编辑里添加。</p> : <ul className="tag-list">{tags.map((tag) => <li key={tag.name}><span className="tag">{tag.name}</span> <span className="muted">{tag.nodeCount} 个节点</span>{" "}<ConfirmDelete label={`删除标签 ${tag.name}`} confirm={`确认删除标签 ${tag.name}`} note="只从节点上解除，节点不受影响" pending={pending} onDelete={() => onDelete(tag.name)} /></li>)}</ul>}
   </section></details>;
 }
+import { trafficText } from "../lib/traffic";

@@ -34,7 +34,7 @@ const draftOf = (r: AlertRule): Draft => {
   return {
     name: r.name, kind: r.kind, enabled: r.enabled, allNodes: r.allNodes, nodeIds: new Set(r.nodeIds), channelIds: new Set(r.channelIds),
     taskId: withTask ? String(r.taskId) : "", metric: probe ? r.metric : ProbeMetric.LOSS_PCT,
-    threshold: probe ? String(r.threshold) : r.kind === AlertKind.RESOURCE ? String(r.threshold / scale) : "", forMinutes: probe || r.kind === AlertKind.RESOURCE ? String(r.forMinutes) : "3",
+    threshold: probe || r.kind === AlertKind.TRAFFIC ? String(r.threshold) : r.kind === AlertKind.RESOURCE ? String(r.threshold / scale) : "", forMinutes: probe || r.kind === AlertKind.RESOURCE ? String(r.forMinutes) : "3",
     daysBefore: r.kind === AlertKind.EXPIRY || r.kind === AlertKind.CERT_EXPIRY ? String(r.daysBefore) : "7",
     selectorTags: r.selectorTags, dynamic: r.selectorTags.length > 0,
     resourceMetric: r.kind === AlertKind.RESOURCE ? r.resourceMetric : ResourceMetric.MEMORY_USED_PCT,
@@ -56,7 +56,7 @@ function toRule(id: bigint, d: Draft, nodes: Node[], channels: NotifyChannel[]) 
     ? { taskId: BigInt(d.taskId), metric: d.metric, threshold: Number(d.threshold), forMinutes: Number(d.forMinutes) }
     : d.kind === AlertKind.EXPIRY ? { daysBefore: Number(d.daysBefore) }
       : d.kind === AlertKind.CERT_EXPIRY ? { taskId: BigInt(d.taskId), daysBefore: Number(d.daysBefore) }
-        : d.kind === AlertKind.RESOURCE ? resourceRule(d) : {};
+        : d.kind === AlertKind.RESOURCE ? resourceRule(d) : d.kind === AlertKind.TRAFFIC ? { threshold: Number(d.threshold) } : {};
   return {
     id, name: d.name.trim(), kind: d.kind, enabled: d.enabled, allNodes: d.allNodes,
     nodeIds: d.allNodes || d.dynamic ? [] : liveIds(d.nodeIds, nodes), selectorTags: !d.allNodes && d.dynamic ? d.selectorTags : [], channelIds: liveIds(d.channelIds, channels), ...own,
@@ -169,6 +169,8 @@ function RuleForm({ title, nodes, channels, tasks, initial, pending, onSubmit, o
           </div>
           <p className="muted">任务的证书到期日距今不超过提前天数即触发（已过期的也算）；证书更换使到期日落到范围之外，或调小提前天数使它落到范围之外，即恢复。证书到期日由 HTTPS 探测握手成功时顺带带回（每任务每小时至多一次）。保存后立即评估，此后在 hub 启动时、hub 时区的每个日界与证书观测变化时评估。</p>
         </>
+      ) : draft.kind === AlertKind.TRAFFIC ? (
+        <label>流量阈值（%）<input type="number" required step="any" min={0} max={100} value={draft.threshold} onChange={(e) => set({ threshold: e.target.value })} /><span className="muted">大于 0、不超过 100；节点未设配额时不触发。</span></label>
       ) : draft.kind === AlertKind.RESOURCE ? (
         <ResourceFields draft={draft} set={set} />
       ) : probe ? (

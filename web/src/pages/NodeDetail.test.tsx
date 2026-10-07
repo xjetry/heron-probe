@@ -25,7 +25,7 @@ const listNodes = async () => ({
 const trafficOf = (nodeId: bigint) => ({
   nodeId, name: "db-01",
   traffic: { totalRx: 10n * 1024n ** 3n, totalTx: 5n * 1024n ** 3n, periodRx: 1024n ** 3n, periodTx: 512n * 1024n ** 2n,
-    periodStart: 1_756_684_800n, nextResetAt: 1_759_276_800n, resetDay: 1 },
+    periodStart: 1_756_684_800n, nextResetAt: 1_759_276_800n, resetDay: 1, quotaUsedBytes: 512n * 1024n ** 2n, quotaBytes: 1024n ** 3n, quotaUsedPct: 50 },
 });
 const getTraffic = async () => ({ timezone: "UTC", now: 1_757_000_000n, nodes: [trafficOf(7n)] });
 
@@ -50,7 +50,7 @@ it.each(["listNodes", "getTraffic"] as const)("详情 %s 刷新失败保留内�
   expect(screen.getByLabelText("本周期下行 (GiB)")).toBe(input);
   expect(input).toHaveValue("2.5");
   expect(screen.getByRole("heading", { name: "db-01" })).toBeInTheDocument();
-  expect(screen.getByText("↓ 1.0 GiB ↑ 512 MiB")).toBeInTheDocument();
+  expect(screen.getByText("512 MiB / 1.0 GiB（50.0%）")).toBeInTheDocument();
 });
 
 it("四个查询同文刷新失败只显示一条", async () => {
@@ -78,7 +78,7 @@ it("listNodes 从未成功但历史与流量已就绪时仍显示图表、流量
   expect(await screen.findByRole("alert")).toHaveTextContent("nodes down");
   expect(await screen.findAllByTestId("chart")).toHaveLength(10);
   expect(screen.getByRole("button", { name: "24h" })).toBeInTheDocument();
-  expect(screen.getByText("↓ 1.0 GiB ↑ 512 MiB")).toBeInTheDocument();
+  expect(screen.getByText("512 MiB / 1.0 GiB（50.0%）")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "节点 #7" })).toBeInTheDocument();
 });
 
@@ -177,7 +177,7 @@ describe("NodeDetail", () => {
     const traffic = vi.fn(getTraffic);
     renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }), getTraffic: traffic, adjustTraffic },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
-    expect(await screen.findByText("↓ 1.0 GiB ↑ 512 MiB")).toBeInTheDocument();
+    expect(await screen.findByText("512 MiB / 1.0 GiB（50.0%）")).toBeInTheDocument();
     expect(screen.getByText("↓ 10 GiB ↑ 5.0 GiB")).toBeInTheDocument();
     expect(screen.getByText(/每月 1 日/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("本周期下行 (GiB)"), { target: { value: "2.5" } });
@@ -190,7 +190,7 @@ describe("NodeDetail", () => {
   it("校正输入不是非负数时按钮禁用", async () => {
     renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }), getTraffic },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
-    await screen.findByText("↓ 1.0 GiB ↑ 512 MiB");
+    await screen.findByText("512 MiB / 1.0 GiB（50.0%）");
     fireEvent.change(screen.getByLabelText("本周期下行 (GiB)"), { target: { value: "-1" } });
     expect(screen.getByRole("button", { name: "校正本周期" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("本周期下行 (GiB)"), { target: { value: "abc" } });
@@ -202,7 +202,7 @@ describe("NodeDetail", () => {
   it.each(["1e308", "17179869184"])("校正输入 %s 超出字节范围时按钮禁用", async (value) => {
     renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }), getTraffic },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
-    await screen.findByText("↓ 1.0 GiB ↑ 512 MiB");
+    await screen.findByText("512 MiB / 1.0 GiB（50.0%）");
     fireEvent.change(screen.getByLabelText("本周期下行 (GiB)"), { target: { value } });
     expect(screen.getByRole("button", { name: "校正本周期" })).toBeDisabled();
   });
@@ -454,7 +454,7 @@ it("诊断每 10 秒更新，刷新失败保留最近诊断并显示错误", asy
   });
   renderWithAdmin({ ...defaultImpl, listNodes: nodes }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   await screen.findByRole("heading", { name: "db-01" });
-  await screen.findByText("↓ 1.0 GiB ↑ 512 MiB");
+  await screen.findByText("512 MiB / 1.0 GiB（50.0%）");
   expect(screen.getByText("生效上报间隔").nextElementSibling).toHaveTextContent("1000 ms");
   expect(screen.getByText("诊断信息更新时间").nextElementSibling?.querySelector("time")).toHaveAttribute("dateTime", new Date(Number(updatedAt) * 1000).toISOString());
   degraded = true;

@@ -9,7 +9,7 @@ it("卡片区分运行时长与在线状态，展示核数、负载、虚拟化�
     id: 1n, name: "香港家宽", online: true, lastSeenAt: 998n, country: "HK",
     facts: { os: "Debian 13", arch: "amd64", virtualization: "kvm", cpuCores: 2 },
     metrics: { cpuPct: 0, load1: 0, load5: 0.12, load15: 1.5, memUsed: 0n, memTotal: 1024n ** 3n, diskUsed: 1024n ** 3n, diskTotal: 10n * 1024n ** 3n, uptimeS: 90000n, netRxBps: 0n, netTxBps: 1024n },
-    traffic: { periodRx: 1024n ** 3n, periodTx: 2n * 1024n ** 3n },
+    traffic: { periodRx: 1024n ** 3n, periodTx: 2n * 1024n ** 3n, quotaUsedBytes: 2n * 1024n ** 3n, quotaBytes: 4n * 1024n ** 3n, quotaUsedPct: 50 },
   }] }) }, [{ path: "/", Component: PublicOverview }], "/");
   const card = within(await screen.findByRole("article", { name: "香港家宽" }));
   expect(card.getByText("CPU 2 核")).toBeInTheDocument();
@@ -18,7 +18,7 @@ it("卡片区分运行时长与在线状态，展示核数、负载、虚拟化�
   expect(card.getByLabelText("负载 1 / 5 / 15 分钟")).toHaveTextContent("0.00 / 0.12 / 1.50");
   expect(card.getByRole("meter", { name: "0.0%" })).toHaveAttribute("aria-valuenow", "0");
   expect(card.getByRole("meter", { name: "0 B / 1.0 GiB" })).toHaveAttribute("aria-valuenow", "0");
-  expect(card.getByText("3.0 GiB")).toBeInTheDocument();
+  expect(card.getByText("2.0 GiB / 4.0 GiB（50.0%）")).toBeInTheDocument();
   expect(card.getByRole("group", { name: "下载" })).toHaveTextContent("0 B/s");
   expect(card.getByRole("group", { name: "下载" })).toHaveTextContent("本周期 1.0 GiB");
   expect(card.getByRole("group", { name: "上传" })).toHaveTextContent("1.0 KiB/s");

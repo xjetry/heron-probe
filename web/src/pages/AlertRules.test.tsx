@@ -26,6 +26,21 @@ const routes = [{ path: "/alerts", Component: AlertRules }];
 const base: AdminImpl = { listNodes: async () => nodes, listNotifyChannels: async () => channels, listProbeTasks: async () => tasks, listAlertRules: async () => rules };
 const render = (impl: AdminImpl) => renderWithAdmin({ ...base, ...impl }, routes, "/alerts");
 
+it("流量规则只提交百分比阈值，编辑与摘要保留阈值", async () => {
+  const saved: SaveAlertRuleRequest[] = [];
+  render({ listAlertRules: async () => create(ListAlertRulesResponseSchema, { rules: [{ id: 21n, name: "流量提醒", kind: AlertKind.TRAFFIC, enabled: true, allNodes: true, threshold: 80 }] }), saveAlertRule: async (r) => { saved.push(r); return {}; } });
+  expect(await screen.findByText("周期流量用量 ≥ 配额的 80%")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "编辑 流量提醒（#21）" }));
+  const form = within(screen.getByRole("form", { name: "编辑 流量提醒（#21）" }));
+  expect(form.getByLabelText(/流量阈值/)).toHaveValue(80);
+  expect(form.queryByLabelText("探测任务")).toBeNull();
+  expect(form.queryByLabelText(/持续/)).toBeNull();
+  fireEvent.change(form.getByLabelText(/流量阈值/), { target: { value: "100" } });
+  fireEvent.click(form.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].rule).toMatchObject({ kind: AlertKind.TRAFFIC, threshold: 100, taskId: 0n, forMinutes: 0, daysBefore: 0, recoveryThreshold: 0 });
+});
+
 it("轮询成功更新状态，随后刷新失败仍保留同一编辑表单与草稿", async () => {
   let calls = 0;
   vi.useFakeTimers();

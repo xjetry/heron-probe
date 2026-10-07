@@ -43,6 +43,7 @@ export const ALERT_KINDS: readonly Entry<AlertKind>[] = [
   { value: AlertKind.EXPIRY, label: "到期" },
   { value: AlertKind.RESOURCE, label: "资源" },
   { value: AlertKind.CERT_EXPIRY, label: "证书到期" },
+  { value: AlertKind.TRAFFIC, label: "流量" },
 ];
 // 资源指标的单位决定面板阈值输入的展示与换算：百分比与每核负载原值输入；速率以 Mbps 输入，
 // 协议值仍是 bytes/s（proto ResourceMetric 注释），1 Mbps = 125000 bytes/s。
@@ -98,6 +99,7 @@ export function taskLabels(ids: bigint[], tasks: readonly ProbeTaskDetail[] | un
 }
 
 export function ruleCondition(rule: AlertRule, tasks: ProbeTaskDetail[] | undefined): string {
+  if (rule.kind === AlertKind.TRAFFIC) return `周期流量用量 ≥ 配额的 ${rule.threshold}%`;
   if (rule.kind === AlertKind.OFFLINE) return "超过宽限期未上报";
   if (rule.kind === AlertKind.EXPIRY) return `到期日距今不超过 ${rule.daysBefore} 天（含已过期）`;
   if (rule.kind === AlertKind.CERT_EXPIRY) return `${taskLabel(rule.taskId, tasks)} 的证书到期日距今不超过 ${rule.daysBefore} 天（含已过期）`;
