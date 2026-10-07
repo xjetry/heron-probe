@@ -7,6 +7,7 @@ import { sameTag } from "../lib/tags";
 import { FilterRow, type View } from "./FilterRow";
 import { filterPublicNodes, NO_FILTERS, regionOptions, sortCards, type CardSort, type ColorBy, type PublicFilters } from "./filters";
 import { StatusSummary } from "./StatusSummary";
+import { CardGrid } from "./NodeCard";
 
 export function PublicOverview() {
   const snap = useQuery(PublicService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
@@ -17,6 +18,7 @@ export function PublicOverview() {
   const gate = queryGate(snap);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const all = gate.data.nodes;
+  const now = Number(gate.data.now);
   const regions = regionOptions(all);
   // 标签的集合与顺序取 hub 下发的并集（按折叠键排序，与面板同序），页面不自己汇总、排序：折叠规则只在 hub 一处。
   const tagCounts = new Map(gate.data.tags.map((tag) => [tag, all.filter((n) => n.tags.some((t) => sameTag(t, tag))).length]));
@@ -37,11 +39,11 @@ export function PublicOverview() {
           <StatusSummary nodes={nodes} />
           <FilterRow filters={effective} onFilters={setFilters} regions={regions} tags={tags} view={view} onView={setView} colorBy={colorBy} onColorBy={setColorBy} sort={sort} onSort={setSort} />
           {nodes.length === 0 && <p className="muted">没有符合筛选条件的节点。</p>}
-          {nodes.length > 0 && (
+          {nodes.length > 0 && (view === "cards" ? <CardGrid nodes={sortCards(nodes, sort)} now={now} /> : (
             <ul>
-              {(view === "cards" ? sortCards(nodes, sort) : nodes).map((n) => <li key={String(n.id)}><article aria-label={n.name}>{n.name}</article></li>)}
+              {nodes.map((n) => <li key={String(n.id)}><article aria-label={n.name}>{n.name}</article></li>)}
             </ul>
-          )}
+          ))}
         </>
       )}
     </section>
