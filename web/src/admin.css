@@ -236,3 +236,20 @@ span.node-subtext { margin-right: 8px; }
   .form-grid, .admin-shell .billing-edit { grid-template-columns: minmax(0, 1fr); gap: 16px; }
   .form-grid .full-width { grid-column: auto; }
 }
+
+/* 抽屉：固定右侧 480px，整高；与 .admin-modal 同一个 dialog 原语，只差布局（设计 §2「抽屉固定右侧 480px」）。 */
+.drawer { position: fixed; inset: 0 0 0 auto; margin: 0; width: min(480px, 100vw); height: 100dvh; max-height: 100dvh; display: flex; flex-direction: column; padding: 0; border: 0; border-left: 1px solid var(--line); border-radius: 0; color: var(--fg); background: var(--card); box-shadow: var(--shadow-float); }
+.drawer::backdrop { background: #080b1094; }
+.drawer > form { display: contents; }
+.drawer .modal-body { flex: 1; overflow: auto; }
+.drawer .modal-footer { position: static; }
+@media (max-width: 560px) { .drawer { width: 100vw; border-left: 0; } }
+
+/* 行操作菜单（components/RowMenu.tsx）。 */
+.row-menu { position: relative; display: inline-flex; }
+.row-menu-popup { position: absolute; z-index: 40; top: calc(100% + 4px); right: 0; min-width: 160px; padding: 4px; display: grid; background: var(--card-raised); border: 1px solid var(--line); border-radius: var(--radius-control); box-shadow: var(--shadow-float); }
+.row-menu-popup [role="menuitem"] { display: block; width: 100%; min-height: 32px; padding: 0 10px; border: 0; border-radius: var(--radius-control); background: none; color: var(--fg); font: inherit; text-align: left; line-height: 32px; white-space: nowrap; cursor: pointer; }
+.row-menu-popup [role="menuitem"]:hover, .row-menu-popup [role="menuitem"]:focus-visible { background: var(--card-hover); outline: none; }
+.row-menu-popup [role="menuitem"].danger { color: var(--status-offline); }
+.row-menu-popup [role="menuitem"][aria-disabled="true"] { color: var(--faint); cursor: default; }
+.row-menu-note { display: block; padding: 2px 12px 6px; font-size: 12px; color: var(--muted); max-width: 32ch; }
