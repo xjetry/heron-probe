@@ -67,6 +67,33 @@ it("批量更新逐目标显示部分失败", async () => {
   expect(ids).toEqual([1n, 3n]);
 });
 
+it("确认后立即关闭确认框，提交进度与结果显示在页面上，提交期间不能再发起", async () => {
+  const ids: bigint[] = [];
+  const releases: Array<() => void> = [];
+  render({ startUpdate: (req) => new Promise((resolve) => { ids.push(req.nodeId); releases.push(() => resolve({})); }) });
+  await check();
+  fireEvent.click(screen.getByRole("checkbox", { name: "选择 东京（#1）" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "选择 西雅图（#3）" }));
+  fireEvent.click(screen.getByRole("button", { name: "更新选中节点（2）" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "确认更新" }));
+  // 第一个请求还没有返回，确认框已经关闭，焦点交给显示进度的状态区。
+  await waitFor(() => expect(ids).toEqual([1n]));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  const status = screen.getByText("正在提交更新任务：0/2").closest<HTMLElement>('[role="status"]')!;
+  await waitFor(() => expect(status).toHaveFocus());
+  expect(screen.getByRole("button", { name: "更新选中节点（2）" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "检查官方新版本" })).toBeDisabled();
+  expect(screen.getByRole("checkbox", { name: "选择 东京（#1）" })).toBeDisabled();
+  await act(async () => { releases[0](); });
+  await screen.findByText("正在提交更新任务：1/2");
+  expect(screen.getByText(/东京：更新任务已提交/)).toBeInTheDocument();
+  await waitFor(() => expect(ids).toEqual([1n, 3n]));
+  await act(async () => { releases[1](); });
+  await screen.findByText(/西雅图：更新任务已提交/);
+  expect(screen.queryByText(/正在提交更新任务/)).toBeNull();
+  expect(screen.getByRole("button", { name: "检查官方新版本" })).toBeEnabled();
+});
+
 it("显示每个节点取产物的来源", async () => {
   render();
   expect(await screen.findByText("经 hub 中转")).toBeInTheDocument();

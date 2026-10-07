@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@connectrpc/connect-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGateAll } from "../api/queryGate";
 import { MixedCheckbox } from "../components/MixedCheckbox";
@@ -39,11 +39,17 @@ export function Updates() {
   const [latest, setLatest] = useState("");
   const [selected, setSelected] = useState<Set<bigint>>(new Set());
   const [confirmation, setConfirmation] = useState<{ ids: bigint[]; version: string; opener: HTMLElement } | null>(null);
-  const [busy, setBusy] = useState(false);
+  // 提交进度：null 表示没有在提交。busy 只由它推出，锁住所有发起更新、取消与勾选的控件。
+  const [submitting, setSubmitting] = useState<{ done: number; total: number } | null>(null);
+  const busy = submitting !== null;
   const [results, setResults] = useState<string[]>([]);
   const check = useMutation(AdminService.method.getUpdates, { onSuccess: (data) => setLatest(data.latestVersion) });
   const start = useMutation(AdminService.method.startUpdate);
   const cancel = useMutation(AdminService.method.cancelUpdate, { onSuccess: () => { void updates.refetch(); } });
+  const statusRef = useRef<HTMLDivElement>(null);
+  // 确认框关闭时 Modal 要把焦点还给触发按钮，但提交期间那个按钮已被 busy 禁用，focus() 不生效，焦点会落到 body 上；
+  // 改交给显示进度的状态区。
+  useEffect(() => { if (busy) statusRef.current?.focus(); }, [busy]);
   const gate = queryGateAll(updates, nodes);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const targets = new Map(updates.data!.targets.map((target) => [target.nodeId, target.status]));
@@ -57,18 +63,22 @@ export function Updates() {
   const updatable = nodes.data!.nodes.filter((node) => eligible(targets.get(node.id), nodeTarget)).map((node) => node.id);
   const chosen = updatable.filter((id) => selected.has(id));
   const nameOf = (id: bigint) => id === 0n ? "Hub" : nodes.data!.nodes.find((node) => node.id === id)?.name ?? `节点 #${id}`;
+  // 确认框只负责确认：点了确认就关闭，逐个提交的进度与每个目标的结果显示在页面的状态区。目标与版本在关闭前取出，
+  // 之后的轮询与勾选变化不影响这次提交；提交期间 busy 禁止再打开确认框，同一批目标不会被重复提交。
   const execute = async () => {
     if (!confirmation || busy) return;
-    setBusy(true); setResults([]);
-    for (const id of confirmation.ids) {
+    const { ids, version } = confirmation;
+    setConfirmation(null); setResults([]); setSubmitting({ done: 0, total: ids.length });
+    for (const id of ids) {
       try {
-        await start.mutateAsync({ nodeId: id, version: confirmation.version });
+        await start.mutateAsync({ nodeId: id, version });
         setResults((old) => [...old, `${nameOf(id)}：更新任务已提交，最终结果以状态回读为准。`]);
       } catch (error) {
         setResults((old) => [...old, `${nameOf(id)}：${errorText(error)}${id === 0n ? "。若连接已断开，请等待状态回读，不能据此判定更新成功或失败。" : ""}`]);
       }
+      setSubmitting((old) => old && { ...old, done: old.done + 1 });
     }
-    setBusy(false); setConfirmation(null); setSelected(new Set()); void updates.refetch();
+    setSubmitting(null); setSelected(new Set()); void updates.refetch();
   };
   return <section>
     <div className="page-heading"><div><h1>在线更新</h1><p>官方正式发行版 · Linux systemd</p></div>
@@ -88,7 +98,10 @@ export function Updates() {
         <p className="muted">首次启用需用新版安装器安装本机更新服务。Docker、OpenRC 与 macOS 请使用各自安装方式。</p>
       </div>
     </div>
-    {results.length > 0 && <div className="card" role="status">{results.map((result, i) => <p key={i}>{result}</p>)}</div>}
+    {(submitting || results.length > 0) && <div className="card" role="status" tabIndex={-1} ref={statusRef}>
+      {submitting && <p>正在提交更新任务：{submitting.done}/{submitting.total}</p>}
+      {results.map((result, i) => <p key={i}>{result}</p>)}
+    </div>}
     <div className="page-heading"><div><h2>节点 Agent</h2><p>{nodeTarget ? `目标版本 ${nodeTarget}（hub 绑定的 agent 版本）。` : "这个 hub 没有绑定正式的 agent 版本（开发构建或预发布），不能在线更新节点。"}离线任务最多等待 24 小时；新版本成功上报后才算完成。</p></div>
       <button type="button" disabled={chosen.length === 0 || busy} onClick={(event) => setConfirmation({ ids: chosen, version: nodeTarget, opener: event.currentTarget })}>更新选中节点（{chosen.length}）</button>
     </div>
@@ -105,10 +118,10 @@ export function Updates() {
       })}</tbody>
     </table></div>
     {nodes.data!.nodes.length === 0 && <p className="muted">还没有节点。</p>}
-    {confirmation && <Modal title={confirmation.ids[0] === 0n ? "确认更新 Hub" : "确认更新节点"} opener={confirmation.opener} busy={busy} onClose={() => setConfirmation(null)}>
+    {confirmation && <Modal title={confirmation.ids[0] === 0n ? "确认更新 Hub" : "确认更新节点"} opener={confirmation.opener} onClose={() => setConfirmation(null)}>
       <div className="modal-body"><p>将 {confirmation.ids.map(nameOf).join("、")} 更新到 <strong>{confirmation.version}</strong>。</p>
         <p className="muted">{confirmation.ids[0] === 0n ? "Hub 将短暂断连。更新器会在停服后备份数据库，启动验证失败时恢复程序和数据库。请等待重新连接后的任务结果。" : "更新会短暂中断节点上报。已经下发的任务无法取消；失败时由本机更新器恢复旧程序。"}</p>
-      </div><div className="modal-footer"><button type="button" disabled={busy} onClick={() => setConfirmation(null)}>返回</button><button type="button" className="primary" disabled={busy} onClick={() => { void execute(); }}>{busy ? "正在提交…" : "确认更新"}</button></div>
+      </div><div className="modal-footer"><button type="button" onClick={() => setConfirmation(null)}>返回</button><button type="button" className="primary" onClick={() => { void execute(); }}>确认更新</button></div>
     </Modal>}
   </section>;
 }
