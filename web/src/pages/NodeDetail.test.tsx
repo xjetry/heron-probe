@@ -101,13 +101,13 @@ it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅，�
   });
   renderWithAdmin({ ...defaultImpl, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   expect(await screen.findAllByTestId("chart")).toHaveLength(10);
-  await screen.findByText(/级别 1m，每点 60s/);
+  await screen.findByText(/级别 1m，每点 60 秒/);
   fail = true;
   // 窗口右端每分钟前进一次（History.tsx 的 REFRESH_MS），换键后的这次请求失败。
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000 + 100); });
   expect(await screen.findByRole("alert")).toHaveTextContent("history down");
   expect(screen.getAllByTestId("chart")).toHaveLength(10);
-  expect(screen.getByText(/级别 1m，每点 60s/)).toBeInTheDocument();
+  expect(screen.getByText(/级别 1m，每点 60 秒/)).toBeInTheDocument();
   // 沿用的还是 24h 这个 range 自己的数据，只是这次刷新没成功；range 没变，不该报"看错窗口"，
   // 失败已经由上面的横幅表达。
   expect(screen.queryByText(/图表还不是/)).toBeNull();
@@ -128,14 +128,14 @@ it("切到另一个节点、新节点历史未返回时不显示上一个节点�
   });
   const { router } = renderWithAdmin({ ...defaultImpl, listNodes: listTwoNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   await screen.findByRole("heading", { name: "db-07" });
-  await screen.findByText(/级别 1m，每点 60s/);
+  await screen.findByText(/级别 1m，每点 60 秒/);
   await act(async () => { router.navigate("/nodes/8"); });
   expect(await screen.findByRole("heading", { name: "db-08" })).toBeInTheDocument();
   // 8 的历史还没回来：不能把 7 的"级别 1m"标签或图表当成 8 的显示，这段时间没有图表比显示错的更安全。
   expect(screen.queryByText(/级别 1m/)).toBeNull();
   expect(screen.queryAllByTestId("chart")).toHaveLength(0);
   await act(async () => { releaseNode8(); });
-  expect(await screen.findByText(/级别 5m，每点 300s/)).toBeInTheDocument();
+  expect(await screen.findByText(/级别 5m，每点 300 秒/)).toBeInTheDocument();
   expect(screen.getAllByTestId("chart")).toHaveLength(10);
 });
 
@@ -244,7 +244,7 @@ describe("NodeDetail", () => {
       return response;
     });
     renderWithAdmin({ ...defaultImpl, getTraffic, listNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
-    await screen.findByText(/级别 1m，每点 60s/);
+    await screen.findByText(/级别 1m，每点 60 秒/);
 
     // 窗口右端前进一分钟（History.tsx 的 REFRESH_MS），换键但 range 没变：挂起期间不该报"非当前窗口"。
     // gate 在这一步故意不 resolve，advanceTimersByTimeAsync 会一直等它，因此只用同步的 advanceTimersByTime
@@ -262,7 +262,7 @@ describe("NodeDetail", () => {
     fireEvent.click(screen.getByRole("button", { name: "7d" }));
     await pending;
     expect(screen.getByText(/图表还不是 7d 窗口的结果/).parentElement).toBe(rangeHeader());
-    expect(screen.getByText(/级别 1m，每点 60s/).parentElement).toBe(rangeHeader());
+    expect(screen.getByText(/级别 1m，每点 60 秒/).closest("header")).toBe(rangeHeader());
     release();
     await waitFor(() => expect(screen.queryByText(/图表还不是/)).toBeNull());
   });
@@ -283,7 +283,7 @@ describe("NodeDetail", () => {
     }));
     renderWithAdmin({ ...defaultImpl, getTraffic, listNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
     expect(await screen.findByRole("heading", { level: 1, name: "db-01" })).toBeInTheDocument();
-    expect(await screen.findByText(/级别 5m，每点 300s/)).toBeInTheDocument();
+    expect(await screen.findByText(/级别 5m，每点 300 秒/)).toBeInTheDocument();
     const charts = screen.getAllByTestId("chart");
     expect(charts).toHaveLength(10);
     expect(charts[7]).toHaveAttribute("data-labels", "下行均值,上行均值,下行峰值,上行峰值");
@@ -313,7 +313,7 @@ describe("NodeDetail", () => {
     const queryMetrics = vi.fn<NonNullable<AdminImpl["queryMetrics"]>>(async () => ({ level: "1m", stepS: 60, ts: [], series: [] }));
     renderWithAdmin({ ...defaultImpl, getTraffic, listNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
     await screen.findByRole("heading", { level: 1, name: "db-01" });
-    await screen.findByText(/级别 1m，每点 60s/);
+    await screen.findByText(/级别 1m，每点 60 秒/);
     fireEvent.click(screen.getByRole("button", { name: label }));
     await waitFor(() => expect(queryMetrics.mock.calls.length).toBeGreaterThanOrEqual(2));
     const last = queryMetrics.mock.calls.at(-1)![0] as { from: bigint; to: bigint };

@@ -2,27 +2,12 @@ import { useQuery } from "@connectrpc/connect-query";
 import { Link, useParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { CountryBadge } from "../components/CountryBadge";
-import { HistoryCharts, RangePicker, useHistory, type HistoryMethods, type HistoryState } from "../components/History";
+import { MetricCharts, ProbeTaskCharts, RangePicker, useHistory, type HistoryMethods } from "../components/History";
 import { PublicService } from "../gen/heron/v1/public_pb";
-import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { expired, expiryText, priceText } from "../lib/billing";
 import { POLL_MS } from "../lib/poll";
-import { seriesLabels } from "../lib/probes";
 
 const PUBLIC_HISTORY: HistoryMethods = { queryMetrics: PublicService.method.queryMetrics, queryProbes: PublicService.method.queryProbes };
-
-// 只给带来了种类与目标的任务入口。未标注的序列是已删除或已撤下的任务，对比 List 对它们没有可画的节点。
-function ProbeLinks({ history }: { history: HistoryState }) {
-  const series = history.probes.data?.series ?? [];
-  const labels = seriesLabels(series);
-  const links = series.flatMap((seriesItem, i) => seriesItem.kind === ProbeKind.UNSPECIFIED ? [] : [{ id: seriesItem.taskId, label: labels[i] }]);
-  if (links.length === 0) return null;
-  return (
-    <nav aria-label="各节点对比" className="compare-links">
-      {links.map((link) => <Link key={String(link.id)} to={`/probes/${link.id}`}>各节点对比：{link.label}</Link>)}
-    </nav>
-  );
-}
 
 export function NodePage() {
   const { id } = useParams();
@@ -47,7 +32,8 @@ export function NodePage() {
         <RangePicker history={history} />
       </header>
       {node.publicRemark && <p className="node-remark">{node.publicRemark}</p>}
-      <HistoryCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。</p>} probeFooter={<ProbeLinks history={history} />} />
+      <MetricCharts history={history} />
+      <ProbeTaskCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。</p>} titleLink={(taskId, title) => <Link to={`/probes/${taskId}`}>{title}</Link>} />
       {/* 静态信息卡：主机信息从未上报时缺失，费用与到期填了才显示（§10），三者都没有时不画这张卡。 */}
       {(node.facts || price || expiry) && (
         <dl className="card facts">

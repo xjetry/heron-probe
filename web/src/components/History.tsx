@@ -3,10 +3,12 @@ import { useQuery } from "@connectrpc/connect-query";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useRetained } from "../api/useRetained";
 import type { QueryMetricsRequestSchema, QueryMetricsResponseSchema, QueryProbesRequestSchema, QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
+import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { coverageView } from "../lib/coverage";
-import { lossPercent, rttMeanMs, seriesLabels, taskIdsOf, toProbeAligned, type ProbeValue } from "../lib/probes";
+import { lossPercent, rttMeanMs, rttMinMs, rttMaxMs, seriesLabels, taskIdsOf, toProbeAligned, toProbeTaskAligned, type ProbeValue } from "../lib/probes";
 import { toAligned, unitOf, type SeriesSelection } from "../lib/series";
 import { Chart } from "./Chart";
+import { InfoTip } from "./InfoTip";
 
 // 对比图与历史图用同一组窗口、同一个 maxPoints：同一段时间才会落到同一级。
 export const HISTORY_MAX_POINTS = 1000;
@@ -48,20 +50,20 @@ export function RangeButtons({ range, setRange }: { range: HistoryRange; setRang
   );
 }
 
-// 时间窗口按钮的伴随文字：当前显示的级别、“非当前窗口”提示、刷新中。几段 span 之间没有分隔符，
-// 只靠 .row 头部的 gap 隔开，所以调用方要把 RangeStatus 与 RangeButtons 放进同一个 .row 头部、
-// 不另包元素；放到头部之外或包进别的元素里，几段文字会连成一句话。
-export function RangeStatus({ shown, stale, rangeLabel, updating = false }: {
-  shown?: { level: string; stepS: number } | null; stale: boolean; rangeLabel: string; updating?: boolean;
+// 级别与口径收进说明，窗口过期与刷新中仍是可见状态；调用方与 RangeButtons 共用 .row 头部的间距。
+export function RangeStatus({ shown, stale, rangeLabel, updating = false, note = PEAK_NOTE }: {
+  shown?: { level: string; stepS: number } | null; stale: boolean; rangeLabel: string; updating?: boolean; note?: ReactNode;
 }) {
   return (
     <>
-      {shown && <span className="muted">级别 {shown.level}，每点 {shown.stepS}s</span>}
+      {shown && <InfoTip label="口径说明">级别 {shown.level}，每点 {shown.stepS} 秒。{note}</InfoTip>}
       {stale && <span className="muted">{rangeStaleText(rangeLabel)}</span>}
       {shown && updating && <span className="muted">更新中</span>}
     </>
   );
 }
+
+export const PEAK_NOTE = "峰值为每个图表时间桶内已采集样本的最大值，不代表采样间隔内的瞬时最高值；缺少峰值时留空。";
 
 // 指标名与 hub 的描述表一致；网络均值由累计字节增量除以桶宽，峰值取 agent 已测得的速率，
 // 两者来源不同，不能以均值补峰值。可加量的数据单位是 bytes，图上速率统一指定为 bytes/s。
@@ -121,7 +123,7 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, enabled: boo
   const { range, setRange, from, to } = useTimeWindow();
   const request = { nodeId, from: BigInt(from), to: BigInt(to), maxPoints: HISTORY_MAX_POINTS };
   // 窗口右端每分钟前进一次、切换 range 都会换查询键；换键期间或失败时图表与“级别…”标签不能都消失，也不能
-  // 沿用别的节点的数据。指标图与“级别…”标签由 metrics.data 派生，两张探测图由 probes.data 派生：data 回到
+  // 沿用别的节点的数据。指标图与“级别…”标签由 metrics.data 派生，探测图由 probes.data 派生：data 回到
   // undefined 时它们都不再渲染。用 useRetained 沿用本节点上一份成功数据直到当前键取到自己的数据为止，失败
   // 只由 error 表达；不用 keepPreviousData——它只在挂起期间补位，请求一失败 data 就回到 undefined。identity
   // 传 nodeId：切到另一个节点时丢掉上一个节点的沿用值，否则新节点还没有自己的数据时会把上一个节点的图表当成
@@ -136,6 +138,7 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, enabled: boo
     return data ? PANELS.map((p) => ({
       ...p,
       labels: p.selections.map((selection) => selection.label),
+      soft: p.selections.map((selection) => selection.value === "max"),
       data: toAligned(data, p.selections, from, to),
       unit: p.unit ?? unitOf(data, p.selections[0].name),
     })) : [];
@@ -147,6 +150,21 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, enabled: boo
     const labels = seriesLabels(probes.data.series);
     return PROBE_PANELS.map((p) => ({ ...p, labels, data: toProbeAligned(probes.data!, ids, from, to, p.value) }));
   }, [probes.data, from, to]);
+  const probeTaskCharts = useMemo(() => {
+    const data = probes.data;
+    if (!data) return [];
+    const titles = seriesLabels(data.series);
+    return data.series.map((s, i) => ({
+      taskId: s.taskId,
+      kind: s.kind,
+      title: titles[i],
+      labels: ["RTT 均值", "最小", "最大"],
+      soft: [false, true, true],
+      bands: [{ lower: 1, upper: 2 }],
+      unit: "ms" as const,
+      data: toProbeTaskAligned(data, s.taskId, from, to, [rttMeanMs, rttMinMs, rttMaxMs]),
+    }));
+  }, [probes.data, from, to]);
   // stale 只说“这份数据不是当前查询键自己的”：窗口右端每分钟前进一次也会换键，请求还没回来的这一小段
   // 时间同样是 stale，但沿用的还是同一个 range，只晚了不到一分钟，不该报成“看错窗口”。这里另记一下
   // “当前沿用值最后一次确认属于哪个 range”：只有 metrics/probes 沿用中、且沿用值所属的 range 与当前
@@ -156,7 +174,7 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, enabled: boo
   const [probesRange, setProbesRange] = useState(range);
   if (!probes.stale && probes.data !== undefined && probesRange !== range) setProbesRange(range);
   const rangeStale = (metrics.stale && metricsRange !== range) || (probes.stale && probesRange !== range);
-  return { range, setRange, metrics, probes, charts, probeCharts, rangeStale };
+  return { range, setRange, metrics, probes, charts, probeCharts, probeTaskCharts, rangeStale };
 }
 
 export type HistoryState = ReturnType<typeof useHistory>;
@@ -173,11 +191,10 @@ export function RangePicker({ history }: { history: HistoryState }) {
   );
 }
 
-// noProbes 是窗口内没有探测结果时的说明：面板给出去任务页的链接，公开页只说明没有。
 // showCoverage 默认不显示：本组件由管理端与公开页共用，覆盖率口径（hub 的观测与保留期、节点首报）
 // 只在管理端展示；默认方向取"不显示"，新调用方忘记传参时覆盖率不会被带到公开页。
-export function HistoryCharts({ history, noProbes, showCoverage = false, probeFooter = null }: { history: HistoryState; noProbes: ReactNode; showCoverage?: boolean; probeFooter?: ReactNode }) {
-  const { charts, probeCharts, probes, metrics } = history;
+export function MetricCharts({ history, showCoverage = false }: { history: HistoryState; showCoverage?: boolean }) {
+  const { charts, metrics } = history;
   const coverage = coverageView(metrics.data?.coverageSummary);
   return (
     <>
@@ -191,29 +208,60 @@ export function HistoryCharts({ history, noProbes, showCoverage = false, probeFo
           。这是 hub 观测到的分钟里节点有上报的比例，不是在线率；hub 未运行、超出保留期等无法观测的时段计为未知。
         </p>
       )}
-      {charts.length > 0 && <p className="muted">峰值为每个图表时间桶内已采集样本的最大值，不代表采样间隔内的瞬时最高值；缺少峰值时留空。</p>}
       <div className="grid">
         {charts.map((c) => (
+          <div className="card" key={c.title}>
+            <h2>{c.title}</h2>
+            <Chart data={c.data} labels={c.labels} unit={c.unit} soft={c.soft} />
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+// 管理端沿用两张面板，每任务一条线；noProbes 是窗口内没有探测结果时的说明。
+export function ProbePanels({ history, noProbes, probeFooter = null }: { history: HistoryState; noProbes: ReactNode; probeFooter?: ReactNode }) {
+  const { probeCharts, probes } = history;
+  if (!probes.data) return null;
+  if (probes.data.series.length === 0) return <>{noProbes}</>;
+  return (
+    <>
+      <div className="grid">
+        {probeCharts.map((c) => (
           <div className="card" key={c.title}>
             <h2>{c.title}</h2>
             <Chart data={c.data} labels={c.labels} unit={c.unit} />
           </div>
         ))}
       </div>
-      {probes.data && probes.data.series.length === 0 && noProbes}
-      {probes.data && probes.data.series.length > 0 && (
-        <>
-          <div className="grid">
-            {probeCharts.map((c) => (
-              <div className="card" key={c.title}>
-                <h2>{c.title}</h2>
-                <Chart data={c.data} labels={c.labels} unit={c.unit} />
-              </div>
-            ))}
-          </div>
-          {probeFooter}
-        </>
-      )}
+      {probeFooter}
+    </>
+  );
+}
+
+// 未标注任务没有可用的公开对比页，仅显示编号标题；其余任务的链接由调用方提供。
+export function ProbeTaskCharts({ history, noProbes, titleLink }: { history: HistoryState; noProbes: ReactNode; titleLink: (taskId: bigint, title: string) => ReactNode }) {
+  const { probeTaskCharts, probes } = history;
+  if (!probes.data) return null;
+  if (probes.data.series.length === 0) return <>{noProbes}</>;
+  return (
+    <div className="grid">
+      {probeTaskCharts.map((c) => (
+        <div className="card" key={String(c.taskId)}>
+          <h2>{c.kind === ProbeKind.UNSPECIFIED ? c.title : titleLink(c.taskId, c.title)}</h2>
+          <Chart data={c.data} labels={c.labels} unit={c.unit} soft={c.soft} bands={c.bands} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function HistoryCharts({ history, noProbes, showCoverage = false, probeFooter = null }: { history: HistoryState; noProbes: ReactNode; showCoverage?: boolean; probeFooter?: ReactNode }) {
+  return (
+    <>
+      <MetricCharts history={history} showCoverage={showCoverage} />
+      <ProbePanels history={history} noProbes={noProbes} probeFooter={probeFooter} />
     </>
   );
 }
