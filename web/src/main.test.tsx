@@ -3,6 +3,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { act, within } from "@testing-library/react";
 import * as ReactDOM from "react-dom/client";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
+import { checkFocusRefresh } from "./test/focus";
 
 // 入口用例验证路由与认证；图表依赖的布局和 canvas 不由 jsdom 提供。
 vi.mock("./components/Chart", () => ({ Chart: () => null }));
@@ -50,6 +51,10 @@ afterAll(async () => {
 
 test("入口在 /admin/login 将登录页挂载到 root", () => {
   expect(within(root).getByLabelText("管理员密码")).toBeInTheDocument();
+});
+
+test("入口只让轮询查询在回前台时立即刷新", async () => {
+  await checkFocusRefresh(queryClient!);
 });
 
 async function failRequest(kind: "query" | "mutation", code: Code) {

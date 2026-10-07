@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { CountryBadge } from "../components/CountryBadge";
 import { HistoryCharts, RangePicker, useHistory, type HistoryMethods, type HistoryState } from "../components/History";
-import { PublicService } from "../gen/heron/v1/public_pb";
+import { PublicService, type PublicNode } from "../gen/heron/v1/public_pb";
 import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { expired, expiryText, priceText } from "../lib/billing";
 import { POLL_MS } from "../lib/poll";
@@ -30,18 +30,22 @@ export function NodePage() {
   const nodeId = validId ? BigInt(id!) : 0n;
   const snap = useQuery(PublicService.method.getSnapshot, {}, { enabled: validId, refetchInterval: POLL_MS });
   const node = snap.data?.nodes.find((n) => n.id === nodeId);
-  // 只在快照里有这个节点时查历史：未公开或不存在的节点，历史查询只会得到 NotFound。
-  const history = useHistory(PUBLIC_HISTORY, nodeId, node !== undefined);
   const missing = <p role="alert" className="error">节点 {id} 不存在或未公开。<Link to="/">返回总览</Link></p>;
   if (!validId) return missing;
   const gate = queryGate(snap);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   if (!node) return missing;
+  // 节点准入与 hub now 都由这份快照提供；缺任一项都不能开始历史查询。
+  return <NodeContent node={node} now={Number(gate.data.now)} error={snap.error} />;
+}
+
+function NodeContent({ node, now, error }: { node: PublicNode; now: number; error: unknown }) {
+  const history = useHistory(PUBLIC_HISTORY, node.id, now);
   const price = priceText(node.billing);
   const expiry = expiryText(node.billing);
   return (
     <section>
-      {errorBanner(snap.error, history.metrics.error, history.probes.error)}
+      {errorBanner(error, history.metrics.error, history.probes.error)}
       <header className="row detail-header">
         <h1>{node.name}{node.country && <>{" "}<CountryBadge code={node.country} /></>}</h1>
         <RangePicker history={history} />

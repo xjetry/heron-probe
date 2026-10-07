@@ -448,7 +448,10 @@ func TestGetStorageStatsMatchesTheStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	counts := rowCounts(t, h.store)
+	counts := rowCounts(t, h.dbPath)
+	if resp.Msg.SqlObservedAt == nil || resp.Msg.GetSqlObservedAt() != h.clk.Now().Unix() {
+		t.Fatalf("sql_observed_at = %v, want %d", resp.Msg.SqlObservedAt, h.clk.Now().Unix())
+	}
 	var names []string
 	for _, tr := range resp.Msg.GetTables() {
 		names = append(names, tr.GetName())

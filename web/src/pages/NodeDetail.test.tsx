@@ -99,11 +99,11 @@ it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅，�
     if (fail) throw new ConnectError("history down", Code.Unavailable);
     return { level: "1m", stepS: 60, ts: [], series: [] };
   });
-  renderWithAdmin({ ...defaultImpl, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+  renderWithAdmin({ ...defaultImpl, queryMetrics, getTraffic: async () => ({ ...await getTraffic(), now: 1_757_000_000n + (fail ? 60n : 0n) }) }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   expect(await screen.findAllByTestId("chart")).toHaveLength(10);
   await screen.findByText(/级别 1m，每点 60s/);
   fail = true;
-  // 窗口右端每分钟前进一次（History.tsx 的 REFRESH_MS），换键后的这次请求失败。
+  // 下次流量轮询带来跨分钟的 hub now，换键后的历史请求失败。
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000 + 100); });
   expect(await screen.findByRole("alert")).toHaveTextContent("history down");
   expect(screen.getAllByTestId("chart")).toHaveLength(10);
@@ -207,12 +207,15 @@ describe("NodeDetail", () => {
     expect(screen.getByRole("button", { name: "校正本周期" })).toBeDisabled();
   });
 
-  it("流量请求失败只在卡内报错，不影响图表", async () => {
-    renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }),
+  it("流量首次失败时没有 hub 时间，不查历史但保留节点信息", async () => {
+    const queryMetrics = vi.fn(async () => ({ level: "1m", stepS: 60, ts: [], series: [] }));
+    renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics,
       getTraffic: async () => { throw new ConnectError("traffic unavailable", Code.Unavailable); } },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
     expect(await screen.findByRole("alert")).toHaveTextContent(/^traffic unavailable$/);
-    expect(screen.getAllByTestId("chart")).toHaveLength(10);
+    expect(queryMetrics).not.toHaveBeenCalled();
+    expect(screen.queryAllByTestId("chart")).toHaveLength(0);
+    expect(screen.getByRole("heading", { name: "db-01" })).toBeInTheDocument();
   });
 
   it("切窗请求挂起期间保留十张图", async () => {
@@ -243,13 +246,13 @@ describe("NodeDetail", () => {
       if (queryMetrics.mock.calls.length > 1) { started(); await gate; }
       return response;
     });
-    renderWithAdmin({ ...defaultImpl, getTraffic, listNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
+    let now = 1_757_000_000n;
+    renderWithAdmin({ ...defaultImpl, getTraffic: async () => ({ ...await getTraffic(), now }), listNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
     await screen.findByText(/级别 1m，每点 60s/);
 
-    // 窗口右端前进一分钟（History.tsx 的 REFRESH_MS），换键但 range 没变：挂起期间不该报"非当前窗口"。
-    // gate 在这一步故意不 resolve，advanceTimersByTimeAsync 会一直等它，因此只用同步的 advanceTimersByTime
-    // 触发这次换键，再单独等 pending（effect 在这次 act 里已经同步跑过，pending 这时已经 resolve）。
-    act(() => { vi.advanceTimersByTime(60_000 + 100); });
+    // hub now 跨分钟换键但 range 没变：挂起期间不该报“非当前窗口”。
+    now += 60n;
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000 + 100); });
     await pending;
     expect(screen.queryByText(/图表还不是/)).toBeNull();
     release();

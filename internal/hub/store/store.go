@@ -39,6 +39,7 @@ type Store struct {
 	closed        bool
 	w             *sql.DB
 	r             *sql.DB
+	stats         storageStatsCache
 	clk           clock.Clock
 	log           *slog.Logger
 	writes        chan writeReq
@@ -114,7 +115,6 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 		w.Close()
 		return nil, err
 	}
-	s := &Store{path: path, files: osFileStatter{}, w: w, r: r, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{}), themeChanges: make(chan struct{}, 1)}
 	// 打开时读一次设置，同时满足两件事：总闸的内存副本从库加载（不变式见 SaveSettings）；设置里有必须合法才能解释的
 	// 编码（两个开关只认 0 / 1，备份的数值有范围，渠道列表是 JSON 数组，见 readSettings），库里有非法值就拒绝打开。
 	settings, err := readSettings(context.Background(), r)
@@ -123,12 +123,22 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 		w.Close()
 		return nil, err
 	}
+	statsDB, err := sql.Open("sqlite", dsn(path, "&_pragma=query_only(1)"))
+	if err != nil {
+		r.Close()
+		w.Close()
+		return nil, err
+	}
+	statsDB.SetMaxOpenConns(1)
+	statsCtx, cancelStats := context.WithCancel(context.Background())
+	s := &Store{path: path, files: osFileStatter{}, w: w, r: r, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{}), themeChanges: make(chan struct{}, 1),
+		stats: storageStatsCache{db: statsDB, ctx: statsCtx, cancel: cancelStats}}
 	s.publicEnabled.Store(settings.Site.PublicEnabled)
 	go s.runWriter()
 	return s, nil
 }
 
-// Close 等待队列里的写全部执行完再关闭连接，退出时投递的最后一批刷出不丢。
+// Close 阻止新统计入场，取消并等待在飞计算退出；队列里的写全部执行完后才关连接，最后一批刷出不丢。
 func (s *Store) Close() error {
 	s.closeMu.Lock()
 	defer s.closeMu.Unlock()
@@ -136,9 +146,16 @@ func (s *Store) Close() error {
 		return nil
 	}
 	s.closed = true
+	s.stats.cancel()
+	s.stats.mu.Lock()
+	flight := s.stats.flight
+	s.stats.mu.Unlock()
+	if flight != nil {
+		<-flight.done
+	}
 	close(s.writes)
 	<-s.done
-	return errors.Join(s.r.Close(), s.w.Close())
+	return errors.Join(s.stats.db.Close(), s.r.Close(), s.w.Close())
 }
 
 func (s *Store) runWriter() {

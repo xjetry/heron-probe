@@ -275,7 +275,7 @@ func TestDeleteNodeLeavesNoTagRows(t *testing.T) {
 	if _, err := h.admin.DeleteNode(t.Context(), connect.NewRequest(&heronv1.DeleteNodeRequest{Id: gone})); err != nil {
 		t.Fatal(err)
 	}
-	if rows := rowCounts(t, h.store); rows["node_tag"] != 1 || rows["tag"] != 2 {
+	if rows := rowCounts(t, h.dbPath); rows["node_tag"] != 1 || rows["tag"] != 2 {
 		t.Fatalf("node_tag rows = %d, tag rows = %d; want 1 and 2", rows["node_tag"], rows["tag"])
 	}
 	if got := listTags(t, h); !slices.Equal(got, []string{"a:1", "b:0"}) {

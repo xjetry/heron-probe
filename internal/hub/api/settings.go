@@ -421,7 +421,7 @@ func (s *Service) GetStorageStats(ctx context.Context, _ *connect.Request[heronv
 		s.log.Error("reading storage stats failed", "err", err)
 		return nil, internalError("reading storage stats failed")
 	}
-	out := &heronv1.GetStorageStatsResponse{DbBytes: uint64(stats.DBBytes), LastPruneAt: stats.LastPrune, LastRollupAt: stats.LastRollup}
+	out := &heronv1.GetStorageStatsResponse{DbBytes: uint64(stats.DBBytes), LastPruneAt: stats.LastPrune, LastRollupAt: stats.LastRollup, SqlObservedAt: &stats.SQLObservedAt}
 	out.Wal = walObservationProto(stats.WAL)
 	for _, t := range stats.Tables {
 		out.Tables = append(out.Tables, &heronv1.TableRows{Name: t.Name, Rows: uint64(t.Rows)})

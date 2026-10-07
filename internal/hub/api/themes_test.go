@@ -125,7 +125,7 @@ func (h *harness) enabledThemes(t *testing.T) []string {
 
 func (h *harness) themeRows(t *testing.T) [2]int64 {
 	t.Helper()
-	rows := rowCounts(t, h.store)
+	rows := rowCounts(t, h.dbPath)
 	return [2]int64{rows["theme"], rows["theme_file"]}
 }
 

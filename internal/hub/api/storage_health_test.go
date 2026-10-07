@@ -93,6 +93,8 @@ func TestGetStorageStatsReportsHealthWithStaleness(t *testing.T) {
 	if err := h.store.Rollup(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	// 明确越过 SQL 统计的复用窗口，才用新快照检查上卷结果。
+	h.clk.Advance(61 * time.Second)
 	after := h.storageStatsWithToken(t, tok)
 	for _, s := range after.GetSeries() {
 		if s.GetWatermarkStale() || (s.WatermarkTs != nil && now-s.GetWatermarkTs() > 3*int64(s.GetBucketS())) {

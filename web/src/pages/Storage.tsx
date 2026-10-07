@@ -42,6 +42,9 @@ export function Storage() {
     <section>
       {gate.banner}
       <h1>存储</h1>
+      {s.sqlObservedAt !== undefined && (
+        <p className="muted">统计于 {at(s.sqlObservedAt)}；同一份 SQL 统计在算出后 60 秒内复用。</p>
+      )}
       <p>数据库逻辑大小：{bytes(s.dbBytes)}</p>
       <p className="muted">
         逻辑大小是 SQL 快照里的页数乘页大小，不含 -wal 与 -shm 文件；与 WAL 文件观测不是同一时刻读出的。

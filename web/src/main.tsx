@@ -6,7 +6,7 @@ import { RouterProvider } from "react-router";
 import { transport } from "./api/transport";
 import { isUnauthenticated } from "./api/auth";
 import { router } from "./App";
-import { retryQuery } from "./retry";
+import { queryDefaults } from "./queryDefaults";
 import "./styles.css";
 import "./admin.css";
 
@@ -19,7 +19,7 @@ const queryClient = new QueryClient({
   queryCache: new QueryCache({ onError }),
   mutationCache: new MutationCache({ onError }),
   defaultOptions: {
-    queries: { retry: retryQuery, refetchOnWindowFocus: false },
+    queries: queryDefaults,
   },
 });
 

@@ -13,10 +13,10 @@ import (
 	"github.com/xjetry/heron-probe/internal/clock"
 )
 
-// rowCounts 是测试里按表名取行数的写法；来源与 GetStorageStats、heron-hub stats 相同。
+// 写后检查需要即时行数，直接计算而不经过 StorageStats 的复用窗口。
 func rowCounts(t testing.TB, s *Store) map[string]int64 {
 	t.Helper()
-	stats, err := s.StorageStats(t.Context())
+	stats, err := s.computeStorageStats(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

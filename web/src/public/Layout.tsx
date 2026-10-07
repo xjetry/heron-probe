@@ -8,8 +8,8 @@ import { applySite, DEFAULT_TITLE } from "./site";
 import { HeronMark } from "../components/HeronMark";
 
 // 外观只在页面加载时取，之后不再重取：已打开的页面刷新后才看到改动，刷新时浏览器还可能再用最多 5 分钟的缓存
-// （hub 对 GetSite 下发 max-age=300）。react-query 的窗口聚焦、断网重连与重新挂载三种自动重取都只针对已过期的查询，
-// staleTime: Infinity 让这条永不过期，因此三种都不重取它；main.tsx 里关掉聚焦重取是全站的取舍，不是这条的前提。
+// （hub 对 GetSite 下发 max-age=300）。断网重连与重新挂载默认只重取已过期查询，staleTime: Infinity 阻止这两类重取。
+// GetSite 没有轮询，queryDefaults 的聚焦策略对它返回 false；只有轮询查询才在回前台时立即补取。
 //
 // 没取到站点设置（加载中、失败或被限流）与设置全部为空是同一个状态：文档标题与页头都按内置外观，从同一份值得出。
 export function PublicLayout() {

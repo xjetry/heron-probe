@@ -17,6 +17,8 @@ hub 的管理接口是 Connect unary：每个方法都是 `POST $HERON_HUB/heron
 
 ## 存储观测
 
+`GetStorageStats.sqlObservedAt` 是 SQL 统计（精确行数、逻辑大小与维护健康）所在只读事务开始时的 hub 墙钟 Unix 秒。新 hub 总是给出，缺席表示旧 hub。并发请求共用单份计算，成功计算完成后 60 秒内复用，复用期间时刻不变；跨请求比较 SQL 数字时按各自的 `sqlObservedAt`，不能当作请求时刻。WAL 文件仍逐请求观测，不跟随 SQL 缓存。
+
 `GetStorageStats.wal` 是独立于 SQL 快照的一次 `-wal` 文件观测，不含 `-shm`，也不是未检查点的数据量。先检查消息存在性：缺 `wal` 是旧 hub 未提供；有消息时按 oneof 分支读取，`bytes`（JSON 十进制字符串）表示文件存在且可为 `"0"`，`absent: true` 表示无 WAL 文件，`error` 表示大小未知（错误文本最多 512 字节），不能把后两者补成零字节。`observedAt` 是 stat 完成时的 hub 墙钟 Unix 秒，与 SQL 统计不承诺同一时刻；跨请求比较必须保留各自时刻。没有或不识别的 result 分支也按未知处理，不据此推导 checkpoint 或告警结论。
 
 ## 预授权写入

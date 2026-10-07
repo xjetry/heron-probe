@@ -214,10 +214,17 @@ func TestStatsPrintsSizeAndEveryTable(t *testing.T) {
 		t.Fatalf("first line %q, file size %v (%v)", lines[0], info, statErr)
 	}
 	tables := lines[1:]
-	// 表行之后是健康行，它们的键带点号。
-	if i := slices.IndexFunc(tables, func(l string) bool { k, _, _ := strings.Cut(l, ":"); return strings.Contains(k, ".") }); i >= 0 {
-		tables = tables[:i]
+	// 表行之后是键带点号的读数，第一条是 SQL 快照时刻。
+	i := slices.IndexFunc(tables, func(l string) bool { k, _, _ := strings.Cut(l, ":"); return strings.Contains(k, ".") })
+	if i < 0 {
+		t.Fatalf("no dotted readings after the table rows: %q", out.String())
 	}
+	observed, hasObserved := strings.CutPrefix(tables[i], "sql.observed_at: ")
+	at, parseErr := strconv.ParseInt(observed, 10, 64)
+	if !hasObserved || parseErr != nil || at <= 0 {
+		t.Fatalf("first reading after the tables = %q, want sql.observed_at in Unix seconds", tables[i])
+	}
+	tables = tables[:i]
 	if !slices.IsSorted(tables) {
 		t.Fatalf("tables not sorted: %v", tables)
 	}

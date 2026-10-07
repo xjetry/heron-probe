@@ -14,8 +14,10 @@ import (
 func runStats(args []string) error { return runStatsWith(args, os.Stdout) }
 
 // runStatsWith 打印库的逻辑大小、每张表的行数与存储健康读数；数据来自 store.StorageStats，与
-// AdminService.GetStorageStats 同源。健康读数在表行数之后按 Series 的固定顺序给出，键都带点号
-// （表名.oldest、表名.watermark、prune.finished_at、rollup.finished_at），不会与"表名: 行数"混淆；缺失的值写 none。
+// AdminService.GetStorageStats 同源。除首行 db_bytes 外，不是表行数的读数都在表行数之后、键都带点号
+// （sql.observed_at、表名.oldest、表名.watermark、prune.finished_at、rollup.finished_at），不会与"表名: 行数"混淆：
+// 解析方（scripts/e2e.sh 与 stats_health_test）按"键不带点号且值为整数"认表行，新增读数的键不带点号就会被当成一张表。
+// sql.observed_at 是行数、逻辑大小与健康读数所在 SQL 快照的时刻（Unix 秒），与 wal.observed_at 不是同一时刻。缺失的值写 none。
 // 离线命令不知道运行中 hub 的保留期配置，所以只给原值，不给标红结论（标红见 GetStorageStats）。
 // wal.* 原样展示 store 的单次文件观测；present（含零字节）、absent、unknown 分开，不另读文件系统。
 // 本命令自己打开库：hub 未运行时观测到的是这次打开建立的 -wal（正常关闭过的库上为 0 字节）。
@@ -50,6 +52,7 @@ func runStatsWithSource(args []string, out io.Writer, open func(string) (storage
 	for _, t := range stats.Tables {
 		fmt.Fprintf(out, "%s: %d\n", t.Name, t.Rows)
 	}
+	fmt.Fprintf(out, "sql.observed_at: %d\n", stats.SQLObservedAt)
 	for _, h := range stats.Series {
 		fmt.Fprintf(out, "%s.oldest: %s\n", h.Table, orNone(h.Oldest))
 		if h.Watermark != nil {

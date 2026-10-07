@@ -4,9 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
 )
 
@@ -20,12 +24,55 @@ type TableRows struct {
 // 不含 -wal 与 -shm 文件。Tables 按表名升序。Series 按 metric_1m、5m、1h、probe_1m、5m、1h 的固定顺序。
 // LastPrune、LastRollup 是 maintenance_state 里的完成时刻（Unix 秒），nil 即从未整轮成功过。
 type StorageStats struct {
-	DBBytes    int64
-	Tables     []TableRows
-	Series     []SeriesHealth
-	LastPrune  *int64
-	LastRollup *int64
-	WAL        WALObservation
+	SQLObservedAt int64
+	DBBytes       int64
+	Tables        []TableRows
+	Series        []SeriesHealth
+	LastPrune     *int64
+	LastRollup    *int64
+	WAL           WALObservation
+}
+
+// 存储页与 API 读者只需分钟级新鲜度。成功计算之间至少空出此窗口，让耗时 S 的整库
+// 扫描持有长读快照的占比不超过 S/(S+60秒)，避免连续请求一直阻止 WAL 重置。
+const storageStatsReuse = 60 * time.Second
+
+type storageStatsFlight struct {
+	done   chan struct{}
+	result StorageStats
+	err    error
+}
+
+type storageStatsCache struct {
+	db        *sql.DB
+	ctx       context.Context
+	cancel    context.CancelFunc
+	mu        sync.Mutex
+	flight    *storageStatsFlight
+	cached    *StorageStats
+	completed time.Duration
+	// 测试在事务已开始时控制计算的进度；只在首次调用前设置。
+	afterBegin func(context.Context) error
+}
+
+// 返回值归调用方所有，不能让切片或指针的修改污染后续读者复用的快照。
+func (s StorageStats) clone() StorageStats {
+	s.Tables = slices.Clone(s.Tables)
+	s.Series = slices.Clone(s.Series)
+	cloneInt := func(p *int64) *int64 {
+		if p == nil {
+			return nil
+		}
+		v := *p
+		return &v
+	}
+	for i := range s.Series {
+		s.Series[i].Oldest = cloneInt(s.Series[i].Oldest)
+		s.Series[i].Watermark = cloneInt(s.Series[i].Watermark)
+	}
+	s.LastPrune = cloneInt(s.LastPrune)
+	s.LastRollup = cloneInt(s.LastRollup)
+	return s
 }
 
 // WALObservation 是库旁 -wal 的一次 stat 结果，不含 -shm。Bytes 非 nil 表示存在（包括零字节），
@@ -73,16 +120,78 @@ func (s *Store) observeWAL() WALObservation {
 	return out
 }
 
-// StorageStats 的 SQL 读数在一个只读事务里读出，行数、逻辑大小与维护健康属于同一快照；
-// WAL 在事务结束后独立 stat，不承诺与 SQL 同一时刻。表名取自 sqlite_master 而不是手写清单：
+// StorageStats 共用 Store 自有的单份计算；请求取消只结束等待，不取消计算。成功结果从计算完成起
+// 复用 storageStatsReuse，失败不缓存。SQLObservedAt 是只读事务开始时的墙钟 Unix 秒；
+// WAL 每次调用独立 stat，不承诺与 SQL 同一时刻。
+func (s *Store) StorageStats(ctx context.Context) (StorageStats, error) {
+	if err := ctx.Err(); err != nil {
+		return StorageStats{}, err
+	}
+	// Close 持写锁阻止新计算入场；计算协程不获取 closeMu，Close 可持锁等待它退出。
+	s.closeMu.RLock()
+	if s.closed {
+		s.closeMu.RUnlock()
+		return StorageStats{}, ErrClosed
+	}
+	s.stats.mu.Lock()
+	if cached := s.stats.cached; cached != nil && s.clk.Mono()-s.stats.completed < storageStatsReuse {
+		s.stats.mu.Unlock()
+		s.closeMu.RUnlock()
+		out := cached.clone()
+		out.WAL = s.observeWAL()
+		return out, nil
+	}
+	flight := s.stats.flight
+	if flight == nil {
+		flight = &storageStatsFlight{done: make(chan struct{})}
+		s.stats.flight = flight
+		go s.runStorageStats(flight)
+	}
+	s.stats.mu.Unlock()
+	s.closeMu.RUnlock()
+	select {
+	case <-ctx.Done():
+		return StorageStats{}, ctx.Err()
+	case <-flight.done:
+		if err := ctx.Err(); err != nil {
+			return StorageStats{}, err
+		}
+		if flight.err != nil {
+			return StorageStats{}, flight.err
+		}
+		out := flight.result.clone()
+		out.WAL = s.observeWAL()
+		return out, nil
+	}
+}
+
+func (s *Store) runStorageStats(flight *storageStatsFlight) {
+	flight.result, flight.err = s.computeStorageStats(s.stats.ctx)
+	s.stats.mu.Lock()
+	defer s.stats.mu.Unlock()
+	if flight.err == nil {
+		s.stats.cached = &flight.result
+		s.stats.completed = s.clk.Mono()
+	}
+	s.stats.flight = nil
+	close(flight.done)
+}
+
+// 行数、逻辑大小与维护健康在独立连接的同一只读事务里读出。表名取自 sqlite_master 而不是手写清单：
 // 新增的表自动计入。名字以 sqlite_ 开头的是 SQLite 内部表（如 AUTOINCREMENT 的 sqlite_sequence），不计；
 // 前缀按字面比较，不用 LIKE（它的 _ 是通配符，且对 ASCII 不分大小写）。
-func (s *Store) StorageStats(ctx context.Context) (StorageStats, error) {
-	tx, err := s.r.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+func (s *Store) computeStorageStats(ctx context.Context) (StorageStats, error) {
+	tx, err := s.stats.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return StorageStats{}, err
 	}
 	defer tx.Rollback()
+	out := StorageStats{SQLObservedAt: s.clk.Now().Unix()}
+	if s.stats.afterBegin != nil {
+		if err := s.stats.afterBegin(ctx); err != nil {
+			return StorageStats{}, err
+		}
+	}
 	var names []string
 	rows, err := tx.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type = 'table' AND substr(name, 1, 7) <> 'sqlite_' ORDER BY name")
 	if err != nil {
@@ -99,11 +208,31 @@ func (s *Store) StorageStats(ctx context.Context) (StorageStats, error) {
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return StorageStats{}, err
 	}
-	var out StorageStats
+	oldest := map[string]*int64{}
+	for _, f := range families {
+		for _, table := range f.tables {
+			// nil 只表示空表的最老桶；必需表缺失是 schema 损坏，不能伪装成空表健康读数。
+			if !slices.Contains(names, table) {
+				return StorageStats{}, fmt.Errorf("storage stats: missing time-series table %s", table)
+			}
+			oldest[table] = nil
+		}
+	}
 	for _, n := range names {
 		var c int64
 		// 表名来自 sqlite_master，按 SQL 标识符规则加双引号并转义内部的双引号。
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM "`+strings.ReplaceAll(n, `"`, `""`)+`"`).Scan(&c); err != nil {
+		table := `"` + strings.ReplaceAll(n, `"`, `""`) + `"`
+		var err error
+		if _, series := oldest[n]; series {
+			var ts sql.NullInt64
+			err = tx.QueryRowContext(ctx, `SELECT COUNT(*), min(ts) FROM `+table).Scan(&c, &ts)
+			if ts.Valid {
+				oldest[n] = &ts.Int64
+			}
+		} else {
+			err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table).Scan(&c)
+		}
+		if err != nil {
 			return StorageStats{}, err
 		}
 		out.Tables = append(out.Tables, TableRows{Name: n, Rows: c})
@@ -116,7 +245,7 @@ func (s *Store) StorageStats(ctx context.Context) (StorageStats, error) {
 		return StorageStats{}, err
 	}
 	out.DBBytes = pages * pageSize
-	if out.Series, err = seriesHealth(ctx, tx); err != nil {
+	if out.Series, err = seriesHealth(ctx, tx, oldest); err != nil {
 		return StorageStats{}, err
 	}
 	last, err := lastMaintenance(ctx, tx)
@@ -132,6 +261,5 @@ func (s *Store) StorageStats(ctx context.Context) (StorageStats, error) {
 	if err := tx.Commit(); err != nil {
 		return StorageStats{}, err
 	}
-	out.WAL = s.observeWAL()
 	return out, nil
 }

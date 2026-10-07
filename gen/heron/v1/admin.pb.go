@@ -8843,7 +8843,11 @@ type GetStorageStatsResponse struct {
 	LastRollupAt *int64 `protobuf:"varint,5,opt,name=last_rollup_at,json=lastRollupAt,proto3,oneof" json:"last_rollup_at,omitempty"`
 	// 本次请求对数据库旁 -wal 文件的一次文件系统观测；不含 -shm，与上面的 SQL 只读事务统计不是同一快照。
 	// 新 hub 总是返回此消息；缺失表示旧 hub 未提供该项，不表示无 WAL 文件或 0 字节。
-	Wal           *WalFileObservation `protobuf:"bytes,6,opt,name=wal,proto3" json:"wal,omitempty"`
+	Wal *WalFileObservation `protobuf:"bytes,6,opt,name=wal,proto3" json:"wal,omitempty"`
+	// SQL 统计（行数、逻辑大小、维护健康）所在只读事务开始时的 hub 墙钟，Unix 秒。
+	// 新 hub 总是给出；缺席表示旧 hub。成功计算完成后 60 秒内复用同一份 SQL 统计，此值不变，
+	// 不能当作请求时刻；wal 仍是每次调用各自的文件观测，两者不承诺同一时刻。
+	SqlObservedAt *int64 `protobuf:"varint,7,opt,name=sql_observed_at,json=sqlObservedAt,proto3,oneof" json:"sql_observed_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -8918,6 +8922,13 @@ func (x *GetStorageStatsResponse) GetWal() *WalFileObservation {
 		return x.Wal
 	}
 	return nil
+}
+
+func (x *GetStorageStatsResponse) GetSqlObservedAt() int64 {
+	if x != nil && x.SqlObservedAt != nil {
+		return *x.SqlObservedAt
+	}
+	return 0
 }
 
 // WAL 文件的实际长度，不是未检查点的数据量；不能据此推导告警或 checkpoint 是否成功。
@@ -11422,16 +11433,18 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\x06digest\x18\x02 \x01(\tR\x06digest\"3\n" +
 	"\x17GetThemePackageResponse\x12\x18\n" +
 	"\apackage\x18\x01 \x01(\fR\apackage\"\x18\n" +
-	"\x16GetStorageStatsRequest\"\xbf\x02\n" +
+	"\x16GetStorageStatsRequest\"\x80\x03\n" +
 	"\x17GetStorageStatsResponse\x12\x19\n" +
 	"\bdb_bytes\x18\x01 \x01(\x04R\adbBytes\x12+\n" +
 	"\x06tables\x18\x02 \x03(\v2\x13.heron.v1.TableRowsR\x06tables\x123\n" +
 	"\x06series\x18\x03 \x03(\v2\x1b.heron.v1.SeriesTableHealthR\x06series\x12'\n" +
 	"\rlast_prune_at\x18\x04 \x01(\x03H\x00R\vlastPruneAt\x88\x01\x01\x12)\n" +
 	"\x0elast_rollup_at\x18\x05 \x01(\x03H\x01R\flastRollupAt\x88\x01\x01\x12.\n" +
-	"\x03wal\x18\x06 \x01(\v2\x1c.heron.v1.WalFileObservationR\x03walB\x10\n" +
+	"\x03wal\x18\x06 \x01(\v2\x1c.heron.v1.WalFileObservationR\x03wal\x12+\n" +
+	"\x0fsql_observed_at\x18\a \x01(\x03H\x02R\rsqlObservedAt\x88\x01\x01B\x10\n" +
 	"\x0e_last_prune_atB\x11\n" +
-	"\x0f_last_rollup_at\"\x89\x01\n" +
+	"\x0f_last_rollup_atB\x12\n" +
+	"\x10_sql_observed_at\"\x89\x01\n" +
 	"\x12WalFileObservation\x12\x1f\n" +
 	"\vobserved_at\x18\x01 \x01(\x03R\n" +
 	"observedAt\x12\x16\n" +

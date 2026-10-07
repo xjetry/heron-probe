@@ -116,6 +116,7 @@ hub 只提供明文 HTTP，TLS 由反代（Caddy、nginx、CDN）终止。容器
 
 - 端口只发布到本机回环（`-p 127.0.0.1:8080:8080`，反代在宿主上），或者不发布端口，让反代容器与 hub 在同一个 Docker 网络里转发到 `http://heron:8080`。
 - `--trusted-proxies` 写 hub 看到的反代地址（TCP 对端；CIDR 列表，逗号分隔）。只有来自这些地址的 `X-Forwarded-For`、`X-Forwarded-Proto` 才被采信。HTTPS 反代必须保留浏览器访问的 Host（含非默认端口），设置 `X-Forwarded-Proto: https`，并配置可信代理；否则管理接口的同源检查会拒绝浏览器请求，包括密码登录，返回 403。升级前先核对这些配置；不要通过改写或删除浏览器 Origin 头绕过检查。
+- 反代与 CDN 必须对 `/heron.v1.AdminService/` 路径禁用响应压缩，并保留 hub 的 `Cache-Control: no-store, no-transform`：前者禁止缓存，后者要求中间层不要改写响应（包括重新压缩）。管理响应含私有数据和节点自报字符串，压缩后的长度可能泄漏二者的重合；TLS 不隐藏流量长度。不要只依赖源站已不压缩，部署后用带 `Accept-Encoding: gzip, deflate, br, zstd` 的管理请求检查最终响应没有 `Content-Encoding`、缓存头仍完整。公开 API 与静态资源可继续压缩。
 - 不信任转发头时，公开页与注册的限流按 TCP 对端地址计，反代后的访客共用代理地址的一个桶；节点来源 IP 也记成代理地址。配置可信代理和正确的 `X-Forwarded-For` 后才能记录实际节点来源。量级：公开服务每个来源的桶容量 60、每秒补充 10；每个打开的总览页每 2 秒轮询一次快照（每秒 0.5 次），节点页另有每分钟两次历史查询，页面加载时还有几次请求。同时打开的总览页超过 20 个、或节点页约 19 个起，消耗就持续多于补充，60 次的余量用完后访客开始收到 429（30 个页面时约 10–12 秒后）。
 
 反代与 hub 在同一个网络时，给网络固定网段、只让这两个容器加入，并信任这个网段：
@@ -225,7 +226,7 @@ docker start heron
 镜像里没有 shell，`docker exec heron sh` 不可用。可以：
 
 - 看日志：`docker logs heron`。
-- 查版本、各表行数与存储健康（各级最老桶、上卷水位、上次清理与上卷的完成时刻；标红判定见面板的存储页或 `GetStorageStats`）：`docker exec heron heron-hub version`、`docker exec heron heron-hub stats --db /data/heron.db`。
+- 查版本、SQL 统计时刻（输出里的 `sql.observed_at`，Unix 秒）、各表行数与存储健康（各级最老桶、上卷水位、上次清理与上卷的完成时刻；SQL 统计在算出后 60 秒内复用，WAL 为逐调用观测；标红判定见面板的存储页或 `GetStorageStats`）：`docker exec heron heron-hub version`、`docker exec heron heron-hub stats --db /data/heron.db`。
 - 看卷里的文件：挂同一个卷起一个带 shell 的临时容器，`docker run --rm -v heron-data:/data alpine:3.21 ls -ln /data`。
 - 从 hub 自己的网络里发请求：`docker run --rm --network container:heron alpine:3.21 wget -qO /dev/null http://127.0.0.1:8080/admin/ && echo ok`。
 

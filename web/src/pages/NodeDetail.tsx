@@ -1,6 +1,6 @@
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 import { Link, useParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { HistoryCharts, RangePicker, useHistory, type HistoryMethods } from "../components/History";
@@ -11,38 +11,33 @@ import { NodeAddresses } from "../components/NodeAddresses";
 import { AgentDiagnostics } from "../components/AgentDiagnostics";
 import { ExecutionScope } from "../components/ExecutionScope";
 import { trafficText } from "../lib/traffic";
+import { TRAFFIC_MS } from "../lib/poll";
 
 const ADMIN_HISTORY: HistoryMethods = { queryMetrics: AdminService.method.queryMetrics, queryProbes: AdminService.method.queryProbes };
-
-// 周期量与诊断随上报更新；详情以 10 秒节奏读取，流量卡不依赖落盘刷出。
-export const TRAFFIC_MS = 10_000;
 
 export function NodeDetail() {
   const { id } = useParams();
   const validId = /^\d+$/.test(id ?? "");
   const nodeId = validId ? BigInt(id!) : 0n;
   const nodes = useQuery(AdminService.method.listNodes, {}, { enabled: validId, refetchInterval: TRAFFIC_MS });
-  const history = useHistory(ADMIN_HISTORY, nodeId, validId);
-  // 流量与图表面向不同查询，各自降级；校正操作在卡片内保留自己的错误槽位。
+  // 历史窗口依赖流量响应里的 hub now；校正操作仍在卡片内保留自己的错误槽位。
   const traffic = useQuery(AdminService.method.getTraffic, {}, { enabled: validId, refetchInterval: TRAFFIC_MS });
 
   if (!validId) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
   const gate = queryGate(nodes);
-  // history 与 traffic 只依赖 URL 里的 id，不依赖 listNodes；listNodes 挂起或首次失败时它们完全可能
+  const time = queryGate(traffic);
+  // history 与 traffic 不依赖 listNodes；listNodes 挂起或首次失败时它们完全可能
   // 已经就绪，不能因为 listNodes 的门控挡住这些已经就绪、不依赖它的内容。是否"不存在"只有 listNodes
   // 真的到达后才能判断——它挂起或首次失败时无法区分"节点被删了"与"这次还没拿到列表"，按后者处理。
   const node = gate.ready ? gate.data.nodes.find((n) => n.id === nodeId) : undefined;
   if (gate.ready && !node) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
   return (
     <section>
-      {errorBanner(nodes.error, history.metrics.error, history.probes.error, traffic.error)}
-      <header className="row detail-header">
-        <h1>{node ? node.name : `节点 #${nodeId}`}</h1>
-        <Link to={`/events?node=${id}`}>告警事件</Link>
-        <RangePicker history={history} />
-      </header>
-      <TrafficCard nodeId={nodeId} data={traffic.data} />
-      <HistoryCharts history={history} showCoverage noProbes={<p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>} />
+      {time.ready ? <NodeHistory nodeId={nodeId} name={node?.name} traffic={time.data} errors={[nodes.error, traffic.error]} /> : <>
+        {errorBanner(nodes.error, ...time.errors)}
+        <DetailHeader nodeId={nodeId} name={node?.name} />
+        {time.loading}
+      </>}
       {gate.ready ? node?.facts && (
         <dl className="card facts">
           {/* 来源地址是 hub 在上报上看到的对端，不是 agent 自报；只在管理端显示，公开页没有这个字段。 */}
@@ -61,6 +56,24 @@ export function NodeDetail() {
       {node && <AgentDiagnostics diagnostics={node.facts?.diagnostics} updatedAt={node.factsUpdatedAt} />}
     </section>
   );
+}
+
+function DetailHeader({ nodeId, name, children }: { nodeId: bigint; name?: string; children?: ReactNode }) {
+  return <header className="row detail-header">
+    <h1>{name ?? `节点 #${nodeId}`}</h1>
+    <Link to={`/events?node=${nodeId}`}>告警事件</Link>
+    {children}
+  </header>;
+}
+
+function NodeHistory({ nodeId, name, traffic, errors }: { nodeId: bigint; name?: string; traffic: GetTrafficResponse; errors: unknown[] }) {
+  const history = useHistory(ADMIN_HISTORY, nodeId, Number(traffic.now));
+  return <>
+    {errorBanner(...errors, history.metrics.error, history.probes.error)}
+    <DetailHeader nodeId={nodeId} name={name}><RangePicker history={history} /></DetailHeader>
+    <TrafficCard nodeId={nodeId} data={traffic} />
+    <HistoryCharts history={history} showCoverage noProbes={<p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>} />
+  </>;
 }
 
 const GIB = 2 ** 30;

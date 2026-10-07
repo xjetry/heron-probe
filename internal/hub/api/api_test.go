@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -217,16 +218,38 @@ func (h *harness) setPublic(t *testing.T, id int64, name string, public bool) {
 
 func codeOf(err error) connect.Code { return connect.CodeOf(err) }
 
-// rowCounts 按表名取行数，来源与 GetStorageStats、heron-hub stats 相同。
-func rowCounts(t *testing.T, st *store.Store) map[string]int64 {
+// 写入前后断言需要即时行数，不能复用 StorageStats 的旧快照；独立连接直接计数也作为 API 统计的对照。
+func rowCounts(t *testing.T, path string) map[string]int64 {
 	t.Helper()
-	stats, err := st.StorageStats(t.Context())
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Close()
+	rows, err := db.QueryContext(t.Context(), "SELECT name FROM sqlite_master WHERE type = 'table'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(name, "sqlite_") {
+			names = append(names, name)
+		}
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		t.Fatal(err)
+	}
 	out := map[string]int64{}
-	for _, tr := range stats.Tables {
-		out[tr.Name] = tr.Rows
+	for _, name := range names {
+		var count int64
+		if err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM "`+strings.ReplaceAll(name, `"`, `""`)+`"`).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		out[name] = count
 	}
 	return out
 }
@@ -425,7 +448,7 @@ func TestCrossSiteRequestShapesAreRejectedWithoutSideEffects(t *testing.T) {
 		t.Fatalf("JSON control sent %d requests", calls.Load())
 	}
 	calls.Store(0)
-	before := rowCounts(t, h.store)
+	before := rowCounts(t, h.dbPath)
 	services := heronv1.File_heron_v1_admin_proto.Services()
 	for i := 0; i < services.Len(); i++ {
 		service := services.Get(i)
@@ -455,7 +478,7 @@ func TestCrossSiteRequestShapesAreRejectedWithoutSideEffects(t *testing.T) {
 	if calls.Load() != 0 {
 		t.Fatalf("cross-site TestNotifyChannel sent %d requests", calls.Load())
 	}
-	after := rowCounts(t, h.store)
+	after := rowCounts(t, h.dbPath)
 	if !reflect.DeepEqual(before, after) {
 		t.Fatalf("cross-site changed counts: before=%v after=%v", before, after)
 	}
@@ -794,7 +817,7 @@ func TestDeletedNodeRejectsLateStorageWrites(t *testing.T) {
 	if n, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: h.clk.Now().Unix(), CoverageStart: h.clk.Now().Unix(), Bucket: b}}}); err != nil || n != 1 {
 		t.Errorf("late metric write: rejected=%d err=%v", n, err)
 	}
-	counts := rowCounts(t, h.store)
+	counts := rowCounts(t, h.dbPath)
 	if counts["node_facts"] != 0 || counts["metric_1m"] != 0 {
 		t.Fatalf("late writes recreated deleted history: %v", counts)
 	}
