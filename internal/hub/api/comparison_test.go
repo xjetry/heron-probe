@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 
@@ -256,23 +257,22 @@ func TestReadQuotaThroughRealEntries(t *testing.T) {
 	h.login(t)
 	id, _ := h.createNode(t, "a")
 	ctx := t.Context()
-	// 维护从未推进（水位为 0）：一年的分钟行全部留在 metric_1m，长窗口的 1h 级查询要读
-	// 两万行源数据，超过指标族 12000 的额度。
-	base := h.clk.Now().Unix() - 20001*60
-	var rows []metric.Row
-	for i := int64(0); i < 20001; i++ {
-		ts := base + i*60
-		b := metric.NewBucket()
-		b.Sum[0] = 1
-		b.N[0] = 1
-		b.Max[0] = 1
-		rows = append(rows, metric.Row{NodeID: id, TS: ts, CoverageStart: ts, Bucket: b})
+	// 维护从未推进（水位为 0）：分钟行全部留在 metric_1m，长窗口的 1h 级查询要读
+	// 一万两千多行源数据，超过指标族 12000 的额度。种子数据经一条递归 CTE 直连写入
+	//（与负载台同一条路，绕过测试套件的慢速插入——race 下逐行写是分钟级）。
+	base := h.clk.Now().Unix() - 12050*60
+	db, err := sql.Open("sqlite", "file:"+h.dbPath+"?_pragma=busy_timeout(10000)")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := h.store.WriteMinuteBatch(ctx, metric.Batch{Rows: rows}); err != nil {
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, `WITH RECURSIVE seq(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM seq WHERE i < 12050)
+		INSERT INTO metric_1m (node_id, ts, cpu_sum, cpu_n, cpu_max, reported, observed)
+		SELECT ?, (? - (12050 - i) * 60), 1, 1, 1, 1, NULL FROM seq`, id, h.clk.Now().Unix()); err != nil {
 		t.Fatal(err)
 	}
 	req := &heronv1.QueryMetricsRequest{NodeId: id, From: base, To: h.clk.Now().Unix(), MaxPoints: 10}
-	_, err := h.admin.QueryMetrics(ctx, connect.NewRequest(req))
+	_, err = h.admin.QueryMetrics(ctx, connect.NewRequest(req))
 	if codeOf(err) != connect.CodeFailedPrecondition {
 		t.Fatalf("admin entry err = %v (%+v), want FailedPrecondition", err, err)
 	}
