@@ -190,6 +190,8 @@ func (s *Service) Handler() (string, http.Handler) {
 	path, rest := heronv1connect.NewAdminServiceHandler(s, common, connect.WithReadMaxBytes(maxSettingsBody))
 	_, upload := heronv1connect.NewAdminServiceHandler(s, common, connect.WithReadMaxBytes(maxThemeBody))
 	return path, auth.WebAuthnContext(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// no-transform 要求遵守该指令的反代/CDN 不改写响应，包括重新压缩。
+		// 来源检查会直接写出 403，缓存头必须在它之前设置，才能覆盖这条提前返回路径。
 		w.Header().Set("Cache-Control", "no-store, no-transform")
 		// 不透明沙箱和跨源浏览器请求在解码与鉴权之前拒绝，不能依赖 CORS 阻止副作用。
 		if !auth.SameOriginRequest(r, s.cfg.TrustedProxies) {
