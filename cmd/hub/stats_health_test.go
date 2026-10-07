@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -66,8 +67,11 @@ func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
 	if start < 0 {
 		t.Fatalf("no health lines in %q", out.String())
 	}
-	// 两入口之间关闭再打开库，WAL 文件可能变化；独立文件观测不参与 SQL 快照的逐行对照。
-	cli := slices.DeleteFunc(lines[start:], func(line string) bool { return strings.HasPrefix(line, "wal.") })
+	// 逐行对照只比 SQL 读出的值。两入口各算一次：sql.observed_at 是各自那次计算的时刻（CLI 经 openOffline 用真实时钟，
+	// 下面的 API 用假时钟），wal.* 是各自的文件观测，两入口之间还关闭又打开过库，它们都不参与对照。
+	cli := slices.DeleteFunc(lines[start:], func(line string) bool {
+		return strings.HasPrefix(line, "wal.") || strings.HasPrefix(line, "sql.observed_at: ")
+	})
 
 	st, err = store.Open(db, clk, slog.Default(), store.MigrateSchema)
 	if err != nil {
@@ -119,5 +123,21 @@ func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
 		if !slices.Contains(cli, line) {
 			t.Errorf("CLI health lines lack %q:\n%s", line, strings.Join(cli, "\n"))
 		}
+	}
+	// scripts/e2e.sh 用同一规则从 CLI 输出里认表行（键不带点号、值为整数、不是 db_bytes），再与响应的表清单逐行比较，
+	// 但它只在 make e2e 里跑。这里在单元测试里按同一规则先查一遍：不是表的读数若用了不带点号的键，会被当成一张表。
+	tableRow := regexp.MustCompile(`^([a-z0-9_]+): [0-9]+$`)
+	var cliTables []string
+	for _, line := range lines {
+		if m := tableRow.FindStringSubmatch(line); m != nil && m[1] != "db_bytes" {
+			cliTables = append(cliTables, m[1])
+		}
+	}
+	var apiTables []string
+	for _, tr := range msg.GetTables() {
+		apiTables = append(apiTables, tr.GetName())
+	}
+	if !slices.Equal(cliTables, apiTables) {
+		t.Fatalf("CLI lines read as table rows:\n%s\nAPI tables:\n%s", strings.Join(cliTables, "\n"), strings.Join(apiTables, "\n"))
 	}
 }

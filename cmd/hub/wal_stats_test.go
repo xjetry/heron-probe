@@ -55,7 +55,7 @@ func TestStatsWALUsesSingleObservation(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, got, ok := strings.Cut(out.String(), "wal.observed_at: ")
-			if !strings.Contains(out.String(), "sql_observed_at: 122\n") {
+			if !strings.Contains(out.String(), "sql.observed_at: 122\n") {
 				t.Fatalf("SQL observation must come from the Store result: %q", out.String())
 			}
 			if fixture.calls != 1 || !ok || "wal.observed_at: "+got != tc.want {
