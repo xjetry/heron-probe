@@ -71,6 +71,13 @@ it("方向键在项间循环移动焦点，禁用项仍可到达但不可选", (
   expect(items[0]).toHaveFocus();
 });
 
+it("鼠标武装危险项后焦点留在确认项，后续 Escape 能关闭菜单", () => {
+  mount([{ label: "编辑" }, { label: "删除", confirm: "确认删除 web-01（#1）" }]);
+  fireEvent.click(screen.getByRole("button", { name: "更多操作 web-01（#1）" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "删除 web-01（#1）" }));
+  expect(screen.getByRole("menuitem", { name: "确认删除 web-01（#1）" })).toHaveFocus();
+});
+
 it("点菜单外关闭并撤销武装", () => {
   mount([{ label: "删除", confirm: "确认删除 web-01（#1）", onSelect: () => {} }]);
   const trigger = screen.getByRole("button", { name: "更多操作 web-01（#1）" });

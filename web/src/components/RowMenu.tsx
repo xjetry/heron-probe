@@ -65,7 +65,7 @@ export function RowMenu({ label, items }: { label: string; items: readonly RowMe
             }
             return (
               <Fragment key={item.label}>
-                <button type="button" role="menuitem" aria-label={name} className={className} aria-disabled={item.disabled || undefined} onClick={() => select(item, index)}>{text}</button>
+                <button type="button" role="menuitem" aria-label={name} className={className} aria-disabled={item.disabled || undefined} onClick={(event) => { event.currentTarget.focus(); select(item, index); }}>{text}</button>
                 {armed === index && item.note && <small className="row-menu-note">{item.note}</small>}
               </Fragment>
             );
