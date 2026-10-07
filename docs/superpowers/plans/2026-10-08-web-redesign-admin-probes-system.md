@@ -71,7 +71,8 @@
 | `form` 「新建探测任务」常驻 | `ProbeTasks.test.tsx` 多处 | 点 `button` 「新建探测任务」后在 `dialog` 内；`form` 名不变 | Task 2 |
 | 类型 `combobox`（探测任务） | `ProbeTasks.test.tsx:89,103` | `radiogroup` 「类型」四个 `radio`（ICMP / TCP / HTTP / DNS 标签不变） | Task 2 |
 | `button` 「编辑 X」「删除 X」→「确认删除 X」、`link` 「对比」「证书」（探测任务行内） | `ProbeTasks.test.tsx:373-396,489` | `button` 「更多操作 X」→ `menuitem` 同名；对比 / 证书是 `menuitem`（`a`） | Task 2 |
-| 「A 行保存挂起时 B 行保存禁用」「同名任务同时编辑时保存的是被改的那一行」 | `ProbeTasks.test.tsx:196,225`；`AlertRules.test.tsx:383`；`Channels.test.tsx:401` | 单抽屉：保存在途时「关闭抽屉」禁用且其它行的 `更多操作` 禁用；同名第二条经菜单打开后保存的是它的 id | Task 2、3、5 |
+| 「A 行保存挂起时 B 行保存禁用」「同名任务同时编辑时保存的是被改的那一行」 | `ProbeTasks.test.tsx:196,225`；`AlertRules.test.tsx:383`；`Channels.test.tsx:401` | 单抽屉：保存在途时抽屉的「关闭抽屉」与「取消」禁用（抽屉打开期间页面其余部分由原生 `showModal` 置为 inert，不另加 `RowMenu` 的入口禁用）；同名第二条经菜单打开后保存的是它的 id | Task 2、3、5 |
+| `select[multiple][required]`（动态标签非空才能提交） | `ProbeTasksSelector.test.tsx`（空动态标签不发请求） | `NodeAssignment.tsx` 导出 `assignmentValid(value)`，三处表单在 `checkValidity()` 之后先过它再 `onSubmit` | Task 1、2、3、5 |
 | `form` 「新建告警规则」常驻；`button` 「编辑 X」「删除 X」 | `AlertRules.test.tsx`、`AlertRulesResource.test.tsx` | `button` 「新建告警规则」→ `dialog`；菜单 | Task 3 |
 | 规则表「状态」列文字（触发 / 待定 / 已停用） | `AlertRules.test.tsx:218,549,561` | 列保留；「已停用」改由启用列的 `switch` 表达，状态列显示「—」 | Task 3 |
 | 事件表列「时间 节点 变化 摘要 通知」、系统事件节点列「系统」 | `pages/AlertEvents.test.tsx:17,81,199`；`NodeDetail.test.tsx`（计划一 Task 12 新增的 tab 用例只看「没有告警事件。」） | 列「时间 节点 规则 变化 观测值 投递」；系统事件节点列「—」、规则列「—」；摘要在变化列下一行 `small` | Task 4 |
@@ -332,7 +333,8 @@ Run: `cd /Users/xjetry/work/vibe/probe/web && grep -n "新建探测任务\|name:
 | 类型 `combobox` `fireEvent.change(select, { target: { value } })` | `fireEvent.click(within(dialog).getByRole("radio", { name: "DNS" }))` |
 | 「勾选全部节点后隐藏节点多选」 | `radio` 「全部节点」后 `queryByRole("searchbox", { name: "搜索节点" })` 为 null |
 | 「标签批量选择保存固定节点，动态选择器只保存非空标签」 | 指定节点：`button` 「按标签快选 X」；动态：`radio` 「动态标签选择器」+ `MultiSelect` 「匹配标签」 |
-| 「A 行保存挂起时 B 行保存禁用，刷新完成才关闭 A 行」 | 改名「保存挂起时抽屉不可关闭、其它行菜单禁用，刷新完成才关闭抽屉」：`button` 「关闭抽屉」`toBeDisabled()`，其它行 `button` 「更多操作 Y」`toBeDisabled()`，刷新 resolve 后 `dialog` 消失 |
+| 「A 行保存挂起时 B 行保存禁用，刷新完成才关闭 A 行」 | 改名「保存挂起时抽屉不可关闭，刷新完成才关闭抽屉」：`button` 「关闭抽屉」与「取消」`toBeDisabled()`，刷新 resolve 后 `dialog` 消失；不断言其它行（抽屉打开期间它们由原生 dialog 置为 inert，jsdom 不模拟） |
+| 「标签批量选择保存固定节点，动态选择器只保存非空标签」里的空动态标签不提交 | `handle` 在 `checkValidity()` 之后 `if (!assignmentValid(draft)) return;`；`assignmentValid` 定义在 `NodeAssignment.tsx` 末尾：`export const assignmentValid = (value: NodeSelection): boolean => value.allNodes \|\| !value.dynamic \|\| value.selectorTags.length > 0;` |
 | 「同名任务同时编辑时保存的是被改的那一行」 | 改名「同名任务经菜单打开第二条，保存的是第二条的 id」 |
 | 「创建成功后复位全部字段，下一次提交不沿用旧值」 | 成功后 `dialog` 消失；再 `openCreate()`，字段是默认值 |
 | 「列出任务与分配的节点名」 | 分配格文字按新摘要：显式两个节点 → 「2 个指定节点」且 `title="a、b"`；`allNodes` → 「全部节点」；动态 → 「标签：prod ∩ edge（当前 1）」；显式空 → 「未分配」 |
@@ -505,7 +507,7 @@ Run: `cd /Users/xjetry/work/vibe/probe/web && grep -n "新建告警规则\|name:
 | `编辑 X` / `删除 X` 按钮 | `openRowAction(label, "编辑" / "删除")` |
 | 「从 enabled=%s 编辑开关，保存与刷新后状态一致」 | 两条路径都钉：抽屉里的「启用」勾选；行上的 `switch` 「启用 X」点击提交整条规则（`saveAlertRule` 收到 `enabled` 翻转、其余字段等于 `toRule(draftOf(r))`） |
 | 「列表展示名称、条件、作用域、通知与当前状态」中 `已停用` 文字 | 启用列 `switch` `not.toBeChecked()`，状态列 `—` |
-| 「一行保存挂起时其它行的保存禁用」 | 「保存挂起时抽屉不可关闭、其它行菜单与开关禁用」 |
+| 「一行保存挂起时其它行的保存禁用」 | 「保存挂起时抽屉不可关闭、各行启用开关禁用」（不断言其它行的 `更多操作`：抽屉打开期间由原生 dialog 置为 inert）；表单 `handle` 同样先过 `assignmentValid` |
 | 「编辑态在刷新完成后才关闭」 | `dialog` 在刷新 resolve 后消失 |
 | NodeSelector 相关（109、237、256、308） | 按 Task 1 的新契约（`radio` / 快选 / 勾选列表） |
 
