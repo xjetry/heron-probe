@@ -1,15 +1,12 @@
-/* 公开页在共用调色板（../styles.css）之上的布局：站点标题与节点卡片。站点设置的自定义 CSS 排在这之后。 */
-.nav .brand { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--fg); font-weight: 600; }
-.nav .brand .logo { height: 24px; width: auto; }
-.nav .admin { margin-left: auto; color: var(--muted); }
-.public-layout {
-  --node-surface: light-dark(#fff, #171c23);
-  --node-track: light-dark(#edf0f3, #2a313a);
-  background: radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 65%), var(--bg);
-}
-.public-layout .main:has(> .public-overview) { max-width: 1680px; padding: 2rem clamp(1rem, 2.5vw, 2.5rem); }
-.public-overview > .row { margin-bottom: 1.25rem; align-items: center; }
-.public-overview h1 { margin: 0; font-size: 1.75rem; letter-spacing: -.04em; }
+/* 公开页在共用 token（../styles.css）之上的布局。站点设置的自定义 CSS 排在这之后。 */
+.public-layout { min-height: 100dvh; }
+.public-header { position: sticky; top: 0; z-index: 20; height: 48px; display: flex; align-items: center; gap: 16px; padding: 0 clamp(12px, 2vw, 24px); background: var(--card); border-bottom: 1px solid var(--line); }
+.public-header .brand { color: var(--fg); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.public-header .brand .logo, .public-header .heron-mark { height: 24px; width: auto; }
+.public-header .live { font-size: 12px; white-space: nowrap; }
+.public-header .theme-toggle { margin-left: auto; }
+.public-header .admin { color: var(--muted); font-size: 13px; }
+.public-layout .main { max-width: 1680px; padding: 16px clamp(12px, 2vw, 24px); }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 1rem; }
 .node-card {
   position: relative; isolation: isolate; min-width: 0; display: flex; flex-direction: column; padding: 1.4rem;

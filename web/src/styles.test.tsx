@@ -37,7 +37,7 @@ it("styles.css 的每条 nowrap 规则（含分组规则内的）都不命中公
 
   renderWithService(PublicService, { getSite: async () => ({}) }, [{ path: "/", Component: PublicLayout }], "/");
   await screen.findByRole("link");
-  const header = document.querySelector("header.nav")!;
+  const header = document.querySelector("header.public-header")!;
   const targets = [header, ...Array.from(header.children)];
   for (const selector of selectors) {
     for (const el of targets) {
