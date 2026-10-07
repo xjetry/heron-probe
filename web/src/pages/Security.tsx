@@ -5,6 +5,7 @@ import { Link } from "react-router";
 import { AdminService, SecurityActionKind } from "../gen/heron/v1/admin_pb";
 import { errorText } from "../api/auth";
 import { passkeyCredential } from "../lib/passkey";
+import { PageHeader } from "../components/PageHeader";
 
 const originReasons: Record<string, string> = {
   https_required: "当前请求不是可信 HTTPS",
@@ -82,21 +83,21 @@ export function Security() {
     const url = URL.createObjectURL(new Blob([codes.join("\n") + "\n"], { type: "text/plain" }));
     const link = document.createElement("a"); link.href = url; link.download = "heron-recovery-codes.txt"; link.click(); URL.revokeObjectURL(url);
   }}>下载恢复码</button></>}<Link to="/login">重新登录</Link></section>;
-  return <section><h1>账户安全</h1><p>Passkey 可无密码登录；启用 TOTP 后，密码登录必须同时提供动态验证码或一次性恢复码。任何认证器变更都会撤销全部会话。</p>
+  return <section><PageHeader title="账户安全" /><p>Passkey 可无密码登录；启用 TOTP 后，密码登录必须同时提供动态验证码或一次性恢复码。任何认证器变更都会撤销全部会话。</p>
     {(error || security.error) && <p role="alert" className="error">{error || errorText(security.error)}</p>}
-    <fieldset disabled={controlsDisabled}><legend>重新证明身份</legend>
+    <fieldset className="card" disabled={controlsDisabled}><legend>重新证明身份</legend>
       <p>操作前输入密码与当前第二因素，或使用已有 Passkey。Passkey 证明五分钟内有效且仅能使用一次。</p>
       <label>管理员密码<input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
       {security.data?.totpEnabled && <><label>当前动态验证码<input autoComplete="one-time-code" inputMode="numeric" value={otp} onChange={(e) => { setOTP(e.target.value); setRecoveryCode(""); }} /></label><label>或一次性恢复码<input autoComplete="off" value={recoveryCode} onChange={(e) => { setRecoveryCode(e.target.value); setOTP(""); }} /></label></>}
       {!!security.data?.passkeys.length && <button type="button" disabled={!passkeyReady} onClick={() => void reauth()}>使用 Passkey 重新认证</button>}
       {proofToken && <p role="status">Passkey 身份证明已准备。</p>}
     </fieldset>
-    <fieldset disabled={controlsDisabled}><legend>TOTP 与恢复码</legend>
+    <fieldset className="card" disabled={controlsDisabled}><legend>TOTP 与恢复码</legend>
       <p>{security.data?.totpEnabled ? `已启用，剩余 ${security.data.recoveryCodesRemaining} 个恢复码。` : "未启用。"}</p>
       {security.data?.totpEnabled ? <><button onClick={() => void change(SecurityActionKind.TOTP_DISABLE)}>关闭 TOTP</button><button onClick={() => void change(SecurityActionKind.RECOVERY_REGENERATE)}>作废旧恢复码并生成新码</button></> : <button onClick={() => void beginTOTP()}>设置 TOTP</button>}
       {pending && <div><p>将以下密钥手动添加到认证器（SHA-1、六位、30 秒）。设置会在五分钟后过期。</p><code>{pending.secret}</code><p><a href={pending.uri}>在认证器中打开</a></p><label>新认证器验证码<input autoComplete="one-time-code" inputMode="numeric" value={setupOTP} onChange={(e) => setSetupOTP(e.target.value)} /></label><button onClick={() => void finishTOTP()}>验证并启用</button></div>}
     </fieldset>
-    <fieldset disabled={controlsDisabled}><legend>Passkey</legend>
+    <fieldset className="card" disabled={controlsDisabled}><legend>Passkey</legend>
       {info && <>
         <p>当前访问来源：<code>{info.currentOrigin || "服务端无法确认可信 HTTPS 来源"}</code></p>
         <p>已绑定来源：<code>{info.origin || "尚未绑定"}</code></p>

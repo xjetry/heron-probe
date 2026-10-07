@@ -258,3 +258,7 @@ span.node-subtext { margin-right: 8px; }
 .hub-card dd { margin: 0; font-size: 18px; font-weight: 600; }
 .hub-card-description { grid-column: 1 / -1; }
 @media (max-width: 900px) { .hub-card, .hub-card dl { grid-template-columns: 1fr; } }
+
+/* 账户安全摘要卡片。 */
+.cards-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+@media (max-width: 900px) { .cards-3 { grid-template-columns: 1fr; } }
