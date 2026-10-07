@@ -84,6 +84,7 @@ test("限定节点凭据的创建、预览、写入、重试、回执和吊销",
     await page.getByRole("button", { name: `更多操作 ${name}（#${tokenId}）`, exact: true }).click();
     await page.getByRole("menuitem", { name: `吊销 ${name}（#${tokenId}）`, exact: true }).click();
     await page.getByRole("menuitem", { name: `确认吊销 ${name}（#${tokenId}）`, exact: true }).click();
+    await page.getByRole("button", { name: `更多操作 ${name}（#${tokenId}）`, exact: true }).waitFor({ state: "hidden" });
     await expect(secret).toHaveCount(0);
     const revoked = await rpc(page, "ListNodes", {}, token);
     expect(revoked.body.code).toBe("unauthenticated");
