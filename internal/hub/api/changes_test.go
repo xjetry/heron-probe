@@ -932,6 +932,12 @@ func TestUpdateNodeChangeCoversEveryEditableField(t *testing.T) {
 		first, second func(*heronv1.UpdateNodeRequest)
 	}
 	values := map[string]pair{
+		"traffic_quota_bytes": {func(r *heronv1.UpdateNodeRequest) { r.TrafficQuotaBytes = 1000 }, func(r *heronv1.UpdateNodeRequest) { r.TrafficQuotaBytes = 2000 }},
+		"traffic_quota_mode": {func(r *heronv1.UpdateNodeRequest) {
+			r.TrafficQuotaMode = heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_RX
+		}, func(r *heronv1.UpdateNodeRequest) {
+			r.TrafficQuotaMode = heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_TX
+		}},
 		"name":              {func(r *heronv1.UpdateNodeRequest) { r.Name = "first" }, func(r *heronv1.UpdateNodeRequest) { r.Name = "second" }},
 		"public":            {func(r *heronv1.UpdateNodeRequest) { r.Public = true }, func(r *heronv1.UpdateNodeRequest) { r.Public = false }},
 		"note":              {func(r *heronv1.UpdateNodeRequest) { r.Note = "first note" }, func(r *heronv1.UpdateNodeRequest) { r.Note = "second note" }},
@@ -1030,6 +1036,10 @@ func TestUpdateNodeChangeCoversEveryEditableField(t *testing.T) {
 			probe := &heronv1.ExecuteChangeRequest{RequestId: "probe-" + name, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{other}}, Change: &heronv1.ExecuteChangeRequest_UpdateNode{UpdateNode: same}}
 			if previewChange(t, client, probe).ExpectedVersion == m.ExpectedVersion {
 				t.Fatalf("changing only %s did not change the expected version", name)
+			}
+			m.RequestId = "stale-" + name
+			if _, err := client.ExecuteChange(t.Context(), connect.NewRequest(m)); connect.CodeOf(err) != connect.CodeAborted {
+				t.Fatalf("stale version after changing %s: %v, want Aborted", name, err)
 			}
 		})
 	}

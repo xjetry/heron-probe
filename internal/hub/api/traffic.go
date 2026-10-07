@@ -13,11 +13,18 @@ import (
 )
 
 // Book 的入账、校正及 Load 都维持累计值在 [0, MaxInt64]，包括手工改库后的恢复，转 uint64 不会变号。
-func trafficProto(e traffic.Entry) *heronv1.Traffic {
-	return &heronv1.Traffic{
+func trafficProto(e traffic.Entry, n store.Node) *heronv1.Traffic {
+	out := &heronv1.Traffic{
 		TotalRx: uint64(e.TotalRx), TotalTx: uint64(e.TotalTx), PeriodRx: uint64(e.PeriodRx), PeriodTx: uint64(e.PeriodTx),
 		PeriodStart: e.PeriodStart.Unix(), NextResetAt: e.NextReset.Unix(), ResetDay: uint32(e.ResetDay),
 	}
+	out.QuotaBytes, out.QuotaMode = n.TrafficQuotaBytes, enumFor(trafficQuotaModes, n.TrafficQuotaMode)
+	used, pct, has := traffic.Quota(e, n.TrafficQuotaBytes, n.TrafficQuotaMode)
+	out.QuotaUsedBytes = used
+	if has {
+		out.QuotaUsedPct = &pct
+	}
+	return out
 }
 
 func (s *Service) GetTraffic(ctx context.Context, _ *connect.Request[heronv1.GetTrafficRequest]) (*connect.Response[heronv1.GetTrafficResponse], error) {
@@ -28,7 +35,7 @@ func (s *Service) GetTraffic(ctx context.Context, _ *connect.Request[heronv1.Get
 	}
 	out := &heronv1.GetTrafficResponse{Now: s.clk.Now().Unix(), Timezone: s.traffic.Zone().String()}
 	for _, n := range nodes {
-		out.Nodes = append(out.Nodes, &heronv1.NodeTraffic{NodeId: n.ID, Name: n.Name, Traffic: trafficProto(s.traffic.View(n.ID))})
+		out.Nodes = append(out.Nodes, &heronv1.NodeTraffic{NodeId: n.ID, Name: n.Name, Traffic: trafficProto(s.traffic.View(n.ID), n)})
 	}
 	return connect.NewResponse(out), nil
 }
@@ -52,5 +59,15 @@ func (s *Service) AdjustTraffic(ctx context.Context, req *connect.Request[heronv
 		return nil, internalError("adjusting traffic failed")
 	}
 	s.log.Info("traffic adjusted", "node", id, "period_rx", e.PeriodRx, "period_tx", e.PeriodTx)
-	return connect.NewResponse(&heronv1.AdjustTrafficResponse{Traffic: trafficProto(e)}), nil
+	if err := s.alerts.EvaluateTrafficNode(context.WithoutCancel(ctx), id); err != nil {
+		s.log.Error("traffic evaluation after adjustment failed", "node", id, "err", err)
+	}
+	n, err := s.store.GetNode(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, notFound(id)
+	}
+	if err != nil {
+		return nil, internalError("reading adjusted node failed")
+	}
+	return connect.NewResponse(&heronv1.AdjustTrafficResponse{Traffic: trafficProto(e, n)}), nil
 }

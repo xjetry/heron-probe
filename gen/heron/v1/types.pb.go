@@ -464,6 +464,62 @@ func (ProbeKind) EnumDescriptor() ([]byte, []int) {
 	return file_heron_v1_types_proto_rawDescGZIP(), []int{6}
 }
 
+// 周期流量计入口径；启用配额时必须显式指定。
+type TrafficQuotaMode int32
+
+const (
+	TrafficQuotaMode_TRAFFIC_QUOTA_MODE_UNSPECIFIED TrafficQuotaMode = 0
+	TrafficQuotaMode_TRAFFIC_QUOTA_MODE_SUM         TrafficQuotaMode = 1
+	TrafficQuotaMode_TRAFFIC_QUOTA_MODE_RX          TrafficQuotaMode = 2
+	TrafficQuotaMode_TRAFFIC_QUOTA_MODE_TX          TrafficQuotaMode = 3
+	TrafficQuotaMode_TRAFFIC_QUOTA_MODE_MAX         TrafficQuotaMode = 4
+)
+
+// Enum value maps for TrafficQuotaMode.
+var (
+	TrafficQuotaMode_name = map[int32]string{
+		0: "TRAFFIC_QUOTA_MODE_UNSPECIFIED",
+		1: "TRAFFIC_QUOTA_MODE_SUM",
+		2: "TRAFFIC_QUOTA_MODE_RX",
+		3: "TRAFFIC_QUOTA_MODE_TX",
+		4: "TRAFFIC_QUOTA_MODE_MAX",
+	}
+	TrafficQuotaMode_value = map[string]int32{
+		"TRAFFIC_QUOTA_MODE_UNSPECIFIED": 0,
+		"TRAFFIC_QUOTA_MODE_SUM":         1,
+		"TRAFFIC_QUOTA_MODE_RX":          2,
+		"TRAFFIC_QUOTA_MODE_TX":          3,
+		"TRAFFIC_QUOTA_MODE_MAX":         4,
+	}
+)
+
+func (x TrafficQuotaMode) Enum() *TrafficQuotaMode {
+	p := new(TrafficQuotaMode)
+	*p = x
+	return p
+}
+
+func (x TrafficQuotaMode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (TrafficQuotaMode) Descriptor() protoreflect.EnumDescriptor {
+	return file_heron_v1_types_proto_enumTypes[7].Descriptor()
+}
+
+func (TrafficQuotaMode) Type() protoreflect.EnumType {
+	return &file_heron_v1_types_proto_enumTypes[7]
+}
+
+func (x TrafficQuotaMode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use TrafficQuotaMode.Descriptor instead.
+func (TrafficQuotaMode) EnumDescriptor() ([]byte, []int) {
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{7}
+}
+
 // 节点的计费周期（§9.4）。管理与公开两端共用，所以与 Billing 一起定义在这里：public.proto 不能 import admin.proto。
 // 未指定表示没有周期（一次性付费或未填）；自动续期要求非未指定。
 type BillingCycle int32
@@ -521,11 +577,11 @@ func (x BillingCycle) String() string {
 }
 
 func (BillingCycle) Descriptor() protoreflect.EnumDescriptor {
-	return file_heron_v1_types_proto_enumTypes[7].Descriptor()
+	return file_heron_v1_types_proto_enumTypes[8].Descriptor()
 }
 
 func (BillingCycle) Type() protoreflect.EnumType {
-	return &file_heron_v1_types_proto_enumTypes[7]
+	return &file_heron_v1_types_proto_enumTypes[8]
 }
 
 func (x BillingCycle) Number() protoreflect.EnumNumber {
@@ -534,7 +590,7 @@ func (x BillingCycle) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use BillingCycle.Descriptor instead.
 func (BillingCycle) EnumDescriptor() ([]byte, []int) {
-	return file_heron_v1_types_proto_rawDescGZIP(), []int{7}
+	return file_heron_v1_types_proto_rawDescGZIP(), []int{8}
 }
 
 // 一次上报里的主机读数。每个读数都是 optional：缺失表示"无读数"，
@@ -1725,7 +1781,14 @@ type Traffic struct {
 	PeriodStart int64 `protobuf:"varint,5,opt,name=period_start,json=periodStart,proto3" json:"period_start,omitempty"`
 	NextResetAt int64 `protobuf:"varint,6,opt,name=next_reset_at,json=nextResetAt,proto3" json:"next_reset_at,omitempty"`
 	// 周期重置日 1–28。
-	ResetDay      uint32 `protobuf:"varint,7,opt,name=reset_day,json=resetDay,proto3" json:"reset_day,omitempty"`
+	ResetDay uint32 `protobuf:"varint,7,opt,name=reset_day,json=resetDay,proto3" json:"reset_day,omitempty"`
+	// 周期配额，0 表示未设配额；随公开节点一起公开。
+	QuotaBytes uint64           `protobuf:"varint,8,opt,name=quota_bytes,json=quotaBytes,proto3" json:"quota_bytes,omitempty"`
+	QuotaMode  TrafficQuotaMode `protobuf:"varint,9,opt,name=quota_mode,json=quotaMode,proto3,enum=heron.v1.TrafficQuotaMode" json:"quota_mode,omitempty"`
+	// 按 quota_mode 计算的周期用量；未设配额时仍有值。
+	QuotaUsedBytes uint64 `protobuf:"varint,10,opt,name=quota_used_bytes,json=quotaUsedBytes,proto3" json:"quota_used_bytes,omitempty"`
+	// 用量占配额的百分比；未设配额时缺失。实时展示可能领先于告警使用的已提交观测。
+	QuotaUsedPct  *float64 `protobuf:"fixed64,11,opt,name=quota_used_pct,json=quotaUsedPct,proto3,oneof" json:"quota_used_pct,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1805,6 +1868,34 @@ func (x *Traffic) GetNextResetAt() int64 {
 func (x *Traffic) GetResetDay() uint32 {
 	if x != nil {
 		return x.ResetDay
+	}
+	return 0
+}
+
+func (x *Traffic) GetQuotaBytes() uint64 {
+	if x != nil {
+		return x.QuotaBytes
+	}
+	return 0
+}
+
+func (x *Traffic) GetQuotaMode() TrafficQuotaMode {
+	if x != nil {
+		return x.QuotaMode
+	}
+	return TrafficQuotaMode_TRAFFIC_QUOTA_MODE_UNSPECIFIED
+}
+
+func (x *Traffic) GetQuotaUsedBytes() uint64 {
+	if x != nil {
+		return x.QuotaUsedBytes
+	}
+	return 0
+}
+
+func (x *Traffic) GetQuotaUsedPct() float64 {
+	if x != nil && x.QuotaUsedPct != nil {
+		return *x.QuotaUsedPct
 	}
 	return 0
 }
@@ -2053,7 +2144,7 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"ProbeTasks\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12)\n" +
-	"\x05tasks\x18\x02 \x03(\v2\x13.heron.v1.ProbeTaskR\x05tasks\"\xdd\x01\n" +
+	"\x05tasks\x18\x02 \x03(\v2\x13.heron.v1.ProbeTaskR\x05tasks\"\xa1\x03\n" +
 	"\aTraffic\x12\x19\n" +
 	"\btotal_rx\x18\x01 \x01(\x04R\atotalRx\x12\x19\n" +
 	"\btotal_tx\x18\x02 \x01(\x04R\atotalTx\x12\x1b\n" +
@@ -2061,7 +2152,15 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\tperiod_tx\x18\x04 \x01(\x04R\bperiodTx\x12!\n" +
 	"\fperiod_start\x18\x05 \x01(\x03R\vperiodStart\x12\"\n" +
 	"\rnext_reset_at\x18\x06 \x01(\x03R\vnextResetAt\x12\x1b\n" +
-	"\treset_day\x18\a \x01(\rR\bresetDay\"\xe6\x01\n" +
+	"\treset_day\x18\a \x01(\rR\bresetDay\x12\x1f\n" +
+	"\vquota_bytes\x18\b \x01(\x04R\n" +
+	"quotaBytes\x129\n" +
+	"\n" +
+	"quota_mode\x18\t \x01(\x0e2\x1a.heron.v1.TrafficQuotaModeR\tquotaMode\x12(\n" +
+	"\x10quota_used_bytes\x18\n" +
+	" \x01(\x04R\x0equotaUsedBytes\x12)\n" +
+	"\x0equota_used_pct\x18\v \x01(\x01H\x00R\fquotaUsedPct\x88\x01\x01B\x11\n" +
+	"\x0f_quota_used_pct\"\xe6\x01\n" +
 	"\aBilling\x12\x14\n" +
 	"\x05price\x18\x01 \x01(\tR\x05price\x12\x1a\n" +
 	"\bcurrency\x18\x02 \x01(\tR\bcurrency\x12;\n" +
@@ -2125,7 +2224,13 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x0fPROBE_KIND_ICMP\x10\x01\x12\x12\n" +
 	"\x0ePROBE_KIND_TCP\x10\x02\x12\x13\n" +
 	"\x0fPROBE_KIND_HTTP\x10\x03\x12\x12\n" +
-	"\x0ePROBE_KIND_DNS\x10\x04*\xf6\x01\n" +
+	"\x0ePROBE_KIND_DNS\x10\x04*\xa4\x01\n" +
+	"\x10TrafficQuotaMode\x12\"\n" +
+	"\x1eTRAFFIC_QUOTA_MODE_UNSPECIFIED\x10\x00\x12\x1a\n" +
+	"\x16TRAFFIC_QUOTA_MODE_SUM\x10\x01\x12\x19\n" +
+	"\x15TRAFFIC_QUOTA_MODE_RX\x10\x02\x12\x19\n" +
+	"\x15TRAFFIC_QUOTA_MODE_TX\x10\x03\x12\x1a\n" +
+	"\x16TRAFFIC_QUOTA_MODE_MAX\x10\x04*\xf6\x01\n" +
 	"\fBillingCycle\x12\x1d\n" +
 	"\x19BILLING_CYCLE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15BILLING_CYCLE_MONTHLY\x10\x01\x12\x1b\n" +
@@ -2148,7 +2253,7 @@ func file_heron_v1_types_proto_rawDescGZIP() []byte {
 	return file_heron_v1_types_proto_rawDescData
 }
 
-var file_heron_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
+var file_heron_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 9)
 var file_heron_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_heron_v1_types_proto_goTypes = []any{
 	(ScopeKind)(0),               // 0: heron.v1.ScopeKind
@@ -2158,26 +2263,27 @@ var file_heron_v1_types_proto_goTypes = []any{
 	(AddressDetectionState)(0),   // 4: heron.v1.AddressDetectionState
 	(PresentedReason)(0),         // 5: heron.v1.PresentedReason
 	(ProbeKind)(0),               // 6: heron.v1.ProbeKind
-	(BillingCycle)(0),            // 7: heron.v1.BillingCycle
-	(*Metrics)(nil),              // 8: heron.v1.Metrics
-	(*Facts)(nil),                // 9: heron.v1.Facts
-	(*ExecutionScope)(nil),       // 10: heron.v1.ExecutionScope
-	(*AgentDiagnostics)(nil),     // 11: heron.v1.AgentDiagnostics
-	(*NetworkInfo)(nil),          // 12: heron.v1.NetworkInfo
-	(*AddressDetection)(nil),     // 13: heron.v1.AddressDetection
-	(*ProbeResult)(nil),          // 14: heron.v1.ProbeResult
-	(*PresentedCertificate)(nil), // 15: heron.v1.PresentedCertificate
-	(*Timeout)(nil),              // 16: heron.v1.Timeout
-	(*ProbeError)(nil),           // 17: heron.v1.ProbeError
-	(*ProbeTask)(nil),            // 18: heron.v1.ProbeTask
-	(*ProbeTasks)(nil),           // 19: heron.v1.ProbeTasks
-	(*Traffic)(nil),              // 20: heron.v1.Traffic
-	(*Billing)(nil),              // 21: heron.v1.Billing
+	(TrafficQuotaMode)(0),        // 7: heron.v1.TrafficQuotaMode
+	(BillingCycle)(0),            // 8: heron.v1.BillingCycle
+	(*Metrics)(nil),              // 9: heron.v1.Metrics
+	(*Facts)(nil),                // 10: heron.v1.Facts
+	(*ExecutionScope)(nil),       // 11: heron.v1.ExecutionScope
+	(*AgentDiagnostics)(nil),     // 12: heron.v1.AgentDiagnostics
+	(*NetworkInfo)(nil),          // 13: heron.v1.NetworkInfo
+	(*AddressDetection)(nil),     // 14: heron.v1.AddressDetection
+	(*ProbeResult)(nil),          // 15: heron.v1.ProbeResult
+	(*PresentedCertificate)(nil), // 16: heron.v1.PresentedCertificate
+	(*Timeout)(nil),              // 17: heron.v1.Timeout
+	(*ProbeError)(nil),           // 18: heron.v1.ProbeError
+	(*ProbeTask)(nil),            // 19: heron.v1.ProbeTask
+	(*ProbeTasks)(nil),           // 20: heron.v1.ProbeTasks
+	(*Traffic)(nil),              // 21: heron.v1.Traffic
+	(*Billing)(nil),              // 22: heron.v1.Billing
 }
 var file_heron_v1_types_proto_depIdxs = []int32{
-	12, // 0: heron.v1.Facts.network:type_name -> heron.v1.NetworkInfo
-	11, // 1: heron.v1.Facts.diagnostics:type_name -> heron.v1.AgentDiagnostics
-	10, // 2: heron.v1.Facts.execution:type_name -> heron.v1.ExecutionScope
+	13, // 0: heron.v1.Facts.network:type_name -> heron.v1.NetworkInfo
+	12, // 1: heron.v1.Facts.diagnostics:type_name -> heron.v1.AgentDiagnostics
+	11, // 2: heron.v1.Facts.execution:type_name -> heron.v1.ExecutionScope
 	0,  // 3: heron.v1.ExecutionScope.kind:type_name -> heron.v1.ScopeKind
 	1,  // 4: heron.v1.ExecutionScope.cpu:type_name -> heron.v1.ResourceScope
 	1,  // 5: heron.v1.ExecutionScope.memory:type_name -> heron.v1.ResourceScope
@@ -2185,21 +2291,22 @@ var file_heron_v1_types_proto_depIdxs = []int32{
 	1,  // 7: heron.v1.ExecutionScope.load:type_name -> heron.v1.ResourceScope
 	2,  // 8: heron.v1.ExecutionScope.notes:type_name -> heron.v1.ScopeNote
 	3,  // 9: heron.v1.AgentDiagnostics.failed_collectors:type_name -> heron.v1.CollectionComponent
-	13, // 10: heron.v1.NetworkInfo.ipv4:type_name -> heron.v1.AddressDetection
-	13, // 11: heron.v1.NetworkInfo.ipv6:type_name -> heron.v1.AddressDetection
+	14, // 10: heron.v1.NetworkInfo.ipv4:type_name -> heron.v1.AddressDetection
+	14, // 11: heron.v1.NetworkInfo.ipv6:type_name -> heron.v1.AddressDetection
 	4,  // 12: heron.v1.AddressDetection.state:type_name -> heron.v1.AddressDetectionState
-	16, // 13: heron.v1.ProbeResult.timeout:type_name -> heron.v1.Timeout
-	17, // 14: heron.v1.ProbeResult.error:type_name -> heron.v1.ProbeError
-	15, // 15: heron.v1.ProbeResult.presented:type_name -> heron.v1.PresentedCertificate
+	17, // 13: heron.v1.ProbeResult.timeout:type_name -> heron.v1.Timeout
+	18, // 14: heron.v1.ProbeResult.error:type_name -> heron.v1.ProbeError
+	16, // 15: heron.v1.ProbeResult.presented:type_name -> heron.v1.PresentedCertificate
 	5,  // 16: heron.v1.PresentedCertificate.reason:type_name -> heron.v1.PresentedReason
 	6,  // 17: heron.v1.ProbeTask.kind:type_name -> heron.v1.ProbeKind
-	18, // 18: heron.v1.ProbeTasks.tasks:type_name -> heron.v1.ProbeTask
-	7,  // 19: heron.v1.Billing.billing_cycle:type_name -> heron.v1.BillingCycle
-	20, // [20:20] is the sub-list for method output_type
-	20, // [20:20] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	19, // 18: heron.v1.ProbeTasks.tasks:type_name -> heron.v1.ProbeTask
+	7,  // 19: heron.v1.Traffic.quota_mode:type_name -> heron.v1.TrafficQuotaMode
+	8,  // 20: heron.v1.Billing.billing_cycle:type_name -> heron.v1.BillingCycle
+	21, // [21:21] is the sub-list for method output_type
+	21, // [21:21] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_heron_v1_types_proto_init() }
@@ -2214,13 +2321,14 @@ func file_heron_v1_types_proto_init() {
 		(*ProbeResult_Timeout)(nil),
 		(*ProbeResult_Error)(nil),
 	}
+	file_heron_v1_types_proto_msgTypes[12].OneofWrappers = []any{}
 	file_heron_v1_types_proto_msgTypes[13].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_heron_v1_types_proto_rawDesc), len(file_heron_v1_types_proto_rawDesc)),
-			NumEnums:      8,
+			NumEnums:      9,
 			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   0,

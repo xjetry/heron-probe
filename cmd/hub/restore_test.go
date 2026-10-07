@@ -282,6 +282,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			removeV36Config(t, cfg)
 			removeV35Config(t, cfg)
 			removeV34Config(t, cfg)
 			removeV34Metrics(t, met)
@@ -340,6 +341,11 @@ func removeV26Config(t *testing.T, config *sql.DB) {
 // 33 只在指标层的探测表上加了对比索引；拆库读用不到它，回退就是删除三个索引。
 // 34 给 node_facts 加了 execution 与 facts_rev，给三张指标表加了 load1_per_core 的 sum/n。
 // 回填更早的版本号之前必须撤掉，否则配置层的 ADD COLUMN 会撞上重复列。
+func removeV36Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "ALTER TABLE node DROP COLUMN traffic_quota_bytes; ALTER TABLE node DROP COLUMN traffic_quota_mode")
+}
+
 func removeV35Config(t *testing.T, config *sql.DB) {
 	t.Helper()
 	restoreExec(t, config, "DROP TABLE probe_cert_presented")
@@ -393,6 +399,7 @@ func TestRestoreV28ConfigSnapshotAddsDNSServerColumn(t *testing.T) {
 	config, metrics := restoreSnapshots(t)
 	cfg := restoreDB(t, config)
 	restoreExec(t, cfg, "INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,config_id) VALUES (8,1,'legacy.example',60,1000,0,0,0,x'02020202020202020202020202020202')")
+	removeV36Config(t, cfg)
 	removeV35Config(t, cfg)
 	removeV34Config(t, cfg)
 	removeV32Config(t, cfg)

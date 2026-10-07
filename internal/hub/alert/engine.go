@@ -16,6 +16,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/clock"
 	"github.com/xjetry/heron-probe/internal/hub/live"
 	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/hub/traffic"
 )
 
 // flush 在一次评估调用结束时、仍持 writeMu 时逐个事件调用 Enqueue：不得阻塞，也不得回调 Engine 的写方法，否则会
@@ -108,9 +109,11 @@ type Engine struct {
 	states   map[stateKey]stateEntry
 	// started 与 startedWall 是本次 Load 的时刻，分别按单调钟与墙钟记：前者是本次启动后没有上报的节点量已离线时长的起点，
 	// 后者只在库里也没有最后上报时充当离线开始（见 offlineStart）。
-	started     time.Duration
-	startedWall time.Time
-	sender      Sender
+	started         time.Duration
+	startedWall     time.Time
+	sender          Sender
+	traffic         *traffic.Book
+	monitoringNodes func(context.Context) ([]store.Node, error)
 }
 
 // New 对缺时区的 Config panic：到期扫描对 nil 时区调用 time.Time.In 会在运行中 panic，装配错误应当在启动时暴露。
@@ -118,9 +121,16 @@ func New(cfg Config, st *store.Store, l *live.Live, clk clock.Clock, log *slog.L
 	if cfg.Location == nil {
 		panic("alert.Config.Location must be set")
 	}
-	return &Engine{cfg: cfg, st: st, live: l, clk: clk, log: log, rules: map[int64]store.AlertRule{}, channels: map[int64]store.NotifyChannel{}, silences: map[int64]store.Silence{}, states: map[stateKey]stateEntry{}}
+	return &Engine{cfg: cfg, st: st, live: l, clk: clk, log: log, monitoringNodes: st.ListMonitoringNodes, rules: map[int64]store.AlertRule{}, channels: map[int64]store.NotifyChannel{}, silences: map[int64]store.Silence{}, states: map[stateKey]stateEntry{}}
 }
 func (e *Engine) SetSender(s Sender) { e.mu.Lock(); defer e.mu.Unlock(); e.sender = s }
+
+// SetTraffic 在启动扫描之前装配；writeMu 与所有评估入口共用，替换时不会混用两份账本。
+func (e *Engine) SetTraffic(b *traffic.Book) {
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
+	e.traffic = b
+}
 
 func (e *Engine) Load(ctx context.Context) error {
 	e.writeMu.Lock()
@@ -237,6 +247,11 @@ func (e *Engine) SaveRule(ctx context.Context, r store.AlertRule) (store.AlertRu
 		return store.AlertRule{}, err
 	}
 	e.publishRule(saved)
+	if saved.Enabled && saved.Kind == store.KindTraffic {
+		if err := e.sweepTraffic(context.WithoutCancel(ctx), saved.ID, 0); err != nil {
+			e.log.Error("traffic sweep after saving rule failed", "rule_id", saved.ID, "err", err)
+		}
+	}
 	// 除此之外，日历类规则只在启动、日界与相关变化（计费、证书观测更新）时评估：若不在这里评估一次，新建、启用或
 	// 改了提前天数的规则要等到下一个日界才有状态。规则已提交，扫描失败只记日志：保存本身成功了，下一次扫描会再评估。
 	if saved.Enabled && calendarRule(saved.Kind) {
@@ -584,12 +599,15 @@ func (e *Engine) SweepOffline(ctx context.Context) error {
 	defer e.writeMu.Unlock()
 	cy := newCycle()
 	defer e.flush(cy)
-	nodes, err := e.st.ListMonitoringNodes(ctx)
+	nodes, err := e.monitoringNodes(ctx)
 	if err != nil {
 		return err
 	}
 	now := e.clk.Mono()
 	var errs []error
+	if err := e.evaluateTraffic(ctx, cy, nodes, 0, 0); err != nil {
+		errs = append(errs, err)
+	}
 	for _, r := range e.Rules() {
 		if !r.Enabled || r.Kind != store.KindOffline {
 			continue

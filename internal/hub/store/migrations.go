@@ -60,6 +60,12 @@ var migrations = map[int]func(*sql.Tx) error{
 	33: execAll(migrationV33Metrics),
 	34: migrateV34,
 	35: migrateV35,
+	36: execAll(migrationV36Config),
+}
+
+var migrationV36Config = []string{
+	"ALTER TABLE node ADD COLUMN traffic_quota_bytes INTEGER NOT NULL DEFAULT 0",
+	"ALTER TABLE node ADD COLUMN traffic_quota_mode TEXT NOT NULL DEFAULT 'sum'",
 }
 
 // 覆盖列（metric_1m 的 reported/observed，上卷表的 minutes/observed/both）已经排在指标列之后。

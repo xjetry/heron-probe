@@ -52,12 +52,14 @@ type NodeEdit struct {
 	Public bool
 	Note   string
 	// PublicRemark 是站长写给访客的一行说明，与 Note 同随 UpdateNode 整体替换；空串即没有。
-	PublicRemark    string
-	TrafficResetDay int
-	OfflineGraceS   int // 0 写 NULL，读侧取 TTL
-	Billing         Billing
-	CountryPin      string // 手动指定的国家，空串表示不指定（回落到查得值）
-	Maintenance     bool   // 维护状态（§9.5）
+	PublicRemark      string
+	TrafficResetDay   int
+	TrafficQuotaBytes uint64
+	TrafficQuotaMode  string
+	OfflineGraceS     int // 0 写 NULL，读侧取 TTL
+	Billing           Billing
+	CountryPin        string // 手动指定的国家，空串表示不指定（回落到查得值）
+	Maintenance       bool   // 维护状态（§9.5）
 	// Tags 整体替换节点的标签集合，空即清空。调用方已按 §10 校验每个名字、按 TagFold 去重并限定个数；
 	// 重复的名字会撞 node_tag 的主键而让整次更新失败。
 	Tags []string
@@ -73,12 +75,14 @@ type Node struct {
 	SortOrder    int32
 	// Position 是节点在全部节点里按 (sort_order, id) 升序的名次，从 1 起，在 queryNodes 里随读算出：
 	// where 条件（标签交集、无标签、公开、监控范围）只筛行，不改名次。
-	Position        uint32
-	CreatedAt       time.Time
-	LastSeenAt      time.Time // 零值表示从未上报
-	LastSource      string    // 最近一次上报的来源地址；空串表示 hub 没有记录到来源，含义见 node.last_source
-	TrafficResetDay int       // 周期重置日 1–28，列默认 1
-	OfflineGraceS   int       // 0 表示列为 NULL，读侧取 TTL。
+	Position          uint32
+	CreatedAt         time.Time
+	LastSeenAt        time.Time // 零值表示从未上报
+	LastSource        string    // 最近一次上报的来源地址；空串表示 hub 没有记录到来源，含义见 node.last_source
+	TrafficResetDay   int       // 周期重置日 1–28，列默认 1
+	TrafficQuotaBytes uint64
+	TrafficQuotaMode  string
+	OfflineGraceS     int // 0 表示列为 NULL，读侧取 TTL。
 	// Facts 为 nil 表示该节点尚未上报过静态信息。
 	Facts          *heronv1.Facts
 	FactsUpdatedAt time.Time
@@ -128,10 +132,10 @@ func (n Node) DisplayCountry() (string, CountrySource) {
 // node_facts。窗口函数在内层计算，先于外层 where 过滤——名次属于全部节点，where（标签交集、无标签、公开、
 // 监控范围）只筛行，不重排名次。
 const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.position, n.created_at, n.last_seen_at, n.traffic_reset_day, n.offline_grace_s,
-	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source, n.country, n.country_ip, n.country_pin, n.maintenance, n.public_remark,
+	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source, n.country, n.country_ip, n.country_pin, n.maintenance, n.public_remark, n.traffic_quota_bytes, n.traffic_quota_mode,
 	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at, f.network, f.diagnostics, f.execution
 	FROM (SELECT id, name, public, note, sort_order, created_at, last_seen_at, traffic_reset_day, offline_grace_s,
-		price, currency, billing_cycle, expires_on, auto_renew, last_source, country, country_ip, country_pin, maintenance, public_remark,
+		price, currency, billing_cycle, expires_on, auto_renew, last_source, country, country_ip, country_pin, maintenance, public_remark, traffic_quota_bytes, traffic_quota_mode,
 		ROW_NUMBER() OVER (ORDER BY sort_order, id) AS position FROM node) n
 	LEFT JOIN node_facts f ON f.node_id = n.id`
 
@@ -149,7 +153,7 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 		var cores, icmp, factsUpdated sql.NullInt64
 		b := &n.Billing
 		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &n.Position, &created, &seen, &n.TrafficResetDay, &grace,
-			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource, &n.Country, &n.CountryIP, &n.CountryPin, &n.Maintenance, &n.PublicRemark,
+			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource, &n.Country, &n.CountryIP, &n.CountryPin, &n.Maintenance, &n.PublicRemark, &n.TrafficQuotaBytes, &n.TrafficQuotaMode,
 			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated, &network, &diagnostics, &execution); err != nil {
 			return nil, err
 		}
@@ -286,6 +290,7 @@ func (s *Store) UpdateNode(ctx context.Context, id int64, e NodeEdit) (billingCh
 
 type NodeUpdateResult struct {
 	BillingChanged bool
+	TrafficChanged bool
 	Tasks          map[int64][]uint64
 	Version        uint64
 	Rules          []AlertRule
@@ -295,10 +300,16 @@ type NodeUpdateResult struct {
 
 // UpdateNodeTasks 在标签替换的同一事务内裁决任务上限、推进版本并读取新覆盖；注册表只发布这份已提交结果。
 func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (result NodeUpdateResult, err error) {
+	if e.TrafficQuotaBytes == 0 {
+		e.TrafficQuotaMode = "sum"
+	}
 	err = s.write(ctx, func(tx *sql.Tx) error {
 		var old Billing
-		err := tx.QueryRow("SELECT price, currency, billing_cycle, expires_on, auto_renew FROM node WHERE id = ?", id).
-			Scan(&old.Price, &old.Currency, &old.Cycle, &old.ExpiresOn, &old.AutoRenew)
+		var oldQuota uint64
+		var oldMode string
+		var oldDay int
+		err := tx.QueryRow("SELECT price, currency, billing_cycle, expires_on, auto_renew, traffic_quota_bytes, traffic_quota_mode, traffic_reset_day FROM node WHERE id = ?", id).
+			Scan(&old.Price, &old.Currency, &old.Cycle, &old.ExpiresOn, &old.AutoRenew, &oldQuota, &oldMode, &oldDay)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -307,8 +318,8 @@ func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (resu
 		}
 		b := e.Billing
 		if _, err := tx.Exec(`UPDATE node SET name = ?, public = ?, note = ?, traffic_reset_day = ?, offline_grace_s = NULLIF(?, 0),
-			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, auto_renew = ?, country_pin = ?, maintenance = ?, public_remark = ? WHERE id = ?`,
-			e.Name, e.Public, e.Note, e.TrafficResetDay, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, e.CountryPin, e.Maintenance, e.PublicRemark, id); err != nil {
+			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, auto_renew = ?, country_pin = ?, maintenance = ?, public_remark = ?, traffic_quota_bytes = ?, traffic_quota_mode = ? WHERE id = ?`,
+			e.Name, e.Public, e.Note, e.TrafficResetDay, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, e.CountryPin, e.Maintenance, e.PublicRemark, e.TrafficQuotaBytes, e.TrafficQuotaMode, id); err != nil {
 			return err
 		}
 		if err := setNodeTags(tx, id, e.Tags); err != nil {
@@ -316,6 +327,7 @@ func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (resu
 		}
 		result, err = s.nodeScopesAfterUpdate(ctx, tx, []int64{id})
 		result.BillingChanged = old != b
+		result.TrafficChanged = oldQuota != e.TrafficQuotaBytes || oldMode != e.TrafficQuotaMode || oldDay != e.TrafficResetDay
 		return err
 	})
 	if err != nil {

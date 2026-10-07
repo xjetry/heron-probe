@@ -56,7 +56,8 @@ type Delta struct{ Rx, Tx int64 }
 
 type entry struct {
 	State
-	dirty bool
+	committed *State
+	dirty     bool
 }
 
 type Book struct {
@@ -100,6 +101,8 @@ func (b *Book) Load(ctx context.Context) error {
 	for _, r := range recs {
 		b.entries[r.NodeID] = &entry{State: State{BootID: r.BootID, NetCounterEpoch: r.NetCounterEpoch, LastRx: r.LastRx, LastTx: r.LastTx, TotalRx: max(r.TotalRx, 0), TotalTx: max(r.TotalTx, 0),
 			PeriodRx: max(r.PeriodRx, 0), PeriodTx: max(r.PeriodTx, 0), PeriodStart: r.PeriodStart}}
+		s := b.entries[r.NodeID].State
+		b.entries[r.NodeID].committed = &s
 	}
 	b.resetDay = days
 	return nil
@@ -213,6 +216,43 @@ func (b *Book) View(nodeID int64) Entry {
 	return b.view(nodeID, b.fresh(nodeID, now))
 }
 
+// Committed 原样复制已提交观测，不按当前重置日滚动。Load、成功的 Flush、Adjust、Commit
+// 是唯一发布点；告警引擎另检查周期有效性，未提交的清零不能造成恢复事件。
+func (b *Book) Committed() map[int64]State {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make(map[int64]State, len(b.entries))
+	for id, e := range b.entries {
+		if e.committed != nil {
+			out[id] = *e.committed
+		}
+	}
+	return out
+}
+
+// Commit 与 Adjust、Flush 共用写锁顺序，周期滚动与写库成功后才发布；锁内不调用告警引擎。
+func (b *Book) Commit(ctx context.Context, nodeID int64) (Entry, error) {
+	b.writeMu.Lock()
+	defer b.writeMu.Unlock()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e := b.entries[nodeID]
+	if e == nil {
+		e = &entry{State: b.fresh(nodeID, b.clk.Now())}
+	}
+	next, _ := b.rolled(e.State, b.day(nodeID), b.clk.Now())
+	skipped, err := b.st.WriteTraffic(ctx, []store.TrafficRecord{record(nodeID, next)})
+	if err != nil {
+		return Entry{}, err
+	}
+	if skipped > 0 {
+		return Entry{}, store.ErrNotFound
+	}
+	e.State, e.committed, e.dirty = next, &next, false
+	b.entries[nodeID] = e
+	return b.view(nodeID, next), nil
+}
+
 // SetResetDay 只更新配置。边界按新日子在下一次入账、读取或刷出时判定：若 now 已越过
 // 按新日子算出的下一个边界，周期立即开始新的一段、周期量清零。
 func (b *Book) SetResetDay(nodeID int64, day int) {
@@ -255,6 +295,7 @@ func (b *Book) Adjust(ctx context.Context, nodeID int64, periodRx, periodTx uint
 		return Entry{}, store.ErrNotFound
 	}
 	e.State, e.dirty = next, false
+	e.committed = &next
 	b.entries[nodeID] = e
 	return b.view(nodeID, next), nil
 }
@@ -276,11 +317,13 @@ func (b *Book) Flush(ctx context.Context) error {
 	b.mu.Lock()
 	var recs []store.TrafficRecord
 	var ids []int64
+	written := map[int64]State{}
 	for id, e := range b.entries {
 		b.roll(id, e, now)
 		if e.dirty {
 			recs = append(recs, record(id, e.State))
 			ids = append(ids, id)
+			written[id] = e.State
 			e.dirty = false
 		}
 	}
@@ -302,6 +345,13 @@ func (b *Book) Flush(ctx context.Context) error {
 	if skipped > 0 {
 		b.log.Warn("traffic rows for deleted nodes dropped", "skipped", skipped)
 	}
+	b.mu.Lock()
+	for id, state := range written {
+		if e := b.entries[id]; e != nil {
+			e.committed = &state
+		}
+	}
+	b.mu.Unlock()
 	return nil
 }
 

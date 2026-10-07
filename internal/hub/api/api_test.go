@@ -136,6 +136,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, loc, slog.Default())
 	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: loc}, st, l, clk, slog.Default())
+	alerts.SetTraffic(book)
 	// 通知与国家查询共用一个出站客户端，与 serve 的装配相同。
 	client := outbound.NewClient(alert.NotifyTimeout)
 	notifier := alert.NewQueue(st, alerts.Channels, client, deps.telegramBase, clk, nil, slog.Default())
@@ -146,6 +147,9 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	}
 	ctx := context.Background()
 	if err := errors.Join(a.Load(ctx), in.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
+		t.Fatal(err)
+	}
+	if err := alerts.SweepTraffic(ctx); err != nil {
 		t.Fatal(err)
 	}
 	hb := &stubHeartbeat{}

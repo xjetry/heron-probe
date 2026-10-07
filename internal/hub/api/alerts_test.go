@@ -583,6 +583,7 @@ func TestAlertKindsMapEveryValue(t *testing.T) {
 	}
 	// 每个存储种类一条最小的合法规则：离线不带专用字段，探测带任务、指标、阈值与持续分钟，到期带提前天数。
 	minimal := map[store.AlertKind]store.AlertRule{
+		store.KindTraffic: {Name: "流量", Kind: store.KindTraffic, AllNodes: true, Threshold: 80},
 		store.KindOffline: {Name: "离线", Kind: store.KindOffline, AllNodes: true},
 		store.KindProbe:   {Name: "探测", Kind: store.KindProbe, AllNodes: true, TaskID: 1, Metric: store.MetricLossPct, Threshold: 10, ForMinutes: 3},
 		store.KindExpiry:  {Name: "到期", Kind: store.KindExpiry, AllNodes: true, DaysBefore: 7},

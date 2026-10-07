@@ -20,6 +20,7 @@ var alertKinds = map[heronv1.AlertKind]store.AlertKind{
 	heronv1.AlertKind_ALERT_KIND_EXPIRY:      store.KindExpiry,
 	heronv1.AlertKind_ALERT_KIND_RESOURCE:    store.KindResource,
 	heronv1.AlertKind_ALERT_KIND_CERT_EXPIRY: store.KindCertExpiry,
+	heronv1.AlertKind_ALERT_KIND_TRAFFIC:     store.KindTraffic,
 }
 var resourceMetrics = map[heronv1.ResourceMetric]store.ResourceMetric{
 	heronv1.ResourceMetric_RESOURCE_METRIC_MEMORY_USED_PCT: store.MetricMemoryUsedPct,

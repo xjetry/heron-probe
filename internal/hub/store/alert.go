@@ -23,6 +23,7 @@ const (
 	KindExpiry     AlertKind = "expiry"
 	KindResource   AlertKind = "resource"
 	KindCertExpiry AlertKind = "cert_expiry"
+	KindTraffic    AlertKind = "traffic"
 )
 
 type ProbeMetric string
@@ -356,7 +357,7 @@ type KindFieldError struct {
 func (e KindFieldError) Error() string { return e.Field + " " + e.Constraint }
 
 // CheckKindFields 裁决种类与专用字段的组合：任务只属于探测与证书到期，探测指标只属于探测，资源指标与恢复阈值只属于资源；
-// 阈值和持续分钟由探测与资源共用，days_before 只属于到期与证书到期，其余种类必须是零值。SaveAlertRule 对非法组合报错而不改写，
+// 阈值由探测、资源与流量共用，持续分钟只属于探测与资源，days_before 只属于到期与证书到期。SaveAlertRule 对非法组合报错而不改写，
 // alert.CheckRule 在保存与载入时调它，协议层经 CheckRule 得到同样的字段与约束（§9.1）。阈值用 != 0 判：NaN 与任何数
 // 都不等，也被拒绝。种类本身是否合法不在这里判断。
 func CheckKindFields(r AlertRule) error {
@@ -368,10 +369,12 @@ func CheckKindFields(r AlertRule) error {
 	if r.Kind != KindProbe && r.Metric != "" {
 		return KindFieldError{"metric", "must be unspecified unless kind is probe"}
 	}
-	if r.Kind != KindProbe && r.Kind != KindResource {
+	if r.Kind != KindProbe && r.Kind != KindResource && r.Kind != KindTraffic {
 		if r.Threshold != 0 {
-			return KindFieldError{"threshold", "must be 0 unless kind is probe or resource"}
+			return KindFieldError{"threshold", "must be 0 unless kind is probe, resource or traffic"}
 		}
+	}
+	if r.Kind != KindProbe && r.Kind != KindResource {
 		if r.ForMinutes != 0 {
 			return KindFieldError{"for_minutes", "must be 0 unless kind is probe or resource"}
 		}
@@ -421,6 +424,9 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 		// 每种规则只落自己的专用列，其余列写 NULL。CheckKindFields 已保证别的种类的专用字段都是零值，NULL 与回显的
 		// 零值一致。
 		var task, metric, threshold, minutes, daysBefore, resourceMetric, recovery any
+		if r.Kind == KindTraffic {
+			threshold = r.Threshold
+		}
 		if r.Kind == KindProbe {
 			if err := requireAlertReference(tx, "probe_task", ObjectProbeTask, int64(r.TaskID)); err != nil {
 				return err

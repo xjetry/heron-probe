@@ -50,7 +50,9 @@ const ddlNode = `CREATE TABLE node (
   maintenance INTEGER NOT NULL DEFAULT 0,
   -- 公开备注：站长写给访客的一行说明（如线路类型），空串表示没有。准入在 api 的 cleanPublicRemark（单行、
   -- 至多 100 个码点、不含控制字符），与私有备注 note 并列。列序与迁移 32 的 ADD COLUMN 结果一致。
-  public_remark TEXT NOT NULL DEFAULT ''
+  public_remark TEXT NOT NULL DEFAULT '',
+  traffic_quota_bytes INTEGER NOT NULL DEFAULT 0,
+  traffic_quota_mode TEXT NOT NULL DEFAULT 'sum'
 )`
 
 const ddlNodeFacts = `CREATE TABLE node_facts (

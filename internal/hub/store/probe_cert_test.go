@@ -102,7 +102,7 @@ func TestCheckKindFieldsCertExpiry(t *testing.T) {
 		want   string
 	}{
 		{"metric", func(r *AlertRule) { r.Metric = MetricRttMs }, "metric must be unspecified unless kind is probe"},
-		{"threshold", func(r *AlertRule) { r.Threshold = 1 }, "threshold must be 0 unless kind is probe or resource"},
+		{"threshold", func(r *AlertRule) { r.Threshold = 1 }, "threshold must be 0 unless kind is probe, resource or traffic"},
 		{"for_minutes", func(r *AlertRule) { r.ForMinutes = 5 }, "for_minutes must be 0 unless kind is probe or resource"},
 		{"resource_metric", func(r *AlertRule) { r.ResourceMetric = MetricCpuPct }, "resource_metric must be unspecified unless kind is resource"},
 		{"recovery_threshold", func(r *AlertRule) { r.RecoveryThreshold = 1 }, "recovery_threshold must be 0 unless kind is resource"},

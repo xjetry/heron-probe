@@ -281,6 +281,15 @@ message ProbeTasks {
   repeated ProbeTask tasks = 2;
 }
 
+// 周期流量计入口径；启用配额时必须显式指定。
+enum TrafficQuotaMode {
+  TRAFFIC_QUOTA_MODE_UNSPECIFIED = 0;
+  TRAFFIC_QUOTA_MODE_SUM = 1;
+  TRAFFIC_QUOTA_MODE_RX = 2;
+  TRAFFIC_QUOTA_MODE_TX = 3;
+  TRAFFIC_QUOTA_MODE_MAX = 4;
+}
+
 message Traffic {
   // 自节点首次上报以来 hub 累计的字节数。校正只改周期用量，总量随同一差值变动。
   uint64 total_rx = 1;
@@ -293,6 +302,13 @@ message Traffic {
   int64 next_reset_at = 6;
   // 周期重置日 1–28。
   uint32 reset_day = 7;
+  // 周期配额，0 表示未设配额；随公开节点一起公开。
+  uint64 quota_bytes = 8;
+  TrafficQuotaMode quota_mode = 9;
+  // 按 quota_mode 计算的周期用量；未设配额时仍有值。
+  uint64 quota_used_bytes = 10;
+  // 用量占配额的百分比；未设配额时缺失。实时展示可能领先于告警使用的已提交观测。
+  optional double quota_used_pct = 11;
 }
 
 // 节点的计费周期（§9.4）。管理与公开两端共用，所以与 Billing 一起定义在这里：public.proto 不能 import admin.proto。

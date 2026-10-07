@@ -76,6 +76,11 @@ func CheckRule(r store.AlertRule) error {
 		return err
 	}
 	switch r.Kind {
+	case store.KindTraffic:
+		if math.IsNaN(r.Threshold) || math.IsInf(r.Threshold, 0) || r.Threshold <= 0 || r.Threshold > 100 {
+			return invalid("threshold", "must be greater than 0 and at most 100")
+		}
+		return checkKindFields(r)
 	case store.KindOffline:
 		return checkKindFields(r)
 	case store.KindExpiry:
@@ -147,7 +152,7 @@ func CheckRule(r store.AlertRule) error {
 		}
 		return nil
 	default:
-		return oneOf("kind", string(r.Kind), string(store.KindOffline), string(store.KindProbe), string(store.KindExpiry), string(store.KindResource), string(store.KindCertExpiry))
+		return oneOf("kind", string(r.Kind), string(store.KindOffline), string(store.KindProbe), string(store.KindExpiry), string(store.KindResource), string(store.KindCertExpiry), string(store.KindTraffic))
 	}
 }
 

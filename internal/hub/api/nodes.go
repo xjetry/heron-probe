@@ -43,6 +43,13 @@ var billingCycles = map[heronv1.BillingCycle]store.BillingCycle{
 	heronv1.BillingCycle_BILLING_CYCLE_QUINQUENNIAL: store.CycleQuinquennial,
 }
 
+var trafficQuotaModes = map[heronv1.TrafficQuotaMode]string{
+	heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_SUM: "sum",
+	heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_RX:  "rx",
+	heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_TX:  "tx",
+	heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_MAX: "max",
+}
+
 // 价格与币种的形状按 §9.4。RE2 的 \d 只匹配 ASCII 数字，全角数字不算。
 var (
 	pricePattern    = regexp.MustCompile(`^\d{1,9}(\.\d{1,2})?$`)
@@ -109,7 +116,8 @@ var countrySources = map[store.CountrySource]heronv1.CountrySource{
 // nodeProto 的 today 是 hub 时区的今天（alert.Today）。
 func nodeProto(n store.Node, today time.Time) *heronv1.Node {
 	out := &heronv1.Node{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, PublicRemark: n.PublicRemark, SortOrder: n.SortOrder, Position: n.Position, CreatedAt: n.CreatedAt.Unix(), Facts: n.Facts, TrafficResetDay: uint32(n.TrafficResetDay),
-		Billing: billingProto(n.Billing, today), LastSource: n.LastSource, CountryIp: n.CountryIP, CountryPin: n.CountryPin, CountryLookup: n.Country, Tags: n.Tags, Maintenance: n.Maintenance}
+		Billing: billingProto(n.Billing, today), LastSource: n.LastSource, CountryIp: n.CountryIP, CountryPin: n.CountryPin, CountryLookup: n.Country, Tags: n.Tags, Maintenance: n.Maintenance,
+		TrafficQuotaBytes: n.TrafficQuotaBytes, TrafficQuotaMode: enumFor(trafficQuotaModes, n.TrafficQuotaMode)}
 	country, source := n.DisplayCountry()
 	out.Country, out.CountrySource = country, countrySources[source]
 	if !n.LastSeenAt.IsZero() {
@@ -234,6 +242,18 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.U
 	if day < minResetDay || day > maxResetDay {
 		return nil, invalid("traffic_reset_day must be between %d and %d; got %d", minResetDay, maxResetDay, day)
 	}
+	quota := req.Msg.GetTrafficQuotaBytes()
+	if quota >= 1<<62 {
+		return nil, invalid("traffic_quota_bytes: must be between 0 (inclusive) and 2^62 (exclusive); got %d", quota)
+	}
+	mode := "sum"
+	if quota > 0 {
+		var ok bool
+		mode, ok = trafficQuotaModes[req.Msg.GetTrafficQuotaMode()]
+		if !ok {
+			return nil, invalid("traffic_quota_mode: must be SUM, RX, TX or MAX when traffic_quota_bytes is nonzero; got %s", req.Msg.GetTrafficQuotaMode())
+		}
+	}
 	if req.Msg.OfflineGraceS == nil {
 		return nil, invalid("offline_grace_s: required; 0 clears it")
 	}
@@ -253,14 +273,23 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.U
 	if err != nil {
 		return nil, err
 	}
-	edit := store.NodeEdit{Name: name, Public: req.Msg.GetPublic(), Note: note, PublicRemark: remark, TrafficResetDay: day, OfflineGraceS: int(grace), Billing: billing, CountryPin: pin, Maintenance: req.Msg.GetMaintenance(), Tags: tags}
+	edit := store.NodeEdit{Name: name, Public: req.Msg.GetPublic(), Note: note, PublicRemark: remark, TrafficResetDay: day, TrafficQuotaBytes: quota, TrafficQuotaMode: mode, OfflineGraceS: int(grace), Billing: billing, CountryPin: pin, Maintenance: req.Msg.GetMaintenance(), Tags: tags}
 	s.nodeMu.Lock()
+	trafficChanged := false
 	billingChanged, err := s.alerts.UpdateScope(func() (store.NodeUpdateResult, error) {
-		return s.probes.UpdateNode(ctx, req.Msg.GetId(), edit)
+		result, err := s.probes.UpdateNode(ctx, req.Msg.GetId(), edit)
+		trafficChanged = result.TrafficChanged
+		return result, err
 	})
 	if err == nil {
 		// 只有库提交成功才改内存；nodeMu 跨越两次写入并与删除共用，失败或并发请求都不能使两者分叉。
 		s.traffic.SetResetDay(req.Msg.GetId(), day)
+		if trafficChanged {
+			if _, commitErr := s.traffic.Commit(context.WithoutCancel(ctx), req.Msg.GetId()); commitErr != nil {
+				s.log.Error("traffic commit after node update failed", "node", req.Msg.GetId(), "err", commitErr)
+				trafficChanged = false
+			}
+		}
 	}
 	s.nodeMu.Unlock()
 	if errors.Is(err, store.ErrNotFound) {
@@ -277,6 +306,11 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.U
 	if billingChanged {
 		if err := s.alerts.SweepExpiry(context.WithoutCancel(ctx)); err != nil {
 			s.log.Error("expiry sweep after node update failed", "node", req.Msg.GetId(), "err", err)
+		}
+	}
+	if trafficChanged {
+		if err := s.alerts.EvaluateTrafficNode(context.WithoutCancel(ctx), req.Msg.GetId()); err != nil {
+			s.log.Error("traffic evaluation after node update failed", "node", req.Msg.GetId(), "err", err)
 		}
 	}
 	// 扫描之后才回读，响应里的到期日与 days_left 已是推后之后的值。放锁之后节点可能已被并发的 DeleteNode 删掉，

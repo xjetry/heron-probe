@@ -18,7 +18,7 @@ func (s *Service) GetSnapshot(ctx context.Context, _ *connect.Request[heronv1.Ge
 	}
 	out := &heronv1.GetSnapshotResponse{Now: s.clk.Now().Unix(), ReportIntervalMs: uint32(s.cfg.ReportInterval / time.Millisecond), HubVersion: s.cfg.HubVersion, BoundAgentVersion: s.boundAgent()}
 	for _, n := range nodes {
-		st := &heronv1.NodeStatus{Id: n.ID, Name: n.Name, Traffic: trafficProto(s.traffic.View(n.ID))}
+		st := &heronv1.NodeStatus{Id: n.ID, Name: n.Name, Traffic: trafficProto(s.traffic.View(n.ID), n)}
 		st.Online, st.LastSeenAt, st.Metrics = liveState(s.live, n)
 		out.Nodes = append(out.Nodes, st)
 	}

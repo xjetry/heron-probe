@@ -431,7 +431,7 @@ func TestSaveAlertRuleExpiryKind(t *testing.T) {
 		{func(r *heronv1.AlertRule) { r.DaysBefore = 366 }, "rule.days_before must be between 1 and 365"},
 		{func(r *heronv1.AlertRule) { r.TaskId = 1 }, "rule.task_id must be 0 unless kind is probe or cert_expiry"},
 		{func(r *heronv1.AlertRule) { r.Metric = heronv1.ProbeMetric_PROBE_METRIC_LOSS_PCT }, "rule.metric must be unspecified unless kind is probe"},
-		{func(r *heronv1.AlertRule) { r.Threshold = 1 }, "rule.threshold must be 0 unless kind is probe or resource"},
+		{func(r *heronv1.AlertRule) { r.Threshold = 1 }, "rule.threshold must be 0 unless kind is probe, resource or traffic"},
 		{func(r *heronv1.AlertRule) { r.ForMinutes = 1 }, "rule.for_minutes must be 0 unless kind is probe or resource"},
 	} {
 		r := expiryRuleProto()
@@ -457,7 +457,7 @@ func TestSaveAlertRuleRejectsFieldsOfOtherKinds(t *testing.T) {
 	}{
 		{offline(func(r *heronv1.AlertRule) { r.TaskId = 1 }), "rule.task_id must be 0 unless kind is probe or cert_expiry"},
 		{offline(func(r *heronv1.AlertRule) { r.Metric = heronv1.ProbeMetric_PROBE_METRIC_RTT_MS }), "rule.metric must be unspecified unless kind is probe"},
-		{offline(func(r *heronv1.AlertRule) { r.Threshold = 5 }), "rule.threshold must be 0 unless kind is probe or resource"},
+		{offline(func(r *heronv1.AlertRule) { r.Threshold = 5 }), "rule.threshold must be 0 unless kind is probe, resource or traffic"},
 		{offline(func(r *heronv1.AlertRule) { r.ForMinutes = 3 }), "rule.for_minutes must be 0 unless kind is probe or resource"},
 		{offline(func(r *heronv1.AlertRule) { r.DaysBefore = 7 }), "rule.days_before must be 0 unless kind is expiry or cert_expiry"},
 		{probeWithDays, "rule.days_before must be 0 unless kind is expiry or cert_expiry"},

@@ -234,7 +234,7 @@ func (c *Change) snapshot(tx *sql.Tx) (string, string, error) {
 	var secretQuery string
 	switch c.Kind {
 	case "node":
-		queries = []snapshotQuery{{"node", `SELECT id,name,public,note,traffic_reset_day,offline_grace_s,price,currency,billing_cycle,expires_on,auto_renew,country_pin,maintenance,public_remark FROM node WHERE id=?`},
+		queries = []snapshotQuery{{"node", `SELECT id,name,public,note,traffic_reset_day,offline_grace_s,price,currency,billing_cycle,expires_on,auto_renew,country_pin,maintenance,public_remark,traffic_quota_bytes,traffic_quota_mode FROM node WHERE id=?`},
 			{"tags", `SELECT t.name FROM node_tag n JOIN tag t ON t.id=n.tag_id WHERE n.node_id=? ORDER BY t.name_fold`}}
 		secretQuery = "SELECT hex(token_hash) FROM node WHERE id=?"
 	case "probe":

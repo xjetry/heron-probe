@@ -58,7 +58,7 @@ func TestSaveAlertRuleCertExpiryKind(t *testing.T) {
 		{func(r *heronv1.AlertRule) { r.DaysBefore = 366 }, "rule.days_before must be between 1 and 365"},
 		{func(r *heronv1.AlertRule) { r.TaskId = 0 }, "rule.task_id must not be 0"},
 		{func(r *heronv1.AlertRule) { r.Metric = heronv1.ProbeMetric_PROBE_METRIC_LOSS_PCT }, "rule.metric must be unspecified unless kind is probe"},
-		{func(r *heronv1.AlertRule) { r.Threshold = 1 }, "rule.threshold must be 0 unless kind is probe or resource"},
+		{func(r *heronv1.AlertRule) { r.Threshold = 1 }, "rule.threshold must be 0 unless kind is probe, resource or traffic"},
 		{func(r *heronv1.AlertRule) { r.ForMinutes = 1 }, "rule.for_minutes must be 0 unless kind is probe or resource"},
 		{func(r *heronv1.AlertRule) { r.ResourceMetric = heronv1.ResourceMetric_RESOURCE_METRIC_MEMORY_USED_PCT }, "rule.resource_metric must be unspecified unless kind is resource"},
 		{func(r *heronv1.AlertRule) { r.RecoveryThreshold = 1 }, "rule.recovery_threshold must be 0 unless kind is resource"},

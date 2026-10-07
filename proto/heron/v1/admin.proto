@@ -490,6 +490,9 @@ message Node {
   // 是同一个值，私有节点只有这里可见。随 UpdateNode 整体替换；CreateNode 不接受（与 note 同口径，新节点为空串）。
   // 单行、至多 100 个 Unicode 码点、不含控制字符（含换行）。
   string public_remark = 22;
+  // 周期流量配额，范围 [0, 2^62) 字节；0 表示未设配额。
+  uint64 traffic_quota_bytes = 23;
+  TrafficQuotaMode traffic_quota_mode = 24;
 }
 
 // 国家显示值的来源。
@@ -556,6 +559,10 @@ message UpdateNodeRequest {
   // 公开备注，整体替换：缺失即空串（清除）。单行、至多 100 个 Unicode 码点、不含控制字符（含换行）；
   // 超长返回 InvalidArgument，不截断。
   string public_remark = 11;
+  // 整体替换，缺省的 0 停用配额；范围 [0, 2^62) 字节。
+  uint64 traffic_quota_bytes = 12;
+  // 配额非 0 时必须指定 sum、rx、tx 或 max；配额为 0 时忽略并存 sum。
+  TrafficQuotaMode traffic_quota_mode = 13;
 }
 message UpdateNodeResponse {
   Node node = 1;
@@ -818,6 +825,8 @@ enum AlertKind {
   // 任务（必须是 https:// 的 HTTP 任务）观测到的证书到期日距今不超过 days_before 天
   // （含已过期）即触发，数据源是 probe_cert 里该节点该任务的最新观测。
   ALERT_KIND_CERT_EXPIRY = 5;
+  // 已提交周期用量达到配额的 threshold 百分比即触发；threshold 范围 (0, 100]。
+  ALERT_KIND_TRAFFIC = 6;
 }
 enum ResourceMetric {
   RESOURCE_METRIC_UNSPECIFIED = 0;
@@ -842,7 +851,7 @@ message AlertRule {
   int64 id = 1;
   // 1–64 个字符。
   string name = 2;
-  // 必须为离线、探测、到期或资源，未指定值不允许保存。
+  // 必须为离线、探测、到期、资源、证书到期或流量，未指定值不允许保存。
   AlertKind kind = 3;
   bool enabled = 4;
   // 显式作用域，升序去重；all_nodes 为假时就是作用域，保存时不可为空。
