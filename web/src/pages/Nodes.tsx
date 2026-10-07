@@ -225,9 +225,6 @@ export function Nodes() {
         <button type="button" className="link" disabled={editing} onClick={() => setSelected([])}>清除选择</button>
       </div>}
       <p className="node-subtext order-help" id="node-order-help">拖动手柄调整顺序，松开后自动保存。也可使用移动菜单，或聚焦手柄后按方向键、Home / End。</p>
-      {list.length === 0 && (scope.lagging && boundAgentVersion === undefined
-        ? <p className="node-empty" role="status">无法取得 hub 绑定的 agent 版本，「agent 版本落后」筛选暂时没有结果。</p>
-        : <p className="node-empty" role="status">{narrowed ? "没有匹配的节点。" : "还没有节点，添加节点后安装 agent 即可开始监控。"}</p>)}
       <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
         <table className="nodes node-management"><thead><tr>
           <th data-column="select"><MixedCheckbox label="选择当前结果全部节点" checked={selectedNodes.length === 0 ? false : selectedNodes.length === list.length ? true : "mixed"} disabled={editing || nodes.stale || list.length === 0} onChange={() => setSelected(selectedNodes.length === list.length ? [] : list.map((node) => node.id))} /></th>
@@ -253,6 +250,9 @@ export function Nodes() {
           })}</tbody>
         </table>
       </div>
+      {list.length === 0 && (scope.lagging && boundAgentVersion === undefined
+        ? <p className="node-empty" role="status">无法取得 hub 绑定的 agent 版本，「agent 版本落后」筛选暂时没有结果。</p>
+        : <p className="node-empty" role="status">{narrowed ? "没有匹配的节点。" : "还没有节点，添加节点后安装 agent 即可开始监控。"}</p>)}
     </> : gate.loading}
     <TagManager tags={tags.data?.tags} pending={removeTag.isPending} onDelete={(name) => removeTag.mutate({ name })} />
     {batchEditor && <BatchNodeTagsEditor nodes={batchEditor.nodes} knownTags={batchEditor.tags} opener={batchEditor.opener} saving={batchUpdate.isPending} error={batchUpdate.error} onClose={() => setBatchEditor(null)}
@@ -281,8 +281,10 @@ function NodeRow({ node, live, boundAgentVersion, selection, orderControl, order
       <div className="node-name-line"><Link to={`/nodes/${node.id}`} aria-label={label}>{node.name}</Link><NodeCountry node={node} />
         {node.public && <span className="chip chip-public">公开</span>}
         {lagging && <span className="badge-attention" title={`低于 hub 绑定的 agent 版本 ${boundAgentVersion}`}>agent 低于 {boundAgentVersion}</span>}</div>
-      {node.tags.length > 0 && <ul className="tag-chips" aria-label={`标签 ${label}`}>{node.tags.map((tag) => <li key={tag} className="chip">{tag}</li>)}</ul>}
-      {node.note && <p className="node-note muted" title={node.note}>{node.note}</p>}
+      {(node.tags.length > 0 || node.note) && <div className="node-secondary">
+        {node.tags.length > 0 && <ul className="tag-chips" aria-label={`标签 ${label}`} title={node.tags.join("、")}>{node.tags.map((tag) => <li key={tag} className="chip">{tag}</li>)}</ul>}
+        {node.note && <p className="node-note muted" title={node.note}>{node.note}</p>}
+      </div>}
     </td>
     <td data-column="addresses" data-label="IPv4 / IPv6"><NodeAddresses network={node.facts?.network} /></td>
     <td data-column="status" data-label="状态">{status ? <StatusBadge status={status} /> : <span className="muted">状态未知</span>}</td>
