@@ -228,10 +228,10 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 		return err
 	}
 	ctx := context.Background()
-	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx), updateManager.Load(ctx)); err != nil {
+	if err := errors.Join(a.Load(ctx), svc.Load(ctx), reg.Load(ctx), updateManager.Load(ctx)); err != nil {
 		return err
 	}
-	if err := alerts.SweepTraffic(ctx); err != nil {
+	if err := loadTrafficAlerts(ctx, book, alerts); err != nil {
 		return err
 	}
 	// 续投读取已加载的渠道快照；所有 Load 成功后才入队，后台 worker 尚未启动。

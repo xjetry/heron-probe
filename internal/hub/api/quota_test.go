@@ -12,6 +12,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/traffic"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
 func TestUpdateNodeTrafficQuotaValidation(t *testing.T) {
@@ -53,6 +54,136 @@ func TestUpdateNodeTrafficQuotaValidation(t *testing.T) {
 	n := h.update(t, &heronv1.UpdateNodeRequest{Id: id, Name: "quota", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0)})
 	if n.TrafficQuotaBytes != 0 || n.TrafficQuotaMode != heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_SUM {
 		t.Fatalf("omission did not clear quota: %v", n)
+	}
+}
+
+func TestTrafficQuotaImmediateRecoveryInputs(t *testing.T) {
+	for _, action := range []string{"adjust", "quota", "mode", "clear", "threshold", "change"} {
+		t.Run(action, func(t *testing.T) {
+			h := newHarness(t, "")
+			h.login(t)
+			id, _ := h.createNode(t, "quota")
+			quotaNode(t, h, id, 100, heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_SUM, 1)
+			_, err := h.admin.AdjustTraffic(t.Context(), connect.NewRequest(&heronv1.AdjustTrafficRequest{NodeId: id, PeriodRx: 60, PeriodTx: 30}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			r, err := h.alerts.SaveRule(t.Context(), store.AlertRule{Name: "quota", Kind: store.KindTraffic, Enabled: true, AllNodes: true, Threshold: 80})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(quotaEvents(t, h)) != 1 {
+				t.Fatal("save did not fire")
+			}
+			switch action {
+			case "adjust":
+				_, err = h.admin.AdjustTraffic(t.Context(), connect.NewRequest(&heronv1.AdjustTrafficRequest{NodeId: id, PeriodRx: 10}))
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "quota":
+				quotaNode(t, h, id, 1000, heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_SUM, 1)
+			case "mode":
+				quotaNode(t, h, id, 100, heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_TX, 1)
+			case "clear":
+				quotaNode(t, h, id, 0, heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_SUM, 1)
+			case "threshold":
+				r.Threshold = 100
+				if _, err := h.alerts.SaveRule(t.Context(), r); err != nil {
+					t.Fatal(err)
+				}
+			case "change":
+				client, _, _ := grantedClient(t, h, &heronv1.TokenGrant{NodeIds: []int64{id}, Permissions: []heronv1.TokenPermission{heronv1.TokenPermission_TOKEN_PERMISSION_CONFIGURE}})
+				m := &heronv1.ExecuteChangeRequest{RequestId: "quota", UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"traffic_quota_bytes"}}, Change: &heronv1.ExecuteChangeRequest_UpdateNode{UpdateNode: &heronv1.UpdateNodeRequest{Id: id, TrafficQuotaBytes: 1000}}}
+				previewChange(t, client, m)
+				if _, err := client.ExecuteChange(t.Context(), connect.NewRequest(m)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			events := quotaEvents(t, h)
+			if len(events) != 2 || events[0].Transition != store.TransitionRecovered {
+				t.Fatalf("immediate recovery=%+v", events)
+			}
+		})
+	}
+}
+
+func TestTrafficQuotaCrashBeforeFlushKeepsCommittedFiring(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	id, tok := h.createNode(t, "quota")
+	quotaNode(t, h, id, 100, heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_SUM, 1)
+	if err := h.report(t, tok, netCounters("boot", 100, 100)); err != nil {
+		t.Fatal(err)
+	}
+	h.clk.Advance(10 * time.Second)
+	if err := h.report(t, tok, netCounters("boot", 190, 100)); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.book.Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	_, err := h.alerts.SaveRule(t.Context(), store.AlertRule{Name: "quota", Kind: store.KindTraffic, Enabled: true, AllNodes: true, Threshold: 80})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 跨周期后的未提交清零只存在实时账本；崩溃重建时不能先恢复再触发。
+	h.clk.SetWall(time.Date(2026, 2, 1, 0, 0, 1, 0, time.UTC))
+	h.book.View(id)
+	if err := h.alerts.SweepOffline(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(quotaEvents(t, h)) != 1 {
+		t.Fatal("uncommitted rollover converted firing before crash")
+	}
+	book := traffic.New(h.store, h.clk, time.UTC, slog.Default())
+	if err := book.Load(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	engine := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, h.store, h.live, h.clk, slog.Default())
+	engine.SetTraffic(book)
+	if err := engine.Load(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.SweepTraffic(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(quotaEvents(t, h)) != 1 {
+		t.Fatal("crash restart repeated transitions")
+	}
+	if err := book.Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.SweepOffline(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if events := quotaEvents(t, h); len(events) != 2 || events[0].Transition != store.TransitionRecovered {
+		t.Fatalf("durable rollover did not recover: %+v", events)
+	}
+}
+
+func TestTrafficQuotaSuccessfulResetEditSequence(t *testing.T) {
+	h := newHarness(t, "")
+	h.clk.SetWall(time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC))
+	h.login(t)
+	id, _ := h.createNode(t, "quota")
+	quotaNode(t, h, id, 100, heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_SUM, 1)
+	if _, err := h.admin.AdjustTraffic(t.Context(), connect.NewRequest(&heronv1.AdjustTrafficRequest{NodeId: id, PeriodRx: 90})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.alerts.SaveRule(t.Context(), store.AlertRule{Name: "quota", Kind: store.KindTraffic, Enabled: true, AllNodes: true, Threshold: 80}); err != nil {
+		t.Fatal(err)
+	}
+	quotaNode(t, h, id, 100, heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_SUM, 5)
+	if _, err := h.admin.GetTraffic(t.Context(), connect.NewRequest(&heronv1.GetTrafficRequest{})); err != nil {
+		t.Fatal(err)
+	}
+	quotaNode(t, h, id, 100, heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_SUM, 1)
+	if err := h.alerts.SweepOffline(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if events := quotaEvents(t, h); len(events) != 2 || events[0].Transition != store.TransitionRecovered {
+		t.Fatalf("reset edit notifications=%+v", events)
 	}
 }
 

@@ -28,12 +28,12 @@ ON CONFLICT (node_id) DO UPDATE SET boot_id = excluded.boot_id, last_rx = exclud
   total_rx = excluded.total_rx, total_tx = excluded.total_tx, period_rx = excluded.period_rx, period_tx = excluded.period_tx,
   period_start = excluded.period_start, updated_at = excluded.updated_at, net_counter_epoch = excluded.net_counter_epoch`
 
-// WriteTraffic 在一个事务里写入全部记录。节点已删除的记录跳过并计数：删除后迟到的
+// WriteTraffic 在一个事务里写入全部记录，并返回实际写入的节点 ID。节点已删除的记录跳过：删除后迟到的
 // 刷出不得重建从属行，与 WriteMinuteBatch 同一处理；存在性在写事务内判定，与 DeleteNode 串行。
-func (s *Store) WriteTraffic(ctx context.Context, recs []TrafficRecord) (int, error) {
-	skipped := 0
+func (s *Store) WriteTraffic(ctx context.Context, recs []TrafficRecord) ([]int64, error) {
+	var written []int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		skipped = 0
+		written = nil
 		now := s.clk.Now().Unix()
 		for _, r := range recs {
 			if err := agentwire.ValidateCounterEpoch(r.NetCounterEpoch); err != nil {
@@ -44,17 +44,20 @@ func (s *Store) WriteTraffic(ctx context.Context, recs []TrafficRecord) (int, er
 				return err
 			}
 			if !exists {
-				skipped++
 				continue
 			}
 			if _, err := tx.Exec(upsertTraffic, r.NodeID, r.BootID, r.LastRx, r.LastTx, r.TotalRx, r.TotalTx,
 				r.PeriodRx, r.PeriodTx, r.PeriodStart.Unix(), now, r.NetCounterEpoch); err != nil {
 				return err
 			}
+			written = append(written, r.NodeID)
 		}
 		return nil
 	})
-	return skipped, err
+	if err != nil {
+		return nil, err
+	}
+	return written, nil
 }
 
 func (s *Store) LoadTraffic(ctx context.Context) ([]TrafficRecord, error) {

@@ -26,7 +26,7 @@ const NoBaseline int64 = -1
 
 type Storage interface {
 	LoadTraffic(ctx context.Context) ([]store.TrafficRecord, error)
-	WriteTraffic(ctx context.Context, recs []store.TrafficRecord) (int, error)
+	WriteTraffic(ctx context.Context, recs []store.TrafficRecord) ([]int64, error)
 	TrafficResetDays(ctx context.Context) (map[int64]int, error)
 }
 
@@ -67,10 +67,10 @@ type Book struct {
 	log *slog.Logger
 
 	// 同一节点写库的顺序与内存状态更新的顺序一致，否则 Flush 的旧快照会盖掉已成功的校正。
-	// Flush 与 Adjust 统一按 writeMu → mu 取锁；Flush 等待写库时释放 mu，入账不等待数据库。
+	// Flush、Adjust 与 Commit 统一按 writeMu → mu 取锁；Flush 等待写库时释放 mu，入账不等待数据库。
 	writeMu sync.Mutex
 
-	// mu 保护 entries 与 resetDay。Adjust 在 mu 下同步写库：持锁期间所有入账等待，
+	// mu 保护 entries 与 resetDay。Adjust 与 Commit 在 mu 下同步写库：持锁期间所有入账等待，
 	// 换来"返回成功即已持久化、返回失败则内存与库都未变"；校正是罕见的管理操作。
 	mu       sync.Mutex
 	entries  map[int64]*entry
@@ -241,11 +241,11 @@ func (b *Book) Commit(ctx context.Context, nodeID int64) (Entry, error) {
 		e = &entry{State: b.fresh(nodeID, b.clk.Now())}
 	}
 	next, _ := b.rolled(e.State, b.day(nodeID), b.clk.Now())
-	skipped, err := b.st.WriteTraffic(ctx, []store.TrafficRecord{record(nodeID, next)})
+	written, err := b.st.WriteTraffic(ctx, []store.TrafficRecord{record(nodeID, next)})
 	if err != nil {
 		return Entry{}, err
 	}
-	if skipped > 0 {
+	if len(written) == 0 {
 		return Entry{}, store.ErrNotFound
 	}
 	e.State, e.committed, e.dirty = next, &next, false
@@ -287,11 +287,11 @@ func (b *Book) Adjust(ctx context.Context, nodeID int64, periodRx, periodTx uint
 	next.TotalRx = satAdd(max(next.TotalRx-next.PeriodRx, 0), rx)
 	next.TotalTx = satAdd(max(next.TotalTx-next.PeriodTx, 0), tx)
 	next.PeriodRx, next.PeriodTx = rx, tx
-	skipped, err := b.st.WriteTraffic(ctx, []store.TrafficRecord{record(nodeID, next)})
+	written, err := b.st.WriteTraffic(ctx, []store.TrafficRecord{record(nodeID, next)})
 	if err != nil {
 		return Entry{}, err
 	}
-	if skipped > 0 {
+	if len(written) == 0 {
 		return Entry{}, store.ErrNotFound
 	}
 	e.State, e.dirty = next, false
@@ -331,7 +331,7 @@ func (b *Book) Flush(ctx context.Context) error {
 	if len(recs) == 0 {
 		return nil
 	}
-	skipped, err := b.st.WriteTraffic(ctx, recs)
+	committed, err := b.st.WriteTraffic(ctx, recs)
 	if err != nil {
 		b.mu.Lock()
 		for _, id := range ids {
@@ -342,11 +342,12 @@ func (b *Book) Flush(ctx context.Context) error {
 		b.mu.Unlock()
 		return err
 	}
-	if skipped > 0 {
+	if skipped := len(recs) - len(committed); skipped > 0 {
 		b.log.Warn("traffic rows for deleted nodes dropped", "skipped", skipped)
 	}
 	b.mu.Lock()
-	for id, state := range written {
+	for _, id := range committed {
+		state := written[id]
 		if e := b.entries[id]; e != nil {
 			e.committed = &state
 		}

@@ -1,12 +1,14 @@
 package traffic
 
 import (
+	"context"
 	"errors"
 	"math"
 	"testing"
 	"time"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -29,6 +31,36 @@ func TestQuotaModes(t *testing.T) {
 		if used != tc.used || pct != tc.pct || has != tc.has {
 			t.Fatalf("%+v: got %d/%g/%t", tc, used, pct, has)
 		}
+	}
+}
+
+type partialTrafficStore struct{ *memStore }
+
+func (m partialTrafficStore) WriteTraffic(ctx context.Context, recs []store.TrafficRecord) ([]int64, error) {
+	var kept []store.TrafficRecord
+	for _, r := range recs {
+		if r.NodeID == 1 {
+			kept = append(kept, r)
+		}
+	}
+	return m.memStore.WriteTraffic(ctx, kept)
+}
+
+func TestCommittedExcludesSkippedWrites(t *testing.T) {
+	m := newMem()
+	b, _ := newBook(t, m)
+	b.st = partialTrafficStore{m}
+	for _, id := range []int64{1, 2} {
+		b.Account(id, &heronv1.Metrics{BootId: "b", NetRxTotal: proto.Uint64(10), NetTxTotal: proto.Uint64(20)})
+	}
+	if err := b.Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Committed(); len(got) != 1 || got[1].LastRx != 10 {
+		t.Fatalf("committed includes skipped write: %+v", got)
+	}
+	if _, err := b.Commit(t.Context(), 2); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Commit skipped: %v", err)
 	}
 }
 

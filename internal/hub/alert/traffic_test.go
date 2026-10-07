@@ -146,3 +146,51 @@ func TestTrafficSummaryFacts(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestTrafficSilenceMaintenanceAndRetry(t *testing.T) {
+	for _, mode := range []string{"maintenance", "silence", "retry"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newFixture(t)
+			b := traffic.New(f.st, f.clk, f.loc, f.log)
+			must(t, b.Load(t.Context()))
+			f.e.SetTraffic(b)
+			edit := store.NodeEdit{Name: "quota", TrafficResetDay: 1, TrafficQuotaBytes: 100, TrafficQuotaMode: "sum", Maintenance: mode == "maintenance"}
+			_, err := f.st.UpdateNode(t.Context(), f.ids[0], edit)
+			must(t, err)
+			if mode == "silence" {
+				f.silence(t, store.Silence{Name: "quiet", Enabled: true, AllNodes: true, Kind: store.SilenceOnce, FromAt: f.clk.Now().Add(-time.Minute).Unix(), UntilAt: f.clk.Now().Add(time.Hour).Unix()})
+			}
+			r := f.rule(t, store.AlertRule{Name: "quota", Kind: store.KindTraffic, Enabled: true, NodeIDs: f.ids[:1], Threshold: 80})
+			_, err = b.Adjust(t.Context(), f.ids[0], 90, 0)
+			must(t, err)
+			if mode == "retry" {
+				deliverySQL(t, deliveryDB(t, f), "CREATE TRIGGER reject_quota BEFORE INSERT ON alert_event BEGIN SELECT RAISE(ABORT,'event unavailable'); END")
+			}
+			err = f.e.SweepOffline(t.Context())
+			if mode == "retry" {
+				if err == nil || len(f.events(t)) != 0 || stateOf(f.e, r.ID, f.ids[0]) == store.StateFiring {
+					t.Fatalf("failed write published: err=%v events=%v", err, f.events(t))
+				}
+				deliverySQL(t, deliveryDB(t, f), "DROP TRIGGER reject_quota")
+				f.sweep(t)
+			} else {
+				must(t, err)
+			}
+			_, err = b.Adjust(t.Context(), f.ids[0], 10, 0)
+			must(t, err)
+			edit.Maintenance = false
+			_, err = f.st.UpdateNode(t.Context(), f.ids[0], edit)
+			must(t, err)
+			f.sweep(t)
+			events := f.events(t)
+			if len(events) != 2 || events[0].Transition != store.TransitionRecovered || events[1].Transition != store.TransitionFiring {
+				t.Fatalf("pair=%+v", events)
+			}
+			for _, ev := range events {
+				if ev.Silenced != (mode != "retry") {
+					t.Fatalf("%s: silenced=%t", ev.Transition, ev.Silenced)
+				}
+			}
+		})
+	}
+}

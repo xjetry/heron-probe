@@ -32,8 +32,8 @@ func TestTrafficRoundTripUpsertsBaselineAndTotalsTogether(t *testing.T) {
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	rec := TrafficRecord{NodeID: id, BootID: "b1", LastRx: 100, LastTx: 200, TotalRx: 1000, TotalTx: 2000, PeriodRx: 10, PeriodTx: 20, PeriodStart: start}
 	rec.NetCounterEpoch = strings.Repeat("a", 64)
-	if skipped, err := st.WriteTraffic(t.Context(), []TrafficRecord{rec}); err != nil || skipped != 0 {
-		t.Fatalf("write: %v skipped=%d", err, skipped)
+	if written, err := st.WriteTraffic(t.Context(), []TrafficRecord{rec}); err != nil || len(written) != 1 || written[0] != id {
+		t.Fatalf("write: %v written=%v", err, written)
 	}
 	rec.LastRx, rec.TotalRx, rec.PeriodRx = 150, 1050, 60
 	rec.NetCounterEpoch = strings.Repeat("b", 64)
@@ -130,9 +130,9 @@ func TestTrafficWriteSkipsDeletedNodes(t *testing.T) {
 	if err := st.DeleteNode(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}
-	skipped, err := st.WriteTraffic(t.Context(), []TrafficRecord{{NodeID: id, BootID: "b", PeriodStart: time.Unix(0, 0)}})
-	if err != nil || skipped != 1 {
-		t.Fatalf("skipped=%d err=%v, want 1/nil", skipped, err)
+	written, err := st.WriteTraffic(t.Context(), []TrafficRecord{{NodeID: id, BootID: "b", PeriodStart: time.Unix(0, 0)}})
+	if err != nil || len(written) != 0 {
+		t.Fatalf("written=%v err=%v, want empty/nil", written, err)
 	}
 	got, _ := st.LoadTraffic(t.Context())
 	if len(got) != 0 {

@@ -42,7 +42,7 @@ func (m *memStore) LoadTraffic(context.Context) ([]store.TrafficRecord, error) {
 	return out, nil
 }
 
-func (m *memStore) WriteTraffic(_ context.Context, recs []store.TrafficRecord) (int, error) {
+func (m *memStore) WriteTraffic(_ context.Context, recs []store.TrafficRecord) ([]int64, error) {
 	if m.gate != nil {
 		first := false
 		m.gateOnce.Do(func() {
@@ -56,13 +56,15 @@ func (m *memStore) WriteTraffic(_ context.Context, recs []store.TrafficRecord) (
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.fail != nil {
-		return 0, m.fail
+		return nil, m.fail
 	}
 	m.writes++
+	var written []int64
 	for _, r := range recs {
 		m.recs[r.NodeID] = r
+		written = append(written, r.NodeID)
 	}
-	return 0, nil
+	return written, nil
 }
 
 func (m *memStore) TrafficResetDays(context.Context) (map[int64]int, error) { return m.days, nil }
