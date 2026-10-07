@@ -10,6 +10,7 @@ import { errorText } from "../api/auth";
 import { NodeAddresses } from "../components/NodeAddresses";
 import { AgentDiagnostics } from "../components/AgentDiagnostics";
 import { ExecutionScope } from "../components/ExecutionScope";
+import { trafficText } from "../lib/traffic";
 
 const ADMIN_HISTORY: HistoryMethods = { queryMetrics: AdminService.method.queryMetrics, queryProbes: AdminService.method.queryProbes };
 
@@ -112,4 +113,3 @@ function TrafficCard({ nodeId, data }: { nodeId: bigint; data: GetTrafficRespons
     </div>
   );
 }
-import { trafficText } from "../lib/traffic";

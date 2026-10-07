@@ -9,6 +9,7 @@ import { filterNodes } from "../lib/nodeSearch";
 import { POLL_MS } from "../lib/poll";
 import { Bar, Missing, ratio } from "../components/Bar";
 import { Icon } from "../components/Icon";
+import { trafficText } from "../lib/traffic";
 
 export function Overview() {
   const [search, setSearch] = useState("");
@@ -99,4 +100,3 @@ function NodeRow({ node, now }: { node: NodeStatus; now: number }) {
     </tr>
   );
 }
-import { trafficText } from "../lib/traffic";

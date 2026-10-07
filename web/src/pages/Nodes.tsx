@@ -26,6 +26,7 @@ import { sameTag, withoutTag, withTag } from "../lib/tags";
 import { olderThan } from "../lib/version";
 import { NodeEditor } from "./NodeEditor";
 import { BatchNodeTagsEditor } from "./BatchNodeTagsEditor";
+import { trafficText } from "../lib/traffic";
 
 // 标签过滤二选一：按一组标签取交集，或只要无标签节点。空 names 表示不过滤。
 // 用判别式联合让"既选了标签又选了无标签"在类型上不可表示——hub 对两个条件同时给出返回 InvalidArgument
@@ -320,4 +321,3 @@ function TagManager({ tags, pending, onDelete }: { tags: readonly Tag[] | undefi
     {tags.length === 0 ? <p className="node-subtext">还没有标签；在节点的编辑里添加。</p> : <ul className="tag-list">{tags.map((tag) => <li key={tag.name}><span className="tag">{tag.name}</span> <span className="muted">{tag.nodeCount} 个节点</span>{" "}<ConfirmDelete label={`删除标签 ${tag.name}`} confirm={`确认删除标签 ${tag.name}`} note="只从节点上解除，节点不受影响" pending={pending} onDelete={() => onDelete(tag.name)} /></li>)}</ul>}
   </section></details>;
 }
-import { trafficText } from "../lib/traffic";
