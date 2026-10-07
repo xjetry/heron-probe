@@ -127,6 +127,17 @@ func TestPublicGateClosedFollowsTheFallbackRule(t *testing.T) {
 		checkSecurityHeaders(t, resp)
 		return body
 	}
+	open = false
+	body := checkClosed(t, "/nodes/7", false)
+	// 分享出去的链接要能看出是站点关了而不是链接失效：说明页带品牌图形、原因与面板入口。
+	for _, want := range []string{"<svg", "公开页已关闭", "站长暂时关闭了公开页", `href="` + Prefix + `"`, "管理员登录", `<meta name="viewport"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("closed page lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "http") || strings.Contains(body, "@import") {
+		t.Fatalf("closed page must not reference remote resources:\n%s", body)
+	}
 	var pages, notFound int
 	for _, path := range []string{
 		"/nodes/7", "/theme.js", "/sub", "/.env", "/assetsx/missing.js", "/assets/../nodes/7",
