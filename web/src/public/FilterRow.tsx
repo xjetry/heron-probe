@@ -1,7 +1,6 @@
 import { MultiSelect } from "../components/MultiSelect";
 import { CARD_SORTS, COLOR_BYS, type CardSort, type ColorBy, type PublicFilters, type RegionOption } from "./filters";
-
-export type View = "wall" | "cards";
+import type { View } from "./view";
 
 // 筛选行（设计 §3.1）：搜索、地区多选、标签多选（可搜索）、只看在线、视图切换；状态墙多一个着色依据，卡片多一个排序。
 // 地区与标签是动态集合（设计 §2），选项由调用方从当前快照算出并带计数。

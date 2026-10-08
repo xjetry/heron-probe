@@ -26,6 +26,8 @@ test('公开页地区多选与家宽标签交集，未知和手机布局', async
     await rpc(page, 'UpdateNode', { id, name, public: true, countryPin, tags: [tag], trafficResetDay: 1, offlineGraceS: 0 });
   }
   await page.goto('/');
+  // 方块只在状态墙上：墙画出全部节点，含离线与从未上报。
+  await page.getByRole('group', { name: '视图' }).getByRole('button', { name: '状态墙' }).click();
   const tiles = page.locator('.tile');
   await expect(tiles).toHaveCount(6);
   const regions = page.getByRole('group', { name: '地区' });

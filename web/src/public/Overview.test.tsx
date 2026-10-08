@@ -1,10 +1,11 @@
 import { create } from "@bufbuild/protobuf";
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { PublicService, PublicSnapshotSchema } from "../gen/heron/v1/public_pb";
 import { POLL_MS } from "../lib/poll";
 import { renderWithService } from "../test/harness";
 import { PublicOverview } from "./Overview";
+import { PUBLIC_VIEW_KEY } from "./view";
 
 const snapshot = create(PublicSnapshotSchema, {
   now: 1_000n,
@@ -17,8 +18,10 @@ const snapshot = create(PublicSnapshotSchema, {
     { id: 4n, name: "bare-1", online: false, sortOrder: 3, country: "" },
   ],
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); localStorage.clear(); });
 
+// 状态墙把在线、离线与从未上报都画成方块，筛选用例在墙上看结果；卡片视图把离线折起来。
+const wall = () => fireEvent.click(within(screen.getByRole("group", { name: "视图" })).getByRole("button", { name: "状态墙" }));
 const shown = () => screen.queryAllByRole("link").filter((a) => a.closest(".tile")).map((a) => a.getAttribute("aria-label"));
 const open = (label: string) => fireEvent.click(within(screen.getByRole("group", { name: label })).getByRole("button", { name: new RegExp(`^${label}`) }));
 const check = (label: string, name: string) => fireEvent.click(within(screen.getByRole("group", { name: label })).getByRole("checkbox", { name }));
@@ -29,6 +32,7 @@ function render(getSnapshot: () => Promise<typeof snapshot> = async () => snapsh
 it("汇总、筛选行与节点一起出现；地区与标签是带计数的多选下拉", async () => {
   render();
   expect(await screen.findByText("2 / 4 在线")).toBeInTheDocument();
+  wall();
   expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
   open("地区");
   expect(within(screen.getByRole("group", { name: "地区" })).getAllByRole("checkbox").map((c) => c.getAttribute("aria-label"))).toEqual(["香港", "日本", "未知"]);
@@ -40,6 +44,7 @@ it("汇总、筛选行与节点一起出现；地区与标签是带计数的多�
 it("地区并集、标签交集、搜索与只看在线叠加；计数按筛选后的节点算；滤空时说明", async () => {
   render();
   await screen.findByText("2 / 4 在线");
+  wall();
   open("地区");
   check("地区", "日本");
   check("地区", "未知");
@@ -60,6 +65,7 @@ it("地区并集、标签交集、搜索与只看在线叠加；计数按筛选�
 it("标签折叠比较：选 db 时 DB 的节点也命中", async () => {
   render();
   await screen.findByText("2 / 4 在线");
+  wall();
   open("标签");
   check("标签", "db");
   expect(shown()).toEqual(["lab-1", "db-1"]);
@@ -70,6 +76,7 @@ it("被选中的标签或地区从快照消失后从选择集里移除，不留�
   let current = snapshot;
   render(async () => current);
   await screen.findByText("2 / 4 在线");
+  wall();
   open("标签");
   check("标签", "web");
   open("地区");
@@ -94,17 +101,32 @@ it("没有公开节点时说明，不画汇总与筛选行", async () => {
   expect(screen.queryByRole("group", { name: "筛选" })).toBeNull();
 });
 
-it("视图切换：默认状态墙带着色依据；卡片视图带排序", async () => {
+it("视图切换：没选过时默认卡片带排序；状态墙带着色依据", async () => {
   render();
   await screen.findByText("2 / 4 在线");
   const views = within(screen.getByRole("group", { name: "视图" }));
-  expect(views.getByRole("button", { name: "状态墙" })).toHaveAttribute("aria-pressed", "true");
-  expect(screen.getByRole("combobox", { name: "着色依据" })).toHaveValue("status");
-  expect(screen.queryByRole("combobox", { name: "排序" })).toBeNull();
-  fireEvent.click(views.getByRole("button", { name: "卡片" }));
   expect(views.getByRole("button", { name: "卡片" })).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByRole("combobox", { name: "排序" })).toHaveValue("default");
   expect(screen.queryByRole("combobox", { name: "着色依据" })).toBeNull();
+  expect(screen.getAllByRole("article").map((a) => a.getAttribute("aria-label"))).toEqual(["web-1", "lab-1"]);
+  wall();
+  expect(views.getByRole("button", { name: "状态墙" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("combobox", { name: "着色依据" })).toHaveValue("status");
+  expect(screen.queryByRole("combobox", { name: "排序" })).toBeNull();
+});
+
+it("访客选的视图记到 localStorage，下次打开沿用", async () => {
+  render();
+  await screen.findByText("2 / 4 在线");
+  wall();
+  expect(localStorage.getItem(PUBLIC_VIEW_KEY)).toBe("wall");
+  cleanup();
+  render();
+  await screen.findByText("2 / 4 在线");
+  expect(within(screen.getByRole("group", { name: "视图" })).getByRole("button", { name: "状态墙" })).toHaveAttribute("aria-pressed", "true");
+  expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
+  fireEvent.click(within(screen.getByRole("group", { name: "视图" })).getByRole("button", { name: "卡片" }));
+  expect(localStorage.getItem(PUBLIC_VIEW_KEY)).toBe("cards");
 });
 
 it("按 POLL_MS 轮询快照", async () => {

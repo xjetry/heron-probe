@@ -57,7 +57,9 @@ function Meter({ label, value, text }: { label: string; value?: number; text?: s
   );
 }
 
-// 卡片网格 + 折叠的离线表。传入的 nodes 已按调用方的排序；折叠表保持同一顺序。
+// 卡片网格 + 网格下方离线与从未上报的紧凑表。传入的 nodes 已按调用方的排序；紧凑表保持同一顺序。
+// 紧凑表默认展开：open 与状态墙的地区分组一样只是初始值，React 只在这个 prop 变化时写 DOM，
+// 轮询带来的重渲染不会把访客收起的分组再展开。
 export function CardGrid({ nodes, now }: { nodes: readonly PublicNode[]; now: number }) {
   const live = nodes.filter((n) => { const s = nodeStatus(n); return s === "online" || s === "maintenance"; });
   const rest = nodes.filter((n) => !live.includes(n));
@@ -67,7 +69,7 @@ export function CardGrid({ nodes, now }: { nodes: readonly PublicNode[]; now: nu
         {live.map((n) => <NodeCard key={String(n.id)} node={n} now={now} />)}
       </div>
       {rest.length > 0 && (
-        <details className="folded-nodes">
+        <details className="folded-nodes" open>
           <summary>离线与从未上报 · {rest.length}</summary>
           <table className="compact-table">
             <thead><tr><th>名称</th><th>地区</th><th>状态</th><th>最后上报</th></tr></thead>

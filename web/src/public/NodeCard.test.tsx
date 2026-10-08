@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from "@testing-library/react";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { PublicService } from "../gen/heron/v1/public_pb";
 import { BillingCycle } from "../gen/heron/v1/types_pb";
@@ -6,7 +6,7 @@ import { TrafficQuotaMode } from "../gen/heron/v1/types_pb";
 import { renderWithService } from "../test/harness";
 import { PublicOverview } from "./Overview";
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); localStorage.clear(); });
 
 async function renderCards(nodes: object[]) {
   renderWithService(PublicService, { getSnapshot: async () => ({ now: 1000n, nodes, tags: [] }) }, [{ path: "/", Component: PublicOverview }], "/");
@@ -54,7 +54,7 @@ it("没填费用与到期时底行写破折号；已过期写已过期天数并�
   expect.soft(lapsed.getByText("已过期 3 天").closest(".expiry")).toHaveAttribute("data-level", "critical");
 });
 
-it("只有在线与维护中出卡片；离线与从未上报折进默认收起的表格（名称、地区、状态、最后上报）", async () => {
+it("只有在线与维护中出卡片；离线与从未上报列在网格下方默认展开的表格里（名称、地区、状态、最后上报）", async () => {
   await renderCards([
     { id: 1n, name: "on", online: true, lastSeenAt: 998n, country: "JP" },
     { id: 2n, name: "maint", online: false, lastSeenAt: 900n, maintenance: true },
@@ -64,11 +64,27 @@ it("只有在线与维护中出卡片；离线与从未上报折进默认收起�
   expect.soft(screen.getAllByRole("article").map((a) => a.getAttribute("aria-label"))).toEqual(["on", "maint"]);
   expect.soft(within(screen.getByRole("article", { name: "maint" })).getByText("维护中")).toHaveAttribute("data-status", "maintenance");
   const folded = screen.getByText("离线与从未上报 · 2").closest("details")!;
-  expect.soft(folded).not.toHaveAttribute("open");
-  fireEvent.click(within(folded).getByText("离线与从未上报 · 2"));
+  expect.soft(folded).toHaveAttribute("open");
   const rows = within(folded).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent));
   expect.soft(rows).toEqual([["off", "HK", "离线", "10 分钟前"], ["fresh", "", "从未上报", "–"]]);
   expect.soft(within(folded).getByRole("link", { name: "off" })).toHaveAttribute("href", "/nodes/3");
+});
+
+it("访客收起离线分组后，轮询带来新数据也不会把它再展开", async () => {
+  let now = 1000n;
+  const { queryClient } = renderWithService(PublicService, { getSnapshot: async () => ({ now, nodes: [
+    { id: 1n, name: "on", online: true, lastSeenAt: now - 2n },
+    { id: 3n, name: "off", online: false, lastSeenAt: 400n },
+  ], tags: [] }) }, [{ path: "/", Component: PublicOverview }], "/");
+  const folded = () => screen.getByText("离线与从未上报 · 1").closest("details")!;
+  expect(await screen.findByText("10 分钟前")).toBeInTheDocument();
+  expect(folded()).toHaveAttribute("open");
+  // 访客点 summary 收起时，浏览器只改 DOM 上的 open。
+  folded().open = false;
+  now = 1060n;
+  await act(async () => { await queryClient.refetchQueries(); });
+  expect(await screen.findByText("11 分钟前")).toBeInTheDocument();
+  expect(folded()).not.toHaveAttribute("open");
 });
 
 it("卡片排序：默认顺序与到期 / CPU / 流量排序", async () => {

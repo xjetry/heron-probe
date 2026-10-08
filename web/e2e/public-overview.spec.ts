@@ -1,4 +1,4 @@
-import { type Page } from "@playwright/test";
+import { type Page, type Route } from "@playwright/test";
 import { expect, test } from "./fixtures";
 
 // 设计 §6 的公开页禁止字段：任何一个出现在页面文字里都算失败。
@@ -47,6 +47,13 @@ test("公开总览：状态墙、详情、卡片、手机列表与数据边界",
 
   // 汇总与分组：维护中不算在线；组按在线数降序，未知最后。
   await expect(page.getByText("2 / 5 在线")).toBeVisible();
+  // 没选过时默认卡片；切到状态墙后记在浏览器里，刷新沿用。
+  const views = page.getByRole("group", { name: "视图" });
+  await expect(views.getByRole("button", { name: "卡片" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("article")).toHaveCount(3);
+  await views.getByRole("button", { name: "状态墙" }).click();
+  await page.reload();
+  await expect(views.getByRole("button", { name: "状态墙" })).toHaveAttribute("aria-pressed", "true");
   // 日本与香港都是 1 / 2：同在线数、同总数时按代码排，HK 在 JP 前。
   await expect(page.locator(".wall-group > summary")).toHaveText(["香港 · 1 / 2 在线", "日本 · 1 / 2 在线", "未知 · 0 / 1 在线"]);
   await expect(page.locator(".tile[data-status='offline']").getByText("离线 · 2 小时前")).toBeVisible();
@@ -76,16 +83,28 @@ test("公开总览：状态墙、详情、卡片、手机列表与数据边界",
   await page.getByRole("button", { name: "只看在线" }).click();
 
   // 卡片视图：只有在线与维护中出卡片，离线折叠；卡片有费用与到期。
-  await page.getByRole("group", { name: "视图" }).getByRole("button", { name: "卡片" }).click();
+  await views.getByRole("button", { name: "卡片" }).click();
   await expect(page.getByRole("article")).toHaveCount(3);
   const card = page.getByRole("article", { name: "tokyo-core" });
   await expect(card.getByText("US$12 / 月")).toBeVisible();
   await expect(card.locator(".expiry")).toHaveAttribute("data-level", "attention");
   await expect(card.locator(".expiry")).toContainText("剩 25 天");
+  // 离线与从未上报默认展开；访客收起后，轮询带来新数据也不会再展开。
   const folded = page.locator("details.folded-nodes");
   await expect(folded.locator("summary")).toHaveText("离线与从未上报 · 2");
-  await folded.locator("summary").click();
+  await expect(folded).toHaveAttribute("open");
   await expect(folded.getByRole("row")).toHaveCount(3);
+  await expect(folded.getByRole("link", { name: "tokyo-home" })).toBeVisible();
+  await folded.locator("summary").click();
+  await expect(folded).not.toHaveAttribute("open");
+  const withExtra = (route: Route) => route.fulfill({ json: { now: String(now), nodes: [...nodes, { id: "6", name: "新离线节点", country: "", online: false, tags: [], lastSeenAt: String(now - 600) }], tags: ["家宽", "机房"] } });
+  await page.route("**/heron.v1.PublicService/GetSnapshot**", withExtra);
+  await expect(folded.locator("summary")).toHaveText("离线与从未上报 · 3");
+  await expect(folded).not.toHaveAttribute("open");
+  await page.unroute("**/heron.v1.PublicService/GetSnapshot**", withExtra);
+  await expect(folded.locator("summary")).toHaveText("离线与从未上报 · 2");
+  await folded.locator("summary").click();
+  await expect(folded.getByRole("link", { name: "tokyo-home" })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("cards-dark.png"), fullPage: true });
 
   // 浅色：访客切换压过站点的 dark。
@@ -97,9 +116,12 @@ test("公开总览：状态墙、详情、卡片、手机列表与数据边界",
   const text = await page.evaluate(() => document.body.innerText);
   for (const word of FORBIDDEN) expect(text, word).not.toContain(word);
 
-  // 手机：墙是单列列表，点行直接进节点页，没有横向溢出。
-  await page.getByRole("group", { name: "视图" }).getByRole("button", { name: "状态墙" }).click();
+  // 手机：卡片视图没有横向溢出。
   await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  await page.screenshot({ path: testInfo.outputPath("cards-mobile.png"), fullPage: true });
+  // 手机：墙是单列列表，点行直接进节点页，没有横向溢出。
+  await views.getByRole("button", { name: "状态墙" }).click();
   await expect(panel).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   await page.screenshot({ path: testInfo.outputPath("wall-mobile.png"), fullPage: true });

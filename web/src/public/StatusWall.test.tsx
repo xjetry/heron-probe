@@ -4,6 +4,7 @@ import { PublicService } from "../gen/heron/v1/public_pb";
 import { POLL_MS } from "../lib/poll";
 import { renderWithService } from "../test/harness";
 import { PublicOverview } from "./Overview";
+import { PUBLIC_VIEW_KEY } from "./view";
 
 const snapshot = {
   now: 1_000n, tags: ["prod"],
@@ -21,8 +22,10 @@ const queryMetrics = vi.fn(async () => ({ level: "1m", stepS: 60, ts: [900n, 960
   { name: "rx_bytes", unit: "bytes", samples: [{ n: 1, sum: 6000 }, { n: 1, sum: 0 }] },
   { name: "tx_bytes", unit: "bytes", samples: [{ n: 1, sum: 600 }, { n: 1, sum: 0 }] },
 ] }));
-afterEach(() => { vi.useRealTimers(); queryMetrics.mockClear(); });
+afterEach(() => { vi.useRealTimers(); queryMetrics.mockClear(); localStorage.clear(); });
+// 这些用例观察状态墙：按访客上次选了状态墙打开，与没选过时的默认视图无关。
 function render(getSnapshot: () => Promise<typeof snapshot> = async () => snapshot) {
+  localStorage.setItem(PUBLIC_VIEW_KEY, "wall");
   return renderWithService(PublicService, { getSnapshot, queryMetrics }, [{ path: "/", Component: PublicOverview }, { path: "/nodes/:id", element: <p>节点页</p> }], "/");
 }
 const tile = (name: string) => screen.getByRole("link", { name });

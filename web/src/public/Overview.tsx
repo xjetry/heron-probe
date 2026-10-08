@@ -4,16 +4,18 @@ import { errorBanner, queryGate } from "../api/queryGate";
 import { PublicService } from "../gen/heron/v1/public_pb";
 import { POLL_MS } from "../lib/poll";
 import { sameTag } from "../lib/tags";
-import { FilterRow, type View } from "./FilterRow";
+import { FilterRow } from "./FilterRow";
 import { filterPublicNodes, NO_FILTERS, regionOptions, sortCards, type CardSort, type ColorBy, type PublicFilters } from "./filters";
 import { StatusSummary } from "./StatusSummary";
 import { CardGrid } from "./NodeCard";
 import { StatusWall } from "./StatusWall";
+import { readPublicView, writePublicView, type View } from "./view";
 
 export function PublicOverview() {
   const snap = useQuery(PublicService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
   const [filters, setFilters] = useState<PublicFilters>(NO_FILTERS);
-  const [view, setView] = useState<View>("wall");
+  const [view, setView] = useState<View>(readPublicView);
+  const chooseView = (next: View) => { setView(next); writePublicView(next); };
   const [colorBy, setColorBy] = useState<ColorBy>("status");
   const [sort, setSort] = useState<CardSort>("default");
   const [selectedId, setSelectedId] = useState<bigint | null>(null);
@@ -39,7 +41,7 @@ export function PublicOverview() {
       {all.length > 0 && (
         <>
           <StatusSummary nodes={nodes} />
-          <FilterRow filters={effective} onFilters={setFilters} regions={regions} tags={tags} view={view} onView={setView} colorBy={colorBy} onColorBy={setColorBy} sort={sort} onSort={setSort} />
+          <FilterRow filters={effective} onFilters={setFilters} regions={regions} tags={tags} view={view} onView={chooseView} colorBy={colorBy} onColorBy={setColorBy} sort={sort} onSort={setSort} />
           {nodes.length === 0 && <p className="muted">没有符合筛选条件的节点。</p>}
           {nodes.length > 0 && view === "wall" && <StatusWall nodes={nodes} now={now} colorBy={colorBy} selectedId={selectedId} onSelect={setSelectedId} />}
           {nodes.length > 0 && view === "cards" && <CardGrid nodes={sortCards(nodes, sort)} now={now} />}
