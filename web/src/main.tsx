@@ -7,6 +7,7 @@ import { transport } from "./api/transport";
 import { isUnauthenticated } from "./api/auth";
 import { router } from "./App";
 import { queryDefaults } from "./queryDefaults";
+import "./fonts";
 import "./styles.css";
 import "./admin.css";
 

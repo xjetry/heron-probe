@@ -5,7 +5,7 @@ import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService, type AlertDelivery, type AlertEvent, type AlertRule, type ListAlertEventsResponse } from "../gen/heron/v1/admin_pb";
 import { alarming, deliveryText, eventValueText, hasErrorText, ruleLabel, transitionLabel, TRANSITIONS } from "../lib/alerts";
 import { withId } from "../lib/ids";
-import { dateTime } from "../lib/format";
+import { dateTime, isDate } from "../lib/format";
 
 // 与 hub 的默认页长一致；不足一页即已到最早的事件。
 export const EVENT_PAGE = 100;
@@ -72,12 +72,6 @@ function EventList({ data, nodeName, channelName, rules, visible, hasNextPage, f
 
 export type EventFilters = { ruleId: bigint | null; transition: string | null; from: string; to: string };
 
-function validDate(value: string): boolean {
-  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value) || value.startsWith("0000")) return false;
-  const date = new Date(`${value}T00:00:00Z`);
-  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
-}
-
 export function filtersFromParams(params: URLSearchParams): EventFilters {
   const rule = params.get("rule");
   const transition = params.get("transition");
@@ -86,8 +80,8 @@ export function filtersFromParams(params: URLSearchParams): EventFilters {
   return {
     ruleId: rule !== null && /^[1-9]\d*$/.test(rule) ? BigInt(rule) : null,
     transition: transition !== null && Object.hasOwn(TRANSITIONS, transition) ? transition : null,
-    from: validDate(from) ? from : "",
-    to: validDate(to) ? to : "",
+    from: isDate(from) ? from : "",
+    to: isDate(to) ? to : "",
   };
 }
 

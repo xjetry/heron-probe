@@ -9,6 +9,7 @@ import { PageHeader } from "../components/PageHeader";
 import { AdminService, type Theme } from "../gen/heron/v1/admin_pb";
 import { toBase64 } from "../lib/base64";
 import { bytes, dateTime } from "../lib/format";
+import { FileInput } from "../components/FileInput";
 
 const maxPackageBytes = 8 * 1024 * 1024;
 const versionLabel = (theme: Theme) => `${theme.name}（${theme.id}）${theme.version} [${theme.digest.slice(0, 12)}]`;
@@ -137,7 +138,8 @@ export function Themes() {
     <form className="card" aria-label="上传主题" onSubmit={(e) => void submit(e)}>
       <h2>上传本地 ZIP</h2>
       <div className="row">
-        <label>主题包（zip，至多 8 MiB）<input ref={fileInput} type="file" accept=".zip,application/zip" disabled={busy} onChange={(e) => { setFile(e.target.files?.[0] ?? null); setNotice(null); upload.reset(); }} /></label>
+        <FileInput label="主题包（zip，至多 8 MiB）" caption="主题包（zip，至多 8 MiB）" inputRef={fileInput} accept=".zip,application/zip" disabled={busy} fileName={file?.name}
+          onChange={(e) => { setFile(e.target.files?.[0] ?? null); setNotice(null); upload.reset(); }} />
         <label>用途<select value={expectId} disabled={busy} onChange={(e) => setExpectId(e.target.value)}>{purposeOptions}</select></label>
         <button type="submit" disabled={!file || busy}>{reading || upload.isPending ? "上传中…" : "上传"}</button>
       </div>

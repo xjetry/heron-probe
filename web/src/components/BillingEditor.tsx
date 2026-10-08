@@ -37,7 +37,7 @@ export function BillingEditor({ label, draft, autoFocus, onChange }: {
       <label><input type="radio" name={`cycle-${label}`} checked={draft.billingCycle === BillingCycle.UNSPECIFIED} onChange={() => onChange({ billingCycle: BillingCycle.UNSPECIFIED })} />无周期</label>
       {BILLING_CYCLES.map(({ value, label: cycle }) => <label key={value}><input type="radio" name={`cycle-${label}`} checked={draft.billingCycle === value} onChange={() => onChange({ billingCycle: value })} />每{cycle}</label>)}
     </fieldset>
-    <DateInput label={`到期日 ${label}`} value={draft.expiresOn} onChange={(expiresOn) => onChange({ expiresOn })} />
+    <DateInput label={`到期日 ${label}`} caption="到期日" hint="年满四位、月满两位自动跳转；可留空" value={draft.expiresOn} onChange={(expiresOn) => onChange({ expiresOn })} />
     <label className="switch-field"><span>自动续期<small>到期后自动按付款周期推后日期</small></span><input type="checkbox" aria-label={`自动续期 ${label}`} checked={draft.autoRenew} onChange={(e) => onChange({ autoRenew: e.target.checked })} /></label>
     <p className="muted">只用于展示与到期提醒。开着自动续期时，到期日过了 hub 按周期推后；需要周期与到期日。</p>
   </div>;

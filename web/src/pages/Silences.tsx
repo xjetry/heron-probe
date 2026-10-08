@@ -11,6 +11,7 @@ import { RowMenu } from "../components/RowMenu";
 import { AdminService, SilenceKind, type Node, type Silence } from "../gen/heron/v1/admin_pb";
 import { liveIds, withId } from "../lib/ids";
 import { dateTime } from "../lib/format";
+import { DateTimeInput, TimeInput } from "../components/DateInput";
 
 type Draft = NodeSelection & {
   name: string; enabled: boolean; kind: SilenceKind;
@@ -21,7 +22,7 @@ const emptyDraft = (): Draft => ({
   name: "", enabled: true, kind: SilenceKind.DAILY, allNodes: true, nodeIds: new Set(), selectorTags: [], dynamic: false,
   startHhmm: "22:00", endHhmm: "06:00", fromAt: "", untilAt: "", reason: "",
 });
-// datetime-local 的值是本地墙钟；from_at/until_at 是 Unix 秒，含起点不含终点。
+// DateTimeInput 的值（与 datetime-local 同格式 YYYY-MM-DDTHH:MM）是本地墙钟；from_at/until_at 是 Unix 秒，含起点不含终点。
 const toLocalInput = (unix: bigint) => {
   if (unix === 0n) return "";
   const d = new Date(Number(unix) * 1000);
@@ -140,14 +141,14 @@ function SilenceDrawer({ title, submitLabel, nodes, initial, pending, error, ope
             </div>
             {draft.kind === SilenceKind.DAILY ? (
               <div className="row">
-                <label>开始（HH:MM）<input required type="time" value={draft.startHhmm} onChange={(e) => set({ startHhmm: e.target.value })} /></label>
-                <label>结束（HH:MM）<input required type="time" value={draft.endHhmm} onChange={(e) => set({ endHhmm: e.target.value })} /></label>
+                <TimeInput label="每日开始" caption="开始" required value={draft.startHhmm} onChange={(startHhmm) => set({ startHhmm })} />
+                <TimeInput label="每日结束" caption="结束" required value={draft.endHhmm} onChange={(endHhmm) => set({ endHhmm })} />
                 <p className="muted">按 hub 时区判定，允许跨午夜（如 22:00–06:00）；开始含、结束不含。</p>
               </div>
             ) : (
               <div className="row">
-                <label>开始<input required type="datetime-local" value={draft.fromAt} onChange={(e) => set({ fromAt: e.target.value })} /></label>
-                <label>结束<input required type="datetime-local" value={draft.untilAt} onChange={(e) => set({ untilAt: e.target.value })} /></label>
+                <DateTimeInput label="开始" caption="开始" required value={draft.fromAt} onChange={(fromAt) => set({ fromAt })} />
+                <DateTimeInput label="结束" caption="结束" required value={draft.untilAt} onChange={(untilAt) => set({ untilAt })} />
                 <p className="muted">含开始、不含结束。到期后保留供审计，随告警事件的保留期清理。</p>
               </div>
             )}

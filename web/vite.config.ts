@@ -23,6 +23,23 @@ function keepEmbedDirectory(outDir: string): Plugin {
   };
 }
 
+// 内嵌字体（src/fonts.ts）是 SIL OFL 授权，再分发须随字体附上许可证全文；woff2 的 name 表只有版权行与许可证网址，
+// 没有全文。所以把字体包自带的 LICENSE 原样产出到每份产物的 licenses/ 下，随 woff2 一起嵌进 hub。
+// 这张表与 src/fonts.ts 引入的字体包一一对应，fonts.test.ts 双向核对；增减字体包两处一起改。
+const FONT_PACKAGES = ["@fontsource-variable/inter", "@fontsource-variable/jetbrains-mono"];
+function fontLicenses(): Plugin {
+  return {
+    name: "font-licenses",
+    apply: "build",
+    generateBundle() {
+      for (const pkg of FONT_PACKAGES) {
+        const source = readFileSync(new URL(`./node_modules/${pkg}/LICENSE`, import.meta.url));
+        this.emitFile({ type: "asset", fileName: `licenses/${pkg.split("/")[1]}-OFL.txt`, source });
+      }
+    },
+  };
+}
+
 // 内置配色只写在 styles.css 的 --accent: light-dark(浅色, 深色) 里。外观页的取色器在主色为空时显示浅色那一个值，
 // 这里在构建与测试时读出它、经 define 编成常量（lib/palette.ts），不另存一份；写法变了读不出即构建失败。
 // 不在运行时用 ?raw 读 styles.css：vitest 默认把 CSS 文件换成空内容，测试里读不到。
@@ -39,7 +56,7 @@ export default defineConfig(({ mode }) => {
   return {
     root: isPublic ? fileURLToPath(new URL("./src/public", import.meta.url)) : undefined,
     base: isPublic ? "/" : "/admin/",
-    plugins: [react(), keepEmbedDirectory(outDir)],
+    plugins: [react(), keepEmbedDirectory(outDir), fontLicenses()],
     define: { __BUILT_IN_ACCENT__: JSON.stringify(builtInLightAccent()) },
     build: { outDir, emptyOutDir: true },
     test: {

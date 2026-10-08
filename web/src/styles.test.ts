@@ -36,9 +36,9 @@ it("五个状态色都是字面量", () => {
   for (const name of ["online", "attention", "offline", "never", "maintenance"]) expect(token(`--status-${name}`)).toMatch(/^#[0-9a-f]{6}$/);
 });
 
-it("等宽只经 .num 施加，正文字体栈以 Inter 开头、不引用远程字体", () => {
-  expect(token("--font-ui")).toMatch(/^Inter,/);
-  expect(token("--font-mono")).toMatch(/^"JetBrains Mono",/);
+it("字体栈以内嵌的 Inter / JetBrains Mono 开头，样式表本身不声明或引用远程字体", () => {
+  expect(token("--font-ui")).toMatch(/^"Inter Variable",/);
+  expect(token("--font-mono")).toMatch(/^"JetBrains Mono Variable",/);
   expect(css).not.toMatch(/@font-face|@import|fonts\.googleapis/);
   expect(css).toMatch(/\.num\s*\{[^}]*font-family:\s*var\(--font-mono\)[^}]*font-variant-numeric:\s*tabular-nums/);
 });

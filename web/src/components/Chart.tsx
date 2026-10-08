@@ -76,7 +76,9 @@ export function Chart({ data, labels, unit, height = 180, soft, bands = [], lege
     if (!host) return;
     const axisColor = resolveColor(host, "var(--muted)");
     const gridColor = resolveColor(host, "var(--line)");
-    const axisStyle = { stroke: axisColor, grid: { stroke: gridColor, width: 1 }, ticks: { show: false } };
+    // 刻度画在 canvas 上，不继承 CSS：字体从 --font-mono 取，与页面里的 .num 读数同一个等宽栈。
+    const axisFont = `11px ${getComputedStyle(host).getPropertyValue("--font-mono").trim() || "monospace"}`;
+    const axisStyle = { stroke: axisColor, font: axisFont, grid: { stroke: gridColor, width: 1 }, ticks: { show: false } };
     const opts: Options = {
       width: host.clientWidth || 600,
       height,
@@ -129,7 +131,11 @@ export function Chart({ data, labels, unit, height = 180, soft, bands = [], lege
     for (const i of hiddenRef.current) u.setSeries(i + 1, { show: false });
     const ro = new ResizeObserver(() => plot.current?.setSize({ width: host.clientWidth, height }));
     ro.observe(host);
+    // canvas 不会在字体到达后自己重画：内嵌字体晚于首帧加载完时，就绪后重算一次坐标轴，刻度不停在回退字体上。
+    let mounted = true;
+    void document.fonts?.ready.then(() => { if (mounted) plot.current?.redraw(false, true); });
     return () => {
+      mounted = false;
       ro.disconnect();
       plot.current?.destroy();
       plot.current = null;

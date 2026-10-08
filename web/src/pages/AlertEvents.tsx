@@ -6,6 +6,8 @@ import { EventFeed, useAlertEvents, filtersFromParams, paramsWithFilters, matche
 import { PageHeader } from "../components/PageHeader";
 import { ruleLabel, TRANSITIONS } from "../lib/alerts";
 import { withId } from "../lib/ids";
+import { DateInput } from "../components/DateInput";
+import { isDate } from "../lib/format";
 
 export function AlertEvents() {
   const [params, setParams] = useSearchParams();
@@ -53,8 +55,9 @@ export function AlertEvents() {
         <option value="">全部</option>
         {Object.entries(TRANSITIONS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </select></label>
-      <label>起始日期<input type="date" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} /></label>
-      <label>结束日期<input type="date" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} /></label>
+      {/* URL 里只放完整日期：没填完的值留在控件各段里显示，不写进地址，也不参与筛选。 */}
+      <DateInput label="起始日期" caption="起始日期" value={filters.from} onChange={(from) => { if (from === "" || isDate(from)) setFilters({ ...filters, from }); }} />
+      <DateInput label="结束日期" caption="结束日期" value={filters.to} onChange={(to) => { if (to === "" || isDate(to)) setFilters({ ...filters, to }); }} />
       {filtered && <button type="button" className="link" onClick={() => {
         const next = paramsWithFilters(params, { ruleId: null, transition: null, from: "", to: "" });
         next.delete("node");

@@ -8,6 +8,7 @@ import { Nodes } from "./Nodes";
 import { AdminService, CountrySource, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema, type ListNodesRequest } from "../gen/heron/v1/admin_pb";
 import { sameTag } from "../lib/tags";
 import { AddressDetectionState, BillingCycle } from "../gen/heron/v1/types_pb";
+import { fillSegments, segmentsValue } from "../test/fields";
 
 // 行菜单入口携带 id，同名节点仍能定位到各自的操作。
 const rowAction = (label: string, action: string) => {
@@ -559,7 +560,7 @@ describe("Nodes", () => {
     fireEvent.change(screen.getByLabelText("价格 新节点"), { target: { value: "12.50" } });
     fireEvent.click(screen.getByRole("radio", { name: "USD" }));
     fireEvent.click(screen.getByRole("radio", { name: "每月" }));
-    fireEvent.change(screen.getByLabelText("到期日 新节点", { selector: "input" }), { target: { value: "2027-01-31" } });
+    fillSegments("到期日 新节点", "2027-01-31");
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
     await waitFor(() => expect(createNode).toHaveBeenCalledWith(expect.objectContaining({
       name: "c",
@@ -782,7 +783,7 @@ describe("Nodes", () => {
       const cycles = screen.getByRole("group", { name: "付款周期" });
       expect(within(cycles).getAllByRole("radio").map((radio) => (radio as HTMLInputElement).labels?.[0]?.textContent)).toEqual(["无周期", "每月", "每季", "每半年", "每年", "每两年", "每三年", "每五年"]);
       fireEvent.click(within(cycles).getByRole("radio", { name: "每年" }));
-      fireEvent.change(screen.getByLabelText("到期日 a（#1）", { selector: "input" }), { target: { value: "2027-01-31" } });
+      fillSegments("到期日 a（#1）", "2027-01-31");
       fireEvent.click(screen.getByLabelText("自动续期 a（#1）"));
       expect(within(currencies).getByRole("radio", { name: currency })).toBeChecked();
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -820,13 +821,13 @@ describe("Nodes", () => {
         price: (screen.getByLabelText("价格 a（#1）") as HTMLInputElement).value,
         currency: (screen.getByRole("radio", { name: "EUR" }) as HTMLInputElement).checked,
         cycle: (screen.getByRole("radio", { name: "每季" }) as HTMLInputElement).checked,
-        expiresOn: (screen.getByLabelText("到期日 a（#1）", { selector: "input" }) as HTMLInputElement).value,
+        expiresOn: segmentsValue("到期日 a（#1）"),
         autoRenew: (screen.getByLabelText("自动续期 a（#1）") as HTMLInputElement).checked,
       }).toEqual({ price: "9", currency: true, cycle: true, expiresOn: "2026-12-01", autoRenew: true });
       fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "" } });
       fireEvent.click(screen.getByRole("radio", { name: "未设置" }));
       fireEvent.click(screen.getByRole("radio", { name: "无周期" }));
-      fireEvent.change(screen.getByLabelText("到期日 a（#1）", { selector: "input" }), { target: { value: "" } });
+      fillSegments("到期日 a（#1）", "");
       fireEvent.click(screen.getByLabelText("自动续期 a（#1）"));
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
       await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({
@@ -843,7 +844,7 @@ describe("Nodes", () => {
       fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "abc" } });
       fireEvent.click(screen.getByRole("radio", { name: "USD" }));
       fireEvent.click(screen.getByRole("radio", { name: "每月" }));
-      fireEvent.change(screen.getByLabelText("到期日 a（#1）", { selector: "input" }), { target: { value: "2030-07-01" } });
+      fillSegments("到期日 a（#1）", "2030-07-01");
       fireEvent.click(screen.getByLabelText("自动续期 a（#1）"));
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
       expect(await screen.findByRole("alert")).toHaveTextContent(message);
@@ -852,7 +853,7 @@ describe("Nodes", () => {
         price: (screen.getByLabelText("价格 a（#1）") as HTMLInputElement).value,
         currency: (screen.getByRole("radio", { name: "USD" }) as HTMLInputElement).checked,
         cycle: (screen.getByRole("radio", { name: "每月" }) as HTMLInputElement).checked,
-        expiresOn: (screen.getByLabelText("到期日 a（#1）", { selector: "input" }) as HTMLInputElement).value,
+        expiresOn: segmentsValue("到期日 a（#1）"),
         autoRenew: (screen.getByLabelText("自动续期 a（#1）") as HTMLInputElement).checked,
       }).toEqual({ price: "abc", currency: true, cycle: true, expiresOn: "2030-07-01", autoRenew: true });
     });

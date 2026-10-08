@@ -7,6 +7,7 @@ import { AdminService, AlertEventSchema, ChannelKind, DeliveryFailure, ListNodes
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { AlertEvents } from "./AlertEvents";
 import { EventFeed, useAlertEvents, filtersFromParams, paramsWithFilters, matchesFilters } from "../components/EventFeed";
+import { fillSegments } from "../test/fields";
 
 const nodes = create(ListNodesResponseSchema, { nodes: [{ id: 1n, name: "东京" }, { id: 2n, name: "法兰克福" }] });
 const channels = create(ListNotifyChannelsResponseSchema, { channels: [{ id: 5n, name: "hook", kind: ChannelKind.WEBHOOK }] });
@@ -40,11 +41,11 @@ it("规则、变化与日期筛选只作用于已加载的行，筛空仍可加�
   fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
   expect(router.state.location.search).toBe("");
   expect(screen.getAllByRole("row")).toHaveLength(101);
-  fireEvent.change(screen.getByLabelText("起始日期"), { target: { value: "2099-01-01" } });
+  fillSegments("起始日期", "2099-01-01");
   expect(router.state.location.search).toBe("?from=2099-01-01");
   expect(screen.getByRole("status")).toHaveTextContent("已加载的 100 条里没有匹配的事件");
-  fireEvent.change(screen.getByLabelText("起始日期"), { target: { value: "" } });
-  fireEvent.change(screen.getByLabelText("结束日期"), { target: { value: "2000-01-01" } });
+  fillSegments("起始日期", "");
+  fillSegments("结束日期", "2000-01-01");
   expect(router.state.location.search).toBe("?to=2000-01-01");
   expect(screen.getByRole("status")).toHaveTextContent("已加载的 100 条里没有匹配的事件");
   await act(async () => {});

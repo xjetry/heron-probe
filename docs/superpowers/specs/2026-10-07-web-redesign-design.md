@@ -23,7 +23,7 @@
 
 品牌图形（`docs/brand.md`）保持青灰色鹭鸟与琥珀眼点，不随主色变化；界面主色取蓝而非青，是因为青色与在线绿在小尺寸状态点上难以区分。
 
-**字体。** 界面文字 Inter + 系统中文字体；JetBrains Mono 只用于数字、单位、时间、IP、版本号，并开 `tabular-nums`。中文标签、节点名、按钮一律不用等宽。管理端正文 13px，公开页 14px。不随产物打包字体、不加载远程字体（`docs/brand.md`；CSP 只放行同源），字体栈以 Inter / JetBrains Mono 开头、按本机已安装字体回退。
+**字体。** 界面文字 Inter + 系统中文字体；JetBrains Mono 只用于数字、单位、时间、IP、版本号，并开 `tabular-nums`。中文标签、节点名、按钮一律不用等宽。管理端正文 13px，公开页 14px。Inter 与 JetBrains Mono 的拉丁字形随产物内嵌、由 hub 同源提供（`web/src/fonts.ts`；不加载远程字体，见 `docs/brand.md`，CSP 只放行同源），中文不内嵌、回退系统中文字体。日期、时刻与文件选择用自绘控件（`DateInput` / `TimeInput` / `DateTimeInput`、`FileInput`），外观不随浏览器界面语言变化。
 
 **密度与形状。** 表头 32px、行 36px（两行内容 52px）、控件 32px；状态墙方块约 128×56px；卡片约 200px 高。圆角控件 4px、卡片 6px，全圆角只给状态点与胶囊。层级靠 1px 边框与表面明度，只有弹层与抽屉带阴影。抽屉固定右侧 480px。
 

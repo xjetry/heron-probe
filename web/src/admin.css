@@ -121,12 +121,6 @@ span.node-subtext { margin-right: 8px; }
 .switch-field input:checked::before { background: var(--card); transform: translateX(14px); }
 .admin-shell .billing-edit { min-width: 0; gap: 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .billing-edit .switch-field { grid-column: 1 / -1; }
-.date-field { display: grid; gap: .25rem; min-width: 0; }
-.date-input { position: relative; display: grid; grid-template-columns: minmax(4.5rem, 1.5fr) repeat(2, minmax(3rem, 1fr)) auto auto; align-items: end; gap: .25rem; }
-.date-input label { min-width: 0; font-size: .85rem; }
-.admin-shell .date-input label input { width: 100%; padding: .65rem .4rem; text-align: center; font-variant-numeric: tabular-nums; }
-.admin-shell .date-input .icon-button { width: 28px; height: 40px; }
-.admin-shell .date-input .date-picker-native { position: absolute; bottom: 0; left: 0; width: 1px; height: 1px; min-height: 0; padding: 0; opacity: 0; pointer-events: none; }
 .admin-shell .tags-edit { min-width: 0; }
 .tags-input-row { display: flex; gap: 8px; }
 .tags-input-row input { flex: 1; }
@@ -311,7 +305,8 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
 /* 节点抽屉：每个分组沿纵向排布，长说明与输入保持在同一阅读顺序。 */
 .drawer .form-section { display: grid; gap: 12px; }
 .drawer .form-section + .form-section { margin-top: 20px; padding-top: 20px; }
-.drawer .form-section :is(input:not([type="checkbox"]):not([type="radio"]), textarea) { width: 100%; }
+/* 分段日期控件的各段是定宽的几位数字，不随抽屉拉满（.date-segment 见 styles.css）。 */
+.drawer .form-section :is(input:not([type="checkbox"]):not([type="radio"]):not(.date-segment), textarea) { width: 100%; }
 .drawer .form-section textarea { min-height: 76px; resize: vertical; }
 .admin-shell .drawer .billing-edit { grid-template-columns: minmax(0, 1fr); }
 /* 节点表里到期日与剩余天数上下两行，列宽固定时不再随机折行。 */

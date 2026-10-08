@@ -5,6 +5,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { ListNodesResponseSchema, ListSilencesResponseSchema, SilenceKind, type SaveSilenceRequest } from "../gen/heron/v1/admin_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Silences } from "./Silences";
+import { fillSegments, segmentsValue } from "../test/fields";
 
 const nodes = create(ListNodesResponseSchema, { nodes: [{ id: 1n, name: "东京" }, { id: 2n, name: "法兰克福" }] });
 const silences = create(ListSilencesResponseSchema, { silences: [
@@ -56,8 +57,8 @@ it("每日静默只提交窗口字段，一次性静默只提交起止时间", a
   const again = await openCreate();
   fireEvent.change(within(again).getByLabelText("名称"), { target: { value: "升级窗口" } });
   fireEvent.change(within(again).getByLabelText("类型"), { target: { value: String(SilenceKind.ONCE) } });
-  fireEvent.change(within(again).getByLabelText("开始"), { target: { value: "2026-10-04T22:00" } });
-  fireEvent.change(within(again).getByLabelText("结束"), { target: { value: "2026-10-05T06:00" } });
+  fillSegments("开始", "2026-10-04T22:00", within(again));
+  fillSegments("结束", "2026-10-05T06:00", within(again));
   fireEvent.click(within(again).getByRole("button", { name: "创建" }));
   await waitFor(() => expect(saved).toHaveLength(2));
   expect(saved[1].silence).toMatchObject({
@@ -77,7 +78,7 @@ it("编辑保留完整载荷，删除两段确认后发出", async () => {
   await openRowAction("夜间维护（#7）", "编辑");
   const form = screen.getByRole("form", { name: "编辑 夜间维护（#7）" });
   expect(within(form).getByLabelText("名称")).toHaveValue("夜间维护");
-  expect(within(form).getByLabelText("开始（HH:MM）")).toHaveValue("22:00");
+  expect(segmentsValue("每日开始", within(form))).toBe("22:00");
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "夜间巡检" } });
   fireEvent.click(within(form).getByRole("button", { name: "保存" }));
   await waitFor(() => expect(saved).toHaveLength(1));

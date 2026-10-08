@@ -84,3 +84,15 @@ export function day(unixSeconds: number | bigint, timeZone?: string): string {
   const p = clockParts(timeZone)(Number(unixSeconds) * 1000);
   return p ? `${p.year}-${p.month}-${p.day}` : "";
 }
+
+// YYYY-MM-DD 且是日历上存在的日子。0000 年不收，比 hub 的 alert.ParseDate（收 0000–9999）更严：日期控件的年份段要求非零的四位年份。
+export function isDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000")) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+// 24 小时制 HH:MM。
+export function isTime(value: string): boolean {
+  return /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
+}

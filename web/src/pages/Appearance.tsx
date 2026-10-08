@@ -12,6 +12,7 @@ import { LOGO_TYPES, MAX_TITLE_CHARS, THEMES, sizeProblems, type Theme } from ".
 import { ANSWERS_PER_NODE } from "../lib/country";
 import { BUILT_IN_ACCENT } from "../lib/palette";
 import { DEFAULT_TITLE } from "../public/site";
+import { FileInput } from "../components/FileInput";
 
 const THEME_LABELS: Record<Theme, string> = { auto: "跟随访客的系统设置", light: "浅色", dark: "深色" };
 
@@ -124,10 +125,8 @@ export function Appearance() {
             <button type="button" className="link" onClick={() => edit({ accentColor: "" })} disabled={form.accentColor === ""}>用内置配色</button>
           </div>
           <div className="row">
-            <label>
-              logo
-              <input type="file" accept={LOGO_TYPES.join(",")} onChange={pickLogo} disabled={reading} />
-            </label>
+            <FileInput label="logo" caption="logo" accept={LOGO_TYPES.join(",")} onChange={pickLogo} disabled={reading}
+              fileName={reading ? "读取中…" : form.logo ? "已设置 logo" : undefined} />
             {form.logo && <img src={form.logo} alt="logo 预览" className="logo-preview" />}
             <button type="button" className="link" onClick={() => edit({ logo: "" })} disabled={form.logo === "" || reading}>移除 logo</button>
           </div>

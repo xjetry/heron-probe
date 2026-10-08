@@ -6,6 +6,7 @@ import { RouterProvider } from "react-router";
 import { queryDefaults } from "../queryDefaults";
 import { transport } from "./transport";
 import { router } from "./router";
+import "../fonts";
 import "../styles.css";
 import "./public.css";
 
