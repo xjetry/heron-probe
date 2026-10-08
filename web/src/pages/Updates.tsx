@@ -99,17 +99,22 @@ export function Updates() {
     {check.error && <p role="alert" className="error">{errorText(check.error)}</p>}
     {check.data?.checkError && <p role="alert" className="error">检查官方版本失败：{check.data.checkError}</p>}
     {cancel.error && <p role="alert" className="error">{errorText(cancel.error)}</p>}
-    <section className="hub-card" aria-label="Hub">
+    {/* 与下面「节点 Agent」同一种写法：小标题一行，操作按钮在标题右侧，卡片里只放版本与状态。 */}
+    <section aria-label="Hub">
+      <div className="page-header"><div><h2>Hub</h2></div>
+        <button type="button" disabled={!eligible(hub, latest) || busy} onClick={(event) => setConfirmation({ ids: [0n], version: latest, opener: event.currentTarget })}>更新 Hub</button>
+      </div>
+      <div className="hub-card">
       <dl>
         <div><dt>当前版本</dt><dd>{hub?.version || "未知"}</dd></div>
         <div><dt>官方最新正式版</dt><dd>{latest || "尚未检查"}</dd></div>
         <div><dt>绑定的 agent 版本</dt><dd>{updates.data!.boundAgentVersion || "—"}</dd></div>
       </dl>
-      <button type="button" disabled={!eligible(hub, latest) || busy} onClick={(event) => setConfirmation({ ids: [0n], version: latest, opener: event.currentTarget })}>更新 Hub</button>
       <Progress status={hub} target={latest} />
       <div className="hub-card-description">
         <p className="muted">只安装 xjetry/heron-probe 正式 Release 中带官方签名的产物，不执行远程命令；节点按安装时的选择直接从 GitHub 或经 hub 中转取得。节点更新到 hub 绑定的 agent 版本；只改 hub 的版本不要求节点升级。</p>
         <p className="muted">首次启用需用新版安装器安装本机更新服务。Docker、OpenRC 与 macOS 请使用各自安装方式。</p>
+      </div>
       </div>
     </section>
     {(submitting || results.length > 0) && <div className="card" role="status" tabIndex={-1} ref={statusRef}>

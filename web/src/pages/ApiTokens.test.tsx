@@ -218,3 +218,14 @@ it("剪贴板被拒时退回手动复制弹窗", async () => {
   const box = await screen.findByRole("textbox", { name: "油猴脚本源码" });
   expect((box as HTMLTextAreaElement).value).toContain("==UserScript==");
 });
+
+it("没有 token 时不画只有表头的空表，空态与接入方式各自成块", async () => {
+  render({ listApiTokens: async () => ({ tokens: [] }) });
+  expect(await screen.findByText("还没有 API token。")).toBeInTheDocument();
+  expect(screen.getByText("还没有 API token。").closest(".empty-state")).toHaveAttribute("role", "status");
+  expect(screen.queryByRole("region", { name: "API token 管理" })).toBeNull();
+  expect(screen.queryByRole("columnheader")).toBeNull();
+  const integrations = screen.getByRole("region", { name: "接入方式" });
+  expect(within(integrations).getByRole("button", { name: "下载入口卡片" })).toBeInTheDocument();
+  expect(within(integrations).getByRole("button", { name: "复制油猴脚本" })).toBeInTheDocument();
+});

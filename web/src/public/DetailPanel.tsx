@@ -21,9 +21,14 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   return <div className="detail-row"><dt>{label}</dt><dd>{children}</dd></div>;
 }
 
+// 与墙上方块、卡片同一种细条：条只表示比例，读数写在条右侧，不压在条上。读屏名仍是「标签 读数」。
+function Meter({ value, label, text }: { value: number; label: string; text: string }) {
+  return <span className="detail-meter"><Bar thin value={value} label={`${label} ${text}`} /><span className="num">{text}</span></span>;
+}
+
 function Capacity({ label, used, total }: { label: string; used?: bigint; total?: bigint }) {
   if (used === undefined || total === undefined || total === 0n) return <Row label={label}><Missing /></Row>;
-  return <Row label={label}><Bar value={ratio(used, total)} label={`${label} ${bytes(used)} / ${bytes(total)}`} /></Row>;
+  return <Row label={label}><Meter value={ratio(used, total)} label={label} text={`${bytes(used)} / ${bytes(total)}`} /></Row>;
 }
 
 // 详情面板（设计 §3.1）：选中节点的全部公开字段；网络速率带最近 1 小时迷你线——这是公开总览唯一的历史查询，
@@ -55,7 +60,7 @@ export function DetailPanel({ node, now }: { node: PublicNode; now: number }) {
         {f && <Row label="系统">{[f.os, f.virtualization, f.arch].filter(Boolean).join(" · ") || <Missing />}</Row>}
         {f && f.cpuModel && <Row label="CPU">{f.cpuModel} × {f.cpuCores}</Row>}
         <Row label="运行时长">{m?.uptimeS !== undefined ? `运行 ${duration(m.uptimeS)}` : <Missing />}</Row>
-        <Row label="CPU 使用">{m?.cpuPct !== undefined ? <Bar value={m.cpuPct} label={`CPU ${percent(m.cpuPct)}`} /> : <Missing />}</Row>
+        <Row label="CPU 使用">{m?.cpuPct !== undefined ? <Meter value={m.cpuPct} label="CPU" text={percent(m.cpuPct)} /> : <Missing />}</Row>
         <Capacity label="内存" used={m?.memUsed} total={m?.memTotal} />
         <Capacity label="交换" used={m?.swapUsed} total={m?.swapTotal} />
         <Capacity label="磁盘" used={m?.diskUsed} total={m?.diskTotal} />

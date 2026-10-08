@@ -78,8 +78,6 @@
 .admin-shell .node-order-control .order-handle:active { cursor: grabbing; }
 .admin-shell .node-order-control .order-handle:disabled { cursor: not-allowed; }
 .order-position { font-size: 10px; font-variant-numeric: tabular-nums; min-width: 16px; }
-.admin-shell select.order-menu { min-height: 28px; font-size: 11px; padding: 2px 4px; width: 64px; border-color: transparent; color: var(--muted); background: transparent; }
-.admin-shell select.order-menu:hover:not(:disabled) { border-color: var(--line); color: var(--fg); }
 .node-management tr.is-dragging { opacity: .4; }
 .node-management tr.drop-before > td { box-shadow: inset 0 3px var(--accent); }
 .node-management tr.drop-after > td { box-shadow: inset 0 -3px var(--accent); }
@@ -96,7 +94,14 @@ span.node-subtext { margin-right: 8px; }
 .address-state.failed { color: var(--warn); }
 .tag-management { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 18px; }
 .tag-management summary { cursor: pointer; color: var(--muted); font-size: 12px; }
-.tag-management .tag-list { display: flex; flex-wrap: wrap; gap: 10px 24px; font-size: 11px; }
+/* 标签管理：每个标签一枚胶囊，删除默认弱化色。能悬停的设备上删除只在悬停或聚焦该标签时出现，整页不再平铺一排红字；
+   触屏没有悬停，删除常显。:only-child 只命中未武装的首击按钮——ConfirmDelete 进入确认态后有确认、说明、取消三项，始终可见。 */
+.tag-management .tag-list { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 10px 0 0; padding: 0; list-style: none; font-size: 12px; }
+.tag-management .tag-list > li { display: inline-flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 6px 0 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--card); }
+.tag-management .tag-list .tag { padding: 0; border: 0; background: none; font-weight: 500; }
+.tag-management .tag-list .tag-delete > .link.danger { color: var(--muted); font-size: 11px; }
+.tag-management .tag-list .tag-delete > .link.danger:is(:hover, :focus-visible) { color: var(--status-offline); }
+@media (hover: hover) { .tag-management .tag-list > li:not(:hover, :focus-within) .tag-delete > .link.danger:only-child { opacity: 0; } }
 .batch-tag-list { display: grid; gap: 8px; }
 .batch-tag-option { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
 .batch-tag-name { flex: 1; min-width: 80px; overflow-wrap: anywhere; }
@@ -146,7 +151,7 @@ span.node-subtext { margin-right: 8px; }
   .admin-shell .mobile-menu { display: inline-flex; }
   .admin-breadcrumb > span { display: none; }
   .node-order-control { flex-direction: row; }
-  .admin-shell .node-order-control .order-handle, .admin-shell select.order-menu { min-height: 44px; }
+  .admin-shell .node-order-control .order-handle { min-height: 44px; }
   .node-management tr.drop-before { box-shadow: 0 -3px var(--accent); }
   .node-management tr.drop-after { box-shadow: 0 3px var(--accent); }
   .node-management tr.drop-before > td, .node-management tr.drop-after > td { box-shadow: none; }
@@ -223,12 +228,12 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
   .overview-table td[data-label="负载"], .overview-table td[data-label="本周期"] { display: none; }
 }
 /* Hub 版本与更新状态。 */
-.hub-card { display: grid; grid-template-columns: 1fr auto; gap: 8px 24px; align-items: start; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); margin-bottom: 20px; }
+.hub-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px 24px; align-items: start; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); margin-bottom: 20px; }
 .hub-card dl { display: grid; grid-template-columns: repeat(3, auto); gap: 4px 24px; margin: 0; }
 .hub-card dt { font-size: 12px; color: var(--muted); }
 .hub-card dd { margin: 0; font-size: 18px; font-weight: 600; }
 .hub-card-description { grid-column: 1 / -1; }
-@media (max-width: 900px) { .hub-card, .hub-card dl { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .hub-card dl { grid-template-columns: 1fr; } }
 
 /* 账户安全摘要卡片。 */
 .cards-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
@@ -242,22 +247,21 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
 .quick-search li[aria-selected="true"] a { background: var(--card-hover); }
 @media (max-width: 900px) { .quick-search-trigger { min-width: 0; } .quick-search-trigger span, .quick-search-trigger kbd { display: none; } }
 /* 分段单选与抽屉中的双列字段。 */
-.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-control); overflow: hidden; margin-bottom: 12px; }
-.segmented label { position: relative; }
-.segmented input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
-.segmented span { display: inline-block; height: 30px; line-height: 30px; padding: 0 12px; font-size: 13px; color: var(--muted); }
-.segmented input:checked + span { background: var(--fg); color: var(--bg); }
-.segmented input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
 .form-grid.two { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 /* 节点管理表（pages/Nodes.tsx）：行高 52px（设计 §4.3），名称格紧凑排列，操作列只有 ⋯。 */
 .admin-shell table.node-management td { height: 52px; padding: 6px 12px; vertical-align: middle; }
 .admin-shell table.node-management th[data-column="select"], .admin-shell table.node-management td[data-column="select"] { width: 36px; padding-right: 0; }
-.admin-shell table.node-management th[data-column="order"], .admin-shell table.node-management td[data-column="order"] { width: 88px; }
+.admin-shell table.node-management th[data-column="order"], .admin-shell table.node-management td[data-column="order"] { width: 60px; }
+/* 费用与到期是定长读数（两行写法见 pages/Nodes.tsx 的 TwoLine 与 Expiry），给定宽；剩下的宽度留给本周期的「用量 / 配额」。 */
+.admin-shell table.node-management th[data-column="billing"] { width: 124px; }
+.admin-shell table.node-management th[data-column="expiry"] { width: 108px; }
+.node-management .cell-main { white-space: nowrap; }
+.node-management .cell-note { display: block; font-size: 11px; color: var(--muted); }
 .admin-shell table.node-management th[data-column="actions"], .admin-shell table.node-management td[data-column="actions"] { width: 44px; text-align: right; }
 .node-name-line { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
-/* 名称行只放名称、国家码与「公开」，都是定宽的短件；名称保底 6em 再截断，徽章类提示放第二行（.node-secondary），
-   不和名称抢第一行的宽度。 */
-.node-name-line a { flex: 0 1 auto; min-width: min(6em, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 名称行只放名称、国家码与「公开」，后两者合计不到 90px；落后徽章等提示放第二行（.node-secondary），不和名称抢第一行，
+   名称列最窄（表格 min-width 1080 的 24%）时名称仍有 150px 左右。名称不设保底宽度：保底会让短名后面空出一截。 */
+.node-name-line a { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-name-line .country-badge, .node-name-line .chip { flex: none; }
 .node-secondary .badge-attention { flex: none; }
 .chip-public { background: var(--card-raised); }
@@ -268,7 +272,6 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
 .node-management .tag-chips .chip { flex: none; }
 .node-management .node-order-control { flex-direction: row; gap: 2px; }
 .admin-shell .node-management .order-handle { width: 28px; min-width: 28px; }
-.admin-shell .node-management select.order-menu { width: 44px; }
 .batch-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card-raised); }
 .filter-row .check { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 @media (min-width: 901px) {
@@ -280,21 +283,26 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
   .node-secondary { mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
 }
 @media (max-width: 900px) {
-  /* 手机卡片（设计 §4.7）：状态 + 名称 + ⋯ 一行，本周期 / 费用同排，到期另起一行；地址与排序藏起来。 */
+  /* 手机卡片（设计 §4.7）：首行勾选、名称块、⋯ 顶对齐，下面依次是状态、本周期与费用、到期，都缩进到名称下方；地址与排序藏起来。
+     按 data-column 指名放进网格区域并整体顶对齐：名称块有几行（标签、备注）都不会把勾选框与 ⋯ 推到卡片中部。 */
   .admin-shell .table-scroll:has(.node-management) { border: 0; background: none; overflow: visible; }
   .admin-shell table.node-management, .node-management tbody { display: block; min-width: 0; background: none; border: 0; }
   .node-management td[data-column="status"]::before, .node-management td[data-column="select"]::before, .node-management td[data-column="name"]::before, .node-management td[data-column="actions"]::before { display: none; }
   .node-management thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-  .node-management tr { display: grid; grid-template-columns: auto 1fr auto; gap: 6px 10px; align-items: center; margin-bottom: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); }
+  .node-management tr {
+    display: grid; grid-template-columns: 20px minmax(0, 1fr) minmax(0, 1fr) 32px; gap: 8px 10px; align-items: start;
+    grid-template-areas: "select name name actions" ". status status ." ". traffic billing ." ". expiry expiry .";
+    margin-bottom: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card);
+  }
   .admin-shell table.node-management td { height: auto; padding: 0; border: 0; }
-  .node-management td[data-column="status"] { grid-row: 1; grid-column: 1; }
-  .node-management td[data-column="name"] { grid-row: 1; grid-column: 2; }
-  .node-management td[data-column="actions"] { grid-row: 1; grid-column: 3; }
-  .node-management td[data-column="select"] { grid-row: 2; grid-column: 1; }
-  .node-management td[data-column="traffic"], .node-management td[data-column="billing"], .node-management td[data-column="expiry"] { grid-row: 2; font-size: 12px; }
-  .node-management td[data-column="traffic"] { grid-column: 2; }
-  .node-management td[data-column="billing"] { grid-column: 3; }
-  .node-management td[data-column="expiry"] { grid-row: 3; grid-column: 2 / -1; }
+  .node-management td[data-column="select"] { grid-area: select; padding-top: 2px; }
+  .node-management td[data-column="name"] { grid-area: name; }
+  .node-management td[data-column="actions"] { grid-area: actions; }
+  .node-management td[data-column="status"] { grid-area: status; }
+  .node-management td[data-column="traffic"], .node-management td[data-column="billing"], .node-management td[data-column="expiry"] { font-size: 12px; }
+  .node-management td[data-column="traffic"] { grid-area: traffic; }
+  .node-management td[data-column="billing"] { grid-area: billing; }
+  .node-management td[data-column="expiry"] { grid-area: expiry; }
   .node-management td[data-column="order"], .node-management td[data-column="addresses"] { display: none; }
   .node-name-line { flex-wrap: wrap; overflow: visible; }
   .node-name-line a { white-space: normal; overflow: visible; text-overflow: clip; }
@@ -318,3 +326,15 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
 .admin-shell input.switch:checked { background: var(--status-online); }
 .switch:checked::after { left: 16px; }
 .switch:disabled { opacity: .5; cursor: default; }
+
+/* 空态卡片：列表为空时代替只有表头的空表（pages/ApiTokens.tsx）。 */
+.empty-state p { margin: 0; }
+.empty-state p + p { margin-top: 4px; font-size: 13px; }
+/* API token 页的接入方式：每项说明在左、动作在右，窄屏时动作落到说明下方。 */
+.integrations h2 { margin-bottom: 4px; }
+.integration { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px 24px; padding: 12px 0; border-top: 1px solid var(--line); }
+.integration:first-of-type { border-top: 0; }
+.integration > p { display: grid; gap: 4px; margin: 0; max-width: 720px; }
+.integration > p .muted { font-size: 13px; }
+.integration > :last-child { flex: none; }
+@media (max-width: 640px) { .integration { flex-direction: column; } }

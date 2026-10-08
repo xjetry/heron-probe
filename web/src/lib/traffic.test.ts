@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseQuota, quotaInput, trafficDetail, trafficText } from "./traffic";
+import { parseQuota, quotaInput, trafficDetail, trafficParts, trafficText } from "./traffic";
 import { create } from "@bufbuild/protobuf";
 import { TrafficQuotaMode, TrafficSchema } from "../gen/heron/v1/types_pb";
 
@@ -17,8 +17,10 @@ describe("quota conversion", () => {
   it("formats only the server billing numerator and percentage", () => {
     const t = create(TrafficSchema, { periodRx: 800n, periodTx: 200n, quotaBytes: 1000n, quotaUsedBytes: 200n, quotaUsedPct: 20 });
     expect(trafficText(t)).toBe("200 B / 1000 B (20.0%)");
+    expect(trafficParts(t)).toEqual({ amount: "200 B / 1000 B", percent: "20.0%" });
     t.quotaBytes = 0n;
     expect(trafficText(t)).toBe("200 B");
+    expect(trafficParts(t)).toEqual({ amount: "200 B" });
     expect(quotaInput(1n << 30n, "GiB")).toBe("1");
   });
   it("labels the numerator by the quota mode and falls back to sum without a quota", () => {

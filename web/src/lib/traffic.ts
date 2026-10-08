@@ -22,9 +22,15 @@ export function quotaInput(bytes: bigint, unit: QuotaUnit): string {
 }
 
 // 只有数字与单位：调用方把它放进等宽的 .num 里，中文说明（口径、是否设了配额）由 trafficDetail 另起一段给出。
-export function trafficText(t: Traffic): string {
+// trafficParts 是同一份文字的两段：用量（有配额时带分母）与配额百分比，供窄列分两行排；其余位置用 trafficText 写成一行。
+export function trafficParts(t: Traffic): { amount: string; percent?: string } {
   const used = bytes(t.quotaUsedBytes);
-  return t.quotaBytes > 0n ? `${used} / ${bytes(t.quotaBytes)} (${(t.quotaUsedPct ?? 0).toFixed(1)}%)` : used;
+  return t.quotaBytes > 0n ? { amount: `${used} / ${bytes(t.quotaBytes)}`, percent: `${(t.quotaUsedPct ?? 0).toFixed(1)}%` } : { amount: used };
+}
+
+export function trafficText(t: Traffic): string {
+  const { amount, percent } = trafficParts(t);
+  return percent ? `${amount} (${percent})` : amount;
 }
 
 // 配额的计入口径决定 quota_used_bytes 是哪个分子；展示分子的地方必须用同一口径作副标题，否则"只收"的数值配着"下载 + 上传"的说明。

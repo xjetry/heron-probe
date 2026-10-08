@@ -89,7 +89,8 @@ button.danger { color: var(--bad); border-color: var(--bad); }
 form.row { align-items: flex-end; flex-wrap: wrap; }
 .detail-header { flex-wrap: wrap; }
 .detail-header h1 { max-width: 100%; overflow-wrap: anywhere; }
-.detail-header nav { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+/* 节点页 / 对比页的工具栏：时间窗口分段控件、口径说明、覆盖率排一行。 */
+.detail-header { align-items: center; gap: 8px 12px; }
 .table-scroll { overflow-x: auto; position: relative; }
 .tag { display: inline-flex; align-items: center; gap: .15rem; margin: 0 .25rem .15rem 0; padding: 0 .4rem; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; }
 .tags-edit { white-space: normal; min-width: 12rem; }
@@ -180,7 +181,11 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .chip > button:hover { color: var(--fg); }
 /* 多选下拉（components/MultiSelect.tsx）：桌面为浮层；窄屏改为底部弹出（设计 §3.4）。 */
 .multi-select { position: relative; display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.multi-select-trigger { height: var(--control-h); }
+/* 触发按钮带下拉箭头，与原生 select 一样一眼看出点开是下拉；展开时箭头朝上。 */
+.multi-select-trigger { display: inline-flex; align-items: center; gap: 4px; height: var(--control-h); }
+.multi-select-caret { color: var(--muted); transition: transform .15s; }
+.multi-select-trigger[aria-expanded="true"] .multi-select-caret { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .multi-select-caret { transition: none; } }
 .multi-select-trigger[aria-expanded="true"] { border-color: var(--accent); }
 .multi-select-chips { display: contents; list-style: none; margin: 0; padding: 0; }
 .multi-select-popup { position: absolute; z-index: 40; top: calc(100% + 4px); left: 0; min-width: 220px; max-height: 320px; overflow: auto; padding: 8px; background: var(--card-raised); border: 1px solid var(--line); border-radius: var(--radius-control); box-shadow: var(--shadow-float); }
@@ -269,6 +274,7 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .now-cell { padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); min-width: 0; }
 .now-cell dt { font-size: 12px; color: var(--muted); }
 .now-cell dd { margin: 2px 0 0; font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
+.now-cell .now-line { display: block; font-size: 14px; white-space: nowrap; }
 .now-cell [data-level="attention"] { color: var(--status-attention); }
 .now-cell [data-level="critical"] { color: var(--status-offline); }
 @media (max-width: 900px) { .now-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
@@ -324,3 +330,36 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .file-input:has(.file-native:focus-visible) .file-button { outline: 2px solid var(--accent); outline-offset: 2px; }
 .file-input[data-disabled] { opacity: 0.5; cursor: default; }
 .file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+
+/* 分段控件：一组互斥选项拼成一个外框，选中项前景色实底。两种写法共用外观：单选（label > input + span，探测类型、渠道类型）
+   与按钮（button[aria-pressed]，时间窗口）。面板与公开页都用，所以放在共享样式里。 */
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-control); overflow: hidden; margin-bottom: 12px; }
+.detail-header .segmented { margin-bottom: 0; }
+.segmented label { position: relative; }
+.segmented input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.segmented span, .segmented > button { display: inline-block; height: 30px; line-height: 30px; padding: 0 12px; font-size: 13px; color: var(--muted); }
+.segmented > button { min-height: 0; border: 0; border-radius: 0; background: none; }
+.segmented > button + button { border-left: 1px solid var(--line); }
+.segmented > button:hover { color: var(--fg); }
+.segmented input:checked + span, .segmented > button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.segmented input:focus-visible + span, .segmented > button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* 历史图网格：每张至少 480px 宽，管理端与公开页在 1440 宽下都排两列；卡片内边距收紧，把面积留给图。 */
+.chart-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 12px; margin-bottom: 12px; container-type: inline-size; }
+/* 最后一行不满时把最后一张拉宽，不留空格：两列（宽 2×480+12 到 3×480+24）时张数为奇数，最后一张撑满整行；
+   三列（宽 3×480+24 到 4×480+36）时剩一张撑满、剩两张时最后一张占两格。断点由上面的 480px 与 12px 间距算出，
+   改其中任一项要同步改这里；四列以上不处理。 */
+@container (min-width: 972px) and (max-width: 1463.98px) { .chart-grid > .chart-card:last-child:nth-child(odd) { grid-column: 1 / -1; } }
+@container (min-width: 1464px) and (max-width: 1955.98px) {
+  .chart-grid > .chart-card:last-child:nth-child(3n + 1) { grid-column: 1 / -1; }
+  .chart-grid > .chart-card:last-child:nth-child(3n + 2) { grid-column: span 2; }
+}
+.chart-grid > .card.chart-card { margin: 0; padding: 12px 14px 8px; }
+.chart-card h2 { font-size: 13px; margin: 0 0 6px; }
+.coverage-note { display: inline-flex; align-items: center; gap: 2px; font-size: 13px; }
+
+/* 公开节点页页头里的系统信息行（public/NodePage.tsx）。 */
+.facts-inline { display: flex; flex-wrap: wrap; gap: 2px 16px; margin: 6px 0 0; font-size: 12px; }
+.facts-inline > div { display: flex; gap: 6px; min-width: 0; }
+.facts-inline dt { color: var(--muted); }
+.facts-inline dd { margin: 0; overflow-wrap: anywhere; }

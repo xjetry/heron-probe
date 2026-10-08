@@ -73,21 +73,17 @@ export function ApiTokens() {
   return (
     <section>
       {gate.banner}
-      <PageHeader title="API token" description={<>供 agent 与脚本使用的预授权凭据：以 <code>Authorization: Bearer &lt;token&gt;</code> 调用 API。默认只读，勾选的操作可在授权节点范围内自主执行，无需逐次审批。</>} actions={<>
-        <button type="button" onClick={() => reference.mutate({})} disabled={reference.isPending}>下载入口卡片</button>
+      <PageHeader title="API token" description={<>供 agent 与脚本使用的预授权凭据：以 <code>Authorization: Bearer &lt;token&gt;</code> 调用 API。默认只读，勾选的操作可在授权节点范围内自主执行，无需逐次审批。</>} actions={
         <button type="button" className="primary-button" onClick={(e) => { create.reset(); setDrawerOpener(e.currentTarget); }}>新建 API token</button>
-      </>} />
-      <p className="muted">
-        保存为 agent 的 skills 目录下的 heron-hub/SKILL.md（Claude Code 为 ~/.claude/skills/heron-hub/SKILL.md），并设置 <code>HERON_HUB={window.location.origin}</code> 与 <code>HERON_TOKEN</code>。
-      </p>
-      <p>
-        <UserscriptButton />
-      </p>
-      <p className="muted">油猴脚本给运维自己用：粘贴进 Tampermonkey 等脚本管理器后，任意站点右下角出现悬浮按钮，在 IDC 页面看着价格与到期一键建节点，建好后直接给出安装命令。脚本经 <code>ExecuteChange</code> 写，token 需勾选「创建节点」。</p>
+      } />
       {drawerOpener && <ApiTokenDrawer opener={drawerOpener} pending={create.isPending} error={create.error}
         onClose={() => { setDrawerOpener(null); create.reset(); }} onCreate={(name, grant) => create.mutateAsync({ name, grant })} />}
       {!drawerOpener && error != null && <p role="alert" className="error">{errorText(error)}</p>}
-      <div className="table-scroll" role="region" aria-label="API token 管理" tabIndex={0}>
+      {/* 没有 token 时不画只有表头的空表，空态写在同一块卡片里。 */}
+      {gate.data.tokens.length === 0 ? <div className="card empty-state" role="status">
+        <p>还没有 API token。</p>
+        <p className="muted">新建一个 token 交给 agent 或脚本；权限与可操作的节点在新建时勾选，之后可随时吊销。</p>
+      </div> : <div className="table-scroll" role="region" aria-label="API token 管理" tabIndex={0}>
         <table className="nodes">
           <thead><tr><th>名称</th><th>权限 / 范围</th><th>创建于</th><th>最后使用</th><th><span className="sr-only">操作</span></th></tr></thead>
           <tbody>
@@ -109,9 +105,20 @@ export function ApiTokens() {
             ))}
           </tbody>
         </table>
-      </div>
-      {gate.data.tokens.length === 0 && <p className="muted">还没有 API token。</p>}
+      </div>}
       {auditOwner !== null && <Operations ownerId={auditOwner} />}
+      {/* 两种接入方式各占一行：说明在左，动作在右。它们是辅助材料，排在 token 列表之后。 */}
+      <section className="card integrations" aria-label="接入方式">
+        <h2>接入方式</h2>
+        <div className="integration">
+          <p><strong>agent 入口卡片</strong><span className="muted">保存为 agent 的 skills 目录下的 heron-hub/SKILL.md（Claude Code 为 ~/.claude/skills/heron-hub/SKILL.md），并设置 <code>HERON_HUB={window.location.origin}</code> 与 <code>HERON_TOKEN</code>。</span></p>
+          <button type="button" onClick={() => reference.mutate({})} disabled={reference.isPending}>下载入口卡片</button>
+        </div>
+        <div className="integration">
+          <p><strong>油猴脚本</strong><span className="muted">给运维自己用：粘贴进 Tampermonkey 等脚本管理器后，任意站点右下角出现悬浮按钮，在 IDC 页面看着价格与到期一键建节点，建好后直接给出安装命令。脚本经 <code>ExecuteChange</code> 写，token 需勾选「创建节点」。</span></p>
+          <UserscriptButton />
+        </div>
+      </section>
     </section>
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { literalPattern } from "../lib/fold";
+import { Icon } from "./Icon";
 
 export type MultiSelectOption = { value: string; label: string; count?: number };
 
@@ -34,6 +35,7 @@ export function MultiSelect({ label, options, selected, onChange, searchable = f
     <div ref={root} className="multi-select" role="group" aria-label={label} onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }}>
       <button type="button" className="multi-select-trigger" aria-expanded={open} aria-controls={listId} onClick={() => setOpen((o) => !o)}>
         {label}{chips.length > 0 && <span className="num"> {chips.length}</span>}
+        <Icon name="chevronDown" className="multi-select-caret" width={14} height={14} />
       </button>
       {chips.length > 0 && (
         <ul className="multi-select-chips">

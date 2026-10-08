@@ -36,9 +36,9 @@ export function useTimeWindow(now: number) {
 
 export function RangeButtons({ range, setRange }: { range: HistoryRange; setRange: (range: HistoryRange) => void }) {
   return (
-    <nav aria-label="时间窗口">
+    <nav aria-label="时间窗口" className="segmented">
       {RANGES.map((r) => (
-        <button key={r.label} type="button" className={r.label === range.label ? "active" : "link"} onClick={() => setRange(r)} aria-pressed={r.label === range.label}>
+        <button key={r.label} type="button" onClick={() => setRange(r)} aria-pressed={r.label === range.label}>
           {r.label}
         </button>
       ))}
@@ -164,38 +164,38 @@ export function useHistory(methods: HistoryMethods, nodeId: bigint, now: number 
 
 export type HistoryState = ReturnType<typeof useHistory>;
 
-export function RangePicker({ history }: { history: HistoryState }) {
+// showCoverage 默认不显示：本组件由管理端与公开页共用，覆盖率口径（hub 的观测与保留期、节点首报）
+// 只在管理端展示；默认方向取"不显示"，新调用方忘记传参时覆盖率不会被带到公开页。
+export function RangePicker({ history, showCoverage = false }: { history: HistoryState; showCoverage?: boolean }) {
   const { range, setRange, metrics, rangeStale } = history;
+  const coverage = coverageView(metrics.data?.coverageSummary);
   return (
     <>
       <RangeButtons range={range} setRange={setRange} />
       {/* rangeStale 排除了“同一个 range 里晚了不到一分钟”的情况，只在真的换过 range 还没等到新 range
           自己的数据时才出现；不点出来，这里显示的级别与图表会被当成当前选中 range 的结果看。 */}
       <RangeStatus shown={metrics.data} stale={rangeStale} rangeLabel={range.label} />
+      {/* 覆盖率取与图表同一次 QueryMetrics 响应的 coverageSummary，不另发请求；旧 hub 没有这个字段，
+          absent 时整项不显示（不显示 0%、也不显示"未知"）。读数直接写在工具栏上，口径收进说明。 */}
+      {showCoverage && coverage.kind !== "absent" && (
+        <span className="muted coverage-note">
+          {coverage.kind === "no-start" && "尚无覆盖记录"}
+          {coverage.kind === "no-observed" && "无可观测区间"}
+          {coverage.kind === "rate" && <>上报覆盖 <span className="num">{coverage.percent}%</span>{coverage.unknown && <>，未知 {coverage.unknown}</>}</>}
+          <InfoTip label="上报覆盖率说明">这是 hub 观测到的分钟里节点有上报的比例，不是在线率；hub 未运行、超出保留期等无法观测的时段计为未知。</InfoTip>
+        </span>
+      )}
     </>
   );
 }
 
-// showCoverage 默认不显示：本组件由管理端与公开页共用，覆盖率口径（hub 的观测与保留期、节点首报）
-// 只在管理端展示；默认方向取"不显示"，新调用方忘记传参时覆盖率不会被带到公开页。
-export function MetricCharts({ history, showCoverage = false }: { history: HistoryState; showCoverage?: boolean }) {
-  const { charts, metrics } = history;
-  const coverage = coverageView(metrics.data?.coverageSummary);
+export function MetricCharts({ history }: { history: HistoryState }) {
+  const { charts } = history;
   return (
     <>
-      {/* 覆盖率取与图表同一次 QueryMetrics 响应的 coverageSummary，不另发请求；旧 hub 没有这个字段，
-          absent 时整项不显示（不显示 0%、也不显示"未知"）。 */}
-      {showCoverage && coverage.kind !== "absent" && (
-        <p className="muted coverage-note"><InfoTip label="上报覆盖率">
-          {coverage.kind === "no-start" && "尚无覆盖记录"}
-          {coverage.kind === "no-observed" && "无可观测区间"}
-          {coverage.kind === "rate" && <>上报覆盖 {coverage.percent}%{coverage.unknown && <>，未知 {coverage.unknown}</>}</>}
-          。这是 hub 观测到的分钟里节点有上报的比例，不是在线率；hub 未运行、超出保留期等无法观测的时段计为未知。
-        </InfoTip></p>
-      )}
-      <div className="grid">
+      <div className="grid chart-grid">
         {charts.map((c) => (
-          <div className="card" key={c.title}>
+          <div className="card chart-card" key={c.title}>
             <h2>{c.title}</h2>
             <Chart data={c.data} labels={c.labels} unit={c.unit} soft={c.soft} />
           </div>
@@ -211,9 +211,9 @@ export function ProbeTaskCharts({ history, noProbes, titleLink }: { history: His
   if (!probes.data) return null;
   if (probes.data.series.length === 0) return <>{noProbes}</>;
   return (
-    <div className="grid">
+    <div className="grid chart-grid">
       {probeTaskCharts.map((c) => (
-        <div className="card" key={String(c.taskId)}>
+        <div className="card chart-card" key={String(c.taskId)}>
           <h2>{c.kind === ProbeKind.UNSPECIFIED ? c.title : titleLink(c.taskId, c.title)}</h2>
           <Chart data={c.data} labels={c.labels} unit={c.unit} soft={c.soft} bands={c.bands} />
         </div>

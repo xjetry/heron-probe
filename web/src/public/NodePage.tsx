@@ -45,6 +45,15 @@ function NodeContent({ node, now, error }: { node: PublicNode; now: number; erro
         </div>
         {node.publicRemark && <p className="node-remark">{node.publicRemark}</p>}
         {node.tags.length > 0 && <ul className="tag-chips">{node.tags.map((tag) => <li key={tag} className="chip">{tag}</li>)}</ul>}
+        {/* 系统信息写成页头里的一行，不单独铺一张全宽卡片；主机信息从未上报时整行不画，缺的单项不写。 */}
+        {f && (
+          <dl className="facts-inline">
+            {f.os && <div><dt>系统</dt><dd>{f.os}</dd></div>}
+            {f.arch && <div><dt>架构</dt><dd>{f.arch}</dd></div>}
+            {f.cpuModel && <div><dt>CPU</dt><dd>{f.cpuModel}{f.cpuCores ? ` × ${f.cpuCores}` : ""}</dd></div>}
+            <div><dt>虚拟化</dt><dd>{f.virtualization || "无 / 未知"}</dd></div>
+          </dl>
+        )}
         <NowGrid metrics={m} daysLeft={daysLeft} />
       </header>
       <header className="row detail-header">
@@ -52,15 +61,6 @@ function NodeContent({ node, now, error }: { node: PublicNode; now: number; erro
       </header>
       <MetricCharts history={history} />
       <ProbeTaskCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。</p>} titleLink={(taskId, title) => <Link to={`/probes/${taskId}`}>{title}</Link>} />
-      {/* 系统信息卡：主机信息从未上报时缺失，整张不画。 */}
-      {f && (
-        <dl className="card facts">
-          <dt>系统</dt><dd>{f.os}</dd>
-          <dt>架构</dt><dd>{f.arch}</dd>
-          <dt>CPU</dt><dd>{f.cpuModel} × {f.cpuCores}</dd>
-          <dt>虚拟化</dt><dd>{f.virtualization || "无 / 未知"}</dd>
-        </dl>
-      )}
     </section>
   );
 }

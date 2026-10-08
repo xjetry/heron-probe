@@ -41,8 +41,8 @@ describe("100 节点管理交互", () => {
     await screen.findByRole("link", { name: label(99) });
     expect(shown()).toEqual(nodes.map((node) => node.name));
     expect(screen.getAllByText(nodes[0].note)).toHaveLength(100);
-    fireEvent.change(screen.getByRole("combobox", { name: `移动 ${label(0)}` }), { target: { value: "down" } });
-    fireEvent.change(screen.getByRole("combobox", { name: `移动 ${label(0)}` }), { target: { value: "down" } });
+    openRowAction(label(0), "下移一位");
+    openRowAction(label(0), "下移一位");
     openRowAction(label(50), "编辑");
     const draft = screen.getByRole("textbox", { name: `备注 ${label(50)}` });
     fireEvent.change(draft, { target: { value: "尚未保存的规模验收备注" } });
@@ -73,7 +73,7 @@ describe("100 节点管理交互", () => {
       listTags: async () => ({ tags: [] }), getSnapshot: async () => ({ nodes: [] }), reorderNodes,
     }, [{ path: "/nodes", Component: Nodes }], "/nodes");
     await screen.findByRole("link", { name: label(99) });
-    fireEvent.change(screen.getByRole("combobox", { name: `移动 ${label(0)}` }), { target: { value: "down" } });
+    openRowAction(label(0), "下移一位");
     const recover = await screen.findByRole("button", { name: "重新读取排序" });
     await waitFor(() => expect(recover).toBeEnabled());
     expect(screen.getAllByRole("alert").some((alert) => alert.textContent?.includes("无法确认服务端排序"))).toBe(true);

@@ -90,6 +90,8 @@ export function Chart({ data, labels, unit, height = 180, soft, bands = [], lege
         {
           ...axisStyle,
           space: X_TICK_SPACE,
+          // 横轴只有一行 11px 刻度；uPlot 默认给横轴留 50px，刻度与图例之间空出一截，压到 30px 把高度还给绘图区。
+          size: 30,
           // 刻度文字画在 canvas 上，DOM 里看不到；把刻度数写到宿主上，e2e 才能核对间距规则真的起了作用。
           values: (u, splits, _axisIdx, _foundSpace, foundIncr) => {
             host.dataset.xTicks = String(splits.length);

@@ -52,10 +52,13 @@
 
 /* 状态墙（StatusWall.tsx）+ 详情面板（DetailPanel.tsx）：左 2/3 右 1/3，面板随滚动固定。 */
 .wall-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); gap: 16px; align-items: start; }
-.wall-group { margin: 0 0 12px; }
+/* 地区组按内容宽度横向流式排布：节点少的组并排放，不再一组独占一行、右侧大片空白；组内方块定宽，多的组在整行宽度内折行。 */
+.wall { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 28px; }
+.wall-group { flex: 0 1 auto; min-width: 0; max-width: 100%; margin: 0 0 12px; }
 .wall-group > summary { display: flex; align-items: center; gap: 8px; height: 32px; font-weight: 600; font-size: 13px; cursor: pointer; list-style: none; }
 .wall-group > summary::-webkit-details-marker { display: none; }
-.tiles { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 6px; }
+.tiles { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.tile { width: 132px; }
 .tile > a { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 2px 6px; min-height: 56px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); color: var(--fg); font-size: 12px; }
 .tile > a:hover { background: var(--card-hover); border-color: var(--line-strong); }
 .tile[aria-current] > a { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
@@ -77,14 +80,17 @@
 .detail-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; align-items: center; }
 .detail-row dt { color: var(--muted); }
 .detail-row dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-.detail-row .bar { min-width: 0; height: 16px; }
+.detail-meter { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.detail-meter .bar { min-width: 0; }
 .detail-row .sparkline { margin-top: 4px; width: 100%; }
 .detail-more { display: inline-block; margin-top: 12px; }
 /* 手机版（设计 §3.4）：墙降级为单列列表，组头吸顶；详情面板不渲染（StatusWall 按同一断点判断）。 */
 @media (max-width: 900px) {
   .wall-layout { grid-template-columns: minmax(0, 1fr); }
   .wall-group > summary { position: sticky; top: 48px; z-index: 5; background: var(--bg); }
-  .tiles { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .wall { display: block; }
+  .tiles { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .tile { width: auto; }
   .tile > a { grid-template-columns: auto minmax(0, 1fr) auto auto; grid-template-rows: auto; align-items: center; min-height: 44px; border-radius: 0; border-width: 0 0 1px; }
   .tile-name { display: flex; align-items: center; gap: 4px; }
   .tile-attention { color: var(--status-attention); font-size: 10px; }

@@ -33,11 +33,14 @@ it("公开节点的历史图表走 PublicService；首屏是实时状态头与�
   expect(within(screen.getByRole("group", { name: "磁盘" })).getByText("10%")).toBeInTheDocument();
   expect(screen.getByRole("group", { name: "网络" })).toHaveTextContent("↓ 2.0 KiB/s ↑ 1.0 KiB/s");
   expect(screen.getByRole("group", { name: "运行时长" })).toHaveTextContent("1d 1h");
-  expect(within(screen.getByRole("group", { name: "剩余天数" })).getByText("20 天")).toHaveAttribute("data-level", "attention");
+  expect(screen.getByRole("group", { name: "剩余天数" })).toHaveTextContent("20 天");
+  expect(within(screen.getByRole("group", { name: "剩余天数" })).getByText("20").closest("[data-level]")).toHaveAttribute("data-level", "attention");
+  expect(within(screen.getByRole("group", { name: "剩余天数" })).getByText("20")).toHaveClass("num");
   expect(await screen.findByRole("heading", { name: "TCP example.com:443" })).toBeInTheDocument();
   expect(screen.getAllByTestId("chart")).toHaveLength(11);
   for (const r of ["1h", "6h", "24h", "7d", "30d"]) expect(screen.getByRole("button", { name: r })).toBeInTheDocument();
-  expect(screen.getByText("Alpine 3.21")).toBeInTheDocument();
+  expect(within(head).getByText("Alpine 3.21").closest("dl")).toHaveClass("facts-inline");
+  expect(within(head).getByText("Neoverse × 2")).toBeInTheDocument();
   expect(screen.queryByLabelText("执行环境")).not.toBeInTheDocument();
   expect((queryMetrics.mock.calls[0] as unknown[])[0]).toMatchObject({ nodeId: 7n, maxPoints: 1000 });
 });
@@ -58,7 +61,7 @@ it("快照里没有的节点说明不存在或未公开，也不去查历史", a
   expect(queryMetrics).not.toHaveBeenCalled();
 });
 
-it("系统信息卡：主机信息缺失时不画卡片", async () => {
+it("系统信息行：主机信息缺失时整行不画，缺的单项不写", async () => {
   const nodes = [
     { id: 7n, name: "edge-1", online: true, facts: { os: "Alpine 3.21", arch: "arm64" } },
     { id: 9n, name: "bare", online: false, billing: { price: "3", currency: "USD", expiresOn: "2030-01-01", daysLeft: 20 } },
@@ -71,10 +74,12 @@ it("系统信息卡：主机信息缺失时不画卡片", async () => {
     await screen.findByRole("heading", { level: 1 });
   };
   await show(7);
-  expect(screen.getByText("Alpine 3.21")).toBeInTheDocument();
+  const facts = screen.getByText("Alpine 3.21").closest("dl")!;
+  expect(facts).toHaveClass("facts-inline");
+  expect(within(facts).queryByText("CPU")).toBeNull();
   cleanup();
   await show(9);
-  expect(document.querySelector("dl.facts")).toBeNull();
+  expect(document.querySelector("dl.facts-inline")).toBeNull();
 });
 
 it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅，不误报“非当前窗口”", async () => {

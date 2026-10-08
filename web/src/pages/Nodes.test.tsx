@@ -49,7 +49,9 @@ describe("Nodes", () => {
 
   it("列表显示 hub 计费用量与配额，不重新求收发之和", async () => {
     renderNodes({ listNodes: async () => ({ nodes: two }), getSnapshot: async () => ({ nodes: [{ id: 1n, name: "a", traffic: { periodRx: 800n, periodTx: 200n, quotaUsedBytes: 200n, quotaBytes: 1000n, quotaUsedPct: 20 } }] }) });
-    expect(await screen.findByText("200 B / 1000 B (20.0%)")).toBeInTheDocument();
+    const amount = await screen.findByText("200 B / 1000 B");
+    expect(amount).toHaveClass("cell-main");
+    expect(amount.closest("td")).toHaveTextContent(/^200 B \/ 1000 B 20\.0%$/);
   });
 
   it("双栈结果区分地址、不支持、失败与未上报，并在详情显示探测时间", async () => {
@@ -137,12 +139,14 @@ describe("Nodes", () => {
       expect(button).toBeDisabled();
       fireEvent.click(button);
     }
+    for (const action of ["上移一位", "下移一位", "置顶", "置底"]) expect(rowAction("b（#2）", action)).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(rowAction("b（#2）", "上移一位"));
     await act(async () => {});
     expect(reorderNodes).not.toHaveBeenCalled();
     fireEvent.change(input, { target: { value: "" } });
     expect(screen.queryByText("筛选时不能用拖动或上下移（它们保存完整排列）；可用行菜单的「移动到…」按全序名次移动，或清除筛选后再调整。")).toBeNull();
     for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) expect(button).toBeEnabled();
-    fireEvent.change(screen.getByRole("combobox", { name: "移动 a（#1）" }), { target: { value: "down" } });
+    openRowAction("a（#1）", "下移一位");
     await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n] }), expect.anything()));
   });
 
@@ -304,12 +308,13 @@ describe("Nodes", () => {
       listNodes, rotateNodeToken: async () => ({ token: "new" }), reorderNodes: async () => ({}),
     });
     await screen.findByRole("link", { name: "a（#1）" });
-    if (operation === "rotate") rowAction("a（#1）", "换 token");
+    // 菜单在启用假定时器之前打开：菜单的定位与焦点走真实的异步时序。
+    const action = operation === "rotate" ? "换 token" : "下移一位";
+    rowAction("a（#1）", action);
     vi.useFakeTimers();
     try {
       await act(async () => {
-        if (operation === "rotate") fireEvent.click(screen.getByRole("menuitem", { name: "换 token a（#1）" }));
-        else fireEvent.change(screen.getByRole("combobox", { name: "移动 a（#1）" }), { target: { value: "down" } });
+        fireEvent.click(screen.getByRole("menuitem", { name: `${action} a（#1）` }));
         await vi.advanceTimersByTimeAsync(100);
       });
       expect(listNodes).toHaveBeenCalledTimes(2);
@@ -633,12 +638,22 @@ describe("Nodes", () => {
     await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 11n, name: "renamed" }), expect.anything()));
   });
 
+  it("行菜单的上下移与置顶置底：首行不能上移、置顶，末行不能下移、置底", async () => {
+    renderNodes({ listNodes: async () => ({ nodes: two }) });
+    await screen.findByRole("link", { name: "b（#2）" });
+    const cases = [["a（#1）", ["上移一位", "置顶"], ["下移一位", "置底"]], ["b（#2）", ["下移一位", "置底"], ["上移一位", "置顶"]]] as const;
+    for (const [label, off, on] of cases) {
+      for (const action of off) expect(rowAction(label, action)).toHaveAttribute("aria-disabled", "true");
+      for (const action of on) expect(rowAction(label, action)).not.toHaveAttribute("aria-disabled");
+    }
+  });
+
   it.each([["a（#1）", "down"], ["b（#2）", "up"]])("移动 %s %s 提交完整排列", async (label, value) => {
     const reorderNodes = vi.fn(async () => ({}));
     const three = [...two, { ...two[0], id: 3n, name: "c", sortOrder: 2 }];
     renderNodes({ listNodes: async () => ({ nodes: three }), reorderNodes });
     await screen.findByRole("link", { name: "a（#1）" });
-    fireEvent.change(screen.getByRole("combobox", { name: `移动 ${label}` }), { target: { value } });
+    openRowAction(label, value === "down" ? "下移一位" : "上移一位");
     await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n, 3n] }), expect.anything()));
   });
 
@@ -759,7 +774,7 @@ describe("Nodes", () => {
         { ...two[0], id: 3n, name: "c" },
       ] }) });
       const row = async (name: string) => within((await screen.findByRole("link", { name })).closest("tr")!);
-      expect((await row("a（#1）")).getByRole("cell", { name: "US$12.50 / 月· 自动续期" })).toBeInTheDocument();
+      expect((await row("a（#1）")).getByRole("cell", { name: "US$12.50 / 月 自动续期" })).toBeInTheDocument();
       // 日期进等宽 .num，中文的剩余天数不进；两段共用一个 data-level 着色。
       const soon = (await row("a（#1）")).getByText("2026-10-01");
       expect(soon).toHaveClass("num");
@@ -1044,7 +1059,7 @@ describe("Nodes", () => {
       fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
       await waitFor(() => expect(shown()).toEqual(["alpha", "beta", "gamma", "delta"]));
       for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) expect(button).toBeEnabled();
-      fireEvent.change(screen.getByRole("combobox", { name: "移动 alpha（#1）" }), { target: { value: "down" } });
+      openRowAction("alpha（#1）", "下移一位");
       await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n, 3n, 4n] }), expect.anything()));
     });
 
@@ -1367,7 +1382,7 @@ describe("移动到指定位置", () => {
     const reorderNodes = vi.fn((): Promise<{}> => new Promise(() => {}));
     renderNodes({ listNodes: listHub, listTags: tagList, reorderNodes });
     await screen.findByRole("link", { name: "d（#4）" });
-    fireEvent.change(screen.getByRole("combobox", { name: "移动 a（#1）" }), { target: { value: "down" } });
+    openRowAction("a（#1）", "下移一位");
     await waitFor(() => expect(screen.getByText("正在保存并确认排序…")).toBeInTheDocument());
     // a 的服务端 position 仍是 1，序号按期望排列显示为 2。
     expect(positionOf("a（#1）")).toBe("2");
@@ -1384,7 +1399,7 @@ describe("移动到指定位置", () => {
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "移动" }));
     // 提交后 MoveNodes 一直未返回：手柄禁用，菜单上下移不再触发 ReorderNodes。
     await waitFor(() => expect(screen.getByRole("button", { name: "调整顺序 a（#1）" })).toBeDisabled());
-    fireEvent.change(screen.getByRole("combobox", { name: "移动 a（#1）" }), { target: { value: "down" } });
+    openRowAction("a（#1）", "下移一位");
     expect(reorderNodes).not.toHaveBeenCalled();
     expect(moveNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [3n], position: 1 }), expect.anything());
   });
@@ -1480,7 +1495,7 @@ describe("移动到指定位置", () => {
     renderNodes({ listNodes: listHub, listTags: tagList, moveNodes, reorderNodes });
     await screen.findByRole("link", { name: "d（#4）" });
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 c（#3）" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "移动 a（#1）" }), { target: { value: "down" } });
+    openRowAction("a（#1）", "下移一位");
     await waitFor(() => expect(screen.getByText("正在保存并确认排序…")).toBeInTheDocument());
     expect(screen.getByRole("button", { name: "移动到…" })).toBeDisabled();
     // 排序会话本身允许继续累积调整，但「移动到…」在未确认前关闭。

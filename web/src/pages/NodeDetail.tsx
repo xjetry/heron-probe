@@ -65,8 +65,8 @@ export function NodeDetail() {
   const panel = (
     <section id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`}>
       {tab === "overview" && (time.ready ? <>
-        <header className="row detail-header"><RangePicker history={history} /></header>
-        <MetricCharts history={history} showCoverage />
+        <header className="row detail-header"><RangePicker history={history} showCoverage /></header>
+        <MetricCharts history={history} />
         <ProbeTaskCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>} titleLink={(taskId, title) => <Link to={`/probes/${taskId}/compare`}>{title}</Link>} />
       </> : time.loading)}
       {tab === "traffic" && <TrafficCard nodeId={nodeId} data={traffic.data} />}

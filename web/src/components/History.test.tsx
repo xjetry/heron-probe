@@ -139,27 +139,30 @@ it.each([
   {
     name: "正常：百分比向下截断到一位小数，未知时长按量级选单位",
     summary: { coverageStart: 1_700_000_000n, eligibleMinutes: 200n, observedMinutes: 150n, observedReportedMinutes: 100n },
-    pattern: /上报覆盖 66\.6%，未知 50 分钟。这是 hub 观测到的分钟里节点有上报的比例，不是在线率/,
+    shown: "上报覆盖 66.6%，未知 50 分钟",
   },
   {
     name: "无未知分钟时不显示未知时长",
     summary: { coverageStart: 1_700_000_000n, eligibleMinutes: 150n, observedMinutes: 150n, observedReportedMinutes: 150n },
-    pattern: /上报覆盖 100\.0%。这是/,
+    shown: "上报覆盖 100.0%",
   },
   {
     name: "coverageStart 缺席：只说尚无覆盖记录，不断言从未上报",
     summary: {},
-    pattern: /尚无覆盖记录。这是/,
+    shown: "尚无覆盖记录",
   },
   {
     name: "observedMinutes 为 0：无可观测区间，不出现 NaN/Infinity",
     summary: { coverageStart: 1_700_000_000n, eligibleMinutes: 60n },
-    pattern: /无可观测区间。这是/,
+    shown: "无可观测区间",
   },
-])("管理端显示上报覆盖率（$name）", async ({ summary, pattern }) => {
+])("管理端在工具栏上直接显示上报覆盖率，口径收进说明（$name）", async ({ summary, shown }) => {
   renderHistory("管理", summary);
-  expect(await screen.findByRole("button", { name: "上报覆盖率" })).toBeInTheDocument();
-  expect(screen.getByText(pattern)).toHaveAttribute("role", "tooltip");
+  const tip = await screen.findByRole("button", { name: "上报覆盖率说明" });
+  const note = tip.closest(".coverage-note")!;
+  expect(note.closest(".detail-header")).not.toBeNull();
+  expect(note.textContent?.replace(tip.parentElement!.textContent!, "")).toBe(shown);
+  expect(screen.getByText(/这是 hub 观测到的分钟里节点有上报的比例，不是在线率/)).toHaveAttribute("role", "tooltip");
   expect(screen.queryByText(/NaN|Infinity/)).not.toBeInTheDocument();
 });
 

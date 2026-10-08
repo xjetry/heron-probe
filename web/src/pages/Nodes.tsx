@@ -31,7 +31,7 @@ import { liveById, liveStatus } from "../lib/adminStatus";
 import { applyScope, isScoped, paramsWithScope, scopeFromParams, STATUS_OPTIONS, type ScopeFilters } from "../lib/nodeFilters";
 import { NodeEditor } from "./NodeEditor";
 import { BatchNodeTagsEditor } from "./BatchNodeTagsEditor";
-import { trafficText } from "../lib/traffic";
+import { trafficParts } from "../lib/traffic";
 
 // 标签过滤二选一：按一组标签取交集，或只要无标签节点。空 names 表示不过滤。
 // 用判别式联合让"既选了标签又选了无标签"在类型上不可表示——hub 对两个条件同时给出返回 InvalidArgument
@@ -228,7 +228,7 @@ export function Nodes() {
       <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
         <table className="nodes node-management"><thead><tr>
           <th data-column="select"><MixedCheckbox label="选择当前结果全部节点" checked={selectedNodes.length === 0 ? false : selectedNodes.length === list.length ? true : "mixed"} disabled={editing || nodes.stale || list.length === 0} onChange={() => setSelected(selectedNodes.length === list.length ? [] : list.map((node) => node.id))} /></th>
-          <th data-column="order"><span className="sr-only">排序</span></th><th data-column="name">节点</th><th data-column="addresses">IPv4 / IPv6</th><th data-column="status">状态</th><th>本周期</th><th>费用</th><th>到期</th><th data-column="actions"><span className="sr-only">操作</span></th>
+          <th data-column="order"><span className="sr-only">排序</span></th><th data-column="name">节点</th><th data-column="addresses">IPv4 / IPv6</th><th data-column="status">状态</th><th data-column="traffic">本周期</th><th data-column="billing">费用</th><th data-column="expiry">到期</th><th data-column="actions"><span className="sr-only">操作</span></th>
         </tr></thead>
           <tbody>{list.map((node, index) => {
             const label = withId(node.name, node.id);
@@ -237,12 +237,17 @@ export function Nodes() {
               orderClass={dragging === node.id ? "is-dragging" : dragging !== null && drop?.target === node.id ? `drop-${drop.edge}` : undefined}
               onDragOver={(event) => { if (dragging === null || dragging === node.id) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDrop(dropPosition(event, node.id)); }}
               onDrop={(event) => { if (dragging !== null && dragging !== node.id) { event.preventDefault(); moveNode(dragging, dropPosition(event, node.id)); } endDrag(); }}
-              orderControl={<NodeOrderControl label={label} index={index} count={list.length} position={narrowed ? node.position : index + 1} reorderDisabled={!sortable}
+              orderControl={<NodeOrderControl label={label} count={list.length} position={narrowed ? node.position : index + 1} reorderDisabled={!sortable}
                 onMove={(move) => moveNode(node.id, move)} onDragEnd={endDrag}
                 onDragStart={(event) => { if (!sortable) { event.preventDefault(); return; } event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", String(node.id)); setDrag({ id: node.id, members }); setDrop(null); }} />}
               menu={<RowMenu label={label} items={[
                 { label: "编辑", disabled: editing, onSelect: (trigger) => openEditor(node, trigger) },
                 { label: "查看详情", to: `/nodes/${node.id}` },
+                // 上下移与置顶置底和排序手柄同一入口（完整排列），可用条件也相同：筛选或排序会话阻塞时整组禁用。
+                { label: "上移一位", disabled: !sortable || index === 0, onSelect: () => moveNode(node.id, -1) },
+                { label: "下移一位", disabled: !sortable || index === list.length - 1, onSelect: () => moveNode(node.id, 1) },
+                { label: "置顶", disabled: !sortable || index === 0, onSelect: () => moveNode(node.id, "first") },
+                { label: "置底", disabled: !sortable || index === list.length - 1, onSelect: () => moveNode(node.id, "last") },
                 { label: "移动到…", disabled: moveLocked, onSelect: (trigger) => { moveNodes.reset(); setMoveTarget({ nodes: [node], opener: trigger }); } },
                 { label: "换 token", disabled: rotate.isPending || editing, onSelect: (trigger) => { lastOpener.current = trigger; rotate.mutate({ id: node.id }); } },
                 { label: "删除", danger: true, confirm: `确认删除 ${label}`, disabled: remove.isPending || editing, onSelect: () => remove.mutate({ id: node.id }) },
@@ -288,16 +293,22 @@ function NodeRow({ node, live, boundAgentVersion, selection, orderControl, order
     </td>
     <td data-column="addresses" data-label="IPv4 / IPv6"><NodeAddresses network={node.facts?.network} /></td>
     <td data-column="status" data-label="状态">{status ? <StatusBadge status={status} /> : <span className="muted">状态未知</span>}</td>
-    <td data-column="traffic" data-label="本周期" className="num">{live?.traffic ? trafficText(live.traffic) : <Missing />}</td>
-    <td data-column="billing" data-label="费用"><span className="num">{priceText(node.billing) || "—"}</span>{node.billing?.autoRenew && <span className="muted"> · 自动续期</span>}</td>
+    <td data-column="traffic" data-label="本周期">{live?.traffic ? <TwoLine main={trafficParts(live.traffic).amount} note={trafficParts(live.traffic).percent} mono /> : <Missing />}</td>
+    <td data-column="billing" data-label="费用"><TwoLine main={priceText(node.billing) || "—"} note={node.billing?.autoRenew ? "自动续期" : undefined} /></td>
     <td data-column="expiry" data-label="到期">{node.billing?.expiresOn ? <Expiry billing={node.billing} /> : "—"}</td>
     <td data-column="actions">{menu}</td>
   </tr>;
 }
 
+// 节点表的窄列固定写成两行：主读数不折行，附注（配额百分比、自动续期）另起一行，不在主读数中间随列宽断开。
+// 两段之间的空格是给读屏与单元格文字用的分隔，视觉上由 .cell-note 换行。
+function TwoLine({ main, note, mono = false }: { main: string; note?: string; mono?: boolean }) {
+  return <><span className="num cell-main">{main}</span>{note && <>{" "}<span className={mono ? "num cell-note" : "cell-note"}>{note}</span></>}</>;
+}
+
 function TagManager({ tags, pending, onDelete }: { tags: readonly Tag[] | undefined; pending: boolean; onDelete: (name: string) => void }) {
   if (tags === undefined) return null;
   return <details className="tag-management" open><summary>标签管理 <span className="muted">{tags.length}</span></summary><section aria-label="标签">
-    {tags.length === 0 ? <p className="node-subtext">还没有标签；在节点的编辑里添加。</p> : <ul className="tag-list">{tags.map((tag) => <li key={tag.name}><span className="tag">{tag.name}</span> <span className="muted">{tag.nodeCount} 个节点</span>{" "}<ConfirmDelete label={`删除标签 ${tag.name}`} confirm={`确认删除标签 ${tag.name}`} note="只从节点上解除，节点不受影响" pending={pending} onDelete={() => onDelete(tag.name)} /></li>)}</ul>}
+    {tags.length === 0 ? <p className="node-subtext">还没有标签；在节点的编辑里添加。</p> : <ul className="tag-list">{tags.map((tag) => <li key={tag.name}><span className="tag">{tag.name}</span> <span className="muted">{tag.nodeCount} 个节点</span>{" "}<span className="tag-delete"><ConfirmDelete label={`删除标签 ${tag.name}`} confirm={`确认删除标签 ${tag.name}`} note="只从节点上解除，节点不受影响" pending={pending} onDelete={() => onDelete(tag.name)} /></span></li>)}</ul>}
   </section></details>;
 }
