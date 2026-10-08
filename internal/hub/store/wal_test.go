@@ -139,7 +139,7 @@ func TestWALTruncatedToLimitAfterBurst(t *testing.T) {
 	const chunk = 64 << 10
 	rows := (walSizeLimit + 8<<20) / chunk
 	if _, err := s.w.Exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
-		INSERT INTO burst SELECT randomblob(?) FROM n`, rows, chunk); err != nil {
+		INSERT INTO burst SELECT zeroblob(?) FROM n`, rows, chunk); err != nil {
 		t.Fatal(err)
 	}
 	if peak := walBytes(); peak <= walSizeLimit {
