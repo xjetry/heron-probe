@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -64,10 +65,17 @@ type writeReq struct {
 // 机会撤销。WAL 只在 migrate 判定通过、库确实建成或迁移完成后由写连接显式打开，
 // 见 openStore；一旦打开，日志模式记在文件里，之后的连接（包括这里的读连接池）
 // 不需要也不应重复声明它。
+// walSizeLimit 是检查点重置 WAL 时保留的文件上限（journal_size_limit）。SQLite 默认不限：WAL 长到多大，检查点之后
+// 文件就留多大，一次迁移或补数把它撑大后永远不回落。正常运行时自动检查点在 WAL 达到 1000 页时触发（页 4 KiB，约
+// 4 MiB，即平时的高水位）；上限取它的 4 倍，平时的写入碰不到上限，不会反复截短又长回，突发写入之后截回上限以内。
+// 截断发生在写连接下一次重启 WAL 时，所有连接都带这个 pragma，不必区分哪条连接会做重启。它只管重置之后留多大：
+// 持续有读者挡住重置时 WAL 照样增长（架构设计 §13 第 9 项），那是检查点策略的事，不由这个上限兜住。
+const walSizeLimit = 16 << 20
+
 func dsn(path string, extra string) string {
 	// path 是文件名而非 URI；编码路径部分，避免 #、? 和 % 改变实际打开的数据库。
 	u := url.URL{Path: path}
-	return "file:" + u.EscapedPath() + "?_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)" + extra
+	return "file:" + u.EscapedPath() + "?_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)&_pragma=journal_size_limit(" + strconv.Itoa(walSizeLimit) + ")" + extra
 }
 
 // SchemaPolicy 由打开库的入口显式选择。离线命令不得迁移旧库：否则用新二进制查看 stats

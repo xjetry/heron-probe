@@ -120,3 +120,35 @@ func TestWALLifecycleObservation(t *testing.T) {
 		t.Fatalf("after normal Close: stat failed: %v", err)
 	}
 }
+
+// 一次超过上限的大写入之后，下一次普通写入重启 WAL 时把文件截回 walSizeLimit，不留在峰值（迁移、补数之后的常态）。
+// 先确认大写入确实把 WAL 撑过了上限，否则「写完不超过上限」证明不了截断。
+func TestWALTruncatedToLimitAfterBurst(t *testing.T) {
+	s, path := openAt(t)
+	walBytes := func() int64 {
+		t.Helper()
+		info, err := os.Stat(path + "-wal")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info.Size()
+	}
+	if _, err := s.w.Exec(`CREATE TABLE burst (b BLOB)`); err != nil {
+		t.Fatal(err)
+	}
+	const chunk = 64 << 10
+	rows := (walSizeLimit + 8<<20) / chunk
+	if _, err := s.w.Exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
+		INSERT INTO burst SELECT randomblob(?) FROM n`, rows, chunk); err != nil {
+		t.Fatal(err)
+	}
+	if peak := walBytes(); peak <= walSizeLimit {
+		t.Fatalf("burst left WAL at %d bytes, want above the %d-byte limit", peak, walSizeLimit)
+	}
+	if _, err := s.w.Exec(`INSERT INTO burst VALUES (x'00')`); err != nil {
+		t.Fatal(err)
+	}
+	if after := walBytes(); after > walSizeLimit {
+		t.Fatalf("WAL stayed at %d bytes after the next write, want at most %d", after, walSizeLimit)
+	}
+}
