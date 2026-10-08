@@ -20,6 +20,12 @@ reference-projects/
 
 # SDD 执行工作区：账本、任务简报、审阅包，都是会话级草稿
 /.superpowers/
+# herdr 编排运行目录：manifest、任务简报、worker 往来消息与日志，同属会话级草稿
+/.herdr-runs/
+
+# 本机 MCP 配置（含第三方 API key）与 Playwright MCP 的截图、快照草稿
+/.mcp.json
+/.playwright-mcp/
 
 # 发行签名私钥的本地副本：正式签名用 Actions secret，这里只是本机保管，绝不入库
 /.release-signing/
