@@ -2372,13 +2372,13 @@ cd /Users/xjetry/work/vibe/probe && git add web/src/admin.css docs/superpowers/p
 
 日志目录：`/Users/xjetry/work/vibe/probe/.herdr-runs/r9c4d2e1/tasks/r9c4d2e1-t13/logs/`；清理后记录为 `cleanup-typecheck.log`、`cleanup-build.log`、`cleanup-unit.log`，菜单浮层修复后为 `portal-typecheck.log`、`portal-unit.log`、`e2e-8.log`。最终提交后的独立复验记录使用 `final-typecheck.log`、`final-build.log`、`final-unit.log`、`final-e2e.log`；提交前的日志不冒充最终 HEAD 凭据。
 
-截图已目视：四张需要处理卡在桌面同一行，节点名称与标签/备注为两行；1440px 下有标签及备注的节点行高度断言不超过 53px。375px 下抽屉 x=0、宽=375，无横向滚动；武装菜单完整显示取消入口。
+截图已目视（路径相对仓库根，由 `make web-e2e` 重新生成）：四张需要处理卡在桌面同一行，节点名称与标签/备注为两行；1440px 下有标签及备注的节点行高度断言不超过 53px。375px 下抽屉 x=0、宽=375，无横向滚动；武装菜单完整显示取消入口。
 
-- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/overview-desktop.png`
-- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/nodes-light-desktop.png`
-- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/nodes-row-menu-armed.png`
-- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/node-editor-mobile.png`
-- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/agent-diagnostics-采集诊断从真实上报进入管理详情且不进入公开页-chromium/diagnostics-desktop.png`
+- `web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/overview-desktop.png`
+- `web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/nodes-light-desktop.png`
+- `web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/nodes-row-menu-armed.png`
+- `web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/node-editor-mobile.png`
+- `web/test-results/agent-diagnostics-采集诊断从真实上报进入管理详情且不进入公开页-chromium/diagnostics-desktop.png`
 
 ### 清理与消费面
 

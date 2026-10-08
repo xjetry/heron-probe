@@ -1096,12 +1096,12 @@ cd /Users/xjetry/work/vibe/probe && git add web/src/admin.css web/src/styles.css
 
 日志目录：`/Users/xjetry/work/vibe/probe/.herdr-runs/r9c4d2e1/tasks/r9c4d2e1-t13/logs/`；清理后记录为 `cleanup-typecheck.log`、`cleanup-build.log`、`cleanup-unit.log`，菜单浮层修复后为 `portal-typecheck.log`、`portal-unit.log`、`e2e-8.log`。最终提交后的独立复验记录使用 `final-typecheck.log`、`final-build.log`、`final-unit.log`、`final-e2e.log`；提交前的日志不冒充最终 HEAD 凭据。
 
-截图已目视：探测与规则分配三卡手机单列，三种新建抽屉均贴右且手机占满宽，事件筛选行无溢出。
+截图已目视（路径相对仓库根，由 `make web-e2e` 重新生成）：探测与规则分配三卡手机单列，三种新建抽屉均贴右且手机占满宽，事件筛选行无溢出。
 
-- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/probes-drawer-mobile.png`
-- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/alerts-drawer-mobile.png`
-- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/channels-drawer-mobile.png`
-- `/Users/xjetry/work/vibe/probe-r9c4d2e1/t13/web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/events-mobile.png`
+- `web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/probes-drawer-mobile.png`
+- `web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/alerts-drawer-mobile.png`
+- `web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/channels-drawer-mobile.png`
+- `web/test-results/admin-ui-后台明暗、双栈、编辑与计费、移动导航和键盘交互-chromium/events-mobile.png`
 
 ### 清理与消费面
 
