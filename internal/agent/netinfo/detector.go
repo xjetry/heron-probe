@@ -18,8 +18,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// 下标是地址族，与 clients 和 detect 的 family 一致：0 为 IPv4，1 为 IPv6。
+// 每族的回显主机只发布该族的 DNS 记录，但测到哪一族由 clients 强制的 tcp4/tcp6 拨号保证；
+// 两项互换不会测到另一族：拨号解析不到本族地址，结果是探测失败。
+var endpoints = [2]string{"https://api-ipv4.ip.sb/ip", "https://api-ipv6.ip.sb/ip"}
+
 const (
-	endpoint       = "https://api64.ipify.org"
 	interval       = 5 * time.Minute
 	requestTimeout = 10 * time.Second
 	maxResponse    = 64
@@ -117,7 +121,7 @@ func (d *Detector) detect(ctx context.Context, family int, addresses []netip.Add
 		out.State = heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_UNSUPPORTED
 		return out
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoints[family], nil)
 	if err != nil {
 		return out
 	}

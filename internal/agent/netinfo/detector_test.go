@@ -23,17 +23,21 @@ func testAddresses() ([]netip.Addr, error) {
 	return []netip.Addr{netip.MustParseAddr("10.0.0.2"), netip.MustParseAddr("fd00::2")}, nil
 }
 
-// 固定请求仍指向正式主机名，拨号仅重定向到受控 TLS 服务，不依赖本机公网或 IPv6 路由。
+// 每族的回显主机只发布该族的 DNS 记录，拨号族与主机配错时线上必然拨不出去，所以按族核对。
+var familyHosts = map[string]string{"tcp4": "api-ipv4.ip.sb", "tcp6": "api-ipv6.ip.sb"}
+
+// 请求仍指向正式主机名，拨号仅重定向到受控 TLS 服务，不依赖本机公网或 IPv6 路由。
 func localDetector(t *testing.T, handler http.HandlerFunc) *Detector {
 	t.Helper()
 	srv := httptest.NewTLSServer(handler)
 	t.Cleanup(srv.Close)
 	d := newDetector(testAddresses, func(ctx context.Context, network, address string) (net.Conn, error) {
-		if network != "tcp4" && network != "tcp6" {
+		host, ok := familyHosts[network]
+		if !ok {
 			t.Errorf("dial family=%q", network)
 		}
-		if address != "api64.ipify.org:443" {
-			t.Errorf("dial address=%q", address)
+		if address != host+":443" {
+			t.Errorf("dial family=%q address=%q, want %q", network, address, host+":443")
 		}
 		return (&net.Dialer{}).DialContext(ctx, "tcp4", srv.Listener.Addr().String())
 	})
@@ -60,6 +64,9 @@ func TestDetectionResponseAndFailureStates(t *testing.T) {
 			calls := 0
 			d := localDetector(t, func(w http.ResponseWriter, r *http.Request) {
 				calls++
+				if want := familyHosts[[]string{"tcp4", "tcp6"}[tc.family]]; r.Host != want || r.URL.Path != "/ip" {
+					t.Errorf("request host=%q path=%q, want %q /ip", r.Host, r.URL.Path, want)
+				}
 				w.Header().Set("Location", "/redirected")
 				w.WriteHeader(tc.code)
 				io.WriteString(w, tc.body)
