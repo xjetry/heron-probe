@@ -21,6 +21,8 @@ for (const hours of [8, -8]) for (const [service, comparison] of [
 ] as const) test(`${service} ${comparison ? "对比" : "节点"} 浏览器偏移 ${hours} 小时仍使用 hub 窗口`, async ({ page, browserName }, testInfo) => {
   await page.goto("/admin/login");
   await rpc(page, "Login", { password: "local-browser-test-password" });
+  // 公开端用例的前提是公开页总闸打开；它是 hub 共用设置，不能依赖之前的 spec 留下的状态。
+  if (service === "PublicService") await rpc(page, "UpdateSettings", { settings: { publicEnabled: true } });
   const { node } = await rpc(page, "CreateNode", { name: `clock-${browserName}` });
   let taskId: string | undefined;
   try {
@@ -58,6 +60,7 @@ for (const [path, service] of [["/admin/", "AdminService"], ["/", "PublicService
   test(`${service} 挂住轮询在预算内显示横幅，解除拦截后恢复`, async ({ page }) => {
     await page.goto("/admin/login");
     await rpc(page, "Login", { password: "local-browser-test-password" });
+    if (service === "PublicService") await rpc(page, "UpdateSettings", { settings: { publicEnabled: true } });
     // install 接管 setTimeout；pauseAt 停住自动走时，runFor 逐段执行真实页面的截止与重试计时器。
     const start = Date.now();
     await page.clock.install({ time: start });
