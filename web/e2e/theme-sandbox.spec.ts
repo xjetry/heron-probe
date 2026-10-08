@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { readFile } from "node:fs/promises";
 
 // 固定测试密码只用于每次临时创建的本机数据库，服务器退出后整个目录删除。
@@ -33,10 +34,13 @@ async function login(page: Page) {
   await rpc(page, 'Login', { password });
 }
 
-test('安装、预览、启用、旧资源及直接文档都保持权限隔离', async ({ page, context, browserName }, testInfo) => {
+test('安装、预览、启用、旧资源及直接文档都保持权限隔离', async ({ page, context, browserName, hub }, testInfo) => {
   await login(page);
   await rpc(page, 'UpdateSettings', { settings: { publicEnabled: true } });
   const id = 'browser-' + browserName;
+  // 用例中途会关闸、启用这个主题：两者都是整个 hub 共用的状态，收尾时卸载主题、恢复总闸（fixtures.ts），不留给后面的公开页用例。
+  hub.atEnd('恢复公开页总闸', () => hub.rpc('UpdateSettings', { settings: { publicEnabled: true } }));
+  hub.deleteAtEnd('DeleteTheme', { id });
   const pkg = zip({
     'theme.json': JSON.stringify({ id, name: 'Browser Theme', version: '1', sdk: 1 }),
     'index.html': '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="./style.css"><div id="result">loading</div><button id="route">节点</button><script type="module" src="./app.js"></script>',
@@ -97,14 +101,13 @@ document.querySelector('#result').textContent=JSON.stringify(result);`,
   expect(JSON.parse(await sandbox.locator('#result').innerText())).toMatchObject({ cookie: true, storage: true, fetch: true, worker: true, passkey: true });
   await sandbox.goto(file.replace('index.html', 'view.svg'));
   await expect(sandbox.locator('svg')).toHaveAttribute('isolated', 'yes');
+  // 沙箱里伪造的 CreateNode 没有成功：只看它要建的那个名字，不假定 hub 里没有别的用例建的节点。
   const nodes = await rpc(page, 'ListNodes');
-  expect(nodes.nodes ?? []).toEqual([]);
+  expect((nodes.nodes ?? []).map((node: { name: string }) => node.name)).not.toContain('stolen');
   await rpc(page, 'EnableTheme', {});
   expect((await context.request.get(file)).status()).toBe(200);
   await rpc(page, 'UpdateSettings', { settings: { publicEnabled: false } });
   expect(await (await context.request.get(file)).text()).toContain('公开页已关闭');
-  await rpc(page, 'UpdateSettings', { settings: { publicEnabled: true } });
-  await rpc(page, 'DeleteTheme', { id });
   await sandbox.close();
 });
 

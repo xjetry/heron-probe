@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 async function setScheme(page: Page, want: 'light' | 'dark') {
   for (let i = 0; i < 3; i++) {
@@ -49,235 +50,232 @@ test('注册命令复制与移动端布局', async ({ page, context, browserName
   await expect(page.getByRole('button', { name: '复制 wget 命令' })).toHaveCount(0);
 });
 
-test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', async ({ page, context, browserName }, testInfo) => {
+test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', async ({ page, context, browserName, hub }, testInfo) => {
   const ids: string[] = [];
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/admin/login');
   await rpc(page, 'Login', { password: 'local-browser-test-password' });
-  try {
-    for (const [index, name] of ['tokyo-edge', 'seattle-core', 'frankfurt-worker'].entries()) {
-      const result = await rpc(page, 'CreateNode', { name: `${name}-${browserName}` });
-      const id = result.node.id;
-      ids.push(id);
-      await rpc(page, 'UpdateNode', { id, name: `${name}-${browserName}`, note: '生产节点 / 核心业务', public: true, trafficResetDay: 1, offlineGraceS: 0, countryPin: ['JP', 'US', 'DE'][index], tags: ['production', index === 0 ? 'edge' : 'compute'], billing: { price: String(12 + index * 8), currency: 'USD', billingCycle: 'BILLING_CYCLE_MONTHLY', expiresOn: '2027-10-01' } });
-      await page.evaluate(async ({ key, index }) => {
-        const registered = await fetch('/heron.v1.AgentService/Register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
-        if (!registered.ok) throw new Error(await registered.text());
-        const { token } = await registered.json();
-        const checkedAt = String(Math.floor(Date.now() / 1000));
-        const response = await fetch('/heron.v1.AgentService/Report', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({
-          factsHash: '1', metrics: { bootId: '0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f', cpuPct: 12 + index * 15, memUsed: '536870912', memTotal: '2147483648', diskUsed: '2147483648', diskTotal: '21474836480', load1: 0.3, load5: 0.2, load15: 0.1, netRxBps: '524288', netTxBps: '131072' },
-          facts: { hostname: 'edge.internal', agentVersion: 'dev', network: {
-            ipv4: { state: index === 2 ? 'ADDRESS_DETECTION_STATE_FAILED' : 'ADDRESS_DETECTION_STATE_AVAILABLE', address: index === 2 ? '' : ['8.8.8.8', '1.1.1.1'][index], checkedAt },
-            ipv6: index === 1 ? { state: 'ADDRESS_DETECTION_STATE_UNSUPPORTED', checkedAt } : { state: 'ADDRESS_DETECTION_STATE_AVAILABLE', address: '2606:4700:4700::1111', checkedAt },
-          } },
-        }) });
-        if (!response.ok) throw new Error(await response.text());
-      }, { key: result.token, index });
+  for (const [index, name] of ['tokyo-edge', 'seattle-core', 'frankfurt-worker'].entries()) {
+    const result = await rpc(page, 'CreateNode', { name: `${name}-${browserName}` });
+    const id = result.node.id;
+    ids.push(id);
+    hub.deleteNodeAtEnd(id);
+    await rpc(page, 'UpdateNode', { id, name: `${name}-${browserName}`, note: '生产节点 / 核心业务', public: true, trafficResetDay: 1, offlineGraceS: 0, countryPin: ['JP', 'US', 'DE'][index], tags: ['production', index === 0 ? 'edge' : 'compute'], billing: { price: String(12 + index * 8), currency: 'USD', billingCycle: 'BILLING_CYCLE_MONTHLY', expiresOn: '2027-10-01' } });
+    await page.evaluate(async ({ key, index }) => {
+      const registered = await fetch('/heron.v1.AgentService/Register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
+      if (!registered.ok) throw new Error(await registered.text());
+      const { token } = await registered.json();
+      const checkedAt = String(Math.floor(Date.now() / 1000));
+      const response = await fetch('/heron.v1.AgentService/Report', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({
+        factsHash: '1', metrics: { bootId: '0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f', cpuPct: 12 + index * 15, memUsed: '536870912', memTotal: '2147483648', diskUsed: '2147483648', diskTotal: '21474836480', load1: 0.3, load5: 0.2, load15: 0.1, netRxBps: '524288', netTxBps: '131072' },
+        facts: { hostname: 'edge.internal', agentVersion: 'dev', network: {
+          ipv4: { state: index === 2 ? 'ADDRESS_DETECTION_STATE_FAILED' : 'ADDRESS_DETECTION_STATE_AVAILABLE', address: index === 2 ? '' : ['8.8.8.8', '1.1.1.1'][index], checkedAt },
+          ipv6: index === 1 ? { state: 'ADDRESS_DETECTION_STATE_UNSUPPORTED', checkedAt } : { state: 'ADDRESS_DETECTION_STATE_AVAILABLE', address: '2606:4700:4700::1111', checkedAt },
+        } },
+      }) });
+      if (!response.ok) throw new Error(await response.text());
+    }, { key: result.token, index });
+  }
+  await page.goto('/admin/nodes');
+  await setScheme(page, 'dark');
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await expect(page.getByText('2606:4700:4700::1111').first()).toBeVisible();
+  await expect(page.getByText('不支持', { exact: true })).toBeVisible();
+  await expect(page.getByText('探测失败', { exact: true })).toBeVisible();
+  const copy4 = page.getByRole('button', { name: '复制 IPv4 8.8.8.8', exact: true });
+  const copy6 = page.getByRole('button', { name: '复制 IPv6 2606:4700:4700::1111', exact: true }).first();
+  await expect(copy4).toBeVisible();
+  await expect(copy6).toBeVisible();
+  if (browserName === 'chromium') {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    for (const [button, address] of [[copy4, '8.8.8.8'], [copy6, '2606:4700:4700::1111']] as const) {
+      await button.click();
+      await expect(button).toHaveAttribute('title', '已复制');
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(address);
     }
-    await page.goto('/admin/nodes');
-    await setScheme(page, 'dark');
-    await page.setViewportSize({ width: 1440, height: 960 });
-    await expect(page.getByText('2606:4700:4700::1111').first()).toBeVisible();
-    await expect(page.getByText('不支持', { exact: true })).toBeVisible();
-    await expect(page.getByText('探测失败', { exact: true })).toBeVisible();
-    const copy4 = page.getByRole('button', { name: '复制 IPv4 8.8.8.8', exact: true });
-    const copy6 = page.getByRole('button', { name: '复制 IPv6 2606:4700:4700::1111', exact: true }).first();
-    await expect(copy4).toBeVisible();
-    await expect(copy6).toBeVisible();
-    if (browserName === 'chromium') {
-      await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-      for (const [button, address] of [[copy4, '8.8.8.8'], [copy6, '2606:4700:4700::1111']] as const) {
-        await button.click();
-        await expect(button).toHaveAttribute('title', '已复制');
-        expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(address);
-      }
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1440);
+  expect((await page.getByRole('row', { name: `tokyo-edge-${browserName}`, exact: true }).boundingBox())?.height).toBeLessThanOrEqual(53);
+  await page.screenshot({ path: testInfo.outputPath('nodes-dark-desktop.png'), fullPage: true });
+  await openRowAction(page, `tokyo-edge-${browserName}（#${ids[0]}）`, '编辑');
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toHaveClass(/drawer/);
+  await expect(dialog.getByRole('button', { name: '复制 IPv4 8.8.8.8', exact: true })).toBeVisible();
+  const name = dialog.getByLabel(`名称 tokyo-edge-${browserName}（#${ids[0]}）`, { exact: true });
+  await expect(name).toBeFocused();
+  await name.fill('tokyo-renamed');
+  await page.screenshot({ path: testInfo.outputPath('node-editor-desktop.png'), fullPage: true });
+  for (let i = 0; i < 22; i++) {
+    await page.keyboard.press('Tab');
+    // 原生 dialog 允许 Tab 进入浏览器工具栏，但不能进入背景页面的控件。
+    expect(await page.evaluate(() => document.activeElement === document.body || !!document.activeElement?.closest('dialog'))).toBe(true);
+  }
+  await dialog.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('link', { name: `tokyo-renamed（#${ids[0]}）` })).toBeVisible();
+  await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '编辑');
+  const billing = dialog.getByRole('region', { name: '费用', exact: true });
+  await billing.getByLabel(`价格 tokyo-renamed（#${ids[0]}）`).fill('29.50');
+  const expiryLabel = `到期日 tokyo-renamed（#${ids[0]}）`;
+  const year = billing.getByRole('textbox', { name: `${expiryLabel} 年`, exact: true });
+  const month = billing.getByRole('textbox', { name: `${expiryLabel} 月`, exact: true });
+  const day = billing.getByRole('textbox', { name: `${expiryLabel} 日`, exact: true });
+  await year.fill('2031');
+  await month.fill('02');
+  await day.fill('29');
+  await dialog.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(dialog).toBeVisible();
+  const unchanged = await rpc(page, 'ListNodes');
+  expect(unchanged.nodes.find((node: { id: string }) => node.id === ids[0]).billing.expiresOn).toBe('2027-10-01');
+  await year.fill('');
+  await year.pressSequentially('2031');
+  await expect(month).toBeFocused();
+  await month.pressSequentially('12');
+  await expect(day).toBeFocused();
+  await day.pressSequentially('25');
+  await expect(year).toHaveValue('2031');
+  await expect(month).toHaveValue('12');
+  await expect(day).toHaveValue('25');
+  await page.screenshot({ path: testInfo.outputPath('billing-desktop.png'), fullPage: true });
+  await dialog.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText('US$29.50 / 月')).toBeVisible();
+  const updated = await rpc(page, 'ListNodes');
+  expect(updated.nodes.find((node: { id: string }) => node.id === ids[0]).billing.expiresOn).toBe('2031-12-25');
+  const renamedMenu = page.getByRole('button', { name: `更多操作 tokyo-renamed（#${ids[0]}）`, exact: true });
+  await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '编辑');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(renamedMenu).toBeFocused();
+  await setScheme(page, 'light');
+  // 危险操作首击只武装，关闭菜单必须撤销武装且保留节点。
+  await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '删除');
+  await expect(page.getByRole('menuitem', { name: `确认删除 tokyo-renamed（#${ids[0]}）` })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('nodes-row-menu-armed.png') });
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: `tokyo-renamed（#${ids[0]}）` })).toBeVisible();
+  // 卡上的数量与节点列表的到期筛选必须使用同一判定。
+  await page.goto('/admin/');
+  const expiring = page.getByRole('list', { name: '需要处理' }).getByRole('link').nth(1);
+  const expiringCount = Number(await expiring.locator('strong').textContent());
+  await expiring.click();
+  await expect(page).toHaveURL(/\/admin\/nodes\?expiring=1$/);
+  // 数据行数等于卡上的数；为 0 时节点表让位给空态（components/EmptyState.tsx），先等空态出现，免得在加载中把 0 行当成结果。
+  if (expiringCount === 0) await expect(page.getByRole('status').filter({ hasText: '没有匹配的节点。' })).toBeVisible();
+  await expect(page.locator('.node-management tbody > tr')).toHaveCount(expiringCount);
+  await page.getByRole('button', { name: '清除筛选' }).click();
+  await expect(page).toHaveURL(/\/admin\/nodes$/);
+  await page.getByRole('link', { name: `tokyo-renamed（#${ids[0]}）`, exact: true }).waitFor();
+  await page.screenshot({ path: testInfo.outputPath('nodes-light-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 375, height: 812 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
+  await expect(page.getByRole('row', { name: 'tokyo-renamed', exact: true }).getByRole('button', { name: `更多操作 tokyo-renamed（#${ids[0]}）` })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('nodes-mobile.png'), fullPage: true });
+  await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '编辑');
+  expect(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  const drawerBox = await dialog.boundingBox();
+  expect(drawerBox?.x).toBe(0);
+  expect(drawerBox?.width).toBe(375);
+  await page.screenshot({ path: testInfo.outputPath('node-editor-mobile.png'), fullPage: true });
+  await page.keyboard.press('Escape');
+  await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '编辑');
+  await billing.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('billing-mobile.png'), fullPage: true });
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '打开导航' }).click();
+  await dialog.getByRole('link', { name: '总览', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '总览', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
+  await page.screenshot({ path: testInfo.outputPath('overview-mobile.png'), fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await setScheme(page, 'dark');
+  await expect(page.getByRole('list', { name: '需要处理' })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('overview-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 375, height: 812 });
+  for (const [route, heading] of [
+    ['probes', '探测任务'], ['alerts', '告警规则'], ['events', '告警事件'], ['channels', '通知渠道'],
+    ['appearance', '外观'], ['themes', '主题'], ['storage', '存储'], ['updates', '在线更新'], ['security', '安全'],
+    ['security/credentials', '账户安全'], ['tokens', 'API token'], ['register', '注册窗口'],
+  ]) {
+    await page.goto('/admin/' + route);
+    await expect(page.getByRole('heading', { name: heading, exact: true, level: 1 })).toBeVisible();
+    await expect(page.getByText('加载中…', { exact: true })).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), route).toBe(375);
+    await page.screenshot({ path: testInfo.outputPath(route.replace('/', '-') + '-mobile.png'), fullPage: true });
+    const create = { probes: '新建探测任务', alerts: '新建告警规则', channels: '新建通知渠道' }[route];
+    if (create) {
+      await page.getByRole('button', { name: create, exact: true }).click();
+      await page.screenshot({ path: testInfo.outputPath(route + '-drawer-mobile.png'), fullPage: true });
+      await page.keyboard.press('Escape');
     }
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1440);
-    expect((await page.getByRole('row', { name: `tokyo-edge-${browserName}`, exact: true }).boundingBox())?.height).toBeLessThanOrEqual(53);
-    await page.screenshot({ path: testInfo.outputPath('nodes-dark-desktop.png'), fullPage: true });
-    await openRowAction(page, `tokyo-edge-${browserName}（#${ids[0]}）`, '编辑');
-    const dialog = page.getByRole('dialog');
-    await expect(dialog).toHaveClass(/drawer/);
-    await expect(dialog.getByRole('button', { name: '复制 IPv4 8.8.8.8', exact: true })).toBeVisible();
-    const name = dialog.getByLabel(`名称 tokyo-edge-${browserName}（#${ids[0]}）`, { exact: true });
-    await expect(name).toBeFocused();
-    await name.fill('tokyo-renamed');
-    await page.screenshot({ path: testInfo.outputPath('node-editor-desktop.png'), fullPage: true });
-    for (let i = 0; i < 22; i++) {
-      await page.keyboard.press('Tab');
-      // 原生 dialog 允许 Tab 进入浏览器工具栏，但不能进入背景页面的控件。
-      expect(await page.evaluate(() => document.activeElement === document.body || !!document.activeElement?.closest('dialog'))).toBe(true);
-    }
-    await dialog.getByRole('button', { name: '保存', exact: true }).click();
-    await expect(dialog).toHaveCount(0);
-    await expect(page.getByRole('link', { name: `tokyo-renamed（#${ids[0]}）` })).toBeVisible();
-    await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '编辑');
-    const billing = dialog.getByRole('region', { name: '费用', exact: true });
-    await billing.getByLabel(`价格 tokyo-renamed（#${ids[0]}）`).fill('29.50');
-    const expiryLabel = `到期日 tokyo-renamed（#${ids[0]}）`;
-    const year = billing.getByRole('textbox', { name: `${expiryLabel} 年`, exact: true });
-    const month = billing.getByRole('textbox', { name: `${expiryLabel} 月`, exact: true });
-    const day = billing.getByRole('textbox', { name: `${expiryLabel} 日`, exact: true });
-    await year.fill('2031');
-    await month.fill('02');
-    await day.fill('29');
-    await dialog.getByRole('button', { name: '保存', exact: true }).click();
-    await expect(dialog).toBeVisible();
-    const unchanged = await rpc(page, 'ListNodes');
-    expect(unchanged.nodes.find((node: { id: string }) => node.id === ids[0]).billing.expiresOn).toBe('2027-10-01');
-    await year.fill('');
-    await year.pressSequentially('2031');
-    await expect(month).toBeFocused();
-    await month.pressSequentially('12');
-    await expect(day).toBeFocused();
-    await day.pressSequentially('25');
-    await expect(year).toHaveValue('2031');
-    await expect(month).toHaveValue('12');
-    await expect(day).toHaveValue('25');
-    await page.screenshot({ path: testInfo.outputPath('billing-desktop.png'), fullPage: true });
-    await dialog.getByRole('button', { name: '保存', exact: true }).click();
-    await expect(dialog).toHaveCount(0);
-    await expect(page.getByText('US$29.50 / 月')).toBeVisible();
-    const updated = await rpc(page, 'ListNodes');
-    expect(updated.nodes.find((node: { id: string }) => node.id === ids[0]).billing.expiresOn).toBe('2031-12-25');
-    const renamedMenu = page.getByRole('button', { name: `更多操作 tokyo-renamed（#${ids[0]}）`, exact: true });
-    await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '编辑');
-    await page.keyboard.press('Escape');
-    await expect(dialog).toHaveCount(0);
-    await expect(renamedMenu).toBeFocused();
-    await setScheme(page, 'light');
-    // 危险操作首击只武装，关闭菜单必须撤销武装且保留节点。
-    await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '删除');
-    await expect(page.getByRole('menuitem', { name: `确认删除 tokyo-renamed（#${ids[0]}）` })).toBeVisible();
-    await page.screenshot({ path: testInfo.outputPath('nodes-row-menu-armed.png') });
-    await page.keyboard.press('Escape');
-    await expect(page.getByRole('menu')).toHaveCount(0);
-    await expect(page.getByRole('link', { name: `tokyo-renamed（#${ids[0]}）` })).toBeVisible();
-    // 卡上的数量与节点列表的到期筛选必须使用同一判定。
-    await page.goto('/admin/');
-    const expiring = page.getByRole('list', { name: '需要处理' }).getByRole('link').nth(1);
-    const expiringCount = Number(await expiring.locator('strong').textContent());
-    await expiring.click();
-    await expect(page).toHaveURL(/\/admin\/nodes\?expiring=1$/);
-    // 数据行数等于卡上的数；为 0 时节点表让位给空态（components/EmptyState.tsx），先等空态出现，免得在加载中把 0 行当成结果。
-    if (expiringCount === 0) await expect(page.getByRole('status').filter({ hasText: '没有匹配的节点。' })).toBeVisible();
-    await expect(page.locator('.node-management tbody > tr')).toHaveCount(expiringCount);
-    await page.getByRole('button', { name: '清除筛选' }).click();
-    await expect(page).toHaveURL(/\/admin\/nodes$/);
-    await page.getByRole('link', { name: `tokyo-renamed（#${ids[0]}）`, exact: true }).waitFor();
-    await page.screenshot({ path: testInfo.outputPath('nodes-light-desktop.png'), fullPage: true });
-    await page.setViewportSize({ width: 375, height: 812 });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
-    await expect(page.getByRole('row', { name: 'tokyo-renamed', exact: true }).getByRole('button', { name: `更多操作 tokyo-renamed（#${ids[0]}）` })).toBeVisible();
-    await page.screenshot({ path: testInfo.outputPath('nodes-mobile.png'), fullPage: true });
-    await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '编辑');
-    expect(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
-    const drawerBox = await dialog.boundingBox();
-    expect(drawerBox?.x).toBe(0);
-    expect(drawerBox?.width).toBe(375);
-    await page.screenshot({ path: testInfo.outputPath('node-editor-mobile.png'), fullPage: true });
-    await page.keyboard.press('Escape');
-    await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '编辑');
-    await billing.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: testInfo.outputPath('billing-mobile.png'), fullPage: true });
-    await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: '打开导航' }).click();
-    await dialog.getByRole('link', { name: '总览', exact: true }).click();
-    await expect(dialog).toHaveCount(0);
-    await expect(page.getByRole('heading', { name: '总览', exact: true })).toBeVisible();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
-    await page.screenshot({ path: testInfo.outputPath('overview-mobile.png'), fullPage: true });
-    await page.setViewportSize({ width: 1440, height: 960 });
-    await setScheme(page, 'dark');
-    await expect(page.getByRole('list', { name: '需要处理' })).toBeVisible();
-    await page.screenshot({ path: testInfo.outputPath('overview-desktop.png'), fullPage: true });
-    await page.setViewportSize({ width: 375, height: 812 });
-    for (const [route, heading] of [
-      ['probes', '探测任务'], ['alerts', '告警规则'], ['events', '告警事件'], ['channels', '通知渠道'],
-      ['appearance', '外观'], ['themes', '主题'], ['storage', '存储'], ['updates', '在线更新'], ['security', '安全'],
-      ['security/credentials', '账户安全'], ['tokens', 'API token'], ['register', '注册窗口'],
-    ]) {
-      await page.goto('/admin/' + route);
-      await expect(page.getByRole('heading', { name: heading, exact: true, level: 1 })).toBeVisible();
-      await expect(page.getByText('加载中…', { exact: true })).toHaveCount(0);
-      expect(await page.evaluate(() => document.documentElement.scrollWidth), route).toBe(375);
-      await page.screenshot({ path: testInfo.outputPath(route.replace('/', '-') + '-mobile.png'), fullPage: true });
-      const create = { probes: '新建探测任务', alerts: '新建告警规则', channels: '新建通知渠道' }[route];
-      if (create) {
-        await page.getByRole('button', { name: create, exact: true }).click();
-        await page.screenshot({ path: testInfo.outputPath(route + '-drawer-mobile.png'), fullPage: true });
-        await page.keyboard.press('Escape');
-      }
-    }
-  } finally {
-    for (const id of ids) await rpc(page, 'DeleteNode', { id });
   }
 });
 
-test('节点拖拽、键盘和移动端菜单保存同一完整顺序', async ({ page, browserName }, testInfo) => {
+test('节点拖拽、键盘和移动端菜单保存同一完整顺序', async ({ page, browserName, hub }, testInfo) => {
   await page.goto('/admin/login');
   await rpc(page, 'Login', { password: 'local-browser-test-password' });
   const ids: string[] = [];
   const label = (index: number) => `order-${index}-${browserName}（#${ids[index]}）`;
   const actual = async () => (await rpc(page, 'ListNodes')).nodes.filter((node: { id: string }) => ids.includes(node.id)).map((node: { id: string }) => node.id);
-  try {
-    for (let i = 0; i < 3; i++) ids.push((await rpc(page, 'CreateNode', { name: `order-${i}-${browserName}` })).node.id);
-    await page.goto('/admin/nodes');
-    await page.setViewportSize({ width: 1440, height: 960 });
-    const handle = page.getByRole('button', { name: `调整顺序 ${label(0)}`, exact: true });
-    const target = page.getByRole('link', { name: label(2), exact: true }).locator('xpath=ancestor::tr');
-    await expect(handle).toBeEnabled();
-    const box = await target.boundingBox();
-    expect(box).not.toBeNull();
-    await handle.dragTo(target, { targetPosition: { x: 30, y: box!.height - 5 } });
-    await expect(page.getByText('顺序已保存', { exact: true })).toBeVisible();
-    await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
-    await handle.focus();
-    await handle.press('Home');
-    await expect.poll(actual).toEqual([ids[0], ids[1], ids[2]]);
-    await expect(handle).toBeFocused();
-    await handle.press('ArrowDown');
-    await expect(handle).toBeFocused();
-    await page.keyboard.press('ArrowDown');
-    await expect(handle).toBeFocused();
-    await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
-    await handle.press('Home');
-    await expect.poll(actual).toEqual([ids[0], ids[1], ids[2]]);
-    await handle.press('End');
-    await expect(handle).toBeFocused();
-    await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
-    await handle.press('Home');
-    await expect.poll(actual).toEqual([ids[0], ids[1], ids[2]]);
-    await page.screenshot({ path: testInfo.outputPath('node-order-desktop.png'), fullPage: true });
-    await page.getByRole('searchbox', { name: '搜索节点' }).fill(`order-0-${browserName}`);
-    await expect(handle).toBeDisabled();
-    // 过滤时拖动与上下移仍禁用（行菜单里的上移、下移、置顶、置底同样保存完整排列），但按全序名次的「移动到…」可用，菜单保持可用（不被禁用）。
-    await page.getByRole('button', { name: `更多操作 ${label(0)}`, exact: true }).click();
-    await expect(page.getByRole('menuitem', { name: `移动到… ${label(0)}`, exact: true })).toBeEnabled();
-    for (const action of ['上移一位', '下移一位', '置顶', '置底']) await expect(page.getByRole('menuitem', { name: `${action} ${label(0)}`, exact: true })).toBeDisabled();
-    await page.keyboard.press('Escape');
-    await expect(page.getByText('筛选时不能用拖动或上下移（它们保存完整排列）；可用行菜单的「移动到…」按全序名次移动，或清除筛选后再调整。')).toBeVisible();
-    await page.getByRole('searchbox', { name: '搜索节点' }).fill('');
-    await openRowAction(page, label(0), '置底');
-    await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
-    await handle.press('Home');
-    await expect.poll(actual).toEqual([ids[0], ids[1], ids[2]]);
-    await page.setViewportSize({ width: 375, height: 812 });
-    await openRowAction(page, label(0), '移动到…');
-    const move = page.getByRole('dialog', { name: '移动节点', exact: true });
-    const total = (await rpc(page, 'ListNodes')).nodes.length;
-    await move.getByRole('spinbutton').fill(String(total));
-    await move.getByRole('button', { name: '移动', exact: true }).click();
-    await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
-    await page.screenshot({ path: testInfo.outputPath('node-order-mobile.png'), fullPage: true });
-  } finally {
-    for (const id of ids) await rpc(page, 'DeleteNode', { id });
+  for (let i = 0; i < 3; i++) {
+    const { node } = await rpc(page, 'CreateNode', { name: `order-${i}-${browserName}` });
+    ids.push(node.id);
+    hub.deleteNodeAtEnd(node.id);
   }
+  await page.goto('/admin/nodes');
+  await page.setViewportSize({ width: 1440, height: 960 });
+  const handle = page.getByRole('button', { name: `调整顺序 ${label(0)}`, exact: true });
+  const target = page.getByRole('link', { name: label(2), exact: true }).locator('xpath=ancestor::tr');
+  await expect(handle).toBeEnabled();
+  const box = await target.boundingBox();
+  expect(box).not.toBeNull();
+  await handle.dragTo(target, { targetPosition: { x: 30, y: box!.height - 5 } });
+  await expect(page.getByText('顺序已保存', { exact: true })).toBeVisible();
+  await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
+  await handle.focus();
+  await handle.press('Home');
+  await expect.poll(actual).toEqual([ids[0], ids[1], ids[2]]);
+  await expect(handle).toBeFocused();
+  await handle.press('ArrowDown');
+  await expect(handle).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(handle).toBeFocused();
+  await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
+  await handle.press('Home');
+  await expect.poll(actual).toEqual([ids[0], ids[1], ids[2]]);
+  await handle.press('End');
+  await expect(handle).toBeFocused();
+  await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
+  await handle.press('Home');
+  await expect.poll(actual).toEqual([ids[0], ids[1], ids[2]]);
+  await page.screenshot({ path: testInfo.outputPath('node-order-desktop.png'), fullPage: true });
+  await page.getByRole('searchbox', { name: '搜索节点' }).fill(`order-0-${browserName}`);
+  await expect(handle).toBeDisabled();
+  // 过滤时拖动与上下移仍禁用（行菜单里的上移、下移、置顶、置底同样保存完整排列），但按全序名次的「移动到…」可用，菜单保持可用（不被禁用）。
+  await page.getByRole('button', { name: `更多操作 ${label(0)}`, exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: `移动到… ${label(0)}`, exact: true })).toBeEnabled();
+  for (const action of ['上移一位', '下移一位', '置顶', '置底']) await expect(page.getByRole('menuitem', { name: `${action} ${label(0)}`, exact: true })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(page.getByText('筛选时不能用拖动或上下移（它们保存完整排列）；可用行菜单的「移动到…」按全序名次移动，或清除筛选后再调整。')).toBeVisible();
+  await page.getByRole('searchbox', { name: '搜索节点' }).fill('');
+  await openRowAction(page, label(0), '置底');
+  await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
+  await handle.press('Home');
+  await expect.poll(actual).toEqual([ids[0], ids[1], ids[2]]);
+  await page.setViewportSize({ width: 375, height: 812 });
+  await openRowAction(page, label(0), '移动到…');
+  const move = page.getByRole('dialog', { name: '移动节点', exact: true });
+  const total = (await rpc(page, 'ListNodes')).nodes.length;
+  await move.getByRole('spinbutton').fill(String(total));
+  await move.getByRole('button', { name: '移动', exact: true }).click();
+  await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
+  await page.screenshot({ path: testInfo.outputPath('node-order-mobile.png'), fullPage: true });
 });
 
-test('节点按全序名次整体移动到指定位置', async ({ page, browserName }, testInfo) => {
+test('节点按全序名次整体移动到指定位置', async ({ page, browserName, hub }, testInfo) => {
   await page.goto('/admin/login');
   await rpc(page, 'Login', { password: 'local-browser-test-password' });
   const ids: string[] = [];
@@ -289,64 +287,64 @@ test('节点按全序名次整体移动到指定位置', async ({ page, browserN
     const all = await hubList();
     return all.every((node, index) => node.position === index + 1);
   };
-  try {
-    for (let i = 0; i < 5; i++) ids.push((await rpc(page, 'CreateNode', { name: `move-${i}-${browserName}` })).node.id);
-    await page.goto('/admin/nodes');
-    await page.setViewportSize({ width: 1440, height: 960 });
-    const total = (await hubList()).length;
-    // 本批 5 个节点刚连着创建，占全序中连续的名次：从 ids[0] 的名次推出整批的基准位次。
-    const base = (await hubList()).find((node) => node.id === ids[0])!.position;
-    const handle = (index: number) => page.getByRole('button', { name: `调整顺序 ${label(index)}`, exact: true });
-    // 多选 move-1、move-3（本批第 2、4 位）整体移到本批第 3 位：其余相对顺序不变。
-    await page.getByRole('checkbox', { name: `选择 ${label(1)}`, exact: true }).check();
-    await page.getByRole('checkbox', { name: `选择 ${label(3)}`, exact: true }).check();
-    await expect(page.getByText('已选择 2 个节点')).toBeVisible();
-    await page.getByRole('button', { name: '移动到…', exact: true }).click();
-    const dialog = page.getByRole('dialog');
-    await expect(dialog).toHaveAccessibleName('移动节点');
-    await expect(dialog.getByText(`共 ${total} 个节点，将移动其中的 2 个；其余节点相对顺序不变。`)).toBeVisible();
-    const input = dialog.getByLabel(`目标位置（1–${total - 1}）`, { exact: true });
-    await expect(input).toHaveAttribute('max', String(total - 1));
-    await expect(dialog.getByText('将 2 个节点移到第 1–2 位')).toBeVisible();
-    await input.fill(String(base + 2));
-    await expect(dialog.getByText(`将 2 个节点移到第 ${base + 2}–${base + 3} 位`)).toBeVisible();
-    await page.screenshot({ path: testInfo.outputPath('node-move-modal.png'), fullPage: true });
-    await dialog.getByRole('button', { name: '移动', exact: true }).click();
-    await expect(dialog).toHaveCount(0);
-    await expect(page.getByRole('toolbar', { name: '批量操作' })).toHaveCount(0);
-    await expect.poll(mineInOrder).toEqual([ids[0], ids[2], ids[1], ids[3], ids[4]]);
-    expect(await positionsMatchList()).toBe(true);
-    // 序号列跟着新的全序名次走。
-    await expect(handle(0)).toHaveText(String(base));
-    await expect(handle(2)).toHaveText(String(base + 1));
-    await expect(handle(1)).toHaveText(String(base + 2));
-    await expect(handle(3)).toHaveText(String(base + 3));
-    // 过滤到单个节点：拖动禁用，但行菜单可按全序名次移动这一个节点。
-    await page.getByRole('searchbox', { name: '搜索节点' }).fill(`move-4-${browserName}`);
-    await expect(page.getByRole('link', { name: label(4), exact: true })).toBeVisible();
-    const positionOfLast = (await hubList()).find((node) => node.id === ids[4])!.position;
-    await expect(handle(4)).toHaveText(String(positionOfLast));
-    await expect(handle(4)).toBeDisabled();
-    await openRowAction(page, label(4), '移动到…');
-    const single = page.getByRole('dialog');
-    await expect(single).toHaveAccessibleName('移动节点');
-    const singleInput = single.getByLabel(`目标位置（1–${total}）`, { exact: true });
-    await expect(single.getByText('移到第 1 位')).toBeVisible();
-    await singleInput.fill('2');
-    await expect(single.getByText('移到第 2 位')).toBeVisible();
-    await singleInput.fill('1');
-    await expect(single.getByText('移到第 1 位')).toBeVisible();
-    await single.getByRole('button', { name: '移动', exact: true }).click();
-    await expect(single).toHaveCount(0);
-    await page.getByRole('searchbox', { name: '搜索节点' }).fill('');
-    await expect.poll(mineInOrder).toEqual([ids[4], ids[0], ids[2], ids[1], ids[3]]);
-    expect(await positionsMatchList()).toBe(true);
-    await expect(handle(4)).toHaveText('1');
-    await expect(handle(3)).toHaveText(String(base + 4));
-    await page.screenshot({ path: testInfo.outputPath('node-move-desktop.png'), fullPage: true });
-  } finally {
-    for (const id of ids) await rpc(page, 'DeleteNode', { id });
+  for (let i = 0; i < 5; i++) {
+    const { node } = await rpc(page, 'CreateNode', { name: `move-${i}-${browserName}` });
+    ids.push(node.id);
+    hub.deleteNodeAtEnd(node.id);
   }
+  await page.goto('/admin/nodes');
+  await page.setViewportSize({ width: 1440, height: 960 });
+  const total = (await hubList()).length;
+  // 本批 5 个节点刚连着创建，占全序中连续的名次：从 ids[0] 的名次推出整批的基准位次。
+  const base = (await hubList()).find((node) => node.id === ids[0])!.position;
+  const handle = (index: number) => page.getByRole('button', { name: `调整顺序 ${label(index)}`, exact: true });
+  // 多选 move-1、move-3（本批第 2、4 位）整体移到本批第 3 位：其余相对顺序不变。
+  await page.getByRole('checkbox', { name: `选择 ${label(1)}`, exact: true }).check();
+  await page.getByRole('checkbox', { name: `选择 ${label(3)}`, exact: true }).check();
+  await expect(page.getByText('已选择 2 个节点')).toBeVisible();
+  await page.getByRole('button', { name: '移动到…', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toHaveAccessibleName('移动节点');
+  await expect(dialog.getByText(`共 ${total} 个节点，将移动其中的 2 个；其余节点相对顺序不变。`)).toBeVisible();
+  const input = dialog.getByLabel(`目标位置（1–${total - 1}）`, { exact: true });
+  await expect(input).toHaveAttribute('max', String(total - 1));
+  await expect(dialog.getByText('将 2 个节点移到第 1–2 位')).toBeVisible();
+  await input.fill(String(base + 2));
+  await expect(dialog.getByText(`将 2 个节点移到第 ${base + 2}–${base + 3} 位`)).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('node-move-modal.png'), fullPage: true });
+  await dialog.getByRole('button', { name: '移动', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('toolbar', { name: '批量操作' })).toHaveCount(0);
+  await expect.poll(mineInOrder).toEqual([ids[0], ids[2], ids[1], ids[3], ids[4]]);
+  expect(await positionsMatchList()).toBe(true);
+  // 序号列跟着新的全序名次走。
+  await expect(handle(0)).toHaveText(String(base));
+  await expect(handle(2)).toHaveText(String(base + 1));
+  await expect(handle(1)).toHaveText(String(base + 2));
+  await expect(handle(3)).toHaveText(String(base + 3));
+  // 过滤到单个节点：拖动禁用，但行菜单可按全序名次移动这一个节点。
+  await page.getByRole('searchbox', { name: '搜索节点' }).fill(`move-4-${browserName}`);
+  await expect(page.getByRole('link', { name: label(4), exact: true })).toBeVisible();
+  const positionOfLast = (await hubList()).find((node) => node.id === ids[4])!.position;
+  await expect(handle(4)).toHaveText(String(positionOfLast));
+  await expect(handle(4)).toBeDisabled();
+  await openRowAction(page, label(4), '移动到…');
+  const single = page.getByRole('dialog');
+  await expect(single).toHaveAccessibleName('移动节点');
+  const singleInput = single.getByLabel(`目标位置（1–${total}）`, { exact: true });
+  await expect(single.getByText('移到第 1 位')).toBeVisible();
+  await singleInput.fill('2');
+  await expect(single.getByText('移到第 2 位')).toBeVisible();
+  await singleInput.fill('1');
+  await expect(single.getByText('移到第 1 位')).toBeVisible();
+  await single.getByRole('button', { name: '移动', exact: true }).click();
+  await expect(single).toHaveCount(0);
+  await page.getByRole('searchbox', { name: '搜索节点' }).fill('');
+  await expect.poll(mineInOrder).toEqual([ids[4], ids[0], ids[2], ids[1], ids[3]]);
+  expect(await positionsMatchList()).toBe(true);
+  await expect(handle(4)).toHaveText('1');
+  await expect(handle(3)).toHaveText(String(base + 4));
+  await page.screenshot({ path: testInfo.outputPath('node-move-desktop.png'), fullPage: true });
 });
 
 test('在线更新展示实际平台能力并禁止不支持的更新', async ({ page }, testInfo) => {

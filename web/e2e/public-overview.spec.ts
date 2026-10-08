@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 // 设计 §6 的公开页禁止字段：任何一个出现在页面文字里都算失败。
 const FORBIDDEN = ["可用率", "在线率", "SLA", "宕机", "不可达", "主机名", "内核", "agent 版本", "IPv4", "IPv6", "事件", "告警", "刷新"];
@@ -106,15 +107,12 @@ test("公开总览：状态墙、详情、卡片、手机列表与数据边界",
   await expect(page).toHaveURL(/\/nodes\/4$/);
 });
 
-test("公开页关闭时分享链接得到说明页而不是 404", async ({ page }) => {
-  // 总闸是整个 hub 共用的设置，后续 spec 共用同一个 hub：关闸只在本用例内有效，结束时恢复。
+test("公开页关闭时分享链接得到说明页而不是 404", async ({ page, hub }) => {
+  // 总闸是整个 hub 共用的设置，后续 spec 共用同一个 hub：关闸只在本用例内有效，收尾时恢复（fixtures.ts）。
+  hub.atEnd("恢复公开页总闸", () => hub.rpc("UpdateSettings", { settings: { publicEnabled: true } }));
   await setPublicEnabled(page, false);
-  try {
-    const response = await page.goto("/nodes/7");
-    expect(response?.status()).toBe(200);
-    await expect(page.getByRole("heading", { name: "公开页已关闭" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "管理员登录" })).toHaveAttribute("href", "/admin/");
-  } finally {
-    await setPublicEnabled(page, true);
-  }
+  const response = await page.goto("/nodes/7");
+  expect(response?.status()).toBe(200);
+  await expect(page.getByRole("heading", { name: "公开页已关闭" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "管理员登录" })).toHaveAttribute("href", "/admin/");
 });
