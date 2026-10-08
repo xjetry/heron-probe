@@ -113,11 +113,11 @@ func TestTrafficQuotaCrashBeforeFlushKeepsCommittedFiring(t *testing.T) {
 	h.login(t)
 	id, tok := h.createNode(t, "quota")
 	quotaNode(t, h, id, 100, heronv1.TrafficQuotaMode_TRAFFIC_QUOTA_MODE_SUM, 1)
-	if err := h.report(t, tok, netCounters("boot", 100, 100)); err != nil {
+	if err := h.report(t, tok, netCounters(testBootID, 100, 100)); err != nil {
 		t.Fatal(err)
 	}
 	h.clk.Advance(10 * time.Second)
-	if err := h.report(t, tok, netCounters("boot", 190, 100)); err != nil {
+	if err := h.report(t, tok, netCounters(testBootID, 190, 100)); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.book.Flush(t.Context()); err != nil {
@@ -262,11 +262,11 @@ func TestTrafficQuotaReportCommitAndAllResponses(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := h.report(t, tok, netCounters("boot", 100, 100)); err != nil {
+			if err := h.report(t, tok, netCounters(testBootID, 100, 100)); err != nil {
 				t.Fatal(err)
 			}
 			h.clk.Advance(10 * time.Second)
-			if err := h.report(t, tok, netCounters("boot", 160, 130)); err != nil {
+			if err := h.report(t, tok, netCounters(testBootID, 160, 130)); err != nil {
 				t.Fatal(err)
 			}
 			if err := h.alerts.SweepOffline(t.Context()); err != nil {

@@ -177,18 +177,24 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 // today 是 hub 时区（--timezone）的今天，days_left 以它为基准。
 func (s *Service) today() time.Time { return alert.Today(s.clk.Now(), s.cfg.Location) }
 
-// Handler 是 AdminService 的挂载点。两个 connect 处理器挂同一个 Service 与同一个鉴权拦截器，只差解码预算；请求按
-// 路径是否等于 UploadTheme 的过程名分给它们。生成的处理器分派过程用的也是 r.URL.Path 的精确相等，所以大预算的
-// 处理器只会执行 UploadTheme，其余过程都经小预算的处理器。
+// Handler 是 AdminService 的挂载点。三个 connect 处理器挂同一个 Service 与同一个鉴权拦截器，只差解码预算与响应压缩；
+// 请求按路径分给它们：UploadTheme 走大预算，GetSnapshot 走可压缩的那个，其余走小预算、不压缩的那个。生成的处理器
+// 分派过程用的也是 r.URL.Path 的精确相等，所以另外两个处理器只会执行各自那一个过程。
 func (s *Service) Handler() (string, http.Handler) {
-	// 管理响应把私有字段与 agent 自报字符串放在一起，压缩长度会泄漏二者的重合。
-	// 只抬高响应压缩门槛，不移除 gzip 支持，保证压缩请求仍可解码；所有解码预算共用此策略。
-	common := connect.WithHandlerOptions(
-		connect.WithInterceptors(s.accessInterceptor()),
-		connect.WithCompressMinBytes(math.MaxInt),
-	)
-	path, rest := heronv1connect.NewAdminServiceHandler(s, common, connect.WithReadMaxBytes(maxSettingsBody))
-	_, upload := heronv1connect.NewAdminServiceHandler(s, common, connect.WithReadMaxBytes(maxThemeBody))
+	// 管理响应默认不压缩：节点表等响应把私有字段（备注、来源地址）与 agent 自报的任意字符串（Facts 里的主机名等）放在
+	// 一起，控制一台 agent 又能看到响应长度的人，可以借压缩后的长度逐字试探私有字段。只抬高响应压缩门槛，不移除 gzip
+	// 支持，保证压缩请求仍可解码。
+	//
+	// GetSnapshot 例外：总览每 2 秒轮询它，不压缩时每小时多出几十 MB。它的字符串只有节点名（含非公开节点，属于要保护的
+	// 内容）、hub 构建时注入的两个版本号，以及 agent 写入、但写法受准入约束的 boot_id（UUID，ingest.validateBootID）与
+	// net_counter_epoch（小写十六进制摘要）；其余是数值，以及 hub 判定的 online 与管理员设定的 quota_mode。所以 agent
+	// 能放进这条响应的只有十六进制字符、连字符与数值写法里的字符：节点名里由这些字符组成的片段仍可被试探，其余字符不能。
+	// TestSnapshotStringFieldsAreAudited 枚举这条响应可达的全部字符串字段，新增字段必须先过这条判断再放进去。
+	access := connect.WithInterceptors(s.accessInterceptor())
+	closed := connect.WithCompressMinBytes(math.MaxInt)
+	path, rest := heronv1connect.NewAdminServiceHandler(s, access, closed, connect.WithReadMaxBytes(maxSettingsBody))
+	_, upload := heronv1connect.NewAdminServiceHandler(s, access, closed, connect.WithReadMaxBytes(maxThemeBody))
+	_, snapshot := heronv1connect.NewAdminServiceHandler(s, access, connect.WithReadMaxBytes(maxSettingsBody))
 	return path, auth.WebAuthnContext(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// no-transform 要求遵守该指令的反代/CDN 不改写响应，包括重新压缩。
 		// 来源检查会直接写出 403，缓存头必须在它之前设置，才能覆盖这条提前返回路径。
@@ -205,11 +211,14 @@ func (s *Service) Handler() (string, http.Handler) {
 			scheme = "http"
 		}
 		r = r.WithContext(context.WithValue(r.Context(), schemeKey{}, scheme))
-		if r.URL.Path == heronv1connect.AdminServiceUploadThemeProcedure {
+		switch r.URL.Path {
+		case heronv1connect.AdminServiceUploadThemeProcedure:
 			upload.ServeHTTP(w, r)
-			return
+		case heronv1connect.AdminServiceGetSnapshotProcedure:
+			snapshot.ServeHTTP(w, r)
+		default:
+			rest.ServeHTTP(w, r)
 		}
-		rest.ServeHTTP(w, r)
 	}), s.cfg.TrustedProxies)
 }
 

@@ -160,7 +160,7 @@ message ReportResponse {
 }
 
 message Metrics {
-  string boot_id = 1;
+  string boot_id = 1;   // 空串或 UUID 文本（Linux 的 /proc/sys/kernel/random/boot_id、macOS 的 kern.bootsessionuuid）；hub 拒收其他写法
   optional double cpu_pct = 2;   // 忙时占比；范围见 Facts.execution：环境走 cpu.stat 差分（steal/iowait 不设置），真根/v1 走 /proc/stat
   optional double load1 = 3;  optional double load5 = 4;  optional double load15 = 5;  // host 或 legacy（procfs）或 unknown：来源见 Facts.execution
   optional uint64 mem_total = 6;   optional uint64 mem_used = 7;
@@ -377,15 +377,15 @@ hub 只监听明文 HTTP，TLS 由反代（Caddy / nginx / CDN）终止，hub �
 - 主题不需要独立主机名或启动参数。旧 `--theme-origin` 已移除，升级前必须从启动配置中删除；后台直接选择同域名公开页的主题版本。
 - hub 不生成自己的对外地址：面板里安装命令的 hub 地址取浏览器当前的 origin（§10），所以没有 `--site-url`，也不存在从 `Host` 头推断对外地址的问题。
 
-**管理响应的压缩边界**：经 `AdminService` 挂载点的响应不压缩，并带 `Cache-Control: no-store, no-transform`；成功、错误、来源检查直接返回的 403 与 `UploadTheme` 都在此范围。唯一挂载点 `Service.Handler()` 统一写缓存头，两个解码预算的 Connect 处理器共用鉴权及 `WithCompressMinBytes(math.MaxInt)`，不删除 gzip 解码能力，已有压缩请求仍可接受。停机时，全局 `drainingHandler` 在进入此挂载点之前直接返回 503，不带这项缓存头；其正文固定为 `server shutting down`，不含私有数据或 agent 可控内容，因此不构成上述混合内容的压缩旁路。connect-go v1.21.0 的真实 HTTP 测试覆盖 Connect、gRPC、gRPC-Web：检查 HTTP 内容编码，以及后两者消息帧和 gRPC-Web trailer 帧的压缩位，而不只看客户端解码后的对象。
+**管理响应的压缩边界**：经 `AdminService` 挂载点的响应除 `GetSnapshot` 外都不压缩，全部带 `Cache-Control: no-store, no-transform`；成功、错误、来源检查直接返回的 403 与 `UploadTheme` 都在此范围。唯一挂载点 `Service.Handler()` 统一写缓存头，按路径分给三个 Connect 处理器：`UploadTheme` 用大解码预算，`GetSnapshot` 按 connect 默认协商压缩，其余共用 `WithCompressMinBytes(math.MaxInt)`；三者共用鉴权，不删除 gzip 解码能力，已有压缩请求仍可接受。停机时，全局 `drainingHandler` 在进入此挂载点之前直接返回 503，不带这项缓存头；其正文固定为 `server shutting down`，不含私有数据或 agent 可控内容，因此不构成上述混合内容的压缩旁路。connect-go v1.21.0 的真实 HTTP 测试覆盖 Connect、gRPC、gRPC-Web：检查 HTTP 内容编码，以及后两者消息帧和 gRPC-Web trailer 帧的压缩位，而不只看客户端解码后的对象。
 
-一台失守节点可以任意改写自己上报的 `Facts` 字符串（hostname、os、kernel、cpu_model 等）；`ListNodes` 又把它们与其他节点的私有备注、来源地址及国家查询记录放进同一个响应。若攻击者还能观测管理员 HTTPS 流量长度，就能反复改变自报字符串，以压缩长度随字符串与秘密重合而变化的现象探测私有内容；TLS 加密正文不等于隐藏长度。因此不在单个方法按字段猜测敏感性，而对整个管理服务禁用响应压缩，并要求反代/CDN 不重新压缩。`no-store` 禁止存储响应，`no-transform` 要求中间层不改写；部署仍须按管理路径显式禁用压缩并回读核对最终响应。`PublicService` 的响应仅投影已获准公开的数据，不把私有字段与节点自报内容混在一起，继续协商压缩，保留各方法的 GET `max-age` 和按压缩方式分键的快照缓存。
+一台失守节点可以任意改写自己上报的 `Facts` 字符串（hostname、os、kernel、cpu_model 等）；`ListNodes` 又把它们与其他节点的私有备注、来源地址及国家查询记录放进同一个响应。若攻击者还能观测管理员 HTTPS 流量长度，就能反复改变自报字符串，以压缩长度随字符串与秘密重合而变化的现象探测私有内容；TLS 加密正文不等于隐藏长度。因此管理服务默认禁用响应压缩，并要求反代/CDN 不重新压缩。唯一的例外是 `GetSnapshot`：总览每 2 秒轮询它，不压缩的代价最大；它的字符串字段逐个审过——节点名（含非公开节点，属于要保护的内容）、hub 构建时注入的两个版本号、agent 写入的 `boot_id` 与 `net_counter_epoch`；其余是数值，以及 hub 判定的 `online` 与管理员设定的 `quota_mode`。`boot_id` 的准入只收空串或 UUID（§4.2 `Metrics`），`net_counter_epoch` 只收小写十六进制摘要，所以 agent 能放进这条响应的只有十六进制字符、连字符与数值写法里的字符：节点名里由这些字符组成的片段仍可被试探，其余字符不能。`TestSnapshotStringFieldsAreAudited` 枚举响应可达的全部字符串字段并与审过的清单比对，新增字段不过这条判断就不能进快照。`no-store` 禁止存储响应，`no-transform` 要求中间层不改写；部署仍须按管理路径显式禁用压缩并回读核对最终响应。`PublicService` 的响应仅投影已获准公开的数据，不把私有字段与节点自报内容混在一起，继续协商压缩，保留各方法的 GET `max-age` 和按压缩方式分键的快照缓存。
 
-代价是管理端响应正文增大。固定合成样本经真实管理 HTTP 入口测量：150 个节点，其中 46 个带完整 Metrics 与 Facts，其余未上报；节点有不同名称和私有备注，已上报节点包含网络检测、采集诊断与执行范围。Go 1.27.1 / connect-go v1.21.0 下，对同一份 JSON 用标准库 gzip 默认级别压缩：
+代价是管理端响应正文增大（`GetSnapshot` 自压缩起不再承担）。固定合成样本经真实管理 HTTP 入口测量：150 个节点，其中 46 个带完整 Metrics 与 Facts，其余未上报；节点有不同名称和私有备注，已上报节点包含网络检测、采集诊断与执行范围。Go 1.27.1 / connect-go v1.21.0 下，对同一份 JSON 用标准库 gzip 默认级别压缩：
 
 | 管理方法 | identity 正文（字节） | gzip 正文（字节） | 禁压缩增加（字节/次） |
 |---|---:|---:|---:|
-| `GetSnapshot` | 48,970 | 4,250 | 44,720 |
+| `GetSnapshot` | 48,970 | 4,250 | 0（压缩） |
 | `ListNodes` | 85,217 | 4,058 | 81,159 |
 
 这里只复用了生产的节点数量与上报构成，不是生产内容实测，也不是最坏上限；字符串长度、指标数值与重复度会改变体积。数字不含 HTTP 头和 TLS 开销；公开页的轮询不承担这项增量。

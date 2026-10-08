@@ -758,6 +758,9 @@ func TestRegisterTrimsAfterRemovingControls(t *testing.T) {
 	}
 }
 
+// testBootID 是夹具用的启动周期标识：准入只收 UUID（validateBootID），与真实 agent 读到的写法一致。
+const testBootID = "3f2b8c1e-6a4d-4e9b-8c7f-1d2e3f4a5b6c"
+
 func netCounters(boot string, rx, tx uint64) *heronv1.Metrics {
 	return &heronv1.Metrics{BootId: boot, NetRxTotal: proto.Uint64(rx), NetTxTotal: proto.Uint64(tx)}
 }
@@ -780,9 +783,9 @@ func rxAccounted(rows []metric.Row) (sum float64, n uint32) {
 func TestReportAccountsTrafficIntoTotalsAndMinuteBucket(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
-	h.mustReport(t, tok, netCounters("b", 1000, 1000))
+	h.mustReport(t, tok, netCounters(testBootID, 1000, 1000))
 	h.clk.Advance(10 * time.Second)
-	h.mustReport(t, tok, netCounters("b", 1100, 1300))
+	h.mustReport(t, tok, netCounters(testBootID, 1100, 1300))
 	e, ok := h.book.Get(id)
 	if !ok || e.TotalRx != 100 || e.TotalTx != 300 || e.PeriodRx != 100 {
 		t.Fatalf("book after two reports: %+v %v", e, ok)
@@ -799,9 +802,9 @@ func TestReportAccountsTrafficIntoTotalsAndMinuteBucket(t *testing.T) {
 func TestGapBeyondTTLKeepsTotalsButSkipsTheBucket(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
-	h.mustReport(t, tok, netCounters("b", 1000, 1000))
+	h.mustReport(t, tok, netCounters(testBootID, 1000, 1000))
 	h.clk.Advance(31 * time.Second) // TTL 30s：这段增量跨了不止一个上报周期
-	h.mustReport(t, tok, netCounters("b", 1500, 1000))
+	h.mustReport(t, tok, netCounters(testBootID, 1500, 1000))
 	if e, _ := h.book.Get(id); e.TotalRx != 500 {
 		t.Fatalf("totals must still take the increment: %+v", e)
 	}
@@ -810,12 +813,12 @@ func TestGapBeyondTTLKeepsTotalsButSkipsTheBucket(t *testing.T) {
 	}
 
 	h.clk.Advance(29 * time.Second)
-	h.mustReport(t, tok, netCounters("b", 1600, 1000))
+	h.mustReport(t, tok, netCounters(testBootID, 1600, 1000))
 	if sum, n := rxAccounted(h.live.Drain().Rows); sum != 100 || n != 1 {
 		t.Fatalf("increment at TTL-1s must enter the bucket: %v/%d, want 100/1", sum, n)
 	}
 	h.clk.Advance(30 * time.Second)
-	h.mustReport(t, tok, netCounters("b", 1700, 1000))
+	h.mustReport(t, tok, netCounters(testBootID, 1700, 1000))
 	if sum, n := rxAccounted(h.live.Drain().Rows); sum != 0 || n != 0 {
 		t.Fatalf("increment at exactly TTL landed in a minute bucket: %v/%d", sum, n)
 	}
@@ -825,9 +828,9 @@ func TestFirstReportAfterRestartSkipsTheBucketButKeepsTotals(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "t.db")
 	h := newHubAt(t, path)
 	id, tok := h.node(t)
-	h.mustReport(t, tok, netCounters("b", 1000, 1000))
+	h.mustReport(t, tok, netCounters(testBootID, 1000, 1000))
 	h.clk.Advance(10 * time.Second)
-	h.mustReport(t, tok, netCounters("b", 1200, 1000))
+	h.mustReport(t, tok, netCounters(testBootID, 1200, 1000))
 	if err := h.book.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -836,7 +839,7 @@ func TestFirstReportAfterRestartSkipsTheBucketButKeepsTotals(t *testing.T) {
 	}
 
 	h2 := newHubAt(t, path) // 同一库：token 与基线都从库恢复
-	h2.mustReport(t, tok, netCounters("b", 1300, 1000))
+	h2.mustReport(t, tok, netCounters(testBootID, 1300, 1000))
 	if e, _ := h2.book.Get(id); e.TotalRx != 300 {
 		t.Fatalf("restart lost the persisted baseline or totals: %+v", e)
 	}
@@ -844,7 +847,7 @@ func TestFirstReportAfterRestartSkipsTheBucketButKeepsTotals(t *testing.T) {
 		t.Fatalf("first report after restart landed in a minute bucket: %v/%d", sum, n)
 	}
 	h2.clk.Advance(10 * time.Second)
-	h2.mustReport(t, tok, netCounters("b", 1310, 1000))
+	h2.mustReport(t, tok, netCounters(testBootID, 1310, 1000))
 	if sum, n := rxAccounted(h2.live.Drain().Rows); sum != 10 || n != 1 {
 		t.Fatalf("second report after restart must resume bucketing: %v/%d", sum, n)
 	}
@@ -853,7 +856,7 @@ func TestFirstReportAfterRestartSkipsTheBucketButKeepsTotals(t *testing.T) {
 func TestForgetDropsTrafficState(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
-	h.mustReport(t, tok, netCounters("b", 1000, 1000))
+	h.mustReport(t, tok, netCounters(testBootID, 1000, 1000))
 	h.svc.Forget(id)
 	if _, ok := h.book.Get(id); ok {
 		t.Fatal("traffic entry survived Forget")
@@ -961,7 +964,7 @@ func TestMalformedResultRejectsWholeReport(t *testing.T) {
 			id, tok := h.node(t)
 			task := h.task(t, id)
 			tc.result.TaskId = task
-			req := report(tok, netCounters("boot", 1000, 2000))
+			req := report(tok, netCounters(testBootID, 1000, 2000))
 			req.Msg.ProbeResults = []*heronv1.ProbeResult{tc.result, rtt(task, 0, 100)}
 			_, err := h.client.Report(t.Context(), req)
 			if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), tc.field) {
@@ -1035,12 +1038,12 @@ func TestMalformedResultLeavesExistingStateUnchanged(t *testing.T) {
 	h := newHub(t)
 	id, tok := h.node(t)
 	task := h.task(t, id)
-	h.mustReport(t, tok, netCounters("boot", 1000, 2000))
+	h.mustReport(t, tok, netCounters(testBootID, 1000, 2000))
 	before, _ := h.book.Get(id)
 	liveBefore, _ := h.live.Get(id)
 	h.live.Drain()
 	h.clk.Advance(10 * time.Second)
-	req := report(tok, netCounters("boot", 1100, 2300))
+	req := report(tok, netCounters(testBootID, 1100, 2300))
 	req.Msg.ProbeResults = []*heronv1.ProbeResult{rtt(task, 0, 5_000_001)}
 	_, err := h.client.Report(t.Context(), req)
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {

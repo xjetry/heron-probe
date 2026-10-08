@@ -25,7 +25,7 @@ func TestAgentScopeAndDiagnosticsThroughHTTP(t *testing.T) {
 	id, token := h.createNode(t, "scope")
 	h.setPublic(t, id, "scope", true)
 	_, readerToken := createToken(t, h, "diagnostics-reader")
-	fsys := fstest.MapFS{"proc/sys/kernel/random/boot_id": {Data: []byte("boot")}}
+	fsys := fstest.MapFS{"proc/sys/kernel/random/boot_id": {Data: []byte(testBootID + "\n")}}
 	put := func(name string, n uint64) {
 		for direction, value := range map[string]uint64{"rx": n, "tx": n * 2} {
 			fsys[fmt.Sprintf("sys/class/net/%s/statistics/%s_bytes", name, direction)] = &fstest.MapFile{Data: fmt.Appendf(nil, "%d", value)}
@@ -81,7 +81,7 @@ func TestAgentScopeAndDiagnosticsThroughHTTP(t *testing.T) {
 	if !ok || state.TotalRx != 40 || state.TotalTx != 80 || state.NetCounterEpoch != epoch {
 		t.Fatalf("persisted scope baseline or totals: %+v", state)
 	}
-	if delta, ok := reloaded.Account(id, &heronv1.Metrics{BootId: "boot", NetCounterEpoch: epoch, NetRxTotal: proto.Uint64(5025), NetTxTotal: proto.Uint64(10050)}); !ok || delta.Rx != 5 || delta.Tx != 10 {
+	if delta, ok := reloaded.Account(id, &heronv1.Metrics{BootId: testBootID, NetCounterEpoch: epoch, NetRxTotal: proto.Uint64(5025), NetTxTotal: proto.Uint64(10050)}); !ok || delta.Rx != 5 || delta.Tx != 10 {
 		t.Fatalf("same-scope restart delta = %v %v", delta, ok)
 	}
 	reader := heronv1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)

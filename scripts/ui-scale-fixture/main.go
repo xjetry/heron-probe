@@ -168,7 +168,7 @@ func run(ctx context.Context, base string, count int, password string) error {
 				err := client.call(ctx, "AgentService", "Report", token, map[string]any{
 					"factsHash": strconv.Itoa(i + 1),
 					"facts":     map[string]any{"hostname": fmt.Sprintf("scale-%03d.internal", i+1), "os": "Fixture Linux", "arch": "amd64", "cpuCores": 4, "agentVersion": "ui-scale-fixture"},
-					"metrics": map[string]any{"bootId": fmt.Sprintf("fixture-%d", i), "cpuPct": (i + int(tick)) % 100,
+					"metrics": map[string]any{"bootId": fmt.Sprintf("00000000-0000-4000-8000-%012d", i), "cpuPct": (i + int(tick)) % 100,
 						"memTotal": "8589934592", "memUsed": strconv.FormatUint(1<<30+tick*(1<<20), 10),
 						"netRxTotal": strconv.FormatUint(tick*1048576, 10), "netTxTotal": strconv.FormatUint(tick*524288, 10),
 						"netRxBps": "262144", "netTxBps": "131072", "uptimeS": strconv.FormatUint(tick*4, 10)},

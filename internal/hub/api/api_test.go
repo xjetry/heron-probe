@@ -907,6 +907,9 @@ func TestWindowAndQueryAdmissionBounds(t *testing.T) {
 	}
 }
 
+// testBootID 是夹具用的启动周期标识：准入只收 UUID（ingest.validateBootID），与真实 agent 读到的写法一致。
+const testBootID = "3f2b8c1e-6a4d-4e9b-8c7f-1d2e3f4a5b6c"
+
 func netCounters(boot string, rx, tx uint64) *heronv1.Metrics {
 	return &heronv1.Metrics{BootId: boot, NetRxTotal: proto.Uint64(rx), NetTxTotal: proto.Uint64(tx)}
 }
@@ -916,11 +919,11 @@ func TestTrafficIsReportedAdjustedAndConfigured(t *testing.T) {
 	h.login(t)
 	ctx := context.Background()
 	id, tok := h.createNode(t, "n")
-	if err := h.report(t, tok, netCounters("b", 1000, 1000)); err != nil {
+	if err := h.report(t, tok, netCounters(testBootID, 1000, 1000)); err != nil {
 		t.Fatal(err)
 	}
 	h.clk.Advance(10 * time.Second)
-	if err := h.report(t, tok, netCounters("b", 1000+1<<20, 2000)); err != nil {
+	if err := h.report(t, tok, netCounters(testBootID, 1000+1<<20, 2000)); err != nil {
 		t.Fatal(err)
 	}
 	jan1, feb1, jan15 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Unix(), time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC).Unix(), time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC).Unix()
@@ -949,7 +952,7 @@ func TestTrafficIsReportedAdjustedAndConfigured(t *testing.T) {
 		t.Fatalf("after adjust: %v", tr)
 	}
 	h.clk.Advance(10 * time.Second)
-	if err := h.report(t, tok, netCounters("b", 1000+1<<20+100, 2000)); err != nil {
+	if err := h.report(t, tok, netCounters(testBootID, 1000+1<<20+100, 2000)); err != nil {
 		t.Fatal(err)
 	}
 	if e, _ := h.book.Get(id); e.PeriodRx != 5<<30+100 || e.LastRx != 1000+1<<20+100 {

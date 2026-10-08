@@ -118,7 +118,7 @@ func TestNewProjectionRejectsMisalignedFields(t *testing.T) {
 // 只复制源里存在的字段：optional 缺失仍是缺失，显式的 0 仍是 0；目标没有的字段（boot_id）不出现。
 func TestProjectionKeepsPresenceAndDropsUndeclaredFields(t *testing.T) {
 	p := newProjection((&heronv1.PublicMetrics{}).ProtoReflect().Type(), (&heronv1.Metrics{}).ProtoReflect().Descriptor())
-	got := p.apply(&heronv1.Metrics{BootId: "b", MemUsed: proto.Uint64(0), Load1: proto.Float64(0.5),
+	got := p.apply(&heronv1.Metrics{BootId: testBootID, MemUsed: proto.Uint64(0), Load1: proto.Float64(0.5),
 		DiskReadBps: proto.Uint64(0), CpuStealPct: proto.Float64(2.5), CpuIowaitPct: proto.Float64(0)}).(*heronv1.PublicMetrics)
 	want := &heronv1.PublicMetrics{MemUsed: proto.Uint64(0), Load1: proto.Float64(0.5),
 		DiskReadBps: proto.Uint64(0), CpuStealPct: proto.Float64(2.5), CpuIowaitPct: proto.Float64(0)}

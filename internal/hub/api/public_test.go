@@ -191,7 +191,7 @@ func TestPublicSnapshotListsOnlyPublicNodesWithPublicFields(t *testing.T) {
 	if !proto.Equal(adminNetwork, facts.Network) {
 		t.Fatalf("admin network missing: %v", adminNetwork)
 	}
-	if err := h.report(t, tokA, &heronv1.Metrics{BootId: "boot-secret", CpuPct: proto.Float64(12.5), MemUsed: proto.Uint64(0), MemTotal: proto.Uint64(1 << 30)}); err != nil {
+	if err := h.report(t, tokA, &heronv1.Metrics{BootId: testBootID, CpuPct: proto.Float64(12.5), MemUsed: proto.Uint64(0), MemTotal: proto.Uint64(1 << 30)}); err != nil {
 		t.Fatal(err)
 	}
 	resp, err := h.publicClient().GetSnapshot(ctx, connect.NewRequest(&heronv1.PublicServiceGetSnapshotRequest{}))
@@ -217,7 +217,7 @@ func TestPublicSnapshotListsOnlyPublicNodesWithPublicFields(t *testing.T) {
 	}
 	// 正文层面再核一次：不公开的字段与私有节点的名字都不在 JSON 里。
 	raw := pubGet(t, h, "GetSnapshot", jsonQuery("{}"), nil)
-	for _, leak := range []string{"secret", "hostname", "kernel", "agentVersion", "icmpAvailable", "bootId", `"b"`, "network", "8.8.4.4", "checkedAt"} {
+	for _, leak := range []string{"secret", testBootID, "hostname", "kernel", "agentVersion", "icmpAvailable", "bootId", `"b"`, "network", "8.8.4.4", "checkedAt"} {
 		if bytes.Contains(raw.body, []byte(leak)) {
 			t.Errorf("snapshot JSON contains %s: %s", leak, raw.body)
 		}

@@ -18,7 +18,7 @@ func TestCoverageBothAPIsFromReception(t *testing.T) {
 	base := h.clk.Now().Truncate(time.Minute)
 	h.clk.SetWall(base.Add(-time.Second))
 	h.live.SetReceiving(true)
-	if err := h.report(t, token, &heronv1.Metrics{BootId: "boot"}); err != nil {
+	if err := h.report(t, token, &heronv1.Metrics{BootId: testBootID}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 10; i++ {

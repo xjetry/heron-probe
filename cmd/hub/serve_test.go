@@ -487,8 +487,8 @@ func TestServeFlushesTrafficOnShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, m := range []*heronv1.Metrics{
-		{BootId: "b", NetRxTotal: proto.Uint64(1000), NetTxTotal: proto.Uint64(5000)},
-		{BootId: "b", NetRxTotal: proto.Uint64(1200), NetTxTotal: proto.Uint64(5001)},
+		{BootId: "3f2b8c1e-6a4d-4e9b-8c7f-1d2e3f4a5b6c", NetRxTotal: proto.Uint64(1000), NetTxTotal: proto.Uint64(5000)},
+		{BootId: "3f2b8c1e-6a4d-4e9b-8c7f-1d2e3f4a5b6c", NetRxTotal: proto.Uint64(1200), NetTxTotal: proto.Uint64(5001)},
 	} {
 		report := connect.NewRequest(&heronv1.ReportRequest{Metrics: m})
 		report.Header().Set("Authorization", "Bearer "+registered.Msg.Token)
@@ -506,7 +506,7 @@ func TestServeFlushesTrafficOnShutdown(t *testing.T) {
 	if err != nil || len(recs) != 1 {
 		t.Fatalf("traffic rows after shutdown: %v %v", recs, err)
 	}
-	if r := recs[0]; r.NodeID != node.Msg.Node.Id || r.TotalRx != 200 || r.TotalTx != 1 || r.LastRx != 1200 || r.BootID != "b" {
+	if r := recs[0]; r.NodeID != node.Msg.Node.Id || r.TotalRx != 200 || r.TotalTx != 1 || r.LastRx != 1200 || r.BootID != "3f2b8c1e-6a4d-4e9b-8c7f-1d2e3f4a5b6c" {
 		t.Fatalf("shutdown lost the traffic state: %+v", r)
 	}
 }

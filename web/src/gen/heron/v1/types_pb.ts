@@ -22,6 +22,8 @@ export type Metrics = Message<"heron.v1.Metrics"> & {
   /**
    * 启动周期标识，随计数器同一条消息到达：流量差分必须在同一条消息里
    * 同时拿到计数器与它所属的启动周期，否则重启后的首次上报会被误当增量。
+   * 空串（读不到）或 UUID 文本（8-4-4-4-12 位十六进制，大小写均可：Linux 的
+   * /proc/sys/kernel/random/boot_id、macOS 的 kern.bootsessionuuid）；hub 拒收其他写法的整条上报。
    *
    * @generated from field: string boot_id = 1;
    */

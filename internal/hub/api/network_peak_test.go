@@ -16,13 +16,13 @@ func TestNetworkPeaksFromReportToBothHistoryAPIs(t *testing.T) {
 	h.setPublic(t, id, "peaks", true)
 	base := h.clk.Now().Truncate(time.Hour).Unix()
 	for i, rate := range []uint64{800, 20, 100} {
-		if err := h.report(t, token, &heronv1.Metrics{BootId: "boot", NetRxTotal: proto.Uint64(uint64(i) * 300), NetTxTotal: proto.Uint64(0), NetRxBps: proto.Uint64(rate), NetTxBps: proto.Uint64(0)}); err != nil {
+		if err := h.report(t, token, &heronv1.Metrics{BootId: testBootID, NetRxTotal: proto.Uint64(uint64(i) * 300), NetTxTotal: proto.Uint64(0), NetRxBps: proto.Uint64(rate), NetTxBps: proto.Uint64(0)}); err != nil {
 			t.Fatal(err)
 		}
 		h.clk.Advance(10 * time.Second)
 	}
 	h.clk.Advance(time.Minute)
-	if err := h.report(t, token, &heronv1.Metrics{BootId: "boot"}); err != nil {
+	if err := h.report(t, token, &heronv1.Metrics{BootId: testBootID}); err != nil {
 		t.Fatal(err)
 	}
 	h.ingest.Flush(t.Context(), true)

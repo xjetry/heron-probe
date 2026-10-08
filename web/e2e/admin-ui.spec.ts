@@ -66,7 +66,7 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
         const { token } = await registered.json();
         const checkedAt = String(Math.floor(Date.now() / 1000));
         const response = await fetch('/heron.v1.AgentService/Report', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({
-          factsHash: '1', metrics: { bootId: 'browser-test', cpuPct: 12 + index * 15, memUsed: '536870912', memTotal: '2147483648', diskUsed: '2147483648', diskTotal: '21474836480', load1: 0.3, load5: 0.2, load15: 0.1, netRxBps: '524288', netTxBps: '131072' },
+          factsHash: '1', metrics: { bootId: '0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f', cpuPct: 12 + index * 15, memUsed: '536870912', memTotal: '2147483648', diskUsed: '2147483648', diskTotal: '21474836480', load1: 0.3, load5: 0.2, load15: 0.1, netRxBps: '524288', netTxBps: '131072' },
           facts: { hostname: 'edge.internal', agentVersion: 'dev', network: {
             ipv4: { state: index === 2 ? 'ADDRESS_DETECTION_STATE_FAILED' : 'ADDRESS_DETECTION_STATE_AVAILABLE', address: index === 2 ? '' : ['8.8.8.8', '1.1.1.1'][index], checkedAt },
             ipv6: index === 1 ? { state: 'ADDRESS_DETECTION_STATE_UNSUPPORTED', checkedAt } : { state: 'ADDRESS_DETECTION_STATE_AVAILABLE', address: '2606:4700:4700::1111', checkedAt },
@@ -432,4 +432,19 @@ test('表单行里的链接按钮与勾选框和字段控件齐平', async ({ pa
     return (t.top + t.height / 2) - (n.top + n.height / 2);
   });
   expect(Math.abs(enabled)).toBeLessThan(1.5);
+});
+
+// 管理端只有总览轮询的 GetSnapshot 由 hub 压缩（字段经审核，internal/hub/api/service.go），节点表等其余响应不压缩。
+// 从浏览器入口核对实际收到的响应头，而不是只看服务端单测。
+test('总览轮询的快照压缩，其余管理响应不压缩', async ({ page }) => {
+  await page.goto('/admin/login');
+  await rpc(page, 'Login', { password: 'local-browser-test-password' });
+  const encodings = new Map<string, string>();
+  page.on('response', async (response) => {
+    const method = new URL(response.url()).pathname.match(/^\/heron\.v1\.AdminService\/(GetSnapshot|ListNodes)$/)?.[1];
+    if (method && response.ok()) encodings.set(method, (await response.allHeaders())['content-encoding'] ?? '');
+  });
+  await page.goto('/admin/');
+  await expect(page.getByRole('list', { name: '需要处理' })).toBeVisible();
+  await expect.poll(() => [encodings.get('GetSnapshot'), encodings.get('ListNodes')]).toEqual(['gzip', '']);
 });

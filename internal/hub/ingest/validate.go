@@ -12,12 +12,12 @@ import (
 )
 
 // validateMetrics 对整条上报做准入：任何一个字段非法就整条拒绝，live 不变。
-// 无符号整数由协议类型定界；浮点、load 三元组和 boot_id 长度在此检查。
+// 无符号整数由协议类型定界；浮点、load 三元组和 boot_id 的写法在此检查。
 func validateMetrics(m *heronv1.Metrics) error {
 	if m == nil {
 		return errors.New("metrics: required")
 	}
-	if err := validateHostString("boot_id", m.BootId); err != nil {
+	if err := validateBootID(m.BootId); err != nil {
 		return err
 	}
 	if err := agentwire.ValidateCounterEpoch(m.NetCounterEpoch); err != nil {
@@ -133,7 +133,34 @@ func validateTasksDigest(d []byte) error {
 	return nil
 }
 
-// maxHostString 约束 boot_id 与 Facts 的入参字节数，给报告的非探测部分提供体积上界。
+// validateBootID 只收空串或 UUID 文本（8-4-4-4-12 位十六进制，大小写均可）：Linux 的 /proc/sys/kernel/random/boot_id
+// 与 macOS 的 kern.bootsessionuuid 都是这个写法，agent 读不到时发空串。boot_id 随实时读数进管理端 GetSnapshot，
+// 那条响应是压缩的（api.Service.Handler）；只收 UUID，agent 能放进去的就只有十六进制字符与连字符，不能拿任意文本
+// 借压缩长度试探同一响应里的节点名。
+func validateBootID(id string) error {
+	if id == "" {
+		return nil
+	}
+	if len(id) != 36 {
+		return fmt.Errorf("boot_id: must be empty or a UUID; got %d bytes", len(id))
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return errors.New("boot_id: must be empty or a UUID")
+			}
+		default:
+			if !('0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F') {
+				return errors.New("boot_id: must be empty or a UUID")
+			}
+		}
+	}
+	return nil
+}
+
+// maxHostString 约束 Facts 的入参字节数，给报告的非探测部分提供体积上界。
 const maxHostString = 256
 
 func validateHostString(name, value string) error {

@@ -32,7 +32,7 @@ test("采集诊断从真实上报进入管理详情且不进入公开页", async
       failedCollectors: ["COLLECTION_COMPONENT_DISK"], reportIntervalMs: 10000,
     };
     const report = await rpc(page, "AgentService", "Report", {
-      metrics: { bootId: "browser-boot", netCounterEpoch: "a".repeat(64), netRxTotal: "100", netTxTotal: "200" },
+      metrics: { bootId: "0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f", netCounterEpoch: "a".repeat(64), netRxTotal: "100", netTxTotal: "200" },
       factsHash: "101", facts: { agentVersion: "browser-diagnostic-version", diagnostics },
     }, token);
     expect(report.status).toBe(200);
@@ -45,7 +45,7 @@ test("采集诊断从真实上报进入管理详情且不进入公开页", async
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
     await page.screenshot({ path: testInfo.outputPath("diagnostics-mobile.png"), fullPage: true });
     expect((await rpc(page, "AgentService", "Report", {
-      metrics: { bootId: "browser-boot", netCounterEpoch: "a".repeat(64) },
+      metrics: { bootId: "0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f", netCounterEpoch: "a".repeat(64) },
       factsHash: "102", facts: { diagnostics: { ...diagnostics, failedCollectors: [] } },
     }, token)).status).toBe(200);
     await expect(card.getByText("最近采集未报告失败", { exact: true })).toBeVisible({ timeout: 15000 });

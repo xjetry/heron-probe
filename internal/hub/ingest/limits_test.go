@@ -23,7 +23,7 @@ func maxErrorResult() *heronv1.ProbeResult {
 
 func TestReportHostStringLimits(t *testing.T) {
 	facts := (&heronv1.Facts{}).ProtoReflect().Descriptor().Fields()
-	fields := []string{"boot_id"}
+	var fields []string
 	for i := 0; i < facts.Len(); i++ {
 		if field := facts.Get(i); field.Kind() == protoreflect.StringKind {
 			fields = append(fields, "facts."+string(field.Name()))
@@ -36,13 +36,9 @@ func TestReportHostStringLimits(t *testing.T) {
 				h := newHub(t)
 				id, tok := h.node(t)
 				req := report(tok, &heronv1.Metrics{})
-				if field == "boot_id" {
-					req.Msg.Metrics.BootId = value
-				} else {
-					req.Msg.Facts = &heronv1.Facts{}
-					fd := facts.ByName(protoreflect.Name(strings.TrimPrefix(field, "facts.")))
-					req.Msg.Facts.ProtoReflect().Set(fd, protoreflect.ValueOfString(value))
-				}
+				req.Msg.Facts = &heronv1.Facts{}
+				fd := facts.ByName(protoreflect.Name(strings.TrimPrefix(field, "facts.")))
+				req.Msg.Facts.ProtoReflect().Set(fd, protoreflect.ValueOfString(value))
 				_, err := h.client.Report(t.Context(), req)
 				if size == 256 {
 					if err != nil {
@@ -59,6 +55,43 @@ func TestReportHostStringLimits(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// boot_id 只收空串或 UUID（Linux 小写、macOS 大写都是这个写法）：不合规的整条上报被拒、live 不变。它随实时读数进
+// 可压缩的管理端快照，放宽成任意文本就能借压缩长度试探同一响应里的节点名（api.Service.Handler）。
+func TestReportBootIDMustBeUUID(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		ok          bool
+	}{
+		{"empty", "", true},
+		{"linux", "3f2b8c1e-6a4d-4e9b-8c7f-1d2e3f4a5b6c", true},
+		{"macos", "3F2B8C1E-6A4D-4E9B-8C7F-1D2E3F4A5B6C", true},
+		{"word", "boot", false},
+		{"non_hex", "3f2b8c1e-6a4d-4e9b-8c7f-1d2e3f4a5b6g", false},
+		{"dash_moved", "3f2b8c1e6-a4d-4e9b-8c7f-1d2e3f4a5b6c", false},
+		{"braced", "{3f2b8c1e-6a4d-4e9b-8c7f-1d2e3f4a5b6}", false},
+		{"too_long", "3f2b8c1e-6a4d-4e9b-8c7f-1d2e3f4a5b6c0", false},
+		{"node_name_guess", "tokyo-xtom-9950x-guess-tokyo-xtom-99", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHub(t)
+			id, tok := h.node(t)
+			_, err := h.client.Report(t.Context(), report(tok, &heronv1.Metrics{BootId: tc.value}))
+			if tc.ok {
+				if err != nil {
+					t.Fatalf("valid boot_id %q rejected: %v", tc.value, err)
+				}
+				return
+			}
+			if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "boot_id: must be empty or a UUID") {
+				t.Errorf("boot_id %q error=%v, want InvalidArgument naming the UUID rule", tc.value, err)
+			}
+			if _, ok := h.live.Get(id); ok {
+				t.Error("rejected boot_id changed live state")
+			}
+		})
 	}
 }
 
@@ -148,6 +181,10 @@ func maxHostReport(t *testing.T) *heronv1.ReportRequest {
 				value = protoreflect.ValueOfString(strings.Repeat("x", maxHostString))
 				if fd.FullName() == "heron.v1.Metrics.net_counter_epoch" {
 					value = protoreflect.ValueOfString(strings.Repeat("a", 64))
+				}
+				// boot_id 只收 UUID（validateBootID），36 字节就是它能取的最长合法值。
+				if fd.FullName() == "heron.v1.Metrics.boot_id" {
+					value = protoreflect.ValueOfString("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
 				}
 			case protoreflect.Uint32Kind:
 				// cpu_cores 的准入上界是 MaxScopeCores，比 uint32 最大值更紧；守卫量的是现在会接受的最大载荷。
