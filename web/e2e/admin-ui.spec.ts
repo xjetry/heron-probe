@@ -160,7 +160,9 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
     const expiringCount = Number(await expiring.locator('strong').textContent());
     await expiring.click();
     await expect(page).toHaveURL(/\/admin\/nodes\?expiring=1$/);
-    await expect(page.getByRole('row')).toHaveCount(expiringCount + 1);
+    // 数据行数等于卡上的数；为 0 时节点表让位给空态（components/EmptyState.tsx），先等空态出现，免得在加载中把 0 行当成结果。
+    if (expiringCount === 0) await expect(page.getByRole('status').filter({ hasText: '没有匹配的节点。' })).toBeVisible();
+    await expect(page.locator('.node-management tbody > tr')).toHaveCount(expiringCount);
     await page.getByRole('button', { name: '清除筛选' }).click();
     await expect(page).toHaveURL(/\/admin\/nodes$/);
     await page.getByRole('link', { name: `tokyo-renamed（#${ids[0]}）`, exact: true }).waitFor();
@@ -250,13 +252,14 @@ test('节点拖拽、键盘和移动端菜单保存同一完整顺序', async ({
     await page.screenshot({ path: testInfo.outputPath('node-order-desktop.png'), fullPage: true });
     await page.getByRole('searchbox', { name: '搜索节点' }).fill(`order-0-${browserName}`);
     await expect(handle).toBeDisabled();
-    // 过滤时拖动与上下移仍禁用，但按全序名次的「移动到…」可用，菜单保持可用（不被禁用）。
+    // 过滤时拖动与上下移仍禁用（行菜单里的上移、下移、置顶、置底同样保存完整排列），但按全序名次的「移动到…」可用，菜单保持可用（不被禁用）。
     await page.getByRole('button', { name: `更多操作 ${label(0)}`, exact: true }).click();
     await expect(page.getByRole('menuitem', { name: `移动到… ${label(0)}`, exact: true })).toBeEnabled();
+    for (const action of ['上移一位', '下移一位', '置顶', '置底']) await expect(page.getByRole('menuitem', { name: `${action} ${label(0)}`, exact: true })).toBeDisabled();
     await page.keyboard.press('Escape');
     await expect(page.getByText('筛选时不能用拖动或上下移（它们保存完整排列）；可用行菜单的「移动到…」按全序名次移动，或清除筛选后再调整。')).toBeVisible();
     await page.getByRole('searchbox', { name: '搜索节点' }).fill('');
-    await page.getByRole('combobox', { name: `移动 ${label(0)}`, exact: true }).selectOption('last');
+    await openRowAction(page, label(0), '置底');
     await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
     await handle.press('Home');
     await expect.poll(actual).toEqual([ids[0], ids[1], ids[2]]);
@@ -361,4 +364,72 @@ test('在线更新展示实际平台能力并禁止不支持的更新', async ({
   await page.setViewportSize({ width: 375, height: 812 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
   await page.screenshot({ path: testInfo.outputPath('updates-mobile.png'), fullPage: true });
+});
+
+// 手机上告警事件每条一张卡（admin.css 的 .events-table 移动端规则），不再横向滚动一张六列宽表。
+// 一条事件可有多条投递，每条是块级元素；它们要与「未配置渠道」一样起在「投递」标签右侧，而不是掉到标签下一行。
+test('手机上的告警事件排成卡片：不横向滚动，投递起在标签右侧', async ({ page }, testInfo) => {
+  await page.goto('/admin/login');
+  await rpc(page, 'Login', { password: 'local-browser-test-password' });
+  const now = Math.floor(Date.now() / 1000);
+  const delivery = (id: string, ok: boolean) => ({ id, channelId: id, attempts: ok ? 1 : 3, ok, done: true, ...(ok ? { deliveredAt: String(now) } : { failure: 'DELIVERY_FAILURE_TRANSPORT' }) });
+  await page.route('**/heron.v1.AdminService/ListAlertEvents**', (route) => route.fulfill({ json: { events: [
+    { id: '2', ruleId: '1', nodeId: '1', transition: 'firing', at: String(now), summary: '节点 tokyo 离线 39s', value: 39, deliveries: [delivery('11', true), delivery('12', false)] },
+    { id: '1', ruleId: '1', nodeId: '1', transition: 'recovered', at: String(now - 60), summary: '节点 tokyo 已恢复', value: 0, deliveries: [] },
+  ] } }));
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto('/admin/events');
+  const region = page.getByRole('region', { name: '告警事件' });
+  const cells = region.locator('td[data-label="投递"]');
+  await expect(cells).toHaveCount(2);
+  await expect(cells.first().locator(':scope > *')).toHaveCount(2);
+  await expect(cells.first().getByRole('button', { name: /^查看错误原文 / })).toBeVisible();
+  expect(await region.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
+  for (const cell of await cells.all()) {
+    const offsets = await cell.evaluate((td) => {
+      const box = td.getBoundingClientRect();
+      return [...td.children].map((el) => { const r = el.getBoundingClientRect(); return { left: r.left - box.left, top: r.top - box.top }; });
+    });
+    expect(offsets[0].top).toBeLessThan(2);
+    expect(offsets[0].left).toBeGreaterThan(10);
+    for (const o of offsets) expect(o.left).toBeCloseTo(offsets[0].left, 0);
+  }
+  // 「查看错误原文」是链接按钮，不能把它所在的投递行撑到控件高度（styles.css 的 button.link）。
+  const line = await cells.first().evaluate((td) => ({ height: td.querySelector('button')!.parentElement!.getBoundingClientRect().height, lineHeight: parseFloat(getComputedStyle(td).lineHeight) }));
+  expect(line.height).toBeLessThanOrEqual(line.lineHeight + 2);
+  await page.screenshot({ path: testInfo.outputPath('events-mobile.png'), fullPage: true });
+});
+
+// 表单行混排「标题在上、控件在下」的字段与链接按钮、勾选框（styles.css 的 form .row）：单行项的文字与字段控件里的文字齐平，
+// 不因字段的下外边距沉下去，也不跟着字段标题浮上来。文字中心与控件中心比，同字号时等价于基线对齐。
+test('表单行里的链接按钮与勾选框和字段控件齐平', async ({ page }) => {
+  await page.goto('/admin/login');
+  await rpc(page, 'Login', { password: 'local-browser-test-password' });
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto('/admin/appearance');
+  const form = page.getByRole('form', { name: '公开页外观' });
+  await expect(form.getByRole('button', { name: '用内置配色' })).toBeVisible();
+  const offsets = await form.evaluate((f) => {
+    const center = (el: Element) => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; };
+    const link = (text: string) => [...f.querySelectorAll('button.link')].find((b) => b.textContent === text)!;
+    const accent = [...f.querySelectorAll('input')].find((i) => i.placeholder.startsWith('#rrggbb'))!;
+    return { accent: center(link('用内置配色')) - center(accent), logo: center(link('移除 logo')) - center(f.querySelector('.file-button')!) };
+  });
+  expect(Math.abs(offsets.accent), JSON.stringify(offsets)).toBeLessThan(1.5);
+  expect(Math.abs(offsets.logo), JSON.stringify(offsets)).toBeLessThan(1.5);
+  await page.goto('/admin/alerts');
+  await page.getByRole('button', { name: '新建告警规则', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: '新建告警规则' });
+  await expect(drawer.getByRole('checkbox', { name: '启用' })).toBeVisible();
+  const enabled = await drawer.evaluate((dialog) => {
+    const name = [...dialog.querySelectorAll('label')].find((l) => l.textContent?.startsWith('名称'))!.querySelector('input')!;
+    const label = [...dialog.querySelectorAll('label')].find((l) => l.textContent?.trim() === '启用')!;
+    const text = [...label.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim())!;
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const t = range.getBoundingClientRect(), n = name.getBoundingClientRect();
+    return (t.top + t.height / 2) - (n.top + n.height / 2);
+  });
+  expect(Math.abs(enabled)).toBeLessThan(1.5);
 });

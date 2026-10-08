@@ -99,3 +99,14 @@ it("快选保留已有节点并去重，已勾选的节点可取消", async () =
   fireEvent.click(node);
   expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ nodeIds: new Set([2n, 3n]) }));
 });
+
+it("按标签快选超过 10 个时先列前 10 个，其余收在「全部 N 个」后面", async () => {
+  const many = Array.from({ length: 12 }, (_, i) => `t${String(i + 1).padStart(2, "0")}`);
+  render(<Harness initial={{ ...empty(), selectorTags: many }} />);
+  const toggle = await screen.findByRole("button", { name: "全部 14 个" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getAllByRole("button", { name: /^按标签快选 / })).toHaveLength(10);
+  fireEvent.click(toggle);
+  expect(screen.getAllByRole("button", { name: /^按标签快选 / })).toHaveLength(14);
+  expect(screen.getByRole("button", { name: "收起" })).toHaveAttribute("aria-expanded", "true");
+});

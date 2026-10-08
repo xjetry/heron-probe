@@ -7,6 +7,7 @@ import { MAX_NOTIFY_CHANNELS } from "../lib/alerts";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { statefulHub } from "../test/settingsHub";
 import { Channels } from "./Channels";
+import { expectEmptyState } from "../test/empty";
 
 const channels = create(ListNotifyChannelsResponseSchema, { channels: [
   { id: 1n, name: "tg", kind: ChannelKind.TELEGRAM, telegram: { chatId: "42", hasBotToken: true }, createdAt: 1_700_000_000n, ratePerMinute: 20 },
@@ -566,4 +567,9 @@ it("同名渠道经第二条菜单打开后只保存第二条 id", async () => {
   await openRowAction("同名（#2）", "编辑");
   fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "保存" }));
   await waitFor(() => expect(saved.map((req) => req.channel?.id)).toEqual([2n]));
+});
+
+it("没有通知渠道时只有空态卡，不画只有表头的表", async () => {
+  render({ listNotifyChannels: async () => ({ channels: [] }) });
+  await expectEmptyState("还没有通知渠道。", { region: "通知渠道管理" });
 });

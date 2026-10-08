@@ -32,6 +32,7 @@ import { applyScope, isScoped, paramsWithScope, scopeFromParams, STATUS_OPTIONS,
 import { NodeEditor } from "./NodeEditor";
 import { BatchNodeTagsEditor } from "./BatchNodeTagsEditor";
 import { trafficParts } from "../lib/traffic";
+import { EmptyState } from "../components/EmptyState";
 
 // 标签过滤二选一：按一组标签取交集，或只要无标签节点。空 names 表示不过滤。
 // 用判别式联合让"既选了标签又选了无标签"在类型上不可表示——hub 对两个条件同时给出返回 InvalidArgument
@@ -224,8 +225,12 @@ export function Nodes() {
         {allNodes.error != null && <span className="error">无法取得节点总数，「移动到…」不可用：{errorText(allNodes.error)}</span>}
         <button type="button" className="link" disabled={editing} onClick={() => setSelected([])}>清除选择</button>
       </div>}
-      <p className="node-subtext order-help" id="node-order-help">拖动手柄调整顺序，松开后自动保存。也可使用移动菜单，或聚焦手柄后按方向键、Home / End。</p>
-      <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
+      <p className="node-subtext order-help" id="node-order-help">拖动手柄调整顺序，松开后自动保存。也可用行菜单（⋯）上移、下移、置顶、置底，或聚焦手柄后按方向键、Home / End。</p>
+      {list.length === 0
+        ? scope.lagging && boundAgentVersion === undefined
+          ? <EmptyState status title="无法取得 hub 绑定的 agent 版本，「agent 版本落后」筛选暂时没有结果。" />
+          : narrowed ? <EmptyState status title="没有匹配的节点。" /> : <EmptyState title="还没有节点。">添加节点后安装 agent 即可开始监控。</EmptyState>
+        : <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
         <table className="nodes node-management"><thead><tr>
           <th data-column="select"><MixedCheckbox label="选择当前结果全部节点" checked={selectedNodes.length === 0 ? false : selectedNodes.length === list.length ? true : "mixed"} disabled={editing || nodes.stale || list.length === 0} onChange={() => setSelected(selectedNodes.length === list.length ? [] : list.map((node) => node.id))} /></th>
           <th data-column="order"><span className="sr-only">排序</span></th><th data-column="name">节点</th><th data-column="addresses">IPv4 / IPv6</th><th data-column="status">状态</th><th data-column="traffic">本周期</th><th data-column="billing">费用</th><th data-column="expiry">到期</th><th data-column="actions"><span className="sr-only">操作</span></th>
@@ -254,10 +259,7 @@ export function Nodes() {
               ]}/>} />;
           })}</tbody>
         </table>
-      </div>
-      {list.length === 0 && (scope.lagging && boundAgentVersion === undefined
-        ? <p className="node-empty" role="status">无法取得 hub 绑定的 agent 版本，「agent 版本落后」筛选暂时没有结果。</p>
-        : <p className="node-empty" role="status">{narrowed ? "没有匹配的节点。" : "还没有节点，添加节点后安装 agent 即可开始监控。"}</p>)}
+      </div>}
     </> : gate.loading}
     <TagManager tags={tags.data?.tags} pending={removeTag.isPending} onDelete={(name) => removeTag.mutate({ name })} />
     {batchEditor && <BatchNodeTagsEditor nodes={batchEditor.nodes} knownTags={batchEditor.tags} opener={batchEditor.opener} saving={batchUpdate.isPending} error={batchUpdate.error} onClose={() => setBatchEditor(null)}

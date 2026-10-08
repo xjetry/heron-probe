@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { create } from "@bufbuild/protobuf";
 import { createConnectQueryKey } from "@connectrpc/connect-query";
 import { ConnectError, Code } from "@connectrpc/connect";
@@ -7,6 +7,7 @@ import { AdminService, AlertKind, ChannelKind, ListAlertRulesResponseSchema, Lis
 import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { AlertRules } from "./AlertRules";
+import { expectEmptyState } from "../test/empty";
 
 const nodes = create(ListNodesResponseSchema, { nodes: [{ id: 1n, name: "东京" }, { id: 2n, name: "法兰克福" }] });
 const channels = create(ListNotifyChannelsResponseSchema, { channels: [{ id: 5n, name: "hook", kind: ChannelKind.WEBHOOK }] });
@@ -665,4 +666,13 @@ it("空动态标签不发请求，选择标签后可以提交", async () => {
   fireEvent.click(screen.getByRole("checkbox", { name: /db/ }));
   fireEvent.submit(form);
   await waitFor(() => expect(saveAlertRule).toHaveBeenCalledTimes(1));
+});
+
+it("没有规则时只有空态卡；只看触发中没有结果时空态播报", async () => {
+  render({ listAlertRules: async () => ({ rules: [], states: [] }) });
+  await expectEmptyState("还没有告警规则。", { region: "告警规则管理" });
+  cleanup();
+  render({ listAlertRules: async () => create(ListAlertRulesResponseSchema, { rules: rules.rules, states: [] }) });
+  fireEvent.click(await screen.findByRole("checkbox", { name: "只看触发中" }));
+  await expectEmptyState("没有触发中的规则。", { region: "告警规则管理", status: true });
 });

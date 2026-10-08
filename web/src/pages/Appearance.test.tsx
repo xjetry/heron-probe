@@ -487,3 +487,18 @@ describe("设置表单的保存互斥", () => {
     expect(hub.state().geoEnabled).toBe(false);
   });
 });
+
+// 各分区的标题与说明在左栏、表单与状态在右栏（components/SettingsSection.tsx）；说明不再压在表单上方。
+it("设置分区：标题与说明在左栏，表单在右栏", async () => {
+  render({ getBackupStatus: async () => ({ enabled: false }), getHeartbeatStatus: async () => ({ enabled: false }) });
+  const pairs = [["公开页", "公开页外观"], ["国家 / 地区查询", "国家 / 地区查询"], ["备份到 S3", "备份到 S3"], ["心跳外推", "心跳外推"]] as const;
+  for (const [title, form] of pairs) {
+    const heading = await screen.findByRole("heading", { level: 2, name: title });
+    const section = heading.closest(".settings-section") as HTMLElement;
+    expect(heading.closest(".settings-aside")).not.toBeNull();
+    expect(within(section).getByRole("form", { name: form }).closest(".settings-main")).not.toBeNull();
+  }
+  const backup = (await screen.findByRole("heading", { level: 2, name: "备份状态" })).closest(".settings-section") as HTMLElement;
+  expect(within(backup).getByText(/停用备份即结束两层的故障跟踪/).closest(".settings-aside")).not.toBeNull();
+  expect(within(backup).getByRole("region", { name: "备份状态" }).closest(".settings-main")).not.toBeNull();
+});

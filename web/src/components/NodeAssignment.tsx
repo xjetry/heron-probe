@@ -10,6 +10,8 @@ export type NodeSelection = { allNodes: boolean; nodeIds: Set<bigint>; selectorT
 type Mode = "all" | "dynamic" | "picked";
 const modeOf = (v: NodeSelection): Mode => (v.allNodes ? "all" : v.dynamic ? "dynamic" : "picked");
 
+const QUICK_TAGS = 10;
+
 // 模式切换只修改 allNodes / dynamic，另一种形状的草稿保留给用户切回；提交时由调用方按模式取舍。
 // 已选集合可能含当前列表里没有的 id，仍需展示并允许移除，不能让不可见的选择留在草稿里。
 export function NodeAssignment({ nodes, value, onChange, legend, noun = "分配" }: {
@@ -17,6 +19,7 @@ export function NodeAssignment({ nodes, value, onChange, legend, noun = "分配"
 }) {
   const tags = useQuery(AdminService.method.listTags, {});
   const [search, setSearch] = useState("");
+  const [allQuick, setAllQuick] = useState(false);
   const mode = modeOf(value);
   const known = [...new Set([...(tags.data?.tags.map((t) => t.name) ?? nodes.flatMap((n) => n.tags)), ...value.selectorTags])].sort();
   const options = known.map((name) => ({ value: name, label: name, count: nodes.filter((n) => n.tags.some((t) => sameTag(t, name))).length }));
@@ -38,8 +41,10 @@ export function NodeAssignment({ nodes, value, onChange, legend, noun = "分配"
         <p className="muted">{value.selectorTags.length === 0 ? "至少选择一个标签" : `当前匹配 ${matching.length} 个节点`}</p>
       </>}
       {mode === "picked" && <>
+        {/* 快选只是捷径：标签多时先列前 QUICK_TAGS 个，其余收在「全部 N 个」后面，不让一排胶囊占掉半个抽屉。 */}
         {known.length > 0 && <div className="assignment-quick"><span className="muted">按标签快选</span>
-          {known.map((name) => <button key={name} type="button" className="chip" aria-label={`按标签快选 ${name}`} onClick={() => onChange({ nodeIds: new Set([...value.nodeIds, ...nodes.filter((n) => n.tags.some((t) => sameTag(t, name))).map((n) => n.id)]) })}>{name}</button>)}
+          {(allQuick ? known : known.slice(0, QUICK_TAGS)).map((name) => <button key={name} type="button" className="chip" aria-label={`按标签快选 ${name}`} onClick={() => onChange({ nodeIds: new Set([...value.nodeIds, ...nodes.filter((n) => n.tags.some((t) => sameTag(t, name))).map((n) => n.id)]) })}>{name}</button>)}
+        {known.length > QUICK_TAGS && <button type="button" className="link" aria-expanded={allQuick} onClick={() => setAllQuick(!allQuick)}>{allQuick ? "收起" : `全部 ${known.length} 个`}</button>}
         </div>}
         <input type="search" aria-label="搜索节点" placeholder="名称或 #id" value={search} onChange={(event) => setSearch(event.target.value)} />
         <ul className="assignment-list">

@@ -80,13 +80,18 @@ input, select, button, textarea { font: inherit; min-height: var(--control-h); p
 textarea { min-height: 6rem; padding: 0.4rem 0.6rem; }
 button { cursor: pointer; }
 button[disabled] { opacity: 0.5; cursor: default; }
-button.link { border: none; background: none; color: var(--accent); padding: 0; }
+/* 链接样式的按钮是行文里的文字，不是控件：不继承上面的控件最小高度，否则所在的行（投递记录、「已选择 N 个节点 清空已选」）被撑到 32px。 */
+button.link { border: none; background: none; color: var(--accent); padding: 0; min-height: 0; }
 button.danger { color: var(--bad); border-color: var(--bad); }
 .error { color: var(--bad); }
 .warn { color: var(--warn); }
 .muted { color: var(--muted); }
 .row { display: flex; align-items: baseline; gap: 1rem; }
-form.row { align-items: flex-end; flex-wrap: wrap; }
+/* 表单里的一行（form.row 与表单内的 .row）混排「标题在上、控件在下」的字段与勾选框、链接按钮这类单行项：
+   按各项最后一行文字的基线对齐，单行项与字段控件里的文字齐平。字段带的下外边距（admin.css 的 form.card label）不参与基线对齐；
+   按底边对齐会把它算进去，按首行基线对齐则让单行项跟着字段标题浮到上方。 */
+form.row, form .row { align-items: last baseline; }
+form.row { flex-wrap: wrap; }
 .detail-header { flex-wrap: wrap; }
 .detail-header h1 { max-width: 100%; overflow-wrap: anywhere; }
 /* 节点页 / 对比页的工具栏：时间窗口分段控件、口径说明、覆盖率排一行。 */
@@ -152,7 +157,6 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 /* 计费编辑格：小输入两列排开，平铺选择、日期与说明占整行；表格单元格默认不换行，这里要换。 */
 .billing-edit { display: grid; grid-template-columns: repeat(2, minmax(6rem, 1fr)); gap: 0.25rem 0.5rem; white-space: normal; min-width: 16rem; }
 .billing-edit p, .billing-edit .picks { grid-column: 1 / -1; margin: 0; }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: 1rem; }
 .secret { font-family: var(--font-mono); word-break: break-all; white-space: pre-wrap; background: var(--bg); padding: 0.5rem; border-radius: 6px; }
 
 /* 到期（components/Expiry.tsx），面板与公开页共用：日期与剩余天数整体按临近 / 已过期着色。 */
@@ -255,7 +259,7 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 /* 分配 / 作用域（components/NodeAssignment.tsx）：三张卡片式单选一行，指定节点的勾选列表自身滚动。 */
 .assignment { border: 0; padding: 0; margin: 12px 0; min-width: 0; }
 .assignment-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 6px 0 10px; }
-.assignment-card { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); cursor: pointer; }
+.assignment-card { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: start; align-content: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); cursor: pointer; }
 .assignment-card:has(input:checked) { border-color: var(--fg); }
 .assignment-card input { margin: 3px 0 0; }
 .assignment-card span { font-weight: 600; }
@@ -345,7 +349,7 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .segmented input:focus-visible + span, .segmented > button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* 历史图网格：每张至少 480px 宽，管理端与公开页在 1440 宽下都排两列；卡片内边距收紧，把面积留给图。 */
-.chart-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 12px; margin-bottom: 12px; container-type: inline-size; }
+.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 12px; margin-bottom: 12px; container-type: inline-size; }
 /* 最后一行不满时把最后一张拉宽，不留空格：两列（宽 2×480+12 到 3×480+24）时张数为奇数，最后一张撑满整行；
    三列（宽 3×480+24 到 4×480+36）时剩一张撑满、剩两张时最后一张占两格。断点由上面的 480px 与 12px 间距算出，
    改其中任一项要同步改这里；四列以上不处理。 */

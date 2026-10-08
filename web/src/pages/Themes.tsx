@@ -10,6 +10,7 @@ import { AdminService, type Theme } from "../gen/heron/v1/admin_pb";
 import { toBase64 } from "../lib/base64";
 import { bytes, dateTime } from "../lib/format";
 import { FileInput } from "../components/FileInput";
+import { EmptyState } from "../components/EmptyState";
 
 const maxPackageBytes = 8 * 1024 * 1024;
 const versionLabel = (theme: Theme) => `${theme.name}（${theme.id}）${theme.version} [${theme.digest.slice(0, 12)}]`;
@@ -148,7 +149,7 @@ export function Themes() {
     {notice != null && <p role="status">{notice}</p>}
     {error != null && <p role="alert" className="error">{errorText(error)}</p>}
     {preview.data?.url && <p><a href={preview.data.url} target="_blank" rel="noreferrer">打开沙箱预览</a>（只预览所选产物，不改变公开首页；链接会过期。）</p>}
-    <div className="table-scroll" role="region" aria-label="主题管理" tabIndex={0}>
+    {themes.length === 0 ? <EmptyState title="还没有主题。" /> : <div className="table-scroll" role="region" aria-label="主题管理" tabIndex={0}>
       <table className="nodes"><thead><tr><th>预览</th><th>名称</th><th>id</th><th>版本 / 摘要</th><th>来源</th><th>安装于</th><th>状态</th><th>操作</th></tr></thead><tbody>
         {themes.map((t, index) => {
           const executable = t.sdk === 1, protectedVersion = t.enabled || t.previous, label = versionLabel(t);
@@ -168,7 +169,6 @@ export function Themes() {
           </tr>;
         })}
       </tbody></table>
-    </div>
-    {themes.length === 0 && <p className="muted">还没有主题。</p>}
+    </div>}
   </section>;
 }

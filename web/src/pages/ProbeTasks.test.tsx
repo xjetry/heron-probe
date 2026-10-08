@@ -7,6 +7,7 @@ import { AdminService, ListNodesResponseSchema, ListProbeTasksResponseSchema, Sa
 import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { ProbeTasks } from "./ProbeTasks";
+import { expectEmptyState } from "../test/empty";
 
 const nodes = create(ListNodesResponseSchema, { nodes: [{ id: 1n, name: "东京" }, { id: 2n, name: "法兰克福" }] });
 const tasks = create(ListProbeTasksResponseSchema, { version: 9n, tasks: [
@@ -572,4 +573,9 @@ it("改成不能钉的种类时仍显示指纹，且不会自动清除", async (
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0].certPin?.action.case).toBe("setSpkiSha256");
   expect(saved[0].task?.kind).toBe(ProbeKind.ICMP);
+});
+
+it("没有探测任务时只有空态卡，不画只有表头的表", async () => {
+  renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => ({ tasks: [] }) }, routes, "/probes");
+  await expectEmptyState("还没有探测任务。", { region: "探测任务管理" });
 });

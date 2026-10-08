@@ -9,6 +9,7 @@ import { AdminService } from "../gen/heron/v1/admin_pb";
 import type { UpdateStatus } from "../gen/heron/v1/update_pb";
 import { isRelease, isStableRelease, olderThan } from "../lib/version";
 import { updateReasonText } from "../lib/updateReason";
+import { EmptyState } from "../components/EmptyState";
 
 const labels: Record<string, string> = {
   queued: "等待节点上线", dispatched: "已下发", downloading: "下载并校验", stopping: "停止旧服务",
@@ -124,7 +125,7 @@ export function Updates() {
     <div className="page-header"><div><h2>节点 Agent</h2><p className="muted">{nodeTarget ? `目标版本 ${nodeTarget}（hub 绑定的 agent 版本）。` : "这个 hub 没有绑定正式的 agent 版本（开发构建或预发布），不能在线更新节点。"}离线任务最多等待 24 小时；新版本成功上报后才算完成。</p></div>
       <button type="button" disabled={chosen.length === 0 || busy} onClick={(event) => setConfirmation({ ids: chosen, version: nodeTarget, opener: event.currentTarget })}>更新选中节点（{chosen.length}）</button>
     </div>
-    <div className="table-scroll" role="region" aria-label="节点更新" tabIndex={0}><table className="nodes">
+    {nodes.data!.nodes.length === 0 ? <EmptyState title="还没有节点。" /> : <div className="table-scroll" role="region" aria-label="节点更新" tabIndex={0}><table className="nodes">
       <thead><tr><th><label className="inline"><MixedCheckbox label="选择全部可更新节点" checked={chosen.length === 0 ? false : chosen.length === updatable.length ? true : "mixed"}
         disabled={updatable.length === 0 || busy} onChange={() => setSelected(new Set(chosen.length === updatable.length ? [] : updatable))} />全选</label></th><th>节点</th><th>当前版本</th><th>来源</th><th>更新状态</th><th><span className="sr-only">操作</span></th></tr></thead>
       <tbody>{nodes.data!.nodes.map((node) => {
@@ -139,8 +140,7 @@ export function Updates() {
           {status?.task?.state === "queued" && <button type="button" disabled={cancel.isPending || busy} onClick={() => cancel.mutate({ nodeId: node.id, id: status.task!.id })}>取消排队</button>}
         </td></tr>;
       })}</tbody>
-    </table></div>
-    {nodes.data!.nodes.length === 0 && <p className="muted">还没有节点。</p>}
+    </table></div>}
     {confirmation && <Modal title={confirmation.ids[0] === 0n ? "确认更新 Hub" : "确认更新节点"} opener={confirmation.opener} onClose={() => setConfirmation(null)}>
       <div className="modal-body"><p>将 {confirmation.ids.map(nameOf).join("、")} 更新到 <strong>{confirmation.version}</strong>。</p>
         <p className="muted">{confirmation.ids[0] === 0n ? "Hub 将短暂断连。更新器会在停服后备份数据库，启动验证失败时恢复程序和数据库。请等待重新连接后的任务结果。" : "更新会短暂中断节点上报。已经下发的任务无法取消；失败时由本机更新器恢复旧程序。"}</p>

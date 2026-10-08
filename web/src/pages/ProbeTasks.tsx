@@ -17,6 +17,7 @@ import { ProbeKind, ProbeTaskSchema, type ProbeTask } from "../gen/heron/v1/type
 import { formatPin, parsePin } from "../lib/certpin";
 import { ascending, withId } from "../lib/ids";
 import { PROBE_KINDS, isHTTPSTarget, kindLabel, targetRule } from "../lib/probes";
+import { EmptyState } from "../components/EmptyState";
 
 type Draft = NodeSelection & { kind: ProbeKind; target: string; dnsServer: string; intervalS: string; timeoutMs: string; pin: string; clearPin: boolean; configId?: Uint8Array };
 type TaskEntry = { task: ProbeTask; allNodes: boolean; nodeIds: bigint[]; selectorTags: string[] };
@@ -98,7 +99,7 @@ export function ProbeTasks() {
       {order.error != null && <p role="alert" className="error">排序未完成：{errorText(order.error)}</p>}
       {order.pending && <p role="status" className="muted">正在保存并确认排序…</p>}
       {order.blocked && <button type="button" onClick={order.recover} disabled={order.pending}>重新读取排序</button>}
-      <div className="table-scroll" role="region" aria-label="探测任务管理" tabIndex={0}>
+      {tasks.length === 0 ? <EmptyState title="还没有探测任务。" /> : <div className="table-scroll" role="region" aria-label="探测任务管理" tabIndex={0}>
         <table className="nodes probe-table">
           <thead><tr><th><span className="sr-only">排序</span></th><th>类型</th><th>目标</th><th>间隔</th><th>超时</th><th>分配</th><th><span className="sr-only">操作</span></th></tr></thead>
           <tbody>{tasks.map((entry) => {
@@ -123,8 +124,7 @@ export function ProbeTasks() {
             </tr>;
           })}</tbody>
         </table>
-      </div>
-      {tasks.length === 0 && <p className="muted">还没有探测任务。</p>}
+      </div>}
       {drawer?.kind === "create" && <ProbeTaskDrawer title="新建探测任务" submitLabel="创建" nodes={nodeList} initial={emptyDraft()} pending={create.isPending} error={create.error} opener={drawer.opener} onClose={() => setDrawer(null)}
         onSubmit={(d) => submit(create, 0n, d, () => setDrawer(null))} />}
       {drawer?.kind === "edit" && <ProbeTaskDrawer key={String(drawer.entry.task.id)} title={`编辑 ${withId(drawer.entry.task.target, drawer.entry.task.id)}`} submitLabel="保存" nodes={nodeList} initial={draftOf(drawer.entry)} pending={update.isPending} error={update.error} opener={drawer.opener} onClose={() => setDrawer(null)}

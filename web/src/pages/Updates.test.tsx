@@ -6,6 +6,7 @@ import type { MessageInitShape } from "@bufbuild/protobuf";
 import { AdminService, type GetUpdatesResponse, GetUpdatesResponseSchema } from "../gen/heron/v1/admin_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Updates } from "./Updates";
+import { expectEmptyState } from "../test/empty";
 
 const targets = [
   { nodeId: 0n, status: { supported: true, version: "v0.2.0" } },
@@ -262,4 +263,9 @@ it("已登记的不支持原因写中文，未登记的照写原文", async () =
   expect(row("东京（#1）").getByText("不支持在线更新：agent 尚未上报在线更新能力（版本过旧，或刚连上 hub）")).toBeInTheDocument();
   expect(row("东京（#1）").queryByText(/has not reported/)).toBeNull();
   expect(row("香港（#2）").getByText("OpenRC is unsupported").tagName).toBe("CODE");
+});
+
+it("没有节点时节点更新只有空态卡，不画只有表头的表", async () => {
+  render({ listNodes: async () => ({ nodes: [] }) });
+  await expectEmptyState("还没有节点。", { region: "节点更新" });
 });

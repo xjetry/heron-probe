@@ -8,6 +8,7 @@ import { RowMenu } from "../components/RowMenu";
 import { AdminService } from "../gen/heron/v1/admin_pb";
 import { Link } from "react-router";
 import { dateTime } from "../lib/format";
+import { EmptyState } from "../components/EmptyState";
 
 export function Sessions() {
   const queryClient = useQueryClient();
@@ -52,7 +53,7 @@ export function Sessions() {
       </div>
       <p className="muted">有效登录会话。撤销后，该会话立即失效；撤销当前会话会返回登录页。</p>
       {revoke.error && <p role="alert" className="error">{errorText(revoke.error)}</p>}
-      <div className="table-scroll" role="region" aria-label="登录会话" tabIndex={0}>
+      {gate.data.sessions.length === 0 ? <EmptyState title="没有有效会话。" /> : <div className="table-scroll" role="region" aria-label="登录会话" tabIndex={0}>
         <table className="nodes">
           <thead><tr><th>会话</th><th>创建于</th><th>最近使用</th><th><span className="sr-only">操作</span></th></tr></thead>
           <tbody>
@@ -72,8 +73,7 @@ export function Sessions() {
             ))}
           </tbody>
         </table>
-      </div>
-      {gate.data.sessions.length === 0 && <p className="muted">没有有效会话。</p>}
+      </div>}
     </section>
   );
 }

@@ -42,7 +42,7 @@ export function BackupSettingsForm({ current }: { current: BackupSettings | unde
     },
   });
   const gate = queryGate(channels);
-  if (!gate.ready) return <><h2>备份到 S3</h2>{gate.loading ?? errorBanner(...gate.errors)}</>;
+  if (!gate.ready) return <>{gate.loading ?? errorBanner(...gate.errors)}</>;
   const channelList = gate.data.channels;
   const form = draft ?? backupDraft(current);
   const edit = (patch: Partial<BackupDraft>) => {
@@ -58,11 +58,9 @@ export function BackupSettingsForm({ current }: { current: BackupSettings | unde
   };
   return (
     <>
-      <h2>备份到 S3</h2>
       {gate.banner}
       <form className="card" aria-label="备份到 S3" onSubmit={submit}>
         <fieldset className="bare" disabled={saving}>
-          <p className="muted">目标使用 path-style，兼容 R2。Bucket 必须为私有；建议使用 HTTPS。清空 Endpoint 并保存可整体关闭备份。缺少 Bucket、Access key 或 Secret 时也不会启动备份。</p>
           <label>Endpoint<input type="url" value={form.endpoint} maxLength={2048} placeholder="https://account.r2.cloudflarestorage.com" onChange={(e) => edit({ endpoint: e.target.value })} /></label>
           <div className="row">
             <label>Bucket<input value={form.bucket} maxLength={63} onChange={(e) => edit({ bucket: e.target.value })} /></label>

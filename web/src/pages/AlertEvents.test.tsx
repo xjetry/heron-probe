@@ -8,6 +8,7 @@ import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { AlertEvents } from "./AlertEvents";
 import { EventFeed, useAlertEvents, filtersFromParams, paramsWithFilters, matchesFilters } from "../components/EventFeed";
 import { fillSegments } from "../test/fields";
+import { expectEmptyState } from "../test/empty";
 
 const nodes = create(ListNodesResponseSchema, { nodes: [{ id: 1n, name: "东京" }, { id: 2n, name: "法兰克福" }] });
 const channels = create(ListNotifyChannelsResponseSchema, { channels: [{ id: 5n, name: "hook", kind: ChannelKind.WEBHOOK }] });
@@ -36,7 +37,7 @@ it("规则、变化与日期筛选只作用于已加载的行，筛空仍可加�
   expect(within(screen.getAllByRole("row")[1]).getAllByRole("cell").map((c) => c.textContent)).toEqual([expect.any(String), "东京", "cpu（#1）", "触发A 触发", "95.5", "未配置渠道"]);
   expect(screen.getByText("A 触发").tagName).toBe("SMALL");
   fireEvent.change(screen.getByRole("combobox", { name: "变化" }), { target: { value: "recovered" } });
-  expect(screen.getByRole("status")).toHaveTextContent("已加载的 100 条里没有匹配的事件");
+  await expectEmptyState("已加载的 100 条里没有匹配的事件。", { region: "告警事件", status: true });
   expect(screen.getByRole("button", { name: "加载更早的事件" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
   expect(router.state.location.search).toBe("");
@@ -72,7 +73,7 @@ it.each(["2025-03-09", "2025-11-02"])("本地日期 %s 包含整天，不包含�
 
 it("节点筛选保留客户端筛选，清除筛选同时清节点", async () => {
   const { router } = render({ listAlertEvents: async () => ({ events: [] }) }, "/events?rule=7&transition=firing&from=2025-01-01");
-  await screen.findByText("没有告警事件。");
+  await expectEmptyState("没有告警事件。", { region: "告警事件" });
   fireEvent.change(screen.getByLabelText("节点"), { target: { value: "2" } });
   await screen.findByText("没有告警事件。");
   expect(router.state.location.search).toBe("?rule=7&transition=firing&from=2025-01-01&node=2");

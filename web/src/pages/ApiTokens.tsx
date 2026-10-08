@@ -13,6 +13,7 @@ import { Picks } from "../components/Picks";
 import { AdminService, TokenPermission, type CreateApiTokenResponse } from "../gen/heron/v1/admin_pb";
 import { withId } from "../lib/ids";
 import { dateTime, day } from "../lib/format";
+import { EmptyState } from "../components/EmptyState";
 
 const permissionChoices = [
   [TokenPermission.CONFIGURE, "监控配置"],
@@ -79,11 +80,7 @@ export function ApiTokens() {
       {drawerOpener && <ApiTokenDrawer opener={drawerOpener} pending={create.isPending} error={create.error}
         onClose={() => { setDrawerOpener(null); create.reset(); }} onCreate={(name, grant) => create.mutateAsync({ name, grant })} />}
       {!drawerOpener && error != null && <p role="alert" className="error">{errorText(error)}</p>}
-      {/* 没有 token 时不画只有表头的空表，空态写在同一块卡片里。 */}
-      {gate.data.tokens.length === 0 ? <div className="card empty-state" role="status">
-        <p>还没有 API token。</p>
-        <p className="muted">新建一个 token 交给 agent 或脚本；权限与可操作的节点在新建时勾选，之后可随时吊销。</p>
-      </div> : <div className="table-scroll" role="region" aria-label="API token 管理" tabIndex={0}>
+      {gate.data.tokens.length === 0 ? <EmptyState title="还没有 API token。">新建一个 token 交给 agent 或脚本；权限与可操作的节点在新建时勾选，之后可随时吊销。</EmptyState> : <div className="table-scroll" role="region" aria-label="API token 管理" tabIndex={0}>
         <table className="nodes">
           <thead><tr><th>名称</th><th>权限 / 范围</th><th>创建于</th><th>最后使用</th><th><span className="sr-only">操作</span></th></tr></thead>
           <tbody>

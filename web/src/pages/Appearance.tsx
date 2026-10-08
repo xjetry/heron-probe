@@ -13,6 +13,7 @@ import { ANSWERS_PER_NODE } from "../lib/country";
 import { BUILT_IN_ACCENT } from "../lib/palette";
 import { DEFAULT_TITLE } from "../public/site";
 import { FileInput } from "../components/FileInput";
+import { SettingsSection } from "../components/SettingsSection";
 
 const THEME_LABELS: Record<Theme, string> = { auto: "跟随访客的系统设置", light: "浅色", dark: "深色" };
 
@@ -92,10 +93,10 @@ export function Appearance() {
     <section>
       {gate.banner}
       <PageHeader title="外观" />
-      <p className="muted">
+      <SettingsSection title="公开页" description={<p className="muted">
         公开页（站点根路径 /）的标题、明暗、主色、logo 与自定义 CSS。保存后，访客刷新公开页才看到新外观；浏览器还可能再用最多 5 分钟的缓存。
         要改页面结构，可在「主题」页安装主题；--public-dir 仅用于部署者信任的静态目录。「启用公开页」统一控制内置页、可信目录、主题及其预览。
-      </p>
+      </p>}>
       <form className="card" aria-label="公开页外观" onSubmit={submit}>
         <fieldset className="bare" disabled={saving}>
           <label className="row"><input type="checkbox" checked={publicEnabled} onChange={(e) => edit({ publicEnabled: e.target.checked })} />启用公开页</label>
@@ -142,11 +143,23 @@ export function Appearance() {
           <button type="submit" disabled={reading || problems.length > 0}>保存</button>
         </fieldset>
       </form>
-      <GeoLookup current={gate.data.settings} />
-      <BackupSettingsForm current={gate.data.settings?.backup} />
-      <BackupStatus />
-      <HeartbeatSettingsForm current={gate.data.settings?.heartbeat} />
-      <HeartbeatStatus />
+      </SettingsSection>
+      <SettingsSection title="国家 / 地区查询" description={<p className="muted">按节点的公网来源地址查得国家 / 地区，用于节点表的国家码、公开页的地区筛选与状态墙分组。</p>}>
+        <GeoLookup current={gate.data.settings} />
+      </SettingsSection>
+      <SettingsSection title="备份到 S3" description={<p className="muted">目标使用 path-style，兼容 R2。Bucket 必须为私有；建议使用 HTTPS。清空 Endpoint 并保存可整体关闭备份。缺少 Bucket、Access key 或 Secret 时也不会启动备份。</p>}>
+        <BackupSettingsForm current={gate.data.settings?.backup} />
+      </SettingsSection>
+      <SettingsSection title="备份状态" description={<p className="muted">配置层连续故障只在首次失败与恢复时通知，未恢复标记跨 hub 重启保留；重启后故障类别重新观察。指标层故障不通知，重启后重新观察。停用备份即结束两层的故障跟踪，配置层已通知的故障以一条停用事件收尾。</p>}>
+        <BackupStatus />
+      </SettingsSection>
+      <SettingsSection title="心跳外推" description={<p className="muted">
+        hub 按周期向一个外部监控服务（如 Uptime Kuma 的 push 地址、healthchecks.io）发一次请求：hub 停机时对方收不到心跳而告警。
+        请求只带聚合计数与版本号，不含节点名或地址。默认关闭；地址清空即停用，改动不需要重启。
+      </p>}>
+        <HeartbeatSettingsForm current={gate.data.settings?.heartbeat} />
+        <HeartbeatStatus />
+      </SettingsSection>
     </section>
   );
 }
@@ -185,7 +198,6 @@ function GeoLookup({ current }: { current: Settings | undefined }) {
   };
   return (
     <>
-      <h2>国家 / 地区查询</h2>
       <form className="card" aria-label="国家 / 地区查询" onSubmit={submit}>
         <p className="muted" style={{ overflowWrap: "anywhere" }}>
           {local ? `当前后端：本地文件 ${current.geoMmdbPath}，不出网；服务地址不生效。` : `当前后端：HTTP 服务 ${current?.geoUrl ?? ""}`}

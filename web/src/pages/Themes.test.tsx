@@ -6,6 +6,7 @@ import { createConnectQueryKey } from "@connectrpc/connect-query";
 import { AdminService, ListThemesResponseSchema } from "../gen/heron/v1/admin_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Themes } from "./Themes";
+import { expectEmptyState } from "../test/empty";
 
 const current = "a".repeat(64), previous = "b".repeat(64), available = "c".repeat(64), legacy = "d".repeat(64);
 const label = (name: string, id: string, version: string, digest: string) => `${name}（${id}）${version} [${digest.slice(0, 12)}]`;
@@ -252,4 +253,9 @@ it("显示原包备份缺口和上传时限", async () => {
   render({ getBackupStatus: async () => ({ themesWithoutPackage: ["plain"] }) });
   expect(await screen.findByText("主题 plain 未备份：请重新上传原包")).toBeVisible();
   expect(screen.getByText(/30 秒内传完/)).toBeVisible();
+});
+
+it("没有主题时只有空态卡，不画只有表头的表", async () => {
+  render({ listThemes: async () => ({ themes: [] }) });
+  await expectEmptyState("还没有主题。", { region: "主题管理" });
 });

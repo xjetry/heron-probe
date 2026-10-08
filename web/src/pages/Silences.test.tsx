@@ -6,6 +6,7 @@ import { ListNodesResponseSchema, ListSilencesResponseSchema, SilenceKind, type 
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Silences } from "./Silences";
 import { fillSegments, segmentsValue } from "../test/fields";
+import { expectEmptyState } from "../test/empty";
 
 const nodes = create(ListNodesResponseSchema, { nodes: [{ id: 1n, name: "东京" }, { id: 2n, name: "法兰克福" }] });
 const silences = create(ListSilencesResponseSchema, { silences: [
@@ -161,4 +162,9 @@ it("动态标签为空不发请求，选择标签后仍可保存", async () => {
   fireEvent.click(await screen.findByRole("checkbox", { name: "prod" }));
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
   await waitFor(() => expect(saved.map((req) => req.silence?.selectorTags)).toEqual([["prod"]]));
+});
+
+it("没有维护静默时只有空态卡，不画只有表头的表", async () => {
+  render({ listSilences: async () => ({ silences: [] }) });
+  await expectEmptyState("还没有维护静默。", { region: "维护静默管理" });
 });

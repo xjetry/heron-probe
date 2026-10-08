@@ -12,6 +12,7 @@ import { AdminService, SilenceKind, type Node, type Silence } from "../gen/heron
 import { liveIds, withId } from "../lib/ids";
 import { dateTime } from "../lib/format";
 import { DateTimeInput, TimeInput } from "../components/DateInput";
+import { EmptyState } from "../components/EmptyState";
 
 type Draft = NodeSelection & {
   name: string; enabled: boolean; kind: SilenceKind;
@@ -74,7 +75,7 @@ export function Silences() {
         actions={<button type="button" className="primary-button" disabled={busy} onClick={(event) => { create.reset(); setDrawer({ kind: "create", opener: event.currentTarget }); }}>新建维护静默</button>} />
       {gate.banner}
       {drawer === null && error != null && <p role="alert" className="error">{errorText(error)}</p>}
-      <div className="table-scroll" role="region" aria-label="维护静默管理" tabIndex={0}>
+      {silencesData.silences.length === 0 ? <EmptyState title="还没有维护静默。" /> : <div className="table-scroll" role="region" aria-label="维护静默管理" tabIndex={0}>
         <table className="nodes">
           <thead><tr><th>名称</th><th>窗口</th><th>作用域</th><th>状态</th><th><span className="sr-only">操作</span></th></tr></thead>
           <tbody>
@@ -95,8 +96,7 @@ export function Silences() {
             })}
           </tbody>
         </table>
-      </div>
-      {silencesData.silences.length === 0 && <p className="muted">还没有维护静默。</p>}
+      </div>}
       {drawer?.kind === "create" && <SilenceDrawer title="新建维护静默" submitLabel="创建" nodes={nodeList} initial={emptyDraft()} pending={create.isPending} error={create.error} opener={drawer.opener} onClose={() => setDrawer(null)}
         onSubmit={(d) => create.mutate({ silence: toSilence(0n, d, nodeList) }, { onSuccess: () => setDrawer(null) })} />}
       {drawer?.kind === "edit" && <SilenceDrawer key={String(drawer.silence.id)} title={`编辑 ${withId(drawer.silence.name, drawer.silence.id)}`} submitLabel="保存" nodes={nodeList} initial={draftOf(drawer.silence)} pending={update.isPending} error={update.error} opener={drawer.opener} onClose={() => setDrawer(null)}

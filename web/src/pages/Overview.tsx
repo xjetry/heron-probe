@@ -13,6 +13,7 @@ import { filterNodes } from "../lib/nodeSearch";
 import { POLL_MS } from "../lib/poll";
 import { trafficText } from "../lib/traffic";
 import { STATUS_LABEL } from "../lib/status";
+import { EmptyState } from "../components/EmptyState";
 
 // ListNodes 提供维护状态、到期与 agent 版本，GetSnapshot 提供在线裁决与读数；
 // queryGateAll 等待两者首次到达，避免缺少维护状态时误判节点状态。
@@ -46,8 +47,8 @@ export function Overview() {
         <input type="search" aria-label="搜索节点" placeholder="名称、IP、地区、备注或主机名" value={search} onChange={(event) => setSearch(event.target.value)} />
         <span className="muted">实时 · 每 {POLL_MS / 1000} 秒</span>
       </div>
-      {listed.nodes.length === 0 && <p className="muted">还没有节点。去 <Link to="/nodes">节点</Link> 页创建，或开一个 <Link to="/register">注册窗口</Link>。</p>}
-      {listed.nodes.length > 0 && rows.length === 0 && <p className="muted" role="status">没有匹配的节点。</p>}
+      {listed.nodes.length === 0 && <EmptyState title="还没有节点。">去 <Link to="/nodes">节点</Link> 页创建，或开一个 <Link to="/register">注册窗口</Link>。</EmptyState>}
+      {listed.nodes.length > 0 && rows.length === 0 && <EmptyState status title="没有匹配的节点。" />}
       {rows.length > 0 && (
         <div className="table-scroll" role="region" aria-label="节点实时读数" tabIndex={0}>
           <table className="nodes overview-table">

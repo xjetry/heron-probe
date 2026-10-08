@@ -18,13 +18,6 @@
 .segments > [data-status="offline"] { background: var(--status-offline); }
 .summary-rates, .summary-period { color: var(--muted); white-space: nowrap; }
 
-/* 公开节点页（NodePage.tsx）：图表与系统信息卡。 */
-.node-page .grid { grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); }
-.node-page .facts { display: grid; grid-template-columns: minmax(80px, auto) minmax(0, 1fr); gap: 6px 16px; margin-top: 16px; font-size: 13px; }
-.node-page .facts dt { color: var(--muted); }
-.node-page .facts dd { margin: 0; overflow-wrap: anywhere; }
-@media (max-width: 480px) { .node-page .grid { grid-template-columns: minmax(0, 1fr); } }
-
 /* 卡片视图（NodeCard.tsx）：宽屏五列，1px 边框分层，不用阴影与渐变（设计 §2、§3.1）。 */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, max(240px, (100% - 40px) / 5)), 1fr)); gap: 10px; }
 .node-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); font-size: 13px; }

@@ -14,6 +14,7 @@ import { AdminService, AlertKind, ProbeMetric, ResourceMetric, type AlertRule, t
 import { ALERT_KINDS, MBPS_TO_BYTES_PER_S, PROBE_METRICS, RESOURCE_METRICS, labelOf, resourceThresholdMax, resourceUnit, ruleCondition, statesOf, taskLabels, type RuleStates } from "../lib/alerts";
 import { liveIds, withId } from "../lib/ids";
 import { isHTTPSTarget } from "../lib/probes";
+import { EmptyState } from "../components/EmptyState";
 
 type Draft = NodeSelection & {
   name: string; kind: AlertKind; enabled: boolean; allNodes: boolean; nodeIds: Set<bigint>; channelIds: Set<bigint>;
@@ -116,7 +117,9 @@ export function AlertRules() {
         <span className="muted num">{shown.length} / {rulesData.rules.length}</span>
       </div>
       {drawer === null && error != null && <p role="alert" className="error">{errorText(error)}</p>}
-      <div className="table-scroll" role="region" aria-label="告警规则管理" tabIndex={0}>
+      {shown.length === 0
+        ? rulesData.rules.length === 0 ? <EmptyState title="还没有告警规则。" /> : <EmptyState status title="没有触发中的规则。" />
+        : <div className="table-scroll" role="region" aria-label="告警规则管理" tabIndex={0}>
         <table className="nodes">
           <thead><tr><th>名称</th><th>类型</th><th>条件</th><th>作用域</th><th>通知渠道</th><th>启用</th><th>状态</th><th><span className="sr-only">操作</span></th></tr></thead>
           <tbody>{shown.map((r) => {
@@ -136,9 +139,7 @@ export function AlertRules() {
             </tr>;
           })}</tbody>
         </table>
-      </div>
-      {rulesData.rules.length === 0 && <p className="muted">还没有告警规则。</p>}
-      {rulesData.rules.length > 0 && shown.length === 0 && <p className="muted" role="status">没有触发中的规则。</p>}
+      </div>}
       {drawer?.kind === "create" && <AlertRuleDrawer title="新建告警规则" submitLabel="创建" {...lists} initial={emptyDraft()} pending={create.isPending} error={create.error} opener={drawer.opener} onClose={() => setDrawer(null)}
         onSubmit={(d) => create.mutate({ rule: toRule(0n, d, nodeList, channelList) }, { onSuccess: () => setDrawer(null) })} />}
       {drawer?.kind === "edit" && <AlertRuleDrawer key={String(drawer.rule.id)} title={`编辑 ${withId(drawer.rule.name, drawer.rule.id)}`} submitLabel="保存" {...lists} initial={draftOf(drawer.rule)} pending={update.isPending} error={update.error} opener={drawer.opener} onClose={() => setDrawer(null)}

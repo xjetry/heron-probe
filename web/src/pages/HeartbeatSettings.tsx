@@ -48,11 +48,6 @@ export function HeartbeatSettingsForm({ current }: { current: Heartbeat | undefi
   };
   return (
     <>
-      <h2>心跳外推</h2>
-      <p className="muted">
-        hub 按周期向一个外部监控服务（如 Uptime Kuma 的 push 地址、healthchecks.io）发一次请求：hub 停机时对方收不到心跳而告警。
-        请求只带聚合计数与版本号，不含节点名或地址。默认关闭；地址清空即停用，改动不需要重启。
-      </p>
       <form className="card" aria-label="心跳外推" onSubmit={submit}>
         <fieldset className="bare" disabled={saving}>
           <label>

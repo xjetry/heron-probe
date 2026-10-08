@@ -32,7 +32,6 @@ it("设置读不出时 enabled 为 false，仍显示配置层 settings 故障与
   const metrics = within(region.getByRole("article", { name: "指标与探测历史" }));
   expect(metrics.getByText(`上次成功：${dateTime(60)}`)).toBeVisible();
   expect(metrics.getByText("无当前故障")).toBeVisible();
-  expect(region.getByText(/停用备份即结束两层的故障跟踪/)).toBeVisible();
 });
 
 it("状态查询失败不冒充备份正常，也不阻塞设置表单", async () => {

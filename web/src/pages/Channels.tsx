@@ -13,6 +13,7 @@ import { AdminService, ChannelKind, type NotifyChannel, type Settings } from "..
 import { CHANNEL_KINDS, MAX_NOTIFY_CHANNELS, NOTIFY_LISTS, channelTarget, labelOf, methodOf, rateLabel } from "../lib/alerts";
 import { withId } from "../lib/ids";
 import { day } from "../lib/format";
+import { EmptyState } from "../components/EmptyState";
 
 const METHODS = ["POST", "PUT", "PATCH"] as const;
 type HeaderRow = { id: number; name: string; value: string };
@@ -100,7 +101,7 @@ export function Channels() {
       <LoginNotifications channels={channels} deleting={remove.isPending} />
       {drawer === null && error != null && <p role="alert" className="error">{errorText(error)}</p>}
       <p role="status">{notice ?? ""}</p>
-      <div className="table-scroll" role="region" aria-label="通知渠道管理" tabIndex={0}>
+      {channels.length === 0 ? <EmptyState title="还没有通知渠道。" /> : <div className="table-scroll" role="region" aria-label="通知渠道管理" tabIndex={0}>
         <table className="nodes">
           <thead><tr><th>名称</th><th>类型</th><th>目标</th><th>节奏上限</th><th>创建于</th><th><span className="sr-only">操作</span></th></tr></thead>
           <tbody>
@@ -121,8 +122,7 @@ export function Channels() {
             })}
           </tbody>
         </table>
-      </div>
-      {channels.length === 0 && <p className="muted">还没有通知渠道。</p>}
+      </div>}
       {drawer?.kind === "create" && <ChannelDrawer title="新建通知渠道" submitLabel="创建" initial={emptyDraft()} pending={create.isPending} error={create.error} opener={drawer.opener} onClose={() => setDrawer(null)}
         onSubmit={(d) => create.mutate({ channel: toChannel(0n, d) }, { onSuccess: () => setDrawer(null) })} />}
       {drawer?.kind === "edit" && <ChannelDrawer key={String(drawer.channel.id)} title={`编辑 ${withId(drawer.channel.name, drawer.channel.id)}`} submitLabel="保存" initial={draftOf(drawer.channel)} original={drawer.channel} pending={update.isPending} error={update.error} opener={drawer.opener} onClose={() => setDrawer(null)}

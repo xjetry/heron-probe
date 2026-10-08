@@ -9,6 +9,7 @@ import { AdminService, CountrySource, GetSnapshotResponseSchema, GetRegisterWind
 import { sameTag } from "../lib/tags";
 import { AddressDetectionState, BillingCycle } from "../gen/heron/v1/types_pb";
 import { fillSegments, segmentsValue } from "../test/fields";
+import { expectEmptyState } from "../test/empty";
 
 // 行菜单入口携带 id，同名节点仍能定位到各自的操作。
 const rowAction = (label: string, action: string) => {
@@ -123,7 +124,7 @@ describe("Nodes", () => {
     expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(["alpha"]);
     fireEvent.change(input, { target: { value: "absent" } });
     expect(screen.queryAllByRole("link")).toEqual([]);
-    expect(screen.getByRole("status")).toHaveTextContent("没有匹配的节点。");
+    await expectEmptyState("没有匹配的节点。", { region: "节点管理", status: true });
     fireEvent.change(input, { target: { value: "" } });
     expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(["alpha", "b"]);
   });
@@ -1538,4 +1539,10 @@ it("编辑抽屉四个分组按设计顺序，费用分组与原计费入口同�
   expect(within(dialog).getAllByRole("region").map((section) => section.getAttribute("aria-label") ?? within(section).getByRole("heading").textContent)).toEqual(["基本", "地区", "费用", "运行"]);
   expect(within(within(dialog).getByRole("region", { name: "费用" })).getByLabelText("价格 a（#1）")).toBeInTheDocument();
   expect(within(within(dialog).getByRole("region", { name: "运行" })).getByLabelText("维护 a（#1）")).toBeInTheDocument();
+});
+
+it("没有节点时只有空态卡，不画只有表头的表", async () => {
+  renderNodes({ listNodes: async () => ({ nodes: [] }) });
+  await expectEmptyState("还没有节点。", { region: "节点管理" });
+  expect(screen.getByText("添加节点后安装 agent 即可开始监控。")).toBeInTheDocument();
 });

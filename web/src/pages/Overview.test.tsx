@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
 import { POLL_MS } from "../lib/poll";
 import { Overview } from "./Overview";
+import { expectEmptyState } from "../test/empty";
 
 const snapshot = {
   now: 1_000_000n, reportIntervalMs: 10_000, hubVersion: "v0.9.0", boundAgentVersion: "v0.8.0",
@@ -73,7 +74,7 @@ it.each(["WEB", "CUSTOMER", "HOSTNAME"])("搜索 %s 过滤实时表，清空恢�
   fireEvent.change(input, { target: { value: search } });
   expect(screen.getAllByRole("row").slice(1).map((row) => row.getAttribute("aria-label") ?? within(row).getByRole("link").textContent)).toEqual(["web-01"]);
   fireEvent.change(input, { target: { value: "absent" } });
-  expect(screen.getByRole("status")).toHaveTextContent("没有匹配的节点。");
+  await expectEmptyState("没有匹配的节点。", { region: "节点实时读数", status: true });
   fireEvent.change(input, { target: { value: "" } });
   expect(screen.getAllByRole("row")).toHaveLength(5);
 });
@@ -102,7 +103,7 @@ it("没有节点时四张卡都是 0 且可点，表格位置给出去处", asyn
   render({ getSnapshot: async () => ({ ...snapshot, nodes: [] }), listNodes: async () => ({ nodes: [] }), listAlertRules: async () => ({ rules: [], states: [] }) });
   const cards = within(await screen.findByRole("list", { name: "需要处理" })).getAllByRole("link");
   expect(cards.map((a) => a.querySelector("strong")?.textContent)).toEqual(["0", "0", "0", "0"]);
-  expect(screen.getByText(/还没有节点/)).toBeInTheDocument();
+  await expectEmptyState("还没有节点。", { region: "节点实时读数" });
   expect(screen.getByRole("link", { name: "注册窗口" })).toHaveAttribute("href", "/register");
 });
 

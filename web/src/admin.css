@@ -108,7 +108,6 @@ span.node-subtext { margin-right: 8px; }
 .batch-tag-intent { min-width: 64px; color: var(--accent); font-size: 12px; }
 .batch-tag-add { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-top: 16px; }
 .batch-tag-add label { flex: 1; min-width: 160px; }
-.node-empty { padding: 40px; text-align: center; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); }
 .admin-modal { width: min(720px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-card); padding: 0; color: var(--fg); background: var(--card); box-shadow: 0 32px 100px #0005; }
 .admin-modal::backdrop { background: #080b1094; backdrop-filter: blur(4px); }
 .modal-header { padding: 16px 20px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--line); }
@@ -327,7 +326,7 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
 .switch:checked::after { left: 16px; }
 .switch:disabled { opacity: .5; cursor: default; }
 
-/* 空态卡片：列表为空时代替只有表头的空表（pages/ApiTokens.tsx）。 */
+/* 空态卡片（components/EmptyState.tsx）：列表为空时代替只有表头的空表。 */
 .empty-state p { margin: 0; }
 .empty-state p + p { margin-top: 4px; font-size: 13px; }
 /* API token 页的接入方式：每项说明在左、动作在右，窄屏时动作落到说明下方。 */
@@ -338,3 +337,43 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
 .integration > p .muted { font-size: 13px; }
 .integration > :last-child { flex: none; }
 @media (max-width: 640px) { .integration { flex-direction: column; } }
+
+/* 抽屉表单的纵向节奏：不分组的抽屉（探测、告警、静默、渠道）里，fieldset 的直接子项统一 14px 间距，子项自带的外边距清零，
+   输入框不会和下一行的标签贴在一起。含 .form-section 的抽屉（节点编辑、新建节点）由分组自己的间距负责，不叠加。 */
+.drawer fieldset.bare:not(:has(> .form-section)) { display: grid; gap: 14px; align-content: start; }
+.drawer fieldset.bare:not(:has(> .form-section)) > * { margin-top: 0; margin-bottom: 0; }
+
+/* 手机上的告警事件（components/EventFeed.tsx）：每条事件一张卡，首行变化与摘要、右侧观测值，下面是节点与规则、时间、投递，
+   不再横向滚动一张六列宽表。区域按 data-label 指名放置，不依赖单元格顺序。 */
+@media (max-width: 900px) {
+  .admin-shell .table-scroll:has(.events-table) { border: 0; background: none; overflow: visible; }
+  .admin-shell table.events-table, .events-table tbody { display: block; border: 0; background: none; }
+  .events-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .events-table tr {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 4px 12px; align-items: start;
+    grid-template-areas: "change change value" "node rule rule" "time time time" "delivery delivery delivery";
+    margin-bottom: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card);
+  }
+  .admin-shell table.events-table td { height: auto; padding: 0; border: 0; white-space: normal; min-width: 0; }
+  .admin-shell table.events-table td:is([data-label="变化"], [data-label="投递"]) { min-width: 0; }
+  .events-table td[data-label="变化"] { grid-area: change; }
+  .events-table td[data-label="观测值"] { grid-area: value; text-align: right; }
+  .events-table td[data-label="节点"] { grid-area: node; font-size: 12px; }
+  .events-table td[data-label="规则"] { grid-area: rule; font-size: 12px; }
+  .events-table td[data-label="时间"] { grid-area: time; font-size: 12px; color: var(--muted); }
+  .events-table td:is([data-label="节点"], [data-label="规则"], [data-label="投递"])::before { content: attr(data-label) " "; color: var(--muted); }
+  /* 一条事件可有多条投递，每条是块级元素（含展开的错误原文）：标签占左列，投递都排进右列，不论几条都与「未配置渠道」同样起在标签右侧。 */
+  .events-table td[data-label="投递"] { grid-area: delivery; display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 4px; font-size: 12px; }
+  .events-table td[data-label="投递"] > * { grid-column: 2; }
+}
+
+/* 设置分区（components/SettingsSection.tsx）：左栏标题与说明定宽，右栏表单；分区之间一条分隔线。右栏的文本输入统一最宽 480px，
+   不再一个框长一个框短。窄屏合成一栏。 */
+.settings-section { display: grid; grid-template-columns: minmax(200px, 280px) minmax(0, 1fr); gap: 12px 32px; padding: 24px 0; border-top: 1px solid var(--line); }
+.settings-section:first-of-type { border-top: 0; padding-top: 4px; }
+.settings-aside h2 { margin: 0 0 6px; }
+.settings-aside p { margin: 0 0 8px; font-size: 13px; line-height: 1.6; }
+.settings-main > :is(.card, form.card) { margin-bottom: 12px; }
+.settings-main > :last-child { margin-bottom: 0; }
+.settings-main :is(input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not(.date-segment):not(.file-native), select, textarea) { width: 100%; max-width: 480px; }
+@media (max-width: 900px) { .settings-section { grid-template-columns: minmax(0, 1fr); } }

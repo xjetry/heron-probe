@@ -42,11 +42,9 @@ export function BackupStatus() {
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   return <section aria-label="备份状态">
     {gate.banner}
-    <h2>备份状态</h2>
     <p>{gate.data.enabled ? "自动备份已启用" : "自动备份未启用"}</p>
     {gate.data.themesWithoutPackage.map((id) => <p key={id}>主题 {id} 未备份：请重新上传原包</p>)}
     <Layer name="配置与凭据" status={gate.data.config} />
     <Layer name="指标与探测历史" status={gate.data.metrics} />
-    <p className="muted">配置层连续故障只在首次失败与恢复时通知，未恢复标记跨 hub 重启保留；重启后故障类别重新观察。指标层故障不通知，重启后重新观察。停用备份即结束两层的故障跟踪，配置层已通知的故障以一条停用事件收尾。</p>
   </section>;
 }

@@ -5,6 +5,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { ListApiTokensResponseSchema, TokenPermission, type TokenGrant } from "../gen/heron/v1/admin_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { ApiTokens } from "./ApiTokens";
+import { expectEmptyState } from "../test/empty";
 
 const tokens = create(ListApiTokensResponseSchema, { tokens: [
   { id: 1n, name: "ci", createdAt: 1_700_000_000n, lastUsedAt: 1_700_000_600n },
@@ -221,9 +222,7 @@ it("剪贴板被拒时退回手动复制弹窗", async () => {
 
 it("没有 token 时不画只有表头的空表，空态与接入方式各自成块", async () => {
   render({ listApiTokens: async () => ({ tokens: [] }) });
-  expect(await screen.findByText("还没有 API token。")).toBeInTheDocument();
-  expect(screen.getByText("还没有 API token。").closest(".empty-state")).toHaveAttribute("role", "status");
-  expect(screen.queryByRole("region", { name: "API token 管理" })).toBeNull();
+  await expectEmptyState("还没有 API token。", { region: "API token 管理" });
   expect(screen.queryByRole("columnheader")).toBeNull();
   const integrations = screen.getByRole("region", { name: "接入方式" });
   expect(within(integrations).getByRole("button", { name: "下载入口卡片" })).toBeInTheDocument();

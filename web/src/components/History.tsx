@@ -192,16 +192,14 @@ export function RangePicker({ history, showCoverage = false }: { history: Histor
 export function MetricCharts({ history }: { history: HistoryState }) {
   const { charts } = history;
   return (
-    <>
-      <div className="grid chart-grid">
-        {charts.map((c) => (
-          <div className="card chart-card" key={c.title}>
-            <h2>{c.title}</h2>
-            <Chart data={c.data} labels={c.labels} unit={c.unit} soft={c.soft} />
-          </div>
-        ))}
-      </div>
-    </>
+    <div className="chart-grid">
+      {charts.map((c) => (
+        <div className="card chart-card" key={c.title}>
+          <h2>{c.title}</h2>
+          <Chart data={c.data} labels={c.labels} unit={c.unit} soft={c.soft} />
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -211,7 +209,7 @@ export function ProbeTaskCharts({ history, noProbes, titleLink }: { history: His
   if (!probes.data) return null;
   if (probes.data.series.length === 0) return <>{noProbes}</>;
   return (
-    <div className="grid chart-grid">
+    <div className="chart-grid">
       {probeTaskCharts.map((c) => (
         <div className="card chart-card" key={String(c.taskId)}>
           <h2>{c.kind === ProbeKind.UNSPECIFIED ? c.title : titleLink(c.taskId, c.title)}</h2>

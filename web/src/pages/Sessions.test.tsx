@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Sessions } from "./Sessions";
 import { dateTime } from "../lib/format";
+import { expectEmptyState } from "../test/empty";
 
 const currentID = "a".repeat(64);
 const otherID = "b".repeat(64);
@@ -84,4 +85,9 @@ it("getSecurity 读取失败只影响卡片，会话表照常", async () => {
   expect.soft(screen.queryByRole("row", { name: new RegExp(currentID.slice(0, 12)) })).toBeInTheDocument();
   expect.soft(screen.queryByRole("article", { name: "TOTP" })).toHaveTextContent("读取失败");
   expect.soft(screen.queryByRole("article", { name: "Passkey" })).toHaveTextContent("读取失败");
+});
+
+it("没有会话时只有空态卡，不画只有表头的表", async () => {
+  render({ listSessions: async () => ({ sessions: [] }) });
+  await expectEmptyState("没有有效会话。", { region: "登录会话" });
 });

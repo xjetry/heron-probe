@@ -6,6 +6,7 @@ import { AdminService, type AlertDelivery, type AlertEvent, type AlertRule, type
 import { alarming, deliveryText, eventValueText, hasErrorText, ruleLabel, transitionLabel, TRANSITIONS } from "../lib/alerts";
 import { withId } from "../lib/ids";
 import { dateTime, isDate } from "../lib/format";
+import { EmptyState } from "./EmptyState";
 
 // 与 hub 的默认页长一致；不足一页即已到最早的事件。
 export const EVENT_PAGE = 100;
@@ -37,7 +38,9 @@ function EventList({ data, nodeName, channelName, rules, visible, hasNextPage, f
   const shown = visible ? rows.filter(visible) : rows;
   return (
     <>
-      <div className="table-scroll" role="region" aria-label="告警事件" tabIndex={0}>
+      {shown.length === 0
+        ? rows.length === 0 ? <EmptyState title="没有告警事件。" /> : <EmptyState status title={`已加载的 ${rows.length} 条里没有匹配的事件。`} />
+        : <div className="table-scroll" role="region" aria-label="告警事件" tabIndex={0}>
         <table className="nodes events-table">
           <thead><tr><th>时间</th><th>节点</th><th>规则</th><th>变化</th><th>观测值</th><th>投递</th></tr></thead>
           <tbody>
@@ -60,12 +63,10 @@ function EventList({ data, nodeName, channelName, rules, visible, hasNextPage, f
             })}
           </tbody>
         </table>
-      </div>
+      </div>}
       {hasNextPage && (
         <button type="button" disabled={fetchingNext} onClick={onMore}>加载更早的事件</button>
       )}
-      {rows.length === 0 && <p className="muted">没有告警事件。</p>}
-      {rows.length > 0 && shown.length === 0 && <p className="muted" role="status">已加载的 {rows.length} 条里没有匹配的事件。</p>}
     </>
   );
 }
