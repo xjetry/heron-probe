@@ -5,6 +5,7 @@ import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { ConfirmDelete } from "../components/ConfirmDelete";
+import { PageHeader } from "../components/PageHeader";
 import { AdminService, type Theme } from "../gen/heron/v1/admin_pb";
 import { toBase64 } from "../lib/base64";
 
@@ -101,14 +102,14 @@ export function Themes() {
   const purposeOptions = <><option value="">安装新主题或保留新版本</option>{targets.map((t) => <option key={t.id} value={t.id}>更新 {t.name}（{t.id}）：校验主题 id</option>)}</>;
   return <section>
     {gate.banner}
-    <h1>主题</h1>
+    <PageHeader title="主题" />
     {backup.error != null && errorBanner(backup.error)}
     {backup.data?.themesWithoutPackage.map((id) => <p key={id}>主题 {id} 未备份：请重新上传原包</p>)}
     <p>{enabled ? `当前启用 ${enabled.name}（${enabled.id}）版本 ${enabled.version}。` : "当前使用内置公开页。"} <a href="/" target="_blank" rel="noreferrer">打开公开首页</a></p>
     <p className="muted">第三方主题在同域名沙箱内运行，只能通过 SDK 读取公开数据。安装不会自动切换首页；每个主题最多保留 3 个版本，全站最多 20 个主题。包根需包含 index.html 与声明 SDK 1 的 theme.json。</p>
     {publicDir && <p role="note" aria-label="公开页由目录接管" className="card">公开首页由 --public-dir 的目录接管，不能启用托管主题。移除该配置并重启后才可切换；仍可安装和管理版本。</p>}
     {enabled && <button type="button" disabled={busy || publicDir} onClick={() => enable.mutate({ id: "", digest: "" })}>切回内置主题</button>}
-    <form className="card edit-form" aria-label="GitHub 安装" onSubmit={(e) => {
+    <form className="card" aria-label="GitHub 安装" onSubmit={(e) => {
       e.preventDefault();
       if (!repository.trim() || busy || releases.isPending) return;
       setTag(""); setAssetId(""); setNotice(null); releases.reset();
@@ -132,7 +133,7 @@ export function Themes() {
         {release?.assets.length === 0 && <p>这个版本没有 ZIP 资产；GitHub 自动生成的源码归档不能安装。</p>}
       </>)}
     </form>
-    <form className="card edit-form" aria-label="上传主题" onSubmit={(e) => void submit(e)}>
+    <form className="card" aria-label="上传主题" onSubmit={(e) => void submit(e)}>
       <h2>上传本地 ZIP</h2>
       <div className="row">
         <label>主题包（zip，至多 8 MiB）<input ref={fileInput} type="file" accept=".zip,application/zip" disabled={busy} onChange={(e) => { setFile(e.target.files?.[0] ?? null); setNotice(null); upload.reset(); }} /></label>

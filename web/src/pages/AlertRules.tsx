@@ -4,9 +4,12 @@ import { type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGateAll } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
-import { ConfirmDelete } from "../components/ConfirmDelete";
+import { useSearchParams } from "react-router";
+import { Drawer } from "../components/Modal";
+import { PageHeader } from "../components/PageHeader";
+import { RowMenu } from "../components/RowMenu";
 import { Picks } from "../components/Picks";
-import { NodeSelector, type NodeSelection } from "../components/NodeSelector";
+import { NodeAssignment, assignmentValid, type NodeSelection } from "../components/NodeAssignment";
 import { AdminService, AlertKind, ProbeMetric, ResourceMetric, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/heron/v1/admin_pb";
 import { ALERT_KINDS, MBPS_TO_BYTES_PER_S, PROBE_METRICS, RESOURCE_METRICS, labelOf, resourceThresholdMax, resourceUnit, ruleCondition, statesOf, taskLabels, type RuleStates } from "../lib/alerts";
 import { liveIds, withId } from "../lib/ids";
@@ -65,7 +68,15 @@ function toRule(id: bigint, d: Draft, nodes: Node[], channels: NotifyChannel[]) 
 
 export function AlertRules() {
   const qc = useQueryClient();
-  const [creation, setCreation] = useState(0);
+  const [params, setParams] = useSearchParams();
+  const firingOnly = params.get("state") === "firing";
+  const setFiringOnly = (on: boolean) => {
+    const next = new URLSearchParams(params);
+    if (on) next.set("state", "firing"); else next.delete("state");
+    setParams(next, { replace: true });
+  };
+  const [drawer, setDrawer] = useState<{ kind: "create"; opener: HTMLElement } | { kind: "edit"; rule: AlertRule; opener: HTMLElement } | null>(null);
+  const [toggling, setToggling] = useState<bigint | null>(null);
   const { error, mutationOptions } = useLatestError();
   const nodes = useQuery(AdminService.method.listNodes, {});
   const channels = useQuery(AdminService.method.listNotifyChannels, {});
@@ -74,10 +85,11 @@ export function AlertRules() {
   const rules = useQuery(AdminService.method.listAlertRules, {}, { refetchInterval: 10_000 });
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listAlertRules, cardinality: "finite" }) });
   const create = useMutation(AdminService.method.saveAlertRule, { ...mutationOptions, onSuccess: refresh });
-  // 各行共用一个 mutation observer，重叠的 mutate 只回调最后一次；任一行保存挂起时禁用全部行的保存。
+  // 行开关与抽屉共用 mutation observer，重叠的 mutate 只回调最后一次；任一保存挂起时禁用其它保存入口。
   // 返回刷新 promise，编辑态在列表显示已保存值之后才关闭。
   const update = useMutation(AdminService.method.saveAlertRule, { ...mutationOptions, onSuccess: refresh });
   const remove = useMutation(AdminService.method.deleteAlertRule, { ...mutationOptions, onSuccess: refresh });
+  const busy = create.isPending || update.isPending;
   // 节点与渠道求交需要相应列表，任务列表用于任务选择与标签；依赖未到达时不渲染可提交表单。
   const gate = queryGateAll(nodes, channels, tasks, rules);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
@@ -89,27 +101,48 @@ export function AlertRules() {
   const nodeName = (id: bigint) => nodeList.find((n) => n.id === id)?.name ?? `节点 #${id}`;
   const channelName = (id: bigint) => channelList.find((c) => c.id === id)?.name ?? `渠道 #${id}`;
   const lists = { nodes: nodeList, channels: channelList, tasks: taskList };
+  const shown = firingOnly ? rulesData.rules.filter((r) => (byRule.get(r.id)?.firing.length ?? 0) > 0) : rulesData.rules;
+  const toggleEnabled = (r: AlertRule) => {
+    setToggling(r.id);
+    update.mutate({ rule: { ...toRule(r.id, draftOf(r), nodeList, channelList), enabled: !r.enabled } }, { onSettled: () => setToggling(null) });
+  };
   return (
     <section>
+      <PageHeader title="告警规则" actions={<button type="button" className="primary-button" disabled={busy} onClick={(event) => { create.reset(); setDrawer({ kind: "create", opener: event.currentTarget }); }}>新建告警规则</button>} />
       {gate.banner}
-      <h1>告警规则</h1>
-      <RuleForm key={creation} title="新建告警规则" {...lists} initial={emptyDraft()} pending={create.isPending}
-        onSubmit={(d) => create.mutate({ rule: toRule(0n, d, nodeList, channelList) }, { onSuccess: () => setCreation((k) => k + 1) })} />
-      {error != null && <p role="alert" className="error">{errorText(error)}</p>}
+      <div className="filter-row" role="group" aria-label="筛选">
+        <label className="check"><input type="checkbox" aria-label="只看触发中" checked={firingOnly} onChange={(event) => setFiringOnly(event.target.checked)} />只看触发中</label>
+        {firingOnly && <button type="button" className="link" onClick={() => setFiringOnly(false)}>清除筛选</button>}
+        <span className="muted num">{shown.length} / {rulesData.rules.length}</span>
+      </div>
+      {drawer === null && error != null && <p role="alert" className="error">{errorText(error)}</p>}
       <div className="table-scroll" role="region" aria-label="告警规则管理" tabIndex={0}>
         <table className="nodes">
-          <thead><tr><th>名称</th><th>类型</th><th>条件</th><th>作用域</th><th>通知</th><th>状态</th><th>操作</th></tr></thead>
-          <tbody>
-            {rulesData.rules.map((r) => (
-              <RuleRow key={String(r.id)} rule={r} states={byRule.get(r.id)} {...lists} nodeName={nodeName} channelName={channelName}
-                saving={update.isPending} deleting={remove.isPending}
-                onSave={(d, onSuccess) => update.mutate({ rule: toRule(r.id, d, nodeList, channelList) }, { onSuccess })}
-                onDelete={() => remove.mutate({ id: r.id })} />
-            ))}
-          </tbody>
+          <thead><tr><th>名称</th><th>类型</th><th>条件</th><th>作用域</th><th>通知渠道</th><th>启用</th><th>状态</th><th><span className="sr-only">操作</span></th></tr></thead>
+          <tbody>{shown.map((r) => {
+            const label = withId(r.name, r.id);
+            return <tr key={String(r.id)} aria-label={r.name}>
+              <td data-label="名称">{r.name}</td>
+              <td data-label="类型">{labelOf(ALERT_KINDS, r.kind)}</td>
+              <td data-label="条件">{ruleCondition(r, taskList)}</td>
+              <td data-label="作用域">{r.allNodes ? "全部节点" : r.selectorTags.length ? `标签：${r.selectorTags.join(" ∩ ")}（当前 ${r.nodeIds.length}）` : r.nodeIds.length ? <span title={r.nodeIds.map(nodeName).join("、")}>{r.nodeIds.length} 个指定节点</span> : <span className="muted">无节点</span>}</td>
+              <td data-label="通知渠道">{r.channelIds.map(channelName).join("、") || <span className="muted">只记事件</span>}</td>
+              <td data-label="启用"><input type="checkbox" role="switch" className="switch" aria-label={`启用 ${label}`} checked={r.enabled} disabled={busy} aria-busy={toggling === r.id || undefined} onChange={() => toggleEnabled(r)} /></td>
+              <td data-label="状态">{r.enabled ? <RuleState states={byRule.get(r.id)} nodeName={nodeName} /> : <span className="muted">—</span>}</td>
+              <td data-column="actions"><RowMenu label={label} items={[
+                { label: "编辑", disabled: busy, onSelect: (trigger) => { update.reset(); setDrawer({ kind: "edit", rule: r, opener: trigger }); } },
+                { label: "删除", danger: true, confirm: `确认删除 ${label}`, note: "事件记录保留", disabled: busy || remove.isPending, onSelect: () => remove.mutate({ id: r.id }) },
+              ]} /></td>
+            </tr>;
+          })}</tbody>
         </table>
       </div>
       {rulesData.rules.length === 0 && <p className="muted">还没有告警规则。</p>}
+      {rulesData.rules.length > 0 && shown.length === 0 && <p className="muted" role="status">没有触发中的规则。</p>}
+      {drawer?.kind === "create" && <AlertRuleDrawer title="新建告警规则" submitLabel="创建" {...lists} initial={emptyDraft()} pending={create.isPending} error={create.error} opener={drawer.opener} onClose={() => setDrawer(null)}
+        onSubmit={(d) => create.mutate({ rule: toRule(0n, d, nodeList, channelList) }, { onSuccess: () => setDrawer(null) })} />}
+      {drawer?.kind === "edit" && <AlertRuleDrawer key={String(drawer.rule.id)} title={`编辑 ${withId(drawer.rule.name, drawer.rule.id)}`} submitLabel="保存" {...lists} initial={draftOf(drawer.rule)} pending={update.isPending} error={update.error} opener={drawer.opener} onClose={() => setDrawer(null)}
+        onSubmit={(d) => update.mutate({ rule: toRule(drawer.rule.id, d, nodeList, channelList) }, { onSuccess: () => setDrawer(null) })} />}
     </section>
   );
 }
@@ -125,8 +158,8 @@ function taskOptions(tasks: ProbeTaskDetail[], httpsOnly = false) {
   return listed.map((t, i) => <option key={String(t.id)} value={String(t.id)}>{labels[i]}</option>);
 }
 
-function RuleForm({ title, nodes, channels, tasks, initial, pending, onSubmit, onCancel }: Lists & {
-  title: string; initial: Draft; pending: boolean; onSubmit: (d: Draft) => void; onCancel?: () => void;
+function AlertRuleDrawer({ title, submitLabel, nodes, channels, tasks, initial, pending, error, opener, onSubmit, onClose }: Lists & {
+  title: string; submitLabel: string; initial: Draft; pending: boolean; error: unknown; opener: HTMLElement; onSubmit: (d: Draft) => void; onClose: () => void;
 }) {
   // initial 只在挂载时读取；列表的周期刷新不覆盖草稿。
   const [draft, setDraft] = useState(initial);
@@ -136,10 +169,15 @@ function RuleForm({ title, nodes, channels, tasks, initial, pending, onSubmit, o
   const handle = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!e.currentTarget.checkValidity()) return;
+    if (!assignmentValid(draft)) return;
     onSubmit(draft);
   };
   return (
-    <form className="card edit-form" aria-label={title} onSubmit={handle}>
+    <Drawer title={title} opener={opener} busy={pending} onClose={onClose}>
+    <form aria-label={title} onSubmit={handle}>
+      <div className="modal-body">
+      {errorBanner(error)}
+      <fieldset className="bare" disabled={pending}>
       <div className="row">
         <label>名称<input required value={draft.name} onChange={(e) => set({ name: e.target.value })} /></label>
         <label>类型
@@ -193,17 +231,20 @@ function RuleForm({ title, nodes, channels, tasks, initial, pending, onSubmit, o
       ) : (
         <p className="muted">节点超过离线宽限期未上报即触发，收到上报即恢复；宽限期在节点页按节点设置，未设置时取 hub 的 HERON_OFFLINE_AFTER。</p>
       )}
-      <NodeSelector nodes={nodes} value={draft} onChange={set} legend="作用域节点" />
+      <NodeAssignment nodes={nodes} value={draft} onChange={set} legend="作用域节点" noun="作用域" />
       {probe && <p className="muted">探测规则只在既属于作用域、又分配了该任务的节点上评估。</p>}
       {draft.kind === AlertKind.CERT_EXPIRY && <p className="muted">证书到期规则只在既属于作用域、又分配了该任务的节点上评估；没有证书观测的节点不评估。</p>}
       {channels.length > 0
         ? <Picks legend="通知渠道" items={channels} selected={draft.channelIds} onChange={(channelIds) => set({ channelIds })} />
         : <p className="muted">还没有通知渠道；规则只记录事件，不发送通知。</p>}
-      <div className="row">
-        <button type="submit" disabled={pending}>{onCancel ? "保存" : "创建"}</button>
-        {onCancel && <button type="button" className="link" onClick={onCancel}>取消</button>}
+      </fieldset>
       </div>
+      <footer className="modal-footer">
+        <button type="button" disabled={pending} onClick={onClose}>取消</button>
+        <button type="submit" className="primary-button" disabled={pending}>{submitLabel}</button>
+      </footer>
     </form>
+    </Drawer>
   );
 }
 
@@ -229,38 +270,7 @@ function ResourceFields({ draft, set }: { draft: Draft; set: (patch: Partial<Dra
   );
 }
 
-function RuleRow({ rule: r, states, nodes, channels, tasks, nodeName, channelName, saving, deleting, onSave, onDelete }: Lists & {
-  rule: AlertRule; states: RuleStates | undefined; nodeName: (id: bigint) => string; channelName: (id: bigint) => string;
-  saving: boolean; deleting: boolean; onSave: (d: Draft, onSuccess: () => void) => void; onDelete: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  if (editing) {
-    return (
-      <tr><td colSpan={7}>
-      <RuleForm title={`编辑 ${withId(r.name, r.id)}`} nodes={nodes} channels={channels} tasks={tasks} initial={draftOf(r)} pending={saving}
-          onSubmit={(d) => onSave(d, () => setEditing(false))} onCancel={() => setEditing(false)} />
-      </td></tr>
-    );
-  }
-  return (
-    <tr>
-      <td>{r.name}</td>
-      <td>{labelOf(ALERT_KINDS, r.kind)}</td>
-      <td>{ruleCondition(r, tasks)}</td>
-      <td>{r.allNodes ? "全部节点" : r.selectorTags.length ? `动态标签：${r.selectorTags.join(" ∩ ")}；当前 ${r.nodeIds.length} 个节点` : r.nodeIds.map(nodeName).join("、") || "无节点"}</td>
-      <td>{r.channelIds.map(channelName).join("、") || "只记事件"}</td>
-      <td><RuleState enabled={r.enabled} states={states} nodeName={nodeName} /></td>
-      <td>
-        <button type="button" className="link" aria-label={`编辑 ${withId(r.name, r.id)}`} onClick={() => setEditing(true)}>编辑</button>{" "}
-        <ConfirmDelete label={`删除 ${withId(r.name, r.id)}`} confirm={`确认删除 ${withId(r.name, r.id)}`} note="事件记录保留" pending={deleting} onDelete={onDelete} />
-      </td>
-    </tr>
-  );
-}
-
-// 停用的规则不评估，hub 保存停用时已清除其状态行；显示"已停用"而不是"正常"，避免读成一切无事。
-function RuleState({ enabled, states, nodeName }: { enabled: boolean; states: RuleStates | undefined; nodeName: (id: bigint) => string }) {
-  if (!enabled) return <span className="muted">已停用</span>;
+function RuleState({ states, nodeName }: { states: RuleStates | undefined; nodeName: (id: bigint) => string }) {
   if (!states) return <span className="muted">正常</span>;
   // flapping 由 hub 的离线巡检判定（pending 且只因抖动抑制而未触发），silenced 由事件生成处标记
   // （firing 进入时处于维护静默覆盖内，本次触发与它的恢复都不投递），面板只标出，不重算。

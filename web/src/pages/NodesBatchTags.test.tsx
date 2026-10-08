@@ -18,6 +18,7 @@ it("五台中三台有标签时半选，保留未操作标签，只提交批量�
   const batchUpdateNodeTags = vi.fn(async () => ({}));
   renderNodes({ batchUpdateNodeTags });
   const dialog = await openBatch();
+  expect(screen.getByRole("dialog", { name: "批量编辑标签" })).toHaveClass("drawer");
   expect(dialog.getByRole("checkbox", { name: "家宽" })).toBePartiallyChecked();
   expect(dialog.getByText("3/5 个节点")).toBeInTheDocument();
   expect(dialog.getByRole("checkbox", { name: "DB" })).toBeChecked();
@@ -60,7 +61,7 @@ it("筛选切换清除选择，不会修改隐藏节点；失败保留草稿，�
   fireEvent.click(await screen.findByRole("checkbox", { name: "选择 n1（#1）" }));
   expect(screen.getByRole("checkbox", { name: "选择当前结果全部节点" })).toBePartiallyChecked();
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "n5" } });
-  expect(screen.getByRole("button", { name: "批量编辑标签" })).toBeDisabled();
+  expect(screen.queryByRole("toolbar", { name: "批量操作" })).toBeNull();
   const dialog = await openBatch();
   fireEvent.click(dialog.getByRole("checkbox", { name: "家宽" }));
   fireEvent.click(dialog.getByRole("button", { name: "保存" }));

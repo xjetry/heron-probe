@@ -4,13 +4,14 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { createConnectQueryKey, createQueryOptions, useMutation, useQuery, useTransport } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
-import { Link } from "react-router";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGateAll } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { useOrder } from "../api/useOrder";
-import { ConfirmDelete } from "../components/ConfirmDelete";
-import { NodeSelector, type NodeSelection } from "../components/NodeSelector";
+import { Drawer } from "../components/Modal";
+import { RowMenu } from "../components/RowMenu";
+import { PageHeader } from "../components/PageHeader";
+import { assignmentValid, NodeAssignment, type NodeSelection } from "../components/NodeAssignment";
 import { AdminService, CertPinChangeSchema, SaveProbeTaskRequestSchema, type Node, type ProbeTaskDetail } from "../gen/heron/v1/admin_pb";
 import { ProbeKind, ProbeTaskSchema, type ProbeTask } from "../gen/heron/v1/types_pb";
 import { formatPin, parsePin } from "../lib/certpin";
@@ -20,10 +21,14 @@ import { PROBE_KINDS, isHTTPSTarget, kindLabel, targetRule } from "../lib/probes
 type Draft = NodeSelection & { kind: ProbeKind; target: string; dnsServer: string; intervalS: string; timeoutMs: string; pin: string; clearPin: boolean; configId?: Uint8Array };
 type TaskEntry = { task: ProbeTask; allNodes: boolean; nodeIds: bigint[]; selectorTags: string[] };
 
+type DrawerState = { kind: "create"; opener: HTMLElement } | { kind: "edit"; entry: TaskEntry; opener: HTMLElement } | null;
+
+const taskError = (error: unknown) => error instanceof ConnectError && error.code === Code.FailedPrecondition
+  ? `配置已变化，请刷新后再试。${errorText(error)}` : errorText(error);
+
 const emptyDraft = (): Draft => ({ kind: ProbeKind.ICMP, target: "", dnsServer: "", intervalS: "60", timeoutMs: "1000", allNodes: false, nodeIds: new Set(), selectorTags: [], dynamic: false, pin: "", clearPin: false });
 const taskEntries = (tasks: readonly ProbeTaskDetail[]): TaskEntry[] => tasks.flatMap((d) => d.task ? [{ task: d.task, allNodes: d.allNodes, nodeIds: d.nodeIds, selectorTags: d.selectorTags }] : []);
-// all_nodes 任务的 nodeIds 是 hub 展开的当前全部节点；编辑时取消"全部节点"即以它们作为显式分配的起点，
-// 覆盖不会因为取消勾选而一下子清空。
+// all_nodes 任务的 nodeIds 是 hub 展开的当前全部节点；编辑切换为指定节点时以它们作为显式分配的起点。
 const draftOf = ({ task, allNodes, nodeIds, selectorTags }: TaskEntry): Draft => ({
   kind: task.kind, target: task.target, dnsServer: task.dnsServer, intervalS: String(task.intervalS),
   timeoutMs: String(task.timeoutMs), allNodes, nodeIds: new Set(nodeIds), selectorTags, dynamic: selectorTags.length > 0,
@@ -33,16 +38,16 @@ const draftOf = ({ task, allNodes, nodeIds, selectorTags }: TaskEntry): Draft =>
 export function ProbeTasks() {
   const qc = useQueryClient();
   const transport = useTransport();
-  const [creation, setCreation] = useState(0);
+  const [drawer, setDrawer] = useState<DrawerState>(null);
   const { error, mutationOptions } = useLatestError();
   const nodes = useQuery(AdminService.method.listNodes, {});
   const list = useQuery(AdminService.method.listProbeTasks, {});
   // 任务与分配的每次修改都让列表重新拉取；节点列表没有变化，不失效它。
   const refresh = () => qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listProbeTasks, cardinality: "finite" }) });
   const create = useMutation(AdminService.method.saveProbeTask, { ...mutationOptions, onSuccess: refresh });
-  // 各行共用一个 mutation observer，重叠的 mutate 只回调最后一次；因此任一行保存挂起时禁用全部行的保存，退出编辑的才是保存的那一行。
-  // 返回刷新 promise，编辑态在列表显示已保存值之后才关闭。
+  // mutation 的 onSuccess 返回刷新 promise，提交回调在列表回读完成后才关闭抽屉。
   const update = useMutation(AdminService.method.saveProbeTask, { ...mutationOptions, onSuccess: refresh });
+  const busy = create.isPending || update.isPending;
   const remove = useMutation(AdminService.method.deleteProbeTask, { ...mutationOptions, onSuccess: refresh });
   const reorder = useMutation(AdminService.method.reorderProbeTasks);
   const order = useOrder({
@@ -78,36 +83,59 @@ export function ProbeTasks() {
     m.mutate(req, { onSuccess });
   };
   const tasks = taskEntries(order.items);
+  const assignmentText = (entry: TaskEntry) => {
+    const names = entry.nodeIds.map((id) => nodeList.find((n) => n.id === id)?.name ?? `#${id}`);
+    if (entry.allNodes) return { text: "全部节点", title: names.join("、") || "暂无节点" };
+    if (entry.selectorTags.length) return { text: `标签：${entry.selectorTags.join(" ∩ ")}（当前 ${names.length}）`, title: names.join("、") || "无匹配" };
+    // 显式分配为空不覆盖任何节点，必须与全部节点区分。
+    return names.length ? { text: `${names.length} 个指定节点`, title: names.join("、") } : { text: "未分配", title: "" };
+  };
   return (
     <section>
+      <PageHeader title="探测任务" actions={<button type="button" className="primary-button" disabled={busy} onClick={(event) => { create.reset(); setDrawer({ kind: "create", opener: event.currentTarget }); }}>新建探测任务</button>} />
       {gate.banner}
-      <h1>探测任务</h1>
-      <TaskForm key={creation} title="新建探测任务" nodes={nodeList} initial={emptyDraft()} pending={create.isPending}
-        onSubmit={(d) => submit(create, 0n, d, () => setCreation((key) => key + 1))} />
-      {error != null && <p role="alert" className="error">{error instanceof ConnectError && error.code === Code.FailedPrecondition ? `配置已变化，请刷新后再试。${errorText(error)}` : errorText(error)}</p>}
+      {drawer === null && error != null && <p role="alert" className="error">{taskError(error)}</p>}
       {order.error != null && <p role="alert" className="error">排序未完成：{errorText(order.error)}</p>}
       {order.pending && <p role="status" className="muted">正在保存并确认排序…</p>}
       {order.blocked && <button type="button" onClick={order.recover} disabled={order.pending}>重新读取排序</button>}
       <div className="table-scroll" role="region" aria-label="探测任务管理" tabIndex={0}>
-        <table className="nodes">
-          <thead><tr><th>排序</th><th>类型</th><th>目标</th><th>间隔 (s)</th><th>超时 (ms)</th><th>节点</th><th>操作</th></tr></thead>
-          <tbody>
-            {tasks.map((entry) => (
-              <TaskRow key={String(entry.task.id)} entry={entry} nodes={nodeList} saving={update.isPending} deleting={remove.isPending}
-                onMove={order.blocked || list.isError ? undefined : (direction) => order.move(entry.task.id, direction)}
-                onSave={(draft, onSuccess) => submit(update, entry.task.id, draft, onSuccess)} onDelete={() => remove.mutate({ id: entry.task.id })} />
-            ))}
-          </tbody>
+        <table className="nodes probe-table">
+          <thead><tr><th><span className="sr-only">排序</span></th><th>类型</th><th>目标</th><th>间隔</th><th>超时</th><th>分配</th><th><span className="sr-only">操作</span></th></tr></thead>
+          <tbody>{tasks.map((entry) => {
+            const t = entry.task;
+            const label = withId(t.target, t.id);
+            const assignment = assignmentText(entry);
+            const movable = !(order.blocked || list.isError);
+            return <tr key={String(t.id)} aria-label={t.target}>
+              <td data-label="排序"><button type="button" className="link" aria-label={`上移 ${label}`} disabled={!movable} onClick={() => order.move(t.id, -1)}>↑</button><button type="button" className="link" aria-label={`下移 ${label}`} disabled={!movable} onClick={() => order.move(t.id, 1)}>↓</button></td>
+              <td data-label="类型">{kindLabel(t.kind)}</td>
+              <td data-label="目标" className="num">{t.target}</td>
+              <td data-label="间隔" className="num">{t.intervalS} s</td>
+              <td data-label="超时" className="num">{t.timeoutMs} ms</td>
+              <td data-label="分配"><span title={assignment.title || undefined} className={assignment.text === "未分配" ? "muted" : undefined}>{assignment.text}</span></td>
+              <td data-column="actions"><RowMenu label={label} items={[
+                { label: "编辑", disabled: busy, onSelect: (trigger) => { update.reset(); setDrawer({ kind: "edit", entry, opener: trigger }); } },
+                // 导航项不随保存禁用：保存只发生在抽屉里，抽屉打开时整页已 inert，行菜单本就不可达。
+                { label: "对比", to: `/probes/${t.id}/compare` },
+                ...(isHTTPSTarget(t.kind, t.target) ? [{ label: "证书", to: `/probes/${t.id}/certs` }] : []),
+                { label: "删除", danger: true, confirm: `确认删除 ${label}`, note: "历史保留至到期清理", disabled: busy || remove.isPending, onSelect: () => remove.mutate({ id: t.id }) },
+              ]} /></td>
+            </tr>;
+          })}</tbody>
         </table>
       </div>
       {tasks.length === 0 && <p className="muted">还没有探测任务。</p>}
+      {drawer?.kind === "create" && <ProbeTaskDrawer title="新建探测任务" submitLabel="创建" nodes={nodeList} initial={emptyDraft()} pending={create.isPending} error={create.error} opener={drawer.opener} onClose={() => setDrawer(null)}
+        onSubmit={(d) => submit(create, 0n, d, () => setDrawer(null))} />}
+      {drawer?.kind === "edit" && <ProbeTaskDrawer key={String(drawer.entry.task.id)} title={`编辑 ${withId(drawer.entry.task.target, drawer.entry.task.id)}`} submitLabel="保存" nodes={nodeList} initial={draftOf(drawer.entry)} pending={update.isPending} error={update.error} opener={drawer.opener} onClose={() => setDrawer(null)}
+        onSubmit={(d) => submit(update, drawer.entry.task.id, d, () => setDrawer(null))} />}
     </section>
   );
 }
 
 // 创建与编辑共用；字段约束用原生属性表达，hub 的 probelimit 是最终裁决，错误原文回到页面上。
-function TaskForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
-  title: string; nodes: Node[]; initial: Draft; pending: boolean; onSubmit: (d: Draft) => void; onCancel?: () => void;
+function ProbeTaskDrawer({ title, submitLabel, nodes, initial, pending, error, opener, onClose, onSubmit }: {
+  title: string; submitLabel: "创建" | "保存"; nodes: Node[]; initial: Draft; pending: boolean; error: unknown; opener: HTMLElement; onClose: () => void; onSubmit: (d: Draft) => void;
 }) {
   // initial 只在挂载时读取；编辑期间的列表刷新不覆盖草稿，节点列表以 props 实时更新，提交时与当前列表求交。
   const [draft, setDraft] = useState(initial);
@@ -117,6 +145,7 @@ function TaskForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
   const handle = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!e.currentTarget.checkValidity()) return;
+    if (!assignmentValid(draft)) return;
     if (!draft.clearPin && draft.pin.trim()) {
       try {
         parsePin(draft.pin);
@@ -129,78 +158,42 @@ function TaskForm({ title, nodes, initial, pending, onSubmit, onCancel }: {
     onSubmit(draft);
   };
   return (
-    <form className="card edit-form" aria-label={title} onSubmit={handle}>
-      <div className="row">
-        <label>类型
-          <select value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: Number(e.target.value) as ProbeKind })}>
-            {PROBE_KINDS.map(({ kind, label }) => <option key={kind} value={kind}>{label}</option>)}
-          </select>
-        </label>
-        <label>目标<input required maxLength={targetRule(draft.kind).maxLength} placeholder={targetRule(draft.kind).placeholder} value={draft.target}
-          onChange={(e) => setDraft({ ...draft, target: e.target.value })} /></label>
-        {draft.kind === ProbeKind.DNS && (
-          <label>解析器<input required maxLength={47} placeholder="ip:port，如 1.1.1.1:53" value={draft.dnsServer}
-            onChange={(e) => setDraft({ ...draft, dnsServer: e.target.value })} /></label>
-        )}
-        <label>间隔 (s)<input type="number" required min={5} max={3600} value={draft.intervalS} onChange={(e) => setDraft({ ...draft, intervalS: e.target.value })} /></label>
-        <label>超时 (ms)<input type="number" required min={100} max={5000} value={draft.timeoutMs} onChange={(e) => setDraft({ ...draft, timeoutMs: e.target.value })} /></label>
-        {showPin && (
-          <label>证书指纹
-            <input aria-label="证书指纹" placeholder="sha256// 加 base64，留空表示不改" value={draft.pin}
-              onChange={(e) => setDraft({ ...draft, pin: e.target.value, clearPin: false })} />
-          </label>
-        )}
-      </div>
-      {showPin && (
-        <p className="muted">{draft.clearPin ? "保存时将清除指纹。" : draft.pin ? `当前显示 ${draft.pin}` : "未钉指纹。"}
-          {" "}<button type="button" className="link" onClick={() => setDraft({ ...draft, pin: "", clearPin: true })}>清除指纹</button>
-        </p>
-      )}
-      {showPin && !pinFits && <p className="muted">这个种类或地址不能钉指纹，改种类不会自动清除。请先清除指纹再保存。</p>}
-      {pinError && <p role="alert" className="error">{pinError}</p>}
-      <NodeSelector nodes={nodes} value={draft} onChange={(patch) => setDraft({ ...draft, ...patch })} legend="分配到节点" />
-      <div className="row">
-        <button type="submit" disabled={pending}>{onCancel ? "保存" : "创建"}</button>
-        {onCancel && <button type="button" className="link" onClick={onCancel}>取消</button>}
-      </div>
-    </form>
-  );
-}
-
-function TaskRow({ entry, nodes, saving, deleting, onSave, onDelete, onMove }: {
-  entry: TaskEntry; nodes: Node[]; saving: boolean; deleting: boolean; onSave: (d: Draft, onSuccess: () => void) => void; onDelete: () => void;
-  onMove?: (direction: -1 | 1) => void;
-}) {
-  const { task: t, allNodes, nodeIds } = entry;
-  const [editing, setEditing] = useState(false);
-  const names = nodeIds.map((id) => nodes.find((n) => n.id === id)?.name ?? `#${id}`).join("、");
-  // 显式分配为空显示"未分配"：它不覆盖任何节点，与"全部节点"区分开。
-  const coverage = allNodes ? `全部节点：${names || "暂无节点"}` : entry.selectorTags.length ? `动态标签：${entry.selectorTags.join(" ∩ ")}；当前：${names || "无匹配"}` : names;
-  if (editing) {
-    return (
-      <tr><td colSpan={7}>
-        <TaskForm title={`编辑 ${withId(t.target, t.id)}`} nodes={nodes} initial={draftOf(entry)} pending={saving}
-          onSubmit={(d) => onSave(d, () => setEditing(false))} onCancel={() => setEditing(false)} />
-      </td></tr>
-    );
-  }
-  return (
-    <tr>
-      <td>
-        <button type="button" className="link" aria-label={`上移 ${withId(t.target, t.id)}`} disabled={!onMove} onClick={() => onMove?.(-1)}>↑</button>
-        <button type="button" className="link" aria-label={`下移 ${withId(t.target, t.id)}`} disabled={!onMove} onClick={() => onMove?.(1)}>↓</button>
-      </td>
-      <td>{kindLabel(t.kind)}</td>
-      <td>{t.target}</td>
-      <td>{t.intervalS}</td>
-      <td>{t.timeoutMs}</td>
-      <td>{coverage || <span className="muted">未分配</span>}</td>
-      <td>
-        <Link to={`/probes/${t.id}/compare`}>对比</Link>{" "}
-        {isHTTPSTarget(t.kind, t.target) && <><Link to={`/probes/${t.id}/certs`}>证书</Link>{" "}</>}
-        <button type="button" className="link" aria-label={`编辑 ${withId(t.target, t.id)}`} onClick={() => setEditing(true)}>编辑</button>{" "}
-        <ConfirmDelete label={`删除 ${withId(t.target, t.id)}`} confirm={`确认删除 ${withId(t.target, t.id)}`} note="历史保留至到期清理" pending={deleting} onDelete={onDelete} />
-      </td>
-    </tr>
+    <Drawer title={title} busy={pending} opener={opener} onClose={onClose}>
+      <form aria-label={title} onSubmit={handle}>
+        <div className="modal-body">
+          {error != null && <p role="alert" className="error">{taskError(error)}</p>}
+          <fieldset className="bare" disabled={pending}>
+            <div className="segmented" role="radiogroup" aria-label="类型">
+              {PROBE_KINDS.map(({ kind, label }) => <label key={kind}><input type="radio" name="probe-kind" aria-label={label} checked={draft.kind === kind} onChange={() => setDraft({ ...draft, kind })} /><span>{label}</span></label>)}
+            </div>
+            <label>目标<input data-autofocus required maxLength={targetRule(draft.kind).maxLength} placeholder={targetRule(draft.kind).placeholder} value={draft.target}
+              onChange={(e) => setDraft({ ...draft, target: e.target.value })} /></label>
+            {draft.kind === ProbeKind.DNS && (
+              <label>解析器<input required maxLength={47} placeholder="ip:port，如 1.1.1.1:53" value={draft.dnsServer}
+                onChange={(e) => setDraft({ ...draft, dnsServer: e.target.value })} /></label>
+            )}
+            <div className="form-grid two">
+              <label>间隔 (s)<input type="number" required min={5} max={3600} value={draft.intervalS} onChange={(e) => setDraft({ ...draft, intervalS: e.target.value })} /></label>
+              <label>超时 (ms)<input type="number" required min={100} max={5000} value={draft.timeoutMs} onChange={(e) => setDraft({ ...draft, timeoutMs: e.target.value })} /></label>
+            </div>
+            {showPin && (
+              <label>证书指纹
+                <input aria-label="证书指纹" placeholder="sha256// 加 base64，留空表示不改" value={draft.pin}
+                  onChange={(e) => setDraft({ ...draft, pin: e.target.value, clearPin: false })} />
+              </label>
+            )}
+            {showPin && (
+              <p className="muted">{draft.clearPin ? "保存时将清除指纹。" : draft.pin ? `当前显示 ${draft.pin}` : "未钉指纹。"}
+                {" "}<button type="button" className="link" onClick={() => setDraft({ ...draft, pin: "", clearPin: true })}>清除指纹</button>
+              </p>
+            )}
+            {showPin && !pinFits && <p className="muted">这个种类或地址不能钉指纹，改种类不会自动清除。请先清除指纹再保存。</p>}
+            {pinError && <p role="alert" className="error">{pinError}</p>}
+            <NodeAssignment nodes={nodes} value={draft} onChange={(patch) => setDraft({ ...draft, ...patch })} legend="分配到节点" />
+          </fieldset>
+        </div>
+        <footer className="modal-footer"><button type="button" disabled={pending} onClick={onClose}>取消</button><button type="submit" className="primary-button" disabled={pending}>{submitLabel}</button></footer>
+      </form>
+    </Drawer>
   );
 }

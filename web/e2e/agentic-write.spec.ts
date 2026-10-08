@@ -25,6 +25,7 @@ test("限定节点凭据的创建、预览、写入、重试、回执和吊销",
       ids.push(created.body.node.id);
     }
     await page.goto("/admin/tokens");
+    await page.getByRole("button", { name: "新建 API token", exact: true }).click();
     const form = page.getByRole("form", { name: "新建 API token" });
     await form.getByLabel("名称", { exact: true }).fill(name);
     await form.getByLabel("监控配置", { exact: true }).check();
@@ -68,7 +69,9 @@ test("限定节点凭据的创建、预览、写入、重试、回执和吊销",
     expect(replay.body.operation.id).toBe(committed.body.operation.id);
     expect(replay.body.result).toBeUndefined();
 
-    await page.getByRole("button", { name: `查看 ${name} 操作记录`, exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "关闭抽屉", exact: true }).click();
+    await page.getByRole("button", { name: `更多操作 ${name}（#${tokenId}）`, exact: true }).click();
+    await page.getByRole("menuitem", { name: `查看操作记录 ${name}（#${tokenId}）`, exact: true }).click();
     const operations = page.getByRole("region", { name: "操作记录" });
     await expect(operations.locator("details")).toHaveCount(1);
     await operations.locator("summary").click();
@@ -78,8 +81,10 @@ test("限定节点凭据的创建、预览、写入、重试、回执和吊销",
     await page.setViewportSize({ width: 375, height: 812 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
     await page.screenshot({ path: testInfo.outputPath("token-audit-mobile.png"), fullPage: true });
-    await page.getByRole("button", { name: `吊销 ${name}（#${tokenId}）`, exact: true }).click();
-    await page.getByRole("button", { name: `确认吊销 ${name}（#${tokenId}）`, exact: true }).click();
+    await page.getByRole("button", { name: `更多操作 ${name}（#${tokenId}）`, exact: true }).click();
+    await page.getByRole("menuitem", { name: `吊销 ${name}（#${tokenId}）`, exact: true }).click();
+    await page.getByRole("menuitem", { name: `确认吊销 ${name}（#${tokenId}）`, exact: true }).click();
+    await page.getByRole("button", { name: `更多操作 ${name}（#${tokenId}）`, exact: true }).waitFor({ state: "hidden" });
     await expect(secret).toHaveCount(0);
     const revoked = await rpc(page, "ListNodes", {}, token);
     expect(revoked.body.code).toBe("unauthenticated");

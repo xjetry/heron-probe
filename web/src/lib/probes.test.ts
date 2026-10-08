@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
 import { ProbeSeriesSchema, QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
 import { ProbeKind } from "../gen/heron/v1/types_pb";
-import { PROBE_KINDS, isHTTPSTarget, kindLabel, lossPercent, rttMeanMs, seriesLabels, targetRule, taskIdsOf, toProbeAligned } from "./probes";
+import { PROBE_KINDS, isHTTPSTarget, kindLabel, lossPercent, rttMeanMs, rttMinMs, rttMaxMs, seriesLabels, targetRule, taskIdsOf, toProbeAligned, toProbeTaskAligned } from "./probes";
 
 it.each([
   {
@@ -43,6 +43,14 @@ const resp = create(QueryProbesResponseSchema, {
     ] },
     { taskId: 7n, samples: [{ ts: 180n, sent: 5, lost: 0, errors: 5 }] },
   ],
+});
+
+it("每任务对齐：均值 / 最小 / 最大三列同网格，没有成功探测的点三列都是 null", () => {
+  const response = create(QueryProbesResponseSchema, { level: "1m", stepS: 60, series: [
+    { taskId: 3n, samples: [{ ts: 60n, sent: 4, lost: 0, errors: 0, rttMeanUs: 20_000, rttMinUs: 10_000, rttMaxUs: 30_000 }, { ts: 120n, sent: 4, lost: 4, errors: 0 }] },
+  ] });
+  expect(toProbeTaskAligned(response, 3n, 60, 240, [rttMeanMs, rttMinMs, rttMaxMs])).toEqual([[60, 120, 180], [20, null, null], [10, null, null], [30, null, null]]);
+  expect(toProbeTaskAligned(response, 9n, 60, 180, [rttMeanMs])).toEqual([[60, 120], [null, null]]);
 });
 
 describe("toProbeAligned", () => {

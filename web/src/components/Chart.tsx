@@ -1,17 +1,22 @@
-import { useEffect, useRef } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import uPlot, { type AlignedData, type Options } from "uplot";
 import "uplot/dist/uPlot.min.css";
 import { formatUnit } from "../lib/format";
 import { axisValues } from "../lib/axis";
 import { formatChartTimes, isolatedPointIndices, readingGap, type ReadingGap } from "../lib/chartMarks";
 import { resolveColor, useColorScheme } from "../lib/colorScheme";
+import { seriesColors } from "../lib/seriesPalette";
 
-// 一个节点常有多条探测线，八色减少颜色重复；超过八条时循环使用。
-const palette = ["#3b82f6", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#06b6d4", "#84cc16", "#ec4899"];
+// 窄于这个宽度的图按手机刻度：横轴只写时分（设计 §5）。
+export const COMPACT_WIDTH = 480;
+// 相邻刻度至少相隔的像素（设计 §5）：uPlot 据此从画布宽度算刻度数，节点页与对比页都不各自设刻度。
+export const X_TICK_SPACE = 80;
 
-function yColumns(data: AlignedData): (readonly (number | null | undefined)[])[] {
-  const cols: (readonly (number | null | undefined)[])[] = [];
-  for (let i = 1; i < data.length; i++) cols.push(data[i] as readonly (number | null | undefined)[]);
+type Column = readonly (number | null | undefined)[];
+
+function yColumns(data: AlignedData): Column[] {
+  const cols: Column[] = [];
+  for (let i = 1; i < data.length; i++) cols.push(data[i] as Column);
   return cols;
 }
 
@@ -22,52 +27,106 @@ function gapMessage(gap: ReadingGap): string | null {
   return null;
 }
 
+function isReading(v: number | null | undefined): v is number {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
+function lastReadingIndex(col: Column): number | null {
+  for (let i = col.length - 1; i >= 0; i--) if (isReading(col[i])) return i;
+  return null;
+}
+
+type ChartProps = {
+  data: AlignedData;
+  labels: string[];
+  unit: string;
+  height?: number;
+  soft?: readonly boolean[];
+  bands?: readonly { lower: number; upper: number }[];
+  legend?: boolean;
+  hidden?: ReadonlySet<number>;
+  onHiddenChange?: (next: ReadonlySet<number>) => void;
+  onFocus?: (index: number | null) => void;
+};
+
 // spanGaps 关闭：null 是无读数，线在这里必须断开而不是把两侧连起来。
 // 时间不传时区：formatChartTimes 与 uPlot 的刻度对齐都用浏览器本地时区，不引入 hub 时区。
-export function Chart({ data, labels, unit, height = 180 }: { data: AlignedData; labels: string[]; unit: string; height?: number }) {
+// 图例由本组件自绘（设计 §5）：无悬停时每条序列显示它最后一个有限读数，悬停时显示光标所在时刻的值；点击一项隐藏该序列。
+// hidden 受控时由调用方持有集合（对比页的表格开关），否则组件自管。
+export function Chart({ data, labels, unit, height = 180, soft, bands = [], legend = true, hidden, onHiddenChange, onFocus }: ChartProps) {
   const el = useRef<HTMLDivElement>(null);
   const plot = useRef<uPlot | null>(null);
   const initialData = useRef(data);
   const key = labels.join("|");
+  const softFlags = useMemo(() => labels.map((_, i) => soft?.[i] ?? false), [key, soft]);
+  const softKey = softFlags.map((s) => (s ? 1 : 0)).join("");
+  const bandKey = bands.map((b) => `${b.lower}-${b.upper}`).join("|");
+  const colors = useMemo(() => seriesColors(softFlags), [softKey]);
   const scheme = useColorScheme();
   const gap = gapMessage(readingGap(yColumns(data), labels));
+  const [cursorIdx, setCursorIdx] = useState<number | null>(null);
+  const [ownHidden, setOwnHidden] = useState<ReadonlySet<number>>(() => new Set());
+  const shownHidden = hidden ?? ownHidden;
+  const onFocusRef = useRef(onFocus);
+  onFocusRef.current = onFocus;
+  const hiddenRef = useRef(shownHidden);
+  hiddenRef.current = shownHidden;
   useEffect(() => {
     const host = el.current;
     if (!host) return;
     const axisColor = resolveColor(host, "var(--muted)");
     const gridColor = resolveColor(host, "var(--line)");
-    const axisStyle = { stroke: axisColor, grid: { stroke: gridColor }, ticks: { stroke: axisColor } };
+    const axisStyle = { stroke: axisColor, grid: { stroke: gridColor, width: 1 }, ticks: { show: false } };
     const opts: Options = {
       width: host.clientWidth || 600,
       height,
-      // 不设置 legend.show：uPlot 默认显示图例，点击一项切换该条线。对比图一条线一个节点，靠的就是这个。
+      legend: { show: false },
+      cursor: { focus: { prox: 16 } },
+      focus: { alpha: 0.25 },
       scales: { x: { time: true }, y: unit === "percent" ? { range: [0, 100] } : {} },
       axes: [
-        { ...axisStyle, values: (_u, splits, _axisIdx, _foundSpace, foundIncr) => formatChartTimes(splits, { incrSec: foundIncr }) },
+        {
+          ...axisStyle,
+          space: X_TICK_SPACE,
+          // 刻度文字画在 canvas 上，DOM 里看不到；把刻度数写到宿主上，e2e 才能核对间距规则真的起了作用。
+          values: (u, splits, _axisIdx, _foundSpace, foundIncr) => {
+            host.dataset.xTicks = String(splits.length);
+            return formatChartTimes(splits, { incrSec: foundIncr, compact: u.width < COMPACT_WIDTH });
+          },
+        },
         { ...axisStyle, size: 80, values: (_u, vals) => axisValues(vals, unit) },
       ],
+      // uPlot 的 bands 用序列下标（0 是时间轴），本组件对外用 labels 下标；填充取上界序列的颜色加 20% 透明度。
+      bands: bands.map((b) => ({ series: [b.upper + 1, b.lower + 1], fill: `${colors[b.upper]}33` })),
       series: [
-        {
-          label: "时间",
-          value: (_u: uPlot, v: number | null) => (v == null || !Number.isFinite(v) ? "–" : formatChartTimes([v])[0]),
-        },
+        { label: "时间" },
         ...labels.map((label, i) => ({
           label,
-          stroke: palette[i % palette.length],
-          width: 1.5,
+          stroke: colors[i],
+          width: softFlags[i] ? 1 : 1.5,
+          alpha: softFlags[i] ? 0.55 : 1,
           spanGaps: false,
           // 默认点填充是白色，浅色背景上只剩细描边。填成与线相同的颜色，孤立读数才是一粒看得见的实心点。
           // filter 必须返回数组：返回 null 时 uPlot 会把可见范围内的每个点都画出来。
           points: {
             show: true,
-            fill: palette[i % palette.length],
-            filter: (u: uPlot, seriesIdx: number) => isolatedPointIndices(u.data[seriesIdx] as readonly (number | null | undefined)[]),
+            fill: colors[i],
+            filter: (u: uPlot, seriesIdx: number) => isolatedPointIndices(u.data[seriesIdx] as Column),
           },
-          value: (_u: uPlot, v: number | null) => (v === null ? "–" : formatUnit(v, unit)),
         })),
       ],
+      hooks: {
+        setCursor: [(u) => setCursorIdx(u.cursor.idx ?? null)],
+        // 悬停高亮经 cursor.focus 触发 setSeries 且 opts 带 focus；本组件自己调 setSeries 切显示时 opts 只有 show。
+        setSeries: [(_u, idx, seriesOpts: { focus?: boolean; show?: boolean }) => {
+          if (!("focus" in seriesOpts)) return;
+          onFocusRef.current?.(idx == null ? null : idx - 1);
+        }],
+      },
     };
-    plot.current = new uPlot(opts, initialData.current, host);
+    const u = new uPlot(opts, initialData.current, host);
+    plot.current = u;
+    for (const i of hiddenRef.current) u.setSeries(i + 1, { show: false });
     const ro = new ResizeObserver(() => plot.current?.setSize({ width: host.clientWidth, height }));
     ro.observe(host);
     return () => {
@@ -75,18 +134,53 @@ export function Chart({ data, labels, unit, height = 180 }: { data: AlignedData;
       plot.current?.destroy();
       plot.current = null;
     };
-    // 标签、单位、尺寸或明暗改变才重建；下面的数据 effect 维护最近提交的数据快照并应用当前数据。
-  }, [key, unit, height, scheme]);
+    // 标签、单位、尺寸、明暗、浅线与填充带改变才重建；下面的数据 effect 维护最近提交的数据快照并应用当前数据。
+  }, [key, unit, height, scheme, softKey, bandKey, colors]);
   useEffect(() => {
     initialData.current = data;
     plot.current?.setData(data);
   }, [data]);
+  useEffect(() => {
+    const u = plot.current;
+    if (!u) return;
+    labels.forEach((_, i) => u.setSeries(i + 1, { show: !shownHidden.has(i) }));
+  }, [shownHidden, key]);
+  const toggle = (i: number) => {
+    const next = new Set(shownHidden);
+    if (next.has(i)) next.delete(i);
+    else next.add(i);
+    if (hidden === undefined) setOwnHidden(next);
+    onHiddenChange?.(next);
+  };
+  const xs = data[0] as Column;
   // uPlot 把自己的根节点 append 进宿主。提示若也放在宿主里，图建好之后才出现的提示会被 React 追加到
-  // uPlot 根之后，位置就随提示与图谁先出现而变；所以宿主只交给 uPlot，提示放在宿主之前。
+  // uPlot 根之后，位置就随提示与图谁先出现而变；所以宿主只交给 uPlot，提示放在宿主之前、由 CSS 叠到图区中央。
   return (
     <div className="chart">
-      {gap && <p className="muted chart-gap">{gap}</p>}
-      <div ref={el} />
+      <div className="chart-plot">
+        {gap && <p className="muted chart-gap">{gap}</p>}
+        <div ref={el} />
+      </div>
+      {legend && labels.length > 0 && (
+        <ul className="chart-legend" aria-label="图例">
+          <li className="legend-time num">{cursorIdx == null || !isReading(xs[cursorIdx]) ? "最新" : formatChartTimes([xs[cursorIdx]])[0]}</li>
+          {labels.map((label, i) => {
+            const col = data[i + 1] as Column;
+            const at = cursorIdx ?? lastReadingIndex(col);
+            const v = at == null ? null : col[at];
+            const off = shownHidden.has(i);
+            return (
+              <li key={label}>
+                <button type="button" aria-pressed={!off} style={{ "--series": colors[i] } as CSSProperties} onClick={() => toggle(i)}>
+                  <span className={softFlags[i] ? "legend-swatch soft" : "legend-swatch"} aria-hidden="true" />
+                  {label}
+                  <span className="num">{isReading(v) ? formatUnit(v, unit) : "–"}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

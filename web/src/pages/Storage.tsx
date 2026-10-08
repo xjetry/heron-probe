@@ -1,4 +1,5 @@
 import { useQuery } from "@connectrpc/connect-query";
+import { PageHeader } from "../components/PageHeader";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService, type SeriesTableHealth } from "../gen/heron/v1/admin_pb";
 import { bytes, duration } from "../lib/format";
@@ -41,7 +42,7 @@ export function Storage() {
   return (
     <section>
       {gate.banner}
-      <h1>存储</h1>
+      <PageHeader title="存储" />
       {s.sqlObservedAt !== undefined && (
         <p className="muted">统计于 {at(s.sqlObservedAt)}；同一份 SQL 统计在算出后 60 秒内复用。</p>
       )}

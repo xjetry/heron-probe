@@ -1,5 +1,18 @@
 import { expect, test, type Page } from "@playwright/test";
 
+async function setScheme(page: Page, want: 'light' | 'dark') {
+  for (let i = 0; i < 3; i++) {
+    if (await page.evaluate(() => document.documentElement.dataset.theme) === want) return;
+    await page.getByRole('button', { name: '明暗切换' }).click();
+  }
+  await expect(page.locator('html')).toHaveAttribute('data-theme', want);
+}
+
+async function openRowAction(page: Page, label: string, action: string) {
+  await page.getByRole('button', { name: `更多操作 ${label}`, exact: true }).click();
+  await page.getByRole('menuitem', { name: `${action} ${label}`, exact: true }).click();
+}
+
 async function rpc(page: Page, method: string, body: unknown = {}) {
   return page.evaluate(async ({ method, body }) => {
     const response = await fetch('/heron.v1.AdminService/' + method, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -14,6 +27,7 @@ test('注册命令复制与移动端布局', async ({ page, context, browserName
   await rpc(page, 'Login', { password: 'local-browser-test-password' });
   await page.goto('/admin/register');
   await page.getByRole('button', { name: '开启新窗口' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '开启', exact: true }).click();
   await expect(page.getByLabel('curl 安装命令')).toBeVisible();
   if (browserName === 'chromium') {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -62,7 +76,7 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
       }, { key: result.token, index });
     }
     await page.goto('/admin/nodes');
-    await page.getByLabel('后台配色').selectOption('dark');
+    await setScheme(page, 'dark');
     await page.setViewportSize({ width: 1440, height: 960 });
     await expect(page.getByText('2606:4700:4700::1111').first()).toBeVisible();
     await expect(page.getByText('不支持', { exact: true })).toBeVisible();
@@ -80,10 +94,11 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
       }
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1440);
+    expect((await page.getByRole('row', { name: `tokyo-edge-${browserName}`, exact: true }).boundingBox())?.height).toBeLessThanOrEqual(53);
     await page.screenshot({ path: testInfo.outputPath('nodes-dark-desktop.png'), fullPage: true });
-    const edit = page.getByRole('button', { name: `编辑 tokyo-edge-${browserName}（#${ids[0]}）`, exact: true });
-    await edit.click();
+    await openRowAction(page, `tokyo-edge-${browserName}（#${ids[0]}）`, '编辑');
     const dialog = page.getByRole('dialog');
+    await expect(dialog).toHaveClass(/drawer/);
     await expect(dialog.getByRole('button', { name: '复制 IPv4 8.8.8.8', exact: true })).toBeVisible();
     const name = dialog.getByLabel(`名称 tokyo-edge-${browserName}（#${ids[0]}）`, { exact: true });
     await expect(name).toBeFocused();
@@ -97,12 +112,13 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
     await dialog.getByRole('button', { name: '保存', exact: true }).click();
     await expect(dialog).toHaveCount(0);
     await expect(page.getByRole('link', { name: `tokyo-renamed（#${ids[0]}）` })).toBeVisible();
-    await page.getByRole('button', { name: `计费 tokyo-renamed（#${ids[0]}）` }).click();
-    await dialog.getByLabel(`价格 tokyo-renamed（#${ids[0]}）`).fill('29.50');
+    await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '编辑');
+    const billing = dialog.getByRole('region', { name: '费用', exact: true });
+    await billing.getByLabel(`价格 tokyo-renamed（#${ids[0]}）`).fill('29.50');
     const expiryLabel = `到期日 tokyo-renamed（#${ids[0]}）`;
-    const year = dialog.getByRole('textbox', { name: `${expiryLabel} 年`, exact: true });
-    const month = dialog.getByRole('textbox', { name: `${expiryLabel} 月`, exact: true });
-    const day = dialog.getByRole('textbox', { name: `${expiryLabel} 日`, exact: true });
+    const year = billing.getByRole('textbox', { name: `${expiryLabel} 年`, exact: true });
+    const month = billing.getByRole('textbox', { name: `${expiryLabel} 月`, exact: true });
+    const day = billing.getByRole('textbox', { name: `${expiryLabel} 日`, exact: true });
     await year.fill('2031');
     await month.fill('02');
     await day.fill('29');
@@ -125,23 +141,43 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
     await expect(page.getByText('US$29.50 / 月')).toBeVisible();
     const updated = await rpc(page, 'ListNodes');
     expect(updated.nodes.find((node: { id: string }) => node.id === ids[0]).billing.expiresOn).toBe('2031-12-25');
-    const renamedEdit = page.getByRole('button', { name: `编辑 tokyo-renamed（#${ids[0]}）` });
-    await renamedEdit.click();
+    const renamedMenu = page.getByRole('button', { name: `更多操作 tokyo-renamed（#${ids[0]}）`, exact: true });
+    await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '编辑');
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
-    await expect(renamedEdit).toBeFocused();
-    await page.getByLabel('后台配色').selectOption('light');
+    await expect(renamedMenu).toBeFocused();
+    await setScheme(page, 'light');
+    // 危险操作首击只武装，关闭菜单必须撤销武装且保留节点。
+    await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '删除');
+    await expect(page.getByRole('menuitem', { name: `确认删除 tokyo-renamed（#${ids[0]}）` })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath('nodes-row-menu-armed.png') });
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu')).toHaveCount(0);
+    await expect(page.getByRole('link', { name: `tokyo-renamed（#${ids[0]}）` })).toBeVisible();
+    // 卡上的数量与节点列表的到期筛选必须使用同一判定。
+    await page.goto('/admin/');
+    const expiring = page.getByRole('list', { name: '需要处理' }).getByRole('link').nth(1);
+    const expiringCount = Number(await expiring.locator('strong').textContent());
+    await expiring.click();
+    await expect(page).toHaveURL(/\/admin\/nodes\?expiring=1$/);
+    await expect(page.getByRole('row')).toHaveCount(expiringCount + 1);
+    await page.getByRole('button', { name: '清除筛选' }).click();
+    await expect(page).toHaveURL(/\/admin\/nodes$/);
+    await page.getByRole('link', { name: `tokyo-renamed（#${ids[0]}）`, exact: true }).waitFor();
     await page.screenshot({ path: testInfo.outputPath('nodes-light-desktop.png'), fullPage: true });
     await page.setViewportSize({ width: 375, height: 812 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
-    await expect(copy4).toBeVisible();
-    await expect(copy6).toBeVisible();
+    await expect(page.getByRole('row', { name: 'tokyo-renamed', exact: true }).getByRole('button', { name: `更多操作 tokyo-renamed（#${ids[0]}）` })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('nodes-mobile.png'), fullPage: true });
-    await renamedEdit.click();
+    await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '编辑');
     expect(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    const drawerBox = await dialog.boundingBox();
+    expect(drawerBox?.x).toBe(0);
+    expect(drawerBox?.width).toBe(375);
     await page.screenshot({ path: testInfo.outputPath('node-editor-mobile.png'), fullPage: true });
     await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: `计费 tokyo-renamed（#${ids[0]}）` }).click();
+    await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '编辑');
+    await billing.scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath('billing-mobile.png'), fullPage: true });
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: '打开导航' }).click();
@@ -151,7 +187,8 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
     await page.screenshot({ path: testInfo.outputPath('overview-mobile.png'), fullPage: true });
     await page.setViewportSize({ width: 1440, height: 960 });
-    await page.getByLabel('后台配色').selectOption('dark');
+    await setScheme(page, 'dark');
+    await expect(page.getByRole('list', { name: '需要处理' })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('overview-desktop.png'), fullPage: true });
     await page.setViewportSize({ width: 375, height: 812 });
     for (const [route, heading] of [
@@ -164,6 +201,12 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
       await expect(page.getByText('加载中…', { exact: true })).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth), route).toBe(375);
       await page.screenshot({ path: testInfo.outputPath(route.replace('/', '-') + '-mobile.png'), fullPage: true });
+      const create = { probes: '新建探测任务', alerts: '新建告警规则', channels: '新建通知渠道' }[route];
+      if (create) {
+        await page.getByRole('button', { name: create, exact: true }).click();
+        await page.screenshot({ path: testInfo.outputPath(route + '-drawer-mobile.png'), fullPage: true });
+        await page.keyboard.press('Escape');
+      }
     }
   } finally {
     for (const id of ids) await rpc(page, 'DeleteNode', { id });
@@ -208,12 +251,21 @@ test('节点拖拽、键盘和移动端菜单保存同一完整顺序', async ({
     await page.getByRole('searchbox', { name: '搜索节点' }).fill(`order-0-${browserName}`);
     await expect(handle).toBeDisabled();
     // 过滤时拖动与上下移仍禁用，但按全序名次的「移动到…」可用，菜单保持可用（不被禁用）。
-    const filteredMenu = page.getByRole('combobox', { name: `移动 ${label(0)}`, exact: true });
-    await expect(filteredMenu).toBeEnabled();
-    await expect(page.getByText('搜索或按标签过滤时不能用拖动或上下移（它们保存完整排列）；可用「移动到…」按全序名次移动，或清空过滤后再调整。')).toBeVisible();
+    await page.getByRole('button', { name: `更多操作 ${label(0)}`, exact: true }).click();
+    await expect(page.getByRole('menuitem', { name: `移动到… ${label(0)}`, exact: true })).toBeEnabled();
+    await page.keyboard.press('Escape');
+    await expect(page.getByText('筛选时不能用拖动或上下移（它们保存完整排列）；可用行菜单的「移动到…」按全序名次移动，或清除筛选后再调整。')).toBeVisible();
     await page.getByRole('searchbox', { name: '搜索节点' }).fill('');
-    await page.setViewportSize({ width: 375, height: 812 });
     await page.getByRole('combobox', { name: `移动 ${label(0)}`, exact: true }).selectOption('last');
+    await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
+    await handle.press('Home');
+    await expect.poll(actual).toEqual([ids[0], ids[1], ids[2]]);
+    await page.setViewportSize({ width: 375, height: 812 });
+    await openRowAction(page, label(0), '移动到…');
+    const move = page.getByRole('dialog', { name: '移动节点', exact: true });
+    const total = (await rpc(page, 'ListNodes')).nodes.length;
+    await move.getByRole('spinbutton').fill(String(total));
+    await move.getByRole('button', { name: '移动', exact: true }).click();
     await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
     await page.screenshot({ path: testInfo.outputPath('node-order-mobile.png'), fullPage: true });
@@ -258,7 +310,7 @@ test('节点按全序名次整体移动到指定位置', async ({ page, browserN
     await page.screenshot({ path: testInfo.outputPath('node-move-modal.png'), fullPage: true });
     await dialog.getByRole('button', { name: '移动', exact: true }).click();
     await expect(dialog).toHaveCount(0);
-    await expect(page.getByText('已选择 0 个节点')).toBeVisible();
+    await expect(page.getByRole('toolbar', { name: '批量操作' })).toHaveCount(0);
     await expect.poll(mineInOrder).toEqual([ids[0], ids[2], ids[1], ids[3], ids[4]]);
     expect(await positionsMatchList()).toBe(true);
     // 序号列跟着新的全序名次走。
@@ -272,7 +324,7 @@ test('节点按全序名次整体移动到指定位置', async ({ page, browserN
     const positionOfLast = (await hubList()).find((node) => node.id === ids[4])!.position;
     await expect(handle(4)).toHaveText(String(positionOfLast));
     await expect(handle(4)).toBeDisabled();
-    await page.getByRole('combobox', { name: `移动 ${label(4)}`, exact: true }).selectOption('move');
+    await openRowAction(page, label(4), '移动到…');
     const single = page.getByRole('dialog');
     await expect(single).toHaveAccessibleName('移动节点');
     const singleInput = single.getByLabel(`目标位置（1–${total}）`, { exact: true });

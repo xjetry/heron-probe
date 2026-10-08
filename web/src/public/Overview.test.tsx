@@ -1,300 +1,117 @@
+import { create } from "@bufbuild/protobuf";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { PublicService } from "../gen/heron/v1/public_pb";
-import { BillingCycle } from "../gen/heron/v1/types_pb";
+import { PublicService, PublicSnapshotSchema } from "../gen/heron/v1/public_pb";
 import { POLL_MS } from "../lib/poll";
 import { renderWithService } from "../test/harness";
 import { PublicOverview } from "./Overview";
 
-const snapshot = {
+const snapshot = create(PublicSnapshotSchema, {
   now: 1_000n,
   reportIntervalMs: 4000,
+  tags: ["db", "prod", "web"],
   nodes: [
-    {
-      id: 3n, name: "web-1", online: true, lastSeenAt: 998n, sortOrder: 0,
-      facts: { os: "Debian 12", arch: "amd64" },
-      metrics: { cpuPct: 42, memUsed: 512n * 1024n ** 2n, memTotal: 1024n ** 3n, diskUsed: 0n, diskTotal: 10n * 1024n ** 3n,
-        netRxBps: 2048n, netTxBps: 1024n, uptimeS: 90_000n },
-      traffic: { periodRx: 1024n ** 3n, periodTx: 0n },
-    },
-    { id: 4n, name: "db-1", online: false, sortOrder: 1 },
+    { id: 1n, name: "web-1", online: true, lastSeenAt: 998n, sortOrder: 0, country: "JP", tags: ["web", "prod"], metrics: { cpuPct: 42 } },
+    { id: 2n, name: "db-1", online: false, lastSeenAt: 900n, sortOrder: 1, country: "JP", tags: ["db", "prod"], publicRemark: "联通 4837" },
+    { id: 3n, name: "lab-1", online: true, lastSeenAt: 998n, sortOrder: 2, country: "HK", tags: ["DB"] },
+    { id: 4n, name: "bare-1", online: false, sortOrder: 3, country: "" },
   ],
-};
-
+});
 afterEach(() => vi.useRealTimers());
 
-it("每个公开节点一张卡片：名称、在线、系统与架构、读数、运行时长与本周期流量", async () => {
-  renderWithService(PublicService, { getSnapshot: async () => snapshot }, [{ path: "/", Component: PublicOverview }], "/");
-  expect(await screen.findByText("1 / 2 在线")).toBeInTheDocument();
-  const web = within(screen.getByRole("article", { name: "web-1" }));
-  expect(web.getByRole("img", { name: "在线" })).toBeInTheDocument();
-  expect(web.getByRole("link", { name: "web-1" })).toHaveAttribute("href", "/nodes/3");
-  expect(web.getByText("Debian 12 · amd64")).toBeInTheDocument();
-  expect(web.getByRole("meter", { name: "42%" })).toHaveAttribute("aria-valuenow", "42");
-  expect(web.getByRole("meter", { name: "512 MiB / 1.0 GiB" })).toHaveAttribute("aria-valuenow", "50");
-  // 读数为 0 与无读数是两个事实：0 画成空条，不是破折号。
-  expect(web.getByRole("meter", { name: "0 B / 10 GiB" })).toHaveAttribute("aria-valuenow", "0");
-  expect(web.getByRole("group", { name: "下载" })).toHaveTextContent("2.0 KiB/s");
-  expect(web.getByRole("group", { name: "上传" })).toHaveTextContent("1.0 KiB/s");
-  expect(web.getByText("运行 1d 1h")).toBeInTheDocument();
-  expect(web.getByRole("group", { name: "下载" })).toHaveTextContent("本周期 1.0 GiB");
-  expect(web.getByRole("group", { name: "上传" })).toHaveTextContent("本周期 0 B");
-  expect(web.getByText("最近上报 刚刚")).toBeInTheDocument();
-  const db = within(screen.getByRole("article", { name: "db-1" }));
-  expect(db.getByRole("img", { name: "离线" })).toBeInTheDocument();
-  expect(db.getByText("系统未知")).toBeInTheDocument();
-  expect(db.queryAllByRole("meter")).toHaveLength(0);
-  expect(within(db.getByRole("group", { name: "下载" })).getAllByLabelText("无读数")).toHaveLength(2);
-  expect(db.getByText("运行时长未知")).toBeInTheDocument();
-  expect(db.getByText("从未上报")).toBeInTheDocument();
+const shown = () => screen.queryAllByRole("link").filter((a) => a.closest(".tile")).map((a) => a.getAttribute("aria-label"));
+const open = (label: string) => fireEvent.click(within(screen.getByRole("group", { name: label })).getByRole("button", { name: new RegExp(`^${label}`) }));
+const check = (label: string, name: string) => fireEvent.click(within(screen.getByRole("group", { name: label })).getByRole("checkbox", { name }));
+function render(getSnapshot: () => Promise<typeof snapshot> = async () => snapshot) {
+  renderWithService(PublicService, { getSnapshot }, [{ path: "/", Component: PublicOverview }], "/");
+}
+
+it("汇总、筛选行与节点一起出现；地区与标签是带计数的多选下拉", async () => {
+  render();
+  expect(await screen.findByText("2 / 4 在线")).toBeInTheDocument();
+  expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
+  open("地区");
+  expect(within(screen.getByRole("group", { name: "地区" })).getAllByRole("checkbox").map((c) => c.getAttribute("aria-label"))).toEqual(["🇭🇰 香港", "🇯🇵 日本", "未知"]);
+  open("标签");
+  // 标签的集合与顺序取 hub 下发的并集（按折叠键排序），页面不自己汇总、排序。
+  expect(within(screen.getByRole("group", { name: "标签" })).getAllByRole("checkbox").map((c) => c.getAttribute("aria-label"))).toEqual(["db", "prod", "web"]);
 });
 
-it("没有公开节点时说明", async () => {
-  renderWithService(PublicService, { getSnapshot: async () => ({ now: 1n, nodes: [] }) }, [{ path: "/", Component: PublicOverview }], "/");
+it("地区并集、标签交集、搜索与只看在线叠加；计数按筛选后的节点算；滤空时说明", async () => {
+  render();
+  await screen.findByText("2 / 4 在线");
+  open("地区");
+  check("地区", "🇯🇵 日本");
+  check("地区", "未知");
+  expect(shown()).toEqual(["web-1", "db-1", "bare-1"]);
+  expect(screen.getByText("1 / 3 在线")).toBeInTheDocument();
+  open("标签");
+  check("标签", "prod");
+  expect(shown()).toEqual(["web-1", "db-1"]);
+  fireEvent.click(screen.getByRole("button", { name: "只看在线" }));
+  expect(shown()).toEqual(["web-1"]);
+  fireEvent.change(screen.getByRole("searchbox", { name: "搜索节点" }), { target: { value: "4837" } });
+  expect(shown()).toEqual([]);
+  expect(screen.getByText("没有符合筛选条件的节点。")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "只看在线" }));
+  expect(shown()).toEqual(["db-1"]);
+});
+
+it("标签折叠比较：选 db 时 DB 的节点也命中", async () => {
+  render();
+  await screen.findByText("2 / 4 在线");
+  open("标签");
+  check("标签", "db");
+  expect(shown()).toEqual(["lab-1", "db-1"]);
+});
+
+it("被选中的标签或地区从快照消失后从选择集里移除，不留下看不见的过滤", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  let current = snapshot;
+  render(async () => current);
+  await screen.findByText("2 / 4 在线");
+  open("标签");
+  check("标签", "web");
+  open("地区");
+  check("地区", "未知");
+  expect(shown()).toEqual([]);
+  current = { ...snapshot, tags: ["db", "prod"], nodes: snapshot.nodes.map((n) => ({ ...n, tags: n.tags?.filter((t) => t !== "web"), country: n.country || "CA" })) };
+  await act(async () => vi.advanceTimersByTimeAsync(POLL_MS + 100));
+  await waitFor(() => expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]));
+  expect(within(screen.getByRole("group", { name: "标签" })).queryByRole("button", { name: /^移除/ })).toBeNull();
+  expect(within(screen.getByRole("group", { name: "地区" })).queryByRole("button", { name: /^移除/ })).toBeNull();
+});
+
+it("没有任何节点带标签时不画标签下拉；没有公开节点时只说明", async () => {
+  render(async () => ({ ...snapshot, tags: [], nodes: snapshot.nodes.map((n) => ({ ...n, tags: [] })) }));
+  await screen.findByText("2 / 4 在线");
+  expect(screen.queryByRole("group", { name: "标签" })).toBeNull();
+});
+
+it("没有公开节点时说明，不画汇总与筛选行", async () => {
+  render(async () => ({ ...snapshot, now: 1n, nodes: [], tags: [] }));
   expect(await screen.findByText("没有公开的节点。")).toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "筛选" })).toBeNull();
+});
+
+it("视图切换：默认状态墙带着色依据；卡片视图带排序", async () => {
+  render();
+  await screen.findByText("2 / 4 在线");
+  const views = within(screen.getByRole("group", { name: "视图" }));
+  expect(views.getByRole("button", { name: "状态墙" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("combobox", { name: "着色依据" })).toHaveValue("status");
+  expect(screen.queryByRole("combobox", { name: "排序" })).toBeNull();
+  fireEvent.click(views.getByRole("button", { name: "卡片" }));
+  expect(views.getByRole("button", { name: "卡片" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("combobox", { name: "排序" })).toHaveValue("default");
+  expect(screen.queryByRole("combobox", { name: "着色依据" })).toBeNull();
 });
 
 it("按 POLL_MS 轮询快照", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const getSnapshot = vi.fn(async () => snapshot);
-  renderWithService(PublicService, { getSnapshot }, [{ path: "/", Component: PublicOverview }], "/");
-  await screen.findByText("1 / 2 在线");
+  render(getSnapshot);
+  await screen.findByText("2 / 4 在线");
   await act(async () => vi.advanceTimersByTimeAsync(POLL_MS + 100));
   await waitFor(() => expect(getSnapshot.mock.calls.length).toBeGreaterThanOrEqual(2));
-});
-
-it("填了费用与到期的节点卡片多两行，已过期的到期标红，没填的不显示这两行", async () => {
-  // 时钟放在与夹具错开的日期：剩余天数只能来自 hub 下发的 daysLeft，页面按本地日期重算会得出另一个数。
-  vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date(2031, 0, 1));
-  const billed = {
-    now: 1_000n,
-    nodes: [
-      { id: 5n, name: "paid", online: true, sortOrder: 0, billing: { price: "12.50", currency: "USD", billingCycle: BillingCycle.MONTHLY, expiresOn: "2026-10-01", daysLeft: 4 } },
-      { id: 6n, name: "lapsed", online: true, sortOrder: 1, billing: { expiresOn: "2026-09-24", daysLeft: -3 } },
-      { id: 7n, name: "plain", online: true, sortOrder: 2, publicRemark: "联通 4837" },
-    ],
-  };
-  renderWithService(PublicService, { getSnapshot: async () => billed }, [{ path: "/", Component: PublicOverview }], "/");
-  const paid = within(await screen.findByRole("article", { name: "paid" }));
-  expect(paid.getByText("费用").nextElementSibling).toHaveTextContent(/^US\$12\.50 \/ 月$/);
-  const due = paid.getByText("到期").nextElementSibling;
-  expect(due).toHaveTextContent(/^2026-10-01（剩 4 天）$/);
-  expect(due).not.toHaveClass("error");
-  const lapsed = within(screen.getByRole("article", { name: "lapsed" }));
-  expect(lapsed.queryByText("费用")).toBeNull();
-  expect(lapsed.getByText("2026-09-24（已过期 3 天）")).toHaveClass("error");
-  const plain = within(screen.getByRole("article", { name: "plain" }));
-  expect([plain.queryByText("费用"), plain.queryByText("到期")]).toEqual([null, null]);
-  // 公开备注按纯文本渲染：没有链接，有备注的卡片才显示这一行。
-  expect(plain.getByText("联通 4837").tagName).toBe("P");
-  expect(paid.queryByText("联通 4837")).toBeNull();
-});
-
-it("卡片名称旁是国家 / 地区徽章：旗帜由国家码算出，照写国家码；没有国家的卡片不画徽章", async () => {
-  const withCountry = { ...snapshot, nodes: [{ ...snapshot.nodes[0], country: "JP" }, snapshot.nodes[1]] };
-  renderWithService(PublicService, { getSnapshot: async () => withCountry }, [{ path: "/", Component: PublicOverview }], "/");
-  const web = within(await screen.findByRole("article", { name: "web-1" }));
-  expect(web.getByTitle("国家 / 地区 JP")).toHaveTextContent("\u{1F1EF}\u{1F1F5} JP");
-  expect(web.getByRole("heading", { level: 2 })).toHaveTextContent(/^web-1$/);
-  // 徽章在链接之外，不改变链接的可访问名。
-  expect(web.getByRole("link", { name: "web-1" })).toBeInTheDocument();
-  const db = within(screen.getByRole("article", { name: "db-1" }));
-  expect(db.getByRole("heading", { level: 2 })).toHaveTextContent(/^db-1$/);
-});
-
-// tags 是 hub 下发的公开标签并集（按折叠键排序）；lab-1 的 "DB" 在真实数据里不会出现（name_fold 唯一，写法统一），
-// 留着它钉住节点标签与所选标签按折叠比较。
-const tagged = {
-  now: 1_000n,
-  reportIntervalMs: 4000,
-  tags: ["db", "prod", "web"],
-  nodes: [
-    { id: 1n, name: "web-1", online: true, sortOrder: 0, tags: ["web", "prod"] },
-    { id: 2n, name: "db-1", online: false, sortOrder: 1, tags: ["db", "prod"] },
-    { id: 3n, name: "lab-1", online: true, sortOrder: 2, tags: ["DB"] },
-    { id: 4n, name: "bare-1", online: true, sortOrder: 3, tags: [] },
-  ],
-};
-
-// 模拟轮询后某个标签从全部公开节点上摘掉：hub 的快照里它同时从节点与并集里消失。
-const without = (snap: typeof tagged, tag: string) => ({
-  ...snap, tags: snap.tags.filter((t) => t !== tag), nodes: snap.nodes.map((n) => ({ ...n, tags: n.tags.filter((t) => t !== tag) })),
-});
-
-const shown = () => screen.queryAllByRole("article").map((a) => a.getAttribute("aria-label"));
-const chip = (name: string) => within(screen.getByRole("group", { name: "按标签筛选" })).getByRole("button", { name });
-
-function renderTagged(getSnapshot: () => Promise<typeof tagged> = async () => tagged) {
-  renderWithService(PublicService, { getSnapshot }, [{ path: "/", Component: PublicOverview }], "/");
-}
-
-it("标签栏：默认显示全部，按钮照快照的 tags 列出", async () => {
-  renderTagged();
-  await screen.findByText("3 / 4 在线");
-  expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
-  expect(chip("全部")).toHaveAttribute("aria-pressed", "true");
-  expect(within(screen.getByRole("group", { name: "按标签筛选" })).getAllByRole("button").map((b) => b.textContent)).toEqual(["全部", "db", "prod", "web"]);
-});
-
-it("没有任何节点带标签时不画标签栏", async () => {
-  renderWithService(PublicService, { getSnapshot: async () => snapshot }, [{ path: "/", Component: PublicOverview }], "/");
-  await screen.findByText("1 / 2 在线");
-  expect(screen.queryByRole("group", { name: "按标签筛选" })).toBeNull();
-});
-
-it("单击只选这一个；再点同一个回到全部；点「全部」清空", async () => {
-  renderTagged();
-  await screen.findByText("3 / 4 在线");
-  fireEvent.click(chip("prod"));
-  expect(shown()).toEqual(["web-1", "db-1"]);
-  expect(chip("prod")).toHaveAttribute("aria-pressed", "true");
-  expect(chip("全部")).toHaveAttribute("aria-pressed", "false");
-  // 顶部计数按过滤后的节点算。
-  expect(screen.getByText("1 / 2 在线")).toBeInTheDocument();
-  fireEvent.click(chip("web"));
-  expect(shown()).toEqual(["web-1"]);
-  expect(chip("prod")).toHaveAttribute("aria-pressed", "false");
-  fireEvent.click(chip("web"));
-  expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
-  fireEvent.click(chip("db"));
-  fireEvent.click(chip("全部"));
-  expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
-});
-
-it("Shift+单击在其余标签状态不变的前提下翻转被点的一个，多选取交集", async () => {
-  renderTagged();
-  await screen.findByText("3 / 4 在线");
-  fireEvent.click(chip("prod"));
-  fireEvent.click(chip("db"), { shiftKey: true });
-  expect(shown()).toEqual(["db-1"]);
-  expect(chip("prod")).toHaveAttribute("aria-pressed", "true");
-  expect(chip("db")).toHaveAttribute("aria-pressed", "true");
-  fireEvent.click(chip("prod"), { shiftKey: true });
-  // 只剩 db：DB 与 db 折叠后是同一个标签，两个节点都命中。
-  expect(shown()).toEqual(["db-1", "lab-1"]);
-  fireEvent.click(chip("db"), { shiftKey: true });
-  expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
-});
-
-it("过滤后没有节点时给出说明，标签栏仍在", async () => {
-  renderTagged();
-  await screen.findByText("3 / 4 在线");
-  fireEvent.click(chip("web"));
-  fireEvent.click(chip("db"), { shiftKey: true });
-  expect(shown()).toEqual([]);
-  expect(screen.getByText("没有符合筛选条件的节点。")).toBeInTheDocument();
-  expect(chip("web")).toBeInTheDocument();
-});
-
-it("被选中的标签从快照里消失后回到显示全部，而不是留下看不见的过滤", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  let current: typeof tagged = tagged;
-  renderTagged(async () => current);
-  await screen.findByText("3 / 4 在线");
-  fireEvent.click(chip("web"));
-  expect(shown()).toEqual(["web-1"]);
-  current = without(tagged, "web");
-  await act(async () => vi.advanceTimersByTimeAsync(POLL_MS + 100));
-  await waitFor(() => expect(screen.queryByRole("button", { name: "web" })).toBeNull());
-  expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
-  expect(chip("全部")).toHaveAttribute("aria-pressed", "true");
-});
-
-const due = (daysLeft?: number) => ({ price: "", currency: "", expiresOn: daysLeft === undefined ? "" : "2030-07-01", daysLeft });
-const billed = {
-  now: 1_000n,
-  reportIntervalMs: 4000,
-  tags: ["dev", "prod"],
-  nodes: [
-    { id: 1n, name: "a-on-far", online: true, sortOrder: 0, tags: ["prod"], billing: due(30) },
-    { id: 2n, name: "b-off-soon", online: false, sortOrder: 1, tags: ["prod"], billing: due(5) },
-    { id: 3n, name: "c-off-none", online: false, sortOrder: 2, tags: ["dev"] },
-    { id: 4n, name: "d-off-gone", online: false, sortOrder: 3, tags: ["dev"], billing: due(-3) },
-    { id: 5n, name: "e-on-soon", online: true, sortOrder: 4, tags: ["prod"], billing: due(5) },
-  ],
-};
-const renderBilled = () => renderWithService(PublicService, { getSnapshot: async () => billed }, [{ path: "/", Component: PublicOverview }], "/");
-const toggle = (name: string) => screen.getByRole("button", { name });
-
-it("仅离线：只留离线节点，计数按显示的节点算；再点一次恢复全部", async () => {
-  renderBilled();
-  await screen.findByText("2 / 5 在线");
-  expect(toggle("仅离线")).toHaveAttribute("aria-pressed", "false");
-  fireEvent.click(toggle("仅离线"));
-  expect(toggle("仅离线")).toHaveAttribute("aria-pressed", "true");
-  expect(shown()).toEqual(["b-off-soon", "c-off-none", "d-off-gone"]);
-  expect(screen.getByText("0 / 3 在线")).toBeInTheDocument();
-  fireEvent.click(toggle("仅离线"));
-  expect(shown()).toEqual(["a-on-far", "b-off-soon", "c-off-none", "d-off-gone", "e-on-soon"]);
-});
-
-it("没有任何标签时开关照常可用", async () => {
-  renderWithService(PublicService, { getSnapshot: async () => snapshot }, [{ path: "/", Component: PublicOverview }], "/");
-  await screen.findByText("1 / 2 在线");
-  fireEvent.click(toggle("仅离线"));
-  expect(shown()).toEqual(["db-1"]);
-});
-
-it("按到期时间排序：到期早的在前，已过期最前，没有到期日最后，同到期保持面板顺序；关掉恢复面板顺序", async () => {
-  renderBilled();
-  await screen.findByText("2 / 5 在线");
-  expect(toggle("按到期时间排序")).toHaveAttribute("aria-pressed", "false");
-  fireEvent.click(toggle("按到期时间排序"));
-  expect(toggle("按到期时间排序")).toHaveAttribute("aria-pressed", "true");
-  expect(shown()).toEqual(["d-off-gone", "b-off-soon", "e-on-soon", "a-on-far", "c-off-none"]);
-  fireEvent.click(toggle("按到期时间排序"));
-  expect(shown()).toEqual(["a-on-far", "b-off-soon", "c-off-none", "d-off-gone", "e-on-soon"]);
-});
-
-it("标签、仅离线与排序叠加：先取交集再排序", async () => {
-  renderBilled();
-  await screen.findByText("2 / 5 在线");
-  fireEvent.click(chip("prod"));
-  fireEvent.click(toggle("仅离线"));
-  expect(shown()).toEqual(["b-off-soon"]);
-  fireEvent.click(chip("prod"));
-  fireEvent.click(chip("dev"), { shiftKey: true });
-  // 当前恰好只选 prod，再点一次清空回到全部；Shift+dev 在空选择上加入 dev，此刻只选 dev。
-  expect(shown()).toEqual(["c-off-none", "d-off-gone"]);
-  fireEvent.click(toggle("按到期时间排序"));
-  expect(shown()).toEqual(["d-off-gone", "c-off-none"]);
-  fireEvent.click(toggle("仅离线"));
-  expect(shown()).toEqual(["d-off-gone", "c-off-none"]);
-  fireEvent.click(chip("dev"), { shiftKey: true });
-  expect(shown()).toEqual(["d-off-gone", "b-off-soon", "e-on-soon", "a-on-far", "c-off-none"]);
-});
-
-it("筛选条件把节点滤空时给出说明", async () => {
-  renderBilled();
-  await screen.findByText("2 / 5 在线");
-  fireEvent.click(chip("prod"));
-  fireEvent.click(toggle("仅离线"));
-  fireEvent.click(chip("dev"), { shiftKey: true });
-  expect(shown()).toEqual([]);
-  expect(screen.getByText("没有符合筛选条件的节点。")).toBeInTheDocument();
-});
-
-it("标签栏按 hub 给的顺序排列，页面不自己重排", async () => {
-  // hub 按折叠键排序（"ALPHA" < "ZETA" < "_X"）；按码元排会变成 Zeta、_x、alpha。
-  const snap = { now: 1n, tags: ["alpha", "Zeta", "_x"], nodes: [{ id: 1n, name: "n", online: true, sortOrder: 0, tags: ["Zeta", "_x", "alpha"] }] };
-  renderWithService(PublicService, { getSnapshot: async () => snap }, [{ path: "/", Component: PublicOverview }], "/");
-  await screen.findByText("1 / 1 在线");
-  expect(within(screen.getByRole("group", { name: "按标签筛选" })).getAllByRole("button").map((b) => b.textContent)).toEqual(["全部", "alpha", "Zeta", "_x"]);
-});
-
-it("多选时部分标签从快照里消失：只按仍在的标签过滤，不回到全部", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  let current: typeof tagged = tagged;
-  renderTagged(async () => current);
-  await screen.findByText("3 / 4 在线");
-  fireEvent.click(chip("prod"));
-  fireEvent.click(chip("web"), { shiftKey: true });
-  expect(shown()).toEqual(["web-1"]);
-  current = without(tagged, "web");
-  await act(async () => vi.advanceTimersByTimeAsync(POLL_MS + 100));
-  await waitFor(() => expect(screen.queryByRole("button", { name: "web" })).toBeNull());
-  expect(shown()).toEqual(["web-1", "db-1"]);
-  expect(chip("prod")).toHaveAttribute("aria-pressed", "true");
-  expect(chip("全部")).toHaveAttribute("aria-pressed", "false");
 });

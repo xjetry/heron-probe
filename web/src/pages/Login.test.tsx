@@ -1,5 +1,5 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithAdmin } from "../test/harness";
 import { Login } from "./Login";
@@ -19,6 +19,14 @@ function renderLogin(login: (req: { password: string }) => Promise<Record<string
 }
 
 describe("Login", () => {
+  it("登录按钮是主按钮，Passkey 入口是次级按钮，两者都在表单内", () => {
+    renderWithAdmin({}, [{ path: "/login", Component: Login }], "/login");
+    const form = screen.getByRole("button", { name: "登录" }).closest("form")!;
+    expect(form).toHaveClass("login-card");
+    expect(screen.getByRole("button", { name: "登录" })).toHaveClass("primary-button");
+    expect(within(form).getByRole("button", { name: "使用 Passkey 登录" })).toHaveClass("passkey-button");
+  });
+
   it("登录页显示 Heron 品牌与主机监控定位", () => {
     renderLogin(vi.fn(async () => ({})));
     expect(screen.getByRole("heading", { name: "Heron" })).toBeInTheDocument();

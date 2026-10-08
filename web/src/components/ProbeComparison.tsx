@@ -5,15 +5,14 @@ import { useEffect, useMemo, useState } from "react";
 import { errorText } from "../api/auth";
 import type { ListProbeComparisonNodesRequestSchema, ListProbeComparisonNodesResponseSchema, QueryProbeComparisonRequestSchema, QueryProbeComparisonResponseSchema } from "../gen/heron/v1/query_pb";
 import { ProbeKind } from "../gen/heron/v1/types_pb";
-import { assembleComparison, chunkNodeIds, type ComparisonChart, type ComparisonChunk } from "../lib/probeComparison";
+import { formatUnit, percent } from "../lib/format";
+import { assembleComparison, chunkNodeIds, summarizeComparison, sortRows, type SortKey, type ComparisonChunk } from "../lib/probeComparison";
 import { kindLabel } from "../lib/probes";
 import { Chart } from "./Chart";
 import { HISTORY_MAX_POINTS, RangeButtons, RangeStatus, useTimeWindow } from "./History";
 
 // 同时在飞的分块数。这不是块的大小：块的大小只来自 List 的 max_nodes_per_query。
 const MAX_IN_FLIGHT_CHUNKS = 2;
-// 短名单直接展开；再长就折叠，避免几十个节点把图撑出屏幕。
-const FOLD_AT = 8;
 
 const LIMIT_ERROR = "对比协议错误：服务端返回的分块上限无效。";
 const ALIGN_ERROR = "对比协议错误：分块结果无法对齐成一张图。";
@@ -80,33 +79,9 @@ async function queryChunks(
   return { chunks: results, level: results[0]?.level ?? "" };
 }
 
-function NameList({ title, names }: { title: string; names: readonly string[] }) {
-  if (names.length === 0) return null;
-  const summary = `${title}（${names.length} 个）`;
-  const items = (
-    <ul>
-      {names.map((name, i) => <li key={`${i}:${name}`}>{name}</li>)}
-    </ul>
-  );
-  if (names.length <= FOLD_AT) {
-    return <div className="compare-nodes"><p className="muted">{summary}</p>{items}</div>;
-  }
-  return <details className="compare-nodes"><summary>{summary}</summary>{items}</details>;
-}
-
-function ChartBlock({ title, unit, chart }: { title: string; unit: string; chart: ComparisonChart }) {
-  return (
-    <div className="card">
-      <h2>{title}</h2>
-      {chart.labels.length > 0 && <Chart data={chart.data} labels={chart.labels} unit={unit} />}
-      <NameList title="该图窗口内没有读数的节点" names={chart.missing} />
-    </div>
-  );
-}
-
-function taskHeading(taskId: bigint, hold: Hold | null): string {
-  if (!hold || hold.kind === ProbeKind.UNSPECIFIED || hold.target === "") return `任务 #${taskId}`;
-  return `${kindLabel(hold.kind)} ${hold.target}`;
+function TaskHeading({ taskId, hold }: { taskId: bigint; hold: Hold | null }) {
+  if (!hold || hold.kind === ProbeKind.UNSPECIFIED || hold.target === "") return <h1>任务 #{String(taskId)}</h1>;
+  return <h1><span className="kind-badge">{kindLabel(hold.kind)}</span> {hold.target}</h1>;
 }
 
 // 管理端与公开页同一份。节点名由调用方给：管理端来自 ListNodes，公开端来自 GetSnapshot。
@@ -122,6 +97,11 @@ export function ProbeComparison({ taskId, methods, nodes, now }: { taskId: bigin
   const [notFound, setNotFound] = useState(false);
   const [updating, setUpdating] = useState(true);
   const [attempt, setAttempt] = useState(0);
+  // 显隐与悬停按节点 id 记：线的位置随刷新变化（见 ComparisonChart.ids 的说明），索引只在交给 Chart 时换算。
+  const [hiddenIds, setHiddenIds] = useState<ReadonlySet<bigint>>(() => new Set());
+  const [focusedId, setFocusedId] = useState<bigint | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("label");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   // 换任务不能沿用上一张图：那是另一个任务的节点。换窗口则留着，直到新窗口自己的块到齐。
   if (holdTask !== taskId) {
     setHoldTask(taskId);
@@ -129,6 +109,8 @@ export function ProbeComparison({ taskId, methods, nodes, now }: { taskId: bigin
     setError(null);
     setNotFound(false);
     setUpdating(true);
+    setHiddenIds(new Set());
+    setFocusedId(null);
   }
   const shown = holdTask === taskId ? hold : null;
   const names = useMemo(() => new Map(nodes.map((node) => [node.id, node.name])), [nodes]);
@@ -136,6 +118,7 @@ export function ProbeComparison({ taskId, methods, nodes, now }: { taskId: bigin
     () => (shown ? assembleComparison(shown.nodeIds, names, shown.chunks, shown.from, shown.to) : null),
     [shown, names],
   );
+  const rows = useMemo(() => (shown ? sortRows(summarizeComparison(shown.nodeIds, names, shown.chunks), sortKey, sortDir) : []), [shown, names, sortKey, sortDir]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -215,12 +198,32 @@ export function ProbeComparison({ taskId, methods, nodes, now }: { taskId: bigin
   }, [attempt, from, methods.list, methods.query, rangeLabel, taskId, to, transport]);
 
   const stale = shown !== null && shown.rangeLabel !== rangeLabel;
+  const lineIds = view?.rtt.ids ?? [];
+  const lineOf = new Map(lineIds.map((id, i) => [id, i]));
+  const hiddenLines = new Set(lineIds.flatMap((id, i) => (hiddenIds.has(id) ? [i] : [])));
+  const toggleHidden = (id: bigint) => {
+    const next = new Set(hiddenIds);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setHiddenIds(next);
+  };
+  // Chart 只会在图例上改显隐（这里图例关着），仍按同一口径换算回 id；当前没有线的节点的偏好原样保留。
+  const onHiddenLines = (next: ReadonlySet<number>) =>
+    setHiddenIds(new Set([...[...hiddenIds].filter((id) => !lineOf.has(id)), ...lineIds.filter((_, i) => next.has(i))]));
+  const sortButton = (key: SortKey, text: string) => (
+    <th aria-sort={sortKey === key ? (sortDir === "asc" ? "ascending" : "descending") : "none"}>
+      <button type="button" className="link" onClick={() => {
+        if (sortKey === key) setSortDir(sortDir === "asc" ? "desc" : "asc");
+        else { setSortKey(key); setSortDir("asc"); }
+      }}>{text}</button>
+    </th>
+  );
   return (
-    <section aria-busy={updating}>
+    <section className="compare" aria-busy={updating}>
       <header className="row detail-header">
-        <h1>{taskHeading(taskId, shown)}</h1>
+        <TaskHeading taskId={taskId} hold={shown} />
+        {shown && <span className="muted">{shown.nodeIds.length} 个节点执行此探测</span>}
         <RangeButtons range={range} setRange={setRange} />
-        <RangeStatus shown={shown} stale={stale} rangeLabel={rangeLabel} updating={updating} />
+        <RangeStatus shown={shown} stale={stale} rangeLabel={rangeLabel} updating={updating} note="均值是时间桶内成功探测的 RTT 均值；表格按整个窗口汇总。" />
       </header>
       {error && (
         <p role="alert" className="error">
@@ -231,11 +234,35 @@ export function ProbeComparison({ taskId, methods, nodes, now }: { taskId: bigin
       {notFound && !updating && <p className="muted">{NO_COMPARISON_NODES}</p>}
       {view?.complete && !notFound && (
         <>
-          <div className="grid">
-            <ChartBlock title="丢包率" unit="percent" chart={view.loss} />
-            <ChartBlock title="RTT 均值" unit="ms" chart={view.rtt} />
+          <div className="card compare-chart">
+            {view.rtt.labels.length > 0
+              ? <Chart data={view.rtt.data} labels={view.rtt.labels} unit="ms" height={280} legend={false} hidden={hiddenLines} onHiddenChange={onHiddenLines} onFocus={(i) => setFocusedId(i === null ? null : lineIds[i] ?? null)} />
+              : <p className="muted">窗口内没有读数</p>}
           </div>
-          <NameList title="已不可见的节点" names={view.unavailable} />
+          <table className="compare-table">
+            <thead><tr>
+              <th>显示</th>
+              {sortButton("label", "节点")}{sortButton("mean", "均值")}{sortButton("min", "最小")}{sortButton("max", "最大")}{sortButton("lossPercent", "丢包率")}{sortButton("errors", "错误数")}
+            </tr></thead>
+            <tbody>
+              {rows.map((row) => {
+                // assembleComparison 只给有 RTT 读数的节点分配线；其他行没有可切换的线。
+                const line = lineOf.get(row.id);
+                return (
+                  <tr key={String(row.id)} aria-label={row.label} data-focused={line !== undefined && focusedId === row.id ? "true" : undefined} className={row.unavailable ? "muted" : undefined}>
+                    <td><input type="checkbox" aria-label={`显示 ${row.label}`} disabled={line === undefined} checked={line !== undefined && !hiddenIds.has(row.id)} onChange={() => { if (line !== undefined) toggleHidden(row.id); }} /></td>
+                    <td>{row.label}</td>
+                    <td className="num">{row.mean === null ? "–" : formatUnit(row.mean, "ms")}</td>
+                    <td className="num">{row.min === null ? "–" : formatUnit(row.min, "ms")}</td>
+                    <td className="num">{row.max === null ? "–" : formatUnit(row.max, "ms")}</td>
+                    <td className="num">{row.lossPercent === null ? "–" : <span data-level={row.lossPercent > 1 ? "attention" : undefined}>{percent(row.lossPercent)}</span>}</td>
+                    <td className="num">{row.errors}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="muted">丢包率 = 超时数 ÷ 发送数；错误不计入丢包。</p>
         </>
       )}
     </section>

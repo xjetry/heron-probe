@@ -1,29 +1,19 @@
 import { useQuery } from "@connectrpc/connect-query";
 import { Link, useParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
+import { NowGrid } from "../components/NowGrid";
 import { CountryBadge } from "../components/CountryBadge";
-import { HistoryCharts, RangePicker, useHistory, type HistoryMethods, type HistoryState } from "../components/History";
+import { MetricCharts, ProbeTaskCharts, RangePicker, useHistory, type HistoryMethods } from "../components/History";
+import { StatusBadge } from "../components/StatusBadge";
 import { PublicService, type PublicNode } from "../gen/heron/v1/public_pb";
-import { ProbeKind } from "../gen/heron/v1/types_pb";
-import { expired, expiryText, priceText } from "../lib/billing";
+import { ago } from "../lib/format";
 import { POLL_MS } from "../lib/poll";
-import { seriesLabels } from "../lib/probes";
+import { nodeStatus } from "../lib/status";
 
 const PUBLIC_HISTORY: HistoryMethods = { queryMetrics: PublicService.method.queryMetrics, queryProbes: PublicService.method.queryProbes };
 
-// 只给带来了种类与目标的任务入口。未标注的序列是已删除或已撤下的任务，对比 List 对它们没有可画的节点。
-function ProbeLinks({ history }: { history: HistoryState }) {
-  const series = history.probes.data?.series ?? [];
-  const labels = seriesLabels(series);
-  const links = series.flatMap((seriesItem, i) => seriesItem.kind === ProbeKind.UNSPECIFIED ? [] : [{ id: seriesItem.taskId, label: labels[i] }]);
-  if (links.length === 0) return null;
-  return (
-    <nav aria-label="各节点对比" className="compare-links">
-      {links.map((link) => <Link key={String(link.id)} to={`/probes/${link.id}`}>各节点对比：{link.label}</Link>)}
-    </nav>
-  );
-}
-
+// 节点页（设计 §3.2）：首屏是实时状态头与六个现值格，其下时间窗口、指标图、每任务一张 RTT 图、系统信息卡。
+// 公开页不出现 IP、主机名、内核、agent 版本：PublicFacts 已 reserved 这些字段，前端不另有来源。
 export function NodePage() {
   const { id } = useParams();
   const validId = /^\d+$/.test(id ?? "");
@@ -41,30 +31,34 @@ export function NodePage() {
 
 function NodeContent({ node, now, error }: { node: PublicNode; now: number; error: unknown }) {
   const history = useHistory(PUBLIC_HISTORY, node.id, now);
-  const price = priceText(node.billing);
-  const expiry = expiryText(node.billing);
+  const m = node.metrics;
+  const f = node.facts;
+  const daysLeft = node.billing?.daysLeft;
   return (
-    <section>
+    <section className="node-page">
       {errorBanner(error, history.metrics.error, history.probes.error)}
+      <header className="node-head">
+        <div className="node-head-title">
+          <h1>{node.name}</h1>
+          {node.country && <CountryBadge code={node.country} />}
+          <StatusBadge status={nodeStatus(node)} detail={node.lastSeenAt !== undefined ? `最近上报 ${ago(node.lastSeenAt, now)}` : undefined} />
+        </div>
+        {node.publicRemark && <p className="node-remark">{node.publicRemark}</p>}
+        {node.tags.length > 0 && <ul className="tag-chips">{node.tags.map((tag) => <li key={tag} className="chip">{tag}</li>)}</ul>}
+        <NowGrid metrics={m} daysLeft={daysLeft} />
+      </header>
       <header className="row detail-header">
-        <h1>{node.name}{node.country && <>{" "}<CountryBadge code={node.country} /></>}</h1>
         <RangePicker history={history} />
       </header>
-      {node.publicRemark && <p className="node-remark">{node.publicRemark}</p>}
-      <HistoryCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。</p>} probeFooter={<ProbeLinks history={history} />} />
-      {/* 静态信息卡：主机信息从未上报时缺失，费用与到期填了才显示（§10），三者都没有时不画这张卡。 */}
-      {(node.facts || price || expiry) && (
+      <MetricCharts history={history} />
+      <ProbeTaskCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。</p>} titleLink={(taskId, title) => <Link to={`/probes/${taskId}`}>{title}</Link>} />
+      {/* 系统信息卡：主机信息从未上报时缺失，整张不画。 */}
+      {f && (
         <dl className="card facts">
-          {node.facts && (
-            <>
-              <dt>系统</dt><dd>{node.facts.os}</dd>
-              <dt>架构</dt><dd>{node.facts.arch}</dd>
-              <dt>CPU</dt><dd>{node.facts.cpuModel} × {node.facts.cpuCores}</dd>
-              <dt>虚拟化</dt><dd>{node.facts.virtualization || "无 / 未知"}</dd>
-            </>
-          )}
-          {price && <><dt>费用</dt><dd>{price}</dd></>}
-          {expiry && <><dt>到期</dt><dd className={expired(node.billing) ? "error" : undefined}>{expiry}</dd></>}
+          <dt>系统</dt><dd>{f.os}</dd>
+          <dt>架构</dt><dd>{f.arch}</dd>
+          <dt>CPU</dt><dd>{f.cpuModel} × {f.cpuCores}</dd>
+          <dt>虚拟化</dt><dd>{f.virtualization || "无 / 未知"}</dd>
         </dl>
       )}
     </section>

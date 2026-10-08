@@ -6,15 +6,113 @@ import { ConnectError, Code } from "@connectrpc/connect";
 import { AdminService, AlertEventSchema, ChannelKind, DeliveryFailure, ListNodesResponseSchema, ListNotifyChannelsResponseSchema, type ListAlertEventsRequest } from "../gen/heron/v1/admin_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { AlertEvents } from "./AlertEvents";
+import { EventFeed, useAlertEvents, filtersFromParams, paramsWithFilters, matchesFilters } from "../components/EventFeed";
 
 const nodes = create(ListNodesResponseSchema, { nodes: [{ id: 1n, name: "东京" }, { id: 2n, name: "法兰克福" }] });
 const channels = create(ListNotifyChannelsResponseSchema, { channels: [{ id: 5n, name: "hook", kind: ChannelKind.WEBHOOK }] });
 const event = (id: bigint, nodeId = 1n) => create(AlertEventSchema, { id, nodeId, ruleId: 7n, transition: "firing", at: 1_700_000_000n, summary: `事件 ${id}` });
 const routes = [{ path: "/events", Component: AlertEvents }];
 const render = (impl: AdminImpl, path = "/events") =>
-  renderWithAdmin({ listNodes: async () => nodes, listNotifyChannels: async () => channels, ...impl }, routes, path);
+  renderWithAdmin({ listNodes: async () => nodes, listNotifyChannels: async () => channels, listAlertRules: async () => ({}), ...impl }, routes, path);
 
-it("零节点的系统事件显示系统与登录、备份结果", async () => {
+it("规则、变化与日期筛选只作用于已加载的行，筛空仍可加载更早，URL 可清除", async () => {
+  let requests = 0;
+  const events = [
+    { ...event(200n), ruleId: 1n, summary: "A 触发", value: 95.5 },
+    { ...event(199n), ruleId: 2n, transition: "recovered", summary: "B 恢复", value: 10 },
+    ...Array.from({ length: 98 }, (_, i) => ({ ...event(BigInt(198 - i)), ruleId: 2n })),
+  ];
+  const { router } = render({
+    listAlertRules: async () => ({ rules: [{ id: 1n, name: "cpu" }, { id: 2n, name: "mem" }] }),
+    listAlertEvents: async () => { requests++; return { events }; },
+  }, "/events?transition=bogus");
+  await screen.findByText("A 触发");
+  expect(screen.getAllByRole("columnheader").map((c) => c.textContent)).toEqual(["时间", "节点", "规则", "变化", "观测值", "投递"]);
+  expect(screen.getByRole("combobox", { name: "变化" })).toHaveValue("");
+  fireEvent.change(screen.getByRole("combobox", { name: "规则" }), { target: { value: "1" } });
+  expect(router.state.location.search).toBe("?rule=1");
+  expect(screen.getAllByRole("row")).toHaveLength(2);
+  expect(within(screen.getAllByRole("row")[1]).getAllByRole("cell").map((c) => c.textContent)).toEqual([expect.any(String), "东京", "cpu（#1）", "触发A 触发", "95.5", "未配置渠道"]);
+  expect(screen.getByText("A 触发").tagName).toBe("SMALL");
+  fireEvent.change(screen.getByRole("combobox", { name: "变化" }), { target: { value: "recovered" } });
+  expect(screen.getByRole("status")).toHaveTextContent("已加载的 100 条里没有匹配的事件");
+  expect(screen.getByRole("button", { name: "加载更早的事件" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+  expect(router.state.location.search).toBe("");
+  expect(screen.getAllByRole("row")).toHaveLength(101);
+  fireEvent.change(screen.getByLabelText("起始日期"), { target: { value: "2099-01-01" } });
+  expect(router.state.location.search).toBe("?from=2099-01-01");
+  expect(screen.getByRole("status")).toHaveTextContent("已加载的 100 条里没有匹配的事件");
+  fireEvent.change(screen.getByLabelText("起始日期"), { target: { value: "" } });
+  fireEvent.change(screen.getByLabelText("结束日期"), { target: { value: "2000-01-01" } });
+  expect(router.state.location.search).toBe("?to=2000-01-01");
+  expect(screen.getByRole("status")).toHaveTextContent("已加载的 100 条里没有匹配的事件");
+  await act(async () => {});
+  expect(requests).toBe(1);
+});
+
+it("事件筛选参数忽略非法值，回写保留节点与其它参数", () => {
+  expect(filtersFromParams(new URLSearchParams("rule=-1&transition=toString&from=2025-02-30&to=nope"))).toEqual({ ruleId: null, transition: null, from: "", to: "" });
+  const filters = { ruleId: 2n, transition: "firing", from: "2024-02-29", to: "2024-03-01" };
+  const params = paramsWithFilters(new URLSearchParams("node=7&extra=x"), filters);
+  expect(params.toString()).toBe("node=7&extra=x&rule=2&transition=firing&from=2024-02-29&to=2024-03-01");
+  expect(filtersFromParams(params)).toEqual(filters);
+  expect(paramsWithFilters(params, { ruleId: null, transition: null, from: "", to: "" }).toString()).toBe("node=7&extra=x");
+});
+
+it.each(["2025-03-09", "2025-11-02"])("本地日期 %s 包含整天，不包含前日与次日", (day) => {
+  const start = new Date(`${day}T00:00:00`);
+  const next = new Date(start);
+  next.setDate(next.getDate() + 1);
+  const filters = { ruleId: null, transition: null, from: day, to: day };
+  const at = [start.getTime() / 1000 - 1, start.getTime() / 1000, next.getTime() / 1000 - 1, next.getTime() / 1000];
+  expect(at.map((seconds) => matchesFilters({ ...event(1n), at: BigInt(seconds) }, filters))).toEqual([false, true, true, false]);
+});
+
+it("节点筛选保留客户端筛选，清除筛选同时清节点", async () => {
+  const { router } = render({ listAlertEvents: async () => ({ events: [] }) }, "/events?rule=7&transition=firing&from=2025-01-01");
+  await screen.findByText("没有告警事件。");
+  fireEvent.change(screen.getByLabelText("节点"), { target: { value: "2" } });
+  await screen.findByText("没有告警事件。");
+  expect(router.state.location.search).toBe("?rule=7&transition=firing&from=2025-01-01&node=2");
+  fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+  expect(router.state.location.search).toBe("");
+});
+
+it("四个查询错误汇总去重，规则名失败不阻断已有事件", async () => {
+  let fail = false;
+  const failing = (text: string) => { if (fail) throw new ConnectError(text, Code.Unavailable); };
+  const { queryClient } = render({
+    listNodes: async () => { failing("hub unreachable"); return nodes; },
+    listNotifyChannels: async () => { failing("hub unreachable"); return channels; },
+    listAlertEvents: async () => { failing("hub unreachable"); return { events: [event(1n)] }; },
+    listAlertRules: async () => { failing("rules unavailable"); return {}; },
+  });
+  await screen.findByText("事件 1");
+  fail = true;
+  await act(async () => { await queryClient.refetchQueries(); });
+  await screen.findAllByRole("alert");
+  expect(screen.getAllByRole("alert").map((a) => a.textContent)).toEqual(["hub unreachable", "rules unavailable"]);
+  expect(screen.getByRole("cell", { name: "规则 #7" })).toBeInTheDocument();
+});
+
+it("事件组件省略规则名与筛选时显示全部行，系统零值为空而触发零值保留", async () => {
+  function Feed() {
+    const events = useAlertEvents(0n);
+    return <EventFeed events={events} nodeName={() => "节点"} channelName={() => "渠道"} />;
+  }
+  renderWithAdmin({ listAlertEvents: async () => ({ events: [
+    event(1n),
+    { ...event(2n, 0n), ruleId: 0n, transition: "login_success", value: 0 },
+    { ...event(3n, 0n), ruleId: 0n, transition: "login_success", value: 5 },
+  ] }) }, [{ path: "/feed", Component: Feed }], "/feed");
+  await screen.findByText("事件 1");
+  expect(screen.getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent).filter((_, i) => [1, 2, 4].includes(i)))).toEqual([
+    ["节点", "规则 #7", "0"], ["—", "—", "—"], ["—", "—", "5"],
+  ]);
+});
+
+it("零节点的系统事件显示空节点与规则及登录、备份结果", async () => {
   render({ listAlertEvents: async () => ({ events: [
     { id: 1n, ruleId: 0n, nodeId: 0n, transition: "login_success", summary: "密码登录" },
     { id: 2n, ruleId: 0n, nodeId: 0n, transition: "login_locked", summary: "密码锁定" },
@@ -22,11 +120,11 @@ it("零节点的系统事件显示系统与登录、备份结果", async () => {
     { id: 4n, ruleId: 0n, nodeId: 0n, transition: "backup_recovered", summary: "config 层备份已恢复" },
   ] }) });
   await screen.findByText("密码登录");
-  expect(screen.getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").slice(1, 3).map((c) => c.textContent))).toEqual([
-    ["系统", "登录成功"], ["系统", "登录锁定"], ["系统", "备份失败"], ["系统", "备份恢复"],
+  expect(screen.getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").slice(1, 4).map((c) => c.textContent))).toEqual([
+    ["—", "—", "登录成功密码登录"], ["—", "—", "登录锁定密码锁定"], ["—", "—", "备份失败config 层备份失败"], ["—", "—", "备份恢复config 层备份已恢复"],
   ]);
   // 登录锁定是有人在猜密码、备份失败是 RPO 在变长，与规则触发一样标红；登录成功与备份恢复不标。
-  expect(["登录锁定", "登录成功", "备份失败", "备份恢复"].map((name) => screen.getByRole("cell", { name }).className)).toEqual(["error", "", "error", ""]);
+  expect(["登录锁定", "登录成功", "备份失败", "备份恢复"].map((name) => screen.getByRole("cell", { name: new RegExp(`^${name}`) }).className)).toEqual(["error", "", "error", ""]);
 });
 
 it("一页满 100 条时可加载更早的事件，从本页最小 id 之前继续", async () => {
@@ -201,8 +299,8 @@ it("变化标签与节点名回退", async () => {
     create(AlertEventSchema, { id: 1n, nodeId: 9n, ruleId: 7n, transition: "firing", at: 1_700_000_000n, summary: "触发的事件" }),
     create(AlertEventSchema, { id: 2n, nodeId: 1n, ruleId: 7n, transition: "recovered", at: 1_700_000_000n, summary: "恢复的事件" }),
   ] }) });
-  expect(await screen.findByRole("cell", { name: "恢复" })).toBeInTheDocument();
-  expect(screen.getByRole("cell", { name: "触发" })).toHaveClass("error");
+  expect(await screen.findByRole("cell", { name: /^恢复\s*恢复的事件$/ })).toBeInTheDocument();
+  expect(screen.getByRole("cell", { name: /^触发\s*触发的事件$/ })).toHaveClass("error");
   expect(screen.getByRole("cell", { name: "节点 #9" })).toBeInTheDocument();
 });
 

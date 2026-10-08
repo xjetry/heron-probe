@@ -1,6 +1,8 @@
 import { AddressDetectionState, type AddressDetection, type NetworkInfo } from "../gen/heron/v1/types_pb";
 import { CopyableText } from "./CopyableText";
 
+export const addressText = (d: AddressDetection | undefined): string => d?.state === AddressDetectionState.AVAILABLE ? d.address : d?.state === AddressDetectionState.FAILED ? "探测失败" : d?.state === AddressDetectionState.UNSUPPORTED ? "不支持" : "—";
+
 function Address({ family, detection, detailed }: { family: string; detection?: AddressDetection; detailed: boolean }) {
   const state = detection?.state;
   const available = state === AddressDetectionState.AVAILABLE && !!detection?.address;

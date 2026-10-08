@@ -12,7 +12,55 @@ const nodes = create(ListNodesResponseSchema, { nodes: [{ id: 1n, name: "东京"
 const tasks = create(ListProbeTasksResponseSchema, { version: 9n, tasks: [
   { task: { id: 3n, kind: ProbeKind.TCP, target: "1.1.1.1:443", intervalS: 30, timeoutMs: 1000 }, nodeIds: [1n, 2n] },
 ] });
+async function openCreate() {
+  fireEvent.click(await screen.findByRole("button", { name: "新建探测任务" }));
+  return screen.getByRole("form", { name: "新建探测任务" });
+}
+async function openRowAction(label: string, action: string) {
+  fireEvent.click(await screen.findByRole("button", { name: `更多操作 ${label}` }));
+  fireEvent.click(screen.getByRole("menuitem", { name: `${action} ${label}` }));
+}
+
 const routes = [{ path: "/probes", Component: ProbeTasks }];
+
+it("编辑抽屉打开时列表刷新把这条任务删掉：抽屉仍在，保存被 hub 拒绝时原文显示在抽屉内", async () => {
+  let gone = false;
+  const { queryClient } = renderWithAdmin({
+    listNodes: async () => nodes,
+    listProbeTasks: async () => ({ tasks: gone ? [] : tasks.tasks }),
+    saveProbeTask: async () => { throw new ConnectError("task 3 not found", Code.NotFound); },
+  }, routes, "/probes");
+  await openRowAction("1.1.1.1:443（#3）", "编辑");
+  const dialog = screen.getByRole("dialog");
+  fireEvent.change(within(dialog).getByLabelText("目标"), { target: { value: "draft:443" } });
+  gone = true;
+  await act(async () => { await queryClient.invalidateQueries(); });
+  await screen.findByText("还没有探测任务。");
+  expect(screen.getByRole("dialog")).toBe(dialog);
+  expect(within(dialog).getByLabelText("目标")).toHaveValue("draft:443");
+  fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+  expect(await within(dialog).findByRole("alert", {}, { timeout: 1000 })).toHaveTextContent("task 3 not found");
+});
+
+it("页头、分配摘要与菜单保留完整导航和类型契约", async () => {
+  renderWithAdmin({
+    listNodes: async () => nodes,
+    listProbeTasks: async () => ({ tasks: [{
+      task: { id: 8n, kind: ProbeKind.HTTP, target: "https://example.com/" },
+      selectorTags: ["prod", "edge"], nodeIds: [1n],
+    }] }),
+  }, routes, "/probes");
+  await screen.findByRole("heading", { name: "探测任务", level: 1 });
+  expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["排序", "类型", "目标", "间隔", "超时", "分配", "操作"]);
+  expect(screen.getByText("标签：prod ∩ edge（当前 1）")).toHaveAttribute("title", "东京");
+  fireEvent.click(screen.getByRole("button", { name: "更多操作 https://example.com/（#8）" }));
+  expect(screen.getAllByRole("menuitem").map((item) => [item.textContent, item.getAttribute("href")])).toEqual([
+    ["编辑", null], ["对比", "/probes/8/compare"], ["证书", "/probes/8/certs"], ["删除", null],
+  ]);
+  fireEvent.click(screen.getByRole("button", { name: "更多操作 https://example.com/（#8）" }));
+  const form = await openCreate();
+  expect(within(within(form).getByRole("radiogroup", { name: "类型" })).getAllByRole("radio").map((radio) => radio.getAttribute("aria-label"))).toEqual(["ICMP", "TCP", "HTTP", "DNS"]);
+});
 
 it("连续排序串行保存完整排列，最终回读顺序保留到刷新之后", async () => {
   let current = create(ListProbeTasksResponseSchema, { tasks: [1n, 2n, 3n].map((id) => ({ task: { id, target: `task-${id}`, kind: ProbeKind.ICMP } })) });
@@ -45,7 +93,7 @@ it("探测任务刷新失败保留同一编辑表单与草稿", async () => {
     if (fail) throw new ConnectError("tasks refresh failed", Code.Unavailable);
     return tasks;
   } }, routes, "/probes");
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
+  await openRowAction("1.1.1.1:443（#3）", "编辑");
   const form = screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" });
   fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "draft:443" } });
   fail = true;
@@ -94,8 +142,9 @@ it("四种类型在选项与任务列表使用一致标签", async () => {
     { task: { id: 6n, kind: ProbeKind.DNS, target: "example.com", dnsServer: "1.1.1.1:53" } },
   ] }) }, routes, "/probes");
   await screen.findByText("1.1.1.1:443");
+  const form = await openCreate();
   for (const label of ["ICMP", "TCP", "HTTP", "DNS"]) {
-    expect(screen.getByRole("option", { name: label })).toBeInTheDocument();
+    expect(within(form).getByRole("radio", { name: label })).toBeInTheDocument();
     expect(screen.getByRole("cell", { name: label })).toBeInTheDocument();
   }
 });
@@ -105,20 +154,20 @@ it("目标约束与解析器输入随类型切换，dns_server 只对 DNS 任务
   renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks,
     saveProbeTask: async (req) => { saved.push(req); return {}; },
   }, routes, "/probes");
-  const form = await screen.findByRole("form", { name: "新建探测任务" });
+  const form = await openCreate();
   // ICMP 默认：253，无解析器输入。
   expect(within(form).getByLabelText("目标")).toHaveAttribute("maxlength", "253");
   expect(within(form).queryByLabelText("解析器")).toBeNull();
   // HTTP：512，无解析器输入。
-  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ProbeKind.HTTP) } });
+  fireEvent.click(within(form).getByRole("radio", { name: "HTTP" }));
   expect(within(form).getByLabelText("目标")).toHaveAttribute("maxlength", "512");
   expect(within(form).queryByLabelText("解析器")).toBeNull();
   // TCP：host:port 提示，无解析器输入。
-  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ProbeKind.TCP) } });
+  fireEvent.click(within(form).getByRole("radio", { name: "TCP" }));
   expect(within(form).getByLabelText("目标")).toHaveAttribute("placeholder", "host:port");
   expect(within(form).queryByLabelText("解析器")).toBeNull();
   // DNS：253 且出现解析器输入；提交带上 dns_server（首尾空白裁掉）。
-  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ProbeKind.DNS) } });
+  fireEvent.click(within(form).getByRole("radio", { name: "DNS" }));
   expect(within(form).getByLabelText("目标")).toHaveAttribute("maxlength", "253");
   fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "example.com" } });
   fireEvent.change(within(form).getByLabelText("解析器"), { target: { value: " [2001:4860:4860::8888]:53 " } });
@@ -126,10 +175,11 @@ it("目标约束与解析器输入随类型切换，dns_server 只对 DNS 任务
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0].task).toMatchObject({ kind: ProbeKind.DNS, target: "example.com", dnsServer: "[2001:4860:4860::8888]:53" });
   // 非 DNS 任务不携带 dns_server（草稿残留也不提交）。
-  const next = screen.getByRole("form", { name: "新建探测任务" });
-  fireEvent.change(within(next).getByLabelText("类型"), { target: { value: String(ProbeKind.DNS) } });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), { timeout: 1000 });
+  const next = await openCreate();
+  fireEvent.click(within(next).getByRole("radio", { name: "DNS" }));
   fireEvent.change(within(next).getByLabelText("解析器"), { target: { value: "1.1.1.1:53" } });
-  fireEvent.change(within(next).getByLabelText("类型"), { target: { value: String(ProbeKind.HTTP) } });
+  fireEvent.click(within(next).getByRole("radio", { name: "HTTP" }));
   fireEvent.change(within(next).getByLabelText("目标"), { target: { value: "https://example.com/" } });
   fireEvent.submit(next);
   await waitFor(() => expect(saved).toHaveLength(2));
@@ -141,17 +191,17 @@ it("创建成功后复位全部字段，下一次提交不沿用旧值", async (
   renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks,
     saveProbeTask: async (req) => { saved.push(req); return {}; },
   }, routes, "/probes");
-  await screen.findByText("东京、法兰克福");
-  const form = screen.getByRole("form", { name: "新建探测任务" });
-  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ProbeKind.TCP) } });
+  await screen.findByText("2 个指定节点");
+  const form = await openCreate();
+  fireEvent.click(within(form).getByRole("radio", { name: "TCP" }));
   fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "old:80" } });
   fireEvent.change(within(form).getByLabelText("间隔 (s)"), { target: { value: "10" } });
   fireEvent.change(within(form).getByLabelText("超时 (ms)"), { target: { value: "500" } });
   fireEvent.click(within(form).getByLabelText("东京（#1）"));
   fireEvent.submit(form);
-  await waitFor(() => expect(within(screen.getByRole("form", { name: "新建探测任务" })).getByLabelText("目标")).toHaveValue(""));
-  const next = screen.getByRole("form", { name: "新建探测任务" });
-  expect(within(next).getByLabelText("类型")).toHaveValue(String(ProbeKind.ICMP));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), { timeout: 1000 });
+  const next = await openCreate();
+  expect(within(next).getByRole("radio", { name: "ICMP" })).toBeChecked();
   expect(within(next).getByLabelText("间隔 (s)")).toHaveValue(60);
   expect(within(next).getByLabelText("超时 (ms)")).toHaveValue(1000);
   expect(within(next).getByLabelText("东京（#1）")).not.toBeChecked();
@@ -164,9 +214,10 @@ it("创建成功后复位全部字段，下一次提交不沿用旧值", async (
 it("缺失 task 的条目不变成可编辑或可删除的任务", async () => {
   renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => ({ tasks: [{ nodeIds: [1n] }, ...tasks.tasks] }) }, routes, "/probes");
   expect(await screen.findByText("1.1.1.1:443")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "更多操作 1.1.1.1:443（#3）" }));
   expect({
-    edits: screen.getAllByRole("button", { name: /^编辑 / }).length,
-    deletes: screen.getAllByRole("button", { name: /^删除 / }).length,
+    edits: screen.getAllByRole("menuitem", { name: /^编辑 / }).length,
+    deletes: screen.getAllByRole("menuitem", { name: /^删除 / }).length,
   }).toEqual({ edits: 1, deletes: 1 });
 });
 
@@ -183,8 +234,8 @@ it("提交剔除编辑期间从节点列表消失的分配", async () => {
   let current = nodes;
   const save = vi.fn<NonNullable<AdminImpl["saveProbeTask"]>>(async () => ({}));
   const { queryClient } = renderWithAdmin({ listNodes: async () => current, listProbeTasks: async () => tasks, saveProbeTask: save }, routes, "/probes");
-  await screen.findByText("东京、法兰克福");
-  fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
+  await screen.findByText("2 个指定节点");
+  await openRowAction("1.1.1.1:443（#3）", "编辑");
   current = create(ListNodesResponseSchema, { nodes: [nodes.nodes[0]] });
   await act(async () => { await queryClient.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) }); });
   await waitFor(() => expect(within(screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" })).queryByLabelText("法兰克福")).toBeNull());
@@ -193,7 +244,7 @@ it("提交剔除编辑期间从节点列表消失的分配", async () => {
   expect(save.mock.calls[0][0].nodeIds).toEqual([1n]);
 });
 
-it("A 行保存挂起时 B 行保存禁用，刷新完成才关闭 A 行", async () => {
+it("保存挂起时抽屉不可关闭，刷新完成才关闭抽屉", async () => {
   let releaseSave!: () => void;
   let releaseList!: () => void;
   const saveGate = new Promise<void>((r) => { releaseSave = r; });
@@ -203,15 +254,14 @@ it("A 行保存挂起时 B 行保存禁用，刷新完成才关闭 A 行", async
   const save = vi.fn(async () => { await saveGate; entries[0] = { ...entries[0], task: { ...entries[0].task!, target: "changed:80" } }; return {}; });
   renderWithAdmin({ listNodes: async () => nodes, listProbeTasks, saveProbeTask: save }, routes, "/probes");
   await screen.findByText("1.1.1.1:443");
-  fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
-  fireEvent.click(screen.getByRole("button", { name: "编辑 b（#4）" }));
+  await openRowAction("1.1.1.1:443（#3）", "编辑");
   const a = screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" });
-  const b = screen.getByRole("form", { name: "编辑 b（#4）" });
   fireEvent.change(within(a).getByLabelText("目标"), { target: { value: "changed:80" } });
   fireEvent.submit(a);
   try {
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
-    expect(within(b).getByRole("button", { name: "保存" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "关闭抽屉" })).toBeDisabled();
+    expect(within(a).getByRole("button", { name: "取消" })).toBeDisabled();
     vi.useFakeTimers();
     await act(async () => { releaseSave(); await vi.runAllTimersAsync(); });
     expect(listProbeTasks).toHaveBeenCalledTimes(2);
@@ -219,10 +269,10 @@ it("A 行保存挂起时 B 行保存禁用，刷新完成才关闭 A 行", async
   } finally { vi.useRealTimers(); await act(async () => { releaseSave(); releaseList(); }); }
   expect(await screen.findByRole("cell", { name: "changed:80" })).toBeInTheDocument();
   expect(screen.queryByRole("form", { name: "编辑 1.1.1.1:443（#3）" })).toBeNull();
-  expect(screen.getByRole("form", { name: "编辑 b（#4）" })).toBe(b);
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
-it("同名任务同时编辑时保存的是被改的那一行", async () => {
+it("同名任务经菜单打开第二条，保存的是第二条的 id", async () => {
   const same = create(ListProbeTasksResponseSchema, { version: 9n, tasks: [
     { task: { id: 7n, kind: ProbeKind.TCP, target: "same.example", intervalS: 30, timeoutMs: 1000 }, nodeIds: [1n] },
     { task: { id: 8n, kind: ProbeKind.TCP, target: "same.example", intervalS: 30, timeoutMs: 1000 }, nodeIds: [2n] },
@@ -233,13 +283,8 @@ it("同名任务同时编辑时保存的是被改的那一行", async () => {
     saveProbeTask: async (req) => { saved.push(req); return {}; },
   }, routes, "/probes");
   await screen.findAllByText("same.example");
-  const edits = screen.getAllByRole("button", { name: /^编辑 same\.example/ });
-  fireEvent.click(edits[0]);
-  fireEvent.click(edits[1]);
-  // 带 id 时只命中第二行；名称不含 id 时两行同名，getBy 必须报多个。
-  const second = screen.getByRole("form", {
-    name: (name) => name === "编辑 same.example（#8）" || name === "编辑 same.example",
-  });
+  await openRowAction("same.example（#8）", "编辑");
+  const second = screen.getByRole("form", { name: "编辑 same.example（#8）" });
   fireEvent.change(within(second).getByLabelText("目标"), { target: { value: "other.example" } });
   fireEvent.submit(second);
   await waitFor(() => expect(saved).toHaveLength(1));
@@ -256,16 +301,17 @@ it("最新操作清掉创建旧错误，编辑失败显示自己的正文", asyn
     },
   }, routes, "/probes");
   await screen.findByText("1.1.1.1:443");
-  const form = screen.getByRole("form", { name: "新建探测任务" });
+  const form = await openCreate();
   fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "x" } });
   fireEvent.submit(form);
   expect(await screen.findByRole("alert")).toHaveTextContent(/^create rejected$/);
-  fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
+  fireEvent.click(screen.getByRole("button", { name: "关闭抽屉" }));
+  await openRowAction("1.1.1.1:443（#3）", "编辑");
   fireEvent.submit(screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" }));
-  await waitFor(() => expect(screen.queryByRole("form", { name: "编辑 1.1.1.1:443（#3）" })).toBeNull());
+  await waitFor(() => expect(screen.queryByRole("form", { name: "编辑 1.1.1.1:443（#3）" })).toBeNull(), { timeout: 1000 });
   expect(screen.queryByRole("alert")).toBeNull();
   rejectEdit = true;
-  fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
+  await openRowAction("1.1.1.1:443（#3）", "编辑");
   fireEvent.submit(screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(/^edit rejected$/);
 });
@@ -282,7 +328,7 @@ describe("ProbeTasks", () => {
     });
     renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks, saveProbeTask }, routes, "/probes");
     await screen.findByText("1.1.1.1:443");
-    fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
+    await openRowAction("1.1.1.1:443（#3）", "编辑");
     const form = screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" });
     fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "8.8.8.8:443" } });
     fireEvent.submit(form);
@@ -305,7 +351,7 @@ describe("ProbeTasks", () => {
   it("列出任务与分配的节点名", async () => {
     renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks }, routes, "/probes");
     expect(await screen.findByText("1.1.1.1:443")).toBeInTheDocument();
-    expect(screen.getByText("东京、法兰克福")).toBeInTheDocument();
+    expect(screen.getByText("2 个指定节点")).toHaveAttribute("title", "东京、法兰克福");
     expect(screen.getByRole("cell", { name: "TCP" })).toBeInTheDocument();
   });
 
@@ -317,11 +363,11 @@ describe("ProbeTasks", () => {
       listNodes, listProbeTasks,
       saveProbeTask: async (req) => { saved.push(req); return create(SaveProbeTaskResponseSchema, { version: 10n }); },
     }, routes, "/probes");
-    await screen.findByText("东京、法兰克福");
+    await screen.findByText("2 个指定节点");
     const nodesKey = createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" });
     queryClient.setQueryData(nodesKey, nodes);
-    const form = screen.getByRole("form", { name: "新建探测任务" });
-    fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ProbeKind.TCP) } });
+    const form = await openCreate();
+    fireEvent.click(within(form).getByRole("radio", { name: "TCP" }));
     fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "1.1.1.1:80" } });
     fireEvent.change(within(form).getByLabelText("间隔 (s)"), { target: { value: "60" } });
     fireEvent.change(within(form).getByLabelText("超时 (ms)"), { target: { value: "800" } });
@@ -342,7 +388,7 @@ describe("ProbeTasks", () => {
       saveProbeTask: async (req) => { saved.push(req); return create(SaveProbeTaskResponseSchema, {}); },
     }, routes, "/probes");
     await screen.findByText("1.1.1.1:443");
-    const form = screen.getByRole("form", { name: "新建探测任务" });
+    const form = await openCreate();
     fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "8.8.8.8" } });
     fireEvent.change(within(form).getByLabelText("间隔 (s)"), { target: { value: "4" } });
     fireEvent.submit(form);
@@ -360,7 +406,7 @@ describe("ProbeTasks", () => {
       saveProbeTask: async (req) => { saved.push(req); return create(SaveProbeTaskResponseSchema, { version: 10n }); },
     }, routes, "/probes");
     await screen.findByText("1.1.1.1:443");
-    fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
+    await openRowAction("1.1.1.1:443（#3）", "编辑");
     const form = screen.getByRole("form", { name: "编辑 1.1.1.1:443（#3）" });
     fireEvent.change(within(form).getByLabelText("超时 (ms)"), { target: { value: "2000" } });
     fireEvent.click(within(form).getByLabelText("法兰克福（#2）"));
@@ -374,10 +420,10 @@ describe("ProbeTasks", () => {
     const remove = vi.fn<NonNullable<AdminImpl["deleteProbeTask"]>>(async () => create(DeleteProbeTaskResponseSchema, { version: 11n }));
     renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks, deleteProbeTask: remove }, routes, "/probes");
     await screen.findByText("1.1.1.1:443");
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "删除 1.1.1.1:443（#3）" })); });
+    await openRowAction("1.1.1.1:443（#3）", "删除");
     expect(remove).not.toHaveBeenCalled();
     expect(screen.getByText("历史保留至到期清理")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "确认删除 1.1.1.1:443（#3）" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "确认删除 1.1.1.1:443（#3）" }));
     await waitFor(() => expect(remove).toHaveBeenCalledTimes(1));
     expect(remove.mock.calls[0][0]).toMatchObject({ id: 3n });
   });
@@ -385,12 +431,13 @@ describe("ProbeTasks", () => {
   it("编辑往返撤销已武装的删除确认", async () => {
     renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks }, routes, "/probes");
     await screen.findByText("1.1.1.1:443");
-    fireEvent.click(screen.getByRole("button", { name: "删除 1.1.1.1:443（#3）" }));
-    expect(screen.getByRole("button", { name: "确认删除 1.1.1.1:443（#3）" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "编辑 1.1.1.1:443（#3）" }));
+    await openRowAction("1.1.1.1:443（#3）", "删除");
+    expect(screen.getByRole("menuitem", { name: "确认删除 1.1.1.1:443（#3）" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: "编辑 1.1.1.1:443（#3）" }));
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
-    expect(screen.getByRole("button", { name: "删除 1.1.1.1:443（#3）" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "确认删除 1.1.1.1:443（#3）" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "更多操作 1.1.1.1:443（#3）" }));
+    expect(screen.getByRole("menuitem", { name: "删除 1.1.1.1:443（#3）" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "确认删除 1.1.1.1:443（#3）" })).toBeNull();
   });
 
   it("服务端错误原文可见", async () => {
@@ -399,7 +446,7 @@ describe("ProbeTasks", () => {
       saveProbeTask: async () => { throw new ConnectError("task.target: target for a TCP task must be host:port; got \"x\"", Code.InvalidArgument); },
     }, routes, "/probes");
     await screen.findByText("1.1.1.1:443");
-    const form = screen.getByRole("form", { name: "新建探测任务" });
+    const form = await openCreate();
     fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "x" } });
     fireEvent.change(within(form).getByLabelText("间隔 (s)"), { target: { value: "60" } });
     fireEvent.change(within(form).getByLabelText("超时 (ms)"), { target: { value: "800" } });
@@ -416,19 +463,19 @@ describe("全部节点作用域", () => {
     renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => ({ tasks: [allTask, emptyTask] }) }, routes, "/probes");
     const all = within((await screen.findByText("all.example")).closest("tr")!);
     const none = within(screen.getByText("none.example").closest("tr")!);
-    expect(all.getByRole("cell", { name: "全部节点：东京、法兰克福" })).toBeInTheDocument();
+    expect(all.getByText("全部节点")).toHaveAttribute("title", "东京、法兰克福");
     expect(none.getByRole("cell", { name: "未分配" })).toBeInTheDocument();
     expect(none.queryByText(/全部节点/)).toBeNull();
   });
 
-  it("勾选全部节点后隐藏节点多选，提交 allNodes 且不带分配", async () => {
+  it("选择全部节点后隐藏节点多选，提交 allNodes 且不带分配", async () => {
     const saved: SaveProbeTaskRequest[] = [];
     renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => tasks,
       saveProbeTask: async (req) => { saved.push(req); return {}; },
     }, routes, "/probes");
-    const form = await screen.findByRole("form", { name: "新建探测任务" });
+    const form = await openCreate();
     fireEvent.click(within(form).getByLabelText("东京（#1）"));
-    fireEvent.click(within(form).getByLabelText("全部节点（含以后新建的节点）"));
+    fireEvent.click(within(form).getByRole("radio", { name: "全部节点" }));
     expect(within(form).queryByLabelText("东京（#1）")).toBeNull();
     fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "all.example" } });
     fireEvent.submit(form);
@@ -436,16 +483,16 @@ describe("全部节点作用域", () => {
     expect(saved[0]).toMatchObject({ task: { id: 0n, target: "all.example" }, allNodes: true, nodeIds: [] });
   });
 
-  it("编辑全部节点任务时取消勾选，以当前展开的节点作为显式分配提交", async () => {
+  it("编辑全部节点任务时切换指定节点，以当前展开的节点作为显式分配提交", async () => {
     const saved: SaveProbeTaskRequest[] = [];
     renderWithAdmin({ listNodes: async () => nodes, listProbeTasks: async () => ({ tasks: [allTask] }),
       saveProbeTask: async (req) => { saved.push(req); return {}; },
     }, routes, "/probes");
-    fireEvent.click(await screen.findByRole("button", { name: "编辑 all.example（#5）" }));
+    await openRowAction("all.example（#5）", "编辑");
     const form = screen.getByRole("form", { name: "编辑 all.example（#5）" });
-    const toggle = within(form).getByLabelText("全部节点（含以后新建的节点）");
+    const toggle = within(form).getByRole("radio", { name: "全部节点" });
     expect(toggle).toBeChecked();
-    fireEvent.click(toggle);
+    fireEvent.click(within(form).getByRole("radio", { name: "指定节点" }));
     expect(within(form).getByLabelText("东京（#1）")).toBeChecked();
     fireEvent.click(within(form).getByLabelText("东京（#1）"));
     fireEvent.submit(form);
@@ -462,7 +509,7 @@ it("编辑带上配置身份，清除指纹是单独的动作", async () => {
     listProbeTasks: async () => ({ tasks: [{ task: { id: 8n, kind: ProbeKind.HTTP, target: "https://example.com/", intervalS: 60, timeoutMs: 1000, certSpkiSha256: Uint8Array.from({ length: 32 }, () => 7), configId: config }, nodeIds: [1n] }] }),
     saveProbeTask: async (req) => { saved.push(req); return {}; },
   }, routes, "/probes");
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 https://example.com/（#8）" }));
+  await openRowAction("https://example.com/（#8）", "编辑");
   const form = screen.getByRole("form", { name: "编辑 https://example.com/（#8）" });
   expect((within(form).getByLabelText("证书指纹") as HTMLInputElement).value).toMatch(/^sha256\/\//);
   fireEvent.click(within(form).getByRole("button", { name: "清除指纹" }));
@@ -480,7 +527,7 @@ it("前置条件失败提示刷新且不自动再提交", async () => {
     listProbeTasks: async () => ({ tasks: [{ task: { id: 8n, kind: ProbeKind.HTTP, target: "https://example.com/", intervalS: 60, timeoutMs: 1000, configId: Uint8Array.from({ length: 16 }, () => 1) }, nodeIds: [1n] }] }),
     saveProbeTask: async () => { calls += 1; throw new ConnectError("expected_config_id does not match", Code.FailedPrecondition); },
   }, routes, "/probes");
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 https://example.com/（#8）" }));
+  await openRowAction("https://example.com/（#8）", "编辑");
   fireEvent.submit(screen.getByRole("form", { name: "编辑 https://example.com/（#8）" }));
   expect(await screen.findByText(/请刷新后再试/)).toBeInTheDocument();
   expect(calls).toBe(1);
@@ -495,8 +542,14 @@ it("只有 https 的 HTTP 任务有证书链接", async () => {
       { task: { id: 9n, kind: ProbeKind.HTTP, target: "http://example.com/", intervalS: 60, timeoutMs: 1000 }, nodeIds: [1n] },
     ] }),
   }, routes, "/probes");
-  expect(await screen.findByRole("link", { name: "证书" })).toHaveAttribute("href", "/probes/8/certs");
-  expect(screen.getAllByRole("link", { name: "证书" })).toHaveLength(1);
+  for (const label of ["1.1.1.1:443（#3）", "http://example.com/（#9）"]) {
+    fireEvent.click(await screen.findByRole("button", { name: `更多操作 ${label}` }));
+    expect(screen.queryByRole("menuitem", { name: /^证书/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: `更多操作 ${label}` }));
+  }
+  fireEvent.click(screen.getByRole("button", { name: "更多操作 https://example.com/（#8）" }));
+  expect(screen.getByRole("menuitem", { name: "证书 https://example.com/（#8）" })).toHaveAttribute("href", "/probes/8/certs");
+  expect(screen.getAllByRole("menuitem", { name: /^证书/ })).toHaveLength(1);
 });
 
 it("改成不能钉的种类时仍显示指纹，且不会自动清除", async () => {
@@ -507,9 +560,9 @@ it("改成不能钉的种类时仍显示指纹，且不会自动清除", async (
     listProbeTasks: async () => ({ tasks: [{ task: { id: 8n, kind: ProbeKind.HTTP, target: "https://example.com/", intervalS: 60, timeoutMs: 1000, certSpkiSha256: pin }, nodeIds: [1n] }] }),
     saveProbeTask: async (req) => { saved.push(req); return {}; },
   }, routes, "/probes");
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 https://example.com/（#8）" }));
+  await openRowAction("https://example.com/（#8）", "编辑");
   const form = screen.getByRole("form", { name: "编辑 https://example.com/（#8）" });
-  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ProbeKind.ICMP) } });
+  fireEvent.click(within(form).getByRole("radio", { name: "ICMP" }));
   expect(within(form).getByLabelText("证书指纹")).toBeInTheDocument();
   expect(within(form).getByRole("button", { name: "清除指纹" })).toBeInTheDocument();
   expect(within(form).getByText(/不能钉指纹/)).toBeInTheDocument();

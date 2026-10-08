@@ -15,6 +15,16 @@ const channels = create(ListNotifyChannelsResponseSchema, { channels: [
 const routes = [{ path: "/channels", Component: Channels }];
 const render = (impl: AdminImpl) => renderWithAdmin({ listNotifyChannels: async () => channels, getSettings: async () => ({ settings: { theme: "dark", title: "站点", loginNotify: { channelIds: [2n] } } }), ...impl }, routes, "/channels");
 
+async function openCreate() {
+  fireEvent.click(await screen.findByRole("button", { name: "新建通知渠道" }));
+  return within(screen.getByRole("dialog")).getByRole("form", { name: "新建通知渠道" });
+}
+
+async function openRowAction(label: string, action: string) {
+  fireEvent.click(await screen.findByRole("button", { name: `更多操作 ${label}` }));
+  fireEvent.click(screen.getByRole("menuitem", { name: `${action} ${label}` }));
+}
+
 it("登录通知读取选择且只提交通知字段，空集合可关闭", async () => {
   const sent: UpdateSettingsRequest[] = [];
   render({ updateSettings: async (r) => { sent.push(r); return { settings: r.settings }; } });
@@ -49,10 +59,11 @@ it("登录通知保存后刷新失败，重新进入页面时显示刚保存的�
 
 // 点开删除确认，取出确认旁的提示后取消。
 async function deleteNoteOf(name: string) {
-  fireEvent.click(await screen.findByRole("button", { name: `删除 ${name}` }));
-  const cell = screen.getByRole("button", { name: `确认删除 ${name}` }).closest("td")!;
-  const note = cell.querySelector(".muted")?.textContent ?? null;
-  fireEvent.click(within(cell).getByRole("button", { name: `取消删除 ${name}` }));
+  await openRowAction(name, "删除");
+  const menu = screen.getByRole("menu");
+  const note = menu.querySelector(".row-menu-note")?.textContent ?? null;
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "取消" }));
+  fireEvent.keyDown(menu, { key: "Escape" });
   return note;
 }
 
@@ -62,7 +73,7 @@ it("删除登录通知唯一的接收渠道时，确认写明登录通知会关�
 });
 
 // 删渠道成功后要重读设置：hub 在同一事务里把它从登录通知列表摘除，面板若沿用删之前的设置，剩下那个渠道的确认会
-// 少算"唯一接收渠道"这一条后果。重读完成的信号是确认按钮恢复可用：删除在途时它禁用（ConfirmDelete 的 pending），
+// 少算"唯一接收渠道"这一条后果。重读完成的信号是删除菜单项恢复可用：删除在途时它带 aria-disabled，
 // remove 的 onSuccess 等列表与设置都重新拉取完才返回，在途一直持续到那时。删除之后的设置读取先挂起，钉住"重读期间
 // 仍在途"：在途若不覆盖重读，按钮在放行前就可用，用户这时点确认读到的是旧提示。放行后等按钮可用，读一次提示即可，
 // 不在 waitFor 里反复点开取消——那样失败时要等满超时才红。
@@ -84,15 +95,16 @@ it("删掉一个登录通知渠道后，剩下那个的删除确认按重读的�
       return {};
     },
   });
-  fireEvent.click(await screen.findByRole("button", { name: "删除 tg（#1）" }));
-  fireEvent.click(screen.getByRole("button", { name: "确认删除 tg（#1）" }));
-  await waitFor(() => expect(screen.queryByRole("button", { name: "删除 tg（#1）" })).toBeNull());
-  fireEvent.click(screen.getByRole("button", { name: "删除 hook（#2）" }));
-  const confirm = screen.getByRole("button", { name: "确认删除 hook（#2）" });
-  expect(confirm).toBeDisabled();
+  await openRowAction("tg（#1）", "删除");
+  fireEvent.click(screen.getByRole("menuitem", { name: "确认删除 tg（#1）" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "更多操作 tg（#1）" })).toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: "更多操作 hook（#2）" }));
+  const remove = screen.getByRole("menuitem", { name: "删除 hook（#2）" });
+  expect(remove).toHaveAttribute("aria-disabled", "true");
   release();
-  await waitFor(() => expect(confirm).toBeEnabled());
-  expect(confirm.closest("td")!.querySelector(".muted")?.textContent).toBe("它是登录通知唯一的接收渠道，删除后登录通知关闭。");
+  await waitFor(() => expect(remove).not.toHaveAttribute("aria-disabled"));
+  fireEvent.click(remove);
+  expect(screen.getByText("它是登录通知唯一的接收渠道，删除后登录通知关闭。")).toBeInTheDocument();
 });
 
 // 备份失败通知与登录通知同为设置里的渠道列表，删除确认按同一份逻辑逐个列表写明影响。
@@ -148,7 +160,7 @@ it("渠道刷新失败保留同一编辑表单与草稿", async () => {
     if (fail) throw new ConnectError("channels refresh failed", Code.Unavailable);
     return channels;
   } });
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 tg（#1）" }));
+  await openRowAction("tg（#1）", "编辑");
   const form = screen.getByRole("form", { name: "编辑 tg（#1）" });
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "尚未保存" } });
   fail = true;
@@ -175,7 +187,7 @@ it("列表只显示非凭据字段", async () => {
 it("新建 Telegram 渠道只发 telegram 配置，成功后表单复位", async () => {
   const saved: SaveNotifyChannelRequest[] = [];
   render({ saveNotifyChannel: async (req) => { saved.push(req); return {}; } });
-  const form = await screen.findByRole("form", { name: "新建通知渠道" });
+  const form = await openCreate();
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "值班群" } });
   fireEvent.change(within(form).getByLabelText("Bot token"), { target: { value: "123:abc" } });
   fireEvent.change(within(form).getByLabelText("Chat ID"), { target: { value: "-100" } });
@@ -185,13 +197,14 @@ it("新建 Telegram 渠道只发 telegram 配置，成功后表单复位", async
   // 节奏上限留空时不发这个字段，由 hub 按种类取默认值。
   expect({ id: c.id, name: c.name, kind: c.kind, token: c.telegram?.botToken, chat: c.telegram?.chatId, webhook: c.webhook, rate: c.ratePerMinute }).toEqual(
     { id: 0n, name: "值班群", kind: ChannelKind.TELEGRAM, token: "123:abc", chat: "-100", webhook: undefined, rate: undefined });
-  await waitFor(() => expect(within(screen.getByRole("form", { name: "新建通知渠道" })).getByLabelText("名称")).toHaveValue(""));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(within(await openCreate()).getByLabelText("名称")).toHaveValue("");
 });
 
 it("编辑同种类时凭据留空即保留", async () => {
   const saved: SaveNotifyChannelRequest[] = [];
   render({ saveNotifyChannel: async (req) => { saved.push(req); return {}; } });
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 hook（#2）" }));
+  await openRowAction("hook（#2）", "编辑");
   const form = screen.getByRole("form", { name: "编辑 hook（#2）" });
   const url = within(form).getByLabelText("URL");
   expect(url).toHaveAttribute("placeholder", "已保存 https://hooks.example，留空保持不变");
@@ -207,7 +220,7 @@ it("编辑同种类时凭据留空即保留", async () => {
 it("删除已保存的头", async () => {
   const saved: SaveNotifyChannelRequest[] = [];
   render({ saveNotifyChannel: async (req) => { saved.push(req); return {}; } });
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 hook（#2）" }));
+  await openRowAction("hook（#2）", "编辑");
   const form = screen.getByRole("form", { name: "编辑 hook（#2）" });
   fireEvent.click(within(form).getByLabelText("删除 Authorization"));
   fireEvent.click(within(form).getByRole("button", { name: "保存" }));
@@ -218,7 +231,7 @@ it("删除已保存的头", async () => {
 it("新增头与覆盖", async () => {
   const saved: SaveNotifyChannelRequest[] = [];
   render({ saveNotifyChannel: async (req) => { saved.push(req); return {}; } });
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 hook（#2）" }));
+  await openRowAction("hook（#2）", "编辑");
   const form = screen.getByRole("form", { name: "编辑 hook（#2）" });
   fireEvent.click(within(form).getByRole("button", { name: "添加请求头" }));
   fireEvent.change(within(form).getByLabelText("请求头名"), { target: { value: "X-Tag" } });
@@ -233,8 +246,8 @@ it("新增头与覆盖", async () => {
 it("同名头拒绝提交", async () => {
   const saved: SaveNotifyChannelRequest[] = [];
   render({ saveNotifyChannel: async (req) => { saved.push(req); return {}; } });
-  const form = await screen.findByRole("form", { name: "新建通知渠道" });
-  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ChannelKind.WEBHOOK) } });
+  const form = await openCreate();
+  fireEvent.click(within(form).getByRole("radio", { name: "Webhook" }));
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "hook3" } });
   fireEvent.change(within(form).getByLabelText("URL"), { target: { value: "https://hook3.example" } });
   fireEvent.click(within(form).getByRole("button", { name: "添加请求头" }));
@@ -253,24 +266,24 @@ it("同名头拒绝提交", async () => {
 
 it("编辑时 Webhook 换成 Telegram 要求新 token", async () => {
   render({});
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 hook（#2）" }));
+  await openRowAction("hook（#2）", "编辑");
   const form = screen.getByRole("form", { name: "编辑 hook（#2）" });
-  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ChannelKind.TELEGRAM) } });
+  fireEvent.click(within(form).getByRole("radio", { name: "Telegram" }));
   expect(within(form).getByLabelText("Bot token")).toBeRequired();
 });
 
 it("编辑时切换种类要求新凭据", async () => {
   render({});
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 tg（#1）" }));
+  await openRowAction("tg（#1）", "编辑");
   const form = screen.getByRole("form", { name: "编辑 tg（#1）" });
-  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ChannelKind.WEBHOOK) } });
+  fireEvent.click(within(form).getByRole("radio", { name: "Webhook" }));
   expect(within(form).getByLabelText("URL")).toBeRequired();
   expect(within(form).queryByText("已保存的请求头（值不回显）")).toBeNull();
 });
 
 it("Telegram 编辑 token 可留空", async () => {
   render({});
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 tg（#1）" }));
+  await openRowAction("tg（#1）", "编辑");
   const form = screen.getByRole("form", { name: "编辑 tg（#1）" });
   const token = within(form).getByLabelText("Bot token");
   expect(token).toHaveValue("");
@@ -288,10 +301,10 @@ it("发送测试成功与失败", async () => {
     return {};
   } });
   expect((await screen.findByRole("status")).textContent).toBe("");
-  fireEvent.click(await screen.findByRole("button", { name: "发送测试 tg（#1）" }));
+  await openRowAction("tg（#1）", "发送测试");
   await waitFor(() => expect(screen.getByRole("status").textContent).toBe("已向 tg 发送测试消息"));
   fail = true;
-  fireEvent.click(screen.getByRole("button", { name: "发送测试 tg（#1）" }));
+  await openRowAction("tg（#1）", "发送测试");
   expect(await screen.findByRole("alert")).toHaveTextContent("telegram: 401 Unauthorized");
   expect(screen.getByRole("status").textContent).toBe("");
   expect(tested).toEqual([1n, 1n]);
@@ -304,37 +317,39 @@ it("在途测试被新操作打断后不出现成功提示", async () => {
     testNotifyChannel: async () => { await testGate; return {}; },
     deleteNotifyChannel: async () => { throw new ConnectError("ref", Code.FailedPrecondition); },
   });
-  fireEvent.click(await screen.findByRole("button", { name: "发送测试 tg（#1）" }));
-  fireEvent.click(screen.getByRole("button", { name: "删除 tg（#1）" }));
-  fireEvent.click(screen.getByRole("button", { name: "确认删除 tg（#1）" }));
+  await openRowAction("tg（#1）", "发送测试");
+  await openRowAction("tg（#1）", "删除");
+  fireEvent.click(screen.getByRole("menuitem", { name: "确认删除 tg（#1）" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("ref");
   await act(async () => { releaseTest(); });
-  await waitFor(() => expect(screen.getByRole("button", { name: "发送测试 tg（#1）" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "更多操作 tg（#1）" }));
+  await waitFor(() => expect(screen.getByRole("menuitem", { name: "发送测试 tg（#1）" })).not.toHaveAttribute("aria-disabled"));
   expect(screen.getByRole("status").textContent).toBe("");
   expect(screen.getByRole("alert")).toHaveTextContent("ref");
 });
 
 it("删除被引用渠道显示服务端原文", async () => {
   render({ deleteNotifyChannel: async () => { throw new ConnectError("notify channel 1 is referenced by alert rules: 离线 (id 4)", Code.FailedPrecondition); } });
-  fireEvent.click(await screen.findByRole("button", { name: "删除 tg（#1）" }));
-  fireEvent.click(screen.getByRole("button", { name: "确认删除 tg（#1）" }));
+  await openRowAction("tg（#1）", "删除");
+  fireEvent.click(screen.getByRole("menuitem", { name: "确认删除 tg（#1）" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("notify channel 1 is referenced by alert rules: 离线 (id 4)");
   expect(screen.getByRole("cell", { name: "tg" })).toBeInTheDocument();
 });
 
 it("编辑往返撤销已武装的删除确认", async () => {
   render({});
-  fireEvent.click(await screen.findByRole("button", { name: "删除 tg（#1）" }));
-  expect(screen.getByRole("button", { name: "确认删除 tg（#1）" })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "编辑 tg（#1）" }));
+  await openRowAction("tg（#1）", "删除");
+  expect(screen.getByRole("menuitem", { name: "确认删除 tg（#1）" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("menuitem", { name: "编辑 tg（#1）" }));
   fireEvent.click(screen.getByRole("button", { name: "取消" }));
-  expect(screen.getByRole("button", { name: "删除 tg（#1）" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "确认删除 tg（#1）" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "更多操作 tg（#1）" }));
+  expect(screen.getByRole("menuitem", { name: "删除 tg（#1）" })).toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: "确认删除 tg（#1）" })).toBeNull();
 });
 
 it("mutation 配置不携带展示层方法", async () => {
   const { queryClient } = render({ testNotifyChannel: async () => ({}) });
-  fireEvent.click(await screen.findByRole("button", { name: "发送测试 tg（#1）" }));
+  await openRowAction("tg（#1）", "发送测试");
   await waitFor(() => expect(screen.getByRole("status").textContent).toBe("已向 tg 发送测试消息"));
   const mutations = queryClient.getMutationCache().getAll();
   expect(mutations.length).toBeGreaterThan(0);
@@ -356,10 +371,11 @@ const mk = (name: string) => create(ListNotifyChannelsResponseSchema, { channels
 it("删除首击不发请求", async () => {
   const removed: bigint[] = [];
   render({ deleteNotifyChannel: async (req) => { removed.push(req.id); throw new ConnectError("ref", Code.FailedPrecondition); } });
-  fireEvent.click(await screen.findByRole("button", { name: "删除 tg（#1）" }));
-  fireEvent.click(screen.getByRole("button", { name: "取消删除 tg（#1）" }));
-  fireEvent.click(screen.getByRole("button", { name: "删除 hook（#2）" }));
-  fireEvent.click(screen.getByRole("button", { name: "确认删除 hook（#2）" }));
+  await openRowAction("tg（#1）", "删除");
+  fireEvent.click(screen.getByRole("menuitem", { name: "取消" }));
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  await openRowAction("hook（#2）", "删除");
+  fireEvent.click(screen.getByRole("menuitem", { name: "确认删除 hook（#2）" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("ref");
   expect(removed).toEqual([2n]);
 });
@@ -369,10 +385,10 @@ it("新操作开始时清除测试提示", async () => {
     testNotifyChannel: async () => ({}),
     deleteNotifyChannel: async () => { throw new ConnectError("ref", Code.FailedPrecondition); },
   });
-  fireEvent.click(await screen.findByRole("button", { name: "发送测试 tg（#1）" }));
+  await openRowAction("tg（#1）", "发送测试");
   await waitFor(() => expect(screen.getByRole("status").textContent).toBe("已向 tg 发送测试消息"));
-  fireEvent.click(screen.getByRole("button", { name: "删除 tg（#1）" }));
-  fireEvent.click(screen.getByRole("button", { name: "确认删除 tg（#1）" }));
+  await openRowAction("tg（#1）", "删除");
+  fireEvent.click(screen.getByRole("menuitem", { name: "确认删除 tg（#1）" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("ref");
   expect(screen.getByRole("status").textContent).toBe("");
 });
@@ -384,7 +400,7 @@ it("编辑态在刷新完成后才关闭", async () => {
   let current = mk("hook");
   render({ listNotifyChannels: async () => { listCalls++; if (listCalls > 1) await listGate; return current; },
     saveNotifyChannel: async () => { current = mk("hook2"); return {}; } });
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 hook（#2）" }));
+  await openRowAction("hook（#2）", "编辑");
   const form = screen.getByRole("form", { name: "编辑 hook（#2）" });
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "hook2" } });
   fireEvent.click(within(form).getByRole("button", { name: "保存" }));
@@ -398,23 +414,23 @@ it("编辑态在刷新完成后才关闭", async () => {
   expect(screen.getByRole("cell", { name: "hook2" })).toBeInTheDocument();
 });
 
-it("一行保存挂起时其它行的保存禁用", async () => {
+it("单抽屉保存挂起时不能关闭或取消，刷新完成才退出", async () => {
   let releaseSave!: () => void;
   const saveGate = new Promise<void>((r) => { releaseSave = r; });
   render({ saveNotifyChannel: async () => { await saveGate; return {}; } });
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 hook（#2）" }));
-  fireEvent.click(screen.getByRole("button", { name: "编辑 tg（#1）" }));
+  await openRowAction("hook（#2）", "编辑");
   const hookForm = screen.getByRole("form", { name: "编辑 hook（#2）" });
-  const tgForm = screen.getByRole("form", { name: "编辑 tg（#1）" });
   fireEvent.click(within(hookForm).getByRole("button", { name: "保存" }));
   try {
-    await waitFor(() => expect(within(tgForm).getByRole("button", { name: "保存" })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "关闭抽屉" })).toBeDisabled());
+    expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
   } finally { await act(async () => { releaseSave(); }); }
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
 it("创建失败保留草稿", async () => {
   render({ saveNotifyChannel: async () => { throw new ConnectError("channel.name: must not be empty", Code.InvalidArgument); } });
-  const form = await screen.findByRole("form", { name: "新建通知渠道" });
+  const form = await openCreate();
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "值班群" } });
   fireEvent.change(within(form).getByLabelText("Bot token"), { target: { value: "123:abc" } });
   fireEvent.change(within(form).getByLabelText("Chat ID"), { target: { value: "-100" } });
@@ -425,8 +441,8 @@ it("创建失败保留草稿", async () => {
 
 it("请求头行带序号分组与序号化移除名", async () => {
   render({});
-  const form = await screen.findByRole("form", { name: "新建通知渠道" });
-  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ChannelKind.WEBHOOK) } });
+  const form = await openCreate();
+  fireEvent.click(within(form).getByRole("radio", { name: "Webhook" }));
   fireEvent.click(within(form).getByRole("button", { name: "添加请求头" }));
   fireEvent.click(within(form).getByRole("button", { name: "添加请求头" }));
   expect(within(form).getByRole("group", { name: "请求头 1" })).toBeInTheDocument();
@@ -439,8 +455,8 @@ it("请求头行带序号分组与序号化移除名", async () => {
 
 it("移除中间请求头行不搬动其余行的输入节点", async () => {
   render({});
-  const form = await screen.findByRole("form", { name: "新建通知渠道" });
-  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(ChannelKind.WEBHOOK) } });
+  const form = await openCreate();
+  fireEvent.click(within(form).getByRole("radio", { name: "Webhook" }));
   const add = () => fireEvent.click(within(form).getByRole("button", { name: "添加请求头" }));
   add();
   add();
@@ -458,7 +474,7 @@ it("移除中间请求头行不搬动其余行的输入节点", async () => {
 it("编辑时带出已存的节奏上限，改写后原样提交，清空即交给 hub 取默认值", async () => {
   const saved: SaveNotifyChannelRequest[] = [];
   render({ saveNotifyChannel: async (req) => { saved.push(req); return {}; } });
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 tg（#1）" }));
+  await openRowAction("tg（#1）", "编辑");
   let form = screen.getByRole("form", { name: "编辑 tg（#1）" });
   const rate = within(form).getByLabelText("每分钟上限");
   expect(rate).toHaveValue(20);
@@ -466,7 +482,7 @@ it("编辑时带出已存的节奏上限，改写后原样提交，清空即交�
   fireEvent.click(within(form).getByRole("button", { name: "保存" }));
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0].channel!.ratePerMinute).toBe(0);
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 tg（#1）" }));
+  await openRowAction("tg（#1）", "编辑");
   form = screen.getByRole("form", { name: "编辑 tg（#1）" });
   fireEvent.change(within(form).getByLabelText("每分钟上限"), { target: { value: "" } });
   expect(within(form).getByLabelText("每分钟上限")).toHaveAttribute("placeholder", "留空取默认 20");
@@ -479,7 +495,7 @@ it("编辑时带出已存的节奏上限，改写后原样提交，清空即交�
 it("节奏上限不接受负数", async () => {
   const saved: SaveNotifyChannelRequest[] = [];
   render({ saveNotifyChannel: async (req) => { saved.push(req); return {}; } });
-  const form = await screen.findByRole("form", { name: "新建通知渠道" });
+  const form = await openCreate();
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "值班群" } });
   fireEvent.change(within(form).getByLabelText("Bot token"), { target: { value: "123:abc" } });
   fireEvent.change(within(form).getByLabelText("Chat ID"), { target: { value: "-100" } });
@@ -498,7 +514,7 @@ it("节奏上限不接受负数", async () => {
 it("节奏上限不超过 uint32", async () => {
   const saved: SaveNotifyChannelRequest[] = [];
   render({ saveNotifyChannel: async (req) => { saved.push(req); return {}; } });
-  const form = await screen.findByRole("form", { name: "新建通知渠道" });
+  const form = await openCreate();
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "值班群" } });
   fireEvent.change(within(form).getByLabelText("Bot token"), { target: { value: "123:abc" } });
   fireEvent.change(within(form).getByLabelText("Chat ID"), { target: { value: "-100" } });
@@ -511,4 +527,43 @@ it("节奏上限不超过 uint32", async () => {
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0].channel!.ratePerMinute).toBe(4294967295);
+});
+
+it("页头、六列表格与渠道类型分段使用统一契约", async () => {
+  render({});
+  await screen.findByRole("heading", { name: "通知渠道", level: 1 });
+  const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
+  const form = await openCreate();
+  const group = within(form).getByRole("radiogroup", { name: "类型" });
+  expect({ headers, kinds: within(group).getAllByRole("radio").map((radio) => radio.getAttribute("aria-label")) }).toEqual({
+    headers: ["名称", "类型", "目标", "节奏上限", "创建于", "操作"], kinds: ["Telegram", "Webhook"],
+  });
+});
+
+it("列表移除正在编辑的渠道后保留草稿，保存失败原文留在抽屉", async () => {
+  let removed = false;
+  const { queryClient } = render({
+    listNotifyChannels: async () => removed ? { channels: [] } : channels,
+    saveNotifyChannel: async () => { throw new ConnectError("channel 1 not found", Code.NotFound); },
+  });
+  await openRowAction("tg（#1）", "编辑");
+  const form = screen.getByRole("form", { name: "编辑 tg（#1）" });
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "未保存的渠道" } });
+  removed = true;
+  await act(async () => { await queryClient.refetchQueries(); });
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  const dialog = screen.getByRole("dialog");
+  const error = await within(dialog).findByRole("alert");
+  expect({ form: within(dialog).getByRole("form"), name: (within(form).getByLabelText("名称") as HTMLInputElement).value, error: error.textContent }).toEqual({ form, name: "未保存的渠道", error: "channel 1 not found" });
+});
+
+it("同名渠道经第二条菜单打开后只保存第二条 id", async () => {
+  const saved: SaveNotifyChannelRequest[] = [];
+  render({
+    listNotifyChannels: async () => ({ channels: channels.channels.map((channel) => ({ ...channel, name: "同名" })) }),
+    saveNotifyChannel: async (req) => { saved.push(req); return {}; },
+  });
+  await openRowAction("同名（#2）", "编辑");
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(saved.map((req) => req.channel?.id)).toEqual([2n]));
 });

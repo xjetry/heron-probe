@@ -1,79 +1,119 @@
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, type ReactNode, useState } from "react";
-import { Link, useParams } from "react-router";
+import { type FormEvent, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
-import { HistoryCharts, RangePicker, useHistory, type HistoryMethods } from "../components/History";
-import { AdminService, type GetTrafficResponse } from "../gen/heron/v1/admin_pb";
-import { bytes } from "../lib/format";
 import { errorText } from "../api/auth";
-import { NodeAddresses } from "../components/NodeAddresses";
 import { AgentDiagnostics } from "../components/AgentDiagnostics";
+import { CountryBadge } from "../components/CountryBadge";
+import { EventFeed, useAlertEvents } from "../components/EventFeed";
 import { ExecutionScope } from "../components/ExecutionScope";
+import { MetricCharts, ProbeTaskCharts, RangePicker, useHistory, type HistoryMethods } from "../components/History";
+import { NodeAddresses, addressText } from "../components/NodeAddresses";
+import { NowGrid } from "../components/NowGrid";
+import { StatusBadge } from "../components/StatusBadge";
+import { AdminService, type GetTrafficResponse } from "../gen/heron/v1/admin_pb";
+import { liveStatus } from "../lib/adminStatus";
+import { ago, bytes } from "../lib/format";
+import { withId } from "../lib/ids";
+import { POLL_MS, TRAFFIC_MS } from "../lib/poll";
 import { trafficText } from "../lib/traffic";
-import { TRAFFIC_MS } from "../lib/poll";
+import { olderThan } from "../lib/version";
+import { NodeEditor } from "./NodeEditor";
 
 const ADMIN_HISTORY: HistoryMethods = { queryMetrics: AdminService.method.queryMetrics, queryProbes: AdminService.method.queryProbes };
+export type DetailTab = "overview" | "traffic" | "diagnostics" | "events";
+const TABS: readonly { id: DetailTab; label: string }[] = [{ id: "overview", label: "概览" }, { id: "traffic", label: "流量校正" }, { id: "diagnostics", label: "Agent 诊断" }, { id: "events", label: "告警事件" }];
+// URL 是外部输入：不认识的 tab 当概览，不显示一个空面板。
+const tabOf = (raw: string | null): DetailTab => (TABS.some((t) => t.id === raw) ? (raw as DetailTab) : "overview");
 
 export function NodeDetail() {
   const { id } = useParams();
+  const [params, setParams] = useSearchParams();
+  const tab = tabOf(params.get("tab"));
   const validId = /^\d+$/.test(id ?? "");
   const nodeId = validId ? BigInt(id!) : 0n;
+  const qc = useQueryClient();
   const nodes = useQuery(AdminService.method.listNodes, {}, { enabled: validId, refetchInterval: TRAFFIC_MS });
-  // 历史窗口依赖流量响应里的 hub now；校正操作仍在卡片内保留自己的错误槽位。
+  const snap = useQuery(AdminService.method.getSnapshot, {}, { enabled: validId, refetchInterval: POLL_MS });
+  const tags = useQuery(AdminService.method.listTags, {}, { enabled: validId });
+  const rules = useQuery(AdminService.method.listAlertRules, {}, { enabled: validId && tab === "events" });
+  const channels = useQuery(AdminService.method.listNotifyChannels, {}, { enabled: validId && tab === "events" });
+  // 流量响应同时携带历史窗口要用的 hub now；校正操作在卡片内保留自己的错误槽位。
   const traffic = useQuery(AdminService.method.getTraffic, {}, { enabled: validId, refetchInterval: TRAFFIC_MS });
-
+  // 历史与 tab 无关：hook 留在页面顶层，切 tab 不卸载，查询键不变、不重发；hub now 到达前它不发请求。
+  const history = useHistory(ADMIN_HISTORY, nodeId, validId && traffic.data ? Number(traffic.data.now) : undefined);
+  // 事件 tab 才取事件：它是低频内容，不该随每次打开详情多发一条请求。
+  const events = useAlertEvents(validId && tab === "events" ? nodeId : null);
+  const [editor, setEditor] = useState<HTMLElement | null>(null);
+  const update = useMutation(AdminService.method.updateNode, {
+    onSuccess: async () => {
+      try { await qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) }, { throwOnError: true }); }
+      catch (error) { throw new Error(`已保存，但回读失败：${errorText(error)}`); }
+    },
+  });
   if (!validId) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
   const gate = queryGate(nodes);
   const time = queryGate(traffic);
-  // history 与 traffic 不依赖 listNodes；listNodes 挂起或首次失败时它们完全可能
-  // 已经就绪，不能因为 listNodes 的门控挡住这些已经就绪、不依赖它的内容。是否"不存在"只有 listNodes
-  // 真的到达后才能判断——它挂起或首次失败时无法区分"节点被删了"与"这次还没拿到列表"，按后者处理。
+  // 历史与流量不依赖 listNodes；listNodes 挂起或首次失败时它们完全可能已经就绪，不能被它的门控挡住。
+  // 是否"不存在"只有 listNodes 真的到达后才能判断——它挂起或首次失败时无法区分"节点被删了"与"这次还没拿到列表"，按后者处理。
   const node = gate.ready ? gate.data.nodes.find((n) => n.id === nodeId) : undefined;
   if (gate.ready && !node) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
-  return (
-    <section>
-      {time.ready ? <NodeHistory nodeId={nodeId} name={node?.name} traffic={time.data} errors={[nodes.error, traffic.error]} /> : <>
-        {errorBanner(nodes.error, ...time.errors)}
-        <DetailHeader nodeId={nodeId} name={node?.name} />
-        {time.loading}
-      </>}
-      {gate.ready ? node?.facts && (
-        <dl className="card facts">
+  const live = snap.data?.nodes.find((n) => n.id === nodeId);
+  const bound = snap.data?.boundAgentVersion;
+  const status = node ? liveStatus(node, live) : undefined;
+  const ruleName = (id: bigint) => {
+    const rule = rules.data?.rules.find((r) => r.id === id);
+    return rule ? withId(rule.name, rule.id) : `规则 #${id}`;
+  };
+  const select = (next: DetailTab) => { const p = new URLSearchParams(params); if (next === "overview") p.delete("tab"); else p.set("tab", next); setParams(p, { replace: true }); };
+  const panel = (
+    <section id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`}>
+      {tab === "overview" && (time.ready ? <>
+        <header className="row detail-header"><RangePicker history={history} /></header>
+        <MetricCharts history={history} showCoverage />
+        <ProbeTaskCharts history={history} noProbes={<p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>} titleLink={(taskId, title) => <Link to={`/probes/${taskId}/compare`}>{title}</Link>} />
+      </> : time.loading)}
+      {tab === "traffic" && <TrafficCard nodeId={nodeId} data={traffic.data} />}
+      {tab === "diagnostics" && (gate.ready && node ? <>
+        {node.facts && <dl className="card facts">
           {/* 来源地址是 hub 在上报上看到的对端，不是 agent 自报；只在管理端显示，公开页没有这个字段。 */}
           <dt>主机名</dt><dd>{node.facts.hostname}{node.lastSource && <span className="muted">（来源 {node.lastSource}）</span>}</dd>
           <dt>双栈出口</dt><dd><NodeAddresses network={node.facts.network} detailed /></dd>
-          <dt>系统</dt><dd>{node.facts.os}</dd>
-          <dt>内核</dt><dd>{node.facts.kernel}</dd>
-          <dt>架构</dt><dd>{node.facts.arch}</dd>
-          <dt>CPU</dt><dd>{node.facts.cpuModel} × {node.facts.cpuCores}</dd>
-          <dt>虚拟化</dt><dd>{node.facts.virtualization || "无 / 未知"}</dd>
-          <dt>agent</dt><dd>{node.facts.agentVersion}</dd>
-          <dt>ICMP 探测</dt><dd>{node.facts.icmpAvailable ? "可用" : "不可用"}</dd>
-        </dl>
-      ) : gate.loading}
-      {node && <ExecutionScope execution={node.facts?.execution} updatedAt={node.factsUpdatedAt} />}
-      {node && <AgentDiagnostics diagnostics={node.facts?.diagnostics} updatedAt={node.factsUpdatedAt} />}
+          <dt>系统</dt><dd>{node.facts.os}</dd><dt>内核</dt><dd>{node.facts.kernel}</dd><dt>架构</dt><dd>{node.facts.arch}</dd>
+          <dt>CPU</dt><dd>{node.facts.cpuModel} × {node.facts.cpuCores}</dd><dt>虚拟化</dt><dd>{node.facts.virtualization || "无 / 未知"}</dd>
+          <dt>agent</dt><dd>{node.facts.agentVersion}</dd><dt>ICMP 探测</dt><dd>{node.facts.icmpAvailable ? "可用" : "不可用"}</dd>
+        </dl>}
+        <ExecutionScope execution={node.facts?.execution} updatedAt={node.factsUpdatedAt} />
+        <AgentDiagnostics diagnostics={node.facts?.diagnostics} updatedAt={node.factsUpdatedAt} />
+      </> : !gate.ready ? gate.loading : null)}
+      {tab === "events" && node && <EventFeed events={events} ruleName={ruleName} nodeName={() => node.name} channelName={(cid) => channels.data?.channels.find((c) => c.id === cid)?.name ?? `渠道 #${cid}`} />}
     </section>
   );
-}
-
-function DetailHeader({ nodeId, name, children }: { nodeId: bigint; name?: string; children?: ReactNode }) {
-  return <header className="row detail-header">
-    <h1>{name ?? `节点 #${nodeId}`}</h1>
-    <Link to={`/events?node=${nodeId}`}>告警事件</Link>
-    {children}
-  </header>;
-}
-
-function NodeHistory({ nodeId, name, traffic, errors }: { nodeId: bigint; name?: string; traffic: GetTrafficResponse; errors: unknown[] }) {
-  const history = useHistory(ADMIN_HISTORY, nodeId, Number(traffic.now));
-  return <>
-    {errorBanner(...errors, history.metrics.error, history.probes.error)}
-    <DetailHeader nodeId={nodeId} name={name}><RangePicker history={history} /></DetailHeader>
-    <TrafficCard nodeId={nodeId} data={traffic} />
-    <HistoryCharts history={history} showCoverage noProbes={<p className="muted">窗口内没有探测结果。<Link to="/probes">管理探测任务</Link></p>} />
-  </>;
+  return (
+    <section className="node-detail">
+      {errorBanner(nodes.error, snap.error, traffic.error, history.metrics.error, history.probes.error, tab === "events" ? events.error : undefined, tab === "events" ? channels.error : undefined, tab === "events" ? rules.error : undefined)}
+      <header className="node-head" role="group" aria-label="节点状态">
+        <div className="node-head-title">
+          <h1>{node ? node.name : `节点 #${nodeId}`}</h1>
+          {node?.country && <CountryBadge code={node.country} />}
+          {status && <StatusBadge status={status} detail={live?.lastSeenAt !== undefined && snap.data ? `最近上报 ${ago(live.lastSeenAt, Number(snap.data.now))}` : undefined} />}
+          {node && <button type="button" className="node-head-edit" disabled={editor !== null} onClick={(event) => { update.reset(); setEditor(event.currentTarget); }}>编辑</button>}
+        </div>
+        {node?.facts && <p className="node-head-meta num">
+          {[addressText(node.facts.network?.ipv4), addressText(node.facts.network?.ipv6), node.facts.hostname || "—", node.facts.kernel || "—", node.facts.agentVersion || "—"].join(" · ")}
+          {bound !== undefined && olderThan(node.facts.agentVersion, bound) && <> <span className="badge-attention" title={`低于 hub 绑定的 agent 版本 ${bound}`}>agent 低于 {bound}</span></>}
+        </p>}
+        <NowGrid metrics={live?.metrics} daysLeft={node?.billing?.daysLeft} />
+      </header>
+      <div className="tabs" role="tablist" aria-label="详情">
+        {TABS.map((t) => <button key={t.id} id={`tab-${t.id}`} type="button" role="tab" aria-selected={tab === t.id} aria-controls={`panel-${t.id}`} onClick={() => select(t.id)}>{t.label}</button>)}
+      </div>
+      {panel}
+      {editor && node && <NodeEditor key={String(node.id)} node={node} opener={editor} knownTags={tags.data?.tags ?? []} saving={update.isPending} error={update.error} listError={nodes.error}
+        onClose={() => setEditor(null)} onSave={(patch) => update.mutate({ id: node.id, ...patch }, { onSuccess: () => setEditor(null) })} />}
+    </section>
+  );
 }
 
 const GIB = 2 ** 30;

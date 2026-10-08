@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { ProbeSample } from "../gen/heron/v1/query_pb";
-import { assembleComparison, chunkNodeIds, taskIdParam, type ComparisonChunk } from "./probeComparison";
+import { assembleComparison, chunkNodeIds, sortRows, summarizeComparison, taskIdParam, type ComparisonChunk } from "./probeComparison";
 
 const names = new Map<bigint, string>([
   [1n, "edge"],
@@ -16,6 +16,34 @@ function sample(ts: number, sent: number, lost: number, errors: number, rttMeanU
 
 const from = 100;
 const to = 300;
+
+it("按节点汇总：均值按成功数加权，极值、丢包与错误各按其口径累计，不可见节点标记", () => {
+  const rows = summarizeComparison([1n, 2n, 3n], new Map([[1n, "a"], [2n, "b"]]), [chunk([
+    { nodeId: 1n, samples: [
+      { ...sample(60, 4, 1, 1, 10_000), rttMinUs: 8_000, rttMaxUs: 12_000 },
+      { ...sample(120, 4, 0, 0, 40_000), rttMinUs: 5_000, rttMaxUs: 90_000 },
+    ] },
+    { nodeId: 2n, samples: [sample(60, 2, 2, 0)] },
+  ], [3n])]);
+  expect(rows).toEqual([
+    { id: 1n, label: "a", mean: 30, min: 5, max: 90, lossPercent: 12.5, errors: 1, unavailable: false },
+    { id: 2n, label: "b", mean: null, min: null, max: null, lossPercent: 100, errors: 0, unavailable: false },
+    { id: 3n, label: "#3", mean: null, min: null, max: null, lossPercent: null, errors: 0, unavailable: true },
+  ]);
+});
+
+it("排序：数值列按方向，null 永远最后；标签按本地比较，不修改输入", () => {
+  const rows = [
+    { id: 1n, label: "b", mean: 30, min: 5, max: 90, lossPercent: 12.5, errors: 1, unavailable: false },
+    { id: 2n, label: "a", mean: null, min: null, max: null, lossPercent: 100, errors: 0, unavailable: false },
+    { id: 3n, label: "c", mean: 10, min: 1, max: 20, lossPercent: 0, errors: 3, unavailable: false },
+  ];
+  expect(sortRows(rows, "mean", "asc").map((r) => r.id)).toEqual([3n, 1n, 2n]);
+  expect(sortRows(rows, "mean", "desc").map((r) => r.id)).toEqual([1n, 3n, 2n]);
+  expect(sortRows(rows, "lossPercent", "desc").map((r) => r.id)).toEqual([2n, 1n, 3n]);
+  expect(sortRows(rows, "label", "asc").map((r) => r.label)).toEqual(["a", "b", "c"]);
+  expect(rows.map((r) => r.id)).toEqual([1n, 2n, 3n]);
+});
 
 function chunk(series: ComparisonChunk["series"], unavailable: bigint[] = [], stepS = 60): ComparisonChunk {
   return { stepS, series, unavailableNodeIds: unavailable };

@@ -11,11 +11,12 @@ import { renderWithAdmin, renderWithService } from "./test/harness";
 // styles.css、public.css 与 uPlot 的规则，管理端那份合并了 styles.css 与 uPlot。两端共用的是
 // styles.css 与 uPlot 两份；uPlot 只含 .uplot 与 .u-* 选择器、没有 white-space 规则，碰不到公开页头部，
 // 所以本测试只核对 styles.css 里的规则不外溢到公开页头部；public.css（单独给
-// `.nav .brand` 定样式）与运行期注入的站点自定义 CSS 不共用给两端，不存在"外溢"这回事，因此不在
-// 覆盖范围内。面板专用的 nowrap 规则必须锁在 .panel-nav 上——styles.css 里任何一条 nowrap 规则，
-// 只要选择器写成两边共用的 .nav 类（公开页上就是 header.nav 及其直接子元素），就会连带命中公开页
-// 头部的站点标题链接，标题变长时不再折行，整页横向溢出；因此要连 @media、@supports 等分组规则内
-// 的一起枚举逐条核对，不能只看顶层规则。
+// `.public-header` 及其子元素定样式，站点标题过长时在那里按省略号截断）与运行期注入的站点自定义 CSS
+// 不共用给两端，不存在"外溢"这回事，因此不在覆盖范围内。面板专用的 nowrap 规则必须锁在 .panel-nav 上：
+// 公开页头部（header.public-header）不带 .nav 类，但它的直接子元素仍用 styles.css 里两端共用的
+// .brand、.muted 等基础类，styles.css 里任何一条 nowrap 规则，只要选择器能匹配到这些共用类或裸元素，
+// 就会连带命中公开页头部，让头部的折行与截断不再只由 public.css 决定；因此要连 @media、@supports
+// 等分组规则内的一起枚举逐条核对，不能只看顶层规则。
 function nowrapSelectors(): string[] {
   const css = readFileSync(join(import.meta.dirname, "styles.css"), "utf8");
   const style = document.createElement("style");
@@ -37,7 +38,7 @@ it("styles.css 的每条 nowrap 规则（含分组规则内的）都不命中公
 
   renderWithService(PublicService, { getSite: async () => ({}) }, [{ path: "/", Component: PublicLayout }], "/");
   await screen.findByRole("link");
-  const header = document.querySelector("header.nav")!;
+  const header = document.querySelector("header.public-header")!;
   const targets = [header, ...Array.from(header.children)];
   for (const selector of selectors) {
     for (const el of targets) {

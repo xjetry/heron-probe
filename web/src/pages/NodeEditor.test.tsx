@@ -10,7 +10,7 @@ afterEach(cleanup);
 function editor(bytes = 1073741825n) {
   const onSave = vi.fn();
   const node = create(NodeSchema, { id: 1n, name: "quota", trafficResetDay: 1, trafficQuotaBytes: bytes, trafficQuotaMode: TrafficQuotaMode.TX });
-  render(<NodeEditor node={node} mode="general" knownTags={[]} saving={false} error={null} listError={null} onClose={() => {}} onSave={onSave} opener={document.createElement("button")} />);
+  render(<NodeEditor node={node} knownTags={[]} saving={false} error={null} listError={null} onClose={() => {}} onSave={onSave} opener={document.createElement("button")} />);
   return onSave;
 }
 

@@ -115,7 +115,7 @@ test('Passkey 在 HTTPS 注册、重启登录并迁移到新域名', async ({ pa
   await cdp.send('WebAuthn.addVirtualAuthenticator', { options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true } });
   await login(page);
   await page.goto('/admin/security');
-  await page.getByRole('link', { name: '管理 TOTP、恢复码与 Passkey' }).click();
+  await page.getByRole('article', { name: 'TOTP' }).getByRole('link', { name: '管理 TOTP、恢复码与 Passkey' }).click();
   await page.getByLabel('管理员密码').fill(password);
   await page.getByLabel('认证器名称').fill('Browser key');
   await page.getByRole('button', { name: '添加 Passkey', exact: true }).click();

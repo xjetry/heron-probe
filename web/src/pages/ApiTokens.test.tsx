@@ -13,13 +13,23 @@ const tokens = create(ListApiTokensResponseSchema, { tokens: [
 const routes = [{ path: "/tokens", Component: ApiTokens }];
 const render = (impl: AdminImpl) => renderWithAdmin({ listApiTokens: async () => tokens, ...impl }, routes, "/tokens");
 
+async function openCreate() {
+  fireEvent.click(await screen.findByRole("button", { name: "新建 API token" }));
+  return within(screen.getByRole("dialog")).getByRole("form", { name: "新建 API token" });
+}
+
+async function openRowAction(label: string, action: string) {
+  fireEvent.click(await screen.findByRole("button", { name: `更多操作 ${label}` }));
+  fireEvent.click(screen.getByRole("menuitem", { name: `${action} ${label}` }));
+}
+
 it("预授权只提交勾选的操作和指定节点", async () => {
   let grant: TokenGrant | undefined;
   render({
     listNodes: async () => ({ nodes: [{ id: 11n, name: "边缘节点" }] }),
     createApiToken: async (req) => { grant = req.grant; return { apiToken: { id: 3n, name: req.name }, token: "heron_at_new" }; },
   });
-  const form = await screen.findByRole("form", { name: "新建 API token" });
+  const form = await openCreate();
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "writer" } });
   fireEvent.click(within(form).getByLabelText("监控配置"));
   fireEvent.click(within(form).getByLabelText("创建节点"));
@@ -35,7 +45,7 @@ it("预授权只提交勾选的操作和指定节点", async () => {
 it("默认凭据仍为全站只读", async () => {
   let grant: TokenGrant | undefined;
   render({ createApiToken: async (req) => { grant = req.grant; return { apiToken: { id: 3n, name: req.name }, token: "heron_at_read" }; } });
-  const form = await screen.findByRole("form", { name: "新建 API token" });
+  const form = await openCreate();
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "reader" } });
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
   await waitFor(() => expect(grant).toBeDefined());
@@ -56,7 +66,7 @@ it("恢复后同请求 ID 的不同身份回执保持独立", async () => {
     { id: "receipt-source", ownerId: 1n, requestId: "same-key", action: "create_node", resourceId: 1n, committedAt: 1n, afterJson: "source" },
     { id: "receipt-target", ownerId: 1n, requestId: "same-key", action: "create_node", resourceId: 1n, committedAt: 1n, afterJson: "target" },
   ] }) });
-  fireEvent.click(await screen.findByRole("button", { name: "查看 ci 操作记录" }));
+  await openRowAction("ci（#1）", "查看操作记录");
   expect(await screen.findByText("source")).toBeInTheDocument();
   expect(screen.getByText("target")).toBeInTheDocument();
   expect(errors.mock.calls.filter((call) => String(call[0]).includes("same key"))).toEqual([]);
@@ -77,29 +87,31 @@ it("创建后只显示一次明文并刷新列表", async () => {
     listApiTokens: async () => { lists++; return tokens; },
     createApiToken: async (req) => { created.push(req.name); return { apiToken: { id: 3n, name: req.name, createdAt: 1n }, token: "heron_at_abc" }; },
   });
-  const form = await screen.findByRole("form", { name: "新建 API token" });
+  const form = await openCreate();
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "agent" } });
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
-  expect(await screen.findByLabelText("API token agent（#3）")).toHaveTextContent("heron_at_abc");
+  expect(await within(screen.getByRole("dialog")).findByLabelText("API token agent（#3）")).toHaveTextContent("heron_at_abc");
   expect(created).toEqual(["agent"]);
   await waitFor(() => expect(lists).toBe(2));
-  expect(within(form).getByLabelText("名称")).toHaveValue("");
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "完成" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 it("创建失败显示 hub 的错误原文", async () => {
   render({ createApiToken: async () => { throw new ConnectError("at most 100 API tokens may exist; delete an unused one first", Code.ResourceExhausted); } });
-  const form = await screen.findByRole("form", { name: "新建 API token" });
+  const form = await openCreate();
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "x" } });
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("at most 100 API tokens");
+  expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent("at most 100 API tokens");
 });
 
 it("吊销需要确认，确认后按 id 删除", async () => {
   const deleted: bigint[] = [];
   render({ deleteApiToken: async (req) => { deleted.push(req.id); return {}; } });
-  fireEvent.click(await screen.findByRole("button", { name: "吊销 laptop（#2）" }));
+  await openRowAction("laptop（#2）", "吊销");
   expect(deleted).toEqual([]);
-  fireEvent.click(screen.getByRole("button", { name: "确认吊销 laptop（#2）" }));
+  expect(screen.getByText("用它的请求立即失效")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("menuitem", { name: "确认吊销 laptop（#2）" }));
   await waitFor(() => expect(deleted).toEqual([2n]));
 });
 
@@ -110,12 +122,12 @@ it("同名 token 的吊销按钮按 id 区分并删除正确行", async () => {
   ] });
   const deleted: bigint[] = [];
   render({ listApiTokens: async () => duplicateTokens, deleteApiToken: async (req) => { deleted.push(req.id); return {}; } });
-  fireEvent.click(await screen.findByRole("button", { name: "吊销 ci（#2）" }));
-  fireEvent.click(screen.getByRole("button", { name: "确认吊销 ci（#2）" }));
+  await openRowAction("ci（#2）", "吊销");
+  fireEvent.click(screen.getByRole("menuitem", { name: "确认吊销 ci（#2）" }));
   await waitFor(() => expect(deleted).toEqual([2n]));
 });
 
-it("吊销卡片所属 token 时清掉明文，吊销别的保留", async () => {
+it("关闭抽屉后明文不在页面上，再次打开是空白表单", async () => {
   render({
     listApiTokens: async () => create(ListApiTokensResponseSchema, { tokens: [
       { id: 3n, name: "agent", createdAt: 1n },
@@ -124,16 +136,14 @@ it("吊销卡片所属 token 时清掉明文，吊销别的保留", async () => 
     createApiToken: async (req) => ({ apiToken: { id: 3n, name: req.name, createdAt: 1n }, token: "heron_at_abc" }),
     deleteApiToken: async () => ({}),
   });
-  const form = await screen.findByRole("form", { name: "新建 API token" });
+  const form = await openCreate();
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "agent" } });
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
   expect(await screen.findByLabelText("API token agent（#3）")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "吊销 other（#4）" }));
-  fireEvent.click(screen.getByRole("button", { name: "确认吊销 other（#4）" }));
-  expect(await screen.findByLabelText("API token agent（#3）")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "吊销 agent（#3）" }));
-  fireEvent.click(screen.getByRole("button", { name: "确认吊销 agent（#3）" }));
+  fireEvent.click(screen.getByRole("button", { name: "关闭抽屉" }));
   await waitFor(() => expect(screen.queryByLabelText("API token agent（#3）")).toBeNull());
+  const reopened = await openCreate();
+  expect(within(reopened).getByLabelText("名称")).toHaveValue("");
 });
 
 it("说明入口卡片的保存路径", async () => {
@@ -183,7 +193,7 @@ it("创建带「创建节点」权限的 token 后可复制预填脚本", async 
   const writeText = vi.fn(async (_text: string) => {});
   vi.stubGlobal("navigator", { clipboard: { writeText } });
   render({ createApiToken: async (req) => ({ apiToken: { id: 3n, name: req.name }, token: "heron_at_secret" }) });
-  const form = await screen.findByRole("form", { name: "新建 API token" });
+  const form = await openCreate();
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "tamper" } });
   fireEvent.click(within(form).getByLabelText("创建节点"));
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
@@ -194,7 +204,7 @@ it("创建带「创建节点」权限的 token 后可复制预填脚本", async 
 
 it("没有「创建节点」权限时不给出预填按钮", async () => {
   render({ createApiToken: async (req) => ({ apiToken: { id: 3n, name: req.name }, token: "heron_at_read" }) });
-  const form = await screen.findByRole("form", { name: "新建 API token" });
+  const form = await openCreate();
   fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "reader" } });
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
   expect(await screen.findByLabelText("API token reader（#3）")).toBeInTheDocument();

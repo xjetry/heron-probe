@@ -1,6 +1,22 @@
 import { expect, it } from "vitest";
 import { formatChartTimes, isolatedPointIndices, readingGap } from "./chartMarks";
 
+// 手机上的横轴只留时分（设计 §5）：1h / 6h / 24h 窗口刻度不足一天，跨日界也不补日期；7d / 30d 的刻度落在日界，仍写月-日。
+it("compact：小于一天的刻度只写时分，跨日界不补日期；不小于一天的刻度仍写月-日", () => {
+  const t0 = Date.parse("2026-10-06T22:00:00+08:00") / 1000;
+  const hourly = [t0, t0 + 3600, t0 + 7200, t0 + 10800];
+  expect(formatChartTimes(hourly, { incrSec: 3600, timeZone: "Asia/Shanghai" })).toEqual(["10-06 22:00", "23:00", "10-07 00:00", "01:00"]);
+  expect(formatChartTimes(hourly, { incrSec: 3600, timeZone: "Asia/Shanghai", compact: true })).toEqual(["22:00", "23:00", "00:00", "01:00"]);
+  const daily = [t0 + 7200, t0 + 7200 + 86_400 * 2];
+  expect(formatChartTimes(daily, { incrSec: 86_400 * 2, timeZone: "Asia/Shanghai", compact: true })).toEqual(["10-07", "10-09"]);
+});
+
+it("compact 不影响图例（没有 incrSec 时仍是完整时间）", () => {
+  const t = Date.parse("2026-10-06T22:00:00+08:00") / 1000;
+  expect(formatChartTimes([t], { timeZone: "Asia/Shanghai", compact: true })).toEqual(["2026-10-06 22:00"]);
+});
+
+
 const sh = (iso: string) => Date.parse(iso) / 1000;
 
 it("单点窗口要画点，连续段不加点", () => {

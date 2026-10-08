@@ -1,102 +1,84 @@
 import { useQuery } from "@connectrpc/connect-query";
 import { useState } from "react";
 import { Link } from "react-router";
-import { errorBanner, queryGate } from "../api/queryGate";
-import { AdminService, type NodeStatus } from "../gen/heron/v1/admin_pb";
+import { errorBanner, queryGateAll } from "../api/queryGate";
+import { Bar, Missing, ratio } from "../components/Bar";
+import { PageHeader } from "../components/PageHeader";
+import { AdminService, type Node, type NodeStatus as LiveNode } from "../gen/heron/v1/admin_pb";
+import { liveById, liveStatus } from "../lib/adminStatus";
+import { attentionCards } from "../lib/attention";
 import { ago, bytes, percent } from "../lib/format";
 import { withId } from "../lib/ids";
 import { filterNodes } from "../lib/nodeSearch";
 import { POLL_MS } from "../lib/poll";
-import { Bar, Missing, ratio } from "../components/Bar";
-import { Icon } from "../components/Icon";
 import { trafficText } from "../lib/traffic";
+import { STATUS_LABEL } from "../lib/status";
+
+// ListNodes 提供维护状态、到期与 agent 版本，GetSnapshot 提供在线裁决与读数；
+// queryGateAll 等待两者首次到达，避免缺少维护状态时误判节点状态。
+const DETAILS_MS = 10_000;
 
 export function Overview() {
   const [search, setSearch] = useState("");
   const snap = useQuery(AdminService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
-  const gate = queryGate(snap);
+  const details = useQuery(AdminService.method.listNodes, {}, { refetchInterval: DETAILS_MS });
+  const rules = useQuery(AdminService.method.listAlertRules, {}, { refetchInterval: DETAILS_MS });
+  const gate = queryGateAll(snap, details);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
-  const now = Number(gate.data.now);
-  const online = gate.data.nodes.filter((n) => n.online).length;
+  const [snapshot, listed] = gate.data;
+  const now = Number(snapshot.now);
+  const live = liveById(snapshot.nodes);
+  const cards = attentionCards({ nodes: listed.nodes, live, boundAgentVersion: snapshot.boundAgentVersion, states: rules.data?.states });
+  const rows = filterNodes(listed.nodes, search);
   return (
     <section>
-      <header className="page-heading">
-        <div><div className="eyebrow">Overview</div><h1>总览</h1><p>基础设施运行概况，关键指标尽在眼前。</p></div>
-        <span className="status-pill"><span className="dot ok" />{online} / {gate.data.nodes.length} 在线</span>
-      </header>
+      <PageHeader title="总览" />
       {gate.banner}
-      <OverviewSummary nodes={gate.data.nodes} />
-      <div className="section-heading"><h2>实时节点</h2><span className="live-caption">每 2 秒刷新 · 以 hub 上报状态为准</span></div>
-      <label className="node-search">搜索节点<input type="search" placeholder="名称、IP、地区、备注或主机名" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
-      {gate.data.nodes.length === 0 && (
-        <p className="muted">
-          还没有节点。去 <Link to="/nodes">节点</Link> 页创建，或开一个 <Link to="/register">注册窗口</Link>。
-        </p>
+      {errorBanner(rules.error)}
+      <ul className="attention" aria-label="需要处理">
+        {cards.map((card) => (
+          <li key={card.key} data-key={card.key} data-zero={card.count === 0 || undefined}>
+            <Link to={card.to}><strong className="num">{card.count === null ? "—" : card.count}</strong><span>{card.label}</span>{card.note && <small className="muted">{card.note}</small>}</Link>
+          </li>
+        ))}
+      </ul>
+      <div className="filter-row" role="group" aria-label="筛选">
+        <input type="search" aria-label="搜索节点" placeholder="名称、IP、地区、备注或主机名" value={search} onChange={(event) => setSearch(event.target.value)} />
+        <span className="muted">实时 · 每 {POLL_MS / 1000} 秒</span>
+      </div>
+      {listed.nodes.length === 0 && <p className="muted">还没有节点。去 <Link to="/nodes">节点</Link> 页创建，或开一个 <Link to="/register">注册窗口</Link>。</p>}
+      {listed.nodes.length > 0 && rows.length === 0 && <p className="muted" role="status">没有匹配的节点。</p>}
+      {rows.length > 0 && (
+        <div className="table-scroll" role="region" aria-label="节点实时读数" tabIndex={0}>
+          <table className="nodes overview-table">
+            <thead><tr><th>状态</th><th>节点</th><th>CPU</th><th>内存</th><th>磁盘</th><th>负载</th><th>网络</th><th>本周期</th><th>最近上报</th></tr></thead>
+            <tbody>{rows.map((node) => <NodeRow key={String(node.id)} node={node} live={live.get(node.id)} now={now} />)}</tbody>
+          </table>
+        </div>
       )}
-      <OverviewNodes nodes={gate.data.nodes} now={now} search={search} />
     </section>
   );
 }
 
-function OverviewSummary({ nodes }: { nodes: NodeStatus[] }) {
-  const online = nodes.filter((node) => node.online);
-  const cpus = online.flatMap((node) => node.metrics?.cpuPct === undefined ? [] : [node.metrics.cpuPct]);
-  const links = online.filter((node) => node.metrics?.netRxBps !== undefined && node.metrics?.netTxBps !== undefined);
-  const rx = links.reduce((total, node) => total + node.metrics!.netRxBps!, 0n);
-  const tx = links.reduce((total, node) => total + node.metrics!.netTxBps!, 0n);
-  return <div className="stats-grid">
-    <dl className="metric-card"><dt>节点总数<Icon name="server" /></dt><dd>{nodes.length}</dd><small>{online.length} 在线 / {nodes.length - online.length} 离线</small></dl>
-    <dl className="metric-card"><dt>平均 CPU<Icon name="activity" /></dt><dd>{cpus.length ? percent(cpus.reduce((total, value) => total + value, 0) / cpus.length) : "暂无读数"}</dd><small>{cpus.length} 个在线节点有读数</small></dl>
-    <dl className="metric-card"><dt>实时下行<Icon name="arrowDown" /></dt><dd>{links.length ? `${bytes(rx)}/s` : "暂无读数"}</dd><small>{links.length} 个在线节点合计</small></dl>
-    <dl className="metric-card"><dt>实时上行<Icon name="arrowUp" /></dt><dd>{links.length ? `${bytes(tx)}/s` : "暂无读数"}</dd><small>{links.length} 个在线节点合计</small></dl>
-  </div>;
+function Meter({ label, value }: { label: string; value: number | undefined }) {
+  if (value === undefined) return <Missing />;
+  return <><Bar thin value={value} label={`${label} ${percent(value)}`} /><span className="num">{percent(value)}</span></>;
 }
 
-function OverviewNodes({ nodes, now, search }: { nodes: NodeStatus[]; now: number; search: string }) {
-  // 快照没有备注与主机名，搜索时按 id 关联 ListNodes；空输入不依赖资料查询，仍可直接查看实时读数。
-  const details = useQuery(AdminService.method.listNodes, {}, { enabled: search !== "", refetchInterval: POLL_MS });
-  if (search === "") return <NodeTable nodes={nodes} now={now} />;
-  const gate = queryGate(details);
-  if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
-  const byId = new Map(gate.data.nodes.map((node) => [node.id, node]));
-  const matches = filterNodes(nodes.map((node) => ({ ...node, note: byId.get(node.id)?.note, facts: byId.get(node.id)?.facts, country: byId.get(node.id)?.country, lastSource: byId.get(node.id)?.lastSource })), search);
-  return <>
-    {gate.banner}
-    {matches.length === 0 && <p className="muted" role="status">没有匹配的节点。</p>}
-    <NodeTable nodes={matches} now={now} />
-  </>;
-}
-
-function NodeTable({ nodes, now }: { nodes: NodeStatus[]; now: number }) {
+function NodeRow({ node, live, now }: { node: Node; live: LiveNode | undefined; now: number }) {
+  const status = liveStatus(node, live);
+  const m = live?.metrics;
   return (
-    <div className="table-scroll" role="region" aria-label="节点实时读数" tabIndex={0}>
-      <table className="nodes">
-        <thead>
-          <tr><th>节点</th><th>CPU</th><th>内存</th><th>磁盘</th><th>负载</th><th>网络</th><th>本周期 ↓/↑</th><th>最近上报</th></tr>
-        </thead>
-        <tbody>
-          {nodes.map((n) => <NodeRow key={String(n.id)} node={n} now={now} />)}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function NodeRow({ node, now }: { node: NodeStatus; now: number }) {
-  const m = node.metrics;
-  return (
-    <tr className={node.online ? "online" : "offline"}>
-      <td>
-        <span className={`dot ${node.online ? "ok" : "bad"}`} role="img" aria-label={node.online ? "在线" : "离线"} />
-        <Link to={`/nodes/${node.id}`} aria-label={withId(node.name, node.id)}>{node.name}</Link>
-      </td>
-      <td>{m?.cpuPct !== undefined ? <Bar value={m.cpuPct} label={percent(m.cpuPct)} /> : <Missing />}</td>
-      <td>{m?.memUsed !== undefined && m.memTotal ? <Bar value={ratio(m.memUsed, m.memTotal)} label={`${bytes(m.memUsed)} / ${bytes(m.memTotal)}`} /> : <Missing />}</td>
-      <td>{m?.diskUsed !== undefined && m.diskTotal ? <Bar value={ratio(m.diskUsed, m.diskTotal)} label={`${bytes(m.diskUsed)} / ${bytes(m.diskTotal)}`} /> : <Missing />}</td>
-      <td>{m?.load1 !== undefined ? `${m.load1.toFixed(2)} / ${m.load5?.toFixed(2) ?? "–"} / ${m.load15?.toFixed(2) ?? "–"}` : <Missing />}</td>
-      <td>{m?.netRxBps !== undefined && m.netTxBps !== undefined ? `↓ ${bytes(m.netRxBps)}/s ↑ ${bytes(m.netTxBps)}/s` : <Missing />}</td>
-      <td>{node.traffic ? trafficText(node.traffic) : <Missing />}</td>
-      <td className="muted">{node.lastSeenAt !== undefined ? ago(node.lastSeenAt, now) : "从未"}</td>
+    <tr aria-label={node.name} data-status={status ?? "unknown"}>
+      <td data-label="状态"><span className="status-dot" data-status={status} role="img" aria-label={status ? STATUS_LABEL[status] : "状态未知"} /></td>
+      <td data-label="节点"><Link to={`/nodes/${node.id}`} aria-label={withId(node.name, node.id)}>{node.name}</Link></td>
+      <td data-label="CPU"><Meter label="CPU" value={m?.cpuPct} /></td>
+      <td data-label="内存"><Meter label="内存" value={m?.memUsed !== undefined && m.memTotal ? ratio(m.memUsed, m.memTotal) : undefined} /></td>
+      <td data-label="磁盘"><Meter label="磁盘" value={m?.diskUsed !== undefined && m.diskTotal ? ratio(m.diskUsed, m.diskTotal) : undefined} /></td>
+      <td data-label="负载" className="num">{m?.load1 !== undefined && m.load5 !== undefined && m.load15 !== undefined ? `${m.load1.toFixed(2)} / ${m.load5.toFixed(2)} / ${m.load15.toFixed(2)}` : <Missing />}</td>
+      <td data-label="网络" className="num">{m?.netRxBps !== undefined && m.netTxBps !== undefined ? `↓ ${bytes(m.netRxBps)}/s ↑ ${bytes(m.netTxBps)}/s` : <Missing />}</td>
+      <td data-label="本周期" className="num">{live?.traffic ? trafficText(live.traffic) : <Missing />}</td>
+      <td data-label="最近上报" className="muted num">{live?.lastSeenAt !== undefined ? ago(live.lastSeenAt, now) : STATUS_LABEL.never}</td>
     </tr>
   );
 }
