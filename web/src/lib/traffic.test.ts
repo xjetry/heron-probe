@@ -16,9 +16,9 @@ describe("quota conversion", () => {
   });
   it("formats only the server billing numerator and percentage", () => {
     const t = create(TrafficSchema, { periodRx: 800n, periodTx: 200n, quotaBytes: 1000n, quotaUsedBytes: 200n, quotaUsedPct: 20 });
-    expect(trafficText(t)).toBe("200 B / 1000 B（20.0%）");
+    expect(trafficText(t)).toBe("200 B / 1000 B (20.0%)");
     t.quotaBytes = 0n;
-    expect(trafficText(t)).toBe("200 B（未设配额）");
+    expect(trafficText(t)).toBe("200 B");
     expect(quotaInput(1n << 30n, "GiB")).toBe("1");
   });
   it("labels the numerator by the quota mode and falls back to sum without a quota", () => {
@@ -32,6 +32,6 @@ describe("quota conversion", () => {
     expect(trafficDetail(t)).toBe("下载 + 上传");
     t.quotaBytes = 0n;
     t.quotaMode = TrafficQuotaMode.TX;
-    expect(trafficDetail(t)).toBe("下载 + 上传");
+    expect(trafficDetail(t)).toBe("下载 + 上传 · 未设配额");
   });
 });

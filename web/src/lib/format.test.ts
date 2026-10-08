@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ago, bytes, duration, formatUnit, percent } from "./format";
+import { ago, bytes, dateTime, day, duration, formatUnit, percent } from "./format";
 
 describe("format", () => {
   it("ms 按量级取位数", () => {
@@ -36,5 +36,17 @@ describe("format", () => {
     expect(formatUnit(0, "bytes/s")).toBe("0 B/s");
     expect(formatUnit(2.4, "count")).toBe("2");
     expect(formatUnit(1.23456, "")).toBe("1.23");
+  });
+  it("dateTime 与 day 固定为 YYYY-MM-DD HH:mm:ss / YYYY-MM-DD，24 小时制，按给定时区", () => {
+    expect(dateTime(1_800_000_000, "UTC")).toBe("2027-01-15 08:00:00");
+    expect(dateTime(1_800_000_000n, "Asia/Tokyo")).toBe("2027-01-15 17:00:00");
+    expect(dateTime(1_700_000_005, "America/New_York")).toBe("2023-11-14 17:13:25");
+    expect(dateTime(86_400, "UTC")).toBe("1970-01-02 00:00:00");
+    expect(day(1_800_000_000, "UTC")).toBe("2027-01-15");
+    expect(day(1_800_000_000, "Pacific/Kiritimati")).toBe("2027-01-15");
+    expect(day(1_800_000_000 - 9 * 3600, "UTC")).toBe("2027-01-14");
+  });
+  it("dateTime 无效时间返回空串", () => {
+    expect(dateTime(Number.NaN)).toBe("");
   });
 });

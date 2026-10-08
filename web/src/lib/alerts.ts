@@ -1,5 +1,7 @@
-import { AlertKind, ChannelKind, DeliveryFailure, ProbeMetric, ResourceMetric, type AlertDelivery, type AlertRule, type AlertStateEntry, type NotifyChannel, type ProbeTaskDetail, type Settings } from "../gen/heron/v1/admin_pb";
-import { formatUnit } from "./format";
+import { AlertKind, ChannelKind, DeliveryFailure, ProbeMetric, ResourceMetric, type AlertDelivery, type AlertEvent, type AlertRule, type AlertStateEntry, type NotifyChannel, type ProbeTaskDetail, type Settings } from "../gen/heron/v1/admin_pb";
+import { remainingText } from "./billing";
+import { duration, formatUnit, percent } from "./format";
+import { withId } from "./ids";
 import { disambiguate, kindLabel } from "./probes";
 
 type Entry<K> = { value: K; label: string };
@@ -180,3 +182,38 @@ export function deliveryText(d: AlertDelivery, channel: string): string {
 
 // 缺失表示取 hub 的 HERON_OFFLINE_AFTER（proto Node.offline_grace_s）；清除后 hub 存 NULL，不会回显 0。
 export const graceText = (s: number | undefined): string => (s === undefined ? "默认" : `${s} 秒`);
+
+// 规则列表未到、查询失败或规则已删除时按编号回退，事件行仍可辨认。
+export function ruleLabel(id: bigint, rules: readonly AlertRule[] | undefined): string {
+  const rule = rules?.find((r) => r.id === id);
+  return rule ? withId(rule.name, rule.id) : `规则 #${id}`;
+}
+
+// AlertEvent.value 的单位随规则种类（proto AlertEvent.value 与 internal/hub/alert 各 apply 调用处）：离线是未上报秒数，
+// 探测同规则阈值的单位，到期与证书到期是剩余天数（负数已过期），流量是配额百分比，资源随指标（字节速率按面板的 Mbps 口径）。
+// 没有观测值的事件（系统事件、触发 / 恢复之外的变化且值为 0）返回 null。规则未知（列表未到、已删除或面板不认识的种类）时
+// 不猜单位，只写数字。到期规则因清除到期日而恢复时值为 0：剩 0 天必然仍在提醒窗口内，不会是恢复值，所以恢复的 0 不写成"剩 0 天"。
+export function eventValueText(ev: AlertEvent, rule: AlertRule | undefined): string | null {
+  const v = ev.value;
+  if (v === 0 && ev.transition !== "firing" && ev.transition !== "recovered") return null;
+  switch (rule?.kind) {
+    case AlertKind.OFFLINE: return v < 60 ? `${Math.round(v)} s` : duration(Math.round(v));
+    case AlertKind.PROBE: {
+      const metric = PROBE_METRICS.find((m) => m.value === rule.metric);
+      return metric ? formatUnit(v, metric.unit) : plain(v);
+    }
+    case AlertKind.EXPIRY:
+    case AlertKind.CERT_EXPIRY:
+      return v === 0 && ev.transition === "recovered" ? null : remainingText(Math.round(v));
+    case AlertKind.TRAFFIC: return percent(v);
+    case AlertKind.RESOURCE:
+      switch (resourceUnit(rule.resourceMetric)) {
+        case "per-core": return v.toFixed(2);
+        case "mbps": return `${(v / MBPS_TO_BYTES_PER_S).toFixed(1)} Mbps`;
+        default: return percent(v);
+      }
+    default: return plain(v);
+  }
+}
+
+const plain = (v: number) => String(Number(v.toFixed(2)));

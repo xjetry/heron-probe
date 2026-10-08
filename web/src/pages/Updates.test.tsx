@@ -250,3 +250,16 @@ it("已在目标版本、没有任务的机器显示已是目标版本，而不�
   await check("v0.5.5");
   expect(screen.getAllByText("已是目标版本")).toHaveLength(2);
 });
+
+it("已登记的不支持原因写中文，未登记的照写原文", async () => {
+  render({ getUpdates: async () => ({ targets: [
+    { nodeId: 0n, status: { supported: true, version: "v0.5.5" } },
+    { nodeId: 1n, status: { supported: false, reason: "agent has not reported online update support" } },
+    { nodeId: 2n, status: { supported: false, version: "v0.5.3", reason: "OpenRC is unsupported" } },
+  ], latestVersion: "", boundAgentVersion: "v0.5.4" }) });
+  const row = (name: string) => within(screen.getByRole("checkbox", { name: `选择 ${name}` }).closest("tr")!);
+  await screen.findByRole("checkbox", { name: "选择 东京（#1）" });
+  expect(row("东京（#1）").getByText("不支持在线更新：agent 尚未上报在线更新能力（版本过旧，或刚连上 hub）")).toBeInTheDocument();
+  expect(row("东京（#1）").queryByText(/has not reported/)).toBeNull();
+  expect(row("香港（#2）").getByText("OpenRC is unsupported").tagName).toBe("CODE");
+});

@@ -12,6 +12,7 @@ import { Picks } from "../components/Picks";
 import { AdminService, ChannelKind, type NotifyChannel, type Settings } from "../gen/heron/v1/admin_pb";
 import { CHANNEL_KINDS, MAX_NOTIFY_CHANNELS, NOTIFY_LISTS, channelTarget, labelOf, methodOf, rateLabel } from "../lib/alerts";
 import { withId } from "../lib/ids";
+import { day } from "../lib/format";
 
 const METHODS = ["POST", "PUT", "PATCH"] as const;
 type HeaderRow = { id: number; name: string; value: string };
@@ -110,7 +111,7 @@ export function Channels() {
                 <td data-label="类型">{labelOf(CHANNEL_KINDS, c.kind)}</td>
                 <td data-label="目标">{channelTarget(c)}</td>
                 <td data-label="节奏上限">{rateLabel(c)}</td>
-                <td data-label="创建于" className="muted">{new Date(Number(c.createdAt) * 1000).toLocaleDateString()}</td>
+                <td data-label="创建于" className="muted">{day(c.createdAt)}</td>
                 <td data-column="actions"><RowMenu label={label} items={[
                   { label: "编辑", disabled: busy, onSelect: (trigger) => { update.reset(); setDrawer({ kind: "edit", channel: c, opener: trigger }); } },
                   { label: "发送测试", disabled: test.isPending, onSelect: () => test.mutate({ id: c.id }, { onSuccess: (_r, _v, op) => { if (isLatest(op)) setNotice(`已向 ${c.name} 发送测试消息`); } }) },

@@ -1,11 +1,12 @@
 import { Link } from "react-router";
 import { Bar, Missing, ratio } from "../components/Bar";
 import { CountryBadge } from "../components/CountryBadge";
+import { Expiry } from "../components/Expiry";
 import { StatusBadge } from "../components/StatusBadge";
 import type { PublicNode } from "../gen/heron/v1/public_pb";
 import { priceText } from "../lib/billing";
 import { ago, bytes, duration, percent } from "../lib/format";
-import { expiryLevel, nodeStatus } from "../lib/status";
+import { nodeStatus } from "../lib/status";
 import { trafficDetail, trafficText } from "../lib/traffic";
 
 export function NodeCard({ node }: { node: PublicNode; now: number }) {
@@ -16,7 +17,6 @@ export function NodeCard({ node }: { node: PublicNode; now: number }) {
   const uptime = m?.uptimeS !== undefined ? `运行 ${duration(m.uptimeS)}` : null;
   const price = priceText(node.billing);
   const b = node.billing;
-  const daysLeft = b?.daysLeft;
   return (
     <article className="node-card" aria-label={node.name} data-status={status}>
       <header className="node-card-head">
@@ -34,13 +34,14 @@ export function NodeCard({ node }: { node: PublicNode; now: number }) {
       <p className="node-network num" role="group" aria-label="网络速率">
         ↓ {m?.netRxBps !== undefined ? `${bytes(m.netRxBps)}/s` : <Missing />} ↑ {m?.netTxBps !== undefined ? `${bytes(m.netTxBps)}/s` : <Missing />}
       </p>
-      <footer className="node-card-foot">
-        <div><span className="muted">本周期{node.traffic && ` · ${trafficDetail(node.traffic)}`}</span><span className="num">{node.traffic ? trafficText(node.traffic) : "–"}</span><span className="muted">费用</span><span className="num">{price || "–"}</span></div>
-        <div>
-          <span className="muted">到期</span><span className="num">{b?.expiresOn || "–"}</span>
-          {daysLeft !== undefined && <span className="num" data-level={expiryLevel(daysLeft)}>{daysLeft < 0 ? `已过期 ${-daysLeft} 天` : `剩 ${daysLeft} 天`}</span>}
-        </div>
-      </footer>
+      <dl className="node-card-foot">
+        <dt>本周期</dt>
+        <dd>{node.traffic ? <><span className="num">{trafficText(node.traffic)}</span><span className="muted">{trafficDetail(node.traffic)}</span></> : "–"}</dd>
+        <dt>费用</dt>
+        <dd><span className="num">{price || "–"}</span></dd>
+        <dt>到期</dt>
+        <dd>{b?.expiresOn ? <Expiry billing={b} /> : "–"}</dd>
+      </dl>
     </article>
   );
 }

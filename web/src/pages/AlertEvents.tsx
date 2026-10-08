@@ -4,7 +4,7 @@ import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService } from "../gen/heron/v1/admin_pb";
 import { EventFeed, useAlertEvents, filtersFromParams, paramsWithFilters, matchesFilters, type EventFilters } from "../components/EventFeed";
 import { PageHeader } from "../components/PageHeader";
-import { TRANSITIONS } from "../lib/alerts";
+import { ruleLabel, TRANSITIONS } from "../lib/alerts";
 import { withId } from "../lib/ids";
 
 export function AlertEvents() {
@@ -27,10 +27,7 @@ export function AlertEvents() {
   const nodeName = (id: bigint) => id === 0n ? "系统" : nodeList.find((n) => n.id === id)?.name ?? `节点 #${id}`;
   // 渠道只提供名称：它的失败只进横幅，不阻断事件；名称缺失时按编号回退。
   const channelName = (id: bigint) => channels.data?.channels.find((c) => c.id === id)?.name ?? `渠道 #${id}`;
-  const ruleName = (id: bigint) => {
-    const rule = rules.data?.rules.find((r) => r.id === id);
-    return rule ? withId(rule.name, rule.id) : `规则 #${id}`;
-  };
+  const ruleName = (id: bigint) => ruleLabel(id, rules.data?.rules);
   const filtered = nodeId !== 0n || filters.ruleId !== null || filters.transition !== null || filters.from !== "" || filters.to !== "";
   return (
     <section>
@@ -56,8 +53,8 @@ export function AlertEvents() {
         <option value="">全部</option>
         {Object.entries(TRANSITIONS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </select></label>
-      <input type="date" aria-label="起始日期" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} />
-      <input type="date" aria-label="结束日期" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} />
+      <label>起始日期<input type="date" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} /></label>
+      <label>结束日期<input type="date" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} /></label>
       {filtered && <button type="button" className="link" onClick={() => {
         const next = paramsWithFilters(params, { ruleId: null, transition: null, from: "", to: "" });
         next.delete("node");
@@ -65,7 +62,7 @@ export function AlertEvents() {
       }}>清除筛选</button>}
       </div>
       {errorBanner(nodes.error, events.error, channels.error, rules.error)}
-      <EventFeed events={events} nodeName={nodeName} channelName={channelName} ruleName={ruleName} visible={(ev) => matchesFilters(ev, filters)} />
+      <EventFeed events={events} nodeName={nodeName} channelName={channelName} rules={rules.data?.rules} visible={(ev) => matchesFilters(ev, filters)} />
     </section>
   );
 }

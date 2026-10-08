@@ -47,7 +47,7 @@ test("公开总览：状态墙、详情、卡片、手机列表与数据边界",
   // 汇总与分组：维护中不算在线；组按在线数降序，未知最后。
   await expect(page.getByText("2 / 5 在线")).toBeVisible();
   // 日本与香港都是 1 / 2：同在线数、同总数时按代码排，HK 在 JP 前。
-  await expect(page.locator(".wall-group > summary")).toHaveText(["🇭🇰 香港 · 1 / 2 在线", "🇯🇵 日本 · 1 / 2 在线", "未知 · 0 / 1 在线"]);
+  await expect(page.locator(".wall-group > summary")).toHaveText(["香港 · 1 / 2 在线", "日本 · 1 / 2 在线", "未知 · 0 / 1 在线"]);
   await expect(page.locator(".tile[data-status='offline']").getByText("离线 · 2 小时前")).toBeVisible();
 
   // 详情面板默认选中第一个节点；点另一个方块只切换，不导航。
@@ -66,12 +66,12 @@ test("公开总览：状态墙、详情、卡片、手机列表与数据边界",
 
   // 筛选：地区下拉 + 标签下拉 + 只看在线。
   await page.getByRole("group", { name: "地区" }).getByRole("button", { name: /^地区/ }).click();
-  await page.getByRole("checkbox", { name: "🇯🇵 日本" }).check();
-  await page.getByRole("checkbox", { name: "🇯🇵 日本" }).press("Escape");
+  await page.getByRole("checkbox", { name: "日本" }).check();
+  await page.getByRole("checkbox", { name: "日本" }).press("Escape");
   await expect(page.locator(".summary-count")).toHaveText("1 / 2 在线");
   await page.getByRole("button", { name: "只看在线" }).click();
   await expect(page.locator(".tile")).toHaveCount(1);
-  await page.getByRole("button", { name: "移除 🇯🇵 日本" }).click();
+  await page.getByRole("button", { name: "移除 日本" }).click();
   await page.getByRole("button", { name: "只看在线" }).click();
 
   // 卡片视图：只有在线与维护中出卡片，离线折叠；卡片有费用与到期。
@@ -79,7 +79,8 @@ test("公开总览：状态墙、详情、卡片、手机列表与数据边界",
   await expect(page.getByRole("article")).toHaveCount(3);
   const card = page.getByRole("article", { name: "tokyo-core" });
   await expect(card.getByText("US$12 / 月")).toBeVisible();
-  await expect(card.getByText("剩 25 天")).toHaveAttribute("data-level", "attention");
+  await expect(card.locator(".expiry")).toHaveAttribute("data-level", "attention");
+  await expect(card.locator(".expiry")).toContainText("剩 25 天");
   const folded = page.locator("details.folded-nodes");
   await expect(folded.locator("summary")).toHaveText("离线与从未上报 · 2");
   await folded.locator("summary").click();

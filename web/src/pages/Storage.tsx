@@ -2,10 +2,10 @@ import { useQuery } from "@connectrpc/connect-query";
 import { PageHeader } from "../components/PageHeader";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService, type SeriesTableHealth } from "../gen/heron/v1/admin_pb";
-import { bytes, duration } from "../lib/format";
+import { bytes, dateTime, duration } from "../lib/format";
 import { walObservationView } from "../lib/wal";
 
-const at = (unix: bigint) => new Date(Number(unix) * 1000).toLocaleString();
+const at = (unix: bigint) => dateTime(unix);
 
 // 读数缺失的两种含义不同：表为空（没有最老桶），与本级没有水位（1m 级不经上卷写入）。
 function Oldest({ h }: { h: SeriesTableHealth }) {

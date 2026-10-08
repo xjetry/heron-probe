@@ -1,5 +1,6 @@
 import { ResourceScope, ScopeKind, ScopeNote, type ExecutionScope as Scope } from "../gen/heron/v1/types_pb";
 import { bytes } from "../lib/format";
+import { Timestamp } from "./Timestamp";
 
 const KINDS: Partial<Record<ScopeKind, string>> = {
   [ScopeKind.HOST]: "整台主机",
@@ -40,7 +41,6 @@ function resourceText<T>(scope: ResourceScope, label: string, value: T | undefin
 }
 
 export function ExecutionScope({ execution, updatedAt }: { execution?: Scope; updatedAt?: bigint }) {
-  const updated = updatedAt && updatedAt > 0n ? new Date(Number(updatedAt) * 1000) : undefined;
   const notes = (execution?.notes ?? []).flatMap((note) => {
     const text = NOTES[note];
     return text ? [text] : [];
@@ -50,7 +50,7 @@ export function ExecutionScope({ execution, updatedAt }: { execution?: Scope; up
     {!execution ? <p className="muted">未上报</p> : <>
       <p className="muted">采样来源取自最近保存的 Facts，可能滞后于实时指标。容量是可见上限，不是机器的实际容量。</p>
       <dl className="facts">
-        <dt>保存时间</dt><dd>{updated ? <time dateTime={updated.toISOString()}>{updated.toLocaleString()}</time> : "未知"}</dd>
+        <dt>保存时间</dt><dd>{updatedAt && updatedAt > 0n ? <Timestamp at={updatedAt} /> : "未知"}</dd>
         <dt>整体范围</dt><dd>{KINDS[execution.kind] ?? "未识别"}</dd>
         <dt>CPU</dt><dd>{resourceText(execution.cpu, "可见上限", execution.cpuEffectiveCores, cores)}</dd>
         <dt>内存</dt><dd>{resourceText(execution.memory, "可见上限", execution.memoryLimitBytes, bytes)}</dd>

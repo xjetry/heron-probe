@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
-import { AlertDeliverySchema, AlertKind, AlertKindSchema, AlertRuleSchema, AlertStateEntrySchema, ChannelKind, DeliveryFailure, DeliveryFailureSchema, ListProbeTasksResponseSchema, NotifyChannelSchema, ProbeMetric, ProbeTaskDetailSchema } from "../gen/heron/v1/admin_pb";
+import { AlertDeliverySchema, AlertEventSchema, AlertKind, AlertKindSchema, AlertRuleSchema, AlertStateEntrySchema, ChannelKind, DeliveryFailure, DeliveryFailureSchema, ListProbeTasksResponseSchema, NotifyChannelSchema, ProbeMetric, ProbeTaskDetailSchema, ResourceMetric } from "../gen/heron/v1/admin_pb";
 import { ProbeKind } from "../gen/heron/v1/types_pb";
-import { ALERT_KINDS, CHANNEL_KINDS, channelTarget, deliveryText, failureText, graceText, labelOf, rateLabel, ruleCondition, statesOf, taskLabel, taskLabels, transitionLabel } from "./alerts";
+import { ALERT_KINDS, CHANNEL_KINDS, channelTarget, deliveryText, eventValueText, ruleLabel, failureText, graceText, labelOf, rateLabel, ruleCondition, statesOf, taskLabel, taskLabels, transitionLabel } from "./alerts";
 import { PROBE_KINDS } from "./probes";
 
 describe("taskLabel", () => {
@@ -146,4 +146,34 @@ it("transitionLabel 认识规则事件与系统事件的每种变化，未知值
 
 it("graceText 缺失即默认", () => {
   expect([graceText(undefined), graceText(90)]).toEqual(["默认", "90 秒"]);
+});
+
+describe("eventValueText", () => {
+  const ev = (value: number, transition = "firing") => create(AlertEventSchema, { ruleId: 1n, transition, value });
+  const rule = (init: Parameters<typeof create<typeof AlertRuleSchema>>[1]) => create(AlertRuleSchema, { id: 1n, ...init });
+  it.each([
+    ["离线不足一分钟写秒", rule({ kind: AlertKind.OFFLINE }), ev(39.226), "39 s"],
+    ["离线超过一分钟写时长", rule({ kind: AlertKind.OFFLINE }), ev(3725), "1h 2m"],
+    ["探测丢包是百分比", rule({ kind: AlertKind.PROBE, metric: ProbeMetric.LOSS_PCT }), ev(22.5), "23%"],
+    ["探测往返是毫秒", rule({ kind: AlertKind.PROBE, metric: ProbeMetric.RTT_MS }), ev(182.44), "182 ms"],
+    ["到期是剩余天数", rule({ kind: AlertKind.EXPIRY }), ev(12), "剩 12 天"],
+    ["已过期写过期天数", rule({ kind: AlertKind.EXPIRY }), ev(-3), "已过期 3 天"],
+    ["证书到期同到期", rule({ kind: AlertKind.CERT_EXPIRY }), ev(5, "recovered"), "剩 5 天"],
+    ["流量是配额百分比", rule({ kind: AlertKind.TRAFFIC }), ev(90), "90%"],
+    ["资源百分比", rule({ kind: AlertKind.RESOURCE, resourceMetric: ResourceMetric.CPU_PCT }), ev(91.24), "91%"],
+    ["资源每核负载两位小数", rule({ kind: AlertKind.RESOURCE, resourceMetric: ResourceMetric.LOAD1_PER_CORE }), ev(1.5), "1.50"],
+    ["资源速率按 Mbps", rule({ kind: AlertKind.RESOURCE, resourceMetric: ResourceMetric.NET_RX_BPS }), ev(1250000), "10.0 Mbps"],
+    ["规则未知只写数字", undefined, ev(39.226), "39.23"],
+  ])("%s", (_, r, e, want) => {
+    expect(eventValueText(e, r)).toBe(want);
+  });
+  it("没有观测值的事件与清除到期日的恢复写破折号", () => {
+    expect(eventValueText(ev(0, "login_success"), undefined)).toBeNull();
+    expect(eventValueText(ev(0, "recovered"), rule({ kind: AlertKind.EXPIRY }))).toBeNull();
+    expect(eventValueText(ev(0, "firing"), rule({ kind: AlertKind.EXPIRY }))).toBe("剩 0 天");
+  });
+  it("规则标签按编号回退", () => {
+    expect(ruleLabel(1n, [rule({ name: "cpu" })])).toBe("cpu（#1）");
+    expect(ruleLabel(2n, undefined)).toBe("规则 #2");
+  });
 });

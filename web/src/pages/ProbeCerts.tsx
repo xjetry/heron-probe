@@ -9,6 +9,7 @@ import { errorBanner, queryGateAll } from "../api/queryGate";
 import { AdminService, CertPinChangeSchema, PinCapability, SaveProbeTaskRequestSchema, type NodeProbeCertificate } from "../gen/heron/v1/admin_pb";
 import { PresentedReason, ProbeTaskSchema } from "../gen/heron/v1/types_pb";
 import { formatPin } from "../lib/certpin";
+import { Timestamp } from "../components/Timestamp";
 
 function capabilityText(cap: PinCapability, pinned: boolean): string {
   switch (cap) {
@@ -32,8 +33,7 @@ const reasonText: Record<number, string> = {
 };
 
 function when(seconds: bigint) {
-  const at = new Date(Number(seconds) * 1000);
-  return <time dateTime={at.toISOString()}>{at.toLocaleString()}</time>;
+  return <Timestamp at={seconds} />;
 }
 
 export function ProbeCerts() {

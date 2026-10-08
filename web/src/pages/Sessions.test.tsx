@@ -3,6 +3,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { expect, it } from "vitest";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Sessions } from "./Sessions";
+import { dateTime } from "../lib/format";
 
 const currentID = "a".repeat(64);
 const otherID = "b".repeat(64);
@@ -21,8 +22,8 @@ it("会话列表显示创建与最近使用时刻并仅标记当前会话", asyn
   render();
   for (const s of sessions) {
     const row = (await screen.findByRole("button", { name: `更多操作 ${s.id.slice(0, 12)}` })).closest("tr")!;
-    expect(within(row).getByText(new Date(Number(s.createdAt) * 1000).toLocaleString())).toBeInTheDocument();
-    expect(within(row).getByText(new Date(Number(s.lastUsedAt) * 1000).toLocaleString())).toBeInTheDocument();
+    expect(within(row).getByText(dateTime(s.createdAt))).toBeInTheDocument();
+    expect(within(row).getByText(dateTime(s.lastUsedAt))).toBeInTheDocument();
     expect(within(row).queryByText("当前") != null).toBe(s.current);
   }
 });

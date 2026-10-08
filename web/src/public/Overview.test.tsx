@@ -31,7 +31,7 @@ it("汇总、筛选行与节点一起出现；地区与标签是带计数的多�
   expect(await screen.findByText("2 / 4 在线")).toBeInTheDocument();
   expect(shown()).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
   open("地区");
-  expect(within(screen.getByRole("group", { name: "地区" })).getAllByRole("checkbox").map((c) => c.getAttribute("aria-label"))).toEqual(["🇭🇰 香港", "🇯🇵 日本", "未知"]);
+  expect(within(screen.getByRole("group", { name: "地区" })).getAllByRole("checkbox").map((c) => c.getAttribute("aria-label"))).toEqual(["香港", "日本", "未知"]);
   open("标签");
   // 标签的集合与顺序取 hub 下发的并集（按折叠键排序），页面不自己汇总、排序。
   expect(within(screen.getByRole("group", { name: "标签" })).getAllByRole("checkbox").map((c) => c.getAttribute("aria-label"))).toEqual(["db", "prod", "web"]);
@@ -41,7 +41,7 @@ it("地区并集、标签交集、搜索与只看在线叠加；计数按筛选�
   render();
   await screen.findByText("2 / 4 在线");
   open("地区");
-  check("地区", "🇯🇵 日本");
+  check("地区", "日本");
   check("地区", "未知");
   expect(shown()).toEqual(["web-1", "db-1", "bare-1"]);
   expect(screen.getByText("1 / 3 在线")).toBeInTheDocument();

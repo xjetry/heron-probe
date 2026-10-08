@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BillingCycle, BillingCycleSchema } from "../gen/heron/v1/types_pb";
-import { BILLING_CYCLES, cycleLabel, expired, expiryText, priceText, sortByExpiry, type BillingView } from "./billing";
+import { BILLING_CYCLES, cycleLabel, priceText, remainingText, sortByExpiry, type BillingView } from "./billing";
 
 const none: BillingView = { price: "", currency: "", billingCycle: BillingCycle.UNSPECIFIED, expiresOn: "" };
 
@@ -53,22 +53,15 @@ describe("priceText", () => {
   });
 });
 
-describe("expiryText", () => {
-  it.each([
-    [{ expiresOn: "2026-10-01", daysLeft: 4 }, "2026-10-01（剩 4 天）", false],
-    [{ expiresOn: "2026-09-27", daysLeft: 0 }, "2026-09-27（剩 0 天）", false],
-    [{ expiresOn: "2026-09-24", daysLeft: -3 }, "2026-09-24（已过期 3 天）", true],
-    [{ expiresOn: "2026-10-01" }, "2026-10-01", false],
-    [{}, "", false],
-  ])("%o → %s", (b, want, isExpired) => {
-    expect(expiryText({ ...none, ...b })).toBe(want);
-    expect(expired({ ...none, ...b })).toBe(isExpired);
+describe("remainingText", () => {
+  it.each([[4, "剩 4 天"], [0, "剩 0 天"], [-3, "已过期 3 天"]])("%i → %s", (daysLeft, want) => {
+    expect(remainingText(daysLeft)).toBe(want);
   });
 });
 
 describe("没有 billing 的节点", () => {
-  it("三个函数都当作什么都没填", () => {
-    expect([priceText(undefined), expiryText(undefined), expired(undefined)]).toEqual(["", "", false]);
+  it("价格当作什么都没填", () => {
+    expect(priceText(undefined)).toBe("");
   });
 });
 

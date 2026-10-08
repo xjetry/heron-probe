@@ -1,6 +1,8 @@
 // 历史图的三条显示规则：孤立读数画点、整列没有有限值才算无读数、时刻用浏览器本地时区。
 // 管理端与公开页共用 Chart，规则放在这里，不在两个页面各写一份。
 
+import { clockParts, type ClockParts } from "./format";
+
 const DAY_S = 86_400;
 
 // 线只连接相邻的有限数。null 与 undefined 用 != null 比较时相等，uPlot 两者都不画线段；
@@ -42,30 +44,12 @@ export function readingGap(
   return { kind: "series", labels: names };
 }
 
-type Stamp = { year: string; month: string; day: string; hour: string; minute: string };
+type Stamp = ClockParts;
 
-// 数字取自 Intl 的部件，不自备月份名表。timeZone 缺省时用运行环境的本地时区，
-// 与不带 timeZone 的 toLocaleString() 相同；uPlot 的刻度也按这个时区对齐，调用方不要另传固定时区。
+// 时区缺省时用运行环境的本地时区，与 lib/format 的 dateTime 不带 timeZone 时相同；uPlot 的刻度也按这个时区对齐，调用方不要另传固定时区。
 function stampsOf(timestampsSec: readonly (number | null | undefined)[], timeZone: string | undefined): (Stamp | null)[] {
-  const options: Intl.DateTimeFormatOptions = {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  };
-  if (timeZone !== undefined) options.timeZone = timeZone;
-  const fmt = new Intl.DateTimeFormat("zh-CN", options);
-  return timestampsSec.map((ts) => {
-    if (typeof ts !== "number" || !Number.isFinite(ts)) return null;
-    const parts: Partial<Stamp> = {};
-    for (const p of fmt.formatToParts(ts * 1000)) {
-      if (p.type === "year" || p.type === "month" || p.type === "day" || p.type === "hour" || p.type === "minute") parts[p.type] = p.value;
-    }
-    if (!parts.year || !parts.month || !parts.day || !parts.hour || !parts.minute) return null;
-    return parts as Stamp;
-  });
+  const parts = clockParts(timeZone);
+  return timestampsSec.map((ts) => (typeof ts === "number" && Number.isFinite(ts) ? parts(ts * 1000) : null));
 }
 
 function dayKey(s: Stamp): string {

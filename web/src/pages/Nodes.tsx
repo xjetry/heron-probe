@@ -8,6 +8,7 @@ import { useLatestError } from "../api/useLatestError";
 import { useRetained } from "../api/useRetained";
 import { type OrderMove, useOrder } from "../api/useOrder";
 import { ConfirmDelete } from "../components/ConfirmDelete";
+import { Expiry } from "../components/Expiry";
 import { MixedCheckbox } from "../components/MixedCheckbox";
 import { NodeAddresses } from "../components/NodeAddresses";
 import { NodeCountry } from "../components/NodeCountry";
@@ -16,7 +17,7 @@ import { NodeCredentialsDrawer } from "../components/NodeCredentialsDrawer";
 import { NodeMoveModal } from "../components/NodeMoveModal";
 import { NodeOrderControl } from "../components/NodeOrderControl";
 import { AdminService, type Node, type NodeStatus, type Tag } from "../gen/heron/v1/admin_pb";
-import { expiryText, priceText } from "../lib/billing";
+import { priceText } from "../lib/billing";
 import { withId } from "../lib/ids";
 import { POLL_MS } from "../lib/poll";
 import { sameTag, withoutTag } from "../lib/tags";
@@ -28,7 +29,6 @@ import { RowMenu } from "../components/RowMenu";
 import { StatusBadge } from "../components/StatusBadge";
 import { liveById, liveStatus } from "../lib/adminStatus";
 import { applyScope, isScoped, paramsWithScope, scopeFromParams, STATUS_OPTIONS, type ScopeFilters } from "../lib/nodeFilters";
-import { expiryLevel } from "../lib/status";
 import { NodeEditor } from "./NodeEditor";
 import { BatchNodeTagsEditor } from "./BatchNodeTagsEditor";
 import { trafficText } from "../lib/traffic";
@@ -279,9 +279,9 @@ function NodeRow({ node, live, boundAgentVersion, selection, orderControl, order
     <td data-column="order" data-label="排序">{orderControl}</td>
     <td data-column="name" data-label="节点">
       <div className="node-name-line"><Link to={`/nodes/${node.id}`} aria-label={label}>{node.name}</Link><NodeCountry node={node} />
-        {node.public && <span className="chip chip-public">公开</span>}
-        {lagging && <span className="badge-attention" title={`低于 hub 绑定的 agent 版本 ${boundAgentVersion}`}>agent 低于 {boundAgentVersion}</span>}</div>
-      {(node.tags.length > 0 || node.note) && <div className="node-secondary">
+        {node.public && <span className="chip chip-public">公开</span>}</div>
+      {(lagging || node.tags.length > 0 || node.note) && <div className="node-secondary">
+        {lagging && <span className="badge-attention" title={`低于 hub 绑定的 agent 版本 ${boundAgentVersion}`}>agent 低于 {boundAgentVersion}</span>}
         {node.tags.length > 0 && <ul className="tag-chips" aria-label={`标签 ${label}`} title={node.tags.join("、")}>{node.tags.map((tag) => <li key={tag} className="chip">{tag}</li>)}</ul>}
         {node.note && <p className="node-note muted" title={node.note}>{node.note}</p>}
       </div>}
@@ -290,7 +290,7 @@ function NodeRow({ node, live, boundAgentVersion, selection, orderControl, order
     <td data-column="status" data-label="状态">{status ? <StatusBadge status={status} /> : <span className="muted">状态未知</span>}</td>
     <td data-column="traffic" data-label="本周期" className="num">{live?.traffic ? trafficText(live.traffic) : <Missing />}</td>
     <td data-column="billing" data-label="费用"><span className="num">{priceText(node.billing) || "—"}</span>{node.billing?.autoRenew && <span className="muted"> · 自动续期</span>}</td>
-    <td data-column="expiry" data-label="到期" className="num"><span data-level={expiryLevel(node.billing?.daysLeft)}>{expiryText(node.billing) || "—"}</span></td>
+    <td data-column="expiry" data-label="到期">{node.billing?.expiresOn ? <Expiry billing={node.billing} /> : "—"}</td>
     <td data-column="actions">{menu}</td>
   </tr>;
 }

@@ -8,6 +8,7 @@ import { PageHeader } from "../components/PageHeader";
 import { AdminService } from "../gen/heron/v1/admin_pb";
 import type { UpdateStatus } from "../gen/heron/v1/update_pb";
 import { isRelease, isStableRelease, olderThan } from "../lib/version";
+import { updateReasonText } from "../lib/updateReason";
 
 const labels: Record<string, string> = {
   queued: "等待节点上线", dispatched: "已下发", downloading: "下载并校验", stopping: "停止旧服务",
@@ -22,10 +23,19 @@ function eligible(status: UpdateStatus | undefined, version: string) {
 }
 // target 是这台机器的更新目标（节点为 hub 绑定的 agent 版本，hub 为检查到的官方最新版），未知时为空串。
 // 没有任务时：已达到目标显示"已是目标版本"，否则只陈述在线更新能力；目标未知时无从比较，也只陈述能力。
+// 已登记的原因写中文；未登记的（更新引擎的原始错误）照写原文，用等宽小字和中文说明区分开。
+function UnsupportedReason({ reason }: { reason: string }) {
+  if (reason === "") return <span className="muted">不支持在线更新：本机更新器不可用</span>;
+  const text = updateReasonText(reason);
+  return text !== undefined
+    ? <span className="muted">不支持在线更新：{text}</span>
+    : <span className="muted">不支持在线更新<code className="update-reason-raw">{reason}</code></span>;
+}
+
 function Progress({ status, target }: { status?: UpdateStatus; target: string }) {
   if (!status) return <span className="muted">尚未收到更新能力，请先升级安装器与 agent。</span>;
   return <div className="update-progress">
-    {!status.supported && <span className="muted">不支持在线更新：{status.reason || "本机更新器不可用"}</span>}
+    {!status.supported && <UnsupportedReason reason={status.reason} />}
     {status.task && <><strong>{labels[status.task.state] ?? status.task.state}</strong><span className="muted">目标 {status.task.version}</span>
       {status.task.state === "unconfirmed" && <span className="muted">下发后等待超时，无法确认执行结果；后续上报仍会校正。重试由节点本机更新器检查是否可执行。</span>}
       {status.task.error && <span className="error">{status.task.error}</span>}</>}
@@ -110,7 +120,7 @@ export function Updates() {
       <button type="button" disabled={chosen.length === 0 || busy} onClick={(event) => setConfirmation({ ids: chosen, version: nodeTarget, opener: event.currentTarget })}>更新选中节点（{chosen.length}）</button>
     </div>
     <div className="table-scroll" role="region" aria-label="节点更新" tabIndex={0}><table className="nodes">
-      <thead><tr><th><label><MixedCheckbox label="选择全部可更新节点" checked={chosen.length === 0 ? false : chosen.length === updatable.length ? true : "mixed"}
+      <thead><tr><th><label className="inline"><MixedCheckbox label="选择全部可更新节点" checked={chosen.length === 0 ? false : chosen.length === updatable.length ? true : "mixed"}
         disabled={updatable.length === 0 || busy} onChange={() => setSelected(new Set(chosen.length === updatable.length ? [] : updatable))} />全选</label></th><th>节点</th><th>当前版本</th><th>来源</th><th>更新状态</th><th><span className="sr-only">操作</span></th></tr></thead>
       <tbody>{nodes.data!.nodes.map((node) => {
         const status = targets.get(node.id);

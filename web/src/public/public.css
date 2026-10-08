@@ -39,10 +39,10 @@
 .node-meter { display: grid; grid-template-columns: 2.5em minmax(0, 1fr) auto; align-items: center; gap: 8px; font-size: 12px; }
 .meter-missing { height: 4px; border-radius: 999px; background: repeating-linear-gradient(90deg, var(--line) 0 4px, transparent 4px 8px); }
 .node-network { margin: 0; font-size: 12px; }
-.node-card-foot { margin-top: auto; padding-top: 6px; border-top: 1px solid var(--line); font-size: 12px; display: grid; gap: 2px; }
-.node-card-foot > div { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
-.node-card-foot [data-level="attention"] { color: var(--status-attention); }
-.node-card-foot [data-level="critical"] { color: var(--status-offline); }
+/* 页脚是标签 / 值两列：标签列按最长标签定宽，值再长也只在自己那一格里折行，不把下一个标签挤到行尾。 */
+.node-card-foot { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; margin: auto 0 0; padding-top: 6px; border-top: 1px solid var(--line); font-size: 12px; }
+.node-card-foot dt { color: var(--muted); }
+.node-card-foot dd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; min-width: 0; margin: 0; }
 .folded-nodes { margin-top: 16px; }
 .folded-nodes > summary { cursor: pointer; color: var(--muted); font-size: 13px; height: 32px; display: flex; align-items: center; }
 .compact-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); }

@@ -99,7 +99,7 @@ it("四个查询错误汇总去重，规则名失败不阻断已有事件", asyn
 it("事件组件省略规则名与筛选时显示全部行，系统零值为空而触发零值保留", async () => {
   function Feed() {
     const events = useAlertEvents(0n);
-    return <EventFeed events={events} nodeName={() => "节点"} channelName={() => "渠道"} />;
+    return <EventFeed events={events} nodeName={() => "节点"} channelName={() => "渠道"} rules={undefined} />;
   }
   renderWithAdmin({ listAlertEvents: async () => ({ events: [
     event(1n),

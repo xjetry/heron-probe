@@ -10,6 +10,7 @@ import { PageHeader } from "../components/PageHeader";
 import { RowMenu } from "../components/RowMenu";
 import { AdminService, SilenceKind, type Node, type Silence } from "../gen/heron/v1/admin_pb";
 import { liveIds, withId } from "../lib/ids";
+import { dateTime } from "../lib/format";
 
 type Draft = NodeSelection & {
   name: string; enabled: boolean; kind: SilenceKind;
@@ -105,7 +106,7 @@ export function Silences() {
 
 function windowText(s: Silence): string {
   if (s.kind === SilenceKind.DAILY) return `每日 ${s.startHhmm}–${s.endHhmm}（hub 时区）`;
-  const at = (unix: bigint) => new Date(Number(unix) * 1000).toLocaleString();
+  const at = (unix: bigint) => dateTime(unix);
   return `${at(s.fromAt)} – ${at(s.untilAt)}`;
 }
 

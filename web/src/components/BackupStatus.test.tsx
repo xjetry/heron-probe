@@ -3,6 +3,7 @@ import { screen, within } from "@testing-library/react";
 import { expect, it } from "vitest";
 import { renderWithAdmin } from "../test/harness";
 import { Appearance } from "../pages/Appearance";
+import { dateTime } from "../lib/format";
 
 const routes = [{ path: "/appearance", Component: Appearance }];
 
@@ -14,8 +15,8 @@ it("设置页按层显示启用、上次成功和故障，保留从未成功的�
   const region = within(await screen.findByRole("region", { name: "备份状态" }));
   expect(region.getByText("自动备份已启用")).toBeVisible();
   const config = within(region.getByRole("article", { name: "配置与凭据" }));
-  expect(config.getByText(`上次成功：${new Date(0).toLocaleString()}`)).toBeVisible();
-  expect(config.getByText(`当前故障：upload/http_status（HTTP 503）；自 ${new Date(60000).toLocaleString()} 起`)).toHaveClass("error");
+  expect(config.getByText(`上次成功：${dateTime(0)}`)).toBeVisible();
+  expect(config.getByText(`当前故障：upload/http_status（HTTP 503）；自 ${dateTime(60)} 起`)).toHaveClass("error");
   const metrics = within(region.getByRole("article", { name: "指标与探测历史" }));
   expect(metrics.getByText("上次成功：从未成功")).toBeVisible();
   expect(metrics.getByText("无当前故障")).toBeVisible();
@@ -26,10 +27,10 @@ it("设置读不出时 enabled 为 false，仍显示配置层 settings 故障与
   const region = within(await screen.findByRole("region", { name: "备份状态" }));
   expect(region.getByText("自动备份未启用")).toBeVisible();
   const config = within(region.getByRole("article", { name: "配置与凭据" }));
-  expect(config.getByText(`上次成功：${new Date(60000).toLocaleString()}`)).toBeVisible();
-  expect(config.getByText(`当前故障：settings；自 ${new Date(120000).toLocaleString()} 起`)).toHaveClass("error");
+  expect(config.getByText(`上次成功：${dateTime(60)}`)).toBeVisible();
+  expect(config.getByText(`当前故障：settings；自 ${dateTime(120)} 起`)).toHaveClass("error");
   const metrics = within(region.getByRole("article", { name: "指标与探测历史" }));
-  expect(metrics.getByText(`上次成功：${new Date(60000).toLocaleString()}`)).toBeVisible();
+  expect(metrics.getByText(`上次成功：${dateTime(60)}`)).toBeVisible();
   expect(metrics.getByText("无当前故障")).toBeVisible();
   expect(region.getByText(/停用备份即结束两层的故障跟踪/)).toBeVisible();
 });

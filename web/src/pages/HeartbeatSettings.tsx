@@ -4,6 +4,7 @@ import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { SAVE_SETTINGS, useAdoptSavedSettings, useSettingsSaving } from "../api/saveSettings";
 import { AdminService, HeartbeatMethod, type Heartbeat } from "../gen/heron/v1/admin_pb";
+import { dateTime } from "../lib/format";
 
 // 心跳地址是只写设置（ping 地址本身就是密钥），hub 只回 has_url 与 url_host。草稿里的 url 因此总从空开始：给出这一组
 // 就是整体替换，留空保存即停用，要改间隔又保留地址必须重新填写。已配置时"保存"在地址为空时禁用，停用另有按钮，避免
@@ -99,7 +100,7 @@ export function HeartbeatSettingsForm({ current }: { current: Heartbeat | undefi
   );
 }
 
-const at = (unix: bigint) => new Date(Number(unix) * 1000).toLocaleString();
+const at = (unix: bigint) => dateTime(unix);
 
 const failureAdvice: Record<string, string> = {
   transport: "连不上目标地址，检查地址、网络与对方服务是否可达",

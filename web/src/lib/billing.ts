@@ -53,14 +53,10 @@ export function priceText(b: BillingView | undefined): string {
   return cycle ? `${amount} / ${cycle}` : amount;
 }
 
-// "2026-10-01（剩 4 天）" 或 "2026-09-24（已过期 3 天）"；没有到期日时是空串。
-export function expiryText(b: BillingView | undefined): string {
-  if (!b || b.expiresOn === "") return "";
-  if (b.daysLeft === undefined) return b.expiresOn;
-  return b.daysLeft < 0 ? `${b.expiresOn}（已过期 ${-b.daysLeft} 天）` : `${b.expiresOn}（剩 ${b.daysLeft} 天）`;
+// daysLeft 是 BillingView.daysLeft：负数为已过期天数。
+export function remainingText(daysLeft: number): string {
+  return daysLeft < 0 ? `已过期 ${-daysLeft} 天` : `剩 ${daysLeft} 天`;
 }
-
-export const expired = (b: BillingView | undefined): boolean => b?.daysLeft !== undefined && b.daysLeft < 0;
 
 // 按到期从早到晚排：已过期的到期最早，排最前；没有到期日、或到期日无法解析（hub 不下发 daysLeft）的排最后。
 // 排序键取 hub 下发的 daysLeft 而不是 expiresOn 字符串：同一次 GetSnapshot 里所有节点的 daysLeft 由同一个 today 算出，

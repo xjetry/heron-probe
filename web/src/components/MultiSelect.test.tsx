@@ -4,7 +4,7 @@ import { expect, it } from "vitest";
 import { MultiSelect, type MultiSelectOption } from "./MultiSelect";
 
 const regions: MultiSelectOption[] = [
-  { value: "HK", label: "🇭🇰 香港", count: 3 }, { value: "JP", label: "🇯🇵 日本", count: 2 }, { value: "US", label: "🇺🇸 美国", count: 1 }, { value: "", label: "未知", count: 1 },
+  { value: "HK", label: "香港", count: 3 }, { value: "JP", label: "日本", count: 2 }, { value: "US", label: "美国", count: 1 }, { value: "", label: "未知", count: 1 },
 ];
 
 function Harness({ searchable = false, foldAt }: { searchable?: boolean; foldAt?: number }) {
@@ -19,15 +19,15 @@ it("收起时只有触发按钮；展开后选项是带计数的复选框，勾�
   expect(group().queryByRole("checkbox")).toBeNull();
   fireEvent.click(trigger());
   expect(trigger()).toHaveAttribute("aria-expanded", "true");
-  expect(group().getAllByRole("checkbox").map((c) => c.getAttribute("aria-label"))).toEqual(["🇭🇰 香港", "🇯🇵 日本", "🇺🇸 美国", "未知"]);
-  expect(group().getByRole("checkbox", { name: "🇭🇰 香港" }).closest("label")).toHaveTextContent("3");
-  fireEvent.click(group().getByRole("checkbox", { name: "🇯🇵 日本" }));
+  expect(group().getAllByRole("checkbox").map((c) => c.getAttribute("aria-label"))).toEqual(["香港", "日本", "美国", "未知"]);
+  expect(group().getByRole("checkbox", { name: "香港" }).closest("label")).toHaveTextContent("3");
+  fireEvent.click(group().getByRole("checkbox", { name: "日本" }));
   fireEvent.click(group().getByRole("checkbox", { name: "未知" }));
-  expect(group().getByRole("checkbox", { name: "🇯🇵 日本" })).toBeChecked();
+  expect(group().getByRole("checkbox", { name: "日本" })).toBeChecked();
   expect(trigger()).toHaveTextContent("地区 2");
-  expect(group().getByRole("button", { name: "移除 🇯🇵 日本" })).toBeInTheDocument();
-  fireEvent.click(group().getByRole("button", { name: "移除 🇯🇵 日本" }));
-  expect(group().getByRole("checkbox", { name: "🇯🇵 日本" })).not.toBeChecked();
+  expect(group().getByRole("button", { name: "移除 日本" })).toBeInTheDocument();
+  fireEvent.click(group().getByRole("button", { name: "移除 日本" }));
+  expect(group().getByRole("checkbox", { name: "日本" })).not.toBeChecked();
   fireEvent.click(group().getByRole("button", { name: "清除" }));
   expect(trigger()).toHaveTextContent(/^地区$/);
 });
@@ -35,7 +35,7 @@ it("收起时只有触发按钮；展开后选项是带计数的复选框，勾�
 it("Escape 与点击外部收起；选择保留", () => {
   render(<Harness />);
   fireEvent.click(trigger());
-  fireEvent.click(group().getByRole("checkbox", { name: "🇺🇸 美国" }));
+  fireEvent.click(group().getByRole("checkbox", { name: "美国" }));
   fireEvent.keyDown(trigger(), { key: "Escape" });
   expect(trigger()).toHaveAttribute("aria-expanded", "false");
   fireEvent.click(trigger());
@@ -61,7 +61,7 @@ it("可搜索：按折叠大小写的字面匹配过滤选项，正则特殊字�
 it("已选超过 foldAt 个时只显示前几个胶囊，其余折成 +N", () => {
   render(<Harness foldAt={2} />);
   fireEvent.click(trigger());
-  for (const name of ["🇭🇰 香港", "🇯🇵 日本", "🇺🇸 美国"]) fireEvent.click(group().getByRole("checkbox", { name }));
+  for (const name of ["香港", "日本", "美国"]) fireEvent.click(group().getByRole("checkbox", { name }));
   expect(group().getAllByRole("button", { name: /^移除/ })).toHaveLength(2);
   expect(group().getByText("+1")).toBeInTheDocument();
 });

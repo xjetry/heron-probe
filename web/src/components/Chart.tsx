@@ -163,7 +163,7 @@ export function Chart({ data, labels, unit, height = 180, soft, bands = [], lege
       </div>
       {legend && labels.length > 0 && (
         <ul className="chart-legend" aria-label="图例">
-          <li className="legend-time num">{cursorIdx == null || !isReading(xs[cursorIdx]) ? "最新" : formatChartTimes([xs[cursorIdx]])[0]}</li>
+          {cursorIdx == null || !isReading(xs[cursorIdx]) ? <li className="legend-time">最新</li> : <li className="legend-time num">{formatChartTimes([xs[cursorIdx]])[0]}</li>}
           {labels.map((label, i) => {
             const col = data[i + 1] as Column;
             const at = cursorIdx ?? lastReadingIndex(col);

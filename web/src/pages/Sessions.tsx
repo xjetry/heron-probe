@@ -7,6 +7,7 @@ import { PageHeader } from "../components/PageHeader";
 import { RowMenu } from "../components/RowMenu";
 import { AdminService } from "../gen/heron/v1/admin_pb";
 import { Link } from "react-router";
+import { dateTime } from "../lib/format";
 
 export function Sessions() {
   const queryClient = useQueryClient();
@@ -58,8 +59,8 @@ export function Sessions() {
             {gate.data.sessions.map((session) => (
               <tr key={session.id}>
                 <td data-label="会话"><code title={session.id}>{session.id.slice(0, 12)}</code>{session.current && <> <span className="muted">当前</span></>}</td>
-                <td data-label="创建于">{new Date(Number(session.createdAt) * 1000).toLocaleString()}</td>
-                <td data-label="最近使用">{new Date(Number(session.lastUsedAt) * 1000).toLocaleString()}</td>
+                <td data-label="创建于">{dateTime(session.createdAt)}</td>
+                <td data-label="最近使用">{dateTime(session.lastUsedAt)}</td>
                 <td data-label="操作">
                   <RowMenu label={session.id.slice(0, 12)} items={[{
                     label: "撤销会话", danger: true, confirm: `确认撤销会话 ${session.id.slice(0, 12)}`,

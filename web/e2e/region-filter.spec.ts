@@ -29,10 +29,10 @@ test('公开页地区多选与家宽标签交集，未知和手机布局', async
     await expect(tiles).toHaveCount(6);
     const regions = page.getByRole('group', { name: '地区' });
     await regions.getByRole('button', { name: /^地区/ }).click();
-    await expect(regions.locator('label > span:first-of-type')).toHaveText(['🇭🇰 香港', '🇯🇵 日本', '🇺🇸 美国', '未知']);
-    await regions.getByRole('checkbox', { name: '🇭🇰 香港' }).check();
-    await regions.getByRole('checkbox', { name: '🇯🇵 日本' }).check();
-    await regions.getByRole('checkbox', { name: '🇯🇵 日本' }).press('Escape');
+    await expect(regions.locator('label > span:first-of-type')).toHaveText(['香港', '日本', '美国', '未知']);
+    await regions.getByRole('checkbox', { name: '香港' }).check();
+    await regions.getByRole('checkbox', { name: '日本' }).check();
+    await regions.getByRole('checkbox', { name: '日本' }).press('Escape');
     const tags = page.getByRole('group', { name: '标签' });
     await tags.getByRole('button', { name: /^标签/ }).click();
     await tags.getByRole('checkbox', { name: '家宽' }).check();
@@ -44,8 +44,8 @@ test('公开页地区多选与家宽标签交集，未知和手机布局', async
     await page.setViewportSize({ width: 375, height: 812 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
     await page.screenshot({ path: testInfo.outputPath('regions-mobile.png'), fullPage: true });
-    await page.getByRole('button', { name: '移除 🇭🇰 香港' }).click();
-    await page.getByRole('button', { name: '移除 🇯🇵 日本' }).click();
+    await page.getByRole('button', { name: '移除 香港' }).click();
+    await page.getByRole('button', { name: '移除 日本' }).click();
     await expect(tiles).toHaveCount(4);
     await regions.getByRole('button', { name: /^地区/ }).click();
     await regions.getByRole('checkbox', { name: '未知' }).check();

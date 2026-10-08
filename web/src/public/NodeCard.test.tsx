@@ -34,10 +34,10 @@ it("卡片：名称、国家、状态徽章；系统 · 虚拟化 · 架构 · �
   expect.soft(card.getByRole("meter", { name: "内存 0 B / 1.0 GiB" })).toHaveAttribute("aria-valuenow", "0");
   expect.soft(card.getByRole("meter", { name: "磁盘 9.0 GiB / 10 GiB" })).toHaveAttribute("data-level", "attention");
   expect.soft(card.getByRole("group", { name: "网络速率" })).toHaveTextContent("↓ 0 B/s ↑ 1.0 KiB/s");
-  expect.soft(card.getByText("本周期 · 下载 + 上传").nextElementSibling).toHaveTextContent("2.0 GiB / 4.0 GiB（50.0%）");
+  expect.soft(card.getByText("本周期").nextElementSibling).toHaveTextContent("2.0 GiB / 4.0 GiB (50.0%)下载 + 上传");
   expect.soft(card.getByText("费用").nextElementSibling).toHaveTextContent("US$12.50 / 月");
   expect.soft(card.getByText("到期").nextElementSibling).toHaveTextContent("2026-10-01");
-  expect.soft(card.getByText("剩 4 天")).toHaveAttribute("data-level", "attention");
+  expect.soft(card.getByText("剩 4 天").closest(".expiry")).toHaveAttribute("data-level", "attention");
 });
 
 it("没填费用与到期时底行写破折号；已过期写已过期天数并标玫红；无读数不画进度条", async () => {
@@ -51,7 +51,7 @@ it("没填费用与到期时底行写破折号；已过期写已过期天数并�
   expect.soft(plain.queryAllByRole("meter")).toHaveLength(0);
   expect.soft(plain.getByText("系统未知")).toBeInTheDocument();
   const lapsed = within(screen.getByRole("article", { name: "lapsed" }));
-  expect.soft(lapsed.getByText("已过期 3 天")).toHaveAttribute("data-level", "critical");
+  expect.soft(lapsed.getByText("已过期 3 天").closest(".expiry")).toHaveAttribute("data-level", "critical");
 });
 
 it("只有在线与维护中出卡片；离线与从未上报折进默认收起的表格（名称、地区、状态、最后上报）", async () => {
@@ -67,7 +67,7 @@ it("只有在线与维护中出卡片；离线与从未上报折进默认收起�
   expect.soft(folded).not.toHaveAttribute("open");
   fireEvent.click(within(folded).getByText("离线与从未上报 · 2"));
   const rows = within(folded).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent));
-  expect.soft(rows).toEqual([["off", "🇭🇰 HK", "离线", "10 分钟前"], ["fresh", "", "从未上报", "–"]]);
+  expect.soft(rows).toEqual([["off", "HK", "离线", "10 分钟前"], ["fresh", "", "从未上报", "–"]]);
   expect.soft(within(folded).getByRole("link", { name: "off" })).toHaveAttribute("href", "/nodes/3");
 });
 
@@ -94,9 +94,9 @@ it("流量副标题跟随节点的配额口径，未设配额时沿用下载 + �
     { id: 2n, name: "无配额", online: true, lastSeenAt: 998n, traffic: { periodRx: 300n, periodTx: 700n, quotaUsedBytes: 1000n, quotaMode: TrafficQuotaMode.TX } },
   ]);
   const rx = within(await screen.findByRole("article", { name: "只收" }));
-  expect(rx.getByText("300 B / 1000 B（30.0%）")).toBeInTheDocument();
-  expect(rx.getByText("本周期 · 仅下载")).toBeInTheDocument();
+  expect(rx.getByText("300 B / 1000 B (30.0%)")).toHaveClass("num");
+  expect(rx.getByText("仅下载")).not.toHaveClass("num");
   const none = within(screen.getByRole("article", { name: "无配额" }));
-  expect(none.getByText("1000 B（未设配额）")).toBeInTheDocument();
-  expect(none.getByText("本周期 · 下载 + 上传")).toBeInTheDocument();
+  expect(none.getByText("1000 B")).toHaveClass("num");
+  expect(none.getByText("下载 + 上传 · 未设配额")).not.toHaveClass("num");
 });

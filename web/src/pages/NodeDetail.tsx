@@ -14,10 +14,9 @@ import { NowGrid } from "../components/NowGrid";
 import { StatusBadge } from "../components/StatusBadge";
 import { AdminService, type GetTrafficResponse } from "../gen/heron/v1/admin_pb";
 import { liveStatus } from "../lib/adminStatus";
-import { ago, bytes } from "../lib/format";
-import { withId } from "../lib/ids";
+import { ago, bytes, dateTime } from "../lib/format";
 import { POLL_MS, TRAFFIC_MS } from "../lib/poll";
-import { trafficText } from "../lib/traffic";
+import { trafficDetail, trafficText } from "../lib/traffic";
 import { olderThan } from "../lib/version";
 import { NodeEditor } from "./NodeEditor";
 
@@ -62,10 +61,6 @@ export function NodeDetail() {
   const live = snap.data?.nodes.find((n) => n.id === nodeId);
   const bound = snap.data?.boundAgentVersion;
   const status = node ? liveStatus(node, live) : undefined;
-  const ruleName = (id: bigint) => {
-    const rule = rules.data?.rules.find((r) => r.id === id);
-    return rule ? withId(rule.name, rule.id) : `规则 #${id}`;
-  };
   const select = (next: DetailTab) => { const p = new URLSearchParams(params); if (next === "overview") p.delete("tab"); else p.set("tab", next); setParams(p, { replace: true }); };
   const panel = (
     <section id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`}>
@@ -87,7 +82,7 @@ export function NodeDetail() {
         <ExecutionScope execution={node.facts?.execution} updatedAt={node.factsUpdatedAt} />
         <AgentDiagnostics diagnostics={node.facts?.diagnostics} updatedAt={node.factsUpdatedAt} />
       </> : !gate.ready ? gate.loading : null)}
-      {tab === "events" && node && <EventFeed events={events} ruleName={ruleName} nodeName={() => node.name} channelName={(cid) => channels.data?.channels.find((c) => c.id === cid)?.name ?? `渠道 #${cid}`} />}
+      {tab === "events" && node && <EventFeed events={events} rules={rules.data?.rules} nodeName={() => node.name} channelName={(cid) => channels.data?.channels.find((c) => c.id === cid)?.name ?? `渠道 #${cid}`} />}
     </section>
   );
   return (
@@ -152,10 +147,10 @@ function TrafficCard({ nodeId, data }: { nodeId: bigint; data: GetTrafficRespons
     <div className="card">
       <h2>流量</h2>
       <dl className="facts">
-        <dt>本周期</dt><dd>{trafficText(t)}</dd>
+        <dt>本周期</dt><dd><span className="num">{trafficText(t)}</span> <span className="muted">{trafficDetail(t)}</span></dd>
         <dt>总量</dt><dd>↓ {bytes(t.totalRx)} ↑ {bytes(t.totalTx)}</dd>
-        <dt>周期起点</dt><dd>{new Date(Number(t.periodStart) * 1000).toLocaleString(undefined, { timeZone })}</dd>
-        <dt>下次重置</dt><dd>{new Date(Number(t.nextResetAt) * 1000).toLocaleString(undefined, { timeZone })}（每月 {t.resetDay} 日，{timeZone}）</dd>
+        <dt>周期起点</dt><dd>{dateTime(t.periodStart, timeZone)}</dd>
+        <dt>下次重置</dt><dd>{dateTime(t.nextResetAt, timeZone)}（每月 {t.resetDay} 日，{timeZone}）</dd>
       </dl>
       <form onSubmit={onSubmit} className="row">
         <label>本周期下行 (GiB)<input value={form.rx} onChange={(e) => setDraft({ ...form, rx: e.target.value })} inputMode="decimal" /></label>

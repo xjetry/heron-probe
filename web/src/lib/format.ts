@@ -55,3 +55,32 @@ export function formatUnit(v: number, unit: string): string {
       return v.toFixed(2);
   }
 }
+
+export type ClockParts = { year: string; month: string; day: string; hour: string; minute: string; second: string };
+
+// 数字取自 Intl 的部件，不自备月份名表，也不随浏览器语言换顺序或换成 12 小时制；hourCycle h23 让午夜是 00 而不是 24。
+// timeZone 缺省时用运行环境的本地时区；无效的时区名由 Intl 抛 RangeError。复用同一个 Intl 实例，逐个时间戳调用。
+export function clockParts(timeZone?: string): (unixMs: number) => ClockParts | null {
+  const options: Intl.DateTimeFormatOptions = { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" };
+  if (timeZone !== undefined) options.timeZone = timeZone;
+  const fmt = new Intl.DateTimeFormat("zh-CN", options);
+  return (unixMs) => {
+    if (!Number.isFinite(unixMs)) return null;
+    const parts: Partial<ClockParts> = {};
+    for (const p of fmt.formatToParts(unixMs)) {
+      if (p.type === "year" || p.type === "month" || p.type === "day" || p.type === "hour" || p.type === "minute" || p.type === "second") parts[p.type] = p.value;
+    }
+    return parts.year && parts.month && parts.day && parts.hour && parts.minute && parts.second ? parts as ClockParts : null;
+  };
+}
+
+// 面板与公开页统一的时刻写法 YYYY-MM-DD HH:mm:ss 与日期写法 YYYY-MM-DD。timeZone 传 hub 的时区（如 GetTraffic.timezone）时按 hub 的日界显示。
+export function dateTime(unixSeconds: number | bigint, timeZone?: string): string {
+  const p = clockParts(timeZone)(Number(unixSeconds) * 1000);
+  return p ? `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}` : "";
+}
+
+export function day(unixSeconds: number | bigint, timeZone?: string): string {
+  const p = clockParts(timeZone)(Number(unixSeconds) * 1000);
+  return p ? `${p.year}-${p.month}-${p.day}` : "";
+}

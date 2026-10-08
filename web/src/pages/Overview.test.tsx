@@ -47,7 +47,7 @@ it("实时表每行一个状态点与细条；维护中压过在线，不在快�
   expect(web.getByRole("meter", { name: "磁盘 10%" })).toBeInTheDocument();
   expect(web.getByText("0.50 / 0.40 / 0.30")).toBeInTheDocument();
   expect(web.getByText("↓ 1.0 KiB/s ↑ 2.0 KiB/s")).toBeInTheDocument();
-  expect(web.getByText("512 MiB / 1.0 GiB（50.0%）")).toBeInTheDocument();
+  expect(web.getByText("512 MiB / 1.0 GiB (50.0%)")).toBeInTheDocument();
   expect(web.getByText("10 秒前")).toBeInTheDocument();
   expect(web.getByRole("link", { name: "web-01（#1）" })).toHaveAttribute("href", "/nodes/1");
   const never = within(screen.getByRole("row", { name: /never/ }));

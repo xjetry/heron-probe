@@ -1,4 +1,5 @@
 import { CollectionComponent, type AgentDiagnostics as Diagnostics } from "../gen/heron/v1/types_pb";
+import { Timestamp } from "./Timestamp";
 
 const COLLECTORS: Record<CollectionComponent, string> = {
   [CollectionComponent.UNSPECIFIED]: "未知类别",
@@ -16,14 +17,13 @@ const COLLECTORS: Record<CollectionComponent, string> = {
 };
 
 export function AgentDiagnostics({ diagnostics, updatedAt }: { diagnostics?: Diagnostics; updatedAt?: bigint }) {
-  const updated = updatedAt && updatedAt > 0n ? new Date(Number(updatedAt) * 1000) : undefined;
   const networkFailed = diagnostics?.failedCollectors.includes(CollectionComponent.NET);
   return <section className="card" aria-label="Agent 运行诊断">
     <h2>Agent 运行诊断</h2>
     {!diagnostics ? <p className="muted">Agent 未提供诊断信息，请更新 Agent 后等待上报。</p> : <>
       <p className="muted">最近保存的诊断，不保证实时健康。生效参数只读。</p>
       <dl className="facts">
-        <dt>诊断信息更新时间</dt><dd>{updated ? <time dateTime={updated.toISOString()}>{updated.toLocaleString()}</time> : "未知"}</dd>
+        <dt>诊断信息更新时间</dt><dd>{updatedAt && updatedAt > 0n ? <Timestamp at={updatedAt} /> : "未知"}</dd>
         <dt>生效上报间隔</dt><dd>{diagnostics.reportIntervalMs > 0 ? <>{diagnostics.reportIntervalMs} ms <span className="muted">（不含请求耗时和失败退避）</span></> : "未知"}</dd>
         <dt>包含规则</dt><dd>{diagnostics.netInclude.length ? <code>{diagnostics.netInclude.join(" ")}</code> : "全部接口"}</dd>
         <dt>排除规则</dt><dd>{diagnostics.netExclude.length ? <code>{diagnostics.netExclude.join(" ")}</code> : "无"}</dd>

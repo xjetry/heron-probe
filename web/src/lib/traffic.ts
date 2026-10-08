@@ -21,13 +21,15 @@ export function quotaInput(bytes: bigint, unit: QuotaUnit): string {
   return `${bytes / scale}.${((bytes % scale) * 1000000n / scale).toString().padStart(6, "0")}`.replace(/\.?0+$/, "");
 }
 
+// 只有数字与单位：调用方把它放进等宽的 .num 里，中文说明（口径、是否设了配额）由 trafficDetail 另起一段给出。
 export function trafficText(t: Traffic): string {
   const used = bytes(t.quotaUsedBytes);
-  return t.quotaBytes > 0n ? `${used} / ${bytes(t.quotaBytes)}（${(t.quotaUsedPct ?? 0).toFixed(1)}%）` : `${used}（未设配额）`;
+  return t.quotaBytes > 0n ? `${used} / ${bytes(t.quotaBytes)} (${(t.quotaUsedPct ?? 0).toFixed(1)}%)` : used;
 }
 
 // 配额的计入口径决定 quota_used_bytes 是哪个分子；展示分子的地方必须用同一口径作副标题，否则"只收"的数值配着"下载 + 上传"的说明。
-// 未设配额时 hub 按 sum 计分子（traffic.Quota 的默认分支），副标题与之一致。
+// 未设配额时 hub 按 sum 计分子（traffic.Quota 的默认分支），副标题与之一致，并注明未设配额：trafficText 此时没有分母，
+// 读者要从副标题知道这是"没设"而不是"没取到"。
 const QUOTA_MODE_LABELS: Record<TrafficQuotaMode, string> = {
   [TrafficQuotaMode.UNSPECIFIED]: "下载 + 上传",
   [TrafficQuotaMode.SUM]: "下载 + 上传",
@@ -37,5 +39,5 @@ const QUOTA_MODE_LABELS: Record<TrafficQuotaMode, string> = {
 };
 
 export function trafficDetail(t: Traffic): string {
-  return t.quotaBytes > 0n ? QUOTA_MODE_LABELS[t.quotaMode] : QUOTA_MODE_LABELS[TrafficQuotaMode.SUM];
+  return t.quotaBytes > 0n ? QUOTA_MODE_LABELS[t.quotaMode] : `${QUOTA_MODE_LABELS[TrafficQuotaMode.SUM]} · 未设配额`;
 }

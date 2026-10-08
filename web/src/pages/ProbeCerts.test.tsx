@@ -5,6 +5,7 @@ import { PinCapability, type SaveProbeTaskRequest } from "../gen/heron/v1/admin_
 import { PresentedReason } from "../gen/heron/v1/types_pb";
 import { renderWithAdmin } from "../test/harness";
 import { ProbeCerts } from "./ProbeCerts";
+import { dateTime } from "../lib/format";
 
 const pinA = Uint8Array.from({ length: 32 }, () => 1);
 const pinB = Uint8Array.from({ length: 32 }, () => 2);
@@ -32,7 +33,7 @@ it("未下发与未绑定观测只展示，不一致的指纹逐个信任，成�
   expect(await screen.findByText(/任务照常下发，钉住后不再下发/)).toBeInTheDocument();
   expect(screen.getByText(/本次 hub 启动后尚未上报/)).toBeInTheDocument();
   const observed = new Date(1_800_000_000 * 1000);
-  const stamp = screen.getByText(observed.toLocaleString());
+  const stamp = screen.getByText(dateTime(1_800_000_000));
   expect(stamp.tagName).toBe("TIME");
   expect(stamp).toHaveAttribute("dateTime", observed.toISOString());
   expect(screen.getByText(/未绑定配置身份/)).toBeInTheDocument();

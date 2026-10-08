@@ -129,5 +129,5 @@ it("节点页标题带国家 / 地区徽章", async () => {
   renderWithService(PublicService, { getSnapshot: withCountry }, [{ path: "/nodes/:id", Component: NodePage }], "/nodes/7");
   const h1 = await screen.findByRole("heading", { level: 1 });
   expect(h1).toHaveTextContent(/^edge-1$/);
-  expect(within(h1.closest("header")!).getByTitle("国家 / 地区 DE")).toHaveTextContent("\u{1F1E9}\u{1F1EA} DE");
+  expect(within(h1.closest("header")!).getByTitle("国家 / 地区 DE")).toHaveTextContent(/^DE$/);
 });

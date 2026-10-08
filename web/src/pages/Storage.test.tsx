@@ -4,9 +4,10 @@ import { create } from "@bufbuild/protobuf";
 import { GetStorageStatsResponseSchema, WalFileObservationSchema, type WalFileObservation } from "../gen/heron/v1/admin_pb";
 import { renderWithAdmin } from "../test/harness";
 import { Storage } from "./Storage";
+import { dateTime } from "../lib/format";
 
 const routes = [{ path: "/storage", Component: Storage }];
-const at = (unix: bigint) => new Date(Number(unix) * 1000).toLocaleString();
+const at = (unix: bigint) => dateTime(unix);
 
 const stats = create(GetStorageStatsResponseSchema, {
   dbBytes: 4096n,

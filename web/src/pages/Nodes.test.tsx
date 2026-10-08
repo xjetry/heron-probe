@@ -48,7 +48,7 @@ describe("Nodes", () => {
 
   it("列表显示 hub 计费用量与配额，不重新求收发之和", async () => {
     renderNodes({ listNodes: async () => ({ nodes: two }), getSnapshot: async () => ({ nodes: [{ id: 1n, name: "a", traffic: { periodRx: 800n, periodTx: 200n, quotaUsedBytes: 200n, quotaBytes: 1000n, quotaUsedPct: 20 } }] }) });
-    expect(await screen.findByText("200 B / 1000 B（20.0%）")).toBeInTheDocument();
+    expect(await screen.findByText("200 B / 1000 B (20.0%)")).toBeInTheDocument();
   });
 
   it("双栈结果区分地址、不支持、失败与未上报，并在详情显示探测时间", async () => {
@@ -704,9 +704,9 @@ describe("Nodes", () => {
 
     it("列出显示值的徽章、来源与查得值，手动指定时查得值与它所属的地址照写，没有国家是破折号", async () => {
       renderNodes({ listNodes: async () => ({ nodes: located }) });
-      expect(await countryCell("a（#1）")).toHaveTextContent(/^\u{1F1FA}\u{1F1F8} US$/u);
+      expect(await countryCell("a（#1）")).toHaveTextContent(/^US$/);
       expect(await countryCell("a（#1）")).toHaveAttribute("title", "查得于 8.8.8.8");
-      expect(await countryCell("b（#2）")).toHaveTextContent(/^\u{1F1EF}\u{1F1F5} JP$/u);
+      expect(await countryCell("b（#2）")).toHaveTextContent(/^JP$/);
       expect(await countryCell("b（#2）")).toHaveAttribute("title", "手动指定；查得 US（于 8.8.4.4）");
       expect(await countryCell("c（#3）")).toHaveTextContent("地区未知");
       expect(await countryCell("d（#4）")).toHaveAttribute("title", "手动指定");
@@ -759,8 +759,13 @@ describe("Nodes", () => {
       ] }) });
       const row = async (name: string) => within((await screen.findByRole("link", { name })).closest("tr")!);
       expect((await row("a（#1）")).getByRole("cell", { name: "US$12.50 / 月· 自动续期" })).toBeInTheDocument();
-      expect((await row("a（#1）")).getByText("2026-10-01（剩 4 天）")).toHaveAttribute("data-level", "attention");
-      expect((await row("b（#2）")).getByText("2026-09-24（已过期 3 天）")).toHaveAttribute("data-level", "critical");
+      // 日期进等宽 .num，中文的剩余天数不进；两段共用一个 data-level 着色。
+      const soon = (await row("a（#1）")).getByText("2026-10-01");
+      expect(soon).toHaveClass("num");
+      expect(soon.closest(".expiry")).toHaveAttribute("data-level", "attention");
+      expect(soon.closest(".expiry")).toHaveTextContent("2026-10-01剩 4 天");
+      expect((await row("a（#1）")).getByText("剩 4 天")).not.toHaveClass("num");
+      expect((await row("b（#2）")).getByText("已过期 3 天").closest(".expiry")).toHaveAttribute("data-level", "critical");
       expect((await row("c（#3）")).getAllByRole("cell")[column("费用")]).toHaveTextContent("—");
     });
 

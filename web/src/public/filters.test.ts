@@ -71,8 +71,8 @@ it.each([
 
 it("地区选项按代码排序，未知最后，带国旗与计数", () => {
   expect(regionOptions(nodes)).toEqual([
-    { value: "HK", label: "🇭🇰 香港", count: 2 },
-    { value: "JP", label: "🇯🇵 日本", count: 2 },
+    { value: "HK", label: "香港", count: 2 },
+    { value: "JP", label: "日本", count: 2 },
     { value: "", label: "未知", count: 1 },
   ]);
 });

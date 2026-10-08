@@ -6,6 +6,7 @@ import { act, screen, fireEvent, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { rangeHeader, renderWithAdmin, type AdminImpl } from "../test/harness";
 import { NodeDetail } from "./NodeDetail";
+import { dateTime } from "../lib/format";
 
 afterEach(() => vi.useRealTimers());
 
@@ -52,7 +53,7 @@ it.each(["listNodes", "getTraffic"] as const)("详情 %s 刷新失败保留内�
   expect(screen.getByLabelText("本周期下行 (GiB)")).toBe(input);
   expect(input).toHaveValue("2.5");
   expect(screen.getByRole("heading", { name: "db-01" })).toBeInTheDocument();
-  expect(screen.getByText("512 MiB / 1.0 GiB（50.0%）")).toBeInTheDocument();
+  expect(screen.getByText("512 MiB / 1.0 GiB (50.0%)")).toBeInTheDocument();
 });
 
 it("四个查询同文刷新失败只显示一条", async () => {
@@ -82,7 +83,7 @@ it("listNodes 从未成功但历史与流量已就绪时仍显示图表、流量
   expect(await screen.findAllByTestId("chart")).toHaveLength(10);
   expect(screen.getByRole("button", { name: "24h" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "流量校正" }));
-  expect(await screen.findByText("512 MiB / 1.0 GiB（50.0%）")).toBeInTheDocument();
+  expect(await screen.findByText("512 MiB / 1.0 GiB (50.0%)")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "节点 #7" })).toBeInTheDocument();
 });
 
@@ -305,8 +306,8 @@ describe("NodeDetail", () => {
       getTraffic: async () => ({ ...await getTraffic(), timezone }) },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=traffic");
     const t = trafficOf(7n).traffic;
-    const start = new Date(Number(t.periodStart) * 1000).toLocaleString(undefined, { timeZone: timezone });
-    const next = new Date(Number(t.nextResetAt) * 1000).toLocaleString(undefined, { timeZone: timezone });
+    const start = dateTime(t.periodStart, timezone);
+    const next = dateTime(t.nextResetAt, timezone);
     expect(await screen.findByText(start)).toBeInTheDocument();
     expect(screen.getByText(`${next}（每月 1 日，${timezone}）`)).toBeInTheDocument();
   });
@@ -316,7 +317,7 @@ describe("NodeDetail", () => {
     const traffic = vi.fn(getTraffic);
     renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }), getTraffic: traffic, adjustTraffic },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=traffic");
-    expect(await screen.findByText("512 MiB / 1.0 GiB（50.0%）")).toBeInTheDocument();
+    expect(await screen.findByText("512 MiB / 1.0 GiB (50.0%)")).toBeInTheDocument();
     expect(screen.getByText("↓ 10 GiB ↑ 5.0 GiB")).toBeInTheDocument();
     expect(screen.getByText(/每月 1 日/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("本周期下行 (GiB)"), { target: { value: "2.5" } });
@@ -329,7 +330,7 @@ describe("NodeDetail", () => {
   it("校正输入不是非负数时按钮禁用", async () => {
     renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }), getTraffic },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=traffic");
-    await screen.findByText("512 MiB / 1.0 GiB（50.0%）");
+    await screen.findByText("512 MiB / 1.0 GiB (50.0%)");
     fireEvent.change(screen.getByLabelText("本周期下行 (GiB)"), { target: { value: "-1" } });
     expect(screen.getByRole("button", { name: "校正本周期" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("本周期下行 (GiB)"), { target: { value: "abc" } });
@@ -341,7 +342,7 @@ describe("NodeDetail", () => {
   it.each(["1e308", "17179869184"])("校正输入 %s 超出字节范围时按钮禁用", async (value) => {
     renderWithAdmin({ ...defaultImpl, listNodes, queryMetrics: async () => ({ level: "1m", stepS: 60, ts: [], series: [] }), getTraffic },
       [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7?tab=traffic");
-    await screen.findByText("512 MiB / 1.0 GiB（50.0%）");
+    await screen.findByText("512 MiB / 1.0 GiB (50.0%)");
     fireEvent.change(screen.getByLabelText("本周期下行 (GiB)"), { target: { value } });
     expect(screen.getByRole("button", { name: "校正本周期" })).toBeDisabled();
   });

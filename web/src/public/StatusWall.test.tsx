@@ -31,7 +31,7 @@ it("按地区分组、在线数降序、未知最后；组头只写计数；方�
   render();
   await screen.findByText("1 / 4 在线");
   const groups = screen.getAllByRole("group").filter((g) => g.classList.contains("wall-group"));
-  expect(groups.map((g) => g.querySelector("summary")?.textContent)).toEqual(["🇯🇵 日本 · 1 / 2 在线", "🇭🇰 香港 · 0 / 1 在线", "未知 · 0 / 1 在线"]);
+  expect(groups.map((g) => g.querySelector("summary")?.textContent)).toEqual(["日本 · 1 / 2 在线", "香港 · 0 / 1 在线", "未知 · 0 / 1 在线"]);
   expect(groups.map((g) => g.getAttribute("aria-label"))).toEqual(["日本 1 / 2 在线", "香港 0 / 1 在线", "未知 0 / 1 在线"]);
   expect(tile("tokyo-1").closest("li")).toHaveAttribute("data-status", "online");
   expect(within(tile("tokyo-1").closest("li")!).getByRole("meter", { name: "CPU 95%" })).toHaveAttribute("data-level", "critical");
@@ -59,11 +59,11 @@ it("宽屏：默认选中墙上第一个节点，点方块只切换详情不导�
   expect(panel.getByRole("meter", { name: "交换 0 B / 1.0 GiB" })).toHaveAttribute("aria-valuenow", "0");
   expect(panel.getByText("0.50 / 0.40 / 0.30")).toBeInTheDocument();
   expect(panel.getByText("↓ 2.0 KiB/s ↑ 1.0 KiB/s")).toBeInTheDocument();
-  expect(panel.getByText("本周期 1.0 GiB（未设配额） · 下载 + 上传")).toBeInTheDocument();
+  expect(panel.getByText("本周期").nextElementSibling).toHaveTextContent("1.0 GiB 下载 + 上传 · 未设配额");
   expect(panel.getByText("读 10 B/s 写 20 B/s")).toBeInTheDocument();
   expect(panel.getByText("TCP 12 · UDP 3 · 进程 99")).toBeInTheDocument();
   expect(panel.getByText("US$12.50 / 月")).toBeInTheDocument();
-  expect(panel.getByText("2030-01-01（剩 12 天）")).toBeInTheDocument();
+  expect(panel.getByText("到期").nextElementSibling).toHaveTextContent("2030-01-01剩 12 天");
   expect(panel.getByRole("link", { name: "查看完整历史 →" })).toHaveAttribute("href", "/nodes/1");
   // 迷你线：1 小时、60 点，取 rx+tx 的速率。请求窗口以 hub 的 now 为准。
   await waitFor(() => expect(queryMetrics).toHaveBeenCalled());
@@ -110,8 +110,9 @@ it("窄屏：点方块直接进节点页，不渲染详情面板", async () => {
     expect(screen.queryByRole("complementary", { name: "节点详情" })).toBeNull();
     const mobileTile = within(tile("tokyo-1").closest("li")!);
     expect(mobileTile.getByText("需关注")).toBeInTheDocument();
-    expect(mobileTile.getByText("CPU 95%", { selector: ".num" })).toBeInTheDocument();
-    expect(mobileTile.getByText("内存 80%", { selector: ".num" })).toBeInTheDocument();
+    // 标签写在等宽数字外面：.num 只包数字与单位。
+    expect(mobileTile.getByText("95%", { selector: ".num" }).parentElement).toHaveTextContent(/^CPU 95%$/);
+    expect(mobileTile.getByText("80%", { selector: ".num" }).parentElement).toHaveTextContent(/^内存 80%$/);
     expect(mobileTile.getByText("↓ 2.0 KiB/s")).toBeInTheDocument();
     expect(within(tile("hk-1").querySelector(".tile-name")!).getByText("维护中")).toBeInTheDocument();
     expect(queryMetrics).not.toHaveBeenCalled();

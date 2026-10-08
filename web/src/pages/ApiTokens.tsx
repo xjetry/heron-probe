@@ -12,6 +12,7 @@ import { UserscriptButton } from "../components/UserscriptButton";
 import { Picks } from "../components/Picks";
 import { AdminService, TokenPermission, type CreateApiTokenResponse } from "../gen/heron/v1/admin_pb";
 import { withId } from "../lib/ids";
+import { dateTime, day } from "../lib/format";
 
 const permissionChoices = [
   [TokenPermission.CONFIGURE, "监控配置"],
@@ -31,7 +32,7 @@ function Operations({ ownerId }: { ownerId: bigint }) {
     <h2>最近操作</h2>
     {gate.data.operations.length === 0 && <p className="muted">暂无已提交操作。</p>}
     {gate.data.operations.map((o) => <details key={o.id}>
-      <summary>{o.action} #{String(o.resourceId)} · {new Date(Number(o.committedAt) * 1000).toLocaleString()}</summary>
+      <summary>{o.action} #{String(o.resourceId)} · {dateTime(o.committedAt)}</summary>
       <p>请求 ID：<code>{o.requestId}</code></p>
       <p>操作 ID：<code>{o.id}</code></p>
       <p>修改前</p><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{o.beforeJson || "详细记录已过保留期"}</pre>
@@ -95,8 +96,8 @@ export function ApiTokens() {
                 <td data-label="名称">{t.name}</td>
                 <td data-label="权限 / 范围">{t.grant?.permissions.length ? t.grant.permissions.map((p) => permissionChoices.find(([v]) => v === p)?.[1] ?? "未知权限").join("、") : "只读"}<br />
                   {t.grant?.allNodes !== false ? "全站" : t.grant.nodeIds.length ? t.grant.nodeIds.map((id) => `#${id}`).join("、") : "无现有节点"}</td>
-                <td data-label="创建于" className="muted">{new Date(Number(t.createdAt) * 1000).toLocaleDateString()}</td>
-                <td data-label="最后使用" className="muted">{t.lastUsedAt == null ? "从未使用" : new Date(Number(t.lastUsedAt) * 1000).toLocaleString()}</td>
+                <td data-label="创建于" className="muted">{day(t.createdAt)}</td>
+                <td data-label="最后使用" className="muted">{t.lastUsedAt == null ? "从未使用" : dateTime(t.lastUsedAt)}</td>
                 <td data-label="操作">
                   <RowMenu label={withId(t.name, t.id)} items={[
                     { label: "查看操作记录", onSelect: () => setAuditOwner(t.id) },

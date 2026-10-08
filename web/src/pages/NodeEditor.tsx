@@ -9,6 +9,7 @@ import { Drawer } from "../components/Modal";
 import { BillingEditor } from "../components/BillingEditor";
 import { NodeAddresses } from "../components/NodeAddresses";
 import { lookupText, NodeCountry } from "../components/NodeCountry";
+import { day } from "../lib/format";
 
 // UpdateNode 整体替换全部可编辑字段；每次保存必须保留未编辑字段，不能用缺席表达“不变”。
 const draftOf = (node: Node) => ({
@@ -58,7 +59,7 @@ export function NodeEditor({ node, knownTags, saving, error, listError, onClose,
             <div className="address-diagnostics"><NodeAddresses network={node.facts?.network} detailed /><p className="muted">agent 探测出口，每 5 分钟更新。无可用地址或路由标记为不支持；超时与服务异常标记为探测失败。</p></div>
             <div><span className="field-label">上报来源 IP</span><p>{node.lastSource ? <code>{node.lastSource}</code> : <span className="muted">尚未记录来源</span>}</p><p className="muted">hub 实际观察到的来源，经过反代时依赖可信代理配置；与 agent 探测结果独立。</p></div>
             <label>手动指定国家 / 地区<input aria-label={`手动指定国家 / 地区 ${label}`} aria-describedby={`country-hint-${node.id}`} placeholder="例如 JP，留空自动查询" value={draft.countryPin} onChange={(e) => setDraft({ ...draft, countryPin: e.target.value.toUpperCase() })} /><span className="muted" id={`country-hint-${node.id}`}>两个字母（ISO 3166-1），优先于查得值；留空用查得值：{node.countryLookup ? lookupText(node) : "尚无查得值"}。</span></label>
-            <p className="muted"><NodeCountry node={node} /> · 创建于 {new Date(Number(node.createdAt) * 1000).toLocaleDateString()}</p>
+            <p className="muted"><NodeCountry node={node} /> · 创建于 {day(node.createdAt)}</p>
           </section>
           <section className="form-section" aria-label="费用">
             <h3>费用</h3>

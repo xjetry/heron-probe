@@ -9,6 +9,7 @@ import { Drawer } from "../components/Modal";
 import { PageHeader } from "../components/PageHeader";
 import { Secret } from "../components/Secret";
 import { AdminService } from "../gen/heron/v1/admin_pb";
+import { dateTime } from "../lib/format";
 
 const TTLS = [
   { label: "10 分钟", seconds: 600 },
@@ -50,7 +51,7 @@ export function RegisterWindow() {
         onClick={(e) => { open.reset(); setDrawerOpener(e.currentTarget); }}>开启新窗口</button>} />
       <section className="card" aria-label="窗口状态">
         {gate.data.open ? (
-          <p>窗口开启中：剩余 {gate.data.remaining} 个名额，截止 {new Date(Number(gate.data.expiresAt) * 1000).toLocaleString()}。{" "}
+          <p>窗口开启中：剩余 {gate.data.remaining} 个名额，截止 {dateTime(gate.data.expiresAt)}。{" "}
             <button type="button" className="danger" onClick={() => close.mutate({})} disabled={close.isPending}>关闭窗口</button>
           </p>
         ) : (

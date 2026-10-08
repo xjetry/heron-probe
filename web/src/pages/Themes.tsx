@@ -8,6 +8,7 @@ import { ConfirmDelete } from "../components/ConfirmDelete";
 import { PageHeader } from "../components/PageHeader";
 import { AdminService, type Theme } from "../gen/heron/v1/admin_pb";
 import { toBase64 } from "../lib/base64";
+import { bytes, dateTime } from "../lib/format";
 
 const maxPackageBytes = 8 * 1024 * 1024;
 const versionLabel = (theme: Theme) => `${theme.name}（${theme.id}）${theme.version} [${theme.digest.slice(0, 12)}]`;
@@ -124,7 +125,7 @@ export function Themes() {
       {releases.data && (releases.data.releases.length === 0 ? <p>没有公开的 Release。可上传作者提供的已构建主题包。</p> : <>
         <div className="row">
           <label>Release 版本<select value={tag} disabled={busy || releases.isPending} onChange={(e) => { setTag(e.target.value); setAssetId(""); }}><option value="">请选择版本</option>{releases.data.releases.map((r) => <option key={r.tag} value={r.tag}>{r.name || r.tag} ({r.tag}){r.prerelease ? " · 预发布" : ""}</option>)}</select></label>
-          <label>ZIP 资产<select value={assetId} disabled={!release || busy || releases.isPending} onChange={(e) => setAssetId(e.target.value)}><option value="">请选择资产</option>{release?.assets.map((a) => <option key={a.id.toString()} value={a.id.toString()} disabled={a.size > BigInt(maxPackageBytes)}>{a.name} · {Number(a.size).toLocaleString()} 字节{a.size > BigInt(maxPackageBytes) ? " · 超过 8 MiB" : ""}</option>)}</select></label>
+          <label>ZIP 资产<select value={assetId} disabled={!release || busy || releases.isPending} onChange={(e) => setAssetId(e.target.value)}><option value="">请选择资产</option>{release?.assets.map((a) => <option key={a.id.toString()} value={a.id.toString()} disabled={a.size > BigInt(maxPackageBytes)}>{a.name} · {bytes(a.size)}{a.size > BigInt(maxPackageBytes) ? " · 超过 8 MiB" : ""}</option>)}</select></label>
           <label>GitHub 安装用途<select value={githubExpectId} disabled={busy} onChange={(e) => setGitHubExpectId(e.target.value)}>{purposeOptions}</select></label>
           <button type="button" disabled={!release || !asset || asset.size > BigInt(maxPackageBytes) || busy || releases.isPending} onClick={() => {
             if (release && asset) { setNotice(null); install.mutate({ repository: repository.trim(), tag: release.tag, assetId: asset.id, expectId: githubExpectId }); }
@@ -153,7 +154,7 @@ export function Themes() {
             <td><Preview theme={t} /></td><td>{t.name}</td><td><code>{t.id}</code></td>
             <td>{t.version}<br /><code title={t.digest}>{t.digest.slice(0, 12)}</code></td>
             <td>{t.repository ? `${t.repository} · ${t.release} · ${t.asset}` : "本地上传"}</td>
-            <td className="muted">{new Date(Number(t.uploadedAt) * 1000).toLocaleString()}</td>
+            <td className="muted">{dateTime(t.uploadedAt)}</td>
             <td>{themeStatus(t)}</td>
             <td>
               <button type="button" className="link" aria-label={`下载原包 ${label}`} disabled={!t.digest || busy} onClick={() => archive.mutate({ id: t.id, digest: t.digest })}>下载原包</button>{" "}

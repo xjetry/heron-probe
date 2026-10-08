@@ -78,7 +78,7 @@ function NodeRow({ node, live, now }: { node: Node; live: LiveNode | undefined; 
       <td data-label="负载" className="num">{m?.load1 !== undefined && m.load5 !== undefined && m.load15 !== undefined ? `${m.load1.toFixed(2)} / ${m.load5.toFixed(2)} / ${m.load15.toFixed(2)}` : <Missing />}</td>
       <td data-label="网络" className="num">{m?.netRxBps !== undefined && m.netTxBps !== undefined ? `↓ ${bytes(m.netRxBps)}/s ↑ ${bytes(m.netTxBps)}/s` : <Missing />}</td>
       <td data-label="本周期" className="num">{live?.traffic ? trafficText(live.traffic) : <Missing />}</td>
-      <td data-label="最近上报" className="muted num">{live?.lastSeenAt !== undefined ? ago(live.lastSeenAt, now) : STATUS_LABEL.never}</td>
+      <td data-label="最近上报" className="muted">{live?.lastSeenAt !== undefined ? ago(live.lastSeenAt, now) : STATUS_LABEL.never}</td>
     </tr>
   );
 }

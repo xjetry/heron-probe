@@ -1,12 +1,10 @@
-import { flag } from "../lib/country";
-
-// 国家 / 地区徽章：旗帜加国家码。旗帜在一些系统上只显示成两个字母，国家码照写一遍，徽章在哪里都读得出来。
-// 没有国家时不渲染。
+// 国家 / 地区徽章：只写国家码。区域指示符旗帜在 Windows 上不渲染、在部分系统上对个别地区显示成方框，
+// 同一个徽章在不同访客那里长得不一样，所以不用 emoji。没有国家时不渲染。
 export function CountryBadge({ code }: { code: string }) {
   if (code === "") return null;
   return (
     <span className="country-badge" title={`国家 / 地区 ${code}`}>
-      <span aria-hidden="true">{flag(code)}</span> {code}
+      {code}
     </span>
   );
 }

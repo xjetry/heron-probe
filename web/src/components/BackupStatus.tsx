@@ -1,8 +1,9 @@
 import { useQuery } from "@connectrpc/connect-query";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService, type BackupLayerStatus } from "../gen/heron/v1/admin_pb";
+import { dateTime } from "../lib/format";
 
-const at = (unix: bigint) => new Date(Number(unix) * 1000).toLocaleString();
+const at = (unix: bigint) => dateTime(unix);
 
 function failureAdvice(category: string): string {
   const advice: Record<string, string> = {

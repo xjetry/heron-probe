@@ -3,10 +3,11 @@ import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { Bar, Missing, ratio } from "../components/Bar";
 import { CountryBadge } from "../components/CountryBadge";
+import { Expiry } from "../components/Expiry";
 import { Sparkline } from "../components/Sparkline";
 import { StatusBadge } from "../components/StatusBadge";
 import { PublicService, type PublicNode } from "../gen/heron/v1/public_pb";
-import { expired, expiryText, priceText } from "../lib/billing";
+import { priceText } from "../lib/billing";
 import { ago, bytes, duration, percent } from "../lib/format";
 import { toAligned } from "../lib/series";
 import { nodeStatus } from "../lib/status";
@@ -41,7 +42,6 @@ export function DetailPanel({ node, now }: { node: PublicNode; now: number }) {
     return rx === null && tx === null ? null : (rx ?? 0) + (tx ?? 0);
   }) : null;
   const price = priceText(node.billing);
-  const expiry = expiryText(node.billing);
   return (
     <aside className="detail-panel" aria-label="节点详情">
       <header>
@@ -64,11 +64,11 @@ export function DetailPanel({ node, now }: { node: PublicNode; now: number }) {
           {m?.netRxBps !== undefined && m.netTxBps !== undefined ? <span className="num">↓ {bytes(m.netRxBps)}/s ↑ {bytes(m.netTxBps)}/s</span> : <Missing />}
           {rate && <Sparkline values={rate} label="最近 1 小时网络速率" />}
         </Row>
-        <Row label="流量">{node.traffic ? <span className="num">本周期 {trafficText(node.traffic)} · {trafficDetail(node.traffic)}</span> : <Missing />}</Row>
+        <Row label="本周期">{node.traffic ? <><span className="num">{trafficText(node.traffic)}</span> <span className="muted">{trafficDetail(node.traffic)}</span></> : <Missing />}</Row>
         <Row label="磁盘读写">{m?.diskReadBps !== undefined && m.diskWriteBps !== undefined ? <span className="num">读 {bytes(m.diskReadBps)}/s 写 {bytes(m.diskWriteBps)}/s</span> : <Missing />}</Row>
         <Row label="连接">{m?.tcpConns !== undefined && m.udpConns !== undefined && m.procs !== undefined ? <span className="num">TCP {m.tcpConns} · UDP {m.udpConns} · 进程 {m.procs}</span> : <Missing />}</Row>
         {price && <Row label="费用"><span className="num">{price}</span></Row>}
-        {expiry && <Row label="到期"><span className={expired(node.billing) ? "num error" : "num"}>{expiry}</span></Row>}
+        {node.billing?.expiresOn && <Row label="到期"><Expiry billing={node.billing} /></Row>}
       </dl>
       <Link to={`/nodes/${node.id}`} className="detail-more">查看完整历史 →</Link>
     </aside>

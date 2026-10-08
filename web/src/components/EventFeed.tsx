@@ -2,9 +2,10 @@ import { useInfiniteQuery, useQuery } from "@connectrpc/connect-query";
 import { skipToken, type InfiniteData } from "@tanstack/react-query";
 import { useState } from "react";
 import { errorBanner, queryGate } from "../api/queryGate";
-import { AdminService, type AlertDelivery, type AlertEvent, type ListAlertEventsResponse } from "../gen/heron/v1/admin_pb";
-import { alarming, deliveryText, hasErrorText, transitionLabel, TRANSITIONS } from "../lib/alerts";
+import { AdminService, type AlertDelivery, type AlertEvent, type AlertRule, type ListAlertEventsResponse } from "../gen/heron/v1/admin_pb";
+import { alarming, deliveryText, eventValueText, hasErrorText, ruleLabel, transitionLabel, TRANSITIONS } from "../lib/alerts";
 import { withId } from "../lib/ids";
+import { dateTime } from "../lib/format";
 
 // 与 hub 的默认页长一致；不足一页即已到最早的事件。
 export const EVENT_PAGE = 100;
@@ -17,19 +18,19 @@ export function useAlertEvents(nodeId: bigint | null) {
   });
 }
 
-export function EventFeed({ events, nodeName, channelName, ruleName = (id) => `规则 #${id}`, visible }: {
+export function EventFeed({ events, nodeName, channelName, rules, visible }: {
   events: ReturnType<typeof useAlertEvents>; nodeName: (id: bigint) => string; channelName: (id: bigint) => string;
-  ruleName?: (id: bigint) => string; visible?: (ev: AlertEvent) => boolean;
+  rules: readonly AlertRule[] | undefined; visible?: (ev: AlertEvent) => boolean;
 }) {
   const region = queryGate(events);
   if (!region.ready) return <>{region.loading}</>;
-  return <EventList data={region.data} nodeName={nodeName} channelName={channelName} ruleName={ruleName} visible={visible}
+  return <EventList data={region.data} nodeName={nodeName} channelName={channelName} rules={rules} visible={visible}
     hasNextPage={events.hasNextPage} fetchingNext={events.isFetchingNextPage} onMore={() => void events.fetchNextPage()} />;
 }
 
-function EventList({ data, nodeName, channelName, ruleName, visible, hasNextPage, fetchingNext, onMore }: {
+function EventList({ data, nodeName, channelName, rules, visible, hasNextPage, fetchingNext, onMore }: {
   data: InfiniteData<ListAlertEventsResponse>; nodeName: (id: bigint) => string; channelName: (id: bigint) => string;
-  ruleName: (id: bigint) => string; visible?: (ev: AlertEvent) => boolean;
+  rules: readonly AlertRule[] | undefined; visible?: (ev: AlertEvent) => boolean;
   hasNextPage: boolean; fetchingNext: boolean; onMore: () => void;
 }) {
   const rows = data.pages.flatMap((p) => p.events);
@@ -37,16 +38,17 @@ function EventList({ data, nodeName, channelName, ruleName, visible, hasNextPage
   return (
     <>
       <div className="table-scroll" role="region" aria-label="告警事件" tabIndex={0}>
-        <table className="nodes">
+        <table className="nodes events-table">
           <thead><tr><th>时间</th><th>节点</th><th>规则</th><th>变化</th><th>观测值</th><th>投递</th></tr></thead>
           <tbody>
-            {shown.map((ev) => (
-              <tr key={String(ev.id)}>
-                <td data-label="时间" className="num">{new Date(Number(ev.at) * 1000).toLocaleString()}</td>
+            {shown.map((ev) => {
+              const value = eventValueText(ev, rules?.find((r) => r.id === ev.ruleId));
+              return <tr key={String(ev.id)}>
+                <td data-label="时间" className="num">{dateTime(ev.at)}</td>
                 <td data-label="节点">{ev.nodeId === 0n ? <span className="muted">—</span> : nodeName(ev.nodeId)}</td>
-                <td data-label="规则">{ev.ruleId === 0n ? <span className="muted">—</span> : ruleName(ev.ruleId)}</td>
+                <td data-label="规则">{ev.ruleId === 0n ? <span className="muted">—</span> : ruleLabel(ev.ruleId, rules)}</td>
                 <td data-label="变化" className={alarming(ev.transition) ? "error" : undefined}>{transitionLabel(ev.transition)}<small className="muted event-summary">{ev.summary}</small></td>
-                <td data-label="观测值" className="num">{ev.value !== 0 || ev.transition === "firing" || ev.transition === "recovered" ? ev.value.toLocaleString() : <span className="muted">—</span>}</td>
+                <td data-label="观测值">{value === null ? <span className="muted">—</span> : value}</td>
                 <td data-label="投递">
                   {ev.silenced
                     ? <span className="muted">已静默（维护窗口内，未投递）</span>
@@ -54,8 +56,8 @@ function EventList({ data, nodeName, channelName, ruleName, visible, hasNextPage
                       ? <span className="muted">未配置渠道</span>
                       : ev.deliveries.map((d) => <DeliveryItem key={String(d.id)} d={d} channel={channelName(d.channelId)} />)}
                 </td>
-              </tr>
-            ))}
+              </tr>;
+            })}
           </tbody>
         </table>
       </div>

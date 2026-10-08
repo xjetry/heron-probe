@@ -25,9 +25,10 @@
   --ok: var(--status-online);
   --bad: var(--status-offline);
   --warn: var(--status-attention);
-  /* 不打包或远程加载字体，本机未安装时退到系统字体。 */
+  /* 不打包或远程加载字体，本机未安装时退到系统字体。等宽栈在通用族 monospace 之前也列上界面用的中文字体：
+     .num 里偶有漏进来的中文时按界面字体回退，不落到系统给 monospace 配的中文字体（字宽、字重都和界面不一致）。 */
   --font-ui: Inter, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", monospace;
   --radius-control: 4px;
   --radius-card: 6px;
   --control-h: 32px;
@@ -44,7 +45,16 @@
 :is(button, input, select, textarea, a, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 * { box-sizing: border-box; }
 body { margin: 0; }
+/* 标题阶梯 20 / 15 / 13，统一 600：页面标题、卡片与分区、分组。.page-header、.node-head、卡片名、弹窗等按需覆盖；
+   没覆盖的标题落到这里而不是浏览器默认（h2 约 21px，比页面标题还大）。 */
+h1, h2, h3 { font-weight: 600; line-height: 1.35; }
+h1 { font-size: 20px; }
+h2 { font-size: 15px; margin: 0 0 10px; }
+h3 { font-size: 13px; margin: 0 0 8px; }
 a { color: var(--accent); text-decoration: none; }
+/* 表格与标题里的链接是对象名（节点、任务），满屏蓝色会盖过读数：用前景色，悬停才显示链接色。正文里的链接保持链接色。 */
+:is(table, h1, h2, h3) a { color: var(--fg); }
+:is(table, h1, h2, h3) a:hover { color: var(--accent); }
 .layout { min-height: 100vh; display: flex; flex-direction: column; }
 .nav { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; padding: 0.6rem 1rem; border-bottom: 1px solid var(--line); background: var(--card); }
 .panel-nav a, .panel-nav > button { white-space: nowrap; }
@@ -142,11 +152,24 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: 1rem; }
 .secret { font-family: ui-monospace, monospace; word-break: break-all; white-space: pre-wrap; background: var(--bg); padding: 0.5rem; border-radius: 6px; }
 
-/* 国家 / 地区徽章（components/CountryBadge.tsx），面板与公开页共用。 */
+/* 到期（components/Expiry.tsx），面板与公开页共用：日期与剩余天数整体按临近 / 已过期着色。 */
+.expiry { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; }
+.expiry[data-level="attention"] { color: var(--status-attention); }
+.expiry[data-level="critical"] { color: var(--status-offline); }
+
+/* 国家 / 地区徽章（components/CountryBadge.tsx），面板与公开页共用：两个字母的小方标，不随所在标题放大。 */
 .country-badge {
+  display: inline-block;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
   white-space: nowrap;
-  font-size: 0.85em;
-  font-weight: normal;
+  vertical-align: middle;
 }
 
 /* 胶囊：已选标签 / 地区、「+N」。全圆角只给胶囊与状态点（设计 §2）。 */
@@ -219,7 +242,9 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .view-switch { display: inline-flex; }
 .view-switch button:first-child { border-radius: var(--radius-control) 0 0 var(--radius-control); }
 .view-switch button:last-child { border-radius: 0 var(--radius-control) var(--radius-control) 0; margin-left: -1px; }
-.filter-row label.inline { gap: 6px; font-size: 13px; color: var(--muted); }
+/* 筛选行里的标签一律写在控件左侧，和不带标签的搜索框、勾选项落在同一条中线上；标签文字弱化，控件保持前景色。 */
+.filter-row > label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.filter-row > label > :is(select, input:not([type="checkbox"])) { color: var(--fg); }
 /* 分配 / 作用域（components/NodeAssignment.tsx）：三张卡片式单选一行，指定节点的勾选列表自身滚动。 */
 .assignment { border: 0; padding: 0; margin: 12px 0; min-width: 0; }
 .assignment-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 6px 0 10px; }

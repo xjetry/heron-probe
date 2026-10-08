@@ -1,7 +1,6 @@
 import { ratio } from "../components/Bar";
 import type { PublicNode } from "../gen/heron/v1/public_pb";
 import { sortByExpiry } from "../lib/billing";
-import { flag } from "../lib/country";
 import { literalPattern } from "../lib/fold";
 import { expiryLevel, nodeStatus, STATUS_ORDER, usageLevel, type Level, type NodeStatus } from "../lib/status";
 import { matchesTags } from "../lib/tags";
@@ -78,10 +77,6 @@ export function regionName(code: string): string {
   }
 }
 
-function regionLabel(code: string): string {
-  return code === "" ? "未知" : `${flag(code)} ${regionName(code)}`;
-}
-
 const byCodeUnknownLast = (a: string, b: string) => (a === b ? 0 : a === "" ? 1 : b === "" ? -1 : a.localeCompare(b));
 
 export type RegionOption = { value: string; label: string; count: number };
@@ -89,7 +84,7 @@ export type RegionOption = { value: string; label: string; count: number };
 export function regionOptions(nodes: readonly PublicNode[]): RegionOption[] {
   const counts = new Map<string, number>();
   for (const n of nodes) counts.set(n.country, (counts.get(n.country) ?? 0) + 1);
-  return [...counts.keys()].sort(byCodeUnknownLast).map((code) => ({ value: code, label: regionLabel(code), count: counts.get(code)! }));
+  return [...counts.keys()].sort(byCodeUnknownLast).map((code) => ({ value: code, label: regionName(code), count: counts.get(code)! }));
 }
 
 export type RegionGroup = { code: string; name: string; nodes: PublicNode[]; online: number };

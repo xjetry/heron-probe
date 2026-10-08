@@ -2,7 +2,6 @@ import type { MouseEvent } from "react";
 import { Link } from "react-router";
 import { Bar, ratio } from "../components/Bar";
 import type { PublicNode } from "../gen/heron/v1/public_pb";
-import { flag } from "../lib/country";
 import { ago, bytes, percent } from "../lib/format";
 import { nodeStatus, STATUS_LABEL, usageLevel } from "../lib/status";
 import { useMediaQuery, WIDE_QUERY } from "../lib/useMediaQuery";
@@ -28,7 +27,7 @@ export function StatusWall({ nodes, now, colorBy, selectedId, onSelect }: {
       <div className="wall">
         {groups.map((group) => (
           <details className="wall-group" role="group" aria-label={`${group.name} ${group.online} / ${group.nodes.length} 在线`} key={group.code} open>
-            <summary>{group.code ? `${flag(group.code)} ${group.name}` : group.name} · {group.online} / {group.nodes.length} 在线</summary>
+            <summary>{group.name} · {group.online} / {group.nodes.length} 在线</summary>
             <ul className="tiles">
               {group.nodes.map((n) => {
                 const status = nodeStatus(n);
@@ -48,8 +47,8 @@ export function StatusWall({ nodes, now, colorBy, selectedId, onSelect }: {
                       {(status === "never" || (wide && status === "maintenance")) && <span className="tile-note">{STATUS_LABEL[status]}</span>}
                       {live && m && (
                         <span className="tile-meters">
-                          {m.cpuPct !== undefined && <><Bar thin value={m.cpuPct} label={`CPU ${percent(m.cpuPct)}`} /><span className="num">{!wide && "CPU "}{percent(m.cpuPct)}</span></>}
-                          {m.memUsed !== undefined && m.memTotal ? <><Bar thin value={ratio(m.memUsed, m.memTotal)} label={`内存 ${percent(ratio(m.memUsed, m.memTotal))}`} /><span className="num">{!wide && "内存 "}{percent(ratio(m.memUsed, m.memTotal))}</span></> : null}
+                          {m.cpuPct !== undefined && <><Bar thin value={m.cpuPct} label={`CPU ${percent(m.cpuPct)}`} /><span>{!wide && "CPU "}<span className="num">{percent(m.cpuPct)}</span></span></>}
+                          {m.memUsed !== undefined && m.memTotal ? <><Bar thin value={ratio(m.memUsed, m.memTotal)} label={`内存 ${percent(ratio(m.memUsed, m.memTotal))}`} /><span>{!wide && "内存 "}<span className="num">{percent(ratio(m.memUsed, m.memTotal))}</span></span></> : null}
                           {!wide && m.netRxBps !== undefined && <span className="num">↓ {bytes(m.netRxBps)}/s</span>}
                         </span>
                       )}
