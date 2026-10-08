@@ -1,13 +1,15 @@
 import { MultiSelect } from "../components/MultiSelect";
-import { CARD_SORTS, COLOR_BYS, type CardSort, type ColorBy, type PublicFilters, type RegionOption } from "./filters";
+import { CARD_SORTS, COLOR_BYS, GROUP_BYS, type CardSort, type ColorBy, type GroupBy, type PublicFilters, type RegionOption } from "./filters";
 import type { View } from "./view";
 
-// 筛选行（设计 §3.1）：搜索、地区多选、标签多选（可搜索）、只看在线、视图切换；状态墙多一个着色依据，卡片多一个排序。
+// 筛选行（设计 §3.1）：搜索、地区多选、标签多选（可搜索）、只看在线、视图切换；状态墙多一个分组依据（有标签时）与着色依据，
+// 卡片多一个排序。
 // 地区与标签是动态集合（设计 §2），选项由调用方从当前快照算出并带计数。
-export function FilterRow({ filters, onFilters, regions, tags, view, onView, colorBy, onColorBy, sort, onSort }: {
+export function FilterRow({ filters, onFilters, regions, tags, view, onView, groupBy, onGroupBy, colorBy, onColorBy, sort, onSort }: {
   filters: PublicFilters; onFilters: (next: PublicFilters) => void;
   regions: RegionOption[]; tags: readonly { value: string; label: string; count: number }[];
   view: View; onView: (view: View) => void;
+  groupBy: GroupBy; onGroupBy: (by: GroupBy) => void;
   colorBy: ColorBy; onColorBy: (by: ColorBy) => void;
   sort: CardSort; onSort: (sort: CardSort) => void;
 }) {
@@ -21,6 +23,13 @@ export function FilterRow({ filters, onFilters, regions, tags, view, onView, col
         <button type="button" aria-pressed={view === "wall"} onClick={() => onView("wall")}>状态墙</button>
         <button type="button" aria-pressed={view === "cards"} onClick={() => onView("cards")}>卡片</button>
       </div>
+      {view === "wall" && tags.length > 0 && (
+        <label className="inline">分组
+          <select aria-label="分组" value={groupBy} onChange={(event) => onGroupBy(event.target.value as GroupBy)}>
+            {GROUP_BYS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </label>
+      )}
       {view === "wall" && (
         <label className="inline">着色依据
           <select aria-label="着色依据" value={colorBy} onChange={(event) => onColorBy(event.target.value as ColorBy)}>

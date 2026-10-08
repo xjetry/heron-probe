@@ -5,7 +5,7 @@ import { PublicService } from "../gen/heron/v1/public_pb";
 import { POLL_MS } from "../lib/poll";
 import { sameTag } from "../lib/tags";
 import { FilterRow } from "./FilterRow";
-import { filterPublicNodes, NO_FILTERS, regionOptions, sortCards, type CardSort, type ColorBy, type PublicFilters } from "./filters";
+import { filterPublicNodes, NO_FILTERS, regionOptions, sortCards, type CardSort, type ColorBy, type GroupBy, type PublicFilters } from "./filters";
 import { StatusSummary } from "./StatusSummary";
 import { CardGrid } from "./NodeCard";
 import { StatusWall } from "./StatusWall";
@@ -16,6 +16,7 @@ export function PublicOverview() {
   const [filters, setFilters] = useState<PublicFilters>(NO_FILTERS);
   const [view, setView] = useState<View>(readPublicView);
   const chooseView = (next: View) => { setView(next); writePublicView(next); };
+  const [groupBy, setGroupBy] = useState<GroupBy>("region");
   const [colorBy, setColorBy] = useState<ColorBy>("status");
   const [sort, setSort] = useState<CardSort>("default");
   const [selectedId, setSelectedId] = useState<bigint | null>(null);
@@ -34,6 +35,8 @@ export function PublicOverview() {
   if (liveRegions.length !== filters.regions.length || liveTags.length !== filters.tags.length) setFilters({ ...filters, regions: liveRegions, tags: liveTags });
   const effective: PublicFilters = { ...filters, regions: liveRegions, tags: liveTags };
   const nodes = filterPublicNodes(all, effective);
+  // 没有任何标签时分组下拉不出现，按标签分组也只剩「无标签」一组：此时按地区分组，不留下看不见的设置。
+  const wallGroupBy: GroupBy = gate.data.tags.length > 0 ? groupBy : "region";
   return (
     <section className="public-overview">
       {gate.banner}
@@ -41,9 +44,9 @@ export function PublicOverview() {
       {all.length > 0 && (
         <>
           <StatusSummary nodes={nodes} />
-          <FilterRow filters={effective} onFilters={setFilters} regions={regions} tags={tags} view={view} onView={chooseView} colorBy={colorBy} onColorBy={setColorBy} sort={sort} onSort={setSort} />
+          <FilterRow filters={effective} onFilters={setFilters} regions={regions} tags={tags} view={view} onView={chooseView} groupBy={wallGroupBy} onGroupBy={setGroupBy} colorBy={colorBy} onColorBy={setColorBy} sort={sort} onSort={setSort} />
           {nodes.length === 0 && <p className="muted">没有符合筛选条件的节点。</p>}
-          {nodes.length > 0 && view === "wall" && <StatusWall nodes={nodes} now={now} colorBy={colorBy} selectedId={selectedId} onSelect={setSelectedId} />}
+          {nodes.length > 0 && view === "wall" && <StatusWall nodes={nodes} tags={gate.data.tags} now={now} groupBy={wallGroupBy} colorBy={colorBy} selectedId={selectedId} onSelect={setSelectedId} />}
           {nodes.length > 0 && view === "cards" && <CardGrid nodes={sortCards(nodes, sort)} now={now} />}
         </>
       )}

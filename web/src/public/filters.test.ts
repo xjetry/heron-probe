@@ -1,7 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { expect, it } from "vitest";
 import { PublicNodeSchema, type PublicNode } from "../gen/heron/v1/public_pb";
-import { CARD_SORTS, COLOR_BYS, filterPublicNodes, groupByRegion, matchesSearch, NO_FILTERS, regionName, regionOptions, sortCards, summarize, tileLevel, type CardSort, type ColorBy, type PublicFilters } from "./filters";
+import { CARD_SORTS, COLOR_BYS, filterPublicNodes, groupByRegion, groupByTag, matchesSearch, NO_FILTERS, regionName, regionOptions, sortCards, summarize, tileLevel, type CardSort, type ColorBy, type PublicFilters } from "./filters";
 
 const node = (init: Parameters<typeof create<typeof PublicNodeSchema>>[1]): PublicNode => create(PublicNodeSchema, init);
 const nodes = [
@@ -78,7 +78,7 @@ it("地区选项按代码排序，未知最后，带国旗与计数", () => {
 });
 
 it("地区分组按四态算在线数，在线数与总数相同按代码排序", () => {
-  expect(groupByRegion(nodes).map((g) => [g.code, g.name, g.online, names(g.nodes)])).toEqual([
+  expect(groupByRegion(nodes).map((g) => [g.key, g.name, g.online, names(g.nodes)])).toEqual([
     ["HK", "香港", 1, ["hk-1", "hk-2"]],
     ["JP", "日本", 1, ["tokyo-1", "tokyo-2"]],
     ["", "未知", 0, ["fresh"]],
@@ -94,7 +94,7 @@ it("地区按在线数降序优先于总数与代码，未知即使在线更多�
     node({ country: "US", online: true, lastSeenAt: 1n }),
     ...Array.from({ length: 4 }, () => node({ online: true, lastSeenAt: 1n })),
   ];
-  expect(groupByRegion(input).map((g) => g.code)).toEqual(["US", "DE", ""]);
+  expect(groupByRegion(input).map((g) => g.key)).toEqual(["US", "DE", ""]);
 });
 
 it("同在线数先按总数降序，再按代码", () => {
@@ -103,15 +103,35 @@ it("同在线数先按总数降序，再按代码", () => {
     node({ country: "US", online: true, lastSeenAt: 1n }),
     node({ country: "US", lastSeenAt: 1n }),
   ];
-  expect(groupByRegion(input).map((g) => g.code)).toEqual(["US", "DE"]);
+  expect(groupByRegion(input).map((g) => g.key)).toEqual(["US", "DE"]);
 });
 
 it("只有未知地区时只有一个组", () => {
-  expect(groupByRegion([nodes[3]]).map((g) => [g.code, g.name])).toEqual([["", "未知"]]);
+  expect(groupByRegion([nodes[3]]).map((g) => [g.key, g.name])).toEqual([["", "未知"]]);
 });
 
 it("空快照没有地区组", () => {
   expect(groupByRegion([])).toEqual([]);
+});
+
+it("按标签分组：节点出现在它的每个标签组里，标签按折叠比较归组、组名取 hub 的写法，无标签最后", () => {
+  expect(groupByTag(nodes, ["db", "prod"]).map((g) => [g.key, g.name, g.online, names(g.nodes)])).toEqual([
+    ["tag:prod", "prod", 1, ["tokyo-1", "tokyo-2"]],
+    ["tag:db", "db", 0, ["tokyo-2"]],
+    ["untagged", "无标签", 1, ["hk-1", "fresh", "hk-2"]],
+  ]);
+});
+
+it("标签组同在线数先按总数降序，再按 hub 的标签顺序；无标签即使在线更多仍最后；筛掉后没有节点的标签不成组", () => {
+  const input = [
+    node({ tags: ["b"], online: true, lastSeenAt: 1n }),
+    node({ tags: ["a"], online: true, lastSeenAt: 1n }),
+    node({ tags: ["c"], online: true, lastSeenAt: 1n }),
+    node({ tags: ["c"], lastSeenAt: 1n }),
+    ...Array.from({ length: 3 }, () => node({ online: true, lastSeenAt: 1n })),
+  ];
+  expect(groupByTag(input, ["b", "a", "c", "gone"]).map((g) => g.key)).toEqual(["tag:c", "tag:b", "tag:a", "untagged"]);
+  expect(groupByTag([], ["a"])).toEqual([]);
 });
 
 it("汇总四态互斥，速率只累计在线与维护中", () => {

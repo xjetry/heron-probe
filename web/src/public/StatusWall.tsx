@@ -6,16 +6,16 @@ import { ago, bytes, percent } from "../lib/format";
 import { nodeStatus, STATUS_LABEL, usageLevel } from "../lib/status";
 import { useMediaQuery, WIDE_QUERY } from "../lib/useMediaQuery";
 import { DetailPanel } from "./DetailPanel";
-import { groupByRegion, tileLevel, type ColorBy } from "./filters";
+import { groupByRegion, groupByTag, tileLevel, type ColorBy, type GroupBy } from "./filters";
 
-// 状态墙（设计 §3.1）：左侧按地区分组的方块，右侧固定详情面板随点选切换。方块是节点页的链接：宽屏上不带修饰键的左键点击
+// 状态墙（设计 §3.1）：左侧按地区或标签分组的方块（tags 是 hub 下发的标签并集，按标签分组时用），右侧固定详情面板随点选切换。方块是节点页的链接：宽屏上不带修饰键的左键点击
 // 只切换详情（面板里有「查看完整历史」去节点页），其余情况（窄屏、中键、⌘ / Ctrl / Shift）都是普通链接。
 // 选中的节点不在当前列表里（被筛掉或转私有）时退回墙上第一个节点。
-export function StatusWall({ nodes, now, colorBy, selectedId, onSelect }: {
-  nodes: readonly PublicNode[]; now: number; colorBy: ColorBy; selectedId: bigint | null; onSelect: (id: bigint) => void;
+export function StatusWall({ nodes, tags, now, groupBy, colorBy, selectedId, onSelect }: {
+  nodes: readonly PublicNode[]; tags: readonly string[]; now: number; groupBy: GroupBy; colorBy: ColorBy; selectedId: bigint | null; onSelect: (id: bigint) => void;
 }) {
   const wide = useMediaQuery(WIDE_QUERY);
-  const groups = groupByRegion(nodes);
+  const groups = groupBy === "tag" ? groupByTag(nodes, tags) : groupByRegion(nodes);
   const selected = nodes.find((n) => n.id === selectedId) ?? groups[0]?.nodes[0];
   const pick = (event: MouseEvent, id: bigint) => {
     if (!wide || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -26,7 +26,7 @@ export function StatusWall({ nodes, now, colorBy, selectedId, onSelect }: {
     <div className="wall-layout">
       <div className="wall">
         {groups.map((group) => (
-          <details className="wall-group" role="group" aria-label={`${group.name} ${group.online} / ${group.nodes.length} 在线`} key={group.code} open>
+          <details className="wall-group" role="group" aria-label={`${group.name} ${group.online} / ${group.nodes.length} 在线`} key={group.key} open>
             <summary>{group.name} · {group.online} / {group.nodes.length} 在线</summary>
             <ul className="tiles">
               {group.nodes.map((n) => {

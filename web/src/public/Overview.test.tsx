@@ -115,6 +115,33 @@ it("视图切换：没选过时默认卡片带排序；状态墙带着色依据"
   expect(screen.queryByRole("combobox", { name: "排序" })).toBeNull();
 });
 
+const groupHeads = () => Array.from(document.querySelectorAll(".wall-group > summary")).map((s) => s.textContent);
+
+it("状态墙可按标签分组：节点进它的每个标签组，组名取 hub 的写法，无标签最后；分组下拉只在状态墙出现", async () => {
+  render();
+  await screen.findByText("2 / 4 在线");
+  expect(screen.queryByRole("combobox", { name: "分组" })).toBeNull();
+  wall();
+  expect(screen.getByRole("combobox", { name: "分组" })).toHaveValue("region");
+  expect(groupHeads()).toEqual(["日本 · 1 / 2 在线", "香港 · 1 / 1 在线", "未知 · 0 / 1 在线"]);
+  fireEvent.change(screen.getByRole("combobox", { name: "分组" }), { target: { value: "tag" } });
+  expect(groupHeads()).toEqual(["db · 1 / 2 在线", "prod · 1 / 2 在线", "web · 1 / 1 在线", "无标签 · 0 / 1 在线"]);
+  expect(shown()).toEqual(["db-1", "lab-1", "web-1", "db-1", "web-1", "bare-1"]);
+});
+
+it("没有任何标签时不出分组下拉，按地区分组", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  let current = snapshot;
+  render(async () => current);
+  await screen.findByText("2 / 4 在线");
+  wall();
+  fireEvent.change(screen.getByRole("combobox", { name: "分组" }), { target: { value: "tag" } });
+  current = { ...snapshot, tags: [], nodes: snapshot.nodes.map((n) => ({ ...n, tags: [] })) };
+  await act(async () => vi.advanceTimersByTimeAsync(POLL_MS + 100));
+  await waitFor(() => expect(screen.queryByRole("combobox", { name: "分组" })).toBeNull());
+  expect(groupHeads()).toEqual(["日本 · 1 / 2 在线", "香港 · 1 / 1 在线", "未知 · 0 / 1 在线"]);
+});
+
 it("访客选的视图记到 localStorage，下次打开沿用", async () => {
   render();
   await screen.findByText("2 / 4 在线");

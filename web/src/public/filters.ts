@@ -3,7 +3,7 @@ import type { PublicNode } from "../gen/heron/v1/public_pb";
 import { sortByExpiry } from "../lib/billing";
 import { literalPattern } from "../lib/fold";
 import { expiryLevel, nodeStatus, STATUS_ORDER, usageLevel, type Level, type NodeStatus } from "../lib/status";
-import { matchesTags } from "../lib/tags";
+import { matchesTags, sameTag } from "../lib/tags";
 
 export type PublicFilters = { search: string; regions: readonly string[]; tags: readonly string[]; onlineOnly: boolean };
 export const NO_FILTERS: PublicFilters = { search: "", regions: [], tags: [], onlineOnly: false };
@@ -87,21 +87,50 @@ export function regionOptions(nodes: readonly PublicNode[]): RegionOption[] {
   return [...counts.keys()].sort(byCodeUnknownLast).map((code) => ({ value: code, label: regionName(code), count: counts.get(code)! }));
 }
 
-export type RegionGroup = { code: string; name: string; nodes: PublicNode[]; online: number };
+export type GroupBy = "region" | "tag";
+export const GROUP_BYS: readonly { value: GroupBy; label: string }[] = [{ value: "region", label: "地区" }, { value: "tag", label: "标签" }];
 
-// 未知地区固定排最后；其余先按四态在线数降序，再按总数降序和代码排序。
-export function groupByRegion(nodes: readonly PublicNode[]): RegionGroup[] {
-  const groups = new Map<string, RegionGroup>();
+export type WallGroup = { key: string; name: string; nodes: PublicNode[]; online: number };
+
+const countOnline = (nodes: readonly PublicNode[]) => nodes.filter((n) => nodeStatus(n) === "online").length;
+
+// 两种分组同一排序：兜底组（未知地区、无标签）固定最后；其余按四态在线数降序、总数降序，再按各自的 tiebreak。
+function ordered(groups: WallGroup[], fallbackKey: string, tiebreak: (a: WallGroup, b: WallGroup) => number): WallGroup[] {
+  return groups.sort((a, b) => {
+    if ((a.key === fallbackKey) !== (b.key === fallbackKey)) return a.key === fallbackKey ? 1 : -1;
+    return b.online - a.online || b.nodes.length - a.nodes.length || tiebreak(a, b);
+  });
+}
+
+// 组键是国家代码，未知地区为空串；同在线数、同总数时按代码排。
+export function groupByRegion(nodes: readonly PublicNode[]): WallGroup[] {
+  const groups = new Map<string, WallGroup>();
   for (const n of nodes) {
-    const g = groups.get(n.country) ?? { code: n.country, name: regionName(n.country), nodes: [], online: 0 };
+    const g = groups.get(n.country) ?? { key: n.country, name: regionName(n.country), nodes: [], online: 0 };
     g.nodes.push(n);
-    if (nodeStatus(n) === "online") g.online++;
     groups.set(n.country, g);
   }
-  return [...groups.values()].sort((a, b) => {
-    if ((a.code === "") !== (b.code === "")) return a.code === "" ? 1 : -1;
-    return b.online - a.online || b.nodes.length - a.nodes.length || a.code.localeCompare(b.code);
-  });
+  for (const g of groups.values()) g.online = countOnline(g.nodes);
+  return ordered([...groups.values()], "", (a, b) => a.key.localeCompare(b.key));
+}
+
+const UNTAGGED = "untagged";
+
+// 组的集合、写法与 tiebreak 次序取 hub 下发的标签并集（按折叠键排序），与标签筛选同源；节点标签按 sameTag 折叠比较归组。
+// 一个节点出现在它的每个标签组里，各组计数独立，组计数之和可以大于节点数。并集覆盖全部公开节点的标签，
+// 落不进任何组的只有没有标签的节点，归入「无标签」。筛选后没有节点的标签不成组。
+export function groupByTag(nodes: readonly PublicNode[], tags: readonly string[]): WallGroup[] {
+  const groups: WallGroup[] = [];
+  const placed = new Set<PublicNode>();
+  for (const tag of tags) {
+    const members = nodes.filter((n) => n.tags.some((t) => sameTag(t, tag)));
+    for (const n of members) placed.add(n);
+    if (members.length > 0) groups.push({ key: `tag:${tag}`, name: tag, nodes: members, online: countOnline(members) });
+  }
+  const rest = nodes.filter((n) => !placed.has(n));
+  if (rest.length > 0) groups.push({ key: UNTAGGED, name: "无标签", nodes: rest, online: countOnline(rest) });
+  const order = new Map(tags.map((tag, i) => [`tag:${tag}`, i]));
+  return ordered(groups, UNTAGGED, (a, b) => order.get(a.key)! - order.get(b.key)!);
 }
 
 export type Summary = { total: number; counts: Record<NodeStatus, number>; rxBps: bigint; txBps: bigint; periodBytes: bigint };

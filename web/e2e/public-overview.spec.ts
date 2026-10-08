@@ -61,6 +61,12 @@ test("公开总览：状态墙、详情、卡片、手机列表与数据边界",
   // 日本与香港都是 1 / 2：同在线数、同总数时按代码排，HK 在 JP 前。
   await expect(page.locator(".wall-group > summary")).toHaveText(["香港 · 1 / 2 在线", "日本 · 1 / 2 在线", "未知 · 0 / 1 在线"]);
   await expect(page.locator(".tile[data-status='offline']").getByText("离线 · 2 小时前")).toBeVisible();
+  // 分组切到标签：节点进它的每个标签组，同计数按 hub 的标签顺序，无标签最后；再切回地区。
+  const grouping = page.getByRole("combobox", { name: "分组" });
+  await grouping.selectOption("tag");
+  await expect(page.locator(".wall-group > summary")).toHaveText(["家宽 · 1 / 2 在线", "机房 · 1 / 2 在线", "无标签 · 0 / 1 在线"]);
+  await grouping.selectOption("region");
+  await expect(page.locator(".wall-group > summary")).toHaveText(["香港 · 1 / 2 在线", "日本 · 1 / 2 在线", "未知 · 0 / 1 在线"]);
 
   // 详情面板默认选中第一个节点；点另一个方块只切换，不导航。
   const panel = page.getByRole("complementary", { name: "节点详情" });
