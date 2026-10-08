@@ -8,6 +8,7 @@ import { applySite, DEFAULT_TITLE } from "./site";
 import { HeronMark } from "../components/HeronMark";
 import { PUBLIC_SCHEME_KEY, readSchemeChoice, writeSchemeChoice } from "../lib/scheme";
 import { POLL_MS } from "../lib/poll";
+import { GitHubLink } from "../components/GitHubLink";
 import { ThemeToggle } from "../components/ThemeToggle";
 
 // 外观只在页面加载时取，之后不再重取：已打开的页面刷新后才看到改动，刷新时浏览器还可能再用最多 5 分钟的缓存
@@ -29,6 +30,7 @@ export function PublicLayout() {
         </Link>
         {/* Overview 按 POLL_MS 自动刷新快照，顶栏仅说明刷新周期。 */}
         <span className="live muted">实时 · 每 {POLL_MS / 1000} 秒</span>
+        <GitHubLink />
         <ThemeToggle choice={choice} onChange={(next) => { writeSchemeChoice(PUBLIC_SCHEME_KEY, next); setChoice(next); }} />
         {/* 面板是另一个前端入口，用普通链接整页跳转；只接受 hub 给出的面板路径。 */}
         {site.data?.adminPath && <a href={site.data.adminPath} className="admin">登录</a>}

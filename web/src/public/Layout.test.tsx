@@ -12,10 +12,14 @@ import { PUBLIC_SCHEME_KEY } from "../lib/scheme";
 afterEach(() => { document.title = ""; localStorage.clear(); delete document.documentElement.dataset.theme; });
 
 // 顶栏只有：logo、站点标题、「实时 · 每 N 秒」、明暗切换、「登录」（设计 §3.1）；没有导航、铃铛、刷新、页脚。
-it("顶栏只有标题链接、实时说明、明暗切换与登录；没有导航与页脚", async () => {
+it("顶栏只有标题链接、实时说明、GitHub 仓库、明暗切换与登录；没有导航与页脚", async () => {
   renderWithService(PublicService, { getSite: async () => ({ title: "机房", adminPath: "/admin/" }) }, [{ path: "/", Component: PublicLayout }], "/");
   const header = (await screen.findByRole("link", { name: "机房" })).closest("header")!;
-  expect(within(header).getAllByRole("link").map((a) => a.textContent)).toEqual(["机房", "登录"]);
+  expect(within(header).getAllByRole("link").map((a) => a.getAttribute("aria-label") ?? a.textContent)).toEqual(["机房", "GitHub 仓库", "登录"]);
+  const github = within(header).getByRole("link", { name: "GitHub 仓库" });
+  expect(github).toHaveAttribute("href", "https://github.com/xjetry/heron-probe");
+  expect(github).toHaveAttribute("target", "_blank");
+  expect(github).toHaveAttribute("rel", "noreferrer");
   expect(within(header).getByText(`实时 · 每 ${POLL_MS / 1000} 秒`)).toBeInTheDocument();
   expect(within(header).getByRole("button", { name: "明暗切换" })).toBeInTheDocument();
   expect(screen.queryByRole("navigation")).toBeNull();

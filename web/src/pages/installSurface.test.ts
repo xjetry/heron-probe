@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { REPO_URL } from "../lib/repo";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const installSh = readFileSync(resolve(root, "deploy/install.sh"), "utf8");
@@ -39,13 +40,20 @@ describe("面板安装命令与 install.sh", () => {
     expect(panel).not.toMatch(/--version\b/);
   });
 
-  it("install.sh 的 REPO 与面板里的仓库地址一致", () => {
+  // 面板的仓库地址只有 lib/repo.ts 一个来源：安装命令里出现 github 字面地址就是第二份来源，release 地址必须由 REPO_URL 派生。
+  it("install.sh 的 REPO 与面板的仓库地址一致；安装命令不另写仓库地址", () => {
     const repo = installSh.match(/^REPO=(\S+)/m)?.[1];
     expect(repo).toBeTruthy();
-    const urls = [...panel.matchAll(/https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/g)].map((m) => m[0]);
+    expect(REPO_URL).toBe(repo);
+    expect(panel).not.toMatch(/https:\/\/github\.com\//);
+    expect(panel).toMatch(/\$\{REPO_URL\}\/releases\//);
+  });
+
+  // 油猴脚本独立分发、不能引用面板代码，只能自带一份仓库地址；每一处都必须落在 install.sh 的 REPO 之下。
+  it("油猴脚本里的仓库地址与 install.sh 的 REPO 一致", () => {
+    const repo = installSh.match(/^REPO=(\S+)/m)?.[1];
+    const urls = [...userscript.matchAll(/https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/g)].map((m) => m[0]);
     expect(urls.length).toBeGreaterThan(0);
-    for (const url of urls) {
-      expect(url === repo || url.startsWith(`${repo}/`)).toBe(true);
-    }
+    for (const url of urls) expect(url === repo || url.startsWith(`${repo}/`), url).toBe(true);
   });
 });

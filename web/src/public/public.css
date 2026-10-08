@@ -4,7 +4,7 @@
 .public-header .brand { color: var(--fg); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .public-header .brand .logo, .public-header .heron-mark { height: 24px; width: auto; }
 .public-header .live { font-size: 12px; white-space: nowrap; }
-.public-header .theme-toggle { margin-left: auto; }
+.public-header .github-link { margin-left: auto; }
 .public-header .admin { color: var(--muted); font-size: 13px; }
 .public-layout .main { max-width: 1680px; padding: 16px clamp(12px, 2vw, 24px); }
 /* 汇总条（StatusSummary.tsx）。 */

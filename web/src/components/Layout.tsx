@@ -7,6 +7,7 @@ import { useLeaveSession } from "../api/useLeaveSession";
 import { HeronMark } from "./HeronMark";
 import { Icon, type IconName } from "./Icon";
 import { Modal } from "./Modal";
+import { GitHubLink } from "./GitHubLink";
 import { ThemeToggle } from "./ThemeToggle";
 import { QuickSearch } from "./QuickSearch";
 import { ADMIN_SCHEME_KEY, readSchemeChoice, writeSchemeChoice } from "../lib/scheme";
@@ -55,6 +56,7 @@ export function Layout() {
           <div className="topbar-actions">
             <QuickSearch />
             <a href="/" target="_blank" rel="noreferrer" className="public-page-link" aria-label="公开页 ↗"><Icon name="external" /><span>公开页 ↗</span></a>
+            <GitHubLink />
             <ThemeToggle choice={choice} onChange={(next) => { writeSchemeChoice(ADMIN_SCHEME_KEY, next); setChoice(next); }} />
             <button type="button" className="icon-button" title="登出" aria-label="登出" onClick={() => logout.mutate({})} disabled={logout.isPending}><Icon name="logout" /></button>
           </div>

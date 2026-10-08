@@ -3,6 +3,7 @@ import { CopyableText } from "./CopyableText";
 import { needsInsecureHTTP } from "../lib/transport";
 import { isRelease } from "../lib/version";
 import { loadProxyPort, parseProxyPort, saveProxyPort, sshProxyArgs } from "../lib/installProxy";
+import { REPO_URL } from "../lib/repo";
 
 // 安装脚本只装自己所属的版本（spec §5.7），版本由取哪个 URL 的脚本决定；每个 release 里的 agent 脚本装的就是这个
 // hub 版本绑定的 agent（spec §14.1）——只发 hub 的 release 把绑定版本的脚本原样带进来，完整 release 本来就是同一版本。
@@ -10,8 +11,8 @@ import { loadProxyPort, parseProxyPort, saveProxyPort, sshProxyArgs } from "../l
 // release 的脚本，装最新 hub 绑定的 agent。
 const scriptUrl = (hubVersion: string) =>
   isRelease(hubVersion)
-    ? `https://github.com/xjetry/heron-probe/releases/download/${hubVersion}/install.sh`
-    : "https://github.com/xjetry/heron-probe/releases/latest/download/install.sh";
+    ? `${REPO_URL}/releases/download/${hubVersion}/install.sh`
+    : `${REPO_URL}/releases/latest/download/install.sh`;
 
 // origin 是 agent 访问 hub 的地址，也是判定要不要 --insecure-http 的依据：命令里的 --hub 与这个判定取同一个值。
 // registerKey 是注册窗口的 key 或指定节点的安装凭据；注册后由 agent 保存另行签发的运行 token。

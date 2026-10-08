@@ -38,9 +38,13 @@ test("公开总览：状态墙、详情、卡片、手机列表与数据边界",
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto("/");
 
-  // 顶栏只有标题、实时说明、明暗切换、登录；没有导航。
+  // 顶栏只有标题、实时说明、GitHub 仓库、明暗切换、登录；没有导航。
   const header = page.locator("header.public-header");
-  await expect(header.getByRole("link")).toHaveText(["Heron · 基础设施", "登录"]);
+  await expect(header.getByRole("link")).toHaveCount(3);
+  await expect(header.getByRole("link").nth(0)).toHaveText("Heron · 基础设施");
+  await expect(header.getByRole("link").nth(1)).toHaveAccessibleName("GitHub 仓库");
+  await expect(header.getByRole("link").nth(1)).toHaveAttribute("href", "https://github.com/xjetry/heron-probe");
+  await expect(header.getByRole("link").nth(2)).toHaveText("登录");
   await expect(header.getByText("实时 · 每 2 秒")).toBeVisible();
   await expect(page.getByRole("navigation")).toHaveCount(0);
   await expect(page.locator("footer.site-footer")).toHaveCount(0);

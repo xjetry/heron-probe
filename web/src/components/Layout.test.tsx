@@ -24,12 +24,16 @@ it("明暗切换保存在本机并在离开布局时恢复原页面配色", asyn
   } finally { localStorage.removeItem("heron-admin-scheme"); delete document.documentElement.dataset.theme; }
 });
 
-it("顶栏提供面包屑、公开页链接、明暗切换与登出，侧栏没有页脚", () => {
+it("顶栏提供面包屑、公开页链接、GitHub 仓库、明暗切换与登出，侧栏没有页脚", () => {
   renderWithAdmin({}, [{ path: "/", Component: Layout, children: [{ index: true, element: <h1>home</h1> }] }], "/");
   const topbar = screen.getByRole("banner");
   expect(within(topbar).getByRole("button", { name: "搜索节点" })).toBeInTheDocument();
   expect(within(topbar).getByRole("navigation", { name: "位置" })).toHaveTextContent("工作台/总览");
   expect(within(topbar).getByRole("link", { name: "公开页 ↗" })).toHaveAttribute("href", "/");
+  const github = within(topbar).getByRole("link", { name: "GitHub 仓库" });
+  expect(github).toHaveAttribute("href", "https://github.com/xjetry/heron-probe");
+  expect(github).toHaveAttribute("target", "_blank");
+  expect(github).toHaveAttribute("rel", "noreferrer");
   expect(within(topbar).getByRole("button", { name: "明暗切换" })).toBeInTheDocument();
   expect(within(topbar).getByRole("button", { name: "登出" })).toBeInTheDocument();
   expect(screen.queryByText("管理工作台")).toBeNull();
