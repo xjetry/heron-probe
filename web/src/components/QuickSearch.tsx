@@ -1,6 +1,6 @@
 import { useQuery } from "@connectrpc/connect-query";
 import { skipToken } from "@tanstack/react-query";
-import { type KeyboardEvent, useEffect, useState } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { errorBanner } from "../api/queryGate";
 import { AdminService } from "../gen/heron/v1/admin_pb";
@@ -14,6 +14,8 @@ const LIMIT = 8;
 export function QuickSearch() {
   const navigate = useNavigate();
   const [opener, setOpener] = useState<HTMLElement | null>(null);
+  // 对话框关闭时焦点归还给打开它的元素；快捷键打开时这个元素是顶栏按钮，由 ref 直接指向，不按类名查 DOM。
+  const trigger = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const nodes = useQuery(AdminService.method.listNodes, opener ? {} : skipToken);
@@ -21,7 +23,7 @@ export function QuickSearch() {
     const onKey = (event: globalThis.KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setOpener((current) => current ?? document.querySelector<HTMLElement>(".quick-search-trigger") ?? document.body);
+        setOpener((current) => current ?? trigger.current ?? document.body);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -37,7 +39,7 @@ export function QuickSearch() {
   };
   return (
     <>
-      <button type="button" className="quick-search-trigger" aria-label="搜索节点" onClick={(event) => setOpener(event.currentTarget)}>
+      <button ref={trigger} type="button" className="quick-search-trigger" aria-label="搜索节点" onClick={(event) => setOpener(event.currentTarget)}>
         <Icon name="search" /><span>搜索节点</span><kbd>⌘K</kbd>
       </button>
       {opener && (

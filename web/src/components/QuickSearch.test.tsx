@@ -58,6 +58,8 @@ it("Ctrl+K 打开后直接 Enter 进入第一条", async () => {
   await screen.findAllByRole("option");
   fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Enter" });
   await waitFor(() => expect(router.state.location.pathname).toBe("/nodes/1"));
+  // 快捷键打开的对话框关闭后，焦点归还给顶栏按钮，而不是落到 body。
+  expect(screen.getByRole("button", { name: "搜索节点" })).toHaveFocus();
 });
 
 it("只列前八条，方向键停在边界，重复快捷键保留查询与当前选中", async () => {

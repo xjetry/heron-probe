@@ -117,3 +117,15 @@ it("列表刷新替换操作数组时保持菜单、武装与焦点，确认使�
   expect(oldSelect).not.toHaveBeenCalled();
   expect(newSelect).toHaveBeenCalledTimes(1);
 });
+
+it("数据刷新改写某项的 label 时该项不重挂，焦点留在原按钮上", () => {
+  const items = (label: string) => [{ label: "编辑", onSelect: () => {} }, { label, onSelect: () => {} }];
+  const { rerender } = render(<RowMenu label="web-01（#1）" items={items("停用")} />);
+  fireEvent.click(screen.getByRole("button", { name: "更多操作 web-01（#1）" }));
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "ArrowDown" });
+  const toggle = screen.getByRole("menuitem", { name: "停用 web-01（#1）" });
+  expect(toggle).toHaveFocus();
+  rerender(<RowMenu label="web-01（#1）" items={items("启用")} />);
+  expect(screen.getByRole("menuitem", { name: "启用 web-01（#1）" })).toBe(toggle);
+  expect(toggle).toHaveFocus();
+});

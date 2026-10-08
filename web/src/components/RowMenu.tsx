@@ -72,15 +72,16 @@ export function RowMenu({ label, items }: { label: string; items: readonly RowMe
         onClick={() => (open ? close(false) : setOpen(true))}><Icon name="more" /></button>
       {open && createPortal(
         <div ref={menu} className="row-menu-popup" role="menu" aria-label={`${label} 的操作`} style={position} onKeyDown={onKeyDown}>
+          {/* 项是位置式的静态列表，用序号作 key：label 会随数据刷新改写（如启用 / 停用互换），按 label 建 key 会让那一项重挂、丢掉焦点与武装。 */}
           {items.map((item, index) => {
             const name = armed === index && item.confirm ? item.confirm : `${item.label} ${label}`;
             const text = armed === index && item.confirm ? item.confirm : item.label;
             const className = item.danger ? "danger" : undefined;
             if (item.to && !item.disabled) {
-              return <Link key={item.label} role="menuitem" aria-label={name} className={className} to={item.to} onClick={() => close(false)}>{text}</Link>;
+              return <Link key={index} role="menuitem" aria-label={name} className={className} to={item.to} onClick={() => close(false)}>{text}</Link>;
             }
             return (
-              <Fragment key={item.label}>
+              <Fragment key={index}>
                 <button type="button" role="menuitem" aria-label={name} className={className} aria-disabled={item.disabled || undefined} onClick={(event) => { event.currentTarget.focus(); select(item, index); }}>{text}</button>
                 {armed === index && item.note && <small className="row-menu-note">{item.note}</small>}
               </Fragment>
