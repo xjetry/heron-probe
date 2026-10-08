@@ -87,6 +87,7 @@ export function NodeDetail() {
   );
   return (
     <section className="node-detail">
+      <p><Link to="/nodes">返回节点列表</Link></p>
       {errorBanner(nodes.error, snap.error, traffic.error, history.metrics.error, history.probes.error, tab === "events" ? events.error : undefined, tab === "events" ? channels.error : undefined, tab === "events" ? rules.error : undefined)}
       <header className="node-head" role="group" aria-label="节点状态">
         <div className="node-head-title">

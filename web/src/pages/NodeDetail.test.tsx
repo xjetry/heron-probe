@@ -614,3 +614,14 @@ it("诊断每 10 秒更新，刷新失败保留最近诊断并显示错误", asy
   expect(screen.getByText("生效上报间隔").nextElementSibling).toHaveTextContent("2000 ms");
   expect(screen.getByText("本次网络采集失败，接口清单不可用")).toBeInTheDocument();
 });
+
+it("返回节点列表在数据到达前就可用，点击回到节点列表", async () => {
+  const { router } = renderWithAdmin({ ...defaultImpl, listNodes: () => new Promise<never>(() => {}) },
+    [{ path: "/nodes/:id", Component: NodeDetail }, { path: "/nodes", Component: () => <h1>节点列表页</h1> }], "/nodes/7?tab=diagnostics");
+  const back = await screen.findByRole("link", { name: "返回节点列表" });
+  expect(screen.queryByRole("heading", { name: "db-01" })).not.toBeInTheDocument();
+  fireEvent.click(back);
+  expect(await screen.findByRole("heading", { name: "节点列表页" })).toBeInTheDocument();
+  expect(router.state.location.pathname).toBe("/nodes");
+  expect(router.state.location.search).toBe("");
+});
