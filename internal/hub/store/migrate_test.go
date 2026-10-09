@@ -565,7 +565,7 @@ func TestFrozenSchemasFollowMigrations(t *testing.T) {
 			}
 			_, stepped := frozenSchemaFixture(t, v-1)
 			previous := describe(t, stepped)
-			if err := inTxDB(stepped, step); err != nil {
+			if err := inTx(stepped, step); err != nil {
 				t.Fatalf("migrations[%d] on frozen v%d: %v", v, v-1, err)
 			}
 			_, frozen := frozenSchemaFixture(t, v)

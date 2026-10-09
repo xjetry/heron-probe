@@ -173,7 +173,7 @@ func (s *Store) runWriter() {
 		if req.ctx != nil && req.ctx.Err() != nil {
 			err = req.ctx.Err()
 		} else {
-			err = s.inTx(req.fn)
+			err = inTx(s.w, req.fn)
 		}
 		if req.res != nil {
 			req.res <- err
@@ -185,8 +185,10 @@ func (s *Store) runWriter() {
 	}
 }
 
-func (s *Store) inTx(fn func(*sql.Tx) error) error {
-	tx, err := s.w.Begin()
+// inTx 在 db 上开一个事务执行 fn：fn 出错则回滚并返回该错误，否则返回提交的结果。runWriter（写连接）与 migrate
+// 共用它；返回 nil 即已提交，是 write 契约的来源。
+func inTx(db *sql.DB, fn func(*sql.Tx) error) error {
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
@@ -321,7 +323,7 @@ func migrate(db *sql.DB, policy SchemaPolicy, log *slog.Logger) error {
 	case schemaCurrent:
 		return nil
 	case schemaCreate:
-		if err := inTxDB(db, func(tx *sql.Tx) error { return createSchema(ctx, tx) }); err != nil {
+		if err := inTx(db, func(tx *sql.Tx) error { return createSchema(ctx, tx) }); err != nil {
 			return err
 		}
 		logSchemaCreated(log)
@@ -332,7 +334,7 @@ func migrate(db *sql.DB, policy SchemaPolicy, log *slog.Logger) error {
 		if !ok {
 			return fmt.Errorf("no migration to schema version %d", next)
 		}
-		if err := inTxDB(db, func(tx *sql.Tx) error {
+		if err := inTx(db, func(tx *sql.Tx) error {
 			if err := step(tx); err != nil {
 				return err
 			}
@@ -344,16 +346,4 @@ func migrate(db *sql.DB, policy SchemaPolicy, log *slog.Logger) error {
 		log.Info("database schema migrated", "from", next-1, "to", next)
 	}
 	return nil
-}
-
-func inTxDB(db *sql.DB, fn func(*sql.Tx) error) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	if err := fn(tx); err != nil {
-		tx.Rollback()
-		return err
-	}
-	return tx.Commit()
 }
