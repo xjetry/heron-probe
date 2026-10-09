@@ -29,6 +29,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -85,17 +86,38 @@ func New(st *store.Store, nodes NodeCreator, sender LoginSender, clk clock.Clock
 	return &Auth{store: st, nodes: nodes, loginSender: sender, clk: clk, loc: loc, log: log, byHash: map[[32]byte]int64{}, register: newFailureTracker(failLimit, failWindow), login: newFailureTracker(failLimit, failWindow)}
 }
 
+// Load 自库整体重建 token 映射。
 func (a *Auth) Load(ctx context.Context) error {
+	_, err := a.Reload(ctx)
+	return err
+}
+
+// Reload 自库整体重建 token 映射，并返回重建前在映射里、重建后不在的节点（升序）：它们已不在库里，是被本进程之外
+// 删除的。删除集合由替换映射所用的那次读库算出，并与替换在同一次 mutMu 持有内完成；本进程的建删、换发与认领都持
+// mutMu，不会插进来，所以返回的恰是库外删除。若另读一次库来算删除集合，夹在那次读与替换所用的读之间的库外删除，
+// 在两次读里一次在场、一次缺席，算不进删除集合，却被替换直接从映射里抹掉，之后再也算不到。返回错误时映射未变。
+func (a *Auth) Reload(ctx context.Context) ([]int64, error) {
 	a.mutMu.Lock()
 	defer a.mutMu.Unlock()
 	m, err := a.store.TokenHashes(ctx)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	kept := make(map[int64]bool, len(m))
+	for _, id := range m {
+		kept[id] = true
 	}
 	a.mu.Lock()
+	var removed []int64
+	for _, id := range a.byHash {
+		if !kept[id] && !slices.Contains(removed, id) {
+			removed = append(removed, id)
+		}
+	}
 	a.byHash = m
 	a.mu.Unlock()
-	return nil
+	slices.Sort(removed)
+	return removed, nil
 }
 
 // Authenticate 只查内存映射，不读库：这是上报路径上唯一的鉴权动作。
