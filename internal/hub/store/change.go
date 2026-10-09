@@ -129,7 +129,12 @@ type changeKindSpec struct {
 	secret string
 	// sequence 读 AUTOINCREMENT 刚分配的身份；为空的种类没有由写分配的资源身份。
 	sequence string
+	// scope 读带节点选择器的资源（探测任务、告警规则）的作用域，供 RuleScope 使用；其它种类为 nil。
+	scope *ruleScopeQueries
 }
+
+// ruleScopeQueries 的 head 读 (all_nodes, 引用的探测任务 id)，tags 计选择器标签数，nodes 列显式节点。
+type ruleScopeQueries struct{ head, tags, nodes string }
 
 // 白名单列同时决定预览和审计，不从原始请求或响应复制内容；凭据哈希只进入版本摘要。
 var changeKinds = map[ChangeKind]changeKindSpec{
@@ -143,11 +148,21 @@ var changeKinds = map[ChangeKind]changeKindSpec{
 		row:       "SELECT id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,dns_server,cert_spki_sha256,config_id FROM probe_task WHERE id=?",
 		relations: []snapshotQuery{{"nodes", "SELECT node_id FROM probe_task_node WHERE task_id=? ORDER BY node_id"}, {"tags", "SELECT tag_id FROM probe_task_tag WHERE task_id=? ORDER BY tag_id"}},
 		sequence:  "SELECT seq FROM sqlite_sequence WHERE name='probe_task'",
+		scope: &ruleScopeQueries{
+			head:  "SELECT all_nodes, 0 FROM probe_task WHERE id = ?",
+			tags:  "SELECT COUNT(*) FROM probe_task_tag WHERE task_id = ?",
+			nodes: "SELECT node_id FROM probe_task_node WHERE task_id = ?",
+		},
 	},
 	ChangeAlert: {
 		row:       "SELECT id,name,kind,enabled,all_nodes,task_id,metric,threshold,for_minutes,created_at,days_before,resource_metric,recovery_threshold FROM alert_rule WHERE id=?",
 		relations: []snapshotQuery{{"nodes", "SELECT node_id FROM alert_rule_node WHERE rule_id=? ORDER BY node_id"}, {"tags", "SELECT tag_id FROM alert_rule_tag WHERE rule_id=? ORDER BY tag_id"}, {"channels", "SELECT channel_id FROM alert_rule_channel WHERE rule_id=? ORDER BY channel_id"}},
 		sequence:  "SELECT seq FROM sqlite_sequence WHERE name='alert_rule'",
+		scope: &ruleScopeQueries{
+			head:  "SELECT all_nodes, COALESCE(task_id, 0) FROM alert_rule WHERE id = ?",
+			tags:  "SELECT COUNT(*) FROM alert_rule_tag WHERE rule_id = ?",
+			nodes: "SELECT node_id FROM alert_rule_node WHERE rule_id = ?",
+		},
 	},
 	ChangeWindow: {
 		row:    "SELECT owner_id,expires_at,remaining FROM register_window WHERE owner_id=?",
@@ -181,7 +196,9 @@ func (c *Change) spec() (changeActionSpec, changeKindSpec, error) {
 // 回执里持久化的动作名，由写边界按 Action.String() 填写，调用方不设置它。
 type Change struct {
 	Operation
-	Action          ChangeAction
+	Action ChangeAction
+	// Policy 裁决这次变更是否被允许；store 只按固定次序调用它，自己不作允许或拒绝的决定。
+	Policy          ChangePolicy
 	Preview         bool
 	ExpectedVersion string
 	Version         string
@@ -191,10 +208,74 @@ type Change struct {
 	ReferenceTask   int64
 }
 
+// ChangeReader 是策略在写事务内（或 ChangeVersion 的读事务内）可做的全部读取。策略只经它读库，裁决与写
+// 看到的是同一份快照；接口只列策略需要的读，不暴露事务本身。
+type ChangeReader interface {
+	// APIToken 读 token 的当前行；不存在时返回 ErrNotFound。
+	APIToken(id int64) (APIToken, error)
+	// RuleScope 读探测任务或告警规则的当前作用域；不存在时返回 ErrNotFound。
+	RuleScope(kind ChangeKind, id int64) (RuleScope, error)
+}
+
+// RuleScope 是带节点选择器的资源的作用域。TaskID 是告警规则引用的探测任务（没有引用或资源是探测任务时为 0）。
+type RuleScope struct {
+	AllNodes bool
+	TagCount int
+	NodeIDs  []int64
+	TaskID   int64
+}
+
+// ChangePolicy 是类型化变更的授权策略。changeWrite 的调用次序固定为 主体 → 重放 → 作用域 → 写 → 资源：
+//   - Principal 鉴别主体并核对操作所需的权限位，会话主体返回 nil token；
+//   - 重放检查由 store 在 Principal 之后、Scope 之前完成，已提交的请求在作用域被收回后仍能取回回执；
+//   - Scope 按当前库状态裁决作用域，ChangeVersion 与写前共用它，预览与执行的准入口径因此相同；
+//   - Resource 只对登记了 authorizeAfterWrite 的操作在写之后调用，此时 ResourceID 已知、资源已是写后状态。
+//
+// 拒绝的错误契约写在 permission.go 的权限哨兵上；写边界把拒绝记进 Change.Err，其它错误按普通写失败处理。
+type ChangePolicy interface {
+	Principal(ctx context.Context, r ChangeReader, c *Change) (*APIToken, error)
+	Scope(ctx context.Context, r ChangeReader, c *Change, token *APIToken) error
+	Resource(ctx context.Context, r ChangeReader, c *Change, token *APIToken) error
+}
+
+// txReader 在调用方的事务上实现 ChangeReader。
+type txReader struct{ tx *sql.Tx }
+
+func (r txReader) APIToken(id int64) (APIToken, error) {
+	t, err := scanAPIToken(r.tx.QueryRow(selectAPIToken+" WHERE id = ?", id).Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return APIToken{}, ErrNotFound
+	}
+	return t, err
+}
+
+func (r txReader) RuleScope(kind ChangeKind, id int64) (RuleScope, error) {
+	q := changeKinds[kind].scope
+	if q == nil {
+		return RuleScope{}, fmt.Errorf("change kind %s has no rule scope", kind)
+	}
+	var out RuleScope
+	err := r.tx.QueryRow(q.head, id).Scan(&out.AllNodes, &out.TaskID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RuleScope{}, ErrNotFound
+	}
+	if err != nil {
+		return RuleScope{}, err
+	}
+	if err := r.tx.QueryRow(q.tags, id).Scan(&out.TagCount); err != nil {
+		return RuleScope{}, err
+	}
+	out.NodeIDs, err = scanIDs(r.tx.Query(q.nodes, id))
+	return out, err
+}
+
 type changeKey struct{}
 
-// WithChange 把 c 装进 ctx；未登记的操作是装配错误，在这里 panic 而不是等到写边界才发现。
+// WithChange 把 c 装进 ctx；没有策略或操作未登记都是装配错误，在这里 panic 而不是等到写边界才发现。
 func WithChange(ctx context.Context, c *Change) context.Context {
+	if c.Policy == nil {
+		panic("store.WithChange: Change.Policy is nil")
+	}
 	if _, _, err := c.spec(); err != nil {
 		panic("store.WithChange: " + err.Error())
 	}
@@ -209,7 +290,8 @@ func (s *Store) changeWrite(ctx context.Context, c *Change, fn func(*sql.Tx) err
 		if err != nil {
 			return err
 		}
-		token, err := c.authorizePrincipal(ctx, tx)
+		r := txReader{tx}
+		token, err := c.Policy.Principal(ctx, r, c)
 		if err != nil {
 			c.Err = err
 			return err
@@ -229,7 +311,7 @@ func (s *Store) changeWrite(ctx context.Context, c *Change, fn func(*sql.Tx) err
 				return err
 			}
 		}
-		if err := c.authorizeScope(tx, token); err != nil {
+		if err := c.Policy.Scope(ctx, r, c, token); err != nil {
 			c.Err = err
 			return err
 		}
@@ -254,7 +336,7 @@ func (s *Store) changeWrite(ctx context.Context, c *Change, fn func(*sql.Tx) err
 			}
 		}
 		if action.authorizeAfterWrite {
-			if err := c.authorize(ctx, tx); err != nil {
+			if err := c.Policy.Resource(ctx, r, c, token); err != nil {
 				c.Err = err
 				return err
 			}
@@ -276,115 +358,6 @@ func (s *Store) changeWrite(ctx context.Context, c *Change, fn func(*sql.Tx) err
 		_, err = tx.Exec(`INSERT INTO operation (owner_key,owner_id,request_id,request_hash,action,resource_id,before_json,after_json,committed_at) VALUES (?,?,?,?,?,?,?,?,?)`, operationOwner(ctx), c.OwnerID, c.RequestID, c.RequestHash, c.Operation.Action, c.ResourceID, c.BeforeJSON, c.AfterJSON, c.CommittedAt)
 		return err
 	}
-}
-
-func (c *Change) authorize(ctx context.Context, tx *sql.Tx) error {
-	t, err := c.authorizePrincipal(ctx, tx)
-	if err != nil {
-		return err
-	}
-	return c.authorizeScope(tx, t)
-}
-
-func (c *Change) authorizePrincipal(ctx context.Context, tx *sql.Tx) (*APIToken, error) {
-	p, bearer := Principal(ctx)
-	if !bearer {
-		return nil, nil
-	}
-	t, err := scanAPIToken(tx.QueryRow(selectAPIToken+" WHERE id = ?", p.ID).Scan)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrPermission
-	}
-	if err != nil {
-		return nil, err
-	}
-	if t.Identity != p.Identity || !t.Allows(c.Action.Permission()) {
-		return nil, ErrPermission
-	}
-	return &t, nil
-}
-
-func (c *Change) authorizeScope(tx *sql.Tx, t *APIToken) error {
-	if t == nil {
-		return nil
-	}
-	if c.Selector != nil && !t.AllowsSelector(c.Selector.AllNodes, c.Selector.Tags, c.Selector.NodeIDs) {
-		return ErrPermission
-	}
-	if c.ReferenceTask != 0 {
-		if err := authorizeRule(tx, t.TokenGrant, ChangeProbe, c.ReferenceTask); err != nil {
-			return err
-		}
-	}
-	switch kind := c.Action.Kind(); kind {
-	case ChangeNode:
-		if c.Action.Permission() == PermissionCreate {
-			return nil
-		}
-		if !t.AllowsNode(c.ResourceID) {
-			return ErrPermission
-		}
-	case ChangeUpdate:
-		if !t.AllowsNode(c.ResourceID) {
-			return ErrPermission
-		}
-	case ChangeWindow:
-		if c.ResourceID != t.ID {
-			return ErrPermission
-		}
-	case ChangeTag:
-		if !t.AllNodes {
-			return ErrPermission
-		}
-	case ChangeProbe, ChangeAlert:
-		if c.ResourceID == 0 {
-			return nil
-		}
-		return authorizeRule(tx, t.TokenGrant, kind, c.ResourceID)
-	default:
-		return ErrPermission
-	}
-	return nil
-}
-
-func authorizeRule(tx *sql.Tx, g TokenGrant, kind ChangeKind, id int64) error {
-	if g.AllNodes {
-		return nil
-	}
-	table, key := "probe_task", "task_id"
-	if kind == ChangeAlert {
-		table, key = "alert_rule", "rule_id"
-	}
-	var all bool
-	err := tx.QueryRow("SELECT all_nodes FROM "+table+" WHERE id = ?", id).Scan(&all)
-	// 删除后的空资源可通过；删除前的检查已完成，未找到不等于认领空作用域。
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	var tags int
-	if err := tx.QueryRow("SELECT COUNT(*) FROM "+table+"_tag WHERE "+key+" = ?", id).Scan(&tags); err != nil {
-		return err
-	}
-	ids, err := scanIDs(tx.Query("SELECT node_id FROM "+table+"_node WHERE "+key+" = ?", id))
-	if err != nil {
-		return err
-	}
-	if all || tags != 0 || !g.AllowsSelector(false, nil, ids) {
-		return ErrPermission
-	}
-	if kind == ChangeAlert {
-		var task sql.NullInt64
-		if err := tx.QueryRow("SELECT task_id FROM alert_rule WHERE id = ?", id).Scan(&task); err != nil {
-			return err
-		}
-		if task.Valid && task.Int64 != 0 {
-			return authorizeRule(tx, g, ChangeProbe, task.Int64)
-		}
-	}
-	return nil
 }
 
 func (c *Change) snapshot(tx *sql.Tx) (string, string, error) {
@@ -443,12 +416,20 @@ func (s *Store) ChangeVersion(ctx context.Context, c *Change) (string, error) {
 	if _, _, err := c.spec(); err != nil {
 		return "", err
 	}
+	if c.Policy == nil {
+		panic("store.ChangeVersion: Change.Policy is nil")
+	}
 	tx, err := s.r.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback()
-	if err := c.authorize(ctx, tx); err != nil {
+	r := txReader{tx}
+	token, err := c.Policy.Principal(ctx, r, c)
+	if err != nil {
+		return "", err
+	}
+	if err := c.Policy.Scope(ctx, r, c, token); err != nil {
 		return "", err
 	}
 	_, version, err := c.snapshot(tx)

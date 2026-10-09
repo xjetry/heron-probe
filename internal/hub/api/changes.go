@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/authz"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -147,7 +148,7 @@ func (s *Service) ExecuteChange(ctx context.Context, req *connect.Request[heronv
 }
 
 func (s *Service) prepareChange(ctx context.Context, m *heronv1.ExecuteChangeRequest) (*store.Change, changeCall, func() error, error) {
-	c := &store.Change{}
+	c := &store.Change{Policy: authz.Policy{}}
 	var call changeCall
 	var patch func() error
 	switch q := m.Change.(type) {

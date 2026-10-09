@@ -236,7 +236,7 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	return s.listAlertRules(ctx, false)
 }
 
-// ListVisibleAlertRules 与写入、引用错误共用 authorizeRule；规则自身和引用任务都必须在授权范围内。
+// ListVisibleAlertRules 与变更策略、引用错误共用 RuleInScope；规则自身和引用任务都必须在授权范围内。
 func (s *Store) ListVisibleAlertRules(ctx context.Context) ([]AlertRule, error) {
 	return s.listAlertRules(ctx, true)
 }
@@ -255,12 +255,13 @@ func (s *Store) listAlertRules(ctx context.Context, visibleOnly bool) ([]AlertRu
 	if p, ok := Principal(ctx); ok && visibleOnly {
 		visible := out[:0]
 		for _, r := range out {
-			if err := authorizeRule(tx, p.TokenGrant, ChangeAlert, r.ID); errors.Is(err, ErrPermission) {
-				continue
-			} else if err != nil {
+			ok, err := RuleInScope(txReader{tx}, p.TokenGrant, ChangeAlert, r.ID)
+			if err != nil {
 				return nil, err
 			}
-			visible = append(visible, r)
+			if ok {
+				visible = append(visible, r)
+			}
 		}
 		out = visible
 	}
@@ -642,11 +643,13 @@ func checkAlertReferences(ctx context.Context, tx *sql.Tx, query string, kind Ob
 			return err
 		}
 		if bearer {
-			if err := authorizeRule(tx, p.TokenGrant, ChangeAlert, ref.ID); errors.Is(err, ErrPermission) {
+			ok, err := RuleInScope(txReader{tx}, p.TokenGrant, ChangeAlert, ref.ID)
+			if err != nil {
+				return err
+			}
+			if !ok {
 				used.HiddenRules = true
 				continue
-			} else if err != nil {
-				return err
 			}
 		}
 		used.Rules = append(used.Rules, ref)

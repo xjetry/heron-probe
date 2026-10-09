@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"errors"
@@ -27,6 +28,16 @@ var schemaV25 = append(slices.Clone(schemaV24),
 	"DROP TABLE register_window_old",
 	"ALTER TABLE node_update ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0",
 )
+
+// permitPolicy 放行一切：本文件的用例验证写边界自身的状态机，授权裁决由 authz 包的用例钉住（store 不能 import
+// 实现了策略的 authz）。
+type permitPolicy struct{}
+
+func (permitPolicy) Principal(context.Context, ChangeReader, *Change) (*APIToken, error) {
+	return nil, nil
+}
+func (permitPolicy) Scope(context.Context, ChangeReader, *Change, *APIToken) error    { return nil }
+func (permitPolicy) Resource(context.Context, ChangeReader, *Change, *APIToken) error { return nil }
 
 func TestAgenticMigrationKeepsLegacyReadOnly(t *testing.T) {
 	s := migrateFrom(t, 24, func(t *testing.T, db *sql.DB) {
@@ -84,7 +95,7 @@ func TestAgenticDeferredCommitFailure(t *testing.T) {
 	}
 	newChange := func() *Change {
 		t.Helper()
-		c := &Change{Operation: Operation{RequestID: "commit-retry", RequestHash: "same"}, Action: ActionCreateNode}
+		c := &Change{Operation: Operation{RequestID: "commit-retry", RequestHash: "same"}, Action: ActionCreateNode, Policy: permitPolicy{}}
 		var err error
 		c.ExpectedVersion, err = s.ChangeVersion(t.Context(), c)
 		if err != nil {
@@ -118,34 +129,6 @@ func TestAgenticDeferredCommitFailure(t *testing.T) {
 	}
 }
 
-func TestChangeRechecksRevocationInsideTransaction(t *testing.T) {
-	s, clk := open(t)
-	node, _, err := s.CreateNode(t.Context(), "node", Billing{}, hash(1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	p, err := s.CreateAPIToken(t.Context(), "writer", sha256.Sum256([]byte("writer")), clk.Now(), 100, &TokenGrant{NodeIDs: []int64{node}, Permissions: []Permission{PermissionRotate}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := WithPrincipal(t.Context(), p)
-	c := &Change{Operation: Operation{OwnerID: p.ID, RequestID: "rotate", RequestHash: "x", ResourceID: node}, Action: ActionRotateNodeToken}
-	c.ExpectedVersion, err = s.ChangeVersion(ctx, c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.DeleteAPIToken(t.Context(), p.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetTokenHash(WithChange(ctx, c), node, hash(2)); !errors.Is(err, ErrPermission) {
-		t.Fatalf("revoked grant committed: %v", err)
-	}
-	var got []byte
-	if err := s.r.QueryRow("SELECT token_hash FROM node WHERE id=?", node).Scan(&got); err != nil || !slices.Equal(got, hash(1)) {
-		t.Fatalf("revoked write changed credential: %x %v", got, err)
-	}
-}
-
 func TestQueuedUpdateRevocationAndRegisterOwnership(t *testing.T) {
 	s, clk := open(t)
 	p, err := s.CreateAPIToken(t.Context(), "writer", sha256.Sum256([]byte("writer")), clk.Now(), 100, &TokenGrant{Permissions: []Permission{PermissionRegister, PermissionUpdate}})
@@ -164,7 +147,7 @@ func TestQueuedUpdateRevocationAndRegisterOwnership(t *testing.T) {
 	if err != nil || len(rows) != 1 || rows[0].ID != node {
 		t.Fatalf("registration did not grant node: %+v %v", rows, err)
 	}
-	c := &Change{Operation: Operation{OwnerID: p.ID, RequestID: "update", RequestHash: "x", ResourceID: node}, Action: ActionStartUpdate}
+	c := &Change{Operation: Operation{OwnerID: p.ID, RequestID: "update", RequestHash: "x", ResourceID: node}, Action: ActionStartUpdate, Policy: permitPolicy{}}
 	c.ExpectedVersion, err = s.ChangeVersion(ctx, c)
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +176,7 @@ func TestAgenticReceiptsSurviveRestartRestoreAndRetention(t *testing.T) {
 	ctx := t.Context()
 	create := func(id string, b byte) *Change {
 		t.Helper()
-		c := &Change{Operation: Operation{RequestID: id, RequestHash: id}, Action: ActionCreateNode}
+		c := &Change{Operation: Operation{RequestID: id, RequestHash: id}, Action: ActionCreateNode, Policy: permitPolicy{}}
 		var err error
 		c.ExpectedVersion, err = s.ChangeVersion(ctx, c)
 		if err != nil {
@@ -234,105 +217,12 @@ func TestAgenticReceiptsSurviveRestartRestoreAndRetention(t *testing.T) {
 	if err != nil || old.BeforeJSON != "" || old.AfterJSON != "" {
 		t.Fatalf("restore resurrected expired audit details: %+v %v", old, err)
 	}
-	retry := &Change{Operation: Operation{RequestID: "first", RequestHash: "first"}, Action: ActionCreateNode, ExpectedVersion: first.ExpectedVersion}
+	retry := &Change{Operation: Operation{RequestID: "first", RequestHash: "first"}, Action: ActionCreateNode, Policy: permitPolicy{}, ExpectedVersion: first.ExpectedVersion}
 	if _, _, err := reopened.CreateNode(WithChange(ctx, retry), "duplicate", Billing{}, hash(3)); !errors.Is(err, ErrReplay) {
 		t.Fatalf("durable retry was executed: %v", err)
 	}
 	nodes, err := reopened.ListNodes(ctx)
 	if err != nil || len(nodes) != 1 || nodes[0].Name != "first" {
 		t.Fatalf("retry mutated restored configuration: %+v %v", nodes, err)
-	}
-}
-
-func TestAgenticReplayAfterScopeRemoval(t *testing.T) {
-	s, clk := open(t)
-	node, _, err := s.CreateNode(t.Context(), "node", Billing{}, hash(1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	p, err := s.CreateAPIToken(t.Context(), "writer", sha256.Sum256([]byte("writer")), clk.Now(), 100, &TokenGrant{NodeIDs: []int64{node}, Permissions: []Permission{PermissionDelete}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := WithPrincipal(t.Context(), p)
-	c := Change{Operation: Operation{OwnerID: p.ID, RequestID: "delete", RequestHash: "delete", ResourceID: node}, Action: ActionDeleteNode}
-	c.ExpectedVersion, err = s.ChangeVersion(ctx, &c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	retry := c
-	if err := s.DeleteNode(WithChange(ctx, &c), node); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.DeleteNode(WithChange(ctx, &retry), node); !errors.Is(err, ErrReplay) {
-		t.Fatalf("committed retry rejected after scope removal: %v", err)
-	}
-	if retry.ResourceID != node || retry.CommittedAt == 0 {
-		t.Fatalf("retry lost original receipt: %+v", retry)
-	}
-}
-
-func TestAgenticRestoreSeparatesReusedTokenIDs(t *testing.T) {
-	source, clk := open(t)
-	target, _ := open(t)
-	create := func(s *Store, name string, hashByte byte) APIToken {
-		t.Helper()
-		p, err := s.CreateAPIToken(t.Context(), name, sha256.Sum256([]byte(name)), clk.Now(), 100, &TokenGrant{Permissions: []Permission{PermissionCreate}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		ctx := WithPrincipal(t.Context(), p)
-		c := &Change{Operation: Operation{OwnerID: p.ID, RequestID: "same-key", RequestHash: name}, Action: ActionCreateNode}
-		c.ExpectedVersion, err = s.ChangeVersion(ctx, c)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, _, err := s.CreateNode(WithChange(ctx, c), name, Billing{}, hash(hashByte)); err != nil {
-			t.Fatal(err)
-		}
-		return p
-	}
-	p, q := create(source, "source", 1), create(target, "target", 2)
-	if p.ID != q.ID || p.Identity == q.Identity {
-		t.Fatal("fixture must reuse numeric IDs without reusing credentials")
-	}
-	snapshot := filepath.Join(t.TempDir(), "snapshot.db")
-	if err := source.SnapshotConfig(t.Context(), snapshot); err != nil {
-		t.Fatal(err)
-	}
-	if err := target.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Restore(t.Context(), target.path, snapshot, "", "", clk.Now(), slog.Default()); err != nil {
-		t.Fatal(err)
-	}
-	restored, err := Open(target.path, clk, slog.Default(), RequireCurrentSchema)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer restored.Close()
-	actual, ok, err := restored.APITokenByHash(t.Context(), sha256.Sum256([]byte("source")))
-	if err != nil || !ok || actual.Identity != p.Identity {
-		t.Fatalf("restored credential identity changed: %+v %v", actual, err)
-	}
-	ctx := WithPrincipal(t.Context(), actual)
-	o, err := restored.FindOperation(ctx, actual.ID, "same-key")
-	if err != nil || o.RequestHash != "source" || !strings.Contains(o.AfterJSON, "source") || strings.Contains(o.AfterJSON, "target") {
-		t.Fatalf("receipt crossed credential identities: %+v %v", o, err)
-	}
-	list, err := restored.ListOperations(ctx, actual.ID, "", 100)
-	if err != nil || len(list) != 1 || list[0].RequestHash != "source" {
-		t.Fatalf("restored token saw another identity's audit: %+v %v", list, err)
-	}
-	all, err := restored.ListOperations(t.Context(), actual.ID, "", 100)
-	if err != nil || len(all) != 2 {
-		t.Fatalf("restore lost an identity's history: %+v %v", all, err)
-	}
-	if o.ID == "" || list[0].ID != o.ID || all[0].ID == all[1].ID {
-		t.Fatalf("restored receipts lack distinct stable IDs: own=%+v all=%+v", o, all)
-	}
-	original, err := source.FindOperation(WithPrincipal(t.Context(), p), p.ID, "same-key")
-	if err != nil || original.ID != o.ID {
-		t.Fatalf("restore changed receipt ID: before=%+v after=%+v err=%v", original, o, err)
 	}
 }

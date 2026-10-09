@@ -58,7 +58,7 @@ func (s *Service) CreateApiToken(ctx context.Context, req *connect.Request[heron
 		}
 	}
 	tok, plain, err := s.auth.CreateAPIToken(ctx, name, grant)
-	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrPermission) {
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrInvalidGrant) {
 		return nil, invalid("grant: invalid scope or node does not exist")
 	}
 	if errors.Is(err, store.ErrAPITokenLimit) {

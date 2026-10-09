@@ -19,7 +19,13 @@ const (
 	PermissionUpdate    Permission = "update"
 )
 
+// ErrPermission 是变更写契约的一部分：策略（ChangePolicy）拒绝时返回它，写边界据此回滚事务，api 据此回答
+// PermissionDenied。store 只定义它，不在任何分支里作出拒绝。
 var ErrPermission = errors.New("operation or resource is outside the API token grant")
+
+// ErrInvalidGrant 是建 token 时 grant 本身的形状不合法（未知权限位、全部节点与显式节点并存）。它是输入校验，
+// 不是授权拒绝，与授权哨兵分开。
+var ErrInvalidGrant = errors.New("invalid API token grant")
 
 type TokenGrant struct {
 	Permissions []Permission
@@ -47,16 +53,41 @@ func (g TokenGrant) AllowsSelector(all bool, tags []string, ids []int64) bool {
 	return true
 }
 
+// RuleInScope 报告 grant 是否覆盖探测任务或告警规则 id 当前作用域里的每一个节点：全部节点与标签选择器只有
+// 全部节点的 grant 覆盖，显式节点必须逐个在 grant 内，空显式集合不归任何主体（同 AllowsSelector）；告警规则
+// 还要求它引用的探测任务同样被覆盖。资源不存在时没有未被覆盖的节点，结果为真——写侧在删除之前已按资源存在时
+// 的作用域裁决过，删除之后的写后授权读到无行即放行；读侧只对事务里读到的现存行调用它。
+// 变更策略与读侧可见性过滤（告警规则列表、引用错误里的隐藏规则）共用这一个判定，二者口径不会分叉。
+func RuleInScope(r ChangeReader, g TokenGrant, kind ChangeKind, id int64) (bool, error) {
+	if g.AllNodes {
+		return true, nil
+	}
+	s, err := r.RuleScope(kind, id)
+	if errors.Is(err, ErrNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if s.AllNodes || s.TagCount != 0 || !g.AllowsSelector(false, nil, s.NodeIDs) {
+		return false, nil
+	}
+	if s.TaskID != 0 {
+		return RuleInScope(r, g, ChangeProbe, s.TaskID)
+	}
+	return true, nil
+}
+
 func (g TokenGrant) validate(tx *sql.Tx) error {
 	for _, p := range g.Permissions {
 		switch p {
 		case PermissionConfigure, PermissionCreate, PermissionRegister, PermissionRotate, PermissionDelete, PermissionUpdate:
 		default:
-			return ErrPermission
+			return ErrInvalidGrant
 		}
 	}
 	if g.AllNodes && len(g.NodeIDs) != 0 {
-		return ErrPermission
+		return ErrInvalidGrant
 	}
 	for _, id := range g.NodeIDs {
 		ok, err := nodeExistsTx(tx, id)

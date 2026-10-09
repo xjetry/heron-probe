@@ -114,3 +114,32 @@ func TestDeleteAllAPITokens(t *testing.T) {
 		t.Fatalf("deleted %d err %v", n, err)
 	}
 }
+
+// grant 的形状错误是输入校验（ErrInvalidGrant），不是授权拒绝；引用不存在的节点是 ErrNotFound。三者都不落库。
+func TestCreateAPITokenRejectsInvalidGrant(t *testing.T) {
+	s, clk := open(t)
+	node, _, err := s.CreateNode(t.Context(), "node", Billing{}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		grant TokenGrant
+		want  error
+	}{
+		"unknown permission":         {TokenGrant{Permissions: []Permission{"root"}}, ErrInvalidGrant},
+		"all nodes with node list":   {TokenGrant{AllNodes: true, NodeIDs: []int64{node}}, ErrInvalidGrant},
+		"node that does not exist":   {TokenGrant{NodeIDs: []int64{node + 1}}, ErrNotFound},
+		"valid grant for comparison": {TokenGrant{NodeIDs: []int64{node}, Permissions: []Permission{PermissionConfigure}}, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := s.CreateAPIToken(t.Context(), name, sha256.Sum256([]byte(name)), clk.Now(), 100, &tc.grant)
+			if !errors.Is(err, tc.want) || errors.Is(err, ErrPermission) {
+				t.Fatalf("got %v, want %v", err, tc.want)
+			}
+		})
+	}
+	list, err := s.ListAPITokens(t.Context())
+	if err != nil || len(list) != 1 {
+		t.Fatalf("rejected grants were stored: %+v %v", list, err)
+	}
+}
