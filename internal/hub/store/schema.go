@@ -165,8 +165,19 @@ func schemaStatements() []string {
 		ddlTheme, ddlThemeVersion, ddlThemeSelection, seedThemeSelection, ddlThemeFile, ddlRestoreRecord, ddlThemePackage,
 		ddlAdminSecurity, seedAdminSecurity, ddlProbeTaskTag, ddlProbeTaskTagIndex, ddlAlertRuleTag, ddlAlertRuleTagIndex, ddlNodeUpdate,
 		ddlSilence, ddlSilenceNode, ddlSilenceNodeByNode, ddlSilenceTag, ddlSilenceTagByTag,
-		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime, ddlProbeCert, ddlProbeCertPresented, ddlNodeCoverage)
+		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime, ddlProbeCert, ddlProbeCertPresented, ddlNodeCoverage,
+		ddlHubCoordination, seedHubCoordination)
 }
+
+// hub_coordination 是运行中的 hub 与库外写者（离线子命令）之间的协调状态，不是站点配置，所以不放 setting 表，
+// 也不进任何备份层。offline_generation 是库外写者已提交的写事务计数：带 ExternalWriter 打开的 Store 在每个提交的
+// 写事务里把它加一，hub 按周期读它决定是否重载内存缓存（见 coordination.go）。只有一行（id = 1），建库时种子为 0；
+// 缺行或负值都是库损坏，读侧报错而不是当作"没有外部变更"。
+const ddlHubCoordination = `CREATE TABLE hub_coordination (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  offline_generation INTEGER NOT NULL CHECK (offline_generation >= 0)
+)`
+const seedHubCoordination = `INSERT INTO hub_coordination (id, offline_generation) VALUES (1, 0)`
 
 const ddlNodeCoverage = `CREATE TABLE node_coverage (node_id INTEGER PRIMARY KEY, start_ts INTEGER NOT NULL)`
 

@@ -341,6 +341,11 @@ func removeV26Config(t *testing.T, config *sql.DB) {
 // 33 只在指标层的探测表上加了对比索引；拆库读用不到它，回退就是删除三个索引。
 // 34 给 node_facts 加了 execution 与 facts_rev，给三张指标表加了 load1_per_core 的 sum/n。
 // 回填更早的版本号之前必须撤掉，否则配置层的 ADD COLUMN 会撞上重复列。
+func removeV37Coordination(t *testing.T, db *sql.DB) {
+	t.Helper()
+	restoreExec(t, db, "DROP TABLE hub_coordination")
+}
+
 func removeV36Config(t *testing.T, config *sql.DB) {
 	t.Helper()
 	restoreExec(t, config, "ALTER TABLE node DROP COLUMN traffic_quota_bytes; ALTER TABLE node DROP COLUMN traffic_quota_mode")

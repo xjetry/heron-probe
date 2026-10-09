@@ -114,6 +114,14 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 	if _, err = tx.ExecContext(ctx, "DELETE FROM main.register_window"); err != nil {
 		return result, err
 	}
+	// 离线变更代数只对读它的那个 hub 进程有意义，恢复要求 hub 已停止，下次启动的 hub 从库里读起点；重新种子为 0
+	// 同时修复目标库里缺失或损坏的那一行，不让它挡住之后的启动。
+	if _, err = tx.ExecContext(ctx, "DELETE FROM main.hub_coordination"); err != nil {
+		return result, err
+	}
+	if _, err = tx.ExecContext(ctx, seedHubCoordination); err != nil {
+		return result, err
+	}
 	for _, src := range sources {
 		for _, table := range src.tables {
 			columns, e := restoreColumnList(ctx, tx, table)
@@ -460,6 +468,8 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			if layer == "config" {
 				statements = migrationV36Config
 			}
+		case 37:
+			// 离线变更代数表不属于任一备份层；目标库的那一行由 Restore 重新种子。
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}
