@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/netip"
 	"path/filepath"
@@ -46,6 +47,10 @@ func TestReloadReturnsNodesDeletedOutsideTheProcess(t *testing.T) {
 	}
 	rotated, _, err := runningNode(t, hub, "rotated")
 	if err != nil {
+		t.Fatal(err)
+	}
+	// 每次离线命令都在打开库时加载映射（openOffline），这里同样先加载，离线一侧看到的是库的当前凭据。
+	if err := offline.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := offline.DeleteNode(ctx, deleted); err != nil {
@@ -105,5 +110,85 @@ func TestReloadFailureLeavesMapAndDeletionsForNextTime(t *testing.T) {
 	}
 	if removed, err := hub.Reload(t.Context()); err != nil || !slices.Equal(removed, []int64{deleted}) {
 		t.Fatalf("reload after failure removed %v, %v; want [%d]", removed, err, deleted)
+	}
+}
+
+// 映射落后于库时（库外已换发或删除、尚未重载），拿映射里仍有效的安装凭据认领：比较并换发失败，回答与查无此凭据
+// 相同的 ErrDenied，库里留着库外换发的凭据；重载之后库外换发的凭据可以认领。
+func TestRegisterWithCredentialSupersededOutsideIsDenied(t *testing.T) {
+	hub, offline := hubAndOffline(t)
+	ctx := t.Context()
+	from := netip.MustParseAddr("127.0.0.1")
+	rotated, staleInstall, err := hub.CreateNode(ctx, "rotated", store.Billing{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleted, deletedInstall, err := hub.CreateNode(ctx, "deleted", store.Billing{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := offline.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	install, err := offline.RotateToken(ctx, rotated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := offline.DeleteNode(ctx, deleted); err != nil {
+		t.Fatal(err)
+	}
+	for name, key := range map[string]string{"rotated": staleInstall, "deleted": deletedInstall} {
+		if _, _, err := hub.Register(ctx, key, "", from); !errors.Is(err, ErrDenied) {
+			t.Fatalf("register with the %s node's superseded credential: %v, want ErrDenied", name, err)
+		}
+	}
+	stored, err := hub.store.TokenHashes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored[HashToken(install)] != rotated {
+		t.Fatal("the superseded credential overwrote the one issued outside the process")
+	}
+	if _, err := hub.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, err := hub.Register(ctx, install, "", from); err != nil || got != rotated {
+		t.Fatalf("register with the reissued credential after reload: %d, %v", got, err)
+	}
+}
+
+// 映射落后于库时换发 token：期望值取自映射，库里已不是它，得到 ErrCredentialChanged，库与映射都不变；重载后成功。
+func TestRotateTokenOverStaleMapReportsCredentialChanged(t *testing.T) {
+	hub, offline := hubAndOffline(t)
+	ctx := t.Context()
+	id, running, err := runningNode(t, hub, "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := offline.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	install, err := offline.RotateToken(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.RotateToken(ctx, id); !errors.Is(err, store.ErrCredentialChanged) {
+		t.Fatalf("rotate over a stale map: %v, want ErrCredentialChanged", err)
+	}
+	if _, ok := hub.Authenticate(running); !ok {
+		t.Fatal("a refused rotation changed the map")
+	}
+	stored, err := hub.store.TokenHashes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored[HashToken(install)] != id {
+		t.Fatal("a refused rotation changed the database")
+	}
+	if _, err := hub.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.RotateToken(ctx, id); err != nil {
+		t.Fatalf("rotate after reload: %v", err)
 	}
 }

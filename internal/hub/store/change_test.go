@@ -285,7 +285,7 @@ func TestChangeTargetRejectsSiblingFirstWrite(t *testing.T) {
 			if !errors.Is(c.Err, ErrChangeTarget) || !c.claimed {
 				t.Fatalf("mismatched first write not recorded on the change: err=%v claimed=%t", c.Err, c.claimed)
 			}
-			if err := f.s.SetTokenHash(ctx, f.node, hash(2)); !errors.Is(err, ErrChangeTarget) {
+			if err := f.s.SetTokenHash(ctx, f.node, hash(1), hash(2)); !errors.Is(err, ErrChangeTarget) {
 				t.Fatalf("primary write after a mismatched one: %v, want ErrChangeTarget", err)
 			}
 			if name, token, receipts := f.state(t); name != "original" || !slices.Equal(token, hash(1)) || receipts != 0 {

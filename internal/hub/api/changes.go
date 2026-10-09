@@ -41,6 +41,9 @@ func changeError(err error) error {
 		return permissionDenied("change exceeds preauthorized permissions or node scope")
 	case errors.Is(err, store.ErrConflict):
 		return connect.NewError(connect.CodeAborted, err)
+	case errors.Is(err, store.ErrCredentialChanged):
+		// 与 ErrConflict 同码：资源在调用方读到之后已变（另一个进程换发了凭据），重试即可。
+		return connect.NewError(connect.CodeAborted, err)
 	case errors.Is(err, store.ErrRequestID):
 		return connect.NewError(connect.CodeAlreadyExists, err)
 	case errors.Is(err, store.ErrChangeTarget):

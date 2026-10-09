@@ -23,6 +23,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/agentwire"
 	"github.com/xjetry/heron-probe/internal/clock"
 	"github.com/xjetry/heron-probe/internal/hub/alert"
+	"github.com/xjetry/heron-probe/internal/hub/auth"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hubclient"
 	"github.com/xjetry/heron-probe/internal/testwait"
@@ -454,5 +455,61 @@ func TestReloadInterleavedWithOnlineChangesConverges(t *testing.T) {
 	slices.Sort(want)
 	if len(tasks.Msg.Tasks) != 1 || !slices.Equal(tasks.Msg.Tasks[0].NodeIds, want) {
 		t.Fatalf("all_nodes task coverage = %v, want %v", tasks.Msg.Tasks, want)
+	}
+}
+
+// 安装凭据的跨进程竞争：hub 的映射里是安装凭据 A；离线 rotate-token 换发为 B 并推进代数。在 hub 重载之前（屏障停在
+// 发现变更、尚未重建映射处）拿 A 注册被拒，库里仍是 B；重载之后用 B 注册得到运行 token，用它上报成功。
+func TestStaleInstallCredentialCannotOverwriteOfflineRotation(t *testing.T) {
+	f := seedReload(t)
+	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 30, 0, time.UTC))
+	var entered <-chan struct{}
+	var release func()
+	_, url, logs := startReloadHub(t, f, clk, func(next slog.Handler) slog.Handler {
+		var h slog.Handler
+		h, entered, release = testwait.PauseAtLog(next, "offline changes detected")
+		return h
+	})
+	defer release()
+	ctx := t.Context()
+	st, a, err := openOffline(f.db, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reissued, err := a.RotateToken(ctx, f.kept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(testwait.Bound):
+		t.Fatal("reload did not reach the pause")
+	}
+	if _, err := register(ctx, url, f.keptInstall); connect.CodeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("register with the superseded credential before reload: %v, want Unauthenticated", err)
+	}
+	raw, err := sql.Open("sqlite", "file:"+f.db+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var stored []byte
+	if err := raw.QueryRow("SELECT token_hash FROM node WHERE id = ?", f.kept).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if want := auth.HashToken(reissued); !slices.Equal(stored, want[:]) {
+		t.Fatal("the superseded credential overwrote the offline rotation")
+	}
+	release()
+	logs.wait(t, "offline generation confirmed", confirmedAttrs(t, f.db))
+	token, err := register(ctx, url, reissued)
+	if err != nil {
+		t.Fatalf("register with the reissued credential after reload: %v", err)
+	}
+	if err := report(ctx, url, token); err != nil {
+		t.Fatalf("report with the token from the reissued credential: %v", err)
 	}
 }

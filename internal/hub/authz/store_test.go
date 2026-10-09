@@ -64,7 +64,7 @@ func TestChangeRechecksRevocationInsideTransaction(t *testing.T) {
 	if _, err := s.DeleteAPIToken(t.Context(), p.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetTokenHash(store.WithChange(ctx, c), node, hash(2)); !errors.Is(err, store.ErrPermission) {
+	if err := s.SetTokenHash(store.WithChange(ctx, c), node, hash(1), hash(2)); !errors.Is(err, store.ErrPermission) {
 		t.Fatalf("revoked grant committed: %v", err)
 	}
 	var got []byte

@@ -151,12 +151,18 @@ func (a *Auth) CreateNode(ctx context.Context, name string, billing store.Billin
 	return id, plain, nil
 }
 
-// RotateToken 返回前在 mu 下以新 hash 替换旧 hash，读者不会观察到两者同时有效。
+// RotateToken 返回前在 mu 下以新 hash 替换旧 hash，读者不会观察到两者同时有效。换发以映射里的当前凭据为期望值
+// （store.SetTokenHash 比较并换发）：映射落后于库（库外已换发、尚未重载）时得到 store.ErrCredentialChanged，库与映射
+// 都不变，重载之后重试即可；节点在映射里没有凭据而库里有，同样是映射落后，也得到它。节点不存在是 store.ErrNotFound。
+// 离线子命令的映射是打开库时刚从库里加载的，期望值就是它读到的库。
 func (a *Auth) RotateToken(ctx context.Context, id int64) (string, error) {
 	a.mutMu.Lock()
 	defer a.mutMu.Unlock()
 	plain, h := newInstallToken()
-	if err := a.store.SetTokenHash(ctx, id, h[:]); err != nil {
+	a.mu.RLock()
+	expected := a.hashOfLocked(id)
+	a.mu.RUnlock()
+	if err := a.store.SetTokenHash(ctx, id, expected, h[:]); err != nil {
 		return "", err
 	}
 	a.mu.Lock()
@@ -175,6 +181,17 @@ func (a *Auth) DeleteNode(ctx context.Context, id int64) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.dropLocked(id)
+	return nil
+}
+
+// hashOfLocked 返回映射里节点 id 的凭据 hash，没有则返回 nil（nil 与库里任何 token_hash 都不相等，NOT NULL）。
+// 映射与库一样每个节点至多一个 hash（Load 自库建立，变更者在 mutMu 下先替换库再替换映射）。调用方持 mu。
+func (a *Auth) hashOfLocked(id int64) []byte {
+	for k, v := range a.byHash {
+		if v == id {
+			return k[:]
+		}
+	}
 	return nil
 }
 
@@ -220,7 +237,10 @@ func (a *Auth) Register(ctx context.Context, key, name string, from netip.Addr) 
 		return 0, "", ErrDenied
 	}
 	// 只有独立用途的安装凭据能认领；完整前缀参与哈希，不能拿运行 token 自报安装用途。
-	// mutMu 串行化认领和管理员换发，成功后旧凭据从库与映射移除，同一凭据只能消费一次。
+	// mutMu 串行化本进程内的认领和管理员换发，成功后旧凭据从库与映射移除，同一凭据只能消费一次。
+	// 跨进程靠比较并换发：映射可能落后于库（离线子命令已换发或删除、尚未重载），凭据在映射里有效不代表在库里仍有效，
+	// 所以以这个凭据的 hash 为期望值换发；库里已不是它（store.ErrCredentialChanged）或节点已删（store.ErrNotFound），
+	// 这个凭据就已作废，与查无此凭据一样回答 ErrDenied，对外不区分，也不计失败次数（同查无此凭据）。
 	if random, installation := strings.CutPrefix(key, installTokenPrefix); installation {
 		if !isTokenShaped(random) {
 			return 0, "", ErrDenied
@@ -229,8 +249,11 @@ func (a *Auth) Register(ctx context.Context, key, name string, from netip.Addr) 
 		if !ok {
 			return 0, "", ErrDenied
 		}
+		expected := HashToken(key)
 		plain, h := NewToken()
-		if err := a.store.SetTokenHash(ctx, id, h[:]); err != nil {
+		if err := a.store.SetTokenHash(ctx, id, expected[:], h[:]); errors.Is(err, store.ErrCredentialChanged) || errors.Is(err, store.ErrNotFound) {
+			return 0, "", ErrDenied
+		} else if err != nil {
 			return 0, "", err
 		}
 		a.mu.Lock()

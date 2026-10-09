@@ -307,6 +307,10 @@ func (s *Service) RotateNodeToken(ctx context.Context, req *connect.Request[hero
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, notFound(req.Msg.GetId())
 	}
+	// 凭据已被别的进程（离线 rotate-token）换过、hub 尚未重载：库与映射都没动，重载之后重试即可。
+	if errors.Is(err, store.ErrCredentialChanged) {
+		return nil, changeError(err)
+	}
 	if err != nil {
 		s.log.Error("rotating token failed", "err", err)
 		return nil, internalError("rotating token failed")

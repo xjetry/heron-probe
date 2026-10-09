@@ -69,7 +69,7 @@ func TestExternalWriterAdvancesOfflineGenerationPerCommit(t *testing.T) {
 	}
 	wantGeneration(t, hub, 2)
 
-	if err := external.SetTokenHash(ctx, 2, hash(3)); err != nil {
+	if err := external.SetTokenHash(ctx, 2, hash(2), hash(3)); err != nil {
 		t.Fatal(err)
 	}
 	wantGeneration(t, external, 3)
